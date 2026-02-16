@@ -399,7 +399,6 @@ abstract class AnthropicCompatProvider extends BaseProvider {
       let currentToolId = '';
       let currentToolName = '';
       let currentToolInput = '';
-      let isInThinking = false;
 
       const response = await this.client.messages.create(kwargs);
 
@@ -409,35 +408,14 @@ abstract class AnthropicCompatProvider extends BaseProvider {
           const block = event.content_block;
           currentBlockType = block.type;
           if (block.type === 'thinking') {
-            isInThinking = true;
             currentThinking = '';
             currentThinkingSignature = (block as any).signature ?? '';
             // spinner 继续运行，由 thinking_delta 更新显示
           } else if (block.type === 'redacted_thinking') {
-            // 处理 redacted_thinking block
             currentBlockType = 'redacted_thinking';
           } else if (block.type === 'text') {
-            if (isInThinking) {
-              isInThinking = false;
-              // thinking 结束，停止 spinner 并显示摘要
-              if (globalSpinner) {
-                globalSpinner.stop();
-                globalSpinner = null;
-              }
-              if (currentThinking) {
-                const preview = currentThinking.length > 100
-                  ? currentThinking.slice(0, 100) + '...'
-                  : currentThinking;
-                console.log(chalk.dim(`[thinking] ${preview}`));
-              }
-            }
             currentText = '';
           } else if (block.type === 'tool_use') {
-            // 停止 spinner
-            if (globalSpinner) {
-              globalSpinner.stop();
-              globalSpinner = null;
-            }
             currentToolId = block.id;
             currentToolName = block.name;
             currentToolInput = '';
