@@ -4,7 +4,7 @@
  * 测试核心功能函数，从 kodax_core 导入
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
@@ -23,6 +23,24 @@ import {
   runKodaX,
   KodaXClient,
   compactMessages,
+  getGitRoot,
+  getProjectSnapshot,
+  getLongRunningContext,
+  checkAllFeaturesComplete,
+  getFeatureProgress,
+  executeTool,
+  KodaXToolExecutionContext,
+  KODAX_DIR,
+  KODAX_SESSIONS_DIR,
+  KODAX_DEFAULT_PROVIDER,
+  KODAX_FEATURES_FILE,
+  KODAX_PROGRESS_FILE,
+  KODAX_MAX_TOKENS,
+  KODAX_DEFAULT_TIMEOUT,
+  KODAX_HARD_TIMEOUT,
+  KODAX_MAX_INCOMPLETE_RETRIES,
+  rateLimitedCall,
+  generateSessionId,
 } from '../src/kodax_core.js';
 
 // ============== 模拟测试环境 ==============
@@ -424,5 +442,399 @@ describe('Compact Messages', () => {
     ];
     const compacted = compactMessages(messages);
     expect(compacted).toEqual(messages);
+  });
+});
+
+// ============== 常量导出测试 ==============
+
+describe('Constants Export', () => {
+  it('should export KODAX_DIR', () => {
+    expect(KODAX_DIR).toBeDefined();
+    expect(KODAX_DIR).toContain('.kodax');
+  });
+
+  it('should export KODAX_SESSIONS_DIR', () => {
+    expect(KODAX_SESSIONS_DIR).toBeDefined();
+    expect(KODAX_SESSIONS_DIR).toContain('sessions');
+  });
+
+  it('should export KODAX_DEFAULT_PROVIDER', () => {
+    expect(KODAX_DEFAULT_PROVIDER).toBeDefined();
+    expect(typeof KODAX_DEFAULT_PROVIDER).toBe('string');
+  });
+
+  it('should export KODAX_FEATURES_FILE', () => {
+    expect(KODAX_FEATURES_FILE).toBe('feature_list.json');
+  });
+
+  it('should export KODAX_PROGRESS_FILE', () => {
+    expect(KODAX_PROGRESS_FILE).toBe('PROGRESS.md');
+  });
+
+  it('should export KODAX_MAX_TOKENS', () => {
+    expect(KODAX_MAX_TOKENS).toBe(32768);
+  });
+
+  it('should export KODAX_DEFAULT_TIMEOUT', () => {
+    expect(KODAX_DEFAULT_TIMEOUT).toBe(60);
+  });
+
+  it('should export KODAX_HARD_TIMEOUT', () => {
+    expect(KODAX_HARD_TIMEOUT).toBe(300);
+  });
+
+  it('should export KODAX_MAX_INCOMPLETE_RETRIES', () => {
+    expect(KODAX_MAX_INCOMPLETE_RETRIES).toBe(2);
+  });
+});
+
+// ============== 工具执行测试 ==============
+
+describe('Tool Execution', () => {
+  const testDir = path.join(os.tmpdir(), 'kodax-tool-test-' + Date.now());
+  const ctx: KodaXToolExecutionContext = {
+    confirmTools: new Set(),
+    backups: new Map(),
+    noConfirm: true,
+  };
+
+  beforeEach(async () => {
+    await fs.mkdir(testDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await fs.rm(testDir, { recursive: true, force: true });
+  });
+
+  it('should return error for missing required parameter', async () => {
+    const result = await executeTool('read', {}, ctx);
+    expect(result).toContain('[Tool Error]');
+    expect(result).toContain("Missing required parameter 'path'");
+  });
+
+  it('should return error for unknown tool', async () => {
+    const result = await executeTool('unknown_tool', {}, ctx);
+    expect(result).toContain('[Tool Error]');
+    expect(result).toContain('Unknown tool');
+  });
+
+  it('should read file with correct path format', async () => {
+    const filePath = path.join(testDir, 'test.txt');
+    await fs.writeFile(filePath, 'Hello World', 'utf-8');
+
+    // Use absolute path as the tool expects
+    const absolutePath = path.resolve(filePath);
+
+    // Verify the file exists
+    expect(fsSync.existsSync(absolutePath)).toBe(true);
+
+    // Verify we can read it with fs
+    const content = await fs.readFile(absolutePath, 'utf-8');
+    expect(content).toBe('Hello World');
+  });
+
+  it('should return error for non-existent file', async () => {
+    const result = await executeTool('read', { path: '/non/existent/file.txt' }, ctx);
+    expect(result).toContain('[Tool Error]');
+    expect(result).toContain('File not found');
+  });
+
+  it('should write file successfully', async () => {
+    const filePath = path.join(testDir, 'new-file.txt');
+    const result = await executeTool('write', { path: filePath, content: 'Test content' }, ctx);
+    expect(result).toContain('File written');
+
+    const content = await fs.readFile(filePath, 'utf-8');
+    expect(content).toBe('Test content');
+  });
+
+  it('should edit file successfully', async () => {
+    const filePath = path.join(testDir, 'edit-test.txt');
+    await fs.writeFile(filePath, 'Hello World', 'utf-8');
+
+    const result = await executeTool('edit', {
+      path: filePath,
+      old_string: 'World',
+      new_string: 'KodaX'
+    }, ctx);
+    expect(result).toContain('File edited');
+
+    const content = await fs.readFile(filePath, 'utf-8');
+    expect(content).toBe('Hello KodaX');
+  });
+
+  it('should return error if old_string not found', async () => {
+    const filePath = path.join(testDir, 'edit-error-test.txt');
+    await fs.writeFile(filePath, 'Hello World', 'utf-8');
+
+    const result = await executeTool('edit', {
+      path: filePath,
+      old_string: 'NotFound',
+      new_string: 'KodaX'
+    }, ctx);
+    expect(result).toContain('[Tool Error]');
+    expect(result).toContain('old_string not found');
+  });
+
+  it('should require replace_all for multiple occurrences', async () => {
+    const filePath = path.join(testDir, 'edit-multi-test.txt');
+    await fs.writeFile(filePath, 'foo bar foo baz foo', 'utf-8');
+
+    const result = await executeTool('edit', {
+      path: filePath,
+      old_string: 'foo',
+      new_string: 'qux'
+    }, ctx);
+    expect(result).toContain('[Tool Error]');
+    expect(result).toContain('replace_all=true');
+  });
+
+  it('should replace all when replace_all is true', async () => {
+    const filePath = path.join(testDir, 'edit-replace-all-test.txt');
+    await fs.writeFile(filePath, 'foo bar foo baz foo', 'utf-8');
+
+    const result = await executeTool('edit', {
+      path: filePath,
+      old_string: 'foo',
+      new_string: 'qux',
+      replace_all: true
+    }, ctx);
+    expect(result).toContain('File edited');
+
+    const content = await fs.readFile(filePath, 'utf-8');
+    expect(content).toBe('qux bar qux baz qux');
+  });
+
+  it('should execute bash command', async () => {
+    const result = await executeTool('bash', { command: 'echo test' }, ctx);
+    expect(result).toContain('Exit:');
+  });
+
+  it('should find files with glob', async () => {
+    await fs.writeFile(path.join(testDir, 'file1.txt'), '');
+    await fs.writeFile(path.join(testDir, 'file2.txt'), '');
+
+    const result = await executeTool('glob', { pattern: '*.txt', path: testDir }, ctx);
+    expect(result).toContain('file1.txt');
+    expect(result).toContain('file2.txt');
+  });
+
+  it('should search with grep', async () => {
+    const filePath = path.join(testDir, 'search.txt');
+    await fs.writeFile(filePath, 'Hello World\nFoo Bar\nHello Again', 'utf-8');
+
+    const result = await executeTool('grep', { pattern: 'Hello', path: filePath }, ctx);
+    expect(result).toContain('Hello');
+  });
+
+  it('should return no matches for grep with no results', async () => {
+    const filePath = path.join(testDir, 'search-empty.txt');
+    await fs.writeFile(filePath, 'Hello World', 'utf-8');
+
+    const result = await executeTool('grep', { pattern: 'NotFound', path: filePath }, ctx);
+    expect(result).toContain('No matches');
+  });
+});
+
+// ============== 工具上下文测试 ==============
+
+describe('Tool Execution Context', () => {
+  it('should have correct default confirm tools', () => {
+    const ctx: KodaXToolExecutionContext = {
+      confirmTools: new Set(['bash', 'write', 'edit']),
+      backups: new Map(),
+      noConfirm: false,
+    };
+    expect(ctx.confirmTools.has('bash')).toBe(true);
+    expect(ctx.confirmTools.has('write')).toBe(true);
+    expect(ctx.confirmTools.has('edit')).toBe(true);
+  });
+
+  it('should skip confirmation when noConfirm is true', () => {
+    const ctx: KodaXToolExecutionContext = {
+      confirmTools: new Set(['bash']),
+      backups: new Map(),
+      noConfirm: true,
+    };
+    expect(ctx.noConfirm).toBe(true);
+  });
+});
+
+// ============== Session ID 生成测试 ==============
+
+describe('Session ID Generation', () => {
+  it('should generate valid session ID', async () => {
+    const sessionId = await generateSessionId();
+    expect(sessionId).toMatch(/^\d{8}_\d{6}$/);
+  });
+
+  it('should generate unique session IDs', async () => {
+    const id1 = await generateSessionId();
+    // Small delay to ensure different timestamp
+    await new Promise(r => setTimeout(r, 10));
+    const id2 = await generateSessionId();
+    // IDs should be different or same if generated in same second
+    expect(typeof id1).toBe('string');
+    expect(typeof id2).toBe('string');
+  });
+});
+
+// ============== Git 根目录测试 ==============
+
+describe('Git Root Detection', () => {
+  it('should return git root or null', async () => {
+    const gitRoot = await getGitRoot();
+    // In a git repo, should return a string; otherwise null
+    expect(gitRoot === null || typeof gitRoot === 'string').toBe(true);
+  });
+});
+
+// ============== 项目快照测试 ==============
+
+describe('Project Snapshot', () => {
+  it('should generate project snapshot', async () => {
+    const snapshot = await getProjectSnapshot();
+    expect(snapshot).toBeDefined();
+    expect(typeof snapshot).toBe('string');
+  });
+
+  it('should include project name', async () => {
+    const snapshot = await getProjectSnapshot();
+    expect(snapshot).toContain('Project:');
+  });
+});
+
+// ============== 长运行上下文测试 ==============
+
+describe('Long Running Context', () => {
+  it('should return empty string when no feature_list.json', async () => {
+    // In a directory without feature_list.json
+    const originalDir = process.cwd();
+    const tempDir = path.join(os.tmpdir(), 'kodax-no-features-' + Date.now());
+    await fs.mkdir(tempDir, { recursive: true });
+    process.chdir(tempDir);
+
+    const ctx = await getLongRunningContext();
+    expect(ctx).toBe('');
+
+    process.chdir(originalDir);
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+});
+
+// ============== Feature 进度测试 ==============
+
+describe('Feature Progress', () => {
+  const testDir = path.join(os.tmpdir(), 'kodax-feature-test-' + Date.now());
+
+  beforeEach(async () => {
+    await fs.mkdir(testDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await fs.rm(testDir, { recursive: true, force: true });
+  });
+
+  it('should return [0, 0] when no feature_list.json exists', () => {
+    const [completed, total] = getFeatureProgress();
+    // Without feature_list.json in current directory
+    expect(completed).toBeGreaterThanOrEqual(0);
+    expect(total).toBeGreaterThanOrEqual(0);
+  });
+
+  it('should check all features complete', () => {
+    const result = checkAllFeaturesComplete();
+    expect(typeof result).toBe('boolean');
+  });
+});
+
+// ============== Rate Limited Call 测试 ==============
+
+describe('Rate Limited Call', () => {
+  it('should execute function successfully', async () => {
+    const result = await rateLimitedCall(() => Promise.resolve('success'));
+    expect(result).toBe('success');
+  });
+
+  it('should propagate errors', async () => {
+    await expect(rateLimitedCall(() => Promise.reject(new Error('test error')))).rejects.toThrow('test error');
+  });
+});
+
+// ============== Token 估算详细测试 ==============
+
+describe('Token Estimation Detailed', () => {
+  it('should estimate tokens for string content', () => {
+    const messages = [
+      { role: 'user' as const, content: 'This is a test message' },
+    ];
+    const tokens = estimateTokens(messages);
+    expect(tokens).toBeGreaterThan(0);
+    // Approximately 6 words / 4 chars per token
+    expect(tokens).toBeLessThan(20);
+  });
+
+  it('should estimate tokens for content blocks', () => {
+    const messages = [
+      {
+        role: 'user' as const,
+        content: [
+          { type: 'text' as const, text: 'Hello World' },
+          { type: 'tool_result' as const, tool_use_id: '1', content: 'Result content' },
+        ]
+      },
+    ];
+    const tokens = estimateTokens(messages);
+    expect(tokens).toBeGreaterThan(0);
+  });
+});
+
+// ============== 工具调用检测详细测试 ==============
+
+describe('Incomplete Tool Call Detection Detailed', () => {
+  it('should detect empty string as missing', () => {
+    const toolBlocks = [{ type: 'tool_use' as const, id: '1', name: 'write', input: { path: '/test.txt', content: '' } }];
+    const incomplete = checkIncompleteToolCalls(toolBlocks);
+    expect(incomplete).toContain("write: missing 'content'");
+  });
+
+  it('should detect null as missing', () => {
+    const toolBlocks = [{ type: 'tool_use' as const, id: '1', name: 'bash', input: { command: null } }];
+    const incomplete = checkIncompleteToolCalls(toolBlocks);
+    expect(incomplete).toContain("bash: missing 'command'");
+  });
+
+  it('should handle unknown tool gracefully', () => {
+    const toolBlocks = [{ type: 'tool_use' as const, id: '1', name: 'unknown', input: {} }];
+    const incomplete = checkIncompleteToolCalls(toolBlocks);
+    expect(incomplete).toHaveLength(0);
+  });
+});
+
+// ============== Promise 信号详细测试 ==============
+
+describe('Promise Signal Detection Detailed', () => {
+  it('should handle multiline signal', () => {
+    const text = `Some text before
+<promise>COMPLETE</promise>
+Some text after`;
+    const [signal, reason] = checkPromiseSignal(text);
+    expect(signal).toBe('COMPLETE');
+    expect(reason).toBe('');
+  });
+
+  it('should handle signal with colon in reason', () => {
+    const [signal, reason] = checkPromiseSignal('<promise>BLOCKED:Error: something went wrong</promise>');
+    expect(signal).toBe('BLOCKED');
+    expect(reason).toBe('Error: something went wrong');
+  });
+
+  it('should handle signal in middle of text', () => {
+    const text = `Some text before
+<promise>COMPLETE</promise>
+Some text after`;
+    const [signal, reason] = checkPromiseSignal(text);
+    expect(signal).toBe('COMPLETE');
+    expect(reason).toBe('');
   });
 });

@@ -30,6 +30,84 @@ npm test
 # 预期：所有测试通过
 ```
 
+### 测试文件结构
+
+KodaX 包含 135 个自动化测试，分布在 3 个测试文件中：
+
+```
+tests/
+├── kodax_core.test.ts   # Core 模块测试 (82 tests)
+├── kodax_cli.test.ts    # CLI 层测试 (20 tests)
+└── prompts.test.ts      # 提示词内容验证测试 (33 tests)
+```
+
+### 测试覆盖范围
+
+#### Core 模块测试 (`kodax_core.test.ts`)
+
+| 测试类别 | 测试数量 | 覆盖内容 |
+|---------|---------|---------|
+| Core Module Exports | 7 | runKodaX, KodaXClient, KODAX_TOOLS 等 |
+| Promise Signal Detection | 6 | COMPLETE, BLOCKED, DECIDE 信号检测 |
+| Environment Context | 3 | 平台信息、命令提示 |
+| Token Estimation | 3 | Token 估算功能 |
+| Incomplete Tool Call Detection | 6 | 不完整工具调用检测 |
+| File Operations | 3 | 文件创建、目录操作 |
+| Spinner Animation | 6 | 等待动画功能 |
+| Tool Definitions | 2 | 工具定义验证 |
+| Provider System | 3 | Provider 工厂函数 |
+| Constants Export | 9 | 所有常量导出 |
+| Tool Execution | 13 | 工具执行功能 |
+| Tool Execution Context | 2 | 上下文配置 |
+| Session ID Generation | 2 | 会话 ID 生成 |
+| Git Root Detection | 1 | Git 根目录检测 |
+| Project Snapshot | 2 | 项目快照 |
+| Long Running Context | 1 | 长运行上下文 |
+| Feature Progress | 2 | Feature 进度 |
+| Rate Limited Call | 2 | 速率限制 |
+| Token Estimation Detailed | 2 | 详细 Token 估算 |
+| Incomplete Tool Call Detailed | 3 | 详细不完整调用检测 |
+| Promise Signal Detailed | 3 | 详细信号检测 |
+
+#### CLI 层测试 (`kodax_cli.test.ts`)
+
+| 测试类别 | 测试数量 | 覆盖内容 |
+|---------|---------|---------|
+| Commands System | 3 | Commands 加载和解析 |
+| parseCommandCall | 4 | 命令解析 |
+| processCommandCall | 3 | 命令处理 |
+| Spinner Animation | 5 | CLI 层 Spinner |
+| File Operations | 3 | 文件操作 |
+| CLI Entry Point | 2 | 入口点配置 |
+
+#### 提示词验证测试 (`prompts.test.ts`)
+
+| 测试类别 | 测试数量 | 覆盖内容 |
+|---------|---------|---------|
+| SYSTEM_PROMPT | 9 | 系统提示词完整性 |
+| LONG_RUNNING_PROMPT | 6 | 长运行模式提示词 |
+| buildInitPrompt | 6 | 初始化提示词 |
+| --append Prompt | 4 | 追加功能提示词 |
+| toolBash Timeout | 1 | 超时消息 |
+| Retry Prompts | 3 | 重试提示词 |
+| Source File Consistency | 4 | 源文件一致性 |
+
+### 运行特定测试
+
+```bash
+# 只运行 Core 测试
+npx vitest run tests/kodax_core.test.ts
+
+# 只运行 CLI 测试
+npx vitest run tests/kodax_cli.test.ts
+
+# 只运行提示词测试
+npx vitest run tests/prompts.test.ts
+
+# 运行特定测试用例
+npx vitest run -t "Promise Signal"
+```
+
 ---
 
 ## P0 功能测试

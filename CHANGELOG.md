@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `KodaXClient` class for continuous sessions
 - **Session Storage Interface**: `KodaXSessionStorage` for custom storage backends
 - **Commands System**: `/xxx` commands in CLI layer (replaces previous "Skills" naming)
+- **Comprehensive Test Suite**: 135 tests across 3 test files
+  - `kodax_core.test.ts`: Core module tests (82 tests)
+  - `kodax_cli.test.ts`: CLI layer tests (20 tests)
+  - `prompts.test.ts`: Prompt content verification tests (33 tests)
 
 ### Terminology
 - **Skills** = Model capabilities (KODAX_TOOLS: read, write, bash, etc.) - in Core

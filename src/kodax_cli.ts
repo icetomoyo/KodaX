@@ -413,10 +413,29 @@ A feature is a COMPLETE, TESTABLE functionality that can be finished in 1-2 sess
 - Time: ~10-60 minutes of actual development work
 - Testable: Has clear "done" criteria
 
-**Feature Count Guidelines:**
+**Feature Count Guidelines (use your judgment, not hard limits):**
 - **Simple task** (single file, display page, config): 1-3 features
 - **Medium task** (multi-page site, CLI tool, small API): 3-8 features
 - **Complex task** (full app with frontend + backend + database): 8-15 features
+
+**DO:**
+- Split by user-facing features (page A, page B, API group C)
+- Each feature = something a user can actually USE
+
+**DO NOT:**
+- Split by technical layers (HTML → CSS → JS → content)
+- Create features smaller than ~50 lines of code
+- Create features larger than ~300 lines of code
+
+**Examples of GOOD features:**
+- "User authentication (register, login, logout)" - complete system
+- "Todo list page with add/delete/mark-done" - complete page functionality
+- "REST API for todos (GET, POST, PUT, DELETE)" - complete API resource
+
+**Examples of BAD features:**
+- "Add HTML structure" - too small, technical layer
+- "Create the entire application" - too large
+- "Add button styling" - trivial, not a feature
 
 Format:
 {
@@ -429,7 +448,16 @@ Format:
   ]
 }
 
-2. **PROGRESS.md** - A progress log file
+2. **PROGRESS.md** - A progress log file:
+   # Progress Log
+
+   ## ${currentDate} - Project Initialization
+
+   ### Completed
+   - [x] Project initialized
+
+   ### Next Steps
+   - [ ] First feature to implement
 
 After creating files, make an initial git commit:
    git add .
@@ -606,14 +634,33 @@ async function main() {
 - Date: ${currentDate}
 - OS: ${currentOS}
 
-**Existing Features** (DO NOT modify these):
+**Existing Features** (DO NOT modify these, keep them as-is):
 ${JSON.stringify(existingFeatures, null, 2)}
 
 **Your Task**:
-1. Read the existing feature_list.json
+1. Read the existing feature_list.json to understand what's already done
 2. Create NEW features for: ${options.init}
-3. Use the EDIT tool to APPEND the new features
-4. Add a new section to PROGRESS.md
+3. Use the EDIT tool to APPEND the new features to the existing feature_list.json
+   - Do NOT delete or modify existing features
+   - Just add new features to the "features" array
+4. Add a new section to PROGRESS.md for this phase (don't overwrite)
+
+**New Feature Guidelines:**
+- Aim for 5-10 NEW features (not 40+)
+- Keep each feature SMALL (completable in 1 session)
+- Each new feature should have "passes": false
+
+After updating files, commit:
+   git add .
+   git commit -m "Add new features: ${options.init.slice(0, 50)}"
+
+**Example of appending to feature_list.json:**
+Old: {"features": [{"description": "Old feature", "passes": true}]}
+New: {"features": [
+  {"description": "Old feature", "passes": true},
+  {"description": "New feature 1", "steps": [...], "passes": false},
+  {"description": "New feature 2", "steps": [...], "passes": false}
+]}
 `;
       } else if (options.overwrite) {
         console.log(chalk.yellow(`[Warning] Overwriting existing feature_list.json (${total} features will be lost)`));

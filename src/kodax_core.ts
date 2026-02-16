@@ -721,7 +721,7 @@ async function toolBash(input: Record<string, unknown>): Promise<string> {
     const timer = setTimeout(() => {
       proc.kill();
       const partial = stdout.length ? stdout.toString('utf-8').slice(0, 2000) : '';
-      resolve(`[Timeout] Command interrupted after ${timeout}s\n\nPartial output:\n${partial}\n\n[Suggestion] The command took too long.`);
+      resolve(`[Timeout] Command interrupted after ${timeout}s\n\nPartial output:\n${partial}\n\n[Suggestion] The command took too long. Consider:\n- Is this a watch/dev server? Run in a separate terminal.\n- Can the task be broken into smaller steps?\n- Is there an error causing it to hang?`);
     }, timeout * 1000);
 
     proc.stdout?.on('data', (d: Buffer) => { stdout = Buffer.concat([stdout, d]); });
@@ -984,6 +984,12 @@ When writing files, plan ahead to avoid truncation:
 - Files over 300 lines: write skeleton first, then edit to add sections
 - This prevents response truncation and reduces retry overhead
 
+Example approach for large files:
+1. write file with basic structure/skeleton (under 300 lines)
+2. edit to add first major section
+3. edit to add second major section
+4. continue until complete
+
 ## Error Handling
 
 When a tool call returns an error:
@@ -991,6 +997,10 @@ When a tool call returns an error:
 2. DO NOT repeat the same tool call with the same parameters
 3. Identify what's wrong (missing parameter? wrong type? wrong path?)
 4. Fix the issue BEFORE making another tool call
+5. Common errors:
+   - "Missing required parameter 'X'" → Add the missing parameter to your JSON
+   - "File not found" → Check the path with read or glob first
+   - "String not found" → Read the file again to see exact content
 
 ## Editing Files
 
@@ -1011,6 +1021,10 @@ Different platforms have different commands:
 - Delete: \`del\` (Windows) vs \`rm\` (Unix/Mac)
 
 **IMPORTANT: Directories are created automatically by the \`write\` tool.**
+- NEVER use \`mkdir\` before writing files - the write tool handles directory creation
+- If you truly need an empty directory: \`mkdir dir\` (Windows) or \`mkdir -p dir\` (Unix)
+
+If you see "不是内部或外部命令" or "not recognized", the command doesn't exist on this platform. Try the equivalent command.
 
 ## Multi-step Tasks
 
@@ -1026,6 +1040,10 @@ For any non-trivial task (creating files, editing code, running complex commands
 3. Consider potential issues (edge cases, dependencies, conflicts)
 4. Then execute step by step
 
+For simple read-only tasks (reading a file, listing directory), just do it directly.
+
+Always explain what you're doing before taking action.
+
 {context}`;
 
 const LONG_RUNNING_PROMPT = `
@@ -1037,9 +1055,78 @@ You are in a long-running task mode. At the start of EACH session, follow these 
 1. Note the Working Directory from context. Use relative paths for file operations.
 2. Read git logs (\`git log --oneline -10\`) and PROGRESS.md to understand recent work
 3. Read feature_list.json and pick ONE incomplete feature (passes: false)
-4. **Write a session plan** to .kodax/session_plan.md
+4. **Write a session plan** to .kodax/session_plan.md (see Session Planning section below)
 5. Execute the plan step by step, testing as you go
 6. End session with: git commit + update PROGRESS.md with plan summary
+
+IMPORTANT Rules:
+- Only change \`passes\` field in feature_list.json. NEVER remove or modify features.
+- Leave codebase in clean state after each session (no half-implemented features).
+- Work on ONE feature at a time. Do not start new features until current one is complete.
+- Always verify features work end-to-end before marking as passing.
+
+## Session Planning (CRITICAL for Quality)
+
+Before writing ANY code in this session, you MUST create a plan file:
+
+1. **Write plan** to \`.kodax/session_plan.md\` with this structure (directory will be created automatically):
+
+\`\`\`markdown
+# Session Plan
+
+**Date**: [current date]
+**Feature**: [feature description from feature_list.json]
+
+## Understanding
+[Your understanding of what this feature does and why it's needed]
+
+## Approach
+[How you plan to implement this feature - be specific about technical choices]
+
+## Steps
+1. [First step - e.g., "Check existing code structure"]
+2. [Second step - e.g., "Create user model"]
+3. [Third step - e.g., "Add API routes"]
+...
+
+## Considerations
+- [Edge cases to handle]
+- [Dependencies to check first]
+- [Security implications]
+- [Performance considerations]
+
+## Risks
+- [What could go wrong]
+- [How to mitigate each risk]
+\`\`\`
+
+3. **Execute** the plan step by step
+4. **After execution**, update PROGRESS.md with a summary:
+
+\`\`\`markdown
+## Session N - [date]
+
+### Plan
+[Brief summary of what you planned to do]
+
+### Completed
+- [What was actually done]
+
+### Notes
+- [Key learnings]
+- [Issues encountered and how you solved them]
+\`\`\`
+
+This planning step ensures you think through the implementation before coding, leading to higher quality output.
+
+## Efficiency Rules (CRITICAL)
+
+1. Each session MUST complete at least ONE full feature (not just start it)
+2. Minimum meaningful code change per session: 50+ lines
+3. A single-page display task should be completed in ONE session
+4. Avoid re-reading the same files - remember what you've read
+5. Write code efficiently - don't over-engineer simple tasks
+6. If a feature is taking too long, it might be too large - but don't give up, complete it
 
 ## Promise Signals (Ralph-Loop Style)
 
@@ -1051,9 +1138,11 @@ When you need to communicate status to the orchestrator, use these special signa
 
 <promise>BLOCKED:reason</promise>
   - Use when you are stuck and need human intervention
+  - Example: <promise>BLOCKED:Need API key for external service</promise>
 
 <promise>DECIDE:question</promise>
   - Use when you need a decision from the user
+  - Example: <promise>DECIDE:Should I use PostgreSQL or MongoDB?</promise>
 
 Only use these signals when necessary. Normal operation does not require them.
 `;
@@ -1187,7 +1276,12 @@ export async function runKodaX(
         if (incompleteRetryCount <= KODAX_MAX_INCOMPLETE_RETRIES) {
           events.onRetry?.(`Incomplete tool calls: ${incomplete.join(', ')}`, incompleteRetryCount, KODAX_MAX_INCOMPLETE_RETRIES);
           messages.pop();
-          const retryPrompt = `Your previous response was truncated. Missing required parameters:\n${incomplete.map(i => `- ${i}`).join('\n')}\n\nPlease provide the complete tool calls.`;
+          let retryPrompt: string;
+          if (incompleteRetryCount === 1) {
+            retryPrompt = `Your previous response was truncated. Missing required parameters:\n${incomplete.map(i => `- ${i}`).join('\n')}\n\nPlease provide the complete tool calls with ALL required parameters.\nFor large content, keep it concise (under 50 lines for write operations).`;
+          } else {
+            retryPrompt = `⚠️ CRITICAL: Your response was TRUNCATED again. This is retry ${incompleteRetryCount}/${KODAX_MAX_INCOMPLETE_RETRIES}.\n\nMISSING PARAMETERS:\n${incomplete.map(i => `- ${i}`).join('\n')}\n\nYOU MUST:\n1. For 'write' tool: Keep content under 50 lines - write structure first, fill in later with 'edit'\n2. For 'edit' tool: Keep new_string under 30 lines - make smaller, focused changes\n3. Provide ALL required parameters in your tool call\n\nIf your response is truncated again, the task will FAIL.\nPROVIDE SHORT, COMPLETE PARAMETERS NOW.`;
+          }
           messages.push({ role: 'user', content: retryPrompt });
           continue;
         } else {
