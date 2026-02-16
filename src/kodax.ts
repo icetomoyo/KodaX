@@ -1142,7 +1142,7 @@ const LONG_RUNNING_PROMPT = `
 
 You are in a long-running task mode. At the start of EACH session, follow these steps:
 
-1. Run \`pwd\` to confirm your working directory
+1. Note the Working Directory from context. Use relative paths for file operations.
 2. Read git logs (\`git log --oneline -10\`) and PROGRESS.md to understand recent work
 3. Read feature_list.json and pick ONE incomplete feature (passes: false)
 4. **Write a session plan** to .kodax/session_plan.md (see Session Planning section below)
