@@ -331,7 +331,7 @@ function createCliEvents(): KodaXEvents {
         const preview = singleLine.length > 100
           ? singleLine.slice(0, 100) + '...'
           : singleLine;
-        console.log(chalk.dim(`[thinking] ${preview}`));
+        console.log(chalk.dim(`[Thinking] ${preview}`));
       }
     },
 

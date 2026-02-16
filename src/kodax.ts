@@ -477,7 +477,7 @@ abstract class AnthropicCompatProvider extends BaseProvider {
               const preview = singleLine.length > 100
                 ? singleLine.slice(0, 100) + '...'
                 : singleLine;
-              console.log(chalk.dim(`[thinking] ${preview}`));
+              console.log(chalk.dim(`[Thinking] ${preview}`));
             }
           } else if (currentBlockType === 'redacted_thinking') {
             // redacted_thinking block 处理（数据在 block 中）
