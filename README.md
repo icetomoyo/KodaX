@@ -23,6 +23,56 @@ src/
 - **kodax_core.ts**: Pure library module with no CLI dependencies
 - **kodax_cli.ts**: CLI layer with UI, commands, and user interaction
 
+### Two Usage Modes
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Mode 1: CLI Command Line                                   │
+│                                                              │
+│  kodax "your task"                                           │
+│                                                              │
+│  Entry: package.json "bin" → dist/kodax_cli.js              │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│  Mode 2: Library Import                                      │
+│                                                              │
+│  import { runKodaX } from 'kodax';                          │
+│                                                              │
+│  Entry: package.json "main" → dist/index.js                 │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### package.json Key Fields
+
+```json
+{
+  "main": "dist/index.js",           // Library entry (for import)
+  "bin": {
+    "kodax": "./dist/kodax_cli.js"   // CLI entry (for command line)
+  }
+}
+```
+
+| Field | Purpose | Trigger |
+|-------|---------|---------|
+| `"main"` | Library entry | `import from 'kodax'` |
+| `"bin"` | Command entry | `kodax "task"` or `npm link` |
+
+### Role of index.ts
+
+`index.ts` is the package "facade" that controls public API:
+
+```typescript
+// index.ts
+export * from './kodax_core.js';  // Re-exports everything from core
+```
+
+**Why index.ts?**
+- Serves as package entry, making `import from 'kodax'` work
+- Can selectively export (control which APIs are public)
+- Can combine multiple sub-modules
+
 ## Features
 
 - **Modular Architecture**: Use as CLI or as a library
@@ -89,6 +139,49 @@ kodax "Help me create a TypeScript project"
 
 # Or use node directly
 node dist/kodax_cli.js "your task"
+```
+
+### Session Mode (With Memory)
+
+```bash
+# Start a session with specific ID
+kodax --session my-project "Read package.json"
+
+# Continue same session (has context memory)
+kodax --session my-project "Summarize it"
+
+# List all sessions
+kodax --session list
+
+# Resume last session
+kodax --session resume "continue"
+```
+
+### No Memory vs With Memory
+
+```bash
+# ❌ No memory: two independent calls
+kodax "Read src/auth.ts"           # Agent reads and responds
+kodax "Summarize it"               # Agent doesn't know what to summarize
+
+# ✅ With memory: same session
+kodax --session auth-review "Read src/auth.ts"
+kodax --session auth-review "Summarize it"        # Agent knows to summarize auth.ts
+kodax --session auth-review "How to fix first issue"  # Agent has context
+```
+
+### Common Scenarios
+
+```bash
+# Code review (multi-turn conversation)
+kodax --session review "Review src/ directory"
+kodax --session review "Focus on security issues"
+kodax --session review "Give me fix suggestions"
+
+# Project development (continuous session)
+kodax --session todo-app "Create a Todo application"
+kodax --session todo-app "Add delete functionality"
+kodax --session todo-app "Write tests"
 ```
 
 ### CLI Options
@@ -177,6 +270,15 @@ await runKodaX({
   events: { ... },
 }, 'task');
 ```
+
+### Library Modes Comparison
+
+| Feature | runKodaX | KodaXClient |
+|---------|----------|-------------|
+| **Message Memory** | ❌ No | ✅ Yes |
+| **Call Style** | Function | Class instance |
+| **Context** | Independent each time | Accumulates |
+| **Use Case** | Single tasks, batch processing | Interactive dialogue, multi-step tasks |
 
 ### Providers
 
