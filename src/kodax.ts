@@ -87,6 +87,9 @@ let globalSpinner: {
   updateText: (text: string) => void;
 } | null = null;
 
+// 标志位：是否已经为 spinner 换过行（避免多次换行）
+let spinnerNewlined = false;
+
 function startWaitingDots(): { stop: () => void; updateText: (text: string) => void; isStopped: () => boolean } {
   let frame = 0;
   let colorIdx = 0;
@@ -449,8 +452,11 @@ abstract class AnthropicCompatProvider extends BaseProvider {
               globalSpinner.updateText(`Receiving ${currentToolName}...`);
             } else if (!globalSpinner) {
               // 如果 spinner 已停止（因为 thinking 结束后），先换行再创建 spinner
-              // 这样可以避免覆盖之前输出的内容
-              process.stdout.write('\n');
+              // 但只在第一次换行，避免多次换行导致显示空旷
+              if (!spinnerNewlined) {
+                process.stdout.write('\n');
+                spinnerNewlined = true;
+              }
               globalSpinner = startWaitingDots();
               globalSpinner.updateText(`Receiving ${currentToolName}...`);
             }
@@ -1364,6 +1370,7 @@ async function runAgent(options: CliOptions, userPrompt: string): Promise<[boole
         globalSpinner.stop();
       }
       globalSpinner = null;
+      spinnerNewlined = false;  // 重置换行标志，为下一轮迭代准备
 
       // 如果 spinner 在流式输出期间被停止（text_delta 处理），重启它
       if (stopDots.isStopped()) {
