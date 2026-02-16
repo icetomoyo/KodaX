@@ -80,21 +80,45 @@ async function rateLimitedCall<T>(fn: () => Promise<T>): Promise<T> {
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const SPINNER_COLORS = ['\x1b[36m', '\x1b[35m', '\x1b[34m']; // cyan, magenta, blue
 
-function startWaitingDots(): () => void {
+// 全局 spinner 控制器（供 stream 方法访问）
+let globalSpinner: {
+  stop: () => void;
+  isStopped: () => boolean;
+  updateText: (text: string) => void;
+} | null = null;
+
+function startWaitingDots(): { stop: () => void } {
   let frame = 0;
   let colorIdx = 0;
+  let stopped = false;
+  let currentText = 'Thinking...';
+
   const interval = setInterval(() => {
+    if (stopped) return;
     const color = SPINNER_COLORS[colorIdx % SPINNER_COLORS.length];
     const reset = '\x1b[0m';
     const spinner = SPINNER_FRAMES[frame % SPINNER_FRAMES.length];
-    process.stdout.write(`\r${color}${spinner}${reset} Thinking...`);
+    // 清除整行并写入新内容
+    process.stdout.write(`\r${color}${spinner}${reset} ${currentText}    `);
     frame++;
-    if (frame % 10 === 0) colorIdx++; // 每 10 帧换一个颜色
+    if (frame % 10 === 0) colorIdx++;
   }, 80);
-  return () => {
-    clearInterval(interval);
-    process.stdout.write('\r                    \r'); // 清除整行
+
+  const controller = {
+    stop: () => {
+      if (stopped) return;
+      stopped = true;
+      clearInterval(interval);
+      process.stdout.write('\r                                        \r');
+    },
+    isStopped: () => stopped,
+    updateText: (text: string) => {
+      currentText = text;
+    }
   };
+
+  globalSpinner = controller;
+  return controller;
 }
 
 // Session 计划模板
@@ -388,23 +412,32 @@ abstract class AnthropicCompatProvider extends BaseProvider {
             isInThinking = true;
             currentThinking = '';
             currentThinkingSignature = (block as any).signature ?? '';
-            // 不再打印 [thinking] 前缀，让 spinner 动画处理
+            // spinner 继续运行，由 thinking_delta 更新显示
           } else if (block.type === 'redacted_thinking') {
             // 处理 redacted_thinking block
             currentBlockType = 'redacted_thinking';
           } else if (block.type === 'text') {
             if (isInThinking) {
               isInThinking = false;
-              // thinking 结束，显示摘要
+              // thinking 结束，停止 spinner 并显示摘要
+              if (globalSpinner) {
+                globalSpinner.stop();
+                globalSpinner = null;
+              }
               if (currentThinking) {
-                const preview = currentThinking.length > 150
-                  ? currentThinking.slice(0, 150) + '...'
+                const preview = currentThinking.length > 100
+                  ? currentThinking.slice(0, 100) + '...'
                   : currentThinking;
-                console.log(chalk.dim(`\n[thinking] ${preview}\n`));
+                console.log(chalk.dim(`[thinking] ${preview}`));
               }
             }
             currentText = '';
           } else if (block.type === 'tool_use') {
+            // 停止 spinner
+            if (globalSpinner) {
+              globalSpinner.stop();
+              globalSpinner = null;
+            }
             currentToolId = block.id;
             currentToolName = block.name;
             currentToolInput = '';
@@ -413,8 +446,16 @@ abstract class AnthropicCompatProvider extends BaseProvider {
           const delta = event.delta as any;
           if (delta.type === 'thinking_delta') {
             currentThinking += delta.thinking ?? '';
-            // 不再实时打印 thinking 内容，避免与 spinner 混淆
+            // 更新 spinner 显示当前 thinking 字数
+            if (globalSpinner && !globalSpinner.isStopped()) {
+              globalSpinner.updateText(`Thinking... (${currentThinking.length} chars)`);
+            }
           } else if (delta.type === 'text_delta') {
+            // 第一次输出 text 时停止 spinner
+            if (globalSpinner) {
+              globalSpinner.stop();
+              globalSpinner = null;
+            }
             currentText += delta.text ?? '';
             process.stdout.write(delta.text ?? '');
           } else if (delta.type === 'input_json_delta') {
@@ -425,12 +466,16 @@ abstract class AnthropicCompatProvider extends BaseProvider {
             if (currentThinking) {
               thinkingBlocks.push({ type: 'thinking', thinking: currentThinking, signature: currentThinkingSignature });
             }
-            // thinking block 结束，显示摘要
+            // thinking block 结束，停止 spinner 并显示摘要
+            if (globalSpinner) {
+              globalSpinner.stop();
+              globalSpinner = null;
+            }
             if (currentThinking) {
-              const preview = currentThinking.length > 150
-                ? currentThinking.slice(0, 150) + '...'
+              const preview = currentThinking.length > 100
+                ? currentThinking.slice(0, 100) + '...'
                 : currentThinking;
-              console.log(chalk.dim(`\n[thinking] ${preview}\n`));
+              console.log(chalk.dim(`[thinking] ${preview}`));
             }
           } else if (currentBlockType === 'redacted_thinking') {
             // redacted_thinking block 处理（数据在 block 中）
@@ -1302,7 +1347,7 @@ async function runAgent(options: CliOptions, userPrompt: string): Promise<[boole
       console.log(chalk.magenta('\n[Assistant]'));
       const stopDots = startWaitingDots();
       const result = await provider.stream(compacted, TOOLS, systemPrompt, options.thinking);
-      stopDots();
+      stopDots.stop();
       console.log();
 
       lastText = result.textBlocks.map(b => b.text).join(' ');
@@ -1699,7 +1744,7 @@ New: {"features": [
           const result = await rateLimitedCall(() =>
             provider.stream(subMessages, TOOLS, systemPrompt, options.thinking)
           );
-          stopDots();
+          stopDots.stop();
           console.log();
           releaseStreamLock();
 
