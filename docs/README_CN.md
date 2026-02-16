@@ -90,6 +90,34 @@ export ZHIPU_API_KEY=your-key    # 或 KIMI_API_KEY, ANTHROPIC_API_KEY 等
 node dist/kodax.js "用 Express 创建一个 REST API"
 ```
 
+### 全局安装（推荐）
+
+安装为全局命令行工具（类似 Python 的 `uv tool install -e .`）：
+
+```bash
+# 先构建
+npm run build
+
+# 全局链接（可编辑模式 - 代码修改后重新 build 即可生效）
+npm link
+
+# 现在可以在任何目录使用 'kodax' 命令
+kodax "你的任务"
+kodax --provider kimi-code "帮我写代码"
+
+# 卸载
+npm unlink -g kodax
+```
+
+**与 Python 版本的对应关系：**
+
+| Python (KodaXP) | TypeScript (KodaX) | 说明 |
+|-----------------|-------------------|------|
+| `uv tool install -e .` | `npm link` | 本地开发安装，代码修改生效 |
+| `uv tool install .` | `npm install -g .` | 全局安装 |
+| `uv tool uninstall kodaxp` | `npm unlink -g kodax` | 卸载 |
+| `kodaxp "任务"` | `kodax "任务"` | 运行命令 |
+
 ## 使用
 
 ```bash

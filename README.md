@@ -35,6 +35,34 @@ npm run build
 node dist/kodax.js "your task"
 ```
 
+### Global Installation (Recommended)
+
+Install as a global command-line tool (similar to `uv tool install -e .` in Python):
+
+```bash
+# Build first
+npm run build
+
+# Link globally (editable mode - code changes take effect after rebuild)
+npm link
+
+# Now you can use 'kodax' anywhere
+kodax "your task"
+kodax --provider kimi-code "help me write code"
+
+# Uninstall
+npm unlink -g kodax
+```
+
+**Comparison with Python version:**
+
+| Python (KodaXP) | TypeScript (KodaX) | Description |
+|-----------------|-------------------|-------------|
+| `uv tool install -e .` | `npm link` | Local dev install, code changes work |
+| `uv tool install .` | `npm install -g .` | Global install |
+| `uv tool uninstall kodaxp` | `npm unlink -g kodax` | Uninstall |
+| `kodaxp "task"` | `kodax "task"` | Run command |
+
 ## Usage
 
 ### Basic Usage
