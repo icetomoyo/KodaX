@@ -448,7 +448,9 @@ abstract class AnthropicCompatProvider extends BaseProvider {
             if (globalSpinner && !globalSpinner.isStopped()) {
               globalSpinner.updateText(`Receiving ${currentToolName}...`);
             } else if (!globalSpinner) {
-              // 如果 spinner 已停止（因为 thinking 结束后），重启它
+              // 如果 spinner 已停止（因为 thinking 结束后），先换行再创建 spinner
+              // 这样可以避免覆盖之前输出的内容
+              process.stdout.write('\n');
               globalSpinner = startWaitingDots();
               globalSpinner.updateText(`Receiving ${currentToolName}...`);
             }
