@@ -1,70 +1,75 @@
 # KodaX
 
-极致轻量化 Coding Agent - TypeScript 单文件实现
+Extreme Lightweight Coding Agent - TypeScript Single-File Implementation
 
-## 概述
+## Overview
 
-KodaX 是 KodaXP 的 TypeScript + Node.js 版本，采用单文件实现（约 1800 LOC），支持 7 种 LLM 提供商。
+KodaX is the TypeScript + Node.js version of KodaXP, implemented in a single file (~1800 LOC), supporting 7 LLM providers.
 
-**核心理念**: 透明、灵活、极简
+**Core Philosophy**: Transparent, Flexible, Minimalist
 
-## 特性
+## Features
 
-- **单文件实现**: 所有代码在 `src/kodax.ts` 中，易于阅读和定制
-- **7 种 LLM 提供商**: Anthropic, OpenAI, Kimi, Kimi Code, Qwen, Zhipu, Zhipu Coding
-- **Thinking 模式**: 支持深度推理
-- **流式输出**: 实时显示响应
-- **7 个工具**: read, write, edit, bash, glob, grep, undo
-- **会话管理**: JSONL 格式持久化存储
-- **跨平台**: Windows/macOS/Linux
+- **Single-File Implementation**: All code in `src/kodax.ts`, easy to read and customize
+- **7 LLM Providers**: Anthropic, OpenAI, Kimi, Kimi Code, Qwen, Zhipu, Zhipu Coding
+- **Thinking Mode**: Deep reasoning support
+- **Streaming Output**: Real-time response display
+- **7 Tools**: read, write, edit, bash, glob, grep, undo
+- **Session Management**: JSONL format persistent storage
+- **Cross-Platform**: Windows/macOS/Linux
 
-## 安装
+## Installation
 
 ```bash
-# 克隆仓库
+# Clone repository
 git clone https://github.com/icetomoyo/KodaX.git
 cd KodaX
 
-# 安装依赖
+# Install dependencies
 npm install
 
-# 构建
+# Build
 npm run build
 
-# 运行
-node dist/kodax.js "你的任务"
+# Run
+node dist/kodax.js "your task"
 ```
 
-## 使用
+## Usage
 
-### 基本使用
+### Basic Usage
 
 ```bash
-# 设置 API Key
+# Set API Key
 export ZHIPU_API_KEY=your_api_key
 
-# 运行
-node dist/kodax.js "帮我创建一个 TypeScript 项目"
+# Run
+node dist/kodax.js "Help me create a TypeScript project"
 
-# 或使用 npm
-npm start "帮我创建一个 TypeScript 项目"
+# Or use npm
+npm start "Help me create a TypeScript project"
 ```
 
-### CLI 选项
+### CLI Options
 
 ```
---provider <name>   LLM 提供商 (default: zhipu-coding)
---thinking          启用思考模式
---no-confirm        禁用所有确认
---session <id>      会话: resume, list, 或指定 ID
---parallel          并行工具执行
---max-iter <n>      最大迭代次数 (default: 50)
+--provider <name>   LLM provider (default: zhipu-coding)
+--thinking          Enable thinking mode
+--no-confirm        Disable all confirmations
+--session <id>      Session: resume, list, or specific ID
+--parallel          Parallel tool execution
+--team <tasks>      Run multiple agents in parallel
+--init <task>       Initialize long-running project
+--auto-continue     Auto-continue until complete
+--max-iter <n>      Maximum iterations (default: 50)
+--max-sessions <n>  Maximum sessions for --auto-continue (default: 50)
+--max-hours <h>     Maximum hours for --auto-continue (default: 2.0)
 ```
 
-### 提供商
+### Providers
 
-| Provider | 环境变量 | Thinking | 默认模型 |
-|----------|----------|----------|----------|
+| Provider | Environment Variable | Thinking | Default Model |
+|----------|---------------------|----------|---------------|
 | anthropic | `ANTHROPIC_API_KEY` | Yes | claude-sonnet-4-20250514 |
 | openai | `OPENAI_API_KEY` | No | gpt-4o |
 | kimi | `KIMI_API_KEY` | No | moonshot-v1-128k |
@@ -73,56 +78,88 @@ npm start "帮我创建一个 TypeScript 项目"
 | zhipu | `ZHIPU_API_KEY` | No | glm-4-plus |
 | zhipu-coding | `ZHIPU_API_KEY` | Yes | glm-5 |
 
-### 示例
+### Examples
 
 ```bash
-# 使用智谱 Coding
-node dist/kodax.js --provider zhipu-coding --thinking "帮我优化这段代码"
+# Use Zhipu Coding
+node dist/kodax.js --provider zhipu-coding --thinking "Help me optimize this code"
 
-# 使用 OpenAI
+# Use OpenAI
 export OPENAI_API_KEY=your_key
-node dist/kodax.js --provider openai "创建一个 REST API"
+node dist/kodax.js --provider openai "Create a REST API"
 
-# 恢复上次会话
+# Resume last session
 node dist/kodax.js --session resume
 
-# 列出所有会话
+# List all sessions
 node dist/kodax.js --session list
+
+# Parallel tool execution
+node dist/kodax.js --parallel "Read package.json and tsconfig.json"
+
+# Agent Team
+node dist/kodax.js --team "Analyze code structure,Check test coverage,Find bugs"
+
+# Long-running project
+node dist/kodax.js --init "Build a Todo application"
+node dist/kodax.js --auto-continue
 ```
 
-## 工具
+## Tools
 
-| 工具 | 描述 |
-|------|------|
-| read | 读取文件内容 |
-| write | 写入文件 |
-| edit | 精确字符串替换 |
-| bash | 执行 Shell 命令 |
-| glob | 文件模式匹配 |
-| grep | 内容搜索 |
-| undo | 撤销最近修改 |
+| Tool | Description |
+|------|-------------|
+| read | Read file contents (supports offset/limit) |
+| write | Write to file |
+| edit | Exact string replacement (supports replace_all) |
+| bash | Execute shell commands |
+| glob | File pattern matching |
+| grep | Content search (supports output_mode) |
+| undo | Revert last modification |
 
-## 开发
+## TypeScript Improvements over Python Version
+
+| Feature | Python (KodaXP) | TypeScript (KodaX) |
+|---------|-----------------|-------------------|
+| **Waiting Animation** | Leaves dots in terminal | Clears with `\r`, cleaner |
+| **Environment Context** | Platform only | Includes Node version |
+| **read Tool** | Basic | offset/limit parameters |
+| **grep Tool** | Basic | output_mode parameter |
+| **edit Tool** | Single replacement | replace_all parameter |
+| **Type Safety** | Runtime | Compile-time |
+| **Async** | asyncio + threading | async/await |
+
+## Development
 
 ```bash
-# 开发模式 (使用 tsx)
-npm run dev "你的任务"
+# Development mode (using tsx)
+npm run dev "your task"
 
-# 构建
+# Build
 npm run build
 
-# 清理
+# Run tests
+npm test
+
+# Clean
 npm run clean
 ```
 
-## 与 KodaXP 的对应
+## Documentation
 
-KodaX 是 KodaXP 的 TypeScript 移植版本，功能完全对应：
+- [README_CN.md](docs/README_CN.md) - Chinese Documentation
+- [DESIGN.md](docs/DESIGN.md) - Architecture and Implementation Details
+- [TESTING.md](docs/TESTING.md) - Testing Guide
+- [LONG_RUNNING_GUIDE.md](docs/LONG_RUNNING_GUIDE.md) - Long-Running Mode Guide
+
+## Correspondence with KodaXP
+
+KodaX is the TypeScript port of KodaXP with full feature parity:
 
 - `kodaxp.py` (Python) → `src/kodax.ts` (TypeScript)
-- 约 2000 LOC Python → 约 1800 LOC TypeScript
+- ~2000 LOC Python → ~1800 LOC TypeScript
 - `uv run kodaxp.py` → `node dist/kodax.js`
 
-## 许可证
+## License
 
 MIT
