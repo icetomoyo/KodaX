@@ -34,6 +34,8 @@ import {
   KODAX_TOOLS,
 } from './kodax_core.js';
 
+import { runInteractiveMode } from './interactive/index.js';
+
 import os from 'os';
 
 // ============== Commands 系统 (CLI 层) ==============
@@ -166,6 +168,7 @@ interface CliOptions {
   maxSessions: number;
   maxHours: number;
   prompt: string[];
+  noInteractive: boolean;
 }
 
 // ============== Spinner 动画 ==============
@@ -527,13 +530,16 @@ async function main() {
     .name('kodax')
     .description('KodaX - 极致轻量化 Coding Agent')
     .version('1.0.0')
-    .argument('[prompt...]', 'Your task')
-    .option('--provider <name>', 'LLM provider', KODAX_DEFAULT_PROVIDER)
-    .option('--thinking', 'Enable thinking mode')
-    .option('--confirm <tools>', 'Tools requiring confirmation')
-    .option('--no-confirm', 'Disable confirmations')
-    .option('--session <id>', 'Session: resume, list, or ID')
-    .option('--parallel', 'Parallel tool execution')
+    .argument('[prompt...]', 'Your task (optional, enters interactive mode if not provided)')
+    // 短参数支持
+    .option('-p, --prompt <text>', 'Task prompt (alternative to positional argument)')
+    .option('-P, --provider <name>', 'LLM provider', KODAX_DEFAULT_PROVIDER)
+    .option('-t, --thinking', 'Enable thinking mode')
+    .option('-c, --confirm <tools>', 'Tools requiring confirmation')
+    .option('-y, --no-confirm', 'Disable confirmations (YOLO mode)')
+    .option('-s, --session <id>', 'Session: resume, list, or ID')
+    .option('-j, --parallel', 'Parallel tool execution')
+    // 长参数
     .option('--team <tasks>', 'Run multiple sub-agents in parallel (comma-separated)')
     .option('--init <task>', 'Initialize a long-running task')
     .option('--append', 'With --init: append to existing feature_list.json')
@@ -542,6 +548,8 @@ async function main() {
     .option('--auto-continue', 'Auto-continue long-running task until all features pass')
     .option('--max-sessions <n>', 'Max sessions for --auto-continue', '50')
     .option('--max-hours <n>', 'Max hours for --auto-continue', '2')
+    .option('--single-shot', 'Single-shot mode (no interactive, show help if no task)')
+    .allowUnknownOption(false)
     .parse();
 
   const opts = program.opts();
@@ -560,7 +568,8 @@ async function main() {
     autoContinue: opts.autoContinue ?? false,
     maxSessions: parseInt(opts.maxSessions ?? '50', 10),
     maxHours: parseFloat(opts.maxHours ?? '2'),
-    prompt: program.args,
+    prompt: opts.prompt ? [opts.prompt] : program.args,
+    noInteractive: opts.singleShot ?? false,
   };
 
   // 会话列表
@@ -832,33 +841,48 @@ New: {"features": [
     }
   }
 
-  // 无 prompt 显示帮助
-  if (!userPrompt && !options.init) {
+  // 无 prompt 且未禁用交互式模式 → 进入交互式
+  if (!userPrompt && !options.init && !options.noInteractive) {
+    const kodaXOptions = createKodaXOptions(options);
+    await runInteractiveMode(kodaXOptions);
+    return;
+  }
+
+  // 显示帮助（仅在 --no-interactive 且无任务时）
+  if (!userPrompt && !options.init && options.noInteractive) {
     console.log('KodaX - 极致轻量化 Coding Agent\n');
-    console.log('Usage: kodax "your task"');
+    console.log('Usage: kodax [options] [prompt]');
+    console.log('       kodax -p "your task"');
     console.log('       kodax /command_name\n');
     console.log('Options:');
-    console.log('  --provider NAME    LLM provider (anthropic, kimi, kimi-code, qwen, zhipu, openai, zhipu-coding)');
-    console.log('  --thinking         Enable thinking mode');
-    console.log('  --confirm TOOLS    Tools requiring confirmation');
-    console.log('  --no-confirm       Disable all confirmations');
-    console.log('  --session ID       Session management (resume, list, or ID)');
-    console.log('  --parallel         Enable parallel tool execution');
-    console.log('  --team TASKS       Run multiple sub-agents in parallel');
-    console.log('  --init TASK        Initialize a long-running task');
-    console.log('  --append           With --init: append to existing feature_list.json');
-    console.log('  --overwrite        With --init: overwrite existing feature_list.json');
-    console.log('  --max-iter N       Max iterations per session (default: 50)');
-    console.log('  --auto-continue    Auto-continue long-running task until all features pass');
-    console.log('  --max-sessions N   Max sessions for --auto-continue (default: 50)');
-    console.log('  --max-hours H      Max hours for --auto-continue (default: 2.0)\n');
-    console.log('Commands:');
-    const commands = await loadCommands();
-    if (commands.size > 0) {
-      for (const [name, info] of commands) console.log(`  /${name.padEnd(15)} ${info.description}`);
-    } else {
-      console.log(`  (no commands installed in ${KODAX_COMMANDS_DIR})`);
-    }
+    console.log('  -p, --prompt TEXT      Task prompt');
+    console.log('  -P, --provider NAME    LLM provider (anthropic, kimi, kimi-code, qwen, zhipu, openai, zhipu-coding)');
+    console.log('  -t, --thinking         Enable thinking mode');
+    console.log('  -c, --confirm TOOLS    Tools requiring confirmation');
+    console.log('  -y, --no-confirm       Disable all confirmations (YOLO mode)');
+    console.log('  -s, --session ID       Session management (resume, list, or ID)');
+    console.log('  -j, --parallel         Parallel tool execution');
+    console.log('  --team TASKS           Run multiple sub-agents in parallel');
+    console.log('  --init TASK            Initialize a long-running task');
+    console.log('  --append               With --init: append to existing feature_list.json');
+    console.log('  --overwrite            With --init: overwrite existing feature_list.json');
+    console.log('  --max-iter N           Max iterations per session (default: 50)');
+    console.log('  --auto-continue        Auto-continue long-running task until all features pass');
+    console.log('  --max-sessions N       Max sessions for --auto-continue (default: 50)');
+    console.log('  --max-hours H          Max hours for --auto-continue (default: 2.0)');
+    console.log('  --single-shot          Single-shot mode (show help if no task)\n');
+    console.log('Interactive Commands (in REPL mode):');
+    console.log('  /help, /h              Show all commands');
+    console.log('  /exit, /quit           Exit interactive mode');
+    console.log('  /clear                 Clear conversation history');
+    console.log('  /status                Show session status');
+    console.log('  /mode [code|ask]       Switch mode');
+    console.log('  /sessions              List saved sessions\n');
+    console.log('Examples:');
+    console.log('  kodax                           # Enter interactive mode (default)');
+    console.log('  kodax "create a component"       # Run single task');
+    console.log('  kodax -p "quick fix" -t         # Quick task with thinking');
+    console.log('  kodax -P kimi-code -t "task"    # Use Kimi Code with thinking\n');
     return;
   }
 
