@@ -150,6 +150,7 @@ node dist/kodax.js --auto-continue
 | Feature | Python (KodaXP) | TypeScript (KodaX) |
 |---------|-----------------|-------------------|
 | **Waiting Animation** | Leaves dots in terminal | Clears with `\r`, cleaner |
+| **Spinner Instant Render** | Waits 80ms for first frame | Renders immediately, no visual gap |
 | **Environment Context** | Platform only | Includes Node version + platform-specific command hints |
 | **Cross-Platform Commands** | Static `pwd` and `mkdir -p` | Dynamic hints for Windows/Unix |
 | **Working Directory** | Project name only | Full path injected |

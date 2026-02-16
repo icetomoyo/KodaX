@@ -87,22 +87,28 @@ let globalSpinner: {
   updateText: (text: string) => void;
 } | null = null;
 
-function startWaitingDots(): { stop: () => void; updateText: (text: string) => void } {
+function startWaitingDots(): { stop: () => void; updateText: (text: string) => void; isStopped: () => boolean } {
   let frame = 0;
   let colorIdx = 0;
   let stopped = false;
   let currentText = 'Thinking...';
 
-  const interval = setInterval(() => {
+  const renderFrame = () => {
     if (stopped) return;
     const color = SPINNER_COLORS[colorIdx % SPINNER_COLORS.length];
     const reset = '\x1b[0m';
     const spinner = SPINNER_FRAMES[frame % SPINNER_FRAMES.length];
-    // 清除整行并写入新内容
     process.stdout.write(`\r${color}${spinner}${reset} ${currentText}    `);
+  };
+
+  const interval = setInterval(() => {
     frame++;
     if (frame % 10 === 0) colorIdx++;
+    renderFrame();
   }, 80);
+
+  // 立即渲染第一帧（不等待 80ms）
+  renderFrame();
 
   const controller = {
     stop: () => {
@@ -444,11 +450,7 @@ abstract class AnthropicCompatProvider extends BaseProvider {
             if (currentThinking) {
               thinkingBlocks.push({ type: 'thinking', thinking: currentThinking, signature: currentThinkingSignature });
             }
-            // thinking block 结束，停止 spinner 并显示摘要
-            if (globalSpinner) {
-              globalSpinner.stop();
-              globalSpinner = null;
-            }
+            // thinking block 结束，显示摘要（不停止 spinner，由主循环管理）
             if (currentThinking) {
               const preview = currentThinking.length > 100
                 ? currentThinking.slice(0, 100) + '...'
@@ -942,8 +944,8 @@ function getEnvContext(): string {
   const p = process.platform;
   const isWin = p === 'win32';
   const cmdHint = isWin
-    ? 'Use: dir, move, copy, del, mkdir (no -p needed)'
-    : 'Use: ls, mv, cp, rm, mkdir -p';
+    ? 'Use: dir, move, copy, del'
+    : 'Use: ls, mv, cp, rm';
   return `Platform: ${isWin ? 'Windows' : p === 'darwin' ? 'macOS' : 'Linux'}\n${cmdHint}\nNode: ${process.version}`;
 }
 
@@ -1116,6 +1118,10 @@ Different platforms have different commands:
 - Move: \`move\` (Windows) vs \`mv\` (Unix/Mac)
 - List: \`dir\` (Windows) vs \`ls\` (Unix/Mac)
 - Delete: \`del\` (Windows) vs \`rm\` (Unix/Mac)
+
+**IMPORTANT: Directories are created automatically by the \`write\` tool.**
+- NEVER use \`mkdir\` before writing files - the write tool handles directory creation
+- If you truly need an empty directory: \`mkdir dir\` (Windows) or \`mkdir -p dir\` (Unix)
 
 If you see "不是内部或外部命令" or "not recognized", the command doesn't exist on this platform. Try the equivalent command.
 
@@ -1328,10 +1334,15 @@ async function runAgent(options: CliOptions, userPrompt: string): Promise<[boole
       const compacted = compactMessages(messages);
 
       console.log(chalk.magenta('\n[Assistant]'));
-      const stopDots = startWaitingDots();
+      let stopDots = startWaitingDots();
       const result = await provider.stream(compacted, TOOLS, systemPrompt, options.thinking);
-      stopDots.stop();
       console.log();
+
+      // 如果 spinner 在流式输出期间被停止（text_delta 处理），重启它
+      if (stopDots.isStopped()) {
+        stopDots = startWaitingDots();
+        stopDots.updateText('Processing...');
+      }
 
       lastText = result.textBlocks.map(b => b.text).join(' ');
 
@@ -1345,11 +1356,16 @@ async function runAgent(options: CliOptions, userPrompt: string): Promise<[boole
       const assistantContent: ContentBlock[] = [...result.thinkingBlocks, ...result.textBlocks, ...result.toolBlocks];
       messages.push({ role: 'assistant', content: assistantContent });
 
-      if (result.toolBlocks.length === 0) { console.log(chalk.green('\n[KodaX] Done!')); break; }
+      if (result.toolBlocks.length === 0) {
+        stopDots.stop();
+        console.log(chalk.green('\n[KodaX] Done!'));
+        break;
+      }
 
       // ============ 检测截断 + 自动重试 ============
       const incomplete = checkIncompleteToolCalls(result.toolBlocks);
       if (incomplete.length > 0) {
+        stopDots.stop();  // 停止主 spinner
         incompleteRetryCount++;
         if (incompleteRetryCount <= MAX_INCOMPLETE_RETRIES) {
           console.log(chalk.yellow(`\n[KodaX] Detected incomplete tool call(s): ${incomplete.join(', ')}`));
@@ -1380,6 +1396,7 @@ async function runAgent(options: CliOptions, userPrompt: string): Promise<[boole
       }
 
       // 执行工具
+      stopDots.stop();  // 停止主 spinner
       const toolResults: ToolResultBlock[] = [];
 
       if (options.parallel && result.toolBlocks.length > 1) {
@@ -1731,7 +1748,7 @@ New: {"features": [
           const taskPreview = task.slice(0, 50) + (task.length > 50 ? '...' : '');
           console.log(chalk.cyan(`\n[Agent ${taskIndex + 1}] ${chalk.dim(taskPreview)}`));
 
-          const stopDots = startWaitingDots();
+          let stopDots = startWaitingDots();
           const result = await rateLimitedCall(() =>
             provider.stream(subMessages, TOOLS, systemPrompt, options.thinking)
           );

@@ -64,11 +64,12 @@ KodaX 是 KodaXP 的 TypeScript 版本，专为想要**理解**、**定制**和*
 | 改进 | 说明 |
 |------|------|
 | **等待动画** | 使用 `\r` 清除，不在终端留下痕迹 |
+| **Spinner 立即渲染** | 启动时立即渲染第一帧，不等待 80ms，消除视觉卡顿 |
 | **环境上下文** | 包含 Node 版本 + 跨平台命令提示（mkdir、dir 等） |
 | **跨平台命令** | 动态提示：Windows 用 `mkdir`，Unix 用 `mkdir -p` |
 | **工作目录** | 注入完整路径，避免 LLM 猜测错误路径 |
 | **read 工具增强** | 支持行号、offset、limit 参数 |
-| **grep output_mode** | 支持 `content | files_with_matches | count` |
+| **grep output_mode** | 支持 `content \| files_with_matches \| count` |
 | **edit replace_all** | 支持批量替换所有匹配项 |
 | **类型安全** | 编译时捕获错误 |
 | **async/await** | 更清晰的异步代码结构 |

@@ -52,9 +52,39 @@ node dist/kodax.js --provider zhipu-coding "列出当前目录下的文件"
 node dist/kodax.js --provider zhipu-coding "读取 README.md"
 
 # 预期：
-# 1. 等待时显示 3 个点
-# 2. 点会被 \r 清除，不在终端留下痕迹
+# 1. 等待时显示旋转动画 (⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏)
+# 2. 动画会被 \r 清除，不在终端留下痕迹
 # 3. 比 Python 版本更整洁
+```
+
+### 1.2 Spinner 立即渲染测试
+
+验证 spinner 在启动时立即渲染第一帧，消除视觉卡顿：
+
+```bash
+# 测试 spinner 立即渲染
+node dist/kodax.js --provider zhipu-coding --no-confirm "
+创建一个简单的 test_spinner.txt 文件
+"
+
+# 预期：
+# 1. LLM 输出结束后，立即看到 "Processing..." spinner（不等待 80ms）
+# 2. 从 LLM 输出到工具执行之间没有明显的"卡顿"感
+# 3. 任务完成时 spinner 正确停止
+```
+
+### 1.3 任务完成时 Spinner 停止测试
+
+验证任务完成时 spinner 正确停止：
+
+```bash
+# 测试任务完成时的 spinner 行为
+node dist/kodax.js --provider zhipu-coding "你好"
+
+# 预期：
+# 1. 显示 "[KodaX] Done!"
+# 2. spinner 正确停止，不再继续旋转
+# 3. 程序正常退出
 ```
 
 ### 2. 确认机制
