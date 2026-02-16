@@ -1355,6 +1355,9 @@ async function runAgent(options: CliOptions, userPrompt: string): Promise<[boole
           console.log(chalk.yellow(`\n[KodaX] Detected incomplete tool call(s): ${incomplete.join(', ')}`));
           console.log(chalk.yellow(`[KodaX] Requesting completion (retry ${incompleteRetryCount}/${MAX_INCOMPLETE_RETRIES})...`));
 
+          const retrySpinner = startWaitingDots();
+          retrySpinner.updateText('Retrying...');
+
           // 移除刚才添加的 assistant message
           messages.pop();
 
@@ -1365,6 +1368,8 @@ async function runAgent(options: CliOptions, userPrompt: string): Promise<[boole
             retryPrompt = `⚠️ CRITICAL: Your response was TRUNCATED again. This is retry ${incompleteRetryCount}/${MAX_INCOMPLETE_RETRIES}.\n\nMISSING PARAMETERS:\n${incomplete.map(i => `- ${i}`).join('\n')}\n\nYOU MUST:\n1. For 'write' tool: Keep content under 50 lines - write structure first, fill in later with 'edit'\n2. For 'edit' tool: Keep new_string under 30 lines - make smaller, focused changes\n3. Provide ALL required parameters in your tool call\n\nIf your response is truncated again, the task will FAIL.\nPROVIDE SHORT, COMPLETE PARAMETERS NOW.`;
           }
           messages.push({ role: 'user', content: retryPrompt });
+
+          retrySpinner.stop();
           continue;
         } else {
           console.log(chalk.red(`\n[KodaX] Max retries reached for incomplete tool calls. Proceeding with error messages.`));
