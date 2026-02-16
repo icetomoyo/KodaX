@@ -14,13 +14,13 @@ import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
 import os from 'os';
-import { spawn } from 'child_process';
+import { spawn, exec } from 'child_process';
 import { glob as globAsync } from 'glob';
 import iconv from 'iconv-lite';
 import { promisify } from 'util';
 import readline from 'readline';
 
-const execAsync = promisify(require('child_process').exec);
+const execAsync = promisify(exec);
 
 // ============== 配置常量 ==============
 
