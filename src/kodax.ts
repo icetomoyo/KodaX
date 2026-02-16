@@ -129,13 +129,14 @@ function checkPromiseSignal(text: string): [string, string] {
 interface TextBlock { type: 'text'; text: string; }
 interface ToolUseBlock { type: 'tool_use'; id: string; name: string; input: Record<string, unknown>; }
 interface ToolResultBlock { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean; }
-interface ThinkingBlock { type: 'thinking'; thinking: string; }
-type ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock | ThinkingBlock;
+interface ThinkingBlock { type: 'thinking'; thinking: string; signature?: string; }
+interface RedactedThinkingBlock { type: 'redacted_thinking'; data: string; }
+type ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock | ThinkingBlock | RedactedThinkingBlock;
 
 interface StreamResult {
   textBlocks: TextBlock[];
   toolBlocks: ToolUseBlock[];
-  thinkingBlocks: ThinkingBlock[];
+  thinkingBlocks: (ThinkingBlock | RedactedThinkingBlock)[];
 }
 
 interface Message {
@@ -354,7 +355,7 @@ abstract class AnthropicCompatProvider extends BaseProvider {
 
       const textBlocks: TextBlock[] = [];
       const toolBlocks: ToolUseBlock[] = [];
-      const thinkingBlocks: ThinkingBlock[] = [];
+      const thinkingBlocks: (ThinkingBlock | RedactedThinkingBlock)[] = [];
 
       // 手工处理流事件（细粒度控制）
       let currentBlockType: string | null = null;
@@ -376,6 +377,9 @@ abstract class AnthropicCompatProvider extends BaseProvider {
             isInThinking = true;
             currentThinking = '';
             process.stdout.write(chalk.gray('[thinking] '));
+          } else if (block.type === 'redacted_thinking') {
+            // 处理 redacted_thinking block
+            currentBlockType = 'redacted_thinking';
           } else if (block.type === 'text') {
             if (isInThinking) {
               isInThinking = false;
@@ -406,6 +410,12 @@ abstract class AnthropicCompatProvider extends BaseProvider {
               thinkingBlocks.push({ type: 'thinking', thinking: currentThinking });
             }
             process.stdout.write('\n');
+          } else if (currentBlockType === 'redacted_thinking') {
+            // redacted_thinking block 处理（数据在 block 中）
+            const block = (event as any).content_block;
+            if (block?.data) {
+              thinkingBlocks.push({ type: 'redacted_thinking', data: block.data });
+            }
           } else if (currentBlockType === 'text') {
             if (currentText) textBlocks.push({ type: 'text', text: currentText });
           } else if (currentBlockType === 'tool_use') {
@@ -627,7 +637,7 @@ async function executeTool(name: string, input: Record<string, unknown>, ctx: To
 
 async function toolRead(input: Record<string, unknown>): Promise<string> {
   const filePath = path.resolve(input.path as string);
-  if (!fsSync.existsSync(filePath)) return `[Error] File not found: ${filePath}`;
+  if (!fsSync.existsSync(filePath)) return `[Tool Error] File not found: ${filePath}`;
   const content = await fs.readFile(filePath, 'utf-8');
   const lines = content.split('\n');
   const offset = (input.offset as number) ?? 0;
@@ -648,24 +658,24 @@ async function toolWrite(input: Record<string, unknown>, ctx: ToolExecutionConte
   }
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   await fs.writeFile(filePath, content, 'utf-8');
-  return `Wrote ${content.length} chars to ${filePath}`;
+  return `File written: ${filePath}`;
 }
 
 async function toolEdit(input: Record<string, unknown>, ctx: ToolExecutionContext): Promise<string> {
   const filePath = path.resolve(input.path as string);
-  if (!fsSync.existsSync(filePath)) return `[Error] File not found: ${filePath}`;
+  if (!fsSync.existsSync(filePath)) return `[Tool Error] File not found: ${filePath}`;
   const oldStr = input.old_string as string;
   const newStr = input.new_string as string;
   const replaceAll = input.replace_all as boolean;
   const content = await fs.readFile(filePath, 'utf-8');
   ctx.backups.set(filePath, content);
   FILE_BACKUPS.set(filePath, content);
-  if (!content.includes(oldStr)) return `[Error] old_string not found`;
+  if (!content.includes(oldStr)) return `[Tool Error] old_string not found`;
   const count = content.split(oldStr).length - 1;
-  if (count > 1 && !replaceAll) return `[Error] old_string appears ${count} times. Use replace_all=true`;
+  if (count > 1 && !replaceAll) return `[Tool Error] old_string appears ${count} times. Use replace_all=true`;
   const newContent = replaceAll ? content.split(oldStr).join(newStr) : content.replace(oldStr, newStr);
   await fs.writeFile(filePath, newContent, 'utf-8');
-  return `Replaced ${replaceAll ? count : 1} occurrence(s) in ${filePath}`;
+  return `File edited: ${filePath}`;
 }
 
 async function toolBash(input: Record<string, unknown>): Promise<string> {
@@ -708,8 +718,8 @@ async function toolGlob(input: Record<string, unknown>): Promise<string> {
   const pattern = input.pattern as string;
   const cwd = (input.path as string) ?? process.cwd();
   const files = await globAsync(pattern, { cwd: path.resolve(cwd), nodir: true, absolute: true, ignore: ['**/node_modules/**', '**/dist/**', '**/.*/**'] });
-  if (files.length === 0) return `No files matching "${pattern}"`;
-  return `Found ${files.length} files:\n${files.slice(0, 100).join('\n')}${files.length > 100 ? `\n[Truncated]` : ''}`;
+  if (files.length === 0) return 'No files found';
+  return files.slice(0, 100).join('\n') + (files.length > 100 ? '\n... (more files)' : '');
 }
 
 async function toolGrep(input: Record<string, unknown>): Promise<string> {
@@ -732,7 +742,7 @@ async function toolGrep(input: Record<string, unknown>): Promise<string> {
       for (let i = 0; i < lines.length && results.length < 200; i++) {
         if (regex.test(lines[i]!)) {
           if (outputMode === 'files_with_matches') { results.push(resolvedPath); break; }
-          else results.push(`${resolvedPath}:${i + 1}:${lines[i]}`);
+          else results.push(`${resolvedPath}:${i + 1}: ${lines[i]!.trim()}`);
         }
         regex.lastIndex = 0;
       }
@@ -747,7 +757,7 @@ async function toolGrep(input: Record<string, unknown>): Promise<string> {
         for (let i = 0; i < lines.length && results.length < 200; i++) {
           if (regex.test(lines[i]!)) {
             if (outputMode === 'files_with_matches') { results.push(file); break; }
-            else results.push(`${file}:${i + 1}:${lines[i]}`);
+            else results.push(`${file}:${i + 1}: ${lines[i]!.trim()}`);
           }
           regex.lastIndex = 0;
         }
@@ -900,7 +910,7 @@ function compactMessages(messages: Message[]): Message[] {
     const content = typeof m.content === 'string' ? m.content : (m.content as ContentBlock[]).filter((b): b is TextBlock => b.type === 'text').map(b => b.text).join(' ');
     return `- ${m.role}: ${content.slice(0, 100)}...`;
   }).join('\n');
-  return [{ role: 'user', content: `[Previous context]\n${summary}` }, ...recent];
+  return [{ role: 'user', content: `[对话历史摘要]\n${summary}` }, ...recent];
 }
 
 // ============== 上下文增强 ==============
@@ -1641,13 +1651,15 @@ New: {"features": [
         noConfirm: true,
       };
       const subMessages: Message[] = [{ role: 'user', content: task }];
-      const systemPrompt = await buildSystemPrompt(options, true);
+      const basePrompt = await buildSystemPrompt(options, true);
+      const systemPrompt = basePrompt + "\n\nYou are a sub-agent working on a specific task. Focus only on your assigned task and provide a concise summary when done.";
       let lastText = '';
 
       for (let round = 0; round < MAX_SUB_ROUNDS; round++) {
         try {
           await acquireStreamLock();
-          console.log(chalk.cyan(`\n[Agent ${taskIndex + 1}] Round ${round + 1}`));
+          const taskPreview = task.slice(0, 50) + (task.length > 50 ? '...' : '');
+          console.log(chalk.cyan(`\n[Agent ${taskIndex + 1}] ${chalk.dim(taskPreview)}`));
 
           const stopDots = startWaitingDots();
           const result = await rateLimitedCall(() =>
