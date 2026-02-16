@@ -318,6 +318,19 @@ function createCliEvents(): KodaXEvents {
       spinner.updateText(`Thinking... (${thinkingCharCount} chars)`);
     },
 
+    onThinkingEnd: (thinking: string) => {
+      // thinking block 结束，停止 spinner 并显示摘要
+      if (spinner) { spinner.stop(); spinner = null; }
+      if (thinking) {
+        // 移除换行符，确保 preview 是单行
+        const singleLine = thinking.replace(/\n/g, ' ');
+        const preview = singleLine.length > 100
+          ? singleLine.slice(0, 100) + '...'
+          : singleLine;
+        console.log(chalk.dim(`[thinking] ${preview}`));
+      }
+    },
+
     onToolUseStart: (tool: { name: string; id: string }) => {
       if (!spinner) {
         if (!spinnerNewlined) {
@@ -332,6 +345,15 @@ function createCliEvents(): KodaXEvents {
     onToolInputDelta: (toolName: string, _json: string) => {
       if (spinner && !spinner.isStopped()) {
         spinner.updateText(`Receiving ${toolName}...`);
+      } else if (!spinner || spinner.isStopped()) {
+        // 如果 spinner 已停止（因为 thinking 结束后），先换行再创建 spinner
+        // 与 kodax.ts 行为一致
+        if (!spinnerNewlined) {
+          process.stdout.write('\n');
+          spinnerNewlined = true;
+        }
+        spinner = startWaitingDots();
+        spinner.updateText(`Receiving ${toolName}...`);
       }
     },
 
@@ -340,9 +362,33 @@ function createCliEvents(): KodaXEvents {
       console.log(chalk.green(`[Result] ${result.content.slice(0, 300)}${result.content.length > 300 ? '...' : ''}`));
     },
 
+    onStreamEnd: () => {
+      // 停止 globalSpinner（在 input_json_delta 中可能创建的）
+      if (globalSpinner && !globalSpinner.isStopped()) {
+        globalSpinner.stop();
+      }
+      globalSpinner = null;
+      spinnerNewlined = false;
+
+      // 换行，结束当前输出
+      console.log();
+
+      // 如果 spinner 在流式输出期间被停止（text_delta 处理），重启它
+      if (!spinner || spinner.isStopped()) {
+        spinner = startWaitingDots();
+        spinner.updateText('Processing...');
+      }
+    },
+
     onIterationStart: (_iter: number, _maxIter: number) => {
+      // 先停止已有的 spinner（避免多个 interval 同时运行）
+      if (spinner && !spinner.isStopped()) {
+        spinner.stop();
+      }
       spinnerNewlined = false;
       console.log(chalk.magenta('\n[Assistant]'));
+      // 每次迭代都重新创建 spinner（与 kodax.ts 行为一致）
+      spinner = startWaitingDots();
     },
 
     onCompact: (tokens: number) => {

@@ -121,9 +121,11 @@ export interface KodaXEvents {
   // 流式输出
   onTextDelta?: (text: string) => void;
   onThinkingDelta?: (text: string, charCount: number) => void;
+  onThinkingEnd?: (thinking: string) => void;  // thinking block 结束时调用
   onToolUseStart?: (tool: { name: string; id: string }) => void;
   onToolResult?: (result: { id: string; name: string; content: string }) => void;
   onToolInputDelta?: (toolName: string, partialJson: string) => void;
+  onStreamEnd?: () => void;  // 流式输出结束时调用
 
   // 状态通知
   onSessionStart?: (info: { provider: string; sessionId: string }) => void;
@@ -299,6 +301,7 @@ const FILE_BACKUPS = new Map<string, string>();
 export interface KodaXProviderStreamOptions {
   onTextDelta?: (text: string) => void;
   onThinkingDelta?: (text: string) => void;
+  onThinkingEnd?: (thinking: string) => void;
   onToolInputDelta?: (toolName: string, partialJson: string) => void;
 }
 
@@ -425,6 +428,8 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
           if (currentBlockType === 'thinking') {
             if (currentThinking) {
               thinkingBlocks.push({ type: 'thinking', thinking: currentThinking, signature: currentThinkingSignature });
+              // thinking block 结束时通知 CLI 层
+              streamOptions?.onThinkingEnd?.(currentThinking);
             }
           } else if (currentBlockType === 'redacted_thinking') {
             const block = (event as any).content_block;
@@ -1241,8 +1246,12 @@ export async function runKodaX(
       const result = await provider.stream(compacted, KODAX_TOOLS, systemPrompt, options.thinking, {
         onTextDelta: (text) => events.onTextDelta?.(text),
         onThinkingDelta: (text) => events.onThinkingDelta?.(text, 0),
+        onThinkingEnd: (thinking) => events.onThinkingEnd?.(thinking),
         onToolInputDelta: (name, json) => events.onToolInputDelta?.(name, json),
       });
+
+      // 流式输出结束，通知 CLI 层
+      events.onStreamEnd?.();
 
       lastText = result.textBlocks.map(b => b.text).join(' ');
 
