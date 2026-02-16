@@ -1350,6 +1350,12 @@ async function runAgent(options: CliOptions, userPrompt: string): Promise<[boole
       const result = await provider.stream(compacted, TOOLS, systemPrompt, options.thinking);
       console.log();
 
+      // 停止任何可能在流式传输期间创建的 spinner（input_json_delta 等）
+      if (globalSpinner && !globalSpinner.isStopped()) {
+        globalSpinner.stop();
+      }
+      globalSpinner = null;
+
       // 如果 spinner 在流式输出期间被停止（text_delta 处理），重启它
       if (stopDots.isStopped()) {
         stopDots = startWaitingDots();
