@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-02-16
+
+### Changed
+- **Architecture Refactoring**: Split into Core + CLI modules
+  - `kodax_core.ts`: Pure library module (can be used as npm package)
+  - `kodax_cli.ts`: CLI entry with UI (spinner, colors, readline)
+  - `index.ts`: Package entry point
+  - Original `kodax.ts` kept as reference
+
+### Added
+- **Event-driven API**: `KodaXEvents` interface for streaming callbacks
+- **Library API**: Can now use KodaX as an npm package
+  - `runKodaX()` function for simple usage
+  - `KodaXClient` class for continuous sessions
+- **Session Storage Interface**: `KodaXSessionStorage` for custom storage backends
+- **Commands System**: `/xxx` commands in CLI layer (replaces previous "Skills" naming)
+
+### Terminology
+- **Skills** = Model capabilities (KODAX_TOOLS: read, write, bash, etc.) - in Core
+- **Commands** = CLI shortcuts (/review, /test, etc.) - in CLI layer
+
+### Exports
+- `runKodaX` - Main function to run agent
+- `KodaXClient` - Class for continuous sessions
+- `KodaXEvents` - Event interface for streaming
+- `KodaXOptions` - Options interface
+- `KodaXResult` - Result interface
+- `KODAX_TOOLS` - Tool definitions
+- `getProvider` - Provider factory function
+- `executeTool` - Tool execution function
+- `compactMessages` - Context compression utility
+- `estimateTokens` - Token estimation utility
+
 ## [0.1.0] - 2026-02-16
 
 ### Added

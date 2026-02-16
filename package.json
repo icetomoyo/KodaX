@@ -1,16 +1,28 @@
 {
   "name": "kodax",
-  "version": "0.1.0",
-  "description": "极致轻量化 Coding Agent - TypeScript 单文件实现，支持7种LLM提供商",
+  "version": "0.2.0",
+  "description": "极致轻量化 Coding Agent - TypeScript 实现，支持7种LLM提供商",
   "type": "module",
-  "main": "dist/kodax.js",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "bin": {
-    "kodax": "./dist/kodax.js"
+    "kodax": "./dist/kodax_cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./core": {
+      "types": "./dist/kodax_core.d.ts",
+      "import": "./dist/kodax_core.js"
+    }
   },
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/kodax.ts",
-    "start": "node dist/kodax.js",
+    "dev:cli": "tsx src/kodax_cli.ts",
+    "start": "node dist/kodax_cli.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rm -rf dist/"
