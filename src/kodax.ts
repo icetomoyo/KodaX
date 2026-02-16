@@ -478,6 +478,11 @@ abstract class AnthropicCompatProvider extends BaseProvider {
           } else if (currentBlockType === 'text') {
             if (currentText) textBlocks.push({ type: 'text', text: currentText });
           } else if (currentBlockType === 'tool_use') {
+            // tool_use block 结束时停止 spinner
+            if (globalSpinner && !globalSpinner.isStopped()) {
+              globalSpinner.stop();
+            }
+            globalSpinner = null;
             try {
               const input = currentToolInput ? JSON.parse(currentToolInput) : {};
               toolBlocks.push({ type: 'tool_use', id: currentToolId, name: currentToolName, input });
