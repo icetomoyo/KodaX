@@ -24,7 +24,7 @@ const execAsync = promisify(exec);
 
 // ============== 配置常量 ==============
 
-const MAX_TOKENS = 4096;
+const MAX_TOKENS = 32768;
 const DEFAULT_TIMEOUT = 60;
 const HARD_TIMEOUT = 300;
 const DEFAULT_CONFIRM_TOOLS = new Set(['bash', 'write', 'edit']);
@@ -1104,17 +1104,18 @@ const SYSTEM_PROMPT = `You are a helpful coding assistant. You can read, write, 
 
 ## Large File Handling (IMPORTANT)
 
-When writing large files (over 300 lines or 10KB):
-- DO NOT use a single write call with huge content
-- Instead, write the file structure first, then use edit to add sections incrementally
-- Break large content into 2-3 smaller write operations if needed
-- This prevents response truncation issues
+**RECOMMENDED LIMIT: 300 lines per write call**
+
+When writing files, plan ahead to avoid truncation:
+- Files under 300 lines: safe to write in one call
+- Files over 300 lines: write skeleton first, then edit to add sections
+- This prevents response truncation and reduces retry overhead
 
 Example approach for large files:
-1. write file with basic structure/skeleton
+1. write file with basic structure/skeleton (under 300 lines)
 2. edit to add first major section
 3. edit to add second major section
-4. etc.
+4. continue until complete
 
 ## Error Handling
 
