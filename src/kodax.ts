@@ -464,9 +464,11 @@ abstract class AnthropicCompatProvider extends BaseProvider {
               globalSpinner = null;
             }
             if (currentThinking) {
-              const preview = currentThinking.length > 100
-                ? currentThinking.slice(0, 100) + '...'
-                : currentThinking;
+              // 移除换行符，确保 preview 是单行
+              const singleLine = currentThinking.replace(/\n/g, ' ');
+              const preview = singleLine.length > 100
+                ? singleLine.slice(0, 100) + '...'
+                : singleLine;
               console.log(chalk.dim(`[thinking] ${preview}`));
             }
           } else if (currentBlockType === 'redacted_thinking') {
