@@ -1461,7 +1461,7 @@ async function main() {
   const options: CliOptions = {
     provider: opts.provider ?? DEFAULT_PROVIDER,
     thinking: opts.thinking ?? false,
-    noConfirm: opts.noConfirm ?? false,
+    noConfirm: opts.noConfirm === true || opts.confirm === false,
     session: opts.session,
     parallel: opts.parallel ?? false,
     confirm: opts.confirm,

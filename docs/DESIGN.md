@@ -1055,3 +1055,172 @@ output_mode: {
 - 需要使用 zhipuai SDK（原生支持）
 
 **两个版本都很好，选择你更熟悉的语言即可！**
+
+---
+
+## 附录 A: Kimi Code API Thinking Block 处理
+
+Kimi Code API（以及智谱 Coding、Anthropic）在启用 thinking 模式时，有特殊的内容顺序要求。本节记录这个关键实现细节。
+
+### A.1 问题描述
+
+当启用 thinking 模式后，如果 assistant 消息中包含 tool_use，但 thinking blocks 没有正确处理，API 会返回错误：
+
+```
+"thinking is enabled but reasoning_content is missing in assistant tool call message at index 2"
+```
+
+### A.2 根本原因
+
+Kimi Code API 要求：
+1. **thinking blocks 必须包含 signature 字段**
+2. **thinking blocks 必须放在 content 数组的最前面**
+3. **redacted_thinking blocks 也需要正确处理**
+
+### A.3 正确实现
+
+#### A.3.1 流处理中保存 signature
+
+```typescript
+// 在 content_block_start 事件中提取 signature
+if (block.type === 'thinking') {
+  currentThinkingSignature = (block as any).signature ?? '';
+}
+
+// 在 content_block_stop 事件中保存完整 thinking block
+if (currentBlockType === 'thinking') {
+  thinkingBlocks.push({
+    type: 'thinking',
+    thinking: currentThinking,
+    signature: currentThinkingSignature  // 关键：必须包含 signature
+  });
+}
+
+// 处理 redacted_thinking
+if (currentBlockType === 'redacted_thinking') {
+  const block = (event as any).content_block;
+  if (block?.data) {
+    thinkingBlocks.push({ type: 'redacted_thinking', data: block.data });
+  }
+}
+```
+
+#### A.3.2 消息转换时保持正确顺序
+
+```typescript
+private convertMessages(messages: Message[]): Anthropic.Messages.MessageParam[] {
+  return messages.map(m => {
+    if (typeof m.content === 'string') return { role: m.role, content: m.content };
+    const content: Anthropic.Messages.ContentBlockParam[] = [];
+
+    // 关键：thinking blocks 必须放在最前面
+    for (const b of m.content) {
+      if (b.type === 'thinking') {
+        content.push({ type: 'thinking', thinking: b.thinking, signature: b.signature ?? '' } as any);
+      } else if (b.type === 'redacted_thinking') {
+        content.push({ type: 'redacted_thinking', data: b.data } as any);
+      }
+    }
+
+    // 然后是 text blocks
+    for (const b of m.content) {
+      if (b.type === 'text') content.push({ type: 'text', text: b.text });
+    }
+
+    // 最后是 tool blocks
+    for (const b of m.content) {
+      if (b.type === 'tool_use' && m.role === 'assistant') {
+        content.push({ type: 'tool_use', id: b.id, name: b.name, input: b.input });
+      } else if (b.type === 'tool_result' && m.role === 'user') {
+        content.push({ type: 'tool_result', tool_use_id: b.tool_use_id, content: b.content });
+      }
+    }
+
+    return { role: m.role, content } as Anthropic.Messages.MessageParam;
+  });
+}
+```
+
+#### A.3.3 构建 assistant content 时的顺序
+
+```typescript
+// 正确顺序：thinking → text → tool_use
+const assistantContent: ContentBlock[] = [
+  ...result.thinkingBlocks,  // thinking blocks 在最前面
+  ...result.textBlocks,      // 然后是文本
+  ...result.toolBlocks       // 最后是工具调用
+];
+messages.push({ role: 'assistant', content: assistantContent });
+```
+
+### A.4 内容顺序要求
+
+```
+assistant message content:
+┌──────────────────────────────────────┐
+│ thinking blocks (含 signature)       │ ← 必须在最前面
+├──────────────────────────────────────┤
+│ text blocks                          │
+├──────────────────────────────────────┤
+│ tool_use blocks                      │ ← 必须在最后
+└──────────────────────────────────────┘
+```
+
+### A.5 与 Python 版本的对应
+
+TypeScript 版本的实现与 Python 版本 (KodaXP) 保持一致：
+
+```python
+# Python 版本 (kodaxp.py:1069-1077)
+assistant_content = []
+for tb in thinking_blocks:
+    assistant_content.append(tb)  # thinking 在最前面
+for b in text_blocks:
+    assistant_content.append({"type": "text", "text": b["text"]})
+for b in tool_blocks:
+    assistant_content.append({"type": "tool_use", "id": b["id"], "name": b["name"], "input": b["input"]})
+```
+
+### A.6 相关文件位置
+
+| 功能 | 文件位置 |
+|------|----------|
+| 流处理 signature 提取 | `src/kodax.ts:390` |
+| thinking block 保存 | `src/kodax.ts:420` |
+| convertMessages 顺序处理 | `src/kodax.ts:447-469` |
+| assistant content 构建 | `src/kodax.ts:1307`, `src/kodax.ts:1697` |
+
+---
+
+## 附录 B: Commander.js --no-xxx 选项处理
+
+### B.1 问题描述
+
+使用 `--no-confirm` 参数时，确认机制没有生效，用户仍然被要求确认工具执行。
+
+### B.2 根本原因
+
+Commander.js 对 `--no-xxx` 格式的选项有特殊处理：
+- 定义 `--no-confirm` 时，commander 会创建 `opts.confirm = false`
+- **而不是** `opts.noConfirm = true`
+
+### B.3 解决方案
+
+```typescript
+// 错误写法
+noConfirm: opts.noConfirm ?? false,  // opts.noConfirm 是 undefined
+
+// 正确写法
+noConfirm: opts.noConfirm === true || opts.confirm === false,
+```
+
+### B.4 替代方案
+
+如果想避免这个问题，可以改用其他选项名：
+
+```typescript
+.option('--skip-confirm', 'Skip all confirmations')  // 避免 --no-xxx 格式
+```
+
+这样 commander 就会正常设置 `opts.skipConfirm = true`。
+
