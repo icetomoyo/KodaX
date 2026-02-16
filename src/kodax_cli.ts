@@ -533,7 +533,7 @@ async function main() {
     .argument('[prompt...]', 'Your task (optional, enters interactive mode if not provided)')
     // 短参数支持
     .option('-p, --prompt <text>', 'Task prompt (alternative to positional argument)')
-    .option('-P, --provider <name>', 'LLM provider', KODAX_DEFAULT_PROVIDER)
+    .option('-m, --provider <name>', 'LLM provider', KODAX_DEFAULT_PROVIDER)
     .option('-t, --thinking', 'Enable thinking mode')
     .option('-c, --confirm <tools>', 'Tools requiring confirmation')
     .option('-y, --no-confirm', 'Disable confirmations (YOLO mode)')
@@ -856,7 +856,7 @@ New: {"features": [
     console.log('       kodax /command_name\n');
     console.log('Options:');
     console.log('  -p, --prompt TEXT      Task prompt');
-    console.log('  -P, --provider NAME    LLM provider (anthropic, kimi, kimi-code, qwen, zhipu, openai, zhipu-coding)');
+    console.log('  -m, --provider NAME    LLM provider (anthropic, kimi, kimi-code, qwen, zhipu, openai, zhipu-coding)');
     console.log('  -t, --thinking         Enable thinking mode');
     console.log('  -c, --confirm TOOLS    Tools requiring confirmation');
     console.log('  -y, --no-confirm       Disable all confirmations (YOLO mode)');
@@ -879,10 +879,10 @@ New: {"features": [
     console.log('  /mode [code|ask]       Switch mode');
     console.log('  /sessions              List saved sessions\n');
     console.log('Examples:');
-    console.log('  kodax                           # Enter interactive mode (default)');
+    console.log('  kodax                            # Enter interactive mode (default)');
     console.log('  kodax "create a component"       # Run single task');
-    console.log('  kodax -p "quick fix" -t         # Quick task with thinking');
-    console.log('  kodax -P kimi-code -t "task"    # Use Kimi Code with thinking\n');
+    console.log('  kodax -p "quick fix" -t          # Quick task with thinking');
+    console.log('  kodax -m kimi-code -t "task"     # Use Kimi Code with thinking\n');
     return;
   }
 
