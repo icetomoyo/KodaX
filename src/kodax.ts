@@ -371,6 +371,7 @@ abstract class AnthropicCompatProvider extends BaseProvider {
       let currentBlockType: string | null = null;
       let currentText = '';
       let currentThinking = '';
+      let currentThinkingSignature = '';
       let currentToolId = '';
       let currentToolName = '';
       let currentToolInput = '';
@@ -386,6 +387,7 @@ abstract class AnthropicCompatProvider extends BaseProvider {
           if (block.type === 'thinking') {
             isInThinking = true;
             currentThinking = '';
+            currentThinkingSignature = (block as any).signature ?? '';
             process.stdout.write(chalk.gray('[thinking] '));
           } else if (block.type === 'redacted_thinking') {
             // 处理 redacted_thinking block
@@ -417,7 +419,7 @@ abstract class AnthropicCompatProvider extends BaseProvider {
         } else if (event.type === 'content_block_stop') {
           if (currentBlockType === 'thinking') {
             if (currentThinking) {
-              thinkingBlocks.push({ type: 'thinking', thinking: currentThinking });
+              thinkingBlocks.push({ type: 'thinking', thinking: currentThinking, signature: currentThinkingSignature });
             }
             process.stdout.write('\n');
           } else if (currentBlockType === 'redacted_thinking') {
@@ -448,9 +450,21 @@ abstract class AnthropicCompatProvider extends BaseProvider {
     return messages.map(m => {
       if (typeof m.content === 'string') return { role: m.role, content: m.content };
       const content: Anthropic.Messages.ContentBlockParam[] = [];
+      // 关键：thinking blocks 必须放在最前面（Kimi Code API 要求）
+      for (const b of m.content) {
+        if (b.type === 'thinking') {
+          content.push({ type: 'thinking', thinking: b.thinking, signature: b.signature ?? '' } as any);
+        } else if (b.type === 'redacted_thinking') {
+          content.push({ type: 'redacted_thinking', data: b.data } as any);
+        }
+      }
+      // 然后是 text blocks
       for (const b of m.content) {
         if (b.type === 'text') content.push({ type: 'text', text: b.text });
-        else if (b.type === 'tool_use' && m.role === 'assistant') content.push({ type: 'tool_use', id: b.id, name: b.name, input: b.input });
+      }
+      // 最后是 tool blocks
+      for (const b of m.content) {
+        if (b.type === 'tool_use' && m.role === 'assistant') content.push({ type: 'tool_use', id: b.id, name: b.name, input: b.input });
         else if (b.type === 'tool_result' && m.role === 'user') content.push({ type: 'tool_result', tool_use_id: b.tool_use_id, content: b.content });
       }
       return { role: m.role, content } as Anthropic.Messages.MessageParam;
