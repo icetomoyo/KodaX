@@ -979,7 +979,7 @@ async function getProjectSnapshot(maxDepth = 2, maxFiles = 50): Promise<string> 
   const ignoreDirs = new Set(['.git', '__pycache__', 'node_modules', '.venv', 'venv', 'dist', 'build', '.idea', '.vscode']);
   const ignoreExts = new Set(['.pyc', '.pyo', '.so', '.dll', '.exe', '.bin']);
   const cwd = process.cwd();
-  const lines = [`Working Directory: ${cwd}`, `Project: ${path.basename(cwd)}`];
+  const lines = [`Project: ${path.basename(cwd)}`];
   let fileCount = 0;
 
   async function walk(dir: string, depth: number) {
@@ -1162,7 +1162,7 @@ IMPORTANT Rules:
 
 Before writing ANY code in this session, you MUST create a plan file:
 
-1. **Create directory**: \`mkdir -p .kodax\` (if not exists)
+1. **Create directory** \`.kodax\` if not exists (use appropriate command for platform)
 2. **Write plan** to \`.kodax/session_plan.md\` with this structure:
 
 \`\`\`markdown
@@ -1246,6 +1246,9 @@ async function buildSystemPrompt(options: CliOptions, isNewSession: boolean): Pr
 
   // 环境上下文（始终注入）
   contextParts.push(getEnvContext());
+
+  // 工作目录（始终注入，避免 --auto-continue 后续会话丢失）
+  contextParts.push(`Working Directory: ${process.cwd()}`);
 
   // Git 上下文（仅新会话）
   if (isNewSession) {
