@@ -940,8 +940,11 @@ async function getGitContext(): Promise<string> {
 
 function getEnvContext(): string {
   const p = process.platform;
-  const cmdHint = p === 'win32' ? 'Use: dir, move, copy, del' : 'Use: ls, mv, cp, rm';
-  return `Platform: ${p === 'win32' ? 'Windows' : p === 'darwin' ? 'macOS' : 'Linux'}\n${cmdHint}\nNode: ${process.version}`;
+  const isWin = p === 'win32';
+  const cmdHint = isWin
+    ? 'Use: dir, move, copy, del, mkdir (no -p needed)'
+    : 'Use: ls, mv, cp, rm, mkdir -p';
+  return `Platform: ${isWin ? 'Windows' : p === 'darwin' ? 'macOS' : 'Linux'}\n${cmdHint}\nNode: ${process.version}`;
 }
 
 // ============== Token 估算 ==============

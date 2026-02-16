@@ -405,6 +405,35 @@ node dist/kodax.js --provider zhipu-coding --no-confirm "
 # 3. 文件成功移动
 ```
 
+### 1.1 跨平台 mkdir 命令测试
+
+```bash
+# 测试 mkdir 命令提示
+node dist/kodax.js --provider zhipu-coding --no-confirm "
+告诉我当前平台应该使用什么命令创建嵌套目录
+"
+
+# 预期（Windows）：
+# 1. Agent 知道应该使用 mkdir（不带 -p 参数）
+# 2. 不会尝试执行 mkdir -p（Windows 不支持）
+
+# 预期（Unix/Mac）：
+# 1. Agent 知道应该使用 mkdir -p
+```
+
+### 1.2 工作目录路径注入测试
+
+```bash
+# 测试完整工作目录注入
+node dist/kodax.js --provider zhipu-coding --no-confirm "
+在当前目录创建一个测试文件 test_cwd.txt
+"
+
+# 预期：
+# 1. Agent 能正确识别当前工作目录
+# 2. 文件创建在正确的位置（而非 C:\Users\user\...）
+```
+
 ### 2. UTF-8 编码测试
 
 ```bash
@@ -511,6 +540,8 @@ node dist/kodax.js --provider kimi-code --thinking --no-confirm "
 | **Windows UTF-8 编码** | 中文输出测试 | ☐ |
 | **环境感知注入** | Agent 知道运行平台和 Node 版本 | ☐ |
 | **Thinking 多轮调用** | kimi-code/zhipu-coding thinking 多工具 | ☐ |
+| **跨平台 mkdir** | Windows 用 mkdir，Unix 用 mkdir -p | ☐ |
+| **工作目录路径** | Agent 能识别完整工作目录 | ☐ |
 
 ---
 

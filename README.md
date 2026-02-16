@@ -150,7 +150,9 @@ node dist/kodax.js --auto-continue
 | Feature | Python (KodaXP) | TypeScript (KodaX) |
 |---------|-----------------|-------------------|
 | **Waiting Animation** | Leaves dots in terminal | Clears with `\r`, cleaner |
-| **Environment Context** | Platform only | Includes Node version |
+| **Environment Context** | Platform only | Includes Node version + platform-specific command hints |
+| **Cross-Platform Commands** | Static `pwd` and `mkdir -p` | Dynamic hints for Windows/Unix |
+| **Working Directory** | Project name only | Full path injected |
 | **read Tool** | Basic | offset/limit parameters |
 | **grep Tool** | Basic | output_mode parameter |
 | **edit Tool** | Single replacement | replace_all parameter |
