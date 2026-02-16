@@ -87,7 +87,7 @@ let globalSpinner: {
   updateText: (text: string) => void;
 } | null = null;
 
-function startWaitingDots(): { stop: () => void } {
+function startWaitingDots(): { stop: () => void; updateText: (text: string) => void } {
   let frame = 0;
   let colorIdx = 0;
   let stopped = false;
@@ -1407,7 +1407,10 @@ async function runAgent(options: CliOptions, userPrompt: string): Promise<[boole
       } else {
         for (const tc of result.toolBlocks) {
           console.log(chalk.yellow(`\n[Tool] ${tc.name}(${JSON.stringify(tc.input).slice(0, 80)}...)`));
+          const toolSpinner = startWaitingDots();
+          toolSpinner.updateText(`Executing ${tc.name}...`);
           const content = await executeTool(tc.name, tc.input, ctx);
+          toolSpinner.stop();
           console.log(chalk.green(`[Result] ${content.slice(0, 300)}${content.length > 300 ? '...' : ''}`));
           toolResults.push({ type: 'tool_result', tool_use_id: tc.id, content });
         }
