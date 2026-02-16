@@ -444,13 +444,25 @@ abstract class AnthropicCompatProvider extends BaseProvider {
             process.stdout.write(delta.text ?? '');
           } else if (delta.type === 'input_json_delta') {
             currentToolInput += delta.partial_json ?? '';
+            // tool_use JSON 流式传输期间显示进度
+            if (globalSpinner && !globalSpinner.isStopped()) {
+              globalSpinner.updateText(`Receiving ${currentToolName}...`);
+            } else if (!globalSpinner) {
+              // 如果 spinner 已停止（因为 thinking 结束后），重启它
+              globalSpinner = startWaitingDots();
+              globalSpinner.updateText(`Receiving ${currentToolName}...`);
+            }
           }
         } else if (event.type === 'content_block_stop') {
           if (currentBlockType === 'thinking') {
             if (currentThinking) {
               thinkingBlocks.push({ type: 'thinking', thinking: currentThinking, signature: currentThinkingSignature });
             }
-            // thinking block 结束，显示摘要（不停止 spinner，由主循环管理）
+            // thinking block 结束，先停止 spinner 清除当前行，再显示摘要
+            if (globalSpinner && !globalSpinner.isStopped()) {
+              globalSpinner.stop();
+              globalSpinner = null;
+            }
             if (currentThinking) {
               const preview = currentThinking.length > 100
                 ? currentThinking.slice(0, 100) + '...'
