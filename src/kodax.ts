@@ -976,7 +976,7 @@ async function getProjectSnapshot(maxDepth = 2, maxFiles = 50): Promise<string> 
   const ignoreDirs = new Set(['.git', '__pycache__', 'node_modules', '.venv', 'venv', 'dist', 'build', '.idea', '.vscode']);
   const ignoreExts = new Set(['.pyc', '.pyo', '.so', '.dll', '.exe', '.bin']);
   const cwd = process.cwd();
-  const lines = [`Project: ${path.basename(cwd)}`];
+  const lines = [`Working Directory: ${cwd}`, `Project: ${path.basename(cwd)}`];
   let fileCount = 0;
 
   async function walk(dir: string, depth: number) {
