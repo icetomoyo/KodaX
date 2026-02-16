@@ -1162,8 +1162,7 @@ IMPORTANT Rules:
 
 Before writing ANY code in this session, you MUST create a plan file:
 
-1. **Create directory** \`.kodax\` if not exists (use appropriate command for platform)
-2. **Write plan** to \`.kodax/session_plan.md\` with this structure:
+1. **Write plan** to \`.kodax/session_plan.md\` with this structure (directory will be created automatically):
 
 \`\`\`markdown
 # Session Plan
