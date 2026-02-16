@@ -192,7 +192,8 @@ function startWaitingDots(): { stop: () => void; updateText: (text: string) => v
     const color = SPINNER_COLORS[colorIdx % SPINNER_COLORS.length];
     const reset = '\x1b[0m';
     const spinner = SPINNER_FRAMES[frame % SPINNER_FRAMES.length];
-    process.stdout.write(`\r${color}${spinner}${reset} ${currentText}    `);
+    // 使用 \r 回到行首，末尾不加多余空格，光标停在文本末尾
+    process.stdout.write(`\r${color}${spinner}${reset} ${currentText}`);
   };
 
   const interval = setInterval(() => {
@@ -208,7 +209,8 @@ function startWaitingDots(): { stop: () => void; updateText: (text: string) => v
       if (stopped) return;
       stopped = true;
       clearInterval(interval);
-      process.stdout.write('\r                                        \r');
+      // 清除整行并将光标移回行首
+      process.stdout.write('\r\x1b[K');
     },
     isStopped: () => stopped,
     updateText: (text: string) => {
@@ -300,6 +302,7 @@ async function confirmAction(name: string, input: Record<string, unknown>): Prom
 function createCliEvents(): KodaXEvents {
   let spinner: ReturnType<typeof startWaitingDots> | null = null;
   let thinkingCharCount = 0;
+  let needNewline = false;  // 是否需要在 onStreamEnd 中换行
 
   const events: KodaXEvents = {
     onSessionStart: (info: { provider: string; sessionId: string }) => {
@@ -310,6 +313,7 @@ function createCliEvents(): KodaXEvents {
       if (spinner) { spinner.stop(); spinner = null; }
       thinkingCharCount = 0;
       process.stdout.write(text);
+      needNewline = true;  // 有文本输出，后续需要换行
     },
 
     onThinkingDelta: (text: string, _charCount: number) => {
@@ -351,6 +355,7 @@ function createCliEvents(): KodaXEvents {
         if (!spinnerNewlined) {
           process.stdout.write('\n');
           spinnerNewlined = true;
+          needNewline = false;  // 已经换行，onStreamEnd 不需要再换行
         }
         spinner = startWaitingDots();
         spinner.updateText(`Receiving ${toolName}...`);
@@ -370,8 +375,11 @@ function createCliEvents(): KodaXEvents {
       globalSpinner = null;
       spinnerNewlined = false;
 
-      // 换行，结束当前输出
-      console.log();
+      // 只有在有文本输出且没有在 onToolInputDelta 中换行时，才换行
+      if (needNewline) {
+        console.log();
+        needNewline = false;
+      }
 
       // 如果 spinner 在流式输出期间被停止（text_delta 处理），重启它
       if (!spinner || spinner.isStopped()) {
@@ -386,6 +394,7 @@ function createCliEvents(): KodaXEvents {
         spinner.stop();
       }
       spinnerNewlined = false;
+      needNewline = false;  // 重置换行标志
       console.log(chalk.magenta('\n[Assistant]'));
       // 每次迭代都重新创建 spinner（与 kodax.ts 行为一致）
       spinner = startWaitingDots();
