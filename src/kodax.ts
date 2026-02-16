@@ -1385,7 +1385,10 @@ async function runAgent(options: CliOptions, userPrompt: string): Promise<[boole
       const [signal, reason] = checkPromiseSignal(lastText);
       if (signal) {
         console.log(chalk.cyan(`[Signal] ${signal}${reason ? `: ${reason}` : ''}`));
-        if (signal === 'COMPLETE') break;
+        if (signal === 'COMPLETE') {
+          stopDots.stop();
+          break;
+        }
       }
 
       const assistantContent: ContentBlock[] = [...result.thinkingBlocks, ...result.textBlocks, ...result.toolBlocks];
