@@ -388,14 +388,20 @@ abstract class AnthropicCompatProvider extends BaseProvider {
             isInThinking = true;
             currentThinking = '';
             currentThinkingSignature = (block as any).signature ?? '';
-            process.stdout.write(chalk.gray('[thinking] '));
+            // 不再打印 [thinking] 前缀，让 spinner 动画处理
           } else if (block.type === 'redacted_thinking') {
             // 处理 redacted_thinking block
             currentBlockType = 'redacted_thinking';
           } else if (block.type === 'text') {
             if (isInThinking) {
               isInThinking = false;
-              process.stdout.write('\n');
+              // thinking 结束，显示摘要
+              if (currentThinking) {
+                const preview = currentThinking.length > 150
+                  ? currentThinking.slice(0, 150) + '...'
+                  : currentThinking;
+                console.log(chalk.dim(`\n[thinking] ${preview}\n`));
+              }
             }
             currentText = '';
           } else if (block.type === 'tool_use') {
@@ -407,9 +413,7 @@ abstract class AnthropicCompatProvider extends BaseProvider {
           const delta = event.delta as any;
           if (delta.type === 'thinking_delta') {
             currentThinking += delta.thinking ?? '';
-            // 显示 thinking 的前200字符作为预览
-            const preview = (delta.thinking ?? '').slice(0, 50);
-            if (preview) process.stdout.write(chalk.gray(preview));
+            // 不再实时打印 thinking 内容，避免与 spinner 混淆
           } else if (delta.type === 'text_delta') {
             currentText += delta.text ?? '';
             process.stdout.write(delta.text ?? '');
@@ -421,7 +425,13 @@ abstract class AnthropicCompatProvider extends BaseProvider {
             if (currentThinking) {
               thinkingBlocks.push({ type: 'thinking', thinking: currentThinking, signature: currentThinkingSignature });
             }
-            process.stdout.write('\n');
+            // thinking block 结束，显示摘要
+            if (currentThinking) {
+              const preview = currentThinking.length > 150
+                ? currentThinking.slice(0, 150) + '...'
+                : currentThinking;
+              console.log(chalk.dim(`\n[thinking] ${preview}\n`));
+            }
           } else if (currentBlockType === 'redacted_thinking') {
             // redacted_thinking block 处理（数据在 block 中）
             const block = (event as any).content_block;
