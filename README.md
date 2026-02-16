@@ -4,7 +4,7 @@
 
 ## 概述
 
-KodaX 是 KodaXP 的 TypeScript + Node.js 版本，采用单文件实现（约 600 LOC），支持 7 种 LLM 提供商。
+KodaX 是 KodaXP 的 TypeScript + Node.js 版本，采用单文件实现（约 1800 LOC），支持 7 种 LLM 提供商。
 
 **核心理念**: 透明、灵活、极简
 
@@ -120,7 +120,7 @@ npm run clean
 KodaX 是 KodaXP 的 TypeScript 移植版本，功能完全对应：
 
 - `kodaxp.py` (Python) → `src/kodax.ts` (TypeScript)
-- 约 2000 LOC Python → 约 600 LOC TypeScript
+- 约 2000 LOC Python → 约 1800 LOC TypeScript
 - `uv run kodaxp.py` → `node dist/kodax.js`
 
 ## 许可证
