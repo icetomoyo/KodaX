@@ -76,15 +76,25 @@ async function rateLimitedCall<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-// 等待动画
+// 等待动画 (Claude Code 风格的旋转 spinner)
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+const SPINNER_COLORS = ['\x1b[36m', '\x1b[35m', '\x1b[34m']; // cyan, magenta, blue
+
 function startWaitingDots(): () => void {
-  let count = 0;
+  let frame = 0;
+  let colorIdx = 0;
   const interval = setInterval(() => {
-    process.stdout.write('.');
-    count++;
-    if (count >= 3) { process.stdout.write('\r   \r'); count = 0; }
-  }, 500);
-  return () => { clearInterval(interval); process.stdout.write('\r   \r'); };
+    const color = SPINNER_COLORS[colorIdx % SPINNER_COLORS.length];
+    const reset = '\x1b[0m';
+    const spinner = SPINNER_FRAMES[frame % SPINNER_FRAMES.length];
+    process.stdout.write(`\r${color}${spinner}${reset} Thinking...`);
+    frame++;
+    if (frame % 10 === 0) colorIdx++; // 每 10 帧换一个颜色
+  }, 80);
+  return () => {
+    clearInterval(interval);
+    process.stdout.write('\r                    \r'); // 清除整行
+  };
 }
 
 // Session 计划模板
