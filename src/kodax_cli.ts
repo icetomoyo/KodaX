@@ -11,6 +11,13 @@ import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
 import readline from 'readline';
+import { fileURLToPath } from 'url';
+
+// 从 package.json 读取版本号
+const packageJsonPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '../package.json');
+const version = fsSync.existsSync(packageJsonPath)
+  ? JSON.parse(fsSync.readFileSync(packageJsonPath, 'utf-8')).version
+  : '0.0.0';
 
 import {
   runKodaX,
@@ -529,7 +536,7 @@ async function main() {
   const program = new Command()
     .name('kodax')
     .description('KodaX - 极致轻量化 Coding Agent')
-    .version('1.0.0')
+    .version(version)
     .argument('[prompt...]', 'Your task (optional, enters interactive mode if not provided)')
     // 短参数支持
     .option('-p, --prompt <text>', 'Task prompt (alternative to positional argument)')
