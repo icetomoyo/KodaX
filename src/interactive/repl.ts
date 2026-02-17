@@ -407,14 +407,13 @@ function printStartupBanner(config: CurrentConfig, mode: string): void {
   const model = getProviderModel(config.provider) ?? config.provider;
 
   // KODAX 方块字符 logo
-  // K-分叉腿  O-两边圆弧  D-左直右弧  A-尖顶  X-交叉
   const logo = `
-  ██╗  ██╗  ██████╗  █████╗     ████╗   ██╗  ██╗
-  ██║ ██╔╝ ██╔══██╗ ██╔═██╗    ██╔██╗  ╚██╗██╔╝
-  █████╔╝  ██║  ██║ ██║  ██╗  ██╔╝██║   ╚███╔╝
-  ██╔═██╗  ██║  ██║ ██║  ██║  ╚████╔╝   ██╔██╗
-  ██║  ██╗ ╚█████╔╝ ██████╔╝   ╚═██║   ██╔╝ ██╗
-  ╚═╝  ╚═╝  ╚═════╝  ╚════╝      ╚═╝   ╚═╝  ╚═╝`;
+  ██╗  ██╗  ██████╗  ██████╗   █████╗  ██╗  ██╗
+  ██║ ██╔╝ ██╔══██╗ ██╔══██╗ ██╔══██╗  ╚██╗██╔╝
+  █████╔╝  ██║  ██║ ██║  ██║ ███████║   ╚███╔╝
+  ██╔═██╗  ██║  ██║ ██║  ██║ ██╔══██║   ██╔██╗
+  ██║  ██╗ ██████╔╝ ██████╔╝ ██║  ██║  ██╔╝ ██╗
+  ╚═╝  ╚═╝ ╚═════╝  ╚═════╝  ╚═╝  ╚═╝  ╚═╝  ╚═╝`;
 
   console.log(chalk.cyan('\n' + logo));
   console.log(chalk.white(`\n  v${KODAX_VERSION}  |  AI Coding Agent  |  ${config.provider}:${model}`));
