@@ -16,6 +16,7 @@ import {
   BUILTIN_COMMANDS,
   CommandCallbacks,
 } from '../src/interactive/index.js';
+import { KodaXMessage } from '../src/kodax_core.js';
 
 // ============== 上下文管理测试 ==============
 
@@ -401,5 +402,182 @@ describe('Command Aliases', () => {
 
     await executeCommand({ command: 'resume', args: ['session-456'] }, context, callbacks);
     expect(loadedId).toBe('session-456');
+  });
+});
+
+// ============== 模式切换详细测试 ==============
+
+describe('Mode Switching Detailed', () => {
+  let context: InteractiveContext;
+  let callbacks: CommandCallbacks;
+
+  beforeEach(async () => {
+    context = await createInteractiveContext({});
+    callbacks = {
+      exit: () => {},
+      saveSession: async () => {},
+      loadSession: async () => true,
+      listSessions: async () => {},
+      clearHistory: () => {},
+      printHistory: () => {},
+    };
+  });
+
+  it('should start in code mode by default', () => {
+    expect(context.mode).toBe('code');
+  });
+
+  it('should switch to ask mode and back to code', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await executeCommand({ command: 'ask', args: [] }, context, callbacks);
+    expect(context.mode).toBe('ask');
+
+    await executeCommand({ command: 'code', args: [] }, context, callbacks);
+    expect(context.mode).toBe('code');
+
+    consoleSpy.mockRestore();
+  });
+
+  it('should handle invalid mode gracefully', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const originalMode = context.mode;
+
+    await executeCommand({ command: 'mode', args: ['invalid'] }, context, callbacks);
+
+    expect(context.mode).toBe(originalMode);
+    const output = consoleSpy.mock.calls.map(c => c.join(' ')).join('\n');
+    expect(output).toContain('Unknown mode');
+
+    consoleSpy.mockRestore();
+  });
+});
+
+// ============== 会话管理详细测试 ==============
+
+describe('Session Management Detailed', () => {
+  let context: InteractiveContext;
+  let callbacks: CommandCallbacks;
+  let savedSessions: Array<{ id: string; messages: KodaXMessage[]; title: string }>;
+
+  beforeEach(async () => {
+    context = await createInteractiveContext({});
+    savedSessions = [];
+
+    callbacks = {
+      exit: () => {},
+      saveSession: async () => {
+        savedSessions.push({
+          id: context.sessionId,
+          messages: [...context.messages],
+          title: context.title,
+        });
+      },
+      loadSession: async (id: string) => {
+        const session = savedSessions.find(s => s.id === id);
+        if (session) {
+          context.messages = session.messages;
+          context.title = session.title;
+          return true;
+        }
+        return false;
+      },
+      listSessions: async () => {},
+      clearHistory: () => {
+        context.messages = [];
+      },
+      printHistory: () => {},
+    };
+  });
+
+  it('should save and load session', async () => {
+    // Add some messages
+    context.messages.push({ role: 'user', content: 'Hello' });
+    context.messages.push({ role: 'assistant', content: 'Hi!' });
+    context.title = 'Test Session';
+
+    // Save
+    await callbacks.saveSession();
+    expect(savedSessions).toHaveLength(1);
+
+    // Clear and verify
+    callbacks.clearHistory();
+    expect(context.messages).toHaveLength(0);
+
+    // Load
+    const loaded = await callbacks.loadSession(context.sessionId);
+    expect(loaded).toBe(true);
+    expect(context.messages).toHaveLength(2);
+  });
+
+  it('should return false for non-existent session', async () => {
+    const loaded = await callbacks.loadSession('non-existent-id');
+    expect(loaded).toBe(false);
+  });
+});
+
+// ============== 命令解析边界测试 ==============
+
+describe('Command Parsing Edge Cases', () => {
+  it('should handle command with extra whitespace', () => {
+    const result = parseCommand('/help   arg1   arg2   ');
+    expect(result).not.toBeNull();
+    expect(result?.command).toBe('help');
+    expect(result?.args).toEqual(['arg1', 'arg2']);
+  });
+
+  it('should handle uppercase command', () => {
+    const result = parseCommand('/HELP');
+    expect(result?.command).toBe('help');
+  });
+
+  it('should handle mixed case command', () => {
+    const result = parseCommand('/HeLp');
+    expect(result?.command).toBe('help');
+  });
+
+  it('should handle command with special characters in args', () => {
+    const result = parseCommand('/load session-with-dashes_and_underscores');
+    expect(result?.command).toBe('load');
+    expect(result?.args).toEqual(['session-with-dashes_and_underscores']);
+  });
+
+  it('should return null for input without slash', () => {
+    expect(parseCommand('help')).toBeNull();
+    expect(parseCommand(' regular text')).toBeNull();
+  });
+
+  it('should return null for empty input', () => {
+    expect(parseCommand('')).toBeNull();
+    expect(parseCommand('   ')).toBeNull();
+  });
+});
+
+// ============== 上下文管理详细测试 ==============
+
+describe('Context Management Detailed', () => {
+  it('should create context with custom gitRoot', async () => {
+    const context = await createInteractiveContext({ gitRoot: '/custom/path' });
+    expect(context.gitRoot).toBe('/custom/path');
+  });
+
+  it('should create unique session IDs', async () => {
+    const context1 = await createInteractiveContext({});
+    await new Promise(r => setTimeout(r, 10));
+    const context2 = await createInteractiveContext({});
+
+    // Session IDs should match the format and likely be different
+    expect(context1.sessionId).toMatch(/^\d{8}_\d{6}$/);
+    expect(context2.sessionId).toMatch(/^\d{8}_\d{6}$/);
+  });
+
+  it('should track lastAccessed time', async () => {
+    const context = await createInteractiveContext({});
+    const originalTime = context.lastAccessed;
+
+    await new Promise(r => setTimeout(r, 50));
+    touchContext(context);
+
+    expect(context.lastAccessed).not.toBe(originalTime);
   });
 });

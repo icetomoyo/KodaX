@@ -41,6 +41,12 @@ import {
   KODAX_MAX_INCOMPLETE_RETRIES,
   rateLimitedCall,
   generateSessionId,
+  // 错误类型
+  KodaXError,
+  KodaXProviderError,
+  KodaXToolError,
+  KodaXRateLimitError,
+  KodaXSessionError,
 } from '../src/kodax_core.js';
 
 // ============== 模拟测试环境 ==============
@@ -900,3 +906,188 @@ describe('generateSessionId', () => {
     expect(id2).toMatch(/^\d{8}_\d{6}$/);
   });
 });
+
+// ============== 错误类型测试 ==============
+
+describe('KodaXError Types', () => {
+  describe('KodaXError (base)', () => {
+    it('should create error with default code', () => {
+      const error = new KodaXError('Test error');
+      expect(error.message).toBe('Test error');
+      expect(error.code).toBe('KODAX_ERROR');
+      expect(error.name).toBe('KodaXError');
+      expect(error).toBeInstanceOf(Error);
+    });
+
+    it('should create error with custom code', () => {
+      const error = new KodaXError('Custom error', 'CUSTOM_CODE');
+      expect(error.message).toBe('Custom error');
+      expect(error.code).toBe('CUSTOM_CODE');
+    });
+  });
+
+  describe('KodaXProviderError', () => {
+    it('should create provider error', () => {
+      const error = new KodaXProviderError('Provider failed', 'anthropic');
+      expect(error.message).toBe('Provider failed');
+      expect(error.code).toBe('PROVIDER_ERROR');
+      expect(error.provider).toBe('anthropic');
+      expect(error.name).toBe('KodaXProviderError');
+    });
+
+    it('should create provider error without provider name', () => {
+      const error = new KodaXProviderError('Provider failed');
+      expect(error.provider).toBeUndefined();
+    });
+  });
+
+  describe('KodaXToolError', () => {
+    it('should create tool error', () => {
+      const error = new KodaXToolError('Tool failed', 'write', 'tool-123');
+      expect(error.message).toBe('Tool failed');
+      expect(error.code).toBe('TOOL_ERROR');
+      expect(error.toolName).toBe('write');
+      expect(error.toolId).toBe('tool-123');
+      expect(error.name).toBe('KodaXToolError');
+    });
+
+    it('should create tool error without tool ID', () => {
+      const error = new KodaXToolError('Tool failed', 'read');
+      expect(error.toolId).toBeUndefined();
+    });
+  });
+
+  describe('KodaXRateLimitError', () => {
+    it('should create rate limit error', () => {
+      const error = new KodaXRateLimitError('Rate limit exceeded', 60);
+      expect(error.message).toBe('Rate limit exceeded');
+      expect(error.code).toBe('RATE_LIMIT_ERROR');
+      expect(error.retryAfter).toBe(60);
+      expect(error.name).toBe('KodaXRateLimitError');
+    });
+
+    it('should create rate limit error without retry time', () => {
+      const error = new KodaXRateLimitError('Rate limit exceeded');
+      expect(error.retryAfter).toBeUndefined();
+    });
+  });
+
+  describe('KodaXSessionError', () => {
+    it('should create session error', () => {
+      const error = new KodaXSessionError('Session not found', 'session-123');
+      expect(error.message).toBe('Session not found');
+      expect(error.code).toBe('SESSION_ERROR');
+      expect(error.sessionId).toBe('session-123');
+      expect(error.name).toBe('KodaXSessionError');
+    });
+
+    it('should create session error without session ID', () => {
+      const error = new KodaXSessionError('Session error');
+      expect(error.sessionId).toBeUndefined();
+    });
+  });
+});
+
+// ============== 工具执行错误处理测试 ==============
+
+describe('Tool Execution Error Handling', () => {
+  let ctx: KodaXToolExecutionContext;
+
+  beforeEach(() => {
+    ctx = {
+      confirmTools: new Set(['bash', 'write', 'edit']),
+      backups: new Map(),
+      noConfirm: true,
+    };
+  });
+
+  it('should return error for multiple missing parameters', async () => {
+    const result = await executeTool('write', { path: '/test.txt' }, ctx);
+    expect(result).toContain('[Tool Error]');
+    expect(result).toContain('Missing required parameter');
+    expect(result).toContain('content');
+  });
+
+  it('should return error for unknown tool with available tools list', async () => {
+    const result = await executeTool('nonexistent', {}, ctx);
+    expect(result).toContain('[Tool Error]');
+    expect(result).toContain('Unknown tool');
+    expect(result).toContain('Available tools');
+    expect(result).toContain('read');
+    expect(result).toContain('write');
+  });
+
+  it('should return cancellation message when user cancels', async () => {
+    const ctxWithConfirm: KodaXToolExecutionContext = {
+      confirmTools: new Set(['bash']),
+      backups: new Map(),
+      noConfirm: false,
+      onConfirm: async () => false, // User cancels
+    };
+    const result = await executeTool('bash', { command: 'rm -rf /' }, ctxWithConfirm);
+    expect(result).toContain('[Cancelled]');
+    expect(result).toContain('cancelled by user');
+  });
+
+  it('should detect null as missing parameter', async () => {
+    const result = await executeTool('read', { path: null }, ctx);
+    expect(result).toContain('[Tool Error]');
+    expect(result).toContain('Missing required parameter');
+  });
+});
+
+// ============== toolRead 详细测试 ==============
+
+describe('toolRead Detailed', () => {
+  let testFile: string;
+  let ctx: KodaXToolExecutionContext;
+
+  beforeEach(async () => {
+    testFile = path.join(TEST_DIR, `read-test-${Date.now()}.txt`);
+    await fs.mkdir(TEST_DIR, { recursive: true });
+    await fs.writeFile(testFile, 'line1\nline2\nline3\nline4\nline5\n');
+    ctx = {
+      confirmTools: new Set(),
+      backups: new Map(),
+      noConfirm: true,
+    };
+  });
+
+  afterEach(async () => {
+    try {
+      await fs.rm(testFile);
+    } catch {}
+  });
+
+  it('should read file from offset 1 (first line)', async () => {
+    const result = await executeTool('read', { path: testFile, offset: 1, limit: 1 }, ctx);
+    expect(result).toContain('line1');
+    expect(result).not.toContain('line2');
+  });
+
+  it('should read file from offset 0 (same as offset 1)', async () => {
+    const result = await executeTool('read', { path: testFile, offset: 0, limit: 1 }, ctx);
+    expect(result).toContain('line1');
+  });
+
+  it('should read file with limit', async () => {
+    const result = await executeTool('read', { path: testFile, offset: 1, limit: 2 }, ctx);
+    expect(result).toContain('line1');
+    expect(result).toContain('line2');
+    expect(result).not.toContain('line3');
+  });
+
+  it('should read file from middle offset', async () => {
+    const result = await executeTool('read', { path: testFile, offset: 3, limit: 2 }, ctx);
+    expect(result).toContain('line3');
+    expect(result).toContain('line4');
+    expect(result).not.toContain('line1');
+  });
+
+  it('should return error for non-existent file', async () => {
+    const result = await executeTool('read', { path: '/nonexistent/file.txt' }, ctx);
+    expect(result).toContain('[Tool Error]');
+    expect(result).toContain('File not found');
+  });
+});
+
