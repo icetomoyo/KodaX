@@ -60,6 +60,14 @@ class MemorySessionStorage implements SessionStorage {
       msgCount: data.messages.length,
     }));
   }
+
+  async delete(id: string): Promise<void> {
+    this.sessions.delete(id);
+  }
+
+  async deleteAll(_gitRoot?: string): Promise<void> {
+    this.sessions.clear();
+  }
 }
 
 // REPL 选项
@@ -100,7 +108,14 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   });
 
   let isRunning = true;
-  let currentOptions = { ...options };
+  // 修复：确保 session.id 被设置以复用同一 session
+  let currentOptions: RepLOptions = {
+    ...options,
+    session: {
+      ...options.session,
+      id: context.sessionId,
+    },
+  };
 
   // 命令回调
   const callbacks: CommandCallbacks = {
@@ -174,6 +189,12 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     setNoConfirm: (enabled: boolean) => {
       currentConfig.noConfirm = enabled;
       currentOptions.noConfirm = enabled;
+    },
+    deleteSession: async (id: string) => {
+      await storage.delete?.(id);
+    },
+    deleteAllSessions: async () => {
+      await storage.deleteAll?.();
     },
   };
 

@@ -32,6 +32,8 @@ export interface CommandCallbacks {
   switchProvider?: (provider: string) => void;
   setThinking?: (enabled: boolean) => void;
   setNoConfirm?: (enabled: boolean) => void;
+  deleteSession?: (id: string) => Promise<void>;
+  deleteAllSessions?: () => Promise<void>;
 }
 
 // 命令定义
@@ -154,6 +156,26 @@ export const BUILTIN_COMMANDS: Command[] = [
     description: 'Show conversation history',
     handler: async (_args, _context, callbacks) => {
       callbacks.printHistory();
+    },
+  },
+  {
+    name: 'delete',
+    aliases: ['rm', 'del'],
+    description: 'Delete a session',
+    usage: '/delete <session-id> or /delete all',
+    handler: async (args, _context, callbacks) => {
+      if (args.length === 0) {
+        console.log(chalk.red('\n[Usage: /delete <session-id> or /delete all]'));
+        await callbacks.listSessions?.();
+        return;
+      }
+      if (args[0] === 'all') {
+        await callbacks.deleteAllSessions?.();
+        console.log(chalk.green('\n[All sessions deleted]'));
+      } else {
+        await callbacks.deleteSession?.(args[0]!);
+        console.log(chalk.green(`\n[Session deleted: ${args[0]}]`));
+      }
     },
   },
   {

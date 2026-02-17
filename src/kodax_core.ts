@@ -258,6 +258,8 @@ export interface KodaXSessionStorage {
   save(id: string, data: { messages: KodaXMessage[]; title: string; gitRoot: string }): Promise<void>;
   load(id: string): Promise<{ messages: KodaXMessage[]; title: string; gitRoot: string } | null>;
   list?(gitRoot?: string): Promise<Array<{ id: string; title: string; msgCount: number }>>;
+  delete?(id: string): Promise<void>;
+  deleteAll?(gitRoot?: string): Promise<void>;
 }
 
 // ============== 工具执行上下文 ==============

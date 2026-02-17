@@ -289,6 +289,21 @@ class FileSessionStorage implements KodaXSessionStorage {
     }
     return sessions.sort((a, b) => b.id.localeCompare(a.id)).slice(0, 10);
   }
+
+  async delete(id: string): Promise<void> {
+    const filePath = path.join(KODAX_SESSIONS_DIR, `${id}.jsonl`);
+    if (fsSync.existsSync(filePath)) {
+      await fs.unlink(filePath);
+    }
+  }
+
+  async deleteAll(gitRoot?: string): Promise<void> {
+    const currentGitRoot = gitRoot ?? await getGitRoot();
+    const sessions = await this.list(currentGitRoot ?? undefined);
+    for (const s of sessions) {
+      await this.delete(s.id);
+    }
+  }
 }
 
 // ============== 用户确认 ==============
