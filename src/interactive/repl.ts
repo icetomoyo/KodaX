@@ -406,16 +406,16 @@ function extractTitle(messages: KodaXMessage[]): string {
 function printStartupBanner(config: CurrentConfig, mode: string): void {
   const model = getProviderModel(config.provider) ?? config.provider;
 
-  const logo = chalk.cyan(`
-   █████╗ ██╗     ██████╗  ██████╗ ███████╗ ██████╗ ██████╗
-  ██╔══██╗██║     ██╔══██╗██╔════╝ ██╔════╝██╔═══██╗██╔══██╗
-  ███████║██║     ██████╔╝██║  ███╗█████╗  ██║   ██║██████╔╝
-  ██╔══██║██║     ██╔══██╗██║   ██║██╔══╝  ██║   ██║██╔══██╗
-  ██║  ██║███████╗██║  ██║╚██████╔╝███████╗╚██████╔╝██║  ██║
-  ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝ ╚═════╝ ╚═╝  ╚═╝`);
+  // 简洁的 KodaX ASCII logo
+  const logo = `
+    _\\__       __/
+    \\  /    __  \\
+     \\  __/  \\  \\
+      \\/  \\   \\  \\
+          KodaX`;
 
-  console.log(chalk.cyan('\n') + logo);
-  console.log(chalk.white(`\n  KodaX v${KODAX_VERSION}  |  AI Coding Agent  |  ${config.provider}:${model}`));
+  console.log(chalk.cyan('\n' + logo));
+  console.log(chalk.white(`\n  v${KODAX_VERSION}  |  AI Coding Agent  |  ${config.provider}:${model}`));
   console.log(chalk.dim('\n  ────────────────────────────────────────────────────────'));
   console.log(chalk.dim('  Mode: ') + chalk.cyan(mode) + chalk.dim('  |  Thinking: ') + (config.thinking ? chalk.green('on') : chalk.dim('off')) + chalk.dim('  |  Auto: ') + (config.noConfirm ? chalk.green('on') : chalk.dim('off')));
   console.log(chalk.dim('  ────────────────────────────────────────────────────────\n'));
