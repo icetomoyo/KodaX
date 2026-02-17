@@ -574,6 +574,17 @@ class KimiCodeProvider extends KodaXAnthropicCompatProvider {
   constructor() { super(); this.initClient(); }
 }
 
+class MiniMaxCodingProvider extends KodaXAnthropicCompatProvider {
+  readonly name = 'minimax-coding';
+  protected readonly config: KodaXProviderConfig = {
+    apiKeyEnv: 'MINIMAX_API_KEY',
+    baseUrl: 'https://api.minimaxi.com/anthropic',
+    model: 'MiniMax-M2.5',
+    supportsThinking: true,
+  };
+  constructor() { super(); this.initClient(); }
+}
+
 // ============== OpenAI 兼容 Provider 基类 ==============
 
 export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
@@ -692,6 +703,7 @@ export const KODAX_PROVIDERS: Record<string, () => KodaXBaseProvider> = {
   qwen: () => new QwenProvider(),
   zhipu: () => new ZhipuProvider(),
   'zhipu-coding': () => new ZhipuCodingProvider(),
+  'minimax-coding': () => new MiniMaxCodingProvider(),
 };
 
 export function getProvider(name?: string): KodaXBaseProvider {
@@ -792,6 +804,7 @@ async function toolEdit(input: Record<string, unknown>, ctx: KodaXToolExecutionC
   if (!content.includes(oldStr)) return `[Tool Error] old_string not found`;
   const count = content.split(oldStr).length - 1;
   if (count > 1 && !replaceAll) return `[Tool Error] old_string appears ${count} times. Use replace_all=true`;
+  // 使用字面字符串匹配（非正则），split/join 是安全的
   const newContent = replaceAll ? content.split(oldStr).join(newStr) : content.replace(oldStr, newStr);
   await fs.writeFile(filePath, newContent, 'utf-8');
   return `File edited: ${filePath}`;

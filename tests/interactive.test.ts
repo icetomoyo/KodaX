@@ -754,3 +754,75 @@ describe('processSpecialSyntax', () => {
     consoleSpy.mockRestore();
   });
 });
+
+// ============== Shell 命令跳过逻辑测试 (Bug 1 修复验证) ==============
+// Warp 风格：成功执行 → 跳过，空命令 → 跳过，失败/错误 → 发送给 LLM
+
+describe('Shell Command Skip Logic (Warp Style)', () => {
+  // 模拟修复后的跳过逻辑
+  function shouldSkipShellCommand(trimmed: string, processed: string): boolean {
+    if (trimmed.startsWith('!')) {
+      if (processed.startsWith('[Shell command executed:') || processed.startsWith('[Shell:')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  it('should skip successful shell command', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const processed = await processSpecialSyntax('!echo hello');
+
+    expect(shouldSkipShellCommand('!echo hello', processed)).toBe(true);
+    consoleSpy.mockRestore();
+  });
+
+  it('should skip empty shell command', () => {
+    const processed = '[Shell: No command provided]';
+    expect(shouldSkipShellCommand('!', processed)).toBe(true);
+  });
+
+  it('should skip shell command with only whitespace', () => {
+    const processed = '[Shell: No command provided]';
+    expect(shouldSkipShellCommand('!   ', processed)).toBe(true);
+  });
+
+  it('should NOT skip failed shell command - exits with error', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const processed = await processSpecialSyntax('!exit 1');
+
+    expect(shouldSkipShellCommand('!exit 1', processed)).toBe(false);
+    consoleSpy.mockRestore();
+  });
+
+  it('should NOT skip non-existent command', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const processed = await processSpecialSyntax('!nonexistent_cmd_12345');
+
+    expect(shouldSkipShellCommand('!nonexistent_cmd_12345', processed)).toBe(false);
+    consoleSpy.mockRestore();
+  });
+
+  it('should NOT skip command that fails due to missing module', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    // Use a command that will fail
+    const processed = await processSpecialSyntax('!npm run nonexistent-script');
+
+    expect(shouldSkipShellCommand('!npm run nonexistent-script', processed)).toBe(false);
+    consoleSpy.mockRestore();
+  });
+
+  it('should not skip non-shell commands', () => {
+    expect(shouldSkipShellCommand('hello world', 'hello world')).toBe(false);
+    expect(shouldSkipShellCommand('/help', '/help')).toBe(false);
+    expect(shouldSkipShellCommand('', '')).toBe(false);
+  });
+
+  it('should handle commands that produce no output', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const processed = await processSpecialSyntax('!true');
+
+    expect(shouldSkipShellCommand('!true', processed)).toBe(true);
+    consoleSpy.mockRestore();
+  });
+});

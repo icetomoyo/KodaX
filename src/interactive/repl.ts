@@ -176,10 +176,14 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     // 处理特殊语法
     const processed = await processSpecialSyntax(trimmed);
 
-    // 如果是纯 shell 命令（!command），只显示结果，不发送到 LLM
-    if (trimmed.startsWith('!') && processed.startsWith('[Shell')) {
-      // Shell 命令已执行并显示结果，跳过 LLM 处理
-      continue;
+    // Shell 命令处理：Warp 风格
+    // - 成功执行 → 跳过（结果已显示）
+    // - 空命令 → 跳过（用户知道）
+    // - 失败/错误 → 发送给 LLM（需要智能帮助）
+    if (trimmed.startsWith('!')) {
+      if (processed.startsWith('[Shell command executed:') || processed.startsWith('[Shell:')) {
+        continue;
+      }
     }
 
     // 添加用户消息到上下文
