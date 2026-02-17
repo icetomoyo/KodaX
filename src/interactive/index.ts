@@ -2,7 +2,7 @@
  * KodaX 交互式模块
  */
 
-export { runInteractiveMode, type RepLOptions } from './repl.js';
+export { runInteractiveMode, processSpecialSyntax, type RepLOptions } from './repl.js';
 export {
   InteractiveContext,
   InteractiveMode,

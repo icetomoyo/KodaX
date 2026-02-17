@@ -3,7 +3,11 @@
  */
 
 import * as readline from 'readline';
+import * as childProcess from 'child_process';
+import * as util from 'util';
 import chalk from 'chalk';
+
+const execAsync = util.promisify(childProcess.exec);
 import {
   KodaXOptions,
   KodaXMessage,
@@ -172,6 +176,12 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     // 处理特殊语法
     const processed = await processSpecialSyntax(trimmed);
 
+    // 如果是纯 shell 命令（!command），只显示结果，不发送到 LLM
+    if (trimmed.startsWith('!') && processed.startsWith('[Shell')) {
+      // Shell 命令已执行并显示结果，跳过 LLM 处理
+      continue;
+    }
+
     // 添加用户消息到上下文
     context.messages.push({ role: 'user', content: processed });
 
@@ -234,7 +244,7 @@ function askInput(rl: readline.Interface, prompt: string): Promise<string> {
 }
 
 // 处理特殊语法
-async function processSpecialSyntax(input: string): Promise<string> {
+export async function processSpecialSyntax(input: string): Promise<string> {
   // @file 语法：添加文件内容到上下文
   const fileRefs = input.match(/@[\w./-]+/g);
   if (fileRefs) {
@@ -247,8 +257,51 @@ async function processSpecialSyntax(input: string): Promise<string> {
 
   // !command 语法：执行 shell 命令
   if (input.startsWith('!')) {
-    // 暂时保留原样，后续实现
-    return input;
+    const command = input.slice(1).trim();
+    if (!command) {
+      return '[Shell: No command provided]';
+    }
+
+    try {
+      console.log(chalk.dim(`\n[Executing: ${command}]`));
+      const { stdout, stderr } = await execAsync(command, {
+        maxBuffer: 1024 * 1024, // 1MB buffer
+        timeout: 30000, // 30 second timeout
+      });
+
+      let result = '';
+      if (stdout) {
+        result += stdout;
+      }
+      if (stderr) {
+        result += (result ? '\n' : '') + `[stderr] ${stderr}`;
+      }
+
+      // Truncate if too long
+      const maxLength = 8000;
+      if (result.length > maxLength) {
+        result = result.slice(0, maxLength) + '\n...[output truncated]';
+      }
+
+      console.log(chalk.dim(result || '[No output]'));
+      console.log(); // Add blank line
+
+      return `[Shell command executed: ${command}]\n\nOutput:\n${result || '(no output)'}`;
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      let errorMessage = err.message;
+
+      // Truncate error if too long
+      const maxLength = 4000;
+      if (errorMessage.length > maxLength) {
+        errorMessage = errorMessage.slice(0, maxLength) + '\n...[error truncated]';
+      }
+
+      console.log(chalk.red(`\n[Shell Error: ${errorMessage}]`));
+      console.log(); // Add blank line
+
+      return `[Shell command failed: ${command}]\n\nError: ${errorMessage}`;
+    }
   }
 
   return input;

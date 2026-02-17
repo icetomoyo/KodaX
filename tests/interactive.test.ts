@@ -15,6 +15,7 @@ import {
   executeCommand,
   BUILTIN_COMMANDS,
   CommandCallbacks,
+  processSpecialSyntax,
 } from '../src/interactive/index.js';
 import { KodaXMessage } from '../src/kodax_core.js';
 
@@ -579,5 +580,177 @@ describe('Context Management Detailed', () => {
     touchContext(context);
 
     expect(context.lastAccessed).not.toBe(originalTime);
+  });
+});
+
+// ============== 特殊语法处理测试 ==============
+
+describe('processSpecialSyntax', () => {
+  it('should return input unchanged for normal text', async () => {
+    const result = await processSpecialSyntax('hello world');
+    expect(result).toBe('hello world');
+  });
+
+  it('should return input unchanged for code questions', async () => {
+    const result = await processSpecialSyntax('how do I fix this bug?');
+    expect(result).toBe('how do I fix this bug?');
+  });
+
+  it('should execute shell command with ! prefix', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const result = await processSpecialSyntax('!echo hello');
+
+    expect(result).toContain('[Shell command executed: echo hello]');
+    expect(result).toContain('hello');
+    expect(consoleSpy).toHaveBeenCalled();
+
+    consoleSpy.mockRestore();
+  });
+
+  it('should handle shell command with no output', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    // true command always succeeds with no output
+    const result = await processSpecialSyntax('!true');
+
+    expect(result).toContain('[Shell command executed: true]');
+    expect(result).toContain('(no output)');
+
+    consoleSpy.mockRestore();
+  });
+
+  it('should handle shell command error', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    // Use a command that will fail
+    const result = await processSpecialSyntax('!exit 1');
+
+    expect(result).toContain('[Shell command failed: exit 1]');
+    expect(result).toContain('Error:');
+
+    consoleSpy.mockRestore();
+  });
+
+  it('should handle empty shell command', async () => {
+    const result = await processSpecialSyntax('!');
+    expect(result).toBe('[Shell: No command provided]');
+  });
+
+  it('should handle shell command with only whitespace', async () => {
+    const result = await processSpecialSyntax('!   ');
+    expect(result).toBe('[Shell: No command provided]');
+  });
+
+  it('should handle shell command with arguments', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const result = await processSpecialSyntax('!echo test1 test2');
+
+    expect(result).toContain('[Shell command executed: echo test1 test2]');
+    expect(result).toContain('test1 test2');
+
+    consoleSpy.mockRestore();
+  });
+
+  it('should handle multi-line shell output', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const result = await processSpecialSyntax('!echo line1 && echo line2');
+
+    expect(result).toContain('[Shell command executed:');
+    expect(result).toContain('line1');
+
+    consoleSpy.mockRestore();
+  });
+
+  it('should handle shell command with stderr output', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    // Use a command that writes to stderr (node -e works cross-platform)
+    const result = await processSpecialSyntax('!node -e "console.error(\'stderr output\')"');
+
+    expect(result).toContain('[Shell command executed:');
+    expect(result).toContain('stderr');
+    expect(result).toContain('[stderr]');
+
+    consoleSpy.mockRestore();
+  });
+
+  it('should handle shell command with special characters', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const result = await processSpecialSyntax('!echo "hello $WORLD"');
+
+    expect(result).toContain('[Shell command executed:');
+    expect(result).toContain('hello');
+
+    consoleSpy.mockRestore();
+  });
+
+  it('should handle shell command with quotes', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const result = await processSpecialSyntax('!echo "hello world"');
+
+    expect(result).toContain('[Shell command executed:');
+    expect(result).toContain('hello world');
+
+    consoleSpy.mockRestore();
+  });
+
+  it('should handle shell command with pipes', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const result = await processSpecialSyntax('!echo hello | cat');
+
+    expect(result).toContain('[Shell command executed:');
+    expect(result).toContain('hello');
+
+    consoleSpy.mockRestore();
+  });
+
+  it('should handle non-existent command', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const result = await processSpecialSyntax('!nonexistentcommand12345');
+
+    expect(result).toContain('[Shell command failed:');
+    expect(result).toContain('Error:');
+
+    consoleSpy.mockRestore();
+  });
+
+  it('should return @file syntax unchanged (not implemented yet)', async () => {
+    const result = await processSpecialSyntax('@./src/file.ts');
+    // @file syntax is not implemented yet, so it should return unchanged
+    expect(result).toBe('@./src/file.ts');
+  });
+
+  it('should handle input with @file and normal text', async () => {
+    const result = await processSpecialSyntax('check @./src/file.ts for bugs');
+    // @file syntax is not implemented yet, so it should return unchanged
+    expect(result).toBe('check @./src/file.ts for bugs');
+  });
+
+  it('should handle shell command with cd', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const result = await processSpecialSyntax('!cd . && echo success');
+
+    expect(result).toContain('[Shell command executed:');
+    expect(result).toContain('success');
+
+    consoleSpy.mockRestore();
+  });
+
+  it('should handle git command', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const result = await processSpecialSyntax('!git --version');
+
+    expect(result).toContain('[Shell command executed:');
+    expect(result).toContain('git version');
+
+    consoleSpy.mockRestore();
+  });
+
+  it('should handle npm command', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const result = await processSpecialSyntax('!npm --version');
+
+    expect(result).toContain('[Shell command executed:');
+    // npm version should be a number-like string
+    expect(result).toMatch(/\d+\.\d+\.\d+/);
+
+    consoleSpy.mockRestore();
   });
 });
