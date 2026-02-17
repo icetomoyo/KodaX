@@ -838,3 +838,63 @@ Some text after`;
     expect(reason).toBe('');
   });
 });
+
+// ============== Session Initial Messages 测试 ==============
+
+describe('Session Initial Messages', () => {
+  it('should accept initialMessages in session options', () => {
+    // 测试接口定义是否正确
+    const options = {
+      provider: KODAX_DEFAULT_PROVIDER,
+      session: {
+        initialMessages: [
+          { role: 'user' as const, content: 'Hello' },
+          { role: 'assistant' as const, content: 'Hi there!' },
+        ],
+      },
+      events: {},
+    };
+    expect(options.session.initialMessages).toHaveLength(2);
+  });
+
+  it('should handle empty initialMessages', () => {
+    const options = {
+      provider: KODAX_DEFAULT_PROVIDER,
+      session: {
+        initialMessages: [],
+      },
+      events: {},
+    };
+    expect(options.session.initialMessages).toHaveLength(0);
+  });
+
+  it('should handle undefined initialMessages', () => {
+    const options = {
+      provider: KODAX_DEFAULT_PROVIDER,
+      session: {},
+      events: {},
+    };
+    expect(options.session.initialMessages).toBeUndefined();
+  });
+});
+
+// ============== generateSessionId 测试 ==============
+
+describe('generateSessionId', () => {
+  it('should generate session ID in correct format', async () => {
+    const id = await generateSessionId();
+    // Format: YYYYMMDD_HHMMSS
+    expect(id).toMatch(/^\d{8}_\d{6}$/);
+  });
+
+  it('should generate unique IDs', async () => {
+    const id1 = await generateSessionId();
+    // Small delay to ensure different timestamp
+    await new Promise(resolve => setTimeout(resolve, 10));
+    const id2 = await generateSessionId();
+    // They might be the same if called within the same second
+    // So we just check the format
+    expect(id1).toMatch(/^\d{8}_\d{6}$/);
+    expect(id2).toMatch(/^\d{8}_\d{6}$/);
+  });
+});

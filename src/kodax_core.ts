@@ -145,6 +145,7 @@ export interface KodaXSessionOptions {
   id?: string;
   resume?: boolean;
   storage?: KodaXSessionStorage;
+  initialMessages?: KodaXMessage[];  // 初始消息（用于交互式模式的多轮对话）
 }
 
 export interface KodaXContextOptions {
@@ -1188,6 +1189,18 @@ export async function generateSessionId(): Promise<string> {
   return `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
 }
 
+// 从消息中提取标题
+function extractTitleFromMessages(messages: KodaXMessage[]): string {
+  const firstUser = messages.find(m => m.role === 'user');
+  if (firstUser) {
+    const content = typeof firstUser.content === 'string'
+      ? firstUser.content
+      : '';
+    return content.slice(0, 50) + (content.length > 50 ? '...' : '');
+  }
+  return 'Untitled Session';
+}
+
 // ============== 核心 Agent 函数 ==============
 
 export async function runKodaX(
@@ -1207,7 +1220,11 @@ export async function runKodaX(
   let messages: KodaXMessage[] = [];
   let title = '';
 
-  if (options.session?.storage && options.session.id) {
+  // 优先使用 initialMessages（用于交互式模式的多轮对话）
+  if (options.session?.initialMessages && options.session.initialMessages.length > 0) {
+    messages = [...options.session.initialMessages];
+    title = extractTitleFromMessages(messages);
+  } else if (options.session?.storage && options.session.id) {
     const loaded = await options.session.storage.load(options.session.id);
     if (loaded) {
       messages = loaded.messages;

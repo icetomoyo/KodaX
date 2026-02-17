@@ -132,10 +132,10 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
       for (let i = 0; i < recent.length; i++) {
         const m = recent[i]!;
         const role = chalk.cyan(m.role.padEnd(10));
-        const preview = typeof m.content === 'string'
-          ? m.content.slice(0, 60).replace(/\n/g, ' ')
-          : '[Complex content]';
-        console.log(`  ${(i + 1).toString().padStart(2)}. ${role} ${preview}...`);
+        const content = typeof m.content === 'string' ? m.content : '[Complex content]';
+        const preview = content.slice(0, 60).replace(/\n/g, ' ');
+        const ellipsis = content.length > 60 ? '...' : '';
+        console.log(`  ${(i + 1).toString().padStart(2)}. ${role} ${preview}${ellipsis}`);
       }
       console.log();
     },
@@ -176,12 +176,8 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     try {
       const result = await runAgentRound(currentOptions, context, processed);
 
-      // 添加助手响应到上下文
-      if (result.messages.length > context.messages.length) {
-        // 获取新的消息
-        const newMessages = result.messages.slice(context.messages.length);
-        context.messages.push(...newMessages);
-      }
+      // 更新上下文中的消息（runKodaX 返回完整的消息列表）
+      context.messages = result.messages;
 
       // 自动保存
       if (context.messages.length > 0) {
@@ -242,12 +238,15 @@ async function runAgentRound(
   // 创建事件回调
   const events = options.events ?? {};
 
-  // 如果没有自定义事件，使用默认的 CLI 事件
-  // 这里简化处理，直接调用 runKodaX
+  // 传递已有的对话历史，实现多轮对话
   return runKodaX(
     {
       ...options,
       events,
+      session: {
+        ...options.session,
+        initialMessages: context.messages,  // 传递已有消息
+      },
     },
     prompt
   );
