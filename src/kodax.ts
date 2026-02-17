@@ -447,9 +447,10 @@ abstract class AnthropicCompatProvider extends BaseProvider {
             process.stdout.write(delta.text ?? '');
           } else if (delta.type === 'input_json_delta') {
             currentToolInput += delta.partial_json ?? '';
+            const charCount = currentToolInput.length;
             // tool_use JSON 流式传输期间显示进度
             if (globalSpinner && !globalSpinner.isStopped()) {
-              globalSpinner.updateText(`Receiving ${currentToolName}...`);
+              globalSpinner.updateText(`Receiving ${currentToolName}... (${charCount} chars)`);
             } else if (!globalSpinner) {
               // 如果 spinner 已停止（因为 thinking 结束后），先换行再创建 spinner
               // 但只在第一次换行，避免多次换行导致显示空旷
@@ -458,7 +459,7 @@ abstract class AnthropicCompatProvider extends BaseProvider {
                 spinnerNewlined = true;
               }
               globalSpinner = startWaitingDots();
-              globalSpinner.updateText(`Receiving ${currentToolName}...`);
+              globalSpinner.updateText(`Receiving ${currentToolName}... (${charCount} chars)`);
             }
           }
         } else if (event.type === 'content_block_stop') {

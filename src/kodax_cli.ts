@@ -356,9 +356,10 @@ function createCliEvents(): KodaXEvents {
       spinner.updateText(`Executing ${tool.name}...`);
     },
 
-    onToolInputDelta: (toolName: string, _json: string) => {
+    onToolInputDelta: (toolName: string, json: string) => {
+      const charCount = json.length;
       if (spinner && !spinner.isStopped()) {
-        spinner.updateText(`Receiving ${toolName}...`);
+        spinner.updateText(`Receiving ${toolName}... (${charCount} chars)`);
       } else if (!spinner || spinner.isStopped()) {
         // 如果 spinner 已停止（因为 thinking 结束后），先换行再创建 spinner
         // 与 kodax.ts 行为一致
@@ -368,7 +369,7 @@ function createCliEvents(): KodaXEvents {
           needNewline = false;  // 已经换行，onStreamEnd 不需要再换行
         }
         spinner = startWaitingDots();
-        spinner.updateText(`Receiving ${toolName}...`);
+        spinner.updateText(`Receiving ${toolName}... (${charCount} chars)`);
       }
     },
 
