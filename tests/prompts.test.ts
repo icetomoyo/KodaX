@@ -282,15 +282,13 @@ describe('Retry Prompts Content Verification', () => {
 // ============== 源文件一致性测试 ==============
 
 describe('Source File Consistency', () => {
-  const kodaxPath = path.join(process.cwd(), 'src', 'kodax.ts');
   const kodaxCorePath = path.join(process.cwd(), 'src', 'kodax_core.ts');
   const kodaxCliPath = path.join(process.cwd(), 'src', 'kodax_cli.ts');
 
-  it('should have SYSTEM_PROMPT in both files', async () => {
-    const kodaxContent = await fs.readFile(kodaxPath, 'utf-8');
+  it('should have SYSTEM_PROMPT in kodax_core.ts', async () => {
     const kodaxCoreContent = await fs.readFile(kodaxCorePath, 'utf-8');
 
-    // Verify key sections exist in both
+    // Verify key sections exist
     const keySections = [
       '## Large File Handling (IMPORTANT)',
       'Example approach for large files:',
@@ -303,13 +301,11 @@ describe('Source File Consistency', () => {
     ];
 
     for (const section of keySections) {
-      expect(kodaxContent).toContain(section);
       expect(kodaxCoreContent).toContain(section);
     }
   });
 
-  it('should have LONG_RUNNING_PROMPT in both files', async () => {
-    const kodaxContent = await fs.readFile(kodaxPath, 'utf-8');
+  it('should have LONG_RUNNING_PROMPT in kodax_core.ts', async () => {
     const kodaxCoreContent = await fs.readFile(kodaxCorePath, 'utf-8');
 
     const keySections = [
@@ -320,13 +316,11 @@ describe('Source File Consistency', () => {
     ];
 
     for (const section of keySections) {
-      expect(kodaxContent).toContain(section);
       expect(kodaxCoreContent).toContain(section);
     }
   });
 
-  it('should have buildInitPrompt in both files', async () => {
-    const kodaxContent = await fs.readFile(kodaxPath, 'utf-8');
+  it('should have buildInitPrompt in kodax_cli.ts', async () => {
     const kodaxCliContent = await fs.readFile(kodaxCliPath, 'utf-8');
 
     const keySections = [
@@ -340,13 +334,11 @@ describe('Source File Consistency', () => {
     ];
 
     for (const section of keySections) {
-      expect(kodaxContent).toContain(section);
       expect(kodaxCliContent).toContain(section);
     }
   });
 
-  it('should have --append prompt in both files', async () => {
-    const kodaxContent = await fs.readFile(kodaxPath, 'utf-8');
+  it('should have --append prompt in kodax_cli.ts', async () => {
     const kodaxCliContent = await fs.readFile(kodaxCliPath, 'utf-8');
 
     const keySections = [
@@ -356,7 +348,6 @@ describe('Source File Consistency', () => {
     ];
 
     for (const section of keySections) {
-      expect(kodaxContent).toContain(section);
       expect(kodaxCliContent).toContain(section);
     }
   });

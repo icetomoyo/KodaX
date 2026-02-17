@@ -163,7 +163,6 @@ export function parseCommandCall(input: string): [string, string?] | null {
 interface CliOptions {
   provider: string;
   thinking: boolean;
-  confirm?: string;
   auto: boolean;
   session?: string;
   parallel: boolean;
@@ -176,7 +175,10 @@ interface CliOptions {
   maxSessions: number;
   maxHours: number;
   prompt: string[];
-  noInteractive: boolean;
+  continue?: boolean;
+  resume?: string;
+  noSession: boolean;
+  print?: boolean;
 }
 
 // ============== Spinner 动画 ==============
@@ -325,14 +327,18 @@ async function confirmAction(name: string, input: Record<string, unknown>): Prom
 
 // ============== CLI 事件处理器 ==============
 
-function createCliEvents(): KodaXEvents {
+function createCliEvents(showSessionId = true): KodaXEvents {
   let spinner: ReturnType<typeof startWaitingDots> | null = null;
   let thinkingCharCount = 0;
   let needNewline = false;  // 是否需要在 onStreamEnd 中换行
 
   const events: KodaXEvents = {
     onSessionStart: (info: { provider: string; sessionId: string }) => {
-      console.log(chalk.cyan(`[KodaX] Provider: ${info.provider} | Session: ${info.sessionId}`));
+      if (showSessionId) {
+        console.log(chalk.cyan(`[KodaX] Provider: ${info.provider} | Session: ${info.sessionId}`));
+      } else {
+        console.log(chalk.cyan(`[KodaX] Provider: ${info.provider}`));
+      }
     },
 
     onTextDelta: (text: string) => {
@@ -455,7 +461,7 @@ function createCliEvents(): KodaXEvents {
 
 // ============== CLI 选项转换 ==============
 
-function createKodaXOptions(cliOptions: CliOptions): KodaXOptions {
+function createKodaXOptions(cliOptions: CliOptions, isPrintMode = false): KodaXOptions {
   return {
     provider: cliOptions.provider,
     thinking: cliOptions.thinking,
@@ -464,16 +470,53 @@ function createKodaXOptions(cliOptions: CliOptions): KodaXOptions {
     auto: cliOptions.auto,
     confirmTools: cliOptions.auto
       ? new Set()
-      : cliOptions.confirm
-        ? new Set(cliOptions.confirm.split(','))
-        : new Set(['bash', 'write', 'edit']),
-    session: cliOptions.session ? {
-      id: cliOptions.session === 'resume' ? undefined : cliOptions.session,
-      resume: cliOptions.session === 'resume',
-      storage: new FileSessionStorage(),
-    } : undefined,
-    events: createCliEvents(),
+      : new Set(['bash', 'write', 'edit']),
+    session: buildSessionOptions(cliOptions),
+    events: createCliEvents(!isPrintMode),
   };
+}
+
+// 构建 session 选项
+function buildSessionOptions(cliOptions: CliOptions): { id?: string; resume?: boolean; storage: FileSessionStorage; autoResume?: boolean } | undefined {
+  const storage = new FileSessionStorage();
+
+  // -p --no-session: 不启用 session（纯无状态）
+  if (cliOptions.print && cliOptions.noSession) {
+    return undefined;
+  }
+
+  // -r <id>: 恢复指定会话
+  if (cliOptions.resume) {
+    return { id: cliOptions.resume, storage };
+  }
+
+  // -c: 继续最近会话
+  if (cliOptions.continue) {
+    return { resume: true, storage };
+  }
+
+  // -s resume: 向后兼容
+  if (cliOptions.session === 'resume') {
+    return { resume: true, storage };
+  }
+
+  // -s <id>: 向后兼容
+  if (cliOptions.session && cliOptions.session !== 'list' && cliOptions.session !== 'delete-all' && !cliOptions.session.startsWith('delete ')) {
+    return { id: cliOptions.session, storage };
+  }
+
+  // -p 模式（不带 --no-session）: 启用 session 以便后续 -c 继续
+  if (cliOptions.print) {
+    return { storage };
+  }
+
+  // 纯交互模式（无参数）: 自动恢复最近会话
+  if (!cliOptions.prompt?.length) {
+    return { autoResume: true, storage };
+  }
+
+  // 默认启用 session
+  return { storage };
 }
 
 // ============== --init 提示词构建 ==============
@@ -556,13 +599,15 @@ async function main() {
     .version(version)
     .argument('[prompt...]', 'Your task (optional, enters interactive mode if not provided)')
     // 短参数支持
-    .option('-p, --prompt <text>', 'Task prompt (alternative to positional argument)')
+    .option('-p, --print <text>', 'Print mode: run single task and exit')
+    .option('-c, --continue', 'Continue most recent conversation in current directory')
+    .option('-r, --resume <id>', 'Resume session by ID (no id = interactive picker)')
     .option('-m, --provider <name>', 'LLM provider')
     .option('-t, --thinking', 'Enable thinking mode')
-    .option('-c, --confirm <tools>', 'Tools requiring confirmation')
-    .option('-y, --no-confirm', 'Disable confirmations (YOLO mode)')
-    .option('-s, --session <id>', 'Session: resume, list, or ID')
+    .option('-y, --auto', 'Auto mode: skip all confirmations')
+    .option('-s, --session <id>', 'Session management: list, delete <id>, delete-all')
     .option('-j, --parallel', 'Parallel tool execution')
+    .option('--no-session', 'Disable session persistence (print mode only)')
     // 长参数
     .option('--team <tasks>', 'Run multiple sub-agents in parallel (comma-separated)')
     .option('--init <task>', 'Initialize a long-running task')
@@ -572,7 +617,6 @@ async function main() {
     .option('--auto-continue', 'Auto-continue long-running task until all features pass')
     .option('--max-sessions <n>', 'Max sessions for --auto-continue', '50')
     .option('--max-hours <n>', 'Max hours for --auto-continue', '2')
-    .option('--single-shot', 'Single-shot mode (no interactive, show help if no task)')
     .allowUnknownOption(false)
     .parse();
 
@@ -580,7 +624,7 @@ async function main() {
   // 加载配置文件（用于确定默认值）
   const config = loadConfig();
   // CLI 参数优先，否则用配置文件的值，最后用默认值
-  const cliAuto = opts.noConfirm === true || opts.confirm === false;
+  const cliAuto = opts.auto === true;
   const options: CliOptions = {
     // 优先级：CLI 参数 > 配置文件 > 默认值
     provider: opts.provider ?? config.provider ?? KODAX_DEFAULT_PROVIDER,
@@ -588,7 +632,6 @@ async function main() {
     auto: cliAuto ? true : (config.auto ?? false),
     session: opts.session,
     parallel: opts.parallel ?? false,
-    confirm: opts.confirm,
     team: opts.team,
     init: opts.init,
     append: opts.append ?? false,
@@ -597,8 +640,11 @@ async function main() {
     autoContinue: opts.autoContinue ?? false,
     maxSessions: parseInt(opts.maxSessions ?? '50', 10),
     maxHours: parseFloat(opts.maxHours ?? '2'),
-    prompt: opts.prompt ? [opts.prompt] : program.args,
-    noInteractive: opts.singleShot ?? false,
+    prompt: opts.print ? [opts.print] : program.args,
+    continue: opts.continue ?? false,
+    resume: opts.resume,
+    noSession: opts.noSession ?? false,
+    print: opts.print ? true : false,
   };
 
   // 会话列表
@@ -610,6 +656,28 @@ async function main() {
   }
 
   let userPrompt = options.prompt.join(' ');
+
+  // -r / --resume 不带 id: 交互式选择会话
+  if (opts.resume === true) {
+    try {
+      const storage = new FileSessionStorage();
+      const sessions = await storage.list();
+      if (sessions.length === 0) {
+        console.log(chalk.yellow('No sessions found. Starting new session...'));
+      } else {
+        console.log(chalk.cyan('Recent sessions:'));
+        sessions.forEach((s, i) => {
+          console.log(`  ${i + 1}. ${s.id} [${s.msgCount} msgs] ${s.title}`);
+        });
+        // 默认选择第一个（最近）
+        const selected = sessions[0]!;
+        options.resume = selected.id;
+        console.log(chalk.cyan(`\nResuming session: ${selected.id}`));
+      }
+    } catch (error) {
+      console.log(chalk.yellow('Failed to list sessions. Starting new session...'));
+    }
+  }
 
   // --auto-continue: 自动循环
   if (options.autoContinue) {
@@ -665,7 +733,7 @@ async function main() {
       const kodaXOptions = createKodaXOptions({
         ...options,
         session: sessionCount === 1 ? firstSessionId : undefined,
-      });
+      }, false);
 
       const result = await runKodaX(kodaXOptions, prompt);
 
@@ -855,7 +923,7 @@ New: {"features": [
       const [commandName, args] = parsed;
       const commands = await loadCommands();
       if (commands.has(commandName)) {
-        const kodaXOptions = createKodaXOptions(options);
+        const kodaXOptions = createKodaXOptions(options, false);
         const commandPrompt = await processCommandCall(
           commandName,
           args,
@@ -870,9 +938,9 @@ New: {"features": [
     }
   }
 
-  // 无 prompt 且未禁用交互式模式 → 进入交互式
-  if (!userPrompt && !options.init && !options.noInteractive) {
-    const kodaXOptions = createKodaXOptions(options);
+  // 无 prompt 且非 print 模式 → 进入交互式
+  if (!userPrompt && !options.init && !options.print) {
+    const kodaXOptions = createKodaXOptions(options, false);
     // 传递 FileSessionStorage 以支持会话持久化
     await runInteractiveMode({
       ...kodaXOptions,
@@ -881,19 +949,21 @@ New: {"features": [
     return;
   }
 
-  // 显示帮助（仅在 --no-interactive 且无任务时）
-  if (!userPrompt && !options.init && options.noInteractive) {
+  // 显示帮助（print 模式且无任务时）
+  if (!userPrompt && !options.init && options.print) {
     console.log('KodaX - 极致轻量化 Coding Agent\n');
     console.log('Usage: kodax [options] [prompt]');
-    console.log('       kodax -p "your task"');
+    console.log('       kodax "your task"');
     console.log('       kodax /command_name\n');
     console.log('Options:');
-    console.log('  -p, --prompt TEXT      Task prompt');
+    console.log('  -p, --print TEXT       Print mode: run single task and exit');
+    console.log('  -c, --continue         Continue most recent conversation');
+    console.log('  -r, --resume [id]      Resume session by ID (no id = interactive picker)');
     console.log('  -m, --provider NAME    LLM provider (anthropic, kimi, kimi-code, qwen, zhipu, openai, zhipu-coding)');
     console.log('  -t, --thinking         Enable thinking mode');
-    console.log('  -c, --confirm TOOLS    Tools requiring confirmation');
-    console.log('  -y, --no-confirm       Enable auto mode (skip all confirmations)');
-    console.log('  -s, --session ID       Session management (resume, list, or ID)');
+    console.log('  -y, --auto             Auto mode: skip all confirmations');
+    console.log('  -s, --session ID       Session management (list, delete <id>, delete-all)');
+    console.log('  --no-session           Disable session persistence (print mode only)');
     console.log('  -j, --parallel         Parallel tool execution');
     console.log('  --team TASKS           Run multiple sub-agents in parallel');
     console.log('  --init TASK            Initialize a long-running task');
@@ -902,8 +972,7 @@ New: {"features": [
     console.log('  --max-iter N           Max iterations per session (default: 50)');
     console.log('  --auto-continue        Auto-continue long-running task until all features pass');
     console.log('  --max-sessions N       Max sessions for --auto-continue (default: 50)');
-    console.log('  --max-hours H          Max hours for --auto-continue (default: 2.0)');
-    console.log('  --single-shot          Single-shot mode (show help if no task)\n');
+    console.log('  --max-hours H          Max hours for --auto-continue (default: 2.0)\n');
     console.log('Interactive Commands (in REPL mode):');
     console.log('  /help, /h              Show all commands');
     console.log('  /exit, /quit           Exit interactive mode');
@@ -912,15 +981,18 @@ New: {"features": [
     console.log('  /mode [code|ask]       Switch mode');
     console.log('  /sessions              List saved sessions\n');
     console.log('Examples:');
-    console.log('  kodax                            # Enter interactive mode (default)');
-    console.log('  kodax "create a component"       # Run single task');
+    console.log('  kodax                            # Enter interactive mode (auto-resume)');
+    console.log('  kodax "create a component"       # Run single task (with session)');
     console.log('  kodax -p "quick fix" -t          # Quick task with thinking');
-    console.log('  kodax -m kimi-code -t "task"     # Use Kimi Code with thinking\n');
+    console.log('  kodax -c                         # Continue recent conversation');
+    console.log('  kodax -c "finish this"           # Continue with new task');
+    console.log('  kodax -r                         # Pick session to resume');
+    console.log('  kodax -p "task" --no-session     # Run without saving session\n');
     return;
   }
 
   // 正常运行
-  const kodaXOptions = createKodaXOptions(options);
+  const kodaXOptions = createKodaXOptions(options, options.print ?? false);
   await runKodaX(kodaXOptions, userPrompt);
 }
 

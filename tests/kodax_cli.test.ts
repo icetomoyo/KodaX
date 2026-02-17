@@ -290,34 +290,65 @@ describe('CLI Entry Point', () => {
   });
 });
 
+// 创建与 kodax_cli.ts 一致的 Command 配置（全局可复用）
+function createTestCommand(): Command {
+  return new Command()
+    .allowUnknownOption(false)
+    .option('-p, --print <text>', 'Print mode: run single task and exit')
+    .option('-c, --continue', 'Continue most recent conversation in current directory')
+    .option('-r, --resume <id>', 'Resume session by ID (no id = interactive picker)')
+    .option('-m, --provider <name>', 'LLM provider', KODAX_DEFAULT_PROVIDER)
+    .option('-t, --thinking', 'Enable thinking mode')
+    .option('-y, --auto', 'Auto mode: skip all confirmations')
+    .option('-s, --session <id>', 'Session management: list, delete <id>, delete-all')
+    .option('-j, --parallel', 'Parallel tool execution')
+    .option('--no-session', 'Disable session persistence (print mode only)');
+}
+
 // ============== CLI 选项解析测试 ==============
 
 describe('CLI Option Parsing', () => {
-  // 创建与 kodax_cli.ts 一致的 Command 配置
-  function createTestCommand(): Command {
-    return new Command()
-      .allowUnknownOption(false)
-      .option('-p, --prompt <text>', 'Task prompt')
-      .option('-m, --provider <name>', 'LLM provider', KODAX_DEFAULT_PROVIDER)
-      .option('-t, --thinking', 'Enable thinking mode')
-      .option('-c, --confirm <tools>', 'Tools requiring confirmation')
-      .option('-y, --no-confirm', 'Disable confirmations')
-      .option('-s, --session <id>', 'Session')
-      .option('-j, --parallel', 'Parallel tool execution');
-  }
 
-  it('should parse -p (prompt) option', () => {
+  it('should parse -p (print) option', () => {
     const program = createTestCommand();
     program.parse(['node', 'test', '-p', 'hello world']);
     const opts = program.opts();
-    expect(opts.prompt).toBe('hello world');
+    expect(opts.print).toBe('hello world');
   });
 
-  it('should parse --prompt option', () => {
+  it('should parse --print option', () => {
     const program = createTestCommand();
-    program.parse(['node', 'test', '--prompt', 'hello world']);
+    program.parse(['node', 'test', '--print', 'hello world']);
     const opts = program.opts();
-    expect(opts.prompt).toBe('hello world');
+    expect(opts.print).toBe('hello world');
+  });
+
+  it('should parse -c (continue) option', () => {
+    const program = createTestCommand();
+    program.parse(['node', 'test', '-c']);
+    const opts = program.opts();
+    expect(opts.continue).toBe(true);
+  });
+
+  it('should parse --continue option', () => {
+    const program = createTestCommand();
+    program.parse(['node', 'test', '--continue']);
+    const opts = program.opts();
+    expect(opts.continue).toBe(true);
+  });
+
+  it('should parse -r (resume) option with ID', () => {
+    const program = createTestCommand();
+    program.parse(['node', 'test', '-r', 'abc123']);
+    const opts = program.opts();
+    expect(opts.resume).toBe('abc123');
+  });
+
+  it('should parse --resume option with ID', () => {
+    const program = createTestCommand();
+    program.parse(['node', 'test', '--resume', 'session-456']);
+    const opts = program.opts();
+    expect(opts.resume).toBe('session-456');
   });
 
   it('should parse -m (provider) option', () => {
@@ -355,19 +386,18 @@ describe('CLI Option Parsing', () => {
     expect(opts.thinking).toBe(true);
   });
 
-  it('should parse -c (confirm) option', () => {
-    const program = createTestCommand();
-    program.parse(['node', 'test', '-c', 'bash,write']);
-    const opts = program.opts();
-    expect(opts.confirm).toBe('bash,write');
-  });
-
-  it('should parse -y (auto mode) option', () => {
+  it('should parse -y (auto) option', () => {
     const program = createTestCommand();
     program.parse(['node', 'test', '-y']);
     const opts = program.opts();
-    // Commander converts --no-confirm to confirm: false
-    expect(opts.confirm).toBe(false);
+    expect(opts.auto).toBe(true);
+  });
+
+  it('should parse --auto option', () => {
+    const program = createTestCommand();
+    program.parse(['node', 'test', '--auto']);
+    const opts = program.opts();
+    expect(opts.auto).toBe(true);
   });
 
   it('should parse -s (session) option', () => {
@@ -375,6 +405,20 @@ describe('CLI Option Parsing', () => {
     program.parse(['node', 'test', '-s', 'resume']);
     const opts = program.opts();
     expect(opts.session).toBe('resume');
+  });
+
+  it('should parse -s (session) option with list', () => {
+    const program = createTestCommand();
+    program.parse(['node', 'test', '-s', 'list']);
+    const opts = program.opts();
+    expect(opts.session).toBe('list');
+  });
+
+  it('should parse -s (session) option with delete', () => {
+    const program = createTestCommand();
+    program.parse(['node', 'test', '-s', 'delete abc123']);
+    const opts = program.opts();
+    expect(opts.session).toBe('delete abc123');
   });
 
   it('should parse -j (parallel) option', () => {
@@ -386,20 +430,127 @@ describe('CLI Option Parsing', () => {
 
   it('should parse multiple short options together', () => {
     const program = createTestCommand();
-    program.parse(['node', 'test', '-t', '-j', '-m', 'kimi']);
+    program.parse(['node', 'test', '-t', '-j', '-m', 'kimi', '-c']);
     const opts = program.opts();
     expect(opts.thinking).toBe(true);
     expect(opts.parallel).toBe(true);
     expect(opts.provider).toBe('kimi');
+    expect(opts.continue).toBe(true);
   });
 
   it('should parse short and long options mixed', () => {
     const program = createTestCommand();
-    program.parse(['node', 'test', '-t', '--provider', 'anthropic', '-y']);
+    program.parse(['node', 'test', '-t', '--provider', 'anthropic', '-y', '-r', 'abc']);
     const opts = program.opts();
     expect(opts.thinking).toBe(true);
     expect(opts.provider).toBe('anthropic');
-    // Commander converts --no-confirm (auto mode) to confirm: false
-    expect(opts.confirm).toBe(false);
+    expect(opts.auto).toBe(true);
+    expect(opts.resume).toBe('abc');
+  });
+});
+
+// ============== Session 管理测试 ==============
+
+describe('Session Management', () => {
+  it('should handle session ID format', () => {
+    const testIds = [
+      '20250218_001946',
+      'abc123def456',
+      'session-001',
+      'my_session_123',
+    ];
+
+    for (const id of testIds) {
+      const program = createTestCommand();
+      program.parse(['node', 'test', '-r', id]);
+      const opts = program.opts();
+      expect(opts.resume).toBe(id);
+    }
+  });
+
+  it('should parse session list command', () => {
+    const program = createTestCommand();
+    program.parse(['node', 'test', '-s', 'list']);
+    const opts = program.opts();
+    expect(opts.session).toBe('list');
+  });
+
+  it('should parse session delete command', () => {
+    const program = createTestCommand();
+    program.parse(['node', 'test', '-s', 'delete abc123']);
+    const opts = program.opts();
+    expect(opts.session).toBe('delete abc123');
+  });
+
+  it('should parse session delete-all command', () => {
+    const program = createTestCommand();
+    program.parse(['node', 'test', '-s', 'delete-all']);
+    const opts = program.opts();
+    expect(opts.session).toBe('delete-all');
+  });
+
+  it('should handle print mode with session persistence', () => {
+    const program = createTestCommand();
+    program.parse(['node', 'test', '-p', 'my task']);
+    const opts = program.opts();
+    expect(opts.print).toBe('my task');
+    // By default, -p saves session (unless --no-session is used)
+  });
+
+  it('should handle print mode without session persistence', () => {
+    const program = createTestCommand();
+    program.parse(['node', 'test', '-p', 'my task', '--no-session']);
+    const opts = program.opts();
+    expect(opts.print).toBe('my task');
+    // --no-session disables session persistence
+  });
+
+  it('should handle continue mode without ID', () => {
+    const program = createTestCommand();
+    program.parse(['node', 'test', '-c']);
+    const opts = program.opts();
+    expect(opts.continue).toBe(true);
+    // Should auto-resume most recent session
+  });
+
+  it('should handle resume with ID', () => {
+    const program = createTestCommand();
+    program.parse(['node', 'test', '-r', 'abc123']);
+    const opts = program.opts();
+    expect(opts.resume).toBe('abc123');
+  });
+});
+
+// ============== CLI 行为测试 ==============
+
+describe('CLI Behavior', () => {
+
+  it('should handle empty arguments', () => {
+    const program = createTestCommand();
+    program.parse(['node', 'test']);
+    const opts = program.opts();
+    expect(opts.provider).toBe(KODAX_DEFAULT_PROVIDER);
+    expect(opts.thinking).toBeUndefined();
+    expect(opts.continue).toBeUndefined();
+    expect(opts.resume).toBeUndefined();
+    expect(opts.print).toBeUndefined();
+  });
+
+  it('should reject unknown options', () => {
+    const program = createTestCommand();
+    expect(() => {
+      program.parse(['node', 'test', '--unknown-option']);
+    }).toThrow();
+  });
+
+  it('should handle combined short options', () => {
+    const program = createTestCommand();
+    // Note: commander doesn't support combined short options like -tyj
+    // Each option must be separate or have its own value
+    program.parse(['node', 'test', '-t', '-y', '-j']);
+    const opts = program.opts();
+    expect(opts.thinking).toBe(true);
+    expect(opts.auto).toBe(true);
+    expect(opts.parallel).toBe(true);
   });
 });

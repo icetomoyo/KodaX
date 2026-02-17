@@ -224,6 +224,7 @@ export interface KodaXEvents {
 export interface KodaXSessionOptions {
   id?: string;
   resume?: boolean;
+  autoResume?: boolean;  // 自动恢复当前目录最近会话
   storage?: KodaXSessionStorage;
   initialMessages?: KodaXMessage[];  // 初始消息（用于交互式模式的多轮对话）
 }
@@ -1383,8 +1384,21 @@ export async function runKodaX(
   }
 
   const maxIter = options.maxIter ?? 50;
-  const sessionId = options.session?.id ?? await generateSessionId();
   const events = options.events;
+
+  // 处理 autoResume/resume：自动加载当前目录最近会话
+  let resolvedSessionId = options.session?.id;
+  if ((options.session?.autoResume || options.session?.resume) && options.session?.storage && !resolvedSessionId) {
+    const storage = options.session.storage;
+    if (storage.list) {
+      const sessions = await storage.list();
+      if (sessions.length > 0) {
+        resolvedSessionId = sessions[0]!.id;  // 最近会话
+      }
+    }
+  }
+
+  const sessionId = resolvedSessionId ?? await generateSessionId();
 
   // 加载或初始化消息
   let messages: KodaXMessage[] = [];
@@ -1394,8 +1408,8 @@ export async function runKodaX(
   if (options.session?.initialMessages && options.session.initialMessages.length > 0) {
     messages = [...options.session.initialMessages];
     title = extractTitleFromMessages(messages);
-  } else if (options.session?.storage && options.session.id) {
-    const loaded = await options.session.storage.load(options.session.id);
+  } else if (options.session?.storage && sessionId) {
+    const loaded = await options.session.storage.load(sessionId);
     if (loaded) {
       messages = loaded.messages;
       title = loaded.title;
