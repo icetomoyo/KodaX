@@ -11,6 +11,7 @@ export interface CurrentConfig {
   provider: string;
   thinking: boolean;
   noConfirm: boolean;
+  mode?: string;
 }
 
 // 命令处理器类型

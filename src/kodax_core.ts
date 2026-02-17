@@ -15,6 +15,7 @@ import { spawn, exec } from 'child_process';
 import { glob as globAsync } from 'glob';
 import iconv from 'iconv-lite';
 import { promisify } from 'util';
+import { fileURLToPath } from 'url';
 
 const execAsync = promisify(exec);
 
@@ -30,6 +31,13 @@ export const KODAX_SESSIONS_DIR = path.join(KODAX_DIR, 'sessions');
 export const KODAX_CONFIG_FILE = path.join(KODAX_DIR, 'config.json');
 
 export const KODAX_DEFAULT_PROVIDER = process.env.KODAX_PROVIDER ?? 'zhipu-coding';
+
+// 动态读取版本号
+const packageJsonPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '../package.json');
+const pkgVersion = fsSync.existsSync(packageJsonPath)
+  ? JSON.parse(fsSync.readFileSync(packageJsonPath, 'utf-8')).version
+  : '0.0.0';
+export const KODAX_VERSION = pkgVersion;
 
 // 配置类型
 export interface KodaXConfig {

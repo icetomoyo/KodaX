@@ -20,6 +20,7 @@ import {
   KodaXRateLimitError,
   KodaXProviderError,
   KODAX_DEFAULT_PROVIDER,
+  KODAX_VERSION,
   loadConfig,
   getProviderModel,
 } from '../kodax_core.js';
@@ -91,6 +92,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     provider: initialProvider,
     thinking: initialThinking,
     noConfirm: initialNoConfirm,
+    mode: 'code',
   };
 
   const context = await createInteractiveContext({
@@ -98,8 +100,8 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     gitRoot,
   });
 
-  console.log(chalk.cyan('\n[KodaX Interactive Mode]'));
-  console.log(chalk.dim('Type /help for commands, /exit to quit.\n'));
+  // 打印启动 Banner
+  printStartupBanner(currentConfig, context.mode);
 
   const rl = readline.createInterface({
     input: process.stdin,
@@ -398,4 +400,30 @@ function extractTitle(messages: KodaXMessage[]): string {
     return content.slice(0, 50) + (content.length > 50 ? '...' : '');
   }
   return 'Untitled Session';
+}
+
+// 打印启动 Banner
+function printStartupBanner(config: CurrentConfig, mode: string): void {
+  const model = getProviderModel(config.provider) ?? config.provider;
+
+  const logo = chalk.cyan(`
+   █████╗ ██╗     ██████╗  ██████╗ ███████╗ ██████╗ ██████╗
+  ██╔══██╗██║     ██╔══██╗██╔════╝ ██╔════╝██╔═══██╗██╔══██╗
+  ███████║██║     ██████╔╝██║  ███╗█████╗  ██║   ██║██████╔╝
+  ██╔══██║██║     ██╔══██╗██║   ██║██╔══╝  ██║   ██║██╔══██╗
+  ██║  ██║███████╗██║  ██║╚██████╔╝███████╗╚██████╔╝██║  ██║
+  ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝ ╚═════╝ ╚═╝  ╚═╝`);
+
+  console.log(chalk.cyan('\n') + logo);
+  console.log(chalk.white(`\n  KodaX v${KODAX_VERSION}  |  AI Coding Agent  |  ${config.provider}:${model}`));
+  console.log(chalk.dim('\n  ────────────────────────────────────────────────────────'));
+  console.log(chalk.dim('  Mode: ') + chalk.cyan(mode) + chalk.dim('  |  Thinking: ') + (config.thinking ? chalk.green('on') : chalk.dim('off')) + chalk.dim('  |  Auto: ') + (config.noConfirm ? chalk.green('on') : chalk.dim('off')));
+  console.log(chalk.dim('  ────────────────────────────────────────────────────────\n'));
+
+  console.log(chalk.dim('  Quick tips:'));
+  console.log(chalk.cyan('    /help      ') + chalk.dim('Show all commands'));
+  console.log(chalk.cyan('    /mode      ') + chalk.dim('Switch code/ask mode'));
+  console.log(chalk.cyan('    /clear     ') + chalk.dim('Clear conversation'));
+  console.log(chalk.cyan('    @file      ') + chalk.dim('Add file to context'));
+  console.log(chalk.cyan('    !cmd       ') + chalk.dim('Run shell command\n'));
 }
