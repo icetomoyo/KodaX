@@ -12,6 +12,9 @@ import {
   estimateTokens,
   getGitRoot,
   KodaXSessionStorage,
+  KodaXError,
+  KodaXRateLimitError,
+  KodaXProviderError,
 } from '../kodax_core.js';
 import {
   InteractiveContext,
@@ -190,8 +193,29 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
         });
       }
     } catch (err) {
+      // 处理不同类型的错误
       const error = err instanceof Error ? err : new Error(String(err));
-      console.log(chalk.red(`\n[Error] ${error.message}`));
+
+      // 移除失败的用户消息（避免重复）
+      context.messages.pop();
+
+      // 根据错误类型提供不同的恢复建议
+      if (error.message.includes('rate limit') || error.message.includes('Rate limit')) {
+        console.log(chalk.yellow(`\n[Rate Limit] ${error.message}`));
+        console.log(chalk.dim('Suggestion: Wait a moment and try again, or switch provider with /mode\n'));
+      } else if (error.message.includes('API key') || error.message.includes('not configured')) {
+        console.log(chalk.red(`\n[Configuration Error] ${error.message}`));
+        console.log(chalk.dim('Suggestion: Set the required API key environment variable\n'));
+      } else if (error.message.includes('network') || error.message.includes('ECONNREFUSED') || error.message.includes('ETIMEDOUT')) {
+        console.log(chalk.red(`\n[Network Error] ${error.message}`));
+        console.log(chalk.dim('Suggestion: Check your internet connection and try again\n'));
+      } else if (error.message.includes('token') || error.message.includes('context too long')) {
+        console.log(chalk.yellow(`\n[Context Error] ${error.message}`));
+        console.log(chalk.dim('Suggestion: Use /clear to start a fresh conversation\n'));
+      } else {
+        console.log(chalk.red(`\n[Error] ${error.message}`));
+        console.log(chalk.dim('Your message was not sent. Please try again.\n'));
+      }
     }
   }
 }

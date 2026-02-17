@@ -509,13 +509,15 @@ describe('Tool Execution', () => {
   it('should return error for missing required parameter', async () => {
     const result = await executeTool('read', {}, ctx);
     expect(result).toContain('[Tool Error]');
-    expect(result).toContain("Missing required parameter 'path'");
+    expect(result).toContain('Missing required parameter');
+    expect(result).toContain('path');
   });
 
   it('should return error for unknown tool', async () => {
     const result = await executeTool('unknown_tool', {}, ctx);
     expect(result).toContain('[Tool Error]');
     expect(result).toContain('Unknown tool');
+    expect(result).toContain('Available tools');
   });
 
   it('should read file with correct path format', async () => {

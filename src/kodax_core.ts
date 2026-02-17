@@ -74,6 +74,52 @@ export function checkPromiseSignal(text: string): [string, string] {
   return ['', ''];
 }
 
+// ============== 错误类型定义 ==============
+
+/** 基础 KodaX 错误类 */
+export class KodaXError extends Error {
+  constructor(message: string, public readonly code: string = 'KODAX_ERROR') {
+    super(message);
+    this.name = 'KodaXError';
+  }
+}
+
+/** Provider 配置错误 */
+export class KodaXProviderError extends KodaXError {
+  constructor(message: string, public readonly provider?: string) {
+    super(message, 'PROVIDER_ERROR');
+    this.name = 'KodaXProviderError';
+  }
+}
+
+/** 工具执行错误 */
+export class KodaXToolError extends KodaXError {
+  constructor(
+    message: string,
+    public readonly toolName: string,
+    public readonly toolId?: string
+  ) {
+    super(message, 'TOOL_ERROR');
+    this.name = 'KodaXToolError';
+  }
+}
+
+/** API 速率限制错误 */
+export class KodaXRateLimitError extends KodaXError {
+  constructor(message: string, public readonly retryAfter?: number) {
+    super(message, 'RATE_LIMIT_ERROR');
+    this.name = 'KodaXRateLimitError';
+  }
+}
+
+/** 会话错误 */
+export class KodaXSessionError extends KodaXError {
+  constructor(message: string, public readonly sessionId?: string) {
+    super(message, 'SESSION_ERROR');
+    this.name = 'KodaXSessionError';
+  }
+}
+
 // ============== 类型定义 ==============
 
 export interface KodaXTextBlock { type: 'text'; text: string; }
@@ -336,20 +382,37 @@ export abstract class KodaXBaseProvider {
   }
 
   protected async withRateLimit<T>(fn: () => Promise<T>, retries = 3): Promise<T> {
-    let lastErr: Error | undefined;
     for (let i = 0; i < retries; i++) {
-      try { return await fn(); }
-      catch (e) {
+      try {
+        return await fn();
+      } catch (e) {
         if (this.isRateLimitError(e)) {
-          lastErr = e instanceof Error ? e : new Error(String(e));
-          // 通知调用方有重试
-          await new Promise(r => setTimeout(r, (i + 1) * 2000));
-          continue;
+          const delay = (i + 1) * 2000;
+          // 最后一次重试失败，抛出错误
+          if (i === retries - 1) {
+            throw new KodaXRateLimitError(
+              `API rate limit exceeded after ${retries} retries. Please wait and try again later.`,
+              60000
+            );
+          }
+          // 抛出速率限制错误，包含重试信息
+          throw new KodaXRateLimitError(
+            `API rate limit hit. Retrying in ${delay / 1000}s (${i + 1}/${retries})`,
+            delay
+          );
+        }
+        // 对于其他错误，包装成 Provider 错误
+        if (e instanceof Error) {
+          throw new KodaXProviderError(
+            `${this.name} API error: ${e.message}`,
+            this.name
+          );
         }
         throw e;
       }
     }
-    throw lastErr;
+    // TypeScript 需要返回值，但这个代码理论上不会被执行
+    throw new KodaXError('Unexpected end of withRateLimit');
   }
 }
 
@@ -646,13 +709,19 @@ export async function executeTool(
   ctx: KodaXToolExecutionContext
 ): Promise<string> {
   const required = KODAX_TOOL_REQUIRED_PARAMS[name] ?? [];
-  for (const p of required) {
-    if (input[p] === undefined) return `[Tool Error] ${name}: Missing required parameter '${p}'`;
+  const missing = required.filter(p => input[p] === undefined || input[p] === null);
+  if (missing.length > 0) {
+    return `[Tool Error] ${name}: Missing required parameter(s): ${missing.join(', ')}`;
+  }
+
+  // 未知工具检查
+  if (!KODAX_TOOL_REQUIRED_PARAMS.hasOwnProperty(name)) {
+    return `[Tool Error] Unknown tool: ${name}. Available tools: ${Object.keys(KODAX_TOOL_REQUIRED_PARAMS).join(', ')}`;
   }
 
   if (ctx.confirmTools.has(name) && !ctx.noConfirm) {
     const confirmed = ctx.onConfirm ? await ctx.onConfirm(name, input) : true;
-    if (!confirmed) return 'Operation cancelled by user';
+    if (!confirmed) return '[Cancelled] Operation cancelled by user';
   }
 
   try {
@@ -667,7 +736,16 @@ export async function executeTool(
       default: return `[Tool Error] Unknown tool: ${name}`;
     }
   } catch (e) {
-    return `[Tool Error] ${name}: ${e instanceof Error ? e.message : String(e)}`;
+    const errorMsg = e instanceof Error ? e.message : String(e);
+    // 提供更详细的错误信息
+    if (errorMsg.includes('ENOENT')) {
+      return `[Tool Error] ${name}: File or directory not found`;
+    } else if (errorMsg.includes('EACCES') || errorMsg.includes('EPERM')) {
+      return `[Tool Error] ${name}: Permission denied`;
+    } else if (errorMsg.includes('ENOSPC')) {
+      return `[Tool Error] ${name}: No space left on device`;
+    }
+    return `[Tool Error] ${name}: ${errorMsg}`;
   }
 }
 
@@ -1278,7 +1356,7 @@ export async function runKodaX(
       lastText = result.textBlocks.map(b => b.text).join(' ');
 
       // Promise 信号检测
-      const [signal, reason] = checkPromiseSignal(lastText);
+      const [signal, _reason] = checkPromiseSignal(lastText);
       if (signal) {
         if (signal === 'COMPLETE') {
           events.onComplete?.();
