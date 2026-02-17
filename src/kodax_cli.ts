@@ -557,7 +557,7 @@ async function main() {
     .argument('[prompt...]', 'Your task (optional, enters interactive mode if not provided)')
     // 短参数支持
     .option('-p, --prompt <text>', 'Task prompt (alternative to positional argument)')
-    .option('-m, --provider <name>', 'LLM provider', KODAX_DEFAULT_PROVIDER)
+    .option('-m, --provider <name>', 'LLM provider')
     .option('-t, --thinking', 'Enable thinking mode')
     .option('-c, --confirm <tools>', 'Tools requiring confirmation')
     .option('-y, --no-confirm', 'Disable confirmations (YOLO mode)')
