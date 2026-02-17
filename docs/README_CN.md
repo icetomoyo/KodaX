@@ -248,7 +248,7 @@ kodax /explain src/utils.ts
 |------|------|
 | `--provider NAME` | 指定大模型 |
 | `--thinking` | 开启思考模式 |
-| `--no-confirm` | 跳过确认 |
+| `--no-confirm` | 启用自动模式（跳过确认） |
 | `--session ID` | 会话管理（resume/list/ID） |
 | `--parallel` | 并行执行工具 |
 | `--team TASKS` | 多 Agent 并行 |
@@ -279,7 +279,7 @@ const result = await runKodaX({
   provider: 'zhipu-coding',
   thinking: true,
   events,
-  noConfirm: true,
+  auto: true,
 }, 'What is 1+1?');
 
 console.log(result.lastText);

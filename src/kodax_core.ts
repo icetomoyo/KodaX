@@ -43,7 +43,7 @@ export const KODAX_VERSION = pkgVersion;
 export interface KodaXConfig {
   provider?: string;
   thinking?: boolean;
-  noConfirm?: boolean;
+  auto?: boolean;
 }
 
 // 加载配置
@@ -242,7 +242,7 @@ export interface KodaXOptions {
   thinking?: boolean;
   maxIter?: number;
   parallel?: boolean;
-  noConfirm?: boolean;
+  auto?: boolean;
   confirmTools?: Set<string>;
   session?: KodaXSessionOptions;
   context?: KodaXContextOptions;
@@ -275,7 +275,7 @@ export interface KodaXSessionStorage {
 export interface KodaXToolExecutionContext {
   confirmTools: Set<string>;
   backups: Map<string, string>;
-  noConfirm: boolean;
+  auto: boolean;
   onConfirm?: (tool: string, input: Record<string, unknown>) => Promise<boolean>;
 }
 
@@ -805,7 +805,7 @@ export async function executeTool(
     return `[Tool Error] Unknown tool: ${name}. Available tools: ${Object.keys(KODAX_TOOL_REQUIRED_PARAMS).join(', ')}`;
   }
 
-  if (ctx.confirmTools.has(name) && !ctx.noConfirm) {
+  if (ctx.confirmTools.has(name) && !ctx.auto) {
     const confirmed = ctx.onConfirm ? await ctx.onConfirm(name, input) : true;
     if (!confirmed) return '[Cancelled] Operation cancelled by user';
   }
@@ -1408,7 +1408,7 @@ export async function runKodaX(
   const ctx: KodaXToolExecutionContext = {
     confirmTools: options.confirmTools ?? new Set(['bash', 'write', 'edit']),
     backups: new Map(),
-    noConfirm: options.noConfirm ?? false,
+    auto: options.auto ?? false,
     onConfirm: events.onConfirm,
   };
 

@@ -164,7 +164,7 @@ interface CliOptions {
   provider: string;
   thinking: boolean;
   confirm?: string;
-  noConfirm: boolean;
+  auto: boolean;
   session?: string;
   parallel: boolean;
   team?: string;
@@ -461,8 +461,8 @@ function createKodaXOptions(cliOptions: CliOptions): KodaXOptions {
     thinking: cliOptions.thinking,
     maxIter: cliOptions.maxIter,
     parallel: cliOptions.parallel,
-    noConfirm: cliOptions.noConfirm,
-    confirmTools: cliOptions.noConfirm
+    auto: cliOptions.auto,
+    confirmTools: cliOptions.auto
       ? new Set()
       : cliOptions.confirm
         ? new Set(cliOptions.confirm.split(','))
@@ -580,12 +580,12 @@ async function main() {
   // 加载配置文件（用于确定默认值）
   const config = loadConfig();
   // CLI 参数优先，否则用配置文件的值，最后用默认值
-  const cliNoConfirm = opts.noConfirm === true || opts.confirm === false;
+  const cliAuto = opts.noConfirm === true || opts.confirm === false;
   const options: CliOptions = {
     // 优先级：CLI 参数 > 配置文件 > 默认值
     provider: opts.provider ?? config.provider ?? KODAX_DEFAULT_PROVIDER,
     thinking: opts.thinking ?? config.thinking ?? false,
-    noConfirm: cliNoConfirm ? true : (config.noConfirm ?? false),
+    auto: cliAuto ? true : (config.auto ?? false),
     session: opts.session,
     parallel: opts.parallel ?? false,
     confirm: opts.confirm,
@@ -892,7 +892,7 @@ New: {"features": [
     console.log('  -m, --provider NAME    LLM provider (anthropic, kimi, kimi-code, qwen, zhipu, openai, zhipu-coding)');
     console.log('  -t, --thinking         Enable thinking mode');
     console.log('  -c, --confirm TOOLS    Tools requiring confirmation');
-    console.log('  -y, --no-confirm       Disable all confirmations (YOLO mode)');
+    console.log('  -y, --no-confirm       Enable auto mode (skip all confirmations)');
     console.log('  -s, --session ID       Session management (resume, list, or ID)');
     console.log('  -j, --parallel         Parallel tool execution');
     console.log('  --team TASKS           Run multiple sub-agents in parallel');

@@ -85,13 +85,13 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   const config = loadConfig();
   const initialProvider = options.provider ?? config.provider ?? KODAX_DEFAULT_PROVIDER;
   const initialThinking = options.thinking ?? config.thinking ?? false;
-  const initialNoConfirm = options.noConfirm ?? config.noConfirm ?? false;
+  const initialAuto = options.auto ?? config.auto ?? false;
 
   // 当前配置状态
   let currentConfig: CurrentConfig = {
     provider: initialProvider,
     thinking: initialThinking,
-    noConfirm: initialNoConfirm,
+    auto: initialAuto,
     mode: 'code',
   };
 
@@ -188,9 +188,9 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
       currentConfig.thinking = enabled;
       currentOptions.thinking = enabled;
     },
-    setNoConfirm: (enabled: boolean) => {
-      currentConfig.noConfirm = enabled;
-      currentOptions.noConfirm = enabled;
+    setAuto: (enabled: boolean) => {
+      currentConfig.auto = enabled;
+      currentOptions.auto = enabled;
     },
     deleteSession: async (id: string) => {
       await storage.delete?.(id);
@@ -291,7 +291,7 @@ function getPrompt(mode: InteractiveMode, config: CurrentConfig): string {
   const modeColor = mode === 'ask' ? chalk.yellow : chalk.green;
   const model = getProviderModel(config.provider) ?? config.provider;
   const thinkingFlag = config.thinking ? chalk.cyan('[thinking]') : '';
-  const autoFlag = config.noConfirm ? chalk.cyan('[auto]') : '';
+  const autoFlag = config.auto ? chalk.cyan('[auto]') : '';
   const flags = [thinkingFlag, autoFlag].filter(Boolean).join('');
   return modeColor(`kodax:${mode} (${config.provider}:${model})${flags}> `);
 }
@@ -418,7 +418,7 @@ function printStartupBanner(config: CurrentConfig, mode: string): void {
   console.log(chalk.cyan('\n' + logo));
   console.log(chalk.white(`\n  v${KODAX_VERSION}  |  AI Coding Agent  |  ${config.provider}:${model}`));
   console.log(chalk.dim('\n  ────────────────────────────────────────────────────────'));
-  console.log(chalk.dim('  Mode: ') + chalk.cyan(mode) + chalk.dim('  |  Thinking: ') + (config.thinking ? chalk.green('on') : chalk.dim('off')) + chalk.dim('  |  Auto: ') + (config.noConfirm ? chalk.green('on') : chalk.dim('off')));
+  console.log(chalk.dim('  Mode: ') + chalk.cyan(mode) + chalk.dim('  |  Thinking: ') + (config.thinking ? chalk.green('on') : chalk.dim('off')) + chalk.dim('  |  Auto: ') + (config.auto ? chalk.green('on') : chalk.dim('off')));
   console.log(chalk.dim('  ────────────────────────────────────────────────────────\n'));
 
   console.log(chalk.dim('  Quick tips:'));

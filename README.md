@@ -189,7 +189,7 @@ kodax --session todo-app "Write tests"
 ```
 --provider <name>   LLM provider (default: zhipu-coding)
 --thinking          Enable thinking mode
---no-confirm        Disable all confirmations
+--no-confirm        Enable auto mode (skip all confirmations)
 --session <id>      Session: resume, list, or specific ID
 --parallel          Parallel tool execution
 --team <tasks>      Run multiple agents in parallel
@@ -219,7 +219,7 @@ const result = await runKodaX({
   provider: 'zhipu-coding',
   thinking: true,
   events,
-  noConfirm: true,
+  auto: true,
 }, 'What is 1+1?');
 
 console.log(result.lastText);

@@ -362,7 +362,7 @@ describe('CLI Option Parsing', () => {
     expect(opts.confirm).toBe('bash,write');
   });
 
-  it('should parse -y (no-confirm) option', () => {
+  it('should parse -y (auto mode) option', () => {
     const program = createTestCommand();
     program.parse(['node', 'test', '-y']);
     const opts = program.opts();
@@ -399,7 +399,7 @@ describe('CLI Option Parsing', () => {
     const opts = program.opts();
     expect(opts.thinking).toBe(true);
     expect(opts.provider).toBe('anthropic');
-    // Commander converts --no-confirm to confirm: false
+    // Commander converts --no-confirm (auto mode) to confirm: false
     expect(opts.confirm).toBe(false);
   });
 });

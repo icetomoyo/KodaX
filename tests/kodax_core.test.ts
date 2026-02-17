@@ -501,7 +501,7 @@ describe('Tool Execution', () => {
   const ctx: KodaXToolExecutionContext = {
     confirmTools: new Set(),
     backups: new Map(),
-    noConfirm: true,
+    auto: true,
   };
 
   beforeEach(async () => {
@@ -651,20 +651,20 @@ describe('Tool Execution Context', () => {
     const ctx: KodaXToolExecutionContext = {
       confirmTools: new Set(['bash', 'write', 'edit']),
       backups: new Map(),
-      noConfirm: false,
+      auto: false,
     };
     expect(ctx.confirmTools.has('bash')).toBe(true);
     expect(ctx.confirmTools.has('write')).toBe(true);
     expect(ctx.confirmTools.has('edit')).toBe(true);
   });
 
-  it('should skip confirmation when noConfirm is true', () => {
+  it('should skip confirmation when auto is true', () => {
     const ctx: KodaXToolExecutionContext = {
       confirmTools: new Set(['bash']),
       backups: new Map(),
-      noConfirm: true,
+      auto: true,
     };
-    expect(ctx.noConfirm).toBe(true);
+    expect(ctx.auto).toBe(true);
   });
 });
 
@@ -997,7 +997,7 @@ describe('Tool Execution Error Handling', () => {
     ctx = {
       confirmTools: new Set(['bash', 'write', 'edit']),
       backups: new Map(),
-      noConfirm: true,
+      auto: true,
     };
   });
 
@@ -1021,7 +1021,7 @@ describe('Tool Execution Error Handling', () => {
     const ctxWithConfirm: KodaXToolExecutionContext = {
       confirmTools: new Set(['bash']),
       backups: new Map(),
-      noConfirm: false,
+      auto: false,
       onConfirm: async () => false, // User cancels
     };
     const result = await executeTool('bash', { command: 'rm -rf /' }, ctxWithConfirm);
@@ -1049,7 +1049,7 @@ describe('toolRead Detailed', () => {
     ctx = {
       confirmTools: new Set(),
       backups: new Map(),
-      noConfirm: true,
+      auto: true,
     };
   });
 

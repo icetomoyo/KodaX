@@ -10,7 +10,7 @@ import { estimateTokens, KODAX_PROVIDERS, getProviderList, saveConfig } from '..
 export interface CurrentConfig {
   provider: string;
   thinking: boolean;
-  noConfirm: boolean;
+  auto: boolean;
   mode?: string;
 }
 
@@ -32,7 +32,7 @@ export interface CommandCallbacks {
   printHistory: () => void;
   switchProvider?: (provider: string) => void;
   setThinking?: (enabled: boolean) => void;
-  setNoConfirm?: (enabled: boolean) => void;
+  setAuto?: (enabled: boolean) => void;
   deleteSession?: (id: string) => Promise<void>;
   deleteAllSessions?: () => Promise<void>;
 }
@@ -196,7 +196,7 @@ export const BUILTIN_COMMANDS: Command[] = [
           const current = p.name === currentConfig.provider ? chalk.cyan(' *') : '';
           console.log(`  ${paddedName} (${p.model}) ${configured}${current}`);
         }
-        console.log(chalk.dim(`\nCurrent: provider=${currentConfig.provider}, thinking=${currentConfig.thinking}, noConfirm=${currentConfig.noConfirm}`));
+        console.log(chalk.dim(`\nCurrent: provider=${currentConfig.provider}, thinking=${currentConfig.thinking}, auto=${currentConfig.auto}`));
         console.log(chalk.dim('Usage: /model <provider-name> to switch\n'));
         return;
       }
@@ -239,27 +239,27 @@ export const BUILTIN_COMMANDS: Command[] = [
     },
   },
   {
-    name: 'noconfirm',
-    aliases: ['nc', 'auto'],
-    description: 'Show or toggle auto-confirm mode',
-    usage: '/noconfirm [on|off]',
+    name: 'auto',
+    aliases: ['a'],
+    description: 'Show or toggle auto mode (skip confirmations)',
+    usage: '/auto [on|off]',
     handler: async (args, _context, callbacks, currentConfig) => {
       if (args.length === 0) {
-        const status = currentConfig.noConfirm ? chalk.green('ON (auto)') : chalk.dim('OFF (confirm)');
-        console.log(chalk.dim(`\nAuto-confirm: ${status}`));
-        console.log(chalk.dim('Usage: /noconfirm on|off to toggle\n'));
+        const status = currentConfig.auto ? chalk.green('ON') : chalk.dim('OFF');
+        console.log(chalk.dim(`\nAuto: ${status}`));
+        console.log(chalk.dim('Usage: /auto on|off to toggle\n'));
         return;
       }
 
       const value = args[0].toLowerCase();
       if (value === 'on' || value === 'off') {
         const enabled = value === 'on';
-        saveConfig({ noConfirm: enabled });
-        callbacks.setNoConfirm?.(enabled);
-        console.log(chalk.cyan(`\n[Auto-confirm ${enabled ? 'enabled' : 'disabled'}] (已保存)`));
+        saveConfig({ auto: enabled });
+        callbacks.setAuto?.(enabled);
+        console.log(chalk.cyan(`\n[Auto ${enabled ? 'enabled' : 'disabled'}] (已保存)`));
       } else {
         console.log(chalk.red(`\n[Invalid value: ${args[0]}]`));
-        console.log(chalk.dim('Usage: /noconfirm on|off\n'));
+        console.log(chalk.dim('Usage: /auto on|off\n'));
       }
     },
   },
@@ -274,7 +274,7 @@ function printHelp(): void {
     'General': BUILTIN_COMMANDS.filter(c => ['help', 'exit', 'clear', 'status'].includes(c.name)),
     'Mode': BUILTIN_COMMANDS.filter(c => ['mode', 'ask', 'code'].includes(c.name)),
     'Session': BUILTIN_COMMANDS.filter(c => ['save', 'load', 'sessions', 'history', 'delete'].includes(c.name)),
-    'Settings': BUILTIN_COMMANDS.filter(c => ['model', 'thinking', 'noconfirm'].includes(c.name)),
+    'Settings': BUILTIN_COMMANDS.filter(c => ['model', 'thinking', 'auto'].includes(c.name)),
   };
 
   for (const [category, commands] of Object.entries(categories)) {

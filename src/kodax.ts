@@ -212,7 +212,7 @@ interface CliOptions {
   provider: string;
   thinking: boolean;
   confirm?: string;
-  noConfirm: boolean;
+  auto: boolean;
   session?: string;
   parallel: boolean;
   team?: string;
@@ -229,7 +229,7 @@ interface CliOptions {
 interface ToolExecutionContext {
   confirmTools: Set<string>;
   backups: Map<string, string>;
-  noConfirm: boolean;
+  auto: boolean;
 }
 
 // ============== 工具定义 ==============
@@ -702,7 +702,7 @@ async function executeTool(name: string, input: Record<string, unknown>, ctx: To
     if (input[p] === undefined) return `[Tool Error] ${name}: Missing required parameter '${p}'`;
   }
 
-  if (ctx.confirmTools.has(name) && !ctx.noConfirm) {
+  if (ctx.confirmTools.has(name) && !ctx.auto) {
     if (!(await confirmAction(name, input))) return 'Operation cancelled by user';
   }
 
@@ -1340,9 +1340,9 @@ async function runAgent(options: CliOptions, userPrompt: string): Promise<[boole
   if (!title) title = userPrompt.slice(0, 50) + (userPrompt.length > 50 ? '...' : '');
 
   const ctx: ToolExecutionContext = {
-    confirmTools: options.noConfirm ? new Set() : options.confirm ? new Set(options.confirm.split(',')) : DEFAULT_CONFIRM_TOOLS,
+    confirmTools: options.auto ? new Set() : options.confirm ? new Set(options.confirm.split(',')) : DEFAULT_CONFIRM_TOOLS,
     backups: new Map(),
-    noConfirm: options.noConfirm,
+    auto: options.auto,
   };
 
   const systemPrompt = await buildSystemPrompt(options, isNewSession);
@@ -1563,7 +1563,7 @@ async function main() {
   const options: CliOptions = {
     provider: opts.provider ?? DEFAULT_PROVIDER,
     thinking: opts.thinking ?? false,
-    noConfirm: opts.noConfirm === true || opts.confirm === false,
+    auto: opts.noConfirm === true || opts.confirm === false,
     session: opts.session,
     parallel: opts.parallel ?? false,
     confirm: opts.confirm,
@@ -1774,7 +1774,7 @@ New: {"features": [
       const subCtx: ToolExecutionContext = {
         confirmTools: new Set(), // SubAgent 不需要确认
         backups: new Map(),
-        noConfirm: true,
+        auto: true,
       };
       const subMessages: Message[] = [{ role: 'user', content: task }];
       const basePrompt = await buildSystemPrompt(options, true);

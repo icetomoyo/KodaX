@@ -907,9 +907,9 @@ describe('New Commands', () => {
     expect(thinkingCmd.aliases).toContain('t');
   });
 
-  it('should have noconfirm command', () => {
-    const noConfirmCmd = BUILTIN_COMMANDS.find(c => c.name === 'noconfirm');
-    expect(noConfirmCmd).toBeDefined();
-    expect(noConfirmCmd.aliases).toContain('auto');
+  it('should have auto command', () => {
+    const autoCmd = BUILTIN_COMMANDS.find(c => c.name === 'auto');
+    expect(autoCmd).toBeDefined();
+    expect(autoCmd.aliases).toContain('a');
   });
 });

@@ -627,7 +627,7 @@ node dist/kodax.js --provider kimi-code --thinking --no-confirm "
 |------|---------|------|
 | 基本对话 | `node dist/kodax.js "你好"` | ☐ |
 | 确认机制 | `node dist/kodax.js "创建文件"` | ☐ |
-| 禁用确认 | `node dist/kodax.js --no-confirm "..."` | ☐ |
+| 启用自动模式 | `node dist/kodax.js --no-confirm "..."` | ☐ |
 | 流式输出 | 观察输出是否逐步显示 | ☐ |
 | **等待动画** | 观察点是否被清除（TS 特有） | ☐ |
 | Thinking Mode | `node dist/kodax.js --thinking "..."` | ☐ |

@@ -139,7 +139,7 @@ async function executeTool(
   context: ToolExecutionContext
 ): Promise<string> {
   // 确认机制
-  if (context.confirmTools.has(name) && !context.noConfirm) {
+  if (context.confirmTools.has(name) && !context.auto) {
     const confirmed = await askConfirm(`Execute ${name}?`);
     if (!confirmed) return 'Operation cancelled by user';
   }
@@ -177,7 +177,7 @@ node dist/kodax.js "你的任务"
 # 自定义确认列表
 node dist/kodax.js --confirm bash,write "你的任务"
 
-# 禁用所有确认
+# 启用自动模式（跳过所有确认）
 node dist/kodax.js --no-confirm "你的任务"
 ```
 
@@ -1208,10 +1208,10 @@ Commander.js 对 `--no-xxx` 格式的选项有特殊处理：
 
 ```typescript
 // 错误写法
-noConfirm: opts.noConfirm ?? false,  // opts.noConfirm 是 undefined
+auto: opts.noConfirm ?? false,  // opts.noConfirm 是 undefined
 
 // 正确写法
-noConfirm: opts.noConfirm === true || opts.confirm === false,
+auto: opts.noConfirm === true || opts.confirm === false,
 ```
 
 ### B.4 替代方案
