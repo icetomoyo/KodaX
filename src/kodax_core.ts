@@ -27,8 +27,34 @@ export const KODAX_COMPACT_THRESHOLD = 100000;
 export const KODAX_COMPACT_KEEP_RECENT = 10;
 export const KODAX_DIR = path.join(os.homedir(), '.kodax');
 export const KODAX_SESSIONS_DIR = path.join(KODAX_DIR, 'sessions');
+export const KODAX_CONFIG_FILE = path.join(KODAX_DIR, 'config.json');
 
 export const KODAX_DEFAULT_PROVIDER = process.env.KODAX_PROVIDER ?? 'zhipu-coding';
+
+// 配置类型
+export interface KodaXConfig {
+  provider?: string;
+  thinking?: boolean;
+  noConfirm?: boolean;
+}
+
+// 加载配置
+export function loadConfig(): KodaXConfig {
+  try {
+    if (fsSync.existsSync(KODAX_CONFIG_FILE)) {
+      return JSON.parse(fsSync.readFileSync(KODAX_CONFIG_FILE, 'utf-8'));
+    }
+  } catch { }
+  return {};
+}
+
+// 保存配置
+export function saveConfig(config: KodaXConfig): void {
+  const current = loadConfig();
+  const merged = { ...current, ...config };
+  fsSync.mkdirSync(path.dirname(KODAX_CONFIG_FILE), { recursive: true });
+  fsSync.writeFileSync(KODAX_CONFIG_FILE, JSON.stringify(merged, null, 2));
+}
 
 // 长时间运行状态文件
 export const KODAX_FEATURES_FILE = 'feature_list.json';
@@ -367,6 +393,10 @@ export abstract class KodaXBaseProvider {
 
   isConfigured(): boolean {
     return !!process.env[this.config.apiKeyEnv];
+  }
+
+  getModel(): string {
+    return this.config.model;
   }
 
   protected getApiKey(): string {
@@ -711,6 +741,40 @@ export function getProvider(name?: string): KodaXBaseProvider {
   const factory = KODAX_PROVIDERS[n];
   if (!factory) throw new Error(`Unknown provider: ${n}. Available: ${Object.keys(KODAX_PROVIDERS).join(', ')}`);
   return factory();
+}
+
+// 检查 Provider 是否已配置 API Key
+export function isProviderConfigured(name: string): boolean {
+  try {
+    const provider = getProvider(name);
+    return provider.isConfigured();
+  } catch {
+    return false;
+  }
+}
+
+// 获取 Provider 使用的模型名称
+export function getProviderModel(name: string): string | null {
+  try {
+    const provider = getProvider(name);
+    return provider.getModel();
+  } catch {
+    return null;
+  }
+}
+
+// 获取所有可用的 Provider 列表（带配置状态）
+export function getProviderList(): Array<{ name: string; model: string; configured: boolean }> {
+  const result: Array<{ name: string; model: string; configured: boolean }> = [];
+  for (const [name, factory] of Object.entries(KODAX_PROVIDERS)) {
+    try {
+      const p = factory();
+      result.push({ name, model: p.getModel(), configured: p.isConfigured() });
+    } catch {
+      result.push({ name, model: 'unknown', configured: false });
+    }
+  }
+  return result;
 }
 
 // ============== 工具执行 ==============

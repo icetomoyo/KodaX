@@ -16,4 +16,5 @@ export {
   BUILTIN_COMMANDS,
   type Command,
   type CommandCallbacks,
+  type CurrentConfig,
 } from './commands.js';

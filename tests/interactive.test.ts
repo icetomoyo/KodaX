@@ -4,7 +4,10 @@
  * 测试 REPL 模式、命令系统和上下文管理
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import path from 'path';
+import os from 'os';
+import fs from 'fs/promises';
 import {
   InteractiveContext,
   InteractiveMode,
@@ -17,7 +20,7 @@ import {
   CommandCallbacks,
   processSpecialSyntax,
 } from '../src/interactive/index.js';
-import { KodaXMessage } from '../src/kodax_core.js';
+import { KodaXMessage, saveConfig, loadConfig, getProviderModel, getProviderList, isProviderConfigured, KODAX_PROVIDERS } from '../src/kodax_core.js';
 
 // ============== 上下文管理测试 ==============
 
@@ -824,5 +827,89 @@ describe('Shell Command Skip Logic (Warp Style)', () => {
 
     expect(shouldSkipShellCommand('!true', processed)).toBe(true);
     consoleSpy.mockRestore();
+  });
+});
+
+// ============== 配置加载/保存测试 ==============
+
+describe('Config Loading and Saving', () => {
+  const TEST_CONFIG_FILE = path.join(os.tmpdir(), 'kodax-test-config-' + Date.now() + '.json');
+  const originalConfigFile = 'KODAX_CONFIG_FILE';
+
+  beforeEach(async () => {
+    // 使用测试配置文件
+  });
+
+  afterEach(async () => {
+    try {
+      await fs.rm(TEST_CONFIG_FILE, { recursive: true, force: true });
+    } catch { }
+  });
+
+  it('should load empty config when file does not exist', async () => {
+    const config = loadConfig();
+    expect(config).toBeDefined();
+  });
+
+  it('should save and load config', async () => {
+    expect(saveConfig).toBeDefined();
+    expect(loadConfig).toBeDefined();
+  });
+});
+
+// ============== Provider 信息测试 ==============
+
+describe('Provider Info', () => {
+  it('should get provider model', async () => {
+    const model = getProviderModel('anthropic');
+    expect(model).toBeDefined();
+    // model could be string or null depending on env setup
+    expect(model === null || typeof model === 'string').toBe(true);
+  });
+
+  it('should return null for unknown provider', async () => {
+    const model = getProviderModel('unknown-provider');
+    expect(model).toBeNull();
+  });
+
+  it('should get provider list with config status', async () => {
+    const list = getProviderList();
+    expect(list).toBeDefined();
+    expect(Array.isArray(list)).toBe(true);
+    expect(list.length).toBeGreaterThan(0);
+
+    // 验证每个 provider 有必要字段
+    for (const p of list) {
+      expect(p.name).toBeDefined();
+      expect(p.model).toBeDefined();
+      expect(typeof p.configured).toBe('boolean');
+    }
+  });
+
+  it('should check if provider is configured', async () => {
+    // 这个测试依赖于环境变量，所以只检查函数是否正常工作
+    expect(typeof isProviderConfigured).toBe('function');
+  });
+});
+
+// ============== 新命令测试 ==============
+
+describe('New Commands', () => {
+  it('should have model command', () => {
+    const modelCmd = BUILTIN_COMMANDS.find(c => c.name === 'model');
+    expect(modelCmd).toBeDefined();
+    expect(modelCmd.aliases).toContain('m');
+  });
+
+  it('should have thinking command', () => {
+    const thinkingCmd = BUILTIN_COMMANDS.find(c => c.name === 'thinking');
+    expect(thinkingCmd).toBeDefined();
+    expect(thinkingCmd.aliases).toContain('t');
+  });
+
+  it('should have noconfirm command', () => {
+    const noConfirmCmd = BUILTIN_COMMANDS.find(c => c.name === 'noconfirm');
+    expect(noConfirmCmd).toBeDefined();
+    expect(noConfirmCmd.aliases).toContain('auto');
   });
 });

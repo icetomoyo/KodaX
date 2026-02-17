@@ -19,6 +19,9 @@ import {
   KodaXError,
   KodaXRateLimitError,
   KodaXProviderError,
+  KODAX_DEFAULT_PROVIDER,
+  loadConfig,
+  getProviderModel,
 } from '../kodax_core.js';
 import {
   InteractiveContext,
@@ -30,6 +33,7 @@ import {
   parseCommand,
   executeCommand,
   CommandCallbacks,
+  CurrentConfig,
 } from './commands.js';
 
 // 扩展的会话存储接口（增加 list 方法）
@@ -67,6 +71,19 @@ export interface RepLOptions extends KodaXOptions {
 export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   const gitRoot = await getGitRoot() ?? undefined;
   const storage = options.storage ?? new MemorySessionStorage();
+
+  // 加载配置（优先级：CLI参数 > 配置文件 > 默认值）
+  const config = loadConfig();
+  const initialProvider = options.provider ?? config.provider ?? KODAX_DEFAULT_PROVIDER;
+  const initialThinking = options.thinking ?? config.thinking ?? false;
+  const initialNoConfirm = options.noConfirm ?? config.noConfirm ?? false;
+
+  // 当前配置状态
+  let currentConfig: CurrentConfig = {
+    provider: initialProvider,
+    thinking: initialThinking,
+    noConfirm: initialNoConfirm,
+  };
 
   const context = await createInteractiveContext({
     sessionId: options.session?.id,
@@ -146,6 +163,18 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
       }
       console.log();
     },
+    switchProvider: (provider: string) => {
+      currentConfig.provider = provider;
+      currentOptions.provider = provider;
+    },
+    setThinking: (enabled: boolean) => {
+      currentConfig.thinking = enabled;
+      currentOptions.thinking = enabled;
+    },
+    setNoConfirm: (enabled: boolean) => {
+      currentConfig.noConfirm = enabled;
+      currentOptions.noConfirm = enabled;
+    },
   };
 
   // 处理 Ctrl+C
@@ -156,7 +185,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
 
   // 主循环
   while (isRunning) {
-    const prompt = getPrompt(context.mode);
+    const prompt = getPrompt(context.mode, currentConfig);
     const input = await askInput(rl, prompt);
 
     if (!isRunning) break;
@@ -169,7 +198,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     // 处理命令
     const parsed = parseCommand(trimmed);
     if (parsed) {
-      await executeCommand(parsed, context, callbacks);
+      await executeCommand(parsed, context, callbacks, currentConfig);
       continue;
     }
 
@@ -235,9 +264,13 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
 }
 
 // 获取提示符
-function getPrompt(mode: InteractiveMode): string {
+function getPrompt(mode: InteractiveMode, config: CurrentConfig): string {
   const modeColor = mode === 'ask' ? chalk.yellow : chalk.green;
-  return modeColor(`kodax:${mode}> `);
+  const model = getProviderModel(config.provider) ?? config.provider;
+  const thinkingFlag = config.thinking ? chalk.cyan('[thinking]') : '';
+  const autoFlag = config.noConfirm ? chalk.cyan('[auto]') : '';
+  const flags = [thinkingFlag, autoFlag].filter(Boolean).join('');
+  return modeColor(`kodax:${mode} (${config.provider}:${model})${flags}> `);
 }
 
 // 读取输入

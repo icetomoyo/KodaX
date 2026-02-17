@@ -4,13 +4,21 @@
 
 import chalk from 'chalk';
 import { InteractiveContext, InteractiveMode, setMode } from './context.js';
-import { estimateTokens } from '../kodax_core.js';
+import { estimateTokens, KODAX_PROVIDERS, getProviderList, saveConfig } from '../kodax_core.js';
+
+// 当前配置状态（由 repl.ts 传入）
+export interface CurrentConfig {
+  provider: string;
+  thinking: boolean;
+  noConfirm: boolean;
+}
 
 // 命令处理器类型
 export type CommandHandler = (
   args: string[],
   context: InteractiveContext,
-  callbacks: CommandCallbacks
+  callbacks: CommandCallbacks,
+  currentConfig: CurrentConfig
 ) => Promise<void>;
 
 // 命令回调
@@ -21,6 +29,9 @@ export interface CommandCallbacks {
   listSessions: () => Promise<void>;
   clearHistory: () => void;
   printHistory: () => void;
+  switchProvider?: (provider: string) => void;
+  setThinking?: (enabled: boolean) => void;
+  setNoConfirm?: (enabled: boolean) => void;
 }
 
 // 命令定义
@@ -145,6 +156,90 @@ export const BUILTIN_COMMANDS: Command[] = [
       callbacks.printHistory();
     },
   },
+  {
+    name: 'model',
+    aliases: ['m'],
+    description: 'Show or switch provider',
+    usage: '/model [provider-name]',
+    handler: async (args, _context, callbacks, currentConfig) => {
+      if (args.length === 0) {
+        // 显示所有 Provider 及状态
+        console.log(chalk.bold('\nAvailable Providers:\n'));
+        const providers = getProviderList();
+        const maxNameLen = Math.max(...providers.map(p => p.name.length));
+        for (const p of providers) {
+          const paddedName = p.name.padEnd(maxNameLen);
+          const configured = p.configured ? chalk.green('[已配置]') : chalk.red('[未配置]');
+          const current = p.name === currentConfig.provider ? chalk.cyan(' *') : '';
+          console.log(`  ${paddedName} (${p.model}) ${configured}${current}`);
+        }
+        console.log(chalk.dim(`\nCurrent: provider=${currentConfig.provider}, thinking=${currentConfig.thinking}, noConfirm=${currentConfig.noConfirm}`));
+        console.log(chalk.dim('Usage: /model <provider-name> to switch\n'));
+        return;
+      }
+
+      const newProvider = args[0];
+      if (KODAX_PROVIDERS[newProvider]) {
+        // 保存到配置
+        saveConfig({ provider: newProvider });
+        callbacks.switchProvider?.(newProvider);
+        console.log(chalk.cyan(`\n[Switched to ${newProvider}] (已保存)`));
+      } else {
+        console.log(chalk.red(`\n[Unknown provider: ${newProvider}]`));
+        console.log(chalk.dim(`Available: ${Object.keys(KODAX_PROVIDERS).join(', ')}\n`));
+      }
+    },
+  },
+  {
+    name: 'thinking',
+    aliases: ['t'],
+    description: 'Show or toggle thinking mode',
+    usage: '/thinking [on|off]',
+    handler: async (args, _context, callbacks, currentConfig) => {
+      if (args.length === 0) {
+        const status = currentConfig.thinking ? chalk.green('ON') : chalk.dim('OFF');
+        console.log(chalk.dim(`\nThinking: ${status}`));
+        console.log(chalk.dim('Usage: /thinking on|off to toggle\n'));
+        return;
+      }
+
+      const value = args[0].toLowerCase();
+      if (value === 'on' || value === 'off') {
+        const enabled = value === 'on';
+        saveConfig({ thinking: enabled });
+        callbacks.setThinking?.(enabled);
+        console.log(chalk.cyan(`\n[Thinking ${enabled ? 'enabled' : 'disabled'}] (已保存)`));
+      } else {
+        console.log(chalk.red(`\n[Invalid value: ${args[0]}]`));
+        console.log(chalk.dim('Usage: /thinking on|off\n'));
+      }
+    },
+  },
+  {
+    name: 'noconfirm',
+    aliases: ['nc', 'auto'],
+    description: 'Show or toggle auto-confirm mode',
+    usage: '/noconfirm [on|off]',
+    handler: async (args, _context, callbacks, currentConfig) => {
+      if (args.length === 0) {
+        const status = currentConfig.noConfirm ? chalk.green('ON (auto)') : chalk.dim('OFF (confirm)');
+        console.log(chalk.dim(`\nAuto-confirm: ${status}`));
+        console.log(chalk.dim('Usage: /noconfirm on|off to toggle\n'));
+        return;
+      }
+
+      const value = args[0].toLowerCase();
+      if (value === 'on' || value === 'off') {
+        const enabled = value === 'on';
+        saveConfig({ noConfirm: enabled });
+        callbacks.setNoConfirm?.(enabled);
+        console.log(chalk.cyan(`\n[Auto-confirm ${enabled ? 'enabled' : 'disabled'}] (已保存)`));
+      } else {
+        console.log(chalk.red(`\n[Invalid value: ${args[0]}]`));
+        console.log(chalk.dim('Usage: /noconfirm on|off\n'));
+      }
+    },
+  },
 ];
 
 // 打印帮助
@@ -220,7 +315,8 @@ export function parseCommand(input: string): { command: string; args: string[] }
 export async function executeCommand(
   parsed: { command: string; args: string[] },
   context: InteractiveContext,
-  callbacks: CommandCallbacks
+  callbacks: CommandCallbacks,
+  currentConfig: CurrentConfig
 ): Promise<boolean> {
   // 延迟初始化
   if (commandRegistry.size === 0) {
@@ -229,7 +325,7 @@ export async function executeCommand(
 
   const cmd = commandRegistry.get(parsed.command);
   if (cmd) {
-    await cmd.handler(parsed.args, context, callbacks);
+    await cmd.handler(parsed.args, context, callbacks, currentConfig);
     return true;
   }
 
