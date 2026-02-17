@@ -11,6 +11,7 @@ import {
   runKodaX,
   estimateTokens,
   getGitRoot,
+  KodaXSessionStorage,
 } from '../kodax_core.js';
 import {
   InteractiveContext,
@@ -24,26 +25,24 @@ import {
   CommandCallbacks,
 } from './commands.js';
 
-// 会话存储接口
-interface SessionStorage {
-  save(id: string, data: { messages: KodaXMessage[]; title: string }): Promise<void>;
-  load(id: string): Promise<{ messages: KodaXMessage[]; title: string } | null>;
-  list(): Promise<Array<{ id: string; title: string; msgCount: number }>>;
+// 扩展的会话存储接口（增加 list 方法）
+interface SessionStorage extends KodaXSessionStorage {
+  list(gitRoot?: string): Promise<Array<{ id: string; title: string; msgCount: number }>>;
 }
 
 // 简单的内存会话存储（可替换为持久化存储）
 class MemorySessionStorage implements SessionStorage {
-  private sessions = new Map<string, { messages: KodaXMessage[]; title: string }>();
+  private sessions = new Map<string, { messages: KodaXMessage[]; title: string; gitRoot: string }>();
 
-  async save(id: string, data: { messages: KodaXMessage[]; title: string }): Promise<void> {
+  async save(id: string, data: { messages: KodaXMessage[]; title: string; gitRoot: string }): Promise<void> {
     this.sessions.set(id, data);
   }
 
-  async load(id: string): Promise<{ messages: KodaXMessage[]; title: string } | null> {
+  async load(id: string): Promise<{ messages: KodaXMessage[]; title: string; gitRoot: string } | null> {
     return this.sessions.get(id) ?? null;
   }
 
-  async list(): Promise<Array<{ id: string; title: string; msgCount: number }>> {
+  async list(_gitRoot?: string): Promise<Array<{ id: string; title: string; msgCount: number }>> {
     return Array.from(this.sessions.entries()).map(([id, data]) => ({
       id,
       title: data.title,
@@ -92,6 +91,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
         await storage.save(context.sessionId, {
           messages: context.messages,
           title,
+          gitRoot: gitRoot ?? '',
         });
       }
     },
@@ -186,6 +186,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
         await storage.save(context.sessionId, {
           messages: context.messages,
           title,
+          gitRoot: gitRoot ?? '',
         });
       }
     } catch (err) {

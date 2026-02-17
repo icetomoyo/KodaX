@@ -844,7 +844,11 @@ New: {"features": [
   // 无 prompt 且未禁用交互式模式 → 进入交互式
   if (!userPrompt && !options.init && !options.noInteractive) {
     const kodaXOptions = createKodaXOptions(options);
-    await runInteractiveMode(kodaXOptions);
+    // 传递 FileSessionStorage 以支持会话持久化
+    await runInteractiveMode({
+      ...kodaXOptions,
+      storage: new FileSessionStorage(),
+    });
     return;
   }
 

@@ -676,11 +676,16 @@ async function toolRead(input: Record<string, unknown>): Promise<string> {
   if (!fsSync.existsSync(filePath)) return `[Tool Error] File not found: ${filePath}`;
   const content = await fs.readFile(filePath, 'utf-8');
   const lines = content.split('\n');
-  const offset = (input.offset as number) ?? 0;
+  // offset 是 1-indexed，0 表示从头开始（等同于 1）
+  const offset = Math.max(0, (input.offset as number) ?? 1);
   const limit = (input.limit as number) ?? lines.length;
-  const selected = lines.slice(Math.max(0, offset - 1), offset - 1 + limit);
-  const numbered = selected.map((l, i) => `${(offset + i + 1).toString().padStart(6)}\t${l}`);
-  if (lines.length > 2000) return numbered.slice(0, 2000).join('\n') + `\n\n[Truncated] ${lines.length} lines total`;
+  // 转换为 0-indexed
+  const startIdx = Math.max(0, offset > 0 ? offset - 1 : 0);
+  const selected = lines.slice(startIdx, startIdx + limit);
+  const numbered = selected.map((l, i) => `${(offset + i).toString().padStart(6)}\t${l}`);
+  if (selected.length < lines.length && limit >= lines.length) {
+    return numbered.join('\n') + `\n\n[Truncated] ${lines.length} lines total`;
+  }
   return numbered.join('\n');
 }
 
@@ -1311,7 +1316,32 @@ export async function runKodaX(
           messages.push({ role: 'user', content: retryPrompt });
           continue;
         } else {
+          // 超过重试次数，过滤掉不完整的工具调用并添加错误结果
+          events.onRetry?.(`Max retries exceeded for incomplete tool calls. Skipping: ${incomplete.join(', ')}`, incompleteRetryCount, KODAX_MAX_INCOMPLETE_RETRIES);
+          const incompleteIds = new Set<string>();
+          for (const tc of result.toolBlocks) {
+            const required = KODAX_TOOL_REQUIRED_PARAMS[tc.name] ?? [];
+            const input = (tc.input ?? {}) as Record<string, unknown>;
+            for (const param of required) {
+              if (input[param] === undefined || input[param] === null || input[param] === '') {
+                incompleteIds.add(tc.id);
+                break;
+              }
+            }
+          }
+          // 直接添加错误结果，不执行不完整的工具调用
+          const errorResults: KodaXToolResultBlock[] = [];
+          for (const id of incompleteIds) {
+            const tc = result.toolBlocks.find(t => t.id === id);
+            if (tc) {
+              const errorMsg = `[Tool Error] ${tc.name}: Skipped due to missing required parameters after ${KODAX_MAX_INCOMPLETE_RETRIES} retries`;
+              events.onToolResult?.({ id: tc.id, name: tc.name, content: errorMsg });
+              errorResults.push({ type: 'tool_result', tool_use_id: tc.id, content: errorMsg, is_error: true });
+            }
+          }
+          messages.push({ role: 'user', content: errorResults });
           incompleteRetryCount = 0;
+          continue;
         }
       } else {
         incompleteRetryCount = 0;
