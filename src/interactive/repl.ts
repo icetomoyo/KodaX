@@ -406,14 +406,14 @@ function extractTitle(messages: KodaXMessage[]): string {
 function printStartupBanner(config: CurrentConfig, mode: string): void {
   const model = getProviderModel(config.provider) ?? config.provider;
 
-  // KODAX 字母 logo
+  // KODAX 方块字符 logo
   const logo = `
-    K   K   O   O   D   D   A   A   X   X
-    K   K  O   O  D   D  A   A  X   X
-    K   K  O   O  D   D A     A  X   X
-    K   K  O   O  D   D A     A  X   X
-    K   K  O   O  D   D A     A  X   X
-    K   K   O   O   D   D   A   A   X   X`;
+   █████╗ ██╗     ██████╗  ██████╗ ███████╗ ██████╗ ██████╗
+  ██╔══██╗██║     ██╔══██╗██╔════╝ ██╔════╝██╔═══██╗██╔══██╗
+  ███████║██║     ██████╔╝██║  ███╗█████╗  ██║   ██║██████╔╝
+  ██╔══██║██║     ██╔══██╗██║   ██║██╔══╝  ██║   ██║██╔══██╗
+  ██║  ██║███████╗██║  ██║╚██████╔╝███████╗╚██████╔╝██║  ██║
+  ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝ ╚═════╝ ╚═╝  ╚═╝`;
 
   console.log(chalk.cyan('\n' + logo));
   console.log(chalk.white(`\n  v${KODAX_VERSION}  |  AI Coding Agent  |  ${config.provider}:${model}`));
