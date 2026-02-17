@@ -39,6 +39,7 @@ import {
   rateLimitedCall,
   getProvider,
   KODAX_TOOLS,
+  loadConfig,
 } from './kodax_core.js';
 
 import { runInteractiveMode } from './interactive/index.js';
@@ -576,10 +577,15 @@ async function main() {
     .parse();
 
   const opts = program.opts();
+  // 加载配置文件（用于确定默认值）
+  const config = loadConfig();
+  // CLI 参数优先，否则用配置文件的值，最后用默认值
+  const cliNoConfirm = opts.noConfirm === true || opts.confirm === false;
   const options: CliOptions = {
-    provider: opts.provider ?? KODAX_DEFAULT_PROVIDER,
-    thinking: opts.thinking ?? false,
-    noConfirm: opts.noConfirm === true || opts.confirm === false,
+    // 优先级：CLI 参数 > 配置文件 > 默认值
+    provider: opts.provider ?? config.provider ?? KODAX_DEFAULT_PROVIDER,
+    thinking: opts.thinking ?? config.thinking ?? false,
+    noConfirm: cliNoConfirm ? true : (config.noConfirm ?? false),
     session: opts.session,
     parallel: opts.parallel ?? false,
     confirm: opts.confirm,
