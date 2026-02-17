@@ -8,6 +8,7 @@ export {
   InteractiveMode,
   createInteractiveContext,
   setMode,
+  touchContext,
 } from './context.js';
 export {
   parseCommand,

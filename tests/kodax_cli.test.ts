@@ -9,6 +9,7 @@ import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
 import os from 'os';
+import { Command } from 'commander';
 
 // 从 kodax_cli 导入 Commands 系统
 import {
@@ -18,6 +19,9 @@ import {
   KODAX_COMMANDS_DIR,
   KodaXCommand,
 } from '../src/kodax_cli.js';
+
+// 默认 provider
+const KODAX_DEFAULT_PROVIDER = 'zhipu-coding';
 
 // ============== 模拟测试环境 ==============
 
@@ -283,5 +287,119 @@ describe('CLI Entry Point', () => {
 
   it('should export commands directory constant', () => {
     expect(KODAX_COMMANDS_DIR).toBe(path.join(os.homedir(), '.kodax', 'commands'));
+  });
+});
+
+// ============== CLI 选项解析测试 ==============
+
+describe('CLI Option Parsing', () => {
+  // 创建与 kodax_cli.ts 一致的 Command 配置
+  function createTestCommand(): Command {
+    return new Command()
+      .allowUnknownOption(false)
+      .option('-p, --prompt <text>', 'Task prompt')
+      .option('-m, --provider <name>', 'LLM provider', KODAX_DEFAULT_PROVIDER)
+      .option('-t, --thinking', 'Enable thinking mode')
+      .option('-c, --confirm <tools>', 'Tools requiring confirmation')
+      .option('-y, --no-confirm', 'Disable confirmations')
+      .option('-s, --session <id>', 'Session')
+      .option('-j, --parallel', 'Parallel tool execution');
+  }
+
+  it('should parse -p (prompt) option', () => {
+    const program = createTestCommand();
+    program.parse(['node', 'test', '-p', 'hello world']);
+    const opts = program.opts();
+    expect(opts.prompt).toBe('hello world');
+  });
+
+  it('should parse --prompt option', () => {
+    const program = createTestCommand();
+    program.parse(['node', 'test', '--prompt', 'hello world']);
+    const opts = program.opts();
+    expect(opts.prompt).toBe('hello world');
+  });
+
+  it('should parse -m (provider) option', () => {
+    const program = createTestCommand();
+    program.parse(['node', 'test', '-m', 'kimi-code']);
+    const opts = program.opts();
+    expect(opts.provider).toBe('kimi-code');
+  });
+
+  it('should parse --provider option', () => {
+    const program = createTestCommand();
+    program.parse(['node', 'test', '--provider', 'anthropic']);
+    const opts = program.opts();
+    expect(opts.provider).toBe('anthropic');
+  });
+
+  it('should have default provider', () => {
+    const program = createTestCommand();
+    program.parse(['node', 'test']);
+    const opts = program.opts();
+    expect(opts.provider).toBe(KODAX_DEFAULT_PROVIDER);
+  });
+
+  it('should parse -t (thinking) option', () => {
+    const program = createTestCommand();
+    program.parse(['node', 'test', '-t']);
+    const opts = program.opts();
+    expect(opts.thinking).toBe(true);
+  });
+
+  it('should parse --thinking option', () => {
+    const program = createTestCommand();
+    program.parse(['node', 'test', '--thinking']);
+    const opts = program.opts();
+    expect(opts.thinking).toBe(true);
+  });
+
+  it('should parse -c (confirm) option', () => {
+    const program = createTestCommand();
+    program.parse(['node', 'test', '-c', 'bash,write']);
+    const opts = program.opts();
+    expect(opts.confirm).toBe('bash,write');
+  });
+
+  it('should parse -y (no-confirm) option', () => {
+    const program = createTestCommand();
+    program.parse(['node', 'test', '-y']);
+    const opts = program.opts();
+    // Commander converts --no-confirm to confirm: false
+    expect(opts.confirm).toBe(false);
+  });
+
+  it('should parse -s (session) option', () => {
+    const program = createTestCommand();
+    program.parse(['node', 'test', '-s', 'resume']);
+    const opts = program.opts();
+    expect(opts.session).toBe('resume');
+  });
+
+  it('should parse -j (parallel) option', () => {
+    const program = createTestCommand();
+    program.parse(['node', 'test', '-j']);
+    const opts = program.opts();
+    expect(opts.parallel).toBe(true);
+  });
+
+  it('should parse multiple short options together', () => {
+    const program = createTestCommand();
+    program.parse(['node', 'test', '-t', '-j', '-m', 'kimi']);
+    const opts = program.opts();
+    expect(opts.thinking).toBe(true);
+    expect(opts.parallel).toBe(true);
+    expect(opts.provider).toBe('kimi');
+  });
+
+  it('should parse short and long options mixed', () => {
+    const program = createTestCommand();
+    program.parse(['node', 'test', '-t', '--provider', 'anthropic', '-y']);
+    const opts = program.opts();
+    expect(opts.thinking).toBe(true);
+    expect(opts.provider).toBe('anthropic');
+    // Commander converts --no-confirm to confirm: false
+    expect(opts.confirm).toBe(false);
   });
 });
