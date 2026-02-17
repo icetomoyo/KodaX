@@ -272,7 +272,7 @@ function printHelp(): void {
   const categories: Record<string, Command[]> = {
     'General': BUILTIN_COMMANDS.filter(c => ['help', 'exit', 'clear', 'status'].includes(c.name)),
     'Mode': BUILTIN_COMMANDS.filter(c => ['mode', 'ask', 'code'].includes(c.name)),
-    'Session': BUILTIN_COMMANDS.filter(c => ['save', 'load', 'sessions', 'history'].includes(c.name)),
+    'Session': BUILTIN_COMMANDS.filter(c => ['save', 'load', 'sessions', 'history', 'delete'].includes(c.name)),
   };
 
   for (const [category, commands] of Object.entries(categories)) {
