@@ -14,16 +14,14 @@ import {
   KodaXResult,
   runKodaX,
   estimateTokens,
-  getGitRoot,
   KodaXSessionStorage,
   KodaXError,
   KodaXRateLimitError,
   KodaXProviderError,
   KODAX_DEFAULT_PROVIDER,
-  KODAX_VERSION,
-  loadConfig,
-  getProviderModel,
-} from '../kodax_core.js';
+  generateSessionId,
+} from '../core/index.js';
+import { getGitRoot, loadConfig, getProviderModel, KODAX_VERSION } from '../cli/utils.js';
 import {
   InteractiveContext,
   InteractiveMode,

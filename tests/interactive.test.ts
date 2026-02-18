@@ -20,7 +20,9 @@ import {
   CommandCallbacks,
   processSpecialSyntax,
 } from '../src/interactive/index.js';
-import { KodaXMessage, saveConfig, loadConfig, getProviderModel, getProviderList, isProviderConfigured, KODAX_PROVIDERS } from '../src/kodax_core.js';
+import { KodaXMessage } from '../src/core/index.js';
+import { loadConfig, saveConfig, getProviderModel, getProviderList, isProviderConfigured } from '../src/cli/utils.js';
+import { KODAX_PROVIDERS } from '../src/core/providers/index.js';
 
 // ============== 上下文管理测试 ==============
 

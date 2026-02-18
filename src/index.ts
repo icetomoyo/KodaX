@@ -4,5 +4,5 @@
  * 导出 Core API
  */
 
-// Core 模块
-export * from './kodax_core.js';
+// Core 模块 - 从新的分层架构导出
+export * from './core/index.js';

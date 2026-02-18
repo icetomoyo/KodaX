@@ -27,20 +27,14 @@ import {
   KodaXResult,
   KodaXMessage,
   KodaXSessionStorage,
-  KODAX_DIR,
-  KODAX_SESSIONS_DIR,
   KODAX_DEFAULT_PROVIDER,
   KODAX_FEATURES_FILE,
   KODAX_PROGRESS_FILE,
-  getGitRoot,
-  getFeatureProgress,
-  checkAllFeaturesComplete,
   checkPromiseSignal,
-  rateLimitedCall,
   getProvider,
   KODAX_TOOLS,
-  loadConfig,
-} from './kodax_core.js';
+} from './core/index.js';
+import { getGitRoot, loadConfig, getFeatureProgress, checkAllFeaturesComplete, rateLimitedCall, KODAX_SESSIONS_DIR } from './cli/utils.js';
 
 import { runInteractiveMode } from './interactive/index.js';
 
