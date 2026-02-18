@@ -34,6 +34,7 @@ import {
   CommandCallbacks,
   CurrentConfig,
 } from './commands.js';
+import { runWithPlanMode } from '../cli/plan-mode.js';
 
 // 扩展的会话存储接口（增加 list 方法）
 interface SessionStorage extends KodaXSessionStorage {
@@ -93,13 +94,16 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     mode: 'code',
   };
 
+  // Plan mode 状态
+  let planMode = false;
+
   const context = await createInteractiveContext({
     sessionId: options.session?.id,
     gitRoot,
   });
 
   // 打印启动 Banner
-  printStartupBanner(currentConfig, context.mode);
+  printStartupBanner(currentConfig, currentConfig.mode ?? 'code');
 
   const rl = readline.createInterface({
     input: process.stdin,
@@ -111,6 +115,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   // 修复：确保 session.id 被设置以复用同一 session
   let currentOptions: RepLOptions = {
     ...options,
+    mode: currentConfig.mode,
     session: {
       ...options.session,
       id: context.sessionId,
@@ -196,6 +201,18 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     deleteAllSessions: async () => {
       await storage.deleteAll?.();
     },
+    setPlanMode: (enabled: boolean) => {
+      planMode = enabled;
+    },
+    createKodaXOptions: () => {
+      return {
+        ...currentOptions,
+        provider: currentConfig.provider,
+        thinking: currentConfig.thinking,
+        auto: currentConfig.auto,
+        mode: currentConfig.mode,
+      };
+    },
   };
 
   // 处理 Ctrl+C
@@ -206,7 +223,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
 
   // 主循环
   while (isRunning) {
-    const prompt = getPrompt(context.mode, currentConfig);
+    const prompt = getPrompt(currentConfig.mode ?? 'code', currentConfig, planMode);
     const input = await askInput(rl, prompt);
 
     if (!isRunning) break;
@@ -238,6 +255,26 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
 
     // 添加用户消息到上下文
     context.messages.push({ role: 'user', content: processed });
+
+    // 同步当前模式到 options
+    currentOptions.mode = currentConfig.mode;
+
+    // 如果启用了 Plan Mode，使用计划模式执行
+    if (planMode) {
+      try {
+        await runWithPlanMode(processed, {
+          ...currentOptions,
+          provider: currentConfig.provider,
+          thinking: currentConfig.thinking,
+          auto: currentConfig.auto,
+          mode: currentConfig.mode,
+        });
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error(String(err));
+        console.log(chalk.red(`\n[Plan Mode Error] ${error.message}`));
+      }
+      continue;
+    }
 
     // 运行 Agent
     try {
@@ -285,12 +322,13 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
 }
 
 // 获取提示符
-function getPrompt(mode: InteractiveMode, config: CurrentConfig): string {
+function getPrompt(mode: InteractiveMode, config: CurrentConfig, planMode: boolean): string {
   const modeColor = mode === 'ask' ? chalk.yellow : chalk.green;
   const model = getProviderModel(config.provider) ?? config.provider;
   const thinkingFlag = config.thinking ? chalk.cyan('[thinking]') : '';
   const autoFlag = config.auto ? chalk.cyan('[auto]') : '';
-  const flags = [thinkingFlag, autoFlag].filter(Boolean).join('');
+  const planFlag = planMode ? chalk.magenta('[plan]') : '';
+  const flags = [thinkingFlag, autoFlag, planFlag].filter(Boolean).join('');
   return modeColor(`kodax:${mode} (${config.provider}:${model})${flags}> `);
 }
 

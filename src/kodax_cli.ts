@@ -158,6 +158,7 @@ interface CliOptions {
   provider: string;
   thinking: boolean;
   auto: boolean;
+  mode?: 'code' | 'ask';  // 交互模式
   session?: string;
   parallel: boolean;
   team?: string;
@@ -462,6 +463,7 @@ function createKodaXOptions(cliOptions: CliOptions, isPrintMode = false): KodaXO
     maxIter: cliOptions.maxIter,
     parallel: cliOptions.parallel,
     auto: cliOptions.auto,
+    mode: cliOptions.mode,
     confirmTools: cliOptions.auto
       ? new Set()
       : new Set(['bash', 'write', 'edit']),

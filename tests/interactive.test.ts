@@ -12,7 +12,6 @@ import {
   InteractiveContext,
   InteractiveMode,
   createInteractiveContext,
-  setMode,
   touchContext,
   parseCommand,
   executeCommand,
@@ -34,7 +33,7 @@ describe('InteractiveContext', () => {
     expect(context.sessionId).toBeDefined();
     expect(context.sessionId).toMatch(/^\d{8}_\d{6}$/); // YYYYMMDD_HHMMSS format
     expect(context.title).toBe('');
-    expect(context.mode).toBe('code');
+    // mode 已移至 CurrentConfig 管理
     expect(context.createdAt).toBeDefined();
     expect(context.lastAccessed).toBeDefined();
   });
@@ -68,24 +67,6 @@ describe('touchContext', () => {
     touchContext(context);
     expect(context.lastAccessed).not.toBe(originalTime);
     expect(new Date(context.lastAccessed).getTime()).toBeGreaterThan(new Date(originalTime).getTime());
-  });
-});
-
-describe('setMode', () => {
-  it('should change mode to ask', async () => {
-    const context = await createInteractiveContext({});
-    expect(context.mode).toBe('code');
-
-    setMode(context, 'ask');
-    expect(context.mode).toBe('ask');
-  });
-
-  it('should change mode to code', async () => {
-    const context = await createInteractiveContext({});
-    context.mode = 'ask';
-
-    setMode(context, 'code');
-    expect(context.mode).toBe('code');
   });
 });
 
@@ -179,6 +160,7 @@ describe('BUILTIN_COMMANDS', () => {
 describe('executeCommand', () => {
   let context: InteractiveContext;
   let callbacks: CommandCallbacks;
+  let currentConfig: { provider: string; thinking: boolean; auto: boolean; mode?: 'code' | 'ask' };
   let exitCalled: boolean;
   let savedSession: { id: string; messages: unknown[]; title: string } | null;
   let loadedSessionId: string | null;
@@ -186,6 +168,7 @@ describe('executeCommand', () => {
 
   beforeEach(async () => {
     context = await createInteractiveContext({});
+    currentConfig = { provider: 'test', thinking: false, auto: false, mode: 'code' };
     exitCalled = false;
     savedSession = null;
     loadedSessionId = null;
@@ -211,7 +194,7 @@ describe('executeCommand', () => {
 
   it('should execute help command', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await executeCommand({ command: 'help', args: [] }, context, callbacks);
+    await executeCommand({ command: 'help', args: [] }, context, callbacks, currentConfig);
     expect(consoleSpy).toHaveBeenCalled();
     const output = consoleSpy.mock.calls.map(c => c.join(' ')).join('\n');
     expect(output).toContain('Available Commands');
@@ -220,32 +203,32 @@ describe('executeCommand', () => {
 
   it('should execute help command with alias h', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await executeCommand({ command: 'h', args: [] }, context, callbacks);
+    await executeCommand({ command: 'h', args: [] }, context, callbacks, currentConfig);
     expect(consoleSpy).toHaveBeenCalled();
     consoleSpy.mockRestore();
   });
 
   it('should execute exit command', async () => {
-    await executeCommand({ command: 'exit', args: [] }, context, callbacks);
+    await executeCommand({ command: 'exit', args: [] }, context, callbacks, currentConfig);
     expect(exitCalled).toBe(true);
     expect(savedSession).not.toBeNull();
   });
 
   it('should execute exit command with alias quit', async () => {
-    await executeCommand({ command: 'quit', args: [] }, context, callbacks);
+    await executeCommand({ command: 'quit', args: [] }, context, callbacks, currentConfig);
     expect(exitCalled).toBe(true);
   });
 
   it('should execute clear command', async () => {
     context.messages = [{ role: 'user', content: 'test' }];
-    await executeCommand({ command: 'clear', args: [] }, context, callbacks);
+    await executeCommand({ command: 'clear', args: [] }, context, callbacks, currentConfig);
     expect(clearedHistory).toBe(true);
     expect(context.messages).toHaveLength(0);
   });
 
   it('should execute mode command without args (show current)', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await executeCommand({ command: 'mode', args: [] }, context, callbacks);
+    await executeCommand({ command: 'mode', args: [] }, context, callbacks, currentConfig);
     const output = consoleSpy.mock.calls.map(c => c.join(' ')).join('\n');
     expect(output).toContain('Current mode');
     consoleSpy.mockRestore();
@@ -253,49 +236,49 @@ describe('executeCommand', () => {
 
   it('should execute mode command with code arg', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await executeCommand({ command: 'mode', args: ['code'] }, context, callbacks);
-    expect(context.mode).toBe('code');
+    await executeCommand({ command: 'mode', args: ['code'] }, context, callbacks, currentConfig);
+    expect(currentConfig.mode).toBe('code');
     consoleSpy.mockRestore();
   });
 
   it('should execute mode command with ask arg', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await executeCommand({ command: 'mode', args: ['ask'] }, context, callbacks);
-    expect(context.mode).toBe('ask');
+    await executeCommand({ command: 'mode', args: ['ask'] }, context, callbacks, currentConfig);
+    expect(currentConfig.mode).toBe('ask');
     consoleSpy.mockRestore();
   });
 
   it('should execute ask command', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await executeCommand({ command: 'ask', args: [] }, context, callbacks);
-    expect(context.mode).toBe('ask');
+    await executeCommand({ command: 'ask', args: [] }, context, callbacks, currentConfig);
+    expect(currentConfig.mode).toBe('ask');
     consoleSpy.mockRestore();
   });
 
   it('should execute code command', async () => {
-    context.mode = 'ask';
+    currentConfig.mode = 'ask';
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await executeCommand({ command: 'code', args: [] }, context, callbacks);
-    expect(context.mode).toBe('code');
+    await executeCommand({ command: 'code', args: [] }, context, callbacks, currentConfig);
+    expect(currentConfig.mode).toBe('code');
     consoleSpy.mockRestore();
   });
 
   it('should execute save command', async () => {
     context.messages = [{ role: 'user', content: 'test message' }];
-    await executeCommand({ command: 'save', args: [] }, context, callbacks);
+    await executeCommand({ command: 'save', args: [] }, context, callbacks, currentConfig);
     expect(savedSession).not.toBeNull();
   });
 
   it('should execute load command with session id', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await executeCommand({ command: 'load', args: ['session-123'] }, context, callbacks);
+    await executeCommand({ command: 'load', args: ['session-123'] }, context, callbacks, currentConfig);
     expect(loadedSessionId).toBe('session-123');
     consoleSpy.mockRestore();
   });
 
   it('should execute load command without args (show usage)', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await executeCommand({ command: 'load', args: [] }, context, callbacks);
+    await executeCommand({ command: 'load', args: [] }, context, callbacks, currentConfig);
     const output = consoleSpy.mock.calls.map(c => c.join(' ')).join('\n');
     expect(output).toContain('Usage');
     consoleSpy.mockRestore();
@@ -303,7 +286,7 @@ describe('executeCommand', () => {
 
   it('should execute status command', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await executeCommand({ command: 'status', args: [] }, context, callbacks);
+    await executeCommand({ command: 'status', args: [] }, context, callbacks, currentConfig);
     const output = consoleSpy.mock.calls.map(c => c.join(' ')).join('\n');
     expect(output).toContain('Session Status');
     expect(output).toContain('Mode');
@@ -313,7 +296,7 @@ describe('executeCommand', () => {
 
   it('should handle unknown command', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const result = await executeCommand({ command: 'unknowncommand', args: [] }, context, callbacks);
+    const result = await executeCommand({ command: 'unknowncommand', args: [] }, context, callbacks, currentConfig);
     expect(result).toBe(false);
     const output = consoleSpy.mock.calls.map(c => c.join(' ')).join('\n');
     expect(output).toContain('Unknown command');
@@ -326,9 +309,11 @@ describe('executeCommand', () => {
 describe('Command Aliases', () => {
   let context: InteractiveContext;
   let callbacks: CommandCallbacks;
+  let currentConfig: { provider: string; thinking: boolean; auto: boolean; mode?: 'code' | 'ask' };
 
   beforeEach(async () => {
     context = await createInteractiveContext({});
+    currentConfig = { provider: 'test', thinking: false, auto: false, mode: 'code' };
     callbacks = {
       exit: () => {},
       saveSession: async () => {},
@@ -342,11 +327,11 @@ describe('Command Aliases', () => {
   it('should recognize help aliases (h, ?)', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    await executeCommand({ command: 'h', args: [] }, context, callbacks);
+    await executeCommand({ command: 'h', args: [] }, context, callbacks, currentConfig);
     expect(consoleSpy).toHaveBeenCalled();
 
     consoleSpy.mockClear();
-    await executeCommand({ command: '?', args: [] }, context, callbacks);
+    await executeCommand({ command: '?', args: [] }, context, callbacks, currentConfig);
     expect(consoleSpy).toHaveBeenCalled();
 
     consoleSpy.mockRestore();
@@ -356,24 +341,24 @@ describe('Command Aliases', () => {
     let exitCount = 0;
     callbacks.exit = () => { exitCount++; };
 
-    await executeCommand({ command: 'quit', args: [] }, context, callbacks);
+    await executeCommand({ command: 'quit', args: [] }, context, callbacks, currentConfig);
     expect(exitCount).toBe(1);
 
-    await executeCommand({ command: 'q', args: [] }, context, callbacks);
+    await executeCommand({ command: 'q', args: [] }, context, callbacks, currentConfig);
     expect(exitCount).toBe(2);
 
-    await executeCommand({ command: 'bye', args: [] }, context, callbacks);
+    await executeCommand({ command: 'bye', args: [] }, context, callbacks, currentConfig);
     expect(exitCount).toBe(3);
   });
 
   it('should recognize status aliases (info, ctx)', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    await executeCommand({ command: 'info', args: [] }, context, callbacks);
+    await executeCommand({ command: 'info', args: [] }, context, callbacks, currentConfig);
     expect(consoleSpy).toHaveBeenCalled();
 
     consoleSpy.mockClear();
-    await executeCommand({ command: 'ctx', args: [] }, context, callbacks);
+    await executeCommand({ command: 'ctx', args: [] }, context, callbacks, currentConfig);
     expect(consoleSpy).toHaveBeenCalled();
 
     consoleSpy.mockRestore();
@@ -383,11 +368,11 @@ describe('Command Aliases', () => {
     let listCalled = false;
     callbacks.listSessions = async () => { listCalled = true; };
 
-    await executeCommand({ command: 'ls', args: [] }, context, callbacks);
+    await executeCommand({ command: 'ls', args: [] }, context, callbacks, currentConfig);
     expect(listCalled).toBe(true);
 
     listCalled = false;
-    await executeCommand({ command: 'list', args: [] }, context, callbacks);
+    await executeCommand({ command: 'list', args: [] }, context, callbacks, currentConfig);
     expect(listCalled).toBe(true);
   });
 
@@ -395,7 +380,7 @@ describe('Command Aliases', () => {
     let historyCalled = false;
     callbacks.printHistory = () => { historyCalled = true; };
 
-    await executeCommand({ command: 'hist', args: [] }, context, callbacks);
+    await executeCommand({ command: 'hist', args: [] }, context, callbacks, currentConfig);
     expect(historyCalled).toBe(true);
   });
 
@@ -406,7 +391,7 @@ describe('Command Aliases', () => {
       return true;
     };
 
-    await executeCommand({ command: 'resume', args: ['session-456'] }, context, callbacks);
+    await executeCommand({ command: 'resume', args: ['session-456'] }, context, callbacks, currentConfig);
     expect(loadedId).toBe('session-456');
   });
 });
@@ -416,9 +401,11 @@ describe('Command Aliases', () => {
 describe('Mode Switching Detailed', () => {
   let context: InteractiveContext;
   let callbacks: CommandCallbacks;
+  let currentConfig: { provider: string; thinking: boolean; auto: boolean; mode?: 'code' | 'ask' };
 
   beforeEach(async () => {
     context = await createInteractiveContext({});
+    currentConfig = { provider: 'test', thinking: false, auto: false, mode: 'code' };
     callbacks = {
       exit: () => {},
       saveSession: async () => {},
@@ -430,28 +417,28 @@ describe('Mode Switching Detailed', () => {
   });
 
   it('should start in code mode by default', () => {
-    expect(context.mode).toBe('code');
+    expect(currentConfig.mode).toBe('code');
   });
 
   it('should switch to ask mode and back to code', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    await executeCommand({ command: 'ask', args: [] }, context, callbacks);
-    expect(context.mode).toBe('ask');
+    await executeCommand({ command: 'ask', args: [] }, context, callbacks, currentConfig);
+    expect(currentConfig.mode).toBe('ask');
 
-    await executeCommand({ command: 'code', args: [] }, context, callbacks);
-    expect(context.mode).toBe('code');
+    await executeCommand({ command: 'code', args: [] }, context, callbacks, currentConfig);
+    expect(currentConfig.mode).toBe('code');
 
     consoleSpy.mockRestore();
   });
 
   it('should handle invalid mode gracefully', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const originalMode = context.mode;
+    const originalMode = currentConfig.mode;
 
-    await executeCommand({ command: 'mode', args: ['invalid'] }, context, callbacks);
+    await executeCommand({ command: 'mode', args: ['invalid'] }, context, callbacks, currentConfig);
 
-    expect(context.mode).toBe(originalMode);
+    expect(currentConfig.mode).toBe(originalMode);
     const output = consoleSpy.mock.calls.map(c => c.join(' ')).join('\n');
     expect(output).toContain('Unknown mode');
 

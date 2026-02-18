@@ -3,15 +3,17 @@
  */
 
 import chalk from 'chalk';
-import { InteractiveContext, InteractiveMode, setMode } from './context.js';
+import { InteractiveContext, InteractiveMode } from './context.js';
 import { estimateTokens, KODAX_PROVIDERS, getProviderList, saveConfig } from '../kodax_core.js';
+import { runWithPlanMode, listPlans, resumePlan, clearCompletedPlans } from '../cli/plan-mode.js';
+import { KodaXOptions } from '../core/index.js';
 
 // 当前配置状态（由 repl.ts 传入）
 export interface CurrentConfig {
   provider: string;
   thinking: boolean;
   auto: boolean;
-  mode?: string;
+  mode?: 'code' | 'ask';
 }
 
 // 命令处理器类型
@@ -35,6 +37,8 @@ export interface CommandCallbacks {
   setAuto?: (enabled: boolean) => void;
   deleteSession?: (id: string) => Promise<void>;
   deleteAllSessions?: () => Promise<void>;
+  setPlanMode?: (enabled: boolean) => void;
+  createKodaXOptions?: () => KodaXOptions;
 }
 
 // 命令定义
@@ -78,8 +82,8 @@ export const BUILTIN_COMMANDS: Command[] = [
     name: 'status',
     aliases: ['info', 'ctx'],
     description: 'Show current session status',
-    handler: async (_args, context) => {
-      printStatus(context);
+    handler: async (_args, context, _callbacks, currentConfig) => {
+      printStatus(context, currentConfig);
     },
   },
   {
@@ -87,15 +91,15 @@ export const BUILTIN_COMMANDS: Command[] = [
     aliases: ['m'],
     description: 'Switch between code and ask mode',
     usage: '/mode [code|ask]',
-    handler: async (args, context) => {
+    handler: async (args, _context, _callbacks, currentConfig) => {
       if (args.length === 0) {
-        console.log(chalk.dim(`\nCurrent mode: ${chalk.cyan(context.mode)}`));
+        console.log(chalk.dim(`\nCurrent mode: ${chalk.cyan(currentConfig.mode ?? 'code')}`));
         console.log(chalk.dim('Usage: /mode [code|ask]'));
         return;
       }
       const newMode = args[0] as InteractiveMode;
       if (newMode === 'code' || newMode === 'ask') {
-        setMode(context, newMode);
+        currentConfig.mode = newMode;
         console.log(chalk.cyan(`\n[Switched to ${newMode} mode]`));
       } else {
         console.log(chalk.red(`\n[Unknown mode: ${args[0]}. Use 'code' or 'ask']`));
@@ -105,16 +109,16 @@ export const BUILTIN_COMMANDS: Command[] = [
   {
     name: 'ask',
     description: 'Switch to ask mode (read-only)',
-    handler: async (_args, context) => {
-      setMode(context, 'ask');
+    handler: async (_args, _context, _callbacks, currentConfig) => {
+      currentConfig.mode = 'ask';
       console.log(chalk.cyan('\n[Switched to ask mode - no file modifications]'));
     },
   },
   {
     name: 'code',
     description: 'Switch to code mode (default)',
-    handler: async (_args, context) => {
-      setMode(context, 'code');
+    handler: async (_args, _context, _callbacks, currentConfig) => {
+      currentConfig.mode = 'code';
       console.log(chalk.cyan('\n[Switched to code mode]'));
     },
   },
@@ -263,6 +267,70 @@ export const BUILTIN_COMMANDS: Command[] = [
       }
     },
   },
+  {
+    name: 'plan',
+    aliases: ['p'],
+    description: 'Plan mode management',
+    usage: '/plan [on|off|once|list|resume|clear] [args]',
+    handler: async (args, _context, callbacks, _currentConfig) => {
+      const subCommand = args[0]?.toLowerCase();
+
+      switch (subCommand) {
+        case 'on':
+          callbacks.setPlanMode?.(true);
+          console.log(chalk.cyan('\n[Plan mode enabled]'));
+          break;
+
+        case 'off':
+          callbacks.setPlanMode?.(false);
+          console.log(chalk.cyan('\n[Plan mode disabled]'));
+          break;
+
+        case 'once': {
+          const prompt = args.slice(1).join(' ');
+          if (!prompt) {
+            console.log(chalk.yellow('\n[Usage: /plan once <your request>]'));
+            return;
+          }
+          const options = callbacks.createKodaXOptions?.();
+          if (options) {
+            await runWithPlanMode(prompt, options);
+          }
+          break;
+        }
+
+        case 'list':
+          await listPlans();
+          break;
+
+        case 'resume': {
+          const planId = args[1];
+          if (!planId) {
+            console.log(chalk.yellow('\n[Usage: /plan resume <plan-id>]'));
+            return;
+          }
+          const options = callbacks.createKodaXOptions?.();
+          if (options) {
+            await resumePlan(planId, options);
+          }
+          break;
+        }
+
+        case 'clear':
+          await clearCompletedPlans();
+          break;
+
+        default:
+          console.log(chalk.dim('\nUsage: /plan [on|off|once|list|resume|clear]'));
+          console.log(chalk.dim('  on    - Enable plan mode for all requests'));
+          console.log(chalk.dim('  off   - Disable plan mode'));
+          console.log(chalk.dim('  once  - Run plan mode for a single request'));
+          console.log(chalk.dim('  list  - List saved plans'));
+          console.log(chalk.dim('  resume- Resume a saved plan'));
+          console.log(chalk.dim('  clear - Clear completed plans\n'));
+      }
+    },
+  },
 ];
 
 // 打印帮助
@@ -293,10 +361,10 @@ function printHelp(): void {
 }
 
 // 打印状态
-function printStatus(context: InteractiveContext): void {
+function printStatus(context: InteractiveContext, currentConfig: CurrentConfig): void {
   const tokens = estimateTokens(context.messages);
   console.log(chalk.bold('\nSession Status:\n'));
-  console.log(chalk.dim(`  Mode:        ${chalk.cyan(context.mode)}`));
+  console.log(chalk.dim(`  Mode:        ${chalk.cyan(currentConfig.mode ?? 'code')}`));
   console.log(chalk.dim(`  Session ID:  ${context.sessionId}`));
   console.log(chalk.dim(`  Messages:    ${context.messages.length}`));
   console.log(chalk.dim(`  Tokens:      ~${tokens}`));

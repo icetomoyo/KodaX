@@ -244,10 +244,13 @@ export interface KodaXOptions {
   maxIter?: number;
   parallel?: boolean;
   auto?: boolean;
+  mode?: 'code' | 'ask';  // 交互模式：code 允许修改，ask 只读
   confirmTools?: Set<string>;
   session?: KodaXSessionOptions;
   context?: KodaXContextOptions;
   events: KodaXEvents;
+  beforeToolExecute?: (tool: string, input: Record<string, unknown>) => Promise<boolean>;  // 执行前钩子
+  noSession?: boolean;  // 单次模式不保存 session
 }
 
 // ============== 结果类型 ==============
@@ -277,7 +280,9 @@ export interface KodaXToolExecutionContext {
   confirmTools: Set<string>;
   backups: Map<string, string>;
   auto: boolean;
+  mode?: 'code' | 'ask';  // 交互模式
   onConfirm?: (tool: string, input: Record<string, unknown>) => Promise<boolean>;
+  beforeToolExecute?: (tool: string, input: Record<string, unknown>) => Promise<boolean>;  // 执行前钩子
 }
 
 // ============== 工具定义 ==============
@@ -809,6 +814,19 @@ export async function executeTool(
   if (ctx.confirmTools.has(name) && !ctx.auto) {
     const confirmed = ctx.onConfirm ? await ctx.onConfirm(name, input) : true;
     if (!confirmed) return '[Cancelled] Operation cancelled by user';
+  }
+
+  // Ask 模式检查：修改性工具返回友好提示
+  const ASK_MODE_BLOCKED_TOOLS = new Set(['write', 'edit', 'bash', 'notebook_edit']);
+  if (ctx.mode === 'ask' && ASK_MODE_BLOCKED_TOOLS.has(name)) {
+    return `[Ask Mode] Tool "${name}" is blocked in ask mode. ` +
+           `Switch to code mode with "/mode code" to execute this operation.`;
+  }
+
+  // Plan Mode 钩子：执行前确认
+  if (ctx.beforeToolExecute) {
+    const shouldContinue = await ctx.beforeToolExecute(name, input);
+    if (!shouldContinue) return '[Cancelled by user]';
   }
 
   try {
@@ -1350,6 +1368,14 @@ export async function buildSystemPrompt(options: KodaXOptions, isNewSession: boo
     prompt += LONG_RUNNING_PROMPT;
   }
 
+  // Ask 模式系统提示
+  if (options.mode === 'ask') {
+    prompt += '\n\n## Current Mode: ASK (read-only)\n';
+    prompt += '- You CANNOT use: write, edit, bash, notebook_edit\n';
+    prompt += '- You CAN use: read, glob, grep, undo\n';
+    prompt += '- If user asks for file modifications, explain what you would do but DO NOT execute';
+  }
+
   return prompt;
 }
 
@@ -1423,7 +1449,9 @@ export async function runKodaX(
     confirmTools: options.confirmTools ?? new Set(['bash', 'write', 'edit']),
     backups: new Map(),
     auto: options.auto ?? false,
+    mode: options.mode,
     onConfirm: events.onConfirm,
+    beforeToolExecute: options.beforeToolExecute,
   };
 
   const systemPrompt = await buildSystemPrompt(options, messages.length === 1);

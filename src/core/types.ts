@@ -143,10 +143,12 @@ export interface KodaXOptions {
   maxIter?: number;
   parallel?: boolean;
   auto?: boolean;
+  mode?: 'code' | 'ask';  // 交互模式：code 允许修改，ask 只读
   confirmTools?: Set<string>;
   session?: KodaXSessionOptions;
   context?: KodaXContextOptions;
   events?: KodaXEvents;
+  beforeToolExecute?: (tool: string, input: Record<string, unknown>) => Promise<boolean>;  // 执行前钩子
 }
 
 // ============== 结果类型 ==============

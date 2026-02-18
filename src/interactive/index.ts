@@ -7,7 +7,6 @@ export {
   InteractiveContext,
   InteractiveMode,
   createInteractiveContext,
-  setMode,
   touchContext,
 } from './context.js';
 export {

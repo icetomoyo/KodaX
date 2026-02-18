@@ -15,7 +15,7 @@ export interface InteractiveContext {
   gitRoot?: string;
   createdAt: string;
   lastAccessed: string;
-  mode: InteractiveMode;
+  // 注意：mode 已移至 CurrentConfig 管理，避免状态分散
 }
 
 // 创建交互式上下文
@@ -31,7 +31,6 @@ export async function createInteractiveContext(options: {
     gitRoot: options.gitRoot,
     createdAt: new Date().toISOString(),
     lastAccessed: new Date().toISOString(),
-    mode: 'code',
   };
 }
 
@@ -46,9 +45,4 @@ function generateSessionId(): string {
 // 更新上下文访问时间
 export function touchContext(context: InteractiveContext): void {
   context.lastAccessed = new Date().toISOString();
-}
-
-// 设置模式
-export function setMode(context: InteractiveContext, mode: InteractiveMode): void {
-  context.mode = mode;
 }
