@@ -146,7 +146,7 @@ export interface KodaXOptions {
   confirmTools?: Set<string>;
   session?: KodaXSessionOptions;
   context?: KodaXContextOptions;
-  events: KodaXEvents;
+  events?: KodaXEvents;
 }
 
 // ============== 结果类型 ==============

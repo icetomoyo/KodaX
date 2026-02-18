@@ -41,7 +41,7 @@ export async function runKodaX(
   }
 
   const maxIter = options.maxIter ?? 50;
-  const events = options.events;
+  const events = options.events ?? {};
 
   // 处理 autoResume/resume：自动加载当前目录最近会话
   let resolvedSessionId = options.session?.id;
@@ -80,7 +80,7 @@ export async function runKodaX(
     confirmTools: options.confirmTools ?? new Set(['bash', 'write', 'edit']),
     backups: new Map(),
     auto: options.auto ?? false,
-    onConfirm: events.onConfirm,
+    onConfirm: events?.onConfirm,
   };
 
   const systemPrompt = await buildSystemPrompt(options, messages.length === 1);

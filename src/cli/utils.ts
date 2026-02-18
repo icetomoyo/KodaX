@@ -89,6 +89,15 @@ export async function getGitRoot(): Promise<string | null> {
   try { const { stdout } = await execAsync('git rev-parse --show-toplevel'); return stdout.trim(); } catch { return null; }
 }
 
+// Feature 类型定义
+interface Feature {
+  name?: string;
+  description?: string;
+  steps?: string[];
+  passes?: boolean;
+  [key: string]: unknown;
+}
+
 // 获取功能进度
 export function getFeatureProgress(): [number, number] {
   const featuresPath = path.resolve('feature_list.json');
@@ -96,7 +105,7 @@ export function getFeatureProgress(): [number, number] {
   try {
     const features = JSON.parse(fsSync.readFileSync(featuresPath, 'utf-8'));
     const total = (features.features ?? []).length;
-    const completed = (features.features ?? []).filter((f: any) => f.passes).length;
+    const completed = (features.features ?? []).filter((f: Feature) => f.passes).length;
     return [completed, total];
   } catch { return [0, 0]; }
 }
