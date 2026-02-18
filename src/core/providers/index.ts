@@ -14,4 +14,6 @@ export {
   isProviderConfigured,
   getProviderModel,
   getProviderList,
+  ProviderName,
+  isProviderName,
 } from './registry.js';

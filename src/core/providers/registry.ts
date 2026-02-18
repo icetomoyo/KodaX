@@ -12,6 +12,18 @@ import { KodaXProviderError } from '../errors.js';
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 
+// ============== Provider 名称类型 ==============
+
+export type ProviderName =
+  | 'anthropic'
+  | 'openai'
+  | 'kimi'
+  | 'kimi-code'
+  | 'qwen'
+  | 'zhipu'
+  | 'zhipu-coding'
+  | 'minimax-coding';
+
 // ============== 具体 Provider 实现 ==============
 
 class AnthropicProvider extends KodaXAnthropicCompatProvider {
@@ -141,4 +153,9 @@ export function getProviderList(): Array<{ name: string; model: string; configur
     }
   }
   return result;
+}
+
+// 类型守卫函数：检查字符串是否为有效的 Provider 名称
+export function isProviderName(name: string): name is ProviderName {
+  return name in KODAX_PROVIDERS;
 }
