@@ -12,7 +12,7 @@ import { buildSystemPrompt } from './prompts/index.js';
 import { generateSessionId, extractTitleFromMessages } from './session.js';
 import { compactMessages, checkIncompleteToolCalls } from './messages.js';
 import { estimateTokens } from './tokenizer.js';
-import { KODAX_MAX_INCOMPLETE_RETRIES, PROMISE_PATTERN } from './constants.js';
+import { KODAX_MAX_INCOMPLETE_RETRIES, PROMISE_PATTERN, KODAX_TOOL_REQUIRED_PARAMS } from './constants.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
@@ -156,12 +156,7 @@ export async function runKodaX(
           events.onRetry?.(`Max retries exceeded for incomplete tool calls. Skipping: ${incomplete.join(', ')}`, incompleteRetryCount, KODAX_MAX_INCOMPLETE_RETRIES);
           const incompleteIds = new Set<string>();
           for (const tc of result.toolBlocks) {
-            const required = tc.name === 'read' ? ['path'] :
-              tc.name === 'write' ? ['path', 'content'] :
-              tc.name === 'edit' ? ['path', 'old_string', 'new_string'] :
-              tc.name === 'bash' ? ['command'] :
-              tc.name === 'glob' ? ['pattern'] :
-              tc.name === 'grep' ? ['pattern', 'path'] : [];
+            const required = KODAX_TOOL_REQUIRED_PARAMS[tc.name] ?? [];
             const input = (tc.input ?? {}) as Record<string, unknown>;
             for (const param of required) {
               if (input[param] === undefined || input[param] === null || input[param] === '') {
