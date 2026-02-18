@@ -182,6 +182,7 @@ export interface KodaXOptions {
   maxIter?: number;
   parallel?: boolean;
   auto?: boolean;
+  mode?: 'code' | 'ask';           // 交互模式，默认 'code'
   confirmTools?: Set<string>;
   session?: KodaXSessionOptions;
   events?: KodaXEvents;
@@ -232,6 +233,9 @@ export interface KodaXEvents {
 
   // 用户交互（由上层实现）
   onConfirm?: (tool: string, input: Record<string, unknown>) => Promise<boolean>;
+
+  // 工具执行钩子（用于 Ask/Plan 模式）
+  beforeToolExecute?: (tool: string, input: Record<string, unknown>) => Promise<boolean>;
 }
 ```
 
@@ -528,7 +532,79 @@ export function createCliEvents(showSessionId = true): KodaXEvents {
 
 ## 8. Interactive 层设计
 
-### 8.1 REPL 实现
+### 8.1 交互模式
+
+KodaX 支持三种交互模式，通过 `currentConfig.mode` 统一管理：
+
+| 模式 | 说明 | 可用工具 |
+|------|------|----------|
+| `code` | 默认模式，完整功能 | 全部工具 |
+| `ask` | 只读模式 | read, glob, grep, undo |
+| `plan` | 计划模式 | 全部工具（执行前确认） |
+
+**模式切换命令**：
+```
+/mode [code|ask]     # 切换交互模式
+/plan [on|off|once]  # 计划模式管理
+```
+
+**状态指示器**：REPL 提示符会显示当前模式状态
+- `[thinking]` - 思考模式开启（青色）
+- `[auto]` - 自动确认模式（青色）
+- `[plan]` - 计划模式开启（洋红色）
+
+### 8.2 Ask 模式实现
+
+Ask 模式通过 Core 层钩子强制执行只读限制：
+
+```typescript
+// Core 层 - beforeToolExecute 钩子
+const options: KodaXOptions = {
+  mode: 'ask',
+  events: {
+    beforeToolExecute: async (tool, input) => {
+      const readOnlyTools = ['read', 'glob', 'grep', 'undo'];
+      if (!readOnlyTools.includes(tool)) {
+        console.log(chalk.yellow(`[Ask Mode] ${tool} is blocked`));
+        return false;  // 阻止执行
+      }
+      return true;
+    }
+  }
+};
+```
+
+### 8.3 Plan 模式实现
+
+Plan 模式实现计划生成、存储和逐步执行：
+
+**核心文件**：
+- `src/cli/plan-storage.ts` - 计划持久化存储
+- `src/cli/plan-mode.ts` - 计划生成与执行逻辑
+
+**计划数据结构**：
+```typescript
+interface ExecutionPlan {
+  id: string;
+  title: string;
+  originalPrompt: string;
+  steps: {
+    id: string;
+    description: string;
+    tool?: string;
+    status: 'pending' | 'done' | 'skipped' | 'failed';
+  }[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+```
+
+**特性**：
+- 文本计划格式（非 JSON），灵活容错
+- 计划持久化，支持中断恢复
+- 逐步确认执行
+
+### 8.4 REPL 实现
 
 ```typescript
 // src/interactive/repl.ts
@@ -710,7 +786,9 @@ KodaX/
 │   │   ├── options.ts
 │   │   ├── storage.ts
 │   │   ├── events.ts
-│   │   └── commands.ts
+│   │   ├── commands.ts
+│   │   ├── plan-mode.ts      # Plan 模式逻辑
+│   │   └── plan-storage.ts   # 计划持久化
 │   └── interactive/          # Interactive 层
 │       ├── index.ts
 │       ├── repl.ts
