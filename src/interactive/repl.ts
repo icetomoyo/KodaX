@@ -108,6 +108,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
+    terminal: process.stdout.isTTY ?? true,
     historySize: 100,
   });
 

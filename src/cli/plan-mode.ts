@@ -5,16 +5,25 @@
 import { runKodaX, KodaXOptions } from '../core/index.js';
 import { planStorage, ExecutionPlan } from './plan-storage.js';
 import chalk from 'chalk';
-import readline from 'readline';
+import * as readline from 'readline';
 
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout
-});
+// 延迟创建 readline 接口，避免与 REPL 层冲突导致字符重复
+let rl: readline.Interface | null = null;
+
+function getReadline(): readline.Interface {
+  if (!rl) {
+    rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      terminal: process.stdout.isTTY ?? true,
+    });
+  }
+  return rl;
+}
 
 async function confirm(message: string): Promise<boolean> {
   return new Promise(resolve => {
-    rl.question(`${message} (y/n) `, answer => {
+    getReadline().question(`${message} (y/n) `, answer => {
       resolve(answer.toLowerCase().startsWith('y'));
     });
   });
