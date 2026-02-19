@@ -156,7 +156,7 @@ export function printProjectHelp(): void {
   console.log(chalk.dim('  init <task>         ') + 'Initialize a new project with feature list');
   console.log(chalk.dim('  status              ') + 'Show current project status and progress');
   console.log(chalk.dim('  next [--no-confirm] ') + 'Execute the next pending feature');
-  console.log(chalk.dim('  auto [--max=N]      ') + 'Auto-execute all pending features');
+  console.log(chalk.dim('  auto [--max=N]      ') + 'Auto-execute all pending features (no confirm)');
   console.log(chalk.dim('  pause               ') + 'Pause auto-continue mode');
   console.log(chalk.dim('  list                ') + 'List all features with status');
   console.log(chalk.dim('  mark <n> [done|skip]') + 'Manually mark a feature');
@@ -175,7 +175,8 @@ export function printProjectHelp(): void {
 
   console.log();
   console.log(chalk.bold('Options:'));
-  console.log(chalk.dim('  --no-confirm        Skip confirmation prompts'));
+  console.log(chalk.dim('  --no-confirm        Skip confirmation prompts (next)'));
+  console.log(chalk.dim('  --confirm           Require confirmation for each feature (auto)'));
   console.log(chalk.dim('  --max=N             Limit auto-execution to N features'));
   console.log(chalk.dim('  --overwrite         Overwrite existing project (init)'));
   console.log(chalk.dim('  --append            Add features to existing project (init)'));
@@ -394,11 +395,11 @@ async function projectNext(
 /**
  * 解析 auto 命令选项
  */
-function parseAutoOptions(args: string[]): { hasNoConfirm: boolean; maxRuns: number } {
-  const hasNoConfirm = args.includes('--no-confirm');
+function parseAutoOptions(args: string[]): { hasConfirm: boolean; maxRuns: number } {
+  const hasConfirm = args.includes('--confirm');
   const maxArg = args.find(a => a.startsWith('--max='));
   const maxRuns = maxArg ? parseInt(maxArg.split('=')[1] ?? '10', 10) : 0; // 0 = unlimited
-  return { hasNoConfirm, maxRuns };
+  return { hasConfirm, maxRuns };
 }
 
 /**
@@ -440,14 +441,14 @@ async function projectAuto(
   }
 
   // 解析选项
-  const { hasNoConfirm, maxRuns } = parseAutoOptions(args);
+  const { hasConfirm, maxRuns } = parseAutoOptions(args);
 
   const stats = await storage.getStatistics();
   let runCount = 0;
 
   console.log(chalk.cyan('\nAuto-Continue Mode'));
   console.log(chalk.dim(`  Max runs: ${maxRuns || 'unlimited'}`));
-  console.log(chalk.dim(`  Confirm each: ${hasNoConfirm ? 'no' : 'yes'}`));
+  console.log(chalk.dim(`  Confirm each: ${hasConfirm ? 'yes' : 'no'}`));
   console.log(chalk.dim(`  Remaining: ${stats.pending} features`));
   console.log();
 
@@ -470,8 +471,8 @@ async function projectAuto(
       const desc = next.feature.description || next.feature.name || 'Unnamed';
       console.log(chalk.cyan(`[${runCount}] ${desc}`));
 
-      // 确认
-      if (!hasNoConfirm) {
+      // 确认（仅在 --confirm 模式下）
+      if (hasConfirm) {
         const answer = await question('Execute? (y/n/s=skip/q=quit) ');
         const action = parseAutoAction(answer);
 

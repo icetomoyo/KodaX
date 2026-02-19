@@ -1287,3 +1287,47 @@ describe('Project Command', () => {
     expect(projectCmd?.usage).toContain('next');
   });
 });
+
+// ============== parseAutoOptions 测试 ==============
+
+describe('parseAutoOptions', () => {
+  // 复制 project-commands.ts 中的函数逻辑进行测试
+  function parseAutoOptions(args: string[]): { hasConfirm: boolean; maxRuns: number } {
+    const hasConfirm = args.includes('--confirm');
+    const maxArg = args.find(a => a.startsWith('--max='));
+    const maxRuns = maxArg ? parseInt(maxArg.split('=')[1] ?? '10', 10) : 0;
+    return { hasConfirm, maxRuns };
+  }
+
+  it('should return hasConfirm=false by default', () => {
+    const result = parseAutoOptions([]);
+    expect(result.hasConfirm).toBe(false);
+    expect(result.maxRuns).toBe(0);
+  });
+
+  it('should detect --confirm flag', () => {
+    const result = parseAutoOptions(['--confirm']);
+    expect(result.hasConfirm).toBe(true);
+  });
+
+  it('should parse --max=N option', () => {
+    const result = parseAutoOptions(['--max=5']);
+    expect(result.maxRuns).toBe(5);
+  });
+
+  it('should parse both --confirm and --max=N', () => {
+    const result = parseAutoOptions(['--confirm', '--max=3']);
+    expect(result.hasConfirm).toBe(true);
+    expect(result.maxRuns).toBe(3);
+  });
+
+  it('should return 0 for unlimited when no --max specified', () => {
+    const result = parseAutoOptions([]);
+    expect(result.maxRuns).toBe(0);
+  });
+
+  it('should handle invalid --max value gracefully', () => {
+    const result = parseAutoOptions(['--max=invalid']);
+    expect(result.maxRuns).toBeNaN();
+  });
+});

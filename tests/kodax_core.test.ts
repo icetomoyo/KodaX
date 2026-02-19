@@ -1021,3 +1021,162 @@ describe('toolRead Detailed', () => {
   });
 });
 
+// ============== Auto 模式安全检查测试 ==============
+
+describe('Auto Mode Safety Checks', () => {
+  let ctx: KodaXToolExecutionContext;
+  const projectRoot = process.cwd();
+
+  beforeEach(() => {
+    ctx = {
+      confirmTools: new Set(),
+      backups: new Map(),
+      auto: true,
+      gitRoot: projectRoot,
+    };
+  });
+
+  describe('Write/Edit outside project', () => {
+    it('should allow write to file inside project', async () => {
+      const testFile = path.join(TEST_DIR, 'safe-write-test.txt');
+      await fs.mkdir(TEST_DIR, { recursive: true });
+
+      // If TEST_DIR is inside project, this should work
+      // Otherwise it would require confirmation
+      const ctxWithConfirm: KodaXToolExecutionContext = {
+        ...ctx,
+        onConfirm: async () => true,
+      };
+
+      const result = await executeTool('write', {
+        path: testFile,
+        content: 'test content'
+      }, ctxWithConfirm);
+
+      // Result should not contain cancellation message
+      expect(result).not.toContain('[Cancelled] Operation on file outside project');
+    });
+
+    it('should trigger confirmation for write outside project in auto mode', async () => {
+      const ctxWithConfirm: KodaXToolExecutionContext = {
+        ...ctx,
+        gitRoot: '/definitely/not/project/root',
+        onConfirm: async () => false, // User rejects
+      };
+
+      const result = await executeTool('write', {
+        path: '/some/path/outside/project.txt',
+        content: 'test'
+      }, ctxWithConfirm);
+
+      expect(result).toContain('[Cancelled]');
+      expect(result).toContain('outside project');
+    });
+
+    it('should allow write outside project when user confirms', async () => {
+      const ctxWithConfirm: KodaXToolExecutionContext = {
+        ...ctx,
+        gitRoot: '/definitely/not/project/root',
+        onConfirm: async () => true, // User confirms
+      };
+
+      // Use a temp file that can be written
+      const tempFile = path.join(os.tmpdir(), `kodax-test-outside-${Date.now()}.txt`);
+      const result = await executeTool('write', {
+        path: tempFile,
+        content: 'test content'
+      }, ctxWithConfirm);
+
+      expect(result).not.toContain('[Cancelled]');
+      // Clean up
+      try { await fs.unlink(tempFile); } catch {}
+    });
+
+    it('should not check path safety when gitRoot is not set', async () => {
+      const ctxNoGitRoot: KodaXToolExecutionContext = {
+        ...ctx,
+        gitRoot: undefined,
+      };
+
+      // Should not throw or cancel
+      const tempFile = path.join(os.tmpdir(), `kodax-test-no-git-${Date.now()}.txt`);
+      const result = await executeTool('write', {
+        path: tempFile,
+        content: 'test content'
+      }, ctxNoGitRoot);
+
+      expect(result).not.toContain('[Cancelled]');
+      expect(result).not.toContain('outside project');
+      // Clean up
+      try { await fs.unlink(tempFile); } catch {}
+    });
+
+    it('should not check path safety when auto is false', async () => {
+      const ctxNotAuto: KodaXToolExecutionContext = {
+        ...ctx,
+        auto: false,
+        gitRoot: '/some/project',
+      };
+
+      // Should not trigger outside project check when not in auto mode
+      const tempFile = path.join(os.tmpdir(), `kodax-test-not-auto-${Date.now()}.txt`);
+      const result = await executeTool('write', {
+        path: tempFile,
+        content: 'test'
+      }, ctxNotAuto);
+
+      expect(result).not.toContain('outside project');
+      // Clean up
+      try { await fs.unlink(tempFile); } catch {}
+    });
+  });
+
+  describe('Bash command danger detection', () => {
+    it('should trigger confirmation for rm command outside project', async () => {
+      const ctxWithConfirm: KodaXToolExecutionContext = {
+        ...ctx,
+        gitRoot: '/safe/project/root',
+        onConfirm: async () => false, // User rejects
+      };
+
+      const result = await executeTool('bash', {
+        command: 'rm /outside/project/file.txt'
+      }, ctxWithConfirm);
+
+      expect(result).toContain('[Cancelled]');
+    });
+
+    it('should allow safe commands without confirmation', async () => {
+      // Commands like echo, ls without dangerous operations on outside paths
+      const result = await executeTool('bash', {
+        command: 'echo "hello world"'
+      }, ctx);
+
+      expect(result).toContain('hello world');
+      expect(result).not.toContain('[Cancelled]');
+    });
+
+    it('should not check bash safety when gitRoot is not set', async () => {
+      const ctxNoGitRoot: KodaXToolExecutionContext = {
+        ...ctx,
+        gitRoot: undefined,
+      };
+
+      const result = await executeTool('bash', {
+        command: 'echo "test"'
+      }, ctxNoGitRoot);
+
+      expect(result).toContain('test');
+      expect(result).not.toContain('[Cancelled]');
+    });
+
+    it('should allow commands with safe paths like /dev/null', async () => {
+      const result = await executeTool('bash', {
+        command: 'echo "test" > /dev/null'
+      }, ctx);
+
+      expect(result).not.toContain('outside project');
+    });
+  });
+});
+

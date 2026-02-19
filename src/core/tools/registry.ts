@@ -4,6 +4,7 @@
  * 工具注册表 - 统一管理所有工具
  */
 
+import path from 'path';
 import { ToolHandler } from './types.js';
 import { KodaXToolExecutionContext, KodaXToolDefinition } from '../types.js';
 import { KODAX_TOOL_REQUIRED_PARAMS } from '../constants.js';
@@ -125,6 +126,95 @@ export const KODAX_TOOLS: KodaXToolDefinition[] = [
   },
 ];
 
+// ============== 路径安全检查 ==============
+
+/**
+ * 检查路径是否在项目目录内
+ * 用于 auto 模式下对项目外文件修改的安全检查
+ */
+function isPathInsideProject(targetPath: string, projectRoot: string): boolean {
+  try {
+    const resolvedTarget = path.resolve(targetPath);
+    const resolvedRoot = path.resolve(projectRoot);
+    // 规范化路径比较（处理 Windows/Unix 差异）
+    const normalizedTarget = resolvedTarget.toLowerCase();
+    const normalizedRoot = resolvedRoot.toLowerCase();
+    // 检查目标路径是否以项目根目录开头
+    return normalizedTarget === normalizedRoot || normalizedTarget.startsWith(normalizedRoot + path.sep);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 检测 bash 命令是否包含对项目外文件的危险操作
+ * 危险操作包括：rm, mv, cp, rmdir, del, rd 等
+ */
+function isBashCommandDangerousOutsideProject(command: string, projectRoot: string): { dangerous: boolean; reason?: string } {
+  // 危险命令列表（文件修改相关）
+  const DANGEROUS_COMMANDS = [
+    'rm ', 'rm -', 'rmdir', 'mv ', 'cp ', 'del ', 'rd ',
+    'shred', 'wipe', 'chmod', 'chown',
+    '>', '>>', '2>', // 重定向操作
+  ];
+
+  const normalizedCmd = command.toLowerCase();
+
+  // 检查是否包含危险命令
+  const hasDangerousCmd = DANGEROUS_COMMANDS.some(cmd => normalizedCmd.includes(cmd));
+  if (!hasDangerousCmd) {
+    return { dangerous: false };
+  }
+
+  // 提取命令中的绝对路径（Unix 和 Windows 格式）
+  // Unix: /path/to/file
+  // Windows: C:\path\to\file 或 C:/path/to/file
+  const absPathPatterns = [
+    /\/[^\s;|&<>(){}'"]+/g,  // Unix 绝对路径
+    /[A-Za-z]:[\\/][^\s;|&<>(){}'"]+/g,  // Windows 绝对路径
+  ];
+
+  for (const pattern of absPathPatterns) {
+    const matches = command.match(pattern);
+    if (matches) {
+      for (const match of matches) {
+        // 跳过常见的安全路径（如 /dev/null, /tmp 等）
+        if (match.startsWith('/dev/') || match.startsWith('/tmp/')) continue;
+
+        if (!isPathInsideProject(match, projectRoot)) {
+          return {
+            dangerous: true,
+            reason: `Command may modify file outside project: ${match}`
+          };
+        }
+      }
+    }
+  }
+
+  // 如果包含重定向且目标不在项目内
+  if (normalizedCmd.includes('>') || normalizedCmd.includes('>>')) {
+    // 提取重定向目标
+    const redirectMatch = command.match(/[>]>\s*([^\s;|&]+)/g);
+    if (redirectMatch) {
+      for (const match of redirectMatch) {
+        const targetPath = match.replace(/[>]>\s*/, '').trim();
+        if (targetPath && !targetPath.startsWith('/') && !targetPath.match(/^[A-Za-z]:/)) {
+          // 相对路径，视为安全（在当前目录下）
+          continue;
+        }
+        if (targetPath && !isPathInsideProject(targetPath, projectRoot)) {
+          return {
+            dangerous: true,
+            reason: `Redirect target outside project: ${targetPath}`
+          };
+        }
+      }
+    }
+  }
+
+  return { dangerous: false };
+}
+
 // 执行工具
 export async function executeTool(
   name: string,
@@ -140,6 +230,30 @@ export async function executeTool(
   // 未知工具检查
   if (!KODAX_TOOL_REQUIRED_PARAMS.hasOwnProperty(name)) {
     return `[Tool Error] Unknown tool: ${name}. Available tools: ${Object.keys(KODAX_TOOL_REQUIRED_PARAMS).join(', ')}`;
+  }
+
+  // Auto 模式下，项目外文件修改需要确认
+  const MODIFICATION_TOOLS = new Set(['write', 'edit']);
+
+  // write/edit: 检查目标文件路径
+  if (ctx.auto && ctx.gitRoot && MODIFICATION_TOOLS.has(name)) {
+    const targetPath = input.path as string;
+    if (targetPath && !isPathInsideProject(targetPath, ctx.gitRoot)) {
+      const confirmed = ctx.onConfirm ? await ctx.onConfirm(name, { ...input, _outsideProject: true }) : true;
+      if (!confirmed) return '[Cancelled] Operation on file outside project directory was cancelled';
+    }
+  }
+
+  // bash: 检查命令是否涉及项目外的危险操作
+  if (ctx.auto && ctx.gitRoot && name === 'bash') {
+    const command = input.command as string;
+    if (command) {
+      const dangerCheck = isBashCommandDangerousOutsideProject(command, ctx.gitRoot);
+      if (dangerCheck.dangerous) {
+        const confirmed = ctx.onConfirm ? await ctx.onConfirm(name, { ...input, _outsideProject: true, _reason: dangerCheck.reason }) : true;
+        if (!confirmed) return `[Cancelled] ${dangerCheck.reason}`;
+      }
+    }
   }
 
   if (ctx.confirmTools.has(name) && !ctx.auto) {

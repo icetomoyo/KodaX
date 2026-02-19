@@ -178,7 +178,10 @@ export interface KodaXToolExecutionContext {
   confirmTools: Set<string>;
   backups: Map<string, string>;
   auto: boolean;
+  mode?: 'code' | 'ask';
+  gitRoot?: string;  // 项目根目录，用于 auto 模式下检查项目外文件修改
   onConfirm?: (tool: string, input: Record<string, unknown>) => Promise<boolean>;
+  beforeToolExecute?: (tool: string, input: Record<string, unknown>) => Promise<boolean>;
 }
 
 // ============== 配置类型 ==============

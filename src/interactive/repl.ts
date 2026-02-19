@@ -216,6 +216,47 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
         thinking: currentConfig.thinking,
         auto: currentConfig.auto,
         mode: currentConfig.mode,
+        events: {
+          ...currentOptions.events,
+          onConfirm: async (tool: string, input: Record<string, unknown>) => {
+            return new Promise(resolve => {
+              let prompt: string;
+              // 检查是否是项目外操作
+              const isOutsideProject = input._outsideProject === true;
+              const reason = input._reason as string | undefined;
+
+              if (isOutsideProject) {
+                if (reason) {
+                  prompt = chalk.yellow(`[Safety Warning] ${reason}\n  Proceed anyway? (y/n) `);
+                } else if (tool === 'write' || tool === 'edit') {
+                  prompt = chalk.yellow(`[Safety Warning] Modifying file outside project: ${input.path}\n  Proceed anyway? (y/n) `);
+                } else if (tool === 'bash') {
+                  prompt = chalk.yellow(`[Safety Warning] Bash command may affect files outside project:\n  ${(input.command as string)?.slice(0, 60)}...\n  Proceed anyway? (y/n) `);
+                } else {
+                  prompt = chalk.yellow(`[Safety Warning] Operation outside project directory.\n  Proceed anyway? (y/n) `);
+                }
+              } else {
+                switch (tool) {
+                  case 'bash':
+                    prompt = `[Confirm] Execute: ${(input.command as string)?.slice(0, 60)}...? (y/n) `;
+                    break;
+                  case 'write':
+                    prompt = `[Confirm] Write to ${input.path}? (y/n) `;
+                    break;
+                  case 'edit':
+                    prompt = `[Confirm] Edit ${input.path}? (y/n) `;
+                    break;
+                  default:
+                    prompt = `[Confirm] Execute ${tool}? (y/n) `;
+                }
+              }
+
+              rl.question(prompt, ans => {
+                resolve(['y', 'yes'].includes(ans.trim().toLowerCase()));
+              });
+            });
+          },
+        },
       };
     },
     // 传递 readline 接口供需要用户交互的命令使用
