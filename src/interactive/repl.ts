@@ -8,6 +8,10 @@ import * as util from 'util';
 import chalk from 'chalk';
 
 const execAsync = util.promisify(childProcess.exec);
+
+// 导出 Ink UI 版本的入口
+export { runInkInteractiveMode } from '../ui/index.js';
+export type { InkREPLOptions } from '../ui/index.js';
 import {
   KodaXOptions,
   KodaXMessage,

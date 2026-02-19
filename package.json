@@ -1,6 +1,6 @@
 {
   "name": "kodax",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "极致轻量化 Coding Agent - TypeScript 实现，支持7种LLM提供商",
   "type": "module",
   "main": "dist/index.js",
@@ -43,10 +43,16 @@
     "commander": "^13.1.0",
     "glob": "^11.0.1",
     "iconv-lite": "^0.6.3",
-    "openai": "^4.85.0"
+    "ink": "^5.0.0",
+    "ink-spinner": "^5.0.0",
+    "ink-text-input": "^6.0.0",
+    "openai": "^4.85.0",
+    "react": "^18.2.0",
+    "string-width": "^7.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.13.4",
+    "@types/react": "^18.2.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
     "vitest": "^3.2.4"

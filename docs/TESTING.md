@@ -32,13 +32,15 @@ npm test
 
 ### 测试文件结构
 
-KodaX 包含 135 个自动化测试，分布在 3 个测试文件中：
+KodaX 包含 183 个自动化测试，分布在 5 个测试文件中：
 
 ```
 tests/
-├── kodax_core.test.ts   # Core 模块测试 (82 tests)
-├── kodax_cli.test.ts    # CLI 层测试 (20 tests)
-└── prompts.test.ts      # 提示词内容验证测试 (33 tests)
+├── kodax_core.test.ts     # Core 模块测试 (82 tests)
+├── kodax_cli.test.ts      # CLI 层测试 (20 tests)
+├── prompts.test.ts        # 提示词内容验证测试 (33 tests)
+├── interactive.test.ts    # 交互式模式测试
+└── text-buffer.test.ts    # TextBuffer 单元测试 (48 tests)
 ```
 
 ### 测试覆盖范围

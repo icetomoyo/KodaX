@@ -37,6 +37,7 @@ import {
 import { getGitRoot, loadConfig, getFeatureProgress, checkAllFeaturesComplete, rateLimitedCall, KODAX_SESSIONS_DIR, buildInitPrompt } from './cli/utils.js';
 
 import { runInteractiveMode } from './interactive/index.js';
+import { runInkInteractiveMode } from './ui/index.js';
 
 import os from 'os';
 
@@ -174,6 +175,7 @@ interface CliOptions {
   resume?: string;
   noSession: boolean;
   print?: boolean;
+  ink: boolean;  // Use Ink-based UI
 }
 
 // ============== Spinner 动画 ==============
@@ -728,6 +730,7 @@ async function main() {
     .option('--auto-continue', 'Auto-continue long-running task until all features pass')
     .option('--max-sessions <n>', 'Max sessions for --auto-continue', '50')
     .option('--max-hours <n>', 'Max hours for --auto-continue', '2')
+    .option('--ink', 'Use Ink-based interactive UI (experimental)')
     .allowUnknownOption(false)
     .parse();
 
@@ -756,6 +759,7 @@ async function main() {
     resume: opts.resume,
     noSession: opts.noSession ?? false,
     print: opts.print ? true : false,
+    ink: opts.ink ?? false,
   };
 
   // 会话列表
@@ -1070,10 +1074,19 @@ New: {"features": [
   if (!userPrompt && !options.init && !options.print) {
     const kodaXOptions = createKodaXOptions(options, false);
     // 传递 FileSessionStorage 以支持会话持久化
-    await runInteractiveMode({
-      ...kodaXOptions,
-      storage: new FileSessionStorage(),
-    });
+    if (options.ink) {
+      // 使用 Ink-based UI (实验性)
+      await runInkInteractiveMode({
+        ...kodaXOptions,
+        storage: new FileSessionStorage(),
+      });
+    } else {
+      // 使用经典 readline UI
+      await runInteractiveMode({
+        ...kodaXOptions,
+        storage: new FileSessionStorage(),
+      });
+    }
     return;
   }
 

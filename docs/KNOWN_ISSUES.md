@@ -16,6 +16,13 @@
 | 9 | 交互提示缺少输入验证 | 中 | `src/interactive/project-commands.ts` | 待处理 | 空白字符可能导致意外行为 |
 | 12 | 不安全的类型断言 | 中 | `src/interactive/project-commands.ts` | 待处理 | `{} as KodaXOptions` 空对象断言为特定类型 |
 | 13 | 非空断言缺乏显式检查 | 中 | `src/interactive/project-storage.ts` | 待处理 | 使用 `!` 操作符时缺少显式 null 检查 |
+| 14 | 命令预览长度不一致 | 中 | `src/interactive/prompts.ts` | 待处理 | 某处显示 60 字符，另一处 50 字符，应统一常量 |
+| 15 | ANSI Strip 性能 | 中 | `src/interactive/status-bar.ts` | 待处理 | 每次渲染都用正则替换，建议缓存或使用 `strip-ansi` 库 |
+| 16 | 自动补全缓存内存泄漏 | 低 | `src/interactive/autocomplete.ts` | 待处理 | `setTimeout` 高频调用可能内存问题，建议用 LRU cache |
+| 17 | 语法高亮语言支持不全 | 低 | `src/interactive/markdown-render.ts` | 待处理 | `_language` 参数未使用，仅支持 JS/TS 关键词 |
+| 18 | Unicode 检测不完整 | 低 | `src/interactive/themes.ts` | 待处理 | 未检测 Windows CMD/PowerShell 的 `chcp 65001` 设置 |
+| 19 | InkREPL 组件过大 | 中 | `src/ui/InkREPL.tsx` | 待处理 | ~637 行代码，可考虑拆分为更小模块 |
+| 20 | TextBuffer 未使用方法 | 低 | `src/ui/utils/text-buffer.ts` | 待处理 | `getAbsoluteOffset()` 方法已实现但未被调用 |
 
 ## 已解决问题
 
@@ -24,6 +31,7 @@
 | 3 | 资源泄漏 | 高 | `src/interactive/project-commands.ts` | 2026-02-19 | readline 接口未关闭，通过 callbacks 传递复用 |
 | 10 | 全局可变状态 | 高 | `src/interactive/project-commands.ts` | 2026-02-19 | 封装到 `ProjectRuntimeState` 类 |
 | 11 | 函数过长 | 高 | `src/interactive/project-commands.ts` | 2026-02-19 | 提取辅助函数，每个函数职责单一 |
+| 21 | Delete 键无效 | 高 | `src/ui/components/InputPrompt.tsx` | 2026-02-20 | 添加 `delete: deleteChar` 别名并调用处理函数 |
 
 ---
 
@@ -343,8 +351,266 @@ export const projectRuntimeState = new ProjectRuntimeState();
 
 ---
 
+---
+
+### Issue #14: 命令预览长度不一致
+
+**位置**: `src/interactive/prompts.ts` - 行 253-254 vs 239
+
+**问题描述**:
+```typescript
+// 行 239: 显示 50 字符
+const preview = cmd.slice(0, 50) + (cmd.length > 50 ? '...' : '');
+
+// 行 253-254: 显示 60 字符
+const cmd = (input.command as string)?.slice(0, 60) ?? '';
+const suffix = cmd.length >= 60 ? '...' : '';
+```
+
+**影响**:
+- 用户体验不一致
+- 代码维护困难
+
+**建议修复**:
+```typescript
+const CMD_PREVIEW_LENGTH = 50;
+const preview = cmd.slice(0, CMD_PREVIEW_LENGTH) + (cmd.length > CMD_PREVIEW_LENGTH ? '...' : '');
+```
+
+---
+
+### Issue #15: ANSI Strip 性能问题
+
+**位置**: `src/interactive/status-bar.ts` - 行 206-208
+
+**问题描述**:
+```typescript
+private stripAnsi(str: string): string {
+  // eslint-disable-next-line no-control-regex
+  return str.replace(/\x1b\[[0-9;]*m/g, '');
+}
+```
+
+`stripAnsi()` 在每次渲染时都调用正则替换，状态栏更新频繁时可能影响性能。
+
+**影响**:
+- 高频渲染时可能有性能开销
+- 正则表达式每次都重新编译
+
+**建议修复**:
+- 使用 `strip-ansi` npm 包（更高效）
+- 或缓存正则表达式：`const ANSI_REGEX = /\x1b\[[0-9;]*m/g;`
+- 或缓存已处理的字符串
+
+---
+
+### Issue #16: 自动补全缓存内存泄漏风险
+
+**位置**: `src/interactive/autocomplete.ts` - 行 95-110
+
+**问题描述**:
+```typescript
+setTimeout(() => this.cache.delete(dir), this.cacheTimeout);
+```
+
+使用 `setTimeout` 进行缓存过期清理，在高频率调用时可能导致：
+- 大量定时器积压
+- 内存无法及时释放
+
+**影响**:
+- 长时间运行时可能内存泄漏
+- 大量文件操作时定时器堆积
+
+**建议修复**:
+```typescript
+// 使用 LRU cache with TTL
+import { LRUCache } from 'lru-cache';
+
+private cache = new LRUCache<string, string[]>({
+  max: 100,
+  ttl: 60_000, // 60 seconds
+});
+```
+
+---
+
+### Issue #17: 语法高亮语言支持不全
+
+**位置**: `src/interactive/markdown-render.ts` - 行 43-65
+
+**问题描述**:
+```typescript
+function highlightCode(code: string, _language: string): string {
+  const keywords = /\b(const|let|var|...)\b/g;
+  // _language 参数未使用
+}
+```
+
+**影响**:
+- 无法针对不同语言高亮（Python、Go、Rust 等）
+- 关键词列表只覆盖 JavaScript/TypeScript
+
+**建议修复**:
+```typescript
+function highlightCode(code: string, language: string): string {
+  const keywordSets: Record<string, string[]> = {
+    javascript: ['const', 'let', 'var', ...],
+    python: ['def', 'class', 'import', 'from', ...],
+    go: ['func', 'package', 'import', 'var', ...],
+    // ...
+  };
+  const keywords = keywordSets[language] ?? keywordSets['javascript'];
+  // ...
+}
+```
+
+或集成 `highlight.js` / `prism` 库。
+
+---
+
+### Issue #18: Unicode 检测不完整
+
+**位置**: `src/interactive/themes.ts` - 行 93-101
+
+**问题描述**:
+```typescript
+function supportsUnicode(): boolean {
+  if (process.platform === 'win32') {
+    const env = process.env;
+    return env.WT_SESSION !== undefined ||  // Windows Terminal
+           env.TERM_PROGRAM === 'vscode' ||
+           env.CI === 'true';
+  }
+  return true;
+}
+```
+
+**影响**:
+- 未检测 CMD/PowerShell 的代码页设置 (`chcp 65001`)
+- 用户设置了 UTF-8 代码页但仍显示 ASCII 字符
+
+**建议修复**:
+```typescript
+function supportsUnicode(): boolean {
+  if (process.platform === 'win32') {
+    const env = process.env;
+    // Windows Terminal, VS Code, CI
+    if (env.WT_SESSION || env.TERM_PROGRAM === 'vscode' || env.CI) {
+      return true;
+    }
+    // 检测代码页 (65001 = UTF-8)
+    // 注意：这需要同步执行 chcp 命令，可能影响性能
+    // 可以在启动时缓存结果
+    return false;
+  }
+  return true;
+}
+```
+
+---
+
+### Issue #19: InkREPL 组件过大
+
+**位置**: `src/ui/InkREPL.tsx`
+
+**问题描述**:
+InkREPL 组件约 637 行代码，包含多个职责：
+- 命令处理
+- Shell 命令执行
+- 会话管理
+- 消息格式化
+- 状态管理
+
+**影响**:
+- 代码可读性降低
+- 维护成本增加
+- 难以单独测试各模块
+
+**建议修复**:
+拆分为多个模块：
+```typescript
+// 提取 shell 执行逻辑
+// src/ui/utils/shell-executor.ts
+export async function executeShellCommand(...)
+
+// 提取消息格式化
+// src/ui/utils/message-formatter.ts
+export function formatMessage(...)
+
+// 提取会话管理
+// src/ui/hooks/useSessionManager.ts
+export function useSessionManager(...)
+```
+
+---
+
+### Issue #20: TextBuffer 未使用方法
+
+**位置**: `src/ui/utils/text-buffer.ts` - 行 436-445
+
+**问题描述**:
+```typescript
+getAbsoluteOffset(): number {
+  let offset = 0;
+  for (let i = 0; i < this._cursor.row; i++) {
+    offset += (this._lines[i]?.length ?? 0) + 1;
+  }
+  offset += sliceByCodePoints(line, 0, this._cursor.col).length;
+  return offset;
+}
+```
+
+`getAbsoluteOffset()` 方法计算光标在文本中的字节偏移位置，但当前未被任何 UI 组件调用。
+
+**影响**:
+- 代码冗余（约 10 行）
+- 不影响功能
+
+**建议处理**:
+- **保留**：作为未来高级编辑功能的扩展点（如文本选择、外部编辑器同步）
+- **删除**：如果确定不需要这些功能
+- **标注**：添加 `@internal` 或文档说明用途
+
+---
+
+### Issue #21: Delete 键无效（已解决）
+
+**原问题描述**:
+在 `InputPrompt.tsx` 中，Delete 键的处理函数为空，无法删除光标后的字符：
+```typescript
+if (key.delete) {
+  // 空实现
+  return;
+}
+```
+
+**解决方案**:
+1. 从 `useTextBuffer` hook 解构时添加 `delete` 别名：
+```typescript
+const { ..., delete: deleteChar } = useTextBuffer({...});
+```
+2. 在 Delete 键处理中调用 `deleteChar()`:
+```typescript
+if (key.delete) {
+  deleteChar();
+  return;
+}
+```
+
+---
+
 ## 更新日志
 
+- **2026-02-20**: Ink UI 代码审查与修复
+  - 解决 Issue #21: Delete 键无效问题
+  - 新增 `tests/text-buffer.test.ts` 单元测试（48 个测试用例）
+  - 新增 Issue #19-20（中/低优先级）
+- **2026-02-19**: Ink UI 集成完成
+  - 新增 `src/ui/InkREPL.tsx` 适配器层
+  - 更新 `kodax_cli.ts` 添加 `--ink` 参数
+  - Phase 4 集成完成，可通过 `kodax --ink` 使用实验性 Ink UI
+- **2026-02-19**: 交互式 UI Phase 1-4 代码审查
+  - 新增 Issue #14-18（中/低优先级）
 - **2026-02-19**: 代码审查更新
   - 新增 Issue #6-9, #12-13（低/中优先级）
   - 解决 Issue #3, #10, #11（高优先级）
