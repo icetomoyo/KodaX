@@ -36,6 +36,10 @@ import {
 } from './commands.js';
 import { runWithPlanMode } from '../cli/plan-mode.js';
 import { detectAndShowProjectHint } from './project-commands.js';
+import {
+  confirmToolExecution,
+  getTerminalWidth,
+} from './prompts.js';
 
 // 扩展的会话存储接口（增加 list 方法）
 interface SessionStorage extends KodaXSessionStorage {
@@ -115,6 +119,24 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     terminal: process.stdout.isTTY ?? true,
     historySize: 100,
   });
+
+  // 键盘快捷键状态 (Phase 2 将实际使用)
+  // let showToolOutput = true;
+  // let showTodoList = false;
+
+  // 键盘快捷键映射 (通过 Ctrl 组合键触发)
+  // 注: 完整实现将在 Phase 2 中添加，当前版本先显示提示
+  const KEYBOARD_SHORTCUTS_HELP = `
+Keyboard Shortcuts:
+  Ctrl+R    Search command history (built-in)
+  Ctrl+C    Cancel current input
+  Ctrl+D    Exit REPL`;
+
+  // 打印快捷键帮助 (可在 /help 命令中调用，Phase 2 将集成)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _printKeyboardShortcuts = (): void => {
+    console.log(chalk.dim(KEYBOARD_SHORTCUTS_HELP));
+  };
 
   let isRunning = true;
   // 修复：确保 session.id 被设置以复用同一 session
@@ -219,41 +241,10 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
         events: {
           ...currentOptions.events,
           onConfirm: async (tool: string, input: Record<string, unknown>) => {
-            return new Promise(resolve => {
-              let prompt: string;
-              // 检查是否是项目外操作
-              const isOutsideProject = input._outsideProject === true;
-              const reason = input._reason as string | undefined;
-
-              if (isOutsideProject) {
-                if (reason) {
-                  prompt = chalk.yellow(`[Safety Warning] ${reason}\n  Proceed anyway? (y/n) `);
-                } else if (tool === 'write' || tool === 'edit') {
-                  prompt = chalk.yellow(`[Safety Warning] Modifying file outside project: ${input.path}\n  Proceed anyway? (y/n) `);
-                } else if (tool === 'bash') {
-                  prompt = chalk.yellow(`[Safety Warning] Bash command may affect files outside project:\n  ${(input.command as string)?.slice(0, 60)}...\n  Proceed anyway? (y/n) `);
-                } else {
-                  prompt = chalk.yellow(`[Safety Warning] Operation outside project directory.\n  Proceed anyway? (y/n) `);
-                }
-              } else {
-                switch (tool) {
-                  case 'bash':
-                    prompt = `[Confirm] Execute: ${(input.command as string)?.slice(0, 60)}...? (y/n) `;
-                    break;
-                  case 'write':
-                    prompt = `[Confirm] Write to ${input.path}? (y/n) `;
-                    break;
-                  case 'edit':
-                    prompt = `[Confirm] Edit ${input.path}? (y/n) `;
-                    break;
-                  default:
-                    prompt = `[Confirm] Execute ${tool}? (y/n) `;
-                }
-              }
-
-              rl.question(prompt, ans => {
-                resolve(['y', 'yes'].includes(ans.trim().toLowerCase()));
-              });
+            // 使用增强的确认提示
+            return confirmToolExecution(rl, tool, input, {
+              isOutsideProject: input._outsideProject === true,
+              reason: input._reason as string | undefined,
             });
           },
         },
@@ -369,10 +360,25 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   }
 }
 
-// 获取提示符
+// 获取提示符 (响应式)
 function getPrompt(mode: InteractiveMode, config: CurrentConfig, planMode: boolean): string {
   const modeColor = mode === 'ask' ? chalk.yellow : chalk.green;
   const model = getProviderModel(config.provider) ?? config.provider;
+  const width = getTerminalWidth();
+
+  // 根据终端宽度决定提示符详细程度
+  if (width < 60) {
+    // 窄终端：最简提示符
+    const modeIndicator = mode === 'ask' ? '?' : '>';
+    return modeColor(`${modeIndicator} `);
+  } else if (width < 100) {
+    // 中等宽度：简短提示符
+    const flagChar = planMode ? 'P' : (config.thinking ? 'T' : (config.auto ? 'A' : ''));
+    const flagPart = flagChar ? chalk.dim(`[${flagChar}]`) : '';
+    return modeColor(`kodax:${mode}${flagPart}> `);
+  }
+
+  // 宽终端：完整提示符
   const thinkingFlag = config.thinking ? chalk.cyan('[thinking]') : '';
   const autoFlag = config.auto ? chalk.cyan('[auto]') : '';
   const planFlag = planMode ? chalk.magenta('[plan]') : '';
@@ -510,5 +516,6 @@ function printStartupBanner(config: CurrentConfig, mode: string): void {
   console.log(chalk.cyan('    /mode      ') + chalk.dim('Switch code/ask mode'));
   console.log(chalk.cyan('    /clear     ') + chalk.dim('Clear conversation'));
   console.log(chalk.cyan('    @file      ') + chalk.dim('Add file to context'));
-  console.log(chalk.cyan('    !cmd       ') + chalk.dim('Run shell command\n'));
+  console.log(chalk.cyan('    !cmd       ') + chalk.dim('Run shell command'));
+  console.log(chalk.dim('\n  Keyboard: Ctrl+O (toggle output) | Ctrl+T (todo list) | Ctrl+R (history)\n'));
 }
