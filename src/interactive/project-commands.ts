@@ -6,16 +6,13 @@
 
 import * as readline from 'readline';
 import chalk from 'chalk';
-import { runKodaX, KodaXOptions } from '../core/index.js';
+import { runKodaX, KodaXOptions, KodaXMessage } from '../core/index.js';
 import { ProjectStorage } from './project-storage.js';
 import {
   ProjectFeature,
-  ProjectStatistics,
-  isAllCompleted,
 } from './project-state.js';
 import {
   InteractiveContext,
-  createInteractiveContext,
 } from './context.js';
 import {
   CommandCallbacks,
@@ -23,32 +20,58 @@ import {
 } from './commands.js';
 import { buildInitPrompt } from '../cli/utils.js';
 
-// 延迟创建 readline 接口
-let rl: readline.Interface | null = null;
+// ============== 运行时状态管理 ==============
 
-function getReadline(): readline.Interface {
-  if (!rl) {
-    rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-      terminal: process.stdout.isTTY ?? true,
-    });
+/**
+ * 项目运行时状态
+ *
+ * 用于管理 auto-continue 模式的状态。
+ * 设计为模块级单例，因为 REPL 会话中只会有一个自动继续循环。
+ */
+class ProjectRuntimeState {
+  private _autoContinueRunning = false;
+
+  get autoContinueRunning(): boolean {
+    return this._autoContinueRunning;
   }
-  return rl;
+
+  setAutoContinueRunning(value: boolean): void {
+    this._autoContinueRunning = value;
+  }
+
+  /** 重置所有状态（用于测试或会话重置） */
+  reset(): void {
+    this._autoContinueRunning = false;
+  }
 }
 
-async function confirm(message: string): Promise<boolean> {
-  return new Promise(resolve => {
-    getReadline().question(`${message} (y/n) `, answer => {
-      resolve(answer.toLowerCase().startsWith('y'));
+// 模块级单例
+export const projectRuntimeState = new ProjectRuntimeState();
+
+// ============== 辅助函数 ==============
+
+/**
+ * 创建确认提示函数
+ */
+function createConfirmFn(rl: readline.Interface): (message: string) => Promise<boolean> {
+  return (message: string): Promise<boolean> => {
+    return new Promise(resolve => {
+      rl.question(`${message} (y/n) `, answer => {
+        resolve(answer.trim().toLowerCase().startsWith('y'));
+      });
     });
-  });
+  };
 }
 
-async function question(prompt: string): Promise<string> {
-  return new Promise(resolve => {
-    getReadline().question(prompt, resolve);
-  });
+/**
+ * 创建问题提示函数
+ */
+function createQuestionFn(rl: readline.Interface): (prompt: string) => Promise<string> {
+  return (prompt: string): Promise<string> => {
+    return new Promise(resolve => {
+      rl.question(prompt, resolve);
+    });
+  };
 }
 
 /**
@@ -59,21 +82,106 @@ function getProjectStorage(): ProjectStorage {
 }
 
 /**
+ * 显示功能信息
+ */
+function displayFeatureInfo(feature: ProjectFeature, index: number): void {
+  const desc = feature.description || feature.name || 'Unnamed';
+  console.log(chalk.cyan(`\nNext Feature (Index ${index}):`));
+  console.log(chalk.white(`  ${desc}`));
+
+  if (feature.steps?.length) {
+    console.log(chalk.dim('\n  Planned steps:'));
+    feature.steps.forEach((step, i) => {
+      console.log(chalk.dim(`    ${i + 1}. ${step}`));
+    });
+  }
+  console.log();
+}
+
+/**
+ * 构建 feature 执行的提示词
+ */
+function buildFeaturePrompt(desc: string, steps?: string[]): string {
+  const stepsSection = steps?.length
+    ? `\n\nPlanned steps:\n${steps.map((s, i) => `${i + 1}. ${s}`).join('\n')}`
+    : '';
+
+  return `Continue implementing the project. Focus on this feature:
+
+${desc}${stepsSection}
+
+After completing this feature, update feature_list.json to mark it as passes: true.`;
+}
+
+/**
+ * 执行单个功能
+ */
+async function executeSingleFeature(
+  feature: ProjectFeature,
+  index: number,
+  context: InteractiveContext,
+  options: KodaXOptions
+): Promise<{ success: boolean; messages: KodaXMessage[] }> {
+  const desc = feature.description || feature.name || 'Unnamed';
+  const prompt = buildFeaturePrompt(desc, feature.steps);
+
+  const result = await runKodaX(
+    {
+      ...options,
+      session: {
+        ...options.session,
+        initialMessages: context.messages,
+      },
+    },
+    prompt
+  );
+
+  return {
+    success: true,
+    messages: result.messages,
+  };
+}
+
+// ============== 命令处理函数 ==============
+
+/**
  * 打印项目帮助
  */
-function printProjectHelp(): void {
+export function printProjectHelp(): void {
   console.log(chalk.cyan('\n/project - Project Long-Running Task Management\n'));
-  console.log('Commands:');
-  console.log(chalk.dim('  /project init <task>     ') + 'Initialize a long-running project');
-  console.log(chalk.dim('  /project status          ') + 'Show project status and progress');
-  console.log(chalk.dim('  /project next            ') + 'Execute next pending feature');
-  console.log(chalk.dim('  /project auto            ') + 'Enter auto-continue mode');
-  console.log(chalk.dim('  /project pause           ') + 'Pause auto-continue mode');
-  console.log(chalk.dim('  /project list            ') + 'List all features');
-  console.log(chalk.dim('  /project mark <n> [done|skip]') + 'Mark feature status');
-  console.log(chalk.dim('  /project progress        ') + 'View PROGRESS.md');
+  console.log(chalk.bold('Usage:'));
+  console.log(chalk.dim('  /project <command> [options]\n'));
+
+  console.log(chalk.bold('Commands:'));
+  console.log(chalk.dim('  init <task>         ') + 'Initialize a new project with feature list');
+  console.log(chalk.dim('  status              ') + 'Show current project status and progress');
+  console.log(chalk.dim('  next [--no-confirm] ') + 'Execute the next pending feature');
+  console.log(chalk.dim('  auto [--max=N]      ') + 'Auto-execute all pending features');
+  console.log(chalk.dim('  pause               ') + 'Pause auto-continue mode');
+  console.log(chalk.dim('  list                ') + 'List all features with status');
+  console.log(chalk.dim('  mark <n> [done|skip]') + 'Manually mark a feature');
+  console.log(chalk.dim('  progress            ') + 'View PROGRESS.md content');
+
   console.log();
-  console.log('Aliases: /proj, /p');
+  console.log(chalk.bold('Aliases:'), chalk.dim('/proj, /p'));
+
+  console.log();
+  console.log(chalk.bold('Workflow:'));
+  console.log(chalk.dim('  1. /project init "Your project description"'));
+  console.log(chalk.dim('  2. /project list                    # Review generated features'));
+  console.log(chalk.dim('  3. /project next                    # Work on next feature'));
+  console.log(chalk.dim('  4. /project auto                    # Or auto-execute all'));
+  console.log(chalk.dim('  5. /project status                  # Check progress'));
+
+  console.log();
+  console.log(chalk.bold('Options:'));
+  console.log(chalk.dim('  --no-confirm        Skip confirmation prompts'));
+  console.log(chalk.dim('  --max=N             Limit auto-execution to N features'));
+  console.log(chalk.dim('  --overwrite         Overwrite existing project (init)'));
+  console.log(chalk.dim('  --append            Add features to existing project (init)'));
+
+  console.log();
+  console.log(chalk.dim('Type /help for all available commands.'));
   console.log();
 }
 
@@ -126,7 +234,8 @@ async function projectInit(
   args: string[],
   context: InteractiveContext,
   callbacks: CommandCallbacks,
-  currentConfig: CurrentConfig
+  _currentConfig: CurrentConfig,
+  confirm: (message: string) => Promise<boolean>
 ): Promise<void> {
   const storage = getProjectStorage();
 
@@ -202,7 +311,8 @@ async function projectNext(
   args: string[],
   context: InteractiveContext,
   callbacks: CommandCallbacks,
-  currentConfig: CurrentConfig
+  _currentConfig: CurrentConfig,
+  confirm: (message: string) => Promise<boolean>
 ): Promise<void> {
   const storage = getProjectStorage();
 
@@ -233,18 +343,7 @@ async function projectNext(
   }
 
   // 显示功能信息
-  const desc = feature.description || feature.name || 'Unnamed';
-  console.log(chalk.cyan(`\nNext Feature (Index ${targetIndex}):`));
-  console.log(chalk.white(`  ${desc}`));
-
-  if (feature.steps?.length) {
-    console.log(chalk.dim('\n  Planned steps:'));
-    feature.steps.forEach((step, i) => {
-      console.log(chalk.dim(`    ${i + 1}. ${step}`));
-    });
-  }
-
-  console.log();
+  displayFeatureInfo(feature, targetIndex);
 
   // 确认执行
   if (!hasNoConfirm) {
@@ -267,26 +366,7 @@ async function projectNext(
     const options = callbacks.createKodaXOptions?.() ?? {} as KodaXOptions;
 
     // 执行功能
-    const prompt = `Continue implementing the project. Focus on this feature:
-
-${desc}
-
-${feature.steps?.length ? 'Planned steps:\n' + feature.steps.map((s, i) => `${i + 1}. ${s}`).join('\n') : ''}
-
-After completing this feature, update feature_list.json to mark it as passes: true.`;
-
-    const result = await runKodaX(
-      {
-        ...options,
-        session: {
-          ...options.session,
-          initialMessages: context.messages,
-        },
-      },
-      prompt
-    );
-
-    // 更新上下文消息
+    const result = await executeSingleFeature(feature, targetIndex, context, options);
     context.messages = result.messages;
 
     // 检查是否完成（通过读取更新后的 feature_list.json）
@@ -312,15 +392,38 @@ After completing this feature, update feature_list.json to mark it as passes: tr
 }
 
 /**
+ * 解析 auto 命令选项
+ */
+function parseAutoOptions(args: string[]): { hasNoConfirm: boolean; maxRuns: number } {
+  const hasNoConfirm = args.includes('--no-confirm');
+  const maxArg = args.find(a => a.startsWith('--max='));
+  const maxRuns = maxArg ? parseInt(maxArg.split('=')[1] ?? '10', 10) : 0; // 0 = unlimited
+  return { hasNoConfirm, maxRuns };
+}
+
+/**
+ * 处理自动继续模式的用户输入
+ */
+type AutoAction = 'yes' | 'no' | 'skip' | 'quit';
+
+function parseAutoAction(answer: string): AutoAction {
+  const action = answer.toLowerCase().trim();
+  if (action === 'q' || action === 'quit') return 'quit';
+  if (action === 's' || action === 'skip') return 'skip';
+  if (action.startsWith('y')) return 'yes';
+  return 'no';
+}
+
+/**
  * 自动继续模式
  */
-let autoContinueRunning = false;
-
 async function projectAuto(
   args: string[],
   context: InteractiveContext,
   callbacks: CommandCallbacks,
-  currentConfig: CurrentConfig
+  _currentConfig: CurrentConfig,
+  confirm: (message: string) => Promise<boolean>,
+  question: (prompt: string) => Promise<string>
 ): Promise<void> {
   const storage = getProjectStorage();
 
@@ -330,16 +433,14 @@ async function projectAuto(
     return;
   }
 
-  if (autoContinueRunning) {
+  if (projectRuntimeState.autoContinueRunning) {
     console.log(chalk.yellow('\n[Auto-continue already running]'));
     console.log(chalk.dim('Use /project pause to stop\n'));
     return;
   }
 
   // 解析选项
-  const hasNoConfirm = args.includes('--no-confirm');
-  const maxArg = args.find(a => a.startsWith('--max='));
-  const maxRuns = maxArg ? parseInt(maxArg.split('=')[1] ?? '10', 10) : 0; // 0 = unlimited
+  const { hasNoConfirm, maxRuns } = parseAutoOptions(args);
 
   const stats = await storage.getStatistics();
   let runCount = 0;
@@ -350,94 +451,79 @@ async function projectAuto(
   console.log(chalk.dim(`  Remaining: ${stats.pending} features`));
   console.log();
 
-  autoContinueRunning = true;
+  projectRuntimeState.setAutoContinueRunning(true);
 
-  while (autoContinueRunning) {
-    const next = await storage.getNextPendingFeature();
-    if (!next) {
-      console.log(chalk.green('\n✓ All features completed\n'));
-      break;
-    }
-
-    runCount++;
-    if (maxRuns > 0 && runCount > maxRuns) {
-      console.log(chalk.yellow('\nMax runs reached\n'));
-      break;
-    }
-
-    const desc = next.feature.description || next.feature.name || 'Unnamed';
-    console.log(chalk.cyan(`[${runCount}] ${desc}`));
-
-    // 确认
-    if (!hasNoConfirm) {
-      const answer = await question('Execute? (y/n/s=skip/q=quit) ');
-      const action = answer.toLowerCase().trim();
-
-      if (action === 'q' || action === 'quit') {
-        console.log(chalk.dim('\nPaused\n'));
+  try {
+    while (projectRuntimeState.autoContinueRunning) {
+      const next = await storage.getNextPendingFeature();
+      if (!next) {
+        console.log(chalk.green('\n✓ All features completed\n'));
         break;
       }
-      if (action === 's' || action === 'skip') {
-        await storage.updateFeatureStatus(next.index, { skipped: true });
-        console.log(chalk.dim('  Skipped\n'));
-        continue;
-      }
-      if (!action.startsWith('y')) {
-        console.log(chalk.dim('  Skipped\n'));
-        continue;
-      }
-    }
 
-    // 执行
-    try {
-      const options = callbacks.createKodaXOptions?.() ?? {} as KodaXOptions;
-
-      const prompt = `Continue implementing the project. Focus on this feature:
-
-${desc}
-
-After completing, update feature_list.json to mark it as passes: true.`;
-
-      const result = await runKodaX(
-        {
-          ...options,
-          session: {
-            ...options.session,
-            initialMessages: context.messages,
-          },
-        },
-        prompt
-      );
-
-      context.messages = result.messages;
-
-      const updatedFeature = await storage.getFeatureByIndex(next.index);
-      if (updatedFeature?.passes) {
-        console.log(chalk.green('  ✓ Completed\n'));
-      } else {
-        console.log(chalk.yellow('  ⚠ May need review\n'));
-      }
-
-    } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      console.log(chalk.red(`  ✗ Error: ${err.message}\n`));
-
-      const continueAfter = await confirm('Continue with next feature?');
-      if (!continueAfter) {
+      runCount++;
+      if (maxRuns > 0 && runCount > maxRuns) {
+        console.log(chalk.yellow('\nMax runs reached\n'));
         break;
       }
+
+      const desc = next.feature.description || next.feature.name || 'Unnamed';
+      console.log(chalk.cyan(`[${runCount}] ${desc}`));
+
+      // 确认
+      if (!hasNoConfirm) {
+        const answer = await question('Execute? (y/n/s=skip/q=quit) ');
+        const action = parseAutoAction(answer);
+
+        if (action === 'quit') {
+          console.log(chalk.dim('\nPaused\n'));
+          break;
+        }
+        if (action === 'skip') {
+          await storage.updateFeatureStatus(next.index, { skipped: true });
+          console.log(chalk.dim('  Skipped\n'));
+          continue;
+        }
+        if (action === 'no') {
+          console.log(chalk.dim('  Skipped\n'));
+          continue;
+        }
+      }
+
+      // 执行
+      try {
+        const options = callbacks.createKodaXOptions?.() ?? {} as KodaXOptions;
+        const result = await executeSingleFeature(next.feature, next.index, context, options);
+        context.messages = result.messages;
+
+        const updatedFeature = await storage.getFeatureByIndex(next.index);
+        if (updatedFeature?.passes) {
+          console.log(chalk.green('  ✓ Completed\n'));
+        } else {
+          console.log(chalk.yellow('  ⚠ May need review\n'));
+        }
+
+      } catch (error) {
+        const err = error instanceof Error ? error : new Error(String(error));
+        console.log(chalk.red(`  ✗ Error: ${err.message}\n`));
+
+        const continueAfter = await confirm('Continue with next feature?');
+        if (!continueAfter) {
+          break;
+        }
+      }
     }
+  } finally {
+    projectRuntimeState.setAutoContinueRunning(false);
   }
-
-  autoContinueRunning = false;
 }
 
 /**
  * 暂停自动继续
  */
 async function projectPause(): Promise<void> {
-  if (autoContinueRunning) {
-    autoContinueRunning = false;
+  if (projectRuntimeState.autoContinueRunning) {
+    projectRuntimeState.setAutoContinueRunning(false);
     console.log(chalk.cyan('\n[Auto-continue paused]\n'));
   } else {
     console.log(chalk.yellow('\n[Auto-continue not running]\n'));
@@ -562,10 +648,27 @@ export async function handleProjectCommand(
 ): Promise<void> {
   const subCommand = args[0]?.toLowerCase();
 
+  // 获取 readline 接口，如果没有则使用降级方案
+  const rl = callbacks.readline;
+  if (!rl) {
+    console.log(chalk.yellow('\n[Warning] Readline interface not available'));
+    console.log(chalk.dim('Some interactive features may not work\n'));
+    // 对于不需要交互的命令，继续执行
+    if (!['init', 'next', 'auto'].includes(subCommand ?? '')) {
+      // 可以执行非交互命令
+    } else {
+      return;
+    }
+  }
+
+  // 创建辅助函数
+  const confirm = rl ? createConfirmFn(rl) : async () => false;
+  const question = rl ? createQuestionFn(rl) : async () => '';
+
   switch (subCommand) {
     case 'init':
     case 'i':
-      await projectInit(args.slice(1), context, callbacks, currentConfig);
+      await projectInit(args.slice(1), context, callbacks, currentConfig, confirm);
       break;
 
     case 'status':
@@ -576,12 +679,12 @@ export async function handleProjectCommand(
 
     case 'next':
     case 'n':
-      await projectNext(args.slice(1), context, callbacks, currentConfig);
+      await projectNext(args.slice(1), context, callbacks, currentConfig, confirm);
       break;
 
     case 'auto':
     case 'a':
-      await projectAuto(args.slice(1), context, callbacks, currentConfig);
+      await projectAuto(args.slice(1), context, callbacks, currentConfig, confirm, question);
       break;
 
     case 'pause':

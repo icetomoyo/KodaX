@@ -218,6 +218,8 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
         mode: currentConfig.mode,
       };
     },
+    // 传递 readline 接口供需要用户交互的命令使用
+    readline: rl,
   };
 
   // 处理 Ctrl+C

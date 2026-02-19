@@ -187,6 +187,7 @@ kodax --session todo-app "Write tests"
 ### CLI Options
 
 ```
+-h, --help [topic]  Show help, or detailed help for a topic
 --provider <name>   LLM provider (default: zhipu-coding)
 --thinking          Enable thinking mode
 --no-confirm        Enable auto mode (skip all confirmations)
@@ -198,6 +199,25 @@ kodax --session todo-app "Write tests"
 --max-iter <n>      Maximum iterations (default: 50)
 --max-sessions <n>  Maximum sessions for --auto-continue (default: 50)
 --max-hours <h>     Maximum hours for --auto-continue (default: 2.0)
+```
+
+### CLI Help Topics
+
+Get detailed help for specific topics:
+
+```bash
+# Basic help
+kodax -h
+kodax --help
+
+# Detailed topic help
+kodax -h sessions      # Session management details
+kodax -h init          # Long-running project initialization
+kodax -h auto          # Auto-continue mode
+kodax -h provider      # LLM provider configuration
+kodax -h thinking      # Thinking/reasoning mode
+kodax -h team          # Multi-agent parallel execution
+kodax -h print         # Print configuration
 ```
 
 ### Library Usage

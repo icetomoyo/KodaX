@@ -246,6 +246,7 @@ kodax /explain src/utils.ts
 
 | 选项 | 说明 |
 |------|------|
+| `-h, --help [TOPIC]` | 显示帮助，或指定主题的详细帮助 |
 | `--provider NAME` | 指定大模型 |
 | `--thinking` | 开启思考模式 |
 | `--no-confirm` | 启用自动模式（跳过确认） |
@@ -255,6 +256,25 @@ kodax /explain src/utils.ts
 | `--init TASK` | 初始化长时间运行任务 |
 | `--auto-continue` | 自动继续直到所有功能完成 |
 | `--max-iter N` | 单次会话最大迭代次数（默认：50） |
+
+### CLI 帮助主题
+
+获取特定主题的详细帮助：
+
+```bash
+# 基本帮助
+kodax -h
+kodax --help
+
+# 详细主题帮助
+kodax -h sessions      # 会话管理详解
+kodax -h init          # 长时间运行任务初始化
+kodax -h auto          # 自动继续模式
+kodax -h provider      # LLM 供应商配置
+kodax -h thinking      # 思考/推理模式
+kodax -h team          # 多 Agent 并行执行
+kodax -h print         # 打印配置
+```
 
 ---
 

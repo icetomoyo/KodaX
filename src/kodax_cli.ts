@@ -517,12 +517,198 @@ function buildSessionOptions(cliOptions: CliOptions): { id?: string; resume?: bo
 
 // ============== 主函数 ==============
 
+// ============== CLI 详细帮助 ==============
+
+const CLI_HELP_TOPICS: Record<string, () => void> = {
+  sessions: () => {
+    console.log(chalk.cyan('\nSession Management\n'));
+    console.log(chalk.bold('Overview:'));
+    console.log(chalk.dim('  KodaX automatically saves conversation sessions, allowing you to'));
+    console.log(chalk.dim('  resume work later or switch between different conversations.\n'));
+    console.log(chalk.bold('Options:'));
+    console.log(chalk.dim('  -c, --continue       ') + 'Continue most recent conversation');
+    console.log(chalk.dim('  -r, --resume [id]    ') + 'Resume session by ID (interactive picker if no ID)');
+    console.log(chalk.dim('  -s, --session <op>   ') + 'Session operations: list, delete <id>, delete-all');
+    console.log(chalk.dim('  --no-session         ') + 'Disable session persistence\n');
+    console.log(chalk.bold('Examples:'));
+    console.log(chalk.dim('  kodax                      ') + '# Start/continue session (interactive)');
+    console.log(chalk.dim('  kodax -c                   ') + '# Continue recent conversation');
+    console.log(chalk.dim('  kodax -r                   ') + '# Pick session to resume');
+    console.log(chalk.dim('  kodax -r 20260219_143052   ') + '# Resume specific session');
+    console.log(chalk.dim('  kodax -s list              ') + '# List all sessions');
+    console.log(chalk.dim('  kodax -s delete 20260219   ') + '# Delete a session');
+    console.log(chalk.dim('  kodax -p "task" --no-session') + ' # Run without saving\n');
+  },
+  init: () => {
+    console.log(chalk.cyan('\nProject Initialization\n'));
+    console.log(chalk.bold('Overview:'));
+    console.log(chalk.dim('  Initialize a long-running project with auto-generated feature list.'));
+    console.log(chalk.dim('  KodaX analyzes your task and creates manageable feature steps.\n'));
+    console.log(chalk.bold('Options:'));
+    console.log(chalk.dim('  --init <task>    ') + 'Initialize new project');
+    console.log(chalk.dim('  --append         ') + 'Add features to existing project');
+    console.log(chalk.dim('  --overwrite      ') + 'Replace existing feature_list.json\n');
+    console.log(chalk.bold('Workflow:'));
+    console.log(chalk.dim('  1. kodax --init "Build REST API"     # Generate feature_list.json'));
+    console.log(chalk.dim('  2. kodax --auto-continue             # Auto-execute all features'));
+    console.log(chalk.dim('  OR'));
+    console.log(chalk.dim('  2. kodax                            # Interactive, use /project next'));
+    console.log();
+    console.log(chalk.bold('Examples:'));
+    console.log(chalk.dim('  kodax --init "Create auth system"   ') + '# New project');
+    console.log(chalk.dim('  kodax --init "Add tests" --append   ') + '# Add to existing');
+    console.log(chalk.dim('  kodax --init "Redo" --overwrite     ') + '# Start fresh\n');
+  },
+  auto: () => {
+    console.log(chalk.cyan('\nAuto Mode & Auto-Continue\n'));
+    console.log(chalk.bold('Auto Mode (-y, --auto):'));
+    console.log(chalk.dim('  Skip all confirmation prompts for file operations.'));
+    console.log(chalk.dim('  Useful for trusted environments or automated workflows.\n'));
+    console.log(chalk.bold('Auto-Continue (--auto-continue):'));
+    console.log(chalk.dim('  Automatically run sessions until all features are complete.'));
+    console.log(chalk.dim('  Works with --init for hands-off project execution.\n'));
+    console.log(chalk.bold('Options:'));
+    console.log(chalk.dim('  -y, --auto             ') + 'Skip confirmations');
+    console.log(chalk.dim('  --auto-continue        ') + 'Auto-execute until complete');
+    console.log(chalk.dim('  --max-sessions <n>     ') + 'Max sessions (default: 50)');
+    console.log(chalk.dim('  --max-hours <h>        ') + 'Max runtime hours (default: 2)\n');
+    console.log(chalk.bold('Examples:'));
+    console.log(chalk.dim('  kodax -y "refactor code"          ') + '# No confirmations');
+    console.log(chalk.dim('  kodax --init "API" --auto-continue') + '# Full automation');
+    console.log(chalk.dim('  kodax --auto-continue --max-hours 4') + '# Extended run\n');
+  },
+  provider: () => {
+    console.log(chalk.cyan('\nLLM Providers\n'));
+    console.log(chalk.bold('Overview:'));
+    console.log(chalk.dim('  KodaX supports multiple LLM providers. Configure via -m option'));
+    console.log(chalk.dim('  or set default in ~/.kodax/config.json\n'));
+    console.log(chalk.bold('Available Providers:'));
+    console.log(chalk.dim('  anthropic      ') + 'Claude (Opus, Sonnet, Haiku)');
+    console.log(chalk.dim('  openai         ') + 'GPT-4, GPT-3.5');
+    console.log(chalk.dim('  kimi           ') + 'Moonshot Kimi');
+    console.log(chalk.dim('  kimi-code      ') + 'Moonshot Kimi (code-optimized)');
+    console.log(chalk.dim('  qwen           ') + 'Alibaba Qwen');
+    console.log(chalk.dim('  zhipu          ') + 'Zhipu AI GLM');
+    console.log(chalk.dim('  zhipu-coding   ') + 'Zhipu AI (code-optimized)\n');
+    console.log(chalk.bold('Examples:'));
+    console.log(chalk.dim('  kodax -m anthropic "task"     ') + '# Use Claude');
+    console.log(chalk.dim('  kodax -m openai "task"        ') + '# Use GPT-4');
+    console.log(chalk.dim('  /model                        ') + '# Switch in REPL (saves to config)\n');
+  },
+  thinking: () => {
+    console.log(chalk.cyan('\nThinking Mode\n'));
+    console.log(chalk.bold('Overview:'));
+    console.log(chalk.dim('  Extended thinking allows the model to reason through complex'));
+    console.log(chalk.dim('  problems before responding. Useful for architectural decisions,'));
+    console.log(chalk.dim('  multi-step reasoning, and deep code analysis.\n'));
+    console.log(chalk.bold('Options:'));
+    console.log(chalk.dim('  -t, --thinking       ') + 'Enable extended thinking\n');
+    console.log(chalk.bold('Examples:'));
+    console.log(chalk.dim('  kodax -t "design the architecture"  ') + '# Deep reasoning');
+    console.log(chalk.dim('  kodax -t -p "analyze this bug"      ') + '# Quick analysis');
+    console.log(chalk.dim('  /thinking on                        ') + '# Enable in REPL\n');
+  },
+  team: () => {
+    console.log(chalk.cyan('\nTeam Mode (Parallel Agents)\n'));
+    console.log(chalk.bold('Overview:'));
+    console.log(chalk.dim('  Run multiple independent tasks in parallel using separate agents.'));
+    console.log(chalk.dim('  Each agent works on its task simultaneously.\n'));
+    console.log(chalk.bold('Options:'));
+    console.log(chalk.dim('  --team <tasks>      ') + 'Comma-separated tasks');
+    console.log(chalk.dim('  -j, --parallel      ') + 'Enable parallel tool execution\n');
+    console.log(chalk.bold('Examples:'));
+    console.log(chalk.dim('  kodax --team "fix auth tests,update docs,clean logs"'));
+    console.log(chalk.dim('  kodax --team "task1,task2" -m anthropic -t\n'));
+  },
+  print: () => {
+    console.log(chalk.cyan('\nPrint Mode\n'));
+    console.log(chalk.bold('Overview:'));
+    console.log(chalk.dim('  Run a single task and exit. Useful for scripting and CI/CD.\n'));
+    console.log(chalk.bold('Options:'));
+    console.log(chalk.dim('  -p, --print <text>  ') + 'Run task and exit');
+    console.log(chalk.dim('  --no-session        ') + 'Disable session saving\n');
+    console.log(chalk.bold('Examples:'));
+    console.log(chalk.dim('  kodax -p "fix the bug in auth.ts"   ') + '# Quick fix');
+    console.log(chalk.dim('  kodax -p "generate tests" -t        ') + '# With thinking');
+    console.log(chalk.dim('  kodax -p "task" --no-session        ') + '# Stateless run');
+    console.log(chalk.dim('  echo "task" | kodax -p -            ') + '# Pipe input\n');
+  },
+};
+
+function showCliHelpTopic(topic: string): boolean {
+  const helpFn = CLI_HELP_TOPICS[topic.toLowerCase()];
+  if (helpFn) {
+    helpFn();
+    return true;
+  }
+  return false;
+}
+
+function showCliHelpTopics(): void {
+  console.log(chalk.cyan('\nDetailed Help Topics:\n'));
+  console.log(chalk.dim('  kodax -h sessions   ') + 'Session management (-c, -r, -s options)');
+  console.log(chalk.dim('  kodax -h init       ') + 'Project initialization (--init, --append)');
+  console.log(chalk.dim('  kodax -h auto       ') + 'Auto mode and auto-continue');
+  console.log(chalk.dim('  kodax -h provider   ') + 'LLM provider options');
+  console.log(chalk.dim('  kodax -h thinking   ') + 'Extended thinking mode');
+  console.log(chalk.dim('  kodax -h team       ') + 'Parallel agent execution');
+  console.log(chalk.dim('  kodax -h print      ') + 'Print mode for scripting\n');
+}
+
+function showBasicHelp(): void {
+  console.log('KodaX - 极致轻量化 Coding Agent\n');
+  console.log('Usage: kodax [options] [prompt]');
+  console.log('       kodax "your task"');
+  console.log('       kodax /command_name\n');
+  console.log('Options:');
+  console.log('  -h, --help [TOPIC]      Show help, or detailed help for a topic');
+  console.log('  -p, --print TEXT        Print mode: run single task and exit');
+  console.log('  -c, --continue          Continue most recent conversation');
+  console.log('  -r, --resume [id]       Resume session by ID (no id = interactive picker)');
+  console.log('  -m, --provider NAME     LLM provider (anthropic, kimi, kimi-code, qwen, zhipu, openai, zhipu-coding)');
+  console.log('  -t, --thinking          Enable thinking mode');
+  console.log('  -y, --auto              Auto mode: skip all confirmations');
+  console.log('  -s, --session ID        Session management (list, delete <id>, delete-all)');
+  console.log('  --no-session            Disable session persistence (print mode only)');
+  console.log('  -j, --parallel          Parallel tool execution');
+  console.log('  --team TASKS            Run multiple sub-agents in parallel');
+  console.log('  --init TASK             Initialize a long-running task');
+  console.log('  --append                With --init: append to existing feature_list.json');
+  console.log('  --overwrite             With --init: overwrite existing feature_list.json');
+  console.log('  --max-iter N            Max iterations per session (default: 50)');
+  console.log('  --auto-continue         Auto-continue long-running task until all features pass');
+  console.log('  --max-sessions N        Max sessions for --auto-continue (default: 50)');
+  console.log('  --max-hours H           Max hours for --auto-continue (default: 2.0)\n');
+  console.log('Help Topics (use -h <topic>):');
+  console.log('  sessions, init, auto, provider, thinking, team, print\n');
+  console.log('Interactive Commands (in REPL mode):');
+  console.log('  /help, /h               Show all commands');
+  console.log('  /exit, /quit            Exit interactive mode');
+  console.log('  /clear                  Clear conversation history');
+  console.log('  /status                 Show session status');
+  console.log('  /mode [code|ask]        Switch mode');
+  console.log('  /sessions               List saved sessions\n');
+  console.log('Examples:');
+  console.log('  kodax                             # Enter interactive mode (auto-resume)');
+  console.log('  kodax "create a component"        # Run single task (with session)');
+  console.log('  kodax -p "quick fix" -t           # Quick task with thinking');
+  console.log('  kodax -c                          # Continue recent conversation');
+  console.log('  kodax -c "finish this"            # Continue with new task');
+  console.log('  kodax -r                          # Pick session to resume');
+  console.log('  kodax -p "task" --no-session      # Run without saving session');
+  console.log('  kodax -h sessions                 # Detailed help on sessions\n');
+}
+
 async function main() {
   const program = new Command()
     .name('kodax')
     .description('KodaX - 极致轻量化 Coding Agent')
     .version(version)
+    // 禁用默认 help，使用自定义的
+    .helpOption(false)
     .argument('[prompt...]', 'Your task (optional, enters interactive mode if not provided)')
+    // 自定义 help 选项（支持可选参数）
+    .option('-h, --help [topic]', 'Show help, or detailed help for a topic')
     // 短参数支持
     .option('-p, --print <text>', 'Print mode: run single task and exit')
     .option('-c, --continue', 'Continue most recent conversation in current directory')
@@ -581,6 +767,23 @@ async function main() {
   }
 
   let userPrompt = options.prompt.join(' ');
+
+  // -h / --help [topic]: 帮助（无参数显示基本帮助，有参数显示详细主题）
+  if (opts.help !== undefined) {
+    // opts.help === true 表示没有参数，字符串表示有参数
+    if (typeof opts.help === 'string') {
+      const topic = opts.help.toLowerCase();
+      if (showCliHelpTopic(topic)) {
+        return;
+      }
+      console.log(chalk.yellow(`\n[Unknown help topic: ${topic}]`));
+      showCliHelpTopics();
+      return;
+    }
+    // 无参数：显示基本帮助
+    showBasicHelp();
+    return;
+  }
 
   // -r / --resume 不带 id: 交互式选择会话
   if (opts.resume === true) {
@@ -876,43 +1079,7 @@ New: {"features": [
 
   // 显示帮助（print 模式且无任务时）
   if (!userPrompt && !options.init && options.print) {
-    console.log('KodaX - 极致轻量化 Coding Agent\n');
-    console.log('Usage: kodax [options] [prompt]');
-    console.log('       kodax "your task"');
-    console.log('       kodax /command_name\n');
-    console.log('Options:');
-    console.log('  -p, --print TEXT       Print mode: run single task and exit');
-    console.log('  -c, --continue         Continue most recent conversation');
-    console.log('  -r, --resume [id]      Resume session by ID (no id = interactive picker)');
-    console.log('  -m, --provider NAME    LLM provider (anthropic, kimi, kimi-code, qwen, zhipu, openai, zhipu-coding)');
-    console.log('  -t, --thinking         Enable thinking mode');
-    console.log('  -y, --auto             Auto mode: skip all confirmations');
-    console.log('  -s, --session ID       Session management (list, delete <id>, delete-all)');
-    console.log('  --no-session           Disable session persistence (print mode only)');
-    console.log('  -j, --parallel         Parallel tool execution');
-    console.log('  --team TASKS           Run multiple sub-agents in parallel');
-    console.log('  --init TASK            Initialize a long-running task');
-    console.log('  --append               With --init: append to existing feature_list.json');
-    console.log('  --overwrite            With --init: overwrite existing feature_list.json');
-    console.log('  --max-iter N           Max iterations per session (default: 50)');
-    console.log('  --auto-continue        Auto-continue long-running task until all features pass');
-    console.log('  --max-sessions N       Max sessions for --auto-continue (default: 50)');
-    console.log('  --max-hours H          Max hours for --auto-continue (default: 2.0)\n');
-    console.log('Interactive Commands (in REPL mode):');
-    console.log('  /help, /h              Show all commands');
-    console.log('  /exit, /quit           Exit interactive mode');
-    console.log('  /clear                 Clear conversation history');
-    console.log('  /status                Show session status');
-    console.log('  /mode [code|ask]       Switch mode');
-    console.log('  /sessions              List saved sessions\n');
-    console.log('Examples:');
-    console.log('  kodax                            # Enter interactive mode (auto-resume)');
-    console.log('  kodax "create a component"       # Run single task (with session)');
-    console.log('  kodax -p "quick fix" -t          # Quick task with thinking');
-    console.log('  kodax -c                         # Continue recent conversation');
-    console.log('  kodax -c "finish this"           # Continue with new task');
-    console.log('  kodax -r                         # Pick session to resume');
-    console.log('  kodax -p "task" --no-session     # Run without saving session\n');
+    showBasicHelp();
     return;
   }
 
