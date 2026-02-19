@@ -40,6 +40,12 @@ import {
   confirmToolExecution,
   getTerminalWidth,
 } from './prompts.js';
+import {
+  StatusBar,
+  createStatusBarState,
+  supportsStatusBar,
+  formatTokenCount,
+} from './status-bar.js';
 
 // 扩展的会话存储接口（增加 list 方法）
 interface SessionStorage extends KodaXSessionStorage {
@@ -119,6 +125,18 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     terminal: process.stdout.isTTY ?? true,
     historySize: 100,
   });
+
+  // 初始化状态栏 (如果终端支持)
+  const model = getProviderModel(currentConfig.provider) ?? currentConfig.provider;
+  let statusBar: StatusBar | null = null;
+  if (supportsStatusBar()) {
+    statusBar = new StatusBar(createStatusBarState(
+      context.sessionId,
+      currentConfig.mode ?? 'code',
+      currentConfig.provider,
+      model
+    ));
+  }
 
   // 键盘快捷键状态 (Phase 2 将实际使用)
   // let showToolOutput = true;
@@ -260,6 +278,15 @@ Keyboard Shortcuts:
     rl.prompt();
   });
 
+  // 处理退出时清理状态栏
+  const cleanup = () => {
+    statusBar?.hide();
+    rl.close();
+  };
+
+  process.on('exit', cleanup);
+  process.on('SIGTERM', cleanup);
+
   // 主循环
   while (isRunning) {
     const prompt = getPrompt(currentConfig.mode ?? 'code', currentConfig, planMode);
@@ -295,6 +322,9 @@ Keyboard Shortcuts:
     // 添加用户消息到上下文
     context.messages.push({ role: 'user', content: processed });
 
+    // 更新状态栏消息数量
+    statusBar?.update({ messageCount: context.messages.length });
+
     // 同步当前模式到 options
     currentOptions.mode = currentConfig.mode;
 
@@ -321,6 +351,11 @@ Keyboard Shortcuts:
 
       // 更新上下文中的消息（runKodaX 返回完整的消息列表）
       context.messages = result.messages;
+
+      // 更新状态栏
+      statusBar?.update({
+        messageCount: context.messages.length,
+      });
 
       // 自动保存
       if (context.messages.length > 0) {
@@ -386,11 +421,83 @@ function getPrompt(mode: InteractiveMode, config: CurrentConfig, planMode: boole
   return modeColor(`kodax:${mode} (${config.provider}:${model})${flags}> `);
 }
 
-// 读取输入
-function askInput(rl: readline.Interface, prompt: string): Promise<string> {
-  return new Promise((resolve) => {
+// 读取输入 (支持多行)
+async function askInput(rl: readline.Interface, prompt: string): Promise<string> {
+  const lines: string[] = [];
+
+  // 读取第一行
+  const firstLine = await new Promise<string>((resolve) => {
     rl.question(prompt, resolve);
   });
+
+  lines.push(firstLine);
+
+  // 检测是否需要多行输入
+  // 1. 以 \ 结尾 (续行符)
+  // 2. 括号/引号未闭合
+  while (needsContinuation(lines.join('\n'))) {
+    const continuationPrompt = chalk.dim('... ');
+    const nextLine = await new Promise<string>((resolve) => {
+      rl.question(continuationPrompt, resolve);
+    });
+    lines.push(nextLine);
+  }
+
+  // 处理续行符：移除行尾的 \
+  const result = lines.join('\n').replace(/\\\n/g, '\n');
+  return result;
+}
+
+// 检测是否需要续行
+function needsContinuation(input: string): boolean {
+  // 以 \ 结尾（续行符）
+  if (input.endsWith('\\') && !input.endsWith('\\\\')) {
+    return true;
+  }
+
+  // 检测未闭合的括号
+  const openBrackets = { '(': 0, '[': 0, '{': 0 };
+  const closeBrackets = { ')': '(', ']': '[', '}': '{' };
+  let inString: string | null = null;
+
+  for (let i = 0; i < input.length; i++) {
+    const char = input[i];
+
+    // 处理字符串
+    if ((char === '"' || char === "'" || char === '`') && input[i - 1] !== '\\') {
+      if (inString === char) {
+        inString = null;
+      } else if (inString === null) {
+        inString = char;
+      }
+      continue;
+    }
+
+    // 在字符串内不检测括号
+    if (inString) continue;
+
+    // 检测括号
+    if (char in openBrackets) {
+      openBrackets[char as keyof typeof openBrackets]++;
+    } else if (char in closeBrackets) {
+      const openChar = closeBrackets[char as keyof typeof closeBrackets];
+      if (openChar) {
+        openBrackets[openChar as keyof typeof openBrackets]--;
+      }
+    }
+  }
+
+  // 有未闭合的括号
+  if (Object.values(openBrackets).some(count => count > 0)) {
+    return true;
+  }
+
+  // 有未闭合的字符串
+  if (inString) {
+    return true;
+  }
+
+  return false;
 }
 
 // 处理特殊语法
