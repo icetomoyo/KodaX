@@ -17,3 +17,19 @@ export {
   type CommandCallbacks,
   type CurrentConfig,
 } from './commands.js';
+export {
+  ProjectStorage,
+} from './project-storage.js';
+export {
+  ProjectFeature,
+  ProjectState,
+  ProjectStatistics,
+  FeatureList,
+  calculateStatistics,
+  getNextPendingIndex,
+  isAllCompleted,
+} from './project-state.js';
+export {
+  handleProjectCommand,
+  detectAndShowProjectHint,
+} from './project-commands.js';

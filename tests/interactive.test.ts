@@ -18,6 +18,11 @@ import {
   BUILTIN_COMMANDS,
   CommandCallbacks,
   processSpecialSyntax,
+  ProjectStorage,
+  ProjectFeature,
+  calculateStatistics,
+  getNextPendingIndex,
+  isAllCompleted,
 } from '../src/interactive/index.js';
 import { KodaXMessage } from '../src/core/index.js';
 import { loadConfig, saveConfig, getProviderModel, getProviderList, isProviderConfigured } from '../src/cli/utils.js';
@@ -900,5 +905,385 @@ describe('New Commands', () => {
     const autoCmd = BUILTIN_COMMANDS.find(c => c.name === 'auto');
     expect(autoCmd).toBeDefined();
     expect(autoCmd.aliases).toContain('a');
+  });
+});
+
+// ============== Project State 工具函数测试 ==============
+
+describe('Project State Utilities', () => {
+  describe('calculateStatistics', () => {
+    it('should calculate statistics for empty features', () => {
+      const stats = calculateStatistics([]);
+      expect(stats.total).toBe(0);
+      expect(stats.completed).toBe(0);
+      expect(stats.pending).toBe(0);
+      expect(stats.skipped).toBe(0);
+      expect(stats.percentage).toBe(0);
+    });
+
+    it('should calculate statistics for mixed features', () => {
+      const features: ProjectFeature[] = [
+        { description: 'Feature 1', passes: true },
+        { description: 'Feature 2', passes: false },
+        { description: 'Feature 3', skipped: true },
+        { description: 'Feature 4', passes: true },
+        { description: 'Feature 5', passes: false },
+      ];
+
+      const stats = calculateStatistics(features);
+      expect(stats.total).toBe(5);
+      expect(stats.completed).toBe(2);
+      expect(stats.skipped).toBe(1);
+      expect(stats.pending).toBe(2);
+      expect(stats.percentage).toBe(40);
+    });
+
+    it('should calculate 100% when all completed', () => {
+      const features: ProjectFeature[] = [
+        { description: 'Feature 1', passes: true },
+        { description: 'Feature 2', passes: true },
+      ];
+
+      const stats = calculateStatistics(features);
+      expect(stats.percentage).toBe(100);
+    });
+
+    it('should handle features with passes=false', () => {
+      const features: ProjectFeature[] = [
+        { description: 'Feature 1', passes: false },
+        { description: 'Feature 2' }, // no passes field
+      ];
+
+      const stats = calculateStatistics(features);
+      expect(stats.completed).toBe(0);
+      expect(stats.pending).toBe(2);
+    });
+  });
+
+  describe('getNextPendingIndex', () => {
+    it('should return -1 for empty features', () => {
+      expect(getNextPendingIndex([])).toBe(-1);
+    });
+
+    it('should return first pending feature index', () => {
+      const features: ProjectFeature[] = [
+        { description: 'Feature 1', passes: true },
+        { description: 'Feature 2', passes: false },
+        { description: 'Feature 3', passes: false },
+      ];
+
+      expect(getNextPendingIndex(features)).toBe(1);
+    });
+
+    it('should skip skipped features', () => {
+      const features: ProjectFeature[] = [
+        { description: 'Feature 1', passes: true },
+        { description: 'Feature 2', skipped: true },
+        { description: 'Feature 3', passes: false },
+      ];
+
+      expect(getNextPendingIndex(features)).toBe(2);
+    });
+
+    it('should return -1 when all completed', () => {
+      const features: ProjectFeature[] = [
+        { description: 'Feature 1', passes: true },
+        { description: 'Feature 2', passes: true },
+      ];
+
+      expect(getNextPendingIndex(features)).toBe(-1);
+    });
+
+    it('should return -1 when all completed or skipped', () => {
+      const features: ProjectFeature[] = [
+        { description: 'Feature 1', passes: true },
+        { description: 'Feature 2', skipped: true },
+      ];
+
+      expect(getNextPendingIndex(features)).toBe(-1);
+    });
+  });
+
+  describe('isAllCompleted', () => {
+    it('should return true for empty features', () => {
+      expect(isAllCompleted([])).toBe(true);
+    });
+
+    it('should return true when all passed or skipped', () => {
+      const features: ProjectFeature[] = [
+        { description: 'Feature 1', passes: true },
+        { description: 'Feature 2', skipped: true },
+        { description: 'Feature 3', passes: true },
+      ];
+
+      expect(isAllCompleted(features)).toBe(true);
+    });
+
+    it('should return false when pending exists', () => {
+      const features: ProjectFeature[] = [
+        { description: 'Feature 1', passes: true },
+        { description: 'Feature 2', passes: false },
+      ];
+
+      expect(isAllCompleted(features)).toBe(false);
+    });
+  });
+});
+
+// ============== ProjectStorage 测试 ==============
+
+describe('ProjectStorage', () => {
+  let tempDir: string;
+  let storage: ProjectStorage;
+
+  beforeEach(async () => {
+    // Create temp directory
+    tempDir = path.join(os.tmpdir(), 'kodax-test-project-' + Date.now());
+    await fs.mkdir(tempDir, { recursive: true });
+    storage = new ProjectStorage(tempDir);
+  });
+
+  afterEach(async () => {
+    // Cleanup temp directory
+    try {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    } catch { }
+  });
+
+  describe('exists', () => {
+    it('should return false when no project exists', async () => {
+      expect(await storage.exists()).toBe(false);
+    });
+
+    it('should return true when feature_list.json exists', async () => {
+      await fs.writeFile(
+        path.join(tempDir, 'feature_list.json'),
+        JSON.stringify({ features: [] }),
+        'utf-8'
+      );
+      expect(await storage.exists()).toBe(true);
+    });
+  });
+
+  describe('loadFeatures and saveFeatures', () => {
+    it('should return null when no features file exists', async () => {
+      expect(await storage.loadFeatures()).toBeNull();
+    });
+
+    it('should save and load features', async () => {
+      const data = {
+        features: [
+          { description: 'Feature 1', passes: false },
+          { description: 'Feature 2', passes: true },
+        ],
+      };
+
+      await storage.saveFeatures(data);
+      const loaded = await storage.loadFeatures();
+
+      expect(loaded).not.toBeNull();
+      expect(loaded?.features).toHaveLength(2);
+      expect(loaded?.features[0]?.description).toBe('Feature 1');
+      expect(loaded?.features[1]?.passes).toBe(true);
+    });
+  });
+
+  describe('readProgress and appendProgress', () => {
+    it('should return empty string when no progress file exists', async () => {
+      expect(await storage.readProgress()).toBe('');
+    });
+
+    it('should append and read progress', async () => {
+      await storage.appendProgress('# Progress\n');
+      await storage.appendProgress('## Day 1\n');
+
+      const progress = await storage.readProgress();
+      expect(progress).toContain('# Progress');
+      expect(progress).toContain('## Day 1');
+    });
+  });
+
+  describe('readSessionPlan and writeSessionPlan', () => {
+    it('should return empty string when no session plan exists', async () => {
+      expect(await storage.readSessionPlan()).toBe('');
+    });
+
+    it('should write and read session plan', async () => {
+      const plan = '# Session Plan\n\n## Steps\n1. Step 1\n2. Step 2';
+      await storage.writeSessionPlan(plan);
+
+      const read = await storage.readSessionPlan();
+      expect(read).toBe(plan);
+    });
+
+    it('should create .kodax directory if not exists', async () => {
+      await storage.writeSessionPlan('Test plan');
+
+      const kodaxDir = path.join(tempDir, '.kodax');
+      const stat = await fs.stat(kodaxDir);
+      expect(stat.isDirectory()).toBe(true);
+    });
+  });
+
+  describe('getNextPendingFeature', () => {
+    it('should return null when no project exists', async () => {
+      expect(await storage.getNextPendingFeature()).toBeNull();
+    });
+
+    it('should return first pending feature', async () => {
+      await storage.saveFeatures({
+        features: [
+          { description: 'Feature 1', passes: true },
+          { description: 'Feature 2', passes: false },
+          { description: 'Feature 3', passes: false },
+        ],
+      });
+
+      const result = await storage.getNextPendingFeature();
+      expect(result).not.toBeNull();
+      expect(result?.index).toBe(1);
+      expect(result?.feature.description).toBe('Feature 2');
+    });
+
+    it('should return null when all completed', async () => {
+      await storage.saveFeatures({
+        features: [
+          { description: 'Feature 1', passes: true },
+          { description: 'Feature 2', skipped: true },
+        ],
+      });
+
+      expect(await storage.getNextPendingFeature()).toBeNull();
+    });
+  });
+
+  describe('getFeatureByIndex', () => {
+    it('should return null when no project exists', async () => {
+      expect(await storage.getFeatureByIndex(0)).toBeNull();
+    });
+
+    it('should return feature at index', async () => {
+      await storage.saveFeatures({
+        features: [
+          { description: 'Feature 1', passes: false },
+          { description: 'Feature 2', passes: true },
+        ],
+      });
+
+      const feature = await storage.getFeatureByIndex(1);
+      expect(feature?.description).toBe('Feature 2');
+      expect(feature?.passes).toBe(true);
+    });
+
+    it('should return null for invalid index', async () => {
+      await storage.saveFeatures({ features: [{ description: 'Feature 1' }] });
+
+      expect(await storage.getFeatureByIndex(-1)).toBeNull();
+      expect(await storage.getFeatureByIndex(10)).toBeNull();
+    });
+  });
+
+  describe('updateFeatureStatus', () => {
+    it('should return false when no project exists', async () => {
+      expect(await storage.updateFeatureStatus(0, { passes: true })).toBe(false);
+    });
+
+    it('should update feature status', async () => {
+      await storage.saveFeatures({
+        features: [
+          { description: 'Feature 1', passes: false },
+          { description: 'Feature 2', passes: false },
+        ],
+      });
+
+      const result = await storage.updateFeatureStatus(1, { passes: true });
+      expect(result).toBe(true);
+
+      const feature = await storage.getFeatureByIndex(1);
+      expect(feature?.passes).toBe(true);
+    });
+
+    it('should merge updates with existing data', async () => {
+      await storage.saveFeatures({
+        features: [{ description: 'Feature 1', passes: false, notes: 'Original' }],
+      });
+
+      await storage.updateFeatureStatus(0, { passes: true, completedAt: '2025-01-01' });
+
+      const feature = await storage.getFeatureByIndex(0);
+      expect(feature?.description).toBe('Feature 1');
+      expect(feature?.notes).toBe('Original');
+      expect(feature?.passes).toBe(true);
+      expect(feature?.completedAt).toBe('2025-01-01');
+    });
+  });
+
+  describe('getStatistics', () => {
+    it('should return zeros when no project exists', async () => {
+      const stats = await storage.getStatistics();
+      expect(stats.total).toBe(0);
+      expect(stats.percentage).toBe(0);
+    });
+
+    it('should return correct statistics', async () => {
+      await storage.saveFeatures({
+        features: [
+          { description: 'Feature 1', passes: true },
+          { description: 'Feature 2', passes: false },
+          { description: 'Feature 3', skipped: true },
+        ],
+      });
+
+      const stats = await storage.getStatistics();
+      expect(stats.total).toBe(3);
+      expect(stats.completed).toBe(1);
+      expect(stats.pending).toBe(1);
+      expect(stats.skipped).toBe(1);
+      expect(stats.percentage).toBe(33);
+    });
+  });
+
+  describe('listFeatures', () => {
+    it('should return empty array when no project exists', async () => {
+      expect(await storage.listFeatures()).toEqual([]);
+    });
+
+    it('should return all features', async () => {
+      await storage.saveFeatures({
+        features: [
+          { description: 'Feature 1' },
+          { description: 'Feature 2' },
+        ],
+      });
+
+      const features = await storage.listFeatures();
+      expect(features).toHaveLength(2);
+    });
+  });
+
+  describe('getPaths', () => {
+    it('should return correct paths', () => {
+      const paths = storage.getPaths();
+      expect(paths.features).toBe(path.join(tempDir, 'feature_list.json'));
+      expect(paths.progress).toBe(path.join(tempDir, 'PROGRESS.md'));
+      expect(paths.sessionPlan).toBe(path.join(tempDir, '.kodax', 'session_plan.md'));
+    });
+  });
+});
+
+// ============== Project 命令测试 ==============
+
+describe('Project Command', () => {
+  it('should have project command', () => {
+    const projectCmd = BUILTIN_COMMANDS.find(c => c.name === 'project');
+    expect(projectCmd).toBeDefined();
+    expect(projectCmd?.aliases).toContain('proj');
+  });
+
+  it('should have project command with correct usage', () => {
+    const projectCmd = BUILTIN_COMMANDS.find(c => c.name === 'project');
+    expect(projectCmd?.usage).toContain('init');
+    expect(projectCmd?.usage).toContain('status');
+    expect(projectCmd?.usage).toContain('next');
   });
 });

@@ -35,6 +35,7 @@ import {
   CurrentConfig,
 } from './commands.js';
 import { runWithPlanMode } from '../cli/plan-mode.js';
+import { detectAndShowProjectHint } from './project-commands.js';
 
 // 扩展的会话存储接口（增加 list 方法）
 interface SessionStorage extends KodaXSessionStorage {
@@ -104,6 +105,9 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
 
   // 打印启动 Banner
   printStartupBanner(currentConfig, currentConfig.mode ?? 'code');
+
+  // 检测并显示项目提示
+  await detectAndShowProjectHint();
 
   const rl = readline.createInterface({
     input: process.stdin,

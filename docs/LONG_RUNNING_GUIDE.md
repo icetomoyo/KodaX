@@ -1,45 +1,287 @@
 # KodaX 长时间运行模式指南
 
-本文档提供使用 `--init` 开发完整项目的最佳实践和提示词范例。
+本指南介绍如何使用 KodaX 进行长时间运行的项目开发，包括会话管理、CLI 自动化模式和交互式项目模式。
 
 ---
 
 ## 目录
 
 1. [核心概念](#核心概念)
-2. [提示词最佳实践](#提示词最佳实践)
-3. [项目类型模板](#项目类型模板)
-4. [常见问题与解决](#常见问题与解决)
+2. [会话管理](#会话管理)
+3. [CLI 长运行模式](#cli-长运行模式)
+4. [交互式项目模式](#交互式项目模式)
+5. [提示词最佳实践](#提示词最佳实践)
+6. [项目类型模板](#项目类型模板)
+7. [常见问题与解决](#常见问题与解决)
 
 ---
 
 ## 核心概念
 
-### 两种上下文模式
+### 三种上下文模式
 
-| 模式 | 上下文来源 | 适用场景 |
-|------|-----------|----------|
-| **会话模式** | Session 文件 (`~/.kodax/sessions/`) | 短期任务、快速修复 |
-| **长运行模式** | 项目状态文件 (`feature_list.json`, `PROGRESS.md`, git log) | 完整项目、多日开发 |
+| 模式 | 上下文来源 | 适用场景 | 触发方式 |
+|------|-----------|----------|----------|
+| **单次模式** | 无持久化 | 快速问答、一次性任务 | `kodax "prompt"` |
+| **会话模式** | `~/.kodax/sessions/` | 短期任务、多轮对话 | `kodax -i` 或 `-c` |
+| **长运行模式** | `feature_list.json` + `PROGRESS.md` | 完整项目、多日开发 | `--init` 或 `/project` |
 
-### 长运行模式工作流
+### 长运行模式架构
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  1. --init "项目描述"                                        │
-│     → 创建 feature_list.json + PROGRESS.md + init.sh        │
-│     → 执行第一个 session，完成初始功能                        │
+│                       长运行模式                              │
 ├─────────────────────────────────────────────────────────────┤
-│  2. --auto-continue 或 "继续开发"                            │
-│     → 读取 feature_list.json，选择未完成功能                  │
-│     → 读取 PROGRESS.md，了解历史进度                          │
-│     → 读取 git log，了解最近提交                              │
-│     → 实现功能 → 测试 → git commit → 更新 PROGRESS.md         │
-├─────────────────────────────────────────────────────────────┤
-│  3. 重复步骤 2 直到所有功能完成                               │
-│     → Agent 输出 <promise>COMPLETE</promise> 自动停止        │
+│                                                             │
+│  CLI 模式（自动化）           交互式模式（人机协作）          │
+│  ├── --init <task>           ├── /project init <task>       │
+│  ├── --auto-continue         ├── /project next              │
+│  └── 无人值守执行             ├── /project auto              │
+│                              └── 每步可确认/跳过             │
+│                                                             │
+│              ↓                            ↓                 │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │               共享项目状态                             │   │
+│  │  ├── feature_list.json  (功能列表)                   │   │
+│  │  ├── PROGRESS.md        (进度日志)                   │   │
+│  │  └── .kodax/            (会话计划)                   │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## 会话管理
+
+### 会话存储位置
+
+```
+~/.kodax/
+├── sessions/              # 会话文件
+│   └── YYYYMMDD_HHMMSS.jsonl
+├── plans/                 # Plan Mode 计划
+│   └── {planId}.json
+└── config.json            # 全局配置
+```
+
+### 会话文件格式
+
+```jsonl
+{"_type":"meta","title":"会话标题","id":"20250219_123456","gitRoot":"/path/to/project","createdAt":"..."}
+{"role":"user","content":"用户消息"}
+{"role":"assistant","content":[...]}
+```
+
+### CLI 会话命令
+
+| 命令 | 说明 |
+|------|------|
+| `kodax -i` | 启动交互式模式（自动恢复最近会话） |
+| `kodax -c, --continue` | 继续最近的会话 |
+| `kodax -r, --resume [id]` | 恢复指定会话（无参数时显示选择器） |
+| `kodax -s list` | 列出所有会话 |
+| `kodax -s delete <id>` | 删除指定会话 |
+| `kodax -s delete-all` | 删除当前项目所有会话 |
+| `kodax --no-session` | 不保存会话（单次模式） |
+
+### 交互式会话命令
+
+在交互式 REPL 中：
+
+| 命令 | 别名 | 说明 |
+|------|------|------|
+| `/save` | - | 保存当前会话 |
+| `/load <id>` | `/resume` | 加载指定会话 |
+| `/sessions` | `/ls`, `/list` | 列出最近会话 |
+| `/delete <id>` | `/rm` | 删除会话 |
+| `/history` | `/hist` | 显示对话历史 |
+
+---
+
+## CLI 长运行模式
+
+### 初始化项目
+
+```bash
+kodax --init "项目描述"
+```
+
+创建以下文件：
+- `feature_list.json` - 功能列表和完成状态
+- `PROGRESS.md` - 进度日志
+- `.kodax/session_plan.md` - 当前会话计划
+
+### 自动继续模式
+
+```bash
+kodax --auto-continue
+```
+
+自动循环执行直到所有功能完成。支持以下限制参数：
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `--max-sessions <n>` | 最大会话数 | 50 |
+| `--max-hours <n>` | 最大运行时间（小时） | 2 |
+
+### Promise 信号系统
+
+Agent 可以输出特殊信号控制流程：
+
+| 信号 | 含义 | 场景 |
+|------|------|------|
+| `<promise>COMPLETE</promise>` | 所有功能完成，停止 | 全部实现并测试通过 |
+| `<promise>BLOCKED:原因</promise>` | 需要人工干预 | 缺少 API Key、依赖问题 |
+| `<promise>DECIDE:问题</promise>` | 需要用户决策 | 选择技术方案 |
+
+### CLI 工作流程
+
+```
+1. kodax --init "项目描述"
+   ↓
+   Agent 分析需求，创建 feature_list.json
+   ↓
+2. kodax --auto-continue
+   ↓
+   循环：
+   ├── 读取 feature_list.json，选择未完成功能
+   ├── 读取 PROGRESS.md，了解历史进度
+   ├── 读取 git log，了解最近提交
+   ├── 实现 → 测试 → commit → 更新 PROGRESS.md
+   └── 检测 COMPLETE 信号，退出循环
+```
+
+---
+
+## 交互式项目模式
+
+交互式项目模式提供更细粒度的控制，适合需要人工监督的开发场景。
+
+### 启动检测
+
+当检测到项目存在 `feature_list.json` 时，启动时会显示：
+
+```
+📁 Long-running project detected
+  Use /project status to view progress
+  Use /project next to work on next feature
+```
+
+### `/project` 命令组
+
+| 命令 | 别名 | 说明 |
+|------|------|------|
+| `/project init <task>` | `/proj i` | 初始化长运行项目 |
+| `/project status` | `/proj st` | 显示项目状态和进度 |
+| `/project next` | `/proj n` | 执行下一个未完成功能 |
+| `/project auto` | `/proj a` | 进入自动继续模式 |
+| `/project pause` | - | 暂停自动继续 |
+| `/project list` | `/proj l` | 列出所有功能 |
+| `/project mark <n> [done\|skip]` | `/proj m` | 标记功能状态 |
+| `/project progress` | `/proj p` | 查看 PROGRESS.md |
+
+### 命令详解
+
+#### `/project init <task>`
+
+初始化一个新的长运行项目：
+
+```
+/project init "TypeScript + Express 构建博客 API"
+```
+
+选项：
+- `--append`：追加到现有项目
+- `--overwrite`：覆盖现有项目
+
+#### `/project status`
+
+显示项目当前状态：
+
+```
+Project Status:
+  Total Features:   15
+  Completed:        8  [53%]
+  Pending:          7
+  Skipped:          0
+
+Next Feature (Index 8):
+  User authentication (register, login, logout)
+```
+
+#### `/project next`
+
+执行下一个未完成功能：
+
+```
+Next Feature: Todo list page
+
+Plan:
+  1. [READ] Check current structure
+  2. [WRITE] Create TodoList component
+  3. [EDIT] Add routes
+
+Execute? (y/n) >
+```
+
+选项：
+- `--no-confirm`：跳过确认
+- `--index <n>`：执行指定索引的功能
+
+#### `/project auto`
+
+进入自动继续模式：
+
+```
+Auto-Continue Mode
+  Max runs: unlimited
+  Current run: 3
+
+[1/7] Todo list page - ✓
+[2/7] REST API - ✓
+[3/7] User profile - running...
+```
+
+执行每个功能前会要求确认（除非使用 `--no-confirm`）。
+
+#### `/project mark <index> [done|skip]`
+
+手动标记功能状态：
+
+```
+/project mark 3 done    # 标记为完成
+/project mark 5 skip    # 跳过该功能
+```
+
+### 交互式工作流程
+
+```
+1. /project init "项目描述"
+   ↓
+   确认后创建 feature_list.json
+   ↓
+2. /project status
+   ↓
+   查看功能列表，了解进度
+   ↓
+3. /project next
+   ↓
+   查看计划 → 确认 → 执行 → 完成
+   ↓
+4. 重复步骤 3，或使用 /project auto
+```
+
+### CLI vs 交互式模式对比
+
+| 特性 | CLI 模式 | 交互式模式 |
+|------|----------|------------|
+| 执行方式 | 无人值守 | 人机协作 |
+| 确认机制 | 无 | 每步可确认 |
+| 中断恢复 | 信号控制 | 手动控制 |
+| 进度查看 | 日志输出 | 实时显示 |
+| 适用场景 | CI/CD、批处理 | 日常开发 |
+| 风险控制 | 低风险任务 | 关键任务 |
 
 ---
 
@@ -47,7 +289,7 @@
 
 ### 初始化提示词结构
 
-一个优秀的 `--init` 提示词应包含：
+一个优秀的初始化提示词应包含：
 
 ```text
 --init "<技术栈> <项目类型>：核心功能描述
@@ -132,7 +374,7 @@ Feature 应该：
 ### 模板 1：Node.js CLI 工具
 
 ```bash
-node dist/kodax.js --init "TypeScript CLI 工具：<工具名称>
+kodax --init "TypeScript CLI 工具：<工具名称>
 
 功能：
 - 命令行入口支持多个子命令
@@ -154,7 +396,7 @@ node dist/kodax.js --init "TypeScript CLI 工具：<工具名称>
 ### 模板 2：REST API
 
 ```bash
-node dist/kodax.js --init "Express REST API：<API 名称>
+kodax --init "Express REST API：<API 名称>
 
 核心资源：
 - User: 注册、登录、资料管理
@@ -182,7 +424,7 @@ node dist/kodax.js --init "Express REST API：<API 名称>
 ### 模板 3：Web 前端
 
 ```bash
-node dist/kodax.js --init "React 前端应用：<应用名称>
+kodax --init "React 前端应用：<应用名称>
 
 页面结构：
 - 登录/注册页
@@ -211,7 +453,7 @@ node dist/kodax.js --init "React 前端应用：<应用名称>
 ### 模板 4：数据处理脚本
 
 ```bash
-node dist/kodax.js --init "Node.js 数据处理脚本：<脚本名称>
+kodax --init "Node.js 数据处理脚本：<脚本名称>
 
 输入：
 - 读取 CSV/JSON 文件
@@ -235,136 +477,6 @@ node dist/kodax.js --init "Node.js 数据处理脚本：<脚本名称>
 - 单文件实现
 - 内存使用不超过 500MB
 - 处理 100 万行数据在 30 秒内"
-```
-
----
-
-## 提示词完整范例
-
-### 范例 1：Todo CLI
-
-```bash
-node dist/kodax.js --init "TypeScript Todo CLI 工具
-
-功能：
-1. 添加任务：todo add \"任务内容\" --priority high
-2. 列出任务：todo list [--done|--pending]
-3. 完成任务：todo done <id>
-4. 删除任务：todo delete <id>
-5. 清理已完成：todo clear
-
-数据存储：
-- 使用 JSON 文件存储（~/.todo.json）
-- 支持任务 ID、内容、优先级、创建时间、完成状态
-
-技术要求：
-- 使用 commander 处理命令行参数
-- 单文件实现（todo.ts）
-- 编译为 node dist/todo.js
-
-约束条件：
-- 不使用数据库
-- 不需要认证
-- 代码不超过 300 行
-- 每个命令有 --help 说明
-
-验收标准：
-- 所有命令正常工作
-- 数据持久化正确
-- 错误处理友好"
-```
-
-### 范例 2：博客 API（完整版）
-
-```bash
-node dist/kodax.js --init "Express + TypeScript 博客 API
-
-核心功能：
-1. 用户认证
-   - POST /auth/register - 用户注册（用户名、邮箱、密码）
-   - POST /auth/login - 登录返回 JWT token
-   - GET /auth/me - 获取当前用户信息
-
-2. 文章管理
-   - GET /posts - 获取文章列表（分页、排序）
-   - POST /posts - 创建文章（需要认证）
-   - GET /posts/:id - 获取单篇文章
-   - PUT /posts/:id - 更新文章（仅作者）
-   - DELETE /posts/:id - 删除文章（仅作者）
-
-3. 评论系统
-   - GET /posts/:id/comments - 获取评论列表
-   - POST /posts/:id/comments - 发表评论（需要认证）
-   - DELETE /comments/:id - 删除评论（仅作者）
-
-4. 搜索功能
-   - GET /search?q=keyword - 搜索文章标题和内容
-
-数据模型：
-- User: id, username, email, password_hash, created_at
-- Post: id, title, content, author_id, created_at, updated_at
-- Comment: id, content, post_id, author_id, created_at
-
-技术栈：
-- Express + TypeScript
-- SQLite + better-sqlite3
-- JWT 认证 (jsonwebtoken)
-- 密码哈希 (bcrypt)
-
-约束条件：
-- 单文件实现（blog_api.ts）
-- 代码不超过 800 行
-- 不需要前端界面
-- 不需要图片上传
-- 不需要邮件验证
-
-质量要求：
-- 所有端点有错误处理
-- 返回正确的 HTTP 状态码
-- TypeScript 编译无错误"
-```
-
-### 范例 3：代码分析器
-
-```bash
-node dist/kodax.js --init "TypeScript 代码分析工具
-
-功能：
-1. 代码统计
-   - 统计代码行数、注释行数、空行数
-   - 按文件类型分类统计
-   - 计算注释率
-
-2. 复杂度分析
-   - 函数圈复杂度
-   - 函数长度统计
-   - 识别过长函数
-
-3. 依赖分析
-   - 解析 import 语句
-   - 生成依赖关系图
-   - 识别循环依赖
-
-4. 报告生成
-   - 控制台彩色输出
-   - JSON 格式导出
-   - Markdown 报告
-
-使用方式：
-- code-analyzer analyze <path>
-- code-analyzer stats <path>
-- code-analyzer deps <path>
-- code-analyzer report <path> --format json
-
-技术要求：
-- 使用 TypeScript Compiler API 解析代码
-- 单文件实现
-- 编译为 node dist/code-analyzer.js
-
-约束条件：
-- 只分析 TypeScript/JavaScript 代码
-- 不修改源文件
-- 代码不超过 500 行"
 ```
 
 ---
@@ -438,11 +550,30 @@ node dist/kodax.js --init "TypeScript 代码分析工具
 
 **症状**：Agent 反复尝试同一个失败的操作
 
-**解决**：使用 `--max-sessions` 限制
+**解决**：使用限制参数或交互式模式
 
 ```bash
-# 限制最多 10 个 session
-node dist/kodax.js --auto-continue --max-sessions 10
+# CLI 模式：限制会话数
+kodax --auto-continue --max-sessions 10
+
+# 交互式模式：手动控制每步
+/project next  # 每步确认
+```
+
+### 问题 6：需要修改 Feature 列表
+
+**症状**：发现 Feature 定义不合理，需要调整
+
+**解决**：使用交互式命令或直接编辑
+
+```bash
+# 查看当前列表
+/project list
+
+# 标记跳过
+/project mark 3 skip
+
+# 手动编辑 feature_list.json
 ```
 
 ---
@@ -452,73 +583,31 @@ node dist/kodax.js --auto-continue --max-sessions 10
 初始化后，继续开发时可以使用：
 
 ```bash
-# 标准继续
-node dist/kodax.js "继续开发"
+# CLI 模式
+kodax --auto-continue                    # 自动继续
+kodax "继续开发，优先完成用户认证功能"      # 聚焦特定功能
+kodax "检查测试失败的原因并修复"           # 修复问题
 
-# 聚焦特定功能
-node dist/kodax.js "继续开发，优先完成用户认证功能"
-
-# 修复问题
-node dist/kodax.js "检查测试失败的原因并修复"
-
-# 添加新功能
-node dist/kodax.js "在现有功能基础上，添加搜索功能"
-
-# 代码审查
-node dist/kodax.js "审查代码质量，找出可以改进的地方"
-
-# 第二天继续
-node dist/kodax.js --session resume "继续昨天的工作"
-```
-
----
-
-## 信号系统
-
-Agent 可以使用特殊信号控制流程：
-
-| 信号 | 含义 | 示例 |
-|------|------|------|
-| `<promise>COMPLETE</promise>` | 所有功能完成，停止 | 功能全部实现并测试通过 |
-| `<promise>BLOCKED:原因</promise>` | 需要人工干预 | 缺少 API Key |
-| `<promise>DECIDE:问题</promise>` | 需要用户决策 | 选择数据库类型 |
-
----
-
-## TypeScript 项目特有建议
-
-### 类型安全
-
-```
-验收要求：
-- TypeScript strict 模式编译通过
-- 所有函数有类型注解
-- 无 any 类型（除非必要）
-```
-
-### 构建和测试
-
-```
-技术要求：
-- npm run build 编译无错误
-- 源码在 src/ 目录
-- 编译输出在 dist/ 目录
-```
-
-### 依赖管理
-
-```
-约束条件：
-- 使用 esbuild 或 tsc 编译
-- 运行时依赖最小化
-- 开发依赖单独管理
+# 交互式模式
+/project next                            # 执行下一个功能
+/project auto                            # 自动继续模式
 ```
 
 ---
 
 ## 总结
 
-### 成功的 `--init` 提示词清单
+### 模式选择指南
+
+| 场景 | 推荐模式 |
+|------|----------|
+| 快速问答 | 单次模式 (`kodax "prompt"`) |
+| 短期多轮对话 | 会话模式 (`kodax -i`) |
+| CI/CD 自动化 | CLI 长运行 (`--auto-continue`) |
+| 日常项目开发 | 交互式项目模式 (`/project`) |
+| 关键任务 | 交互式项目模式（每步确认） |
+
+### 成功的提示词清单
 
 - [ ] 明确的技术栈
 - [ ] 具体的功能列表

@@ -147,3 +147,79 @@ export async function rateLimitedCall<T>(fn: () => Promise<T>): Promise<T> {
     if (next) next();
   }
 }
+
+// ============== --init 提示词构建 ==============
+
+/**
+ * 构建初始化长运行项目的提示词
+ */
+export function buildInitPrompt(task: string, currentDate?: string, currentOS?: string): string {
+  const date = currentDate ?? new Date().toISOString().split('T')[0];
+  const os = currentOS ?? process.platform;
+  return `Initialize a long-running project: ${task}
+
+**Current Context:**
+- Date: ${date}
+- OS: ${os}
+
+Create these files in the current directory:
+
+1. **feature_list.json** - A list of features for this project.
+
+**What is a Feature?**
+A feature is a COMPLETE, TESTABLE functionality that can be finished in 1-2 sessions.
+- Code size: ~50-300 lines per feature
+- Time: ~10-60 minutes of actual development work
+- Testable: Has clear "done" criteria
+
+**Feature Count Guidelines (use your judgment, not hard limits):**
+- **Simple task** (single file, display page, config): 1-3 features
+- **Medium task** (multi-page site, CLI tool, small API): 3-8 features
+- **Complex task** (full app with frontend + backend + database): 8-15 features
+
+**DO:**
+- Split by user-facing features (page A, page B, API group C)
+- Each feature = something a user can actually USE
+
+**DO NOT:**
+- Split by technical layers (HTML → CSS → JS → content)
+- Create features smaller than ~50 lines of code
+- Create features larger than ~300 lines of code
+
+**Examples of GOOD features:**
+- "User authentication (register, login, logout)" - complete system
+- "Todo list page with add/delete/mark-done" - complete page functionality
+- "REST API for todos (GET, POST, PUT, DELETE)" - complete API resource
+
+**Examples of BAD features:**
+- "Add HTML structure" - too small, technical layer
+- "Create the entire application" - too large
+- "Add button styling" - trivial, not a feature
+
+Format:
+{
+  "features": [
+    {
+      "description": "Feature description (clear and testable)",
+      "steps": ["step 1", "step 2", "step 3"],
+      "passes": false
+    }
+  ]
+}
+
+2. **PROGRESS.md** - A progress log file:
+   # Progress Log
+
+   ## ${date} - Project Initialization
+
+   ### Completed
+   - [x] Project initialized
+
+   ### Next Steps
+   - [ ] First feature to implement
+
+After creating files, make an initial git commit:
+   git add .
+   git commit -m "Initial commit: project setup for ${task.slice(0, 50)}"
+`;
+}

@@ -6,6 +6,7 @@ import chalk from 'chalk';
 import { InteractiveContext, InteractiveMode } from './context.js';
 import { estimateTokens, KODAX_PROVIDERS, getProviderList, saveConfig } from '../kodax_core.js';
 import { runWithPlanMode, listPlans, resumePlan, clearCompletedPlans } from '../cli/plan-mode.js';
+import { handleProjectCommand } from './project-commands.js';
 import { KodaXOptions } from '../core/index.js';
 
 // 当前配置状态（由 repl.ts 传入）
@@ -331,6 +332,15 @@ export const BUILTIN_COMMANDS: Command[] = [
       }
     },
   },
+  {
+    name: 'project',
+    aliases: ['proj'],
+    description: 'Project long-running task management',
+    usage: '/project [init|status|next|auto|pause|list|mark|progress]',
+    handler: async (args, context, callbacks, currentConfig) => {
+      await handleProjectCommand(args, context, callbacks, currentConfig);
+    },
+  },
 ];
 
 // 打印帮助
@@ -342,10 +352,12 @@ function printHelp(): void {
     'General': BUILTIN_COMMANDS.filter(c => ['help', 'exit', 'clear', 'status'].includes(c.name)),
     'Mode': BUILTIN_COMMANDS.filter(c => ['mode', 'ask', 'code'].includes(c.name)),
     'Session': BUILTIN_COMMANDS.filter(c => ['save', 'load', 'sessions', 'history', 'delete'].includes(c.name)),
-    'Settings': BUILTIN_COMMANDS.filter(c => ['model', 'thinking', 'auto'].includes(c.name)),
+    'Settings': BUILTIN_COMMANDS.filter(c => ['model', 'thinking', 'auto', 'plan'].includes(c.name)),
+    'Project': BUILTIN_COMMANDS.filter(c => ['project'].includes(c.name)),
   };
 
   for (const [category, commands] of Object.entries(categories)) {
+    if (commands.length === 0) continue;
     console.log(chalk.dim(`${category}:`));
     for (const cmd of commands) {
       const aliases = cmd.aliases ? chalk.dim(` (${cmd.aliases.join(', ')})`) : '';

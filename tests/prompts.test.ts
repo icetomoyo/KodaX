@@ -154,17 +154,17 @@ describe('LONG_RUNNING_PROMPT Content Verification', () => {
 // ============== buildInitPrompt 测试 ==============
 
 describe('buildInitPrompt Content Verification', () => {
-  const kodaxCliPath = path.join(process.cwd(), 'src', 'kodax_cli.ts');
+  const cliUtilsPath = path.join(process.cwd(), 'src', 'cli', 'utils.ts');
 
   it('should contain feature definition', async () => {
-    const content = await fs.readFile(kodaxCliPath, 'utf-8');
+    const content = await fs.readFile(cliUtilsPath, 'utf-8');
     expect(content).toContain('**What is a Feature?**');
     expect(content).toContain('A feature is a COMPLETE, TESTABLE functionality');
     expect(content).toContain('~50-300 lines per feature');
   });
 
   it('should contain Feature Count Guidelines', async () => {
-    const content = await fs.readFile(kodaxCliPath, 'utf-8');
+    const content = await fs.readFile(cliUtilsPath, 'utf-8');
     expect(content).toContain('Feature Count Guidelines');
     expect(content).toContain('Simple task');
     expect(content).toContain('Medium task');
@@ -172,7 +172,7 @@ describe('buildInitPrompt Content Verification', () => {
   });
 
   it('should contain DO/DON\'T sections', async () => {
-    const content = await fs.readFile(kodaxCliPath, 'utf-8');
+    const content = await fs.readFile(cliUtilsPath, 'utf-8');
     expect(content).toContain('**DO:**');
     expect(content).toContain('Split by user-facing features');
     expect(content).toContain('**DO NOT:**');
@@ -180,7 +180,7 @@ describe('buildInitPrompt Content Verification', () => {
   });
 
   it('should contain GOOD/BAD examples', async () => {
-    const content = await fs.readFile(kodaxCliPath, 'utf-8');
+    const content = await fs.readFile(cliUtilsPath, 'utf-8');
     expect(content).toContain('**Examples of GOOD features:**');
     expect(content).toContain('**Examples of BAD features:**');
     expect(content).toContain('User authentication (register, login, logout)');
@@ -188,7 +188,7 @@ describe('buildInitPrompt Content Verification', () => {
   });
 
   it('should contain PROGRESS.md template', async () => {
-    const content = await fs.readFile(kodaxCliPath, 'utf-8');
+    const content = await fs.readFile(cliUtilsPath, 'utf-8');
     expect(content).toContain('2. **PROGRESS.md**');
     expect(content).toContain('# Progress Log');
     expect(content).toContain('### Completed');
@@ -196,7 +196,7 @@ describe('buildInitPrompt Content Verification', () => {
   });
 
   it('should contain git commit instructions', async () => {
-    const content = await fs.readFile(kodaxCliPath, 'utf-8');
+    const content = await fs.readFile(cliUtilsPath, 'utf-8');
     expect(content).toContain('git add .');
     expect(content).toContain('git commit');
     expect(content).toContain('Initial commit');
@@ -284,6 +284,7 @@ describe('Retry Prompts Content Verification', () => {
 describe('Source File Consistency', () => {
   const kodaxCorePath = path.join(process.cwd(), 'src', 'kodax_core.ts');
   const kodaxCliPath = path.join(process.cwd(), 'src', 'kodax_cli.ts');
+  const cliUtilsPath = path.join(process.cwd(), 'src', 'cli', 'utils.ts');
 
   it('should have SYSTEM_PROMPT in kodax_core.ts', async () => {
     const kodaxCoreContent = await fs.readFile(kodaxCorePath, 'utf-8');
@@ -320,8 +321,8 @@ describe('Source File Consistency', () => {
     }
   });
 
-  it('should have buildInitPrompt in kodax_cli.ts', async () => {
-    const kodaxCliContent = await fs.readFile(kodaxCliPath, 'utf-8');
+  it('should have buildInitPrompt in cli/utils.ts', async () => {
+    const cliUtilsContent = await fs.readFile(cliUtilsPath, 'utf-8');
 
     const keySections = [
       'What is a Feature?',
@@ -334,7 +335,7 @@ describe('Source File Consistency', () => {
     ];
 
     for (const section of keySections) {
-      expect(kodaxCliContent).toContain(section);
+      expect(cliUtilsContent).toContain(section);
     }
   });
 
