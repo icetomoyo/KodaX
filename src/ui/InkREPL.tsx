@@ -231,11 +231,6 @@ const InkREPL: React.FC<InkREPLProps> = ({
     async (input: string) => {
       if (!input.trim() || !isRunning) return;
 
-      // Hide banner on first input
-      if (showBanner) {
-        setShowBanner(false);
-      }
-
       // Add user message to UI
       const userMessage: Message = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
@@ -473,7 +468,6 @@ const InkREPL: React.FC<InkREPLProps> = ({
     },
     [
       isRunning,
-      showBanner,
       context,
       currentConfig,
       planMode,
@@ -592,7 +586,7 @@ const InkREPL: React.FC<InkREPLProps> = ({
       {/* Status Bar */}
       <Box flexShrink={0}>
         <Text dimColor>
-          Session: {context.sessionId.slice(0, 8)} | Mode: {currentConfig.mode} |
+          Session: {context.sessionId} | Mode: {currentConfig.mode} |
           Provider: {currentConfig.provider}
           {currentConfig.thinking ? " | Thinking" : ""}
           {currentConfig.auto ? " | Auto" : ""}
