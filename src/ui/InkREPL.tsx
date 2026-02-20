@@ -487,11 +487,8 @@ const InkREPL: React.FC<InkREPLProps> = ({
   const model =
     getProviderModel(currentConfig.provider) ?? currentConfig.provider;
 
-  // Safe terminal height (fallback to 24 if not available)
-  const terminalHeight = stdout?.rows ?? process.stdout?.rows ?? 24;
-
   return (
-    <Box flexDirection="column" height={terminalHeight}>
+    <Box flexDirection="column">
       {/* Startup Banner with ASCII Art Logo */}
       {showBanner && (
         <Box flexDirection="column">
@@ -519,7 +516,7 @@ const InkREPL: React.FC<InkREPLProps> = ({
           </Box>
 
           {/* Divider */}
-          <Text dimColor>{"  "}{`${"─".repeat(Math.min(60, (stdout?.columns ?? 80) - 4))}`}</Text>
+          <Text dimColor>{"  "}{`${"-".repeat(Math.min(60, (stdout?.columns ?? 80) - 4))}`}</Text>
 
           {/* Session Info */}
           <Box>
@@ -530,7 +527,7 @@ const InkREPL: React.FC<InkREPLProps> = ({
           </Box>
 
           {/* Divider */}
-          <Text dimColor>{"  "}{`${"─".repeat(Math.min(60, (stdout?.columns ?? 80) - 4))}`}</Text>
+          <Text dimColor>{"  "}{`${"-".repeat(Math.min(60, (stdout?.columns ?? 80) - 4))}`}</Text>
         </Box>
       )}
 
