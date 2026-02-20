@@ -6,10 +6,8 @@
  */
 
 import React, { useState, useCallback, useRef } from "react";
-import { render, Box, Text, useApp } from "ink";
+import { render, Box, useApp } from "ink";
 import { InputPrompt } from "./components/InputPrompt.js";
-import { SessionHistory } from "./components/SessionHistory.js";
-import type { Message } from "./types.js";
 import {
   KodaXOptions,
   KodaXMessage,
@@ -120,7 +118,6 @@ const InkREPL: React.FC<InkREPLProps> = ({
   const { exit } = useApp();
 
   // State
-  const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [currentConfig, setCurrentConfig] = useState<CurrentConfig>(config);
   const [planMode, setPlanMode] = useState(false);
@@ -134,15 +131,6 @@ const InkREPL: React.FC<InkREPLProps> = ({
       ...options.session,
       id: context.sessionId,
     },
-  });
-
-  // Convert KodaXMessage to UI Message
-  const kodaxMessageToUIMessage = (msg: KodaXMessage): Message => ({
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-    role: msg.role as "user" | "assistant" | "system",
-    content:
-      typeof msg.content === "string" ? msg.content : "[Complex content]",
-    timestamp: Date.now(),
   });
 
   // Process special syntax (shell commands, file references)
@@ -225,14 +213,10 @@ const InkREPL: React.FC<InkREPLProps> = ({
     async (input: string) => {
       if (!input.trim() || !isRunning) return;
 
-      // Add user message to UI
-      const userMessage: Message = {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-        role: "user",
-        content: input,
-        timestamp: Date.now(),
-      };
-      setMessages((prev) => [...prev, userMessage]);
+      // Print user input to console (not in Ink component to avoid re-render issues)
+      console.log(chalk.cyan(`You: ${input}`));
+      console.log();
+
       setIsLoading(true);
 
       touchContext(context);
@@ -264,8 +248,7 @@ const InkREPL: React.FC<InkREPLProps> = ({
               context.messages = loaded.messages;
               context.title = loaded.title;
               context.sessionId = id;
-              // Update UI messages
-              setMessages(loaded.messages.map(kodaxMessageToUIMessage));
+              console.log(chalk.green(`[Session loaded: ${id}]`));
               return true;
             }
             return false;
@@ -286,7 +269,7 @@ const InkREPL: React.FC<InkREPLProps> = ({
           },
           clearHistory: () => {
             context.messages = [];
-            setMessages([]);
+            console.log(chalk.dim("[Conversation cleared]"));
           },
           printHistory: () => {
             if (context.messages.length === 0) {
@@ -377,13 +360,7 @@ const InkREPL: React.FC<InkREPLProps> = ({
           });
         } catch (err) {
           const error = err instanceof Error ? err : new Error(String(err));
-          const errorMessage: Message = {
-            id: `${Date.now()}-error`,
-            role: "system",
-            content: `[Plan Mode Error] ${error.message}`,
-            timestamp: Date.now(),
-          };
-          setMessages((prev) => [...prev, errorMessage]);
+          console.log(chalk.red(`[Plan Mode Error] ${error.message}`));
         }
         setIsLoading(false);
         return;
@@ -395,21 +372,6 @@ const InkREPL: React.FC<InkREPLProps> = ({
 
         // Update context
         context.messages = result.messages;
-
-        // Add assistant response to UI
-        const lastMessage = result.messages[result.messages.length - 1];
-        if (lastMessage && lastMessage.role === "assistant") {
-          const assistantMessage: Message = {
-            id: `${Date.now()}-assistant`,
-            role: "assistant",
-            content:
-              typeof lastMessage.content === "string"
-                ? lastMessage.content
-                : "[Complex content]",
-            timestamp: Date.now(),
-          };
-          setMessages((prev) => [...prev, assistantMessage]);
-        }
 
         // Auto-save
         if (context.messages.length > 0) {
@@ -449,13 +411,7 @@ const InkREPL: React.FC<InkREPLProps> = ({
           errorContent = `[Context Error] ${error.message}\nSuggestion: Use /clear to start fresh`;
         }
 
-        const errorMessage: Message = {
-          id: `${Date.now()}-error`,
-          role: "system",
-          content: errorContent,
-          timestamp: Date.now(),
-        };
-        setMessages((prev) => [...prev, errorMessage]);
+        console.log(chalk.red(errorContent));
       } finally {
         setIsLoading(false);
       }
@@ -473,55 +429,7 @@ const InkREPL: React.FC<InkREPLProps> = ({
 
   return (
     <Box flexDirection="column">
-      {/* Session History - Show when resuming session with messages */}
-      {context.messages && context.messages.length > 0 && (
-        <SessionHistory
-          messages={context.messages.slice(-5).map((m) => ({
-            role: m.role,
-            content: m.content,
-          }))}
-          maxDisplay={5}
-          maxLength={100}
-        />
-      )}
-
-      {/* Message List - only grow if there are messages */}
-      {messages.length > 0 || isLoading ? (
-        <Box flexGrow={1} flexDirection="column" overflow="hidden">
-          {messages.map((msg) => (
-            <Box key={msg.id} marginBottom={1}>
-              <Text
-                color={
-                  msg.role === "user"
-                    ? "cyan"
-                    : msg.role === "assistant"
-                      ? "green"
-                      : "yellow"
-                }
-                bold
-              >
-                {msg.role === "user"
-                  ? "You"
-                  : msg.role === "assistant"
-                    ? "Assistant"
-                    : "System"}
-                :{" "}
-              </Text>
-              <Text dimColor={msg.role === "system"}>
-                {msg.content.slice(0, 200)}
-                {msg.content.length > 200 ? "..." : ""}
-              </Text>
-            </Box>
-          ))}
-          {isLoading && (
-            <Box>
-              <Text dimColor>Thinking...</Text>
-            </Box>
-          )}
-        </Box>
-      ) : null}
-
-      {/* Input Area */}
+      {/* Input Area - the only interactive element */}
       <Box flexShrink={0}>
         <InputPrompt
           onSubmit={handleSubmit}
@@ -529,17 +437,6 @@ const InkREPL: React.FC<InkREPLProps> = ({
           prompt=">"
           focus={!isLoading}
         />
-      </Box>
-
-      {/* Status Bar */}
-      <Box flexShrink={0}>
-        <Text dimColor>
-          Session: {context.sessionId} | Mode: {currentConfig.mode} |
-          Provider: {currentConfig.provider}
-          {currentConfig.thinking ? " | Thinking" : ""}
-          {currentConfig.auto ? " | Auto" : ""}
-          {planMode ? " | Plan" : ""}
-        </Text>
       </Box>
     </Box>
   );
