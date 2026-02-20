@@ -521,7 +521,7 @@ const InkREPL: React.FC<InkREPLProps> = ({
           {/* Session Info */}
           <Box>
             <Text dimColor>{"  Session: "}</Text>
-            <Text color="cyan">{context.sessionId.slice(0, 8)}</Text>
+            <Text color="cyan">{context.sessionId}</Text>
             <Text dimColor>{" | Working: "}</Text>
             <Text dimColor>{options.context?.gitRoot || process.cwd()}</Text>
           </Box>
