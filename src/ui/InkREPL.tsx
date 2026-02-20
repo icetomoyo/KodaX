@@ -531,6 +531,20 @@ const InkREPL: React.FC<InkREPLProps> = ({
         </Box>
       )}
 
+      {/* Compact Header - shown after first interaction instead of full banner */}
+      {!showBanner && messages.length > 0 && (
+        <Box>
+          <Text bold color="cyan">KodaX</Text>
+          <Text dimColor>{" v" + KODAX_VERSION + " | "}</Text>
+          <Text color="green">{currentConfig.provider}/{model}</Text>
+          <Text dimColor>{" | "}</Text>
+          <Text color="cyan">{currentConfig.mode}</Text>
+          {currentConfig.thinking && <Text color="yellow">{" +think"}</Text>}
+          {currentConfig.auto && <Text color="magenta">{" +auto"}</Text>}
+          {planMode && <Text color="blue">{" +plan"}</Text>}
+        </Box>
+      )}
+
       {/* Session History - Show when resuming session with messages */}
       {showBanner && context.messages && context.messages.length > 0 && (
         <SessionHistory
