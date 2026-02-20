@@ -523,39 +523,41 @@ const InkREPL: React.FC<InkREPLProps> = ({
         />
       )}
 
-      {/* Message List */}
-      <Box flexGrow={1} flexDirection="column" overflow="hidden">
-        {messages.map((msg) => (
-          <Box key={msg.id} marginBottom={1}>
-            <Text
-              color={
-                msg.role === "user"
-                  ? "cyan"
+      {/* Message List - only grow if there are messages */}
+      {messages.length > 0 || isLoading ? (
+        <Box flexGrow={1} flexDirection="column" overflow="hidden">
+          {messages.map((msg) => (
+            <Box key={msg.id} marginBottom={1}>
+              <Text
+                color={
+                  msg.role === "user"
+                    ? "cyan"
+                    : msg.role === "assistant"
+                      ? "green"
+                      : "yellow"
+                }
+                bold
+              >
+                {msg.role === "user"
+                  ? "You"
                   : msg.role === "assistant"
-                    ? "green"
-                    : "yellow"
-              }
-              bold
-            >
-              {msg.role === "user"
-                ? "You"
-                : msg.role === "assistant"
-                  ? "Assistant"
-                  : "System"}
-              :{" "}
-            </Text>
-            <Text dimColor={msg.role === "system"}>
-              {msg.content.slice(0, 200)}
-              {msg.content.length > 200 ? "..." : ""}
-            </Text>
-          </Box>
-        ))}
-        {isLoading && (
-          <Box>
-            <Text dimColor>Thinking...</Text>
-          </Box>
-        )}
-      </Box>
+                    ? "Assistant"
+                    : "System"}
+                :{" "}
+              </Text>
+              <Text dimColor={msg.role === "system"}>
+                {msg.content.slice(0, 200)}
+                {msg.content.length > 200 ? "..." : ""}
+              </Text>
+            </Box>
+          ))}
+          {isLoading && (
+            <Box>
+              <Text dimColor>Thinking...</Text>
+            </Box>
+          )}
+        </Box>
+      ) : null}
 
       {/* Input Area */}
       <Box flexShrink={0}>
