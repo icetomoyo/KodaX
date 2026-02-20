@@ -32,15 +32,19 @@ npm test
 
 ### 测试文件结构
 
-KodaX 包含 183 个自动化测试，分布在 5 个测试文件中：
+KodaX 包含 416 个自动化测试，分布在 9 个测试文件中：
 
 ```
 tests/
-├── kodax_core.test.ts     # Core 模块测试 (82 tests)
-├── kodax_cli.test.ts      # CLI 层测试 (20 tests)
-├── prompts.test.ts        # 提示词内容验证测试 (33 tests)
-├── interactive.test.ts    # 交互式模式测试
-└── text-buffer.test.ts    # TextBuffer 单元测试 (48 tests)
+├── kodax_core.test.ts       # Core 模块测试 (108 tests)
+├── kodax_cli.test.ts        # CLI 层测试 (20 tests)
+├── prompts.test.ts          # 提示词内容验证测试 (33 tests)
+├── interactive.test.ts      # 交互式模式测试 (130 tests)
+├── text-buffer.test.ts      # TextBuffer 单元测试 (48 tests)
+├── text-input-utils.test.ts # TextInput 工具函数测试 (21 tests)
+├── errors.test.ts           # 错误处理测试
+├── history-navigation.test.ts # 历史导航逻辑测试 (11 tests)
+└── session-history.test.ts  # 会话历史显示测试 (15 tests)
 ```
 
 ### 测试覆盖范围
@@ -70,6 +74,10 @@ tests/
 | Token Estimation Detailed | 2 | 详细 Token 估算 |
 | Incomplete Tool Call Detailed | 3 | 详细不完整调用检测 |
 | Promise Signal Detailed | 3 | 详细信号检测 |
+| Errors | 6 | KodaXTerminalError 错误处理 |
+| Session History | 15 | 会话历史组件和工具函数 |
+| History Navigation | 11 | 多行输入历史导航逻辑 |
+| Text Input Utils | 21 | TextInput 组件工具函数 |
 
 #### CLI 层测试 (`kodax_cli.test.ts`)
 

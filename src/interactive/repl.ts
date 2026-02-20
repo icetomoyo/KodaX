@@ -5,6 +5,9 @@
 import * as readline from 'readline';
 import * as childProcess from 'child_process';
 import * as util from 'util';
+import * as path from 'path';
+import * as fs from 'fs';
+import * as os from 'os';
 import chalk from 'chalk';
 
 const execAsync = util.promisify(childProcess.exec);
@@ -50,6 +53,12 @@ import {
   supportsStatusBar,
   formatTokenCount,
 } from './status-bar.js';
+import {
+  createCompleter,
+  getCompletionSuggestions,
+  type Completion,
+} from './autocomplete.js';
+import { getCurrentTheme, setTheme, type Theme } from './themes.js';
 
 // 扩展的会话存储接口（增加 list 方法）
 interface SessionStorage extends KodaXSessionStorage {
@@ -101,6 +110,10 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   const initialThinking = options.thinking ?? config.thinking ?? false;
   const initialAuto = options.auto ?? config.auto ?? false;
 
+  // 应用主题 (使用默认 dark 主题)
+  // TODO: 从配置文件读取主题设置
+  const theme = getCurrentTheme();
+
   // 当前配置状态
   let currentConfig: CurrentConfig = {
     provider: initialProvider,
@@ -111,6 +124,12 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
 
   // Plan mode 状态
   let planMode = false;
+
+  // Esc+Esc 编辑状态
+  let lastEscTime = 0;
+  let lastUserMessage = '';
+  let pendingEdit = false;  // 标记是否需要在外部编辑器中编辑上一条消息
+  const ESC_DOUBLE_PRESS_MS = 500;
 
   const context = await createInteractiveContext({
     sessionId: options.session?.id,
@@ -123,11 +142,22 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   // 检测并显示项目提示
   await detectAndShowProjectHint();
 
+  // 创建自动补全器
+  const completer = createCompleter(gitRoot ?? process.cwd());
+
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
     terminal: process.stdout.isTTY ?? true,
     historySize: 100,
+    completer: (line: string, callback: (err: null | Error, result: [string[], string]) => void) => {
+      // 异步补全
+      completer(line).then(result => {
+        callback(null, result);
+      }).catch(() => {
+        callback(null, [[], line]);
+      });
+    },
   });
 
   // 初始化状态栏 (如果终端支持)
@@ -146,19 +176,41 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   // let showToolOutput = true;
   // let showTodoList = false;
 
-  // 键盘快捷键映射 (通过 Ctrl 组合键触发)
-  // 注: 完整实现将在 Phase 2 中添加，当前版本先显示提示
+  // 键盘快捷键映射
   const KEYBOARD_SHORTCUTS_HELP = `
 Keyboard Shortcuts:
+  Tab       Auto-complete (@files, /commands)
+  Esc+Esc   Edit last message
+  Ctrl+E    Open external editor
   Ctrl+R    Search command history (built-in)
   Ctrl+C    Cancel current input
   Ctrl+D    Exit REPL`;
 
-  // 打印快捷键帮助 (可在 /help 命令中调用，Phase 2 将集成)
+  // 打印快捷键帮助 (可在 /help 命令中调用)
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const _printKeyboardShortcuts = (): void => {
     console.log(chalk.dim(KEYBOARD_SHORTCUTS_HELP));
   };
+
+  // 监听键盘事件 (用于 Esc+Esc 和 Ctrl+E)
+  if (process.stdin.isTTY) {
+    process.stdin.on('keypress', (char: string | undefined, key: readline.Key | undefined) => {
+      if (!key) return;
+
+      // Esc+Esc 检测
+      if (key.name === 'escape') {
+        const now = Date.now();
+        if (now - lastEscTime < ESC_DOUBLE_PRESS_MS && lastUserMessage) {
+          // 双击 Esc - 标记需要在编辑器中编辑上一条消息
+          pendingEdit = true;
+          console.log(chalk.dim('\n[Opening editor with last message...]'));
+          // 关闭当前 readline 问题以便主循环可以处理编辑
+          rl.pause();
+        }
+        lastEscTime = now;
+      }
+    });
+  }
 
   let isRunning = true;
   // 修复：确保 session.id 被设置以复用同一 session
@@ -293,6 +345,79 @@ Keyboard Shortcuts:
 
   // 主循环
   while (isRunning) {
+    // 检查是否需要编辑上一条消息 (Esc+Esc 触发)
+    if (pendingEdit && lastUserMessage) {
+      pendingEdit = false;
+      rl.resume();  // 恢复 readline
+      // 在外部编辑器中打开上一条消息
+      const edited = await openExternalEditor(lastUserMessage);
+      if (edited && edited.trim() && edited !== lastUserMessage) {
+        // 如果有修改，作为新输入处理
+        console.log(chalk.dim(`\n[Edited message ready to send]`));
+        // 直接处理编辑后的内容，跳过 askInput
+        const trimmed = edited.trim();
+        touchContext(context);
+
+        // 处理命令
+        const parsed = parseCommand(trimmed);
+        if (parsed) {
+          await executeCommand(parsed, context, callbacks, currentConfig);
+          continue;
+        }
+
+        // 处理特殊语法并更新 lastUserMessage
+        const processed = await processSpecialSyntax(trimmed);
+        context.messages.push({ role: 'user', content: processed });
+        lastUserMessage = trimmed;
+        statusBar?.update({ messageCount: context.messages.length });
+
+        // 运行 agent (复制主循环逻辑)
+        try {
+          currentOptions.mode = currentConfig.mode;
+          if (planMode) {
+            await runWithPlanMode(processed, {
+              ...currentOptions,
+              provider: currentConfig.provider,
+              thinking: currentConfig.thinking,
+              auto: currentConfig.auto,
+              mode: currentConfig.mode,
+            });
+          } else {
+            const result = await runKodaX(
+              {
+                ...currentOptions,
+                provider: currentConfig.provider,
+                thinking: currentConfig.thinking,
+                auto: currentConfig.auto,
+                mode: currentConfig.mode,
+                session: { ...currentOptions.session, initialMessages: context.messages },
+              },
+              processed
+            );
+            context.messages = result.messages;
+
+            // 自动保存
+            if (context.messages.length > 0) {
+              const title = extractTitle(context.messages);
+              context.title = title;
+              await storage.save(context.sessionId, {
+                messages: context.messages,
+                title,
+                gitRoot: context.gitRoot ?? '',
+              });
+            }
+          }
+        } catch (err) {
+          const error = err instanceof Error ? err : new Error(String(err));
+          context.messages.pop();
+          console.log(chalk.red(`\n[Error] ${error.message}`));
+        }
+        continue;
+      } else if (edited === lastUserMessage) {
+        console.log(chalk.dim('\n[No changes made, continuing...]'));
+      }
+    }
+
     const prompt = getPrompt(currentConfig.mode ?? 'code', currentConfig, planMode);
     const input = await askInput(rl, prompt);
 
@@ -325,6 +450,9 @@ Keyboard Shortcuts:
 
     // 添加用户消息到上下文
     context.messages.push({ role: 'user', content: processed });
+
+    // 保存最后一条用户消息 (用于 Esc+Esc 编辑)
+    lastUserMessage = trimmed;
 
     // 更新状态栏消息数量
     statusBar?.update({ messageCount: context.messages.length });
@@ -399,34 +527,36 @@ Keyboard Shortcuts:
   }
 }
 
-// 获取提示符 (响应式)
+// 获取提示符 (响应式，使用主题颜色)
 function getPrompt(mode: InteractiveMode, config: CurrentConfig, planMode: boolean): string {
-  const modeColor = mode === 'ask' ? chalk.yellow : chalk.green;
+  const theme = getCurrentTheme();
+  const modeColor = mode === 'ask' ? chalk.hex(theme.colors.warning) : chalk.hex(theme.colors.success);
   const model = getProviderModel(config.provider) ?? config.provider;
   const width = getTerminalWidth();
 
   // 根据终端宽度决定提示符详细程度
   if (width < 60) {
     // 窄终端：最简提示符
-    const modeIndicator = mode === 'ask' ? '?' : '>';
+    const modeIndicator = mode === 'ask' ? '?' : theme.symbols.prompt;
     return modeColor(`${modeIndicator} `);
   } else if (width < 100) {
     // 中等宽度：简短提示符
     const flagChar = planMode ? 'P' : (config.thinking ? 'T' : (config.auto ? 'A' : ''));
-    const flagPart = flagChar ? chalk.dim(`[${flagChar}]`) : '';
+    const flagPart = flagChar ? chalk.hex(theme.colors.dim)(`[${flagChar}]`) : '';
     return modeColor(`kodax:${mode}${flagPart}> `);
   }
 
   // 宽终端：完整提示符
-  const thinkingFlag = config.thinking ? chalk.cyan('[thinking]') : '';
-  const autoFlag = config.auto ? chalk.cyan('[auto]') : '';
-  const planFlag = planMode ? chalk.magenta('[plan]') : '';
+  const thinkingFlag = config.thinking ? chalk.hex(theme.colors.info)('[thinking]') : '';
+  const autoFlag = config.auto ? chalk.hex(theme.colors.success)('[auto]') : '';
+  const planFlag = planMode ? chalk.hex(theme.colors.accent)('[plan]') : '';
   const flags = [thinkingFlag, autoFlag, planFlag].filter(Boolean).join('');
   return modeColor(`kodax:${mode} (${config.provider}:${model})${flags}> `);
 }
 
-// 读取输入 (支持多行)
+// 读取输入 (支持多行和外部编辑器)
 async function askInput(rl: readline.Interface, prompt: string): Promise<string> {
+  const theme = getCurrentTheme();
   const lines: string[] = [];
 
   // 读取第一行
@@ -434,13 +564,19 @@ async function askInput(rl: readline.Interface, prompt: string): Promise<string>
     rl.question(prompt, resolve);
   });
 
+  // 检查是否要打开外部编辑器 (Ctrl+E 会被输入为特殊字符)
+  if (firstLine === '\x05' || firstLine.toLowerCase() === '/e') {
+    const edited = await openExternalEditor(lines.join('\n'));
+    return edited;
+  }
+
   lines.push(firstLine);
 
   // 检测是否需要多行输入
   // 1. 以 \ 结尾 (续行符)
   // 2. 括号/引号未闭合
   while (needsContinuation(lines.join('\n'))) {
-    const continuationPrompt = chalk.dim('... ');
+    const continuationPrompt = chalk.hex(theme.colors.dim)('... ');
     const nextLine = await new Promise<string>((resolve) => {
       rl.question(continuationPrompt, resolve);
     });
@@ -450,6 +586,69 @@ async function askInput(rl: readline.Interface, prompt: string): Promise<string>
   // 处理续行符：移除行尾的 \
   const result = lines.join('\n').replace(/\\\n/g, '\n');
   return result;
+}
+
+// 打开外部编辑器
+// 安全说明: 使用 spawnSync 代替 execSync 避免命令注入
+async function openExternalEditor(initialContent: string): Promise<string> {
+  // 使用 os.tmpdir() 获取系统安全的临时目录
+  const tmpDir = path.join(os.tmpdir(), 'kodax');
+  // 使用随机后缀避免文件名冲突
+  const tmpFile = path.join(tmpDir, `input-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`);
+
+  try {
+    // 确保临时目录存在
+    await fs.promises.mkdir(tmpDir, { recursive: true });
+    await fs.promises.writeFile(tmpFile, initialContent, 'utf-8');
+
+    let editor = process.env.EDITOR ?? process.env.VISUAL ??
+      (process.platform === 'win32' ? 'notepad.exe' : 'nano');
+
+    // 基本的安全检查: 验证编辑器名称不包含路径分隔符或可疑字符
+    // 这可以防止一些明显的注入尝试，但不会阻止所有攻击
+    // spawnSync 本身不通过 shell 执行，所以大部分命令注入已被阻止
+    if (editor.includes('/') || editor.includes('\\') || editor.includes('&&') || editor.includes('|')) {
+      // 如果编辑器路径包含特殊字符，尝试提取基本名称
+      const baseName = path.basename(editor);
+      console.log(chalk.yellow(`\n[Security] Editor path sanitized: ${baseName}`));
+      editor = baseName;
+    }
+
+    console.log(chalk.dim(`\n[Opening editor: ${editor}]`));
+
+    // Windows notepad 特殊提示
+    const isWindowsNotepad = process.platform === 'win32' &&
+      (editor.toLowerCase() === 'notepad' || editor.toLowerCase() === 'notepad.exe');
+
+    if (isWindowsNotepad) {
+      console.log(chalk.dim('Note: Please close Notepad manually after editing to continue.\n'));
+    } else {
+      console.log(chalk.dim('Save and close the editor to continue...\n'));
+    }
+
+    // 使用 spawnSync 代替 execSync - 避免 shell 命令注入
+    // spawnSync 直接执行程序，参数作为数组传递，不经过 shell 解析
+    childProcess.spawnSync(editor, [tmpFile], {
+      stdio: 'inherit',
+      timeout: 300000, // 5 minutes timeout
+      shell: false,    // 明确禁用 shell
+    });
+
+    // 读取编辑后的内容
+    const content = await fs.promises.readFile(tmpFile, 'utf-8');
+    return content.trim();
+  } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
+    console.log(chalk.red(`\n[Editor Error] ${err.message}`));
+    return initialContent;
+  } finally {
+    // 清理临时文件
+    try {
+      await fs.promises.unlink(tmpFile);
+    } catch {
+      // 忽略清理错误
+    }
+  }
 }
 
 // 检测是否需要续行
@@ -603,8 +802,9 @@ function extractTitle(messages: KodaXMessage[]): string {
   return 'Untitled Session';
 }
 
-// 打印启动 Banner
+// 打印启动 Banner (使用主题颜色)
 function printStartupBanner(config: CurrentConfig, mode: string): void {
+  const theme = getCurrentTheme();
   const model = getProviderModel(config.provider) ?? config.provider;
 
   // KODAX 方块字符 logo
@@ -616,17 +816,17 @@ function printStartupBanner(config: CurrentConfig, mode: string): void {
   ██║  ██╗ ╚██████╔╝ ██████╔╝  ██║  ██║  ██╔╝ ██╗
   ╚═╝  ╚═╝  ╚═════╝  ╚═════╝   ╚═╝  ╚═╝  ╚═╝  ╚═╝`;
 
-  console.log(chalk.cyan('\n' + logo));
-  console.log(chalk.white(`\n  v${KODAX_VERSION}  |  AI Coding Agent  |  ${config.provider}:${model}`));
-  console.log(chalk.dim('\n  ────────────────────────────────────────────────────────'));
-  console.log(chalk.dim('  Mode: ') + chalk.cyan(mode) + chalk.dim('  |  Thinking: ') + (config.thinking ? chalk.green('on') : chalk.dim('off')) + chalk.dim('  |  Auto: ') + (config.auto ? chalk.green('on') : chalk.dim('off')));
-  console.log(chalk.dim('  ────────────────────────────────────────────────────────\n'));
+  console.log(chalk.hex(theme.colors.primary)('\n' + logo));
+  console.log(chalk.hex(theme.colors.text)(`\n  v${KODAX_VERSION}  |  AI Coding Agent  |  ${config.provider}:${model}`));
+  console.log(chalk.hex(theme.colors.dim)('\n  ────────────────────────────────────────────────────────'));
+  console.log(chalk.hex(theme.colors.dim)('  Mode: ') + chalk.hex(theme.colors.primary)(mode) + chalk.hex(theme.colors.dim)('  |  Thinking: ') + (config.thinking ? chalk.hex(theme.colors.success)('on') : chalk.hex(theme.colors.dim)('off')) + chalk.hex(theme.colors.dim)('  |  Auto: ') + (config.auto ? chalk.hex(theme.colors.success)('on') : chalk.hex(theme.colors.dim)('off')));
+  console.log(chalk.hex(theme.colors.dim)('  ────────────────────────────────────────────────────────\n'));
 
-  console.log(chalk.dim('  Quick tips:'));
-  console.log(chalk.cyan('    /help      ') + chalk.dim('Show all commands'));
-  console.log(chalk.cyan('    /mode      ') + chalk.dim('Switch code/ask mode'));
-  console.log(chalk.cyan('    /clear     ') + chalk.dim('Clear conversation'));
-  console.log(chalk.cyan('    @file      ') + chalk.dim('Add file to context'));
-  console.log(chalk.cyan('    !cmd       ') + chalk.dim('Run shell command'));
-  console.log(chalk.dim('\n  Keyboard: Ctrl+O (toggle output) | Ctrl+T (todo list) | Ctrl+R (history)\n'));
+  console.log(chalk.hex(theme.colors.dim)('  Quick tips:'));
+  console.log(chalk.hex(theme.colors.primary)('    /help      ') + chalk.hex(theme.colors.dim)('Show all commands'));
+  console.log(chalk.hex(theme.colors.primary)('    /mode      ') + chalk.hex(theme.colors.dim)('Switch code/ask mode'));
+  console.log(chalk.hex(theme.colors.primary)('    /clear     ') + chalk.hex(theme.colors.dim)('Clear conversation'));
+  console.log(chalk.hex(theme.colors.primary)('    @file      ') + chalk.hex(theme.colors.dim)('Add file to context'));
+  console.log(chalk.hex(theme.colors.primary)('    !cmd       ') + chalk.hex(theme.colors.dim)('Run shell command'));
+  console.log(chalk.hex(theme.colors.dim)('\n  Keyboard: Tab (complete) | Esc+Esc (edit last) | Ctrl+E (editor) | Ctrl+R (history)\n'));
 }
