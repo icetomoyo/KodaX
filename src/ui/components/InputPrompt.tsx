@@ -74,9 +74,14 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         return;
       }
 
-      // 处理上下键历史导航（仅在第一行且光标在行首时）
+      // 处理上下键历史导航
+      // 连贯历史导航：
+      // - 上箭头在第一行任意位置 → 加载上一条历史
+      // - 下箭头在最后一行末尾 → 加载下一条历史
+      // - 否则 → 移动光标
       if (key.upArrow) {
-        if (isFirstLine && cursor.row === 0) {
+        if (cursor.row === 0) {
+          // 第一行 → 加载上一条历史
           const historyText = navigateUp();
           if (historyText !== null) {
             setText(historyText);
@@ -88,7 +93,13 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       }
 
       if (key.downArrow) {
-        if (isFirstLine && cursor.row === 0) {
+        const lineCount = lines.length;
+        const currentLineLength = lines[cursor.row]?.length ?? 0;
+        const isLastLine = cursor.row === lineCount - 1;
+        const isAtEnd = cursor.col >= currentLineLength;
+
+        if (isLastLine && isAtEnd) {
+          // 最后一行末尾 → 加载下一条历史
           const historyText = navigateDown();
           if (historyText !== null) {
             setText(historyText);

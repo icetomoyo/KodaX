@@ -8,6 +8,7 @@
 import React, { useState, useCallback, useRef } from "react";
 import { render, Box, Text, useApp, useStdout } from "ink";
 import { InputPrompt } from "./components/InputPrompt.js";
+import { SessionHistory } from "./components/SessionHistory.js";
 import type { Message } from "./types.js";
 import {
   KodaXOptions,
@@ -488,34 +489,34 @@ const InkREPL: React.FC<InkREPLProps> = ({
 
   return (
     <Box flexDirection="column" height={stdout.rows}>
-      {/* Startup Banner */}
+      {/* Compact Startup Banner */}
       {showBanner && (
-        <Box flexDirection="column" marginBottom={1}>
-          <Text color="cyan">
-            {`
-  ██╗  ██╗  ██████╗  ██████╗    █████╗   ██╗  ██╗
-  ██║ ██╔╝ ██╔═══██╗ ██╔══██╗  ██╔══██╗  ╚██╗██╔╝
-  █████╔╝  ██║   ██║ ██║  ██║  ███████║   ╚███╔╝
-  ██╔═██╗  ██║   ██║ ██║  ██║  ██╔══██║   ██╔██╗
-  ██║  ██╗ ╚██████╔╝ ██████╔╝  ██║  ██║  ██╔╝ ██╗
-  ╚═╝  ╚═╝  ╚═════╝  ╚═════╝   ╚═╝  ╚═╝  ╚═╝  ╚═╝`}
-          </Text>
+        <Box flexDirection="column">
           <Text>
-            {`  v${KODAX_VERSION}  |  AI Coding Agent  |  ${currentConfig.provider}:${model}`}
+            <Text color="cyan" bold>╭─╮</Text>
+            <Text bold> KodaX </Text>
+            <Text dimColor>v{KODAX_VERSION}</Text>
+            <Text dimColor> | </Text>
+            <Text color="green">{currentConfig.provider}/{model}</Text>
+            <Text dimColor> | </Text>
+            <Text dimColor>{currentConfig.mode}</Text>
+            {currentConfig.thinking && <Text color="yellow"> +think</Text>}
+            {currentConfig.auto && <Text color="magenta"> +auto</Text>}
           </Text>
-          <Text dimColor>
-            {`  Mode: ${currentConfig.mode}  |  Thinking: ${currentConfig.thinking ? "on" : "off"}  |  Auto: ${currentConfig.auto ? "on" : "off"}`}
-          </Text>
-          <Text dimColor>
-            {`  /help for commands  |  @file for context  |  !cmd for shell`}
-          </Text>
-          <Text dimColor>
-            {`  ────────────────────────────────────────────────────────`}
-          </Text>
-          <Text dimColor>
-            {`  Working directory: ${options.context?.gitRoot || process.cwd()}`}
-          </Text>
+          <Text dimColor>╰─╯ {options.context?.gitRoot || process.cwd()}</Text>
         </Box>
+      )}
+
+      {/* Session History - Show when resuming session with messages */}
+      {showBanner && context.messages && context.messages.length > 0 && (
+        <SessionHistory
+          messages={context.messages.slice(-5).map((m) => ({
+            role: m.role,
+            content: m.content,
+          }))}
+          maxDisplay={5}
+          maxLength={100}
+        />
       )}
 
       {/* Message List */}
