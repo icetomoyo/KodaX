@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useCallback, useRef } from "react";
-import { render, Box, Text, useApp, useStdout } from "ink";
+import { render, Box, Text, useApp } from "ink";
 import { InputPrompt } from "./components/InputPrompt.js";
 import { SessionHistory } from "./components/SessionHistory.js";
 import type { Message } from "./types.js";
@@ -29,7 +29,8 @@ import {
   CommandCallbacks,
   CurrentConfig,
 } from "../interactive/commands.js";
-import { getProviderModel, KODAX_VERSION } from "../cli/utils.js";
+import { getProviderModel } from "../cli/utils.js";
+import { KODAX_VERSION } from "../cli/utils.js";
 import { runWithPlanMode } from "../cli/plan-mode.js";
 import chalk from "chalk";
 import * as childProcess from "child_process";
@@ -117,7 +118,6 @@ const InkREPL: React.FC<InkREPLProps> = ({
   onExit,
 }) => {
   const { exit } = useApp();
-  const { stdout } = useStdout();
 
   // State
   const [messages, setMessages] = useState<Message[]>([]);
@@ -125,9 +125,6 @@ const InkREPL: React.FC<InkREPLProps> = ({
   const [currentConfig, setCurrentConfig] = useState<CurrentConfig>(config);
   const [planMode, setPlanMode] = useState(false);
   const [isRunning, setIsRunning] = useState(true);
-
-  // Always show banner - similar to Claude Code's linear output mode
-  const showBanner = true;
 
   // Refs for callbacks
   const currentOptionsRef = useRef<InkREPLOptions>({
@@ -474,55 +471,8 @@ const InkREPL: React.FC<InkREPLProps> = ({
     ]
   );
 
-  // Get model display name
-  const model =
-    getProviderModel(currentConfig.provider) ?? currentConfig.provider;
-
   return (
     <Box flexDirection="column">
-      {/* Startup Banner with ASCII Art Logo */}
-      {showBanner && (
-        <Box flexDirection="column">
-          {/* ASCII Art Logo */}
-          <Text color="cyan">
-{`  ██╗  ██╗  ██████╗  ██████╗    █████╗   ██╗  ██╗
-  ██║ ██╔╝ ██╔═══██╗ ██╔══██╗  ██╔══██╗  ╚██╗██╔╝
-  █████╔╝  ██║   ██║ ██║  ██║  ███████║   ╚███╔╝
-  ██╔═██╗  ██║   ██║ ██║  ██║  ██╔══██║   ██╔██╗
-  ██║  ██╗ ╚██████╔╝ ██████╔╝  ██║  ██║  ██╔╝ ██╗
-  ╚═╝  ╚═╝  ╚═════╝  ╚═════╝   ╚═╝  ╚═╝  ╚═╝  ╚═╝`}
-          </Text>
-
-          {/* Version and Provider Info */}
-          <Box>
-            <Text dimColor>{"  "}</Text>
-            <Text bold color="white">v{KODAX_VERSION}</Text>
-            <Text dimColor>{" | "}</Text>
-            <Text color="green">{currentConfig.provider}/{model}</Text>
-            <Text dimColor>{" | "}</Text>
-            <Text color="cyan">{currentConfig.mode}</Text>
-            {currentConfig.thinking && <Text color="yellow">{" +think"}</Text>}
-            {currentConfig.auto && <Text color="magenta">{" +auto"}</Text>}
-            {planMode && <Text color="blue">{" +plan"}</Text>}
-          </Box>
-
-          {/* Divider */}
-          <Text dimColor>{"  "}{`${"-".repeat(Math.min(60, (stdout?.columns ?? 80) - 4))}`}</Text>
-
-          {/* Session Info */}
-          <Box>
-            <Text dimColor>{"  Session: "}</Text>
-            <Text color="cyan">{context.sessionId}</Text>
-            <Text dimColor>{" | Working: "}</Text>
-            <Text dimColor>{options.context?.gitRoot || process.cwd()}</Text>
-          </Box>
-
-          {/* Divider */}
-          <Text dimColor>{"  "}{`${"-".repeat(Math.min(60, (stdout?.columns ?? 80) - 4))}`}</Text>
-        </Box>
-      )}
-
-      {/* Compact Header - shown after first interaction instead of full banner */}
       {/* Session History - Show when resuming session with messages */}
       {context.messages && context.messages.length > 0 && (
         <SessionHistory
@@ -603,6 +553,46 @@ function isRawModeSupported(): boolean {
 }
 
 /**
+ * Print startup banner (called BEFORE starting Ink to avoid re-rendering)
+ */
+function printStartupBanner(config: CurrentConfig, sessionId: string, workingDir: string): void {
+  const model = getProviderModel(config.provider) ?? config.provider;
+  const terminalWidth = process.stdout.columns ?? 80;
+  const dividerWidth = Math.min(60, terminalWidth - 4);
+
+  const logo = `  ██╗  ██╗  ██████╗  ██████╗    █████╗   ██╗  ██╗
+  ██║ ██╔╝ ██╔═══██╗ ██╔══██╗  ██╔══██╗  ╚██╗██╔╝
+  █████╔╝  ██║   ██║ ██║  ██║  ███████║   ╚███╔╝
+  ██╔═██╗  ██║   ██║ ██║  ██║  ██╔══██║   ██╔██╗
+  ██║  ██╗ ╚██████╔╝ ██████╔╝  ██║  ██║  ██╔╝ ██╗
+  ╚═╝  ╚═╝  ╚═════╝  ╚═════╝   ╚═╝  ╚═╝  ╚═╝  ╚═╝`;
+
+  console.log(chalk.cyan(logo));
+  console.log();
+
+  // Version and Provider Info
+  let infoLine = chalk.white.bold(`  v${KODAX_VERSION}`) + chalk.dim(" | ");
+  infoLine += chalk.green(`${config.provider}/${model}`) + chalk.dim(" | ");
+  infoLine += chalk.cyan(config.mode);
+  if (config.thinking) infoLine += chalk.yellow(" +think");
+  if (config.auto) infoLine += chalk.magenta(" +auto");
+  console.log(infoLine);
+
+  // Divider
+  console.log(chalk.dim(`  ${"-".repeat(dividerWidth)}`));
+
+  // Session Info
+  console.log(
+    chalk.dim("  Session: ") + chalk.cyan(sessionId) +
+    chalk.dim(" | Working: ") + chalk.dim(workingDir)
+  );
+
+  // Divider
+  console.log(chalk.dim(`  ${"-".repeat(dividerWidth)}`));
+  console.log();
+}
+
+/**
  * Run Ink-based interactive mode
  */
 export async function runInkInteractiveMode(options: InkREPLOptions): Promise<void> {
@@ -640,8 +630,12 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
     gitRoot: undefined,
   });
 
-  // Note: Banner is now rendered inside InkREPL component to avoid being cleared by Ink's render()
-  // The project hint is also shown inside the component
+  // Print banner BEFORE starting Ink (to avoid re-rendering on every state change)
+  printStartupBanner(
+    currentConfig,
+    context.sessionId,
+    options.context?.gitRoot || process.cwd()
+  );
 
   try {
     // Render Ink app
