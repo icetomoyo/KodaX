@@ -46,6 +46,7 @@ export {
   KodaXToolError,
   KodaXRateLimitError,
   KodaXSessionError,
+  KodaXTerminalError,
 } from './errors.js';
 
 // 常量导出

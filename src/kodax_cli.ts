@@ -11,7 +11,7 @@ import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
 import readline from 'readline';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 // 从 package.json 读取版本号
 const packageJsonPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '../package.json');
@@ -33,10 +33,10 @@ import {
   checkPromiseSignal,
   getProvider,
   KODAX_TOOLS,
+  KodaXTerminalError,
 } from './core/index.js';
 import { getGitRoot, loadConfig, getFeatureProgress, checkAllFeaturesComplete, rateLimitedCall, KODAX_SESSIONS_DIR, buildInitPrompt } from './cli/utils.js';
 
-import { runInteractiveMode } from './interactive/index.js';
 import { runInkInteractiveMode } from './ui/index.js';
 
 import os from 'os';
@@ -175,7 +175,6 @@ interface CliOptions {
   resume?: string;
   noSession: boolean;
   print?: boolean;
-  ink: boolean;  // Use Ink-based UI
 }
 
 // ============== Spinner 动画 ==============
@@ -730,7 +729,6 @@ async function main() {
     .option('--auto-continue', 'Auto-continue long-running task until all features pass')
     .option('--max-sessions <n>', 'Max sessions for --auto-continue', '50')
     .option('--max-hours <n>', 'Max hours for --auto-continue', '2')
-    .option('--ink', 'Use Ink-based interactive UI (experimental)')
     .allowUnknownOption(false)
     .parse();
 
@@ -759,7 +757,6 @@ async function main() {
     resume: opts.resume,
     noSession: opts.noSession ?? false,
     print: opts.print ? true : false,
-    ink: opts.ink ?? false,
   };
 
   // 会话列表
@@ -1074,18 +1071,24 @@ New: {"features": [
   if (!userPrompt && !options.init && !options.print) {
     const kodaXOptions = createKodaXOptions(options, false);
     // 传递 FileSessionStorage 以支持会话持久化
-    if (options.ink) {
-      // 使用 Ink-based UI (实验性)
+    try {
       await runInkInteractiveMode({
         ...kodaXOptions,
         storage: new FileSessionStorage(),
       });
-    } else {
-      // 使用经典 readline UI
-      await runInteractiveMode({
-        ...kodaXOptions,
-        storage: new FileSessionStorage(),
-      });
+    } catch (error) {
+      if (error instanceof KodaXTerminalError) {
+        console.error(chalk.red(`\n[Error] ${error.message}`));
+        console.error(chalk.dim("\nYour terminal environment does not support interactive mode."));
+        console.error(chalk.dim("\nPlease use CLI mode instead:"));
+        for (const suggestion of error.suggestions) {
+          console.error(chalk.cyan(`  ${suggestion}`));
+        }
+        console.error();
+        process.exitCode = 1;
+      } else {
+        throw error;
+      }
     }
     return;
   }
@@ -1101,4 +1104,35 @@ New: {"features": [
   await runKodaX(kodaXOptions, userPrompt);
 }
 
-main().catch(e => { console.error(chalk.red(`[Error] ${e.message}`)); process.exit(1); });
+/**
+ * Entry Point Detection
+ *
+ * Determines if this module is being run as the main entry point.
+ * This is necessary because:
+ * 1. When run directly (e.g., `node dist/kodax_cli.js`), we should execute main()
+ * 2. When imported for testing, we should NOT execute main()
+ * 3. When run via npm link, the paths may differ due to symlinks
+ *
+ * Detection logic:
+ * - Direct execution: import.meta.url === pathToFileURL(process.argv[1]).href
+ * - npm link: import.meta.url ends with '/dist/kodax_cli.js' while process.argv[1]
+ *   points to the symlinked global bin
+ */
+const scriptPath = process.argv[1];
+const metaUrl = import.meta.url;
+const scriptUrl = scriptPath ? pathToFileURL(scriptPath).href : '';
+
+// Check if this is the main module
+// Primary: exact URL match (direct execution)
+// Fallback: check if module path ends with the expected dist file (npm link scenario)
+const isMainModule = scriptPath && (
+  metaUrl === scriptUrl ||
+  metaUrl.endsWith('/dist/kodax_cli.js')
+);
+
+if (isMainModule) {
+  main().catch(e => { console.error(chalk.red(`[Error] ${e.message}`)); process.exit(1); });
+}
+
+// Export for testing
+export { main };

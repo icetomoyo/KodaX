@@ -47,3 +47,15 @@ export class KodaXSessionError extends KodaXError {
     this.name = 'KodaXSessionError';
   }
 }
+
+/** 终端不支持错误 */
+export class KodaXTerminalError extends KodaXError {
+  /** 建议的替代命令 */
+  public readonly suggestions: string[];
+
+  constructor(message: string, suggestions: string[] = []) {
+    super(message, 'TERMINAL_ERROR');
+    this.name = 'KodaXTerminalError';
+    this.suggestions = suggestions;
+  }
+}

@@ -9,6 +9,7 @@ import path from 'path';
 import os from 'os';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { fileURLToPath } from 'url';
 import { getProvider, KODAX_PROVIDERS } from '../core/index.js';
 
 const execAsync = promisify(exec);
@@ -18,9 +19,11 @@ export const KODAX_DIR = path.join(os.homedir(), '.kodax');
 export const KODAX_SESSIONS_DIR = path.join(KODAX_DIR, 'sessions');
 export const KODAX_CONFIG_FILE = path.join(KODAX_DIR, 'config.json');
 
-// 动态读取版本号
+// 动态读取版本号（从安装目录的 package.json 读取）
 export function getVersion(): string {
-  const packageJsonPath = path.join(process.cwd(), 'package.json');
+  // 使用 import.meta.url 获取相对于此文件的路径
+  // 这样无论用户在哪个目录运行，都能正确读取版本号
+  const packageJsonPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../package.json');
   if (fsSync.existsSync(packageJsonPath)) {
     try {
       return JSON.parse(fsSync.readFileSync(packageJsonPath, 'utf-8')).version ?? '0.0.0';

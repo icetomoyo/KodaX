@@ -4,8 +4,8 @@
  * 显示文本内容并渲染光标
  */
 
-import React, { useMemo } from "react";
-import { Text, Box } from "ink";
+import React, { useMemo, useState, useEffect } from "react";
+import { Text, Box, useStdout } from "ink";
 import stringWidth from "string-width";
 import { getTheme } from "../themes/index.js";
 
@@ -28,6 +28,48 @@ function getVisualCursorPos(line: string, col: number): number {
   return stringWidth(textBeforeCursor);
 }
 
+/**
+ * 分隔线最大宽度（防止超宽终端性能问题）
+ */
+const MAX_DIVIDER_WIDTH = 200;
+
+/**
+ * 生成分隔线
+ */
+function generateDivider(width: number): string {
+  const safeWidth = Math.min(MAX_DIVIDER_WIDTH, Math.max(1, width));
+  return "─".repeat(safeWidth);
+}
+
+/**
+ * 获取终端宽度的 Hook
+ */
+function useTerminalWidth(): number {
+  const { stdout } = useStdout();
+  const [width, setWidth] = useState(() => {
+    // 初始化时使用 stdout 或 process.stdout
+    return stdout?.columns ?? process.stdout?.columns ?? 80;
+  });
+
+  useEffect(() => {
+    const handleResize = () => {
+      // 使用 process.stdout.columns 而非闭包中的 stdout
+      // 因为闭包中的值可能过时
+      const newWidth = process.stdout?.columns ?? stdout?.columns ?? 80;
+      setWidth(newWidth);
+    };
+
+    // 监听终端 resize 事件
+    process.stdout?.on("resize", handleResize);
+
+    return () => {
+      process.stdout?.off("resize", handleResize);
+    };
+  }, [stdout]);
+
+  return width;
+}
+
 export const TextInput: React.FC<TextInputProps> = ({
   lines,
   cursorRow,
@@ -36,9 +78,13 @@ export const TextInput: React.FC<TextInputProps> = ({
   placeholder = "Type your message...",
   focus = true,
   theme: themeName = "dark",
-  width,
+  width: propWidth,
 }) => {
   const theme = useMemo(() => getTheme(themeName), [themeName]);
+  const terminalWidth = propWidth ?? useTerminalWidth();
+
+  // 计算提示符宽度（用于对齐）
+  const promptWidth = stringWidth(prompt) + 1; // +1 for space
 
   // 处理空输入
   if (lines.length === 0 || (lines.length === 1 && lines[0] === "")) {
@@ -51,12 +97,42 @@ export const TextInput: React.FC<TextInputProps> = ({
     );
   }
 
-  // 渲染多行
+  // 单行输入
+  if (lines.length === 1) {
+    const line = lines[0] ?? "";
+    const beforeCursor = [...line].slice(0, cursorCol).join("");
+    const cursorChar = [...line][cursorCol] ?? " ";
+    const afterCursor = [...line].slice(cursorCol + 1).join("");
+
+    return (
+      <Box>
+        <Text color={theme.colors.primary}>{prompt} </Text>
+        <Text color={theme.colors.text}>{beforeCursor}</Text>
+        {focus && (
+          <>
+            <Text backgroundColor={theme.colors.primary} color="#000000">
+              {cursorChar}
+            </Text>
+            <Text color={theme.colors.text}>{afterCursor}</Text>
+          </>
+        )}
+        {!focus && <Text color={theme.colors.text}>{line}</Text>}
+      </Box>
+    );
+  }
+
+  // 多行输入 - 使用分隔线样式
+  const divider = generateDivider(terminalWidth);
+
   return (
-    <Box flexDirection="column" width={width}>
+    <Box flexDirection="column" width={propWidth}>
+      {/* 顶部分隔线 */}
+      <Text dimColor>{divider}</Text>
+
+      {/* 内容行 */}
       {lines.map((line, rowIndex) => {
         const isCurrentLine = rowIndex === cursorRow;
-        const linePrompt = rowIndex === 0 ? prompt : "...";
+        const linePrompt = rowIndex === 0 ? prompt : " ".repeat(promptWidth - 1);
 
         // 当前行需要显示光标
         if (isCurrentLine && focus) {
@@ -84,6 +160,9 @@ export const TextInput: React.FC<TextInputProps> = ({
           </Box>
         );
       })}
+
+      {/* 底部分隔线 */}
+      <Text dimColor>{divider}</Text>
     </Box>
   );
 };

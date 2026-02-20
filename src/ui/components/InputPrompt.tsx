@@ -5,7 +5,7 @@
  */
 
 import React, { useEffect, useState, useCallback } from "react";
-import { Box, Text, useInput, type Key } from "ink";
+import { Box, Text, useInput } from "ink";
 import { TextInput } from "./TextInput.js";
 import { useTextBuffer } from "../hooks/useTextBuffer.js";
 import { useInputHistory } from "../hooks/useInputHistory.js";
@@ -14,7 +14,7 @@ import type { InputPromptProps } from "../types.js";
 
 export const InputPrompt: React.FC<InputPromptProps> = ({
   onSubmit,
-  placeholder = "Type your message... (Enter: submit, \\+Enter: newline)",
+  placeholder = "Type... (\\+Enter=newline, Enter=send)",
   prompt = ">",
   focus = true,
   initialValue = "",
@@ -111,25 +111,47 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         return;
       }
 
-      // Delete 键（删除光标后的字符）
-      if (key.delete) {
-        deleteChar();
-        return;
-      }
-
-      // 退格
-      if (key.backspace || (key.ctrl && char === "h")) {
+      // 退格键 - 检查多种情况
+      // 1. Ink 检测到的 key.backspace
+      // 2. \x7f (DEL, ASCII 127) - 某些终端的 Backspace 发送此字符
+      // 3. \x08 (BS, ASCII 8) - 另一种 Backspace 字符
+      // 4. Ctrl+H - 某些终端将其映射为 Backspace
+      // 注意：必须在 key.delete 检查之前，因为某些终端将 Backspace 识别为 Delete
+      if (key.backspace || char === "\x7f" || char === "\x08" || (key.ctrl && char === "h")) {
         backspace();
         return;
       }
 
-      // 回车
-      if (key.return) {
-        // Shift+Enter 始终换行
-        if (key.shift) {
-          newline();
-          return;
+      // Delete 键（删除光标后的字符）
+      // 注意：某些终端的 Backspace 被识别为 key.delete=true 且 char=""
+      // 真正的 Delete 键通常会有特定的字符序列
+      // 所以当 key.delete=true 且 char 为空时，应该当作 Backspace 处理
+      if (key.delete) {
+        if (!char || char === "") {
+          // Backspace 被错误识别为 Delete，删除光标前的字符
+          backspace();
+        } else {
+          // 真正的 Delete 键，删除光标后的字符
+          deleteChar();
         }
+        return;
+      }
+
+      // 换行检测 - 多种方式
+      // 1. Shift+Enter (key.shift + key.return)
+      // 2. Ctrl+Enter (key.ctrl + key.return)
+      // 3. 单独的 \n 字符 (某些终端的 Shift+Enter 不被 Ink 正确识别)
+      const isNewline = (key.return && key.shift) ||
+                        (key.return && key.ctrl) ||
+                        (char === "\n" && !key.return);
+
+      if (isNewline) {
+        newline();
+        return;
+      }
+
+      // 回车提交
+      if (key.return) {
 
         // 检查是否需要换行 (行尾是 \)
         const currentLine = lines[cursor.row] ?? "";
@@ -176,15 +198,6 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         focus={focus}
         theme="dark"
       />
-
-      {/* 多行提示 */}
-      {lines.length > 1 && (
-        <Box marginLeft={2}>
-          <Text dimColor>
-            Lines: {lines.length} | Ctrl+C: clear | Enter: submit
-          </Text>
-        </Box>
-      )}
     </Box>
   );
 };

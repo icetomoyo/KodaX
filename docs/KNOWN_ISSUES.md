@@ -23,6 +23,7 @@
 | 18 | Unicode 检测不完整 | 低 | `src/interactive/themes.ts` | 待处理 | 未检测 Windows CMD/PowerShell 的 `chcp 65001` 设置 |
 | 19 | InkREPL 组件过大 | 中 | `src/ui/InkREPL.tsx` | 待处理 | ~637 行代码，可考虑拆分为更小模块 |
 | 20 | TextBuffer 未使用方法 | 低 | `src/ui/utils/text-buffer.ts` | 待处理 | `getAbsoluteOffset()` 方法已实现但未被调用 |
+| 22 | TODO 注释未清理 | 低 | `src/interactive/repl.ts` | 待处理 | 行 112-113 有 TODO 注释关于主题配置，需实现或转换为 issue |
 
 ## 已解决问题
 
@@ -32,6 +33,11 @@
 | 10 | 全局可变状态 | 高 | `src/interactive/project-commands.ts` | 2026-02-19 | 封装到 `ProjectRuntimeState` 类 |
 | 11 | 函数过长 | 高 | `src/interactive/project-commands.ts` | 2026-02-19 | 提取辅助函数，每个函数职责单一 |
 | 21 | Delete 键无效 | 高 | `src/ui/components/InputPrompt.tsx` | 2026-02-20 | 添加 `delete: deleteChar` 别名并调用处理函数 |
+| 23 | Backspace 键无效 | 高 | `src/ui/components/InputPrompt.tsx` | 2026-02-20 | 调整 `\x7f` 检测优先级高于 `key.delete` |
+| 24 | Shift+Enter 换行无效 | 高 | `src/ui/components/InputPrompt.tsx` | 2026-02-20 | 添加 `char === "\n"` 检测以支持更多终端 |
+| 25 | Resize handler 空引用 | 高 | `src/ui/components/TextInput.tsx` | 2026-02-20 | 使用 `process.stdout` 替代闭包中的 `stdout` |
+| 26 | 异步上下文直接退出 | 高 | `src/ui/InkREPL.tsx` | 2026-02-20 | 使用 `KodaXTerminalError` 替代 `process.exit()` |
+| 27 | 超宽终端分隔符 | 中 | `src/ui/components/TextInput.tsx` | 2026-02-20 | 添加 `MAX_DIVIDER_WIDTH=200` 限制 |
 
 ---
 
@@ -599,8 +605,111 @@ if (key.delete) {
 
 ---
 
+### Issue #23: Backspace 键无效（已解决）
+
+**原问题描述**:
+在某些终端（如 Windows Terminal）中，按 Backspace 键无法删除字符。调试发现：
+- 终端发送 `char = "\x7f"` (DEL, ASCII 127)
+- Ink 检测到 `key.backspace = false`, `key.delete = true`
+
+代码中 `key.delete` 检查在 `char === "\x7f"` 之前，导致调用 `deleteChar()` (删除光标后字符) 而非 `backspace()` (删除光标前字符)。
+
+**解决方案**:
+调整检测顺序，使 `\x7f` 字符检测优先于 `key.delete` 检测：
+```typescript
+// 退格键 - 检查多种情况（必须在 key.delete 检查之前）
+if (key.backspace || char === "\x7f" || char === "\x08" || (key.ctrl && char === "h")) {
+  backspace();
+  return;
+}
+
+// Delete 键（真正的 Delete 键，不是 Backspace）
+if (key.delete) {
+  deleteChar();
+  return;
+}
+```
+
+---
+
+### Issue #24: Shift+Enter 换行无效（已解决）
+
+**原问题描述**:
+在某些终端中，按 Shift+Enter 无法插入换行。调试发现：
+- 终端发送 `char = "\n"` (LF)
+- Ink 检测到 `key.return = false`, `key.shift = false`
+
+Ink 的 `useInput` hook 在某些终端中无法正确检测 Shift+Enter 组合键。
+
+**解决方案**:
+添加对 `\n` 字符的检测作为换行的后备方案：
+```typescript
+const isNewline = (key.return && key.shift) ||
+                  (key.return && key.ctrl) ||
+                  (char === "\n" && !key.return);  // 新增：支持更多终端
+
+if (isNewline) {
+  newline();
+  return;
+}
+```
+
+---
+
+### Issue #22: TODO 注释未清理
+
+**位置**: `src/interactive/repl.ts` - 行 112-113
+
+**问题描述**:
+```typescript
+// 应用主题 (使用默认 dark 主题)
+// TODO: 从配置文件读取主题设置
+const theme = getCurrentTheme();
+```
+
+代码中留有 TODO 注释，表明主题配置功能尚未完全实现。
+
+**影响**:
+- 代码维护混淆
+- 用户无法通过配置文件自定义主题
+
+**建议修复**:
+- 选项 A: 实现从配置文件读取主题设置的功能
+- 选项 B: 将 TODO 转换为 GitHub issue 追踪
+- 选项 C: 如果短期内不计划实现，移除 TODO 注释
+
+---
+
 ## 更新日志
 
+- **2026-02-20**: v0.3.2 高优先级问题修复
+  - 解决 Issue #25: Resize handler 空引用 - 使用 `process.stdout` 替代闭包中的 `stdout`
+  - 解决 Issue #26: 异步上下文直接退出 - 新增 `KodaXTerminalError` 错误类，在顶层处理
+  - 解决 Issue #27: 超宽终端分隔符 - 添加 `MAX_DIVIDER_WIDTH=200` 限制
+  - 新增 21 个测试用例（errors.test.ts, text-input-utils.test.ts）
+- **2026-02-20**: UI 改进与代码审查
+  - 新增启动 Banner 显示当前工作目录
+  - 多行输入使用分隔线样式替代 `...` 提示
+  - 分隔线响应终端宽度变化
+  - 修复版本号读取错误（使用 `import.meta.url` 代替 `process.cwd()`）
+- **2026-02-20**: 按键问题修复
+  - 解决 Issue #23: Backspace 键无效 - 调整 `\x7f` 检测优先级
+  - 解决 Issue #24: Shift+Enter 换行无效 - 添加 `\n` 字符检测
+  - 移除调试代码和未使用的导入
+- **2026-02-20**: 代码审查与安全修复
+  - **安全修复** (高严重性):
+    - 修复 `openExternalEditor` 中的命令注入漏洞：使用 `spawnSync` 代替 `execSync`
+    - 修复临时文件路径遍历风险：使用 `os.tmpdir()` 代替 `process.env.TEMP`
+    - 添加编辑器名称基本安全验证
+    - 添加随机后缀避免临时文件名冲突
+  - **功能修复** (中严重性):
+    - 完善 Esc+Esc 编辑功能：现在会打开外部编辑器编辑上一条消息
+    - 改进入口点检测逻辑：添加详细注释，使用 `endsWith` 代替 `includes`
+  - **已知问题更新**:
+    - 新增 Issue #22 (TODO 注释未清理)
+  - **架构简化**:
+    - 移除 `--ink` 参数，统一使用 Ink UI
+    - Ink UI 在不支持 raw mode 时显示清晰错误提示
 - **2026-02-20**: Ink UI 代码审查与修复
   - 解决 Issue #21: Delete 键无效问题
   - 新增 `tests/text-buffer.test.ts` 单元测试（48 个测试用例）

@@ -15,6 +15,7 @@ import {
   KodaXResult,
   runKodaX,
   KODAX_DEFAULT_PROVIDER,
+  KodaXTerminalError,
 } from "../core/index.js";
 import {
   InteractiveContext,
@@ -123,6 +124,7 @@ const InkREPL: React.FC<InkREPLProps> = ({
   const [currentConfig, setCurrentConfig] = useState<CurrentConfig>(config);
   const [planMode, setPlanMode] = useState(false);
   const [isRunning, setIsRunning] = useState(true);
+  const [showBanner, setShowBanner] = useState(true);  // Show banner on startup
   const [tokenUsage, setTokenUsage] = useState<{
     input: number;
     output: number;
@@ -227,6 +229,11 @@ const InkREPL: React.FC<InkREPLProps> = ({
   const handleSubmit = useCallback(
     async (input: string) => {
       if (!input.trim() || !isRunning) return;
+
+      // Hide banner on first input
+      if (showBanner) {
+        setShowBanner(false);
+      }
 
       // Add user message to UI
       const userMessage: Message = {
@@ -465,6 +472,7 @@ const InkREPL: React.FC<InkREPLProps> = ({
     },
     [
       isRunning,
+      showBanner,
       context,
       currentConfig,
       planMode,
@@ -480,6 +488,36 @@ const InkREPL: React.FC<InkREPLProps> = ({
 
   return (
     <Box flexDirection="column" height={stdout.rows}>
+      {/* Startup Banner */}
+      {showBanner && (
+        <Box flexDirection="column" marginBottom={1}>
+          <Text color="cyan">
+            {`
+  ██╗  ██╗  ██████╗  ██████╗    █████╗   ██╗  ██╗
+  ██║ ██╔╝ ██╔═══██╗ ██╔══██╗  ██╔══██╗  ╚██╗██╔╝
+  █████╔╝  ██║   ██║ ██║  ██║  ███████║   ╚███╔╝
+  ██╔═██╗  ██║   ██║ ██║  ██║  ██╔══██║   ██╔██╗
+  ██║  ██╗ ╚██████╔╝ ██████╔╝  ██║  ██║  ██╔╝ ██╗
+  ╚═╝  ╚═╝  ╚═════╝  ╚═════╝   ╚═╝  ╚═╝  ╚═╝  ╚═╝`}
+          </Text>
+          <Text>
+            {`  v${KODAX_VERSION}  |  AI Coding Agent  |  ${currentConfig.provider}:${model}`}
+          </Text>
+          <Text dimColor>
+            {`  Mode: ${currentConfig.mode}  |  Thinking: ${currentConfig.thinking ? "on" : "off"}  |  Auto: ${currentConfig.auto ? "on" : "off"}`}
+          </Text>
+          <Text dimColor>
+            {`  /help for commands  |  @file for context  |  !cmd for shell`}
+          </Text>
+          <Text dimColor>
+            {`  ────────────────────────────────────────────────────────`}
+          </Text>
+          <Text dimColor>
+            {`  Working directory: ${options.context?.gitRoot || process.cwd()}`}
+          </Text>
+        </Box>
+      )}
+
       {/* Message List */}
       <Box flexGrow={1} flexDirection="column" overflow="hidden">
         {messages.map((msg) => (
@@ -579,15 +617,41 @@ function printStartupBanner(config: CurrentConfig, mode: string): void {
   console.log(chalk.cyan("    !cmd       ") + chalk.dim("Run shell command"));
   console.log(
     chalk.dim(
-      "\n  Keyboard: Enter (submit) | \\+Enter (newline) | Shift+Enter (newline)\n"
+      "\n  Keyboard: Enter (submit) | \\+Enter (newline) | Shift+Enter (newline)"
     )
   );
+  console.log(
+    chalk.dim("  ────────────────────────────────────────────────────────")
+  );
+  console.log(
+    chalk.dim("  Working directory: ") + chalk.cyan(process.cwd())
+  );
+  console.log();
+}
+
+/**
+ * Check if raw mode is supported (required for Ink)
+ */
+function isRawModeSupported(): boolean {
+  return process.stdin.isTTY === true && typeof process.stdin.setRawMode === "function";
 }
 
 /**
  * Run Ink-based interactive mode
  */
 export async function runInkInteractiveMode(options: InkREPLOptions): Promise<void> {
+  // Check if raw mode is supported
+  if (!isRawModeSupported()) {
+    throw new KodaXTerminalError(
+      "Interactive mode requires a TTY with raw mode support.",
+      [
+        "kodax -p \"your task\"    # Run a single task",
+        "kodax -c               # Continue last session",
+        "kodax -r               # Resume session",
+      ]
+    );
+  }
+
   const storage = options.storage ?? new MemorySessionStorage();
 
   // Load config
@@ -610,28 +674,37 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
     gitRoot: undefined,
   });
 
-  // Print banner
-  printStartupBanner(currentConfig, currentConfig.mode ?? "code");
+  // Note: Banner is now rendered inside InkREPL component to avoid being cleared by Ink's render()
+  // The project hint is also shown inside the component
 
-  // Detect and show project hint
-  const { detectAndShowProjectHint } = await import(
-    "../interactive/project-commands.js"
-  );
-  await detectAndShowProjectHint();
+  try {
+    // Render Ink app
+    const { waitUntilExit } = render(
+      <InkREPL
+        options={options}
+        config={currentConfig}
+        context={context}
+        storage={storage}
+        onExit={() => {
+          console.log(chalk.dim("\n[Exiting KodaX...]"));
+        }}
+      />
+    );
 
-  // Render Ink app
-  const { waitUntilExit } = render(
-    <InkREPL
-      options={options}
-      config={currentConfig}
-      context={context}
-      storage={storage}
-      onExit={() => {
-        console.log(chalk.dim("\n[Exiting KodaX...]"));
-      }}
-    />
-  );
-
-  // Wait for exit
-  await waitUntilExit();
+    // Wait for exit
+    await waitUntilExit();
+  } catch (error) {
+    // If Ink fails due to raw mode, throw terminal error
+    if (error instanceof Error && error.message.includes("Raw mode")) {
+      throw new KodaXTerminalError(
+        "Interactive mode failed to start.",
+        [
+          "kodax -p \"your task\"    # Run a single task",
+          "kodax -c               # Continue last session",
+        ]
+      );
+    } else {
+      throw error;
+    }
+  }
 }
