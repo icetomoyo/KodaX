@@ -125,12 +125,9 @@ const InkREPL: React.FC<InkREPLProps> = ({
   const [currentConfig, setCurrentConfig] = useState<CurrentConfig>(config);
   const [planMode, setPlanMode] = useState(false);
   const [isRunning, setIsRunning] = useState(true);
-  const [showBanner, setShowBanner] = useState(true);  // Show banner on startup
-  const [tokenUsage, setTokenUsage] = useState<{
-    input: number;
-    output: number;
-    total: number;
-  } | null>(null);
+
+  // Always show banner - similar to Claude Code's linear output mode
+  const showBanner = true;
 
   // Refs for callbacks
   const currentOptionsRef = useRef<InkREPLOptions>({
@@ -230,11 +227,6 @@ const InkREPL: React.FC<InkREPLProps> = ({
   const handleSubmit = useCallback(
     async (input: string) => {
       if (!input.trim() || !isRunning) return;
-
-      // Hide banner on first input (prevents banner from appearing after command output)
-      if (showBanner) {
-        setShowBanner(false);
-      }
 
       // Add user message to UI
       const userMessage: Message = {
@@ -473,7 +465,6 @@ const InkREPL: React.FC<InkREPLProps> = ({
     },
     [
       isRunning,
-      showBanner,
       context,
       currentConfig,
       planMode,
@@ -532,21 +523,8 @@ const InkREPL: React.FC<InkREPLProps> = ({
       )}
 
       {/* Compact Header - shown after first interaction instead of full banner */}
-      {!showBanner && messages.length > 0 && (
-        <Box>
-          <Text bold color="cyan">KodaX</Text>
-          <Text dimColor>{" v" + KODAX_VERSION + " | "}</Text>
-          <Text color="green">{currentConfig.provider}/{model}</Text>
-          <Text dimColor>{" | "}</Text>
-          <Text color="cyan">{currentConfig.mode}</Text>
-          {currentConfig.thinking && <Text color="yellow">{" +think"}</Text>}
-          {currentConfig.auto && <Text color="magenta">{" +auto"}</Text>}
-          {planMode && <Text color="blue">{" +plan"}</Text>}
-        </Box>
-      )}
-
       {/* Session History - Show when resuming session with messages */}
-      {showBanner && context.messages && context.messages.length > 0 && (
+      {context.messages && context.messages.length > 0 && (
         <SessionHistory
           messages={context.messages.slice(-5).map((m) => ({
             role: m.role,
@@ -618,59 +596,6 @@ const InkREPL: React.FC<InkREPLProps> = ({
 };
 
 /**
- * Print startup banner
- */
-function printStartupBanner(config: CurrentConfig, mode: string): void {
-  const model = getProviderModel(config.provider) ?? config.provider;
-
-  const logo = `
-  ██╗  ██╗  ██████╗  ██████╗    █████╗   ██╗  ██╗
-  ██║ ██╔╝ ██╔═══██╗ ██╔══██╗  ██╔══██╗  ╚██╗██╔╝
-  █████╔╝  ██║   ██║ ██║  ██║  ███████║   ╚███╔╝
-  ██╔═██╗  ██║   ██║ ██║  ██║  ██╔══██║   ██╔██╗
-  ██║  ██╗ ╚██████╔╝ ██████╔╝  ██║  ██║  ██╔╝ ██╗
-  ╚═╝  ╚═╝  ╚═════╝  ╚═════╝   ╚═╝  ╚═╝  ╚═╝  ╚═╝`;
-
-  console.log(chalk.cyan("\n" + logo));
-  console.log(
-    chalk.white(`\n  v${KODAX_VERSION}  |  AI Coding Agent  |  ${config.provider}:${model}`)
-  );
-  console.log(
-    chalk.dim("\n  ────────────────────────────────────────────────────────")
-  );
-  console.log(
-    chalk.dim("  Mode: ") +
-      chalk.cyan(mode) +
-      chalk.dim("  |  Thinking: ") +
-      (config.thinking ? chalk.green("on") : chalk.dim("off")) +
-      chalk.dim("  |  Auto: ") +
-      (config.auto ? chalk.green("on") : chalk.dim("off"))
-  );
-  console.log(
-    chalk.dim("  ────────────────────────────────────────────────────────\n")
-  );
-
-  console.log(chalk.dim("  Quick tips:"));
-  console.log(chalk.cyan("    /help      ") + chalk.dim("Show all commands"));
-  console.log(chalk.cyan("    /mode      ") + chalk.dim("Switch code/ask mode"));
-  console.log(chalk.cyan("    /clear     ") + chalk.dim("Clear conversation"));
-  console.log(chalk.cyan("    @file      ") + chalk.dim("Add file to context"));
-  console.log(chalk.cyan("    !cmd       ") + chalk.dim("Run shell command"));
-  console.log(
-    chalk.dim(
-      "\n  Keyboard: Enter (submit) | \\+Enter (newline) | Shift+Enter (newline)"
-    )
-  );
-  console.log(
-    chalk.dim("  ────────────────────────────────────────────────────────")
-  );
-  console.log(
-    chalk.dim("  Working directory: ") + chalk.cyan(process.cwd())
-  );
-  console.log();
-}
-
-/**
  * Check if raw mode is supported (required for Ink)
  */
 function isRawModeSupported(): boolean {
@@ -729,7 +654,13 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
         onExit={() => {
           console.log(chalk.dim("\n[Exiting KodaX...]"));
         }}
-      />
+      />,
+      {
+        stdout: process.stdout,
+        stdin: process.stdin,
+        exitOnCtrlC: false,
+        patchConsole: false,  // Don't patch console to allow command output to work
+      }
     );
 
     // Wait for exit
