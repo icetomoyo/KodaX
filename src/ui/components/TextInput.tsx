@@ -38,7 +38,7 @@ const MAX_DIVIDER_WIDTH = 200;
  */
 function generateDivider(width: number): string {
   const safeWidth = Math.min(MAX_DIVIDER_WIDTH, Math.max(1, width));
-  return "─".repeat(safeWidth);
+  return "-".repeat(safeWidth);
 }
 
 /**

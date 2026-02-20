@@ -115,8 +115,11 @@ export const App: React.FC<AppProps> = ({ model, provider, onSubmit }) => {
     setCurrentTool(tool);
   }, []);
 
+  // Safe terminal height (fallback to 24 if not available)
+  const terminalHeight = stdout?.rows ?? process.stdout?.rows ?? 24;
+
   return (
-    <Box flexDirection="column" height={stdout.rows}>
+    <Box flexDirection="column" height={terminalHeight}>
       {/* 消息列表区域 */}
       <Box flexGrow={1} flexDirection="column" overflow="hidden">
         <MessageList messages={state.messages} isLoading={state.isLoading} />

@@ -495,18 +495,19 @@ const InkREPL: React.FC<InkREPLProps> = ({
       {/* Compact Startup Banner */}
       {showBanner && (
         <Box flexDirection="column">
-          <Text>
-            <Text color="cyan" bold>╭─╮</Text>
+          <Box>
+            <Text color="cyan" bold>[</Text>
             <Text bold> KodaX </Text>
             <Text dimColor>v{KODAX_VERSION}</Text>
+            <Text color="cyan" bold>]</Text>
             <Text dimColor> | </Text>
             <Text color="green">{currentConfig.provider}/{model}</Text>
             <Text dimColor> | </Text>
             <Text dimColor>{currentConfig.mode}</Text>
             {currentConfig.thinking && <Text color="yellow"> +think</Text>}
             {currentConfig.auto && <Text color="magenta"> +auto</Text>}
-          </Text>
-          <Text dimColor>╰─╯ {options.context?.gitRoot || process.cwd()}</Text>
+          </Box>
+          <Text dimColor>  {options.context?.gitRoot || process.cwd()}</Text>
         </Box>
       )}
 
