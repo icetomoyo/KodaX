@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-02-20 23:30_
+_Last Updated: 2026-02-21 00:00_
 
 ---
 
@@ -9,48 +9,47 @@ _Last Updated: 2026-02-20 23:30_
 
 | ID | Priority | Status | Title | Created | Resolved |
 |----|----------|--------|-------|---------|----------|
-| M001 | Low | Open | 未使用常量 PLAN_GENERATION_PROMPT | 2026-02-19 | - |
-| M002 | Low | Open | /plan 命令未使用 _currentConfig 参数 | 2026-02-19 | - |
-| M003 | Medium | Open | Plan 文件无版本号 | 2026-02-19 | - |
-| M004 | Medium | Open | Plan 解析正则表达式脆弱 | 2026-02-19 | - |
-| M005 | Low | Open | 中英文注释混用 | 2026-02-19 | - |
-| M006 | Low | Open | 整数解析无范围检查 | 2026-02-19 | - |
-| M007 | Medium | Open | 静默吞掉错误 | 2026-02-19 | - |
-| M008 | Medium | Open | 交互提示缺少输入验证 | 2026-02-19 | - |
-| M009 | Medium | Open | 不安全的类型断言 | 2026-02-19 | - |
-| M010 | Medium | Open | 非空断言缺乏显式检查 | 2026-02-19 | - |
-| M011 | Medium | Open | 命令预览长度不一致 | 2026-02-19 | - |
-| M012 | Medium | Open | ANSI Strip 性能问题 | 2026-02-19 | - |
-| M013 | Low | Open | 自动补全缓存内存泄漏风险 | 2026-02-19 | - |
-| M014 | Low | Open | 语法高亮语言支持不全 | 2026-02-19 | - |
-| M015 | Low | Open | Unicode 检测不完整 | 2026-02-19 | - |
-| M016 | Medium | Open | InkREPL 组件过大 | 2026-02-19 | - |
-| M017 | Low | Open | TextBuffer 未使用方法 | 2026-02-19 | - |
-| M018 | Low | Open | TODO 注释未清理 | 2026-02-19 | - |
-| M034 | Medium | Open | 状态栏 Session ID 显示问题 | 2026-02-20 | - |
-| M019 | High | Resolved | 资源泄漏 - Readline 接口 | 2026-02-19 | 2026-02-19 |
-| M020 | High | Resolved | 全局可变状态 | 2026-02-19 | 2026-02-19 |
-| M021 | High | Resolved | 函数过长 | 2026-02-19 | 2026-02-19 |
-| M022 | High | Resolved | Delete 键无效 | 2026-02-20 | 2026-02-20 |
-| M023 | High | Resolved | Backspace 键无效 | 2026-02-20 | 2026-02-20 |
-| M024 | High | Resolved | Shift+Enter 换行无效 | 2026-02-20 | 2026-02-20 |
-| M025 | High | Resolved | Resize handler 空引用 | 2026-02-20 | 2026-02-20 |
-| M026 | High | Resolved | 异步上下文直接退出 | 2026-02-20 | 2026-02-20 |
-| M027 | Medium | Resolved | 超宽终端分隔符 | 2026-02-20 | 2026-02-20 |
-| M028 | High | Resolved | --continue 会话不恢复 | 2026-02-20 | 2026-02-20 |
-| M029 | Medium | Resolved | gitRoot 未设置 | 2026-02-20 | 2026-02-20 |
-| M030 | High | Resolved | Thinking 内容不显示 | 2026-02-20 | 2026-02-20 |
-| M031 | High | Resolved | 非流式输出 | 2026-02-20 | 2026-02-20 |
-| M032 | Medium | Resolved | Banner 消失 | 2026-02-20 | 2026-02-20 |
-| M033 | Medium | Resolved | /help 输出不可见 | 2026-02-20 | 2026-02-20 |
+| 001 | Low | Open | 未使用常量 PLAN_GENERATION_PROMPT | 2026-02-19 | - |
+| 002 | Low | Open | /plan 命令未使用 _currentConfig 参数 | 2026-02-19 | - |
+| 003 | Medium | Open | Plan 文件无版本号 | 2026-02-19 | - |
+| 004 | Medium | Open | Plan 解析正则表达式脆弱 | 2026-02-19 | - |
+| 005 | Low | Open | 中英文注释混用 | 2026-02-19 | - |
+| 006 | Low | Open | 整数解析无范围检查 | 2026-02-19 | - |
+| 007 | Medium | Open | 静默吞掉错误 | 2026-02-19 | - |
+| 008 | Medium | Open | 交互提示缺少输入验证 | 2026-02-19 | - |
+| 009 | Medium | Open | 不安全的类型断言 | 2026-02-19 | - |
+| 010 | Medium | Open | 非空断言缺乏显式检查 | 2026-02-19 | - |
+| 011 | Medium | Open | 命令预览长度不一致 | 2026-02-19 | - |
+| 012 | Medium | Open | ANSI Strip 性能问题 | 2026-02-19 | - |
+| 013 | Low | Open | 自动补全缓存内存泄漏风险 | 2026-02-19 | - |
+| 014 | Low | Open | 语法高亮语言支持不全 | 2026-02-19 | - |
+| 015 | Low | Open | Unicode 检测不完整 | 2026-02-19 | - |
+| 016 | Medium | Open | InkREPL 组件过大 | 2026-02-19 | - |
+| 017 | Low | Open | TextBuffer 未使用方法 | 2026-02-19 | - |
+| 018 | Low | Open | TODO 注释未清理 | 2026-02-19 | - |
+| 019 | Medium | Open | 状态栏 Session ID 显示问题 | 2026-02-20 | - |
+| 020 | High | Resolved | 资源泄漏 - Readline 接口 | 2026-02-19 | 2026-02-19 |
+| 021 | High | Resolved | 全局可变状态 | 2026-02-19 | 2026-02-19 |
+| 022 | High | Resolved | 函数过长 | 2026-02-19 | 2026-02-19 |
+| 023 | High | Resolved | Delete 键无效 | 2026-02-20 | 2026-02-20 |
+| 024 | High | Resolved | Backspace 键无效 | 2026-02-20 | 2026-02-20 |
+| 025 | High | Resolved | Shift+Enter 换行无效 | 2026-02-20 | 2026-02-20 |
+| 026 | High | Resolved | Resize handler 空引用 | 2026-02-20 | 2026-02-20 |
+| 027 | High | Resolved | 异步上下文直接退出 | 2026-02-20 | 2026-02-20 |
+| 028 | Medium | Resolved | 超宽终端分隔符 | 2026-02-20 | 2026-02-20 |
+| 029 | High | Resolved | --continue 会话不恢复 | 2026-02-20 | 2026-02-20 |
+| 030 | Medium | Resolved | gitRoot 未设置 | 2026-02-20 | 2026-02-20 |
+| 031 | High | Resolved | Thinking 内容不显示 | 2026-02-20 | 2026-02-20 |
+| 032 | High | Resolved | 非流式输出 | 2026-02-20 | 2026-02-20 |
+| 033 | Medium | Resolved | Banner 消失 | 2026-02-20 | 2026-02-20 |
+| 034 | Medium | Resolved | /help 输出不可见 | 2026-02-20 | 2026-02-20 |
 
 ---
 
 ## Issue Details
 <!-- Full details for each issue - REQUIRED for all issues -->
 
-### M001: 未使用常量 PLAN_GENERATION_PROMPT
-- **Type**: Manual
+### 001: 未使用常量 PLAN_GENERATION_PROMPT
 - **Priority**: Low
 - **Status**: Open
 - **Created**: 2026-02-19
@@ -58,14 +57,11 @@ _Last Updated: 2026-02-20 23:30_
   - 定义了 `PLAN_GENERATION_PROMPT` 常量作为计划生成的提示词模板，但实际 `generatePlan` 函数中并未使用它
   - 而是通过 `runKodaX` 内部的系统提示词来生成计划
 - **Context**: `src/cli/plan-mode.ts`
-- **Proposed Solution**:
-  - 选项 A: 删除这个常量
-  - 选项 B: 将其实际用于 `generatePlan` 函数
+- **Proposed Solution**: 删除这个常量 或 将其实际用于 `generatePlan` 函数
 
 ---
 
-### M002: /plan 命令未使用 _currentConfig 参数
-- **Type**: Manual
+### 002: /plan 命令未使用 _currentConfig 参数
 - **Priority**: Low
 - **Status**: Open
 - **Created**: 2026-02-19
@@ -81,16 +77,15 @@ _Last Updated: 2026-02-20 23:30_
 
 ---
 
-### M003: Plan 文件无版本号
-- **Type**: Manual
+### 003: Plan 文件无版本号
 - **Priority**: Medium
 - **Status**: Open
 - **Created**: 2026-02-19
 - **Original Problem**:
   - `ExecutionPlan` 接口没有版本字段
   - 如果未来计划格式变更（添加新字段、修改步骤结构），旧文件无法正确解析
+  - 未来兼容性风险，用户升级后保存的计划可能损坏
 - **Context**: `src/cli/plan-storage.ts` - `ExecutionPlan` 接口
-- **Impact**: 未来兼容性风险，用户升级后保存的计划可能损坏
 - **Proposed Solution**:
   ```typescript
   export interface ExecutionPlan {
@@ -102,8 +97,7 @@ _Last Updated: 2026-02-20 23:30_
 
 ---
 
-### M004: Plan 解析正则表达式脆弱
-- **Type**: Manual
+### 004: Plan 解析正则表达式脆弱
 - **Priority**: Medium
 - **Status**: Open
 - **Created**: 2026-02-19
@@ -116,28 +110,26 @@ _Last Updated: 2026-02-20 23:30_
     - AI 输出 `1.[READ]` (无空格) → 失败
     - AI 输出 `1. [read]` (小写) → 失败
     - AI 输出 `1. [ READ ]` (多空格) → 失败
+  - Plan 生成失败时无提示，跨模型兼容性差
 - **Context**: `src/cli/plan-mode.ts`
-- **Impact**: Plan 生成失败时无提示，跨模型兼容性差
 - **Proposed Solution**: 添加更宽松的正则匹配，解析失败时给出友好提示，添加日志记录原始输出
 
 ---
 
-### M005: 中英文注释混用
-- **Type**: Manual
+### 005: 中英文注释混用
 - **Priority**: Low
 - **Status**: Open
 - **Created**: 2026-02-19
 - **Original Problem**:
   - 代码中混合使用中文和英文注释
   - 例如：`// 延迟创建 readline 接口` (中文) vs `// Check if project exists` (英文)
+  - 国际化团队协作困难，代码风格不一致
 - **Context**: `src/interactive/` 目录下多个文件
-- **Impact**: 国际化团队协作困难，代码风格不一致
 - **Proposed Solution**: 选择一种语言保持一致（推荐英文，便于国际协作）
 
 ---
 
-### M006: 整数解析无范围检查
-- **Type**: Manual
+### 006: 整数解析无范围检查
 - **Priority**: Low
 - **Status**: Open
 - **Created**: 2026-02-19
@@ -158,8 +150,7 @@ _Last Updated: 2026-02-20 23:30_
 
 ---
 
-### M007: 静默吞掉错误
-- **Type**: Manual
+### 007: 静默吞掉错误
 - **Priority**: Medium
 - **Status**: Open
 - **Created**: 2026-02-19
@@ -177,8 +168,8 @@ _Last Updated: 2026-02-20 23:30_
     - `ENOENT` (文件不存在) → 正常，项目未初始化
     - `EACCES` (权限不足) → 需要告知用户
     - `SyntaxError` (JSON 格式错误) → 文件损坏，需要警告
+  - 调试困难，用户无法知道真正的问题
 - **Context**: `src/interactive/project-storage.ts` - `loadFeatures()` 方法
-- **Impact**: 调试困难，用户无法知道真正的问题
 - **Proposed Solution**:
   ```typescript
   async loadFeatures(): Promise<FeatureList | null> {
@@ -197,8 +188,7 @@ _Last Updated: 2026-02-20 23:30_
 
 ---
 
-### M008: 交互提示缺少输入验证
-- **Type**: Manual
+### 008: 交互提示缺少输入验证
 - **Priority**: Medium
 - **Status**: Open
 - **Created**: 2026-02-19
@@ -220,8 +210,7 @@ _Last Updated: 2026-02-20 23:30_
 
 ---
 
-### M009: 不安全的类型断言
-- **Type**: Manual
+### 009: 不安全的类型断言
 - **Priority**: Medium
 - **Status**: Open
 - **Created**: 2026-02-19
@@ -230,11 +219,10 @@ _Last Updated: 2026-02-20 23:30_
   const options = callbacks.createKodaXOptions?.() ?? {} as KodaXOptions;
   ```
   - 空对象 `{}` 被断言为 `KodaXOptions` 类型，但空对象实际上并不包含该接口所需的任何属性
+  - 运行时访问不存在的属性会得到 `undefined`，类型安全被绕过
 - **Context**: `src/interactive/project-commands.ts`
-- **Impact**: 运行时访问不存在的属性会得到 `undefined`，类型安全被绕过
 - **Proposed Solution**:
   ```typescript
-  // 方案 A: 提供默认值
   const defaultOptions: KodaXOptions = {
     provider: 'anthropic',
     // ...其他必需字段
@@ -244,8 +232,7 @@ _Last Updated: 2026-02-20 23:30_
 
 ---
 
-### M010: 非空断言缺乏显式检查
-- **Type**: Manual
+### 010: 非空断言缺乏显式检查
 - **Priority**: Medium
 - **Status**: Open
 - **Created**: 2026-02-19
@@ -265,8 +252,7 @@ _Last Updated: 2026-02-20 23:30_
 
 ---
 
-### M011: 命令预览长度不一致
-- **Type**: Manual
+### 011: 命令预览长度不一致
 - **Priority**: Medium
 - **Status**: Open
 - **Created**: 2026-02-19
@@ -279,8 +265,8 @@ _Last Updated: 2026-02-20 23:30_
   const cmd = (input.command as string)?.slice(0, 60) ?? '';
   const suffix = cmd.length >= 60 ? '...' : '';
   ```
+  - 用户体验不一致，代码维护困难
 - **Context**: `src/interactive/prompts.ts` - 行 253-254 vs 239
-- **Impact**: 用户体验不一致，代码维护困难
 - **Proposed Solution**:
   ```typescript
   const CMD_PREVIEW_LENGTH = 50;
@@ -289,15 +275,13 @@ _Last Updated: 2026-02-20 23:30_
 
 ---
 
-### M012: ANSI Strip 性能问题
-- **Type**: Manual
+### 012: ANSI Strip 性能问题
 - **Priority**: Medium
 - **Status**: Open
 - **Created**: 2026-02-19
 - **Original Problem**:
   ```typescript
   private stripAnsi(str: string): string {
-    // eslint-disable-next-line no-control-regex
     return str.replace(/\x1b\[[0-9;]*m/g, '');
   }
   ```
@@ -305,15 +289,11 @@ _Last Updated: 2026-02-20 23:30_
   - 状态栏更新频繁时可能影响性能
   - 正则表达式每次都重新编译
 - **Context**: `src/interactive/status-bar.ts` - 行 206-208
-- **Proposed Solution**:
-  - 使用 `strip-ansi` npm 包（更高效）
-  - 或缓存正则表达式：`const ANSI_REGEX = /\x1b\[[0-9;]*m/g;`
-  - 或缓存已处理的字符串
+- **Proposed Solution**: 使用 `strip-ansi` npm 包 或 缓存正则表达式
 
 ---
 
-### M013: 自动补全缓存内存泄漏风险
-- **Type**: Manual
+### 013: 自动补全缓存内存泄漏风险
 - **Priority**: Low
 - **Status**: Open
 - **Created**: 2026-02-19
@@ -321,25 +301,13 @@ _Last Updated: 2026-02-20 23:30_
   ```typescript
   setTimeout(() => this.cache.delete(dir), this.cacheTimeout);
   ```
-  - 使用 `setTimeout` 进行缓存过期清理，在高频率调用时可能导致：
-    - 大量定时器积压
-    - 内存无法及时释放
+  - 使用 `setTimeout` 进行缓存过期清理，在高频率调用时可能导致大量定时器积压和内存无法及时释放
 - **Context**: `src/interactive/autocomplete.ts` - 行 95-110
-- **Proposed Solution**:
-  ```typescript
-  // 使用 LRU cache with TTL
-  import { LRUCache } from 'lru-cache';
-
-  private cache = new LRUCache<string, string[]>({
-    max: 100,
-    ttl: 60_000, // 60 seconds
-  });
-  ```
+- **Proposed Solution**: 使用 LRU cache with TTL 替代 setTimeout
 
 ---
 
-### M014: 语法高亮语言支持不全
-- **Type**: Manual
+### 014: 语法高亮语言支持不全
 - **Priority**: Low
 - **Status**: Open
 - **Created**: 2026-02-19
@@ -353,25 +321,11 @@ _Last Updated: 2026-02-20 23:30_
   - 无法针对不同语言高亮（Python、Go、Rust 等）
   - 关键词列表只覆盖 JavaScript/TypeScript
 - **Context**: `src/interactive/markdown-render.ts` - 行 43-65
-- **Proposed Solution**:
-  ```typescript
-  function highlightCode(code: string, language: string): string {
-    const keywordSets: Record<string, string[]> = {
-      javascript: ['const', 'let', 'var', ...],
-      python: ['def', 'class', 'import', 'from', ...],
-      go: ['func', 'package', 'import', 'var', ...],
-      // ...
-    };
-    const keywords = keywordSets[language] ?? keywordSets['javascript'];
-    // ...
-  }
-  ```
-  或集成 `highlight.js` / `prism` 库
+- **Proposed Solution**: 添加多语言关键词集 或 集成 `highlight.js` / `prism` 库
 
 ---
 
-### M015: Unicode 检测不完整
-- **Type**: Manual
+### 015: Unicode 检测不完整
 - **Priority**: Low
 - **Status**: Open
 - **Created**: 2026-02-19
@@ -394,39 +348,19 @@ _Last Updated: 2026-02-20 23:30_
 
 ---
 
-### M016: InkREPL 组件过大
-- **Type**: Manual
+### 016: InkREPL 组件过大
 - **Priority**: Medium
 - **Status**: Open
 - **Created**: 2026-02-19
 - **Original Problem**:
-  - InkREPL 组件约 637 行代码，包含多个职责：
-    - 命令处理
-    - Shell 命令执行
-    - 会话管理
-    - 消息格式化
-    - 状态管理
+  - InkREPL 组件约 637 行代码，包含多个职责：命令处理、Shell 命令执行、会话管理、消息格式化、状态管理
+  - 代码可读性降低，维护成本增加，难以单独测试各模块
 - **Context**: `src/ui/InkREPL.tsx`
-- **Impact**: 代码可读性降低，维护成本增加，难以单独测试各模块
-- **Proposed Solution**:
-  ```typescript
-  // 提取 shell 执行逻辑
-  // src/ui/utils/shell-executor.ts
-  export async function executeShellCommand(...)
-
-  // 提取消息格式化
-  // src/ui/utils/message-formatter.ts
-  export function formatMessage(...)
-
-  // 提取会话管理
-  // src/ui/hooks/useSessionManager.ts
-  export function useSessionManager(...)
-  ```
+- **Proposed Solution**: 拆分为多个模块（shell-executor、message-formatter、useSessionManager）
 
 ---
 
-### M017: TextBuffer 未使用方法
-- **Type**: Manual
+### 017: TextBuffer 未使用方法
 - **Priority**: Low
 - **Status**: Open
 - **Created**: 2026-02-19
@@ -443,15 +377,11 @@ _Last Updated: 2026-02-20 23:30_
   ```
   - `getAbsoluteOffset()` 方法计算光标在文本中的字节偏移位置，但当前未被任何 UI 组件调用
 - **Context**: `src/ui/utils/text-buffer.ts` - 行 436-445
-- **Proposed Solution**:
-  - **保留**：作为未来高级编辑功能的扩展点（如文本选择、外部编辑器同步）
-  - **删除**：如果确定不需要这些功能
-  - **标注**：添加 `@internal` 或文档说明用途
+- **Proposed Solution**: 保留作为未来扩展点 或 删除如果确定不需要
 
 ---
 
-### M018: TODO 注释未清理
-- **Type**: Manual
+### 018: TODO 注释未清理
 - **Priority**: Low
 - **Status**: Open
 - **Created**: 2026-02-19
@@ -463,15 +393,11 @@ _Last Updated: 2026-02-20 23:30_
   ```
   - 代码中留有 TODO 注释，表明主题配置功能尚未完全实现
 - **Context**: `src/interactive/repl.ts` - 行 112-113
-- **Proposed Solution**:
-  - 选项 A: 实现从配置文件读取主题设置的功能
-  - 选项 B: 将 TODO 转换为 issue 追踪
-  - 选项 C: 如果短期内不计划实现，移除 TODO 注释
+- **Proposed Solution**: 实现功能 或 转换为 issue 追踪 或 移除注释
 
 ---
 
-### M034: 状态栏 Session ID 显示问题
-- **Type**: Manual
+### 019: 状态栏 Session ID 显示问题
 - **Priority**: Medium
 - **Status**: Open
 - **Created**: 2026-02-20
@@ -480,30 +406,21 @@ _Last Updated: 2026-02-20 23:30_
   - `model` 字段存储在状态中但从未在渲染时显示
   - 用户无法看到当前使用的模型名称
   ```typescript
-  // 行 123-124: Session ID 过短
   const shortId = this.state.sessionId.slice(0, 6);
   parts.push(chalk.dim(`#${shortId}`));
-
   // model 字段存在于 StatusBarState 接口但从未被显示
   ```
 - **Context**: `src/interactive/status-bar.ts` - 行 123-131
-- **Expected Behavior**:
-  - Session ID 应包含足够的时间信息（至少到秒）
-  - 状态栏应显示当前使用的模型名称
-  - 各元素之间应有清晰分隔符
+- **Expected Behavior**: Session ID 应包含足够的时间信息，状态栏应显示当前使用的模型名称
 - **Proposed Solution**:
   ```typescript
-  // 增加截取长度以包含秒
-  const shortId = this.state.sessionId.slice(0, 12); // 或根据实际 ID 格式调整
-
-  // 在 provider 后显示 model
+  const shortId = this.state.sessionId.slice(0, 12);
   parts.push(chalk.cyan(`${this.state.provider}/${this.state.model}`));
   ```
 
 ---
 
-### M019: 资源泄漏 - Readline 接口 (RESOLVED)
-- **Type**: Manual
+### 020: 资源泄漏 - Readline 接口 (RESOLVED)
 - **Priority**: High
 - **Status**: Resolved
 - **Created**: 2026-02-19
@@ -515,14 +432,12 @@ _Last Updated: 2026-02-20 23:30_
   - 通过 `CommandCallbacks` 传递 REPL 的 readline 接口
   - 在 `CommandCallbacks` 接口添加 `readline?: readline.Interface`
   - 在 `repl.ts` 中传入 `rl` 实例
-  - 在 `project-commands.ts` 中使用传入的接口
 - **Resolution Date**: 2026-02-19
 - **Files Changed**: `src/interactive/project-commands.ts`, `src/interactive/repl.ts`
 
 ---
 
-### M020: 全局可变状态 (RESOLVED)
-- **Type**: Manual
+### 021: 全局可变状态 (RESOLVED)
 - **Priority**: High
 - **Status**: Resolved
 - **Created**: 2026-02-19
@@ -533,285 +448,179 @@ _Last Updated: 2026-02-20 23:30_
   ```
   - 模块级可变变量可能导致状态残留和测试困难
 - **Context**: `src/interactive/project-commands.ts`
-- **Resolution**:
-  - 封装到 `ProjectRuntimeState` 类
-  ```typescript
-  class ProjectRuntimeState {
-    private _autoContinueRunning = false;
-    get autoContinueRunning(): boolean { ... }
-    setAutoContinueRunning(value: boolean): void { ... }
-    reset(): void { ... }  // 用于测试
-  }
-  export const projectRuntimeState = new ProjectRuntimeState();
-  ```
+- **Resolution**: 封装到 `ProjectRuntimeState` 类
 - **Resolution Date**: 2026-02-19
 - **Files Changed**: `src/interactive/project-commands.ts`
 
 ---
 
-### M021: 函数过长 (RESOLVED)
-- **Type**: Manual
+### 022: 函数过长 (RESOLVED)
 - **Priority**: High
 - **Status**: Resolved
 - **Created**: 2026-02-19
 - **Original Problem**:
-  - `projectInit()` ~70 行
-  - `projectNext()` ~80 行
-  - `projectAuto()` ~100 行
+  - `projectInit()` ~70 行, `projectNext()` ~80 行, `projectAuto()` ~100 行
 - **Context**: `src/interactive/project-commands.ts`
-- **Resolution**:
-  提取辅助函数：
-  - `createConfirmFn()` - 创建确认提示函数
-  - `createQuestionFn()` - 创建问题提示函数
-  - `displayFeatureInfo()` - 显示功能信息
-  - `buildFeaturePrompt()` - 构建执行提示词
-  - `executeSingleFeature()` - 执行单个功能
-  - `parseAutoOptions()` - 解析 auto 命令选项
-  - `parseAutoAction()` - 解析用户动作
+- **Resolution**: 提取辅助函数 (createConfirmFn, createQuestionFn, displayFeatureInfo, buildFeaturePrompt, executeSingleFeature, parseAutoOptions, parseAutoAction)
 - **Resolution Date**: 2026-02-19
 - **Files Changed**: `src/interactive/project-commands.ts`
 
 ---
 
-### M022: Delete 键无效 (RESOLVED)
-- **Type**: Manual
+### 023: Delete 键无效 (RESOLVED)
 - **Priority**: High
 - **Status**: Resolved
 - **Created**: 2026-02-20
 - **Original Problem**:
-  - 在 `InputPrompt.tsx` 中，Delete 键的处理函数为空
-  - 无法删除光标后的字符
-  ```typescript
-  if (key.delete) {
-    // 空实现
-    return;
-  }
-  ```
+  - 在 `InputPrompt.tsx` 中，Delete 键的处理函数为空，无法删除光标后的字符
 - **Context**: `src/ui/components/InputPrompt.tsx`
-- **Resolution**:
-  1. 从 `useTextBuffer` hook 解构时添加 `delete` 别名：
-     ```typescript
-     const { ..., delete: deleteChar } = useTextBuffer({...});
-     ```
-  2. 在 Delete 键处理中调用 `deleteChar()`:
-     ```typescript
-     if (key.delete) {
-       deleteChar();
-       return;
-     }
-     ```
+- **Resolution**: 添加 `delete: deleteChar` 别名并调用 `deleteChar()`
 - **Resolution Date**: 2026-02-20
 - **Files Changed**: `src/ui/components/InputPrompt.tsx`
 
 ---
 
-### M023: Backspace 键无效 (RESOLVED)
-- **Type**: Manual
+### 024: Backspace 键无效 (RESOLVED)
 - **Priority**: High
 - **Status**: Resolved
 - **Created**: 2026-02-20
 - **Original Problem**:
-  - 在某些终端（如 Windows Terminal）中，按 Backspace 键无法删除字符
-  - 终端发送 `char = "\x7f"` (DEL, ASCII 127)
-  - Ink 检测到 `key.backspace = false`, `key.delete = true`
-  - 代码中 `key.delete` 检查在 `char === "\x7f"` 之前，导致调用 `deleteChar()` 而非 `backspace()`
+  - 在某些终端中，按 Backspace 键无法删除字符
+  - 代码中 `key.delete` 检查在 `char === "\x7f"` 之前，导致调用错误的处理函数
 - **Context**: `src/ui/components/InputPrompt.tsx`
-- **Resolution**:
-  调整检测顺序，使 `\x7f` 字符检测优先于 `key.delete` 检测：
-  ```typescript
-  // 退格键 - 检查多种情况（必须在 key.delete 检查之前）
-  if (key.backspace || char === "\x7f" || char === "\x08" || (key.ctrl && char === "h")) {
-    backspace();
-    return;
-  }
-
-  // Delete 键（真正的 Delete 键，不是 Backspace）
-  if (key.delete) {
-    deleteChar();
-    return;
-  }
-  ```
+- **Resolution**: 调整检测顺序，使 `\x7f` 字符检测优先于 `key.delete` 检测
 - **Resolution Date**: 2026-02-20
 - **Files Changed**: `src/ui/components/InputPrompt.tsx`
 
 ---
 
-### M024: Shift+Enter 换行无效 (RESOLVED)
-- **Type**: Manual
+### 025: Shift+Enter 换行无效 (RESOLVED)
 - **Priority**: High
 - **Status**: Resolved
 - **Created**: 2026-02-20
 - **Original Problem**:
   - 在某些终端中，按 Shift+Enter 无法插入换行
-  - 终端发送 `char = "\n"` (LF)
-  - Ink 检测到 `key.return = false`, `key.shift = false`
   - Ink 的 `useInput` hook 在某些终端中无法正确检测 Shift+Enter 组合键
 - **Context**: `src/ui/components/InputPrompt.tsx`
-- **Resolution**:
-  添加对 `\n` 字符的检测作为换行的后备方案：
-  ```typescript
-  const isNewline = (key.return && key.shift) ||
-                    (key.return && key.ctrl) ||
-                    (char === "\n" && !key.return);  // 新增：支持更多终端
-
-  if (isNewline) {
-    newline();
-    return;
-  }
-  ```
+- **Resolution**: 添加对 `\n` 字符的检测作为换行的后备方案
 - **Resolution Date**: 2026-02-20
 - **Files Changed**: `src/ui/components/InputPrompt.tsx`
 
 ---
 
-### M025: Resize handler 空引用 (RESOLVED)
-- **Type**: Manual
+### 026: Resize handler 空引用 (RESOLVED)
 - **Priority**: High
 - **Status**: Resolved
 - **Created**: 2026-02-20
 - **Original Problem**:
-  - `TextInput.tsx` 中的 resize handler 使用闭包中的 `stdout` 变量
-  - 在某些情况下可能为 null，导致运行时错误
+  - `TextInput.tsx` 中的 resize handler 使用闭包中的 `stdout` 变量，可能为 null
 - **Context**: `src/ui/components/TextInput.tsx`
-- **Resolution**:
-  - 使用 `process.stdout` 替代闭包中的 `stdout`
+- **Resolution**: 使用 `process.stdout` 替代闭包中的 `stdout`
 - **Resolution Date**: 2026-02-20
 - **Files Changed**: `src/ui/components/TextInput.tsx`
 
 ---
 
-### M026: 异步上下文直接退出 (RESOLVED)
-- **Type**: Manual
+### 027: 异步上下文直接退出 (RESOLVED)
 - **Priority**: High
 - **Status**: Resolved
 - **Created**: 2026-02-20
 - **Original Problem**:
   - `InkREPL.tsx` 中在异步上下文直接调用 `process.exit()`
-  - 这会导致资源未正确释放，可能造成数据丢失或资源泄漏
+  - 导致资源未正确释放，可能造成数据丢失或资源泄漏
 - **Context**: `src/ui/InkREPL.tsx`
-- **Resolution**:
-  - 新增 `KodaXTerminalError` 错误类
-  - 在顶层处理错误，而不是在异步上下文中直接退出
+- **Resolution**: 新增 `KodaXTerminalError` 错误类，在顶层处理错误
 - **Resolution Date**: 2026-02-20
 - **Files Changed**: `src/ui/InkREPL.tsx`, `src/ui/errors.ts`
 
 ---
 
-### M027: 超宽终端分隔符 (RESOLVED)
-- **Type**: Manual
+### 028: 超宽终端分隔符 (RESOLVED)
 - **Priority**: Medium
 - **Status**: Resolved
 - **Created**: 2026-02-20
 - **Original Problem**:
   - 在超宽终端（如 300+ 列）中，分隔符会生成过长的字符串
-  - 可能导致性能问题或显示异常
 - **Context**: `src/ui/components/TextInput.tsx`
-- **Resolution**:
-  - 添加 `MAX_DIVIDER_WIDTH=200` 限制
+- **Resolution**: 添加 `MAX_DIVIDER_WIDTH=200` 限制
 - **Resolution Date**: 2026-02-20
 - **Files Changed**: `src/ui/components/TextInput.tsx`
 
 ---
 
-### M028: --continue 会话不恢复 (RESOLVED)
-- **Type**: Manual
+### 029: --continue 会话不恢复 (RESOLVED)
 - **Priority**: High
 - **Status**: Resolved
 - **Created**: 2026-02-20
 - **Original Problem**:
   - 使用 `--continue` 参数时，不会恢复最近的会话
-  - 用户无法继续之前的对话
 - **Context**: `src/ui/InkREPL.tsx`
-- **Resolution**:
-  - 添加 `resume`/`autoResume` 选项处理
-  - 加载最近会话
+- **Resolution**: 添加 `resume`/`autoResume` 选项处理，加载最近会话
 - **Resolution Date**: 2026-02-20
 - **Files Changed**: `src/ui/InkREPL.tsx`
 
 ---
 
-### M029: gitRoot 未设置 (RESOLVED)
-- **Type**: Manual
+### 030: gitRoot 未设置 (RESOLVED)
 - **Priority**: Medium
 - **Status**: Resolved
 - **Created**: 2026-02-20
 - **Original Problem**:
-  - 创建 context 时 `gitRoot` 未设置
-  - 导致会话过滤功能不正常
+  - 创建 context 时 `gitRoot` 未设置，导致会话过滤功能不正常
 - **Context**: `src/ui/InkREPL.tsx`
-- **Resolution**:
-  - 在创建 context 前获取 gitRoot
-  - 用于会话过滤
+- **Resolution**: 在创建 context 前获取 gitRoot
 - **Resolution Date**: 2026-02-20
 - **Files Changed**: `src/ui/InkREPL.tsx`
 
 ---
 
-### M030: Thinking 内容不显示 (RESOLVED)
-- **Type**: Manual
+### 031: Thinking 内容不显示 (RESOLVED)
 - **Priority**: High
 - **Status**: Resolved
 - **Created**: 2026-02-20
 - **Original Problem**:
-  - 在 Thinking 模式下，模型的 thinking 内容（`onThinkingDelta`）不会在 UI 中实时显示
-  - 虽然 `thinkingCharCount` 会更新，但实际内容不可见
+  - 在 Thinking 模式下，模型的 thinking 内容不会在 UI 中实时显示
 - **Context**: `src/ui/contexts/StreamingContext.tsx`, `src/ui/components/MessageList.tsx`
-- **Resolution**:
-  1. 在 `StreamingContextValue` 接口添加 `thinkingContent: string` 字段
-  2. 添加 `appendThinkingContent(text: string)` 方法
-  3. 在 `MessageList` 组件中添加 `thinkingContent` 显示区域（淡灰色斜体）
-  4. 在 `InkREPL` 中使用 `appendThinkingContent` 替代 `appendThinkingChars`
+- **Resolution**: 添加 `thinkingContent` 字段和 `appendThinkingContent` 方法，在 MessageList 中显示
 - **Resolution Date**: 2026-02-20
 - **Files Changed**: `src/ui/contexts/StreamingContext.tsx`, `src/ui/components/MessageList.tsx`, `src/ui/InkREPL.tsx`
 
 ---
 
-### M031: 非流式输出 (RESOLVED)
-- **Type**: Manual
+### 032: 非流式输出 (RESOLVED)
 - **Priority**: High
 - **Status**: Resolved
 - **Created**: 2026-02-20
 - **Original Problem**:
-  - 非 Thinking 模式下，响应内容（`onTextDelta`）会在流式完成后一次性显示
-  - 而非实时逐字显示
+  - 非 Thinking 模式下，响应内容会在流式完成后一次性显示，而非实时逐字显示
 - **Context**: `src/ui/components/MessageList.tsx`, `src/ui/InkREPL.tsx`
-- **Resolution**:
-  1. 在 `MessageList` 组件添加 `streamingResponse` prop
-  2. 添加流式响应实时显示区域（显示 `streamingState.currentResponse`）
-  3. 在 `InkREPL` 中传递 `streamingResponse={streamingState.currentResponse}`
+- **Resolution**: 添加 `streamingResponse` prop 实现实时流式显示
 - **Resolution Date**: 2026-02-20
 - **Files Changed**: `src/ui/components/MessageList.tsx`, `src/ui/InkREPL.tsx`
 
 ---
 
-### M032: Banner 消失 (RESOLVED)
-- **Type**: Manual
+### 033: Banner 消失 (RESOLVED)
 - **Priority**: Medium
 - **Status**: Resolved
 - **Created**: 2026-02-20
 - **Original Problem**:
   - 用户首次交互后，启动 Banner 会消失或被隐藏
-  - 导致无法看到版本和配置信息
 - **Context**: `src/ui/InkREPL.tsx`
-- **Resolution**:
-  - 移除 `setShowBanner(false)` 调用
-  - Banner 在启动时显示，随着消息增加自然向上滚动，保持布局稳定
+- **Resolution**: 移除 `setShowBanner(false)` 调用
 - **Resolution Date**: 2026-02-20
 - **Files Changed**: `src/ui/InkREPL.tsx`
 
 ---
 
-### M033: /help 输出不可见 (RESOLVED)
-- **Type**: Manual
+### 034: /help 输出不可见 (RESOLVED)
 - **Priority**: Medium
 - **Status**: Resolved
 - **Created**: 2026-02-20
 - **Original Problem**:
   - `/help` 等命令的 `console.log` 输出在 Ink 的 alternate buffer 中不可见
 - **Context**: `src/ui/InkREPL.tsx`
-- **Resolution**:
-  - 在 Ink 的 `render()` 选项中设置 `patchConsole: true`
-  - 将 `console.log` 输出路由到 Ink 渲染系统
+- **Resolution**: 在 Ink 的 `render()` 选项中设置 `patchConsole: true`
 - **Resolution Date**: 2026-02-20
 - **Files Changed**: `src/ui/InkREPL.tsx`
 
@@ -819,37 +628,40 @@ _Last Updated: 2026-02-20 23:30_
 
 ## Summary
 - Total: 34 (19 Open, 15 Resolved)
-- Manual: 34 (19 Open, 15 Resolved)
-- Highest Priority Open: M003 - Plan 文件无版本号 (Medium)
+- Highest Priority Open: 003 - Plan 文件无版本号 (Medium)
 
 ---
 
 ## Changelog
 
+### 2026-02-21: 格式更新
+- 更新 KNOWN_ISSUES.md 格式以符合新版 known-issues-tracker 技能规范
+- ID 格式从 M### 改为 ###
+- 移除 Type 字段（不再区分 Manual/Auto-Tracked）
+
 ### 2026-02-20: v0.3.3 流式显示修复
-- Resolved M030: Thinking 内容不显示
-- Resolved M031: 非流式输出
-- Resolved M032: Banner 消失
-- Resolved M033: /help 输出不可见
-- Added 28 test cases (thinking and tool functionality tests)
+- Resolved 031: Thinking 内容不显示
+- Resolved 032: 非流式输出
+- Resolved 033: Banner 消失
+- Resolved 034: /help 输出不可见
+- Added 28 test cases
 
 ### 2026-02-20: Phase 6-8 完成与会话管理修复
-- Resolved M028: --continue 会话不恢复
-- Resolved M029: gitRoot 未设置
+- Resolved 029: --continue 会话不恢复
+- Resolved 030: gitRoot 未设置
 
 ### 2026-02-20: v0.3.2 高优先级问题修复
-- Resolved M025: Resize handler 空引用
-- Resolved M026: 异步上下文直接退出
-- Resolved M027: 超宽终端分隔符
-- Added 21 test cases
+- Resolved 026: Resize handler 空引用
+- Resolved 027: 异步上下文直接退出
+- Resolved 028: 超宽终端分隔符
 
 ### 2026-02-20: 按键问题修复
-- Resolved M022: Delete 键无效
-- Resolved M023: Backspace 键无效
-- Resolved M024: Shift+Enter 换行无效
+- Resolved 023: Delete 键无效
+- Resolved 024: Backspace 键无效
+- Resolved 025: Shift+Enter 换行无效
 
 ### 2026-02-19: 代码审查与重构
-- Resolved M019: 资源泄漏 - Readline 接口
-- Resolved M020: 全局可变状态
-- Resolved M021: 函数过长
-- Added open issues M001-M018 from code review
+- Resolved 020: 资源泄漏 - Readline 接口
+- Resolved 021: 全局可变状态
+- Resolved 022: 函数过长
+- Added open issues 001-018 from code review
