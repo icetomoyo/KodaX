@@ -143,6 +143,103 @@ registerTool('my-tool', async (input, context) => 'result');
 
 ---
 
+---
+
+## 规划中特性
+
+### 架构重构与模块解耦 (v0.4.0)
+
+**目标**: 将 KodaX 重构为三个高度解耦、可独立使用的模块
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      KodaX Architecture                      │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐     │
+│  │  @kodax/core │ ← │  @kodax/cli  │ ← │  @kodax/repl │     │
+│  │              │   │              │   │              │     │
+│  │  核心引擎     │   │  CLI 入口    │   │  交互式终端   │     │
+│  │  Provider    │   │  命令解析    │   │  Ink UI      │     │
+│  │  Agent       │   │  参数处理    │   │  会话管理    │     │
+│  │  Tools       │   │  输出格式    │   │  历史记录    │     │
+│  └──────────────┘   └──────────────┘   └──────────────┘     │
+│         ↑                  ↑                  ↑              │
+│         └──────────────────┴──────────────────┘              │
+│                          标准化接口                           │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### 模块职责
+
+| 模块 | 职责 | 设计原则 |
+|------|------|----------|
+| `@kodax/core` | 核心引擎、Provider、Agent、Tools | 极简、智能、无副作用 |
+| `@kodax/cli` | 命令解析、参数处理、输出格式 | 极简、智能、薄层 |
+| `@kodax/repl` | Ink UI、会话管理、命令系统 | 智能、清晰、高可靠 |
+
+#### 标准化接口
+
+```typescript
+// 统一事件接口
+interface KodaXEvent {
+  type: 'thinking' | 'text' | 'tool_use' | 'tool_result' | 'error' | 'done';
+  timestamp: number;
+  data: unknown;
+}
+
+// 统一上下文接口
+interface KodaXContext {
+  engine: KodaXEngine;
+  config: KodaXConfig;
+  state: { provider: string; model: string; mode: 'chat' | 'plan' | 'auto' };
+  emit(event: KodaXEvent): void;
+  on(type: string, handler: EventHandler): Unsubscribe;
+}
+
+// 统一结果接口
+interface KodaXResult {
+  success: boolean;
+  text?: string;
+  thinking?: string;
+  toolCalls?: ToolCall[];
+  error?: KodaXError;
+  metadata: { provider: string; model: string; duration: number };
+}
+```
+
+#### 重构步骤
+
+| Phase | 任务 | 预计时间 |
+|-------|------|----------|
+| 1 | 代码审查与分析，生成依赖关系图 | 1-2 天 |
+| 2 | Core 模块重构，定义 KodaXEngine 主类 | 3-5 天 |
+| 3 | CLI 模块重构，实现命令注册系统 | 2-3 天 |
+| 4 | REPL 模块重构，UI 组件独立化 | 3-5 天 |
+| 5 | 集成测试与文档，发布 npm 包 | 2-3 天 |
+
+#### 成功标准
+
+```typescript
+// @kodax/core - 必须能独立使用，可在浏览器运行
+import { KodaXEngine } from '@kodax/core';
+const engine = new KodaXEngine({...});
+const result = await engine.execute({ messages: [...] });
+
+// @kodax/cli - 必须能程序化调用，可自定义命令
+import { createCLI } from '@kodax/cli';
+const cli = createCLI({...});
+cli.run(['node', 'kodax', 'run', 'Hello']);
+
+// @kodax/repl - 必须能嵌入其他应用，可自定义 UI
+import { createREPL } from '@kodax/repl';
+const repl = createREPL({...});
+await repl.start();
+```
+
+---
+
 ## 相关文档
 
 - [DESIGN.md](../DESIGN.md) - 架构设计详解
