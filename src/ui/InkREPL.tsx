@@ -487,8 +487,11 @@ const InkREPL: React.FC<InkREPLProps> = ({
   const model =
     getProviderModel(currentConfig.provider) ?? currentConfig.provider;
 
+  // Safe terminal height (fallback to 24 if not available)
+  const terminalHeight = stdout?.rows ?? process.stdout?.rows ?? 24;
+
   return (
-    <Box flexDirection="column" height={stdout.rows}>
+    <Box flexDirection="column" height={terminalHeight}>
       {/* Compact Startup Banner */}
       {showBanner && (
         <Box flexDirection="column">
