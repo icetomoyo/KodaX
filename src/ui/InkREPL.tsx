@@ -492,22 +492,45 @@ const InkREPL: React.FC<InkREPLProps> = ({
 
   return (
     <Box flexDirection="column" height={terminalHeight}>
-      {/* Compact Startup Banner */}
+      {/* Startup Banner with ASCII Art Logo */}
       {showBanner && (
         <Box flexDirection="column">
+          {/* ASCII Art Logo */}
+          <Text color="cyan">
+{`  ██╗  ██╗  ██████╗  ██████╗    █████╗   ██╗  ██╗
+  ██║ ██╔╝ ██╔═══██╗ ██╔══██╗  ██╔══██╗  ╚██╗██╔╝
+  █████╔╝  ██║   ██║ ██║  ██║  ███████║   ╚███╔╝
+  ██╔═██╗  ██║   ██║ ██║  ██║  ██╔══██║   ██╔██╗
+  ██║  ██╗ ╚██████╔╝ ██████╔╝  ██║  ██║  ██╔╝ ██╗
+  ╚═╝  ╚═╝  ╚═════╝  ╚═════╝   ╚═╝  ╚═╝  ╚═╝  ╚═╝`}
+          </Text>
+
+          {/* Version and Provider Info */}
           <Box>
-            <Text color="cyan" bold>[</Text>
-            <Text bold> KodaX </Text>
-            <Text dimColor>v{KODAX_VERSION}</Text>
-            <Text color="cyan" bold>]</Text>
-            <Text dimColor> | </Text>
+            <Text dimColor>{"  "}</Text>
+            <Text bold color="white">v{KODAX_VERSION}</Text>
+            <Text dimColor>{" | "}</Text>
             <Text color="green">{currentConfig.provider}/{model}</Text>
-            <Text dimColor> | </Text>
-            <Text dimColor>{currentConfig.mode}</Text>
-            {currentConfig.thinking && <Text color="yellow"> +think</Text>}
-            {currentConfig.auto && <Text color="magenta"> +auto</Text>}
+            <Text dimColor>{" | "}</Text>
+            <Text color="cyan">{currentConfig.mode}</Text>
+            {currentConfig.thinking && <Text color="yellow">{" +think"}</Text>}
+            {currentConfig.auto && <Text color="magenta">{" +auto"}</Text>}
+            {planMode && <Text color="blue">{" +plan"}</Text>}
           </Box>
-          <Text dimColor>  {options.context?.gitRoot || process.cwd()}</Text>
+
+          {/* Divider */}
+          <Text dimColor>{"  "}{`${"─".repeat(Math.min(60, (stdout?.columns ?? 80) - 4))}`}</Text>
+
+          {/* Session Info */}
+          <Box>
+            <Text dimColor>{"  Session: "}</Text>
+            <Text color="cyan">{context.sessionId.slice(0, 8)}</Text>
+            <Text dimColor>{" | Working: "}</Text>
+            <Text dimColor>{options.context?.gitRoot || process.cwd()}</Text>
+          </Box>
+
+          {/* Divider */}
+          <Text dimColor>{"  "}{`${"─".repeat(Math.min(60, (stdout?.columns ?? 80) - 4))}`}</Text>
         </Box>
       )}
 
