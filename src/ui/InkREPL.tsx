@@ -231,6 +231,11 @@ const InkREPL: React.FC<InkREPLProps> = ({
     async (input: string) => {
       if (!input.trim() || !isRunning) return;
 
+      // Hide banner on first input (prevents banner from appearing after command output)
+      if (showBanner) {
+        setShowBanner(false);
+      }
+
       // Add user message to UI
       const userMessage: Message = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
@@ -468,6 +473,7 @@ const InkREPL: React.FC<InkREPLProps> = ({
     },
     [
       isRunning,
+      showBanner,
       context,
       currentConfig,
       planMode,
