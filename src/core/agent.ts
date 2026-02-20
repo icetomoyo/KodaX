@@ -103,7 +103,7 @@ export async function runKodaX(
       // 流式调用 Provider
       const result = await provider.stream(compacted, KODAX_TOOLS, systemPrompt, options.thinking, {
         onTextDelta: (text) => events.onTextDelta?.(text),
-        onThinkingDelta: (text) => events.onThinkingDelta?.(text, 0),
+        onThinkingDelta: (text) => events.onThinkingDelta?.(text),
         onThinkingEnd: (thinking) => events.onThinkingEnd?.(thinking),
         onToolInputDelta: (name, json) => events.onToolInputDelta?.(name, json),
       });

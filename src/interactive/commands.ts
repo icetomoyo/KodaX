@@ -405,7 +405,7 @@ export const BUILTIN_COMMANDS: Command[] = [
   },
   {
     name: 'thinking',
-    aliases: ['t'],
+    aliases: ['think', 't'],
     description: 'Show or toggle thinking mode',
     usage: '/thinking [on|off]',
     handler: async (args, _context, callbacks, currentConfig) => {

@@ -14,11 +14,25 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   model,
   tokenUsage,
   currentTool,
+  thinking,
+  auto,
 }) => {
   const theme = useMemo(() => getTheme("dark"), []);
 
-  // 简短会话 ID
-  const shortSessionId = sessionId.slice(0, 8);
+  // 简短会话 ID - 显示格式为 YYYYMMDD_HHMM (13 字符)
+  // 如果 ID 格式是 YYYYMMDD_HHMMSS，我们取前 13 个字符
+  // 如果 ID 较短，显示全部
+  const shortSessionId = sessionId.length > 13
+    ? sessionId.slice(0, 13)
+    : sessionId;
+
+  // 构建模式指示器
+  const modeIndicators: string[] = [];
+  if (thinking) modeIndicators.push("think");
+  if (auto) modeIndicators.push("auto");
+  const modeStr = modeIndicators.length > 0
+    ? `${mode.toUpperCase()}+${modeIndicators.join(",")}`
+    : mode.toUpperCase();
 
   return (
     <Box
@@ -33,7 +47,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
           KodaX
         </Text>
         <Text dimColor> | </Text>
-        <Text color={theme.colors.accent}>{mode.toUpperCase()}</Text>
+        <Text color={theme.colors.accent}>{modeStr}</Text>
         <Text dimColor> | </Text>
         <Text dimColor>{shortSessionId}</Text>
       </Box>

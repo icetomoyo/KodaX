@@ -5,9 +5,21 @@
  * 支持多行文本编辑，光标导航，Unicode 安全操作
  */
 
+import {
+  getCodePointLength,
+  getVisualWidth,
+  splitByCodePoints,
+  isWideChar,
+} from "./textUtils.js";
+
 export interface CursorPosition {
   row: number; // 逻辑行号 (0-based)
   col: number; // 列位置 (code point index)
+}
+
+export interface VisualCursor {
+  row: number; // 屏幕行号
+  col: number; // 视觉列位置（考虑宽字符）
 }
 
 export interface TextBufferOptions {
@@ -15,24 +27,10 @@ export interface TextBufferOptions {
 }
 
 /**
- * 将字符串拆分为 Unicode code points
- */
-function toCodePoints(str: string): string[] {
-  return [...str];
-}
-
-/**
- * 获取字符串的 code point 长度
- */
-function codePointLength(str: string): number {
-  return [...str].length;
-}
-
-/**
  * 根据 code point 索引截取字符串
  */
 function sliceByCodePoints(str: string, start: number, end?: number): string {
-  const points = toCodePoints(str);
+  const points = splitByCodePoints(str);
   return points.slice(start, end).join("");
 }
 
@@ -75,6 +73,63 @@ export class TextBuffer {
 
   get isEmpty(): boolean {
     return this._text.length === 0;
+  }
+
+  // === 视觉光标 ===
+
+  /**
+   * 获取当前行的视觉宽度
+   */
+  get currentLineVisualWidth(): number {
+    return getVisualWidth(this.currentLine);
+  }
+
+  /**
+   * 获取光标的视觉位置（考虑宽字符）
+   */
+  get visualCursor(): VisualCursor {
+    const line = this._lines[this._cursor.row] ?? "";
+    const textBeforeCursor = sliceByCodePoints(line, 0, this._cursor.col);
+    return {
+      row: this._cursor.row,
+      col: getVisualWidth(textBeforeCursor),
+    };
+  }
+
+  /**
+   * 获取当前行在光标位置的字符视觉宽度
+   */
+  getCharWidthAtCursor(): number {
+    const line = this._lines[this._cursor.row] ?? "";
+    const chars = splitByCodePoints(line);
+    const char = chars[this._cursor.col];
+    return char ? (isWideChar(char) ? 2 : 1) : 0;
+  }
+
+  /**
+   * 将视觉列位置转换为逻辑列位置
+   */
+  visualColToLogicalCol(visualCol: number): number {
+    const line = this._lines[this._cursor.row] ?? "";
+    const chars = splitByCodePoints(line);
+
+    let currentVisualWidth = 0;
+    for (let i = 0; i < chars.length; i++) {
+      const charWidth = isWideChar(chars[i]!) ? 2 : 1;
+      if (currentVisualWidth + charWidth > visualCol) {
+        return i;
+      }
+      currentVisualWidth += charWidth;
+    }
+    return chars.length;
+  }
+
+  /**
+   * 移动到视觉列位置
+   */
+  moveToVisualCol(visualCol: number): void {
+    this._cursor.col = this.visualColToLogicalCol(visualCol);
+    this._rememberedCol = this._cursor.col;
   }
 
   // === 文本操作 ===
@@ -123,7 +178,7 @@ export class TextBuffer {
     const after = sliceByCodePoints(line, this._cursor.col);
 
     this._lines[this._cursor.row] = before + text + after;
-    this._cursor.col += codePointLength(text);
+    this._cursor.col += getCodePointLength(text);
     this._rememberedCol = this._cursor.col;
     this._updateText();
   }
@@ -172,7 +227,7 @@ export class TextBuffer {
       const currentLine = this._lines[this._cursor.row];
       const prevLine = this._lines[this._cursor.row - 1];
 
-      this._cursor.col = codePointLength(prevLine);
+      this._cursor.col = getCodePointLength(prevLine);
       this._lines[this._cursor.row - 1] = prevLine + currentLine;
       this._lines.splice(this._cursor.row, 1);
       this._cursor.row--;
@@ -186,7 +241,7 @@ export class TextBuffer {
    */
   delete(): void {
     const line = this._lines[this._cursor.row];
-    if (this._cursor.col < codePointLength(line)) {
+    if (this._cursor.col < getCodePointLength(line)) {
       // 删除当前行光标后的字符
       this._saveHistory();
       const before = sliceByCodePoints(line, 0, this._cursor.col);
@@ -254,14 +309,14 @@ export class TextBuffer {
     } else if (this._cursor.row > 0) {
       // 移动到上一行末尾
       this._cursor.row--;
-      this._cursor.col = codePointLength(this._lines[this._cursor.row]);
+      this._cursor.col = getCodePointLength(this._lines[this._cursor.row]);
       this._rememberedCol = this._cursor.col;
     }
   }
 
   private _moveRight(): void {
     const line = this._lines[this._cursor.row];
-    if (this._cursor.col < codePointLength(line)) {
+    if (this._cursor.col < getCodePointLength(line)) {
       this._cursor.col++;
       this._rememberedCol = this._cursor.col;
     } else if (this._cursor.row < this._lines.length - 1) {
@@ -278,7 +333,7 @@ export class TextBuffer {
   }
 
   private _moveEnd(): void {
-    this._cursor.col = codePointLength(this._lines[this._cursor.row]);
+    this._cursor.col = getCodePointLength(this._lines[this._cursor.row]);
     this._rememberedCol = this._cursor.col;
   }
 
@@ -287,7 +342,7 @@ export class TextBuffer {
    */
   private _clampColumn(): void {
     const line = this._lines[this._cursor.row];
-    const maxCol = codePointLength(line);
+    const maxCol = getCodePointLength(line);
     // 使用记住的列位置，但不超出当前行
     this._cursor.col = Math.min(this._rememberedCol, maxCol);
   }
@@ -299,7 +354,7 @@ export class TextBuffer {
     this._cursor.row = Math.max(0, Math.min(this._cursor.row, this._lines.length - 1));
     this._cursor.col = Math.max(
       0,
-      Math.min(this._cursor.col, codePointLength(this._lines[this._cursor.row]))
+      Math.min(this._cursor.col, getCodePointLength(this._lines[this._cursor.row]))
     );
     this._rememberedCol = this._cursor.col;
   }
@@ -311,7 +366,7 @@ export class TextBuffer {
    */
   killLineRight(): void {
     const line = this._lines[this._cursor.row];
-    if (this._cursor.col < codePointLength(line)) {
+    if (this._cursor.col < getCodePointLength(line)) {
       this._saveHistory();
       this._lines[this._cursor.row] = sliceByCodePoints(line, 0, this._cursor.col);
       this._updateText();
@@ -345,7 +400,7 @@ export class TextBuffer {
 
     // 找到词的开始位置
     let wordStart = this._cursor.col - 1;
-    const chars = toCodePoints(line);
+    const chars = splitByCodePoints(line);
 
     // 跳过空格
     while (wordStart > 0 && /\s/.test(chars[wordStart] ?? "")) {

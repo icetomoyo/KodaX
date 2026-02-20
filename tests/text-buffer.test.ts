@@ -433,4 +433,58 @@ describe("TextBuffer", () => {
       expect(buffer.text).toBe("Hello   ");
     });
   });
+
+  describe("视觉光标", () => {
+    it("应该计算 ASCII 的视觉宽度", () => {
+      buffer.insert("Hello");
+      expect(buffer.currentLineVisualWidth).toBe(5);
+    });
+
+    it("应该计算 CJK 的视觉宽度", () => {
+      buffer.insert("你好");
+      expect(buffer.currentLineVisualWidth).toBe(4); // 每个 CJK 字符宽度为 2
+    });
+
+    it("应该计算混合内容的视觉宽度", () => {
+      buffer.insert("Hi你好");
+      expect(buffer.currentLineVisualWidth).toBe(6); // 2*1 + 2*2 = 6
+    });
+
+    it("应该返回正确的视觉光标位置 - ASCII", () => {
+      buffer.insert("Hello");
+      buffer.move("home");
+      buffer.move("right");
+      buffer.move("right");
+      expect(buffer.visualCursor.col).toBe(2);
+    });
+
+    it("应该返回正确的视觉光标位置 - CJK", () => {
+      buffer.insert("你好世界");
+      buffer.move("home");
+      buffer.move("right"); // 移到 '好' 位置
+      expect(buffer.visualCursor.col).toBe(2); // '你' 宽度为 2
+    });
+
+    it("应该将视觉列转换为逻辑列", () => {
+      buffer.insert("你好好");
+      // 视觉宽度: 2 + 2 + 2 = 6
+      // 视觉列 3 应该对应逻辑列 1（'好' 的开始）
+      expect(buffer.visualColToLogicalCol(3)).toBe(1);
+      expect(buffer.visualColToLogicalCol(4)).toBe(2);
+    });
+
+    it("应该移动到视觉列位置", () => {
+      buffer.insert("你好好");
+      buffer.moveToVisualCol(3);
+      expect(buffer.cursor.col).toBe(1);
+    });
+
+    it("应该获取光标位置的字符宽度", () => {
+      buffer.insert("你A好");
+      buffer.move("home");
+      expect(buffer.getCharWidthAtCursor()).toBe(2); // '你' 是宽字符
+      buffer.move("right");
+      expect(buffer.getCharWidthAtCursor()).toBe(1); // 'A' 是窄字符
+    });
+  });
 });

@@ -15,6 +15,8 @@ export const darkTheme: Theme = {
     success: "#10B981", // Green
     warning: "#F59E0B", // Amber
     error: "#EF4444", // Red
+    info: "#3B82F6", // Blue
+    hint: "#6366F1", // Indigo
   },
   symbols: {
     prompt: ">",
@@ -36,6 +38,8 @@ export const minimalTheme: Theme = {
     success: "#00FF00",
     warning: "#FFFF00",
     error: "#FF0000",
+    info: "#0088FF", // Blue
+    hint: "#8800FF", // Purple
   },
   symbols: {
     prompt: "$",

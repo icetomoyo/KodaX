@@ -344,7 +344,7 @@ function createCliEvents(showSessionId = true): KodaXEvents {
       needNewline = true;  // 有文本输出，后续需要换行
     },
 
-    onThinkingDelta: (text: string, _charCount: number) => {
+    onThinkingDelta: (text: string) => {
       thinkingCharCount += text.length;
       if (!spinner) spinner = startWaitingDots();
       spinner.updateText(`Thinking... (${thinkingCharCount} chars)`);
@@ -507,9 +507,9 @@ function buildSessionOptions(cliOptions: CliOptions): { id?: string; resume?: bo
     return { storage };
   }
 
-  // 纯交互模式（无参数）: 自动恢复最近会话
+  // 纯交互模式（无参数）: 创建新会话（不自动恢复）
   if (!cliOptions.prompt?.length) {
-    return { autoResume: true, storage };
+    return { storage };
   }
 
   // 默认启用 session
@@ -532,7 +532,7 @@ const CLI_HELP_TOPICS: Record<string, () => void> = {
     console.log(chalk.dim('  -s, --session <op>   ') + 'Session operations: list, delete <id>, delete-all');
     console.log(chalk.dim('  --no-session         ') + 'Disable session persistence\n');
     console.log(chalk.bold('Examples:'));
-    console.log(chalk.dim('  kodax                      ') + '# Start/continue session (interactive)');
+    console.log(chalk.dim('  kodax                      ') + '# Start new session (interactive)');
     console.log(chalk.dim('  kodax -c                   ') + '# Continue recent conversation');
     console.log(chalk.dim('  kodax -r                   ') + '# Pick session to resume');
     console.log(chalk.dim('  kodax -r 20260219_143052   ') + '# Resume specific session');
@@ -713,6 +713,7 @@ async function main() {
     // 短参数支持
     .option('-p, --print <text>', 'Print mode: run single task and exit')
     .option('-c, --continue', 'Continue most recent conversation in current directory')
+    .option('-n, --new', 'Start a new session (do not auto-resume)')
     .option('-r, --resume <id>', 'Resume session by ID (no id = interactive picker)')
     .option('-m, --provider <name>', 'LLM provider')
     .option('-t, --thinking', 'Enable thinking mode')
@@ -1071,10 +1072,19 @@ New: {"features": [
   if (!userPrompt && !options.init && !options.print) {
     const kodaXOptions = createKodaXOptions(options, false);
     // 传递 FileSessionStorage 以支持会话持久化
+    // 注意：不传递 CLI events，Ink 模式有自己的状态显示组件
     try {
       await runInkInteractiveMode({
-        ...kodaXOptions,
+        provider: kodaXOptions.provider,
+        thinking: kodaXOptions.thinking,
+        auto: kodaXOptions.auto,
+        maxIter: kodaXOptions.maxIter,
+        parallel: kodaXOptions.parallel,
+        mode: kodaXOptions.mode,
+        confirmTools: kodaXOptions.confirmTools,
+        session: kodaXOptions.session,
         storage: new FileSessionStorage(),
+        // 不传递 events，避免与 Ink UI 冲突
       });
     } catch (error) {
       if (error instanceof KodaXTerminalError) {

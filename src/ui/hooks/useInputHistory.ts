@@ -21,6 +21,7 @@ export interface UseInputHistoryReturn {
   reset: () => void;
   getPrevious: () => string | null;
   getNext: () => string | null;
+  saveTempInput: (text: string) => void;
 }
 
 export function useInputHistory(options: UseInputHistoryOptions = {}): UseInputHistoryReturn {
@@ -136,5 +137,6 @@ export function useInputHistory(options: UseInputHistoryOptions = {}): UseInputH
     reset,
     getPrevious,
     getNext,
+    saveTempInput,
   };
 }

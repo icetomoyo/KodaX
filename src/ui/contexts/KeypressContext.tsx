@@ -13,7 +13,7 @@ import React, {
   useRef,
   type ReactNode,
 } from "react";
-import { useInput } from "ink";
+import { useInput, type Key } from "ink";
 import {
   KeypressHandlerPriority,
   type KeyInfo,
@@ -153,11 +153,25 @@ export function KeypressProvider({
 
   // 处理键盘输入
   const handleInput = useCallback(
-    (char: string, key: KeyInfo) => {
+    (char: string, key: Key) => {
       if (!enabled) return;
 
+      // Derive key name from Ink's Key properties
+      let keyName = char;
+      if (key.return) keyName = "return";
+      else if (key.escape) keyName = "escape";
+      else if (key.tab) keyName = "tab";
+      else if (key.backspace) keyName = "backspace";
+      else if (key.delete) keyName = "delete";
+      else if (key.upArrow) keyName = "up";
+      else if (key.downArrow) keyName = "down";
+      else if (key.leftArrow) keyName = "left";
+      else if (key.rightArrow) keyName = "right";
+      else if (key.pageUp) keyName = "pageup";
+      else if (key.pageDown) keyName = "pagedown";
+
       const event: KeyInfo = {
-        name: key.name || char,
+        name: keyName,
         sequence: char,
         ctrl: key.ctrl || false,
         meta: key.meta || false,

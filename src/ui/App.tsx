@@ -10,11 +10,26 @@ import { InputPrompt } from "./components/InputPrompt.js";
 import { MessageList } from "./components/MessageList.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { getTheme } from "./themes/index.js";
-import type { AppProps, Message, AppState } from "./types.js";
+import type { AppProps, Message, AppState, HistoryItem } from "./types.js";
 
 // 生成唯一 ID
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+// 将 Message 转换为 HistoryItem
+function messageToHistoryItem(msg: Message): HistoryItem {
+  const base = { id: msg.id, timestamp: msg.timestamp };
+  switch (msg.role) {
+    case "user":
+      return { ...base, type: "user", text: msg.content };
+    case "assistant":
+      return { ...base, type: "assistant", text: msg.content };
+    case "system":
+      return { ...base, type: "system", text: msg.content };
+    default:
+      return { ...base, type: "info", text: msg.content };
+  }
 }
 
 export const App: React.FC<AppProps> = ({ model, provider, onSubmit }) => {
@@ -119,7 +134,10 @@ export const App: React.FC<AppProps> = ({ model, provider, onSubmit }) => {
     <Box flexDirection="column">
       {/* 消息列表区域 */}
       <Box flexGrow={1} flexDirection="column" overflow="hidden">
-        <MessageList messages={state.messages} isLoading={state.isLoading} />
+        <MessageList
+          items={state.messages.map(messageToHistoryItem)}
+          isLoading={state.isLoading}
+        />
       </Box>
 
       {/* 输入区域 */}

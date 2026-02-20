@@ -99,7 +99,7 @@ export interface KodaXProviderStreamOptions {
 export interface KodaXEvents {
   // 流式输出
   onTextDelta?: (text: string) => void;
-  onThinkingDelta?: (text: string, charCount: number) => void;
+  onThinkingDelta?: (text: string) => void;  // UI 层自己计算 text.length
   onThinkingEnd?: (thinking: string) => void;
   onToolUseStart?: (tool: { name: string; id: string }) => void;
   onToolResult?: (result: { id: string; name: string; content: string }) => void;

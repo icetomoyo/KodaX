@@ -23,7 +23,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   const [isFirstLine, setIsFirstLine] = useState(true);
 
   // 输入历史
-  const { add: addHistory, navigateUp, navigateDown, reset: resetHistory } = useInputHistory();
+  const { add: addHistory, navigateUp, navigateDown, reset: resetHistory, saveTempInput } = useInputHistory();
 
   // 文本缓冲区
   const { text, cursor, lines, setText, clear, move, insert, backspace, newline, delete: deleteChar } = useTextBuffer({
@@ -82,6 +82,8 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       if (key.upArrow) {
         if (cursor.row === 0) {
           // 第一行 → 加载上一条历史
+          // 在导航前保存当前输入，以便向下导航回来时恢复
+          saveTempInput(text);
           const historyText = navigateUp();
           if (historyText !== null) {
             setText(historyText);
@@ -104,6 +106,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
           if (historyText !== null) {
             setText(historyText);
           } else {
+            // 回到保存的临时输入（如果有）
             clear();
           }
         } else {
@@ -122,29 +125,34 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         return;
       }
 
-      // 退格键 - 检查多种情况
+      // 退格键 - 检查多种情况（必须优先于 Delete 检查）
       // 1. Ink 检测到的 key.backspace
       // 2. \x7f (DEL, ASCII 127) - 某些终端的 Backspace 发送此字符
       // 3. \x08 (BS, ASCII 8) - 另一种 Backspace 字符
       // 4. Ctrl+H - 某些终端将其映射为 Backspace
-      // 注意：必须在 key.delete 检查之前，因为某些终端将 Backspace 识别为 Delete
-      if (key.backspace || char === "\x7f" || char === "\x08" || (key.ctrl && char === "h")) {
+      // 5. 某些终端发送空 char 但 key.backspace 不为 true
+      // 6. Windows 终端可能将 Backspace 误报为 key.delete=true 但 char 为空
+      const isBackspace = key.backspace ||
+                          char === "\x7f" ||
+                          char === "\x08" ||
+                          (key.ctrl && char === "h") ||
+                          // Windows 终端行为：char 为空且没有明确的 key 标识时，假设为 backspace
+                          (char === "" && (key.backspace === undefined && key.delete === undefined)) ||
+                          // Windows 终端行为：key.delete=true 但 char 为空，这通常是 Backspace
+                          (key.delete && char === "");
+      if (isBackspace) {
         backspace();
         return;
       }
 
       // Delete 键（删除光标后的字符）
-      // 注意：某些终端的 Backspace 被识别为 key.delete=true 且 char=""
-      // 真正的 Delete 键通常会有特定的字符序列
-      // 所以当 key.delete=true 且 char 为空时，应该当作 Backspace 处理
-      if (key.delete) {
-        if (!char || char === "") {
-          // Backspace 被错误识别为 Delete，删除光标前的字符
-          backspace();
-        } else {
-          // 真正的 Delete 键，删除光标后的字符
-          deleteChar();
-        }
+      // Delete 键通常发送 \x1b[3~ 序列，Ink 会将其识别为 key.delete=true
+      // 注意：
+      // 1. Backspace 已经在上面处理过了，包括 key.delete + char="" 的情况
+      // 2. 只有当 key.delete=true 且 char 不是 \x7f 且 char 不为空时，才认为是真正的 Delete
+      // 3. 真正的 Delete 键发送的是 \x1b[3~，不会是 \x7f 或空字符串
+      if (key.delete && char !== "\x7f" && char !== "") {
+        deleteChar();
         return;
       }
 

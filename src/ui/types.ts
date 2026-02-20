@@ -57,6 +57,21 @@ export interface Completer {
   getCompletions(input: string, cursorPos: number): Promise<Completion[]>;
 }
 
+// === 建议显示 ===
+
+/**
+ * 自动补全建议项
+ * 用于 SuggestionsDisplay 组件
+ */
+export interface Suggestion {
+  id: string;
+  text: string; // 建议文本
+  displayText?: string; // 显示文本（如果与 text 不同）
+  description?: string; // 描述
+  type?: "command" | "file" | "history" | "argument" | "snippet"; // 类型
+  icon?: string; // 可选图标
+}
+
 // === 主题 ===
 
 export interface ThemeColors {
@@ -68,6 +83,8 @@ export interface ThemeColors {
   success: string; // 成功状态
   warning: string; // 警告状态
   error: string; // 错误状态
+  info: string; // 信息状态
+  hint: string; // 提示状态
 }
 
 export interface ThemeSymbols {
@@ -105,9 +122,14 @@ export interface StatusBarProps {
     total: number;
   };
   currentTool?: string;
+  thinking?: boolean;
+  auto?: boolean;
 }
 
-export interface MessageListProps {
+/**
+ * @deprecated Use MessageListProps from components/MessageList.js instead
+ */
+export interface LegacyMessageListProps {
   messages: Message[];
   isLoading?: boolean;
 }
@@ -298,6 +320,20 @@ export type HistoryItem =
   | HistoryItemInfo
   | HistoryItemHint;
 
+/**
+ * 可创建的历史项类型（带 text 属性）
+ * 用于 addHistoryItem 等函数的参数类型
+ */
+export type CreatableHistoryItem =
+  | Omit<HistoryItemUser, "id" | "timestamp">
+  | Omit<HistoryItemAssistant, "id" | "timestamp">
+  | Omit<HistoryItemSystem, "id" | "timestamp">
+  | Omit<HistoryItemThinking, "id" | "timestamp">
+  | Omit<HistoryItemError, "id" | "timestamp">
+  | Omit<HistoryItemInfo, "id" | "timestamp">
+  | Omit<HistoryItemHint, "id" | "timestamp">
+  | Omit<HistoryItemToolGroup, "id" | "timestamp">;
+
 // === UI 状态 ===
 
 /**
@@ -349,7 +385,7 @@ export interface UIActions {
   clearResponse: () => void;
 
   // 历史操作
-  addHistoryItem: (item: Omit<HistoryItem, "id" | "timestamp">) => void;
+  addHistoryItem: (item: CreatableHistoryItem) => void;
   updateHistoryItem: (id: string, updates: Partial<HistoryItem>) => void;
   clearHistory: () => void;
 

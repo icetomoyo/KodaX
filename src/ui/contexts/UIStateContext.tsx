@@ -17,6 +17,7 @@ import {
   type UIState,
   type UIActions,
   type HistoryItem,
+  type CreatableHistoryItem,
   type ToolCall,
   StreamingState,
   DEFAULT_UI_STATE,
@@ -56,7 +57,7 @@ export function generateId(): string {
  * 创建带自动生成 ID 和时间戳的历史项
  */
 export function createHistoryItem(
-  item: Omit<HistoryItem, "id" | "timestamp">
+  item: CreatableHistoryItem
 ): HistoryItem {
   return {
     ...item,
@@ -99,7 +100,7 @@ function uiReducer(state: UIState, action: UIAction): UIState {
         ...state,
         history: state.history.map((item) =>
           item.id === action.payload.id
-            ? { ...item, ...action.payload.updates }
+            ? { ...item, ...action.payload.updates } as HistoryItem
             : item
         ),
       };
@@ -190,7 +191,7 @@ export function UIStateProvider({
   }, []);
 
   const addHistoryItem = useCallback(
-    (item: Omit<HistoryItem, "id" | "timestamp">) => {
+    (item: CreatableHistoryItem) => {
       const fullItem = createHistoryItem(item);
       dispatch({ type: "ADD_HISTORY_ITEM", payload: fullItem });
     },
@@ -336,6 +337,14 @@ export function useUI(): { state: UIState; actions: UIActions } {
   const state = useUIState();
   const actions = useUIActions();
   return { state, actions };
+}
+
+/**
+ * 获取当前主题
+ */
+export function useTheme(): import("../types.js").Theme {
+  const { getTheme } = require("../themes/index.js");
+  return getTheme();
 }
 
 // === Exports ===

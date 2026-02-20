@@ -200,7 +200,7 @@ export interface KodaXProviderConfig {
 export interface KodaXEvents {
   // 流式输出
   onTextDelta?: (text: string) => void;
-  onThinkingDelta?: (text: string, charCount: number) => void;
+  onThinkingDelta?: (text: string) => void;  // UI 层自己计算 text.length
   onThinkingEnd?: (thinking: string) => void;  // thinking block 结束时调用
   onToolUseStart?: (tool: { name: string; id: string }) => void;
   onToolResult?: (result: { id: string; name: string; content: string }) => void;
@@ -1592,7 +1592,7 @@ export async function runKodaX(
       // 流式调用 Provider
       const result = await provider.stream(compacted, KODAX_TOOLS, systemPrompt, options.thinking, {
         onTextDelta: (text) => events.onTextDelta?.(text),
-        onThinkingDelta: (text) => events.onThinkingDelta?.(text, 0),
+        onThinkingDelta: (text) => events.onThinkingDelta?.(text),
         onThinkingEnd: (thinking) => events.onThinkingEnd?.(thinking),
         onToolInputDelta: (name, json) => events.onToolInputDelta?.(name, json),
       });
