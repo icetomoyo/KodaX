@@ -3,11 +3,28 @@
  *
  * Bridges Ink UI components with existing KodaX command processing logic.
  * Replaces the Node.js readline-based input with Ink's React components.
+ *
+ * Architecture based on Gemini CLI:
+ * - Uses UIStateContext for global state
+ * - Uses KeypressContext for priority-based keyboard handling
+ * - Uses StreamingContext for streaming response management
  */
 
-import React, { useState, useCallback, useRef } from "react";
-import { render, Box, useApp } from "ink";
+import React, { useState, useCallback, useRef, useEffect } from "react";
+import { render, Box, useApp, Text } from "ink";
 import { InputPrompt } from "./components/InputPrompt.js";
+import { MessageList } from "./components/MessageList.js";
+import { ThinkingIndicator } from "./components/LoadingIndicator.js";
+import { StatusBar } from "./components/StatusBar.js";
+import {
+  UIStateProvider,
+  useUIState,
+  useUIActions,
+  StreamingProvider,
+  useStreamingState,
+  useStreamingActions,
+} from "./contexts/index.js";
+import { StreamingState, type HistoryItem } from "./types.js";
 import {
   KodaXOptions,
   KodaXMessage,
@@ -30,11 +47,36 @@ import {
 import { getProviderModel } from "../cli/utils.js";
 import { KODAX_VERSION } from "../cli/utils.js";
 import { runWithPlanMode } from "../cli/plan-mode.js";
+import { getTheme } from "./themes/index.js";
 import chalk from "chalk";
 import * as childProcess from "child_process";
 import * as util from "util";
 
 const execAsync = util.promisify(childProcess.exec);
+
+// === Helper Functions ===
+
+/**
+ * Extract text content from a message (handles both string and array content)
+ */
+function extractTextContent(content: string | unknown[]): string {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (Array.isArray(content)) {
+    // Extract text from text blocks
+    const textParts: string[] = [];
+    for (const block of content) {
+      if (block && typeof block === "object" && "type" in block && block.type === "text" && "text" in block) {
+        textParts.push(String(block.text));
+      }
+    }
+    if (textParts.length > 0) {
+      return textParts.join("\n");
+    }
+  }
+  return "[Complex content]";
+}
 
 // Extended session storage interface
 interface SessionStorage {
@@ -105,10 +147,97 @@ interface InkREPLProps {
   onExit: () => void;
 }
 
+// Banner Props
+interface BannerProps {
+  config: CurrentConfig;
+  sessionId: string;
+  workingDir: string;
+}
+
 /**
- * InkREPL Component - Main REPL interface using Ink
+ * Banner component - displayed inside Ink UI so it's part of the alternate buffer
  */
-const InkREPL: React.FC<InkREPLProps> = ({
+const Banner: React.FC<BannerProps> = ({ config, sessionId, workingDir }) => {
+  const theme = getTheme("dark");
+  const model = getProviderModel(config.provider) ?? config.provider;
+  const terminalWidth = process.stdout.columns ?? 80;
+  const dividerWidth = Math.min(60, terminalWidth - 4);
+
+  const logoLines = [
+    "  ██╗  ██╗  ██████╗  ██████╗    █████╗   ██╗  ██╗",
+    "  ██║ ██╔╝ ██╔═══██╗ ██╔══██╗  ██╔══██╗  ╚██╗██╔╝",
+    "  █████╔╝  ██║   ██║ ██║  ██║  ███████║   ╚███╔╝ ",
+    "  ██╔═██╗  ██║   ██║ ██║  ██║  ██╔══██║   ██╔██╗ ",
+    "  ██║  ██╗ ╚██████╔╝ ██████╔╝  ██║  ██║  ██╔╝ ██╗",
+    "  ╚═╝  ╚═╝  ╚═════╝  ╚═════╝   ╚═╝  ╚═╝  ╚═╝  ╚═╝",
+  ];
+
+  return (
+    <Box flexDirection="column" marginBottom={1}>
+      {/* Logo */}
+      {logoLines.map((line, i) => (
+        <Text key={i} color={theme.colors.primary}>
+          {line}
+        </Text>
+      ))}
+
+      {/* Version and Provider Info */}
+      <Box>
+        <Text bold color={theme.colors.text}>
+          {"  v"}
+          {KODAX_VERSION}
+        </Text>
+        <Text dimColor>
+          {" | "}
+        </Text>
+        <Text color={theme.colors.success}>
+          {config.provider}/{model}
+        </Text>
+        <Text dimColor>
+          {" | "}
+        </Text>
+        <Text color={theme.colors.accent}>
+          {config.mode}
+        </Text>
+        {config.thinking && (
+          <Text color={theme.colors.warning}>
+            {" +think"}
+          </Text>
+        )}
+        {config.auto && (
+          <Text color="magenta">
+            {" +auto"}
+          </Text>
+        )}
+      </Box>
+
+      {/* Divider */}
+      <Text dimColor>
+        {"  "}
+        {"-".repeat(dividerWidth)}
+      </Text>
+
+      {/* Session Info */}
+      <Box>
+        <Text dimColor>{"  Session: "}</Text>
+        <Text color={theme.colors.accent}>{sessionId}</Text>
+        <Text dimColor>{" | Working: "}</Text>
+        <Text dimColor>{workingDir}</Text>
+      </Box>
+
+      {/* Divider */}
+      <Text dimColor>
+        {"  "}
+        {"-".repeat(dividerWidth)}
+      </Text>
+    </Box>
+  );
+};
+
+/**
+ * Inner REPL component that uses contexts
+ */
+const InkREPLInner: React.FC<InkREPLProps> = ({
   options,
   config,
   context,
@@ -116,12 +245,28 @@ const InkREPL: React.FC<InkREPLProps> = ({
   onExit,
 }) => {
   const { exit } = useApp();
+  const { history } = useUIState();
+  const { addHistoryItem, clearHistory: clearUIHistory } = useUIActions();
+  const streamingState = useStreamingState();
+  const {
+    startStreaming,
+    stopStreaming,
+    startThinking,
+    appendThinkingChars,
+    appendThinkingContent,
+    stopThinking,
+    setCurrentTool,
+    appendToolInputChars,
+    clearResponse,
+    appendResponse,
+  } = useStreamingActions();
 
   // State
   const [isLoading, setIsLoading] = useState(false);
   const [currentConfig, setCurrentConfig] = useState<CurrentConfig>(config);
   const [planMode, setPlanMode] = useState(false);
   const [isRunning, setIsRunning] = useState(true);
+  const [showBanner, setShowBanner] = useState(true); // Show banner in Ink UI
 
   // Refs for callbacks
   const currentOptionsRef = useRef<InkREPLOptions>({
@@ -132,6 +277,28 @@ const InkREPL: React.FC<InkREPLProps> = ({
       id: context.sessionId,
     },
   });
+
+  // Sync history from context to UI on mount
+  useEffect(() => {
+    if (context.messages.length > 0) {
+      // Convert legacy messages to history items
+      for (const msg of context.messages) {
+        const content = extractTextContent(msg.content);
+        if (msg.role === "user") {
+          addHistoryItem({
+            type: "user",
+            text: content,
+          });
+        } else if (msg.role === "assistant") {
+          addHistoryItem({
+            type: "assistant",
+            text: content,
+          });
+        }
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only run on mount
 
   // Process special syntax (shell commands, file references)
   const processSpecialSyntax = async (input: string): Promise<string> => {
@@ -191,11 +358,43 @@ const InkREPL: React.FC<InkREPLProps> = ({
     return "Untitled Session";
   };
 
+  // Create KodaXEvents for streaming updates
+  const createStreamingEvents = useCallback((): import("../core/types.js").KodaXEvents => ({
+    onThinkingDelta: (text: string) => {
+      // UI 层存储 thinking 内容用于显示
+      appendThinkingContent(text);
+    },
+    onThinkingEnd: (_thinking: string) => {
+      stopThinking();
+    },
+    onTextDelta: (text: string) => {
+      stopThinking();
+      appendResponse(text);
+    },
+    onToolUseStart: (tool: { name: string; id: string }) => {
+      setCurrentTool(tool.name);
+    },
+    onToolInputDelta: (_toolName: string, partialJson: string) => {
+      appendToolInputChars(partialJson.length);
+    },
+    onToolResult: () => {
+      setCurrentTool(undefined);
+    },
+    onStreamEnd: () => {
+      stopThinking();
+      setCurrentTool(undefined);
+    },
+    onError: (error: Error) => {
+      console.log(chalk.red(`[Stream Error] ${error.message}`));
+    },
+  }), [appendThinkingContent, stopThinking, appendResponse, setCurrentTool, appendToolInputChars]);
+
   // Run agent round
   const runAgentRound = async (
     opts: KodaXOptions,
     prompt: string
   ): Promise<KodaXResult> => {
+    const events = createStreamingEvents();
     return runKodaX(
       {
         ...opts,
@@ -203,6 +402,7 @@ const InkREPL: React.FC<InkREPLProps> = ({
           ...opts.session,
           initialMessages: context.messages,
         },
+        events,
       },
       prompt
     );
@@ -213,11 +413,22 @@ const InkREPL: React.FC<InkREPLProps> = ({
     async (input: string) => {
       if (!input.trim() || !isRunning) return;
 
-      // Print user input to console (not in Ink component to avoid re-render issues)
+      // Banner remains visible - it will scroll up naturally as messages are added
+      // (Removed showBanner toggle to keep layout stable)
+
+      // Add user message to UI history
+      addHistoryItem({
+        type: "user",
+        text: input,
+      });
+
+      // Also print to console for non-Ink output
       console.log(chalk.cyan(`You: ${input}`));
       console.log();
 
       setIsLoading(true);
+      clearResponse();
+      startStreaming();
 
       touchContext(context);
 
@@ -269,6 +480,7 @@ const InkREPL: React.FC<InkREPLProps> = ({
           },
           clearHistory: () => {
             context.messages = [];
+            clearUIHistory();
             console.log(chalk.dim("[Conversation cleared]"));
           },
           printHistory: () => {
@@ -281,8 +493,7 @@ const InkREPL: React.FC<InkREPLProps> = ({
             for (let i = 0; i < recent.length; i++) {
               const m = recent[i]!;
               const role = chalk.cyan(m.role.padEnd(10));
-              const content =
-                typeof m.content === "string" ? m.content : "[Complex content]";
+              const content = extractTextContent(m.content);
               const preview = content.slice(0, 60).replace(/\n/g, " ");
               const ellipsis = content.length > 60 ? "..." : "";
               console.log(
@@ -326,6 +537,7 @@ const InkREPL: React.FC<InkREPLProps> = ({
 
         await executeCommand(parsed, context, callbacks, currentConfig);
         setIsLoading(false);
+        stopStreaming();
         return;
       }
 
@@ -339,6 +551,7 @@ const InkREPL: React.FC<InkREPLProps> = ({
           processed.startsWith("[Shell:"))
       ) {
         setIsLoading(false);
+        stopStreaming();
         return;
       }
 
@@ -361,17 +574,35 @@ const InkREPL: React.FC<InkREPLProps> = ({
         } catch (err) {
           const error = err instanceof Error ? err : new Error(String(err));
           console.log(chalk.red(`[Plan Mode Error] ${error.message}`));
+          addHistoryItem({
+            type: "error",
+            text: error.message,
+          });
         }
         setIsLoading(false);
+        stopStreaming();
         return;
       }
 
       // Run agent
+      // Start thinking indicator - will be updated by onThinkingDelta with char count
+      startThinking();
+
       try {
         const result = await runAgentRound(currentOptionsRef.current, processed);
 
         // Update context
         context.messages = result.messages;
+
+        // Add assistant response to UI history
+        const lastAssistant = result.messages[result.messages.length - 1];
+        if (lastAssistant?.role === "assistant") {
+          const content = extractTextContent(lastAssistant.content);
+          addHistoryItem({
+            type: "assistant",
+            text: content,
+          });
+        }
 
         // Auto-save
         if (context.messages.length > 0) {
@@ -412,8 +643,15 @@ const InkREPL: React.FC<InkREPLProps> = ({
         }
 
         console.log(chalk.red(errorContent));
+
+        // Add error to UI history
+        addHistoryItem({
+          type: "error",
+          text: errorContent,
+        });
       } finally {
         setIsLoading(false);
+        stopStreaming();
       }
     },
     [
@@ -424,12 +662,50 @@ const InkREPL: React.FC<InkREPLProps> = ({
       storage,
       exit,
       onExit,
+      addHistoryItem,
+      clearUIHistory,
+      startStreaming,
+      stopStreaming,
+      clearResponse,
+      createStreamingEvents,
     ]
   );
 
   return (
     <Box flexDirection="column">
-      {/* Input Area - the only interactive element */}
+      {/* Banner - shown once at start */}
+      {showBanner && (
+        <Banner
+          config={currentConfig}
+          sessionId={context.sessionId}
+          workingDir={options.context?.gitRoot || process.cwd()}
+        />
+      )}
+
+      {/* Message History */}
+      {history.length > 0 && (
+        <Box flexDirection="column" marginBottom={1}>
+          <MessageList
+            items={history}
+            isLoading={isLoading}
+            isThinking={streamingState.isThinking}
+            thinkingCharCount={streamingState.thinkingCharCount}
+            thinkingContent={streamingState.thinkingContent}
+            streamingResponse={streamingState.currentResponse}
+            currentTool={streamingState.currentTool}
+            toolInputCharCount={streamingState.toolInputCharCount}
+          />
+        </Box>
+      )}
+
+      {/* Loading/Thinking Indicator */}
+      {isLoading && history.length === 0 && (
+        <Box marginBottom={1}>
+          <ThinkingIndicator message="Thinking" showSpinner />
+        </Box>
+      )}
+
+      {/* Input Area */}
       <Box flexShrink={0}>
         <InputPrompt
           onSubmit={handleSubmit}
@@ -438,7 +714,37 @@ const InkREPL: React.FC<InkREPLProps> = ({
           focus={!isLoading}
         />
       </Box>
+
+      {/* Status Bar */}
+      <Box flexShrink={0} marginTop={1}>
+        <StatusBar
+          sessionId={context.sessionId}
+          mode={currentConfig.mode ?? "code"}
+          provider={currentConfig.provider}
+          model={getProviderModel(currentConfig.provider) ?? currentConfig.provider}
+          currentTool={streamingState.currentTool}
+          thinking={currentConfig.thinking}
+          auto={currentConfig.auto}
+        />
+      </Box>
     </Box>
+  );
+};
+
+/**
+ * InkREPL Component - Main REPL interface using Ink
+ * Wrapped with context providers
+ *
+ * Note: KeypressProvider is not used here because InputPrompt
+ * uses useInput directly. Having both would conflict.
+ */
+const InkREPL: React.FC<InkREPLProps> = (props) => {
+  return (
+    <UIStateProvider>
+      <StreamingProvider>
+        <InkREPLInner {...props} />
+      </StreamingProvider>
+    </UIStateProvider>
   );
 };
 
@@ -508,7 +814,7 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
   const storage = options.storage ?? new MemorySessionStorage();
 
   // Load config
-  const { loadConfig } = await import("../cli/utils.js");
+  const { loadConfig, getGitRoot } = await import("../cli/utils.js");
   const config = loadConfig();
   const initialProvider = options.provider ?? config.provider ?? KODAX_DEFAULT_PROVIDER;
   const initialThinking = options.thinking ?? config.thinking ?? false;
@@ -521,18 +827,49 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
     mode: "code",
   };
 
-  // Create context
-  const context = await createInteractiveContext({
-    sessionId: options.session?.id,
-    gitRoot: undefined,
-  });
+  // Handle session resume/load
+  let sessionId = options.session?.id;
+  let existingMessages: KodaXMessage[] = [];
+  let sessionTitle = "";
+  const gitRoot = (await getGitRoot().catch(() => null)) ?? undefined;
 
-  // Print banner BEFORE starting Ink (to avoid re-rendering on every state change)
-  printStartupBanner(
-    currentConfig,
-    context.sessionId,
-    options.context?.gitRoot || process.cwd()
-  );
+  // -r <id>: Load specific session
+  if (options.session?.id && !options.session.resume) {
+    const loaded = await storage.load(options.session.id);
+    if (loaded) {
+      existingMessages = loaded.messages;
+      sessionTitle = loaded.title;
+      sessionId = options.session.id;
+      console.log(chalk.green(`[Session loaded: ${options.session.id}]`));
+    }
+  }
+  // -c or autoResume: Load most recent session
+  else if (options.session?.resume || options.session?.autoResume) {
+    const sessions = await storage.list(gitRoot);
+    if (sessions.length > 0) {
+      const recentSession = sessions[0];
+      if (recentSession) {
+        const loaded = await storage.load(recentSession.id);
+        if (loaded) {
+          existingMessages = loaded.messages;
+          sessionTitle = loaded.title;
+          sessionId = recentSession.id;
+          console.log(chalk.green(`[Continuing session: ${recentSession.id}]`));
+        }
+      }
+    }
+  }
+
+  // Create context with loaded session
+  const context = await createInteractiveContext({
+    sessionId,
+    gitRoot,
+    existingMessages,
+  });
+  context.title = sessionTitle;
+
+  // Note: Banner is now shown inside Ink component (Banner.tsx)
+  // This ensures it's visible in the alternate buffer
 
   try {
     // Render Ink app
@@ -550,7 +887,7 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
         stdout: process.stdout,
         stdin: process.stdin,
         exitOnCtrlC: false,
-        patchConsole: false,  // Don't patch console to allow command output to work
+        patchConsole: true,  // Route console.log through Ink so command output is visible
       }
     );
 

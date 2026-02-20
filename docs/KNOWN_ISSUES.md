@@ -38,6 +38,12 @@
 | 25 | Resize handler 空引用 | 高 | `src/ui/components/TextInput.tsx` | 2026-02-20 | 使用 `process.stdout` 替代闭包中的 `stdout` |
 | 26 | 异步上下文直接退出 | 高 | `src/ui/InkREPL.tsx` | 2026-02-20 | 使用 `KodaXTerminalError` 替代 `process.exit()` |
 | 27 | 超宽终端分隔符 | 中 | `src/ui/components/TextInput.tsx` | 2026-02-20 | 添加 `MAX_DIVIDER_WIDTH=200` 限制 |
+| 28 | --continue 会话不恢复 | 高 | `src/ui/InkREPL.tsx` | 2026-02-20 | 添加 `resume`/`autoResume` 选项处理，加载最近会话 |
+| 29 | gitRoot 未设置 | 中 | `src/ui/InkREPL.tsx` | 2026-02-20 | 在创建 context 前获取 gitRoot，用于会话过滤 |
+| 30 | Thinking 内容不显示 | 高 | `src/ui/contexts/StreamingContext.tsx`, `src/ui/components/MessageList.tsx` | 2026-02-20 | 添加 `thinkingContent` 字段和 `appendThinkingContent` 方法，实时显示 thinking 内容 |
+| 31 | 非流式输出 | 高 | `src/ui/components/MessageList.tsx`, `src/ui/InkREPL.tsx` | 2026-02-20 | 添加 `streamingResponse` prop 实现实时流式显示 |
+| 32 | Banner 消失 | 中 | `src/ui/InkREPL.tsx` | 2026-02-20 | 移除 `setShowBanner(false)` 调用，保持 Banner 可见 |
+| 33 | /help 输出不可见 | 中 | `src/ui/InkREPL.tsx` | 2026-02-20 | 设置 `patchConsole: true` 使 console.log 输出在 Ink 中可见 |
 
 ---
 
@@ -680,8 +686,64 @@ const theme = getCurrentTheme();
 
 ---
 
+### Issue #30: Thinking 内容不显示（已解决）
+
+**原问题描述**:
+在 Thinking 模式下，模型的 thinking 内容（`onThinkingDelta`）不会在 UI 中实时显示。虽然 `thinkingCharCount` 会更新，但实际内容不可见。
+
+**解决方案**:
+1. 在 `StreamingContextValue` 接口添加 `thinkingContent: string` 字段
+2. 添加 `appendThinkingContent(text: string)` 方法
+3. 在 `MessageList` 组件中添加 `thinkingContent` 显示区域（淡灰色斜体）
+4. 在 `InkREPL` 中使用 `appendThinkingContent` 替代 `appendThinkingChars`
+
+---
+
+### Issue #31: 非流式输出（已解决）
+
+**原问题描述**:
+非 Thinking 模式下，响应内容（`onTextDelta`）会在流式完成后一次性显示，而非实时逐字显示。
+
+**解决方案**:
+1. 在 `MessageList` 组件添加 `streamingResponse` prop
+2. 添加流式响应实时显示区域（显示 `streamingState.currentResponse`）
+3. 在 `InkREPL` 中传递 `streamingResponse={streamingState.currentResponse}`
+
+---
+
+### Issue #32: Banner 消失（已解决）
+
+**原问题描述**:
+用户首次交互后，启动 Banner 会消失或被隐藏，导致无法看到版本和配置信息。
+
+**解决方案**:
+移除 `setShowBanner(false)` 调用。Banner 在启动时显示，随着消息增加自然向上滚动，保持布局稳定。
+
+---
+
+### Issue #33: /help 输出不可见（已解决）
+
+**原问题描述**:
+`/help` 等命令的 `console.log` 输出在 Ink 的 alternate buffer 中不可见。
+
+**解决方案**:
+在 Ink 的 `render()` 选项中设置 `patchConsole: true`，将 `console.log` 输出路由到 Ink 渲染系统。
+
+---
+
 ## 更新日志
 
+- **2026-02-20**: v0.3.3 流式显示修复
+  - 解决 Issue #30: Thinking 内容不显示 - 添加 `thinkingContent` 字段实时显示
+  - 解决 Issue #31: 非流式输出 - 添加 `streamingResponse` 实时显示
+  - 解决 Issue #32: Banner 消失 - 移除状态切换保持可见
+  - 解决 Issue #33: /help 输出不可见 - 设置 `patchConsole: true`
+  - 新增 28 个测试用例（thinking 和 tool 功能测试）
+- **2026-02-20**: Phase 6-8 完成与会话管理修复
+  - 解决 Issue #28: --continue 会话不恢复 - 添加 `resume`/`autoResume` 选项处理
+  - 解决 Issue #29: gitRoot 未设置 - 在创建 context 前获取 gitRoot
+  - 更新功能对比表：消息列表、流式响应、工具可视化、加载指示器、状态栏现已实现
+  - 添加 Phase 6-8 手动测试指南到功能文档
 - **2026-02-20**: v0.3.2 高优先级问题修复
   - 解决 Issue #25: Resize handler 空引用 - 使用 `process.stdout` 替代闭包中的 `stdout`
   - 解决 Issue #26: 异步上下文直接退出 - 新增 `KodaXTerminalError` 错误类，在顶层处理
