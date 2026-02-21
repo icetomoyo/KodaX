@@ -1,48 +1,48 @@
 # Known Issues
 
-_Last Updated: 2026-02-21 00:00_
+_Last Updated: 2026-02-21 19:30_
 
 ---
 
 ## Issue Index
 <!-- Quick reference table for all issues -->
 
-| ID | Priority | Status | Title | Created | Resolved |
-|----|----------|--------|-------|---------|----------|
-| 001 | Low | Open | 未使用常量 PLAN_GENERATION_PROMPT | 2026-02-19 | - |
-| 002 | Low | Open | /plan 命令未使用 _currentConfig 参数 | 2026-02-19 | - |
-| 003 | Medium | Open | Plan 文件无版本号 | 2026-02-19 | - |
-| 004 | Medium | Open | Plan 解析正则表达式脆弱 | 2026-02-19 | - |
-| 005 | Low | Open | 中英文注释混用 | 2026-02-19 | - |
-| 006 | Low | Open | 整数解析无范围检查 | 2026-02-19 | - |
-| 007 | Medium | Open | 静默吞掉错误 | 2026-02-19 | - |
-| 008 | Medium | Open | 交互提示缺少输入验证 | 2026-02-19 | - |
-| 009 | Medium | Open | 不安全的类型断言 | 2026-02-19 | - |
-| 010 | Medium | Open | 非空断言缺乏显式检查 | 2026-02-19 | - |
-| 011 | Medium | Open | 命令预览长度不一致 | 2026-02-19 | - |
-| 012 | Medium | Open | ANSI Strip 性能问题 | 2026-02-19 | - |
-| 013 | Low | Open | 自动补全缓存内存泄漏风险 | 2026-02-19 | - |
-| 014 | Low | Open | 语法高亮语言支持不全 | 2026-02-19 | - |
-| 015 | Low | Open | Unicode 检测不完整 | 2026-02-19 | - |
-| 016 | Medium | Open | InkREPL 组件过大 | 2026-02-19 | - |
-| 017 | Low | Open | TextBuffer 未使用方法 | 2026-02-19 | - |
-| 018 | Low | Open | TODO 注释未清理 | 2026-02-19 | - |
-| 019 | Medium | Open | 状态栏 Session ID 显示问题 | 2026-02-20 | - |
-| 020 | High | Resolved | 资源泄漏 - Readline 接口 | 2026-02-19 | 2026-02-19 |
-| 021 | High | Resolved | 全局可变状态 | 2026-02-19 | 2026-02-19 |
-| 022 | High | Resolved | 函数过长 | 2026-02-19 | 2026-02-19 |
-| 023 | High | Resolved | Delete 键无效 | 2026-02-20 | 2026-02-20 |
-| 024 | High | Resolved | Backspace 键无效 | 2026-02-20 | 2026-02-20 |
-| 025 | High | Resolved | Shift+Enter 换行无效 | 2026-02-20 | 2026-02-20 |
-| 026 | High | Resolved | Resize handler 空引用 | 2026-02-20 | 2026-02-20 |
-| 027 | High | Resolved | 异步上下文直接退出 | 2026-02-20 | 2026-02-20 |
-| 028 | Medium | Resolved | 超宽终端分隔符 | 2026-02-20 | 2026-02-20 |
-| 029 | High | Resolved | --continue 会话不恢复 | 2026-02-20 | 2026-02-20 |
-| 030 | Medium | Resolved | gitRoot 未设置 | 2026-02-20 | 2026-02-20 |
-| 031 | High | Resolved | Thinking 内容不显示 | 2026-02-20 | 2026-02-20 |
-| 032 | High | Resolved | 非流式输出 | 2026-02-20 | 2026-02-20 |
-| 033 | Medium | Resolved | Banner 消失 | 2026-02-20 | 2026-02-20 |
-| 034 | Medium | Resolved | /help 输出不可见 | 2026-02-20 | 2026-02-20 |
+| ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
+|----|----------|--------|-------|------------|-------|---------|----------|
+| 001 | Low | Open | 未使用常量 PLAN_GENERATION_PROMPT | v0.3.1 | - | 2026-02-19 | - |
+| 002 | Low | Open | /plan 命令未使用 _currentConfig 参数 | v0.3.1 | - | 2026-02-19 | - |
+| 003 | Medium | Open | Plan 文件无版本号 | v0.3.1 | - | 2026-02-19 | - |
+| 004 | Medium | Open | Plan 解析正则表达式脆弱 | v0.3.1 | - | 2026-02-19 | - |
+| 005 | Low | Open | 中英文注释混用 | v0.3.1 | - | 2026-02-19 | - |
+| 006 | Low | Open | 整数解析无范围检查 | v0.3.1 | - | 2026-02-19 | - |
+| 007 | Medium | Open | 静默吞掉错误 | v0.3.1 | - | 2026-02-19 | - |
+| 008 | Medium | Open | 交互提示缺少输入验证 | v0.3.1 | - | 2026-02-19 | - |
+| 009 | Medium | Open | 不安全的类型断言 | v0.3.1 | - | 2026-02-19 | - |
+| 010 | Medium | Open | 非空断言缺乏显式检查 | v0.3.1 | - | 2026-02-19 | - |
+| 011 | Medium | Open | 命令预览长度不一致 | v0.3.1 | - | 2026-02-19 | - |
+| 012 | Medium | Open | ANSI Strip 性能问题 | v0.3.1 | - | 2026-02-19 | - |
+| 013 | Low | Open | 自动补全缓存内存泄漏风险 | v0.3.1 | - | 2026-02-19 | - |
+| 014 | Low | Open | 语法高亮语言支持不全 | v0.3.1 | - | 2026-02-19 | - |
+| 015 | Low | Open | Unicode 检测不完整 | v0.3.1 | - | 2026-02-19 | - |
+| 016 | Medium | Open | InkREPL 组件过大 | v0.3.1 | - | 2026-02-19 | - |
+| 017 | Low | Open | TextBuffer 未使用方法 | v0.3.1 | - | 2026-02-19 | - |
+| 018 | Low | Open | TODO 注释未清理 | v0.3.1 | - | 2026-02-19 | - |
+| 019 | Medium | Open | 状态栏 Session ID 显示问题 | v0.3.1 | - | 2026-02-20 | - |
+| 020 | High | Resolved | 资源泄漏 - Readline 接口 | v0.3.1 | v0.3.2 | 2026-02-19 | 2026-02-19 |
+| 021 | High | Resolved | 全局可变状态 | v0.3.1 | v0.3.2 | 2026-02-19 | 2026-02-19 |
+| 022 | High | Resolved | 函数过长 | v0.3.1 | v0.3.2 | 2026-02-19 | 2026-02-19 |
+| 023 | High | Resolved | Delete 键无效 | v0.3.1 | v0.3.2 | 2026-02-20 | 2026-02-20 |
+| 024 | High | Resolved | Backspace 键无效 | v0.3.1 | v0.3.2 | 2026-02-20 | 2026-02-20 |
+| 025 | High | Resolved | Shift+Enter 换行无效 | v0.3.1 | v0.3.2 | 2026-02-20 | 2026-02-20 |
+| 026 | High | Resolved | Resize handler 空引用 | v0.3.1 | v0.3.2 | 2026-02-20 | 2026-02-20 |
+| 027 | High | Resolved | 异步上下文直接退出 | v0.3.1 | v0.3.2 | 2026-02-20 | 2026-02-20 |
+| 028 | Medium | Resolved | 超宽终端分隔符 | v0.3.1 | v0.3.2 | 2026-02-20 | 2026-02-20 |
+| 029 | High | Resolved | --continue 会话不恢复 | v0.3.1 | v0.3.2 | 2026-02-20 | 2026-02-20 |
+| 030 | Medium | Resolved | gitRoot 未设置 | v0.3.1 | v0.3.2 | 2026-02-20 | 2026-02-20 |
+| 031 | High | Resolved | Thinking 内容不显示 | v0.3.2 | v0.3.3 | 2026-02-20 | 2026-02-20 |
+| 032 | High | Resolved | 非流式输出 | v0.3.2 | v0.3.3 | 2026-02-20 | 2026-02-20 |
+| 033 | Medium | Resolved | Banner 消失 | v0.3.2 | v0.3.3 | 2026-02-20 | 2026-02-20 |
+| 034 | Medium | Resolved | /help 输出不可见 | v0.3.2 | v0.3.3 | 2026-02-20 | 2026-02-20 |
 
 ---
 
@@ -52,6 +52,7 @@ _Last Updated: 2026-02-21 00:00_
 ### 001: 未使用常量 PLAN_GENERATION_PROMPT
 - **Priority**: Low
 - **Status**: Open
+- **Introduced**: v0.3.1 (auto-detected)
 - **Created**: 2026-02-19
 - **Original Problem**:
   - 定义了 `PLAN_GENERATION_PROMPT` 常量作为计划生成的提示词模板，但实际 `generatePlan` 函数中并未使用它
@@ -64,6 +65,7 @@ _Last Updated: 2026-02-21 00:00_
 ### 002: /plan 命令未使用 _currentConfig 参数
 - **Priority**: Low
 - **Status**: Open
+- **Introduced**: v0.3.1 (auto-detected)
 - **Created**: 2026-02-19
 - **Original Problem**:
   ```typescript
@@ -80,6 +82,7 @@ _Last Updated: 2026-02-21 00:00_
 ### 003: Plan 文件无版本号
 - **Priority**: Medium
 - **Status**: Open
+- **Introduced**: v0.3.1 (auto-detected)
 - **Created**: 2026-02-19
 - **Original Problem**:
   - `ExecutionPlan` 接口没有版本字段
@@ -100,6 +103,7 @@ _Last Updated: 2026-02-21 00:00_
 ### 004: Plan 解析正则表达式脆弱
 - **Priority**: Medium
 - **Status**: Open
+- **Introduced**: v0.3.1 (auto-detected)
 - **Created**: 2026-02-19
 - **Original Problem**:
   ```typescript
@@ -119,6 +123,7 @@ _Last Updated: 2026-02-21 00:00_
 ### 005: 中英文注释混用
 - **Priority**: Low
 - **Status**: Open
+- **Introduced**: v0.3.1 (auto-detected)
 - **Created**: 2026-02-19
 - **Original Problem**:
   - 代码中混合使用中文和英文注释
@@ -132,6 +137,7 @@ _Last Updated: 2026-02-21 00:00_
 ### 006: 整数解析无范围检查
 - **Priority**: Low
 - **Status**: Open
+- **Introduced**: v0.3.1 (auto-detected)
 - **Created**: 2026-02-19
 - **Original Problem**:
   ```typescript
@@ -153,6 +159,7 @@ _Last Updated: 2026-02-21 00:00_
 ### 007: 静默吞掉错误
 - **Priority**: Medium
 - **Status**: Open
+- **Introduced**: v0.3.1 (auto-detected)
 - **Created**: 2026-02-19
 - **Original Problem**:
   ```typescript
@@ -191,6 +198,7 @@ _Last Updated: 2026-02-21 00:00_
 ### 008: 交互提示缺少输入验证
 - **Priority**: Medium
 - **Status**: Open
+- **Introduced**: v0.3.1 (auto-detected)
 - **Created**: 2026-02-19
 - **Original Problem**:
   ```typescript
@@ -213,6 +221,7 @@ _Last Updated: 2026-02-21 00:00_
 ### 009: 不安全的类型断言
 - **Priority**: Medium
 - **Status**: Open
+- **Introduced**: v0.3.1 (auto-detected)
 - **Created**: 2026-02-19
 - **Original Problem**:
   ```typescript
@@ -235,6 +244,7 @@ _Last Updated: 2026-02-21 00:00_
 ### 010: 非空断言缺乏显式检查
 - **Priority**: Medium
 - **Status**: Open
+- **Introduced**: v0.3.1 (auto-detected)
 - **Created**: 2026-02-19
 - **Original Problem**:
   ```typescript
@@ -255,6 +265,7 @@ _Last Updated: 2026-02-21 00:00_
 ### 011: 命令预览长度不一致
 - **Priority**: Medium
 - **Status**: Open
+- **Introduced**: v0.3.1 (auto-detected)
 - **Created**: 2026-02-19
 - **Original Problem**:
   ```typescript
@@ -278,6 +289,7 @@ _Last Updated: 2026-02-21 00:00_
 ### 012: ANSI Strip 性能问题
 - **Priority**: Medium
 - **Status**: Open
+- **Introduced**: v0.3.1 (auto-detected)
 - **Created**: 2026-02-19
 - **Original Problem**:
   ```typescript
@@ -296,6 +308,7 @@ _Last Updated: 2026-02-21 00:00_
 ### 013: 自动补全缓存内存泄漏风险
 - **Priority**: Low
 - **Status**: Open
+- **Introduced**: v0.3.1 (auto-detected)
 - **Created**: 2026-02-19
 - **Original Problem**:
   ```typescript
@@ -310,6 +323,7 @@ _Last Updated: 2026-02-21 00:00_
 ### 014: 语法高亮语言支持不全
 - **Priority**: Low
 - **Status**: Open
+- **Introduced**: v0.3.1 (auto-detected)
 - **Created**: 2026-02-19
 - **Original Problem**:
   ```typescript
@@ -328,6 +342,7 @@ _Last Updated: 2026-02-21 00:00_
 ### 015: Unicode 检测不完整
 - **Priority**: Low
 - **Status**: Open
+- **Introduced**: v0.3.1 (auto-detected)
 - **Created**: 2026-02-19
 - **Original Problem**:
   ```typescript
@@ -351,6 +366,7 @@ _Last Updated: 2026-02-21 00:00_
 ### 016: InkREPL 组件过大
 - **Priority**: Medium
 - **Status**: Open
+- **Introduced**: v0.3.1 (auto-detected)
 - **Created**: 2026-02-19
 - **Original Problem**:
   - InkREPL 组件约 637 行代码，包含多个职责：命令处理、Shell 命令执行、会话管理、消息格式化、状态管理
@@ -363,6 +379,7 @@ _Last Updated: 2026-02-21 00:00_
 ### 017: TextBuffer 未使用方法
 - **Priority**: Low
 - **Status**: Open
+- **Introduced**: v0.3.1 (auto-detected)
 - **Created**: 2026-02-19
 - **Original Problem**:
   ```typescript
@@ -384,6 +401,7 @@ _Last Updated: 2026-02-21 00:00_
 ### 018: TODO 注释未清理
 - **Priority**: Low
 - **Status**: Open
+- **Introduced**: v0.3.1 (auto-detected)
 - **Created**: 2026-02-19
 - **Original Problem**:
   ```typescript
@@ -400,6 +418,7 @@ _Last Updated: 2026-02-21 00:00_
 ### 019: 状态栏 Session ID 显示问题
 - **Priority**: Medium
 - **Status**: Open
+- **Introduced**: v0.3.1 (auto-detected)
 - **Created**: 2026-02-20
 - **Original Problem**:
   - Session ID 截断为前 6 个字符 (`slice(0, 6)`)，如果 ID 是时间戳格式则不包含秒信息
@@ -423,6 +442,8 @@ _Last Updated: 2026-02-21 00:00_
 ### 020: 资源泄漏 - Readline 接口 (RESOLVED)
 - **Priority**: High
 - **Status**: Resolved
+- **Introduced**: v0.3.1 (auto-detected)
+- **Fixed**: v0.3.2 (auto-detected)
 - **Created**: 2026-02-19
 - **Original Problem**:
   - `project-commands.ts` 创建了自己的 readline 接口但从未关闭
@@ -440,6 +461,8 @@ _Last Updated: 2026-02-21 00:00_
 ### 021: 全局可变状态 (RESOLVED)
 - **Priority**: High
 - **Status**: Resolved
+- **Introduced**: v0.3.1 (auto-detected)
+- **Fixed**: v0.3.2 (auto-detected)
 - **Created**: 2026-02-19
 - **Original Problem**:
   ```typescript
@@ -457,6 +480,8 @@ _Last Updated: 2026-02-21 00:00_
 ### 022: 函数过长 (RESOLVED)
 - **Priority**: High
 - **Status**: Resolved
+- **Introduced**: v0.3.1 (auto-detected)
+- **Fixed**: v0.3.2 (auto-detected)
 - **Created**: 2026-02-19
 - **Original Problem**:
   - `projectInit()` ~70 行, `projectNext()` ~80 行, `projectAuto()` ~100 行
@@ -470,6 +495,8 @@ _Last Updated: 2026-02-21 00:00_
 ### 023: Delete 键无效 (RESOLVED)
 - **Priority**: High
 - **Status**: Resolved
+- **Introduced**: v0.3.1 (auto-detected)
+- **Fixed**: v0.3.2 (auto-detected)
 - **Created**: 2026-02-20
 - **Original Problem**:
   - 在 `InputPrompt.tsx` 中，Delete 键的处理函数为空，无法删除光标后的字符
@@ -483,6 +510,8 @@ _Last Updated: 2026-02-21 00:00_
 ### 024: Backspace 键无效 (RESOLVED)
 - **Priority**: High
 - **Status**: Resolved
+- **Introduced**: v0.3.1 (auto-detected)
+- **Fixed**: v0.3.2 (auto-detected)
 - **Created**: 2026-02-20
 - **Original Problem**:
   - 在某些终端中，按 Backspace 键无法删除字符
@@ -497,6 +526,8 @@ _Last Updated: 2026-02-21 00:00_
 ### 025: Shift+Enter 换行无效 (RESOLVED)
 - **Priority**: High
 - **Status**: Resolved
+- **Introduced**: v0.3.1 (auto-detected)
+- **Fixed**: v0.3.2 (auto-detected)
 - **Created**: 2026-02-20
 - **Original Problem**:
   - 在某些终端中，按 Shift+Enter 无法插入换行
@@ -511,6 +542,8 @@ _Last Updated: 2026-02-21 00:00_
 ### 026: Resize handler 空引用 (RESOLVED)
 - **Priority**: High
 - **Status**: Resolved
+- **Introduced**: v0.3.1 (auto-detected)
+- **Fixed**: v0.3.2 (auto-detected)
 - **Created**: 2026-02-20
 - **Original Problem**:
   - `TextInput.tsx` 中的 resize handler 使用闭包中的 `stdout` 变量，可能为 null
@@ -524,6 +557,8 @@ _Last Updated: 2026-02-21 00:00_
 ### 027: 异步上下文直接退出 (RESOLVED)
 - **Priority**: High
 - **Status**: Resolved
+- **Introduced**: v0.3.1 (auto-detected)
+- **Fixed**: v0.3.2 (auto-detected)
 - **Created**: 2026-02-20
 - **Original Problem**:
   - `InkREPL.tsx` 中在异步上下文直接调用 `process.exit()`
@@ -538,6 +573,8 @@ _Last Updated: 2026-02-21 00:00_
 ### 028: 超宽终端分隔符 (RESOLVED)
 - **Priority**: Medium
 - **Status**: Resolved
+- **Introduced**: v0.3.1 (auto-detected)
+- **Fixed**: v0.3.2 (auto-detected)
 - **Created**: 2026-02-20
 - **Original Problem**:
   - 在超宽终端（如 300+ 列）中，分隔符会生成过长的字符串
@@ -551,6 +588,8 @@ _Last Updated: 2026-02-21 00:00_
 ### 029: --continue 会话不恢复 (RESOLVED)
 - **Priority**: High
 - **Status**: Resolved
+- **Introduced**: v0.3.1 (auto-detected)
+- **Fixed**: v0.3.2 (auto-detected)
 - **Created**: 2026-02-20
 - **Original Problem**:
   - 使用 `--continue` 参数时，不会恢复最近的会话
@@ -564,6 +603,8 @@ _Last Updated: 2026-02-21 00:00_
 ### 030: gitRoot 未设置 (RESOLVED)
 - **Priority**: Medium
 - **Status**: Resolved
+- **Introduced**: v0.3.1 (auto-detected)
+- **Fixed**: v0.3.2 (auto-detected)
 - **Created**: 2026-02-20
 - **Original Problem**:
   - 创建 context 时 `gitRoot` 未设置，导致会话过滤功能不正常
@@ -577,6 +618,8 @@ _Last Updated: 2026-02-21 00:00_
 ### 031: Thinking 内容不显示 (RESOLVED)
 - **Priority**: High
 - **Status**: Resolved
+- **Introduced**: v0.3.2 (auto-detected)
+- **Fixed**: v0.3.3 (auto-detected)
 - **Created**: 2026-02-20
 - **Original Problem**:
   - 在 Thinking 模式下，模型的 thinking 内容不会在 UI 中实时显示
@@ -590,6 +633,8 @@ _Last Updated: 2026-02-21 00:00_
 ### 032: 非流式输出 (RESOLVED)
 - **Priority**: High
 - **Status**: Resolved
+- **Introduced**: v0.3.2 (auto-detected)
+- **Fixed**: v0.3.3 (auto-detected)
 - **Created**: 2026-02-20
 - **Original Problem**:
   - 非 Thinking 模式下，响应内容会在流式完成后一次性显示，而非实时逐字显示
@@ -603,6 +648,8 @@ _Last Updated: 2026-02-21 00:00_
 ### 033: Banner 消失 (RESOLVED)
 - **Priority**: Medium
 - **Status**: Resolved
+- **Introduced**: v0.3.2 (auto-detected)
+- **Fixed**: v0.3.3 (auto-detected)
 - **Created**: 2026-02-20
 - **Original Problem**:
   - 用户首次交互后，启动 Banner 会消失或被隐藏
@@ -616,6 +663,8 @@ _Last Updated: 2026-02-21 00:00_
 ### 034: /help 输出不可见 (RESOLVED)
 - **Priority**: Medium
 - **Status**: Resolved
+- **Introduced**: v0.3.2 (auto-detected)
+- **Fixed**: v0.3.3 (auto-detected)
 - **Created**: 2026-02-20
 - **Original Problem**:
   - `/help` 等命令的 `console.log` 输出在 Ink 的 alternate buffer 中不可见
@@ -634,10 +683,10 @@ _Last Updated: 2026-02-21 00:00_
 
 ## Changelog
 
-### 2026-02-21: 格式更新
+### 2026-02-21: 格式更新 (v0.3.3)
 - 更新 KNOWN_ISSUES.md 格式以符合新版 known-issues-tracker 技能规范
-- ID 格式从 M### 改为 ###
-- 移除 Type 字段（不再区分 Manual/Auto-Tracked）
+- 添加 `Introduced` 和 `Fixed` 版本追踪字段
+- 根据提交历史推断问题引入版本（v0.3.1: 交互式 UI 首次引入）
 
 ### 2026-02-20: v0.3.3 流式显示修复
 - Resolved 031: Thinking 内容不显示
