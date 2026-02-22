@@ -277,7 +277,11 @@ async function projectInit(
     const initPrompt = buildInitPrompt(task);
 
     // 获取 KodaX 选项
-    const options = callbacks.createKodaXOptions?.() ?? {} as KodaXOptions;
+    const options = callbacks.createKodaXOptions?.();
+    if (!options) {
+      console.log(chalk.red('\n[Error] KodaX options not available\n'));
+      return;
+    }
 
     // 执行初始化
     const result = await runKodaX(
@@ -364,7 +368,11 @@ async function projectNext(
     });
 
     // 获取 KodaX 选项
-    const options = callbacks.createKodaXOptions?.() ?? {} as KodaXOptions;
+    const options = callbacks.createKodaXOptions?.();
+    if (!options) {
+      console.log(chalk.red('\n[Error] KodaX options not available\n'));
+      return;
+    }
 
     // 执行功能
     const result = await executeSingleFeature(feature, targetIndex, context, options);
@@ -493,7 +501,11 @@ async function projectAuto(
 
       // 执行
       try {
-        const options = callbacks.createKodaXOptions?.() ?? {} as KodaXOptions;
+        const options = callbacks.createKodaXOptions?.();
+        if (!options) {
+          console.log(chalk.red('\n[Error] KodaX options not available\n'));
+          break;
+        }
         const result = await executeSingleFeature(next.feature, next.index, context, options);
         context.messages = result.messages;
 

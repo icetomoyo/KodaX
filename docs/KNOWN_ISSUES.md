@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-02-22 00:00_
+_Last Updated: 2026-02-22_
 
 ---
 
@@ -16,8 +16,8 @@ _Last Updated: 2026-02-22 00:00_
 | 005 | Low | Open | 中英文注释混用 | v0.3.1 | - | 2026-02-19 | - |
 | 006 | Low | Open | 整数解析无范围检查 | v0.3.1 | - | 2026-02-19 | - |
 | 007 | Medium | Resolved | 静默吞掉错误 | v0.3.1 | v0.3.3 | 2026-02-19 | 2026-02-22 |
-| 008 | Medium | Open | 交互提示缺少输入验证 | v0.3.1 | - | 2026-02-19 | - |
-| 009 | Medium | Open | 不安全的类型断言 | v0.3.1 | - | 2026-02-19 | - |
+| 008 | Medium | Resolved | 交互提示缺少输入验证 | v0.3.1 | v0.3.3 | 2026-02-19 | 2026-02-22 |
+| 009 | Medium | Resolved | 不安全的类型断言 | v0.3.1 | v0.3.3 | 2026-02-19 | 2026-02-22 |
 | 010 | Medium | Open | 非空断言缺乏显式检查 | v0.3.1 | - | 2026-02-19 | - |
 | 011 | Medium | Open | 命令预览长度不一致 | v0.3.1 | - | 2026-02-19 | - |
 | 012 | Medium | Open | ANSI Strip 性能问题 | v0.3.1 | - | 2026-02-19 | - |
@@ -190,10 +190,11 @@ _Last Updated: 2026-02-22 00:00_
 
 ---
 
-### 008: 交互提示缺少输入验证
+### 008: 交互提示缺少输入验证 (RESOLVED)
 - **Priority**: Medium
-- **Status**: Open
+- **Status**: Resolved
 - **Introduced**: v0.3.1 (auto-detected)
+- **Fixed**: v0.3.3
 - **Created**: 2026-02-19
 - **Original Problem**:
   ```typescript
@@ -204,19 +205,20 @@ _Last Updated: 2026-02-22 00:00_
   - 用户输入未进行清理，空白字符可能导致意外行为
   - 输入 " y" 或 "y " 可能不被正确识别
 - **Context**: `src/interactive/project-commands.ts`
-- **Proposed Solution**:
-  ```typescript
-  rl.question(`${message} (y/n) `, answer => {
-    resolve(answer.trim().toLowerCase().startsWith('y'));
-  });
-  ```
+- **Resolution**:
+  - 在 `createConfirmFn` 函数中添加 `.trim()` 方法
+  - 现在用户输入会先去除首尾空白字符，再进行大小写转换和匹配
+  - 修改后代码：`resolve(answer.trim().toLowerCase().startsWith('y'));`
+- **Resolution Date**: 2026-02-22
+- **Files Changed**: `src/interactive/project-commands.ts`
 
 ---
 
-### 009: 不安全的类型断言
+### 009: 不安全的类型断言 (RESOLVED)
 - **Priority**: Medium
-- **Status**: Open
+- **Status**: Resolved
 - **Introduced**: v0.3.1 (auto-detected)
+- **Fixed**: v0.3.3
 - **Created**: 2026-02-19
 - **Original Problem**:
   ```typescript
@@ -225,14 +227,19 @@ _Last Updated: 2026-02-22 00:00_
   - 空对象 `{}` 被断言为 `KodaXOptions` 类型，但空对象实际上并不包含该接口所需的任何属性
   - 运行时访问不存在的属性会得到 `undefined`，类型安全被绕过
 - **Context**: `src/interactive/project-commands.ts`
-- **Proposed Solution**:
-  ```typescript
-  const defaultOptions: KodaXOptions = {
-    provider: 'anthropic',
-    // ...其他必需字段
-  };
-  const options = callbacks.createKodaXOptions?.() ?? defaultOptions;
-  ```
+- **Resolution**:
+  - 移除不安全的类型断言 `{} as KodaXOptions`
+  - 改为显式检查 options 是否存在，如果不存在则输出错误并返回
+  - 修复后代码：
+    ```typescript
+    const options = callbacks.createKodaXOptions?.();
+    if (!options) {
+      console.log(chalk.red('\n[Error] KodaX options not available\n'));
+      return;
+    }
+    ```
+- **Resolution Date**: 2026-02-22
+- **Files Changed**: `src/interactive/project-commands.ts`
 
 ---
 
@@ -671,12 +678,16 @@ _Last Updated: 2026-02-22 00:00_
 ---
 
 ## Summary
-- Total: 34 (16 Open, 16 Resolved, 2 Won't Fix)
-- Highest Priority Open: 008 - 交互提示缺少输入验证 (Medium)
+- Total: 34 (14 Open, 18 Resolved, 2 Won't Fix)
+- Highest Priority Open: 010 - 非空断言缺乏显式检查 (Medium)
 
 ---
 
 ## Changelog
+
+### 2026-02-22: 代码质量修复
+- Resolved 008: 交互提示缺少输入验证
+- Resolved 009: 不安全的类型断言
 
 ### 2026-02-21: 格式更新 (v0.3.3)
 - 更新 KNOWN_ISSUES.md 格式以符合新版 known-issues-tracker 技能规范
