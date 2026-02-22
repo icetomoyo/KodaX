@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-02-22_
+_Last Updated: 2026-02-22 15:30_
 
 ---
 
@@ -43,6 +43,11 @@ _Last Updated: 2026-02-22_
 | 032 | High | Resolved | 非流式输出 | v0.3.2 | v0.3.3 | 2026-02-20 | 2026-02-20 |
 | 033 | Medium | Resolved | Banner 消失 | v0.3.2 | v0.3.3 | 2026-02-20 | 2026-02-20 |
 | 034 | Medium | Resolved | /help 输出不可见 | v0.3.2 | v0.3.3 | 2026-02-20 | 2026-02-20 |
+| 035 | High | Open | Backspace 检测边缘情况 | v0.3.3 | - | 2026-02-22 | - |
+| 036 | Medium | Open | React 状态同步潜在问题 | v0.3.3 | - | 2026-02-22 | - |
+| 037 | Medium | Open | 两套键盘事件系统冲突 | v0.3.3 | - | 2026-02-22 | - |
+| 038 | Low | Open | 输入焦点竞态条件 | v0.3.3 | - | 2026-02-22 | - |
+| 039 | Low | Open | 死代码 printStartupBanner | v0.3.3 | - | 2026-02-22 | - |
 
 ---
 
@@ -677,13 +682,253 @@ _Last Updated: 2026-02-22_
 
 ---
 
+### 035: Backspace 检测边缘情况
+- **Priority**: High
+- **Status**: Open
+- **Introduced**: v0.3.3 (auto-detected)
+- **Created**: 2026-02-22
+- **Original Problem**:
+  - `InputPrompt.tsx` 中的 Backspace 检测逻辑存在条件重叠
+  - 某些边缘情况可能导致 Backspace 行为不一致：
+    1. 条件 `(key.delete && char === "")` 与 Delete 检测存在潜在冲突
+    2. 后备条件 `(char === "" && key.backspace === undefined && key.delete === undefined)` 可能捕获其他空事件
+  - 不同终端对 Backspace 的报告方式不一致（`\x7f`、`\x08`、`key.delete=true`）
+- **Context**: `src/ui/components/InputPrompt.tsx` - 行 135-157
+- **Root Cause Analysis**:
+  ```typescript
+  // 当前代码
+  const isBackspace = key.backspace ||
+                      char === "\x7f" ||
+                      char === "\x08" ||
+                      (key.ctrl && char === "h") ||
+                      (char === "" && (key.backspace === undefined && key.delete === undefined)) ||
+                      (key.delete && char === "");  // ⚠️ 与 Delete 检测重叠
+
+  // Delete 检测
+  if (key.delete && char !== "\x7f" && char !== "") {
+    deleteChar();  // 如果终端发送 key.delete=true + char=某个字符，会错误触发 Delete
+  }
+  ```
+- **Proposed Solution**:
+  ```typescript
+  // 按置信度分层检测，避免条件重叠
+
+  // 1. 高置信度：明确的 Backspace 标记
+  const isExplicitBackspace = key.backspace === true ||
+                              char === "\x7f" ||  // DEL (ASCII 127)
+                              char === "\x08";    // BS (ASCII 8)
+
+  // 2. 中置信度：Ctrl+H
+  const isCtrlH = key.ctrl === true && char === "h";
+
+  // 3. 低置信度：Windows 终端边缘情况
+  const isWindowsBackspace = key.delete === true && char === "" && !key.backspace;
+
+  // 4. 后备检测：空事件且无其他键标识
+  const isEmptyBackspace = char === "" &&
+      !key.backspace && !key.delete && !key.return &&
+      !key.escape && !key.tab && !key.upArrow &&
+      !key.downArrow && !key.leftArrow && !key.rightArrow;
+
+  const isBackspace = isExplicitBackspace || isCtrlH || isWindowsBackspace || isEmptyBackspace;
+  ```
+- **Safety Analysis**:
+  - ✅ 每个条件显式且文档化
+  - ✅ 条件之间无重叠
+  - ✅ 后备检测仅在无任何其他键标识时触发
+  - ✅ 与 Delete 检测逻辑解耦
+  - ✅ 向后兼容现有终端行为
+- **Files to Change**: `src/ui/components/InputPrompt.tsx`
+- **Tests Required**:
+  - 添加单元测试覆盖各种终端 Backspace 报告方式
+  - 添加集成测试验证 Delete 键不被 Backspace 检测误捕获
+
+---
+
+### 036: React 状态同步潜在问题
+- **Priority**: Medium
+- **Status**: Open
+- **Introduced**: v0.3.3 (auto-detected)
+- **Created**: 2026-02-22
+- **Original Problem**:
+  - `useTextBuffer.ts` 中的 `syncState` 函数使用三个独立的 `setState` 调用
+  - 在极端情况下（React 批处理失败），可能导致中间渲染状态不一致
+- **Context**: `src/ui/hooks/useTextBuffer.ts` - 行 50-55
+- **Root Cause Analysis**:
+  ```typescript
+  const syncState = useCallback(() => {
+    setText(buffer.text);      // 状态更新 1
+    setCursor(buffer.cursor);  // 状态更新 2
+    setLines(buffer.lines);    // 状态更新 3
+    onTextChange?.(buffer.text);
+  }, [buffer, onTextChange]);
+  ```
+  - 虽然 React 18 自动批处理大多数更新，但在某些边缘情况下可能不生效
+  - 如果组件在 `setText` 和 `setCursor` 之间渲染，`cursor` 位置可能与 `text` 内容不匹配
+- **Proposed Solution**:
+  ```typescript
+  // 使用单一状态对象确保原子更新
+  type BufferState = {
+    text: string;
+    cursor: CursorPosition;
+    lines: string[];
+  };
+
+  const [state, setState] = useState<BufferState>({
+    text: "",
+    cursor: { row: 0, col: 0 },
+    lines: [""],
+  });
+
+  const syncState = useCallback(() => {
+    setState({
+      text: buffer.text,
+      cursor: { ...buffer.cursor },
+      lines: [...buffer.lines],
+    });
+    onTextChange?.(buffer.text);
+  }, [buffer, onTextChange]);
+
+  // 保持现有 API 不变
+  return {
+    buffer,
+    text: state.text,
+    cursor: state.cursor,
+    lines: state.lines,
+    // ... 其他方法
+  };
+  ```
+- **Safety Analysis**:
+  - ✅ 单一 `setState` 确保原子更新
+  - ✅ 现有 API 完全保持不变
+  - ✅ 使用展开操作符确保不可变性
+  - ✅ 向后兼容所有调用方
+- **Files to Change**: `src/ui/hooks/useTextBuffer.ts`
+- **Tests Required**:
+  - 现有测试应继续通过
+  - 添加状态一致性测试（验证 text/cursor/lines 总是同步）
+
+---
+
+### 037: 两套键盘事件系统冲突
+- **Priority**: Medium
+- **Status**: Open
+- **Introduced**: v0.3.3 (auto-detected)
+- **Created**: 2026-02-22
+- **Original Problem**:
+  - 项目存在两套键盘事件处理系统：
+    1. `KeypressContext.tsx` - 优先级系统，支持多个处理器
+    2. `InputPrompt.tsx` - 直接使用 Ink 的 `useInput`
+  - 两者无法同时使用，导致优先级系统无法用于 REPL
+- **Context**: `src/ui/contexts/KeypressContext.tsx`, `src/ui/components/InputPrompt.tsx`
+- **Root Cause Analysis**:
+  - `InkREPL.tsx` 行 738-739 注释：
+    ```typescript
+    // Note: KeypressProvider is not used here because InputPrompt
+    // uses useInput directly. Having both would conflict.
+    ```
+  - Ink 的 `useInput` 全局监听 stdin，多个实例会互相干扰
+  - `KeypressContext` 设计用于协调多个处理器，但未被使用
+- **Impact**:
+  - 无法实现全局快捷键（如 Ctrl+C 退出需要重复实现）
+  - 建议导航功能难以集成（需要优先级系统）
+  - 代码重复（多处实现相同的按键检测）
+- **Proposed Solution** (v0.4.0 Scope):
+  1. 迁移 `InputPrompt` 使用 `KeypressContext`
+  2. 注册输入处理器为 `KeypressHandlerPriority.Normal`
+  3. 注册全局快捷键为 `KeypressHandlerPriority.Critical`
+  4. 允许建议导航注册为 `KeypressHandlerPriority.High`
+- **Safety Analysis**:
+  - ⚠️ 这是架构级变更，需要全面测试
+  - ✅ 推迟到 v0.4.0 monorepo 重构时处理
+  - ✅ 当前实现功能正常，不阻塞发布
+- **Decision**: 推迟到 v0.4.0
+- **Files to Change**: `src/ui/components/InputPrompt.tsx`, `src/ui/InkREPL.tsx`
+
+---
+
+### 038: 输入焦点竞态条件
+- **Priority**: Low
+- **Status**: Open
+- **Introduced**: v0.3.3 (auto-detected)
+- **Created**: 2026-02-22
+- **Original Problem**:
+  - 当 `isLoading` 从 `false` 变为 `true` 时，`InputPrompt` 的 `focus` prop 变为 `false`
+  - `useInput` 的 `isActive` 选项随之变为 `false`
+  - 如果此时有按键事件正在处理中，可能导致意外行为
+- **Context**: `src/ui/components/InputPrompt.tsx`, `src/ui/InkREPL.tsx`
+- **Root Cause Analysis**:
+  ```typescript
+  // InkREPL.tsx
+  <InputPrompt focus={!isLoading} ... />
+
+  // InputPrompt.tsx
+  useInput(handleInput, { isActive: focus });
+  ```
+  - 状态更新和 `useInput` 停用之间存在微小时间窗口
+- **Safety Analysis**:
+  - ✅ 这是理论问题，实际使用中未报告 Bug
+  - ✅ React 18 自动批处理状态更新
+  - ✅ `useInput` 的 `isActive` 在处理事件前检查
+  - ⚠️ 添加延迟机制会增加复杂性且可能引入新问题
+- **Decision**: 记录为已知问题，暂不修复
+- **Backup Solution** (如需修复):
+  ```typescript
+  const focusRef = useRef(focus);
+
+  useEffect(() => {
+    if (focus) {
+      focusRef.current = true;
+    } else {
+      const rafId = requestAnimationFrame(() => {
+        focusRef.current = false;
+      });
+      return () => cancelAnimationFrame(rafId);
+    }
+  }, [focus]);
+  ```
+
+---
+
+### 039: 死代码 printStartupBanner
+- **Priority**: Low
+- **Status**: Open
+- **Introduced**: v0.3.3 (auto-detected)
+- **Created**: 2026-02-22
+- **Original Problem**:
+  - `InkREPL.tsx` 中定义了 `printStartupBanner()` 函数（行 761-796）
+  - 该函数已被 `Banner` 组件替代，但未删除
+  - 代码注释表明迁移已完成：
+    ```typescript
+    // Note: Banner is now shown inside Ink component (Banner.tsx)
+    // This ensures it's visible in the alternate buffer
+    ```
+- **Context**: `src/ui/InkREPL.tsx` - 行 761-796, 871-872
+- **Proposed Solution**: 在 v0.4.0 重构时删除 `printStartupBanner()` 函数
+- **Safety Analysis**:
+  - ✅ 确认函数未被调用
+  - ✅ 删除不影响任何功能
+  - ✅ 减少代码库维护负担
+- **Files to Change**: `src/ui/InkREPL.tsx`
+
+---
+
 ## Summary
-- Total: 34 (14 Open, 18 Resolved, 2 Won't Fix)
-- Highest Priority Open: 010 - 非空断言缺乏显式检查 (Medium)
+- Total: 39 (19 Open, 18 Resolved, 2 Won't Fix)
+- Highest Priority Open: 035 - Backspace 检测边缘情况 (High)
 
 ---
 
 ## Changelog
+
+### 2026-02-22: REPL 代码审查
+- Added 035: Backspace 检测边缘情况 (High Priority)
+- Added 036: React 状态同步潜在问题 (Medium Priority)
+- Added 037: 两套键盘事件系统冲突 (Medium Priority)
+- Added 038: 输入焦点竞态条件 (Low Priority)
+- Added 039: 死代码 printStartupBanner (Low Priority)
+- 所有新 issue 都包含详细的根因分析和安全修复方案
+- Issue 037, 038, 039 推迟到 v0.4.0 处理
 
 ### 2026-02-22: 代码质量修复
 - Resolved 008: 交互提示缺少输入验证
