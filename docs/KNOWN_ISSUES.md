@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-02-21 19:30_
+_Last Updated: 2026-02-22 00:00_
 
 ---
 
@@ -11,11 +11,11 @@ _Last Updated: 2026-02-21 19:30_
 |----|----------|--------|-------|------------|-------|---------|----------|
 | 001 | Low | Open | 未使用常量 PLAN_GENERATION_PROMPT | v0.3.1 | - | 2026-02-19 | - |
 | 002 | Low | Open | /plan 命令未使用 _currentConfig 参数 | v0.3.1 | - | 2026-02-19 | - |
-| 003 | Medium | Open | Plan 文件无版本号 | v0.3.1 | - | 2026-02-19 | - |
-| 004 | Medium | Open | Plan 解析正则表达式脆弱 | v0.3.1 | - | 2026-02-19 | - |
+| 003 | Medium | Won't Fix | Plan 文件无版本号 | v0.3.1 | - | 2026-02-19 | 2026-02-22 |
+| 004 | Medium | Won't Fix | Plan 解析正则表达式脆弱 | v0.3.1 | - | 2026-02-19 | 2026-02-22 |
 | 005 | Low | Open | 中英文注释混用 | v0.3.1 | - | 2026-02-19 | - |
 | 006 | Low | Open | 整数解析无范围检查 | v0.3.1 | - | 2026-02-19 | - |
-| 007 | Medium | Open | 静默吞掉错误 | v0.3.1 | - | 2026-02-19 | - |
+| 007 | Medium | Resolved | 静默吞掉错误 | v0.3.1 | v0.3.3 | 2026-02-19 | 2026-02-22 |
 | 008 | Medium | Open | 交互提示缺少输入验证 | v0.3.1 | - | 2026-02-19 | - |
 | 009 | Medium | Open | 不安全的类型断言 | v0.3.1 | - | 2026-02-19 | - |
 | 010 | Medium | Open | 非空断言缺乏显式检查 | v0.3.1 | - | 2026-02-19 | - |
@@ -79,9 +79,9 @@ _Last Updated: 2026-02-21 19:30_
 
 ---
 
-### 003: Plan 文件无版本号
+### 003: Plan 文件无版本号 (WON'T FIX)
 - **Priority**: Medium
-- **Status**: Open
+- **Status**: Won't Fix
 - **Introduced**: v0.3.1 (auto-detected)
 - **Created**: 2026-02-19
 - **Original Problem**:
@@ -89,20 +89,17 @@ _Last Updated: 2026-02-21 19:30_
   - 如果未来计划格式变更（添加新字段、修改步骤结构），旧文件无法正确解析
   - 未来兼容性风险，用户升级后保存的计划可能损坏
 - **Context**: `src/cli/plan-storage.ts` - `ExecutionPlan` 接口
-- **Proposed Solution**:
-  ```typescript
-  export interface ExecutionPlan {
-    version: '1.0';  // 添加版本号
-    id: string;
-    // ...
-  }
-  ```
+- **Decision**: 不添加版本字段，理由如下：
+  1. **行业标准实践**: Claude Code 的 JSONL 会话文件不使用版本字段，数据格式被视为内部实现细节
+  2. **Plan 文件是短期存储**: 存储在 `.kodax/plans/` 目录，主要用于当前会话，不需要长期跨版本兼容
+  3. **容错解析更合适**: 如未来需要兼容性处理，应在 `PlanStorage.load()` 中采用容错解析策略，而非增加版本控制复杂度
+- **Resolution Date**: 2026-02-22
 
 ---
 
-### 004: Plan 解析正则表达式脆弱
+### 004: Plan 解析正则表达式脆弱 (WON'T FIX)
 - **Priority**: Medium
-- **Status**: Open
+- **Status**: Won't Fix
 - **Introduced**: v0.3.1 (auto-detected)
 - **Created**: 2026-02-19
 - **Original Problem**:
@@ -116,7 +113,12 @@ _Last Updated: 2026-02-21 19:30_
     - AI 输出 `1. [ READ ]` (多空格) → 失败
   - Plan 生成失败时无提示，跨模型兼容性差
 - **Context**: `src/cli/plan-mode.ts`
-- **Proposed Solution**: 添加更宽松的正则匹配，解析失败时给出友好提示，添加日志记录原始输出
+- **Decision**: 不修复，理由如下：
+  1. **脆弱点 1 不是真正的问题**: 正则 `\s*` 允许 0 个或多个空格，`1.[READ]` 实际可以匹配
+  2. **PLAN_GENERATION_PROMPT 已明确指定格式**: 提示词要求使用大写的 READ/WRITE 等，AI 会遵循
+  3. **v0.4.0 会重构 Plan Mode**: 架构重构可能改变或移除 Plan Mode，现在修复意义不大
+  4. **无实际使用报告**: 没有证据表明这个问题在实际使用中出现过
+- **Resolution Date**: 2026-02-22
 
 ---
 
@@ -156,10 +158,11 @@ _Last Updated: 2026-02-21 19:30_
 
 ---
 
-### 007: 静默吞掉错误
+### 007: 静默吞掉错误 (RESOLVED)
 - **Priority**: Medium
-- **Status**: Open
+- **Status**: Resolved
 - **Introduced**: v0.3.1 (auto-detected)
+- **Fixed**: v0.3.3
 - **Created**: 2026-02-19
 - **Original Problem**:
   ```typescript
@@ -176,22 +179,14 @@ _Last Updated: 2026-02-21 19:30_
     - `EACCES` (权限不足) → 需要告知用户
     - `SyntaxError` (JSON 格式错误) → 文件损坏，需要警告
   - 调试困难，用户无法知道真正的问题
-- **Context**: `src/interactive/project-storage.ts` - `loadFeatures()` 方法
-- **Proposed Solution**:
-  ```typescript
-  async loadFeatures(): Promise<FeatureList | null> {
-    try {
-      const content = await fs.readFile(this.featuresPath, 'utf-8');
-      return JSON.parse(content) as FeatureList;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return null; // 预期：文件不存在
-      }
-      console.error('Failed to load feature_list.json:', error);
-      throw error; // 非预期错误应该抛出
-    }
-  }
-  ```
+- **Context**: `src/interactive/project-storage.ts` - `loadFeatures()`, `readProgress()`, `readSessionPlan()` 方法
+- **Resolution**:
+  - 在三个方法中区分 `ENOENT` 和其他错误
+  - 对于 `ENOENT` 错误（文件不存在），返回 null/空字符串（正常行为）
+  - 对于其他错误（权限、格式等），使用 `console.error` 记录错误日志
+  - 保持返回类型不变，确保向后兼容
+- **Resolution Date**: 2026-02-22
+- **Files Changed**: `src/interactive/project-storage.ts`
 
 ---
 
@@ -676,8 +671,8 @@ _Last Updated: 2026-02-21 19:30_
 ---
 
 ## Summary
-- Total: 34 (19 Open, 15 Resolved)
-- Highest Priority Open: 003 - Plan 文件无版本号 (Medium)
+- Total: 34 (16 Open, 16 Resolved, 2 Won't Fix)
+- Highest Priority Open: 008 - 交互提示缺少输入验证 (Medium)
 
 ---
 

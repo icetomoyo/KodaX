@@ -56,7 +56,13 @@ export class ProjectStorage {
       const content = await fs.readFile(this.featuresPath, 'utf-8');
       const data = JSON.parse(content);
       return data as FeatureList;
-    } catch {
+    } catch (error) {
+      // 文件不存在是正常情况（项目未初始化）
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return null;
+      }
+      // 其他错误（权限、格式等）应该记录日志
+      console.error(`[KodaX] Failed to load ${this.featuresPath}:`, error);
       return null;
     }
   }
@@ -78,7 +84,13 @@ export class ProjectStorage {
   async readProgress(): Promise<string> {
     try {
       return await fs.readFile(this.progressPath, 'utf-8');
-    } catch {
+    } catch (error) {
+      // 文件不存在是正常情况
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return '';
+      }
+      // 其他错误应该记录日志
+      console.error(`[KodaX] Failed to read ${this.progressPath}:`, error);
       return '';
     }
   }
@@ -98,7 +110,13 @@ export class ProjectStorage {
   async readSessionPlan(): Promise<string> {
     try {
       return await fs.readFile(this.sessionPlanPath, 'utf-8');
-    } catch {
+    } catch (error) {
+      // 文件不存在是正常情况
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return '';
+      }
+      // 其他错误应该记录日志
+      console.error(`[KodaX] Failed to read ${this.sessionPlanPath}:`, error);
       return '';
     }
   }
