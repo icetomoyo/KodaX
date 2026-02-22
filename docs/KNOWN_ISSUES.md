@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-02-22 15:30_
+_Last Updated: 2026-02-22 20:15_
 
 ---
 
@@ -45,9 +45,9 @@ _Last Updated: 2026-02-22 15:30_
 | 034 | Medium | Resolved | /help 输出不可见 | v0.3.2 | v0.3.3 | 2026-02-20 | 2026-02-20 |
 | 035 | High | Open | Backspace 检测边缘情况 | v0.3.3 | - | 2026-02-22 | - |
 | 036 | Medium | Open | React 状态同步潜在问题 | v0.3.3 | - | 2026-02-22 | - |
-| 037 | Medium | Open | 两套键盘事件系统冲突 | v0.3.3 | - | 2026-02-22 | - |
-| 038 | Low | Open | 输入焦点竞态条件 | v0.3.3 | - | 2026-02-22 | - |
-| 039 | Low | Open | 死代码 printStartupBanner | v0.3.3 | - | 2026-02-22 | - |
+| 037 | Medium | Open | 两套键盘事件系统冲突 | v0.3.3 | v0.4.0 | 2026-02-22 | - |
+| 038 | Low | Won't Fix | 输入焦点竞态条件 | v0.3.3 | - | 2026-02-22 | 2026-02-22 |
+| 039 | Low | Open | 死代码 printStartupBanner | v0.3.3 | v0.4.0 | 2026-02-22 | - |
 
 ---
 
@@ -814,11 +814,12 @@ _Last Updated: 2026-02-22 15:30_
 - **Priority**: Medium
 - **Status**: Open
 - **Introduced**: v0.3.3 (auto-detected)
+- **Planned Fix**: v0.4.0
 - **Created**: 2026-02-22
 - **Original Problem**:
   - 项目存在两套键盘事件处理系统：
     1. `KeypressContext.tsx` - 优先级系统，支持多个处理器
-    2. `InputPrompt.tsx` - 直接使用 Ink 的 `useInput`
+  2. `InputPrompt.tsx` - 直接使用 Ink 的 `useInput`
   - 两者无法同时使用，导致优先级系统无法用于 REPL
 - **Context**: `src/ui/contexts/KeypressContext.tsx`, `src/ui/components/InputPrompt.tsx`
 - **Root Cause Analysis**:
@@ -842,14 +843,14 @@ _Last Updated: 2026-02-22 15:30_
   - ⚠️ 这是架构级变更，需要全面测试
   - ✅ 推迟到 v0.4.0 monorepo 重构时处理
   - ✅ 当前实现功能正常，不阻塞发布
-- **Decision**: 推迟到 v0.4.0
+- **Decision**: 推迟到 v0.4.0，详见 [features/v0.4.0.md#issue_037](features/v0.4.0.md#issue_037-两套键盘事件系统冲突)
 - **Files to Change**: `src/ui/components/InputPrompt.tsx`, `src/ui/InkREPL.tsx`
 
 ---
 
-### 038: 输入焦点竞态条件
+### 038: 输入焦点竞态条件 (WON'T FIX)
 - **Priority**: Low
-- **Status**: Open
+- **Status**: Won't Fix
 - **Introduced**: v0.3.3 (auto-detected)
 - **Created**: 2026-02-22
 - **Original Problem**:
@@ -866,27 +867,12 @@ _Last Updated: 2026-02-22 15:30_
   useInput(handleInput, { isActive: focus });
   ```
   - 状态更新和 `useInput` 停用之间存在微小时间窗口
-- **Safety Analysis**:
-  - ✅ 这是理论问题，实际使用中未报告 Bug
-  - ✅ React 18 自动批处理状态更新
-  - ✅ `useInput` 的 `isActive` 在处理事件前检查
-  - ⚠️ 添加延迟机制会增加复杂性且可能引入新问题
-- **Decision**: 记录为已知问题，暂不修复
-- **Backup Solution** (如需修复):
-  ```typescript
-  const focusRef = useRef(focus);
-
-  useEffect(() => {
-    if (focus) {
-      focusRef.current = true;
-    } else {
-      const rafId = requestAnimationFrame(() => {
-        focusRef.current = false;
-      });
-      return () => cancelAnimationFrame(rafId);
-    }
-  }, [focus]);
-  ```
+- **Decision**: 不修复，理由如下：
+  1. **理论问题，无实际报告**: 实际使用中从未有用户报告此问题
+  2. **React 18 自动批处理**: 现代 React 会自动批处理状态更新，时间窗口极小
+  3. **useInput 内部检查**: `isActive` 在处理事件前检查，竞态条件难以触发
+  4. **修复成本高**: 添加延迟机制会增加代码复杂性且可能引入新问题
+- **Resolution Date**: 2026-02-22
 
 ---
 
@@ -894,6 +880,7 @@ _Last Updated: 2026-02-22 15:30_
 - **Priority**: Low
 - **Status**: Open
 - **Introduced**: v0.3.3 (auto-detected)
+- **Planned Fix**: v0.4.0
 - **Created**: 2026-02-22
 - **Original Problem**:
   - `InkREPL.tsx` 中定义了 `printStartupBanner()` 函数（行 761-796）
@@ -904,22 +891,26 @@ _Last Updated: 2026-02-22 15:30_
     // This ensures it's visible in the alternate buffer
     ```
 - **Context**: `src/ui/InkREPL.tsx` - 行 761-796, 871-872
-- **Proposed Solution**: 在 v0.4.0 重构时删除 `printStartupBanner()` 函数
-- **Safety Analysis**:
-  - ✅ 确认函数未被调用
-  - ✅ 删除不影响任何功能
-  - ✅ 减少代码库维护负担
+- **Proposed Solution**: 在 v0.4.0 重构迁移 `src/ui/` 到 `packages/repl/src/ui/` 时，直接不复制该函数
+- **Decision**: 推迟到 v0.4.0，详见 [features/v0.4.0.md#issue_039](features/v0.4.0.md#issue_039-死代码-printstartupbanner)
 - **Files to Change**: `src/ui/InkREPL.tsx`
 
 ---
 
 ## Summary
-- Total: 39 (19 Open, 18 Resolved, 2 Won't Fix)
+- Total: 39 (17 Open, 18 Resolved, 3 Won't Fix, 1 Planned for v0.4.0)
 - Highest Priority Open: 035 - Backspace 检测边缘情况 (High)
+- Planned for v0.4.0: 037, 039
 
 ---
 
 ## Changelog
+
+### 2026-02-22: Issue 状态更新
+- Issue 037 (两套键盘事件系统冲突) → 计划在 v0.4.0 解决，已融合到 feature design
+- Issue 038 (输入焦点竞态条件) → Won't Fix，理论问题无实际影响
+- Issue 039 (死代码 printStartupBanner) → 计划在 v0.4.0 解决，已融合到 feature design
+- 更新 v0.4.0 feature design 文档，添加同步解决的已知问题章节
 
 ### 2026-02-22: REPL 代码审查
 - Added 035: Backspace 检测边缘情况 (High Priority)
