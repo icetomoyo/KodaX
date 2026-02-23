@@ -8,12 +8,17 @@ import type { CursorPosition } from "./utils/text-buffer.js";
 
 // === 键盘事件 ===
 
+/**
+ * 键盘信息接口
+ * 参考: Gemini CLI Key interface
+ */
 export interface KeyInfo {
   name: string;
   sequence: string;
   ctrl: boolean;
-  meta: boolean;
+  meta: boolean; // Alt key
   shift: boolean;
+  insertable: boolean; // 是否可以插入到文本中
 }
 
 // === 文本缓冲区 ===

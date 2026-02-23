@@ -3,6 +3,11 @@
  *
  * 参考 Gemini CLI 的 KeypressContext 架构实现。
  * 使用优先级系统允许不同组件处理相同的按键。
+ *
+ * 关键改进：
+ * - 使用自定义 KeypressParser 替代 Ink 的 useInput
+ * - 正确处理 Backspace/Delete 键混淆问题
+ * - 添加 insertable 属性支持
  */
 
 import React, {
@@ -13,12 +18,18 @@ import React, {
   useRef,
   type ReactNode,
 } from "react";
-import { useInput, type Key } from "ink";
+import { useStdin } from "ink";
+import { KeypressParser } from "../utils/keypress-parser.js";
 import {
   KeypressHandlerPriority,
   type KeyInfo,
   type KeypressHandler,
 } from "../types.js";
+
+// === Constants ===
+
+/** ESC 序列超时时间（毫秒） */
+const ESC_TIMEOUT = 50;
 
 // === Types ===
 
@@ -60,6 +71,15 @@ export interface KeypressManager {
 export function createKeypressManager(): KeypressManager {
   // 使用 Map 存储优先级 -> 处理器数组的映射
   const handlers = new Map<number, KeypressHandler[]>();
+  // 缓存排序后的优先级
+  let sortedPrioritiesCache: number[] | null = null;
+
+  const getSortedPriorities = (): number[] => {
+    if (sortedPrioritiesCache === null) {
+      sortedPrioritiesCache = [...handlers.keys()].sort((a, b) => b - a);
+    }
+    return sortedPrioritiesCache;
+  };
 
   return {
     register(priority: number, handler: KeypressHandler): () => void {
@@ -69,16 +89,8 @@ export function createKeypressManager(): KeypressManager {
       const priorityHandlers = handlers.get(priority)!;
       priorityHandlers.push(handler);
 
-      // 按 priority 降序排序（高优先级在前）
-      const sortedKeys = [...handlers.keys()].sort((a, b) => b - a);
-      const newMap = new Map<number, KeypressHandler[]>();
-      for (const key of sortedKeys) {
-        newMap.set(key, handlers.get(key)!);
-      }
-      handlers.clear();
-      for (const [key, value] of newMap) {
-        handlers.set(key, value);
-      }
+      // 使缓存失效
+      sortedPrioritiesCache = null;
 
       return () => {
         const arr = handlers.get(priority);
@@ -91,12 +103,14 @@ export function createKeypressManager(): KeypressManager {
             handlers.delete(priority);
           }
         }
+        // 使缓存失效
+        sortedPrioritiesCache = null;
       };
     },
 
     dispatch(event: KeyInfo): boolean {
       // 按优先级从高到低遍历
-      const sortedPriorities = [...handlers.keys()].sort((a, b) => b - a);
+      const sortedPriorities = getSortedPriorities();
 
       for (const priority of sortedPriorities) {
         const priorityHandlers = handlers.get(priority);
@@ -144,47 +158,86 @@ export interface KeypressProviderProps {
  * KeypressProvider - 提供全局键盘事件管理
  *
  * 必须在 Ink 组件树内使用。
+ * 使用自定义 KeypressParser 替代 Ink 的 useInput，解决 Backspace/Delete 混淆问题。
  */
 export function KeypressProvider({
   children,
   enabled = true,
 }: KeypressProviderProps): React.ReactElement {
+  const { stdin, setRawMode } = useStdin();
   const managerRef = useRef<KeypressManager>(createKeypressManager());
 
-  // 处理键盘输入
-  const handleInput = useCallback(
-    (char: string, key: Key) => {
+  // 分发事件的回调
+  const dispatch = useCallback(
+    (event: KeyInfo) => {
       if (!enabled) return;
-
-      // Derive key name from Ink's Key properties
-      let keyName = char;
-      if (key.return) keyName = "return";
-      else if (key.escape) keyName = "escape";
-      else if (key.tab) keyName = "tab";
-      else if (key.backspace) keyName = "backspace";
-      else if (key.delete) keyName = "delete";
-      else if (key.upArrow) keyName = "up";
-      else if (key.downArrow) keyName = "down";
-      else if (key.leftArrow) keyName = "left";
-      else if (key.rightArrow) keyName = "right";
-      else if (key.pageUp) keyName = "pageup";
-      else if (key.pageDown) keyName = "pagedown";
-
-      const event: KeyInfo = {
-        name: keyName,
-        sequence: char,
-        ctrl: key.ctrl || false,
-        meta: key.meta || false,
-        shift: key.shift || false,
-      };
-
       managerRef.current.dispatch(event);
     },
     [enabled]
   );
 
-  // 使用 Ink 的 useInput hook
-  useInput(handleInput, { isActive: enabled });
+  // 设置 stdin 监听
+  useEffect(() => {
+    if (!stdin || !enabled) {
+      return;
+    }
+
+    // 记录原始模式状态
+    const wasRaw = stdin.isRaw;
+
+    // 启用原始模式
+    if (wasRaw === false) {
+      setRawMode(true);
+    }
+
+    // 创建解析器
+    const parser = new KeypressParser();
+
+    // 注册处理器
+    const unsubscribeParser = parser.onKeypress(dispatch);
+
+    // ESC 序列超时定时器
+    let timeoutId: NodeJS.Timeout | null = null;
+
+    // 监听 stdin 数据
+    const onData = (data: Buffer | string) => {
+      // 清除之前的超时
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+
+      // 喂给解析器
+      parser.feed(data);
+
+      // 设置 ESC 序列超时
+      if (data.length !== 0) {
+        timeoutId = setTimeout(() => {
+          // 发送空数据触发超时处理（flush=true 表示刷新不完整的序列）
+          parser.feed("", true);
+        }, ESC_TIMEOUT);
+      }
+    };
+
+    stdin.on("data", onData);
+
+    // 清理
+    return () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      stdin.off("data", onData);
+      unsubscribeParser();
+
+      // 恢复原始模式
+      if (wasRaw === false) {
+        try {
+          setRawMode(false);
+        } catch {
+          // 忽略错误
+        }
+      }
+    };
+  }, [stdin, setRawMode, enabled, dispatch]);
 
   return React.createElement(
     KeypressManagerContext.Provider,
@@ -209,22 +262,30 @@ export function useKeypressManager(): KeypressManager {
 /**
  * 注册键盘事件处理器
  *
- * @param priority 处理器优先级
+ * @param priority 处理器优先级（或使用 boolean: true = High, false = Normal）
  * @param handler 处理函数
  * @param deps 依赖数组
  */
 export function useKeypress(
-  priority: number,
+  priority: number | boolean,
   handler: KeypressHandler,
   deps: React.DependencyList = []
 ): void {
   const manager = useKeypressManager();
 
+  // 处理 boolean 类型的 priority（兼容 Gemini CLI 风格）
+  const actualPriority =
+    typeof priority === "boolean"
+      ? priority
+        ? KeypressHandlerPriority.High
+        : KeypressHandlerPriority.Normal
+      : priority;
+
   useEffect(() => {
-    const unregister = manager.register(priority, handler);
+    const unregister = manager.register(actualPriority, handler);
     return unregister;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [manager, priority, ...deps]);
+  }, [manager, actualPriority, ...deps]);
 }
 
 /**
@@ -239,6 +300,7 @@ export function createKeyMatcher(pattern: Partial<KeyInfo>): (event: KeyInfo) =>
     if (pattern.meta !== undefined && event.meta !== pattern.meta) return false;
     if (pattern.shift !== undefined && event.shift !== pattern.shift) return false;
     if (pattern.sequence !== undefined && event.sequence !== pattern.sequence) return false;
+    if (pattern.insertable !== undefined && event.insertable !== pattern.insertable) return false;
     return true;
   };
 }
@@ -261,6 +323,8 @@ export const KeyMatchers = {
     event.name === "return" && event.shift === true,
   isCtrlEnter: (event: KeyInfo) =>
     event.name === "return" && event.ctrl === true,
+  isInsertable: (event: KeyInfo) =>
+    event.insertable === true && !event.ctrl && !event.meta,
 } as const;
 
 // === Exports ===

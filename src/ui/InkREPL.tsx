@@ -23,8 +23,10 @@ import {
   StreamingProvider,
   useStreamingState,
   useStreamingActions,
+  KeypressProvider,
+  useKeypress,
 } from "./contexts/index.js";
-import { StreamingState, type HistoryItem } from "./types.js";
+import { StreamingState, type HistoryItem, KeypressHandlerPriority } from "./types.js";
 import {
   KodaXOptions,
   KodaXMessage,
@@ -251,6 +253,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const {
     startStreaming,
     stopStreaming,
+    abort,
     startThinking,
     appendThinkingChars,
     appendThinkingContent,
@@ -277,6 +280,30 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       id: context.sessionId,
     },
   });
+
+  // 全局中断处理器 - 在 LLM 响应时处理 Ctrl+C 和 ESC
+  // 使用 Normal 优先级（低于 InputPrompt 的 High），所以 InputPrompt 先处理
+  useKeypress(
+    KeypressHandlerPriority.Normal,
+    (key) => {
+      // 只在加载中时处理中断
+      if (!isLoading) return false;
+
+      // Ctrl+C 或 ESC 中断当前操作
+      if ((key.ctrl && key.name === "c") || key.name === "escape") {
+        // 使用 abort() 而不是 stopStreaming() 来真正中止 API 请求
+        abort();
+        stopThinking();
+        setCurrentTool(undefined);
+        setIsLoading(false);
+        console.log(chalk.yellow("\n[Interrupted]"));
+        return true;
+      }
+
+      return false;
+    },
+    [isLoading, abort, stopThinking, setCurrentTool]
+  );
 
   // Sync history from context to UI on mount
   useEffect(() => {
@@ -735,14 +762,16 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
  * InkREPL Component - Main REPL interface using Ink
  * Wrapped with context providers
  *
- * Note: KeypressProvider is not used here because InputPrompt
- * uses useInput directly. Having both would conflict.
+ * KeypressProvider provides centralized keyboard handling.
+ * InputPrompt uses useKeypress from this context.
  */
 const InkREPL: React.FC<InkREPLProps> = (props) => {
   return (
     <UIStateProvider>
       <StreamingProvider>
-        <InkREPLInner {...props} />
+        <KeypressProvider>
+          <InkREPLInner {...props} />
+        </KeypressProvider>
       </StreamingProvider>
     </UIStateProvider>
   );

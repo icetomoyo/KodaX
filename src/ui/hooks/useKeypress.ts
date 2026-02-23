@@ -25,6 +25,8 @@ const DOUBLE_ESC_INTERVAL_MS = 500;
  */
 function keyToKeyInfo(char: string, key: Key): KeyInfo {
   let name = "";
+  let insertable = false;
+
   if (key.upArrow) name = "up";
   else if (key.downArrow) name = "down";
   else if (key.leftArrow) name = "left";
@@ -34,7 +36,11 @@ function keyToKeyInfo(char: string, key: Key): KeyInfo {
   else if (key.backspace) name = "backspace";
   else if (key.delete) name = "delete";
   else if (key.tab) name = "tab";
-  else name = char;
+  else {
+    name = char;
+    // 可打印字符标记为 insertable
+    insertable = char.length === 1 && char.charCodeAt(0) >= 32 && !key.ctrl && !key.meta;
+  }
 
   return {
     name,
@@ -42,6 +48,7 @@ function keyToKeyInfo(char: string, key: Key): KeyInfo {
     ctrl: key.ctrl ?? false,
     meta: key.meta ?? false,
     shift: key.shift ?? false,
+    insertable,
   };
 }
 

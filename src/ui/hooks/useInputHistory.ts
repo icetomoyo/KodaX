@@ -94,9 +94,10 @@ export function useInputHistory(options: UseInputHistoryOptions = {}): UseInputH
       return history[historyIndexRef.current]?.text ?? null;
     }
 
-    // 回到当前输入
+    // 回到当前输入 - 总是返回 tempInputRef 或空字符串
+    // 参考 Gemini CLI 和 OpenCode: 永远不返回 null，而是返回空字符串
     historyIndexRef.current = -1;
-    return tempInputRef.current || null;
+    return tempInputRef.current; // 可能是空字符串，但不是 null
   }, [history]);
 
   // 重置导航

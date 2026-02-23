@@ -2,15 +2,19 @@
  * InputPrompt - 输入提示组件
  *
  * 集成多行输入、历史导航、键盘快捷键
+ * 使用 centralized KeypressContext 进行键盘事件处理
+ *
+ * 参考: Gemini CLI InputPrompt 架构
  */
 
 import React, { useEffect, useState, useCallback } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text, useApp } from "ink";
 import { TextInput } from "./TextInput.js";
 import { useTextBuffer } from "../hooks/useTextBuffer.js";
 import { useInputHistory } from "../hooks/useInputHistory.js";
+import { useKeypress } from "../contexts/KeypressContext.js";
 import { getTheme } from "../themes/index.js";
-import type { InputPromptProps } from "../types.js";
+import { KeypressHandlerPriority, type InputPromptProps } from "../types.js";
 
 export const InputPrompt: React.FC<InputPromptProps> = ({
   onSubmit,
@@ -20,6 +24,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   initialValue = "",
 }) => {
   const theme = getTheme("dark");
+  const { exit } = useApp();
   const [isFirstLine, setIsFirstLine] = useState(true);
 
   // 输入历史
@@ -60,29 +65,38 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     newline();
   }, [lines, cursor.row, backspace, newline]);
 
-  // 键盘输入处理
-  useInput(
-    (char, key) => {
-      if (!focus) return;
+  // 键盘输入处理 - 使用 centralized KeypressContext
+  // 参考 Gemini CLI: 使用优先级系统注册处理器
+  useKeypress(
+    KeypressHandlerPriority.High, // 高优先级，确保输入组件优先处理
+    (key) => {
+      if (!focus) return false;
 
       // Ctrl+C 清空或退出
-      if (key.ctrl && char === "c") {
+      if (key.ctrl && key.name === "c") {
+        if (text.length > 0) {
+          clear();
+          resetHistory();
+        } else {
+          // 没有文字时退出程序
+          exit();
+        }
+        return true;
+      }
+
+      // ESC 键 - 清空输入
+      if (key.name === "escape") {
         if (text.length > 0) {
           clear();
           resetHistory();
         }
-        return;
+        return true;
       }
 
       // 处理上下键历史导航
-      // 连贯历史导航：
-      // - 上箭头在第一行任意位置 → 加载上一条历史
-      // - 下箭头在最后一行末尾 → 加载下一条历史
-      // - 否则 → 移动光标
-      if (key.upArrow) {
+      if (key.name === "up") {
         if (cursor.row === 0) {
           // 第一行 → 加载上一条历史
-          // 在导航前保存当前输入，以便向下导航回来时恢复
           saveTempInput(text);
           const historyText = navigateUp();
           if (historyText !== null) {
@@ -91,119 +105,100 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         } else {
           move("up");
         }
-        return;
+        return true;
       }
 
-      if (key.downArrow) {
+      if (key.name === "down") {
         const lineCount = lines.length;
-        const currentLineLength = lines[cursor.row]?.length ?? 0;
         const isLastLine = cursor.row === lineCount - 1;
-        const isAtEnd = cursor.col >= currentLineLength;
 
-        if (isLastLine && isAtEnd) {
-          // 最后一行末尾 → 加载下一条历史
+        if (isLastLine) {
+          // 最后一行 → 加载下一条历史
           const historyText = navigateDown();
+          // navigateDown 返回 string（可能是空字符串）或 null（表示没有导航）
+          // 参考 Gemini CLI/OpenCode: 总是更新文本，包括空字符串
           if (historyText !== null) {
             setText(historyText);
-          } else {
-            // 回到保存的临时输入（如果有）
-            clear();
           }
+          // 如果返回 null，说明已经在最新位置，不做任何操作
         } else {
           move("down");
         }
-        return;
+        return true;
       }
 
       // 左右方向键
-      if (key.leftArrow) {
+      if (key.name === "left") {
         move("left");
-        return;
+        return true;
       }
-      if (key.rightArrow) {
+      if (key.name === "right") {
         move("right");
-        return;
+        return true;
       }
 
-      // 退格键 - 检查多种情况（必须优先于 Delete 检查）
-      // 1. Ink 检测到的 key.backspace
-      // 2. \x7f (DEL, ASCII 127) - 某些终端的 Backspace 发送此字符
-      // 3. \x08 (BS, ASCII 8) - 另一种 Backspace 字符
-      // 4. Ctrl+H - 某些终端将其映射为 Backspace
-      // 5. 某些终端发送空 char 但 key.backspace 不为 true
-      // 6. Windows 终端可能将 Backspace 误报为 key.delete=true 但 char 为空
-      const isBackspace = key.backspace ||
-                          char === "\x7f" ||
-                          char === "\x08" ||
-                          (key.ctrl && char === "h") ||
-                          // Windows 终端行为：char 为空且没有明确的 key 标识时，假设为 backspace
-                          (char === "" && (key.backspace === undefined && key.delete === undefined)) ||
-                          // Windows 终端行为：key.delete=true 但 char 为空，这通常是 Backspace
-                          (key.delete && char === "");
-      if (isBackspace) {
+      // Backspace 键 - 删除光标前的字符
+      // 使用 centralized parser，\b 和 \x7f 都正确识别为 backspace
+      if (key.name === "backspace") {
         backspace();
-        return;
+        return true;
       }
 
-      // Delete 键（删除光标后的字符）
-      // Delete 键通常发送 \x1b[3~ 序列，Ink 会将其识别为 key.delete=true
-      // 注意：
-      // 1. Backspace 已经在上面处理过了，包括 key.delete + char="" 的情况
-      // 2. 只有当 key.delete=true 且 char 不是 \x7f 且 char 不为空时，才认为是真正的 Delete
-      // 3. 真正的 Delete 键发送的是 \x1b[3~，不会是 \x7f 或空字符串
-      if (key.delete && char !== "\x7f" && char !== "") {
+      // Delete 键 - 删除光标后的字符
+      // 只有真正的 Delete 键（\x1b[3~）才会触发这个
+      if (key.name === "delete") {
         deleteChar();
-        return;
+        return true;
       }
 
-      // 换行检测 - 多种方式
-      // 1. Shift+Enter (key.shift + key.return)
-      // 2. Ctrl+Enter (key.ctrl + key.return)
-      // 3. 单独的 \n 字符 (某些终端的 Shift+Enter 不被 Ink 正确识别)
-      const isNewline = (key.return && key.shift) ||
-                        (key.return && key.ctrl) ||
-                        (char === "\n" && !key.return);
-
-      if (isNewline) {
+      // 换行 - Shift+Enter, Ctrl+Enter, 或 Ctrl+J (newline)
+      // 参考 Gemini CLI: 多种方式插入换行
+      if (
+        (key.name === "return" && key.shift) ||
+        (key.name === "return" && key.ctrl) ||
+        key.name === "newline"  // Ctrl+J 或终端发送的 \n
+      ) {
         newline();
-        return;
+        return true;
       }
 
       // 回车提交
-      if (key.return) {
-
+      if (key.name === "return") {
         // 检查是否需要换行 (行尾是 \)
         const currentLine = lines[cursor.row] ?? "";
         if (currentLine.endsWith("\\")) {
           handleLineContinuation();
-          return;
+          return true;
         }
 
         // 提交
         handleSubmit();
-        return;
+        return true;
       }
 
       // Ctrl 组合键
       if (key.ctrl) {
-        switch (char) {
+        switch (key.name) {
           case "a":
             move("home");
-            return;
+            return true;
           case "e":
             move("end");
-            return;
+            return true;
         }
-        return;
+        return true;
       }
 
       // 普通字符输入（排除控制字符）
-      if (char && !key.meta && char.charCodeAt(0) >= 32) {
-        insert(char);
-        return;
+      // 使用 insertable 属性判断是否可插入
+      if (key.insertable && !key.ctrl && !key.meta) {
+        insert(key.sequence);
+        return true;
       }
+
+      return false;
     },
-    { isActive: focus }
+    [focus, text, cursor, lines, clear, resetHistory, saveTempInput, navigateUp, navigateDown, setText, move, backspace, deleteChar, newline, handleSubmit, handleLineContinuation, insert]
   );
 
   return (
@@ -232,41 +227,48 @@ export const SimpleInputPrompt: React.FC<{
   const [value, setValue] = useState("");
   const [cursorCol, setCursorCol] = useState(0);
 
-  useInput((char, key) => {
-    if (key.return) {
-      if (value.trim()) {
-        onSubmit(value);
-        setValue("");
-        setCursorCol(0);
+  useKeypress(
+    KeypressHandlerPriority.High,
+    (key) => {
+      if (key.name === "return") {
+        if (value.trim()) {
+          onSubmit(value);
+          setValue("");
+          setCursorCol(0);
+        }
+        return true;
       }
-      return;
-    }
 
-    if (key.backspace && cursorCol > 0) {
-      const before = [...value].slice(0, cursorCol - 1).join("");
-      const after = [...value].slice(cursorCol).join("");
-      setValue(before + after);
-      setCursorCol(cursorCol - 1);
-      return;
-    }
+      if (key.name === "backspace" && cursorCol > 0) {
+        const before = [...value].slice(0, cursorCol - 1).join("");
+        const after = [...value].slice(cursorCol).join("");
+        setValue(before + after);
+        setCursorCol(cursorCol - 1);
+        return true;
+      }
 
-    if (key.leftArrow && cursorCol > 0) {
-      setCursorCol(cursorCol - 1);
-      return;
-    }
+      if (key.name === "left" && cursorCol > 0) {
+        setCursorCol(cursorCol - 1);
+        return true;
+      }
 
-    if (key.rightArrow && cursorCol < [...value].length) {
-      setCursorCol(cursorCol + 1);
-      return;
-    }
+      if (key.name === "right" && cursorCol < [...value].length) {
+        setCursorCol(cursorCol + 1);
+        return true;
+      }
 
-    if (char && !key.ctrl && !key.meta && char.charCodeAt(0) >= 32) {
-      const before = [...value].slice(0, cursorCol).join("");
-      const after = [...value].slice(cursorCol).join("");
-      setValue(before + char + after);
-      setCursorCol(cursorCol + 1);
-    }
-  });
+      if (key.insertable && !key.ctrl && !key.meta) {
+        const before = [...value].slice(0, cursorCol).join("");
+        const after = [...value].slice(cursorCol).join("");
+        setValue(before + key.sequence + after);
+        setCursorCol(cursorCol + 1);
+        return true;
+      }
+
+      return false;
+    },
+    [value, cursorCol, onSubmit]
+  );
 
   const theme = getTheme("dark");
 

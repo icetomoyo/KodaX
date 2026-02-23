@@ -43,7 +43,10 @@ _Last Updated: 2026-02-23 09:50_
 | 032 | High | Resolved | 非流式输出 | v0.3.2 | v0.3.3 | 2026-02-20 | 2026-02-20 |
 | 033 | Medium | Resolved | Banner 消失 | v0.3.2 | v0.3.3 | 2026-02-20 | 2026-02-20 |
 | 034 | Medium | Resolved | /help 输出不可见 | v0.3.2 | v0.3.3 | 2026-02-20 | 2026-02-20 |
-| 035 | High | Open | Backspace 检测边缘情况 | v0.3.3 | - | 2026-02-22 | - |
+| 035 | High | Resolved | Backspace 检测边缘情况 | v0.3.3 | v0.3.3 | 2026-02-22 | 2026-02-23 |
+| 041 | High | Resolved | 历史导航清空输入无法恢复 | v0.3.3 | v0.3.3 | 2026-02-23 | 2026-02-23 |
+| 042 | Medium | Resolved | Shift+Enter/Ctrl+J 换行无效 | v0.3.3 | v0.3.3 | 2026-02-23 | 2026-02-23 |
+| 043 | Medium | Open | 流式响应中断不完全 | v0.3.3 | - | 2026-02-23 | - |
 | 036 | Medium | Open | React 状态同步潜在问题 | v0.3.3 | - | 2026-02-22 | - |
 | 037 | Medium | Open | 两套键盘事件系统冲突 | v0.3.3 | v0.4.0 | 2026-02-22 | - |
 | 038 | Low | Won't Fix | 输入焦点竞态条件 | v0.3.3 | - | 2026-02-22 | 2026-02-22 |
@@ -935,14 +938,91 @@ _Last Updated: 2026-02-23 09:50_
 
 ---
 
+### 041: 历史导航清空输入无法恢复 (RESOLVED)
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: v0.3.3 (auto-detected)
+- **Fixed**: v0.3.3
+- **Created**: 2026-02-23
+- **Original Problem**:
+  - 用户输入文字后按上键浏览历史，再按下键回到最新位置时，输入被清空
+  - 再次按上键无法恢复刚才输入的文字
+- **Context**: `src/ui/hooks/useInputHistory.ts`, `src/ui/components/InputPrompt.tsx`
+- **Root Cause Analysis**:
+  - `useInputHistory.ts` 中 `navigateDown()` 返回 `tempInputRef.current || null`
+  - 当 `tempInputRef.current` 为空字符串时，返回 `null`
+  - `InputPrompt.tsx` 中检测到 `null` 后调用 `setText("")` 清空输入
+  - 参考 Gemini CLI/OpenCode: 应该返回空字符串而不是 null
+- **Resolution**:
+  - 修改 `navigateDown()` 返回 `tempInputRef.current` (可能是空字符串)
+  - 修改 `InputPrompt.tsx` 在 `historyText !== null` 时更新文本（包括空字符串）
+- **Resolution Date**: 2026-02-23
+- **Files Changed**: `src/ui/hooks/useInputHistory.ts`, `src/ui/components/InputPrompt.tsx`
+
+---
+
+### 042: Shift+Enter/Ctrl+J 换行无效 (RESOLVED)
+- **Priority**: Medium
+- **Status**: Resolved
+- **Introduced**: v0.3.3 (auto-detected)
+- **Fixed**: v0.3.3
+- **Created**: 2026-02-23
+- **Original Problem**:
+  - Shift+Enter 无法插入换行（大多数终端无法区分 Shift+Enter 和 Enter）
+  - 用户无法在输入中插入多行文本（只能用 `\`+Enter 后备方案）
+- **Context**: `src/ui/utils/keypress-parser.ts`, `src/ui/components/InputPrompt.tsx`
+- **Root Cause Analysis**:
+  - 大多数终端（尤其是 Windows）不支持 CSI u 格式的 modifyOtherKeys
+  - Shift+Enter 发送的 `\x1b[13;2u` 序列很少被终端支持
+  - 实际上 Shift+Enter 和 Enter 发送的都是 `\r`
+- **Resolution**:
+  - 添加 Ctrl+J (Line Feed, `\n`) 作为换行的可靠替代
+  - 修改 `keypress-parser.ts` 将 `\n` 命名为 "newline"
+  - 修改 `InputPrompt.tsx` 处理 `key.name === "newline"` 为换行
+- **Resolution Date**: 2026-02-23
+- **Files Changed**: `src/ui/utils/keypress-parser.ts`, `src/ui/components/InputPrompt.tsx`
+
+---
+
+### 043: 流式响应中断不完全
+- **Priority**: Medium
+- **Status**: Open
+- **Introduced**: v0.3.3 (auto-detected)
+- **Created**: 2026-02-23
+- **Original Problem**:
+  - 在 LLM 流式响应时按 Ctrl+C 或 ESC 中断
+  - UI 显示 "[Interrupted]" 但 API 请求可能仍在后台继续
+  - 流式输出过程中中断可能导致显示问题
+- **Context**: `src/ui/InkREPL.tsx`, `src/ui/contexts/StreamingContext.tsx`, `src/core/providers/`
+- **Root Cause Analysis**:
+  - `StreamingContext` 创建了 `AbortController` 但 signal 未传递给 API 调用
+  - `abort()` 调用 `abortController.abort()` 但 Anthropic/OpenAI SDK 不知道这个 signal
+  - 实际 HTTP 请求没有被取消，LLM 会继续生成
+- **Proposed Solution**:
+  1. 添加 `abortSignal?: AbortSignal` 到 `KodaXOptions`
+  2. 在 provider 实现中将 signal 传递给 SDK 调用
+  3. 在 `InkREPL.tsx` 中获取 `StreamingContext` 的 abortController.signal 并传递给 runKodaX
+- **Safety Analysis**:
+  - ⚠️ 需要修改多个文件和接口
+  - ⚠️ 需要测试各 provider (Anthropic, OpenAI) 的 abort 行为
+  - ✅ 不影响现有功能，只是添加可选参数
+- **Files to Change**: `src/core/types.ts`, `src/core/agent.ts`, `src/core/providers/anthropic.ts`, `src/core/providers/openai.ts`, `src/ui/InkREPL.tsx`, `src/ui/contexts/StreamingContext.tsx`
+
+---
+
 ## Summary
-- Total: 40 (18 Open, 18 Resolved, 3 Won't Fix, 1 Planned for v0.4.0)
-- Highest Priority Open: 035 - Backspace 检测边缘情况 (High), 040 - REPL 历史显示乱序 (High)
+- Total: 43 (17 Open, 22 Resolved, 3 Won't Fix, 1 Planned for v0.4.0)
+- Highest Priority Open: 040 - REPL 历史显示乱序 (High), 043 - 流式响应中断不完全 (Medium)
 - Planned for v0.4.0: 037, 039
 
 ---
 
 ## Changelog
+
+### 2026-02-23: Issue 035 后续修复
+- Resolved 041: 历史导航清空输入无法恢复
+- Resolved 042: Shift+Enter/Ctrl+J 换行无效
+- Added 043: 流式响应中断不完全（需要传递 AbortSignal 到 API 调用）
 
 ### 2026-02-23: REPL 显示问题
 - Added 040: REPL 历史显示乱序 - Banner 出现在对话中间 (High Priority)
