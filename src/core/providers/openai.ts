@@ -24,7 +24,8 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
     tools: KodaXToolDefinition[],
     system: string,
     _thinking = false,
-    streamOptions?: KodaXProviderStreamOptions
+    streamOptions?: KodaXProviderStreamOptions,
+    signal?: AbortSignal
   ): Promise<KodaXStreamResult> {
     return this.withRateLimit(async () => {
       const fullMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
@@ -32,6 +33,11 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         ...this.convertMessages(messages),
       ];
       const openaiTools = tools.map(t => ({ type: 'function' as const, function: { name: t.name, description: t.description, parameters: t.input_schema } }));
+
+      // 检查是否已被取消
+      if (signal?.aborted) {
+        throw new Error('Request aborted');
+      }
 
       const toolCallsMap = new Map<number, { id: string; name: string; arguments: string }>();
       let textContent = '';
@@ -45,6 +51,11 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
       });
 
       for await (const chunk of stream) {
+        // 检查是否被中断
+        if (signal?.aborted) {
+          throw new Error('Request aborted');
+        }
+
         const delta = chunk.choices[0]?.delta;
         if (delta?.content) {
           textContent += delta.content;

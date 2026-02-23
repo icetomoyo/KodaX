@@ -92,6 +92,9 @@ export interface StreamingActions {
 
   /** 追加工具输入字符数 */
   appendToolInputChars: (count: number) => void;
+
+  /** 获取当前的 AbortSignal (用于传递给 API 请求) */
+  getSignal: () => AbortSignal | undefined;
 }
 
 /**
@@ -169,6 +172,9 @@ export interface StreamingManager {
 
   /** 追加工具输入字符数 */
   appendToolInputChars: (count: number) => void;
+
+  /** 获取当前的 AbortSignal */
+  getSignal: () => AbortSignal | undefined;
 }
 
 /**
@@ -321,6 +327,8 @@ export function createStreamingManager(): StreamingManager {
       };
       notify();
     },
+
+    getSignal: () => state.abortController?.signal,
   };
 }
 
@@ -412,6 +420,10 @@ export function StreamingProvider({
     managerRef.current.appendToolInputChars(count);
   }, []);
 
+  const getSignal = useCallback(() => {
+    return managerRef.current.getSignal();
+  }, []);
+
   const actions: StreamingActions = {
     startStreaming,
     stopStreaming,
@@ -426,6 +438,7 @@ export function StreamingProvider({
     stopThinking,
     setCurrentTool,
     appendToolInputChars,
+    getSignal,
   };
 
   return React.createElement(

@@ -92,6 +92,8 @@ export interface KodaXProviderStreamOptions {
   onThinkingDelta?: (text: string) => void;
   onThinkingEnd?: (thinking: string) => void;
   onToolInputDelta?: (toolName: string, partialJson: string) => void;
+  /** AbortSignal for cancelling the stream request */
+  signal?: AbortSignal;
 }
 
 // ============== 事件接口 ==============
@@ -149,6 +151,8 @@ export interface KodaXOptions {
   context?: KodaXContextOptions;
   events?: KodaXEvents;
   beforeToolExecute?: (tool: string, input: Record<string, unknown>) => Promise<boolean>;  // 执行前钩子
+  /** AbortSignal for cancelling the API request */
+  abortSignal?: AbortSignal;
 }
 
 // ============== 结果类型 ==============

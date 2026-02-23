@@ -17,7 +17,8 @@ export abstract class KodaXBaseProvider {
     tools: KodaXToolDefinition[],
     system: string,
     thinking?: boolean,
-    streamOptions?: KodaXProviderStreamOptions
+    streamOptions?: KodaXProviderStreamOptions,
+    signal?: AbortSignal
   ): Promise<KodaXStreamResult>;
 
   isConfigured(): boolean {

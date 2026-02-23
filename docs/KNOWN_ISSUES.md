@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-02-23 09:50_
+_Last Updated: 2026-02-23 16:00_
 
 ---
 
@@ -46,12 +46,13 @@ _Last Updated: 2026-02-23 09:50_
 | 035 | High | Resolved | Backspace 检测边缘情况 | v0.3.3 | v0.3.3 | 2026-02-22 | 2026-02-23 |
 | 041 | High | Resolved | 历史导航清空输入无法恢复 | v0.3.3 | v0.3.3 | 2026-02-23 | 2026-02-23 |
 | 042 | Medium | Resolved | Shift+Enter/Ctrl+J 换行无效 | v0.3.3 | v0.3.3 | 2026-02-23 | 2026-02-23 |
-| 043 | Medium | Open | 流式响应中断不完全 | v0.3.3 | - | 2026-02-23 | - |
+| 043 | Medium | Resolved | 流式响应中断不完全 | v0.3.3 | v0.3.4 | 2026-02-23 | 2026-02-23 |
 | 036 | Medium | Open | React 状态同步潜在问题 | v0.3.3 | - | 2026-02-22 | - |
 | 037 | Medium | Open | 两套键盘事件系统冲突 | v0.3.3 | v0.4.0 | 2026-02-22 | - |
 | 038 | Low | Won't Fix | 输入焦点竞态条件 | v0.3.3 | - | 2026-02-22 | 2026-02-22 |
 | 039 | Low | Open | 死代码 printStartupBanner | v0.3.3 | v0.4.0 | 2026-02-22 | - |
 | 040 | High | Open | REPL 历史显示乱序 - Banner 出现在对话中间 | v0.3.3 | - | 2026-02-23 | - |
+| 044 | High | Open | 流式输出时 Ctrl+C 延迟生效 | v0.3.4 | - | 2026-02-23 | - |
 
 ---
 
@@ -938,6 +939,34 @@ _Last Updated: 2026-02-23 09:50_
 
 ---
 
+### 044: 流式输出时 Ctrl+C 延迟生效
+- **Priority**: High
+- **Status**: Open
+- **Introduced**: v0.3.4 (auto-detected)
+- **Created**: 2026-02-23
+- **Original Problem**:
+  - 在 LLM 流式输出（非 thinking）时按 Ctrl+C 中断
+  - 中断不会立即生效，而是等流式输出结束后才生效
+  - Thinking 过程中可以正常中断（043 已修复）
+- **Context**: `src/ui/InkREPL.tsx`, `src/core/providers/`
+- **Root Cause Analysis**:
+  - 043 修复了 AbortSignal 传递到 API 的问题
+  - 但 Ctrl+C 的 keypress handler 可能在流式迭代中被阻塞
+  - Node.js 事件循环中，`for await...of` 循环可能延迟处理 stdin 事件
+  - 需要检查 provider 的流迭代是否阻塞了事件循环
+- **Proposed Solution**:
+  1. 检查 `useKeypress` hook 是否在 streaming 期间正确监听
+  2. 确认 InkREPL 的 abort handler 使用正确的优先级
+  3. 可能需要在 provider 的流迭代中添加 `setImmediate()` 或类似机制
+  4. 考虑在每次流迭代时检查 stdin 是否有待处理的中断信号
+- **Safety Analysis**:
+  - ⚠️ 需要深入分析 Node.js 事件循环和流处理机制
+  - ⚠️ 可能需要修改 provider 的流处理逻辑
+  - ✅ 不影响现有功能
+- **Files to Change**: `src/ui/InkREPL.tsx`, `src/core/providers/anthropic.ts`, `src/core/providers/openai.ts`
+
+---
+
 ### 041: 历史导航清空输入无法恢复 (RESOLVED)
 - **Priority**: High
 - **Status**: Resolved
@@ -984,10 +1013,11 @@ _Last Updated: 2026-02-23 09:50_
 
 ---
 
-### 043: 流式响应中断不完全
+### 043: 流式响应中断不完全 (RESOLVED)
 - **Priority**: Medium
-- **Status**: Open
+- **Status**: Resolved
 - **Introduced**: v0.3.3 (auto-detected)
+- **Fixed**: v0.3.4
 - **Created**: 2026-02-23
 - **Original Problem**:
   - 在 LLM 流式响应时按 Ctrl+C 或 ESC 中断
@@ -998,26 +1028,42 @@ _Last Updated: 2026-02-23 09:50_
   - `StreamingContext` 创建了 `AbortController` 但 signal 未传递给 API 调用
   - `abort()` 调用 `abortController.abort()` 但 Anthropic/OpenAI SDK 不知道这个 signal
   - 实际 HTTP 请求没有被取消，LLM 会继续生成
-- **Proposed Solution**:
-  1. 添加 `abortSignal?: AbortSignal` 到 `KodaXOptions`
-  2. 在 provider 实现中将 signal 传递给 SDK 调用
-  3. 在 `InkREPL.tsx` 中获取 `StreamingContext` 的 abortController.signal 并传递给 runKodaX
-- **Safety Analysis**:
-  - ⚠️ 需要修改多个文件和接口
-  - ⚠️ 需要测试各 provider (Anthropic, OpenAI) 的 abort 行为
-  - ✅ 不影响现有功能，只是添加可选参数
-- **Files to Change**: `src/core/types.ts`, `src/core/agent.ts`, `src/core/providers/anthropic.ts`, `src/core/providers/openai.ts`, `src/ui/InkREPL.tsx`, `src/ui/contexts/StreamingContext.tsx`
+- **Resolution**:
+  1. 添加 `abortSignal?: AbortSignal` 到 `KodaXOptions` 类型
+  2. 添加 `signal?: AbortSignal` 到 `KodaXProviderStreamOptions` 类型
+  3. 更新 `KodaXBaseProvider.stream()` 签名接受 signal 参数
+  4. 更新 `KodaXAnthropicCompatProvider.stream()` 和 `KodaXOpenAICompatProvider.stream()` 在流迭代中检查 `signal.aborted`
+  5. 更新 `agent.ts` 将 `options.abortSignal` 传递给 provider.stream()
+  6. 在 `StreamingContext` 中添加 `getSignal()` 方法暴露 AbortSignal
+  7. 在 `InkREPL.tsx` 中调用 `getSignal()` 并传递给 `runKodaX`
+- **Implementation Details**:
+  - 参考 Gemini CLI 的 abort 处理模式
+  - 在 provider 的流迭代循环中检查 `signal?.aborted`，如果为 true 则抛出 'Request aborted' 错误
+  - 完整的信号传递链：UI (StreamingContext) → runKodaX → provider.stream() → SDK
+- **Resolution Date**: 2026-02-23
+- **Files Changed**: `src/core/types.ts`, `src/core/providers/base.ts`, `src/core/providers/anthropic.ts`, `src/core/providers/openai.ts`, `src/core/agent.ts`, `src/ui/contexts/StreamingContext.tsx`, `src/ui/InkREPL.tsx`
 
 ---
 
 ## Summary
-- Total: 43 (17 Open, 22 Resolved, 3 Won't Fix, 1 Planned for v0.4.0)
-- Highest Priority Open: 040 - REPL 历史显示乱序 (High), 043 - 流式响应中断不完全 (Medium)
+- Total: 44 (17 Open, 23 Resolved, 3 Won't Fix, 1 Planned for v0.4.0)
+- Highest Priority Open: 040 - REPL 历史显示乱序 (High), 044 - 流式输出时 Ctrl+C 延迟生效 (High)
 - Planned for v0.4.0: 037, 039
 
 ---
 
 ## Changelog
+
+### 2026-02-23: Issue 044 新增
+- Added 044: 流式输出时 Ctrl+C 延迟生效 (High Priority)
+- 根因：流式迭代期间 Ctrl+C 事件被延迟处理
+- 043 修复了 AbortSignal 传递，但 Ctrl+C 按键事件处理仍有问题
+
+### 2026-02-23: Issue 043 修复
+- Resolved 043: 流式响应中断不完全
+- 添加 AbortSignal 传递链：UI → runKodaX → provider → SDK
+- 参考 Gemini CLI 的 abort 处理模式实现
+- 更新 7 个文件实现完整的中断功能
 
 ### 2026-02-23: Issue 035 后续修复
 - Resolved 041: 历史导航清空输入无法恢复

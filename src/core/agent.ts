@@ -106,7 +106,8 @@ export async function runKodaX(
         onThinkingDelta: (text) => events.onThinkingDelta?.(text),
         onThinkingEnd: (thinking) => events.onThinkingEnd?.(thinking),
         onToolInputDelta: (name, json) => events.onToolInputDelta?.(name, json),
-      });
+        signal: options.abortSignal,
+      }, options.abortSignal);
 
       // 流式输出结束，通知 CLI 层
       events.onStreamEnd?.();

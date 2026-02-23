@@ -24,7 +24,8 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
     tools: KodaXToolDefinition[],
     system: string,
     thinking = false,
-    streamOptions?: KodaXProviderStreamOptions
+    streamOptions?: KodaXProviderStreamOptions,
+    signal?: AbortSignal
   ): Promise<KodaXStreamResult> {
     return this.withRateLimit(async () => {
       const kwargs: Anthropic.Messages.MessageCreateParams = {
@@ -36,6 +37,11 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
         stream: true,
       };
       if (thinking) kwargs.thinking = { type: 'enabled', budget_tokens: 10000 };
+
+      // 检查是否已被取消
+      if (signal?.aborted) {
+        throw new Error('Request aborted');
+      }
 
       const textBlocks: KodaXTextBlock[] = [];
       const toolBlocks: KodaXToolUseBlock[] = [];
@@ -52,6 +58,11 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
       const response = await this.client.messages.create(kwargs);
 
       for await (const event of response as AsyncIterable<Anthropic.Messages.RawMessageStreamEvent>) {
+        // 检查是否被中断
+        if (signal?.aborted) {
+          throw new Error('Request aborted');
+        }
+
         if (event.type === 'content_block_start') {
           const block = event.content_block;
           currentBlockType = block.type;

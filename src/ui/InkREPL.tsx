@@ -262,6 +262,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     appendToolInputChars,
     clearResponse,
     appendResponse,
+    getSignal,
   } = useStreamingActions();
 
   // State
@@ -430,6 +431,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           initialMessages: context.messages,
         },
         events,
+        abortSignal: getSignal(),
       },
       prompt
     );
@@ -695,6 +697,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       stopStreaming,
       clearResponse,
       createStreamingEvents,
+      getSignal,
     ]
   );
 
