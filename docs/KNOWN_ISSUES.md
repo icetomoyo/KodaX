@@ -51,7 +51,7 @@ _Last Updated: 2026-02-23 16:00_
 | 037 | Medium | Open | 两套键盘事件系统冲突 | v0.3.3 | v0.4.0 | 2026-02-22 | - |
 | 038 | Low | Won't Fix | 输入焦点竞态条件 | v0.3.3 | - | 2026-02-22 | 2026-02-22 |
 | 039 | Low | Open | 死代码 printStartupBanner | v0.3.3 | v0.4.0 | 2026-02-22 | - |
-| 040 | High | Open | REPL 历史显示乱序 - Banner 出现在对话中间 | v0.3.3 | - | 2026-02-23 | - |
+| 040 | High | Open | REPL 显示严重问题 - 重复/乱序/占位符/命令不可见 | v0.3.3 | - | 2026-02-23 | - |
 | 044 | High | Open | 流式输出时 Ctrl+C 延迟生效 | v0.3.4 | - | 2026-02-23 | - |
 
 ---
@@ -902,40 +902,186 @@ _Last Updated: 2026-02-23 16:00_
 
 ---
 
-### 040: REPL 历史显示乱序 - Banner 出现在对话中间
+### 040: REPL 历史显示严重问题 - 重复/乱序/占位符/命令不可见
 - **Priority**: High
 - **Status**: Open
 - **Introduced**: v0.3.3 (auto-detected)
 - **Created**: 2026-02-23
 - **Original Problem**:
-  - REPL 启动后，用户输入命令时显示顺序混乱
-  - Banner 应该在最上方，但实际出现在对话中间
-  - LLM 回答和命令输出出现在 Banner 上方
-  - 历史记录出现在 Banner 下方
-  - 整体呈现"乱序 + Banner 插入中间"的视觉效果
-- **Context**: `src/ui/InkREPL.tsx`, `src/ui/components/MessageList.tsx`
+  REPL 显示存在多个严重问题，远超出最初预期的"Banner 乱序"：
+
+  1. **消息重复显示**：同一条消息在终端中出现 2-3 次
+  2. **[Complex content] 占位符**：LLM 回复显示为 `[Complex content]` 而非实际文本
+  3. **命令输出不可见**：`/help`、`/model` 等命令的输出不显示
+  4. **显示顺序混乱**：Banner、用户输入、LLM 回复的顺序完全错乱
+  5. **内容丢失**：用户输入的文字在某些操作后消失
+
+- **Context**: `src/ui/InkREPL.tsx`, `src/ui/components/MessageList.tsx`, `src/interactive/commands.ts`
 - **Root Cause Analysis**:
-  1. **双重输出源**：
-     - `console.log(chalk.cyan(\`You: ${input}\`));` (line 426) 立即打印 "You: /model"（无时间戳）
-     - `MessageList` 的 `UserItemRenderer` 显示 "You [09:45 AM] /model"（有时间戳）
-     - 两者显示相同内容但格式不同，造成视觉混乱
-  2. **Ink patchConsole 机制**：
-     - `patchConsole: true` 使 `console.log` 输出被 Ink 捕获
-     - 但 console 输出区域与 React 组件树是分离的
-     - console.log 输出在 Banner 渲染之前显示
-  3. **渲染时序**：
-     - console.log 立即输出（在命令处理时）
-     - React 状态更新后 MessageList 才渲染
-     - Banner 作为 React 组件在中间位置渲染
+
+  ### 问题 1: 双重输出通道冲突
+  ```
+  console.log 输出 ←→ patchConsole 捕获
+         ↓                    ↓
+  [独立的输出区域]    [React 组件渲染区]
+         ↓                    ↓
+     时序混乱 ←——— 两者无法同步 ——→ 显示错位
+  ```
+
+  **代码层面**：
+  - `InkREPL.tsx:455-456` - `console.log(chalk.cyan(\`You: ${input}\`))` 打印用户输入
+  - `InkREPL.tsx:314-320` - `addHistoryItem({ type: "user", text: content })` 添加到历史
+  - `MessageList.tsx` - 渲染历史记录
+
+  两个输出通道互不协调，导致：
+  - 用户输入显示两次（格式不同）
+  - 顺序取决于 console.log 和 React 渲染的执行时序
+
+  ### 问题 2: [Complex content] 占位符
+  `extractTextContent()` 函数（InkREPL.tsx:64-81）只处理 text 类型的内容块：
+
+  ```typescript
+  function extractTextContent(content: string | unknown[]): string {
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) {
+      const textParts: string[] = [];
+      for (const block of content) {
+        // 只提取 type === "text" 的块
+        if (block?.type === "text" && "text" in block) {
+          textParts.push(String(block.text));
+        }
+      }
+      if (textParts.length > 0) return textParts.join("\n");
+    }
+    return "[Complex content]";  // ⚠️ 其他类型全部显示为占位符
+  }
+  ```
+
+  未处理的块类型：
+  - `tool_use` - 工具调用请求
+  - `tool_result` - 工具执行结果
+  - `image` - 图像内容
+  - `thinking` - 思考内容
+
+  ### 问题 3: 命令输出不可见
+  命令处理流程：
+  ```
+  用户输入 → parseCommand() → executeCommand()
+                               ↓
+                    commands.ts 中的 console.log()
+                               ↓
+                    patchConsole: true 捕获
+                               ↓
+                    ⚠️ 输出位置不可预测
+  ```
+
+  - `commands.ts` 中所有命令使用 `console.log` 输出
+  - `patchConsole: true` 捕获这些输出
+  - 但输出位置相对于 React 组件不确定
+  - 导致 `/help` 等命令输出可能被覆盖或显示在错误位置
+
+  ### 问题 4: Ink patchConsole 机制限制
+  Ink 的 `patchConsole: true` 设计目的：
+  - 将 `console.log` 输出重定向到 alternate buffer
+  - 使命令输出在 Ink UI 中可见
+
+  但其限制：
+  - console 输出和 React 组件是两个独立的渲染系统
+  - 无法精确控制 console 输出相对于 React 组件的位置
+  - 高频输出时容易造成显示混乱
+
+- **Comparison with Gemini CLI**:
+
+  Gemini CLI 使用完全不同的架构：
+
+  ### ConsolePatcher 模式
+  ```typescript
+  // Gemini CLI: packages/core/src/utils/ConsolePatcher.ts
+  class ConsolePatcher {
+    private onNewMessage?: (item: ConsoleMessageItem) => void;
+
+    log(...args: unknown[]) {
+      this.onNewMessage?.({
+        type: 'console',
+        content: this.formatArgs(args),
+        count: 1,
+      });
+    }
+  }
+  ```
+
+  ### 统一的 HistoryItem 类型系统
+  ```typescript
+  // 所有输出统一为 HistoryItem
+  type HistoryItem =
+    | UserMessageItem
+    | AssistantMessageItem
+    | ConsoleMessageItem  // ← console.log 转换为这个
+    | ToolCallMessageItem
+    | ...;
+  ```
+
+  ### 关键差异
+  | 特性 | KodaX | Gemini CLI |
+  |------|-------|------------|
+  | console.log 处理 | patchConsole 捕获 | 转换为 HistoryItem |
+  | 输出统一性 | 双通道独立 | 单一 HistoryItem 列表 |
+  | 显示顺序 | 时序依赖 | 列表顺序保证 |
+  | 内容类型 | 只处理 text | 完整类型支持 |
+
 - **Proposed Solution**:
-  移除 `console.log(chalk.cyan(\`You: ${input}\`));` (line 426)，因为 MessageList 已正确显示用户输入（带时间戳）。
-  这是最安全的修复，不会影响命令输出或其他功能。
+
+  ### 短期修复（v0.3.x）
+  1. 移除冗余的 `console.log(chalk.cyan(\`You: ${input}\`))`
+  2. 改进 `extractTextContent()` 支持更多块类型
+  3. 为命令输出添加 HistoryItem 类型
+
+  ### 长期重构（v0.4.0）
+  参考 Gemini CLI 实现 ConsolePatcher：
+
+  ```typescript
+  // 1. 创建 ConsolePatcher 类
+  class ConsolePatcher {
+    private onNewHistoryItem: (item: HistoryItem) => void;
+
+    install() {
+      const originalLog = console.log;
+      console.log = (...args) => {
+        this.onNewHistoryItem({
+          type: 'info',  // 或专门的 'console' 类型
+          text: this.formatArgs(args),
+          timestamp: Date.now(),
+        });
+      };
+    }
+  }
+
+  // 2. 统一 HistoryItem 类型
+  type HistoryItem =
+    | { type: 'user'; text: string; ... }
+    | { type: 'assistant'; text: string; ... }
+    | { type: 'console'; content: string; level: 'log' | 'warn' | 'error'; ... }
+    | { type: 'tool_use'; name: string; input: unknown; ... }
+    | { type: 'tool_result'; toolUseId: string; content: string; ... };
+
+  // 3. 所有输出通过 MessageList 渲染
+  // 移除 patchConsole，禁用 Ink 的 console 捕获
+  render(<App />, { patchConsole: false });
+  ```
+
 - **Safety Analysis**:
-  - ✅ MessageList 已正确显示用户输入（带时间戳）
-  - ✅ 移除冗余输出不会丢失信息
-  - ✅ 不影响命令输出（命令输出仍通过 console.log 显示）
-  - ✅ 不影响其他 Ink 组件渲染
-- **Files to Change**: `src/ui/InkREPL.tsx` (删除 line 426)
+  - ✅ 短期修复风险低，向后兼容
+  - ⚠️ 长期重构需要全面测试
+  - ✅ 参考 Gemini CLI 成熟架构
+  - ✅ 符合 v0.4.0 monorepo 重构计划
+
+- **Files to Change**:
+  - `src/ui/InkREPL.tsx` - 移除冗余 console.log，改进 extractTextContent
+  - `src/ui/types.ts` - 添加 console/tool 相关 HistoryItem 类型
+  - `src/ui/components/MessageList.tsx` - 支持新类型渲染
+  - `src/interactive/commands.ts` - 可选：返回输出而非直接 console.log
+
+- **Related**: 037 (两套键盘事件系统冲突)，v0.4.0 架构重构
 
 ---
 
@@ -1047,12 +1193,19 @@ _Last Updated: 2026-02-23 16:00_
 
 ## Summary
 - Total: 44 (17 Open, 23 Resolved, 3 Won't Fix, 1 Planned for v0.4.0)
-- Highest Priority Open: 040 - REPL 历史显示乱序 (High), 044 - 流式输出时 Ctrl+C 延迟生效 (High)
-- Planned for v0.4.0: 037, 039
+- Highest Priority Open: 040 - REPL 显示严重问题（重复/乱序/占位符/命令不可见）(High), 044 - 流式输出时 Ctrl+C 延迟生效 (High)
+- Planned for v0.4.0: 037, 039, 040 (长期重构)
 
 ---
 
 ## Changelog
+
+### 2026-02-23: Issue 040 详细分析
+- 深度分析 040: REPL 显示严重问题
+- 发现问题远超预期：重复消息、占位符、命令不可见、顺序混乱
+- 对比 Gemini CLI 的 ConsolePatcher 架构
+- 提出短期修复和长期重构方案
+- 长期方案融合到 v0.4.0 monorepo 重构计划
 
 ### 2026-02-23: Issue 044 新增
 - Added 044: 流式输出时 Ctrl+C 延迟生效 (High Priority)
