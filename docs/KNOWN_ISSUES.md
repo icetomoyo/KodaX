@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-02-22 20:15_
+_Last Updated: 2026-02-23 09:50_
 
 ---
 
@@ -48,6 +48,7 @@ _Last Updated: 2026-02-22 20:15_
 | 037 | Medium | Open | 两套键盘事件系统冲突 | v0.3.3 | v0.4.0 | 2026-02-22 | - |
 | 038 | Low | Won't Fix | 输入焦点竞态条件 | v0.3.3 | - | 2026-02-22 | 2026-02-22 |
 | 039 | Low | Open | 死代码 printStartupBanner | v0.3.3 | v0.4.0 | 2026-02-22 | - |
+| 040 | High | Open | REPL 历史显示乱序 - Banner 出现在对话中间 | v0.3.3 | - | 2026-02-23 | - |
 
 ---
 
@@ -897,14 +898,56 @@ _Last Updated: 2026-02-22 20:15_
 
 ---
 
+### 040: REPL 历史显示乱序 - Banner 出现在对话中间
+- **Priority**: High
+- **Status**: Open
+- **Introduced**: v0.3.3 (auto-detected)
+- **Created**: 2026-02-23
+- **Original Problem**:
+  - REPL 启动后，用户输入命令时显示顺序混乱
+  - Banner 应该在最上方，但实际出现在对话中间
+  - LLM 回答和命令输出出现在 Banner 上方
+  - 历史记录出现在 Banner 下方
+  - 整体呈现"乱序 + Banner 插入中间"的视觉效果
+- **Context**: `src/ui/InkREPL.tsx`, `src/ui/components/MessageList.tsx`
+- **Root Cause Analysis**:
+  1. **双重输出源**：
+     - `console.log(chalk.cyan(\`You: ${input}\`));` (line 426) 立即打印 "You: /model"（无时间戳）
+     - `MessageList` 的 `UserItemRenderer` 显示 "You [09:45 AM] /model"（有时间戳）
+     - 两者显示相同内容但格式不同，造成视觉混乱
+  2. **Ink patchConsole 机制**：
+     - `patchConsole: true` 使 `console.log` 输出被 Ink 捕获
+     - 但 console 输出区域与 React 组件树是分离的
+     - console.log 输出在 Banner 渲染之前显示
+  3. **渲染时序**：
+     - console.log 立即输出（在命令处理时）
+     - React 状态更新后 MessageList 才渲染
+     - Banner 作为 React 组件在中间位置渲染
+- **Proposed Solution**:
+  移除 `console.log(chalk.cyan(\`You: ${input}\`));` (line 426)，因为 MessageList 已正确显示用户输入（带时间戳）。
+  这是最安全的修复，不会影响命令输出或其他功能。
+- **Safety Analysis**:
+  - ✅ MessageList 已正确显示用户输入（带时间戳）
+  - ✅ 移除冗余输出不会丢失信息
+  - ✅ 不影响命令输出（命令输出仍通过 console.log 显示）
+  - ✅ 不影响其他 Ink 组件渲染
+- **Files to Change**: `src/ui/InkREPL.tsx` (删除 line 426)
+
+---
+
 ## Summary
-- Total: 39 (17 Open, 18 Resolved, 3 Won't Fix, 1 Planned for v0.4.0)
-- Highest Priority Open: 035 - Backspace 检测边缘情况 (High)
+- Total: 40 (18 Open, 18 Resolved, 3 Won't Fix, 1 Planned for v0.4.0)
+- Highest Priority Open: 035 - Backspace 检测边缘情况 (High), 040 - REPL 历史显示乱序 (High)
 - Planned for v0.4.0: 037, 039
 
 ---
 
 ## Changelog
+
+### 2026-02-23: REPL 显示问题
+- Added 040: REPL 历史显示乱序 - Banner 出现在对话中间 (High Priority)
+- 根因：console.log 与 MessageList 双重输出 + Ink patchConsole 机制导致渲染顺序混乱
+- 解决方案：移除冗余的 console.log 用户输入输出
 
 ### 2026-02-22: Issue 状态更新
 - Issue 037 (两套键盘事件系统冲突) → 计划在 v0.4.0 解决，已融合到 feature design
