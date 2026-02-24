@@ -3,6 +3,10 @@
   "version": "0.3.6",
   "description": "极致轻量化 Coding Agent - TypeScript 实现，支持7种LLM提供商",
   "type": "module",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
@@ -20,12 +24,14 @@
   },
   "scripts": {
     "build": "tsc",
+    "build:packages": "npm run build --workspaces",
     "dev": "tsx src/kodax.ts",
     "dev:cli": "tsx src/kodax_cli.ts",
     "start": "node dist/kodax_cli.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "clean": "rm -rf dist/"
+    "clean": "rm -rf dist/",
+    "clean:packages": "npm run clean --workspaces"
   },
   "keywords": [
     "ai",
