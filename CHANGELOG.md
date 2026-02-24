@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-02-24
+
+### Changed
+- **Architecture Refactoring**: Monorepo with npm workspaces
+  - `@kodax/core`: Pure AI engine (7 providers, tools, session management)
+  - `@kodax/repl`: Complete interactive terminal experience
+  - Main entry `src/kodax_cli.ts` uses both packages
+- **Directory Structure**: Renamed `cli/` to `common/` for better semantics
+
+### Fixed
+- Issue 035, 041, 042: Keyboard input issues (Backspace, history navigation, Shift+Enter)
+- Issue 043: AbortSignal propagation for stream interruption
+- Issue 044: Ctrl+C delay during streaming output
+
+### Known Issues
+- Issue 040: REPL display issues (banner timing, duplicate messages, [Complex content] placeholder)
+
 ## [0.2.0] - 2026-02-16
 
 ### Changed
