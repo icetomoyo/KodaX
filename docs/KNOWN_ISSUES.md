@@ -916,7 +916,55 @@ _Last Updated: 2026-02-23 16:00_
   4. **显示顺序混乱**：Banner、用户输入、LLM 回复的顺序完全错乱
   5. **内容丢失**：用户输入的文字在某些操作后消失
 
-- **Context**: `src/ui/InkREPL.tsx`, `src/ui/components/MessageList.tsx`, `src/interactive/commands.ts`
+- **Observed Behavior (v0.4.0 Test on 2026-02-24)**:
+
+  实际测试显示问题更加具体：
+
+  ```
+  kodax
+  You: /help              ← 第一次显示 (console.log)
+
+  [命令输出正常显示]
+
+  You: /model
+
+  [命令输出正常显示]
+
+  You: 给我讲讲上层目录的内容
+
+  [Interrupted]           ← 用户中断流式输出
+
+  ██╗  ██╗  ██████╗      ← Banner 在这里才出现！
+  ...Banner 内容...
+  v0.4.0 | kimi-code/k2p5 | code
+  ------------------------------------------------------------
+
+  You [07:37 PM]          ← 第二次显示 (MessageList 渲染)
+    /help
+
+  You [07:37 PM]          ← 第二次显示
+    /model
+
+  You [07:37 PM]          ← 第二次显示
+    给我讲讲上层目录的内容
+
+  Assistant [07:37 PM]
+    [Complex content]     ← 占位符出现
+
+  Assistant               ← 实际内容又出现在下方！
+    我来查看一下上层目录的内容...
+  ```
+
+  **关键发现**：
+  1. **Banner 延迟显示**：Banner 在用户第一次交互（或中断）后才出现，而非启动时
+  2. **双重消息显示**：每条用户消息显示两次，格式不同：
+     - `You: <message>` (console.log 即时输出)
+     - `You [HH:MM PM] <message>` (MessageList 历史渲染)
+  3. **[Complex content] + 实际内容重复**：Assistant 消息先显示占位符，然后又显示实际内容
+  4. **命令输出可见**：`/help`、`/model` 输出实际是可见的（问题 3 部分不存在或已修复）
+  5. **punycode 弃用警告**：`DeprecationWarning: The punycode module is deprecated`（新问题，低优先级）
+
+- **Context**: `packages/repl/src/ui/InkREPL.tsx`, `packages/repl/src/ui/components/MessageList.tsx`, `packages/repl/src/interactive/commands.ts`
 - **Root Cause Analysis**:
 
   ### 问题 1: 双重输出通道冲突
@@ -1031,12 +1079,15 @@ _Last Updated: 2026-02-23 16:00_
 
 - **Proposed Solution**:
 
-  ### 短期修复（v0.3.x）
-  1. 移除冗余的 `console.log(chalk.cyan(\`You: ${input}\`))`
-  2. 改进 `extractTextContent()` 支持更多块类型
-  3. 为命令输出添加 HistoryItem 类型
+  ### 短期修复（v0.4.x）
+  1. **Banner 显示时机**：确保 Banner 在 Ink 组件首次渲染时显示，而非等待用户交互
+  2. **移除重复输出**：删除 `console.log(chalk.cyan(\`You: ${input}\`))`，统一使用 MessageList 渲染
+  3. **修复 [Complex content]**：
+     - 检查 `extractTextContent()` 的调用时机
+     - 确保实际内容渲染后不再显示占位符
+  4. **punycode 警告**：更新依赖或添加 Node.js 版本检查（低优先级）
 
-  ### 长期重构（v0.4.0）
+  ### 长期重构（v0.5.0+）
   参考 Gemini CLI 实现 ConsolePatcher：
 
   ```typescript
@@ -1076,12 +1127,12 @@ _Last Updated: 2026-02-23 16:00_
   - ✅ 符合 v0.4.0 monorepo 重构计划
 
 - **Files to Change**:
-  - `src/ui/InkREPL.tsx` - 移除冗余 console.log，改进 extractTextContent
-  - `src/ui/types.ts` - 添加 console/tool 相关 HistoryItem 类型
-  - `src/ui/components/MessageList.tsx` - 支持新类型渲染
-  - `src/interactive/commands.ts` - 可选：返回输出而非直接 console.log
+  - `packages/repl/src/ui/InkREPL.tsx` - Banner 显示时机，移除冗余 console.log
+  - `packages/repl/src/ui/components/MessageList.tsx` - 修复占位符重复显示
+  - `packages/repl/src/ui/types.ts` - 添加 console/tool 相关 HistoryItem 类型
+  - `packages/repl/src/interactive/commands.ts` - 可选：返回输出而非直接 console.log
 
-- **Related**: 037 (两套键盘事件系统冲突)，v0.4.0 架构重构
+- **Related**: 037 (两套键盘事件系统冲突)，v0.4.0 架构重构已完成
 
 ---
 
@@ -1196,13 +1247,23 @@ _Last Updated: 2026-02-23 16:00_
 ---
 
 ## Summary
-- Total: 44 (16 Open, 24 Resolved, 3 Won't Fix, 1 Planned for v0.4.0)
-- Highest Priority Open: 040 - REPL 显示严重问题（重复/乱序/占位符/命令不可见）(High)
-- Planned for v0.4.0: 037, 039, 040 (长期重构)
+- Total: 44 (16 Open, 24 Resolved, 3 Won't Fix, 1 Planned for v0.5.0+)
+- Highest Priority Open: 040 - REPL 显示严重问题（重复/乱序/占位符）(High)
+- Planned for v0.5.0+: 037, 039, 040 (长期重构 - ConsolePatcher 架构)
 
 ---
 
 ## Changelog
+
+### 2026-02-24: v0.4.0 发布 + Issue 040 更新
+- 完成架构重构：@kodax/core + @kodax/repl monorepo
+- 更新 Issue 040：添加实际测试观察结果
+  - Banner 延迟显示（首次交互后才出现）
+  - 用户消息双重显示（console.log + MessageList）
+  - [Complex content] 与实际内容重复显示
+  - 命令输出实际可见（问题 3 部分缓解）
+  - 新发现 punycode 弃用警告（低优先级）
+- 修复计划调整为短期快速修复 + 长期架构重构
 
 ### 2026-02-24: Issue 044 修复
 - Resolved 044: 流式输出时 Ctrl+C 延迟生效
