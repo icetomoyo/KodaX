@@ -12,6 +12,9 @@ export type { AppHandle } from "./App.js";
 export { runInkInteractiveMode } from "./InkREPL.js";
 export type { InkREPLOptions } from "./InkREPL.js";
 
+// CLI 事件处理器
+export { createCliEvents } from "./cli-events.js";
+
 // 组件
 export * from "./components/index.js";
 

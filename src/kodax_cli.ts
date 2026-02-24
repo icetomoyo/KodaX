@@ -31,12 +31,18 @@ import {
   getProvider,
   KODAX_TOOLS,
   KodaXTerminalError,
-} from './core/index.js';
-import { getGitRoot, loadConfig, getFeatureProgress, checkAllFeaturesComplete, rateLimitedCall, buildInitPrompt } from './cli/utils.js';
-
-import { runInkInteractiveMode } from './ui/index.js';
-import { FileSessionStorage } from './interactive/storage.js';
-import { createCliEvents } from './ui/cli-events.js';
+} from '@kodax/core';
+import {
+  getGitRoot,
+  loadConfig,
+  getFeatureProgress,
+  checkAllFeaturesComplete,
+  rateLimitedCall,
+  buildInitPrompt,
+  runInkInteractiveMode,
+  FileSessionStorage,
+  createCliEvents,
+} from '@kodax/repl';
 
 import os from 'os';
 
