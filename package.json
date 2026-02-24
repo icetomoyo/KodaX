@@ -1,6 +1,6 @@
 {
   "name": "kodax",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "极致轻量化 Coding Agent - TypeScript 实现，支持7种LLM提供商",
   "type": "module",
   "private": true,

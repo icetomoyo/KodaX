@@ -1,6 +1,6 @@
 {
   "name": "@kodax/repl",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "KodaX REPL - 完整的交互式终端体验",
   "type": "module",
   "main": "dist/index.js",
