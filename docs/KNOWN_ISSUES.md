@@ -51,7 +51,7 @@ _Last Updated: 2026-02-23 16:00_
 | 037 | Medium | Open | 两套键盘事件系统冲突 | v0.3.3 | v0.4.0 | 2026-02-22 | - |
 | 038 | Low | Won't Fix | 输入焦点竞态条件 | v0.3.3 | - | 2026-02-22 | 2026-02-22 |
 | 039 | Low | Open | 死代码 printStartupBanner | v0.3.3 | v0.4.0 | 2026-02-22 | - |
-| 040 | High | Open | REPL 显示严重问题 - 重复/乱序/占位符/命令不可见 | v0.3.3 | - | 2026-02-23 | - |
+| 040 | High | Open | REPL 显示问题 - Banner重复/消息双重输出 | v0.3.3 | - | 2026-02-23 | - |
 | 044 | High | Open | 流式输出时 Ctrl+C 延迟生效 | v0.3.4 | - | 2026-02-23 | - |
 
 ---
@@ -902,237 +902,59 @@ _Last Updated: 2026-02-23 16:00_
 
 ---
 
-### 040: REPL 历史显示严重问题 - 重复/乱序/占位符/命令不可见
+### 040: REPL 显示问题 - Banner重复/消息双重输出
 - **Priority**: High
 - **Status**: Open
 - **Introduced**: v0.3.3 (auto-detected)
 - **Created**: 2026-02-23
 - **Original Problem**:
-  REPL 显示存在多个严重问题，远超出最初预期的"Banner 乱序"：
+  REPL 显示存在以下确认的问题（基于实际测试观察）：
 
-  1. **消息重复显示**：同一条消息在终端中出现 2-3 次
-  2. **[Complex content] 占位符**：LLM 回复显示为 `[Complex content]` 而非实际文本
-  3. **命令输出不可见**：`/help`、`/model` 等命令的输出不显示
-  4. **显示顺序混乱**：Banner、用户输入、LLM 回复的顺序完全错乱
-  5. **内容丢失**：用户输入的文字在某些操作后消失
+  | 问题 | 启动时 | 交互后 |
+  |------|--------|--------|
+  | Banner 重复显示 | ✅ 正常显示在顶部 | ❌ 每次交互后在 console 输出之后重新出现 |
+  | 用户消息双重输出 | N/A | ❌ `You: /help` (console.log) + `You [08:33 PM] /help` (MessageList) |
+  | Assistant 双重显示 | N/A | ❌ `Assistant [时间]` (历史) + `Assistant` (流式) 内容略有不同 |
 
-- **Observed Behavior (v0.4.0 Test on 2026-02-24)**:
+  **详细表现**：
+  1. **Banner**：启动时正常 → 每次命令/交互后，Banner 会在 console 输出（如 `/help` 结果）之后重新出现
+  2. **用户消息**：`console.log` 输出简洁格式 `You: xxx`，MessageList 输出带时间戳格式 `You [时间] xxx`
+  3. **Assistant**：历史记录 `Assistant [时间]` 显示最终结果，流式响应 `Assistant` 显示 tool call 过程（"我来查看一下..."）
 
-  实际测试显示问题更加具体：
-
-  ```
-  kodax
-  You: /help              ← 第一次显示 (console.log)
-
-  [命令输出正常显示]
-
-  You: /model
-
-  [命令输出正常显示]
-
-  You: 给我讲讲上层目录的内容
-
-  [Interrupted]           ← 用户中断流式输出
-
-  ██╗  ██╗  ██████╗      ← Banner 在这里才出现！
-  ...Banner 内容...
-  v0.4.0 | kimi-code/k2p5 | code
-  ------------------------------------------------------------
-
-  You [07:37 PM]          ← 第二次显示 (MessageList 渲染)
-    /help
-
-  You [07:37 PM]          ← 第二次显示
-    /model
-
-  You [07:37 PM]          ← 第二次显示
-    给我讲讲上层目录的内容
-
-  Assistant [07:37 PM]
-    [Complex content]     ← 占位符出现
-
-  Assistant               ← 实际内容又出现在下方！
-    我来查看一下上层目录的内容...
-  ```
-
-  **关键发现**：
-  1. **Banner 延迟显示**：Banner 在用户第一次交互（或中断）后才出现，而非启动时
-  2. **双重消息显示**：每条用户消息显示两次，格式不同：
-     - `You: <message>` (console.log 即时输出)
-     - `You [HH:MM PM] <message>` (MessageList 历史渲染)
-  3. **[Complex content] + 实际内容重复**：Assistant 消息先显示占位符，然后又显示实际内容
-  4. **命令输出可见**：`/help`、`/model` 输出实际是可见的（问题 3 部分不存在或已修复）
-  5. **punycode 弃用警告**：`DeprecationWarning: The punycode module is deprecated`（新问题，低优先级）
-
-- **Context**: `packages/repl/src/ui/InkREPL.tsx`, `packages/repl/src/ui/components/MessageList.tsx`, `packages/repl/src/interactive/commands.ts`
 - **Root Cause Analysis**:
 
-  ### 问题 1: 双重输出通道冲突
-  ```
-  console.log 输出 ←→ patchConsole 捕获
-         ↓                    ↓
-  [独立的输出区域]    [React 组件渲染区]
-         ↓                    ↓
-     时序混乱 ←——— 两者无法同步 ——→ 显示错位
-  ```
+  ### 问题 1: Banner 重复显示
+  - Banner 组件在 React 组件树内部渲染
+  - `patchConsole: true` 模式下，console 输出被 Ink 捕获并插入到渲染流中
+  - 每次交互的 console.log 输出（命令结果、用户输入）导致 React 树重新排列
+  - Banner 组件在重新渲染时出现在 console 输出之后的位置
 
-  **代码层面**：
-  - `InkREPL.tsx:455-456` - `console.log(chalk.cyan(\`You: ${input}\`))` 打印用户输入
-  - `InkREPL.tsx:314-320` - `addHistoryItem({ type: "user", text: content })` 添加到历史
-  - `MessageList.tsx` - 渲染历史记录
+  ### 问题 2: 用户消息双重输出
+  - `InkREPL.tsx` 行 500-502: `console.log(chalk.cyan(\`You: ${input}\`))` 打印用户输入
+  - 同时 `addHistoryItem()` 添加到历史，MessageList 也会渲染
+  - 两个输出通道互不协调，导致同一条消息显示两次（格式不同）
 
-  两个输出通道互不协调，导致：
-  - 用户输入显示两次（格式不同）
-  - 顺序取决于 console.log 和 React 渲染的执行时序
+  ### 问题 3: Assistant 双重显示
+  - 流式响应通过 `streamingState.currentResponse` 实时显示（无时间戳）
+  - 完成后通过 `addHistoryItem()` 添加到历史（带时间戳）
+  - 流式响应内容包含 tool call 描述（"我来查看一下当前目录..."），历史记录只包含最终结果
+  - MessageList 同时显示两者，造成重复
 
-  ### 问题 2: [Complex content] 占位符
-  `extractTextContent()` 函数（InkREPL.tsx:64-81）只处理 text 类型的内容块：
-
-  ```typescript
-  function extractTextContent(content: string | unknown[]): string {
-    if (typeof content === "string") return content;
-    if (Array.isArray(content)) {
-      const textParts: string[] = [];
-      for (const block of content) {
-        // 只提取 type === "text" 的块
-        if (block?.type === "text" && "text" in block) {
-          textParts.push(String(block.text));
-        }
-      }
-      if (textParts.length > 0) return textParts.join("\n");
-    }
-    return "[Complex content]";  // ⚠️ 其他类型全部显示为占位符
-  }
-  ```
-
-  未处理的块类型：
-  - `tool_use` - 工具调用请求
-  - `tool_result` - 工具执行结果
-  - `image` - 图像内容
-  - `thinking` - 思考内容
-
-  ### 问题 3: 命令输出不可见
-  命令处理流程：
-  ```
-  用户输入 → parseCommand() → executeCommand()
-                               ↓
-                    commands.ts 中的 console.log()
-                               ↓
-                    patchConsole: true 捕获
-                               ↓
-                    ⚠️ 输出位置不可预测
-  ```
-
-  - `commands.ts` 中所有命令使用 `console.log` 输出
-  - `patchConsole: true` 捕获这些输出
-  - 但输出位置相对于 React 组件不确定
-  - 导致 `/help` 等命令输出可能被覆盖或显示在错误位置
-
-  ### 问题 4: Ink patchConsole 机制限制
-  Ink 的 `patchConsole: true` 设计目的：
-  - 将 `console.log` 输出重定向到 alternate buffer
-  - 使命令输出在 Ink UI 中可见
-
-  但其限制：
-  - console 输出和 React 组件是两个独立的渲染系统
-  - 无法精确控制 console 输出相对于 React 组件的位置
-  - 高频输出时容易造成显示混乱
-
-- **Comparison with Gemini CLI**:
-
-  Gemini CLI 使用完全不同的架构：
-
-  ### ConsolePatcher 模式
-  ```typescript
-  // Gemini CLI: packages/core/src/utils/ConsolePatcher.ts
-  class ConsolePatcher {
-    private onNewMessage?: (item: ConsoleMessageItem) => void;
-
-    log(...args: unknown[]) {
-      this.onNewMessage?.({
-        type: 'console',
-        content: this.formatArgs(args),
-        count: 1,
-      });
-    }
-  }
-  ```
-
-  ### 统一的 HistoryItem 类型系统
-  ```typescript
-  // 所有输出统一为 HistoryItem
-  type HistoryItem =
-    | UserMessageItem
-    | AssistantMessageItem
-    | ConsoleMessageItem  // ← console.log 转换为这个
-    | ToolCallMessageItem
-    | ...;
-  ```
-
-  ### 关键差异
-  | 特性 | KodaX | Gemini CLI |
-  |------|-------|------------|
-  | console.log 处理 | patchConsole 捕获 | 转换为 HistoryItem |
-  | 输出统一性 | 双通道独立 | 单一 HistoryItem 列表 |
-  | 显示顺序 | 时序依赖 | 列表顺序保证 |
-  | 内容类型 | 只处理 text | 完整类型支持 |
+- **Context**: `src/ui/InkREPL.tsx:500-502`, `src/ui/components/MessageList.tsx`
 
 - **Proposed Solution**:
 
-  ### 短期修复（v0.4.x）
-  1. **Banner 显示时机**：确保 Banner 在 Ink 组件首次渲染时显示，而非等待用户交互
-  2. **移除重复输出**：删除 `console.log(chalk.cyan(\`You: ${input}\`))`，统一使用 MessageList 渲染
-  3. **修复 [Complex content]**：
-     - 检查 `extractTextContent()` 的调用时机
-     - 确保实际内容渲染后不再显示占位符
-  4. **punycode 警告**：更新依赖或添加 Node.js 版本检查（低优先级）
-
-  ### 长期重构（v0.5.0+）
-  参考 Gemini CLI 实现 ConsolePatcher：
-
-  ```typescript
-  // 1. 创建 ConsolePatcher 类
-  class ConsolePatcher {
-    private onNewHistoryItem: (item: HistoryItem) => void;
-
-    install() {
-      const originalLog = console.log;
-      console.log = (...args) => {
-        this.onNewHistoryItem({
-          type: 'info',  // 或专门的 'console' 类型
-          text: this.formatArgs(args),
-          timestamp: Date.now(),
-        });
-      };
-    }
-  }
-
-  // 2. 统一 HistoryItem 类型
-  type HistoryItem =
-    | { type: 'user'; text: string; ... }
-    | { type: 'assistant'; text: string; ... }
-    | { type: 'console'; content: string; level: 'log' | 'warn' | 'error'; ... }
-    | { type: 'tool_use'; name: string; input: unknown; ... }
-    | { type: 'tool_result'; toolUseId: string; content: string; ... };
-
-  // 3. 所有输出通过 MessageList 渲染
-  // 移除 patchConsole，禁用 Ink 的 console 捕获
-  render(<App />, { patchConsole: false });
-  ```
-
-- **Safety Analysis**:
-  - ✅ 短期修复风险低，向后兼容
-  - ⚠️ 长期重构需要全面测试
-  - ✅ 参考 Gemini CLI 成熟架构
-  - ✅ 符合 v0.4.0 monorepo 重构计划
+  1. **Banner 重复**：
+     - 方案 A：从 React 树中移除 Banner，只在启动时 console.log 打印一次
+     - 方案 B：使用 Ink 的 `<Static>` 组件包裹 Banner，使其固定在顶部不受 patchConsole 影响
+  2. **用户消息双重输出**：删除 `console.log(chalk.cyan(\`You: ${input}\`))`，统一使用 MessageList 渲染
+  3. **Assistant 双重显示**：在 MessageList 中，当有 `streamingResponse` 时过滤掉最后一条 assistant 历史
 
 - **Files to Change**:
-  - `packages/repl/src/ui/InkREPL.tsx` - Banner 显示时机，移除冗余 console.log
-  - `packages/repl/src/ui/components/MessageList.tsx` - 修复占位符重复显示
-  - `packages/repl/src/ui/types.ts` - 添加 console/tool 相关 HistoryItem 类型
-  - `packages/repl/src/interactive/commands.ts` - 可选：返回输出而非直接 console.log
+  - `src/ui/InkREPL.tsx` - 移除冗余 console.log，修复 Banner 显示逻辑
+  - `src/ui/components/MessageList.tsx` - 避免流式响应和历史记录重复显示
 
-- **Related**: 037 (两套键盘事件系统冲突)，v0.4.0 架构重构已完成
+- **Related**: 037 (两套键盘事件系统冲突), 034 (/help 输出不可见 - 已通过 patchConsole:true 解决)
 
 ---
 
