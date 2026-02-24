@@ -459,7 +459,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
       // Wait for React to process the state update before continuing
       // This ensures user message is rendered before command output
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      // 50ms is enough for React to batch and render state updates in Ink
+      await new Promise((resolve) => setTimeout(resolve, 50));
 
       // Process commands
       const parsed = parseCommand(input.trim());
