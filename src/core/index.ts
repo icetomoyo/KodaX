@@ -78,9 +78,9 @@ export {
   isProviderConfigured,
   getProviderModel,
   getProviderList,
-  ProviderName,
   isProviderName,
 } from './providers/index.js';
+export type { ProviderName } from './providers/index.js';
 
 // 工具导出
 export {

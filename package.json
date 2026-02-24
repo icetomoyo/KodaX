@@ -25,7 +25,7 @@
   "scripts": {
     "build": "tsc",
     "build:packages": "npm run build --workspaces",
-    "dev": "tsx src/kodax.ts",
+    "dev": "tsx src/kodax_cli.ts",
     "dev:cli": "tsx src/kodax_cli.ts",
     "start": "node dist/kodax_cli.js",
     "test": "vitest run",
