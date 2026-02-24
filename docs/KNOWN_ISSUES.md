@@ -51,8 +51,8 @@ _Last Updated: 2026-02-23 16:00_
 | 037 | Medium | Open | 两套键盘事件系统冲突 | v0.3.3 | v0.4.0 | 2026-02-22 | - |
 | 038 | Low | Won't Fix | 输入焦点竞态条件 | v0.3.3 | - | 2026-02-22 | 2026-02-22 |
 | 039 | Low | Open | 死代码 printStartupBanner | v0.3.3 | v0.4.0 | 2026-02-22 | - |
-| 040 | High | Open | REPL 显示问题 - Banner重复/消息双重输出 | v0.3.3 | - | 2026-02-23 | - |
-| 044 | High | Open | 流式输出时 Ctrl+C 延迟生效 | v0.3.4 | - | 2026-02-23 | - |
+| 040 | High | Resolved | REPL 显示问题 - Banner重复/消息双重输出 | v0.3.3 | v0.4.2 | 2026-02-23 | 2026-02-24 |
+| 044 | High | Resolved | 流式输出时 Ctrl+C 延迟生效 | v0.3.4 | v0.3.6 | 2026-02-23 | 2026-02-24 |
 
 ---
 
@@ -904,9 +904,11 @@ _Last Updated: 2026-02-23 16:00_
 
 ### 040: REPL 显示问题 - Banner重复/消息双重输出
 - **Priority**: High
-- **Status**: Open
+- **Status**: Resolved
 - **Introduced**: v0.3.3 (auto-detected)
+- **Fixed**: v0.4.2
 - **Created**: 2026-02-23
+- **Resolved**: 2026-02-24
 - **Original Problem**:
   REPL 显示存在以下确认的问题（基于实际测试观察）：
 
@@ -940,19 +942,17 @@ _Last Updated: 2026-02-23 16:00_
   - 流式响应内容包含 tool call 描述（"我来查看一下当前目录..."），历史记录只包含最终结果
   - MessageList 同时显示两者，造成重复
 
-- **Context**: `src/ui/InkREPL.tsx:500-502`, `src/ui/components/MessageList.tsx`
+- **Context**: `packages/repl/src/ui/InkREPL.tsx`, `packages/repl/src/ui/components/MessageList.tsx`
 
-- **Proposed Solution**:
-
-  1. **Banner 重复**：
-     - 方案 A：从 React 树中移除 Banner，只在启动时 console.log 打印一次
-     - 方案 B：使用 Ink 的 `<Static>` 组件包裹 Banner，使其固定在顶部不受 patchConsole 影响
+- **Resolution**:
+  1. **Banner 重复**：使用 Ink 的 `<Static>` 组件包裹 Banner，使其固定在顶部不受 patchConsole 影响
   2. **用户消息双重输出**：删除 `console.log(chalk.cyan(\`You: ${input}\`))`，统一使用 MessageList 渲染
   3. **Assistant 双重显示**：在 MessageList 中，当有 `streamingResponse` 时过滤掉最后一条 assistant 历史
+  4. **渲染顺序问题**：在命令执行前添加 `await new Promise(r => setTimeout(r, 0))` 确保 React 状态更新先于 console.log 处理
 
-- **Files to Change**:
-  - `src/ui/InkREPL.tsx` - 移除冗余 console.log，修复 Banner 显示逻辑
-  - `src/ui/components/MessageList.tsx` - 避免流式响应和历史记录重复显示
+- **Files Changed**:
+  - `packages/repl/src/ui/InkREPL.tsx` - Static 包裹 Banner，移除冗余 console.log，添加状态更新等待
+  - `packages/repl/src/ui/components/MessageList.tsx` - filteredItems 逻辑避免流式响应和历史记录重复显示
 
 - **Related**: 037 (两套键盘事件系统冲突), 034 (/help 输出不可见 - 已通过 patchConsole:true 解决)
 
@@ -1070,12 +1070,20 @@ _Last Updated: 2026-02-23 16:00_
 
 ## Summary
 - Total: 44 (16 Open, 24 Resolved, 3 Won't Fix, 1 Planned for v0.5.0+)
-- Highest Priority Open: 040 - REPL 显示严重问题（重复/乱序/占位符）(High)
-- Planned for v0.5.0+: 037, 039, 040 (长期重构 - ConsolePatcher 架构)
+- Highest Priority Open: 036 - React 状态同步潜在问题 (Medium)
+- Planned for v0.5.0+: 037, 039 (长期重构 - ConsolePatcher 架构)
 
 ---
 
 ## Changelog
+
+### 2026-02-24: Issue 040 修复 (v0.4.2)
+- Resolved 040: REPL 显示问题 - Banner重复/消息双重输出
+- 修复内容：
+  1. Banner 使用 Ink `<Static>` 组件固定在顶部
+  2. 移除冗余的 `console.log` 用户消息输出
+  3. MessageList 在流式响应时过滤掉最后一条 assistant 历史
+  4. 添加 React 状态更新等待确保渲染顺序正确
 
 ### 2026-02-24: v0.4.0 发布 + Issue 040 更新
 - 完成架构重构：@kodax/core + @kodax/repl monorepo

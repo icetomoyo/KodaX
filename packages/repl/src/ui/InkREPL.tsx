@@ -11,7 +11,7 @@
  */
 
 import React, { useState, useCallback, useRef, useEffect } from "react";
-import { render, Box, useApp, Text } from "ink";
+import { render, Box, useApp, Text, Static } from "ink";
 import { InputPrompt } from "./components/InputPrompt.js";
 import { MessageList } from "./components/MessageList.js";
 import { ThinkingIndicator } from "./components/LoadingIndicator.js";
@@ -451,15 +451,15 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         text: input,
       });
 
-      // Also print to console for non-Ink output
-      console.log(chalk.cyan(`You: ${input}`));
-      console.log();
-
       setIsLoading(true);
       clearResponse();
       startStreaming();
 
       touchContext(context);
+
+      // Wait for React to process the state update before continuing
+      // This ensures user message is rendered before command output
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       // Process commands
       const parsed = parseCommand(input.trim());
@@ -703,13 +703,18 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
   return (
     <Box flexDirection="column">
-      {/* Banner - shown once at start */}
+      {/* Banner - shown once at start, using Static to prevent re-rendering */}
       {showBanner && (
-        <Banner
-          config={currentConfig}
-          sessionId={context.sessionId}
-          workingDir={options.context?.gitRoot || process.cwd()}
-        />
+        <Static items={[1]}>
+          {() => (
+            <Banner
+              key="banner"
+              config={currentConfig}
+              sessionId={context.sessionId}
+              workingDir={options.context?.gitRoot || process.cwd()}
+            />
+          )}
+        </Static>
       )}
 
       {/* Message History */}

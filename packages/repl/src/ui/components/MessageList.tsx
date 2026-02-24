@@ -387,6 +387,27 @@ export const MessageList: React.FC<MessageListProps> = ({
 }) => {
   const theme = useMemo(() => getTheme("dark"), []);
 
+  // When streaming, filter out the last assistant item to avoid double display
+  // (streamingResponse shows the live content, history item would show the final result)
+  const filteredItems = useMemo(() => {
+    if (!streamingResponse) return items;
+
+    // Find the last assistant item index
+    let lastAssistantIndex = -1;
+    for (let i = items.length - 1; i >= 0; i--) {
+      if (items[i]?.type === "assistant") {
+        lastAssistantIndex = i;
+        break;
+      }
+    }
+
+    // Filter out the last assistant item if found
+    if (lastAssistantIndex >= 0) {
+      return items.filter((_, index) => index !== lastAssistantIndex);
+    }
+    return items;
+  }, [items, streamingResponse]);
+
   if (items.length === 0 && !isLoading) {
     return (
       <Box paddingY={1}>
@@ -413,7 +434,7 @@ export const MessageList: React.FC<MessageListProps> = ({
 
   return (
     <Box flexDirection="column" paddingY={1}>
-      {items.map((item) => (
+      {filteredItems.map((item) => (
         <HistoryItemRenderer key={item.id} item={item} theme={theme} maxLines={maxLines} />
       ))}
 
