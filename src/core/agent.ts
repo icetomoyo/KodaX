@@ -227,6 +227,20 @@ export async function runKodaX(
       }
     } catch (e) {
       const error = e instanceof Error ? e : new Error(String(e));
+
+      // 检查是否为 AbortError（用户中断）
+      // 参考 Gemini CLI: 静默处理中断，不报告为错误
+      if (error.name === 'AbortError') {
+        events.onStreamEnd?.();
+        return {
+          success: true,  // 中断不算失败
+          lastText,
+          messages,
+          sessionId,
+          interrupted: true,
+        };
+      }
+
       events.onError?.(error);
       return {
         success: false,

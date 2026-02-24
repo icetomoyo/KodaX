@@ -282,14 +282,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     },
   });
 
-  // 全局中断处理器 - 在 LLM 响应时处理 Ctrl+C 和 ESC
-  // 使用 Normal 优先级（低于 InputPrompt 的 High），所以 InputPrompt 先处理
+  // 全局中断处理器 - 使用 Gemini CLI 风格的 isActive 模式
+  // 只在 streaming 期间订阅，确保键盘事件能被正确捕获
+  // 参考: Gemini CLI useGeminiStream.ts 中的 useKeypress 使用方式
   useKeypress(
-    KeypressHandlerPriority.Normal,
     (key) => {
-      // 只在加载中时处理中断
-      if (!isLoading) return false;
-
       // Ctrl+C 或 ESC 中断当前操作
       if ((key.ctrl && key.name === "c") || key.name === "escape") {
         // 使用 abort() 而不是 stopStreaming() 来真正中止 API 请求
@@ -303,7 +300,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
       return false;
     },
-    [isLoading, abort, stopThinking, setCurrentTool]
+    {
+      isActive: isLoading, // 只在 streaming 期间激活
+      priority: KeypressHandlerPriority.Critical, // 使用最高优先级，确保中断优先处理
+    }
   );
 
   // Sync history from context to UI on mount

@@ -164,6 +164,8 @@ export interface KodaXResult {
   signalReason?: string;
   messages: KodaXMessage[];
   sessionId: string;
+  /** 是否被用户中断 (Ctrl+C) */
+  interrupted?: boolean;
 }
 
 // ============== 会话存储接口 ==============

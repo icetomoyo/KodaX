@@ -1085,31 +1085,35 @@ _Last Updated: 2026-02-23 16:00_
 
 ---
 
-### 044: 流式输出时 Ctrl+C 延迟生效
+### 044: 流式输出时 Ctrl+C 延迟生效 (RESOLVED)
 - **Priority**: High
-- **Status**: Open
+- **Status**: Resolved
 - **Introduced**: v0.3.4 (auto-detected)
+- **Fixed**: v0.3.6
 - **Created**: 2026-02-23
+- **Resolved**: 2026-02-24
 - **Original Problem**:
   - 在 LLM 流式输出（非 thinking）时按 Ctrl+C 中断
   - 中断不会立即生效，而是等流式输出结束后才生效
   - Thinking 过程中可以正常中断（043 已修复）
 - **Context**: `src/ui/InkREPL.tsx`, `src/core/providers/`
 - **Root Cause Analysis**:
-  - 043 修复了 AbortSignal 传递到 API 的问题
-  - 但 Ctrl+C 的 keypress handler 可能在流式迭代中被阻塞
-  - Node.js 事件循环中，`for await...of` 循环可能延迟处理 stdin 事件
-  - 需要检查 provider 的流迭代是否阻塞了事件循环
-- **Proposed Solution**:
-  1. 检查 `useKeypress` hook 是否在 streaming 期间正确监听
-  2. 确认 InkREPL 的 abort handler 使用正确的优先级
-  3. 可能需要在 provider 的流迭代中添加 `setImmediate()` 或类似机制
-  4. 考虑在每次流迭代时检查 stdin 是否有待处理的中断信号
-- **Safety Analysis**:
-  - ⚠️ 需要深入分析 Node.js 事件循环和流处理机制
-  - ⚠️ 可能需要修改 provider 的流处理逻辑
-  - ✅ 不影响现有功能
-- **Files to Change**: `src/ui/InkREPL.tsx`, `src/core/providers/anthropic.ts`, `src/core/providers/openai.ts`
+  - AbortSignal 虽然传递到了 provider，但未传递给底层 SDK
+  - `provider.stream()` 调用 `client.messages.create()` 时没有传递 signal 参数
+  - 底层 HTTP 请求无法被取消，只能在流事件到达时检查 abort 状态
+- **Resolution**:
+  1. 修改 `anthropic.ts` 和 `openai.ts`：传递 signal 给 SDK 的 create 方法
+  2. 修改 `agent.ts`：正确识别并处理 AbortError（`error.name === 'AbortError'`）
+  3. 添加 `KodaXResult.interrupted` 字段标记中断状态
+  4. 使用 Gemini CLI 风格的 `isActive` 模式优化 keypress handler 订阅
+- **Resolution Date**: 2026-02-24
+- **Files Changed**:
+  - `src/core/providers/anthropic.ts` - 传递 signal 给 SDK
+  - `src/core/providers/openai.ts` - 传递 signal 给 SDK
+  - `src/core/agent.ts` - AbortError 处理
+  - `src/core/types.ts` - 添加 interrupted 字段
+  - `src/ui/contexts/KeypressContext.tsx` - 支持 isActive 模式
+  - `src/ui/InkREPL.tsx` - 使用 Gemini CLI 风格中断处理
 
 ---
 
@@ -1192,13 +1196,20 @@ _Last Updated: 2026-02-23 16:00_
 ---
 
 ## Summary
-- Total: 44 (17 Open, 23 Resolved, 3 Won't Fix, 1 Planned for v0.4.0)
-- Highest Priority Open: 040 - REPL 显示严重问题（重复/乱序/占位符/命令不可见）(High), 044 - 流式输出时 Ctrl+C 延迟生效 (High)
+- Total: 44 (16 Open, 24 Resolved, 3 Won't Fix, 1 Planned for v0.4.0)
+- Highest Priority Open: 040 - REPL 显示严重问题（重复/乱序/占位符/命令不可见）(High)
 - Planned for v0.4.0: 037, 039, 040 (长期重构)
 
 ---
 
 ## Changelog
+
+### 2026-02-24: Issue 044 修复
+- Resolved 044: 流式输出时 Ctrl+C 延迟生效
+- 根因：AbortSignal 未传递给底层 SDK，HTTP 请求无法被取消
+- 修复：传递 signal 给 Anthropic/OpenAI SDK 的 create 方法
+- 参考 Gemini CLI 的 abort 处理模式实现
+- 更新 6 个文件实现完整的中断功能
 
 ### 2026-02-23: Issue 040 详细分析
 - 深度分析 040: REPL 显示严重问题

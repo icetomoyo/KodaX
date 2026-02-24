@@ -40,7 +40,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
 
       // 检查是否已被取消
       if (signal?.aborted) {
-        throw new Error('Request aborted');
+        throw new DOMException('Request aborted', 'AbortError');
       }
 
       const textBlocks: KodaXTextBlock[] = [];
@@ -55,12 +55,14 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
       let currentToolName = '';
       let currentToolInput = '';
 
-      const response = await this.client.messages.create(kwargs);
+      // 传递 signal 给 SDK，确保底层 HTTP 请求能被取消
+      // 参考: https://github.com/anthropics/anthropic-sdk-typescript
+      const response = await this.client.messages.create(kwargs, signal ? { signal } : {});
 
       for await (const event of response as AsyncIterable<Anthropic.Messages.RawMessageStreamEvent>) {
-        // 检查是否被中断
+        // 检查是否被中断 (双重保险)
         if (signal?.aborted) {
-          throw new Error('Request aborted');
+          throw new DOMException('Request aborted', 'AbortError');
         }
 
         if (event.type === 'content_block_start') {

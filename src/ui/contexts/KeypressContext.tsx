@@ -260,32 +260,79 @@ export function useKeypressManager(): KeypressManager {
 }
 
 /**
+ * useKeypress 选项接口
+ * 参考 Gemini CLI 的 useKeypress 签名
+ */
+export interface UseKeypressOptions {
+  /** 是否激活（订阅键盘事件） */
+  isActive?: boolean;
+  /** 优先级（可选，默认 Normal） */
+  priority?: number | boolean;
+}
+
+/**
  * 注册键盘事件处理器
  *
- * @param priority 处理器优先级（或使用 boolean: true = High, false = Normal）
- * @param handler 处理函数
- * @param deps 依赖数组
+ * 支持两种调用模式：
+ *
+ * 1. KodaX 原有模式（向后兼容）：
+ *    useKeypress(priority, handler, deps)
+ *
+ * 2. Gemini CLI 风格（推荐用于条件订阅）：
+ *    useKeypress(handler, { isActive: boolean, priority?: number })
+ *
+ * @param priorityOrHandler 优先级或处理函数
+ * @param handlerOrOptions 处理函数或选项对象
+ * @param deps 依赖数组（仅用于 KodaX 模式）
  */
 export function useKeypress(
-  priority: number | boolean,
-  handler: KeypressHandler,
+  priorityOrHandler: number | boolean | KeypressHandler,
+  handlerOrOptions?: KeypressHandler | UseKeypressOptions,
   deps: React.DependencyList = []
 ): void {
   const manager = useKeypressManager();
 
-  // 处理 boolean 类型的 priority（兼容 Gemini CLI 风格）
-  const actualPriority =
-    typeof priority === "boolean"
-      ? priority
-        ? KeypressHandlerPriority.High
-        : KeypressHandlerPriority.Normal
-      : priority;
+  // 检测调用模式
+  const isGeminiStyle = typeof priorityOrHandler === "function";
+
+  let handler: KeypressHandler;
+  let actualPriority: number;
+  let isActive: boolean;
+
+  if (isGeminiStyle) {
+    // Gemini CLI 风格：useKeypress(handler, { isActive, priority? })
+    handler = priorityOrHandler as KeypressHandler;
+    const options = (handlerOrOptions as UseKeypressOptions) ?? {};
+    isActive = options.isActive ?? true;
+    const priority = options.priority;
+    actualPriority =
+      typeof priority === "boolean"
+        ? priority
+          ? KeypressHandlerPriority.High
+          : KeypressHandlerPriority.Normal
+        : (priority ?? KeypressHandlerPriority.Normal);
+  } else {
+    // KodaX 原有模式：useKeypress(priority, handler, deps)
+    actualPriority =
+      typeof priorityOrHandler === "boolean"
+        ? priorityOrHandler
+          ? KeypressHandlerPriority.High
+          : KeypressHandlerPriority.Normal
+        : priorityOrHandler;
+    handler = handlerOrOptions as KeypressHandler;
+    isActive = true; // 原有模式总是激活
+  }
 
   useEffect(() => {
+    // 如果不激活，不订阅
+    if (!isActive) {
+      return;
+    }
+
     const unregister = manager.register(actualPriority, handler);
     return unregister;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [manager, actualPriority, ...deps]);
+  }, [manager, actualPriority, isActive, ...(isGeminiStyle ? [] : deps)]);
 }
 
 /**
