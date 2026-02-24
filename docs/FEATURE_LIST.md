@@ -1,6 +1,6 @@
 # Feature List
 
-_Last Updated: 2026-02-21 23:30_
+_Last Updated: 2026-02-25 00:10_
 
 ---
 
@@ -8,8 +8,8 @@ _Last Updated: 2026-02-21 23:30_
 
 | 字段 | 值 | 说明 |
 |------|-----|------|
-| **Current Release** | v0.3.3 | 最新发布版本（仅供参考） |
-| **Planned Version** | v0.4.0 | 当前规划的版本 |
+| **Current Release** | v0.4.2 | 最新发布版本（仅供参考） |
+| **Planned Version** | v0.5.0 | 当前规划的版本 |
 
 ---
 
@@ -19,7 +19,8 @@ _Last Updated: 2026-02-21 23:30_
 |---------|--------|----------|----------|
 | v0.3.1 | Released | 3 | 3/3 (100%) |
 | v0.3.3 | Released | 1 | 1/1 (100%) |
-| v0.4.0 | Planned | 1 | 0/1 (0%) |
+| v0.4.0 | Released | 1 | 1/1 (100%) |
+| v0.5.0 | Planned | 2 | 0/2 (0%) |
 
 ---
 
@@ -31,7 +32,9 @@ _Last Updated: 2026-02-21 23:30_
 | 002 | Enhancement | Completed | High | 强化 Ask 模式 | v0.3.1 | v0.3.1 | [Design](features/v0.3.1.md#002) | 2026-02-18 | 2026-02-18 | 2026-02-18 |
 | 003 | New | Completed | High | 交互式项目模式 | v0.3.1 | v0.3.1 | [Design](features/v0.3.1.md#003) | 2026-02-19 | 2026-02-19 | 2026-02-19 |
 | 004 | Enhancement | Completed | Medium | 交互式界面改进 | v0.3.3 | v0.3.3 | [Design](features/v0.3.3.md#004) | 2026-02-19 | 2026-02-19 | 2026-02-20 |
-| 005 | Refactor | Planned | High | v0.4.0 架构重构与模块解耦 | v0.4.0 | - | [Design](features/v0.4.0.md#005) | 2026-02-20 | - | - |
+| 005 | Refactor | Completed | High | v0.4.0 架构重构与模块解耦 | v0.4.0 | v0.4.0 | [Design](features/v0.4.0.md#005) | 2026-02-20 | 2026-02-24 | 2026-02-24 |
+| 006 | New | Planned | Critical | Skills 系统 | v0.5.0 | - | [Design](features/v0.5.0.md#006) | 2026-02-25 | - | - |
+| 007 | Enhancement | Planned | Medium | 主题系统完善 | v0.5.0 | - | [Design](features/v0.5.0.md#007) | 2026-02-25 | - | - |
 
 ---
 
@@ -151,44 +154,91 @@ REPL 中的长运行项目管理，通过 `/project` 命令组实现。
 
 ---
 
-### 005: v0.4.0 架构重构与模块解耦 (PLANNED)
+### 005: v0.4.0 架构重构与模块解耦 (COMPLETED)
 - **Category**: Refactor
-- **Status**: Planned
+- **Status**: Completed
 - **Priority**: High
 - **Planned**: v0.4.0
-- **Released**: -
+- **Released**: v0.4.0
 - **Design**: [v0.4.0.md#005](features/v0.4.0.md#005)
 - **Created**: 2026-02-20
+- **Started**: 2026-02-24
+- **Completed**: 2026-02-24
+
+**Description**:
+重大架构重构，创建 monorepo 结构，包含 `@kodax/core` 和 `@kodax/repl` 两个独立包。
+
+**Goals**:
+1. **@kodax/core**: 纯 AI 引擎，环境无关（Node.js、浏览器、边缘运行时）
+2. **@kodax/repl**: 完整的交互式终端体验
+
+**Implementation Notes**:
+- monorepo 结构使用 npm workspaces
+- 根目录 `src/` 简化为代理导出
+- packages/core 独立核心功能
+- packages/repl 包含 CLI 和 UI 组件
+
+---
+
+### 006: Skills 系统 (PLANNED)
+- **Category**: New
+- **Status**: Planned
+- **Priority**: Critical
+- **Planned**: v0.5.0
+- **Released**: -
+- **Design**: [v0.5.0.md#006](features/v0.5.0.md#006)
+- **Created**: 2026-02-25
 - **Started**: -
 - **Completed**: -
 
 **Description**:
-重大架构重构，创建三个高度解耦、可独立使用的模块：
-`@kodax/core`、`@kodax/cli`、`@kodax/repl`
+类似 Claude Code 的 Skills 系统，允许用户定义和加载可复用的技能/命令模块。
 
 **Goals**:
-1. **@kodax/core**: 纯 AI 引擎，环境无关（Node.js、浏览器、边缘运行时）
-2. **@kodax/cli**: 薄层 CLI 封装，带命令注册系统
-3. **@kodax/repl**: 完整的交互式终端体验
+1. 支持 `.claude/skills/` 目录加载自定义技能
+2. 内置常用技能库（代码审查、测试生成等）
+3. 技能可以通过 `/skill-name` 方式调用
+4. 支持技能的参数传递和配置
+5. 技能可以被 LLM 自动识别和调用
+
+**Key Features**:
+- 技能发现和注册机制
+- 技能元数据（名称、描述、触发词）
+- 技能执行上下文隔离
+- 技能依赖管理
+
+---
+
+### 007: 主题系统完善 (PLANNED)
+- **Category**: Enhancement
+- **Status**: Planned
+- **Priority**: Medium
+- **Planned**: v0.5.0
+- **Released**: -
+- **Design**: [v0.5.0.md#007](features/v0.5.0.md#007)
+- **Created**: 2026-02-25
+- **Started**: -
+- **Completed**: -
+
+**Description**:
+将所有硬编码的 chalk 颜色改为使用主题系统，实现全局主题切换。
+
+**Goals**:
+1. 命令输出颜色使用主题系统
+2. 添加 `/theme` 命令切换主题
+3. 支持用户自定义主题
+4. 主题持久化到配置文件
 
 **Key Changes**:
-- 模块间标准化接口
-- 事件驱动架构
-- Provider 和 Tool 插件系统
-- 独立的 npm 包
-
-**Phases**:
-- Phase 1: 代码审查与依赖分析
-- Phase 2: Core 模块重构
-- Phase 3: CLI 模块重构
-- Phase 4: REPL 模块重构
-- Phase 5: 集成测试与发布
+- 修改 `commands.ts` 使用主题颜色
+- 添加 ThemeContext 全局主题状态
+- 主题配置存储在 `.kodax/config.json`
 
 ---
 
 ## Summary
-- Total: 5 (1 Planned, 0 InProgress, 4 Completed)
-- By Priority: Critical: 0, High: 4, Medium: 1, Low: 0
-- Current Version: v0.3.3
-- Next Release (v0.4.0): 1 feature planned
-- Highest Priority InProgress: None
+- Total: 7 (2 Planned, 0 InProgress, 5 Completed)
+- By Priority: Critical: 1, High: 4, Medium: 2, Low: 0
+- Current Version: v0.4.2
+- Next Release (v0.5.0): 2 features planned
+- Highest Priority Planned: 006 - Skills 系统 (Critical)
