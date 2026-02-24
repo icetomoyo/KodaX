@@ -5,7 +5,8 @@
 import * as readline from 'readline';
 import chalk from 'chalk';
 import { InteractiveContext, InteractiveMode } from './context.js';
-import { estimateTokens, KODAX_PROVIDERS, getProviderList, saveConfig } from '../kodax_core.js';
+import { estimateTokens, KODAX_PROVIDERS, getProviderList } from '../core/index.js';
+import { saveConfig } from '../cli/utils.js';
 import { runWithPlanMode, listPlans, resumePlan, clearCompletedPlans } from '../cli/plan-mode.js';
 import { handleProjectCommand, printProjectHelp } from './project-commands.js';
 import { KodaXOptions } from '../core/index.js';

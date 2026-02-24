@@ -1,7 +1,7 @@
 /**
  * KodaX 提示词内容验证测试
  *
- * 确保 kodax_core.ts 和 kodax_cli.ts 中的提示词关键内容存在
+ * 确保 core/prompts/ 和 cli/ 中的提示词关键内容存在
  */
 
 import { describe, it, expect } from 'vitest';
@@ -11,16 +11,16 @@ import path from 'path';
 // ============== SYSTEM_PROMPT 测试 ==============
 
 describe('SYSTEM_PROMPT Content Verification', () => {
-  const kodaxCorePath = path.join(process.cwd(), 'src', 'kodax_core.ts');
+  const systemPromptPath = path.join(process.cwd(), 'src', 'core', 'prompts', 'system.ts');
 
   it('should contain Large File Handling section', async () => {
-    const content = await fs.readFile(kodaxCorePath, 'utf-8');
+    const content = await fs.readFile(systemPromptPath, 'utf-8');
     expect(content).toContain('## Large File Handling (IMPORTANT)');
     expect(content).toContain('**RECOMMENDED LIMIT: 300 lines per write call**');
   });
 
   it('should contain Example approach for large files', async () => {
-    const content = await fs.readFile(kodaxCorePath, 'utf-8');
+    const content = await fs.readFile(systemPromptPath, 'utf-8');
     expect(content).toContain('Example approach for large files:');
     expect(content).toContain('1. write file with basic structure/skeleton (under 300 lines)');
     expect(content).toContain('2. edit to add first major section');
@@ -29,7 +29,7 @@ describe('SYSTEM_PROMPT Content Verification', () => {
   });
 
   it('should contain Error Handling section with Common errors', async () => {
-    const content = await fs.readFile(kodaxCorePath, 'utf-8');
+    const content = await fs.readFile(systemPromptPath, 'utf-8');
     expect(content).toContain('## Error Handling');
     expect(content).toContain('5. Common errors:');
     expect(content).toContain('"Missing required parameter \'X\'"');
@@ -38,7 +38,7 @@ describe('SYSTEM_PROMPT Content Verification', () => {
   });
 
   it('should contain Editing Files section', async () => {
-    const content = await fs.readFile(kodaxCorePath, 'utf-8');
+    const content = await fs.readFile(systemPromptPath, 'utf-8');
     expect(content).toContain('## Editing Files');
     expect(content).toContain('Always read the file first');
     expect(content).toContain('Make precise, targeted edits');
@@ -46,7 +46,7 @@ describe('SYSTEM_PROMPT Content Verification', () => {
   });
 
   it('should contain Shell Commands section with Cross-Platform Notes', async () => {
-    const content = await fs.readFile(kodaxCorePath, 'utf-8');
+    const content = await fs.readFile(systemPromptPath, 'utf-8');
     expect(content).toContain('## Shell Commands');
     expect(content).toContain('### Cross-Platform Notes');
     // Check for platform-specific command hints
@@ -59,7 +59,7 @@ describe('SYSTEM_PROMPT Content Verification', () => {
   });
 
   it('should contain mkdir instructions with Chinese error hint', async () => {
-    const content = await fs.readFile(kodaxCorePath, 'utf-8');
+    const content = await fs.readFile(systemPromptPath, 'utf-8');
     expect(content).toContain('Directories are created automatically');
     expect(content).toContain('NEVER use');  // Without exact backticks
     expect(content).toContain('mkdir');
@@ -68,14 +68,14 @@ describe('SYSTEM_PROMPT Content Verification', () => {
   });
 
   it('should contain Multi-step Tasks section', async () => {
-    const content = await fs.readFile(kodaxCorePath, 'utf-8');
+    const content = await fs.readFile(systemPromptPath, 'utf-8');
     expect(content).toContain('## Multi-step Tasks');
     expect(content).toContain('Track your progress');
     expect(content).toContain('Break complex tasks into smaller steps');
   });
 
   it('should contain Plan Before Action section', async () => {
-    const content = await fs.readFile(kodaxCorePath, 'utf-8');
+    const content = await fs.readFile(systemPromptPath, 'utf-8');
     expect(content).toContain('## Plan Before Action');
     expect(content).toContain('First explain your understanding of the task');
     expect(content).toContain('Outline your approach');
@@ -85,7 +85,7 @@ describe('SYSTEM_PROMPT Content Verification', () => {
   });
 
   it('should contain {context} placeholder', async () => {
-    const content = await fs.readFile(kodaxCorePath, 'utf-8');
+    const content = await fs.readFile(systemPromptPath, 'utf-8');
     expect(content).toContain('{context}');
   });
 });
@@ -93,16 +93,16 @@ describe('SYSTEM_PROMPT Content Verification', () => {
 // ============== LONG_RUNNING_PROMPT 测试 ==============
 
 describe('LONG_RUNNING_PROMPT Content Verification', () => {
-  const kodaxCorePath = path.join(process.cwd(), 'src', 'kodax_core.ts');
+  const longRunningPath = path.join(process.cwd(), 'src', 'core', 'prompts', 'long-running.ts');
 
   it('should contain Long-Running Task Mode section', async () => {
-    const content = await fs.readFile(kodaxCorePath, 'utf-8');
+    const content = await fs.readFile(longRunningPath, 'utf-8');
     expect(content).toContain('## Long-Running Task Mode');
     expect(content).toContain('At the start of EACH session, follow these steps:');
   });
 
   it('should contain all 6 steps', async () => {
-    const content = await fs.readFile(kodaxCorePath, 'utf-8');
+    const content = await fs.readFile(longRunningPath, 'utf-8');
     expect(content).toContain('1. Note the Working Directory from context');
     expect(content).toContain('2. Read git logs');
     expect(content).toContain('3. Read feature_list.json and pick ONE incomplete feature');
@@ -112,7 +112,7 @@ describe('LONG_RUNNING_PROMPT Content Verification', () => {
   });
 
   it('should contain IMPORTANT Rules', async () => {
-    const content = await fs.readFile(kodaxCorePath, 'utf-8');
+    const content = await fs.readFile(longRunningPath, 'utf-8');
     expect(content).toContain('IMPORTANT Rules:');
     // Check for key rule concepts (without exact backticks)
     expect(content).toContain('passes');
@@ -122,7 +122,7 @@ describe('LONG_RUNNING_PROMPT Content Verification', () => {
   });
 
   it('should contain Session Planning template', async () => {
-    const content = await fs.readFile(kodaxCorePath, 'utf-8');
+    const content = await fs.readFile(longRunningPath, 'utf-8');
     expect(content).toContain('## Session Planning (CRITICAL for Quality)');
     expect(content).toContain('# Session Plan');
     expect(content).toContain('**Date**:');
@@ -135,7 +135,7 @@ describe('LONG_RUNNING_PROMPT Content Verification', () => {
   });
 
   it('should contain Efficiency Rules', async () => {
-    const content = await fs.readFile(kodaxCorePath, 'utf-8');
+    const content = await fs.readFile(longRunningPath, 'utf-8');
     expect(content).toContain('## Efficiency Rules (CRITICAL)');
     expect(content).toContain('Each session MUST complete at least ONE full feature');
     expect(content).toContain('Minimum meaningful code change per session: 50+ lines');
@@ -143,7 +143,7 @@ describe('LONG_RUNNING_PROMPT Content Verification', () => {
   });
 
   it('should contain Promise Signals', async () => {
-    const content = await fs.readFile(kodaxCorePath, 'utf-8');
+    const content = await fs.readFile(longRunningPath, 'utf-8');
     expect(content).toContain('## Promise Signals (Ralph-Loop Style)');
     expect(content).toContain('<promise>COMPLETE</promise>');
     expect(content).toContain('<promise>BLOCKED:reason</promise>');
@@ -242,10 +242,10 @@ describe('--append Prompt Content Verification', () => {
 // ============== toolBash timeout message 测试 ==============
 
 describe('toolBash Timeout Message Verification', () => {
-  const kodaxCorePath = path.join(process.cwd(), 'src', 'kodax_core.ts');
+  const bashToolPath = path.join(process.cwd(), 'src', 'core', 'tools', 'bash.ts');
 
   it('should contain all timeout suggestions', async () => {
-    const content = await fs.readFile(kodaxCorePath, 'utf-8');
+    const content = await fs.readFile(bashToolPath, 'utf-8');
     expect(content).toContain('[Suggestion] The command took too long. Consider:');
     expect(content).toContain('Is this a watch/dev server? Run in a separate terminal.');
     expect(content).toContain('Can the task be broken into smaller steps?');
@@ -256,15 +256,15 @@ describe('toolBash Timeout Message Verification', () => {
 // ============== Retry prompts 测试 ==============
 
 describe('Retry Prompts Content Verification', () => {
-  const kodaxCorePath = path.join(process.cwd(), 'src', 'kodax_core.ts');
+  const agentPath = path.join(process.cwd(), 'src', 'core', 'agent.ts');
 
   it('should contain first retry prompt with concise instruction', async () => {
-    const content = await fs.readFile(kodaxCorePath, 'utf-8');
+    const content = await fs.readFile(agentPath, 'utf-8');
     expect(content).toContain('For large content, keep it concise (under 50 lines for write operations)');
   });
 
   it('should contain second retry prompt with detailed instructions', async () => {
-    const content = await fs.readFile(kodaxCorePath, 'utf-8');
+    const content = await fs.readFile(agentPath, 'utf-8');
     expect(content).toContain('⚠️ CRITICAL: Your response was TRUNCATED again');
     expect(content).toContain('YOU MUST:');
     expect(content).toContain("For 'write' tool: Keep content under 50 lines");
@@ -273,7 +273,7 @@ describe('Retry Prompts Content Verification', () => {
   });
 
   it('should contain incompleteRetryCount conditional', async () => {
-    const content = await fs.readFile(kodaxCorePath, 'utf-8');
+    const content = await fs.readFile(agentPath, 'utf-8');
     expect(content).toContain('if (incompleteRetryCount === 1)');
     expect(content).toContain('} else {');
   });
@@ -282,12 +282,13 @@ describe('Retry Prompts Content Verification', () => {
 // ============== 源文件一致性测试 ==============
 
 describe('Source File Consistency', () => {
-  const kodaxCorePath = path.join(process.cwd(), 'src', 'kodax_core.ts');
+  const systemPromptPath = path.join(process.cwd(), 'src', 'core', 'prompts', 'system.ts');
+  const longRunningPath = path.join(process.cwd(), 'src', 'core', 'prompts', 'long-running.ts');
   const kodaxCliPath = path.join(process.cwd(), 'src', 'kodax_cli.ts');
   const cliUtilsPath = path.join(process.cwd(), 'src', 'cli', 'utils.ts');
 
-  it('should have SYSTEM_PROMPT in kodax_core.ts', async () => {
-    const kodaxCoreContent = await fs.readFile(kodaxCorePath, 'utf-8');
+  it('should have SYSTEM_PROMPT in core/prompts/system.ts', async () => {
+    const systemPromptContent = await fs.readFile(systemPromptPath, 'utf-8');
 
     // Verify key sections exist
     const keySections = [
@@ -302,12 +303,12 @@ describe('Source File Consistency', () => {
     ];
 
     for (const section of keySections) {
-      expect(kodaxCoreContent).toContain(section);
+      expect(systemPromptContent).toContain(section);
     }
   });
 
-  it('should have LONG_RUNNING_PROMPT in kodax_core.ts', async () => {
-    const kodaxCoreContent = await fs.readFile(kodaxCorePath, 'utf-8');
+  it('should have LONG_RUNNING_PROMPT in core/prompts/long-running.ts', async () => {
+    const longRunningContent = await fs.readFile(longRunningPath, 'utf-8');
 
     const keySections = [
       '## Long-Running Task Mode',
@@ -317,7 +318,7 @@ describe('Source File Consistency', () => {
     ];
 
     for (const section of keySections) {
-      expect(kodaxCoreContent).toContain(section);
+      expect(longRunningContent).toContain(section);
     }
   });
 

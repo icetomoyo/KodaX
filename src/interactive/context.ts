@@ -2,7 +2,7 @@
  * KodaX 交互式上下文管理
  */
 
-import { KodaXMessage } from '../kodax_core.js';
+import { KodaXMessage } from '../core/index.js';
 
 // 交互模式
 export type InteractiveMode = 'code' | 'ask';
