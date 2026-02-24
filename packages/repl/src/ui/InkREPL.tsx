@@ -565,7 +565,31 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           >,
         };
 
-        await executeCommand(parsed, context, callbacks, currentConfig);
+        // Capture console.log output to add to history instead of
+        // letting Ink render it in the wrong position
+        const capturedOutput: string[] = [];
+        const originalLog = console.log;
+        console.log = (...args: unknown[]) => {
+          const output = args.map(arg =>
+            typeof arg === 'string' ? arg : String(arg)
+          ).join(' ');
+          capturedOutput.push(output);
+        };
+
+        try {
+          await executeCommand(parsed, context, callbacks, currentConfig);
+        } finally {
+          console.log = originalLog;
+        }
+
+        // Add captured command output to history as info item
+        if (capturedOutput.length > 0) {
+          addHistoryItem({
+            type: "info",
+            text: capturedOutput.join('\n'),
+          });
+        }
+
         setIsLoading(false);
         stopStreaming();
         return;

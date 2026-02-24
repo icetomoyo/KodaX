@@ -51,7 +51,7 @@ _Last Updated: 2026-02-23 16:00_
 | 037 | Medium | Open | 两套键盘事件系统冲突 | v0.3.3 | v0.4.0 | 2026-02-22 | - |
 | 038 | Low | Won't Fix | 输入焦点竞态条件 | v0.3.3 | - | 2026-02-22 | 2026-02-22 |
 | 039 | Low | Open | 死代码 printStartupBanner | v0.3.3 | v0.4.0 | 2026-02-22 | - |
-| 040 | High | Resolved | REPL 显示问题 - Banner重复/消息双重输出 | v0.3.3 | v0.4.2 | 2026-02-23 | 2026-02-24 |
+| 040 | High | Open | REPL 显示问题 - 命令输出渲染位置错误 | v0.3.3 | - | 2026-02-23 | - |
 | 044 | High | Resolved | 流式输出时 Ctrl+C 延迟生效 | v0.3.4 | v0.3.6 | 2026-02-23 | 2026-02-24 |
 
 ---
@@ -902,59 +902,84 @@ _Last Updated: 2026-02-23 16:00_
 
 ---
 
-### 040: REPL 显示问题 - Banner重复/消息双重输出
+### 040: REPL 显示问题 - 命令输出渲染位置错误
 - **Priority**: High
-- **Status**: Resolved
+- **Status**: Open
 - **Introduced**: v0.3.3 (auto-detected)
-- **Fixed**: v0.4.2
 - **Created**: 2026-02-23
-- **Resolved**: 2026-02-24
 - **Original Problem**:
   REPL 显示存在以下确认的问题（基于实际测试观察）：
 
-  | 问题 | 启动时 | 交互后 |
-  |------|--------|--------|
-  | Banner 重复显示 | ✅ 正常显示在顶部 | ❌ 每次交互后在 console 输出之后重新出现 |
-  | 用户消息双重输出 | N/A | ❌ `You: /help` (console.log) + `You [08:33 PM] /help` (MessageList) |
-  | Assistant 双重显示 | N/A | ❌ `Assistant [时间]` (历史) + `Assistant` (流式) 内容略有不同 |
+  **当前主要问题：命令输出渲染位置错误**
+  - `/help`, `/model` 等命令的输出被渲染在 Banner 下面、用户消息上面
+  - 预期顺序：Banner → 用户输入 → 命令输出
+  - 实际顺序：Banner → 命令输出 → 用户输入
 
-  **详细表现**：
-  1. **Banner**：启动时正常 → 每次命令/交互后，Banner 会在 console 输出（如 `/help` 结果）之后重新出现
-  2. **用户消息**：`console.log` 输出简洁格式 `You: xxx`，MessageList 输出带时间戳格式 `You [时间] xxx`
-  3. **Assistant**：历史记录 `Assistant [时间]` 显示最终结果，流式响应 `Assistant` 显示 tool call 过程（"我来查看一下..."）
+  **实际测试输出示例**：
+  ```
+  [Banner]
+
+  Available Commands:     ← /help 的输出在 Banner 下面
+  /help (h, ?)     Show all available commands
+  ...
+
+  Available Providers:    ← /model 的输出也在 Banner 下面
+  anthropic      (unknown) [未配置]
+  ...
+
+  You [11:48 PM]          ← 用户消息在命令输出之后
+    /help
+
+  You [11:48 PM]
+    你好呀
+
+  Assistant [11:48 PM]    ← Assistant 回复在正确位置
+    你好！很高兴为你服务...
+  ```
+
+  **已修复的问题**：
+  1. Banner 重复显示 → 使用 `<Static>` 组件固定 ✅
+  2. 用户消息双重输出 → 移除冗余 console.log ✅
+  3. Assistant 双重显示 → filteredItems 逻辑 ✅
 
 - **Root Cause Analysis**:
 
-  ### 问题 1: Banner 重复显示
-  - Banner 组件在 React 组件树内部渲染
-  - `patchConsole: true` 模式下，console 输出被 Ink 捕获并插入到渲染流中
-  - 每次交互的 console.log 输出（命令结果、用户输入）导致 React 树重新排列
-  - Banner 组件在重新渲染时出现在 console 输出之后的位置
+  **命令输出位置错误的根因**：
+  - `executeCommand()` 使用 `console.log` 输出命令结果
+  - Ink 的 `patchConsole: true` 模式捕获所有 console 输出
+  - 被捕获的 console 输出被渲染在 Ink 内部确定的位置
+  - 这个位置在 MessageList 组件之前，导致命令输出出现在用户消息上面
 
-  ### 问题 2: 用户消息双重输出
-  - `InkREPL.tsx` 行 500-502: `console.log(chalk.cyan(\`You: ${input}\`))` 打印用户输入
-  - 同时 `addHistoryItem()` 添加到历史，MessageList 也会渲染
-  - 两个输出通道互不协调，导致同一条消息显示两次（格式不同）
-
-  ### 问题 3: Assistant 双重显示
-  - 流式响应通过 `streamingState.currentResponse` 实时显示（无时间戳）
-  - 完成后通过 `addHistoryItem()` 添加到历史（带时间戳）
-  - 流式响应内容包含 tool call 描述（"我来查看一下当前目录..."），历史记录只包含最终结果
-  - MessageList 同时显示两者，造成重复
+  **组件结构**：
+  ```jsx
+  <Box>
+    <Static><Banner /></Static>  // 固定在顶部
+    // console.log 输出被渲染在这里！
+    <MessageList items={history} />  // 用户消息和 Assistant 回复
+    <InputPrompt />
+    <StatusBar />
+  </Box>
+  ```
 
 - **Context**: `packages/repl/src/ui/InkREPL.tsx`, `packages/repl/src/ui/components/MessageList.tsx`
 
-- **Resolution**:
-  1. **Banner 重复**：使用 Ink 的 `<Static>` 组件包裹 Banner，使其固定在顶部不受 patchConsole 影响
-  2. **用户消息双重输出**：删除 `console.log(chalk.cyan(\`You: ${input}\`))`，统一使用 MessageList 渲染
-  3. **Assistant 双重显示**：在 MessageList 中，当有 `streamingResponse` 时过滤掉最后一条 assistant 历史
-  4. **渲染顺序问题**：在命令执行前添加 `await new Promise(r => setTimeout(r, 0))` 确保 React 状态更新先于 console.log 处理
+- **Proposed Solution**:
 
-- **Files Changed**:
-  - `packages/repl/src/ui/InkREPL.tsx` - Static 包裹 Banner，移除冗余 console.log，添加状态更新等待
-  - `packages/repl/src/ui/components/MessageList.tsx` - filteredItems 逻辑避免流式响应和历史记录重复显示
+  **方案 A：命令输出改为 history item（推荐）**
+  - 修改 `executeCommand` 返回输出字符串而非直接 console.log
+  - 在 `handleSubmit` 中将命令输出作为 "info" 类型添加到 history
+  - 这样命令输出会按正确顺序出现在 MessageList 中
 
-- **Related**: 037 (两套键盘事件系统冲突), 034 (/help 输出不可见 - 已通过 patchConsole:true 解决)
+  **方案 B：捕获 console 输出**
+  - 在命令执行前后临时捕获 console.log
+  - 将捕获的内容添加到 history
+  - 更复杂，不推荐
+
+- **Files to Change**:
+  - `packages/repl/src/interactive/commands.ts` - 修改命令返回输出而非 console.log
+  - `packages/repl/src/ui/InkREPL.tsx` - 处理命令返回值并添加到 history
+
+- **Related**: 037 (两套键盘事件系统冲突), 034 (/help 输出不可见)
 
 ---
 
@@ -1070,12 +1095,18 @@ _Last Updated: 2026-02-23 16:00_
 
 ## Summary
 - Total: 44 (16 Open, 24 Resolved, 3 Won't Fix, 1 Planned for v0.5.0+)
-- Highest Priority Open: 036 - React 状态同步潜在问题 (Medium)
+- Highest Priority Open: 040 - REPL 显示问题 - 命令输出渲染位置错误 (High)
 - Planned for v0.5.0+: 037, 039 (长期重构 - ConsolePatcher 架构)
 
 ---
 
 ## Changelog
+
+### 2026-02-24: Issue 040 重新打开
+- Issue 040 之前的修复只解决了部分问题
+- 新发现的根本问题：命令输出（/help, /model 等）渲染在 Banner 下面、用户消息上面
+- 根因：console.log 被 Ink patchConsole 捕获后渲染在 MessageList 之前的位置
+- 解决方案：修改命令返回输出字符串，添加到 history 而非使用 console.log
 
 ### 2026-02-24: Issue 040 修复 (v0.4.2)
 - Resolved 040: REPL 显示问题 - Banner重复/消息双重输出
