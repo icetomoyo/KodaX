@@ -569,13 +569,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         // letting Ink render it in the wrong position
         const capturedOutput: string[] = [];
         const originalLog = console.log;
-        // Regex to strip ANSI escape codes (colors, bold, etc.)
-        const stripAnsi = (str: string) => str.replace(/\x1b\[[0-9;]*m/g, '');
         console.log = (...args: unknown[]) => {
           const output = args.map(arg =>
             typeof arg === 'string' ? arg : String(arg)
           ).join(' ');
-          capturedOutput.push(stripAnsi(output));
+          capturedOutput.push(output);
         };
 
         try {
