@@ -8,7 +8,7 @@ import path from 'path';
 import os from 'os';
 import chalk from 'chalk';
 import { KodaXMessage, KodaXSessionStorage } from '@kodax/core';
-import { getGitRoot, KODAX_SESSIONS_DIR } from '../cli/utils.js';
+import { getGitRoot, KODAX_SESSIONS_DIR } from '../common/utils.js';
 
 export class FileSessionStorage implements KodaXSessionStorage {
   async save(id: string, data: { messages: KodaXMessage[]; title: string; gitRoot: string }): Promise<void> {

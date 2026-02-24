@@ -48,7 +48,7 @@ export {
   detectAndShowProjectHint,
 } from "./interactive/project-commands.js";
 
-// === CLI 工具 (内部使用) ===
+// === 共享工具 ===
 export {
   getVersion,
   KODAX_VERSION,
@@ -65,18 +65,18 @@ export {
   KODAX_DIR,
   KODAX_SESSIONS_DIR,
   KODAX_CONFIG_FILE,
-} from "./cli/utils.js";
+} from "./common/utils.js";
 export {
   runWithPlanMode,
   listPlans,
   resumePlan,
   clearCompletedPlans,
-} from "./cli/plan-mode.js";
+} from "./common/plan-mode.js";
 export {
   PlanStorage,
   planStorage,
   type ExecutionPlan,
-} from "./cli/plan-storage.js";
+} from "./common/plan-storage.js";
 
 // === 会话存储 ===
 export { FileSessionStorage } from "./interactive/storage.js";

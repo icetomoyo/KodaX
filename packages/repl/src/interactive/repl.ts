@@ -28,7 +28,7 @@ import {
   KODAX_DEFAULT_PROVIDER,
   generateSessionId,
 } from '@kodax/core';
-import { getGitRoot, loadConfig, getProviderModel, KODAX_VERSION } from '../cli/utils.js';
+import { getGitRoot, loadConfig, getProviderModel, KODAX_VERSION } from '../common/utils.js';
 import {
   InteractiveContext,
   InteractiveMode,
@@ -41,7 +41,7 @@ import {
   CommandCallbacks,
   CurrentConfig,
 } from './commands.js';
-import { runWithPlanMode } from '../cli/plan-mode.js';
+import { runWithPlanMode } from '../common/plan-mode.js';
 import { detectAndShowProjectHint } from './project-commands.js';
 import {
   confirmToolExecution,

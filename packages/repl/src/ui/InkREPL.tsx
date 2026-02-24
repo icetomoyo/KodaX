@@ -46,9 +46,9 @@ import {
   CommandCallbacks,
   CurrentConfig,
 } from "../interactive/commands.js";
-import { getProviderModel } from "../cli/utils.js";
-import { KODAX_VERSION } from "../cli/utils.js";
-import { runWithPlanMode } from "../cli/plan-mode.js";
+import { getProviderModel } from "../common/utils.js";
+import { KODAX_VERSION } from "../common/utils.js";
+import { runWithPlanMode } from "../common/plan-mode.js";
 import { getTheme } from "./themes/index.js";
 import chalk from "chalk";
 import * as childProcess from "child_process";
@@ -846,7 +846,7 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
   const storage = options.storage ?? new MemorySessionStorage();
 
   // Load config
-  const { loadConfig, getGitRoot } = await import("../cli/utils.js");
+  const { loadConfig, getGitRoot } = await import("../common/utils.js");
   const config = loadConfig();
   const initialProvider = options.provider ?? config.provider ?? KODAX_DEFAULT_PROVIDER;
   const initialThinking = options.thinking ?? config.thinking ?? false;

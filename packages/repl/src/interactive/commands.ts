@@ -6,8 +6,8 @@ import * as readline from 'readline';
 import chalk from 'chalk';
 import { InteractiveContext, InteractiveMode } from './context.js';
 import { estimateTokens, KODAX_PROVIDERS, getProviderList, KodaXOptions } from '@kodax/core';
-import { saveConfig } from '../cli/utils.js';
-import { runWithPlanMode, listPlans, resumePlan, clearCompletedPlans } from '../cli/plan-mode.js';
+import { saveConfig } from '../common/utils.js';
+import { runWithPlanMode, listPlans, resumePlan, clearCompletedPlans } from '../common/plan-mode.js';
 import { handleProjectCommand, printProjectHelp } from './project-commands.js';
 
 // 当前配置状态（由 repl.ts 传入）

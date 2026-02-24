@@ -18,7 +18,7 @@ import {
   CommandCallbacks,
   CurrentConfig,
 } from './commands.js';
-import { buildInitPrompt } from '../cli/utils.js';
+import { buildInitPrompt } from '../common/utils.js';
 
 // ============== 运行时状态管理 ==============
 
