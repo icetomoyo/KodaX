@@ -42,23 +42,37 @@ KodaX 是 KodaXP 的 TypeScript 版本，专为想要**理解**、**定制**和*
 
 ## 架构
 
-KodaX 采用模块化架构：
+KodaX 使用 **monorepo 架构**，基于 npm workspaces：
 
 ```
-src/
-├── kodax_core.ts      # 核心库（可作为 npm 包使用）
-├── kodax_cli.ts       # CLI 入口（命令行 UI）
-├── kodax.ts           # 原始单文件（保留作为参考）
-└── index.ts           # 包导出入口
+KodaX/
+├── packages/
+│   ├── core/              # @kodax/core - 纯 AI 引擎
+│   │   ├── src/
+│   │   │   ├── providers/ # 7 个 LLM 提供商
+│   │   │   ├── tools/     # 工具定义与执行
+│   │   │   └── session/   # 会话管理
+│   │   └── package.json
+│   │
+│   └── repl/              # @kodax/repl - 交互式终端
+│       ├── src/
+│       │   ├── ui/        # Ink 组件、主题
+│       │   └── interactive/ # 命令、REPL 逻辑
+│       └── package.json
+│
+├── src/
+│   └── kodax_cli.ts       # 主 CLI 入口点
+│
+└── package.json           # 根 workspace 配置
 ```
 
-### 模块职责
+### 包结构
 
-| 模块 | 职责 | 依赖 |
-|------|------|------|
-| `kodax_core.ts` | 核心 Agent 能力（Provider、Tools、runKodaX） | 仅 LLM SDK |
-| `kodax_cli.ts` | CLI 体验（Spinner、颜色、用户交互、Commands） | Core + chalk/commander |
-| `index.ts` | 包导出（给 `import` 使用） | Core |
+| 包 | 用途 | 依赖 |
+|----|------|------|
+| `@kodax/core` | 环境无关的 AI 引擎 | anthropic-sdk, openai |
+| `@kodax/repl` | 完整的交互式终端 | ink, react, chalk |
+| `kodax` (根) | CLI 入口，组合两者 | @kodax/core, @kodax/repl |
 
 ### 两种使用方式
 
@@ -74,9 +88,9 @@ src/
 ┌─────────────────────────────────────────────────────────────┐
 │  方式 2: 库引用                                              │
 │                                                              │
-│  import { runKodaX } from 'kodax';                          │
+│  import { runKodaX } from '@kodax/core';                    │
 │                                                              │
-│  入口: package.json "main" → dist/index.js                  │
+│  入口: packages/core/dist/index.js                           │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -87,7 +101,10 @@ src/
   "main": "dist/index.js",           // 库入口（import 使用）
   "bin": {
     "kodax": "./dist/kodax_cli.js"   // CLI 入口（命令行使用）
-  }
+  },
+  "workspaces": [
+    "packages/*"                      // Monorepo 包
+  ]
 }
 ```
 
@@ -95,20 +112,7 @@ src/
 |------|------|---------|
 | `"main"` | 库入口 | `import from 'kodax'` |
 | `"bin"` | 命令入口 | `kodax "任务"` 或 `npm link` |
-
-### index.ts 的作用
-
-`index.ts` 是包的"门面"，控制公开 API：
-
-```typescript
-// index.ts
-export * from './kodax_core.js';  // 重导出 Core 的所有内容
-```
-
-**为什么需要 index.ts？**
-- 作为包入口，让 `import from 'kodax'` 能工作
-- 未来可以选择性导出（控制哪些 API 是公开的）
-- 可以组合多个子模块
+| `"workspaces"` | Monorepo | `npm install` 自动链接包 |
 
 ---
 
@@ -136,10 +140,11 @@ export * from './kodax_core.js';  // 重导出 Core 的所有内容
 git clone https://github.com/icetomoyo/KodaX.git
 cd KodaX
 
-# 安装依赖
+# 安装依赖（包含 workspace 包）
 npm install
 
-# 构建
+# 构建所有包
+npm run build:packages
 npm run build
 
 # 全局链接（推荐）

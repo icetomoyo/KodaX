@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] - 2026-02-25
+
+### Fixed
+- Issue 040: REPL display ordering - command output now renders in correct position (user message → command output)
+- Console.log capture mechanism to preserve chalk colors while fixing render order
+
+## [0.4.2] - 2026-02-25
+
+### Fixed
+- Issue 043: AbortSignal propagation for stream interruption
+- Issue 044: Ctrl+C delay during streaming output
+
+## [0.4.1] - 2026-02-24
+
+### Fixed
+- Issue 035, 041, 042: Keyboard input issues (Backspace, history navigation, Shift+Enter)
+
 ## [0.4.0] - 2026-02-24
 
 ### Changed

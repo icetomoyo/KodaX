@@ -10,18 +10,37 @@ KodaX is the TypeScript + Node.js version of KodaXP, supporting 7 LLM providers 
 
 ## Architecture
 
-KodaX is now modular:
+KodaX uses a **monorepo architecture** with npm workspaces:
 
 ```
-src/
-├── kodax_core.ts      # Core library (can be used as npm package)
-├── kodax_cli.ts       # CLI entry with UI (spinner, colors)
-├── kodax.ts           # Original single-file (kept as reference)
-└── index.ts           # Package exports
+KodaX/
+├── packages/
+│   ├── core/              # @kodax/core - Pure AI engine
+│   │   ├── src/
+│   │   │   ├── providers/ # 7 LLM providers
+│   │   │   ├── tools/     # Tool definitions & execution
+│   │   │   └── session/   # Session management
+│   │   └── package.json
+│   │
+│   └── repl/              # @kodax/repl - Interactive terminal
+│       ├── src/
+│       │   ├── ui/        # Ink components, themes
+│       │   └── interactive/ # Commands, REPL logic
+│       └── package.json
+│
+├── src/
+│   └── kodax_cli.ts       # Main CLI entry point
+│
+└── package.json           # Root workspace config
 ```
 
-- **kodax_core.ts**: Pure library module with no CLI dependencies
-- **kodax_cli.ts**: CLI layer with UI, commands, and user interaction
+### Package Structure
+
+| Package | Purpose | Dependencies |
+|---------|---------|--------------|
+| `@kodax/core` | Environment-agnostic AI engine | anthropic-sdk, openai |
+| `@kodax/repl` | Complete interactive terminal | ink, react, chalk |
+| `kodax` (root) | CLI entry, combines both | @kodax/core, @kodax/repl |
 
 ### Two Usage Modes
 
@@ -37,9 +56,9 @@ src/
 ┌─────────────────────────────────────────────────────────────┐
 │  Mode 2: Library Import                                      │
 │                                                              │
-│  import { runKodaX } from 'kodax';                          │
+│  import { runKodaX } from '@kodax/core';                    │
 │                                                              │
-│  Entry: package.json "main" → dist/index.js                 │
+│  Entry: packages/core/dist/index.js                          │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -50,7 +69,10 @@ src/
   "main": "dist/index.js",           // Library entry (for import)
   "bin": {
     "kodax": "./dist/kodax_cli.js"   // CLI entry (for command line)
-  }
+  },
+  "workspaces": [
+    "packages/*"                      // Monorepo packages
+  ]
 }
 ```
 
@@ -58,20 +80,7 @@ src/
 |-------|---------|---------|
 | `"main"` | Library entry | `import from 'kodax'` |
 | `"bin"` | Command entry | `kodax "task"` or `npm link` |
-
-### Role of index.ts
-
-`index.ts` is the package "facade" that controls public API:
-
-```typescript
-// index.ts
-export * from './kodax_core.js';  // Re-exports everything from core
-```
-
-**Why index.ts?**
-- Serves as package entry, making `import from 'kodax'` work
-- Can selectively export (control which APIs are public)
-- Can combine multiple sub-modules
+| `"workspaces"` | Monorepo | `npm install` links packages |
 
 ## Features
 
@@ -92,10 +101,11 @@ export * from './kodax_core.js';  // Re-exports everything from core
 git clone https://github.com/icetomoyo/KodaX.git
 cd KodaX
 
-# Install dependencies
+# Install dependencies (includes workspace packages)
 npm install
 
-# Build
+# Build all packages
+npm run build:packages
 npm run build
 
 # Link globally (development mode)
