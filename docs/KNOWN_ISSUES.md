@@ -51,7 +51,7 @@ _Last Updated: 2026-02-23 16:00_
 | 037 | Medium | Open | 两套键盘事件系统冲突 | v0.3.3 | v0.4.0 | 2026-02-22 | - |
 | 038 | Low | Won't Fix | 输入焦点竞态条件 | v0.3.3 | - | 2026-02-22 | 2026-02-22 |
 | 039 | Low | Open | 死代码 printStartupBanner | v0.3.3 | v0.4.0 | 2026-02-22 | - |
-| 040 | High | Open | REPL 显示问题 - 命令输出渲染位置错误 | v0.3.3 | - | 2026-02-23 | - |
+| 040 | High | Resolved | REPL 显示问题 - 命令输出渲染位置错误 | v0.3.3 | v0.4.2 | 2026-02-23 | 2026-02-25 |
 | 044 | High | Resolved | 流式输出时 Ctrl+C 延迟生效 | v0.3.4 | v0.3.6 | 2026-02-23 | 2026-02-24 |
 
 ---
@@ -902,82 +902,34 @@ _Last Updated: 2026-02-23 16:00_
 
 ---
 
-### 040: REPL 显示问题 - 命令输出渲染位置错误
+### 040: REPL 显示问题 - 命令输出渲染位置错误 (RESOLVED)
 - **Priority**: High
-- **Status**: Open
+- **Status**: Resolved
 - **Introduced**: v0.3.3 (auto-detected)
+- **Fixed**: v0.4.2
 - **Created**: 2026-02-23
+- **Resolved**: 2026-02-25
 - **Original Problem**:
   REPL 显示存在以下确认的问题（基于实际测试观察）：
 
-  **当前主要问题：命令输出渲染位置错误**
+  **主要问题：命令输出渲染位置错误**
   - `/help`, `/model` 等命令的输出被渲染在 Banner 下面、用户消息上面
   - 预期顺序：Banner → 用户输入 → 命令输出
   - 实际顺序：Banner → 命令输出 → 用户输入
 
-  **实际测试输出示例**：
-  ```
-  [Banner]
-
-  Available Commands:     ← /help 的输出在 Banner 下面
-  /help (h, ?)     Show all available commands
-  ...
-
-  Available Providers:    ← /model 的输出也在 Banner 下面
-  anthropic      (unknown) [未配置]
-  ...
-
-  You [11:48 PM]          ← 用户消息在命令输出之后
-    /help
-
-  You [11:48 PM]
-    你好呀
-
-  Assistant [11:48 PM]    ← Assistant 回复在正确位置
-    你好！很高兴为你服务...
-  ```
-
-  **已修复的问题**：
-  1. Banner 重复显示 → 使用 `<Static>` 组件固定 ✅
-  2. 用户消息双重输出 → 移除冗余 console.log ✅
-  3. Assistant 双重显示 → filteredItems 逻辑 ✅
-
 - **Root Cause Analysis**:
-
-  **命令输出位置错误的根因**：
   - `executeCommand()` 使用 `console.log` 输出命令结果
   - Ink 的 `patchConsole: true` 模式捕获所有 console 输出
-  - 被捕获的 console 输出被渲染在 Ink 内部确定的位置
-  - 这个位置在 MessageList 组件之前，导致命令输出出现在用户消息上面
+  - 被捕获的 console 输出被渲染在 MessageList 组件之前的位置
 
-  **组件结构**：
-  ```jsx
-  <Box>
-    <Static><Banner /></Static>  // 固定在顶部
-    // console.log 输出被渲染在这里！
-    <MessageList items={history} />  // 用户消息和 Assistant 回复
-    <InputPrompt />
-    <StatusBar />
-  </Box>
-  ```
+- **Resolution**:
+  采用方案 B：捕获 console 输出
+  - 在命令执行期间临时拦截 `console.log`
+  - 将捕获的内容添加到 history 作为 "info" 类型
+  - 命令输出按正确顺序出现在 MessageList 中
 
-- **Context**: `packages/repl/src/ui/InkREPL.tsx`, `packages/repl/src/ui/components/MessageList.tsx`
-
-- **Proposed Solution**:
-
-  **方案 A：命令输出改为 history item（推荐）**
-  - 修改 `executeCommand` 返回输出字符串而非直接 console.log
-  - 在 `handleSubmit` 中将命令输出作为 "info" 类型添加到 history
-  - 这样命令输出会按正确顺序出现在 MessageList 中
-
-  **方案 B：捕获 console 输出**
-  - 在命令执行前后临时捕获 console.log
-  - 将捕获的内容添加到 history
-  - 更复杂，不推荐
-
-- **Files to Change**:
-  - `packages/repl/src/interactive/commands.ts` - 修改命令返回输出而非 console.log
-  - `packages/repl/src/ui/InkREPL.tsx` - 处理命令返回值并添加到 history
+- **Files Changed**:
+  - `packages/repl/src/ui/InkREPL.tsx` - 捕获 console.log 并添加到 history
 
 - **Related**: 037 (两套键盘事件系统冲突), 034 (/help 输出不可见)
 
@@ -1095,12 +1047,18 @@ _Last Updated: 2026-02-23 16:00_
 
 ## Summary
 - Total: 44 (16 Open, 24 Resolved, 3 Won't Fix, 1 Planned for v0.5.0+)
-- Highest Priority Open: 040 - REPL 显示问题 - 命令输出渲染位置错误 (High)
+- Highest Priority Open: 036 - React 状态同步潜在问题 (Medium)
 - Planned for v0.5.0+: 037, 039 (长期重构 - ConsolePatcher 架构)
 
 ---
 
 ## Changelog
+
+### 2026-02-25: Issue 040 修复完成
+- Resolved 040: REPL 显示问题 - 命令输出渲染位置错误
+- 最终方案：捕获 console.log 输出并添加到 history
+- 命令输出现在按正确顺序出现在用户消息之后
+- 相关提交：fddc97c, 9c40f40
 
 ### 2026-02-24: Issue 040 重新打开
 - Issue 040 之前的修复只解决了部分问题
