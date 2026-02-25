@@ -1,6 +1,6 @@
 {
   "name": "@kodax/core",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "KodaX Core - 环境无关的 AI Agent 引擎",
   "type": "module",
   "main": "dist/index.js",

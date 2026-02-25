@@ -642,6 +642,17 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       // Start thinking indicator - will be updated by onThinkingDelta with char count
       startThinking();
 
+      // Capture console.log output to add to history instead of
+      // letting Ink render it in the wrong position (Issue 045)
+      const capturedOutput: string[] = [];
+      const originalLog = console.log;
+      console.log = (...args: unknown[]) => {
+        const output = args.map(arg =>
+          typeof arg === 'string' ? arg : String(arg)
+        ).join(' ');
+        capturedOutput.push(output);
+      };
+
       try {
         const result = await runAgentRound(currentOptionsRef.current, processed);
 
@@ -696,6 +707,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           errorContent = `[Context Error] ${error.message}\nSuggestion: Use /clear to start fresh`;
         }
 
+        console.log = originalLog;
         console.log(chalk.red(errorContent));
 
         // Add error to UI history
@@ -704,6 +716,17 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           text: errorContent,
         });
       } finally {
+        // Restore console.log
+        console.log = originalLog;
+
+        // Add captured console output to history as info items
+        if (capturedOutput.length > 0) {
+          addHistoryItem({
+            type: "info",
+            text: capturedOutput.join('\n'),
+          });
+        }
+
         setIsLoading(false);
         stopStreaming();
       }

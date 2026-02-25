@@ -302,11 +302,13 @@ export function createStreamingManager(): StreamingManager {
     },
 
     stopThinking: () => {
+      // Don't clear thinkingContent - preserve it for display
+      // Only reset isThinking flag to hide the Thinking indicator
       state = {
         ...state,
         isThinking: false,
         thinkingCharCount: 0,
-        thinkingContent: "",
+        // thinkingContent is preserved for display
       };
       notify();
     },

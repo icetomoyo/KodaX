@@ -53,7 +53,7 @@ _Last Updated: 2026-02-23 16:00_
 | 039 | Low | Open | 死代码 printStartupBanner | v0.3.3 | v0.4.0 | 2026-02-22 | - |
 | 040 | High | Resolved | REPL 显示问题 - 命令输出渲染位置错误 | v0.3.3 | v0.4.2 | 2026-02-23 | 2026-02-25 |
 | 044 | High | Resolved | 流式输出时 Ctrl+C 延迟生效 | v0.3.4 | v0.3.6 | 2026-02-23 | 2026-02-24 |
-| 045 | High | Open | Spinner 出现时问答顺序颠倒 | v0.4.3 | - | 2026-02-25 | - |
+| 045 | High | Resolved | Spinner 出现时问答顺序颠倒 | v0.4.3 | v0.4.4 | 2026-02-25 | 2026-02-25 |
 
 ---
 
@@ -936,11 +936,13 @@ _Last Updated: 2026-02-23 16:00_
 
 ---
 
-### 045: Spinner 出现时问答顺序颠倒
+### 045: Spinner 出现时问答顺序颠倒 (RESOLVED)
 - **Priority**: High
-- **Status**: Open
+- **Status**: Resolved
 - **Introduced**: v0.4.3 (auto-detected)
+- **Fixed**: v0.4.4
 - **Created**: 2026-02-25
+- **Resolved**: 2026-02-25
 - **Original Problem**:
   - 在问答过程中，当 spinner (加载指示器) 出现时，问答顺序会上下颠倒乱序
   - 表现类似 Issue 040：命令输出渲染位置错误
@@ -951,26 +953,28 @@ _Last Updated: 2026-02-23 16:00_
   - **渲染结构分析**：
     - 当 `history.length > 0` 时，MessageList 组件渲染，Spinner 在 MessageList 内部（MessageList.tsx 行 468-483）
     - 当 `history.length === 0 && isLoading` 时，ThinkingIndicator 在 MessageList 外部渲染（InkREPL.tsx 行 762-766）
-  - **关于 50ms 延迟的说明**：
-    - InkREPL.tsx 行 463 确实存在 50ms 延迟，但这并非 Issue 040 的真正解决方案
-    - Issue 040 的真正修复是：**捕获 console.log 并添加到 history**
-    - 命令执行路径曾有 50ms 延迟，但不能作为可靠方案
-  - **问题根源 - Ink patchConsole 行为**：
+  - **问题根源 1 - Ink patchConsole 行为**：
     - Ink 使用 `patchConsole: true`（InkREPL.tsx 行 952）捕获所有 console 输出
     - 被捕获的输出会作为虚拟组件插入渲染树
     - 在流式响应期间，渲染树不断变化，捕获的输出可能出现在错误位置
     - Agent 执行路径中的 console.log（onError、catch 块）未被显式处理，被 patchConsole 任意插入
+  - **问题根源 2 - Thinking 内容消失**：
+    - `onTextDelta` 被调用时，会调用 `stopThinking()`（InkREPL.tsx 行 399）
+    - `stopThinking()` 会清空 `thinkingContent`（StreamingContext.tsx 行 309）
+    - 这导致 Thinking 内容在第一个文本到达时消失
   - **MessageList 渲染顺序**（MessageList.tsx 行 435-484）：
     1. filteredItems（历史消息）
     2. thinkingContent（思考内容）
     3. streamingResponse（流式响应）
     4. Spinner（加载指示器）
 - **Related**: 040 (REPL 显示问题 - 命令输出渲染位置错误，已修复)
-- **Proposed Solution**:
-  1. **方案 A（推荐）**：在 agent 运行期间也捕获 console.log（类似 Issue 040 的解决方案）
-     - 在 runAgentRound 调用前后捕获/恢复 console.log
+- **Resolution**:
+  1. **修复 1**：在 agent 运行期间捕获 console.log（类似 Issue 040 的解决方案）
+     - 在 `InkREPL.tsx` 的 `runAgentRound` 调用前后捕获/恢复 console.log
      - 将捕获的内容添加到 history 作为 info 类型
-  2. **方案 B**：移除 patchConsole: true，改为手动将所有需要显示的输出添加到 history
+  2. **修复 2**：保留 Thinking 内容显示
+     - 修改 `StreamingContext.tsx` 的 `stopThinking()` 函数，不再清空 `thinkingContent`
+     - Thinking 内容现在会保留显示，直到下一个 thinking session 开始
 
 ---
   - 在 LLM 流式输出（非 thinking）时按 Ctrl+C 中断
