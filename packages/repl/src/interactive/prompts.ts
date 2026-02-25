@@ -6,6 +6,7 @@
 
 import * as readline from 'readline';
 import chalk from 'chalk';
+import { PREVIEW_MAX_LENGTH } from '../common/utils.js';
 
 /**
  * 确认选项定义
@@ -249,8 +250,8 @@ export async function confirmToolExecution(
     switch (tool) {
       case 'bash':
         message = `Execute bash command?`;
-        const cmd = (input.command as string)?.slice(0, 60) ?? '';
-        const suffix = cmd.length >= 60 ? '...' : '';
+        const cmd = (input.command as string)?.slice(0, PREVIEW_MAX_LENGTH) ?? '';
+        const suffix = cmd.length >= PREVIEW_MAX_LENGTH ? '...' : '';
         message += `\n  ${chalk.dim(cmd + suffix)}`;
         break;
       case 'write':

@@ -7,6 +7,7 @@
 import chalk from 'chalk';
 import readline from 'readline';
 import { KodaXEvents } from '@kodax/core';
+import { PREVIEW_MAX_LENGTH } from '../common/utils.js';
 
 // ============== Spinner 动画 ==============
 
@@ -69,7 +70,7 @@ async function confirmAction(name: string, input: Record<string, unknown>): Prom
   return new Promise(resolve => {
     let prompt: string;
     switch (name) {
-      case 'bash': prompt = `[Confirm] Execute: ${(input.command as string)?.slice(0, 60)}...? (y/n) `; break;
+      case 'bash': prompt = `[Confirm] Execute: ${(input.command as string)?.slice(0, PREVIEW_MAX_LENGTH)}...? (y/n) `; break;
       case 'write': prompt = `[Confirm] Write to ${input.path}? (y/n) `; break;
       case 'edit': prompt = `[Confirm] Edit ${input.path}? (y/n) `; break;
       default: prompt = `[Confirm] Execute ${name}? (y/n) `;

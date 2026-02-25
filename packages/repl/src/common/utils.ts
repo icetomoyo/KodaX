@@ -19,6 +19,9 @@ export const KODAX_DIR = path.join(os.homedir(), '.kodax');
 export const KODAX_SESSIONS_DIR = path.join(KODAX_DIR, 'sessions');
 export const KODAX_CONFIG_FILE = path.join(KODAX_DIR, 'config.json');
 
+// UI 显示常量
+export const PREVIEW_MAX_LENGTH = 60;
+
 // 动态读取版本号（从安装目录的 package.json 读取）
 export function getVersion(): string {
   // 使用 import.meta.url 获取相对于此文件的路径

@@ -102,3 +102,27 @@ _创建时间: 2026-02-25_
 **Assistant**:
 - 生成热轨快照 v2
 - 添加墓碑：50ms 延迟方案
+
+#### Turn 6 - Issue 011 修复
+**User**: 执行 /resolve-next-issue
+**Assistant**:
+- 自动选择 Issue 011（命令预览长度不一致）
+- 分析影响范围：cli-events.ts (60字符) vs prompts.ts (60字符)
+- 修复方案：在 common/utils.ts 添加 PREVIEW_MAX_LENGTH = 60 常量
+- 修改 index.ts 导出常量
+- 修改 cli-events.ts 和 prompts.ts 使用常量
+
+#### Turn 7 - 输入框 UX 改进
+**User**: 输入框光标位置优化
+**Assistant**:
+- 分析 TextInput.tsx 渲染逻辑
+- 修改光标位置：现在显示在 > 后空一格
+- 保留 placeholder 显示在光标后
+- 简化 placeholder 文字
+
+#### Turn 8 - 生成快照
+**User**: 执行 /context-snapshot
+**Assistant**:
+- 生成热轨快照 v3
+- 添加 Issue 011 修复记录
+- 添加输入框 UX 改进记录
