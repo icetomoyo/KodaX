@@ -144,7 +144,6 @@ export const App: React.FC<AppProps> = ({ model, provider, onSubmit }) => {
       <Box flexShrink={0}>
         <InputPrompt
           onSubmit={handleSubmit}
-          placeholder="Type your message... (Enter: submit, \\+Enter: newline)"
           prompt=">"
           focus={!state.isLoading}
         />

@@ -6,6 +6,15 @@ _创建时间: 2026-02-25_
 
 ## 墓碑区
 
+### T02: 50ms 延迟方案
+- **失败原因**: 只是临时方案，不能根本解决问题，且命令执行的 50ms 延迟本身也不是 Issue 040 的真正解决方案
+- **放弃日期**: 2026-02-25
+- **尝试过程**:
+  1. 发现命令执行有 50ms 延迟，agent 执行没有
+  2. 最初考虑在 agent 执行也添加 50ms 延迟
+  3. 用户指出 50ms 延迟不是真正解决方案
+  4. 改为使用 console.log 捕获方案
+
 ### T01: WebSearch 查询 Ink patchConsole 机制
 - **失败原因**: API 错误 "invalid params, function name or parameters is empty"
 - **放弃日期**: 2026-02-25
@@ -71,3 +80,25 @@ _创建时间: 2026-02-25_
 **下一步**：
 - 选择一个修复方案实现
 - 验证修复效果
+
+#### Turn 3 - 测试修复
+**User**: 测试修复效果
+**Assistant**:
+- 用户发现 Thinking 内容消失问题
+- 分析发现 `stopThinking()` 清空了 `thinkingContent`
+- 更新 Issue 045 分析，添加 Thinking 内容消失的根因
+- 修复 StreamingContext.tsx 的 `stopThinking()` 函数，保留 thinkingContent
+
+#### Turn 4 - Issue 010 修复
+**User**: 执行 /resolve-next-issue
+**Assistant**:
+- 自动选择 Issue 010（非空断言缺乏显式检查）
+- 分析影响范围：所有调用者都有 null 检查
+- 修复 project-storage.ts，添加显式 null 检查
+- 提交并推送
+
+#### Turn 5 - 生成快照
+**User**: 执行 /context-snapshot
+**Assistant**:
+- 生成热轨快照 v2
+- 添加墓碑：50ms 延迟方案

@@ -18,7 +18,7 @@ import { KeypressHandlerPriority, type InputPromptProps } from "../types.js";
 
 export const InputPrompt: React.FC<InputPromptProps> = ({
   onSubmit,
-  placeholder = "Type... (\\+Enter=newline, Enter=send)",
+  placeholder = "Type a message...",
   prompt = ">",
   focus = true,
   initialValue = "",

@@ -792,7 +792,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       <Box flexShrink={0}>
         <InputPrompt
           onSubmit={handleSubmit}
-          placeholder="Type your message... (Enter: submit, \\+Enter: newline)"
           prompt=">"
           focus={!isLoading}
         />

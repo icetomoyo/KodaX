@@ -1,61 +1,65 @@
 # 热轨快照
 
-_生成时间: 2026-02-25_
-_快照版本: v1_
+_生成时间: 2026-02-25 23:46_
+_快照版本: v2_
 
 ---
 
 ## 1. 项目状态
 
 ### 当前目标
-分析并修复 Issue 045 - Spinner 出现时问答顺序颠倒问题
+修复 REPL 渲染问题 + 代码质量改进
 
 ### 进度概览
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| Issue 045 分析 | 进行中 | 根因已初步定位 |
-| 根因代码定位 | 完成 | 3 个关键发现 |
-| 解决方案 | 待验证 | 3 个方案待选择 |
+| Issue 045 - Spinner 顺序颠倒 | 已修复 | v0.4.4 |
+| Issue 010 - 非空断言检查 | 已修复 | v0.4.4 |
 
 ### 当下阻塞
-- **问题**: 问答顺序在 spinner 出现时颠倒乱序
-- **下一步**: 选择修复方案并实现
+无阻塞问题
 
 ---
 
 ## 2. 已确定接口（骨架）
 
-### InkREPL.tsx (关键部分)
+### InkREPL.tsx (runAgentRound 调用)
 ```typescript
-// handleSubmit - 用户输入处理
-const handleSubmit = useCallback(async (input: string) => {
-  addHistoryItem({ type: "user", text: input });
-  setIsLoading(true);
-  await new Promise((resolve) => setTimeout(resolve, 50)); // 命令执行有延迟
-  // Agent 执行没有延迟
-}, [...])
-
-// createStreamingEvents - 流事件处理
-const createStreamingEvents = useCallback((): KodaXEvents => ({
-  onThinkingDelta: (text) => appendThinkingContent(text),
-  onTextDelta: (text) => { stopThinking(); appendResponse(text); },
-  onError: (error) => console.log(chalk.red(`[Stream Error] ${error.message}`)),
-}), [...])
+// Capture console.log output to add to history (Issue 045)
+const capturedOutput: string[] = [];
+const originalLog = console.log;
+console.log = (...args: unknown[]) => { ... };
+try {
+  const result = await runAgentRound(currentOptionsRef.current, processed);
+} finally {
+  console.log = originalLog;
+  if (capturedOutput.length > 0) {
+    addHistoryItem({ type: "info", text: capturedOutput.join('\n') });
+  }
+}
 ```
 
-### MessageList.tsx (渲染顺序)
+### StreamingContext.tsx (stopThinking)
 ```typescript
-// 渲染顺序：
-// 1. filteredItems（历史消息）
-// 2. thinkingContent（思考内容）
-// 3. streamingResponse（流式响应）
-// 4. Spinner（加载指示器）
+// stopThinking - 保留 thinkingContent 用于显示
+stopThinking: () => {
+  state = {
+    ...state,
+    isThinking: false,
+    thinkingCharCount: 0,
+    // thinkingContent is preserved for display
+  };
+  notify();
+}
 ```
 
-### InkREPL.tsx (渲染结构)
+### project-storage.ts (getNextPendingFeature)
 ```typescript
-// {history.length > 0 && <MessageList ... />}
-{isLoading && history.length === 0 && <ThinkingIndicator />}
+async getNextPendingFeature(): Promise<{ feature: ProjectFeature; index: number } | null> {
+  const feature = data.features[index];
+  if (!feature) return null;
+  return { feature, index };
+}
 ```
 
 ---
@@ -64,7 +68,7 @@ const createStreamingEvents = useCallback((): KodaXEvents => ({
 
 | 死胡同 | 失败原因 | 日期 |
 |--------|----------|------|
-| WebSearch 查询 Ink patchConsole 机制 | API 错误，无法获取信息 | 2026-02-25 |
+| 50ms 延迟方案 | 临时方案，不能根本解决问题 | 2026-02-25 |
 
 ---
 
@@ -72,25 +76,9 @@ const createStreamingEvents = useCallback((): KodaXEvents => ({
 
 | 决策 | 理由 | 日期 |
 |------|------|------|
-| 方案 A（捕获 console.log） | 最接近 Issue 040 的解决方案 | 2026-02-25 |
-| 方案 C（添加延迟） | 实现最简单，但可能不彻底 | 2026-02-25 |
+| Issue 045 使用 console.log 捕获方案 | 与 Issue 040 解决方案一致 | 2026-02-25 |
+| Issue 010 使用显式 null 检查 | 与 getFeatureByIndex 风格一致 | 2026-02-25 |
 
 ---
 
-## 5. Issue 045 根因总结
-
-**执行流程差异**：
-- 命令执行有 50ms 延迟等待渲染（InkREPL.tsx:463）
-- Agent 执行没有延迟（InkREPL.tsx:641-709）
-
-**Agent 运行时 console.log**：
-- `createStreamingEvents.onError` 有 console.log（行 416）
-- catch 块有 console.log（行 699）
-- Ink patchConsole: true（行 952）捕获所有 console 输出
-
-**MessageList 渲染顺序**：
-- filteredItems → thinkingContent → streamingResponse → Spinner
-
----
-
-*Token 数: ~800*
+*Token 数: ~600*

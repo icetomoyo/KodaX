@@ -86,13 +86,17 @@ export const TextInput: React.FC<TextInputProps> = ({
   // 计算提示符宽度（用于对齐）
   const promptWidth = stringWidth(prompt) + 1; // +1 for space
 
-  // 处理空输入
+  // 处理空输入 - 光标显示在提示符之后，空一格
   if (lines.length === 0 || (lines.length === 1 && lines[0] === "")) {
     return (
       <Box>
         <Text color={theme.colors.primary}>{prompt} </Text>
+        {focus ? (
+          <Text backgroundColor={theme.colors.primary}> </Text>
+        ) : (
+          <Text> </Text>
+        )}
         <Text dimColor>{placeholder}</Text>
-        {focus && <Text backgroundColor={theme.colors.primary}> </Text>}
       </Box>
     );
   }
