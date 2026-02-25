@@ -18,7 +18,7 @@ _Last Updated: 2026-02-23 16:00_
 | 007 | Medium | Resolved | 静默吞掉错误 | v0.3.1 | v0.3.3 | 2026-02-19 | 2026-02-22 |
 | 008 | Medium | Resolved | 交互提示缺少输入验证 | v0.3.1 | v0.3.3 | 2026-02-19 | 2026-02-22 |
 | 009 | Medium | Resolved | 不安全的类型断言 | v0.3.1 | v0.3.3 | 2026-02-19 | 2026-02-22 |
-| 010 | Medium | Open | 非空断言缺乏显式检查 | v0.3.1 | - | 2026-02-19 | - |
+| 010 | Medium | Resolved | 非空断言缺乏显式检查 | v0.3.1 | v0.4.4 | 2026-02-19 | 2026-02-25 |
 | 011 | Medium | Open | 命令预览长度不一致 | v0.3.1 | - | 2026-02-19 | - |
 | 012 | Medium | Open | ANSI Strip 性能问题 | v0.3.1 | - | 2026-02-19 | - |
 | 013 | Low | Open | 自动补全缓存内存泄漏风险 | v0.3.1 | - | 2026-02-19 | - |
@@ -254,24 +254,30 @@ _Last Updated: 2026-02-23 16:00_
 
 ---
 
-### 010: 非空断言缺乏显式检查
+### 010: 非空断言缺乏显式检查 (RESOLVED)
 - **Priority**: Medium
-- **Status**: Open
+- **Status**: Resolved
 - **Introduced**: v0.3.1 (auto-detected)
+- **Fixed**: v0.4.4
 - **Created**: 2026-02-19
+- **Resolved**: 2026-02-25
 - **Original Problem**:
   ```typescript
   return { feature: data.features[index]!, index };
   ```
   - 使用 `!` 非空断言操作符时缺少显式 null 检查
   - TypeScript 的 `!` 在编译后被移除，运行时无保护
-- **Context**: `src/interactive/project-storage.ts`
-- **Proposed Solution**:
-  ```typescript
-  const feature = data.features[index];
-  if (!feature) return null;  // 显式检查
-  return { feature, index };
-  ```
+- **Context**: `packages/repl/src/interactive/project-storage.ts`
+- **Resolution**:
+  - 修改 `getNextPendingFeature()` 函数，添加显式 null 检查
+  - 修复后代码：
+    ```typescript
+    const feature = data.features[index];
+    if (!feature) return null;
+    return { feature, index };
+    ```
+  - 与同文件 `getFeatureByIndex()` (line 152-153) 保持风格一致
+- **Files Changed**: `packages/repl/src/interactive/project-storage.ts`
 
 ---
 

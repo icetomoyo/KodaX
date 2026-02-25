@@ -141,7 +141,9 @@ export class ProjectStorage {
     const index = getNextPendingIndex(data.features);
     if (index === -1) return null;
 
-    return { feature: data.features[index]!, index };
+    const feature = data.features[index];
+    if (!feature) return null;
+    return { feature, index };
   }
 
   /**
