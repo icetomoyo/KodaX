@@ -27,7 +27,7 @@ _Last Updated: 2026-02-23 16:00_
 | 016 | Medium | Resolved | InkREPL 组件过大 | v0.3.1 | v0.4.4 | 2026-02-19 | 2026-02-26 |
 | 017 | Low | Open | TextBuffer 未使用方法 | v0.3.1 | - | 2026-02-19 | - |
 | 018 | Low | Open | TODO 注释未清理 | v0.3.1 | - | 2026-02-19 | - |
-| 019 | Medium | Open | 状态栏 Session ID 显示问题 | v0.3.1 | - | 2026-02-20 | - |
+| 019 | Medium | Resolved | 状态栏 Session ID 显示问题 | v0.3.1 | v0.4.4 | 2026-02-20 | 2026-02-26 |
 | 020 | High | Resolved | 资源泄漏 - Readline 接口 | v0.3.1 | v0.3.2 | 2026-02-19 | 2026-02-19 |
 | 021 | High | Resolved | 全局可变状态 | v0.3.1 | v0.3.2 | 2026-02-19 | 2026-02-19 |
 | 022 | High | Resolved | 函数过长 | v0.3.1 | v0.3.2 | 2026-02-19 | 2026-02-19 |
@@ -503,27 +503,35 @@ _Last Updated: 2026-02-23 16:00_
 
 ---
 
-### 019: 状态栏 Session ID 显示问题
+### 019: 状态栏 Session ID 显示问题 (RESOLVED)
 - **Priority**: Medium
-- **Status**: Open
+- **Status**: Resolved
 - **Introduced**: v0.3.1 (auto-detected)
+- **Fixed**: v0.4.4
 - **Created**: 2026-02-20
+- **Resolved**: 2026-02-26
 - **Original Problem**:
-  - Session ID 截断为前 6 个字符 (`slice(0, 6)`)，如果 ID 是时间戳格式则不包含秒信息
-  - `model` 字段存储在状态中但从未在渲染时显示
-  - 用户无法看到当前使用的模型名称
+  - 存在两套 StatusBar 实现：
+    - Legacy `status-bar.ts` (readline 界面): 截断为 6 字符，不显示 model
+    - Active `StatusBar.tsx` (Ink React 组件): 截断为 13 字符，已显示 provider/model
+  - 当前使用的 Ink 版本截断 Session ID 为 13 字符，丢失最后 2 位秒数
+  - Session ID 格式为 `YYYYMMDD_HHMMSS` (15 字符)，13 字符截断后显示 `YYYYMMDD_HHMM`
   ```typescript
-  const shortId = this.state.sessionId.slice(0, 6);
-  parts.push(chalk.dim(`#${shortId}`));
-  // model 字段存在于 StatusBarState 接口但从未被显示
+  // StatusBar.tsx 原代码
+  const shortSessionId = sessionId.length > 13
+    ? sessionId.slice(0, 13)
+    : sessionId;
   ```
-- **Context**: `src/interactive/status-bar.ts` - 行 123-131
-- **Expected Behavior**: Session ID 应包含足够的时间信息，状态栏应显示当前使用的模型名称
-- **Proposed Solution**:
-  ```typescript
-  const shortId = this.state.sessionId.slice(0, 12);
-  parts.push(chalk.cyan(`${this.state.provider}/${this.state.model}`));
-  ```
+- **Context**: `packages/repl/src/ui/components/StatusBar.tsx` - 行 25-27
+- **Expected Behavior**: Session ID 完整显示，不截断，保留 `YYYYMMDD_HHMMSS` 格式
+- **Resolution**:
+  - 移除截断逻辑，直接显示完整 Session ID (15 字符)
+  - 修复后代码：
+    ```typescript
+    // 直接显示完整 Session ID，不截断
+    const displaySessionId = sessionId;
+    ```
+- **Files Changed**: `packages/repl/src/ui/components/StatusBar.tsx`
 
 ---
 
@@ -1163,13 +1171,18 @@ _Last Updated: 2026-02-23 16:00_
 ---
 
 ## Summary
-- Total: 45 (13 Open, 28 Resolved, 3 Won't Fix, 1 Planned for v0.5.0+)
-- Highest Priority Open: 019 - 状态栏 Session ID 显示问题 (Medium)
+- Total: 45 (12 Open, 29 Resolved, 3 Won't Fix, 1 Planned for v0.5.0+)
+- Highest Priority Open: 036 - React 状态同步潜在问题 (Medium)
 - Planned for v0.5.0+: 037, 039 (长期重构 - ConsolePatcher 架构)
 
 ---
 
 ## Changelog
+
+### 2026-02-26: Issue 019 修复
+- Resolved 019: 状态栏 Session ID 显示问题 - 移除截断逻辑，显示完整 Session ID
+- 修正 KNOWN_ISSUES.md 中过时的描述（原描述针对已废弃的 status-bar.ts）
+- 当前 Open Issues 降至 12 个
 
 ### 2026-02-26: Issue 011 & 012 修复
 - Resolved 011: 命令预览长度不一致 - 统一使用 PREVIEW_MAX_LENGTH 常量

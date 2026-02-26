@@ -19,12 +19,9 @@ export const StatusBar: React.FC<StatusBarProps> = ({
 }) => {
   const theme = useMemo(() => getTheme("dark"), []);
 
-  // 简短会话 ID - 显示格式为 YYYYMMDD_HHMM (13 字符)
-  // 如果 ID 格式是 YYYYMMDD_HHMMSS，我们取前 13 个字符
-  // 如果 ID 较短，显示全部
-  const shortSessionId = sessionId.length > 13
-    ? sessionId.slice(0, 13)
-    : sessionId;
+  // 显示完整 Session ID (YYYYMMDD_HHMMSS 格式，15 字符)
+  // 不截断，保留完整时间信息
+  const displaySessionId = sessionId;
 
   // 构建模式指示器
   const modeIndicators: string[] = [];
@@ -49,7 +46,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
         <Text dimColor> | </Text>
         <Text color={theme.colors.accent}>{modeStr}</Text>
         <Text dimColor> | </Text>
-        <Text dimColor>{shortSessionId}</Text>
+        <Text dimColor>{displaySessionId}</Text>
       </Box>
 
       {/* 中间：当前工具 */}
@@ -61,6 +58,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
 
       {/* 右侧：模型和 Token 使用 */}
       <Box>
+        <Text dimColor>| </Text>
         <Text color={theme.colors.secondary}>
           {provider}/{model}
         </Text>
