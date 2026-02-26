@@ -12,7 +12,7 @@ import type { KodaXMessage } from "@kodax/core";
  *
  * 处理字符串和数组两种内容格式：
  * - 字符串：直接返回
- * - 数组：提取所有 text/thinking/tool_use block 并拼接
+ * - 数组：提取 text/thinking 块，忽略 tool_use/tool_result/redacted_thinking
  *
  * @param content - 消息内容（字符串或内容块数组）
  * @returns 提取的文本内容
@@ -39,17 +39,12 @@ export function extractTextContent(content: string | unknown[]): string {
             }
             break;
           case "tool_use":
-            // 显示工具调用信息
-            if ("name" in block) {
-              textParts.push(`[Tool: ${block.name}]`);
-            }
-            break;
+          case "tool_result":
           case "redacted_thinking":
-            // 被遮蔽的思考内容
-            textParts.push("[Thinking content redacted]");
+            // 这些块类型不显示在历史消息中
             break;
           default:
-            // 忽略其他类型的块（如 tool_result）
+            // 未知类型也忽略
             break;
         }
       }
