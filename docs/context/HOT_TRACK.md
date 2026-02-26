@@ -1,23 +1,22 @@
 # 热轨快照
 
-_生成时间: 2026-02-26 14:35_
-_快照版本: v7_
+_生成时间: 2026-02-26 21:00_
+_快照版本: v8_
 
 ---
 
 ## 1. 项目状态
 
 ### 当前目标
-代码质量改进 + Issue 修复
+FEATURE_008 权限控制体系改进设计完成
 
 ### 进度概览
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| Issue 011 - 命令预览长度 | 已修复 | v0.4.4 |
-| Issue 012 - ANSI Strip 性能 | 已修复 | v0.4.4 |
-| Issue 016 - InkREPL 过大 | 已修复 | v0.4.4, 994→819 行 |
-| Issue 045 - Thinking 内容闪烁 | 已修复 | v0.4.4, 提交 30a9ea2 |
-| Issue 019 - Session ID 显示 | **已修复** | v0.4.4, 完整显示 15 字符 |
+| Issue 045 - Thinking 内容闪烁 | 已修复 | v0.4.4 |
+| Issue 016 - InkREPL 重构 | 已修复 | v0.4.4, 994→819 行 |
+| Issue 019 - Session ID 显示 | 已修复 | v0.4.4 |
+| FEATURE_008 - 权限控制体系 | **设计完成** | v0.5.0, 待实现 |
 
 ### 当下阻塞
 无阻塞问题
@@ -26,40 +25,48 @@ _快照版本: v7_
 
 ## 2. 已确定接口（骨架）
 
-### StreamingContext.tsx (Issue 045 修复)
+### FEATURE_008 权限控制类型定义
 ```typescript
-export interface StreamingActions {
-  // ... existing methods
-  stopThinking(): void;           // 只设置 isThinking=false，不清空内容
-  clearThinkingContent(): void;   // 响应完成时清空 thinking 内容
+// packages/core/src/types.ts
+export type PermissionMode = 'plan' | 'default' | 'accept-edits' | 'auto-in-project';
+
+export interface KodaXOptions {
+  permissionMode?: PermissionMode;  // 新增
+  confirmTools?: Set<string>;       // 保留向后兼容
+  auto?: boolean;
 }
 
-// MessageList 渲染条件
-// 旧: {isThinking && thinkingContent && ...}
-// 新: {isLoading && thinkingContent && ...}
+export interface KodaXToolExecutionContext {
+  permissionMode: PermissionMode;
+  projectRoot: string;  // 用于判断项目内外
+}
 ```
 
-### packages/repl/src/ui/utils/ (Issue 016 新模块)
-
+### 权限计算函数
 ```typescript
-// session-storage.ts
-export interface SessionStorage {
-  save(id: string, data: SessionData): Promise<void>;
-  load(id: string): Promise<SessionData | null>;
-  list(gitRoot?: string): Promise<Array<{ id: string; title: string; msgCount: number }>>;
+// packages/core/src/tools/permission.ts
+export function computeConfirmTools(mode: PermissionMode): Set<string>
+export function isAlwaysConfirmPath(targetPath: string, projectRoot: string): boolean
+```
+
+### 配置文件格式
+```json
+// ~/.kodax/config.json (用户级)
+// .kodax/config.local.json (项目级)
+{
+  "permission": {
+    "mode": "accept-edits",
+    "allowedPatterns": [{ "pattern": "Bash(git log:*)", "addedBy": "user-confirm" }],
+    "deniedPatterns": []
+  }
 }
+```
 
-// shell-executor.ts
-export async function executeShellCommand(command: string, config?: ShellExecutorConfig): Promise<string>
-export async function processSpecialSyntax(input: string, config?: ShellExecutorConfig): Promise<string>
-
-// message-utils.ts
-export function extractTextContent(content: string | unknown[]): string
-export function extractTitle(messages: KodaXMessage[]): string
-
-// console-capturer.ts
-export class ConsoleCapturer { start(): void; stop(): string[]; }
-export async function withCapture<T>(fn: () => Promise<T>): Promise<{ result: T; captured: string[] }>
+### 确认提示组件
+```tsx
+// [y] Yes (this time only)
+// [Y] Yes always (only for this project)  // 非永久保护区域
+// [n] No
 ```
 
 ---
@@ -68,8 +75,7 @@ export async function withCapture<T>(fn: () => Promise<T>): Promise<{ result: T;
 
 | 死胡同 | 失败原因 | 日期 |
 |--------|----------|------|
-| 50ms 延迟方案 | 临时方案，不能根本解决问题 | 2026-02-25 |
-| WebSearch 查询 | API 错误，无法获取信息 | 2026-02-25 |
+| CLI 多余参数设计 | --plan/-y/--allow/--deny/--config 冗余，仅需 --mode | 2026-02-26 |
 
 ---
 
@@ -77,54 +83,71 @@ export async function withCapture<T>(fn: () => Promise<T>): Promise<{ result: T;
 
 | 决策 | 理由 | 日期 |
 |------|------|------|
-| Issue 016 采用方案 A | 低风险渐进式改进 | 2026-02-26 |
-| Thinking 内容用 isLoading 控制显示 | 响应期间持续显示，完成后消失 | 2026-02-26 |
-| 添加 clearThinkingContent() | 响应完成时清空，为下次请求做准备 | 2026-02-26 |
+| 四级模式替代 code/ask | 更细粒度控制 | 2026-02-26 |
+| auto-in-project 允许项目内危险命令 | 用户明确信任项目 | 2026-02-26 |
+| .kodax/ 永久保护 | 配置文件涉及自动化，需额外确认 | 2026-02-26 |
+| default 模式 [Y] 自动切换 accept-edits | 简化用户操作 | 2026-02-26 |
+| 仅 --mode 参数 | 简化 CLI，其他参数冗余 | 2026-02-26 |
 
 ---
 
-## 5. 关键理解：Claude API 流式机制
+## 5. 新旧机制映射
 
-### Content Block 交织
-```
-单次 API 调用 → 单次流式响应
-
-content_block_start (thinking)
-  → thinking_delta → onThinkingDelta()
-  → content_block_stop → onThinkingEnd()
-
-content_block_start (text)
-  → text_delta → onTextDelta()
-  → content_block_stop
-
-content_block_start (thinking)  ← 可多次交织
-  → thinking_delta → onThinkingDelta()
-  → content_block_stop → onThinkingEnd()
-
-...直到 message_stop
-```
-
-### Thinking 状态生命周期
-```
-startThinking() → thinkingContent = ""
-    ↓
-onThinkingDelta → thinkingContent += text (累加)
-    ↓
-onThinkingEnd → isThinking = false (内容保留)
-    ↓
-响应完成 → clearThinkingContent() (清空)
-```
+| 新模式 | confirmTools | auto | 说明 |
+|--------|--------------|------|------|
+| `plan` | 所有修改工具 | - | 阻止执行 |
+| `default` | [bash,write,edit] | false | 当前默认 |
+| `accept-edits` | [bash] | false | 文件自动 |
+| `auto-in-project` | [] | true | 项目内全auto |
 
 ---
 
-## 6. 当前 Open Issues (11)
+## 6. 项目模式权限映射
+
+| 场景 | 命令 | 权限模式 |
+|------|------|----------|
+| CLI 项目自动执行 | `--auto-continue` | `auto-in-project` |
+| CLI 快速模式 | `--mode auto-in-project` | `auto-in-project` |
+| REPL 项目自动执行 | `/project auto` | `auto-in-project` |
+
+---
+
+## 7. 永久保护区域
+
+以下路径**永远需要确认**，不受任何配置影响：
+- `.kodax/` - 项目配置目录
+- `~/.kodax/` - 用户配置目录
+- 项目外路径
+
+---
+
+## 8. 当前 Open Issues (11)
 
 | 优先级 | ID | 标题 |
 |--------|-----|------|
 | Medium | 036 | React 状态同步潜在问题 |
-| Medium | 037 | 两套键盘事件系统冲突 (Planned v0.5.0+) |
+| Medium | 037 | 两套键盘事件系统冲突 |
 | Low | 001-006, 013-015, 017-018, 039 | 代码质量问题 |
 
 ---
 
-*Token 数: ~1,100*
+## 9. FEATURE_008 需要修改/创建的文件
+
+```
+修改:
+├── packages/core/src/types.ts           # PermissionMode 类型
+├── packages/core/src/tools/registry.ts  # 权限检查逻辑
+├── packages/repl/src/interactive/commands.ts    # /mode 命令
+├── packages/repl/src/interactive/project-commands.ts  # /project auto
+├── src/kodax_cli.ts                     # --mode 参数
+
+创建:
+├── packages/core/src/tools/permission.ts        # computeConfirmTools
+├── packages/repl/src/common/permission-config.ts
+├── packages/repl/src/ui/components/ConfirmPrompt.tsx
+└── src/cli-permission.ts
+```
+
+---
+
+*Token 数: ~1,200*

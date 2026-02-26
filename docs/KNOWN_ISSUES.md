@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-02-23 16:00_
+_Last Updated: 2026-02-26 14:40_
 
 ---
 
@@ -54,6 +54,7 @@ _Last Updated: 2026-02-23 16:00_
 | 040 | High | Resolved | REPL 显示问题 - 命令输出渲染位置错误 | v0.3.3 | v0.4.2 | 2026-02-23 | 2026-02-25 |
 | 044 | High | Resolved | 流式输出时 Ctrl+C 延迟生效 | v0.3.4 | v0.3.6 | 2026-02-23 | 2026-02-24 |
 | 045 | High | Resolved | Spinner 出现时问答顺序颠倒 | v0.4.3 | v0.4.4 | 2026-02-25 | 2026-02-25 |
+| 046 | Medium | Open | Session 恢复时消息显示为 "[Complex content]" | v0.4.5 | - | 2026-02-26 | - |
 
 ---
 
@@ -1304,6 +1305,26 @@ _Last Updated: 2026-02-23 16:00_
 - Resolved 023: Delete 键无效
 - Resolved 024: Backspace 键无效
 - Resolved 025: Shift+Enter 换行无效
+
+### 046: Session 恢复时消息显示为 "[Complex content]" (OPEN)
+- **Priority**: Medium
+- **Status**: Open
+- **Introduced**: v0.4.5
+- **Created**: 2026-02-26
+- **Original Problem**:
+  - 使用 `kodax -c` 恢复之前的 session 时，很多消息显示为 `[Complex content]`
+  - 部分消息被截断，无法查看完整内容
+  - 当前行为：历史消息被替换为 `[Complex content]` 占位符
+  - 预期行为：恢复的 session 应该完整显示所有历史消息
+- **Context**: `kodax -c` 命令、session 加载/序列化逻辑
+- **Reproduction**:
+  1. 使用 `kodax` 进行多轮对话
+  2. 退出后使用 `kodax -c` 恢复 session
+  3. 观察历史消息显示为 `[Complex content]`
+- **Root Cause**: (待分析)
+- **Proposed Solution**: (待分析)
+
+---
 
 ### 2026-02-19: 代码审查与重构
 - Resolved 020: 资源泄漏 - Readline 接口

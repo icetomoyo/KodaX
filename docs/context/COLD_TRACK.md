@@ -7,6 +7,15 @@ _最后更新: 2026-02-26_
 
 ## 墓碑区
 
+### T03: CLI 冗余参数设计
+- **失败原因**: --plan, -y/--auto, --allow, --deny, --config 参数冗余，仅需 --mode 即可覆盖所有场景
+- **放弃日期**: 2026-02-26
+- **尝试过程**:
+  1. 最初设计了多个 CLI 参数
+  2. 用户指出冗余
+  3. 简化为仅 --mode 参数
+  4. 配置文件路径固定，无需 --config
+
 ### T02: 50ms 延迟方案
 - **失败原因**: 只是临时方案，不能根本解决问题，且命令执行的 50ms 延迟本身也不是 Issue 040 的真正解决方案
 - **放弃日期**: 2026-02-25
@@ -338,4 +347,96 @@ _最后更新: 2026-02-26_
 | Thinking 结束 | 内容消失 | 内容保留 |
 | 响应进行中 | 无内容 | 显示 thinking 内容 |
 | 响应完成 | N/A | 消失并清空 |
+
+---
+
+### Session: 2026-02-26 (续4 - FEATURE_008 权限控制体系设计)
+
+#### Turn 1 - /add-feature 添加权限控制特性
+**User**: 添加权限控制体系改进的 feature，使用 PERMISSION_CONTROL_ANALYSIS.md 作为详情
+
+**Assistant**:
+- 读取 PERMISSION_CONTROL_ANALYSIS.md（之前生成的分析文档）
+- 添加 FEATURE_008 到 FEATURE_LIST.md
+- 添加详细设计到 v0.5.0.md
+- 删除 PERMISSION_CONTROL_ANALYSIS.md
+
+**Tools**: Read, Edit, Write, Bash (rm)
+
+#### Turn 2 - 用户澄清权限模式设计
+**User**: 多轮讨论权限模式设计
+
+**讨论要点**:
+1. accept-edits 模式是否允许危险命令 → 需要 auto-in-project 模式
+2. 三级模式与 ask 模式的关系 → 不需要 ask/code 区分，仅用四级模式
+3. 配置文件位置 → 用户级 ~/.kodax/ + 项目级 .kodax/config.local.json
+4. .kodax/ 目录需要永久保护
+5. default 模式选 [Y] Yes always → 自动切换到 accept-edits
+6. 确认提示文字 → "(only for this project)"
+
+**Assistant**:
+- 多次更新 v0.5.0.md 设计文档
+- 修正配置文件引用
+- 添加永久保护区域逻辑
+- 添加模式切换行为
+
+**Tools**: Read, Edit
+
+#### Turn 3 - CLI 模式设计
+**User**: 询问 CLI 模式的设计
+
+**Assistant**:
+- 添加 CLI 模式设计章节到 v0.5.0.md
+- 包含：参数、配置加载、确认提示、使用示例
+
+#### Turn 4 - 简化 CLI 参数
+**User**: 指出 CLI 参数冗余
+
+**Assistant**:
+- 删除冗余参数：--plan, -y/--auto, --allow, --deny, --config
+- 仅保留 --mode 参数
+- 更新文档
+
+#### Turn 5 - 项目模式权限映射
+**User**: 要求梳理 --init 和 /project 的权限映射
+
+**Assistant**:
+- 读取 project-commands.ts 和 kodax_cli.ts 源码
+- 分析现有机制：confirmTools Set, auto 标志
+- 添加详细的代码集成设计（8.2 章节）
+- 添加项目模式权限映射表
+- 添加验收标准
+
+**Tools**: Read, Grep
+
+---
+
+### FEATURE_008 设计详情
+
+**四级权限模式**:
+| 模式 | 文件编辑 | Shell 命令 | 危险命令 | 项目外操作 |
+|------|----------|------------|----------|------------|
+| plan | 禁止 | 禁止 | 禁止 | 禁止 |
+| default | 需确认 | 需确认 | 需确认 | 需确认 |
+| accept-edits | 自动 | 需确认 | 需确认 | 需确认 |
+| auto-in-project | 自动 | 自动 | 自动 | 需确认 |
+
+**命令模式匹配语法**:
+```
+Bash(git log:*)  - 匹配 git log 开头的命令
+Bash(npm:*)      - 匹配 npm 开头的命令
+Bash(rm:*)       - 匹配 rm 开头的命令
+```
+
+**配置加载优先级**:
+1. CLI --mode 参数
+2. 项目级 .kodax/config.local.json
+3. 用户级 ~/.kodax/config.json
+4. 代码默认值 'default'
+
+**向后兼容**:
+- `/mode code` → `accept-edits` + 提示
+- `/mode ask` → `plan` + 提示
+- 旧 confirmTools 设置仍有效
+
 
