@@ -19,8 +19,8 @@ _Last Updated: 2026-02-23 16:00_
 | 008 | Medium | Resolved | 交互提示缺少输入验证 | v0.3.1 | v0.3.3 | 2026-02-19 | 2026-02-22 |
 | 009 | Medium | Resolved | 不安全的类型断言 | v0.3.1 | v0.3.3 | 2026-02-19 | 2026-02-22 |
 | 010 | Medium | Resolved | 非空断言缺乏显式检查 | v0.3.1 | v0.4.4 | 2026-02-19 | 2026-02-25 |
-| 011 | Medium | Open | 命令预览长度不一致 | v0.3.1 | - | 2026-02-19 | - |
-| 012 | Medium | Open | ANSI Strip 性能问题 | v0.3.1 | - | 2026-02-19 | - |
+| 011 | Medium | Resolved | 命令预览长度不一致 | v0.3.1 | v0.4.4 | 2026-02-19 | 2026-02-26 |
+| 012 | Medium | Resolved | ANSI Strip 性能问题 | v0.3.1 | v0.4.4 | 2026-02-19 | 2026-02-26 |
 | 013 | Low | Open | 自动补全缓存内存泄漏风险 | v0.3.1 | - | 2026-02-19 | - |
 | 014 | Low | Open | 语法高亮语言支持不全 | v0.3.1 | - | 2026-02-19 | - |
 | 015 | Low | Open | Unicode 检测不完整 | v0.3.1 | - | 2026-02-19 | - |
@@ -281,11 +281,13 @@ _Last Updated: 2026-02-23 16:00_
 
 ---
 
-### 011: 命令预览长度不一致
+### 011: 命令预览长度不一致 (RESOLVED)
 - **Priority**: Medium
-- **Status**: Open
+- **Status**: Resolved
 - **Introduced**: v0.3.1 (auto-detected)
+- **Fixed**: v0.4.4
 - **Created**: 2026-02-19
+- **Resolved**: 2026-02-26
 - **Original Problem**:
   ```typescript
   // 行 239: 显示 50 字符
@@ -297,19 +299,21 @@ _Last Updated: 2026-02-23 16:00_
   ```
   - 用户体验不一致，代码维护困难
 - **Context**: `src/interactive/prompts.ts` - 行 253-254 vs 239
-- **Proposed Solution**:
-  ```typescript
-  const CMD_PREVIEW_LENGTH = 50;
-  const preview = cmd.slice(0, CMD_PREVIEW_LENGTH) + (cmd.length > CMD_PREVIEW_LENGTH ? '...' : '');
-  ```
+- **Resolution**:
+  - 在 `common/utils.ts` 添加共享常量 `PREVIEW_MAX_LENGTH = 60`
+  - 修改 `cli-events.ts` 和 `prompts.ts` 使用共享常量
+  - 统一所有命令预览长度为 60 字符
+- **Files Changed**: `packages/repl/src/common/utils.ts`, `packages/repl/src/index.ts`, `packages/repl/src/ui/cli-events.ts`, `packages/repl/src/interactive/prompts.ts`
 
 ---
 
-### 012: ANSI Strip 性能问题
+### 012: ANSI Strip 性能问题 (RESOLVED)
 - **Priority**: Medium
-- **Status**: Open
+- **Status**: Resolved
 - **Introduced**: v0.3.1 (auto-detected)
+- **Fixed**: v0.4.4
 - **Created**: 2026-02-19
+- **Resolved**: 2026-02-26
 - **Original Problem**:
   ```typescript
   private stripAnsi(str: string): string {
@@ -320,7 +324,11 @@ _Last Updated: 2026-02-23 16:00_
   - 状态栏更新频繁时可能影响性能
   - 正则表达式每次都重新编译
 - **Context**: `src/interactive/status-bar.ts` - 行 206-208
-- **Proposed Solution**: 使用 `strip-ansi` npm 包 或 缓存正则表达式
+- **Resolution**:
+  - 将正则表达式提取为模块级常量 `ANSI_REGEX`
+  - 在 `stripAnsi()` 方法中复用缓存的正则表达式
+  - 添加 `lastIndex = 0` 重置以确保从头匹配
+- **Files Changed**: `packages/repl/src/interactive/status-bar.ts`
 
 ---
 
@@ -1086,13 +1094,19 @@ _Last Updated: 2026-02-23 16:00_
 ---
 
 ## Summary
-- Total: 45 (17 Open, 24 Resolved, 3 Won't Fix, 1 Planned for v0.5.0+)
-- Highest Priority Open: 045 - Spinner 出现时问答顺序颠倒 (High)
+- Total: 45 (15 Open, 26 Resolved, 3 Won't Fix, 1 Planned for v0.5.0+)
+- Highest Priority Open: 035 - Backspace 检测边缘情况 (High)
 - Planned for v0.5.0+: 037, 039 (长期重构 - ConsolePatcher 架构)
 
 ---
 
 ## Changelog
+
+### 2026-02-26: Issue 011 & 012 修复
+- Resolved 011: 命令预览长度不一致 - 统一使用 PREVIEW_MAX_LENGTH 常量
+- Resolved 012: ANSI Strip 性能问题 - 缓存正则表达式避免重复编译
+- 更新 Issue 011 状态（之前已修复但未更新状态）
+- 当前 Open Issues 降至 15 个
 
 ### 2026-02-25: Issue 045 新增
 - Added 045: Spinner 出现时问答顺序颠倒 (High Priority)

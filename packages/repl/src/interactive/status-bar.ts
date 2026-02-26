@@ -30,6 +30,11 @@ export interface StatusBarState {
 }
 
 /**
+ * ANSI 转义序列正则表达式（缓存避免重复编译）
+ */
+const ANSI_REGEX = /\x1b\[[0-9;]*m/g;
+
+/**
  * ANSI 转义序列
  */
 const ANSI = {
@@ -204,8 +209,9 @@ export class StatusBar {
    * 移除 ANSI 转义序列
    */
   private stripAnsi(str: string): string {
-    // eslint-disable-next-line no-control-regex
-    return str.replace(/\x1b\[[0-9;]*m/g, '');
+    // 使用缓存的正则表达式，避免重复编译
+    ANSI_REGEX.lastIndex = 0; // 重置 lastIndex 确保从头匹配
+    return str.replace(ANSI_REGEX, '');
   }
 }
 
