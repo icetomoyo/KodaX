@@ -212,3 +212,60 @@ _最后更新: 2026-02-26_
 7. 错误分类 (4种)
 8. 自动保存
 
+---
+
+### Session: 2026-02-26 (续2)
+
+#### Turn 1 - 继续会话
+**Context**: 从压缩后恢复，继续 Issue 016 修复
+
+**Assistant**:
+- 读取 InkREPL.tsx (lines 700-780) 查找 printStartupBanner
+- 确认 printStartupBanner 在 InkREPL.tsx 中是死代码（repl.ts 有独立实现）
+- 删除 printStartupBanner 函数（行 707-745，约 39 行）
+- 更新 utils/index.ts barrel export
+
+**Tools**: Read, Grep, Edit, Write
+
+#### Turn 2 - TypeScript 验证
+**Assistant**:
+- 运行 `tsc --noEmit` 验证编译
+- 检查 InkREPL.tsx 行数：994 → 819 行 (-175 行，-17.6%)
+
+**用户验证**: 通过
+
+#### Turn 3 - 更新 KNOWN_ISSUES.md
+**Assistant**:
+- 更新 Issue 016 Index: Open → Resolved, Fixed v0.4.4
+- 更新 Issue 016 Details: 添加 Resolution 部分
+- 更新 Summary: 14 Open → 13 Open
+- 新的 Highest Priority Open: Issue 019
+
+#### Turn 4 - 提交推送
+**Assistant**:
+- 暂存 9 个文件（4 新建 + 5 修改）
+- 提交: `refactor: resolve Issue 016 - InkREPL component refactoring`
+- 推送: `1be18ea`
+
+**Tools**: Bash (git status, git diff, git add, git commit, git push)
+
+---
+
+### Issue 016 修复详情
+
+**执行方案**: A（保守重构）
+
+**新建模块**:
+| 模块 | 行数 | 内容 |
+|------|------|------|
+| session-storage.ts | ~70 | SessionStorage 接口 + MemorySessionStorage |
+| shell-executor.ts | ~120 | processSpecialSyntax, executeShellCommand |
+| message-utils.ts | ~76 | extractTextContent, extractTitle, formatMessagePreview |
+| console-capturer.ts | ~109 | ConsoleCapturer, withCapture, withCaptureSync |
+
+**删除代码**:
+- printStartupBanner() 死代码：~39 行
+- 内联函数提取：~136 行
+
+**结果**: 994 行 → 819 行 (-175 行，-17.6%)
+
