@@ -439,7 +439,8 @@ export const MessageList: React.FC<MessageListProps> = ({
       ))}
 
       {/* Thinking 内容显示 - 淡灰色 */}
-      {isThinking && thinkingContent && (
+      {/* 显示条件：响应进行中 + 有 thinking 内容 */}
+      {isLoading && thinkingContent && (
         <Box flexDirection="column" marginBottom={1}>
           <Box>
             <Text color={theme.colors.dim} italic>Thinking</Text>

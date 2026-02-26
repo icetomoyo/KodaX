@@ -87,6 +87,9 @@ export interface StreamingActions {
   /** 结束 thinking */
   stopThinking: () => void;
 
+  /** 清空 thinking 内容 (响应完成时调用) */
+  clearThinkingContent: () => void;
+
   /** 设置当前工具 */
   setCurrentTool: (tool: string | undefined) => void;
 
@@ -166,6 +169,9 @@ export interface StreamingManager {
 
   /** 结束 thinking */
   stopThinking: () => void;
+
+  /** 清空 thinking 内容 (响应完成时调用) */
+  clearThinkingContent: () => void;
 
   /** 设置当前工具 */
   setCurrentTool: (tool: string | undefined) => void;
@@ -313,6 +319,17 @@ export function createStreamingManager(): StreamingManager {
       notify();
     },
 
+    clearThinkingContent: () => {
+      // Clear thinking content when response completes
+      state = {
+        ...state,
+        isThinking: false,
+        thinkingCharCount: 0,
+        thinkingContent: "",
+      };
+      notify();
+    },
+
     setCurrentTool: (tool: string | undefined) => {
       state = {
         ...state,
@@ -414,6 +431,10 @@ export function StreamingProvider({
     managerRef.current.stopThinking();
   }, []);
 
+  const clearThinkingContent = useCallback(() => {
+    managerRef.current.clearThinkingContent();
+  }, []);
+
   const setCurrentTool = useCallback((tool: string | undefined) => {
     managerRef.current.setCurrentTool(tool);
   }, []);
@@ -438,6 +459,7 @@ export function StreamingProvider({
     appendThinkingChars,
     appendThinkingContent,
     stopThinking,
+    clearThinkingContent,
     setCurrentTool,
     appendToolInputChars,
     getSignal,

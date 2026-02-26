@@ -180,6 +180,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     appendThinkingChars,
     appendThinkingContent,
     stopThinking,
+    clearThinkingContent,
     setCurrentTool,
     appendToolInputChars,
     clearResponse,
@@ -214,6 +215,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         // 使用 abort() 而不是 stopStreaming() 来真正中止 API 请求
         abort();
         stopThinking();
+        clearThinkingContent();
         setCurrentTool(undefined);
         setIsLoading(false);
         console.log(chalk.yellow("\n[Interrupted]"));
@@ -594,6 +596,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
         setIsLoading(false);
         stopStreaming();
+        clearThinkingContent();
       }
     },
     [
