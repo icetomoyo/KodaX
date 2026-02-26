@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-02-26 14:40_
+_Last Updated: 2026-02-26 21:30_
 
 ---
 
@@ -55,6 +55,7 @@ _Last Updated: 2026-02-26 14:40_
 | 044 | High | Resolved | 流式输出时 Ctrl+C 延迟生效 | v0.3.4 | v0.3.6 | 2026-02-23 | 2026-02-24 |
 | 045 | High | Resolved | Spinner 出现时问答顺序颠倒 | v0.4.3 | v0.4.4 | 2026-02-25 | 2026-02-25 |
 | 046 | Medium | Open | Session 恢复时消息显示为 "[Complex content]" | v0.4.5 | - | 2026-02-26 | - |
+| 047 | Medium | Open | 流式输出时界面闪烁 | v0.4.5 | - | 2026-02-26 | - |
 
 ---
 
@@ -1172,13 +1173,17 @@ _Last Updated: 2026-02-26 14:40_
 ---
 
 ## Summary
-- Total: 45 (12 Open, 29 Resolved, 3 Won't Fix, 1 Planned for v0.5.0+)
+- Total: 47 (13 Open, 30 Resolved, 3 Won't Fix, 1 Planned for v0.5.0+)
 - Highest Priority Open: 036 - React 状态同步潜在问题 (Medium)
 - Planned for v0.5.0+: 037, 039 (长期重构 - ConsolePatcher 架构)
 
 ---
 
 ## Changelog
+
+### 2026-02-26: Issue 047 新增
+- Added 047: 流式输出时界面闪烁 (Medium Priority)
+- 高速流式输出时界面出现闪烁，可能与 Ink 渲染频率有关
 
 ### 2026-02-26: Issue 019 修复
 - Resolved 019: 状态栏 Session ID 显示问题 - 移除截断逻辑，显示完整 Session ID
@@ -1323,6 +1328,94 @@ _Last Updated: 2026-02-26 14:40_
   3. 观察历史消息显示为 `[Complex content]`
 - **Root Cause**: (待分析)
 - **Proposed Solution**: (待分析)
+
+---
+
+### 047: 流式输出时界面闪烁 (OPEN)
+- **Priority**: Medium
+- **Status**: Open
+- **Introduced**: v0.4.5
+- **Created**: 2026-02-26
+- **Original Problem**:
+  - 流式输出时界面偶尔会闪烁
+  - 输出越快速，闪烁越频繁
+  - 当前行为：高速流式输出时出现明显闪烁
+  - 预期行为：流式输出应该平滑无闪烁
+- **Context**: REPL 流式响应渲染，Ink 组件频繁重绘
+- **Reproduction**:
+  1. 使用 `kodax` 进行对话
+  2. 观察高速流式输出时的界面表现
+  3. 注意界面闪烁频率
+- **Root Cause Analysis**:
+  1. **Ink 渲染机制**：
+     - Ink 默认 30fps 渲染（约 33ms/帧）
+     - 当前未使用 `maxFps` 参数限制渲染频率
+     - `patchConsole: true`（InkREPL.tsx:802）增加额外渲染负载
+
+  2. **流式更新频率**：
+     - `appendResponse()` 在 `onTextDelta` 中被调用（InkREPL.tsx:267）
+     - 每个 token 都触发状态更新和 React 重渲染
+     - 高速输出时更新频率 > 30fps，超出 Ink 渲染能力
+
+  3. **终端渲染特性**：
+     - 终端没有 DOM，每次更新需重绘整个视口
+     - 动态内容（streamingResponse）每次变化都触发全视口重绘
+     - 未使用 `<Static>` 组件固定历史消息
+
+  4. **MessageList 渲染逻辑**（MessageList.tsx:454-466）：
+     ```tsx
+     {streamingResponse && (
+       <Box flexDirection="column">
+         {streamingResponse.split("\n").map((line, index) => (
+           <Text key={index}>{line || " "}</Text>
+         ))}
+       </Box>
+     )}
+     ```
+     - 每次更新都重新渲染整个流式响应块
+     - `split("\n")` 生成新数组，key 无变化但仍触发重渲染
+- **Proposed Solutions**:
+  | 方案 | 优先级 | 难度 | 说明 |
+  |------|--------|------|------|
+  | A. `maxFps` 限制 | 高 | 低 | 添加 `maxFps: 15` 到 render() 选项 |
+  | B. 批量更新 | 高 | 中 | 缓冲流式文本，每 50-100ms 更新一次 UI |
+  | C. `<Static>` 组件 | 中 | 中 | 将已完成的历史消息移入 Static 组件 |
+  | D. 减少 patchConsole | 低 | 高 | 仅在必要时启用 patchConsole |
+- **Recommended**: 方案 A + B 组合
+  ```tsx
+  // InkREPL.tsx - 方案 A
+  render(<InkREPL ... />, {
+    stdout: process.stdout,
+    stdin: process.stdin,
+    exitOnCtrlC: false,
+    patchConsole: true,
+    maxFps: 15,  // 降低渲染频率
+  });
+  ```
+  ```tsx
+  // StreamingContext.tsx - 方案 B
+  let responseBuffer = "";
+  let updateTimer: NodeJS.Timeout | null = null;
+
+  const appendResponse = (text: string) => {
+    responseBuffer += text;
+    if (!updateTimer) {
+      updateTimer = setTimeout(() => {
+        state.currentResponse += responseBuffer;
+        responseBuffer = "";
+        updateTimer = null;
+        notify();
+      }, 50);  // 50ms 批量更新
+    }
+  };
+  ```
+- **References**:
+  - [Ink render options - maxFps](https://github.com/vadimdemedes/ink/blob/main/src/render.ts)
+  - [Qwen Code - Ink flickering analysis](https://github.com/QwenLM/qwen-code/issues/1778)
+  - [GitHub Copilot CLI - animation rendering](https://github.blog/engineering/from-pixels-to-characters/)
+- **Files to Change**:
+  - `packages/repl/src/ui/InkREPL.tsx` - 添加 maxFps 参数
+  - `packages/repl/src/ui/contexts/StreamingContext.tsx` - 批量更新逻辑
 
 ---
 
