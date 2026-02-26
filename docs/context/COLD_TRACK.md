@@ -1,7 +1,7 @@
 # 冷轨归档
 
 _创建时间: 2026-02-25_
-_最后更新: 2026-02-26_
+_最后更新: 2026-02-27_
 
 ---
 
@@ -438,5 +438,121 @@ Bash(rm:*)       - 匹配 rm 开头的命令
 - `/mode code` → `accept-edits` + 提示
 - `/mode ask` → `plan` + 提示
 - 旧 confirmTools 设置仍有效
+
+---
+
+### Session: 2026-02-27 (Issue 046 + 047)
+
+#### Turn 1 - Issue 046 修复
+**Context**: 从压缩后恢复
+
+**Assistant**:
+- 读取 KNOWN_ISSUES.md 查找下一个 Open issue
+- 读取 message-utils.ts, MessageList.tsx, context.ts 分析 Issue 046
+
+**问题分析**:
+1. 用户消息重复：InkREPL.tsx:481 和 agent.ts:76 都 push 用户消息
+2. 响应截断：maxLines = 20 太小
+3. [Complex content] 显示：纯 tool_result 消息返回占位符
+
+**修复**:
+- InkREPL.tsx: 删除重复 push (line 481)
+- MessageList.tsx: maxLines 20 → 1000
+- message-utils.ts: 纯非文本消息返回空字符串
+
+**Tools**: Read, Grep, Edit
+
+#### Turn 2 - 用户反馈 thinking 内容问题
+**User**: thinking 的内容被当做正式的内容记录下来了
+
+**Assistant**:
+- 分析发现 extractTextContent 提取了 thinking 块内容
+- 修复：在 extractTextContent 中跳过 thinking 块
+
+#### Turn 3 - 验证并提交
+**User**: 简单验证后觉得修复完了，可以进行 issue 状态变更以及提交代码和推送了
+
+**Assistant**:
+- 更新 KNOWN_ISSUES.md Issue 046 状态 → Resolved
+- 提交: `fix: resolve Issue 046 - session restore display issues`
+- 推送: `b524862`
+
+**Tools**: Edit, Bash (git add, git commit, git push)
+
+#### Turn 4 - Issue 047 分析开始
+**User**: 执行 /resolve-next-issue
+
+**Assistant**:
+- 读取 KNOWN_ISSUES.md
+- 自动选择 Issue 047 (流式输出时界面闪烁, Medium)
+- 读取 InkREPL.tsx, StreamingContext.tsx 分析根因
+
+**根因分析**:
+1. Ink 默认 30fps 渲染，未使用 maxFps 限制
+2. 每个 token 触发状态更新和 React 重渲染
+3. 动态内容每次变化都触发全视口重绘
+
+**推荐方案**: A + B 组合
+- A. 添加 maxFps: 15 到 render() 选项
+- B. 缓冲流式文本，每 50-100ms 更新一次 UI
+
+**Tools**: Read, Grep, TodoWrite
+
+#### Turn 5 - 生成快照
+**User**: 执行 /context-snapshot
+
+**Tools**: Read, Write, Edit
+
+---
+
+### Issue 046 修复详情
+
+**问题**: Session 恢复时消息显示异常
+
+**四个子问题及修复**:
+
+| 问题 | 根因 | 修复 |
+|------|------|------|
+| 用户消息重复 | InkREPL.tsx:481 和 agent.ts:76 都 push | 删除 InkREPL 中的 push |
+| 响应截断 | maxLines = 20 | 改为 1000 |
+| [Complex content] | 纯 tool_result 返回占位符 | 返回空字符串 |
+| thinking 作为正式内容 | extractTextContent 提取 thinking | 跳过 thinking 块 |
+
+**修改文件**:
+- packages/repl/src/ui/utils/message-utils.ts
+- packages/repl/src/ui/InkREPL.tsx
+- packages/repl/src/ui/components/MessageList.tsx
+
+**Commit**: b524862
+
+---
+
+### Issue 047 分析详情
+
+**问题**: 流式输出时界面偶尔闪烁，输出越快速，闪烁越频繁
+
+**根因**:
+1. **Ink 渲染机制**：
+   - Ink 默认 30fps 渲染（约 33ms/帧）
+   - 当前未使用 `maxFps` 参数限制渲染频率
+   - `patchConsole: true` 增加额外渲染负载
+
+2. **流式更新频率**：
+   - `appendResponse()` 在 `onTextDelta` 中被调用
+   - 每个 token 都触发状态更新和 React 重渲染
+   - 高速输出时更新频率 > 30fps，超出 Ink 渲染能力
+
+3. **终端渲染特性**：
+   - 终端没有 DOM，每次更新需重绘整个视口
+   - 动态内容每次变化都触发全视口重绘
+
+**推荐方案**:
+
+| 方案 | 优先级 | 难度 | 说明 |
+|------|--------|------|------|
+| A. maxFps 限制 | 高 | 低 | 添加 maxFps: 15 到 render() 选项 |
+| B. 批量更新 | 高 | 中 | 缓冲流式文本，每 50-100ms 更新一次 UI |
+
+**待实现** (用户中断)
 
 

@@ -1,22 +1,21 @@
 # 热轨快照
 
-_生成时间: 2026-02-26 21:00_
-_快照版本: v8_
+_生成时间: 2026-02-27 01:35_
+_快照版本: v9_
 
 ---
 
 ## 1. 项目状态
 
 ### 当前目标
-FEATURE_008 权限控制体系改进设计完成
+Issue 047 流式输出界面闪烁修复 (进行中)
 
 ### 进度概览
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| Issue 045 - Thinking 内容闪烁 | 已修复 | v0.4.4 |
-| Issue 016 - InkREPL 重构 | 已修复 | v0.4.4, 994→819 行 |
-| Issue 019 - Session ID 显示 | 已修复 | v0.4.4 |
-| FEATURE_008 - 权限控制体系 | **设计完成** | v0.5.0, 待实现 |
+| Issue 046 - Session 恢复消息显示 | **已修复** | v0.4.5, commit b524862 |
+| Issue 047 - 流式输出闪烁 | **进行中** | 分析完成，待实现 |
+| FEATURE_008 - 权限控制体系 | 设计完成 | v0.5.0, 待实现 |
 
 ### 当下阻塞
 无阻塞问题
@@ -25,48 +24,61 @@ FEATURE_008 权限控制体系改进设计完成
 
 ## 2. 已确定接口（骨架）
 
-### FEATURE_008 权限控制类型定义
+### Issue 047 修复方案
+
+#### StreamingContext.tsx 批量更新
 ```typescript
-// packages/core/src/types.ts
-export type PermissionMode = 'plan' | 'default' | 'accept-edits' | 'auto-in-project';
-
-export interface KodaXOptions {
-  permissionMode?: PermissionMode;  // 新增
-  confirmTools?: Set<string>;       // 保留向后兼容
-  auto?: boolean;
+// 当前: 每个 token 立即更新
+appendResponse: (text: string) => {
+  state = { ...state, currentResponse: state.currentResponse + text };
+  notify();  // 每次触发重渲染
 }
 
-export interface KodaXToolExecutionContext {
-  permissionMode: PermissionMode;
-  projectRoot: string;  // 用于判断项目内外
-}
+// 方案 B: 批量更新（50-100ms 缓冲）
+// 在 createStreamingManager() 中添加缓冲机制
 ```
 
-### 权限计算函数
+#### InkREPL.tsx render() 选项
 ```typescript
-// packages/core/src/tools/permission.ts
-export function computeConfirmTools(mode: PermissionMode): Set<string>
-export function isAlwaysConfirmPath(targetPath: string, projectRoot: string): boolean
+// 当前 (line 808-813)
+render(<InkREPL ... />, {
+  stdout: process.stdout,
+  stdin: process.stdin,
+  exitOnCtrlC: false,
+  patchConsole: true,
+})
+
+// 方案 A: 添加 maxFps 限制
+render(<InkREPL ... />, {
+  stdout: process.stdout,
+  stdin: process.stdin,
+  exitOnCtrlC: false,
+  patchConsole: true,
+  maxFps: 15,  // 限制渲染频率
+})
 ```
 
-### 配置文件格式
-```json
-// ~/.kodax/config.json (用户级)
-// .kodax/config.local.json (项目级)
-{
-  "permission": {
-    "mode": "accept-edits",
-    "allowedPatterns": [{ "pattern": "Bash(git log:*)", "addedBy": "user-confirm" }],
-    "deniedPatterns": []
-  }
-}
+### Issue 046 修复摘要
+
+#### message-utils.ts
+```typescript
+// extractTextContent: 只提取 text 块
+// 忽略: thinking, tool_use, tool_result, redacted_thinking
+// 纯非文本消息返回空字符串（允许 UI 过滤）
+export function extractTextContent(content: string | unknown[]): string
 ```
 
-### 确认提示组件
-```tsx
-// [y] Yes (this time only)
-// [Y] Yes always (only for this project)  // 非永久保护区域
-// [n] No
+#### MessageList.tsx
+```typescript
+// maxLines: 20 → 1000 (避免截断)
+maxLines = 1000
+```
+
+#### InkREPL.tsx
+```typescript
+// 1. 删除重复 push (line 481)
+// 2. 添加空内容过滤 (useEffect, handleSubmit)
+// 3. 注意: agent.ts:76 会自动添加用户消息
 ```
 
 ---
@@ -76,6 +88,8 @@ export function isAlwaysConfirmPath(targetPath: string, projectRoot: string): bo
 | 死胡同 | 失败原因 | 日期 |
 |--------|----------|------|
 | CLI 多余参数设计 | --plan/-y/--allow/--deny/--config 冗余，仅需 --mode | 2026-02-26 |
+| extractTextContent 返回 [Complex content] | 纯 tool_result 消息不应显示占位符，应返回空字符串过滤 | 2026-02-27 |
+| thinking 块作为正式内容 | thinking 是 AI 内部思考，不应在 session 恢复时显示 | 2026-02-27 |
 
 ---
 
@@ -83,71 +97,45 @@ export function isAlwaysConfirmPath(targetPath: string, projectRoot: string): bo
 
 | 决策 | 理由 | 日期 |
 |------|------|------|
-| 四级模式替代 code/ask | 更细粒度控制 | 2026-02-26 |
-| auto-in-project 允许项目内危险命令 | 用户明确信任项目 | 2026-02-26 |
-| .kodax/ 永久保护 | 配置文件涉及自动化，需额外确认 | 2026-02-26 |
-| default 模式 [Y] 自动切换 accept-edits | 简化用户操作 | 2026-02-26 |
-| 仅 --mode 参数 | 简化 CLI，其他参数冗余 | 2026-02-26 |
+| Issue 047 方案 A+B 组合 | maxFps 限制 + 批量更新双重优化 | 2026-02-27 |
+| maxFps: 15 | 终端渲染 15fps 足够流畅，减少重绘 | 2026-02-27 |
+| 批量更新 50-100ms | 平衡响应性和性能 | 2026-02-27 |
 
 ---
 
-## 5. 新旧机制映射
+## 5. FEATURE_008 权限控制类型定义
 
-| 新模式 | confirmTools | auto | 说明 |
-|--------|--------------|------|------|
-| `plan` | 所有修改工具 | - | 阻止执行 |
-| `default` | [bash,write,edit] | false | 当前默认 |
-| `accept-edits` | [bash] | false | 文件自动 |
-| `auto-in-project` | [] | true | 项目内全auto |
+```typescript
+// packages/core/src/types.ts
+export type PermissionMode = 'plan' | 'default' | 'accept-edits' | 'auto-in-project';
 
----
-
-## 6. 项目模式权限映射
-
-| 场景 | 命令 | 权限模式 |
-|------|------|----------|
-| CLI 项目自动执行 | `--auto-continue` | `auto-in-project` |
-| CLI 快速模式 | `--mode auto-in-project` | `auto-in-project` |
-| REPL 项目自动执行 | `/project auto` | `auto-in-project` |
+export interface KodaXOptions {
+  permissionMode?: PermissionMode;
+  confirmTools?: Set<string>;  // 向后兼容
+  auto?: boolean;
+}
+```
 
 ---
 
-## 7. 永久保护区域
-
-以下路径**永远需要确认**，不受任何配置影响：
-- `.kodax/` - 项目配置目录
-- `~/.kodax/` - 用户配置目录
-- 项目外路径
-
----
-
-## 8. 当前 Open Issues (11)
+## 6. 当前 Open Issues (10)
 
 | 优先级 | ID | 标题 |
 |--------|-----|------|
+| Medium | 047 | 流式输出时界面闪烁 (**进行中**) |
 | Medium | 036 | React 状态同步潜在问题 |
 | Medium | 037 | 两套键盘事件系统冲突 |
 | Low | 001-006, 013-015, 017-018, 039 | 代码质量问题 |
 
 ---
 
-## 9. FEATURE_008 需要修改/创建的文件
+## 7. Issue 047 待实现任务
 
-```
-修改:
-├── packages/core/src/types.ts           # PermissionMode 类型
-├── packages/core/src/tools/registry.ts  # 权限检查逻辑
-├── packages/repl/src/interactive/commands.ts    # /mode 命令
-├── packages/repl/src/interactive/project-commands.ts  # /project auto
-├── src/kodax_cli.ts                     # --mode 参数
-
-创建:
-├── packages/core/src/tools/permission.ts        # computeConfirmTools
-├── packages/repl/src/common/permission-config.ts
-├── packages/repl/src/ui/components/ConfirmPrompt.tsx
-└── src/cli-permission.ts
-```
+- [ ] 添加 `maxFps: 15` 到 InkREPL.tsx render() 选项
+- [ ] 在 StreamingContext 实现批量更新（50-100ms 缓冲）
+- [ ] 测试闪烁修复效果
+- [ ] 更新 KNOWN_ISSUES.md
 
 ---
 
-*Token 数: ~1,200*
+*Token 数: ~900*
