@@ -231,11 +231,15 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   );
 
   // Sync history from context to UI on mount
+  // Only sync if history is empty to avoid duplicates (Issue 046)
   useEffect(() => {
-    if (context.messages.length > 0) {
-      // Convert legacy messages to history items
+    if (context.messages.length > 0 && history.length === 0) {
+      // Convert messages to history items
+      // Skip messages with empty content (e.g., pure tool_result messages)
       for (const msg of context.messages) {
         const content = extractTextContent(msg.content);
+        // Skip empty content to avoid showing blank or tool_result-only messages
+        if (!content) continue;
         if (msg.role === "user") {
           addHistoryItem({
             type: "user",
@@ -476,8 +480,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         return;
       }
 
-      // Add to context
-      context.messages.push({ role: "user", content: processed });
+      // Note: Do NOT push user message to context.messages here!
+      // runKodaX (agent.ts:76) will add the prompt to messages automatically.
+      // If we push here, the message gets duplicated (Issue 046).
 
       // Sync options mode
       currentOptionsRef.current.mode = currentConfig.mode;
@@ -530,10 +535,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         const lastAssistant = result.messages[result.messages.length - 1];
         if (lastAssistant?.role === "assistant") {
           const content = extractTextContent(lastAssistant.content);
-          addHistoryItem({
-            type: "assistant",
-            text: content,
-          });
+          // Only add if there's actual content to display
+          if (content) {
+            addHistoryItem({
+              type: "assistant",
+              text: content,
+            });
+          }
         }
 
         // Auto-save
@@ -548,7 +556,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         }
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
-        context.messages.pop(); // Remove failed user message
+        // Note: No need to pop from context.messages here anymore.
+        // Since we removed the pre-push (Issue 046 fix), context.messages
+        // doesn't contain the new user message when runKodaX fails.
 
         let errorContent = error.message;
         if (

@@ -31,7 +31,7 @@ export interface MessageListProps {
   items: HistoryItem[];
   /** 是否加载中 */
   isLoading?: boolean;
-  /** 最大显示行数 */
+  /** 最大显示行数 (默认 1000，避免截断) */
   maxLines?: number;
   /** 是否正在 thinking */
   isThinking?: boolean;
@@ -341,7 +341,7 @@ const HintItemRenderer: React.FC<{ item: HistoryItemHint; theme: Theme }> = ({ i
 export const HistoryItemRenderer: React.FC<HistoryItemRendererProps> = ({
   item,
   theme: themeProp,
-  maxLines = 20,
+  maxLines = 1000, // Increased from 20 to avoid truncation (Issue 046)
 }) => {
   const theme = themeProp ?? useMemo(() => getTheme("dark"), []);
 
@@ -377,7 +377,7 @@ export const HistoryItemRenderer: React.FC<HistoryItemRendererProps> = ({
 export const MessageList: React.FC<MessageListProps> = ({
   items,
   isLoading = false,
-  maxLines = 20,
+  maxLines = 1000, // Increased from 20 to avoid truncation (Issue 046)
   isThinking = false,
   thinkingCharCount = 0,
   thinkingContent = "",

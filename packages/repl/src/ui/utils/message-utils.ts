@@ -12,10 +12,10 @@ import type { KodaXMessage } from "@kodax/core";
  *
  * 处理字符串和数组两种内容格式：
  * - 字符串：直接返回
- * - 数组：提取 text/thinking 块，忽略 tool_use/tool_result/redacted_thinking
+ * - 数组：只提取 text 块，忽略 thinking/tool_use/tool_result/redacted_thinking
  *
  * @param content - 消息内容（字符串或内容块数组）
- * @returns 提取的文本内容
+ * @returns 提取的文本内容，对于纯 tool_result/thinking 消息返回空字符串
  */
 export function extractTextContent(content: string | unknown[]): string {
   if (typeof content === "string") {
@@ -28,20 +28,17 @@ export function extractTextContent(content: string | unknown[]): string {
       if (block && typeof block === "object" && "type" in block) {
         switch (block.type) {
           case "text":
+            // 只提取 text 块的内容
             if ("text" in block) {
               textParts.push(String(block.text));
             }
             break;
           case "thinking":
-            // 提取 thinking 块的内容
-            if ("thinking" in block) {
-              textParts.push(String(block.thinking));
-            }
-            break;
           case "tool_use":
           case "tool_result":
           case "redacted_thinking":
             // 这些块类型不显示在历史消息中
+            // thinking 是 AI 内部思考过程，不应在 session 恢复时显示
             break;
           default:
             // 未知类型也忽略
@@ -52,9 +49,12 @@ export function extractTextContent(content: string | unknown[]): string {
     if (textParts.length > 0) {
       return textParts.join("\n");
     }
+    // 纯 tool_result/tool_use/thinking 消息返回空字符串，让 UI 层过滤掉
+    return "";
   }
 
-  return "[Complex content]";
+  // 未知格式返回空字符串
+  return "";
 }
 
 /**

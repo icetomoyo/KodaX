@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-02-27 00:30_
+_Last Updated: 2026-02-27 01:20_
 
 ---
 
@@ -54,7 +54,7 @@ _Last Updated: 2026-02-27 00:30_
 | 040 | High | Resolved | REPL 显示问题 - 命令输出渲染位置错误 | v0.3.3 | v0.4.2 | 2026-02-23 | 2026-02-25 |
 | 044 | High | Resolved | 流式输出时 Ctrl+C 延迟生效 | v0.3.4 | v0.3.6 | 2026-02-23 | 2026-02-24 |
 | 045 | High | Resolved | Spinner 出现时问答顺序颠倒 | v0.4.3 | v0.4.4 | 2026-02-25 | 2026-02-25 |
-| 046 | High | Open | Session 恢复时消息显示异常 | v0.4.5 | - | 2026-02-26 | - |
+| 046 | High | Resolved | Session 恢复时消息显示异常 | v0.4.5 | v0.4.5 | 2026-02-26 | 2026-02-27 |
 | 047 | Medium | Open | 流式输出时界面闪烁 | v0.4.5 | - | 2026-02-26 | - |
 
 ---
@@ -1160,13 +1160,23 @@ _Last Updated: 2026-02-27 00:30_
 ---
 
 ## Summary
-- Total: 47 (11 Open, 32 Resolved, 3 Won't Fix, 1 Planned for v0.5.0+)
-- Highest Priority Open: 046 - Session 恢复时消息显示异常 (High)
+- Total: 47 (10 Open, 33 Resolved, 3 Won't Fix, 1 Planned for v0.5.0+)
+- Highest Priority Open: 044 - 流式输出时 Ctrl+C 延迟生效 (High) [已解决]
+- Highest Priority Open: 047 - 流式输出时界面闪烁 (Medium)
 - Planned for v0.5.0+: 039 (长期重构 - ConsolePatcher 架构)
 
 ---
 
 ## Changelog
+
+### 2026-02-27: Issue 046 最终修复
+- Issue 046 (Session 恢复时消息显示异常) 已完全修复
+- 根本原因分析和修复：
+  1. **用户消息重复**：`InkREPL.tsx` 和 `agent.ts` 都添加用户消息，删除前者的 push 操作
+  2. **消息截断**：`MessageList.tsx` 默认 `maxLines=20` 太小，改为 1000
+  3. **[Complex content]**：纯 tool_result 消息返回空字符串并在 UI 层过滤
+  4. **thinking 内容显示**：`extractTextContent` 不应提取 thinking 块内容
+- 修改文件：`InkREPL.tsx`, `MessageList.tsx`, `message-utils.ts`
 
 ### 2026-02-27: Issue 046 重新打开
 - Issue 046 (Session 恢复时消息显示异常) 并未完全修复
@@ -1318,11 +1328,13 @@ _Last Updated: 2026-02-27 00:30_
 - Resolved 024: Backspace 键无效
 - Resolved 025: Shift+Enter 换行无效
 
-### 046: Session 恢复时消息显示异常 (OPEN)
+### 046: Session 恢复时消息显示异常 (RESOLVED)
 - **Priority**: High
-- **Status**: Open
+- **Status**: Resolved
 - **Introduced**: v0.4.5
+- **Fixed**: v0.4.5
 - **Created**: 2026-02-26
+- **Resolved**: 2026-02-27
 - **Original Problem**:
   使用 `kodax -c` 恢复 session 时，存在多个严重的消息显示问题：
 
@@ -1338,6 +1350,10 @@ _Last Updated: 2026-02-27 00:30_
   - 用户消息中包含 tool_result 的部分仍显示为 `[Complex content]`
   - 之前的修复只处理了 thinking/tool_use，未处理 tool_result
 
+  **问题 4: thinking 内容被当作正式回复显示**
+  - AI 的内部思考过程在 session 恢复时被当作正式回复显示
+  - 这不应该发生，thinking 是内部处理过程
+
 - **Context**: `kodax -c` 命令、session 加载/序列化逻辑、MessageList 组件
 - **Reproduction**:
   1. 使用 `kodax` 进行多轮对话（包含工具调用）
@@ -1346,28 +1362,24 @@ _Last Updated: 2026-02-27 00:30_
      - 用户消息是否重复
      - 回复是否被截断
      - tool_result 是否显示为 [Complex content]
+     - thinking 内容是否被当作正式回复
 
-- **Root Cause Analysis**:
-  1. **用户消息重复**：
-     - 可能是 session 加载时同时从 `context.messages` 和其他来源添加到 history
-     - 需要检查 InkREPL.tsx 中的消息同步逻辑
+- **Root Cause**:
+  1. **用户消息重复**：`InkREPL.tsx:481` 和 `agent.ts:76` 都添加用户消息到 messages
+  2. **回复截断**：`MessageList.tsx` 默认 `maxLines=20` 太小
+  3. **[Complex content]**：`extractTextContent` 对纯 tool_result 消息返回 `[Complex content]`
+  4. **thinking 内容显示**：`extractTextContent` 提取了 thinking 块内容
 
-  2. **回复截断**：
-     - 可能是 MessageList 组件对长消息有截断逻辑
-     - 需要检查是否有 maxLines 或类似的限制
+- **Resolution**:
+  1. 删除 `InkREPL.tsx:481` 的 push 操作，避免重复添加用户消息
+  2. 将 `MessageList.tsx` 的 `maxLines` 从 20 增加到 1000
+  3. 修改 `extractTextContent` 对纯 tool_result 消息返回空字符串，UI 层过滤空内容
+  4. 修改 `extractTextContent` 只提取 text 块，跳过 thinking 块
 
-  3. **[Complex content]**：
-     - `extractTextContent` 函数仍未处理 `tool_result` 类型的内容块
-     - 用户消息可能包含 `tool_result`（当用户角色是 tool 时）
-
-- **Attempted Fix (2026-02-26)**:
-  - 扩展 `extractTextContent` 支持 thinking/tool_use/redacted_thinking
-  - 但问题并未完全解决，仍有上述三个问题
-
-- **Files to Investigate**:
-  - `packages/repl/src/ui/InkREPL.tsx` - 消息同步逻辑
-  - `packages/repl/src/ui/components/MessageList.tsx` - 消息渲染和截断逻辑
-  - `packages/repl/src/ui/utils/message-utils.ts` - extractTextContent 函数
+- **Files Changed**:
+  - `packages/repl/src/ui/InkREPL.tsx`
+  - `packages/repl/src/ui/components/MessageList.tsx`
+  - `packages/repl/src/ui/utils/message-utils.ts`
 
 ---
 
