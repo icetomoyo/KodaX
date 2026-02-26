@@ -51,89 +51,11 @@ import { KODAX_VERSION } from "../common/utils.js";
 import { runWithPlanMode } from "../common/plan-mode.js";
 import { getTheme } from "./themes/index.js";
 import chalk from "chalk";
-import * as childProcess from "child_process";
-import * as util from "util";
-
-const execAsync = util.promisify(childProcess.exec);
-
-// === Helper Functions ===
-
-/**
- * Extract text content from a message (handles both string and array content)
- */
-function extractTextContent(content: string | unknown[]): string {
-  if (typeof content === "string") {
-    return content;
-  }
-  if (Array.isArray(content)) {
-    // Extract text from text blocks
-    const textParts: string[] = [];
-    for (const block of content) {
-      if (block && typeof block === "object" && "type" in block && block.type === "text" && "text" in block) {
-        textParts.push(String(block.text));
-      }
-    }
-    if (textParts.length > 0) {
-      return textParts.join("\n");
-    }
-  }
-  return "[Complex content]";
-}
-
-// Extended session storage interface
-interface SessionStorage {
-  save(
-    id: string,
-    data: { messages: KodaXMessage[]; title: string; gitRoot: string }
-  ): Promise<void>;
-  load(
-    id: string
-  ): Promise<{ messages: KodaXMessage[]; title: string; gitRoot: string } | null>;
-  list(
-    gitRoot?: string
-  ): Promise<Array<{ id: string; title: string; msgCount: number }>>;
-  delete?(id: string): Promise<void>;
-  deleteAll?(): Promise<void>;
-}
-
-// Simple in-memory session storage
-class MemorySessionStorage implements SessionStorage {
-  private sessions = new Map<
-    string,
-    { messages: KodaXMessage[]; title: string; gitRoot: string }
-  >();
-
-  async save(
-    id: string,
-    data: { messages: KodaXMessage[]; title: string; gitRoot: string }
-  ): Promise<void> {
-    this.sessions.set(id, data);
-  }
-
-  async load(
-    id: string
-  ): Promise<{ messages: KodaXMessage[]; title: string; gitRoot: string } | null> {
-    return this.sessions.get(id) ?? null;
-  }
-
-  async list(
-    _gitRoot?: string
-  ): Promise<Array<{ id: string; title: string; msgCount: number }>> {
-    return Array.from(this.sessions.entries()).map(([id, data]) => ({
-      id,
-      title: data.title,
-      msgCount: data.messages.length,
-    }));
-  }
-
-  async delete(id: string): Promise<void> {
-    this.sessions.delete(id);
-  }
-
-  async deleteAll(): Promise<void> {
-    this.sessions.clear();
-  }
-}
+// Extracted modules
+import { MemorySessionStorage, type SessionStorage } from "./utils/session-storage.js";
+import { processSpecialSyntax, isShellCommandSuccess } from "./utils/shell-executor.js";
+import { extractTextContent, extractTitle } from "./utils/message-utils.js";
+import { withCapture, ConsoleCapturer } from "./utils/console-capturer.js";
 
 // REPL options
 export interface InkREPLOptions extends KodaXOptions {
@@ -329,63 +251,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }, []); // Only run on mount
 
   // Process special syntax (shell commands, file references)
-  const processSpecialSyntax = async (input: string): Promise<string> => {
-    // !command syntax: execute shell command
-    if (input.startsWith("!")) {
-      const command = input.slice(1).trim();
-      if (!command) {
-        return "[Shell: No command provided]";
-      }
-
-      try {
-        console.log(chalk.dim(`\n[Executing: ${command}]`));
-        const { stdout: cmdStdout, stderr } = await execAsync(command, {
-          maxBuffer: 1024 * 1024,
-          timeout: 30000,
-        });
-
-        let result = "";
-        if (cmdStdout) result += cmdStdout;
-        if (stderr) result += (result ? "\n" : "") + `[stderr] ${stderr}`;
-
-        const maxLength = 8000;
-        if (result.length > maxLength) {
-          result = result.slice(0, maxLength) + "\n...[output truncated]";
-        }
-
-        console.log(chalk.dim(result || "[No output]"));
-        console.log();
-
-        return `[Shell command executed: ${command}]\n\nOutput:\n${result || "(no output)"}`;
-      } catch (error) {
-        const err = error instanceof Error ? error : new Error(String(error));
-        let errorMessage = err.message;
-        const maxLength = 4000;
-        if (errorMessage.length > maxLength) {
-          errorMessage = errorMessage.slice(0, maxLength) + "\n...[error truncated]";
-        }
-
-        console.log(chalk.red(`\n[Shell Error: ${errorMessage}]`));
-        console.log();
-
-        return `[Shell command failed: ${command}]\n\nError: ${errorMessage}`;
-      }
-    }
-
-    return input;
-  };
-
-  // Extract title from messages
-  const extractTitle = (msgs: KodaXMessage[]): string => {
-    const firstUser = msgs.find((m) => m.role === "user");
-    if (firstUser) {
-      const content =
-        typeof firstUser.content === "string" ? firstUser.content : "";
-      return content.slice(0, 50) + (content.length > 50 ? "..." : "");
-    }
-    return "Untitled Session";
-  };
-
   // Create KodaXEvents for streaming updates
   const createStreamingEvents = useCallback((): import("@kodax/core").KodaXEvents => ({
     onThinkingDelta: (text: string) => {
@@ -837,46 +702,6 @@ const InkREPL: React.FC<InkREPLProps> = (props) => {
  */
 function isRawModeSupported(): boolean {
   return process.stdin.isTTY === true && typeof process.stdin.setRawMode === "function";
-}
-
-/**
- * Print startup banner (called BEFORE starting Ink to avoid re-rendering)
- */
-function printStartupBanner(config: CurrentConfig, sessionId: string, workingDir: string): void {
-  const model = getProviderModel(config.provider) ?? config.provider;
-  const terminalWidth = process.stdout.columns ?? 80;
-  const dividerWidth = Math.min(60, terminalWidth - 4);
-
-  const logo = `  ██╗  ██╗  ██████╗  ██████╗    █████╗   ██╗  ██╗
-  ██║ ██╔╝ ██╔═══██╗ ██╔══██╗  ██╔══██╗  ╚██╗██╔╝
-  █████╔╝  ██║   ██║ ██║  ██║  ███████║   ╚███╔╝
-  ██╔═██╗  ██║   ██║ ██║  ██║  ██╔══██║   ██╔██╗
-  ██║  ██╗ ╚██████╔╝ ██████╔╝  ██║  ██║  ██╔╝ ██╗
-  ╚═╝  ╚═╝  ╚═════╝  ╚═════╝   ╚═╝  ╚═╝  ╚═╝  ╚═╝`;
-
-  console.log(chalk.cyan(logo));
-  console.log();
-
-  // Version and Provider Info
-  let infoLine = chalk.white.bold(`  v${KODAX_VERSION}`) + chalk.dim(" | ");
-  infoLine += chalk.green(`${config.provider}/${model}`) + chalk.dim(" | ");
-  infoLine += chalk.cyan(config.mode);
-  if (config.thinking) infoLine += chalk.yellow(" +think");
-  if (config.auto) infoLine += chalk.magenta(" +auto");
-  console.log(infoLine);
-
-  // Divider
-  console.log(chalk.dim(`  ${"-".repeat(dividerWidth)}`));
-
-  // Session Info
-  console.log(
-    chalk.dim("  Session: ") + chalk.cyan(sessionId) +
-    chalk.dim(" | Working: ") + chalk.dim(workingDir)
-  );
-
-  // Divider
-  console.log(chalk.dim(`  ${"-".repeat(dividerWidth)}`));
-  console.log();
 }
 
 /**

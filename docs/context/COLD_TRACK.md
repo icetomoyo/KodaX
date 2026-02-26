@@ -1,6 +1,7 @@
 # 冷轨归档
 
 _创建时间: 2026-02-25_
+_最后更新: 2026-02-26_
 
 ---
 
@@ -126,3 +127,88 @@ _创建时间: 2026-02-25_
 - 生成热轨快照 v3
 - 添加 Issue 011 修复记录
 - 添加输入框 UX 改进记录
+
+---
+
+### Session: 2026-02-26 (续)
+
+#### Turn 1 - /resolve-next-issue
+**User**: 执行 /resolve-next-issue
+**Assistant**:
+- 发现 Issue 011 已修复但状态未更新，修正状态
+- 自动选择 Issue 012 (ANSI Strip 性能问题)
+- 分析 status-bar.ts 中的 stripAnsi() 方法
+- 修复：将正则表达式提取为模块级常量 ANSI_REGEX
+- 添加 lastIndex = 0 重置确保正确匹配
+- 提交 dc90177
+
+**Tools**: Grep, Read, Edit, Bash
+
+#### Turn 2 - Issue 035 状态检查
+**User**: 指出 Issue 035 已解决
+**Assistant**:
+- 发现 Issue Index 显示 Resolved，但 Details 显示 Open
+- 检查 git log 确认 f655fca 已修复
+- 更新 Details 部分为 Resolved 状态
+- 添加 Resolution 说明
+- 更新 Summary: 14 Open, 27 Resolved
+- 提交 9b079bc
+
+#### Turn 3 - Issue 016 详细分析
+**User**: 要求分析 Issue 016 详细情况和修复影响
+**Assistant**:
+- 分析 InkREPL.tsx 当前状态：994 行（原记录 637 行）
+- 识别 7+ 个职责：SessionStorage, Helper, Banner, InkREPLInner, 包装器, 工具函数
+- 重点分析 handleSubmit() 函数：300+ 行，包含 13 个回调
+- 提出两种修复方案：
+  - 方案 A（保守）：提取纯函数模块，994→800 行
+  - 方案 B（激进）：提取 hooks + 模块，994→500 行
+- 建议采用方案 A，低风险
+
+**Tools**: Bash (wc -l), Read, Grep
+
+#### Turn 4 - 生成快照
+**User**: 执行 /context-snapshot
+**Assistant**:
+- 生成热轨快照 v4
+- 添加 Issue 011, 012 修复记录
+- 添加 Issue 035 状态修正记录
+- 添加 Issue 016 分析结论
+- 添加待决策事项
+
+---
+
+### Issue 016 分析详情
+
+**当前状态**：InkREPL.tsx 994 行，比原记录的 637 行增长 56%
+
+**职责分解**：
+```
+1. SessionStorage 接口 + 实现    (lines 84-136)   ~52行
+2. Helper 函数                   (lines 64-81)    ~17行
+3. Banner 组件                   (lines 153-240)  ~87行
+4. InkREPLInner 核心组件         (lines 242-820) ~578行
+   ├── 状态管理 (useState x 5)
+   ├── 全局中断处理 (useKeypress)
+   ├── 消息同步 (useEffect)
+   ├── processSpecialSyntax()    ~45行
+   ├── extractTitle()            ~8行
+   ├── createStreamingEvents()   ~28行
+   ├── runAgentRound()           ~16行
+   └── handleSubmit()            ~300行 (巨型函数)
+5. InkREPL 包装器                (lines 823-836)  ~13行
+6. isRawModeSupported()          (lines 838-843)  ~5行
+7. printStartupBanner() - 死代码 (lines 845-896) ~51行
+8. startInkREPL() 入口           (lines 898-994) ~96行
+```
+
+**handleSubmit() 内联职责**：
+1. CommandCallbacks 创建 (13个回调)
+2. Console.log 捕获 (两处重复)
+3. 命令解析与执行
+4. Shell 命令处理
+5. Plan Mode 处理
+6. Agent 执行
+7. 错误分类 (4种)
+8. 自动保存
+

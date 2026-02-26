@@ -24,7 +24,7 @@ _Last Updated: 2026-02-23 16:00_
 | 013 | Low | Open | 自动补全缓存内存泄漏风险 | v0.3.1 | - | 2026-02-19 | - |
 | 014 | Low | Open | 语法高亮语言支持不全 | v0.3.1 | - | 2026-02-19 | - |
 | 015 | Low | Open | Unicode 检测不完整 | v0.3.1 | - | 2026-02-19 | - |
-| 016 | Medium | Open | InkREPL 组件过大 | v0.3.1 | - | 2026-02-19 | - |
+| 016 | Medium | Resolved | InkREPL 组件过大 | v0.3.1 | v0.4.4 | 2026-02-19 | 2026-02-26 |
 | 017 | Low | Open | TextBuffer 未使用方法 | v0.3.1 | - | 2026-02-19 | - |
 | 018 | Low | Open | TODO 注释未清理 | v0.3.1 | - | 2026-02-19 | - |
 | 019 | Medium | Open | 状态栏 Session ID 显示问题 | v0.3.1 | - | 2026-02-20 | - |
@@ -392,14 +392,75 @@ _Last Updated: 2026-02-23 16:00_
 
 ### 016: InkREPL 组件过大
 - **Priority**: Medium
-- **Status**: Open
+- **Status**: Resolved
 - **Introduced**: v0.3.1 (auto-detected)
+- **Fixed**: v0.4.4
 - **Created**: 2026-02-19
+- **Resolved**: 2026-02-26
 - **Original Problem**:
-  - InkREPL 组件约 637 行代码，包含多个职责：命令处理、Shell 命令执行、会话管理、消息格式化、状态管理
+  - InkREPL 组件约 994 行代码（原记录 637 行，增长 56%）
+  - 包含 7+ 个职责：命令处理、Shell 命令执行、会话管理、消息格式化、状态管理等
+  - `handleSubmit()` 单函数 300+ 行，包含 13 个内联回调
   - 代码可读性降低，维护成本增加，难以单独测试各模块
-- **Context**: `src/ui/InkREPL.tsx`
-- **Proposed Solution**: 拆分为多个模块（shell-executor、message-formatter、useSessionManager）
+- **Context**: `packages/repl/src/ui/InkREPL.tsx`
+- **职责分析** (994 行):
+  ```
+  1. SessionStorage 接口 + 实现    (lines 84-136)   ~52行
+  2. Helper 函数                   (lines 64-81)    ~17行
+  3. Banner 组件                   (lines 153-240)  ~87行
+  4. InkREPLInner 核心组件         (lines 242-820) ~578行
+     ├── 状态管理 (useState x 5)
+     ├── 全局中断处理 (useKeypress)
+     ├── 消息同步 (useEffect)
+     ├── processSpecialSyntax()    ~45行
+     ├── extractTitle()            ~8行
+     ├── createStreamingEvents()   ~28行
+     ├── runAgentRound()           ~16行
+     └── handleSubmit()            ~300行 (巨型函数)
+  5. InkREPL 包装器                (lines 823-836)  ~13行
+  6. isRawModeSupported()          (lines 838-843)  ~5行
+  7. printStartupBanner() - 死代码 (lines 845-896) ~51行
+  8. startInkREPL() 入口           (lines 898-994) ~96行
+  ```
+- **handleSubmit() 内联职责** (300+ 行):
+  1. CommandCallbacks 创建 (13个回调)
+  2. Console.log 捕获 (两处重复)
+  3. 命令解析与执行
+  4. Shell 命令处理
+  5. Plan Mode 处理
+  6. Agent 执行
+  7. 错误分类 (4种)
+  8. 自动保存
+- **修复方案 A（保守重构）** - 推荐:
+  | 提取模块 | 行数 | 风险 |
+  |----------|------|------|
+  | session-storage.ts | ~52 | 低 |
+  | shell-executor.ts | ~45 | 低 |
+  | message-utils.ts | ~25 | 低 |
+  | console-capturer.ts | ~30 | 低 |
+  | 删除 printStartupBanner() | -51 | 无 |
+  - 预期效果：994 → ~800 行
+- **修复方案 B（激进重构）** - 不推荐:
+  - + 方案 A 的所有模块
+  - + 提取 hooks: useSessionManager, useCommandHandler, useAgentRunner
+  - 预期效果：994 → ~500 行，但风险较高
+- **决策**: 采用方案 A，原因：风险可控、逐步改进、不影响组件结构
+- **Files to Change**:
+  - 新建: `packages/repl/src/ui/utils/session-storage.ts`
+  - 新建: `packages/repl/src/ui/utils/shell-executor.ts`
+  - 新建: `packages/repl/src/ui/utils/message-utils.ts`
+  - 新建: `packages/repl/src/ui/utils/console-capturer.ts`
+  - 修改: `packages/repl/src/ui/InkREPL.tsx`
+- **Resolution** (2026-02-26):
+  - 执行方案 A 保守重构
+  - 新建 4 个工具模块:
+    - `utils/session-storage.ts` - SessionStorage 接口 + MemorySessionStorage 实现
+    - `utils/shell-executor.ts` - processSpecialSyntax() 和 Shell 命令执行
+    - `utils/message-utils.ts` - extractTextContent(), extractTitle(), formatMessagePreview()
+    - `utils/console-capturer.ts` - ConsoleCapturer 类和 withCapture() 函数
+  - 删除死代码: printStartupBanner() 函数
+  - 更新 utils/index.ts barrel export
+  - 结果: 994 行 → 819 行 (减少 175 行，-17.6%)
 
 ---
 
@@ -1102,8 +1163,8 @@ _Last Updated: 2026-02-23 16:00_
 ---
 
 ## Summary
-- Total: 45 (14 Open, 27 Resolved, 3 Won't Fix, 1 Planned for v0.5.0+)
-- Highest Priority Open: 016 - InkREPL 组件过大 (Medium)
+- Total: 45 (13 Open, 28 Resolved, 3 Won't Fix, 1 Planned for v0.5.0+)
+- Highest Priority Open: 019 - 状态栏 Session ID 显示问题 (Medium)
 - Planned for v0.5.0+: 037, 039 (长期重构 - ConsolePatcher 架构)
 
 ---
