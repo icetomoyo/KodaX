@@ -22,6 +22,15 @@ const PASTE_DETECTION = {
   MAX_INTERVAL_MS: 8, // 最大间隔毫秒
 };
 
+/**
+ * 统一状态接口 - 保证 text, cursor, lines 原子更新
+ */
+interface TextBufferState {
+  text: string;
+  cursor: CursorPosition;
+  lines: string[];
+}
+
 export function useTextBuffer(options: UseTextBufferOptions = {}): UseTextBufferReturn {
   const { initialValue = "", onSubmit, onTextChange } = options;
 
@@ -31,10 +40,12 @@ export function useTextBuffer(options: UseTextBufferOptions = {}): UseTextBuffer
   const lastInputTimeRef = useRef<number>(0);
   const consecutiveCharsRef = useRef<number>(0);
 
-  // React 状态，用于触发重新渲染
-  const [text, setText] = useState(initialValue);
-  const [cursor, setCursor] = useState<CursorPosition>({ row: 0, col: 0 });
-  const [lines, setLines] = useState<string[]>([""]);
+  // React 状态 - 使用单一状态对象保证原子更新（Issue 036）
+  const [state, setState] = useState<TextBufferState>({
+    text: initialValue,
+    cursor: { row: 0, col: 0 },
+    lines: [""],
+  });
 
   // 初始化 TextBuffer
   if (bufferRef.current === null) {
@@ -46,11 +57,13 @@ export function useTextBuffer(options: UseTextBufferOptions = {}): UseTextBuffer
 
   const buffer = bufferRef.current;
 
-  // 同步状态
+  // 同步状态 - 原子更新，避免中间状态（Issue 036 修复）
   const syncState = useCallback(() => {
-    setText(buffer.text);
-    setCursor(buffer.cursor);
-    setLines(buffer.lines);
+    setState({
+      text: buffer.text,
+      cursor: buffer.cursor,
+      lines: buffer.lines,
+    });
     onTextChange?.(buffer.text);
   }, [buffer, onTextChange]);
 
@@ -248,9 +261,9 @@ export function useTextBuffer(options: UseTextBufferOptions = {}): UseTextBuffer
 
   return {
     buffer,
-    text,
-    cursor,
-    lines,
+    text: state.text,
+    cursor: state.cursor,
+    lines: state.lines,
     setText: handleSetText,
     insert: handleInsert,
     newline: handleNewline,

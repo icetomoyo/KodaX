@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-02-26 21:30_
+_Last Updated: 2026-02-26 23:30_
 
 ---
 
@@ -47,8 +47,8 @@ _Last Updated: 2026-02-26 21:30_
 | 041 | High | Resolved | 历史导航清空输入无法恢复 | v0.3.3 | v0.3.3 | 2026-02-23 | 2026-02-23 |
 | 042 | Medium | Resolved | Shift+Enter/Ctrl+J 换行无效 | v0.3.3 | v0.3.3 | 2026-02-23 | 2026-02-23 |
 | 043 | Medium | Resolved | 流式响应中断不完全 | v0.3.3 | v0.3.4 | 2026-02-23 | 2026-02-23 |
-| 036 | Medium | Open | React 状态同步潜在问题 | v0.3.3 | - | 2026-02-22 | - |
-| 037 | Medium | Open | 两套键盘事件系统冲突 | v0.3.3 | v0.4.0 | 2026-02-22 | - |
+| 036 | Medium | Resolved | React 状态同步潜在问题 | v0.3.3 | v0.4.5 | 2026-02-22 | 2026-02-26 |
+| 037 | Medium | Resolved | 两套键盘事件系统冲突 | v0.3.3 | v0.4.5 | 2026-02-22 | 2026-02-26 |
 | 038 | Low | Won't Fix | 输入焦点竞态条件 | v0.3.3 | - | 2026-02-22 | 2026-02-22 |
 | 039 | Low | Open | 死代码 printStartupBanner | v0.3.3 | v0.4.0 | 2026-02-22 | - |
 | 040 | High | Resolved | REPL 显示问题 - 命令输出渲染位置错误 | v0.3.3 | v0.4.2 | 2026-02-23 | 2026-02-25 |
@@ -844,17 +844,24 @@ _Last Updated: 2026-02-26 21:30_
 
 ---
 
-### 036: React 状态同步潜在问题
+### 036: React 状态同步潜在问题 (RESOLVED)
 - **Priority**: Medium
-- **Status**: Open
+- **Status**: Resolved
 - **Introduced**: v0.3.3 (auto-detected)
+- **Fixed**: v0.4.5
 - **Created**: 2026-02-22
+- **Resolved**: 2026-02-26
 - **Original Problem**:
   - `useTextBuffer.ts` 中的 `syncState` 函数使用三个独立的 `setState` 调用
   - 在极端情况下（React 批处理失败），可能导致中间渲染状态不一致
-- **Context**: `src/ui/hooks/useTextBuffer.ts` - 行 50-55
+- **Context**: `packages/repl/src/ui/hooks/useTextBuffer.ts`
 - **Root Cause Analysis**:
   ```typescript
+  // 旧代码 - 三个独立的 setState
+  const [text, setText] = useState(initialValue);
+  const [cursor, setCursor] = useState<CursorPosition>({ row: 0, col: 0 });
+  const [lines, setLines] = useState<string[]>([""]);
+
   const syncState = useCallback(() => {
     setText(buffer.text);      // 状态更新 1
     setCursor(buffer.cursor);  // 状态更新 2
@@ -864,17 +871,20 @@ _Last Updated: 2026-02-26 21:30_
   ```
   - 虽然 React 18 自动批处理大多数更新，但在某些边缘情况下可能不生效
   - 如果组件在 `setText` 和 `setCursor` 之间渲染，`cursor` 位置可能与 `text` 内容不匹配
-- **Proposed Solution**:
+- **Resolution**:
+  - 使用单一状态对象 `TextBufferState` 替代三个独立的 `useState`
+  - `syncState` 现在只调用一次 `setState`，确保原子更新
+  - 公开 API 完全保持不变，仅内部实现变更
   ```typescript
-  // 使用单一状态对象确保原子更新
-  type BufferState = {
+  // 新代码 - 单一状态对象
+  interface TextBufferState {
     text: string;
     cursor: CursorPosition;
     lines: string[];
-  };
+  }
 
-  const [state, setState] = useState<BufferState>({
-    text: "",
+  const [state, setState] = useState<TextBufferState>({
+    text: initialValue,
     cursor: { row: 0, col: 0 },
     lines: [""],
   });
@@ -882,68 +892,45 @@ _Last Updated: 2026-02-26 21:30_
   const syncState = useCallback(() => {
     setState({
       text: buffer.text,
-      cursor: { ...buffer.cursor },
-      lines: [...buffer.lines],
+      cursor: buffer.cursor,
+      lines: buffer.lines,
     });
     onTextChange?.(buffer.text);
   }, [buffer, onTextChange]);
 
-  // 保持现有 API 不变
+  // API 不变
   return {
     buffer,
     text: state.text,
     cursor: state.cursor,
     lines: state.lines,
-    // ... 其他方法
+    // ...
   };
   ```
-- **Safety Analysis**:
-  - ✅ 单一 `setState` 确保原子更新
-  - ✅ 现有 API 完全保持不变
-  - ✅ 使用展开操作符确保不可变性
-  - ✅ 向后兼容所有调用方
-- **Files to Change**: `src/ui/hooks/useTextBuffer.ts`
-- **Tests Required**:
-  - 现有测试应继续通过
-  - 添加状态一致性测试（验证 text/cursor/lines 总是同步）
+- **Files Changed**: `packages/repl/src/ui/hooks/useTextBuffer.ts`
+- **Tests Added**: 无（该项目暂无自动化测试，已手动验证编译通过）
 
 ---
 
-### 037: 两套键盘事件系统冲突
+### 037: 两套键盘事件系统冲突 (RESOLVED)
 - **Priority**: Medium
-- **Status**: Open
+- **Status**: Resolved
 - **Introduced**: v0.3.3 (auto-detected)
-- **Planned Fix**: v0.4.0
+- **Fixed**: v0.4.5
 - **Created**: 2026-02-22
+- **Resolved**: 2026-02-26
 - **Original Problem**:
   - 项目存在两套键盘事件处理系统：
     1. `KeypressContext.tsx` - 优先级系统，支持多个处理器
   2. `InputPrompt.tsx` - 直接使用 Ink 的 `useInput`
   - 两者无法同时使用，导致优先级系统无法用于 REPL
-- **Context**: `src/ui/contexts/KeypressContext.tsx`, `src/ui/components/InputPrompt.tsx`
-- **Root Cause Analysis**:
-  - `InkREPL.tsx` 行 738-739 注释：
-    ```typescript
-    // Note: KeypressProvider is not used here because InputPrompt
-    // uses useInput directly. Having both would conflict.
-    ```
-  - Ink 的 `useInput` 全局监听 stdin，多个实例会互相干扰
-  - `KeypressContext` 设计用于协调多个处理器，但未被使用
-- **Impact**:
-  - 无法实现全局快捷键（如 Ctrl+C 退出需要重复实现）
-  - 建议导航功能难以集成（需要优先级系统）
-  - 代码重复（多处实现相同的按键检测）
-- **Proposed Solution** (v0.4.0 Scope):
-  1. 迁移 `InputPrompt` 使用 `KeypressContext`
-  2. 注册输入处理器为 `KeypressHandlerPriority.Normal`
-  3. 注册全局快捷键为 `KeypressHandlerPriority.Critical`
-  4. 允许建议导航注册为 `KeypressHandlerPriority.High`
-- **Safety Analysis**:
-  - ⚠️ 这是架构级变更，需要全面测试
-  - ✅ 推迟到 v0.4.0 monorepo 重构时处理
-  - ✅ 当前实现功能正常，不阻塞发布
-- **Decision**: 推迟到 v0.4.0，详见 [features/v0.4.0.md#issue_037](features/v0.4.0.md#issue_037-两套键盘事件系统冲突)
-- **Files to Change**: `src/ui/components/InputPrompt.tsx`, `src/ui/InkREPL.tsx`
+- **Context**: `packages/repl/src/ui/contexts/KeypressContext.tsx`, `packages/repl/src/ui/components/InputPrompt.tsx`
+- **Resolution**:
+  - `InkREPL.tsx` 现已使用 `<KeypressProvider>` 包裹组件（行 695-697）
+  - `InputPrompt.tsx` 已迁移使用 `useKeypress` 从 `KeypressContext`（行 15, 70）
+  - 使用优先级系统 `KeypressHandlerPriority.High` 注册输入处理器
+  - 实现了完整的 Proposed Solution（v0.4.0 Scope）
+- **Files Changed**: `packages/repl/src/ui/InkREPL.tsx`, `packages/repl/src/ui/components/InputPrompt.tsx`
 
 ---
 
@@ -1173,13 +1160,21 @@ _Last Updated: 2026-02-26 21:30_
 ---
 
 ## Summary
-- Total: 47 (13 Open, 30 Resolved, 3 Won't Fix, 1 Planned for v0.5.0+)
-- Highest Priority Open: 036 - React 状态同步潜在问题 (Medium)
-- Planned for v0.5.0+: 037, 039 (长期重构 - ConsolePatcher 架构)
+- Total: 47 (11 Open, 32 Resolved, 3 Won't Fix, 1 Planned for v0.5.0+)
+- Highest Priority Open: 046 - Session 恢复时消息显示为 "[Complex content]" (Medium)
+- Planned for v0.5.0+: 039 (长期重构 - ConsolePatcher 架构)
 
 ---
 
 ## Changelog
+
+### 2026-02-26: Issue 036 修复
+- Resolved 036: React 状态同步潜在问题 - 将三个独立 useState 合并为单一状态对象，确保原子更新
+
+### 2026-02-26: Issue 037 状态更新
+- Resolved 037: 两套键盘事件系统冲突 - InputPrompt 已迁移使用 KeypressContext
+- InkREPL 现使用 KeypressProvider 包裹，使用优先级系统注册处理器
+- 当前 Open Issues 降至 12 个
 
 ### 2026-02-26: Issue 047 新增
 - Added 047: 流式输出时界面闪烁 (Medium Priority)
