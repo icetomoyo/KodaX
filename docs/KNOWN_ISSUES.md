@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-02-27 00:15_
+_Last Updated: 2026-02-27 00:30_
 
 ---
 
@@ -54,7 +54,7 @@ _Last Updated: 2026-02-27 00:15_
 | 040 | High | Resolved | REPL 显示问题 - 命令输出渲染位置错误 | v0.3.3 | v0.4.2 | 2026-02-23 | 2026-02-25 |
 | 044 | High | Resolved | 流式输出时 Ctrl+C 延迟生效 | v0.3.4 | v0.3.6 | 2026-02-23 | 2026-02-24 |
 | 045 | High | Resolved | Spinner 出现时问答顺序颠倒 | v0.4.3 | v0.4.4 | 2026-02-25 | 2026-02-25 |
-| 046 | Medium | Resolved | Session 恢复时消息显示为 "[Complex content]" | v0.4.5 | v0.4.5 | 2026-02-26 | 2026-02-26 |
+| 046 | High | Open | Session 恢复时消息显示异常 | v0.4.5 | - | 2026-02-26 | - |
 | 047 | Medium | Open | 流式输出时界面闪烁 | v0.4.5 | - | 2026-02-26 | - |
 
 ---
@@ -1160,16 +1160,25 @@ _Last Updated: 2026-02-27 00:15_
 ---
 
 ## Summary
-- Total: 47 (10 Open, 33 Resolved, 3 Won't Fix, 1 Planned for v0.5.0+)
-- Highest Priority Open: 047 - 流式输出时界面闪烁 (Medium)
+- Total: 47 (11 Open, 32 Resolved, 3 Won't Fix, 1 Planned for v0.5.0+)
+- Highest Priority Open: 046 - Session 恢复时消息显示异常 (High)
 - Planned for v0.5.0+: 039 (长期重构 - ConsolePatcher 架构)
 
 ---
 
 ## Changelog
 
-### 2026-02-26: Issue 046 修复
-- Resolved 046: Session 恢复时消息显示为 "[Complex content]" - 扩展 extractTextContent 支持 thinking/tool_use/redacted_thinking 块
+### 2026-02-27: Issue 046 重新打开
+- Issue 046 (Session 恢复时消息显示异常) 并未完全修复
+- 发现更多问题：
+  1. 用户消息重复显示（同一消息出现两遍）
+  2. Assistant 回复被截断（显示 `... (33 more lines)`）
+  3. tool_result 仍显示为 [Complex content]
+- 提升优先级为 High
+
+### 2026-02-26: Issue 046 部分修复（后发现问题未解决）
+- 扩展 extractTextContent 支持 thinking/tool_use/redacted_thinking 块
+- 但后续测试发现仍有用户消息重复、回复截断等问题
 
 ### 2026-02-26: Issue 036 修复
 - Resolved 036: React 状态同步潜在问题 - 将三个独立 useState 合并为单一状态对象，确保原子更新
@@ -1309,36 +1318,56 @@ _Last Updated: 2026-02-27 00:15_
 - Resolved 024: Backspace 键无效
 - Resolved 025: Shift+Enter 换行无效
 
-### 046: Session 恢复时消息显示为 "[Complex content]" (RESOLVED)
-- **Priority**: Medium
-- **Status**: Resolved
+### 046: Session 恢复时消息显示异常 (OPEN)
+- **Priority**: High
+- **Status**: Open
 - **Introduced**: v0.4.5
-- **Fixed**: v0.4.5
 - **Created**: 2026-02-26
 - **Original Problem**:
-  - 使用 `kodax -c` 恢复之前的 session 时，很多消息显示为 `[Complex content]`
-  - 部分消息被截断，无法查看完整内容
-  - 当前行为：历史消息被替换为 `[Complex content]` 占位符
-  - 预期行为：恢复的 session 应该完整显示所有历史消息
-- **Context**: `kodax -c` 命令、session 加载/序列化逻辑
+  使用 `kodax -c` 恢复 session 时，存在多个严重的消息显示问题：
+
+  **问题 1: 用户消息重复显示**
+  - 同一条用户消息出现两次
+  - 例如：`You [10:29 PM] 请你帮我列一下这个项目中的关键文件` 出现两遍
+
+  **问题 2: Assistant 回复被截断**
+  - 长回复被截断，显示 `... (33 more lines)` 或类似提示
+  - 用户无法查看完整的历史回复内容
+
+  **问题 3: tool_result 显示为 [Complex content]**
+  - 用户消息中包含 tool_result 的部分仍显示为 `[Complex content]`
+  - 之前的修复只处理了 thinking/tool_use，未处理 tool_result
+
+- **Context**: `kodax -c` 命令、session 加载/序列化逻辑、MessageList 组件
 - **Reproduction**:
-  1. 使用 `kodax` 进行多轮对话
+  1. 使用 `kodax` 进行多轮对话（包含工具调用）
   2. 退出后使用 `kodax -c` 恢复 session
-  3. 观察历史消息显示为 `[Complex content]`
-- **Root Cause**:
-  - `extractTextContent` 函数只处理 `text` 类型的内容块
-  - Claude API 返回的 assistant 消息可能包含 `thinking`、`tool_use`、`redacted_thinking` 等类型的内容块
-  - 当消息只有 `thinking` 块（没有 `text` 块）时，函数返回 `"[Complex content]"` 占位符
-- **Resolution**:
-  - 扩展 `extractTextContent` 函数以处理所有 `KodaXContentBlock` 类型：
-    - `text`: 提取文本内容
-    - `thinking`: 提取 thinking 字段内容
-    - `tool_use`: 显示 `[Tool: tool_name]`
-    - `redacted_thinking`: 显示 `[Thinking content redacted]`
-  - 确保所有类型的消息内容都能正确显示
-- **Resolution Date**: 2026-02-26
-- **Files Changed**: `packages/repl/src/ui/utils/message-utils.ts`
-- **Proposed Solution**: (待分析)
+  3. 观察：
+     - 用户消息是否重复
+     - 回复是否被截断
+     - tool_result 是否显示为 [Complex content]
+
+- **Root Cause Analysis**:
+  1. **用户消息重复**：
+     - 可能是 session 加载时同时从 `context.messages` 和其他来源添加到 history
+     - 需要检查 InkREPL.tsx 中的消息同步逻辑
+
+  2. **回复截断**：
+     - 可能是 MessageList 组件对长消息有截断逻辑
+     - 需要检查是否有 maxLines 或类似的限制
+
+  3. **[Complex content]**：
+     - `extractTextContent` 函数仍未处理 `tool_result` 类型的内容块
+     - 用户消息可能包含 `tool_result`（当用户角色是 tool 时）
+
+- **Attempted Fix (2026-02-26)**:
+  - 扩展 `extractTextContent` 支持 thinking/tool_use/redacted_thinking
+  - 但问题并未完全解决，仍有上述三个问题
+
+- **Files to Investigate**:
+  - `packages/repl/src/ui/InkREPL.tsx` - 消息同步逻辑
+  - `packages/repl/src/ui/components/MessageList.tsx` - 消息渲染和截断逻辑
+  - `packages/repl/src/ui/utils/message-utils.ts` - extractTextContent 函数
 
 ---
 
