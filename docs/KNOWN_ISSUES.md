@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-02-26 23:30_
+_Last Updated: 2026-02-27 00:15_
 
 ---
 
@@ -54,7 +54,7 @@ _Last Updated: 2026-02-26 23:30_
 | 040 | High | Resolved | REPL 显示问题 - 命令输出渲染位置错误 | v0.3.3 | v0.4.2 | 2026-02-23 | 2026-02-25 |
 | 044 | High | Resolved | 流式输出时 Ctrl+C 延迟生效 | v0.3.4 | v0.3.6 | 2026-02-23 | 2026-02-24 |
 | 045 | High | Resolved | Spinner 出现时问答顺序颠倒 | v0.4.3 | v0.4.4 | 2026-02-25 | 2026-02-25 |
-| 046 | Medium | Open | Session 恢复时消息显示为 "[Complex content]" | v0.4.5 | - | 2026-02-26 | - |
+| 046 | Medium | Resolved | Session 恢复时消息显示为 "[Complex content]" | v0.4.5 | v0.4.5 | 2026-02-26 | 2026-02-26 |
 | 047 | Medium | Open | 流式输出时界面闪烁 | v0.4.5 | - | 2026-02-26 | - |
 
 ---
@@ -1160,13 +1160,16 @@ _Last Updated: 2026-02-26 23:30_
 ---
 
 ## Summary
-- Total: 47 (11 Open, 32 Resolved, 3 Won't Fix, 1 Planned for v0.5.0+)
-- Highest Priority Open: 046 - Session 恢复时消息显示为 "[Complex content]" (Medium)
+- Total: 47 (10 Open, 33 Resolved, 3 Won't Fix, 1 Planned for v0.5.0+)
+- Highest Priority Open: 047 - 流式输出时界面闪烁 (Medium)
 - Planned for v0.5.0+: 039 (长期重构 - ConsolePatcher 架构)
 
 ---
 
 ## Changelog
+
+### 2026-02-26: Issue 046 修复
+- Resolved 046: Session 恢复时消息显示为 "[Complex content]" - 扩展 extractTextContent 支持 thinking/tool_use/redacted_thinking 块
 
 ### 2026-02-26: Issue 036 修复
 - Resolved 036: React 状态同步潜在问题 - 将三个独立 useState 合并为单一状态对象，确保原子更新
@@ -1306,10 +1309,11 @@ _Last Updated: 2026-02-26 23:30_
 - Resolved 024: Backspace 键无效
 - Resolved 025: Shift+Enter 换行无效
 
-### 046: Session 恢复时消息显示为 "[Complex content]" (OPEN)
+### 046: Session 恢复时消息显示为 "[Complex content]" (RESOLVED)
 - **Priority**: Medium
-- **Status**: Open
+- **Status**: Resolved
 - **Introduced**: v0.4.5
+- **Fixed**: v0.4.5
 - **Created**: 2026-02-26
 - **Original Problem**:
   - 使用 `kodax -c` 恢复之前的 session 时，很多消息显示为 `[Complex content]`
@@ -1321,7 +1325,19 @@ _Last Updated: 2026-02-26 23:30_
   1. 使用 `kodax` 进行多轮对话
   2. 退出后使用 `kodax -c` 恢复 session
   3. 观察历史消息显示为 `[Complex content]`
-- **Root Cause**: (待分析)
+- **Root Cause**:
+  - `extractTextContent` 函数只处理 `text` 类型的内容块
+  - Claude API 返回的 assistant 消息可能包含 `thinking`、`tool_use`、`redacted_thinking` 等类型的内容块
+  - 当消息只有 `thinking` 块（没有 `text` 块）时，函数返回 `"[Complex content]"` 占位符
+- **Resolution**:
+  - 扩展 `extractTextContent` 函数以处理所有 `KodaXContentBlock` 类型：
+    - `text`: 提取文本内容
+    - `thinking`: 提取 thinking 字段内容
+    - `tool_use`: 显示 `[Tool: tool_name]`
+    - `redacted_thinking`: 显示 `[Thinking content redacted]`
+  - 确保所有类型的消息内容都能正确显示
+- **Resolution Date**: 2026-02-26
+- **Files Changed**: `packages/repl/src/ui/utils/message-utils.ts`
 - **Proposed Solution**: (待分析)
 
 ---
