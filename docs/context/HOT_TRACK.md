@@ -1,7 +1,7 @@
 # 热轨快照
 
-_生成时间: 2026-02-26 10:45_
-_快照版本: v5_
+_生成时间: 2026-02-26 11:15_
+_快照版本: v6_
 
 ---
 
@@ -13,10 +13,10 @@ _快照版本: v5_
 ### 进度概览
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| Issue 011 - 命令预览长度 | 已修复 | v0.4.4 (状态更新) |
+| Issue 011 - 命令预览长度 | 已修复 | v0.4.4 |
 | Issue 012 - ANSI Strip 性能 | 已修复 | v0.4.4 |
-| Issue 035 - Backspace 检测 | 已修复 | 状态不一致修正 |
-| Issue 016 - InkREPL 过大 | **已修复** | v0.4.4, 994→819 行 |
+| Issue 016 - InkREPL 过大 | 已修复 | v0.4.4, 994→819 行 |
+| Issue 045 - Thinking 内容闪烁 | **已修复** | v0.4.4, 提交 30a9ea2 |
 
 ### 当下阻塞
 无阻塞问题
@@ -25,55 +25,40 @@ _快照版本: v5_
 
 ## 2. 已确定接口（骨架）
 
+### StreamingContext.tsx (Issue 045 修复)
+```typescript
+export interface StreamingActions {
+  // ... existing methods
+  stopThinking(): void;           // 只设置 isThinking=false，不清空内容
+  clearThinkingContent(): void;   // 响应完成时清空 thinking 内容
+}
+
+// MessageList 渲染条件
+// 旧: {isThinking && thinkingContent && ...}
+// 新: {isLoading && thinkingContent && ...}
+```
+
 ### packages/repl/src/ui/utils/ (Issue 016 新模块)
 
 ```typescript
 // session-storage.ts
-export interface SessionData {
-  messages: KodaXMessage[];
-  title: string;
-  gitRoot: string;
-}
 export interface SessionStorage {
   save(id: string, data: SessionData): Promise<void>;
   load(id: string): Promise<SessionData | null>;
   list(gitRoot?: string): Promise<Array<{ id: string; title: string; msgCount: number }>>;
 }
-export class MemorySessionStorage implements SessionStorage { ... }
 
 // shell-executor.ts
 export async function executeShellCommand(command: string, config?: ShellExecutorConfig): Promise<string>
 export async function processSpecialSyntax(input: string, config?: ShellExecutorConfig): Promise<string>
-export function isShellCommand(input: string): boolean
-export function isShellCommandSuccess(result: string): boolean
 
 // message-utils.ts
 export function extractTextContent(content: string | unknown[]): string
 export function extractTitle(messages: KodaXMessage[]): string
-export function formatMessagePreview(content: string, maxLength?: number): string
 
 // console-capturer.ts
-export class ConsoleCapturer {
-  start(): void;
-  stop(): string[];
-  getCaptured(): string[];
-  clear(): void;
-}
+export class ConsoleCapturer { start(): void; stop(): string[]; }
 export async function withCapture<T>(fn: () => Promise<T>): Promise<{ result: T; captured: string[] }>
-```
-
-### status-bar.ts (ANSI_REGEX 缓存)
-```typescript
-const ANSI_REGEX = /\x1b\[[0-9;]*m/g;
-private stripAnsi(str: string): string {
-  ANSI_REGEX.lastIndex = 0;
-  return str.replace(ANSI_REGEX, '');
-}
-```
-
-### common/utils.ts (PREVIEW_MAX_LENGTH)
-```typescript
-export const PREVIEW_MAX_LENGTH = 60;
 ```
 
 ---
@@ -91,13 +76,47 @@ export const PREVIEW_MAX_LENGTH = 60;
 
 | 决策 | 理由 | 日期 |
 |------|------|------|
-| Issue 016 采用方案 A | 低风险渐进式改进，不影响组件结构 | 2026-02-26 |
-| 提取 4 个工具模块 | 改善代码组织，便于测试 | 2026-02-26 |
-| 删除 printStartupBanner 死代码 | 已被 Banner 组件替代 | 2026-02-26 |
+| Issue 016 采用方案 A | 低风险渐进式改进 | 2026-02-26 |
+| Thinking 内容用 isLoading 控制显示 | 响应期间持续显示，完成后消失 | 2026-02-26 |
+| 添加 clearThinkingContent() | 响应完成时清空，为下次请求做准备 | 2026-02-26 |
 
 ---
 
-## 5. 当前 Open Issues (13)
+## 5. 关键理解：Claude API 流式机制
+
+### Content Block 交织
+```
+单次 API 调用 → 单次流式响应
+
+content_block_start (thinking)
+  → thinking_delta → onThinkingDelta()
+  → content_block_stop → onThinkingEnd()
+
+content_block_start (text)
+  → text_delta → onTextDelta()
+  → content_block_stop
+
+content_block_start (thinking)  ← 可多次交织
+  → thinking_delta → onThinkingDelta()
+  → content_block_stop → onThinkingEnd()
+
+...直到 message_stop
+```
+
+### Thinking 状态生命周期
+```
+startThinking() → thinkingContent = ""
+    ↓
+onThinkingDelta → thinkingContent += text (累加)
+    ↓
+onThinkingEnd → isThinking = false (内容保留)
+    ↓
+响应完成 → clearThinkingContent() (清空)
+```
+
+---
+
+## 6. 当前 Open Issues (12)
 
 | 优先级 | ID | 标题 |
 |--------|-----|------|
@@ -108,4 +127,4 @@ export const PREVIEW_MAX_LENGTH = 60;
 
 ---
 
-*Token 数: ~950*
+*Token 数: ~1,100*
