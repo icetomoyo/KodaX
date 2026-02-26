@@ -702,11 +702,13 @@ _Last Updated: 2026-02-23 16:00_
 
 ---
 
-### 035: Backspace 检测边缘情况
+### 035: Backspace 检测边缘情况 (RESOLVED)
 - **Priority**: High
-- **Status**: Open
+- **Status**: Resolved
 - **Introduced**: v0.3.3 (auto-detected)
+- **Fixed**: v0.3.3
 - **Created**: 2026-02-22
+- **Resolved**: 2026-02-23
 - **Original Problem**:
   - `InputPrompt.tsx` 中的 Backspace 检测逻辑存在条件重叠
   - 某些边缘情况可能导致 Backspace 行为不一致：
@@ -762,6 +764,12 @@ _Last Updated: 2026-02-23 16:00_
 - **Tests Required**:
   - 添加单元测试覆盖各种终端 Backspace 报告方式
   - 添加集成测试验证 Delete 键不被 Backspace 检测误捕获
+- **Resolution**:
+  - 按置信度分层重构 Backspace 检测逻辑
+  - 分离高/中/低置信度条件，避免重叠
+  - 后备检测仅在无其他键标识时触发
+  - 与 Delete 检测逻辑完全解耦
+- **Files Changed**: `src/ui/components/InputPrompt.tsx`
 
 ---
 
@@ -1094,8 +1102,8 @@ _Last Updated: 2026-02-23 16:00_
 ---
 
 ## Summary
-- Total: 45 (15 Open, 26 Resolved, 3 Won't Fix, 1 Planned for v0.5.0+)
-- Highest Priority Open: 035 - Backspace 检测边缘情况 (High)
+- Total: 45 (14 Open, 27 Resolved, 3 Won't Fix, 1 Planned for v0.5.0+)
+- Highest Priority Open: 016 - InkREPL 组件过大 (Medium)
 - Planned for v0.5.0+: 037, 039 (长期重构 - ConsolePatcher 架构)
 
 ---
