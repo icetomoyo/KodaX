@@ -96,6 +96,18 @@ export interface KodaXProviderStreamOptions {
   signal?: AbortSignal;
 }
 
+// ============== 确认结果 ==============
+
+/**
+ * Confirmation result - 确认结果
+ * - confirmed: Whether the user confirmed the action - 用户是否确认
+ * - always: If true, remember this choice for future uses of this tool - 如果为 true，记住这个选择
+ */
+export interface ConfirmResult {
+  confirmed: boolean;
+  always?: boolean;  // "Always yes for this tool" - 总是允许这个工具
+}
+
 // ============== 事件接口 ==============
 
 export interface KodaXEvents {
@@ -117,7 +129,11 @@ export interface KodaXEvents {
   onError?: (error: Error) => void;
 
   // 用户交互（可选，由 CLI 层实现）
-  onConfirm?: (tool: string, input: Record<string, unknown>) => Promise<boolean>;
+  onConfirm?: (tool: string, input: Record<string, unknown>) => Promise<ConfirmResult>;
+  /** Callback to save a tool to always-allow list (user selected "always yes") - 保存工具到总是允许列表 */
+  saveAlwaysAllowTool?: (tool: string) => void;
+  /** Callback to switch permission mode (e.g., default -> accept-edits when user selects "always") - 切换权限模式的回调 */
+  switchPermissionMode?: (mode: PermissionMode) => void;
 }
 
 // ============== Agent 选项 ==============
@@ -157,6 +173,7 @@ export interface KodaXOptions {
   parallel?: boolean;
   permissionMode?: PermissionMode;  // 4-level permission mode - 四级权限模式
   confirmTools?: Set<string>;       // Derived from permissionMode - 由 permissionMode 计算得出
+  alwaysAllowTools?: string[];      // Tools that are always allowed - 总是允许的工具
   session?: KodaXSessionOptions;
   context?: KodaXContextOptions;
   events?: KodaXEvents;
@@ -195,7 +212,13 @@ export interface KodaXToolExecutionContext {
   backups: Map<string, string>;
   permissionMode: PermissionMode;
   gitRoot?: string;
-  onConfirm?: (tool: string, input: Record<string, unknown>) => Promise<boolean>;
+  /** Tools that are always allowed (user selected "always yes") - 总是允许的工具 */
+  alwaysAllowTools: Set<string>;
+  /** Callback to save a tool to always-allow list - 保存工具到总是允许列表的回调 */
+  saveAlwaysAllowTool?: (tool: string) => void;
+  /** Callback to switch permission mode - 切换权限模式的回调 */
+  switchPermissionMode?: (mode: PermissionMode) => void;
+  onConfirm?: (tool: string, input: Record<string, unknown>) => Promise<ConfirmResult>;
   beforeToolExecute?: (tool: string, input: Record<string, unknown>) => Promise<boolean>;
 }
 
@@ -205,4 +228,6 @@ export interface KodaXConfig {
   provider?: string;
   thinking?: boolean;
   permissionMode?: PermissionMode;
+  /** Tools that are always allowed (no confirmation needed) - 总是允许的工具（无需确认）*/
+  alwaysAllowTools?: string[];
 }

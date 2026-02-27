@@ -318,6 +318,7 @@ Keyboard Shortcuts:
             // Use enhanced confirmation prompt - 使用增强的确认提示
             return confirmToolExecution(rl, tool, input, {
               isOutsideProject: input._outsideProject === true,
+              isProtectedPath: input._alwaysConfirm === true,
               reason: input._reason as string | undefined,
             });
           },

@@ -6,8 +6,9 @@
 
 import chalk from 'chalk';
 import readline from 'readline';
-import { KodaXEvents } from '@kodax/core';
+import { KodaXEvents, PermissionMode } from '@kodax/core';
 import { PREVIEW_MAX_LENGTH } from '../common/utils.js';
+import { saveAlwaysAllowTool, savePermissionModeProject } from '../common/permission-config.js';
 
 // ============== Spinner Animation - Spinner 动画 ==============
 
@@ -65,17 +66,35 @@ function startWaitingDots(): { stop: () => void; updateText: (text: string) => v
 
 // ============== User Confirmation - 用户确认 ==============
 
-async function confirmAction(name: string, input: Record<string, unknown>): Promise<boolean> {
+async function confirmAction(name: string, input: Record<string, unknown>): Promise<import('@kodax/core').ConfirmResult> {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+
+  // Check if this is a protected path - 检查是否为永久保护路径
+  const isProtectedPath = input._alwaysConfirm === true;
+
   return new Promise(resolve => {
     let prompt: string;
+    const optionsHint = isProtectedPath ? '(y/n)' : '(y/a/n)';
+
     switch (name) {
-      case 'bash': prompt = `[Confirm] Execute: ${(input.command as string)?.slice(0, PREVIEW_MAX_LENGTH)}...? (y/n) `; break;
-      case 'write': prompt = `[Confirm] Write to ${input.path}? (y/n) `; break;
-      case 'edit': prompt = `[Confirm] Edit ${input.path}? (y/n) `; break;
-      default: prompt = `[Confirm] Execute ${name}? (y/n) `;
+      case 'bash': prompt = `[Confirm] Execute: ${(input.command as string)?.slice(0, PREVIEW_MAX_LENGTH)}...? ${optionsHint} `; break;
+      case 'write': prompt = `[Confirm] Write to ${input.path}? ${optionsHint} `; break;
+      case 'edit': prompt = `[Confirm] Edit ${input.path}? ${optionsHint} `; break;
+      default: prompt = `[Confirm] Execute ${name}? ${optionsHint} `;
     }
-    rl.question(prompt, ans => { rl.close(); resolve(['y', 'yes'].includes(ans.trim().toLowerCase())); });
+
+    rl.question(prompt, ans => {
+      rl.close();
+      const answer = ans.trim().toLowerCase();
+
+      if (answer === 'y' || answer === 'yes') {
+        resolve({ confirmed: true });
+      } else if (!isProtectedPath && (answer === 'a' || answer === 'always')) {
+        resolve({ confirmed: true, always: true });
+      } else {
+        resolve({ confirmed: false });
+      }
+    });
   });
 }
 
@@ -207,6 +226,15 @@ export function createCliEvents(showSessionId = true): KodaXEvents {
 
     onConfirm: async (tool: string, input: Record<string, unknown>) => {
       return confirmAction(tool, input);
+    },
+
+    saveAlwaysAllowTool: (tool: string) => {
+      saveAlwaysAllowTool(tool);
+    },
+
+    switchPermissionMode: (mode: PermissionMode) => {
+      savePermissionModeProject(mode);
+      console.log(chalk.dim(`[Permission mode switched to: ${mode}]`));
     },
   };
 

@@ -24,6 +24,10 @@ export async function buildSystemPrompt(options: KodaXOptions, isNewSession: boo
   contextParts.push(getEnvContext());
   contextParts.push(`Working Directory: ${process.cwd()}`);
 
+  // Add permission mode context - 添加权限模式上下文
+  const modeContext = getPermissionModeContext(options.permissionMode);
+  if (modeContext) contextParts.push(modeContext);
+
   if (isNewSession) {
     const gitCtx = await getGitContext();
     if (gitCtx) contextParts.push(gitCtx);
@@ -45,6 +49,46 @@ export async function buildSystemPrompt(options: KodaXOptions, isNewSession: boo
   }
 
   return prompt;
+}
+
+/**
+ * 获取权限模式上下文 - 告知 LLM 当前模式约束
+ */
+function getPermissionModeContext(mode?: string): string {
+  if (mode === 'plan') {
+    return `## IMPORTANT: Plan Mode (Read-Only)
+
+You are currently in **PLAN MODE**. This means:
+- You CANNOT modify any files (no write, edit operations)
+- You CANNOT execute shell commands that modify the filesystem
+- You CAN read files, search code, and analyze the codebase
+- You SHOULD focus on:
+  1. Analyzing the codebase and understanding the problem
+  2. Creating a detailed implementation plan
+  3. Explaining what changes would be needed
+  4. Providing step-by-step guidance for implementation
+
+When you have completed your analysis and planning, state your plan clearly and ask the user to switch to a different mode to implement it.
+
+Switch modes with: /mode default or /mode accept-edits`;
+  }
+
+  if (mode === 'default') {
+    return `## Permission Mode: Default
+All file modifications and shell commands require user confirmation before execution.`;
+  }
+
+  if (mode === 'accept-edits') {
+    return `## Permission Mode: Accept-Edits
+File edits are auto-approved. Shell commands still require confirmation.`;
+  }
+
+  if (mode === 'auto-in-project') {
+    return `## Permission Mode: Auto-in-Project
+Operations within the project directory are auto-approved. Operations outside the project require confirmation.`;
+  }
+
+  return '';
 }
 
 /**

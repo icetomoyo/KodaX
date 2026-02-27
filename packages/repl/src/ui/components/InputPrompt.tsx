@@ -277,7 +277,7 @@ export const SimpleInputPrompt: React.FC<{
       <Box>
         <Text color={theme.colors.primary}>{prompt} </Text>
         {placeholder && <Text dimColor>{placeholder}</Text>}
-        <Text backgroundColor={theme.colors.primary}> </Text>
+        <Text backgroundColor={theme.colors.primary} color="#000000"> </Text>
       </Box>
     );
   }

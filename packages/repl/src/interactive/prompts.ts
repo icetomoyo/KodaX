@@ -7,6 +7,7 @@
 import * as readline from 'readline';
 import chalk from 'chalk';
 import { PREVIEW_MAX_LENGTH } from '../common/utils.js';
+import { ConfirmResult } from '@kodax/core';
 
 /**
  * 确认选项定义
@@ -218,15 +219,16 @@ export async function confirmToolExecution(
   options?: {
     isOutsideProject?: boolean;
     reason?: string;
+    isProtectedPath?: boolean;
   }
-): Promise<boolean> {
-  const { isOutsideProject = false, reason } = options ?? {};
+): Promise<ConfirmResult> {
+  const { isOutsideProject = false, reason, isProtectedPath = false } = options ?? {};
   const symbols = getSymbols();
 
   let message: string;
   let promptOptions: ConfirmOption[];
 
-  if (isOutsideProject) {
+  if (isOutsideProject || isProtectedPath) {
     // 安全警告提示
     message = `${chalk.yellow(symbols.warning)} Safety Warning`;
     if (reason) {
@@ -241,6 +243,7 @@ export async function confirmToolExecution(
       message += `\n  ${chalk.dim(`Command: ${cmd}${cmd.length >= 50 ? '...' : ''}`)}`;
     }
 
+    // Protected paths don't get "always" option - 永久保护路径不提供 "always" 选项
     promptOptions = [
       { key: 'y', label: 'Yes', description: '本次允许', value: 'yes' },
       { key: 'n', label: 'No', description: '取消', value: 'no' },
@@ -266,7 +269,8 @@ export async function confirmToolExecution(
         message = `Execute tool: ${tool}?`;
     }
 
-    promptOptions = DEFAULT_YES_NO_OPTIONS;
+    // Normal confirmation includes "always" option - 普通确认包含 "always" 选项
+    promptOptions = SAFETY_CONFIRM_OPTIONS;
   }
 
   const result = await confirmEnhanced(rl, {
@@ -275,7 +279,10 @@ export async function confirmToolExecution(
     options: promptOptions,
   });
 
-  return result === 'yes';
+  if (result === 'always') {
+    return { confirmed: true, always: true };
+  }
+  return { confirmed: result === 'yes' };
 }
 
 /**

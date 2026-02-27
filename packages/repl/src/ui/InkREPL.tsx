@@ -35,6 +35,7 @@ import {
   KODAX_DEFAULT_PROVIDER,
   KodaXTerminalError,
   PermissionMode,
+  ConfirmResult,
 } from "@kodax/core";
 import {
   InteractiveContext,
@@ -50,6 +51,7 @@ import {
 import { getProviderModel } from "../common/utils.js";
 import { KODAX_VERSION } from "../common/utils.js";
 import { runWithPlanMode } from "../common/plan-mode.js";
+import { saveAlwaysAllowTool, loadAlwaysAllowTools, savePermissionModeProject } from "../common/permission-config.js";
 import { getTheme } from "./themes/index.js";
 import chalk from "chalk";
 
@@ -198,12 +200,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     input: Record<string, unknown>;
     prompt: string;
   } | null>(null);
-  const confirmResolveRef = useRef<((confirmed: boolean) => void) | null>(null);
+  const confirmResolveRef = useRef<((result: ConfirmResult) => void) | null>(null);
 
   // Refs for callbacks
   const currentOptionsRef = useRef<InkREPLOptions>({
     ...options,
     permissionMode: currentConfig.permissionMode,
+    alwaysAllowTools: loadAlwaysAllowTools(),
     session: {
       ...options.session,
       id: context.sessionId,
@@ -241,13 +244,20 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       if (!confirmRequest) return;
 
       const answer = input.toLowerCase();
+      const isProtectedPath = !!confirmRequest.input._alwaysConfirm;
+
       if (answer === 'y' || answer === 'yes') {
         setConfirmRequest(null);
-        confirmResolveRef.current?.(true);
+        confirmResolveRef.current?.({ confirmed: true });
+        confirmResolveRef.current = null;
+      } else if (!isProtectedPath && (answer === 'a' || answer === 'always')) {
+        // "Always" option not available for protected paths - 永久保护路径不提供 "always" 选项
+        setConfirmRequest(null);
+        confirmResolveRef.current?.({ confirmed: true, always: true });
         confirmResolveRef.current = null;
       } else if (answer === 'n' || answer === 'no') {
         setConfirmRequest(null);
-        confirmResolveRef.current?.(false);
+        confirmResolveRef.current?.({ confirmed: false });
         confirmResolveRef.current = null;
       }
     },
@@ -334,10 +344,22 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
 
       // Return promise that resolves when user answers - 返回一个 Promise，当用户回答时 resolve
-      return new Promise<boolean>((resolve) => {
+      return new Promise<ConfirmResult>((resolve) => {
         confirmResolveRef.current = resolve;
         setConfirmRequest({ tool, input, prompt: promptText });
       });
+    },
+    saveAlwaysAllowTool: (tool: string) => {
+      saveAlwaysAllowTool(tool);
+    },
+    switchPermissionMode: (mode: PermissionMode) => {
+      // Update state - 更新状态
+      setCurrentConfig((prev) => ({ ...prev, permissionMode: mode }));
+      // Update ref for next agent round - 更新 ref 用于下一轮 agent
+      currentOptionsRef.current.permissionMode = mode;
+      // Persist to config file - 持久化到配置文件
+      savePermissionModeProject(mode);
+      console.log(chalk.dim(`\n[Permission mode switched to: ${mode}]`));
     },
   }), [appendThinkingContent, stopThinking, appendResponse, setCurrentTool, appendToolInputChars, confirmRequest]);
 
@@ -750,9 +772,16 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           <Text color="yellow" bold>
             [Confirm] {confirmRequest.prompt}
           </Text>
-          <Text dimColor>
-            Press (y) to confirm, (n) to cancel
-          </Text>
+          {/* Don't show "always" option for protected paths - 永久保护路径不显示 "always" 选项 */}
+          {confirmRequest.input._alwaysConfirm ? (
+            <Text dimColor>
+              Press (y) to confirm, (n) to cancel (protected path)
+            </Text>
+          ) : (
+            <Text dimColor>
+              Press (y) yes, (a) always yes for this tool, (n) no
+            </Text>
+          )}
         </Box>
       )}
     </Box>

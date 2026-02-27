@@ -91,6 +91,8 @@ export interface ThemeColors {
   error: string; // Error state - 错误状态
   info: string; // Info state - 信息状态
   hint: string; // Hint state - 提示状态
+  background: string; // Background color - 背景颜色
+  inputBackground: string; // Input background color - 输入框背景颜色
 }
 
 export interface ThemeSymbols {
@@ -456,4 +458,3 @@ export const DEFAULT_UI_STATE: UIState = {
   model: "",
   isLoading: false,
 };
-

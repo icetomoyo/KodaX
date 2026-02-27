@@ -83,6 +83,9 @@ export async function runKodaX(
     confirmTools: options.confirmTools ?? computeConfirmTools(permissionMode),
     backups: new Map(),
     gitRoot: options.context?.gitRoot ?? undefined,
+    alwaysAllowTools: new Set(options.alwaysAllowTools ?? []),
+    saveAlwaysAllowTool: events?.saveAlwaysAllowTool,
+    switchPermissionMode: events?.switchPermissionMode,
     onConfirm: events?.onConfirm,
     beforeToolExecute: options.beforeToolExecute,
   };
@@ -220,6 +223,24 @@ export async function runKodaX(
           events.onToolResult?.({ id: tc.id, name: tc.name, content });
           toolResults.push({ type: 'tool_result', tool_use_id: tc.id, content });
         }
+      }
+
+      // Check if any tool was cancelled by user - 检查是否有工具被用户取消
+      const hasCancellation = toolResults.some(r =>
+        typeof r.content === 'string' && r.content.startsWith('[Cancelled]')
+      );
+
+      if (hasCancellation) {
+        // User cancelled - add results and exit loop - 用户取消，添加结果并退出循环
+        messages.push({ role: 'user', content: toolResults });
+        events.onStreamEnd?.();
+        return {
+          success: true,
+          lastText: 'Operation cancelled by user',
+          messages,
+          sessionId,
+          interrupted: true,
+        };
       }
 
       messages.push({ role: 'user', content: toolResults });

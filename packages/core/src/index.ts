@@ -38,6 +38,7 @@ export type {
   KodaXToolExecutionContext,
   KodaXConfig,
   PermissionMode,
+  ConfirmResult,
 } from './types.js';
 
 // 错误导出

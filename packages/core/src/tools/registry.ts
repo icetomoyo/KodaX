@@ -240,11 +240,12 @@ export async function executeTool(
   }
 
   // === Permanent protection zone: always confirm, applies to all modes - 永久保护区域：任何模式下都需确认 ===
+  // Note: Permanent protection zones do NOT support "always" option - 注意：永久保护区域不支持 "always" 选项
   if (ctx.gitRoot && FILE_MODIFICATION_TOOLS.has(name)) {
     const targetPath = input.path as string | undefined;
     if (targetPath && isAlwaysConfirmPath(targetPath, ctx.gitRoot)) {
-      const confirmed = ctx.onConfirm ? await ctx.onConfirm(name, { ...input, _alwaysConfirm: true }) : false;
-      if (!confirmed) return '[Cancelled] Operation on protected path requires confirmation';
+      const result = ctx.onConfirm ? await ctx.onConfirm(name, { ...input, _alwaysConfirm: true }) : { confirmed: false };
+      if (!result.confirmed) return '[Cancelled] Operation on protected path requires confirmation';
     }
   }
 
@@ -252,8 +253,8 @@ export async function executeTool(
   if (mode === 'auto-in-project' && ctx.gitRoot && FILE_MODIFICATION_TOOLS.has(name)) {
     const targetPath = input.path as string | undefined;
     if (targetPath && !isPathInsideProject(targetPath, ctx.gitRoot)) {
-      const confirmed = ctx.onConfirm ? await ctx.onConfirm(name, { ...input, _outsideProject: true }) : false;
-      if (!confirmed) return '[Cancelled] Operation on file outside project directory was cancelled';
+      const result = ctx.onConfirm ? await ctx.onConfirm(name, { ...input, _outsideProject: true }) : { confirmed: false };
+      if (!result.confirmed) return '[Cancelled] Operation on file outside project directory was cancelled';
     }
   }
 
@@ -263,16 +264,37 @@ export async function executeTool(
     if (command) {
       const dangerCheck = isBashCommandDangerousOutsideProject(command, ctx.gitRoot);
       if (dangerCheck.dangerous) {
-        const confirmed = ctx.onConfirm ? await ctx.onConfirm(name, { ...input, _outsideProject: true, _reason: dangerCheck.reason }) : false;
-        if (!confirmed) return `[Cancelled] ${dangerCheck.reason}`;
+        const result = ctx.onConfirm ? await ctx.onConfirm(name, { ...input, _outsideProject: true, _reason: dangerCheck.reason }) : { confirmed: false };
+        if (!result.confirmed) return `[Cancelled] ${dangerCheck.reason}`;
       }
     }
   }
 
   // === default / accept-edits: standard confirmTools check - default/accept-edits 模式：标准确认检查 ===
   if (ctx.confirmTools.has(name)) {
-    const confirmed = ctx.onConfirm ? await ctx.onConfirm(name, input) : true;
-    if (!confirmed) return '[Cancelled] Operation cancelled by user';
+    // Check if tool is in always-allow list - 检查工具是否在总是允许列表中
+    if (ctx.alwaysAllowTools.has(name)) {
+      // Tool is always allowed, skip confirmation - 工具总是允许，跳过确认
+    } else if (ctx.onConfirm) {
+      const result = await ctx.onConfirm(name, input);
+      if (!result.confirmed) return '[Cancelled] Operation cancelled by user';
+      // If user selected "always", save to config and add to set - 如果用户选择了 "always"，保存到配置并添加到集合
+      if (result.always) {
+        ctx.alwaysAllowTools.add(name);
+        ctx.saveAlwaysAllowTool?.(name);
+        // If in default mode, switch to accept-edits mode - 如果在 default 模式，切换到 accept-edits 模式
+        if (ctx.permissionMode === 'default' && ctx.switchPermissionMode) {
+          ctx.switchPermissionMode('accept-edits');
+        }
+      }
+    }
+  } else {
+    // Tool NOT in confirmTools = auto-allowed, save to always-allow config for persistence
+    // 工具不在确认列表中 = 自动允许，保存到总是允许配置以持久化
+    if (!ctx.alwaysAllowTools.has(name)) {
+      ctx.alwaysAllowTools.add(name);
+      ctx.saveAlwaysAllowTool?.(name);
+    }
   }
 
   const handler = getTool(name);

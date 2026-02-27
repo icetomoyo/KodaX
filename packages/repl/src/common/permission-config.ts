@@ -20,6 +20,7 @@ function getProjectConfigFile(): string {
 
 interface PermissionConfigData {
   permissionMode?: PermissionMode;
+  alwaysAllowTools?: string[];
 }
 
 function readJsonFile(filePath: string): Record<string, unknown> {
@@ -67,4 +68,39 @@ export function savePermissionModeProject(mode: PermissionMode): void {
   const projectConfigFile = getProjectConfigFile();
   const current = readJsonFile(projectConfigFile);
   writeJsonFile(projectConfigFile, { ...current, permissionMode: mode });
+}
+
+/**
+ * Load always-allow tools list (project-level merged with user-level)
+ * 加载总是允许的工具列表（项目级与用户级合并）
+ */
+export function loadAlwaysAllowTools(): string[] {
+  const userConfig = readJsonFile(USER_CONFIG_FILE) as PermissionConfigData;
+  const projectConfig = readJsonFile(getProjectConfigFile()) as PermissionConfigData;
+
+  // Merge both lists (project-level additions) - 合并两个列表（项目级补充）
+  const userTools = userConfig.alwaysAllowTools ?? [];
+  const projectTools = projectConfig.alwaysAllowTools ?? [];
+
+  return [...new Set([...userTools, ...projectTools])];
+}
+
+/**
+ * Save a tool to the always-allow list (project-level config)
+ * 保存工具到总是允许列表（项目级配置）
+ *
+ * Note: "Always yes" is project-specific, not global
+ * 注意："总是允许"是项目特定的，不是全局的
+ */
+export function saveAlwaysAllowTool(tool: string): void {
+  const projectConfigFile = getProjectConfigFile();
+  const current = readJsonFile(projectConfigFile) as PermissionConfigData;
+  const existingTools = current.alwaysAllowTools ?? [];
+
+  if (!existingTools.includes(tool)) {
+    writeJsonFile(projectConfigFile, {
+      ...current,
+      alwaysAllowTools: [...existingTools, tool]
+    });
+  }
 }

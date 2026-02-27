@@ -92,7 +92,7 @@ export const TextInput: React.FC<TextInputProps> = ({
       <Box>
         <Text color={theme.colors.primary}>{prompt} </Text>
         {focus ? (
-          <Text backgroundColor={theme.colors.primary}> </Text>
+          <Text backgroundColor={theme.colors.primary} color="#000000"> </Text>
         ) : (
           <Text> </Text>
         )}
@@ -189,7 +189,7 @@ export const SingleLineTextInput: React.FC<{
       <Box>
         <Text color={theme.colors.primary}>{prompt} </Text>
         {placeholder && <Text dimColor>{placeholder}</Text>}
-        {focus && <Text backgroundColor={theme.colors.primary}> </Text>}
+        {focus && <Text backgroundColor={theme.colors.primary} color="#000000"> </Text>}
       </Box>
     );
   }
