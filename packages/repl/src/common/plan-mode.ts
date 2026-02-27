@@ -1,5 +1,6 @@
 /**
- * Plan Mode 主逻辑
+ * Plan Mode - Main logic for step-by-step task execution
+ * Plan Mode 主逻辑 - 分步执行任务
  */
 
 import { runKodaX, KodaXOptions } from '@kodax/core';
@@ -7,6 +8,7 @@ import { planStorage, ExecutionPlan } from './plan-storage.js';
 import chalk from 'chalk';
 import * as readline from 'readline';
 
+// Lazy initialize readline to avoid character duplication from REPL layer conflict
 // 延迟创建 readline 接口，避免与 REPL 层冲突导致字符重复
 let rl: readline.Interface | null = null;
 
@@ -30,10 +32,10 @@ async function confirm(message: string): Promise<boolean> {
 }
 
 async function generatePlan(prompt: string, options: KodaXOptions): Promise<string> {
-  // 临时修改系统提示来生成计划
+  // Temporarily modify options for plan generation only
   const planOptions: KodaXOptions = {
     ...options,
-    maxIter: 1,  // 只生成计划，不执行工具
+    maxIter: 1,  // Generate plan only, don't execute tools
   };
 
   const result = await runKodaX(planOptions,
@@ -43,7 +45,7 @@ async function generatePlan(prompt: string, options: KodaXOptions): Promise<stri
   return result.lastText || '';
 }
 
-// 简单解析文本计划
+// Simple text plan parser - 简单解析文本计划
 function parsePlanText(text: string, originalPrompt: string): ExecutionPlan {
   const lines = text.split('\n');
   const title = lines.find(l => l.startsWith('PLAN:'))?.replace('PLAN:', '').trim()
@@ -53,7 +55,7 @@ function parsePlanText(text: string, originalPrompt: string): ExecutionPlan {
   let stepId = 0;
 
   for (const line of lines) {
-    // 匹配: 1. [READ] description - target
+    // Match format: 1. [READ] description - target - 匹配格式
     const match = line.match(/^\d+\.\s*\[([A-Z]+)\]\s*(.+?)(?:\s+-\s+(.+))?$/);
     if (match) {
       steps.push({
@@ -76,7 +78,7 @@ function parsePlanText(text: string, originalPrompt: string): ExecutionPlan {
   };
 }
 
-// 展示计划
+// Display plan to console - 展示计划
 function displayPlan(plan: ExecutionPlan): void {
   console.log(chalk.cyan('\n╔══════════════════════════════════════════════════════════════╗'));
   console.log(chalk.cyan(`║  📋 ${plan.title.padEnd(55)}║`));
@@ -107,7 +109,7 @@ function displayPlan(plan: ExecutionPlan): void {
   console.log(chalk.dim(`\nProgress: ${progress}/${plan.steps.length} completed\n`));
 }
 
-// 执行计划
+// Execute plan step by step - 执行计划
 async function executePlan(
   plan: ExecutionPlan,
   options: KodaXOptions
@@ -129,7 +131,7 @@ async function executePlan(
     }
 
     try {
-      // 执行步骤
+      // Execute step - 执行步骤
       const stepOptions: KodaXOptions = {
         ...options,
         beforeToolExecute: async (tool, input) => {
@@ -159,12 +161,12 @@ async function executePlan(
   console.log(chalk.cyan('\n📋 Plan execution completed\n'));
 }
 
-// 主入口
+// Main entry point - 主入口
 export async function runWithPlanMode(
   prompt: string,
   options: KodaXOptions
 ): Promise<void> {
-  // 1. 检查未完成计划
+  // 1. Check for pending plans - 检查未完成计划
   const pending = await planStorage.findPending();
   if (pending) {
     const progress = pending.steps.filter(s => s.status === 'done').length;
@@ -180,7 +182,7 @@ export async function runWithPlanMode(
     }
   }
 
-  // 2. 生成新计划
+  // 2. Generate new plan - 生成新计划
   console.log(chalk.dim('\n📝 Generating plan...\n'));
   const planText = await generatePlan(prompt, options);
 
@@ -196,10 +198,10 @@ export async function runWithPlanMode(
     return;
   }
 
-  // 3. 保存计划
+  // 3. Save plan
   await planStorage.save(plan);
 
-  // 4. 展示并确认
+  // 4. Display and confirm
   displayPlan(plan);
   const confirmed = await confirm('Execute this plan?');
 
@@ -208,11 +210,11 @@ export async function runWithPlanMode(
     return;
   }
 
-  // 5. 执行
+  // 5. Execute
   await executePlan(plan, options);
 }
 
-// 列出所有计划
+// List all saved plans - 列出所有计划
 export async function listPlans(): Promise<void> {
   const plans = await planStorage.list();
 
@@ -232,7 +234,7 @@ export async function listPlans(): Promise<void> {
   console.log();
 }
 
-// 恢复指定计划
+// Resume a specific plan by ID - 恢复指定计划
 export async function resumePlan(planId: string, options: KodaXOptions): Promise<void> {
   const plan = await planStorage.load(planId);
   if (!plan) {
@@ -248,7 +250,7 @@ export async function resumePlan(planId: string, options: KodaXOptions): Promise
   }
 }
 
-// 清除已完成计划
+// Clear all completed plans - 清除已完成计划
 export async function clearCompletedPlans(): Promise<void> {
   const plans = await planStorage.list();
   const completed = plans.filter(p =>

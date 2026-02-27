@@ -417,6 +417,66 @@ npm test
 npm run clean
 ```
 
+## Code Style
+
+### Comment Guidelines
+
+KodaX uses a **English-first** comment style with selective Chinese brief notes for complex logic.
+
+#### Rules
+
+| Situation | Style | Example |
+|-----------|-------|---------|
+| Import/Export | English only | `// Import dependencies` |
+| Simple constants | English only | `// Max retry count` |
+| Simple logic | English only | `// Return if null` |
+| **Business rules** | English + Chinese | `// Skip tool_result - 跳过工具结果块` |
+| **Platform compatibility** | English + Chinese | `// Windows path handling - Windows 路径处理` |
+| **Performance optimization** | English + Chinese | `// Debounce to prevent flicker - 防抖避免闪烁` |
+| **Complex algorithms** | English + Chinese | Multi-line explanation |
+
+#### Examples
+
+```typescript
+// ========== English ONLY (simple/obvious logic) ==========
+
+// Import dependencies
+import { foo } from 'bar';
+
+// Default timeout in milliseconds
+const DEFAULT_TIMEOUT = 5000;
+
+// Initialize state
+const [count, setCount] = useState(0);
+
+// Clear the timer
+clearInterval(timer);
+
+// Return early if empty
+if (!items.length) return;
+
+// ========== English + Chinese brief (complex/business logic) ==========
+
+// Validate session before resuming - 验证会话有效性后才恢复
+// 避免加载损坏的会话文件导致运行时错误
+if (session && !validateSession(session)) {
+  return null;
+}
+
+// Batch updates to reduce render frequency - 批量更新减少渲染频率
+// 解决流式输出时 Ink reconciler 每字符触发重渲染的问题
+const FLUSH_INTERVAL = 80;
+
+/**
+ * Extracts text content from various message block types
+ * 从各类消息块中提取文本内容
+ *
+ * Note: thinking blocks are internal AI reasoning and should not be displayed
+ * 注意：thinking 块是 AI 内部思考，不应显示给用户
+ */
+function extractTextContent(block: MessageBlock): string { ... }
+```
+
 ## TypeScript Improvements over Python Version
 
 | Feature | Python (KodaXP) | TypeScript (KodaX) |

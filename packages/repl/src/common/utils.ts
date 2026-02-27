@@ -1,6 +1,5 @@
 /**
  * KodaX CLI Utilities
- *
  * CLI 层工具函数
  */
 
@@ -14,18 +13,18 @@ import { getProvider, KODAX_PROVIDERS } from '@kodax/core';
 
 const execAsync = promisify(exec);
 
-// CLI 配置目录
+// CLI config directory
 export const KODAX_DIR = path.join(os.homedir(), '.kodax');
 export const KODAX_SESSIONS_DIR = path.join(KODAX_DIR, 'sessions');
 export const KODAX_CONFIG_FILE = path.join(KODAX_DIR, 'config.json');
 
-// UI 显示常量
+// UI display constants
 export const PREVIEW_MAX_LENGTH = 60;
 
-// 动态读取版本号（从安装目录的 package.json 读取）
+// Read version from package.json dynamically - 动态读取版本号
+// Uses import.meta.url for path resolution, works regardless of cwd
+// 使用 import.meta.url 获取路径，无论用户在哪个目录运行都能正确读取
 export function getVersion(): string {
-  // 使用 import.meta.url 获取相对于此文件的路径
-  // 这样无论用户在哪个目录运行，都能正确读取版本号
   const packageJsonPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../package.json');
   if (fsSync.existsSync(packageJsonPath)) {
     try {
@@ -35,10 +34,10 @@ export function getVersion(): string {
   return '0.0.0';
 }
 
-// 导出 KODAX_VERSION 供兼容性使用
+// Export for backwards compatibility
 export const KODAX_VERSION = getVersion();
 
-// 获取 Provider 模型名称
+// Get provider model name
 export function getProviderModel(name: string): string | null {
   try {
     const provider = getProvider(name);
@@ -48,7 +47,7 @@ export function getProviderModel(name: string): string | null {
   }
 }
 
-// 获取 Provider 列表
+// Get list of all providers with their status
 export function getProviderList(): Array<{ name: string; model: string; configured: boolean }> {
   const result: Array<{ name: string; model: string; configured: boolean }> = [];
   for (const [name, factory] of Object.entries(KODAX_PROVIDERS)) {
@@ -62,7 +61,7 @@ export function getProviderList(): Array<{ name: string; model: string; configur
   return result;
 }
 
-// 检查 Provider 是否已配置
+// Check if provider is configured
 export function isProviderConfigured(name: string): boolean {
   try {
     const provider = getProvider(name);
@@ -72,7 +71,7 @@ export function isProviderConfigured(name: string): boolean {
   }
 }
 
-// 加载配置
+// Load config from ~/.kodax/config.json
 export function loadConfig(): { provider?: string; thinking?: boolean; auto?: boolean } {
   try {
     if (fsSync.existsSync(KODAX_CONFIG_FILE)) {
@@ -82,7 +81,7 @@ export function loadConfig(): { provider?: string; thinking?: boolean; auto?: bo
   return {};
 }
 
-// 保存配置
+// Save config to ~/.kodax/config.json
 export function saveConfig(config: { provider?: string; thinking?: boolean; auto?: boolean }): void {
   const current = loadConfig();
   const merged = { ...current, ...config };
@@ -90,12 +89,12 @@ export function saveConfig(config: { provider?: string; thinking?: boolean; auto
   fsSync.writeFileSync(KODAX_CONFIG_FILE, JSON.stringify(merged, null, 2));
 }
 
-// 获取 Git 根目录
+// Get git root directory
 export async function getGitRoot(): Promise<string | null> {
   try { const { stdout } = await execAsync('git rev-parse --show-toplevel'); return stdout.trim(); } catch { return null; }
 }
 
-// Feature 类型定义
+// Feature type definition
 interface Feature {
   name?: string;
   description?: string;
@@ -104,7 +103,7 @@ interface Feature {
   [key: string]: unknown;
 }
 
-// 获取功能进度
+// Get feature progress from feature_list.json
 export function getFeatureProgress(): [number, number] {
   const featuresPath = path.resolve('feature_list.json');
   if (!fsSync.existsSync(featuresPath)) return [0, 0];
@@ -116,7 +115,7 @@ export function getFeatureProgress(): [number, number] {
   } catch { return [0, 0]; }
 }
 
-// 检查所有功能是否完成
+// Check if all features are complete
 export function checkAllFeaturesComplete(): boolean {
   const featuresPath = path.resolve('feature_list.json');
   if (!fsSync.existsSync(featuresPath)) return false;
@@ -129,7 +128,7 @@ export function checkAllFeaturesComplete(): boolean {
   } catch { return false; }
 }
 
-// API 速率限制
+// API rate limiting - API 速率限制
 const KODAX_API_MIN_INTERVAL = 0.5;
 let lastApiCallTime = 0;
 const apiLock = { locked: false, queue: [] as (() => void)[] };
@@ -154,9 +153,10 @@ export async function rateLimitedCall<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-// ============== --init 提示词构建 ==============
+// ============== --init prompt builder - 提示词构建 ==============
 
 /**
+ * Build initialization prompt for long-running projects
  * 构建初始化长运行项目的提示词
  */
 export function buildInitPrompt(task: string, currentDate?: string, currentOS?: string): string {

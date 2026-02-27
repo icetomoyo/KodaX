@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-02-27 03:00_
+_Last Updated: 2026-02-27 03:20_
 
 ---
 
@@ -10,7 +10,7 @@ _Last Updated: 2026-02-27 03:00_
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
 | 001 | Low | Resolved | 未使用常量 PLAN_GENERATION_PROMPT | v0.3.1 | v0.4.5 | 2026-02-19 | 2026-02-27 |
-| 002 | Low | Open | /plan 命令未使用 _currentConfig 参数 | v0.3.1 | - | 2026-02-19 | - |
+| 002 | Low | Won't Fix | /plan 命令未使用 _currentConfig 参数 | v0.3.1 | - | 2026-02-19 | 2026-02-27 |
 | 003 | Medium | Won't Fix | Plan 文件无版本号 | v0.3.1 | - | 2026-02-19 | 2026-02-22 |
 | 004 | Medium | Won't Fix | Plan 解析正则表达式脆弱 | v0.3.1 | - | 2026-02-19 | 2026-02-22 |
 | 005 | Low | Open | 中英文注释混用 | v0.3.1 | - | 2026-02-19 | - |
@@ -82,9 +82,9 @@ _Last Updated: 2026-02-27 03:00_
 
 ---
 
-### 002: /plan 命令未使用 _currentConfig 参数
+### 002: /plan 命令未使用 _currentConfig 参数 (WON'T FIX)
 - **Priority**: Low
-- **Status**: Open
+- **Status**: Won't Fix
 - **Introduced**: v0.3.1 (auto-detected)
 - **Created**: 2026-02-19
 - **Original Problem**:
@@ -94,8 +94,13 @@ _Last Updated: 2026-02-27 03:00_
   }
   ```
   - 所有命令 handler 签名相同，但此参数未被使用
-- **Context**: `src/interactive/commands.ts`
-- **Proposed Solution**: 保持现状（下划线前缀已表明"故意不使用"）或用它来验证 plan mode 与当前 mode 的兼容性
+- **Context**: `packages/repl/src/interactive/commands.ts`
+- **Decision**: 不修复，理由如下：
+  1. **下划线前缀是标准约定**: `_currentConfig` 表示"故意不使用"，是 TypeScript 社区标准做法
+  2. **类型签名要求**: `CommandHandler` 类型要求 4 个参数，无法删除
+  3. **无实际功能问题**: 这是代码风格观察，不是 bug
+  4. **修改风险高**: 修改类型签名会影响所有命令
+- **Resolution Date**: 2026-02-27
 
 ---
 
@@ -1167,12 +1172,18 @@ _Last Updated: 2026-02-27 03:00_
 ---
 
 ## Summary
-- Total: 48 (9 Open, 36 Resolved, 3 Won't Fix)
-- Highest Priority Open: 002 - /plan 命令未使用 _currentConfig 参数 (Low)
+- Total: 48 (8 Open, 36 Resolved, 4 Won't Fix)
+- Highest Priority Open: 005 - 中英文注释混用 (Low)
 
 ---
 
 ## Changelog
+
+### 2026-02-27: Issue 002 标记为 Won't Fix
+- Issue 002 (/plan 命令未使用 _currentConfig 参数) 标记为 Won't Fix
+- 理由：下划线前缀是 TypeScript 标准约定，表示"故意不使用"
+- 类型签名要求该参数，无法删除
+- 无实际功能问题
 
 ### 2026-02-27: Issue 001 已修复
 - Issue 001 (未使用常量 PLAN_GENERATION_PROMPT) 已修复
