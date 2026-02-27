@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-02-28 00:45_
+_Last Updated: 2026-02-28 01:15_
 
 ---
 
@@ -59,7 +59,7 @@ _Last Updated: 2026-02-28 00:45_
 | 048 | Medium | Resolved | Spinner 动画期间消息显示乱序 | v0.4.5 | v0.4.5 | 2026-02-27 | 2026-02-27 |
 | 049 | High | Resolved | 权限模式持久化位置错误 | v0.5.0 | v0.5.0 | 2026-02-27 | 2026-02-27 |
 | 050 | Medium | Resolved | 命令输出格式不一致（AI 编造问题） | v0.4.6 | v0.4.6 | 2026-02-27 | 2026-02-28 |
-| 051 | Medium | Open | 权限确认取消时无提示 | v0.4.6 | - | 2026-02-27 | - |
+| 051 | Medium | Resolved | 权限确认取消时无提示 | v0.4.6 | v0.4.6 | 2026-02-27 | 2026-02-28 |
 | 052 | High | Open | 受保护路径确认对话框显示错误选项 | v0.4.6 | - | 2026-02-28 | - |
 
 ---
@@ -1186,12 +1186,17 @@ _Last Updated: 2026-02-28 00:45_
 ---
 
 ## Summary
-- Total: 52 (9 Open, 39 Resolved, 4 Won't Fix)
+- Total: 52 (8 Open, 40 Resolved, 4 Won't Fix)
 - Highest Priority Open: 052 - 受保护路径确认对话框显示错误选项 (High)
 
 ---
 
 ## Changelog
+
+### 2026-02-28: Issue 051 修复
+- Resolved 051: 权限确认取消时无提示
+- 在 `beforeToolExecute` 中用户拒绝确认时添加取消提示消息
+- 修改文件：`packages/repl/src/ui/InkREPL.tsx`
 
 ### 2026-02-27: Issue 002 标记为 Won't Fix
 - Issue 002 (/plan 命令未使用 _currentConfig 参数) 标记为 Won't Fix
@@ -1786,10 +1791,11 @@ _Last Updated: 2026-02-28 00:45_
 
 ---
 
-### 051: 权限确认取消时无提示
+### 051: 权限确认取消时无提示 (RESOLVED)
 - **Priority**: Medium
-- **Status**: Open
+- **Status**: Resolved
 - **Introduced**: v0.4.6
+- **Fixed**: v0.4.6
 - **Created**: 2026-02-27
 - **Original Problem**:
   在 Feature 009 测试 (TC-008) 中发现：
@@ -1808,10 +1814,12 @@ _Last Updated: 2026-02-28 00:45_
   2. 执行 `创建文件 test_reject.txt`
   3. 在确认对话框中按 `n`
   4. 观察：操作被取消但无提示信息
-- **Root Cause**: Unknown - 需要检查权限确认取消时的 UI 反馈逻辑
-- **Proposed Solution**:
-  - 检查 `InkREPL.tsx` 中 `onConfirm` 回调的拒绝路径
-  - 确认取消时是否正确输出取消消息
+- **Root Cause**: 在 `InkREPL.tsx` 的 `beforeToolExecute` 钩子中，当用户拒绝确认时只返回 `false` 阻止工具执行，但没有输出任何取消提示消息。
+- **Resolution**:
+  - 在 `beforeToolExecute` 中，当 `result.confirmed` 为 `false` 时，添加 `console.log(chalk.yellow('[Cancelled] Operation cancelled by user'))` 输出取消提示
+  - 最小化改动，只添加一行代码
+- **Resolution Date**: 2026-02-28
+- **Files Changed**: `packages/repl/src/ui/InkREPL.tsx`
 
 ---
 

@@ -365,6 +365,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         // Show confirmation dialog
         const result = await showConfirmDialog(tool, input);
         if (!result.confirmed) {
+          // Issue 051 fix: Show cancellation feedback - Issue 051 修复：显示取消反馈
+          console.log(chalk.yellow('[Cancelled] Operation cancelled by user'));
           return false;
         }
 

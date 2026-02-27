@@ -273,11 +273,11 @@
 **预期效果**:
 - [x] 显示确认对话框
 - [x] 按 `n` 后操作被取消
-- [ ] 显示 "[Cancelled] Operation cancelled by user" 提示
+- [x] 显示 "[Cancelled] Operation cancelled by user" 提示
 - [x] 文件未被创建
 
 **实际结果**: [待填写]
-**是否通过**: [ ] Pass / [ ] Fail
+**是否通过**: [x] Pass / [ ] Fail
 
 ---
 
