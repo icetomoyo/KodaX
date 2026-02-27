@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-02-27 01:20_
+_Last Updated: 2026-02-27 02:30_
 
 ---
 
@@ -55,8 +55,8 @@ _Last Updated: 2026-02-27 01:20_
 | 044 | High | Resolved | 流式输出时 Ctrl+C 延迟生效 | v0.3.4 | v0.3.6 | 2026-02-23 | 2026-02-24 |
 | 045 | High | Resolved | Spinner 出现时问答顺序颠倒 | v0.4.3 | v0.4.4 | 2026-02-25 | 2026-02-25 |
 | 046 | High | Resolved | Session 恢复时消息显示异常 | v0.4.5 | v0.4.5 | 2026-02-26 | 2026-02-27 |
-| 047 | Medium | Open | 流式输出时界面闪烁 | v0.4.5 | - | 2026-02-26 | - |
-| 048 | Medium | Open | Spinner 动画期间消息显示乱序 | v0.4.5 | - | 2026-02-27 | - |
+| 047 | Medium | Resolved | 流式输出时界面闪烁 | v0.4.5 | v0.4.5 | 2026-02-26 | 2026-02-27 |
+| 048 | Medium | Resolved | Spinner 动画期间消息显示乱序 | v0.4.5 | v0.4.5 | 2026-02-27 | 2026-02-27 |
 
 ---
 
@@ -1161,9 +1161,8 @@ _Last Updated: 2026-02-27 01:20_
 ---
 
 ## Summary
-- Total: 47 (10 Open, 33 Resolved, 3 Won't Fix, 1 Planned for v0.5.0+)
-- Highest Priority Open: 044 - 流式输出时 Ctrl+C 延迟生效 (High) [已解决]
-- Highest Priority Open: 047 - 流式输出时界面闪烁 (Medium)
+- Total: 47 (8 Open, 35 Resolved, 3 Won't Fix, 1 Planned for v0.5.0+)
+- Highest Priority Open: 036 - React 状态同步潜在问题 (Medium)
 - Planned for v0.5.0+: 039 (长期重构 - ConsolePatcher 架构)
 
 ---
@@ -1384,11 +1383,13 @@ _Last Updated: 2026-02-27 01:20_
 
 ---
 
-### 047: 流式输出时界面闪烁 (OPEN)
+### 047: 流式输出时界面闪烁 (RESOLVED)
 - **Priority**: Medium
-- **Status**: Open
+- **Status**: Resolved
 - **Introduced**: v0.4.5
+- **Fixed**: v0.4.5
 - **Created**: 2026-02-26
+- **Resolved**: 2026-02-27
 - **Original Problem**:
   - 流式输出时界面偶尔会闪烁
   - 输出越快速，闪烁越频繁
@@ -1470,13 +1471,25 @@ _Last Updated: 2026-02-27 01:20_
   - `packages/repl/src/ui/InkREPL.tsx` - 添加 maxFps 参数
   - `packages/repl/src/ui/contexts/StreamingContext.tsx` - 批量更新逻辑
 
+- **Resolution**:
+  通过方案 B（批量更新）解决，与 Issue 048 共用同一修复方案。
+
+  **实现方式**:
+  - 在 `StreamingContext.tsx` 添加批量更新缓冲区
+  - 使用 80ms 刷新间隔，将更新频率从 ~100fps 降到 12.5fps
+  - 高速流式输出不再超出 Ink 渲染能力
+
+  **Commit**: (待提交)
+
 ---
 
-### 048: Spinner 动画期间消息显示乱序 (OPEN)
+### 048: Spinner 动画期间消息显示乱序 (RESOLVED)
 - **Priority**: Medium
-- **Status**: Open
+- **Status**: Resolved
 - **Introduced**: v0.4.5
+- **Fixed**: v0.4.5
 - **Created**: 2026-02-27
+- **Resolved**: 2026-02-27
 - **Original Problem**:
   - Spinner 动画期间历史消息偶尔会乱序显示
   - 响应结束后恢复正常显示
@@ -1637,6 +1650,22 @@ _Last Updated: 2026-02-27 01:20_
   - `packages/repl/src/ui/contexts/StreamingContext.tsx` - 统一更新周期
   - `packages/repl/src/ui/components/MessageList.tsx` - 分离静态/动态渲染
   - `packages/repl/src/ui/components/LoadingIndicator.tsx` - Spinner 帧管理移出
+
+- **Resolution**:
+  实施方案 B（统一更新周期）已解决闪烁和乱序问题。
+
+  **实现方式**:
+  - 在 `StreamingContext.tsx` 添加 `pendingResponseText` 和 `pendingThinkingText` 缓冲区
+  - 使用 80ms 刷新间隔（与 Spinner 动画同步）
+  - 在关键操作（stopStreaming, abort, setError 等）前强制刷新缓冲区
+  - 确保所有内容在响应结束时完整显示
+
+  **方案 A 决策**:
+  - 方案 A（Static 组件）边际收益低，不实施
+  - 方案 B 已将更新频率从 ~100fps 降到 12.5fps
+  - Ink 的 reconciler 会跳过未变化的内容，重渲染开销可接受
+
+  **Commit**: (待提交)
 
 ---
 

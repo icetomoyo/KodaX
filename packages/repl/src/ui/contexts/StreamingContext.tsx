@@ -185,10 +185,26 @@ export interface StreamingManager {
 
 /**
  * 创建流式管理器
+ *
+ * Issue 048 修复: 使用批量更新减少渲染频率
+ * - 流式文本和 thinking 内容缓冲到 80ms 周期
+ * - 与 Spinner 动画同步，避免竞态条件
  */
 export function createStreamingManager(): StreamingManager {
   let state: StreamingContextValue = { ...DEFAULT_STREAMING_STATE };
   const listeners = new Set<StreamingStateListener>();
+
+  // === 批量更新缓冲区 (Issue 048) ===
+  let pendingResponseText = "";
+  let pendingThinkingText = "";
+  let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * 刷新间隔 (ms)
+   * - 80ms 与 Spinner 动画帧同步
+   * - 100ms 内的用户感知为即时响应
+   */
+  const FLUSH_INTERVAL = 80;
 
   const notify = () => {
     for (const listener of listeners) {
@@ -196,15 +212,49 @@ export function createStreamingManager(): StreamingManager {
     }
   };
 
+  /**
+   * 立即应用缓冲区内容并通知
+   */
+  const flushPendingUpdates = () => {
+    if (flushTimer) {
+      clearTimeout(flushTimer);
+      flushTimer = null;
+    }
+
+    const hasUpdates = pendingResponseText || pendingThinkingText;
+    if (hasUpdates) {
+      state = {
+        ...state,
+        currentResponse: state.currentResponse + pendingResponseText,
+        thinkingContent: state.thinkingContent + pendingThinkingText,
+        thinkingCharCount: state.thinkingContent.length + pendingThinkingText.length,
+      };
+      pendingResponseText = "";
+      pendingThinkingText = "";
+      notify();
+    }
+  };
+
+  /**
+   * 安排延迟刷新
+   */
+  const scheduleFlush = () => {
+    if (!flushTimer) {
+      flushTimer = setTimeout(flushPendingUpdates, FLUSH_INTERVAL);
+    }
+  };
+
   return {
     getState: () => state,
 
     setState: (newState: StreamingState) => {
+      flushPendingUpdates(); // 状态切换前刷新
       state = { ...state, state: newState };
       notify();
     },
 
     startStreaming: () => {
+      flushPendingUpdates(); // 开始前刷新
       state = {
         ...state,
         state: StreamingState.Responding,
@@ -215,6 +265,7 @@ export function createStreamingManager(): StreamingManager {
     },
 
     stopStreaming: () => {
+      flushPendingUpdates(); // 停止前刷新，确保所有内容显示
       state = {
         ...state,
         state: StreamingState.Idle,
@@ -224,14 +275,12 @@ export function createStreamingManager(): StreamingManager {
     },
 
     appendResponse: (text: string) => {
-      state = {
-        ...state,
-        currentResponse: state.currentResponse + text,
-      };
-      notify();
+      pendingResponseText += text;
+      scheduleFlush();
     },
 
     clearResponse: () => {
+      flushPendingUpdates(); // 清空前刷新
       state = {
         ...state,
         currentResponse: "",
@@ -240,6 +289,7 @@ export function createStreamingManager(): StreamingManager {
     },
 
     setError: (error: string | undefined) => {
+      flushPendingUpdates(); // 错误前刷新
       state = {
         ...state,
         error,
@@ -249,6 +299,7 @@ export function createStreamingManager(): StreamingManager {
     },
 
     abort: () => {
+      flushPendingUpdates(); // 中断前刷新，确保已接收内容显示
       state.abortController?.abort();
       state = {
         ...state,
@@ -259,6 +310,7 @@ export function createStreamingManager(): StreamingManager {
     },
 
     reset: () => {
+      flushPendingUpdates(); // 重置前刷新
       state.abortController?.abort();
       state = { ...DEFAULT_STREAMING_STATE };
       notify();
@@ -279,6 +331,7 @@ export function createStreamingManager(): StreamingManager {
     },
 
     startThinking: () => {
+      flushPendingUpdates(); // 开始 thinking 前刷新
       state = {
         ...state,
         isThinking: true,
@@ -289,6 +342,7 @@ export function createStreamingManager(): StreamingManager {
     },
 
     appendThinkingChars: (count: number) => {
+      // 字符计数不需要批量更新，直接更新
       state = {
         ...state,
         isThinking: true,
@@ -298,16 +352,12 @@ export function createStreamingManager(): StreamingManager {
     },
 
     appendThinkingContent: (text: string) => {
-      state = {
-        ...state,
-        isThinking: true,
-        thinkingContent: state.thinkingContent + text,
-        thinkingCharCount: state.thinkingContent.length + text.length,
-      };
-      notify();
+      pendingThinkingText += text;
+      scheduleFlush();
     },
 
     stopThinking: () => {
+      flushPendingUpdates(); // 停止前刷新
       // Don't clear thinkingContent - preserve it for display
       // Only reset isThinking flag to hide the Thinking indicator
       state = {
@@ -320,6 +370,7 @@ export function createStreamingManager(): StreamingManager {
     },
 
     clearThinkingContent: () => {
+      flushPendingUpdates(); // 清空前刷新
       // Clear thinking content when response completes
       state = {
         ...state,
@@ -331,6 +382,7 @@ export function createStreamingManager(): StreamingManager {
     },
 
     setCurrentTool: (tool: string | undefined) => {
+      flushPendingUpdates(); // 工具切换前刷新
       state = {
         ...state,
         currentTool: tool,
@@ -340,6 +392,7 @@ export function createStreamingManager(): StreamingManager {
     },
 
     appendToolInputChars: (count: number) => {
+      // 字符计数不需要批量更新，直接更新
       state = {
         ...state,
         toolInputCharCount: state.toolInputCharCount + count,

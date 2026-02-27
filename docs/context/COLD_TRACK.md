@@ -657,4 +657,88 @@ Bash(rm:*)       - 匹配 rm 开头的命令
 | A. Static 组件 | 将历史消息包装在 Static 中，避免重渲染 | 低 |
 | B. 统一更新周期 | 流式内容与 Spinner 共享同一更新周期 | 中 |
 
+---
+
+### Session: 2026-02-27 (Issue 047/048 修复)
+
+#### Turn 1 - 实施方案 B
+**Assistant**:
+- 修改 StreamingContext.tsx 添加批量更新逻辑
+- 添加 pendingResponseText 和 pendingThinkingText 缓冲区
+- FLUSH_INTERVAL = 80ms 与 Spinner 同步
+- 在关键操作前强制刷新缓冲区
+
+**Tools**: Edit
+
+#### Turn 2 - 用户验证
+**User**: 验证通过，闪烁和乱序问题已解决
+
+**Assistant**:
+- 分析方案 A 的边际收益
+- 结论：方案 A 边际收益低，不实施
+- 理由：方案 B 已将更新频率从 ~100fps 降到 12.5fps
+
+#### Turn 3 - 更新 Issue 状态
+**Assistant**:
+- 更新 Issue 047 状态: Open → Resolved
+- 更新 Issue 048 状态: Open → Resolved
+- 更新 Summary: 10 Open → 8 Open
+
+**Tools**: Edit
+
+#### Turn 4 - 生成快照
+**User**: 执行 /context-snapshot
+
+---
+
+### Issue 047/048 修复详情
+
+**问题**: 流式输出时界面闪烁 + Spinner 动画期间消息乱序
+
+**修复方案**: 方案 B（批量更新）
+
+**实现**:
+```typescript
+// StreamingContext.tsx
+let pendingResponseText = "";
+let pendingThinkingText = "";
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+const FLUSH_INTERVAL = 80;
+
+const flushPendingUpdates = () => {
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  if (pendingResponseText || pendingThinkingText) {
+    state = {
+      ...state,
+      currentResponse: state.currentResponse + pendingResponseText,
+      thinkingContent: state.thinkingContent + pendingThinkingText,
+      thinkingCharCount: state.thinkingContent.length + pendingThinkingText.length,
+    };
+    pendingResponseText = "";
+    pendingThinkingText = "";
+    notify();
+  }
+};
+
+const scheduleFlush = () => {
+  if (!flushTimer) {
+    flushTimer = setTimeout(flushPendingUpdates, FLUSH_INTERVAL);
+  }
+};
+
+// 修改后的 appendResponse
+appendResponse: (text: string) => {
+  pendingResponseText += text;
+  scheduleFlush();
+}
+```
+
+**方案 A 决策**:
+- 不实施 Static 组件隔离
+- 边际收益低，风险/收益比不佳
+- Ink reconciler 会跳过未变化内容
+
 
