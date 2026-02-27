@@ -1,11 +1,15 @@
 /**
  * Permission System - Core permission computation utilities - 权限系统核心工具函数
  *
- * Pattern format (inspired by Claude Code):
- * - "read" - simple tool name (for read-only tools)
- * - "Edit(*)" - allow all edit operations
+ * Pattern format (ONLY for Bash tool in accept-edits mode):
  * - "Bash(npm install)" - exact command match
- * - "Bash(git commit:*)" - prefix wildcard match
+ * - "Bash(git commit:*)" - prefix wildcard match (matches "git commit -m 'msg'" etc.)
+ * - "Bash(npm:*)" - command prefix wildcard (matches "npm install", "npm run build" etc.)
+ *
+ * Note: Bash(*) is REJECTED for safety. Use specific command patterns.
+ * Note: Other tools don't need pattern support:
+ * - Read/Glob/Grep: Always allowed (project-external access is enforced confirmation)
+ * - Edit/Write: Auto-allowed in accept-edits mode, always-ask in default mode
  */
 
 import path from 'path';
@@ -39,46 +43,37 @@ export function parseAllowedToolPattern(entry: string): { tool: string; pattern:
 }
 
 /**
- * Check if a tool call matches an allowed pattern - 检查工具调用是否匹配允许的模式
+ * Check if a bash command matches an allowed pattern - 检查 bash 命令是否匹配允许的模式
  *
- * @param toolName - Tool name (e.g., "bash", "edit")
- * @param input - Tool input (contains command for bash, path for edit/write)
- * @param pattern - Pattern from config (e.g., "npm install", "git commit:*", "*")
+ * Note: We reject "*" pattern for safety. Use specific patterns like "git:*" or "npm:*"
+ *
+ * @param command - The bash command to check
+ * @param pattern - Pattern from config (e.g., "npm install", "git commit:*")
  */
-export function matchesAllowedPattern(
-  toolName: string,
-  input: Record<string, unknown>,
-  pattern: string | null
-): boolean {
-  // No pattern means allow all for this tool - 无模式表示允许该工具的所有操作
-  if (pattern === null) return true;
+function matchesBashPattern(command: string, pattern: string): boolean {
+  // Reject "*" pattern for safety - 拒绝 "*" 模式以确保安全
+  // If user wants all bash auto-allowed, use 'auto-in-project' mode instead
+  if (pattern === '*') return false;
 
-  // Wildcard means allow all - 通配符表示允许所有
-  if (pattern === '*') return true;
-
-  // For bash: match against command - bash 工具：匹配命令
-  if (toolName === 'bash') {
-    const command = (input.command as string) ?? '';
-    // Prefix wildcard: "git commit:*" matches "git commit -m 'msg'"
-    if (pattern.endsWith(':*')) {
-      const prefix = pattern.slice(0, -2); // Remove ":*"
-      return command.startsWith(prefix);
-    }
-    // Exact match - 精确匹配
-    return command === pattern;
+  // Prefix wildcard: "git commit:*" matches "git commit -m 'msg'"
+  if (pattern.endsWith(':*')) {
+    const prefix = pattern.slice(0, -2); // Remove ":*"
+    return command.startsWith(prefix);
   }
 
-  // For edit/write: could match against path in future - edit/write：未来可匹配路径
-  // For now, pattern "*" means all, anything else is not supported yet
-  // 目前只支持 "*" 表示全部，其他模式暂不支持
-  return pattern === '*';
+  // Exact match - 精确匹配
+  return command === pattern;
 }
 
 /**
  * Check if a tool call is allowed by the patterns list - 检查工具调用是否被模式列表允许
  *
- * @param toolName - Tool name
- * @param input - Tool input
+ * Note: Only Bash tool is supported. Other tools don't need pattern matching:
+ * - Read/Glob/Grep: Always allowed for in-project, enforced confirmation for out-of-project
+ * - Edit/Write: Mode-based (auto in accept-edits, ask in default)
+ *
+ * @param toolName - Tool name (only "bash" is meaningful)
+ * @param input - Tool input (contains command for bash)
  * @param allowedPatterns - List of allowed patterns from config
  */
 export function isToolCallAllowed(
@@ -86,16 +81,24 @@ export function isToolCallAllowed(
   input: Record<string, unknown>,
   allowedPatterns: string[]
 ): boolean {
-  const lowerToolName = toolName.toLowerCase();
+  // Only bash tool supports pattern matching - 只有 bash 工具支持模式匹配
+  if (toolName.toLowerCase() !== 'bash') {
+    return false;
+  }
+
+  const command = (input.command as string) ?? '';
 
   for (const entry of allowedPatterns) {
     const parsed = parseAllowedToolPattern(entry);
 
     // Tool name must match (case-insensitive) - 工具名必须匹配（不区分大小写）
-    if (parsed.tool !== lowerToolName) continue;
+    if (parsed.tool !== 'bash') continue;
 
-    // Check if input matches the pattern - 检查输入是否匹配模式
-    if (matchesAllowedPattern(toolName, input, parsed.pattern)) {
+    // No pattern means allow all bash commands - 无模式表示允许所有 bash 命令
+    if (parsed.pattern === null) return true;
+
+    // Check if command matches the pattern - 检查命令是否匹配模式
+    if (matchesBashPattern(command, parsed.pattern)) {
       return true;
     }
   }
@@ -106,45 +109,41 @@ export function isToolCallAllowed(
 /**
  * Generate pattern string for saving - 生成用于保存的模式字符串
  *
- * @param toolName - Tool name
- * @param input - Tool input (to extract command/path for specific pattern)
- * @param allowAll - If true, save "Tool(*)"; if false, save specific pattern
+ * Note: Only Bash tool patterns are supported. We NEVER generate Bash(*) as it's too dangerous.
+ *
+ * @param toolName - Tool name (only "bash" generates meaningful patterns)
+ * @param input - Tool input (contains command for bash)
+ * @param allowAll - Ignored for bash (we always generate specific patterns for safety)
  */
 export function generateSavePattern(
   toolName: string,
   input: Record<string, unknown>,
   allowAll: boolean
 ): string {
-  const lowerToolName = toolName.toLowerCase();
-
-  // Read-only tools: save simple name - 只读工具：保存简单名称
-  if (lowerToolName === 'read' || lowerToolName === 'glob' || lowerToolName === 'grep') {
-    return lowerToolName;
+  // Only bash tool generates meaningful patterns - 只有 bash 生成有意义的模式
+  if (toolName.toLowerCase() !== 'bash') {
+    return '';  // Return empty string for non-bash tools (won't be saved)
   }
 
-  // If allowAll, save Tool(*) - 如果允许全部，保存 Tool(*)
-  if (allowAll) {
-    return `${toolName.charAt(0).toUpperCase() + toolName.slice(1)}(*)`;
-  }
+  // We ignore allowAll for bash - always generate specific patterns for safety
+  // 忽略 allowAll 参数，始终生成具体的命令模式以确保安全
+  // If user wants all bash auto-allowed, they should use 'auto-in-project' mode instead
+  // 如果用户想要所有 bash 自动允许，应该使用 'auto-in-project' 模式
 
-  // For bash: save specific command pattern - bash：保存特定命令模式
-  if (lowerToolName === 'bash') {
-    const command = (input.command as string) ?? '';
-    // Extract base command for pattern - 提取基础命令作为模式
-    // e.g., "npm install" -> "Bash(npm install)"
+  const command = (input.command as string) ?? '';
+  const parts = command.split(' ');
+
+  if (parts.length > 1) {
+    // Has arguments: use prefix wildcard with base command - 有参数：使用前缀通配符
     // e.g., "git commit -m 'msg'" -> "Bash(git commit:*)"
-    const parts = command.split(' ');
-    if (parts.length > 1) {
-      // Has arguments: use prefix wildcard with base command - 有参数：使用前缀通配符
-      const baseCommand = parts.slice(0, 2).join(' ');
-      return `Bash(${baseCommand}:*)`;
-    }
-    // No arguments: exact match - 无参数：精确匹配
-    return `Bash(${command})`;
+    // e.g., "npm install package" -> "Bash(npm install:*)"
+    const baseCommand = parts.slice(0, 2).join(' ');
+    return `Bash(${baseCommand}:*)`;
   }
 
-  // For edit/write: save Tool(*) for now - edit/write：目前保存 Tool(*)
-  return `${toolName.charAt(0).toUpperCase() + toolName.slice(1)}(*)`;
+  // Single command without args: exact match - 无参数的单一命令：精确匹配
+  // e.g., "npm" -> "Bash(npm)"
+  return `Bash(${command})`;
 }
 
 // ============== Permission Mode Computation - 权限模式计算 ==============

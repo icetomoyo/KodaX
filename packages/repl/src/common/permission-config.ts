@@ -4,11 +4,15 @@
  * Priority: project-level (.kodax/config.local.json) > user-level (~/.kodax/config.json)
  * 优先级：项目级 (.kodax/config.local.json) > 用户级 (~/.kodax/config.json)
  *
- * Pattern format (inspired by Claude Code):
- * - "read" - simple tool name (for read-only tools)
- * - "Edit(*)" - allow all edit operations
+ * Pattern format (ONLY for Bash tool in accept-edits mode):
  * - "Bash(npm install)" - exact command match
- * - "Bash(git commit:*)" - prefix wildcard match
+ * - "Bash(git commit:*)" - prefix wildcard (matches "git commit -m 'msg'" etc.)
+ * - "Bash(npm:*)" - command prefix wildcard (matches "npm install", "npm run" etc.)
+ *
+ * Note: Bash(*) is REJECTED for safety. Use specific command patterns.
+ * Note: Other tools don't need patterns:
+ * - Read/Glob/Grep: Always allowed (project-external is enforced confirmation)
+ * - Edit/Write: Auto-allowed in accept-edits, always-ask in default
  */
 
 import fsSync from 'fs';
@@ -17,13 +21,12 @@ import os from 'os';
 import {
   PermissionMode,
   parseAllowedToolPattern,
-  matchesAllowedPattern,
   isToolCallAllowed,
   generateSavePattern,
 } from '@kodax/core';
 
 // Re-export for convenience - 重新导出便于使用
-export { parseAllowedToolPattern, matchesAllowedPattern, isToolCallAllowed, generateSavePattern };
+export { parseAllowedToolPattern, isToolCallAllowed, generateSavePattern };
 
 // User-level config: ~/.kodax/config.json
 const USER_CONFIG_FILE = path.join(os.homedir(), '.kodax', 'config.json');
@@ -106,9 +109,11 @@ export function loadAlwaysAllowTools(): string[] {
  * Save a tool pattern to the always-allow list (project-level config)
  * 保存工具模式到总是允许列表（项目级配置）
  *
- * @param toolName - Tool name
+ * Note: Only Bash patterns are meaningful. Non-bash tools return empty pattern and won't be saved.
+ *
+ * @param toolName - Tool name (only "bash" generates meaningful patterns)
  * @param input - Tool input (used to generate specific pattern)
- * @param allowAll - If true, save Tool(*); if false, save specific pattern
+ * @param allowAll - If true, save Bash(*) ; if false, save specific command pattern
  */
 export function saveAlwaysAllowToolPattern(
   toolName: string,
@@ -116,6 +121,10 @@ export function saveAlwaysAllowToolPattern(
   allowAll: boolean = false
 ): void {
   const pattern = generateSavePattern(toolName, input, allowAll);
+
+  // Skip if empty pattern (non-bash tools) - 跳过空模式（非 bash 工具）
+  if (!pattern) return;
+
   const projectConfigFile = getProjectConfigFile();
   const current = readJsonFile(projectConfigFile) as PermissionConfigData;
   const existingPatterns = current.alwaysAllowTools ?? [];
