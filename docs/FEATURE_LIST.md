@@ -21,7 +21,7 @@ _Last Updated: 2026-02-27 21:00_
 | v0.3.3 | Released | 1 | 1/1 (100%) |
 | v0.4.0 | Released | 1 | 1/1 (100%) |
 | v0.4.6 | Released | 1 | 1/1 (100%) |
-| v0.5.0 | Planned | 3 | 0/3 (0%) |
+| v0.5.0 | Planned | 4 | 0/4 (0%) |
 
 ---
 
@@ -37,7 +37,7 @@ _Last Updated: 2026-02-27 21:00_
 | 006 | New | Planned | Critical | Skills 系统 | v0.5.0 | - | [Design](features/v0.5.0.md#006) | 2026-02-25 | - | - |
 | 007 | Enhancement | Planned | Medium | 主题系统完善 | v0.5.0 | - | [Design](features/v0.5.0.md#007) | 2026-02-25 | - | - |
 | 008 | Enhancement | Completed | High | 权限控制体系改进 | v0.5.0 | v0.4.6 | [Design](features/v0.5.0.md#008) | 2026-02-26 | 2026-02-27 | 2026-02-27 |
-| 009 | Refactor | Planned | Critical | 架构重构：AI 层独立 + 权限层分离 | v0.5.0 | - | [Design](features/v0.5.0-refactor.md) | 2026-02-27 | - | - |
+| 009 | Refactor | Planned | Critical | 架构重构：AI 层独立 + 权限层分离 | v0.5.0 | - | [Design](features/v0.5.0.md#009) | 2026-02-27 | - | - |
 
 ---
 
@@ -279,7 +279,7 @@ REPL 中的长运行项目管理，通过 `/project` 命令组实现。
 - **Priority**: Critical
 - **Planned**: v0.5.0
 - **Released**: -
-- **Design**: [v0.5.0-refactor.md](features/v0.5.0-refactor.md)
+- **Design**: [v0.5.0.md#009](features/v0.5.0.md#009)
 - **Created**: 2026-02-27
 - **Started**: -
 - **Completed**: -
@@ -305,8 +305,8 @@ REPL 中的长运行项目管理，通过 `/project` 命令组实现。
 ---
 
 ## Summary
-- Total: 9 (3 Planned, 0 InProgress, 6 Completed)
-- By Priority: Critical: 2, High: 5, Medium: 2, Low: 0
+- Total: 9 (4 Planned, 0 InProgress, 5 Completed)
+- By Priority: Critical: 2, High: 4, Medium: 2, Low: 0
 - Current Version: v0.4.6
-- Next Release (v0.5.0): 3 features planned (006, 007, 009)
+- Next Release (v0.5.0): 4 features planned (006, 007, 008, 009)
 - Highest Priority Planned: 006 - Skills 系统, 009 - 架构重构 (Critical)
