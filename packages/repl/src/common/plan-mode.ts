@@ -29,33 +29,6 @@ async function confirm(message: string): Promise<boolean> {
   });
 }
 
-// 生成计划提示词
-const PLAN_GENERATION_PROMPT = `You are in PLAN MODE. Do not execute any tools yet.
-
-Analyze the user's request and create a detailed execution plan.
-
-Respond with a simple text plan in this format:
-
-PLAN: <Brief title>
-
-Steps:
-1. [ACTION] <description> - <target file/command>
-2. [ACTION] <description> - <target file/command>
-...
-
-Available actions: READ, WRITE, EDIT, BASH, EXPLAIN
-
-Example:
-PLAN: Add User Authentication
-
-Steps:
-1. [READ] Check current project structure - .
-2. [READ] Check dependencies - package.json
-3. [WRITE] Create auth middleware - src/middleware/auth.ts
-4. [EDIT] Add auth routes - src/routes/index.ts
-5. [EXPLAIN] Explain how to use the new auth system
-`;
-
 async function generatePlan(prompt: string, options: KodaXOptions): Promise<string> {
   // 临时修改系统提示来生成计划
   const planOptions: KodaXOptions = {

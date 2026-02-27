@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-02-27 02:30_
+_Last Updated: 2026-02-27 03:00_
 
 ---
 
@@ -9,7 +9,7 @@ _Last Updated: 2026-02-27 02:30_
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
-| 001 | Low | Open | 未使用常量 PLAN_GENERATION_PROMPT | v0.3.1 | - | 2026-02-19 | - |
+| 001 | Low | Resolved | 未使用常量 PLAN_GENERATION_PROMPT | v0.3.1 | v0.4.5 | 2026-02-19 | 2026-02-27 |
 | 002 | Low | Open | /plan 命令未使用 _currentConfig 参数 | v0.3.1 | - | 2026-02-19 | - |
 | 003 | Medium | Won't Fix | Plan 文件无版本号 | v0.3.1 | - | 2026-02-19 | 2026-02-22 |
 | 004 | Medium | Won't Fix | Plan 解析正则表达式脆弱 | v0.3.1 | - | 2026-02-19 | 2026-02-22 |
@@ -63,16 +63,22 @@ _Last Updated: 2026-02-27 02:30_
 ## Issue Details
 <!-- Full details for each issue - REQUIRED for all issues -->
 
-### 001: 未使用常量 PLAN_GENERATION_PROMPT
+### 001: 未使用常量 PLAN_GENERATION_PROMPT (RESOLVED)
 - **Priority**: Low
-- **Status**: Open
+- **Status**: Resolved
 - **Introduced**: v0.3.1 (auto-detected)
+- **Fixed**: v0.4.5
 - **Created**: 2026-02-19
 - **Original Problem**:
   - 定义了 `PLAN_GENERATION_PROMPT` 常量作为计划生成的提示词模板，但实际 `generatePlan` 函数中并未使用它
   - 而是通过 `runKodaX` 内部的系统提示词来生成计划
-- **Context**: `src/cli/plan-mode.ts`
-- **Proposed Solution**: 删除这个常量 或 将其实际用于 `generatePlan` 函数
+- **Context**: `packages/repl/src/common/plan-mode.ts`
+- **Resolution**:
+  - 删除未使用的 `PLAN_GENERATION_PROMPT` 常量（25 行代码）
+  - `generatePlan` 函数已有自己的内联提示词，不需要这个常量
+  - 纯删除操作，无功能变更
+- **Resolution Date**: 2026-02-27
+- **Files Changed**: `packages/repl/src/common/plan-mode.ts`
 
 ---
 
@@ -1161,13 +1167,17 @@ _Last Updated: 2026-02-27 02:30_
 ---
 
 ## Summary
-- Total: 47 (8 Open, 35 Resolved, 3 Won't Fix, 1 Planned for v0.5.0+)
-- Highest Priority Open: 036 - React 状态同步潜在问题 (Medium)
-- Planned for v0.5.0+: 039 (长期重构 - ConsolePatcher 架构)
+- Total: 48 (9 Open, 36 Resolved, 3 Won't Fix)
+- Highest Priority Open: 002 - /plan 命令未使用 _currentConfig 参数 (Low)
 
 ---
 
 ## Changelog
+
+### 2026-02-27: Issue 001 已修复
+- Issue 001 (未使用常量 PLAN_GENERATION_PROMPT) 已修复
+- 删除了 `packages/repl/src/common/plan-mode.ts` 中未使用的 `PLAN_GENERATION_PROMPT` 常量（25 行代码）
+- 该常量从未被 `generatePlan` 函数使用，是纯粹的死代码删除
 
 ### 2026-02-27: Issue 046 最终修复
 - Issue 046 (Session 恢复时消息显示异常) 已完全修复

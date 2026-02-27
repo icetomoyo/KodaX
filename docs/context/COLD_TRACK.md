@@ -1,11 +1,22 @@
 # 冷轨归档
 
 _创建时间: 2026-02-25_
-_最后更新: 2026-02-27_
+_最后更新: 2026-02-27 03:15_
 
 ---
 
 ## 墓碑区
+
+### T04: pnpm install 破坏 npm workspaces
+- **失败原因**: pnpm 不识别 npm workspaces 配置，尝试从 registry 下载本地包，并将已安装的包移到 .ignored 文件夹
+- **放弃日期**: 2026-02-27
+- **尝试过程**:
+  1. 用户报告 `npm run build:packages` 构建失败
+  2. 错误显示 `Cannot find module '@kodax/core'` 和 TypeScript 类型错误
+  3. 最初误以为是 Issue 001 修复导致
+  4. 发现是之前运行了 `pnpm install` 导致 node_modules 损坏
+  5. pnpm 警告：`Moving @types/node that was installed by a different package manager to "node_modules/.ignored"`
+- **解决方案**: 删除 node_modules，使用 `npm install` 重新安装
 
 ### T03: CLI 冗余参数设计
 - **失败原因**: --plan, -y/--auto, --allow, --deny, --config 参数冗余，仅需 --mode 即可覆盖所有场景
@@ -740,5 +751,42 @@ appendResponse: (text: string) => {
 - 不实施 Static 组件隔离
 - 边际收益低，风险/收益比不佳
 - Ink reconciler 会跳过未变化内容
+
+---
+
+### Session: 2026-02-27 (Issue 001 修复)
+
+#### Turn 1 - Issue 001 分析
+**User**: /resolve-next-issue (保证不要引入新问题的条件下进行修复)
+
+**Assistant**:
+- 从 KNOWN_ISSUES.md 选择 Issue 001 (最早创建的 Low 优先级)
+- Issue: `PLAN_GENERATION_PROMPT` 常量定义但未使用
+- 文件: `packages/repl/src/common/plan-mode.ts`
+- 分析: `generatePlan()` 函数不使用此常量，是死代码
+
+#### Turn 2 - 实施修复
+**Assistant**:
+- 删除 `PLAN_GENERATION_PROMPT` 常量 (lines 33-57, 25 行)
+- TypeScript 编译验证通过
+- 更新 KNOWN_ISSUES.md 标记 Issue 001 为 Resolved (v0.4.5)
+
+#### Turn 3 - 构建问题排查
+**User**: 报告 `npm run build:packages` 失败，大量 TypeScript 错误
+
+**Assistant**:
+- 分析错误：`Cannot find module '@kodax/core'`，类型定义缺失
+- 确认与 Issue 001 修复无关（纯字符串删除）
+- 发现原因：之前运行 `pnpm install` 破坏了 npm workspaces 安装
+- 解决：删除 node_modules，运行 `npm install`
+- 构建成功
+
+#### Turn 4 - package-lock.json 变化
+**User**: 询问 package-lock.json 变化
+
+**Assistant**:
+- 变化仅为版本号更新：0.4.3 → 0.4.5
+- npm install 同步 lockfile 版本号
+- 正常行为，与 Issue 001 修复无关
 
 
