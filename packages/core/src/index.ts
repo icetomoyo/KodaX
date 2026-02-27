@@ -109,6 +109,10 @@ export {
   inferPermissionMode,
   MODIFICATION_TOOLS,
   FILE_MODIFICATION_TOOLS,
+  parseAllowedToolPattern,
+  matchesAllowedPattern,
+  isToolCallAllowed,
+  generateSavePattern,
 } from './tools/permission.js';
 
 // 提示词导出

@@ -15,7 +15,7 @@ import { toolBash } from './bash.js';
 import { toolGlob } from './glob.js';
 import { toolGrep } from './grep.js';
 import { toolUndo } from './undo.js';
-import { isAlwaysConfirmPath, FILE_MODIFICATION_TOOLS } from './permission.js';
+import { isAlwaysConfirmPath, FILE_MODIFICATION_TOOLS, isToolCallAllowed } from './permission.js';
 
 // 工具注册表
 const TOOL_REGISTRY = new Map<string, ToolHandler>();
@@ -271,31 +271,45 @@ export async function executeTool(
   }
 
   // === default / accept-edits: standard confirmTools check - default/accept-edits 模式：标准确认检查 ===
+  // Permission logic overview - 权限逻辑概览:
+  // - plan mode: All modification tools blocked, alwaysAllowTools NOT used - plan 模式：所有修改工具被阻止，alwaysAllowTools 不生效
+  // - default mode: All tools need confirmation, alwaysAllowTools NOT used - default 模式：所有工具需确认，alwaysAllowTools 不生效
+  // - accept-edits mode: File edits auto, bash needs confirmation, alwaysAllowTools ONLY for bash - accept-edits 模式：文件编辑自动，bash 需确认，alwaysAllowTools 仅对 bash 生效
+  // - auto-in-project mode: Project-scoped auto, alwaysAllowTools NOT used - auto-in-project 模式：项目内自动，alwaysAllowTools 不生效
+
   if (ctx.confirmTools.has(name)) {
-    // Check if tool is in always-allow list - 检查工具是否在总是允许列表中
-    if (ctx.alwaysAllowTools.has(name)) {
-      // Tool is always allowed, skip confirmation - 工具总是允许，跳过确认
-    } else if (ctx.onConfirm) {
+    // Tool needs confirmation based on mode - 根据模式需要确认的工具
+    let skipConfirmation = false;
+
+    // Only check alwaysAllowTools in accept-edits mode for bash - 只在 accept-edits 模式下对 bash 检查 alwaysAllowTools
+    if (mode === 'accept-edits' && name === 'bash') {
+      // Use pattern matching for bash commands - 对 bash 命令使用模式匹配
+      if (isToolCallAllowed(name, input, ctx.alwaysAllowTools)) {
+        skipConfirmation = true;
+      }
+    }
+
+    if (!skipConfirmation && ctx.onConfirm) {
       const result = await ctx.onConfirm(name, input);
       if (!result.confirmed) return '[Cancelled] Operation cancelled by user';
-      // If user selected "always", save to config and add to set - 如果用户选择了 "always"，保存到配置并添加到集合
+
+      // Handle "always" selection - 处理 "always" 选择
       if (result.always) {
-        ctx.alwaysAllowTools.add(name);
-        ctx.saveAlwaysAllowTool?.(name);
-        // If in default mode, switch to accept-edits mode - 如果在 default 模式，切换到 accept-edits 模式
+        // Only save pattern in accept-edits mode - 只在 accept-edits 模式下保存模式
+        if (mode === 'accept-edits') {
+          ctx.saveAlwaysAllowTool?.(name, input, false);
+        }
+        // Switch from default to accept-edits when user selects "always" - 用户选择 "always" 时从 default 切换到 accept-edits
         if (ctx.permissionMode === 'default' && ctx.switchPermissionMode) {
           ctx.switchPermissionMode('accept-edits');
         }
       }
     }
-  } else {
-    // Tool NOT in confirmTools = auto-allowed, save to always-allow config for persistence
-    // 工具不在确认列表中 = 自动允许，保存到总是允许配置以持久化
-    if (!ctx.alwaysAllowTools.has(name)) {
-      ctx.alwaysAllowTools.add(name);
-      ctx.saveAlwaysAllowTool?.(name);
-    }
   }
+  // Note: Tools NOT in confirmTools are auto-allowed by the mode itself (e.g., edit in accept-edits)
+  // 注意：不在 confirmTools 中的工具由模式本身自动允许（如 accept-edits 中的 edit）
+  // We don't save them to alwaysAllowTools anymore since they're controlled by mode
+  // 我们不再将它们保存到 alwaysAllowTools，因为它们由模式控制
 
   const handler = getTool(name);
   if (!handler) {

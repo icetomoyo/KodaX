@@ -83,7 +83,7 @@ export async function runKodaX(
     confirmTools: options.confirmTools ?? computeConfirmTools(permissionMode),
     backups: new Map(),
     gitRoot: options.context?.gitRoot ?? undefined,
-    alwaysAllowTools: new Set(options.alwaysAllowTools ?? []),
+    alwaysAllowTools: options.alwaysAllowTools ?? [],
     saveAlwaysAllowTool: events?.saveAlwaysAllowTool,
     switchPermissionMode: events?.switchPermissionMode,
     onConfirm: events?.onConfirm,

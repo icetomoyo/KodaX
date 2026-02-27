@@ -130,8 +130,8 @@ export interface KodaXEvents {
 
   // 用户交互（可选，由 CLI 层实现）
   onConfirm?: (tool: string, input: Record<string, unknown>) => Promise<ConfirmResult>;
-  /** Callback to save a tool to always-allow list (user selected "always yes") - 保存工具到总是允许列表 */
-  saveAlwaysAllowTool?: (tool: string) => void;
+  /** Callback to save a tool pattern to always-allow list - 保存工具模式到总是允许列表 */
+  saveAlwaysAllowTool?: (tool: string, input: Record<string, unknown>, allowAll?: boolean) => void;
   /** Callback to switch permission mode (e.g., default -> accept-edits when user selects "always") - 切换权限模式的回调 */
   switchPermissionMode?: (mode: PermissionMode) => void;
 }
@@ -212,10 +212,10 @@ export interface KodaXToolExecutionContext {
   backups: Map<string, string>;
   permissionMode: PermissionMode;
   gitRoot?: string;
-  /** Tools that are always allowed (user selected "always yes") - 总是允许的工具 */
-  alwaysAllowTools: Set<string>;
-  /** Callback to save a tool to always-allow list - 保存工具到总是允许列表的回调 */
-  saveAlwaysAllowTool?: (tool: string) => void;
+  /** Allowed tool patterns (e.g., ["read", "Bash(npm install)", "Bash(git commit:*)"]) - 允许的工具模式 */
+  alwaysAllowTools: string[];
+  /** Callback to save a tool pattern to always-allow list - 保存工具模式到总是允许列表的回调 */
+  saveAlwaysAllowTool?: (tool: string, input: Record<string, unknown>, allowAll?: boolean) => void;
   /** Callback to switch permission mode - 切换权限模式的回调 */
   switchPermissionMode?: (mode: PermissionMode) => void;
   onConfirm?: (tool: string, input: Record<string, unknown>) => Promise<ConfirmResult>;

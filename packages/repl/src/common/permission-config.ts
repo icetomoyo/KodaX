@@ -3,12 +3,27 @@
  *
  * Priority: project-level (.kodax/config.local.json) > user-level (~/.kodax/config.json)
  * 优先级：项目级 (.kodax/config.local.json) > 用户级 (~/.kodax/config.json)
+ *
+ * Pattern format (inspired by Claude Code):
+ * - "read" - simple tool name (for read-only tools)
+ * - "Edit(*)" - allow all edit operations
+ * - "Bash(npm install)" - exact command match
+ * - "Bash(git commit:*)" - prefix wildcard match
  */
 
 import fsSync from 'fs';
 import path from 'path';
 import os from 'os';
-import { PermissionMode } from '@kodax/core';
+import {
+  PermissionMode,
+  parseAllowedToolPattern,
+  matchesAllowedPattern,
+  isToolCallAllowed,
+  generateSavePattern,
+} from '@kodax/core';
+
+// Re-export for convenience - 重新导出便于使用
+export { parseAllowedToolPattern, matchesAllowedPattern, isToolCallAllowed, generateSavePattern };
 
 // User-level config: ~/.kodax/config.json
 const USER_CONFIG_FILE = path.join(os.homedir(), '.kodax', 'config.json');
@@ -36,6 +51,8 @@ function writeJsonFile(filePath: string, data: Record<string, unknown>): void {
   fsSync.mkdirSync(path.dirname(filePath), { recursive: true });
   fsSync.writeFileSync(filePath, JSON.stringify(data, null, 2));
 }
+
+// ============== Config Load/Save - 配置加载/保存 ==============
 
 /**
  * Load effective permission mode (project-level overrides user-level)
@@ -86,11 +103,35 @@ export function loadAlwaysAllowTools(): string[] {
 }
 
 /**
- * Save a tool to the always-allow list (project-level config)
- * 保存工具到总是允许列表（项目级配置）
+ * Save a tool pattern to the always-allow list (project-level config)
+ * 保存工具模式到总是允许列表（项目级配置）
  *
- * Note: "Always yes" is project-specific, not global
- * 注意："总是允许"是项目特定的，不是全局的
+ * @param toolName - Tool name
+ * @param input - Tool input (used to generate specific pattern)
+ * @param allowAll - If true, save Tool(*); if false, save specific pattern
+ */
+export function saveAlwaysAllowToolPattern(
+  toolName: string,
+  input: Record<string, unknown>,
+  allowAll: boolean = false
+): void {
+  const pattern = generateSavePattern(toolName, input, allowAll);
+  const projectConfigFile = getProjectConfigFile();
+  const current = readJsonFile(projectConfigFile) as PermissionConfigData;
+  const existingPatterns = current.alwaysAllowTools ?? [];
+
+  if (!existingPatterns.includes(pattern)) {
+    writeJsonFile(projectConfigFile, {
+      ...current,
+      alwaysAllowTools: [...existingPatterns, pattern]
+    });
+  }
+}
+
+/**
+ * Legacy function for backward compat - kept for old code
+ * 旧版兼容函数 - 保留给旧代码使用
+ * @deprecated Use saveAlwaysAllowToolPattern instead
  */
 export function saveAlwaysAllowTool(tool: string): void {
   const projectConfigFile = getProjectConfigFile();

@@ -8,7 +8,7 @@ import chalk from 'chalk';
 import readline from 'readline';
 import { KodaXEvents, PermissionMode } from '@kodax/core';
 import { PREVIEW_MAX_LENGTH } from '../common/utils.js';
-import { saveAlwaysAllowTool, savePermissionModeProject } from '../common/permission-config.js';
+import { saveAlwaysAllowToolPattern, savePermissionModeProject } from '../common/permission-config.js';
 
 // ============== Spinner Animation - Spinner 动画 ==============
 
@@ -228,8 +228,8 @@ export function createCliEvents(showSessionId = true): KodaXEvents {
       return confirmAction(tool, input);
     },
 
-    saveAlwaysAllowTool: (tool: string) => {
-      saveAlwaysAllowTool(tool);
+    saveAlwaysAllowTool: (tool: string, input: Record<string, unknown>, allowAll?: boolean) => {
+      saveAlwaysAllowToolPattern(tool, input, allowAll ?? false);
     },
 
     switchPermissionMode: (mode: PermissionMode) => {

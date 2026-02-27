@@ -51,7 +51,7 @@ import {
 import { getProviderModel } from "../common/utils.js";
 import { KODAX_VERSION } from "../common/utils.js";
 import { runWithPlanMode } from "../common/plan-mode.js";
-import { saveAlwaysAllowTool, loadAlwaysAllowTools, savePermissionModeProject } from "../common/permission-config.js";
+import { saveAlwaysAllowToolPattern, loadAlwaysAllowTools, savePermissionModeProject } from "../common/permission-config.js";
 import { getTheme } from "./themes/index.js";
 import chalk from "chalk";
 
@@ -349,8 +349,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         setConfirmRequest({ tool, input, prompt: promptText });
       });
     },
-    saveAlwaysAllowTool: (tool: string) => {
-      saveAlwaysAllowTool(tool);
+    saveAlwaysAllowTool: (tool: string, input: Record<string, unknown>, allowAll?: boolean) => {
+      saveAlwaysAllowToolPattern(tool, input, allowAll ?? false);
     },
     switchPermissionMode: (mode: PermissionMode) => {
       // Update state - 更新状态
