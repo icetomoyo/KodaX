@@ -211,6 +211,35 @@ kodax --session todo-app "Write tests"
 --max-hours <h>     Maximum hours for --auto-continue (default: 2.0)
 ```
 
+### Permission Control
+
+KodaX provides 4-level permission modes for fine-grained control:
+
+| Mode | Description | Tools Need Confirmation |
+|------|-------------|------------------------|
+| `plan` | Read-only planning mode | All modification tools blocked |
+| `default` | Safe mode (default) | write, edit, bash |
+| `accept-edits` | Auto-accept file edits | bash only |
+| `auto-in-project` | Full auto within project | None (project-scoped) |
+
+```bash
+# In REPL, use /mode command
+/mode plan          # Switch to plan mode (read-only)
+/mode default       # Switch to default mode
+/mode accept-edits  # Switch to accept-edits mode
+/mode auto          # Switch to auto-in-project mode
+
+# Check current mode
+/mode
+```
+
+**Features:**
+- Auto-switch to `accept-edits` when selecting "always" in default mode
+- Plan mode includes system prompt context for LLM awareness
+- Permanent protection zones: `.kodax/`, `~/.kodax/`, paths outside project
+- Two-level config: user-level `~/.kodax/config.json` + project-level `.kodax/config.local.json`
+- Unified diff display for write/edit operations
+
 ### CLI Help Topics
 
 Get detailed help for specific topics:

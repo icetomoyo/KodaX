@@ -1,6 +1,6 @@
 # Feature List
 
-_Last Updated: 2026-02-27 18:50_
+_Last Updated: 2026-02-27 21:00_
 
 ---
 
@@ -8,7 +8,7 @@ _Last Updated: 2026-02-27 18:50_
 
 | 字段 | 值 | 说明 |
 |------|-----|------|
-| **Current Release** | v0.4.2 | 最新发布版本（仅供参考） |
+| **Current Release** | v0.4.6 | 最新发布版本（仅供参考） |
 | **Planned Version** | v0.5.0 | 当前规划的版本 |
 
 ---
@@ -20,7 +20,8 @@ _Last Updated: 2026-02-27 18:50_
 | v0.3.1 | Released | 3 | 3/3 (100%) |
 | v0.3.3 | Released | 1 | 1/1 (100%) |
 | v0.4.0 | Released | 1 | 1/1 (100%) |
-| v0.5.0 | InDevelopment | 3 | 1/3 (33%) |
+| v0.4.6 | Released | 1 | 1/1 (100%) |
+| v0.5.0 | Planned | 2 | 0/2 (0%) |
 
 ---
 
@@ -35,7 +36,7 @@ _Last Updated: 2026-02-27 18:50_
 | 005 | Refactor | Completed | High | v0.4.0 架构重构与模块解耦 | v0.4.0 | v0.4.0 | [Design](features/v0.4.0.md#005) | 2026-02-20 | 2026-02-24 | 2026-02-24 |
 | 006 | New | Planned | Critical | Skills 系统 | v0.5.0 | - | [Design](features/v0.5.0.md#006) | 2026-02-25 | - | - |
 | 007 | Enhancement | Planned | Medium | 主题系统完善 | v0.5.0 | - | [Design](features/v0.5.0.md#007) | 2026-02-25 | - | - |
-| 008 | Enhancement | Completed | High | 权限控制体系改进 | v0.5.0 | - | [Design](features/v0.5.0.md#008) | 2026-02-26 | 2026-02-27 | 2026-02-27 |
+| 008 | Enhancement | Completed | High | 权限控制体系改进 | v0.5.0 | v0.4.6 | [Design](features/v0.5.0.md#008) | 2026-02-26 | 2026-02-27 | 2026-02-27 |
 
 ---
 
@@ -242,7 +243,7 @@ REPL 中的长运行项目管理，通过 `/project` 命令组实现。
 - **Status**: Completed
 - **Priority**: High
 - **Planned**: v0.5.0
-- **Released**: -
+- **Released**: v0.4.6
 - **Design**: [v0.5.0.md#008](features/v0.5.0.md#008)
 - **Created**: 2026-02-26
 - **Started**: 2026-02-27
@@ -253,16 +254,19 @@ REPL 中的长运行项目管理，通过 `/project` 命令组实现。
 
 **Implementation**:
 - 四级权限模式：`plan` / `default` / `accept-edits` / `auto-in-project`
-- `plan` 模式：只读规划，禁止 write/edit/bash/undo
-- `default` 模式：全部需确认
+- `plan` 模式：只读规划，禁止 write/edit/bash/undo，系统提示词告知 LLM
+- `default` 模式：全部需确认，选择 "always" 时自动切换到 accept-edits
 - `accept-edits` 模式：文件编辑自动，bash 需确认
 - `auto-in-project` 模式：项目内全自动
 - 永久保护区域：`.kodax/`、`~/.kodax/`、项目外路径永远需确认
 - 两级配置：用户级 `~/.kodax/config.json` + 项目级 `.kodax/config.local.json`
+- Diff 显示：write/edit 操作显示 unified diff 格式变更
 
 **Key Files**:
 - `packages/core/src/tools/permission.ts` - 核心权限逻辑
 - `packages/core/src/tools/registry.ts` - 工具执行权限检查
+- `packages/core/src/tools/diff.ts` - Unified diff 生成
+- `packages/core/src/prompts/builder.ts` - Plan mode 系统提示词
 - `packages/repl/src/common/permission-config.ts` - 配置加载/保存
 - `packages/repl/src/interactive/commands.ts` - `/mode` 命令更新
 
@@ -271,6 +275,6 @@ REPL 中的长运行项目管理，通过 `/project` 命令组实现。
 ## Summary
 - Total: 8 (2 Planned, 0 InProgress, 6 Completed)
 - By Priority: Critical: 1, High: 5, Medium: 2, Low: 0
-- Current Version: v0.4.2
-- Next Release (v0.5.0): 3 features planned
+- Current Version: v0.4.6
+- Next Release (v0.5.0): 2 features planned (006, 007)
 - Highest Priority Planned: 006 - Skills 系统 (Critical)

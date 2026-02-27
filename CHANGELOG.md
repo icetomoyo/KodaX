@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.6] - 2026-02-27
+
+### Added
+- **Permission Mode Auto-Switch**: Automatically switch to accept-edits mode when user selects "always" in default mode
+- **Plan Mode Context**: System prompt informs LLM about read-only constraints in plan mode
+- **Diff Display**: Show unified diff for write/edit operations
+- **Warp.dev Theme**: New dark theme inspired by Warp.dev terminal (cyan accent, deep dark backgrounds)
+
+### Changed
+- **Config Location**: "Always yes" now saves to project-level config (`.kodax/config.local.json`)
+- **Plan Mode Blocking**: Modification tools (write/edit/bash/undo) are directly blocked in plan mode without user confirmation dialog
+
+### Fixed
+- Permission mode persistence now correctly uses project-level configuration
+
+## [0.4.5] - 2026-02-26
+
+### Changed
+- **Code Style**: Implemented English-first bilingual comment style for repl package
+- Comments are primarily in English with selective Chinese brief notes for complex logic
+
+## [0.4.4] - 2026-02-26
+
+### Fixed
+- Issue 047: Streaming flicker during output
+- Issue 048: Message disorder in REPL display
+- Issue 001: Removed unused PLAN_GENERATION_PROMPT constant
+
 ## [0.4.3] - 2026-02-25
 
 ### Fixed
