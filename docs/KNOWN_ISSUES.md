@@ -56,6 +56,7 @@ _Last Updated: 2026-02-27 01:20_
 | 045 | High | Resolved | Spinner 出现时问答顺序颠倒 | v0.4.3 | v0.4.4 | 2026-02-25 | 2026-02-25 |
 | 046 | High | Resolved | Session 恢复时消息显示异常 | v0.4.5 | v0.4.5 | 2026-02-26 | 2026-02-27 |
 | 047 | Medium | Open | 流式输出时界面闪烁 | v0.4.5 | - | 2026-02-26 | - |
+| 048 | Medium | Open | Spinner 动画期间消息显示乱序 | v0.4.5 | - | 2026-02-27 | - |
 
 ---
 
@@ -1468,6 +1469,174 @@ _Last Updated: 2026-02-27 01:20_
 - **Files to Change**:
   - `packages/repl/src/ui/InkREPL.tsx` - 添加 maxFps 参数
   - `packages/repl/src/ui/contexts/StreamingContext.tsx` - 批量更新逻辑
+
+---
+
+### 048: Spinner 动画期间消息显示乱序 (OPEN)
+- **Priority**: Medium
+- **Status**: Open
+- **Introduced**: v0.4.5
+- **Created**: 2026-02-27
+- **Original Problem**:
+  - Spinner 动画期间历史消息偶尔会乱序显示
+  - 响应结束后恢复正常显示
+  - 问题是间歇性的，不是每次必现
+  - 类似 Issue 045 但触发条件不同
+- **Context**: REPL 流式响应 + Spinner 动画并行渲染
+- **Reproduction**:
+  1. 使用 `kodax` 进行对话
+  2. 在 Spinner 动画期间观察消息显示
+  3. 偶尔会出现消息顺序错乱
+- **Root Cause Analysis**:
+
+  1. **历史消息未使用 Static 组件**（核心问题）:
+     ```tsx
+     // InkREPL.tsx:647-659 - 当前实现
+     {history.length > 0 && (
+       <Box flexDirection="column" marginBottom={1}>
+         <MessageList items={history} ... />
+       </Box>
+     )}
+     ```
+     - 历史消息放在普通 Box 中，每次状态变化都会重新渲染
+     - Banner 使用了 `<Static>` 但历史消息没有
+     - 当 Spinner 更新或流式内容更新时，整个历史消息树重新渲染
+
+  2. **两套独立的状态系统 + 独立更新周期**:
+     | 状态源 | 管理内容 | 更新触发机制 |
+     |--------|----------|--------------|
+     | UIStateContext | history, isLoading | dispatch (React batch) |
+     | StreamingContext | streamingResponse, thinkingContent | notify() → forceUpdate() |
+     | Spinner (useState) | frame | setInterval 80ms |
+
+     - 三个系统独立触发 React 重渲染
+     - 当同时更新时产生竞态条件
+     - Ink 的批处理时机不确定，可能导致渲染顺序不一致
+
+  3. **StreamingContext 立即 notify()**:
+     ```typescript
+     // StreamingContext.tsx:226-231
+     appendResponse: (text: string) => {
+       state = { ...state, currentResponse: state.currentResponse + text };
+       notify();  // 每个 token 立即触发 forceUpdate()
+     },
+     ```
+     - 每个 token 立即触发整个组件树重渲染
+     - 与 Spinner 的 80ms 更新周期不同步
+
+  4. **Spinner 独立更新周期**:
+     ```typescript
+     // LoadingIndicator.tsx:81-87
+     useEffect(() => {
+       const timer = setInterval(() => {
+         setFrame((f) => (f + 1) % SPINNER_FRAMES.length);
+       }, 80);  // 80ms 更新周期
+       return () => clearInterval(timer);
+     }, []);
+     ```
+     - Spinner 每 80ms 更新一次帧
+     - 流式更新频率不可预测（取决于 API 返回速度）
+     - 两者不同步，可能在任意时刻同时触发更新
+
+  5. **终端渲染特性**:
+     - 终端没有 DOM diff，每次更新重绘整个视口
+     - 多个异步更新同时到达时，最终渲染顺序可能不一致
+     - Ink 的 reconciler 在高频率更新时可能有批处理延迟
+
+- **Proposed Solutions**:
+  | 方案 | 优先级 | 难度 | 说明 |
+  |------|--------|------|------|
+  | A. Static 组件包裹历史消息 | 高 | 中 | 将已完成的历史消息移入 Static 组件 |
+  | B. 统一更新周期 | 高 | 中 | 流式内容与 Spinner 同步更新 |
+  | C. 合并状态系统 | 中 | 高 | 将 UIStateContext 和 StreamingContext 合并 |
+
+- **Recommended**: 方案 A + B 组合
+
+  **方案 A: Static 组件包裹历史消息**
+  ```tsx
+  // InkREPL.tsx - 重构渲染结构
+  // 已完成的历史消息使用 Static，避免重渲染
+  <Static items={completedHistory}>
+    {(item) => <HistoryItemRenderer key={item.id} item={item} ... />}
+  </Static>
+
+  // 动态区域：仅包含当前流式响应 + Spinner
+  {streamingResponse && (
+    <StreamingContent text={streamingResponse} />
+  )}
+  {isLoading && <Spinner />}
+  ```
+  - 关键点：`completedHistory` 不包含正在流式传输的最后一条 assistant 消息
+  - 流式响应单独渲染，不影响历史消息
+
+  **方案 B: 统一更新周期**
+  ```typescript
+  // StreamingContext.tsx - 批量更新 + 同步 Spinner
+  const UPDATE_INTERVAL = 60; // ~15fps，与 Spinner 对齐
+
+  let responseBuffer = "";
+  let thinkingBuffer = "";
+  let updateTimer: ReturnType<typeof setInterval> | null = null;
+  let spinnerFrame = 0;
+
+  const startStreaming = () => {
+    state = { ...state, state: StreamingState.Responding, ... };
+    // 启动统一更新定时器
+    updateTimer = setInterval(() => {
+      const hasUpdates = responseBuffer || thinkingBuffer;
+      if (hasUpdates) {
+        state = {
+          ...state,
+          currentResponse: state.currentResponse + responseBuffer,
+          thinkingContent: state.thinkingContent + thinkingBuffer,
+          spinnerFrame: (spinnerFrame + 1) % SPINNER_FRAMES.length,
+        };
+        responseBuffer = "";
+        thinkingBuffer = "";
+        notify();
+      }
+    }, UPDATE_INTERVAL);
+    notify();
+  };
+
+  const appendResponse = (text: string) => {
+    responseBuffer += text;  // 仅缓冲，不立即通知
+  };
+
+  const stopStreaming = () => {
+    if (updateTimer) {
+      clearInterval(updateTimer);
+      updateTimer = null;
+    }
+    // 最终刷新
+    if (responseBuffer || thinkingBuffer) {
+      state = {
+        ...state,
+        currentResponse: state.currentResponse + responseBuffer,
+        thinkingContent: state.thinkingContent + thinkingBuffer,
+      };
+      responseBuffer = "";
+      thinkingBuffer = "";
+    }
+    state = { ...state, state: StreamingState.Idle, ... };
+    notify();
+  };
+  ```
+  - 流式内容和 Spinner 动画使用同一个定时器
+  - 所有更新在同一个渲染周期内完成
+  - 消除竞态条件
+
+- **Implementation Notes**:
+  1. 方案 A 需要重构 MessageList 组件，分离静态和动态内容
+  2. 方案 B 需要将 Spinner 的帧管理移到 StreamingContext
+  3. 两个方案可以独立实现，但组合使用效果最佳
+  4. 需要考虑流式响应中断时的缓冲区清理
+
+- **Files to Change**:
+  - `packages/repl/src/ui/InkREPL.tsx` - Static 组件重构
+  - `packages/repl/src/ui/contexts/StreamingContext.tsx` - 统一更新周期
+  - `packages/repl/src/ui/components/MessageList.tsx` - 分离静态/动态渲染
+  - `packages/repl/src/ui/components/LoadingIndicator.tsx` - Spinner 帧管理移出
 
 ---
 

@@ -555,4 +555,106 @@ Bash(rm:*)       - 匹配 rm 开头的命令
 
 **待实现** (用户中断)
 
+---
+
+### Session: 2026-02-27 (Issue 048 分析)
+
+#### Turn 1 - 用户报告间歇性问题
+**User**: 报告两个间歇性问题：
+1. Spinner 动画期间消息乱序（响应结束后恢复）
+2. 用户问题连续显示2次（非常偶现）
+
+**Assistant**:
+- 读取 InkREPL.tsx, MessageList.tsx, UIStateContext.tsx, StreamingContext.tsx, LoadingIndicator.tsx
+- 分析渲染顺序和 spinner 动画相关代码
+
+**Tools**: Read, Grep
+
+#### Turn 2 - 根因分析
+**Assistant**:
+
+**问题 1 根因分析 (Spinner 动画期间消息乱序)**:
+1. 历史消息未在 Static 组件中：
+   - InkREPL.tsx:647-659 使用普通 Box 渲染 history
+   - 每次状态变化触发完整重渲染
+
+2. 三套独立更新系统：
+   - UIStateContext (history 状态)
+   - StreamingContext (streaming 内容，立即 notify())
+   - Spinner (80ms interval, 独立 useState)
+
+3. 竞态条件：
+   - StreamingContext 每个 token 调用 notify()
+   - Spinner 80ms 更新一次 frame
+   - 终端全视口重绘时内容错位
+
+**问题 2 分析 (用户消息显示2次)**:
+- 用户不同意此分析，暂时搁置
+
+**Tools**: Read
+
+#### Turn 3 - 用户反馈
+**User**: 同意问题 1 分析，建议：
+1. 响应完毕的历史消息应该放在 Static 中
+2. 两套独立状态系统不合理，流式内容应与 spinner 同步周期更新
+
+**Assistant**:
+- 整理问题 1 修复方案：
+  - 方案 A: Static 组件隔离
+  - 方案 B: 统一更新周期
+
+#### Turn 4 - 添加 Issue 048
+**Assistant**:
+- 添加 Issue 048 到 KNOWN_ISSUES.md Issue Index
+- 添加详细 Issue 048 部分，包含：
+  - 根因分析（三套独立更新系统）
+  - 修复方案 A + B
+  - 影响文件列表
+
+**Tools**: Edit
+
+#### Turn 5 - 生成快照
+**User**: 执行 /context-snapshot
+
+---
+
+### Issue 048 分析详情
+
+**问题**: Spinner 动画期间消息显示乱序，响应结束后恢复正常
+
+**根因**:
+1. **历史消息未在 Static 组件中**：
+   - InkREPL.tsx:647-659 使用普通 Box 渲染 history
+   - Banner 使用了 Static，但 history 没有
+   - 每次状态变化触发完整重渲染
+
+2. **三套独立更新系统**：
+   ```typescript
+   // 1. UIStateContext - React useReducer
+   const [state, dispatch] = useReducer(uiReducer, ...);
+
+   // 2. StreamingContext - 立即 notify()
+   appendResponse: (text: string) => {
+     state = { ...state, currentResponse: state.currentResponse + text };
+     notify();  // 每个 token 触发
+   }
+
+   // 3. Spinner - 独立 80ms interval
+   useEffect(() => {
+     const timer = setInterval(() => {
+       setFrame((f) => (f + 1) % SPINNER_FRAMES.length);
+     }, 80);
+   }, []);
+   ```
+
+3. **终端渲染特性**：
+   - 终端没有 DOM diff，每次更新重绘整个视口
+   - 多个状态系统异步更新导致渲染帧内容不一致
+
+**修复方案**:
+| 方案 | 说明 | 难度 |
+|------|------|------|
+| A. Static 组件 | 将历史消息包装在 Static 中，避免重渲染 | 低 |
+| B. 统一更新周期 | 流式内容与 Spinner 共享同一更新周期 | 中 |
+
 
