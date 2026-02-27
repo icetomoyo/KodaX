@@ -37,6 +37,7 @@ export type {
   KodaXSessionStorage,
   KodaXToolExecutionContext,
   KodaXConfig,
+  PermissionMode,
 } from './types.js';
 
 // 错误导出
@@ -99,6 +100,15 @@ export {
   toolGrep,
   toolUndo,
 } from './tools/index.js';
+
+// 权限控制导出
+export {
+  computeConfirmTools,
+  isAlwaysConfirmPath,
+  inferPermissionMode,
+  MODIFICATION_TOOLS,
+  FILE_MODIFICATION_TOOLS,
+} from './tools/permission.js';
 
 // 提示词导出
 export {

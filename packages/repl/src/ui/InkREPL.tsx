@@ -11,7 +11,7 @@
  */
 
 import React, { useState, useCallback, useRef, useEffect } from "react";
-import { render, Box, useApp, Text, Static } from "ink";
+import { render, Box, useApp, Text, Static, useInput } from "ink";
 import { InputPrompt } from "./components/InputPrompt.js";
 import { MessageList } from "./components/MessageList.js";
 import { ThinkingIndicator } from "./components/LoadingIndicator.js";
@@ -34,6 +34,7 @@ import {
   runKodaX,
   KODAX_DEFAULT_PROVIDER,
   KodaXTerminalError,
+  PermissionMode,
 } from "@kodax/core";
 import {
   InteractiveContext,
@@ -51,6 +52,7 @@ import { KODAX_VERSION } from "../common/utils.js";
 import { runWithPlanMode } from "../common/plan-mode.js";
 import { getTheme } from "./themes/index.js";
 import chalk from "chalk";
+
 // Extracted modules
 import { MemorySessionStorage, type SessionStorage } from "./utils/session-storage.js";
 import { processSpecialSyntax, isShellCommandSuccess } from "./utils/shell-executor.js";
@@ -121,16 +123,11 @@ const Banner: React.FC<BannerProps> = ({ config, sessionId, workingDir }) => {
           {" | "}
         </Text>
         <Text color={theme.colors.accent}>
-          {config.mode}
+          {config.permissionMode}
         </Text>
         {config.thinking && (
           <Text color={theme.colors.warning}>
             {" +think"}
-          </Text>
-        )}
-        {config.auto && (
-          <Text color="magenta">
-            {" +auto"}
           </Text>
         )}
       </Box>
@@ -195,10 +192,18 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const [isRunning, setIsRunning] = useState(true);
   const [showBanner, setShowBanner] = useState(true); // Show banner in Ink UI
 
+  // Confirmation dialog state - 确认对话框状态
+  const [confirmRequest, setConfirmRequest] = useState<{
+    tool: string;
+    input: Record<string, unknown>;
+    prompt: string;
+  } | null>(null);
+  const confirmResolveRef = useRef<((confirmed: boolean) => void) | null>(null);
+
   // Refs for callbacks
   const currentOptionsRef = useRef<InkREPLOptions>({
     ...options,
-    mode: currentConfig.mode,
+    permissionMode: currentConfig.permissionMode,
     session: {
       ...options.session,
       id: context.sessionId,
@@ -228,6 +233,25 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       isActive: isLoading, // Only active during streaming - 只在 streaming 期间激活
       priority: KeypressHandlerPriority.Critical, // Use highest priority to ensure interrupt is handled first - 使用最高优先级，确保中断优先处理
     }
+  );
+
+  // Confirmation dialog keyboard handler - 确认对话框键盘处理
+  useInput(
+    (input, _key) => {
+      if (!confirmRequest) return;
+
+      const answer = input.toLowerCase();
+      if (answer === 'y' || answer === 'yes') {
+        setConfirmRequest(null);
+        confirmResolveRef.current?.(true);
+        confirmResolveRef.current = null;
+      } else if (answer === 'n' || answer === 'no') {
+        setConfirmRequest(null);
+        confirmResolveRef.current?.(false);
+        confirmResolveRef.current = null;
+      }
+    },
+    { isActive: !!confirmRequest }
   );
 
   // Sync history from context to UI on mount
@@ -286,7 +310,36 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     onError: (error: Error) => {
       console.log(chalk.red(`[Stream Error] ${error.message}`));
     },
-  }), [appendThinkingContent, stopThinking, appendResponse, setCurrentTool, appendToolInputChars]);
+    onConfirm: async (tool: string, input: Record<string, unknown>) => {
+      // Build confirmation prompt text - 构建确认提示文本
+      const inputPreview = input.path
+        ? ` ${input.path as string}`
+        : input.command
+          ? ` ${(input.command as string).slice(0, 60)}${(input.command as string).length > 60 ? '...' : ''}`
+          : '';
+
+      let promptText: string;
+      switch (tool) {
+        case 'bash':
+          promptText = `Execute bash command?${inputPreview}`;
+          break;
+        case 'write':
+          promptText = `Write to file?${inputPreview}`;
+          break;
+        case 'edit':
+          promptText = `Edit file?${inputPreview}`;
+          break;
+        default:
+          promptText = `Execute ${tool}?`;
+      }
+
+      // Return promise that resolves when user answers - 返回一个 Promise，当用户回答时 resolve
+      return new Promise<boolean>((resolve) => {
+        confirmResolveRef.current = resolve;
+        setConfirmRequest({ tool, input, prompt: promptText });
+      });
+    },
+  }), [appendThinkingContent, stopThinking, appendResponse, setCurrentTool, appendToolInputChars, confirmRequest]);
 
   // Run agent round
   const runAgentRound = async (
@@ -411,9 +464,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             setCurrentConfig((prev) => ({ ...prev, thinking: enabled }));
             currentOptionsRef.current.thinking = enabled;
           },
-          setAuto: (enabled: boolean) => {
-            setCurrentConfig((prev) => ({ ...prev, auto: enabled }));
-            currentOptionsRef.current.auto = enabled;
+          setPermissionMode: (mode: PermissionMode) => {
+            setCurrentConfig((prev) => ({ ...prev, permissionMode: mode }));
+            currentOptionsRef.current.permissionMode = mode;
           },
           deleteSession: async (id: string) => {
             await storage.delete?.(id);
@@ -428,8 +481,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             ...currentOptionsRef.current,
             provider: currentConfig.provider,
             thinking: currentConfig.thinking,
-            auto: currentConfig.auto,
-            mode: currentConfig.mode,
+            permissionMode: currentConfig.permissionMode,
           }),
           readline: null as unknown as ReturnType<
             typeof import("readline").createInterface
@@ -484,8 +536,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       // runKodaX (agent.ts:76) will add the prompt to messages automatically.
       // If we push here, the message gets duplicated (Issue 046).
 
-      // Sync options mode
-      currentOptionsRef.current.mode = currentConfig.mode;
+      // Sync options permissionMode
+      currentOptionsRef.current.permissionMode = currentConfig.permissionMode;
 
       // Run with plan mode if enabled
       if (planMode) {
@@ -494,8 +546,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             ...currentOptionsRef.current,
             provider: currentConfig.provider,
             thinking: currentConfig.thinking,
-            auto: currentConfig.auto,
-            mode: currentConfig.mode,
+            permissionMode: currentConfig.permissionMode,
           });
         } catch (err) {
           const error = err instanceof Error ? err : new Error(String(err));
@@ -679,14 +730,31 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       <Box flexShrink={0} marginTop={1}>
         <StatusBar
           sessionId={context.sessionId}
-          mode={currentConfig.mode ?? "code"}
+          permissionMode={currentConfig.permissionMode}
           provider={currentConfig.provider}
           model={getProviderModel(currentConfig.provider) ?? currentConfig.provider}
           currentTool={streamingState.currentTool}
           thinking={currentConfig.thinking}
-          auto={currentConfig.auto}
         />
       </Box>
+
+      {/* Confirmation Dialog - 确认对话框 */}
+      {confirmRequest && (
+        <Box
+          flexDirection="column"
+          borderStyle="round"
+          borderColor="yellow"
+          paddingX={1}
+          marginTop={1}
+        >
+          <Text color="yellow" bold>
+            [Confirm] {confirmRequest.prompt}
+          </Text>
+          <Text dimColor>
+            Press (y) to confirm, (n) to cancel
+          </Text>
+        </Box>
+      )}
     </Box>
   );
 };
@@ -740,13 +808,13 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
   const config = loadConfig();
   const initialProvider = options.provider ?? config.provider ?? KODAX_DEFAULT_PROVIDER;
   const initialThinking = options.thinking ?? config.thinking ?? false;
-  const initialAuto = options.auto ?? config.auto ?? false;
+  const initialPermissionMode: PermissionMode =
+    options.permissionMode ?? (config.permissionMode as PermissionMode | undefined) ?? 'default';
 
   const currentConfig: CurrentConfig = {
     provider: initialProvider,
     thinking: initialThinking,
-    auto: initialAuto,
-    mode: "code",
+    permissionMode: initialPermissionMode,
   };
 
   // Handle session resume/load

@@ -5,8 +5,9 @@
 import * as readline from 'readline';
 import chalk from 'chalk';
 import { InteractiveContext, InteractiveMode } from './context.js';
-import { estimateTokens, KODAX_PROVIDERS, getProviderList, KodaXOptions } from '@kodax/core';
+import { estimateTokens, KODAX_PROVIDERS, getProviderList, KodaXOptions, PermissionMode } from '@kodax/core';
 import { saveConfig } from '../common/utils.js';
+import { savePermissionModeUser } from '../common/permission-config.js';
 import { runWithPlanMode, listPlans, resumePlan, clearCompletedPlans } from '../common/plan-mode.js';
 import { handleProjectCommand, printProjectHelp } from './project-commands.js';
 
@@ -14,8 +15,7 @@ import { handleProjectCommand, printProjectHelp } from './project-commands.js';
 export interface CurrentConfig {
   provider: string;
   thinking: boolean;
-  auto: boolean;
-  mode?: 'code' | 'ask';
+  permissionMode: PermissionMode;
 }
 
 // Command handler type - 命令处理器类型
@@ -36,7 +36,7 @@ export interface CommandCallbacks {
   printHistory: () => void;
   switchProvider?: (provider: string) => void;
   setThinking?: (enabled: boolean) => void;
-  setAuto?: (enabled: boolean) => void;
+  setPermissionMode?: (mode: PermissionMode) => void;
   deleteSession?: (id: string) => Promise<void>;
   deleteAllSessions?: () => Promise<void>;
   setPlanMode?: (enabled: boolean) => void;
@@ -151,78 +151,44 @@ export const BUILTIN_COMMANDS: Command[] = [
   {
     name: 'mode',
     aliases: ['m'],
-    description: 'Switch between code and ask mode',
-    usage: '/mode [code|ask]',
-    handler: async (args, _context, _callbacks, currentConfig) => {
+    description: 'Show or switch permission mode (plan/default/accept-edits/auto-in-project)',
+    usage: '/mode [plan|default|accept-edits|auto-in-project]',
+    handler: async (args, _context, callbacks, currentConfig) => {
+      const VALID_MODES: PermissionMode[] = ['plan', 'default', 'accept-edits', 'auto-in-project'];
       if (args.length === 0) {
-        console.log(chalk.dim(`\nCurrent mode: ${chalk.cyan(currentConfig.mode ?? 'code')}`));
-        console.log(chalk.dim('Usage: /mode [code|ask]'));
+        const m = currentConfig.permissionMode;
+        console.log(chalk.dim(`\nCurrent mode: ${chalk.cyan(m)}`));
+        console.log(chalk.dim('Usage: /mode [plan|default|accept-edits|auto-in-project]'));
         return;
       }
-      const newMode = args[0] as InteractiveMode;
-      if (newMode === 'code' || newMode === 'ask') {
-        currentConfig.mode = newMode;
-        console.log(chalk.cyan(`\n[Switched to ${newMode} mode]`));
+      const newMode = args[0] as PermissionMode;
+      if (VALID_MODES.includes(newMode)) {
+        currentConfig.permissionMode = newMode;
+        callbacks.setPermissionMode?.(newMode);
+        savePermissionModeUser(newMode);
+        console.log(chalk.cyan(`\n[Switched to ${newMode} mode] (saved)`));
       } else {
-        console.log(chalk.red(`\n[Unknown mode: ${args[0]}. Use 'code' or 'ask']`));
+        console.log(chalk.red(`\n[Unknown mode: ${args[0]}. Use: plan | default | accept-edits | auto-in-project]`));
       }
     },
     detailedHelp: () => {
-      console.log(chalk.cyan('\n/mode - Switch Interaction Mode\n'));
+      console.log(chalk.cyan('\n/mode - Switch Permission Mode\n'));
       console.log(chalk.bold('Usage:'));
-      console.log(chalk.dim('  /mode              ') + 'Show current mode');
-      console.log(chalk.dim('  /mode code         ') + 'Switch to code mode (default)');
-      console.log(chalk.dim('  /mode ask          ') + 'Switch to ask mode');
+      console.log(chalk.dim('  /mode                        ') + 'Show current permission mode');
+      console.log(chalk.dim('  /mode plan                   ') + 'Read-only: blocks all modifications');
+      console.log(chalk.dim('  /mode default                ') + 'All tools require confirmation');
+      console.log(chalk.dim('  /mode accept-edits           ') + 'File edits auto, bash requires confirmation');
+      console.log(chalk.dim('  /mode auto-in-project        ') + 'Project-internal fully auto');
       console.log();
-      console.log(chalk.bold('Modes:'));
-      console.log(chalk.green('  code') + chalk.dim('  - Full capabilities: read, write, execute commands'));
-      console.log(chalk.yellow('  ask') + chalk.dim('   - Read-only: answer questions without modifying files'));
+      console.log(chalk.bold('Permission Levels:'));
+      console.log(chalk.yellow('  plan          ') + chalk.dim('- Read-only planning, no file/command modifications'));
+      console.log(chalk.cyan('  default       ') + chalk.dim('- All tools (write/edit/bash) require confirmation'));
+      console.log(chalk.green('  accept-edits  ') + chalk.dim('- File edits auto-approved, bash still requires confirmation'));
+      console.log(chalk.green('  auto-in-project') + chalk.dim('- All tools auto within project, outside requires confirmation'));
       console.log();
-      console.log(chalk.bold('Examples:'));
-      console.log(chalk.dim('  /mode              ') + '# Check current mode');
-      console.log(chalk.dim('  /mode ask          ') + '# Switch to Q&A mode');
-      console.log(chalk.dim('  /ask               ') + '# Quick switch to ask mode');
-      console.log(chalk.dim('  /code              ') + '# Quick switch to code mode');
-      console.log();
-    },
-  },
-  {
-    name: 'ask',
-    description: 'Switch to ask mode (read-only)',
-    handler: async (_args, _context, _callbacks, currentConfig) => {
-      currentConfig.mode = 'ask';
-      console.log(chalk.cyan('\n[Switched to ask mode - no file modifications]'));
-    },
-    detailedHelp: () => {
-      console.log(chalk.cyan('\n/ask - Quick Switch to Ask Mode\n'));
-      console.log(chalk.bold('Usage:'));
-      console.log(chalk.dim('  /ask               ') + 'Switch to ask mode immediately');
-      console.log();
-      console.log(chalk.bold('Description:'));
-      console.log(chalk.dim('  Equivalent to /mode ask. Switches to read-only mode.'));
-      console.log(chalk.dim('  In ask mode, the agent will NOT modify any files.'));
-      console.log();
-      console.log(chalk.dim('  See also: /help mode, /help code'));
-      console.log();
-    },
-  },
-  {
-    name: 'code',
-    description: 'Switch to code mode (default)',
-    handler: async (_args, _context, _callbacks, currentConfig) => {
-      currentConfig.mode = 'code';
-      console.log(chalk.cyan('\n[Switched to code mode]'));
-    },
-    detailedHelp: () => {
-      console.log(chalk.cyan('\n/code - Quick Switch to Code Mode\n'));
-      console.log(chalk.bold('Usage:'));
-      console.log(chalk.dim('  /code              ') + 'Switch to code mode immediately');
-      console.log();
-      console.log(chalk.bold('Description:'));
-      console.log(chalk.dim('  Equivalent to /mode code. Switches to full capability mode.'));
-      console.log(chalk.dim('  In code mode, the agent can read, write, and execute.'));
-      console.log();
-      console.log(chalk.dim('  See also: /help mode, /help ask'));
+      console.log(chalk.bold('Notes:'));
+      console.log(chalk.dim('  - .kodax/ directory and project-external paths always require confirmation'));
+      console.log(chalk.dim('  - Mode is saved to ~/.kodax/config.json'));
       console.log();
     },
   },
@@ -370,7 +336,7 @@ export const BUILTIN_COMMANDS: Command[] = [
           const current = p.name === currentConfig.provider ? chalk.cyan(' *') : '';
           console.log(`  ${paddedName} (${p.model}) ${configured}${current}`);
         }
-        console.log(chalk.dim(`\nCurrent: provider=${currentConfig.provider}, thinking=${currentConfig.thinking}, auto=${currentConfig.auto}`));
+        console.log(chalk.dim(`\nCurrent: provider=${currentConfig.provider}, thinking=${currentConfig.thinking}, mode=${currentConfig.permissionMode}`));
         console.log(chalk.dim('Usage: /model <provider-name> to switch\n'));
         return;
       }
@@ -447,43 +413,25 @@ export const BUILTIN_COMMANDS: Command[] = [
   {
     name: 'auto',
     aliases: ['a'],
-    description: 'Show or toggle auto mode (skip confirmations)',
-    usage: '/auto [on|off]',
-    handler: async (args, _context, callbacks, currentConfig) => {
-      if (args.length === 0) {
-        const status = currentConfig.auto ? chalk.green('ON') : chalk.dim('OFF');
-        console.log(chalk.dim(`\nAuto: ${status}`));
-        console.log(chalk.dim('Usage: /auto on|off to toggle\n'));
-        return;
-      }
-
-      const value = args[0].toLowerCase();
-      if (value === 'on' || value === 'off') {
-        const enabled = value === 'on';
-        saveConfig({ auto: enabled });
-        callbacks.setAuto?.(enabled);
-        console.log(chalk.cyan(`\n[Auto ${enabled ? 'enabled' : 'disabled'}] (已保存)`));
-      } else {
-        console.log(chalk.red(`\n[Invalid value: ${args[0]}]`));
-        console.log(chalk.dim('Usage: /auto on|off\n'));
-      }
+    description: 'Quick switch to auto-in-project mode',
+    handler: async (_args, _context, callbacks, currentConfig) => {
+      currentConfig.permissionMode = 'auto-in-project';
+      callbacks.setPermissionMode?.('auto-in-project');
+      savePermissionModeUser('auto-in-project');
+      console.log(chalk.cyan('\n[Switched to auto-in-project mode] (saved)'));
     },
     detailedHelp: () => {
-      console.log(chalk.cyan('\n/auto - Toggle Auto Mode\n'));
+      console.log(chalk.cyan('\n/auto - Quick Switch to Auto-in-Project Mode\n'));
       console.log(chalk.bold('Usage:'));
-      console.log(chalk.dim('  /auto              ') + 'Show current auto status');
-      console.log(chalk.dim('  /auto on           ') + 'Enable auto mode');
-      console.log(chalk.dim('  /auto off          ') + 'Disable auto mode');
+      console.log(chalk.dim('  /auto              ') + 'Switch to auto-in-project mode');
       console.log(chalk.dim('  /a                 ') + 'Alias for /auto');
       console.log();
       console.log(chalk.bold('Description:'));
-      console.log(chalk.dim('  When auto mode is ON, the agent will skip confirmation'));
-      console.log(chalk.dim('  prompts for file operations. Useful for:'));
-      console.log(chalk.dim('  - Trusted environments'));
-      console.log(chalk.dim('  - Automated workflows'));
-      console.log(chalk.dim('  - Faster iteration'));
+      console.log(chalk.dim('  Equivalent to /mode auto-in-project.'));
+      console.log(chalk.dim('  All tools auto-approved within project directory.'));
+      console.log(chalk.dim('  Operations outside project still require confirmation.'));
       console.log();
-      console.log(chalk.yellow('  Warning: Without confirmations, changes happen faster!'));
+      console.log(chalk.dim('  See also: /help mode'));
       console.log();
     },
   },
@@ -601,9 +549,9 @@ function printHelp(): void {
   // Group by category - 按类别分组
   const categories: Record<string, Command[]> = {
     'General': BUILTIN_COMMANDS.filter(c => ['help', 'exit', 'clear', 'status'].includes(c.name)),
-    'Mode': BUILTIN_COMMANDS.filter(c => ['mode', 'ask', 'code'].includes(c.name)),
+    'Permission': BUILTIN_COMMANDS.filter(c => ['mode', 'auto'].includes(c.name)),
     'Session': BUILTIN_COMMANDS.filter(c => ['save', 'load', 'sessions', 'history', 'delete'].includes(c.name)),
-    'Settings': BUILTIN_COMMANDS.filter(c => ['model', 'thinking', 'auto', 'plan'].includes(c.name)),
+    'Settings': BUILTIN_COMMANDS.filter(c => ['model', 'thinking', 'plan'].includes(c.name)),
     'Project': BUILTIN_COMMANDS.filter(c => ['project'].includes(c.name)),
   };
 
@@ -661,7 +609,7 @@ function printDetailedHelp(commandName: string): void {
 function printStatus(context: InteractiveContext, currentConfig: CurrentConfig): void {
   const tokens = estimateTokens(context.messages);
   console.log(chalk.bold('\nSession Status:\n'));
-  console.log(chalk.dim(`  Mode:        ${chalk.cyan(currentConfig.mode ?? 'code')}`));
+  console.log(chalk.dim(`  Permission:  ${chalk.cyan(currentConfig.permissionMode)}`));
   console.log(chalk.dim(`  Session ID:  ${context.sessionId}`));
   console.log(chalk.dim(`  Messages:    ${context.messages.length}`));
   console.log(chalk.dim(`  Tokens:      ~${tokens}`));

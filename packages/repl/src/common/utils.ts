@@ -72,7 +72,7 @@ export function isProviderConfigured(name: string): boolean {
 }
 
 // Load config from ~/.kodax/config.json
-export function loadConfig(): { provider?: string; thinking?: boolean; auto?: boolean } {
+export function loadConfig(): { provider?: string; thinking?: boolean; permissionMode?: string } {
   try {
     if (fsSync.existsSync(KODAX_CONFIG_FILE)) {
       return JSON.parse(fsSync.readFileSync(KODAX_CONFIG_FILE, 'utf-8'));
@@ -82,7 +82,7 @@ export function loadConfig(): { provider?: string; thinking?: boolean; auto?: bo
 }
 
 // Save config to ~/.kodax/config.json
-export function saveConfig(config: { provider?: string; thinking?: boolean; auto?: boolean }): void {
+export function saveConfig(config: { provider?: string; thinking?: boolean; permissionMode?: string }): void {
   const current = loadConfig();
   const merged = { ...current, ...config };
   fsSync.mkdirSync(path.dirname(KODAX_CONFIG_FILE), { recursive: true });

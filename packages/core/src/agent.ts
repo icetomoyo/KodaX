@@ -8,6 +8,7 @@ import { KodaXOptions, KodaXResult, KodaXMessage, KodaXToolResultBlock, KodaXToo
 import { KodaXClient } from './client.js';
 import { getProvider } from './providers/index.js';
 import { executeTool, KODAX_TOOLS } from './tools/index.js';
+import { computeConfirmTools } from './tools/permission.js';
 import { buildSystemPrompt } from './prompts/index.js';
 import { generateSessionId, extractTitleFromMessages } from './session.js';
 import { compactMessages, checkIncompleteToolCalls } from './messages.js';
@@ -76,11 +77,14 @@ export async function runKodaX(
   messages.push({ role: 'user', content: prompt });
   if (!title) title = prompt.slice(0, 50) + (prompt.length > 50 ? '...' : '');
 
+  const permissionMode = options.permissionMode ?? 'default';
   const ctx: KodaXToolExecutionContext = {
-    confirmTools: options.confirmTools ?? new Set(['bash', 'write', 'edit']),
+    permissionMode,
+    confirmTools: options.confirmTools ?? computeConfirmTools(permissionMode),
     backups: new Map(),
-    auto: options.auto ?? false,
+    gitRoot: options.context?.gitRoot ?? undefined,
     onConfirm: events?.onConfirm,
+    beforeToolExecute: options.beforeToolExecute,
   };
 
   const systemPrompt = await buildSystemPrompt(options, messages.length === 1);

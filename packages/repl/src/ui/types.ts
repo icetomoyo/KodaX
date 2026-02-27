@@ -5,6 +5,7 @@
  */
 
 import type { CursorPosition } from "./utils/text-buffer.js";
+import type { PermissionMode } from "@kodax/core";
 
 // === Keyboard Events - 键盘事件 ===
 
@@ -118,7 +119,7 @@ export interface InputPromptProps {
 
 export interface StatusBarProps {
   sessionId: string;
-  mode: "code" | "ask";
+  permissionMode: PermissionMode;
   provider: string;
   model: string;
   tokenUsage?: {
@@ -128,7 +129,6 @@ export interface StatusBarProps {
   };
   currentTool?: string;
   thinking?: boolean;
-  auto?: boolean;
 }
 
 /**
@@ -360,7 +360,6 @@ export interface UIState {
 
   // Session info - 会话信息
   sessionId: string;
-  mode: "code" | "ask";
 
   // Provider info - Provider 信息
   provider: string;
@@ -401,7 +400,6 @@ export interface UIActions {
 
   // Session operations - 会话操作
   setSessionId: (id: string) => void;
-  setMode: (mode: "code" | "ask") => void;
 
   // Provider operations - Provider 操作
   setProvider: (provider: string) => void;
@@ -454,7 +452,6 @@ export const DEFAULT_UI_STATE: UIState = {
   history: [],
   pendingToolCalls: [],
   sessionId: "",
-  mode: "code",
   provider: "",
   model: "",
   isLoading: false,

@@ -12,7 +12,7 @@ import { getTerminalWidth, getSymbols, supportsUnicode } from './prompts.js';
  */
 export interface StatusBarState {
   sessionId: string;           // 简短会话 ID
-  mode: 'code' | 'ask';        // 当前模式
+  permissionMode: string;      // 当前权限模式 (PermissionMode)
   provider: string;            // Provider 名称
   model: string;               // 模型名称
   tokenUsage?: {
@@ -128,9 +128,16 @@ export class StatusBar {
     const shortId = this.state.sessionId.slice(0, 6);
     parts.push(chalk.dim(`#${shortId}`));
 
-    // 模式
-    const modeColor = this.state.mode === 'ask' ? chalk.yellow : chalk.green;
-    parts.push(modeColor(this.state.mode));
+    // 权限模式
+    const modeColor =
+      this.state.permissionMode === 'plan'
+        ? chalk.blue
+        : this.state.permissionMode === 'accept-edits'
+          ? chalk.cyan
+          : this.state.permissionMode === 'auto-in-project'
+            ? chalk.magenta
+            : chalk.green; // default
+    parts.push(modeColor(this.state.permissionMode));
 
     // Provider
     parts.push(chalk.cyan(`${this.state.provider}`));
@@ -220,13 +227,13 @@ export class StatusBar {
  */
 export function createStatusBarState(
   sessionId: string,
-  mode: 'code' | 'ask',
+  permissionMode: string,
   provider: string,
   model: string
 ): StatusBarState {
   return {
     sessionId,
-    mode,
+    permissionMode,
     provider,
     model,
   };

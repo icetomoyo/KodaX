@@ -31,6 +31,8 @@ import {
   getProvider,
   KODAX_TOOLS,
   KodaXTerminalError,
+  PermissionMode,
+  computeConfirmTools,
 } from '@kodax/core';
 import {
   getGitRoot,
@@ -163,8 +165,7 @@ export function parseCommandCall(input: string): [string, string?] | null {
 interface CliOptions {
   provider: string;
   thinking: boolean;
-  auto: boolean;
-  mode?: 'code' | 'ask';  // 交互模式
+  permissionMode: PermissionMode;
   session?: string;
   parallel: boolean;
   team?: string;
@@ -185,16 +186,14 @@ interface CliOptions {
 // ============== CLI 选项转换 ==============
 
 function createKodaXOptions(cliOptions: CliOptions, isPrintMode = false): KodaXOptions {
+  const permissionMode = cliOptions.permissionMode;
   return {
     provider: cliOptions.provider,
     thinking: cliOptions.thinking,
     maxIter: cliOptions.maxIter,
     parallel: cliOptions.parallel,
-    auto: cliOptions.auto,
-    mode: cliOptions.mode,
-    confirmTools: cliOptions.auto
-      ? new Set()
-      : new Set(['bash', 'write', 'edit']),
+    permissionMode,
+    confirmTools: computeConfirmTools(permissionMode),
     session: buildSessionOptions(cliOptions),
     events: createCliEvents(!isPrintMode),
   };
@@ -464,12 +463,15 @@ async function main() {
   // 加载配置文件（用于确定默认值）
   const config = loadConfig();
   // CLI 参数优先，否则用配置文件的值，最后用默认值
-  const cliAuto = opts.auto === true;
+  // Derive permission mode: -y/--auto → auto-in-project, else from config, else 'default'
+  const cliPermissionMode: PermissionMode = opts.auto === true
+    ? 'auto-in-project'
+    : ((config.permissionMode as PermissionMode | undefined) ?? 'default');
   const options: CliOptions = {
     // 优先级：CLI 参数 > 配置文件 > 默认值
     provider: opts.provider ?? config.provider ?? KODAX_DEFAULT_PROVIDER,
     thinking: opts.thinking ?? config.thinking ?? false,
-    auto: cliAuto ? true : (config.auto ?? false),
+    permissionMode: cliPermissionMode,
     session: opts.session,
     parallel: opts.parallel ?? false,
     team: opts.team,
@@ -804,10 +806,9 @@ New: {"features": [
       await runInkInteractiveMode({
         provider: kodaXOptions.provider,
         thinking: kodaXOptions.thinking,
-        auto: kodaXOptions.auto,
         maxIter: kodaXOptions.maxIter,
         parallel: kodaXOptions.parallel,
-        mode: kodaXOptions.mode,
+        permissionMode: kodaXOptions.permissionMode,
         confirmTools: kodaXOptions.confirmTools,
         session: kodaXOptions.session,
         storage: new FileSessionStorage(),

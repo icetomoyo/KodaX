@@ -15,6 +15,7 @@ import { toolBash } from './bash.js';
 import { toolGlob } from './glob.js';
 import { toolGrep } from './grep.js';
 import { toolUndo } from './undo.js';
+import { isAlwaysConfirmPath, FILE_MODIFICATION_TOOLS } from './permission.js';
 
 // 工具注册表
 const TOOL_REGISTRY = new Map<string, ToolHandler>();
@@ -227,36 +228,49 @@ export async function executeTool(
     return `[Tool Error] ${name}: Missing required parameter(s): ${missing.join(', ')}`;
   }
 
-  // 未知工具检查
   if (!KODAX_TOOL_REQUIRED_PARAMS.hasOwnProperty(name)) {
     return `[Tool Error] Unknown tool: ${name}. Available tools: ${Object.keys(KODAX_TOOL_REQUIRED_PARAMS).join(', ')}`;
   }
 
-  // Auto 模式下，项目外文件修改需要确认
-  const MODIFICATION_TOOLS = new Set(['write', 'edit']);
+  const mode = ctx.permissionMode ?? 'default';
 
-  // write/edit: 检查目标文件路径
-  if (ctx.auto && ctx.gitRoot && MODIFICATION_TOOLS.has(name)) {
-    const targetPath = input.path as string;
+  // === plan mode: block all modification tools - plan 模式：阻止所有修改操作 ===
+  if (mode === 'plan' && (FILE_MODIFICATION_TOOLS.has(name) || name === 'bash' || name === 'undo')) {
+    return `[Blocked] Tool '${name}' is not allowed in plan mode (read-only)`;
+  }
+
+  // === Permanent protection zone: always confirm, applies to all modes - 永久保护区域：任何模式下都需确认 ===
+  if (ctx.gitRoot && FILE_MODIFICATION_TOOLS.has(name)) {
+    const targetPath = input.path as string | undefined;
+    if (targetPath && isAlwaysConfirmPath(targetPath, ctx.gitRoot)) {
+      const confirmed = ctx.onConfirm ? await ctx.onConfirm(name, { ...input, _alwaysConfirm: true }) : false;
+      if (!confirmed) return '[Cancelled] Operation on protected path requires confirmation';
+    }
+  }
+
+  // === auto-in-project: protect outside-project file edits - auto-in-project 模式：项目外文件需确认 ===
+  if (mode === 'auto-in-project' && ctx.gitRoot && FILE_MODIFICATION_TOOLS.has(name)) {
+    const targetPath = input.path as string | undefined;
     if (targetPath && !isPathInsideProject(targetPath, ctx.gitRoot)) {
-      const confirmed = ctx.onConfirm ? await ctx.onConfirm(name, { ...input, _outsideProject: true }) : true;
+      const confirmed = ctx.onConfirm ? await ctx.onConfirm(name, { ...input, _outsideProject: true }) : false;
       if (!confirmed) return '[Cancelled] Operation on file outside project directory was cancelled';
     }
   }
 
-  // bash: 检查命令是否涉及项目外的危险操作
-  if (ctx.auto && ctx.gitRoot && name === 'bash') {
+  // === auto-in-project: protect outside-project bash commands - auto-in-project 模式：项目外 bash 命令需确认 ===
+  if (mode === 'auto-in-project' && ctx.gitRoot && name === 'bash') {
     const command = input.command as string;
     if (command) {
       const dangerCheck = isBashCommandDangerousOutsideProject(command, ctx.gitRoot);
       if (dangerCheck.dangerous) {
-        const confirmed = ctx.onConfirm ? await ctx.onConfirm(name, { ...input, _outsideProject: true, _reason: dangerCheck.reason }) : true;
+        const confirmed = ctx.onConfirm ? await ctx.onConfirm(name, { ...input, _outsideProject: true, _reason: dangerCheck.reason }) : false;
         if (!confirmed) return `[Cancelled] ${dangerCheck.reason}`;
       }
     }
   }
 
-  if (ctx.confirmTools.has(name) && !ctx.auto) {
+  // === default / accept-edits: standard confirmTools check - default/accept-edits 模式：标准确认检查 ===
+  if (ctx.confirmTools.has(name)) {
     const confirmed = ctx.onConfirm ? await ctx.onConfirm(name, input) : true;
     if (!confirmed) return '[Cancelled] Operation cancelled by user';
   }

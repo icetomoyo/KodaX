@@ -1,6 +1,6 @@
 # Feature List
 
-_Last Updated: 2026-02-26 20:30_
+_Last Updated: 2026-02-27 18:50_
 
 ---
 
@@ -20,7 +20,7 @@ _Last Updated: 2026-02-26 20:30_
 | v0.3.1 | Released | 3 | 3/3 (100%) |
 | v0.3.3 | Released | 1 | 1/1 (100%) |
 | v0.4.0 | Released | 1 | 1/1 (100%) |
-| v0.5.0 | Planned | 3 | 0/3 (0%) |
+| v0.5.0 | InDevelopment | 3 | 1/3 (33%) |
 
 ---
 
@@ -35,7 +35,7 @@ _Last Updated: 2026-02-26 20:30_
 | 005 | Refactor | Completed | High | v0.4.0 架构重构与模块解耦 | v0.4.0 | v0.4.0 | [Design](features/v0.4.0.md#005) | 2026-02-20 | 2026-02-24 | 2026-02-24 |
 | 006 | New | Planned | Critical | Skills 系统 | v0.5.0 | - | [Design](features/v0.5.0.md#006) | 2026-02-25 | - | - |
 | 007 | Enhancement | Planned | Medium | 主题系统完善 | v0.5.0 | - | [Design](features/v0.5.0.md#007) | 2026-02-25 | - | - |
-| 008 | Enhancement | Planned | High | 权限控制体系改进 | v0.5.0 | - | [Design](features/v0.5.0.md#008) | 2026-02-26 | - | - |
+| 008 | Enhancement | Completed | High | 权限控制体系改进 | v0.5.0 | - | [Design](features/v0.5.0.md#008) | 2026-02-26 | 2026-02-27 | 2026-02-27 |
 
 ---
 
@@ -237,40 +237,39 @@ REPL 中的长运行项目管理，通过 `/project` 命令组实现。
 
 ---
 
-### 008: 权限控制体系改进 (PLANNED)
+### 008: 权限控制体系改进 (COMPLETED)
 - **Category**: Enhancement
-- **Status**: Planned
+- **Status**: Completed
 - **Priority**: High
 - **Planned**: v0.5.0
 - **Released**: -
 - **Design**: [v0.5.0.md#008](features/v0.5.0.md#008)
 - **Created**: 2026-02-26
-- **Started**: -
-- **Completed**: -
+- **Started**: 2026-02-27
+- **Completed**: 2026-02-27
 
 **Description**:
 完善 KodaX 权限控制系统，对标 Claude Code 的权限控制方案，提供更细粒度的权限管理。
 
-**Goals**:
-1. 四级权限模式（plan/default/accept-edits/auto-in-project）
-2. 命令模式匹配支持（如 `Bash(git log:*)`）
-3. 两级配置（用户级 `~/.kodax/` + 项目级 `.kodax/`）
-4. 确认提示增强（yes/yes-always/no）
-5. 永久保护区域（`.kodax/` 和项目外永远需确认）
-
-**Key Features**:
-- `plan` 模式：只读规划
-- `default` 模式：全部需确认，`[Y]` 自动切换到 `accept-edits`
-- `accept-edits` 模式：文件自动，命令需确认
+**Implementation**:
+- 四级权限模式：`plan` / `default` / `accept-edits` / `auto-in-project`
+- `plan` 模式：只读规划，禁止 write/edit/bash/undo
+- `default` 模式：全部需确认
+- `accept-edits` 模式：文件编辑自动，bash 需确认
 - `auto-in-project` 模式：项目内全自动
-- 命令通配符允许/禁止列表
-- `.kodax/` 目录和项目外操作永远需要确认
-- 确认持久化到 `.kodax/config.local.json`
+- 永久保护区域：`.kodax/`、`~/.kodax/`、项目外路径永远需确认
+- 两级配置：用户级 `~/.kodax/config.json` + 项目级 `.kodax/config.local.json`
+
+**Key Files**:
+- `packages/core/src/tools/permission.ts` - 核心权限逻辑
+- `packages/core/src/tools/registry.ts` - 工具执行权限检查
+- `packages/repl/src/common/permission-config.ts` - 配置加载/保存
+- `packages/repl/src/interactive/commands.ts` - `/mode` 命令更新
 
 ---
 
 ## Summary
-- Total: 8 (3 Planned, 0 InProgress, 5 Completed)
+- Total: 8 (2 Planned, 0 InProgress, 6 Completed)
 - By Priority: Critical: 1, High: 5, Medium: 2, Low: 0
 - Current Version: v0.4.2
 - Next Release (v0.5.0): 3 features planned

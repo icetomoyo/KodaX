@@ -108,7 +108,10 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   const config = loadConfig();
   const initialProvider = options.provider ?? config.provider ?? KODAX_DEFAULT_PROVIDER;
   const initialThinking = options.thinking ?? config.thinking ?? false;
-  const initialAuto = options.auto ?? config.auto ?? false;
+  const initialPermissionMode: import('@kodax/core').PermissionMode =
+    (options as { permissionMode?: import('@kodax/core').PermissionMode }).permissionMode ??
+    (config as { permissionMode?: import('@kodax/core').PermissionMode }).permissionMode ??
+    'default';
 
   // Apply theme (using default dark theme) - 应用主题 (使用默认 dark 主题)
   // TODO: Read theme setting from config file - TODO: 从配置文件读取主题设置
@@ -118,8 +121,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   let currentConfig: CurrentConfig = {
     provider: initialProvider,
     thinking: initialThinking,
-    auto: initialAuto,
-    mode: 'code',
+    permissionMode: initialPermissionMode,
   };
 
   // Plan mode state - Plan mode 状态
@@ -137,7 +139,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   });
 
   // Print startup Banner - 打印启动 Banner
-  printStartupBanner(currentConfig, currentConfig.mode ?? 'code');
+  printStartupBanner(currentConfig, currentConfig.permissionMode);
 
   // Detect and show project hint - 检测并显示项目提示
   await detectAndShowProjectHint();
@@ -166,7 +168,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   if (supportsStatusBar()) {
     statusBar = new StatusBar(createStatusBarState(
       context.sessionId,
-      currentConfig.mode ?? 'code',
+      currentConfig.permissionMode,
       currentConfig.provider,
       model
     ));
@@ -216,7 +218,6 @@ Keyboard Shortcuts:
   // Fix: Ensure session.id is set to reuse same session - 修复：确保 session.id 被设置以复用同一 session
   let currentOptions: RepLOptions = {
     ...options,
-    mode: currentConfig.mode,
     session: {
       ...options.session,
       id: context.sessionId,
@@ -292,9 +293,9 @@ Keyboard Shortcuts:
       currentConfig.thinking = enabled;
       currentOptions.thinking = enabled;
     },
-    setAuto: (enabled: boolean) => {
-      currentConfig.auto = enabled;
-      currentOptions.auto = enabled;
+    setPermissionMode: (mode: import('@kodax/core').PermissionMode) => {
+      currentConfig.permissionMode = mode;
+      currentOptions.permissionMode = mode;
     },
     deleteSession: async (id: string) => {
       await storage.delete?.(id);
@@ -310,8 +311,7 @@ Keyboard Shortcuts:
         ...currentOptions,
         provider: currentConfig.provider,
         thinking: currentConfig.thinking,
-        auto: currentConfig.auto,
-        mode: currentConfig.mode,
+        permissionMode: currentConfig.permissionMode,
         events: {
           ...currentOptions.events,
           onConfirm: async (tool: string, input: Record<string, unknown>) => {
@@ -373,14 +373,13 @@ Keyboard Shortcuts:
 
         // Run agent (copy main loop logic) - 运行 agent (复制主循环逻辑)
         try {
-          currentOptions.mode = currentConfig.mode;
+          currentOptions.permissionMode = currentConfig.permissionMode;
           if (planMode) {
             await runWithPlanMode(processed, {
               ...currentOptions,
               provider: currentConfig.provider,
               thinking: currentConfig.thinking,
-              auto: currentConfig.auto,
-              mode: currentConfig.mode,
+              permissionMode: currentConfig.permissionMode,
             });
           } else {
             const result = await runKodaX(
@@ -388,8 +387,7 @@ Keyboard Shortcuts:
                 ...currentOptions,
                 provider: currentConfig.provider,
                 thinking: currentConfig.thinking,
-                auto: currentConfig.auto,
-                mode: currentConfig.mode,
+                permissionMode: currentConfig.permissionMode,
                 session: { ...currentOptions.session, initialMessages: context.messages },
               },
               processed
@@ -418,7 +416,7 @@ Keyboard Shortcuts:
       }
     }
 
-    const prompt = getPrompt(currentConfig.mode ?? 'code', currentConfig, planMode);
+    const prompt = getPrompt(currentConfig.permissionMode, currentConfig, planMode);
     const input = await askInput(rl, prompt);
 
     if (!isRunning) break;
@@ -457,8 +455,8 @@ Keyboard Shortcuts:
     // Update status bar message count - 更新状态栏消息数量
     statusBar?.update({ messageCount: context.messages.length });
 
-    // Sync current mode to options - 同步当前模式到 options
-    currentOptions.mode = currentConfig.mode;
+    // Sync current permissionMode to options - 同步当前权限模式到 options
+    currentOptions.permissionMode = currentConfig.permissionMode;
 
     // If Plan Mode is enabled, execute in plan mode - 如果启用了 Plan Mode，使用计划模式执行
     if (planMode) {
@@ -467,8 +465,7 @@ Keyboard Shortcuts:
           ...currentOptions,
           provider: currentConfig.provider,
           thinking: currentConfig.thinking,
-          auto: currentConfig.auto,
-          mode: currentConfig.mode,
+          permissionMode: currentConfig.permissionMode,
         });
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
@@ -528,29 +525,28 @@ Keyboard Shortcuts:
 }
 
 // Get prompt (responsive, using theme colors) - 获取提示符 (响应式，使用主题颜色)
-function getPrompt(mode: InteractiveMode, config: CurrentConfig, planMode: boolean): string {
+function getPrompt(mode: string, config: CurrentConfig, planMode: boolean): string {
   const theme = getCurrentTheme();
-  const modeColor = mode === 'ask' ? chalk.hex(theme.colors.warning) : chalk.hex(theme.colors.success);
+  const modeColor = mode === 'plan' ? chalk.hex(theme.colors.warning) : chalk.hex(theme.colors.success);
   const model = getProviderModel(config.provider) ?? config.provider;
   const width = getTerminalWidth();
 
   // Decide prompt detail level based on terminal width - 根据终端宽度决定提示符详细程度
   if (width < 60) {
     // Narrow terminal: minimal prompt - 窄终端：最简提示符
-    const modeIndicator = mode === 'ask' ? '?' : theme.symbols.prompt;
+    const modeIndicator = mode === 'plan' ? '?' : theme.symbols.prompt;
     return modeColor(`${modeIndicator} `);
   } else if (width < 100) {
     // Medium width: short prompt - 中等宽度：简短提示符
-    const flagChar = planMode ? 'P' : (config.thinking ? 'T' : (config.auto ? 'A' : ''));
+    const flagChar = planMode ? 'P' : (config.thinking ? 'T' : '');
     const flagPart = flagChar ? chalk.hex(theme.colors.dim)(`[${flagChar}]`) : '';
     return modeColor(`kodax:${mode}${flagPart}> `);
   }
 
   // Wide terminal: full prompt - 宽终端：完整提示符
   const thinkingFlag = config.thinking ? chalk.hex(theme.colors.info)('[thinking]') : '';
-  const autoFlag = config.auto ? chalk.hex(theme.colors.success)('[auto]') : '';
   const planFlag = planMode ? chalk.hex(theme.colors.accent)('[plan]') : '';
-  const flags = [thinkingFlag, autoFlag, planFlag].filter(Boolean).join('');
+  const flags = [thinkingFlag, planFlag].filter(Boolean).join('');
   return modeColor(`kodax:${mode} (${config.provider}:${model})${flags}> `);
 }
 
@@ -819,7 +815,7 @@ function printStartupBanner(config: CurrentConfig, mode: string): void {
   console.log(chalk.hex(theme.colors.primary)('\n' + logo));
   console.log(chalk.hex(theme.colors.text)(`\n  v${KODAX_VERSION}  |  AI Coding Agent  |  ${config.provider}:${model}`));
   console.log(chalk.hex(theme.colors.dim)('\n  ────────────────────────────────────────────────────────'));
-  console.log(chalk.hex(theme.colors.dim)('  Mode: ') + chalk.hex(theme.colors.primary)(mode) + chalk.hex(theme.colors.dim)('  |  Thinking: ') + (config.thinking ? chalk.hex(theme.colors.success)('on') : chalk.hex(theme.colors.dim)('off')) + chalk.hex(theme.colors.dim)('  |  Auto: ') + (config.auto ? chalk.hex(theme.colors.success)('on') : chalk.hex(theme.colors.dim)('off')));
+  console.log(chalk.hex(theme.colors.dim)('  Mode: ') + chalk.hex(theme.colors.primary)(mode) + chalk.hex(theme.colors.dim)('  |  Thinking: ') + (config.thinking ? chalk.hex(theme.colors.success)('on') : chalk.hex(theme.colors.dim)('off')));
   console.log(chalk.hex(theme.colors.dim)('  ────────────────────────────────────────────────────────\n'));
 
   console.log(chalk.hex(theme.colors.dim)('  Quick tips:'));

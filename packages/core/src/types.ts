@@ -139,18 +139,28 @@ export interface KodaXContextOptions {
   };
 }
 
+// ============== 权限模式 ==============
+
+/**
+ * Permission mode - 权限模式
+ * - plan: Read-only planning, all modifications blocked - 只读规划，禁止所有修改操作
+ * - default: All tools require confirmation - 全部需要确认
+ * - accept-edits: File edits auto-approved, shell commands require confirmation - 文件自动，命令需确认
+ * - auto-in-project: All tools auto-approved within project, outside requires confirmation - 项目内全自动，项目外需确认
+ */
+export type PermissionMode = 'plan' | 'default' | 'accept-edits' | 'auto-in-project';
+
 export interface KodaXOptions {
   provider: string;
   thinking?: boolean;
   maxIter?: number;
   parallel?: boolean;
-  auto?: boolean;
-  mode?: 'code' | 'ask';  // 交互模式：code 允许修改，ask 只读
-  confirmTools?: Set<string>;
+  permissionMode?: PermissionMode;  // 4-level permission mode - 四级权限模式
+  confirmTools?: Set<string>;       // Derived from permissionMode - 由 permissionMode 计算得出
   session?: KodaXSessionOptions;
   context?: KodaXContextOptions;
   events?: KodaXEvents;
-  beforeToolExecute?: (tool: string, input: Record<string, unknown>) => Promise<boolean>;  // 执行前钩子
+  beforeToolExecute?: (tool: string, input: Record<string, unknown>) => Promise<boolean>;
   /** AbortSignal for cancelling the API request */
   abortSignal?: AbortSignal;
 }
@@ -183,9 +193,8 @@ export interface KodaXSessionStorage {
 export interface KodaXToolExecutionContext {
   confirmTools: Set<string>;
   backups: Map<string, string>;
-  auto: boolean;
-  mode?: 'code' | 'ask';
-  gitRoot?: string;  // 项目根目录，用于 auto 模式下检查项目外文件修改
+  permissionMode: PermissionMode;
+  gitRoot?: string;
   onConfirm?: (tool: string, input: Record<string, unknown>) => Promise<boolean>;
   beforeToolExecute?: (tool: string, input: Record<string, unknown>) => Promise<boolean>;
 }
@@ -195,5 +204,5 @@ export interface KodaXToolExecutionContext {
 export interface KodaXConfig {
   provider?: string;
   thinking?: boolean;
-  auto?: boolean;
+  permissionMode?: PermissionMode;
 }

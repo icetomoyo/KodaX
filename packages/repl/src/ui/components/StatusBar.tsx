@@ -9,27 +9,31 @@ import type { StatusBarProps } from "../types.js";
 
 export const StatusBar: React.FC<StatusBarProps> = ({
   sessionId,
-  mode,
+  permissionMode,
   provider,
   model,
   tokenUsage,
   currentTool,
   thinking,
-  auto,
 }) => {
   const theme = useMemo(() => getTheme("dark"), []);
 
-  // Display full Session ID (YYYYMMDD_HHMMSS format, 15 chars)
-  // No truncation, preserve complete time information - 显示完整 Session ID (YYYYMMDD_HHMMSS 格式，15 字符)，不截断，保留完整时间信息
   const displaySessionId = sessionId;
 
-  // Build mode indicators - 构建模式指示器
-  const modeIndicators: string[] = [];
-  if (thinking) modeIndicators.push("think");
-  if (auto) modeIndicators.push("auto");
-  const modeStr = modeIndicators.length > 0
-    ? `${mode.toUpperCase()}+${modeIndicators.join(",")}`
-    : mode.toUpperCase();
+  // Map permission mode to display string with color hint
+  const modeDisplay = thinking
+    ? `${permissionMode.toUpperCase()}+think`
+    : permissionMode.toUpperCase();
+
+  // Color-code by permission mode
+  const modeColor =
+    permissionMode === "plan"
+      ? "blue"
+      : permissionMode === "default"
+        ? "white"
+        : permissionMode === "accept-edits"
+          ? "cyan"
+          : "magenta"; // auto-in-project
 
   return (
     <Box
@@ -44,7 +48,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
           KodaX
         </Text>
         <Text dimColor> | </Text>
-        <Text color={theme.colors.accent}>{modeStr}</Text>
+        <Text color={modeColor}>{modeDisplay}</Text>
         <Text dimColor> | </Text>
         <Text dimColor>{displaySessionId}</Text>
       </Box>
@@ -79,16 +83,16 @@ export const StatusBar: React.FC<StatusBarProps> = ({
  * Simplified status bar - 简化版状态栏
  */
 export const SimpleStatusBar: React.FC<{
-  mode: "code" | "ask";
+  permissionMode: string;
   provider: string;
   model: string;
-}> = ({ mode, provider, model }) => {
+}> = ({ permissionMode, provider, model }) => {
   const theme = useMemo(() => getTheme("dark"), []);
 
   return (
     <Box>
       <Text color={theme.colors.primary} bold>
-        [{mode}]
+        [{permissionMode}]
       </Text>
       <Text dimColor>
         {" "}
@@ -97,3 +101,4 @@ export const SimpleStatusBar: React.FC<{
     </Box>
   );
 };
+

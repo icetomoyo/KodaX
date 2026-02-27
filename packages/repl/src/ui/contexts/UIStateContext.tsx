@@ -127,9 +127,6 @@ function uiReducer(state: UIState, action: UIAction): UIState {
     case "SET_SESSION_ID":
       return { ...state, sessionId: action.payload };
 
-    case "SET_MODE":
-      return { ...state, mode: action.payload };
-
     case "SET_PROVIDER":
       return { ...state, provider: action.payload };
 
