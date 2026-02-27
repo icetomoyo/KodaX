@@ -4,11 +4,11 @@
  * Agent 主循环 - Core 层核心入口
  */
 
-import { KodaXOptions, KodaXResult, KodaXMessage, KodaXToolResultBlock, KodaXToolExecutionContext } from './types.js';
+import { KodaXOptions, KodaXResult, KodaXToolResultBlock, KodaXToolExecutionContext } from './types.js';
+import type { KodaXMessage } from '@kodax/ai';
 import { KodaXClient } from './client.js';
 import { getProvider } from './providers/index.js';
 import { executeTool, KODAX_TOOLS } from './tools/index.js';
-import { computeConfirmTools } from './tools/permission.js';
 import { buildSystemPrompt } from './prompts/index.js';
 import { generateSessionId, extractTitleFromMessages } from './session.js';
 import { compactMessages, checkIncompleteToolCalls } from './messages.js';
@@ -77,17 +77,10 @@ export async function runKodaX(
   messages.push({ role: 'user', content: prompt });
   if (!title) title = prompt.slice(0, 50) + (prompt.length > 50 ? '...' : '');
 
-  const permissionMode = options.permissionMode ?? 'default';
+  // Simplified context - no permission fields (handled by REPL layer)
   const ctx: KodaXToolExecutionContext = {
-    permissionMode,
-    confirmTools: options.confirmTools ?? computeConfirmTools(permissionMode),
     backups: new Map(),
     gitRoot: options.context?.gitRoot ?? undefined,
-    alwaysAllowTools: options.alwaysAllowTools ?? [],
-    saveAlwaysAllowTool: events?.saveAlwaysAllowTool,
-    switchPermissionMode: events?.switchPermissionMode,
-    onConfirm: events?.onConfirm,
-    beforeToolExecute: options.beforeToolExecute,
   };
 
   const systemPrompt = await buildSystemPrompt(options, messages.length === 1);
@@ -201,12 +194,30 @@ export async function runKodaX(
         const resultMap = new Map<string, string>();
 
         if (nonBashTools.length > 0) {
-          const promises = nonBashTools.map(tc => executeTool(tc.name, tc.input, ctx).then(r => ({ id: tc.id, content: r })));
+          const promises = nonBashTools.map(async tc => {
+            // Permission hook - allow REPL layer to control execution
+            if (events.beforeToolExecute) {
+              const allowed = await events.beforeToolExecute(tc.name, tc.input as Record<string, unknown>);
+              if (!allowed) {
+                return { id: tc.id, content: '[Cancelled] Operation cancelled by user' };
+              }
+            }
+            const r = await executeTool(tc.name, tc.input, ctx);
+            return { id: tc.id, content: r };
+          });
           const results = await Promise.all(promises);
           for (const r of results) resultMap.set(r.id, r.content);
         }
 
         for (const tc of bashTools) {
+          // Permission hook - allow REPL layer to control execution
+          if (events.beforeToolExecute) {
+            const allowed = await events.beforeToolExecute(tc.name, tc.input as Record<string, unknown>);
+            if (!allowed) {
+              resultMap.set(tc.id, '[Cancelled] Operation cancelled by user');
+              continue;
+            }
+          }
           const content = await executeTool(tc.name, tc.input, ctx);
           resultMap.set(tc.id, content);
         }
@@ -219,7 +230,18 @@ export async function runKodaX(
       } else {
         for (const tc of result.toolBlocks) {
           events.onToolUseStart?.({ name: tc.name, id: tc.id });
-          const content = await executeTool(tc.name, tc.input, ctx);
+          // Permission hook - allow REPL layer to control execution
+          let content: string;
+          if (events.beforeToolExecute) {
+            const allowed = await events.beforeToolExecute(tc.name, tc.input as Record<string, unknown>);
+            if (!allowed) {
+              content = '[Cancelled] Operation cancelled by user';
+            } else {
+              content = await executeTool(tc.name, tc.input, ctx);
+            }
+          } else {
+            content = await executeTool(tc.name, tc.input, ctx);
+          }
           events.onToolResult?.({ id: tc.id, name: tc.name, content });
           toolResults.push({ type: 'tool_result', tool_use_id: tc.id, content });
         }

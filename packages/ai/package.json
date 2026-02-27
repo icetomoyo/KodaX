@@ -1,7 +1,7 @@
 {
-  "name": "@kodax/core",
+  "name": "@kodax/ai",
   "version": "0.4.6",
-  "description": "KodaX Core - 环境无关的 AI Agent 引擎",
+  "description": "KodaX AI - 独立的 LLM 抽象层，可被其他项目复用",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -19,7 +19,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@kodax/ai": "*"
+    "@anthropic-ai/sdk": "^0.40.0",
+    "openai": "^4.85.0"
   },
   "devDependencies": {
     "@types/node": "^22.13.4",
@@ -27,7 +28,8 @@
     "vitest": "^3.2.4"
   },
   "peerDependencies": {
-    "@kodax/ai": ">=0.4.6"
+    "@anthropic-ai/sdk": ">=0.40.0",
+    "openai": ">=4.0.0"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -35,7 +37,7 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/icetomoyo/KodaX.git",
-    "directory": "packages/core"
+    "directory": "packages/ai"
   },
   "license": "MIT"
 }

@@ -6,9 +6,9 @@
 
 import chalk from 'chalk';
 import readline from 'readline';
-import { KodaXEvents, PermissionMode } from '@kodax/core';
+import type { KodaXEvents } from '@kodax/core';
 import { PREVIEW_MAX_LENGTH } from '../common/utils.js';
-import { saveAlwaysAllowToolPattern, savePermissionModeProject } from '../common/permission-config.js';
+import type { ConfirmResult } from '../permission/types.js';
 
 // ============== Spinner Animation - Spinner 动画 ==============
 
@@ -65,8 +65,10 @@ function startWaitingDots(): { stop: () => void; updateText: (text: string) => v
 }
 
 // ============== User Confirmation - 用户确认 ==============
+// Note: CLI mode is YOLO mode, this function is kept for potential future use
+// 注意: CLI 模式是 YOLO 模式，此函数保留以备将来使用
 
-async function confirmAction(name: string, input: Record<string, unknown>): Promise<import('@kodax/core').ConfirmResult> {
+async function confirmAction(name: string, input: Record<string, unknown>): Promise<ConfirmResult> {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
   // Check if this is a protected path - 检查是否为永久保护路径
@@ -224,17 +226,10 @@ export function createCliEvents(showSessionId = true): KodaXEvents {
       console.log(chalk.red(`\n[Error] ${error.message}`));
     },
 
-    onConfirm: async (tool: string, input: Record<string, unknown>) => {
-      return confirmAction(tool, input);
-    },
-
-    saveAlwaysAllowTool: (tool: string, input: Record<string, unknown>, allowAll?: boolean) => {
-      saveAlwaysAllowToolPattern(tool, input, allowAll ?? false);
-    },
-
-    switchPermissionMode: (mode: PermissionMode) => {
-      savePermissionModeProject(mode);
-      console.log(chalk.dim(`[Permission mode switched to: ${mode}]`));
+    // CLI mode: beforeToolExecute always returns true (YOLO mode)
+    // CLI 模式: beforeToolExecute 始终返回 true (YOLO 模式)
+    beforeToolExecute: async (_tool: string, _input: Record<string, unknown>) => {
+      return true;
     },
   };
 

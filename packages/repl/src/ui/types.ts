@@ -5,7 +5,7 @@
  */
 
 import type { CursorPosition } from "./utils/text-buffer.js";
-import type { PermissionMode } from "@kodax/core";
+import type { PermissionMode } from "../permission/types.js";
 
 // === Keyboard Events - 键盘事件 ===
 

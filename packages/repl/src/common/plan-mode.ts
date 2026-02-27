@@ -134,9 +134,12 @@ async function executePlan(
       // Execute step - 执行步骤
       const stepOptions: KodaXOptions = {
         ...options,
-        beforeToolExecute: async (tool, input) => {
-          console.log(chalk.dim(`  Using tool: ${tool}`));
-          return true;
+        events: {
+          ...options.events,
+          beforeToolExecute: async (tool, _input) => {
+            console.log(chalk.dim(`  Using tool: ${tool}`));
+            return true;
+          }
         }
       };
 

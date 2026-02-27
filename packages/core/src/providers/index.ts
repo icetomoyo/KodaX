@@ -1,13 +1,15 @@
 /**
  * KodaX Providers
  *
- * Provider 模块统一导出
+ * Provider 模块统一导出 - 从 @kodax/ai 重新导出
+ * @deprecated 直接从 @kodax/ai 导入
  */
 
-export { KodaXBaseProvider } from './base.js';
-export { KodaXAnthropicCompatProvider } from './anthropic.js';
-export { KodaXOpenAICompatProvider } from './openai.js';
+// Re-export everything from @kodax/ai for backward compatibility
 export {
+  KodaXBaseProvider,
+  KodaXAnthropicCompatProvider,
+  KodaXOpenAICompatProvider,
   KODAX_PROVIDERS,
   KODAX_DEFAULT_PROVIDER,
   getProvider,
@@ -15,5 +17,5 @@ export {
   getProviderModel,
   getProviderList,
   isProviderName,
-} from './registry.js';
-export type { ProviderName } from './registry.js';
+} from '@kodax/ai';
+export type { ProviderName } from '@kodax/ai';

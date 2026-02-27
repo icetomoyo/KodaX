@@ -34,9 +34,17 @@ import {
   runKodaX,
   KODAX_DEFAULT_PROVIDER,
   KodaXTerminalError,
+} from "@kodax/core";
+import {
   PermissionMode,
   ConfirmResult,
-} from "@kodax/core";
+  createPermissionContext,
+  computeConfirmTools,
+  isToolCallAllowed,
+  isAlwaysConfirmPath,
+  FILE_MODIFICATION_TOOLS,
+} from "../permission/index.js";
+import type { PermissionContext } from "../permission/types.js";
 import {
   InteractiveContext,
   createInteractiveContext,
@@ -51,7 +59,7 @@ import {
 import { getProviderModel } from "../common/utils.js";
 import { KODAX_VERSION } from "../common/utils.js";
 import { runWithPlanMode } from "../common/plan-mode.js";
-import { saveAlwaysAllowToolPattern, loadAlwaysAllowTools, savePermissionModeProject } from "../common/permission-config.js";
+import { saveAlwaysAllowToolPattern, loadAlwaysAllowTools, savePermissionModeUser } from "../common/permission-config.js";
 import { getTheme } from "./themes/index.js";
 import chalk from "chalk";
 
@@ -203,15 +211,17 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const confirmResolveRef = useRef<((result: ConfirmResult) => void) | null>(null);
 
   // Refs for callbacks
+  // Note: permissionMode and alwaysAllowTools are stored separately for permission checks
   const currentOptionsRef = useRef<InkREPLOptions>({
     ...options,
-    permissionMode: currentConfig.permissionMode,
-    alwaysAllowTools: loadAlwaysAllowTools(),
     session: {
       ...options.session,
       id: context.sessionId,
     },
   });
+  // Permission-related refs (not part of KodaXOptions anymore)
+  const permissionModeRef = useRef<PermissionMode>(currentConfig.permissionMode);
+  const alwaysAllowToolsRef = useRef<string[]>(loadAlwaysAllowTools());
 
   // Global interrupt handler - using Gemini CLI style isActive pattern - 全局中断处理器 - 使用 Gemini CLI 风格的 isActive 模式
   // Only subscribe during streaming to ensure keyboard events are captured correctly - 只在 streaming 期间订阅，确保键盘事件能被正确捕获
@@ -320,48 +330,97 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     onError: (error: Error) => {
       console.log(chalk.red(`[Stream Error] ${error.message}`));
     },
-    onConfirm: async (tool: string, input: Record<string, unknown>) => {
-      // Build confirmation prompt text - 构建确认提示文本
-      const inputPreview = input.path
-        ? ` ${input.path as string}`
-        : input.command
-          ? ` ${(input.command as string).slice(0, 60)}${(input.command as string).length > 60 ? '...' : ''}`
-          : '';
+    // Permission hook - called before each tool execution
+    // 权限钩子 - 在每个工具执行前调用
+    beforeToolExecute: async (tool: string, input: Record<string, unknown>): Promise<boolean> => {
+      const mode = currentConfig.permissionMode;
+      const confirmTools = computeConfirmTools(mode);
+      const alwaysAllowTools = alwaysAllowToolsRef.current;
+      const gitRoot = options.context?.gitRoot;
 
-      let promptText: string;
-      switch (tool) {
-        case 'bash':
-          promptText = `Execute bash command?${inputPreview}`;
-          break;
-        case 'write':
-          promptText = `Write to file?${inputPreview}`;
-          break;
-        case 'edit':
-          promptText = `Edit file?${inputPreview}`;
-          break;
-        default:
-          promptText = `Execute ${tool}?`;
+      // === 1. Plan mode: block modification tools ===
+      if (mode === 'plan' && (FILE_MODIFICATION_TOOLS.has(tool) || tool === 'bash' || tool === 'undo')) {
+        console.log(chalk.yellow(`[Blocked] Tool '${tool}' is not allowed in plan mode (read-only)`));
+        return false;
       }
 
-      // Return promise that resolves when user answers - 返回一个 Promise，当用户回答时 resolve
-      return new Promise<ConfirmResult>((resolve) => {
-        confirmResolveRef.current = resolve;
-        setConfirmRequest({ tool, input, prompt: promptText });
-      });
+      // === 2. Protected paths: always confirm ===
+      if (gitRoot && FILE_MODIFICATION_TOOLS.has(tool)) {
+        const targetPath = input.path as string | undefined;
+        if (targetPath && isAlwaysConfirmPath(targetPath, gitRoot)) {
+          const result = await showConfirmDialog(tool, { ...input, _alwaysConfirm: true });
+          return result.confirmed;
+        }
+      }
+
+      // === 3. Check if tool needs confirmation based on mode ===
+      if (confirmTools.has(tool)) {
+        // In accept-edits mode, check alwaysAllowTools for bash
+        if (mode === 'accept-edits' && tool === 'bash') {
+          if (isToolCallAllowed(tool, input, alwaysAllowTools)) {
+            return true; // Auto-allowed
+          }
+        }
+
+        // Show confirmation dialog
+        const result = await showConfirmDialog(tool, input);
+        if (!result.confirmed) {
+          return false;
+        }
+
+        // Handle "always" selection
+        if (result.always) {
+          if (mode === 'accept-edits') {
+            saveAlwaysAllowToolPattern(tool, input, false);
+            // Update ref for next tool calls in this session
+            alwaysAllowToolsRef.current = loadAlwaysAllowTools();
+          }
+          if (mode === 'default') {
+            // Switch to accept-edits mode
+            const newMode: PermissionMode = 'accept-edits';
+            setCurrentConfig((prev) => ({ ...prev, permissionMode: newMode }));
+            permissionModeRef.current = newMode;
+            savePermissionModeUser(newMode);
+            console.log(chalk.dim(`\n[Permission mode switched to: ${newMode}]`));
+          }
+        }
+      }
+
+      return true;
     },
-    saveAlwaysAllowTool: (tool: string, input: Record<string, unknown>, allowAll?: boolean) => {
-      saveAlwaysAllowToolPattern(tool, input, allowAll ?? false);
-    },
-    switchPermissionMode: (mode: PermissionMode) => {
-      // Update state - 更新状态
-      setCurrentConfig((prev) => ({ ...prev, permissionMode: mode }));
-      // Update ref for next agent round - 更新 ref 用于下一轮 agent
-      currentOptionsRef.current.permissionMode = mode;
-      // Persist to config file - 持久化到配置文件
-      savePermissionModeProject(mode);
-      console.log(chalk.dim(`\n[Permission mode switched to: ${mode}]`));
-    },
-  }), [appendThinkingContent, stopThinking, appendResponse, setCurrentTool, appendToolInputChars, confirmRequest]);
+  }), [appendThinkingContent, stopThinking, appendResponse, setCurrentTool, appendToolInputChars, currentConfig, options.context?.gitRoot]);
+
+  // Helper function to show confirmation dialog
+  // 显示确认对话框的辅助函数
+  const showConfirmDialog = (tool: string, input: Record<string, unknown>): Promise<ConfirmResult> => {
+    // Build confirmation prompt text - 构建确认提示文本
+    const inputPreview = input.path
+      ? ` ${input.path as string}`
+      : input.command
+        ? ` ${(input.command as string).slice(0, 60)}${(input.command as string).length > 60 ? '...' : ''}`
+        : '';
+
+    let promptText: string;
+    switch (tool) {
+      case 'bash':
+        promptText = `Execute bash command?${inputPreview}`;
+        break;
+      case 'write':
+        promptText = `Write to file?${inputPreview}`;
+        break;
+      case 'edit':
+        promptText = `Edit file?${inputPreview}`;
+        break;
+      default:
+        promptText = `Execute ${tool}?`;
+    }
+
+    // Return promise that resolves when user answers - 返回一个 Promise，当用户回答时 resolve
+    return new Promise<ConfirmResult>((resolve) => {
+      confirmResolveRef.current = resolve;
+      setConfirmRequest({ tool, input, prompt: promptText });
+    });
+  };
 
   // Run agent round
   const runAgentRound = async (
@@ -488,7 +547,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           },
           setPermissionMode: (mode: PermissionMode) => {
             setCurrentConfig((prev) => ({ ...prev, permissionMode: mode }));
-            currentOptionsRef.current.permissionMode = mode;
+            permissionModeRef.current = mode;
           },
           deleteSession: async (id: string) => {
             await storage.delete?.(id);
@@ -503,7 +562,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             ...currentOptionsRef.current,
             provider: currentConfig.provider,
             thinking: currentConfig.thinking,
-            permissionMode: currentConfig.permissionMode,
           }),
           readline: null as unknown as ReturnType<
             typeof import("readline").createInterface
@@ -558,9 +616,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       // runKodaX (agent.ts:76) will add the prompt to messages automatically.
       // If we push here, the message gets duplicated (Issue 046).
 
-      // Sync options permissionMode
-      currentOptionsRef.current.permissionMode = currentConfig.permissionMode;
-
       // Run with plan mode if enabled
       if (planMode) {
         try {
@@ -568,7 +623,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             ...currentOptionsRef.current,
             provider: currentConfig.provider,
             thinking: currentConfig.thinking,
-            permissionMode: currentConfig.permissionMode,
           });
         } catch (err) {
           const error = err instanceof Error ? err : new Error(String(err));
@@ -837,8 +891,10 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
   const config = loadConfig();
   const initialProvider = options.provider ?? config.provider ?? KODAX_DEFAULT_PROVIDER;
   const initialThinking = options.thinking ?? config.thinking ?? false;
+  // Load permission mode from config file (not from CLI options)
+  // CLI is always YOLO mode; REPL uses config file for permission mode
   const initialPermissionMode: PermissionMode =
-    options.permissionMode ?? (config.permissionMode as PermissionMode | undefined) ?? 'default';
+    (config.permissionMode as PermissionMode | undefined) ?? 'default';
 
   const currentConfig: CurrentConfig = {
     provider: initialProvider,

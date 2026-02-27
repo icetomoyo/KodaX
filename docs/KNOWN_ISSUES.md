@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-02-27 04:30_
+_Last Updated: 2026-02-28 00:45_
 
 ---
 
@@ -57,6 +57,10 @@ _Last Updated: 2026-02-27 04:30_
 | 046 | High | Resolved | Session 恢复时消息显示异常 | v0.4.5 | v0.4.5 | 2026-02-26 | 2026-02-27 |
 | 047 | Medium | Resolved | 流式输出时界面闪烁 | v0.4.5 | v0.4.5 | 2026-02-26 | 2026-02-27 |
 | 048 | Medium | Resolved | Spinner 动画期间消息显示乱序 | v0.4.5 | v0.4.5 | 2026-02-27 | 2026-02-27 |
+| 049 | High | Resolved | 权限模式持久化位置错误 | v0.5.0 | v0.5.0 | 2026-02-27 | 2026-02-27 |
+| 050 | Medium | Resolved | 命令输出格式不一致（AI 编造问题） | v0.4.6 | v0.4.6 | 2026-02-27 | 2026-02-28 |
+| 051 | Medium | Open | 权限确认取消时无提示 | v0.4.6 | - | 2026-02-27 | - |
+| 052 | High | Open | 受保护路径确认对话框显示错误选项 | v0.4.6 | - | 2026-02-28 | - |
 
 ---
 
@@ -1182,8 +1186,8 @@ _Last Updated: 2026-02-27 04:30_
 ---
 
 ## Summary
-- Total: 48 (8 Open, 36 Resolved, 4 Won't Fix)
-- Highest Priority Open: 005 - 中英文注释混用 (Low)
+- Total: 52 (9 Open, 39 Resolved, 4 Won't Fix)
+- Highest Priority Open: 052 - 受保护路径确认对话框显示错误选项 (High)
 
 ---
 
@@ -1697,6 +1701,174 @@ _Last Updated: 2026-02-27 04:30_
   - Ink 的 reconciler 会跳过未变化的内容，重渲染开销可接受
 
   **Commit**: (待提交)
+
+---
+
+### 049: 权限模式持久化位置错误 (RESOLVED)
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: v0.5.0
+- **Fixed**: v0.5.0
+- **Created**: 2026-02-27
+- **Resolved**: 2026-02-27
+- **Original Problem**:
+  - 在 REPL 中使用 `/mode default` 切换权限模式时，用户配置文件 `~/.kodax/config.json` 中的 `permissionMode` 未变化
+  - `permissionMode` 被错误地保存到项目级配置 `.kodax/config.local.json` 中
+  - 用户期望权限模式是用户级别的偏好设置，应该在用户配置文件中管理
+- **Context**:
+  - `packages/repl/src/common/permission-config.ts` 提供了两个保存函数：
+    - `savePermissionModeProject()` - 保存到 `.kodax/config.local.json`
+    - `savePermissionModeUser()` - 保存到 `~/.kodax/config.json`
+  - 当前代码调用的是 `savePermissionModeProject()` 而不是 `savePermissionModeUser()`
+- **Root Cause**: 使用了错误的保存函数，`permissionMode` 应该保存到用户级配置而非项目级配置
+- **Resolution**:
+  - 将 `savePermissionModeProject()` 调用改为 `savePermissionModeUser()`
+  - 更新帮助文档，将 "saved to .kodax/config.local.json" 改为 "saved to ~/.kodax/config.json"
+- **Files Changed**:
+  - `packages/repl/src/interactive/commands.ts` - 修改 import 和调用
+  - `packages/repl/src/ui/InkREPL.tsx` - 修改 import 和调用
+
+---
+
+### 050: 命令输出格式不一致（AI 编造问题）(RESOLVED)
+- **Priority**: Medium
+- **Status**: Resolved
+- **Introduced**: v0.4.6
+- **Fixed**: v0.4.6
+- **Created**: 2026-02-27
+- **Original Problem**:
+  在 REPL 中连续执行多个 bash 命令时，命令输出格式不一致：
+
+  **第一次 `ls -a`**：显示正确，Windows `dir` 格式的详细输出（带日期、大小）
+  ```
+  C:\Works\GitWorks\MarkXbook 的目录
+  2026/02/27  23:41    <DIR>          .
+  2026/02/27  23:40    <DIR>          ..
+  ...
+  ```
+
+  **第二次 `ls -a`**：格式错误，显示简化的 Unix ls 风格（只有文件名）
+  ```
+  .                ..               .git            .gitignore
+  .kodax           feature_list.json  node_modules   package.json
+  ...
+  ```
+
+  **核心问题**：
+  - 同一个命令 `ls -a` 在连续执行时输出格式不同
+  - 第一次是真正执行命令得到的输出（Windows dir 格式）
+  - 后续可能是 AI 模型自己"编造"的输出（Unix ls 风格），而非真正调用 bash 工具
+- **Context**:
+  - REPL 中的 Bash 工具执行
+  - Windows 环境下 `ls -a` 命令（在 Windows 上 `ls -a` 等同于 `dir /a`）
+  - 大模型工具调用行为
+- **Root Cause Analysis**:
+  这是 **大模型行为问题**，而非 kodax 代码问题：
+
+  1. Bash 工具代码正确实现了命令执行（使用 `spawn` 真正执行）
+  2. 第一次 AI 正确调用了 bash 工具，得到真实的 Windows 输出
+  3. 后续 AI 可能：
+     - 没有真正调用 bash 工具，而是基于对话历史自己"编造"输出
+     - AI 的训练数据中 Unix `ls` 格式更常见，所以编造了 Unix 风格的输出
+
+  **验证方法**：检查输出中是否有 `Command: ${command}` 前缀
+  - 有前缀：真正执行了命令
+  - 无前缀：AI 编造的输出
+
+- **Resolution**:
+  - 在 bash 工具输出中添加执行的命令（`Command: ${command}`）
+  - 输出格式从 `Exit: ${code}\n${output}` 改为 `Command: ${command}\nExit: ${code}\n${output}`
+  - 同时更新了超时和错误消息格式以保持一致性
+  - 这使 AI 和用户都能清楚地辨别：哪些是真正执行的命令输出，哪些可能是 AI 编造的
+  - 帮助 AI 在多轮对话中正确归因输出与命令的对应关系
+- **Resolution Date**: 2026-02-28
+- **Files Changed**: packages/core/src/tools/bash.ts
+
+---
+
+### 051: 权限确认取消时无提示
+- **Priority**: Medium
+- **Status**: Open
+- **Introduced**: v0.4.6
+- **Created**: 2026-02-27
+- **Original Problem**:
+  在 Feature 009 测试 (TC-008) 中发现：
+  - 执行需要权限确认的文件操作（如 `创建文件 test_reject.txt`）
+  - 在确认对话框中按 `n` (no) 拒绝操作
+  - 操作被成功取消，但没有显示 `[Cancelled] Operation cancelled by user` 提示
+  - 用户无法得到明确的取消反馈
+- **Expected Behavior**:
+  - 按下 `n` 后应显示 `[Cancelled] Operation cancelled by user` 或类似的取消提示
+- **Context**:
+  - REPL 权限确认系统
+  - Feature 009: 架构重构后的权限层
+  - TC-008 测试用例：拒绝操作确认
+- **Reproduction**:
+  1. 启动 `kodax` 进入 REPL
+  2. 执行 `创建文件 test_reject.txt`
+  3. 在确认对话框中按 `n`
+  4. 观察：操作被取消但无提示信息
+- **Root Cause**: Unknown - 需要检查权限确认取消时的 UI 反馈逻辑
+- **Proposed Solution**:
+  - 检查 `InkREPL.tsx` 中 `onConfirm` 回调的拒绝路径
+  - 确认取消时是否正确输出取消消息
+
+---
+
+### 052: 受保护路径确认对话框显示错误选项
+- **Priority**: High
+- **Status**: Open
+- **Introduced**: v0.4.6
+- **Created**: 2026-02-28
+- **Original Problem**:
+  在 Feature 009 测试 (TC-009) 中发现两个相关的问题：
+
+  **问题 1: 受保护路径显示 "always" 选项**
+  - 当操作涉及受保护路径（如 `.kodax/test_protected.txt`）时
+  - 确认对话框显示了 `Press (y) yes, (a) always yes for this tool, (n) no`
+  - 受保护路径不应该允许设置 "always"，因为这会绕过安全保护
+  - 预期提示应该只显示 `(y) yes, (n) no`，不包含 `(a) always` 选项
+
+  **问题 2: 缺少 "(protected path)" 提示**
+  - 受保护路径的确认对话框应该显示明确的标识
+  - 预期提示应包含 `(protected path)` 或类似说明
+  - 例如：`Press (y) to confirm, (n) to cancel (protected path)`
+- **Expected Behavior**:
+  - 受保护路径的确认对话框应该：
+    1. 不显示 `(a) always` 选项
+    2. 显示 `(protected path)` 提示
+- **Context**:
+  - REPL 权限确认系统
+  - 受保护路径：`.kodax/`, `~/.kodax/`, 项目外路径
+  - Feature 009: 架构重构后的权限层
+  - TC-009 测试用例：受保护路径确认
+- **Reproduction**:
+  1. 启动 `kodax` 进入 REPL（在某个 git 项目目录）
+  2. 执行 `在 .kodax 目录创建文件 test_protected.txt`
+  3. 观察确认对话框：
+     - 是否显示 `(a) always` 选项（不应该显示）
+     - 是否显示 `(protected path)` 提示（应该显示）
+- **Root Cause Analysis**:
+  - 代码逻辑存在于 `InkREPL.tsx` 行 818-840：
+    ```typescript
+    {confirmRequest.input._alwaysConfirm ? (
+      <Text dimColor>
+        Press (y) to confirm, (n) to cancel (protected path)
+      </Text>
+    ) : (
+      <Text dimColor>
+        Press (y) yes, (a) always yes for this tool, (n) no
+      </Text>
+    )}
+    ```
+  - 问题在于 `_alwaysConfirm` 标志可能未正确设置
+  - 需要检查 `isAlwaysConfirmPath()` 函数是否正确检测 `.kodax/` 路径
+  - 或者 `_alwaysConfirm` 标志在传递给确认对话框时被错误设置
+- **Proposed Solution**:
+  1. 检查 `isAlwaysConfirmPath()` 函数的逻辑
+  2. 确保 `.kodax/` 路径被正确识别为受保护路径
+  3. 验证 `_alwaysConfirm` 标志在传递给确认对话框前被正确设置
+  4. 考虑将判断逻辑移到更早的阶段（如 `requestConfirm` 函数中）
 
 ---
 

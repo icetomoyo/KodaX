@@ -28,6 +28,9 @@ import {
   KODAX_DEFAULT_PROVIDER,
   generateSessionId,
 } from '@kodax/core';
+import type { PermissionMode, ConfirmResult } from '../permission/types.js';
+import { computeConfirmTools, FILE_MODIFICATION_TOOLS } from '../permission/types.js';
+import { isToolCallAllowed, isAlwaysConfirmPath } from '../permission/permission.js';
 import { getGitRoot, loadConfig, getProviderModel, KODAX_VERSION } from '../common/utils.js';
 import {
   InteractiveContext,
@@ -108,10 +111,8 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   const config = loadConfig();
   const initialProvider = options.provider ?? config.provider ?? KODAX_DEFAULT_PROVIDER;
   const initialThinking = options.thinking ?? config.thinking ?? false;
-  const initialPermissionMode: import('@kodax/core').PermissionMode =
-    (options as { permissionMode?: import('@kodax/core').PermissionMode }).permissionMode ??
-    (config as { permissionMode?: import('@kodax/core').PermissionMode }).permissionMode ??
-    'default';
+  const initialPermissionMode: PermissionMode =
+    (config as { permissionMode?: PermissionMode }).permissionMode ?? 'default';
 
   // Apply theme (using default dark theme) - 应用主题 (使用默认 dark 主题)
   // TODO: Read theme setting from config file - TODO: 从配置文件读取主题设置
@@ -123,6 +124,10 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     thinking: initialThinking,
     permissionMode: initialPermissionMode,
   };
+
+  // Local permission state - 本地权限状态
+  let currentPermissionMode: PermissionMode = initialPermissionMode;
+  let alwaysAllowTools: string[] = [];
 
   // Plan mode state - Plan mode 状态
   let planMode = false;
@@ -293,9 +298,10 @@ Keyboard Shortcuts:
       currentConfig.thinking = enabled;
       currentOptions.thinking = enabled;
     },
-    setPermissionMode: (mode: import('@kodax/core').PermissionMode) => {
+    setPermissionMode: (mode: PermissionMode) => {
       currentConfig.permissionMode = mode;
-      currentOptions.permissionMode = mode;
+      // Note: permissionMode is no longer part of KodaXOptions
+      // Permission control is handled locally via beforeToolExecute callback
     },
     deleteSession: async (id: string) => {
       await storage.delete?.(id);
@@ -311,16 +317,66 @@ Keyboard Shortcuts:
         ...currentOptions,
         provider: currentConfig.provider,
         thinking: currentConfig.thinking,
-        permissionMode: currentConfig.permissionMode,
         events: {
           ...currentOptions.events,
-          onConfirm: async (tool: string, input: Record<string, unknown>) => {
-            // Use enhanced confirmation prompt - 使用增强的确认提示
-            return confirmToolExecution(rl, tool, input, {
-              isOutsideProject: input._outsideProject === true,
-              isProtectedPath: input._alwaysConfirm === true,
-              reason: input._reason as string | undefined,
-            });
+          // Permission control via beforeToolExecute hook - 通过 beforeToolExecute 钩子控制权限
+          beforeToolExecute: async (tool: string, input: Record<string, unknown>): Promise<boolean> => {
+            const mode = currentPermissionMode;
+            const confirmTools = computeConfirmTools(mode);
+
+            // Plan mode: block modification tools
+            if (mode === 'plan' && (FILE_MODIFICATION_TOOLS.has(tool) || tool === 'bash' || tool === 'undo')) {
+              console.log(chalk.yellow(`[Blocked] Tool '${tool}' is not allowed in plan mode (read-only)`));
+              return false;
+            }
+
+            // Protected paths: always confirm
+            if (gitRoot && FILE_MODIFICATION_TOOLS.has(tool)) {
+              const targetPath = input.path as string | undefined;
+              if (targetPath && isAlwaysConfirmPath(targetPath, gitRoot)) {
+                const result = await confirmToolExecution(rl, tool, input, { isProtectedPath: true });
+                if (!result.confirmed) {
+                  console.log(chalk.dim('[Cancelled] Operation on protected path requires confirmation'));
+                  return false;
+                }
+                return true;
+              }
+            }
+
+            // Check if tool needs confirmation based on mode
+            if (confirmTools.has(tool)) {
+              // Check alwaysAllowTools in accept-edits mode for bash
+              if (mode === 'accept-edits' && tool === 'bash') {
+                if (isToolCallAllowed(tool, input, alwaysAllowTools)) {
+                  return true;
+                }
+              }
+
+              // Show confirmation dialog
+              const result = await confirmToolExecution(rl, tool, input, {
+                isOutsideProject: input._outsideProject === true,
+                reason: input._reason as string | undefined,
+              });
+
+              if (!result.confirmed) {
+                console.log(chalk.dim('[Cancelled] Operation cancelled by user'));
+                return false;
+              }
+
+              // Handle "always" selection
+              if (result.always) {
+                if (mode === 'accept-edits') {
+                  // Add to alwaysAllowTools
+                  // TODO: Implement pattern generation
+                }
+                if (mode === 'default') {
+                  currentPermissionMode = 'accept-edits';
+                  currentConfig.permissionMode = 'accept-edits';
+                }
+              }
+            }
+
+            return true;
           },
         },
       };
@@ -374,13 +430,11 @@ Keyboard Shortcuts:
 
         // Run agent (copy main loop logic) - 运行 agent (复制主循环逻辑)
         try {
-          currentOptions.permissionMode = currentConfig.permissionMode;
           if (planMode) {
             await runWithPlanMode(processed, {
               ...currentOptions,
               provider: currentConfig.provider,
               thinking: currentConfig.thinking,
-              permissionMode: currentConfig.permissionMode,
             });
           } else {
             const result = await runKodaX(
@@ -388,7 +442,6 @@ Keyboard Shortcuts:
                 ...currentOptions,
                 provider: currentConfig.provider,
                 thinking: currentConfig.thinking,
-                permissionMode: currentConfig.permissionMode,
                 session: { ...currentOptions.session, initialMessages: context.messages },
               },
               processed
@@ -456,9 +509,6 @@ Keyboard Shortcuts:
     // Update status bar message count - 更新状态栏消息数量
     statusBar?.update({ messageCount: context.messages.length });
 
-    // Sync current permissionMode to options - 同步当前权限模式到 options
-    currentOptions.permissionMode = currentConfig.permissionMode;
-
     // If Plan Mode is enabled, execute in plan mode - 如果启用了 Plan Mode，使用计划模式执行
     if (planMode) {
       try {
@@ -466,7 +516,6 @@ Keyboard Shortcuts:
           ...currentOptions,
           provider: currentConfig.provider,
           thinking: currentConfig.thinking,
-          permissionMode: currentConfig.permissionMode,
         });
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));

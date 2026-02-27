@@ -5,9 +5,10 @@
 import * as readline from 'readline';
 import chalk from 'chalk';
 import { InteractiveContext, InteractiveMode } from './context.js';
-import { estimateTokens, KODAX_PROVIDERS, getProviderList, KodaXOptions, PermissionMode } from '@kodax/core';
+import { estimateTokens, KODAX_PROVIDERS, getProviderList, KodaXOptions } from '@kodax/core';
+import { PermissionMode } from '../permission/types.js';
 import { saveConfig } from '../common/utils.js';
-import { savePermissionModeProject } from '../common/permission-config.js';
+import { savePermissionModeUser } from '../common/permission-config.js';
 import { runWithPlanMode, listPlans, resumePlan, clearCompletedPlans } from '../common/plan-mode.js';
 import { handleProjectCommand, printProjectHelp } from './project-commands.js';
 
@@ -165,7 +166,7 @@ export const BUILTIN_COMMANDS: Command[] = [
       if (VALID_MODES.includes(newMode)) {
         currentConfig.permissionMode = newMode;
         callbacks.setPermissionMode?.(newMode);
-        savePermissionModeProject(newMode);
+        savePermissionModeUser(newMode);
         console.log(chalk.cyan(`\n[Switched to ${newMode} mode] (saved)`));
       } else {
         console.log(chalk.red(`\n[Unknown mode: ${args[0]}. Use: plan | default | accept-edits | auto-in-project]`));
@@ -188,7 +189,7 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log();
       console.log(chalk.bold('Notes:'));
       console.log(chalk.dim('  - .kodax/ directory and project-external paths always require confirmation'));
-      console.log(chalk.dim('  - Mode is saved to .kodax/config.local.json (project-level)'));
+      console.log(chalk.dim('  - Mode is saved to ~/.kodax/config.json (user-level)'));
       console.log();
     },
   },
@@ -417,7 +418,7 @@ export const BUILTIN_COMMANDS: Command[] = [
     handler: async (_args, _context, callbacks, currentConfig) => {
       currentConfig.permissionMode = 'auto-in-project';
       callbacks.setPermissionMode?.('auto-in-project');
-      savePermissionModeProject('auto-in-project');
+      savePermissionModeUser('auto-in-project');
       console.log(chalk.cyan('\n[Switched to auto-in-project mode] (saved)'));
     },
     detailedHelp: () => {

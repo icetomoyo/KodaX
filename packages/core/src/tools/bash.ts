@@ -21,7 +21,7 @@ export async function toolBash(input: Record<string, unknown>): Promise<string> 
     const timer = setTimeout(() => {
       proc.kill();
       const partial = stdout.length ? stdout.toString('utf-8').slice(0, 2000) : '';
-      resolve(`[Timeout] Command interrupted after ${timeout}s\n\nPartial output:\n${partial}\n\n[Suggestion] The command took too long. Consider:\n- Is this a watch/dev server? Run in a separate terminal.\n- Can the task be broken into smaller steps?\n- Is there an error causing it to hang?`);
+      resolve(`Command: ${command}\n[Timeout] Command interrupted after ${timeout}s\n\nPartial output:\n${partial}\n\n[Suggestion] The command took too long. Consider:\n- Is this a watch/dev server? Run in a separate terminal.\n- Can the task be broken into smaller steps?\n- Is there an error causing it to hang?`);
     }, timeout * 1000);
 
     proc.stdout?.on('data', (d: Buffer) => { stdout = Buffer.concat([stdout, d]); });
@@ -35,11 +35,12 @@ export async function toolBash(input: Record<string, unknown>): Promise<string> 
         }
         return b.toString('utf-8');
       };
-      let out = `Exit: ${code}\n${decode(stdout)}`;
+      // Issue 050 fix: Include command in output for better attribution - Issue 050 修复：在输出中包含命令以便更好地归因
+      let out = `Command: ${command}\nExit: ${code}\n${decode(stdout)}`;
       if (stderr.length) out += `\n[stderr]\n${decode(stderr)}`;
       if (capped) out += `\n[Note] Timeout capped at ${KODAX_HARD_TIMEOUT}s`;
       resolve(out);
     });
-    proc.on('error', e => { clearTimeout(timer); resolve(`[Error] ${e.message}`); });
+    proc.on('error', e => { clearTimeout(timer); resolve(`Command: ${command}\n[Error] ${e.message}`); });
   });
 }

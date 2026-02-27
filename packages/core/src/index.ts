@@ -15,7 +15,10 @@
  * ```
  */
 
-// 类型导出
+// ============== Re-export from @kodax/ai ==============
+// AI types are re-exported for backward compatibility
+// New code should import directly from @kodax/ai
+
 export type {
   KodaXContentBlock,
   KodaXTextBlock,
@@ -24,11 +27,22 @@ export type {
   KodaXThinkingBlock,
   KodaXRedactedThinkingBlock,
   KodaXMessage,
-  KodaXSessionMeta,
   KodaXStreamResult,
   KodaXToolDefinition,
   KodaXProviderConfig,
   KodaXProviderStreamOptions,
+} from '@kodax/ai';
+
+export {
+  KodaXError,
+  KodaXProviderError,
+  KodaXRateLimitError,
+} from '@kodax/ai';
+
+// ============== Core Types ==============
+
+export type {
+  KodaXSessionMeta,
   KodaXEvents,
   KodaXSessionOptions,
   KodaXContextOptions,
@@ -36,22 +50,18 @@ export type {
   KodaXResult,
   KodaXSessionStorage,
   KodaXToolExecutionContext,
-  KodaXConfig,
-  PermissionMode,
-  ConfirmResult,
 } from './types.js';
 
-// 错误导出
+// ============== Core Errors ==============
+
 export {
-  KodaXError,
-  KodaXProviderError,
   KodaXToolError,
-  KodaXRateLimitError,
   KodaXSessionError,
   KodaXTerminalError,
 } from './errors.js';
 
-// 常量导出
+// ============== Constants ==============
+
 export {
   KODAX_MAX_TOKENS,
   KODAX_DEFAULT_TIMEOUT,
@@ -69,7 +79,8 @@ export {
   KODAX_TOOL_REQUIRED_PARAMS,
 } from './constants.js';
 
-// Provider 导出
+// ============== Provider (re-export from @kodax/ai) ==============
+
 export {
   KodaXBaseProvider,
   KodaXAnthropicCompatProvider,
@@ -84,7 +95,8 @@ export {
 } from './providers/index.js';
 export type { ProviderName } from './providers/index.js';
 
-// 工具导出
+// ============== Tools ==============
+
 export {
   type ToolHandler,
   type ToolRegistry,
@@ -102,49 +114,41 @@ export {
   toolUndo,
 } from './tools/index.js';
 
-// 权限控制导出
-export {
-  computeConfirmTools,
-  isAlwaysConfirmPath,
-  inferPermissionMode,
-  MODIFICATION_TOOLS,
-  FILE_MODIFICATION_TOOLS,
-  parseAllowedToolPattern,
-  matchesAllowedPattern,
-  isToolCallAllowed,
-  generateSavePattern,
-} from './tools/permission.js';
+// ============== Prompts ==============
 
-// 提示词导出
 export {
   SYSTEM_PROMPT,
   LONG_RUNNING_PROMPT,
   buildSystemPrompt,
 } from './prompts/index.js';
 
-// 会话导出
+// ============== Session ==============
+
 export {
   generateSessionId,
   extractTitleFromMessages,
 } from './session.js';
 
-// 消息处理导出
+// ============== Message Processing ==============
+
 export {
   compactMessages,
   checkIncompleteToolCalls,
 } from './messages.js';
 
-// Tokenizer 导出
+// ============== Tokenizer ==============
+
 export {
   estimateTokens,
 } from './tokenizer.js';
 
-// Agent 导出
+// ============== Agent ==============
+
 export {
   runKodaX,
   checkPromiseSignal,
   KodaXClient,
 } from './agent.js';
 
-// Client 单独导出
+// Client alias
 export { KodaXClient as Client } from './client.js';

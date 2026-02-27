@@ -7,7 +7,7 @@
 import * as readline from 'readline';
 import chalk from 'chalk';
 import { PREVIEW_MAX_LENGTH } from '../common/utils.js';
-import { ConfirmResult } from '@kodax/core';
+import { ConfirmResult } from '../permission/types.js';
 
 /**
  * 确认选项定义

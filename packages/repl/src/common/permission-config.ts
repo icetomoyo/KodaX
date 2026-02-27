@@ -23,7 +23,7 @@ import {
   parseAllowedToolPattern,
   isToolCallAllowed,
   generateSavePattern,
-} from '@kodax/core';
+} from '../permission/index.js';
 
 // Re-export for convenience - 重新导出便于使用
 export { parseAllowedToolPattern, isToolCallAllowed, generateSavePattern };

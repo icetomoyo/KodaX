@@ -1,6 +1,6 @@
 # Feature List
 
-_Last Updated: 2026-02-27 21:00_
+_Last Updated: 2026-02-27 23:30_
 
 ---
 
@@ -8,7 +8,7 @@ _Last Updated: 2026-02-27 21:00_
 
 | 字段 | 值 | 说明 |
 |------|-----|------|
-| **Current Release** | v0.4.6 | 最新发布版本（仅供参考） |
+| **Current Release** | v0.5.0 | 最新发布版本（仅供参考） |
 | **Planned Version** | v0.5.0 | 当前规划的版本 |
 
 ---
@@ -21,7 +21,7 @@ _Last Updated: 2026-02-27 21:00_
 | v0.3.3 | Released | 1 | 1/1 (100%) |
 | v0.4.0 | Released | 1 | 1/1 (100%) |
 | v0.4.6 | Released | 1 | 1/1 (100%) |
-| v0.5.0 | Planned | 4 | 0/4 (0%) |
+| v0.5.0 | InProgress | 4 | 2/4 (50%) |
 
 ---
 
@@ -37,7 +37,7 @@ _Last Updated: 2026-02-27 21:00_
 | 006 | New | Planned | Critical | Skills 系统 | v0.5.0 | - | [Design](features/v0.5.0.md#006) | 2026-02-25 | - | - |
 | 007 | Enhancement | Planned | Medium | 主题系统完善 | v0.5.0 | - | [Design](features/v0.5.0.md#007) | 2026-02-25 | - | - |
 | 008 | Enhancement | Completed | High | 权限控制体系改进 | v0.5.0 | v0.4.6 | [Design](features/v0.5.0.md#008) | 2026-02-26 | 2026-02-27 | 2026-02-27 |
-| 009 | Refactor | Planned | Critical | 架构重构：AI 层独立 + 权限层分离 | v0.5.0 | - | [Design](features/v0.5.0.md#009) | 2026-02-27 | - | - |
+| 009 | Refactor | Completed | Critical | 架构重构：AI 层独立 + 权限层分离 | v0.5.0 | v0.5.0 | [Design](features/v0.5.0.md#009) | 2026-02-27 | 2026-02-27 | 2026-02-27 |
 
 ---
 
@@ -273,16 +273,16 @@ REPL 中的长运行项目管理，通过 `/project` 命令组实现。
 
 ---
 
-### 009: 架构重构：AI 层独立 + 权限层分离 (PLANNED)
+### 009: 架构重构：AI 层独立 + 权限层分离 (COMPLETED)
 - **Category**: Refactor
-- **Status**: Planned
+- **Status**: Completed
 - **Priority**: Critical
 - **Planned**: v0.5.0
-- **Released**: -
+- **Released**: v0.5.0
 - **Design**: [v0.5.0.md#009](features/v0.5.0.md#009)
 - **Created**: 2026-02-27
-- **Started**: -
-- **Completed**: -
+- **Started**: 2026-02-27
+- **Completed**: 2026-02-27
 
 **Description**:
 参考 pi-mono 的优雅设计，重构 KodaX 架构，实现职责分离和可复用性。
@@ -296,17 +296,23 @@ REPL 中的长运行项目管理，通过 `/project` 命令组实现。
 **Inspired by**: [pi-mono](https://github.com/badlogic/pi-mono)
 
 **Key Changes**:
-- 从 core 移除 permission.ts
+- 创建 `packages/ai/` 独立包，包含 Provider 抽象层
+- 从 core 移除 permission.ts，简化为纯执行
 - 简化 registry.ts 的 executeTool()（无权限检查）
-- 创建 packages/ai/ 独立包
-- CLI 移除 --mode 参数，默认 auto
-- REPL 保留完整权限控制
+- CLI 默认 YOLO 模式（无权限检查），保留 `-y/--auto` 向后兼容
+- REPL 保留完整权限控制（通过 `beforeToolExecute` hook）
+
+**Implementation Notes**:
+- `packages/ai/` - 独立的 LLM Provider 抽象层
+- `packages/core/src/tools/registry.ts` - 简化的工具执行
+- `packages/repl/src/permission/` - REPL 层权限模块
+- `packages/repl/src/ui/InkREPL.tsx` - 使用 `beforeToolExecute` hook
 
 ---
 
 ## Summary
-- Total: 9 (4 Planned, 0 InProgress, 5 Completed)
+- Total: 9 (2 Planned, 0 InProgress, 7 Completed)
 - By Priority: Critical: 2, High: 4, Medium: 2, Low: 0
-- Current Version: v0.4.6
-- Next Release (v0.5.0): 4 features planned (006, 007, 008, 009)
-- Highest Priority Planned: 006 - Skills 系统, 009 - 架构重构 (Critical)
+- Current Version: v0.5.0
+- Next Release (v0.5.0): 2 features planned (006, 007)
+- Highest Priority Planned: 006 - Skills 系统 (Critical)
