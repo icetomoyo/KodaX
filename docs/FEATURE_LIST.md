@@ -21,7 +21,7 @@ _Last Updated: 2026-02-27 21:00_
 | v0.3.3 | Released | 1 | 1/1 (100%) |
 | v0.4.0 | Released | 1 | 1/1 (100%) |
 | v0.4.6 | Released | 1 | 1/1 (100%) |
-| v0.5.0 | Planned | 2 | 0/2 (0%) |
+| v0.5.0 | Planned | 3 | 0/3 (0%) |
 
 ---
 
@@ -37,6 +37,7 @@ _Last Updated: 2026-02-27 21:00_
 | 006 | New | Planned | Critical | Skills 系统 | v0.5.0 | - | [Design](features/v0.5.0.md#006) | 2026-02-25 | - | - |
 | 007 | Enhancement | Planned | Medium | 主题系统完善 | v0.5.0 | - | [Design](features/v0.5.0.md#007) | 2026-02-25 | - | - |
 | 008 | Enhancement | Completed | High | 权限控制体系改进 | v0.5.0 | v0.4.6 | [Design](features/v0.5.0.md#008) | 2026-02-26 | 2026-02-27 | 2026-02-27 |
+| 009 | Refactor | Planned | Critical | 架构重构：AI 层独立 + 权限层分离 | v0.5.0 | - | [Design](features/v0.5.0-refactor.md) | 2026-02-27 | - | - |
 
 ---
 
@@ -272,9 +273,40 @@ REPL 中的长运行项目管理，通过 `/project` 命令组实现。
 
 ---
 
+### 009: 架构重构：AI 层独立 + 权限层分离 (PLANNED)
+- **Category**: Refactor
+- **Status**: Planned
+- **Priority**: Critical
+- **Planned**: v0.5.0
+- **Released**: -
+- **Design**: [v0.5.0-refactor.md](features/v0.5.0-refactor.md)
+- **Created**: 2026-02-27
+- **Started**: -
+- **Completed**: -
+
+**Description**:
+参考 pi-mono 的优雅设计，重构 KodaX 架构，实现职责分离和可复用性。
+
+**Goals**:
+1. **@kodax/ai**: 独立的 LLM 抽象层，可被其他项目复用
+2. **@kodax/core**: 纯 Agent 逻辑，移除权限检查
+3. **@kodax/repl**: 权限控制层，UI 交互
+4. **CLI**: 默认 auto (YOLO) 模式，快速执行
+
+**Inspired by**: [pi-mono](https://github.com/badlogic/pi-mono)
+
+**Key Changes**:
+- 从 core 移除 permission.ts
+- 简化 registry.ts 的 executeTool()（无权限检查）
+- 创建 packages/ai/ 独立包
+- CLI 移除 --mode 参数，默认 auto
+- REPL 保留完整权限控制
+
+---
+
 ## Summary
-- Total: 8 (2 Planned, 0 InProgress, 6 Completed)
-- By Priority: Critical: 1, High: 5, Medium: 2, Low: 0
+- Total: 9 (3 Planned, 0 InProgress, 6 Completed)
+- By Priority: Critical: 2, High: 5, Medium: 2, Low: 0
 - Current Version: v0.4.6
-- Next Release (v0.5.0): 2 features planned (006, 007)
-- Highest Priority Planned: 006 - Skills 系统 (Critical)
+- Next Release (v0.5.0): 3 features planned (006, 007, 009)
+- Highest Priority Planned: 006 - Skills 系统, 009 - 架构重构 (Critical)
