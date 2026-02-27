@@ -205,14 +205,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     },
   });
 
-  // 全局中断处理器 - 使用 Gemini CLI 风格的 isActive 模式
-  // 只在 streaming 期间订阅，确保键盘事件能被正确捕获
-  // 参考: Gemini CLI useGeminiStream.ts 中的 useKeypress 使用方式
+  // Global interrupt handler - using Gemini CLI style isActive pattern - 全局中断处理器 - 使用 Gemini CLI 风格的 isActive 模式
+  // Only subscribe during streaming to ensure keyboard events are captured correctly - 只在 streaming 期间订阅，确保键盘事件能被正确捕获
+  // Reference: Gemini CLI useGeminiStream.ts useKeypress usage - 参考: Gemini CLI useGeminiStream.ts 中的 useKeypress 使用方式
   useKeypress(
     (key) => {
-      // Ctrl+C 或 ESC 中断当前操作
+      // Ctrl+C or ESC interrupts current operation - Ctrl+C 或 ESC 中断当前操作
       if ((key.ctrl && key.name === "c") || key.name === "escape") {
-        // 使用 abort() 而不是 stopStreaming() 来真正中止 API 请求
+        // Use abort() instead of stopStreaming() to truly abort API request - 使用 abort() 而不是 stopStreaming() 来真正中止 API 请求
         abort();
         stopThinking();
         clearThinkingContent();
@@ -225,8 +225,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       return false;
     },
     {
-      isActive: isLoading, // 只在 streaming 期间激活
-      priority: KeypressHandlerPriority.Critical, // 使用最高优先级，确保中断优先处理
+      isActive: isLoading, // Only active during streaming - 只在 streaming 期间激活
+      priority: KeypressHandlerPriority.Critical, // Use highest priority to ensure interrupt is handled first - 使用最高优先级，确保中断优先处理
     }
   );
 
@@ -260,7 +260,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   // Create KodaXEvents for streaming updates
   const createStreamingEvents = useCallback((): import("@kodax/core").KodaXEvents => ({
     onThinkingDelta: (text: string) => {
-      // UI 层存储 thinking 内容用于显示
+      // UI layer stores thinking content for display - UI 层存储 thinking 内容用于显示
       appendThinkingContent(text);
     },
     onThinkingEnd: (_thinking: string) => {

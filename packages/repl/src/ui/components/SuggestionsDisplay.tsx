@@ -1,11 +1,11 @@
 /**
- * SuggestionsDisplay - 自动补全建议显示组件
+ * SuggestionsDisplay - Autocomplete suggestion display component - 自动补全建议显示组件
  *
- * 显示自动补全建议列表，支持：
- * - 高亮选中项
- * - 滚动显示（当建议数量超过最大可见数）
- * - 描述显示
- * - 类型图标
+ * Display autocomplete suggestions list with support for:
+ * - Highlight selected item - 高亮选中项
+ * - Scroll display (when suggestions exceed max visible) - 滚动显示（当建议数量超过最大可见数）
+ * - Description display - 描述显示
+ * - Type icons - 类型图标
  */
 
 import React, { useMemo } from "react";
@@ -15,26 +15,26 @@ import type { Suggestion } from "../types.js";
 import { truncateByVisualWidth, getVisualWidth } from "../utils/textUtils.js";
 
 export interface SuggestionsDisplayProps {
-  /** 建议列表 */
+  /** Suggestion list - 建议列表 */
   suggestions: Suggestion[];
-  /** 当前选中索引 */
+  /** Current selected index - 当前选中索引 */
   selectedIndex: number;
-  /** 是否可见 */
+  /** Whether visible - 是否可见 */
   visible: boolean;
-  /** 最大可见数量 */
+  /** Maximum visible count - 最大可见数量 */
   maxVisible?: number;
-  /** 容器宽度 */
+  /** Container width - 容器宽度 */
   width?: number;
-  /** 是否显示计数 */
+  /** Whether to show count - 是否显示计数 */
   showCount?: boolean;
 }
 
-// 默认宽度
+// Default width - 默认宽度
 const DEFAULT_WIDTH = 80;
-// 默认最大可见数量
+// Default max visible count - 默认最大可见数量
 const DEFAULT_MAX_VISIBLE = 7;
 
-// 类型图标映射
+// Type icon mapping - 类型图标映射
 const TYPE_ICONS: Record<string, string> = {
   command: ">",
   file: "📄",
@@ -44,7 +44,7 @@ const TYPE_ICONS: Record<string, string> = {
 };
 
 /**
- * 计算可见的建议范围（支持滚动）
+ * Calculate visible suggestion range (supports scrolling) - 计算可见的建议范围（支持滚动）
  */
 function getVisibleRange(
   selectedIndex: number,
@@ -55,12 +55,12 @@ function getVisibleRange(
     return { start: 0, end: total };
   }
 
-  // 尽量让选中项在中间
+  // Try to center selected item - 尽量让选中项在中间
   const halfVisible = Math.floor(maxVisible / 2);
   let start = selectedIndex - halfVisible;
   let end = start + maxVisible;
 
-  // 边界调整
+  // Boundary adjustment - 边界调整
   if (start < 0) {
     start = 0;
     end = maxVisible;
@@ -73,7 +73,7 @@ function getVisibleRange(
 }
 
 /**
- * 单个建议项组件
+ * Single suggestion item component - 单个建议项组件
  */
 function SuggestionItem({
   suggestion,
@@ -86,7 +86,7 @@ function SuggestionItem({
 }) {
   const theme = useTheme();
 
-  // 计算各部分宽度
+  // Calculate width for each part - 计算各部分宽度
   const icon = suggestion.icon || (suggestion.type && TYPE_ICONS[suggestion.type]) || "";
   const iconWidth = icon ? getVisualWidth(icon) + 1 : 0;
   const textWidth = getVisualWidth(suggestion.displayText || suggestion.text);
@@ -94,12 +94,12 @@ function SuggestionItem({
     ? getVisualWidth(suggestion.description)
     : 0;
 
-  // 计算描述最大可用宽度
+  // Calculate max available width for description - 计算描述最大可用宽度
   const maxTextWidth = Math.min(textWidth, width - iconWidth - 2);
   const remainingWidth = width - iconWidth - maxTextWidth - 3;
   const maxDescWidth = Math.max(0, remainingWidth);
 
-  // 截断文本
+  // Truncate text - 截断文本
   const displayText = truncateByVisualWidth(
     suggestion.displayText || suggestion.text,
     maxTextWidth
@@ -110,14 +110,14 @@ function SuggestionItem({
 
   return (
     <Box>
-      {/* 图标 */}
+      {/* Icon - 图标 */}
       {icon && (
         <Text color={isSelected ? theme.colors.accent : theme.colors.dim}>
           {icon}{" "}
         </Text>
       )}
 
-      {/* 文本 */}
+      {/* Text - 文本 */}
       <Text
         color={isSelected ? theme.colors.primary : theme.colors.text}
         bold={isSelected}
@@ -125,7 +125,7 @@ function SuggestionItem({
         {displayText}
       </Text>
 
-      {/* 描述 */}
+      {/* Description - 描述 */}
       {displayDesc && (
         <>
           <Text> </Text>
@@ -135,7 +135,7 @@ function SuggestionItem({
         </>
       )}
 
-      {/* 选中指示器 */}
+      {/* Selection indicator - 选中指示器 */}
       {isSelected && (
         <Text color={theme.colors.accent}>
           {" "}
@@ -147,7 +147,7 @@ function SuggestionItem({
 }
 
 /**
- * 建议显示组件
+ * Suggestion display component - 建议显示组件
  */
 export function SuggestionsDisplay({
   suggestions,
@@ -159,12 +159,12 @@ export function SuggestionsDisplay({
 }: SuggestionsDisplayProps): React.ReactElement | null {
   const theme = useTheme();
 
-  // 不可见或无建议时不渲染
+  // Don't render if not visible or no suggestions - 不可见或无建议时不渲染
   if (!visible || suggestions.length === 0) {
     return null;
   }
 
-  // 计算可见范围
+  // Calculate visible range - 计算可见范围
   const { start, end } = useMemo(
     () => getVisibleRange(selectedIndex, suggestions.length, maxVisible),
     [selectedIndex, suggestions.length, maxVisible]
@@ -174,14 +174,14 @@ export function SuggestionsDisplay({
 
   return (
     <Box flexDirection="column" marginLeft={2}>
-      {/* 滚动指示器 - 上方 */}
+      {/* Scroll indicator - top - 滚动指示器 - 上方 */}
       {start > 0 && (
         <Text color={theme.colors.dim}>
           {"  "}▲ {start} more...
         </Text>
       )}
 
-      {/* 建议列表 */}
+      {/* Suggestion list - 建议列表 */}
       {visibleSuggestions.map((suggestion, index) => {
         const actualIndex = start + index;
         const isSelected = actualIndex === selectedIndex;
@@ -196,14 +196,14 @@ export function SuggestionsDisplay({
         );
       })}
 
-      {/* 滚动指示器 - 下方 */}
+      {/* Scroll indicator - bottom - 滚动指示器 - 下方 */}
       {end < suggestions.length && (
         <Text color={theme.colors.dim}>
           {"  "}▼ {suggestions.length - end} more...
         </Text>
       )}
 
-      {/* 计数指示器 */}
+      {/* Count indicator - 计数指示器 */}
       {showCount && (
         <Text color={theme.colors.dim}>
           {selectedIndex + 1}/{suggestions.length}

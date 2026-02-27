@@ -1,10 +1,10 @@
 /**
- * InputPrompt - 输入提示组件
+ * InputPrompt - Input prompt component - 输入提示组件
  *
- * 集成多行输入、历史导航、键盘快捷键
- * 使用 centralized KeypressContext 进行键盘事件处理
+ * Integrate multi-line input, history navigation, keyboard shortcuts
+ * Use centralized KeypressContext for keyboard event handling - 集成多行输入、历史导航、键盘快捷键，使用 centralized KeypressContext 进行键盘事件处理
  *
- * 参考: Gemini CLI InputPrompt 架构
+ * Reference: Gemini CLI InputPrompt architecture - 参考: Gemini CLI InputPrompt 架构
  */
 
 import React, { useEffect, useState, useCallback } from "react";
@@ -27,10 +27,10 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   const { exit } = useApp();
   const [isFirstLine, setIsFirstLine] = useState(true);
 
-  // 输入历史
+  // Input history - 输入历史
   const { add: addHistory, navigateUp, navigateDown, reset: resetHistory, saveTempInput } = useInputHistory();
 
-  // 文本缓冲区
+  // Text buffer - 文本缓冲区
   const { text, cursor, lines, setText, clear, move, insert, backspace, newline, delete: deleteChar } = useTextBuffer({
     initialValue,
     onSubmit: (submittedText) => {
@@ -40,12 +40,12 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     },
   });
 
-  // 更新 isFirstLine 状态
+  // Update isFirstLine state - 更新 isFirstLine 状态
   useEffect(() => {
     setIsFirstLine(cursor.row === 0);
   }, [cursor.row]);
 
-  // 处理提交
+  // Handle submit - 处理提交
   const handleSubmit = useCallback(() => {
     if (text.trim()) {
       addHistory(text);
@@ -55,36 +55,36 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     }
   }, [text, addHistory, onSubmit, clear]);
 
-  // 处理换行（删除行尾的反斜杠）
+  // Handle line continuation (remove backslash at end of line) - 处理换行（删除行尾的反斜杠）
   const handleLineContinuation = useCallback(() => {
     const currentLine = lines[cursor.row] ?? "";
     if (currentLine.endsWith("\\")) {
-      // 删除反斜杠
+      // Remove backslash - 删除反斜杠
       backspace();
     }
     newline();
   }, [lines, cursor.row, backspace, newline]);
 
-  // 键盘输入处理 - 使用 centralized KeypressContext
-  // 参考 Gemini CLI: 使用优先级系统注册处理器
+  // Keyboard input handling - use centralized KeypressContext
+  // Reference Gemini CLI: use priority system to register handlers - 键盘输入处理 - 使用 centralized KeypressContext，参考 Gemini CLI: 使用优先级系统注册处理器
   useKeypress(
-    KeypressHandlerPriority.High, // 高优先级，确保输入组件优先处理
+    KeypressHandlerPriority.High, // High priority, ensure input component handles first - 高优先级，确保输入组件优先处理
     (key) => {
       if (!focus) return false;
 
-      // Ctrl+C 清空或退出
+      // Ctrl+C clear or exit - Ctrl+C 清空或退出
       if (key.ctrl && key.name === "c") {
         if (text.length > 0) {
           clear();
           resetHistory();
         } else {
-          // 没有文字时退出程序
+          // Exit program when no text - 没有文字时退出程序
           exit();
         }
         return true;
       }
 
-      // ESC 键 - 清空输入
+      // ESC key - clear input - ESC 键 - 清空输入
       if (key.name === "escape") {
         if (text.length > 0) {
           clear();
@@ -93,10 +93,10 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         return true;
       }
 
-      // 处理上下键历史导航
+      // Handle up/down arrow history navigation - 处理上下键历史导航
       if (key.name === "up") {
         if (cursor.row === 0) {
-          // 第一行 → 加载上一条历史
+          // First line → load previous history - 第一行 → 加载上一条历史
           saveTempInput(text);
           const historyText = navigateUp();
           if (historyText !== null) {
@@ -113,21 +113,21 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         const isLastLine = cursor.row === lineCount - 1;
 
         if (isLastLine) {
-          // 最后一行 → 加载下一条历史
+          // Last line → load next history - 最后一行 → 加载下一条历史
           const historyText = navigateDown();
-          // navigateDown 返回 string（可能是空字符串）或 null（表示没有导航）
-          // 参考 Gemini CLI/OpenCode: 总是更新文本，包括空字符串
+          // navigateDown returns string (may be empty string) or null (no navigation)
+          // Reference Gemini CLI/OpenCode: always update text, including empty string - navigateDown 返回 string（可能是空字符串）或 null（表示没有导航），参考 Gemini CLI/OpenCode: 总是更新文本，包括空字符串
           if (historyText !== null) {
             setText(historyText);
           }
-          // 如果返回 null，说明已经在最新位置，不做任何操作
+          // If returns null, already at latest position, do nothing - 如果返回 null，说明已经在最新位置，不做任何操作
         } else {
           move("down");
         }
         return true;
       }
 
-      // 左右方向键
+      // Left/right arrow keys - 左右方向键
       if (key.name === "left") {
         move("left");
         return true;
@@ -137,22 +137,22 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         return true;
       }
 
-      // Backspace 键 - 删除光标前的字符
-      // 使用 centralized parser，\b 和 \x7f 都正确识别为 backspace
+      // Backspace key - delete character before cursor
+      // Use centralized parser, both \b and \x7f are correctly identified as backspace - Backspace 键 - 删除光标前的字符，使用 centralized parser，\b 和 \x7f 都正确识别为 backspace
       if (key.name === "backspace") {
         backspace();
         return true;
       }
 
-      // Delete 键 - 删除光标后的字符
-      // 只有真正的 Delete 键（\x1b[3~）才会触发这个
+      // Delete key - delete character after cursor
+      // Only true Delete key (\x1b[3~) triggers this - Delete 键 - 删除光标后的字符，只有真正的 Delete 键（\x1b[3~）才会触发这个
       if (key.name === "delete") {
         deleteChar();
         return true;
       }
 
-      // 换行 - Shift+Enter, Ctrl+Enter, 或 Ctrl+J (newline)
-      // 参考 Gemini CLI: 多种方式插入换行
+      // Line break - Shift+Enter, Ctrl+Enter, or Ctrl+J (newline)
+      // Reference Gemini CLI: multiple ways to insert line break - 换行 - Shift+Enter, Ctrl+Enter, 或 Ctrl+J (newline)，参考 Gemini CLI: 多种方式插入换行
       if (
         (key.name === "return" && key.shift) ||
         (key.name === "return" && key.ctrl) ||
@@ -162,21 +162,21 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         return true;
       }
 
-      // 回车提交
+      // Enter to submit - 回车提交
       if (key.name === "return") {
-        // 检查是否需要换行 (行尾是 \)
+        // Check if line break needed (line ends with \) - 检查是否需要换行 (行尾是 \)
         const currentLine = lines[cursor.row] ?? "";
         if (currentLine.endsWith("\\")) {
           handleLineContinuation();
           return true;
         }
 
-        // 提交
+        // Submit - 提交
         handleSubmit();
         return true;
       }
 
-      // Ctrl 组合键
+      // Ctrl key combinations - Ctrl 组合键
       if (key.ctrl) {
         switch (key.name) {
           case "a":
@@ -189,8 +189,8 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         return true;
       }
 
-      // 普通字符输入（排除控制字符）
-      // 使用 insertable 属性判断是否可插入
+      // Regular character input (exclude control characters)
+      // Use insertable property to determine if insertable - 普通字符输入（排除控制字符），使用 insertable 属性判断是否可插入
       if (key.insertable && !key.ctrl && !key.meta) {
         insert(key.sequence);
         return true;
@@ -217,7 +217,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 };
 
 /**
- * 简化版 InputPrompt - 单行模式
+ * Simplified InputPrompt - single-line mode - 简化版 InputPrompt - 单行模式
  */
 export const SimpleInputPrompt: React.FC<{
   onSubmit: (text: string) => void;

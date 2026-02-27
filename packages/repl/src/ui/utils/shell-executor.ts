@@ -1,8 +1,8 @@
 /**
- * Shell Executor - Shell 命令执行器
+ * Shell Executor - Shell command executor - Shell 命令执行器
  *
- * 处理 !command 语法，执行 Shell 命令并返回结果
- * 从 InkREPL.tsx 提取以改善代码组织
+ * Handles !command syntax, executes shell commands and returns results - 处理 !command 语法，执行 Shell 命令并返回结果
+ * Extracted from InkREPL.tsx to improve code organization - 从 InkREPL.tsx 提取以改善代码组织
  */
 
 import * as childProcess from "child_process";
@@ -12,7 +12,7 @@ import chalk from "chalk";
 const execAsync = util.promisify(childProcess.exec);
 
 /**
- * Shell 命令执行配置
+ * Shell command execution configuration - Shell 命令执行配置
  */
 export interface ShellExecutorConfig {
   maxBuffer?: number;
@@ -29,11 +29,11 @@ const DEFAULT_CONFIG: Required<ShellExecutorConfig> = {
 };
 
 /**
- * 执行 Shell 命令
+ * Execute shell command - 执行 Shell 命令
  *
- * @param command - 要执行的命令（不含 ! 前缀）
- * @param config - 可选配置
- * @returns 命令输出或错误信息，格式化为适合 LLM 处理的字符串
+ * @param command - Command to execute (without ! prefix) - 要执行的命令（不含 ! 前缀）
+ * @param config - Optional configuration - 可选配置
+ * @returns Command output or error message, formatted for LLM processing - 命令输出或错误信息，格式化为适合 LLM 处理的字符串
  */
 export async function executeShellCommand(
   command: string,
@@ -57,7 +57,7 @@ export async function executeShellCommand(
     if (stdout) result += stdout;
     if (stderr) result += (result ? "\n" : "") + `[stderr] ${stderr}`;
 
-    // 截断过长输出
+    // Truncate excessively long output - 截断过长输出
     if (result.length > cfg.maxOutputLength) {
       result = result.slice(0, cfg.maxOutputLength) + "\n...[output truncated]";
     }
@@ -70,7 +70,7 @@ export async function executeShellCommand(
     const err = error instanceof Error ? error : new Error(String(error));
     let errorMessage = err.message;
 
-    // 截断过长错误信息
+    // Truncate excessively long error messages - 截断过长错误信息
     if (errorMessage.length > cfg.maxErrorLength) {
       errorMessage = errorMessage.slice(0, cfg.maxErrorLength) + "\n...[error truncated]";
     }
@@ -83,19 +83,19 @@ export async function executeShellCommand(
 }
 
 /**
- * 处理特殊语法
+ * Handle special syntax - 处理特殊语法
  *
- * 检测并处理 !command 语法，执行 Shell 命令
+ * Detects and handles !command syntax, executes shell commands - 检测并处理 !command 语法，执行 Shell 命令
  *
- * @param input - 用户输入
- * @param config - 可选配置
- * @returns 处理后的输入（如果是 Shell 命令则返回执行结果，否则原样返回）
+ * @param input - User input - 用户输入
+ * @param config - Optional configuration - 可选配置
+ * @returns Processed input (returns execution result for shell commands, otherwise returns original) - 处理后的输入（如果是 Shell 命令则返回执行结果，否则原样返回）
  */
 export async function processSpecialSyntax(
   input: string,
   config: ShellExecutorConfig = {}
 ): Promise<string> {
-  // !command 语法：执行 Shell 命令
+  // !command syntax: execute shell command - !command 语法：执行 Shell 命令
   if (input.startsWith("!")) {
     const command = input.slice(1).trim();
     return executeShellCommand(command, config);
@@ -105,14 +105,14 @@ export async function processSpecialSyntax(
 }
 
 /**
- * 检查输入是否为 Shell 命令
+ * Check if input is a shell command - 检查输入是否为 Shell 命令
  */
 export function isShellCommand(input: string): boolean {
   return input.trim().startsWith("!");
 }
 
 /**
- * 检查 Shell 命令是否执行成功
+ * Check if shell command executed successfully - 检查 Shell 命令是否执行成功
  */
 export function isShellCommandSuccess(result: string): boolean {
   return result.startsWith("[Shell command executed:") || result.startsWith("[Shell:");

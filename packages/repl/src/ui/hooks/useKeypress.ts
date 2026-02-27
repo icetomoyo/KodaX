@@ -1,7 +1,7 @@
 /**
- * useKeypress - 键盘事件处理 Hook
+ * useKeypress - Keyboard event handling Hook - 键盘事件处理 Hook
  *
- * 封装 Ink 的 useInput，提供更详细的按键信息
+ * Wraps Ink's useInput, provides more detailed key information - 封装 Ink 的 useInput，提供更详细的按键信息
  */
 
 import { useInput, useApp, type Key } from "ink";
@@ -9,19 +9,19 @@ import { useCallback, useRef } from "react";
 import type { KeyInfo } from "../types.js";
 
 export interface UseKeypressOptions {
-  onKey?: (key: KeyInfo) => boolean; // 返回 true 表示已处理
+  onKey?: (key: KeyInfo) => boolean; // Return true if handled - 返回 true 表示已处理
   onEsc?: () => void;
   onCtrlC?: () => void;
   enabled?: boolean;
 }
 
 /**
- * 双击 Esc 检测配置
+ * Double-press Esc detection configuration - 双击 Esc 检测配置
  */
 const DOUBLE_ESC_INTERVAL_MS = 500;
 
 /**
- * 将 Ink Key 转换为 KeyInfo
+ * Convert Ink Key to KeyInfo - 将 Ink Key 转换为 KeyInfo
  */
 function keyToKeyInfo(char: string, key: Key): KeyInfo {
   let name = "";
@@ -38,7 +38,7 @@ function keyToKeyInfo(char: string, key: Key): KeyInfo {
   else if (key.tab) name = "tab";
   else {
     name = char;
-    // 可打印字符标记为 insertable
+    // Mark printable characters as insertable - 可打印字符标记为 insertable
     insertable = char.length === 1 && char.charCodeAt(0) >= 32 && !key.ctrl && !key.meta;
   }
 
@@ -63,14 +63,14 @@ export function useKeypress(options: UseKeypressOptions = {}) {
 
       const keyInfo = keyToKeyInfo(char, key);
 
-      // 特殊处理 Esc
+      // Special handling for Esc - 特殊处理 Esc
       if (key.escape) {
         const now = Date.now();
         const isDoubleEsc = now - lastEscTimeRef.current < DOUBLE_ESC_INTERVAL_MS;
         lastEscTimeRef.current = now;
 
         if (isDoubleEsc) {
-          // 双击 Esc - 编辑上一条消息
+          // Double press Esc - edit previous message - 双击 Esc - 编辑上一条消息
           keyInfo.name = "escape-escape";
         }
 
@@ -79,20 +79,20 @@ export function useKeypress(options: UseKeypressOptions = {}) {
         return;
       }
 
-      // 特殊处理 Ctrl+C
+      // Special handling for Ctrl+C - 特殊处理 Ctrl+C
       if (key.ctrl && char === "c") {
         onCtrlC?.();
         onKey?.(keyInfo);
         return;
       }
 
-      // 特殊处理 Ctrl+D (退出)
+      // Special handling for Ctrl+D (exit) - 特殊处理 Ctrl+D (退出)
       if (key.ctrl && char === "d") {
         exit();
         return;
       }
 
-      // 调用通用处理
+      // Call general handler - 调用通用处理
       onKey?.(keyInfo);
     },
     [enabled, onKey, onEsc, onCtrlC, exit]
@@ -106,7 +106,7 @@ export function useKeypress(options: UseKeypressOptions = {}) {
 }
 
 /**
- * 创建 key matcher 工具函数
+ * Create key matcher utility function - 创建 key matcher 工具函数
  */
 export function createKeyMatcher(key: KeyInfo) {
   return {

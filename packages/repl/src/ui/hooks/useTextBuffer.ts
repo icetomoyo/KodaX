@@ -1,7 +1,7 @@
 /**
  * useTextBuffer - TextBuffer React Hook
  *
- * 将 TextBuffer 类与 React 状态管理集成
+ * Integrates TextBuffer class with React state management - 将 TextBuffer 类与 React 状态管理集成
  */
 
 import { useState, useCallback, useRef, useEffect } from "react";
@@ -15,15 +15,15 @@ export interface UseTextBufferOptions {
 }
 
 /**
- * 粘贴检测配置
+ * Paste detection configuration - 粘贴检测配置
  */
 const PASTE_DETECTION = {
-  MIN_CHARS: 16, // 最少连续字符数
-  MAX_INTERVAL_MS: 8, // 最大间隔毫秒
+  MIN_CHARS: 16, // Minimum consecutive characters - 最少连续字符数
+  MAX_INTERVAL_MS: 8, // Maximum interval in milliseconds - 最大间隔毫秒
 };
 
 /**
- * 统一状态接口 - 保证 text, cursor, lines 原子更新
+ * Unified state interface - ensures atomic updates to text, cursor, and lines - 统一状态接口 - 保证 text, cursor, lines 原子更新
  */
 interface TextBufferState {
   text: string;
@@ -34,20 +34,20 @@ interface TextBufferState {
 export function useTextBuffer(options: UseTextBufferOptions = {}): UseTextBufferReturn {
   const { initialValue = "", onSubmit, onTextChange } = options;
 
-  // 使用 ref 存储 TextBuffer 实例，避免重新创建
+  // Use ref to store TextBuffer instance, avoiding recreation - 使用 ref 存储 TextBuffer 实例，避免重新创建
   const bufferRef = useRef<TextBuffer | null>(null);
-  // 粘贴检测状态
+  // Paste detection state - 粘贴检测状态
   const lastInputTimeRef = useRef<number>(0);
   const consecutiveCharsRef = useRef<number>(0);
 
-  // React 状态 - 使用单一状态对象保证原子更新（Issue 036）
+  // React state - use single state object for atomic updates (Issue 036) - React 状态 - 使用单一状态对象保证原子更新（Issue 036）
   const [state, setState] = useState<TextBufferState>({
     text: initialValue,
     cursor: { row: 0, col: 0 },
     lines: [""],
   });
 
-  // 初始化 TextBuffer
+  // Initialize TextBuffer - 初始化 TextBuffer
   if (bufferRef.current === null) {
     bufferRef.current = new TextBuffer();
     if (initialValue) {
@@ -57,7 +57,7 @@ export function useTextBuffer(options: UseTextBufferOptions = {}): UseTextBuffer
 
   const buffer = bufferRef.current;
 
-  // 同步状态 - 原子更新，避免中间状态（Issue 036 修复）
+  // Sync state - atomic updates, avoiding intermediate states (Issue 036 fix) - 同步状态 - 原子更新，避免中间状态（Issue 036 修复）
   const syncState = useCallback(() => {
     setState({
       text: buffer.text,
@@ -79,7 +79,7 @@ export function useTextBuffer(options: UseTextBufferOptions = {}): UseTextBuffer
   // insert
   const handleInsert = useCallback(
     (insertText: string, insertOptions?: { paste?: boolean }) => {
-      // 粘贴检测
+      // Paste detection - 粘贴检测
       const now = Date.now();
       const isPaste =
         insertOptions?.paste ??
@@ -150,12 +150,12 @@ export function useTextBuffer(options: UseTextBufferOptions = {}): UseTextBuffer
     return result;
   }, [buffer, syncState]);
 
-  // handleInput - 处理键盘输入
+  // handleInput - process keyboard input - 处理键盘输入
   const handleInput = useCallback(
     (key: KeyInfo): boolean => {
       const { name, sequence, ctrl, meta, shift: isShift } = key;
 
-      // Ctrl 组合键
+      // Ctrl key combinations - Ctrl 组合键
       if (ctrl) {
         switch (name) {
           case "a":
@@ -185,7 +185,7 @@ export function useTextBuffer(options: UseTextBufferOptions = {}): UseTextBuffer
         }
       }
 
-      // 方向键
+      // Arrow keys - 方向键
       switch (name) {
         case "up":
           handleMove("up");
@@ -207,7 +207,7 @@ export function useTextBuffer(options: UseTextBufferOptions = {}): UseTextBuffer
           return true;
       }
 
-      // 退格和删除
+      // Backspace and delete - 退格和删除
       if (name === "backspace") {
         handleBackspace();
         return true;
@@ -217,23 +217,23 @@ export function useTextBuffer(options: UseTextBufferOptions = {}): UseTextBuffer
         return true;
       }
 
-      // 回车
+      // Enter key - 回车
       if (name === "return") {
-        // Shift+Enter 始终换行
+        // Shift+Enter always inserts newline - Shift+Enter 始终换行
         if (isShift) {
           handleNewline();
           return true;
         }
 
-        // 检查是否需要换行 (行尾是 \)
+        // Check if newline is needed (line ends with \) - 检查是否需要换行 (行尾是 \)
         if (buffer.isLineContinuation()) {
-          // 删除反斜杠并换行
+          // Delete backslash and insert newline - 删除反斜杠并换行
           buffer.backspace();
           handleNewline();
           return true;
         }
 
-        // 提交
+        // Submit - 提交
         if (onSubmit && buffer.text.trim()) {
           onSubmit(buffer.text);
           handleClear();
@@ -241,7 +241,7 @@ export function useTextBuffer(options: UseTextBufferOptions = {}): UseTextBuffer
         return true;
       }
 
-      // 普通字符输入
+      // Regular character input - 普通字符输入
       if (sequence && sequence.length === 1 && !ctrl && !meta) {
         handleInsert(sequence);
         return true;
@@ -252,7 +252,7 @@ export function useTextBuffer(options: UseTextBufferOptions = {}): UseTextBuffer
     [buffer, handleMove, handleBackspace, handleDelete, handleNewline, handleInsert, handleClear, handleUndo, handleRedo, syncState, onSubmit]
   );
 
-  // 清理
+  // Cleanup - 清理
   useEffect(() => {
     return () => {
       bufferRef.current = null;

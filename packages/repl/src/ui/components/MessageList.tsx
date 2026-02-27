@@ -1,8 +1,8 @@
 /**
- * MessageList - 历史消息列表组件
+ * MessageList - History message list component - 历史消息列表组件
  *
- * 参考 Gemini CLI 的消息显示架构实现。
- * 支持 HistoryItem 类型：user, assistant, tool_group, thinking, error, info, hint
+ * Reference Gemini CLI's message display architecture implementation.
+ * Support HistoryItem types: user, assistant, tool_group, thinking, error, info, hint - 参考 Gemini CLI 的消息显示架构实现，支持 HistoryItem 类型：user, assistant, tool_group, thinking, error, info, hint
  */
 
 import React, { useMemo, type ReactNode } from "react";
@@ -27,23 +27,23 @@ import {
 // === Types ===
 
 export interface MessageListProps {
-  /** 历史项列表 */
+  /** History item list - 历史项列表 */
   items: HistoryItem[];
-  /** 是否加载中 */
+  /** Whether loading - 是否加载中 */
   isLoading?: boolean;
-  /** 最大显示行数 (默认 1000，避免截断) */
+  /** Maximum display lines (default 1000, avoid truncation) - 最大显示行数 (默认 1000，避免截断) */
   maxLines?: number;
-  /** 是否正在 thinking */
+  /** Whether thinking - 是否正在 thinking */
   isThinking?: boolean;
-  /** Thinking 字符计数 */
+  /** Thinking character count - Thinking 字符计数 */
   thinkingCharCount?: number;
-  /** Thinking 内容 (实时显示) */
+  /** Thinking content (real-time display) - Thinking 内容 (实时显示) */
   thinkingContent?: string;
-  /** 当前流式响应文本 (实时显示) */
+  /** Current streaming response text (real-time display) - 当前流式响应文本 (实时显示) */
   streamingResponse?: string;
-  /** 当前工具名称 */
+  /** Current tool name - 当前工具名称 */
   currentTool?: string;
-  /** 工具输入字符计数 */
+  /** Tool input character count - 工具输入字符计数 */
   toolInputCharCount?: number;
 }
 
@@ -56,7 +56,7 @@ export interface HistoryItemRendererProps {
 // === Helpers ===
 
 /**
- * 格式化时间戳
+ * Format timestamp - 格式化时间戳
  */
 function formatTimestamp(timestamp: number): string {
   const date = new Date(timestamp);
@@ -67,7 +67,7 @@ function formatTimestamp(timestamp: number): string {
 }
 
 /**
- * 截断文本到最大行数
+ * Truncate text to max lines - 截断文本到最大行数
  */
 function truncateLines(text: string, maxLines: number): { lines: string[]; hasMore: boolean } {
   const lines = text.split("\n");
@@ -77,7 +77,7 @@ function truncateLines(text: string, maxLines: number): { lines: string[]; hasMo
 }
 
 /**
- * 格式化工具执行时间
+ * Format tool execution duration - 格式化工具执行时间
  */
 function formatDuration(startTime: number, endTime?: number): string {
   if (!endTime) return "";
@@ -87,7 +87,7 @@ function formatDuration(startTime: number, endTime?: number): string {
 }
 
 /**
- * 获取工具状态图标
+ * Get tool status icon - 获取工具状态图标
  */
 function getToolStatusIcon(status: ToolCallStatus): string {
   switch (status) {
@@ -111,7 +111,7 @@ function getToolStatusIcon(status: ToolCallStatus): string {
 }
 
 /**
- * 获取工具状态颜色
+ * Get tool status color - 获取工具状态颜色
  */
 function getToolStatusColor(status: ToolCallStatus, theme: Theme): string {
   switch (status) {
@@ -136,7 +136,7 @@ function getToolStatusColor(status: ToolCallStatus, theme: Theme): string {
 // === Sub-Components ===
 
 /**
- * 用户消息渲染器
+ * User message renderer - 用户消息渲染器
  */
 const UserItemRenderer: React.FC<{ item: HistoryItemUser; theme: Theme }> = ({ item, theme }) => (
   <Box flexDirection="column" marginBottom={1}>
@@ -153,7 +153,7 @@ const UserItemRenderer: React.FC<{ item: HistoryItemUser; theme: Theme }> = ({ i
 );
 
 /**
- * 助手消息渲染器
+ * Assistant message renderer - 助手消息渲染器
  */
 const AssistantItemRenderer: React.FC<{
   item: HistoryItemAssistant;
@@ -191,7 +191,7 @@ const AssistantItemRenderer: React.FC<{
 };
 
 /**
- * 系统消息渲染器
+ * System message renderer - 系统消息渲染器
  */
 const SystemItemRenderer: React.FC<{ item: HistoryItemSystem; theme: Theme }> = ({ item, theme }) => (
   <Box flexDirection="column" marginBottom={1}>
@@ -208,7 +208,7 @@ const SystemItemRenderer: React.FC<{ item: HistoryItemSystem; theme: Theme }> = 
 );
 
 /**
- * 工具调用渲染器
+ * Tool call renderer - 工具调用渲染器
  */
 const ToolCallRenderer: React.FC<{ tool: ToolCall; theme: Theme }> = ({ tool, theme }) => {
   const icon = getToolStatusIcon(tool.status);
@@ -250,7 +250,7 @@ const ToolCallRenderer: React.FC<{ tool: ToolCall; theme: Theme }> = ({ tool, th
 };
 
 /**
- * 工具组渲染器
+ * Tool group renderer - 工具组渲染器
  */
 const ToolGroupRenderer: React.FC<{ item: HistoryItemToolGroup; theme: Theme }> = ({ item, theme }) => (
   <Box flexDirection="column" marginBottom={1}>
@@ -267,7 +267,7 @@ const ToolGroupRenderer: React.FC<{ item: HistoryItemToolGroup; theme: Theme }> 
 );
 
 /**
- * 思考内容渲染器
+ * Thinking content renderer - 思考内容渲染器
  */
 const ThinkingItemRenderer: React.FC<{ item: HistoryItemThinking; theme: Theme }> = ({ item, theme }) => (
   <Box flexDirection="column" marginBottom={1}>
@@ -285,7 +285,7 @@ const ThinkingItemRenderer: React.FC<{ item: HistoryItemThinking; theme: Theme }
 );
 
 /**
- * 错误消息渲染器
+ * Error message renderer - 错误消息渲染器
  */
 const ErrorItemRenderer: React.FC<{ item: HistoryItemError; theme: Theme }> = ({ item, theme }) => (
   <Box flexDirection="column" marginBottom={1}>
@@ -301,7 +301,7 @@ const ErrorItemRenderer: React.FC<{ item: HistoryItemError; theme: Theme }> = ({
 );
 
 /**
- * 信息消息渲染器
+ * Info message renderer - 信息消息渲染器
  */
 const InfoItemRenderer: React.FC<{ item: HistoryItemInfo; theme: Theme }> = ({ item, theme }) => (
   <Box flexDirection="column" marginBottom={1}>
@@ -317,7 +317,7 @@ const InfoItemRenderer: React.FC<{ item: HistoryItemInfo; theme: Theme }> = ({ i
 );
 
 /**
- * 提示消息渲染器
+ * Hint message renderer - 提示消息渲染器
  */
 const HintItemRenderer: React.FC<{ item: HistoryItemHint; theme: Theme }> = ({ item, theme }) => (
   <Box flexDirection="column" marginBottom={1}>
@@ -335,8 +335,8 @@ const HintItemRenderer: React.FC<{ item: HistoryItemHint; theme: Theme }> = ({ i
 // === Main Components ===
 
 /**
- * 历史项渲染器
- * 根据类型分发到对应的渲染器
+ * History item renderer
+ * Dispatch to corresponding renderer based on type - 历史项渲染器，根据类型分发到对应的渲染器
  */
 export const HistoryItemRenderer: React.FC<HistoryItemRendererProps> = ({
   item,
@@ -372,7 +372,7 @@ export const HistoryItemRenderer: React.FC<HistoryItemRendererProps> = ({
 };
 
 /**
- * MessageList - 消息列表组件
+ * MessageList - Message list component - 消息列表组件
  */
 export const MessageList: React.FC<MessageListProps> = ({
   items,
@@ -416,7 +416,7 @@ export const MessageList: React.FC<MessageListProps> = ({
     );
   }
 
-  // 确定加载状态文本
+  // Determine loading status text - 确定加载状态文本
   let loadingText = "Thinking";
   let prefix = "";
   if (currentTool) {
@@ -438,8 +438,8 @@ export const MessageList: React.FC<MessageListProps> = ({
         <HistoryItemRenderer key={item.id} item={item} theme={theme} maxLines={maxLines} />
       ))}
 
-      {/* Thinking 内容显示 - 淡灰色 */}
-      {/* 显示条件：响应进行中 + 有 thinking 内容 */}
+      {/* Thinking content display - light gray - Thinking 内容显示 - 淡灰色 */}
+      {/* Display condition: response in progress + has thinking content - 显示条件：响应进行中 + 有 thinking 内容 */}
       {isLoading && thinkingContent && (
         <Box flexDirection="column" marginBottom={1}>
           <Box>
@@ -451,7 +451,7 @@ export const MessageList: React.FC<MessageListProps> = ({
         </Box>
       )}
 
-      {/* 流式响应显示 */}
+      {/* Streaming response display - 流式响应显示 */}
       {streamingResponse && (
         <Box flexDirection="column" marginBottom={1}>
           <Box>
@@ -465,7 +465,7 @@ export const MessageList: React.FC<MessageListProps> = ({
         </Box>
       )}
 
-      {/* 加载指示器 - 只在没有流式内容时显示 */}
+      {/* Loading indicator - only show when no streaming content - 加载指示器 - 只在没有流式内容时显示 */}
       {isLoading && !streamingResponse && !thinkingContent && (
         <Box>
           <Spinner theme={theme} />
@@ -474,7 +474,7 @@ export const MessageList: React.FC<MessageListProps> = ({
         </Box>
       )}
 
-      {/* 有 thinking 内容时显示简化的加载指示器 */}
+      {/* Show simplified loading indicator when has thinking content - 有 thinking 内容时显示简化的加载指示器 */}
       {isLoading && (streamingResponse || thinkingContent) && (
         <Box>
           <Spinner theme={theme} />
@@ -517,7 +517,7 @@ export const LegacyMessageList: React.FC<LegacyMessageListProps> = ({ messages, 
 };
 
 /**
- * 简化消息显示
+ * Simplified message display - 简化消息显示
  */
 export const SimpleMessageDisplay: React.FC<{
   role: "user" | "assistant" | "system";

@@ -1,7 +1,7 @@
 /**
- * KodaX CLI 事件处理器
+ * KodaX CLI Event Handler - CLI 事件处理器
  *
- * 用于 CLI 模式的 Spinner 动画和事件处理
+ * Spinner animation and event handling for CLI mode - 用于 CLI 模式的 Spinner 动画和事件处理
  */
 
 import chalk from 'chalk';
@@ -9,7 +9,7 @@ import readline from 'readline';
 import { KodaXEvents } from '@kodax/core';
 import { PREVIEW_MAX_LENGTH } from '../common/utils.js';
 
-// ============== Spinner 动画 ==============
+// ============== Spinner Animation - Spinner 动画 ==============
 
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const SPINNER_COLORS = ['\x1b[36m', '\x1b[35m', '\x1b[34m'];
@@ -33,7 +33,7 @@ function startWaitingDots(): { stop: () => void; updateText: (text: string) => v
     const color = SPINNER_COLORS[colorIdx % SPINNER_COLORS.length];
     const reset = '\x1b[0m';
     const spinner = SPINNER_FRAMES[frame % SPINNER_FRAMES.length];
-    // 使用 \r 回到行首，末尾不加多余空格，光标停在文本末尾
+    // Use \r to return to line start, no extra trailing space, cursor at text end - 使用 \r 回到行首，末尾不加多余空格，光标停在文本末尾
     process.stdout.write(`\r${color}${spinner}${reset} ${currentText}`);
   };
 
@@ -50,7 +50,7 @@ function startWaitingDots(): { stop: () => void; updateText: (text: string) => v
       if (stopped) return;
       stopped = true;
       clearInterval(interval);
-      // 清除整行并将光标移回行首
+      // Clear entire line and move cursor to line start - 清除整行并将光标移回行首
       process.stdout.write('\r\x1b[K');
     },
     isStopped: () => stopped,
@@ -63,7 +63,7 @@ function startWaitingDots(): { stop: () => void; updateText: (text: string) => v
   return controller;
 }
 
-// ============== 用户确认 ==============
+// ============== User Confirmation - 用户确认 ==============
 
 async function confirmAction(name: string, input: Record<string, unknown>): Promise<boolean> {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -99,7 +99,7 @@ export function createCliEvents(showSessionId = true): KodaXEvents {
       if (spinner) { spinner.stop(); spinner = null; }
       thinkingCharCount = 0;
       process.stdout.write(text);
-      needNewline = true;  // 有文本输出，后续需要换行
+      needNewline = true;  // Has text output, need newline later - 有文本输出，后续需要换行
     },
 
     onThinkingDelta: (text: string) => {
@@ -109,10 +109,10 @@ export function createCliEvents(showSessionId = true): KodaXEvents {
     },
 
     onThinkingEnd: (thinking: string) => {
-      // thinking block 结束，停止 spinner 并显示摘要
+      // thinking block ended, stop spinner and show summary - thinking block 结束，停止 spinner 并显示摘要
       if (spinner) { spinner.stop(); spinner = null; }
       if (thinking) {
-        // 移除换行符，确保 preview 是单行
+        // Remove newlines to ensure preview is single line - 移除换行符，确保 preview 是单行
         const singleLine = thinking.replace(/\n/g, ' ');
         const preview = singleLine.length > 100
           ? singleLine.slice(0, 100) + '...'
@@ -137,12 +137,12 @@ export function createCliEvents(showSessionId = true): KodaXEvents {
       if (spinner && !spinner.isStopped()) {
         spinner.updateText(`Receiving ${toolName}... (${charCount} chars)`);
       } else if (!spinner || spinner.isStopped()) {
-        // 如果 spinner 已停止（因为 thinking 结束后），先换行再创建 spinner
-        // 与 kodax.ts 行为一致
+        // If spinner stopped (after thinking ended), newline first then create spinner - 如果 spinner 已停止（因为 thinking 结束后），先换行再创建 spinner
+        // Consistent with kodax.ts behavior - 与 kodax.ts 行为一致
         if (!spinnerNewlined) {
           process.stdout.write('\n');
           spinnerNewlined = true;
-          needNewline = false;  // 已经换行，onStreamEnd 不需要再换行
+          needNewline = false;  // Already newlined, onStreamEnd doesn't need to newline - 已经换行，onStreamEnd 不需要再换行
         }
         spinner = startWaitingDots();
         spinner.updateText(`Receiving ${toolName}... (${charCount} chars)`);
@@ -155,20 +155,20 @@ export function createCliEvents(showSessionId = true): KodaXEvents {
     },
 
     onStreamEnd: () => {
-      // 停止 globalSpinner（在 input_json_delta 中可能创建的）
+      // Stop globalSpinner (may be created in input_json_delta) - 停止 globalSpinner（在 input_json_delta 中可能创建的）
       if (globalSpinner && !globalSpinner.isStopped()) {
         globalSpinner.stop();
       }
       globalSpinner = null;
       spinnerNewlined = false;
 
-      // 只有在有文本输出且没有在 onToolInputDelta 中换行时，才换行
+      // Only newline if has text output and didn't newline in onToolInputDelta - 只有在有文本输出且没有在 onToolInputDelta 中换行时，才换行
       if (needNewline) {
         console.log();
         needNewline = false;
       }
 
-      // 如果 spinner 在流式输出期间被停止（text_delta 处理），重启它
+      // If spinner was stopped during streaming (text_delta handling), restart it - 如果 spinner 在流式输出期间被停止（text_delta 处理），重启它
       if (!spinner || spinner.isStopped()) {
         spinner = startWaitingDots();
         spinner.updateText('Processing...');
@@ -176,14 +176,14 @@ export function createCliEvents(showSessionId = true): KodaXEvents {
     },
 
     onIterationStart: (_iter: number, _maxIter: number) => {
-      // 先停止已有的 spinner（避免多个 interval 同时运行）
+      // Stop existing spinner first (avoid multiple intervals running) - 先停止已有的 spinner（避免多个 interval 同时运行）
       if (spinner && !spinner.isStopped()) {
         spinner.stop();
       }
       spinnerNewlined = false;
-      needNewline = false;  // 重置换行标志
+      needNewline = false;  // Reset newline flag - 重置换行标志
       console.log(chalk.magenta('\n[Assistant]'));
-      // 每次迭代都重新创建 spinner（与 kodax.ts 行为一致）
+      // Recreate spinner each iteration (consistent with kodax.ts behavior) - 每次迭代都重新创建 spinner（与 kodax.ts 行为一致）
       spinner = startWaitingDots();
     },
 

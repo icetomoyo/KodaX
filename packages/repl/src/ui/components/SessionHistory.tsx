@@ -1,7 +1,7 @@
 /**
- * SessionHistory - 会话历史显示组件
+ * SessionHistory - Session history display component - 会话历史显示组件
  *
- * 在恢复会话时显示最近的对话历史
+ * Display recent conversation history when restoring session - 在恢复会话时显示最近的对话历史
  */
 
 import React from "react";
@@ -9,14 +9,14 @@ import { Box, Text } from "ink";
 import { getTheme } from "../themes/index.js";
 
 export interface SessionHistoryProps {
-  /** 消息列表 */
+  /** Message list - 消息列表 */
   messages: Array<{
     role: "user" | "assistant" | "system";
     content: string | unknown[];
   }>;
-  /** 最大显示条数，默认 5 */
+  /** Maximum display count, default 5 - 最大显示条数，默认 5 */
   maxDisplay?: number;
-  /** 每条消息最大长度，默认 100 */
+  /** Maximum length per message, default 100 - 每条消息最大长度，默认 100 */
   maxLength?: number;
 }
 
@@ -38,7 +38,7 @@ function extractContent(content: string | unknown[]): string {
     return content;
   }
   if (Array.isArray(content)) {
-    // Extract text from content blocks
+    // Extract text from content blocks - 从内容块中提取文本
     return content
       .filter((block) => {
         return (

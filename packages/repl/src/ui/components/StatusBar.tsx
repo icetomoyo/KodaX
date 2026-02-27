@@ -1,5 +1,5 @@
 /**
- * StatusBar - 底部状态栏组件
+ * StatusBar - Bottom status bar component - 底部状态栏组件
  */
 
 import React, { useMemo } from "react";
@@ -19,11 +19,11 @@ export const StatusBar: React.FC<StatusBarProps> = ({
 }) => {
   const theme = useMemo(() => getTheme("dark"), []);
 
-  // 显示完整 Session ID (YYYYMMDD_HHMMSS 格式，15 字符)
-  // 不截断，保留完整时间信息
+  // Display full Session ID (YYYYMMDD_HHMMSS format, 15 chars)
+  // No truncation, preserve complete time information - 显示完整 Session ID (YYYYMMDD_HHMMSS 格式，15 字符)，不截断，保留完整时间信息
   const displaySessionId = sessionId;
 
-  // 构建模式指示器
+  // Build mode indicators - 构建模式指示器
   const modeIndicators: string[] = [];
   if (thinking) modeIndicators.push("think");
   if (auto) modeIndicators.push("auto");
@@ -38,7 +38,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
       paddingX={1}
       justifyContent="space-between"
     >
-      {/* 左侧：会话信息 */}
+      {/* Left side: session info - 左侧：会话信息 */}
       <Box>
         <Text color={theme.colors.primary} bold>
           KodaX
@@ -49,14 +49,14 @@ export const StatusBar: React.FC<StatusBarProps> = ({
         <Text dimColor>{displaySessionId}</Text>
       </Box>
 
-      {/* 中间：当前工具 */}
+      {/* Middle: current tool - 中间：当前工具 */}
       {currentTool && (
         <Box>
           <Text color={theme.colors.warning}>⏳ {currentTool}</Text>
         </Box>
       )}
 
-      {/* 右侧：模型和 Token 使用 */}
+      {/* Right side: model and token usage - 右侧：模型和 Token 使用 */}
       <Box>
         <Text dimColor>| </Text>
         <Text color={theme.colors.secondary}>
@@ -76,7 +76,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
 };
 
 /**
- * 简化版状态栏
+ * Simplified status bar - 简化版状态栏
  */
 export const SimpleStatusBar: React.FC<{
   mode: "code" | "ask";

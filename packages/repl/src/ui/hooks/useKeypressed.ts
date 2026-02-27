@@ -1,10 +1,10 @@
 /**
- * useKeypressed - 自定义键盘输入 Hook
+ * useKeypressed - Custom keyboard input Hook - 自定义键盘输入 Hook
  *
- * 替代 Ink 的 useInput，解决 Backspace/Delete 混淆问题。
- * 使用自己的 KeypressParser 进行正确的按键解析。
+ * Replaces Ink's useInput, resolves Backspace/Delete confusion - 替代 Ink 的 useInput，解决 Backspace/Delete 混淆问题
+ * Uses custom KeypressParser for proper key parsing - 使用自己的 KeypressParser 进行正确的按键解析
  *
- * 参考: Gemini CLI KeypressContext
+ * Reference: Gemini CLI KeypressContext - 参考: Gemini CLI KeypressContext
  */
 
 import { useEffect, useCallback, useRef } from "react";
@@ -16,13 +16,13 @@ export type KeypressHandler = (key: KeyInfo) => boolean | void;
 
 export interface UseKeypressedOptions {
   /**
-   * 是否激活
+   * Whether the hook is active - 是否激活
    * @default true
    */
   isActive?: boolean;
 
   /**
-   * 是否启用原始模式
+   * Whether to enable raw mode - 是否启用原始模式
    * @default true
    */
   rawMode?: boolean;
@@ -31,14 +31,14 @@ export interface UseKeypressedOptions {
 /**
  * useKeypressed Hook
  *
- * 提供正确的终端键盘输入处理，解决 Backspace/Delete 键混淆问题。
+ * Provides correct terminal keyboard input handling, resolves Backspace/Delete key confusion - 提供正确的终端键盘输入处理，解决 Backspace/Delete 键混淆问题
  *
  * @example
  * ```tsx
  * useKeypressed((key) => {
  *   if (key.name === 'backspace') {
  *     handleBackspace();
- *     return true; // 阻止继续传播
+ *     return true; // Stop propagation - 阻止继续传播
  *   }
  *   if (key.name === 'delete') {
  *     handleDelete();
@@ -56,7 +56,7 @@ export function useKeypressed(
   const handlerRef = useRef(handler);
   const parserRef = useRef<KeypressParser | null>(null);
 
-  // 更新 handler ref
+  // Update handler ref - 更新 handler ref
   useEffect(() => {
     handlerRef.current = handler;
   }, [handler]);
@@ -68,21 +68,21 @@ export function useKeypressed(
 
     const stdinStream = stdin.stdin;
 
-    // 启用原始模式
+    // Enable raw mode - 启用原始模式
     if (rawMode && stdinStream.isTTY) {
       stdinStream.setRawMode(true);
     }
 
-    // 创建解析器
+    // Create parser - 创建解析器
     const parser = new KeypressParser();
     parserRef.current = parser;
 
-    // 注册处理器
+    // Register handler - 注册处理器
     const unsubscribe = parser.onKeypress((key) => {
       handlerRef.current(key);
     });
 
-    // 监听 stdin 数据
+    // Listen to stdin data - 监听 stdin 数据
     const onData = (data: Buffer) => {
       parser.feed(data);
     };
@@ -93,12 +93,12 @@ export function useKeypressed(
       stdinStream.off("data", onData);
       unsubscribe();
 
-      // 恢复终端模式
+      // Restore terminal mode - 恢复终端模式
       if (rawMode && stdinStream.isTTY) {
         try {
           stdinStream.setRawMode(false);
         } catch {
-          // 忽略错误
+          // Ignore error - 忽略错误
         }
       }
 
@@ -110,7 +110,7 @@ export function useKeypressed(
 /**
  * useKeypressedMulti Hook
  *
- * 支持多个处理器，按添加顺序执行，直到某个处理器返回 true
+ * Supports multiple handlers, executes in order until one returns true - 支持多个处理器，按添加顺序执行，直到某个处理器返回 true
  *
  * @example
  * ```tsx
@@ -152,18 +152,18 @@ export function useKeypressedMulti(options: UseKeypressedOptions = {}) {
 
     const stdinStream = stdin.stdin;
 
-    // 启用原始模式
+    // Enable raw mode - 启用原始模式
     if (rawMode && stdinStream.isTTY) {
       stdinStream.setRawMode(true);
     }
 
-    // 创建解析器
+    // Create parser - 创建解析器
     const parser = new KeypressParser();
     parserRef.current = parser;
 
-    // 注册处理器
+    // Register handler - 注册处理器
     const unsubscribe = parser.onKeypress((key) => {
-      // 按顺序执行处理器，直到某个返回 true
+      // Execute handlers in order until one returns true - 按顺序执行处理器，直到某个返回 true
       for (const handler of handlersRef.current) {
         const result = handler(key);
         if (result === true) {
@@ -172,7 +172,7 @@ export function useKeypressedMulti(options: UseKeypressedOptions = {}) {
       }
     });
 
-    // 监听 stdin 数据
+    // Listen to stdin data - 监听 stdin 数据
     const onData = (data: Buffer) => {
       parser.feed(data);
     };
@@ -183,12 +183,12 @@ export function useKeypressedMulti(options: UseKeypressedOptions = {}) {
       stdinStream.off("data", onData);
       unsubscribe();
 
-      // 恢复终端模式
+      // Restore terminal mode - 恢复终端模式
       if (rawMode && stdinStream.isTTY) {
         try {
           stdinStream.setRawMode(false);
         } catch {
-          // 忽略错误
+          // Ignore error - 忽略错误
         }
       }
 
@@ -203,14 +203,14 @@ export function useKeypressedMulti(options: UseKeypressedOptions = {}) {
 }
 
 /**
- * 直接解析单个按键序列
+ * Parse a single keypress sequence directly - 直接解析单个按键序列
  *
- * 用于测试或手动处理
+ * For testing or manual handling - 用于测试或手动处理
  */
 export { parseKeypress };
 
 /**
- * 检查按键是否匹配指定条件
+ * Check if key matches specified conditions - 检查按键是否匹配指定条件
  */
 export function keyMatches(key: KeyInfo, match: Partial<KeyInfo>): boolean {
   if (match.name !== undefined && key.name !== match.name) return false;
@@ -222,7 +222,7 @@ export function keyMatches(key: KeyInfo, match: Partial<KeyInfo>): boolean {
 }
 
 /**
- * 创建按键匹配器
+ * Create a key matcher - 创建按键匹配器
  *
  * @example
  * ```tsx

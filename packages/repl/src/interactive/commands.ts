@@ -1,5 +1,5 @@
 /**
- * KodaX 交互式命令系统
+ * KodaX Interactive Command System - 交互式命令系统
  */
 
 import * as readline from 'readline';
@@ -10,7 +10,7 @@ import { saveConfig } from '../common/utils.js';
 import { runWithPlanMode, listPlans, resumePlan, clearCompletedPlans } from '../common/plan-mode.js';
 import { handleProjectCommand, printProjectHelp } from './project-commands.js';
 
-// 当前配置状态（由 repl.ts 传入）
+// Current config state (passed from repl.ts) - 当前配置状态（由 repl.ts 传入）
 export interface CurrentConfig {
   provider: string;
   thinking: boolean;
@@ -18,7 +18,7 @@ export interface CurrentConfig {
   mode?: 'code' | 'ask';
 }
 
-// 命令处理器类型
+// Command handler type - 命令处理器类型
 export type CommandHandler = (
   args: string[],
   context: InteractiveContext,
@@ -26,7 +26,7 @@ export type CommandHandler = (
   currentConfig: CurrentConfig
 ) => Promise<void>;
 
-// 命令回调
+// Command callbacks - 命令回调
 export interface CommandCallbacks {
   exit: () => void;
   saveSession: () => Promise<void>;
@@ -41,22 +41,22 @@ export interface CommandCallbacks {
   deleteAllSessions?: () => Promise<void>;
   setPlanMode?: (enabled: boolean) => void;
   createKodaXOptions?: () => KodaXOptions;
-  /** REPL 的 readline 接口，供需要用户交互的命令使用 */
+  /** REPL readline interface for commands requiring user interaction - REPL 的 readline 接口，供需要用户交互的命令使用 */
   readline?: readline.Interface;
 }
 
-// 命令定义
+// Command definition - 命令定义
 export interface Command {
   name: string;
   aliases?: string[];
   description: string;
   usage?: string;
   handler: CommandHandler;
-  /** 详细帮助函数，返回多行帮助文本 */
+  /** Detailed help function returning multi-line help text - 详细帮助函数，返回多行帮助文本 */
   detailedHelp?: () => void;
 }
 
-// 内置命令
+// Built-in commands - 内置命令
 export const BUILTIN_COMMANDS: Command[] = [
   {
     name: 'help',
@@ -65,7 +65,7 @@ export const BUILTIN_COMMANDS: Command[] = [
     usage: '/help [command]',
     handler: async (args) => {
       if (args.length > 0) {
-        // 显示特定命令的详细帮助
+        // Show detailed help for specific command - 显示特定命令的详细帮助
         printDetailedHelp(args[0]!);
       } else {
         printHelp();
@@ -360,7 +360,7 @@ export const BUILTIN_COMMANDS: Command[] = [
     usage: '/model [provider-name]',
     handler: async (args, _context, callbacks, currentConfig) => {
       if (args.length === 0) {
-        // 显示所有 Provider 及状态
+        // Show all providers with status - 显示所有 Provider 及状态
         console.log(chalk.bold('\nAvailable Providers:\n'));
         const providers = getProviderList();
         const maxNameLen = Math.max(...providers.map(p => p.name.length));
@@ -377,7 +377,7 @@ export const BUILTIN_COMMANDS: Command[] = [
 
       const newProvider = args[0];
       if (KODAX_PROVIDERS[newProvider]) {
-        // 保存到配置
+        // Save to config - 保存到配置
         saveConfig({ provider: newProvider });
         callbacks.switchProvider?.(newProvider);
         console.log(chalk.cyan(`\n[Switched to ${newProvider}] (已保存)`));
@@ -594,11 +594,11 @@ export const BUILTIN_COMMANDS: Command[] = [
   },
 ];
 
-// 打印帮助
+// Print help - 打印帮助
 function printHelp(): void {
   console.log(chalk.bold('\nAvailable Commands:\n'));
 
-  // 按类别分组
+  // Group by category - 按类别分组
   const categories: Record<string, Command[]> = {
     'General': BUILTIN_COMMANDS.filter(c => ['help', 'exit', 'clear', 'status'].includes(c.name)),
     'Mode': BUILTIN_COMMANDS.filter(c => ['mode', 'ask', 'code'].includes(c.name)),
@@ -614,7 +614,7 @@ function printHelp(): void {
       const aliases = cmd.aliases ? chalk.dim(` (${cmd.aliases.join(', ')})`) : '';
       console.log(`  ${chalk.cyan(`/${cmd.name}`)}${aliases.padEnd(20)} ${cmd.description}`);
     }
-    // 为 Project 类别添加子命令提示
+    // Add subcommand hint for Project category - 为 Project 类别添加子命令提示
     if (category === 'Project') {
       console.log(chalk.dim('    Subcommands: init, status, next, auto, pause, list, mark, progress'));
     }
@@ -627,9 +627,9 @@ function printHelp(): void {
   console.log();
 }
 
-// 打印特定命令的详细帮助
+// Print detailed help for specific command - 打印特定命令的详细帮助
 function printDetailedHelp(commandName: string): void {
-  // 延迟初始化
+  // Lazy initialization - 延迟初始化
   if (commandRegistry.size === 0) {
     initCommandRegistry();
   }
@@ -640,11 +640,11 @@ function printDetailedHelp(commandName: string): void {
     return;
   }
 
-  // 如果命令有详细帮助函数，调用它
+  // If command has detailed help function, call it - 如果命令有详细帮助函数，调用它
   if (cmd.detailedHelp) {
     cmd.detailedHelp();
   } else {
-    // 否则显示基本信息
+    // Otherwise show basic info - 否则显示基本信息
     console.log(chalk.cyan(`\n/${cmd.name}`));
     if (cmd.aliases?.length) {
       console.log(chalk.dim(`Aliases: ${cmd.aliases.join(', ')}`));
@@ -657,7 +657,7 @@ function printDetailedHelp(commandName: string): void {
   }
 }
 
-// 打印状态
+// Print status - 打印状态
 function printStatus(context: InteractiveContext, currentConfig: CurrentConfig): void {
   const tokens = estimateTokens(context.messages);
   console.log(chalk.bold('\nSession Status:\n'));
@@ -673,10 +673,10 @@ function printStatus(context: InteractiveContext, currentConfig: CurrentConfig):
   console.log();
 }
 
-// 命令注册表
+// Command registry - 命令注册表
 const commandRegistry = new Map<string, Command>();
 
-// 初始化命令注册表
+// Initialize command registry - 初始化命令注册表
 function initCommandRegistry(): void {
   for (const cmd of BUILTIN_COMMANDS) {
     commandRegistry.set(cmd.name, cmd);
@@ -688,7 +688,7 @@ function initCommandRegistry(): void {
   }
 }
 
-// 解析命令
+// Parse command - 解析命令
 export function parseCommand(input: string): { command: string; args: string[] } | null {
   const trimmed = input.trim();
   if (!trimmed.startsWith('/')) return null;
@@ -700,14 +700,14 @@ export function parseCommand(input: string): { command: string; args: string[] }
   return command ? { command, args } : null;
 }
 
-// 执行命令
+// Execute command - 执行命令
 export async function executeCommand(
   parsed: { command: string; args: string[] },
   context: InteractiveContext,
   callbacks: CommandCallbacks,
   currentConfig: CurrentConfig
 ): Promise<boolean> {
-  // 延迟初始化
+  // Lazy initialization - 延迟初始化
   if (commandRegistry.size === 0) {
     initCommandRegistry();
   }

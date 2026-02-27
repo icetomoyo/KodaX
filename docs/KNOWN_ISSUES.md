@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-02-27 03:20_
+_Last Updated: 2026-02-27 04:30_
 
 ---
 
@@ -13,7 +13,7 @@ _Last Updated: 2026-02-27 03:20_
 | 002 | Low | Won't Fix | /plan 命令未使用 _currentConfig 参数 | v0.3.1 | - | 2026-02-19 | 2026-02-27 |
 | 003 | Medium | Won't Fix | Plan 文件无版本号 | v0.3.1 | - | 2026-02-19 | 2026-02-22 |
 | 004 | Medium | Won't Fix | Plan 解析正则表达式脆弱 | v0.3.1 | - | 2026-02-19 | 2026-02-22 |
-| 005 | Low | Open | 中英文注释混用 | v0.3.1 | - | 2026-02-19 | - |
+| 005 | Low | Resolved | 中英文注释混用 | v0.3.1 | v0.4.5 | 2026-02-19 | 2026-02-27 |
 | 006 | Low | Open | 整数解析无范围检查 | v0.3.1 | - | 2026-02-19 | - |
 | 007 | Medium | Resolved | 静默吞掉错误 | v0.3.1 | v0.3.3 | 2026-02-19 | 2026-02-22 |
 | 008 | Medium | Resolved | 交互提示缺少输入验证 | v0.3.1 | v0.3.3 | 2026-02-19 | 2026-02-22 |
@@ -147,17 +147,27 @@ _Last Updated: 2026-02-27 03:20_
 
 ---
 
-### 005: 中英文注释混用
+### 005: 中英文注释混用 (RESOLVED)
 - **Priority**: Low
-- **Status**: Open
+- **Status**: Resolved
 - **Introduced**: v0.3.1 (auto-detected)
+- **Fixed**: v0.4.5
 - **Created**: 2026-02-19
 - **Original Problem**:
   - 代码中混合使用中文和英文注释
   - 例如：`// 延迟创建 readline 接口` (中文) vs `// Check if project exists` (英文)
   - 国际化团队协作困难，代码风格不一致
 - **Context**: `src/interactive/` 目录下多个文件
-- **Proposed Solution**: 选择一种语言保持一致（推荐英文，便于国际协作）
+- **Resolution**:
+  - 建立了英文优先的双语注释风格指南
+  - 格式: `// English comment - 中文简述` (单行) 或 `/** English description - 中文描述 */` (JSDoc)
+  - 简单逻辑使用纯英文，复杂/业务逻辑使用英文+中文简述
+  - 更新了所有 interactive 模块和 UI 模块的注释
+- **Resolution Date**: 2026-02-27
+- **Files Changed**:
+  - packages/repl/src/interactive/*.ts
+  - packages/repl/src/ui/**/*.ts, packages/repl/src/ui/**/*.tsx
+- **Tests Added**: None (comment-only changes, build verification)
 
 ---
 

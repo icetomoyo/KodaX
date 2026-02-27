@@ -1,7 +1,7 @@
 /**
- * useInputHistory - 输入历史管理 Hook
+ * useInputHistory - Input history management Hook - 输入历史管理 Hook
  *
- * 管理命令历史，支持上下键导航
+ * Manages command history, supports up/down arrow navigation - 管理命令历史，支持上下键导航
  */
 
 import { useState, useCallback, useRef } from "react";
@@ -31,7 +31,7 @@ export function useInputHistory(options: UseInputHistoryOptions = {}): UseInputH
   const historyIndexRef = useRef<number>(-1);
   const tempInputRef = useRef<string>("");
 
-  // 添加新条目
+  // Add new entry - 添加新条目
   const add = useCallback(
     (text: string) => {
       if (!text.trim()) return;
@@ -42,13 +42,13 @@ export function useInputHistory(options: UseInputHistoryOptions = {}): UseInputH
       };
 
       setHistory((prev) => {
-        // 避免重复连续条目
+        // Avoid duplicate consecutive entries - 避免重复连续条目
         const lastEntry = prev[prev.length - 1];
         if (lastEntry?.text === text) {
           return prev;
         }
 
-        // 限制大小
+        // Limit size - 限制大小
         const newHistory = [...prev, entry];
         if (newHistory.length > maxSize) {
           return newHistory.slice(-maxSize);
@@ -56,7 +56,7 @@ export function useInputHistory(options: UseInputHistoryOptions = {}): UseInputH
         return newHistory;
       });
 
-      // 重置导航索引
+      // Reset navigation index - 重置导航索引
       historyIndexRef.current = -1;
       tempInputRef.current = "";
 
@@ -65,17 +65,17 @@ export function useInputHistory(options: UseInputHistoryOptions = {}): UseInputH
     [maxSize, onSave]
   );
 
-  // 向上导航 (更早的历史)
+  // Navigate up (earlier history) - 向上导航 (更早的历史)
   const navigateUp = useCallback((): string | null => {
     if (history.length === 0) return null;
 
-    // 第一次导航，保存当前输入
+    // First navigation, save current input - 第一次导航，保存当前输入
     if (historyIndexRef.current === -1) {
       historyIndexRef.current = history.length - 1;
       return history[historyIndexRef.current]?.text ?? null;
     }
 
-    // 还有更早的历史
+    // There's earlier history - 还有更早的历史
     if (historyIndexRef.current > 0) {
       historyIndexRef.current--;
       return history[historyIndexRef.current]?.text ?? null;
@@ -84,36 +84,36 @@ export function useInputHistory(options: UseInputHistoryOptions = {}): UseInputH
     return null;
   }, [history]);
 
-  // 向下导航 (更近的历史)
+  // Navigate down (more recent history) - 向下导航 (更近的历史)
   const navigateDown = useCallback((): string | null => {
     if (historyIndexRef.current === -1) return null;
 
-    // 还有更近的历史
+    // There's more recent history - 还有更近的历史
     if (historyIndexRef.current < history.length - 1) {
       historyIndexRef.current++;
       return history[historyIndexRef.current]?.text ?? null;
     }
 
-    // 回到当前输入 - 总是返回 tempInputRef 或空字符串
-    // 参考 Gemini CLI 和 OpenCode: 永远不返回 null，而是返回空字符串
+    // Return to current input - always return tempInputRef or empty string - 回到当前输入 - 总是返回 tempInputRef 或空字符串
+    // Reference: Gemini CLI and OpenCode - never return null, return empty string instead - 参考 Gemini CLI 和 OpenCode: 永远不返回 null，而是返回空字符串
     historyIndexRef.current = -1;
-    return tempInputRef.current; // 可能是空字符串，但不是 null
+    return tempInputRef.current; // May be empty string, but not null - 可能是空字符串，但不是 null
   }, [history]);
 
-  // 重置导航
+  // Reset navigation - 重置导航
   const reset = useCallback(() => {
     historyIndexRef.current = -1;
     tempInputRef.current = "";
   }, []);
 
-  // 保存临时输入 (导航前)
+  // Save temporary input (before navigation) - 保存临时输入 (导航前)
   const saveTempInput = useCallback((text: string) => {
     if (historyIndexRef.current === -1) {
       tempInputRef.current = text;
     }
   }, []);
 
-  // 获取上一个
+  // Get previous - 获取上一个
   const getPrevious = useCallback(() => {
     if (historyIndexRef.current === -1) return null;
     const prevIndex = historyIndexRef.current - 1;
@@ -121,7 +121,7 @@ export function useInputHistory(options: UseInputHistoryOptions = {}): UseInputH
     return history[prevIndex]?.text ?? null;
   }, [history]);
 
-  // 获取下一个
+  // Get next - 获取下一个
   const getNext = useCallback(() => {
     if (historyIndexRef.current === -1) return null;
     const nextIndex = historyIndexRef.current + 1;

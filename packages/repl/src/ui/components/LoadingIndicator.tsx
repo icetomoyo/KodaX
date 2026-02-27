@@ -1,8 +1,8 @@
 /**
- * LoadingIndicator - 加载和思考指示器组件
+ * LoadingIndicator - Loading and thinking indicator component - 加载和思考指示器组件
  *
- * 参考 Gemini CLI 的加载显示架构实现。
- * 提供多种加载状态可视化方式。
+ * Reference Gemini CLI's loading display architecture implementation.
+ * Provide multiple loading state visualization methods - 参考 Gemini CLI 的加载显示架构实现，提供多种加载状态可视化方式。
  */
 
 import React, { useMemo, useState, useEffect } from "react";
@@ -15,53 +15,53 @@ import type { Theme } from "../types.js";
 export type LoadingIndicatorType = "spinner" | "dots" | "bar" | "simple";
 
 export interface LoadingIndicatorProps {
-  /** 主消息 */
+  /** Main message - 主消息 */
   message?: string;
-  /** 子消息 */
+  /** Sub message - 子消息 */
   subMessage?: string;
-  /** 进度 (0-100) */
+  /** Progress (0-100) - 进度 (0-100) */
   progress?: number;
-  /** 类型 */
+  /** Type - 类型 */
   type?: LoadingIndicatorType;
-  /** 紧凑模式 */
+  /** Compact mode - 紧凑模式 */
   compact?: boolean;
-  /** 主题 */
+  /** Theme - 主题 */
   theme?: Theme;
 }
 
 export interface ThinkingIndicatorProps {
-  /** 自定义消息 */
+  /** Custom message - 自定义消息 */
   message?: string;
-  /** 显示旋转器 */
+  /** Show spinner - 显示旋转器 */
   showSpinner?: boolean;
-  /** 主题 */
+  /** Theme - 主题 */
   theme?: Theme;
 }
 
 export interface SpinnerProps {
-  /** 颜色 */
+  /** Color - 颜色 */
   color?: string;
-  /** 主题 */
+  /** Theme - 主题 */
   theme?: Theme;
 }
 
 export interface DotsIndicatorProps {
-  /** 标签 */
+  /** Label - 标签 */
   label?: string;
-  /** 点数量 */
+  /** Dot count - 点数量 */
   dotCount?: number;
-  /** 主题 */
+  /** Theme - 主题 */
   theme?: Theme;
 }
 
 export interface ProgressIndicatorProps {
-  /** 进度 (0-100) */
+  /** Progress (0-100) - 进度 (0-100) */
   progress: number;
-  /** 标签 */
+  /** Label - 标签 */
   label?: string;
-  /** 条宽度 */
+  /** Bar width - 条宽度 */
   width?: number;
-  /** 主题 */
+  /** Theme - 主题 */
   theme?: Theme;
 }
 
@@ -72,7 +72,7 @@ const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", 
 // === Components ===
 
 /**
- * 旋转器组件
+ * Spinner component - 旋转器组件
  */
 export const Spinner: React.FC<SpinnerProps> = ({ color, theme: themeProp }) => {
   const theme = themeProp ?? useMemo(() => getTheme("dark"), []);
@@ -94,7 +94,7 @@ export const Spinner: React.FC<SpinnerProps> = ({ color, theme: themeProp }) => 
 };
 
 /**
- * 点指示器组件
+ * Dots indicator component - 点指示器组件
  */
 export const DotsIndicator: React.FC<DotsIndicatorProps> = ({
   label,
@@ -123,7 +123,7 @@ export const DotsIndicator: React.FC<DotsIndicatorProps> = ({
 };
 
 /**
- * 进度指示器组件
+ * Progress indicator component - 进度指示器组件
  */
 export const ProgressIndicator: React.FC<ProgressIndicatorProps> = ({
   progress,
@@ -158,7 +158,7 @@ export const ProgressIndicator: React.FC<ProgressIndicatorProps> = ({
 };
 
 /**
- * 思考指示器组件
+ * Thinking indicator component - 思考指示器组件
  */
 export const ThinkingIndicator: React.FC<ThinkingIndicatorProps> = ({
   message,
@@ -181,7 +181,7 @@ export const ThinkingIndicator: React.FC<ThinkingIndicatorProps> = ({
 };
 
 /**
- * 加载指示器组件
+ * Loading indicator component - 加载指示器组件
  */
 export const LoadingIndicator: React.FC<LoadingIndicatorProps> = ({
   message,
@@ -194,7 +194,7 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = ({
   const theme = themeProp ?? useMemo(() => getTheme("dark"), []);
   const displayMessage = message ?? "Loading";
 
-  // 紧凑模式
+  // Compact mode - 紧凑模式
   if (compact) {
     return (
       <Box>
@@ -204,7 +204,7 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = ({
     );
   }
 
-  // 进度条模式
+  // Progress bar mode - 进度条模式
   if (type === "bar" && progress !== undefined) {
     return (
       <Box flexDirection="column">
@@ -218,7 +218,7 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = ({
     );
   }
 
-  // 点动画模式
+  // Dot animation mode - 点动画模式
   if (type === "dots") {
     return (
       <Box flexDirection="column">
@@ -232,7 +232,7 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = ({
     );
   }
 
-  // 简单模式
+  // Simple mode - 简单模式
   if (type === "simple") {
     return (
       <Box flexDirection="column">
@@ -251,7 +251,7 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = ({
     );
   }
 
-  // 默认旋转器模式
+  // Default spinner mode - 默认旋转器模式
   return (
     <Box flexDirection="column">
       <Box>

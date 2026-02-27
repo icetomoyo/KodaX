@@ -1,8 +1,8 @@
 /**
  * UIStateContext - Global UI State Management
  *
- * 参考 Gemini CLI 的 UIStateContext 架构实现。
- * 使用 React Context + useReducer 模式管理全局状态。
+ * Reference implementation based on Gemini CLI's UIStateContext architecture - 参考 Gemini CLI 的 UIStateContext 架构实现
+ * Uses React Context + useReducer pattern for global state management - 使用 React Context + useReducer 模式管理全局状态
  */
 
 import React, {
@@ -47,14 +47,14 @@ type UIAction =
 // === Helper Functions ===
 
 /**
- * 生成唯一 ID
+ * Generate unique ID - 生成唯一 ID
  */
 export function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
 /**
- * 创建带自动生成 ID 和时间戳的历史项
+ * Create history item with auto-generated ID and timestamp - 创建带自动生成 ID 和时间戳的历史项
  */
 export function createHistoryItem(
   item: CreatableHistoryItem
@@ -67,7 +67,7 @@ export function createHistoryItem(
 }
 
 /**
- * 创建带自动生成 ID 和开始时间的工具调用
+ * Create tool call with auto-generated ID and start time - 创建带自动生成 ID 和开始时间的工具调用
  */
 export function createToolCall(
   tool: Omit<ToolCall, "id" | "startTime">
@@ -257,7 +257,7 @@ export function UIStateProvider({
     dispatch({ type: "SET_LOADING", payload: isLoading });
   }, []);
 
-  // Memoize actions to prevent unnecessary re-renders
+  // Memoize actions to prevent unnecessary re-renders - 记忆化操作以防止不必要的重新渲染
   const actions = useMemo<UIActions>(
     () => ({
       setStreamingState,
@@ -309,7 +309,7 @@ export function UIStateProvider({
 // === Hooks ===
 
 /**
- * 获取 UI 状态
+ * Get UI state - 获取 UI 状态
  */
 export function useUIState(): UIState {
   const context = useContext(UIStateContext);
@@ -320,7 +320,7 @@ export function useUIState(): UIState {
 }
 
 /**
- * 获取 UI 操作
+ * Get UI actions - 获取 UI 操作
  */
 export function useUIActions(): UIActions {
   const context = useContext(UIActionsContext);
@@ -331,7 +331,7 @@ export function useUIActions(): UIActions {
 }
 
 /**
- * 获取完整 UI 状态和操作
+ * Get complete UI state and actions - 获取完整 UI 状态和操作
  */
 export function useUI(): { state: UIState; actions: UIActions } {
   const state = useUIState();
@@ -340,7 +340,7 @@ export function useUI(): { state: UIState; actions: UIActions } {
 }
 
 /**
- * 获取当前主题
+ * Get current theme - 获取当前主题
  */
 export function useTheme(): import("../types.js").Theme {
   const { getTheme } = require("../themes/index.js");

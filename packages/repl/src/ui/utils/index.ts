@@ -1,8 +1,8 @@
 /**
- * Utils 导出
+ * Utils exports - Utils 导出
  *
- * 集中导出所有工具模块，简化导入路径
- * 包含从 InkREPL.tsx 提取的模块 (Issue 016)
+ * Centralizes exports of all utility modules, simplifying import paths - 集中导出所有工具模块，简化导入路径
+ * Includes modules extracted from InkREPL.tsx (Issue 016) - 包含从 InkREPL.tsx 提取的模块 (Issue 016)
  */
 
 // Text buffer utilities

@@ -1,13 +1,13 @@
 /**
- * KodaX 交互式上下文管理
+ * KodaX Interactive Context Management - 交互式上下文管理
  */
 
 import { KodaXMessage } from '@kodax/core';
 
-// 交互模式
+// Interactive mode - 交互模式
 export type InteractiveMode = 'code' | 'ask';
 
-// 交互式会话上下文
+// Interactive session context - 交互式会话上下文
 export interface InteractiveContext {
   messages: KodaXMessage[];
   sessionId: string;
@@ -15,10 +15,10 @@ export interface InteractiveContext {
   gitRoot?: string;
   createdAt: string;
   lastAccessed: string;
-  // 注意：mode 已移至 CurrentConfig 管理，避免状态分散
+  // Note: mode moved to CurrentConfig to avoid scattered state - 注意：mode 已移至 CurrentConfig 管理，避免状态分散
 }
 
-// 创建交互式上下文
+// Create interactive context - 创建交互式上下文
 export async function createInteractiveContext(options: {
   sessionId?: string;
   gitRoot?: string;
@@ -34,7 +34,7 @@ export async function createInteractiveContext(options: {
   };
 }
 
-// 生成会话 ID
+// Generate session ID - 生成会话 ID
 function generateSessionId(): string {
   const now = new Date();
   const date = now.toISOString().split('T')[0]!.replace(/-/g, '');
@@ -42,7 +42,7 @@ function generateSessionId(): string {
   return `${date}_${time}`;
 }
 
-// 更新上下文访问时间
+// Update context access time - 更新上下文访问时间
 export function touchContext(context: InteractiveContext): void {
   context.lastAccessed = new Date().toISOString();
 }

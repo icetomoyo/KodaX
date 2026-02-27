@@ -1,8 +1,8 @@
 /**
  * StreamingContext - Streaming Response Handling
  *
- * 参考 Gemini CLI 的 StreamingContext 架构实现。
- * 管理流式响应状态、取消操作和错误处理。
+ * Reference implementation based on Gemini CLI's StreamingContext architecture - 参考 Gemini CLI 的 StreamingContext 架构实现
+ * Manages streaming response state, cancellation operations, and error handling - 管理流式响应状态、取消操作和错误处理
  */
 
 import React, {
@@ -19,7 +19,7 @@ import { StreamingState } from "../types.js";
 // === Types ===
 
 /**
- * 流式上下文值
+ * Streaming context value - 流式上下文值
  */
 export interface StreamingContextValue {
   /** 当前流式状态 */
@@ -51,7 +51,7 @@ export interface StreamingContextValue {
 }
 
 /**
- * 流式操作接口
+ * Streaming actions interface - 流式操作接口
  */
 export interface StreamingActions {
   /** 开始流式响应 */
@@ -101,7 +101,7 @@ export interface StreamingActions {
 }
 
 /**
- * 状态变更监听器
+ * State change listener - 状态变更监听器
  */
 export type StreamingStateListener = (state: StreamingContextValue) => void;
 
@@ -122,7 +122,7 @@ const DEFAULT_STREAMING_STATE: StreamingContextValue = {
 // === Streaming Manager ===
 
 /**
- * 流式管理器接口
+ * Streaming manager interface - 流式管理器接口
  */
 export interface StreamingManager {
   /** 获取当前状态 */
@@ -184,25 +184,25 @@ export interface StreamingManager {
 }
 
 /**
- * 创建流式管理器
+ * Create streaming manager - 创建流式管理器
  *
- * Issue 048 修复: 使用批量更新减少渲染频率
- * - 流式文本和 thinking 内容缓冲到 80ms 周期
- * - 与 Spinner 动画同步，避免竞态条件
+ * Issue 048 fix: Use batch updates to reduce render frequency - Issue 048 修复: 使用批量更新减少渲染频率
+ * - Buffer streaming text and thinking content to 80ms cycle - 流式文本和 thinking 内容缓冲到 80ms 周期
+ * - Sync with Spinner animation to avoid race conditions - 与 Spinner 动画同步，避免竞态条件
  */
 export function createStreamingManager(): StreamingManager {
   let state: StreamingContextValue = { ...DEFAULT_STREAMING_STATE };
   const listeners = new Set<StreamingStateListener>();
 
-  // === 批量更新缓冲区 (Issue 048) ===
+  // === Batch update buffer (Issue 048) - 批量更新缓冲区 (Issue 048) ===
   let pendingResponseText = "";
   let pendingThinkingText = "";
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
-   * 刷新间隔 (ms)
-   * - 80ms 与 Spinner 动画帧同步
-   * - 100ms 内的用户感知为即时响应
+   * Flush interval (ms) - 刷新间隔
+   * - 80ms syncs with Spinner animation frame - 80ms 与 Spinner 动画帧同步
+   * - User perceives as instant response within 100ms - 100ms 内的用户感知为即时响应
    */
   const FLUSH_INTERVAL = 80;
 
@@ -213,7 +213,7 @@ export function createStreamingManager(): StreamingManager {
   };
 
   /**
-   * 立即应用缓冲区内容并通知
+   * Immediately apply buffer content and notify - 立即应用缓冲区内容并通知
    */
   const flushPendingUpdates = () => {
     if (flushTimer) {
@@ -236,7 +236,7 @@ export function createStreamingManager(): StreamingManager {
   };
 
   /**
-   * 安排延迟刷新
+   * Schedule delayed flush - 安排延迟刷新
    */
   const scheduleFlush = () => {
     if (!flushTimer) {
@@ -248,13 +248,13 @@ export function createStreamingManager(): StreamingManager {
     getState: () => state,
 
     setState: (newState: StreamingState) => {
-      flushPendingUpdates(); // 状态切换前刷新
+      flushPendingUpdates(); // Flush before state change - 状态切换前刷新
       state = { ...state, state: newState };
       notify();
     },
 
     startStreaming: () => {
-      flushPendingUpdates(); // 开始前刷新
+      flushPendingUpdates(); // Flush before starting - 开始前刷新
       state = {
         ...state,
         state: StreamingState.Responding,
@@ -265,7 +265,7 @@ export function createStreamingManager(): StreamingManager {
     },
 
     stopStreaming: () => {
-      flushPendingUpdates(); // 停止前刷新，确保所有内容显示
+      flushPendingUpdates(); // Flush before stopping to ensure all content displays - 停止前刷新，确保所有内容显示
       state = {
         ...state,
         state: StreamingState.Idle,
@@ -280,7 +280,7 @@ export function createStreamingManager(): StreamingManager {
     },
 
     clearResponse: () => {
-      flushPendingUpdates(); // 清空前刷新
+      flushPendingUpdates(); // Flush before clearing - 清空前刷新
       state = {
         ...state,
         currentResponse: "",
@@ -289,7 +289,7 @@ export function createStreamingManager(): StreamingManager {
     },
 
     setError: (error: string | undefined) => {
-      flushPendingUpdates(); // 错误前刷新
+      flushPendingUpdates(); // Flush before setting error - 错误前刷新
       state = {
         ...state,
         error,
@@ -299,7 +299,7 @@ export function createStreamingManager(): StreamingManager {
     },
 
     abort: () => {
-      flushPendingUpdates(); // 中断前刷新，确保已接收内容显示
+      flushPendingUpdates(); // Flush before aborting to ensure received content displays - 中断前刷新，确保已接收内容显示
       state.abortController?.abort();
       state = {
         ...state,
@@ -310,7 +310,7 @@ export function createStreamingManager(): StreamingManager {
     },
 
     reset: () => {
-      flushPendingUpdates(); // 重置前刷新
+      flushPendingUpdates(); // Flush before resetting - 重置前刷新
       state.abortController?.abort();
       state = { ...DEFAULT_STREAMING_STATE };
       notify();
@@ -331,7 +331,7 @@ export function createStreamingManager(): StreamingManager {
     },
 
     startThinking: () => {
-      flushPendingUpdates(); // 开始 thinking 前刷新
+      flushPendingUpdates(); // Flush before starting thinking - 开始 thinking 前刷新
       state = {
         ...state,
         isThinking: true,
@@ -342,7 +342,7 @@ export function createStreamingManager(): StreamingManager {
     },
 
     appendThinkingChars: (count: number) => {
-      // 字符计数不需要批量更新，直接更新
+      // Character count doesn't need batch update, update directly - 字符计数不需要批量更新，直接更新
       state = {
         ...state,
         isThinking: true,
@@ -357,21 +357,21 @@ export function createStreamingManager(): StreamingManager {
     },
 
     stopThinking: () => {
-      flushPendingUpdates(); // 停止前刷新
+      flushPendingUpdates(); // Flush before stopping - 停止前刷新
       // Don't clear thinkingContent - preserve it for display
       // Only reset isThinking flag to hide the Thinking indicator
       state = {
         ...state,
         isThinking: false,
         thinkingCharCount: 0,
-        // thinkingContent is preserved for display
+        // thinkingContent is preserved for display - thinkingContent 保留用于显示
       };
       notify();
     },
 
     clearThinkingContent: () => {
-      flushPendingUpdates(); // 清空前刷新
-      // Clear thinking content when response completes
+      flushPendingUpdates(); // Flush before clearing - 清空前刷新
+      // Clear thinking content when response completes - 响应完成时清除 thinking 内容
       state = {
         ...state,
         isThinking: false,
@@ -382,7 +382,7 @@ export function createStreamingManager(): StreamingManager {
     },
 
     setCurrentTool: (tool: string | undefined) => {
-      flushPendingUpdates(); // 工具切换前刷新
+      flushPendingUpdates(); // Flush before tool switch - 工具切换前刷新
       state = {
         ...state,
         currentTool: tool,
@@ -392,7 +392,7 @@ export function createStreamingManager(): StreamingManager {
     },
 
     appendToolInputChars: (count: number) => {
-      // 字符计数不需要批量更新，直接更新
+      // Character count doesn't need batch update, update directly - 字符计数不需要批量更新，直接更新
       state = {
         ...state,
         toolInputCharCount: state.toolInputCharCount + count,
@@ -419,7 +419,7 @@ export interface StreamingProviderProps {
 // === Provider ===
 
 /**
- * StreamingProvider - 提供流式响应管理
+ * StreamingProvider - Provides streaming response management - 提供流式响应管理
  */
 export function StreamingProvider({
   children,
@@ -428,7 +428,7 @@ export function StreamingProvider({
   const managerRef = useRef<StreamingManager>(createStreamingManager());
   const [, forceUpdate] = useReducer((x) => x + 1, 0);
 
-  // 订阅状态变更
+  // Subscribe to state changes - 订阅状态变更
   useEffect(() => {
     const unsubscribe = managerRef.current.subscribe((state) => {
       forceUpdate();
@@ -532,7 +532,7 @@ export function StreamingProvider({
 // === Hooks ===
 
 /**
- * 获取流式状态
+ * Get streaming state - 获取流式状态
  */
 export function useStreamingState(): StreamingContextValue {
   const context = useContext(StreamingContextValueContext);
@@ -543,7 +543,7 @@ export function useStreamingState(): StreamingContextValue {
 }
 
 /**
- * 获取流式操作
+ * Get streaming actions - 获取流式操作
  */
 export function useStreamingActions(): StreamingActions {
   const context = useContext(StreamingActionsContext);
@@ -554,7 +554,7 @@ export function useStreamingActions(): StreamingActions {
 }
 
 /**
- * 获取完整流式状态和操作
+ * Get complete streaming state and actions - 获取完整流式状态和操作
  */
 export function useStreaming(): {
   state: StreamingContextValue;

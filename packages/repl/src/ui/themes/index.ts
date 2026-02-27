@@ -1,5 +1,5 @@
 /**
- * 主题系统
+ * Theme System - 主题系统
  */
 
 import type { Theme } from "../types.js";
@@ -13,14 +13,14 @@ export const themes: Record<string, Theme> = {
 };
 
 /**
- * 获取主题
+ * Get theme - 获取主题
  */
 export function getTheme(name: string = "dark"): Theme {
   return themes[name] ?? darkTheme;
 }
 
 /**
- * 获取所有主题名称
+ * Get all theme names - 获取所有主题名称
  */
 export function getThemeNames(): string[] {
   return Object.keys(themes);

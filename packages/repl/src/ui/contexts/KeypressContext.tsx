@@ -1,13 +1,13 @@
 /**
  * KeypressContext - Priority-based Keyboard Event Handling
  *
- * 参考 Gemini CLI 的 KeypressContext 架构实现。
- * 使用优先级系统允许不同组件处理相同的按键。
+ * Reference implementation based on Gemini CLI's KeypressContext architecture - 参考 Gemini CLI 的 KeypressContext 架构实现
+ * Uses priority system to allow different components to handle the same key - 使用优先级系统允许不同组件处理相同的按键
  *
- * 关键改进：
- * - 使用自定义 KeypressParser 替代 Ink 的 useInput
- * - 正确处理 Backspace/Delete 键混淆问题
- * - 添加 insertable 属性支持
+ * Key improvements - 关键改进：
+ * - Use custom KeypressParser instead of Ink's useInput - 使用自定义 KeypressParser 替代 Ink 的 useInput
+ * - Correctly handle Backspace/Delete key confusion - 正确处理 Backspace/Delete 键混淆问题
+ * - Add insertable property support - 添加 insertable 属性支持
  */
 
 import React, {
@@ -28,13 +28,13 @@ import {
 
 // === Constants ===
 
-/** ESC 序列超时时间（毫秒） */
+/** ESC sequence timeout in milliseconds - ESC 序列超时时间（毫秒） */
 const ESC_TIMEOUT = 50;
 
 // === Types ===
 
 /**
- * 键盘事件管理器接口
+ * Keyboard event manager interface - 键盘事件管理器接口
  */
 export interface KeypressManager {
   /**
@@ -61,17 +61,17 @@ export interface KeypressManager {
 // === Keypress Manager Implementation ===
 
 /**
- * 创建键盘事件管理器
+ * Create keyboard event manager - 创建键盘事件管理器
  *
- * 使用 MultiMap 风格的优先级管理：
- * - 高优先级的处理器先执行
- * - 同优先级内后注册的先执行 (LIFO)
- * - 返回 true 的处理器会阻止后续处理器执行
+ * Uses MultiMap-style priority management - 使用 MultiMap 风格的优先级管理：
+ * - Higher priority handlers execute first - 高优先级的处理器先执行
+ * - Within same priority, later registered handlers execute first (LIFO) - 同优先级内后注册的先执行 (LIFO)
+ * - Handlers returning true prevent subsequent handlers from executing - 返回 true 的处理器会阻止后续处理器执行
  */
 export function createKeypressManager(): KeypressManager {
-  // 使用 Map 存储优先级 -> 处理器数组的映射
+  // Use Map to store priority -> handler array mapping - 使用 Map 存储优先级 -> 处理器数组的映射
   const handlers = new Map<number, KeypressHandler[]>();
-  // 缓存排序后的优先级
+  // Cache sorted priorities - 缓存排序后的优先级
   let sortedPrioritiesCache: number[] | null = null;
 
   const getSortedPriorities = (): number[] => {
@@ -89,7 +89,7 @@ export function createKeypressManager(): KeypressManager {
       const priorityHandlers = handlers.get(priority)!;
       priorityHandlers.push(handler);
 
-      // 使缓存失效
+      // Invalidate cache - 使缓存失效
       sortedPrioritiesCache = null;
 
       return () => {
@@ -103,32 +103,32 @@ export function createKeypressManager(): KeypressManager {
             handlers.delete(priority);
           }
         }
-        // 使缓存失效
+        // Invalidate cache - 使缓存失效
         sortedPrioritiesCache = null;
       };
     },
 
     dispatch(event: KeyInfo): boolean {
-      // 按优先级从高到低遍历
+      // Traverse from high to low priority - 按优先级从高到低遍历
       const sortedPriorities = getSortedPriorities();
 
       for (const priority of sortedPriorities) {
         const priorityHandlers = handlers.get(priority);
         if (!priorityHandlers) continue;
 
-        // 同优先级内从后往前遍历 (LIFO)
+        // Traverse from back to front within same priority (LIFO) - 同优先级内从后往前遍历 (LIFO)
         for (let i = priorityHandlers.length - 1; i >= 0; i--) {
           const handler = priorityHandlers[i];
           if (!handler) continue;
 
           const result = handler(event);
           if (result === true) {
-            return true; // 事件被消费
+            return true; // Event consumed - 事件被消费
           }
         }
       }
 
-      return false; // 事件未被消费
+      return false; // Event not consumed - 事件未被消费
     },
 
     size(): number {
@@ -155,10 +155,10 @@ export interface KeypressProviderProps {
 // === Provider ===
 
 /**
- * KeypressProvider - 提供全局键盘事件管理
+ * KeypressProvider - Provides global keyboard event management - 提供全局键盘事件管理
  *
- * 必须在 Ink 组件树内使用。
- * 使用自定义 KeypressParser 替代 Ink 的 useInput，解决 Backspace/Delete 混淆问题。
+ * Must be used within Ink component tree - 必须在 Ink 组件树内使用
+ * Uses custom KeypressParser instead of Ink's useInput to fix Backspace/Delete confusion - 使用自定义 KeypressParser 替代 Ink 的 useInput，解决 Backspace/Delete 混淆问题
  */
 export function KeypressProvider({
   children,
@@ -167,7 +167,7 @@ export function KeypressProvider({
   const { stdin, setRawMode } = useStdin();
   const managerRef = useRef<KeypressManager>(createKeypressManager());
 
-  // 分发事件的回调
+  // Callback to dispatch events - 分发事件的回调
   const dispatch = useCallback(
     (event: KeyInfo) => {
       if (!enabled) return;
@@ -176,43 +176,43 @@ export function KeypressProvider({
     [enabled]
   );
 
-  // 设置 stdin 监听
+  // Setup stdin listener - 设置 stdin 监听
   useEffect(() => {
     if (!stdin || !enabled) {
       return;
     }
 
-    // 记录原始模式状态
+    // Record raw mode state - 记录原始模式状态
     const wasRaw = stdin.isRaw;
 
-    // 启用原始模式
+    // Enable raw mode - 启用原始模式
     if (wasRaw === false) {
       setRawMode(true);
     }
 
-    // 创建解析器
+    // Create parser - 创建解析器
     const parser = new KeypressParser();
 
-    // 注册处理器
+    // Register handler - 注册处理器
     const unsubscribeParser = parser.onKeypress(dispatch);
 
-    // ESC 序列超时定时器
+    // ESC sequence timeout timer - ESC 序列超时定时器
     let timeoutId: NodeJS.Timeout | null = null;
 
-    // 监听 stdin 数据
+    // Listen to stdin data - 监听 stdin 数据
     const onData = (data: Buffer | string) => {
-      // 清除之前的超时
+      // Clear previous timeout - 清除之前的超时
       if (timeoutId) {
         clearTimeout(timeoutId);
       }
 
-      // 喂给解析器
+      // Feed to parser - 喂给解析器
       parser.feed(data);
 
-      // 设置 ESC 序列超时
+      // Set ESC sequence timeout - 设置 ESC 序列超时
       if (data.length !== 0) {
         timeoutId = setTimeout(() => {
-          // 发送空数据触发超时处理（flush=true 表示刷新不完整的序列）
+          // Send empty data to trigger timeout handling (flush=true indicates flushing incomplete sequence) - 发送空数据触发超时处理（flush=true 表示刷新不完整的序列）
           parser.feed("", true);
         }, ESC_TIMEOUT);
       }
@@ -220,7 +220,7 @@ export function KeypressProvider({
 
     stdin.on("data", onData);
 
-    // 清理
+    // Cleanup - 清理
     return () => {
       if (timeoutId) {
         clearTimeout(timeoutId);
@@ -228,12 +228,12 @@ export function KeypressProvider({
       stdin.off("data", onData);
       unsubscribeParser();
 
-      // 恢复原始模式
+      // Restore raw mode - 恢复原始模式
       if (wasRaw === false) {
         try {
           setRawMode(false);
         } catch {
-          // 忽略错误
+          // Ignore error - 忽略错误
         }
       }
     };
@@ -249,7 +249,7 @@ export function KeypressProvider({
 // === Hooks ===
 
 /**
- * 获取键盘管理器
+ * Get keyboard manager - 获取键盘管理器
  */
 export function useKeypressManager(): KeypressManager {
   const context = useContext(KeypressManagerContext);
@@ -260,8 +260,8 @@ export function useKeypressManager(): KeypressManager {
 }
 
 /**
- * useKeypress 选项接口
- * 参考 Gemini CLI 的 useKeypress 签名
+ * useKeypress options interface - useKeypress 选项接口
+ * Reference implementation based on Gemini CLI's useKeypress signature - 参考 Gemini CLI 的 useKeypress 签名
  */
 export interface UseKeypressOptions {
   /** 是否激活（订阅键盘事件） */
@@ -271,19 +271,19 @@ export interface UseKeypressOptions {
 }
 
 /**
- * 注册键盘事件处理器
+ * Register keyboard event handler - 注册键盘事件处理器
  *
- * 支持两种调用模式：
+ * Supports two calling modes - 支持两种调用模式：
  *
- * 1. KodaX 原有模式（向后兼容）：
+ * 1. KodaX original mode (backward compatible) - KodaX 原有模式（向后兼容）：
  *    useKeypress(priority, handler, deps)
  *
- * 2. Gemini CLI 风格（推荐用于条件订阅）：
+ * 2. Gemini CLI style (recommended for conditional subscription) - Gemini CLI 风格（推荐用于条件订阅）：
  *    useKeypress(handler, { isActive: boolean, priority?: number })
  *
- * @param priorityOrHandler 优先级或处理函数
- * @param handlerOrOptions 处理函数或选项对象
- * @param deps 依赖数组（仅用于 KodaX 模式）
+ * @param priorityOrHandler Priority or handler function - 优先级或处理函数
+ * @param handlerOrOptions Handler function or options object - 处理函数或选项对象
+ * @param deps Dependency array (only used in KodaX mode) - 依赖数组（仅用于 KodaX 模式）
  */
 export function useKeypress(
   priorityOrHandler: number | boolean | KeypressHandler,
@@ -292,7 +292,7 @@ export function useKeypress(
 ): void {
   const manager = useKeypressManager();
 
-  // 检测调用模式
+  // Detect calling mode - 检测调用模式
   const isGeminiStyle = typeof priorityOrHandler === "function";
 
   let handler: KeypressHandler;
@@ -300,7 +300,7 @@ export function useKeypress(
   let isActive: boolean;
 
   if (isGeminiStyle) {
-    // Gemini CLI 风格：useKeypress(handler, { isActive, priority? })
+    // Gemini CLI style: useKeypress(handler, { isActive, priority? }) - Gemini CLI 风格：useKeypress(handler, { isActive, priority? })
     handler = priorityOrHandler as KeypressHandler;
     const options = (handlerOrOptions as UseKeypressOptions) ?? {};
     isActive = options.isActive ?? true;
@@ -312,7 +312,7 @@ export function useKeypress(
           : KeypressHandlerPriority.Normal
         : (priority ?? KeypressHandlerPriority.Normal);
   } else {
-    // KodaX 原有模式：useKeypress(priority, handler, deps)
+    // KodaX original mode: useKeypress(priority, handler, deps) - KodaX 原有模式：useKeypress(priority, handler, deps)
     actualPriority =
       typeof priorityOrHandler === "boolean"
         ? priorityOrHandler
@@ -320,11 +320,11 @@ export function useKeypress(
           : KeypressHandlerPriority.Normal
         : priorityOrHandler;
     handler = handlerOrOptions as KeypressHandler;
-    isActive = true; // 原有模式总是激活
+    isActive = true; // Original mode always active - 原有模式总是激活
   }
 
   useEffect(() => {
-    // 如果不激活，不订阅
+    // If not active, don't subscribe - 如果不激活，不订阅
     if (!isActive) {
       return;
     }
@@ -336,9 +336,9 @@ export function useKeypress(
 }
 
 /**
- * 创建按键匹配器
+ * Create key matcher - 创建按键匹配器
  *
- * 用于检查按键是否匹配特定模式
+ * Used to check if a key matches a specific pattern - 用于检查按键是否匹配特定模式
  */
 export function createKeyMatcher(pattern: Partial<KeyInfo>): (event: KeyInfo) => boolean {
   return (event: KeyInfo): boolean => {

@@ -1,14 +1,14 @@
 /**
- * Session Storage - 会话存储抽象层
+ * Session Storage - Session storage abstraction layer - 会话存储抽象层
  *
- * 提供会话持久化接口，支持内存和文件系统存储
- * 从 InkREPL.tsx 提取以改善代码组织
+ * Provides session persistence interface, supports memory and filesystem storage - 提供会话持久化接口，支持内存和文件系统存储
+ * Extracted from InkREPL.tsx to improve code organization - 从 InkREPL.tsx 提取以改善代码组织
  */
 
 import type { KodaXMessage } from "@kodax/core";
 
 /**
- * 会话数据结构
+ * Session data structure - 会话数据结构
  */
 export interface SessionData {
   messages: KodaXMessage[];
@@ -17,7 +17,7 @@ export interface SessionData {
 }
 
 /**
- * 会话存储接口
+ * Session storage interface - 会话存储接口
  */
 export interface SessionStorage {
   save(id: string, data: SessionData): Promise<void>;
@@ -28,10 +28,10 @@ export interface SessionStorage {
 }
 
 /**
- * 内存会话存储实现
+ * In-memory session storage implementation - 内存会话存储实现
  *
- * 用于开发和测试，会话数据保存在内存中
- * 进程退出后数据丢失
+ * Used for development and testing, session data is stored in memory - 用于开发和测试，会话数据保存在内存中
+ * Data is lost after process exit - 进程退出后数据丢失
  */
 export class MemorySessionStorage implements SessionStorage {
   private sessions = new Map<string, SessionData>();
@@ -62,7 +62,7 @@ export class MemorySessionStorage implements SessionStorage {
 }
 
 /**
- * 创建默认的内存会话存储
+ * Create default in-memory session storage - 创建默认的内存会话存储
  */
 export function createMemorySessionStorage(): SessionStorage {
   return new MemorySessionStorage();

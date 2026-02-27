@@ -1,6 +1,7 @@
 /**
- * KodaX 自动补全模块
+ * KodaX Autocomplete Module - 自动补全模块
  *
+ * Provides Tab completion for file paths and commands
  * 提供文件路径和命令的 Tab 补全功能
  */
 
@@ -10,17 +11,17 @@ import type * as readline from 'readline';
 import { BUILTIN_COMMANDS } from './commands.js';
 
 /**
- * 补全项
+ * Completion item - 补全项
  */
 export interface Completion {
-  text: string;                // 补全文本
-  display: string;             // 显示文本
-  description?: string;        // 描述
+  text: string;                // Completion text - 补全文本
+  display: string;             // Display text - 显示文本
+  description?: string;        // Description - 描述
   type: 'file' | 'command' | 'argument';
 }
 
 /**
- * 补全器接口
+ * Completer interface - 补全器接口
  */
 export interface Completer {
   canComplete(input: string, cursorPos: number): boolean;
@@ -28,29 +29,29 @@ export interface Completer {
 }
 
 /**
- * 文件路径补全器
+ * File Path Completer - 文件路径补全器
  *
- * 触发条件: 输入中包含 @ 后跟文件路径
- * 例如: @src/u -> Tab 补全为 @src/utils/
+ * Trigger: Input contains @ followed by file path - 触发条件: 输入中包含 @ 后跟文件路径
+ * Example: @src/u -> Tab completes to @src/utils/ - 例如: @src/u -> Tab 补全为 @src/utils/
  */
 export class FileCompleter implements Completer {
   private cwd: string;
   private cache: Map<string, string[]> = new Map();
-  private cacheTimeout = 5000; // 5 秒缓存
+  private cacheTimeout = 5000; // 5 second cache - 5 秒缓存
 
   constructor(cwd?: string) {
     this.cwd = cwd ?? process.cwd();
   }
 
   canComplete(input: string, cursorPos: number): boolean {
-    // 检查光标前是否有 @ 符号
+    // Check if there's an @ symbol before cursor - 检查光标前是否有 @ 符号
     const beforeCursor = input.slice(0, cursorPos);
     const lastAtIndex = beforeCursor.lastIndexOf('@');
     if (lastAtIndex === -1) return false;
 
-    // 检查 @ 后是否是有效的文件路径开始
+    // Check if content after @ is valid file path start - 检查 @ 后是否是有效的文件路径开始
     const afterAt = beforeCursor.slice(lastAtIndex + 1);
-    // 不允许空格（意味着 @ 后是新词）
+    // Disallow spaces (means @ is followed by a new word) - 不允许空格（意味着 @ 后是新词）
     if (afterAt.includes(' ')) return false;
 
     return true;
@@ -64,7 +65,7 @@ export class FileCompleter implements Completer {
     const afterAt = beforeCursor.slice(lastAtIndex + 1);
     const completions: Completion[] = [];
 
-    // 解析路径
+    // Parse path - 解析路径
     const lastSlash = afterAt.lastIndexOf('/');
     const dir = lastSlash === -1 ? this.cwd : path.join(this.cwd, afterAt.slice(0, lastSlash));
     const prefix = lastSlash === -1 ? afterAt : afterAt.slice(lastSlash + 1);
@@ -86,7 +87,7 @@ export class FileCompleter implements Completer {
         });
       }
     } catch {
-      // 目录不存在或无法读取
+      // Directory doesn't exist or unreadable - 目录不存在或无法读取
     }
 
     return completions;
@@ -119,10 +120,10 @@ export class FileCompleter implements Completer {
 }
 
 /**
- * 命令补全器
+ * Command Completer - 命令补全器
  *
- * 触发条件: 输入以 / 开头
- * 例如: /h -> Tab 补全为 /help
+ * Trigger: Input starts with / - 触发条件: 输入以 / 开头
+ * Example: /h -> Tab completes to /help - 例如: /h -> Tab 补全为 /help
  */
 export class CommandCompleter implements Completer {
   private commands: Map<string, { description: string; aliases: string[] }>;
@@ -133,7 +134,7 @@ export class CommandCompleter implements Completer {
   }
 
   private loadCommands(): void {
-    // 从 BUILTIN_COMMANDS 加载命令
+    // Load commands from BUILTIN_COMMANDS - 从 BUILTIN_COMMANDS 加载命令
     for (const cmd of BUILTIN_COMMANDS) {
       this.commands.set(cmd.name, {
         description: cmd.description,
@@ -143,9 +144,9 @@ export class CommandCompleter implements Completer {
   }
 
   canComplete(input: string, cursorPos: number): boolean {
-    // 必须以 / 开头且光标在命令部分
+    // Must start with / and cursor in command part - 必须以 / 开头且光标在命令部分
     if (!input.startsWith('/')) return false;
-    // 光标必须在第一个空格之前
+    // Cursor must be before first space - 光标必须在第一个空格之前
     const beforeCursor = input.slice(0, cursorPos);
     return !beforeCursor.includes(' ');
   }
@@ -154,7 +155,7 @@ export class CommandCompleter implements Completer {
     if (!input.startsWith('/')) return [];
 
     const beforeCursor = input.slice(0, cursorPos);
-    const partial = beforeCursor.slice(1).toLowerCase(); // 移除 /
+    const partial = beforeCursor.slice(1).toLowerCase(); // Remove / - 移除 /
     const completions: Completion[] = [];
 
     for (const [name, info] of this.commands) {
@@ -167,7 +168,7 @@ export class CommandCompleter implements Completer {
         });
       }
 
-      // 也匹配别名
+      // Also match aliases - 也匹配别名
       for (const alias of info.aliases) {
         if (alias.startsWith(partial) && alias !== name) {
           completions.push({
@@ -185,16 +186,16 @@ export class CommandCompleter implements Completer {
 }
 
 /**
- * readline 补全函数
+ * Create readline completer function - 创建 readline 补全函数
  *
- * 与 Node.js readline 的 completer 接口兼容
+ * Compatible with Node.js readline completer interface - 与 Node.js readline 的 completer 接口兼容
  */
 export function createCompleter(cwd?: string): (line: string) => Promise<[string[], string]> {
   const fileCompleter = new FileCompleter(cwd);
   const commandCompleter = new CommandCompleter();
 
   return async (line: string): Promise<[string[], string]> => {
-    // 检查是否需要补全
+    // Check if completion is needed - 检查是否需要补全
     const hasAt = line.includes('@');
     const hasSlash = line.startsWith('/');
 
@@ -214,25 +215,24 @@ export function createCompleter(cwd?: string): (line: string) => Promise<[string
       allCompletions.push(...completions);
     }
 
-    // 格式化为 readline 需要的格式
-    // 返回 [[completions], originalLine]
+    // Format for readline: [[completions], originalLine] - 格式化为 readline 需要的格式
     const displays = allCompletions.map(c => c.display);
     return [displays, line];
   };
 }
 
 /**
- * 显示补全列表
+ * Display completion list - 显示补全列表
  */
 export function displayCompletions(completions: Completion[]): void {
   if (completions.length === 0) return;
 
-  // 单个补全：直接替换
+  // Single completion: just replace - 单个补全：直接替换
   if (completions.length === 1) {
     return;
   }
 
-  // 多个补全：显示列表
+  // Multiple completions: show list - 多个补全：显示列表
   console.log();
   const maxDisplay = Math.min(completions.length, 10);
 
@@ -254,7 +254,7 @@ export function displayCompletions(completions: Completion[]): void {
 }
 
 /**
- * 获取补全建议 (用于 UI 显示)
+ * Get completion suggestions for UI display - 获取补全建议 (用于 UI 显示)
  */
 export async function getCompletionSuggestions(
   input: string,

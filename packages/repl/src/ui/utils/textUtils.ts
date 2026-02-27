@@ -1,19 +1,19 @@
 /**
- * Text Utilities - LRU Cache + Code Point Utilities
+ * Text Utilities - LRU Cache + Code Point Utilities - 文本工具：LRU 缓存 + Code Point 工具
  *
- * 提供文本处理相关的工具函数，包括：
- * - LRU 缓存用于缓存计算结果
- * - Unicode code point 处理函数
- * - 视觉宽度计算
+ * Provides text processing utilities including: - 提供文本处理相关的工具函数，包括：
+ * - LRU cache for caching computation results - LRU 缓存用于缓存计算结果
+ * - Unicode code point processing functions - Unicode code point 处理函数
+ * - Visual width calculation - 视觉宽度计算
  */
 
 // ============================================================================
-// LRU Cache
+// LRU Cache - LRU 缓存
 // ============================================================================
 
 /**
- * LRU (Least Recently Used) Cache
- * 用于缓存文本处理结果，避免重复计算
+ * LRU (Least Recently Used) Cache - 最近最少使用缓存
+ * Used to cache text processing results and avoid repeated computation - 用于缓存文本处理结果，避免重复计算
  */
 export class LRUCache<K, V> {
   private capacity: number;
@@ -25,7 +25,7 @@ export class LRUCache<K, V> {
   }
 
   /**
-   * 获取缓存值，并更新 LRU 顺序
+   * Get cached value and update LRU order - 获取缓存值，并更新 LRU 顺序
    */
   get(key: K): V | undefined {
     if (!this.cache.has(key)) {
@@ -39,7 +39,7 @@ export class LRUCache<K, V> {
   }
 
   /**
-   * 设置缓存值
+   * Set cached value - 设置缓存值
    */
   set(key: K, value: V): void {
     if (this.cache.has(key)) {
@@ -56,28 +56,28 @@ export class LRUCache<K, V> {
   }
 
   /**
-   * 检查 key 是否存在
+   * Check if key exists - 检查 key 是否存在
    */
   has(key: K): boolean {
     return this.cache.has(key);
   }
 
   /**
-   * 删除 key
+   * Delete key - 删除 key
    */
   delete(key: K): boolean {
     return this.cache.delete(key);
   }
 
   /**
-   * 清空缓存
+   * Clear cache - 清空缓存
    */
   clear(): void {
     this.cache.clear();
   }
 
   /**
-   * 获取当前大小
+   * Get current size - 获取当前大小
    */
   get size(): number {
     return this.cache.size;
@@ -85,12 +85,12 @@ export class LRUCache<K, V> {
 }
 
 // ============================================================================
-// Code Point Utilities
+// Code Point Utilities - Code Point 工具
 // ============================================================================
 
 /**
- * 获取字符串的 code point 长度
- * 正确处理 emoji 和其他多字节字符
+ * Get code point length of a string - 获取字符串的 code point 长度
+ * Properly handles emoji and other multi-byte characters - 正确处理 emoji 和其他多字节字符
  */
 export function getCodePointLength(str: string): number {
   if (!str) return 0;
@@ -106,7 +106,7 @@ export function getCodePointLength(str: string): number {
 }
 
 /**
- * 判断字符是否为宽字符（CJK 或 emoji）
+ * Check if a character is a wide character (CJK or emoji) - 判断字符是否为宽字符（CJK 或 emoji）
  */
 export function isWideChar(char: string): boolean {
   if (!char) return false;
@@ -148,8 +148,8 @@ export function isWideChar(char: string): boolean {
 }
 
 /**
- * 获取字符串的视觉宽度
- * ASCII = 1, CJK/emoji = 2
+ * Get visual width of a string - 获取字符串的视觉宽度
+ * ASCII = 1, CJK/emoji = 2 - ASCII = 1, CJK/emoji = 2
  */
 export function getVisualWidth(str: string): number {
   if (!str) return 0;
@@ -173,7 +173,7 @@ export function getVisualWidth(str: string): number {
 }
 
 /**
- * 获取指定 code point 位置的字符（grapheme cluster）
+ * Get character at specified code point position (grapheme cluster) - 获取指定 code point 位置的字符（grapheme cluster）
  */
 export function getCharAtCodePoint(str: string, index: number): string {
   if (!str || index < 0) return "";
@@ -193,7 +193,7 @@ export function getCharAtCodePoint(str: string, index: number): string {
 }
 
 /**
- * 按code point 分割字符串
+ * Split string by code points - 按 code point 分割字符串
  */
 export function splitByCodePoints(str: string): string[] {
   if (!str) return [];
@@ -209,7 +209,7 @@ export function splitByCodePoints(str: string): string[] {
 }
 
 /**
- * 按视觉宽度截断字符串
+ * Truncate string by visual width - 按视觉宽度截断字符串
  */
 export function truncateByVisualWidth(
   str: string,
@@ -247,16 +247,16 @@ export function truncateByVisualWidth(
 }
 
 // ============================================================================
-// Cache Instances
+// Cache Instances - 缓存实例
 // ============================================================================
 
 /**
- * 视觉宽度计算缓存
+ * Visual width calculation cache - 视觉宽度计算缓存
  */
 export const visualWidthCache = new LRUCache<string, number>(1000);
 
 /**
- * 缓存版本的视觉宽度计算
+ * Cached version of visual width calculation - 缓存版本的视觉宽度计算
  */
 export function getVisualWidthCached(str: string): number {
   const cached = visualWidthCache.get(str);

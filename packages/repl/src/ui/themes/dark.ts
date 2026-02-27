@@ -1,5 +1,5 @@
 /**
- * 暗色主题 - 默认主题
+ * Dark Theme - Default Theme - 暗色主题 - 默认主题
  */
 
 import type { Theme } from "../types.js";

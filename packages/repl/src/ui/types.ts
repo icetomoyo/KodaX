@@ -1,16 +1,16 @@
 /**
- * UI 组件共享类型定义
+ * UI Component Shared Type Definitions - UI 组件共享类型定义
  *
- * 参考 Gemini CLI 架构设计，使用 Context + Reducer 模式管理状态。
+ * Reference: Gemini CLI architecture design, using Context + Reducer pattern for state management - 参考 Gemini CLI 架构设计，使用 Context + Reducer 模式管理状态。
  */
 
 import type { CursorPosition } from "./utils/text-buffer.js";
 
-// === 键盘事件 ===
+// === Keyboard Events - 键盘事件 ===
 
 /**
- * 键盘信息接口
- * 参考: Gemini CLI Key interface
+ * Keyboard info interface - 键盘信息接口
+ * Reference: Gemini CLI Key interface - 参考: Gemini CLI Key interface
  */
 export interface KeyInfo {
   name: string;
@@ -18,10 +18,10 @@ export interface KeyInfo {
   ctrl: boolean;
   meta: boolean; // Alt key
   shift: boolean;
-  insertable: boolean; // 是否可以插入到文本中
+  insertable: boolean; // Whether can be inserted into text - 是否可以插入到文本中
 }
 
-// === 文本缓冲区 ===
+// === Text Buffer - 文本缓冲区 ===
 
 export type { CursorPosition };
 
@@ -41,19 +41,19 @@ export interface UseTextBufferReturn {
   redo: () => boolean;
 }
 
-// === 输入历史 ===
+// === Input History - 输入历史 ===
 
 export interface HistoryEntry {
   text: string;
   timestamp: number;
 }
 
-// === 自动补全 ===
+// === Autocomplete - 自动补全 ===
 
 export interface Completion {
-  text: string; // 补全文本
-  display: string; // 显示文本
-  description?: string; // 描述
+  text: string; // Completion text - 补全文本
+  display: string; // Display text - 显示文本
+  description?: string; // Description - 描述
   type: "file" | "command" | "argument";
 }
 
@@ -62,34 +62,34 @@ export interface Completer {
   getCompletions(input: string, cursorPos: number): Promise<Completion[]>;
 }
 
-// === 建议显示 ===
+// === Suggestions Display - 建议显示 ===
 
 /**
- * 自动补全建议项
- * 用于 SuggestionsDisplay 组件
+ * Autocomplete suggestion item - 自动补全建议项
+ * For SuggestionsDisplay component - 用于 SuggestionsDisplay 组件
  */
 export interface Suggestion {
   id: string;
-  text: string; // 建议文本
-  displayText?: string; // 显示文本（如果与 text 不同）
-  description?: string; // 描述
-  type?: "command" | "file" | "history" | "argument" | "snippet"; // 类型
-  icon?: string; // 可选图标
+  text: string; // Suggestion text - 建议文本
+  displayText?: string; // Display text (if different from text) - 显示文本（如果与 text 不同）
+  description?: string; // Description - 描述
+  type?: "command" | "file" | "history" | "argument" | "snippet"; // Type - 类型
+  icon?: string; // Optional icon - 可选图标
 }
 
-// === 主题 ===
+// === Theme - 主题 ===
 
 export interface ThemeColors {
-  primary: string; // 主色调
-  secondary: string; // 次要颜色
-  accent: string; // 强调色
-  text: string; // 文本颜色
-  dim: string; // 暗淡文本
-  success: string; // 成功状态
-  warning: string; // 警告状态
-  error: string; // 错误状态
-  info: string; // 信息状态
-  hint: string; // 提示状态
+  primary: string; // Primary color - 主色调
+  secondary: string; // Secondary color - 次要颜色
+  accent: string; // Accent color - 强调色
+  text: string; // Text color - 文本颜色
+  dim: string; // Dimmed text - 暗淡文本
+  success: string; // Success state - 成功状态
+  warning: string; // Warning state - 警告状态
+  error: string; // Error state - 错误状态
+  info: string; // Info state - 信息状态
+  hint: string; // Hint state - 提示状态
 }
 
 export interface ThemeSymbols {
@@ -106,7 +106,7 @@ export interface Theme {
   symbols: ThemeSymbols;
 }
 
-// === 组件 Props ===
+// === Component Props - 组件 Props ===
 
 export interface InputPromptProps {
   onSubmit: (text: string) => void;
@@ -146,7 +146,7 @@ export interface Message {
   timestamp: number;
 }
 
-// === 应用状态 ===
+// === Application State - 应用状态 ===
 
 export interface AppState {
   messages: Message[];
@@ -162,14 +162,14 @@ export interface AppProps {
 }
 
 // ============================================================================
-// Phase 6: 新增类型 - 参考 Gemini CLI 架构
+// Phase 6: New Types - Reference Gemini CLI Architecture - 新增类型 - 参考 Gemini CLI 架构
 // ============================================================================
 
-// === 流式状态 ===
+// === Streaming State - 流式状态 ===
 
 /**
- * 流式响应状态枚举
- * 参考: Gemini CLI StreamingContext.tsx
+ * Streaming response state enum - 流式响应状态枚举
+ * Reference: Gemini CLI StreamingContext.tsx - 参考: Gemini CLI StreamingContext.tsx
  */
 export enum StreamingState {
   Idle = "idle",
@@ -177,11 +177,11 @@ export enum StreamingState {
   WaitingForConfirmation = "waiting_for_confirmation",
 }
 
-// === 工具调用 ===
+// === Tool Call - 工具调用 ===
 
 /**
- * 工具调用状态枚举
- * 参考: Gemini CLI useToolScheduler
+ * Tool call status enum - 工具调用状态枚举
+ * Reference: Gemini CLI useToolScheduler - 参考: Gemini CLI useToolScheduler
  */
 export enum ToolCallStatus {
   Scheduled = "scheduled",
@@ -194,7 +194,7 @@ export enum ToolCallStatus {
 }
 
 /**
- * 工具调用状态图标
+ * Tool call status icons - 工具调用状态图标
  */
 export const TOOL_STATUS_ICONS: Record<ToolCallStatus, string> = {
   [ToolCallStatus.Scheduled]: "○",
@@ -207,7 +207,7 @@ export const TOOL_STATUS_ICONS: Record<ToolCallStatus, string> = {
 };
 
 /**
- * 单个工具调用
+ * Single tool call - 单个工具调用
  */
 export interface ToolCall {
   id: string;
@@ -221,11 +221,11 @@ export interface ToolCall {
   endTime?: number;
 }
 
-// === 历史项 ===
+// === History Items - 历史项 ===
 
 /**
- * 历史项类型
- * 参考: Gemini CLI HistoryItem
+ * History item type - 历史项类型
+ * Reference: Gemini CLI HistoryItem - 参考: Gemini CLI HistoryItem
  */
 export type HistoryItemType =
   | "user"
@@ -238,7 +238,7 @@ export type HistoryItemType =
   | "hint";
 
 /**
- * 历史项基类
+ * History item base class - 历史项基类
  */
 export interface HistoryItemBase {
   id: string;
@@ -247,7 +247,7 @@ export interface HistoryItemBase {
 }
 
 /**
- * 用户消息
+ * User message - 用户消息
  */
 export interface HistoryItemUser extends HistoryItemBase {
   type: "user";
@@ -255,7 +255,7 @@ export interface HistoryItemUser extends HistoryItemBase {
 }
 
 /**
- * 助手消息
+ * Assistant message - 助手消息
  */
 export interface HistoryItemAssistant extends HistoryItemBase {
   type: "assistant";
@@ -264,7 +264,7 @@ export interface HistoryItemAssistant extends HistoryItemBase {
 }
 
 /**
- * 系统消息
+ * System message - 系统消息
  */
 export interface HistoryItemSystem extends HistoryItemBase {
   type: "system";
@@ -272,7 +272,7 @@ export interface HistoryItemSystem extends HistoryItemBase {
 }
 
 /**
- * 工具组
+ * Tool group - 工具组
  */
 export interface HistoryItemToolGroup extends HistoryItemBase {
   type: "tool_group";
@@ -280,7 +280,7 @@ export interface HistoryItemToolGroup extends HistoryItemBase {
 }
 
 /**
- * 思考内容
+ * Thinking content - 思考内容
  */
 export interface HistoryItemThinking extends HistoryItemBase {
   type: "thinking";
@@ -288,7 +288,7 @@ export interface HistoryItemThinking extends HistoryItemBase {
 }
 
 /**
- * 错误消息
+ * Error message - 错误消息
  */
 export interface HistoryItemError extends HistoryItemBase {
   type: "error";
@@ -296,7 +296,7 @@ export interface HistoryItemError extends HistoryItemBase {
 }
 
 /**
- * 信息消息
+ * Info message - 信息消息
  */
 export interface HistoryItemInfo extends HistoryItemBase {
   type: "info";
@@ -305,7 +305,7 @@ export interface HistoryItemInfo extends HistoryItemBase {
 }
 
 /**
- * 提示消息
+ * Hint message - 提示消息
  */
 export interface HistoryItemHint extends HistoryItemBase {
   type: "hint";
@@ -313,7 +313,7 @@ export interface HistoryItemHint extends HistoryItemBase {
 }
 
 /**
- * 所有历史项的联合类型
+ * Union type of all history items - 所有历史项的联合类型
  */
 export type HistoryItem =
   | HistoryItemUser
@@ -326,8 +326,8 @@ export type HistoryItem =
   | HistoryItemHint;
 
 /**
- * 可创建的历史项类型（带 text 属性）
- * 用于 addHistoryItem 等函数的参数类型
+ * Creatable history item types (with text property) - 可创建的历史项类型（带 text 属性）
+ * Used for addHistoryItem function parameter type - 用于 addHistoryItem 等函数的参数类型
  */
 export type CreatableHistoryItem =
   | Omit<HistoryItemUser, "id" | "timestamp">
@@ -339,89 +339,89 @@ export type CreatableHistoryItem =
   | Omit<HistoryItemHint, "id" | "timestamp">
   | Omit<HistoryItemToolGroup, "id" | "timestamp">;
 
-// === UI 状态 ===
+// === UI State - UI 状态 ===
 
 /**
- * UI 全局状态接口
- * 参考: Gemini CLI UIStateContext
+ * UI global state interface - UI 全局状态接口
+ * Reference: Gemini CLI UIStateContext - 参考: Gemini CLI UIStateContext
  */
 export interface UIState {
-  // 流式状态
+  // Streaming state - 流式状态
   streamingState: StreamingState;
 
-  // 当前正在流式传输的响应
+  // Currently streaming response - 当前正在流式传输的响应
   currentResponse: string;
 
-  // 历史记录
+  // History records - 历史记录
   history: HistoryItem[];
 
-  // 待处理的工具调用
+  // Pending tool calls - 待处理的工具调用
   pendingToolCalls: ToolCall[];
 
-  // 会话信息
+  // Session info - 会话信息
   sessionId: string;
   mode: "code" | "ask";
 
-  // Provider 信息
+  // Provider info - Provider 信息
   provider: string;
   model: string;
 
-  // Token 使用量
+  // Token usage - Token 使用量
   tokenUsage?: {
     input: number;
     output: number;
     total: number;
   };
 
-  // 错误状态
+  // Error state - 错误状态
   error?: string;
 
-  // 加载状态
+  // Loading state - 加载状态
   isLoading: boolean;
 }
 
 /**
- * UI 操作接口
+ * UI actions interface - UI 操作接口
  */
 export interface UIActions {
-  // 流式操作
+  // Streaming operations - 流式操作
   setStreamingState: (state: StreamingState) => void;
   appendToResponse: (text: string) => void;
   clearResponse: () => void;
 
-  // 历史操作
+  // History operations - 历史操作
   addHistoryItem: (item: CreatableHistoryItem) => void;
   updateHistoryItem: (id: string, updates: Partial<HistoryItem>) => void;
   clearHistory: () => void;
 
-  // 工具操作
+  // Tool operations - 工具操作
   addToolCall: (tool: Omit<ToolCall, "id" | "startTime">) => string;
   updateToolCall: (id: string, updates: Partial<ToolCall>) => void;
   clearToolCalls: () => void;
 
-  // 会话操作
+  // Session operations - 会话操作
   setSessionId: (id: string) => void;
   setMode: (mode: "code" | "ask") => void;
 
-  // Provider 操作
+  // Provider operations - Provider 操作
   setProvider: (provider: string) => void;
   setModel: (model: string) => void;
 
-  // Token 操作
+  // Token operations - Token 操作
   setTokenUsage: (usage: UIState["tokenUsage"]) => void;
 
-  // 错误操作
+  // Error operations - 错误操作
   setError: (error: string | undefined) => void;
 
-  // 加载操作
+  // Loading operations - 加载操作
   setLoading: (loading: boolean) => void;
 }
 
-// === 键盘优先级 ===
+// === Keyboard Priority - 键盘优先级 ===
 
 /**
- * 键盘事件处理器优先级
- * 参考: Gemini CLI KeypressContext
+ * Keyboard event handler priority - 键盘事件处理器优先级
+ * Reference: Gemini CLI KeypressContext - 参考: Gemini CLI KeypressContext
  */
 export enum KeypressHandlerPriority {
   Low = -100,
@@ -431,22 +431,22 @@ export enum KeypressHandlerPriority {
 }
 
 /**
- * 键盘事件处理器
+ * Keyboard event handler - 键盘事件处理器
  */
 export type KeypressHandler = (event: KeyInfo) => boolean | void;
 
 /**
- * 键盘事件
+ * Keyboard event - 键盘事件
  */
 export interface KeypressEvent {
   key: KeyInfo;
   handled: boolean;
 }
 
-// === 默认值 ===
+// === Default Values - 默认值 ===
 
 /**
- * 默认 UI 状态
+ * Default UI state - 默认 UI 状态
  */
 export const DEFAULT_UI_STATE: UIState = {
   streamingState: StreamingState.Idle,
