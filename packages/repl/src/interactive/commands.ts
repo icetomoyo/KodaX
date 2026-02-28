@@ -715,11 +715,15 @@ function printSkillsList(skills: SkillMetadata[]): void {
   const maxNameLen = Math.max(...skills.map(s => s.name.length));
 
   for (const skill of skills) {
+    // Pad first, then color - 避免 ANSI 码影响 padEnd 计算
     const paddedName = skill.name.padEnd(maxNameLen);
-    const hint = skill.argumentHint ? chalk.dim(` ${skill.argumentHint}`) : '';
-    const source = skill.source === 'builtin' ? chalk.dim(' [builtin]') : '';
-    console.log(`  ${chalk.cyan(`/${paddedName}`)}${hint}${source}`);
-    console.log(`  ${' '.repeat(maxNameLen + 3)}${chalk.dim(skill.description.slice(0, 60))}${skill.description.length > 60 ? '...' : ''}`);
+    const hint = skill.argumentHint ? ` ${skill.argumentHint}` : '';
+    const source = skill.source === 'builtin' ? ' [builtin]' : '';
+    // Single line: /skill-name  description
+    const desc = skill.description.length > 50
+      ? skill.description.slice(0, 50) + '...'
+      : skill.description;
+    console.log(`  ${chalk.cyan(`/${paddedName}`)}${chalk.dim(hint)}${chalk.dim(source)}  ${chalk.dim(desc)}`);
   }
 
   console.log();

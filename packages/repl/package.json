@@ -12,7 +12,7 @@
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && cp -r src/skills/builtin dist/skills/",
     "dev": "tsc --watch",
     "clean": "rm -rf dist/",
     "test": "vitest run",
