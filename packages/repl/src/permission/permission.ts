@@ -144,6 +144,46 @@ export function isAlwaysConfirmPath(targetPath: string, projectRoot: string): bo
   }
 }
 
+/**
+ * Extract potential file paths from a bash command
+ * Issue 052: Used to check if bash command operates on protected paths
+ */
+export function extractPathsFromCommand(command: string): string[] {
+  const paths: string[] = [];
+
+  // Match quoted paths (single or double quotes)
+  const quotedPattern = /["']([^"']+)["']/g;
+  let match;
+  while ((match = quotedPattern.exec(command)) !== null) {
+    paths.push(match[1]!);
+  }
+
+  // Match common path patterns:
+  // - Relative paths starting with . or ..
+  // - Paths containing slashes
+  // - Windows absolute paths (C:\, D:\, etc.)
+  const pathPattern = /(?:^|\s)(\.\.?\/[^\s]+|\.\.?\\[^\s]+|[a-zA-Z]:\\[^\s]+|~\/[^\s]+|\.[^\s]*[/\\][^\s]*)/g;
+  while ((match = pathPattern.exec(command)) !== null) {
+    paths.push(match[1]!);
+  }
+
+  return paths;
+}
+
+/**
+ * Check if a bash command operates on any protected paths
+ * Issue 052: Prevent "always" option for bash commands on protected paths
+ */
+export function isCommandOnProtectedPath(command: string, projectRoot: string): boolean {
+  const paths = extractPathsFromCommand(command);
+  for (const p of paths) {
+    if (isAlwaysConfirmPath(p, projectRoot)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // ============== Mode Inference ==============
 
 /**

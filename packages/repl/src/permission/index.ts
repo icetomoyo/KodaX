@@ -14,6 +14,7 @@ export {
   isToolCallAllowed,
   generateSavePattern,
   isAlwaysConfirmPath,
+  isCommandOnProtectedPath,
   inferPermissionMode,
 } from './permission.js';
 

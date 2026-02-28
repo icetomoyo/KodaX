@@ -42,6 +42,7 @@ import {
   computeConfirmTools,
   isToolCallAllowed,
   isAlwaysConfirmPath,
+  isCommandOnProtectedPath,
   FILE_MODIFICATION_TOOLS,
 } from "../permission/index.js";
 import type { PermissionContext } from "../permission/types.js";
@@ -336,7 +337,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       const mode = currentConfig.permissionMode;
       const confirmTools = computeConfirmTools(mode);
       const alwaysAllowTools = alwaysAllowToolsRef.current;
-      const gitRoot = options.context?.gitRoot;
+      // Issue 052 fix: Read gitRoot from context prop, not options.context - Issue 052 修复：从 context prop 读取 gitRoot
+      const gitRoot = context.gitRoot;
 
       // === 1. Plan mode: block modification tools ===
       if (mode === 'plan' && (FILE_MODIFICATION_TOOLS.has(tool) || tool === 'bash' || tool === 'undo')) {
@@ -345,9 +347,27 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
 
       // === 2. Protected paths: always confirm ===
-      if (gitRoot && FILE_MODIFICATION_TOOLS.has(tool)) {
-        const targetPath = input.path as string | undefined;
-        if (targetPath && isAlwaysConfirmPath(targetPath, gitRoot)) {
+      // Issue 052: Check both file tools AND bash commands for protected paths
+      if (gitRoot) {
+        let isProtected = false;
+
+        // Check file modification tools (write, edit)
+        if (FILE_MODIFICATION_TOOLS.has(tool)) {
+          const targetPath = input.path as string | undefined;
+          if (targetPath && isAlwaysConfirmPath(targetPath, gitRoot)) {
+            isProtected = true;
+          }
+        }
+
+        // Check bash commands for protected paths in arguments
+        if (tool === 'bash') {
+          const command = input.command as string | undefined;
+          if (command && isCommandOnProtectedPath(command, gitRoot)) {
+            isProtected = true;
+          }
+        }
+
+        if (isProtected) {
           const result = await showConfirmDialog(tool, { ...input, _alwaysConfirm: true });
           return result.confirmed;
         }
@@ -390,7 +410,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
       return true;
     },
-  }), [appendThinkingContent, stopThinking, appendResponse, setCurrentTool, appendToolInputChars, currentConfig, options.context?.gitRoot]);
+  }), [appendThinkingContent, stopThinking, appendResponse, setCurrentTool, appendToolInputChars, currentConfig, context.gitRoot]);
 
   // Helper function to show confirmation dialog
   // 显示确认对话框的辅助函数

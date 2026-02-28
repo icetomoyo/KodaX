@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-02-28 01:15_
+_Last Updated: 2026-02-28 13:40_
 
 ---
 
@@ -60,7 +60,7 @@ _Last Updated: 2026-02-28 01:15_
 | 049 | High | Resolved | 权限模式持久化位置错误 | v0.5.0 | v0.5.0 | 2026-02-27 | 2026-02-27 |
 | 050 | Medium | Resolved | 命令输出格式不一致（AI 编造问题） | v0.4.6 | v0.4.6 | 2026-02-27 | 2026-02-28 |
 | 051 | Medium | Resolved | 权限确认取消时无提示 | v0.4.6 | v0.4.6 | 2026-02-27 | 2026-02-28 |
-| 052 | High | Open | 受保护路径确认对话框显示错误选项 | v0.4.6 | - | 2026-02-28 | - |
+| 052 | High | Resolved | 受保护路径确认对话框显示错误选项 | v0.4.6 | v0.4.6 | 2026-02-28 | 2026-02-28 |
 
 ---
 
@@ -1186,12 +1186,19 @@ _Last Updated: 2026-02-28 01:15_
 ---
 
 ## Summary
-- Total: 52 (8 Open, 40 Resolved, 4 Won't Fix)
-- Highest Priority Open: 052 - 受保护路径确认对话框显示错误选项 (High)
+- Total: 52 (7 Open, 41 Resolved, 4 Won't Fix)
+- Highest Priority Open: 006 - 整数解析无范围检查 (Low)
 
 ---
 
 ## Changelog
+
+### 2026-02-28: Issue 052 修复
+- Resolved 052: 受保护路径确认对话框显示错误选项
+- 修复 `gitRoot` 变量读取错误：从 `options.context?.gitRoot` 改为 `context.gitRoot`
+- 新增 `isCommandOnProtectedPath()` 函数检测 bash 命令中的受保护路径
+- 扩展受保护路径检查：同时覆盖 `write`/`edit` 工具和 `bash` 命令
+- 修改文件：`InkREPL.tsx`, `permission/permission.ts`, `permission/index.ts`
 
 ### 2026-02-28: Issue 051 修复
 - Resolved 051: 权限确认取消时无提示
@@ -1823,10 +1830,11 @@ _Last Updated: 2026-02-28 01:15_
 
 ---
 
-### 052: 受保护路径确认对话框显示错误选项
+### 052: 受保护路径确认对话框显示错误选项 (RESOLVED)
 - **Priority**: High
-- **Status**: Open
+- **Status**: Resolved
 - **Introduced**: v0.4.6
+- **Fixed**: v0.4.6
 - **Created**: 2026-02-28
 - **Original Problem**:
   在 Feature 009 测试 (TC-009) 中发现两个相关的问题：
@@ -1856,27 +1864,20 @@ _Last Updated: 2026-02-28 01:15_
   3. 观察确认对话框：
      - 是否显示 `(a) always` 选项（不应该显示）
      - 是否显示 `(protected path)` 提示（应该显示）
-- **Root Cause Analysis**:
-  - 代码逻辑存在于 `InkREPL.tsx` 行 818-840：
-    ```typescript
-    {confirmRequest.input._alwaysConfirm ? (
-      <Text dimColor>
-        Press (y) to confirm, (n) to cancel (protected path)
-      </Text>
-    ) : (
-      <Text dimColor>
-        Press (y) yes, (a) always yes for this tool, (n) no
-      </Text>
-    )}
-    ```
-  - 问题在于 `_alwaysConfirm` 标志可能未正确设置
-  - 需要检查 `isAlwaysConfirmPath()` 函数是否正确检测 `.kodax/` 路径
-  - 或者 `_alwaysConfirm` 标志在传递给确认对话框时被错误设置
-- **Proposed Solution**:
-  1. 检查 `isAlwaysConfirmPath()` 函数的逻辑
-  2. 确保 `.kodax/` 路径被正确识别为受保护路径
-  3. 验证 `_alwaysConfirm` 标志在传递给确认对话框前被正确设置
-  4. 考虑将判断逻辑移到更早的阶段（如 `requestConfirm` 函数中）
+- **Root Cause**:
+  - **问题 A**: `gitRoot` 从错误的来源读取 (`options.context?.gitRoot` → 应该是 `context.gitRoot`)
+  - **问题 B**: 受保护路径检查只覆盖 `FILE_MODIFICATION_TOOLS` (write/edit)，不包括 `bash` 命令
+  - 因此通过 bash 删除受保护路径文件时，仍然显示 "always" 选项
+- **Resolution**:
+  - 修复 `gitRoot` 来源：`options.context?.gitRoot` → `context.gitRoot`
+  - 新增 `isCommandOnProtectedPath()` 函数检测 bash 命令中的受保护路径
+  - 扩展受保护路径检查：同时检查 `write`/`edit` 工具和 `bash` 命令
+  - 更新 `createStreamingEvents` 的依赖数组
+- **Resolution Date**: 2026-02-28
+- **Files Changed**:
+  - `packages/repl/src/ui/InkREPL.tsx`
+  - `packages/repl/src/permission/permission.ts`
+  - `packages/repl/src/permission/index.ts`
 
 ---
 
