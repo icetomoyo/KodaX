@@ -1,8 +1,73 @@
 # Feature 006: Skills System - Human Test Guide
 
 _创建时间: 2026-02-28_
+_更新时间: 2026-03-01_
 _Feature: Skills 系统_
 _状态: ReadyForTesting_
+_最近修复: Issue 054 (P0 - LLM 上下文注入)_
+
+---
+
+## 0. Issue 054 修复验证 (P0 - LLM 上下文注入)
+
+> **重要**: 这部分测试用例用于验证 Issue 054 的修复。
+> 修复前：skill 只打印预览，不注入 LLM
+> 修复后：skill 内容被展开为 XML 格式并注入 LLM 上下文
+
+### TC-000: Skill 内容注入 LLM 验证
+
+**目的**: 验证 skill 内容被正确注入 LLM 上下文
+
+**前置条件**:
+- 已配置有效的 AI Provider (Anthropic/OpenAI)
+- 网络连接正常
+
+**步骤**:
+1. 启动 KodaX REPL
+2. 输入 `/code-review packages/core/src/agent.ts`
+3. 观察 UI 输出
+
+**预期结果**:
+- [ ] 显示 "Invoking skill: code-review"
+- [ ] 显示 "Skill activated: code-review"
+- [ ] 显示 "The skill context has been prepared for the AI."
+- [ ] AI 开始生成响应（说明 skill 内容已注入）
+- [ ] AI 响应包含代码审查相关内容（不是普通对话）
+
+**状态**: [ ] Pass [ ] Fail
+
+---
+
+### TC-000a: Skill XML 格式验证
+
+**目的**: 验证 skill 被正确展开为 XML 格式
+
+**步骤**:
+1. 输入 `/tdd packages/repl/src/commands.ts`
+2. 观察 AI 响应
+
+**预期结果**:
+- [ ] AI 响应表明它收到了 skill 内容
+- [ ] AI 按照 TDD skill 定义的流程工作（RED-GREEN-REFACTOR）
+- [ ] AI 正确引用了用户提供的参数 (`packages/repl/src/commands.ts`)
+
+**状态**: [ ] Pass [ ] Fail
+
+---
+
+### TC-000b: 参数替换验证
+
+**目的**: 验证 $ARGUMENTS 被正确替换
+
+**步骤**:
+1. 输入 `/git-workflow status`
+2. 观察 AI 响应
+
+**预期结果**:
+- [ ] AI 执行 git status 相关操作
+- [ ] AI 响应与参数 "status" 相关
+
+**状态**: [ ] Pass [ ] Fail
 
 ---
 

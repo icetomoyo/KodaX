@@ -601,8 +601,15 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           capturedOutput.push(output);
         };
 
+        let skillContentToInject: string | undefined = undefined;
+
         try {
-          await executeCommand(parsed, context, callbacks, currentConfig);
+          const result = await executeCommand(parsed, context, callbacks, currentConfig);
+
+          // Check if result contains skill content to inject
+          if (typeof result === 'object' && result !== null && 'skillContent' in result) {
+            skillContentToInject = result.skillContent;
+          }
         } finally {
           console.log = originalLog;
         }
@@ -613,6 +620,64 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             type: "info",
             text: capturedOutput.join('\n'),
           });
+        }
+
+        // If skill was invoked, inject its content and run agent
+        if (skillContentToInject) {
+          setIsLoading(false);
+          stopStreaming();
+
+          // Create enhanced prompt with skill content
+          const enhancedPrompt = `${skillContentToInject}\n\nUser request: ${input.trim()}`;
+
+          // Re-start streaming for skill execution
+          setIsLoading(true);
+          startStreaming();
+          startThinking();
+
+          try {
+            const result = await runAgentRound(currentOptionsRef.current, enhancedPrompt);
+
+            // Update context
+            context.messages = result.messages;
+
+            // Add assistant response to UI history
+            const lastAssistant = result.messages[result.messages.length - 1];
+            if (lastAssistant?.role === "assistant") {
+              const content = extractTextContent(lastAssistant.content);
+              if (content) {
+                addHistoryItem({
+                  type: "assistant",
+                  text: content,
+                });
+              }
+            }
+
+            // Auto-save
+            if (context.messages.length > 0) {
+              const title = extractTitle(context.messages);
+              context.title = title;
+              await storage.save(context.sessionId, {
+                messages: context.messages,
+                title,
+                gitRoot: context.gitRoot ?? "",
+              });
+            }
+          } catch (err) {
+            const error = err instanceof Error ? err : new Error(String(err));
+            console.log = originalLog;
+            console.log(chalk.red(error.message));
+            addHistoryItem({
+              type: "error",
+              text: error.message,
+            });
+          } finally {
+            setIsLoading(false);
+            stopStreaming();
+            clearThinkingContent();
+          }
+
+          return;
         }
 
         setIsLoading(false);

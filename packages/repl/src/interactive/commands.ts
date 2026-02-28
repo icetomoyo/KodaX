@@ -15,7 +15,9 @@ import {
   getSkillRegistry,
   initializeSkillRegistry,
   type SkillMetadata,
+  type SkillContext,
 } from '../skills/index.js';
+import { expandSkillForLLM } from '../skills/skill-expander.js';
 
 // Current config state (passed from repl.ts) - 当前配置状态（由 repl.ts 传入）
 export interface CurrentConfig {
@@ -707,8 +709,8 @@ function printSkillsList(skills: SkillMetadata[]): void {
   if (skills.length === 0) {
     console.log(chalk.dim('  No skills found.'));
     console.log(chalk.dim('\n  Skills can be placed in:'));
-    console.log(chalk.dim('    - .kodox/skills/'));
-    console.log(chalk.dim('    - ~/.kodox/skills/'));
+    console.log(chalk.dim('    - .kodax/skills/'));
+    console.log(chalk.dim('    - ~/.kodax/skills/'));
     return;
   }
 
@@ -718,12 +720,18 @@ function printSkillsList(skills: SkillMetadata[]): void {
     // Pad first, then color - 避免 ANSI 码影响 padEnd 计算
     const paddedName = skill.name.padEnd(maxNameLen);
     const hint = skill.argumentHint ? ` ${skill.argumentHint}` : '';
-    const source = skill.source === 'builtin' ? ' [builtin]' : '';
+    // Show source for all skills except project level (which is the default)
+    // 显示所有技能来源，project 级别不显示（默认）
+    const sourceLabel = skill.source === 'builtin' ? ' [builtin]'
+      : skill.source === 'user' ? ' [user]'
+      : skill.source === 'enterprise' ? ' [enterprise]'
+      : skill.source === 'plugin' ? ' [plugin]'
+      : '';
     // Single line: /skill-name  description
     const desc = skill.description.length > 50
       ? skill.description.slice(0, 50) + '...'
       : skill.description;
-    console.log(`  ${chalk.cyan(`/${paddedName}`)}${chalk.dim(hint)}${chalk.dim(source)}  ${chalk.dim(desc)}`);
+    console.log(`  ${chalk.cyan(`/${paddedName}`)}${chalk.dim(hint)}${chalk.dim(sourceLabel)}  ${chalk.dim(desc)}`);
   }
 
   console.log();
@@ -774,12 +782,14 @@ export function parseCommand(input: string): { command: string; args: string[] }
 }
 
 // Execute command - 执行命令
+export type CommandResult = boolean | { skillContent: string };
+
 export async function executeCommand(
   parsed: { command: string; args: string[] },
   context: InteractiveContext,
   callbacks: CommandCallbacks,
   currentConfig: CurrentConfig
-): Promise<boolean> {
+): Promise<CommandResult> {
   // Lazy initialization - 延迟初始化
   if (commandRegistry.size === 0) {
     initCommandRegistry();
@@ -805,7 +815,7 @@ export async function executeCommand(
 async function executeSkillCommand(
   parsed: { command: string; args: string[] },
   context: InteractiveContext
-): Promise<boolean> {
+): Promise<CommandResult> {
   const registry = getSkillRegistry(context.gitRoot);
   const skillName = parsed.command;
   const skillArgs = parsed.args.join(' ');
@@ -826,21 +836,33 @@ async function executeSkillCommand(
     // Load full skill and get resolved content - 加载完整技能并获取解析后的内容
     const fullSkill = await registry.loadFull(skillName);
 
-    // Show skill content header - 显示技能内容头
-    console.log(chalk.bold(`--- ${skillName} skill ---`));
-
-    // For now, just show the skill content - 目前只显示技能内容
-    // The actual execution will be integrated with the LLM loop
-    console.log(chalk.dim(fullSkill.content.slice(0, 500)));
-    if (fullSkill.content.length > 500) {
-      console.log(chalk.dim('\n... (content truncated, will be fully loaded on use)'));
+    // Check if model invocation is disabled - 检查是否禁用模型调用
+    if (fullSkill.disableModelInvocation) {
+      console.log(chalk.yellow(`Note: This skill has model invocation disabled.`));
+      console.log(chalk.dim('The skill content is displayed below for manual use:'));
+      console.log(chalk.bold(`\n--- ${skillName} skill ---`));
+      console.log(fullSkill.content);
+      console.log(chalk.bold(`\n--- end ${skillName} ---\n`));
+      return true;
     }
 
-    console.log(chalk.bold(`\n--- end ${skillName} ---`));
-    console.log();
-    console.log(chalk.dim('The skill prompt has been loaded. Continue your request to use it.'));
+    // Create skill context for variable resolution - 创建变量解析上下文
+    const skillContext: SkillContext = {
+      workingDirectory: process.cwd(),
+      projectRoot: context.gitRoot ?? undefined,
+      sessionId: context.sessionId,
+      environment: {},
+    };
 
-    return true;
+    // Expand skill for LLM injection - 展开技能以注入 LLM
+    const expanded = await expandSkillForLLM(fullSkill, skillArgs, skillContext);
+
+    // Show skill activation message - 显示技能激活消息
+    console.log(chalk.green(`Skill activated: ${skillName}`));
+    console.log(chalk.dim('The skill context has been prepared for the AI.'));
+    console.log();
+
+    return { skillContent: expanded.content };
   } catch (error) {
     console.log(chalk.red(`\n[Error invoking skill: ${error instanceof Error ? error.message : String(error)}]`));
     return false;

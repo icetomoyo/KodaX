@@ -118,7 +118,8 @@ export function getNestedSkillPaths(
   projectRoot: string
 ): string[] {
   const paths: string[] = [];
-  const skillDirNames = ['.kodox/skills', '.claude/skills'];
+  // KodaX uses .kodax/skills/ directory
+  const skillDirNames = ['.kodax/skills'];
 
   // Start from current directory and walk up to project root
   let dir = currentDir;
@@ -150,8 +151,7 @@ export async function discoverSkillsWithMonorepo(
   // Add nested paths to project paths
   const customPaths: Partial<SkillPathsConfig> = {
     projectPaths: [
-      join(projectRoot, '.kodox', 'skills'),
-      join(projectRoot, '.claude', 'skills'),
+      join(projectRoot, '.kodax', 'skills'),
       ...nestedPaths,
     ],
   };

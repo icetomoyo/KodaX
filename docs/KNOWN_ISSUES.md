@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-02-28 13:40_
+_Last Updated: 2026-03-01 14:00_
 
 ---
 
@@ -61,6 +61,9 @@ _Last Updated: 2026-02-28 13:40_
 | 050 | Medium | Resolved | 命令输出格式不一致（AI 编造问题） | v0.4.6 | v0.4.6 | 2026-02-27 | 2026-02-28 |
 | 051 | Medium | Resolved | 权限确认取消时无提示 | v0.4.6 | v0.4.6 | 2026-02-27 | 2026-02-28 |
 | 052 | High | Resolved | 受保护路径确认对话框显示错误选项 | v0.4.6 | v0.4.6 | 2026-02-28 | 2026-02-28 |
+| 053 | High | Won't Fix | /help 命令输出重复渲染 | v0.4.7 | - | 2026-02-28 | 2026-03-01 |
+| 054 | Critical | Open | Agent Skills 系统未与 LLM 集成 | v0.4.7 | - | 2026-03-01 | - |
+| 055 | Low | Open | Built-in Skills 未完全符合 Agent Skills 规范 | v0.4.7 | - | 2026-03-01 | - |
 
 ---
 
@@ -1878,6 +1881,772 @@ _Last Updated: 2026-02-28 13:40_
   - `packages/repl/src/ui/InkREPL.tsx`
   - `packages/repl/src/permission/permission.ts`
   - `packages/repl/src/permission/index.ts`
+
+---
+
+### 053: /help 命令输出重复渲染 (WON'T FIX)
+- **Priority**: High
+- **Status**: Won't Fix
+- **Introduced**: v0.4.7
+- **Fixed**: -
+- **Created**: 2026-02-28
+- **Original Problem**:
+  在 REPL 中执行 `/help` 或 `/h` 命令时，整个消息（用户输入 + 命令输出）会重复渲染两次：
+  1. 第一次输出：完整的帮助信息（部分情况下可能不完整）
+  2. 第二次输出：完整的帮助信息（包含 "Skills:" 部分）
+
+  **观察到的现象**:
+  ```
+  You [11:40 PM]
+    /help
+
+  ℹ Info
+    Available Commands:
+    ... (完整帮助信息，但缺少末尾 Skills 部分)
+
+  You [11:40 PM]
+    /help
+
+  ℹ Info
+    Available Commands:
+    ... (完整帮助信息，包含末尾 Skills 部分)
+  ```
+
+  **关键发现**:
+  - 问题只发生在 `/help` 命令
+  - `/model` 和 `/skills` 命令没有此问题
+  - 用户只输入了一次 `/help`，但 `handleSubmit` 被调用了两次
+  - 两次输出的时间戳相同
+- **Expected Behavior**:
+  - 执行 `/help` 命令后，只显示一次用户消息和一次命令输出
+- **Context**:
+  - REPL 交互系统
+  - Ink UI 框架
+  - KeypressContext 键盘事件处理
+  - `handleSubmit` 在 InputPrompt.tsx 和 InkREPL.tsx 中
+- **Reproduction**:
+  1. 启动 `kodax` 进入 REPL
+  2. 执行 `/help` 或 `/h`
+  3. 观察：用户消息和帮助信息出现两次
+- **Analysis**:
+  **可能原因 1: Keypress handler 重复注册**
+  - `useKeypress` 在组件依赖变化时会重新注册 handler
+  - 在旧 handler 注销和新 handler 注册之间可能存在竞态条件
+  - 导致同一个按键事件被两个 handler 处理
+
+  **可能原因 2: React state 更新触发多次渲染**
+  - `handleSubmit` 触发多个 state 更新
+  - 这些更新可能导致组件重新渲染
+  - 在渲染过程中可能触发了额外的提交
+
+  **可能原因 3: console.log 捕获机制问题**
+  - Ink 的 `patchConsole: true` 与手动 console 捕获冲突
+  - 可能导致输出被捕获两次
+
+  **分析代码流程**:
+  1. `InputPrompt.handleSubmit()` 调用 `onSubmit(text)`
+  2. `InkREPL.handleSubmit()` 被调用
+  3. 添加用户消息到历史: `addHistoryItem({ type: "user", text: input })`
+  4. 执行命令: `executeCommand(parsed, ...)`
+  5. 捕获 console 输出并添加到历史: `addHistoryItem({ type: "info", text: capturedOutput.join('\n') })`
+
+  这个流程应该只产生一次输出，但实际上产生了两次。
+- **Attempted Fixes**:
+  **尝试 1: 添加提交保护 (2026-02-28)**
+  ```typescript
+  const isSubmittingRef = useRef(false);
+
+  const handleSubmit = useCallback(() => {
+    if (isSubmittingRef.current) {
+      return;
+    }
+    if (text.trim()) {
+      isSubmittingRef.current = true;
+      // ... 提交逻辑
+      setTimeout(() => {
+        isSubmittingRef.current = false;
+      }, 100);
+    }
+  }, [text, addHistory, onSubmit, clear]);
+  ```
+  **结果**: 无效，问题仍然存在
+
+  **分析**: 如果问题不是在 InputPrompt 层面的重复调用，而是在更底层（如 Ink 的渲染机制或 stdin 事件处理），那么这个保护无法解决问题
+- **Files Investigated**:
+  - `packages/repl/src/ui/components/InputPrompt.tsx`
+  - `packages/repl/src/ui/InkREPL.tsx`
+  - `packages/repl/src/ui/contexts/KeypressContext.tsx`
+  - `packages/repl/src/ui/contexts/StreamingContext.tsx`
+  - `packages/repl/src/ui/contexts/UIStateContext.tsx`
+  - `packages/repl/src/ui/components/MessageList.tsx`
+  - `packages/repl/src/interactive/commands.ts`
+- **Decision**: 不修复，理由如下：
+  1. **终端特定问题**: 问题只在 warp.dev 终端中出现，在 PowerShell 中未复现
+  2. **外部因素**: 可能是 warp.dev 本身的渲染机制与 Ink 框架存在冲突
+  3. **优先级考量**: 不影响核心功能，且只在特定终端环境下出现
+  4. **修复成本高**: 需要针对特定终端做兼容性处理，投入产出比不合理
+- **Resolution Date**: 2026-03-01
+
+---
+
+### 054: Agent Skills 系统未与 LLM 集成 (OPEN → P0 RESOLVED)
+- **Priority**: Critical → Medium (P0 已修复)
+- **Status**: Open (P1/P2 待实现)
+- **Introduced**: v0.4.7
+- **Fixed**: v0.4.8 (P0)
+- **Created**: 2026-03-01
+- **Original Problem**:
+  当前通过 slash 命令（如 `/code-review`）调用 Agent Skills 时，系统只是打印 skill 内容的预览，而没有将 skill 内容注入 LLM 上下文让 AI 真正执行 skill。
+
+  **观察到的现象**:
+  ```
+  You [11:50 PM]
+    /code-review
+
+  ℹ Info
+    --- code-review skill ---
+    Use this skill for code review. Invokes the code-reviewer agent...
+    (只显示前 500 字符的预览)
+    --- end code-review ---
+  ```
+
+  **核心问题**:
+  - Skill 命令执行后，LLM 没有收到 skill 的完整内容
+  - AI 无法根据 skill 的指导执行任务
+  - 用户期望的是 AI 会执行 code-review，而不是看到 skill 文件的预览
+- **Expected Behavior**:
+  - 执行 `/code-review` 后，skill 内容应该被注入到 LLM 的系统提示词或上下文中
+  - AI 应该根据 skill 内容的指导执行相应的任务
+  - 参考协议: https://agentskills.io/
+- **Context**:
+  **当前 KodaX 实现的问题**:
+
+  `packages/repl/src/interactive/commands.ts` (第 811-854 行):
+  ```typescript
+  async function executeSkillCommand(parsed, context) {
+    const skill = await registry.loadFull(skillName);
+    console.log(`--- ${skillName} skill ---`);
+    console.log(fullSkill.content.slice(0, 500));  // 只是打印预览！
+    console.log(`--- end ${skillName} ---`);
+    // 没有将 skill 内容传递给 LLM！
+  }
+  ```
+
+  这个实现存在根本性问题：
+  1. 只使用 `console.log` 打印内容，没有与 LLM 交互
+  2. 只显示前 500 字符，无法利用完整 skill 内容
+  3. 没有将 skill 注入系统提示词或消息上下文
+- **Reference Implementation (pi-mono 最佳实践)**:
+  **pi-mono 项目的优雅实现** (位于 `C:\Works\GitWorks\pi-mono`)，详细分析如下：
+
+  ### 1. 双轨注入机制
+
+  **系统提示词注入（渐进式披露）**:
+  - 位置：`packages/coding-agent/src/core/system-prompt.ts` (第 178-181 行)
+  - 方式：将 skill 元数据（名称、描述、路径）注入系统提示词
+  - 时机：会话启动时或系统提示词重建时
+  ```typescript
+  // system-prompt.ts
+  if (hasRead && skills.length > 0) {
+      prompt += formatSkillsForPrompt(skills);
+  }
+  ```
+
+  **用户命令展开（按需加载）**:
+  - 位置：`packages/coding-agent/src/core/agent-session.ts` (第 878-907 行)
+  - 方式：用户输入 `/skill:name` 时，展开为完整 skill XML 块
+  - 时机：每次用户发送消息时
+  ```typescript
+  private _expandSkillCommand(text: string): string {
+      if (!text.startsWith("\\skill:")) return text;
+
+      const spaceIndex = text.indexOf(" ");
+      const skillName = spaceIndex === -1 ? text.slice(7) : text.slice(7, spaceIndex);
+      const args = spaceIndex === -1 ? "" : text.slice(spaceIndex + 1).trim();
+
+      const skill = this.resourceLoader.getSkills().skills.find((s) => s.name === skillName);
+      if (!skill) return text;
+
+      const content = readFileSync(skill.filePath, "utf-8");
+      const body = stripFrontmatter(content).trim();
+      const skillBlock = `<skill name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${skill.baseDir}.\n\n${body}\n</skill>`;
+      return args ? `${skillBlock}\n\n${args}` : skillBlock;
+  }
+  ```
+
+  ### 2. Skill 格式化标准
+
+  **系统提示词中的格式** (`skills.ts` 第 290-316 行):
+  ```
+  The following skills provide specialized instructions for specific tasks.
+  Use the read tool to load a skill's file when the task matches its description.
+
+  <available_skills>
+    <skill>
+      <name>pdf-tools</name>
+      <description>Extracts text and tables from PDF files...</description>
+      <location>/path/to/skills/pdf-tools/SKILL.md</location>
+    </skill>
+  </available_skills>
+  ```
+
+  **用户消息中的格式** (展开后):
+  ```xml
+  <skill name="pdf-tools" location="/path/to/skills/pdf-tools/SKILL.md">
+  References are relative to /path/to/skills/pdf-tools.
+
+  # PDF Tools
+  ## Setup
+  npm install
+  ## Usage
+  ./extract.sh file.pdf
+  </skill>
+
+  User message here if provided
+  ```
+
+  ### 3. 重复注入防护机制
+
+  **加载时去重 (Load-Time Deduplication)**:
+  - 位置：`packages/coding-agent/src/core/skills.ts` (第 361-400 行)
+  - 同名 skill 只加载第一个发现的
+  - 通过 realpath 检测符号链接指向同一文件的情况
+  ```typescript
+  function loadSkills(options: LoadSkillsOptions = {}): LoadSkillsResult {
+      const skillMap = new Map<string, Skill>();
+      const realPathSet = new Set<string>();
+
+      for (const skill of result.skills) {
+          // 解析符号链接检测重复文件
+          let realPath: string;
+          try {
+              realPath = realpathSync(skill.filePath);
+          } catch {
+              realPath = skill.filePath;
+          }
+
+          // 跳过已加载的文件（通过符号链接）
+          if (realPathSet.has(realPath)) {
+              continue;
+          }
+
+          const existing = skillMap.get(skill.name);
+          if (existing) {
+              // 报告冲突诊断
+              collisionDiagnostics.push({
+                  type: "collision",
+                  message: `name "${skill.name}" collision`,
+                  path: skill.filePath,
+                  collision: {
+                      resourceType: "skill",
+                      name: skill.name,
+                      winnerPath: existing.filePath,
+                      loserPath: skill.filePath,
+                  },
+              });
+          } else {
+              skillMap.set(skill.name, skill);
+              realPathSet.add(realPath);
+          }
+      }
+  }
+  ```
+
+  **重要发现 - 没有会话级别去重**:
+  - pi-mono **不实现**会话级别的重复注入防护
+  - 用户可以多次调用 `/skill:name`，每次都会生成新的 skill 块
+  - 设计哲学是**无状态的、基于消息的设计**
+  - 所有 skill 块都保存在会话历史中（直到压缩）
+
+  ### 4. Skill 生命周期
+
+  ```
+  加载阶段 (Startup)
+      ↓
+  loadSkills() 扫描目录
+      ↓
+  去重 + 冲突检测
+      ↓
+  系统提示词注入 ─────────────────────────┐
+      ↓                                    │
+  formatSkillsForPrompt()                  │
+  生成 <available_skills> 块               │
+      ↓                                    │
+  运行时调用                                │
+      ↓                                    │
+  用户输入 /skill:name                      │
+      ↓                                    │
+  _expandSkillCommand() 展开                │
+      ↓                                    │
+  生成 <skill> XML 块                       │
+      ↓                                    │
+  作为用户消息发送给 LLM                    │
+      ↓                                    │
+  持久化到会话历史                          │
+      ↓                                    │
+  UI 渲染为折叠组件                         │
+      ↓                                    │
+  上下文压缩时可能被摘要                     │
+  ```
+
+  ### 5. UI 渲染处理
+
+  - 位置：`packages/coding-agent/src/modes/interactive/interactive-mode.ts` (第 2407-2432 行)
+  - 检测用户消息中的 skill 块
+  - 渲染为可折叠的 `[skill] name` 组件
+  ```typescript
+  case "user": {
+      const textContent = this.getUserMessageText(message);
+      const skillBlock = parseSkillBlock(textContent);
+      if (skillBlock) {
+          // 渲染 skill 块（可折叠）
+          const component = new SkillInvocationMessageComponent(
+              skillBlock,
+              this.getMarkdownThemeWithSettings(),
+          );
+          component.setExpanded(this.toolOutputExpanded);
+          this.chatContainer.addChild(component);
+          // 如果有用户消息，单独渲染
+          if (skillBlock.userMessage) {
+              const userComponent = new UserMessageComponent(
+                  skillBlock.userMessage,
+                  this.getMarkdownThemeWithSettings(),
+              );
+              this.chatContainer.addChild(userComponent);
+          }
+      }
+  }
+  ```
+
+  ### 6. 关键设计决策
+
+  **有实现的**:
+  - ✅ 加载时去重（同名 skill 只加载第一个）
+  - ✅ XML 格式化（遵循 Agent Skills 规范）
+  - ✅ 渐进式披露（描述在系统提示词，完整内容按需加载）
+  - ✅ Skill 块解析和 UI 渲染
+  - ✅ 冲突检测和诊断报告
+
+  **没有实现的（有意设计）**:
+  - ❌ 会话级别去重（允许同一 skill 多次注入）
+  - ❌ 激活状态跟踪（没有"当前激活的 skills"状态）
+  - ❌ Skill 缓存（每次调用都重新读取文件）
+  - ❌ Skill 生命周期管理（没有 activate/deactivate）
+
+  **设计哲学**:
+  - 无状态的、基于消息的架构
+  - 每条消息独立处理
+  - 依赖 LLM 的上下文窗口和注意力机制处理 skill 有效性
+  - 不维护持久化的"激活 skills"状态
+
+- **Files Investigated**:
+  **KodaX (当前实现)**:
+  - `packages/repl/src/interactive/commands.ts` - executeSkillCommand 实现（问题根源）
+  - `packages/repl/src/skills/executor.ts` - 存在但未连接到 REPL
+  - `packages/repl/src/skills/skill-registry.ts` - 加载 skill 但不执行
+  - `packages/repl/src/skills/types.ts` - 类型定义
+  - `packages/repl/src/skills/discovery.ts` - 发现 skills
+  - `packages/repl/src/skills/skill-loader.ts` - 加载 skill 文件
+
+  **pi-mono (参考实现)**:
+  - `packages/coding-agent/src/core/skills.ts` - 完整的 skill 加载和格式化
+  - `packages/coding-agent/src/core/system-prompt.ts` - 系统提示词集成
+  - `packages/coding-agent/src/core/agent-session.ts` - `_expandSkillCommand()` 实现
+  - `packages/coding-agent/src/core/resource-loader.ts` - 资源管理
+  - `packages/coding-agent/src/modes/interactive/interactive-mode.ts` - UI 渲染
+
+- **Resolution Approach**:
+  需要架构性重构，关键步骤：
+
+  1. **实现 `_expandSkillCommand()` 函数**:
+     ```typescript
+     // 新增函数
+     function expandSkillCommand(input: string, skills: SkillRegistry): string {
+       if (!input.startsWith("/")) return input;
+
+       const skillName = input.slice(1).split(" ")[0];
+       const args = input.slice(skillName.length + 2).trim();
+       const skill = skills.get(skillName);
+
+       if (!skill) return input; // 未知 skill，原样返回
+
+       const content = fs.readFileSync(skill.filePath, "utf-8");
+       const body = stripFrontmatter(content).trim();
+       const skillBlock = `<skill name="${skill.name}" location="${skill.filePath}">
+     References are relative to ${skill.baseDir}.
+
+     ${body}
+     </skill>`;
+       return args ? `${skillBlock}\n\n${args}` : skillBlock;
+     }
+     ```
+
+  2. **修改 executeSkillCommand**:
+     - 不再使用 console.log 打印
+     - 调用 `_expandSkillCommand()` 展开技能
+     - 返回展开后的内容作为用户消息
+
+  3. **集成到消息流**:
+     - 展开的 skill 块作为用户消息发送给 LLM
+     - LLM 接收完整的 skill 内容并执行
+
+  4. **实现 formatSkillsForPrompt()**:
+     - 将可用技能列表注入系统提示词
+     - 使用 `<available_skills>` XML 格式
+     - 支持渐进式披露
+
+  5. **添加 UI 渲染支持**:
+     - 检测用户消息中的 skill 块
+     - 渲染为可折叠组件
+     - 分离 skill 内容和用户附加消息
+
+- **Claude Code 官方 Skills 规范 (https://code.claude.com/docs/en/skills)**:
+
+  ### 1. Commands 与 Skills 的统一
+
+  **官方说明**:
+  > "Custom slash commands have been merged into skills. A file at `.claude/commands/review.md` and a skill at `.claude/skills/review/SKILL.md` both create `/review` and work the same way. Your existing `.claude/commands/` files keep working. Skills add optional features: a directory for supporting files, frontmatter to control whether you or Claude invokes them, and the ability for Claude to load them automatically when relevant."
+
+  **关键点**:
+  - `.claude/commands/review.md` 和 `.claude/skills/review/SKILL.md` 都创建 `/review` 命令
+  - 两者工作方式相同，向后兼容
+  - Skills 增加了额外功能：
+    - 支持文件的目录（templates, examples, scripts）
+    - frontmatter 控制调用方式
+    - Claude 自动加载能力
+
+  ### 2. 官方目录结构
+
+  | 位置 | 路径 | 作用域 |
+  |------|------|--------|
+  | Enterprise | 管理设置 | 组织内所有用户 |
+  | Personal | `~/.claude/skills/<skill-name>/SKILL.md` | 用户的所有项目 |
+  | Project | `.claude/skills/<skill-name>/SKILL.md` | 仅当前项目 |
+  | Plugin | `<plugin>/skills/<skill-name>/SKILL.md` | 插件启用范围 |
+
+  **优先级**: enterprise > personal > project
+  **Plugin skills**: 使用 `plugin-name:skill-name` 命名空间避免冲突
+
+  **Skill 目录结构**:
+  ```
+  my-skill/
+  ├── SKILL.md           # 主指令（必需）
+  ├── template.md        # Claude 填充的模板
+  ├── examples/
+  │   └── sample.md      # 示例输出
+  └── scripts/
+      └── validate.sh    # Claude 可执行的脚本
+  ```
+
+  ### 3. 官方 Frontmatter 字段
+
+  | 字段 | 必需 | 说明 |
+  |------|------|------|
+  | `name` | 否 | 显示名称，省略则用目录名。小写字母、数字、连字符，最多64字符 |
+  | `description` | 推荐 | 技能描述，Claude 用于判断何时使用。省略则用 markdown 第一段 |
+  | `argument-hint` | 否 | 自动补全时显示的参数提示，如 `[issue-number]` |
+  | `disable-model-invocation` | 否 | 设为 `true` 阻止 Claude 自动加载。用于手动触发的命令 |
+  | `user-invocable` | 否 | 设为 `false` 从 `/` 菜单隐藏。用于背景知识 |
+  | `allowed-tools` | 否 | 技能激活时 Claude 可使用的工具，如 `Read, Grep, Bash(python *)` |
+  | `model` | 否 | 指定模型 `haiku`/`sonnet`/`opus` |
+  | `context` | 否 | 设为 `fork` 在子代理中运行 |
+  | `agent` | 否 | `context: fork` 时使用的子代理类型：`Explore`/`Plan`/`general-purpose` |
+  | `hooks` | 否 | 技能生命周期钩子 |
+
+  ### 4. 调用控制矩阵
+
+  | Frontmatter | 用户可调用 | Claude 可调用 | 何时加载到上下文 |
+  |-------------|-----------|--------------|-----------------|
+  | (默认) | Yes | Yes | 描述始终在上下文，调用时加载完整内容 |
+  | `disable-model-invocation: true` | Yes | No | 描述不在上下文，用户调用时加载 |
+  | `user-invocable: false` | No | Yes | 描述始终在上下文，调用时加载完整内容 |
+
+  ### 5. 参数传递语法
+
+  | 变量 | 说明 |
+  |------|------|
+  | `$ARGUMENTS` | 所有参数。如果内容中没有 `$ARGUMENTS`，则追加 `ARGUMENTS: <value>` |
+  | `$ARGUMENTS[N]` | 按位置访问参数，如 `$ARGUMENTS[0]` 为第一个参数 |
+  | `$N` | `$ARGUMENTS[N]` 的简写，如 `$0`/`$1`/`$2` |
+  | `${CLAUDE_SESSION_ID}` | 当前会话 ID |
+
+  ### 6. 动态上下文注入
+
+  使用 `!`command`` 语法在 skill 内容发送给 Claude 之前执行 shell 命令：
+
+  ```markdown
+  ---
+  name: pr-summary
+  description: Summarize changes in a pull request
+  context: fork
+  agent: Explore
+  ---
+
+  ## Pull request context
+  - PR diff: !`gh pr diff`
+  - PR comments: !`gh pr view --comments`
+  - Changed files: !`gh pr diff --name-only`
+
+  ## Your task
+  Summarize this pull request...
+  ```
+
+  ### 7. 子代理执行 (context: fork)
+
+  当 `context: fork` 时，skill 内容成为驱动子代理的 prompt：
+  - 子代理无权访问对话历史
+  - `agent` 字段决定执行环境（模型、工具、权限）
+  - 结果摘要后返回主对话
+
+  | 方式 | 系统提示词 | 任务 | 额外加载 |
+  |------|-----------|------|---------|
+  | Skill with `context: fork` | 来自 agent 类型 | SKILL.md 内容 | CLAUDE.md |
+  | Subagent with `skills` field | 子代理的 markdown body | Claude 的委托消息 | 预加载的 skills + CLAUDE.md |
+
+  ### 8. 上下文字符预算
+
+  - Skill 描述加载到上下文，让 Claude 知道有哪些可用
+  - 预算动态缩放：上下文窗口的 2%，最小 16,000 字符
+  - 运行 `/context` 检查是否有 skill 被排除
+  - 可通过 `SLASH_COMMAND_TOOL_CHAR_BUDGET` 环境变量覆盖
+
+- **KodaX 当前实现分析**:
+
+  ### 1. 目录结构
+
+  **当前实现** (`packages/repl/src/skills/discovery.ts`):
+  ```typescript
+  // KodaX uses .kodax/skills/ directory
+  const skillDirNames = ['.kodax/skills'];
+  ```
+
+  **目录结构** (优先级: enterprise > user > project > plugin > builtin):
+  - `~/.kodax/skills/enterprise/` - Enterprise 级（全局）
+  - `~/.kodax/skills/` - User 级（全局）
+  - `.kodax/skills/` - Project 级（项目内）
+  - `packages/repl/src/skills/builtin/` - 内置
+
+  **已修复**: 原代码错误使用 `.kodox/`，现已统一为 `.kodax/`（与项目其他模块一致）。
+
+  **设计说明**: KodaX 使用自己的 `.kodax/` 目录结构，与 Claude Code 的 `.claude/` 和 pi-mono 的 `.pi/` 类似但独立。这是正确的做法，重点是**功能能力**对齐，而非目录结构兼容。
+
+  ### 2. Frontmatter 支持情况
+
+  **已支持的字段** (`packages/repl/src/skills/types.ts`):
+  ```typescript
+  export interface SkillFrontmatter {
+    name: string;                          // ✅
+    description: string;                   // ✅
+    disableModelInvocation?: boolean;      // ✅ 解析但未完全使用
+    userInvocable?: boolean;               // ✅ 默认 true
+    allowedTools?: string;                 // ✅ "Read, Grep, Bash(python:*)"
+    context?: 'fork';                      // ✅ 占位符
+    agent?: string;                        // ✅ 占位符
+    argumentHint?: string;                 // ✅
+    model?: 'haiku' | 'sonnet' | 'opus';   // ✅
+  }
+  ```
+
+  **YAML 解析** (kebab-case → camelCase):
+  ```typescript
+  disableModelInvocation: parsed['disable-model-invocation'] === true,
+  userInvocable: parsed['user-invocable'] !== false,
+  allowedTools: parsed['allowed-tools'] as string | undefined,
+  ```
+
+  ### 3. 参数传递实现
+
+  **已实现** (`packages/repl/src/skills/skill-resolver.ts`):
+  - ✅ `$ARGUMENTS` - 所有参数
+  - ✅ `$0`, `$1`, `$2` - 位置参数
+  - ✅ `${VAR_NAME}` - 环境变量（含 `${CLAUDE_SESSION_ID}`）
+  - ✅ `!`command`` - 动态上下文（shell 命令执行）
+
+  ```typescript
+  // 位置参数解析
+  private resolvePositionalArgs(content: string, args: string[]): string {
+    return content.replace(/\$(\d+)(?![a-zA-Z0-9_])/g, (match, indexStr) => {
+      const index = parseInt(indexStr, 10);
+      return args[index] ?? '';
+    });
+  }
+  ```
+
+  ### 4. 当前核心问题
+
+  **`packages/repl/src/interactive/commands.ts` (第 811-854 行)**:
+  ```typescript
+  async function executeSkillCommand(parsed, context) {
+    const fullSkill = await registry.loadFull(skillName);
+
+    // 问题：只打印预览，不注入 LLM 上下文！
+    console.log(chalk.bold(`--- ${skillName} skill ---`));
+    console.log(chalk.dim(fullSkill.content.slice(0, 500))); // 只显示 500 字符
+    console.log(chalk.bold(`\n--- end ${skillName} ---`));
+
+    // 注释说 "将集成到 LLM loop"，但未实现
+    console.log(chalk.dim('The skill prompt has been loaded. Continue your request to use it.'));
+  }
+  ```
+
+  **系统提示词注入**:
+  - `getSystemPromptSnippet()` 方法存在但未被调用
+  - Skill 描述未注入系统提示词
+  - Claude 无法知道有哪些 skills 可用
+
+- **功能对比表格**:
+
+  | 功能 | Claude Code 官方 | pi-mono | KodaX 当前 | 状态 |
+  |------|-----------------|---------|-----------|------|
+  | **目录结构** |
+  | 专用目录 | `.claude/skills/` | `.pi/skills/` | `.kodax/skills/` | ✅ OK |
+  | 优先级机制 | ✅ enterprise > personal > project | ✅ | ✅ | OK |
+  | **Frontmatter** |
+  | `name`/`description` | ✅ | ✅ | ✅ | OK |
+  | `disable-model-invocation` | ✅ | ✅ | ⚠️ 解析但未使用 | 部分实现 |
+  | `user-invocable` | ✅ | ✅ | ✅ | OK |
+  | `allowed-tools` | ✅ | ❌ | ✅ 解析但未执行 | 部分实现 |
+  | `context: fork` | ✅ | ❌ | ⚠️ 占位符 | 未实现 |
+  | `agent` 字段 | ✅ | ❌ | ⚠️ 占位符 | 未实现 |
+  | **参数传递** |
+  | `$ARGUMENTS` | ✅ | ❌ | ✅ | OK |
+  | `$0`/`$1`/`$N` | ✅ | ❌ | ✅ | OK |
+  | `${SESSION_ID}` | ✅ | ❌ | ✅ | OK |
+  | `!`command`` 动态上下文 | ✅ | ❌ | ✅ | OK |
+  | **LLM 集成（核心问题）** |
+  | 系统提示词注入 | ✅ 描述始终在上下文 | ✅ `<available_skills>` | ❌ 未调用 | **缺失** |
+  | 命令展开 | ✅ 完整 XML 块 | ✅ `<skill>` XML | ❌ 只打印预览 | **缺失** |
+  | 自然语言触发 | ✅ 基于 description | ❌ | ❌ | 缺失 |
+  | **子代理** |
+  | `context: fork` 执行 | ✅ | ❌ | ❌ | 未实现 |
+  | agent 类型选择 | ✅ | ❌ | ❌ | 未实现 |
+
+- **缺失功能清单**:
+
+  ### ~~P0 - 关键阻塞（已修复）~~
+  ~~1. **LLM 上下文注入** - skill 内容未发送给 LLM，只打印预览~~ ✅ 已修复 (2026-03-01)
+  - 新增 `skill-expander.ts` 模块，将 skill 展开为 XML 格式
+  - 修改 `executeSkillCommand` 返回展开后的 skill 内容
+  - 修改 `InkREPL.handleSubmit` 检测 skill 内容并注入 LLM 上下文
+
+  ~~2. **系统提示词集成** - `getSystemPromptSnippet()` 未被调用~~ ✅ P1 待实现
+
+  ### ~~P0 - 已修复~~
+  ~~3. **目录名称错误** - 代码使用 `.kodox/` 应为 `.kodax/`~~ ✅ 已修复 (2026-03-01)
+
+  ### P1 - 用户体验问题
+  4. **自然语言触发** - AI 无法基于 description 自动触发 skill，只能用 `/skill-name`
+  5. **`disable-model-invocation` 生效** - ✅ 已在 executeSkillCommand 中检查
+
+  ### P2 - 高级功能
+  6. **`context: fork` 执行** - 子代理运行 skill（占位符存在但未实现）
+  7. **`allowed-tools` 执行** - 限制 skill 可用工具（已解析但未执行）
+  8. **上下文字符预算** - 管理 skill 描述的上下文占用
+
+- **Impact**:
+  - ✅ P0 已修复：Skills 现在可以正常工作
+  - 用户调用 `/skill-name` 后，AI 会收到完整的 skill 内容并执行
+
+- **Next Steps**:
+  1. ✅ 完成 pi-mono 最佳实践调研
+  2. ✅ 完成 Claude Code 官方规范调研
+  3. ✅ 完成 KodaX 当前实现分析
+  4. ✅ 实现 skill 命令展开（`expandSkillForLLM()`）
+  5. ✅ 重构 `executeSkillCommand` - 将 skill 内容注入 LLM 上下文
+  6. 🔄 实现系统提示词 skill 注入（调用 `getSystemPromptSnippet()`）
+  7. 📋 添加自然语言 skill 触发（基于 description）
+  8. 📋 实现 `context: fork` 子代理执行
+  9. 📋 添加测试验证 skill 正确注入 LLM 上下文
+
+---
+
+### 055: Built-in Skills 未完全符合 Agent Skills 规范 (OPEN)
+- **Priority**: Low
+- **Status**: Open
+- **Introduced**: v0.4.7
+- **Fixed**: -
+- **Created**: 2026-03-01
+- **Original Problem**:
+  内建的 3 个 Agent Skills (`code-review`, `git-workflow`, `tdd`) 未完全符合 [Agent Skills 开放规范](https://agentskills.io/) 和 [Claude Code Skills 文档](https://code.claude.com/docs/en/skills)。
+
+  **已发现的规范偏差**:
+
+  ### 1. `allowed-tools` 格式偏差
+
+  **Agent Skills 规范要求** (https://agentskills.io/specification):
+  > Space-delimited list of pre-approved tools the skill may use.
+
+  **示例**:
+  ```yaml
+  allowed-tools: Bash(git:*) Bash(jq:*) Read
+  ```
+
+  **KodaX 当前实现** (空格分隔但使用引号包裹):
+  ```yaml
+  allowed-tools: "Read, Grep, Glob, Bash(npm:*, node:*, npx:*)"
+  ```
+
+  **问题**:
+  - 使用逗号分隔而非空格分隔
+  - 使用引号包裹（可能影响解析兼容性）
+
+  ### 2. `description` 语言问题
+
+  **Agent Skills 规范建议** (https://agentskills.io/specification):
+  > Should include specific keywords that help agents identify relevant tasks.
+
+  **KodaX 当前实现** (仅中文):
+  ```yaml
+  # code-review
+  description: 代码审查技能。当用户要求审查代码、code review、检查代码质量、review code 时使用。
+
+  # git-workflow
+  description: Git 工作流技能。当用户要求提交代码、创建 PR、合并分支、git commit、push、branch 管理时使用。
+
+  # tdd
+  description: TDD 测试驱动开发技能。当用户要求写测试、TDD、test-driven、单元测试、测试覆盖时使用。
+  ```
+
+  **问题**:
+  - 描述主体为中文，非英语母语的 LLM 可能识别效率较低
+  - 虽然包含了英文关键词（如 "code review", "TDD"），但主体描述为中文
+  - 不利于跨平台/跨工具的 skill 互操作性
+
+  **推荐格式** (符合规范的英文描述):
+  ```yaml
+  description: Performs comprehensive code review for quality, security, and best practices. Use when reviewing code, checking code quality, or when user mentions "review", "audit", or "code quality".
+  ```
+
+  ### 3. 其他规范符合性检查
+
+  | 检查项 | 规范要求 | KodaX 实现 | 状态 |
+  |--------|---------|-----------|------|
+  | `name` 格式 | 小写字母、数字、连字符，1-64字符 | `code-review`, `git-workflow`, `tdd` | ✅ 符合 |
+  | `name` 与目录匹配 | 必须匹配父目录名 | ✅ 匹配 | ✅ 符合 |
+  | `description` 长度 | 1-1024 字符 | 均在限制内 | ✅ 符合 |
+  | `description` 内容 | 描述功能和使用时机 | ✅ 包含关键词 | ⚠️ 部分符合（语言问题） |
+  | `user-invocable` | Claude Code 扩展字段 | ✅ 正确使用 | ✅ 符合 |
+  | `argument-hint` | Claude Code 扩展字段 | ✅ 正确使用 | ✅ 符合 |
+  | `allowed-tools` 格式 | 空格分隔 | ❌ 逗号分隔+引号 | ❌ 不符合 |
+
+- **Expected Behavior**:
+  - `allowed-tools` 应改为空格分隔格式，不使用引号
+  - `description` 应提供英文版本或双语版本以提高互操作性
+  - 遵循 Agent Skills 开放规范确保 skill 可在不同 AI 工具间复用
+
+- **Context**:
+  - `packages/repl/src/skills/builtin/code-review/SKILL.md`
+  - `packages/repl/src/skills/builtin/git-workflow/SKILL.md`
+  - `packages/repl/src/skills/builtin/tdd/SKILL.md`
+
+- **Impact**:
+  - 低优先级：不影响核心功能，但影响规范兼容性和跨工具互操作性
+  - 如果未来有其他工具采用 Agent Skills 规范，这些 skill 可能无法正确识别
+
+- **Next Steps**:
+  1. 修改 `allowed-tools` 为空格分隔格式
+  2. 考虑将 `description` 改为英文或双语
+  3. 可选择添加 `license` 字段（规范推荐）
 
 ---
 

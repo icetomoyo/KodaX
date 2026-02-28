@@ -202,7 +202,7 @@ REPL 中的长运行项目管理，通过 `/project` 命令组实现。
 - 提供企业级的技能管理和分发能力
 
 **Goals**:
-1. ✅ 支持 `.claude/skills/` 和 `.kodox/skills/` 目录加载自定义技能
+1. ✅ 支持 `.kodax/skills/` 目录加载自定义技能
 2. ✅ 内置 3 个技能库（code-review、git-workflow、tdd）
 3. ✅ 技能可以通过 `/skill-name` 方式调用
 4. ✅ 支持技能的参数传递 (`$ARGUMENTS`, `$0`, `$1`)

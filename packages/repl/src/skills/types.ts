@@ -93,9 +93,9 @@ export interface SkillFile {
 // === Skill Sources ===
 
 export type SkillSource =
-  | 'enterprise' // ~/.kodox/skills/enterprise/
-  | 'user' // ~/.kodox/skills/, ~/.claude/skills/
-  | 'project' // .kodox/skills/, .claude/skills/
+  | 'enterprise' // ~/.kodax/skills/enterprise/
+  | 'user' // ~/.kodax/skills/
+  | 'project' // .kodax/skills/
   | 'plugin' // Plugin-provided skills
   | 'builtin'; // Built-in skills
 
@@ -188,19 +188,17 @@ export function getDefaultSkillPaths(projectRoot?: string): SkillPathsConfig {
 
   return {
     // Enterprise-level (highest priority)
-    enterprisePaths: [path.join(home, '.kodox', 'skills', 'enterprise')],
+    enterprisePaths: [path.join(home, '.kodax', 'skills', 'enterprise')],
 
-    // User-level
+    // User-level - ~/.kodax/skills/
     userPaths: [
-      path.join(home, '.kodox', 'skills'),
-      path.join(home, '.claude', 'skills'), // Claude Code compatibility
+      path.join(home, '.kodax', 'skills'),
     ],
 
-    // Project-level
+    // Project-level - .kodax/skills/
     projectPaths: projectRoot
       ? [
-          path.join(projectRoot, '.kodox', 'skills'),
-          path.join(projectRoot, '.claude', 'skills'), // Claude Code compatibility
+          path.join(projectRoot, '.kodax', 'skills'),
         ]
       : [],
 
