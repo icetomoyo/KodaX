@@ -11,6 +11,11 @@ import { saveConfig } from '../common/utils.js';
 import { savePermissionModeUser } from '../common/permission-config.js';
 import { runWithPlanMode, listPlans, resumePlan, clearCompletedPlans } from '../common/plan-mode.js';
 import { handleProjectCommand, printProjectHelp } from './project-commands.js';
+import {
+  getSkillRegistry,
+  initializeSkillRegistry,
+  type SkillMetadata,
+} from '../skills/index.js';
 
 // Current config state (passed from repl.ts) - 当前配置状态（由 repl.ts 传入）
 export interface CurrentConfig {
@@ -541,6 +546,37 @@ export const BUILTIN_COMMANDS: Command[] = [
     },
     detailedHelp: printProjectHelp,
   },
+  {
+    name: 'skills',
+    description: 'List and manage available skills',
+    usage: '/skills [reload|info <name>]',
+    handler: async (args, context) => {
+      await handleSkillsCommand(args, context);
+    },
+    detailedHelp: () => {
+      console.log(chalk.cyan('\n/skills - Manage Skills\n'));
+      console.log(chalk.bold('Usage:'));
+      console.log(chalk.dim('  /skills             ') + 'List all available skills');
+      console.log(chalk.dim('  /skills reload      ') + 'Reload skills from disk');
+      console.log(chalk.dim('  /skills info <name> ') + 'Show skill details');
+      console.log();
+      console.log(chalk.bold('Description:'));
+      console.log(chalk.dim('  Skills are reusable prompt modules that provide specialized'));
+      console.log(chalk.dim('  capabilities. You can invoke them by typing /skill-name or'));
+      console.log(chalk.dim('  asking naturally - the agent will auto-detect and use them.'));
+      console.log();
+      console.log(chalk.bold('Built-in Skills:'));
+      console.log(chalk.dim('  code-review   ') + 'Code quality and security review');
+      console.log(chalk.dim('  git-workflow  ') + 'Git commit, branch, PR management');
+      console.log(chalk.dim('  tdd           ') + 'Test-driven development workflow');
+      console.log();
+      console.log(chalk.bold('Examples:'));
+      console.log(chalk.dim('  /skills                ') + '# List all skills');
+      console.log(chalk.dim('  /code-review src/      ') + '# Invoke code-review skill');
+      console.log(chalk.dim('  /skills info tdd       ') + '# Show TDD skill details');
+      console.log();
+    },
+  },
 ];
 
 // Print help - 打印帮助
@@ -554,6 +590,7 @@ function printHelp(): void {
     'Session': BUILTIN_COMMANDS.filter(c => ['save', 'load', 'sessions', 'history', 'delete'].includes(c.name)),
     'Settings': BUILTIN_COMMANDS.filter(c => ['model', 'thinking', 'plan'].includes(c.name)),
     'Project': BUILTIN_COMMANDS.filter(c => ['project'].includes(c.name)),
+    'Skills': BUILTIN_COMMANDS.filter(c => ['skills'].includes(c.name)),
   };
 
   for (const [category, commands] of Object.entries(categories)) {
@@ -573,6 +610,10 @@ function printHelp(): void {
   console.log(chalk.dim('Special syntax:'));
   console.log(`  ${chalk.cyan('@file')}             Add file to context`);
   console.log(`  ${chalk.cyan('!command')}         Execute shell command`);
+  console.log();
+  console.log(chalk.dim('Skills:'));
+  console.log(`  ${chalk.cyan('/<skill-name>')}    Invoke a skill (e.g., /code-review)`);
+  console.log(`  ${chalk.cyan('/skills')}          List all available skills`);
   console.log();
 }
 
@@ -622,6 +663,85 @@ function printStatus(context: InteractiveContext, currentConfig: CurrentConfig):
   console.log();
 }
 
+// Handle /skills command - 处理 /skills 命令
+async function handleSkillsCommand(args: string[], context: InteractiveContext): Promise<void> {
+  const registry = getSkillRegistry(context.gitRoot);
+
+  // Ensure skills are discovered - 确保已发现技能
+  if (registry.size === 0) {
+    await initializeSkillRegistry(context.gitRoot);
+  }
+
+  const subCommand = args[0]?.toLowerCase();
+
+  switch (subCommand) {
+    case 'reload':
+      await registry.reload();
+      console.log(chalk.green(`\n[Skills reloaded. Found ${registry.size} skills]`));
+      break;
+
+    case 'info': {
+      const skillName = args[1];
+      if (!skillName) {
+        console.log(chalk.red('\n[Usage: /skills info <skill-name>]'));
+        return;
+      }
+      const skill = registry.get(skillName);
+      if (!skill) {
+        console.log(chalk.red(`\n[Skill not found: ${skillName}]`));
+        return;
+      }
+      printSkillInfo(skill);
+      break;
+    }
+
+    default:
+      printSkillsList(registry.list());
+  }
+}
+
+// Print skills list - 打印技能列表
+function printSkillsList(skills: SkillMetadata[]): void {
+  console.log(chalk.bold('\nAvailable Skills:\n'));
+
+  if (skills.length === 0) {
+    console.log(chalk.dim('  No skills found.'));
+    console.log(chalk.dim('\n  Skills can be placed in:'));
+    console.log(chalk.dim('    - .kodox/skills/'));
+    console.log(chalk.dim('    - ~/.kodox/skills/'));
+    return;
+  }
+
+  const maxNameLen = Math.max(...skills.map(s => s.name.length));
+
+  for (const skill of skills) {
+    const paddedName = skill.name.padEnd(maxNameLen);
+    const hint = skill.argumentHint ? chalk.dim(` ${skill.argumentHint}`) : '';
+    const source = skill.source === 'builtin' ? chalk.dim(' [builtin]') : '';
+    console.log(`  ${chalk.cyan(`/${paddedName}`)}${hint}${source}`);
+    console.log(`  ${' '.repeat(maxNameLen + 3)}${chalk.dim(skill.description.slice(0, 60))}${skill.description.length > 60 ? '...' : ''}`);
+  }
+
+  console.log();
+  console.log(chalk.dim(`Total: ${skills.length} skills`));
+  console.log(chalk.dim('Usage: /<skill-name> [args] or ask naturally'));
+  console.log();
+}
+
+// Print skill info - 打印技能详情
+async function printSkillInfo(skill: SkillMetadata): Promise<void> {
+  console.log(chalk.bold(`\nSkill: ${chalk.cyan(skill.name)}\n`));
+  console.log(chalk.dim(`Source: ${skill.source}`));
+  console.log(chalk.dim(`Path: ${skill.path}`));
+  if (skill.argumentHint) {
+    console.log(chalk.dim(`Arguments: ${skill.argumentHint}`));
+  }
+  console.log();
+  console.log(chalk.bold('Description:'));
+  console.log(chalk.dim(skill.description));
+  console.log();
+}
+
 // Command registry - 命令注册表
 const commandRegistry = new Map<string, Command>();
 
@@ -667,6 +787,58 @@ export async function executeCommand(
     return true;
   }
 
+  // Check if it's a skill invocation - 检查是否是技能调用
+  const registry = getSkillRegistry(context.gitRoot);
+  if (registry.has(parsed.command)) {
+    return await executeSkillCommand(parsed, context);
+  }
+
   console.log(chalk.yellow(`\n[Unknown command: /${parsed.command}. Type /help for available commands]`));
   return false;
+}
+
+// Execute skill command - 执行技能命令
+async function executeSkillCommand(
+  parsed: { command: string; args: string[] },
+  context: InteractiveContext
+): Promise<boolean> {
+  const registry = getSkillRegistry(context.gitRoot);
+  const skillName = parsed.command;
+  const skillArgs = parsed.args.join(' ');
+
+  try {
+    const skill = registry.get(skillName);
+    if (!skill) {
+      console.log(chalk.red(`\n[Skill not found: ${skillName}]`));
+      return false;
+    }
+
+    console.log(chalk.cyan(`\n[Invoking skill: ${skillName}]`));
+    if (skill.argumentHint) {
+      console.log(chalk.dim(`Arguments: ${skillArgs || '(none)'}`));
+    }
+    console.log();
+
+    // Load full skill and get resolved content - 加载完整技能并获取解析后的内容
+    const fullSkill = await registry.loadFull(skillName);
+
+    // Show skill content header - 显示技能内容头
+    console.log(chalk.bold(`--- ${skillName} skill ---`));
+
+    // For now, just show the skill content - 目前只显示技能内容
+    // The actual execution will be integrated with the LLM loop
+    console.log(chalk.dim(fullSkill.content.slice(0, 500)));
+    if (fullSkill.content.length > 500) {
+      console.log(chalk.dim('\n... (content truncated, will be fully loaded on use)'));
+    }
+
+    console.log(chalk.bold(`\n--- end ${skillName} ---`));
+    console.log();
+    console.log(chalk.dim('The skill prompt has been loaded. Continue your request to use it.'));
+
+    return true;
+  } catch (error) {
+    console.log(chalk.red(`\n[Error invoking skill: ${error instanceof Error ? error.message : String(error)}]`));
+    return false;
+  }
 }

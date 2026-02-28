@@ -1,6 +1,6 @@
 # Feature List
 
-_Last Updated: 2026-02-27 23:30_
+_Last Updated: 2026-02-28 20:25_
 
 ---
 
@@ -34,7 +34,7 @@ _Last Updated: 2026-02-27 23:30_
 | 003 | New | Completed | High | 交互式项目模式 | v0.3.1 | v0.3.1 | [Design](features/v0.3.1.md#003) | 2026-02-19 | 2026-02-19 | 2026-02-19 |
 | 004 | Enhancement | Completed | Medium | 交互式界面改进 | v0.3.3 | v0.3.3 | [Design](features/v0.3.3.md#004) | 2026-02-19 | 2026-02-19 | 2026-02-20 |
 | 005 | Refactor | Completed | High | v0.4.0 架构重构与模块解耦 | v0.4.0 | v0.4.0 | [Design](features/v0.4.0.md#005) | 2026-02-20 | 2026-02-24 | 2026-02-24 |
-| 006 | New | Planned | Critical | Skills 系统 | v0.5.0 | - | [Design](features/v0.5.0.md#006) | 2026-02-25 | - | - |
+| 006 | New | ReadyForTesting | Critical | Skills 系统 | v0.5.0 | - | [Design](features/v0.5.0.md#006) | 2026-02-25 | 2026-02-28 | - |
 | 007 | Enhancement | Planned | Medium | 主题系统完善 | v0.5.0 | - | [Design](features/v0.5.0.md#007) | 2026-02-25 | - | - |
 | 008 | Enhancement | Completed | High | 权限控制体系改进 | v0.5.0 | v0.4.6 | [Design](features/v0.5.0.md#008) | 2026-02-26 | 2026-02-27 | 2026-02-27 |
 | 009 | Refactor | Completed | Critical | 架构重构：AI 层独立 + 权限层分离 | v0.5.0 | v0.5.0 | [Design](features/v0.5.0.md#009) | 2026-02-27 | 2026-02-27 | 2026-02-27 |
@@ -183,32 +183,41 @@ REPL 中的长运行项目管理，通过 `/project` 命令组实现。
 
 ---
 
-### 006: Skills 系统 (PLANNED)
+### 006: Skills 系统 (READY FOR TESTING)
 - **Category**: New
-- **Status**: Planned
+- **Status**: ReadyForTesting
 - **Priority**: Critical
 - **Planned**: v0.5.0
 - **Released**: -
 - **Design**: [v0.5.0.md#006](features/v0.5.0.md#006)
 - **Created**: 2026-02-25
-- **Started**: -
+- **Started**: 2026-02-28
 - **Completed**: -
 
 **Description**:
-类似 Claude Code 的 Skills 系统，允许用户定义和加载可复用的技能/命令模块。
+实现完整的 [Agent Skills](https://agentskills.io/) 开放标准，使 KodaX 能够：
+- 加载和使用符合 Agent Skills 标准的技能
+- 完全兼容 Claude Code 及其他支持 Agent Skills 的工具开发的 skills
+- 支持渐进式披露机制，优化上下文使用
+- 提供企业级的技能管理和分发能力
 
 **Goals**:
-1. 支持 `.claude/skills/` 目录加载自定义技能
-2. 内置常用技能库（代码审查、测试生成等）
-3. 技能可以通过 `/skill-name` 方式调用
-4. 支持技能的参数传递和配置
-5. 技能可以被 LLM 自动识别和调用
+1. ✅ 支持 `.claude/skills/` 和 `.kodox/skills/` 目录加载自定义技能
+2. ✅ 内置 3 个技能库（code-review、git-workflow、tdd）
+3. ✅ 技能可以通过 `/skill-name` 方式调用
+4. ✅ 支持技能的参数传递 (`$ARGUMENTS`, `$0`, `$1`)
+5. ✅ 技能可以被 LLM 自动识别和调用
+6. ✅ 渐进式披露机制
 
-**Key Features**:
-- 技能发现和注册机制
-- 技能元数据（名称、描述、触发词）
-- 技能执行上下文隔离
-- 技能依赖管理
+**Implementation Notes**:
+- 实现于 `packages/repl/src/skills/` 目录
+- 类型定义: `types.ts` - Agent Skills 标准接口
+- 加载器: `skill-loader.ts` - YAML frontmatter 解析
+- 发现: `discovery.ts` - 多路径扫描
+- 解析: `skill-resolver.ts` - 变量替换
+- 注册表: `skill-registry.ts` - 渐进式披露
+- 执行器: `executor.ts` - 技能执行
+- 测试: 15 个单元测试全部通过
 
 ---
 
@@ -311,7 +320,7 @@ REPL 中的长运行项目管理，通过 `/project` 命令组实现。
 ---
 
 ## Summary
-- Total: 9 (2 Planned, 0 InProgress, 7 Completed)
+- Total: 9 (1 Planned, 1 InProgress, 7 Completed)
 - By Priority: Critical: 2, High: 4, Medium: 2, Low: 0
 - Current Version: v0.5.0
 - Next Release (v0.5.0): 2 features planned (006, 007)
