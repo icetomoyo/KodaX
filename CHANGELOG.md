@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.7] - 2026-02-28
+
+### Added
+- **@kodax/ai Package**: New independent LLM abstraction layer extracted from core
+  - Can be reused by other projects
+  - Supports 7 providers: Anthropic, OpenAI, Kimi, Kimi Code, Qwen, Zhipu, Zhipu Coding
+- **Pattern-based Permission Control**: Allow specific Bash commands in accept-edits mode
+  - Format: `Bash(npm install)`, `Bash(git commit:*)`
+  - Wildcard `*` is rejected for safety
+- **Protected Path Check for Bash**: Commands operating on `.kodax/`, `~/.kodax/`, or paths outside project root now correctly require confirmation without "always" option
+
+### Changed
+- **Architecture Refactoring**: 4-layer architecture (ai → core → repl → cli)
+  - `@kodax/ai`: Independent LLM abstraction layer
+  - `@kodax/core`: Pure Agent logic without permission checks
+  - `@kodax/repl`: UI + Permission control layer
+  - CLI: Simplified entry point
+
+### Fixed
+- Issue 051: No feedback shown when user rejects permission confirmation with 'n'
+- Issue 052: Protected path confirmation showing "always" option for bash commands
+
 ## [0.4.6] - 2026-02-27
 
 ### Added
