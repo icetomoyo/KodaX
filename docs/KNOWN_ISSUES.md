@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-03-01 14:00_
+_Last Updated: 2026-03-01 15:30_
 
 ---
 
@@ -64,6 +64,7 @@ _Last Updated: 2026-03-01 14:00_
 | 053 | High | Won't Fix | /help 命令输出重复渲染 | v0.4.7 | - | 2026-02-28 | 2026-03-01 |
 | 054 | Critical | Open | Agent Skills 系统未与 LLM 集成 | v0.4.7 | - | 2026-03-01 | - |
 | 055 | Low | Open | Built-in Skills 未完全符合 Agent Skills 规范 | v0.4.7 | - | 2026-03-01 | - |
+| 056 | Medium | Open | Skills 系统缺少渐进式披露机制 | v0.4.8 | - | 2026-03-01 | - |
 
 ---
 
@@ -2647,6 +2648,152 @@ _Last Updated: 2026-03-01 14:00_
   1. 修改 `allowed-tools` 为空格分隔格式
   2. 考虑将 `description` 改为英文或双语
   3. 可选择添加 `license` 字段（规范推荐）
+
+---
+
+### 056: Skills 系统缺少渐进式披露机制 (OPEN)
+- **Priority**: Medium
+- **Status**: Open
+- **Introduced**: v0.4.8
+- **Fixed**: -
+- **Created**: 2026-03-01
+- **Original Problem**:
+  KodaX 的 Skills 系统虽然已实现基本的 `/skill-name` 命令注入（Issue 054 P0），但缺少 pi-mono 和 Agent Skills 规范中的**渐进式披露**机制，导致 AI 无法主动发现和触发 skills。
+
+  **核心问题**: `getSystemPromptSnippet()` 方法存在但**未被调用**，AI 不知道有哪些 skills 可用。
+
+- **Reference Implementation (pi-mono)**:
+  pi-mono 实现了完整的渐进式披露机制，源码位于 `C:\Works\GitWorks\pi-mono`：
+
+  ### 1. 系统提示词注入 (关键缺失)
+
+  **pi-mono 实现** (`packages/coding-agent/src/core/system-prompt.ts`):
+  ```typescript
+  // Append skills section (only if read tool is available)
+  if (hasRead && skills.length > 0) {
+      prompt += formatSkillsForPrompt(skills);
+  }
+  ```
+
+  **pi-mono 的 XML 格式** (`packages/coding-agent/src/core/skills.ts`):
+  ```typescript
+  export function formatSkillsForPrompt(skills: Skill[]): string {
+      const visibleSkills = skills.filter((s) => !s.disableModelInvocation);
+      if (visibleSkills.length === 0) return "";
+
+      const lines = [
+          "\n\nThe following skills provide specialized instructions for specific tasks.",
+          "Use the read tool to load a skill's file when the task matches its description.",
+          "",
+          "<available_skills>",
+      ];
+
+      for (const skill of visibleSkills) {
+          lines.push("  <skill>");
+          lines.push(`    <name>${escapeXml(skill.name)}</name>`);
+          lines.push(`    <description>${escapeXml(skill.description)}</description>`);
+          lines.push(`    <location>${escapeXml(skill.filePath)}</location>`);
+          lines.push("  </skill>");
+      }
+
+      lines.push("</available_skills>");
+      return lines.join("\n");
+  }
+  ```
+
+  **KodaX 当前实现** (`packages/repl/src/skills/skill-registry.ts`):
+  ```typescript
+  getSystemPromptSnippet(): string {
+    const skills = this.list();
+    // ... 使用简单 markdown 列表格式
+    // 关键问题：此方法存在但未被调用！
+  }
+  ```
+
+  ### 2. 自然语言触发机制
+
+  **pi-mono 的设计**:
+  1. 启动时将 skill 元数据（name, description, location）注入系统提示词
+  2. AI 根据用户的自然语言描述判断是否应该使用某个 skill
+  3. AI 使用 `read` 工具读取完整的 SKILL.md 文件
+  4. AI 按照 skill 内容执行任务
+
+  **官方文档说明**:
+  > "Use the read tool to load a skill's file when the task matches its description."
+  > 注：`models don't always do this; use prompting or /skill:name to force it`
+
+  **KodaX 现状**: 由于系统提示词未注入 skill 列表，AI 完全不知道有哪些 skills 可用，自然语言触发无法工作。
+
+  ### 3. Skill 块 UI 渲染
+
+  **pi-mono 实现** (`packages/coding-agent/src/modes/interactive/interactive-mode.ts`):
+  ```typescript
+  case "user": {
+      const textContent = this.getUserMessageText(message);
+      const skillBlock = parseSkillBlock(textContent);
+      if (skillBlock) {
+          // Render skill block (collapsible)
+          const component = new SkillInvocationMessageComponent(skillBlock, ...);
+          component.setExpanded(this.toolOutputExpanded);
+          this.chatContainer.addChild(component);
+          // Render user message separately if present
+          if (skillBlock.userMessage) {
+              const userComponent = new UserMessageComponent(skillBlock.userMessage, ...);
+              this.chatContainer.addChild(userComponent);
+          }
+      }
+  }
+  ```
+
+  **KodaX 现状**: 无专门的 skill 块渲染，skill 调用显示为普通消息。
+
+  ### 4. `disableModelInvocation` 过滤
+
+  **pi-mono**: 在 `formatSkillsForPrompt()` 中过滤掉 `disableModelInvocation=true` 的 skills，这些 skills 只能通过 `/skill:name` 显式调用。
+
+  **KodaX**: `getSystemPromptSnippet()` 没有实现此过滤逻辑。
+
+- **功能对比表**:
+
+  | 功能 | pi-mono | KodaX | 说明 |
+  |------|---------|-------|------|
+  | **系统提示词注入** |
+  | `formatSkillsForPrompt()` | ✅ 被调用 | ❌ `getSystemPromptSnippet()` 未调用 | **核心缺失** |
+  | XML 格式 `<available_skills>` | ✅ 标准格式 | ❌ 使用 markdown 列表 | 格式不规范 |
+  | `disableModelInvocation` 过滤 | ✅ | ❌ | 未实现过滤 |
+  | **自然语言触发** |
+  | AI 主动发现 skills | ✅ 通过系统提示词 | ❌ 无法工作 | 依赖系统提示词 |
+  | 按 description 匹配 | ✅ | ❌ | - |
+  | **UI 渲染** |
+  | Skill 块折叠组件 | ✅ `SkillInvocationMessageComponent` | ❌ | 用户体验差距 |
+  | 分离 skill 内容和用户消息 | ✅ | ❌ | - |
+  | **命令展开** |
+  | `/skill:name` 展开为 XML | ✅ | ✅ Issue 054 已修复 | OK |
+  | `References are relative to` 提示 | ✅ | ✅ | OK |
+
+- **Impact**:
+  - **P1 - 用户体验问题**: 用户必须显式使用 `/skill-name` 命令，无法通过自然语言触发
+  - AI 不知道有哪些 skills 可用，无法主动建议使用相关 skill
+  - 不符合 Agent Skills 规范的渐进式披露设计
+  - UI 体验不佳，skill 调用没有专门的视觉呈现
+
+- **Context**:
+  - `packages/repl/src/skills/skill-registry.ts` - `getSystemPromptSnippet()` 方法
+  - `packages/repl/src/ui/InkREPL.tsx` - 系统提示词构建位置
+  - `packages/core/src/agent.ts` - Agent 系统提示词组装
+
+- **Reference**:
+  - pi-mono 源码: `C:\Works\GitWorks\pi-mono\packages\coding-agent\src\core\skills.ts`
+  - pi-mono 源码: `C:\Works\GitWorks\pi-mono\packages\coding-agent\src\core\system-prompt.ts`
+  - pi-mono 源码: `C:\Works\GitWorks\pi-mono\packages\coding-agent\src\modes\interactive\components\skill-invocation-message.ts`
+  - Agent Skills 规范: https://agentskills.io/integrate-skills
+
+- **Next Steps**:
+  1. **P1 - 系统提示词注入**: 在 Agent 系统提示词构建时调用 `getSystemPromptSnippet()`
+  2. **P1 - XML 格式化**: 修改 `getSystemPromptSnippet()` 生成符合规范的 `<available_skills>` XML 格式
+  3. **P1 - `disableModelInvocation` 过滤**: 在 `getSystemPromptSnippet()` 中过滤掉 `disableModelInvocation=true` 的 skills
+  4. **P2 - UI 渲染**: 添加 Skill 块的专门渲染组件（可折叠显示）
+  5. **P2 - `parseSkillBlock()`**: 实现解析用户消息中的 skill 块，用于 UI 渲染
 
 ---
 
