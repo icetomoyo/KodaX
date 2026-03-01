@@ -52,6 +52,8 @@ export interface SkillMetadata {
   argumentHint?: string;
   path: string;
   source: SkillSource;
+  /** If true, exclude from system prompt (only invokable via /skill-name) */
+  disableModelInvocation: boolean;
 }
 
 // === Full Skill Definition ===

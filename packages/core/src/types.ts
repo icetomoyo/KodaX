@@ -74,6 +74,8 @@ export interface KodaXContextOptions {
     featuresFile?: string;
     progressFile?: string;
   };
+  /** Skills system prompt snippet for progressive disclosure - Skills 系统提示词片段（渐进式披露） */
+  skillsPrompt?: string;
 }
 
 // Import KodaXMessage for KodaXSessionOptions

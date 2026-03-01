@@ -4,11 +4,109 @@ _创建时间: 2026-02-28_
 _更新时间: 2026-03-01_
 _Feature: Skills 系统_
 _状态: ReadyForTesting_
-_最近修复: Issue 054 (P0 - LLM 上下文注入)_
+_最近修复: Issue 054 (P0 - LLM 上下文注入), Issue 056 (P1 - 渐进式披露)_
 
 ---
 
-## 0. Issue 054 修复验证 (P0 - LLM 上下文注入)
+## 0. Issue 056 修复验证 (P1 - 渐进式披露)
+
+> **重要**: 这部分测试用例用于验证 Issue 056 的修复。
+> **核心问题**: `getSystemPromptSnippet()` 方法存在但未被调用，AI 不知道有哪些 skills 可用。
+> **修复内容**:
+> 1. 在 `runAgentRound` 中调用 `getSystemPromptSnippet()`
+> 2. 将 skills 列表注入系统提示词
+> 3. 实现 `disableModelInvocation` 过滤
+
+### TC-000c: 自然语言触发 Skill 验证 (渐进式披露核心)
+
+**目的**: 验证 AI 能够通过系统提示词发现并主动使用可用 skills
+
+**前置条件**:
+- 已配置有效的 AI Provider (Anthropic/OpenAI)
+- 网络连接正常
+- 至少有一个内置 skill 可用 (code-review, tdd, git-workflow)
+
+**步骤**:
+1. 启动 KodaX REPL
+2. 输入自然语言请求，**不要**使用 `/skill-name` 格式:
+   - "请帮我审查一下 packages/core/src/agent.ts 的代码"
+   - 或 "我想用 TDD 的方式为 packages/repl/src/commands.ts 写测试"
+3. 观察 AI 响应
+
+**预期结果**:
+- [ ] AI 识别到这是一个代码审查任务
+- [ ] AI 提到它可以使用 `code-review` skill (或 `tdd` skill)
+- [ ] AI 自行读取 skill 文件并按照 skill 指导执行
+- [ ] AI 响应符合 skill 定义的工作流程
+
+**验证原理**:
+> 渐进式披露机制的工作方式:
+> 1. 系统提示词包含 skill 列表 (name, description, location)
+> 2. AI 根据用户描述匹配 skill 的 description
+> 3. AI 使用 Read 工具读取完整 SKILL.md 文件
+> 4. AI 按照 skill 内容执行任务
+>
+> 注：AI 不一定会每次都触发，但应该能识别并建议使用 skill
+
+**状态**: [ ] Pass [ ] Fail [ ] Partial
+
+---
+
+### TC-000d: disableModelInvocation 过滤验证
+
+**目的**: 验证 `disableModelInvocation: true` 的 skill 不会出现在系统提示词中
+
+**步骤**:
+1. 创建一个测试 skill:
+```bash
+mkdir -p .claude/skills/internal-tool
+```
+
+2. 创建 `.claude/skills/internal-tool/SKILL.md`:
+```markdown
+---
+name: internal-tool
+description: 内部工具，不应被 AI 主动使用
+user-invocable: true
+disable-model-invocation: true
+---
+
+# Internal Tool
+
+这是一个只能通过显式命令调用的工具。
+```
+
+3. 重启 REPL 或执行 `/skills reload`
+4. 输入自然语言: "我需要使用内部工具来处理一些事情"
+5. 观察 AI 响应
+
+**预期结果**:
+- [ ] AI **不会**自动发现并使用 `internal-tool` skill
+- [ ] AI 可能会询问用户想使用什么工具
+- [ ] 仍然可以通过 `/internal-tool` 显式调用
+
+**状态**: [ ] Pass [ ] Fail
+
+---
+
+### TC-000e: /skill-name 显式调用仍然工作
+
+**目的**: 验证渐进式披露不影响显式 skill 调用
+
+**步骤**:
+1. 输入 `/code-review packages/core/src/types.ts`
+2. 观察 AI 响应
+
+**预期结果**:
+- [ ] Skill 正常激活
+- [ ] AI 按照 skill 内容执行
+- [ ] 与 Issue 054 修复后的行为一致
+
+**状态**: [ ] Pass [ ] Fail
+
+---
+
+## 0.1 Issue 054 修复验证 (P0 - LLM 上下文注入)
 
 > **重要**: 这部分测试用例用于验证 Issue 054 的修复。
 > 修复前：skill 只打印预览，不注入 LLM
@@ -402,6 +500,24 @@ Missing description.
 
 ## 3. 测试总结
 
+### Issue 056 渐进式披露测试
+
+| 测试用例 | 状态 | 备注 |
+|----------|------|------|
+| TC-000c | [ ] | 自然语言触发 Skill (核心) |
+| TC-000d | [ ] | disableModelInvocation 过滤 |
+| TC-000e | [ ] | 显式调用仍然工作 |
+
+### Issue 054 LLM 上下文注入测试
+
+| 测试用例 | 状态 | 备注 |
+|----------|------|------|
+| TC-000 | [ ] | Skill 内容注入 LLM |
+| TC-000a | [ ] | Skill XML 格式 |
+| TC-000b | [ ] | 参数替换 |
+
+### 基本功能测试
+
 | 测试用例 | 状态 | 备注 |
 |----------|------|------|
 | TC-001 | [ ] | /skills 帮助 |
@@ -424,9 +540,25 @@ Missing description.
 
 ## 4. 测试完成标准
 
-- [ ] 所有 15 个测试用例通过
+### P0 - 必须通过 (阻塞发布)
+- [ ] TC-000: Skill 内容注入 LLM
+- [ ] TC-000a: Skill XML 格式
+- [ ] TC-000c: 自然语言触发 Skill (渐进式披露核心)
+
+### P1 - 应该通过
+- [ ] TC-000b: 参数替换
+- [ ] TC-000d: disableModelInvocation 过滤
+- [ ] TC-000e: 显式调用仍然工作
+
+### P2 - 基本功能验证
+- [ ] TC-001 ~ TC-015: 基本功能测试通过
 - [ ] 无阻塞问题
 - [ ] 至少完成 3 个内置技能验证
+
+### 总体标准
+- [ ] 所有 P0 测试用例通过
+- [ ] 至少 80% P1 测试用例通过
+- [ ] 无严重 Bug
 
 ---
 

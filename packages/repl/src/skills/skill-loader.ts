@@ -248,6 +248,7 @@ export async function loadSkillMetadata(
       argumentHint: frontmatter.argumentHint,
       path: skillDir,
       source,
+      disableModelInvocation: frontmatter.disableModelInvocation ?? false,
     };
   } catch (error) {
     console.error(`Failed to load skill metadata from ${skillDir}:`, error);

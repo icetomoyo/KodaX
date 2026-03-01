@@ -64,7 +64,7 @@ _Last Updated: 2026-03-01 15:30_
 | 053 | High | Won't Fix | /help 命令输出重复渲染 | v0.4.7 | - | 2026-02-28 | 2026-03-01 |
 | 054 | Critical | Open | Agent Skills 系统未与 LLM 集成 | v0.4.7 | - | 2026-03-01 | - |
 | 055 | Low | Open | Built-in Skills 未完全符合 Agent Skills 规范 | v0.4.7 | - | 2026-03-01 | - |
-| 056 | Medium | Open | Skills 系统缺少渐进式披露机制 | v0.4.8 | - | 2026-03-01 | - |
+| 056 | Medium | Resolved | Skills 系统缺少渐进式披露机制 | v0.4.8 | v0.4.8 | 2026-03-01 | 2026-03-01 |
 
 ---
 
@@ -2651,11 +2651,11 @@ _Last Updated: 2026-03-01 15:30_
 
 ---
 
-### 056: Skills 系统缺少渐进式披露机制 (OPEN)
+### 056: Skills 系统缺少渐进式披露机制 (RESOLVED)
 - **Priority**: Medium
-- **Status**: Open
+- **Status**: Resolved
 - **Introduced**: v0.4.8
-- **Fixed**: -
+- **Fixed**: v0.4.8
 - **Created**: 2026-03-01
 - **Original Problem**:
   KodaX 的 Skills 系统虽然已实现基本的 `/skill-name` 命令注入（Issue 054 P0），但缺少 pi-mono 和 Agent Skills 规范中的**渐进式披露**机制，导致 AI 无法主动发现和触发 skills。
@@ -2794,6 +2794,25 @@ _Last Updated: 2026-03-01 15:30_
   3. **P1 - `disableModelInvocation` 过滤**: 在 `getSystemPromptSnippet()` 中过滤掉 `disableModelInvocation=true` 的 skills
   4. **P2 - UI 渲染**: 添加 Skill 块的专门渲染组件（可折叠显示）
   5. **P2 - `parseSkillBlock()`**: 实现解析用户消息中的 skill 块，用于 UI 渲染
+
+- **Resolution** (2026-03-01):
+  已实现核心的渐进式披露机制：
+
+  ### 已修复
+  1. **系统提示词注入** ✅
+     - `packages/core/src/types.ts`: 添加 `skillsPrompt` 字段到 `KodaXContextOptions`
+     - `packages/core/src/prompts/builder.ts`: 在系统提示词构建时追加 `skillsPrompt`
+     - `packages/repl/src/ui/InkREPL.tsx`: 在 `runAgentRound` 中调用 `getSystemPromptSnippet()` 并传递给 agent
+
+  2. **`disableModelInvocation` 过滤** ✅
+     - `packages/repl/src/skills/types.ts`: 添加 `disableModelInvocation` 到 `SkillMetadata`
+     - `packages/repl/src/skills/skill-loader.ts`: 加载 `disableModelInvocation` 元数据
+     - `packages/repl/src/skills/skill-registry.ts`: 在 `getSystemPromptSnippet()` 中过滤掉 `disableModelInvocation=true` 的 skills
+
+  ### 未实现 (P2，后续处理)
+  - XML 格式化（当前使用 markdown 列表格式，功能等价）
+  - Skill 块 UI 渲染组件
+  - `parseSkillBlock()` 解析
 
 ---
 

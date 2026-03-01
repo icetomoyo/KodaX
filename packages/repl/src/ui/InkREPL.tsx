@@ -61,6 +61,7 @@ import { getProviderModel } from "../common/utils.js";
 import { KODAX_VERSION } from "../common/utils.js";
 import { runWithPlanMode } from "../common/plan-mode.js";
 import { saveAlwaysAllowToolPattern, loadAlwaysAllowTools, savePermissionModeUser } from "../common/permission-config.js";
+import { getSkillRegistry } from "../skills/skill-registry.js";
 import { getTheme } from "./themes/index.js";
 import chalk from "chalk";
 
@@ -450,12 +451,22 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     prompt: string
   ): Promise<KodaXResult> => {
     const events = createStreamingEvents();
+
+    // Get skills system prompt snippet for progressive disclosure (Issue 056)
+    // 获取 skills 系统提示词片段用于渐进式披露
+    const skillRegistry = getSkillRegistry();
+    const skillsPrompt = skillRegistry.getSystemPromptSnippet();
+
     return runKodaX(
       {
         ...opts,
         session: {
           ...opts.session,
           initialMessages: context.messages,
+        },
+        context: {
+          ...opts.context,
+          skillsPrompt, // Inject skills into system prompt
         },
         events,
         abortSignal: getSignal(),

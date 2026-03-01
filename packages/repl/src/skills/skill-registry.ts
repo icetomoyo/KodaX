@@ -146,11 +146,13 @@ export class SkillRegistry implements ISkillRegistry {
 
   /**
    * Get skills formatted for system prompt injection
+   * Filters out skills with disableModelInvocation=true (Issue 056)
    */
   getSystemPromptSnippet(): string {
-    const skills = this.list();
+    // Filter out skills that disable model invocation
+    const visibleSkills = this.list().filter(s => !s.disableModelInvocation);
 
-    if (skills.length === 0) {
+    if (visibleSkills.length === 0) {
       return '';
     }
 
@@ -161,7 +163,7 @@ export class SkillRegistry implements ISkillRegistry {
       '',
     ];
 
-    for (const skill of skills) {
+    for (const skill of visibleSkills) {
       const hint = skill.argumentHint ? ` ${skill.argumentHint}` : '';
       lines.push(`- \`/${skill.name}${hint}\` - ${skill.description}`);
     }

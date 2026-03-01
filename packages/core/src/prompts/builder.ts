@@ -47,6 +47,12 @@ export async function buildSystemPrompt(options: KodaXOptions, isNewSession: boo
     prompt += LONG_RUNNING_PROMPT;
   }
 
+  // Append skills prompt for progressive disclosure (Issue 056)
+  // 追加 skills 系统提示词用于渐进式披露
+  if (options.context?.skillsPrompt) {
+    prompt += '\n\n' + options.context.skillsPrompt;
+  }
+
   return prompt;
 }
 
