@@ -49,11 +49,11 @@ npm run dev
 ```
 
 **预期结果**:
-- [ ] 构建成功，无错误
-- [ ] REPL 启动，显示欢迎信息
-- [ ] 显示提示符等待输入
+- [x] 构建成功，无错误
+- [x] REPL 启动，显示欢迎信息
+- [x] 显示提示符等待输入
 
-**状态**: [ ] Pass [ ] Fail
+**状态**: [x] Pass [ ] Fail
 
 ---
 
@@ -76,18 +76,18 @@ Available Skills:
 Usage: /skill:<name> [args] or ask naturally
 ```
 
-- [ ] 显示 "Available Skills" 标题
-- [ ] 列出 3 个内置技能，格式为 `/skill:name`
-- [ ] 每个技能显示名称、参数提示和描述
-- [ ] 底部显示使用提示
+- [x] 显示 "Available Skills" 标题
+- [x] 列出 3 个内置技能，格式为 `/skill:name`
+- [x] 每个技能显示名称、参数提示和描述
+- [x] 底部显示使用提示
 
-**状态**: [ ] Pass [ ] Fail
+**状态**: [x] Pass [ ] Fail
 
 ---
 
 ### Step 1.2: TC-002 - 旧命令废弃提示
 
-**目的**: 验证 `/skills` 命令显示废弃提示并重定向
+**目的**: 验证 `/skills` 命令显示废弃提示并重定向（向后兼容）
 
 **步骤**:
 1. 输入 `/skills`
@@ -95,6 +95,7 @@ Usage: /skill:<name> [args] or ask naturally
 **预期结果**:
 - [ ] 显示废弃提示: "[/skills is deprecated. Use /skill instead]"
 - [ ] 随后显示 skill 列表（与 `/skill` 相同）
+- [ ] 废弃命令不显示在 `/help` 输出中
 
 **状态**: [ ] Pass [ ] Fail
 
@@ -354,14 +355,15 @@ user-invocable: true
 
 ### Step 4.3: TC-012 - 帮助命令显示技能
 
-**目的**: 验证 `/help` 包含技能信息
+**目的**: 验证 `/help` 包含技能信息，且不显示废弃命令
 
 **步骤**:
 1. 输入 `/help`
 
 **预期结果**:
 - [ ] 帮助输出包含 "Skills" 类别
-- [ ] 显示 `/skill` 和 `/skill:<name>` 命令说明
+- [ ] 只显示 `/skill` 命令（不显示废弃的 `/skills`）
+- [ ] 底部 "Skills:" 部分显示 `/skill` 和 `/skill:<name>` 说明
 
 **状态**: [ ] Pass [ ] Fail
 
