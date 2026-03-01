@@ -61,7 +61,7 @@ import { getProviderModel } from "../common/utils.js";
 import { KODAX_VERSION } from "../common/utils.js";
 import { runWithPlanMode } from "../common/plan-mode.js";
 import { saveAlwaysAllowToolPattern, loadAlwaysAllowTools, savePermissionModeUser } from "../common/permission-config.js";
-import { initializeSkillRegistry } from "../skills/skill-registry.js";
+import { initializeSkillRegistry, getSkillRegistry } from "../skills/skill-registry.js";
 import { getTheme } from "./themes/index.js";
 import chalk from "chalk";
 
