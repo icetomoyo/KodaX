@@ -550,32 +550,46 @@ export const BUILTIN_COMMANDS: Command[] = [
   },
   {
     name: 'skills',
-    description: 'List and manage available skills',
-    usage: '/skills [reload|info <name>]',
+    description: '(Deprecated) Use /skill instead',
+    usage: '/skill',
     handler: async (args, context) => {
-      await handleSkillsCommand(args, context);
+      // Redirect to /skill namespace command - 重定向到 /skill 命名空间命令
+      console.log(chalk.dim('\n[/skills is deprecated. Use /skill instead]'));
+      await handleSkillNamespaceCommand(args, context);
     },
     detailedHelp: () => {
-      console.log(chalk.cyan('\n/skills - Manage Skills\n'));
+      console.log(chalk.cyan('\n/skills - Deprecated\n'));
+      console.log(chalk.yellow('This command is deprecated. Use /skill instead.'));
+      console.log();
+      console.log(chalk.dim('  /skill           ') + 'List all available skills');
+      console.log(chalk.dim('  /skill:<name>    ') + 'Invoke a skill');
+      console.log();
+    },
+  },
+  {
+    name: 'skill',
+    description: 'Skill namespace - invoke skills with /skill:name',
+    usage: '/skill[:name] [args]',
+    handler: async (args, context, callbacks, currentConfig) => {
+      // This handler is called when /skill is typed without :name
+      // When /skill:name is used, parseCommand extracts the name and executeCommand
+      // calls executeSkillCommand directly
+      await handleSkillNamespaceCommand(args, context);
+    },
+    detailedHelp: () => {
+      console.log(chalk.cyan('\n/skill - Skill Namespace\n'));
       console.log(chalk.bold('Usage:'));
-      console.log(chalk.dim('  /skills             ') + 'List all available skills');
-      console.log(chalk.dim('  /skills reload      ') + 'Reload skills from disk');
-      console.log(chalk.dim('  /skills info <name> ') + 'Show skill details');
+      console.log(chalk.dim('  /skill               ') + 'List all available skills');
+      console.log(chalk.dim('  /skill:<name> [args] ') + 'Invoke a skill by name');
       console.log();
       console.log(chalk.bold('Description:'));
-      console.log(chalk.dim('  Skills are reusable prompt modules that provide specialized'));
-      console.log(chalk.dim('  capabilities. You can invoke them by typing /skill-name or'));
-      console.log(chalk.dim('  asking naturally - the agent will auto-detect and use them.'));
-      console.log();
-      console.log(chalk.bold('Built-in Skills:'));
-      console.log(chalk.dim('  code-review   ') + 'Code quality and security review');
-      console.log(chalk.dim('  git-workflow  ') + 'Git commit, branch, PR management');
-      console.log(chalk.dim('  tdd           ') + 'Test-driven development workflow');
+      console.log(chalk.dim('  This is the pi-mono style skill invocation format.'));
+      console.log(chalk.dim('  Skills can also be triggered by natural language - just ask!'));
       console.log();
       console.log(chalk.bold('Examples:'));
-      console.log(chalk.dim('  /skills                ') + '# List all skills');
-      console.log(chalk.dim('  /code-review src/      ') + '# Invoke code-review skill');
-      console.log(chalk.dim('  /skills info tdd       ') + '# Show TDD skill details');
+      console.log(chalk.dim('  /skill                    ') + '# List all skills');
+      console.log(chalk.dim('  /skill:code-review src/   ') + '# Invoke code-review skill');
+      console.log(chalk.dim('  /skill:tdd auth           ') + '# Invoke TDD skill');
       console.log();
     },
   },
@@ -592,7 +606,7 @@ function printHelp(): void {
     'Session': BUILTIN_COMMANDS.filter(c => ['save', 'load', 'sessions', 'history', 'delete'].includes(c.name)),
     'Settings': BUILTIN_COMMANDS.filter(c => ['model', 'thinking', 'plan'].includes(c.name)),
     'Project': BUILTIN_COMMANDS.filter(c => ['project'].includes(c.name)),
-    'Skills': BUILTIN_COMMANDS.filter(c => ['skills'].includes(c.name)),
+    'Skills': BUILTIN_COMMANDS.filter(c => ['skill', 'skills'].includes(c.name)),
   };
 
   for (const [category, commands] of Object.entries(categories)) {
@@ -614,8 +628,8 @@ function printHelp(): void {
   console.log(`  ${chalk.cyan('!command')}         Execute shell command`);
   console.log();
   console.log(chalk.dim('Skills:'));
-  console.log(`  ${chalk.cyan('/<skill-name>')}    Invoke a skill (e.g., /code-review)`);
-  console.log(`  ${chalk.cyan('/skills')}          List all available skills`);
+  console.log(`  ${chalk.cyan('/skill')}            List all available skills`);
+  console.log(`  ${chalk.cyan('/skill:<name>')}     Invoke a skill (e.g., /skill:code-review)`);
   console.log();
 }
 
@@ -665,8 +679,8 @@ function printStatus(context: InteractiveContext, currentConfig: CurrentConfig):
   console.log();
 }
 
-// Handle /skills command - 处理 /skills 命令
-async function handleSkillsCommand(args: string[], context: InteractiveContext): Promise<void> {
+// Handle /skill namespace command (pi-mono style) - 处理 /skill 命名空间命令
+async function handleSkillNamespaceCommand(args: string[], context: InteractiveContext): Promise<void> {
   const registry = getSkillRegistry(context.gitRoot);
 
   // Ensure skills are discovered - 确保已发现技能
@@ -674,36 +688,12 @@ async function handleSkillsCommand(args: string[], context: InteractiveContext):
     await initializeSkillRegistry(context.gitRoot);
   }
 
-  const subCommand = args[0]?.toLowerCase();
-
-  switch (subCommand) {
-    case 'reload':
-      await registry.reload();
-      console.log(chalk.green(`\n[Skills reloaded. Found ${registry.size} skills]`));
-      break;
-
-    case 'info': {
-      const skillName = args[1];
-      if (!skillName) {
-        console.log(chalk.red('\n[Usage: /skills info <skill-name>]'));
-        return;
-      }
-      const skill = registry.get(skillName);
-      if (!skill) {
-        console.log(chalk.red(`\n[Skill not found: ${skillName}]`));
-        return;
-      }
-      printSkillInfo(skill);
-      break;
-    }
-
-    default:
-      printSkillsList(registry.list());
-  }
+  // /skill without :name shows the list - /skill 不带 :name 显示列表
+  printSkillsListPiMonoStyle(registry.list());
 }
 
-// Print skills list - 打印技能列表
-function printSkillsList(skills: SkillMetadata[]): void {
+// Print skills list in pi-mono style - 以 pi-mono 风格打印技能列表
+function printSkillsListPiMonoStyle(skills: SkillMetadata[]): void {
   console.log(chalk.bold('\nAvailable Skills:\n'));
 
   if (skills.length === 0) {
@@ -727,30 +717,16 @@ function printSkillsList(skills: SkillMetadata[]): void {
       : skill.source === 'enterprise' ? ' [enterprise]'
       : skill.source === 'plugin' ? ' [plugin]'
       : '';
-    // Single line: /skill-name  description
+    // pi-mono style: /skill:name
     const desc = skill.description.length > 50
       ? skill.description.slice(0, 50) + '...'
       : skill.description;
-    console.log(`  ${chalk.cyan(`/${paddedName}`)}${chalk.dim(hint)}${chalk.dim(sourceLabel)}  ${chalk.dim(desc)}`);
+    console.log(`  ${chalk.cyan(`/skill:${paddedName}`)}${chalk.dim(hint)}${chalk.dim(sourceLabel)}  ${chalk.dim(desc)}`);
   }
 
   console.log();
   console.log(chalk.dim(`Total: ${skills.length} skills`));
-  console.log(chalk.dim('Usage: /<skill-name> [args] or ask naturally'));
-  console.log();
-}
-
-// Print skill info - 打印技能详情
-async function printSkillInfo(skill: SkillMetadata): Promise<void> {
-  console.log(chalk.bold(`\nSkill: ${chalk.cyan(skill.name)}\n`));
-  console.log(chalk.dim(`Source: ${skill.source}`));
-  console.log(chalk.dim(`Path: ${skill.path}`));
-  if (skill.argumentHint) {
-    console.log(chalk.dim(`Arguments: ${skill.argumentHint}`));
-  }
-  console.log();
-  console.log(chalk.bold('Description:'));
-  console.log(chalk.dim(skill.description));
+  console.log(chalk.dim('Usage: /skill:<name> [args] or ask naturally'));
   console.log();
 }
 
@@ -770,7 +746,7 @@ function initCommandRegistry(): void {
 }
 
 // Parse command - 解析命令
-export function parseCommand(input: string): { command: string; args: string[] } | null {
+export function parseCommand(input: string): { command: string; args: string[]; skillInvocation?: { name: string } } | null {
   const trimmed = input.trim();
   if (!trimmed.startsWith('/')) return null;
 
@@ -778,14 +754,26 @@ export function parseCommand(input: string): { command: string; args: string[] }
   const command = parts[0]?.toLowerCase();
   const args = parts.slice(1).filter(Boolean);
 
-  return command ? { command, args } : null;
+  if (!command) return null;
+
+  // Check for /skill:name format (pi-mono style) - 检查 /skill:name 格式
+  if (command.startsWith('skill:')) {
+    const skillName = command.slice(6); // Remove 'skill:' prefix
+    if (skillName) {
+      return { command: 'skill', args, skillInvocation: { name: skillName } };
+    }
+    // /skill: with no name - treat as /skill
+    return { command: 'skill', args };
+  }
+
+  return { command, args };
 }
 
 // Execute command - 执行命令
 export type CommandResult = boolean | { skillContent: string };
 
 export async function executeCommand(
-  parsed: { command: string; args: string[] },
+  parsed: { command: string; args: string[]; skillInvocation?: { name: string } },
   context: InteractiveContext,
   callbacks: CommandCallbacks,
   currentConfig: CurrentConfig
@@ -795,16 +783,18 @@ export async function executeCommand(
     initCommandRegistry();
   }
 
+  // Handle /skill:name format (pi-mono style) - 处理 /skill:name 格式
+  if (parsed.skillInvocation) {
+    return await executeSkillCommand(
+      { command: parsed.skillInvocation.name, args: parsed.args },
+      context
+    );
+  }
+
   const cmd = commandRegistry.get(parsed.command);
   if (cmd) {
     await cmd.handler(parsed.args, context, callbacks, currentConfig);
     return true;
-  }
-
-  // Check if it's a skill invocation - 检查是否是技能调用
-  const registry = getSkillRegistry(context.gitRoot);
-  if (registry.has(parsed.command)) {
-    return await executeSkillCommand(parsed, context);
   }
 
   console.log(chalk.yellow(`\n[Unknown command: /${parsed.command}. Type /help for available commands]`));

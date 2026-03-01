@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-03-01 15:30_
+_Last Updated: 2026-03-01 17:30_
 
 ---
 
@@ -65,6 +65,7 @@ _Last Updated: 2026-03-01 15:30_
 | 054 | Critical | Open | Agent Skills 系统未与 LLM 集成 | v0.4.7 | - | 2026-03-01 | - |
 | 055 | Low | Open | Built-in Skills 未完全符合 Agent Skills 规范 | v0.4.7 | - | 2026-03-01 | - |
 | 056 | Medium | Resolved | Skills 系统缺少渐进式披露机制 | v0.4.8 | v0.4.8 | 2026-03-01 | 2026-03-01 |
+| 057 | Medium | Resolved | Skill 命令格式不符合 pi-mono 设计规范 | v0.4.8 | v0.4.9 | 2026-03-01 | 2026-03-01 |
 
 ---
 
@@ -2813,6 +2814,230 @@ _Last Updated: 2026-03-01 15:30_
   - XML 格式化（当前使用 markdown 列表格式，功能等价）
   - Skill 块 UI 渲染组件
   - `parseSkillBlock()` 解析
+
+---
+
+### 057: Skill 命令格式不符合 pi-mono 设计规范 (RESOLVED)
+- **Priority**: Medium
+- **Status**: Resolved
+- **Introduced**: v0.4.8
+- **Fixed**: v0.4.9
+- **Created**: 2026-03-01
+- **Resolution Date**: 2026-03-01
+- **Original Problem**:
+  KodaX 的 Skill 命令设计沿用了传统 CLI 模式，不符合 pi-mono 的 **AI-first 极简设计**哲学。
+
+  **当前 KodaX 设计**:
+  ```
+  /skills           → 显示 skill 列表
+  /skills list      → 显示 skill 列表 (重复)
+  /skills info <name> → 显示 skill 详情
+  /skills reload    → 重新加载 skills
+  /code-review      → 调用 skill
+  ```
+
+  **pi-mono 设计**:
+  ```
+  /skill            → 显示 skill 帮助/列表
+  /skill:name       → 调用 skill (命名空间格式)
+  自然语言           → "有哪些 skill？" / "code-review 是什么？"
+  ```
+
+- **Design Analysis**:
+
+  ### 1. 命令格式对比
+
+  | 功能 | KodaX (当前) | pi-mono | 问题 |
+  |------|-------------|---------|------|
+  | 列出 skills | `/skills`, `/skills list` | 自然语言或 `/skill` | 冗余命令 |
+  | 查看详情 | `/skills info <name>` | 自然语言询问 AI | CLI 思维惯性 |
+  | 调用 skill | `/skill-name` | `/skill:name` | 无命名空间分离 |
+  | 重载 | `/skills reload` | 不需要 (按需读取) | 缓存设计问题 |
+
+  ### 2. Tab Completion 体验
+
+  **KodaX `/skill-name` 格式**:
+  ```
+  /          [Tab]
+  → /help
+  → /clear
+  → /model
+  → /code-review    ← 命令和 skill 混在一起
+  → /tdd
+  → /git-workflow
+  ```
+
+  **pi-mono `/skill:name` 格式**:
+  ```
+  /          [Tab]
+  → /help
+  → /clear
+  → /model
+  → /skill:         ← 命名空间入口
+
+  /skill:    [Tab]
+  → /skill:code-review
+  → /skill:tdd
+  → /skill:git-workflow
+  ```
+
+  **pi-mono 优势**:
+  - 清晰的命名空间分离
+  - 命令 vs Skill 一目了然
+  - 更好的 tab 补全体验
+  - 可扩展 (未来可有 `/agent:name`, `/tool:name`)
+
+  ### 3. AI-first 设计哲学
+
+  **KodaX 当前问题**:
+  - `/skills info <name>` 是 CLI 思维 - 用户需要记忆命令语法
+  - `/skills reload` 存在是因为缓存设计，不是用户需要
+
+  **pi-mono 方式**:
+  ```
+  用户: code-review skill 是做什么的？
+  AI:  [Read SKILL.md] → 回答
+  ```
+  - 无需记忆命令
+  - AI 实时读取最新内容
+  - 按需读取，无需 reload
+
+- **Reference Implementation (pi-mono)**:
+  源码位于 `C:\Works\GitWorks\pi-mono`
+
+  **pi-mono Command 结构**:
+  ```typescript
+  // 内置命令 (系统功能)
+  /help      - 帮助
+  /clear     - 清屏
+  /model     - 切换模型
+  /compact   - 压缩上下文
+  /exit      - 退出
+
+  // Skill 调用 (用户扩展)
+  /skill:name [args...]
+
+  // 自然语言
+  其他所有输入 → AI 处理
+  ```
+
+- **Implementation Plan**:
+
+  ### Phase 1: 添加 `/skill:` 命名空间格式 (Non-breaking)
+
+  **目标**: 新增 `/skill:` 格式，保留旧格式兼容
+
+  **改动文件**:
+  1. `packages/repl/src/interactive/commands.ts`
+     - 添加 `/skill` 命令入口 (显示帮助)
+     - 添加 `/skill:name` 格式解析
+     - 保持 `/skill-name` 格式兼容
+
+  2. `packages/repl/src/ui/InkREPL.tsx`
+     - 更新 tab 补全逻辑支持 `/skill:` 前缀
+
+  **代码示例**:
+  ```typescript
+  // 新增 /skill 命令
+  registerCommand({
+    name: 'skill',
+    description: 'Skill namespace - use /skill:name to invoke',
+    handler: (args) => {
+      if (!args) {
+        // /skill -> 显示 skill 列表
+        return showSkillList();
+      }
+      // /skill:name -> 调用 skill
+      return invokeSkill(args);
+    }
+  });
+  ```
+
+  ### Phase 2: 移除冗余命令 (Breaking Change)
+
+  **目标**: 移除 CLI 风格命令，改用 AI-first 方式
+
+  **移除**:
+  - `/skills list` → 用自然语言替代
+  - `/skills info <name>` → 用自然语言替代
+  - `/skills reload` → 改为按需读取设计
+
+  **保留**:
+  - `/skills` 或 `/skill` 作为快速查看快捷方式 (可选)
+
+  ### Phase 3: 按需读取重构
+
+  **目标**: 移除缓存，AI 每次调用时读取最新 SKILL.md
+
+  **改动文件**:
+  1. `packages/repl/src/skills/skill-registry.ts`
+     - 移除 skill 内容缓存
+     - `loadFullSkill()` 每次从文件读取
+
+  **注意**: 需要评估性能影响
+
+- **Risk Analysis**:
+
+  | 风险 | 影响 | 缓解措施 |
+  |------|------|---------|
+  | Breaking Change | 用户习惯改变 | Phase 1 保持兼容，渐进迁移 |
+  | Tab 补全冲突 | 补全逻辑复杂化 | 优先显示 `/skill:` 格式 |
+  | 性能下降 (按需读取) | 每次调用读文件 | SSD 下影响可忽略，可加 LRU 缓存 |
+  | 文档需要更新 | 用户困惑 | 更新 README 和帮助文档 |
+
+- **Migration Strategy**:
+
+  1. **v0.4.9**: Phase 1 - 添加新格式，保持兼容
+     - 用户可以开始使用 `/skill:name` 格式
+     - 旧格式 `/skill-name` 仍然工作
+     - 添加 deprecation 警告
+
+  2. **v0.5.0**: Phase 2 - 移除冗余命令
+     - 移除 `/skills info`, `/skills list`
+     - 保留 `/skill` 作为列表快捷方式
+
+  3. **v0.6.0**: Phase 3 - 完全切换到新格式
+     - `/skill-name` 格式标记为 deprecated
+     - 主推 `/skill:name` 格式
+
+- **Context**:
+  - `packages/repl/src/interactive/commands.ts` - 命令注册和处理
+  - `packages/repl/src/ui/InkREPL.tsx` - Tab 补全逻辑
+  - `packages/repl/src/skills/skill-registry.ts` - Skill 加载和缓存
+
+- **Reference**:
+  - pi-mono 源码: `C:\Works\GitWorks\pi-mono\packages\coding-agent\src\modes\interactive\commands.ts`
+  - Agent Skills 规范: https://agentskills.io/
+
+- **Resolution**:
+  按照 pi-mono 设计规范完成所有 3 个阶段的实现:
+
+  **Phase 1**: 添加 `/skill:` 命名空间格式
+  - 新增 `/skill` 命令 (显示 skills 列表)
+  - 新增 `/skill:name` 格式解析和调用
+  - 添加 `printSkillsListPiMonoStyle()` 函数
+
+  **Phase 2**: 移除冗余命令
+  - `/skills` 标记为 deprecated，重定向到 `/skill`
+  - 移除 `/skills info`, `/skills list` 等子命令
+  - 移除 `handleSkillsCommand()`, `printSkillInfo()`, `printSkillsList()` 函数
+
+  **Phase 3**: 移除旧格式
+  - 移除 `/skill-name` 格式支持
+  - 更新系统提示词中的 skill 格式为 `/skill:name`
+  - 更新代码注释
+
+  **最终命令格式**:
+  ```
+  /skill              → 显示所有可用 skills
+  /skill:name [args]  → 调用指定 skill
+  自然语言             → AI 自动发现和使用 skills
+  ```
+
+- **Files Changed**:
+  - `packages/repl/src/interactive/commands.ts` - 命令处理
+  - `packages/repl/src/skills/types.ts` - 注释更新
+  - `packages/repl/src/skills/skill-registry.ts` - 系统提示词格式
 
 ---
 

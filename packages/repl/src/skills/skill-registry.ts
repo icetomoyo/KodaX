@@ -159,13 +159,13 @@ export class SkillRegistry implements ISkillRegistry {
     const lines = [
       '## Available Skills',
       '',
-      'The following skills are available. Use them by typing `/skill-name [args]` or asking naturally:',
+      'The following skills are available. Use them by typing `/skill:name [args]` or asking naturally:',
       '',
     ];
 
     for (const skill of visibleSkills) {
       const hint = skill.argumentHint ? ` ${skill.argumentHint}` : '';
-      lines.push(`- \`/${skill.name}${hint}\` - ${skill.description}`);
+      lines.push(`- \`/skill:${skill.name}${hint}\` - ${skill.description}`);
     }
 
     lines.push('');
