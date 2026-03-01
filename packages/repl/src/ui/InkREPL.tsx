@@ -61,7 +61,7 @@ import { getProviderModel } from "../common/utils.js";
 import { KODAX_VERSION } from "../common/utils.js";
 import { runWithPlanMode } from "../common/plan-mode.js";
 import { saveAlwaysAllowToolPattern, loadAlwaysAllowTools, savePermissionModeUser } from "../common/permission-config.js";
-import { getSkillRegistry } from "../skills/skill-registry.js";
+import { initializeSkillRegistry } from "../skills/skill-registry.js";
 import { getTheme } from "./themes/index.js";
 import chalk from "chalk";
 
@@ -305,7 +305,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   // Preload skills on mount to ensure they're available for first /skill:xxx call
   // Issue 059: Skills lazy loading caused first skill invocation to fail
   useEffect(() => {
-    getSkillRegistry();
+    void initializeSkillRegistry();
   }, []);
 
   // Process special syntax (shell commands, file references)
