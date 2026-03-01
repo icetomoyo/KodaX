@@ -12,9 +12,9 @@
     }
   },
   "scripts": {
-    "build": "tsc && cp -r src/skills/builtin dist/skills/",
+    "build": "tsc && node -e \"require('fs').cpSync('src/skills/builtin','dist/skills/builtin',{recursive:true})\"",
     "dev": "tsc --watch",
-    "clean": "rm -rf dist/",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "test": "vitest run",
     "test:watch": "vitest"
   },

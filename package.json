@@ -26,7 +26,7 @@
     "start": "node dist/kodax_cli.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "clean": "rm -rf dist/",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "clean:packages": "npm run clean --workspaces"
   },
   "keywords": [
