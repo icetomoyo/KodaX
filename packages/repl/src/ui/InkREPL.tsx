@@ -302,6 +302,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Only run on mount
 
+  // Preload skills on mount to ensure they're available for first /skill:xxx call
+  // Issue 059: Skills lazy loading caused first skill invocation to fail
+  useEffect(() => {
+    getSkillRegistry();
+  }, []);
+
   // Process special syntax (shell commands, file references)
   // Create KodaXEvents for streaming updates
   const createStreamingEvents = useCallback((): import("@kodax/core").KodaXEvents => ({

@@ -110,11 +110,11 @@ Usage: /skill:<name> [args] or ask naturally
 2. 观察 AI 响应
 
 **预期结果**:
-- [ ] AI 读取 skill 文件并解释功能
-- [ ] AI 描述 skill 的工作流程
-- [ ] 无需使用 `/skills info` 命令
+- [x] AI 读取 skill 文件并解释功能
+- [x] AI 描述 skill 的工作流程
+- [x] 无需使用 `/skills info` 命令
 
-**状态**: [ ] Pass [ ] Fail [ ] Partial
+**状态**: [x] Pass [ ] Fail [ ] Partial
 
 ---
 
