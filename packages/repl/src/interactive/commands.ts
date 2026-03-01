@@ -606,7 +606,7 @@ function printHelp(): void {
     'Session': BUILTIN_COMMANDS.filter(c => ['save', 'load', 'sessions', 'history', 'delete'].includes(c.name)),
     'Settings': BUILTIN_COMMANDS.filter(c => ['model', 'thinking', 'plan'].includes(c.name)),
     'Project': BUILTIN_COMMANDS.filter(c => ['project'].includes(c.name)),
-    'Skills': BUILTIN_COMMANDS.filter(c => ['skill', 'skills'].includes(c.name)),
+    'Skills': BUILTIN_COMMANDS.filter(c => ['skill'].includes(c.name)),
   };
 
   for (const [category, commands] of Object.entries(categories)) {
