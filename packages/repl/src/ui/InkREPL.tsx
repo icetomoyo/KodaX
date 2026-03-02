@@ -1052,6 +1052,7 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
 
   try {
     // Render Ink app
+    // Issue 058/060: Ink 6.x options to reduce flickering
     const { waitUntilExit } = render(
       <InkREPL
         options={options}
@@ -1067,6 +1068,8 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
         stdin: process.stdin,
         exitOnCtrlC: false,
         patchConsole: true,  // Route console.log through Ink so command output is visible
+        incrementalRendering: true, // Ink 6.5.0+: Only update changed lines
+        maxFps: 15,                  // Ink 6.3.0+: Limit frame rate to reduce flickering
       }
     );
 
