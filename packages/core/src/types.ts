@@ -1,13 +1,29 @@
 /**
  * KodaX Core Types
  *
- * 核心类型定义 - 所有模块共享的类型接口
+ * 核心类型定义 - 重新导出 @kodax/agent 类型 + Coding 特定类型
  */
 
-// ============== Re-export AI Types from @kodax/ai ==============
-// These are re-exported for backward compatibility
-// New code should import directly from @kodax/ai
+// ============== Import from @kodax/agent ==============
+// 通用 Agent 类型从 @kodax/agent 导入
 
+import type {
+  KodaXTextBlock,
+  KodaXToolUseBlock,
+  KodaXToolResultBlock,
+  KodaXThinkingBlock,
+  KodaXRedactedThinkingBlock,
+  KodaXContentBlock,
+  KodaXMessage,
+  KodaXStreamResult,
+  KodaXToolDefinition,
+  KodaXProviderConfig,
+  KodaXProviderStreamOptions,
+  KodaXSessionMeta,
+  KodaXSessionStorage,
+} from '@kodax/agent';
+
+// Re-export all types from @kodax/agent
 export type {
   KodaXTextBlock,
   KodaXToolUseBlock,
@@ -20,17 +36,9 @@ export type {
   KodaXToolDefinition,
   KodaXProviderConfig,
   KodaXProviderStreamOptions,
-} from '@kodax/ai';
-
-// ============== 会话元数据 ==============
-
-export interface KodaXSessionMeta {
-  _type: 'meta';
-  title: string;
-  id: string;
-  gitRoot: string;
-  createdAt: string;
-}
+  KodaXSessionMeta,
+  KodaXSessionStorage,
+};
 
 // ============== 事件接口 ==============
 
@@ -78,9 +86,6 @@ export interface KodaXContextOptions {
   skillsPrompt?: string;
 }
 
-// Import KodaXMessage for KodaXSessionOptions
-import type { KodaXMessage } from '@kodax/ai';
-
 export interface KodaXOptions {
   provider: string;
   thinking?: boolean;
@@ -104,16 +109,6 @@ export interface KodaXResult {
   sessionId: string;
   /** 是否被用户中断 (Ctrl+C) */
   interrupted?: boolean;
-}
-
-// ============== 会话存储接口 ==============
-
-export interface KodaXSessionStorage {
-  save(id: string, data: { messages: KodaXMessage[]; title: string; gitRoot: string }): Promise<void>;
-  load(id: string): Promise<{ messages: KodaXMessage[]; title: string; gitRoot: string } | null>;
-  list?(gitRoot?: string): Promise<Array<{ id: string; title: string; msgCount: number }>>;
-  delete?(id: string): Promise<void>;
-  deleteAll?(gitRoot?: string): Promise<void>;
 }
 
 // ============== 工具执行上下文 ==============

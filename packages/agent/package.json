@@ -1,7 +1,7 @@
 {
-  "name": "@kodax/core",
+  "name": "@kodax/agent",
   "version": "0.5.2",
-  "description": "KodaX Core - 环境无关的 AI Agent 引擎",
+  "description": "KodaX Agent - 通用 Agent 框架，会话管理和消息处理",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -19,16 +19,12 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@kodax/ai": "*",
-    "@kodax/agent": "*"
+    "@kodax/ai": "*"
   },
   "devDependencies": {
     "@types/node": "^22.13.4",
     "typescript": "^5.7.3",
     "vitest": "^3.2.4"
-  },
-  "peerDependencies": {
-    "@kodax/ai": ">=0.4.6"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -36,7 +32,7 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/icetomoyo/KodaX.git",
-    "directory": "packages/core"
+    "directory": "packages/agent"
   },
   "license": "MIT"
 }

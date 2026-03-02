@@ -1,31 +1,22 @@
 /**
  * KodaX Messages
  *
- * 消息处理 - 消息压缩和历史管理
+ * 消息处理 - 重新导出 @kodax/agent 消息功能 + Coding 特定功能
  */
 
-import { KodaXMessage, KodaXContentBlock, KodaXTextBlock, KodaXToolUseBlock } from './types.js';
-import { KODAX_COMPACT_THRESHOLD, KODAX_COMPACT_KEEP_RECENT, KODAX_TOOL_REQUIRED_PARAMS } from './constants.js';
-import { estimateTokens } from './tokenizer.js';
+// ============== Re-export from @kodax/agent ==============
 
-/**
- * 压缩消息历史
- * 当消息超过阈值时，保留最近的消息，压缩旧消息
- */
-export function compactMessages(messages: KodaXMessage[]): KodaXMessage[] {
-  if (estimateTokens(messages) <= KODAX_COMPACT_THRESHOLD) return messages;
-  const recent = messages.slice(-KODAX_COMPACT_KEEP_RECENT);
-  const old = messages.slice(0, -KODAX_COMPACT_KEEP_RECENT);
-  const summary = old.map(m => {
-    const content = typeof m.content === 'string' ? m.content : (m.content as KodaXContentBlock[]).filter((b): b is KodaXTextBlock => b.type === 'text').map(b => b.text).join(' ');
-    return `- ${m.role}: ${content.slice(0, 100)}...`;
-  }).join('\n');
-  return [{ role: 'user', content: `[对话历史摘要]\n${summary}` }, ...recent];
-}
+export { compactMessages } from '@kodax/agent';
+
+// ============== Coding-specific: 工具调用检查 ==============
+
+import type { KodaXToolUseBlock } from '@kodax/ai';
+import { KODAX_TOOL_REQUIRED_PARAMS } from './constants.js';
 
 /**
  * 检查工具调用是否完整
  * 返回不完整工具调用列表
+ * 这是 Coding Agent 特定的功能，依赖具体的工具定义
  */
 export function checkIncompleteToolCalls(toolBlocks: KodaXToolUseBlock[]): string[] {
   const incomplete: string[] = [];
