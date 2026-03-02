@@ -64,3 +64,10 @@ export {
   executeSkill,
 } from './executor.js';
 export type { ExecutionMode, ExecutionOptions } from './executor.js';
+
+// Expander
+export {
+  expandSkillForLLM,
+  formatSkillActivationMessage,
+} from './skill-expander.js';
+export type { SkillExpansionResult } from './skill-expander.js';

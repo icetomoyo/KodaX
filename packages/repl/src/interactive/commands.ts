@@ -14,10 +14,10 @@ import { handleProjectCommand, printProjectHelp } from './project-commands.js';
 import {
   getSkillRegistry,
   initializeSkillRegistry,
+  expandSkillForLLM,
   type SkillMetadata,
   type SkillContext,
-} from '../skills/index.js';
-import { expandSkillForLLM } from '../skills/skill-expander.js';
+} from '@kodax/skills';
 
 // Current config state (passed from repl.ts) - 当前配置状态（由 repl.ts 传入）
 export interface CurrentConfig {
