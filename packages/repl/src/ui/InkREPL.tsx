@@ -307,9 +307,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
   // Preload skills on mount to ensure they're available for first /skill:xxx call
   // Issue 059: Skills lazy loading caused first skill invocation to fail
+  // Issue 064: Must pass projectRoot to discover .kodax/skills/ in project directory
   useEffect(() => {
-    void initializeSkillRegistry();
-  }, []);
+    void initializeSkillRegistry(context.gitRoot);
+  }, [context.gitRoot]);
 
   // Process special syntax (shell commands, file references)
   // Create KodaXEvents for streaming updates
@@ -463,7 +464,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
     // Get skills system prompt snippet for progressive disclosure (Issue 056)
     // 获取 skills 系统提示词片段用于渐进式披露
-    const skillRegistry = getSkillRegistry();
+    // Issue 064: Pass projectRoot to prevent singleton reset
+    const skillRegistry = getSkillRegistry(context.gitRoot);
     const skillsPrompt = skillRegistry.getSystemPromptSnippet();
 
     return runKodaX(

@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-03-02 12:50_
+_Last Updated: 2026-03-02 15:50_
 
 ---
 
@@ -71,6 +71,9 @@ _Last Updated: 2026-03-02 12:50_
 | 060 | Medium | Open | UI 更新定时器未统一，存在相位差 | v0.4.5 | - | 2026-03-02 | - |
 | 061 | Low | Open | Windows Terminal 流式输出时滚轮滚动异常 | v0.4.5 | - | 2026-03-02 | - |
 | 062 | High | Resolved | 中断的流式响应内容丢失 | v0.4.9 | v0.4.9 | 2026-03-02 | 2026-03-02 |
+| 063 | High | Won't Fix | Shift+Enter 换行功能失效，直接发送消息 | v0.4.9 | - | 2026-03-02 | 2026-03-02 |
+| 064 | High | Resolved | 项目目录下 .kodax/skills/ 未被发现 | v0.4.9 | v0.4.9 | 2026-03-02 | 2026-03-02 |
+| 065 | Critical | Resolved | 流式响应后 Skills 全部消失 | v0.4.9 | v0.4.9 | 2026-03-02 | 2026-03-02 |
 
 ---
 
@@ -3575,6 +3578,128 @@ _Last Updated: 2026-03-02 12:50_
   4. 执行 `/skill:tdd xxx`，按 'n' 拒绝权限
   5. 检查部分响应是否保存
   6. 发送新消息，之前的中断响应仍然保留
+
+---
+
+### 063: Shift+Enter 换行功能失效，直接发送消息 (WON'T FIX)
+- **Priority**: High
+- **Status**: Won't Fix
+- **Introduced**: v0.4.9
+- **Created**: 2026-03-02
+- **Resolved**: 2026-03-02
+- **Related**: Issue 025, Issue 042 (历史 Shift+Enter 问题)
+
+- **Original Problem**:
+  Shift+Enter 换行功能在当前版本失效，表现为：
+  - 当前行为：Shift+Enter 直接发送消息，与 Enter 行为相同
+  - 预期行为：Shift+Enter 应该插入换行符，不发送消息
+  - 对比：Ctrl+J 和 `\` + Enter 仍然可以正常换行
+
+- **Context**:
+  - 多行文本输入功能
+  - Windows Terminal 特有问题（Warp.dev 正常）
+  - 终端协议限制：大多数终端无法区分 Shift+Enter 和 Enter
+
+- **Root Cause**:
+  Windows Terminal 对 Enter 和 Shift+Enter 都发送 `\r` (CR) 序列，无法在协议层面区分。
+  经调试确认两者发送的序列完全相同：`seq="\r" shift=false`。
+  这是 Windows Terminal 的固有限制，不是 KodaX 的 bug。
+
+- **Resolution**: Won't Fix
+  这是终端层面的限制，无法在应用层解决。
+
+- **Workaround**:
+  Windows Terminal 用户请使用以下替代换行方式：
+  - `Ctrl+J` - 换行符（推荐）
+  - `\` + Enter - 行延续换行
+
+---
+
+### 064: 项目目录下 .kodax/skills/ 未被发现 (RESOLVED)
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: v0.4.9
+- **Fixed**: v0.4.9
+- **Created**: 2026-03-02
+- **Resolved**: 2026-03-02
+- **Related**: Issue 059 (Skills 延迟加载), Feature 006 (Agent Skills)
+
+- **Original Problem**:
+  在非 KodaX 项目目录（如 C:\Works\GitWorks\MarkXbook）中运行 KodaX 时，
+  项目本地的 `.kodax/skills/` 目录中的技能无法被发现：
+  - `/skill` 命令只显示 3 个 builtin skills
+  - `/skill:internal-tool` 返回 "Skill not found"
+  - 项目中明确存在 `.kodax/skills/internal-tool/SKILL.md`
+
+- **Context**:
+  - Skills 发现机制
+  - 跨项目使用场景
+  - 单例模式问题
+
+- **Root Cause**:
+  两个代码问题：
+  1. `InkREPL.tsx` line 311 调用 `initializeSkillRegistry()` 时未传递 `projectRoot` 参数
+  2. `skill-registry.ts` 的单例模式不处理项目切换场景
+
+  当 `projectRoot` 未传递时，`getDefaultSkillPaths()` 返回空的 `projectPaths` 数组，
+  导致 `.kodax/skills/` 目录从未被扫描。
+
+- **Resolution**:
+  1. 修改 `InkREPL.tsx`，传递 `context.gitRoot` 给 `initializeSkillRegistry()`
+  2. 修改 `skill-registry.ts` 单例逻辑，当 `projectRoot` 变化时重置单例
+
+- **Files Changed**:
+  - `packages/repl/src/ui/InkREPL.tsx`
+  - `packages/repl/src/skills/skill-registry.ts`
+
+---
+
+### 065: 流式响应后 Skills 全部消失 (RESOLVED)
+- **Priority**: Critical
+- **Status**: Resolved
+- **Introduced**: v0.4.9
+- **Fixed**: v0.4.9
+- **Created**: 2026-03-02
+- **Resolved**: 2026-03-02
+- **Related**: Issue 064 (项目级 Skills 发现), Feature 006 (Agent Skills)
+
+- **Original Problem**:
+  在流式响应或中断后，所有 Skills 变得不可用：
+  - `/skill` 列表正常显示 11 个技能
+  - `/skill:user-skill` 第一次调用成功
+  - 流式响应结束后，`/skill:user-skill` 返回 "Skill not found"
+  - 所有其他技能也同时消失
+
+- **Context**:
+  - 流式响应处理
+  - 单例模式状态管理
+  - 技能发现机制
+
+- **Root Cause**:
+  Issue 064 的修复引入了回归问题：
+  ```typescript
+  // skill-registry.ts 原逻辑
+  if (_instance && _instanceProjectRoot !== projectRoot) {
+    _instance = null;  // 当 projectRoot=undefined 时也会重置！
+  }
+  ```
+  当 `runAgentRound()` 调用 `getSkillRegistry()` 不带参数时：
+  1. `projectRoot = undefined`
+  2. `"/path/to/project" !== undefined` → TRUE
+  3. 单例被重置，新空 registry 被创建
+  4. 所有技能丢失
+
+- **Resolution**:
+  1. 修改单例重置逻辑：只有当 `projectRoot` 明确提供且不同时才重置
+  2. 在 `InkREPL.tsx` 的 `runAgentRound()` 中传递 `context.gitRoot`
+  3. 在 `executeSkillCommand()` 中添加 discovery 检查
+  4. 修复技能优先级顺序：Project > User > Enterprise > Plugin > Builtin
+
+- **Files Changed**:
+  - `packages/repl/src/skills/skill-registry.ts` (单例逻辑)
+  - `packages/repl/src/skills/types.ts` (优先级顺序)
+  - `packages/repl/src/ui/InkREPL.tsx` (传递 projectRoot)
+  - `packages/repl/src/interactive/commands.ts` (discovery 检查)
 
 ---
 

@@ -810,6 +810,11 @@ async function executeSkillCommand(
   const skillName = parsed.command;
   const skillArgs = parsed.args.join(' ');
 
+  // Ensure skills are discovered - 确保已发现技能
+  if (registry.size === 0) {
+    await initializeSkillRegistry(context.gitRoot);
+  }
+
   try {
     const skill = registry.get(skillName);
     if (!skill) {

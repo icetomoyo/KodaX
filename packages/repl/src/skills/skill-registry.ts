@@ -190,18 +190,30 @@ export class SkillRegistry implements ISkillRegistry {
   }
 }
 
-// Singleton instance
+// Singleton instance and its project root
 let _instance: SkillRegistry | null = null;
+let _instanceProjectRoot: string | undefined;
 
 /**
  * Get the global skill registry instance
+ *
+ * IMPORTANT: If projectRoot is undefined, returns existing instance without reset.
+ * This prevents accidental singleton reset when called without arguments.
  */
 export function getSkillRegistry(
   projectRoot?: string,
   customPaths?: Partial<SkillPathsConfig>
 ): SkillRegistry {
+  // Only reset if projectRoot is explicitly provided AND different from current
+  // 只有当 projectRoot 明确提供且与当前不同时才重置
+  // This prevents accidental reset when getSkillRegistry() is called without args
+  if (_instance && projectRoot !== undefined && _instanceProjectRoot !== projectRoot) {
+    _instance = null;
+  }
+
   if (!_instance) {
     _instance = new SkillRegistry(projectRoot, customPaths);
+    _instanceProjectRoot = projectRoot;
   }
   return _instance;
 }

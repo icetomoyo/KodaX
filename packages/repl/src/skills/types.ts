@@ -214,18 +214,26 @@ export function getDefaultSkillPaths(projectRoot?: string): SkillPathsConfig {
 
 /**
  * All skill paths in priority order (highest to lowest)
+ *
+ * Priority: Project > User > Enterprise > Plugin > Builtin
+ * - Project: Project-specific skills override everything else
+ * - User: User preferences override enterprise/plugin/builtin
+ * - Enterprise: Company-wide defaults
+ * - Plugin: Third-party plugins
+ * - Builtin: Default skills shipped with KodaX
  */
 export function getSkillPathsFlat(config: SkillPathsConfig): Array<{ path: string; source: SkillSource }> {
   const result: Array<{ path: string; source: SkillSource }> = [];
 
-  for (const p of config.enterprisePaths) {
-    result.push({ path: p, source: 'enterprise' });
+  // Highest priority first - skills found first win
+  for (const p of config.projectPaths) {
+    result.push({ path: p, source: 'project' });
   }
   for (const p of config.userPaths) {
     result.push({ path: p, source: 'user' });
   }
-  for (const p of config.projectPaths) {
-    result.push({ path: p, source: 'project' });
+  for (const p of config.enterprisePaths) {
+    result.push({ path: p, source: 'enterprise' });
   }
   for (const p of config.pluginPaths) {
     result.push({ path: p, source: 'plugin' });
