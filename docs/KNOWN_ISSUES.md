@@ -3048,7 +3048,18 @@ _Last Updated: 2026-03-01 17:30_
 - **Status**: Open
 - **Introduced**: v0.4.8
 - **Created**: 2026-03-01
+- **Last Updated**: 2026-03-02
 - **Affected Platforms**: Windows Terminal (主要), 其他终端可能轻微受影响
+
+- **Failed Implementation Attempt** (2026-03-02):
+  尝试实现 Alternate Buffer 模式，但出现以下问题：
+  - 闪烁问题未解决，反而更严重
+  - 流式输出时无法滚动
+  - 进入时清空整个终端历史
+  - 退出时只保留 KodaX 会话内容，原终端历史丢失
+
+  **结论**: 手动实现 Alternate Buffer (`\x1B[?1049h/l`) 与 Ink 5.x 渲染机制冲突，
+  需要更深入的研究或考虑其他方案。
 
 - **Original Problem**:
   在 Windows Terminal 中，流式输出期间出现两个相关问题：
