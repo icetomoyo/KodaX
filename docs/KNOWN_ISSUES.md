@@ -3044,28 +3044,35 @@ _Last Updated: 2026-03-02 10:45_
 
 ---
 
-### 058: Windows Terminal 流式输出闪烁和滚动问题 (OPEN)
-- **Priority**: Medium
-- **Status**: Open
+### 058: Windows Terminal 流式输出闪烁和滚动问题 (PARTIALLY RESOLVED)
+- **Priority**: Medium → Low (闪烁已解决)
+- **Status**: Partially Resolved (闪烁已修复，滚动问题保留)
 - **Introduced**: v0.4.8
 - **Created**: 2026-03-01
 - **Last Updated**: 2026-03-02
+- **Resolved (Flickering)**: 2026-03-02
 - **Affected Platforms**: Windows Terminal (主要), 其他终端可能轻微受影响
 
-- **Failed Implementation Attempt** (2026-03-02):
-  尝试实现 Alternate Buffer 模式，但出现以下问题：
-  - 闪烁问题未解决，反而更严重
-  - 流式输出时无法滚动
-  - 进入时清空整个终端历史
-  - 退出时只保留 KodaX 会话内容，原终端历史丢失
+- **Solution Implemented** (2026-03-02):
+  升级 Ink 5.x → 6.8.0 并配合 React 18 → 19
 
-  **结论**: 手动实现 Alternate Buffer (`\x1B[?1049h/l`) 与 Ink 5.x 渲染机制冲突，
-  需要更深入的研究或考虑其他方案。
+  **关键改动**:
+  - `packages/repl/package.json`: ink ^5.2.1 → ^6.7.0, react ^18.3.1 → ^19.0.0
+  - `packages/repl/src/ui/InkREPL.tsx`: 添加 `maxFps: 30` 限制帧率
+  - 禁用 `incrementalRendering` (与自定义 TextInput 冲突导致光标问题)
 
-- **Original Problem**:
-  在 Windows Terminal 中，流式输出期间出现两个相关问题：
-  1. **闪烁问题**: 屏幕频繁闪烁，影响用户体验
-  2. **滚动问题**: 流式输出时用鼠标滚轮向上滚动后，无法用滚轮向下滚动（但拖动滚动条可以）
+  **原理**: Ink 6.x 自动启用 synchronized updates（终端刷新周期同步），
+  避免在终端刷新间隙产生"上一屏内容"的闪烁帧。
+
+  **结果**:
+  - ✅ 闪烁问题已解决
+  - ⚠️ 滚动问题仍然存在 (后续处理)
+  - ⚠️ incrementalRendering 与自定义 TextInput 不兼容，已禁用
+
+- **Remaining Issue (Scrolling)**:
+  流式输出时用鼠标滚轮向上滚动后，无法用滚轮向下滚动（但拖动滚动条可以）
+  - 可选方案: 使用 Static 组件包裹历史消息 (见下方方案 A)
+  - 优先级: Low
 
 - **Root Cause Analysis**:
 
@@ -3391,12 +3398,18 @@ _Last Updated: 2026-03-02 10:45_
 
 ---
 
-### 060: UI 更新定时器未统一，存在相位差 (OPEN)
-- **Priority**: Medium
-- **Status**: Open
+### 060: UI 更新定时器未统一，存在相位差 (DEFERRED)
+- **Priority**: Medium → Low (闪烁问题已通过 Ink 6.x 解决)
+- **Status**: Deferred (原始动机已缓解，可作为未来优化)
 - **Introduced**: v0.4.5
 - **Created**: 2026-03-02
+- **Last Updated**: 2026-03-02
 - **Related**: Issue 047, Issue 048, Issue 058
+
+- **Status Update** (2026-03-02):
+  闪烁问题已通过升级 Ink 5.x → 6.x 解决（见 Issue 058）。
+  Ink 6.x 的 synchronized updates 功能自动处理了终端刷新同步问题。
+  统一定时器的需求降低，可作为未来性能优化项目。
 
 - **Original Problem**:
   KodaX 的 UI 输出更新由多个独立的定时器驱动，虽然 Issue 047/048 通过批量更新缓解了闪烁问题，但根本问题未解决：
