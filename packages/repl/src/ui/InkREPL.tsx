@@ -1068,8 +1068,9 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
         stdin: process.stdin,
         exitOnCtrlC: false,
         patchConsole: true,  // Route console.log through Ink so command output is visible
-        incrementalRendering: true, // Ink 6.5.0+: Only update changed lines
-        maxFps: 15,                  // Ink 6.3.0+: Limit frame rate to reduce flickering
+        // Note: incrementalRendering disabled - causes cursor positioning issues with custom TextInput
+        // Ink 6.x still has synchronized updates (auto-enabled) which helps reduce flickering
+        maxFps: 30,          // Ink 6.3.0+: Limit frame rate to reduce flickering
       }
     );
 
