@@ -3044,16 +3044,16 @@ _Last Updated: 2026-03-02 10:45_
 
 ---
 
-### 058: Windows Terminal 流式输出闪烁和滚动问题 (PARTIALLY RESOLVED)
-- **Priority**: Medium → Low (闪烁已解决)
-- **Status**: Partially Resolved (闪烁已修复，滚动问题保留)
+### 058: Windows Terminal 流式输出闪烁和滚动问题 (RESOLVED)
+- **Priority**: Medium → Resolved
+- **Status**: Resolved
 - **Introduced**: v0.4.8
 - **Created**: 2026-03-01
-- **Last Updated**: 2026-03-02
-- **Resolved (Flickering)**: 2026-03-02
-- **Affected Platforms**: Windows Terminal (主要), 其他终端可能轻微受影响
+- **Resolved**: 2026-03-02
+- **Fixed in**: v0.4.9
+- **Affected Platforms**: Windows Terminal (主要)
 
-- **Solution Implemented** (2026-03-02):
+- **Solution**:
   升级 Ink 5.x → 6.8.0 并配合 React 18 → 19
 
   **关键改动**:
@@ -3066,226 +3066,7 @@ _Last Updated: 2026-03-02 10:45_
 
   **结果**:
   - ✅ 闪烁问题已解决
-  - ⚠️ 滚动问题仍然存在 (后续处理)
-  - ⚠️ incrementalRendering 与自定义 TextInput 不兼容，已禁用
-
-- **Remaining Issue (Scrolling)**:
-  流式输出时用鼠标滚轮向上滚动后，无法用滚轮向下滚动（但拖动滚动条可以）
-  - 可选方案: 使用 Static 组件包裹历史消息 (见下方方案 A)
-  - 优先级: Low
-
-- **Root Cause Analysis**:
-
-  ### 原因 1: 历史消息未使用 `Static` 组件 (核心问题)
-
-  **当前代码** (`MessageList.tsx:437-438`):
-  ```tsx
-  {filteredItems.map((item) => (
-    <HistoryItemRenderer key={item.id} item={item} theme={theme} maxLines={maxLines} />
-  ))}
-  ```
-
-  **问题**: 每次流式内容更新时，所有历史消息都会重新渲染，导致全屏重绘。
-
-  **对比**: Banner 正确使用了 `Static` (`InkREPL.tsx:859-868`):
-  ```tsx
-  <Static items={[1]}>
-    {() => <Banner ... />}
-  </Static>
-  ```
-
-  ### 原因 2: 独立定时器导致相位差
-
-  **当前代码使用两个独立的定时器**:
-
-  - Spinner 动画 (`LoadingIndicator.tsx:82-84`):
-    ```tsx
-    const timer = setInterval(() => {
-      setFrame((f) => (f + 1) % SPINNER_FRAMES.length);
-    }, 80);
-    ```
-
-  - 流式内容刷新 (`StreamingContext.tsx:207`):
-    ```tsx
-    const FLUSH_INTERVAL = 80;
-    flushTimer = setTimeout(flushPendingUpdates, FLUSH_INTERVAL);
-    ```
-
-  **问题**: 虽然间隔相同（80ms），但是**独立定时器**，起始时间不同，产生相位差：
-
-  ```
-  时间轴示例:
-  0ms:   Spinner 帧 1 渲染
-  15ms:  流式内容更新 → 触发渲染 (相位差)
-  80ms:  Spinner 帧 2 渲染
-  95ms:  流式内容更新 → 触发渲染
-  ...
-  ```
-
-  相位差会导致某些时刻产生**两次连续渲染**，增加闪烁概率。
-
-  ### 原因 3: Windows Terminal 的 GPU 渲染特性
-
-  Windows Terminal 使用 DirectWrite/GPU 加速渲染，对频繁的全屏重绘更敏感，放大了闪烁效应。
-
-  ### 渲染频率分析
-
-  **当前状态** (存在相位差):
-  ```
-  理想情况: 每秒 ~12.5 次渲染 (同频率同步)
-  实际情况: 每秒 ~15-20 次渲染 (相位差导致额外渲染)
-  ```
-
-  **优化后** (统一定时器 + Static):
-  ```
-  每秒 ~12.5 次局部重渲染 (只有流式内容参与)
-  ```
-
-- **Proposed Solution**:
-
-  ### 方案 A: 使用 Static 包裹历史消息 ⭐ (核心方案)
-
-  **优先级**: 高 | **效果**: 显著
-
-  **改动文件**: `packages/repl/src/ui/components/MessageList.tsx`
-
-  **改动内容**:
-  ```tsx
-  import { Static } from "ink";
-
-  // 在 MessageList 组件中
-  // 将已完成的历史消息用 Static 包裹
-  <Static items={filteredItems}>
-    {(item) => <HistoryItemRenderer item={item} theme={theme} maxLines={maxLines} />}
-  </Static>
-
-  // 流式内容保持动态渲染（不使用 Static）
-  {streamingResponse && (
-    <Box flexDirection="column" marginBottom={1}>
-      <Text color={theme.colors.secondary} bold>Assistant</Text>
-      <Box marginLeft={2} flexDirection="column">
-        {streamingResponse.split("\n").map((line, index) => (
-          <Text key={index} color={theme.colors.text}>{line || " "}</Text>
-        ))}
-      </Box>
-    </Box>
-  )}
-  ```
-
-  **原理**: Ink 的 `Static` 组件将内容写入终端后不再参与后续渲染周期，新内容追加到 Static 内容下方。
-
-  **预期效果**:
-  - ✅ 历史消息只渲染一次
-  - ✅ 只有流式内容参与动态渲染
-  - ✅ 减少 50-80% 的渲染量
-  - ✅ 同时改善闪烁和滚动问题
-
-  ### 方案 D: 统一定时器 ⭐ (推荐)
-
-  **优先级**: 高 | **效果**: 显著
-
-  **目标**: 将 Spinner 动画和流式内容刷新使用同一个定时器驱动，消除相位差。
-
-  **改动思路**:
-  1. StreamingContext 在 flush 时同时触发 Spinner 帧更新
-  2. 或者使用共享的 tick 信号驱动两个更新
-
-  **改动文件**:
-  - `packages/repl/src/ui/contexts/StreamingContext.tsx`
-  - `packages/repl/src/ui/components/LoadingIndicator.tsx`
-
-  **改动内容**:
-  ```tsx
-  // StreamingContext 添加 tick 回调
-  interface StreamingManager {
-    // ... 现有方法
-    onTick: (callback: () => void) => () => void;  // 新增：订阅 flush 事件
-  }
-
-  // Spinner 组件使用外部 tick
-  export const Spinner: React.FC<SpinnerProps & { externalTick?: boolean }> = ({
-    color,
-    theme,
-    externalTick
-  }) => {
-    const [frame, setFrame] = useState(0);
-
-    // 如果使用外部 tick，不创建自己的定时器
-    // 由 StreamingContext 的 flush 事件驱动
-    if (externalTick) {
-      useStreamingTick(() => setFrame(f => (f + 1) % SPINNER_FRAMES.length));
-    } else {
-      // 原有逻辑作为 fallback
-      useEffect(() => {
-        const timer = setInterval(() => {
-          setFrame((f) => (f + 1) % SPINNER_FRAMES.length);
-        }, 80);
-        return () => clearInterval(timer);
-      }, []);
-    }
-    // ...
-  };
-  ```
-
-  **预期效果**:
-  - ✅ 消除相位差导致的额外渲染
-  - ✅ Spinner 动画与流式内容完美同步
-  - ✅ 稳定的每秒 12.5 次渲染
-
-  ### 方案 B: 智能 Spinner 控制 (效果有限)
-
-  **优先级**: 低 | **效果**: 轻微
-
-  **说明**: 如果已实施方案 D（统一定时器），此方案帮助有限，因为渲染频率不会改变。
-
-  **适用场景**: 如果不实施方案 D，可以在有流式内容时移除 Spinner 动画，减少每帧渲染的组件数量。
-
-  ### 方案 C: 调整缓冲间隔 (可选)
-
-  **优先级**: 低 | **效果**: 中等
-
-  **改动文件**: `packages/repl/src/ui/contexts/StreamingContext.tsx`
-
-  **改动内容**:
-  ```tsx
-  const FLUSH_INTERVAL = 100; // 原值 80
-  ```
-
-  **预期效果**: 减少渲染频率，但可能略微影响感知响应速度。
-
-- **Solution Priority**:
-
-  | 顺序 | 方案 | 优先级 | 效果 | 改动量 |
-  |------|------|--------|------|--------|
-  | 1 | A: Static 包裹历史消息 | 高 | 显著 | 中 |
-  | 2 | D: 统一定时器 | 高 | 显著 | 中 |
-  | 3 | C: 调整缓冲间隔 | 低 | 中等 | 小 |
-  | 4 | B: 智能 Spinner 控制 | 低 | 轻微 | 小 |
-
-  **推荐实施顺序**: A → D → (可选) C
-
-- **Risk Analysis**:
-
-  | 风险 | 可能性 | 影响 | 缓解措施 |
-  |------|--------|------|----------|
-  | Static 组件滚动行为变化 | 中 | 低 | 测试多场景滚动 |
-  | 消息更新不反映到 Static | 低 | 中 | 只对"已完成"消息用 Static |
-  | 某些终端 Static 兼容性 | 低 | 低 | 测试主流终端 |
-  | 统一定时器复杂度增加 | 中 | 低 | 保持 fallback 机制 |
-
-- **Verification Checklist**:
-  - [ ] Windows Terminal 闪烁明显减少
-  - [ ] 滚动行为正常（上下滚动都可）
-  - [ ] 流式输出等待首个 token 时 Spinner 正常显示
-  - [ ] Spinner 动画与流式内容同步（无相位差）
-  - [ ] 历史消息只渲染一次（可用 console.log 验证）
-  - [ ] 其他终端 (macOS Terminal, iTerm2, VSCode Terminal) 兼容
-
-- **Context**:
-  - `packages/repl/src/ui/components/MessageList.tsx` - 消息列表渲染
-  - `packages/repl/src/ui/InkREPL.tsx` - 主 REPL 组件
-  - `packages/repl/src/ui/contexts/StreamingContext.tsx` - 流式输出管理
-  - `packages/repl/src/ui/components/LoadingIndicator.tsx` - Spinner 组件
+  - ⚠️ 滚动问题拆分为 Issue 061
 
 ---
 
@@ -3611,6 +3392,90 @@ _Last Updated: 2026-03-02 10:45_
   | TickProvider 未包裹 | 运行时错误 | 启动时检查 context |
   | 性能退化 | 低 | 单一定时器应更快 |
   | Dots 动画变快 | 中 | 使用 tick 计数实现 300ms |
+
+---
+
+### 061: Windows Terminal 流式输出时滚轮滚动异常 (OPEN)
+- **Priority**: Low
+- **Status**: Open
+- **Introduced**: v0.4.5
+- **Created**: 2026-03-02
+- **Related**: Issue 058 (闪烁问题已解决)
+- **Affected Platforms**: Windows Terminal
+
+- **Problem**:
+  流式输出时用鼠标滚轮向上滚动后，无法用滚轮向下滚动（但拖动滚动条可以）
+
+- **Root Cause Analysis**:
+
+  ### 历史消息未使用 `Static` 组件
+
+  **当前代码** (`MessageList.tsx`):
+  ```tsx
+  {filteredItems.map((item) => (
+    <HistoryItemRenderer key={item.id} item={item} theme={theme} maxLines={maxLines} />
+  ))}
+  ```
+
+  **问题**: 每次流式内容更新时，所有历史消息都会重新渲染，Ink 重新计算整个视口，
+  可能导致终端滚动状态被重置。
+
+- **Proposed Solution**:
+
+  ### 方案 A: 使用 Static 包裹历史消息 ⭐
+
+  **优先级**: 高 | **效果**: 显著
+
+  **改动文件**: `packages/repl/src/ui/components/MessageList.tsx`
+
+  **改动内容**:
+  ```tsx
+  import { Static } from "ink";
+
+  // 将已完成的历史消息用 Static 包裹
+  <Static items={filteredItems}>
+    {(item) => <HistoryItemRenderer item={item} theme={theme} maxLines={maxLines} />}
+  </Static>
+
+  // 流式内容保持动态渲染（不使用 Static）
+  {streamingResponse && (
+    <Box flexDirection="column" marginBottom={1}>
+      <Text color={theme.colors.secondary} bold>Assistant</Text>
+      <Box marginLeft={2} flexDirection="column">
+        {streamingResponse.split("\n").map((line, index) => (
+          <Text key={index} color={theme.colors.text}>{line || " "}</Text>
+        ))}
+      </Box>
+    </Box>
+  )}
+  ```
+
+  **原理**: Ink 的 `Static` 组件将内容写入终端后不再参与后续渲染周期，
+  新内容追加到 Static 内容下方，不会触发整个视口重绘。
+
+  **预期效果**:
+  - ✅ 历史消息只渲染一次
+  - ✅ 只有流式内容参与动态渲染
+  - ✅ 滚动状态不受流式更新影响
+
+- **Risk Analysis**:
+
+  | 风险 | 可能性 | 影响 | 缓解措施 |
+  |------|--------|------|----------|
+  | Static 组件滚动行为变化 | 中 | 低 | 测试多场景滚动 |
+  | 消息更新不反映到 Static | 低 | 中 | 只对"已完成"消息用 Static |
+  | 某些终端 Static 兼容性 | 低 | 低 | 测试主流终端 |
+
+- **Verification Checklist**:
+  - [ ] 流式输出时滚轮向上滚动正常
+  - [ ] 滚轮向下滚动也正常
+  - [ ] 拖动滚动条正常
+  - [ ] 历史消息只渲染一次
+  - [ ] 其他终端 (macOS Terminal, iTerm2, VSCode Terminal) 兼容
+
+- **Context**:
+  - `packages/repl/src/ui/components/MessageList.tsx` - 消息列表渲染
+  - `packages/repl/src/ui/InkREPL.tsx` - 主 REPL 组件 (Banner 使用 Static 的参考)
 
 ---
 
