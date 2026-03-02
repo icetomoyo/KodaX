@@ -53,9 +53,9 @@ npm run dev
 ```
 
 **预期结果**:
-- [ ] 构建成功，无错误
-- [ ] REPL 启动，显示欢迎信息
-- [ ] 显示提示符等待输入
+- [x] 构建成功，无错误
+- [x] REPL 启动，显示欢迎信息
+- [x] 显示提示符等待输入
 
 ---
 
@@ -78,9 +78,9 @@ Available Skills:
 Usage: /skill:<name> [args] or ask naturally
 ```
 
-- [ ] 显示 "Available Skills" 标题
-- [ ] 列出 3 个内置技能，格式为 `/skill:name`
-- [ ] 每个技能显示名称、参数提示和描述
+- [x] 显示 "Available Skills" 标题
+- [x] 列出 3 个内置技能，格式为 `/skill:name`
+- [x] 每个技能显示名称、参数提示和描述
 
 ---
 
@@ -99,10 +99,10 @@ Usage: /skill:<name> [args] or ask naturally
 2. 观察 UI 输出
 
 **预期结果**:
-- [ ] 显示 "Invoking skill: code-review"
-- [ ] 显示 "Skill activated: code-review"
-- [ ] AI 开始生成响应（说明 skill 内容已注入）
-- [ ] AI 响应包含代码审查相关内容
+- [x] 显示 "Invoking skill: code-review"
+- [x] 显示 "Skill activated: code-review"
+- [x] AI 开始生成响应（说明 skill 内容已注入）
+- [x] AI 响应包含代码审查相关内容
 
 ---
 

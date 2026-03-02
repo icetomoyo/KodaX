@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-03-02 10:45_
+_Last Updated: 2026-03-02 12:50_
 
 ---
 
@@ -69,6 +69,8 @@ _Last Updated: 2026-03-02 10:45_
 | 058 | Medium | Open | Windows Terminal 流式输出闪烁和滚动问题 | v0.4.8 | - | 2026-03-01 | - |
 | 059 | High | Resolved | Skills 延迟加载导致首次调用失败 | v0.4.8 | v0.4.8 | 2026-03-01 | 2026-03-01 |
 | 060 | Medium | Open | UI 更新定时器未统一，存在相位差 | v0.4.5 | - | 2026-03-02 | - |
+| 061 | Low | Open | Windows Terminal 流式输出时滚轮滚动异常 | v0.4.5 | - | 2026-03-02 | - |
+| 062 | High | Resolved | 中断的流式响应内容丢失 | v0.4.9 | v0.4.9 | 2026-03-02 | 2026-03-02 |
 
 ---
 
@@ -3476,6 +3478,85 @@ _Last Updated: 2026-03-02 10:45_
 - **Context**:
   - `packages/repl/src/ui/components/MessageList.tsx` - 消息列表渲染
   - `packages/repl/src/ui/InkREPL.tsx` - 主 REPL 组件 (Banner 使用 Static 的参考)
+
+---
+
+### 062: 中断的流式响应内容丢失 (RESOLVED)
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: v0.4.9
+- **Fixed**: v0.4.9
+- **Created**: 2026-03-02
+- **Resolution Date**: 2026-03-02
+
+- **Problem**:
+  当用户中断流式响应（Ctrl+C 或发送新消息）时，已输出的部分内容不会保存到历史记录中，导致：
+  1. 中断后再发送新消息，被中断的部分响应消失
+  2. 无法查看之前中断时 AI 已输出的内容
+
+- **Root Cause Analysis**:
+
+  ### `handleSubmit` 直接清空响应
+
+  **原代码** (`InkREPL.tsx:handleSubmit`):
+  ```typescript
+  // Add user message to UI history
+  addHistoryItem({ type: "user", text: input });
+
+  setIsLoading(true);
+  clearResponse();  // ⚠️ 直接清空，streamingState.currentResponse 丢失
+  startStreaming();
+  ```
+
+  **问题**: 当用户在流式输出期间发送新消息时，`clearResponse()` 被调用，
+  但 `streamingState.currentResponse` 中的部分内容没有被保存到历史记录。
+
+- **Resolution**:
+
+  ### 方案: 在清空前保存中断的响应
+
+  **修改位置 1** - `handleSubmit`:
+  ```typescript
+  // Preserve interrupted streaming response before clearing
+  if (streamingState.currentResponse && streamingState.currentResponse.trim()) {
+    addHistoryItem({
+      type: "assistant",
+      text: streamingState.currentResponse.trim() + "\n\n[Interrupted]",
+    });
+  }
+
+  // Add user message to UI history
+  addHistoryItem({ type: "user", text: input });
+
+  setIsLoading(true);
+  clearResponse();
+  startStreaming();
+  ```
+
+  **修改位置 2** - Ctrl+C 中断处理器:
+  ```typescript
+  if ((key.ctrl && key.name === "c") || key.name === "escape") {
+    // Save partial streaming response before aborting
+    const partialResponse = streamingState.currentResponse?.trim();
+    if (partialResponse) {
+      addHistoryItem({
+        type: "assistant",
+        text: partialResponse + "\n\n[Interrupted]",
+      });
+    }
+
+    abort();
+    // ... 其他清理
+  }
+  ```
+
+- **Files Changed**: `packages/repl/src/ui/InkREPL.tsx`
+
+- **Verification**:
+  1. 执行 `/skill:code-review xxx`
+  2. 在响应过程中按 Ctrl+C 中断
+  3. 检查历史记录是否包含部分响应 + `[Interrupted]`
+  4. 发送新消息，之前的中断响应仍然保留
 
 ---
 

@@ -232,6 +232,16 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     (key) => {
       // Ctrl+C or ESC interrupts current operation - Ctrl+C 或 ESC 中断当前操作
       if ((key.ctrl && key.name === "c") || key.name === "escape") {
+        // Save partial streaming response before aborting
+        // Issue: Interrupted responses were lost from history
+        const partialResponse = streamingState.currentResponse?.trim();
+        if (partialResponse) {
+          addHistoryItem({
+            type: "assistant",
+            text: partialResponse + "\n\n[Interrupted]",
+          });
+        }
+
         // Use abort() instead of stopStreaming() to truly abort API request - 使用 abort() 而不是 stopStreaming() 来真正中止 API 请求
         abort();
         stopThinking();
@@ -488,6 +498,15 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
       // Banner remains visible - it will scroll up naturally as messages are added
       // (Removed showBanner toggle to keep layout stable)
+
+      // Preserve interrupted streaming response before clearing
+      // Issue: When user sends new message during streaming, partial content was lost
+      if (streamingState.currentResponse && streamingState.currentResponse.trim()) {
+        addHistoryItem({
+          type: "assistant",
+          text: streamingState.currentResponse.trim() + "\n\n[Interrupted]",
+        });
+      }
 
       // Add user message to UI history
       addHistoryItem({
