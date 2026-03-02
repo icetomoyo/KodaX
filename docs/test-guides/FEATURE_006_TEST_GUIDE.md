@@ -125,8 +125,8 @@ Usage: /skill:<name> [args] or ask naturally
 2. 观察 AI 响应
 
 **预期结果**:
-- [ ] AI 执行 git status 相关操作
-- [ ] AI 响应与参数 "status" 相关
+- [x] AI 执行 git status 相关操作
+- [x] AI 响应与参数 "status" 相关
 
 ---
 
@@ -144,9 +144,9 @@ Usage: /skill:<name> [args] or ask naturally
 2. 观察 AI 响应
 
 **预期结果**:
-- [ ] AI 识别到这是一个代码审查任务
-- [ ] AI 提到它可以使用 `code-review` skill
-- [ ] AI 自行读取 skill 文件并按照 skill 指导执行
+- [x] AI 识别到这是一个代码审查任务
+- [x] AI 提到它可以使用 `code-review` skill
+- [x] AI 自行读取 skill 文件并按照 skill 指导执行
 
 ---
 

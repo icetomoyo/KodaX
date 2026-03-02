@@ -98,6 +98,9 @@ export interface StreamingActions {
 
   /** 获取当前的 AbortSignal (用于传递给 API 请求) */
   getSignal: () => AbortSignal | undefined;
+
+  /** 获取完整响应内容（包括缓冲区中未刷新的内容）- 用于中断时保存 */
+  getFullResponse: () => string;
 }
 
 /**
@@ -181,6 +184,9 @@ export interface StreamingManager {
 
   /** 获取当前的 AbortSignal */
   getSignal: () => AbortSignal | undefined;
+
+  /** 获取完整响应内容（包括缓冲区中未刷新的内容） */
+  getFullResponse: () => string;
 }
 
 /**
@@ -401,6 +407,12 @@ export function createStreamingManager(): StreamingManager {
     },
 
     getSignal: () => state.abortController?.signal,
+
+    getFullResponse: () => {
+      // Return current response + any pending buffered content
+      // 返回当前响应 + 缓冲区中未刷新的内容
+      return state.currentResponse + pendingResponseText;
+    },
   };
 }
 
@@ -500,6 +512,10 @@ export function StreamingProvider({
     return managerRef.current.getSignal();
   }, []);
 
+  const getFullResponse = useCallback(() => {
+    return managerRef.current.getFullResponse();
+  }, []);
+
   const actions: StreamingActions = {
     startStreaming,
     stopStreaming,
@@ -516,6 +532,7 @@ export function StreamingProvider({
     setCurrentTool,
     appendToolInputChars,
     getSignal,
+    getFullResponse,
   };
 
   return React.createElement(

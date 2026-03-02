@@ -195,6 +195,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     clearResponse,
     appendResponse,
     getSignal,
+    getFullResponse,
   } = useStreamingActions();
 
   // State
@@ -232,16 +233,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     (key) => {
       // Ctrl+C or ESC interrupts current operation - Ctrl+C 或 ESC 中断当前操作
       if ((key.ctrl && key.name === "c") || key.name === "escape") {
-        // Save partial streaming response before aborting
-        // Issue: Interrupted responses were lost from history
-        const partialResponse = streamingState.currentResponse?.trim();
-        if (partialResponse) {
-          addHistoryItem({
-            type: "assistant",
-            text: partialResponse + "\n\n[Interrupted]",
-          });
-        }
-
+        // Just abort - the catch block will handle saving the partial response
+        // 只需中止 - catch 块会处理保存部分响应
         // Use abort() instead of stopStreaming() to truly abort API request - 使用 abort() 而不是 stopStreaming() 来真正中止 API 请求
         abort();
         stopThinking();
@@ -500,11 +493,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       // (Removed showBanner toggle to keep layout stable)
 
       // Preserve interrupted streaming response before clearing
+      // Use getFullResponse() to include buffered content not yet flushed to currentResponse
       // Issue: When user sends new message during streaming, partial content was lost
-      if (streamingState.currentResponse && streamingState.currentResponse.trim()) {
+      const currentFullResponse = getFullResponse().trim();
+      if (currentFullResponse) {
         addHistoryItem({
           type: "assistant",
-          text: streamingState.currentResponse.trim() + "\n\n[Interrupted]",
+          text: currentFullResponse + "\n\n[Interrupted]",
         });
       }
 
@@ -701,12 +696,30 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             }
           } catch (err) {
             const error = err instanceof Error ? err : new Error(String(err));
+
+            // Check if this is an abort error (user pressed Ctrl+C)
+            const isAbortError = error.name === 'AbortError' ||
+              error.message.includes('aborted') ||
+              error.message.includes('ABORTED');
+
             console.log = originalLog;
-            console.log(chalk.red(error.message));
-            addHistoryItem({
-              type: "error",
-              text: error.message,
-            });
+
+            if (isAbortError) {
+              // Save any unsaved streaming content
+              const unsavedResponse = getFullResponse().trim();
+              if (unsavedResponse) {
+                addHistoryItem({
+                  type: "assistant",
+                  text: unsavedResponse + "\n\n[Interrupted]",
+                });
+              }
+            } else {
+              console.log(chalk.red(error.message));
+              addHistoryItem({
+                type: "error",
+                text: error.message,
+              });
+            }
           } finally {
             setIsLoading(false);
             stopStreaming();
@@ -749,11 +762,28 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           });
         } catch (err) {
           const error = err instanceof Error ? err : new Error(String(err));
-          console.log(chalk.red(`[Plan Mode Error] ${error.message}`));
-          addHistoryItem({
-            type: "error",
-            text: error.message,
-          });
+
+          // Check if this is an abort error (user pressed Ctrl+C)
+          const isAbortError = error.name === 'AbortError' ||
+            error.message.includes('aborted') ||
+            error.message.includes('ABORTED');
+
+          if (isAbortError) {
+            // Save any unsaved streaming content
+            const unsavedResponse = getFullResponse().trim();
+            if (unsavedResponse) {
+              addHistoryItem({
+                type: "assistant",
+                text: unsavedResponse + "\n\n[Interrupted]",
+              });
+            }
+          } else {
+            console.log(chalk.red(`[Plan Mode Error] ${error.message}`));
+            addHistoryItem({
+              type: "error",
+              text: error.message,
+            });
+          }
         }
         setIsLoading(false);
         stopStreaming();
@@ -806,42 +836,62 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         }
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
-        // Note: No need to pop from context.messages here anymore.
-        // Since we removed the pre-push (Issue 046 fix), context.messages
-        // doesn't contain the new user message when runKodaX fails.
 
-        let errorContent = error.message;
-        if (
-          error.message.includes("rate limit") ||
-          error.message.includes("Rate limit")
-        ) {
-          errorContent = `[Rate Limit] ${error.message}\nSuggestion: Wait a moment and try again, or switch provider with /mode`;
-        } else if (
-          error.message.includes("API key") ||
-          error.message.includes("not configured")
-        ) {
-          errorContent = `[Configuration Error] ${error.message}\nSuggestion: Set the required API key environment variable`;
-        } else if (
-          error.message.includes("network") ||
-          error.message.includes("ECONNREFUSED") ||
-          error.message.includes("ETIMEDOUT")
-        ) {
-          errorContent = `[Network Error] ${error.message}\nSuggestion: Check your internet connection`;
-        } else if (
-          error.message.includes("token") ||
-          error.message.includes("context too long")
-        ) {
-          errorContent = `[Context Error] ${error.message}\nSuggestion: Use /clear to start fresh`;
+        // Check if this is an abort error (user pressed Ctrl+C)
+        // Abort errors should not be added to history - the Ctrl+C handler already saved the partial response
+        const isAbortError = error.name === 'AbortError' ||
+          error.message.includes('aborted') ||
+          error.message.includes('ABORTED');
+
+        if (isAbortError) {
+          // Don't add abort error to history - already handled by Ctrl+C handler
+          console.log = originalLog;
+          // Still need to save any unsaved streaming content
+          const unsavedResponse = getFullResponse().trim();
+          if (unsavedResponse) {
+            addHistoryItem({
+              type: "assistant",
+              text: unsavedResponse + "\n\n[Interrupted]",
+            });
+          }
+        } else {
+          // Note: No need to pop from context.messages here anymore.
+          // Since we removed the pre-push (Issue 046 fix), context.messages
+          // doesn't contain the new user message when runKodaX fails.
+
+          let errorContent = error.message;
+          if (
+            error.message.includes("rate limit") ||
+            error.message.includes("Rate limit")
+          ) {
+            errorContent = `[Rate Limit] ${error.message}\nSuggestion: Wait a moment and try again, or switch provider with /mode`;
+          } else if (
+            error.message.includes("API key") ||
+            error.message.includes("not configured")
+          ) {
+            errorContent = `[Configuration Error] ${error.message}\nSuggestion: Set the required API key environment variable`;
+          } else if (
+            error.message.includes("network") ||
+            error.message.includes("ECONNREFUSED") ||
+            error.message.includes("ETIMEDOUT")
+          ) {
+            errorContent = `[Network Error] ${error.message}\nSuggestion: Check your internet connection`;
+          } else if (
+            error.message.includes("token") ||
+            error.message.includes("context too long")
+          ) {
+            errorContent = `[Context Error] ${error.message}\nSuggestion: Use /clear to start fresh`;
+          }
+
+          console.log = originalLog;
+          console.log(chalk.red(errorContent));
+
+          // Add error to UI history
+          addHistoryItem({
+            type: "error",
+            text: errorContent,
+          });
         }
-
-        console.log = originalLog;
-        console.log(chalk.red(errorContent));
-
-        // Add error to UI history
-        addHistoryItem({
-          type: "error",
-          text: errorContent,
-        });
       } finally {
         // Restore console.log
         console.log = originalLog;
@@ -874,6 +924,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       clearResponse,
       createStreamingEvents,
       getSignal,
+      getFullResponse,
     ]
   );
 

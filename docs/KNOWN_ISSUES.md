@@ -3511,52 +3511,70 @@ _Last Updated: 2026-03-02 12:50_
   **问题**: 当用户在流式输出期间发送新消息时，`clearResponse()` 被调用，
   但 `streamingState.currentResponse` 中的部分内容没有被保存到历史记录。
 
+  ### 缓冲区延迟问题
+
+  **StreamingContext** 使用 80ms 缓冲区延迟：
+  - `appendResponse()` 先写入 `pendingResponseText` 缓冲区
+  - 80ms 后才刷新到 `currentResponse`
+  - 直接读取 `streamingState.currentResponse` 会丢失缓冲区内容
+
 - **Resolution**:
 
-  ### 方案: 在清空前保存中断的响应
+  ### 方案 1: 添加 `getFullResponse()` 方法
 
-  **修改位置 1** - `handleSubmit`:
+  **修改位置** - `StreamingContext.tsx`:
   ```typescript
-  // Preserve interrupted streaming response before clearing
-  if (streamingState.currentResponse && streamingState.currentResponse.trim()) {
-    addHistoryItem({
-      type: "assistant",
-      text: streamingState.currentResponse.trim() + "\n\n[Interrupted]",
-    });
+  // 在 StreamingManager 中添加
+  getFullResponse: () => {
+    // 返回当前响应 + 缓冲区中未刷新的内容
+    return state.currentResponse + pendingResponseText;
   }
-
-  // Add user message to UI history
-  addHistoryItem({ type: "user", text: input });
-
-  setIsLoading(true);
-  clearResponse();
-  startStreaming();
   ```
 
-  **修改位置 2** - Ctrl+C 中断处理器:
+  ### 方案 2: 统一在 catch 块中处理中断保存
+
+  **修改位置** - `InkREPL.tsx` 多个 catch 块:
   ```typescript
-  if ((key.ctrl && key.name === "c") || key.name === "escape") {
-    // Save partial streaming response before aborting
-    const partialResponse = streamingState.currentResponse?.trim();
-    if (partialResponse) {
-      addHistoryItem({
-        type: "assistant",
-        text: partialResponse + "\n\n[Interrupted]",
-      });
+  } catch (err) {
+    const error = err instanceof Error ? err : new Error(String(err));
+
+    // 检测 abort 错误 (用户按 Ctrl+C)
+    const isAbortError = error.name === 'AbortError' ||
+      error.message.includes('aborted') ||
+      error.message.includes('ABORTED');
+
+    if (isAbortError) {
+      // 保存未保存的流式内容
+      const unsavedResponse = getFullResponse().trim();
+      if (unsavedResponse) {
+        addHistoryItem({
+          type: "assistant",
+          text: unsavedResponse + "\n\n[Interrupted]",
+        });
+      }
+    } else {
+      // 正常错误处理
+      addHistoryItem({ type: "error", text: error.message });
     }
-
-    abort();
-    // ... 其他清理
   }
   ```
 
-- **Files Changed**: `packages/repl/src/ui/InkREPL.tsx`
+  **修复覆盖路径**:
+  1. Skill 执行路径 (lines 697-719)
+  2. Plan mode 路径 (lines 763-790)
+  3. 普通 agent 路径 (lines 811-859)
+
+- **Files Changed**:
+  - `packages/repl/src/ui/InkREPL.tsx`
+  - `packages/repl/src/ui/contexts/StreamingContext.tsx`
 
 - **Verification**:
   1. 执行 `/skill:code-review xxx`
   2. 在响应过程中按 Ctrl+C 中断
   3. 检查历史记录是否包含部分响应 + `[Interrupted]`
-  4. 发送新消息，之前的中断响应仍然保留
+  4. 执行 `/skill:tdd xxx`，按 'n' 拒绝权限
+  5. 检查部分响应是否保存
+  6. 发送新消息，之前的中断响应仍然保留
 
 ---
 
