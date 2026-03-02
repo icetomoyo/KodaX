@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-03-01 17:30_
+_Last Updated: 2026-03-02 10:45_
 
 ---
 
@@ -68,6 +68,7 @@ _Last Updated: 2026-03-01 17:30_
 | 057 | Medium | Resolved | Skill 命令格式不符合 pi-mono 设计规范 | v0.4.8 | v0.4.8 | 2026-03-01 | 2026-03-01 |
 | 058 | Medium | Open | Windows Terminal 流式输出闪烁和滚动问题 | v0.4.8 | - | 2026-03-01 | - |
 | 059 | High | Resolved | Skills 延迟加载导致首次调用失败 | v0.4.8 | v0.4.8 | 2026-03-01 | 2026-03-01 |
+| 060 | Medium | Open | UI 更新定时器未统一，存在相位差 | v0.4.5 | - | 2026-03-02 | - |
 
 ---
 
@@ -3387,6 +3388,216 @@ _Last Updated: 2026-03-01 17:30_
   - `packages/repl/src/ui/InkREPL.tsx` - REPL 主组件
   - `packages/repl/src/interactive/commands.ts` - 命令处理
   - `packages/repl/src/skills/skill-registry.ts` - Skill 加载逻辑
+
+---
+
+### 060: UI 更新定时器未统一，存在相位差 (OPEN)
+- **Priority**: Medium
+- **Status**: Open
+- **Introduced**: v0.4.5
+- **Created**: 2026-03-02
+- **Related**: Issue 047, Issue 048, Issue 058
+
+- **Original Problem**:
+  KodaX 的 UI 输出更新由多个独立的定时器驱动，虽然 Issue 047/048 通过批量更新缓解了闪烁问题，但根本问题未解决：
+  - 多个独立定时器存在**相位差**（phase difference）
+  - 极端情况下仍可能导致渲染帧不一致
+  - 终端全视口重绘时内容可能错位
+
+- **Root Cause Analysis**:
+
+  ### 当前定时器架构（4 个独立定时器）
+
+  | 组件 | 定时器类型 | 间隔 | 文件位置 | 用途 |
+  |------|-----------|------|----------|------|
+  | StreamingContext | `setTimeout` 递归 | 80ms | `StreamingContext.tsx:243` | 流式文本批量更新 |
+  | Spinner | `setInterval` | 80ms | `LoadingIndicator.tsx:82` | 动画帧切换 |
+  | DotsIndicator | `setInterval` | 300ms | `LoadingIndicator.tsx:108` | 跳动点动画 |
+  | CLI Spinner | `setInterval` | 80ms | `cli-events.ts:41` | CLI 模式 spinner |
+
+  ### 问题详解
+
+  ```typescript
+  // 1. StreamingContext - 递归 setTimeout
+  flushTimer = setTimeout(flushPendingUpdates, FLUSH_INTERVAL);
+  // 执行完成后才开始下一个计时，可能累积延迟
+
+  // 2. Spinner - 固定 setInterval
+  const timer = setInterval(() => {
+    setFrame((f) => (f + 1) % SPINNER_FRAMES.length);
+  }, 80);
+  // 严格固定间隔，不受执行时间影响
+  ```
+
+  **相位差影响**：
+  - 两个定时器起始时间不同
+  - setTimeout 递归会累积微小延迟（每帧执行时间）
+  - 极端情况下可能在同一帧内触发多次状态更新
+  - 终端全视口重绘时可能导致内容错位
+
+  ### 终端渲染特性
+
+  终端没有 DOM diff，每次状态变化触发全视口重绘。当多个定时器异步更新时：
+  1. Ink reconciler 计算差异
+  2. 生成 ANSI 序列
+  3. 写入 stdout
+  4. 终端重绘
+
+  如果在第 3-4 步之间有新的状态更新，就会产生视觉不一致。
+
+- **Proposed Solution**:
+
+  ### 方案 A: 统一 Tick Context（推荐）
+
+  **设计思路**: 创建一个全局的 `TickContext`，所有 UI 更新都订阅同一个 tick 信号。
+
+  **新建文件**: `packages/repl/src/ui/contexts/TickContext.tsx`
+
+  ```typescript
+  import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+
+  const TICK_INTERVAL = 80; // 统一 80ms 刷新周期
+
+  interface TickContextValue {
+    tick: number;           // 当前 tick 计数
+    subscribe: (callback: () => void) => () => void;
+  }
+
+  const TickContext = createContext<TickContextValue | null>(null);
+
+  export function TickProvider({ children }: { children: React.ReactNode }) {
+    const [tick, setTick] = useState(0);
+    const subscribers = useRef<Set<() => void>>(new Set());
+
+    useEffect(() => {
+      const timer = setInterval(() => {
+        setTick(t => t + 1);
+        subscribers.current.forEach(cb => cb());
+      }, TICK_INTERVAL);
+      return () => clearInterval(timer);
+    }, []);
+
+    const subscribe = useCallback((callback: () => void) => {
+      subscribers.current.add(callback);
+      return () => subscribers.current.delete(callback);
+    }, []);
+
+    return (
+      <TickContext.Provider value={{ tick, subscribe }}>
+        {children}
+      </TickContext.Provider>
+    );
+  }
+
+  export function useTick() {
+    const ctx = useContext(TickContext);
+    if (!ctx) throw new Error('useTick must be used within TickProvider');
+    return ctx.tick;
+  }
+  ```
+
+  **改造 StreamingContext**:
+  ```typescript
+  // 不再使用 setTimeout，而是订阅 tick
+  const { subscribe } = useTickContext();
+
+  useEffect(() => {
+    return subscribe(() => {
+      if (pendingResponseText || pendingThinkingText) {
+        flushPendingUpdates();
+      }
+    });
+  }, [subscribe]);
+  ```
+
+  **改造 LoadingIndicator (Spinner)**:
+  ```typescript
+  // 不再使用 setInterval，而是使用 tick
+  const tick = useTick();
+  const frame = tick % SPINNER_FRAMES.length;
+  const spinnerFrame = SPINNER_FRAMES[frame];
+  ```
+
+  **优点**:
+  - ✅ 绝对同步，无相位差
+  - ✅ 单一定时器，性能更好
+  - ✅ 易于调试（统一的更新周期）
+  - ✅ 支持不同订阅频率（基于 tick 计数）
+
+  **缺点**:
+  - ⚠️ 改动较大，需要修改多个组件
+  - ⚠️ 需要确保 TickProvider 在组件树顶层
+
+  ### 方案 B: 共享定时器引用
+
+  **设计思路**: 保持现有架构，但共享同一个 setInterval 引用。
+
+  ```typescript
+  // shared-timer.ts
+  let sharedTimer: ReturnType<typeof setInterval> | null = null;
+  const callbacks = new Set<() => void>();
+
+  export function startSharedTimer() {
+    if (!sharedTimer) {
+      sharedTimer = setInterval(() => {
+        callbacks.forEach(cb => cb());
+      }, 80);
+    }
+  }
+
+  export function subscribeToTimer(cb: () => void) {
+    callbacks.add(cb);
+    return () => callbacks.delete(cb);
+  }
+  ```
+
+  **优点**:
+  - ✅ 改动较小
+  - ✅ 向后兼容
+
+  **缺点**:
+  - ⚠️ 非响应式，需要手动管理订阅
+  - ⚠️ 不如 React Context 方案优雅
+
+- **Recommended Solution**: 方案 A（统一 Tick Context）
+
+  **理由**:
+  - 符合 React 范式
+  - 更易于测试和调试
+  - 支持未来扩展（如可变刷新率）
+
+- **Implementation Steps**:
+
+  1. **Phase 1: 创建 TickContext**
+     - 新建 `TickContext.tsx`
+     - 在 `App.tsx` 中包裹 `TickProvider`
+
+  2. **Phase 2: 改造 StreamingContext**
+     - 移除 setTimeout 逻辑
+     - 使用 `subscribe` 订阅 tick
+
+  3. **Phase 3: 改造 LoadingIndicator**
+     - Spinner: 移除 setInterval，使用 `useTick()`
+     - Dots: 使用 `tick % 4 === 0` 实现 300ms 效果
+
+  4. **Phase 4: 验证**
+     - 测试流式输出无闪烁
+     - 测试 Spinner 动画流畅
+     - 测试 Windows Terminal 兼容性
+
+- **Files to Change**:
+  - `packages/repl/src/ui/contexts/TickContext.tsx` (新建)
+  - `packages/repl/src/ui/contexts/StreamingContext.tsx` (修改)
+  - `packages/repl/src/ui/components/LoadingIndicator.tsx` (修改)
+  - `packages/repl/src/ui/App.tsx` (添加 TickProvider)
+  - `packages/repl/src/ui/cli-events.ts` (可选，CLI 模式)
+
+- **Risk Assessment**:
+  | 风险 | 影响 | 缓解措施 |
+  |------|------|----------|
+  | TickProvider 未包裹 | 运行时错误 | 启动时检查 context |
+  | 性能退化 | 低 | 单一定时器应更快 |
+  | Dots 动画变快 | 中 | 使用 tick 计数实现 300ms |
 
 ---
 
