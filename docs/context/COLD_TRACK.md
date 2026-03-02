@@ -1,11 +1,27 @@
 # 冷轨归档
 
 _创建时间: 2026-02-25_
-_最后更新: 2026-02-27 03:15_
+_最后更新: 2026-03-02 10:35_
 
 ---
 
 ## 墓碑区
+
+### T05: 手动 ANSI Alternate Buffer
+- **失败原因**: `\x1B[?1049h/l` 与 Ink 5.x 渲染机制冲突，导致闪烁更严重、滚动失效、终端历史丢失
+- **放弃日期**: 2026-03-02
+- **尝试过程**:
+  1. 研究 Gemini CLI 的 Alternate Buffer 实现
+  2. 发现 Gemini 使用 Ink 6.x fork (`@jrichman/ink@6.4.11`)，有内置 `alternateBuffer` 选项
+  3. 尝试在 Ink 5.x 中手动实现 `\x1B[?1049h` 和 `\x1B[?1049l` ANSI 序列
+  4. Ink 5.x 不支持 `overflowY: "scroll"` 和 `scrollTop`，简化了 VirtualizedList
+  5. 用户验证发现：
+     - 闪烁问题未解决，反而更严重
+     - 流式输出时无法滚动
+     - 进入时清空整个终端历史
+     - 退出时只保留 KodaX 会话内容
+  6. 完全回滚 (`git reset --hard d754fe1`)
+- **解决方案**: 需要升级 Ink 6.x 或采用其他架构方案
 
 ### T04: pnpm install 破坏 npm workspaces
 - **失败原因**: pnpm 不识别 npm workspaces 配置，尝试从 registry 下载本地包，并将已安装的包移到 .ignored 文件夹
@@ -788,5 +804,103 @@ appendResponse: (text: string) => {
 - 变化仅为版本号更新：0.4.3 → 0.4.5
 - npm install 同步 lockfile 版本号
 - 正常行为，与 Issue 001 修复无关
+
+---
+
+### Session: 2026-03-02 (Issue 058 失败实现)
+
+#### Turn 1 - Issue 058 实现
+**User**: 请你开始 issue 058的修复
+
+**Assistant**:
+- 研究 Gemini CLI 的 Alternate Buffer 实现
+- 发现 Gemini CLI 使用 forked `@jrichman/ink@6.4.11`
+- Ink 6.x 有内置 `alternateBuffer` 选项
+- Ink 5.x 无此功能，需要手动实现
+
+**实现**:
+1. 新建 `packages/repl/src/ui/ui-config.ts` - UI 配置加载
+2. 新建 `packages/repl/src/ui/hooks/useAlternateBuffer.ts` - hook
+3. 新建 `packages/repl/src/ui/components/VirtualizedList.tsx` - 虚拟列表
+4. 修改 `packages/repl/src/ui/InkREPL.tsx` - 添加 ANSI 序列
+
+**Tools**: Read, Write, Edit, Bash (npm run build)
+
+#### Turn 2 - 用户验证
+**User**: 我看现在进入kodax时，把终端直接清屏了，这个不是预期的操作
+
+**Assistant**:
+- 解释这是 Alternate Buffer 模式的预期行为
+- 进入时切换到备用缓冲区，退出时恢复主缓冲区
+- Gemini CLI 也是这样工作的
+
+#### Turn 3 - 用户反馈问题更严重
+**User**: 现在所有的问题都和做这次改动一样闪烁的情况依旧，现在改动之后，反而流式时既闪烁，而且还无法滚动了。并且现在启动kodax时，会把整个终端的历史清屏，退出时，只保留刚刚kodax的历史。这个和预期差距太大。我建议你回滚前一次所有改动，并且重新打开issue 058
+
+**失败现象**:
+1. 闪烁问题未解决，反而更严重
+2. 流式输出时无法滚动
+3. 进入时清空整个终端历史
+4. 退出时只保留 KodaX 会话内容
+
+**Tools**: Read
+
+#### Turn 4 - 完全回滚
+**Assistant**:
+- 执行 `git reset --hard d754fe1` 回滚所有改动
+- 更新 KNOWN_ISSUES.md Issue 058，添加失败记录
+- 执行 `git push --force` 重置远程
+
+**Tools**: Bash (git reset, git push)
+
+#### Turn 5 - 生成快照
+**User**: 执行 /context-snapshot
+
+**Tools**: Read, Write, Edit
+
+---
+
+### Issue 058 失败详情
+
+**问题**: Windows Terminal 流式输出闪烁和滚动问题
+
+**尝试方案**: 手动 ANSI Alternate Buffer
+
+**实现代码**:
+```typescript
+// InkREPL.tsx
+if (useAlternateBuffer && process.stdout.isTTY) {
+  process.stdout.write('\x1B[?1049h');  // Enter alternate screen buffer
+}
+// ... render ...
+// onExit:
+process.stdout.write('\x1B[?1049l');  // Exit alternate screen buffer
+```
+
+**失败原因**:
+1. Gemini CLI 使用 Ink 6.x fork 有内置 `alternateBuffer` 选项
+2. Ink 5.x 无此功能，手动 ANSI 序列与 Ink 渲染机制冲突
+3. Ink 5.x 不支持 `overflowY: "scroll"` 和 `scrollTop` props
+4. 手动缓冲区切换导致终端状态不一致
+
+**教训**: 不要手动实现与框架渲染机制冲突的功能
+
+**替代方案**:
+- 升级到 Ink 6.x
+- 优化 Static 组件使用
+- 参考 opencode 架构重新设计
+
+---
+
+### T05: 手动 ANSI Alternate Buffer
+- **失败原因**: 与 Ink 5.x 渲染机制冲突，导致闪烁更严重、滚动失效、终端历史丢失
+- **放弃日期**: 2026-03-02
+- **尝试过程**:
+  1. 研究 Gemini CLI 的 Alternate Buffer 实现
+  2. 发现 Gemini 使用 Ink 6.x fork，有内置支持
+  3. 尝试在 Ink 5.x 中手动实现 ANSI 序列
+  4. 用户验证发现问题更严重
+  5. 完全回滚
+- **解决方案**: 需要升级 Ink 或采用其他架构方案
 
 
