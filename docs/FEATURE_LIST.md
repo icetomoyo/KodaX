@@ -21,7 +21,7 @@ _Last Updated: 2026-03-02 18:00_
 | v0.3.3 | Released | 1 | 1/1 (100%) |
 | v0.4.0 | Released | 1 | 1/1 (100%) |
 | v0.4.6 | Released | 1 | 1/1 (100%) |
-| v0.5.0 | InProgress | 6 | 2/6 (33%) |
+| v0.5.0 | InProgress | 8 | 2/8 (25%) |
 
 ---
 
@@ -40,6 +40,8 @@ _Last Updated: 2026-03-02 18:00_
 | 009 | Refactor | Completed | Critical | 架构重构：AI 层独立 + 权限层分离 | v0.5.0 | v0.5.0 | [Design](features/v0.5.0.md#009) | 2026-02-27 | 2026-02-27 | 2026-02-27 |
 | 010 | Refactor | Planned | Critical | 架构拆分：Agent Core + Skills 独立 | v0.5.0 | - | [Design](features/v0.5.0.md#010) | 2026-03-02 | - | - |
 | 011 | Enhancement | Planned | High | 智能上下文压缩 (Compact) | v0.5.0 | - | [Design](features/v0.5.0.md#011) | 2026-03-02 | - | - |
+| 012 | Enhancement | Planned | High | TUI 自动补全增强 | v0.5.0 | - | [Design](features/v0.5.0.md#012) | 2026-03-02 | - | - |
+| 013 | Refactor | Planned | High | Command System 2.0 | v0.5.0 | - | [Design](features/v0.5.0.md#013) | 2026-03-03 | - | - |
 
 ---
 
@@ -413,9 +415,70 @@ REPL 中的长运行项目管理，通过 `/project` 命令组实现。
 
 ---
 
+### 012: TUI 自动补全增强 (PLANNED)
+- **Category**: Enhancement
+- **Status**: Planned
+- **Priority**: High
+- **Planned**: v0.5.0
+- **Released**: -
+- **Design**: [v0.5.0.md#012](features/v0.5.0.md#012)
+- **Created**: 2026-03-02
+- **Started**: -
+- **Completed**: -
+
+**Description**:
+对标 pi-mono 的自动补全系统，提升 KodaX 的命令行补全体验。
+
+**Goals**:
+1. **Fuzzy 匹配** - 支持模糊搜索，更智能的过滤
+2. **参数补全** - 根据命令定义提供参数补全
+3. **UI 增强** - 下拉菜单 + 图标 + 详细描述
+4. **多触发方式** - 支持多种补全触发方式
+
+**Background**:
+- 当前补全使用简单前缀匹配
+- Tab 触发补全不够直观
+- 无参数提示，需要记忆命令用法
+- 无法在补全时看到详细描述
+
+**Inspired by**: [pi-mono](https://github.com/badlogic/pi-mono)
+
+---
+
+### 013: Command System 2.0 (PLANNED)
+- **Category**: Refactor
+- **Status**: Planned
+- **Priority**: High
+- **Planned**: v0.5.0
+- **Released**: -
+- **Design**: [v0.5.0.md#013](features/v0.5.0.md#013)
+- **Created**: 2026-03-03
+- **Started**: -
+- **Completed**: -
+
+**Description**:
+重构 KodaX 的 Command 系统，参考 pi-mono 的 Extension API 设计，实现动态命令注册、丰富的 UI 交互能力、统一的命令来源追踪。
+
+**Goals**:
+1. **动态命令注册** - 通过 `registerCommand()` 动态添加命令
+2. **UI 交互能力** - `ctx.ui.select/confirm/input` 交互对话框
+3. **命令来源追踪** - 区分 builtin/extension/skill/prompt
+4. **参数自动补全** - `getArgumentCompletions` 参数智能提示
+5. **缺失命令补齐** - /reload, /compact, /copy, /new, /commands 等
+
+**Background**:
+- 当前命令硬编码在 `BUILTIN_COMMANDS` 数组中
+- 命令无法提供 UI 交互 (select/confirm/input)
+- KodaX 缺失 12+ pi-mono 具有的实用命令
+- 无动态命令注册机制
+
+**Inspired by**: [pi-mono Extension API](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/src/core/extensions/types.ts)
+
+---
+
 ## Summary
-- Total: 11 (3 Planned, 1 InProgress, 7 Completed)
-- By Priority: Critical: 3, High: 5, Medium: 2, Low: 0
+- Total: 13 (5 Planned, 1 InProgress, 7 Completed)
+- By Priority: Critical: 3, High: 6, Medium: 2, Low: 0
 - Current Version: v0.5.0
-- Next Release (v0.5.0): 4 features planned (006, 007, 010, 011)
+- Next Release (v0.5.0): 6 features planned (006, 007, 010, 011, 012, 013)
 - Highest Priority Planned: 006 - Skills 系统 (Critical), 010 - 架构拆分 (Critical)

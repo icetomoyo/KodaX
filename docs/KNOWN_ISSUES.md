@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-03-02 15:50_
+_Last Updated: 2026-03-03 11:45_
 
 ---
 
@@ -74,6 +74,10 @@ _Last Updated: 2026-03-02 15:50_
 | 063 | High | Won't Fix | Shift+Enter 换行功能失效，直接发送消息 | v0.4.9 | - | 2026-03-02 | 2026-03-02 |
 | 064 | High | Resolved | 项目目录下 .kodax/skills/ 未被发现 | v0.4.9 | v0.4.9 | 2026-03-02 | 2026-03-02 |
 | 065 | Critical | Resolved | 流式响应后 Skills 全部消失 | v0.4.9 | v0.4.9 | 2026-03-02 | 2026-03-02 |
+| 066 | High | Open | /project init 命令在 InkREPL 中静默失败 | v0.5.4 | - | 2026-03-03 | - |
+| 067 | Critical | Open | API 速率限制重试机制失效 | v0.5.4 | - | 2026-03-03 | - |
+| 068 | High | Open | Thinking 指示器长时间无进度反馈 | v0.5.4 | - | 2026-03-03 | - |
+| 069 | Medium | Open | 缺少 LLM 交互式提问工具 | v0.5.4 | - | 2026-03-03 | - |
 
 ---
 
@@ -3700,6 +3704,347 @@ _Last Updated: 2026-03-02 15:50_
   - `packages/repl/src/skills/types.ts` (优先级顺序)
   - `packages/repl/src/ui/InkREPL.tsx` (传递 projectRoot)
   - `packages/repl/src/interactive/commands.ts` (discovery 检查)
+
+---
+
+### 066: /project init 命令在 InkREPL 中静默失败
+- **Priority**: High
+- **Status**: Open
+- **Introduced**: v0.5.4
+- **Created**: 2026-03-03
+
+- **Original Problem**:
+  用户使用 `/project init` 命令时，只看到警告信息，命令实际未执行：
+  ```
+  /project init 按照 TDD 方式,参考已有的设计文档 对这个项目进行开发
+
+  [Warning] Readline interface not available
+  Some interactive features may not work
+
+  (命令静默失败，无任何后续输出)
+  ```
+
+- **Expected Behavior**:
+  - 命令应正常执行，或至少给出明确的错误说明
+
+- **Context**:
+  - `packages/repl/src/ui/InkREPL.tsx` - 现代 Ink UI，未提供 `readline` 接口
+  - `packages/repl/src/interactive/project-commands.ts:664-675` - 命令处理逻辑
+  - `packages/repl/src/interactive/commands.ts:52-53` - `CommandCallbacks` 接口定义
+
+- **Root Cause**:
+  1. InkREPL 创建 `CommandCallbacks` 时未提供 `readline` 属性（该属性是可选的）
+  2. `handleProjectCommand` 检测到 `readline` 不可用时：
+     - 显示警告 `[Warning] Readline interface not available`
+     - 对于 `init`、`next`、`auto` 命令直接 `return`，**静默丢弃命令**
+
+  问题代码 (`project-commands.ts:670-674`):
+  ```typescript
+  if (!['init', 'next', 'auto'].includes(subCommand ?? '')) {
+    // 可以执行非交互命令 - 但什么也没做
+  } else {
+    return;  // 交互命令直接返回，无任何提示！
+  }
+  ```
+
+- **Proposed Solution**:
+  方案 A：为 InkREPL 提供 readline 兼容接口
+  - 使用 Ink 的 input 组件模拟 readline 交互
+
+  方案 B：使用 React 状态管理替代 readline
+  - `projectInit` 等函数改用回调方式处理确认对话框
+  - InkREPL 通过 React 组件显示确认 UI
+
+  方案 C（临时）：至少给出明确错误
+  - 显示 "此命令在当前 UI 模式下不可用，请使用传统 REPL 模式"
+
+---
+
+### 067: API 速率限制重试机制失效
+- **Priority**: Critical
+- **Status**: Open
+- **Introduced**: v0.5.4
+- **Created**: 2026-03-03
+
+- **Original Problem**:
+  当 API 遇到速率限制时，显示重试信息但实际未重试：
+  ```
+  [Stream Error] API rate limit hit. Retrying in 2s (1/3)
+
+  (流式中断，无后续重试)
+  ```
+
+- **Expected Behavior**:
+  - 检测到速率限制后，等待指定时间
+  - 自动重试请求
+  - 最多重试 3 次
+
+- **Context**:
+  - `packages/ai/src/providers/base.ts:44-76` - `withRateLimit` 函数
+  - `packages/ai/src/providers/anthropic.ts:30` - 调用方
+  - `packages/ai/src/providers/openai.ts:30` - 调用方
+  - `packages/repl/src/ui/InkREPL.tsx:343` - 错误显示
+
+- **Root Cause**:
+  `withRateLimit` 函数存在严重逻辑错误：
+
+  **问题代码** (`base.ts:58-62`):
+  ```typescript
+  // 抛出速率限制错误，包含重试信息
+  throw new KodaXRateLimitError(
+    `API rate limit hit. Retrying in ${delay / 1000}s (${i + 1}/${retries})`,
+    delay
+  );
+  ```
+
+  **问题分析**：
+  1. 检测到速率限制错误后，代码**立即抛出异常**
+  2. 消息说 "Retrying in 2s" 是**误导性的** - 实际并未重试
+  3. 没有等待 (`await sleep(delay)`) 就直接抛出错误
+  4. 循环不会继续，重试机制完全失效
+  5. `KodaXRateLimitError.retryAfter` 属性从未被任何代码使用
+
+- **Proposed Solution**:
+  修复 `withRateLimit` 函数，需要考虑以下问题：
+
+  **潜在问题及解决方案**：
+
+  | 问题 | 解决方案 |
+  |------|----------|
+  | 用户看不到重试进度 | 使用 `console.log` 显示，而不是 throw |
+  | AbortSignal 未被尊重 | 在等待期间检查 `signal?.aborted` |
+  | 最后一次重试仍需 throw | 只在最后一次重试时 throw |
+
+  **修复代码**：
+  ```typescript
+  protected async withRateLimit<T>(
+    fn: () => Promise<T>,
+    retries = 3,
+    signal?: AbortSignal  // 添加 signal 参数
+  ): Promise<T> {
+    for (let i = 0; i < retries; i++) {
+      try {
+        return await fn();
+      } catch (e) {
+        if (this.isRateLimitError(e)) {
+          const delay = (i + 1) * 2000;
+
+          // 最后一次重试失败
+          if (i === retries - 1) {
+            throw new KodaXRateLimitError(
+              `API rate limit exceeded after ${retries} retries`,
+              60000
+            );
+          }
+
+          // 显示重试信息
+          console.log(chalk.yellow(`[Rate Limit] Retrying in ${delay/1000}s (${i + 1}/${retries})...`));
+
+          // 等待期间检查是否被取消
+          await new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(resolve, delay);
+            signal?.addEventListener('abort', () => {
+              clearTimeout(timer);
+              reject(new DOMException('Request aborted', 'AbortError'));
+            });
+          });
+
+          continue;  // 继续下一次循环
+        }
+        // 其他错误处理...
+      }
+    }
+  }
+  ```
+
+- **Files to Change**:
+  - `packages/ai/src/providers/base.ts` - 添加 signal 参数并实现正确重试
+  - `packages/ai/src/providers/anthropic.ts` - 传递 signal
+  - `packages/ai/src/providers/openai.ts` - 传递 signal
+
+---
+
+### 068: Thinking 指示器长时间无进度反馈
+- **Priority**: High
+- **Status**: Open
+- **Introduced**: v0.5.4
+- **Created**: 2026-03-03
+
+- **Original Problem**:
+  用户报告两个问题导致不知道 KodaX 当前在做什么：
+
+  **问题 1：Tool 调用过程无动态信息**
+  ```
+  ⠦ [Tool] Processing...
+  (不知道调用了什么 Tool，不知道进度如何)
+  ```
+  - spinner 只显示 `[Tool] Processing...`，没有更多动态信息
+  - 不知道正在调用哪个 Tool
+  - 不知道 Tool 的输入参数
+
+  **问题 2：Thinking 过程无 chars 统计**
+  ```
+  ⠦ Thinking…
+  (长时间停留，无任何进度更新)
+  ```
+  - 等待大模型流式输出时没有 chars 统计
+  - 用户困惑不知道 KodaX 在做什么
+  - 不知道进展如何
+
+- **Expected Behavior**:
+  - **Tool 调用时**：显示 Tool 名称、输入参数摘要、执行状态
+  - **Thinking 时**：显示 thinking 字符数统计，实时更新
+  - **通用**：所有等待状态都应有动态反馈
+
+- **Context**:
+  - `packages/repl/src/ui/components/StatusBar.tsx` - 状态栏显示 tool 名称
+  - `packages/repl/src/ui/components/MessageList.tsx:419-433` - Loading 文本逻辑
+  - `packages/repl/src/ui/components/LoadingIndicator.tsx` - Spinner 组件
+  - `packages/repl/src/ui/contexts/StreamingContext.tsx` - 字符统计已追踪
+  - `packages/repl/src/ui/InkREPL.tsx:317-342` - 事件回调
+
+- **Root Cause Analysis**:
+
+  **KodaX 现状分析**：
+  | 组件 | 当前显示 | 问题 |
+  |------|---------|------|
+  | StatusBar | Tool 名称 (⏳) | 不显示 char count |
+  | MessageList | `[Tool] Processing...` | 不显示具体 tool 名称 |
+  | Thinking | spinner only | 不显示 thinking char count |
+
+  **数据追踪现状** (`StreamingContext.tsx`)：
+  - `thinkingCharCount` ✅ 已追踪但未显示
+  - `toolInputCharCount` ✅ 已追踪但未显示
+  - `currentTool` ✅ 已追踪，StatusBar 显示但 MessageList 不显示
+
+  **pi-mono 对标分析**：
+  | 特性 | pi-mono | KodaX |
+  |------|---------|-------|
+  | Tool 执行状态 | 名称 + 参数摘要 + 背景 color | 仅 `[Tool] Processing...` |
+  | Tool 结果预览 | 5 行预览 + 展开提示 | 无 |
+  | Thinking 进度 | 内容直接流式显示 | spinner only |
+  | LLM 等待 | `Working... (Ctrl+I)` | `Thinking...` |
+  | Footer 统计 | 完成后显示 token | 无 |
+
+  **根本原因**：
+  1. **MessageList loadingText 逻辑问题**：有 `currentTool` 时只显示 `[Tool] Processing...`，未显示 tool 名称
+  2. **StatusBar 未利用 char count**：`thinkingCharCount` 和 `toolInputCharCount` 已在 Context 中追踪，但未在 UI 显示
+  3. **缺少 Tool 参数摘要**：未在 loading 状态显示 tool 的输入参数
+
+- **Proposed Solution**:
+
+  **方案：增强 StatusBar + MessageList 显示**
+
+  **Phase 1：StatusBar 增强** (P0)
+  ```typescript
+  // StatusBar.tsx - 显示更多信息
+  {currentTool && (
+    <Box>
+      <Text color={theme.colors.warning}>⏳ {currentTool}</Text>
+      {toolInputCharCount > 0 && (
+        <Text color={theme.colors.dim}> ({toolInputCharCount} chars)</Text>
+      )}
+    </Box>
+  )}
+  {isThinking && !currentTool && (
+    <Box>
+      <Text color={theme.colors.accent}>Thinking</Text>
+      {thinkingCharCount > 0 && (
+        <Text color={theme.colors.dim}> ({thinkingCharCount} chars)</Text>
+      )}
+    </Box>
+  )}
+  ```
+
+  **Phase 2：MessageList Loading 文本改进** (P0)
+  ```typescript
+  // MessageList.tsx - 改进 loadingText 逻辑
+  let loadingText = "Thinking";
+  let prefix = "";
+
+  if (currentTool) {
+    prefix = `[Tool] `;
+    loadingText = toolInputCharCount > 0
+      ? `${currentTool} (${toolInputCharCount} chars)`
+      : `${currentTool}`;
+  } else if (thinkingCharCount > 0) {
+    loadingText = `Thinking (${thinkingCharCount} chars)`;
+  }
+  ```
+
+  **Phase 3：增加心跳超时提示** (P1)
+  - 当 thinking 超过 10 秒无更新，显示 "Waiting for response..." 或类似提示
+  - 使用 `useEffect` 监控 `thinkingContent` 更新时间
+
+  **Phase 4：Tool 参数摘要显示** (P2)
+  - 提取 tool 输入的前 50 个字符作为摘要
+  - 在 StatusBar 或 MessageList 显示
+
+  **预期效果**：
+  ```
+  Before:
+  ⠦ [Tool] Processing...
+
+  After:
+  StatusBar: ⏳ Read (234 chars)
+  MessageList: ⠦ [Tool] Read (234 chars)...
+
+  Before:
+  ⠦ Thinking…
+
+  After:
+  StatusBar: Thinking (1234 chars)
+  MessageList: ⠦ Thinking (1234 chars)...
+  ```
+
+- **Implementation Notes**:
+  - 修改文件：
+    - `packages/repl/src/ui/components/StatusBar.tsx`
+    - `packages/repl/src/ui/components/MessageList.tsx`
+  - 无需修改 Context（已追踪所需数据）
+  - 无需修改 Provider（事件回调已正确实现）
+
+---
+
+### 069: 缺少 LLM 交互式提问工具
+- **Priority**: Medium
+- **Status**: Open
+- **Introduced**: v0.5.4
+- **Created**: 2026-03-03
+
+- **Original Problem**:
+  用户报告 LLM 有时想要提问，但并没有停下来提供选项让用户选择：
+  ```
+  (LLM 输出中包含问题，但继续执行而不等待用户回答)
+  ```
+
+- **Expected Behavior**:
+  - LLM 应该能够通过工具向用户提问
+  - 用户回答后 LLM 继续执行
+
+- **Context**:
+  - `packages/coding/src/tools/` - 当前可用工具列表
+  - 缺少 `AskUserQuestion` 或类似的交互式工具
+
+- **Root Cause**:
+  KodaX 的工具集中**没有提供交互式提问工具**：
+  - 当前工具：`Read`, `Write`, `Edit`, `Bash`, `Glob`, `Grep`, `Diff`, `Undo`
+  - 缺少：`AskUserQuestion` 或 `PromptUser` 工具
+
+- **Proposed Solution**:
+  添加 `AskUserQuestion` 工具：
+  ```typescript
+  // tools/ask.ts
+  export const askUserQuestion: KodaXToolDefinition = {
+    name: 'AskUserQuestion',
+    description: 'Ask the user a question and wait for their response',
+    parameters: {
+      question: { type: 'string', description: 'The question to ask' },
+      options: { type: 'array', items: { type: 'string' }, description: 'Optional choices' }
+    },
+    // ...
+  };
+  ```
 
 ---
 
