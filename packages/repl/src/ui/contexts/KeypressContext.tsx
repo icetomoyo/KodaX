@@ -190,6 +190,12 @@ export function KeypressProvider({
       setRawMode(true);
     }
 
+    // Enable bracketed paste mode (Issue 075) - 启用粘贴模式 (Issue 075)
+    // This tells the terminal to wrap pasted content in special escape sequences - 这告诉终端将粘贴内容包装在特殊的转义序列中
+    // \x1b[200~ marks the start, \x1b[201~ marks the end - \x1b[200~ 标记开始，\x1b[201~ 标记结束
+    // Must write to stdout (not stdin) to send escape sequences to terminal - 必须写入 stdout（而非 stdin）来发送转义序列到终端
+    process.stdout.write("\x1b[?2004h");
+
     // Create parser - 创建解析器
     const parser = new KeypressParser();
 
@@ -227,6 +233,13 @@ export function KeypressProvider({
       }
       stdin.off("data", onData);
       unsubscribeParser();
+
+      // Disable bracketed paste mode (Issue 075) - 禁用粘贴模式 (Issue 075)
+      try {
+        process.stdout.write("\x1b[?2004l");
+      } catch {
+        // Ignore error - 忽略错误
+      }
 
       // Restore raw mode - 恢复原始模式
       if (wasRaw === false) {

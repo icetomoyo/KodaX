@@ -56,3 +56,12 @@ export {
   processSpecialSyntax,
   type ShellExecutorConfig,
 } from "./shell-executor.js";
+
+// Keypress parser utilities
+export {
+  parseKeypress,
+  KeypressParser,
+  isFunctionKey,
+  isPrintable,
+  getKeyDisplayName,
+} from "./keypress-parser.js";

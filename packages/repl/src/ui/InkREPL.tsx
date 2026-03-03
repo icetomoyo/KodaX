@@ -197,6 +197,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     appendResponse,
     getSignal,
     getFullResponse,
+    getThinkingContent,
     startNewIteration,
     clearIterationHistory,
   } = useStreamingActions();
@@ -352,6 +353,29 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       // Save current content to history and start fresh for new iteration
       // 保存当前内容到历史，开始新一轮
       if (iter > 1) {
+        // Issue 076 fix: Save previous iteration content to persistent history BEFORE clearing
+        // Issue 076 修复：在清空前将上一轮内容保存到持久历史记录
+
+        // First, save thinking content (full content for history)
+        // 首先保存 thinking 内容（完整内容用于历史记录）
+        const prevThinking = getThinkingContent().trim();
+        if (prevThinking) {
+          addHistoryItem({
+            type: "thinking",
+            text: prevThinking,
+          });
+        }
+
+        // Then, save response content
+        // 然后保存响应内容
+        const prevResponse = getFullResponse().trim();
+        if (prevResponse) {
+          addHistoryItem({
+            type: "assistant",
+            text: prevResponse,
+          });
+        }
+
         startNewIteration(iter);
         startThinking();
       }
@@ -922,7 +946,28 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         // Update context
         context.messages = result.messages;
 
-        // Add assistant response to UI history
+        // Issue 076 fix: Save final iteration content to persistent history
+        // This handles the case where the last iteration didn't trigger onIterationStart
+        // Issue 076 修复：将最后一轮内容保存到持久历史记录
+        // 这处理了最后一轮没有触发 onIterationStart 的情况
+        const finalThinking = getThinkingContent().trim();
+        if (finalThinking) {
+          addHistoryItem({
+            type: "thinking",
+            text: finalThinking,
+          });
+        }
+
+        const finalResponse = getFullResponse().trim();
+        if (finalResponse) {
+          addHistoryItem({
+            type: "assistant",
+            text: finalResponse,
+          });
+        }
+
+        // Add assistant response to UI history (from messages, as backup)
+        // 从 messages 添加 assistant 响应到 UI 历史（作为备份）
         const lastAssistant = result.messages[result.messages.length - 1];
         if (lastAssistant?.role === "assistant") {
           const content = extractTextContent(lastAssistant.content);
@@ -958,6 +1003,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           // Don't add abort error to history - already handled by Ctrl+C handler
           console.log = originalLog;
           // Still need to save any unsaved streaming content
+          // Issue 076: Also save thinking content before it's cleared
+          const unsavedThinking = getThinkingContent().trim();
+          if (unsavedThinking) {
+            addHistoryItem({
+              type: "thinking",
+              text: unsavedThinking,
+            });
+          }
           const unsavedResponse = getFullResponse().trim();
           if (unsavedResponse) {
             addHistoryItem({

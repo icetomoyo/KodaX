@@ -109,6 +109,8 @@ export interface KodaXResult {
   sessionId: string;
   /** 是否被用户中断 (Ctrl+C) */
   interrupted?: boolean;
+  /** 是否达到迭代上限 */
+  limitReached?: boolean;
 }
 
 // ============== 工具执行上下文 ==============

@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-03-03 16:30_
+_Last Updated: 2026-03-04 00:25_
 
 ---
 
@@ -83,6 +83,8 @@ _Last Updated: 2026-03-03 16:30_
 | 072 | High | Open | 流式中断后 tool_call_id 不匹配导致 API 错误 | v0.5.4 | - | 2026-03-03 | - |
 | 073 | High | Resolved | /project auto 等子命令无流式进度反馈 | v0.5.4 | v0.5.4 | 2026-03-03 | 2026-03-03 |
 | 074 | Medium | Resolved | 多轮迭代时 Thinking 和 Response 内容混在一起显示 | v0.5.4 | v0.5.4 | 2026-03-03 | 2026-03-03 |
+| 075 | Medium | Resolved | 粘贴多行文本到输入框时换行丢失 | v0.5.4 | v0.5.4 | 2026-03-03 | 2026-03-03 |
+| 076 | Medium | Resolved | 正常响应后历史记录偶现 [Interrupted] 标记 | v0.5.4 | v0.5.4 | 2026-03-03 | 2026-03-04 |
 
 ---
 
@@ -4464,6 +4466,156 @@ _Last Updated: 2026-03-03 16:30_
   - `packages/repl/src/ui/components/MessageList.tsx` - 历史显示
 
 - **Tests Added**: 无（UI 变更，手动验证）
+
+---
+
+### 075: 粘贴多行文本到输入框时换行丢失 (RESOLVED)
+- **Priority**: Medium
+- **Status**: Resolved
+- **Introduced**: v0.5.4
+- **Fixed**: v0.5.4
+- **Created**: 2026-03-03
+- **Resolution Date**: 2026-03-03
+
+- **Original Problem**:
+  粘贴包含换行符的多行文本（如日志、多行信息）到 KodaX 输入框时，所有换行符被移除，多行内容变成一行：
+  ```
+  原始粘贴内容：
+  Line 1: Error in module A
+  Line 2: Stack trace follows
+  Line 3: at function foo()
+
+  实际显示：
+  Line 1: Error in module A Line 2: Stack trace follows Line 3: at function foo()
+  ```
+
+- **Expected Behavior**:
+  - 粘贴的多行文本应保留原始换行符
+  - 用户可以粘贴日志、代码片段、错误信息等多行内容
+  - 换行符应被正确处理（保留或转换为 Shift+Enter）
+
+- **Context**:
+  - `packages/repl/src/ui/components/InputPrompt.tsx` - 输入组件
+  - `packages/repl/src/ui/hooks/useTextBuffer.ts` - 文本缓冲区
+  - `packages/repl/src/ui/utils/text-buffer.ts` - 文本缓冲区实现
+  - Windows 终端粘贴时发送 CRLF (`\r\n`) 而非 LF (`\n`)
+
+- **Root Cause**:
+  Windows 终端在粘贴多行文本时使用 CRLF (`\r\n`) 作为换行符。问题出在两个层面：
+
+  **问题 1: CRLF 被当作两个独立按键处理**
+  - `\r` 被解析为 `return` 键 → 触发表单提交
+  - `\n` 被解析为 `newline` 键 → 但表单已经提交，换行符丢失
+
+  **问题 2: CRLF 被拆分到不同的 stdin 数据块**
+  - 终端可能将粘贴内容分成多个数据块发送
+  - 第一个块包含 `\r`，第二个块包含 `\n`
+  - 当 `\r` 单独在缓冲区末尾时，它被立即提取并处理为 `return`
+  - 即使下一个数据块包含 `\n`，也已经太晚了
+
+  代码路径分析：
+  - `InputPrompt.tsx` 接收按键 → `useTextBuffer` hook → `keypress-parser.ts` 解析
+  - 在 `parseKeypress()` 函数中，`\r` 单独被解析为 `{ name: "return" }`
+  - 在 `KeypressParser.extractNextSequence()` 中，单字符立即返回，不等待可能的 `\n`
+
+- **Resolution**:
+  修改 `keypress-parser.ts` 的 `extractNextSequence()` 方法，采用两层防御策略：
+
+  1. **CRLF 整体提取**：当缓冲区以 `\r\n` 开头时，作为一个序列提取：
+     ```typescript
+     if (this.buffer.length >= 2 && this.buffer[0] === "\r" && this.buffer[1] === "\n") {
+       return { sequence: this.buffer.slice(0, 2), remaining: this.buffer.slice(2) };
+     }
+     ```
+
+  2. **等待可能的 `\n`**：当 `\r` 单独出现在缓冲区末尾时，等待更多数据：
+     ```typescript
+     // CR (\r) at end of buffer - might be start of CRLF sequence
+     if (firstChar === "\r" && this.buffer.length === 1 && !this.flushing) {
+       return null; // Wait for potential \n to follow
+     }
+     ```
+
+  3. **超时刷新**：如果是真正的 Enter 键按下（而非粘贴），超时机制会刷新缓冲区：
+     ```typescript
+     // When flush is triggered, the lone \r is processed as "return"
+     parser.feed("", true);
+     ```
+
+  4. **parseKeypress 处理**：将 CRLF 序列解析为 `newline`：
+     ```typescript
+     if (sequence === "\r\n") {
+       key.name = "newline";
+       return key;
+     }
+     ```
+
+  这样处理了所有情况：
+  - CRLF 在同一数据块 → 整体提取并解析为 newline
+  - CRLF 跨数据块 → 等待组合后解析为 newline
+  - 真正的 Enter 键 → 超时后处理为 return
+
+- **Files Changed**:
+  - `packages/repl/src/ui/utils/keypress-parser.ts` - 添加 CRLF 处理逻辑和等待机制
+
+- **Tests Added**:
+  - `tests/ui/keypress-parser.test.ts` - 33 个测试用例，覆盖：
+    - CRLF 在同一数据块
+    - CRLF 跨数据块
+    - 单独 CR 超时刷新（Enter 键）
+    - 基本按键、箭头键、可打印字符、Ctrl 组合键等
+
+---
+
+### 076: 正常响应后历史记录偶现 [Interrupted] 标记 (RESOLVED)
+- **Priority**: Medium
+- **Status**: Resolved
+- **Introduced**: v0.5.4
+- **Fixed**: v0.5.4
+- **Created**: 2026-03-03
+- **Resolution Date**: 2026-03-04
+
+- **Original Problem**:
+  偶现但频率较高的问题：正常响应结束后，进行新一轮输入时，之前的会话历史中突然冒出 `[Interrupted]` 标记，但用户并没有进行任何中断操作。
+
+  ```
+  正常流程：
+  1. 用户输入问题
+  2. AI 正常响应完成
+  3. 用户输入新问题
+  4. 上一条消息突然显示 [Interrupted]（但实际是正常完成的）
+  ```
+
+- **Expected Behavior**:
+  - 只有在用户主动中断（Ctrl+C）时才显示 `[Interrupted]`
+  - 正常完成的响应不应标记为 `[Interrupted]`
+
+- **Context**:
+  - `packages/repl/src/ui/contexts/StreamingContext.tsx` - 流式状态管理
+  - `packages/repl/src/ui/components/MessageList.tsx` - 消息显示
+  - `packages/repl/src/ui/InkREPL.tsx` - 事件处理
+  - 可能与流式响应结束状态判断的竞态条件有关
+
+- **Root Cause**:
+  问题实际上有两个方面：
+  1. **迭代上限触发"中断"现象**: 原来设置的迭代上限是 50 轮，达到上限时会退出循环但没有正确标记，导致历史记录在下一次输入开始时被清空
+  2. **Thinking 内容未持久化**: 每轮迭代的 thinking 和 response 内容只保存在临时的 `iterationHistory` 中，而不是持久化的 `history` 数组中。当达到迭代上限或其他边界情况时，这些内容会丢失
+
+- **Resolution**:
+  1. **提高迭代上限**: 将 `maxIter` 从 50 提高到 200，减少触达上限的情况
+  2. **每轮迭代内容持久化**: 修改 `onIterationStart` 回调，在每轮迭代开始前：
+     - 先获取 thinking 内容（通过新增的 `getThinkingContent()` 方法）
+     - 将 thinking 内容添加到持久历史（`type: "thinking"`）
+     - 再获取 response 内容
+     - 将 response 内容添加到持久历史（`type: "assistant"`）
+     - 然后才清空临时状态（调用 `startNewIteration`）
+  3. **最终迭代内容持久化**: 在 agent 完成后也保存最后一轮的 thinking 和 response 内容
+  4. **中断时保存 thinking**: 在 abort error 处理中也保存 thinking 内容
+
+- **Files Changed**:
+  - `packages/coding/src/agent.ts` - 提高 maxIter 到 200
+  - `packages/repl/src/ui/contexts/StreamingContext.tsx` - 添加 `getThinkingContent()` 方法
+  - `packages/repl/src/ui/InkREPL.tsx` - 修改 `onIterationStart` 回调和完成后的保存逻辑
 
 ---
 

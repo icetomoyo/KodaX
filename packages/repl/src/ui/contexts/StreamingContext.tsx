@@ -134,6 +134,9 @@ export interface StreamingActions {
   /** 获取完整响应内容（包括缓冲区中未刷新的内容）- 用于中断时保存 */
   getFullResponse: () => string;
 
+  /** 获取完整 thinking 内容（包括缓冲区中未刷新的内容）- 用于持久化历史记录 */
+  getThinkingContent: () => string;
+
   /** Start a new iteration - saves current content to history and clears for next round - 开始新迭代，保存当前内容到历史并清空 */
   startNewIteration: (iteration: number) => void;
 
@@ -234,6 +237,9 @@ export interface StreamingManager {
 
   /** 获取完整响应内容（包括缓冲区中未刷新的内容） */
   getFullResponse: () => string;
+
+  /** 获取完整 thinking 内容（包括缓冲区中未刷新的内容） */
+  getThinkingContent: () => string;
 
   /** Start a new iteration - 开始新迭代 */
   startNewIteration: (iteration: number) => void;
@@ -488,6 +494,12 @@ export function createStreamingManager(): StreamingManager {
       return state.currentResponse + pendingResponseText;
     },
 
+    getThinkingContent: () => {
+      // Return current thinking + any pending buffered content
+      // 返回当前 thinking + 缓冲区中未刷新的内容
+      return state.thinkingContent + pendingThinkingText;
+    },
+
     /**
      * Start a new iteration - saves current content to history and clears for next round
      * 开始新迭代 - 保存当前内容到历史并清空准备下一轮
@@ -662,6 +674,10 @@ export function StreamingProvider({
     return managerRef.current.getFullResponse();
   }, []);
 
+  const getThinkingContent = useCallback(() => {
+    return managerRef.current.getThinkingContent();
+  }, []);
+
   const startNewIteration = useCallback((iteration: number) => {
     managerRef.current.startNewIteration(iteration);
   }, []);
@@ -689,6 +705,7 @@ export function StreamingProvider({
     clearToolInputContent,
     getSignal,
     getFullResponse,
+    getThinkingContent,
     startNewIteration,
     clearIterationHistory,
   };

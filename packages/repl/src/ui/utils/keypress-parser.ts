@@ -26,6 +26,11 @@ const ESCAPE_SEQUENCE_MAP: Record<string, Partial<KeyInfo>> = {
   "[C": { name: "right" },
   "[D": { name: "left" },
 
+  // Bracketed paste mode (Issue 075) - 粘贴模式 (Issue 075)
+  // These sequences wrap pasted content, allowing us to distinguish paste from typing - 这些序列包装粘贴内容，让我们区分粘贴和输入
+  "[200~": { name: "paste_start" },  // Start of pasted content - 粘贴内容开始
+  "[201~": { name: "paste_end" },    // End of pasted content - 粘贴内容结束
+
   // Shift+arrow keys (some terminals) - Shift+方向键 (某些终端)
   "[1;2A": { name: "up", shift: true },
   "[1;2B": { name: "down", shift: true },
@@ -103,9 +108,10 @@ function parseModifier(modifier: number): { shift: boolean; alt: boolean; ctrl: 
  * Parse single keypress sequence - 解析单个按键序列
  *
  * @param sequence - Raw input sequence - 原始输入序列
+ * @param inBracketedPaste - Whether we're inside a bracketed paste (Issue 075) - 是否在粘贴模式中 (Issue 075)
  * @returns Parsed KeyInfo object - 解析后的 KeyInfo 对象
  */
-export function parseKeypress(sequence: string): KeyInfo {
+export function parseKeypress(sequence: string, inBracketedPaste: boolean = false): KeyInfo {
   const key: KeyInfo = {
     name: "",
     sequence,
@@ -120,8 +126,9 @@ export function parseKeypress(sequence: string): KeyInfo {
   }
 
   // 1. Enter (CR) - 1. 回车 (CR)
+  // During bracketed paste, treat CR as newline instead of return (Issue 075) - 粘贴模式中，将 CR 当作换行而非提交 (Issue 075)
   if (sequence === "\r") {
-    key.name = "return";
+    key.name = inBracketedPaste ? "newline" : "return";
     return key;
   }
 
@@ -297,6 +304,8 @@ export class KeypressParser {
   private listeners: Array<(key: KeyInfo) => void> = [];
   /** Whether in timeout flush mode (handling incomplete ESC sequences) - 是否处于超时刷新模式（处理不完整的 ESC 序列） */
   private flushing = false;
+  /** Whether we're inside a bracketed paste (Issue 075) - 是否在粘贴模式中 (Issue 075) */
+  private inBracketedPaste = false;
 
   /**
    * Add keypress listener - 添加按键监听器
@@ -335,7 +344,7 @@ export class KeypressParser {
         if (this.flushing && this.buffer.length > 0) {
           const sequence = this.buffer;
           this.buffer = "";
-          const key = parseKeypress(sequence);
+          const key = parseKeypress(sequence, this.inBracketedPaste);
           this.emit(key);
         }
         break;
@@ -344,7 +353,18 @@ export class KeypressParser {
       const { sequence, remaining } = result;
       this.buffer = remaining;
 
-      const key = parseKeypress(sequence);
+      const key = parseKeypress(sequence, this.inBracketedPaste);
+
+      // Handle bracketed paste mode state transitions (Issue 075) - 处理粘贴模式状态转换 (Issue 075)
+      if (key.name === "paste_start") {
+        this.inBracketedPaste = true;
+        continue; // Don't emit paste_start to listeners - 不要将 paste_start 发送给监听器
+      }
+      if (key.name === "paste_end") {
+        this.inBracketedPaste = false;
+        continue; // Don't emit paste_end to listeners - 不要将 paste_end 发送给监听器
+      }
+
       this.emit(key);
     }
   }

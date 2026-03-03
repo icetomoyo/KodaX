@@ -41,7 +41,7 @@ export async function runKodaX(
     throw new Error(`Provider "${options.provider}" not configured. Set ${options.provider.toUpperCase().replace('-', '_')}_API_KEY`);
   }
 
-  const maxIter = options.maxIter ?? 50;
+  const maxIter = options.maxIter ?? 200;
   const events = options.events ?? {};
 
   // 处理 autoResume/resume：自动加载当前目录最近会话
@@ -90,6 +90,7 @@ export async function runKodaX(
 
   let lastText = '';
   let incompleteRetryCount = 0;
+  let limitReached = false; // Track if we exited due to iteration limit - 追踪是否因达到迭代上限而退出
 
   for (let iter = 0; iter < maxIter; iter++) {
     try {
@@ -125,6 +126,7 @@ export async function runKodaX(
             signal: 'COMPLETE',
             messages,
             sessionId,
+            limitReached: false,
           };
         }
       }
@@ -134,6 +136,7 @@ export async function runKodaX(
 
       if (result.toolBlocks.length === 0) {
         events.onComplete?.();
+        limitReached = false; // 正常完成， 不是达到上限
         break;
       }
 
@@ -307,6 +310,8 @@ export async function runKodaX(
   // 检查最终信号
   const [finalSignal, finalReason] = checkPromiseSignal(lastText);
 
+  // 达到迭代上限 (循环正常结束但没有 COMPLETE 信号且没有提前退出)
+  // 使用 limitReached 变量来准确判断
   return {
     success: true,
     lastText,
@@ -314,6 +319,7 @@ export async function runKodaX(
     signalReason: finalReason,
     messages,
     sessionId,
+    limitReached,
   };
 }
 
