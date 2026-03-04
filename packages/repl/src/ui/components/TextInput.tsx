@@ -8,7 +8,6 @@ import React, { useMemo, useState, useEffect } from "react";
 import { Text, Box, useStdout } from "ink";
 import stringWidth from "string-width";
 import { getTheme } from "../themes/index.js";
-import type { VisualLayout, VisualCursor } from "../types.js";
 import {
   calculateVisualLayout,
   calculateVisualCursorFromLayout,
@@ -23,14 +22,6 @@ export interface TextInputProps {
   focus?: boolean;
   theme?: string;
   width?: number;
-}
-
-/**
- * Get visual cursor position (considering wide characters) - 获取可视光标位置（考虑宽字符）
- */
-function getVisualCursorPos(line: string, col: number): number {
-  const textBeforeCursor = [...line].slice(0, col).join("");
-  return stringWidth(textBeforeCursor);
 }
 
 /**
@@ -91,10 +82,8 @@ export const TextInput: React.FC<TextInputProps> = ({
   // Calculate prompt width (for alignment) - 计算提示符宽度（用于对齐）
   const promptWidth = stringWidth(prompt) + 1; // +1 for space
 
-  // Calculate visual layout for wrapping (only for multi-line) - 计算视觉布局用于换行（仅多行）
+  // Calculate visual layout for wrapping - 计算视觉布局用于换行
   const visualLayout = useMemo(() => {
-    if (lines.length <= 1) return null;
-
     // Calculate available width for text (excluding prompt) - 计算文本可用宽度（排除提示符）
     const availableWidth = Math.max(20, terminalWidth - promptWidth);
 
@@ -106,7 +95,7 @@ export const TextInput: React.FC<TextInputProps> = ({
     );
   }, [lines, terminalWidth, cursorRow, cursorCol, promptWidth]);
 
-  // Calculate visual cursor position (only for multi-line) - 计算视觉光标位置（仅多行）
+  // Calculate visual cursor position - 计算视觉光标位置
   const visualCursor = useMemo(() => {
     if (!visualLayout) return null;
 
@@ -117,50 +106,10 @@ export const TextInput: React.FC<TextInputProps> = ({
     return { row: visualRow, col: visualCol };
   }, [visualLayout, cursorRow, cursorCol]);
 
-  // Handle empty input - cursor displays after prompt with one space - 处理空输入 - 光标显示在提示符之后，空一格
-  if (lines.length === 0 || (lines.length === 1 && lines[0] === "")) {
-    return (
-      <Box>
-        <Text color={theme.colors.primary}>{prompt} </Text>
-        {focus ? (
-          <Text backgroundColor={theme.colors.primary} color="#000000"> </Text>
-        ) : (
-          <Text> </Text>
-        )}
-        <Text dimColor>{placeholder}</Text>
-      </Box>
-    );
-  }
-
-  // Single line input - 单行输入
-  if (lines.length === 1) {
-    const line = lines[0] ?? "";
-    const beforeCursor = [...line].slice(0, cursorCol).join("");
-    const cursorChar = [...line][cursorCol] ?? " ";
-    const afterCursor = [...line].slice(cursorCol + 1).join("");
-
-    return (
-      <Box>
-        <Text color={theme.colors.primary}>{prompt} </Text>
-        <Text color={theme.colors.text}>{beforeCursor}</Text>
-        {focus && (
-          <>
-            <Text backgroundColor={theme.colors.primary} color="#000000">
-              {cursorChar}
-            </Text>
-            <Text color={theme.colors.text}>{afterCursor}</Text>
-          </>
-        )}
-        {!focus && <Text color={theme.colors.text}>{line}</Text>}
-      </Box>
-    );
-  }
-
-  // Multi-line input - use divider style - 多行输入 - 使用分隔线样式
+  // Use visual layout rendering for all input (including empty and single-line) - 所有输入使用视觉布局渲染（包括空输入和单行）
   const divider = generateDivider(terminalWidth);
 
-  // TypeScript non-null assertion: visualLayout and visualCursor are guaranteed non-null in multi-line mode
-  // TypeScript 非空断言：多行模式下 visualLayout 和 visualCursor 保证非空
+  // TypeScript non-null assertion: visualLayout and visualCursor are  // TypeScript 非空断言：visualLayout 和 visualCursor 保证非空
   const layout = visualLayout!;
   const vCursor = visualCursor!;
 
@@ -170,36 +119,51 @@ export const TextInput: React.FC<TextInputProps> = ({
       <Text dimColor>{divider}</Text>
 
       {/* Content lines - 内容行 */}
-      {layout.visualLines.map((visualLine, visualRowIndex) => {
-        const isCurrentVisualLine = visualRowIndex === vCursor.row;
-        const linePrompt = visualRowIndex === 0 ? prompt : " ".repeat(promptWidth - 1);
+      {layout.visualLines.length === 0 || (layout.visualLines.length === 1 && layout.visualLines[0] === "") ? (
+        // Empty input - show placeholder and cursor - 空输入 - 显示占位符和光标
+        <Box>
+          <Text color={theme.colors.primary}>{prompt} </Text>
+          {focus ? (
+            <>
+              <Text backgroundColor={theme.colors.primary} color="#000000"> </Text>
+              <Text dimColor>{placeholder}</Text>
+            </>
+          ) : (
+            <Text dimColor>{placeholder}</Text>
+          )}
+        </Box>
+      ) : (
+        layout.visualLines.map((visualLine, visualRowIndex) => {
+          const isCurrentVisualLine = visualRowIndex === vCursor.row;
+          const linePrompt = visualRowIndex === 0 ? prompt : " ".repeat(promptWidth - 1);
 
-        // Current line needs to show cursor - 当前行需要显示光标
-        if (isCurrentVisualLine && focus) {
-          const beforeCursor = visualLine.slice(0, vCursor.col);
-          const cursorChar = visualLine[vCursor.col] ?? " ";
-          const afterCursor = visualLine.slice(vCursor.col + 1);
+          // Current line needs to show cursor - 当前行需要显示光标
+          if (isCurrentVisualLine && focus) {
+            const beforeCursor = visualLine.slice(0, vCursor.col);
+            const cursorChar = visualLine[vCursor.col] ?? " ";
+            const afterCursor = visualLine.slice(vCursor.col + 1);
 
+            return (
+              <Box key={visualRowIndex}>
+                <Text color={theme.colors.primary}>{linePrompt} </Text>
+                <Text color={theme.colors.text}>{beforeCursor}</Text>
+                <Text backgroundColor={theme.colors.primary} color="#000000">
+                  {cursorChar}
+                </Text>
+                <Text color={theme.colors.text}>{afterCursor}</Text>
+              </Box>
+            );
+          }
+
+          // Non-current line - 非当前行
           return (
             <Box key={visualRowIndex}>
-              <Text color={theme.colors.primary}>{linePrompt} </Text>
-              <Text color={theme.colors.text}>{beforeCursor}</Text>
-              <Text backgroundColor={theme.colors.primary} color="#000000">
-                {cursorChar}
-              </Text>
-              <Text color={theme.colors.text}>{afterCursor}</Text>
+              <Text color={theme.colors.dim}>{linePrompt} </Text>
+              <Text color={theme.colors.text}>{visualLine}</Text>
             </Box>
           );
-        }
-
-        // Non-current line - 非当前行
-        return (
-          <Box key={visualRowIndex}>
-            <Text color={theme.colors.dim}>{linePrompt} </Text>
-            <Text color={theme.colors.text}>{visualLine}</Text>
-          </Box>
-        );
-      })}
+        })
+      )}
 
       {/* Bottom divider - 底部分隔线 */}
       <Text dimColor>{divider}</Text>
