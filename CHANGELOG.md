@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.5.5] - 2026-03-04
 
+### Added
+- **Natural Language Skill Triggering**: Skills can now be triggered by describing the task in natural language (e.g., "帮我审查代码") without needing explicit /skill command
+
 ### Fixed
 - Issue 066: /project init command silently fails in InkREPL
 - Issue 068: Thinking indicator shows no progress for long time
@@ -25,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Issue 073: /project auto subcommand lacks streaming progress feedback
 - Issue 078: CLI --max-iter default overrides coding package default
 - CLI maxIter now correctly defaults to 200 (from coding package) instead of 50
+- **Session History**: Thinking content now restored when resuming session with `-c` flag
 
 ## [0.5.4] - 2026-03-03
 
