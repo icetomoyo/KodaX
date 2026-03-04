@@ -50,6 +50,7 @@ _Last Updated: 2026-03-04 16:00_
 | 077 | Low | Open | Skills 系统高级功能未完全实现 | v0.5.5 | - | 2026-03-04 | - |
 | 078 | High | Resolved | CLI --max-iter 默认值覆盖 coding 包默认值 | v0.5.5 | v0.5.5 | 2026-03-04 | 2026-03-04 |
 | 079 | High | Resolved | Ink 历史渲染无限长导致崩溃 | v0.5.7 | v0.5.7 | 2026-03-04 | 2026-03-04 |
+| 080 | Medium | Open | 长文本输入框未根据终端宽度自动换行 | v0.5.7 | - | 2026-03-04 | - |
 
 ---
 
@@ -3836,6 +3837,42 @@ _Last Updated: 2026-03-04 16:00_
 
 - **Files Changed**:
   - `packages/repl/src/ui/InkREPL.tsx` - 添加 useMemo 计算 renderHistory
+  3840→
+  3841→### 080: 长文本输入框未根据终端宽度自动换行
+  3842→-- **Priority**: Medium
+  3843→-- **Status**: Open
+  3844→-- **Introduced**: v0.5.7
+  3845→-- **Created**: 2026-03-04
+  3846→
+  3847→-- **Original Problem**:
+  3848→  - 在输入框中输入很长的内容时，文本没有根据终端宽度自动换行
+  3849→  - 超出终端宽度的文本显示异常，体验很差
+  3850→  - 多行输入时，长行也不换行，导致整体显示很怪
+  3851→
+  3852→-- **Root Cause**:
+  3853→  - TextInput 组件接收的是逻辑行（按 \n 分割）
+  3854→  - 缺少将逻辑行转换为视觉行的功能
+  3855→  - KodaX 依赖 Ink 的自动换行，但 TextInput 组件没有考虑终端宽度进行预计算
+  3856→
+  3857→-- **Proposed Solution**:
+  3858→  - 参考 Gemini CLI 的 `calculateLayout` 函数实现
+  3859→  - 新增 `VisualLayout` 接口和 `calculateVisualLayout` 函数到 textUtils.ts
+  3860→  - 实现**逻辑行 → 视觉行**转换，支持：
+  3861→    - 空行处理
+  3862→    - **软换行**：优先在空格处换行（保持单词完整）
+  3863→    - **硬换行**：处理超宽字符（如 emoji、CJK）
+  3864→    - 宽字符正确计算（CJK = 2 列，ASCII = 1 列）
+  3865→  - 使用 LRU 缓存优化性能
+  3866→  - 逻辑行和视觉行的双向映射（用于光标定位）
+  3867→  - 新增 `calculateVisualCursorFromLayout` 函数用于光标定位
+  3868→
+  3869→-- **Affected Files**:
+  3870→  - `packages/repl/src/ui/utils/textUtils.ts` - 新增视觉布局计算
+  3871→  - `packages/repl/src/ui/components/TextInput.tsx` - 使用视觉行渲染
+  3872→  - `packages/repl/src/ui/components/InputPrompt.tsx` - 传递终端宽度参数
+  3873→
+  3874→
+  3875→
 
 ### 2026-02-19: 代码审查与重构
 - Resolved 020: 资源泄漏 - Readline 接口

@@ -268,3 +268,162 @@ export function getVisualWidthCached(str: string): number {
   visualWidthCache.set(str, width);
   return width;
 }
+
+/**
+ * Visual layout interface - 视觉布局接口
+ * Reference: Gemini CLI text-buffer.ts - VisualLayout
+ */
+export interface VisualLayout {
+  /** All visual lines for rendering - 所有视觉行（用于渲染） */
+  visualLines: string[];
+  /** For each logical line: [[visualLineIndex, startColInLogical], ...] - 每个逻辑行 -> 视觉行索引 + 起始列的映射 */
+  logicalToVisualMap: Array<Array<[number, number]>>;
+  /** For each visual line: [logicalLineIndex, startColInLogical] - 每个视觉行 -> 逻辑行 + 起始列的映射 */
+  visualToLogicalMap: Array<[number, number]>;
+}
+
+/**
+ * Calculate visual line wrapping - 计算视觉行换行
+ * Reference: Gemini CLI text-buffer.ts - calculateLayout
+ *
+ * @param logicalLines - Array of logical lines (split by \n) - 逻辑行数组（按 \n 分割）
+ * @param viewportWidth - Terminal width for wrapping - 终端宽度（用于换行）
+ * @param cursorRow - Current logical cursor row - 当前逻辑光标行
+ * @param cursorCol - Current logical cursor column - 当前逻辑光标列
+ * @returns VisualLayout with visual lines and coordinate mappings - 视觉布局，包含视觉行和坐标映射
+ */
+export function calculateVisualLayout(
+  logicalLines: string[],
+  viewportWidth: number,
+  cursorRow: number,
+  cursorCol: number
+): VisualLayout {
+  const visualLines: string[] = [];
+  const logicalToVisualMap: Array<Array<[number, number]>> = [];
+  const visualToLogicalMap: Array<[number, number]> = [];
+
+  // Calculate for each logical line - 为每个逻辑行计算
+  for (let logIndex = 0; logIndex < logicalLines.length; logIndex++) {
+    const logicalLine = logicalLines[logIndex] || '';
+    logicalToVisualMap[logIndex] = [];
+
+    if (logicalLine.length === 0) {
+      // Empty line becomes one empty visual line - 空行变成一个空视觉行
+      visualLines.push('');
+      const visualLineIndex = visualLines.length - 1;
+      logicalToVisualMap[logIndex].push([visualLineIndex, 0]);
+      visualToLogicalMap.push([logIndex, 0]);
+      continue;
+    }
+
+    // Non-empty line: build visual lines - 非空行：构建视觉行
+    let currentPosInLogical = 0;
+    const chars = splitByCodePoints(logicalLine);
+
+    while (currentPosInLogical < chars.length) {
+      let currentChunk = '';
+      let currentChunkVisualWidth = 0;
+      let lastWordBreakPoint = -1; // Record space position for soft break - 记录空格位置用于软换行
+
+      // Build current visual line (chunk) - 构建当前视觉行（块）
+      for (let i = currentPosInLogical; i < chars.length; i++) {
+        const char = chars[i]!;
+        const charVisualWidth = isWideChar(char) ? 2 : 1;
+
+        if (currentChunkVisualWidth + charVisualWidth > viewportWidth) {
+          // Character would exceed viewport width - 字符会超出视口宽度
+          if (
+            lastWordBreakPoint >= 0 &&
+            i - currentPosInLogical > 0
+          ) {
+            // Prefer soft break at word boundary - 优先在词边界软换行
+            currentChunk = chars.slice(currentPosInLogical, lastWordBreakPoint).join('');
+            currentChunkVisualWidth = chars.slice(currentPosInLogical, lastWordBreakPoint).reduce((sum, c) => sum + (isWideChar(c) ? 2 : 1), 0);
+          } else {
+            // Hard break: take characters up to viewport width - 硬换行：取字符直到视口宽度
+            // Or just current char if it alone exceeds viewport - 或者如果单个字符超宽也取它
+            if (
+              currentChunk.length === 0 &&
+              charVisualWidth > viewportWidth
+            ) {
+              currentChunk = char;
+              currentChunkVisualWidth = charVisualWidth;
+            }
+          }
+          break; // Break from inner loop to finalize this chunk - 退出内层循环完成此块
+        }
+
+        currentChunk += char;
+        currentChunkVisualWidth += charVisualWidth;
+
+        // Check for word break opportunity (space) - 检查词边界机会（空格）
+        if (char === ' ') {
+          lastWordBreakPoint = i + 1; // Store position AFTER the space - 存储空格后的位置
+        }
+      }
+
+      if (currentChunk.length > 0 || visualLines.length === 0) {
+        // Save this visual line and its mappings - 保存此视觉行及其映射
+        const logicalStartCol = currentPosInLogical;
+        const visualLineIndex = visualLines.length;
+        visualLines.push(currentChunk);
+        logicalToVisualMap[logIndex].push([visualLineIndex, logicalStartCol]);
+        visualToLogicalMap.push([logIndex, logicalStartCol]);
+      }
+
+      currentPosInLogical += currentChunk.length;
+    }
+  }
+
+  return {
+    visualLines,
+    logicalToVisualMap,
+    visualToLogicalMap,
+  };
+}
+
+/**
+ * Calculate visual cursor position from layout - 从布局计算视觉光标位置
+ * Reference: Gemini CLI text-buffer.ts - calculateVisualCursorFromLayout
+ *
+ * @param layout - Visual layout to use for calculation - 用于计算的视觉布局
+ * @param logicalCursor - [logicalRow, logicalCol] - 逻辑光标 [行, 列]
+ * @returns [visualRow, visualCol] - Visual cursor [行, 列]
+ */
+export function calculateVisualCursorFromLayout(
+  layout: VisualLayout,
+  logicalCursor: [number, number]
+): [number, number] {
+  const { logicalToVisualMap, visualLines } = layout;
+
+  // Handle empty text case - 处理空文本情况
+  if (visualLines.length === 0) {
+    return [0, 0];
+  }
+
+  const [cursorRow, cursorCol] = logicalCursor;
+  const logicalLineMaps = logicalToVisualMap[cursorRow];
+
+  if (!logicalLineMaps || logicalLineMaps.length === 0) {
+    // Cursor on empty or non-existent line - 光标在空行或不存在的行
+    return [0, 0];
+  }
+
+  // Find the visual line containing current logical column - 找到包含当前逻辑列的视觉行
+  let bestMatch: [number, number] | undefined;
+  for (const [visualIdx, startLogCol] of logicalLineMaps) {
+    if (startLogCol <= cursorCol) {
+      bestMatch = [visualIdx, startLogCol];
+    } else {
+      break; // Column is beyond current position - 列超出当前位置，停止
+    }
+  }
+
+  const [visualLineIdx, startLogCol] = bestMatch ?? logicalLineMaps[0];
+  const visualLine = visualLines[visualLineIdx] ?? '';
+
+  // Visual column = logical start + current logical column - 视觉列 = 逻辑起始 + 当前列
+  const visualCol = startLogCol + cursorCol;
+
+  return [visualLineIdx, visualCol];
+}

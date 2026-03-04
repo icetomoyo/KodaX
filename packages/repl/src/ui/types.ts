@@ -42,6 +42,22 @@ export interface UseTextBufferReturn {
   redo: () => boolean;
 }
 
+/**
+ * Visual Layout Interface - 视觉布局接口
+ * Reference: Gemini CLI text-buffer.ts - VisualLayout
+ */
+export interface VisualLayout {
+  /** All visual lines for rendering - 所有视觉行（用于渲染） */
+  visualLines: string[];
+  /** For each logical line: [[visualLineIndex, startColInLogical], ...] - 每个逻辑行 -> 视觉行索引 + 起始列的映射 */
+  logicalToVisualMap: Array<Array<[number, number]>>;
+  /** For each visual line: [logicalLineIndex, startColInLogical] - 每个视觉行 -> 逻辑行 + 起始列的映射 */
+  visualToLogicalMap: Array<[number, number]>;
+}
+
+export type VisualCursor = [number, number];
+
+
 // === Input History - 输入历史 ===
 
 export interface HistoryEntry {

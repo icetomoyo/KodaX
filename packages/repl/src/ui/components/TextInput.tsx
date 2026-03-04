@@ -8,6 +8,11 @@ import React, { useMemo, useState, useEffect } from "react";
 import { Text, Box, useStdout } from "ink";
 import stringWidth from "string-width";
 import { getTheme } from "../themes/index.js";
+import type { VisualLayout, VisualCursor } from "../types.js";
+import {
+  calculateVisualLayout,
+  calculateVisualCursorFromLayout,
+} from "../utils/textUtils.js";
 
 export interface TextInputProps {
   lines: string[];
@@ -86,6 +91,32 @@ export const TextInput: React.FC<TextInputProps> = ({
   // Calculate prompt width (for alignment) - 计算提示符宽度（用于对齐）
   const promptWidth = stringWidth(prompt) + 1; // +1 for space
 
+  // Calculate visual layout for wrapping (only for multi-line) - 计算视觉布局用于换行（仅多行）
+  const visualLayout = useMemo(() => {
+    if (lines.length <= 1) return null;
+
+    // Calculate available width for text (excluding prompt) - 计算文本可用宽度（排除提示符）
+    const availableWidth = Math.max(20, terminalWidth - promptWidth);
+
+    return calculateVisualLayout(
+      lines,
+      availableWidth,
+      cursorRow,
+      cursorCol
+    );
+  }, [lines, terminalWidth, cursorRow, cursorCol, promptWidth]);
+
+  // Calculate visual cursor position (only for multi-line) - 计算视觉光标位置（仅多行）
+  const visualCursor = useMemo(() => {
+    if (!visualLayout) return null;
+
+    const [visualRow, visualCol] = calculateVisualCursorFromLayout(
+      visualLayout,
+      [cursorRow, cursorCol]
+    );
+    return { row: visualRow, col: visualCol };
+  }, [visualLayout, cursorRow, cursorCol]);
+
   // Handle empty input - cursor displays after prompt with one space - 处理空输入 - 光标显示在提示符之后，空一格
   if (lines.length === 0 || (lines.length === 1 && lines[0] === "")) {
     return (
@@ -128,24 +159,29 @@ export const TextInput: React.FC<TextInputProps> = ({
   // Multi-line input - use divider style - 多行输入 - 使用分隔线样式
   const divider = generateDivider(terminalWidth);
 
+  // TypeScript non-null assertion: visualLayout and visualCursor are guaranteed non-null in multi-line mode
+  // TypeScript 非空断言：多行模式下 visualLayout 和 visualCursor 保证非空
+  const layout = visualLayout!;
+  const vCursor = visualCursor!;
+
   return (
     <Box flexDirection="column" width={propWidth}>
       {/* Top divider - 顶部分隔线 */}
       <Text dimColor>{divider}</Text>
 
       {/* Content lines - 内容行 */}
-      {lines.map((line, rowIndex) => {
-        const isCurrentLine = rowIndex === cursorRow;
-        const linePrompt = rowIndex === 0 ? prompt : " ".repeat(promptWidth - 1);
+      {layout.visualLines.map((visualLine, visualRowIndex) => {
+        const isCurrentVisualLine = visualRowIndex === vCursor.row;
+        const linePrompt = visualRowIndex === 0 ? prompt : " ".repeat(promptWidth - 1);
 
         // Current line needs to show cursor - 当前行需要显示光标
-        if (isCurrentLine && focus) {
-          const beforeCursor = [...line].slice(0, cursorCol).join("");
-          const cursorChar = [...line][cursorCol] ?? " ";
-          const afterCursor = [...line].slice(cursorCol + 1).join("");
+        if (isCurrentVisualLine && focus) {
+          const beforeCursor = visualLine.slice(0, vCursor.col);
+          const cursorChar = visualLine[vCursor.col] ?? " ";
+          const afterCursor = visualLine.slice(vCursor.col + 1);
 
           return (
-            <Box key={rowIndex}>
+            <Box key={visualRowIndex}>
               <Text color={theme.colors.primary}>{linePrompt} </Text>
               <Text color={theme.colors.text}>{beforeCursor}</Text>
               <Text backgroundColor={theme.colors.primary} color="#000000">
@@ -158,9 +194,9 @@ export const TextInput: React.FC<TextInputProps> = ({
 
         // Non-current line - 非当前行
         return (
-          <Box key={rowIndex}>
+          <Box key={visualRowIndex}>
             <Text color={theme.colors.dim}>{linePrompt} </Text>
-            <Text color={theme.colors.text}>{line}</Text>
+            <Text color={theme.colors.text}>{visualLine}</Text>
           </Box>
         );
       })}

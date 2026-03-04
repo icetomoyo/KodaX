@@ -20,6 +20,8 @@ export {
   isWideChar,
   visualWidthCache,
   getVisualWidthCached,
+  calculateVisualLayout,
+  calculateVisualCursorFromLayout,
 } from "./textUtils.js";
 
 // Terminal capabilities
