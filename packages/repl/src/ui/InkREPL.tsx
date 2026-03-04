@@ -994,19 +994,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           });
         }
 
-        // Add assistant response to UI history (from messages, as backup)
-        // 从 messages 添加 assistant 响应到 UI 历史（作为备份）
-        const lastAssistant = result.messages[result.messages.length - 1];
-        if (lastAssistant?.role === "assistant") {
-          const content = extractTextContent(lastAssistant.content);
-          // Only add if there's actual content to display
-          if (content) {
-            addHistoryItem({
-              type: "assistant",
-              text: content,
-            });
-          }
-        }
 
         // Auto-save
         if (context.messages.length > 0) {
