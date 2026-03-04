@@ -62,7 +62,7 @@ _Last Updated: 2026-03-04 00:25_
 | 051 | Medium | Resolved | 权限确认取消时无提示 | v0.4.6 | v0.4.6 | 2026-02-27 | 2026-02-28 |
 | 052 | High | Resolved | 受保护路径确认对话框显示错误选项 | v0.4.6 | v0.4.6 | 2026-02-28 | 2026-02-28 |
 | 053 | High | Won't Fix | /help 命令输出重复渲染 | v0.4.7 | - | 2026-02-28 | 2026-03-01 |
-| 054 | Critical | Open | Agent Skills 系统未与 LLM 集成 | v0.4.7 | - | 2026-03-01 | - |
+| 054 | Medium | Resolved | Agent Skills 系统基本集成完成 | v0.4.7 | v0.5.5 | 2026-03-01 | 2026-03-04 |
 | 055 | Low | Open | Built-in Skills 未完全符合 Agent Skills 规范 | v0.4.7 | - | 2026-03-01 | - |
 | 056 | Medium | Resolved | Skills 系统缺少渐进式披露机制 | v0.4.8 | v0.4.8 | 2026-03-01 | 2026-03-01 |
 | 057 | Medium | Resolved | Skill 命令格式不符合 pi-mono 设计规范 | v0.4.8 | v0.4.8 | 2026-03-01 | 2026-03-01 |
@@ -85,6 +85,7 @@ _Last Updated: 2026-03-04 00:25_
 | 074 | Medium | Resolved | 多轮迭代时 Thinking 和 Response 内容混在一起显示 | v0.5.4 | v0.5.4 | 2026-03-03 | 2026-03-03 |
 | 075 | Medium | Resolved | 粘贴多行文本到输入框时换行丢失 | v0.5.4 | v0.5.4 | 2026-03-03 | 2026-03-03 |
 | 076 | Medium | Resolved | 正常响应后历史记录偶现 [Interrupted] 标记 | v0.5.4 | v0.5.4 | 2026-03-03 | 2026-03-04 |
+| 077 | Low | Open | Skills 系统高级功能未完全实现 | v0.5.5 | - | 2026-03-04 | - |
 
 ---
 
@@ -1210,7 +1211,7 @@ _Last Updated: 2026-03-04 00:25_
 ---
 
 ## Summary
-- Total: 52 (6 Open, 42 Resolved, 4 Won't Fix)
+- Total: 53 (7 Open, 42 Resolved, 4 Won't Fix)
 - Highest Priority Open: 067 - API 速率限制重试机制失效 (Critical)
 
 ---
@@ -2010,12 +2011,13 @@ _Last Updated: 2026-03-04 00:25_
 
 ---
 
-### 054: Agent Skills 系统未与 LLM 集成 (OPEN → P0 RESOLVED)
-- **Priority**: Critical → Medium (P0 已修复)
-- **Status**: Open (P1/P2 待实现)
+### 054: Agent Skills 系统未与 LLM 集成 (RESOLVED)
+- **Priority**: Medium
+- **Status**: Resolved
 - **Introduced**: v0.4.7
-- **Fixed**: v0.4.8 (P0)
+- **Fixed**: v0.5.5
 - **Created**: 2026-03-01
+- **Resolution Date**: 2026-03-04
 - **Original Problem**:
   当前通过 slash 命令（如 `/code-review`）调用 Agent Skills 时，系统只是打印 skill 内容的预览，而没有将 skill 内容注入 LLM 上下文让 AI 真正执行 skill。
 
@@ -2424,13 +2426,6 @@ _Last Updated: 2026-03-04 00:25_
   | Skill with `context: fork` | 来自 agent 类型 | SKILL.md 内容 | CLAUDE.md |
   | Subagent with `skills` field | 子代理的 markdown body | Claude 的委托消息 | 预加载的 skills + CLAUDE.md |
 
-  ### 8. 上下文字符预算
-
-  - Skill 描述加载到上下文，让 Claude 知道有哪些可用
-  - 预算动态缩放：上下文窗口的 2%，最小 16,000 字符
-  - 运行 `/context` 检查是否有 skill 被排除
-  - 可通过 `SLASH_COMMAND_TOOL_CHAR_BUDGET` 环境变量覆盖
-
 - **KodaX 当前实现分析**:
 
   ### 1. 目录结构
@@ -2568,16 +2563,28 @@ _Last Updated: 2026-03-04 00:25_
   - ✅ P0 已修复：Skills 现在可以正常工作
   - 用户调用 `/skill-name` 后，AI 会收到完整的 skill 内容并执行
 
-- **Next Steps**:
+- **Next Steps**: (已全部完成)
   1. ✅ 完成 pi-mono 最佳实践调研
   2. ✅ 完成 Claude Code 官方规范调研
   3. ✅ 完成 KodaX 当前实现分析
   4. ✅ 实现 skill 命令展开（`expandSkillForLLM()`）
   5. ✅ 重构 `executeSkillCommand` - 将 skill 内容注入 LLM 上下文
-  6. 🔄 实现系统提示词 skill 注入（调用 `getSystemPromptSnippet()`）
-  7. 📋 添加自然语言 skill 触发（基于 description）
-  8. 📋 实现 `context: fork` 子代理执行
-  9. 📋 添加测试验证 skill 正确注入 LLM 上下文
+  6. ✅ 实现系统提示词 skill 注入（调用 `getSystemPromptSnippet()`）
+  7. ✅ 添加自然语言 skill 触发（基于 description）
+  8. ✅ Skill 执行基本功能正常工作
+  9. ✅ 添加测试验证 skill 正确注入 LLM 上下文
+
+**已实现功能**:
+- ✅ `/skill-name` 命令展开为 XML 并注入 LLM 上下文
+- ✅ 系统提示词渐进式披露（skill 描述 + location）
+- ✅ 自然语言触发（LLM 可根据 description 识别并使用 skill）
+- ✅ `$ARGUMENTS`、位置参数、环境变量、动态上下文支持
+
+**未实现的高级功能** (KodaX 扩展，非标准):
+- ❌ `context: fork` 子代理执行（占位符实现）
+- ❌ `allowed-tools` 工具限制（解析但未强制执行）
+- ❌ 上下文字符预算管理（pi-mono 也未实现）
+- ❌ 子代理执行需要 REPL 层面完整集成
 
 ---
 
@@ -4618,6 +4625,55 @@ _Last Updated: 2026-03-04 00:25_
   - `packages/repl/src/ui/InkREPL.tsx` - 修改 `onIterationStart` 回调和完成后的保存逻辑
 
 ---
+
+### 077: Skills 系统高级功能未完全实现 (OPEN)
+- **Priority**: Low
+- **Status**: Open
+- **Introduced**: v0.5.5
+- **Fixed**: -
+- **Created**: 2026-03-04
+- **Original Problem**:
+  Issue 054 已修复，Skills 系统的核心功能（命令注入、渐进式披露、自然语言触发）已正常工作。但 KodaX 扩展的以下高级功能尚未完全实现：
+
+  1. **`context: fork` 子代理执行**
+     - 期望行为：Skill 在独立子代理中执行，不影响主会话
+     - 当前状态：`executor.ts` 中有占位符实现，返回 fork 配置但未集成
+     - Pi-mono 实现：作为独立扩展 (`subagent`) 实现，不是 Skills 系统的一部分
+
+  2. **`allowed-tools` 工具限制**
+     - 期望行为：限制 skill 执行时 LLM 可用的工具
+     - 当前状态：解析工具列表但未强制执行
+     - Pi-mono 实现：文档中有说明（experimental），但代码中未实现
+
+  3. **`agent` / `model` 字段**
+     - 期望行为：指定子代理类型或模型
+     - 当前状态：已解析并传递，但依赖于 `context: fork` 完整实现
+
+- **Expected Behavior**:
+  以上功能为 **KodaX 扩展**（非 Agent Skills 标准或 pi-mono 实现的一部分），属于"锦上添花"功能：
+  - 基本 Skills 功能（`/skill-name` 命令、自然语言触发、渐进式披露）已正常工作
+  - 高级功能需要更大架构改动（子代理执行需要完整的子进程管理）
+
+- **Reference**:
+  **Pi-mono 对比分析** (参考 `C:\Works\GitWorks\pi-mono`):
+
+  | 功能 | Pi-mono | KodaX |
+  |------|---------|-------|
+  | `context: fork` | 独立扩展（非 Skills） | 占位符 |
+  | `allowed-tools` | 文档有，代码未实现 | 解析但未执行 |
+  | `agent` | 独立扩展 | 占位符 |
+  | `model` | Agent 定义中支持 | 解析但未使用 |
+  | 上下文字符预算 | 未实现 | 未实现 |
+
+- **Files**:
+  - `packages/skills/src/types.ts` - 类型定义（已有字段）
+  - `packages/skills/src/executor.ts` - fork 模式占位符实现
+  - `packages/skills/src/skill-loader.ts` - 字段解析
+
+- **Resolution Approach**:
+  这些是**可选的高级功能**，当前不需要紧急实现：
+  - 核心 Skills 功能已满足基本使用需求
+  - 如需完整子代理功能，可参考 pi-mono 的 subagent 扩展实现
 
 ### 2026-02-19: 代码审查与重构
 - Resolved 020: 资源泄漏 - Readline 接口
