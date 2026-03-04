@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-03-04 15:30_
+_Last Updated: 2026-03-04 12:18_
 
 ---
 
@@ -49,7 +49,6 @@ _Last Updated: 2026-03-04 15:30_
 | 076 | Medium | Resolved | 正常响应后历史记录偶现 [Interrupted] 标记 | v0.5.4 | v0.5.4 | 2026-03-03 | 2026-03-04 |
 | 077 | Low | Open | Skills 系统高级功能未完全实现 | v0.5.5 | - | 2026-03-04 | - |
 | 078 | High | Resolved | CLI --max-iter 默认值覆盖 coding 包默认值 | v0.5.5 | v0.5.5 | 2026-03-04 | 2026-03-04 |
-| 079 | High | Open | Ink 历史渲染无限长导致崩溃 | v0.5.7 | - | 2026-03-04 | - |
 
 ---
 
@@ -3813,35 +3812,6 @@ _Last Updated: 2026-03-04 15:30_
 - **Verification**:
   - 构建通过
   - 默认值现在由 coding 包统一管理（agent.ts:44 `const maxIter = options.maxIter ?? 200;`）
-
----
-
-### 079: Ink 历史渲染无限长导致崩溃
-- **Priority**: High
-- **Status**: Open
-- **Introduced**: v0.5.7
-- **Created**: 2026-03-04
-- **Original Problem**:
-  - Ink 中渲染的历史没有长度限制
-  - 长时间使用后，历史记录变得非常长
-  - 过长的历史导致 KodaX 崩溃（可能是内存问题或渲染性能问题）
-
-- **Proposed Solution**:
-  - 设置一个历史高度上限（如 60 行）
-  - 动态裁剪策略：
-    - 首先最多保留 20 轮对话
-    - 计算这 20 轮的总高度，如果超过上限 → 只渲染这 20 轮
-    - 如果 20 轮不到上限 → 扩展到高度上限（可以渲染多于 20 轮）
-    - 如果所有历史加起来都不到上限 → 全部渲染
-  - 实现方式：
-    - 在 `StreamingContext` 中添加渲染历史的裁剪逻辑
-    - 每次新增历史项时检查是否需要裁剪
-    - 从渲染用的历史数组中删除超出的部分
-    - 实际的 session 历史（`history`）保持不变，只限制用于 UI 渲染的历史
-
-- **Context**:
-  - 相关文件可能是 `StreamingContext.tsx` 或 `InkREPL.tsx`
-  - 需要确定渲染历史的数据结构（可能是 `history` 或 `iterationHistory`）
 
 ### 2026-02-19: 代码审查与重构
 - Resolved 020: 资源泄漏 - Readline 接口

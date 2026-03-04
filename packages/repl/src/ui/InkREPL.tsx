@@ -10,7 +10,7 @@
  * - Uses StreamingContext for streaming response management
  */
 
-import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import React, { useState, useCallback, useRef, useEffect } from "react";
 import { render, Box, useApp, Text, Static, useInput } from "ink";
 import { InputPrompt } from "./components/InputPrompt.js";
 import { MessageList } from "./components/MessageList.js";
@@ -180,20 +180,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const { exit } = useApp();
   const { history } = useUIState();
   const { addHistoryItem, clearHistory: clearUIHistory } = useUIActions();
-
-  // Issue 079: Limit history rendering to prevent crashes from infinite growth
-  // Strategy: Use terminal height to calculate max items, but keep at least 20
-  const terminalRows = process.stdout.rows ?? 40;
-  const reservedRows = 15; // Reserve rows for input, status bar, banner, etc.
-  const availableRows = Math.max(25, terminalRows - reservedRows);
-  const avgLinesPerItem = 3; // Estimate: average ~3 lines per history item
-  const maxRenderItems = Math.max(20, Math.floor(availableRows / avgLinesPerItem));
-
-  // Compute limited history for rendering only - full history remains in state
-  const renderHistory = useMemo(
-    () => history.slice(-maxRenderItems),
-    [history, maxRenderItems]
-  );
   const streamingState = useStreamingState();
   const {
     startStreaming,
@@ -1126,7 +1112,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       {history.length > 0 && (
         <Box flexDirection="column" marginBottom={1}>
           <MessageList
-            items={renderHistory}
+            items={history}
             isLoading={isLoading}
             isThinking={streamingState.isThinking}
             thinkingCharCount={streamingState.thinkingCharCount}
