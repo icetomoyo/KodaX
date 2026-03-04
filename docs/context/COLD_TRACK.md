@@ -1,11 +1,20 @@
 # 冷轨归档
 
 _创建时间: 2026-02-25_
-_最后更新: 2026-03-02 10:35_
+_最后更新: 2026-03-04 02:15_
 
 ---
 
 ## 墓碑区
+
+### T06: 上下文字符预算管理
+- **失败原因**: pi-mono 未实现此功能，是 KodaX 扩展的非标准功能，实际不需要
+- **放弃日期**: 2026-03-04
+- **尝试过程**:
+  1. 研究 pi-mono 实现，发现其文档中虽有描述但代码未实现
+  2. Agent Skills 标准本身不包含此功能
+  3. KodaX 渐进式披露机制已经解决了这个问题
+- **解决方案**: 从 Issue 054 和文档中删除相关内容
 
 ### T05: 手动 ANSI Alternate Buffer
 - **失败原因**: `\x1B[?1049h/l` 与 Ink 5.x 渲染机制冲突，导致闪烁更严重、滚动失效、终端历史丢失
@@ -804,6 +813,31 @@ appendResponse: (text: string) => {
 - 变化仅为版本号更新：0.4.3 → 0.4.5
 - npm install 同步 lockfile 版本号
 - 正常行为，与 Issue 001 修复无关
+
+---
+
+### Session: 2026-03-04 (Skills + maxIter 修复)
+
+#### Turn 1 - Issue 054 收尾
+- 用户要求将 Issue 054 标记为已解决
+- 研究 pi-mono 实现：确认 context: fork、allowed-tools、上下文字符预算都是 KodaX 扩展或未实现
+- 更新 Issue 054：标记为 Resolved v0.5.5，移除上下文字符预算内容
+
+#### Turn 2 - Issue 077 新建
+- 新建 Issue 077：描述 Skills 系统高级功能未完全实现
+- 包含 context: fork 占位符、allowed-tools 解析但未执行等问题
+
+#### Turn 3 - maxIter 问题
+- 用户报告 50 轮迭代问题仍然存在
+- 发现 kodax_cli.ts 中 CLI 默认值 50 覆盖了 coding 包默认值 200
+- 修复：改为 fallback 到 coding 包默认值
+
+#### Turn 4 - 提交推送
+- 多个提交：
+  - docs: resolve issue 054, add 077
+  - fix: update CLI default maxIter from 50 to 200
+  - refactor: CLI maxIter defaults to undefined
+  - fix: make CliOptions.maxIter optional
 
 ---
 
