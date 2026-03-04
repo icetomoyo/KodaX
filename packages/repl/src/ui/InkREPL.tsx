@@ -10,7 +10,7 @@
  * - Uses StreamingContext for streaming response management
  */
 
-import React, { useState, useCallback, useRef, useEffect } from "react";
+import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { render, Box, useApp, Text, Static, useInput } from "ink";
 import { InputPrompt } from "./components/InputPrompt.js";
 import { MessageList } from "./components/MessageList.js";
@@ -180,6 +180,34 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const { exit } = useApp();
   const { history } = useUIState();
   const { addHistoryItem, clearHistory: clearUIHistory } = useUIActions();
+
+  // Issue 079: Limit visible history to last 20 conversation rounds
+  // A "round" = one user input + AI response(s)
+  // Full history remains in state, only rendering is limited
+  const MAX_VISIBLE_ROUNDS = 20;
+  const renderHistory = useMemo(() => {
+    if (history.length === 0) return [];
+
+    // Find the index where the last 20 rounds begin
+    // Each round starts with a "user" type message
+    let userCount = 0;
+    let startIndex = 0;
+
+    for (let i = 0; i < history.length; i++) {
+      if (history[i].type === "user") {
+        userCount++;
+        // If this is the 21st user message, this is where we should start
+        if (userCount > MAX_VISIBLE_ROUNDS) {
+          startIndex = i;
+          break;
+        }
+      }
+    }
+
+    // If we have less than or equal to MAX_VISIBLE_ROUNDS, show all
+    return startIndex === 0 ? history : history.slice(startIndex);
+  }, [history]);
+
   const streamingState = useStreamingState();
   const {
     startStreaming,
@@ -1112,7 +1140,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       {history.length > 0 && (
         <Box flexDirection="column" marginBottom={1}>
           <MessageList
-            items={history}
+            items={renderHistory}
             isLoading={isLoading}
             isThinking={streamingState.isThinking}
             thinkingCharCount={streamingState.thinkingCharCount}
