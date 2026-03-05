@@ -1,6 +1,6 @@
 # Feature List
 
-_Last Updated: 2026-03-04 10:00_
+_Last Updated: 2026-03-05_
 
 ---
 
@@ -22,7 +22,7 @@ _Last Updated: 2026-03-04 10:00_
 | v0.4.0 | Released | 1 | 1/1 (100%) |
 | v0.4.6 | Released | 1 | 1/1 (100%) |
 | v0.5.5 | Released | 1 | 1/1 (100%) |
-| v0.5.0 | InProgress | 8 | 2/8 (25%) |
+| v0.5.0 | InProgress | 8 | 3/8 (38%) |
 
 ---
 
@@ -35,7 +35,7 @@ _Last Updated: 2026-03-04 10:00_
 | 003 | New | Completed | High | 交互式项目模式 | v0.3.1 | v0.3.1 | [Design](features/v0.3.1.md#003) | 2026-02-19 | 2026-02-19 | 2026-02-19 |
 | 004 | Enhancement | Completed | Medium | 交互式界面改进 | v0.3.3 | v0.3.3 | [Design](features/v0.3.3.md#004) | 2026-02-19 | 2026-02-19 | 2026-02-20 |
 | 005 | Refactor | Completed | High | v0.4.0 架构重构与模块解耦 | v0.4.0 | v0.4.0 | [Design](features/v0.4.0.md#005) | 2026-02-20 | 2026-02-24 | 2026-02-24 |
-| 006 | New | ReadyForTesting | Critical | Skills 系统 | v0.5.0 | - | [Design](features/v0.5.0.md#006) | 2026-02-25 | 2026-02-28 | - |
+| 006 | New | Completed | Critical | Skills 系统 | v0.5.0 | v0.5.10 | [Design](features/v0.5.0.md#006) | 2026-02-25 | 2026-02-28 | 2026-03-05 |
 | 007 | Enhancement | Planned | Medium | 主题系统完善 | v0.5.0 | - | [Design](features/v0.5.0.md#007) | 2026-02-25 | - | - |
 | 008 | Enhancement | Completed | High | 权限控制体系改进 | v0.5.0 | v0.4.6 | [Design](features/v0.5.0.md#008) | 2026-02-26 | 2026-02-27 | 2026-02-27 |
 | 009 | Refactor | Completed | Critical | 架构重构：AI 层独立 + 权限层分离 | v0.5.0 | v0.5.0 | [Design](features/v0.5.0.md#009) | 2026-02-27 | 2026-02-27 | 2026-02-27 |
@@ -188,16 +188,16 @@ REPL 中的长运行项目管理，通过 `/project` 命令组实现。
 
 ---
 
-### 006: Skills 系统 (READY FOR TESTING)
+### 006: Skills 系统 (COMPLETED)
 - **Category**: New
-- **Status**: ReadyForTesting
+- **Status**: Completed
 - **Priority**: Critical
 - **Planned**: v0.5.0
-- **Released**: -
+- **Released**: v0.5.10
 - **Design**: [v0.5.0.md#006](features/v0.5.0.md#006)
 - **Created**: 2026-02-25
 - **Started**: 2026-02-28
-- **Completed**: -
+- **Completed**: 2026-03-05
 
 **Description**:
 实现完整的 [Agent Skills](https://agentskills.io/) 开放标准，使 KodaX 能够：
@@ -478,8 +478,8 @@ REPL 中的长运行项目管理，通过 `/project` 命令组实现。
 ---
 
 ## Summary
-- Total: 13 (4 Planned, 1 ReadyForTesting, 8 Completed)
+- Total: 13 (4 Planned, 9 Completed)
 - By Priority: Critical: 3, High: 6, Medium: 2, Low: 0
 - Current Version: v0.5.0
-- Next Release (v0.5.0): 5 features planned (007, 011, 012, 013) + 1 ReadyForTesting (006)
-- Highest Priority Planned: 006 - Skills 系统 (Critical), 011 - 智能上下文压缩 (High)
+- Next Release (v0.5.0): 4 features planned (007, 011, 012, 013)
+- Highest Priority Planned: 011 - 智能上下文压缩 (High), 012 - TUI 自动补全增强 (High)
