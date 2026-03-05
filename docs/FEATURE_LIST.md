@@ -22,7 +22,8 @@ _Last Updated: 2026-03-05_
 | v0.4.0 | Released | 1 | 1/1 (100%) |
 | v0.4.6 | Released | 1 | 1/1 (100%) |
 | v0.5.5 | Released | 1 | 1/1 (100%) |
-| v0.5.0 | InProgress | 8 | 3/8 (38%) |
+| v0.5.0 | InProgress | 7 | 3/7 (43%) |
+| v0.6.0 | Planned | 1 | 0/1 (0%) |
 
 ---
 
@@ -36,7 +37,7 @@ _Last Updated: 2026-03-05_
 | 004 | Enhancement | Completed | Medium | 交互式界面改进 | v0.3.3 | v0.3.3 | [Design](features/v0.3.3.md#004) | 2026-02-19 | 2026-02-19 | 2026-02-20 |
 | 005 | Refactor | Completed | High | v0.4.0 架构重构与模块解耦 | v0.4.0 | v0.4.0 | [Design](features/v0.4.0.md#005) | 2026-02-20 | 2026-02-24 | 2026-02-24 |
 | 006 | New | Completed | Critical | Skills 系统 | v0.5.0 | v0.5.10 | [Design](features/v0.5.0.md#006) | 2026-02-25 | 2026-02-28 | 2026-03-05 |
-| 007 | Enhancement | Planned | Medium | 主题系统完善 | v0.5.0 | - | [Design](features/v0.5.0.md#007) | 2026-02-25 | - | - |
+| 007 | Enhancement | Planned | Medium | 主题系统完善 | v0.6.0 | - | [Design](features/v0.6.0.md#007) | 2026-02-25 | - | - |
 | 008 | Enhancement | Completed | High | 权限控制体系改进 | v0.5.0 | v0.4.6 | [Design](features/v0.5.0.md#008) | 2026-02-26 | 2026-02-27 | 2026-02-27 |
 | 009 | Refactor | Completed | Critical | 架构重构：AI 层独立 + 权限层分离 | v0.5.0 | v0.5.0 | [Design](features/v0.5.0.md#009) | 2026-02-27 | 2026-02-27 | 2026-02-27 |
 | 010 | Refactor | Completed | Critical | 架构拆分：Agent Core + Skills 独立 | v0.5.0 | v0.5.5 | [Design](features/v0.5.0.md#010) | 2026-03-02 | 2026-03-02 | 2026-03-02 |
@@ -230,9 +231,9 @@ REPL 中的长运行项目管理，通过 `/project` 命令组实现。
 - **Category**: Enhancement
 - **Status**: Planned
 - **Priority**: Medium
-- **Planned**: v0.5.0
+- **Planned**: v0.6.0
 - **Released**: -
-- **Design**: [v0.5.0.md#007](features/v0.5.0.md#007)
+- **Design**: [v0.6.0.md#007](features/v0.6.0.md#007)
 - **Created**: 2026-02-25
 - **Started**: -
 - **Completed**: -
@@ -481,5 +482,6 @@ REPL 中的长运行项目管理，通过 `/project` 命令组实现。
 - Total: 13 (4 Planned, 9 Completed)
 - By Priority: Critical: 3, High: 6, Medium: 2, Low: 0
 - Current Version: v0.5.0
-- Next Release (v0.5.0): 4 features planned (007, 011, 012, 013)
+- Next Release (v0.5.0): 3 features planned (011, 012, 013)
+- Future Release (v0.6.0): 1 feature planned (007)
 - Highest Priority Planned: 011 - 智能上下文压缩 (High), 012 - TUI 自动补全增强 (High)
