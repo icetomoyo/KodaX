@@ -331,16 +331,19 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const permissionModeRef = useRef<PermissionMode>(currentConfig.permissionMode);
   const alwaysAllowToolsRef = useRef<string[]>(loadAlwaysAllowTools());
 
+  // Double-ESC detection for interrupt - 双击 ESC 中断检测
+  const lastEscPressRef = useRef<number>(0);
+  const DOUBLE_ESC_INTERVAL = 500; // ms
+
   // Global interrupt handler - using Gemini CLI style isActive pattern - 全局中断处理器 - 使用 Gemini CLI 风格的 isActive 模式
   // Only subscribe during streaming to ensure keyboard events are captured correctly - 只在 streaming 期间订阅，确保键盘事件能被正确捕获
   // Reference: Gemini CLI useGeminiStream.ts useKeypress usage - 参考: Gemini CLI useGeminiStream.ts 中的 useKeypress 使用方式
   useKeypress(
     (key) => {
-      // Ctrl+C or ESC interrupts current operation - Ctrl+C 或 ESC 中断当前操作
-      if ((key.ctrl && key.name === "c") || key.name === "escape") {
+      // Ctrl+C immediately interrupts - Ctrl+C 立即中断
+      if (key.ctrl && key.name === "c") {
         // Just abort - the catch block will handle saving the partial response
         // 只需中止 - catch 块会处理保存部分响应
-        // Use abort() instead of stopStreaming() to truly abort API request - 使用 abort() 而不是 stopStreaming() 来真正中止 API 请求
         abort();
         stopThinking();
         clearThinkingContent();
@@ -348,6 +351,28 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         setIsLoading(false);
         console.log(chalk.yellow("\n[Interrupted]"));
         return true;
+      }
+
+      // ESC requires double-press to interrupt - ESC 需要双击才能中断
+      if (key.name === "escape") {
+        const now = Date.now();
+        const timeSinceLastEsc = now - lastEscPressRef.current;
+
+        if (timeSinceLastEsc < DOUBLE_ESC_INTERVAL) {
+          // Double ESC: interrupt streaming - 双击 ESC：中断流
+          lastEscPressRef.current = 0;
+          abort();
+          stopThinking();
+          clearThinkingContent();
+          setCurrentTool(undefined);
+          setIsLoading(false);
+          console.log(chalk.yellow("\n[Interrupted]"));
+          return true;
+        } else {
+          // First ESC: just record the time - 第一次 ESC：只记录时间
+          lastEscPressRef.current = now;
+          return true; // Consume the event to prevent InputPrompt from handling
+        }
       }
 
       return false;

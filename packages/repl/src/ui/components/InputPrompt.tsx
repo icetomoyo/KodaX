@@ -50,6 +50,11 @@ export const InputPrompt: React.FC<InputPromptAutocompleteProps> = ({
   const { exit } = useApp();
   const [isFirstLine, setIsFirstLine] = useState(true);
 
+  // Track last ESC press time for double-ESC detection
+  // 跟踪上次 ESC 按下时间，用于双击检测
+  const lastEscPressRef = useRef<number>(0);
+  const DOUBLE_ESC_INTERVAL = 500; // ms - 双击间隔
+
   // Input history - 输入历史
   const { add: addHistory, navigateUp, navigateDown, reset: resetHistory, saveTempInput } = useInputHistory();
 
@@ -222,17 +227,28 @@ export const InputPrompt: React.FC<InputPromptAutocompleteProps> = ({
         return true;
       }
 
-      // ESC key - cancel autocomplete first, then clear input
-      // ESC 键 - 先取消自动补全，再清空输入
+      // ESC key - cancel autocomplete (single), or clear input (double)
+      // ESC 键 - 单击取消补全，双击清空输入
       if (key.name === "escape") {
+        // Single ESC: cancel autocomplete if visible - 单击 ESC：如果补全可见则取消
         if (isAutocompleteVisible) {
-          // Cancel autocomplete dropdown - 取消自动补全下拉框
           handleAutocompleteEscape();
+          lastEscPressRef.current = 0; // Reset double-ESC timer
           return true;
         }
-        if (text.length > 0) {
+
+        // Check for double ESC - 检测双击 ESC
+        const now = Date.now();
+        const timeSinceLastEsc = now - lastEscPressRef.current;
+
+        if (timeSinceLastEsc < DOUBLE_ESC_INTERVAL && text.length > 0) {
+          // Double ESC: clear input only - 双击 ESC：仅清空输入
+          lastEscPressRef.current = 0;
           clear();
           resetHistory();
+        } else {
+          // First ESC: just record the time - 第一次 ESC：只记录时间
+          lastEscPressRef.current = now;
         }
         return true;
       }
