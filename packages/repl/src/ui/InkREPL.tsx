@@ -1155,6 +1155,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           onSubmit={handleSubmit}
           prompt=">"
           focus={!isLoading}
+          cwd={process.cwd()}
+          gitRoot={options.context?.gitRoot || context.gitRoot}
         />
       </Box>
 

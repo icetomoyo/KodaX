@@ -150,6 +150,12 @@ export function useTextBuffer(options: UseTextBufferOptions = {}): UseTextBuffer
     return result;
   }, [buffer, syncState]);
 
+  // moveToEnd - move cursor to end of entire text
+  const handleMoveToEnd = useCallback(() => {
+    buffer.moveToEnd();
+    syncState();
+  }, [buffer, syncState]);
+
   // handleInput - process keyboard input - 处理键盘输入
   const handleInput = useCallback(
     (key: KeyInfo): boolean => {
@@ -270,6 +276,7 @@ export function useTextBuffer(options: UseTextBufferOptions = {}): UseTextBuffer
     backspace: handleBackspace,
     delete: handleDelete,
     move: handleMove,
+    moveToEnd: handleMoveToEnd,
     clear: handleClear,
     undo: handleUndo,
     redo: handleRedo,

@@ -506,4 +506,15 @@ export class TextBuffer {
     const line = this._lines[this._cursor.row];
     return line.endsWith("\\");
   }
+
+  /**
+   * Move cursor to end of entire text - 将光标移动到整个文本的末尾
+   */
+  moveToEnd(): void {
+    // Move to last line - 移动到最后一行
+    this._cursor.row = this._lines.length - 1;
+    // Move to end of line - 移动到行尾
+    this._cursor.col = getCodePointLength(this._lines[this._cursor.row] ?? "");
+    this._rememberedCol = this._cursor.col;
+  }
 }

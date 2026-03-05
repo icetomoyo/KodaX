@@ -22,6 +22,7 @@ import {
   StreamingState,
   DEFAULT_UI_STATE,
 } from "../types.js";
+import { getTheme } from "../themes/index.js";
 
 // === Constants ===
 
@@ -375,7 +376,6 @@ export function useUI(): { state: UIState; actions: UIActions } {
  * Get current theme - 获取当前主题
  */
 export function useTheme(): import("../types.js").Theme {
-  const { getTheme } = require("../themes/index.js");
   return getTheme();
 }
 

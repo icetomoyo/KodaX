@@ -5,23 +5,47 @@
  * Use centralized KeypressContext for keyboard event handling - 集成多行输入、历史导航、键盘快捷键，使用 centralized KeypressContext 进行键盘事件处理
  *
  * Reference: Gemini CLI InputPrompt architecture - 参考: Gemini CLI InputPrompt 架构
+ *
+ * Autocomplete Integration - 自动补全集成:
+ * - Auto-trigger on typing (debounced) - 输入时自动触发（防抖）
+ * - Tab/Enter to accept completion - Tab/Enter 接受补全
+ * - Up/Down to navigate suggestions - 上下键导航建议
+ * - Escape to cancel - Escape 取消
  */
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { Box, Text, useApp } from "ink";
 import { TextInput } from "./TextInput.js";
+import { SuggestionsDisplay } from "./SuggestionsDisplay.js";
 import { useTextBuffer } from "../hooks/useTextBuffer.js";
 import { useInputHistory } from "../hooks/useInputHistory.js";
+import { useAutocomplete } from "../hooks/useAutocomplete.js";
 import { useKeypress } from "../contexts/KeypressContext.js";
 import { getTheme } from "../themes/index.js";
 import { KeypressHandlerPriority, type InputPromptProps } from "../types.js";
 
-export const InputPrompt: React.FC<InputPromptProps> = ({
+/**
+ * Extended props for InputPrompt with autocomplete support
+ * InputPrompt 的扩展属性，支持自动补全
+ */
+export interface InputPromptAutocompleteProps extends InputPromptProps {
+  /** Working directory for file completion - 文件补全的工作目录 */
+  cwd?: string;
+  /** Git root for skill discovery - 技能发现的 Git 根目录 */
+  gitRoot?: string;
+  /** Whether autocomplete is enabled (default: true) - 是否启用自动补全（默认：true） */
+  autocompleteEnabled?: boolean;
+}
+
+export const InputPrompt: React.FC<InputPromptAutocompleteProps> = ({
   onSubmit,
   placeholder = "Type a message...",
   prompt = ">",
   focus = true,
   initialValue = "",
+  cwd,
+  gitRoot,
+  autocompleteEnabled = true,
 }) => {
   const theme = getTheme("dark");
   const { exit } = useApp();
@@ -31,7 +55,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   const { add: addHistory, navigateUp, navigateDown, reset: resetHistory, saveTempInput } = useInputHistory();
 
   // Text buffer - 文本缓冲区
-  const { text, cursor, lines, setText, clear, move, insert, backspace, newline, delete: deleteChar } = useTextBuffer({
+  const { text, cursor, lines, setText, clear, move, moveToEnd, insert, backspace, newline, delete: deleteChar } = useTextBuffer({
     initialValue,
     onSubmit: (submittedText) => {
       addHistory(submittedText);
@@ -39,6 +63,47 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       setIsFirstLine(true);
     },
   });
+
+  // Autocomplete integration - 自动补全集成
+  const {
+    state: autocompleteState,
+    suggestions,
+    handleInput: handleAutocompleteInput,
+    handleTab,
+    handleEnter,
+    handleUp: handleAutocompleteUp,
+    handleDown: handleAutocompleteDown,
+    handleEscape: handleAutocompleteEscape,
+  } = useAutocomplete({
+    cwd,
+    gitRoot,
+    enabled: autocompleteEnabled,
+  });
+
+  // Track previous text to detect changes - 跟踪前一次文本以检测变化
+  const prevTextRef = useRef(text);
+
+  // Calculate absolute cursor position from row/col - 从行/列计算绝对光标位置
+  const getAbsoluteCursorPos = useCallback((): number => {
+    let pos = 0;
+    for (let i = 0; i < cursor.row; i++) {
+      pos += (lines[i]?.length ?? 0) + 1; // +1 for newline character
+    }
+    pos += cursor.col;
+    return pos;
+  }, [cursor.row, cursor.col, lines]);
+
+  // Trigger autocomplete when text changes - 文本变化时触发自动补全
+  useEffect(() => {
+    if (!autocompleteEnabled) return;
+
+    // Only trigger if text actually changed - 只有文本实际变化时才触发
+    if (text !== prevTextRef.current) {
+      prevTextRef.current = text;
+      const cursorPos = getAbsoluteCursorPos();
+      handleAutocompleteInput(text, cursorPos);
+    }
+  }, [text, autocompleteEnabled, getAbsoluteCursorPos, handleAutocompleteInput]);
 
   // Update isFirstLine state - 更新 isFirstLine 状态
   useEffect(() => {
@@ -65,12 +130,68 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     newline();
   }, [lines, cursor.row, backspace, newline]);
 
+  // Handle accepting a completion - 处理接受补全
+  const acceptCompletion = useCallback((completionText: string): boolean => {
+    if (!completionText) return false;
+
+    // For now, we replace the entire text with the completion
+    // This is a simplified approach; a more sophisticated implementation
+    // would find the word boundary and replace just that portion
+    // 目前我们用补全替换整个文本，这是简化方案；更复杂的实现会找到词边界并仅替换该部分
+
+    // Check if we're completing a command, skill, or file path
+    // 检查是否正在补全命令、技能或文件路径
+    const beforeCursor = text.slice(0, getAbsoluteCursorPos());
+
+    if (beforeCursor.startsWith('/')) {
+      // Command or skill completion - replace from start
+      // 命令或技能补全 - 从开始替换
+      setText(completionText);
+    } else if (beforeCursor.includes('@')) {
+      // File completion - find the @ position and replace from there
+      // 文件补全 - 找到 @ 位置并从那里替换
+      const lastAtIndex = beforeCursor.lastIndexOf('@');
+      const beforeAt = text.slice(0, lastAtIndex);
+      setText(beforeAt + completionText);
+    } else {
+      // Default: replace entire text
+      // 默认：替换整个文本
+      setText(completionText);
+    }
+
+    // Move cursor to end of text after completion
+    // 补全后移动光标到文本末尾
+    // Note: This needs to be called after setText, but since setText triggers
+    // a re-render, we use setTimeout to ensure it runs after the state update
+    // 注意：这需要在 setText 之后调用，但由于 setText 触发重新渲染，
+    // 我们使用 setTimeout 确保它在状态更新后运行
+    setTimeout(() => {
+      moveToEnd();
+    }, 0);
+
+    return true;
+  }, [text, getAbsoluteCursorPos, setText, moveToEnd]);
+
   // Keyboard input handling - use centralized KeypressContext
   // Reference Gemini CLI: use priority system to register handlers - 键盘输入处理 - 使用 centralized KeypressContext，参考 Gemini CLI: 使用优先级系统注册处理器
   useKeypress(
     KeypressHandlerPriority.High, // High priority, ensure input component handles first - 高优先级，确保输入组件优先处理
     (key) => {
       if (!focus) return false;
+
+      // Autocomplete navigation and selection (when dropdown visible)
+      // 自动补全导航和选择（当下拉框可见时）
+      const isAutocompleteVisible = autocompleteState.visible && suggestions.length > 0;
+
+      // Tab key - accept completion if visible
+      // Tab 键 - 如果下拉框可见则接受补全
+      if (key.name === "tab" && isAutocompleteVisible) {
+        const completion = handleTab();
+        if (completion) {
+          acceptCompletion(completion);
+        }
+        return true;
+      }
 
       // Ctrl+C clear or exit - Ctrl+C 清空或退出
       if (key.ctrl && key.name === "c") {
@@ -84,8 +205,14 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         return true;
       }
 
-      // ESC key - clear input - ESC 键 - 清空输入
+      // ESC key - cancel autocomplete first, then clear input
+      // ESC 键 - 先取消自动补全，再清空输入
       if (key.name === "escape") {
+        if (isAutocompleteVisible) {
+          // Cancel autocomplete dropdown - 取消自动补全下拉框
+          handleAutocompleteEscape();
+          return true;
+        }
         if (text.length > 0) {
           clear();
           resetHistory();
@@ -93,8 +220,14 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         return true;
       }
 
-      // Handle up/down arrow history navigation - 处理上下键历史导航
+      // Handle up arrow - autocomplete navigation takes priority over history
+      // 处理上箭头 - 自动补全导航优先于历史
       if (key.name === "up") {
+        if (isAutocompleteVisible) {
+          // Navigate autocomplete suggestions - 导航自动补全建议
+          handleAutocompleteUp();
+          return true;
+        }
         if (cursor.row === 0) {
           // First line → load previous history - 第一行 → 加载上一条历史
           saveTempInput(text);
@@ -108,7 +241,14 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         return true;
       }
 
+      // Handle down arrow - autocomplete navigation takes priority over history
+      // 处理下箭头 - 自动补全导航优先于历史
       if (key.name === "down") {
+        if (isAutocompleteVisible) {
+          // Navigate autocomplete suggestions - 导航自动补全建议
+          handleAutocompleteDown();
+          return true;
+        }
         const lineCount = lines.length;
         const isLastLine = cursor.row === lineCount - 1;
 
@@ -162,8 +302,18 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         return true;
       }
 
-      // Enter to submit - 回车提交
+      // Enter to submit or accept completion - 回车提交或接受补全
       if (key.name === "return") {
+        // If autocomplete visible, accept selection
+        // 如果自动补全可见，接受选择
+        if (isAutocompleteVisible) {
+          const completion = handleEnter();
+          if (completion) {
+            acceptCompletion(completion);
+          }
+          return true;
+        }
+
         // Check if line break needed (line ends with \) - 检查是否需要换行 (行尾是 \)
         const currentLine = lines[cursor.row] ?? "";
         if (currentLine.endsWith("\\")) {
@@ -198,11 +348,20 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
       return false;
     },
-    [focus, text, cursor, lines, clear, resetHistory, saveTempInput, navigateUp, navigateDown, setText, move, backspace, deleteChar, newline, handleSubmit, handleLineContinuation, insert]
+    [focus, text, cursor, lines, clear, resetHistory, saveTempInput, navigateUp, navigateDown, setText, move, backspace, deleteChar, newline, handleSubmit, handleLineContinuation, insert, autocompleteState.visible, suggestions.length, handleTab, handleEnter, handleAutocompleteEscape, handleAutocompleteUp, handleAutocompleteDown, acceptCompletion]
   );
 
   return (
     <Box flexDirection="column" marginY={1}>
+      {/* Autocomplete suggestions - displayed ABOVE input to prevent layout shift */}
+      {/* 自动补全建议 - 显示在输入框上方，防止布局抖动 */}
+      <SuggestionsDisplay
+        suggestions={suggestions}
+        selectedIndex={autocompleteState.selectedIndex}
+        visible={autocompleteState.visible}
+        maxVisible={7}
+        width={80}
+      />
       <TextInput
         lines={lines}
         cursorRow={cursor.row}

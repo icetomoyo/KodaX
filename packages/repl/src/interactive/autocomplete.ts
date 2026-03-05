@@ -17,7 +17,9 @@ export interface Completion {
   text: string;                // Completion text - 补全文本
   display: string;             // Display text - 显示文本
   description?: string;        // Description - 描述
-  type: 'file' | 'command' | 'argument';
+  type: 'file' | 'command' | 'argument' | 'skill';
+  /** Match score (internal use) - 匹配评分（内部使用） */
+  score?: number;
 }
 
 /**

@@ -51,6 +51,7 @@ _Last Updated: 2026-03-05
 | 078 | High | Resolved | CLI --max-iter 默认值覆盖 coding 包默认值 | v0.5.5 | v0.5.5 | 2026-03-04 | 2026-03-04 |
 | 079 | High | Resolved | Ink 历史渲染无限长导致崩溃 | v0.5.7 | v0.5.7 | 2026-03-04 | 2026-03-04 |
 | 080 | Medium | Resolved | 长文本输入框未根据终端宽度自动换行 | v0.5.7 | v0.5.9 | 2026-03-04 | 2026-03-05 |
+| 081 | Medium | Open | useAutocomplete 每次渲染创建新实例 | v0.5.10 | - | 2026-03-05 | - |
 
 ---
 
@@ -3784,6 +3785,53 @@ _Last Updated: 2026-03-05
   3873→
   3874→
   3875→
+
+---
+
+### 081: useAutocomplete 每次渲染创建新实例 (CODE REVIEW)
+- **Priority**: Medium
+- **Status**: Open
+- **Introduced**: v0.5.10
+- **Created**: 2026-03-05
+
+- **Original Problem**:
+  `useAutocomplete` hook 在 `InputPrompt.tsx:68-81` 调用时，每次组件渲染都会创建新的 `AutocompleteProvider` 实例。
+
+  ```typescript
+  const {
+    state: autocompleteState,
+    suggestions,
+    handleInput: handleAutocompleteInput,
+    // ...
+  } = useAutocomplete({
+    cwd,
+    gitRoot,
+    enabled: autocompleteEnabled,
+  });
+  ```
+
+  虽然内部使用了 `useMemo`，但依赖数组为空 `[]`，导致：
+  - 首次渲染时创建 `AutocompleteProvider` 实例
+  - 如果 `InputPrompt` 被卸载再挂载，会丢失之前的补全状态
+
+- **Expected Behavior**:
+  - `AutocompleteProvider` 实例应该在组件生命周期内保持单例
+  - 卸载再挂载时应该保持之前的补全状态（如果需要的话）
+
+- **Impact**: 轻微
+  - 当前架构下 `InputPrompt` 不会被频繁卸载
+  - 实际影响有限，属于代码质量问题
+
+- **Context**:
+  - `packages/repl/src/ui/components/InputPrompt.tsx:68-81`
+  - `packages/repl/src/ui/hooks/useAutocomplete.ts`
+  - `packages/repl/src/interactive/autocomplete-provider.ts`
+
+- **Proposed Solution**:
+  方案 A（简单）：接受当前行为，因为影响轻微
+  方案 B（优化）：将 `AutocompleteProvider` 提升到 `InkREPL` 层级，通过 context 传递
+
+---
 
 ### 2026-02-19: 代码审查与重构
 - Resolved 020: 资源泄漏 - Readline 接口

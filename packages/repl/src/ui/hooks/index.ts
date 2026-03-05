@@ -10,3 +10,6 @@ export type { UseKeypressOptions } from "./useKeypress.js";
 
 export { useInputHistory } from "./useInputHistory.js";
 export type { UseInputHistoryOptions, UseInputHistoryReturn } from "./useInputHistory.js";
+
+export { useAutocomplete } from "./useAutocomplete.js";
+export type { UseAutocompleteOptions, UseAutocompleteReturn } from "./useAutocomplete.js";

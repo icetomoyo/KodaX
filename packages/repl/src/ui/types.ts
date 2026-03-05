@@ -37,6 +37,7 @@ export interface UseTextBufferReturn {
   backspace: () => void;
   delete: () => void;
   move: (direction: "up" | "down" | "left" | "right" | "home" | "end") => void;
+  moveToEnd: () => void;
   clear: () => void;
   undo: () => boolean;
   redo: () => boolean;
@@ -90,7 +91,7 @@ export interface Suggestion {
   text: string; // Suggestion text - 建议文本
   displayText?: string; // Display text (if different from text) - 显示文本（如果与 text 不同）
   description?: string; // Description - 描述
-  type?: "command" | "file" | "history" | "argument" | "snippet"; // Type - 类型
+  type?: "command" | "file" | "history" | "argument" | "snippet" | "skill"; // Type - 类型
   icon?: string; // Optional icon - 可选图标
 }
 

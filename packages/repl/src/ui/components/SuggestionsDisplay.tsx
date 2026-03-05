@@ -41,6 +41,7 @@ const TYPE_ICONS: Record<string, string> = {
   history: "⏱",
   argument: "•",
   snippet: "◇",
+  skill: "★",
 };
 
 /**

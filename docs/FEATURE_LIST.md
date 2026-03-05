@@ -1,6 +1,6 @@
 # Feature List
 
-_Last Updated: 2026-03-05_
+_Last Updated: 2026-03-05 16:20_
 
 ---
 
@@ -22,7 +22,7 @@ _Last Updated: 2026-03-05_
 | v0.4.0 | Released | 1 | 1/1 (100%) |
 | v0.4.6 | Released | 1 | 1/1 (100%) |
 | v0.5.5 | Released | 1 | 1/1 (100%) |
-| v0.5.0 | InProgress | 7 | 3/7 (43%) |
+| v0.5.0 | InProgress | 7 | 4/7 (57%) |
 | v0.6.0 | Planned | 1 | 0/1 (0%) |
 
 ---
@@ -42,7 +42,7 @@ _Last Updated: 2026-03-05_
 | 009 | Refactor | Completed | Critical | 架构重构：AI 层独立 + 权限层分离 | v0.5.0 | v0.5.0 | [Design](features/v0.5.0.md#009) | 2026-02-27 | 2026-02-27 | 2026-02-27 |
 | 010 | Refactor | Completed | Critical | 架构拆分：Agent Core + Skills 独立 | v0.5.0 | v0.5.5 | [Design](features/v0.5.0.md#010) | 2026-03-02 | 2026-03-02 | 2026-03-02 |
 | 011 | Enhancement | Planned | High | 智能上下文压缩 (Compact) | v0.5.0 | - | [Design](features/v0.5.0.md#011) | 2026-03-02 | - | - |
-| 012 | Enhancement | Planned | High | TUI 自动补全增强 | v0.5.0 | - | [Design](features/v0.5.0.md#012) | 2026-03-02 | - | - |
+| 012 | Enhancement | InProgress | High | TUI 自动补全增强 | v0.5.0 | - | [Design](features/v0.5.0.md#012) | 2026-03-02 | 2026-03-05 | - |
 | 013 | Refactor | Planned | High | Command System 2.0 | v0.5.0 | - | [Design](features/v0.5.0.md#013) | 2026-03-03 | - | - |
 
 ---
@@ -417,25 +417,25 @@ REPL 中的长运行项目管理，通过 `/project` 命令组实现。
 
 ---
 
-### 012: TUI 自动补全增强 (PLANNED)
+### 012: TUI 自动补全增强 (IN PROGRESS)
 - **Category**: Enhancement
-- **Status**: Planned
+- **Status**: InProgress
 - **Priority**: High
 - **Planned**: v0.5.0
 - **Released**: -
 - **Design**: [v0.5.0.md#012](features/v0.5.0.md#012)
 - **Created**: 2026-03-02
-- **Started**: -
+- **Started**: 2026-03-05
 - **Completed**: -
 
 **Description**:
 对标 pi-mono 的自动补全系统，提升 KodaX 的命令行补全体验。
 
 **Goals**:
-1. **Fuzzy 匹配** - 支持模糊搜索，更智能的过滤
-2. **参数补全** - 根据命令定义提供参数补全
-3. **UI 增强** - 下拉菜单 + 图标 + 详细描述
-4. **多触发方式** - 支持多种补全触发方式
+1. ✅ **Fuzzy 匹配** - 支持模糊搜索，更智能的过滤
+2. ✅ **参数补全** - 根据命令定义提供参数补全
+3. ✅ **UI 增强** - 下拉菜单 + 图标 + 详细描述
+4. ✅ **多触发方式** - 支持多种补全触发方式
 
 **Background**:
 - 当前补全使用简单前缀匹配
@@ -444,6 +444,16 @@ REPL 中的长运行项目管理，通过 `/project` 命令组实现。
 - 无法在补全时看到详细描述
 
 **Inspired by**: [pi-mono](https://github.com/badlogic/pi-mono)
+
+**Implementation Notes**:
+- `packages/repl/src/interactive/fuzzy.ts` - Fuzzy matching algorithm with scoring
+- `packages/repl/src/interactive/completers/skill-completer.ts` - /skill:xxx completion
+- `packages/repl/src/interactive/completers/argument-completer.ts` - Command argument completion
+- `packages/repl/src/interactive/completers/command-arguments.ts` - Command definitions registry
+- `packages/repl/src/interactive/autocomplete-provider.ts` - Main autocomplete orchestrator
+- `packages/repl/src/ui/hooks/useAutocomplete.ts` - React hook for autocomplete
+- `packages/repl/src/ui/components/InputPrompt.tsx` - Integrated autocomplete UI
+- Tests: 71 unit tests passing (fuzzy, skill-completer, argument-completer, autocomplete-provider)
 
 ---
 
@@ -479,9 +489,10 @@ REPL 中的长运行项目管理，通过 `/project` 命令组实现。
 ---
 
 ## Summary
-- Total: 13 (4 Planned, 9 Completed)
+- Total: 13 (3 Planned, 1 In Progress, 9 Completed)
 - By Priority: Critical: 3, High: 6, Medium: 2, Low: 0
 - Current Version: v0.5.0
-- Next Release (v0.5.0): 3 features planned (011, 012, 013)
+- Next Release (v0.5.0): 4 features (1 in progress, 3 planned) - 011, 012, 013
 - Future Release (v0.6.0): 1 feature planned (007)
-- Highest Priority Planned: 011 - 智能上下文压缩 (High), 012 - TUI 自动补全增强 (High)
+- Highest Priority InProgress: 012 - TUI 自动补全增强 (High)
+- Highest Priority Planned: 011 - 智能上下文压缩 (High)
