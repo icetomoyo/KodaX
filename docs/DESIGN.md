@@ -1,6 +1,6 @@
 # KodaX 设计文档
 
-> 极致轻量化 Coding Agent - 分层架构，Core 层可独立使用
+> 极致轻量化 Coding Agent - 5层架构，每层可独立使用
 >
 > **架构哲学**: 极简且智能 - 每行代码都应有其价值，每个默认值都应是最佳选择
 
@@ -19,16 +19,32 @@
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│                    Interactive Layer                             │
+│                    Interactive Layer (REPL)                      │
 │  ┌──────────────┐ ┌──────────────┐ ┌──────────────────────────┐ │
-│  │ REPL Loop    │ │ Context Mgmt │ │ Built-in Commands        │ │
+│  │ Ink UI       │ │ Permission   │ │ Built-in Commands        │ │
+│  │ Components   │ │ Control      │ │                          │ │
 │  └──────────────┘ └──────────────┘ └──────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│                     Core Layer (独立库)                          │
+│                     Coding Layer (独立库)                        │
 │  ┌──────────────┐ ┌──────────────┐ ┌──────────────────────────┐ │
-│  │ Agent Loop   │ │ Providers    │ │ Tools                    │ │
+│  │ Tools (8个)  │ │ Prompts      │ │ Agent Loop               │ │
+│  └──────────────┘ └──────────────┘ └──────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│                     Agent Layer (独立库)                         │
+│  ┌──────────────┐ ┌──────────────┐ ┌──────────────────────────┐ │
+│  │ Session Mgmt │ │ Messages     │ │ Tokenizer                │ │
+│  └──────────────┘ └──────────────┘ └──────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│                       AI Layer (独立库)                          │
+│  ┌──────────────┐ ┌──────────────┐ ┌──────────────────────────┐ │
+│  │ Providers    │ │ Stream       │ │ Error Handling           │ │
+│  │ (7个)        │ │ Handling     │ │                          │ │
 │  └──────────────┘ └──────────────┘ └──────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -37,101 +53,199 @@
 
 ```
 CLI ──────┐
-          ├──→ Interactive ────→ Core
-REPL ─────┘
-
-Core 层零依赖外部 UI/CLI 库
+          ├──→ REPL ────→ Coding ────→ Agent ────→ AI
+Skills ───┘                      │
+                                 └──→ Skills (零依赖)
 ```
+
+**各层职责**:
+- **AI Layer**: 独立的 LLM 抽象层，可被其他项目复用
+- **Agent Layer**: 通用 Agent 框架，会话管理和消息处理
+- **Skills Layer**: Skills 标准实现，零外部依赖
+- **Coding Layer**: Coding Agent，包含工具和 Prompts
+- **REPL Layer**: 完整的交互式终端体验，权限控制
+- **CLI Layer**: 命令行入口，组合所有模块
 
 ---
 
-## 2. Core 层设计
+## 2. 包结构详解
 
-### 2.1 设计目标
+### 2.1 @kodax/ai - LLM 抽象层
 
-- **库优先**: 可作为独立 npm 包使用
-- **零 UI 依赖**: 纯逻辑层，不依赖 readline/chalk
-- **事件驱动**: 通过事件回调与上层通信
-- **智能默认**: 开箱即用，无需复杂配置
+**设计目标**:
+- 独立的 LLM 抽象层，可被其他项目复用
+- 支持 7 个 LLM 提供商
+- 统一的流式输出接口
 
-### 2.2 核心 API
-
-```typescript
-// 极简调用 - 一行代码运行 Agent
-import { runKodaX } from 'kodax/core';
-
-const result = await runKodaX(
-  { provider: 'anthropic' },
-  "创建一个 HTTP 服务器"
-);
+**目录结构**:
+```
+packages/ai/
+├── src/
+│   ├── index.ts          # 统一导出
+│   ├── types.ts          # 核心类型定义
+│   ├── constants.ts      # 常量配置
+│   ├── errors.ts         # 错误类型体系
+│   └── providers/
+│       ├── index.ts      # Provider 统一导出
+│       ├── base.ts       # BaseProvider 抽象类
+│       ├── anthropic.ts  # Anthropic Provider
+│       ├── openai.ts     # OpenAI 兼容 Provider
+│       └── registry.ts   # Provider 注册表
+├── package.json
+└── tsconfig.json
 ```
 
-```typescript
-// 流式输出 - 实时显示结果
-const result = await runKodaX({
-  provider: 'anthropic',
-  events: {
-    onTextDelta: (text) => process.stdout.write(text),
-    onToolUseStart: (tool) => console.log(`Using ${tool.name}...`),
-  }
-}, "分析代码结构");
+**支持的 Provider**:
+
+| Provider | Thinking | Default Model |
+|----------|----------|---------------|
+| anthropic | Yes | claude-sonnet-4-20250514 |
+| openai | No | gpt-4o |
+| kimi | No | moonshot-v1-128k |
+| kimi-code | Yes | k2p5 |
+| qwen | No | qwen-max |
+| zhipu | No | glm-4-plus |
+| zhipu-coding | Yes | glm-5 |
+
+### 2.2 @kodax/agent - Agent 框架
+
+**设计目标**:
+- 通用 Agent 框架，不包含具体业务逻辑
+- 会话管理和消息处理
+- Token 估算和消息压缩
+
+**目录结构**:
+```
+packages/agent/
+├── src/
+│   ├── index.ts          # 统一导出
+│   ├── types.ts          # 核心类型定义
+│   ├── constants.ts      # 常量配置
+│   ├── session.ts        # 会话管理
+│   ├── messages.ts       # 消息处理/压缩
+│   └── tokenizer.ts      # Token 估算
+├── package.json
+└── tsconfig.json
 ```
 
-```typescript
-// 会话续接 - 保持上下文
-const result = await runKodaX({
-  provider: 'anthropic',
-  session: {
-    id: '20250218_001946',
-    storage: new FileSessionStorage()
-  }
-}, "继续刚才的任务");
+### 2.3 @kodax/skills - Skills 实现
+
+**设计目标**:
+- Skills 标准实现
+- 零外部依赖，可独立使用
+- 支持自然语言触发
+
+**目录结构**:
+```
+packages/skills/
+├── src/
+│   ├── index.ts          # 统一导出
+│   ├── types.ts          # Skills 类型定义
+│   ├── discovery.ts      # Skills 发现
+│   ├── executor.ts       # Skills 执行
+│   ├── skill-loader.ts   # Skills 加载
+│   ├── skill-registry.ts # Skills 注册
+│   ├── skill-resolver.ts # Skills 解析
+│   └── builtin/          # 内置 Skills
+│       ├── code-review/
+│       ├── tdd/
+│       └── git-workflow/
+├── package.json
+└── tsconfig.json
 ```
 
-### 2.3 Core 目录结构
+### 2.4 @kodax/coding - Coding Agent
 
+**设计目标**:
+- 完整的 Coding Agent 实现
+- 包含 8 个工具和系统 Prompts
+- Agent 主循环实现
+
+**目录结构**:
 ```
-src/core/
-├── index.ts              # 统一导出，极简 API 入口
-├── types.ts              # 核心类型定义
-├── errors.ts             # 错误类型体系
-├── constants.ts          # 常量配置
-├── config.ts             # 配置管理
-├── agent.ts              # Agent 主循环 (~200 LOC)
-├── session.ts            # 会话存储接口
-├── messages.ts           # 消息处理/压缩
-├── tokenizer.ts          # Token 估算
-├── providers/
-│   ├── index.ts          # Provider 统一导出
-│   ├── base.ts           # BaseProvider 抽象类
-│   ├── anthropic.ts      # Anthropic 兼容 Provider
-│   ├── openai.ts         # OpenAI 兼容 Provider
-│   └── registry.ts       # Provider 注册表
-├── tools/
-│   ├── index.ts          # 工具统一导出
-│   ├── types.ts          # 工具类型定义
-│   ├── registry.ts       # 工具注册表
-│   ├── read.ts           # read 工具实现
-│   ├── write.ts          # write 工具实现
-│   ├── edit.ts           # edit 工具实现
-│   ├── bash.ts           # bash 工具实现
-│   ├── glob.ts           # glob 工具实现
-│   ├── grep.ts           # grep 工具实现
-│   └── undo.ts           # undo 工具实现
-└── prompts/
-    ├── index.ts          # 提示词统一导出
-    ├── system.ts         # SYSTEM_PROMPT
-    └── long-running.ts   # LONG_RUNNING_PROMPT
+packages/coding/
+├── src/
+│   ├── index.ts          # 统一导出
+│   ├── agent.ts          # Agent 主循环
+│   ├── client.ts         # KodaXClient 类
+│   ├── types.ts          # 核心类型定义
+│   ├── constants.ts      # 常量配置
+│   ├── errors.ts         # 错误类型
+│   ├── session.ts        # 会话存储
+│   ├── messages.ts       # 消息处理
+│   ├── tokenizer.ts      # Token 估算
+│   ├── prompts/          # 系统提示词
+│   │   ├── index.ts
+│   │   ├── system.ts
+│   │   └── long-running.ts
+│   └── tools/            # 工具实现
+│       ├── index.ts
+│       ├── types.ts
+│       ├── registry.ts
+│       ├── read.ts
+│       ├── write.ts
+│       ├── edit.ts
+│       ├── bash.ts
+│       ├── glob.ts
+│       ├── grep.ts
+│       ├── undo.ts
+│       └── diff.ts
+├── package.json
+└── tsconfig.json
 ```
 
-### 2.4 文件大小控制
+**工具列表**:
 
-| 模块 | 目标行数 | 说明 |
-|------|---------|------|
-| `agent.ts` | < 200 | Agent 核心循环 |
-| `providers/*.ts` | < 150/个 | Provider 实现 |
-| `tools/*.ts` | < 100/个 | 工具实现 |
-| `types.ts` | < 150 | 类型定义 |
+| Tool | Description |
+|------|-------------|
+| read | 读取文件内容（支持 offset/limit） |
+| write | 写入文件 |
+| edit | 精确字符串替换（支持 replace_all） |
+| bash | 执行 Shell 命令 |
+| glob | 文件模式匹配 |
+| grep | 内容搜索（支持 output_mode） |
+| undo | 撤销最后修改 |
+| diff | 比较文件或显示变更 |
+
+### 2.5 @kodax/repl - 交互式终端
+
+**设计目标**:
+- 完整的交互式终端体验
+- 基于 Ink/React 的 UI 组件
+- 权限控制和命令系统
+
+**目录结构**:
+```
+packages/repl/
+├── src/
+│   ├── index.ts          # 统一导出
+│   ├── common/           # 通用工具
+│   ├── interactive/      # 交互逻辑
+│   │   ├── index.ts
+│   │   ├── commands.ts   # 命令系统
+│   │   ├── repl.ts       # REPL 主逻辑
+│   │   ├── themes.ts     # 主题配置
+│   │   └── ...
+│   ├── permission/       # 权限控制
+│   │   ├── index.ts
+│   │   └── modes.ts
+│   └── ui/               # UI 组件
+│       ├── index.ts
+│       ├── App.tsx
+│       ├── InkREPL.tsx
+│       ├── components/   # Ink 组件
+│       │   ├── InputPrompt.tsx
+│       │   ├── MessageList.tsx
+│       │   ├── StatusBar.tsx
+│       │   ├── TextInput.tsx
+│       │   └── ...
+│       ├── contexts/     # React Contexts
+│       ├── hooks/        # 自定义 Hooks
+│       ├── themes/       # 主题配置
+│       └── utils/        # 工具函数
+├── package.json
+└── tsconfig.json
+```
 
 ---
 
@@ -140,7 +254,7 @@ src/core/
 ### 3.1 核心类型
 
 ```typescript
-// src/core/types.ts
+// packages/coding/src/types.ts
 
 /** 消息内容块 */
 export type KodaXContentBlock =
@@ -167,35 +281,25 @@ export interface KodaXToolDefinition {
   };
 }
 
-/** Provider 配置 */
-export interface KodaXProviderConfig {
-  apiKeyEnv: string;
-  baseUrl?: string;
-  model: string;
-  supportsThinking: boolean;
-}
-
 /** Agent 选项 */
 export interface KodaXOptions {
   provider: string;
   thinking?: boolean;
-  maxIter?: number;
+  maxIter?: number;          // 默认 200
   parallel?: boolean;
   auto?: boolean;
-  mode?: 'code' | 'ask';           // 交互模式，默认 'code'
+  mode?: PermissionMode;
   confirmTools?: Set<string>;
   session?: KodaXSessionOptions;
   events?: KodaXEvents;
 }
 
-/** 会话选项 */
-export interface KodaXSessionOptions {
-  id?: string;
-  resume?: boolean;
-  autoResume?: boolean;
-  storage?: KodaXSessionStorage;
-  initialMessages?: KodaXMessage[];
-}
+/** 权限模式 */
+export type PermissionMode =
+  | 'plan'           // 只读模式
+  | 'default'        // 安全模式（默认）
+  | 'accept-edits'   // 自动接受编辑
+  | 'auto-in-project'; // 项目内全自动
 
 /** Agent 结果 */
 export interface KodaXResult {
@@ -211,7 +315,7 @@ export interface KodaXResult {
 ### 3.2 事件系统
 
 ```typescript
-// src/core/types.ts
+// packages/coding/src/types.ts
 
 export interface KodaXEvents {
   // 流式输出
@@ -234,7 +338,7 @@ export interface KodaXEvents {
   // 用户交互（由上层实现）
   onConfirm?: (tool: string, input: Record<string, unknown>) => Promise<boolean>;
 
-  // 工具执行钩子（用于 Ask/Plan 模式）
+  // 工具执行钩子
   beforeToolExecute?: (tool: string, input: Record<string, unknown>) => Promise<boolean>;
 }
 ```
@@ -246,7 +350,7 @@ export interface KodaXEvents {
 ### 4.1 BaseProvider 抽象类
 
 ```typescript
-// src/core/providers/base.ts
+// packages/ai/src/providers/base.ts
 
 export abstract class KodaXBaseProvider {
   abstract readonly name: string;
@@ -276,7 +380,7 @@ export abstract class KodaXBaseProvider {
 ### 4.2 Provider 注册表
 
 ```typescript
-// src/core/providers/registry.ts
+// packages/ai/src/providers/registry.ts
 
 const PROVIDER_REGISTRY = new Map<string, () => KodaXBaseProvider>();
 
@@ -296,12 +400,6 @@ export function getProvider(name: string): KodaXBaseProvider {
 export function listProviders(): string[] {
   return Array.from(PROVIDER_REGISTRY.keys());
 }
-
-// 自动注册内置 Provider
-registerProvider('anthropic', () => new AnthropicProvider());
-registerProvider('openai', () => new OpenAIProvider());
-registerProvider('kimi', () => new KimiProvider());
-// ...
 ```
 
 ---
@@ -311,7 +409,7 @@ registerProvider('kimi', () => new KimiProvider());
 ### 5.1 工具注册表
 
 ```typescript
-// src/core/tools/registry.ts
+// packages/coding/src/tools/registry.ts
 
 export type ToolHandler = (
   input: Record<string, unknown>,
@@ -327,27 +425,20 @@ export function registerTool(name: string, handler: ToolHandler): void {
 export function getTool(name: string): ToolHandler | undefined {
   return TOOL_REGISTRY.get(name);
 }
-
-// 自动注册内置工具
-registerTool('read', toolRead);
-registerTool('write', toolWrite);
-registerTool('edit', toolEdit);
-// ...
 ```
 
 ### 5.2 工具实现示例
 
 ```typescript
-// src/core/tools/read.ts
-
-import { KodaXToolError } from '../errors.js';
+// packages/coding/src/tools/read.ts
 
 export async function toolRead(
-  input: Record<string, unknown>
+  input: Record<string, unknown>,
+  context: KodaXToolExecutionContext
 ): Promise<string> {
   const fs = await import('fs/promises');
 
-  const filePath = input.path as string;
+  const filePath = input.file_path as string;
   const offset = input.offset as number | undefined;
   const limit = input.limit as number | undefined;
 
@@ -378,14 +469,14 @@ export async function toolRead(
 ### 6.1 主循环实现
 
 ```typescript
-// src/core/agent.ts
+// packages/coding/src/agent.ts
 
 export async function runKodaX(
   options: KodaXOptions,
   prompt: string
 ): Promise<KodaXResult> {
   const provider = getProvider(options.provider);
-  const maxIter = options.maxIter ?? 50;
+  const maxIter = options.maxIter ?? 200;  // 默认 200
   const events = options.events ?? {};
 
   // 初始化会话
@@ -459,186 +550,76 @@ export async function runKodaX(
 
 ---
 
-## 7. CLI 层设计
+## 7. 权限控制系统
 
-### 7.1 CLI 与 Core 的关系
+### 7.1 权限模式
 
-```
-CLI 层职责:
-├── 参数解析 (Commander.js)
-├── 文件存储 (FileSessionStorage)
-├── 事件处理 (Spinner, 格式化输出)
-├── 自定义命令系统
-└── 交互式 REPL
+| Mode | Description | Tools Need Confirmation |
+|------|-------------|------------------------|
+| `plan` | Read-only planning mode | All modification tools blocked |
+| `default` | Safe mode (default) | write, edit, bash |
+| `accept-edits` | Auto-accept file edits | bash only |
+| `auto-in-project` | Full auto within project | None (project-scoped) |
 
-CLI 层不直接包含 Agent 逻辑，全部委托给 Core 层
-```
-
-### 7.2 FileSessionStorage
+### 7.2 Pattern-based Permission
 
 ```typescript
-// src/cli/storage.ts
+// 允许特定 Bash 命令
+// 格式: Bash(command) 或 Bash(prefix:*)
 
-import type { KodaXSessionStorage, KodaXMessage } from '../core/types.js';
+const allowedPatterns = [
+  'Bash(npm install)',
+  'Bash(npm run build)',
+  'Bash(git status)',
+  'Bash(git diff:*)',  // 允许 git diff 后接任意参数
+];
 
-export class FileSessionStorage implements KodaXSessionStorage {
-  async save(
-    id: string,
-    data: { messages: KodaXMessage[]; title: string; gitRoot: string }
-  ): Promise<void> {
-    // JSONL 格式存储
-  }
-
-  async load(id: string): Promise<...> {
-    // 加载会话
-  }
-
-  async list(): Promise<...> {
-    // 列出所有会话
-  }
-}
+// 通配符 * 被拒绝以确保安全
 ```
 
-### 7.3 CLI 事件处理器
+### 7.3 保护路径
 
-```typescript
-// src/cli/events.ts
-
-import type { KodaXEvents } from '../core/types.js';
-
-export function createCliEvents(showSessionId = true): KodaXEvents {
-  let spinner: ReturnType<typeof startSpinner> | null = null;
-
-  return {
-    onSessionStart: (info) => {
-      if (showSessionId) {
-        console.log(chalk.cyan(`[KodaX] Provider: ${info.provider} | Session: ${info.sessionId}`));
-      } else {
-        console.log(chalk.cyan(`[KodaX] Provider: ${info.provider}`));
-      }
-    },
-
-    onThinkingDelta: (text, count) => {
-      if (!spinner) spinner = startSpinner();
-      spinner.updateText(`Thinking... (${count} chars)`);
-    },
-
-    // ... 其他事件处理
-  };
-}
-```
+以下路径始终需要确认，不提供 "always" 选项：
+- `.kodax/` - 项目配置目录
+- `~/.kodax/` - 用户配置目录
+- 项目根目录外的路径
 
 ---
 
-## 8. Interactive 层设计
+## 8. Skills 系统
 
-### 8.1 交互模式
-
-KodaX 支持三种交互模式，通过 `currentConfig.mode` 统一管理：
-
-| 模式 | 说明 | 可用工具 |
-|------|------|----------|
-| `code` | 默认模式，完整功能 | 全部工具 |
-| `ask` | 只读模式 | read, glob, grep, undo |
-| `plan` | 计划模式 | 全部工具（执行前确认） |
-
-**模式切换命令**：
-```
-/mode [code|ask]     # 切换交互模式
-/plan [on|off|once]  # 计划模式管理
-```
-
-**状态指示器**：REPL 提示符会显示当前模式状态
-- `[thinking]` - 思考模式开启（青色）
-- `[auto]` - 自动确认模式（青色）
-- `[plan]` - 计划模式开启（洋红色）
-
-### 8.2 Ask 模式实现
-
-Ask 模式通过 Core 层钩子强制执行只读限制：
+### 8.1 Skills 发现
 
 ```typescript
-// Core 层 - beforeToolExecute 钩子
-const options: KodaXOptions = {
-  mode: 'ask',
-  events: {
-    beforeToolExecute: async (tool, input) => {
-      const readOnlyTools = ['read', 'glob', 'grep', 'undo'];
-      if (!readOnlyTools.includes(tool)) {
-        console.log(chalk.yellow(`[Ask Mode] ${tool} is blocked`));
-        return false;  // 阻止执行
-      }
-      return true;
-    }
-  }
-};
-```
+// packages/skills/src/discovery.ts
 
-### 8.3 Plan 模式实现
-
-Plan 模式实现计划生成、存储和逐步执行：
-
-**核心文件**：
-- `src/cli/plan-storage.ts` - 计划持久化存储
-- `src/cli/plan-mode.ts` - 计划生成与执行逻辑
-
-**计划数据结构**：
-```typescript
-interface ExecutionPlan {
-  id: string;
-  title: string;
-  originalPrompt: string;
-  steps: {
-    id: string;
-    description: string;
-    tool?: string;
-    status: 'pending' | 'done' | 'skipped' | 'failed';
-  }[];
-  createdAt: Date;
-  updatedAt: Date;
+export async function discoverSkills(
+  directories: string[]
+): Promise<DiscoveredSkill[]> {
+  // 扫描目录中的 skills
+  // 支持 ~/.kodax/skills/ 和 .kodax/skills/
 }
 ```
 
-**特性**：
-- 文本计划格式（非 JSON），灵活容错
-- 计划持久化，支持中断恢复
-- 逐步确认执行
+### 8.2 自然语言触发
 
-### 8.4 REPL 实现
+Skills 可以通过自然语言描述触发，无需显式调用 `/skill`:
 
 ```typescript
-// src/interactive/repl.ts
+// 用户输入: "帮我审查代码"
+// 系统自动匹配 code-review skill
 
-import { runKodaX } from '../core/agent.js';
-
-export async function runInteractiveMode(options: RepLOptions): Promise<void> {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    prompt: buildPrompt(options),
-  });
-
-  const context = await createInteractiveContext(options);
-
-  rl.on('line', async (input) => {
-    const processed = await processSpecialSyntax(input);
-
-    if (processed.type === 'command') {
-      await executeCommand(processed.command, context);
-    } else {
-      // 委托给 Core 层
-      await runKodaX({
-        ...options,
-        session: {
-          id: context.sessionId,
-          initialMessages: context.messages,
-          storage: options.storage,
-        },
-      }, processed.content);
-    }
-  });
-}
+// 用户输入: "写测试用例"
+// 系统自动匹配 tdd skill
 ```
+
+### 8.3 内置 Skills
+
+| Skill | Description | Trigger Keywords |
+|-------|-------------|------------------|
+| code-review | Code review and quality analysis | 审查代码, review, 检查代码 |
+| tdd | Test-driven development workflow | 测试, test, tdd |
+| git-workflow | Git commit and workflow | 提交代码, commit, git |
 
 ---
 
@@ -649,41 +630,63 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
 ```
 1. CLI 参数（最高优先级）
 2. 环境变量
-3. 配置文件 ~/.kodax/config.json
-4. 智能默认值（最低优先级）
+3. 项目配置 .kodax/config.local.json
+4. 用户配置 ~/.kodax/config.json
+5. 智能默认值（最低优先级）
 ```
 
 ### 9.2 配置文件
 
 ```json
+// ~/.kodax/config.json
 {
-  "provider": "anthropic",
+  "provider": "zhipu-coding",
   "thinking": false,
   "auto": false
+}
+
+// .kodax/config.local.json (项目级别)
+{
+  "permissionMode": "accept-edits"
 }
 ```
 
 ---
 
-## 10. 与旧版本的对比
+## 10. REPL UI 设计
 
-### 10.1 架构变化
+### 10.1 组件结构
 
-| 特性 | v0.2.x (旧) | v0.3.0 (新) |
-|------|-------------|-------------|
-| **文件结构** | 单文件 kodax.ts (~1800 LOC) | 分层架构，Core 独立 |
-| **库使用** | 不可单独使用 | `import { runKodaX } from 'kodax/core'` |
-| **测试** | 难以单元测试 | 每层可独立测试 |
-| **扩展** | 修改核心文件 | 注册 Provider/Tool 即可 |
+```
+┌────────────────────────────────────────────────────────────┐
+│ [KodaX] Provider: zhipu-coding | Session: 20260304_001     │ ← Status Bar
+├────────────────────────────────────────────────────────────┤
+│                                                            │
+│ User: Read package.json                                    │
+│                                                            │
+│ Assistant: I'll read the package.json file for you.        │ ← Message List
+│ [Tool] read: package.json                                  │
+│ The file contains...                                       │
+│                                                            │
+│ ● Thinking... (120 chars)                                  │ ← Thinking Indicator
+│                                                            │
+├────────────────────────────────────────────────────────────┤
+│ > _                                                        │ ← Input Prompt
+│ [thinking][auto]                                           │ ← Mode Indicators
+└────────────────────────────────────────────────────────────┘
+```
 
-### 10.2 CLI 参数变化
+### 10.2 主题系统
 
-| 旧参数 | 新参数 | 说明 |
-|--------|--------|------|
-| `-p, --prompt` | `-p, --print` | 语义更清晰 |
-| `-c, --confirm` | `-c, --continue` | 与 Claude Code 对齐 |
-| `-y, --no-confirm` | `-y, --auto` | 更简洁 |
-| `--single-shot` | 移除 | 与 `-p` 语义重复 |
+内置主题:
+- `dark` - 默认深色主题
+- `warp` - Warp.dev 风格主题
+
+```typescript
+// 切换主题
+/theme warp
+/theme dark
+```
 
 ---
 
@@ -696,10 +699,10 @@ npm install kodax
 ```
 
 ```typescript
-import { runKodaX } from 'kodax/core';
+import { runKodaX } from 'kodax';
 
 const result = await runKodaX(
-  { provider: 'anthropic' },
+  { provider: 'zhipu-coding' },
   "分析这个函数的复杂度"
 );
 
@@ -710,16 +713,15 @@ console.log(result.lastText);
 
 ```bash
 # 安装
-npm install -g kodax
+git clone https://github.com/icetomoyo/KodaX.git
+cd KodaX
+npm install
+npm run build:packages
+npm run build
+npm link
 
 # 基本使用
 kodax "创建一个 HTTP 服务器"
-
-# 流式输出模式
-kodax -p "快速任务"
-
-# 继续上次会话
-kodax -c
 
 # 交互模式
 kodax
@@ -732,7 +734,7 @@ kodax
 ### 12.1 自定义 Provider
 
 ```typescript
-import { KodaXBaseProvider } from 'kodax/core';
+import { KodaXBaseProvider, registerProvider } from '@kodax/ai';
 
 class MyProvider extends KodaXBaseProvider {
   readonly name = 'my-provider';
@@ -750,12 +752,29 @@ registerProvider('my-provider', () => new MyProvider());
 ### 12.2 自定义工具
 
 ```typescript
-import { registerTool } from 'kodax/core';
+import { registerTool } from '@kodax/coding';
 
 registerTool('my-tool', async (input, context) => {
   // 实现工具逻辑
   return 'result';
 });
+```
+
+### 12.3 自定义 Skill
+
+```markdown
+<!-- ~/.kodax/skills/my-skill/SKILL.md -->
+# My Custom Skill
+
+## Description
+A custom skill for my workflow.
+
+## Trigger Keywords
+my-task, custom
+
+## Instructions
+1. Step one
+2. Step two
 ```
 
 ---
@@ -764,39 +783,66 @@ registerTool('my-tool', async (input, context) => {
 
 ```
 KodaX/
-├── package.json
-├── tsconfig.json
+├── package.json           # 根配置
+├── tsconfig.json          # TypeScript 配置
 ├── src/
-│   ├── index.ts              # 主入口
-│   ├── core/                 # Core 层（可独立使用）
-│   │   ├── index.ts
-│   │   ├── types.ts
-│   │   ├── errors.ts
-│   │   ├── constants.ts
-│   │   ├── config.ts
-│   │   ├── agent.ts
-│   │   ├── session.ts
-│   │   ├── messages.ts
-│   │   ├── tokenizer.ts
-│   │   ├── providers/
-│   │   ├── tools/
-│   │   └── prompts/
-│   ├── cli/                  # CLI 层
-│   │   ├── index.ts
-│   │   ├── options.ts
-│   │   ├── storage.ts
-│   │   ├── events.ts
-│   │   ├── commands.ts
-│   │   ├── plan-mode.ts      # Plan 模式逻辑
-│   │   └── plan-storage.ts   # 计划持久化
-│   └── interactive/          # Interactive 层
-│       ├── index.ts
-│       ├── repl.ts
-│       ├── context.ts
-│       └── commands.ts
-├── dist/                     # 编译输出
-└── tests/                    # 测试
-    ├── core/
-    ├── cli/
-    └── interactive/
+│   ├── index.ts           # 主入口
+│   └── kodax_cli.ts       # CLI 入口
+│
+├── packages/
+│   ├── ai/                # @kodax/ai
+│   │   ├── src/
+│   │   │   ├── index.ts
+│   │   │   ├── types.ts
+│   │   │   ├── errors.ts
+│   │   │   ├── constants.ts
+│   │   │   └── providers/
+│   │   └── package.json
+│   │
+│   ├── agent/             # @kodax/agent
+│   │   ├── src/
+│   │   │   ├── index.ts
+│   │   │   ├── types.ts
+│   │   │   ├── session.ts
+│   │   │   ├── messages.ts
+│   │   │   └── tokenizer.ts
+│   │   └── package.json
+│   │
+│   ├── skills/            # @kodax/skills
+│   │   ├── src/
+│   │   │   ├── index.ts
+│   │   │   ├── types.ts
+│   │   │   ├── discovery.ts
+│   │   │   ├── executor.ts
+│   │   │   └── builtin/
+│   │   └── package.json
+│   │
+│   ├── coding/            # @kodax/coding
+│   │   ├── src/
+│   │   │   ├── index.ts
+│   │   │   ├── agent.ts
+│   │   │   ├── client.ts
+│   │   │   ├── types.ts
+│   │   │   ├── prompts/
+│   │   │   └── tools/
+│   │   └── package.json
+│   │
+│   └── repl/              # @kodax/repl
+│       ├── src/
+│       │   ├── index.ts
+│       │   ├── common/
+│       │   ├── interactive/
+│       │   ├── permission/
+│       │   └── ui/
+│       └── package.json
+│
+├── docs/                  # 文档
+│   ├── README_CN.md
+│   ├── DESIGN.md
+│   ├── TESTING.md
+│   └── LONG_RUNNING_GUIDE.md
+│
+├── tests/                 # 测试
+│
+└── dist/                  # 编译输出
 ```

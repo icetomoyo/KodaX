@@ -4,93 +4,103 @@ Extreme Lightweight Coding Agent - TypeScript Implementation
 
 ## Overview
 
-KodaX is the TypeScript + Node.js version of KodaXP, supporting 7 LLM providers with a modular architecture.
+KodaX is a **modular, lightweight AI coding agent** built with TypeScript. It supports 7 LLM providers and can be used as both a CLI tool and an npm library.
 
 **Core Philosophy**: Transparent, Flexible, Minimalist
 
+**Why KodaX?**
+
+| Feature | KodaX | Other Tools |
+|---------|-------|-------------|
+| **Architecture** | Modular (5 packages), can be used as library | Usually CLI-only |
+| **Code** | Clean separation, easy to understand and customize | Thousands of files, hard to navigate |
+| **Models** | 7 LLM providers, switch freely | Often single provider |
+| **Cost** | Use affordable models (Kimi, Zhipu, Qwen) | Expensive subscriptions |
+| **Type Safety** | Native TypeScript | No types or weak typing |
+| **Learning** | Perfect for understanding Agent principles | Black box |
+
+---
+
 ## Architecture
 
-KodaX uses a **monorepo architecture** with npm workspaces:
+KodaX uses a **monorepo architecture** with npm workspaces, consisting of 5 packages:
 
 ```
 KodaX/
 ├── packages/
-│   ├── core/              # @kodax/core - Pure AI engine
-│   │   ├── src/
-│   │   │   ├── providers/ # 7 LLM providers
-│   │   │   ├── tools/     # Tool definitions & execution
-│   │   │   └── session/   # Session management
-│   │   └── package.json
+│   ├── ai/                  # @kodax/ai - Independent LLM abstraction layer
+│   │   └── providers/       # 7 LLM providers (Anthropic, OpenAI, etc.)
 │   │
-│   └── repl/              # @kodax/repl - Interactive terminal
-│       ├── src/
-│       │   ├── ui/        # Ink components, themes
-│       │   └── interactive/ # Commands, REPL logic
-│       └── package.json
+│   ├── agent/               # @kodax/agent - Generic Agent framework
+│   │   └── session/         # Session management, message handling
+│   │
+│   ├── skills/              # @kodax/skills - Skills standard implementation
+│   │   └── builtin/         # Built-in skills (code-review, tdd, git-workflow)
+│   │
+│   ├── coding/              # @kodax/coding - Coding Agent (tools + prompts)
+│   │   └── tools/           # 8 tools: read, write, edit, bash, glob, grep, undo, diff
+│   │
+│   └── repl/                # @kodax/repl - Interactive terminal UI
+│       ├── ui/              # Ink/React components, themes
+│       └── interactive/     # Commands, REPL logic
 │
 ├── src/
-│   └── kodax_cli.ts       # Main CLI entry point
+│   └── kodax_cli.ts         # Main CLI entry point
 │
-└── package.json           # Root workspace config
+└── package.json             # Root workspace config
 ```
 
-### Package Structure
-
-| Package | Purpose | Dependencies |
-|---------|---------|--------------|
-| `@kodax/core` | Environment-agnostic AI engine | anthropic-sdk, openai |
-| `@kodax/repl` | Complete interactive terminal | ink, react, chalk |
-| `kodax` (root) | CLI entry, combines both | @kodax/core, @kodax/repl |
-
-### Two Usage Modes
+### Package Dependencies
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Mode 1: CLI Command Line                                   │
-│                                                              │
-│  kodax "your task"                                           │
-│                                                              │
-│  Entry: package.json "bin" → dist/kodax_cli.js              │
-└─────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────┐
-│  Mode 2: Library Import                                      │
-│                                                              │
-│  import { runKodaX } from '@kodax/core';                    │
-│                                                              │
-│  Entry: packages/core/dist/index.js                          │
-└─────────────────────────────────────────────────────────────┘
+                    ┌─────────────────┐
+                    │   kodax (root)  │
+                    │   CLI Entry     │
+                    └────────┬────────┘
+                             │
+              ┌──────────────┴──────────────┐
+              │                             │
+              ▼                             ▼
+       ┌─────────────┐               ┌─────────────┐
+       │ @kodax/repl │               │@kodax/coding│
+       │  UI Layer   │               │ Tools+Prompts│
+       └──────┬──────┘               └──────┬──────┘
+              │                             │
+              │              ┌──────────────┼──────────────┐
+              │              │              │              │
+              ▼              ▼              ▼              ▼
+       ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐
+       │@kodax/skills│ │ @kodax/agent│ │  @kodax/ai  │ │  External   │
+       │(zero deps)  │ │Agent Frame  │ │LLM Abstract │ │   SDKs      │
+       └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘
 ```
 
-### package.json Key Fields
+### Package Overview
 
-```json
-{
-  "main": "dist/index.js",           // Library entry (for import)
-  "bin": {
-    "kodax": "./dist/kodax_cli.js"   // CLI entry (for command line)
-  },
-  "workspaces": [
-    "packages/*"                      // Monorepo packages
-  ]
-}
-```
+| Package | Purpose | Key Dependencies |
+|---------|---------|------------------|
+| `@kodax/ai` | Independent LLM abstraction, reusable by other projects | @anthropic-ai/sdk, openai |
+| `@kodax/agent` | Generic Agent framework, session management | @kodax/ai, js-tiktoken |
+| `@kodax/skills` | Skills standard implementation | Zero external deps |
+| `@kodax/coding` | Coding Agent with tools and prompts | @kodax/ai, @kodax/agent, @kodax/skills |
+| `@kodax/repl` | Complete interactive terminal UI | @kodax/coding, ink, react |
 
-| Field | Purpose | Trigger |
-|-------|---------|---------|
-| `"main"` | Library entry | `import from 'kodax'` |
-| `"bin"` | Command entry | `kodax "task"` or `npm link` |
-| `"workspaces"` | Monorepo | `npm install` links packages |
+---
 
 ## Features
 
-- **Modular Architecture**: Use as CLI or as a library
-- **7 LLM Providers**: Anthropic, OpenAI, Kimi, Kimi Code, Qwen, Zhipu, Zhipu Coding
-- **Thinking Mode**: Deep reasoning support
-- **Streaming Output**: Real-time response display
-- **7 Tools (Skills)**: read, write, edit, bash, glob, grep, undo
-- **Session Management**: JSONL format persistent storage
-- **Cross-Platform**: Windows/macOS/Linux
+- **Modular Architecture** - Use as CLI or as a library
+- **7 LLM Providers** - Anthropic, OpenAI, Kimi, Kimi Code, Qwen, Zhipu, Zhipu Coding
+- **Thinking Mode** - Deep reasoning support (anthropic, kimi-code, zhipu-coding)
+- **Streaming Output** - Real-time response display
+- **8 Tools** - read, write, edit, bash, glob, grep, undo, diff
+- **Session Management** - JSONL format persistent storage
+- **Skills System** - Natural language triggering, extensible
+- **Permission Control** - 4-level modes with pattern-based control
+- **Cross-Platform** - Windows/macOS/Linux
+- **TypeScript Native** - Full type safety and IDE support
+
+---
 
 ## Installation
 
@@ -135,6 +145,8 @@ const result = await runKodaX({
 
 console.log(result.lastText);
 ```
+
+---
 
 ## Usage
 
@@ -206,7 +218,7 @@ kodax --session todo-app "Write tests"
 --team <tasks>      Run multiple agents in parallel
 --init <task>       Initialize long-running project
 --auto-continue     Auto-continue until complete
---max-iter <n>      Maximum iterations (default: 50)
+--max-iter <n>      Maximum iterations (default: 200)
 --max-sessions <n>  Maximum sessions for --auto-continue (default: 50)
 --max-hours <h>     Maximum hours for --auto-continue (default: 2.0)
 ```
@@ -237,7 +249,7 @@ KodaX provides 4-level permission modes for fine-grained control:
 - Auto-switch to `accept-edits` when selecting "always" in default mode
 - Plan mode includes system prompt context for LLM awareness
 - Permanent protection zones: `.kodax/`, `~/.kodax/`, paths outside project
-- Two-level config: user-level `~/.kodax/config.json` + project-level `.kodax/config.local.json`
+- Pattern-based permission: Allow specific Bash commands (e.g., `Bash(npm install)`)
 - Unified diff display for write/edit operations
 
 ### CLI Help Topics
@@ -378,7 +390,9 @@ kodax --init "Build a Todo application"
 kodax --auto-continue
 ```
 
-## Tools (Skills)
+---
+
+## Tools
 
 | Tool | Description |
 |------|-------------|
@@ -389,6 +403,32 @@ kodax --auto-continue
 | glob | File pattern matching |
 | grep | Content search (supports output_mode) |
 | undo | Revert last modification |
+| diff | Compare files or show changes |
+
+---
+
+## Skills System
+
+KodaX includes a built-in Skills system that can be triggered by natural language:
+
+```bash
+# Natural language triggering (no explicit /skill needed)
+kodax "帮我审查代码"           # Triggers code-review skill
+kodax "写测试用例"             # Triggers tdd skill
+kodax "提交代码"               # Triggers git-workflow skill
+
+# Explicit skill command
+kodax /skill code-review
+```
+
+Built-in skills include:
+- **code-review** - Code review and quality analysis
+- **tdd** - Test-driven development workflow
+- **git-workflow** - Git commit and workflow automation
+
+Skills are stored in `~/.kodax/skills/` and can be extended with custom skills.
+
+---
 
 ## Commands (CLI)
 
@@ -402,6 +442,8 @@ kodax /test
 Commands are stored in `~/.kodax/commands/`:
 - `.md` files → Prompt commands (content used as prompt)
 - `.ts/.js` files → Programmable commands
+
+---
 
 ## API Exports
 
@@ -430,6 +472,8 @@ export {
 };
 ```
 
+---
+
 ## Development
 
 ```bash
@@ -439,6 +483,9 @@ npm run dev "your task"
 # Build
 npm run build
 
+# Build all packages
+npm run build:packages
+
 # Run tests
 npm test
 
@@ -446,13 +493,13 @@ npm test
 npm run clean
 ```
 
+---
+
 ## Code Style
 
 ### Comment Guidelines
 
-KodaX uses a **English-first** comment style with selective Chinese brief notes for complex logic.
-
-#### Rules
+KodaX uses an **English-first** comment style with selective Chinese brief notes for complex logic.
 
 | Situation | Style | Example |
 |-----------|-------|---------|
@@ -462,66 +509,8 @@ KodaX uses a **English-first** comment style with selective Chinese brief notes 
 | **Business rules** | English + Chinese | `// Skip tool_result - 跳过工具结果块` |
 | **Platform compatibility** | English + Chinese | `// Windows path handling - Windows 路径处理` |
 | **Performance optimization** | English + Chinese | `// Debounce to prevent flicker - 防抖避免闪烁` |
-| **Complex algorithms** | English + Chinese | Multi-line explanation |
 
-#### Examples
-
-```typescript
-// ========== English ONLY (simple/obvious logic) ==========
-
-// Import dependencies
-import { foo } from 'bar';
-
-// Default timeout in milliseconds
-const DEFAULT_TIMEOUT = 5000;
-
-// Initialize state
-const [count, setCount] = useState(0);
-
-// Clear the timer
-clearInterval(timer);
-
-// Return early if empty
-if (!items.length) return;
-
-// ========== English + Chinese brief (complex/business logic) ==========
-
-// Validate session before resuming - 验证会话有效性后才恢复
-// 避免加载损坏的会话文件导致运行时错误
-if (session && !validateSession(session)) {
-  return null;
-}
-
-// Batch updates to reduce render frequency - 批量更新减少渲染频率
-// 解决流式输出时 Ink reconciler 每字符触发重渲染的问题
-const FLUSH_INTERVAL = 80;
-
-/**
- * Extracts text content from various message block types
- * 从各类消息块中提取文本内容
- *
- * Note: thinking blocks are internal AI reasoning and should not be displayed
- * 注意：thinking 块是 AI 内部思考，不应显示给用户
- */
-function extractTextContent(block: MessageBlock): string { ... }
-```
-
-## TypeScript Improvements over Python Version
-
-| Feature | Python (KodaXP) | TypeScript (KodaX) |
-|---------|-----------------|-------------------|
-| **Architecture** | Single file | Modular (Core + CLI) |
-| **Library Usage** | No | Yes (npm package) |
-| **Waiting Animation** | Leaves dots in terminal | Clears with `\r`, cleaner |
-| **Spinner Instant Render** | Waits 80ms for first frame | Renders immediately, no visual gap |
-| **Environment Context** | Platform only | Includes Node version + platform-specific command hints |
-| **Cross-Platform Commands** | Static `pwd` and `mkdir -p` | Dynamic hints for Windows/Unix |
-| **Working Directory** | Project name only | Full path injected |
-| **read Tool** | Basic | offset/limit parameters |
-| **grep Tool** | Basic | output_mode parameter |
-| **edit Tool** | Single replacement | replace_all parameter |
-| **Type Safety** | Runtime | Compile-time |
-| **Async** | asyncio + threading | async/await |
+---
 
 ## Documentation
 
@@ -529,6 +518,9 @@ function extractTextContent(block: MessageBlock): string { ... }
 - [DESIGN.md](docs/DESIGN.md) - Architecture and Implementation Details
 - [TESTING.md](docs/TESTING.md) - Testing Guide
 - [LONG_RUNNING_GUIDE.md](docs/LONG_RUNNING_GUIDE.md) - Long-Running Mode Guide
+- [CHANGELOG.md](CHANGELOG.md) - Version History
+
+---
 
 ## License
 

@@ -4,7 +4,7 @@
 
 **一个真正好用的轻量级 AI 编程助手（TypeScript 版本）。**
 
-模块化架构 • 7 个大模型 • 流式输出 • 并行执行 • 长运行模式 • 可作为库使用
+5层模块化架构 • 7 个大模型 • 流式输出 • 并行执行 • 长运行模式 • 可作为库使用
 
 [![Node.js 18+](https://img.shields.io/badge/node-18+-green.svg)](https://nodejs.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -21,7 +21,7 @@ KodaX 是 KodaXP 的 TypeScript 版本，专为想要**理解**、**定制**和*
 
 | 对比项 | KodaX | 其他工具 |
 |--------|--------|----------|
-| **架构** | 模块化（Core + CLI），可作为库使用 | 通常只能作为 CLI 使用 |
+| **架构** | 5层模块化，每层可独立使用 | 通常只能作为 CLI 使用 |
 | **代码** | 清晰分离，易于理解和定制 | 成千上万文件，难以理解 |
 | **类型** | TypeScript 原生类型安全 | 无类型或弱类型 |
 | **模型** | 7 个 LLM 供应商，随意切换 | 通常只支持单一供应商 |
@@ -42,37 +42,67 @@ KodaX 是 KodaXP 的 TypeScript 版本，专为想要**理解**、**定制**和*
 
 ## 架构
 
-KodaX 使用 **monorepo 架构**，基于 npm workspaces：
+KodaX 使用 **monorepo 架构**，基于 npm workspaces，由 5 个独立的包组成：
 
 ```
 KodaX/
 ├── packages/
-│   ├── core/              # @kodax/core - 纯 AI 引擎
-│   │   ├── src/
-│   │   │   ├── providers/ # 7 个 LLM 提供商
-│   │   │   ├── tools/     # 工具定义与执行
-│   │   │   └── session/   # 会话管理
-│   │   └── package.json
+│   ├── ai/                  # @kodax/ai - 独立的 LLM 抽象层
+│   │   └── providers/       # 7 个 LLM 提供商
 │   │
-│   └── repl/              # @kodax/repl - 交互式终端
-│       ├── src/
-│       │   ├── ui/        # Ink 组件、主题
-│       │   └── interactive/ # 命令、REPL 逻辑
-│       └── package.json
+│   ├── agent/               # @kodax/agent - 通用 Agent 框架
+│   │   └── session/         # 会话管理、消息处理
+│   │
+│   ├── skills/              # @kodax/skills - Skills 标准实现
+│   │   └── builtin/         # 内置 skills (code-review, tdd, git-workflow)
+│   │
+│   ├── coding/              # @kodax/coding - Coding Agent（工具 + Prompts）
+│   │   └── tools/           # 8 个工具: read, write, edit, bash, glob, grep, undo, diff
+│   │
+│   └── repl/                # @kodax/repl - 完整的交互式终端
+│       ├── ui/              # Ink/React 组件、主题
+│       └── interactive/     # 命令、REPL 逻辑
 │
 ├── src/
-│   └── kodax_cli.ts       # 主 CLI 入口点
+│   └── kodax_cli.ts         # 主 CLI 入口点
 │
-└── package.json           # 根 workspace 配置
+└── package.json             # 根 workspace 配置
+```
+
+### 包依赖关系
+
+```
+                    ┌─────────────────┐
+                    │   kodax (root)  │
+                    │   CLI 入口      │
+                    └────────┬────────┘
+                             │
+              ┌──────────────┴──────────────┐
+              │                             │
+              ▼                             ▼
+       ┌─────────────┐               ┌─────────────┐
+       │ @kodax/repl │               │@kodax/coding│
+       │   UI 层     │               │ 工具+Prompts │
+       └──────┬──────┘               └──────┬──────┘
+              │                             │
+              │              ┌──────────────┼──────────────┐
+              │              │              │              │
+              ▼              ▼              ▼              ▼
+       ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐
+       │@kodax/skills│ │ @kodax/agent│ │  @kodax/ai  │ │   外部 SDK  │
+       │ (零依赖)    │ │ Agent 框架  │ │ LLM 抽象层  │ │             │
+       └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘
 ```
 
 ### 包结构
 
-| 包 | 用途 | 依赖 |
-|----|------|------|
-| `@kodax/core` | 环境无关的 AI 引擎 | anthropic-sdk, openai |
-| `@kodax/repl` | 完整的交互式终端 | ink, react, chalk |
-| `kodax` (根) | CLI 入口，组合两者 | @kodax/core, @kodax/repl |
+| 包 | 用途 | 关键依赖 |
+|----|------|---------|
+| `@kodax/ai` | 独立的 LLM 抽象层，可被其他项目复用 | @anthropic-ai/sdk, openai |
+| `@kodax/agent` | 通用 Agent 框架，会话管理 | @kodax/ai, js-tiktoken |
+| `@kodax/skills` | Skills 标准实现 | 零外部依赖 |
+| `@kodax/coding` | Coding Agent，包含工具和 Prompts | @kodax/ai, @kodax/agent, @kodax/skills |
+| `@kodax/repl` | 完整的交互式终端 UI | @kodax/coding, ink, react |
 
 ### 两种使用方式
 
@@ -88,44 +118,24 @@ KodaX/
 ┌─────────────────────────────────────────────────────────────┐
 │  方式 2: 库引用                                              │
 │                                                              │
-│  import { runKodaX } from '@kodax/core';                    │
+│  import { runKodaX } from 'kodax';                          │
 │                                                              │
-│  入口: packages/core/dist/index.js                           │
+│  入口: packages/coding/dist/index.js                        │
 └─────────────────────────────────────────────────────────────┘
 ```
-
-### package.json 关键字段
-
-```json
-{
-  "main": "dist/index.js",           // 库入口（import 使用）
-  "bin": {
-    "kodax": "./dist/kodax_cli.js"   // CLI 入口（命令行使用）
-  },
-  "workspaces": [
-    "packages/*"                      // Monorepo 包
-  ]
-}
-```
-
-| 字段 | 用途 | 触发方式 |
-|------|------|---------|
-| `"main"` | 库入口 | `import from 'kodax'` |
-| `"bin"` | 命令入口 | `kodax "任务"` 或 `npm link` |
-| `"workspaces"` | Monorepo | `npm install` 自动链接包 |
 
 ---
 
 ## 特性
 
-- **模块化架构** - 可作为 CLI 或库使用
+- **5层模块化架构** - 每层可独立使用，可作为库
 - **7 个模型** - Anthropic, OpenAI, Kimi, Kimi Code, 智谱, 智谱 Coding, 通义千问
-- **流式输出** - 实时显示，不用等待
-- **会话记忆** - 对话跨次保存
-- **长运行模式** - 通过 `feature_list.json` 跟踪进度
-- **并行工具** - 同时执行多个工具
-- **Commands 系统** - `/xxx` 快捷命令扩展
 - **思考模式** - 复杂任务的深度推理（部分模型支持）
+- **流式输出** - 实时显示，不用等待
+- **8 个工具** - read, write, edit, bash, glob, grep, undo, diff
+- **会话记忆** - 对话跨次保存
+- **Skills 系统** - 自然语言触发，可扩展
+- **权限控制** - 4 级模式，支持命令模式匹配
 - **跨平台** - 支持 Windows、macOS 和 Linux
 - **TypeScript 原生** - 完整的类型安全和 IDE 支持
 
@@ -235,17 +245,34 @@ kodax --init "构建一个 REST API"
 kodax --auto-continue
 ```
 
-### Commands（/xxx 快捷命令）
+### 权限控制
+
+KodaX 提供 4 级权限模式，支持精细控制：
+
+| 模式 | 说明 | 需要确认的工具 |
+|------|------|----------------|
+| `plan` | 只读计划模式 | 所有修改工具被阻止 |
+| `default` | 安全模式（默认） | write, edit, bash |
+| `accept-edits` | 自动接受文件编辑 | 仅 bash |
+| `auto-in-project` | 项目内全自动 | 无（仅限项目范围） |
 
 ```bash
-# 使用预定义的命令
-kodax /review src/auth.ts
-kodax /test
-kodax /explain src/utils.ts
+# 在 REPL 中使用 /mode 命令
+/mode plan          # 切换到计划模式（只读）
+/mode default       # 切换到默认模式
+/mode accept-edits  # 切换到接受编辑模式
+/mode auto          # 切换到项目内全自动模式
 
-# 命令定义在
-~/.kodax/commands/
+# 查看当前模式
+/mode
 ```
+
+**高级功能：**
+- 在默认模式选择 "always" 时自动切换到 `accept-edits`
+- 计划模式会在系统提示中告知 LLM 只读限制
+- 永久保护区域：`.kodax/`、`~/.kodax/`、项目外路径
+- 命令模式匹配：允许特定 Bash 命令（如 `Bash(npm install)`）
+- 统一 diff 显示：write/edit 操作显示差异
 
 ### 命令选项
 
@@ -260,7 +287,7 @@ kodax /explain src/utils.ts
 | `--team TASKS` | 多 Agent 并行 |
 | `--init TASK` | 初始化长时间运行任务 |
 | `--auto-continue` | 自动继续直到所有功能完成 |
-| `--max-iter N` | 单次会话最大迭代次数（默认：50） |
+| `--max-iter N` | 单次会话最大迭代次数（默认：200） |
 
 ### CLI 帮助主题
 
@@ -294,9 +321,9 @@ import { runKodaX, KodaXEvents } from 'kodax';
 
 const events: KodaXEvents = {
   onTextDelta: (text) => process.stdout.write(text),
-  onThinkingDelta: (text, charCount) => console.log(`Thinking: ${charCount} chars`),
-  onToolResult: (result) => console.log(`Tool ${result.name}`),
-  onComplete: () => console.log('\nDone!'),
+  onThinkingDelta: (text, charCount) => console.log(`思考中: ${charCount} 字符`),
+  onToolResult: (result) => console.log(`工具 ${result.name}`),
+  onComplete: () => console.log('\n完成!'),
   onError: (e) => console.error(e.message),
 };
 
@@ -305,7 +332,7 @@ const result = await runKodaX({
   thinking: true,
   events,
   auto: true,
-}, 'What is 1+1?');
+}, '1+1等于几？');
 
 console.log(result.lastText);
 ```
@@ -387,6 +414,60 @@ await runKodaX({
 
 ---
 
+## 工具列表
+
+| 工具 | 说明 |
+|------|------|
+| read | 读取文件内容（支持 offset/limit） |
+| write | 写入文件 |
+| edit | 精确字符串替换（支持 replace_all） |
+| bash | 执行 Shell 命令 |
+| glob | 文件模式匹配 |
+| grep | 内容搜索（支持 output_mode） |
+| undo | 撤销最后修改 |
+| diff | 比较文件或显示变更 |
+
+---
+
+## Skills 系统
+
+KodaX 包含内置的 Skills 系统，支持自然语言触发：
+
+```bash
+# 自然语言触发（无需显式调用 /skill）
+kodax "帮我审查代码"           # 触发 code-review skill
+kodax "写测试用例"             # 触发 tdd skill
+kodax "提交代码"               # 触发 git-workflow skill
+
+# 显式 skill 命令
+kodax /skill code-review
+```
+
+内置 Skills：
+- **code-review** - 代码审查和质量分析
+- **tdd** - 测试驱动开发工作流
+- **git-workflow** - Git 提交和工作流自动化
+
+Skills 存储在 `~/.kodax/skills/`，可以用自定义 skills 扩展。
+
+---
+
+## Commands（/xxx 快捷命令）
+
+Commands 是 CLI 中的 `/xxx` 快捷方式：
+
+```bash
+kodax /review src/auth.ts
+kodax /test
+kodax /explain src/utils.ts
+```
+
+Commands 定义在 `~/.kodax/commands/`：
+- `.md` 文件 → 提示词命令（内容作为提示词）
+- `.ts/.js` 文件 → 可编程命令
+
+---
+
 ## API 导出
 
 ```typescript
@@ -420,8 +501,8 @@ export {
 
 | 术语 | 含义 | 位置 |
 |------|------|------|
-| **Skills** | 模型能力（KODAX_TOOLS: read, write, bash 等） | Core 层 |
-| **Commands** | CLI 快捷命令（/review, /test 等） | CLI 层 |
+| **Skills** | Agent 能力（KODAX_TOOLS: read, write, bash 等）+ 扩展 Skills | Coding 层 + Skills 层 |
+| **Commands** | CLI 快捷命令（/review, /test 等） | REPL 层 |
 
 ---
 
@@ -451,6 +532,9 @@ npm run dev "你的任务"
 # 构建
 npm run build
 
+# 构建所有包
+npm run build:packages
+
 # 测试
 npm test
 
@@ -465,6 +549,7 @@ npm run clean
 - [设计文档](DESIGN.md) - 架构和实现细节
 - [长时间运行指南](LONG_RUNNING_GUIDE.md) - `--init` 最佳实践
 - [测试指南](TESTING.md) - 如何测试所有功能
+- [更新日志](../CHANGELOG.md) - 版本历史
 - [Python 版本 (KodaXP)](https://github.com/icetomoyo/KodaXP) - Python 实现
 
 ---
