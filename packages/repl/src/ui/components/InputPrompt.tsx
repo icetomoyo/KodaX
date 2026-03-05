@@ -18,7 +18,7 @@ import { Box, Text, useApp } from "ink";
 import { TextInput } from "./TextInput.js";
 import { useTextBuffer } from "../hooks/useTextBuffer.js";
 import { useInputHistory } from "../hooks/useInputHistory.js";
-import { useAutocomplete, useAutocompleteContext } from "../hooks/useAutocomplete.js";
+import { useAutocomplete, useAutocompleteContext, type SelectedCompletion } from "../hooks/useAutocomplete.js";
 import { useKeypress } from "../contexts/KeypressContext.js";
 import { getTheme } from "../themes/index.js";
 import { KeypressHandlerPriority, type InputPromptProps } from "../types.js";
@@ -136,28 +136,44 @@ export const InputPrompt: React.FC<InputPromptAutocompleteProps> = ({
   }, [lines, cursor.row, backspace, newline]);
 
   // Handle accepting a completion - 处理接受补全
-  const acceptCompletion = useCallback((completionText: string): boolean => {
-    if (!completionText) return false;
+  const acceptCompletion = useCallback((completion: SelectedCompletion): boolean => {
+    if (!completion || !completion.text) return false;
 
-    // For now, we replace the entire text with the completion
-    // This is a simplified approach; a more sophisticated implementation
-    // would find the word boundary and replace just that portion
-    // 目前我们用补全替换整个文本，这是简化方案；更复杂的实现会找到词边界并仅替换该部分
-
-    // Check if we're completing a command, skill, or file path
-    // 检查是否正在补全命令、技能或文件路径
+    const { text: completionText, type } = completion;
     const beforeCursor = text.slice(0, getAbsoluteCursorPos());
 
-    if (beforeCursor.startsWith('/')) {
-      // Command or skill completion - replace from start
-      // 命令或技能补全 - 从开始替换
-      setText(completionText);
-    } else if (beforeCursor.includes('@')) {
-      // File completion - find the @ position and replace from there
-      // 文件补全 - 找到 @ 位置并从那里替换
+    // Smart replacement based on completion type
+    // 根据补全类型智能替换
+    if (type === 'command' || type === 'skill') {
+      // Command/skill: replace from the last / to end
+      // 命令/技能：从最后一个 / 替换到末尾
+      const lastSlashIndex = beforeCursor.lastIndexOf('/');
+      if (lastSlashIndex !== -1) {
+        const prefix = text.slice(0, lastSlashIndex);
+        setText(prefix + completionText);
+      } else {
+        setText(completionText);
+      }
+    } else if (type === 'argument') {
+      // Argument: replace only the last word (the partial argument)
+      // 参数：只替换最后一个词（部分参数）
+      const lastSpaceIndex = beforeCursor.lastIndexOf(' ');
+      if (lastSpaceIndex !== -1) {
+        const prefix = text.slice(0, lastSpaceIndex + 1);
+        setText(prefix + completionText);
+      } else {
+        setText(completionText);
+      }
+    } else if (type === 'file' || beforeCursor.includes('@')) {
+      // File: find the @ position and replace from there
+      // 文件：找到 @ 位置并从那里替换
       const lastAtIndex = beforeCursor.lastIndexOf('@');
-      const beforeAt = text.slice(0, lastAtIndex);
-      setText(beforeAt + completionText);
+      if (lastAtIndex !== -1) {
+        const beforeAt = text.slice(0, lastAtIndex);
+        setText(beforeAt + completionText);
+      } else {
+        setText(completionText);
+      }
     } else {
       // Default: replace entire text
       // 默认：替换整个文本
@@ -166,10 +182,6 @@ export const InputPrompt: React.FC<InputPromptAutocompleteProps> = ({
 
     // Move cursor to end of text after completion
     // 补全后移动光标到文本末尾
-    // Note: This needs to be called after setText, but since setText triggers
-    // a re-render, we use setTimeout to ensure it runs after the state update
-    // 注意：这需要在 setText 之后调用，但由于 setText 触发重新渲染，
-    // 我们使用 setTimeout 确保它在状态更新后运行
     setTimeout(() => {
       moveToEnd();
     }, 0);
@@ -315,19 +327,38 @@ export const InputPrompt: React.FC<InputPromptAutocompleteProps> = ({
         if (isAutocompleteVisible) {
           const completion = handleEnter();
           if (completion) {
-            // Calculate the final text after completion
-            // 计算补全后的最终文本
+            // Calculate the final text after completion using smart replacement
+            // 使用智能替换计算补全后的最终文本
+            const { text: completionText, type } = completion;
             const beforeCursor = text.slice(0, getAbsoluteCursorPos());
             let finalText: string;
 
-            if (beforeCursor.startsWith('/')) {
-              finalText = completion;
-            } else if (beforeCursor.includes('@')) {
+            if (type === 'command' || type === 'skill') {
+              // Command/skill: replace from the last / to end
+              const lastSlashIndex = beforeCursor.lastIndexOf('/');
+              if (lastSlashIndex !== -1) {
+                finalText = text.slice(0, lastSlashIndex) + completionText;
+              } else {
+                finalText = completionText;
+              }
+            } else if (type === 'argument') {
+              // Argument: replace only the last word
+              const lastSpaceIndex = beforeCursor.lastIndexOf(' ');
+              if (lastSpaceIndex !== -1) {
+                finalText = text.slice(0, lastSpaceIndex + 1) + completionText;
+              } else {
+                finalText = completionText;
+              }
+            } else if (type === 'file' || beforeCursor.includes('@')) {
+              // File: find the @ position and replace from there
               const lastAtIndex = beforeCursor.lastIndexOf('@');
-              const beforeAt = text.slice(0, lastAtIndex);
-              finalText = beforeAt + completion;
+              if (lastAtIndex !== -1) {
+                finalText = text.slice(0, lastAtIndex) + completionText;
+              } else {
+                finalText = completionText;
+              }
             } else {
-              finalText = completion;
+              finalText = completionText;
             }
 
             // Submit directly with the completed text

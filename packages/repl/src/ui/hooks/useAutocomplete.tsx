@@ -82,6 +82,17 @@ export interface UseAutocompleteOptions {
 }
 
 /**
+ * Selected completion with type info for replacement logic
+ * 带类型信息的选中补全，用于替换逻辑
+ */
+export interface SelectedCompletion {
+  /** Replacement text - 替换文本 */
+  text: string;
+  /** Completion type - 补全类型 */
+  type: 'command' | 'argument' | 'file' | 'skill';
+}
+
+/**
  * Return type for useAutocomplete hook
  * useAutocomplete hook 的返回类型
  */
@@ -93,9 +104,9 @@ export interface UseAutocompleteReturn {
   /** Handle input change - 处理输入变化 */
   handleInput: (text: string, cursorPos: number) => void;
   /** Handle Tab key - returns selected completion or null - 处理 Tab 键 - 返回选中的补全或 null */
-  handleTab: () => string | null;
+  handleTab: () => SelectedCompletion | null;
   /** Handle Enter key when dropdown visible - returns selected completion or null - 处理下拉框可见时的 Enter 键 - 返回选中的补全或 null */
-  handleEnter: () => string | null;
+  handleEnter: () => SelectedCompletion | null;
   /** Handle up arrow - 处理上箭头 */
   handleUp: () => void;
   /** Handle down arrow - 处理下箭头 */
@@ -226,18 +237,18 @@ function useAutocompleteImpl(
     [provider, enabled]
   );
 
-  // Handle Tab key
-  // 处理 Tab 键
-  const handleTab = useCallback(() => {
+  // Handle Tab key - returns completion with type
+  // 处理 Tab 键 - 返回带类型的补全
+  const handleTab = useCallback((): SelectedCompletion | null => {
     if (!state.visible) return null;
-    return provider.acceptCompletion();
+    return provider.acceptCompletionWithType();
   }, [provider, state.visible]);
 
-  // Handle Enter key when dropdown visible
-  // 处理下拉框可见时的 Enter 键
-  const handleEnter = useCallback(() => {
+  // Handle Enter key when dropdown visible - returns completion with type
+  // 处理下拉框可见时的 Enter 键 - 返回带类型的补全
+  const handleEnter = useCallback((): SelectedCompletion | null => {
     if (!state.visible) return null;
-    return provider.acceptCompletion();
+    return provider.acceptCompletionWithType();
   }, [provider, state.visible]);
 
   // Handle up arrow

@@ -146,18 +146,24 @@ export class CommandCompleter implements Completer {
   }
 
   canComplete(input: string, cursorPos: number): boolean {
-    // Must start with / and cursor in command part - 必须以 / 开头且光标在命令部分
-    if (!input.startsWith('/')) return false;
-    // Cursor must be before first space - 光标必须在第一个空格之前
+    // Must contain / and cursor in command part - 必须包含 / 且光标在命令部分
     const beforeCursor = input.slice(0, cursorPos);
-    return !beforeCursor.includes(' ');
+    const lastSlashIndex = beforeCursor.lastIndexOf('/');
+    if (lastSlashIndex === -1) return false;
+
+    // Get text after the last /
+    const afterSlash = beforeCursor.slice(lastSlashIndex);
+    // Cursor must be in command part (no space after the /)
+    return !afterSlash.includes(' ');
   }
 
   async getCompletions(input: string, cursorPos: number): Promise<Completion[]> {
-    if (!input.startsWith('/')) return [];
-
     const beforeCursor = input.slice(0, cursorPos);
-    const partial = beforeCursor.slice(1).toLowerCase(); // Remove / - 移除 /
+    const lastSlashIndex = beforeCursor.lastIndexOf('/');
+    if (lastSlashIndex === -1) return [];
+
+    // Get text after the last /, excluding the / itself
+    const partial = beforeCursor.slice(lastSlashIndex + 1).toLowerCase();
     const completions: Completion[] = [];
 
     for (const [name, info] of this.commands) {

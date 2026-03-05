@@ -46,13 +46,16 @@ export class ArgumentCompleter implements Completer {
   canComplete(input: string, cursorPos: number): boolean {
     const beforeCursor = input.slice(0, cursorPos);
 
-    // Must start with / and have at least one space
-    // 必须以 / 开头且至少有一个空格
-    if (!beforeCursor.startsWith('/')) return false;
+    // Find the last / to support mid-line commands
+    // 找到最后一个 / 以支持行中命令
+    const lastSlashIndex = beforeCursor.lastIndexOf('/');
+    if (lastSlashIndex === -1) return false;
+
+    const afterSlash = beforeCursor.slice(lastSlashIndex);
 
     // Check if we're in argument position (after command + space)
     // 检查是否在参数位置（命令 + 空格之后）
-    const parts = beforeCursor.split(/\s+/);
+    const parts = afterSlash.split(/\s+/);
     return parts.length >= 2 && parts[0] !== '';
   }
 
@@ -63,13 +66,20 @@ export class ArgumentCompleter implements Completer {
   async getCompletions(input: string, cursorPos: number): Promise<Completion[]> {
     const beforeCursor = input.slice(0, cursorPos);
 
+    // Find the last / to support mid-line commands
+    // 找到最后一个 / 以支持行中命令
+    const lastSlashIndex = beforeCursor.lastIndexOf('/');
+    if (lastSlashIndex === -1) return [];
+
+    const afterSlash = beforeCursor.slice(lastSlashIndex);
+
     // Parse command and partial argument
     // 解析命令和部分参数
-    const firstSpace = beforeCursor.indexOf(' ');
+    const firstSpace = afterSlash.indexOf(' ');
     if (firstSpace === -1) return [];
 
-    const commandName = beforeCursor.slice(1, firstSpace).toLowerCase();
-    const afterCommand = beforeCursor.slice(firstSpace + 1);
+    const commandName = afterSlash.slice(1, firstSpace).toLowerCase();
+    const afterCommand = afterSlash.slice(firstSpace + 1);
 
     // Get argument definitions for this command
     // 获取此命令的参数定义

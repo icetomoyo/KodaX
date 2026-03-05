@@ -38,9 +38,9 @@ export class SkillCompleter implements Completer {
   canComplete(input: string, cursorPos: number): boolean {
     const beforeCursor = input.slice(0, cursorPos);
 
-    // Match /skill:xxx pattern (no spaces allowed in skill name)
-    // 匹配 /skill:xxx 模式（技能名称中不允许空格）
-    return /^\/skill:[^\s]*$/.test(beforeCursor);
+    // Match /skill:xxx pattern anywhere in the line (no spaces allowed in skill name)
+    // 匹配任意位置的 /skill:xxx 模式（技能名称中不允许空格）
+    return /\/skill:[^\s]*$/.test(beforeCursor);
   }
 
   /**
@@ -49,7 +49,7 @@ export class SkillCompleter implements Completer {
    */
   async getCompletions(input: string, cursorPos: number): Promise<Completion[]> {
     const beforeCursor = input.slice(0, cursorPos);
-    const match = beforeCursor.match(/^\/skill:([^\s]*)$/);
+    const match = beforeCursor.match(/\/skill:([^\s]*)$/);
 
     if (!match) {
       return [];

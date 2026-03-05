@@ -259,6 +259,20 @@ export class AutocompleteProvider {
   }
 
   /**
+   * Accept selected completion with type info (for smart replacement)
+   * 接受选中的补全并返回类型信息（用于智能替换）
+   */
+  acceptCompletionWithType(): { text: string; type: Completion['type'] } | null {
+    const selected = this.getSelectedCompletion();
+    if (!selected) return null;
+
+    // Hide dropdown - 隐藏下拉框
+    this.updateState({ visible: false, completions: [], selectedIndex: 0 });
+
+    return { text: selected.text, type: selected.type };
+  }
+
+  /**
    * Cancel/hide autocomplete
    * 取消/隐藏自动补全
    */
@@ -283,13 +297,15 @@ export class AutocompleteProvider {
     const beforeCursor = input.slice(0, cursorPos);
 
     // Check trigger conditions - 检查触发条件
-    // 1. Starts with / (command or skill)
-    // 2. Contains @ (file path)
-    // 3. After command with space (arguments)
+    // 1. Starts with / (command or skill at line start)
+    // 2. Contains / anywhere (command or skill mid-line, e.g., "some text /skill:name")
+    // 3. Contains @ (file path)
+    // 4. After command with space (arguments)
     return (
       beforeCursor.startsWith('/') ||
-      beforeCursor.includes('@') ||
-      /^\/\w+\s/.test(beforeCursor)
+      /\/\w*$/.test(beforeCursor) ||           // / followed by word chars at end (mid-line commands/skills)
+      /\/\w+\s/.test(beforeCursor) ||          // /word followed by space (arguments after mid-line command)
+      beforeCursor.includes('@')
     );
   }
 
@@ -381,22 +397,26 @@ export class AutocompleteProvider {
   private extractPattern(input: string, cursorPos: number): string {
     const beforeCursor = input.slice(0, cursorPos);
 
-    // For commands starting with /
-    // 对于以 / 开头的命令
-    if (beforeCursor.startsWith('/')) {
+    // Find the last / to support mid-line commands/skills
+    // 找到最后一个 / 以支持行中命令/技能
+    const lastSlashIndex = beforeCursor.lastIndexOf('/');
+
+    if (lastSlashIndex !== -1) {
+      const afterSlash = beforeCursor.slice(lastSlashIndex);
+
       // For skill: extract text after /skill: (check this FIRST before generic command match)
       // 对于技能：提取 /skill: 后的文本（在通用命令匹配之前先检查这个）
-      const skillMatch = beforeCursor.match(/^\/skill:(\S*)$/);
+      const skillMatch = afterSlash.match(/^\/skill:(\S*)$/);
       if (skillMatch) return skillMatch[1] ?? '';
 
       // For generic commands: extract text after /
       // 对于通用命令：提取 / 后的文本
-      const match = beforeCursor.match(/^\/(\S*)$/);
+      const match = afterSlash.match(/^\/(\S*)$/);
       if (match) return match[1] ?? '';
 
       // For arguments: extract last word
       // 对于参数：提取最后一个词
-      const parts = beforeCursor.split(/\s+/);
+      const parts = afterSlash.split(/\s+/);
       return (parts[parts.length - 1] ?? '').toLowerCase();
     }
 
