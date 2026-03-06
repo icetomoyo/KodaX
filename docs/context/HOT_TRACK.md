@@ -1,91 +1,56 @@
 # 热轨快照
 
-_生成时间: 2026-03-05 21:50_
-_快照版本: v17_
+_生成时间: 2026-03-06 19:50_
+_快照版本: v1_
 
 ---
 
 ## 1. 项目状态
 
 ### 当前目标
-实现 Feature 011 - 智能上下文压缩 (Compact)
+修复 `/compact` 命令的会话持久化 Bug
 
 ### 进度概览
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| Feature 012 | **Completed** | TUI 自动补全增强，v0.5.13 发布 |
-| Feature 011 | **InProgress** | 智能上下文压缩，规划完成 |
+| clearHistory 修复 | ✅ 完成 | 不再清空 context.messages |
+| /clear 命令修复 | ✅ 完成 | 显式清空 context.messages |
+| /compact 命令修复 | ✅ 完成 | 添加 saveSession 调用 |
+| TypeScript 编译 | ✅ 通过 | 无错误 |
 
 ### 当下阻塞
-- **问题**: 无阻塞
-- **下一步**: 等待用户确认实施计划，开始 Phase 1 (创建类型定义)
+- **问题**: 无
+- **下一步**: 测试修复效果（手动压缩 + 重启会话）
 
 ---
 
 ## 2. 已确定接口（骨架）
 
-### Compaction 类型定义 (packages/agent/src/compaction/types.ts)
+### packages/repl/src/ui/InkREPL.tsx
+
 ```typescript
-interface CompactionConfig {
-  enabled: boolean;
-  reserveTokens: number;
-  keepRecentTokens: number;
-}
-
-interface CompactionDetails {
-  readFiles: string[];
-  modifiedFiles: string[];
-}
-
-interface CompactionResult {
-  compacted: boolean;
-  summary?: string;
-  tokensBefore: number;
-  tokensAfter: number;
-  entriesRemoved: number;
-  details?: CompactionDetails;
-}
+clearHistory: () => {
+  // Only clear UI history, not context.messages
+  // context.messages should only be cleared by specific commands like /clear
+  clearUIHistory();
+},
 ```
 
-### 核心函数签名
+### packages/repl/src/interactive/commands.ts
+
 ```typescript
-// File tracking
-function extractFileOps(messages: KodaXMessage[]): FileOperations;
+// /clear command
+handler: async (_args, context, callbacks) => {
+  context.messages = [];  // Clear messages first
+  callbacks.clearHistory();  // Then clear UI
+  console.log(chalk.yellow('\n[Conversation cleared]'));
+},
 
-// Message serialization
-function serializeConversation(messages: KodaXMessage[]): string;
+// /compact command (after compaction)
+callbacks.clearHistory?.();
 
-// LLM summary generation
-async function generateSummary(
-  messages: KodaXMessage[],
-  provider: KodaXBaseProvider,
-  details: CompactionDetails,
-  customInstructions?: string
-): Promise<string>;
-
-// Compaction logic
-function needsCompaction(
-  messages: KodaXMessage[],
-  config: CompactionConfig,
-  contextWindow?: number
-): boolean;
-
-async function compact(
-  messages: KodaXMessage[],
-  config: CompactionConfig,
-  provider: KodaXBaseProvider,
-  customInstructions?: string
-): Promise<CompactionResult>;
-```
-
-### /compact 命令 (packages/repl/src/interactive/commands.ts)
-```typescript
-{
-  name: 'compact',
-  description: '手动触发上下文压缩',
-  usage: '/compact [instructions]',
-  handler: async (args: string, context: CommandContext) => { ... }
-}
+// Save compacted messages to session storage
+await callbacks.saveSession();
 ```
 
 ---
@@ -94,7 +59,8 @@ async function compact(
 
 | 死胡同 | 失败原因 | 日期 |
 |--------|----------|------|
-| (无) | 规划阶段，尚无失败尝试 | - |
+| 在 /compact 后调用 clearHistory() | clearHistory 会清空 context.messages，导致 saveSession 保存空数组 | 2026-03-06 |
+| 最初只添加 saveSession 调用 | 没有意识到 clearHistory 会清空 messages，修复完全无效 | 2026-03-06 |
 
 ---
 
@@ -102,68 +68,27 @@ async function compact(
 
 | 决策 | 理由 | 日期 |
 |------|------|------|
-| 分 8 个 Phase 实施 | 每阶段独立验证，降低风险 | 2026-03-05 |
-| LLM 摘要用 haiku 模型 | 成本优化，摘要质量足够 | 2026-03-05 |
-| 保留旧 compactMessages() | 添加 useLegacy 开关，快速回滚 | 2026-03-05 |
-| 80ms 刷新间隔 | 复用 Issue 048 修复经验 | 2026-03-05 |
-| 累积文件追踪 | 参考 pi-mono，多轮压缩保留历史 | 2026-03-05 |
+| 分离 UI 清空和 messages 清空 | clearHistory 只负责 UI，messages 由具体命令控制 | 2026-03-06 |
+| /clear 先清 messages 再清 UI | 确保清空顺序正确，避免状态不一致 | 2026-03-06 |
+| /compact 不清空 messages | 压缩后的消息需要保存到会话存储 | 2026-03-06 |
 
 ---
 
-## 5. 本次会话新增内容
+## 5. 修复前后对比
 
-### Feature 012 完成
-- **Issue 081 修复**: 输入框抖动 → 建议区域移到输入栏下方，hasEverShown 延迟预留
-- **Enter 键优化**: 补全即发送 → 参考 claude-code，一键完成
-- **发布**: v0.5.13
-- **状态**: Planned → InProgress → Completed
-
-### Feature 011 开始
-- **分析现有实现**: compactMessages() 简单截断 100 字符
-- **对标 pi-mono**: LLM 结构化摘要 + 文件追踪 + 配置化
-- **详细实施计划**: 8 Phase，每阶段独立验证
-- **风险评估**:
-  - HIGH: 核心循环重构，需完整回归测试
-  - MEDIUM: LLM API 调用，添加重试逻辑
-  - LOW: 配置加载，新功能不影响现有代码
-- **状态**: Planned → InProgress
-
-### 实施计划概览
+### 修复前的错误流程
 ```
-Phase 1: 类型定义 (无风险)
-Phase 2: 文件追踪 (无风险)
-Phase 3: 消息序列化 (无风险)
-Phase 4: LLM 摘要生成器 (MEDIUM - 需验证 Provider API)
-Phase 5: 核心压缩逻辑 (HIGH - 替换旧函数)
-Phase 6: 配置加载 (LOW - 新功能)
-Phase 7: /compact 命令 (MEDIUM - 事件传递)
-Phase 8: agent.ts 集成 (HIGH - 核心循环)
-Phase 9-10: 测试 + 验证
-Phase 11: 文档更新
+1. context.messages = result.messages     ✅ 设置压缩后的消息
+2. clearHistory() → context.messages = [] ❌ 被清空
+3. saveSession() → 保存 messages: []      ❌ 保存空数组
+```
+
+### 修复后的正确流程
+```
+1. context.messages = result.messages  ✅ 设置压缩后的消息
+2. clearHistory()                      ✅ 只清空 UI 历史
+3. saveSession()                       ✅ 保存压缩后的消息
 ```
 
 ---
-
-## 6. 依赖关系图
-
-```
-Phase 1 (types)
-  ↓
-Phase 2 (file-tracker) ← Phase 1
-  ↓
-Phase 3 (utils) ← standalone
-  ↓
-Phase 4 (summary-gen) ← Phase 1, 3
-  ↓
-Phase 5 (compaction) ← Phase 1, 2, 4
-  ↓
-Phase 6 (config) ← standalone
-  ↓
-Phase 7 (/compact) ← Phase 5
-  ↓
-Phase 8 (agent.ts) ← Phase 5, 6
-```
-
----
-
 *Token 数: ~800*
