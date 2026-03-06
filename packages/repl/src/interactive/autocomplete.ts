@@ -166,8 +166,12 @@ export class CommandCompleter implements Completer {
     const partial = beforeCursor.slice(lastSlashIndex + 1).toLowerCase();
     const completions: Completion[] = [];
 
+    // Fuzzy matching: collect all commands that contain the partial pattern
+    // 模糊匹配：收集包含部分模式的所有命令
     for (const [name, info] of this.commands) {
-      if (name.startsWith(partial)) {
+      // Check if pattern characters appear in order (fuzzy match)
+      // 检查模式字符是否按顺序出现（模糊匹配）
+      if (this.fuzzyMatch(partial, name)) {
         completions.push({
           text: '/' + name,
           display: '/' + name,
@@ -176,9 +180,10 @@ export class CommandCompleter implements Completer {
         });
       }
 
-      // Also match aliases - 也匹配别名
+      // Also match aliases with fuzzy matching
+      // 也用模糊匹配别名
       for (const alias of info.aliases) {
-        if (alias.startsWith(partial) && alias !== name) {
+        if (alias !== name && this.fuzzyMatch(partial, alias)) {
           completions.push({
             text: '/' + alias,
             display: '/' + alias,
@@ -190,6 +195,26 @@ export class CommandCompleter implements Completer {
     }
 
     return completions;
+  }
+
+  /**
+   * Simple fuzzy match: check if pattern characters appear in target in order
+   * 简单的模糊匹配：检查模式字符是否按顺序出现在目标中
+   */
+  private fuzzyMatch(pattern: string, target: string): boolean {
+    if (!pattern) return true;
+
+    const patternLower = pattern.toLowerCase();
+    const targetLower = target.toLowerCase();
+
+    let patternIndex = 0;
+    for (let i = 0; i < targetLower.length && patternIndex < patternLower.length; i++) {
+      if (targetLower[i] === patternLower[patternIndex]) {
+        patternIndex++;
+      }
+    }
+
+    return patternIndex === patternLower.length;
   }
 }
 
