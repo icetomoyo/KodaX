@@ -5,6 +5,95 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.15] - 2026-03-06
+
+### Added
+- **Feature 011**: Intelligent Context Compaction (智能上下文压缩)
+  - LLM-generated structured summaries instead of simple truncation
+  - Configurable thresholds and compaction settings
+  - Manual `/compact` command for user-triggered compaction
+  - File operation tracking (read/modified files)
+  - Multi-round compression with UI history preservation
+
+### Changed
+- Updated Feature 011 and 012 status to Completed in FEATURE_LIST.md
+- Synchronized all package versions to 0.5.15
+
+## [0.5.14] - 2026-03-06
+
+### Added
+- **Feature 011**: Intelligent Context Compaction (智能上下文压缩)
+  - Core compaction logic in `packages/agent/src/compaction/`
+  - LLM summary generation using Haiku model
+  - File tracking for read and modified files
+  - Configurable compaction settings in `~/.kodax/config.json`
+
+### Fixed
+- Session persistence after compaction
+- Multi-round compression with UI history display
+- Iteration limit tracking (limitReached flag)
+
+## [0.5.13] - 2026-03-05
+
+### Added
+- **Feature 012**: TUI Autocomplete Enhancement (TUI 自动补全增强) - Part 3
+  - Smart replacement for autocomplete suggestions
+  - Mid-line command trigger support
+
+### Fixed
+- Autocomplete suggestions jitter when appearing/disappearing
+- Double-ESC for clearing input and interrupting streaming
+
+## [0.5.12] - 2026-03-05
+
+### Fixed
+- Autocomplete Enter key now submits immediately
+- Autocomplete smart replacement and mid-line trigger support
+
+## [0.5.11] - 2026-03-05
+
+### Added
+- **Feature 012**: TUI Autocomplete Enhancement (TUI 自动补全增强) - Part 1-2
+  - Fuzzy matching algorithm with scoring
+  - Skill completer (`/skill:xxx` completion)
+  - Argument completer for command parameters
+  - Autocomplete UI with dropdown menu
+
+### Fixed
+- Input box jitter during autocomplete
+- Thinking content missing closing tags
+
+## [0.5.10] - 2026-03-05
+
+### Added
+- **Feature 006**: Agent Skills System (Skills 系统)
+  - Complete implementation of Agent Skills open standard
+  - Skills can be loaded from `.kodax/skills/` directory
+  - Built-in skills: code-review, git-workflow, tdd
+  - Skills can be triggered via `/skill-name` or natural language
+  - Progressive disclosure mechanism for context optimization
+
+### Changed
+- Marked Feature 006 as Completed
+- Moved Feature 007 to v0.6.0 planning
+
+## [0.5.9] - 2026-03-04
+
+### Fixed
+- Added memory limit for history records to prevent memory leaks
+- Closed Issue 080 - Long text input box fixed
+- Unified visual layout rendering for single and multi-line inputs
+
+### Changed
+- Updated project documentation to reflect latest architecture
+- Cleaned up KNOWN_ISSUES.md
+
+## [0.5.8] - 2026-03-04
+
+### Fixed
+- **Issue 080**: Fixed long text input wrapping and cursor positioning
+- Removed duplicate assistant message display
+
 ## [0.5.7] - 2026-03-04
 
 ### Fixed
