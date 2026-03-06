@@ -1,33 +1,29 @@
 # 热轨快照
 
-_生成时间: 2026-03-06 19:50_
-_快照版本: v1_
+_生成时间: 2026-03-06 20:45_
+_快照版本: v2_
 
 ---
 
 ## 1. 项目状态
 
 ### 当前目标
-修复 `/compact` 命令的会话持久化 Bug
+修复代码中的逻辑 bug，确保功能正确性。
 
 ### 进度概览
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| clearHistory 修复 | ✅ 完成 | 不再清空 context.messages |
-| /clear 命令修复 | ✅ 完成 | 显式清空 context.messages |
-| /compact 命令修复 | ✅ 完成 | 添加 saveSession 调用 |
-| TypeScript 编译 | ✅ 通过 | 无错误 |
+| Compaction Session 持久化 | ✅ 完成 | 修复 /compact 后 session 丢失问题 |
+| limitReached 逻辑 bug | ✅ 完成 | 修复达到迭代上限时状态错误 |
 
 ### 当下阻塞
-- **问题**: 无
-- **下一步**: 测试修复效果（手动压缩 + 重启会话）
+无阻塞。所有修复已完成并推送。
 
 ---
 
 ## 2. 已确定接口（骨架）
 
 ### packages/repl/src/ui/InkREPL.tsx
-
 ```typescript
 clearHistory: () => {
   // Only clear UI history, not context.messages
@@ -37,7 +33,6 @@ clearHistory: () => {
 ```
 
 ### packages/repl/src/interactive/commands.ts
-
 ```typescript
 // /clear command
 handler: async (_args, context, callbacks) => {
@@ -46,11 +41,26 @@ handler: async (_args, context, callbacks) => {
   console.log(chalk.yellow('\n[Conversation cleared]'));
 },
 
-// /compact command (after compaction)
+// /compact command
 callbacks.clearHistory?.();
+await callbacks.saveSession();  // Save compacted messages to session storage
+```
 
-// Save compacted messages to session storage
-await callbacks.saveSession();
+### packages/coding/src/agent.ts
+```typescript
+// After loop ends (reached iteration limit)
+limitReached = true;
+
+// Return statement
+return {
+  success: true,
+  lastText,
+  signal: finalSignal as 'COMPLETE' | 'BLOCKED' | 'DECIDE' | undefined,
+  signalReason: finalReason,
+  messages,
+  sessionId,
+  limitReached,
+};
 ```
 
 ---
@@ -59,8 +69,7 @@ await callbacks.saveSession();
 
 | 死胡同 | 失败原因 | 日期 |
 |--------|----------|------|
-| 在 /compact 后调用 clearHistory() | clearHistory 会清空 context.messages，导致 saveSession 保存空数组 | 2026-03-06 |
-| 最初只添加 saveSession 调用 | 没有意识到 clearHistory 会清空 messages，修复完全无效 | 2026-03-06 |
+| sed 多行插入格式错误 | 使用 sed 插入多行注释时格式混乱 | 2026-03-06 |
 
 ---
 
@@ -68,27 +77,26 @@ await callbacks.saveSession();
 
 | 决策 | 理由 | 日期 |
 |------|------|------|
-| 分离 UI 清空和 messages 清空 | clearHistory 只负责 UI，messages 由具体命令控制 | 2026-03-06 |
-| /clear 先清 messages 再清 UI | 确保清空顺序正确，避免状态不一致 | 2026-03-06 |
-| /compact 不清空 messages | 压缩后的消息需要保存到会话存储 | 2026-03-06 |
+| clearHistory 只清空 UI，不清空 messages | 避免 callback 副作用影响数据状态 | 2026-03-06 |
+| /clear 显式清空 messages + UI | 明确命令意图，不依赖 callback 隐式行为 | 2026-03-06 |
+| 循环结束后设置 limitReached = true | 如果执行到这里，说明达到了迭代上限 | 2026-03-06 |
 
 ---
 
-## 5. 修复前后对比
+## 5. 提交记录
 
-### 修复前的错误流程
-```
-1. context.messages = result.messages     ✅ 设置压缩后的消息
-2. clearHistory() → context.messages = [] ❌ 被清空
-3. saveSession() → 保存 messages: []      ❌ 保存空数组
-```
+### Commit c8766cd: fix(repl): fix session persistence after compaction
+- 修复 `/compact` 后 session 丢失
+- `clearHistory` 只清空 UI
+- `/clear` 显式清空 messages
+- `/compact` 保存 compacted messages
 
-### 修复后的正确流程
-```
-1. context.messages = result.messages  ✅ 设置压缩后的消息
-2. clearHistory()                      ✅ 只清空 UI 历史
-3. saveSession()                       ✅ 保存压缩后的消息
-```
+### Commit 0999f87: docs(context): add compaction bug fix session snapshot
+- 添加热轨和冷轨快照文档
+
+### Commit 554f00a: fix(coding): set limitReached to true when reaching iteration limit
+- 修复 `limitReached` 变量从未被设置为 `true`
+- 在循环结束后设置 `limitReached = true`
 
 ---
-*Token 数: ~800*
+*Token 数: ~1,100*

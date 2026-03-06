@@ -6,27 +6,14 @@ _创建时间: 2026-03-06_
 
 ## 墓碑区
 
-### T01: 在 /compact 后直接调用 clearHistory()
-
-- **失败原因**: clearHistory 的实现会清空 context.messages，导致后续 saveSession 保存的是空数组
+### T01: sed 多行插入格式错误
+- **失败原因**: 使用 sed 插入多行注释时，换行符处理不当导致格式混乱
 - **放弃日期**: 2026-03-06
 - **尝试过程**:
-  1. 用户报告：compact 后关闭并重启 kodax -c，历史内容全部恢复，摘要没有保存
-  2. AI 分析发现问题：/compact 只更新了内存中的 messages，但没有调用 saveSession
-  3. AI 添加了 saveSession 调用，但位置在 clearHistory 之后
-  4. 另一个 AI review 发现：clearHistory 会清空 context.messages，导致保存的是空数组
-  5. 这是一个完全无效的修复
-
-### T02: 最初只添加 saveSession 调用
-
-- **失败原因**: 没有意识到 clearHistory 会清空 messages，导致修复完全无效
-- **放弃日期**: 2026-03-06
-- **尝试过程**:
-  1. AI 在 /compact 命令中添加了 `await callbacks.saveSession()`
-  2. 但这行代码在 `callbacks.clearHistory?.()` 之后
-  3. clearHistory 会清空 context.messages
-  4. 所以 saveSession 保存的是空数组
-  5. 正确的做法是：先分离 UI 清空和 messages 清空的职责
+  1. 使用 `sed -i '448a\...'` 插入多行代码
+  2. 结果所有内容都在一行，格式错误
+  3. 多次尝试调整 sed 语法，仍然失败
+  4. 最终回滚修改，使用更简单的方法：先删除旧行，再用 `sed -i 'Nr file'` 插入
 
 ---
 
@@ -34,99 +21,118 @@ _创建时间: 2026-03-06_
 
 ### Session: 2026-03-06
 
-#### Turn 1 - 19:46
-**User**: 请你分析一下，compact后，关闭kodax，再打开kodax -c时的现象，我发现历史内容全都在。compact的摘要没有替代老的内容。这个部分我觉得有些问题。
+#### Turn 1 - 20:30
+**User**: 提交并推送
 
-**Assistant**: 我来分析这个问题。让我检查会话持久化相关的代码。
-- 搜索 session save/load 相关代码
-- 发现 `/compact` 命令只更新了 `context.messages`，但没有调用 `saveSession()`
-- 正常对话流程会调用 `storage.save()` 持久化消息
-- 但 `/compact` 命令缺少这一步
+**Assistant**: 检查 git 状态，发现 4 个修改的文件：
+- docs/context/COLD_TRACK.md
+- docs/context/HOT_TRACK.md
+- packages/repl/src/interactive/commands.ts
+- packages/repl/src/ui/InkREPL.tsx
 
-**Tools**: Grep, Read
+分两次提交：
+1. 核心修复（compaction session persistence）
+2. 文档记录（context snapshot）
 
-#### Turn 2 - 19:48
-**User**: 以下是别的AI review你改动效果的结论，请你仔细看下他说的对不对：
-[review 内容指出 clearHistory 会清空 messages，导致修复无效]
+**Tools**: git status, git diff, git add, git commit, git push
 
-**Assistant**: 你说得**完全正确**！这是一个严重的 Bug，我的修复完全无效！
+#### Turn 2 - 20:40
+**User**: 我用另一个AI review了一下代码，代码中存在逻辑 bug — `limitReached` 变量从未被设置为 `true`。如果 LLM 连续调用工具达到 200 轮上限，返回值无法正确反映这个状态。
 
-问题流程：
-1. context.messages = result.messages  ✅
-2. clearHistory() → context.messages = []  ❌
-3. saveSession() → 保存空数组  ❌
+**Assistant**: 
+1. 搜索 `limitReached` 使用位置
+2. 发现问题：在 packages/coding/src/agent.ts 中
+   - 第 193 行：初始化为 `false`
+   - 第 279 行：正常完成时设置为 `false`（多余但无害）
+   - 循环结束后：**从未设置为 `true`**
 
-正确修复方案：
-- 修改 clearHistory，只清空 UI，不清空 messages
-- 修改 /clear 命令，显式清空 messages
-- 确保 /compact 的 saveSession 保存压缩后的消息
+3. 分析逻辑：
+   - 如果 LLM 在 200 轮内完成：循环 `break` 退出，`limitReached = false` ✅
+   - 如果达到 200 轮上限：循环正常结束，但 `limitReached` 仍然是 `false` ❌
 
-**Tools**: Grep, Edit, Bash
+4. 修复方案：
+   在循环结束后添加 `limitReached = true`
+   因为如果代码执行到这里，说明循环完成了所有迭代，没有因为 COMPLETE、中断或错误提前退出
 
-#### Turn 3 - 19:50
+**Tools**: grep, sed (多次失败), git checkout (回滚错误修改), 最终成功修复
+
+#### Turn 3 - 20:45
 **User**: /context-snapshot
 
-**Assistant**: 执行上下文快照生成
-- 创建 docs/context 目录
-- 生成热轨快照：项目状态、接口骨架、避坑墓碑、关键决策
-- 生成冷轨归档：详细的历史记录和失败过程
+**Assistant**: 执行三步清洗法生成快照：
+1. 无损提取：提取已确定的接口签名
+2. 有损修剪：识别失败尝试（sed 格式错误）
+3. 生成快照：组装热轨和冷轨文档
 
-**Tools**: Bash, Write
+**Tools**: mkdir, cat (写入文件)
 
 ---
 
 ## 技术细节
 
-### clearHistory 的错误实现（修复前）
+### Bug 1: Compaction Session Persistence
 
-```typescript
-clearHistory: () => {
-  context.messages = [];  // ❌ 错误地清空 messages
-  clearUIHistory();
-  console.log(chalk.dim("[Conversation cleared]"));
-},
+**问题流程**:
+```
+1. context.messages = result.messages  // 压缩后的消息
+2. clearHistory() → context.messages = []  // ❌ 清空了消息
+3. saveSession() → 保存空数组  // ❌ 保存的是空数组
 ```
 
-### clearHistory 的正确实现（修复后）
-
-```typescript
-clearHistory: () => {
-  // Only clear UI history, not context.messages
-  // context.messages should only be cleared by specific commands like /clear
-  clearUIHistory();
-},
+**修复后的流程**:
+```
+1. context.messages = result.messages  // 压缩后的消息
+2. clearHistory() → 只清空 UI  // ✅ 不清空 messages
+3. saveSession() → 保存压缩后的消息  // ✅ 正确保存
 ```
 
-### /clear 命令的正确实现（修复后）
+### Bug 2: limitReached Logic
 
+**修复前**:
 ```typescript
-handler: async (_args, context, callbacks) => {
-  context.messages = [];  // Clear messages first
-  callbacks.clearHistory();  // Then clear UI
-  console.log(chalk.yellow('\n[Conversation cleared]'));
-},
+let limitReached = false;
+
+for (let iter = 0; iter < maxIter; iter++) {
+  // ...
+  if (result.toolBlocks.length === 0) {
+    limitReached = false;  // 正常完成
+    break;
+  }
+}
+
+// 循环结束后，limitReached 仍然是 false ❌
+return { limitReached };  // 永远不会是 true
 ```
 
-### /compact 命令的正确流程（修复后）
-
+**修复后**:
 ```typescript
-// Update context with compacted messages
-context.messages = result.messages;
+let limitReached = false;
 
-// Clear UI history - it will be re-created from the new context.messages
-callbacks.clearHistory?.();
+for (let iter = 0; iter < maxIter; iter++) {
+  // ...
+  if (result.toolBlocks.length === 0) {
+    limitReached = false;  // 正常完成
+    break;
+  }
+}
 
-// Save compacted messages to session storage
-await callbacks.saveSession();
+// 达到迭代上限 - 循环完成所有迭代没有提前退出
+limitReached = true;  // ✅ 正确标记
 
-// Display statistics
+return { limitReached };
 ```
 
 ---
 
 ## 经验教训
 
-1. **回调函数可能有副作用**：不能假设 clearHistory 只清空 UI，它可能修改共享状态
-2. **测试完整流程**：不仅要测试 UI 显示，还要测试持久化和重启后的状态
-3. **代码审查很重要**：另一个 AI 的 review 发现了严重的 Bug
-4. **分离职责**：UI 清空和数据清空应该是独立的操作
+1. **Callback 副作用**: `clearHistory` 同时清空 UI 和数据状态，导致意外的副作用。应该分离关注点。
+
+2. **显式优于隐式**: `/clear` 命令应该显式管理状态，而不是依赖 callback 的隐式行为。
+
+3. **循环退出状态**: 循环正常结束（不是 break）时，应该正确标记退出原因。
+
+4. **工具使用**: sed 多行插入容易出错，应该使用更可靠的方法（如 Read/Edit 工具）。
+
+---
+*生成时间: 2026-03-06 20:45*
