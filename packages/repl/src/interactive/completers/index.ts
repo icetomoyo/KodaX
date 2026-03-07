@@ -7,5 +7,6 @@
 
 export { SkillCompleter, createSkillCompleter } from './skill-completer.js';
 export { ArgumentCompleter, createArgumentCompleter } from './argument-completer.js';
+export { ProjectCompleter } from './project-completer.js';
 export type { ArgumentDefinition, CommandArgumentsRegistry } from './argument-completer.js';
 export { COMMAND_ARGUMENTS, getCommandArguments, hasCommandArguments } from './command-arguments.js';

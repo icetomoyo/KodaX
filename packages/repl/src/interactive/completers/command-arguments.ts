@@ -104,22 +104,37 @@ const PLAN_ARGS: ArgumentDefinition[] = [
 const PROJECT_ARGS: ArgumentDefinition[] = [
   {
     name: 'init',
-    description: 'Initialize a new long-running project task',
+    description: 'Initialize a new project with AI-generated feature list',
     type: 'enum',
   },
   {
     name: 'status',
-    description: 'Show current project status',
+    description: 'View project status (default), features, or progress',
     type: 'enum',
   },
   {
     name: 'next',
-    description: 'Get next feature to work on',
+    description: 'Execute next pending feature',
     type: 'enum',
   },
   {
     name: 'auto',
-    description: 'Auto-continue project execution',
+    description: 'Auto-execute all pending features',
+    type: 'enum',
+  },
+  {
+    name: 'edit',
+    description: 'AI-driven feature editing (e.g., edit #3 "标记为完成")',
+    type: 'enum',
+  },
+  {
+    name: 'reset',
+    description: 'Clear progress or delete all project files',
+    type: 'enum',
+  },
+  {
+    name: 'analyze',
+    description: 'AI-powered project analysis',
     type: 'enum',
   },
   {
@@ -129,17 +144,17 @@ const PROJECT_ARGS: ArgumentDefinition[] = [
   },
   {
     name: 'list',
-    description: 'List all project features',
+    description: '[Deprecated] Use /project status --features',
     type: 'enum',
   },
   {
     name: 'mark',
-    description: 'Mark a feature as completed (followed by feature ID)',
+    description: '[Deprecated] Use /project edit instead',
     type: 'enum',
   },
   {
     name: 'progress',
-    description: 'Show detailed progress report',
+    description: '[Deprecated] Use /project status --progress',
     type: 'enum',
   },
 ];

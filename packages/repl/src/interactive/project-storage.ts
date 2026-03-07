@@ -203,4 +203,51 @@ export class ProjectStorage {
       sessionPlan: this.sessionPlanPath,
     };
   }
+
+  /**
+   * 清空进度文件
+   */
+  async clearProgress(): Promise<void> {
+    await fs.writeFile(this.progressPath, '', 'utf-8');
+  }
+
+  /**
+   * 安全删除所有项目管理文件（只删除 3 个特定文件）
+   */
+  async deleteProjectManagementFiles(): Promise<{ deleted: number; failed: number }> {
+    let deleted = 0;
+    let failed = 0;
+
+    // 1. 删除 feature_list.json
+    try {
+      await fs.unlink(this.featuresPath);
+      deleted++;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+        failed++;
+      }
+    }
+
+    // 2. 删除 PROGRESS.md
+    try {
+      await fs.unlink(this.progressPath);
+      deleted++;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+        failed++;
+      }
+    }
+
+    // 3. 只删除 .kodax/session_plan.md，不删除 .kodax/ 文件夹！
+    try {
+      await fs.unlink(this.sessionPlanPath);
+      deleted++;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+        failed++;
+      }
+    }
+
+    return { deleted, failed };
+  }
 }
