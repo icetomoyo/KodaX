@@ -1,6 +1,6 @@
 # Feature List
 
-_Last Updated: 2026-03-07 15:30_
+_Last Updated: 2026-03-07 14:30_
 
 ---
 
@@ -23,7 +23,8 @@ _Last Updated: 2026-03-07 15:30_
 | v0.4.6 | Released | 1 | 1/1 (100%) |
 | v0.5.5 | Released | 1 | 1/1 (100%) |
 | v0.5.0 | Released | 7 | 7/7 (100%) |
-| v0.6.0 | Planned | 1 | 0/1 (0%) |
+| v0.5.20 | Planned | 1 | 0/1 (0%) |
+| v0.6.0 | Planned | 2 | 0/2 (0%) |
 
 ---
 
@@ -43,7 +44,8 @@ _Last Updated: 2026-03-07 15:30_
 | 010 | Refactor | Completed | Critical | 架构拆分：Agent Core + Skills 独立 | v0.5.0 | v0.5.5 | [Design](features/v0.5.0.md#010) | 2026-03-02 | 2026-03-02 | 2026-03-02 |
 | 011 | Enhancement | Completed | High | 智能上下文压缩 (Compact) | v0.5.0 | v0.5.14 | [Design](features/v0.5.0.md#011) | 2026-03-02 | 2026-03-05 | 2026-03-06 |
 | 012 | Enhancement | Completed | High | TUI 自动补全增强 | v0.5.0 | v0.5.13 | [Design](features/v0.5.0.md#012) | 2026-03-02 | 2026-03-05 | 2026-03-05 |
-| 013 | Refactor | Planned | High | Command System 2.0 | v0.5.0 | - | [Design](features/v0.5.0.md#013) | 2026-03-03 | - | - |
+| 013 | Refactor | Planned | High | Command System 2.0 | v0.6.0 | - | [Design](features/v0.6.0.md#013) | 2026-03-03 | - | - |
+| 014 | Refactor | Planned | High | Project Mode Enhancement | v0.5.20 | - | [Design](features/v0.5.20.md) | 2026-03-07 | - | - |
 
 ---
 
@@ -466,9 +468,9 @@ REPL 中的长运行项目管理，通过 `/project` 命令组实现。
 - **Category**: Refactor
 - **Status**: Planned
 - **Priority**: High
-- **Planned**: v0.5.0
+- **Planned**: v0.6.0
 - **Released**: -
-- **Design**: [v0.5.0.md#013](features/v0.5.0.md#013)
+- **Design**: [v0.6.0.md#013](features/v0.6.0.md#013)
 - **Created**: 2026-03-03
 - **Started**: -
 - **Completed**: -
@@ -489,14 +491,59 @@ REPL 中的长运行项目管理，通过 `/project` 命令组实现。
 - KodaX 缺失 12+ pi-mono 具有的实用命令
 - 无动态命令注册机制
 
+
+**Inspired by**: [pi-mono Extension API](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/src/core/extensions/types.ts)
+
+---
+
+### 014: Project Mode Enhancement (PLANNED)
+- **Category**: Refactor
+- **Status**: Planned
+- **Priority**: High
+- **Planned**: v0.5.0
+- **Released**: -
+- **Design**: [v0.5.0-feature-014-project-mode-enhancement.md](features/v0.5.0-feature-014-project-mode-enhancement.md)
+- **Created**: 2026-03-07
+- **Started**: -
+- **Completed**: -
+
+**Description**:
+重新设计 `/project` 命令，采用 AI-First 和 Prompt-Driven 方法。将命令从 13 个精简到 7 个，同时提升灵活性和安全性。
+
+**Goals**:
+1. ✅ **AI-First Design** - 所有命令 AI 辅助
+2. ✅ **Prompt-Driven** - 自然语言描述意图
+3. ✅ **智能编辑** - 统一的 `edit` 命令
+4. ✅ **安全重置** - 明确的 `reset` 语义
+5. ✅ **紧凑帮助** - 优化的用户体验
+
+**Key Changes**:
+- 命令从 13 个精简到 7 个
+- 合并 `list` + `progress` → `status`
+- 万能编辑命令 `edit #n "prompt"` 或 `edit "prompt"`
+- 使用 `#<n>` 语法引用 features（类似 GitHub issues）
+- Tab 补全显示 `#0 #1 #2 ...`
+- `reset --all` 只删除 3 个特定文件，**不删除** `.kodax/` 文件夹
+- 所有命令支持自然语言 prompt
+
+**Implementation Notes**:
+- 创建 `packages/repl/src/interactive/project-edit.ts` - 万能编辑命令
+- 创建 `packages/repl/src/interactive/project-completer.ts` - Tab 补全
+- 创建 `packages/repl/src/interactive/project-help.ts` - 紧凑帮助
+- 修改 `packages/repl/src/interactive/project-commands.ts` - 重构主入口
+- 修改 `packages/repl/src/interactive/project-storage.ts` - 添加新方法
+- 参考: [完整设计文档](features/v0.5.0-feature-014-project-mode-enhancement.md)
+
+---
+
 **Inspired by**: [pi-mono Extension API](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/src/core/extensions/types.ts)
 
 ---
 
 ## Summary
-- Total: 13 (2 Planned, 0 In Progress, 11 Completed)
-- By Priority: Critical: 3, High: 6, Medium: 2, Low: 0
-- Current Version: v0.5.0
-- Next Release (v0.5.0): 0 features planned (all completed!)
-- Future Release (v0.6.0): 1 feature planned (007)
-- Highest Priority Planned: 007 - 主题系统完善 (Medium)
+- Total: 14 (3 Planned, 0 In Progress, 11 Completed)
+- By Priority: Critical: 3, High: 7, Medium: 2, Low: 0
+- Current Version: v0.5.16
+- Next Release (v0.5.20): 1 feature planned (014)
+- Future Releases: v0.6.0 (007, 013)
+- Highest Priority Planned: 013 - Command System 2.0 (High)
