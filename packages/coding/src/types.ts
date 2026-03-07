@@ -21,6 +21,7 @@ import type {
   KodaXProviderStreamOptions,
   KodaXSessionMeta,
   KodaXSessionStorage,
+  SessionErrorMetadata,
 } from '@kodax/agent';
 
 // Re-export all types from @kodax/agent
@@ -38,6 +39,7 @@ export type {
   KodaXProviderStreamOptions,
   KodaXSessionMeta,
   KodaXSessionStorage,
+  SessionErrorMetadata,
 };
 
 // ============== 事件接口 ==============
@@ -111,6 +113,8 @@ export interface KodaXResult {
   interrupted?: boolean;
   /** 是否达到迭代上限 */
   limitReached?: boolean;
+  /** Error metadata for recovery - 错误元数据用于恢复 */
+  errorMetadata?: SessionErrorMetadata;
 }
 
 // ============== 工具执行上下文 ==============

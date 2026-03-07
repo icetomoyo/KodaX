@@ -21,7 +21,13 @@ export type {
 } from './types.js';
 
 // ============== Errors ==============
-export { KodaXError, KodaXProviderError, KodaXRateLimitError } from './errors.js';
+export {
+  KodaXError,
+  KodaXProviderError,
+  KodaXRateLimitError,
+  KodaXNetworkError,
+  KodaXToolCallIdError,
+} from './errors.js';
 
 // ============== Constants ==============
 export { KODAX_MAX_TOKENS, KODAX_API_MIN_INTERVAL } from './constants.js';

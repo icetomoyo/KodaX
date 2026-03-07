@@ -50,6 +50,7 @@ export type {
   KodaXResult,
   KodaXSessionStorage,
   KodaXToolExecutionContext,
+  SessionErrorMetadata,
 } from './types.js';
 
 // ============== Core Errors ==============
@@ -59,6 +60,17 @@ export {
   KodaXSessionError,
   KodaXTerminalError,
 } from './errors.js';
+
+// ============== Error Classification ==============
+
+export {
+  classifyError,
+  ErrorCategory,
+} from './error-classification.js';
+
+export type {
+  ErrorClassification,
+} from './error-classification.js';
 
 // ============== Constants ==============
 
@@ -149,6 +161,7 @@ export {
   runKodaX,
   checkPromiseSignal,
   KodaXClient,
+  cleanupIncompleteToolCalls,
 } from './agent.js';
 
 // Client alias

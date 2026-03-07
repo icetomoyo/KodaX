@@ -1,0 +1,127 @@
+/**
+ * KodaX Error Classification
+ *
+ * 错误分类系统 - 决定适当的恢复策略
+ */
+
+import { KodaXRateLimitError, KodaXProviderError, KodaXNetworkError, KodaXToolCallIdError } from '@kodax/ai';
+
+export enum ErrorCategory {
+  TRANSIENT,      // 临时错误，可重试（速率限制、超时、网络错误）
+  PERMANENT,      // 永久错误，不可重试（认证失败、无效请求）
+  TOOL_CALL_ID,   // 特定的 tool_call_id 不匹配错误
+  USER_ABORT,     // 用户取消
+}
+
+export interface ErrorClassification {
+  category: ErrorCategory;
+  retryable: boolean;
+  maxRetries: number;
+  retryDelay: number;  // 毫秒
+  shouldCleanup: boolean;
+}
+
+/**
+ * 分类错误以确定适当的恢复策略
+ */
+export function classifyError(error: Error): ErrorClassification {
+  // 用户中断
+  if (error.name === 'AbortError') {
+    return {
+      category: ErrorCategory.USER_ABORT,
+      retryable: false,
+      maxRetries: 0,
+      retryDelay: 0,
+      shouldCleanup: true,
+    };
+  }
+
+  // Tool call ID 不匹配错误
+  if (error instanceof KodaXToolCallIdError ||
+      error.message.includes('tool_call_id') ||
+      error.message.includes('tool result')) {
+    return {
+      category: ErrorCategory.TOOL_CALL_ID,
+      retryable: true,  // 清理后重试
+      maxRetries: 1,
+      retryDelay: 1000,
+      shouldCleanup: true,
+    };
+  }
+
+  // 速率限制错误
+  if (error instanceof KodaXRateLimitError) {
+    return {
+      category: ErrorCategory.TRANSIENT,
+      retryable: true,
+      maxRetries: 3,
+      retryDelay: error.retryAfter ?? 60000,
+      shouldCleanup: true,
+    };
+  }
+
+  // 网络错误
+  if (error instanceof KodaXNetworkError) {
+    return {
+      category: ErrorCategory.TRANSIENT,
+      retryable: true,
+      maxRetries: 3,
+      retryDelay: error.isTimeout ? 5000 : 2000,
+      shouldCleanup: true,
+    };
+  }
+
+  // Provider 错误 (API 错误)
+  if (error instanceof KodaXProviderError) {
+    // 检查是否为可重试的 API 错误
+    const msg = error.message.toLowerCase();
+    if (msg.includes('timeout') ||
+        msg.includes('network') ||
+        msg.includes('econnrefused') ||
+        msg.includes('etimedout') ||
+        msg.includes('enotfound') ||
+        msg.includes('socket hang up')) {
+      return {
+        category: ErrorCategory.TRANSIENT,
+        retryable: true,
+        maxRetries: 3,
+        retryDelay: 2000,
+        shouldCleanup: true,
+      };
+    }
+
+    // 永久 API 错误（400 Bad Request, 401 Unauthorized, 等）
+    return {
+      category: ErrorCategory.PERMANENT,
+      retryable: false,
+      maxRetries: 0,
+      retryDelay: 0,
+      shouldCleanup: true,
+    };
+  }
+
+  // 检查通用网络错误模式
+  const msg = error.message.toLowerCase();
+  if (msg.includes('timeout') ||
+      msg.includes('network') ||
+      msg.includes('econnrefused') ||
+      msg.includes('etimedout') ||
+      msg.includes('fetch failed')) {
+    return {
+      category: ErrorCategory.TRANSIENT,
+      retryable: true,
+      maxRetries: 2,
+      retryDelay: 2000,
+      shouldCleanup: true,
+    };
+  }
+
+  // 默认：视为永久错误，总是清理
+  return {
+    category: ErrorCategory.PERMANENT,
+    retryable: false,
+    maxRetries: 0,
+    retryDelay: 0,
+    shouldCleanup: true,
+  };
+}

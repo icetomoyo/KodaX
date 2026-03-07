@@ -27,3 +27,19 @@ export class KodaXRateLimitError extends KodaXError {
     this.name = 'KodaXRateLimitError';
   }
 }
+
+/** 网络错误 (超时, 连接被拒绝等) */
+export class KodaXNetworkError extends KodaXError {
+  constructor(message: string, public readonly isTimeout: boolean = false) {
+    super(message, 'NETWORK_ERROR');
+    this.name = 'KodaXNetworkError';
+  }
+}
+
+/** Tool call ID 不匹配错误 */
+export class KodaXToolCallIdError extends KodaXError {
+  constructor(message: string) {
+    super(message, 'TOOL_CALL_ID_ERROR');
+    this.name = 'KodaXToolCallIdError';
+  }
+}

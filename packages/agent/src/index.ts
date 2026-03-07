@@ -25,6 +25,7 @@ export type {
   KodaXProviderStreamOptions,
   KodaXSessionMeta,
   KodaXSessionStorage,
+  SessionErrorMetadata,
 } from './types.js';
 
 // ============== Constants ==============

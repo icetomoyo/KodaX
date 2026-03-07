@@ -5,7 +5,10 @@
  * Extracted from InkREPL.tsx to improve code organization - 从 InkREPL.tsx 提取以改善代码组织
  */
 
-import type { KodaXMessage } from "@kodax/coding";
+import type { KodaXMessage, SessionErrorMetadata } from "@kodax/coding";
+
+// Re-export SessionErrorMetadata for backward compatibility
+export type { SessionErrorMetadata } from "@kodax/coding";
 
 /**
  * Session data structure - 会话数据结构
@@ -14,6 +17,8 @@ export interface SessionData {
   messages: KodaXMessage[];
   title: string;
   gitRoot: string;
+  /** Error metadata for recovery - 错误元数据用于恢复 */
+  errorMetadata?: SessionErrorMetadata;
 }
 
 /**

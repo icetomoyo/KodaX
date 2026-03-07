@@ -7,26 +7,40 @@ import fsSync from 'fs';
 import path from 'path';
 import os from 'os';
 import chalk from 'chalk';
-import { KodaXMessage, KodaXSessionStorage } from '@kodax/coding';
+import { KodaXMessage, KodaXSessionStorage, cleanupIncompleteToolCalls } from '@kodax/coding';
+import type { SessionData, SessionErrorMetadata } from '../ui/utils/session-storage.js';
 import { getGitRoot, KODAX_SESSIONS_DIR } from '../common/utils.js';
 
 export class FileSessionStorage implements KodaXSessionStorage {
-  async save(id: string, data: { messages: KodaXMessage[]; title: string; gitRoot: string }): Promise<void> {
+  async save(id: string, data: SessionData): Promise<void> {
     await fs.mkdir(KODAX_SESSIONS_DIR, { recursive: true });
-    const meta = { _type: 'meta', title: data.title, id, gitRoot: data.gitRoot, createdAt: new Date().toISOString() };
+    const meta = {
+      _type: 'meta',
+      title: data.title,
+      id,
+      gitRoot: data.gitRoot,
+      createdAt: new Date().toISOString(),
+      errorMetadata: data.errorMetadata,
+    };
     const lines = [JSON.stringify(meta), ...data.messages.map(m => JSON.stringify(m))];
     await fs.writeFile(path.join(KODAX_SESSIONS_DIR, `${id}.jsonl`), lines.join('\n'), 'utf-8');
   }
 
-  async load(id: string): Promise<{ messages: KodaXMessage[]; title: string; gitRoot: string } | null> {
+  async load(id: string): Promise<SessionData | null> {
     const filePath = path.join(KODAX_SESSIONS_DIR, `${id}.jsonl`);
     if (!fsSync.existsSync(filePath)) return null;
     const lines = (await fs.readFile(filePath, 'utf-8')).trim().split('\n');
     const messages: KodaXMessage[] = [];
     let title = '', gitRoot = '';
+    let errorMetadata: SessionErrorMetadata | undefined;
+
     for (let i = 0; i < lines.length; i++) {
       const data = JSON.parse(lines[i]!);
-      if (i === 0 && data._type === 'meta') { title = data.title ?? ''; gitRoot = data.gitRoot ?? ''; }
+      if (i === 0 && data._type === 'meta') {
+        title = data.title ?? '';
+        gitRoot = data.gitRoot ?? '';
+        errorMetadata = data.errorMetadata;
+      }
       else messages.push(data);
     }
 
@@ -38,7 +52,19 @@ export class FileSessionStorage implements KodaXSessionStorage {
       console.log(`  Continuing anyway...\n`);
     }
 
-    return { messages, title, gitRoot };
+    // Phase 4: Session Recovery - Clean incomplete tool calls if needed
+    if (errorMetadata?.consecutiveErrors && errorMetadata.consecutiveErrors > 0) {
+      const cleaned = cleanupIncompleteToolCalls(messages);
+      if (cleaned !== messages) {
+        console.log(chalk.cyan('[Session Recovery] Cleaned incomplete tool calls from previous session'));
+        // Reset error count and save cleaned session
+        errorMetadata.consecutiveErrors = 0;
+        await this.save(id, { messages: cleaned, title, gitRoot, errorMetadata });
+        return { messages: cleaned, title, gitRoot, errorMetadata };
+      }
+    }
+
+    return { messages, title, gitRoot, errorMetadata };
   }
 
   async list(gitRoot?: string): Promise<Array<{ id: string; title: string; msgCount: number }>> {

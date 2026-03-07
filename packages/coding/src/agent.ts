@@ -4,7 +4,7 @@
  * Agent 主循环 - Core 层核心入口
  */
 
-import { KodaXOptions, KodaXResult, KodaXToolResultBlock, KodaXToolExecutionContext } from './types.js';
+import { KodaXOptions, KodaXResult, KodaXToolResultBlock, KodaXToolExecutionContext, SessionErrorMetadata } from './types.js';
 import type { KodaXMessage } from '@kodax/ai';
 import { KodaXClient } from './client.js';
 import { getProvider } from './providers/index.js';
@@ -18,6 +18,8 @@ import { estimateTokens } from './tokenizer.js';
 import { KODAX_MAX_INCOMPLETE_RETRIES, PROMISE_PATTERN, KODAX_TOOL_REQUIRED_PARAMS } from './constants.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { ErrorCategory } from './error-classification.js';
+import { withRetry } from './retry-handler.js';
 
 const execAsync = promisify(exec);
 
@@ -161,6 +163,7 @@ export async function runKodaX(
   // 加载或初始化消息
   let messages: KodaXMessage[] = [];
   let title = '';
+  let errorMetadata: SessionErrorMetadata | undefined;
 
   // 优先使用 initialMessages（用于交互式模式的多轮对话）
   if (options.session?.initialMessages && options.session.initialMessages.length > 0) {
@@ -171,6 +174,7 @@ export async function runKodaX(
     if (loaded) {
       messages = loaded.messages;
       title = loaded.title;
+      errorMetadata = loaded.errorMetadata;
     }
   }
 
@@ -241,14 +245,31 @@ export async function runKodaX(
         }
       }
 
-      // 流式调用 Provider
-      const result = await provider.stream(compacted, KODAX_TOOLS, systemPrompt, options.thinking, {
-        onTextDelta: (text) => events.onTextDelta?.(text),
-        onThinkingDelta: (text) => events.onThinkingDelta?.(text),
-        onThinkingEnd: (thinking) => events.onThinkingEnd?.(thinking),
-        onToolInputDelta: (name, json) => events.onToolInputDelta?.(name, json),
-        signal: options.abortSignal,
-      }, options.abortSignal);
+      // 流式调用 Provider - with automatic retry for transient errors
+      const result = await withRetry(
+        () => provider.stream(compacted, KODAX_TOOLS, systemPrompt, options.thinking, {
+          onTextDelta: (text) => events.onTextDelta?.(text),
+          onThinkingDelta: (text) => events.onThinkingDelta?.(text),
+          onThinkingEnd: (thinking) => events.onThinkingEnd?.(thinking),
+          onToolInputDelta: (name, json) => events.onToolInputDelta?.(name, json),
+          signal: options.abortSignal,
+        }, options.abortSignal),
+        // Default retry classification for provider calls
+        {
+          category: ErrorCategory.TRANSIENT,
+          retryable: true,
+          maxRetries: 2,
+          retryDelay: 1000,
+          shouldCleanup: true,
+        },
+        (attempt, maxRetries, delay) => {
+          events.onRetry?.(
+            `API error, retrying in ${Math.round(delay / 1000)}s (${attempt}/${maxRetries})`,
+            attempt,
+            maxRetries
+          );
+        }
+      );
 
       // 流式输出结束，通知 CLI 层
       events.onStreamEnd?.();
@@ -418,6 +439,28 @@ export async function runKodaX(
     } catch (e) {
       const error = e instanceof Error ? e : new Error(String(e));
 
+      // CRITICAL FIX: Always clean incomplete tool calls on ANY error
+      // This prevents "tool_call_id not found" errors on next API call
+      const cleanedMessages = cleanupIncompleteToolCalls(messages);
+
+      // Update error metadata - increment consecutive error count
+      const updatedErrorMetadata: SessionErrorMetadata = {
+        lastError: error.message,
+        lastErrorTime: Date.now(),
+        consecutiveErrors: (errorMetadata?.consecutiveErrors ?? 0) + 1,
+      };
+
+      // Save session with error metadata
+      if (options.session?.storage) {
+        const gitRoot = await getGitRoot();
+        await options.session.storage.save(sessionId, {
+          messages: cleanedMessages,
+          title,
+          gitRoot: gitRoot ?? '',
+          errorMetadata: updatedErrorMetadata,
+        });
+      }
+
       // 检查是否为 AbortError（用户中断）
       // 参考 Gemini CLI: 静默处理中断，不报告为错误
       if (error.name === 'AbortError') {
@@ -426,14 +469,13 @@ export async function runKodaX(
         // Issue 072 fix: 清理不完整的 tool_use 块
         // 当流式中断时，assistant 消息可能包含 tool_use 但没有对应的 tool_result
         // 这会导致下次请求时 API 报错 "tool_call_id not found"
-        const cleanedMessages = cleanupIncompleteToolCalls(messages);
-
         return {
           success: true,  // 中断不算失败
           lastText,
           messages: cleanedMessages,
           sessionId,
           interrupted: true,
+          errorMetadata: updatedErrorMetadata,
         };
       }
 
@@ -441,8 +483,9 @@ export async function runKodaX(
       return {
         success: false,
         lastText,
-        messages,
+        messages: cleanedMessages,  // ✅ Use cleaned messages to prevent error loop
         sessionId,
+        errorMetadata: updatedErrorMetadata,
       };
     }
   }
@@ -482,3 +525,6 @@ async function getGitRoot(): Promise<string | null> {
 
 // 导出 Client 类
 export { KodaXClient } from './client.js';
+
+// 导出工具函数
+export { cleanupIncompleteToolCalls };

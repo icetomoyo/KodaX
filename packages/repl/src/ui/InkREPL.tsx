@@ -36,6 +36,8 @@ import {
   runKodaX,
   KODAX_DEFAULT_PROVIDER,
   KodaXTerminalError,
+  classifyError,
+  ErrorCategory,
 } from "@kodax/coding";
 import {
   PermissionMode,
@@ -494,7 +496,48 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       setCurrentTool(undefined);
     },
     onError: (error: Error) => {
-      console.log(chalk.red(`[Stream Error] ${error.message}`));
+      // Classify error to provide better user feedback
+      const classification = classifyError(error);
+      const categoryNames = ['Transient', 'Permanent', 'Tool Call ID', 'User Abort'];
+
+      console.log(''); // Empty line for readability
+
+      // Show error type and message
+      const categoryName = categoryNames[classification.category] || 'Unknown';
+      console.log(chalk.red(`❌ API Error (${categoryName}): ${error.message}`));
+
+      // Show what's being done to recover
+      if (classification.shouldCleanup) {
+        console.log(chalk.cyan('   🧹 Cleaned incomplete tool calls'));
+      }
+
+      // Show next steps for user
+      if (classification.category === ErrorCategory.PERMANENT) {
+        console.log(chalk.yellow('   💡 This error requires manual intervention. Please check:'));
+        if (error.message.includes('auth') || error.message.includes('401')) {
+          console.log(chalk.yellow('      - Your API key is valid'));
+          console.log(chalk.yellow('      - Run /config to check provider settings'));
+        } else if (error.message.includes('400')) {
+          console.log(chalk.yellow('      - The request parameters are correct'));
+          console.log(chalk.yellow('      - Try restarting the conversation'));
+        } else {
+          console.log(chalk.yellow('      - The error details above'));
+        }
+      } else if (classification.category === ErrorCategory.TRANSIENT) {
+        if (classification.retryable) {
+          console.log(chalk.yellow(`   ⏳ Will automatically retry (up to ${classification.maxRetries} times)`));
+        }
+      } else if (classification.category === ErrorCategory.TOOL_CALL_ID) {
+        console.log(chalk.green('   ✅ Session cleaned, ready to continue'));
+      }
+
+      console.log(''); // Empty line for readability
+    },
+    onRetry: (reason: string, attempt: number, maxAttempts: number) => {
+      console.log(''); // Empty line for readability
+      console.log(chalk.yellow(`⏳ ${reason}`));
+      console.log(chalk.gray(`   Retry attempt ${attempt}/${maxAttempts}`));
+      console.log(''); // Empty line for readability
     },
     // Iteration start - called at the beginning of each agent iteration
     // 迭代开始 - 在每轮 agent 迭代开始时调用
@@ -507,6 +550,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
       // Save current content to history and start fresh for new iteration
       // 保存当前内容到历史，开始新一轮
+      // Fix: Always call startNewIteration to ensure currentIteration is properly set
+      // 修复：始终调用 startNewIteration 以确保正确设置 currentIteration
       if (iter > 1) {
         // Issue 076 fix: Save previous iteration content to persistent history BEFORE clearing
         // Issue 076 修复：在清空前将上一轮内容保存到持久历史记录
@@ -530,8 +575,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             text: prevResponse,
           });
         }
+      }
 
-        startNewIteration(iter);
+      // Always update iteration counter - this ensures proper count after user input
+      // 始终更新迭代计数器 - 这确保用户输入后能正确计数
+      startNewIteration(iter);
+      if (iter === 1) {
         startThinking();
       }
     },
