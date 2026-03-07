@@ -51,14 +51,12 @@ function cleanupIncompleteToolCalls(messages: KodaXMessage[]): KodaXMessage[] {
 
     // 提取所有 tool_use 的 id
     const toolUseIds = new Set<string>();
-    const toolUseBlocks: Array<{ index: number; id: string }> = [];
 
     for (let i = 0; i < content.length; i++) {
       const block = content[i];
       if (block && typeof block === 'object' && 'type' in block) {
         if (block.type === 'tool_use' && 'id' in block) {
           toolUseIds.add(block.id);
-          toolUseBlocks.push({ index: i, id: block.id });
         }
       }
     }
@@ -66,8 +64,8 @@ function cleanupIncompleteToolCalls(messages: KodaXMessage[]): KodaXMessage[] {
     // 如果没有 tool_use 块，无需清理
     if (toolUseIds.size === 0) return messages;
 
-    // 检查是否有对应的 tool_result 块（在后续的 user 消息中）
-    let hasToolResults = false;
+    // 收集所有 tool_result 中出现的 tool_use_id（在后续的 user 消息中）
+    const toolResultIds = new Set<string>();
     for (let i = messages.length - 1; i < messages.length; i++) {
       const msg = messages[i];
       if (!msg || msg.role !== 'user') continue;
@@ -78,23 +76,30 @@ function cleanupIncompleteToolCalls(messages: KodaXMessage[]): KodaXMessage[] {
       for (const block of userContent) {
         if (block && typeof block === 'object' && 'type' in block) {
           if (block.type === 'tool_result' && 'tool_use_id' in block) {
-            if (toolUseIds.has(block.tool_use_id)) {
-              hasToolResults = true;
-              break;
-            }
+            toolResultIds.add(block.tool_use_id);
           }
         }
       }
-      if (hasToolResults) break;
     }
 
-    // 如果没有对应的 tool_result，移除 tool_use 块
-    if (!hasToolResults && toolUseBlocks.length > 0) {
-      // 过滤掉 tool_use 块，保留其他块（text, thinking 等）
+    // 检查是否有孤立的 tool_use 块（没有对应的 tool_result）
+    const orphanedToolUseIds = new Set<string>();
+    for (const id of toolUseIds) {
+      if (!toolResultIds.has(id)) {
+        orphanedToolUseIds.add(id);
+      }
+    }
+
+    // 如果有孤立的 tool_use 块，移除它们
+    if (orphanedToolUseIds.size > 0) {
+      // 过滤掉孤立的 tool_use 块，保留其他块（text, thinking, 以及有结果的 tool_use）
       const cleanedContent = content.filter((block) => {
         if (!block || typeof block !== 'object') return true;
         if (!('type' in block)) return true;
-        return (block as { type: string }).type !== 'tool_use';
+        const typedBlock = block as { type: string; id?: string };
+        if (typedBlock.type !== 'tool_use') return true;
+        // 只保留有对应 tool_result 的 tool_use 块
+        return !orphanedToolUseIds.has(typedBlock.id ?? '');
       });
 
       // 如果清理后内容为空，返回去掉最后一条消息
