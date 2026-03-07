@@ -33,12 +33,14 @@ npm link
 | Command | Description |
 |---------|-------------|
 | `npm run build` | Compile TypeScript to JavaScript |
-| `npm run dev` | Run development mode with tsx (original version) |
+| `npm run build:packages` | Build all workspace packages |
+| `npm run dev` | Run development mode with tsx |
 | `npm run dev:cli` | Run CLI in development mode with tsx |
 | `npm start` | Run the compiled CLI |
 | `npm test` | Run test suite with Vitest |
 | `npm run test:watch` | Run tests in watch mode |
 | `npm run clean` | Remove dist/ directory |
+| `npm run clean:packages` | Clean all workspace packages |
 <!-- /AUTO-GENERATED -->
 
 ## Testing
@@ -78,15 +80,31 @@ npm test -- --coverage
 
 ## Project Structure
 
+KodaX uses a **monorepo architecture** with npm workspaces:
+
 ```
-src/
-├── kodax_core.ts      # Core library (can be used as npm package)
-├── kodax_cli.ts       # CLI entry with UI (spinner, colors)
-├── kodax.ts           # Original single-file (kept as reference)
-├── index.ts           # Package exports
-├── core/              # Core layer (provider-agnostic)
-├── interactive/       # Interactive REPL components
-└── ui/                # React/Ink UI components
+KodaX/
+├── packages/
+│   ├── ai/                  # @kodax/ai - Independent LLM abstraction layer
+│   │   └── providers/       # 7 LLM providers (Anthropic, OpenAI, etc.)
+│   │
+│   ├── agent/               # @kodax/agent - Generic Agent framework
+│   │   └── session/         # Session management, message handling
+│   │
+│   ├── skills/              # @kodax/skills - Skills standard implementation
+│   │   └── builtin/         # Built-in skills (code-review, tdd, git-workflow)
+│   │
+│   ├── coding/              # @kodax/coding - Coding Agent (tools + prompts)
+│   │   └── tools/           # 8 tools: read, write, edit, bash, glob, grep, undo, diff
+│   │
+│   └── repl/                # @kodax/repl - Interactive terminal UI
+│       ├── ui/              # Ink/React components, themes
+│       └── interactive/     # Commands, REPL logic
+│
+├── src/
+│   └── kodax_cli.ts         # Main CLI entry point
+│
+└── package.json             # Root workspace config
 ```
 
 ## Pull Request Workflow

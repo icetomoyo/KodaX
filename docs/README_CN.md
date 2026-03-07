@@ -549,6 +549,7 @@ npm run clean
 - [设计文档](DESIGN.md) - 架构和实现细节
 - [长时间运行指南](LONG_RUNNING_GUIDE.md) - `--init` 最佳实践
 - [测试指南](TESTING.md) - 如何测试所有功能
+- [test-guides/](test-guides/) - 功能专用测试指南
 - [更新日志](../CHANGELOG.md) - 版本历史
 - [Python 版本 (KodaXP)](https://github.com/icetomoyo/KodaXP) - Python 实现
 

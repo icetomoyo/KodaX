@@ -173,13 +173,12 @@ Agent 可以输出特殊信号控制流程：
 | 命令 | 别名 | 说明 |
 |------|------|------|
 | `/project init <task>` | `/proj i` | 初始化长运行项目 |
-| `/project status` | `/proj st` | 显示项目状态和进度 |
+| `/project status` | `/proj st` | 显示项目状态和进度（合并原 list + progress） |
 | `/project next` | `/proj n` | 执行下一个未完成功能 |
 | `/project auto` | `/proj a` | 进入自动继续模式 |
-| `/project pause` | - | 暂停自动继续 |
-| `/project list` | `/proj l` | 列出所有功能 |
-| `/project mark <n> [done\|skip]` | `/proj m` | 标记功能状态 |
-| `/project progress` | `/proj p` | 查看 PROGRESS.md |
+| `/project edit [#n] <prompt>` | `/proj e` | AI 驱动编辑功能描述 |
+| `/project reset [--all]` | - | 重置项目（仅删除 init 创建的文件） |
+| `/project analyze` | - | 分析项目状态和进度 |
 
 ### 命令详解
 
@@ -245,13 +244,34 @@ Auto-Continue Mode
 
 执行每个功能前会要求确认（除非使用 `--no-confirm`）。
 
-#### `/project mark <index> [done|skip]`
+#### `/project edit [#n] <prompt>`
 
-手动标记功能状态：
+使用 AI 驱动编辑功能描述：
 
 ```
-/project mark 3 done    # 标记为完成
-/project mark 5 skip    # 跳过该功能
+/project edit #3 "添加用户密码重置功能"
+/project edit "在所有功能中添加测试要求"
+```
+
+使用 `#<n>` 语法引用特定功能，或不带索引编辑当前项目。
+
+#### `/project reset [--all]`
+
+重置项目，只删除 `/project init` 创建的文件：
+
+```
+/project reset      # 确认后重置
+/project reset --all  # 强制重置
+```
+
+**注意**：不会删除 `.kodax/` 文件夹（项目配置）。
+
+#### `/project analyze`
+
+分析项目状态，生成详细报告：
+
+```
+/project analyze
 ```
 
 ### 交互式工作流程
@@ -564,16 +584,13 @@ kodax --auto-continue --max-sessions 10
 
 **症状**：发现 Feature 定义不合理，需要调整
 
-**解决**：使用交互式命令或直接编辑
+**解决**：使用 `/project edit` 命令或直接编辑
 
 ```bash
-# 查看当前列表
-/project list
+# 使用 AI 驱动编辑
+/project edit #3 "添加用户密码重置功能"
 
-# 标记跳过
-/project mark 3 skip
-
-# 手动编辑 feature_list.json
+# 或直接编辑 feature_list.json
 ```
 
 ---

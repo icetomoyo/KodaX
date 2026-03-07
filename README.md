@@ -517,6 +517,7 @@ KodaX uses an **English-first** comment style with selective Chinese brief notes
 - [README_CN.md](docs/README_CN.md) - Chinese Documentation
 - [DESIGN.md](docs/DESIGN.md) - Architecture and Implementation Details
 - [TESTING.md](docs/TESTING.md) - Testing Guide
+- [test-guides/](docs/test-guides/) - Feature-specific test guides
 - [LONG_RUNNING_GUIDE.md](docs/LONG_RUNNING_GUIDE.md) - Long-Running Mode Guide
 - [CHANGELOG.md](CHANGELOG.md) - Version History
 

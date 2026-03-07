@@ -623,9 +623,68 @@ Skills 可以通过自然语言描述触发，无需显式调用 `/skill`:
 
 ---
 
-## 9. 配置系统
+## 9. Project Mode 系统
 
-### 9.1 配置优先级
+### 9.1 概述
+
+Project Mode 是 KodaX 的长时间运行项目管理功能，提供 AI-Driven 的项目管理体验。
+
+**核心特性**:
+- Feature 跟踪与进度管理
+- AI 辅助编辑功能描述
+- 智能项目分析
+- `#<n>` 语法快速索引 Feature
+
+### 9.2 命令列表
+
+| 命令 | 别名 | 说明 |
+|------|------|------|
+| `/project init <task>` | `/proj i` | 初始化长运行项目 |
+| `/project status` | `/proj st` | 显示项目状态和进度 |
+| `/project next` | `/proj n` | 执行下一个未完成功能 |
+| `/project auto` | `/proj a` | 进入自动继续模式 |
+| `/project edit [#n] <prompt>` | `/proj e` | AI 驱动编辑功能描述 |
+| `/project reset [--all]` | - | 重置项目（仅删除 init 创建的文件） |
+| `/project analyze` | - | 分析项目状态和进度 |
+
+### 9.3 Feature Index 语法
+
+使用 `#<n>` 语法快速引用 Feature：
+
+```bash
+/project edit #0 "标记为完成"      # 编辑第一个 Feature
+/project next #2                    # 执行第三个 Feature
+/project edit #1 "添加步骤：测试"  # 编辑第二个 Feature
+```
+
+### 9.4 项目文件结构
+
+```
+项目根目录/
+├── feature_list.json     # 功能列表（init 创建）
+├── PROGRESS.md          # 进度日志（init 创建）
+└── .kodax/
+    ├── session_plan.md  # 当前会话计划
+    └── settings.json    # 项目配置（不删除）
+```
+
+### 9.5 Reset 安全边界
+
+`/project reset --all` 命令**只删除**以下 3 个文件：
+- `feature_list.json`
+- `PROGRESS.md`
+- `.kodax/session_plan.md`
+
+**永远不删除**：
+- `.kodax/settings.json`
+- `.kodax/memory/`
+- 项目源代码（src/, package.json 等）
+
+---
+
+## 10. 配置系统
+
+### 10.1 配置优先级
 
 ```
 1. CLI 参数（最高优先级）
@@ -635,7 +694,7 @@ Skills 可以通过自然语言描述触发，无需显式调用 `/skill`:
 5. 智能默认值（最低优先级）
 ```
 
-### 9.2 配置文件
+### 10.2 配置文件
 
 ```json
 // ~/.kodax/config.json
@@ -653,7 +712,7 @@ Skills 可以通过自然语言描述触发，无需显式调用 `/skill`:
 
 ---
 
-## 10. REPL UI 设计
+## 11. REPL UI 设计
 
 ### 10.1 组件结构
 
@@ -690,7 +749,7 @@ Skills 可以通过自然语言描述触发，无需显式调用 `/skill`:
 
 ---
 
-## 11. 快速开始
+## 12. 快速开始
 
 ### 11.1 作为库使用
 
@@ -729,7 +788,7 @@ kodax
 
 ---
 
-## 12. 扩展开发
+## 13. 扩展开发
 
 ### 12.1 自定义 Provider
 
