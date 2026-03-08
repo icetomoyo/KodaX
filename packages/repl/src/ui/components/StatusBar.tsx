@@ -7,6 +7,48 @@ import { Box, Text } from "ink";
 import { getTheme } from "../themes/index.js";
 import type { StatusBarProps } from "../types.js";
 
+/**
+ * Format token count to human-readable string
+ */
+function formatTokenCount(count: number): string {
+  if (count >= 1_000_000) {
+    return `${(count / 1_000_000).toFixed(1)}M`;
+  } else if (count >= 1000) {
+    return `${(count / 1000).toFixed(1)}k`;
+  }
+  return String(count);
+}
+
+/**
+ * Create a mini progress bar string
+ * Uses Unicode block characters for visual representation
+ */
+function createMiniProgressBar(percent: number): string {
+  const filled = Math.round(percent / 10); // 10 blocks max
+  const empty = 10 - filled;
+  return "█".repeat(filled) + "░".repeat(empty);
+}
+
+/**
+ * Determine context usage color based on triggerPercent
+ * - Green: < triggerPercent × 2/3 (safe zone)
+ * - Yellow: triggerPercent × 2/3 ~ triggerPercent (warning zone)
+ * - Red: ≥ triggerPercent (critical zone - should trigger compaction)
+ */
+function getContextColor(currentTokens: number, contextWindow: number, triggerPercent: number): "green" | "yellow" | "red" {
+  if (contextWindow === 0) return "green";
+
+  const percent = (currentTokens / contextWindow) * 100;
+  const warningThreshold = triggerPercent * (2 / 3);
+
+  if (percent >= triggerPercent) {
+    return "red"; // Critical - should trigger compaction
+  } else if (percent >= warningThreshold) {
+    return "yellow"; // Warning - approaching threshold
+  }
+  return "green"; // Safe
+}
+
 export const StatusBar: React.FC<StatusBarProps> = ({
   sessionId,
   permissionMode,
@@ -20,6 +62,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   toolInputContent,
   currentIteration,
   maxIter,
+  contextUsage,
 }) => {
   const theme = useMemo(() => getTheme("dark"), []);
 
@@ -72,6 +115,25 @@ export const StatusBar: React.FC<StatusBarProps> = ({
         : `⏳ ${currentTool}`
     : null;
 
+  // Issue 070: Build context usage display with color-coded progress
+  const contextDisplay = useMemo(() => {
+    if (!contextUsage) return null;
+
+    const { currentTokens, contextWindow, triggerPercent } = contextUsage;
+    if (contextWindow === 0) return null;
+
+    const percent = Math.round((currentTokens / contextWindow) * 100);
+    const currentStr = formatTokenCount(currentTokens);
+    const windowStr = formatTokenCount(contextWindow);
+    const progressBar = createMiniProgressBar(percent);
+    const color = getContextColor(currentTokens, contextWindow, triggerPercent);
+
+    return {
+      text: `${currentStr}/${windowStr} ${progressBar} ${percent}%`,
+      color,
+    };
+  }, [contextUsage]);
+
   return (
     <Box
       paddingX={1}
@@ -102,12 +164,21 @@ export const StatusBar: React.FC<StatusBarProps> = ({
         </Box>
       )}
 
-      {/* Right side: model and token usage - 右侧：模型和 Token 使用 */}
+      {/* Right side: model, token usage, and context usage - 右侧：模型、Token 使用和上下文使用 */}
       <Box>
         <Text dimColor> | </Text>
         <Text color={theme.colors.secondary}>
           {provider}/{model}
         </Text>
+        {/* Issue 070: Context usage display - 上下文使用显示 */}
+        {contextDisplay && (
+          <>
+            <Text dimColor> | </Text>
+            <Text color={contextDisplay.color}>
+              {contextDisplay.text}
+            </Text>
+          </>
+        )}
         {tokenUsage && (
           <>
             <Text dimColor> | </Text>

@@ -1,0 +1,35 @@
+{
+    // ═══════════════════════════════════════════════════════════
+    // KodaX 配置文件模板 (Config Template)
+    //
+    // 将此文件复制到 ~/.kodax/config.json 并按需修改
+    // Copy this file to ~/.kodax/config.json and modify as needed
+    // ═══════════════════════════════════════════════════════════
+    // ── Provider 配置 ──────────────────────────────────────────
+    // 默认使用的 AI Provider
+    // 可选值: "anthropic" | "openai" | "kimi" | "kimi-code" | "qwen" | "zhipu" | "zhipu-coding" | "minimax-coding" | "gemini-cli" | "codex-cli"
+    "provider": "kimi-code",
+    // 是否启用 Thinking 模式 (仅部分 Provider 支持)
+    "thinking": true,
+    // ── Compaction 压缩配置 ────────────────────────────────────
+    // 智能上下文压缩：当对话历史过长时，自动使用 LLM 生成摘要
+    "compaction": {
+        // 是否启用自动压缩 (默认: true)
+        "enabled": true,
+        // 触发压缩的阈值：当 Token 数超过 contextWindow 的此百分比时触发 (默认: 75)
+        // 例: contextWindow=256000, triggerPercent=75 → 超过 192,000 Token 时触发
+        "triggerPercent": 75,
+        // 压缩时保留最近对话的比例 (默认: 10)
+        // 例: contextWindow=256000, keepRecentPercent=10 → 保留最近约 25,600 Token 的完整对话
+        "keepRecentPercent": 10
+        // contextWindow: 不建议手动设置
+        // 如果不设置，系统会自动从 Provider 读取原生上下文窗口大小
+        // 例: kimi-code=256k, anthropic=200k, openai=400k
+        // 仅在需要手动覆盖时设置，例如:
+        // "contextWindow": 200000
+    },
+    // ── Permission 权限配置 ────────────────────────────────────
+    // 权限模式
+    // 可选值: "default" | "accept-edits" | "full-auto" | "plan"
+    "permissionMode": "default"
+}

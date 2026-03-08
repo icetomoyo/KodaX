@@ -158,6 +158,15 @@ export interface StatusBarProps {
   currentIteration?: number;
   /** Maximum iterations - Issue 068: 显示迭代进度 */
   maxIter?: number;
+  /** Context usage info - Issue 070: 显示上下文使用情况 */
+  contextUsage?: {
+    /** Current token count in context */
+    currentTokens: number;
+    /** Context window size (effective contextWindow) */
+    contextWindow: number;
+    /** Compaction trigger percentage (0-100) */
+    triggerPercent: number;
+  };
 }
 
 /**

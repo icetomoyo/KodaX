@@ -11,7 +11,7 @@ import { getProvider } from './providers/index.js';
 import { executeTool, KODAX_TOOLS } from './tools/index.js';
 import { buildSystemPrompt } from './prompts/index.js';
 import { generateSessionId, extractTitleFromMessages } from './session.js';
-import { compactMessages, checkIncompleteToolCalls } from './messages.js';
+import { checkIncompleteToolCalls } from './messages.js';
 import { compact as intelligentCompact, needsCompaction, type CompactionConfig } from '@kodax/agent';
 import { loadCompactionConfig } from './compaction-config.js';
 import { estimateTokens } from './tokenizer.js';
@@ -323,7 +323,12 @@ export async function runKodaX(
     }
   }
 
-  messages.push({ role: 'user', content: prompt });
+  // 防止消息重复推入：如果 initialMessages 的最后一条已经是当前 prompt，跳过 push
+  const lastMsg = messages[messages.length - 1];
+  const isDuplicate = lastMsg?.role === 'user' && lastMsg.content === prompt;
+  if (!isDuplicate) {
+    messages.push({ role: 'user', content: prompt });
+  }
   if (!title) title = prompt.slice(0, 50) + (prompt.length > 50 ? '...' : '');
 
   // Simplified context - no permission fields (handled by REPL layer)
@@ -346,11 +351,16 @@ export async function runKodaX(
     try {
       events.onIterationStart?.(iter + 1, maxIter);
 
-      // Compaction: use new intelligent compaction if enabled, otherwise fall back to legacy
+      // Compaction: 统一使用智能压缩，废除遗留的粗暴截断
       let compacted: KodaXMessage[];
 
-      if (compactionConfig.enabled && needsCompaction(messages, compactionConfig, contextWindow)) {
-        // Use new intelligent compaction
+      // 判断是否需要压缩：优先检查智能压缩阈值 (75%)，其次检查基础安全水位 (100k)
+      const currentTokens = estimateTokens(messages);
+      const needsIntelligentCompact = compactionConfig.enabled && needsCompaction(messages, compactionConfig, contextWindow);
+      const needsBasicCompact = compactionConfig.enabled && currentTokens > 100000; // 基础安全水位，替代遗留 compactMessages
+
+      if (needsIntelligentCompact || needsBasicCompact) {
+        // 统一走智能压缩（分块 LLM 摘要 + 保留最近 10% 上下文）
         try {
           const result = await intelligentCompact(
             messages,
@@ -412,11 +422,8 @@ export async function runKodaX(
           }
         }
       } else {
-        // Use legacy compaction
-        compacted = compactMessages(messages);
-        if (compacted !== messages) {
-          events.onCompact?.(estimateTokens(messages));
-        }
+        // 不需要压缩，直接使用原始消息
+        compacted = messages;
       }
 
       // CRITICAL FIX: Always validate and fix tool history before sending to API
@@ -428,14 +435,34 @@ export async function runKodaX(
       messages = compacted;
 
       // 流式调用 Provider - with automatic retry for transient errors
+      // 注入 API 硬超时保护：防止大型 payload 导致 API 静默丢包引发无限等待
+      const API_HARD_TIMEOUT_MS = 180_000; // 3 分钟硬超时
+      const timeoutController = new AbortController();
+      const timeoutTimer = setTimeout(() => timeoutController.abort(), API_HARD_TIMEOUT_MS);
+
+      // 合并用户中断信号和超时信号
+      const combinedSignal = options.abortSignal
+        ? AbortSignal.any([options.abortSignal, timeoutController.signal])
+        : timeoutController.signal;
+
       const result = await withRetry(
-        () => provider.stream(compacted, KODAX_TOOLS, systemPrompt, options.thinking, {
-          onTextDelta: (text) => events.onTextDelta?.(text),
-          onThinkingDelta: (text) => events.onThinkingDelta?.(text),
-          onThinkingEnd: (thinking) => events.onThinkingEnd?.(thinking),
-          onToolInputDelta: (name, json) => events.onToolInputDelta?.(name, json),
-          signal: options.abortSignal,
-        }, options.abortSignal),
+        () => {
+          // 每次重试时重置超时计时器
+          clearTimeout(timeoutTimer);
+          const retryTimeoutController = new AbortController();
+          const retryTimer = setTimeout(() => retryTimeoutController.abort(), API_HARD_TIMEOUT_MS);
+          const retrySignal = options.abortSignal
+            ? AbortSignal.any([options.abortSignal, retryTimeoutController.signal])
+            : retryTimeoutController.signal;
+
+          return provider.stream(compacted, KODAX_TOOLS, systemPrompt, options.thinking, {
+            onTextDelta: (text) => events.onTextDelta?.(text),
+            onThinkingDelta: (text) => events.onThinkingDelta?.(text),
+            onThinkingEnd: (thinking) => events.onThinkingEnd?.(thinking),
+            onToolInputDelta: (name, json) => events.onToolInputDelta?.(name, json),
+            signal: retrySignal,
+          }, retrySignal).finally(() => clearTimeout(retryTimer));
+        },
         // Default retry classification for provider calls
         {
           category: ErrorCategory.TRANSIENT,

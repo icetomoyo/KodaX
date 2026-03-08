@@ -45,6 +45,7 @@ import {
   CurrentConfig,
 } from './commands.js';
 import { runWithPlanMode } from '../common/plan-mode.js';
+import { loadCompactionConfig } from '../common/compaction-config.js';
 import { detectAndShowProjectHint } from './project-commands.js';
 import {
   confirmToolExecution,
@@ -143,8 +144,20 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     gitRoot,
   });
 
+  // Load compaction config for banner display
+  const compactionConfig = await loadCompactionConfig(gitRoot ?? undefined);
+  const { getProvider } = await import('@kodax/coding');
+  const providerInstance = getProvider(currentConfig.provider);
+  const effectiveContextWindow = compactionConfig.contextWindow
+    ?? providerInstance.getContextWindow?.()
+    ?? 200000;
+
   // Print startup Banner - 打印启动 Banner
-  printStartupBanner(currentConfig, currentConfig.permissionMode);
+  printStartupBanner(currentConfig, currentConfig.permissionMode, {
+    contextWindow: effectiveContextWindow,
+    triggerPercent: compactionConfig.triggerPercent,
+    enabled: compactionConfig.enabled,
+  });
 
   // Detect and show project hint - 检测并显示项目提示
   await detectAndShowProjectHint();
@@ -849,7 +862,7 @@ function extractTitle(messages: KodaXMessage[]): string {
 }
 
 // Print startup Banner (using theme colors) - 打印启动 Banner (使用主题颜色)
-function printStartupBanner(config: CurrentConfig, mode: string): void {
+function printStartupBanner(config: CurrentConfig, mode: string, compactionInfo?: { contextWindow: number; triggerPercent: number; enabled: boolean }): void {
   const theme = getCurrentTheme();
   const model = getProviderModel(config.provider) ?? config.provider;
 
@@ -866,6 +879,15 @@ function printStartupBanner(config: CurrentConfig, mode: string): void {
   console.log(chalk.hex(theme.colors.text)(`\n  v${KODAX_VERSION}  |  AI Coding Agent  |  ${config.provider}:${model}`));
   console.log(chalk.hex(theme.colors.dim)('\n  ────────────────────────────────────────────────────────'));
   console.log(chalk.hex(theme.colors.dim)('  Mode: ') + chalk.hex(theme.colors.primary)(mode) + chalk.hex(theme.colors.dim)('  |  Thinking: ') + (config.thinking ? chalk.hex(theme.colors.success)('on') : chalk.hex(theme.colors.dim)('off')));
+
+  // Compaction info
+  if (compactionInfo) {
+    const ctxK = Math.round(compactionInfo.contextWindow / 1000);
+    const triggerK = Math.round(compactionInfo.contextWindow * compactionInfo.triggerPercent / 100 / 1000);
+    const statusText = compactionInfo.enabled ? chalk.hex(theme.colors.success)('on') : chalk.hex(theme.colors.dim)('off');
+    console.log(chalk.hex(theme.colors.dim)(`  Context: ${ctxK}k  |  Compaction: `) + statusText + chalk.hex(theme.colors.dim)(` @ ${compactionInfo.triggerPercent}% (${triggerK}k)`));
+  }
+
   console.log(chalk.hex(theme.colors.dim)('  ────────────────────────────────────────────────────────\n'));
 
   console.log(chalk.hex(theme.colors.dim)('  Quick tips:'));
@@ -876,3 +898,4 @@ function printStartupBanner(config: CurrentConfig, mode: string): void {
   console.log(chalk.hex(theme.colors.primary)('    !cmd       ') + chalk.hex(theme.colors.dim)('Run shell command'));
   console.log(chalk.hex(theme.colors.dim)('\n  Keyboard: Tab (complete) | Esc+Esc (edit last) | Ctrl+E (editor) | Ctrl+R (history)\n'));
 }
+

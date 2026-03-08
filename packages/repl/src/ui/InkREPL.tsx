@@ -39,6 +39,7 @@ import {
   classifyError,
   ErrorCategory,
 } from "@kodax/coding";
+import { estimateTokens } from "@kodax/agent";
 import {
   PermissionMode,
   ConfirmResult,
@@ -87,6 +88,7 @@ interface InkREPLProps {
   config: CurrentConfig;
   context: InteractiveContext;
   storage: SessionStorage;
+  compactionInfo?: { contextWindow: number; triggerPercent: number; enabled: boolean };
   onExit: () => void;
 }
 
@@ -95,12 +97,13 @@ interface BannerProps {
   config: CurrentConfig;
   sessionId: string;
   workingDir: string;
+  compactionInfo?: { contextWindow: number; triggerPercent: number; enabled: boolean };
 }
 
 /**
  * Banner component - displayed inside Ink UI so it's part of the alternate buffer
  */
-const Banner: React.FC<BannerProps> = ({ config, sessionId, workingDir }) => {
+const Banner: React.FC<BannerProps> = ({ config, sessionId, workingDir, compactionInfo }) => {
   const theme = getTheme("dark");
   const model = getProviderModel(config.provider) ?? config.provider;
   const terminalWidth = process.stdout.columns ?? 80;
@@ -114,6 +117,10 @@ const Banner: React.FC<BannerProps> = ({ config, sessionId, workingDir }) => {
     "  ██║  ██╗ ╚██████╔╝ ██████╔╝  ██║  ██║  ██╔╝ ██╗",
     "  ╚═╝  ╚═╝  ╚═════╝  ╚═════╝   ╚═╝  ╚═╝  ╚═╝  ╚═╝",
   ];
+
+  // Compute compaction display values
+  const ctxK = compactionInfo ? Math.round(compactionInfo.contextWindow / 1000) : 0;
+  const triggerK = compactionInfo ? Math.round(compactionInfo.contextWindow * compactionInfo.triggerPercent / 100 / 1000) : 0;
 
   return (
     <Box flexDirection="column" marginBottom={1}>
@@ -148,6 +155,19 @@ const Banner: React.FC<BannerProps> = ({ config, sessionId, workingDir }) => {
           </Text>
         )}
       </Box>
+
+      {/* Compaction Info */}
+      {compactionInfo && (
+        <Box>
+          <Text dimColor>{"  Context: "}</Text>
+          <Text dimColor>{ctxK}k</Text>
+          <Text dimColor>{" | Compaction: "}</Text>
+          <Text color={compactionInfo.enabled ? theme.colors.success : undefined} dimColor={!compactionInfo.enabled}>
+            {compactionInfo.enabled ? "on" : "off"}
+          </Text>
+          <Text dimColor>{` @ ${compactionInfo.triggerPercent}% (${triggerK}k)`}</Text>
+        </Box>
+      )}
 
       {/* Divider */}
       <Text dimColor>
@@ -259,6 +279,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   context,
   storage,
   onExit,
+  compactionInfo,
 }) => {
   const { exit } = useApp();
   const { stdout } = useStdout();
@@ -336,6 +357,22 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     prompt: string;
   } | null>(null);
   const confirmResolveRef = useRef<((result: ConfirmResult) => void) | null>(null);
+
+  // Issue 070: Calculate context token usage for status bar display
+  // Issue 070: Calculate context token usage for status bar display
+  // Issue 070: 计算上下文 token 使用量用于状态栏显示
+  const contextUsage = useMemo(() => {
+    if (!compactionInfo) return undefined;
+
+    const { contextWindow, triggerPercent } = compactionInfo;
+    const currentTokens = estimateTokens(context.messages);
+
+    return {
+      currentTokens,
+      contextWindow,
+      triggerPercent,
+    };
+  }, [context.messages, compactionInfo]);
 
   // Refs for callbacks
   // Note: permissionMode and alwaysAllowTools are stored separately for permission checks
@@ -805,7 +842,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   // Handle user input submission
   const handleSubmit = useCallback(
     async (input: string) => {
-      if (!input.trim() || !isRunning) return;
+      // Prevent concurrent execution: ignore input if agent is busy or waiting for tool confirmation
+      // 防止并发执行：如果 Agent 正在执行或正在等待工具确认，则忽略新输入
+      if (!input.trim() || !isRunning || isLoading || confirmRequest) return;
 
       // Banner remains visible - it will scroll up naturally as messages are added
       // (Removed showBanner toggle to keep layout stable)
@@ -1140,6 +1179,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           } finally {
             setIsLoading(false);
             stopStreaming();
+            clearResponse();
             clearThinkingContent();
           }
 
@@ -1339,6 +1379,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
         setIsLoading(false);
         stopStreaming();
+        clearResponse(); // Fix: clear stale buffer to prevent ghost [Interrupted] on next submit
         clearThinkingContent();
       }
     },
@@ -1374,6 +1415,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               config={currentConfig}
               sessionId={context.sessionId}
               workingDir={options.context?.gitRoot || process.cwd()}
+              compactionInfo={compactionInfo ?? undefined}
             />
           )}
         </Static>
@@ -1442,6 +1484,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             toolInputContent={streamingState.toolInputContent}
             currentIteration={streamingState.currentIteration}
             maxIter={streamingState.maxIter}
+            contextUsage={contextUsage}
           />
         </Box>
 
@@ -1526,6 +1569,9 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
 
   // Load config
   const { loadConfig, getGitRoot } = await import("../common/utils.js");
+  const { loadCompactionConfig } = await import("../common/compaction-config.js");
+  const { getProvider } = await import("@kodax/coding");
+
   const config = loadConfig();
   const initialProvider = options.provider ?? config.provider ?? KODAX_DEFAULT_PROVIDER;
   const initialThinking = options.thinking ?? config.thinking ?? false;
@@ -1545,6 +1591,24 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
   let existingMessages: KodaXMessage[] = [];
   let sessionTitle = "";
   const gitRoot = (await getGitRoot().catch(() => null)) ?? undefined;
+
+  // Load compaction config before rendering so the <Static> banner has it immediately
+  let compactionInfo: { contextWindow: number; triggerPercent: number; enabled: boolean } | undefined;
+  try {
+    const compConfig = await loadCompactionConfig(gitRoot);
+    const providerInstance = getProvider(initialProvider);
+    const effectiveContextWindow = compConfig.contextWindow
+      ?? providerInstance.getContextWindow?.()
+      ?? 200000;
+
+    compactionInfo = {
+      contextWindow: effectiveContextWindow,
+      triggerPercent: compConfig.triggerPercent,
+      enabled: compConfig.enabled,
+    };
+  } catch {
+    // Silently ignore configuration loading errors for banner
+  }
 
   // -r <id>: Load specific session
   if (options.session?.id && !options.session.resume) {
@@ -1593,6 +1657,7 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
         config={currentConfig}
         context={context}
         storage={storage}
+        compactionInfo={compactionInfo}
         onExit={() => {
           console.log(chalk.dim("\n[Exiting KodaX...]"));
         }}

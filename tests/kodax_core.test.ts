@@ -387,7 +387,7 @@ describe('Tool Definitions', () => {
 describe('Provider System', () => {
   it('should have 8 providers', () => {
     const providerCount = Object.keys(KODAX_PROVIDERS).length;
-    expect(providerCount).toBe(8);
+    expect(providerCount).toBe(10);
   });
 
   it('should throw error for unknown provider', () => {
