@@ -7,6 +7,8 @@
 import { KodaXBaseProvider } from './base.js';
 import { KodaXAnthropicCompatProvider } from './anthropic.js';
 import { KodaXOpenAICompatProvider } from './openai.js';
+import { KodaXGeminiCliProvider } from './gemini-cli.js';
+import { KodaXCodexCliProvider } from './codex-cli.js';
 import { KodaXProviderConfig } from '../types.js';
 import { KodaXProviderError } from '../errors.js';
 import Anthropic from '@anthropic-ai/sdk';
@@ -22,7 +24,9 @@ export type ProviderName =
   | 'qwen'
   | 'zhipu'
   | 'zhipu-coding'
-  | 'minimax-coding';
+  | 'minimax-coding'
+  | 'gemini-cli'
+  | 'codex-cli';
 
 // ============== 具体 Provider 实现 ==============
 
@@ -131,6 +135,8 @@ export const KODAX_PROVIDERS: Record<string, () => KodaXBaseProvider> = {
   zhipu: () => new ZhipuProvider(),
   'zhipu-coding': () => new ZhipuCodingProvider(),
   'minimax-coding': () => new MiniMaxCodingProvider(),
+  'gemini-cli': () => new KodaXGeminiCliProvider(),
+  'codex-cli': () => new KodaXCodexCliProvider(),
 };
 
 export const KODAX_DEFAULT_PROVIDER = process.env.KODAX_PROVIDER ?? 'zhipu-coding';

@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-03-05
+_Last Updated: 2026-03-08
 
 ---
 
@@ -52,6 +52,7 @@ _Last Updated: 2026-03-05
 | 079 | High | Resolved | Ink 历史渲染无限长导致崩溃 | v0.5.7 | v0.5.7 | 2026-03-04 | 2026-03-04 |
 | 080 | Medium | Resolved | 长文本输入框未根据终端宽度自动换行 | v0.5.7 | v0.5.9 | 2026-03-04 | 2026-03-05 |
 | 081 | Medium | Open | useAutocomplete 每次渲染创建新实例 | v0.5.10 | - | 2026-03-05 | - |
+| 082 | Low | Open | packages/ai 缺少单元测试 | v0.5.21 | - | 2026-03-08 | - |
 
 ---
 
@@ -224,7 +225,7 @@ _Last Updated: 2026-03-05
 
 
 ## Summary
-- Total: 40 (14 Open, 23 Resolved, 1 Partially Resolved, 2 Won't Fix)
+- Total: 41 (15 Open, 23 Resolved, 1 Partially Resolved, 2 Won't Fix)
 - Highest Priority Open: 067 - API 速率限制重试机制失效 (Critical)
 - 43 issues archived to ISSUES_ARCHIVED.md
 
@@ -3870,6 +3871,44 @@ _Last Updated: 2026-03-05
 - **Proposed Solution**:
   方案 A（简单）：接受当前行为，因为影响轻微
   方案 B（优化）：将 `AutocompleteProvider` 提升到 `InkREPL` 层级，通过 context 传递
+
+---
+
+### 082: packages/ai 缺少单元测试
+- **Priority**: Low
+- **Status**: Open
+- **Introduced**: v0.5.21
+- **Created**: 2026-03-08
+
+- **Original Problem**:
+  `packages/ai` 目录包含多个 AI Provider 实现，但完全没有单元测试覆盖。
+
+  当前缺少测试的模块：
+  - `providers/anthropic.ts` - Anthropic Claude API 集成
+  - `providers/openai.ts` - OpenAI API 集成
+  - `providers/gemini-cli.ts` - Gemini CLI 凭证提取和 API 集成
+  - `providers/codex-cli.ts` - Codex CLI 凭证提取和 API 集成
+  - `providers/registry.ts` - Provider 注册和工厂
+  - `providers/base.ts` - 基类实现
+
+- **Expected Behavior**:
+  - 测试覆盖率应达到 80%+
+  - 至少覆盖：凭证提取、消息转换、SSE 解析、错误处理
+
+- **Impact**: 中等
+  - 无法保证代码质量和回归测试
+  - 重构时容易引入 bug
+  - 新增 provider 时缺乏参考模式
+
+- **Context**:
+  - 项目全局测试覆盖要求见 `~/.claude/rules/common/testing.md`
+  - IMPROVEMENT_CLI_PROVIDERS.md 中也提到了此问题 (P0)
+
+- **Proposed Solution**:
+  1. 创建 `tests/providers/` 目录
+  2. 为每个 provider 创建测试文件
+  3. 优先覆盖关键路径：认证、消息转换、流式响应解析
+  4. 使用 mock 避免真实 API 调用
 
 ---
 

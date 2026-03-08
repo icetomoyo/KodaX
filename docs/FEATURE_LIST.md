@@ -1,6 +1,6 @@
 # Feature List
 
-_Last Updated: 2026-03-07 22:15_
+_Last Updated: 2026-03-08 15:00_
 
 ---
 
@@ -8,7 +8,7 @@ _Last Updated: 2026-03-07 22:15_
 
 | 字段 | 值 | 说明 |
 |------|-----|------|
-| **Current Release** | v0.5.20 | 最新发布版本（仅供参考） |
+| **Current Release** | v0.5.22 | 最新发布版本（仅供参考） |
 | **Planned Version** | v0.6.0 | 当前规划的版本 |
 
 ---
@@ -24,6 +24,7 @@ _Last Updated: 2026-03-07 22:15_
 | v0.5.5 | Released | 1 | 1/1 (100%) |
 | v0.5.0 | Released | 7 | 7/7 (100%) |
 | v0.5.20 | Released | 1 | 1/1 (100%) |
+| v0.5.22 | Released | 1 | 1/1 (100%) |
 | v0.6.0 | Planned | 3 | 0/3 (0%) |
 
 ---
@@ -46,6 +47,7 @@ _Last Updated: 2026-03-07 22:15_
 | 012 | Enhancement | Completed | High | TUI 自动补全增强 | v0.5.0 | v0.5.13 | [Design](features/v0.5.0.md#012) | 2026-03-02 | 2026-03-05 | 2026-03-05 |
 | 013 | Refactor | Planned | High | Command System 2.0 | v0.6.0 | - | [Design](features/v0.6.0.md#013) | 2026-03-03 | - | - |
 | 014 | Refactor | Completed | High | Project Mode Enhancement | v0.5.20 | v0.5.20 | [Design](features/v0.5.20.md) | 2026-03-07 | 2026-03-07 | 2026-03-07 |
+| 016 | New | Completed | High | CLI-Based OAuth Providers | v0.5.22 | v0.5.22 | [Design](features/v0.5.22.md) | 2026-03-08 | 2026-03-08 | 2026-03-08 |
 ### 014: Project Mode Enhancement (COMPLETED)
 - **Category**: Refactor
 - **Status**: Completed
@@ -588,6 +590,61 @@ Successfully implemented the redesigned `/project` command system with the follo
 
 ---
 
+### 016: CLI-Based OAuth Providers (COMPLETED)
+- **Category**: New
+- **Status**: Completed
+- **Priority**: High
+- **Planned**: v0.5.22
+- **Released**: v0.5.22
+- **Design**: [v0.5.22.md](features/v0.5.22.md)
+- **Created**: 2026-03-08
+- **Started**: 2026-03-08
+- **Completed**: 2026-03-08
+
+**Description**:
+为 KodaX 添加两个新的 CLI-based OAuth Provider，从本地已安装的 CLI 工具提取凭证，无需用户提供 API Key。
+
+**Goals**:
+1. ✅ **Gemini CLI Provider** - 从 `~/.gemini/` 提取 OAuth 凭证
+2. ✅ **Codex CLI Provider** - 从 `~/.codex/` 提取 OAuth 凭证
+3. ✅ **自动 Token 刷新** - 过期时自动刷新 access token
+4. ✅ **SSE 流式响应** - 支持 Server-Sent Events 流式输出
+5. ✅ **Thinking 支持** - Codex 支持 reasoning 模式
+
+**Key Features**:
+- **Gemini CLI Provider** (`gemini-cli`):
+  - 从 `~/.gemini/oauth_creds.json` 和 `~/.gemini/settings.json` 提取凭证
+  - 支持 Google Cloud Code Assist API
+  - 自动发现 Project ID
+  - 支持 thinking (budgetTokens)
+
+- **Codex CLI Provider** (`codex-cli`):
+  - 从 `~/.codex/auth.json` 提取 OAuth token
+  - 支持 ChatGPT Codex Responses API
+  - 自动从 JWT 解码 account ID
+  - 支持 reasoning effort 配置
+
+**Security Model**:
+- 采用 openclaw 的合规方式：从已安装的 CLI 工具提取凭证
+- 不硬编码 Client ID/Secret
+- 显示风险提示（非官方集成）
+- 支持环境变量覆盖
+
+**Implementation Notes**:
+- `packages/ai/src/providers/gemini-cli.ts` - Gemini CLI provider 实现
+- `packages/ai/src/providers/codex-cli.ts` - Codex CLI provider 实现
+- `packages/ai/src/providers/registry.ts` - 添加 provider 注册
+- 使用 `crypto.randomUUID()` 生成工具调用 ID
+- 使用模块级变量缓存凭证（内存中）
+- 支持环境变量：`GEMINI_CLI_ACCESS_TOKEN`, `CODEX_CLI_ACCESS_TOKEN` 等
+
+**Known Issues**:
+- 缺少单元测试 (Issue #082)
+- OAuth 逻辑耦合在 Provider 中
+- 详见 [IMPROVEMENT_CLI_PROVIDERS.md](IMPROVEMENT_CLI_PROVIDERS.md)
+
+---
+
 ### 015: Project Mode 2.0 - AI-Driven Development Workflow (PLANNED)
 - **Category**: Enhancement
 - **Status**: Planned
@@ -640,9 +697,9 @@ Successfully implemented the redesigned `/project` command system with the follo
 ---
 
 ## Summary
-- Total: 15 (4 Planned, 0 In Progress, 11 Completed)
-- By Priority: Critical: 3, High: 8, Medium: 2, Low: 0
-- Current Version: v0.5.20
+- Total: 16 (4 Planned, 0 In Progress, 12 Completed)
+- By Priority: Critical: 3, High: 9, Medium: 2, Low: 0
+- Current Version: v0.5.22
 - Next Release (v0.6.0): 3 features planned (007, 013, 015)
 - Future Releases: v0.7.0+ (TBD)
 - Highest Priority Planned: 013 - Command System 2.0 (High), 015 - Project Mode 2.0 (High)
