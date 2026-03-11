@@ -167,7 +167,10 @@ export class SkillRegistry implements ISkillRegistry {
 
     for (const skill of visibleSkills) {
       const hint = skill.argumentHint ? ` ${skill.argumentHint}` : '';
-      lines.push(`- ${skill.name}:${hint} ${skill.description}`);
+      // Inject absolute path to prevent skill amnesia after context compaction
+      // Use forward slashes for cross-platform prompt robustness
+      const skillFilePath = `${skill.path}/SKILL.md`.replace(/\\/g, '/');
+      lines.push(`- ${skill.name}:${hint} ${skill.description}\n  (Location: ${skillFilePath})`);
     }
 
     lines.push('');
