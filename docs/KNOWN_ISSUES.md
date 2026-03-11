@@ -37,7 +37,7 @@ _Last Updated: 2026-03-11
 | 064 | High | Resolved | 项目目录下 .kodax/skills/ 未被发现 | v0.4.9 | v0.4.9 | 2026-03-02 | 2026-03-02 |
 | 065 | Critical | Resolved | 流式响应后 Skills 全部消失 | v0.4.9 | v0.4.9 | 2026-03-02 | 2026-03-02 |
 | 066 | High | Resolved | /project init 命令在 InkREPL 中静默失败 | v0.5.4 | v0.5.4 | 2026-03-03 | 2026-03-03 |
-| 067 | Critical | Open | API 速率限制重试机制失效 | v0.5.4 | - | 2026-03-03 | - |
+| 067 | Critical | Resolved | API 速率限制重试机制失效 | v0.5.4 | v0.5.27 | 2026-03-03 | 2026-03-11 |
 | 068 | High | Resolved | Thinking 指示器长时间无进度反馈 | v0.5.4 | v0.5.4 | 2026-03-03 | 2026-03-03 |
 | 069 | Medium | Resolved | 缺少 LLM 交互式提问工具 | v0.5.4 | v0.5.29 | 2026-03-03 | 2026-03-11 |
 | 070 | Low | Open | 流式输出可能丢失换行符 | v0.5.4 | - | 2026-03-03 | - |
@@ -231,8 +231,8 @@ _Last Updated: 2026-03-11
 
 
 ## Summary
-- Total: 46 (12 Open, 30 Resolved, 1 Partially Resolved, 3 Won't Fix)
-- Highest Priority Open: 067 - API 速率限制重试机制失效 (Critical)
+- Total: 46 (11 Open, 31 Resolved, 1 Partially Resolved, 3 Won't Fix)
+- Highest Priority Open: 083 - 缺少快捷键系统 (Medium)
 - 43 issues archived to ISSUES_ARCHIVED.md
 
 ---
@@ -243,9 +243,10 @@ _Last Updated: 2026-03-11
 - **Issue 006**: Open → Resolved (存储层 `getFeatureByIndex()` 添加了范围验证)
 - **Issue 039**: Open → Won't Fix (误报 - `printStartupBanner` 函数实际在 `repl.ts` 第 156 行被调用，非死代码)
 - **Issue 060**: Deferred → Resolved (定时器已同步：StreamingContext flush 80ms 与 Spinner 动画帧 80ms 同步)
+- **Issue 067**: Open → Resolved (v0.5.27 实现了正确的重试循环和回调式 UI 通知)
 - **Issue 069**: Open → Resolved (`toolAskUserQuestion` 工具已存在于 `packages/coding/src/tools/ask-user-question.ts`)
 - **Issue 081**: Open → Resolved (Provider 已使用 `useMemo` 记忆化，所有回调使用 `useCallback` 包装)
-- 更新 Summary 统计: 12 Open, 30 Resolved, 1 Partially Resolved, 3 Won't Fix
+- 更新 Summary 统计: 11 Open, 31 Resolved, 1 Partially Resolved, 3 Won't Fix
 
 ### 2026-02-28: Issue 052 修复
 - Resolved 052: 受保护路径确认对话框显示错误选项
@@ -2883,11 +2884,20 @@ _Last Updated: 2026-03-11
 
 ### 067: API 速率限制重试机制失效
 - **Priority**: Critical
-- **Status**: Open
+- **Status**: Resolved
 - **Introduced**: v0.5.4
+- **Fixed**: v0.5.27
 - **Created**: 2026-03-03
+- **Resolved**: 2026-03-11
 
-- **Original Problem**:
+- **Resolution**:
+  修复已在 v0.5.27 中实现：
+  1. **正确的重试循环**: `continue` 继续循环而非立即抛出
+  2. **AbortSignal 支持**: 等待期间检查 `signal?.aborted`
+  3. **回调式 UI 通知**: 使用 `onRateLimit` callback 替代 `console.log`
+  4. **UI 层集成**: `InkREPL.tsx` 的 `onProviderRateLimit` 正确显示重试消息
+
+- **Original Problem** (archived):
   当 API 遇到速率限制时，显示重试信息但实际未重试：
   ```
   [Stream Error] API rate limit hit. Retrying in 2s (1/3)
