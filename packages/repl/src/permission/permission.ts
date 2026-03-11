@@ -13,30 +13,92 @@
 
 import path from 'path';
 import os from 'os';
-import { PermissionMode, MODIFICATION_TOOLS, FILE_MODIFICATION_TOOLS, BASH_WRITE_COMMANDS } from './types.js';
+import { PermissionMode, MODIFICATION_TOOLS, FILE_MODIFICATION_TOOLS, BASH_WRITE_COMMANDS, BASH_SAFE_READ_COMMANDS } from './types.js';
 
 // ============== Pattern Parsing and Matching ==============
 
 /**
+ * Check if a bash command is strictly a safe read-only operation (Whitelist).
+ * It must not contain shell operators that could bypass safety (|, >, <, &, ;, `, $(), \\).
+ *
+ * 检查一个 bash 命令是否是严格安全的只读操作（白名单）。
+ * 必须不能包含可能绕过安全的 shell 操作符 (|, >, <, &, ;, `, $(), \\)。
+ *
+ * @param command - bash command string
+ * @returns true if the command is a safe read operation
+ */
+export function isBashReadCommand(command: string): boolean {
+  if (!command || !command.trim()) {
+    return false;
+  }
+  const normalizedCommand = command.trim().toLowerCase();
+
+  // 1. Strict syntax validation: Reject any command containing shell operators,
+  // command substitution $() or line continuation \
+  const illegalSyntax = /[<>|&;`\\]|\$\(/;
+  if (illegalSyntax.test(command)) {
+    return false;
+  }
+
+  // 2. Base command validation: Must start with a whitelisted command
+  // e.g. "git status -s" starts with "git status"
+  for (const safeCmd of BASH_SAFE_READ_COMMANDS) {
+    if (normalizedCommand === safeCmd || normalizedCommand.startsWith(safeCmd + ' ')) {
+      // Additional safety checks for specific tools
+      if (safeCmd === 'sed') {
+        const parts = normalizedCommand.split(/\s+/);
+        // Catch -i, -i.bak, -i'', etc.
+        if (parts.some(p => p.startsWith('-i') || p === '--in-place')) {
+          return false; // Modifies file in-place
+        }
+      }
+
+      if (safeCmd === 'awk') {
+        const parts = normalizedCommand.split(/\s+/);
+        // Block script execution from file which might have side effects
+        if (parts.includes('-f') || parts.includes('--file')) {
+          return false;
+        }
+      }
+      
+      // Block arbitrary code execution for language tools (version/info only)
+      const languageTools = ['node', 'npm', 'yarn', 'pnpm', 'tsc', 'python', 'pip', 'go', 'cargo', 'rustc', 'ruby', 'perl'];
+      if (languageTools.includes(safeCmd)) {
+        const parts = normalizedCommand.split(/\s+/).slice(1); // skip the command itself
+        // Only allow info flags like -v, --version, -h, --help
+        // If there are any other arguments (like a script name or -e), require confirmation
+        if (parts.length > 0 && !parts.every(p => /^(-v|--version|-h|--help)$/.test(p))) {
+          return false;
+        }
+      }
+      return true;
+    }
+  }
+
+  return false; // Default to denying (requiring confirmation)
+}
+
+// Pre-compile regexes for BASH_WRITE_COMMANDS for performance
+const BASH_WRITE_COMMAND_REGEXES = Array.from(BASH_WRITE_COMMANDS).map(writeCmd => {
+  const escapedCmd = writeCmd.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[|&;><]\\s*)${escapedCmd}(\\s|$)`);
+});
+
+/**
  * Check if a bash command is a write operation
- * 检查 bash 命令是否是写操作
+ * 检查 bash 命令是否是发布写操作的黑名单
  *
  * @param command - bash command string
  * @returns true if the command is a write operation
  */
 export function isBashWriteCommand(command: string): boolean {
+  if (!command || !command.trim()) {
+    return false;
+  }
   const normalizedCommand = command.trim().toLowerCase();
 
-  // Check against blacklist
-  for (const writeCmd of BASH_WRITE_COMMANDS) {
-    // Check if command starts with the write command
-    // e.g., "git commit -m 'msg'" starts with "git commit"
-    if (normalizedCommand.startsWith(writeCmd.toLowerCase())) {
-      return true;
-    }
-    // Also check if it's a pipe/redirection containing the write command
-    // e.g., "echo test | git commit"
-    if (normalizedCommand.includes(writeCmd.toLowerCase())) {
+  for (const regex of BASH_WRITE_COMMAND_REGEXES) {
+    if (regex.test(normalizedCommand)) {
       return true;
     }
   }

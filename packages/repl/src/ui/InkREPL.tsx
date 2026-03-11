@@ -50,6 +50,7 @@ import {
   isCommandOnProtectedPath,
   FILE_MODIFICATION_TOOLS,
   isBashWriteCommand,
+  isBashReadCommand,
 } from "../permission/index.js";
 import type { PermissionContext } from "../permission/types.js";
 import {
@@ -697,6 +698,15 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         if (mode === 'accept-edits' && tool === 'bash') {
           if (isToolCallAllowed(tool, input, alwaysAllowTools)) {
             return true; // Auto-allowed
+          }
+        }
+
+        // In plan mode, only explicitly safe read commands bypass the confirmation dialog.
+        // Unknown or complex commands will still block for user confirmation.
+        if (mode === 'plan' && tool === 'bash') {
+          const command = (input.command as string) ?? '';
+          if (isBashReadCommand(command)) {
+            return true; // Auto-allowed for safe read-only exploration
           }
         }
 

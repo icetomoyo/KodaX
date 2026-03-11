@@ -16,6 +16,8 @@ import {
 import {
   isToolCallAllowed,
   isAlwaysConfirmPath,
+  isBashReadCommand,
+  isBashWriteCommand,
 } from './permission.js';
 import { generateSavePattern } from './permission.js';
 
@@ -116,8 +118,16 @@ export async function executeWithPermission(
   const mode = permContext.permissionMode;
 
   // === 1. Plan mode: block all modification tools ===
-  if (mode === 'plan' && (FILE_MODIFICATION_TOOLS.has(toolName) || toolName === 'bash' || toolName === 'undo')) {
-    return `[Blocked] Tool '${toolName}' is not allowed in plan mode (read-only)`;
+  if (mode === 'plan') {
+    if (FILE_MODIFICATION_TOOLS.has(toolName) || toolName === 'undo') {
+      return `[Blocked] Tool '${toolName}' is not allowed in plan mode (read-only)`;
+    }
+    if (toolName === 'bash') {
+      const command = (input.command as string) ?? '';
+      if (isBashWriteCommand(command)) {
+        return `[Blocked] Bash write operation not allowed in plan mode: ${command.slice(0, 50)}...`;
+      }
+    }
   }
 
   // === 2. Protected paths: always confirm ===

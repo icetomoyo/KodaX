@@ -17,6 +17,7 @@ export {
   isCommandOnProtectedPath,
   inferPermissionMode,
   isBashWriteCommand,
+  isBashReadCommand,
 } from './permission.js';
 
 // Executor

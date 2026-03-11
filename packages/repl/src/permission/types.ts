@@ -62,6 +62,32 @@ export const BASH_WRITE_COMMANDS = new Set([
   'kill', 'pkill', 'killall',
 ]);
 
+/**
+ * Strict whitelist of bash commands considered safe for read-only exploration in plan mode.
+ * Any bash command not matching these bases will require user confirmation.
+ * 严格的白名单，包含在 plan 模式下被认为是安全的只读探讨 bash 命令。
+ * 任何不匹配这些基命令的 bash 操作都将需要用户确认。
+ * 
+ * Note: Some base commands here (like 'npm', 'git') overlap with specific blocked 
+ * operations in BASH_WRITE_COMMANDS (like 'npm install', 'git commit'). 
+ * This is intentional: the base command is allowed for info/read via whitelist,
+ * but the specific mutation parameters are caught by the blacklist.
+ */
+export const BASH_SAFE_READ_COMMANDS = new Set([
+  // Basic shell inspection - 基础 shell 检查
+  'ls', 'cat', 'pwd', 'echo', 'whoami', 'date', 'which', 'whereis', 'tree',
+
+  // Search and find - 搜索与查找
+  'grep', 'find', 'awk', 'sed', 'head', 'tail', 'less', 'more', 'wc',
+
+  // Git operations (read-only) - Git 只读操作
+  'git status', 'git diff', 'git log', 'git show', 'git branch', 
+  'git remote', 'git ls-files', 'git rev-parse', 'git grep',
+
+  // Language toolchains (version/info only) - 语言工具链信息/版本
+  'node', 'npm', 'yarn', 'pnpm', 'tsc', 'python', 'pip', 'go', 'cargo', 'rustc'
+]);
+
 // ============== Permission Context ==============
 
 /**

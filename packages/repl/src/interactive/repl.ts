@@ -30,7 +30,7 @@ import {
 } from '@kodax/coding';
 import type { PermissionMode, ConfirmResult } from '../permission/types.js';
 import { computeConfirmTools, FILE_MODIFICATION_TOOLS } from '../permission/types.js';
-import { isToolCallAllowed, isAlwaysConfirmPath } from '../permission/permission.js';
+import { isToolCallAllowed, isAlwaysConfirmPath, isBashWriteCommand, isBashReadCommand } from '../permission/permission.js';
 import { getGitRoot, loadConfig, getProviderModel, KODAX_VERSION } from '../common/utils.js';
 import {
   InteractiveContext,
@@ -338,9 +338,21 @@ Keyboard Shortcuts:
             const confirmTools = computeConfirmTools(mode);
 
             // Plan mode: block modification tools
-            if (mode === 'plan' && (FILE_MODIFICATION_TOOLS.has(tool) || tool === 'bash' || tool === 'undo')) {
+            if (mode === 'plan' && (FILE_MODIFICATION_TOOLS.has(tool) || tool === 'undo')) {
               console.log(chalk.yellow(`[Blocked] Tool '${tool}' is not allowed in plan mode (read-only)`));
               return false;
+            }
+
+            // For bash in plan mode, only block write operations
+            if (mode === 'plan' && tool === 'bash') {
+              const command = (input.command as string) ?? '';
+              if (isBashWriteCommand(command)) {
+                console.log(chalk.yellow(`[Blocked] Bash write operation not allowed in plan mode: ${command.slice(0, 50)}...`));
+                return false;
+              }
+              if (isBashReadCommand(command)) {
+                return true; // Auto-allowed for safe read-only exploration
+              }
             }
 
             // Protected paths: always confirm
