@@ -1,6 +1,6 @@
 # Feature List
 
-_Last Updated: 2026-03-08 15:00_
+_Last Updated: 2026-03-11 14:00_
 
 ---
 
@@ -8,7 +8,7 @@ _Last Updated: 2026-03-08 15:00_
 
 | 字段 | 值 | 说明 |
 |------|-----|------|
-| **Current Release** | v0.5.22 | 最新发布版本（仅供参考） |
+| **Current Release** | v0.5.29 | 最新发布版本（仅供参考） |
 | **Planned Version** | v0.6.0 | 当前规划的版本 |
 
 ---
@@ -25,7 +25,8 @@ _Last Updated: 2026-03-08 15:00_
 | v0.5.0 | Released | 7 | 7/7 (100%) |
 | v0.5.20 | Released | 1 | 1/1 (100%) |
 | v0.5.22 | Released | 1 | 1/1 (100%) |
-| v0.6.0 | Planned | 3 | 0/3 (0%) |
+| v0.6.0 | Planned | 4 | 0/4 (0%) |
+| v0.8.0 | Planned | 1 | 0/1 (0%) |
 
 ---
 
@@ -48,6 +49,8 @@ _Last Updated: 2026-03-08 15:00_
 | 013 | Refactor | Planned | High | Command System 2.0 | v0.6.0 | - | [Design](features/v0.6.0.md#013) | 2026-03-03 | - | - |
 | 014 | Refactor | Completed | High | Project Mode Enhancement | v0.5.20 | v0.5.20 | [Design](features/v0.5.20.md) | 2026-03-07 | 2026-03-07 | 2026-03-07 |
 | 016 | New | Completed | High | CLI-Based OAuth Providers | v0.5.22 | v0.5.22 | [Design](features/v0.5.22.md) | 2026-03-08 | 2026-03-08 | 2026-03-08 |
+| 017 | Enhancement | Planned | High | 运行时用户输入插队 | v0.6.0 | - | [Design](features/v0.6.0.md#017) | 2026-03-11 | - | - |
+| 018 | New | Planned | High | CodeWiki - 项目知识库系统 | v0.8.0 | - | [Design](features/v0.8.0.md#018) | 2026-03-11 | - | - |
 ### 014: Project Mode Enhancement (COMPLETED)
 - **Category**: Refactor
 - **Status**: Completed
@@ -645,6 +648,79 @@ Successfully implemented the redesigned `/project` command system with the follo
 
 ---
 
+### 017: 运行时用户输入插队 (PLANNED)
+- **Category**: Enhancement
+- **Status**: Planned
+- **Priority**: High
+- **Planned**: v0.6.0
+- **Released**: -
+- **Design**: [v0.6.0.md#017](features/v0.6.0.md#017)
+- **Created**: 2026-03-11
+- **Started**: -
+- **Completed**: -
+
+**Description**:
+在 KodaX 运行时（LLM 回答、流式输出或自动工具运行过程中）能够接受用户输入，并将其插入到下一轮对话中作为最新提示。类似 Codex CLI 和 Claude Code 的 inline input 功能。
+
+**Goals**:
+1. **非阻塞输入** - 在流式输出时保持输入框可交互
+2. **输入队列** - 将用户输入排队到下一轮对话
+3. **即时反馈** - 显示用户输入已被接收的视觉反馈
+4. **取消支持** - 用户可以用 Esc 取消待发送的输入
+
+**Key Features**:
+- 在 AI 流式回复过程中，输入框保持可编辑
+- 用户输入后，显示 `[已排队] 提示: "xxx"` 的状态
+- 当前轮次结束后，自动将排队的输入作为下一轮的 user message
+- 支持多条输入排队（FIFO 顺序）
+- 类似 Codex CLI 和 Claude Code 的体验
+
+**Implementation Notes**:
+- 需要修改 `InputPrompt.tsx` 使其在 streaming 时保持可交互
+- 添加 `pendingInputs: string[]` 状态到 StreamingContext
+- 在 `agent.ts` 的 iteration 循环中检查并注入排队输入
+
+---
+
+### 018: CodeWiki - 项目知识库系统 (PLANNED)
+- **Category**: New
+- **Status**: Planned
+- **Priority**: High
+- **Planned**: v0.8.0
+- **Released**: -
+- **Design**: [v0.8.0.md#018](features/v0.8.0.md#018)
+- **Created**: 2026-03-11
+- **Started**: -
+- **Completed**: -
+
+**Description**:
+在 KodaX 运行过程中持续构建和维护的项目知识库系统。
+
+**Goals**:
+1. **自动积累** - 在代码阅读、文件分析、代码修改过程中自动丰富 wiki
+2. **同步更新** - Project wiki 与代码变更保持同步
+3. **快速查询** - KodaX 可随时通过 wiki 获取项目/代码细节
+4. **渐进披露** - 查询时按需加载，避免占用过多 LLM 上下文
+
+**Key Features**:
+- Wiki 以目录形式存储（如 `.kodax/wiki/`）
+- 支持多种知识类型：架构概览、模块说明、API 文档、依赖关系等
+- 增量更新机制，只在相关代码变更时更新对应 wiki
+- 智能查询接口，根据问题 relevance 返回相关片段
+- 分层披露：先返回摘要，需要时再深入细节
+
+**Implementation Notes**:
+- 具体机制（存储格式、更新触发、查询策略）待实现前讨论
+- 可能涉及 embedding 向量检索或关键词索引
+- 需要设计 wiki 文件的组织结构和命名规范
+- 添加视觉反馈组件显示排队状态
+
+**Inspired by**:
+- Codex CLI inline input
+- Claude Code streaming input
+
+---
+
 ### 015: Project Mode 2.0 - AI-Driven Development Workflow (PLANNED)
 - **Category**: Enhancement
 - **Status**: Planned
@@ -697,9 +773,9 @@ Successfully implemented the redesigned `/project` command system with the follo
 ---
 
 ## Summary
-- Total: 16 (4 Planned, 0 In Progress, 12 Completed)
-- By Priority: Critical: 3, High: 9, Medium: 2, Low: 0
-- Current Version: v0.5.22
-- Next Release (v0.6.0): 3 features planned (007, 013, 015)
+- Total: 17 (5 Planned, 0 In Progress, 12 Completed)
+- By Priority: Critical: 3, High: 10, Medium: 2, Low: 0
+- Current Version: v0.5.29
+- Next Release (v0.6.0): 4 features planned (007, 013, 015, 017)
 - Future Releases: v0.7.0+ (TBD)
-- Highest Priority Planned: 013 - Command System 2.0 (High), 015 - Project Mode 2.0 (High)
+- Highest Priority Planned: 013 - Command System 2.0 (High), 015 - Project Mode 2.0 (High), 017 - 运行时用户输入插队 (High)
