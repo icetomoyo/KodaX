@@ -80,7 +80,8 @@ export function classifyError(error: Error): ErrorClassification {
         msg.includes('econnrefused') ||
         msg.includes('etimedout') ||
         msg.includes('enotfound') ||
-        msg.includes('socket hang up')) {
+        msg.includes('socket hang up') ||
+        msg.includes('aborted')) {
       return {
         category: ErrorCategory.TRANSIENT,
         retryable: true,
@@ -106,7 +107,8 @@ export function classifyError(error: Error): ErrorClassification {
       msg.includes('network') ||
       msg.includes('econnrefused') ||
       msg.includes('etimedout') ||
-      msg.includes('fetch failed')) {
+      msg.includes('fetch failed') ||
+      msg.includes('aborted')) {
     return {
       category: ErrorCategory.TRANSIENT,
       retryable: true,

@@ -95,6 +95,10 @@ export abstract class KodaXBaseProvider {
         }
         // 对于其他错误，包装成 Provider 错误
         if (e instanceof Error) {
+          // 区分用户主动取消和网络层面的 Abort
+          if (e.name === 'AbortError' && signal?.aborted) {
+            throw e; // 保持为 AbortError，让分类器将其识别为 USER_ABORT
+          }
           throw new KodaXProviderError(
             `${this.name} API error: ${e.message}`,
             this.name

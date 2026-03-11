@@ -541,6 +541,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
       console.log(''); // Empty line for readability
 
+      // 对于用户主动取消，静默返回，因为快捷键处理函数已经打印了 [Interrupted]
+      if (classification.category === ErrorCategory.USER_ABORT) {
+        return;
+      }
+
       // Show error type and message
       const categoryName = categoryNames[classification.category] || 'Unknown';
       console.log(chalk.red(`❌ API Error (${categoryName}): ${error.message}`));

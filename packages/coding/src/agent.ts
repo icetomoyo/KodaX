@@ -442,7 +442,9 @@ export async function runKodaX(
       // 注入 API 硬超时保护：防止大型 payload 导致 API 静默丢包引发无限等待
       const API_HARD_TIMEOUT_MS = 180_000; // 3 分钟硬超时
       const timeoutController = new AbortController();
-      const timeoutTimer = setTimeout(() => timeoutController.abort(), API_HARD_TIMEOUT_MS);
+      const timeoutTimer = setTimeout(() => {
+        timeoutController.abort(new Error("API Hard Timeout (3 minutes)"));
+      }, API_HARD_TIMEOUT_MS);
 
       // 合并用户中断信号和超时信号
       const combinedSignal = options.abortSignal
@@ -454,7 +456,9 @@ export async function runKodaX(
           // 每次重试时重置超时计时器
           clearTimeout(timeoutTimer);
           const retryTimeoutController = new AbortController();
-          const retryTimer = setTimeout(() => retryTimeoutController.abort(), API_HARD_TIMEOUT_MS);
+          const retryTimer = setTimeout(() => {
+            retryTimeoutController.abort(new Error("API Hard Timeout (3 minutes)"));
+          }, API_HARD_TIMEOUT_MS);
           const retrySignal = options.abortSignal
             ? AbortSignal.any([options.abortSignal, retryTimeoutController.signal])
             : retryTimeoutController.signal;
