@@ -15,7 +15,7 @@ _Last Updated: 2026-03-11
 | 015 | Low | Open | Unicode 检测不完整 | v0.3.1 | - | 2026-02-19 | - |
 | 017 | Low | Open | TextBuffer 未使用方法 | v0.3.1 | - | 2026-02-19 | - |
 | 018 | Low | Open | TODO 注释未清理 | v0.3.1 | - | 2026-02-19 | - |
-| 039 | Low | Open | 死代码 printStartupBanner | v0.3.3 | v0.4.0 | 2026-02-22 | - |
+| 039 | Low | Won't Fix | 死代码 printStartupBanner (误报) | v0.3.3 | - | 2026-02-22 | 2026-03-11 |
 | 046 | High | Resolved | Session 恢复时消息显示异常 | v0.4.5 | v0.4.5 | 2026-02-26 | 2026-02-27 |
 | 047 | Medium | Resolved | 流式输出时界面闪烁 | v0.4.5 | v0.4.5 | 2026-02-26 | 2026-02-27 |
 | 048 | Medium | Resolved | Spinner 动画期间消息显示乱序 | v0.4.5 | v0.4.5 | 2026-02-27 | 2026-02-27 |
@@ -39,7 +39,7 @@ _Last Updated: 2026-03-11
 | 066 | High | Resolved | /project init 命令在 InkREPL 中静默失败 | v0.5.4 | v0.5.4 | 2026-03-03 | 2026-03-03 |
 | 067 | Critical | Open | API 速率限制重试机制失效 | v0.5.4 | - | 2026-03-03 | - |
 | 068 | High | Resolved | Thinking 指示器长时间无进度反馈 | v0.5.4 | v0.5.4 | 2026-03-03 | 2026-03-03 |
-| 069 | Medium | Open | 缺少 LLM 交互式提问工具 | v0.5.4 | - | 2026-03-03 | - |
+| 069 | Medium | Resolved | 缺少 LLM 交互式提问工具 | v0.5.4 | v0.5.29 | 2026-03-03 | 2026-03-11 |
 | 070 | Low | Open | 流式输出可能丢失换行符 | v0.5.4 | - | 2026-03-03 | - |
 | 071 | High | Resolved | Session Resume 跨项目恢复错误 | v0.5.4 | v0.5.4 | 2026-03-03 | 2026-03-03 |
 | 072 | High | Resolved | 流式中断后 tool_call_id 不匹配导致 API 错误 | v0.5.4 | v0.5.20 | 2026-03-03 | 2026-03-07 |
@@ -200,12 +200,12 @@ _Last Updated: 2026-03-11
 
 
 
-### 039: 死代码 printStartupBanner
+### 039: 死代码 printStartupBanner (误报)
 - **Priority**: Low
-- **Status**: Open
+- **Status**: Won't Fix
 - **Introduced**: v0.3.3 (auto-detected)
-- **Planned Fix**: v0.4.0
 - **Created**: 2026-02-22
+- **Resolved**: 2026-03-11
 - **Original Problem**:
   - `InkREPL.tsx` 中定义了 `printStartupBanner()` 函数（行 761-796）
   - 该函数已被 `Banner` 组件替代，但未删除
@@ -214,10 +214,11 @@ _Last Updated: 2026-03-11
     // Note: Banner is now shown inside Ink component (Banner.tsx)
     // This ensures it's visible in the alternate buffer
     ```
-- **Context**: `src/ui/InkREPL.tsx` - 行 761-796, 871-872
-- **Proposed Solution**: 在 v0.4.0 重构迁移 `src/ui/` 到 `packages/repl/src/ui/` 时，直接不复制该函数
-- **Decision**: 推迟到 v0.4.0，详见 [features/v0.4.0.md#issue_039](features/v0.4.0.md#issue_039-死代码-printstartupbanner)
-- **Files to Change**: `src/ui/InkREPL.tsx`
+- **Resolution**:
+  - 经代码审查确认：`printStartupBanner()` 函数在 `packages/repl/src/interactive/repl.ts:156` 被**实际调用**
+  - 该函数**不是死代码**，原问题报告为误报
+  - 函数功能：在 REPL 启动时打印 Banner 信息
+- **Context**: `packages/repl/src/interactive/repl.ts` - 第 156 行调用
 
 ---
 
@@ -226,13 +227,18 @@ _Last Updated: 2026-03-11
 
 
 ## Summary
-- Total: 41 (15 Open, 23 Resolved, 1 Partially Resolved, 2 Won't Fix)
+- Total: 46 (15 Open, 27 Resolved, 1 Partially Resolved, 3 Won't Fix)
 - Highest Priority Open: 067 - API 速率限制重试机制失效 (Critical)
 - 43 issues archived to ISSUES_ARCHIVED.md
 
 ---
 
 ## Changelog
+
+### 2026-03-11: Issue 状态审查更新
+- **Issue 039**: Open → Won't Fix (误报 - `printStartupBanner` 函数实际在 `repl.ts` 第 156 行被调用，非死代码)
+- **Issue 069**: Open → Resolved (`toolAskUserQuestion` 工具已存在于 `packages/coding/src/tools/ask-user-question.ts`)
+- 更新 Summary 统计: 15 Open, 27 Resolved, 1 Partially Resolved, 3 Won't Fix
 
 ### 2026-02-28: Issue 052 修复
 - Resolved 052: 受保护路径确认对话框显示错误选项
@@ -3098,9 +3104,11 @@ _Last Updated: 2026-03-11
 
 ### 069: 缺少 LLM 交互式提问工具
 - **Priority**: Medium
-- **Status**: Open
+- **Status**: Resolved
 - **Introduced**: v0.5.4
+- **Fixed**: v0.5.29
 - **Created**: 2026-03-03
+- **Resolved**: 2026-03-11
 
 - **Original Problem**:
   用户报告 LLM 有时想要提问，但并没有停下来提供选项让用户选择：
@@ -3121,20 +3129,15 @@ _Last Updated: 2026-03-11
   - 当前工具：`Read`, `Write`, `Edit`, `Bash`, `Glob`, `Grep`, `Diff`, `Undo`
   - 缺少：`AskUserQuestion` 或 `PromptUser` 工具
 
-- **Proposed Solution**:
-  添加 `AskUserQuestion` 工具：
-  ```typescript
-  // tools/ask.ts
-  export const askUserQuestion: KodaXToolDefinition = {
-    name: 'AskUserQuestion',
-    description: 'Ask the user a question and wait for their response',
-    parameters: {
-      question: { type: 'string', description: 'The question to ask' },
-      options: { type: 'array', items: { type: 'string' }, description: 'Optional choices' }
-    },
-    // ...
-  };
-  ```
+- **Resolution**:
+  - 已实现 `toolAskUserQuestion` 工具
+  - 文件：`packages/coding/src/tools/ask-user-question.ts`
+  - 支持多选项问题、默认值、上下文回调
+
+- **Files Changed**:
+  - `packages/coding/src/tools/ask-user-question.ts` (新增)
+  - `packages/coding/src/tools/index.ts` (导出)
+  - `packages/coding/src/tools/registry.ts` (注册)
 
 ---
 
