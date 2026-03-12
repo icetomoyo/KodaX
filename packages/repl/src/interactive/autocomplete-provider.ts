@@ -322,6 +322,15 @@ export class AutocompleteProvider {
 
     this.fetchCompletionsInternal(input, cursorPos)
       .then((completions) => {
+        // CRITICAL: Check if input has changed since we started fetching
+        // This prevents race conditions where stale completions overwrite newer ones
+        // 关键：检查自开始获取以来输入是否已更改
+        // 这可以防止过时的补全覆盖较新的补全的竞态条件
+        if (this.lastInput !== input || this.lastCursorPos !== cursorPos) {
+          // Input changed, discard these completions - 输入已更改，丢弃这些补全
+          return;
+        }
+
         if (completions.length > 0) {
           this.updateState({
             visible: true,

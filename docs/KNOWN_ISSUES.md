@@ -14,6 +14,7 @@ _Last Updated: 2026-03-12_
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 086 | High | Resolved | 自动补全竞态条件导致快速输入时显示过期补全 | v0.5.32 | v0.5.32 | 2026-03-12 | 2026-03-12 |
 | 085 | Medium | Resolved | 只读 Bash 命令白名单未在非 plan 模式复用 | v0.5.29 | v0.5.30 | 2026-03-12 | 2026-03-12 |
 | 084 | High | Resolved | 流式响应长时间静默中断无任何提示 | v0.5.29 | v0.5.30 | 2026-03-12 | 2026-03-12 |
 | 013 | Low | Open | 自动补全缓存内存泄漏风险 | v0.3.1 | - | 2026-02-19 | - |
@@ -31,6 +32,119 @@ _Last Updated: 2026-03-12_
 
 ## Issue Details
 <!-- Full details for each issue - REQUIRED for all issues -->
+---
+
+### 086: 自动补全竞态条件导致快速输入时显示过期补全 (RESOLVED)
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: v0.5.32
+- **Fixed**: v0.5.32
+- **Created**: 2026-03-12
+- **Resolution Date**: 2026-03-12
+
+- **Original Problem**:
+  使用补全功能时，输入 `/model zhipu-coding` 后，补全列表会停留在 `zhipu` 这个推荐上，按回车会直接变成命令 `/model zhipu`。
+
+  **预期行为**：当用户快速输入时，补全列表应该立即更新为最新输入的补全结果，不应该显示过期的补全选项。
+
+- **Root Cause Analysis**:
+
+  **问题不在前缀匹配逻辑，而在异步竞态条件**
+
+  经过详细测试分析，发现 `fuzzy.ts` 中的匹配逻辑实际上是**正确的**：
+  - `prefixMatch("zhipu-coding", "zhipu")` → `false` ✅
+  - `fuzzyMatch("zhipu-coding", "zhipu")` → `{ matched: false }` ✅
+  - `ArgumentCompleter` 的过滤逻辑也正确
+
+  **真正的问题**：`AutocompleteProvider` 中的异步竞态条件
+
+  在 `packages/repl/src/interactive/autocomplete-provider.ts` 的 `fetchCompletions()` 方法中：
+
+  ```typescript
+  private fetchCompletions(input: string, cursorPos: number): void {
+    this.updateState({ loading: true });
+
+    this.fetchCompletionsInternal(input, cursorPos)
+      .then((completions) => {
+        // ❌ 问题：没有检查 input 是否已经改变
+        if (completions.length > 0) {
+          this.updateState({ ... });
+        }
+      });
+  }
+  ```
+
+  **竞态条件流程**：
+  1. 用户输入 `/model zhipu` → 触发异步补全请求 #1
+  2. 用户快速输入 `-coding` → `lastInput` 更新为 `/model zhipu-coding`
+  3. 补全请求 #1 完成 → 更新状态为 `['zhipu', 'zhipu-coding']` (基于旧输入)
+  4. 补全请求 #2 完成 → 更新状态为 `['zhipu-coding']` (基于新输入)
+
+  如果用户在步骤3按回车，就会错误地选择 `zhipu` 而不是继续输入的 `zhipu-coding`。
+
+- **Reproduction**:
+  1. 输入 `/model zhipu` → 看到补全列表 `['zhipu', 'zhipu-coding']`
+  2. 快速输入 `-coding` → 短暂看到旧的补全列表 `['zhipu', 'zhipu-coding']`
+  3. 立即按回车 → 选择 `zhipu` 而不是 `zhipu-coding`
+
+- **Resolution**:
+
+  在 `fetchCompletions()` 的 Promise 回调中添加**输入版本检查**：
+
+  ```typescript
+  private fetchCompletions(input: string, cursorPos: number): void {
+    this.updateState({ loading: true });
+
+    this.fetchCompletionsInternal(input, cursorPos)
+      .then((completions) => {
+        // CRITICAL: Check if input has changed since we started fetching
+        // This prevents race conditions where stale completions overwrite newer ones
+        if (this.lastInput !== input || this.lastCursorPos !== cursorPos) {
+          // Input changed, discard these completions
+          return;
+        }
+
+        if (completions.length > 0) {
+          this.updateState({
+            visible: true,
+            completions: completions.slice(0, this.options.maxCompletions),
+            selectedIndex: 0,
+            loading: false,
+          });
+        } else {
+          this.updateState({
+            visible: false,
+            completions: [],
+            selectedIndex: 0,
+            loading: false,
+          });
+        }
+      })
+      .catch(() => {
+        this.updateState({ loading: false });
+      });
+  }
+  ```
+
+  **修复原理**：
+  - 在请求开始时记录当前的 `input` 和 `cursorPos`
+  - 在 Promise 完成时检查 `this.lastInput` 和 `this.lastCursorPos` 是否还匹配
+  - 如果不匹配，说明用户已经继续输入，丢弃这些过期的补全结果
+  - 这样可以确保只有最新的补全结果才会更新状态
+
+- **Files Changed**:
+  - `packages/repl/src/interactive/autocomplete-provider.ts` (line 320-344)
+
+- **Tests Added**:
+  - 验证测试：快速输入场景，确保最终只显示正确的补全结果
+  - 现有测试：所有 71 个测试通过，无回归
+
+- **Verification**:
+  ```bash
+  npm test --workspace=packages/repl
+  # 71 tests passed
+  ```
+
 ---
 
 ### 085: 只读 Bash 命令白名单未在非 plan 模式复用
@@ -660,13 +774,19 @@ _Last Updated: 2026-03-12_
 ---
 
 ## Summary
-- Total: 12 (10 Open, 2 Resolved, 0 Partially Resolved, 0 Won't Fix)
-- Highest Priority Open: 082 - packages/ai 缺少单元测试 (Low)
+- Total: 13 (11 Open, 2 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Highest Priority Open: 086 - 自动补全前缀匹配方向错误导致超长输入仍匹配短选项 (High)
 - 78 issues archived to ISSUES_ARCHIVED.md (43 previous + 32 resolved + 3 Won't Fix on 2026-03-11)
 
 ---
 
 ## Changelog
+
+### 2026-03-12: Issue 086 新增
+- Added 086: 自动补全前缀匹配方向错误导致超长输入仍匹配短选项 (High Priority)
+- 根因分析：`combinedMatch()` 中的 `prefixMatch()` 检查方向错误，检查的是"选项是否以用户输入开头"而非"用户输入是否以选项开头"
+- 现象：输入 `/model zhipu-coding` 时，补全列表仍显示 `zhipu` 选项，按回车会替换为 `/model zhipu`
+- 影响文件：`packages/repl/src/interactive/fuzzy.ts`, `autocomplete-provider.ts`, `autocomplete.ts`, `argument-completer.ts`
 
 ### 2026-03-12: Issue 083 修复
 - Resolved 083: 缺少快捷键系统 (Medium Priority)

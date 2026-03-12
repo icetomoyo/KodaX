@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import type {
+  KodaXContentBlock,
   KodaXMessage,
   KodaXProviderConfig,
   KodaXProviderStreamOptions,
   KodaXStreamResult,
   KodaXToolDefinition,
+  KodaXToolResultBlock,
 } from '@kodax/ai';
 import { KodaXBaseProvider } from '@kodax/ai';
 import { compact, needsCompaction } from './compaction.js';
@@ -179,11 +181,11 @@ describe('compaction', () => {
       .filter((msg): msg is KodaXMessage & { role: 'user'; content: NonNullable<KodaXMessage['content']> } =>
         msg.role === 'user' && Array.isArray(msg.content)
       )
-      .flatMap(msg => msg.content)
-      .filter(block => block.type === 'tool_result');
+      .flatMap(msg => msg.content as KodaXContentBlock[])
+      .filter((block): block is KodaXToolResultBlock => block.type === 'tool_result');
 
     expect(result.compacted).toBe(true);
-    expect(toolResults.some(block => block.content.startsWith('[Pruned: bash cat]'))).toBe(true);
+    expect(toolResults.some(block => typeof block.content === 'string' && block.content.startsWith('[Pruned: bash cat]'))).toBe(true);
     expect(toolResults.some(block => typeof block.content === 'string' && block.content.startsWith('x x x x'))).toBe(true);
     expect(result.messages.some(msg => msg.role === 'assistant' && msg.content === 'retain assistant note')).toBe(true);
   });
