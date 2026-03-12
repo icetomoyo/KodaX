@@ -343,15 +343,21 @@ Keyboard Shortcuts:
               return false;
             }
 
-            // For bash in plan mode, only block write operations
+            // For bash in plan mode, block write operations
             if (mode === 'plan' && tool === 'bash') {
               const command = (input.command as string) ?? '';
               if (isBashWriteCommand(command)) {
                 console.log(chalk.yellow(`[Blocked] Bash write operation not allowed in plan mode: ${command.slice(0, 50)}...`));
                 return false;
               }
+            }
+
+            // All modes: safe read-only bash commands are auto-allowed BEFORE protected path check
+            // 所有模式：安全的只读 bash 命令在受保护路径检查之前就自动放行
+            if (tool === 'bash') {
+              const command = (input.command as string) ?? '';
               if (isBashReadCommand(command)) {
-                return true; // Auto-allowed for safe read-only exploration
+                return true; // Auto-allowed for safe read-only commands
               }
             }
 

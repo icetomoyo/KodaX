@@ -77,6 +77,7 @@ import { MemorySessionStorage, type SessionStorage } from "./utils/session-stora
 import { processSpecialSyntax, isShellCommandSuccess } from "./utils/shell-executor.js";
 import { extractTextContent, extractTitle } from "./utils/message-utils.js";
 import { withCapture, ConsoleCapturer } from "./utils/console-capturer.js";
+import { emitRetryHistoryItem } from "./utils/retry-history.js";
 
 // REPL options
 export interface InkREPLOptions extends KodaXOptions {
@@ -579,14 +580,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       console.log(''); // Empty line for readability
     },
     onRetry: (reason: string, attempt: number, maxAttempts: number) => {
-      // Use addHistoryItem instead of console.log so the retry message appears
-      // immediately at the time of retry, NOT deferred to the end of the turn
-      // (console.log is captured and batched into the final ℹ Info block)
-      addHistoryItem({
-        type: "info",
-        icon: "⏳",
-        text: `${reason}\n   Retry attempt ${attempt}/${maxAttempts}`,
-      });
+      emitRetryHistoryItem(addHistoryItem, reason, attempt, maxAttempts);
     },
     onProviderRateLimit: (attempt: number, maxAttempts: number, delayMs: number) => {
       addHistoryItem({
@@ -666,11 +660,21 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           console.log(chalk.yellow(`[Blocked] Bash write operation not allowed in plan mode: ${command.slice(0, 50)}...`));
           return false;
         }
-        // Allow read-only bash commands
       }
 
-      // === 2. Protected paths: always confirm ===
+      // === 2. Safe read-only bash commands: auto-allowed BEFORE protected path check ===
+      // Issue 085: All modes should allow safe read commands without confirmation
+      // 安全的只读 bash 命令在受保护路径检查之前就自动放行
+      if (tool === 'bash') {
+        const command = (input.command as string) ?? '';
+        if (isBashReadCommand(command)) {
+          return true; // Auto-allowed for safe read-only commands in all modes
+        }
+      }
+
+      // === 3. Protected paths: always confirm ===
       // Issue 052: Check both file tools AND bash commands for protected paths
+      // Note: This runs AFTER safe read check, so only non-whitelisted bash commands are affected
       if (gitRoot) {
         let isProtected = false;
 
@@ -682,7 +686,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           }
         }
 
-        // Check bash commands for protected paths in arguments
+        // Check bash commands for protected paths in arguments (only for non-read commands now)
         if (tool === 'bash') {
           const command = input.command as string | undefined;
           if (command && isCommandOnProtectedPath(command, gitRoot)) {
@@ -696,21 +700,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         }
       }
 
-      // === 3. Check if tool needs confirmation based on mode ===
+      // === 4. Check if tool needs confirmation based on mode ===
       if (confirmTools.has(tool)) {
         // In accept-edits mode, check alwaysAllowTools for bash
         if (mode === 'accept-edits' && tool === 'bash') {
           if (isToolCallAllowed(tool, input, alwaysAllowTools)) {
             return true; // Auto-allowed
-          }
-        }
-
-        // In plan mode, only explicitly safe read commands bypass the confirmation dialog.
-        // Unknown or complex commands will still block for user confirmation.
-        if (mode === 'plan' && tool === 'bash') {
-          const command = (input.command as string) ?? '';
-          if (isBashReadCommand(command)) {
-            return true; // Auto-allowed for safe read-only exploration
           }
         }
 
@@ -816,7 +811,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     onIterationEnd: (info: { iter: number; maxIter: number; tokenCount: number }) => {
       setLiveTokenCount(info.tokenCount);
     },
-  }), [appendThinkingContent, stopThinking, appendResponse, setCurrentTool, appendToolInputChars, appendToolInputContent, startNewIteration, startThinking, currentConfig, context.gitRoot, startCompacting, stopCompacting]);
+  }), [appendThinkingContent, stopThinking, appendResponse, setCurrentTool, appendToolInputChars, appendToolInputContent, startNewIteration, startThinking, currentConfig, context.gitRoot, startCompacting, stopCompacting, addHistoryItem]);
 
   // Helper function to show confirmation dialog
   // 显示确认对话框的辅助函数

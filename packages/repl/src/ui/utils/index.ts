@@ -39,6 +39,9 @@ export type { TerminalCapabilities } from "./terminalCapabilities.js";
 // Console capture utilities (Issue 040, 045)
 export { ConsoleCapturer, withCapture, withCaptureSync } from "./console-capturer.js";
 
+// Retry history utilities
+export { createRetryHistoryItem, emitRetryHistoryItem } from "./retry-history.js";
+
 // Message processing utilities
 export { extractTextContent, extractTitle, formatMessagePreview } from "./message-utils.js";
 

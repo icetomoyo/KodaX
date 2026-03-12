@@ -130,7 +130,15 @@ export async function executeWithPermission(
     }
   }
 
-  // === 2. Protected paths: always confirm ===
+  // === 2. Safe read-only bash commands: auto-allow in all modes ===
+  if (toolName === 'bash') {
+    const command = (input.command as string) ?? '';
+    if (isBashReadCommand(command)) {
+      return executeTool(toolName, input, coreContext);
+    }
+  }
+
+  // === 3. Protected paths: always confirm ===
   if (permContext.gitRoot && FILE_MODIFICATION_TOOLS.has(toolName)) {
     const targetPath = input.path as string | undefined;
     if (targetPath && isAlwaysConfirmPath(targetPath, permContext.gitRoot)) {
@@ -141,7 +149,7 @@ export async function executeWithPermission(
     }
   }
 
-  // === 3. auto-in-project: protect outside-project file edits ===
+  // === 4. auto-in-project: protect outside-project file edits ===
   if (mode === 'auto-in-project' && permContext.gitRoot && FILE_MODIFICATION_TOOLS.has(toolName)) {
     const targetPath = input.path as string | undefined;
     if (targetPath && !isPathInsideProject(targetPath, permContext.gitRoot)) {
@@ -152,7 +160,7 @@ export async function executeWithPermission(
     }
   }
 
-  // === 4. auto-in-project: protect outside-project bash commands ===
+  // === 5. auto-in-project: protect outside-project bash commands ===
   if (mode === 'auto-in-project' && permContext.gitRoot && toolName === 'bash') {
     const command = input.command as string;
     if (command) {
@@ -166,7 +174,7 @@ export async function executeWithPermission(
     }
   }
 
-  // === 5. default / accept-edits: standard confirmTools check ===
+  // === 6. default / accept-edits / plan: standard confirmTools check ===
   if (permContext.confirmTools.has(toolName)) {
     let skipConfirmation = false;
 
@@ -193,7 +201,7 @@ export async function executeWithPermission(
     }
   }
 
-  // === 6. Execute via core's executeTool() ===
+  // === 7. Execute via core's executeTool() ===
   return executeTool(toolName, input, coreContext);
 }
 

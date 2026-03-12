@@ -14,7 +14,7 @@ _Last Updated: 2026-03-12_
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
-| 085 | Medium | Open | 只读 Bash 命令白名单未在非 plan 模式复用 | v0.5.29 | - | 2026-03-12 | - |
+| 085 | Medium | Resolved | 只读 Bash 命令白名单未在非 plan 模式复用 | v0.5.29 | v0.5.30 | 2026-03-12 | 2026-03-12 |
 | 084 | High | Resolved | 流式响应长时间静默中断无任何提示 | v0.5.29 | v0.5.30 | 2026-03-12 | 2026-03-12 |
 | 013 | Low | Open | 自动补全缓存内存泄漏风险 | v0.3.1 | - | 2026-02-19 | - |
 | 014 | Low | Open | 语法高亮语言支持不全 | v0.3.1 | - | 2026-02-19 | - |
@@ -35,16 +35,18 @@ _Last Updated: 2026-03-12_
 
 ### 085: 只读 Bash 命令白名单未在非 plan 模式复用
 - **Priority**: Medium
-- **Status**: Open
+- **Status**: Resolved
 - **Introduced**: v0.5.29
+- **Fixed**: v0.5.30
 - **Created**: 2026-03-12
+- **Resolved**: 2026-03-12
 
 - **Original Problem**:
   `git diff`、`git status` 等只读 Bash 命令在 `default`、`accept-edits`、`auto-in-project` 模式下仍需要用户确认，而在 `plan` 模式下可以自动放行。
 
   根因分析：
   ```typescript
-  // InkREPL.tsx:706-711
+  // InkREPL.tsx:706-711 (修复前)
   if (mode === 'plan' && tool === 'bash') {
     const command = (input.command as string) ?? '';
     if (isBashReadCommand(command)) {
@@ -55,45 +57,39 @@ _Last Updated: 2026-03-12_
 
   `isBashReadCommand()` 白名单检查只在 `mode === 'plan'` 条件下执行，其他模式没有复用这个逻辑。
 
-- **Expected Behavior**:
-  - `BASH_SAFE_READ_COMMANDS` 白名单应该在所有模式中生效
-  - 只读命令（如 `git status`、`git diff`、`ls`、`cat` 等）应该自动放行
-  - 写命令（黑名单 `BASH_WRITE_COMMANDS`）仍需按各模式规则处理
-
-- **Current Behavior by Mode**:
-
-  | Mode | `git diff` 等只读命令 | 写命令 |
-  |------|----------------------|--------|
-  | `plan` | ✅ 自动放行（白名单） | ❌ 阻止 |
-  | `default` | ⚠️ 需要确认 | ⚠️ 需要确认 |
-  | `accept-edits` | ⚠️ 需要确认 | ⚠️ 需要确认 |
-  | `auto-in-project` | ⚠️ 需要确认 | ⚠️ 需要确认 |
-
-- **Proposed Solution**:
-  1. 将 `isBashReadCommand()` 检查逻辑从 `if (mode === 'plan')` 条件中提取出来
-  2. 在所有模式下，如果命令匹配白名单，自动放行
-  3. 写命令仍按各模式原有逻辑处理（黑名单阻止或需确认）
+- **Solution Implemented**:
+  1. 将 `isBashReadCommand()` 检查逻辑从 `if (mode === 'plan')` 条件中提取出来，使其在所有模式下都生效
+  2. 将只读命令检查移到**受保护路径检查之前**，这样项目目录外的只读命令也能自动放行
 
   ```typescript
-  // 提议的新逻辑
+  // 修复后的逻辑顺序
+  // 1. Safe read-only bash commands: auto-allowed BEFORE protected path check
   if (tool === 'bash') {
     const command = (input.command as string) ?? '';
     if (isBashReadCommand(command)) {
-      return true; // 所有模式都自动放行只读命令
+      return true; // 所有模式都自动放行只读命令（含项目目录外）
     }
-    // plan 模式下，非白名单命令走阻止逻辑
-    // 其他模式走原有确认逻辑
   }
+
+  // 2. Protected paths check (only affects non-whitelisted commands now)
+  // 受保护路径检查现在只影响非白名单命令
   ```
 
-- **Affected Files**:
+- **Fixed Behavior by Mode**:
+
+  | Mode | `git diff` 等只读命令 | 写命令 |
+  |------|----------------------|--------|
+  | `plan` | ✅ 自动放行（含项目外） | ❌ 阻止 |
+  | `default` | ✅ 自动放行（含项目外） | ⚠️ 需要确认 |
+  | `accept-edits` | ✅ 自动放行（含项目外） | ⚠️ 需要确认 |
+  | `auto-in-project` | ✅ 自动放行（含项目外） | ✅ 自动放行（项目内） |
+
+  **Note**: Safe read-only commands are auto-allowed BEFORE protected path check, meaning they work even for paths outside the project directory (e.g., `cat /etc/hosts`, `ls /tmp`).
+  **注意**：安全的只读命令在受保护路径检查之前就自动放行，即使操作项目目录外的路径（如 `cat /etc/hosts`、`ls /tmp`）也无需确认。
+
+- **Files Modified**:
   - `packages/repl/src/ui/InkREPL.tsx` - UI 层权限检查
   - `packages/repl/src/interactive/repl.ts` - 非交互模式权限检查
-  - `packages/repl/src/permission/types.ts` - 白名单定义
-
-- **Context**:
-  - 白名单定义：`BASH_SAFE_READ_COMMANDS` (types.ts:76-89)
-  - 白名单检查函数：`isBashReadCommand()` (permission.ts:30-79)
 
 ---
 
@@ -479,11 +475,12 @@ _Last Updated: 2026-03-12_
 
 ## Changelog
 
-### 2026-03-12: Issue 085 新增
-- Added 085: 只读 Bash 命令白名单未在非 plan 模式复用 (Medium Priority)
-- 现象：`git diff` 等只读命令在 default/accept-edits 模式下需要确认
-- 根因：`isBashReadCommand()` 检查只在 `mode === 'plan'` 条件下生效
-- 建议：将白名单检查逻辑提取到所有模式共用
+### 2026-03-12: Issue 085 修复
+- Added & Resolved 085: 只读 Bash 命令白名单未在非 plan 模式复用 (Medium Priority)
+- 修复内容：
+  1. 将 `isBashReadCommand()` 检查移到所有模式下都生效
+  2. 将只读命令检查移到**受保护路径检查之前**，项目目录外的只读命令也能自动放行
+- 修改文件：`packages/repl/src/ui/InkREPL.tsx`, `packages/repl/src/interactive/repl.ts`
 
 ### 2026-03-12: Issue 084 新增
 - Added 084: 流式响应长时间静默中断无任何提示 (High Priority)
