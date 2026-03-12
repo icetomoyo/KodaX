@@ -14,8 +14,20 @@ export interface CompactionConfig {
   enabled: boolean;
   /** 触发压缩的阈值百分比 (0-100)，例如 75 表示使用 75% 上下文时触发 */
   triggerPercent: number;
-  /** 保留最近消息的百分比 (0-100)。例如 10 表示保留最近 10% 的消息 */
-  keepRecentPercent: number;
+  /**
+   * @deprecated V2 渐进式滚动压缩不再需要该配置项
+   *
+   * 系统将自动执行静默修剪与滚动摘要，智能控制保留范围
+   */
+  keepRecentPercent?: number;
+
+  /** V2: 绝对保护区百分比 (默认 20)。该比例内的最新消息绝对不被压缩或修剪 */
+  protectionPercent?: number;
+  /** V2: 滚动摘要提取百分比 (默认 10)。每次强制压缩时提取的最老消息比例 */
+  rollingSummaryPercent?: number;
+  /** V2: 静默修剪的 Token 阈值估算 (默认 500)。超过此长度的工具输出才会被修剪 */
+  pruningThresholdTokens?: number;
+
   /** (可选) 覆盖 Provider 的 contextWindow */
   contextWindow?: number;
 }

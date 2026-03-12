@@ -4,7 +4,7 @@
  * 核心压缩逻辑 - 检测并执行上下文压缩
  */
 
-import type { KodaXMessage, KodaXBaseProvider } from '@kodax/ai';
+import type { KodaXMessage, KodaXBaseProvider, KodaXContentBlock } from '@kodax/ai';
 import type { CompactionConfig, CompactionResult } from './types.js';
 import { estimateTokens } from '../tokenizer.js';
 import { extractFileOps } from './file-tracker.js';
@@ -40,7 +40,7 @@ export function needsCompaction(
 }
 
 /**
- * 执行压缩
+ * 执行压缩 (V2 渐进式滚动压缩架构)
  *
  * @param messages - 消息列表
  * @param config - 压缩配置
@@ -71,30 +71,29 @@ export async function compact(
     };
   }
 
-  // 1. 提取之前的摘要（用于多轮压缩）
+  // Phase 0: 寻找并分离已有的系统摘要
   let previousSummary: string | undefined;
-  let messagesWithoutOldSummary = messages;
+  let remainingMessages = messages;
 
-  // 查找最近的 system 摘要消息
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
     if (msg?.role === 'system' && typeof msg.content === 'string' && msg.content.startsWith('[对话历史摘要]')) {
       previousSummary = msg.content.replace('[对话历史摘要]\n\n', '');
-      messagesWithoutOldSummary = [...messages.slice(0, i), ...messages.slice(i + 1)];
+      remainingMessages = [...messages.slice(0, i), ...messages.slice(i + 1)];
       break;
     }
   }
 
-  // 2. 找到切割点 (保留 keepRecentPercent)
-  const keepTokens = Math.floor(contextWindow * (config.keepRecentPercent / 100));
-  const cutIndex = findCutPoint(messagesWithoutOldSummary, keepTokens);
+  // Phase 1: 绝对保护区
+  const protectionPercent = config.protectionPercent ?? 20;
+  const protectionTokens = Math.floor(contextWindow * (protectionPercent / 100));
+  const protectCutIndex = findCutPoint(remainingMessages, protectionTokens);
 
-  // 3. 提取待压缩消息
-  const toCompact = messagesWithoutOldSummary.slice(0, cutIndex);
-  const toKeep = messagesWithoutOldSummary.slice(cutIndex);
+  const toProcess = remainingMessages.slice(0, protectCutIndex);
+  const toProtect = remainingMessages.slice(protectCutIndex);
 
-  // 边界情况：没有消息需要压缩
-  if (toCompact.length === 0) {
+  // 如果待处理区为空（比如消息都特别长或者都挤在保护区），直接返回
+  if (toProcess.length === 0) {
     return {
       compacted: false,
       messages,
@@ -104,118 +103,186 @@ export async function compact(
     };
   }
 
-  // 4. 提取整体文件操作（用于最终返回和统计）
-  const totalFileOps = extractFileOps(toCompact);
+  // 全局收集文件操作跟踪（恢复：在修剪前收集，确保追踪不丢失任何工具调用意图）
+  const totalFileOps = extractFileOps(toProcess);
 
-  // 5. 生成 LLM 摘要（传入 systemPrompt 和 previousSummary 支持多轮压缩）
-  // 引入分块逻辑，按 MAX_TOKENS_PER_CHUNK 拆分，避免单一请求过大触发 429 Rate Limit
-  const MAX_TOKENS_PER_CHUNK = 50000;
+  // Phase 2: 静默修剪 (Silent Pruning)
+  const PRUNING_THRESHOLD = config.pruningThresholdTokens ?? 500;
+  let hasPruned = false;
+  const prunedMessages: KodaXMessage[] = [];
+
+  // 构建 tool_use_id -> 简短上下文摘要 的映射
+  const toolContextMap = new Map<string, string>();
+  for (const msg of toProcess) {
+    if (msg.role === 'assistant' && Array.isArray(msg.content)) {
+      for (const block of msg.content) {
+        if (block.type === 'tool_use' && 'id' in block && typeof block.id === 'string') {
+          const name = String(block.name || 'tool');
+          const input = (block.input as Record<string, unknown>) || {};
+          let preview = name;
+
+          // 尝试提取最具代表性的短参数 (如执行的具体命令，或读写的文件名)
+          const cmdLine = input.command ?? input.CommandLine ?? input.command_line;
+          if (typeof cmdLine === 'string') {
+            const cmd = cmdLine.split(' ')[0]; // 只提取程序名，如 'ls', 'git'
+            preview = `${name} ${cmd}`;
+          } else {
+            const pathInfo = input.path ?? input.AbsolutePath ?? input.TargetFile ?? input.file;
+            if (typeof pathInfo === 'string') {
+               const file = pathInfo.split(/[\\/]/).pop(); // 仅保留文件 basename
+               preview = `${name} ${file}`;
+            }
+          }
+          toolContextMap.set(block.id, preview);
+        }
+      }
+    }
+  }
+
+  for (const msg of toProcess) {
+    if (msg.role === 'user' && Array.isArray(msg.content)) {
+      const hasToolResult = msg.content.some((b: KodaXContentBlock) => b.type === 'tool_result');
+      if (hasToolResult) {
+        const newContent = msg.content.map((block: KodaXContentBlock) => {
+          if (block.type === 'tool_result' && 'content' in block && typeof block.content === 'string') {
+            // 快速估算 (1 token ~ 4 chars)
+            if (block.content.length > PRUNING_THRESHOLD * 4) {
+              hasPruned = true;
+              const toolId = ('tool_use_id' in block && typeof block.tool_use_id === 'string') ? block.tool_use_id : undefined;
+              const hint = toolId ? toolContextMap.get(toolId) : undefined;
+              
+              const replacement = hint ? `[Pruned: ${hint}]` : '[Pruned]';
+              return {
+                ...block,
+                content: replacement
+              };
+            }
+          }
+          return block;
+        });
+        prunedMessages.push({ ...msg, content: newContent });
+        continue;
+      }
+    }
+    prunedMessages.push(msg);
+  }
+
+  const prunedQueue = [...prunedMessages, ...toProtect];
+  const tokensAfterPrune = estimateTokens(prunedQueue);
+  const thresholdToken = contextWindow * (config.triggerPercent / 100);
+
+  // 如果仅仅通过修剪就回落到安全水位，无损提前收工
+  if (hasPruned && tokensAfterPrune <= thresholdToken) {
+    const finalMessages = previousSummary 
+       ? [{ role: 'system', content: `[对话历史摘要]\n\n${previousSummary}` } as KodaXMessage, ...prunedQueue] 
+       : prunedQueue;
+       
+    return {
+      compacted: true,
+      messages: finalMessages,
+      summary: previousSummary,
+      tokensBefore,
+      tokensAfter: estimateTokens(finalMessages),
+      entriesRemoved: 0,
+      details: totalFileOps,
+    };
+  }
+
+  // Phase 3: 滚动摘要 (Rolling Summarization)
+  const rollingSummaryPercent = config.rollingSummaryPercent ?? 10;
+  const ROLLING_SUMMARIZE_TOKENS = Math.floor(contextWindow * (rollingSummaryPercent / 100));
+  // 确保至少切出1条可压缩
+  const summarizeCutIndex = Math.max(1, findForwardCutPoint(prunedMessages, ROLLING_SUMMARIZE_TOKENS));
+  
+  const toSummarize = prunedMessages.slice(0, summarizeCutIndex);
+  const stillKeptFromProcess = prunedMessages.slice(summarizeCutIndex);
+
   let summary = previousSummary || '';
-
-  if (toCompact.length > 0) {
-    const chunks = chunkMessages(toCompact, MAX_TOKENS_PER_CHUNK);
+  if (toSummarize.length > 0) {
+    const MAX_TOKENS_PER_CHUNK = 50000;
+    const chunks = chunkMessages(toSummarize, MAX_TOKENS_PER_CHUNK);
 
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i];
       if (!chunk || chunk.length === 0) continue;
-
-      // 取出当前 chunk 的独立文件操作，以免向 LLM 传递属于未来 chunk 的剧透文件信息
+      
       const chunkFileOps = extractFileOps(chunk);
-
-      const chunkSummary = await generateSummary(
+      summary = await generateSummary(
         chunk,
         provider,
-        chunkFileOps, // 传递当前被压缩片段的文件追踪
+        chunkFileOps,
         customInstructions,
         systemPrompt,
         summary !== '' ? summary : undefined
       );
-
-      summary = chunkSummary;
-
-      // 非最后一块时，暂缓 2 秒以避免连续请求再次引发 TPM 限制
+      
       if (i < chunks.length - 1) {
         await new Promise(resolve => setTimeout(resolve, 2000));
       }
     }
   }
 
-  // 6. 构建新消息历史
-  // 使用 'system' role 明确表示这是历史摘要，而非用户输入
   const summaryMessage: KodaXMessage = {
     role: 'system',
     content: `[对话历史摘要]\n\n${summary}`,
   };
 
-  const compactedMessages = [summaryMessage, ...toKeep];
-  const tokensAfter = estimateTokens(compactedMessages);
-
+  const compactedMessages = [summaryMessage, ...stillKeptFromProcess, ...toProtect];
+  
   return {
     compacted: true,
     messages: compactedMessages,
     summary,
     tokensBefore,
-    tokensAfter,
-    entriesRemoved: toCompact.length,
+    tokensAfter: estimateTokens(compactedMessages),
+    entriesRemoved: toSummarize.length,
     details: totalFileOps,
   };
 }
 
 /**
- * 找到切割点
- *
- * 从最新消息往前累加，直到达到 keepRecentTokens
- * CRITICAL: 确保 tool_use 和 tool_result 不被拆散
- *
- * 原子块规则：
- * 1. 普通 user message = 独立块
- * 2. 普通 assistant message = 独立块
- * 3. assistant(含 tool_use) + 下一条 user(含 tool_result) = 原子块，不可拆分
- *
- * @param messages - 消息列表
- * @param keepRecentTokens - 保留的最近 token 数
- * @returns 切割点索引（如果找不到有效切割点返回 0）
+ * 提取原子块的核心逻辑（复用）
+ * 保证 tool_use + tool_result 不被切散
  */
-function findCutPoint(
-  messages: KodaXMessage[],
-  keepRecentTokens: number
-): number {
-  let tokenCount = 0;
-
-  // 1. 识别所有原子块的边界
+function getAtomicBlocks(messages: KodaXMessage[]): Array<{ start: number; end: number; tokens: number }> {
   const atomicBlocks: Array<{ start: number; end: number; tokens: number }> = [];
 
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
     if (!msg) continue;
 
-    // 检查当前 assistant 消息是否包含 tool_use
     const hasToolUse = msg.role === 'assistant' &&
       Array.isArray(msg.content) &&
-      msg.content.some((b: any) => b?.type === 'tool_use');
+      msg.content.some((b: KodaXContentBlock) => b.type === 'tool_use');
 
     if (hasToolUse) {
-      // 检查下一条是否是 user 且包含 tool_result
       const nextMsg = messages[i + 1];
       const hasNextToolResult = nextMsg?.role === 'user' &&
         Array.isArray(nextMsg.content) &&
-        nextMsg.content.some((b: any) => b?.type === 'tool_result');
+        nextMsg.content.some((b: KodaXContentBlock) => b.type === 'tool_result');
 
       if (hasNextToolResult) {
-        // assistant(tool_use) + user(tool_result) = 原子块
         const tokens = estimateTokens([msg, nextMsg]);
         atomicBlocks.push({ start: i, end: i + 1, tokens });
-        i++; // 跳过下一条
+        i++;
         continue;
       }
     }
 
-    // 普通消息 = 独立块
     const tokens = estimateTokens([msg]);
     atomicBlocks.push({ start: i, end: i, tokens });
   }
 
-  // 2. 从后往前累加，找到第一个超过预算的原子块边界
+  return atomicBlocks;
+}
+
+/**
+ * 找到绝对保护区的切割点（逆向查找记录的最老位置）
+ */
+function findCutPoint(messages: KodaXMessage[], keepRecentTokens: number): number {
+  let tokenCount = 0;
+  const atomicBlocks = getAtomicBlocks(messages);
+
   for (let i = atomicBlocks.length - 1; i >= 0; i--) {
     const block = atomicBlocks[i];
     if (!block) continue;
@@ -223,55 +290,52 @@ function findCutPoint(
     tokenCount += block.tokens;
 
     if (tokenCount > keepRecentTokens) {
-      // 返回这个原子块的起始位置作为切割点
       return block.start;
     }
   }
 
-  // 所有消息都需要保留
   return 0;
 }
 
 /**
- * 将消息按 Token 和原子块限制拆分为多个分块
- * 这是为了避免一次性产生超长 payload 触发大模型 TPM Rate Limit (429)
- *
- * @param messages - 待分块的消息列表
- * @param maxTokensPerChunk - 每个分块的最大 token 容量
- * @returns 拆分后的分块数组
+ * 从前往后寻找原子块切分点（用于提取最老的 X% tokens）
  */
+function findForwardCutPoint(messages: KodaXMessage[], targetTokens: number): number {
+  let tokenCount = 0;
+  const atomicBlocks = getAtomicBlocks(messages);
+
+  if (atomicBlocks.length === 0) {
+    return messages.length > 0 ? 1 : 0;
+  }
+
+  let cutEndIndex = 0;
+  for (let i = 0; i < atomicBlocks.length; i++) {
+    const block = atomicBlocks[i];
+    if (!block) continue;
+    
+    tokenCount += block.tokens;
+    cutEndIndex = block.end + 1;
+    if (tokenCount >= targetTokens) {
+      break;
+    }
+  }
+
+  return Math.min(cutEndIndex, messages.length);
+}
+
 function chunkMessages(messages: KodaXMessage[], maxTokensPerChunk: number): KodaXMessage[][] {
   const chunks: KodaXMessage[][] = [];
   let currentChunk: KodaXMessage[] = [];
   let currentTokens = 0;
+  
+  const atomicBlocks = getAtomicBlocks(messages);
 
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i];
-    if (!msg) continue;
+  for (const block of atomicBlocks) {
+    if (!block) continue;
+    
+    const group = messages.slice(block.start, block.end + 1);
+    const groupTokens = block.tokens;
 
-    let group: KodaXMessage[] = [msg];
-
-    // 原子块检查逻辑（同 findCutPoint 保持一致）
-    const hasToolUse = msg.role === 'assistant' &&
-      Array.isArray(msg.content) &&
-      msg.content.some((b: any) => b?.type === 'tool_use');
-
-    if (hasToolUse) {
-      const nextMsg = messages[i + 1];
-      const hasNextToolResult = nextMsg?.role === 'user' &&
-        Array.isArray(nextMsg.content) &&
-        nextMsg.content.some((b: any) => b?.type === 'tool_result');
-
-      if (hasNextToolResult) {
-        group = [msg, nextMsg]; // 绑定为不可分割的原子块
-        i++; // 消耗下一条
-      }
-    }
-
-    const groupTokens = estimateTokens(group);
-
-    // 如果加入当前组会超过最大分块限制，并且当前 chunk 不为空，则新起一个 chunk
-    // 即使单个 group 超过了 maxSize，也只能硬着头皮放入新 chunk 中（不能拆散块）
     if (currentTokens + groupTokens > maxTokensPerChunk && currentChunk.length > 0) {
       chunks.push(currentChunk);
       currentChunk = [...group];
@@ -282,11 +346,9 @@ function chunkMessages(messages: KodaXMessage[], maxTokensPerChunk: number): Kod
     }
   }
 
-  // 推入最后一个 chunk
   if (currentChunk.length > 0) {
     chunks.push(currentChunk);
   }
 
   return chunks;
 }
-

@@ -579,10 +579,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       console.log(''); // Empty line for readability
     },
     onRetry: (reason: string, attempt: number, maxAttempts: number) => {
-      console.log(''); // Empty line for readability
-      console.log(chalk.yellow(`⏳ ${reason}`));
-      console.log(chalk.gray(`   Retry attempt ${attempt}/${maxAttempts}`));
-      console.log(''); // Empty line for readability
+      // Use addHistoryItem instead of console.log so the retry message appears
+      // immediately at the time of retry, NOT deferred to the end of the turn
+      // (console.log is captured and batched into the final ℹ Info block)
+      addHistoryItem({
+        type: "info",
+        icon: "⏳",
+        text: `${reason}\n   Retry attempt ${attempt}/${maxAttempts}`,
+      });
     },
     onProviderRateLimit: (attempt: number, maxAttempts: number, delayMs: number) => {
       addHistoryItem({

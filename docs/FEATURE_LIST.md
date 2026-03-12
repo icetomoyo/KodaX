@@ -1,6 +1,6 @@
 # Feature List
 
-_Last Updated: 2026-03-11 14:00_
+_Last Updated: 2026-03-12 10:30_
 
 ---
 
@@ -26,6 +26,7 @@ _Last Updated: 2026-03-11 14:00_
 | v0.5.20 | Released | 1 | 1/1 (100%) |
 | v0.5.22 | Released | 1 | 1/1 (100%) |
 | v0.6.0 | Planned | 4 | 0/4 (0%) |
+| v0.7.0 | Planned | 1 | 0/1 (0%) |
 | v0.8.0 | Planned | 1 | 0/1 (0%) |
 
 ---
@@ -51,6 +52,7 @@ _Last Updated: 2026-03-11 14:00_
 | 016 | New | Completed | High | CLI-Based OAuth Providers | v0.5.22 | v0.5.22 | [Design](features/v0.5.22.md) | 2026-03-08 | 2026-03-08 | 2026-03-08 |
 | 017 | Enhancement | Planned | High | 运行时用户输入插队 | v0.6.0 | - | [Design](features/v0.6.0.md#017) | 2026-03-11 | - | - |
 | 018 | New | Planned | High | CodeWiki - 项目知识库系统 | v0.8.0 | - | [Design](features/v0.8.0.md#018) | 2026-03-11 | - | - |
+| 019 | New | Planned | High | Session Tree & Rollback System | v0.7.0 | - | [Design](features/v0.7.0.md#019) | 2026-03-12 | - | - |
 ### 014: Project Mode Enhancement (COMPLETED)
 - **Category**: Refactor
 - **Status**: Completed
@@ -721,6 +723,75 @@ Successfully implemented the redesigned `/project` command system with the follo
 
 ---
 
+### 019: Session Tree & Rollback System (PLANNED)
+- **Category**: New
+- **Status**: Planned
+- **Priority**: High
+- **Planned**: v0.7.0
+- **Released**: -
+- **Design**: [v0.7.0.md#019](features/v0.7.0.md#019)
+- **Created**: 2026-03-12
+- **Started**: -
+- **Completed**: -
+
+**Description**:
+借鉴 pi-mono 的会话树机制，实现 KodaX 的分支导航和回滚系统。允许用户回溯到对话的任意节点并从那里继续，而不是简单的"撤销"操作。
+
+**Goals**:
+1. **数据结构迁移** - 将扁平消息数组转换为树形结构 (id/parentId)
+2. **树导航 UI** - `/tree` 命令可视化导航对话树
+3. **分支摘要** - 切换分支时可选生成 LLM 摘要
+4. **Git Checkpoint 扩展** - 可选扩展，stash 代码状态
+
+**Background**:
+- KodaX 当前是扁平数组结构，无树形导航
+- pi-mono 使用 id/parentId 构建树，支持分支导航和总结
+- 现代 AI-coding 工具都有回滚到某一步的操作
+
+**Inspired by**: [pi-mono Session Tree](https://github.com/badlogic/pi-mono)
+
+**Key Components**:
+
+| Component | Description |
+|-----------|-------------|
+| SessionManager | 核心树数据结构、持久化、导航 |
+| TreeSelector UI | TUI 组件，树可视化、过滤、折叠 |
+| Branch Summary | LLM 生成分支切换摘要 |
+| `/tree` Command | 打开树导航器 |
+| `/fork` Command | 从节点分叉到新会话文件 |
+| git-checkpoint | 可选扩展，代码状态回滚 |
+
+**Data Structure Change**:
+```typescript
+// Current (v1) - Flat array
+interface SessionData {
+  messages: KodaXMessage[];
+}
+
+// New (v2) - Tree entries
+interface SessionEntryBase {
+  type: string;
+  id: string;              // 8-char hex ID
+  parentId: string | null; // Links to parent
+  timestamp: string;
+}
+```
+
+**Key Files to Create/Modify**:
+- `packages/agent/src/session/types.ts` - Entry 类型定义
+- `packages/agent/src/session/manager.ts` - SessionManager 类
+- `packages/agent/src/session/migration.ts` - V1→V2 迁移
+- `packages/repl/src/ui/components/tree-selector.tsx` - 树导航组件
+- `packages/repl/src/interactive/commands.ts` - /tree, /fork 命令
+- `packages/coding/src/extensions/git-checkpoint.ts` - Git 扩展
+
+**Design Decisions**:
+1. **摘要触发**: 每次询问用户 (pi-mono 模式)
+2. **Git checkpoint**: 作为可选扩展
+3. **Implementation priority**: 完整实现
+
+---
+
 ### 015: Project Mode 2.0 - AI-Driven Development Workflow (PLANNED)
 - **Category**: Enhancement
 - **Status**: Planned
@@ -773,9 +844,9 @@ Successfully implemented the redesigned `/project` command system with the follo
 ---
 
 ## Summary
-- Total: 17 (5 Planned, 0 In Progress, 12 Completed)
-- By Priority: Critical: 3, High: 10, Medium: 2, Low: 0
+- Total: 18 (6 Planned, 0 In Progress, 12 Completed)
+- By Priority: Critical: 3, High: 11, Medium: 2, Low: 0
 - Current Version: v0.5.29
 - Next Release (v0.6.0): 4 features planned (007, 013, 015, 017)
-- Future Releases: v0.7.0+ (TBD)
-- Highest Priority Planned: 013 - Command System 2.0 (High), 015 - Project Mode 2.0 (High), 017 - 运行时用户输入插队 (High)
+- Future Releases: v0.7.0 (019), v0.8.0 (018)
+- Highest Priority Planned: 013 - Command System 2.0 (High), 015 - Project Mode 2.0 (High), 017 - 运行时用户输入插队 (High), 019 - Session Tree & Rollback System (High)

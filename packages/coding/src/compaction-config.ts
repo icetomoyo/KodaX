@@ -15,7 +15,6 @@ import type { CompactionConfig } from '@kodax/agent';
 const DEFAULT_CONFIG: CompactionConfig = {
   enabled: true,
   triggerPercent: 75,     // 使用 75% 上下文时触发压缩
-  keepRecentPercent: 10,  // 保留最近 10% 的消息
 };
 
 /**
