@@ -1510,6 +1510,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         setCurrentTool={setCurrentTool}
         setIsLoading={setIsLoading}
         onToggleHelp={toggleHelp}
+        setShowHelp={setShowHelp}
+        onSetThinking={(enabled) => {
+          currentOptionsRef.current.thinking = enabled;
+        }}
         isInputEmpty={isInputEmpty}
         onSavePermissionMode={savePermissionModeUser}
       />
@@ -1586,13 +1590,17 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             <Text dimColor>
               <Text bold>? toggle help</Text>
               {'  '}
-              <Text>Ctrl+L clear</Text>
-              {'  '}
               <Text>Ctrl+T thinking</Text>
               {'  '}
               <Text>Ctrl+O mode</Text>
               {'  '}
               <Text>Ctrl+C interrupt</Text>
+              {'  '}
+              <Text color="cyan">/</Text>
+              <Text> commands</Text>
+              {'  '}
+              <Text color="cyan">@</Text>
+              <Text> files</Text>
             </Text>
           </Box>
         )}

@@ -32,17 +32,6 @@ export const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
   },
 
   {
-    id: 'clearScreen',
-    name: '清屏',
-    description: '清空终端屏幕',
-    defaultBindings: [{ key: 'l', ctrl: true }],
-    context: 'global',
-    priority: 150, // Must be higher than InputPrompt (100) to intercept before input handling
-    category: 'global',
-    configurable: true,
-  },
-
-  {
     id: 'showHelp',
     name: '显示帮助',
     description: '显示快捷键帮助面板',

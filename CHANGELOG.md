@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Removed clear screen shortcut (Ctrl+L) to avoid display issues
+- Enhanced help panel with autocomplete hints (/ for commands, @ for files)
+- Help panel now auto-hides when using other shortcuts (Ctrl+T, Ctrl+O)
+- Removed console logs from mode/thinking toggle shortcuts
+
 ---
 
 ## [0.5.35] - 2026-03-13

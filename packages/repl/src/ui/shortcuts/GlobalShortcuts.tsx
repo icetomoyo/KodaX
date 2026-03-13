@@ -36,6 +36,9 @@ export interface GlobalShortcutsProps {
   setIsLoading: (loading: boolean) => void;
   /** Toggle help panel - 切换帮助面板 */
   onToggleHelp: () => void;
+  /** Set help visibility - 设置帮助栏可见性 */
+  setShowHelp: (visible: boolean) => void;
+  onSetThinking?: (enabled: boolean) => void;
   /** Whether input is empty (for ? shortcut) - 输入是否为空（用于 ? 快捷键） */
   isInputEmpty: boolean;
   /** Save permission mode to config - 保存权限模式到配置 */
@@ -56,6 +59,8 @@ export function GlobalShortcuts({
   setCurrentTool,
   setIsLoading,
   onToggleHelp,
+  setShowHelp,
+  onSetThinking,
   isInputEmpty,
   onSavePermissionMode,
 }: GlobalShortcutsProps): null {
@@ -78,12 +83,6 @@ export function GlobalShortcuts({
     { isActive: isLoading }
   );
 
-  // === Clear screen shortcut (Ctrl+L) ===
-  useShortcut('clearScreen', () => {
-    console.clear();
-    return true;
-  });
-
   // === Show help shortcut (?) ===
   // Only show help when input is empty - otherwise let ? be typed normally
   // 只有输入为空时才显示帮助，否则允许正常输入 ? 字符
@@ -99,9 +98,9 @@ export function GlobalShortcuts({
   useShortcut('toggleThinking', () => {
     const newThinking = !currentConfig.thinking;
     setCurrentConfig((prev: CurrentConfig) => ({ ...prev, thinking: newThinking }));
-    console.log(
-      chalk.cyan(`\n[Extended Thinking ${newThinking ? 'ON' : 'OFF'}]`)
-    );
+    onSetThinking?.(newThinking);
+    // Hide help panel when using other shortcuts - 使用其他快捷键时隐藏帮助栏
+    setShowHelp(false);
     return true;
   });
 
@@ -115,7 +114,8 @@ export function GlobalShortcuts({
 
     setCurrentConfig((prev: CurrentConfig) => ({ ...prev, permissionMode: newMode }));
     onSavePermissionMode?.(newMode); // Persist to config
-    console.log(chalk.cyan(`\n[Permission Mode: ${newMode}]`));
+    // Hide help panel when using other shortcuts - 使用其他快捷键时隐藏帮助栏
+    setShowHelp(false);
     return true;
   });
 
