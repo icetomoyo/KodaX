@@ -11,7 +11,6 @@
 import React, {
   createContext,
   useContext,
-  useEffect,
   useState,
   useCallback,
   type ReactNode,
@@ -69,18 +68,13 @@ export function ShortcutsProvider({
 }: ShortcutsProviderProps): React.ReactElement {
   const [showHelp, setShowHelp] = useState(false);
   const [currentContext, setCurrentContext] = useState<ShortcutContext>(initialContext);
-  const [, forceUpdate] = useState({});
 
-  // Initialize registry with default shortcuts on mount
-  useEffect(() => {
-    const registry = getShortcutsRegistry();
-
-    // Register default shortcuts
-    registry.registerAll(DEFAULT_SHORTCUTS);
-
-    // Force re-render after registration
-    forceUpdate({});
-  }, []);
+  // Initialize registry with default shortcuts SYNCHRONOUSLY
+  // This MUST happen during render (not in useEffect) to ensure shortcuts
+  // are registered before child components try to use them
+  // MUST be sync - 子组件在渲染时就需要访问快捷键定义，所以必须同步注册
+  const registry = getShortcutsRegistry();
+  registry.registerAll(DEFAULT_SHORTCUTS);
 
   // Toggle help handler
   const toggleHelp = useCallback(() => {

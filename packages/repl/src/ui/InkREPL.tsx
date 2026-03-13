@@ -1589,6 +1589,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           </Box>
         )}
 
+        {/* Spacer between help and status bar - 帮助栏和状态栏之间的空行 */}
+        {showHelp && <Box><Text> </Text></Box>}
+
         {/* Status Bar */}
         <Box>
           <StatusBar
