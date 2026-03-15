@@ -112,9 +112,8 @@ export interface SkillFile {
 // === Skill Sources ===
 
 export type SkillSource =
-  | 'enterprise' // ~/.kodax/skills/enterprise/
-  | 'user' // ~/.kodax/skills/
-  | 'project' // .kodax/skills/
+  | 'project' // <projectRoot>/.kodax/skills/
+  | 'user' // ~/.kodax/skills/ or ~/.agent/skills/
   | 'plugin' // Plugin-provided skills
   | 'builtin'; // Built-in skills
 
@@ -181,9 +180,8 @@ export interface IVariableResolver {
 // === Skill Paths Configuration ===
 
 export interface SkillPathsConfig {
-  enterprisePaths: string[];
-  userPaths: string[];
   projectPaths: string[];
+  userPaths: string[];
   pluginPaths: string[];
   builtinPath: string;
 }
@@ -201,25 +199,30 @@ const __dirname = dirname(__filename);
 
 /**
  * Get default skill discovery paths
+ *
+ * Priority order (highest first):
+ * 1. Project - <projectRoot>/.kodax/skills/
+ * 2. User - ~/.kodax/skills/
+ * 3. User - ~/.agents/skills/ (AgentSkills standard)
+ * 4. Plugin - (dynamic)
+ * 5. Builtin - packages/skills/src/builtin/
  */
 export function getDefaultSkillPaths(projectRoot?: string): SkillPathsConfig {
   const home = homedir();
 
   return {
-    // Enterprise-level (highest priority)
-    enterprisePaths: [path.join(home, '.kodax', 'skills', 'enterprise')],
-
-    // User-level - ~/.kodax/skills/
-    userPaths: [
-      path.join(home, '.kodax', 'skills'),
-    ],
-
-    // Project-level - .kodax/skills/
+    // Project-level (highest priority) - .kodax/skills/
     projectPaths: projectRoot
       ? [
           path.join(projectRoot, '.kodax', 'skills'),
         ]
       : [],
+
+    // User-level - ~/.kodax/skills/ and ~/.agents/skills/
+    userPaths: [
+      path.join(home, '.kodax', 'skills'),
+      path.join(home, '.agents', 'skills'),
+    ],
 
     // Plugin-level (to be configured)
     pluginPaths: [],
@@ -232,10 +235,9 @@ export function getDefaultSkillPaths(projectRoot?: string): SkillPathsConfig {
 /**
  * All skill paths in priority order (highest to lowest)
  *
- * Priority: Project > User > Enterprise > Plugin > Builtin
+ * Priority: Project > User > Plugin > Builtin
  * - Project: Project-specific skills override everything else
- * - User: User preferences override enterprise/plugin/builtin
- * - Enterprise: Company-wide defaults
+ * - User: User preferences (~/.kodax/ and ~/.agents/)
  * - Plugin: Third-party plugins
  * - Builtin: Default skills shipped with KodaX
  */
@@ -248,9 +250,6 @@ export function getSkillPathsFlat(config: SkillPathsConfig): Array<{ path: strin
   }
   for (const p of config.userPaths) {
     result.push({ path: p, source: 'user' });
-  }
-  for (const p of config.enterprisePaths) {
-    result.push({ path: p, source: 'enterprise' });
   }
   for (const p of config.pluginPaths) {
     result.push({ path: p, source: 'plugin' });
