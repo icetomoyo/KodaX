@@ -16,6 +16,10 @@ export interface AskUserQuestionInput {
   question: string;
   options: AskUserQuestionOption[];
   default?: string;
+  intent?: "generic" | "plan-handoff";
+  target_mode?: "accept-edits";
+  scope?: "session";
+  resume_behavior?: "continue";
 }
 
 /**
@@ -51,6 +55,10 @@ export async function toolAskUserQuestion(
         value: opt.value || opt.label || String(opt),
       })),
       default: input.default as string | undefined,
+      intent: input.intent as "generic" | "plan-handoff" | undefined,
+      targetMode: input.target_mode as "accept-edits" | undefined,
+      scope: input.scope as "session" | undefined,
+      resumeBehavior: input.resume_behavior as "continue" | undefined,
     });
 
     return JSON.stringify({

@@ -204,6 +204,7 @@ export interface AppProps {
   model: string;
   provider: string;
   onSubmit: (input: string) => Promise<void>;
+  permissionMode?: PermissionMode;
 }
 
 // ============================================================================

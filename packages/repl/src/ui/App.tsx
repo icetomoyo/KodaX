@@ -32,7 +32,12 @@ function messageToHistoryItem(msg: Message): HistoryItem {
   }
 }
 
-export const App: React.FC<AppProps> = ({ model, provider, onSubmit }) => {
+export const App: React.FC<AppProps> = ({
+  model,
+  provider,
+  onSubmit,
+  permissionMode = "accept-edits",
+}) => {
   const { stdout } = useStdout();
   const theme = useMemo(() => getTheme("dark"), []);
 
@@ -153,7 +158,7 @@ export const App: React.FC<AppProps> = ({ model, provider, onSubmit }) => {
       <Box flexShrink={0}>
         <StatusBar
           sessionId={state.sessionId}
-          permissionMode="accept-edits"
+          permissionMode={permissionMode}
           provider={provider}
           model={model}
           tokenUsage={tokenUsage ?? undefined}

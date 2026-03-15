@@ -163,6 +163,10 @@ export interface AskUserQuestionOptions {
     value: string;
   }>;
   default?: string;
+  intent?: "generic" | "plan-handoff";
+  targetMode?: "accept-edits";
+  scope?: "session";
+  resumeBehavior?: "continue";
 }
 
 export interface KodaXToolExecutionContext {

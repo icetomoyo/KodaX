@@ -93,6 +93,13 @@ import { processSpecialSyntax, isShellCommandSuccess } from "./utils/shell-execu
 import { extractTextContent, extractTitle, resolveAssistantHistoryText } from "./utils/message-utils.js";
 import { withCapture, ConsoleCapturer } from "./utils/console-capturer.js";
 import { emitRetryHistoryItem } from "./utils/retry-history.js";
+import {
+  getAskUserDialogTitle,
+  resolveAskUserDismissChoice,
+  shouldSwitchToAcceptEdits,
+  toSelectOptions,
+  type SelectOption,
+} from "./utils/ask-user.js";
 
 // REPL options
 export interface InkREPLOptions extends KodaXOptions {
@@ -116,6 +123,9 @@ interface BannerProps {
   workingDir: string;
   compactionInfo?: { contextWindow: number; triggerPercent: number; enabled: boolean };
 }
+
+const PLAN_MODE_BLOCK_GUIDANCE =
+  "Do not try to modify files while planning. Finish the plan first, then use ask_user_question with intent \"plan-handoff\" to ask whether this session should switch to accept-edits and continue.";
 
 function resolveInitialReasoningMode(
   options: Pick<KodaXOptions, 'reasoningMode' | 'thinking'>,
@@ -410,7 +420,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     | {
       kind: "select";
       title: string;
-      options: string[];
+      options: SelectOption[];
       buffer: string;
       error?: string;
     }
@@ -456,6 +466,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   // Permission-related refs (not part of KodaXOptions anymore)
   const permissionModeRef = useRef<PermissionMode>(currentConfig.permissionMode);
   const alwaysAllowToolsRef = useRef<string[]>(loadAlwaysAllowTools());
+
+  const setSessionPermissionMode = useCallback((mode: PermissionMode) => {
+    setCurrentConfig((prev) => ({ ...prev, permissionMode: mode }));
+    permissionModeRef.current = mode;
+  }, []);
 
   // Double-ESC detection for interrupt - 双击 ESC 中断检测
   const lastEscPressRef = useRef<number>(0);
@@ -542,7 +557,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     uiResolveRef.current = null;
   }, []);
 
-  const showSelectDialog = useCallback((title: string, options: string[]): Promise<string | undefined> => {
+  const showSelectDialogWithOptions = useCallback((title: string, options: SelectOption[]): Promise<string | undefined> => {
     if (options.length === 0) {
       return Promise.resolve(undefined);
     }
@@ -557,6 +572,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       });
     });
   }, []);
+
+  const showSelectDialog = useCallback((title: string, options: string[]): Promise<string | undefined> => {
+    return showSelectDialogWithOptions(
+      title,
+      options.map((option) => ({ label: option, value: option })),
+    );
+  }, [showSelectDialogWithOptions]);
 
   const showInputDialog = useCallback((prompt: string, defaultValue?: string): Promise<string | undefined> => {
     return new Promise((resolve) => {
@@ -600,7 +622,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             return;
           }
 
-          resolveUIRequest(uiRequest.options[index]);
+          resolveUIRequest(uiRequest.options[index]?.value);
           return;
         }
 
@@ -831,7 +853,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       // Block file modification tools and undo
       if (mode === 'plan' && (FILE_MODIFICATION_TOOLS.has(tool) || tool === 'undo')) {
         console.log(chalk.yellow(`[Blocked] Tool '${tool}' is not allowed in plan mode (read-only)`));
-        return `[Blocked] Tool '${tool}' is not allowed in plan mode (read-only). If you have finished planning and need to write files, you can use the 'ask_user_question' tool to request changing the mode to 'accept-edits' for human permission. If you are still planning, file modifications are not allowed in plan mode, please think of other ways or explain your plan.`;
+        return `[Blocked] Tool '${tool}' is not allowed in plan mode (read-only). ${PLAN_MODE_BLOCK_GUIDANCE}`;
       }
 
       // For bash in plan mode, only block write operations
@@ -839,7 +861,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         const command = (input.command as string) ?? '';
         if (isBashWriteCommand(command)) {
           console.log(chalk.yellow(`[Blocked] Bash write operation not allowed in plan mode: ${command.slice(0, 50)}...`));
-          return `[Blocked] Bash write operation not allowed in plan mode: ${command.slice(0, 50)}... If you have finished planning and need to write files, you can use the 'ask_user_question' tool to request changing the mode to 'accept-edits' for human permission. If you are still planning, file modifications are not allowed in plan mode, please think of other ways or explain your plan.`;
+          return `[Blocked] Bash write operation not allowed in plan mode: ${command.slice(0, 50)}... ${PLAN_MODE_BLOCK_GUIDANCE}`;
         }
       }
 
@@ -945,49 +967,17 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     },
     // Issue 069: Ask user a question interactively - 交互式向用户提问
     askUser: async (options: import("@kodax/coding").AskUserQuestionOptions): Promise<string> => {
-      // Display question and options
-      console.log('');
-      console.log(chalk.cyan('❓ ' + options.question));
-      console.log('');
+      const selectedValue = await showSelectDialogWithOptions(
+        getAskUserDialogTitle(options),
+        toSelectOptions(options.options),
+      );
+      const resolvedValue = selectedValue ?? resolveAskUserDismissChoice(options);
 
-      options.options.forEach((opt, index) => {
-        const num = (index + 1).toString().padStart(2, ' ');
-        const desc = opt.description ? chalk.dim(` - ${opt.description}`) : '';
-        console.log(`  ${chalk.yellow(num)}${chalk.bold('.')} ${opt.label}${desc}`);
-      });
+      if (shouldSwitchToAcceptEdits(permissionModeRef.current, options, resolvedValue)) {
+        setSessionPermissionMode("accept-edits");
+      }
 
-      console.log('');
-
-      // Wait for user input using readline
-      return new Promise((resolve) => {
-        const readline = require('readline');
-        const rl = readline.createInterface({
-          input: process.stdin,
-          output: process.stdout,
-        });
-
-        const defaultHint = options.default ? ` (default: ${options.default})` : '';
-        rl.question(chalk.dim(`Enter your choice [1-${options.options.length}]${defaultHint}: `), (answer: string) => {
-          rl.close();
-
-          // Handle default
-          if (!answer.trim() && options.default) {
-            resolve(options.default);
-            return;
-          }
-
-          // Parse number
-          const num = parseInt(answer.trim(), 10);
-          if (num >= 1 && num <= options.options.length) {
-            resolve(options.options[num - 1]!.value);
-            return;
-          }
-
-          // Invalid input - return first option as fallback
-          console.log(chalk.yellow(`Invalid choice. Using: ${options.options[0]!.label}`));
-          resolve(options.options[0]!.value);
-        });
-      });
+      return resolvedValue;
     },
     onCompactStart: () => {
       // Trigger the compacting UI indicator before actual compaction begins
@@ -1349,8 +1339,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             currentOptionsRef.current.reasoningMode = mode;
           },
           setPermissionMode: (mode: PermissionMode) => {
-            setCurrentConfig((prev) => ({ ...prev, permissionMode: mode }));
-            permissionModeRef.current = mode;
+            setSessionPermissionMode(mode);
           },
           deleteSession: async (id: string) => {
             await storage.delete?.(id);
@@ -1862,7 +1851,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           currentOptionsRef.current.thinking = mode !== 'off';
         }}
         onSetPermissionMode={(mode) => {
-          permissionModeRef.current = mode;
+          setSessionPermissionMode(mode);
         }}
         isInputEmpty={isInputEmpty}
         onSavePermissionMode={savePermissionModeUser}
@@ -2035,8 +2024,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
                   [Select] {uiRequest.title}
                 </Text>
                 {uiRequest.options.map((option, index) => (
-                  <Text key={`${option}-${index}`} dimColor>
-                    {`${index + 1}. ${option}`}
+                  <Text key={`${option.value}-${index}`} dimColor>
+                    {`${index + 1}. ${option.label}${option.description ? ` - ${option.description}` : ""}`}
                   </Text>
                 ))}
                 <Text dimColor>{`Choice: ${uiRequest.buffer || "(type a number)"}`}</Text>

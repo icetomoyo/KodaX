@@ -73,6 +73,118 @@ describe("executeWithPermission", () => {
     expect(executeToolMock).not.toHaveBeenCalled();
   });
 
+  it("blocks Windows del commands in plan mode without confirmation", async () => {
+    const onConfirm = vi.fn(async () => ({ confirmed: true }));
+    const permissionContext = createPermissionContext({
+      permissionMode: "plan",
+      onConfirm,
+    });
+
+    const result = await executeWithPermission(
+      "bash",
+      { command: "cd C:\\repo && del /Q tmp.txt" },
+      {} as never,
+      permissionContext,
+    );
+
+    expect(result).toContain("[Blocked] Bash write operation not allowed in plan mode");
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(executeToolMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks PowerShell write cmdlets in plan mode without confirmation", async () => {
+    const onConfirm = vi.fn(async () => ({ confirmed: true }));
+    const permissionContext = createPermissionContext({
+      permissionMode: "plan",
+      onConfirm,
+    });
+
+    const result = await executeWithPermission(
+      "bash",
+      { command: "Set-Content notes.txt 'hello'" },
+      {} as never,
+      permissionContext,
+    );
+
+    expect(result).toContain("[Blocked] Bash write operation not allowed in plan mode");
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(executeToolMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks uppercase PowerShell write cmdlets in plan mode without confirmation", async () => {
+    const onConfirm = vi.fn(async () => ({ confirmed: true }));
+    const permissionContext = createPermissionContext({
+      permissionMode: "plan",
+      onConfirm,
+    });
+
+    const result = await executeWithPermission(
+      "bash",
+      { command: "REMOVE-ITEM notes.txt" },
+      {} as never,
+      permissionContext,
+    );
+
+    expect(result).toContain("[Blocked] Bash write operation not allowed in plan mode");
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(executeToolMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks shell redirection writes in plan mode without confirmation", async () => {
+    const onConfirm = vi.fn(async () => ({ confirmed: true }));
+    const permissionContext = createPermissionContext({
+      permissionMode: "plan",
+      onConfirm,
+    });
+
+    const result = await executeWithPermission(
+      "bash",
+      { command: "echo test > output.txt" },
+      {} as never,
+      permissionContext,
+    );
+
+    expect(result).toContain("[Blocked] Bash write operation not allowed in plan mode");
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(executeToolMock).not.toHaveBeenCalled();
+  });
+
+  it("auto-allows Get-ChildItem in plan mode as a safe read command", async () => {
+    const onConfirm = vi.fn(async () => ({ confirmed: false }));
+    const permissionContext = createPermissionContext({
+      permissionMode: "plan",
+      onConfirm,
+    });
+
+    const result = await executeWithPermission(
+      "bash",
+      { command: "Get-ChildItem -Force" },
+      {} as never,
+      permissionContext,
+    );
+
+    expect(result).toBe("[executed]");
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(executeToolMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not misclassify Windows service control queries as file writes", async () => {
+    const onConfirm = vi.fn(async () => ({ confirmed: false }));
+    const permissionContext = createPermissionContext({
+      permissionMode: "plan",
+      onConfirm,
+    });
+
+    const result = await executeWithPermission(
+      "bash",
+      { command: "sc query wuauserv" },
+      {} as never,
+      permissionContext,
+    );
+
+    expect(result).not.toContain("[Blocked] Bash write operation not allowed in plan mode");
+  });
+
   it("keeps auto-in-project permissive for safe read-only bash", async () => {
     const onConfirm = vi.fn(async () => ({ confirmed: false }));
     const permissionContext = createPermissionContext({

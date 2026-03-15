@@ -284,12 +284,12 @@ export async function executeWithPermission(
   // === 1. Plan mode: block all modification tools ===
   if (mode === 'plan') {
     if (FILE_MODIFICATION_TOOLS.has(toolName) || toolName === 'undo') {
-      return `[Blocked] Tool '${toolName}' is not allowed in plan mode (read-only). If you have finished planning and need to write files, you can use the 'ask_user_question' tool to request changing the mode to 'accept-edits' for human permission. If you are still planning, file modifications are not allowed in plan mode, please think of other ways or explain your plan.`;
+      return `[Blocked] Tool '${toolName}' is not allowed in plan mode (read-only). Do not try to modify files while planning. Finish the plan first, then use ask_user_question with intent "plan-handoff" to ask whether this session should switch to accept-edits and continue.`;
     }
     if (toolName === 'bash') {
       const command = (input.command as string) ?? '';
       if (isBashWriteCommand(command)) {
-        return `[Blocked] Bash write operation not allowed in plan mode: ${command.slice(0, 50)}... If you have finished planning and need to write files, you can use the 'ask_user_question' tool to request changing the mode to 'accept-edits' for human permission. If you are still planning, file modifications are not allowed in plan mode, please think of other ways or explain your plan.`;
+        return `[Blocked] Bash write operation not allowed in plan mode: ${command.slice(0, 50)}... Do not try to modify files while planning. Finish the plan first, then use ask_user_question with intent "plan-handoff" to ask whether this session should switch to accept-edits and continue.`;
       }
     }
   }

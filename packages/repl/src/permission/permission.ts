@@ -152,6 +152,20 @@ const BASH_WRITE_COMMAND_REGEXES = Array.from(BASH_WRITE_COMMANDS).map(writeCmd 
   return new RegExp(`(^|[|&;><]\\s*)${escapedCmd}(\\s|$)`);
 });
 
+const BASH_WRITE_SUBCOMMAND_PATTERNS = [
+  /\bremove-item\b/,
+  /\bset-content\b/,
+  /\badd-content\b/,
+  /\bout-file\b/,
+  /\bnew-item\b/,
+  /\bcopy-item\b/,
+  /\bmove-item\b/,
+  /\brename-item\b/,
+  /\bni\b/,
+];
+
+const BASH_REDIRECTION_WRITE_PATTERN = /(^|[^<])>>?(?=\s*\S)/;
+
 /**
  * Check if a bash command is a write operation
  * 检查 bash 命令是否是发布写操作的黑名单
@@ -167,6 +181,16 @@ export function isBashWriteCommand(command: string): boolean {
 
   for (const regex of BASH_WRITE_COMMAND_REGEXES) {
     if (regex.test(normalizedCommand)) {
+      return true;
+    }
+  }
+
+  if (BASH_REDIRECTION_WRITE_PATTERN.test(normalizedCommand)) {
+    return true;
+  }
+
+  for (const pattern of BASH_WRITE_SUBCOMMAND_PATTERNS) {
+    if (pattern.test(normalizedCommand)) {
       return true;
     }
   }

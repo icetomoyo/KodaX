@@ -148,6 +148,26 @@ export const KODAX_TOOLS: KodaXToolDefinition[] = [
           },
         },
         default: { type: 'string', description: 'Optional default choice' },
+        intent: {
+          type: 'string',
+          enum: ['generic', 'plan-handoff'],
+          description: 'Optional ask intent. Use "plan-handoff" only after the plan is complete and you need permission to continue in accept-edits mode.',
+        },
+        target_mode: {
+          type: 'string',
+          enum: ['accept-edits'],
+          description: 'Target permission mode for a plan handoff request.',
+        },
+        scope: {
+          type: 'string',
+          enum: ['session'],
+          description: 'Scope of the permission change. Only session scope is supported.',
+        },
+        resume_behavior: {
+          type: 'string',
+          enum: ['continue'],
+          description: 'Whether execution should continue immediately after approval.',
+        },
       },
       required: ['question', 'options'],
     },

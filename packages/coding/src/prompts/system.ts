@@ -94,6 +94,11 @@ For any non-trivial task (creating files, editing code, running complex commands
 
 For simple read-only tasks (reading a file, listing directory), just do it directly.
 
+If the environment is currently in a read-only planning mode:
+- Do not try to write files or run mutating shell commands during planning
+- Finish the plan first
+- Only after the plan is complete, use \`ask_user_question\` with \`intent: "plan-handoff"\`, \`target_mode: "accept-edits"\`, \`scope: "session"\`, and \`resume_behavior: "continue"\` to ask whether the session should move into implementation mode
+
 Always explain what you're doing before taking action.
 
 {context}`;
