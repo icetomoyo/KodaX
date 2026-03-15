@@ -1013,8 +1013,7 @@ function printSkillsListPiMonoStyle(skills: SkillMetadata[]): void {
     // 显示所有技能来源，project 级别不显示（默认）
     const sourceLabel = skill.source === 'builtin' ? ' [builtin]'
       : skill.source === 'user' ? ' [user]'
-        : skill.source === 'enterprise' ? ' [enterprise]'
-          : skill.source === 'plugin' ? ' [plugin]'
+      : skill.source === 'plugin' ? ' [plugin]'
             : '';
     // pi-mono style: /skill:name
     const desc = skill.description.length > 50
@@ -1033,18 +1032,18 @@ function printSkillsListPiMonoStyle(skills: SkillMetadata[]): void {
 const commandRegistry = new CommandRegistry();
 
 // Initialize command registry - 初始化命令注册表
-function initCommandRegistry(): void {
+function initCommandRegistry(projectRoot?: string): void {
   if (commandRegistry.size > 0) {
     return;
   }
 
   // Register all commands (builtin + discovered user/project commands)
   // 注册所有命令（内置 + 发现的用户/项目命令）
-  registerAllCommands(commandRegistry);
+  registerAllCommands(commandRegistry, projectRoot);
 }
 
-export function getCommandRegistry(): CommandRegistry {
-  initCommandRegistry();
+export function getCommandRegistry(projectRoot?: string): CommandRegistry {
+  initCommandRegistry(projectRoot);
   return commandRegistry;
 }
 
@@ -1095,7 +1094,7 @@ export async function executeCommand(
 ): Promise<CommandResult> {
   // Lazy initialization - 延迟初始化
   if (commandRegistry.size === 0) {
-    initCommandRegistry();
+    initCommandRegistry(context.gitRoot);
   }
 
   // Handle /skill:name format (pi-mono style) - 处理 /skill:name 格式
