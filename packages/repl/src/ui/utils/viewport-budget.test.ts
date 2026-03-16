@@ -31,6 +31,21 @@ describe("viewport-budget", () => {
     expect(budget.messageRows).toBeGreaterThan(0);
   });
 
+  it("accounts for queued inline input feedback", () => {
+    const budget = calculateViewportBudget({
+      terminalRows: 24,
+      terminalWidth: 60,
+      inputText: "",
+      pendingInputSummary: "Queued 2 follow-ups. Latest: check tests too (Esc removes latest)",
+      suggestionsReserved: false,
+      showHelp: false,
+      statusBarText: "status",
+    });
+
+    expect(budget.pendingInputRows).toBeGreaterThan(0);
+    expect(budget.messageRows).toBeGreaterThan(0);
+  });
+
   it("clamps select dialog options and keeps message rows positive", () => {
     const budget = calculateViewportBudget({
       terminalRows: 16,

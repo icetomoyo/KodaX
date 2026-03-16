@@ -10,6 +10,7 @@ import { runKodaX, KodaXOptions, KodaXMessage } from '@kodax/coding';
 import { ProjectStorage } from './project-storage.js';
 import {
   ProjectFeature,
+  ProjectStatistics,
 } from './project-state.js';
 import {
   InteractiveContext,
@@ -19,6 +20,11 @@ import {
   CurrentConfig,
 } from './commands.js';
 import { buildInitPrompt } from '../common/utils.js';
+import {
+  buildProjectQualityReport,
+  formatProjectQualityReport,
+  type ProjectQualityReport,
+} from './project-quality.js';
 
 // ============== 运行时状态管理 ==============
 
@@ -63,6 +69,66 @@ function createConfirmFn(rl: readline.Interface): (message: string) => Promise<b
   };
 }
 
+async function projectQuality(
+  context: InteractiveContext,
+  callbacks: CommandCallbacks,
+): Promise<void> {
+  const storage = getProjectStorage();
+
+  if (!(await storage.exists())) {
+    console.log(chalk.yellow('\n[No project found]'));
+    console.log(chalk.dim('Use /project init <task> to initialize a project\n'));
+    return;
+  }
+
+  const snapshot = await loadProjectSnapshot(storage);
+  if (!snapshot) {
+    console.log(chalk.red('\n[Error] Failed to load project features\n'));
+    return;
+  }
+
+  const report = buildProjectQualityReport(
+    snapshot.features,
+    snapshot.progressText,
+    snapshot.sessionPlan,
+  );
+
+  console.log(chalk.cyan('\n/project quality - Workflow Health\n'));
+  printProjectQualitySection(report);
+
+  const options = callbacks.createKodaXOptions?.();
+  if (!options) {
+    printFallbackGuidedStatus('Assess workflow health and release readiness.', snapshot, report);
+    return;
+  }
+
+  try {
+    const content = await runProjectAnalysis(
+      options,
+      context,
+      buildProjectAnalysisPrompt(
+        snapshot,
+        report,
+        'Assess workflow health and release readiness.',
+        'quality',
+      ),
+    );
+
+    if (content) {
+      console.log(chalk.cyan('AI Quality Review'));
+      console.log(content);
+      console.log();
+    } else {
+      printFallbackGuidedStatus('Assess workflow health and release readiness.', snapshot, report);
+    }
+  } catch (error) {
+    console.log(chalk.yellow('\n[Warning] AI quality analysis failed, showing fallback summary instead.\n'));
+    console.log(chalk.dim(error instanceof Error ? error.message : String(error)));
+    console.log();
+    printFallbackGuidedStatus('Assess workflow health and release readiness.', snapshot, report);
+  }
+}
+
 /**
  * 创建问题提示函数
  */
@@ -79,6 +145,177 @@ function createQuestionFn(rl: readline.Interface): (prompt: string) => Promise<s
  */
 function getProjectStorage(): ProjectStorage {
   return new ProjectStorage(process.cwd());
+}
+
+interface ProjectSnapshot {
+  features: ProjectFeature[];
+  stats: ProjectStatistics;
+  progressText: string;
+  sessionPlan: string;
+  nextFeature: { feature: ProjectFeature; index: number } | null;
+}
+
+async function loadProjectSnapshot(storage: ProjectStorage): Promise<ProjectSnapshot | null> {
+  const featureList = await storage.loadFeatures();
+  if (!featureList) {
+    return null;
+  }
+
+  const [stats, progressText, sessionPlan, nextFeature] = await Promise.all([
+    storage.getStatistics(),
+    storage.readProgress(),
+    storage.readSessionPlan(),
+    storage.getNextPendingFeature(),
+  ]);
+
+  return {
+    features: featureList.features,
+    stats,
+    progressText,
+    sessionPlan,
+    nextFeature,
+  };
+}
+
+function buildProgressBar(percentage: number, length = 20): string {
+  const completedBars = Math.round((percentage / 100) * length);
+  return `${'#'.repeat(completedBars)}${'-'.repeat(length - completedBars)}`;
+}
+
+function printProjectStatusOverview(snapshot: ProjectSnapshot): void {
+  console.log(chalk.cyan('\nProject Status'));
+  console.log(chalk.dim(`  ${'-'.repeat(28)}`));
+  console.log(
+    `  ${snapshot.stats.completed}/${snapshot.stats.total} completed (${snapshot.stats.percentage}%)  [${buildProgressBar(snapshot.stats.percentage)}]`,
+  );
+  console.log(`  ${snapshot.stats.pending} pending, ${snapshot.stats.skipped} skipped`);
+
+  if (snapshot.nextFeature) {
+    const desc = snapshot.nextFeature.feature.description || snapshot.nextFeature.feature.name || 'Unnamed';
+    console.log(chalk.cyan(`\nNext: #${snapshot.nextFeature.index} - ${desc}`));
+  } else if (snapshot.stats.pending === 0) {
+    console.log(chalk.green('\nAll features completed or skipped'));
+  }
+
+  console.log();
+  console.log(chalk.dim('Use --features or --progress for details, or /project quality for workflow health.'));
+  console.log();
+}
+
+function getPendingFeaturePreview(features: readonly ProjectFeature[]): ProjectFeature[] {
+  return features.filter(feature => !feature.passes && !feature.skipped).slice(0, 8);
+}
+
+function extractMessageText(message: KodaXMessage | undefined): string {
+  if (!message?.content) {
+    return '';
+  }
+
+  if (typeof message.content === 'string') {
+    return message.content;
+  }
+
+  return message.content
+    .map(part => ('text' in part ? part.text : '') || '')
+    .join('');
+}
+
+function printProjectQualitySection(report: ProjectQualityReport): void {
+  console.log(formatProjectQualityReport(report));
+  console.log();
+}
+
+function printFallbackGuidedStatus(
+  guidance: string,
+  snapshot: ProjectSnapshot,
+  report: ProjectQualityReport,
+): void {
+  console.log(chalk.cyan('Guided Status Summary'));
+  console.log(chalk.dim(`Question: ${guidance}`));
+
+  const highIssue = report.issues.find(issue => issue.severity === 'high');
+  if (highIssue) {
+    console.log(chalk.yellow(`Primary risk: ${highIssue.title}`));
+    console.log(chalk.dim(`  ${highIssue.detail}`));
+  } else if (snapshot.nextFeature) {
+    const nextDesc =
+      snapshot.nextFeature.feature.description || snapshot.nextFeature.feature.name || 'Unnamed';
+    console.log(chalk.green(`Suggested next move: implement #${snapshot.nextFeature.index} (${nextDesc})`));
+  } else {
+    console.log(chalk.green('Suggested next move: prepare release validation and documentation.'));
+  }
+
+  if (report.phases.test.status === 'pending') {
+    console.log(chalk.dim('Test loop: no test evidence is recorded yet, so add or run validation before moving on.'));
+  } else if (report.phases.review.status === 'pending') {
+    console.log(chalk.dim('Review loop: implementation exists, but review evidence is still missing.'));
+  } else {
+    console.log(chalk.dim(`Workflow score: ${report.overallScore}/100.`));
+  }
+
+  console.log();
+}
+
+function buildProjectAnalysisPrompt(
+  snapshot: ProjectSnapshot,
+  report: ProjectQualityReport,
+  guidance: string,
+  mode: 'status' | 'quality',
+): string {
+  const pendingFeatures = getPendingFeaturePreview(snapshot.features);
+  const objective =
+    mode === 'quality'
+      ? 'Assess release readiness and workflow health. Highlight the most important gaps and the next concrete actions.'
+      : `Answer the user's project-status question directly: "${guidance}"`;
+
+  return `You are reviewing the state of a software project managed by KodaX.
+
+Objective:
+${objective}
+
+Project statistics:
+- Total features: ${snapshot.stats.total}
+- Completed: ${snapshot.stats.completed} (${snapshot.stats.percentage}%)
+- Pending: ${snapshot.stats.pending}
+- Skipped: ${snapshot.stats.skipped}
+
+Pending features:
+${JSON.stringify(pendingFeatures, null, 2)}
+
+Progress log excerpt:
+${snapshot.progressText || '(empty)'}
+
+Session plan:
+${snapshot.sessionPlan || '(empty)'}
+
+Deterministic quality report:
+${formatProjectQualityReport(report)}
+
+Respond in concise markdown with:
+1. Direct assessment
+2. Risks or workflow gaps
+3. Next actions
+
+Keep it actionable and avoid repeating raw JSON.`;
+}
+
+async function runProjectAnalysis(
+  options: KodaXOptions,
+  context: InteractiveContext,
+  prompt: string,
+): Promise<string> {
+  const result = await runKodaX(
+    {
+      ...options,
+      session: {
+        ...options.session,
+        initialMessages: context.messages,
+      },
+    },
+    prompt,
+  );
+
+  return extractMessageText(result.messages[result.messages.length - 1]);
 }
 
 /**
@@ -180,6 +417,50 @@ export function printProjectHelp(): void {
   console.log(chalk.bold('Commands:'));
   console.log(chalk.cyan('  init') + chalk.dim(' <task> [--append|--overwrite]') + '  Initialize project');
   console.log(chalk.cyan('  status') + chalk.dim(' [prompt] [--features|--progress]') + '  View status');
+  console.log(chalk.cyan('  quality') + '                         Review workflow quality and release readiness');
+  console.log(chalk.cyan('  next') + chalk.dim(' [prompt|#index] [--no-confirm]') + '  Run next/specific feature');
+  console.log(chalk.cyan('  auto') + chalk.dim(' [prompt] [--max=N|--confirm]') + '  Auto-run all');
+  console.log(chalk.cyan('  edit') + chalk.dim(' [#index] <prompt>') + '  AI-driven editing');
+  console.log(chalk.cyan('  reset') + chalk.dim(' [--all]') + '  Clear progress or delete files');
+  console.log(chalk.cyan('  analyze') + chalk.dim(' [prompt]') + '  AI-powered analysis');
+  console.log(chalk.dim('  mark <n> [done|skip]  [deprecated: use edit instead]'));
+  console.log(chalk.dim('  list, progress        [deprecated: use status --features/--progress]'));
+
+  console.log();
+  console.log(chalk.bold('Edit Command:'));
+  console.log(chalk.dim('  Single:  /project edit #3 "mark as completed"'));
+  console.log(chalk.dim('  Global:  /project edit "delete all completed features"'));
+  console.log(chalk.dim('  Actions: complete, skip, delete, modify description, add steps'));
+
+  console.log();
+  console.log(chalk.bold('Reset Command:'));
+  console.log(chalk.dim('  /project reset        Clear PROGRESS.md (keep features)'));
+  console.log(chalk.dim('  /project reset --all  Delete all 3 project files'));
+  console.log(chalk.yellow('  Note: only deletes files created by /project init'));
+
+  console.log();
+  console.log(chalk.bold('Feature Index:'));
+  console.log(chalk.dim('  Use #<number> to reference features (e.g., #0, #3, #5)'));
+
+  console.log();
+  console.log(chalk.bold('Quick Examples:'));
+  console.log(chalk.dim('  /p init "Build API" -> /p status -> /p next -> /p auto'));
+  console.log(chalk.dim('  /p quality  |  /p status "what is blocking release?"'));
+  console.log(chalk.dim('  /p edit #3 "mark complete"  |  /p edit "delete skipped features"'));
+  console.log(chalk.dim('  /p analyze  |  /p analyze "risk review"'));
+
+  console.log();
+  console.log(chalk.dim('Aliases: /proj, /p  |  For detailed help, read docs/features/v0.6.0.md'));
+  console.log();
+  return;
+  /*
+
+  console.log(chalk.cyan('\n/project - Project Management\n'));
+
+  console.log(chalk.bold('Commands:'));
+  console.log(chalk.cyan('  init') + chalk.dim(' <task> [--append|--overwrite]') + '  Initialize project');
+  console.log(chalk.cyan('  status') + chalk.dim(' [prompt] [--features|--progress]') + '  View status');
+  console.log(chalk.cyan('  quality') + '                         Review workflow quality and release readiness');
   console.log(chalk.cyan('  next') + chalk.dim(' [prompt|#index] [--no-confirm]') + '  Run next/specific feature');
   console.log(chalk.cyan('  auto') + chalk.dim(' [prompt] [--max=N|--confirm]') + '  Auto-run all');
   console.log(chalk.cyan('  edit') + chalk.dim(' [#index] <prompt>') + '  AI-driven editing');
@@ -207,18 +488,24 @@ export function printProjectHelp(): void {
   console.log();
   console.log(chalk.bold('Quick Examples:'));
   console.log(chalk.dim('  /p init "Build API" → /p status → /p next → /p auto'));
+  console.log(chalk.dim('  /p quality  |  /p status "what is blocking release?"'));
   console.log(chalk.dim('  /p edit #3 "标记完成"  |  /p edit "删除已跳过的"'));
   console.log(chalk.dim('  /p analyze  |  /p analyze "风险评估"'));
 
   console.log();
   console.log(chalk.dim('Aliases: /proj, /p  |  For detailed help, read docs/features/v0.5.20.md'));
   console.log();
+  */
 }
 
 /**
  * 显示项目状态
  */
-async function projectStatus(args: string[]): Promise<void> {
+async function projectStatus(
+  args: string[],
+  context: InteractiveContext,
+  callbacks: CommandCallbacks,
+): Promise<void> {
   const storage = getProjectStorage();
 
   if (!(await storage.exists())) {
@@ -231,13 +518,49 @@ async function projectStatus(args: string[]): Promise<void> {
   const showFeatures = args.includes('--features');
   const showProgress = args.includes('--progress');
   const guidance = args.filter(a => !a.startsWith('--')).join(' ');
+  const snapshot = await loadProjectSnapshot(storage);
+
+  if (!snapshot) {
+    console.log(chalk.red('\n[Error] Failed to load project features\n'));
+    return;
+  }
 
   // 如果有 guidance，提示 AI 分析功能待实现
   if (guidance) {
-    console.log(chalk.cyan('\n/project status - AI-Powered Analysis'));
-    console.log(chalk.dim('\n[AI analysis coming in future release]'));
-    console.log(chalk.dim(`Your request: "${guidance}"`));
-    console.log(chalk.dim('For now, use --features or --progress options.\n'));
+    const report = buildProjectQualityReport(
+      snapshot.features,
+      snapshot.progressText,
+      snapshot.sessionPlan,
+    );
+
+    console.log(chalk.cyan('\n/project status - Guided Analysis\n'));
+    printProjectQualitySection(report);
+
+    const options = callbacks.createKodaXOptions?.();
+    if (!options) {
+      printFallbackGuidedStatus(guidance, snapshot, report);
+      return;
+    }
+
+    try {
+      const content = await runProjectAnalysis(
+        options,
+        context,
+        buildProjectAnalysisPrompt(snapshot, report, guidance, 'status'),
+      );
+
+      if (content) {
+        console.log(content);
+        console.log();
+      } else {
+        printFallbackGuidedStatus(guidance, snapshot, report);
+      }
+    } catch (error) {
+      console.log(chalk.yellow('\n[Warning] AI status analysis failed, showing fallback summary instead.\n'));
+      console.log(chalk.dim(error instanceof Error ? error.message : String(error)));
+      console.log();
+      printFallbackGuidedStatus(guidance, snapshot, report);
+    }
     return;
   }
 
@@ -256,6 +579,10 @@ async function projectStatus(args: string[]): Promise<void> {
     return;
   }
 
+  printProjectStatusOverview(snapshot);
+  return;
+  /*
+
   // 默认：显示简洁状态概览
   const stats = await storage.getStatistics();
   const next = await storage.getNextPendingFeature();
@@ -271,8 +598,8 @@ async function projectStatus(args: string[]): Promise<void> {
   console.log(`  ⏳ ${stats.pending} pending, ${stats.skipped} skipped`);
 
   if (next) {
-    const desc = next.feature.description || next.feature.name || 'Unnamed';
-    console.log(chalk.cyan(`\nNext: #${next.index} - ${desc}`));
+    const desc = next!.feature.description || next!.feature.name || 'Unnamed';
+    console.log(chalk.cyan(`\nNext: #${next!.index} - ${desc}`));
   } else if (stats.pending === 0) {
     console.log(chalk.green('\n  ✓ All features completed or skipped'));
   }
@@ -280,6 +607,7 @@ async function projectStatus(args: string[]): Promise<void> {
   console.log();
   console.log(chalk.dim('Use --features or --progress for detailed view'));
   console.log();
+  */
 }
 
 /**
@@ -1394,7 +1722,12 @@ export async function handleProjectCommand(
     case 'status':
     case 'st':
     case 'info':
-      await projectStatus(args.slice(1));
+      await projectStatus(args.slice(1), context, callbacks);
+      break;
+
+    case 'quality':
+    case 'q':
+      await projectQuality(context, callbacks);
       break;
 
     case 'next':

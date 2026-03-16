@@ -829,7 +829,7 @@ export const BUILTIN_COMMANDS: Command[] = [
     name: 'project',
     aliases: ['proj'],
     description: 'Project long-running task management',
-    usage: '/project [init|status|next|auto|pause|list|mark|progress]',
+    usage: '/project [init|status|quality|next|auto|pause|list|mark|progress]',
     handler: async (args, context, callbacks, currentConfig) => {
       return await handleProjectCommand(args, context, callbacks, currentConfig);
     },

@@ -139,6 +139,15 @@ describe("StreamingManager", () => {
       manager.abort();
       expect(manager.getState().abortController).toBeUndefined();
     });
+
+    it("should clear queued follow-ups after abort", () => {
+      manager.startStreaming();
+      manager.addPendingInput("queued");
+
+      manager.abort();
+
+      expect(manager.getState().pendingInputs).toEqual([]);
+    });
   });
 
   describe("reset", () => {
@@ -221,6 +230,65 @@ describe("StreamingManager", () => {
       expect(listener).not.toHaveBeenCalled();
     });
   });
+
+  describe("pending input queue", () => {
+    it("should queue trimmed inputs in FIFO order", () => {
+      manager.addPendingInput("  first task  ");
+      manager.addPendingInput("second task");
+
+      expect(manager.getState().pendingInputs).toEqual(["first task", "second task"]);
+    });
+
+    it("should ignore empty queued input", () => {
+      manager.addPendingInput("   ");
+      expect(manager.getState().pendingInputs).toEqual([]);
+    });
+
+    it("should cap queued inputs at five items", () => {
+      for (let i = 1; i <= 6; i++) {
+        manager.addPendingInput(`item ${i}`);
+      }
+
+      expect(manager.getState().pendingInputs).toEqual([
+        "item 1",
+        "item 2",
+        "item 3",
+        "item 4",
+        "item 5",
+      ]);
+    });
+
+    it("should remove the last queued input", () => {
+      manager.addPendingInput("first");
+      manager.addPendingInput("second");
+      manager.removeLastPendingInput();
+
+      expect(manager.getState().pendingInputs).toEqual(["first"]);
+    });
+
+    it("should shift the next queued input in FIFO order", () => {
+      manager.addPendingInput("first");
+      manager.addPendingInput("second");
+
+      expect(manager.shiftPendingInput()).toBe("first");
+      expect(manager.getState().pendingInputs).toEqual(["second"]);
+    });
+
+    it("should consume queued inputs and clear the queue", () => {
+      manager.addPendingInput("first");
+      manager.addPendingInput("second");
+
+      expect(manager.consumePendingInputs()).toEqual(["first", "second"]);
+      expect(manager.getState().pendingInputs).toEqual([]);
+    });
+
+    it("should clear queued inputs on reset", () => {
+      manager.addPendingInput("queued");
+      manager.reset();
+
+      expect(manager.getState().pendingInputs).toEqual([]);
+    });
+  });
 });
 
 describe("StreamingContextValue Type", () => {
@@ -235,6 +303,12 @@ describe("StreamingContextValue Type", () => {
       thinkingContent: "",
       currentTool: undefined,
       toolInputCharCount: 0,
+      toolInputContent: "",
+      iterationHistory: [],
+      currentIteration: 1,
+      maxIter: 200,
+      isCompacting: false,
+      pendingInputs: [],
     };
 
     expect(state.state).toBe(StreamingState.Idle);
@@ -258,6 +332,12 @@ describe("StreamingContextValue Type", () => {
         thinkingCharCount: 0,
         thinkingContent: "",
         toolInputCharCount: 0,
+        toolInputContent: "",
+        iterationHistory: [],
+        currentIteration: 1,
+        maxIter: 200,
+        isCompacting: false,
+        pendingInputs: [],
       };
       expect(ctx.state).toBe(s);
     }
@@ -270,6 +350,13 @@ describe("StreamingContextValue Type", () => {
       isThinking: true,
       thinkingCharCount: 100,
       thinkingContent: "Analyzing the code...",
+      toolInputCharCount: 0,
+      toolInputContent: "",
+      iterationHistory: [],
+      currentIteration: 1,
+      maxIter: 200,
+      isCompacting: false,
+      pendingInputs: [],
     };
 
     expect(ctx.isThinking).toBe(true);
@@ -286,6 +373,12 @@ describe("StreamingContextValue Type", () => {
       thinkingContent: "",
       currentTool: "Read",
       toolInputCharCount: 500,
+      toolInputContent: "",
+      iterationHistory: [],
+      currentIteration: 1,
+      maxIter: 200,
+      isCompacting: false,
+      pendingInputs: [],
     };
 
     expect(ctx.currentTool).toBe("Read");
@@ -308,8 +401,24 @@ describe("StreamingActions Type", () => {
       appendThinkingChars: vi.fn(),
       appendThinkingContent: vi.fn(),
       stopThinking: vi.fn(),
+      clearThinkingContent: vi.fn(),
       setCurrentTool: vi.fn(),
       appendToolInputChars: vi.fn(),
+      appendToolInputContent: vi.fn(),
+      clearToolInputContent: vi.fn(),
+      getSignal: vi.fn(),
+      getFullResponse: vi.fn(() => ""),
+      getThinkingContent: vi.fn(() => ""),
+      startNewIteration: vi.fn(),
+      clearIterationHistory: vi.fn(),
+      setMaxIter: vi.fn(),
+      startCompacting: vi.fn(),
+      stopCompacting: vi.fn(),
+      addPendingInput: vi.fn(),
+      removeLastPendingInput: vi.fn(),
+      shiftPendingInput: vi.fn(() => undefined),
+      clearPendingInputs: vi.fn(),
+      consumePendingInputs: vi.fn(() => []),
     };
 
     expect(typeof actions.startStreaming).toBe("function");
@@ -323,8 +432,12 @@ describe("StreamingActions Type", () => {
     expect(typeof actions.appendThinkingChars).toBe("function");
     expect(typeof actions.appendThinkingContent).toBe("function");
     expect(typeof actions.stopThinking).toBe("function");
+    expect(typeof actions.clearThinkingContent).toBe("function");
     expect(typeof actions.setCurrentTool).toBe("function");
     expect(typeof actions.appendToolInputChars).toBe("function");
+    expect(typeof actions.addPendingInput).toBe("function");
+    expect(typeof actions.shiftPendingInput).toBe("function");
+    expect(typeof actions.consumePendingInputs).toBe("function");
   });
 });
 

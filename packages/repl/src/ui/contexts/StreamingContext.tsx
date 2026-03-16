@@ -15,6 +15,7 @@ import React, {
   type ReactNode,
 } from "react";
 import { StreamingState } from "../types.js";
+import { MAX_PENDING_INPUTS } from "../utils/pending-inputs.js";
 
 // === Types ===
 
@@ -80,6 +81,7 @@ export interface StreamingContextValue {
 
   /** 是否正在压缩上下文 */
   isCompacting: boolean;
+  pendingInputs: string[];
 }
 
 /**
@@ -157,6 +159,11 @@ export interface StreamingActions {
 
   /** 结束压缩上下文 */
   stopCompacting: () => void;
+  addPendingInput: (input: string) => void;
+  removeLastPendingInput: () => void;
+  shiftPendingInput: () => string | undefined;
+  clearPendingInputs: () => void;
+  consumePendingInputs: () => string[];
 }
 
 /**
@@ -181,6 +188,7 @@ const DEFAULT_STREAMING_STATE: StreamingContextValue = {
   currentIteration: 1,
   maxIter: 200, // Default max iterations - 默认最大迭代次数
   isCompacting: false,
+  pendingInputs: [],
 };
 
 // === Streaming Manager ===
@@ -272,6 +280,11 @@ export interface StreamingManager {
 
   /** Stop compacting context - 结束压缩上下文 */
   stopCompacting: () => void;
+  addPendingInput: (input: string) => void;
+  removeLastPendingInput: () => void;
+  shiftPendingInput: () => string | undefined;
+  clearPendingInputs: () => void;
+  consumePendingInputs: () => string[];
 }
 
 /**
@@ -396,6 +409,7 @@ export function createStreamingManager(): StreamingManager {
         ...state,
         state: StreamingState.Idle,
         abortController: undefined,
+        pendingInputs: [],
       };
       notify();
     },
@@ -612,6 +626,76 @@ export function createStreamingManager(): StreamingManager {
       };
       notify();
     },
+
+    addPendingInput: (input: string) => {
+      const trimmed = input.trim();
+      if (!trimmed || state.pendingInputs.length >= MAX_PENDING_INPUTS) {
+        return;
+      }
+
+      flushPendingUpdates();
+      state = {
+        ...state,
+        pendingInputs: [...state.pendingInputs, trimmed],
+      };
+      notify();
+    },
+
+    removeLastPendingInput: () => {
+      if (state.pendingInputs.length === 0) {
+        return;
+      }
+
+      flushPendingUpdates();
+      state = {
+        ...state,
+        pendingInputs: state.pendingInputs.slice(0, -1),
+      };
+      notify();
+    },
+
+    shiftPendingInput: () => {
+      if (state.pendingInputs.length === 0) {
+        return undefined;
+      }
+
+      flushPendingUpdates();
+      const [nextInput, ...rest] = state.pendingInputs;
+      state = {
+        ...state,
+        pendingInputs: rest,
+      };
+      notify();
+      return nextInput;
+    },
+
+    clearPendingInputs: () => {
+      if (state.pendingInputs.length === 0) {
+        return;
+      }
+
+      flushPendingUpdates();
+      state = {
+        ...state,
+        pendingInputs: [],
+      };
+      notify();
+    },
+
+    consumePendingInputs: () => {
+      if (state.pendingInputs.length === 0) {
+        return [];
+      }
+
+      flushPendingUpdates();
+      const pendingInputs = state.pendingInputs;
+      state = {
+        ...state,
+        pendingInputs: [],
+      };
+      notify();
+      return pendingInputs;
+    },
   };
 }
 
@@ -747,6 +831,26 @@ export function StreamingProvider({
     managerRef.current.stopCompacting();
   }, []);
 
+  const addPendingInput = useCallback((input: string) => {
+    managerRef.current.addPendingInput(input);
+  }, []);
+
+  const removeLastPendingInput = useCallback(() => {
+    managerRef.current.removeLastPendingInput();
+  }, []);
+
+  const shiftPendingInput = useCallback(() => {
+    return managerRef.current.shiftPendingInput();
+  }, []);
+
+  const clearPendingInputs = useCallback(() => {
+    managerRef.current.clearPendingInputs();
+  }, []);
+
+  const consumePendingInputs = useCallback(() => {
+    return managerRef.current.consumePendingInputs();
+  }, []);
+
   const actions: StreamingActions = {
     startStreaming,
     stopStreaming,
@@ -772,6 +876,11 @@ export function StreamingProvider({
     setMaxIter,
     startCompacting,
     stopCompacting,
+    addPendingInput,
+    removeLastPendingInput,
+    shiftPendingInput,
+    clearPendingInputs,
+    consumePendingInputs,
   };
 
   return React.createElement(

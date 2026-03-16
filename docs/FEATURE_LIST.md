@@ -27,7 +27,7 @@ _Last Updated: 2026-03-16_
 | v0.5.22 | Released | 1 | 1/1 (100%) |
 | v0.5.34 | Released | 1 | 1/1 (100%) |
 | v0.5.37 | Released | 1 | 1/1 (100%) |
-| v0.6.0 | In Development | 5 | 3/5 (60%) |
+| v0.6.0 | In Development | 5 | 4/5 (80%) |
 | v0.7.0 | Planned | 1 | 0/1 (0%) |
 | v0.8.0 | Planned | 2 | 0/2 (0%) |
 
@@ -51,9 +51,9 @@ _Last Updated: 2026-03-16_
 | 012 | Enhancement | Completed | High | TUI 自动补全增强 | v0.5.0 | v0.5.13 | [Design](features/v0.5.0.md#012) | 2026-03-02 | 2026-03-05 | 2026-03-05 |
 | 013 | Refactor | Completed | High | Command System 2.0 | v0.6.0 | - | [Design](features/v0.6.0.md#013) | 2026-03-03 | 2026-03-13 | 2026-03-16 |
 | 014 | Refactor | Completed | High | Project Mode Enhancement | v0.5.20 | v0.5.20 | [Design](features/v0.5.20.md) | 2026-03-07 | 2026-03-07 | 2026-03-07 |
-| 015 | Enhancement | Planned | High | Project Mode 2.0 - AI-Driven Development Workflow | v0.6.0 | - | [Design](features/v0.6.0.md#015) | 2026-03-07 | - | - |
+| 015 | Enhancement | InProgress | High | Project Mode 2.0 - AI-Driven Development Workflow | v0.6.0 | - | [Design](features/v0.6.0.md#015) | 2026-03-07 | 2026-03-17 | - |
 | 016 | New | Completed | High | CLI-Based OAuth Providers | v0.5.22 | v0.5.22 | [Design](features/v0.5.22.md) | 2026-03-08 | 2026-03-08 | 2026-03-08 |
-| 017 | Enhancement | Planned | High | 运行时用户输入插队 | v0.6.0 | - | [Design](features/v0.6.0.md#017) | 2026-03-11 | - | - |
+| 017 | Enhancement | Completed | High | 运行时用户输入插队 | v0.6.0 | - | [Design](features/v0.6.0.md#017) | 2026-03-11 | 2026-03-17 | 2026-03-17 |
 | 018 | New | Planned | High | CodeWiki - 项目知识库系统 | v0.8.0 | - | [Design](features/v0.8.0.md#018) | 2026-03-11 | - | - |
 | 019 | New | Planned | High | Session Tree & Rollback System | v0.7.0 | - | [Design](features/v0.7.0.md#019) | 2026-03-12 | - | - |
 | 020 | New | Completed | High | AGENTS.md - 项目级 AI 上下文规则 | v0.6.0 | v0.5.34 | [Design](features/v0.6.0.md#020) | 2026-03-13 | 2026-03-13 | 2026-03-13 |
@@ -99,7 +99,7 @@ _Last Updated: 2026-03-16_
 
 ---
 
-### 015: Project Mode 2.0 - AI-Driven Development Workflow (PLANNED)
+### 015: Project Mode 2.0 - AI-Driven Development Workflow (IN PROGRESS)
 
 ---
 
@@ -684,16 +684,16 @@ Successfully implemented the redesigned `/project` command system with the follo
 
 ---
 
-### 017: 运行时用户输入插队 (PLANNED)
+### 017: 运行时用户输入插队 (COMPLETED)
 - **Category**: Enhancement
-- **Status**: Planned
+- **Status**: Completed
 - **Priority**: High
 - **Planned**: v0.6.0
 - **Released**: -
 - **Design**: [v0.6.0.md#017](features/v0.6.0.md#017)
 - **Created**: 2026-03-11
-- **Started**: -
-- **Completed**: -
+- **Started**: 2026-03-17
+- **Completed**: 2026-03-17
 
 **Description**:
 在 KodaX 运行时（LLM 回答、流式输出或自动工具运行过程中）能够接受用户输入，并将其插入到下一轮对话中作为最新提示。类似 Codex CLI 和 Claude Code 的 inline input 功能。
@@ -866,15 +866,15 @@ interface SessionEntryBase {
 
 ---
 
-### 015: Project Mode 2.0 - AI-Driven Development Workflow (PLANNED)
+### 015: Project Mode 2.0 - AI-Driven Development Workflow (IN PROGRESS)
 - **Category**: Enhancement
-- **Status**: Planned
+- **Status**: InProgress
 - **Priority**: High
 - **Planned**: v0.6.0
 - **Released**: -
 - **Design**: [v0.6.0.md#015](features/v0.6.0.md#015)
 - **Created**: 2026-03-07
-- **Started**: -
+- **Started**: 2026-03-17
 - **Completed**: -
 
 **Description**:
@@ -918,9 +918,9 @@ interface SessionEntryBase {
 ---
 
 ## Summary
-- Total: 21 (5 Planned, 0 In Progress, 16 Completed)
+- Total: 21 (3 Planned, 1 In Progress, 17 Completed)
 - By Priority: Critical: 3, High: 16, Medium: 2, Low: 0
 - Current Version: v0.5.42
-- Next Release (v0.6.0): 5 features (013, 015, 017, 020, 021), 3 completed and 2 planned
+- Next Release (v0.6.0): 5 features (013, 015, 017, 020, 021), 4 completed and 1 in progress
 - Future Releases: v0.7.0 (019), v0.8.0 (007, 018)
-- Highest Priority Planned: 007 - 主题系统完善 (Medium), 015 - Project Mode 2.0 (High), 017 - 运行时用户输入插队 (High), 018 - CodeWiki - 项目知识库系统 (High), 019 - Session Tree & Rollback System (High)
+- Highest Priority Planned: 007 - 主题系统完善 (Medium), 018 - CodeWiki - 项目知识库系统 (High), 019 - Session Tree & Rollback System (High)

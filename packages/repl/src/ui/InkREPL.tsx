@@ -15,6 +15,7 @@ import { render, Box, useApp, Text, Static, useInput, useStdout } from "ink";
 import { InputPrompt } from "./components/InputPrompt.js";
 import { MessageList } from "./components/MessageList.js";
 import { ThinkingIndicator } from "./components/LoadingIndicator.js";
+import { PendingInputsIndicator } from "./components/PendingInputsIndicator.js";
 import { StatusBar, getStatusBarText } from "./components/StatusBar.js";
 import { SuggestionsDisplay } from "./components/SuggestionsDisplay.js";
 import {
@@ -99,6 +100,8 @@ import {
 import { withCapture, ConsoleCapturer } from "./utils/console-capturer.js";
 import { emitRetryHistoryItem } from "./utils/retry-history.js";
 import { calculateViewportBudget } from "./utils/viewport-budget.js";
+import { formatPendingInputsSummary, MAX_PENDING_INPUTS } from "./utils/pending-inputs.js";
+import { runQueuedPromptSequence } from "./utils/queued-prompt-sequence.js";
 import {
   getAskUserDialogTitle,
   resolveAskUserDismissChoice,
@@ -357,6 +360,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     startCompacting,
     stopCompacting,
     setMaxIter,
+    addPendingInput,
+    removeLastPendingInput,
+    shiftPendingInput,
   } = useStreamingActions();
 
   // State
@@ -366,6 +372,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const [isRunning, setIsRunning] = useState(true);
   const [showBanner, setShowBanner] = useState(true); // Show banner in Ink UI
   const [submitCounter, setSubmitCounter] = useState(0); // Counter to trigger clear on submit
+  const [canQueueFollowUps, setCanQueueFollowUps] = useState(false);
   const [liveTokenCount, setLiveTokenCount] = useState<number | null>(null); // Live token count for real-time display
   const lastCompactionTokensBeforeRef = useRef<number | null>(null);
   const [isInputEmpty, setIsInputEmpty] = useState(true); // Track if input is empty for ? shortcut
@@ -498,6 +505,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   ]);
 
   const statusBarText = useMemo(() => getStatusBarText(statusBarProps), [statusBarProps]);
+  const pendingInputSummary = useMemo(
+    () => formatPendingInputsSummary(streamingState.pendingInputs),
+    [streamingState.pendingInputs]
+  );
   const terminalRows = stdout.rows || process.stdout.rows || 24;
   const viewportBudget = useMemo(
     // 统一预算所有底部区块占用的行数，消息区只拿剩余可见行，避免最后一行被布局副作用裁掉。
@@ -505,6 +516,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       terminalRows,
       terminalWidth,
       inputText,
+      pendingInputSummary,
       suggestionsReserved: shouldReserveSuggestionsSpace,
       showHelp,
       statusBarText,
@@ -535,6 +547,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       terminalRows,
       terminalWidth,
       inputText,
+      pendingInputSummary,
       shouldReserveSuggestionsSpace,
       showHelp,
       statusBarText,
@@ -588,6 +601,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
       // ESC requires a double-press to interrupt.
       if (key.name === "escape") {
+        if (!isInputEmpty) {
+          return false;
+        }
+
         const now = Date.now();
         const timeSinceLastEsc = now - lastEscPressRef.current;
 
@@ -601,11 +618,17 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           setIsLoading(false);
           console.log(chalk.yellow("\n[Interrupted]"));
           return true;
-        } else {
-          // First ESC: record the time only.
-          lastEscPressRef.current = now;
-          return true; // Consume the event to prevent InputPrompt from handling
         }
+
+        if (streamingState.pendingInputs.length > 0) {
+          removeLastPendingInput();
+          lastEscPressRef.current = now;
+          return true;
+        }
+
+        // First ESC: record the time only.
+        lastEscPressRef.current = now;
+        return true; // Consume the event to prevent InputPrompt from handling
       }
 
       return false;
@@ -1169,6 +1192,71 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     });
   }, [context, storage]);
 
+  const recordCompletedAgentRound = useCallback(async (result: KodaXResult) => {
+    context.messages = result.messages;
+
+    const finalThinking = getThinkingContent().trim();
+    const finalResponse = resolveAssistantHistoryText(result.messages, getFullResponse());
+
+    clearThinkingContent();
+    clearResponse();
+
+    if (finalThinking) {
+      addHistoryItem({
+        type: "thinking",
+        text: finalThinking,
+      });
+    }
+
+    if (finalResponse) {
+      addHistoryItem({
+        type: "assistant",
+        text: result.interrupted ? `${finalResponse}\n\n[Interrupted]` : finalResponse,
+      });
+    }
+
+    await persistContextState();
+  }, [
+    addHistoryItem,
+    clearResponse,
+    clearThinkingContent,
+    context,
+    getFullResponse,
+    getThinkingContent,
+    persistContextState,
+  ]);
+
+  const stageQueuedPrompt = useCallback(async (prompt: string) => {
+    addHistoryItem({
+      type: "user",
+      text: prompt,
+    });
+    setSubmitCounter((prev) => prev + 1);
+    touchContext(context);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }, [addHistoryItem, context]);
+
+  const runQueueableAgentSequence = useCallback(async (
+    initialPrompt: string,
+    runRound: (prompt: string) => Promise<KodaXResult>,
+  ) => {
+    setCanQueueFollowUps(true);
+    try {
+      return await runQueuedPromptSequence({
+        initialPrompt,
+        runRound,
+        shiftPendingPrompt: shiftPendingInput,
+        onRoundComplete: async (result) => {
+          await recordCompletedAgentRound(result);
+        },
+        onBeforeQueuedRound: stageQueuedPrompt,
+        shouldContinue: (result) => !result.interrupted,
+      });
+    } finally {
+      setCanQueueFollowUps(false);
+    }
+  }, [recordCompletedAgentRound, shiftPendingInput, stageQueuedPrompt]);
+
   const appendLastAssistantToHistory = useCallback((messages: KodaXMessage[]) => {
     const lastAssistant = messages[messages.length - 1];
     if (lastAssistant?.role !== "assistant") {
@@ -1259,10 +1347,28 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     async (input: string) => {
       // Prevent concurrent execution: ignore input if agent is busy or waiting for tool confirmation
       // Prevent concurrent execution while the agent is busy or awaiting confirmation.
-      if (!input.trim() || !isRunning || isLoading || confirmRequest || uiRequest) return;
+      if (!input.trim() || !isRunning || confirmRequest || uiRequest) return;
 
       // Hide help panel when submitting.
       setShowHelp(false);
+
+      if (isLoading) {
+        if (!canQueueFollowUps) {
+          return;
+        }
+        if (streamingState.pendingInputs.length >= MAX_PENDING_INPUTS) {
+          addHistoryItem({
+            type: "info",
+            icon: "\u23F3",
+            text: `Queued follow-up limit reached (${MAX_PENDING_INPUTS}). Wait for the next round or press Esc to remove the latest item.`,
+          });
+          return;
+        }
+        addPendingInput(input);
+        setSubmitCounter(prev => prev + 1);
+        touchContext(context);
+        return;
+      }
 
       // Banner remains visible - it will scroll up naturally as messages are added
       // (Removed showBanner toggle to keep layout stable)
@@ -1610,13 +1716,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           startThinking();
 
           try {
-            const result = await runAgentRound(currentOptionsRef.current, projectInitPromptToInject);
-
-            // Update context
-            context.messages = result.messages;
-
-            appendLastAssistantToHistory(result.messages);
-            await persistContextState();
+            await runQueueableAgentSequence(
+              projectInitPromptToInject,
+              async (prompt) => runAgentRound(currentOptionsRef.current, prompt),
+            );
           } catch (err) {
             const error = err instanceof Error ? err : new Error(String(err));
 
@@ -1731,59 +1834,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       };
 
       try {
-        const result = await runAgentRound(currentOptionsRef.current, processed);
-
-        // Update context
-        context.messages = result.messages;
-
-        // Issue 076 fix: Save final iteration content to persistent history
-        // This handles the case where the last iteration didn't trigger onIterationStart
-        // Issue 076.
-        // This handles the case where the last iteration did not trigger onIterationStart.
-        const finalThinking = getThinkingContent().trim();
-        const finalResponse = resolveAssistantHistoryText(context.messages, getFullResponse());
-
-        // Clear UI streaming state immediately so it doesn't render alongside the new history item
-        clearThinkingContent();
-        clearResponse();
-
-        if (finalThinking) {
-          addHistoryItem({
-            type: "thinking",
-            text: finalThinking,
-          });
-        }
-
-        // Issue 084 fix: Handle interrupted generations properly
-        if (result.interrupted) {
-          if (finalResponse) {
-            addHistoryItem({
-              type: "assistant",
-              text: finalResponse + "\n\n[Interrupted]",
-            });
-            // CRITICAL FIX: The agent context.messages already has the interrupted blocks
-            // pushed by agent.ts's AbortError handler if it was an internal stream error.
-            // Ensure we don't duplicate them here, but we do need the visual indicator.
-          }
-        } else {
-          if (finalResponse) {
-            addHistoryItem({
-              type: "assistant",
-              text: finalResponse,
-            });
-          }
-        }
-
-        // Auto-save
-        if (context.messages.length > 0) {
-          const title = extractTitle(context.messages);
-          context.title = title;
-          await storage.save(context.sessionId, {
-            messages: context.messages,
-            title,
-            gitRoot: context.gitRoot ?? "",
-          });
-        }
+        await runQueueableAgentSequence(
+          processed,
+          async (prompt) => runAgentRound(currentOptionsRef.current, prompt),
+        );
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
 
@@ -1879,6 +1933,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       context,
       currentConfig,
       planMode,
+      canQueueFollowUps,
+      streamingState.pendingInputs.length,
       storage,
       confirmRequest,
       uiRequest,
@@ -1893,8 +1949,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       executeInvocation,
       getSignal,
       getFullResponse,
+      getThinkingContent,
       appendLastAssistantToHistory,
       persistContextState,
+      runQueueableAgentSequence,
       startCompacting,
       stopCompacting,
     ]
@@ -1981,10 +2039,16 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         {/* Input Area - always at fixed position */}
         {/* Input area - always at a fixed position */}
         <Box>
+          <PendingInputsIndicator pendingInputs={streamingState.pendingInputs} />
           <InputPrompt
             onSubmit={handleSubmit}
             prompt=">"
-            focus={!isLoading && !confirmRequest && !uiRequest}
+            placeholder={isLoading
+              ? canQueueFollowUps
+                ? "Queue a follow-up for the next round..."
+                : "Agent is busy..."
+              : "Type a message..."}
+            focus={!confirmRequest && !uiRequest}
             cwd={process.cwd()}
             gitRoot={options.context?.gitRoot || context.gitRoot}
             onInputChange={handleInputChange}

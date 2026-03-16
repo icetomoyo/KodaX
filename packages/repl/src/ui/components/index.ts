@@ -34,3 +34,5 @@ export type {
 export { SuggestionsDisplay } from "./SuggestionsDisplay.js";
 export type { SuggestionsDisplayProps } from "./SuggestionsDisplay.js";
 
+export { PendingInputsIndicator } from "./PendingInputsIndicator.js";
+export type { PendingInputsIndicatorProps } from "./PendingInputsIndicator.js";
