@@ -65,13 +65,13 @@ function formatDuration(startTime: number, endTime?: number): string {
 function getToolStatusIcon(status: ToolCallStatus): string {
   switch (status) {
     case ToolCallStatus.Scheduled:
-      return "○";
+      return "\u25CB";
     case ToolCallStatus.Validating:
       return "\u25D0";
     case ToolCallStatus.AwaitingApproval:
       return "\u23F8";
     case ToolCallStatus.Executing:
-      return "●";
+      return "\u25CF";
     case ToolCallStatus.Success:
       return "\u2713";
     case ToolCallStatus.Error:
@@ -349,7 +349,7 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
       pushWrappedRows(
         rows,
         `iteration-${record.iteration}-header`,
-        `── Round ${record.iteration} ──`,
+        `\u2500\u2500 Round ${record.iteration} \u2500\u2500`,
         viewportWidth,
         { color: "dim", bold: true }
       );
@@ -389,7 +389,7 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
       pushBlankRow(rows, `iteration-${record.iteration}-blank`);
     });
 
-    pushWrappedRows(rows, "iteration-current-header", `── Round ${currentIteration} (current) ──`, viewportWidth, {
+    pushWrappedRows(rows, "iteration-current-header", `\u2500\u2500 Round ${currentIteration} (current) \u2500\u2500`, viewportWidth, {
       color: "accent",
       bold: true,
     });
@@ -455,6 +455,14 @@ export function buildStaticTranscriptSections(
   viewportWidth: number,
   maxLines = 1000
 ): TranscriptSection[] {
+  return buildHistoryItemTranscriptSections(items, viewportWidth, maxLines);
+}
+
+export function buildHistoryItemTranscriptSections(
+  items: HistoryItem[],
+  viewportWidth: number,
+  maxLines = 1000
+): TranscriptSection[] {
   return items.map((item) => ({
     key: item.id,
     rows: buildTranscriptRows({
@@ -503,4 +511,3 @@ export function resolveTranscriptColor(
       return theme.colors[color];
   }
 }
-

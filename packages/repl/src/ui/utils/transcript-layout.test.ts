@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ToolCallStatus, type HistoryItem } from "../types.js";
 import {
   buildDynamicTranscriptSection,
+  buildHistoryItemTranscriptSections,
   buildTranscriptRows,
   buildStaticTranscriptSections,
   flattenTranscriptSections,
@@ -123,6 +124,30 @@ describe("transcript-layout", () => {
     expect(activeSection.rows.length).toBeGreaterThan(0);
     expect(text.indexOf("prompt")).toBeLessThan(text.indexOf("answer"));
   });
+
+  it("creates one transcript section per history item", () => {
+    const sections = buildHistoryItemTranscriptSections(
+      [
+        {
+          id: "user-1",
+          type: "user",
+          text: "prompt",
+          timestamp: Date.now(),
+        },
+        {
+          id: "assistant-1",
+          type: "assistant",
+          text: "answer",
+          timestamp: Date.now(),
+        },
+      ],
+      80
+    );
+
+    expect(sections).toHaveLength(2);
+    expect(sections[0]?.key).toBe("user-1");
+    expect(sections[1]?.key).toBe("assistant-1");
+    expect(sections[0]?.rows.some((row) => row.text.includes("prompt"))).toBe(true);
+    expect(sections[1]?.rows.some((row) => row.text.includes("answer"))).toBe(true);
+  });
 });
-
-

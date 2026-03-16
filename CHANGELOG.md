@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.42] - 2026-03-16
+
+### Changed
+- **Transcript Section Granularity**: Active round now builds one `TranscriptSection` per `HistoryItem` via `buildHistoryItemTranscriptSections()`, with pending state (thinking/streaming/tool) as a separate section appended only when content exists
+- **JSDoc Cleanup**: `MessageListProps` comments normalized to English
+
+### Fixed
+- **Unicode Escape Consistency**: Remaining non-ASCII characters (`○`, `●`, `──`, hint emoji) replaced with Unicode escapes
+
+---
+
 ## [0.5.41] - 2026-03-16
 
 ### Changed

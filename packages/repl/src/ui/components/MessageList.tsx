@@ -26,7 +26,7 @@ import {
 import type { IterationRecord } from "../contexts/StreamingContext.js";
 import {
   buildDynamicTranscriptSection,
-  buildTranscriptRows,
+  buildHistoryItemTranscriptSections,
   buildStaticTranscriptSections,
   flattenTranscriptSections,
   getVisibleTranscriptRows,
@@ -44,23 +44,23 @@ export interface MessageListProps {
   isLoading?: boolean;
   /** Maximum display lines before truncation */
   maxLines?: number;
-  /** Whether thinking - 是否正在 thinking */
+  /** Whether thinking output is currently being shown. */
   isThinking?: boolean;
-  /** Thinking character count - Thinking 字符计数 */
+  /** Character count for the current thinking output. */
   thinkingCharCount?: number;
-  /** Thinking content (real-time display) - Thinking 内容 (实时显示) */
+  /** Thinking content shown during streaming. */
   thinkingContent?: string;
-  /** Current streaming response text (real-time display) - 当前流式响应文本 (实时显示) */
+  /** Current streaming response text shown in real time. */
   streamingResponse?: string;
-  /** Current tool name - 当前工具名称 */
+  /** Name of the tool currently being executed. */
   currentTool?: string;
-  /** Tool input character count - 工具输入字符计数 */
+  /** Character count for the current tool input preview. */
   toolInputCharCount?: number;
   /** Tool input content preview for display */
   toolInputContent?: string;
-  /** Iteration history - 迭代历史 */
+  /** Completed iteration history for the active response. */
   iterationHistory?: IterationRecord[];
-  /** Current iteration number - 当前迭代序号 */
+  /** Sequence number for the active iteration. */
   currentIteration?: number;
   /** Whether context compaction is in progress */
   isCompacting?: boolean;
@@ -346,7 +346,7 @@ const HintItemRenderer: React.FC<{ item: HistoryItemHint; theme: Theme }> = memo
   <Box flexDirection="column" marginBottom={1}>
     <Box>
       <Text color={theme.colors.hint} bold>
-        💡 Hint
+        {"\u{1F4A1}"} Hint
       </Text>
     </Box>
     <Box marginLeft={2}>
@@ -491,23 +491,34 @@ export const MessageList: React.FC<MessageListProps> = ({
     );
   }
 
-  const activeSection = useMemo(
-    () => buildDynamicTranscriptSection("active-round", {
-      items: activeItems,
-      viewportWidth: terminalWidth,
-      isLoading,
-      maxLines,
-      isThinking,
-      thinkingCharCount,
-      thinkingContent,
-      streamingResponse,
-      currentTool,
-      toolInputCharCount,
-      toolInputContent,
-      iterationHistory,
-      currentIteration,
-      isCompacting,
-    }),
+  const activeSections = useMemo(
+    () => {
+      const historySections = buildHistoryItemTranscriptSections(
+        activeItems,
+        terminalWidth,
+        maxLines
+      );
+      const pendingSection = buildDynamicTranscriptSection("active-pending", {
+        items: [],
+        viewportWidth: terminalWidth,
+        isLoading,
+        maxLines,
+        isThinking,
+        thinkingCharCount,
+        thinkingContent,
+        streamingResponse,
+        currentTool,
+        toolInputCharCount,
+        toolInputContent,
+        iterationHistory,
+        currentIteration,
+        isCompacting,
+      });
+
+      return pendingSection.rows.length > 0
+        ? [...historySections, pendingSection]
+        : historySections;
+    },
     [
       activeItems,
       terminalWidth,
@@ -526,8 +537,8 @@ export const MessageList: React.FC<MessageListProps> = ({
     ]
   );
   const activeTranscriptRows = useMemo(
-    () => flattenTranscriptSections([activeSection]),
-    [activeSection]
+    () => flattenTranscriptSections(activeSections),
+    [activeSections]
   );
 
   const visibleRows = useMemo(
