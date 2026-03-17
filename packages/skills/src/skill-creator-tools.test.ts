@@ -4,14 +4,26 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { validateSkillDirectory } from './builtin/skill-creator/scripts/quick-validate.js';
 import {
+  analyzeBenchmark,
+} from './builtin/skill-creator/scripts/analyze-benchmark.js';
+import {
   buildBenchmarkDocument,
   loadRunResults,
   renderBenchmarkMarkdown,
 } from './builtin/skill-creator/scripts/aggregate-benchmark.js';
 import {
+  compareWorkspace,
+} from './builtin/skill-creator/scripts/compare-runs.js';
+import {
   buildPayload,
   renderHtml,
 } from './builtin/skill-creator/scripts/generate-review.js';
+import {
+  gradeWorkspace,
+} from './builtin/skill-creator/scripts/grade-evals.js';
+import {
+  initSkill,
+} from './builtin/skill-creator/scripts/init-skill.js';
 import {
   extractDescriptionCandidate,
   improveDescription,
@@ -23,6 +35,10 @@ import {
 import {
   buildSkillPackage,
 } from './builtin/skill-creator/scripts/package-skill.js';
+import {
+  buildEvalPrompt,
+  runEvalWorkspace,
+} from './builtin/skill-creator/scripts/run-eval.js';
 import {
   runDescriptionLoop,
   splitEvalSet,
@@ -92,6 +108,23 @@ Follow the workflow.
 
     expect(result.valid).toBe(true);
     expect(result.errors).toEqual([]);
+  });
+
+  it('initializes a new skill scaffold with evals and support directories', async () => {
+    const skillsRoot = await createTempDir('kodax-init-skills-');
+
+    const result = await initSkill({
+      name: 'release-notes',
+      baseDir: skillsRoot,
+      description: 'Draft release notes when the user asks for changelog or release summary help.',
+    });
+
+    expect(result.skillDir).toBe(join(skillsRoot, 'release-notes'));
+    expect(await readFile(join(result.skillDir, 'SKILL.md'), 'utf8')).toContain('name: release-notes');
+    expect(await readFile(join(result.skillDir, 'evals', 'evals.json'), 'utf8')).toContain('"skill_name": "release-notes"');
+
+    const validation = await validateSkillDirectory(result.skillDir);
+    expect(validation.valid).toBe(true);
   });
 
   it('aggregates run results into benchmark summaries', async () => {
@@ -329,6 +362,236 @@ Follow the workflow.
     expect(report.history).toHaveLength(2);
     expect(report.best_description).toContain('release notes');
     expect(skillMarkdown).toContain('release notes, changelogs');
+  });
+
+  it('runs end-to-end eval workspace generation for with-skill and baseline configs', async () => {
+    const skillDir = await createTempDir('kodax-run-eval-skill-');
+    const workspace = await createTempDir('kodax-run-eval-workspace-');
+    await createExampleSkill(skillDir, 'Use this skill when users ask for release notes.');
+    await writeFile(join(skillDir, 'evals-input.txt'), 'Release v1.2.3 changed auth and billing.', 'utf8');
+    await writeFile(
+      join(skillDir, 'evals.json'),
+      JSON.stringify({
+        skill_name: 'example-skill',
+        evals: [
+          {
+            id: 1,
+            prompt: 'Write the release notes.',
+            expected_output: 'Summarize the release clearly.',
+            files: ['evals-input.txt'],
+            assertions: [{ text: 'mentions auth and billing' }],
+          },
+        ],
+      }, null, 2),
+      'utf8'
+    );
+
+    const previewPrompt = await buildEvalPrompt(
+      {
+        prompt: 'Write the release notes.',
+        files: ['evals-input.txt'],
+      },
+      {
+        evalsPath: join(skillDir, 'evals.json'),
+        cwd: skillDir,
+      }
+    );
+
+    expect(previewPrompt).toContain('## Input Files');
+    expect(previewPrompt).toContain('auth and billing');
+
+    const summary = await runEvalWorkspace(
+      {
+        skillPath: skillDir,
+        evalsPath: join(skillDir, 'evals.json'),
+        workspaceDir: workspace,
+        runsPerConfig: 1,
+        cwd: skillDir,
+      },
+      async (prompt, options) => ({
+        result: {
+          success: true,
+          lastText: options.configName === 'with_skill' ? 'Skill-assisted answer' : 'Baseline answer',
+          messages: [
+            { role: 'user', content: prompt },
+            {
+              role: 'assistant',
+              content: [
+                { type: 'text', text: 'Planning' },
+                { type: 'tool_use', id: `tool-${options.configName}`, name: 'read', input: { path: 'notes.md' } },
+              ],
+            },
+            {
+              role: 'user',
+              content: [
+                { type: 'tool_result', tool_use_id: `tool-${options.configName}`, content: 'ok' },
+              ],
+            },
+          ],
+          sessionId: `${options.configName}-${options.runIndex}`,
+        },
+        totalTokens: 321,
+        durationMs: 1500,
+      })
+    );
+
+    expect(summary.eval_count).toBe(1);
+    expect(summary.configs).toEqual(['with_skill', 'without_skill']);
+    expect(await readFile(join(workspace, 'eval-0', 'with_skill', 'run-1', 'outputs', 'result.md'), 'utf8')).toContain('Skill-assisted answer');
+    expect(await readFile(join(workspace, 'eval-0', 'without_skill', 'run-1', 'outputs', 'result.md'), 'utf8')).toContain('Baseline answer');
+    expect(await readFile(join(workspace, 'eval-0', 'with_skill', 'run-1', 'outputs', 'prompt.txt'), 'utf8')).toContain('<skill name="example-skill"');
+    expect(await readFile(join(workspace, 'eval-0', 'eval_metadata.json'), 'utf8')).toContain('mentions auth and billing');
+    expect(await readFile(join(workspace, 'eval-0', 'with_skill', 'run-1', 'timing.json'), 'utf8')).toContain('"total_tokens": 321');
+  });
+
+  it('grades eval runs into grading.json documents and a workspace summary', async () => {
+    const workspace = await createTempDir('kodax-grade-workspace-');
+    const runDir = join(workspace, 'eval-0', 'with_skill', 'run-1');
+
+    await mkdir(join(runDir, 'outputs'), { recursive: true });
+    await writeFile(
+      join(workspace, 'eval-0', 'eval_metadata.json'),
+      JSON.stringify({
+        eval_id: 1,
+        eval_name: 'release-notes',
+        prompt: 'Write release notes.',
+        expected_output: 'Summarize auth and billing changes.',
+        assertions: [{ text: 'mentions auth and billing' }],
+      }, null, 2),
+      'utf8'
+    );
+    await writeFile(join(runDir, 'outputs', 'result.md'), 'Auth and billing changed.', 'utf8');
+    await writeFile(join(runDir, 'outputs', 'prompt.txt'), 'Write release notes.', 'utf8');
+    await writeFile(join(runDir, 'transcript.md'), '# Transcript', 'utf8');
+    await writeFile(
+      join(runDir, 'outputs', 'metrics.json'),
+      JSON.stringify({ total_tool_calls: 1, errors_encountered: 0, output_chars: 25 }, null, 2),
+      'utf8'
+    );
+    await writeFile(
+      join(runDir, 'result.json'),
+      JSON.stringify({ success: true, execution_metrics: { total_tool_calls: 1, errors_encountered: 0, output_chars: 25 } }, null, 2),
+      'utf8'
+    );
+    await writeFile(
+      join(runDir, 'timing.json'),
+      JSON.stringify({ total_tokens: 123, total_duration_seconds: 1.5 }, null, 2),
+      'utf8'
+    );
+
+    const summary = await gradeWorkspace(
+      {
+        workspaceDir: workspace,
+      },
+      async () => JSON.stringify({
+        overall_summary: 'Looks correct.',
+        expectations: [
+          {
+            text: 'mentions auth and billing',
+            passed: true,
+            evidence: 'The output explicitly says auth and billing changed.',
+          },
+        ],
+        user_notes_summary: {
+          uncertainties: [],
+          needs_review: [],
+          workarounds: [],
+        },
+      })
+    );
+
+    expect(summary.processed).toBe(1);
+    expect(await readFile(join(runDir, 'grading.json'), 'utf8')).toContain('"pass_rate": 1');
+    expect(await readFile(join(workspace, 'grading-summary.json'), 'utf8')).toContain('"processed": 1');
+  });
+
+  it('analyzes benchmark outputs into analysis.json and analysis.md', async () => {
+    const workspace = await createTempDir('kodax-analysis-workspace-');
+    await writeFile(
+      join(workspace, 'benchmark.json'),
+      JSON.stringify({
+        skill_name: 'example-skill',
+        workspace,
+        configs: {
+          with_skill: {
+            pass_rate: { mean: 1, stddev: 0, min: 1, max: 1 },
+            time_seconds: { mean: 10, stddev: 0, min: 10, max: 10 },
+            tokens: { mean: 500, stddev: 0, min: 500, max: 500 },
+          },
+          without_skill: {
+            pass_rate: { mean: 0.5, stddev: 0.1, min: 0.4, max: 0.6 },
+            time_seconds: { mean: 8, stddev: 0.5, min: 7.5, max: 8.5 },
+            tokens: { mean: 320, stddev: 20, min: 300, max: 340 },
+          },
+        },
+        delta: {
+          pass_rate: '+0.5000',
+          time_seconds: '+2.0000',
+          tokens: '+180.0000',
+        },
+      }, null, 2),
+      'utf8'
+    );
+
+    const result = await analyzeBenchmark(
+      {
+        workspaceDir: workspace,
+      },
+      async () => JSON.stringify({
+        verdict: 'improves',
+        release_readiness: 'needs_iteration',
+        recommendation: 'Keep the skill but reduce variance before release.',
+        key_findings: ['with_skill improves pass rate materially'],
+        variance_hotspots: ['baseline failures cluster around missing billing details'],
+        suggested_actions: ['tighten assertions around billing coverage'],
+        watchouts: ['token cost increased'],
+      })
+    );
+
+    expect(result.analysis.verdict).toBe('improves');
+    expect(await readFile(join(workspace, 'analysis.json'), 'utf8')).toContain('"release_readiness": "needs_iteration"');
+    expect(await readFile(join(workspace, 'analysis.md'), 'utf8')).toContain('Keep the skill but reduce variance before release.');
+  });
+
+  it('compares blind run pairs and writes a comparison report', async () => {
+    const workspace = await createTempDir('kodax-compare-workspace-');
+    const withSkillRun = join(workspace, 'eval-0', 'with_skill', 'run-1');
+    const withoutSkillRun = join(workspace, 'eval-0', 'without_skill', 'run-1');
+
+    await mkdir(join(withSkillRun, 'outputs'), { recursive: true });
+    await mkdir(join(withoutSkillRun, 'outputs'), { recursive: true });
+    await writeFile(
+      join(workspace, 'eval-0', 'eval_metadata.json'),
+      JSON.stringify({
+        eval_id: 1,
+        eval_name: 'release-notes',
+        prompt: 'Write release notes.',
+        expected_output: 'Mention auth and billing changes.',
+        assertions: [{ text: 'mentions auth and billing' }],
+      }, null, 2),
+      'utf8'
+    );
+    await writeFile(join(withSkillRun, 'outputs', 'result.md'), 'Auth and billing changed in this release.', 'utf8');
+    await writeFile(join(withoutSkillRun, 'outputs', 'result.md'), 'This release includes updates.', 'utf8');
+
+    const result = await compareWorkspace(
+      {
+        workspaceDir: workspace,
+      },
+      async () => JSON.stringify({
+        winner: 'A',
+        confidence: 0.9,
+        rationale: 'Candidate A is more complete and specific.',
+        strengths_a: ['Explicitly mentions auth and billing'],
+        strengths_b: ['Shorter output'],
+        risks: [],
+      })
+    );
+
+    expect(result.document.summary.total_pairs).toBe(1);
+    expect(result.document.summary.config_a_wins).toBe(1);
+    expect(await readFile(join(workspace, 'comparison.json'), 'utf8')).toContain('"winner_config": "with_skill"');
+    expect(await readFile(join(workspace, 'comparison.md'), 'utf8')).toContain('with_skill wins: 1');
   });
 
   it('packages a skill archive and installs it into a target skills directory', async () => {

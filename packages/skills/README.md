@@ -120,7 +120,9 @@ See [the checklist](references/checklist.md) when you need the full incident wor
 
 Builtin `skill-creator` 现在附带一套可直接运行的 Node helpers：
 
+- `scripts/init-skill.js`: 初始化 skill 骨架与可选 eval 文件。
 - `scripts/quick-validate.js`: 校验 skill 结构和 frontmatter。
+- `scripts/run-eval.js`: 生成 `with_skill` / `without_skill` 的端到端 eval workspace。
 - `scripts/run-trigger-eval.js`: 用 KodaX 原生方式评估 description 的触发效果。
 - `scripts/improve-description.js`: 基于 eval 结果生成新的 description 候选。
 - `scripts/run-loop.js`: 多轮跑 trigger eval 与 description 优化。

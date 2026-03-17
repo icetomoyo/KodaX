@@ -209,6 +209,43 @@ export function splitByCodePoints(str: string): string[] {
 }
 
 /**
+ * Slice string by grapheme index - 按 grapheme 索引切片
+ */
+export function sliceByCodePoints(str: string, start: number, end?: number): string {
+  return splitByCodePoints(str).slice(start, end).join("");
+}
+
+/**
+ * Split a string around a visual column - 按视觉列切分字符串
+ */
+export function splitAtVisualColumn(
+  str: string,
+  visualCol: number
+): { before: string; current: string; after: string } {
+  const safeVisualCol = Math.max(0, visualCol);
+  const chars = splitByCodePoints(str);
+
+  let cursorIndex = 0;
+  let currentWidth = 0;
+
+  while (cursorIndex < chars.length) {
+    const charWidth = isWideChar(chars[cursorIndex]!) ? 2 : 1;
+    if (currentWidth + charWidth > safeVisualCol) {
+      break;
+    }
+
+    currentWidth += charWidth;
+    cursorIndex++;
+  }
+
+  return {
+    before: chars.slice(0, cursorIndex).join(""),
+    current: chars[cursorIndex] ?? "",
+    after: chars.slice(cursorIndex + 1).join(""),
+  };
+}
+
+/**
  * Truncate string by visual width - 按视觉宽度截断字符串
  */
 export function truncateByVisualWidth(
@@ -298,6 +335,9 @@ export function calculateVisualLayout(
   cursorRow: number,
   cursorCol: number
 ): VisualLayout {
+  void cursorRow;
+  void cursorCol;
+
   const visualLines: string[] = [];
   const logicalToVisualMap: Array<Array<[number, number]>> = [];
   const visualToLogicalMap: Array<[number, number]> = [];
@@ -323,6 +363,7 @@ export function calculateVisualLayout(
     while (currentPosInLogical < chars.length) {
       let currentChunk = '';
       let currentChunkVisualWidth = 0;
+      let chunkEndInLogical = currentPosInLogical;
       let lastWordBreakPoint = -1; // Record space position for soft break - 记录空格位置用于软换行
 
       // Build current visual line (chunk) - 构建当前视觉行（块）
@@ -339,6 +380,7 @@ export function calculateVisualLayout(
             // Prefer soft break at word boundary - 优先在词边界软换行
             currentChunk = chars.slice(currentPosInLogical, lastWordBreakPoint).join('');
             currentChunkVisualWidth = chars.slice(currentPosInLogical, lastWordBreakPoint).reduce((sum, c) => sum + (isWideChar(c) ? 2 : 1), 0);
+            chunkEndInLogical = lastWordBreakPoint;
           } else {
             // Hard break: take characters up to viewport width - 硬换行：取字符直到视口宽度
             // Or just current char if it alone exceeds viewport - 或者如果单个字符超宽也取它
@@ -348,6 +390,7 @@ export function calculateVisualLayout(
             ) {
               currentChunk = char;
               currentChunkVisualWidth = charVisualWidth;
+              chunkEndInLogical = i + 1;
             }
           }
           break; // Break from inner loop to finalize this chunk - 退出内层循环完成此块
@@ -355,6 +398,7 @@ export function calculateVisualLayout(
 
         currentChunk += char;
         currentChunkVisualWidth += charVisualWidth;
+        chunkEndInLogical = i + 1;
 
         // Check for word break opportunity (space) - 检查词边界机会（空格）
         if (char === ' ') {
@@ -371,7 +415,7 @@ export function calculateVisualLayout(
         visualToLogicalMap.push([logIndex, logicalStartCol]);
       }
 
-      currentPosInLogical += currentChunk.length;
+      currentPosInLogical = chunkEndInLogical;
     }
   }
 
@@ -422,8 +466,9 @@ export function calculateVisualCursorFromLayout(
   const [visualLineIdx, startLogCol] = bestMatch ?? logicalLineMaps[0];
   const visualLine = visualLines[visualLineIdx] ?? '';
 
-  // Visual column = logical start + current logical column - 视觉列 = 逻辑起始 + 当前列
-  const visualCol = startLogCol + cursorCol;
+  // Visual column should be relative to the wrapped visual segment.
+  const relativeLogicalCol = Math.max(0, cursorCol - startLogCol);
+  const visualCol = getVisualWidth(sliceByCodePoints(visualLine, 0, relativeLogicalCol));
 
   return [visualLineIdx, visualCol];
 }

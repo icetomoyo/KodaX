@@ -1,6 +1,6 @@
 # Skill Creator Schemas
 
-这份参考文档定义 KodaX 版 `skill-creator` 默认使用的几个评测文件格式。它不是强制协议，但建议优先沿用，方便后续聚合和 review。
+这份参考文档定义 KodaX 版 `skill-creator` 默认使用的评测文件格式。它不是强制协议，但建议优先沿用，方便后续聚合、review 和自动分析。
 
 ## `evals/evals.json`
 
@@ -22,7 +22,6 @@
 ```
 
 字段说明：
-
 - `skill_name`: skill 名称。
 - `evals`: 测试用例数组。
 - `id`: 用例唯一标识。
@@ -40,6 +39,7 @@
   "eval_id": 1,
   "eval_name": "handles-empty-input",
   "prompt": "Implement validation for empty input",
+  "expected_output": "Reject empty input with a clear message",
   "assertions": [
     {
       "text": "rejects empty input with a clear message"
@@ -50,7 +50,7 @@
 
 ## `grading.json`
 
-用于单次运行后的断言判定结果。
+由 `grade-evals.js` 生成，用于保存单次运行后的断言判定结果。
 
 ```json
 {
@@ -64,7 +64,7 @@
     {
       "text": "rejects empty input with a clear message",
       "passed": true,
-      "evidence": "Observed in outputs/report.md"
+      "evidence": "Observed in outputs/result.md"
     }
   ],
   "execution_metrics": {
@@ -76,12 +76,23 @@
     "uncertainties": [],
     "needs_review": [],
     "workarounds": []
+  },
+  "overall_summary": "Mostly correct, but edge cases need review.",
+  "timing": {
+    "total_tokens": 84852,
+    "total_duration_seconds": 23.3
+  },
+  "meta": {
+    "generated_at": "2026-03-17T12:00:00.000Z",
+    "eval_id": 1,
+    "eval_name": "handles-empty-input",
+    "config": "with_skill",
+    "run_id": "run-1"
   }
 }
 ```
 
 要求：
-
 - `expectations` 里的字段名固定为 `text`、`passed`、`evidence`。
 - `pass_rate` 建议是 `0..1` 之间的小数。
 
@@ -130,6 +141,68 @@
 }
 ```
 
+## `analysis.json`
+
+由 `analyze-benchmark.js` 生成，用于总结 benchmark 的稳定收益、方差热点和下一步建议。
+
+```json
+{
+  "skill_name": "example-skill",
+  "generated_at": "2026-03-17T12:15:00.000Z",
+  "workspace": "/abs/path/to/iteration-1",
+  "verdict": "improves",
+  "release_readiness": "needs_iteration",
+  "recommendation": "Keep the skill, but reduce variance before release.",
+  "key_findings": [
+    "with_skill materially improves pass rate"
+  ],
+  "variance_hotspots": [
+    "baseline repeatedly misses billing details"
+  ],
+  "suggested_actions": [
+    "tighten assertions around billing coverage"
+  ],
+  "watchouts": [
+    "token cost increased"
+  ],
+  "supporting_metrics": {
+    "pass_rate_delta": "+0.3000",
+    "time_seconds_delta": "+2.9000",
+    "tokens_delta": "+1100.0000"
+  },
+  "failure_clusters": {}
+}
+```
+
+## `comparison.json`
+
+由 `compare-runs.js` 生成，用于 blind comparison 两个 config 的输出质量。
+
+```json
+{
+  "workspace": "/abs/path/to/iteration-1",
+  "generated_at": "2026-03-17T12:20:00.000Z",
+  "config_a": "with_skill",
+  "config_b": "without_skill",
+  "summary": {
+    "total_pairs": 3,
+    "config_a_wins": 2,
+    "config_b_wins": 0,
+    "ties": 1,
+    "inconclusive": 0
+  },
+  "comparisons": [
+    {
+      "eval_id": 1,
+      "winner_label": "A",
+      "winner_config": "with_skill",
+      "confidence": 0.9,
+      "rationale": "Candidate A is more complete and specific."
+    }
+  ]
+}
+```
+
 ## 推荐目录结构
 
 ```text
@@ -146,5 +219,9 @@ my-skill-workspace/
     │       ├── grading.json
     │       └── timing.json
     ├── benchmark.json
-    └── benchmark.md
+    ├── benchmark.md
+    ├── analysis.json
+    ├── analysis.md
+    ├── comparison.json
+    └── comparison.md
 ```

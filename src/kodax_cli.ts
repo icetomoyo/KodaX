@@ -283,11 +283,21 @@ const CLI_HELP_TOPICS: Record<string, () => void> = {
     console.log(chalk.dim('  Use built-in skill packaging commands without starting an agent session.'));
     console.log(chalk.dim('  These commands are thin wrappers around the builtin skill-creator tools.\n'));
     console.log(chalk.bold('Commands:'));
+    console.log(chalk.dim('  kodax skill init <name> [options]   ') + 'Create a new skill scaffold');
     console.log(chalk.dim('  kodax skill validate <dir>          ') + 'Validate a skill directory');
+    console.log(chalk.dim('  kodax skill eval --skill-path ...   ') + 'Run end-to-end eval workspace generation');
+    console.log(chalk.dim('  kodax skill grade <workspace>       ') + 'Grade eval runs into grading.json files');
+    console.log(chalk.dim('  kodax skill analyze <workspace>     ') + 'Analyze benchmark variance and failures');
+    console.log(chalk.dim('  kodax skill compare <workspace>     ') + 'Blind-compare two configs across runs');
     console.log(chalk.dim('  kodax skill package <dir> [options] ') + 'Package a skill as .skill');
     console.log(chalk.dim('  kodax skill install <input> [opts]  ') + 'Install a skill from dir or .skill');
     console.log(chalk.bold('Examples:'));
+    console.log(chalk.dim('  kodax skill init release-notes --dest ./.kodax/skills'));
     console.log(chalk.dim('  kodax skill validate ./.kodax/skills/my-skill'));
+    console.log(chalk.dim('  kodax skill eval --skill-path ./.kodax/skills/my-skill --evals ./.kodax/skills/my-skill/evals/evals.json --workspace ./iteration-1'));
+    console.log(chalk.dim('  kodax skill grade ./iteration-1'));
+    console.log(chalk.dim('  kodax skill analyze ./iteration-1'));
+    console.log(chalk.dim('  kodax skill compare ./iteration-1 --config-a with_skill --config-b without_skill'));
     console.log(chalk.dim('  kodax skill package ./.kodax/skills/my-skill --output ./my-skill.skill'));
     console.log(chalk.dim('  kodax skill install ./my-skill.skill --dest ~/.kodax/skills --force\n'));
   },
@@ -428,6 +438,119 @@ function showCliHelpTopics(): void {
   console.log(chalk.dim('  kodax -h print      ') + 'Print mode for scripting\n');
 }
 
+function printSkillSubcommandHelp(name: string): boolean {
+  if (name === 'init') {
+    console.log('Usage: kodax skill init [options] <name>');
+    console.log();
+    console.log('Initialize a new skill scaffold.');
+    console.log();
+    console.log('Options:');
+    console.log('  -d, --dest <dir>         Base skills directory');
+    console.log('  --description <text>     Initial skill description');
+    console.log('  -f, --force              Allow writing into an existing target directory');
+    console.log('  --no-evals               Skip creating evals/evals.json');
+    return true;
+  }
+
+  if (name === 'validate') {
+    console.log('Usage: kodax skill validate <skillDir>');
+    console.log();
+    console.log('Validate a skill directory using builtin skill-creator.');
+    return true;
+  }
+
+  if (name === 'eval') {
+    console.log('Usage: kodax skill eval [options]');
+    console.log();
+    console.log('Run end-to-end skill evals and write a benchmark/review workspace.');
+    console.log();
+    console.log('Options:');
+    console.log('  --skill-path <dir>       Skill directory to evaluate');
+    console.log('  --evals <file>           Evals JSON file');
+    console.log('  --workspace <dir>        Workspace output directory');
+    console.log('  --provider <name>        Provider to use');
+    console.log('  --model <name>           Model override');
+    console.log('  --runs <n>               Runs per config');
+    console.log('  --max-iter <n>           Max iterations per run');
+    console.log('  --reasoning <mode>       Reasoning mode');
+    console.log('  --cwd <dir>              Working directory for the runs');
+    console.log('  --configs <list>         Comma-separated configs, e.g. with_skill,without_skill');
+    console.log('  -o, --output <file>      Optional JSON summary output');
+    return true;
+  }
+
+  if (name === 'grade') {
+    console.log('Usage: kodax skill grade [options] <workspace>');
+    console.log();
+    console.log('Grade eval runs into grading.json files.');
+    console.log();
+    console.log('Options:');
+    console.log('  --provider <name>        Provider to use');
+    console.log('  --model <name>           Model override');
+    console.log('  --reasoning <mode>       Reasoning mode');
+    console.log('  --max-iter <n>           Max iterations per grading run');
+    console.log('  --configs <list>         Comma-separated configs, e.g. with_skill,without_skill');
+    console.log('  --overwrite              Re-grade runs that already have grading.json');
+    return true;
+  }
+
+  if (name === 'analyze') {
+    console.log('Usage: kodax skill analyze [options] <workspace>');
+    console.log();
+    console.log('Analyze benchmark variance and write analysis.json + analysis.md.');
+    console.log();
+    console.log('Options:');
+    console.log('  --benchmark <file>       Optional benchmark.json path');
+    console.log('  --output <file>          JSON output path');
+    console.log('  --markdown <file>        Markdown output path');
+    console.log('  --skill-name <name>      Skill name if benchmark.json must be regenerated');
+    console.log('  --provider <name>        Provider to use');
+    console.log('  --model <name>           Model override');
+    console.log('  --reasoning <mode>       Reasoning mode');
+    return true;
+  }
+
+  if (name === 'compare') {
+    console.log('Usage: kodax skill compare [options] <workspace>');
+    console.log();
+    console.log('Blind-compare two configs across eval run pairs.');
+    console.log();
+    console.log('Options:');
+    console.log('  --config-a <name>        Primary config (default: with_skill)');
+    console.log('  --config-b <name>        Baseline config (default: without_skill)');
+    console.log('  --output <file>          JSON output path');
+    console.log('  --markdown <file>        Markdown output path');
+    console.log('  --max-pairs <n>          Limit pairs per eval');
+    console.log('  --provider <name>        Provider to use');
+    console.log('  --model <name>           Model override');
+    console.log('  --reasoning <mode>       Reasoning mode');
+    return true;
+  }
+
+  if (name === 'package') {
+    console.log('Usage: kodax skill package [options] <skillDir>');
+    console.log();
+    console.log('Package a skill directory as a .skill archive.');
+    console.log();
+    console.log('Options:');
+    console.log('  -o, --output <file>      Output .skill file path');
+    return true;
+  }
+
+  if (name === 'install') {
+    console.log('Usage: kodax skill install [options] <input>');
+    console.log();
+    console.log('Install a skill directory or .skill archive into a skills directory.');
+    console.log();
+    console.log('Options:');
+    console.log('  -d, --dest <dir>         Destination skills directory');
+    console.log('  -f, --force              Overwrite an existing target skill');
+    return true;
+  }
+
+  return false;
+}
+
 function showBasicHelp(): void {
   console.log('KodaX - 极致轻量化 Coding Agent\n');
   console.log('Usage: kodax [options] [prompt]');
@@ -465,6 +588,7 @@ function showBasicHelp(): void {
   console.log('Examples:');
   console.log('  kodax                             # Enter interactive mode (auto-resume)');
   console.log('  kodax "create a component"        # Run single task (with session)');
+  console.log('  kodax skill init my-skill         # Scaffold a new skill');
   console.log('  kodax skill package ./my-skill    # Package a skill without starting the agent');
   console.log('  kodax -p "quick fix" --reasoning balanced  # Quick task with reasoning');
   console.log('  kodax -c                          # Continue recent conversation');
@@ -518,10 +642,231 @@ async function main() {
   });
 
   skillCommand
+    .command('init <name>')
+    .description('Initialize a new skill scaffold')
+    .option('-d, --dest <dir>', 'Base skills directory')
+    .option('--description <text>', 'Initial skill description')
+    .option('-f, --force', 'Allow writing into an existing target directory')
+    .option('--no-evals', 'Skip creating evals/evals.json')
+    .action(async (
+      name: string,
+      subcommandOptions: {
+        dest?: string;
+        description?: string;
+        force?: boolean;
+        evals?: boolean;
+      }
+    ) => {
+      const args = [name];
+      if (subcommandOptions.dest) {
+        args.push('--dest', subcommandOptions.dest);
+      }
+      if (subcommandOptions.description) {
+        args.push('--description', subcommandOptions.description);
+      }
+      if (subcommandOptions.force) {
+        args.push('--force');
+      }
+      if (subcommandOptions.evals === false) {
+        args.push('--no-evals');
+      }
+      await runSkillCreatorTool('init', args);
+    });
+
+  skillCommand
     .command('validate <skillDir>')
     .description('Validate a skill directory using builtin skill-creator')
     .action(async (skillDir: string) => {
       await runSkillCreatorTool('validate', [skillDir]);
+    });
+
+  skillCommand
+    .command('eval')
+    .description('Run end-to-end skill evals and write a benchmark/review workspace')
+    .requiredOption('--skill-path <dir>', 'Skill directory to evaluate')
+    .requiredOption('--evals <file>', 'Evals JSON file')
+    .requiredOption('--workspace <dir>', 'Workspace output directory')
+    .option('--provider <name>', 'Provider to use')
+    .option('--model <name>', 'Model override')
+    .option('--runs <n>', 'Runs per config')
+    .option('--max-iter <n>', 'Max iterations per run')
+    .option('--reasoning <mode>', 'Reasoning mode')
+    .option('--cwd <dir>', 'Working directory for the runs')
+    .option('--configs <list>', 'Comma-separated configs, e.g. with_skill,without_skill')
+    .option('-o, --output <file>', 'Optional JSON summary output')
+    .action(async (subcommandOptions: {
+      skillPath: string;
+      evals: string;
+      workspace: string;
+      provider?: string;
+      model?: string;
+      runs?: string;
+      maxIter?: string;
+      reasoning?: string;
+      cwd?: string;
+      configs?: string;
+      output?: string;
+    }) => {
+      const args = [
+        '--skill-path', subcommandOptions.skillPath,
+        '--evals', subcommandOptions.evals,
+        '--workspace', subcommandOptions.workspace,
+      ];
+      if (subcommandOptions.provider) {
+        args.push('--provider', subcommandOptions.provider);
+      }
+      if (subcommandOptions.model) {
+        args.push('--model', subcommandOptions.model);
+      }
+      if (subcommandOptions.runs) {
+        args.push('--runs', subcommandOptions.runs);
+      }
+      if (subcommandOptions.maxIter) {
+        args.push('--max-iter', subcommandOptions.maxIter);
+      }
+      if (subcommandOptions.reasoning) {
+        args.push('--reasoning', subcommandOptions.reasoning);
+      }
+      if (subcommandOptions.cwd) {
+        args.push('--cwd', subcommandOptions.cwd);
+      }
+      if (subcommandOptions.configs) {
+        args.push('--configs', subcommandOptions.configs);
+      }
+      if (subcommandOptions.output) {
+        args.push('--output', subcommandOptions.output);
+      }
+      await runSkillCreatorTool('eval', args);
+    });
+
+  skillCommand
+    .command('grade <workspace>')
+    .description('Grade eval runs into grading.json files')
+    .option('--provider <name>', 'Provider to use')
+    .option('--model <name>', 'Model override')
+    .option('--reasoning <mode>', 'Reasoning mode')
+    .option('--max-iter <n>', 'Max iterations per grading run')
+    .option('--configs <list>', 'Comma-separated configs, e.g. with_skill,without_skill')
+    .option('--overwrite', 'Re-grade runs that already have grading.json')
+    .action(async (workspace: string, subcommandOptions: {
+      provider?: string;
+      model?: string;
+      reasoning?: string;
+      maxIter?: string;
+      configs?: string;
+      overwrite?: boolean;
+    }) => {
+      const args = [workspace];
+      if (subcommandOptions.provider) {
+        args.push('--provider', subcommandOptions.provider);
+      }
+      if (subcommandOptions.model) {
+        args.push('--model', subcommandOptions.model);
+      }
+      if (subcommandOptions.reasoning) {
+        args.push('--reasoning', subcommandOptions.reasoning);
+      }
+      if (subcommandOptions.maxIter) {
+        args.push('--max-iter', subcommandOptions.maxIter);
+      }
+      if (subcommandOptions.configs) {
+        args.push('--configs', subcommandOptions.configs);
+      }
+      if (subcommandOptions.overwrite) {
+        args.push('--overwrite');
+      }
+      await runSkillCreatorTool('grade', args);
+    });
+
+  skillCommand
+    .command('analyze <workspace>')
+    .description('Analyze benchmark variance and write analysis artifacts')
+    .option('--benchmark <file>', 'Optional benchmark.json path')
+    .option('--output <file>', 'JSON output path')
+    .option('--markdown <file>', 'Markdown output path')
+    .option('--skill-name <name>', 'Skill name if benchmark.json must be regenerated')
+    .option('--provider <name>', 'Provider to use')
+    .option('--model <name>', 'Model override')
+    .option('--reasoning <mode>', 'Reasoning mode')
+    .action(async (workspace: string, subcommandOptions: {
+      benchmark?: string;
+      output?: string;
+      markdown?: string;
+      skillName?: string;
+      provider?: string;
+      model?: string;
+      reasoning?: string;
+    }) => {
+      const args = [workspace];
+      if (subcommandOptions.benchmark) {
+        args.push('--benchmark', subcommandOptions.benchmark);
+      }
+      if (subcommandOptions.output) {
+        args.push('--output', subcommandOptions.output);
+      }
+      if (subcommandOptions.markdown) {
+        args.push('--markdown', subcommandOptions.markdown);
+      }
+      if (subcommandOptions.skillName) {
+        args.push('--skill-name', subcommandOptions.skillName);
+      }
+      if (subcommandOptions.provider) {
+        args.push('--provider', subcommandOptions.provider);
+      }
+      if (subcommandOptions.model) {
+        args.push('--model', subcommandOptions.model);
+      }
+      if (subcommandOptions.reasoning) {
+        args.push('--reasoning', subcommandOptions.reasoning);
+      }
+      await runSkillCreatorTool('analyze', args);
+    });
+
+  skillCommand
+    .command('compare <workspace>')
+    .description('Blind-compare two configs across eval run pairs')
+    .option('--config-a <name>', 'Primary config', 'with_skill')
+    .option('--config-b <name>', 'Baseline config', 'without_skill')
+    .option('--output <file>', 'JSON output path')
+    .option('--markdown <file>', 'Markdown output path')
+    .option('--max-pairs <n>', 'Limit pairs per eval')
+    .option('--provider <name>', 'Provider to use')
+    .option('--model <name>', 'Model override')
+    .option('--reasoning <mode>', 'Reasoning mode')
+    .action(async (workspace: string, subcommandOptions: {
+      configA: string;
+      configB: string;
+      output?: string;
+      markdown?: string;
+      maxPairs?: string;
+      provider?: string;
+      model?: string;
+      reasoning?: string;
+    }) => {
+      const args = [
+        workspace,
+        '--config-a', subcommandOptions.configA,
+        '--config-b', subcommandOptions.configB,
+      ];
+      if (subcommandOptions.output) {
+        args.push('--output', subcommandOptions.output);
+      }
+      if (subcommandOptions.markdown) {
+        args.push('--markdown', subcommandOptions.markdown);
+      }
+      if (subcommandOptions.maxPairs) {
+        args.push('--max-pairs', subcommandOptions.maxPairs);
+      }
+      if (subcommandOptions.provider) {
+        args.push('--provider', subcommandOptions.provider);
+      }
+      if (subcommandOptions.model) {
+        args.push('--model', subcommandOptions.model);
+      }
+      if (subcommandOptions.reasoning) {
+        args.push('--reasoning', subcommandOptions.reasoning);
+      }
+      await runSkillCreatorTool('compare', args);
     });
 
   skillCommand
@@ -552,9 +897,18 @@ async function main() {
       await runSkillCreatorTool('install', args);
     });
 
-  if (argv[0] === 'skill' && (argv.length === 1 || argv[1] === '-h' || argv[1] === '--help')) {
-    console.log(skillCommand.helpInformation());
-    return;
+  if (argv[0] === 'skill') {
+    if (argv.length === 1 || argv[1] === '-h' || argv[1] === '--help') {
+      console.log(skillCommand.helpInformation());
+      return;
+    }
+
+    const skillSubcommand = argv[1];
+    if (skillSubcommand && (argv.includes('-h') || argv.includes('--help'))) {
+      if (printSkillSubcommandHelp(skillSubcommand)) {
+        return;
+      }
+    }
   }
 
   await program.parseAsync(process.argv);

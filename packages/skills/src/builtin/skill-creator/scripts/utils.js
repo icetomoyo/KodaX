@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
-import { readFile, readdir, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
 
 export function toPosixPath(filePath) {
@@ -135,6 +136,44 @@ export function extractJsonObject(text) {
   return safeJsonParse(text.slice(firstBrace, lastBrace + 1));
 }
 
+export async function readJsonFile(filePath, fallback = null) {
+  try {
+    return JSON.parse(await readFile(filePath, 'utf8'));
+  } catch {
+    return fallback;
+  }
+}
+
+export async function loadRelativeText(moduleUrl, relativePath) {
+  const moduleDir = path.dirname(fileURLToPath(moduleUrl));
+  return readFile(path.resolve(moduleDir, relativePath), 'utf8');
+}
+
+export function truncateText(text, maxChars = 12000) {
+  const value = typeof text === 'string' ? text : String(text ?? '');
+  if (value.length <= maxChars) {
+    return value;
+  }
+
+  const hiddenChars = value.length - maxChars;
+  return `${value.slice(0, maxChars)}\n\n[truncated ${hiddenChars} chars]`;
+}
+
+export function computePassSummary(expectations) {
+  const total = Array.isArray(expectations) ? expectations.length : 0;
+  const passed = Array.isArray(expectations)
+    ? expectations.filter((item) => item?.passed === true).length
+    : 0;
+  const failed = Math.max(total - passed, 0);
+
+  return {
+    passed,
+    failed,
+    total,
+    pass_rate: total > 0 ? roundNumber(passed / total) : 0,
+  };
+}
+
 export async function collectFiles(rootDir, currentDir = rootDir, files = []) {
   const entries = await readdir(currentDir, { withFileTypes: true }).catch(() => []);
   for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
@@ -156,4 +195,9 @@ export async function collectFiles(rootDir, currentDir = rootDir, files = []) {
 
 export function getDefaultSkillsDir() {
   return path.join(os.homedir(), '.kodax', 'skills');
+}
+
+export async function ensureDirectory(targetPath) {
+  await mkdir(targetPath, { recursive: true });
+  return targetPath;
 }

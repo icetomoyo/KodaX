@@ -4,7 +4,12 @@ import { spawn } from 'child_process';
 import { getDefaultSkillPaths } from '@kodax/skills';
 
 export const SKILL_CREATOR_TOOLS = {
+  init: 'init-skill.js',
   validate: 'quick-validate.js',
+  eval: 'run-eval.js',
+  grade: 'grade-evals.js',
+  analyze: 'analyze-benchmark.js',
+  compare: 'compare-runs.js',
   package: 'package-skill.js',
   install: 'install-skill.js',
 } as const;

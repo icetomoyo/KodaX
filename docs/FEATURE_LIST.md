@@ -27,7 +27,7 @@ _Last Updated: 2026-03-17_
 | v0.5.22 | Released | 1 | 1/1 (100%) |
 | v0.5.34 | Released | 1 | 1/1 (100%) |
 | v0.5.37 | Released | 1 | 1/1 (100%) |
-| v0.6.0 | In Development | 5 | 4/5 (80%) |
+| v0.6.0 | In Development | 6 | 4/6 (66.7%) |
 | v0.7.0 | Planned | 1 | 0/1 (0%) |
 | v0.8.0 | Planned | 2 | 0/2 (0%) |
 
@@ -58,6 +58,7 @@ _Last Updated: 2026-03-17_
 | 019 | New | Planned | High | Session Tree & Rollback System | v0.7.0 | - | [Design](features/v0.7.0.md#019) | 2026-03-12 | - | - |
 | 020 | New | Completed | High | AGENTS.md - 项目级 AI 上下文规则 | v0.6.0 | v0.5.34 | [Design](features/v0.6.0.md#020) | 2026-03-13 | 2026-03-13 | 2026-03-13 |
 | 021 | Enhancement | Completed | High | Provider-Aware Reasoning Budget Matrix | v0.6.0 | v0.5.37 | [Design](features/v0.6.0.md#021) | 2026-03-15 | 2026-03-15 | 2026-03-15 |
+| 022 | New | Planned | High | Multi-Agent Orchestration Layer | v0.6.0 | - | [Design](features/v0.6.0.md#022) | 2026-03-17 | - | - |
 ### 014: Project Mode Enhancement (COMPLETED)
 - **Category**: Refactor
 - **Status**: Completed
@@ -923,10 +924,46 @@ interface SessionEntryBase {
 
 ---
 
+### 022: Multi-Agent Orchestration Layer (PLANNED)
+- **Category**: New
+- **Status**: Planned
+- **Priority**: High
+- **Planned**: v0.6.0
+- **Released**: -
+- **Design**: [v0.6.0.md#022](features/v0.6.0.md#022)
+- **Created**: 2026-03-17
+- **Started**: -
+- **Completed**: -
+
+**Description**:
+为 KodaX 增加一层面向整体产品能力的多智能体调度基础设施，让系统能够在单次任务中安全地组织 supervisor/worker 式协作，而不是只依赖单智能体串行执行。这个能力会服务 KodaX 的整体执行模型、长任务工作流和未来的能力扩展，而不是只服务 builtin skills。
+
+**Goals**:
+1. 提供 KodaX 原生的 supervisor/worker 执行模型与最小调度协议
+2. 支持基于 workspace artifact 的任务拆分、handoff、汇总与复盘
+3. 复用现有 `context: fork`、`agent`、hooks、tool policy 等原语，而不是另起一套重平台
+4. 保持极简产品心智，让“多智能体”更多是内部实现能力，而不是增加用户负担的复杂概念
+5. 为后续 KodaX 整体能力增强预留稳定接口，包括长任务、评测、质量闭环和协作式执行
+
+**Key Changes**:
+- 定义 worker contract：输入、输出 schema、budget、timeout、tool policy
+- 定义 workspace protocol：目录约定、artifact handoff、result aggregation
+- 增加 supervisor 执行器：顺序优先、独立任务再并行、支持失败隔离
+- 支持 bounded delegation：只在可分解、可验证、可回收的子任务上启用
+- 提供观测与调试面：run metadata、handoff traces、result summaries
+
+**Implementation Notes**:
+- 优先通过真实用例驱动抽象，而不是先做通用 swarm 产品
+- 第一批验证场景以 `skill-creator` 的 grader/analyzer/comparator 套件为试验田
+- 后续抽象目标是增强 KodaX 整体多智能体能力，包括但不限于 builtin skills
+- 与现有 `packages/repl/src/interactive/invocation-runtime.ts` 和 `packages/skills/src/types.ts` 中的 `fork/agent` 原语对齐
+
+---
+
 ## Summary
-- Total: 21 (3 Planned, 0 In Progress, 18 Completed)
-- By Priority: Critical: 3, High: 16, Medium: 2, Low: 0
+- Total: 22 (4 Planned, 0 In Progress, 18 Completed)
+- By Priority: Critical: 3, High: 17, Medium: 2, Low: 0
 - Current Version: v0.5.42
-- Next Release (v0.6.0): 5 features (013, 015, 017, 020, 021), all 5 completed
+- Next Release (v0.6.0): 6 features (013, 015, 017, 020, 021, 022), 5 completed
 - Future Releases: v0.7.0 (019), v0.8.0 (007, 018)
-- Highest Priority Planned: 007 - 主题系统完善 (Medium), 018 - CodeWiki - 项目知识库系统 (High), 019 - Session Tree & Rollback System (High)
+- Highest Priority Planned: 018 - CodeWiki - 项目知识库系统 (High), 019 - Session Tree & Rollback System (High), 022 - Multi-Agent Orchestration Layer (High)

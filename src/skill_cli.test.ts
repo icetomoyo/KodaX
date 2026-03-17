@@ -25,4 +25,20 @@ describe('skill CLI helpers', () => {
     expect(String(scriptPath).replace(/\\/g, '/')).toContain('/skill-creator/scripts/install-skill.js');
     expect(args).toEqual(['example.skill', '--dest', 'C:/skills']);
   });
+
+  it('supports init and eval tool paths as thin wrappers', () => {
+    expect(resolveSkillCreatorToolPath('init', 'C:/tmp/builtin').replace(/\\/g, '/'))
+      .toBe('C:/tmp/builtin/skill-creator/scripts/init-skill.js');
+    expect(resolveSkillCreatorToolPath('eval', 'C:/tmp/builtin').replace(/\\/g, '/'))
+      .toBe('C:/tmp/builtin/skill-creator/scripts/run-eval.js');
+  });
+
+  it('supports phase 3 evaluator tool paths as thin wrappers', () => {
+    expect(resolveSkillCreatorToolPath('grade', 'C:/tmp/builtin').replace(/\\/g, '/'))
+      .toBe('C:/tmp/builtin/skill-creator/scripts/grade-evals.js');
+    expect(resolveSkillCreatorToolPath('analyze', 'C:/tmp/builtin').replace(/\\/g, '/'))
+      .toBe('C:/tmp/builtin/skill-creator/scripts/analyze-benchmark.js');
+    expect(resolveSkillCreatorToolPath('compare', 'C:/tmp/builtin').replace(/\\/g, '/'))
+      .toBe('C:/tmp/builtin/skill-creator/scripts/compare-runs.js');
+  });
 });

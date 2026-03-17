@@ -11,6 +11,8 @@ import { getTheme } from "../themes/index.js";
 import {
   calculateVisualLayout,
   calculateVisualCursorFromLayout,
+  splitAtVisualColumn,
+  splitByCodePoints,
 } from "../utils/textUtils.js";
 
 export interface TextInputProps {
@@ -139,18 +141,17 @@ export const TextInput: React.FC<TextInputProps> = ({
 
           // Current line needs to show cursor - 当前行需要显示光标
           if (isCurrentVisualLine && focus) {
-            const beforeCursor = visualLine.slice(0, vCursor.col);
-            const cursorChar = visualLine[vCursor.col] ?? " ";
-            const afterCursor = visualLine.slice(vCursor.col + 1);
+            const { before, current, after } = splitAtVisualColumn(visualLine, vCursor.col);
+            const cursorChar = current || " ";
 
             return (
               <Box key={visualRowIndex}>
                 <Text color={theme.colors.primary}>{linePrompt} </Text>
-                <Text color={theme.colors.text}>{beforeCursor}</Text>
+                <Text color={theme.colors.text}>{before}</Text>
                 <Text backgroundColor={theme.colors.primary} color="#000000">
                   {cursorChar}
                 </Text>
-                <Text color={theme.colors.text}>{afterCursor}</Text>
+                <Text color={theme.colors.text}>{after}</Text>
               </Box>
             );
           }
@@ -194,9 +195,10 @@ export const SingleLineTextInput: React.FC<{
     );
   }
 
-  const beforeCursor = [...value].slice(0, cursorCol).join("");
-  const cursorChar = [...value][cursorCol] ?? " ";
-  const afterCursor = [...value].slice(cursorCol + 1).join("");
+  const chars = splitByCodePoints(value);
+  const beforeCursor = chars.slice(0, cursorCol).join("");
+  const cursorChar = chars[cursorCol] ?? " ";
+  const afterCursor = chars.slice(cursorCol + 1).join("");
 
   return (
     <Box>
