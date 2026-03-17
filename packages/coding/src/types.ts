@@ -86,6 +86,8 @@ export interface KodaXEvents {
   onCompactStats?: (info: { tokensBefore: number; tokensAfter: number }) => void;
   /** Emitted to silently dismiss the compaction UI if compaction aborted or completed without changes */
   onCompactEnd?: () => void;
+  /** Whether the caller has queued follow-up input waiting for the next round */
+  hasPendingInputs?: () => boolean;
   onRetry?: (reason: string, attempt: number, maxAttempts: number) => void;
   onProviderRateLimit?: (attempt: number, maxRetries: number, delayMs: number) => void;
   onComplete?: () => void;

@@ -49,4 +49,22 @@ describe("runQueuedPromptSequence", () => {
     expect(result.prompt).toBe("initial");
     expect(shiftPendingPrompt).not.toHaveBeenCalled();
   });
+
+  it("skips blank queued prompts before running the next valid round", async () => {
+    const prompts = ["   ", "", "follow-up"];
+    const runRound = vi.fn(async (prompt: string) => ({ prompt, interrupted: false }));
+
+    const result = await runQueuedPromptSequence({
+      initialPrompt: "initial",
+      runRound,
+      shiftPendingPrompt: () => prompts.shift(),
+      shouldContinue: (round) => !round.interrupted,
+    });
+
+    expect(result.prompt).toBe("follow-up");
+    expect(runRound.mock.calls.map(([prompt]) => prompt)).toEqual([
+      "initial",
+      "follow-up",
+    ]);
+  });
 });

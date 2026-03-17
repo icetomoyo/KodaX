@@ -29,13 +29,17 @@ export async function runQueuedPromptSequence<TResult>(
       return result;
     }
 
-    const nextPrompt = shiftPendingPrompt();
+    let nextPrompt = shiftPendingPrompt();
+    while (typeof nextPrompt === "string" && nextPrompt.trim().length === 0) {
+      nextPrompt = shiftPendingPrompt();
+    }
+
     if (!nextPrompt) {
       return result;
     }
 
-    await onBeforeQueuedRound?.(nextPrompt);
-    prompt = nextPrompt;
+    prompt = nextPrompt.trim();
+    await onBeforeQueuedRound?.(prompt);
     result = await runRound(prompt);
   }
 }

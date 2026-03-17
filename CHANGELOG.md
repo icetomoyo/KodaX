@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.1] - 2026-03-17
+
+### Added
+- **`hasPendingInputs` Event Hook**: New `KodaXEvents.hasPendingInputs` callback lets the agent loop detect queued follow-ups and exit early to hand control back to the REPL
+
+### Fixed
+- **Queued Prompt Continuation After User Cancel**: When user interrupts via Ctrl+C/ESC, queued follow-ups now continue instead of being discarded — the agent exits its loop cleanly and the REPL drains the queue
+- **ESC to Remove Queued Input**: Single ESC on empty input now removes the last queued prompt (previously required two presses); double-ESC still interrupts
+- **Blank Prompt Filtering**: `runQueuedPromptSequence` now skips blank/whitespace-only queued prompts instead of sending them to the agent
+- **Input Clear After Queue**: Input field is cleared after queueing a follow-up prompt, preventing stale text from appearing on next render
+- **PendingInputsIndicator Layout**: Container changed to `flexDirection="column"` to prevent horizontal overflow
+
+---
+
 ## [0.6.0] - 2026-03-17
 
 ### Added

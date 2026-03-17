@@ -6,6 +6,7 @@
 
 import {
   KodaXExecutionMode,
+  KodaXEvents,
   KodaXOptions,
   KodaXReasoningMode,
   KodaXResult,
@@ -280,6 +281,10 @@ export function checkPromiseSignal(text: string): [string, string] {
   const match = PROMISE_PATTERN.exec(text);
   if (match) return [match[1]!.toUpperCase(), match[2] ?? ''];
   return ['', ''];
+}
+
+function hasQueuedFollowUp(events: KodaXEvents): boolean {
+  return events.hasPendingInputs?.() === true;
 }
 
 /**
@@ -588,6 +593,17 @@ export async function runKodaX(
       messages.push({ role: 'assistant', content: assistantContent });
 
       if (result.toolBlocks.length === 0) {
+        if (hasQueuedFollowUp(events)) {
+          events.onIterationEnd?.({ iter: iter + 1, maxIter, tokenCount: estimateTokens(messages) });
+          return {
+            success: true,
+            lastText,
+            messages,
+            sessionId,
+            limitReached: false,
+          };
+        }
+
         if (
           reasoningPlan.mode === 'auto' &&
           autoFollowUpCount < autoFollowUpLimit &&
@@ -769,17 +785,31 @@ export async function runKodaX(
       if (hasCancellation) {
         // User cancelled - add results and exit loop - 用户取消，添加结果并退出循环
         messages.push({ role: 'user', content: toolResults });
+        if (hasQueuedFollowUp(events)) {
+          events.onIterationEnd?.({ iter: iter + 1, maxIter, tokenCount: estimateTokens(messages) });
+        }
         events.onStreamEnd?.();
         return {
           success: true,
           lastText: 'Operation cancelled by user',
           messages,
           sessionId,
-          interrupted: true,
+          interrupted: !hasQueuedFollowUp(events),
         };
       }
 
       messages.push({ role: 'user', content: toolResults });
+
+      if (hasQueuedFollowUp(events)) {
+        events.onIterationEnd?.({ iter: iter + 1, maxIter, tokenCount: estimateTokens(messages) });
+        return {
+          success: true,
+          lastText,
+          messages,
+          sessionId,
+          limitReached: false,
+        };
+      }
 
       if (
         reasoningPlan.mode === 'auto' &&

@@ -576,6 +576,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     setCurrentConfig((prev) => ({ ...prev, permissionMode: mode }));
     permissionModeRef.current = mode;
   }, []);
+  const pendingInputsRef = useRef<string[]>(streamingState.pendingInputs);
+  const userInterruptedRef = useRef(false);
+
+  useEffect(() => {
+    pendingInputsRef.current = streamingState.pendingInputs;
+  }, [streamingState.pendingInputs]);
 
   // Double-ESC detection for interrupt handling.
   const lastEscPressRef = useRef<number>(0);
@@ -590,6 +596,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       if (key.ctrl && key.name === "c") {
         // Just abort - the catch block will handle saving the partial response
 
+        userInterruptedRef.current = true;
         abort();
         stopThinking();
         clearThinkingContent();
@@ -601,6 +608,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
       // ESC requires a double-press to interrupt.
       if (key.name === "escape") {
+        if (isInputEmpty && streamingState.pendingInputs.length > 0) {
+          removeLastPendingInput();
+          lastEscPressRef.current = 0;
+          return true;
+        }
+
         if (!isInputEmpty) {
           return false;
         }
@@ -611,18 +624,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         if (timeSinceLastEsc < DOUBLE_ESC_INTERVAL) {
           // Double ESC: interrupt streaming.
           lastEscPressRef.current = 0;
+          userInterruptedRef.current = true;
           abort();
           stopThinking();
           clearThinkingContent();
           setCurrentTool(undefined);
           setIsLoading(false);
           console.log(chalk.yellow("\n[Interrupted]"));
-          return true;
-        }
-
-        if (streamingState.pendingInputs.length > 0) {
-          removeLastPendingInput();
-          lastEscPressRef.current = now;
           return true;
         }
 
@@ -836,6 +844,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       stopThinking();
       setCurrentTool(undefined);
     },
+    hasPendingInputs: () => pendingInputsRef.current.length > 0,
     onError: (error: Error) => {
       // Classify error to provide better user feedback
       const classification = classifyError(error);
@@ -1227,9 +1236,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   ]);
 
   const stageQueuedPrompt = useCallback(async (prompt: string) => {
+    const normalizedPrompt = prompt.trim();
+    if (!normalizedPrompt) {
+      return;
+    }
+
     addHistoryItem({
       type: "user",
-      text: prompt,
+      text: normalizedPrompt,
     });
     setSubmitCounter((prev) => prev + 1);
     touchContext(context);
@@ -1240,6 +1254,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     initialPrompt: string,
     runRound: (prompt: string) => Promise<KodaXResult>,
   ) => {
+    userInterruptedRef.current = false;
     setCanQueueFollowUps(true);
     try {
       return await runQueuedPromptSequence({
@@ -1249,8 +1264,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         onRoundComplete: async (result) => {
           await recordCompletedAgentRound(result);
         },
-        onBeforeQueuedRound: stageQueuedPrompt,
-        shouldContinue: (result) => !result.interrupted,
+        onBeforeQueuedRound: async (prompt) => {
+          userInterruptedRef.current = false;
+          await stageQueuedPrompt(prompt);
+        },
+        shouldContinue: (result) => !userInterruptedRef.current && result.success !== false,
       });
     } finally {
       setCanQueueFollowUps(false);
@@ -1365,6 +1383,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           return;
         }
         addPendingInput(input);
+        setInputText("");
+        setIsInputEmpty(true);
         setSubmitCounter(prev => prev + 1);
         touchContext(context);
         return;
@@ -1389,12 +1409,15 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         type: "user",
         text: input,
       });
+      setInputText("");
+      setIsInputEmpty(true);
 
       // Clear autocomplete suggestions space when message is sent
       // Clear reserved autocomplete space once a message is sent.
       setSubmitCounter(prev => prev + 1);
 
       setIsLoading(true);
+      userInterruptedRef.current = false;
       clearResponse();
       clearIterationHistory(); // Clear iteration history for a new conversation.
       startStreaming();
@@ -2038,7 +2061,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       <Box flexDirection="column" flexShrink={0}>
         {/* Input Area - always at fixed position */}
         {/* Input area - always at a fixed position */}
-        <Box>
+        <Box flexDirection="column">
           <PendingInputsIndicator pendingInputs={streamingState.pendingInputs} />
           <InputPrompt
             onSubmit={handleSubmit}
