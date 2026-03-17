@@ -5,8 +5,8 @@
  * Implements fallback sanitization for non-standard YAML formats.
  */
 
-import { readFile, readdir, stat } from 'fs/promises';
-import { join, basename } from 'path';
+import { readFile, readdir } from 'fs/promises';
+import { join, relative } from 'path';
 import YAML from 'yaml';
 import type {
   Skill,
@@ -250,9 +250,12 @@ export async function loadFullSkill(
     const rawContent = await readFile(skillFilePath, 'utf-8');
     const { frontmatter, body } = parseSkillMarkdown(rawContent);
 
-    // Load support files
-    const [scripts, templates, resources] = await Promise.all([
+    // Load support files. Support both Agent Skills-style folders
+    // (`references`, `assets`) and KodaX's older compatibility folders.
+    const [scripts, references, assets, templates, resources] = await Promise.all([
       loadSkillFiles(join(skillDir, 'scripts')),
+      loadSkillFiles(join(skillDir, 'references')),
+      loadSkillFiles(join(skillDir, 'assets')),
       loadSkillFiles(join(skillDir, 'templates')),
       loadSkillFiles(join(skillDir, 'resources')),
     ]);
@@ -266,6 +269,8 @@ export async function loadFullSkill(
       loaded: true,
       source,
       ...(scripts.length > 0 && { scripts }),
+      ...(references.length > 0 && { references }),
+      ...(assets.length > 0 && { assets }),
       ...(templates.length > 0 && { templates }),
       ...(resources.length > 0 && { resources }),
     };
@@ -280,30 +285,34 @@ export async function loadFullSkill(
 /**
  * Load files from a skill subdirectory
  */
-async function loadSkillFiles(dirPath: string): Promise<SkillFile[]> {
+async function loadSkillFiles(
+  dirPath: string,
+  rootDir: string = dirPath
+): Promise<SkillFile[]> {
   const files: SkillFile[] = [];
 
   try {
-    const dirStat = await stat(dirPath);
-    if (!dirStat.isDirectory()) return files;
-
-    const entries = await readdir(dirPath);
+    const entries = await readdir(dirPath, { withFileTypes: true });
+    entries.sort((a, b) => a.name.localeCompare(b.name));
 
     for (const entry of entries) {
-      const filePath = join(dirPath, entry);
-      try {
-        const fileStat = await stat(filePath);
-        if (fileStat.isFile()) {
-          files.push({
-            name: entry,
-            path: filePath,
-            relativePath: `${basename(dirPath)}/${entry}`,
-            // Content loaded on demand
-          });
-        }
-      } catch {
-        // Skip files we can't access
+      const filePath = join(dirPath, entry.name);
+
+      if (entry.isDirectory()) {
+        files.push(...await loadSkillFiles(filePath, rootDir));
+        continue;
       }
+
+      if (!entry.isFile()) {
+        continue;
+      }
+
+      files.push({
+        name: entry.name,
+        path: filePath,
+        relativePath: relative(rootDir, filePath).replace(/\\/g, '/'),
+        // Content loaded on demand
+      });
     }
   } catch {
     // Directory doesn't exist, return empty

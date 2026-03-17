@@ -1,119 +1,56 @@
 ---
 name: tdd
-description: TDD 测试驱动开发技能。当用户要求写测试、TDD、test-driven、单元测试、测试覆盖时使用。
+description: 用测试驱动开发方式实现或修复功能：先写失败测试，再做最小实现，最后重构。只在用户明确要求 TDD、先写测试、补回归测试或按 Red-Green-Refactor 工作时使用；不要用于单纯解释测试报错或泛泛讨论测试概念。
 user-invocable: true
+disable-model-invocation: true
 allowed-tools: "Read, Grep, Glob, Write, Edit, Bash(npm:*, node:*, npx:*, vitest:*, jest:*, pytest:*)"
 argument-hint: "[file-or-description]"
+compatibility: "Works best in repositories with an existing test runner and established test conventions."
 ---
 
 # TDD (Test-Driven Development) Skill
 
-测试驱动开发辅助，遵循 Red-Green-Refactor 循环。
+按小步快跑的 Red -> Green -> Refactor 循环工作，优先建立可复现的行为保护，再修改实现。
 
-## TDD 流程
+## 开始前
 
-```
-┌─────────────────────────────────────────────┐
-│                                             │
-│  ┌─────────┐    ┌─────────┐    ┌─────────┐ │
-│  │  RED    │───▶│  GREEN  │───▶│ REFACTOR│ │
-│  │ 写失败测试│    │ 写最小实现│    │  优化代码 │ │
-│  └─────────┘    └─────────┘    └─────────┘ │
-│       ▲                               │     │
-│       └───────────────────────────────┘     │
-│                                             │
-└─────────────────────────────────────────────┘
-```
+- 根据 `$ARGUMENTS` 明确目标行为、bug 场景或待实现功能。
+- 先读现有实现、相邻测试和项目约定，优先沿用仓库已有的测试框架、fixture 和命名方式。
+- 如果用户只要求“补测试”而没有要求改实现，就停在测试层，不主动改生产代码。
 
-## 任务分析
+## RED
 
-$ARGUMENTS
+1. 写能暴露目标行为的最小失败测试。
+2. 对 bug 修复，先写复现 bug 的回归测试。
+3. 优先运行最小测试范围，确认它确实失败，并说明失败证明了什么。
 
-## 执行步骤
+## GREEN
 
-### Phase 1: RED - 编写失败测试
+1. 只做让新测试通过所需的最小实现改动。
+2. 先重跑刚刚失败的测试；必要时再补跑相邻测试。
+3. 不为了“顺手优化”扩大改动面。
 
-1. **理解需求**: 分析要实现的功能
-2. **设计接口**: 定义函数/类的公共接口
-3. **编写测试**:
-   - 正常路径测试
-   - 边界条件测试
-   - 错误处理测试
-4. **运行测试**: 确认测试失败 (RED)
+## REFACTOR
 
-### Phase 2: GREEN - 最小实现
+1. 在测试保护下整理命名、消除重复、简化实现。
+2. 任何重构后都重新运行相关测试，确保行为不变。
+3. 只有在改动面较大或用户明确要求时，才扩大到更完整的测试集。
 
-1. **实现功能**: 只写足够让测试通过的代码
-2. **运行测试**: 确认测试通过 (GREEN)
-3. **不追求完美**: 先让它工作
+## 工作准则
 
-### Phase 3: REFACTOR - 优化代码
+- 优先断言对外可观察行为，而不是内部实现细节。
+- 新增测试尽量贴近现有测试文件；只有在必要时才创建新文件。
+- 如果仓库没有测试基础设施，先说明现状，再决定是补最小配置还是只给出建议。
+- 不要把覆盖率数字当成目标；以行为信心和回归保护为准。
 
-1. **消除重复**: DRY 原则
-2. **改善命名**: 提高可读性
-3. **简化逻辑**: 减少复杂度
-4. **运行测试**: 确保仍然通过
+## 汇报方式
 
-## 测试规范
-
-### 测试文件命名
-- TypeScript: `*.spec.ts` 或 `*.test.ts`
-- Python: `test_*.py` 或 `*_test.py`
-
-### 测试结构 (AAA 模式)
-```typescript
-describe('FunctionName', () => {
-  it('should do something when condition', () => {
-    // Arrange - 准备测试数据
-    const input = 'test';
-
-    // Act - 执行被测试的代码
-    const result = functionUnderTest(input);
-
-    // Assert - 验证结果
-    expect(result).toBe(expected);
-  });
-});
-```
-
-### 覆盖率要求
-- 语句覆盖率: ≥ 80%
-- 分支覆盖率: ≥ 75%
-- 函数覆盖率: ≥ 80%
-
-## 测试框架检测
-
-自动检测项目使用的测试框架：
-- `vitest` - 检查 vitest.config.* 或 vite.config.*
-- `jest` - 检查 jest.config.* 或 package.json jest 配置
-- `pytest` - 检查 pytest.ini 或 pyproject.toml
+- 使用 `## RED`、`## GREEN`、`## REFACTOR` 三段汇报。
+- 说明修改了哪些测试文件、哪些实现文件，以及运行了哪些测试命令。
+- 最后补充剩余风险、未覆盖场景或后续建议。
 
 ## 使用示例
 
 - `/tdd src/utils/format.ts` - 为 format.ts 编写测试
 - `/tdd add user validation` - 实现用户验证功能 (TDD 方式)
 - `/tdd` - 为当前 git 变更编写测试
-
-## 输出格式
-
-```markdown
-## TDD Session: [功能名称]
-
-### RED Phase
-- 测试文件: path/to/test.spec.ts
-- 测试用例: X 个
-- 状态: FAIL (预期)
-
-### GREEN Phase
-- 实现文件: path/to/source.ts
-- 状态: PASS
-
-### REFACTOR Phase
-- 优化项: 列出改进
-- 最终状态: PASS
-
-### 覆盖率
-- Statements: X%
-- Branches: X%
-- Functions: X%
-```

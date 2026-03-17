@@ -1,67 +1,59 @@
 ---
 name: code-review
-description: 代码审查技能。当用户要求审查代码、code review、检查代码质量、review code 时使用。
+description: 审查代码、diff、提交或当前 git 改动，重点发现 bug、行为回归、边界条件遗漏、安全风险、性能问题和缺失测试。当用户提到 code review、review 这段代码、帮我看看改动有没有问题、审查 PR/提交时使用；不要用于单纯解释代码或直接实现需求。
 user-invocable: true
 allowed-tools: "Read, Grep, Glob, Bash(npm:*, node:*, npx:*)"
 argument-hint: "[file-or-directory]"
+compatibility: "Works best in a git repository or when the review target is provided explicitly."
 ---
 
 # Code Review Skill
 
-对 **$ARGUMENTS** 进行全面的代码审查。
+对 **$ARGUMENTS** 进行代码审查，并优先输出真正会影响正确性、稳定性或可维护性的发现。
 
-## 审查维度
+## 范围判定
 
-### 1. 代码质量
-- 可读性和命名规范
-- 函数复杂度和长度
-- 代码重复 (DRY 原则)
-- 注释质量
+- 如果提供了 `$ARGUMENTS`，审查对应文件、目录、diff 或提交范围。
+- 如果没有提供参数，优先审查当前 git 改动；如果不在 git 仓库中，就明确说明缺少范围并请求更具体的目标。
+- 在下结论前，尽量查看相邻实现、调用方、测试和相关配置，避免脱离上下文的误报。
 
-### 2. 潜在问题
-- 空值/未定义检查
-- 边界条件处理
-- 错误处理完整性
-- 资源泄漏风险
+## 审查重点
 
-### 3. 性能考量
-- 算法复杂度
-- 不必要的循环或重复计算
-- 内存使用效率
+- 正确性与回归风险：逻辑错误、边界条件、状态同步、类型假设、兼容性变化。
+- 稳定性与安全性：异常处理、输入校验、资源泄漏、敏感信息暴露、权限或注入风险。
+- 性能与可维护性：明显的复杂度问题、重复逻辑、难以验证的实现、缺失测试保护。
+- 只报告有行动价值的问题。纯风格偏好或可选优化，不要包装成高优先级 finding。
 
-### 4. 安全性
-- 输入验证
-- SQL 注入 / XSS 风险
-- 敏感信息暴露
-- 权限检查
+## 严重级别
 
-### 5. 最佳实践
-- TypeScript/JavaScript 规范
-- React 组件模式 (如适用)
-- 测试覆盖建议
+- `Critical`: 会导致数据丢失、严重安全问题、崩溃或明显错误结果。
+- `High`: 很可能引发实际 bug、行为回归或线上风险。
+- `Medium`: 不是立刻出错，但会留下明显缺陷、维护风险或测试空洞。
+- `Low`: 小范围问题或局部改进点，仅在确实值得用户处理时报告。
 
-## 输出格式
+## 输出要求
 
-```
-## 代码审查报告
+- 先给 `## Findings`，并按严重级别从高到低排列。
+- 每条 finding 都要包含：
+  - 严重级别和简短标题
+  - 具体文件和行号
+  - 为什么这是问题，可能造成什么影响
+  - 建议的修复方向
+- 如果没有发现值得报告的问题，明确写 `No findings.`，然后补充剩余风险或测试空白。
+- 需要时再追加 `## Open Questions` 或 `## Change Summary`，但不要用总体打分或“亮点”冲淡问题。
 
-### 概要
-- 审查文件数: X
-- 发现问题数: Y (Critical: A, High: B, Medium: C, Low: D)
+## 输出模板
 
-### 问题详情
+```markdown
+## Findings
+- [High] Title — `path/to/file.ts:42`
+  Why it matters and what to change.
 
-#### [Critical/High/Medium/Low] 问题标题
-- **文件**: path/to/file.ts:行号
-- **问题**: 描述
-- **建议**: 修复建议
+## Open Questions
+- Optional clarification or assumption.
 
-### 亮点
-- 值得肯定的代码实践
-
-### 总体评价
-- 综合评分: X/10
-- 改进建议
+## Change Summary
+- Optional short summary only after findings.
 ```
 
 ## 使用示例

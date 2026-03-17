@@ -1,6 +1,6 @@
 {
   "name": "kodax",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "极致轻量化 Coding Agent - TypeScript 实现，支持7种LLM提供商",
   "type": "module",
   "private": true,
@@ -42,6 +42,7 @@
   "license": "MIT",
   "dependencies": {
     "@kodax/coding": "*",
+    "@kodax/skills": "*",
     "@kodax/repl": "*",
     "chalk": "^5.4.1",
     "commander": "^13.1.0",

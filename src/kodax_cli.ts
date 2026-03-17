@@ -11,6 +11,7 @@ import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
+import { runSkillCreatorTool } from './skill_cli.js';
 
 // 从 package.json 读取版本号
 const packageJsonPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '../package.json');
@@ -276,6 +277,20 @@ function buildSessionOptions(cliOptions: CliOptions): { id?: string; resume?: bo
 // ============== CLI 详细帮助 ==============
 
 const CLI_HELP_TOPICS: Record<string, () => void> = {
+  skill: () => {
+    console.log(chalk.cyan('\nSkill Utilities\n'));
+    console.log(chalk.bold('Overview:'));
+    console.log(chalk.dim('  Use built-in skill packaging commands without starting an agent session.'));
+    console.log(chalk.dim('  These commands are thin wrappers around the builtin skill-creator tools.\n'));
+    console.log(chalk.bold('Commands:'));
+    console.log(chalk.dim('  kodax skill validate <dir>          ') + 'Validate a skill directory');
+    console.log(chalk.dim('  kodax skill package <dir> [options] ') + 'Package a skill as .skill');
+    console.log(chalk.dim('  kodax skill install <input> [opts]  ') + 'Install a skill from dir or .skill');
+    console.log(chalk.bold('Examples:'));
+    console.log(chalk.dim('  kodax skill validate ./.kodax/skills/my-skill'));
+    console.log(chalk.dim('  kodax skill package ./.kodax/skills/my-skill --output ./my-skill.skill'));
+    console.log(chalk.dim('  kodax skill install ./my-skill.skill --dest ~/.kodax/skills --force\n'));
+  },
   sessions: () => {
     console.log(chalk.cyan('\nSession Management\n'));
     console.log(chalk.bold('Overview:'));
@@ -404,6 +419,7 @@ function showCliHelpTopic(topic: string): boolean {
 function showCliHelpTopics(): void {
   console.log(chalk.cyan('\nDetailed Help Topics:\n'));
   console.log(chalk.dim('  kodax -h sessions   ') + 'Session management (-c, -r, -s options)');
+  console.log(chalk.dim('  kodax -h skill      ') + 'Skill packaging and installation helpers');
   console.log(chalk.dim('  kodax -h init       ') + 'Project initialization (--init, --append)');
   console.log(chalk.dim('  kodax -h auto       ') + 'Auto mode and auto-continue');
   console.log(chalk.dim('  kodax -h provider   ') + 'LLM provider options');
@@ -438,7 +454,7 @@ function showBasicHelp(): void {
   console.log('  --max-sessions N        Max sessions for --auto-continue (default: 50)');
   console.log('  --max-hours H           Max hours for --auto-continue (default: 2.0)\n');
   console.log('Help Topics (use -h <topic>):');
-  console.log('  sessions, init, auto, provider, thinking, team, print\n');
+  console.log('  skill, sessions, init, auto, provider, thinking, team, print\n');
   console.log('Interactive Commands (in REPL mode):');
   console.log('  /help, /h               Show all commands');
   console.log('  /exit, /quit            Exit interactive mode');
@@ -449,6 +465,7 @@ function showBasicHelp(): void {
   console.log('Examples:');
   console.log('  kodax                             # Enter interactive mode (auto-resume)');
   console.log('  kodax "create a component"        # Run single task (with session)');
+  console.log('  kodax skill package ./my-skill    # Package a skill without starting the agent');
   console.log('  kodax -p "quick fix" --reasoning balanced  # Quick task with reasoning');
   console.log('  kodax -c                          # Continue recent conversation');
   console.log('  kodax -c "finish this"            # Continue with new task');
@@ -458,6 +475,7 @@ function showBasicHelp(): void {
 }
 
 async function main() {
+  const argv = process.argv.slice(2);
   const program = new Command()
     .name('kodax')
     .description('KodaX - 极致轻量化 Coding Agent')
@@ -488,8 +506,61 @@ async function main() {
     .option('--auto-continue', 'Auto-continue long-running task until all features pass')
     .option('--max-sessions <n>', 'Max sessions for --auto-continue', '50')
     .option('--max-hours <n>', 'Max hours for --auto-continue', '2')
-    .allowUnknownOption(false)
-    .parse();
+    .allowUnknownOption(false);
+
+  const skillCommand = program
+    .command('skill')
+    .description('Built-in skill packaging and installation helpers')
+    .helpOption('-h, --help', 'Show skill utility help');
+
+  skillCommand.action(() => {
+    console.log(skillCommand.helpInformation());
+  });
+
+  skillCommand
+    .command('validate <skillDir>')
+    .description('Validate a skill directory using builtin skill-creator')
+    .action(async (skillDir: string) => {
+      await runSkillCreatorTool('validate', [skillDir]);
+    });
+
+  skillCommand
+    .command('package <skillDir>')
+    .description('Package a skill directory as a .skill archive')
+    .option('-o, --output <file>', 'Output .skill file path')
+    .action(async (skillDir: string, subcommandOptions: { output?: string }) => {
+      const args = [skillDir];
+      if (subcommandOptions.output) {
+        args.push('--output', subcommandOptions.output);
+      }
+      await runSkillCreatorTool('package', args);
+    });
+
+  skillCommand
+    .command('install <input>')
+    .description('Install a skill directory or .skill archive into a skills directory')
+    .option('-d, --dest <dir>', 'Destination skills directory')
+    .option('-f, --force', 'Overwrite an existing target skill')
+    .action(async (input: string, subcommandOptions: { dest?: string; force?: boolean }) => {
+      const args = [input];
+      if (subcommandOptions.dest) {
+        args.push('--dest', subcommandOptions.dest);
+      }
+      if (subcommandOptions.force) {
+        args.push('--force');
+      }
+      await runSkillCreatorTool('install', args);
+    });
+
+  if (argv[0] === 'skill' && (argv.length === 1 || argv[1] === '-h' || argv[1] === '--help')) {
+    console.log(skillCommand.helpInformation());
+    return;
+  }
+
+  await program.parseAsync(process.argv);
+  if (argv[0] === 'skill') {
+    return;
+  }
 
   const opts = program.opts();
   // 加载配置文件（用于确定默认值）

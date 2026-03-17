@@ -91,6 +91,8 @@ export interface Skill extends SkillFrontmatter {
 
   /** Support files */
   scripts?: SkillFile[];
+  references?: SkillFile[];
+  assets?: SkillFile[];
   templates?: SkillFile[];
   resources?: SkillFile[];
 

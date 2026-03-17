@@ -1,7 +1,7 @@
 {
   "name": "@kodax/skills",
-  "version": "0.6.1",
-  "description": "KodaX Skills - Agent Skills 标准实现，零外部依赖",
+  "version": "0.6.2",
+  "description": "KodaX Skills - Agent Skills standard implementation for KodaX",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -34,6 +34,7 @@
   },
   "license": "MIT",
   "dependencies": {
+    "fflate": "^0.8.2",
     "yaml": "^2.8.2"
   }
 }

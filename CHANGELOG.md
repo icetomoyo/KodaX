@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.2] - 2026-03-17
+
+### Added
+- **Skill Creator Builtin**: New `skill-creator` builtin skill with `validate`, `package`, and `install` sub-tools for creating, packaging, and installing KodaX skills
+- **CLI `skill` Command**: `kodax skill validate|package|install` subcommands for running skill tools without starting an agent session, with `kodax -h skill` detailed help topic
+- **Skill Loader: `references/` and `assets/` Folders**: `loadFullSkill` now loads `references/` and `assets/` subdirectories alongside existing `scripts/`, `templates/`, and `resources/`
+- **Recursive Skill File Loading**: `loadSkillFiles` now descends into subdirectories and uses `relative()` paths for correct cross-platform path handling
+- **Skill Type Extensions**: `Skill` interface gains optional `references` and `assets` fields
+
+### Changed
+- **Built-in Skill Descriptions Rewritten**: `code-review`, `tdd`, and `git-workflow` SKILL.md files rewritten with clearer trigger scoping, severity levels, and compatibility notes; `tdd` and `git-workflow` now use `disable-model-invocation: true` for manual-only triggering
+- **`@kodax/skills` README Updated**: Examples updated for new API (`discoverSkills` returns `Map`, `SkillContext` fields), skill table refreshed with new `skill-creator` entry
+- **Plan Mode Handoff Feedback**: Refinements to plan mode handoff behavior
+
+---
+
 ## [0.6.1] - 2026-03-17
 
 ### Added
