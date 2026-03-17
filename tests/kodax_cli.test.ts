@@ -288,6 +288,35 @@ describe('CLI Entry Point', () => {
   it('should export commands directory constant', () => {
     expect(KODAX_COMMANDS_DIR).toBe(path.join(os.homedir(), '.kodax', 'commands'));
   });
+
+  it('should not attach a bare action to the root skill subcommand', async () => {
+    const source = await fs.readFile(path.join(process.cwd(), 'src', 'kodax_cli.ts'), 'utf-8');
+    expect(source).not.toContain('skillCommand.action(() =>');
+  });
+
+  it('should keep the root command executable when subcommands are registered', () => {
+    const writes: string[] = [];
+    const program = new Command()
+      .name('kodax')
+      .helpOption(false)
+      .argument('[prompt...]')
+      .option('-h, --help [topic]')
+      .allowUnknownOption(false)
+      .action(() => {});
+
+    program
+      .command('skill')
+      .description('Built-in skill packaging and installation helpers')
+      .command('init <name>');
+
+    program.configureOutput({
+      writeOut: (text) => { writes.push(text); },
+      writeErr: (text) => { writes.push(text); },
+    });
+
+    expect(() => program.parse(['node', 'kodax'])).not.toThrow();
+    expect(writes.join('')).toBe('');
+  });
 });
 
 // 创建与 kodax_cli.ts 一致的 Command 配置（全局可复用）

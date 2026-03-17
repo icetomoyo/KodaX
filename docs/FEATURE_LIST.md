@@ -27,7 +27,7 @@ _Last Updated: 2026-03-17_
 | v0.5.22 | Released | 1 | 1/1 (100%) |
 | v0.5.34 | Released | 1 | 1/1 (100%) |
 | v0.5.37 | Released | 1 | 1/1 (100%) |
-| v0.6.0 | In Development | 6 | 4/6 (66.7%) |
+| v0.6.0 | In Development | 6 | 5/6 (83.3%) |
 | v0.7.0 | Planned | 1 | 0/1 (0%) |
 | v0.8.0 | Planned | 2 | 0/2 (0%) |
 
@@ -58,7 +58,7 @@ _Last Updated: 2026-03-17_
 | 019 | New | Planned | High | Session Tree & Rollback System | v0.7.0 | - | [Design](features/v0.7.0.md#019) | 2026-03-12 | - | - |
 | 020 | New | Completed | High | AGENTS.md - 项目级 AI 上下文规则 | v0.6.0 | v0.5.34 | [Design](features/v0.6.0.md#020) | 2026-03-13 | 2026-03-13 | 2026-03-13 |
 | 021 | Enhancement | Completed | High | Provider-Aware Reasoning Budget Matrix | v0.6.0 | v0.5.37 | [Design](features/v0.6.0.md#021) | 2026-03-15 | 2026-03-15 | 2026-03-15 |
-| 022 | New | Planned | High | Multi-Agent Orchestration Layer | v0.6.0 | - | [Design](features/v0.6.0.md#022) | 2026-03-17 | - | - |
+| 022 | New | InProgress | High | Multi-Agent Orchestration Layer | v0.6.0 | - | [Design](features/v0.6.0.md#022) | 2026-03-17 | 2026-03-17 | - |
 ### 014: Project Mode Enhancement (COMPLETED)
 - **Category**: Refactor
 - **Status**: Completed
@@ -924,15 +924,15 @@ interface SessionEntryBase {
 
 ---
 
-### 022: Multi-Agent Orchestration Layer (PLANNED)
+### 022: Multi-Agent Orchestration Layer (IN PROGRESS)
 - **Category**: New
-- **Status**: Planned
+- **Status**: InProgress
 - **Priority**: High
 - **Planned**: v0.6.0
 - **Released**: -
 - **Design**: [v0.6.0.md#022](features/v0.6.0.md#022)
 - **Created**: 2026-03-17
-- **Started**: -
+- **Started**: 2026-03-17
 - **Completed**: -
 
 **Description**:
@@ -961,9 +961,9 @@ interface SessionEntryBase {
 ---
 
 ## Summary
-- Total: 22 (4 Planned, 0 In Progress, 18 Completed)
+- Total: 22 (3 Planned, 1 In Progress, 18 Completed)
 - By Priority: Critical: 3, High: 17, Medium: 2, Low: 0
 - Current Version: v0.5.42
-- Next Release (v0.6.0): 6 features (013, 015, 017, 020, 021, 022), 5 completed
+- Next Release (v0.6.0): 6 features (013, 015, 017, 020, 021, 022), 5 completed, 1 in progress
 - Future Releases: v0.7.0 (019), v0.8.0 (007, 018)
-- Highest Priority Planned: 018 - CodeWiki - 项目知识库系统 (High), 019 - Session Tree & Rollback System (High), 022 - Multi-Agent Orchestration Layer (High)
+- Highest Priority Planned: 018 - CodeWiki - 项目知识库系统 (High), 019 - Session Tree & Rollback System (High)

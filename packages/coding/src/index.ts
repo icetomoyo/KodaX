@@ -199,6 +199,30 @@ export {
   validateAndFixToolHistory,
 } from './agent.js';
 
+// ============== Orchestration ==============
+export {
+  runOrchestration,
+  createKodaXTaskRunner,
+} from './orchestration.js';
+
+export type {
+  OrchestrationTaskExecution,
+  OrchestrationTaskStatus,
+  OrchestrationTaskBudget,
+  OrchestrationArtifact,
+  OrchestrationWorkerSpec,
+  OrchestrationWorkerResult,
+  OrchestrationCompletedTask,
+  OrchestrationTaskContext,
+  OrchestrationWorkerRunner,
+  OrchestrationTraceEvent,
+  OrchestrationRunEvents,
+  OrchestrationRunOptions,
+  OrchestrationRunResult,
+  KodaXAgentWorkerSpec,
+  CreateKodaXTaskRunnerOptions,
+} from './orchestration.js';
+
 // ============== Reasoning ==============
 export {
   KODAX_REASONING_MODE_SEQUENCE,

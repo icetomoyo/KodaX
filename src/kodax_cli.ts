@@ -24,8 +24,10 @@ import {
   KodaXClient,
   KodaXEvents,
   KodaXOptions,
+  createKodaXTaskRunner,
   KodaXReasoningMode,
   KodaXResult,
+  runOrchestration,
   KODAX_REASONING_MODE_SEQUENCE,
   KODAX_DEFAULT_PROVIDER,
   KODAX_FEATURES_FILE,
@@ -35,6 +37,7 @@ import {
   KODAX_TOOLS,
   KodaXTerminalError,
 } from '@kodax/coding';
+import type { KodaXAgentWorkerSpec } from '@kodax/coding';
 import {
   getGitRoot,
   loadConfig,
@@ -630,16 +633,14 @@ async function main() {
     .option('--auto-continue', 'Auto-continue long-running task until all features pass')
     .option('--max-sessions <n>', 'Max sessions for --auto-continue', '50')
     .option('--max-hours <n>', 'Max hours for --auto-continue', '2')
-    .allowUnknownOption(false);
+    .allowUnknownOption(false)
+    // Keep the root command executable even when subcommands like `skill` exist.
+    .action(() => {});
 
   const skillCommand = program
     .command('skill')
     .description('Built-in skill packaging and installation helpers')
     .helpOption('-h, --help', 'Show skill utility help');
-
-  skillCommand.action(() => {
-    console.log(skillCommand.helpInformation());
-  });
 
   skillCommand
     .command('init <name>')
@@ -1164,9 +1165,13 @@ New: {"features": [
     if (options.reasoningMode !== 'off') {
       console.log(chalk.cyan(`[KodaX Team] Reasoning mode: ${options.reasoningMode}`));
     }
+    const runId = `team-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    const workspaceDir = path.resolve('.kodax', 'orchestration', runId);
+    console.log(chalk.dim(`[KodaX Team] Workspace: ${workspaceDir}`));
 
     // 流式输出锁
     const streamLock = { locked: false, queue: [] as (() => void)[] };
+    const printedHeaders = new Set<string>();
     async function acquireStreamLock(): Promise<void> {
       while (streamLock.locked) {
         await new Promise<void>(resolve => streamLock.queue.push(resolve));
@@ -1179,57 +1184,85 @@ New: {"features": [
       if (next) next();
     }
 
-    // SubAgent 运行
     const MAX_SUB_ROUNDS = 10;
-    async function runSubAgent(taskIndex: number, task: string): Promise<{ result: string }> {
-      const subEvents: KodaXEvents = {
-        onTextDelta: async (text: string) => {
-          await acquireStreamLock();
-          const taskPreview = task.slice(0, 50) + (task.length > 50 ? '...' : '');
-          console.log(chalk.cyan(`\n[Agent ${taskIndex + 1}] ${chalk.dim(taskPreview)}`));
-          process.stdout.write(text);
-          releaseStreamLock();
-        },
-        onToolResult: (result: { id: string; name: string; content: string }) => {
-          console.log(chalk.green(`[Agent ${taskIndex + 1} Result] ${result.content.slice(0, 100)}...`));
-        },
-      };
-
-      const kodaXOptions: KodaXOptions = {
+    const orchestrationTasks: KodaXAgentWorkerSpec[] = tasks.map((task, index) => ({
+      id: `task-${index + 1}`,
+      title: `Team Task ${index + 1}`,
+      prompt: task,
+      execution: 'parallel',
+      budget: {
+        reasoningMode: options.reasoningMode,
+        thinking: options.thinking,
+        maxIter: MAX_SUB_ROUNDS,
+      },
+      metadata: {
+        taskIndex: index + 1,
+      },
+    }));
+    const runner = createKodaXTaskRunner({
+      baseOptions: {
         provider: options.provider,
         thinking: options.thinking,
         reasoningMode: options.reasoningMode,
         maxIter: MAX_SUB_ROUNDS,
-        events: subEvents,
-      };
-
-      const result = await rateLimitedCall(() => runKodaX(kodaXOptions, task));
-      return { result: result.lastText };
-    }
-
-    // 使用 stagger delay 启动所有 SubAgent
-    const STAGGER_DELAY = 1.0;
-    const promises = tasks.map((task, i) =>
-      new Promise<{ result: string }>(resolve => {
-        setTimeout(() => resolve(runSubAgent(i, task)), i * STAGGER_DELAY * 1000);
-      })
-    );
-
-    const results = await Promise.all(promises);
+      },
+      rateLimit: (operation) => rateLimitedCall(operation),
+      createEvents: (task) => ({
+        onTextDelta: async (text: string) => {
+          await acquireStreamLock();
+          const taskPreview = task.prompt.slice(0, 50) + (task.prompt.length > 50 ? '...' : '');
+          if (!printedHeaders.has(task.id)) {
+            console.log(chalk.cyan(`\n[Agent ${task.metadata?.taskIndex ?? task.id}] ${chalk.dim(taskPreview)}`));
+            printedHeaders.add(task.id);
+          }
+          process.stdout.write(text);
+          releaseStreamLock();
+        },
+        onToolResult: (result: { id: string; name: string; content: string }) => {
+          console.log(
+            chalk.green(
+              `[Agent ${task.metadata?.taskIndex ?? task.id} Result] ${result.content.slice(0, 100)}...`
+            )
+          );
+        },
+      }),
+    });
+    const orchestration = await runOrchestration({
+      runId,
+      workspaceDir,
+      maxParallel: tasks.length,
+      tasks: orchestrationTasks,
+      runner,
+    });
 
     console.log('\n' + '='.repeat(60));
     console.log(chalk.green(`[KodaX Team] Results Summary:`));
     console.log('='.repeat(60));
     for (let i = 0; i < tasks.length; i++) {
-      const result = results[i]!.result;
+      const taskResult = orchestration.taskResults[`task-${i + 1}`];
       console.log(chalk.yellow(`\n[Task ${i + 1}] ${tasks[i]!.slice(0, 50)}${tasks[i]!.length > 50 ? '...' : ''}`));
-      if (result) {
-        const preview = result.length > 300 ? result.slice(-300) : result;
-        console.log(chalk.green(`[Result] ...${preview}`));
+      if (!taskResult) {
+        console.log(chalk.red('[Result] Missing task result'));
+        continue;
+      }
+
+      if (taskResult.status === 'completed') {
+        const resultText = typeof taskResult.result.output === 'string'
+          ? taskResult.result.output
+          : taskResult.result.summary ?? '';
+        if (resultText) {
+          const preview = resultText.length > 300 ? resultText.slice(-300) : resultText;
+          console.log(chalk.green(`[Result] ...${preview}`));
+        } else {
+          console.log(chalk.green('[Result] Completed with no textual output'));
+        }
+      } else {
+        console.log(chalk.red(`[${taskResult.status.toUpperCase()}] ${taskResult.result.error ?? taskResult.result.summary ?? 'Task did not complete successfully'}`));
       }
     }
     console.log('\n' + '='.repeat(60));
-    console.log(chalk.green(`[KodaX Team] All ${tasks.length} tasks completed!`));
+    console.log(chalk.green(`[KodaX Team] Summary: ${orchestration.summary.completed} completed, ${orchestration.summary.failed} failed, ${orchestration.summary.blocked} blocked`));
+    console.log(chalk.dim(`[KodaX Team] Artifacts saved to ${workspaceDir}`));
     return;
   }
 
