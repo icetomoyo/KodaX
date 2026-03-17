@@ -593,7 +593,8 @@ export async function runKodaX(
       messages.push({ role: 'assistant', content: assistantContent });
 
       if (result.toolBlocks.length === 0) {
-        if (hasQueuedFollowUp(events)) {
+        const shouldYieldToQueuedFollowUp = hasQueuedFollowUp(events);
+        if (shouldYieldToQueuedFollowUp) {
           events.onIterationEnd?.({ iter: iter + 1, maxIter, tokenCount: estimateTokens(messages) });
           return {
             success: true,
@@ -783,9 +784,10 @@ export async function runKodaX(
       );
 
       if (hasCancellation) {
+        const shouldYieldToQueuedFollowUp = hasQueuedFollowUp(events);
         // User cancelled - add results and exit loop - 用户取消，添加结果并退出循环
         messages.push({ role: 'user', content: toolResults });
-        if (hasQueuedFollowUp(events)) {
+        if (shouldYieldToQueuedFollowUp) {
           events.onIterationEnd?.({ iter: iter + 1, maxIter, tokenCount: estimateTokens(messages) });
         }
         events.onStreamEnd?.();
@@ -794,13 +796,14 @@ export async function runKodaX(
           lastText: 'Operation cancelled by user',
           messages,
           sessionId,
-          interrupted: !hasQueuedFollowUp(events),
+          interrupted: !shouldYieldToQueuedFollowUp,
         };
       }
 
       messages.push({ role: 'user', content: toolResults });
 
-      if (hasQueuedFollowUp(events)) {
+      const shouldYieldToQueuedFollowUp = hasQueuedFollowUp(events);
+      if (shouldYieldToQueuedFollowUp) {
         events.onIterationEnd?.({ iter: iter + 1, maxIter, tokenCount: estimateTokens(messages) });
         return {
           success: true,
