@@ -217,6 +217,27 @@ Content`);
       expect(commands.find(c => c.name === 'cmd1')?.location).toBe('user');
       expect(commands.find(c => c.name === 'cmd2')?.location).toBe('project');
     });
+
+    it('should skip duplicate directories when project and user paths resolve to the same folder', () => {
+      const sharedDir = path.join(tempDir, '.kodax', 'commands');
+      fs.mkdirSync(sharedDir, { recursive: true });
+
+      fs.writeFileSync(path.join(sharedDir, 'shared.md'), `---
+name: shared-command
+description: Shared command
+---
+
+Shared content`);
+
+      const commands = discoverCommands([
+        { path: sharedDir, location: 'project' },
+        { path: sharedDir, location: 'user' },
+      ] satisfies CommandDiscoveryPath[]);
+
+      expect(commands).toHaveLength(1);
+      expect(commands[0]?.name).toBe('shared-command');
+      expect(commands[0]?.location).toBe('project');
+    });
   });
 
   describe('registerDiscoveredCommands', () => {

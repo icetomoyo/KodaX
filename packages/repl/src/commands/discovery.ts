@@ -253,6 +253,7 @@ export function discoverCommands(
   baseDirs: Array<string | CommandDiscoveryPath>
 ): DiscoveredCommand[] {
   const commands: DiscoveredCommand[] = [];
+  const scannedDirs = new Set<string>();
 
   for (let i = 0; i < baseDirs.length; i++) {
     const baseDirEntry = baseDirs[i];
@@ -265,6 +266,18 @@ export function discoverCommands(
     if (!fs.existsSync(baseDir)) {
       continue;
     }
+
+    let normalizedDir = path.resolve(baseDir);
+    try {
+      normalizedDir = fs.realpathSync.native?.(baseDir) ?? fs.realpathSync(baseDir);
+    } catch {
+      normalizedDir = path.resolve(baseDir);
+    }
+
+    if (scannedDirs.has(normalizedDir)) {
+      continue;
+    }
+    scannedDirs.add(normalizedDir);
 
     try {
       const files = fs.readdirSync(baseDir);

@@ -93,6 +93,7 @@ const ESCAPE_SEQUENCE_MAP: Record<string, Partial<KeyInfo>> = {
  * Matches: ESC [ number ; modifier ~ or ESC [ 1 ; modifier letter - 匹配: ESC [ number ; modifier ~ 或 ESC [ 1 ; modifier letter
  */
 const MODIFIED_KEY_RE = /^\x1b\[([0-9]+);?([0-9]+)?([~A-Za-z])?/;
+const SGR_MOUSE_RE = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/;
 
 /**
  * Parse modifier key bitmask - 解析修饰键位掩码
@@ -125,6 +126,25 @@ export function parseKeypress(sequence: string, inBracketedPaste: boolean = fals
   };
 
   if (!sequence || sequence.length === 0) {
+    return key;
+  }
+
+  const sgrMouseMatch = sequence.match(SGR_MOUSE_RE);
+  if (sgrMouseMatch) {
+    const [, buttonCode] = sgrMouseMatch;
+    const code = Number(buttonCode);
+
+    if (code === 64) {
+      key.name = "wheelup";
+      return key;
+    }
+
+    if (code === 65) {
+      key.name = "wheeldown";
+      return key;
+    }
+
+    key.name = "mouse";
     return key;
   }
 
@@ -434,6 +454,38 @@ export class KeypressParser {
       };
     }
 
+    if (this.buffer.startsWith("\x1b[<")) {
+      let endPos = 3;
+      while (endPos < this.buffer.length) {
+        const ch = this.buffer[endPos];
+        if (!ch) break;
+
+        if ((ch >= "0" && ch <= "9") || ch === ";" || ch === "<") {
+          endPos++;
+          continue;
+        }
+
+        if (ch === "M" || ch === "m") {
+          endPos++;
+          return {
+            sequence: this.buffer.slice(0, endPos),
+            remaining: this.buffer.slice(endPos),
+          };
+        }
+
+        break;
+      }
+
+      if (this.flushing) {
+        return {
+          sequence: this.buffer,
+          remaining: "",
+        };
+      }
+
+      return null;
+    }
+
     // Escape sequence starting with ESC [ or ESC O - ESC [ 或 ESC O 开头的转义序列
     // Find sequence end position - 查找序列结束位置
     let endPos = 2;
@@ -518,6 +570,8 @@ export function isFunctionKey(key: KeyInfo): boolean {
     "delete",
     "pageup",
     "pagedown",
+    "wheelup",
+    "wheeldown",
     "f1",
     "f2",
     "f3",

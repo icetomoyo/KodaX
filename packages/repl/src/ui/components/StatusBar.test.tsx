@@ -12,10 +12,12 @@ describe("StatusBar", () => {
       model: "sonnet",
       thinking: true,
       reasoningMode: "auto",
+      isThinkingActive: true,
       thinkingCharCount: 42,
     });
 
-    expect(text).toContain("Thinking (42 chars)");
+    expect(text).toContain("Thinking");
+    expect(text).not.toContain("42 chars");
   });
 
   it("includes tool char counts in budget text", () => {
@@ -28,7 +30,8 @@ describe("StatusBar", () => {
       toolInputCharCount: 12,
     });
 
-    expect(text).toContain("Bash (12 chars)");
+    expect(text).toContain("Bash");
+    expect(text).not.toContain("12 chars");
   });
 
   it("renders the visible busy status", () => {
@@ -43,6 +46,22 @@ describe("StatusBar", () => {
       />
     );
 
-    expect(lastFrame()).toContain("Bash (12 chars)");
+    expect(lastFrame()).toContain("Bash");
+    expect(lastFrame()).not.toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
+  });
+
+  it("can hide busy status while preserving the rest of the bar", () => {
+    const text = getStatusBarText({
+      sessionId: "session-1",
+      permissionMode: "accept-edits",
+      provider: "anthropic",
+      model: "sonnet",
+      currentTool: "shell_command",
+      toolInputCharCount: 12,
+      showBusyStatus: false,
+    });
+
+    expect(text).toContain("session-1");
+    expect(text).not.toContain("Bash (12 chars)");
   });
 });

@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.4] - 2026-03-18
+
+### Added
+- **History Review Mode**: PgUp enters review mode; Ctrl+Y/Alt+Z toggle; Esc/End/PgDn-at-bottom resume live; j/k for line-by-line scrolling; mouse wheel support (wheelup/wheeldown via SGR sequence parsing); live updates and spinner animation paused while reviewing; up to 50 rounds and 4000 transcript rows visible in review
+- **Mouse Wheel Support**: SGR mouse sequence detection and buffering in keypress-parser; `wheelup`/`wheeldown` recognized as function keys; multi-byte SGR sequence assembly
+- **MessageList Viewport Props**: `scrollOffset`, `animateSpinners`, and `windowed` props for review-mode rendering control; spinner glyphs freeze when `animateSpinners=false`; windowed mode bypasses Ink `<Static>` to enable scroll-offset slicing
+- **Review Snapshot State**: `ReviewSnapshot` interface captures and freezes streaming state when entering review or awaiting user interaction; `isLivePaused` flag coordinates display freeze across MessageList, StatusBar, and suggestions
+- **FEATURE_023: Dual-Mode Terminal UX**: v1.0.0 roadmap feature documenting the inline vs fullscreen TUI split, half-automatic review mode as the first deliverable, and renderer migration strategy (Rezi/OpenTUI/Ratatui)
+
+### Changed
+- **StatusBar Simplified**: Removed animated `<Spinner>` component and per-char counts from status bar; replaced with static `isThinkingActive` boolean and `showBusyStatus` flag; spinner animation now lives only in transcript rows where it belongs
+- **Waiting-for-Input State**: Busy indicator hidden when awaiting user interaction (confirm dialogs, UI requests); input placeholder changes to "Reviewing history..." during review
+- **Viewport Budget**: `reviewHint` line accounting added; `reviewHintRows` included in reserved bottom rows
+- **Help Bar**: Added "PgUp review" hint to the keyboard shortcuts bar
+- **Command Discovery Dedup**: Directories are now resolved via `realpathSync` and deduplicated so overlapping project and user command paths do not produce duplicate commands
+- **Feature List**: Added FEATURE_023 and v1.0.0 version tracking (23 total features)
+
+---
+
 ## [0.6.3] - 2026-03-17
 
 ### Added

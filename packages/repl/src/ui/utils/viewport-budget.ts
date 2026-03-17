@@ -39,6 +39,7 @@ export interface ViewportBudgetOptions {
   confirmInstruction?: string;
   uiRequest?: ViewportBudgetUIRequest | null;
   maxVisibleSelectOptions?: number;
+  reviewHint?: string;
 }
 
 export interface ViewportBudgetResult {
@@ -52,6 +53,7 @@ export interface ViewportBudgetResult {
   confirmRows: number;
   uiRequestRows: number;
   visibleSelectOptions: number;
+  reviewHintRows: number;
 }
 
 function wrapLineCount(text: string, width: number): number {
@@ -96,6 +98,7 @@ export function calculateViewportBudget(options: ViewportBudgetOptions): Viewpor
     confirmInstruction,
     uiRequest,
     maxVisibleSelectOptions = 5,
+    reviewHint,
   } = options;
 
   const pendingInputRows = pendingInputSummary
@@ -162,8 +165,12 @@ export function calculateViewportBudget(options: ViewportBudgetOptions): Viewpor
     }
   }
 
+  const reviewHintRows = reviewHint
+    ? wrapLineCount(reviewHint, Math.max(1, terminalWidth - 2))
+    : 0;
+
   const reservedBottomRows =
-    pendingInputRows + inputRows + suggestionsRows + helpRows + statusRows + confirmRows + uiRequestRows;
+    pendingInputRows + inputRows + suggestionsRows + helpRows + statusRows + confirmRows + uiRequestRows + reviewHintRows;
   const messageRows = Math.max(
     1,
     terminalRows - reservedBottomRows - MESSAGE_LIST_VERTICAL_PADDING_ROWS
@@ -180,5 +187,6 @@ export function calculateViewportBudget(options: ViewportBudgetOptions): Viewpor
     confirmRows,
     uiRequestRows,
     visibleSelectOptions,
+    reviewHintRows,
   };
 }

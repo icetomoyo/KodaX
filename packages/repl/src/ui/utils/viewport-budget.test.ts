@@ -69,4 +69,20 @@ describe("viewport-budget", () => {
     expect(budget.uiRequestRows).toBeGreaterThan(0);
     expect(budget.messageRows).toBeGreaterThan(0);
   });
+
+  it("can drop reserved suggestion space while still accounting for the review hint", () => {
+    const budget = calculateViewportBudget({
+      terminalRows: 24,
+      terminalWidth: 80,
+      inputText: "",
+      suggestionsReserved: false,
+      showHelp: false,
+      statusBarText: "status",
+      reviewHint: "Reviewing history - live updates paused | Esc/End/Ctrl+Y/Alt+Z resume",
+    });
+
+    expect(budget.suggestionsRows).toBe(0);
+    expect(budget.reviewHintRows).toBeGreaterThan(0);
+    expect(budget.messageRows).toBeGreaterThan(0);
+  });
 });

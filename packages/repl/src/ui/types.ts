@@ -158,6 +158,8 @@ export interface StatusBarProps {
   isCompacting?: boolean;
   /** Thinking character count - Issue 068: 显示 thinking 进度 */
   thinkingCharCount?: number;
+  /** Whether a thinking stream is currently active */
+  isThinkingActive?: boolean;
   /** Tool input character count - Issue 068: 显示 tool 输入进度 */
   toolInputCharCount?: number;
   /** Tool input content (truncated) - Issue 068 Phase 4: 显示参数摘要 */
@@ -175,6 +177,8 @@ export interface StatusBarProps {
     /** Compaction trigger percentage (0-100) */
     triggerPercent: number;
   };
+  /** Whether current busy/thinking status should be visible in the bar */
+  showBusyStatus?: boolean;
 }
 
 /**

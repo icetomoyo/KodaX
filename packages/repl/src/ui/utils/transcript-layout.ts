@@ -487,12 +487,83 @@ export function flattenTranscriptSections(sections: TranscriptSection[]): Transc
   return sections.flatMap((section) => section.rows);
 }
 
-export function getVisibleTranscriptRows(rows: TranscriptRow[], viewportRows?: number): TranscriptRow[] {
+export function sliceHistoryToRecentRounds(
+  items: HistoryItem[],
+  maxRounds: number
+): HistoryItem[] {
+  if (maxRounds <= 0 || items.length === 0) {
+    return [];
+  }
+
+  let userCount = 0;
+  let startIndex = 0;
+
+  for (let i = items.length - 1; i >= 0; i--) {
+    if (items[i]?.type === "user") {
+      userCount++;
+      if (userCount > maxRounds) {
+        startIndex = i + 1;
+        break;
+      }
+    }
+  }
+
+  return items.slice(startIndex);
+}
+
+export function capHistoryByTranscriptRows(
+  items: HistoryItem[],
+  viewportWidth: number,
+  rowCap: number,
+  maxLines = 1000
+): HistoryItem[] {
+  if (rowCap <= 0 || items.length === 0) {
+    return [];
+  }
+
+  let totalRows = 0;
+  let startIndex = items.length - 1;
+
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i];
+    if (!item) {
+      continue;
+    }
+
+    const itemRows = buildTranscriptRows({
+      items: [item],
+      viewportWidth,
+      maxLines,
+    }).length;
+
+    if (totalRows + itemRows > rowCap && i !== items.length - 1) {
+      break;
+    }
+
+    totalRows += itemRows;
+    startIndex = i;
+
+    if (totalRows >= rowCap) {
+      break;
+    }
+  }
+
+  return items.slice(startIndex);
+}
+
+export function getVisibleTranscriptRows(
+  rows: TranscriptRow[],
+  viewportRows?: number,
+  scrollOffset = 0
+): TranscriptRow[] {
   if (!viewportRows || viewportRows <= 0) {
     return rows;
   }
 
-  return rows.slice(Math.max(0, rows.length - viewportRows));
+  const clampedOffset = Math.max(0, scrollOffset);
+  const end = Math.max(0, rows.length - clampedOffset);
+  const start = Math.max(0, end - viewportRows);
+  return rows.slice(start, end);
 }
 
 export function resolveTranscriptColor(

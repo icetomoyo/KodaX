@@ -102,6 +102,7 @@ import { emitRetryHistoryItem } from "./utils/retry-history.js";
 import { calculateViewportBudget } from "./utils/viewport-budget.js";
 import { formatPendingInputsSummary, MAX_PENDING_INPUTS } from "./utils/pending-inputs.js";
 import { runQueuedPromptSequence } from "./utils/queued-prompt-sequence.js";
+import { capHistoryByTranscriptRows, sliceHistoryToRecentRounds } from "./utils/transcript-layout.js";
 import {
   getAskUserDialogTitle,
   resolveAskUserDismissChoice,
@@ -132,6 +133,21 @@ interface BannerProps {
   sessionId: string;
   workingDir: string;
   compactionInfo?: { contextWindow: number; triggerPercent: number; enabled: boolean };
+}
+
+interface ReviewSnapshot {
+  items: HistoryItem[];
+  isLoading: boolean;
+  isThinking: boolean;
+  thinkingCharCount: number;
+  thinkingContent: string;
+  currentResponse: string;
+  currentTool?: string;
+  toolInputCharCount: number;
+  toolInputContent: string;
+  iterationHistory: import("./contexts/StreamingContext.js").IterationRecord[];
+  currentIteration: number;
+  isCompacting: boolean;
 }
 
 const PLAN_MODE_BLOCK_GUIDANCE =
@@ -265,8 +281,13 @@ const Banner: React.FC<BannerProps> = ({ config, sessionId, workingDir, compacti
 const AutocompleteSuggestions: React.FC<{
   reserveSpace: boolean;
   width: number;
-}> = ({ reserveSpace, width }) => {
+  hidden?: boolean;
+}> = ({ reserveSpace, width, hidden = false }) => {
   const autocomplete = useAutocompleteContext();
+
+  if (hidden) {
+    return null;
+  }
 
   if (!autocomplete) {
     return reserveSpace ? <Box height={8} /> : null;
@@ -314,28 +335,19 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   // A "round" = one user input + AI response(s)
   // Full history remains in state, only rendering is limited
   const MAX_VISIBLE_ROUNDS = 20;
+  const REVIEW_VISIBLE_ROUNDS = 50;
+  const REVIEW_MAX_TRANSCRIPT_ROWS = 4000;
   const renderHistory = useMemo(() => {
-    if (history.length === 0) return [];
-
-    // Find the index where the last 20 rounds begin
-    // Each round starts with a "user" type message
-    let userCount = 0;
-    let startIndex = 0;
-
-    for (let i = 0; i < history.length; i++) {
-      if (history[i].type === "user") {
-        userCount++;
-        // If this is the 21st user message, this is where we should start
-        if (userCount > MAX_VISIBLE_ROUNDS) {
-          startIndex = i;
-          break;
-        }
-      }
-    }
-
-    // If we have less than or equal to MAX_VISIBLE_ROUNDS, show all
-    return startIndex === 0 ? history : history.slice(startIndex);
+    return sliceHistoryToRecentRounds(history, MAX_VISIBLE_ROUNDS);
   }, [history]);
+  const reviewHistory = useMemo(() => {
+    const recentRounds = sliceHistoryToRecentRounds(history, REVIEW_VISIBLE_ROUNDS);
+    return capHistoryByTranscriptRows(
+      recentRounds,
+      terminalWidth,
+      REVIEW_MAX_TRANSCRIPT_ROWS
+    );
+  }, [history, terminalWidth]);
 
   const streamingState = useStreamingState();
   const {
@@ -377,6 +389,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const lastCompactionTokensBeforeRef = useRef<number | null>(null);
   const [isInputEmpty, setIsInputEmpty] = useState(true); // Track if input is empty for ? shortcut
   const [inputText, setInputText] = useState("");
+  const [isReviewingHistory, setIsReviewingHistory] = useState(false);
+  const [historyScrollOffset, setHistoryScrollOffset] = useState(0);
+  const [reviewSnapshot, setReviewSnapshot] = useState<ReviewSnapshot | null>(null);
 
   // Shortcuts context.
   const { showHelp, toggleHelp, setShowHelp } = useShortcutsContext();
@@ -469,24 +484,92 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     return "Press (y) yes, (n) no";
   }, [confirmRequest, currentConfig.permissionMode]);
 
+  const isAwaitingUserInteraction = !!confirmRequest || !!uiRequest;
+  const isLivePaused = isReviewingHistory || isAwaitingUserInteraction;
+  const suggestionsReservedForLayout = shouldReserveSuggestionsSpace && !isReviewingHistory;
+
+  const createReviewSnapshot = useCallback((): ReviewSnapshot => ({
+    items: isReviewingHistory ? reviewHistory : renderHistory,
+    isLoading,
+    isThinking: streamingState.isThinking,
+    thinkingCharCount: streamingState.thinkingCharCount,
+    thinkingContent: streamingState.thinkingContent,
+    currentResponse: streamingState.currentResponse,
+    currentTool: streamingState.currentTool,
+    toolInputCharCount: streamingState.toolInputCharCount,
+    toolInputContent: streamingState.toolInputContent,
+    iterationHistory: streamingState.iterationHistory,
+    currentIteration: streamingState.currentIteration,
+    isCompacting: streamingState.isCompacting,
+  }), [
+    renderHistory,
+    reviewHistory,
+    isReviewingHistory,
+    isLoading,
+    streamingState.isThinking,
+    streamingState.thinkingCharCount,
+    streamingState.thinkingContent,
+    streamingState.currentResponse,
+    streamingState.currentTool,
+    streamingState.toolInputCharCount,
+    streamingState.toolInputContent,
+    streamingState.iterationHistory,
+    streamingState.currentIteration,
+    streamingState.isCompacting,
+  ]);
+
+  useEffect(() => {
+    if (isLivePaused) {
+      setReviewSnapshot((prev) => prev ?? createReviewSnapshot());
+      return;
+    }
+
+    setReviewSnapshot(null);
+  }, [isLivePaused, createReviewSnapshot]);
+
+  const displaySnapshot = reviewSnapshot;
+  const displayItems = displaySnapshot?.items ?? renderHistory;
+  const displayIsLoading = isAwaitingUserInteraction
+    ? false
+    : displaySnapshot?.isLoading ?? isLoading;
+  const displayStreamingState = {
+    isThinking: displaySnapshot?.isThinking ?? streamingState.isThinking,
+    thinkingCharCount: displaySnapshot?.thinkingCharCount ?? streamingState.thinkingCharCount,
+    thinkingContent: displaySnapshot?.thinkingContent ?? streamingState.thinkingContent,
+    currentResponse: displaySnapshot?.currentResponse ?? streamingState.currentResponse,
+    currentTool: displaySnapshot?.currentTool ?? streamingState.currentTool,
+    toolInputCharCount: displaySnapshot?.toolInputCharCount ?? streamingState.toolInputCharCount,
+    toolInputContent: displaySnapshot?.toolInputContent ?? streamingState.toolInputContent,
+    iterationHistory: displaySnapshot?.iterationHistory ?? streamingState.iterationHistory,
+    currentIteration: displaySnapshot?.currentIteration ?? streamingState.currentIteration,
+    isCompacting: displaySnapshot?.isCompacting ?? streamingState.isCompacting,
+  };
+
+  const reviewHintText = useMemo(() => {
+    if (!isReviewingHistory) return undefined;
+    return "Reviewing history - live updates paused | Wheel/PgUp/PgDn/j/k scroll | Esc/End/Ctrl+Y/Alt+Z resume";
+  }, [isReviewingHistory]);
+
   const statusBarProps = useMemo(() => ({
     sessionId: context.sessionId,
     permissionMode: currentConfig.permissionMode,
     provider: currentConfig.provider,
     model: currentConfig.model ?? getProviderModel(currentConfig.provider) ?? currentConfig.provider,
-    currentTool: streamingState.currentTool,
+    currentTool: displayStreamingState.currentTool,
     thinking: currentConfig.thinking,
     reasoningMode: currentConfig.reasoningMode,
     reasoningCapability: formatReasoningCapabilityShort(
       getProviderReasoningCapability(currentConfig.provider),
     ),
-    thinkingCharCount: streamingState.thinkingCharCount,
-    toolInputCharCount: streamingState.toolInputCharCount,
-    toolInputContent: streamingState.toolInputContent,
-    currentIteration: streamingState.currentIteration,
+    isThinkingActive: displayStreamingState.isThinking,
+    thinkingCharCount: displayStreamingState.thinkingCharCount,
+    toolInputCharCount: displayStreamingState.toolInputCharCount,
+    toolInputContent: displayStreamingState.toolInputContent,
+    currentIteration: displayStreamingState.currentIteration,
     maxIter: streamingState.maxIter,
     contextUsage,
-    isCompacting: streamingState.isCompacting,
+    isCompacting: displayStreamingState.isCompacting,
+    showBusyStatus: !isLivePaused,
   }), [
     context.sessionId,
     currentConfig.permissionMode,
@@ -494,14 +577,16 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     currentConfig.model,
     currentConfig.thinking,
     currentConfig.reasoningMode,
-    streamingState.currentTool,
-    streamingState.thinkingCharCount,
-    streamingState.toolInputCharCount,
-    streamingState.toolInputContent,
-    streamingState.currentIteration,
+    displayStreamingState.currentTool,
+    displayStreamingState.isThinking,
+    displayStreamingState.thinkingCharCount,
+    displayStreamingState.toolInputCharCount,
+    displayStreamingState.toolInputContent,
+    displayStreamingState.currentIteration,
     streamingState.maxIter,
-    streamingState.isCompacting,
+    displayStreamingState.isCompacting,
     contextUsage,
+    isLivePaused,
   ]);
 
   const statusBarText = useMemo(() => getStatusBarText(statusBarProps), [statusBarProps]);
@@ -517,11 +602,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       terminalWidth,
       inputText,
       pendingInputSummary,
-      suggestionsReserved: shouldReserveSuggestionsSpace,
+      suggestionsReserved: suggestionsReservedForLayout,
       showHelp,
       statusBarText,
       confirmPrompt: confirmRequest?.prompt,
       confirmInstruction,
+      reviewHint: reviewHintText,
       uiRequest: uiRequest
         ? uiRequest.kind === "select"
           ? {
@@ -548,14 +634,53 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       terminalWidth,
       inputText,
       pendingInputSummary,
-      shouldReserveSuggestionsSpace,
+      suggestionsReservedForLayout,
       showHelp,
       statusBarText,
       confirmRequest,
       confirmInstruction,
+      reviewHintText,
       uiRequest,
     ]
   );
+  const reviewPageSize = useMemo(
+    () => Math.max(1, viewportBudget.messageRows - 2),
+    [viewportBudget.messageRows]
+  );
+  const reviewWheelStep = useMemo(
+    () => Math.max(3, Math.floor(reviewPageSize / 4)),
+    [reviewPageSize]
+  );
+
+  const enterHistoryReview = useCallback((nextOffset?: number) => {
+    setIsReviewingHistory(true);
+    setHistoryScrollOffset((prev) => nextOffset ?? prev);
+  }, []);
+
+  const exitHistoryReview = useCallback(() => {
+    setIsReviewingHistory(false);
+    setHistoryScrollOffset(0);
+  }, []);
+
+  useEffect(() => {
+    if (!process.stdout.isTTY) {
+      return;
+    }
+
+    if (!isReviewingHistory) {
+      return;
+    }
+
+    process.stdout.write("\x1b[?1000h\x1b[?1006h");
+
+    return () => {
+      try {
+        process.stdout.write("\x1b[?1000l\x1b[?1006l");
+      } catch {
+        // Ignore terminal cleanup failures.
+      }
+    };
+  }, [isReviewingHistory]);
 
   // Refs for callbacks
   // Note: permissionMode and alwaysAllowTools are stored separately for permission checks
@@ -591,7 +716,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   // Only subscribe during streaming so keyboard events are captured correctly.
   // Reference: Gemini CLI useGeminiStream.ts useKeypress usage.
   useKeypress(
+    KeypressHandlerPriority.Critical,
     (key) => {
+      if (!isLoading) {
+        return false;
+      }
+
       // Ctrl+C immediately interrupts.
       if (key.ctrl && key.name === "c") {
         // Just abort - the catch block will handle saving the partial response
@@ -608,6 +738,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
       // ESC requires a double-press to interrupt.
       if (key.name === "escape") {
+        if (isReviewingHistory || isAwaitingUserInteraction) {
+          return false;
+        }
+
         if (isInputEmpty && streamingState.pendingInputs.length > 0) {
           removeLastPendingInput();
           lastEscPressRef.current = 0;
@@ -641,10 +775,112 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
       return false;
     },
-    {
-      isActive: isLoading, // Only active during streaming.
-      priority: KeypressHandlerPriority.Critical, // Highest priority so interrupt wins first.
-    }
+    [
+      isLoading,
+      isReviewingHistory,
+      isAwaitingUserInteraction,
+      isInputEmpty,
+      streamingState.pendingInputs.length,
+      removeLastPendingInput,
+      abort,
+      stopThinking,
+      clearThinkingContent,
+      setCurrentTool,
+      setIsLoading,
+    ]
+  );
+
+  useKeypress(
+    KeypressHandlerPriority.Critical,
+    (key) => {
+      const hasTranscript = displayItems.length > 0 || !!displayStreamingState.currentResponse || !!displayStreamingState.thinkingContent;
+
+      if ((key.ctrl && key.name === "y") || (key.meta && key.name === "z")) {
+        if (!isReviewingHistory) {
+          if (!hasTranscript) return true;
+          enterHistoryReview(0);
+          return true;
+        }
+
+        exitHistoryReview();
+        return true;
+      }
+
+      if (key.name === "pageup") {
+        if (!hasTranscript) return true;
+
+        setIsReviewingHistory(true);
+        setHistoryScrollOffset((prev) => prev + reviewPageSize);
+        return true;
+      }
+
+      if (!isReviewingHistory) {
+        return false;
+      }
+
+      if (key.name === "escape") {
+        exitHistoryReview();
+        return true;
+      }
+
+      if (key.name === "end") {
+        exitHistoryReview();
+        return true;
+      }
+
+      if (key.name === "home") {
+        setHistoryScrollOffset(1_000_000);
+        return true;
+      }
+
+      if (key.name === "pagedown") {
+        if (historyScrollOffset === 0) {
+          exitHistoryReview();
+          return true;
+        }
+
+        setHistoryScrollOffset((prev) => Math.max(0, prev - reviewPageSize));
+        return true;
+      }
+
+      if (key.name === "wheelup") {
+        setHistoryScrollOffset((prev) => prev + reviewWheelStep);
+        return true;
+      }
+
+      if (key.name === "wheeldown") {
+        if (historyScrollOffset === 0) {
+          exitHistoryReview();
+          return true;
+        }
+
+        setHistoryScrollOffset((prev) => Math.max(0, prev - reviewWheelStep));
+        return true;
+      }
+
+      if (key.name === "j" || key.name === "down") {
+        setHistoryScrollOffset((prev) => Math.max(0, prev - 1));
+        return true;
+      }
+
+      if (key.name === "k" || key.name === "up") {
+        setHistoryScrollOffset((prev) => prev + 1);
+        return true;
+      }
+
+      return false;
+    },
+    [
+      isReviewingHistory,
+      displayItems,
+      displayStreamingState.currentResponse,
+      displayStreamingState.thinkingContent,
+      historyScrollOffset,
+      reviewPageSize,
+      reviewWheelStep,
+      enterHistoryReview,
+      exitHistoryReview,
+    ]
   );
 
   // Confirmation dialog keyboard handler.
@@ -2026,30 +2262,33 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       {/* Message History - flexGrow to fill remaining space */}
 
       <Box flexDirection="column" flexGrow={1} overflowY="hidden">
-        {history.length > 0 && (
+        {displayItems.length > 0 && (
           <Box flexDirection="column">
             {/* 保留完整 transcript，避免响应结束后只剩最后一屏内容。 */}
             <MessageList
-              items={renderHistory}
-              isLoading={isLoading}
-              isThinking={streamingState.isThinking}
-              thinkingCharCount={streamingState.thinkingCharCount}
-              thinkingContent={streamingState.thinkingContent}
-              streamingResponse={streamingState.currentResponse}
-              currentTool={streamingState.currentTool}
-              toolInputCharCount={streamingState.toolInputCharCount}
-              toolInputContent={streamingState.toolInputContent}
-              iterationHistory={streamingState.iterationHistory}
-              currentIteration={streamingState.currentIteration}
-              isCompacting={streamingState.isCompacting}
+              items={displayItems}
+              isLoading={displayIsLoading}
+              isThinking={displayStreamingState.isThinking}
+              thinkingCharCount={displayStreamingState.thinkingCharCount}
+              thinkingContent={displayStreamingState.thinkingContent}
+              streamingResponse={displayStreamingState.currentResponse}
+              currentTool={displayStreamingState.currentTool}
+              toolInputCharCount={displayStreamingState.toolInputCharCount}
+              toolInputContent={displayStreamingState.toolInputContent}
+              iterationHistory={displayStreamingState.iterationHistory}
+              currentIteration={displayStreamingState.currentIteration}
+              isCompacting={displayStreamingState.isCompacting}
               viewportRows={viewportBudget.messageRows}
               viewportWidth={terminalWidth}
+              scrollOffset={historyScrollOffset}
+              animateSpinners={!isLivePaused}
+              windowed={isReviewingHistory}
             />
           </Box>
         )}
 
         {/* Loading/Thinking Indicator */}
-        {isLoading && history.length === 0 && (
+        {displayIsLoading && displayItems.length === 0 && (
           <Box>
             <ThinkingIndicator message="Thinking" showSpinner />
           </Box>
@@ -2066,12 +2305,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           <InputPrompt
             onSubmit={handleSubmit}
             prompt=">"
-            placeholder={isLoading
+            placeholder={isReviewingHistory
+              ? "Reviewing history... Press Esc, End, Ctrl+Y, or Alt+Z to resume."
+              : isLoading
               ? canQueueFollowUps
                 ? "Queue a follow-up for the next round..."
                 : "Agent is busy..."
               : "Type a message..."}
-            focus={!confirmRequest && !uiRequest}
+            focus={!confirmRequest && !uiRequest && !isReviewingHistory}
             cwd={process.cwd()}
             gitRoot={options.context?.gitRoot || context.gitRoot}
             onInputChange={handleInputChange}
@@ -2081,7 +2322,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         {/* Autocomplete Suggestions - fixed 8-line container, expands downward */}
 
         {/* 这里始终占据预算层计算出来的高度，不把消息区的裁切交给 Ink 自己“碰运气”。 */}
-        <AutocompleteSuggestions reserveSpace={shouldReserveSuggestionsSpace} width={terminalWidth} />
+        <AutocompleteSuggestions
+          reserveSpace={suggestionsReservedForLayout}
+          width={terminalWidth}
+          hidden={isReviewingHistory}
+        />
 
         {/* Keyboard Shortcuts Help Bar - shown when ? is pressed (Issue 083) */}
         {/* Keyboard shortcuts help bar - shown when ? is pressed */}
@@ -2099,6 +2344,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
         {/* Spacer between help and status bar */}
         {showHelp && <Box><Text> </Text></Box>}
+
+        {reviewHintText && (
+          <Box paddingX={1}>
+            <Text dimColor>{reviewHintText}</Text>
+          </Box>
+        )}
 
         {/* Status Bar */}
         <Box>

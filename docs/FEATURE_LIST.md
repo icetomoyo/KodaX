@@ -30,6 +30,7 @@ _Last Updated: 2026-03-17_
 | v0.6.0 | In Development | 6 | 5/6 (83.3%) |
 | v0.7.0 | Planned | 1 | 0/1 (0%) |
 | v0.8.0 | Planned | 2 | 0/2 (0%) |
+| v1.0.0 | Planned | 1 | 0/1 (0%) |
 
 ---
 
@@ -59,6 +60,7 @@ _Last Updated: 2026-03-17_
 | 020 | New | Completed | High | AGENTS.md - 项目级 AI 上下文规则 | v0.6.0 | v0.5.34 | [Design](features/v0.6.0.md#020) | 2026-03-13 | 2026-03-13 | 2026-03-13 |
 | 021 | Enhancement | Completed | High | Provider-Aware Reasoning Budget Matrix | v0.6.0 | v0.5.37 | [Design](features/v0.6.0.md#021) | 2026-03-15 | 2026-03-15 | 2026-03-15 |
 | 022 | New | InProgress | High | Multi-Agent Orchestration Layer | v0.6.0 | - | [Design](features/v0.6.0.md#022) | 2026-03-17 | 2026-03-17 | - |
+| 023 | Enhancement | Planned | High | Dual-Mode Terminal UX (Inline + Fullscreen TUI) | v1.0.0 | - | [Design](features/v1.0.0.md#023) | 2026-03-17 | - | - |
 ### 014: Project Mode Enhancement (COMPLETED)
 - **Category**: Refactor
 - **Status**: Completed
@@ -960,10 +962,43 @@ interface SessionEntryBase {
 
 ---
 
+### 023: Dual-Mode Terminal UX (Inline + Fullscreen TUI) (PLANNED)
+- **Category**: Enhancement
+- **Status**: Planned
+- **Priority**: High
+- **Planned**: v1.0.0
+- **Released**: -
+- **Design**: [v1.0.0.md#023](features/v1.0.0.md#023)
+- **Created**: 2026-03-17
+- **Started**: -
+- **Completed**: -
+
+**Description**:
+Introduce an explicit dual-mode terminal UX roadmap for KodaX: a scrollback-safe inline mode and a fullscreen TUI mode. The first deliverable is a half-automatic history review mode for the current Ink UI so users can pause live animation, inspect history, and then resume live rendering without being yanked back to the banner.
+
+**Goals**:
+1. Stop showing spinner animation while KodaX is explicitly waiting for user choice/input
+2. Add a half-automatic history review mode with intuitive shortcuts and resumable live rendering
+3. Separate `inline` and `tui` interaction models instead of forcing one mixed mode to serve both
+4. Preserve a future migration path toward Rezi/OpenTUI/other renderers by documenting the renderer boundary now
+5. Record framework research and architectural tradeoffs for the v1.0.0 terminal UX decision
+
+**Key Changes**:
+- Define `live` vs `reviewing_history` UX states and resume behavior
+- Recommend `PgUp` as the primary entry to review mode, `Esc`/`End` as resume keys, and "PgDn at bottom, then PgDn again" as an additional resume gesture
+- Reserve explicit secondary shortcuts for review mode; current recommendation is `Ctrl+Y` as the main toggle and `Alt+Z` as an ergonomic backup because `Ctrl+O` is already occupied by permission mode switching
+- Treat terminal scrollback as the source of truth only in `inline` mode; fullscreen `tui` mode should own its own scrolling model
+- Document why a half-automatic review mode is the best short-term bridge while business-layer work continues
+
+**Implementation Notes**:
+- Short term: keep Ink, implement review mode, pause spinner/high-frequency flush while reviewing history
+- Mid term: split mode-agnostic state from renderer-specific code
+- Long term: reevaluate Rezi/OpenTUI/Ratatui/Bubble Tea once the interaction model is proven
+
 ## Summary
-- Total: 22 (3 Planned, 1 In Progress, 18 Completed)
+- Total: 23 (4 Planned, 1 In Progress, 18 Completed)
 - By Priority: Critical: 3, High: 17, Medium: 2, Low: 0
 - Current Version: v0.5.42
 - Next Release (v0.6.0): 6 features (013, 015, 017, 020, 021, 022), 5 completed, 1 in progress
-- Future Releases: v0.7.0 (019), v0.8.0 (007, 018)
-- Highest Priority Planned: 018 - CodeWiki - 项目知识库系统 (High), 019 - Session Tree & Rollback System (High)
+- Future Releases: v0.7.0 (019), v0.8.0 (007, 018), v1.0.0 (023)
+- Highest Priority Planned: 018 - CodeWiki - 项目知识库系统 (High), 019 - Session Tree & Rollback System (High), 023 - Dual-Mode Terminal UX (High)

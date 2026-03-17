@@ -170,6 +170,22 @@ describe("MessageList", () => {
       expect(lastFrame()).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
     });
 
+    it("can suppress spinner animation while preserving the message body", () => {
+      const items: HistoryItem[] = [createAssistantItem("Thinking...", true)];
+      const { lastFrame } = render(
+        <MessageList
+          items={items}
+          viewportRows={DEFAULT_VIEWPORT_ROWS}
+          viewportWidth={80}
+          animateSpinners={false}
+        />
+      );
+
+      expect(lastFrame()).toContain("Assistant");
+      expect(lastFrame()).toContain("Thinking...");
+      expect(lastFrame()).not.toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
+    });
+
     it("should render thinking item with dim styling", () => {
       const items: HistoryItem[] = [createThinkingItem("Let me think about this...")];
       const { lastFrame } = render(<MessageList items={items} viewportRows={DEFAULT_VIEWPORT_ROWS} viewportWidth={80} />);
@@ -456,6 +472,98 @@ describe("MessageList", () => {
 
       instance.unmount();
       instance.cleanup();
+    });
+  });
+
+  it("keeps completed rounds visible outside the windowed review mode", () => {
+    const items: HistoryItem[] = [
+      createUserItem("Round 1 prompt"),
+      createAssistantItem("Round 1 answer"),
+      createUserItem("Round 2 prompt"),
+      createAssistantItem(["Round 2 line 1", "Round 2 line 2", "Round 2 tail"].join("\n")),
+    ];
+
+    const { lastFrame } = render(
+      <MessageList
+        items={items}
+        viewportRows={4}
+        viewportWidth={80}
+        animateSpinners={false}
+      />
+    );
+
+    const output = lastFrame() ?? "";
+    expect(output).toContain("Round 1 prompt");
+    expect(output).toContain("Round 1 answer");
+    expect(output).toContain("Round 2 tail");
+  });
+
+  it("keeps the full active round visible outside windowed review mode", () => {
+    const items: HistoryItem[] = [
+      createUserItem("Prompt"),
+      createAssistantItem(["line 1", "line 2", "line 3", "line 4", "line 5", "tail"].join("\n")),
+    ];
+
+    const { lastFrame } = render(
+      <MessageList
+        items={items}
+        viewportRows={4}
+        viewportWidth={80}
+        animateSpinners={false}
+      />
+    );
+
+    const output = lastFrame() ?? "";
+    expect(output).toContain("line 1");
+    expect(output).toContain("line 3");
+    expect(output).toContain("tail");
+  });
+
+  describe("review scrolling", () => {
+    it("renders an older slice when scrollOffset is set", () => {
+      const items: HistoryItem[] = [
+        createUserItem("Round 1"),
+        createAssistantItem(["a", "b", "c", "d", "e", "tail"].join("\n")),
+      ];
+
+      const { lastFrame } = render(
+        <MessageList
+          items={items}
+          viewportRows={4}
+          viewportWidth={80}
+          scrollOffset={3}
+          animateSpinners={false}
+          windowed={true}
+        />
+      );
+
+      const output = lastFrame() ?? "";
+      expect(output).toContain("b");
+      expect(output).toContain("c");
+      expect(output).not.toContain("tail");
+    });
+
+    it("preserves the frozen thinking block while review mode is windowed", () => {
+      const items: HistoryItem[] = [createUserItem("Round 1")];
+
+      const { lastFrame } = render(
+        <MessageList
+          items={items}
+          isLoading={true}
+          isThinking={true}
+          thinkingCharCount={120}
+          thinkingContent={"first thought\nsecond thought"}
+          viewportRows={6}
+          viewportWidth={80}
+          animateSpinners={false}
+          windowed={true}
+        />
+      );
+
+      const output = lastFrame() ?? "";
+      expect(output).toContain("Thinking");
+      expect(output).toContain("first thought");
+      expect(output).toContain("second thought");
     });
   });
 });

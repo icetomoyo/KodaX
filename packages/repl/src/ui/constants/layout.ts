@@ -13,6 +13,8 @@ export const HELP_BAR_SEGMENTS: HelpBarSegment[] = [
   { text: "  " },
   { text: "Ctrl+C interrupt" },
   { text: "  " },
+  { text: "PgUp review" },
+  { text: "  " },
   { text: "/", color: "cyan" },
   { text: " commands" },
   { text: "  " },

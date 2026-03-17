@@ -5,14 +5,25 @@ import {
   buildHistoryItemTranscriptSections,
   buildTranscriptRows,
   buildStaticTranscriptSections,
+  capHistoryByTranscriptRows,
   flattenTranscriptSections,
   getVisibleTranscriptRows,
+  sliceHistoryToRecentRounds,
 } from "./transcript-layout.js";
 
 function assistant(text: string): HistoryItem {
   return {
     id: "assistant-1",
     type: "assistant",
+    text,
+    timestamp: Date.now(),
+  };
+}
+
+function user(id: string, text: string): HistoryItem {
+  return {
+    id,
+    type: "user",
     text,
     timestamp: Date.now(),
   };
@@ -39,6 +50,19 @@ describe("transcript-layout", () => {
 
     expect(text).toContain("tail line");
     expect(text).not.toContain("one");
+  });
+
+  it("supports scrolling upward from the bottom with an explicit offset", () => {
+    const rows = buildTranscriptRows({
+      items: [assistant(["one", "two", "three", "four", "five", "tail line"].join("\n"))],
+      viewportWidth: 80,
+    });
+
+    const visible = getVisibleTranscriptRows(rows, 3, 3);
+    const text = visible.map((row) => row.text).join("\n");
+
+    expect(text).toContain("three");
+    expect(text).not.toContain("tail line");
   });
 
   it("includes streaming and loading rows in a single transcript", () => {
@@ -162,5 +186,37 @@ describe("transcript-layout", () => {
     expect(sections[1]?.key).toBe("assistant-1");
     expect(sections[0]?.rows.some((row) => row.text.includes("prompt"))).toBe(true);
     expect(sections[1]?.rows.some((row) => row.text.includes("answer"))).toBe(true);
+  });
+
+  it("keeps only the most recent user-defined rounds", () => {
+    const items: HistoryItem[] = [
+      user("user-1", "round 1"),
+      assistant("answer 1"),
+      user("user-2", "round 2"),
+      assistant("answer 2"),
+      user("user-3", "round 3"),
+      assistant("answer 3"),
+    ];
+
+    const visible = sliceHistoryToRecentRounds(items, 2);
+    const text = visible.map((item) => ("text" in item ? item.text : "")).join("\n");
+
+    expect(text).toContain("round 2");
+    expect(text).toContain("round 3");
+    expect(text).not.toContain("round 1");
+  });
+
+  it("caps review history by transcript row budget", () => {
+    const items: HistoryItem[] = [
+      assistant(["line 1", "line 2", "line 3"].join("\n")),
+      assistant(["line 4", "line 5", "line 6"].join("\n")),
+      assistant(["line 7", "line 8", "tail"].join("\n")),
+    ];
+
+    const visible = capHistoryByTranscriptRows(items, 80, 8);
+    const text = visible.map((item) => ("text" in item ? item.text : "")).join("\n");
+
+    expect(text).toContain("tail");
+    expect(text).not.toContain("line 1");
   });
 });

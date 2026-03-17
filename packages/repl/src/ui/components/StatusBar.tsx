@@ -4,12 +4,10 @@
 
 import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
-import { Spinner } from './LoadingIndicator.js';
 import { getTheme } from '../themes/index.js';
 import type { StatusBarProps } from '../types.js';
 
 const ITERATION_SYMBOL = '\u{1F504}';
-const SPINNER_SYMBOL = '\u23F3';
 const BAR_FILLED = '\u2588';
 const BAR_EMPTY = '\u2592';
 const TOKEN_ARROW = '\u2192';
@@ -100,34 +98,22 @@ function formatToolAction(currentTool: string): string {
 
 function formatBusyStatus({
   currentTool,
-  thinkingCharCount,
-  toolInputCharCount,
-  toolInputContent,
+  isThinkingActive,
   isCompacting,
 }: Pick<
   StatusBarProps,
-  'currentTool' | 'thinkingCharCount' | 'toolInputCharCount' | 'toolInputContent' | 'isCompacting'
+  'currentTool' | 'isThinkingActive' | 'isCompacting'
 >): string | undefined {
   if (isCompacting) {
     return 'Compacting';
   }
 
   if (currentTool) {
-    const actionName = formatToolAction(currentTool);
-    if (toolInputCharCount && toolInputCharCount > 0) {
-      return `${actionName} (${toolInputCharCount} chars)`;
-    }
-    if (toolInputContent) {
-      const preview = toolInputContent.length > 24
-        ? `${toolInputContent.slice(0, 24)}...`
-        : toolInputContent;
-      return `${actionName} (${preview})`;
-    }
-    return actionName;
+    return formatToolAction(currentTool);
   }
 
-  if (thinkingCharCount && thinkingCharCount > 0) {
-    return `Thinking (${thinkingCharCount} chars)`;
+  if (isThinkingActive) {
+    return 'Thinking';
   }
 
   return undefined;
@@ -141,15 +127,14 @@ export function getStatusBarText({
   tokenUsage,
   currentTool,
   thinking,
+  isThinkingActive,
   reasoningMode = thinking ? 'auto' : 'off',
   reasoningCapability,
   isCompacting,
-  thinkingCharCount,
-  toolInputCharCount,
-  toolInputContent,
   currentIteration,
   maxIter,
   contextUsage,
+  showBusyStatus = true,
 }: StatusBarProps): string {
   const parts: string[] = [];
 
@@ -164,14 +149,14 @@ export function getStatusBarText({
     parts.push(`${ITERATION_SYMBOL} ${currentIteration}/${maxIter}`);
   }
 
-  const busyStatus = formatBusyStatus({
-    currentTool,
-    thinkingCharCount,
-    toolInputCharCount,
-    toolInputContent,
-    isCompacting,
-  });
-  const toolStr = busyStatus ? `${SPINNER_SYMBOL} ${busyStatus}` : '';
+  const busyStatus = showBusyStatus
+    ? formatBusyStatus({
+        currentTool,
+        isThinkingActive,
+        isCompacting,
+      })
+    : undefined;
+  const toolStr = busyStatus ? busyStatus : '';
   parts.push(`${sessionId}${toolStr ? ` ${toolStr}` : ''}`);
   parts.push(`${provider}/${model}`);
 
@@ -198,15 +183,14 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   tokenUsage,
   currentTool,
   thinking,
+  isThinkingActive,
   reasoningMode = thinking ? 'auto' : 'off',
   reasoningCapability,
   isCompacting,
-  thinkingCharCount,
-  toolInputCharCount,
-  toolInputContent,
   currentIteration,
   maxIter,
   contextUsage,
+  showBusyStatus = true,
 }) => {
   const theme = useMemo(() => getTheme('dark'), []);
 
@@ -245,13 +229,13 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   // 5: SessionID + Spinner Tool status
   // e.g., "abcd123 <spinner> Bash (12 chars)"
   const sessionToolDisplay = useMemo(() => {
-    const busyStatus = formatBusyStatus({
-      currentTool,
-      thinkingCharCount,
-      toolInputCharCount,
-      toolInputContent,
-      isCompacting,
-    });
+    const busyStatus = showBusyStatus
+      ? formatBusyStatus({
+          currentTool,
+          isThinkingActive,
+          isCompacting,
+        })
+      : undefined;
 
     return (
       <Box>
@@ -259,14 +243,12 @@ export const StatusBar: React.FC<StatusBarProps> = ({
         {busyStatus && (
           <>
             <Text dimColor> </Text>
-            <Spinner color={theme.colors.warning} theme={theme} />
-            <Text dimColor> </Text>
             <Text dimColor>{busyStatus}</Text>
           </>
         )}
       </Box>
     );
-  }, [sessionId, currentTool, thinkingCharCount, toolInputCharCount, toolInputContent, isCompacting, theme]);
+  }, [sessionId, currentTool, isThinkingActive, isCompacting, showBusyStatus]);
 
   // 6: Provider/Model
   const providerModelDisplay = <Text color={theme.colors.secondary}>{provider}/{model}</Text>;

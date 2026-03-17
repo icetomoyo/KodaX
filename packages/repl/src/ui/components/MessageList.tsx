@@ -68,6 +68,12 @@ export interface MessageListProps {
   viewportRows?: number;
   /** Optional width override for deterministic transcript layout */
   viewportWidth?: number;
+  /** Scroll offset from the bottom of the transcript, in rendered rows */
+  scrollOffset?: number;
+  /** Whether spinner glyphs should animate in rendered rows */
+  animateSpinners?: boolean;
+  /** Whether to render the transcript as a windowed viewport owned by the app */
+  windowed?: boolean;
 }
 
 export interface HistoryItemRendererProps {
@@ -397,12 +403,16 @@ export const HistoryItemRenderer: React.FC<HistoryItemRendererProps> = memo(({
 /**
  * MessageList
  */
-const TranscriptRowRenderer: React.FC<{ row: TranscriptRow; theme: Theme }> = memo(({ row, theme }) => {
+const TranscriptRowRenderer: React.FC<{
+  row: TranscriptRow;
+  theme: Theme;
+  animateSpinners?: boolean;
+}> = memo(({ row, theme, animateSpinners = true }) => {
   const color = resolveTranscriptColor(theme, row.color);
 
   return (
     <Box marginLeft={row.indent ?? 0}>
-      {row.spinner && (
+      {row.spinner && animateSpinners && (
         <>
           <Spinner color={theme.colors.accent} theme={theme} />
           <Text> </Text>
@@ -444,11 +454,17 @@ export function splitMessageHistorySections(items: HistoryItem[]): MessageHistor
 const StaticTranscriptItemRenderer: React.FC<{
   section: TranscriptSection;
   theme: Theme;
-}> = memo(({ section, theme }) => {
+  animateSpinners?: boolean;
+}> = memo(({ section, theme, animateSpinners = true }) => {
   return (
     <Box flexDirection="column">
       {section.rows.map((row) => (
-        <TranscriptRowRenderer key={row.key} row={row} theme={theme} />
+        <TranscriptRowRenderer
+          key={row.key}
+          row={row}
+          theme={theme}
+          animateSpinners={animateSpinners}
+        />
       ))}
     </Box>
   );
@@ -470,6 +486,9 @@ export const MessageList: React.FC<MessageListProps> = ({
   isCompacting = false,
   viewportRows,
   viewportWidth,
+  scrollOffset = 0,
+  animateSpinners = true,
+  windowed = false,
 }) => {
   const theme = useMemo(() => getTheme("dark"), []);
   const { stdout } = useStdout();
@@ -491,10 +510,10 @@ export const MessageList: React.FC<MessageListProps> = ({
     );
   }
 
-  const activeSections = useMemo(
+  const transcriptSections = useMemo(
     () => {
       const historySections = buildHistoryItemTranscriptSections(
-        activeItems,
+        windowed ? items : activeItems,
         terminalWidth,
         maxLines
       );
@@ -520,7 +539,9 @@ export const MessageList: React.FC<MessageListProps> = ({
         : historySections;
     },
     [
+      items,
       activeItems,
+      windowed,
       terminalWidth,
       isLoading,
       maxLines,
@@ -536,31 +557,39 @@ export const MessageList: React.FC<MessageListProps> = ({
       isCompacting,
     ]
   );
-  const activeTranscriptRows = useMemo(
-    () => flattenTranscriptSections(activeSections),
-    [activeSections]
+  const transcriptRows = useMemo(
+    () => flattenTranscriptSections(transcriptSections),
+    [transcriptSections]
   );
 
   const visibleRows = useMemo(
-    () => getVisibleTranscriptRows(activeTranscriptRows, viewportRows),
-    [activeTranscriptRows, viewportRows]
+    () => (windowed
+      ? getVisibleTranscriptRows(transcriptRows, viewportRows, scrollOffset)
+      : transcriptRows),
+    [transcriptRows, viewportRows, scrollOffset, windowed]
   );
 
   return (
     <Box flexDirection="column" paddingY={1}>
-      {staticSections.length > 0 && (
+      {!windowed && staticSections.length > 0 && (
         <Static items={staticSections}>
           {(section) => (
             <StaticTranscriptItemRenderer
               key={section.key}
               section={section}
               theme={theme}
+              animateSpinners={animateSpinners}
             />
           )}
         </Static>
       )}
       {visibleRows.map((row) => (
-        <TranscriptRowRenderer key={row.key} row={row} theme={theme} />
+        <TranscriptRowRenderer
+          key={row.key}
+          row={row}
+          theme={theme}
+          animateSpinners={animateSpinners}
+        />
       ))}
     </Box>
   );
