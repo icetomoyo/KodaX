@@ -41,6 +41,7 @@ import {
   createProjectHarnessAttempt,
   formatProjectHarnessSummary,
   readLatestHarnessRun,
+  reverifyProjectHarnessRun,
   recordManualHarnessOverride,
   type ProjectHarnessRunRecord,
   type ProjectHarnessVerificationResult,
@@ -645,6 +646,7 @@ Rules:
 - Prefer minimal relevant edits.
 - Add or update tests when behavior changes.
 - Update PROGRESS.md with evidence and blockers from this attempt.
+- Treat planned feature steps and the current session plan as completion checklist items.
 - Do NOT edit feature_list.json. The command layer will decide completion after verification.
 
 At the end of the attempt, append exactly one JSON block wrapped in <project-harness> tags:
@@ -739,7 +741,7 @@ export function printProjectHelp(): void {
   console.log(chalk.cyan('  brainstorm') + chalk.dim(' <topic>|continue|done') + '  Multi-turn AI-guided brainstorm');
   console.log(chalk.cyan('  next') + chalk.dim(' [prompt|#index] [--no-confirm]') + '  Run next/specific feature');
   console.log(chalk.cyan('  auto') + chalk.dim(' [prompt] [--max=N|--confirm]') + '  Auto-run all');
-  console.log(chalk.cyan('  verify') + chalk.dim(' [#index|--last]') + '         Show latest harness verification');
+  console.log(chalk.cyan('  verify') + chalk.dim(' [#index|--last]') + '         Rerun deterministic harness verification');
   console.log(chalk.cyan('  edit') + chalk.dim(' [#index] <prompt>') + '  AI-driven editing');
   console.log(chalk.cyan('  reset') + chalk.dim(' [--all]') + '  Clear progress or delete files');
   console.log(chalk.cyan('  analyze') + chalk.dim(' [prompt]') + '  AI-powered analysis');
@@ -755,7 +757,7 @@ export function printProjectHelp(): void {
   console.log();
   console.log(chalk.bold('Reset Command:'));
   console.log(chalk.dim('  /project reset        Clear PROGRESS.md (keep features)'));
-  console.log(chalk.dim('  /project reset --all  Delete all 3 project files'));
+  console.log(chalk.dim('  /project reset --all  Delete project truth files and runtime state'));
   console.log(chalk.yellow('  Note: only deletes files created by /project init'));
 
   console.log();
@@ -804,7 +806,7 @@ export function printProjectHelp(): void {
   console.log();
   console.log(chalk.bold('Reset Command:'));
   console.log(chalk.dim('  /project reset        Clear PROGRESS.md (keep features)'));
-  console.log(chalk.dim('  /project reset --all  Delete all 3 project files'));
+  console.log(chalk.dim('  /project reset --all  Delete project truth files and runtime state'));
   console.log(chalk.yellow('  ⚠️  Only deletes files created by /project init'));
 
   console.log();
@@ -1374,8 +1376,11 @@ async function projectVerify(args: string[]): Promise<void> {
     return;
   }
 
-  console.log(chalk.cyan('\n/project verify - Latest Verification\n'));
-  console.log(formatProjectHarnessSummary(selectedRun));
+  const verification = await reverifyProjectHarnessRun(storage, selectedRun);
+
+  console.log(chalk.cyan('\n/project verify - Deterministic Re-check\n'));
+  console.log(chalk.dim('This reruns current workspace checks and proof gates. It does not replay the original full action trace.\n'));
+  console.log(formatProjectHarnessSummary(verification.runRecord));
   console.log();
 }
 
@@ -2011,7 +2016,7 @@ async function projectReset(
     console.log(chalk.cyan('Files to be deleted:'));
     console.log(chalk.dim('  📄 feature_list.json'));
     console.log(chalk.dim('  📄 PROGRESS.md'));
-    console.log(chalk.dim('  📄 .agent/project/session_plan.md'));
+    console.log(chalk.dim('  📁 .agent/project/ (session plan, brainstorm, harness records)'));
     console.log();
     console.log(chalk.green('✓ Safe: .kodax/ folder and other control-plane files are preserved'));
     console.log(chalk.green('✓ Your project code is SAFE (src/, package.json, etc.)'));
@@ -2039,7 +2044,7 @@ async function projectReset(
     // 默认：只清空 PROGRESS.md
     console.log(chalk.cyan('\nThis will clear the progress log (PROGRESS.md).'));
     console.log(chalk.dim('  ✓ feature_list.json will be preserved'));
-    console.log(chalk.dim('  ✓ .agent/project/session_plan.md will be preserved'));
+    console.log(chalk.dim('  ✓ .agent/project/* runtime artifacts will be preserved'));
     console.log(chalk.dim('  ✓ All features will remain intact'));
     console.log();
 

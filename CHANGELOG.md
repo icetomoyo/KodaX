@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+---
+
+## [0.6.10] - 2026-03-18
+
+### Added
+- **FEATURE_024: Project Harness - Action-Level Verified Execution**: Deterministic verification for `/project next` and `/project auto`; protected-artifact blocking for `feature_list.json` and harness-owned files; `/project verify` with current-workspace re-verification; harness run/evidence persistence; proof-carrying completion report parsing; declarative invariant compilation for test, doc, and workspace dependency checks; active-feature relevance and unrelated-diff detection; structured failure codes and retry feedback; checkpoint metadata and session-tree node capture; feature-step and session-plan checklist coverage gates; repair-playbook policy in generated harness config
+- **Autocomplete Replacement Utility**: Extracted `buildAutocompleteReplacement` function into dedicated `autocomplete-replacement.ts` with typed interfaces for command, argument, file, and skill completion types
+- **TextBuffer.replaceRange**: New `replaceRange(start, end, replacement)` method for replacing arbitrary text ranges with cursor positioning
+- **TextBuffer.moveToAbsoluteOffset**: New method to move cursor to any absolute string offset, supporting multi-line navigation
+- **useTextBuffer.replaceRange**: Exposed `replaceRange` from the `useTextBuffer` hook with undo history support
+
+### Changed
+- **Project Runtime Artifact Migration**: Project runtime artifacts moved from `.kodax/project/` to `.agent/project/` with legacy `.kodax` read compatibility; session plan, brainstorm, checkpoints, session-tree, and harness records now under `.agent/project/`
+- **InputPrompt Refactor**: Replaced inline autocomplete replacement logic with extracted `buildAutocompleteReplacement` utility; uses `replaceRange` instead of `setText` for precise cursor-aware completion
+- **`/project verify` Enhancement**: Now reruns deterministic workspace verification instead of just displaying the latest cached result
+- **Feature Execution Prompt**: Added feature-step and session-plan checklist items as completion criteria for agent attempts
+
+---
+
 ## [0.6.4] - 2026-03-18
 
 ### Added
@@ -188,10 +209,6 @@ All notable changes to this project will be documented in this file.
 ### Removed
 - **Build Artifacts**: Cleaned up 24 accidentally committed build output files (`*.d.ts`, `*.js`, `*.js.map`) from `packages/ai/src/`
 - **.gitignore Hardening**: Added rules to prevent build artifacts in source directories (`src/**/*.js`, `src/**/*.d.ts`, etc.)
-
----
-
-## [Unreleased]
 
 ---
 

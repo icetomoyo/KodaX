@@ -76,6 +76,15 @@ export function useTextBuffer(options: UseTextBufferOptions = {}): UseTextBuffer
     [buffer, syncState]
   );
 
+  // replaceRange
+  const handleReplaceRange = useCallback(
+    (start: number, end: number, replacement: string) => {
+      buffer.replaceRange(start, end, replacement);
+      syncState();
+    },
+    [buffer, syncState]
+  );
+
   // insert
   const handleInsert = useCallback(
     (insertText: string, insertOptions?: { paste?: boolean }) => {
@@ -271,6 +280,7 @@ export function useTextBuffer(options: UseTextBufferOptions = {}): UseTextBuffer
     cursor: state.cursor,
     lines: state.lines,
     setText: handleSetText,
+    replaceRange: handleReplaceRange,
     insert: handleInsert,
     newline: handleNewline,
     backspace: handleBackspace,

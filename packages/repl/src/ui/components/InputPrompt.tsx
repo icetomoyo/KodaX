@@ -13,7 +13,7 @@
  * - Escape to cancel - Escape 取消
  */
 
-import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { Box, Text, useApp } from "ink";
 import { TextInput } from "./TextInput.js";
 import { useTextBuffer } from "../hooks/useTextBuffer.js";
@@ -22,6 +22,7 @@ import { useAutocomplete, useAutocompleteContext, type SelectedCompletion } from
 import { useKeypress } from "../contexts/KeypressContext.js";
 import { getTheme } from "../themes/index.js";
 import { KeypressHandlerPriority, type InputPromptProps } from "../types.js";
+import { buildAutocompleteReplacement } from "../utils/autocomplete-replacement.js";
 
 /**
  * Extended props for InputPrompt with autocomplete support
@@ -60,7 +61,7 @@ export const InputPrompt: React.FC<InputPromptAutocompleteProps> = ({
   const { add: addHistory, navigateUp, navigateDown, reset: resetHistory, saveTempInput } = useInputHistory();
 
   // Text buffer - 文本缓冲区
-  const { text, cursor, lines, setText, clear, move, moveToEnd, insert, backspace, newline, delete: deleteChar } = useTextBuffer({
+  const { buffer, text, cursor, lines, setText, replaceRange, clear, move, insert, backspace, newline, delete: deleteChar } = useTextBuffer({
     initialValue,
     onSubmit: (submittedText) => {
       addHistory(submittedText);
@@ -102,15 +103,6 @@ export const InputPrompt: React.FC<InputPromptAutocompleteProps> = ({
   }, [text, onInputChange]);
 
   // Calculate absolute cursor position from row/col - 从行/列计算绝对光标位置
-  const getAbsoluteCursorPos = useCallback((): number => {
-    let pos = 0;
-    for (let i = 0; i < cursor.row; i++) {
-      pos += (lines[i]?.length ?? 0) + 1; // +1 for newline character
-    }
-    pos += cursor.col;
-    return pos;
-  }, [cursor.row, cursor.col, lines]);
-
   // Trigger autocomplete when text changes - 文本变化时触发自动补全
   useEffect(() => {
     if (!autocompleteEnabled) return;
@@ -118,10 +110,10 @@ export const InputPrompt: React.FC<InputPromptAutocompleteProps> = ({
     // Only trigger if text actually changed - 只有文本实际变化时才触发
     if (text !== prevTextRef.current) {
       prevTextRef.current = text;
-      const cursorPos = getAbsoluteCursorPos();
+      const cursorPos = buffer.getAbsoluteOffset();
       handleAutocompleteInput(text, cursorPos);
     }
-  }, [text, autocompleteEnabled, getAbsoluteCursorPos, handleAutocompleteInput]);
+  }, [buffer, text, autocompleteEnabled, handleAutocompleteInput]);
 
   // Update isFirstLine state - 更新 isFirstLine 状态
   useEffect(() => {
@@ -152,55 +144,14 @@ export const InputPrompt: React.FC<InputPromptAutocompleteProps> = ({
   const acceptCompletion = useCallback((completion: SelectedCompletion): boolean => {
     if (!completion || !completion.text) return false;
 
-    const { text: completionText, type } = completion;
-    const beforeCursor = text.slice(0, getAbsoluteCursorPos());
-
-    // Smart replacement based on completion type
-    // 根据补全类型智能替换
-    if (type === 'command' || type === 'skill') {
-      // Command/skill: replace from the last / to end
-      // 命令/技能：从最后一个 / 替换到末尾
-      const lastSlashIndex = beforeCursor.lastIndexOf('/');
-      if (lastSlashIndex !== -1) {
-        const prefix = text.slice(0, lastSlashIndex);
-        setText(prefix + completionText);
-      } else {
-        setText(completionText);
-      }
-    } else if (type === 'argument') {
-      // Argument: replace only the last word (the partial argument)
-      // 参数：只替换最后一个词（部分参数）
-      const lastSpaceIndex = beforeCursor.lastIndexOf(' ');
-      if (lastSpaceIndex !== -1) {
-        const prefix = text.slice(0, lastSpaceIndex + 1);
-        setText(prefix + completionText);
-      } else {
-        setText(completionText);
-      }
-    } else if (type === 'file' || beforeCursor.includes('@')) {
-      // File: find the @ position and replace from there
-      // 文件：找到 @ 位置并从那里替换
-      const lastAtIndex = beforeCursor.lastIndexOf('@');
-      if (lastAtIndex !== -1) {
-        const beforeAt = text.slice(0, lastAtIndex);
-        setText(beforeAt + completionText);
-      } else {
-        setText(completionText);
-      }
-    } else {
-      // Default: replace entire text
-      // 默认：替换整个文本
-      setText(completionText);
-    }
-
-    // Move cursor to end of text after completion
-    // 补全后移动光标到文本末尾
-    setTimeout(() => {
-      moveToEnd();
-    }, 0);
-
+    const replacement = buildAutocompleteReplacement(
+      text,
+      buffer.getAbsoluteOffset(),
+      completion
+    );
+    replaceRange(replacement.start, replacement.end, replacement.replacement);
     return true;
-  }, [text, getAbsoluteCursorPos, setText, moveToEnd]);
+  }, [buffer, text, replaceRange]);
 
   // Keyboard input handling - use centralized KeypressContext
   // Reference Gemini CLI: use priority system to register handlers - 键盘输入处理 - 使用 centralized KeypressContext，参考 Gemini CLI: 使用优先级系统注册处理器
@@ -353,38 +304,15 @@ export const InputPrompt: React.FC<InputPromptAutocompleteProps> = ({
           if (completion) {
             // Calculate the final text after completion using smart replacement
             // 使用智能替换计算补全后的最终文本
-            const { text: completionText, type } = completion;
-            const beforeCursor = text.slice(0, getAbsoluteCursorPos());
-            let finalText: string;
-
-            if (type === 'command' || type === 'skill') {
-              // Command/skill: replace from the last / to end
-              const lastSlashIndex = beforeCursor.lastIndexOf('/');
-              if (lastSlashIndex !== -1) {
-                finalText = text.slice(0, lastSlashIndex) + completionText;
-              } else {
-                finalText = completionText;
-              }
-            } else if (type === 'argument') {
-              // Argument: replace only the last word
-              const lastSpaceIndex = beforeCursor.lastIndexOf(' ');
-              if (lastSpaceIndex !== -1) {
-                finalText = text.slice(0, lastSpaceIndex + 1) + completionText;
-              } else {
-                finalText = completionText;
-              }
-            } else if (type === 'file' || beforeCursor.includes('@')) {
-              // File: find the @ position and replace from there
-              const lastAtIndex = beforeCursor.lastIndexOf('@');
-              if (lastAtIndex !== -1) {
-                finalText = text.slice(0, lastAtIndex) + completionText;
-              } else {
-                finalText = completionText;
-              }
-            } else {
-              finalText = completionText;
-            }
-
+            const replacement = buildAutocompleteReplacement(
+              text,
+              buffer.getAbsoluteOffset(),
+              completion
+            );
+            const finalText =
+              text.slice(0, replacement.start) +
+              replacement.replacement +
+              text.slice(replacement.end);
             // Submit directly with the completed text
             // 直接使用补全后的文本发送
             if (finalText.trim()) {

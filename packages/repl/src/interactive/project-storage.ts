@@ -34,6 +34,9 @@ export class ProjectStorage {
   private harnessRootPath: string;
   private harnessConfigPath: string;
   private harnessRunsPath: string;
+  private harnessCriticPath: string;
+  private harnessCheckpointsPath: string;
+  private harnessSessionTreePath: string;
   private harnessEvidencePath: string;
 
   constructor(projectDir: string) {
@@ -50,6 +53,9 @@ export class ProjectStorage {
     this.harnessRootPath = path.join(this.projectArtifactsRoot, 'harness');
     this.harnessConfigPath = path.join(this.harnessRootPath, 'config.generated.json');
     this.harnessRunsPath = path.join(this.harnessRootPath, 'runs.jsonl');
+    this.harnessCriticPath = path.join(this.harnessRootPath, 'critic.jsonl');
+    this.harnessCheckpointsPath = path.join(this.projectArtifactsRoot, 'checkpoints', 'index.jsonl');
+    this.harnessSessionTreePath = path.join(this.projectArtifactsRoot, 'session-tree', 'nodes.jsonl');
     this.harnessEvidencePath = path.join(this.harnessRootPath, 'evidence');
   }
 
@@ -69,6 +75,35 @@ export class ProjectStorage {
 
   private getHarnessEvidenceFilePath(featureIndex: number): string {
     return path.join(this.harnessEvidencePath, `feature-${featureIndex}.json`);
+  }
+
+  private warnMalformedJsonl(filePath: string, label: string, count: number): void {
+    if (count === 0 || process.env.NODE_ENV === 'test') {
+      return;
+    }
+
+    const fileName = path.basename(filePath);
+    console.warn(`[KodaX] Skipped ${count} malformed ${label} record(s) from ${fileName}.`);
+  }
+
+  private async readJsonLinesFile<T>(filePath: string, label: string): Promise<T[]> {
+    const content = await this.readTextFileWithFallback(filePath);
+    if (!content.trim()) {
+      return [];
+    }
+
+    const records: T[] = [];
+    let malformedCount = 0;
+    for (const line of content.split('\n').map(item => item.trim()).filter(Boolean)) {
+      try {
+        records.push(JSON.parse(line) as T);
+      } catch {
+        malformedCount += 1;
+      }
+    }
+
+    this.warnMalformedJsonl(filePath, label, malformedCount);
+    return records;
   }
 
   private async readTextFileWithFallback(...paths: string[]): Promise<string> {
@@ -308,6 +343,9 @@ export class ProjectStorage {
     harnessRoot: string;
     harnessConfig: string;
     harnessRuns: string;
+    harnessCritic: string;
+    harnessCheckpoints: string;
+    harnessSessionTree: string;
     harnessEvidence: string;
   } {
     return {
@@ -323,6 +361,9 @@ export class ProjectStorage {
       harnessRoot: this.harnessRootPath,
       harnessConfig: this.harnessConfigPath,
       harnessRuns: this.harnessRunsPath,
+      harnessCritic: this.harnessCriticPath,
+      harnessCheckpoints: this.harnessCheckpointsPath,
+      harnessSessionTree: this.harnessSessionTreePath,
       harnessEvidence: this.harnessEvidencePath,
     };
   }
@@ -341,17 +382,35 @@ export class ProjectStorage {
     await fs.appendFile(this.harnessRunsPath, `${JSON.stringify(record)}\n`, 'utf-8');
   }
 
-  async readHarnessRuns<T = unknown>(): Promise<T[]> {
-    const content = await this.readTextFileWithFallback(this.harnessRunsPath);
-    if (!content.trim()) {
-      return [];
-    }
+  async appendHarnessCritic(record: unknown): Promise<void> {
+    await fs.mkdir(this.harnessRootPath, { recursive: true });
+    await fs.appendFile(this.harnessCriticPath, `${JSON.stringify(record)}\n`, 'utf-8');
+  }
 
-    return content
-      .split('\n')
-      .map(line => line.trim())
-      .filter(Boolean)
-      .map(line => JSON.parse(line) as T);
+  async appendHarnessCheckpoint(record: unknown): Promise<void> {
+    await fs.mkdir(path.dirname(this.harnessCheckpointsPath), { recursive: true });
+    await fs.appendFile(this.harnessCheckpointsPath, `${JSON.stringify(record)}\n`, 'utf-8');
+  }
+
+  async appendHarnessSessionNode(record: unknown): Promise<void> {
+    await fs.mkdir(path.dirname(this.harnessSessionTreePath), { recursive: true });
+    await fs.appendFile(this.harnessSessionTreePath, `${JSON.stringify(record)}\n`, 'utf-8');
+  }
+
+  async readHarnessRuns<T = unknown>(): Promise<T[]> {
+    return this.readJsonLinesFile<T>(this.harnessRunsPath, 'harness run');
+  }
+
+  async readHarnessCritics<T = unknown>(): Promise<T[]> {
+    return this.readJsonLinesFile<T>(this.harnessCriticPath, 'harness critic');
+  }
+
+  async readHarnessCheckpoints<T = unknown>(): Promise<T[]> {
+    return this.readJsonLinesFile<T>(this.harnessCheckpointsPath, 'harness checkpoint');
+  }
+
+  async readHarnessSessionNodes<T = unknown>(): Promise<T[]> {
+    return this.readJsonLinesFile<T>(this.harnessSessionTreePath, 'harness session-tree');
   }
 
   async writeHarnessEvidence(featureIndex: number, record: unknown): Promise<void> {
@@ -375,25 +434,7 @@ export class ProjectStorage {
     let deleted = 0;
     let failed = 0;
 
-    try {
-      await fs.unlink(this.featuresPath);
-      deleted++;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        failed++;
-      }
-    }
-
-    try {
-      await fs.unlink(this.progressPath);
-      deleted++;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        failed++;
-      }
-    }
-
-    for (const filePath of [this.sessionPlanPath, this.legacySessionPlanPath]) {
+    const unlinkIfExists = async (filePath: string): Promise<void> => {
       try {
         await fs.unlink(filePath);
         deleted++;
@@ -402,7 +443,27 @@ export class ProjectStorage {
           failed++;
         }
       }
-    }
+    };
+
+    const removeDirIfExists = async (dirPath: string): Promise<void> => {
+      try {
+        await fs.rm(dirPath, { recursive: true, force: false });
+        deleted++;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          return;
+        }
+        failed++;
+      }
+    };
+
+    await unlinkIfExists(this.featuresPath);
+    await unlinkIfExists(this.progressPath);
+    await unlinkIfExists(this.legacySessionPlanPath);
+    await unlinkIfExists(this.legacyBrainstormIndexPath);
+
+    await removeDirIfExists(this.projectArtifactsRoot);
+    await removeDirIfExists(this.legacyBrainstormProjectsPath);
 
     return { deleted, failed };
   }

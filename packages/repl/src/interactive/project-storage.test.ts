@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   appendBrainstormExchange,
@@ -95,5 +95,49 @@ describe('project-storage brainstorm persistence', () => {
     await expect(storage.readSessionPlan()).resolves.toContain('# New Plan');
     expect(existsSync(storage.getPaths().sessionPlan)).toBe(true);
     expect(storage.getPaths().sessionPlan).toContain('.agent');
+  });
+
+  it('skips malformed harness run lines instead of failing the entire read', async () => {
+    const storage = new ProjectStorage(tempDir);
+    mkdirSync(dirname(storage.getPaths().harnessRuns), { recursive: true });
+    writeFileSync(
+      storage.getPaths().harnessRuns,
+      '{"featureIndex":1}\n{not-json}\n{"featureIndex":2}\n',
+      'utf-8',
+    );
+
+    const runs = await storage.readHarnessRuns<{ featureIndex: number }>();
+    expect(runs).toEqual([{ featureIndex: 1 }, { featureIndex: 2 }]);
+  });
+
+  it('persists checkpoint and session-tree records under .agent/project', async () => {
+    const storage = new ProjectStorage(tempDir);
+
+    await storage.appendHarnessCheckpoint({ checkpointId: 'cp-1', featureIndex: 0 });
+    await storage.appendHarnessSessionNode({ nodeId: 'node-1', featureIndex: 0 });
+
+    await expect(storage.readHarnessCheckpoints()).resolves.toEqual([
+      { checkpointId: 'cp-1', featureIndex: 0 },
+    ]);
+    await expect(storage.readHarnessSessionNodes()).resolves.toEqual([
+      { nodeId: 'node-1', featureIndex: 0 },
+    ]);
+    expect(storage.getPaths().harnessCheckpoints).toContain('.agent');
+    expect(storage.getPaths().harnessSessionTree).toContain('.agent');
+  });
+
+  it('deletes project runtime artifacts under .agent/project on full reset', async () => {
+    const storage = new ProjectStorage(tempDir);
+    await storage.writeSessionPlan('# Plan\n');
+    await storage.writeHarnessConfig({ version: 1, checks: [] });
+    await storage.appendHarnessRun({ featureIndex: 0 });
+    await storage.appendHarnessCheckpoint({ checkpointId: 'cp-1' });
+    await storage.appendHarnessSessionNode({ nodeId: 'node-1' });
+    await storage.writeHarnessEvidence(0, { ok: true });
+
+    const result = await storage.deleteProjectManagementFiles();
+
+    expect(result.failed).toBe(0);
+    expect(existsSync(storage.getPaths().projectArtifactsRoot)).toBe(false);
   });
 });

@@ -420,8 +420,78 @@ describe('project commands', () => {
     );
 
     const verifyOutput = logSpy.mock.calls.flat().join('\n');
-    expect(verifyOutput).toContain('/project verify - Latest Verification');
+    expect(verifyOutput).toContain('/project verify - Deterministic Re-check');
+    expect(verifyOutput).toContain('needs_review');
+  });
+
+  it('reruns deterministic checks during /project verify against the current workspace state', async () => {
+    mockRunKodaX.mockImplementation(async () => {
+      const storage = new ProjectStorage(process.cwd());
+      await storage.appendProgress('## Session 3\n\nCompleted verifier wiring.\n');
+      return {
+        messages: [
+          {
+            role: 'assistant',
+            content: '<project-harness>{"status":"complete","summary":"Finished the feature.","evidence":["Updated PROGRESS.md"],"tests":["manual"],"changedFiles":["src/project.ts"]}</project-harness>',
+          },
+        ],
+      };
+    });
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const context = await createInteractiveContext({});
+    const storage = new ProjectStorage(tempDir);
+
+    await handleProjectCommand(
+      ['next', '--no-confirm'],
+      context,
+      createCallbacks({
+        confirm: async () => true,
+        createKodaXOptions: () =>
+          ({
+            provider: 'zhipu-coding',
+            session: {},
+          }) as never,
+      }),
+      currentConfig,
+    );
+
+    await storage.writeHarnessConfig({
+      version: 1,
+      generatedAt: new Date().toISOString(),
+      protectedArtifacts: ['feature_list.json', '.agent/project/harness'],
+      checks: [
+        {
+          id: 'verify-check',
+          command: 'node -e "process.exit(1)"',
+          required: true,
+        },
+      ],
+      completionRules: {
+        requireProgressUpdate: true,
+        requireChecksPass: true,
+        requireCompletionReport: true,
+      },
+      advisoryRules: {
+        warnOnLargeUnrelatedDiff: true,
+        warnOnRepeatedFailure: true,
+      },
+    });
+
+    logSpy.mockClear();
+
+    await handleProjectCommand(
+      ['verify', '--last'],
+      context,
+      createCallbacks(),
+      currentConfig,
+    );
+
+    const verifyOutput = logSpy.mock.calls.flat().join('\n');
+    expect(verifyOutput).toContain('Deterministic Re-check');
     expect(verifyOutput).toContain('retryable_failure');
+    expect(verifyOutput).toContain('verify-check:fail');
+    expect(verifyOutput).toContain('Evidence completeness');
   });
 
   it('records manual override evidence for /project mark', async () => {

@@ -139,12 +139,23 @@ export class TextBuffer {
    */
   setText(text: string): void {
     this._saveHistory();
-    this._text = text;
-    this._lines = text.split("\n");
-    if (this._lines.length === 0) {
-      this._lines = [""];
-    }
+    this._setTextInternal(text);
     this._clampCursor();
+  }
+
+  /**
+   * Replace a text range and leave the cursor after the replacement.
+   */
+  replaceRange(start: number, end: number, replacement: string): void {
+    this._saveHistory();
+
+    const safeStart = Math.max(0, Math.min(start, this._text.length));
+    const safeEnd = Math.max(safeStart, Math.min(end, this._text.length));
+    const nextText =
+      this._text.slice(0, safeStart) + replacement + this._text.slice(safeEnd);
+
+    this._setTextInternal(nextText);
+    this.moveToAbsoluteOffset(safeStart + replacement.length);
   }
 
   /**
@@ -472,6 +483,42 @@ export class TextBuffer {
 
   private _updateText(): void {
     this._text = this._lines.join("\n");
+  }
+
+  private _setTextInternal(text: string): void {
+    this._text = text;
+    this._lines = text.split("\n");
+    if (this._lines.length === 0) {
+      this._lines = [""];
+    }
+  }
+
+  /**
+   * Move cursor to an absolute string offset - 将光标移动到文本中的绝对偏移位置
+   */
+  moveToAbsoluteOffset(offset: number): void {
+    const safeOffset = Math.max(0, Math.min(offset, this._text.length));
+    let remaining = safeOffset;
+
+    for (let row = 0; row < this._lines.length; row++) {
+      const line = this._lines[row] ?? "";
+      const lineLength = line.length;
+      if (remaining <= lineLength) {
+        this._cursor = {
+          row,
+          col: getCodePointLength(line.slice(0, remaining)),
+        };
+        this._rememberedCol = this._cursor.col;
+        return;
+      }
+
+      remaining -= lineLength;
+      if (row < this._lines.length - 1) {
+        remaining -= 1;
+      }
+    }
+
+    this.moveToEnd();
   }
 
   /**

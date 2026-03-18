@@ -33,6 +33,7 @@ export interface UseTextBufferReturn {
   cursor: CursorPosition;
   lines: string[];
   setText: (text: string) => void;
+  replaceRange: (start: number, end: number, replacement: string) => void;
   insert: (text: string, options?: { paste?: boolean }) => void;
   newline: () => void;
   backspace: () => void;

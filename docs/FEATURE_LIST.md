@@ -28,9 +28,9 @@ _Last Updated: 2026-03-18_
 | v0.5.34 | Released | 1 | 1/1 (100%) |
 | v0.5.37 | Released | 1 | 1/1 (100%) |
 | v0.6.0 | In Development | 6 | 5/6 (83.3%) |
-| v0.6.10 | Planned | 1 | 0/1 (0%) |
+| v0.6.10 | In Development | 1 | 1/1 (100%) |
 | v0.7.0 | Planned | 1 | 0/1 (0%) |
-| v0.8.0 | Planned | 2 | 0/2 (0%) |
+| v0.8.0 | Planned | 3 | 0/3 (0%) |
 | v1.0.0 | Planned | 1 | 0/1 (0%) |
 
 ---
@@ -62,7 +62,8 @@ _Last Updated: 2026-03-18_
 | 021 | Enhancement | Completed | High | Provider-Aware Reasoning Budget Matrix | v0.6.0 | v0.5.37 | [Design](features/v0.6.0.md#021) | 2026-03-15 | 2026-03-15 | 2026-03-15 |
 | 022 | New | InProgress | High | Multi-Agent Orchestration Layer | v0.6.0 | - | [Design](features/v0.6.0.md#022) | 2026-03-17 | 2026-03-17 | - |
 | 023 | Enhancement | Planned | High | Dual-Mode Terminal UX (Inline + Fullscreen TUI) | v1.0.0 | - | [Design](features/v1.0.0.md#023) | 2026-03-17 | - | - |
-| 024 | Enhancement | InProgress | High | Project Harness - Action-Level Verified Execution | v0.6.10 | - | [Design](features/v0.6.10.md#feature_024-project-harness---action-level-verified-execution) | 2026-03-18 | 2026-03-18 | - |
+| 024 | Enhancement | Completed | High | Project Harness - Action-Level Verified Execution | v0.6.10 | - | [Design](features/v0.6.10.md#feature_024-project-harness---action-level-verified-execution) | 2026-03-18 | 2026-03-18 | 2026-03-18 |
+| 025 | Enhancement | Planned | High | Adaptive Project Intelligence Layer | v0.8.0 | - | [Design](features/v0.8.0.md#feature_025-adaptive-project-intelligence-layer) | 2026-03-18 | - | - |
 ### 014: Project Mode Enhancement (COMPLETED)
 - **Category**: Refactor
 - **Status**: Completed
@@ -999,16 +1000,16 @@ Introduce an explicit dual-mode terminal UX roadmap for KodaX: a scrollback-safe
 
 ---
 
-### 024: Project Harness - Action-Level Verified Execution (IN PROGRESS)
+### 024: Project Harness - Action-Level Verified Execution (COMPLETED)
 - **Category**: Enhancement
-- **Status**: InProgress
+- **Status**: Completed
 - **Priority**: High
 - **Planned**: v0.6.10
 - **Released**: -
 - **Design**: [v0.6.10.md#feature_024-project-harness---action-level-verified-execution](features/v0.6.10.md#feature_024-project-harness---action-level-verified-execution)
 - **Created**: 2026-03-18
 - **Started**: 2026-03-18
-- **Completed**: -
+- **Completed**: 2026-03-18
 
 **Description**:
 Add an action-level verifier layer to Project Mode so `/project next` and `/project auto` become proof-carrying, automatically verified execution flows instead of relying on the agent to mark a feature complete by editing `feature_list.json`.
@@ -1026,6 +1027,8 @@ Add an action-level verifier layer to Project Mode so `/project next` and `/proj
 - Move Project runtime artifacts from `.kodax/` to `.agent/project/`, while keeping `feature_list.json` and `PROGRESS.md` in the repo root
 - Remove the instruction that tells the agent to directly mark a feature as done in `feature_list.json`
 - Require command-layer automatic verification, evidence writing, and completion gating before a feature is marked done
+- Add declarative checklist, exception, and repair-playbook config for repo-specific control
+- Enforce deterministic architecture invariants for package boundaries and declared workspace dependencies
 
 **Design Decisions**:
 - `feature_list.json` and `PROGRESS.md` remain in the repository root as project truth and user-visible handoff files
@@ -1034,10 +1037,46 @@ Add an action-level verifier layer to Project Mode so `/project next` and `/proj
 - Automatic verification is the default path: agent implementation, automatic checks, automatic evidence, optional automatic one-time self-repair, then either verified completion or pause for review
 - Agent writes do not directly complete a feature during `next/auto`; the command layer updates completion state only after verification passes
 
+---
+
+### 025: Adaptive Project Intelligence Layer (PLANNED)
+- **Category**: Enhancement
+- **Status**: Planned
+- **Priority**: High
+- **Planned**: v0.8.0
+- **Released**: -
+- **Design**: [v0.8.0.md#feature_025-adaptive-project-intelligence-layer](features/v0.8.0.md#feature_025-adaptive-project-intelligence-layer)
+- **Created**: 2026-03-18
+- **Started**: -
+- **Completed**: -
+
+**Description**:
+Build the next KodaX-practice layer on top of Project Harness: deeper but still deterministic architecture semantics, a stronger declarative refiner, clearer evaluator output, and finer repo-specific rule synthesis. This feature explicitly stops before replay-style verification, rollback orchestration, and branch-search systems.
+
+**Goals**:
+1. Use current-workspace docs and repo structure to produce more useful semantic project rules without introducing heavyweight orchestration
+2. Keep harness evolution declarative, reviewable, and bounded instead of generating executable verifier code
+3. Improve retry quality through better repair playbook selection and repo-specific exception synthesis
+4. Make harness scoring and decisions easier to inspect so long-running automation remains explainable
+5. Share foundations with CodeWiki while keeping CodeWiki focused on knowledge storage and retrieval
+
+**Key Changes**:
+- Add deeper declarative architecture semantics beyond basic package-boundary heuristics
+- Strengthen declarative refiner behavior and repair-playbook management
+- Expand evaluator output into a clearer project-facing decision model
+- Synthesize finer repo-specific exceptions and checklist rules from workspace docs and project structure
+- Reuse CodeWiki as the long-term semantic knowledge source instead of inventing a parallel memory system
+
+**Design Decisions**:
+- Keep this work in a separate v0.8.0 feature instead of overloading CodeWiki itself
+- Treat CodeWiki as the semantic knowledge substrate and Project Harness as the deterministic executor/verifier
+- Explicitly avoid action-trace replay, automatic rollback orchestration, branch search, Thompson sampling, and executable harness generation
+- Prefer deterministic or declarative mechanisms that can be reviewed in repo state and test output
+
 ## Summary
-- Total: 24 (4 Planned, 2 In Progress, 18 Completed)
-- By Priority: Critical: 3, High: 18, Medium: 2, Low: 0
+- Total: 25 (5 Planned, 1 In Progress, 19 Completed)
+- By Priority: Critical: 3, High: 19, Medium: 2, Low: 0
 - Current Version: v0.5.42
 - Next Release (v0.6.0): 6 features (013, 015, 017, 020, 021, 022), 5 completed, 1 in progress
-- Future Releases: v0.6.10 (024), v0.7.0 (019), v0.8.0 (007, 018), v1.0.0 (023)
-- Highest Priority Planned: 018 - CodeWiki - 项目知识库系统 (High), 019 - Session Tree & Rollback System (High), 023 - Dual-Mode Terminal UX (High)
+- Future Releases: v0.7.0 (019), v0.8.0 (007, 018, 025), v1.0.0 (023)
+- Highest Priority Planned: 018 - CodeWiki - 项目知识库系统 (High), 019 - Session Tree & Rollback System (High), 023 - Dual-Mode Terminal UX (High), 025 - Adaptive Project Intelligence Layer (High)
