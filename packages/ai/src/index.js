@@ -9,5 +9,5 @@ export { KodaXError, KodaXProviderError, KodaXRateLimitError, KodaXNetworkError,
 // ============== Constants ==============
 export { KODAX_MAX_TOKENS, KODAX_API_MIN_INTERVAL } from './constants.js';
 // ============== Providers ==============
-export { KodaXBaseProvider, KodaXAnthropicCompatProvider, KodaXOpenAICompatProvider, KODAX_PROVIDERS, KODAX_PROVIDER_SNAPSHOTS, KODAX_DEFAULT_PROVIDER, getProvider, getProviderConfiguredReasoningCapability, isProviderConfigured, getProviderModel, getProviderList, isProviderName, } from './providers/index.js';
+export { KodaXBaseProvider, KodaXAnthropicCompatProvider, KodaXOpenAICompatProvider, KODAX_PROVIDERS, KODAX_PROVIDER_SNAPSHOTS, KODAX_DEFAULT_PROVIDER, getProvider, getProviderConfiguredCapabilityProfile, getProviderConfiguredReasoningCapability, isProviderConfigured, getProviderModel, getProviderModels, getProviderList, isProviderName, } from './providers/index.js';
 //# sourceMappingURL=index.js.map

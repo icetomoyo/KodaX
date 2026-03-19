@@ -14,6 +14,7 @@ export {
   KODAX_PROVIDER_SNAPSHOTS,
   KODAX_DEFAULT_PROVIDER,
   getProvider,
+  getProviderConfiguredCapabilityProfile,
   getProviderConfiguredReasoningCapability,
   isProviderConfigured,
   getProviderModel,

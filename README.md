@@ -1,715 +1,362 @@
-# InfCodeX (alias: KodaX)
+# InfCodeX
 
-Extreme Lightweight Coding Agent - TypeScript Implementation
+**InfCodeX** is Tokfinity's next-generation AI coding CLI and execution-oriented agent runtime for real software engineering.
 
-## Overview
+It is not just a terminal chatbot for code. It is a modular, TypeScript-native system that can run as a CLI, be embedded as a library, and evolve into the execution layer of a larger agent platform.
 
-KodaX is a **modular, lightweight AI coding agent** built with TypeScript. It supports 7 LLM providers and can be used as both a CLI tool and an npm library.
-
-**Core Philosophy**: Transparent, Flexible, Minimalist
-
-**Why KodaX?**
-
-| Feature | KodaX | Other Tools |
-|---------|-------|-------------|
-| **Architecture** | Modular (5 packages), can be used as library | Usually CLI-only |
-| **Code** | Clean separation, easy to understand and customize | Thousands of files, hard to navigate |
-| **Models** | 10 LLM providers, switch freely | Often single provider |
-| **Cost** | Use affordable models (Kimi, Zhipu, Qwen) | Expensive subscriptions |
-| **Type Safety** | Native TypeScript | No types or weak typing |
-| **Learning** | Perfect for understanding Agent principles | Black box |
+> Current repository alias and command name: **KodaX / `kodax`**. The repository name is **InfCodeX**, while parts of the codebase and docs still use the historical KodaX naming.
 
 ---
 
-## Architecture
+## Why InfCodeX
 
-KodaX uses a **monorepo architecture** with npm workspaces, consisting of 5 packages:
+Most AI coding tools optimize for quick demos or single-turn assistance. InfCodeX is built around a different goal: **reliable engineering execution**.
 
-```
-KodaX/
-├── packages/
-│   ├── ai/                  # @kodax/ai - Independent LLM abstraction layer
-│   │   └── providers/       # 7 LLM providers (Anthropic, OpenAI, etc.)
-│   │
-│   ├── agent/               # @kodax/agent - Generic Agent framework
-│   │   └── session/         # Session management, message handling
-│   │
-│   ├── skills/              # @kodax/skills - Skills standard implementation
-│   │   └── builtin/         # Built-in skills (code-review, tdd, git-workflow)
-│   │
-│   ├── coding/              # @kodax/coding - Coding Agent (tools + prompts)
-│   │   └── tools/           # 8 tools: read, write, edit, bash, glob, grep, undo, diff
-│   │
-│   └── repl/                # @kodax/repl - Interactive terminal UI
-│       ├── ui/              # Ink/React components, themes
-│       └── interactive/     # Commands, REPL logic
-│
-├── src/
-│   └── kodax_cli.ts         # Main CLI entry point
-│
-└── package.json             # Root workspace config
-```
+InfCodeX matters because it combines:
 
-### Package Dependencies
+- **CLI-first execution** for developers who work in the terminal
+- **Agent runtime architecture** instead of a single monolithic app
+- **Project-aware continuity** through session memory and long-running task flows
+- **Safety and governance** through permission modes and confirmation boundaries
+- **Modularity** through reusable packages and clear dependency boundaries
+- **Future multi-agent evolution** through parallel execution, team mode, and skills
 
-```
-                    ┌─────────────────┐
-                    │   kodax (root)  │
-                    │   CLI Entry     │
-                    └────────┬────────┘
-                             │
-              ┌──────────────┴──────────────┐
-              │                             │
-              ▼                             ▼
-       ┌─────────────┐               ┌─────────────┐
-       │ @kodax/repl │               │@kodax/coding│
-       │  UI Layer   │               │ Tools+Prompts│
-       └──────┬──────┘               └──────┬──────┘
-              │                             │
-              │              ┌──────────────┼──────────────┐
-              │              │              │              │
-              ▼              ▼              ▼              ▼
-       ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐
-       │@kodax/skills│ │ @kodax/agent│ │  @kodax/ai  │ │  External   │
-       │(zero deps)  │ │Agent Frame  │ │LLM Abstract │ │   SDKs      │
-       └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘
-```
-
-### Package Overview
-
-| Package | Purpose | Key Dependencies |
-|---------|---------|------------------|
-| `@kodax/ai` | Independent LLM abstraction, reusable by other projects | @anthropic-ai/sdk, openai |
-| `@kodax/agent` | Generic Agent framework, session management | @kodax/ai, js-tiktoken |
-| `@kodax/skills` | Skills standard implementation | Zero external deps |
-| `@kodax/coding` | Coding Agent with tools and prompts | @kodax/ai, @kodax/agent, @kodax/skills |
-| `@kodax/repl` | Complete interactive terminal UI | @kodax/coding, ink, react |
+For Tokfinity, InfCodeX is important not only as a developer tool, but as a **software-engineering execution substrate** that can integrate with the broader **InfOne** intelligent-organization platform.
 
 ---
 
-## Features
+## Positioning
 
-- **Modular Architecture** - Use as CLI or as a library
-- **10 LLM Providers** - Anthropic, OpenAI, Kimi, Kimi Code, Qwen, Zhipu, Zhipu Coding, MiniMax Coding, Gemini CLI, Codex CLI
-- **Thinking Mode** - Deep reasoning support (anthropic, kimi-code, zhipu-coding, minimax-coding)
-- **Streaming Output** - Real-time response display
-- **8 Tools** - read, write, edit, bash, glob, grep, undo, diff
-- **Session Management** - JSONL format persistent storage
-- **Skills System** - Natural language triggering, extensible
-- **Permission Control** - 4-level modes with pattern-based control
-- **Cross-Platform** - Windows/macOS/Linux
-- **TypeScript Native** - Full type safety and IDE support
+**InfCodeX is a production-oriented AI coding CLI and agent runtime for serious software engineering.**
+
+It serves two roles at the same time:
+
+1. **Developer-facing CLI**
+   - inspect repositories
+   - read and modify files
+   - run commands
+   - iterate across multi-step engineering tasks
+
+2. **Platform-facing execution layer**
+   - reusable as npm packages
+   - suitable for orchestration by higher-level systems
+   - extensible with providers, tools, skills, and project policies
 
 ---
 
-## Installation
+## Core Highlights
 
-### As CLI Tool
+### 1. Modular layered architecture
+InfCodeX is structured as a monorepo with five major packages:
+
+- `@kodax/ai`
+- `@kodax/agent`
+- `@kodax/skills`
+- `@kodax/coding`
+- `@kodax/repl`
+
+This separation is one of the project's strongest differentiators. Each layer has a clear responsibility, and several layers are designed to be independently reusable.
+
+### 2. CLI and library dual use
+InfCodeX can be used as:
+
+- a terminal coding agent for day-to-day development
+- a library embedded into other products or agent systems
+
+That makes it much more strategic than a purely interactive tool.
+
+### 3. Multi-provider model abstraction
+The project exposes a provider abstraction layer and currently documents support for built-in providers such as:
+
+- Anthropic
+- OpenAI
+- Kimi
+- Kimi Code
+- Qwen
+- Zhipu
+- Zhipu Coding
+- MiniMax Coding
+- Gemini CLI
+- Codex CLI
+
+This helps teams avoid hard vendor lock-in and makes the runtime more suitable for cost optimization, regional routing, private deployment, and enterprise model governance.
+
+### 4. Real coding-agent execution loop
+InfCodeX is designed around action, not just answer generation. Its coding layer includes tools and an iterative agent loop so the system can work on actual repositories.
+
+Documented built-in tool capabilities include:
+
+- read
+- write
+- edit
+- bash
+- glob
+- grep
+- undo
+- diff
+
+### 5. Permission-aware autonomy
+InfCodeX introduces four permission modes:
+
+- `plan`
+- `default`
+- `accept-edits`
+- `auto-in-project`
+
+This is a critical design choice. It lets teams balance safety and efficiency rather than forcing a binary choice between manual mode and unrestricted automation.
+
+### 6. Session memory and long-running work
+Real engineering is rarely completed in one turn. InfCodeX supports persistent sessions and long-running workflows so the agent can resume work, preserve context, and move a task forward across multiple steps.
+
+### 7. Skills-driven specialization
+The skills layer allows InfCodeX to be specialized beyond generic prompting. It supports built-in skills, discoverable skills, markdown-based skill definitions, and natural-language triggering.
+
+### 8. Native path toward multi-agent workflows
+The project already points toward coordinated agent execution through features such as:
+
+- parallel execution
+- team mode
+- project initialization
+- auto-continue
+
+This gives InfCodeX a credible path from "AI CLI" to "multi-agent engineering runtime".
+
+---
+
+## Architecture Overview
+
+```text
+InfCodeX
+├─ AI Layer        → provider abstraction, streaming, error handling
+├─ Agent Layer     → sessions, messages, token utilities
+├─ Skills Layer    → skill discovery, registry, execution
+├─ Coding Layer    → tools, prompts, agent loop
+└─ REPL / CLI      → interactive UX, permission control, commands
+```
+
+This design provides several advantages:
+
+- **Clear separation of concerns**
+- **No circular dependency mindset**
+- **Better testability and replacement boundaries**
+- **Potential for independent package reuse**
+- **A stronger foundation for future enterprise orchestration**
+
+---
+
+## Why InfCodeX is strategically important to InfOne
+
+InfOne represents the broader vision of an **intelligent organization / AI org** platform: defining, governing, routing, and managing large-scale agents across business scenarios.
+
+Within that picture, InfCodeX can play a highly specific and valuable role.
+
+### InfOne as control plane
+InfOne is suited to handle:
+
+- agent registration and lifecycle management
+- model routing and policy decisions
+- organization-level memory and governance
+- permissions, auditability, and observability
+- multi-agent orchestration at scale
+
+### InfCodeX as execution plane
+InfCodeX is suited to handle:
+
+- repository-local engineering execution
+- coding tools and file operations
+- project-aware task continuation
+- engineering-specific skills and workflows
+- interactive and semi-automatic task delivery
+
+### Combined value
+Without a strong execution layer, an agent management platform can become a dashboard without operational depth.
+Without a strong management layer, a coding CLI remains a local power tool with limited organizational leverage.
+
+**InfOne + InfCodeX** together form a more complete system:
+
+- InfOne decides **which agents should do what**.
+- InfCodeX carries out **how software-engineering work gets done**.
+
+That is why InfCodeX is not merely "another coding CLI". It is a practical bridge between:
+
+- single-developer AI assistance,
+- repository-level engineering execution,
+- and organization-level agent management.
+
+---
+
+## Typical Use Cases
+
+### 1. Terminal-native coding copilot
+Developers use InfCodeX locally to inspect code, patch files, run commands, and iterate faster without leaving the terminal.
+
+### 2. Multi-step feature delivery
+A task can continue across sessions rather than being constrained to one-shot prompting.
+
+### 3. Team-standard engineering agent
+A team can combine common rules, selected models, and skills to create more consistent coding-agent behavior across repositories.
+
+### 4. SDLC agent execution substrate
+InfCodeX can serve as the execution layer for coding-oriented agents inside a broader SDLC agent stack, including future integration with code review, testing, or delivery workflows.
+
+### 5. Enterprise-safe rollout path
+Organizations can adopt it incrementally with permission modes, scoped automation, and provider flexibility.
+
+---
+
+## Feature Snapshot
+
+- TypeScript-native implementation
+- Monorepo with reusable packages
+- CLI + library usage model
+- Streaming output
+- Thinking / reasoning mode support
+- Session persistence
+- Permission-aware execution
+- Skills system
+- Parallel execution
+- Team mode
+- Long-running project workflows
+- Cross-platform usage on Windows / macOS / Linux
+
+---
+
+## Quick Start
+
+### Requirements
+
+- Node.js `>=18.0.0` according to `package.json`
+- npm workspaces
+
+### Install and build
 
 ```bash
-# Clone repository
-git clone https://github.com/icetomoyo/KodaX.git
-cd KodaX
-
-# Install dependencies (includes workspace packages)
 npm install
-
-# Build all packages
 npm run build:packages
 npm run build
-
-# Link globally (development mode)
-npm link
-
-# Now you can use 'kodax' anywhere
-kodax "your task"
 ```
 
-### As Library
+### Use via CLI
 
 ```bash
-npm install kodax
-```
-
-```typescript
-import { runKodaX, KodaXClient } from 'kodax';
-
-// Simple usage
-const result = await runKodaX({
-  provider: 'zhipu-coding',
-  events: {
-    onTextDelta: (text) => process.stdout.write(text),
-    onComplete: () => console.log('\nDone!'),
-  },
-}, 'your task');
-
-console.log(result.lastText);
-```
-
----
-
-## Usage
-
-### CLI Usage
-
-```bash
-# Set API Key
 export ZHIPU_API_KEY=your_api_key
+kodax "Help me understand this repository"
+```
 
-# Basic usage
-kodax "Help me create a TypeScript project"
+### Use via node directly
 
-# Or use node directly
+```bash
 node dist/kodax_cli.js "your task"
 ```
-
-### Session Mode (With Memory)
-
-```bash
-# Start a session with specific ID
-kodax --session my-project "Read package.json"
-
-# Continue same session (has context memory)
-kodax --session my-project "Summarize it"
-
-# List all sessions
-kodax --session list
-
-# Resume last session
-kodax --session resume "continue"
-```
-
-### No Memory vs With Memory
-
-```bash
-# ❌ No memory: two independent calls
-kodax "Read src/auth.ts"           # Agent reads and responds
-kodax "Summarize it"               # Agent doesn't know what to summarize
-
-# ✅ With memory: same session
-kodax --session auth-review "Read src/auth.ts"
-kodax --session auth-review "Summarize it"        # Agent knows to summarize auth.ts
-kodax --session auth-review "How to fix first issue"  # Agent has context
-```
-
-### Common Scenarios
-
-```bash
-# Code review (multi-turn conversation)
-kodax --session review "Review src/ directory"
-kodax --session review "Focus on security issues"
-kodax --session review "Give me fix suggestions"
-
-# Project development (continuous session)
-kodax --session todo-app "Create a Todo application"
-kodax --session todo-app "Add delete functionality"
-kodax --session todo-app "Write tests"
-```
-
-### CLI Options
-
-```
--h, --help [topic]  Show help, or detailed help for a topic
---provider <name>   LLM provider (default: zhipu-coding)
---thinking          Enable thinking mode
---no-confirm        Enable auto mode (skip all confirmations)
---session <id>      Session: resume, list, or specific ID
---parallel          Parallel tool execution
---team <tasks>      Run multiple agents in parallel
---init <task>       Initialize long-running project
---auto-continue     Auto-continue until complete
---max-iter <n>      Maximum iterations (default: 200)
---max-sessions <n>  Maximum sessions for --auto-continue (default: 50)
---max-hours <h>     Maximum hours for --auto-continue (default: 2.0)
-```
-
-### Permission Control
-
-KodaX provides 4-level permission modes for fine-grained control:
-
-| Mode | Description | Tools Need Confirmation |
-|------|-------------|------------------------|
-| `plan` | Read-only planning mode | All modification tools blocked |
-| `default` | Safe mode (default) | write, edit, bash |
-| `accept-edits` | Auto-accept file edits | bash only |
-| `auto-in-project` | Full auto within project | None (project-scoped) |
-
-```bash
-# In REPL, use /mode command
-/mode plan          # Switch to plan mode (read-only)
-/mode accept-edits  # Switch to accept-edits mode
-/mode auto          # Switch to auto-in-project mode
-
-# Check current mode
-/mode
-```
-
-**Features:**
-- Auto-switch to `accept-edits` when selecting "always" in default mode
-- Plan mode includes system prompt context for LLM awareness
-- Permanent protection zones: `.kodax/`, `~/.kodax/`, paths outside project
-- Pattern-based permission: Allow specific Bash commands (e.g., `Bash(npm install)`)
-- Unified diff display for write/edit operations
-
-### CLI Help Topics
-
-Get detailed help for specific topics:
-
-```bash
-# Basic help
-kodax -h
-kodax --help
-
-# Detailed topic help
-kodax -h sessions      # Session management details
-kodax -h init          # Long-running project initialization
-kodax -h auto          # Auto-continue mode
-kodax -h provider      # LLM provider configuration
-kodax -h thinking      # Thinking/reasoning mode
-kodax -h team          # Multi-agent parallel execution
-kodax -h print         # Print configuration
-```
-
-### Library Usage
-
-#### Simple Mode (runKodaX)
-
-```typescript
-import { runKodaX, KodaXEvents } from 'kodax';
-
-const events: KodaXEvents = {
-  onTextDelta: (text) => process.stdout.write(text),
-  onThinkingDelta: (text, charCount) => console.log(`Thinking: ${charCount} chars`),
-  onToolResult: (result) => console.log(`Tool ${result.name}: ${result.content.slice(0, 100)}`),
-  onComplete: () => console.log('\nDone!'),
-  onError: (e) => console.error(e.message),
-};
-
-const result = await runKodaX({
-  provider: 'zhipu-coding',
-  thinking: true,
-  events,
-  auto: true,
-}, 'What is 1+1?');
-
-console.log(result.lastText);
-```
-
-#### Continuous Session (KodaXClient)
-
-```typescript
-import { KodaXClient } from 'kodax';
-
-const client = new KodaXClient({
-  provider: 'zhipu-coding',
-  events: {
-    onTextDelta: (t) => process.stdout.write(t),
-  },
-});
-
-// First message
-await client.send('Read package.json');
-
-// Continue same session
-await client.send('Summarize it');
-
-console.log(client.getSessionId());
-```
-
-#### Custom Session Storage
-
-```typescript
-import { runKodaX, KodaXSessionStorage, KodaXMessage } from 'kodax';
-
-class MyDatabaseStorage implements KodaXSessionStorage {
-  async save(id: string, data: { messages: KodaXMessage[]; title: string; gitRoot: string }) {
-    // Save to your database
-  }
-  async load(id: string) {
-    // Load from your database
-    return null;
-  }
-}
-
-await runKodaX({
-  provider: 'zhipu-coding',
-  session: {
-    id: 'my-session-123',
-    storage: new MyDatabaseStorage(),
-  },
-  events: { ... },
-}, 'task');
-```
-
-### Library Modes Comparison
-
-| Feature | runKodaX | KodaXClient |
-|---------|----------|-------------|
-| **Message Memory** | ❌ No | ✅ Yes |
-| **Call Style** | Function | Class instance |
-| **Context** | Independent each time | Accumulates |
-| **Use Case** | Single tasks, batch processing | Interactive dialogue, multi-step tasks |
-
----
-
-## Using Individual Packages
-
-KodaX is built with a modular architecture. Each package can be used independently:
-
-### @kodax/ai - LLM Abstraction Layer
-
-Independent LLM provider abstraction, reusable in any project:
-
-```typescript
-import { getProvider, KodaXBaseProvider } from '@kodax/ai';
-
-// Get a provider instance
-const provider = getProvider('anthropic');
-
-// Stream completion
-const stream = await provider.streamCompletion(
-  [{ role: 'user', content: 'Hello!' }],
-  { onTextDelta: (text) => process.stdout.write(text) }
-);
-
-for await (const result of stream) {
-  if (result.type === 'text') {
-    // Handle text delta
-  } else if (result.type === 'tool_use') {
-    // Handle tool call
-  }
-}
-```
-
-**Key Features**:
-- 10 LLM providers with unified interface
-- Streaming output support
-- Thinking mode support
-- Error handling and retry logic
-- Zero business logic dependencies
-
-### @kodax/agent - Agent Framework
-
-Generic agent framework with session management:
-
-```typescript
-import {
-  generateSessionId,
-  estimateTokens,
-  compactMessages,
-  type KodaXMessage
-} from '@kodax/agent';
-
-// Generate session ID
-const sessionId = generateSessionId();
-
-// Estimate tokens
-const tokens = estimateTokens(messages);
-
-// Compact messages when context is too long
-if (tokens > 100000) {
-  const compacted = await compactMessages(messages, {
-    threshold: 75000,
-    keepRecent: 20
-  });
-}
-```
-
-**Key Features**:
-- Session ID generation and title extraction
-- Token estimation (tiktoken-based)
-- Message compaction with AI summarization
-- Generic types for messages and tools
-
-### @kodax/skills - Skills System
-
-Agent Skills standard implementation with zero external dependencies:
-
-```typescript
-import {
-  SkillRegistry,
-  discoverSkills,
-  executeSkill,
-  type SkillContext
-} from '@kodax/skills';
-
-// Discover skills from paths
-const skills = await discoverSkills(['/path/to/skills']);
-
-// Initialize registry
-const registry = getSkillRegistry();
-await registry.registerSkills(skills);
-
-// Execute a skill
-const context: SkillContext = {
-  skillId: 'code-review',
-  arguments: { target: 'src/' },
-  workingDirectory: process.cwd()
-};
-
-const result = await executeSkill(context);
-```
-
-**Key Features**:
-- Zero external dependencies
-- Markdown-based skill files
-- Natural language triggering
-- Variable resolution
-- Built-in skills included
-
-### @kodax/coding - Coding Agent
-
-Complete coding agent with tools and prompts:
-
-```typescript
-import { runKodaX, KodaXClient, KODAX_TOOLS } from '@kodax/coding';
-
-// Use runKodaX for single tasks
-const result = await runKodaX({
-  provider: 'zhipu-coding',
-  thinking: true,
-  events: {
-    onTextDelta: (text) => process.stdout.write(text)
-  }
-}, 'Read package.json and explain the dependencies');
-
-// Or use KodaXClient for continuous sessions
-const client = new KodaXClient({
-  provider: 'anthropic',
-  events: { ... }
-});
-
-await client.send('Create a new file');
-await client.send('Add a function to it'); // Has context from previous message
-```
-
-**Key Features**:
-- 8 built-in tools (read, write, edit, bash, glob, grep, undo, diff)
-- System prompts for coding tasks
-- Agent loop implementation
-- Session management
-- Auto-continue mode
-
-### @kodax/repl - Interactive Terminal UI
-
-Complete interactive REPL with Ink/React components:
-
-```typescript
-// Usually used as CLI, but can be integrated
-import { InkREPL } from '@kodax/repl';
-
-// The REPL package provides:
-// - Interactive terminal UI
-// - Permission control (4 modes)
-// - Command system (/help, /mode, etc.)
-// - Skills integration
-// - Theme support
-```
-
-**Key Features**:
-- Ink-based React components
-- 4-level permission control
-- Built-in commands
-- Real-time streaming display
-- Context usage indicator
-
-### Package Dependency Graph
-
-```
-@kodax/ai (零业务依赖)
-    ↓
-@kodax/agent (依赖 @kodax/ai)
-    ↓
-@kodax/skills (零外部依赖)  →  @kodax/coding (依赖 ai, agent, skills)
-                                        ↓
-                                  @kodax/repl (依赖 coding, ink, react)
-```
-
-**Import Recommendations**:
-
-| Use Case | Package | Why |
-|----------|---------|-----|
-| Only need LLM abstraction | `@kodax/ai` | Minimal dependencies |
-| Building custom agent | `@kodax/agent` | Session + messages + tokenization |
-| Using skills system | `@kodax/skills` | Zero deps, pure skills |
-| Coding tasks | `@kodax/coding` | Complete coding agent |
-| Terminal app | `@kodax/repl` | Full interactive experience |
-
----
-
-| Provider | Environment Variable | Thinking | Default Model |
-|----------|---------------------|----------|---------------|
-| anthropic | `ANTHROPIC_API_KEY` | Yes | claude-sonnet-4-6 |
-| openai | `OPENAI_API_KEY` | No | gpt-5.3-codex |
-| kimi | `KIMI_API_KEY` | Yes | k2.5 |
-| kimi-code | `KIMI_API_KEY` | Yes | k2.5 |
-| qwen | `QWEN_API_KEY` | No | qwen3.5-plus |
-| zhipu | `ZHIPU_API_KEY` | No | glm-5 |
-| zhipu-coding | `ZHIPU_API_KEY` | Yes | glm-5 |
-| minimax-coding | `MINIMAX_API_KEY` | Yes | MiniMax-M2.5 |
-| gemini-cli | `GOOGLE_APPLICATION_CREDENTIALS` | Yes | (via gemini CLI) |
-| codex-cli | `GOOGLE_APPLICATION_CREDENTIALS` | Yes | (via codex CLI) |
 
 ### Examples
 
 ```bash
-# Use Zhipu Coding
-kodax --provider zhipu-coding --thinking "Help me optimize this code"
+# session memory
+kodax --session my-project "Read package.json"
+kodax --session my-project "Summarize it"
 
-# Use OpenAI
-export OPENAI_API_KEY=your_key
-kodax --provider openai "Create a REST API"
+# parallel execution
+kodax --parallel "analyze and improve this module"
 
-# Resume last session
-kodax --session resume
+# team mode
+kodax --team "implement,review,test"
 
-# List all sessions
-kodax --session list
+# initialize long-running project work
+kodax --init "deliver feature X"
 
-# Parallel tool execution
-kodax --parallel "Read package.json and tsconfig.json"
-
-# Agent Team
-kodax --team "Analyze code structure,Check test coverage,Find bugs"
-
-# Long-running project
-kodax --init "Build a Todo application"
-kodax --auto-continue
+# auto-continue until complete
+kodax --auto-continue "finish remaining work"
 ```
 
 ---
 
-## Tools
+## Permission Modes
 
-| Tool | Description |
-|------|-------------|
-| read | Read file contents (supports offset/limit) |
-| write | Write to file |
-| edit | Exact string replacement (supports replace_all) |
-| bash | Execute shell commands |
-| glob | File pattern matching |
-| grep | Content search (supports output_mode) |
-| undo | Revert last modification |
-| diff | Compare files or show changes |
+| Mode | Meaning |
+|------|---------|
+| `plan` | Read-only planning mode |
+| `default` | Safe default mode |
+| `accept-edits` | Automatically accept file edits; confirm bash |
+| `auto-in-project` | Full auto execution within project scope |
+
+These modes make InfCodeX more suitable for serious environments where safety, auditability, and trust calibration matter.
 
 ---
 
-## Skills System
+## Configuration
 
-KodaX includes a built-in Skills system that can be triggered by natural language:
+The repository includes a configuration template with:
 
-```bash
-# Natural language triggering (no explicit /skill needed)
-kodax "帮我审查代码"           # Triggers code-review skill
-kodax "写测试用例"             # Triggers tdd skill
-kodax "提交代码"               # Triggers git-workflow skill
+- default provider selection
+- provider model selection
+- provider model overrides
+- custom provider definitions
+- unified reasoning mode
+- compaction settings
+- permission mode defaults
 
-# Explicit skill command
-kodax /skill:code-review
+The current documented config path is:
+
+```text
+~/.kodax/config.json
 ```
 
-Built-in skills include:
-- **code-review** - Code review and quality analysis
-- **tdd** - Test-driven development workflow
-- **git-workflow** - Git commit and workflow automation
-
-Skills are stored in `~/.kodax/skills/` and can be extended with custom skills.
+See `config.example.jsonc` for the full template.
 
 ---
 
-## Commands (CLI)
+## Design Philosophy
 
-Commands are `/xxx` shortcuts in CLI:
+InfCodeX is guided by several principles:
 
-```bash
-kodax /review src/auth.ts
-kodax /test
-```
+- **Transparent over black-box**
+- **Composable over monolithic**
+- **Execution-oriented over chat-oriented**
+- **Governable over uncontrolled**
+- **Evolvable over one-off**
 
-Commands are stored in `~/.kodax/commands/`:
-- `.md` files → Prompt commands (content used as prompt)
-- `.ts/.js` files → Programmable commands
-
----
-
-## API Exports
-
-```typescript
-// Main functions
-export { runKodaX, KodaXClient };
-
-// Types
-export type {
-  KodaXEvents, KodaXOptions, KodaXResult,
-  KodaXMessage, KodaXContentBlock,
-  KodaXSessionStorage, KodaXToolDefinition
-};
-
-// Tools
-export { KODAX_TOOLS, KODAX_TOOL_REQUIRED_PARAMS, executeTool };
-
-// Providers
-export { getProvider, KODAX_PROVIDERS, KodaXBaseProvider };
-
-// Utilities
-export {
-  estimateTokens, compactMessages,
-  getGitRoot, getGitContext, getEnvContext, getProjectSnapshot,
-  checkPromiseSignal, checkAllFeaturesComplete, getFeatureProgress
-};
-```
+This is what makes the project valuable not only as a CLI, but as a foundation for a broader engineering-agent ecosystem.
 
 ---
 
-## Development
+## Roadmap Direction
 
-```bash
-# Development mode (using tsx)
-npm run dev "your task"
+Based on the existing repo structure and internal documents, the natural forward path includes:
 
-# Build all packages
-npm run build:packages
-
-# Build
-npm run build
-
-# Run tests
-npm test
-
-# Clean
-npm run clean
-```
+- richer multi-agent teamwork
+- more built-in skills
+- stronger plugin / extension capabilities
+- deeper SDLC integration
+- future IDE or web integrations
+- tighter coupling with upper-layer agent platforms such as InfOne
 
 ---
 
-## Code Style
+## Repository Notes
 
-### Comment Guidelines
+The repository is evolving quickly, and parts of the documentation still reflect earlier naming and counting conventions. For example:
 
-KodaX uses an **English-first** comment style with selective Chinese brief notes for complex logic.
+- `InfCodeX` and `KodaX` are both present in the docs
+- some docs mention 7 providers while newer docs/configs enumerate 10 built-in providers
+- package and command names currently remain `kodax`
 
-| Situation | Style | Example |
-|-----------|-------|---------|
-| Import/Export | English only | `// Import dependencies` |
-| Simple constants | English only | `// Max retry count` |
-| Simple logic | English only | `// Return if null` |
-| **Business rules** | English + Chinese | `// Skip tool_result - 跳过工具结果块` |
-| **Platform compatibility** | English + Chinese | `// Windows path handling - Windows 路径处理` |
-| **Performance optimization** | English + Chinese | `// Debounce to prevent flicker - 防抖避免闪烁` |
+This README therefore emphasizes **stable architectural truths** and **strategic product characteristics**, while keeping volatile numeric details aligned as much as possible with the current public repository.
 
 ---
 
-## Documentation
+## Related Documents
 
-- [README_CN.md](docs/README_CN.md) - Chinese Documentation
-- [DESIGN.md](docs/DESIGN.md) - Architecture and Implementation Details
-- [TESTING.md](docs/TESTING.md) - Testing Guide
-- [test-guides/](docs/test-guides/) - Feature-specific test guides
-- [LONG_RUNNING_GUIDE.md](docs/LONG_RUNNING_GUIDE.md) - Long-Running Mode Guide
-- [CHANGELOG.md](CHANGELOG.md) - Version History
+- [Chinese README](./README_CN.md)
+- [Architecture Overview](./docs/ARCHITECTURE_OVERVIEW.md)
+- [Architecture Overview (Chinese)](./docs/ARCHITECTURE_OVERVIEW_CN.md)
+- [InfCodeX + InfOne Positioning](./docs/PROJECT_POSITIONING.md)
+- [InfCodeX + InfOne Positioning (Chinese)](./docs/PROJECT_POSITIONING_CN.md)
 
 ---
 
-## License
+## Summary
 
-MIT
+**InfCodeX is important because it is not only a CLI.**
+
+It is a practical execution runtime for software-engineering agents, and it has the right architecture to grow from a powerful terminal tool into a key execution component inside Tokfinity's larger intelligent-agent platform strategy.

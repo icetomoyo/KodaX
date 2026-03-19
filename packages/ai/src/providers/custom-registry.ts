@@ -10,6 +10,10 @@ import type { KodaXCustomProviderConfig } from '../types.js';
 import type { KodaXBaseProvider } from './base.js';
 import { createCustomProvider } from './custom-provider.js';
 import { KODAX_PROVIDERS } from './registry.js';
+import {
+  cloneCapabilityProfile,
+  NATIVE_PROVIDER_CAPABILITY_PROFILE,
+} from './capability-profile.js';
 
 type CustomProviderFactory = () => KodaXBaseProvider;
 
@@ -71,6 +75,7 @@ export function getCustomProviderList(): Array<{
   models: string[];
   configured: boolean;
   reasoningCapability: string;
+  capabilityProfile: import('../types.js').KodaXProviderCapabilityProfile;
   custom: true;
 }> {
   const result: Array<{
@@ -79,6 +84,7 @@ export function getCustomProviderList(): Array<{
     models: string[];
     configured: boolean;
     reasoningCapability: string;
+    capabilityProfile: import('../types.js').KodaXProviderCapabilityProfile;
     custom: true;
   }> = [];
   for (const [name, config] of customProviders) {
@@ -92,6 +98,9 @@ export function getCustomProviderList(): Array<{
       models,
       configured,
       reasoningCapability: config.reasoningCapability ?? 'none',
+      capabilityProfile: cloneCapabilityProfile(
+        config.capabilityProfile ?? NATIVE_PROVIDER_CAPABILITY_PROFILE,
+      ),
       custom: true,
     });
   }

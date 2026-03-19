@@ -25,6 +25,7 @@ function buildProviderConfig(custom: KodaXCustomProviderConfig): KodaXProviderCo
     models,
     supportsThinking: custom.supportsThinking ?? false,
     reasoningCapability: custom.reasoningCapability ?? 'none',
+    capabilityProfile: custom.capabilityProfile,
     contextWindow: custom.contextWindow,
     maxOutputTokens: custom.maxOutputTokens,
     thinkingBudgetCap: custom.thinkingBudgetCap,

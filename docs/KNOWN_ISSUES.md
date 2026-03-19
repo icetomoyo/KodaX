@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-03-16_
+_Last Updated: 2026-03-19_
 
 ---
 
@@ -29,6 +29,12 @@ _Last Updated: 2026-03-16_
 | 077 | Low | Open | Skills 系统高级功能未完全实现 | v0.5.5 | - | 2026-03-04 | - |
 | 082 | Low | Open | packages/ai 缺少单元测试 | v0.5.21 | - | 2026-03-08 | - |
 | 083 | Medium | Resolved | 缺少快捷键系统 | v0.5.29 | v0.5.30 | 2026-03-11 | 2026-03-12 |
+
+| 089 | High | Resolved | Feature / Design / Summary 元数据漂移 | v0.6.10 | v0.6.10 | 2026-03-18 | 2026-03-19 |
+| 090 | High | Resolved | CLI Provider 桥接语义降级：上下文与 MCP 能力丢失 | v0.6.10 | v0.6.10 | 2026-03-18 | 2026-03-19 |
+| 091 | High | Open | 缺少一等公民 MCP / Web Search / Code Search 工具体系 | v0.6.10 | - | 2026-03-18 | - |
+| 092 | High | Open | Team 模式已暴露但原生多 Agent 架构仍未闭环 | v0.6.10 | - | 2026-03-18 | - |
+| 093 | Medium | Open | 缺少 IDE / Desktop / Web 一体化分发表面 | v0.6.10 | - | 2026-03-18 | - |
 
 ---
 
@@ -459,7 +465,7 @@ _Last Updated: 2026-03-16_
   setTimeout(() => this.cache.delete(dir), this.cacheTimeout);
   ```
   - 使用 `setTimeout` 进行缓存过期清理，在高频率调用时可能导致大量定时器积压和内存无法及时释放
-- **Context**: `src/interactive/autocomplete.ts` - 行 95-110
+- **Context**: `packages/repl/src/interactive/autocomplete.ts` - 行 95-110
 - **Proposed Solution**: 使用 LRU cache with TTL 替代 setTimeout
 
 ---
@@ -478,7 +484,7 @@ _Last Updated: 2026-03-16_
   ```
   - 无法针对不同语言高亮（Python、Go、Rust 等）
   - 关键词列表只覆盖 JavaScript/TypeScript
-- **Context**: `src/interactive/markdown-render.ts` - 行 43-65
+- **Context**: `packages/repl/src/interactive/markdown-render.ts` - 行 43-65
 - **Proposed Solution**: 添加多语言关键词集 或 集成 `highlight.js` / `prism` 库
 
 ---
@@ -502,7 +508,7 @@ _Last Updated: 2026-03-16_
   ```
   - 未检测 CMD/PowerShell 的代码页设置 (`chcp 65001`)
   - 用户设置了 UTF-8 代码页但仍显示 ASCII 字符
-- **Context**: `src/interactive/themes.ts` - 行 93-101
+- **Context**: `packages/repl/src/interactive/themes.ts` - 行 93-101
 - **Proposed Solution**: 在启动时检测并缓存代码页设置结果
 
 ---
@@ -524,7 +530,7 @@ _Last Updated: 2026-03-16_
   }
   ```
   - `getAbsoluteOffset()` 方法计算光标在文本中的字节偏移位置，但当前未被任何 UI 组件调用
-- **Context**: `src/ui/utils/text-buffer.ts` - 行 436-445
+- **Context**: `packages/repl/src/ui/utils/text-buffer.ts` - 行 436-445
 - **Proposed Solution**: 保留作为未来扩展点 或 删除如果确定不需要
 
 ---
@@ -541,7 +547,7 @@ _Last Updated: 2026-03-16_
   const theme = getCurrentTheme();
   ```
   - 代码中留有 TODO 注释，表明主题配置功能尚未完全实现
-- **Context**: `src/interactive/repl.ts` - 行 112-113
+- **Context**: `packages/repl/src/interactive/repl.ts` - 行 112-113
 - **Proposed Solution**: 实现功能 或 转换为 issue 追踪 或 移除注释
 
 ---
@@ -950,14 +956,227 @@ _Last Updated: 2026-03-16_
 
 ---
 
+### 089: Feature / Design / Summary 元数据漂移 (RESOLVED)
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: v0.6.10
+- **Fixed**: v0.6.10
+- **Created**: 2026-03-18
+- **Resolution Date**: 2026-03-19
+
+- **Original Problem**:
+  KodaX 依赖 `FEATURE_LIST.md`、各版本 feature design、summary 区块和发布元数据作为 project truth，但这些内容目前仍需要人工同步。计数、状态、规划版本和设计文档头部信息在多次编辑或发版准备后容易漂移；即使人工修正了某一次快照，流程本身仍然脆弱。
+
+- **Expected Behavior**:
+  - feature / issue summary、版本统计、planned / released 字段、design doc header 应保持一致，或在不一致时直接报错
+  - self-hosting 工作流和后续自动化不应依赖过期元数据
+
+- **Context**:
+  - `docs/FEATURE_LIST.md`
+  - `docs/features/v0.7.0.md`
+  - `docs/features/v0.8.0.md`
+  - `docs/features/v1.0.0.md`
+
+- **Root Cause**:
+  1. 多个 Markdown 文件同时承载重叠的真相字段
+  2. 缺少 consistency validator 或 summary regeneration
+  3. 缺少 CI / release guard 在元数据漂移时阻断流程
+
+- **Proposed Solution**:
+  - 实施 `FEATURE_026 Roadmap Integrity and Tracker Consistency Hardening`
+  - 为 tracker 建立校验和自动汇总能力，并在发版前强制运行
+
+- **Resolution**:
+  - 新增 `tests/tracker-consistency.test.ts`，把 `FEATURE_LIST.md` 的版本信息与 summary 真相字段、`KNOWN_ISSUES.md` 的 summary 计数与最高优先级 open issue、以及 feature design 文件存在性变成可执行校验
+  - 这次只覆盖 089 根因对应的关键元数据，不把当前历史 Markdown 结构差异一并扩大成新的 blocker
+  - 基于新测试修正了 `KNOWN_ISSUES.md` summary 的总数、open/resolved 计数和最高优先级 open issue 选择逻辑
+
+- **Files Changed**:
+  - `tests/tracker-consistency.test.ts`
+  - `docs/KNOWN_ISSUES.md`
+
+- **Tests Added**:
+  - `npm test -- tests/tracker-consistency.test.ts`
+
+---
+
+### 090: CLI Provider 桥接语义降级：上下文与 MCP 能力丢失 (RESOLVED)
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: v0.6.10
+- **Fixed**: v0.6.10
+- **Created**: 2026-03-18
+- **Resolution Date**: 2026-03-19
+
+- **Original Problem**:
+  `gemini-cli`、`codex-cli` 目前被作为一等 provider 暴露，但桥接路径会把会话内容压成最后一条用户 prompt，并在 ACP session 创建时传入空的 `mcpServers`。这会让用户误以为桥接 provider 与原生 provider 具备相同上下文和连接器语义，实际上存在静默降级。
+
+- **Expected Behavior**:
+  - bridge provider 的上下文、MCP、reasoning 能力边界必须被明确暴露
+  - 不支持的能力不应静默丢失
+  - 在可行情况下，多轮上下文语义应尽量保持一致
+
+- **Context**:
+  - `packages/ai/src/providers/acp-base.ts`
+  - `packages/ai/src/cli-events/acp-client.ts`
+  - `packages/ai/src/providers/gemini-cli.ts`
+  - `packages/ai/src/providers/codex-cli.ts`
+  - `packages/ai/src/providers/registry.ts`
+
+- **Root Cause**:
+  1. pseudo ACP bridge 将外部 CLI 视作普通 provider 适配
+  2. provider capability contract 没有区分 native API 与 CLI bridge
+  3. 缺少 bridge-provider 的语义兼容性测试
+
+- **Proposed Solution**:
+  - 实施 `FEATURE_029 Provider Adapter Transparency and Semantic Compatibility`
+  - 配合 `FEATURE_027 Native MCP and Connector Runtime` 补足真实连接器路径
+
+- **Resolution**:
+  - 新增 provider capability profile 合同，显式区分 `native-api` 与 `cli-bridge` 两类 transport，并记录上下文语义 (`full-history` / `last-user-message`) 与 MCP 支持边界
+  - 将 `gemini-cli`、`codex-cli` 的 bridge 语义固化到 provider snapshot 与 provider base override 中，避免它们继续被 UI 和上层逻辑当作“原生等价 provider”
+  - 在 REPL 的 `/model` 列表和 `/status` 输出中直接暴露 bridge provider 的限制：只转发最新一条用户消息，且 MCP 不可用
+  - 为 capability metadata 和用户可见 disclosure 新增回归测试，后续若 bridge provider 再次被误标成原生语义，测试会直接失败
+
+- **Files Changed**:
+  - `packages/ai/src/types.ts`
+  - `packages/ai/src/providers/capability-profile.ts`
+  - `packages/ai/src/providers/base.ts`
+  - `packages/ai/src/providers/acp-base.ts`
+  - `packages/ai/src/providers/registry.ts`
+  - `packages/ai/src/providers/registry.js`
+  - `packages/ai/src/providers/index.ts`
+  - `packages/ai/src/providers/custom-provider.ts`
+  - `packages/ai/src/providers/custom-registry.ts`
+  - `packages/ai/src/index.ts`
+  - `packages/coding/src/providers/index.ts`
+  - `packages/coding/src/index.ts`
+  - `packages/repl/src/common/utils.ts`
+  - `packages/repl/src/interactive/commands.ts`
+
+- **Tests Added**:
+  - `packages/ai/src/providers/capability-profile.test.ts`
+  - `packages/repl/src/interactive/provider-capabilities.test.ts`
+  - `tests/tracker-consistency.test.ts`（持续校验 tracker summary / highest-priority open issue，防止 issue 状态回写再次漂移）
+
+---
+
+### 091: 缺少一等公民 MCP / Web Search / Code Search 工具体系 (OPEN)
+- **Priority**: High
+- **Status**: Open
+- **Introduced**: v0.6.10
+- **Created**: 2026-03-18
+
+- **Original Problem**:
+  KodaX 当前 runtime 仍主要依赖本地文件工具和 shell。对于 MCP、web search、web fetch、code search 这类现代 coding agent 的核心工具族，尚未提供一等公民的结构化实现，导致很多任务只能退回到 bash 或外部 CLI，削弱了安全性、可解释性和产品竞争力。
+
+- **Expected Behavior**:
+  - KodaX 应提供结构化、可授权、可归因的 MCP / search / retrieval 工具
+  - 外部证据和代码探索结果应具备统一的数据模型和权限边界
+  - 研究型与验证型任务不应过度依赖临时 shell 命令
+
+- **Context**:
+  - `packages/coding/src/tools/`
+  - `packages/repl/`
+  - `README.md` 当前能力声明
+
+- **Root Cause**:
+  1. 早期优先完成了本地读写与 project workflow
+  2. 尚未建立统一的 connector / retrieval abstraction
+  3. 尚未建立 evidence-carrying result model
+
+- **Proposed Solution**:
+  - 实施 `FEATURE_027 Native MCP and Connector Runtime`
+  - 实施 `FEATURE_028 First-Class Search Retrieval and Evidence Tooling`
+
+---
+
+### 092: Team 模式已暴露但原生多 Agent 架构仍未闭环 (OPEN)
+- **Priority**: High
+- **Status**: Open
+- **Introduced**: v0.6.10
+- **Created**: 2026-03-18
+
+- **Original Problem**:
+  KodaX 已经在 CLI 层暴露了 `--team` 和 orchestration 能力，但产品层面仍缺少原生 subagent 角色模型、权限边界、任务路由、证据聚合和与 project truth 的深度集成。当前能力更像并行 runner，而不是成熟的多 Agent 产品。
+
+- **Expected Behavior**:
+  - 多 Agent 能力应具备明确的角色语义、状态聚合和 review 边界
+  - Team 模式应与 Session Tree、Project Harness、feature truth 协同工作
+  - CLI 暴露的能力边界应与真实产品成熟度一致
+
+- **Context**:
+  - `src/kodax_cli.ts`
+  - `packages/coding/src/orchestration.ts`
+  - `docs/FEATURE_LIST.md` 中的 `FEATURE_022`
+
+- **Root Cause**:
+  1. 已具备 orchestration plumbing，但 subagent product model 尚未完成
+  2. 缺少共享 evidence model 和 role-aware execution layer
+  3. 当前 Team mode 仍未与后续 session / harness 体系完全打通
+
+- **Proposed Solution**:
+  - 继续推进现有 `FEATURE_022 Multi-Agent Orchestration Layer`
+  - 在完成前，明确 CLI 文案和能力边界，避免过度承诺
+
+---
+
+### 093: 缺少 IDE / Desktop / Web 一体化分发表面 (OPEN)
+- **Priority**: Medium
+- **Status**: Open
+- **Introduced**: v0.6.10
+- **Created**: 2026-03-18
+
+- **Original Problem**:
+  KodaX 当前主要提供 terminal 与 library 形态，缺少 IDE、desktop、web 等分发表面，因此无法很好承载文件上下文注入、可视化 diff review、远程长任务监控和跨设备会话接力等场景。
+
+- **Expected Behavior**:
+  - 至少应具备一个 IDE integration、一个 desktop review surface 和一个 remote / web long-running task surface
+  - 不同表面之间应共享同一引擎、session 和 project context
+
+- **Context**:
+  - `README.md`
+  - `packages/repl/`
+  - 当前仓库中缺少对应 app / sdk surface 目录
+
+- **Root Cause**:
+  1. 研发重心长期集中在 CLI 与 project workflow
+  2. 缺少统一的 surface protocol 与 session handoff layer
+  3. 尚未形成跨表面的产品抽象
+
+- **Proposed Solution**:
+  - 实施 `FEATURE_030 Multi-Surface Delivery`
+  - 在 terminal UX 和 multi-agent 基础稳定后再逐步展开
+
+---
+
 ## Summary
-- Total: 14 (10 Open, 4 Resolved, 0 Partially Resolved, 0 Won't Fix)
-- Highest Priority Open: 013 - 自动补全缓存内存泄漏风险 (Low)
+- Total: 20 (12 Open, 8 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - 79 issues archived to ISSUES_ARCHIVED.md (43 previous + 32 resolved + 3 Won't Fix on 2026-03-11 + 1 resolved on 2026-03-13)
 
 ---
 
 ## Changelog
+
+### 2026-03-19: Issue 090 resolved
+- Resolved 090: CLI Provider 桥接语义降级：上下文与 MCP 能力丢失 (High Priority)
+- 新增 provider capability profile，显式区分 Native API 与 CLI bridge，并记录上下文语义和 MCP 支持边界
+- `/model` 与 `/status` 现在会直接披露 bridge provider 的限制：只转发最新一条用户消息，且 MCP 不可用
+- 新增 `packages/ai/src/providers/capability-profile.test.ts` 与 `packages/repl/src/interactive/provider-capabilities.test.ts`，防止桥接 provider 再次被误标为原生语义
+
+### 2026-03-19: Issue 089 resolved
+- Resolved 089: Feature / Design / Summary 元数据漂移 (High Priority)
+- 新增 `tests/tracker-consistency.test.ts`，自动校验 FEATURE_LIST 版本/summary、KNOWN_ISSUES summary/最高优先级 open issue，以及关键 design 文件存在性
+- 同步修正 KNOWN_ISSUES summary 漂移，后续再发生同类问题会直接由测试报错
+
+### 2026-03-18: Strategic comparison backlog intake
+- Added 089: Feature / Design / Summary 元数据漂移 (High Priority)
+- Added 090: CLI Provider 桥接语义降级：上下文与 MCP 能力丢失 (High Priority)
+- Added 091: 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High Priority)
+- Added 092: Team 模式已暴露但原生多 Agent 架构仍未闭环 (High Priority)
+- Added 093: 缺少 IDE / Desktop / Web 一体化分发表面 (Medium Priority)
+- 来源：对标 opencode / Gemini CLI / Codex CLI / Claude Code 的差距分析，并已同步映射到 feature backlog
 
 ### 2026-03-16: Issue 088 新增并修复
 - Added & Resolved 088: 消息列表视口布局不稳定 - 底部区域跳动/最后一行被裁剪 (High Priority)

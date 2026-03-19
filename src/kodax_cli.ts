@@ -34,6 +34,7 @@ import {
   KODAX_PROGRESS_FILE,
   checkPromiseSignal,
   getProvider,
+  getAvailableProviderNames,
   KODAX_TOOLS,
   KodaXTerminalError,
 } from '@kodax/coding';
@@ -168,6 +169,7 @@ export function parseCommandCall(input: string): [string, string?] | null {
 
 interface CliOptions {
   provider: string;
+  model?: string;
   thinking: boolean;
   reasoningMode: KodaXReasoningMode;
   session?: string;
@@ -223,6 +225,7 @@ function resolveCliReasoningMode(
 function createKodaXOptions(cliOptions: CliOptions, isPrintMode = false): KodaXOptions {
   return {
     provider: cliOptions.provider,
+    model: cliOptions.model,
     thinking: cliOptions.thinking,
     reasoningMode: cliOptions.reasoningMode,
     maxIter: cliOptions.maxIter,
@@ -346,37 +349,41 @@ const CLI_HELP_TOPICS: Record<string, () => void> = {
   auto: () => {
     console.log(chalk.cyan('\nAuto Mode & Auto-Continue\n'));
     console.log(chalk.bold('Auto Mode (-y, --auto):'));
-    console.log(chalk.dim('  Skip all confirmation prompts for file operations.'));
-    console.log(chalk.dim('  Useful for trusted environments or automated workflows.\n'));
+    console.log(chalk.dim('  Backward-compatibility alias kept for scripts.'));
+    console.log(chalk.dim('  Non-REPL CLI already runs in auto mode by default, so this flag currently has no additional effect.\n'));
     console.log(chalk.bold('Auto-Continue (--auto-continue):'));
     console.log(chalk.dim('  Automatically run sessions until all features are complete.'));
     console.log(chalk.dim('  Works with --init for hands-off project execution.\n'));
     console.log(chalk.bold('Options:'));
-    console.log(chalk.dim('  -y, --auto             ') + 'Skip confirmations');
+    console.log(chalk.dim('  -y, --auto             ') + 'Backward-compat alias (no-op in non-REPL CLI)');
     console.log(chalk.dim('  --auto-continue        ') + 'Auto-execute until complete');
     console.log(chalk.dim('  --max-sessions <n>     ') + 'Max sessions (default: 50)');
     console.log(chalk.dim('  --max-hours <h>        ') + 'Max runtime hours (default: 2)\n');
     console.log(chalk.bold('Examples:'));
-    console.log(chalk.dim('  kodax -y "refactor code"          ') + '# No confirmations');
+    console.log(chalk.dim('  kodax -y "refactor code"          ') + '# Legacy alias; same as plain non-REPL run');
     console.log(chalk.dim('  kodax --init "API" --auto-continue') + '# Full automation');
     console.log(chalk.dim('  kodax --auto-continue --max-hours 4') + '# Extended run\n');
   },
   provider: () => {
+    const providerNames = getAvailableProviderNames();
     console.log(chalk.cyan('\nLLM Providers\n'));
     console.log(chalk.bold('Overview:'));
     console.log(chalk.dim('  KodaX supports multiple LLM providers. Configure via -m option'));
-    console.log(chalk.dim('  or set default in ~/.kodax/config.json\n'));
+    console.log(chalk.dim('  or set default in ~/.kodax/config.json. Use --model to override the default model.\n'));
     console.log(chalk.bold('Available Providers:'));
-    console.log(chalk.dim('  anthropic      ') + 'Claude (Opus, Sonnet, Haiku)');
-    console.log(chalk.dim('  openai         ') + 'GPT-4, GPT-3.5');
-    console.log(chalk.dim('  kimi           ') + 'Moonshot Kimi');
-    console.log(chalk.dim('  kimi-code      ') + 'Moonshot Kimi (code-optimized)');
-    console.log(chalk.dim('  qwen           ') + 'Alibaba Qwen');
-    console.log(chalk.dim('  zhipu          ') + 'Zhipu AI GLM');
-    console.log(chalk.dim('  zhipu-coding   ') + 'Zhipu AI (code-optimized)\n');
+    providerNames.forEach((name) => {
+      const detail = name === 'gemini-cli' || name === 'codex-cli'
+        ? 'CLI bridge provider'
+        : 'Native provider';
+      console.log(chalk.dim(`  ${name.padEnd(15)} `) + detail);
+    });
+    console.log();
+    console.log(chalk.bold('Key Options:'));
+    console.log(chalk.dim('  -m, --provider <name> ') + 'Provider to use');
+    console.log(chalk.dim('  --model <name>        ') + 'Model override for the selected provider\n');
     console.log(chalk.bold('Examples:'));
     console.log(chalk.dim('  kodax -m anthropic "task"     ') + '# Use Claude');
-    console.log(chalk.dim('  kodax -m openai "task"        ') + '# Use GPT-4');
+    console.log(chalk.dim('  kodax -m openai --model gpt-5.4 "task"') + '# Override model');
     console.log(chalk.dim('  /model                        ') + '# Switch in REPL (saves to config)\n');
   },
   thinking: () => {
@@ -555,6 +562,7 @@ function printSkillSubcommandHelp(name: string): boolean {
 }
 
 function showBasicHelp(): void {
+  const providerNames = getAvailableProviderNames().join(', ');
   console.log('KodaX - 极致轻量化 Coding Agent\n');
   console.log('Usage: kodax [options] [prompt]');
   console.log('       kodax "your task"');
@@ -564,10 +572,11 @@ function showBasicHelp(): void {
   console.log('  -p, --print TEXT        Print mode: run single task and exit');
   console.log('  -c, --continue          Continue most recent conversation');
   console.log('  -r, --resume [id]       Resume session by ID (no id = interactive picker)');
-  console.log('  -m, --provider NAME     LLM provider (anthropic, kimi, kimi-code, qwen, zhipu, openai, zhipu-coding)');
+  console.log(`  -m, --provider NAME     LLM provider (${providerNames})`);
+  console.log('  --model NAME            Model override for the selected provider');
   console.log('  -t, --thinking          Compatibility alias for --reasoning auto');
   console.log('  --reasoning MODE        Reasoning mode: off, auto, quick, balanced, deep');
-  console.log('  -y, --auto              Auto mode: skip all confirmations');
+  console.log('  -y, --auto              Backward-compat alias; no effect in non-REPL CLI');
   console.log('  -s, --session ID        Session management (list, delete <id>, delete-all)');
   console.log('  --no-session            Disable session persistence (print mode only)');
   console.log('  -j, --parallel          Parallel tool execution');
@@ -586,7 +595,7 @@ function showBasicHelp(): void {
   console.log('  /exit, /quit            Exit interactive mode');
   console.log('  /clear                  Clear conversation history');
   console.log('  /status                 Show session status');
-  console.log('  /mode [code|ask]        Switch mode');
+  console.log('  /mode [plan|accept-edits|auto-in-project]  Switch permission mode');
   console.log('  /sessions               List saved sessions\n');
   console.log('Examples:');
   console.log('  kodax                             # Enter interactive mode (auto-resume)');
@@ -616,11 +625,12 @@ async function main() {
     .option('-p, --print <text>', 'Print mode: run single task and exit')
     .option('-c, --continue', 'Continue most recent conversation in current directory')
     .option('-n, --new', 'Start a new session (do not auto-resume)')
-    .option('-r, --resume <id>', 'Resume session by ID (no id = interactive picker)')
+    .option('-r, --resume [id]', 'Resume session by ID (no id = interactive picker)')
     .option('-m, --provider <name>', 'LLM provider')
+    .option('--model <name>', 'Model override')
     .option('-t, --thinking', 'Compatibility alias for --reasoning auto')
     .option('--reasoning <mode>', 'Reasoning mode: off, auto, quick, balanced, deep')
-    .option('-y, --auto', 'Auto mode: skip all confirmations')
+    .option('-y, --auto', 'Backward-compat alias; no effect in non-REPL CLI')
     .option('-s, --session <id>', 'Session management: list, delete <id>, delete-all')
     .option('-j, --parallel', 'Parallel tool execution')
     .option('--no-session', 'Disable session persistence (print mode only)')
@@ -926,6 +936,7 @@ async function main() {
   const options: CliOptions = {
     // 优先级：CLI 参数 > 配置文件 > 默认值
     provider: opts.provider ?? config.provider ?? KODAX_DEFAULT_PROVIDER,
+    model: opts.model ?? config.model,
     thinking: reasoningMode !== 'off',
     reasoningMode,
     session: opts.session,

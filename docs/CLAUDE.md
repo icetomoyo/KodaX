@@ -89,7 +89,7 @@ If the user did not give you a concrete task in their first message, read README
 | Package Manager | npm workspaces | - |
 | CLI Framework | Ink (React for CLI) | ^4.x |
 | Test | Vitest | ^1.2.0 |
-| LLM Providers | Anthropic, OpenAI, Google, etc. | 7 total |
+| LLM Providers | Anthropic, OpenAI, Google, Zhipu, Kimi, MiniMax, etc. | 10 total |
 
 ## Monorepo Structure
 

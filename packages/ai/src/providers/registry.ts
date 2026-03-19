@@ -9,8 +9,17 @@ import { KodaXAnthropicCompatProvider } from './anthropic.js';
 import { KodaXOpenAICompatProvider } from './openai.js';
 import { KodaXGeminiCliProvider } from './gemini-cli.js';
 import { KodaXCodexCliProvider } from './codex-cli.js';
-import { KodaXProviderConfig, KodaXReasoningCapability } from '../types.js';
+import {
+  KodaXProviderCapabilityProfile,
+  KodaXProviderConfig,
+  KodaXReasoningCapability,
+} from '../types.js';
 import { KodaXProviderError } from '../errors.js';
+import {
+  CLI_BRIDGE_PROVIDER_CAPABILITY_PROFILE,
+  cloneCapabilityProfile,
+  NATIVE_PROVIDER_CAPABILITY_PROFILE,
+} from './capability-profile.js';
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 
@@ -33,6 +42,7 @@ type ProviderSnapshot = {
   models?: readonly string[];
   apiKeyEnv: string;
   reasoningCapability: KodaXReasoningCapability;
+  capabilityProfile: KodaXProviderCapabilityProfile;
 };
 
 // ============== 具体 Provider 实现 ==============
@@ -186,54 +196,64 @@ export const KODAX_PROVIDER_SNAPSHOTS: Record<ProviderName, ProviderSnapshot> = 
     model: 'claude-sonnet-4-6',
     models: ['claude-opus-4-6', 'claude-haiku-4-5'],
     reasoningCapability: 'native-budget',
+    capabilityProfile: NATIVE_PROVIDER_CAPABILITY_PROFILE,
   },
   openai: {
     apiKeyEnv: 'OPENAI_API_KEY',
     model: 'gpt-5.3-codex',
     models: ['gpt-5.4', 'gpt-5.3-codex-spark'],
     reasoningCapability: 'native-effort',
+    capabilityProfile: NATIVE_PROVIDER_CAPABILITY_PROFILE,
   },
   kimi: {
     apiKeyEnv: 'KIMI_API_KEY',
     model: 'k2.5',
     reasoningCapability: 'native-effort',
+    capabilityProfile: NATIVE_PROVIDER_CAPABILITY_PROFILE,
   },
   'kimi-code': {
     apiKeyEnv: 'KIMI_API_KEY',
     model: 'k2.5',
     reasoningCapability: 'native-budget',
+    capabilityProfile: NATIVE_PROVIDER_CAPABILITY_PROFILE,
   },
   qwen: {
     apiKeyEnv: 'QWEN_API_KEY',
     model: 'qwen3.5-plus',
     reasoningCapability: 'native-budget',
+    capabilityProfile: NATIVE_PROVIDER_CAPABILITY_PROFILE,
   },
   zhipu: {
     apiKeyEnv: 'ZHIPU_API_KEY',
     model: 'glm-5',
     models: ['glm-5-turbo', 'glm-4.7'],
     reasoningCapability: 'native-budget',
+    capabilityProfile: NATIVE_PROVIDER_CAPABILITY_PROFILE,
   },
   'zhipu-coding': {
     apiKeyEnv: 'ZHIPU_API_KEY',
     model: 'glm-5',
     models: ['glm-5-turbo', 'glm-4.7'],
     reasoningCapability: 'native-budget',
+    capabilityProfile: NATIVE_PROVIDER_CAPABILITY_PROFILE,
   },
   'minimax-coding': {
     apiKeyEnv: 'MINIMAX_API_KEY',
     model: 'MiniMax-M2.5',
     reasoningCapability: 'native-budget',
+    capabilityProfile: NATIVE_PROVIDER_CAPABILITY_PROFILE,
   },
   'gemini-cli': {
     apiKeyEnv: 'GEMINI_API_KEY',
     model: 'gemini-cli',
-    reasoningCapability: 'none',
+    reasoningCapability: 'prompt-only',
+    capabilityProfile: CLI_BRIDGE_PROVIDER_CAPABILITY_PROFILE,
   },
   'codex-cli': {
     apiKeyEnv: 'OPENAI_API_KEY',
     model: 'codex-cli',
-    reasoningCapability: 'none',
+    reasoningCapability: 'prompt-only',
+    capabilityProfile: CLI_BRIDGE_PROVIDER_CAPABILITY_PROFILE,
   },
 };
 
@@ -269,9 +289,31 @@ export function getProviderConfiguredReasoningCapability(
     : 'unknown';
 }
 
+export function getProviderConfiguredCapabilityProfile(
+  name: string,
+): KodaXProviderCapabilityProfile | null {
+  return isProviderName(name)
+    ? cloneCapabilityProfile(KODAX_PROVIDER_SNAPSHOTS[name].capabilityProfile)
+    : null;
+}
+
 // 获取所有可用的 Provider 列表（带配置状态）
-export function getProviderList(): Array<{ name: string; model: string; models: string[]; configured: boolean; reasoningCapability: KodaXReasoningCapability }> {
-  const result: Array<{ name: string; model: string; models: string[]; configured: boolean; reasoningCapability: KodaXReasoningCapability }> = [];
+export function getProviderList(): Array<{
+  name: string;
+  model: string;
+  models: string[];
+  configured: boolean;
+  reasoningCapability: KodaXReasoningCapability;
+  capabilityProfile: KodaXProviderCapabilityProfile;
+}> {
+  const result: Array<{
+    name: string;
+    model: string;
+    models: string[];
+    configured: boolean;
+    reasoningCapability: KodaXReasoningCapability;
+    capabilityProfile: KodaXProviderCapabilityProfile;
+  }> = [];
   for (const name of Object.keys(KODAX_PROVIDERS) as ProviderName[]) {
     const snapshot = KODAX_PROVIDER_SNAPSHOTS[name];
     result.push({
@@ -280,6 +322,7 @@ export function getProviderList(): Array<{ name: string; model: string; models: 
       models: snapshot.models ? [snapshot.model, ...snapshot.models] : [snapshot.model],
       configured: !!process.env[snapshot.apiKeyEnv],
       reasoningCapability: snapshot.reasoningCapability,
+      capabilityProfile: cloneCapabilityProfile(snapshot.capabilityProfile),
     });
   }
   return result;

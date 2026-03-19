@@ -1121,11 +1121,11 @@ describe('ProjectStorage', () => {
       expect(read).toBe(plan);
     });
 
-    it('should create .kodax directory if not exists', async () => {
+    it('should create .agent/project directory if not exists', async () => {
       await storage.writeSessionPlan('Test plan');
 
-      const kodaxDir = path.join(tempDir, '.kodax');
-      const stat = await fs.stat(kodaxDir);
+      const projectArtifactsDir = path.join(tempDir, '.agent', 'project');
+      const stat = await fs.stat(projectArtifactsDir);
       expect(stat.isDirectory()).toBe(true);
     });
   });
@@ -1271,7 +1271,9 @@ describe('ProjectStorage', () => {
       const paths = storage.getPaths();
       expect(paths.features).toBe(path.join(tempDir, 'feature_list.json'));
       expect(paths.progress).toBe(path.join(tempDir, 'PROGRESS.md'));
-      expect(paths.sessionPlan).toBe(path.join(tempDir, '.kodax', 'session_plan.md'));
+      expect(paths.projectArtifactsRoot).toBe(path.join(tempDir, '.agent', 'project'));
+      expect(paths.sessionPlan).toBe(path.join(tempDir, '.agent', 'project', 'session_plan.md'));
+      expect(paths.legacySessionPlan).toBe(path.join(tempDir, '.kodax', 'session_plan.md'));
     });
   });
 });

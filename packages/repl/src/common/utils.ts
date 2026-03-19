@@ -10,15 +10,15 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { fileURLToPath } from 'url';
 import {
+  getProviderConfiguredCapabilityProfile,
   getProviderConfiguredReasoningCapability,
+  getProviderList as getBuiltInProviderList,
   getProviderModel as getBuiltInProviderModel,
   getProviderModels,
   getCustomProviderList,
   getCustomProvider,
-  isKnownProvider,
   isProviderConfigured as isBuiltInProviderConfigured,
-  getAvailableProviderNames,
-  KODAX_PROVIDERS,
+  type KodaXProviderCapabilityProfile,
   type KodaXReasoningCapability,
   type KodaXReasoningMode,
   type KodaXReasoningOverride,
@@ -119,6 +119,37 @@ export function getProviderReasoningCapability(
   return 'unknown';
 }
 
+export function getProviderCapabilityProfile(
+  name: string,
+): KodaXProviderCapabilityProfile | null {
+  const builtInProfile = getProviderConfiguredCapabilityProfile(name);
+  if (builtInProfile) {
+    return builtInProfile;
+  }
+
+  try {
+    const custom = getCustomProviderList().find((provider) => provider.name === name);
+    return custom?.capabilityProfile ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function describeProviderCapabilitySummary(
+  profile: KodaXProviderCapabilityProfile,
+): string {
+  const transport =
+    profile.transport === 'cli-bridge' ? 'CLI bridge' : 'Native API';
+  const conversation =
+    profile.conversationSemantics === 'last-user-message'
+      ? 'forwards only the latest user message'
+      : 'preserves full conversation history';
+  const mcp =
+    profile.mcpSupport === 'native' ? 'MCP available' : 'MCP unavailable';
+
+  return `${transport}; ${conversation}; ${mcp}`;
+}
+
 export function formatReasoningCapabilityShort(
   capability: KodaXReasoningCapability | 'unknown',
 ): string {
@@ -181,40 +212,50 @@ export function describeReasoningExecution(
 }
 
 // Get list of all providers with their status
-export function getProviderList(providerModelsConfig?: Record<string, string[]>): Array<{ name: string; model: string; models: string[]; configured: boolean; reasoningCapability: string; custom?: boolean }> {
-  const result: Array<{ name: string; model: string; models: string[]; configured: boolean; reasoningCapability: string; custom?: boolean }> = [];
+export function getProviderList(providerModelsConfig?: Record<string, string[]>): Array<{
+  name: string;
+  model: string;
+  models: string[];
+  configured: boolean;
+  reasoningCapability: string;
+  capabilityProfile: KodaXProviderCapabilityProfile;
+  custom?: boolean;
+}> {
+  const result: Array<{
+    name: string;
+    model: string;
+    models: string[];
+    configured: boolean;
+    reasoningCapability: string;
+    capabilityProfile: KodaXProviderCapabilityProfile;
+    custom?: boolean;
+  }> = [];
   if (!providerModelsConfig) {
     providerModelsConfig = loadConfig().providerModels;
   }
-  for (const [name, factory] of Object.entries(KODAX_PROVIDERS)) {
-    try {
-      const p = factory();
-      const builtInModels = p.getAvailableModels();
-      // Merge config-level model list with built-in models
-      const configModels = providerModelsConfig?.[name];
-      const models = (configModels && configModels.length > 0)
-        ? mergeModels(configModels, builtInModels)
-        : builtInModels;
-      result.push({
-        name,
-        model: p.getModel(),
-        models,
-        configured: p.isConfigured(),
-        reasoningCapability: p.getReasoningCapability(),
-      });
-    } catch {
-      result.push({
-        name,
-        model: 'unknown',
-        models: ['unknown'],
-        configured: false,
-        reasoningCapability: 'unknown',
-      });
-    }
+  for (const provider of getBuiltInProviderList()) {
+    result.push({
+      name: provider.name,
+      model: provider.model,
+      models: getProviderAvailableModels(provider.name, providerModelsConfig),
+      configured: provider.capabilityProfile.transport === 'cli-bridge'
+        ? true
+        : provider.configured,
+      reasoningCapability: provider.reasoningCapability,
+      capabilityProfile: provider.capabilityProfile,
+    });
   }
   // Append custom providers - 追加自定义 Provider
   try {
-    const customList = getCustomProviderList();
+    const customList = getCustomProviderList().map((provider) => ({
+      ...provider,
+      models: (() => {
+        const configModels = providerModelsConfig?.[provider.name];
+        return configModels && configModels.length > 0
+          ? mergeModels(configModels, provider.models)
+          : provider.models;
+      })(),
+    }));
     result.push(...customList);
   } catch {
     // Custom providers not initialized or unavailable

@@ -17,10 +17,11 @@
 
 ```
 CLI Layer          → 命令行入口
-Interactive Layer  → REPL 交互
-Coding Layer       → Coding Agent
-Agent Layer        → 通用 Agent 框架
-AI Layer           → LLM 抽象
+Interactive Layer  → REPL 交互 (Ink UI)
+Coding Layer       → Coding Agent (工具 + Prompts)
+Agent Layer        → 通用 Agent 框架 (Session + Messages)
+AI Layer           → LLM 抽象 (Providers + Stream)
+Skills Layer       → Agent Skills (零外部依赖)
 ```
 
 ### 理由

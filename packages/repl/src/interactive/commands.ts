@@ -17,9 +17,11 @@ import {
 import type { AgentsFile } from '@kodax/coding';
 import { PermissionMode } from '../permission/types.js';
 import {
+  describeProviderCapabilitySummary,
   describeReasoningCapabilityControl,
   describeReasoningExecution,
   formatReasoningCapabilityShort,
+  getProviderCapabilityProfile,
   getProviderReasoningCapability,
   getProviderAvailableModels,
   getProviderList,
@@ -517,6 +519,9 @@ export const BUILTIN_COMMANDS: Command[] = [
           const currentProvider = p.name === currentConfig.provider;
           const providerTag = currentProvider ? chalk.cyan(' *') : '';
           console.log(`  ${chalk.bold(p.name)}${providerTag}  ${configured}${customTag}`);
+          if (p.capabilityProfile.transport === 'cli-bridge') {
+            console.log(chalk.yellow(`  ! ${describeProviderCapabilitySummary(p.capabilityProfile)}`));
+          }
 
           const models = getProviderAvailableModels(p.name, providerModels);
           const effectiveModel = currentProvider ? currentConfig.model : null;
@@ -1030,10 +1035,18 @@ function printDetailedHelp(commandName: string): void {
 // Print status - 打印状态
 function printStatus(context: InteractiveContext, currentConfig: CurrentConfig): void {
   const tokens = estimateTokens(context.messages);
+  const capabilityProfile = getProviderCapabilityProfile(currentConfig.provider);
   console.log(chalk.bold('\nSession Status:\n'));
   console.log(chalk.dim(`  Provider:    ${chalk.cyan(currentConfig.provider)}${currentConfig.model ? ` / ${chalk.cyan(currentConfig.model)}` : ''}`));
   console.log(chalk.dim(`  Permission:  ${chalk.cyan(currentConfig.permissionMode)}`));
   console.log(chalk.dim(`  Reasoning:   ${chalk.cyan(currentConfig.reasoningMode)}`));
+  if (capabilityProfile) {
+    const capabilitySummary = describeProviderCapabilitySummary(capabilityProfile);
+    const capabilityColor = capabilityProfile.transport === 'cli-bridge'
+      ? chalk.yellow(capabilitySummary)
+      : chalk.cyan(capabilitySummary);
+    console.log(chalk.dim(`  Provider Cap:${' '} ${capabilityColor}`));
+  }
   console.log(chalk.dim(`  Session ID:  ${context.sessionId}`));
   console.log(chalk.dim(`  Messages:    ${context.messages.length}`));
   console.log(chalk.dim(`  Tokens:      ~${tokens}`));

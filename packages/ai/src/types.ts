@@ -80,6 +80,20 @@ export type KodaXReasoningCapability =
   | 'prompt-only'
   | 'unknown';
 
+export type KodaXProviderTransport = 'native-api' | 'cli-bridge';
+
+export type KodaXProviderConversationSemantics =
+  | 'full-history'
+  | 'last-user-message';
+
+export type KodaXProviderMcpSupport = 'native' | 'none';
+
+export interface KodaXProviderCapabilityProfile {
+  transport: KodaXProviderTransport;
+  conversationSemantics: KodaXProviderConversationSemantics;
+  mcpSupport: KodaXProviderMcpSupport;
+}
+
 export type KodaXReasoningOverride =
   | 'budget'
   | 'effort'
@@ -167,6 +181,7 @@ export interface KodaXCustomProviderConfig {
   models?: string[];
   supportsThinking?: boolean;
   reasoningCapability?: KodaXReasoningCapability;
+  capabilityProfile?: KodaXProviderCapabilityProfile;
   contextWindow?: number;
   maxOutputTokens?: number;
   thinkingBudgetCap?: number;
@@ -180,6 +195,7 @@ export interface KodaXProviderConfig {
   models?: readonly KodaXModelDescriptor[];
   supportsThinking: boolean;
   reasoningCapability?: KodaXReasoningCapability;
+  capabilityProfile?: KodaXProviderCapabilityProfile;
   /** 模型的上下文窗口大小 (tokens) */
   contextWindow?: number;
   /** Provider 允许的最大输出 token */

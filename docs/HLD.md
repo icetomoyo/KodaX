@@ -18,9 +18,9 @@
 
 | 特性 | 说明 |
 |------|------|
-| 多 Provider 支持 | 7 种 LLM 提供商，统一接口 |
+| 多 Provider 支持 | 10 种 LLM 提供商，统一接口 |
 | 交互式 REPL | Ink/React UI，流式输出 |
-| 8 种工具 | Read, Write, Edit, Bash, Glob, Grep, Undo, Diff |
+| 9 种工具 | Read, Write, Edit, Bash, Glob, Grep, Undo, Diff, AskUser |
 | 4 种权限模式 | plan, default, accept-edits, auto-in-project |
 | Skills 系统 | 自然语言触发，自定义扩展 |
 
@@ -49,7 +49,7 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │                     Coding Layer (独立库)                        │
 │  ┌──────────────┐ ┌──────────────┐ ┌──────────────────────────┐ │
-│  │ Tools (8个)  │ │ Prompts      │ │ Agent Loop               │ │
+│  │ Tools (9个)  │ │ Prompts      │ │ Agent Loop               │ │
 │  └──────────────┘ └──────────────┘ └──────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
@@ -64,7 +64,7 @@
 │                       AI Layer (独立库)                          │
 │  ┌──────────────┐ ┌──────────────┐ ┌──────────────────────────┐ │
 │  │ Providers    │ │ Stream       │ │ Error Handling           │ │
-│  │ (7个)        │ │ Handling     │ │                          │ │
+│  │ (10个)       │ │ Handling     │ │                          │ │
 │  └──────────────┘ └──────────────┘ └──────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -74,8 +74,7 @@
 ```
 CLI ──────┐
           ├──→ REPL ────→ Coding ────→ Agent ────→ AI
-Skills ───┘                      │
-                                 └──→ Skills (零依赖)
+Skills ───┘
 ```
 
 ### 2.3 各层职责
@@ -128,7 +127,7 @@ KodaX/
 
 ### 4.1 Provider 抽象模式
 
-**问题**: 需要支持 7 种 LLM 提供商，接口各异
+**问题**: 需要支持 10 种 LLM 提供商，接口各异
 
 **解决方案**: 抽象基类 + 注册表模式
 
@@ -342,7 +341,7 @@ my-task, custom
 | Package Manager | npm workspaces | - |
 | CLI Framework | Ink (React for CLI) | ^4.x |
 | Test | Vitest | ^1.2.0 |
-| LLM Providers | Anthropic, OpenAI, Google, etc. | 7 total |
+| LLM Providers | Anthropic, OpenAI, Zhipu, Kimi, MiniMax, etc. | 10 total |
 
 ---
 

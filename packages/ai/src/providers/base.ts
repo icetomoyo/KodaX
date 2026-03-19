@@ -10,12 +10,17 @@ import {
   KodaXMessage,
   KodaXToolDefinition,
   KodaXProviderStreamOptions,
+  KodaXProviderCapabilityProfile,
   KodaXReasoningCapability,
   KodaXReasoningOverride,
   KodaXReasoningRequest,
   KodaXStreamResult,
 } from '../types.js';
 import { KodaXError, KodaXRateLimitError, KodaXProviderError } from '../errors.js';
+import {
+  cloneCapabilityProfile,
+  NATIVE_PROVIDER_CAPABILITY_PROFILE,
+} from './capability-profile.js';
 import {
   getReasoningCapability,
   normalizeReasoningRequest,
@@ -64,6 +69,12 @@ export abstract class KodaXBaseProvider {
 
   getBaseUrl(): string | undefined {
     return this.config.baseUrl;
+  }
+
+  getCapabilityProfile(): KodaXProviderCapabilityProfile {
+    return cloneCapabilityProfile(
+      this.config.capabilityProfile ?? NATIVE_PROVIDER_CAPABILITY_PROFILE,
+    );
   }
 
   getConfiguredReasoningCapability(): KodaXReasoningCapability {

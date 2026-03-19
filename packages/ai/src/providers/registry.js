@@ -8,6 +8,7 @@ import { KodaXOpenAICompatProvider } from './openai.js';
 import { KodaXGeminiCliProvider } from './gemini-cli.js';
 import { KodaXCodexCliProvider } from './codex-cli.js';
 import { KodaXProviderError } from '../errors.js';
+import { CLI_BRIDGE_PROVIDER_CAPABILITY_PROFILE, cloneCapabilityProfile, NATIVE_PROVIDER_CAPABILITY_PROFILE } from './capability-profile.js';
 import Anthropic from '@anthropic-ai/sdk';
 class AnthropicProvider extends KodaXAnthropicCompatProvider {
     name = 'anthropic';
@@ -126,16 +127,16 @@ export const KODAX_PROVIDERS = {
     'codex-cli': () => new KodaXCodexCliProvider(),
 };
 export const KODAX_PROVIDER_SNAPSHOTS = {
-    anthropic: { apiKeyEnv: 'ANTHROPIC_API_KEY', model: 'claude-sonnet-4-6', reasoningCapability: 'native-budget' },
-    openai: { apiKeyEnv: 'OPENAI_API_KEY', model: 'gpt-5.3-codex', reasoningCapability: 'native-effort' },
-    kimi: { apiKeyEnv: 'KIMI_API_KEY', model: 'k2.5', reasoningCapability: 'native-effort' },
-    'kimi-code': { apiKeyEnv: 'KIMI_API_KEY', model: 'k2.5', reasoningCapability: 'native-budget' },
-    qwen: { apiKeyEnv: 'QWEN_API_KEY', model: 'qwen3.5-plus', reasoningCapability: 'native-budget' },
-    zhipu: { apiKeyEnv: 'ZHIPU_API_KEY', model: 'glm-5', reasoningCapability: 'native-budget' },
-    'zhipu-coding': { apiKeyEnv: 'ZHIPU_API_KEY', model: 'glm-5', reasoningCapability: 'native-budget' },
-    'minimax-coding': { apiKeyEnv: 'MINIMAX_API_KEY', model: 'MiniMax-M2.5', reasoningCapability: 'native-budget' },
-    'gemini-cli': { apiKeyEnv: 'GEMINI_API_KEY', model: 'gemini-cli', reasoningCapability: 'none' },
-    'codex-cli': { apiKeyEnv: 'OPENAI_API_KEY', model: 'codex-cli', reasoningCapability: 'none' },
+    anthropic: { apiKeyEnv: 'ANTHROPIC_API_KEY', model: 'claude-sonnet-4-6', reasoningCapability: 'native-budget', capabilityProfile: NATIVE_PROVIDER_CAPABILITY_PROFILE },
+    openai: { apiKeyEnv: 'OPENAI_API_KEY', model: 'gpt-5.3-codex', reasoningCapability: 'native-effort', capabilityProfile: NATIVE_PROVIDER_CAPABILITY_PROFILE },
+    kimi: { apiKeyEnv: 'KIMI_API_KEY', model: 'k2.5', reasoningCapability: 'native-effort', capabilityProfile: NATIVE_PROVIDER_CAPABILITY_PROFILE },
+    'kimi-code': { apiKeyEnv: 'KIMI_API_KEY', model: 'k2.5', reasoningCapability: 'native-budget', capabilityProfile: NATIVE_PROVIDER_CAPABILITY_PROFILE },
+    qwen: { apiKeyEnv: 'QWEN_API_KEY', model: 'qwen3.5-plus', reasoningCapability: 'native-budget', capabilityProfile: NATIVE_PROVIDER_CAPABILITY_PROFILE },
+    zhipu: { apiKeyEnv: 'ZHIPU_API_KEY', model: 'glm-5', reasoningCapability: 'native-budget', capabilityProfile: NATIVE_PROVIDER_CAPABILITY_PROFILE },
+    'zhipu-coding': { apiKeyEnv: 'ZHIPU_API_KEY', model: 'glm-5', reasoningCapability: 'native-budget', capabilityProfile: NATIVE_PROVIDER_CAPABILITY_PROFILE },
+    'minimax-coding': { apiKeyEnv: 'MINIMAX_API_KEY', model: 'MiniMax-M2.5', reasoningCapability: 'native-budget', capabilityProfile: NATIVE_PROVIDER_CAPABILITY_PROFILE },
+    'gemini-cli': { apiKeyEnv: 'GEMINI_API_KEY', model: 'gemini-cli', reasoningCapability: 'prompt-only', capabilityProfile: CLI_BRIDGE_PROVIDER_CAPABILITY_PROFILE },
+    'codex-cli': { apiKeyEnv: 'OPENAI_API_KEY', model: 'codex-cli', reasoningCapability: 'prompt-only', capabilityProfile: CLI_BRIDGE_PROVIDER_CAPABILITY_PROFILE },
 };
 export const KODAX_DEFAULT_PROVIDER = process.env.KODAX_PROVIDER ?? 'zhipu-coding';
 export function getProvider(name) {
@@ -165,6 +166,11 @@ export function getProviderConfiguredReasoningCapability(name) {
         ? KODAX_PROVIDER_SNAPSHOTS[name].reasoningCapability
         : 'unknown';
 }
+export function getProviderConfiguredCapabilityProfile(name) {
+    return isProviderName(name)
+        ? cloneCapabilityProfile(KODAX_PROVIDER_SNAPSHOTS[name].capabilityProfile)
+        : null;
+}
 export function getProviderList() {
     const result = [];
     for (const name of Object.keys(KODAX_PROVIDERS)) {
@@ -172,8 +178,10 @@ export function getProviderList() {
         result.push({
             name,
             model: snapshot.model,
+            models: snapshot.models ? [snapshot.model, ...snapshot.models] : [snapshot.model],
             configured: !!process.env[snapshot.apiKeyEnv],
             reasoningCapability: snapshot.reasoningCapability,
+            capabilityProfile: cloneCapabilityProfile(snapshot.capabilityProfile),
         });
     }
     return result;

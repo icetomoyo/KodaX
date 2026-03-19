@@ -6,6 +6,27 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.6.11] - 2026-03-19
+
+### Added
+- **Provider Capability Profiles**: `KodaXProviderCapabilityProfile` type distinguishing `native-api` vs `cli-bridge` transport, conversation semantics (`full-history` / `last-user-message`), and MCP support (`native` / `none`); all 10 providers now declare explicit capability metadata
+- **CLI `--model` Flag**: Override the default model for any provider via `--model <name>` (e.g. `kodax -m openai --model gpt-5.4 "task"`)
+- **Provider Capability Warnings**: `/providers` and `/status` now display yellow warnings for `cli-bridge` providers, alerting users to potential capability limitations
+- **`getProviderConfiguredCapabilityProfile` API**: New exported function in `@kodax/ai` for retrieving the capability profile of the active provider
+- **Tracker Consistency Test**: Automated validation test for `FEATURE_LIST.md` metadata (version counts, status aggregates, design doc cross-references)
+
+### Changed
+- **Provider Help Dynamic Rendering**: `--help provider` now generates the provider list dynamically from the registry instead of hardcoding names
+- **Auto Mode Clarification**: `-y, --auto` documented as backward-compat alias; non-REPL CLI already runs in auto mode by default
+
+### Documentation
+- **docs/features/README.md Full Rewrite**: Updated from v0.3.x to v0.6.10; 5-layer architecture diagram, 10 providers, 9 tools, complete feature index, reasoning mode table
+- **Provider/Tool Count Alignment**: Updated counts across PRD, HLD, CLAUDE.md, AGENTS.md, README_CN.md, GENERAL_TEST_GUIDE (7 → 10 providers, 8 → 9 tools)
+- **Path Migration**: Updated `.kodax/session_plan.md` and `.kodax/projects/` references to `.agent/project/` in FEATURE_LIST, DD, features/README
+- **Roadmap Expansion**: Added features 026-030 to FEATURE_LIST and version design docs (v0.7.0, v0.8.0, v1.0.0)
+
+---
+
 ## [0.6.10] - 2026-03-18
 
 ### Added

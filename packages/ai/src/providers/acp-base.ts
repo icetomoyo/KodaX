@@ -1,7 +1,12 @@
 import { KodaXBaseProvider } from './base.js';
 import { AcpClient, AcpClientOptions } from '../cli-events/acp-client.js';
+import {
+    CLI_BRIDGE_PROVIDER_CAPABILITY_PROFILE,
+    cloneCapabilityProfile,
+} from './capability-profile.js';
 import type {
     KodaXMessage,
+    KodaXProviderCapabilityProfile,
     KodaXReasoningRequest,
     KodaXStreamResult,
     KodaXProviderStreamOptions,
@@ -32,6 +37,10 @@ export abstract class KodaXAcpProvider extends KodaXBaseProvider {
     // 我们暂时不需要依赖真实的 API key，除非伪装层需要
     override isConfigured(): boolean {
         return true;
+    }
+
+    override getCapabilityProfile(): KodaXProviderCapabilityProfile {
+        return cloneCapabilityProfile(CLI_BRIDGE_PROVIDER_CAPABILITY_PROFILE);
     }
 
     async stream(

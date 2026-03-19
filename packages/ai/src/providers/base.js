@@ -5,6 +5,7 @@
  */
 import { getReasoningCapability, normalizeReasoningRequest, } from '../reasoning.js';
 import { KodaXError, KodaXRateLimitError, KodaXProviderError } from '../errors.js';
+import { cloneCapabilityProfile, NATIVE_PROVIDER_CAPABILITY_PROFILE, } from './capability-profile.js';
 import {
     buildReasoningOverrideKey,
     loadReasoningOverride,
@@ -21,6 +22,9 @@ export class KodaXBaseProvider {
     }
     getBaseUrl() {
         return this.config.baseUrl;
+    }
+    getCapabilityProfile() {
+        return cloneCapabilityProfile(this.config.capabilityProfile ?? NATIVE_PROVIDER_CAPABILITY_PROFILE);
     }
     getConfiguredReasoningCapability() {
         return getReasoningCapability(this.config);

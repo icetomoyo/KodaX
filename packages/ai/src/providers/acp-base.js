@@ -1,5 +1,6 @@
 import { KodaXBaseProvider } from './base.js';
 import { AcpClient } from '../cli-events/acp-client.js';
+import { CLI_BRIDGE_PROVIDER_CAPABILITY_PROFILE, cloneCapabilityProfile } from './capability-profile.js';
 /**
  * 通用的 ACP Provider 基类。
  * 通过传入 Client Options，它可以连接原生的 CLI 命令，
@@ -12,6 +13,9 @@ export class KodaXAcpProvider extends KodaXBaseProvider {
     // 我们暂时不需要依赖真实的 API key，除非伪装层需要
     isConfigured() {
         return true;
+    }
+    getCapabilityProfile() {
+        return cloneCapabilityProfile(CLI_BRIDGE_PROVIDER_CAPABILITY_PROFILE);
     }
     async stream(messages, tools, system, thinking, streamOptions, signal) {
         // 如果我们使用的是 Pseudo Server，在这里检查对应的 CLI 是否安装

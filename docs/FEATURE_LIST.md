@@ -8,8 +8,8 @@ _Last Updated: 2026-03-18_
 
 | 字段 | 值 | 说明 |
 |------|-----|------|
-| **Current Release** | v0.5.42 | 最新发布版本（仅供参考） |
-| **Planned Version** | v0.6.0 | 当前规划的版本 |
+| **Current Release** | v0.6.10 | 最新发布版本（仅供参考） |
+| **Planned Version** | v0.7.0 | 当前规划的版本 |
 
 ---
 
@@ -27,11 +27,11 @@ _Last Updated: 2026-03-18_
 | v0.5.22 | Released | 1 | 1/1 (100%) |
 | v0.5.34 | Released | 1 | 1/1 (100%) |
 | v0.5.37 | Released | 1 | 1/1 (100%) |
-| v0.6.0 | In Development | 6 | 5/6 (83.3%) |
-| v0.6.10 | In Development | 1 | 1/1 (100%) |
-| v0.7.0 | Planned | 1 | 0/1 (0%) |
-| v0.8.0 | Planned | 3 | 0/3 (0%) |
-| v1.0.0 | Planned | 1 | 0/1 (0%) |
+| v0.6.0 | Released | 6 | 6/6 (100%) |
+| v0.6.10 | Released | 1 | 1/1 (100%) |
+| v0.7.0 | Planned | 3 | 0/3 (0%) |
+| v0.8.0 | Planned | 5 | 0/5 (0%) |
+| v1.0.0 | Planned | 3 | 0/3 (0%) |
 
 ---
 
@@ -51,19 +51,24 @@ _Last Updated: 2026-03-18_
 | 010 | Refactor | Completed | Critical | 架构拆分：Agent Core + Skills 独立 | v0.5.0 | v0.5.5 | [Design](features/v0.5.0.md#010) | 2026-03-02 | 2026-03-02 | 2026-03-02 |
 | 011 | Enhancement | Completed | High | 智能上下文压缩 (Compact) | v0.5.0 | v0.5.14 | [Design](features/v0.5.0.md#011) | 2026-03-02 | 2026-03-05 | 2026-03-06 |
 | 012 | Enhancement | Completed | High | TUI 自动补全增强 | v0.5.0 | v0.5.13 | [Design](features/v0.5.0.md#012) | 2026-03-02 | 2026-03-05 | 2026-03-05 |
-| 013 | Refactor | Completed | High | Command System 2.0 | v0.6.0 | - | [Design](features/v0.6.0.md#013) | 2026-03-03 | 2026-03-13 | 2026-03-16 |
+| 013 | Refactor | Completed | High | Command System 2.0 | v0.6.0 | v0.6.0 | [Design](features/v0.6.0.md#013) | 2026-03-03 | 2026-03-13 | 2026-03-16 |
 | 014 | Refactor | Completed | High | Project Mode Enhancement | v0.5.20 | v0.5.20 | [Design](features/v0.5.20.md) | 2026-03-07 | 2026-03-07 | 2026-03-07 |
-| 015 | Enhancement | Completed | High | Project Mode 2.0 - AI-Driven Development Workflow | v0.6.0 | - | [Design](features/v0.6.0.md#015) | 2026-03-07 | 2026-03-17 | 2026-03-17 |
+| 015 | Enhancement | Completed | High | Project Mode 2.0 - AI-Driven Development Workflow | v0.6.0 | v0.6.0 | [Design](features/v0.6.0.md#015) | 2026-03-07 | 2026-03-17 | 2026-03-17 |
 | 016 | New | Completed | High | CLI-Based OAuth Providers | v0.5.22 | v0.5.22 | [Design](features/v0.5.22.md) | 2026-03-08 | 2026-03-08 | 2026-03-08 |
-| 017 | Enhancement | Completed | High | 运行时用户输入插队 | v0.6.0 | - | [Design](features/v0.6.0.md#017) | 2026-03-11 | 2026-03-17 | 2026-03-17 |
+| 017 | Enhancement | Completed | High | 运行时用户输入插队 | v0.6.0 | v0.6.0 | [Design](features/v0.6.0.md#017) | 2026-03-11 | 2026-03-17 | 2026-03-17 |
 | 018 | New | Planned | High | CodeWiki - 项目知识库系统 | v0.8.0 | - | [Design](features/v0.8.0.md#018) | 2026-03-11 | - | - |
 | 019 | New | Planned | High | Session Tree & Rollback System | v0.7.0 | - | [Design](features/v0.7.0.md#019) | 2026-03-12 | - | - |
 | 020 | New | Completed | High | AGENTS.md - 项目级 AI 上下文规则 | v0.6.0 | v0.5.34 | [Design](features/v0.6.0.md#020) | 2026-03-13 | 2026-03-13 | 2026-03-13 |
 | 021 | Enhancement | Completed | High | Provider-Aware Reasoning Budget Matrix | v0.6.0 | v0.5.37 | [Design](features/v0.6.0.md#021) | 2026-03-15 | 2026-03-15 | 2026-03-15 |
-| 022 | New | InProgress | High | Multi-Agent Orchestration Layer | v0.6.0 | - | [Design](features/v0.6.0.md#022) | 2026-03-17 | 2026-03-17 | - |
+| 022 | New | Planned | High | Multi-Agent Orchestration Layer | v1.0.0 | - | [Design](features/v0.6.0.md#022) | 2026-03-17 | - | - |
 | 023 | Enhancement | Planned | High | Dual-Mode Terminal UX (Inline + Fullscreen TUI) | v1.0.0 | - | [Design](features/v1.0.0.md#023) | 2026-03-17 | - | - |
-| 024 | Enhancement | Completed | High | Project Harness - Action-Level Verified Execution | v0.6.10 | - | [Design](features/v0.6.10.md#feature_024-project-harness---action-level-verified-execution) | 2026-03-18 | 2026-03-18 | 2026-03-18 |
+| 024 | Enhancement | Completed | High | Project Harness - Action-Level Verified Execution | v0.6.10 | v0.6.10 | [Design](features/v0.6.10.md#feature_024-project-harness---action-level-verified-execution) | 2026-03-18 | 2026-03-18 | 2026-03-18 |
 | 025 | Enhancement | Planned | High | Adaptive Project Intelligence Layer | v0.8.0 | - | [Design](features/v0.8.0.md#feature_025-adaptive-project-intelligence-layer) | 2026-03-18 | - | - |
+| 026 | Internal | Planned | High | Roadmap Integrity and Tracker Consistency Hardening | v0.7.0 | - | [Design](features/v0.7.0.md#feature_026-roadmap-integrity-and-tracker-consistency-hardening) | 2026-03-18 | - | - |
+| 027 | New | Planned | High | Native MCP and Connector Runtime | v0.8.0 | - | [Design](features/v0.8.0.md#feature_027-native-mcp-and-connector-runtime) | 2026-03-18 | - | - |
+| 028 | Enhancement | Planned | High | First-Class Search Retrieval and Evidence Tooling | v0.8.0 | - | [Design](features/v0.8.0.md#feature_028-first-class-search-retrieval-and-evidence-tooling) | 2026-03-18 | - | - |
+| 029 | Enhancement | Planned | High | Provider Adapter Transparency and Semantic Compatibility | v0.7.0 | - | [Design](features/v0.7.0.md#feature_029-provider-adapter-transparency-and-semantic-compatibility) | 2026-03-18 | - | - |
+| 030 | Enhancement | Planned | High | Multi-Surface Delivery | v1.0.0 | - | [Design](features/v1.0.0.md#feature_030-multi-surface-delivery) | 2026-03-18 | - | - |
 ### 014: Project Mode Enhancement (COMPLETED)
 - **Category**: Refactor
 - **Status**: Completed
@@ -91,7 +96,7 @@ _Last Updated: 2026-03-18_
 - 万能编辑命令 `edit #n "prompt"` 或 `edit "prompt"`
 - 使用 `#<n>` 语法引用 features（类似 GitHub issues）
 - Tab 补全显示 `#0 #1 #2 ...`
-- `reset --all` 只删除 3 个特定文件，**不删除** `.kodax/` 文件夹
+- `reset --all` 删除 project truth 文件和 `.agent/project/` 运行时目录，**不删除** `.kodax/` 控制面文件夹
 - 所有命令支持自然语言 prompt
 
 **Implementation Notes**:
@@ -213,7 +218,7 @@ REPL 中的长运行项目管理，通过 `/project` 命令组实现。
 
 **Implementation Notes**:
 - 实现于 `src/interactive/project-commands.ts`、`project-state.ts`、`project-storage.ts`
-- 项目存储在 `.kodax/projects/` 目录
+- 项目运行时存储在 `.agent/project/` 目录（v0.6.10 从 `.kodax/projects/` 迁移）
 - 状态包含目标、进度和会话历史
 
 ---
@@ -622,7 +627,7 @@ Successfully implemented the redesigned `/project` command system with the follo
 - 万能编辑命令 `edit #n "prompt"` 或 `edit "prompt"`
 - 使用 `#<n>` 语法引用 features（类似 GitHub issues）
 - Tab 补全显示 `#0 #1 #2 ...`
-- `reset --all` 只删除 3 个特定文件，**不删除** `.kodax/` 文件夹
+- `reset --all` 删除 project truth 文件和 `.agent/project/` 运行时目录，**不删除** `.kodax/` 控制面文件夹
 - 所有命令支持自然语言 prompt
 
 **Implementation Notes**:
@@ -888,8 +893,8 @@ interface SessionEntryBase {
 
 **Current Progress (2026-03-17)**:
 - `/project quality` 和 `/project status "<question>"` 已提供可展示的质量闭环与引导式分析能力。
-- `/project brainstorm` 已支持启动、继续、结束多轮讨论，并把讨论历史持久化到 `.kodax/projects/<session>/brainstorm/`。
-- `/project plan` 已支持按 feature index 或自由主题生成结构化实施计划，并写入 `.kodax/session_plan.md`。
+- `/project brainstorm` 已支持启动、继续、结束多轮讨论，并把讨论历史持久化到 `.agent/project/brainstorm/`。
+- `/project plan` 已支持按 feature index 或自由主题生成结构化实施计划，并写入 `.agent/project/session_plan.md`。
 - 对于 `v0.6.0`，该 feature 以“核心 workflow 完整可用”为完成标准；Graphviz/DAG、brainstorm 直接生成 feature、自动回退编排等更重增强项后移到后续 feature。
 
 **Core Capabilities**:
@@ -1073,10 +1078,160 @@ Build the next KodaX-practice layer on top of Project Harness: deeper but still 
 - Explicitly avoid action-trace replay, automatic rollback orchestration, branch search, Thompson sampling, and executable harness generation
 - Prefer deterministic or declarative mechanisms that can be reviewed in repo state and test output
 
+---
+
+### 026: Roadmap Integrity and Tracker Consistency Hardening (PLANNED)
+- **Category**: Internal
+- **Status**: Planned
+- **Priority**: High
+- **Planned**: v0.7.0
+- **Released**: -
+- **Design**: [v0.7.0.md#feature_026-roadmap-integrity-and-tracker-consistency-hardening](features/v0.7.0.md#feature_026-roadmap-integrity-and-tracker-consistency-hardening)
+- **Created**: 2026-03-18
+- **Started**: -
+- **Completed**: -
+
+**Description**:
+Harden KodaX's document-driven execution model so `FEATURE_LIST.md`, version design docs, release metadata, and summary sections remain trustworthy project truth instead of drifting apart after manual updates.
+
+**Goals**:
+1. Keep version summaries, feature index rows, detail sections, and per-version design documents structurally consistent
+2. Detect status, version, and count drift before release and during self-hosting workflows
+3. Reduce manual bookkeeping in `FEATURE_LIST.md` and related docs
+4. Make Project Harness and future automation able to trust repo metadata safely
+5. Preserve KodaX's "Doc First" philosophy with stronger operational guarantees
+
+**Key Changes**:
+- Add a tracker validation workflow for feature and issue metadata consistency
+- Generate or verify summary counts, version totals, and status aggregates automatically
+- Define ownership rules for feature status, planned version, released version, and design-doc headers
+- Surface actionable warnings when changelog, package version, and tracker metadata drift
+- Prepare CI and release hooks so metadata regressions fail fast
+
+---
+
+### 027: Native MCP and Connector Runtime (PLANNED)
+- **Category**: New
+- **Status**: Planned
+- **Priority**: High
+- **Planned**: v0.8.0
+- **Released**: -
+- **Design**: [v0.8.0.md#feature_027-native-mcp-and-connector-runtime](features/v0.8.0.md#feature_027-native-mcp-and-connector-runtime)
+- **Created**: 2026-03-18
+- **Started**: -
+- **Completed**: -
+
+**Description**:
+Introduce a first-class MCP and connector runtime inside KodaX so external tools, knowledge sources, and service integrations become part of the product surface instead of living behind lossy CLI bridges or ad hoc shell usage.
+
+**Goals**:
+1. Support session-scoped and workspace-scoped MCP server configuration
+2. Make external connectors permission-aware, inspectable, and reusable across future surfaces
+3. Preserve deterministic logs and tool attribution when external capabilities are used
+4. Eliminate silent connector loss in bridge-provider execution paths
+5. Establish the foundation for IDE, desktop, and web parity later
+
+**Key Changes**:
+- Add MCP server registration, startup, and lifecycle management
+- Support local and remote connector definitions with auth and failure handling
+- Expose connector capabilities through a structured runtime contract
+- Reuse permission and audit trails for connector calls
+- Integrate connector context into Project Harness and future multi-agent workflows
+
+---
+
+### 028: First-Class Search Retrieval and Evidence Tooling (PLANNED)
+- **Category**: Enhancement
+- **Status**: Planned
+- **Priority**: High
+- **Planned**: v0.8.0
+- **Released**: -
+- **Design**: [v0.8.0.md#feature_028-first-class-search-retrieval-and-evidence-tooling](features/v0.8.0.md#feature_028-first-class-search-retrieval-and-evidence-tooling)
+- **Created**: 2026-03-18
+- **Started**: -
+- **Completed**: -
+
+**Description**:
+Build native search and retrieval tools for up-to-date research and large-codebase exploration, including structured web search, web fetch, code search, and evidence-carrying result handling.
+
+**Goals**:
+1. Let KodaX gather external evidence without falling back to arbitrary shell commands
+2. Improve codebase exploration with dedicated code search rather than only `grep`
+3. Preserve result attribution so answers and plans remain reviewable
+4. Feed stronger evidence into CodeWiki and Project Harness
+5. Make search-heavy workflows competitive with modern coding agents
+
+**Key Changes**:
+- Add built-in web search, web fetch, and code search tools
+- Introduce evidence summaries and attribution-friendly result blocks
+- Improve tool routing for research-heavy and verification-heavy tasks
+- Cache or compact search results safely for long-running sessions
+- Reuse search outputs in planning, review, and project-quality flows
+
+---
+
+### 029: Provider Adapter Transparency and Semantic Compatibility (PLANNED)
+- **Category**: Enhancement
+- **Status**: Planned
+- **Priority**: High
+- **Planned**: v0.7.0
+- **Released**: -
+- **Design**: [v0.7.0.md#feature_029-provider-adapter-transparency-and-semantic-compatibility](features/v0.7.0.md#feature_029-provider-adapter-transparency-and-semantic-compatibility)
+- **Created**: 2026-03-18
+- **Started**: -
+- **Completed**: -
+
+**Description**:
+Clarify and harden the difference between native API providers and CLI-bridge adapters so KodaX does not imply capability parity where context handling, MCP support, or reasoning semantics are actually degraded.
+
+**Goals**:
+1. Expose an explicit capability contract for each provider path
+2. Prevent bridge adapters from silently dropping context or connector semantics
+3. Improve user trust when switching among OpenAI, Anthropic, Gemini CLI, Codex CLI, and other providers
+4. Make bridge-provider behavior testable instead of relying on best-effort assumptions
+5. Prepare future migration paths from bridge adapters to native integrations
+
+**Key Changes**:
+- Separate native providers from CLI-bridge adapters in capability reporting
+- Warn or gate unsupported MCP, reasoning, and session behaviors explicitly
+- Improve multi-turn compatibility and adapter-specific test coverage
+- Document semantic differences in config and runtime status output
+- Reduce product ambiguity around what "provider support" really means
+
+---
+
+### 030: Multi-Surface Delivery (PLANNED)
+- **Category**: Enhancement
+- **Status**: Planned
+- **Priority**: High
+- **Planned**: v1.0.0
+- **Released**: -
+- **Design**: [v1.0.0.md#feature_030-multi-surface-delivery](features/v1.0.0.md#feature_030-multi-surface-delivery)
+- **Created**: 2026-03-18
+- **Started**: -
+- **Completed**: -
+
+**Description**:
+Expand KodaX from a terminal-first tool into a consistent product across IDE, desktop, and web surfaces, with shared project context, session handoff, visual review, and long-running task visibility.
+
+**Goals**:
+1. Add at least one serious IDE integration path
+2. Add a desktop-grade review surface for diffs, approvals, and session handoff
+3. Support remote or web-based monitoring of long-running tasks
+4. Keep `AGENTS.md`, skills, permissions, and project truth consistent across surfaces
+5. Make KodaX more collaborative and less bound to a single terminal window
+
+**Key Changes**:
+- Define a shared session-transfer and surface protocol
+- Add IDE integration for context injection and task handoff
+- Add a desktop review shell for richer diff and approval workflows
+- Add a web or remote-control surface for long-running sessions
+- Reuse the same engine, config, and permission model across surfaces
+
 ## Summary
-- Total: 25 (5 Planned, 1 In Progress, 19 Completed)
-- By Priority: Critical: 3, High: 19, Medium: 2, Low: 0
-- Current Version: v0.5.42
-- Next Release (v0.6.0): 6 features (013, 015, 017, 020, 021, 022), 5 completed, 1 in progress
-- Future Releases: v0.7.0 (019), v0.8.0 (007, 018, 025), v1.0.0 (023)
-- Highest Priority Planned: 018 - CodeWiki - 项目知识库系统 (High), 019 - Session Tree & Rollback System (High), 023 - Dual-Mode Terminal UX (High), 025 - Adaptive Project Intelligence Layer (High)
+- Total: 30 (11 Planned, 0 In Progress, 19 Completed)
+- By Priority: Critical: 3, High: 25, Medium: 2, Low: 0
+- Current Version: v0.6.10
+- Next Release (v0.7.0): 3 features (019, 026, 029), 0 completed, 0 in progress
+- Future Releases: v0.8.0 (007, 018, 025, 027, 028), v1.0.0 (022, 023, 030)
+- Highest Priority Planned: 019 - Session Tree & Rollback System (High), 026 - Roadmap Integrity and Tracker Consistency Hardening (High), 029 - Provider Adapter Transparency and Semantic Compatibility (High)
