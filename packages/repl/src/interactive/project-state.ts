@@ -37,6 +37,55 @@ export interface FeatureList {
   features: ProjectFeature[];
 }
 
+export type ProjectWorkflowStage =
+  | 'bootstrap'
+  | 'discovering'
+  | 'aligned'
+  | 'planned'
+  | 'executing'
+  | 'blocked'
+  | 'completed';
+
+export type ProjectWorkflowScope = 'project' | 'change_request';
+
+export interface ProjectWorkflowState {
+  stage: ProjectWorkflowStage;
+  scope: ProjectWorkflowScope;
+  activeRequestId?: string;
+  unresolvedQuestionCount: number;
+  currentFeatureIndex?: number;
+  lastPlannedAt?: string;
+  latestExecutionSummary?: string;
+  lastUpdated: string;
+  discoveryStepIndex: number;
+}
+
+export interface ProjectBrief {
+  originalPrompt: string;
+  goals: string[];
+  constraints: string[];
+  nonGoals: string[];
+  updatedAt: string;
+}
+
+export interface ProjectAlignment {
+  sourcePrompt: string;
+  confirmedRequirements: string[];
+  constraints: string[];
+  nonGoals: string[];
+  acceptedTradeoffs: string[];
+  successCriteria: string[];
+  openQuestions: string[];
+  updatedAt: string;
+}
+
+export const DEFAULT_DISCOVERY_OPEN_QUESTIONS = [
+  'What outcome matters most for the first usable version?',
+  'What constraint or boundary must the implementation respect?',
+  'What should stay out of scope for this iteration?',
+  'How will we know the first version is successful?',
+] as const;
+
 /**
  * 项目状态
  */
@@ -70,6 +119,157 @@ export interface ProjectState {
   autoContinueMaxRuns?: number;
   /** 自动继续当前执行次数 */
   autoContinueCurrentRun?: number;
+}
+
+function parseBulletSection(markdown: string, heading: string): string[] {
+  const pattern = new RegExp(`## ${heading}\\r?\\n([\\s\\S]*?)(?=\\r?\\n## |$)`);
+  const match = markdown.match(pattern);
+  if (!match?.[1]) {
+    return [];
+  }
+
+  return match[1]
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => /^[-*]\s+/.test(line) || /^\d+\.\s+/.test(line))
+    .map(line => line.replace(/^[-*]\s+|^\d+\.\s+/, '').trim())
+    .filter(Boolean);
+}
+
+function parseSingleValue(markdown: string, heading: string): string {
+  const pattern = new RegExp(`## ${heading}\\r?\\n([\\s\\S]*?)(?=\\r?\\n## |$)`);
+  const match = markdown.match(pattern);
+  return match?.[1]?.trim() ?? '';
+}
+
+export function createProjectWorkflowState(
+  stage: ProjectWorkflowStage,
+  timestamp = new Date().toISOString(),
+  scope: ProjectWorkflowScope = 'project',
+): ProjectWorkflowState {
+  return {
+    stage,
+    scope,
+    unresolvedQuestionCount: stage === 'aligned' || stage === 'planned' || stage === 'executing' || stage === 'completed'
+      ? 0
+      : DEFAULT_DISCOVERY_OPEN_QUESTIONS.length,
+    lastUpdated: timestamp,
+    discoveryStepIndex: 0,
+  };
+}
+
+export function createProjectBrief(
+  prompt: string,
+  timestamp = new Date().toISOString(),
+): ProjectBrief {
+  const normalized = prompt.trim();
+  return {
+    originalPrompt: normalized,
+    goals: [normalized],
+    constraints: [],
+    nonGoals: [],
+    updatedAt: timestamp,
+  };
+}
+
+export function formatProjectBriefMarkdown(brief: ProjectBrief): string {
+  return [
+    '# Project Brief',
+    '',
+    `Updated: ${brief.updatedAt}`,
+    '',
+    '## Original Prompt',
+    brief.originalPrompt,
+    '',
+    '## Goals',
+    ...(brief.goals.length > 0 ? brief.goals.map(goal => `- ${goal}`) : ['- (not set)']),
+    '',
+    '## Constraints',
+    ...(brief.constraints.length > 0 ? brief.constraints.map(item => `- ${item}`) : ['- (none yet)']),
+    '',
+    '## Non-goals',
+    ...(brief.nonGoals.length > 0 ? brief.nonGoals.map(item => `- ${item}`) : ['- (none yet)']),
+  ].join('\n');
+}
+
+export function parseProjectBriefMarkdown(markdown: string): ProjectBrief {
+  return {
+    originalPrompt: parseSingleValue(markdown, 'Original Prompt'),
+    goals: parseBulletSection(markdown, 'Goals'),
+    constraints: parseBulletSection(markdown, 'Constraints'),
+    nonGoals: parseBulletSection(markdown, 'Non-goals'),
+    updatedAt: markdown.match(/Updated:\s*(.+)/)?.[1]?.trim() ?? new Date().toISOString(),
+  };
+}
+
+export function createProjectAlignment(
+  prompt: string,
+  timestamp = new Date().toISOString(),
+): ProjectAlignment {
+  return {
+    sourcePrompt: prompt.trim(),
+    confirmedRequirements: [],
+    constraints: [],
+    nonGoals: [],
+    acceptedTradeoffs: [],
+    successCriteria: [],
+    openQuestions: [...DEFAULT_DISCOVERY_OPEN_QUESTIONS],
+    updatedAt: timestamp,
+  };
+}
+
+export function formatProjectAlignmentMarkdown(alignment: ProjectAlignment): string {
+  return [
+    '# Project Alignment',
+    '',
+    `Updated: ${alignment.updatedAt}`,
+    '',
+    '## Source Prompt',
+    alignment.sourcePrompt,
+    '',
+    '## Confirmed Requirements',
+    ...(alignment.confirmedRequirements.length > 0
+      ? alignment.confirmedRequirements.map(item => `- ${item}`)
+      : ['- (none confirmed yet)']),
+    '',
+    '## Constraints',
+    ...(alignment.constraints.length > 0
+      ? alignment.constraints.map(item => `- ${item}`)
+      : ['- (none confirmed yet)']),
+    '',
+    '## Non-goals',
+    ...(alignment.nonGoals.length > 0
+      ? alignment.nonGoals.map(item => `- ${item}`)
+      : ['- (none confirmed yet)']),
+    '',
+    '## Accepted Tradeoffs',
+    ...(alignment.acceptedTradeoffs.length > 0
+      ? alignment.acceptedTradeoffs.map(item => `- ${item}`)
+      : ['- (none confirmed yet)']),
+    '',
+    '## Success Criteria',
+    ...(alignment.successCriteria.length > 0
+      ? alignment.successCriteria.map(item => `- ${item}`)
+      : ['- (none confirmed yet)']),
+    '',
+    '## Open Questions',
+    ...(alignment.openQuestions.length > 0
+      ? alignment.openQuestions.map(item => `- ${item}`)
+      : ['- (none)']),
+  ].join('\n');
+}
+
+export function parseProjectAlignmentMarkdown(markdown: string): ProjectAlignment {
+  return {
+    sourcePrompt: parseSingleValue(markdown, 'Source Prompt'),
+    confirmedRequirements: parseBulletSection(markdown, 'Confirmed Requirements').filter(item => item !== '(none confirmed yet)'),
+    constraints: parseBulletSection(markdown, 'Constraints').filter(item => item !== '(none confirmed yet)'),
+    nonGoals: parseBulletSection(markdown, 'Non-goals').filter(item => item !== '(none confirmed yet)'),
+    acceptedTradeoffs: parseBulletSection(markdown, 'Accepted Tradeoffs').filter(item => item !== '(none confirmed yet)'),
+    successCriteria: parseBulletSection(markdown, 'Success Criteria').filter(item => item !== '(none confirmed yet)'),
+    openQuestions: parseBulletSection(markdown, 'Open Questions').filter(item => item !== '(none)'),
+    updatedAt: markdown.match(/Updated:\s*(.+)/)?.[1]?.trim() ?? new Date().toISOString(),
+  };
 }
 
 /**

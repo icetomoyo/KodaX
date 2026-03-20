@@ -1,6 +1,6 @@
 # Feature List
 
-_Last Updated: 2026-03-18_
+_Last Updated: 2026-03-20_
 
 ---
 
@@ -8,7 +8,7 @@ _Last Updated: 2026-03-18_
 
 | 字段 | 值 | 说明 |
 |------|-----|------|
-| **Current Release** | v0.6.10 | 最新发布版本（仅供参考） |
+| **Current Release** | v0.6.11 | 最新发布版本（仅供参考） |
 | **Planned Version** | v0.7.0 | 当前规划的版本 |
 
 ---
@@ -29,9 +29,12 @@ _Last Updated: 2026-03-18_
 | v0.5.37 | Released | 1 | 1/1 (100%) |
 | v0.6.0 | Released | 6 | 6/6 (100%) |
 | v0.6.10 | Released | 1 | 1/1 (100%) |
-| v0.7.0 | Planned | 3 | 0/3 (0%) |
+| v0.6.11 | Released | 0 | 0/0 (100%) |
+| v0.6.15 | Planned | 1 | 0/1 (0%) |
+| v0.7.0 | Planned | 5 | 0/5 (0%) |
 | v0.8.0 | Planned | 5 | 0/5 (0%) |
 | v1.0.0 | Planned | 3 | 0/3 (0%) |
+| v0.9.0 | Planned | 1 | 0/1 (0%) |
 
 ---
 
@@ -65,10 +68,14 @@ _Last Updated: 2026-03-18_
 | 024 | Enhancement | Completed | High | Project Harness - Action-Level Verified Execution | v0.6.10 | v0.6.10 | [Design](features/v0.6.10.md#feature_024-project-harness---action-level-verified-execution) | 2026-03-18 | 2026-03-18 | 2026-03-18 |
 | 025 | Enhancement | Planned | High | Adaptive Project Intelligence Layer | v0.8.0 | - | [Design](features/v0.8.0.md#feature_025-adaptive-project-intelligence-layer) | 2026-03-18 | - | - |
 | 026 | Internal | Planned | High | Roadmap Integrity and Tracker Consistency Hardening | v0.7.0 | - | [Design](features/v0.7.0.md#feature_026-roadmap-integrity-and-tracker-consistency-hardening) | 2026-03-18 | - | - |
-| 027 | New | Planned | High | Native MCP and Connector Runtime | v0.8.0 | - | [Design](features/v0.8.0.md#feature_027-native-mcp-and-connector-runtime) | 2026-03-18 | - | - |
+| 034 | Enhancement | Planned | High | Pi-style Extension API | v0.8.0 | - | [Design](features/v0.8.0.md#034) | 2026-03-20 | - | - |
 | 028 | Enhancement | Planned | High | First-Class Search Retrieval and Evidence Tooling | v0.8.0 | - | [Design](features/v0.8.0.md#feature_028-first-class-search-retrieval-and-evidence-tooling) | 2026-03-18 | - | - |
 | 029 | Enhancement | Planned | High | Provider Adapter Transparency and Semantic Compatibility | v0.7.0 | - | [Design](features/v0.7.0.md#feature_029-provider-adapter-transparency-and-semantic-compatibility) | 2026-03-18 | - | - |
 | 030 | Enhancement | Planned | High | Multi-Surface Delivery | v1.0.0 | - | [Design](features/v1.0.0.md#feature_030-multi-surface-delivery) | 2026-03-18 | - | - |
+| 031 | New | Planned | High | 多模态图片上传支持 | v0.9.0 | - | [Design](features/v0.9.0.md#031) | 2026-03-19 | - | - |
+| 032 | Enhancement | Planned | Medium | JSON 输出模式 (--mode json) | v0.7.0 | - | [Design](features/v0.7.0.md#032) | 2026-03-19 | - | - |
+| 033 | Enhancement | Planned | Medium | REPL Parallel Toggle (/parallel) | v0.6.15 | - | [Design](features/v0.6.15.md#033) | 2026-03-20 | - | - |
+| 035 | New | Planned | High | MCP Bridge Runtime | v0.7.0 | - | [Design](features/v0.7.0.md#035) | 2026-03-20 | - | - |
 ### 014: Project Mode Enhancement (COMPLETED)
 - **Category**: Refactor
 - **Status**: Completed
@@ -1110,36 +1117,6 @@ Harden KodaX's document-driven execution model so `FEATURE_LIST.md`, version des
 
 ---
 
-### 027: Native MCP and Connector Runtime (PLANNED)
-- **Category**: New
-- **Status**: Planned
-- **Priority**: High
-- **Planned**: v0.8.0
-- **Released**: -
-- **Design**: [v0.8.0.md#feature_027-native-mcp-and-connector-runtime](features/v0.8.0.md#feature_027-native-mcp-and-connector-runtime)
-- **Created**: 2026-03-18
-- **Started**: -
-- **Completed**: -
-
-**Description**:
-Introduce a first-class MCP and connector runtime inside KodaX so external tools, knowledge sources, and service integrations become part of the product surface instead of living behind lossy CLI bridges or ad hoc shell usage.
-
-**Goals**:
-1. Support session-scoped and workspace-scoped MCP server configuration
-2. Make external connectors permission-aware, inspectable, and reusable across future surfaces
-3. Preserve deterministic logs and tool attribution when external capabilities are used
-4. Eliminate silent connector loss in bridge-provider execution paths
-5. Establish the foundation for IDE, desktop, and web parity later
-
-**Key Changes**:
-- Add MCP server registration, startup, and lifecycle management
-- Support local and remote connector definitions with auth and failure handling
-- Expose connector capabilities through a structured runtime contract
-- Reuse permission and audit trails for connector calls
-- Integrate connector context into Project Harness and future multi-agent workflows
-
----
-
 ### 028: First-Class Search Retrieval and Evidence Tooling (PLANNED)
 - **Category**: Enhancement
 - **Status**: Planned
@@ -1182,18 +1159,18 @@ Build native search and retrieval tools for up-to-date research and large-codeba
 - **Completed**: -
 
 **Description**:
-Clarify and harden the difference between native API providers and CLI-bridge adapters so KodaX does not imply capability parity where context handling, MCP support, or reasoning semantics are actually degraded.
+Clarify and harden the difference between native API providers and CLI-bridge adapters so KodaX does not imply capability parity where context handling, reasoning semantics, or tool support are actually degraded.
 
 **Goals**:
 1. Expose an explicit capability contract for each provider path
-2. Prevent bridge adapters from silently dropping context or connector semantics
+2. Prevent bridge adapters from silently dropping context or tool semantics
 3. Improve user trust when switching among OpenAI, Anthropic, Gemini CLI, Codex CLI, and other providers
 4. Make bridge-provider behavior testable instead of relying on best-effort assumptions
 5. Prepare future migration paths from bridge adapters to native integrations
 
 **Key Changes**:
 - Separate native providers from CLI-bridge adapters in capability reporting
-- Warn or gate unsupported MCP, reasoning, and session behaviors explicitly
+- Warn or gate unsupported reasoning, tool, and session behaviors explicitly
 - Improve multi-turn compatibility and adapter-specific test coverage
 - Document semantic differences in config and runtime status output
 - Reduce product ambiguity around what "provider support" really means
@@ -1228,10 +1205,166 @@ Expand KodaX from a terminal-first tool into a consistent product across IDE, de
 - Add a web or remote-control surface for long-running sessions
 - Reuse the same engine, config, and permission model across surfaces
 
+---
+
+### 031: 多模态图片上传支持 (PLANNED)
+- **Category**: New
+- **Status**: Planned
+- **Priority**: High
+- **Planned**: v0.9.0
+- **Released**: -
+- **Design**: [v0.9.0.md#031](features/v0.9.0.md#031)
+- **Created**: 2026-03-19
+- **Started**: -
+- **Completed**: -
+
+**Description**:
+为 KodaX 增加上传图片给多模态模型的能力，使用户能够在对话中通过文件路径或粘贴方式传递图片，由支持视觉能力的 LLM provider（如 Claude、GPT-4V、Gemini）进行处理和分析。
+
+**Goals**:
+1. 支持本地图片文件路径引用和剪贴板粘贴两种输入方式
+2. 自动将图片转换为 provider 要求的格式（base64 / URL）
+3. 在 AI 层为支持视觉的 provider 添加 image content block 支持
+4. 图片消息在对话历史中的正确序列化和压缩处理
+5. 安全边界：文件大小限制、格式校验、敏感路径保护
+
+**Key Components**:
+- 图片输入方式：文件路径引用（本地图片）和粘贴支持
+- 图片编码：自动将图片转换为 base64 或 provider 要求的格式
+- Provider 适配：在 AI 层为支持视觉的 provider 添加 image content block 支持
+- 上下文管理：图片消息在对话历史中的序列化和压缩处理
+- 安全边界：文件大小限制、格式校验、敏感路径保护
+
+**User Scenarios**:
+- 用户提供截图让 AI 分析错误信息
+- 用户提供 UI 设计稿让 AI 生成对应代码
+- 用户提供图表让 AI 提取数据或生成描述
+
+---
+
+### 032: JSON 输出模式 (--mode json) (PLANNED)
+- **Category**: Enhancement
+- **Status**: Planned
+- **Priority**: Medium
+- **Planned**: v0.7.0
+- **Released**: -
+- **Design**: [v0.7.0.md#032](features/v0.7.0.md#032)
+- **Created**: 2026-03-19
+- **Started**: -
+- **Completed**: -
+
+**Description**:
+类比 pi-mono 的 `--mode json` 能力，为 KodaX 增加 JSON Lines 输出模式。将 agent 运行期间的所有事件以 JSONL 格式输出到 stdout，便于外部程序解析和集成。
+
+**Goals**:
+1. CLI 标志 `--mode json` 启用 JSON 输出模式
+2. 结构化事件类型：text_delta, thinking_delta, tool_call, tool_result, error, complete, session_info
+3. 与现有 `runKodaX` events API 对齐，JSON 事件为 events 的序列化形式
+4. 错误输出到 stderr，JSONL 数据输出到 stdout（管道友好）
+5. 退出码语义：0=成功, 1=错误
+
+**User Scenarios**:
+- CI/CD 流水线中解析 agent 输出
+- 外部脚本/程序集成 KodaX
+- 调试和审计 agent 行为
+- 与 Pi 的 JSON 模式对齐，方便迁移
+
+**Inspired by**: [pi-mono --mode json](https://github.com/badlogic/pi-mono)
+
+---
+
+### 033: REPL Parallel Toggle (/parallel) (PLANNED)
+- **Category**: Enhancement
+- **Status**: Planned
+- **Priority**: Medium
+- **Planned**: v0.6.15
+- **Released**: -
+- **Design**: [v0.6.15.md#033](features/v0.6.15.md#033)
+- **Created**: 2026-03-20
+- **Started**: -
+- **Completed**: -
+
+**Description**:
+将 `--parallel` (并行工具执行) 能力从仅 CLI 启动时指定扩展到 REPL 交互模式中，支持通过 `/parallel` 命令动态切换，并在状态栏显示当前 parallel 状态。
+
+**Goals**:
+1. 在 `CurrentConfig` 中添加 `parallel: boolean` 字段
+2. 新增 `/parallel` 命令，支持 toggle on/off 和状态显示
+3. 状态栏显示 parallel 开启状态（类似 thinking/reasoning 的显示方式）
+4. 每次 agent turn 根据 `currentConfig.parallel` 决定是否并行执行工具
+
+**Key Changes**:
+- 修改 `packages/repl/src/interactive/commands.ts` — 添加 `/parallel` 命令
+- 修改 `packages/repl/src/interactive/context.ts` — CurrentConfig 增加 parallel 字段
+- 修改 `packages/repl/src/ui/InkREPL.tsx` — 状态栏显示 parallel 状态
+- 修改 `packages/repl/src/interactive/invocation-runtime.ts` — 将 parallel 传入 agent options
+
+---
+
+### 034: Pi-style Extension API (PLANNED)
+- **Category**: Enhancement
+- **Status**: Planned
+- **Priority**: High
+- **Planned**: v0.8.0
+- **Released**: -
+- **Design**: [v0.8.0.md#034](features/v0.8.0.md#034)
+- **Created**: 2026-03-20
+- **Started**: -
+- **Completed**: -
+
+**Description**:
+仿照 pi-mono 的 Extension API 设计统一的 KodaX 扩展接口，允许用户通过单个 `.js` 文件注册自定义工具、命令、provider，并订阅 agent 生命周期事件。取代 KodaX 当前分散的扩展机制（tools Map、CommandRegistry、shell hooks），提供一致的 `KodaXExtensionAPI` 接口。
+
+**Goals**:
+1. 定义统一的 `KodaXExtensionAPI` 接口（registerTool, registerCommand, on, registerProvider, setEditor）
+2. 支持 `--extension ./my-ext.js` 加载扩展
+3. 在 agent turn 生命周期中加入事件系统（turn:start, turn:end, tool:before, tool:after, compaction:before/after）
+4. 统一 tool 注册：原子化的 `registerTool(name, handler, schema)` 函数
+5. 激活 Skill 系统预留的 `'plugin'` source 路径
+
+**Background**:
+- KodaX 当前有 5 个分散的扩展面（Tool Map、CommandRegistry、Skill hooks、Provider registry、shell hooks），但没有统一 API
+- Pi 的 Extension API 提供 28+ event hooks，支持 `registerTool`, `registerCommand`, `on(event)`, `registerProvider`, `setEditor` 等
+- KodaX Skill 系统已预留 `plugin` source 但 `pluginPaths: []` 未实现
+- 前端声明式 hooks（YAML frontmatter）需要升级为 JS/TS 函数级别的 hook
+
+**Inspired by**: [pi-mono Extension System](https://github.com/badlogic/pi-mono)
+
+### 035: MCP Bridge Runtime (PLANNED)
+- **Category**: New
+- **Status**: Planned
+- **Priority**: High
+- **Planned**: v0.7.0
+- **Released**: -
+- **Design**: [v0.7.0.md#035](features/v0.7.0.md#035)
+- **Created**: 2026-03-20
+- **Started**: -
+- **Completed**: -
+
+**Description**:
+为 KodaX 提供 MCP 生态工具访问能力，无需内置 MCP SDK。采用持久化 Runtime 架构，在 REPL 启动时连接所有配置的 MCP server（长驻子进程），通过单一 `mcp_call` 工具暴露给 LLM，工具 schema 通过文件系统渐进披露。
+
+**Goals**:
+1. **零 MCP SDK 依赖** — 纯 Node.js `child_process` + JSON-RPC 实现客户端（~100 行）
+2. **持久化 Runtime** — REPL 启动时 spawn MCP server 子进程，session 期间保持活跃
+3. **单一 mcp_call 工具** — 通过 `mcp_call(server, tool, args)` 统一路由，不动态修改 KODAX_TOOLS
+4. **渐进式披露** — 工具定义写入 `.kodax/mcp-bridge/` 文件系统，LLM 按需 read 发现
+5. **配置驱动** — 用户在 `~/.kodax/config.json` 中配置 `mcpServers`
+6. **最小化实现** — 总计 ~325 行新增 + ~50 行修改，只做 `/mcp status` 命令
+
+**Background**:
+- KodaX 已决定不内置 MCP 支持（FEATURE_027 已删除）
+- MCP 生态拥有大量高质量工具服务器（filesystem、github、postgres、brave-search 等）
+- 行业标准：Claude Code、Cline、Cursor、Goose、OpenCode 全部采用持久连接模式
+- 借鉴 Anthropic "Code Execution with MCP" 范式：工具定义按需加载，98.7% token 减少
+- 单一 mcp_call 模式避免动态修改 KODAX_TOOLS 数组和 KODAX_TOOL_REQUIRED_PARAMS 白名单
+
+**Implementation Plan**: 见 [v0.7.0.md#035](features/v0.7.0.md#035)
+
 ## Summary
-- Total: 30 (11 Planned, 0 In Progress, 19 Completed)
-- By Priority: Critical: 3, High: 25, Medium: 2, Low: 0
-- Current Version: v0.6.10
-- Next Release (v0.7.0): 3 features (019, 026, 029), 0 completed, 0 in progress
-- Future Releases: v0.8.0 (007, 018, 025, 027, 028), v1.0.0 (022, 023, 030)
-- Highest Priority Planned: 019 - Session Tree & Rollback System (High), 026 - Roadmap Integrity and Tracker Consistency Hardening (High), 029 - Provider Adapter Transparency and Semantic Compatibility (High)
+- Total: 34 (15 Planned, 0 In Progress, 19 Completed)
+- By Priority: Critical: 3, High: 27, Medium: 4, Low: 0
+- Current Version: v0.6.11
+- Next Release (v0.6.15): 1 feature (033), 0 completed, 0 in progress
+- Future Releases: v0.7.0 (019, 026, 029, 032, 035), v0.8.0 (007, 018, 025, 028, 034), v0.9.0 (031), v1.0.0 (022, 023, 030)
+- Highest Priority Planned: 019 - Session Tree & Rollback System (High), 026 - Roadmap Integrity and Tracker Consistency Hardening (High), 029 - Provider Adapter Transparency and Semantic Compatibility (High), 031 - 多模态图片上传支持 (High), 035 - MCP Bridge Runtime (High)

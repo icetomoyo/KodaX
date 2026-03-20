@@ -17,6 +17,14 @@ import {
   ProjectStatistics,
   calculateStatistics,
   getNextPendingIndex,
+  type ProjectWorkflowState,
+  type ProjectBrief,
+  type ProjectAlignment,
+  createProjectWorkflowState,
+  parseProjectBriefMarkdown,
+  parseProjectAlignmentMarkdown,
+  formatProjectBriefMarkdown,
+  formatProjectAlignmentMarkdown,
 } from './project-state.js';
 import type { BrainstormSession } from './project-brainstorm.js';
 
@@ -25,6 +33,10 @@ export class ProjectStorage {
   private featuresPath: string;
   private progressPath: string;
   private projectArtifactsRoot: string;
+  private projectStatePath: string;
+  private projectBriefPath: string;
+  private alignmentPath: string;
+  private changeRequestsPath: string;
   private sessionPlanPath: string;
   private legacySessionPlanPath: string;
   private brainstormIndexPath: string;
@@ -44,6 +56,10 @@ export class ProjectStorage {
     this.featuresPath = path.join(projectDir, KODAX_FEATURES_FILE);
     this.progressPath = path.join(projectDir, KODAX_PROGRESS_FILE);
     this.projectArtifactsRoot = path.join(projectDir, '.agent', 'project');
+    this.projectStatePath = path.join(this.projectArtifactsRoot, 'project_state.json');
+    this.projectBriefPath = path.join(this.projectArtifactsRoot, 'project_brief.md');
+    this.alignmentPath = path.join(this.projectArtifactsRoot, 'alignment.md');
+    this.changeRequestsPath = path.join(this.projectArtifactsRoot, 'change-requests');
     this.sessionPlanPath = path.join(this.projectArtifactsRoot, 'session_plan.md');
     this.legacySessionPlanPath = path.join(projectDir, '.kodax', 'session_plan.md');
     this.brainstormIndexPath = path.join(this.projectArtifactsRoot, 'brainstorm-active.json');
@@ -75,6 +91,10 @@ export class ProjectStorage {
 
   private getHarnessEvidenceFilePath(featureIndex: number): string {
     return path.join(this.harnessEvidencePath, `feature-${featureIndex}.json`);
+  }
+
+  private getChangeRequestPath(requestId: string): string {
+    return path.join(this.changeRequestsPath, `${requestId}.md`);
   }
 
   private warnMalformedJsonl(filePath: string, label: string, count: number): void {
@@ -121,6 +141,14 @@ export class ProjectStorage {
     return '';
   }
 
+  private readMarkdownSection(content: string, heading: string): string {
+    const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const match = content.match(
+      new RegExp(`## ${escapedHeading}\\r?\\n([\\s\\S]*?)(?=\\r?\\n## |$)`),
+    );
+    return match?.[1]?.trim() ?? '';
+  }
+
   private async readJsonFile<T>(filePath: string): Promise<T | null> {
     try {
       const content = await fs.readFile(filePath, 'utf-8');
@@ -146,12 +174,28 @@ export class ProjectStorage {
   }
 
   async exists(): Promise<boolean> {
-    try {
-      await fs.access(this.featuresPath);
-      return true;
-    } catch {
-      return false;
+    const candidates = [
+      this.featuresPath,
+      this.progressPath,
+      this.projectStatePath,
+      this.projectBriefPath,
+      this.alignmentPath,
+    ];
+
+    for (const candidate of candidates) {
+      try {
+        await fs.access(candidate);
+        return true;
+      } catch {
+        // Keep scanning.
+      }
     }
+
+    return false;
+  }
+
+  private async ensureProjectArtifactsRoot(): Promise<void> {
+    await fs.mkdir(this.projectArtifactsRoot, { recursive: true });
   }
 
   async loadFeatures(): Promise<FeatureList | null> {
@@ -201,6 +245,123 @@ export class ProjectStorage {
     const artifactsDir = path.dirname(this.sessionPlanPath);
     await fs.mkdir(artifactsDir, { recursive: true });
     await fs.writeFile(this.sessionPlanPath, content, 'utf-8');
+  }
+
+  async loadWorkflowState(): Promise<ProjectWorkflowState | null> {
+    return this.readJsonFile<ProjectWorkflowState>(this.projectStatePath);
+  }
+
+  async inferWorkflowState(): Promise<ProjectWorkflowState> {
+    const timestamp = new Date().toISOString();
+    const featureList = await this.loadFeatures();
+    const sessionPlan = await this.readSessionPlan();
+    const activeSession = await this.loadActiveBrainstormSession();
+    const stats = featureList ? calculateStatistics(featureList.features) : null;
+
+    let stage: ProjectWorkflowState['stage'] = 'bootstrap';
+    if (activeSession) {
+      stage = 'discovering';
+    } else if (featureList?.features.length) {
+      if (stats && stats.pending === 0) {
+        stage = 'completed';
+      } else {
+        stage = 'planned';
+      }
+    }
+
+    const inferred = createProjectWorkflowState(stage, timestamp);
+    inferred.unresolvedQuestionCount = activeSession ? 1 : 0;
+    inferred.currentFeatureIndex = featureList ? getNextPendingIndex(featureList.features) : undefined;
+    if (inferred.currentFeatureIndex === -1) {
+      inferred.currentFeatureIndex = undefined;
+    }
+    if (sessionPlan.trim()) {
+      inferred.lastPlannedAt = timestamp;
+    }
+    return inferred;
+  }
+
+  async loadOrInferWorkflowState(): Promise<ProjectWorkflowState> {
+    return (await this.loadWorkflowState()) ?? this.inferWorkflowState();
+  }
+
+  async saveWorkflowState(state: ProjectWorkflowState): Promise<void> {
+    await this.ensureProjectArtifactsRoot();
+    await fs.writeFile(this.projectStatePath, JSON.stringify(state, null, 2), 'utf-8');
+  }
+
+  async readProjectBrief(): Promise<ProjectBrief | null> {
+    const content = await this.readTextFileWithFallback(this.projectBriefPath);
+    if (!content.trim()) {
+      return null;
+    }
+    return parseProjectBriefMarkdown(content);
+  }
+
+  async writeProjectBrief(brief: ProjectBrief): Promise<void> {
+    await this.ensureProjectArtifactsRoot();
+    await fs.writeFile(this.projectBriefPath, formatProjectBriefMarkdown(brief), 'utf-8');
+  }
+
+  async readAlignment(): Promise<ProjectAlignment | null> {
+    const content = await this.readTextFileWithFallback(this.alignmentPath);
+    if (!content.trim()) {
+      return null;
+    }
+    return parseProjectAlignmentMarkdown(content);
+  }
+
+  async writeAlignment(alignment: ProjectAlignment): Promise<void> {
+    await this.ensureProjectArtifactsRoot();
+    await fs.writeFile(this.alignmentPath, formatProjectAlignmentMarkdown(alignment), 'utf-8');
+  }
+
+  async createChangeRequest(prompt: string, timestamp = new Date().toISOString()): Promise<{
+    id: string;
+    path: string;
+    content: string;
+  }> {
+    const requestId = `request_${timestamp.replace(/[:.]/g, '-')}`;
+    const content = [
+      '# Change Request',
+      '',
+      `Request ID: ${requestId}`,
+      `Updated: ${timestamp}`,
+      '',
+      '## Prompt',
+      prompt.trim(),
+      '',
+      '## Impacted Areas',
+      '- (to be refined during discovery)',
+      '',
+      '## Discovery Summary',
+      '- (pending)',
+      '',
+      '## Plan Delta Summary',
+      '- (pending)',
+    ].join('\n');
+
+    await fs.mkdir(this.changeRequestsPath, { recursive: true });
+    const targetPath = this.getChangeRequestPath(requestId);
+    await fs.writeFile(targetPath, content, 'utf-8');
+
+    return {
+      id: requestId,
+      path: targetPath,
+      content,
+    };
+  }
+
+  async readChangeRequest(requestId: string): Promise<string> {
+    return this.readTextFileWithFallback(this.getChangeRequestPath(requestId));
+  }
+
+  async readChangeRequestPrompt(requestId: string): Promise<string> {
+    const content = await this.readChangeRequest(requestId);
+    if (!content.trim()) {
+      return '';
+    }
+    return this.readMarkdownSection(content, 'Prompt');
   }
 
   async saveBrainstormSession(
@@ -334,6 +495,10 @@ export class ProjectStorage {
     features: string;
     progress: string;
     projectArtifactsRoot: string;
+    projectState: string;
+    projectBrief: string;
+    alignment: string;
+    changeRequests: string;
     sessionPlan: string;
     legacySessionPlan: string;
     brainstormIndex: string;
@@ -352,6 +517,10 @@ export class ProjectStorage {
       features: this.featuresPath,
       progress: this.progressPath,
       projectArtifactsRoot: this.projectArtifactsRoot,
+      projectState: this.projectStatePath,
+      projectBrief: this.projectBriefPath,
+      alignment: this.alignmentPath,
+      changeRequests: this.changeRequestsPath,
       sessionPlan: this.sessionPlanPath,
       legacySessionPlan: this.legacySessionPlanPath,
       brainstormIndex: this.brainstormIndexPath,

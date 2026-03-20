@@ -317,6 +317,39 @@ describe('CLI Entry Point', () => {
     expect(() => program.parse(['node', 'kodax'])).not.toThrow();
     expect(writes.join('')).toBe('');
   });
+
+  it('should keep root help text aligned with current CLI behavior', async () => {
+    const source = await fs.readFile(path.join(process.cwd(), 'src', 'kodax_cli.ts'), 'utf-8');
+    expect(source).toContain('--model <name>');
+    expect(source).toContain('kodax -h project');
+    expect(source).toContain('/project ...            Project workflow commands');
+    expect(source).toContain('Legacy no-op; current CLI already starts a fresh session by default');
+    expect(source).toContain('Resume session by ID (no ID = list recent sessions, then resume the latest)');
+    expect(source).toContain('/mode [plan|accept-edits|auto-in-project]');
+    expect(source).toContain('Backward-compat alias; no effect in non-REPL CLI');
+    expect(source).not.toContain('Pick session to resume');
+    expect(source).not.toContain('echo "task" | kodax -p -');
+    expect(source).not.toContain('/mode [code|ask]');
+    expect(source).not.toContain('Enter interactive mode (auto-resume)');
+  });
+
+  it('should document provider and team caveats in help topics', async () => {
+    const source = await fs.readFile(path.join(process.cwd(), 'src', 'kodax_cli.ts'), 'utf-8');
+    expect(source).toContain('CLI bridge provider (latest-user-message only, MCP unavailable)');
+    expect(source).toContain('Experimental orchestration-based parallel execution for loosely coupled tasks.');
+    expect(source).toContain('not yet a fully shared-context multi-agent runtime');
+    expect(source).toContain('Project mode spans two surfaces: non-REPL bootstrap commands and REPL /project commands.');
+    expect(source).toContain('/project verify [#index|--last]');
+  });
+
+  it('should keep custom skill subcommand help aligned with current options', async () => {
+    const source = await fs.readFile(path.join(process.cwd(), 'src', 'kodax_cli.ts'), 'utf-8');
+    expect(source).toContain('Required Options:');
+    expect(source).toContain('Usage: kodax skill eval [options]');
+    expect(source).toContain('Usage: kodax skill compare [options] <workspace>');
+    expect(source).toContain('Primary config (default: with_skill)');
+    expect(source).toContain('Baseline config (default: without_skill)');
+  });
 });
 
 // 创建与 kodax_cli.ts 一致的 Command 配置（全局可复用）
@@ -325,11 +358,14 @@ function createTestCommand(): Command {
     .allowUnknownOption(false)
     .option('-p, --print <text>', 'Print mode: run single task and exit')
     .option('-c, --continue', 'Continue most recent conversation in current directory')
-    .option('-r, --resume <id>', 'Resume session by ID (no id = interactive picker)')
+    .option('-n, --new', 'Legacy no-op; current CLI already starts a fresh session by default')
+    .option('-r, --resume [id]', 'Resume session by ID (no ID = list recent sessions, then resume the latest)')
     .option('-m, --provider <name>', 'LLM provider', KODAX_DEFAULT_PROVIDER)
+    .option('--model <name>', 'Model override')
     .option('-t, --thinking', 'Enable thinking mode')
-    .option('-y, --auto', 'Auto mode: skip all confirmations')
-    .option('-s, --session <id>', 'Session management: list, delete <id>, delete-all')
+    .option('--reasoning <mode>', 'Reasoning mode: off, auto, quick, balanced, deep')
+    .option('-y, --auto', 'Backward-compat alias; no effect in non-REPL CLI')
+    .option('-s, --session <op>', 'Legacy session operations: list, resume, delete <id>, delete-all, or raw session ID')
     .option('-j, --parallel', 'Parallel tool execution')
     .option('--no-session', 'Disable session persistence (print mode only)');
 }
@@ -380,6 +416,13 @@ describe('CLI Option Parsing', () => {
     expect(opts.resume).toBe('session-456');
   });
 
+  it('should parse --resume without ID as boolean flag', () => {
+    const program = createTestCommand();
+    program.parse(['node', 'test', '--resume']);
+    const opts = program.opts();
+    expect(opts.resume).toBe(true);
+  });
+
   it('should parse -m (provider) option', () => {
     const program = createTestCommand();
     program.parse(['node', 'test', '-m', 'kimi-code']);
@@ -392,6 +435,13 @@ describe('CLI Option Parsing', () => {
     program.parse(['node', 'test', '--provider', 'anthropic']);
     const opts = program.opts();
     expect(opts.provider).toBe('anthropic');
+  });
+
+  it('should parse --model option', () => {
+    const program = createTestCommand();
+    program.parse(['node', 'test', '--model', 'gpt-5.4']);
+    const opts = program.opts();
+    expect(opts.model).toBe('gpt-5.4');
   });
 
   it('should have default provider', () => {

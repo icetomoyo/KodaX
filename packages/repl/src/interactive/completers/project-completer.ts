@@ -33,15 +33,16 @@ export class ProjectCompleter implements Completer {
     // 1. /project edit #
     // 2. /project next #
     // 3. /project verify #
-    // 3. /project status --
-    // 4. /project init --
-    // 5. /project auto --
-    // 6. /project reset --
+    // 4. /project plan #
+    // 5. /project status --
+    // 6. /project init --
+    // 7. /project auto --
+    // 8. /project reset --
     const projectPattern = /\/(?:project|proj|p)\s+/;
     if (!projectPattern.test(beforeCursor)) return false;
 
     // Check for # (feature index) completion
-    if (/\/(?:project|proj|p)\s+(?:edit|next|verify)\s+#?\w*$/.test(beforeCursor)) {
+    if (/\/(?:project|proj|p)\s+(?:edit|next|verify|plan)\s+#?\w*$/.test(beforeCursor)) {
       return true;
     }
 
@@ -61,7 +62,7 @@ export class ProjectCompleter implements Completer {
     const beforeCursor = input.slice(0, cursorPos);
 
     // Pattern 1: Feature index completion (#0, #1, #2...)
-    const indexMatch = beforeCursor.match(/\/(?:project|proj|p)\s+(?:edit|next|verify)\s+#?(\d*)$/);
+    const indexMatch = beforeCursor.match(/\/(?:project|proj|p)\s+(?:edit|next|verify|plan)\s+#?(\d*)$/);
     if (indexMatch) {
       return await this.getFeatureIndexCompletions(indexMatch[1] ?? '');
     }
@@ -115,7 +116,7 @@ export class ProjectCompleter implements Completer {
    */
   private getOptionsForCommand(subCommand: string): string[] {
     const optionMap: Record<string, string[]> = {
-      'init': ['--append', '--overwrite'],
+      'init': ['--overwrite'],
       'status': ['--features', '--progress'],
       'next': ['--no-confirm'],
       'auto': ['--max=', '--confirm'],
@@ -131,7 +132,6 @@ export class ProjectCompleter implements Completer {
    */
   private getOptionDescription(option: string): string {
     const descriptions: Record<string, string> = {
-      '--append': 'Append to existing feature list',
       '--overwrite': 'Overwrite existing feature list',
       '--features': 'Show detailed feature list',
       '--progress': 'Show detailed progress log',

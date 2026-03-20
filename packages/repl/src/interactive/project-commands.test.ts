@@ -16,7 +16,7 @@ vi.mock('@kodax/coding', async () => {
 });
 
 import { createInteractiveContext } from './context.js';
-import { handleProjectCommand } from './project-commands.js';
+import { detectAndShowProjectHint, handleProjectCommand, printProjectHelp } from './project-commands.js';
 import { ProjectStorage } from './project-storage.js';
 import { createBrainstormSession, formatBrainstormTranscript } from './project-brainstorm.js';
 import type { CommandCallbacks, CurrentConfig } from './commands.js';
@@ -30,7 +30,9 @@ function createCallbacks(overrides: Partial<CommandCallbacks> = {}): CommandCall
     clearHistory: () => {},
     printHistory: () => {},
     ui: {
-      select: async () => undefined,
+      select: async () => {
+        throw new Error('Unexpected ui.select call in test. Override ui.select for interactive paths.');
+      },
       confirm: async () => true,
       input: async () => undefined,
     },
@@ -100,6 +102,35 @@ describe('project commands', () => {
     expect(output).toContain('Suggested next move');
   });
 
+  it('prints project help aligned with current command surface', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    printProjectHelp();
+
+    const output = logSpy.mock.calls.flat().join('\n');
+    expect(output).toContain('/project - Project Management');
+    expect(output).toContain('plan');
+    expect(output).toContain('brainstorm');
+    expect(output).toContain('pause');
+    expect(output).toContain('verify');
+    expect(output).toContain('Current Semantics:');
+    expect(output).toContain('init -> brainstorm -> plan -> next/auto');
+    expect(output).toContain('docs/FEATURE_LIST.md');
+    expect(output).toContain('docs/features/v0.6.10.md');
+  });
+
+  it('shows expanded project hints for detected long-running projects', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const shown = await detectAndShowProjectHint();
+
+    const output = logSpy.mock.calls.flat().join('\n');
+    expect(shown).toBe(true);
+    expect(output).toContain('Use /project status to view progress');
+    expect(output).toContain('Recommended next step: /project next');
+    expect(output).toContain('Use /project quality or /project verify when you need diagnostic help');
+  });
+
   it('uses AI for guided status questions when model execution is available', async () => {
     mockRunKodaX.mockResolvedValue({
       messages: [
@@ -148,59 +179,235 @@ describe('project commands', () => {
     expect(output).toContain('Guided Status Summary');
   });
 
-  it('starts and persists a brainstorm session with fallback facilitation', async () => {
+  it('runs brainstorm as a UI-driven discovery flow and saves aligned truth', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const context = await createInteractiveContext({});
     const storage = new ProjectStorage(tempDir);
-
-    await handleProjectCommand(
-      ['brainstorm', 'Need', 'a', 'permission', 'system'],
-      context,
-      createCallbacks(),
-      currentConfig,
-    );
-
-    const output = logSpy.mock.calls.flat().join('\n');
-    const activeSession = await storage.loadActiveBrainstormSession();
-
-    expect(output).toContain('/project brainstorm - Session Started');
-    expect(output).toContain('Use /project brainstorm continue');
-    expect(activeSession?.topic).toBe('Need a permission system');
-    expect(activeSession?.turns[1]?.text).toContain('Key questions to answer first:');
-  });
-
-  it('uses AI output when starting a brainstorm session if model execution is available', async () => {
-    mockRunKodaX.mockResolvedValue({
-      messages: [
-        {
-          role: 'assistant',
-          content: 'Let us map the riskiest assumptions first.\n\n1. Who administers roles?',
-        },
-      ],
+    await storage.writeProjectBrief({
+      originalPrompt: 'Need a permission system',
+      goals: ['Need a permission system'],
+      constraints: [],
+      nonGoals: [],
+      updatedAt: '2026-03-17T10:00:00.000Z',
+    });
+    await storage.writeAlignment({
+      sourcePrompt: 'Need a permission system',
+      confirmedRequirements: [],
+      constraints: [],
+      nonGoals: [],
+      acceptedTradeoffs: [],
+      successCriteria: [],
+      openQuestions: [],
+      updatedAt: '2026-03-17T10:00:00.000Z',
+    });
+    await storage.saveWorkflowState({
+      stage: 'discovering',
+      scope: 'project',
+      unresolvedQuestionCount: 4,
+      discoveryStepIndex: 0,
+      lastUpdated: '2026-03-17T10:00:00.000Z',
     });
 
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const context = await createInteractiveContext({});
-    const storage = new ProjectStorage(tempDir);
-
     await handleProjectCommand(
-      ['brainstorm', 'Multi-tenant', 'RBAC'],
+      ['brainstorm'],
       context,
       createCallbacks({
-        createKodaXOptions: () =>
-          ({
-            session: {},
-          }) as never,
+        ui: {
+          select: async (_title, options) => options[0],
+          confirm: async () => true,
+          input: async () => undefined,
+        },
       }),
       currentConfig,
     );
 
     const output = logSpy.mock.calls.flat().join('\n');
     const activeSession = await storage.loadActiveBrainstormSession();
+    const state = await storage.loadWorkflowState();
+    const alignment = await storage.readAlignment();
 
-    expect(mockRunKodaX).toHaveBeenCalledTimes(1);
-    expect(output).toContain('Session Started');
-    expect(activeSession?.turns[1]?.text).toContain('Let us map the riskiest assumptions first.');
+    expect(output).toContain('/project brainstorm - Discovery Flow');
+    expect(output).toContain('Discovery is aligned.');
+    expect(activeSession).toBeNull();
+    expect(state?.stage).toBe('aligned');
+    expect(alignment?.confirmedRequirements.length).toBeGreaterThan(0);
+    expect(alignment?.successCriteria.length).toBeGreaterThan(0);
+  });
+
+  it('does not require model execution for the new brainstorm flow', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const context = await createInteractiveContext({});
+    const storage = new ProjectStorage(tempDir);
+    await storage.writeProjectBrief({
+      originalPrompt: 'Multi-tenant RBAC',
+      goals: ['Multi-tenant RBAC'],
+      constraints: [],
+      nonGoals: [],
+      updatedAt: '2026-03-17T10:00:00.000Z',
+    });
+    await storage.writeAlignment({
+      sourcePrompt: 'Multi-tenant RBAC',
+      confirmedRequirements: [],
+      constraints: [],
+      nonGoals: [],
+      acceptedTradeoffs: [],
+      successCriteria: [],
+      openQuestions: [],
+      updatedAt: '2026-03-17T10:00:00.000Z',
+    });
+    await storage.saveWorkflowState({
+      stage: 'discovering',
+      scope: 'project',
+      unresolvedQuestionCount: 4,
+      discoveryStepIndex: 0,
+      lastUpdated: '2026-03-17T10:00:00.000Z',
+    });
+
+    await handleProjectCommand(
+      ['brainstorm'],
+      context,
+      createCallbacks({
+        ui: {
+          select: async (_title, options) => options[0],
+          confirm: async () => true,
+          input: async () => undefined,
+        },
+      }),
+      currentConfig,
+    );
+
+    const output = logSpy.mock.calls.flat().join('\n');
+    const state = await storage.loadWorkflowState();
+
+    expect(mockRunKodaX).not.toHaveBeenCalled();
+    expect(output).toContain('Discovery is aligned.');
+    expect(state?.stage).toBe('aligned');
+  });
+
+  it('accepts custom brainstorm answers through the Other -> input path', async () => {
+    const context = await createInteractiveContext({});
+    const storage = new ProjectStorage(tempDir);
+    await storage.writeProjectBrief({
+      originalPrompt: 'Need custom workflow support',
+      goals: ['Need custom workflow support'],
+      constraints: [],
+      nonGoals: [],
+      updatedAt: '2026-03-17T10:00:00.000Z',
+    });
+    await storage.writeAlignment({
+      sourcePrompt: 'Need custom workflow support',
+      confirmedRequirements: [],
+      constraints: [],
+      nonGoals: [],
+      acceptedTradeoffs: [],
+      successCriteria: [],
+      openQuestions: [],
+      updatedAt: '2026-03-17T10:00:00.000Z',
+    });
+    await storage.saveWorkflowState({
+      stage: 'discovering',
+      scope: 'project',
+      unresolvedQuestionCount: 4,
+      discoveryStepIndex: 0,
+      lastUpdated: '2026-03-17T10:00:00.000Z',
+    });
+
+    await handleProjectCommand(
+      ['brainstorm'],
+      context,
+      createCallbacks({
+        ui: {
+          select: async (_title, options) => options[options.length - 1],
+          confirm: async () => true,
+          input: async () => 'Use a bespoke approval pipeline',
+        },
+      }),
+      currentConfig,
+    );
+
+    const alignment = await storage.readAlignment();
+    expect(alignment?.confirmedRequirements).toContain('Use a bespoke approval pipeline');
+  });
+
+  it('routes ambiguous discovery edits through UI selection instead of keyword guessing', async () => {
+    const context = await createInteractiveContext({});
+    const storage = new ProjectStorage(tempDir);
+    await storage.writeAlignment({
+      sourcePrompt: 'Clarify project intent',
+      confirmedRequirements: [],
+      constraints: [],
+      nonGoals: [],
+      acceptedTradeoffs: [],
+      successCriteria: [],
+      openQuestions: [],
+      updatedAt: '2026-03-17T10:00:00.000Z',
+    });
+    await storage.saveWorkflowState({
+      stage: 'discovering',
+      scope: 'project',
+      unresolvedQuestionCount: 1,
+      discoveryStepIndex: 0,
+      lastUpdated: '2026-03-17T10:00:00.000Z',
+    });
+
+    await handleProjectCommand(
+      ['edit', 'This', 'should', 'NOT', 'be', 'a', 'constraint'],
+      context,
+      createCallbacks({
+        confirm: async () => true,
+        ui: {
+          select: async () => 'Confirmed requirement',
+          confirm: async () => true,
+          input: async () => undefined,
+        },
+      }),
+      currentConfig,
+    );
+
+    const alignment = await storage.readAlignment();
+    expect(alignment?.confirmedRequirements).toContain('This should NOT be a constraint');
+    expect(alignment?.constraints).toEqual([]);
+  });
+
+  it('supports removing a discovery alignment entry without re-adding it', async () => {
+    const context = await createInteractiveContext({});
+    const storage = new ProjectStorage(tempDir);
+    await storage.writeAlignment({
+      sourcePrompt: 'Clarify project intent',
+      confirmedRequirements: [],
+      constraints: [],
+      nonGoals: ['Caching is out of scope for the first release'],
+      acceptedTradeoffs: [],
+      successCriteria: [],
+      openQuestions: [],
+      updatedAt: '2026-03-17T10:00:00.000Z',
+    });
+    await storage.saveWorkflowState({
+      stage: 'aligned',
+      scope: 'project',
+      unresolvedQuestionCount: 0,
+      discoveryStepIndex: 4,
+      lastUpdated: '2026-03-17T10:00:00.000Z',
+    });
+
+    await handleProjectCommand(
+      ['edit', 'Remove', 'the', 'non-goal', 'about', 'caching'],
+      context,
+      createCallbacks({
+        confirm: async () => true,
+        ui: {
+          select: async () => {
+            throw new Error('The explicit non-goal removal path should not need a selector.');
+          },
+          confirm: async () => true,
+          input: async () => undefined,
+        },
+      }),
+      currentConfig,
+    );
+
+    const alignment = await storage.readAlignment();
+    expect(alignment?.nonGoals).toEqual([]);
   });
 
   it('builds and persists a structured plan for a feature index', async () => {
@@ -260,16 +467,55 @@ describe('project commands', () => {
     expect(sessionPlan).toContain('# Project Plan: 2026 release readiness');
   });
 
-  it('continues an active brainstorm session and persists the follow-up exchange', async () => {
-    mockRunKodaX.mockResolvedValue({
-      messages: [
-        {
-          role: 'assistant',
-          content: 'We should compare a simple RBAC rollout with a more flexible policy engine.',
-        },
+  it('keeps old feature-list-first projects in planned state when inferring workflow state', async () => {
+    const storage = new ProjectStorage(tempDir);
+    await storage.deleteProjectManagementFiles();
+    await storage.saveFeatures({
+      features: [
+        { description: 'Existing feature', passes: false },
       ],
     });
 
+    const inferred = await storage.loadOrInferWorkflowState();
+    expect(inferred.stage).toBe('planned');
+  });
+
+  it('returns change-request planning back to project scope after generating plan truth', async () => {
+    const storage = new ProjectStorage(tempDir);
+    const context = await createInteractiveContext({});
+    await storage.writeAlignment({
+      sourcePrompt: 'Add pagination',
+      confirmedRequirements: ['Add pagination to the current API'],
+      constraints: [],
+      nonGoals: [],
+      acceptedTradeoffs: [],
+      successCriteria: ['The list endpoint supports stable page traversal'],
+      openQuestions: [],
+      updatedAt: '2026-03-17T10:00:00.000Z',
+    });
+    await storage.saveWorkflowState({
+      stage: 'aligned',
+      scope: 'change_request',
+      activeRequestId: 'request_1',
+      unresolvedQuestionCount: 0,
+      discoveryStepIndex: 4,
+      lastUpdated: '2026-03-17T10:00:00.000Z',
+    });
+
+    await handleProjectCommand(
+      ['plan'],
+      context,
+      createCallbacks(),
+      currentConfig,
+    );
+
+    const state = await storage.loadWorkflowState();
+    expect(state?.scope).toBe('project');
+    expect(state?.activeRequestId).toBeUndefined();
+    expect(state?.stage).toBe('planned');
+  });
+
+  it('resumes from an active brainstorm session and completes discovery', async () => {
     const storage = new ProjectStorage(tempDir);
     const seededSession = createBrainstormSession(
       'Permission system',
@@ -277,57 +523,179 @@ describe('project commands', () => {
       '2026-03-17T10:00:00.000Z',
     );
     await storage.saveBrainstormSession(seededSession, formatBrainstormTranscript(seededSession));
+    await storage.writeProjectBrief({
+      originalPrompt: 'Permission system',
+      goals: ['Permission system'],
+      constraints: [],
+      nonGoals: [],
+      updatedAt: '2026-03-17T10:00:00.000Z',
+    });
+    await storage.writeAlignment({
+      sourcePrompt: 'Permission system',
+      confirmedRequirements: [],
+      constraints: [],
+      nonGoals: [],
+      acceptedTradeoffs: [],
+      successCriteria: [],
+      openQuestions: [],
+      updatedAt: '2026-03-17T10:00:00.000Z',
+    });
+    await storage.saveWorkflowState({
+      stage: 'discovering',
+      scope: 'project',
+      unresolvedQuestionCount: 2,
+      discoveryStepIndex: 2,
+      lastUpdated: '2026-03-17T10:00:00.000Z',
+    });
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const context = await createInteractiveContext({});
 
     await handleProjectCommand(
-      ['brainstorm', 'continue', 'Need', 'RBAC', 'first,', 'ABAC', 'later'],
+      ['brainstorm'],
       context,
       createCallbacks({
-        createKodaXOptions: () =>
-          ({
-            session: {},
-          }) as never,
+        ui: {
+          select: async (_title, options) => options[0],
+          confirm: async () => true,
+          input: async () => undefined,
+        },
       }),
       currentConfig,
     );
 
     const output = logSpy.mock.calls.flat().join('\n');
     const activeSession = await storage.loadActiveBrainstormSession();
+    const storedSession = await storage.loadBrainstormSession(seededSession.id);
+    const state = await storage.loadWorkflowState();
 
-    expect(output).toContain('Session Continued');
-    expect(activeSession?.turns).toHaveLength(4);
-    expect(activeSession?.turns[2]?.text).toBe('Need RBAC first, ABAC later');
-    expect(activeSession?.turns[3]?.text).toContain('simple RBAC rollout');
+    expect(output).toContain('Discovery is aligned.');
+    expect(activeSession).toBeNull();
+    expect(storedSession?.status).toBe('completed');
+    expect(storedSession?.turns.length).toBeGreaterThan(2);
+    expect(state?.stage).toBe('aligned');
   });
 
-  it('completes the active brainstorm session and clears the active pointer', async () => {
+  it('pauses brainstorm when the user cancels a discovery question', async () => {
     const storage = new ProjectStorage(tempDir);
-    const seededSession = createBrainstormSession(
-      'Permission system',
-      'What tenant isolation constraints matter most?',
-      '2026-03-17T10:00:00.000Z',
-    );
-    await storage.saveBrainstormSession(seededSession, formatBrainstormTranscript(seededSession));
+    await storage.writeProjectBrief({
+      originalPrompt: 'Permission system',
+      goals: ['Permission system'],
+      constraints: [],
+      nonGoals: [],
+      updatedAt: '2026-03-17T10:00:00.000Z',
+    });
+    await storage.writeAlignment({
+      sourcePrompt: 'Permission system',
+      confirmedRequirements: [],
+      constraints: [],
+      nonGoals: [],
+      acceptedTradeoffs: [],
+      successCriteria: [],
+      openQuestions: [],
+      updatedAt: '2026-03-17T10:00:00.000Z',
+    });
+    await storage.saveWorkflowState({
+      stage: 'discovering',
+      scope: 'project',
+      unresolvedQuestionCount: 4,
+      discoveryStepIndex: 0,
+      lastUpdated: '2026-03-17T10:00:00.000Z',
+    });
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const context = await createInteractiveContext({});
 
     await handleProjectCommand(
-      ['brainstorm', 'done'],
+      ['brainstorm'],
       context,
-      createCallbacks(),
+      createCallbacks({
+        ui: {
+          select: async () => undefined,
+          confirm: async () => true,
+          input: async () => undefined,
+        },
+      }),
       currentConfig,
     );
 
     const output = logSpy.mock.calls.flat().join('\n');
     const activeSession = await storage.loadActiveBrainstormSession();
-    const storedSession = await storage.loadBrainstormSession(seededSession.id);
+    const state = await storage.loadWorkflowState();
 
-    expect(output).toContain('Session Completed');
-    expect(activeSession).toBeNull();
-    expect(storedSession?.status).toBe('completed');
+    expect(output).toContain('Discovery paused');
+    expect(activeSession?.status).toBe('active');
+    expect(state?.stage).toBe('discovering');
+  });
+
+  it('keeps discovery open when the user chooses to refine additional questions', async () => {
+    const storage = new ProjectStorage(tempDir);
+    const context = await createInteractiveContext({});
+    await storage.writeProjectBrief({
+      originalPrompt: 'Permission system',
+      goals: ['Permission system'],
+      constraints: [],
+      nonGoals: [],
+      updatedAt: '2026-03-17T10:00:00.000Z',
+    });
+    await storage.writeAlignment({
+      sourcePrompt: 'Permission system',
+      confirmedRequirements: [],
+      constraints: [],
+      nonGoals: [],
+      acceptedTradeoffs: [],
+      successCriteria: [],
+      openQuestions: [],
+      updatedAt: '2026-03-17T10:00:00.000Z',
+    });
+    await storage.saveWorkflowState({
+      stage: 'discovering',
+      scope: 'project',
+      unresolvedQuestionCount: 4,
+      discoveryStepIndex: 0,
+      lastUpdated: '2026-03-17T10:00:00.000Z',
+    });
+
+    let selectCount = 0;
+    await handleProjectCommand(
+      ['brainstorm'],
+      context,
+      createCallbacks({
+        ui: {
+          select: async (_title, options) => {
+            selectCount += 1;
+            return selectCount <= 4 ? options[0] : 'Keep refining discovery';
+          },
+          confirm: async () => true,
+          input: async () => 'Clarify tenant migration rules',
+        },
+      }),
+      currentConfig,
+    );
+
+    let state = await storage.loadWorkflowState();
+    let alignment = await storage.readAlignment();
+    expect(state?.stage).toBe('discovering');
+    expect(alignment?.openQuestions).toContain('Clarify tenant migration rules');
+
+    await handleProjectCommand(
+      ['brainstorm'],
+      context,
+      createCallbacks({
+        ui: {
+          select: async (_title, options) => options[2],
+          confirm: async () => true,
+          input: async () => 'Migration only needs to support existing enterprise tenants',
+        },
+      }),
+      currentConfig,
+    );
+
+    state = await storage.loadWorkflowState();
+    alignment = await storage.readAlignment();
+    expect(state?.stage).toBe('aligned');
+    expect(alignment?.openQuestions).toEqual([]);
+    expect(alignment?.confirmedRequirements).toContain('Migration only needs to support existing enterprise tenants');
   });
 
   it('marks a feature complete only after harness verification passes', async () => {

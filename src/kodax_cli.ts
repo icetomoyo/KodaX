@@ -314,13 +314,14 @@ const CLI_HELP_TOPICS: Record<string, () => void> = {
     console.log(chalk.dim('  resume work later or switch between different conversations.\n'));
     console.log(chalk.bold('Options:'));
     console.log(chalk.dim('  -c, --continue       ') + 'Continue most recent conversation');
-    console.log(chalk.dim('  -r, --resume [id]    ') + 'Resume session by ID (interactive picker if no ID)');
-    console.log(chalk.dim('  -s, --session <op>   ') + 'Session operations: list, delete <id>, delete-all');
-    console.log(chalk.dim('  --no-session         ') + 'Disable session persistence\n');
+    console.log(chalk.dim('  -r, --resume [id]    ') + 'Resume session by ID (no ID = list recent sessions, then resume the latest)');
+    console.log(chalk.dim('  -n, --new            ') + 'Legacy no-op; current CLI already starts a fresh session by default');
+    console.log(chalk.dim('  -s, --session <op>   ') + 'Legacy session operations: list, resume, delete <id>, delete-all, or raw session ID');
+    console.log(chalk.dim('  --no-session         ') + 'Disable session persistence (print mode only)\n');
     console.log(chalk.bold('Examples:'));
     console.log(chalk.dim('  kodax                      ') + '# Start new session (interactive)');
     console.log(chalk.dim('  kodax -c                   ') + '# Continue recent conversation');
-    console.log(chalk.dim('  kodax -r                   ') + '# Pick session to resume');
+    console.log(chalk.dim('  kodax -r                   ') + '# List recent sessions, then resume the latest');
     console.log(chalk.dim('  kodax -r 20260219_143052   ') + '# Resume specific session');
     console.log(chalk.dim('  kodax -s list              ') + '# List all sessions');
     console.log(chalk.dim('  kodax -s delete 20260219   ') + '# Delete a session');
@@ -329,22 +330,56 @@ const CLI_HELP_TOPICS: Record<string, () => void> = {
   init: () => {
     console.log(chalk.cyan('\nProject Initialization\n'));
     console.log(chalk.bold('Overview:'));
-    console.log(chalk.dim('  Initialize a long-running project with auto-generated feature list.'));
-    console.log(chalk.dim('  KodaX analyzes your task and creates manageable feature steps.\n'));
-    console.log(chalk.bold('Options:'));
-    console.log(chalk.dim('  --init <task>    ') + 'Initialize new project');
-    console.log(chalk.dim('  --append         ') + 'Add features to existing project');
-    console.log(chalk.dim('  --overwrite      ') + 'Replace existing feature_list.json\n');
+    console.log(chalk.dim('  Initialize a long-running project with project truth files and managed runtime state.'));
+    console.log(chalk.dim('  KodaX analyzes your task, creates manageable feature steps, and uses .agent/project/ for plans and harness artifacts.\n'));
+  console.log(chalk.bold('Options:'));
+  console.log(chalk.dim('  --init <task>    ') + 'Initialize new project');
+  console.log(chalk.dim('  --append         ') + 'Deprecated compatibility alias for the old append flow');
+  console.log(chalk.dim('  --overwrite      ') + 'Replace existing feature_list.json\n');
     console.log(chalk.bold('Workflow:'));
     console.log(chalk.dim('  1. kodax --init "Build REST API"     # Generate feature_list.json'));
-    console.log(chalk.dim('  2. kodax --auto-continue             # Auto-execute all features'));
+    console.log(chalk.dim('  2. kodax                             # Enter REPL and use /project status, /project plan, /project next'));
     console.log(chalk.dim('  OR'));
-    console.log(chalk.dim('  2. kodax                            # Interactive, use /project next'));
+    console.log(chalk.dim('  2. kodax --auto-continue             # Non-REPL session loop over pending features'));
     console.log();
     console.log(chalk.bold('Examples:'));
     console.log(chalk.dim('  kodax --init "Create auth system"   ') + '# New project');
-    console.log(chalk.dim('  kodax --init "Add tests" --append   ') + '# Add to existing');
+    console.log(chalk.dim('  kodax --init "Add tests"            ') + '# Existing project -> change request flow');
     console.log(chalk.dim('  kodax --init "Redo" --overwrite     ') + '# Start fresh\n');
+  },
+  project: () => {
+    console.log(chalk.cyan('\nProject Mode\n'));
+    console.log(chalk.bold('Overview:'));
+    console.log(chalk.dim('  Project mode spans two surfaces: non-REPL bootstrap commands and REPL /project commands.'));
+    console.log(chalk.dim('  Current workflow includes planning, quality review, brainstorm sessions, harness-verified execution, and runtime artifacts under .agent/project/.\n'));
+    console.log(chalk.bold('Non-REPL Entry Points:'));
+    console.log(chalk.dim('  --init <task>          ') + 'Initialize project truth files');
+    console.log(chalk.dim('  --overwrite            ') + 'Replace existing project management truth files');
+    console.log(chalk.dim('  --auto-continue        ') + 'Run a non-REPL session loop across pending features');
+    console.log(chalk.dim('  --max-sessions <n>     ') + 'Bound the auto-continue loop');
+    console.log(chalk.dim('  --max-hours <h>        ') + 'Stop auto-continue after a time budget\n');
+    console.log(chalk.bold('REPL /project Commands:'));
+    console.log(chalk.dim('  /project status [prompt] [--features|--progress]') + '  Status + guided analysis');
+    console.log(chalk.dim('  /project plan [#index|topic]                 ') + '  Generate project or feature planning truth');
+    console.log(chalk.dim('  /project quality                             ') + '  Deterministic workflow health + release review');
+    console.log(chalk.dim('  /project brainstorm                          ') + '  UI-driven discovery flow');
+    console.log(chalk.dim('  /project next [prompt|#index] [--no-confirm] ') + '  Harness-verified feature execution');
+    console.log(chalk.dim('  /project auto [prompt] [--max=N|--confirm]   ') + '  REPL-side auto-continue with pause support');
+    console.log(chalk.dim('  /project pause                               ') + '  Stop /project auto');
+    console.log(chalk.dim('  /project verify [#index|--last]              ') + '  Rerun deterministic harness verification');
+    console.log(chalk.dim('  /project edit <prompt>                       ') + '  Edit current-stage truth');
+    console.log(chalk.dim('  /project analyze [prompt]                    ') + '  AI project analysis');
+    console.log(chalk.dim('  /project reset [--all]                       ') + '  Clear progress or remove project truth files\n');
+    console.log(chalk.bold('Current Semantics:'));
+    console.log(chalk.dim('  - /project next and /project auto are verifier-gated, not self-declared completion'));
+    console.log(chalk.dim('  - /project plan writes the latest plan to .agent/project/session_plan.md'));
+    console.log(chalk.dim('  - /project quality combines deterministic checks with optional model-generated guidance'));
+    console.log(chalk.dim('  - /project brainstorm aligns requirements into .agent/project/alignment.md\n'));
+    console.log(chalk.bold('Examples:'));
+    console.log(chalk.dim('  kodax --init "Desktop app"'));
+    console.log(chalk.dim('  kodax -h project'));
+    console.log(chalk.dim('  kodax  # then: /project brainstorm -> /project plan -> /project next'));
+    console.log(chalk.dim('  kodax  # then: /project quality | /project verify --last | /project auto --max=3\n'));
   },
   auto: () => {
     console.log(chalk.cyan('\nAuto Mode & Auto-Continue\n'));
@@ -373,7 +408,7 @@ const CLI_HELP_TOPICS: Record<string, () => void> = {
     console.log(chalk.bold('Available Providers:'));
     providerNames.forEach((name) => {
       const detail = name === 'gemini-cli' || name === 'codex-cli'
-        ? 'CLI bridge provider'
+        ? 'CLI bridge provider (latest-user-message only, MCP unavailable)'
         : 'Native provider';
       console.log(chalk.dim(`  ${name.padEnd(15)} `) + detail);
     });
@@ -403,8 +438,8 @@ const CLI_HELP_TOPICS: Record<string, () => void> = {
   team: () => {
     console.log(chalk.cyan('\nTeam Mode (Parallel Agents)\n'));
     console.log(chalk.bold('Overview:'));
-    console.log(chalk.dim('  Run multiple independent tasks in parallel using separate agents.'));
-    console.log(chalk.dim('  Each agent works on its task simultaneously.\n'));
+    console.log(chalk.dim('  Experimental orchestration-based parallel execution for loosely coupled tasks.'));
+    console.log(chalk.dim('  Best for independent subtasks; it is not yet a fully shared-context multi-agent runtime.\n'));
     console.log(chalk.bold('Options:'));
     console.log(chalk.dim('  --team <tasks>      ') + 'Comma-separated tasks');
     console.log(chalk.dim('  -j, --parallel      ') + 'Enable parallel tool execution\n');
@@ -418,12 +453,14 @@ const CLI_HELP_TOPICS: Record<string, () => void> = {
     console.log(chalk.dim('  Run a single task and exit. Useful for scripting and CI/CD.\n'));
     console.log(chalk.bold('Options:'));
     console.log(chalk.dim('  -p, --print <text>  ') + 'Run task and exit');
+    console.log(chalk.dim('  --model <name>      ') + 'Override the selected provider model');
     console.log(chalk.dim('  --no-session        ') + 'Disable session saving\n');
     console.log(chalk.bold('Examples:'));
     console.log(chalk.dim('  kodax -p "fix the bug in auth.ts"   ') + '# Quick fix');
     console.log(chalk.dim('  kodax -p "generate tests" --reasoning balanced') + ' # With reasoning');
+    console.log(chalk.dim('  kodax -p "task" -m openai --model gpt-5.4') + ' # Provider + model override');
     console.log(chalk.dim('  kodax -p "task" --no-session        ') + '# Stateless run');
-    console.log(chalk.dim('  echo "task" | kodax -p -            ') + '# Pipe input\n');
+    console.log(chalk.dim('  kodax -p "task" -m anthropic --reasoning deep') + ' # Explicit provider selection\n');
   },
 };
 
@@ -440,7 +477,8 @@ function showCliHelpTopics(): void {
   console.log(chalk.cyan('\nDetailed Help Topics:\n'));
   console.log(chalk.dim('  kodax -h sessions   ') + 'Session management (-c, -r, -s options)');
   console.log(chalk.dim('  kodax -h skill      ') + 'Skill packaging and installation helpers');
-  console.log(chalk.dim('  kodax -h init       ') + 'Project initialization (--init, --append)');
+  console.log(chalk.dim('  kodax -h init       ') + 'Project initialization (--init, --overwrite)');
+  console.log(chalk.dim('  kodax -h project    ') + 'Project mode workflow across CLI and /project');
   console.log(chalk.dim('  kodax -h auto       ') + 'Auto mode and auto-continue');
   console.log(chalk.dim('  kodax -h provider   ') + 'LLM provider options');
   console.log(chalk.dim('  kodax -h thinking   ') + 'Reasoning modes and depth control');
@@ -474,10 +512,12 @@ function printSkillSubcommandHelp(name: string): boolean {
     console.log();
     console.log('Run end-to-end skill evals and write a benchmark/review workspace.');
     console.log();
-    console.log('Options:');
+    console.log('Required Options:');
     console.log('  --skill-path <dir>       Skill directory to evaluate');
     console.log('  --evals <file>           Evals JSON file');
     console.log('  --workspace <dir>        Workspace output directory');
+    console.log();
+    console.log('Options:');
     console.log('  --provider <name>        Provider to use');
     console.log('  --model <name>           Model override');
     console.log('  --runs <n>               Runs per config');
@@ -571,41 +611,45 @@ function showBasicHelp(): void {
   console.log('  -h, --help [TOPIC]      Show help, or detailed help for a topic');
   console.log('  -p, --print TEXT        Print mode: run single task and exit');
   console.log('  -c, --continue          Continue most recent conversation');
-  console.log('  -r, --resume [id]       Resume session by ID (no id = interactive picker)');
+  console.log('  -r, --resume [id]       Resume session by ID (no ID = list recent sessions, then resume the latest)');
+  console.log('  -n, --new               Legacy no-op; current CLI already starts a fresh session by default');
   console.log(`  -m, --provider NAME     LLM provider (${providerNames})`);
   console.log('  --model NAME            Model override for the selected provider');
   console.log('  -t, --thinking          Compatibility alias for --reasoning auto');
   console.log('  --reasoning MODE        Reasoning mode: off, auto, quick, balanced, deep');
   console.log('  -y, --auto              Backward-compat alias; no effect in non-REPL CLI');
-  console.log('  -s, --session ID        Session management (list, delete <id>, delete-all)');
+  console.log('  -s, --session OP        Legacy session operations: list, resume, delete <id>, delete-all, or raw session ID');
   console.log('  --no-session            Disable session persistence (print mode only)');
   console.log('  -j, --parallel          Parallel tool execution');
   console.log('  --team TASKS            Run multiple sub-agents in parallel');
   console.log('  --init TASK             Initialize a long-running task');
-  console.log('  --append                With --init: append to existing feature_list.json');
+  console.log('  --append                Deprecated compatibility alias for the old append flow');
   console.log('  --overwrite             With --init: overwrite existing feature_list.json');
   console.log('  --max-iter N            Max iterations per session (default: 200)');
   console.log('  --auto-continue         Auto-continue long-running task until all features pass');
   console.log('  --max-sessions N        Max sessions for --auto-continue (default: 50)');
   console.log('  --max-hours H           Max hours for --auto-continue (default: 2.0)\n');
   console.log('Help Topics (use -h <topic>):');
-  console.log('  skill, sessions, init, auto, provider, thinking, team, print\n');
+  console.log('  skill, sessions, init, project, auto, provider, thinking, team, print\n');
   console.log('Interactive Commands (in REPL mode):');
   console.log('  /help, /h               Show all commands');
   console.log('  /exit, /quit            Exit interactive mode');
   console.log('  /clear                  Clear conversation history');
   console.log('  /status                 Show session status');
   console.log('  /mode [plan|accept-edits|auto-in-project]  Switch permission mode');
+  console.log('  /project ...            Project workflow commands');
   console.log('  /sessions               List saved sessions\n');
   console.log('Examples:');
-  console.log('  kodax                             # Enter interactive mode (auto-resume)');
+  console.log('  kodax                             # Enter interactive mode');
   console.log('  kodax "create a component"        # Run single task (with session)');
   console.log('  kodax skill init my-skill         # Scaffold a new skill');
   console.log('  kodax skill package ./my-skill    # Package a skill without starting the agent');
+  console.log('  kodax -h project                 # Project mode workflow across CLI and REPL');
   console.log('  kodax -p "quick fix" --reasoning balanced  # Quick task with reasoning');
   console.log('  kodax -c                          # Continue recent conversation');
   console.log('  kodax -c "finish this"            # Continue with new task');
-  console.log('  kodax -r                          # Pick session to resume');
+  console.log('  kodax -r                          # List recent sessions, then resume the latest');
+  console.log('  kodax -p "task" --model gpt-5.4   # Override model for a one-off run');
   console.log('  kodax -p "task" --no-session      # Run without saving session');
   console.log('  kodax -h sessions                 # Detailed help on sessions\n');
 }
@@ -624,20 +668,20 @@ async function main() {
     // 短参数支持
     .option('-p, --print <text>', 'Print mode: run single task and exit')
     .option('-c, --continue', 'Continue most recent conversation in current directory')
-    .option('-n, --new', 'Start a new session (do not auto-resume)')
-    .option('-r, --resume [id]', 'Resume session by ID (no id = interactive picker)')
+    .option('-n, --new', 'Legacy no-op; current CLI already starts a fresh session by default')
+    .option('-r, --resume [id]', 'Resume session by ID (no ID = list recent sessions, then resume the latest)')
     .option('-m, --provider <name>', 'LLM provider')
     .option('--model <name>', 'Model override')
     .option('-t, --thinking', 'Compatibility alias for --reasoning auto')
     .option('--reasoning <mode>', 'Reasoning mode: off, auto, quick, balanced, deep')
     .option('-y, --auto', 'Backward-compat alias; no effect in non-REPL CLI')
-    .option('-s, --session <id>', 'Session management: list, delete <id>, delete-all')
+    .option('-s, --session <op>', 'Legacy session operations: list, resume, delete <id>, delete-all, or raw session ID')
     .option('-j, --parallel', 'Parallel tool execution')
     .option('--no-session', 'Disable session persistence (print mode only)')
     // 长参数
     .option('--team <tasks>', 'Run multiple sub-agents in parallel (comma-separated)')
     .option('--init <task>', 'Initialize a long-running task')
-    .option('--append', 'With --init: append to existing feature_list.json')
+    .option('--append', 'Deprecated compatibility alias for the old append flow')
     .option('--overwrite', 'With --init: overwrite existing feature_list.json')
     .option('--max-iter <n>', 'Max iterations (default: 200 from coding package)')
     .option('--auto-continue', 'Auto-continue long-running task until all features pass')
@@ -1114,6 +1158,7 @@ async function main() {
       } catch { }
 
       if (options.append) {
+        console.log(chalk.yellow('[Warning] --append is deprecated. Prefer /project init "<request>" inside the REPL change-request flow.'));
         console.log(chalk.cyan(`[KodaX] Appending to existing project (${total} features, ${completed} complete)`));
         userPrompt = `Add new features to an existing project: ${options.init}
 
@@ -1156,9 +1201,9 @@ New: {"features": [
         console.log(chalk.yellow(`\n[Warning] feature_list.json already exists!`));
         console.log(`  Current: ${total} features (${completed} complete, ${total - completed} pending)\n`);
         console.log('  Options:');
-        console.log('  --append      Add new features to existing list (recommended)');
+        console.log('  Open the REPL and run /project init "<request>" to create a change request');
         console.log('  --overwrite   Start fresh (existing features will be lost)\n');
-        console.log(`Example:\n  kodax --init "${options.init}" --append`);
+        console.log(`Example:\n  kodax\n  /project init "${options.init}"`);
         process.exit(1);
       }
     } else {

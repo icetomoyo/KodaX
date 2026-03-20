@@ -11,6 +11,14 @@ import { ProjectStorage } from './project-storage.js';
 import {
   ProjectFeature,
   ProjectStatistics,
+  type ProjectAlignment,
+  type ProjectBrief,
+  type ProjectWorkflowScope,
+  type ProjectWorkflowStage,
+  type ProjectWorkflowState,
+  createProjectAlignment,
+  createProjectBrief,
+  createProjectWorkflowState,
 } from './project-state.js';
 import {
   InteractiveContext,
@@ -19,7 +27,6 @@ import {
   CommandCallbacks,
   CurrentConfig,
 } from './commands.js';
-import { buildInitPrompt } from '../common/utils.js';
 import {
   buildProjectQualityReport,
   formatProjectQualityReport,
@@ -30,8 +37,6 @@ import {
   formatProjectPlan,
 } from './project-planner.js';
 import {
-  buildFallbackBrainstormOpening,
-  buildFallbackBrainstormReply,
   appendBrainstormExchange,
   completeBrainstormSession,
   createBrainstormSession,
@@ -198,6 +203,374 @@ async function loadProjectSnapshot(storage: ProjectStorage): Promise<ProjectSnap
   };
 }
 
+const OTHER_INPUT_LABEL = 'Other (type my own answer)';
+
+interface DiscoveryQuestion {
+  prompt: string;
+  options: string[];
+  apply: (alignment: ProjectAlignment, answer: string) => ProjectAlignment;
+}
+
+const MAX_ALIGNMENT_DERIVED_FEATURES = 6;
+
+function appendAlignmentEntry(
+  alignment: ProjectAlignment,
+  field: 'confirmedRequirements' | 'constraints' | 'nonGoals' | 'acceptedTradeoffs' | 'successCriteria' | 'openQuestions',
+  value: string,
+): ProjectAlignment {
+  return {
+    ...alignment,
+    [field]: [...alignment[field], value],
+  };
+}
+
+const DISCOVERY_QUESTIONS: DiscoveryQuestion[] = [
+  {
+    prompt: 'Which outcome matters most for the first usable version?',
+    options: [
+      'Ship the smallest usable version quickly',
+      'Reduce implementation risk before scaling',
+      'Preserve compatibility with the current workflow',
+    ],
+    apply: (alignment, answer) => appendAlignmentEntry(alignment, 'confirmedRequirements', answer),
+  },
+  {
+    prompt: 'Which implementation boundary or constraint must we respect?',
+    options: [
+      'Keep the existing interfaces stable',
+      'Avoid large architectural changes',
+      'Prioritize correctness over speed of delivery',
+    ],
+    apply: (alignment, answer) => appendAlignmentEntry(alignment, 'constraints', answer),
+  },
+  {
+    prompt: 'What should stay out of scope for this iteration?',
+    options: [
+      'Defer advanced configuration and edge-case polish',
+      'Defer scalability work beyond the first release',
+      'Defer UI/UX refinements unless required for correctness',
+    ],
+    apply: (alignment, answer) => appendAlignmentEntry(alignment, 'nonGoals', answer),
+  },
+  {
+    prompt: 'How will we know this first version is successful?',
+    options: [
+      'The core workflow works end to end',
+      'Focused tests cover the new behavior',
+      'Operators can understand the new flow without extra handholding',
+    ],
+    apply: (alignment, answer) => appendAlignmentEntry(alignment, 'successCriteria', answer),
+  },
+];
+
+function dedupeList(values: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values.map(item => item.trim()).filter(Boolean)) {
+    const key = value.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(value);
+    }
+  }
+  return result;
+}
+
+function normalizeAlignment(alignment: ProjectAlignment, timestamp = new Date().toISOString()): ProjectAlignment {
+  return {
+    ...alignment,
+    confirmedRequirements: dedupeList(alignment.confirmedRequirements),
+    constraints: dedupeList(alignment.constraints),
+    nonGoals: dedupeList(alignment.nonGoals),
+    acceptedTradeoffs: dedupeList(alignment.acceptedTradeoffs),
+    successCriteria: dedupeList(alignment.successCriteria),
+    openQuestions: dedupeList(alignment.openQuestions),
+    updatedAt: timestamp,
+  };
+}
+
+async function chooseOrInput(
+  callbacks: CommandCallbacks,
+  title: string,
+  options: string[],
+  inputPrompt: string,
+): Promise<string | undefined> {
+  const choice = await callbacks.ui.select(title, [...options, OTHER_INPUT_LABEL]);
+  if (!choice) {
+    return undefined;
+  }
+  if (choice === OTHER_INPUT_LABEL) {
+    const typed = await callbacks.ui.input(inputPrompt);
+    return typed?.trim() || undefined;
+  }
+  return choice;
+}
+
+type AlignmentField =
+  | 'confirmedRequirements'
+  | 'constraints'
+  | 'nonGoals'
+  | 'acceptedTradeoffs'
+  | 'successCriteria'
+  | 'openQuestions';
+
+const ALIGNMENT_FIELD_OPTIONS: Array<{ label: string; field: AlignmentField }> = [
+  { label: 'Confirmed requirement', field: 'confirmedRequirements' },
+  { label: 'Constraint', field: 'constraints' },
+  { label: 'Non-goal', field: 'nonGoals' },
+  { label: 'Tradeoff', field: 'acceptedTradeoffs' },
+  { label: 'Success criterion', field: 'successCriteria' },
+  { label: 'Open question', field: 'openQuestions' },
+];
+
+function isRemovalInstruction(guidance: string): boolean {
+  return /\b(remove|delete|drop)\b/i.test(guidance) || /(删除|移除|去掉)/.test(guidance);
+}
+
+function isAddInstruction(guidance: string): boolean {
+  return /\b(add|append|include|record|note|capture|mark|set)\b/i.test(guidance) || /(添加|增加|补充|记录|加入|设为)/.test(guidance);
+}
+
+function detectAlignmentField(guidance: string): AlignmentField | null {
+  if (/\bconstraint(s)?\b/i.test(guidance) || /约束/.test(guidance)) {
+    return 'constraints';
+  }
+  if (/\bnon[-\s]?goal(s)?\b/i.test(guidance) || /非目标/.test(guidance)) {
+    return 'nonGoals';
+  }
+  if (/\btrade[\s-]?off(s)?\b/i.test(guidance) || /取舍/.test(guidance)) {
+    return 'acceptedTradeoffs';
+  }
+  if (/\bsuccess(\s+criteria|\s+criterion)?\b/i.test(guidance) || /成功标准|成功准则/.test(guidance)) {
+    return 'successCriteria';
+  }
+  if (/\b(open\s+question|question)\b/i.test(guidance) || /问题|待确认/.test(guidance)) {
+    return 'openQuestions';
+  }
+  if (/\brequirement(s)?\b/i.test(guidance) || /需求/.test(guidance)) {
+    return 'confirmedRequirements';
+  }
+  return null;
+}
+
+function looksLikeExplicitAlignmentFieldEdit(guidance: string): boolean {
+  if (/^(constraint|constraints|约束|non[-\s]?goal|non[-\s]?goals|非目标|trade[\s-]?off|trade[\s-]?offs|取舍|success(\s+criteria|\s+criterion)?|成功标准|success|question|open question|问题|requirement|requirements|需求)\s*[:：-]/i.test(guidance.trim())) {
+    return true;
+  }
+  return detectAlignmentField(guidance) !== null && (isAddInstruction(guidance) || isRemovalInstruction(guidance));
+}
+
+function stripAlignmentEditPrefix(guidance: string, field: AlignmentField, mode: 'add' | 'remove'): string {
+  const prefixesByField: Record<AlignmentField, string[]> = {
+    confirmedRequirements: ['requirement', 'requirements', '需求'],
+    constraints: ['constraint', 'constraints', '约束'],
+    nonGoals: ['non-goal', 'non-goals', 'non goal', 'non goals', '非目标'],
+    acceptedTradeoffs: ['tradeoff', 'tradeoffs', 'trade off', 'trade offs', '取舍'],
+    successCriteria: ['success criteria', 'success criterion', 'success', '成功标准', '成功准则'],
+    openQuestions: ['open question', 'open questions', 'question', 'questions', '问题', '待确认问题'],
+  };
+
+  const escaped = prefixesByField[field]
+    .map(item => item.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('|');
+  const actionPattern = mode === 'add'
+    ? '(?:add|append|include|record|note|capture|mark|set|添加|增加|补充|记录|加入|设为)'
+    : '(?:remove|delete|drop|删除|移除|去掉)';
+  const prefixPattern = new RegExp(
+    `^(?:${actionPattern})\\s+(?:an?\\s+|the\\s+)?(?:${escaped})(?:\\s+(?:about|for))?\\s*[:：-]?\\s*`,
+    'i',
+  );
+
+  const withoutPrefix = guidance.trim().replace(prefixPattern, '');
+  return withoutPrefix
+    .replace(/^(about|for)\s+/i, '')
+    .replace(/^(关于|针对)/, '')
+    .trim();
+}
+
+function removeAlignmentEntry(
+  alignment: ProjectAlignment,
+  field: AlignmentField,
+  guidance: string,
+): { alignment: ProjectAlignment; removed: boolean } {
+  const rawTarget = stripAlignmentEditPrefix(guidance, field, 'remove');
+  const target = rawTarget
+    .replace(/^(the\s+)?/, '')
+    .replace(/^(about\s+|for\s+)/i, '')
+    .trim();
+
+  if (!target) {
+    return { alignment, removed: false };
+  }
+
+  const nextItems = alignment[field].filter(item => {
+    const normalizedItem = item.toLowerCase();
+    const normalizedTarget = target.toLowerCase();
+    return !(
+      normalizedItem === normalizedTarget
+      || normalizedItem.includes(normalizedTarget)
+      || normalizedTarget.includes(normalizedItem)
+    );
+  });
+
+  return {
+    alignment: {
+      ...alignment,
+      [field]: nextItems,
+    },
+    removed: nextItems.length !== alignment[field].length,
+  };
+}
+
+async function chooseAlignmentField(
+  callbacks: CommandCallbacks,
+  guidance: string,
+): Promise<AlignmentField | null> {
+  const choice = await callbacks.ui.select(
+    `Which alignment area should this update? "${guidance}"`,
+    ALIGNMENT_FIELD_OPTIONS.map(option => option.label),
+  );
+  const selected = ALIGNMENT_FIELD_OPTIONS.find(option => option.label === choice);
+  return selected?.field ?? null;
+}
+
+function ensureWorkflowStateDefaults(
+  state: ProjectWorkflowState,
+  timestamp = new Date().toISOString(),
+): ProjectWorkflowState {
+  return {
+    ...state,
+    scope: state.scope ?? 'project',
+    unresolvedQuestionCount: state.unresolvedQuestionCount ?? 0,
+    discoveryStepIndex: state.discoveryStepIndex ?? 0,
+    lastUpdated: state.lastUpdated ?? timestamp,
+  };
+}
+
+async function getWorkflowState(storage: ProjectStorage): Promise<ProjectWorkflowState> {
+  return ensureWorkflowStateDefaults(await storage.loadOrInferWorkflowState());
+}
+
+function getRecommendedNextStep(
+  state: ProjectWorkflowState,
+  hasFeatures: boolean,
+  hasSessionPlan: boolean,
+): string {
+  if (state.stage === 'bootstrap') {
+    return '/project brainstorm';
+  }
+  if (state.stage === 'discovering') {
+    return '/project brainstorm';
+  }
+  if (state.stage === 'aligned') {
+    return '/project plan';
+  }
+  if (state.stage === 'planned') {
+    return '/project next';
+  }
+  if (state.stage === 'executing') {
+    return '/project auto';
+  }
+  if (state.stage === 'blocked') {
+    return '/project verify';
+  }
+  if (!hasFeatures) {
+    return '/project plan';
+  }
+  return hasSessionPlan ? '/project next' : '/project plan';
+}
+
+function isExecutionStage(stage: ProjectWorkflowStage): boolean {
+  return stage === 'planned' || stage === 'executing' || stage === 'blocked' || stage === 'completed';
+}
+
+function formatStage(stage: ProjectWorkflowStage): string {
+  return stage.replace(/_/g, ' ');
+}
+
+function extractFeatureIndexFromText(input: string): number | null {
+  const direct = input.trim();
+  if (/^#?\d+$/.test(direct)) {
+    return parseFeatureIndex(direct);
+  }
+
+  const englishMatch = direct.match(/\bfeature\s*#?\s*(\d+)\b/i);
+  if (englishMatch?.[1]) {
+    return parseInt(englishMatch[1], 10);
+  }
+
+  const chineseMatch = direct.match(/第\s*(\d+)\s*(个)?\s*(feature|条)/i);
+  if (chineseMatch?.[1]) {
+    return parseInt(chineseMatch[1], 10);
+  }
+
+  return null;
+}
+
+function summarizeActiveScope(scope: ProjectWorkflowScope, activeRequestId?: string): string {
+  return scope === 'change_request'
+    ? `change request${activeRequestId ? ` (${activeRequestId})` : ''}`
+    : 'project';
+}
+
+function buildFallbackFeatureListFromAlignment(
+  alignment: ProjectAlignment,
+  existingFeatures: ProjectFeature[],
+  scope: ProjectWorkflowScope,
+): ProjectFeature[] {
+  const baseRequirements = alignment.confirmedRequirements.length > 0
+    ? alignment.confirmedRequirements
+    : [alignment.sourcePrompt];
+  const steps = dedupeList([
+    ...alignment.constraints.map(item => `Respect constraint: ${item}`),
+    ...alignment.successCriteria.map(item => `Validate success criteria: ${item}`),
+  ]);
+
+  const generated = baseRequirements.slice(0, MAX_ALIGNMENT_DERIVED_FEATURES).map((requirement, index) => ({
+    description: scope === 'change_request'
+      ? `Change request: ${requirement}`
+      : requirement,
+    steps: steps.length > 0 ? steps : [
+      'Implement the aligned behavior',
+      'Update focused verification and progress evidence',
+    ],
+    passes: false,
+    notes: index === 0 ? `Derived from alignment: ${alignment.sourcePrompt}` : undefined,
+  }));
+
+  if (scope === 'change_request' && existingFeatures.length > 0) {
+    return [...existingFeatures, ...generated];
+  }
+
+  return generated;
+}
+
+async function ensureExecutionSessionPlan(
+  storage: ProjectStorage,
+  feature: ProjectFeature,
+  index: number,
+  state: ProjectWorkflowState,
+): Promise<void> {
+  const currentPlan = await storage.readSessionPlan();
+  if (currentPlan.trim()) {
+    return;
+  }
+
+  const plan = buildProjectPlan({
+    title: feature.description || feature.name || `Feature #${index}`,
+    steps: feature.steps,
+    contextNote: `Auto-generated for feature #${index}.`,
+  });
+  await storage.writeSessionPlan(formatProjectPlan(plan));
+  await storage.saveWorkflowState({
+    ...state,
+    stage: state.stage === 'aligned' ? 'planned' : state.stage,
+    currentFeatureIndex: index,
+    lastPlannedAt: new Date().toISOString(),
+    lastUpdated: new Date().toISOString(),
+  });
+}
+
 function buildProgressBar(percentage: number, length = 20): string {
   const completedBars = Math.round((percentage / 100) * length);
   return `${'#'.repeat(completedBars)}${'-'.repeat(length - completedBars)}`;
@@ -280,23 +653,240 @@ async function projectBrainstorm(
   callbacks: CommandCallbacks,
 ): Promise<void> {
   const storage = getProjectStorage();
-  const existingSession = await storage.loadActiveBrainstormSession();
-  const options = callbacks.createKodaXOptions?.();
-  const mode = args[0]?.toLowerCase();
+  const legacyMode = args[0]?.toLowerCase();
+  if (legacyMode === 'continue' || legacyMode === 'done' || legacyMode === 'finish' || legacyMode === 'end') {
+    console.log(chalk.yellow('\n[Legacy brainstorm subcommands were removed]'));
+    console.log(chalk.dim('Run /project brainstorm and answer the discovery questions in the UI flow instead.\n'));
+    return;
+  }
 
-  if (mode === 'continue' || mode === 'c' || mode === '--continue') {
-    const userInput = args.slice(1).join(' ').trim();
-    if (!existingSession) {
-      console.log(chalk.yellow('\n[No active brainstorm session]'));
-      console.log(chalk.dim('Start one with /project brainstorm "<topic>" first.\n'));
+  if (!(await storage.exists())) {
+    console.log(chalk.yellow('\n[No project found]'));
+    console.log(chalk.dim('Use /project init <task> to initialize a project\n'));
+    return;
+  }
+
+  const state = await getWorkflowState(storage);
+  const brief = await storage.readProjectBrief();
+  const scopePrompt = state.scope === 'change_request' && state.activeRequestId
+    ? await storage.readChangeRequestPrompt(state.activeRequestId)
+    : brief?.originalPrompt ?? args.join(' ').trim();
+
+  if (!scopePrompt) {
+    console.log(chalk.yellow('\n[No discovery source found]'));
+    console.log(chalk.dim('Run /project init <task> first so Project Mode has a source prompt.\n'));
+    return;
+  }
+
+  let alignment = await storage.readAlignment();
+  if (!alignment || alignment.sourcePrompt.trim() === '') {
+    alignment = createProjectAlignment(scopePrompt);
+  }
+
+  let session = await storage.loadActiveBrainstormSession();
+  if (!session) {
+    session = createBrainstormSession(
+      scopePrompt,
+      `Let us align "${scopePrompt}" one decision at a time before we generate a plan.`,
+    );
+  }
+
+  console.log(chalk.cyan('\n/project brainstorm - Discovery Flow\n'));
+  console.log(chalk.dim(`Scope: ${summarizeActiveScope(state.scope, state.activeRequestId)}`));
+  console.log(chalk.dim(`Source: ${scopePrompt}`));
+  console.log();
+
+  let nextStepIndex = Math.max(0, Math.min(state.discoveryStepIndex ?? 0, DISCOVERY_QUESTIONS.length));
+
+  if (nextStepIndex >= DISCOVERY_QUESTIONS.length && alignment.openQuestions.length > 0) {
+    const customQuestion = alignment.openQuestions[0]!;
+    const customAnswer = await callbacks.ui.input(customQuestion);
+    if (!customAnswer?.trim()) {
+      await storage.saveBrainstormSession(session, formatBrainstormTranscript(session));
+      await storage.writeAlignment(normalizeAlignment(alignment));
+      await storage.saveWorkflowState({
+        ...state,
+        stage: 'discovering',
+        unresolvedQuestionCount: alignment.openQuestions.length,
+        discoveryStepIndex: DISCOVERY_QUESTIONS.length,
+        lastUpdated: new Date().toISOString(),
+      });
+      console.log(chalk.dim('\nDiscovery paused. Run /project brainstorm again to continue.\n'));
       return;
     }
-    if (!userInput) {
-      console.log(chalk.yellow('\n[Usage: /project brainstorm continue "<reply>"]\n'));
+
+    alignment = normalizeAlignment({
+      ...appendAlignmentEntry(alignment, 'confirmedRequirements', customAnswer.trim()),
+      openQuestions: alignment.openQuestions.slice(1),
+    });
+    session = appendBrainstormExchange(
+      session,
+      customAnswer.trim(),
+      `Captured custom discovery detail: ${customAnswer.trim()}`,
+    );
+  }
+
+  for (let index = nextStepIndex; index < DISCOVERY_QUESTIONS.length; index += 1) {
+    const question = DISCOVERY_QUESTIONS[index]!;
+    const answer = await chooseOrInput(
+      callbacks,
+      question.prompt,
+      question.options,
+      'Type your answer',
+    );
+
+    if (!answer) {
+      await storage.saveBrainstormSession(session, formatBrainstormTranscript(session));
+      await storage.writeAlignment(normalizeAlignment({
+        ...alignment,
+        openQuestions: DISCOVERY_QUESTIONS.slice(index).map(item => item.prompt),
+      }));
+      await storage.saveWorkflowState({
+        ...state,
+        stage: 'discovering',
+        unresolvedQuestionCount: DISCOVERY_QUESTIONS.length - index,
+        discoveryStepIndex: index,
+        lastUpdated: new Date().toISOString(),
+      });
+      console.log(chalk.dim('\nDiscovery paused. Run /project brainstorm again to continue.\n'));
       return;
     }
 
-    let reply = buildFallbackBrainstormReply(userInput);
+    alignment = question.apply(alignment, answer);
+    session = appendBrainstormExchange(
+      session,
+      answer,
+      `Captured for alignment: ${answer}`,
+    );
+    nextStepIndex = index + 1;
+  }
+
+  alignment = normalizeAlignment({
+    ...alignment,
+    openQuestions: [],
+  });
+  const completedSession = completeBrainstormSession(session);
+  await storage.saveBrainstormSession(completedSession, formatBrainstormTranscript(completedSession));
+  await storage.writeAlignment(alignment);
+  await storage.saveWorkflowState({
+    ...state,
+    stage: 'aligned',
+    unresolvedQuestionCount: 0,
+    discoveryStepIndex: DISCOVERY_QUESTIONS.length,
+    lastUpdated: new Date().toISOString(),
+  });
+
+  console.log(chalk.green('Discovery is aligned.'));
+  console.log(chalk.dim('Next options: /project plan, /project brainstorm, or leave it here for now.\n'));
+
+  const nextAction = await callbacks.ui.select(
+    'Discovery is aligned. What would you like to do next?',
+    ['Enter planning', 'Keep refining discovery', 'Decide later'],
+  );
+
+  if (nextAction === 'Keep refining discovery') {
+    const extraDetail = await callbacks.ui.input('What else should we clarify?');
+    const nextAlignment = extraDetail?.trim()
+      ? normalizeAlignment({
+          ...alignment,
+          openQuestions: [...alignment.openQuestions, extraDetail.trim()],
+        })
+      : alignment;
+    await storage.writeAlignment(nextAlignment);
+    await storage.saveWorkflowState({
+      ...state,
+      stage: 'discovering',
+      unresolvedQuestionCount: extraDetail?.trim() ? nextAlignment.openQuestions.length : 1,
+      discoveryStepIndex: DISCOVERY_QUESTIONS.length,
+      lastUpdated: new Date().toISOString(),
+    });
+    console.log(chalk.dim('\nAdded one more discovery thread. Run /project brainstorm again when you are ready.\n'));
+    return;
+  }
+
+  if (nextAction === 'Enter planning') {
+    console.log(chalk.dim('\nAlignment saved. Run /project plan when you want to generate or refresh the plan.\n'));
+    return;
+  }
+
+  console.log(chalk.dim('\nAlignment saved. You can continue later with /project plan or /project brainstorm.\n'));
+}
+
+async function projectPlan(
+  args: string[],
+  context: InteractiveContext,
+  callbacks: CommandCallbacks,
+): Promise<void> {
+  const storage = getProjectStorage();
+  if (!(await storage.exists())) {
+    console.log(chalk.yellow('\n[No project found]'));
+    console.log(chalk.dim('Use /project init <task> to initialize a project\n'));
+    return;
+  }
+
+  const state = await getWorkflowState(storage);
+  const alignment = await storage.readAlignment();
+  const featureList = await storage.loadFeatures();
+  const rawTarget = args.join(' ').trim();
+  const hasFeatureTruth = (featureList?.features.length ?? 0) > 0;
+  const explicitFeatureIndex = rawTarget ? extractFeatureIndexFromText(rawTarget) : null;
+  const shouldGenerateProjectTruth =
+    explicitFeatureIndex === null
+    && (
+      state.scope === 'change_request'
+      || !hasFeatureTruth
+      || (state.stage === 'aligned' && !hasFeatureTruth)
+    );
+
+  if (state.stage === 'discovering' && state.unresolvedQuestionCount > 0) {
+    console.log(chalk.yellow('\n/project plan - Discovery Still Open\n'));
+    console.log(chalk.dim(`Unresolved questions: ${state.unresolvedQuestionCount}`));
+    if (alignment?.openQuestions.length) {
+      alignment.openQuestions.forEach((item, index) => {
+        console.log(chalk.dim(`  ${index + 1}. ${item}`));
+      });
+      console.log();
+    }
+
+    const choice = await callbacks.ui.select(
+      'Discovery is still open. What should Project Mode do?',
+      ['Return to discovery', 'Generate a provisional plan'],
+    );
+
+    if (choice !== 'Generate a provisional plan') {
+      console.log(chalk.dim('\nRun /project brainstorm to continue discovery.\n'));
+      return;
+    }
+  }
+  let planInput: { title: string; steps?: string[]; contextNote?: string } | null = null;
+  let targetLabel = '';
+  let plannedFeatureIndex: number | undefined;
+
+  if (explicitFeatureIndex !== null) {
+    const feature = await storage.getFeatureByIndex(explicitFeatureIndex);
+    if (!feature) {
+      console.log(chalk.red(`\n[Feature not found: ${rawTarget}]\n`));
+      return;
+    }
+
+    planInput = {
+      title: feature.description || feature.name || `Feature #${explicitFeatureIndex}`,
+      steps: feature.steps,
+      contextNote: `Generated from feature #${explicitFeatureIndex}.`,
+    };
+    targetLabel = `feature #${explicitFeatureIndex}`;
+    plannedFeatureIndex = explicitFeatureIndex;
+  } else if (shouldGenerateProjectTruth) {
+    if (!alignment) {
+      console.log(chalk.yellow('\n[No alignment found]'));
+      console.log(chalk.dim('Run /project brainstorm first, or initialize the project with /project init.\n'));
+      return;
+    }
+
+    const existingFeatures = featureList?.features ?? [];
+    let generatedFeatures = buildFallbackFeatureListFromAlignment(alignment, existingFeatures, state.scope);
+    const options = callbacks.createKodaXOptions?.();
+
     if (options) {
       try {
         const result = await runKodaX(
@@ -307,167 +897,121 @@ async function projectBrainstorm(
               initialMessages: context.messages,
             },
           },
-          buildBrainstormContinuePrompt(
-            formatBrainstormTranscript(existingSession),
-            userInput,
-          ),
+          `You are generating feature_list.json for Project Mode.
+
+Active scope: ${state.scope}
+Existing features:
+${JSON.stringify(existingFeatures, null, 2)}
+
+Alignment:
+${JSON.stringify(alignment, null, 2)}
+
+Return strict JSON only:
+{
+  "features": [
+    {
+      "description": "clear testable feature",
+      "steps": ["step 1", "step 2"],
+      "passes": false
+    }
+  ]
+}
+
+If the active scope is a change request, preserve unrelated existing features and append or adjust only what is necessary.`,
         );
 
         const content = extractMessageText(result.messages[result.messages.length - 1]).trim();
-        if (content) {
-          reply = content;
+        const parsed = content.match(/\{[\s\S]*\}/)?.[0];
+        if (parsed) {
+          try {
+            const candidate = JSON.parse(parsed) as { features?: ProjectFeature[] };
+            if (candidate.features?.length) {
+              generatedFeatures = candidate.features.map(feature => ({
+                ...feature,
+                passes: feature.passes ?? false,
+              }));
+            }
+          } catch (error) {
+            console.log(chalk.yellow('\n[Warning] Failed to parse AI-generated feature list, falling back to deterministic generation.\n'));
+            console.log(chalk.dim(error instanceof Error ? error.message : String(error)));
+            console.log();
+          }
         }
       } catch (error) {
-        console.log(chalk.yellow('\n[Warning] AI brainstorm follow-up failed, using fallback facilitator reply instead.\n'));
+        console.log(chalk.yellow('\n[Warning] AI feature generation failed, using deterministic generation instead.\n'));
         console.log(chalk.dim(error instanceof Error ? error.message : String(error)));
         console.log();
       }
     }
 
-    const updatedSession = appendBrainstormExchange(existingSession, userInput, reply);
-    await storage.saveBrainstormSession(updatedSession, formatBrainstormTranscript(updatedSession));
+    await storage.saveFeatures({ features: generatedFeatures });
 
-    console.log(chalk.cyan('\n/project brainstorm - Session Continued\n'));
-    console.log(chalk.dim(`Session: ${updatedSession.id}`));
-    console.log(chalk.dim(`Topic: ${updatedSession.topic}`));
-    console.log();
-    console.log(reply);
-    console.log();
-    return;
-  }
-
-  if (mode === 'done' || mode === 'finish' || mode === 'end') {
-    if (!existingSession) {
-      console.log(chalk.yellow('\n[No active brainstorm session]\n'));
+    const pendingIndex = generatedFeatures.findIndex(item => item.passes !== true && item.skipped !== true);
+    const firstChangeRequestIndex =
+      state.scope === 'change_request' && existingFeatures.length < generatedFeatures.length
+        ? generatedFeatures.findIndex((item, index) => index >= existingFeatures.length && item.passes !== true && item.skipped !== true)
+        : -1;
+    const targetIndex = firstChangeRequestIndex >= 0 ? firstChangeRequestIndex : pendingIndex >= 0 ? pendingIndex : 0;
+    const targetFeature = generatedFeatures[targetIndex];
+    if (!targetFeature) {
+      console.log(chalk.yellow('\n[No features generated]'));
       return;
     }
 
-    const completedSession = completeBrainstormSession(existingSession);
-    await storage.saveBrainstormSession(completedSession, formatBrainstormTranscript(completedSession));
+    planInput = {
+      title: targetFeature.description || targetFeature.name || `Feature #${targetIndex}`,
+      steps: targetFeature.steps,
+      contextNote: state.scope === 'change_request'
+        ? `Generated while integrating ${summarizeActiveScope(state.scope, state.activeRequestId)}.`
+        : 'Generated from the aligned project brief.',
+    };
+    targetLabel = state.scope === 'change_request' ? 'change request alignment' : 'project alignment';
+    plannedFeatureIndex = targetIndex;
 
-    console.log(chalk.cyan('\n/project brainstorm - Session Completed\n'));
-    console.log(chalk.dim(`Session: ${completedSession.id}`));
-    console.log(chalk.dim(`Topic: ${completedSession.topic}`));
-    console.log();
-    console.log(chalk.dim('The transcript remains on disk and the active brainstorm pointer has been cleared.'));
-    console.log();
-    return;
-  }
-
-  const topic = args.join(' ').trim();
-  if (!topic) {
-    if (existingSession) {
-      console.log(chalk.cyan('\n/project brainstorm - Active Session\n'));
-      console.log(chalk.dim(`Session: ${existingSession.id}`));
-      console.log(chalk.dim(`Topic: ${existingSession.topic}`));
-      console.log();
-      console.log(chalk.dim('Use /project brainstorm continue "<reply>" to keep going.'));
-      console.log(chalk.dim('Use /project brainstorm done to finish the current session.\n'));
-      return;
-    }
-
-    console.log(chalk.yellow('\n[Usage: /project brainstorm "<topic>"]\n'));
-    return;
-  }
-
-  if (existingSession) {
-    console.log(chalk.yellow('\n[Active brainstorm already in progress]'));
-    console.log(chalk.dim(`Topic: ${existingSession.topic}`));
-    console.log(chalk.dim('Use /project brainstorm continue "<reply>" to keep going, or /project brainstorm done to finish it.\n'));
-    return;
-  }
-
-  let opening = buildFallbackBrainstormOpening(topic);
-  if (options) {
-    try {
-      const result = await runKodaX(
-        {
-          ...options,
-          session: {
-            ...options.session,
-            initialMessages: context.messages,
-          },
-        },
-        buildBrainstormPrompt(topic),
-      );
-
-      const content = extractMessageText(result.messages[result.messages.length - 1]).trim();
-      if (content) {
-        opening = content;
-      }
-    } catch (error) {
-      console.log(chalk.yellow('\n[Warning] AI brainstorm kickoff failed, using fallback facilitator questions instead.\n'));
-      console.log(chalk.dim(error instanceof Error ? error.message : String(error)));
-      console.log();
-    }
-  }
-
-  const session = createBrainstormSession(topic, opening);
-  await storage.saveBrainstormSession(session, formatBrainstormTranscript(session));
-
-  console.log(chalk.cyan('\n/project brainstorm - Session Started\n'));
-  console.log(chalk.dim(`Session: ${session.id}`));
-  console.log(chalk.dim(`Topic: ${session.topic}`));
-  console.log();
-  console.log(opening);
-  console.log();
-  console.log(chalk.dim('Use /project brainstorm continue "<reply>" to keep going, or /project brainstorm done to finish.'));
-  console.log();
-}
-
-async function projectPlan(args: string[]): Promise<void> {
-  const storage = getProjectStorage();
-  const rawTarget = args.join(' ').trim();
-
-  let planInput:
-    | {
-        title: string;
-        steps?: string[];
-        contextNote?: string;
-      }
-    | null = null;
-  let targetLabel = '';
-
-  if (!rawTarget) {
+    await storage.saveWorkflowState({
+      ...state,
+      stage: 'planned',
+      scope: 'project',
+      activeRequestId: undefined,
+      currentFeatureIndex: targetIndex,
+      lastPlannedAt: new Date().toISOString(),
+      lastUpdated: new Date().toISOString(),
+    });
+  } else if (!rawTarget) {
     const nextFeature = await storage.getNextPendingFeature();
     if (!nextFeature) {
-      console.log(chalk.yellow('\n[Usage: /project plan #<index> | /project plan "<topic>"]\n'));
+      console.log(chalk.yellow('\n[No pending feature found]'));
+      console.log(chalk.dim('Run /project brainstorm or /project init to create plan truth first.\n'));
       return;
     }
 
-    const title = nextFeature.feature.description || nextFeature.feature.name || `Feature #${nextFeature.index}`;
     planInput = {
-      title,
+      title: nextFeature.feature.description || nextFeature.feature.name || `Feature #${nextFeature.index}`,
       steps: nextFeature.feature.steps,
       contextNote: `Generated from feature #${nextFeature.index}.`,
     };
     targetLabel = `feature #${nextFeature.index}`;
+    plannedFeatureIndex = nextFeature.index;
   } else {
-    const featureIndex = /^#?\d+$/.test(rawTarget) ? parseFeatureIndex(rawTarget) : null;
-    if (featureIndex !== null) {
-      const feature = await storage.getFeatureByIndex(featureIndex);
-      if (!feature) {
-        console.log(chalk.red(`\n[Feature not found: ${rawTarget}]\n`));
-        return;
-      }
-
-      planInput = {
-        title: feature.description || feature.name || `Feature #${featureIndex}`,
-        steps: feature.steps,
-        contextNote: `Generated from feature #${featureIndex}.`,
-      };
-      targetLabel = `feature #${featureIndex}`;
-    } else {
-      planInput = {
-        title: rawTarget,
-      };
-      targetLabel = 'freeform request';
-    }
+    planInput = {
+      title: rawTarget,
+    };
+    targetLabel = 'freeform request';
   }
 
-  const plan = buildProjectPlan(planInput);
+  const plan = buildProjectPlan(planInput!);
   const planText = formatProjectPlan(plan);
   await storage.writeSessionPlan(planText);
+  const nextFeature = await storage.getNextPendingFeature();
+  await storage.saveWorkflowState({
+    ...state,
+    stage: 'planned',
+    scope: shouldGenerateProjectTruth ? 'project' : state.scope,
+    activeRequestId: shouldGenerateProjectTruth ? undefined : state.activeRequestId,
+    currentFeatureIndex: plannedFeatureIndex ?? nextFeature?.index,
+    lastPlannedAt: new Date().toISOString(),
+    lastUpdated: new Date().toISOString(),
+  });
 
   console.log(chalk.cyan('\n/project plan - Planning View\n'));
   console.log(chalk.dim(`Source: ${targetLabel}`));
@@ -475,7 +1019,7 @@ async function projectPlan(args: string[]): Promise<void> {
   console.log();
   console.log(planText);
   console.log();
-  console.log(chalk.dim('The latest plan has been written to .agent/project/session_plan.md for status and quality analysis.'));
+  console.log(chalk.dim('The latest plan has been written to .agent/project/session_plan.md.'));
   console.log();
 }
 
@@ -734,25 +1278,33 @@ export function printProjectHelp(): void {
   console.log(chalk.cyan('\n/project - Project Management\n'));
 
   console.log(chalk.bold('Commands:'));
-  console.log(chalk.cyan('  init') + chalk.dim(' <task> [--append|--overwrite]') + '  Initialize project');
+  console.log(chalk.cyan('  init') + chalk.dim(' <task> [--overwrite]') + '  Initialize project or record a change request');
   console.log(chalk.cyan('  status') + chalk.dim(' [prompt] [--features|--progress]') + '  View status');
-  console.log(chalk.cyan('  plan') + chalk.dim(' [#index|topic]') + '            Generate a structured implementation plan');
+  console.log(chalk.cyan('  plan') + chalk.dim(' [feature reference|topic]') + '  Generate project or feature planning truth');
   console.log(chalk.cyan('  quality') + '                         Review workflow quality and release readiness');
-  console.log(chalk.cyan('  brainstorm') + chalk.dim(' <topic>|continue|done') + '  Multi-turn AI-guided brainstorm');
+  console.log(chalk.cyan('  brainstorm') + '                      Align the request one question at a time');
   console.log(chalk.cyan('  next') + chalk.dim(' [prompt|#index] [--no-confirm]') + '  Run next/specific feature');
   console.log(chalk.cyan('  auto') + chalk.dim(' [prompt] [--max=N|--confirm]') + '  Auto-run all');
+  console.log(chalk.cyan('  pause') + '                           Stop /project auto');
   console.log(chalk.cyan('  verify') + chalk.dim(' [#index|--last]') + '         Rerun deterministic harness verification');
-  console.log(chalk.cyan('  edit') + chalk.dim(' [#index] <prompt>') + '  AI-driven editing');
+  console.log(chalk.cyan('  edit') + chalk.dim(' <prompt>') + '                 Edit current-stage truth');
   console.log(chalk.cyan('  reset') + chalk.dim(' [--all]') + '  Clear progress or delete files');
   console.log(chalk.cyan('  analyze') + chalk.dim(' [prompt]') + '  AI-powered analysis');
   console.log(chalk.dim('  mark <n> [done|skip]  [deprecated: use edit instead]'));
   console.log(chalk.dim('  list, progress        [deprecated: use status --features/--progress]'));
 
   console.log();
+  console.log(chalk.bold('Current Semantics:'));
+  console.log(chalk.dim('  The happy path is init -> brainstorm -> plan -> next/auto.'));
+  console.log(chalk.dim('  /project brainstorm is UI-driven and no longer uses continue/done subcommands.'));
+  console.log(chalk.dim('  /project next and /project auto include automatic verification internally.'));
+  console.log(chalk.dim('  /project verify remains available as a diagnostic command.'));
+
+  console.log();
   console.log(chalk.bold('Edit Command:'));
-  console.log(chalk.dim('  Single:  /project edit #3 "mark as completed"'));
-  console.log(chalk.dim('  Global:  /project edit "delete all completed features"'));
-  console.log(chalk.dim('  Actions: complete, skip, delete, modify description, add steps'));
+  console.log(chalk.dim('  Discovery: /project edit "Add a constraint: keep the API stable"'));
+  console.log(chalk.dim('  Planning:  /project edit "Give feature 3 a test step"'));
+  console.log(chalk.dim('  Planning:  /project edit "Delete feature 2"'));
 
   console.log();
   console.log(chalk.bold('Reset Command:'));
@@ -766,19 +1318,17 @@ export function printProjectHelp(): void {
 
   console.log();
   console.log(chalk.bold('Quick Examples:'));
-  console.log(chalk.dim('  /p init "Build API" -> /p status -> /p next -> /p auto'));
+  console.log(chalk.dim('  /p init "Build API" -> /p brainstorm -> /p plan -> /p next'));
+  console.log(chalk.dim('  /p init "Add pagination to the current API"'));
   console.log(chalk.dim('  /p plan #1'));
-  console.log(chalk.dim('  /p plan "终端多轮 brainstorm"'));
-  console.log(chalk.dim('  /p brainstorm "权限系统设计"'));
-  console.log(chalk.dim('  /p brainstorm continue "先支持 RBAC，后续再加 ABAC"'));
-  console.log(chalk.dim('  /p brainstorm done'));
-  console.log(chalk.dim('  /p quality  |  /p verify --last'));
+  console.log(chalk.dim('  /p brainstorm'));
+  console.log(chalk.dim('  /p quality  |  /p verify --last  |  /p pause'));
   console.log(chalk.dim('  /p status "what is blocking release?"'));
-  console.log(chalk.dim('  /p edit #3 "mark complete"  |  /p edit "delete skipped features"'));
+  console.log(chalk.dim('  /p edit "Give feature 3 a test step"'));
   console.log(chalk.dim('  /p analyze  |  /p analyze "risk review"'));
 
   console.log();
-  console.log(chalk.dim('Aliases: /proj, /p  |  For detailed help, read docs/features/v0.6.0.md'));
+  console.log(chalk.dim('Aliases: /proj, /p  |  See docs/FEATURE_LIST.md for roadmap and docs/features/v0.6.10.md for harness details.'));
   console.log();
   return;
   /*
@@ -847,14 +1397,12 @@ async function projectStatus(
   const showProgress = args.includes('--progress');
   const guidance = args.filter(a => !a.startsWith('--')).join(' ');
   const snapshot = await loadProjectSnapshot(storage);
+  const state = await getWorkflowState(storage);
+  const alignment = await storage.readAlignment();
+  const sessionPlan = await storage.readSessionPlan();
+  const stats = snapshot?.stats ?? { total: 0, completed: 0, pending: 0, skipped: 0, percentage: 0 };
 
-  if (!snapshot) {
-    console.log(chalk.red('\n[Error] Failed to load project features\n'));
-    return;
-  }
-
-  // 如果有 guidance，提示 AI 分析功能待实现
-  if (guidance) {
+  if (guidance && snapshot) {
     const report = buildProjectQualityReport(
       snapshot.features,
       snapshot.progressText,
@@ -892,11 +1440,30 @@ async function projectStatus(
     return;
   }
 
-  // 如果指定了 --features 或 --progress，显示对应内容
+  console.log(chalk.cyan('\nProject Status\n'));
+  console.log(`Stage: ${formatStage(state.stage)}`);
+  console.log(`Scope: ${summarizeActiveScope(state.scope, state.activeRequestId)}`);
+  console.log(`Unresolved discovery items: ${state.unresolvedQuestionCount}`);
+  console.log(`Features: ${stats.completed}/${stats.total} completed (${stats.percentage}%)`);
+  console.log(`Session plan: ${sessionPlan.trim() ? 'present' : 'missing'}`);
+  console.log(`Next recommended command: ${getRecommendedNextStep(state, stats.total > 0, sessionPlan.trim().length > 0)}`);
+  if (alignment?.openQuestions.length) {
+    console.log();
+    console.log(chalk.dim('Open discovery threads:'));
+    alignment.openQuestions.slice(0, 4).forEach((item, index) => {
+      console.log(chalk.dim(`  ${index + 1}. ${item}`));
+    });
+  }
+  console.log();
+
   if (showFeatures) {
+    if (!snapshot) {
+      console.log(chalk.dim('No feature list has been generated yet.\n'));
+      return;
+    }
     await projectList();
     if (showProgress) {
-      console.log(); // 分隔
+      console.log();
       await projectProgress();
     }
     return;
@@ -907,7 +1474,9 @@ async function projectStatus(
     return;
   }
 
-  printProjectStatusOverview(snapshot);
+  if (snapshot) {
+    printProjectStatusOverview(snapshot);
+  }
   return;
   /*
 
@@ -949,28 +1518,13 @@ async function projectInit(
   confirm: (message: string) => Promise<boolean>
 ): Promise<{ projectInitPrompt: string } | void> {
   const storage = getProjectStorage();
-
-  // 检查是否已存在
-  if (await storage.exists()) {
-    const hasAppend = args.includes('--append');
-    const hasOverwrite = args.includes('--overwrite');
-
-    if (!hasAppend && !hasOverwrite) {
-      console.log(chalk.yellow('\n[Project already exists]'));
-      console.log(chalk.dim('Use --append to add features or --overwrite to replace\n'));
-      return;
-    }
-
-    if (hasOverwrite) {
-      const confirmed = await confirm('Overwrite existing project?');
-      if (!confirmed) {
-        console.log(chalk.dim('\nCancelled\n'));
-        return;
-      }
-    }
+  if (args.includes('--append')) {
+    console.log(chalk.yellow('\n[--append has been removed]'));
+    console.log(chalk.dim('Run /project init "<new request>" and choose a change-request path in the UI.\n'));
+    return;
   }
 
-  // 获取任务描述
+  const hasOverwrite = args.includes('--overwrite');
   const taskArgs = args.filter(a => !a.startsWith('--'));
   const task = taskArgs.join(' ').trim();
 
@@ -980,12 +1534,104 @@ async function projectInit(
     return;
   }
 
-  console.log(chalk.dim('\n📝 Initializing project...\n'));
+  const alreadyExists = await storage.exists();
+  if (alreadyExists && hasOverwrite) {
+    const confirmed = await confirm('Overwrite existing project management artifacts?');
+    if (!confirmed) {
+      console.log(chalk.dim('\nCancelled\n'));
+      return;
+    }
+    await storage.deleteProjectManagementFiles();
+  }
 
-  // 构建 init prompt，返回给 InkREPL 处理
-  // 这样可以使用正确的流式事件处理器
-  const initPrompt = buildInitPrompt(task);
-  return { projectInitPrompt: initPrompt };
+  const timestamp = new Date().toISOString();
+  const brief = createProjectBrief(task, timestamp);
+  const alignment = createProjectAlignment(task, timestamp);
+
+  if (!alreadyExists || hasOverwrite) {
+    await storage.writeProjectBrief(brief);
+    await storage.writeAlignment(alignment);
+
+    const initChoice = await callbacks.ui.select(
+      'How should Project Mode start this project?',
+      ['Start discovery', 'Draft planning input directly', 'Initialize only'],
+    );
+
+    const stage: ProjectWorkflowStage =
+      initChoice === 'Draft planning input directly'
+        ? 'aligned'
+        : initChoice === 'Initialize only'
+          ? 'bootstrap'
+          : 'discovering';
+
+    const initializedAlignment = stage === 'aligned'
+      ? normalizeAlignment({
+          ...alignment,
+          confirmedRequirements: [task],
+          openQuestions: [],
+        }, timestamp)
+      : alignment;
+
+    await storage.writeAlignment(initializedAlignment);
+    await storage.saveWorkflowState({
+      ...createProjectWorkflowState(stage, timestamp, 'project'),
+      unresolvedQuestionCount: stage === 'discovering' ? DISCOVERY_QUESTIONS.length : 0,
+      discoveryStepIndex: stage === 'discovering' ? 0 : DISCOVERY_QUESTIONS.length,
+      lastUpdated: timestamp,
+    });
+
+    console.log(chalk.cyan('\n/project init - Project Initialized\n'));
+    console.log(chalk.dim(`Source prompt saved to .agent/project/project_brief.md`));
+    console.log(chalk.dim(`Alignment file saved to .agent/project/alignment.md`));
+    if (stage === 'discovering') {
+      console.log(chalk.dim('\nNext: run /project brainstorm to align the request.\n'));
+    } else if (stage === 'aligned') {
+      console.log(chalk.dim('\nNext: run /project plan to generate feature truth and a session plan.\n'));
+    } else {
+      console.log(chalk.dim('\nInitialization complete. Continue with /project brainstorm or /project plan.\n'));
+    }
+    return;
+  }
+
+  const changeRequest = await storage.createChangeRequest(task, timestamp);
+  const initChoice = await callbacks.ui.select(
+    'Project already exists. How should this new request be handled?',
+    ['Explore this new request', 'Draft a change plan', 'Record the request only'],
+  );
+
+  if (initChoice === 'Record the request only') {
+    console.log(chalk.cyan('\n/project init - Change Request Recorded\n'));
+    console.log(chalk.dim(`Saved: ${changeRequest.id}`));
+    console.log(chalk.dim('The active project state was left unchanged.\n'));
+    return;
+  }
+
+  const nextStage: ProjectWorkflowStage =
+    initChoice === 'Draft a change plan' ? 'aligned' : 'discovering';
+  const nextAlignment = nextStage === 'aligned'
+    ? normalizeAlignment({
+        ...alignment,
+        confirmedRequirements: [task],
+        openQuestions: [],
+      }, timestamp)
+    : alignment;
+
+  await storage.writeAlignment(nextAlignment);
+  await storage.saveWorkflowState({
+    ...createProjectWorkflowState(nextStage, timestamp, 'change_request'),
+    activeRequestId: changeRequest.id,
+    unresolvedQuestionCount: nextStage === 'discovering' ? DISCOVERY_QUESTIONS.length : 0,
+    discoveryStepIndex: nextStage === 'discovering' ? 0 : DISCOVERY_QUESTIONS.length,
+    lastUpdated: timestamp,
+  });
+
+  console.log(chalk.cyan('\n/project init - Change Request Activated\n'));
+  console.log(chalk.dim(`Request: ${changeRequest.id}`));
+  if (nextStage === 'discovering') {
+    console.log(chalk.dim('Next: run /project brainstorm to align the new request.\n'));
+  } else {
+    console.log(chalk.dim('Next: run /project plan to update feature truth for this request.\n'));
+  }
 }
 
 /**
@@ -1003,6 +1649,14 @@ async function projectNext(
   if (!(await storage.exists())) {
     console.log(chalk.yellow('\n[No project found]'));
     console.log(chalk.dim('Use /project init <task> to initialize a project\n'));
+    return;
+  }
+
+  const state = await getWorkflowState(storage);
+  if (!isExecutionStage(state.stage)) {
+    console.log(chalk.yellow('\n[Project is not ready for execution]'));
+    console.log(chalk.dim(`Current stage: ${formatStage(state.stage)}`));
+    console.log(chalk.dim('Use /project plan after discovery before running /project next.\n'));
     return;
   }
 
@@ -1042,6 +1696,8 @@ async function projectNext(
     console.log(chalk.red(`\n[Error] Feature at index ${targetIndex} not found\n`));
     return;
   }
+
+  await ensureExecutionSessionPlan(storage, feature, targetIndex, state);
 
   // 显示功能信息
   displayFeatureInfo(feature, targetIndex);
@@ -1090,6 +1746,13 @@ async function projectNext(
 
     // 显示进度
     const stats = await storage.getStatistics();
+    await storage.saveWorkflowState({
+      ...state,
+      stage: stats.pending === 0 ? 'completed' : verification.decision === 'verified_complete' ? 'executing' : 'blocked',
+      currentFeatureIndex: (await storage.getNextPendingFeature())?.index,
+      latestExecutionSummary: verification.runRecord.completionReport?.summary ?? verification.reasons[0] ?? 'No summary available',
+      lastUpdated: new Date().toISOString(),
+    });
     console.log(chalk.dim(`Progress: ${stats.completed}/${stats.total} [${stats.percentage}%]\n`));
 
   } catch (error) {
@@ -1144,6 +1807,14 @@ async function projectAuto(
   if (!(await storage.exists())) {
     console.log(chalk.yellow('\n[No project found]'));
     console.log(chalk.dim('Use /project init <task> to initialize a project\n'));
+    return;
+  }
+
+  const initialState = await getWorkflowState(storage);
+  if (!isExecutionStage(initialState.stage)) {
+    console.log(chalk.yellow('\n[Project is not ready for auto execution]'));
+    console.log(chalk.dim(`Current stage: ${formatStage(initialState.stage)}`));
+    console.log(chalk.dim('Use /project plan after discovery before running /project auto.\n'));
     return;
   }
 
@@ -1220,6 +1891,8 @@ async function projectAuto(
           console.log(chalk.red('\n[Error] KodaX options not available\n'));
           break;
         }
+        const currentState = await getWorkflowState(storage);
+        await ensureExecutionSessionPlan(storage, next.feature, next.index, currentState);
         await storage.updateFeatureStatus(next.index, {
           startedAt: next.feature.startedAt ?? new Date().toISOString(),
         });
@@ -1236,10 +1909,25 @@ async function projectAuto(
         if (verification.decision === 'verified_complete') {
           console.log(chalk.green('  ✓ Completed'));
           console.log(chalk.dim(`  ${verification.runRecord.evidence.join(' | ')}`));
+          const updatedStats = await storage.getStatistics();
+          await storage.saveWorkflowState({
+            ...currentState,
+            stage: updatedStats.pending === 0 ? 'completed' : 'executing',
+            currentFeatureIndex: (await storage.getNextPendingFeature())?.index,
+            latestExecutionSummary: verification.runRecord.completionReport?.summary ?? 'Feature completed',
+            lastUpdated: new Date().toISOString(),
+          });
           console.log();
         } else {
           console.log(chalk.yellow(`  ⚠ Paused: ${verification.decision}`));
           console.log(chalk.dim(`  ${verification.reasons.join(' | ') || 'Review the latest harness record.'}`));
+          await storage.saveWorkflowState({
+            ...currentState,
+            stage: 'blocked',
+            currentFeatureIndex: next.index,
+            latestExecutionSummary: verification.runRecord.completionReport?.summary ?? verification.reasons[0] ?? 'No summary available',
+            lastUpdated: new Date().toISOString(),
+          });
           console.log();
           break;
         }
@@ -1434,36 +2122,103 @@ async function projectEdit(
   }
 
   if (args.length === 0) {
-    console.log(chalk.yellow('\nUsage: /project edit [#index] <prompt>'));
+    console.log(chalk.yellow('\nUsage: /project edit <instruction>'));
     console.log(chalk.dim('\nExamples:'));
-    console.log(chalk.dim('  Single feature:  /project edit #3 "修改描述为 xxx"'));
-    console.log(chalk.dim('  Global edit:     /project edit "重新按优先级排序"'));
-    console.log(chalk.dim('  Mark complete:   /project edit #3 "标记为完成"'));
-    console.log(chalk.dim('  Delete feature:  /project edit #3 "删除"\n'));
+    console.log(chalk.dim('  Discovery stage: /project edit "Add a constraint: keep the current API stable"'));
+    console.log(chalk.dim('  Planning stage:  /project edit "Give feature 3 a test step"'));
+    console.log(chalk.dim('  Planning stage:  /project edit "Delete feature 2"\n'));
     return;
   }
 
-  // 检查第一个参数是否是 #index
-  const firstArg = args[0];
-  const isIndexBased = firstArg && parseFeatureIndex(firstArg) !== null;
+  const state = await getWorkflowState(storage);
+  const guidance = args.join(' ').trim();
 
-  if (isIndexBased) {
-    // 单个 feature 编辑
-    const index = parseFeatureIndex(firstArg!)!;
-    const guidance = args.slice(1).join(' ').trim();
+  if (state.stage === 'discovering' || state.stage === 'aligned' || state.stage === 'bootstrap') {
+    await editAlignment(guidance, storage, callbacks);
+    return;
+  }
 
-    if (!guidance) {
-      console.log(chalk.yellow('\n[Error] Please provide edit instructions'));
-      console.log(chalk.dim('Example: /project edit #3 "修改描述"\n'));
+  if (state.stage !== 'planned' && state.stage !== 'executing' && state.stage !== 'blocked' && state.stage !== 'completed') {
+    console.log(chalk.yellow('\n[Edit is not available in the current stage]'));
+    console.log(chalk.dim(`Current stage: ${formatStage(state.stage)}\n`));
+    return;
+  }
+
+  const index = extractFeatureIndexFromText(guidance);
+  if (index !== null) {
+    await editSingleFeature(index, guidance, storage, context, callbacks, confirm);
+    return;
+  }
+
+  await editGlobal(guidance, storage, context, callbacks, confirm);
+}
+
+async function editAlignment(
+  guidance: string,
+  storage: ProjectStorage,
+  callbacks: CommandCallbacks,
+): Promise<void> {
+  let alignment = (await storage.readAlignment()) ?? createProjectAlignment('Unspecified project');
+  const trimmedGuidance = guidance.trim();
+  const detectedField = looksLikeExplicitAlignmentFieldEdit(trimmedGuidance)
+    ? detectAlignmentField(trimmedGuidance)
+    : null;
+  const targetField = detectedField ?? await chooseAlignmentField(callbacks, trimmedGuidance);
+
+  if (!targetField) {
+    console.log(chalk.dim('\nNo alignment update was applied.\n'));
+    return;
+  }
+
+  if (isRemovalInstruction(trimmedGuidance)) {
+    const removal = removeAlignmentEntry(alignment, targetField, trimmedGuidance);
+    alignment = removal.alignment;
+    if (!removal.removed) {
+      console.log(chalk.yellow('\n[No matching alignment entry found to remove]'));
+      console.log(chalk.dim('Please use a more specific phrase, for example: "Remove the constraint: keep the API stable".\n'));
       return;
     }
-
-    await editSingleFeature(index, guidance, storage, context, callbacks, confirm);
   } else {
-    // 全局编辑
-    const guidance = args.join(' ').trim();
-    await editGlobal(guidance, storage, context, callbacks, confirm);
+    const entry = stripAlignmentEditPrefix(trimmedGuidance, targetField, 'add') || trimmedGuidance;
+    alignment = appendAlignmentEntry(alignment, targetField, entry);
   }
+
+  await storage.writeAlignment(normalizeAlignment(alignment));
+  const state = await getWorkflowState(storage);
+  await storage.saveWorkflowState({
+    ...state,
+    stage: state.stage === 'bootstrap' ? 'discovering' : state.stage,
+    lastUpdated: new Date().toISOString(),
+  });
+
+  console.log(chalk.cyan('\n/project edit - Alignment Updated\n'));
+  console.log(chalk.dim('The active alignment truth has been updated.\n'));
+  return;
+  /*
+
+  if (lower.includes('constraint') || guidance.includes('约束')) {
+    alignment = appendAlignmentEntry(alignment, 'constraints', guidance);
+  } else if (lower.includes('non-goal') || guidance.includes('非目标')) {
+    alignment = appendAlignmentEntry(alignment, 'nonGoals', guidance);
+  } else if (lower.includes('success') || guidance.includes('成功')) {
+    alignment = appendAlignmentEntry(alignment, 'successCriteria', guidance);
+  } else if (lower.includes('tradeoff') || guidance.includes('取舍')) {
+    alignment = appendAlignmentEntry(alignment, 'acceptedTradeoffs', guidance);
+  } else {
+    alignment = appendAlignmentEntry(alignment, 'confirmedRequirements', guidance);
+  }
+
+  await storage.writeAlignment(normalizeAlignment(alignment));
+  const state = await getWorkflowState(storage);
+  await storage.saveWorkflowState({
+    ...state,
+    stage: state.stage === 'bootstrap' ? 'discovering' : state.stage,
+    lastUpdated: new Date().toISOString(),
+  });
+
+  console.log(chalk.cyan('\n/project edit - Alignment Updated\n'));
+  console.log(chalk.dim('The active alignment truth has been updated.\n'));
+  */
 }
 
 /**
@@ -2105,7 +2860,7 @@ export async function handleProjectCommand(
       break;
 
     case 'plan':
-      await projectPlan(args.slice(1));
+      await projectPlan(args.slice(1), context, callbacks);
       break;
 
     case 'quality':
@@ -2182,12 +2937,17 @@ export async function detectAndShowProjectHint(): Promise<boolean> {
     return false;
   }
 
+  const state = await getWorkflowState(storage);
   const stats = await storage.getStatistics();
+  const hasSessionPlan = (await storage.readSessionPlan()).trim().length > 0;
+  const nextStep = getRecommendedNextStep(state, stats.total > 0, hasSessionPlan);
 
   console.log(chalk.cyan('  📁 Long-running project detected'));
   console.log(chalk.dim(`    ${stats.completed}/${stats.total} features completed [${stats.percentage}%]`));
+  console.log(chalk.dim(`    Stage: ${formatStage(state.stage)}`));
   console.log(chalk.dim('    Use /project status to view progress'));
-  console.log(chalk.dim('    Use /project next to work on next feature'));
+  console.log(chalk.dim(`    Recommended next step: ${nextStep}`));
+  console.log(chalk.dim('    Use /project quality or /project verify when you need diagnostic help'));
   console.log();
 
   return true;
