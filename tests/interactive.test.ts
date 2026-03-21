@@ -161,6 +161,12 @@ describe('BUILTIN_COMMANDS', () => {
     expect(load).toBeDefined();
     expect(sessions).toBeDefined();
   });
+
+  it('should have parallel command', () => {
+    const parallel = BUILTIN_COMMANDS.find(c => c.name === 'parallel');
+    expect(parallel).toBeDefined();
+    expect(parallel?.aliases).toContain('pm');
+  });
 });
 
 // ============== 命令执行测试 ==============
@@ -168,7 +174,14 @@ describe('BUILTIN_COMMANDS', () => {
 describe('executeCommand', () => {
   let context: InteractiveContext;
   let callbacks: CommandCallbacks;
-  let currentConfig: { provider: string; thinking: boolean; auto: boolean; permissionMode?: string };
+  let currentConfig: {
+    provider: string;
+    model?: string;
+    thinking: boolean;
+    reasoningMode: 'off' | 'auto' | 'quick' | 'balanced' | 'deep';
+    parallel: boolean;
+    permissionMode?: string;
+  };
   let exitCalled: boolean;
   let savedSession: { id: string; messages: unknown[]; title: string } | null;
   let loadedSessionId: string | null;
@@ -176,7 +189,13 @@ describe('executeCommand', () => {
 
   beforeEach(async () => {
     context = await createInteractiveContext({});
-    currentConfig = { provider: 'test', thinking: false, auto: false, permissionMode: 'accept-edits' };
+    currentConfig = {
+      provider: 'test',
+      thinking: false,
+      reasoningMode: 'off',
+      parallel: false,
+      permissionMode: 'accept-edits',
+    };
     exitCalled = false;
     savedSession = null;
     loadedSessionId = null;
@@ -263,6 +282,50 @@ describe('executeCommand', () => {
     consoleSpy.mockRestore();
   });
 
+  it('should show current parallel execution mode', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await executeCommand({ command: 'parallel', args: [] }, context, callbacks, currentConfig);
+    const output = consoleSpy.mock.calls.map(c => c.join(' ')).join('\n');
+    expect(output).toContain('Tool execution');
+    expect(output).toContain('serial');
+    consoleSpy.mockRestore();
+  });
+
+  it('should enable parallel execution', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await executeCommand({ command: 'parallel', args: ['on'] }, context, callbacks, currentConfig);
+    expect(currentConfig.parallel).toBe(true);
+    consoleSpy.mockRestore();
+  });
+
+  it('should disable parallel execution', async () => {
+    currentConfig.parallel = true;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await executeCommand({ command: 'parallel', args: ['off'] }, context, callbacks, currentConfig);
+    expect(currentConfig.parallel).toBe(false);
+    consoleSpy.mockRestore();
+  });
+
+  it('should toggle parallel execution', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await executeCommand({ command: 'parallel', args: ['toggle'] }, context, callbacks, currentConfig);
+    expect(currentConfig.parallel).toBe(true);
+
+    await executeCommand({ command: 'parallel', args: ['toggle'] }, context, callbacks, currentConfig);
+    expect(currentConfig.parallel).toBe(false);
+    consoleSpy.mockRestore();
+  });
+
+  it('should reject invalid parallel values', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await executeCommand({ command: 'parallel', args: ['foo'] }, context, callbacks, currentConfig);
+    const output = consoleSpy.mock.calls.map(c => c.join(' ')).join('\n');
+    expect(currentConfig.parallel).toBe(false);
+    expect(output).toContain('Invalid value');
+    expect(output).toContain('Usage: /parallel on|off|toggle');
+    consoleSpy.mockRestore();
+  });
+
   it('should execute mode command with plan arg', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     await executeCommand({ command: 'mode', args: ['plan'] }, context, callbacks, currentConfig);
@@ -297,6 +360,7 @@ describe('executeCommand', () => {
     const output = consoleSpy.mock.calls.map(c => c.join(' ')).join('\n');
     expect(output).toContain('Session Status');
     expect(output).toContain('Permission');
+    expect(output).toContain('Execution');
     expect(output).toContain('Session ID');
     consoleSpy.mockRestore();
   });
@@ -316,11 +380,23 @@ describe('executeCommand', () => {
 describe('Command Aliases', () => {
   let context: InteractiveContext;
   let callbacks: CommandCallbacks;
-  let currentConfig: { provider: string; thinking: boolean; auto: boolean; permissionMode?: string };
+  let currentConfig: {
+    provider: string;
+    thinking: boolean;
+    reasoningMode: 'off' | 'auto' | 'quick' | 'balanced' | 'deep';
+    parallel: boolean;
+    permissionMode?: string;
+  };
 
   beforeEach(async () => {
     context = await createInteractiveContext({});
-    currentConfig = { provider: 'test', thinking: false, auto: false, permissionMode: 'accept-edits' };
+    currentConfig = {
+      provider: 'test',
+      thinking: false,
+      reasoningMode: 'off',
+      parallel: false,
+      permissionMode: 'accept-edits',
+    };
     callbacks = {
       exit: () => {},
       saveSession: async () => {},
@@ -408,11 +484,23 @@ describe('Command Aliases', () => {
 describe('Mode Switching Detailed', () => {
   let context: InteractiveContext;
   let callbacks: CommandCallbacks;
-  let currentConfig: { provider: string; thinking: boolean; auto: boolean; permissionMode?: string };
+  let currentConfig: {
+    provider: string;
+    thinking: boolean;
+    reasoningMode: 'off' | 'auto' | 'quick' | 'balanced' | 'deep';
+    parallel: boolean;
+    permissionMode?: string;
+  };
 
   beforeEach(async () => {
     context = await createInteractiveContext({});
-    currentConfig = { provider: 'test', thinking: false, auto: false, permissionMode: 'accept-edits' };
+    currentConfig = {
+      provider: 'test',
+      thinking: false,
+      reasoningMode: 'off',
+      parallel: false,
+      permissionMode: 'accept-edits',
+    };
     callbacks = {
       exit: () => {},
       saveSession: async () => {},

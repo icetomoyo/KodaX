@@ -30,9 +30,9 @@ _Last Updated: 2026-03-21_
 | v0.6.0 | Released | 6 | 6/6 (100%) |
 | v0.6.10 | Released | 1 | 1/1 (100%) |
 | v0.6.11 | Released | 0 | 0/0 (100%) |
-| v0.6.15 | Planned | 2 | 0/2 (0%) |
+| v0.6.15 | In Progress | 2 | 1/2 (50%) |
 | v0.7.0 | Planned | 6 | 0/6 (0%) |
-| v0.8.0 | Planned | 5 | 0/5 (0%) |
+| v0.8.0 | Planned | 6 | 0/6 (0%) |
 | v1.0.0 | Planned | 3 | 0/3 (0%) |
 | v0.9.0 | Planned | 1 | 0/1 (0%) |
 
@@ -73,11 +73,12 @@ _Last Updated: 2026-03-21_
 | 030 | Enhancement | Planned | High | 多端交付 | v1.0.0 | - | [Design](features/v1.0.0.md#feature_030-multi-surface-delivery) | 2026-03-18 | - | - |
 | 031 | New | Planned | High | 多模态图片上传支持 | v0.9.0 | - | [Design](features/v0.9.0.md#031) | 2026-03-19 | - | - |
 | 032 | Enhancement | Planned | Medium | JSON 输出模式 (--mode json) | v0.7.0 | - | [Design](features/v0.7.0.md#032) | 2026-03-19 | - | - |
-| 033 | Enhancement | Planned | Medium | REPL 并行切换 (/parallel) | v0.6.15 | - | [Design](features/v0.6.15.md#033) | 2026-03-20 | - | - |
+| 033 | Enhancement | Completed | Medium | REPL 并行切换 (/parallel) | v0.6.15 | v0.6.15 | [Design](features/v0.6.15.md#033) | 2026-03-20 | 2026-03-21 | 2026-03-21 |
 | 034 | Enhancement | Planned | High | Extension + Capability Runtime | v0.8.0 | - | [Design](features/v0.8.0.md#034) | 2026-03-20 | - | - |
 | 035 | New | Planned | High | MCP 能力 Provider | v0.7.0 | - | [Design](features/v0.7.0.md#035) | 2026-03-20 | - | - |
 | 036 | Enhancement | Planned | Medium | DeepSeek 内置 Provider 支持 | v0.6.15 | - | [Design](features/v0.6.15.md#036) | 2026-03-20 | - | - |
 | 037 | Enhancement | Planned | Medium | API Token Usage 真实值优先 + 估算回退 | v0.7.0 | - | [Design](features/v0.7.0.md#037) | 2026-03-21 | - | - |
+| 038 | New | Planned | High | Official Sandbox Extension | v0.8.0 | - | [Design](features/v0.8.0.md#feature_038-official-sandbox-extension) | 2026-03-21 | - | - |
 ### 014: 项目模式增强 (COMPLETED)
 - **Category**: Refactor
 - **Status**: Completed
@@ -1275,31 +1276,43 @@ Expand KodaX from a terminal-first tool into a consistent product across IDE, de
 
 ---
 
-### 033: REPL 并行切换 (/parallel) (PLANNED)
+### 033: REPL 并行切换 (/parallel) (COMPLETED)
 - **Category**: Enhancement
-- **Status**: Planned
+- **Status**: Completed
 - **Priority**: Medium
 - **Planned**: v0.6.15
-- **Released**: -
+- **Released**: v0.6.15
 - **Design**: [v0.6.15.md#033](features/v0.6.15.md#033)
 - **Created**: 2026-03-20
-- **Started**: -
-- **Completed**: -
+- **Started**: 2026-03-21
+- **Completed**: 2026-03-21
 
 **Description**:
-将 `--parallel` (并行工具执行) 能力从仅 CLI 启动时指定扩展到 REPL 交互模式中，支持通过 `/parallel` 命令动态切换，并在状态栏显示当前 parallel 状态。
+将 `--parallel` (并行工具执行) 能力从仅 CLI 启动时指定扩展到 REPL 交互模式中，支持通过 `/parallel` 命令动态切换、持久化到用户配置，并在 classic REPL / Ink REPL / 导出的 App 状态栏中一致显示当前执行模式。
 
 **Goals**:
-1. 在 `CurrentConfig` 中添加 `parallel: boolean` 字段
-2. 新增 `/parallel` 命令，支持 toggle on/off 和状态显示
-3. 状态栏显示 parallel 开启状态（类似 thinking/reasoning 的显示方式）
-4. 每次 agent turn 根据 `currentConfig.parallel` 决定是否并行执行工具
+1. ✅ 在 `CurrentConfig` 中添加 `parallel: boolean` 字段
+2. ✅ 新增 `/parallel` 命令，支持 toggle on/off 和状态显示
+3. ✅ 经典 REPL 与 Ink REPL 状态栏显示 `parallel/serial`
+4. ✅ 每次 agent turn 根据 `currentConfig.parallel` 决定是否并行执行工具
+5. ✅ CLI 未显式传入 `-j/--parallel` 时，重启后回落到持久化配置而不是强制覆盖为 `serial`
+6. ✅ 公开 UI `App` 封装向 `StatusBar` 透传 `parallel` 状态
+
+**Implementation Notes**:
+- Added `/parallel` and persisted the toggle in `~/.kodax/config.json`
+- Synced runtime parallel state across classic REPL, Ink REPL, and command callbacks
+- Added execution visibility to `/status`, startup banner, classic status bar, and Ink status bar
+- Fixed CLI option precedence so persisted `/parallel` survives a normal restart unless `-j/--parallel` is explicitly provided
+- Updated the exported `App` UI wrapper so embedded consumers also show `parallel/serial` correctly
+- Verified with targeted Vitest coverage plus `npm run build:packages`
 
 **Key Changes**:
 - 修改 `packages/repl/src/interactive/commands.ts` — 添加 `/parallel` 命令
-- 修改 `packages/repl/src/interactive/context.ts` — CurrentConfig 增加 parallel 字段
-- 修改 `packages/repl/src/ui/InkREPL.tsx` — 状态栏显示 parallel 状态
-- 修改 `packages/repl/src/interactive/invocation-runtime.ts` — 将 parallel 传入 agent options
+- 修改 `packages/repl/src/common/utils.ts` — 读写 `parallel` 用户配置
+- 修改 `packages/repl/src/interactive/repl.ts` 与 `packages/repl/src/ui/InkREPL.tsx` — 同步 runtime `parallel` 状态与 banner/status
+- 修改 `packages/repl/src/interactive/status-bar.ts` 与 `packages/repl/src/ui/components/StatusBar.tsx` — 显示 `parallel/serial`
+- 修改 `packages/repl/src/ui/App.tsx` 与 `packages/repl/src/ui/types.ts` — 导出 UI API 也支持 `parallel`
+- 修改 `src/kodax_cli.ts` — 修复 CLI `parallel` 配置优先级与重启恢复逻辑
 
 ---
 
@@ -1464,10 +1477,53 @@ The legacy draft below is retained temporarily for history. Implementation shoul
 - `packages/agent/src/tokenizer.ts` — 添加 usage 优先 + fallback 逻辑
 - `packages/agent/src/compaction/compaction.ts` — 优先使用真实 usage
 
+---
+
+### 038: Official Sandbox Extension (PLANNED)
+- **Category**: New
+- **Status**: Planned
+- **Priority**: High
+- **Planned**: v0.8.0
+- **Released**: -
+- **Design**: [v0.8.0.md#feature_038-official-sandbox-extension](features/v0.8.0.md#feature_038-official-sandbox-extension)
+- **Created**: 2026-03-21
+- **Started**: -
+- **Completed**: -
+
+**Description**:
+将 sandbox 定义为 `FEATURE_034` 之上的官方可选扩展包 `@kodax/sandbox`，而不是再做一套 core 权限系统。加载后不接管 agent loop、不替换 provider，而是把少数高风险内建工具替换成带边界的版本：`bash` 走进程级隔离，`read/write/edit/glob/grep/undo` 走路径与搜索边界守卫，并暴露 `/sandbox` 状态命令。
+
+**Goals**:
+1. 将“安全边界”从 REPL 审批语义中解耦出来，避免把 sandbox 继续设计成 Permission System 2.0
+2. 让 `FEATURE_034` 的 extension runtime 成为真正可验证的 runtime foundation，而不是停留在抽象 API
+3. 对 `bash` 提供真实的 process sandbox，对文件类工具提供明确的 host-side guard，避免仅靠事件拦截
+4. 用 `off / workspace / dev` 三个极简 profile 覆盖大多数使用场景，并清晰暴露 degraded 状态
+5. 保持 `@kodax/coding` 极简，真正的安全策略、配置解析、provider 选择与命令展示全部放在 `@kodax/sandbox`
+
+**Key Changes**:
+- 新增 `packages/sandbox/` 包，作为官方 optional extension
+- 依赖 `FEATURE_034` 提供的原子化工具定义、同名工具覆盖语义、built-in tool factories 与 extension loader
+- 新增全局/项目级 sandbox 配置合并与 policy 解析：`~/.kodax/sandbox.json` + `<cwd>/.kodax/sandbox.json`
+- v1 覆盖 `bash`、`read`、`write`、`edit`、`glob`、`grep`、`undo`，并新增 `/sandbox` 命令与状态展示
+- v1 正式支持 `srt` provider；provider 不可用时根据 `enforcement = required | best-effort` 决定 fail-closed 还是显式降级
+
+**Recommended Defaults**:
+- 默认 profile: `workspace`
+- 默认 provider: `auto`（macOS/Linux 优先 `srt`，Windows 明确进入 unsupported/degraded 判断）
+- 默认 enforcement: `required`
+- `workspace` 默认关闭网络；`dev` 才开启常见开发域名 allowlist
+- `workspaceRoot` 优先取 git root，缺失时退回当前 cwd
+
+**Relationship to 034**:
+- 038 是 034 的第一个官方“重度扩展”用例，不是对 034 的替代
+- 034 负责 runtime 插槽，038 负责安全策略与工具替换
+- 事件总线在 038 中只用于初始化、状态和诊断，不承担主要 enforcement
+- REPL 仍可保留 plan / accept-edits / auto-in-project 等 UX 语义，但这些不再被描述为 sandbox 本体
+
 ## Summary
-- Total: 36 (17 Planned, 0 In Progress, 19 Completed)
-- By Priority: Critical: 3, High: 27, Medium: 6, Low: 0
+- Total: 38 (17 Planned, 0 In Progress, 21 Completed)
+- By Priority: Critical: 3, High: 28, Medium: 6, Low: 0
 - Current Version: v0.6.11
-- Next Release (v0.6.15): 2 features (033, 036), 0 completed, 0 in progress
-- Future Releases: v0.7.0 (019, 026, 029, 032, 035, 037), v0.8.0 (007, 018, 025, 028, 034), v0.9.0 (031), v1.0.0 (022, 023, 030)
-- Highest Priority Planned: 019 - 会话树与回滚系统 (High), 026 - Roadmap Integrity 与 Tracker Consistency 加固 (High), 029 - Provider Adapter 透明度与语义兼容性 (High), 031 - 多模态图片上传支持 (High), 035 - MCP 能力 Provider (High)
+- Next Release (v0.6.15): 2 features (033, 036), 1 completed, 0 in progress
+- Future Releases: v0.7.0 (019, 026, 029, 032, 035, 037), v0.8.0 (007, 018, 025, 028, 034, 038), v0.9.0 (031), v1.0.0 (022, 023, 030)
+- Highest Priority Planned: 019 - 会话树与回滚系统 (High), 026 - Roadmap Integrity 与 Tracker Consistency 加固 (High), 029 - Provider Adapter 透明度与语义兼容性 (High), 031 - 多模态图片上传支持 (High), 035 - MCP 能力 Provider (High), 038 - Official Sandbox Extension (High)

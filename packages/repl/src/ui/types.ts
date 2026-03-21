@@ -144,6 +144,7 @@ export interface InputPromptProps {
 export interface StatusBarProps {
   sessionId: string;
   permissionMode: PermissionMode;
+  parallel?: boolean;
   provider: string;
   model: string;
   tokenUsage?: {
@@ -211,6 +212,7 @@ export interface AppProps {
   provider: string;
   onSubmit: (input: string) => Promise<void>;
   permissionMode?: PermissionMode;
+  parallel?: boolean;
 }
 
 // ============================================================================

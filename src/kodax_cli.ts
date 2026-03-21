@@ -220,6 +220,19 @@ function resolveCliReasoningMode(
   return 'auto';
 }
 
+export function resolveCliParallel(
+  program: Command,
+  opts: Record<string, unknown>,
+  config: { parallel?: boolean },
+): boolean {
+  const parallelSource = program.getOptionValueSource('parallel');
+  if (parallelSource === 'cli') {
+    return opts.parallel === true;
+  }
+
+  return config.parallel ?? false;
+}
+
 // ============== CLI 选项转换 ==============
 
 function createKodaXOptions(cliOptions: CliOptions, isPrintMode = false): KodaXOptions {
@@ -975,6 +988,7 @@ async function main() {
   // 加载配置文件（用于确定默认值）
   const config = loadConfig();
   const reasoningMode = resolveCliReasoningMode(program, opts, config);
+  const parallel = resolveCliParallel(program, opts, config);
   // CLI 参数优先，否则用配置文件的值，最后用默认值
   // Note: -y/--auto is kept for backward compatibility but has no effect in CLI (YOLO mode is default)
   const options: CliOptions = {
@@ -984,7 +998,7 @@ async function main() {
     thinking: reasoningMode !== 'off',
     reasoningMode,
     session: opts.session,
-    parallel: opts.parallel ?? false,
+    parallel,
     team: opts.team,
     init: opts.init,
     append: opts.append ?? false,

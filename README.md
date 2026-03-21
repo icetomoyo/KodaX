@@ -1,5 +1,7 @@
 # KodaX
 
+[English](README.md) | [中文](README_CN.md)
+
 Extreme Lightweight Coding Agent - TypeScript Implementation
 
 ## Overview

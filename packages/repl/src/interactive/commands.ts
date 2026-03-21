@@ -43,20 +43,16 @@ import {
 import { CommandRegistry } from '../commands/registry.js';
 import { copyCommand } from '../commands/copy-command.js';
 import { newCommand } from '../commands/new-command.js';
-import { toCommandDefinition, type CommandCallbacks, type CommandInvocationRequest } from '../commands/types.js';
+import {
+  toCommandDefinition,
+  type CommandCallbacks,
+  type CommandInvocationRequest,
+  type CurrentConfig,
+} from '../commands/types.js';
 import { registerAllCommands } from '../commands/index.js';
 
 // Re-export types needed by downstream modules - 重新导出下游模块需要的类型
-export type { CommandCallbacks } from '../commands/types.js';
-
-// Current config state (passed from repl.ts) - 当前配置状态（由 repl.ts 传入）
-export interface CurrentConfig {
-  provider: string;
-  model?: string;
-  thinking: boolean;
-  reasoningMode: KodaXReasoningMode;
-  permissionMode: PermissionMode;
-}
+export type { CommandCallbacks, CurrentConfig } from '../commands/types.js';
 
 // Command handler type - 命令处理器类型
 export type CommandHandler = (
@@ -644,8 +640,8 @@ export const BUILTIN_COMMANDS: Command[] = [
             : value === 'off'
               ? 'off'
               : value as KodaXReasoningMode;
-        applyReasoningMode(mode, callbacks, currentConfig);
-        console.log(chalk.cyan(`\n[Reasoning mode: ${mode}] (saved)`));
+        const persistence = applyReasoningMode(mode, callbacks, currentConfig);
+        printPersistedCommandStatus(`Reasoning mode: ${mode}`, persistence);
         return;
       }
 
@@ -693,8 +689,8 @@ export const BUILTIN_COMMANDS: Command[] = [
         return;
       }
 
-      applyReasoningMode(value, callbacks, currentConfig);
-      console.log(chalk.cyan(`\n[Reasoning mode: ${value}] (saved)`));
+      const persistence = applyReasoningMode(value, callbacks, currentConfig);
+      printPersistedCommandStatus(`Reasoning mode: ${value}`, persistence);
     },
     detailedHelp: () => {
       console.log(chalk.cyan('\n/reasoning - Set Reasoning Mode\n'));
@@ -707,6 +703,55 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log(chalk.dim('  /reasoning deep        ') + 'High-depth reasoning');
       console.log(chalk.dim('  /reasoning:auto        ') + 'Inline form, equivalent to /reasoning auto');
       console.log(chalk.dim('  /reason                ') + 'Alias for /reasoning');
+      console.log();
+    },
+  },
+  {
+    name: 'parallel',
+    aliases: ['pm'],
+    description: 'Show or toggle parallel tool execution',
+    usage: '/parallel [on|off|toggle]',
+    handler: async (args, _context, callbacks, currentConfig) => {
+      if (args.length === 0) {
+        const executionMode = currentConfig.parallel
+          ? chalk.green(describeParallelExecution(currentConfig.parallel))
+          : chalk.dim(describeParallelExecution(currentConfig.parallel));
+        console.log(chalk.dim(`\nTool execution: ${executionMode}`));
+        console.log(chalk.dim('Parallel mode lets the agent run independent tool calls concurrently.'));
+        console.log(chalk.dim('Usage: /parallel on|off|toggle\n'));
+        return;
+      }
+
+      const value = args[0].toLowerCase();
+      if (!['on', 'off', 'toggle'].includes(value)) {
+        console.log(chalk.red(`\n[Invalid value: ${args[0]}]`));
+        console.log(chalk.dim('Usage: /parallel on|off|toggle\n'));
+        return;
+      }
+
+      const nextValue =
+        value === 'toggle'
+          ? !currentConfig.parallel
+          : value === 'on';
+
+      const persistence = applyParallelMode(nextValue, callbacks, currentConfig);
+      printPersistedCommandStatus(
+        `Tool execution: ${describeParallelExecution(nextValue)}`,
+        persistence,
+      );
+    },
+    detailedHelp: () => {
+      console.log(chalk.cyan('\n/parallel - Toggle Parallel Tool Execution\n'));
+      console.log(chalk.bold('Usage:'));
+      console.log(chalk.dim('  /parallel          ') + 'Show the current execution mode');
+      console.log(chalk.dim('  /parallel on       ') + 'Enable parallel tool execution');
+      console.log(chalk.dim('  /parallel off      ') + 'Disable parallel tool execution');
+      console.log(chalk.dim('  /parallel toggle   ') + 'Switch between parallel and serial execution');
+      console.log(chalk.dim('  /pm                ') + 'Alias for /parallel');
+      console.log();
+      console.log(chalk.bold('Description:'));
+      console.log(chalk.dim('  When enabled, independent tool calls from a single agent turn can run concurrently.'));
+      console.log(chalk.dim('  The current value is saved to your KodaX config and shown in the status bar.'));
       console.log();
     },
   },
@@ -894,7 +939,7 @@ const COMMAND_CATEGORIES: Record<string, string[]> = {
   General: ['help', 'copy', 'exit', 'clear', 'compact', 'reload', 'status'],
   Permission: ['mode', 'auto'],
   Session: ['new', 'save', 'load', 'sessions', 'history', 'delete'],
-  Settings: ['model', 'thinking', 'reasoning', 'plan'],
+  Settings: ['model', 'thinking', 'reasoning', 'parallel', 'plan'],
   Project: ['project'],
   Skills: ['skill'],
 };
@@ -911,22 +956,76 @@ function reasoningModeToLegacyThinking(mode: KodaXReasoningMode): boolean {
   return mode !== 'off';
 }
 
+function describeParallelExecution(enabled: boolean): 'parallel' | 'serial' {
+  return enabled ? 'parallel' : 'serial';
+}
+
+type ConfigPersistenceResult =
+  | { saved: true }
+  | { saved: false; error: Error };
+
+function persistUserConfig(
+  config: Parameters<typeof saveConfig>[0],
+): ConfigPersistenceResult {
+  try {
+    saveConfig(config);
+    return { saved: true };
+  } catch (error) {
+    return {
+      saved: false,
+      error: error instanceof Error ? error : new Error(String(error)),
+    };
+  }
+}
+
+function printPersistedCommandStatus(
+  message: string,
+  result: ConfigPersistenceResult,
+): void {
+  if (result.saved) {
+    console.log(chalk.cyan(`\n[${message}] (saved)`));
+    return;
+  }
+
+  console.log(chalk.yellow(`\n[${message}]`));
+  console.log(chalk.red(`[Config save failed: ${result.error.message}]`));
+}
+
 function applyReasoningMode(
   mode: KodaXReasoningMode,
   callbacks: CommandCallbacks,
   currentConfig: CurrentConfig,
-): void {
-  currentConfig.reasoningMode = mode;
-  currentConfig.thinking = reasoningModeToLegacyThinking(mode);
-  saveConfig({
+): ConfigPersistenceResult {
+  const thinking = reasoningModeToLegacyThinking(mode);
+  const persistence = persistUserConfig({
     reasoningMode: mode,
-    thinking: currentConfig.thinking,
+    thinking,
   });
+
   if (callbacks.setReasoningMode) {
     callbacks.setReasoningMode(mode);
   } else {
-    callbacks.setThinking?.(currentConfig.thinking);
+    currentConfig.reasoningMode = mode;
+    currentConfig.thinking = thinking;
   }
+
+  return persistence;
+}
+
+function applyParallelMode(
+  enabled: boolean,
+  callbacks: CommandCallbacks,
+  currentConfig: CurrentConfig,
+): ConfigPersistenceResult {
+  const persistence = persistUserConfig({ parallel: enabled });
+
+  if (callbacks.setParallel) {
+    callbacks.setParallel(enabled);
+  } else {
+    currentConfig.parallel = enabled;
+  }
+
+  return persistence;
 }
 
 function printCommandSection(
@@ -1040,6 +1139,7 @@ function printStatus(context: InteractiveContext, currentConfig: CurrentConfig):
   console.log(chalk.dim(`  Provider:    ${chalk.cyan(currentConfig.provider)}${currentConfig.model ? ` / ${chalk.cyan(currentConfig.model)}` : ''}`));
   console.log(chalk.dim(`  Permission:  ${chalk.cyan(currentConfig.permissionMode)}`));
   console.log(chalk.dim(`  Reasoning:   ${chalk.cyan(currentConfig.reasoningMode)}`));
+  console.log(chalk.dim(`  Execution:   ${chalk.cyan(describeParallelExecution(currentConfig.parallel))}`));
   if (capabilityProfile) {
     const capabilitySummary = describeProviderCapabilitySummary(capabilityProfile);
     const capabilityColor = capabilityProfile.transport === 'cli-bridge'
@@ -1192,12 +1292,17 @@ export async function executeCommand(
       return false;
     }
 
-    const result = await cmd.handler(parsed.args, context, callbacks, currentConfig);
-    // Handle project init prompt - 处理项目初始化提示
-    if (result && typeof result === 'object') {
-      return result;
+    try {
+      const result = await cmd.handler(parsed.args, context, callbacks, currentConfig);
+      // Handle project init prompt - 处理项目初始化提示
+      if (result && typeof result === 'object') {
+        return result;
+      }
+      return true;
+    } catch (error) {
+      console.log(chalk.red(`\n[Command failed: ${error instanceof Error ? error.message : String(error)}]`));
+      return false;
     }
-    return true;
   }
 
   console.log(chalk.yellow(`\n[Unknown command: /${parsed.command}. Type /help for available commands]`));

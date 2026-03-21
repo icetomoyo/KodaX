@@ -280,6 +280,7 @@ export function loadConfig(): {
   model?: string;
   thinking?: boolean;
   reasoningMode?: KodaXReasoningMode;
+  parallel?: boolean;
   permissionMode?: string;
   providerReasoningOverrides?: Record<string, KodaXReasoningOverride>;
   providerModels?: Record<string, string[]>;
@@ -299,6 +300,7 @@ export function saveConfig(config: {
   model?: string;
   thinking?: boolean;
   reasoningMode?: KodaXReasoningMode;
+  parallel?: boolean;
   permissionMode?: string;
   providerReasoningOverrides?: Record<string, KodaXReasoningOverride>;
   providerModels?: Record<string, string[]>;

@@ -44,6 +44,7 @@ const currentConfig: CurrentConfig = {
   provider: 'zhipu-coding',
   thinking: true,
   reasoningMode: 'auto',
+  parallel: false,
   permissionMode: 'default' as never,
 };
 

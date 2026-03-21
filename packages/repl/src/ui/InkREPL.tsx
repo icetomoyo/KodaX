@@ -223,6 +223,12 @@ const Banner: React.FC<BannerProps> = ({ config, sessionId, workingDir, compacti
         <Text color={theme.colors.accent}>
           {config.permissionMode}
         </Text>
+        <Text dimColor>
+          {" | "}
+        </Text>
+        <Text color={config.parallel ? theme.colors.success : theme.colors.dim}>
+          {config.parallel ? "parallel" : "serial"}
+        </Text>
         {config.reasoningMode !== 'off' && (
           <Text color={theme.colors.warning}>
             {` +reason:${config.reasoningMode}`}
@@ -553,6 +559,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const statusBarProps = useMemo(() => ({
     sessionId: context.sessionId,
     permissionMode: currentConfig.permissionMode,
+    parallel: currentConfig.parallel,
     provider: currentConfig.provider,
     model: currentConfig.model ?? getProviderModel(currentConfig.provider) ?? currentConfig.provider,
     currentTool: displayStreamingState.currentTool,
@@ -573,6 +580,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }), [
     context.sessionId,
     currentConfig.permissionMode,
+    currentConfig.parallel,
     currentConfig.provider,
     currentConfig.model,
     currentConfig.thinking,
@@ -686,6 +694,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   // Note: permissionMode and alwaysAllowTools are stored separately for permission checks
   const currentOptionsRef = useRef<InkREPLOptions>({
     ...options,
+    parallel: currentConfig.parallel,
     thinking: currentConfig.thinking,
     reasoningMode: currentConfig.reasoningMode,
     session: {
@@ -1530,6 +1539,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       {
         ...currentOptionsRef.current,
         provider: currentConfig.provider,
+        parallel: currentConfig.parallel,
         thinking: currentConfig.thinking,
         reasoningMode: currentConfig.reasoningMode,
       },
@@ -1772,6 +1782,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             currentOptionsRef.current.thinking = thinking;
             currentOptionsRef.current.reasoningMode = mode;
           },
+          setParallel: (enabled: boolean) => {
+            // Persistence is handled by the command layer; this callback only syncs runtime state and UI.
+            setCurrentConfig((prev) => ({
+              ...prev,
+              parallel: enabled,
+            }));
+            currentOptionsRef.current.parallel = enabled;
+          },
           setPermissionMode: (mode: PermissionMode) => {
             setSessionPermissionMode(mode);
           },
@@ -1788,6 +1806,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             ...currentOptionsRef.current,
             provider: currentConfig.provider,
             model: currentConfig.model,
+            parallel: currentConfig.parallel,
             thinking: currentConfig.thinking,
             reasoningMode: currentConfig.reasoningMode,
             events: createStreamingEvents(), // Include streaming events for /project commands
@@ -2043,6 +2062,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           await runWithPlanMode(processed, {
             ...currentOptionsRef.current,
             provider: currentConfig.provider,
+            parallel: currentConfig.parallel,
             thinking: currentConfig.thinking,
             reasoningMode: currentConfig.reasoningMode,
           });
@@ -2489,6 +2509,7 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
   const initialModel = options.model ?? config.model;
   const initialReasoningMode = resolveInitialReasoningMode(options, config);
   const initialThinking = initialReasoningMode !== 'off';
+  const initialParallel = options.parallel ?? config.parallel ?? false;
   // Load permission mode from config file (not from CLI options)
   // CLI is always YOLO mode; REPL uses config file for permission mode
   const initialPermissionMode: PermissionMode =
@@ -2499,6 +2520,7 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
     model: initialModel,
     thinking: initialThinking,
     reasoningMode: initialReasoningMode,
+    parallel: initialParallel,
     permissionMode: initialPermissionMode,
   };
 

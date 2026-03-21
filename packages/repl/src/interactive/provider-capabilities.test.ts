@@ -16,6 +16,7 @@ describe('provider capability disclosure', () => {
       provider: 'gemini-cli',
       thinking: true,
       reasoningMode: 'balanced',
+      parallel: false,
       permissionMode: 'accept-edits',
     };
   });

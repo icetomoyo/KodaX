@@ -64,4 +64,16 @@ describe("StatusBar", () => {
     expect(text).toContain("session-1");
     expect(text).not.toContain("Bash (12 chars)");
   });
+
+  it("shows execution mode in the status text", () => {
+    const text = getStatusBarText({
+      sessionId: "session-1",
+      permissionMode: "accept-edits",
+      parallel: true,
+      provider: "anthropic",
+      model: "sonnet",
+    });
+
+    expect(text).toContain("parallel");
+  });
 });
