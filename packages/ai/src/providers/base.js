@@ -20,20 +20,35 @@ export class KodaXBaseProvider {
     getModel() {
         return this.config.model;
     }
+    getAvailableModels() {
+        if (!this.config.models?.length)
+            return [this.config.model];
+        return [...new Set([this.config.model, ...this.config.models.map(m => m.id)])];
+    }
+    getModelDescriptor(modelId) {
+        if (!modelId || modelId === this.config.model) {
+            return { id: this.config.model };
+        }
+        return this.config.models?.find(m => m.id === modelId);
+    }
     getBaseUrl() {
         return this.config.baseUrl;
     }
     getCapabilityProfile() {
         return cloneCapabilityProfile(this.config.capabilityProfile ?? NATIVE_PROVIDER_CAPABILITY_PROFILE);
     }
-    getConfiguredReasoningCapability() {
+    getConfiguredReasoningCapability(modelOverride) {
+        const descriptor = this.getModelDescriptor(modelOverride);
+        if (descriptor?.reasoningCapability) {
+            return descriptor.reasoningCapability;
+        }
         return getReasoningCapability(this.config);
     }
     getReasoningCapability(modelOverride) {
         const override = loadReasoningOverride(this.name, this.config, modelOverride);
         return override
             ? reasoningOverrideToCapability(override)
-            : this.getConfiguredReasoningCapability();
+            : this.getConfiguredReasoningCapability(modelOverride);
     }
     getReasoningOverride(modelOverride) {
         return loadReasoningOverride(this.name, this.config, modelOverride);

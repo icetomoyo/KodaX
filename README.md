@@ -6,7 +6,7 @@ Extreme Lightweight Coding Agent - TypeScript Implementation
 
 ## Overview
 
-KodaX is a **modular, lightweight AI coding agent** built with TypeScript. It supports **10 LLM providers**, works as both a CLI tool and a library, and includes a distinctive **Project Mode / harness engineering** workflow for long-running coding tasks.
+KodaX is a **modular, lightweight AI coding agent** built with TypeScript. It supports **11 LLM providers**, works as both a CLI tool and a library, and includes a distinctive **Project Mode / harness engineering** workflow for long-running coding tasks.
 
 **Core Philosophy**: Transparent, Flexible, Minimalist
 
@@ -24,7 +24,7 @@ KodaX is a **modular, lightweight AI coding agent** built with TypeScript. It su
 | Feature | KodaX | Typical hosted coding assistant |
 |---------|-------|----------------------------------|
 | **Architecture** | Modular (5 packages), library-friendly | Usually product-first, less reusable as code |
-| **Provider choice** | 10 providers, custom provider support | Often optimized for one provider |
+| **Provider choice** | 11 providers, custom provider support | Often optimized for one provider |
 | **Customization** | Edit prompts, tools, skills, session flow directly | Limited extension surface |
 | **Codebase clarity** | Small TypeScript monorepo | Often much larger and harder to trace |
 | **Learning value** | Good for understanding agent internals | More black-box |
@@ -178,7 +178,7 @@ KodaX uses a **monorepo architecture** with npm workspaces, consisting of 5 pack
 KodaX/
 ├── packages/
 │   ├── ai/                  # @kodax/ai - Independent LLM abstraction layer
-│   │   └── providers/       # 10 LLM providers (Anthropic, OpenAI, etc.)
+│   │   └── providers/       # 11 LLM providers (Anthropic, OpenAI, DeepSeek, etc.)
 │   │
 │   ├── agent/               # @kodax/agent - Generic Agent framework
 │   │   └── session/         # Session management, message handling
@@ -239,7 +239,7 @@ KodaX/
 ## Features
 
 - **Modular Architecture** - Use as CLI or as a library
-- **10 LLM Providers** - Anthropic, OpenAI, Kimi, Kimi Code, Qwen, Zhipu, Zhipu Coding, MiniMax Coding, Gemini CLI, Codex CLI
+- **11 LLM Providers** - Anthropic, OpenAI, DeepSeek, Kimi, Kimi Code, Qwen, Zhipu, Zhipu Coding, MiniMax Coding, Gemini CLI, Codex CLI
 - **Reasoning Modes** - Unified `off/auto/quick/balanced/deep` interface across providers
 - **Streaming Output** - Real-time response display
 - **8 Tools** - read, write, edit, bash, glob, grep, undo, ask_user_question
@@ -586,7 +586,7 @@ for await (const result of stream) {
 ```
 
 **Key Features**:
-- 10 LLM providers with unified interface
+- 11 LLM providers with unified interface
 - Streaming output support
 - Thinking mode support
 - Error handling and retry logic
@@ -744,14 +744,15 @@ import { InkREPL } from '@kodax/repl';
 
 | Provider | Environment Variable | Reasoning Support | Default Model |
 |----------|----------------------|-------------------|---------------|
-| anthropic | `ANTHROPIC_API_KEY` | Native | claude-sonnet-4-6 |
-| openai | `OPENAI_API_KEY` | Native | gpt-5.3-codex |
-| kimi | `KIMI_API_KEY` | Native | k2.5 |
-| kimi-code | `KIMI_API_KEY` | Native | k2.5 |
-| qwen | `QWEN_API_KEY` | Native | qwen3.5-plus |
-| zhipu | `ZHIPU_API_KEY` | Native | glm-5 |
-| zhipu-coding | `ZHIPU_API_KEY` | Native | glm-5 |
-| minimax-coding | `MINIMAX_API_KEY` | Native | MiniMax-M2.5 |
+| anthropic | `ANTHROPIC_API_KEY` | Native budget | claude-sonnet-4-6 |
+| openai | `OPENAI_API_KEY` | Native effort | gpt-5.3-codex |
+| deepseek | `DEEPSEEK_API_KEY` | Native toggle on `deepseek-chat`; model-selected reasoning on `deepseek-reasoner` | deepseek-chat |
+| kimi | `KIMI_API_KEY` | Native effort | k2.5 |
+| kimi-code | `KIMI_API_KEY` | Native budget | k2.5 |
+| qwen | `QWEN_API_KEY` | Native budget | qwen3.5-plus |
+| zhipu | `ZHIPU_API_KEY` | Native budget | glm-5 |
+| zhipu-coding | `ZHIPU_API_KEY` | Native budget | glm-5 |
+| minimax-coding | `MINIMAX_API_KEY` | Native budget | MiniMax-M2.5 |
 | gemini-cli | `GEMINI_API_KEY` | Prompt-only / CLI bridge | (via gemini CLI) |
 | codex-cli | `OPENAI_API_KEY` | Prompt-only / CLI bridge | (via codex CLI) |
 
@@ -764,6 +765,11 @@ kodax --provider zhipu-coding --thinking "Help me optimize this code"
 # Use OpenAI
 export OPENAI_API_KEY=your_key
 kodax --provider openai "Create a REST API"
+
+# Use DeepSeek
+export DEEPSEEK_API_KEY=your_key
+kodax --provider deepseek "Summarize this repository"
+kodax --provider deepseek --model deepseek-reasoner "Think through this refactor plan"
 
 # Resume last session
 kodax --session resume

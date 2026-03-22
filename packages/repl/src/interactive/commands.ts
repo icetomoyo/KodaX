@@ -618,7 +618,7 @@ export const BUILTIN_COMMANDS: Command[] = [
     usage: '/thinking [on|off|auto|quick|balanced|deep]',
     handler: async (args, _context, callbacks, currentConfig) => {
       if (args.length === 0) {
-        const capability = getProviderReasoningCapability(currentConfig.provider);
+        const capability = getProviderReasoningCapability(currentConfig.provider, currentConfig.model);
         const status = currentConfig.thinking ? chalk.green('ON') : chalk.dim('OFF');
         console.log(chalk.dim(`\nThinking: ${status}`));
         console.log(chalk.dim(`Reasoning mode: ${chalk.cyan(currentConfig.reasoningMode)}`));
@@ -673,7 +673,7 @@ export const BUILTIN_COMMANDS: Command[] = [
     usage: '/reasoning [off|auto|quick|balanced|deep]',
     handler: async (args, _context, callbacks, currentConfig) => {
       if (args.length === 0) {
-        const capability = getProviderReasoningCapability(currentConfig.provider);
+        const capability = getProviderReasoningCapability(currentConfig.provider, currentConfig.model);
         console.log(chalk.dim(`\nReasoning mode: ${chalk.cyan(currentConfig.reasoningMode)}`));
         console.log(chalk.dim(`Thinking compatibility: ${currentConfig.thinking ? chalk.green('ON') : chalk.dim('OFF')}`));
         console.log(chalk.dim(`Effective control: ${chalk.cyan(describeReasoningCapabilityControl(capability))}`));

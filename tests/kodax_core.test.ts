@@ -132,6 +132,7 @@ describe('Core Module Exports', () => {
     expect(typeof KODAX_PROVIDERS).toBe('object');
     expect(Object.keys(KODAX_PROVIDERS)).toContain('anthropic');
     expect(Object.keys(KODAX_PROVIDERS)).toContain('openai');
+    expect(Object.keys(KODAX_PROVIDERS)).toContain('deepseek');
     expect(Object.keys(KODAX_PROVIDERS)).toContain('zhipu-coding');
   });
 
@@ -386,9 +387,9 @@ describe('Tool Definitions', () => {
 // ============== Provider 测试 ==============
 
 describe('Provider System', () => {
-  it('should have 8 providers', () => {
+  it('should have 11 providers', () => {
     const providerCount = Object.keys(KODAX_PROVIDERS).length;
-    expect(providerCount).toBe(10);
+    expect(providerCount).toBe(11);
   });
 
   it('should throw error for unknown provider', () => {

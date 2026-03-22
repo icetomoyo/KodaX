@@ -175,7 +175,7 @@ function resolveInitialReasoningMode(
 const Banner: React.FC<BannerProps> = ({ config, sessionId, workingDir, compactionInfo }) => {
   const theme = getTheme("dark");
   const model = config.model ?? getProviderModel(config.provider) ?? config.provider;
-  const reasoningCapability = getProviderReasoningCapability(config.provider);
+  const reasoningCapability = getProviderReasoningCapability(config.provider, config.model);
   const reasoningCapabilityShort = formatReasoningCapabilityShort(reasoningCapability);
   const terminalWidth = process.stdout.columns ?? 80;
   const dividerWidth = Math.min(60, terminalWidth - 4);
@@ -565,9 +565,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     currentTool: displayStreamingState.currentTool,
     thinking: currentConfig.thinking,
     reasoningMode: currentConfig.reasoningMode,
-    reasoningCapability: formatReasoningCapabilityShort(
-      getProviderReasoningCapability(currentConfig.provider),
-    ),
+            reasoningCapability: formatReasoningCapabilityShort(
+              getProviderReasoningCapability(currentConfig.provider, currentConfig.model),
+            ),
     isThinkingActive: displayStreamingState.isThinking,
     thinkingCharCount: displayStreamingState.thinkingCharCount,
     toolInputCharCount: displayStreamingState.toolInputCharCount,

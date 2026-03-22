@@ -1,10 +1,10 @@
-# KodaX
+﻿# KodaX
 
 <div align="center">
 
 **一个真正好用的轻量级 AI 编程助手（TypeScript 版本）。**
 
-5层模块化架构 • 10 个大模型 • 流式输出 • 并行执行 • 长运行模式 • 可作为库使用
+5层模块化架构 • 11 个大模型 • 流式输出 • 并行执行 • 长运行模式 • 可作为库使用
 
 [![Node.js 18+](https://img.shields.io/badge/node-18+-green.svg)](https://nodejs.org/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
@@ -24,7 +24,7 @@ KodaX 是 KodaXP 的 TypeScript 版本，专为想要**理解**、**定制**和*
 | **架构** | 5层模块化，每层可独立使用 | 通常只能作为 CLI 使用 |
 | **代码** | 清晰分离，易于理解和定制 | 成千上万文件，难以理解 |
 | **类型** | TypeScript 原生类型安全 | 无类型或弱类型 |
-| **模型** | 10 个 LLM 供应商，随意切换 | 通常只支持单一供应商 |
+| **模型** | 11 个 LLM 供应商，随意切换 | 通常只支持单一供应商 |
 | **成本** | 可用便宜的国内模型（Kimi、智谱、通义） | 往往需要昂贵订阅 |
 | **长运行** | Feature 跟踪 + 自动继续 | 通常需要人工监督 |
 | **定制** | 直接修改代码即可 | 复杂的插件系统 |
@@ -189,7 +189,7 @@ KodaX 使用 **monorepo 架构**，基于 npm workspaces，由 5 个独立的包
 KodaX/
 ├── packages/
 │   ├── ai/                  # @kodax/ai - 独立的 LLM 抽象层
-│   │   └── providers/       # 10 个 LLM 提供商 (Anthropic, OpenAI, etc.)
+│   │   └── providers/       # 11 个 LLM 提供商 (Anthropic, OpenAI, DeepSeek, etc.)
 │   │
 │   ├── agent/               # @kodax/agent - 通用 Agent 框架
 │   │   └── session/         # 会话管理、消息处理
@@ -270,7 +270,7 @@ KodaX/
 ## 特性
 
 - **5层模块化架构** - 每层可独立使用，可作为库
-- **10 个模型** - Anthropic, OpenAI, Gemini CLI, Codex CLI, Kimi, Kimi Code, 智谱, 智谱 Coding, 通义千问, Minimax
+- **11 个模型** - Anthropic, OpenAI, DeepSeek, Gemini CLI, Codex CLI, Kimi, Kimi Code, 智谱, 智谱 Coding, 通义千问, Minimax
 - **推理模式** - 统一的 `off/auto/quick/balanced/deep` 推理接口
 - **流式输出** - 实时显示，不用等待
 - **8 个工具** - read, write, edit, bash, glob, grep, undo, ask_user_question
@@ -613,7 +613,7 @@ for await (const result of stream) {
 ```
 
 **核心特性**:
-- 10 个 LLM Provider，统一接口
+- 11 个 LLM Provider，统一接口
 - 流式输出支持
 - 推理模式支持
 - 错误处理和重试逻辑
@@ -779,10 +779,22 @@ import { InkREPL } from '@kodax/repl';
 | `kimi` | `KIMI_API_KEY` | 原生 | `k2.5` |
 | `anthropic` | `ANTHROPIC_API_KEY` | 原生 | `claude-sonnet-4-6` |
 | `openai` | `OPENAI_API_KEY` | 原生 | `gpt-5.3-codex` |
+| `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-chat` 原生 toggle；`deepseek-reasoner` 按模型切换推理 | `deepseek-chat` |
 | `qwen` | `QWEN_API_KEY` | 原生 | `qwen3.5-plus` |
 | `minimax-coding` | `MINIMAX_API_KEY` | 原生 | `MiniMax-M2.5` |
 | `gemini-cli` | `GEMINI_API_KEY` | prompt-only / CLI bridge | `gemini-cli` |
 | `codex-cli` | `OPENAI_API_KEY` | prompt-only / CLI bridge | `codex-cli` |
+
+---
+
+### DeepSeek 示例
+
+```bash
+# PowerShell
+$env:DEEPSEEK_API_KEY="your_key"
+kodax --provider deepseek "总结这个仓库"
+kodax --provider deepseek --model deepseek-reasoner "分析这个重构方案"
+```
 
 ---
 

@@ -56,6 +56,11 @@ describe('provider capability disclosure', () => {
     expect(getProviderReasoningCapability('codex-cli')).toBe('prompt-only');
   });
 
+  it('resolves deepseek capability by active model when available', () => {
+    expect(getProviderReasoningCapability('deepseek', 'deepseek-chat')).toBe('native-toggle');
+    expect(getProviderReasoningCapability('deepseek', 'deepseek-reasoner')).toBe('none');
+  });
+
   it('does not overstate MCP support for native API providers', async () => {
     currentConfig.provider = 'anthropic';
 

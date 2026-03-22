@@ -1,6 +1,6 @@
 # Feature List
 
-_Last Updated: 2026-03-21_
+_Last Updated: 2026-03-22_
 
 ---
 
@@ -9,7 +9,7 @@ _Last Updated: 2026-03-21_
 | 字段 | 值 | 说明 |
 |------|-----|------|
 | **Current Release** | v0.6.11 | 最新发布版本（仅供参考） |
-| **Planned Version** | v0.7.0 | 当前规划的版本 |
+| **Planned Version** | v0.6.20 | 当前规划的版本 |
 
 ---
 
@@ -30,7 +30,8 @@ _Last Updated: 2026-03-21_
 | v0.6.0 | Released | 6 | 6/6 (100%) |
 | v0.6.10 | Released | 1 | 1/1 (100%) |
 | v0.6.11 | Released | 0 | 0/0 (100%) |
-| v0.6.15 | In Progress | 2 | 1/2 (50%) |
+| v0.6.15 | Completed | 2 | 2/2 (100%) |
+| v0.6.20 | Planned | 2 | 0/2 (0%) |
 | v0.7.0 | Planned | 6 | 0/6 (0%) |
 | v0.8.0 | Planned | 6 | 0/6 (0%) |
 | v1.0.0 | Planned | 3 | 0/3 (0%) |
@@ -76,9 +77,11 @@ _Last Updated: 2026-03-21_
 | 033 | Enhancement | Completed | Medium | REPL 并行切换 (/parallel) | v0.6.15 | v0.6.15 | [Design](features/v0.6.15.md#033) | 2026-03-20 | 2026-03-21 | 2026-03-21 |
 | 034 | Enhancement | Planned | High | Extension + Capability Runtime | v0.8.0 | - | [Design](features/v0.8.0.md#034) | 2026-03-20 | - | - |
 | 035 | New | Planned | High | MCP 能力 Provider | v0.7.0 | - | [Design](features/v0.7.0.md#035) | 2026-03-20 | - | - |
-| 036 | Enhancement | Planned | Medium | DeepSeek 内置 Provider 支持 | v0.6.15 | - | [Design](features/v0.6.15.md#036) | 2026-03-20 | - | - |
+| 036 | Enhancement | Completed | Medium | DeepSeek 内置 Provider 支持 | v0.6.15 | v0.6.15 | [Design](features/v0.6.15.md#036) | 2026-03-20 | 2026-03-21 | 2026-03-21 |
 | 037 | Enhancement | Planned | Medium | API Token Usage 真实值优先 + 估算回退 | v0.7.0 | - | [Design](features/v0.7.0.md#037) | 2026-03-21 | - | - |
 | 038 | New | Planned | High | Official Sandbox Extension | v0.8.0 | - | [Design](features/v0.8.0.md#feature_038-official-sandbox-extension) | 2026-03-21 | - | - |
+| 039 | Enhancement | Planned | High | Plan 模式双写白名单（项目说明文档 + 系统临时目录） | v0.6.20 | - | [Design](features/v0.6.20.md#039) | 2026-03-22 | - | - |
+| 040 | New | Planned | High | ACP Server 支持（供编辑器/IDE 直接调用） | v0.6.20 | - | [Design](features/v0.6.20.md#040) | 2026-03-22 | - | - |
 ### 014: 项目模式增强 (COMPLETED)
 - **Category**: Refactor
 - **Status**: Completed
@@ -1398,32 +1401,32 @@ The legacy draft below is retained temporarily for history. Implementation shoul
 
 **Implementation Plan**: 见 [v0.7.0.md#035](features/v0.7.0.md#035)
 
-### 036: DeepSeek 内置 Provider 支持 (PLANNED)
+### 036: DeepSeek 内置 Provider 支持 (COMPLETED)
 - **Category**: Enhancement
-- **Status**: Planned
+- **Status**: Completed
 - **Priority**: Medium
 - **Planned**: v0.6.15
-- **Released**: -
+- **Released**: v0.6.15
 - **Design**: [v0.6.15.md#036](features/v0.6.15.md#036)
 - **Created**: 2026-03-20
-- **Started**: -
-- **Completed**: -
+- **Started**: 2026-03-21
+- **Completed**: 2026-03-21
 
 **Description**:
-为 KodaX 添加 DeepSeek 作为第 11 个内置 provider，基于 DeepSeek-V3.2。使用 OpenAI 兼容协议（`KodaXOpenAICompatProvider`），包含 `deepseek-chat`（非思考模式）和 `deepseek-reasoner`（CoT 思考模式）两个模型。
+为 KodaX 添加 `deepseek` 作为第 11 个内置 provider，直接接入官方 `https://api.deepseek.com`，并补齐 DeepSeek 在推理流和 tool turn 回放上的真实兼容语义，而不是只停留在 registry 注册层。
 
 **Goals**:
 1. **内置 Provider** — 注册为 `deepseek` 内置 provider，无需用户手动配置 custom provider
-2. **双模型支持** — `deepseek-chat`（默认，128K 上下文）和 `deepseek-reasoner`（推理模式，64K 输出）
-3. **原生推理** — `deepseek-reasoner` 通过 `native-effort` reasoning capability 支持 CoT 推理
-4. **完整功能** — 支持 JSON Output、Tool Calls、FIM Completion
+2. **双模型支持** — `deepseek-chat` 作为默认模型，额外暴露 `deepseek-reasoner`
+3. **正确推理语义** — `deepseek-chat` 走原生 thinking toggle，`deepseek-reasoner` 作为模型选择而不是伪装成 `native-effort`
+4. **Tool Turn 回放正确** — assistant `tool_use`、user `tool_result` 和 DeepSeek `reasoning_content` 都能在 OpenAI-compatible 路径下正确回放
 
-**Key Parameters**:
-- Base URL: `https://api.deepseek.com`
-- API Key 环境变量: `DEEPSEEK_API_KEY`
-- 上下文窗口: 128K
-- 最大输出: `deepseek-chat` 8K / `deepseek-reasoner` 64K
-- Reasoning: `native-effort`
+**Implementation Notes**:
+- 内置环境变量为 `DEEPSEEK_API_KEY`
+- 默认模型为 `deepseek-chat`，补充模型为 `deepseek-reasoner`
+- provider snapshot 暴露 128K context window / 64K max output token 语义
+- 流式 `reasoning_content` 会映射为 KodaX `thinkingBlocks`，并驱动 `onThinkingDelta()` / `onThinkingEnd()`
+- REPL 的 reasoning capability 展示按当前模型区分 `deepseek-chat` 与 `deepseek-reasoner`
 
 ### 037: API Token Usage 真实值优先 + 估算回退 (PLANNED)
 - **Category**: Enhancement
@@ -1520,10 +1523,66 @@ The legacy draft below is retained temporarily for history. Implementation shoul
 - 事件总线在 038 中只用于初始化、状态和诊断，不承担主要 enforcement
 - REPL 仍可保留 plan / accept-edits / auto-in-project 等 UX 语义，但这些不再被描述为 sandbox 本体
 
+### 039: Plan 模式双写白名单（项目说明文档 + 系统临时目录） (PLANNED)
+- **Category**: Enhancement
+- **Status**: Planned
+- **Priority**: High
+- **Planned**: v0.6.20
+- **Released**: -
+- **Design**: [v0.6.20.md#039](features/v0.6.20.md#039)
+- **Created**: 2026-03-22
+- **Started**: -
+- **Completed**: -
+
+**Description**:
+在保持 Plan 模式“默认禁止写入”的主语义不变的前提下，增加一个严格受限的双写白名单：允许写入当前项目下的 `.agent/plan_mode_doc.md`，以及当前操作系统的系统临时目录，用于计划说明、阶段性草稿和临时产物落盘，但仍然禁止写入其他工作区文件与任意非临时系统路径。
+**Goals**:
+1. **项目内固定文档出口** - 只允许写入 `<workspace>/.agent/plan_mode_doc.md`，为 Plan 模式提供稳定的计划说明文件
+2. **系统临时目录出口** - 允许写入系统临时目录，支持临时草稿、推导中间结果和一次性附件
+3. **跨平台路径约定明确** - Windows 使用 `%TEMP%`/`%TMP%`（通常是 `C:\Users\<user>\AppData\Local\Temp`）；macOS 优先使用 `$TMPDIR`（通常位于 `/var/folders/.../T/`）；Linux 优先使用 `$TMPDIR`，未设置时回退到 `/tmp`
+4. **边界依旧收紧** - 除上述两个位置外，Plan 模式仍禁止任何其他写入、编辑和重命名落盘
+5. **路径归一化安全** - 对符号链接、相对路径、`..` 跳转和大小写差异做归一化校验，避免借白名单绕过写入边界
+
+**Key Changes**:
+- Plan 模式写权限判定从“全禁写”调整为“仅放行两个精确目标”
+- 项目白名单目标固定为 `.agent/plan_mode_doc.md`，不扩展到整个 `.agent/` 目录
+- 系统临时目录白名单按操作系统解析，不把任意名为 `tmp` 的项目目录视作合法出口
+- 工具报错信息需要明确提示允许的两个写入位置及当前系统识别到的临时目录
+- 文档中明确 Windows / macOS / Linux 的临时目录解析优先级，避免实现歧义
+
+### 040: ACP Server 支持（供编辑器/IDE 直接调用） (PLANNED)
+- **Category**: New
+- **Status**: Planned
+- **Priority**: High
+- **Planned**: v0.6.20
+- **Released**: -
+- **Design**: [v0.6.20.md#040](features/v0.6.20.md#040)
+- **Created**: 2026-03-22
+- **Started**: -
+- **Completed**: -
+
+**Description**:
+让 KodaX 从“能够桥接 ACP/CLI 的内部消费者”升级为“能够直接作为 ACP Server 暴露给外部编辑器、IDE 和其他宿主工具调用”的正式能力。外部工具可以通过 ACP 与 KodaX 建立会话、发送 prompt、接收流式文本与工具调用更新，并把 KodaX 当作一个标准 agent 运行时来接入，而不必依赖私有集成方式。
+**Goals**:
+1. **对外 ACP Server 化** - 提供正式的 ACP server 入口，而不只是内部 `pseudo-acp-server` 适配层
+2. **编辑器可直接接入** - 让支持 ACP 的编辑器/IDE 能通过 stdio 或约定启动方式直接调用 KodaX
+3. **会话与流式事件兼容** - 支持 session lifecycle、prompt、cancel、message chunk、tool call update 等核心 ACP 交互
+4. **权限与工具语义保真** - 外部 ACP 调用必须沿用与 REPL 相同的权限模式、工具执行反馈和中断语义
+5. **权限模型不分叉** - ACP 只是接入协议，不引入独立于 REPL 的第二套权限系统；继续复用 `plan / default / accept-edits / auto-in-project`
+6. **公共集成契约清晰** - 文档化启动方式、握手、能力边界和推荐接入姿势，便于第三方宿主稳定集成
+
+**Key Changes**:
+- 新增用户可见的 ACP server 启动入口，而不是只在 provider/bridge 内部使用 ACP
+- 将现有 `acp-client` / `acp-base` / `pseudo-acp-server` 的内部能力梳理为可对外复用的 server runtime
+- 明确 KodaX 在 ACP 语义中的 session、prompt、cancel、tool call、permission request 映射
+- ACP 权限判定复用 REPL 现有权限层，默认模式下通过 ACP permission request 向宿主请求审批；宿主不支持时必须拒绝高风险操作而不是自动放行
+- 为编辑器/IDE 场景补齐稳定的启动参数、错误输出与能力声明
+- README / 集成文档需要新增“如何把 KodaX 作为 ACP agent 接入外部工具”的说明
+
 ## Summary
-- Total: 38 (17 Planned, 0 In Progress, 21 Completed)
-- By Priority: Critical: 3, High: 28, Medium: 6, Low: 0
+- Total: 40 (18 Planned, 0 In Progress, 22 Completed)
+- By Priority: Critical: 3, High: 30, Medium: 6, Low: 0
 - Current Version: v0.6.11
-- Next Release (v0.6.15): 2 features (033, 036), 1 completed, 0 in progress
-- Future Releases: v0.7.0 (019, 026, 029, 032, 035, 037), v0.8.0 (007, 018, 025, 028, 034, 038), v0.9.0 (031), v1.0.0 (022, 023, 030)
-- Highest Priority Planned: 019 - 会话树与回滚系统 (High), 026 - Roadmap Integrity 与 Tracker Consistency 加固 (High), 029 - Provider Adapter 透明度与语义兼容性 (High), 031 - 多模态图片上传支持 (High), 035 - MCP 能力 Provider (High), 038 - Official Sandbox Extension (High)
+- Next Release (v0.6.20): 2 features (039, 040), 0 completed, 0 in progress
+- Future Releases: v0.6.20 (039, 040), v0.7.0 (019, 026, 029, 032, 035, 037), v0.8.0 (007, 018, 025, 028, 034, 038), v0.9.0 (031), v1.0.0 (022, 023, 030)
+- Highest Priority Planned: 019 - 会话树与回滚系统 (High), 026 - Roadmap Integrity 与 Tracker Consistency 加固 (High), 029 - Provider Adapter 透明度与语义兼容性 (High), 031 - 多模态图片上传支持 (High), 035 - MCP 能力 Provider (High), 038 - Official Sandbox Extension (High), 039 - Plan 模式双写白名单（项目说明文档 + 系统临时目录） (High), 040 - ACP Server 支持（供编辑器/IDE 直接调用） (High)

@@ -107,14 +107,15 @@ export function getProviderAvailableModels(name: string, providerModelsConfig?: 
 
 export function getProviderReasoningCapability(
   name: string,
+  model?: string,
 ): KodaXReasoningCapability | 'unknown' {
   // Try built-in provider snapshot first (no API key needed)
-  const capability = getProviderConfiguredReasoningCapability(name);
+  const capability = getProviderConfiguredReasoningCapability(name, model);
   if (capability !== 'unknown') return capability;
   // Fallback: check custom providers
   try {
     const custom = getCustomProvider(name);
-    if (custom) return custom.getReasoningCapability();
+    if (custom) return custom.getReasoningCapability(model);
   } catch { /* ignore */ }
   return 'unknown';
 }
