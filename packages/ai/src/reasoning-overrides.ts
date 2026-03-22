@@ -12,6 +12,39 @@ type StoredConfig = {
   [key: string]: unknown;
 };
 
+type StoredConfigCache = {
+  filePath: string;
+  config: StoredConfig;
+};
+
+let storedConfigCache: StoredConfigCache | null = null;
+
+function isReasoningOverride(
+  value: unknown,
+): value is KodaXReasoningOverride {
+  return value === 'budget'
+    || value === 'effort'
+    || value === 'toggle'
+    || value === 'none';
+}
+
+function isStoredConfig(value: unknown): value is StoredConfig {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+
+  const overrides = (value as StoredConfig).providerReasoningOverrides;
+  if (overrides === undefined) {
+    return true;
+  }
+
+  if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)) {
+    return false;
+  }
+
+  return Object.values(overrides).every(isReasoningOverride);
+}
+
 function getKodaxDir(): string {
   return process.env.KODAX_HOME ?? path.join(os.homedir(), '.kodax');
 }
@@ -19,6 +52,16 @@ function getKodaxDir(): string {
 function getConfigFilePath(): string {
   return process.env.KODAX_CONFIG_FILE
     ?? path.join(getKodaxDir(), 'config.json');
+}
+
+function updateStoredConfigCache(configFile: string, config: StoredConfig): StoredConfig {
+  storedConfigCache = { filePath: configFile, config };
+  return config;
+}
+
+function readStoredConfigFromDisk(configFile: string): StoredConfig {
+  const parsed = JSON.parse(fs.readFileSync(configFile, 'utf-8'));
+  return isStoredConfig(parsed) ? parsed : {};
 }
 
 export function reasoningCapabilityToOverride(
@@ -68,14 +111,18 @@ export function buildReasoningOverrideKey(
 
 function loadStoredConfig(): StoredConfig {
   const configFile = getConfigFilePath();
+  if (storedConfigCache?.filePath === configFile) {
+    return storedConfigCache.config;
+  }
+
   try {
     if (fs.existsSync(configFile)) {
-      return JSON.parse(fs.readFileSync(configFile, 'utf-8')) as StoredConfig;
+      return updateStoredConfigCache(configFile, readStoredConfigFromDisk(configFile));
     }
   } catch {
     // Best-effort local cache: ignore malformed or unreadable config.
   }
-  return {};
+  return updateStoredConfigCache(configFile, {});
 }
 
 function saveStoredConfig(config: StoredConfig): void {
@@ -83,11 +130,16 @@ function saveStoredConfig(config: StoredConfig): void {
   try {
     fs.mkdirSync(path.dirname(configFile), { recursive: true });
     fs.writeFileSync(configFile, JSON.stringify(config, null, 2));
+    updateStoredConfigCache(configFile, config);
   } catch (error) {
     if (process.env.KODAX_DEBUG_OVERRIDES) {
       console.error('[ReasoningOverride] Failed to save config:', error);
     }
   }
+}
+
+export function resetReasoningOverrideCache(): void {
+  storedConfigCache = null;
 }
 
 export function loadReasoningOverride(

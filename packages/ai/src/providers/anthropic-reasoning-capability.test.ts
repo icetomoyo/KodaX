@@ -10,7 +10,7 @@ import type {
   KodaXReasoningRequest,
   KodaXToolDefinition,
 } from '../types.js';
-import { loadReasoningOverride } from '../reasoning-overrides.js';
+import { loadReasoningOverride, resetReasoningOverrideCache } from '../reasoning-overrides.js';
 
 const MESSAGES: KodaXMessage[] = [{ role: 'user', content: 'hello' }];
 const TOOLS: KodaXToolDefinition[] = [];
@@ -77,11 +77,13 @@ describe('anthropic reasoning capability', () => {
   beforeEach(() => {
     process.env.KODAX_CONFIG_FILE = TEST_CONFIG_FILE;
     fs.rmSync(TEST_CONFIG_FILE, { force: true });
+    resetReasoningOverrideCache();
   });
 
   afterEach(() => {
     delete process.env.KODAX_CONFIG_FILE;
     fs.rmSync(TEST_CONFIG_FILE, { force: true });
+    resetReasoningOverrideCache();
   });
 
   it('falls back from budget to toggle and persists the override', async () => {

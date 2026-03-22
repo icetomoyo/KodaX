@@ -5,12 +5,13 @@
  * UI 层：参数解析、Spinner、颜色输出、用户交互
  */
 
-import { Command } from 'commander';
+import { Command, InvalidArgumentError } from 'commander';
 import chalk from 'chalk';
 import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
+import { runAcpServer } from './acp_server.js';
 import { runSkillCreatorTool } from './skill_cli.js';
 
 // 从 package.json 读取版本号
@@ -49,9 +50,22 @@ import {
   runInkInteractiveMode,
   FileSessionStorage,
   createCliEvents,
+  type PermissionMode,
 } from '@kodax/repl';
 
 import os from 'os';
+
+export const ACP_PERMISSION_MODES: PermissionMode[] = ['plan', 'accept-edits', 'auto-in-project'];
+
+export function parsePermissionModeOption(value: string): PermissionMode {
+  if (ACP_PERMISSION_MODES.includes(value as PermissionMode)) {
+    return value as PermissionMode;
+  }
+
+  throw new InvalidArgumentError(
+    `Expected one of: ${ACP_PERMISSION_MODES.join(', ')}.`,
+  );
+}
 
 // ============== Commands 系统 (CLI 层) ==============
 // Commands 是 /xxx 形式的 CLI 快捷命令，不是 Core 的 Skills (KODAX_TOOLS)
@@ -220,6 +234,59 @@ function resolveCliReasoningMode(
   return 'auto';
 }
 
+export function resolveCliParallel(
+  program: Command,
+  opts: Record<string, unknown>,
+  config: { parallel?: boolean },
+): boolean {
+  const parallelSource = program.getOptionValueSource('parallel');
+  if (parallelSource === 'cli') {
+    return opts.parallel === true;
+  }
+
+  return config.parallel ?? false;
+}
+
+function parseOptionalNonNegativeInt(value: string | undefined): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const parsed = Number.parseInt(trimmed, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return undefined;
+  }
+
+  return parsed;
+}
+
+function parseNonNegativeIntWithFallback(value: string | undefined, fallback: number): number {
+  return parseOptionalNonNegativeInt(value) ?? fallback;
+}
+
+function parsePositiveNumberWithFallback(value: string | undefined, fallback: number): number {
+  if (value === undefined) {
+    return fallback;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return fallback;
+  }
+
+  const parsed = Number.parseFloat(trimmed);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+
+  return parsed;
+}
+
 // ============== CLI 选项转换 ==============
 
 function createKodaXOptions(cliOptions: CliOptions, isPrintMode = false): KodaXOptions {
@@ -283,6 +350,25 @@ function buildSessionOptions(cliOptions: CliOptions): { id?: string; resume?: bo
 // ============== CLI 详细帮助 ==============
 
 const CLI_HELP_TOPICS: Record<string, () => void> = {
+  acp: () => {
+    console.log(chalk.cyan('\nACP Server\n'));
+    console.log(chalk.bold('Overview:'));
+    console.log(chalk.dim('  Run KodaX as a stdio ACP server so editors and IDEs can connect directly.'));
+    console.log(chalk.dim('  Session creation, prompt streaming, cancellation, and permission prompts reuse KodaX runtime semantics.\n'));
+    console.log(chalk.bold('Command:'));
+    console.log(chalk.dim('  kodax acp serve [options]\n'));
+    console.log(chalk.bold('Options:'));
+    console.log(chalk.dim('  --cwd <dir>                  ') + 'Working directory exposed to ACP sessions');
+    console.log(chalk.dim('  -m, --provider <name>        ') + 'Provider to use');
+    console.log(chalk.dim('  --model <name>               ') + 'Model override');
+    console.log(chalk.dim('  --reasoning <mode>           ') + 'Reasoning mode: off, auto, quick, balanced, deep');
+    console.log(chalk.dim('  -t, --thinking               ') + 'Compatibility alias for --reasoning auto');
+    console.log(chalk.dim('  --permission-mode <mode>     ') + 'Initial mode: plan, accept-edits, auto-in-project\n');
+    console.log(chalk.bold('Examples:'));
+    console.log(chalk.dim('  kodax acp serve'));
+    console.log(chalk.dim('  kodax acp serve --cwd C:\\repo --permission-mode accept-edits'));
+    console.log(chalk.dim('  kodax acp serve -m openai --model gpt-5.4 --reasoning balanced\n'));
+  },
   skill: () => {
     console.log(chalk.cyan('\nSkill Utilities\n'));
     console.log(chalk.bold('Overview:'));
@@ -475,6 +561,7 @@ function showCliHelpTopic(topic: string): boolean {
 
 function showCliHelpTopics(): void {
   console.log(chalk.cyan('\nDetailed Help Topics:\n'));
+  console.log(chalk.dim('  kodax -h acp        ') + 'ACP server mode for editors and IDEs');
   console.log(chalk.dim('  kodax -h sessions   ') + 'Session management (-c, -r, -s options)');
   console.log(chalk.dim('  kodax -h skill      ') + 'Skill packaging and installation helpers');
   console.log(chalk.dim('  kodax -h init       ') + 'Project initialization (--init, --overwrite)');
@@ -484,6 +571,25 @@ function showCliHelpTopics(): void {
   console.log(chalk.dim('  kodax -h thinking   ') + 'Reasoning modes and depth control');
   console.log(chalk.dim('  kodax -h team       ') + 'Parallel agent execution');
   console.log(chalk.dim('  kodax -h print      ') + 'Print mode for scripting\n');
+}
+
+function printAcpSubcommandHelp(name: string): boolean {
+  if (name === 'serve') {
+    console.log('Usage: kodax acp serve [options]');
+    console.log();
+    console.log('Run KodaX as a stdio ACP server for editors and IDEs.');
+    console.log();
+    console.log('Options:');
+    console.log('  --cwd <dir>                  Working directory exposed to ACP sessions');
+    console.log('  -m, --provider <name>        Provider to use');
+    console.log('  --model <name>               Model override');
+    console.log('  -t, --thinking               Compatibility alias for --reasoning auto');
+    console.log('  --reasoning <mode>           Reasoning mode: off, auto, quick, balanced, deep');
+    console.log('  --permission-mode <mode>     Initial permission mode');
+    return true;
+  }
+
+  return false;
 }
 
 function printSkillSubcommandHelp(name: string): boolean {
@@ -630,7 +736,7 @@ function showBasicHelp(): void {
   console.log('  --max-sessions N        Max sessions for --auto-continue (default: 50)');
   console.log('  --max-hours H           Max hours for --auto-continue (default: 2.0)\n');
   console.log('Help Topics (use -h <topic>):');
-  console.log('  skill, sessions, init, project, auto, provider, thinking, team, print\n');
+  console.log('  acp, skill, sessions, init, project, auto, provider, thinking, team, print\n');
   console.log('Interactive Commands (in REPL mode):');
   console.log('  /help, /h               Show all commands');
   console.log('  /exit, /quit            Exit interactive mode');
@@ -642,6 +748,7 @@ function showBasicHelp(): void {
   console.log('Examples:');
   console.log('  kodax                             # Enter interactive mode');
   console.log('  kodax "create a component"        # Run single task (with session)');
+  console.log('  kodax acp serve                   # Start ACP stdio server');
   console.log('  kodax skill init my-skill         # Scaffold a new skill');
   console.log('  kodax skill package ./my-skill    # Package a skill without starting the agent');
   console.log('  kodax -h project                 # Project mode workflow across CLI and REPL');
@@ -695,6 +802,39 @@ async function main() {
     .command('skill')
     .description('Built-in skill packaging and installation helpers')
     .helpOption('-h, --help', 'Show skill utility help');
+
+  const acpCommand = program
+    .command('acp')
+    .description('Run KodaX as an ACP server for editors and IDEs')
+    .helpOption('-h, --help', 'Show ACP server help');
+
+  acpCommand
+    .command('serve')
+    .description('Run the ACP stdio server')
+    .option('--cwd <dir>', 'Working directory exposed to ACP sessions')
+    .option('-m, --provider <name>', 'Provider to use')
+    .option('--model <name>', 'Model override')
+    .option('-t, --thinking', 'Compatibility alias for --reasoning auto')
+    .option('--reasoning <mode>', 'Reasoning mode: off, auto, quick, balanced, deep')
+    .option('--permission-mode <mode>', 'Initial permission mode', parsePermissionModeOption, 'accept-edits')
+    .action(async (subcommandOptions: {
+      cwd?: string;
+      provider?: string;
+      model?: string;
+      thinking?: boolean;
+      reasoning?: KodaXReasoningMode;
+      permissionMode?: PermissionMode;
+    }) => {
+      await runAcpServer({
+        cwd: subcommandOptions.cwd,
+        provider: subcommandOptions.provider,
+        model: subcommandOptions.model,
+        thinking: subcommandOptions.thinking,
+        reasoningMode: subcommandOptions.reasoning,
+        permissionMode: subcommandOptions.permissionMode,
+        agentVersion: version,
+      });
+    });
 
   skillCommand
     .command('init <name>')
@@ -966,8 +1106,22 @@ async function main() {
     }
   }
 
+  if (argv[0] === 'acp') {
+    if (argv.length === 1 || argv[1] === '-h' || argv[1] === '--help') {
+      console.log(acpCommand.helpInformation());
+      return;
+    }
+
+    const acpSubcommand = argv[1];
+    if (acpSubcommand && (argv.includes('-h') || argv.includes('--help'))) {
+      if (printAcpSubcommandHelp(acpSubcommand)) {
+        return;
+      }
+    }
+  }
+
   await program.parseAsync(process.argv);
-  if (argv[0] === 'skill') {
+  if (argv[0] === 'skill' || argv[0] === 'acp') {
     return;
   }
 
@@ -975,6 +1129,7 @@ async function main() {
   // 加载配置文件（用于确定默认值）
   const config = loadConfig();
   const reasoningMode = resolveCliReasoningMode(program, opts, config);
+  const parallel = resolveCliParallel(program, opts, config);
   // CLI 参数优先，否则用配置文件的值，最后用默认值
   // Note: -y/--auto is kept for backward compatibility but has no effect in CLI (YOLO mode is default)
   const options: CliOptions = {
@@ -984,15 +1139,15 @@ async function main() {
     thinking: reasoningMode !== 'off',
     reasoningMode,
     session: opts.session,
-    parallel: opts.parallel ?? false,
+    parallel,
     team: opts.team,
     init: opts.init,
     append: opts.append ?? false,
     overwrite: opts.overwrite ?? false,
-    maxIter: opts.maxIter ? parseInt(opts.maxIter, 10) : undefined,
+    maxIter: parseOptionalNonNegativeInt(opts.maxIter),
     autoContinue: opts.autoContinue ?? false,
-    maxSessions: parseInt(opts.maxSessions ?? '50', 10),
-    maxHours: parseFloat(opts.maxHours ?? '2'),
+    maxSessions: parseNonNegativeIntWithFallback(opts.maxSessions, 50),
+    maxHours: parsePositiveNumberWithFallback(opts.maxHours, 2),
     prompt: opts.print ? [opts.print] : program.args,
     continue: opts.continue ?? false,
     resume: opts.resume,

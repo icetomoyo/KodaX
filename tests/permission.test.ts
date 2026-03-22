@@ -35,10 +35,10 @@ describe("executeWithPermission", () => {
     expect(executeToolMock).toHaveBeenCalledTimes(1);
   });
 
-  it("auto-allows safe read-only bash in default mode", async () => {
+  it("auto-allows safe read-only bash in accept-edits mode", async () => {
     const onConfirm = vi.fn(async () => ({ confirmed: false }));
     const permissionContext = createPermissionContext({
-      permissionMode: "default",
+      permissionMode: "accept-edits",
       onConfirm,
     });
 
@@ -68,7 +68,7 @@ describe("executeWithPermission", () => {
       permissionContext,
     );
 
-    expect(result).toContain("[Blocked] Bash write operation not allowed in plan mode");
+    expect(result).toContain("[Blocked] Plan mode only allows bash write operations");
     expect(onConfirm).not.toHaveBeenCalled();
     expect(executeToolMock).not.toHaveBeenCalled();
   });
@@ -87,7 +87,7 @@ describe("executeWithPermission", () => {
       permissionContext,
     );
 
-    expect(result).toContain("[Blocked] Bash write operation not allowed in plan mode");
+    expect(result).toContain("[Blocked] Plan mode only allows bash write operations");
     expect(onConfirm).not.toHaveBeenCalled();
     expect(executeToolMock).not.toHaveBeenCalled();
   });
@@ -106,7 +106,7 @@ describe("executeWithPermission", () => {
       permissionContext,
     );
 
-    expect(result).toContain("[Blocked] Bash write operation not allowed in plan mode");
+    expect(result).toContain("[Blocked] Plan mode only allows bash write operations");
     expect(onConfirm).not.toHaveBeenCalled();
     expect(executeToolMock).not.toHaveBeenCalled();
   });
@@ -125,7 +125,7 @@ describe("executeWithPermission", () => {
       permissionContext,
     );
 
-    expect(result).toContain("[Blocked] Bash write operation not allowed in plan mode");
+    expect(result).toContain("[Blocked] Plan mode only allows bash write operations");
     expect(onConfirm).not.toHaveBeenCalled();
     expect(executeToolMock).not.toHaveBeenCalled();
   });
@@ -144,7 +144,7 @@ describe("executeWithPermission", () => {
       permissionContext,
     );
 
-    expect(result).toContain("[Blocked] Bash write operation not allowed in plan mode");
+    expect(result).toContain("[Blocked] Plan mode only allows bash write operations");
     expect(onConfirm).not.toHaveBeenCalled();
     expect(executeToolMock).not.toHaveBeenCalled();
   });

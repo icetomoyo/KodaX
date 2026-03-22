@@ -132,6 +132,7 @@ describe('Core Module Exports', () => {
     expect(typeof KODAX_PROVIDERS).toBe('object');
     expect(Object.keys(KODAX_PROVIDERS)).toContain('anthropic');
     expect(Object.keys(KODAX_PROVIDERS)).toContain('openai');
+    expect(Object.keys(KODAX_PROVIDERS)).toContain('deepseek');
     expect(Object.keys(KODAX_PROVIDERS)).toContain('zhipu-coding');
   });
 
@@ -386,9 +387,9 @@ describe('Tool Definitions', () => {
 // ============== Provider 测试 ==============
 
 describe('Provider System', () => {
-  it('should have 8 providers', () => {
+  it('should have 11 providers', () => {
     const providerCount = Object.keys(KODAX_PROVIDERS).length;
-    expect(providerCount).toBe(10);
+    expect(providerCount).toBe(11);
   });
 
   it('should throw error for unknown provider', () => {
@@ -465,6 +466,7 @@ describe('Tool Execution', () => {
   const ctx: KodaXToolExecutionContext = {
     backups: new Map(),
     gitRoot: testDir,
+    executionCwd: testDir,
   };
 
   beforeEach(async () => {
@@ -517,6 +519,25 @@ describe('Tool Execution', () => {
 
     const content = await fs.readFile(filePath, 'utf-8');
     expect(content).toBe('Test content');
+  });
+
+  it('should resolve relative read/write/edit paths against executionCwd', async () => {
+    const relativePath = path.join('nested', 'relative.txt');
+    const absolutePath = path.join(testDir, relativePath);
+
+    const writeResult = await executeTool('write', { path: relativePath, content: 'Hello World' }, ctx);
+    expect(writeResult).toContain(path.resolve(absolutePath));
+    expect(await fs.readFile(absolutePath, 'utf-8')).toBe('Hello World');
+
+    const editResult = await executeTool('edit', {
+      path: relativePath,
+      old_string: 'World',
+      new_string: 'KodaX',
+    }, ctx);
+    expect(editResult).toContain(path.resolve(absolutePath));
+
+    const readResult = await executeTool('read', { path: relativePath }, ctx);
+    expect(readResult).toContain('Hello KodaX');
   });
 
   it('should edit file successfully', async () => {
@@ -581,6 +602,15 @@ describe('Tool Execution', () => {
     expect(result).toContain('Exit:');
   });
 
+  it('should execute bash commands from executionCwd', async () => {
+    const result = await executeTool(
+      'bash',
+      { command: 'node -e "process.stdout.write(process.cwd())"' },
+      ctx,
+    );
+    expect(result).toContain(path.resolve(testDir));
+  });
+
   it('should find files with glob', async () => {
     await fs.writeFile(path.join(testDir, 'file1.txt'), '');
     await fs.writeFile(path.join(testDir, 'file2.txt'), '');
@@ -588,6 +618,16 @@ describe('Tool Execution', () => {
     const result = await executeTool('glob', { pattern: '*.txt', path: testDir }, ctx);
     expect(result).toContain('file1.txt');
     expect(result).toContain('file2.txt');
+  });
+
+  it('should resolve search roots against executionCwd', async () => {
+    await fs.writeFile(path.join(testDir, 'default-search.txt'), 'needle', 'utf-8');
+
+    const globResult = await executeTool('glob', { pattern: '*.txt' }, ctx);
+    const grepResult = await executeTool('grep', { pattern: 'needle', path: '.' }, ctx);
+
+    expect(globResult).toContain('default-search.txt');
+    expect(grepResult).toContain('default-search.txt');
   });
 
   it('should search with grep', async () => {
@@ -623,6 +663,14 @@ describe('Tool Execution Context', () => {
       gitRoot: '/project/root',
     };
     expect(ctx.gitRoot).toBe('/project/root');
+  });
+
+  it('should allow an explicit executionCwd', () => {
+    const ctx: KodaXToolExecutionContext = {
+      backups: new Map(),
+      executionCwd: '/project/root/packages/app',
+    };
+    expect(ctx.executionCwd).toBe('/project/root/packages/app');
   });
 });
 

@@ -5,6 +5,7 @@ import { exec as execCallback } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { KodaXEvents, KodaXMessage, KodaXOptions } from '@kodax/coding';
 import type { ProjectFeature } from './project-state.js';
+import { isRecord, isStringArray } from './json-guards.js';
 import { ProjectStorage } from './project-storage.js';
 import { buildProjectQualityReport } from './project-quality.js';
 
@@ -213,6 +214,20 @@ export interface ProjectHarnessCompletionReport {
   tests?: string[];
   changedFiles?: string[];
   blockers?: string[];
+}
+
+function isProjectHarnessCompletionReport(value: unknown): value is ProjectHarnessCompletionReport {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return typeof value.status === 'string'
+    && ['complete', 'needs_review', 'blocked'].includes(value.status)
+    && typeof value.summary === 'string'
+    && (value.evidence === undefined || isStringArray(value.evidence))
+    && (value.tests === undefined || isStringArray(value.tests))
+    && (value.changedFiles === undefined || isStringArray(value.changedFiles))
+    && (value.blockers === undefined || isStringArray(value.blockers));
 }
 
 export interface ProjectHarnessRunRecord {
@@ -537,7 +552,8 @@ function parseCompletionReport(messages: KodaXMessage[]): ProjectHarnessCompleti
   }
 
   try {
-    return JSON.parse(match[1]) as ProjectHarnessCompletionReport;
+    const parsed = JSON.parse(match[1]);
+    return isProjectHarnessCompletionReport(parsed) ? parsed : null;
   } catch {
     return null;
   }

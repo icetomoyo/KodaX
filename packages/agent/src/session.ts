@@ -6,6 +6,43 @@
 
 import type { KodaXMessage } from '@kodax/ai';
 
+const DEFAULT_SESSION_TITLE = 'Untitled Session';
+const SESSION_TITLE_MAX_LENGTH = 50;
+
+function extractPlainText(content: KodaXMessage['content']): string {
+  if (typeof content === 'string') {
+    return content;
+  }
+
+  if (!Array.isArray(content)) {
+    return '';
+  }
+
+  return content
+    .filter(
+      (block): block is { type: 'text'; text: string } =>
+        block != null
+        && typeof block === 'object'
+        && 'type' in block
+        && block.type === 'text'
+        && 'text' in block
+        && typeof block.text === 'string',
+    )
+    .map((block) => block.text)
+    .join(' ');
+}
+
+function formatSessionTitle(text: string): string {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  if (!normalized) {
+    return DEFAULT_SESSION_TITLE;
+  }
+
+  return normalized.length > SESSION_TITLE_MAX_LENGTH
+    ? `${normalized.slice(0, SESSION_TITLE_MAX_LENGTH)}...`
+    : normalized;
+}
+
 /**
  * 生成会话 ID
  * 格式: YYYYMMDD_HHMMSS
@@ -22,10 +59,7 @@ export async function generateSessionId(): Promise<string> {
 export function extractTitleFromMessages(messages: KodaXMessage[]): string {
   const firstUser = messages.find(m => m.role === 'user');
   if (firstUser) {
-    const content = typeof firstUser.content === 'string'
-      ? firstUser.content
-      : '';
-    return content.slice(0, 50) + (content.length > 50 ? '...' : '');
+    return formatSessionTitle(extractPlainText(firstUser.content));
   }
-  return 'Untitled Session';
+  return DEFAULT_SESSION_TITLE;
 }

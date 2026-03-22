@@ -122,6 +122,7 @@ function formatBusyStatus({
 export function getStatusBarText({
   sessionId,
   permissionMode,
+  parallel = false,
   provider,
   model,
   tokenUsage,
@@ -140,6 +141,7 @@ export function getStatusBarText({
 
   parts.push('KodaX');
   parts.push(permissionMode.toUpperCase());
+  parts.push(parallel ? 'parallel' : 'sequential');
 
   const rModeShort = formatReasoningModeShort(reasoningMode);
   const rCapShort = formatReasoningCapabilityShort(reasoningCapability);
@@ -178,6 +180,7 @@ export function getStatusBarText({
 export const StatusBar: React.FC<StatusBarProps> = ({
   sessionId,
   permissionMode,
+  parallel = false,
   provider,
   model,
   tokenUsage,
@@ -209,14 +212,21 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   }, [permissionMode, theme]);
   const modeDisplay = <Text color={modeColor}>{permissionMode.toUpperCase()}</Text>;
 
-  // 3: Reasoning (OFF/AUTO/BALANCED/DEEP)
+  // 3: Execution mode
+  const executionDisplay = (
+    <Text color={parallel ? 'green' : 'gray'}>
+      {parallel ? 'parallel' : 'sequential'}
+    </Text>
+  );
+
+  // 4: Reasoning (OFF/AUTO/BALANCED/DEEP)
   const rModeShort = formatReasoningModeShort(reasoningMode);
   const rCapShort = formatReasoningCapabilityShort(reasoningCapability);
   const reasoningCombined = reasoningCapability ? `${rModeShort}/${rCapShort}` : rModeShort;
   const reasoningColor = getReasoningColor(reasoningMode);
   const reasoningDisplay = <Text color={reasoningColor}>{reasoningCombined}</Text>;
 
-  // 4: Iteration (?? 1/200)
+  // 5: Iteration (?? 1/200)
   const iterationDisplay = useMemo(() => {
     if (!currentIteration || !maxIter) return null;
     const ratio = currentIteration / maxIter;
@@ -226,7 +236,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
     return <Text color={color}>{ITERATION_SYMBOL} {currentIteration}/{maxIter}</Text>;
   }, [currentIteration, maxIter]);
 
-  // 5: SessionID + Spinner Tool status
+  // 6: SessionID + Spinner Tool status
   // e.g., "abcd123 <spinner> Bash (12 chars)"
   const sessionToolDisplay = useMemo(() => {
     const busyStatus = showBusyStatus
@@ -250,10 +260,10 @@ export const StatusBar: React.FC<StatusBarProps> = ({
     );
   }, [sessionId, currentTool, isThinkingActive, isCompacting, showBusyStatus]);
 
-  // 6: Provider/Model
+  // 7: Provider/Model
   const providerModelDisplay = <Text color={theme.colors.secondary}>{provider}/{model}</Text>;
 
-  // 7: Context Usage "24.0k/200.0k ?????????? 12%"
+  // 8: Context Usage "24.0k/200.0k ?????????? 12%"
   const contextDisplay = useMemo(() => {
     if (!contextUsage) return null;
     const { currentTokens, contextWindow, triggerPercent } = contextUsage;
@@ -272,7 +282,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
     );
   }, [contextUsage]);
 
-  // Optional 8: Token Usage
+  // Optional 9: Token Usage
   const tokenDisplay = useMemo(() => {
     if (!tokenUsage) return null;
     return (
@@ -294,10 +304,14 @@ export const StatusBar: React.FC<StatusBarProps> = ({
       {modeDisplay}
       <Separator />
 
-      {/* 3. Reasoning Mode */}
+      {/* 3. Execution Mode */}
+      {executionDisplay}
+      <Separator />
+
+      {/* 4. Reasoning Mode */}
       {reasoningDisplay}
 
-      {/* 4. Iteration */}
+      {/* 5. Iteration */}
       {iterationDisplay && (
         <>
           <Separator />
@@ -306,14 +320,14 @@ export const StatusBar: React.FC<StatusBarProps> = ({
       )}
       <Separator />
 
-      {/* 5. Session ID + Status */}
+      {/* 6. Session ID + Status */}
       {sessionToolDisplay}
       <Separator />
 
-      {/* 6. Provider/Model */}
+      {/* 7. Provider/Model */}
       {providerModelDisplay}
 
-      {/* 7. Context Usage */}
+      {/* 8. Context Usage */}
       {contextDisplay && (
         <>
           <Separator />
@@ -321,7 +335,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
         </>
       )}
 
-      {/* 8. Token Usage (if present) */}
+      {/* 9. Token Usage (if present) */}
       {tokenDisplay && (
         <>
           <Separator />

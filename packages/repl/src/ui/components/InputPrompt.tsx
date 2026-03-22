@@ -356,7 +356,7 @@ export const InputPrompt: React.FC<InputPromptAutocompleteProps> = ({
             move("end");
             return true;
         }
-        return true;
+        return false;
       }
 
       // Regular character input (exclude control characters)

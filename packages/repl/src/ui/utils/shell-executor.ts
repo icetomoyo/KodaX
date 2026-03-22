@@ -8,6 +8,7 @@
 import * as childProcess from "child_process";
 import * as util from "util";
 import chalk from "chalk";
+import { getDirectShellBypassBlockReason } from "../../permission/permission.js";
 
 const execAsync = util.promisify(childProcess.exec);
 
@@ -19,9 +20,10 @@ export interface ShellExecutorConfig {
   timeout?: number;
   maxOutputLength?: number;
   maxErrorLength?: number;
+  cwd?: string;
 }
 
-const DEFAULT_CONFIG: Required<ShellExecutorConfig> = {
+const DEFAULT_CONFIG: Required<Omit<ShellExecutorConfig, "cwd">> = {
   maxBuffer: 1024 * 1024, // 1MB
   timeout: 30000, // 30 seconds
   maxOutputLength: 8000,
@@ -40,17 +42,25 @@ export async function executeShellCommand(
   config: ShellExecutorConfig = {}
 ): Promise<string> {
   const cfg = { ...DEFAULT_CONFIG, ...config };
+  const normalizedCommand = command.trim();
 
-  if (!command.trim()) {
-    return "[Shell: No command provided]";
+  const blockedReason = getDirectShellBypassBlockReason(normalizedCommand);
+  if (blockedReason) {
+    if (blockedReason.startsWith("[Blocked]")) {
+      console.log(chalk.yellow(`\n${blockedReason}`));
+      console.log();
+    }
+    return blockedReason;
   }
 
   try {
-    console.log(chalk.dim(`\n[Executing: ${command}]`));
+    console.log(chalk.dim(`\n[Executing: ${normalizedCommand}]`));
 
-    const { stdout, stderr } = await execAsync(command, {
+    const { stdout, stderr } = await execAsync(normalizedCommand, {
+      cwd: cfg.cwd,
       maxBuffer: cfg.maxBuffer,
       timeout: cfg.timeout,
+      windowsHide: true,
     });
 
     let result = "";
@@ -65,7 +75,7 @@ export async function executeShellCommand(
     console.log(chalk.dim(result || "[No output]"));
     console.log();
 
-    return `[Shell command executed: ${command}]\n\nOutput:\n${result || "(no output)"}`;
+    return `[Shell command executed: ${normalizedCommand}]\n\nOutput:\n${result || "(no output)"}`;
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));
     let errorMessage = err.message;
@@ -78,7 +88,7 @@ export async function executeShellCommand(
     console.log(chalk.red(`\n[Shell Error: ${errorMessage}]`));
     console.log();
 
-    return `[Shell command failed: ${command}]\n\nError: ${errorMessage}`;
+    return `[Shell command failed: ${normalizedCommand}]\n\nError: ${errorMessage}`;
   }
 }
 
@@ -116,4 +126,11 @@ export function isShellCommand(input: string): boolean {
  */
 export function isShellCommandSuccess(result: string): boolean {
   return result.startsWith("[Shell command executed:") || result.startsWith("[Shell:");
+}
+
+export function isShellCommandHandled(result: string): boolean {
+  return result.startsWith("[Shell command executed:")
+    || result.startsWith("[Shell command failed:")
+    || result.startsWith("[Shell:")
+    || result.startsWith("[Blocked]");
 }

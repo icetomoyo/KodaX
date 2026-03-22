@@ -9,7 +9,14 @@
  * import { runKodaX } from 'kodax/core';
  *
  * const result = await runKodaX(
- *   { provider: 'anthropic', events: {} },
+ *   {
+ *     provider: 'anthropic',
+ *     context: {
+ *       gitRoot: '/repo',
+ *       executionCwd: '/repo/packages/app',
+ *     },
+ *     events: {},
+ *   },
  *   "创建一个 HTTP 服务器"
  * );
  * ```

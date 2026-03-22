@@ -17,8 +17,10 @@ docs/features/
 ├── v0.5.22.md         # v0.5.22 — CLI-Based OAuth Providers
 ├── v0.6.0.md          # v0.6.0 — Command System 2.0、Project Mode 2.0
 ├── v0.6.10.md         # v0.6.10 — Project Harness
-├── v0.7.0.md          # v0.7.0 — Session Tree & Rollback (Planned)
+├── v0.6.15.md         # v0.6.15 — Parallel Toggle、DeepSeek Provider、Plan 双写白名单、ACP Server
+├── v0.7.0.md          # v0.7.0 — Session Tree & Rollback、JSON 输出等 (Planned)
 ├── v0.8.0.md          # v0.8.0 — 主题系统、CodeWiki、Adaptive PI (Planned)
+├── v0.9.0.md          # v0.9.0 — 多模态图片上传 (Planned)
 └── v1.0.0.md          # v1.0.0 — Multi-Agent、Dual-Mode UX (Planned)
 ```
 
@@ -26,7 +28,7 @@ docs/features/
 
 ## KodaX 功能总览
 
-> **版本**: v0.6.10 | **更新日期**: 2026-03-18
+> **版本**: v0.6.15 | **更新日期**: 2026-03-22
 
 ### 架构概览
 
@@ -53,7 +55,7 @@ docs/features/
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
 │                       AI Layer (独立库)                          │
-│  Providers (10) | Stream Handling | Error Handling              │
+│  Providers (11) | Stream Handling | Error Handling              │
 └─────────────────────────────────────────────────────────────────┘
                               +
 ┌─────────────────────────────────────────────────────────────────┐
@@ -86,6 +88,7 @@ docs/features/
 | `--team TASKS` | 并行子 Agent |
 | `--init TASK` | 初始化长运行项目 |
 | `--auto-continue` | 自动继续模式 |
+| `acp serve` | ACP Server 模式，供编辑器/IDE 调用 |
 
 ### 交互式命令
 
@@ -95,6 +98,8 @@ docs/features/
 | `/plan [on\|off\|once]` | Plan 模式管理 |
 | `/model [name]` | 切换 LLM 模型 |
 | `/reasoning [off\|auto\|quick\|balanced\|deep]` | 设置推理预算 |
+| `/parallel [on\|off\|toggle]` | 切换并行工具执行模式 |
+| `/status` | 显示当前状态 |
 | `/project [subcommand]` | 项目管理命令组（brainstorm / plan / next / auto / verify / status / quality） |
 | `@file` | 引用文件 |
 | `!command` | 执行 shell 命令 |
@@ -127,6 +132,7 @@ docs/features/
 | minimax-coding | MiniMax-M2.5 | native-budget | 204K |
 | gemini-cli | Gemini (CLI) | native-budget | varies |
 | codex-cli | Codex (CLI) | native-budget | varies |
+| deepseek | deepseek-chat | native-toggle | 128K |
 
 ### Reasoning 模式
 
@@ -153,6 +159,8 @@ docs/features/
 | **AGENTS.md** | 项目级 AI 上下文规则 |
 | **Skills 系统** | Markdown 定义，自然语言触发，自定义扩展 |
 | **运行时输入插队** | Pending Inputs Queue |
+| **ACP Server** | 标准协议，供编辑器/IDE 直接调用 |
+| **Plan 双写白名单** | Plan 模式允许写入 `.agent/plan_mode_doc.md` 和系统临时目录 |
 
 ---
 
@@ -173,7 +181,13 @@ docs/features/
 | **v0.5.34** | 2026-03-13 | 1 | [v0.6.0.md#020) |
 | **v0.5.37** | 2026-03-15 | 1 | [v0.6.0.md#021) |
 | **v0.6.0** | 2026-03-16 | 6 | [v0.6.0.md](./v0.6.0.md) |
+| **v0.6.4** | 2026-03-18 | 1 | [v0.6.0.md#023) |
 | **v0.6.10** | 2026-03-18 | 1 | [v0.6.10.md](./v0.6.10.md) |
+| **v0.6.11** | 2026-03-19 | 0 | — |
+| **v0.6.12** | 2026-03-19 | 0 | — |
+| **v0.6.13** | 2026-03-21 | 1 | [v0.6.15.md#033) |
+| **v0.6.14** | 2026-03-22 | 2 | [v0.6.15.md#036) |
+| **v0.6.15** | 2026-03-22 | 4 | [v0.6.15.md](./v0.6.15.md) |
 
 ### 特性索引
 
@@ -204,6 +218,20 @@ docs/features/
 | 023 | Dual-Mode Terminal UX | Planned | Inline + Fullscreen TUI |
 | 024 | Project Harness | v0.6.10 | Action 级别验证执行 |
 | 025 | Adaptive Project Intelligence | Planned | 自适应项目智能层 |
+| 026 | Roadmap Integrity 加固 | v0.7.0 | Tracker 一致性与元数据校验 |
+| 028 | First-Class 搜索检索 | v0.8.0 | Web search / code search / 证据工具 |
+| 029 | Provider Adapter 透明度 | v0.7.0 | CLI-bridge 与 native API 能力区分 |
+| 030 | 多端交付 | v1.0.0 | IDE / Desktop / Web 统一产品体验 |
+| 031 | 多模态图片上传 | v0.9.0 | 图片文件路径与粘贴支持 |
+| 032 | JSON 输出模式 | v0.7.0 | `--mode json` 结构化事件输出 |
+| 033 | REPL 并行切换 | v0.6.15 | `/parallel` 运行时动态切换 |
+| 034 | Extension + Capability Runtime | v0.8.0 | 统一扩展接口与能力运行时 |
+| 035 | MCP 能力 Provider | v0.7.0 | MCP 生态工具访问 |
+| 036 | DeepSeek 内置 Provider | v0.6.15 | 第 11 个内置 provider |
+| 037 | API Token Usage 优先 | v0.7.0 | 真实 usage 优先 + 估算回退 |
+| 038 | Official Sandbox Extension | v0.8.0 | `@kodax/sandbox` 可选包 |
+| 039 | Plan 模式双写白名单 | v0.6.15 | `.agent/plan_mode_doc.md` + 系统临时目录 |
+| 040 | ACP Server 支持 | v0.6.15 | 供编辑器/IDE 直接调用的 ACP Server |
 
 ---
 
@@ -211,9 +239,10 @@ docs/features/
 
 | 版本 | 特性数 | 设计文档 |
 |------|--------|----------|
-| **v0.7.0** | 1 | [v0.7.0.md](./v0.7.0.md) |
-| **v0.8.0** | 3 | [v0.8.0.md](./v0.8.0.md) |
-| **v1.0.0** | 1 | [v1.0.0.md](./v1.0.0.md) |
+| **v0.7.0** | 6 | [v0.7.0.md](./v0.7.0.md) |
+| **v0.8.0** | 6 | [v0.8.0.md](./v0.8.0.md) |
+| **v0.9.0** | 1 | [v0.9.0.md](./v0.9.0.md) |
+| **v1.0.0** | 3 | [v1.0.0.md](./v1.0.0.md) |
 
 ---
 

@@ -35,6 +35,28 @@ export const KODAX_CONFIG_FILE = path.join(KODAX_DIR, 'config.json');
 // UI display constants
 export const PREVIEW_MAX_LENGTH = 60;
 
+function migrateLegacyPermissionModeInConfig<T extends { permissionMode?: string }>(
+  config: T,
+): T {
+  if (config.permissionMode !== 'default') {
+    return config;
+  }
+
+  const migrated = {
+    ...config,
+    permissionMode: 'accept-edits',
+  } as T;
+
+  try {
+    fsSync.mkdirSync(path.dirname(KODAX_CONFIG_FILE), { recursive: true });
+    fsSync.writeFileSync(KODAX_CONFIG_FILE, JSON.stringify(migrated, null, 2));
+  } catch {
+    // Keep runtime behavior correct even if the migration cannot be persisted.
+  }
+
+  return migrated;
+}
+
 // Read version from package.json dynamically - 动态读取版本号
 // Uses import.meta.url for path resolution, works regardless of cwd
 // 使用 import.meta.url 获取路径，无论用户在哪个目录运行都能正确读取
@@ -107,14 +129,15 @@ export function getProviderAvailableModels(name: string, providerModelsConfig?: 
 
 export function getProviderReasoningCapability(
   name: string,
+  model?: string,
 ): KodaXReasoningCapability | 'unknown' {
   // Try built-in provider snapshot first (no API key needed)
-  const capability = getProviderConfiguredReasoningCapability(name);
+  const capability = getProviderConfiguredReasoningCapability(name, model);
   if (capability !== 'unknown') return capability;
   // Fallback: check custom providers
   try {
     const custom = getCustomProvider(name);
-    if (custom) return custom.getReasoningCapability();
+    if (custom) return custom.getReasoningCapability(model);
   } catch { /* ignore */ }
   return 'unknown';
 }
@@ -280,6 +303,7 @@ export function loadConfig(): {
   model?: string;
   thinking?: boolean;
   reasoningMode?: KodaXReasoningMode;
+  parallel?: boolean;
   permissionMode?: string;
   providerReasoningOverrides?: Record<string, KodaXReasoningOverride>;
   providerModels?: Record<string, string[]>;
@@ -287,7 +311,18 @@ export function loadConfig(): {
 } {
   try {
     if (fsSync.existsSync(KODAX_CONFIG_FILE)) {
-      return JSON.parse(fsSync.readFileSync(KODAX_CONFIG_FILE, 'utf-8'));
+      const parsed = JSON.parse(fsSync.readFileSync(KODAX_CONFIG_FILE, 'utf-8')) as {
+        provider?: string;
+        model?: string;
+        thinking?: boolean;
+        reasoningMode?: KodaXReasoningMode;
+        parallel?: boolean;
+        permissionMode?: string;
+        providerReasoningOverrides?: Record<string, KodaXReasoningOverride>;
+        providerModels?: Record<string, string[]>;
+        customProviders?: KodaXCustomProviderConfig[];
+      };
+      return migrateLegacyPermissionModeInConfig(parsed);
     }
   } catch { }
   return {};
@@ -299,6 +334,7 @@ export function saveConfig(config: {
   model?: string;
   thinking?: boolean;
   reasoningMode?: KodaXReasoningMode;
+  parallel?: boolean;
   permissionMode?: string;
   providerReasoningOverrides?: Record<string, KodaXReasoningOverride>;
   providerModels?: Record<string, string[]>;

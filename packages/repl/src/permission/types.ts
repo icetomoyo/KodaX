@@ -6,11 +6,17 @@
 
 /**
  * Permission mode
- * - plan: Read-only planning, all modifications blocked
+ * - plan: Read-only planning, all modifications blocked unless explicitly whitelisted
  * - accept-edits: File edits auto-approved, shell commands require confirmation
  * - auto-in-project: All tools auto-approved within project, outside requires confirmation
  */
 export type PermissionMode = "plan" | "accept-edits" | "auto-in-project";
+
+export const PERMISSION_MODES: PermissionMode[] = [
+  "plan",
+  "accept-edits",
+  "auto-in-project",
+];
 
 // ============== Confirm Result ==============
 
@@ -89,7 +95,12 @@ export interface PermissionContext {
 }
 
 /**
- * Compute confirmTools set from permission mode.
+ * Compute the base confirmation set for each permission mode.
+ *
+ * Note: `plan` still lists the standard mutating tools here even though most of
+ * them are blocked earlier in the permission pipeline via `getPlanModeBlockReason`.
+ * This helper only describes the remaining confirmation step for calls that are
+ * not hard-blocked.
  */
 export function computeConfirmTools(mode: PermissionMode): Set<string> {
   switch (mode) {
@@ -100,4 +111,19 @@ export function computeConfirmTools(mode: PermissionMode): Set<string> {
     case "auto-in-project":
       return new Set();
   }
+}
+
+export function isPermissionMode(value: string | undefined): value is PermissionMode {
+  return value !== undefined && PERMISSION_MODES.includes(value as PermissionMode);
+}
+
+export function normalizePermissionMode(
+  value: string | undefined,
+  fallback?: PermissionMode,
+): PermissionMode | undefined {
+  if (isPermissionMode(value)) {
+    return value;
+  }
+
+  return fallback;
 }

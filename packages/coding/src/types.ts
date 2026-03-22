@@ -69,7 +69,7 @@ export interface KodaXEvents {
   onTextDelta?: (text: string) => void;
   onThinkingDelta?: (text: string) => void;
   onThinkingEnd?: (thinking: string) => void;
-  onToolUseStart?: (tool: { name: string; id: string }) => void;
+  onToolUseStart?: (tool: { name: string; id: string; input?: Record<string, unknown> }) => void;
   onToolResult?: (result: { id: string; name: string; content: string }) => void;
   onToolInputDelta?: (toolName: string, partialJson: string) => void;
   onStreamEnd?: () => void;
@@ -95,7 +95,11 @@ export interface KodaXEvents {
 
   // 用户交互（可选，由 REPL 层实现）
   /** Tool execution hook - called before tool execution, return false to block - 工具执行前回调 */
-  beforeToolExecute?: (tool: string, input: Record<string, unknown>) => Promise<boolean | string>;
+  beforeToolExecute?: (
+    tool: string,
+    input: Record<string, unknown>,
+    meta?: { toolId?: string }
+  ) => Promise<boolean | string>;
   /** Ask user a question interactively - Issue 069 - 交互式向用户提问 */
   askUser?: (options: AskUserQuestionOptions) => Promise<string>;
 }
@@ -111,7 +115,13 @@ export interface KodaXSessionOptions {
 }
 
 export interface KodaXContextOptions {
+  /** Project root used for project-scoped prompts, permissions, and path policy. */
   gitRoot?: string | null;
+  /**
+   * Explicit working directory used for prompt context, relative tool paths,
+   * and shell execution. Defaults to `gitRoot`, then `process.cwd()`.
+   */
+  executionCwd?: string;
   projectSnapshot?: string;
   longRunning?: {
     featuresFile?: string;
@@ -177,6 +187,8 @@ export interface KodaXToolExecutionContext {
   backups: Map<string, string>;
   /** Git root directory - Git 根目录 */
   gitRoot?: string;
+  /** Working directory used to resolve relative paths and execute shell commands. */
+  executionCwd?: string;
   /** Ask user a question interactively - 交互式向用户提问 (Issue 069) */
   askUser?: (options: AskUserQuestionOptions) => Promise<string>;
 }

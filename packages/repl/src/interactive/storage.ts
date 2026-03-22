@@ -10,6 +10,15 @@ import chalk from 'chalk';
 import { KodaXMessage, KodaXSessionStorage, cleanupIncompleteToolCalls } from '@kodax/coding';
 import type { SessionData, SessionErrorMetadata } from '../ui/utils/session-storage.js';
 import { getGitRoot, KODAX_SESSIONS_DIR } from '../common/utils.js';
+import { isKodaXMessage, isRecord, isSessionErrorMetadata } from './json-guards.js';
+
+function warnMalformedSessionData(filePath: string, count: number): void {
+  if (count === 0 || process.env.NODE_ENV === 'test') {
+    return;
+  }
+
+  console.warn(`[KodaX] Skipped ${count} malformed session record(s) from ${path.basename(filePath)}.`);
+}
 
 export class FileSessionStorage implements KodaXSessionStorage {
   async save(id: string, data: SessionData): Promise<void> {
@@ -29,20 +38,39 @@ export class FileSessionStorage implements KodaXSessionStorage {
   async load(id: string): Promise<SessionData | null> {
     const filePath = path.join(KODAX_SESSIONS_DIR, `${id}.jsonl`);
     if (!fsSync.existsSync(filePath)) return null;
-    const lines = (await fs.readFile(filePath, 'utf-8')).trim().split('\n');
+    const rawContent = await fs.readFile(filePath, 'utf-8');
+    const trimmedContent = rawContent.trim();
+    if (!trimmedContent) {
+      return null;
+    }
+
+    const lines = trimmedContent.split('\n');
     const messages: KodaXMessage[] = [];
     let title = '', gitRoot = '';
     let errorMetadata: SessionErrorMetadata | undefined;
+    let malformedCount = 0;
 
     for (let i = 0; i < lines.length; i++) {
-      const data = JSON.parse(lines[i]!);
-      if (i === 0 && data._type === 'meta') {
-        title = data.title ?? '';
-        gitRoot = data.gitRoot ?? '';
-        errorMetadata = data.errorMetadata;
+      try {
+        const data = JSON.parse(lines[i]!);
+        if (i === 0 && isRecord(data) && data._type === 'meta') {
+          title = typeof data.title === 'string' ? data.title : '';
+          gitRoot = typeof data.gitRoot === 'string' ? data.gitRoot : '';
+          errorMetadata = isSessionErrorMetadata(data.errorMetadata) ? data.errorMetadata : undefined;
+          continue;
+        }
+
+        if (isKodaXMessage(data)) {
+          messages.push(data);
+        } else {
+          malformedCount += 1;
+        }
+      } catch {
+        malformedCount += 1;
       }
-      else messages.push(data);
     }
+
+    warnMalformedSessionData(filePath, malformedCount);
 
     const currentGitRoot = await getGitRoot();
     if (currentGitRoot && gitRoot && currentGitRoot !== gitRoot) {
@@ -78,8 +106,8 @@ export class FileSessionStorage implements KodaXSessionStorage {
         const firstLine = content.split('\n')[0];
         if (!firstLine) continue;
         const first = JSON.parse(firstLine);
-        if (first._type === 'meta') {
-          const sessionGitRoot = first.gitRoot ?? '';
+        if (isRecord(first) && first._type === 'meta') {
+          const sessionGitRoot = typeof first.gitRoot === 'string' ? first.gitRoot : '';
           // Issue 071 fix: Strict project isolation for git projects
           // When in a git project, only show sessions with matching gitRoot
           // Sessions without gitRoot (legacy) are hidden to prevent cross-project confusion
@@ -88,7 +116,11 @@ export class FileSessionStorage implements KodaXSessionStorage {
           }
           // When not in a git project, show all sessions (user can choose)
           const lineCount = content.split('\n').length;
-          sessions.push({ id: f.replace('.jsonl', ''), title: first.title ?? '', msgCount: lineCount - 1 });
+          sessions.push({
+            id: f.replace('.jsonl', ''),
+            title: typeof first.title === 'string' ? first.title : '',
+            msgCount: lineCount - 1,
+          });
         } else {
           const lineCount = content.split('\n').length;
           sessions.push({ id: f.replace('.jsonl', ''), title: '', msgCount: lineCount });

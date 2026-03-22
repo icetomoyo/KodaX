@@ -10,7 +10,7 @@ import type {
   KodaXReasoningRequest,
   KodaXToolDefinition,
 } from '../types.js';
-import { loadReasoningOverride } from '../reasoning-overrides.js';
+import { loadReasoningOverride, resetReasoningOverrideCache } from '../reasoning-overrides.js';
 
 const MESSAGES: KodaXMessage[] = [{ role: 'user', content: 'hello' }];
 const TOOLS: KodaXToolDefinition[] = [];
@@ -55,6 +55,61 @@ function createCompletedOpenAIStream(): AsyncIterable<unknown> {
   };
 }
 
+function createDeepSeekToolStream(): AsyncIterable<unknown> {
+  return {
+    [Symbol.asyncIterator]() {
+      let index = 0;
+      const chunks = [
+        {
+          choices: [
+            {
+              delta: { reasoning_content: 'Need to inspect the file first.' },
+              finish_reason: null,
+            },
+          ],
+        },
+        {
+          choices: [
+            {
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'call_1',
+                    function: {
+                      name: 'read',
+                      arguments: '{"path":"package.json"}',
+                    },
+                  },
+                ],
+              },
+              finish_reason: null,
+            },
+          ],
+        },
+        {
+          choices: [
+            {
+              delta: {},
+              finish_reason: 'tool_calls',
+            },
+          ],
+        },
+      ];
+      return {
+        next: async () => {
+          if (index >= chunks.length) {
+            return { done: true, value: undefined };
+          }
+          const value = chunks[index];
+          index += 1;
+          return { done: false, value };
+        },
+      };
+    },
+  };
+}
+
 class TestOpenAIProvider extends KodaXOpenAICompatProvider {
   readonly name: string;
   protected readonly config: KodaXProviderConfig;
@@ -63,6 +118,7 @@ class TestOpenAIProvider extends KodaXOpenAICompatProvider {
     name: string,
     capability: KodaXReasoningCapability,
     client: unknown,
+    configOverrides: Partial<KodaXProviderConfig> = {},
   ) {
     super();
     this.name = name;
@@ -72,6 +128,7 @@ class TestOpenAIProvider extends KodaXOpenAICompatProvider {
       supportsThinking: capability !== 'none' && capability !== 'prompt-only',
       reasoningCapability: capability,
       maxOutputTokens: 32768,
+      ...configOverrides,
     };
     this.client = client as any;
   }
@@ -93,11 +150,13 @@ describe('openai reasoning capability', () => {
   beforeEach(() => {
     process.env.KODAX_CONFIG_FILE = TEST_CONFIG_FILE;
     fs.rmSync(TEST_CONFIG_FILE, { force: true });
+    resetReasoningOverrideCache();
   });
 
   afterEach(() => {
     delete process.env.KODAX_CONFIG_FILE;
     fs.rmSync(TEST_CONFIG_FILE, { force: true });
+    resetReasoningOverrideCache();
   });
 
   it('sends reasoning_effort for native-effort providers', async () => {
@@ -127,6 +186,65 @@ describe('openai reasoning capability', () => {
     });
   });
 
+  it('enables native thinking toggle for deepseek-chat', async () => {
+    const create = vi.fn().mockResolvedValue(createCompletedOpenAIStream());
+    const provider = new TestOpenAIProvider('deepseek', 'native-toggle', {
+      chat: { completions: { create } },
+    }, {
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-chat',
+      models: [
+        {
+          id: 'deepseek-reasoner',
+          displayName: 'DeepSeek Reasoner',
+          reasoningCapability: 'none',
+        },
+      ],
+    });
+
+    await provider.stream(MESSAGES, TOOLS, 'system', reasoning);
+
+    expect(create.mock.calls[0]?.[0]).toMatchObject({
+      extra_body: {
+        thinking: {
+          type: 'enabled',
+        },
+      },
+    });
+  });
+
+  it('treats deepseek-reasoner as model-selected reasoning and skips toggle params', async () => {
+    const create = vi.fn().mockResolvedValue(createCompletedOpenAIStream());
+    const provider = new TestOpenAIProvider('deepseek', 'native-toggle', {
+      chat: { completions: { create } },
+    }, {
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-chat',
+      models: [
+        {
+          id: 'deepseek-reasoner',
+          displayName: 'DeepSeek Reasoner',
+          reasoningCapability: 'none',
+        },
+      ],
+    });
+
+    expect(provider.getReasoningCapability('deepseek-reasoner')).toBe('none');
+
+    await provider.stream(
+      MESSAGES,
+      TOOLS,
+      'system',
+      reasoning,
+      { modelOverride: 'deepseek-reasoner' },
+    );
+
+    expect(create.mock.calls[0]?.[0].model).toBe('deepseek-reasoner');
+    expect(create.mock.calls[0]?.[0]).not.toHaveProperty('extra_body');
+    expect(create.mock.calls[0]?.[0]).not.toHaveProperty('reasoning_effort');
+    expect(create.mock.calls[0]?.[0]).not.toHaveProperty('thinking');
+  });
+
   it('falls back from budget to toggle and persists the override', async () => {
     const create = vi
       .fn()
@@ -153,5 +271,115 @@ describe('openai reasoning capability', () => {
         model: 'test-model',
       }),
     ).toBe('toggle');
+  });
+
+  it('replays tool history and reasoning_content for deepseek tool turns', async () => {
+    const create = vi.fn().mockResolvedValue(createCompletedOpenAIStream());
+    const provider = new TestOpenAIProvider('deepseek', 'native-toggle', {
+      chat: { completions: { create } },
+    }, {
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-chat',
+    });
+
+    const messages: KodaXMessage[] = [
+      { role: 'user', content: 'Inspect package.json' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'Need the file contents.' },
+          { type: 'tool_use', id: 'call_1', name: 'read', input: { path: 'package.json' } },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: 'call_1', content: '{"name":"kodax"}' },
+        ],
+      },
+    ];
+
+    await provider.stream(messages, TOOLS, 'system', reasoning);
+
+    const requestMessages = create.mock.calls[0]?.[0].messages as Array<Record<string, unknown>>;
+    expect(requestMessages).toEqual([
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Inspect package.json' },
+      {
+        role: 'assistant',
+        content: null,
+        reasoning_content: 'Need the file contents.',
+        tool_calls: [
+          {
+            id: 'call_1',
+            type: 'function',
+            function: {
+              name: 'read',
+              arguments: '{"path":"package.json"}',
+            },
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        tool_call_id: 'call_1',
+        content: '{"name":"kodax"}',
+      },
+    ]);
+  });
+
+  it('captures reasoning_content deltas as thinking blocks', async () => {
+    const create = vi.fn().mockResolvedValue(createDeepSeekToolStream());
+    const onThinkingDelta = vi.fn();
+    const onThinkingEnd = vi.fn();
+    const provider = new TestOpenAIProvider('deepseek', 'native-toggle', {
+      chat: { completions: { create } },
+    }, {
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-chat',
+    });
+
+    const result = await provider.stream(MESSAGES, TOOLS, 'system', reasoning, {
+      onThinkingDelta,
+      onThinkingEnd,
+    });
+
+    expect(result.thinkingBlocks).toEqual([
+      { type: 'thinking', thinking: 'Need to inspect the file first.' },
+    ]);
+    expect(result.toolBlocks).toEqual([
+      {
+        type: 'tool_use',
+        id: 'call_1',
+        name: 'read',
+        input: { path: 'package.json' },
+      },
+    ]);
+    expect(onThinkingDelta).toHaveBeenCalledWith('Need to inspect the file first.');
+    expect(onThinkingEnd).toHaveBeenCalledWith('Need to inspect the file first.');
+  });
+
+  it('preserves historical system summary messages for openai-compatible providers', async () => {
+    const create = vi.fn().mockResolvedValue(createCompletedOpenAIStream());
+    const provider = new TestOpenAIProvider('deepseek', 'native-toggle', {
+      chat: { completions: { create } },
+    }, {
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-chat',
+    });
+
+    const messages: KodaXMessage[] = [
+      { role: 'system', content: '[Conversation Summary]\\n\\nPrior tool results...' },
+      { role: 'user', content: 'Continue the task' },
+    ];
+
+    await provider.stream(messages, TOOLS, 'system', reasoning);
+
+    const requestMessages = create.mock.calls[0]?.[0].messages as Array<Record<string, unknown>>;
+    expect(requestMessages).toEqual([
+      { role: 'system', content: 'system' },
+      { role: 'system', content: '[Conversation Summary]\\n\\nPrior tool results...' },
+      { role: 'user', content: 'Continue the task' },
+    ]);
   });
 });

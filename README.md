@@ -1,23 +1,178 @@
 # InfCodeX (alias: KodaX)
 
+[English](README.md) | [中文](README_CN.md)
+
 Extreme Lightweight Coding Agent - TypeScript Implementation
 
 ## Overview
 
-KodaX is a **modular, lightweight AI coding agent** built with TypeScript. It supports 7 LLM providers and can be used as both a CLI tool and an npm library.
+KodaX is a **modular, lightweight AI coding agent** built with TypeScript. It supports **11 LLM providers**, works as both a CLI tool and a library, and includes a distinctive **Project Mode / harness engineering** workflow for long-running coding tasks.
 
 **Core Philosophy**: Transparent, Flexible, Minimalist
 
 **Why KodaX?**
 
-| Feature | KodaX | Other Tools |
-|---------|-------|-------------|
-| **Architecture** | Modular (5 packages), can be used as library | Usually CLI-only |
-| **Code** | Clean separation, easy to understand and customize | Thousands of files, hard to navigate |
-| **Models** | 10 LLM providers, switch freely | Often single provider |
-| **Cost** | Use affordable models (Kimi, Zhipu, Qwen) | Expensive subscriptions |
-| **Type Safety** | Native TypeScript | No types or weak typing |
-| **Learning** | Perfect for understanding Agent principles | Black box |
+| Question | KodaX answer |
+|---------|--------------|
+| Why not only use Claude Code? | KodaX is easier to inspect, modify, self-host, and switch across providers. |
+| Why not only use an SDK? | KodaX already gives you a CLI, sessions, tools, permissions, and skills out of the box. |
+| Why use it as a codebase? | The architecture is small enough to understand and customize without wading through thousands of files. |
+| Why use it in production tools? | The packages are separated cleanly, so you can reuse only the layer you need. |
+
+**KodaX vs hosted coding assistants**
+
+| Feature | KodaX | Typical hosted coding assistant |
+|---------|-------|----------------------------------|
+| **Architecture** | Modular (5 packages), library-friendly | Usually product-first, less reusable as code |
+| **Provider choice** | 11 providers, custom provider support | Often optimized for one provider |
+| **Customization** | Edit prompts, tools, skills, session flow directly | Limited extension surface |
+| **Codebase clarity** | Small TypeScript monorepo | Often much larger and harder to trace |
+| **Learning value** | Good for understanding agent internals | More black-box |
+
+## Quick Start
+
+### 1. Install and build the CLI
+
+```bash
+git clone https://github.com/icetomoyo/KodaX.git
+cd KodaX
+npm install
+npm run build:packages
+npm run build
+npm link
+```
+
+### 2. Configure a provider
+
+KodaX reads API keys from environment variables. For built-in providers, the fastest path is:
+
+```bash
+# macOS / Linux
+export ZHIPU_API_KEY=your_api_key
+
+# PowerShell
+$env:ZHIPU_API_KEY="your_api_key"
+```
+
+For CLI defaults, create `~/.kodax/config.json`:
+
+```json
+{
+  "provider": "zhipu-coding",
+  "reasoningMode": "auto",
+  "permissionMode": "accept-edits",
+  "parallel": false
+}
+```
+
+If you need a custom base URL or an OpenAI/Anthropic-compatible endpoint, define a custom provider in the same config file:
+
+```json
+{
+  "provider": "my-openai-compatible",
+  "customProviders": [
+    {
+      "name": "my-openai-compatible",
+      "protocol": "openai",
+      "baseUrl": "https://example.com/v1",
+      "apiKeyEnv": "MY_LLM_API_KEY",
+      "model": "my-model"
+    }
+  ]
+}
+```
+
+### 3. Start in REPL or run a one-shot task
+
+```bash
+# Interactive REPL
+kodax
+
+# Then ask naturally inside the REPL
+Read package.json and summarize the architecture
+/mode
+/help
+
+# Project Mode / harness engineering
+kodax --init "Desktop app"
+kodax
+/project brainstorm
+/project plan
+/project next
+
+# One-shot CLI usage
+kodax "Review this repository and summarize the architecture"
+kodax --session review "Find the riskiest parts of src/"
+kodax --session review "Give me concrete fix suggestions"
+```
+
+### 4. Use it as a library
+
+Library usage still expects API keys from environment variables. If you want custom provider names or base URLs in code, register them explicitly:
+
+```typescript
+import { registerCustomProviders, runKodaX } from 'kodax';
+
+registerCustomProviders([
+  {
+    name: 'my-openai-compatible',
+    protocol: 'openai',
+    baseUrl: 'https://example.com/v1',
+    apiKeyEnv: 'MY_LLM_API_KEY',
+    model: 'my-model',
+  },
+]);
+
+const result = await runKodaX(
+  {
+    provider: 'my-openai-compatible',
+    reasoningMode: 'auto',
+    context: {
+      gitRoot: '/repo',
+      executionCwd: '/repo/packages/app',
+    },
+  },
+  'Explain this codebase'
+);
+```
+
+## Core Workflows
+
+- **CLI coding assistant**: run one-off tasks or stay in a session for multi-step work.
+- **Skills-driven workflows**: trigger built-in or custom skills from natural language.
+- **Project Mode / harness engineering**: bootstrap a long-running project, keep project truth on disk, and execute through verifier-gated `/project` flows.
+- **Embeddable library**: reuse the provider layer, session layer, or full coding agent in your own app.
+
+## Project Mode
+
+KodaX's most opinionated feature is **Project Mode**: a harness-engineering workflow for long-running coding projects.
+
+Instead of letting the agent self-report "done", Project Mode keeps project truth on disk and pushes execution through deterministic verification loops. The workflow spans both non-REPL bootstrap commands and REPL `/project` commands.
+
+**What makes it different**
+
+- **Verifier-gated execution**: `/project next` and `/project auto` are checked by a harness instead of trusting self-declared completion.
+- **Project truth files**: initialization creates and updates project management artifacts such as `feature_list.json` and files under `.agent/project/`.
+- **Structured planning**: `/project brainstorm` aligns requirements and `/project plan` writes the active execution plan.
+- **Quality checkpoints**: `/project quality` and `/project verify` rerun deterministic checks before you trust a stage as complete.
+
+**Typical flow**
+
+```bash
+kodax --init "Desktop app"
+kodax
+/project brainstorm
+/project plan
+/project next
+/project quality
+```
+
+**Non-REPL alternative**
+
+```bash
+kodax --init "Desktop app"
+kodax --auto-continue --max-hours 2
+```
 
 ---
 
@@ -29,7 +184,7 @@ KodaX uses a **monorepo architecture** with npm workspaces, consisting of 5 pack
 KodaX/
 ├── packages/
 │   ├── ai/                  # @kodax/ai - Independent LLM abstraction layer
-│   │   └── providers/       # 7 LLM providers (Anthropic, OpenAI, etc.)
+│   │   └── providers/       # 11 LLM providers (Anthropic, OpenAI, DeepSeek, etc.)
 │   │
 │   ├── agent/               # @kodax/agent - Generic Agent framework
 │   │   └── session/         # Session management, message handling
@@ -38,7 +193,7 @@ KodaX/
 │   │   └── builtin/         # Built-in skills (code-review, tdd, git-workflow)
 │   │
 │   ├── coding/              # @kodax/coding - Coding Agent (tools + prompts)
-│   │   └── tools/           # 8 tools: read, write, edit, bash, glob, grep, undo, diff
+│   │   └── tools/           # 8 tools: read, write, edit, bash, glob, grep, undo, ask_user_question
 │   │
 │   └── repl/                # @kodax/repl - Interactive terminal UI
 │       ├── ui/              # Ink/React components, themes
@@ -90,13 +245,14 @@ KodaX/
 ## Features
 
 - **Modular Architecture** - Use as CLI or as a library
-- **10 LLM Providers** - Anthropic, OpenAI, Kimi, Kimi Code, Qwen, Zhipu, Zhipu Coding, MiniMax Coding, Gemini CLI, Codex CLI
-- **Thinking Mode** - Deep reasoning support (anthropic, kimi-code, zhipu-coding, minimax-coding)
+- **11 LLM Providers** - Anthropic, OpenAI, DeepSeek, Kimi, Kimi Code, Qwen, Zhipu, Zhipu Coding, MiniMax Coding, Gemini CLI, Codex CLI
+- **Reasoning Modes** - Unified `off/auto/quick/balanced/deep` interface across providers
 - **Streaming Output** - Real-time response display
-- **8 Tools** - read, write, edit, bash, glob, grep, undo, diff
+- **8 Tools** - read, write, edit, bash, glob, grep, undo, ask_user_question
 - **Session Management** - JSONL format persistent storage
+- **Project Mode / Harness Engineering** - Verifier-gated long-running workflow with project truth files and `/project` commands
 - **Skills System** - Natural language triggering, extensible
-- **Permission Control** - 4-level modes with pattern-based control
+- **Permission Control** - 3 permission modes with pattern-based control
 - **Cross-Platform** - Windows/macOS/Linux
 - **TypeScript Native** - Full type safety and IDE support
 
@@ -132,11 +288,13 @@ npm install kodax
 ```
 
 ```typescript
-import { runKodaX, KodaXClient } from 'kodax';
+import { runKodaX } from 'kodax';
 
-// Simple usage
+process.env.ZHIPU_API_KEY = process.env.ZHIPU_API_KEY ?? 'your_api_key';
+
 const result = await runKodaX({
   provider: 'zhipu-coding',
+  reasoningMode: 'auto',
   events: {
     onTextDelta: (text) => process.stdout.write(text),
     onComplete: () => console.log('\nDone!'),
@@ -146,40 +304,65 @@ const result = await runKodaX({
 console.log(result.lastText);
 ```
 
+For CLI users, provider defaults live in `~/.kodax/config.json`. For library users, API keys are still read from environment variables; if you need custom base URLs or provider aliases, use `registerCustomProviders()` as shown above.
+
 ---
 
 ## Usage
 
-### CLI Usage
+### REPL Quickstart
+
+Running `kodax` with no prompt starts the interactive REPL.
 
 ```bash
-# Set API Key
+kodax
+```
+
+Inside the REPL you can type normal requests or slash commands:
+
+```text
+Read package.json and summarize the architecture
+/model
+/mode
+/help
+```
+
+### CLI Quickstart
+
+```bash
+# Set API key
 export ZHIPU_API_KEY=your_api_key
 
 # Basic usage
 kodax "Help me create a TypeScript project"
 
-# Or use node directly
-node dist/kodax_cli.js "your task"
+# Choose a provider explicitly
+kodax --provider openai --model gpt-5.4 "Create a REST API"
+
+# Use a deeper reasoning mode
+kodax --reasoning deep "Review this architecture"
 ```
 
-### Session Mode (With Memory)
+### Session Workflows
+
+Use a session when you want memory across turns. Without a session, each CLI call is independent.
 
 ```bash
-# Start a session with specific ID
+# No memory: two separate calls
+kodax "Read src/auth.ts"
+kodax "Summarize it"
+
+# With memory: same session
 kodax --session my-project "Read package.json"
-
-# Continue same session (has context memory)
 kodax --session my-project "Summarize it"
+kodax --session my-project "How should I fix the first issue?"
 
-# List all sessions
+# Session management
 kodax --session list
-
-# Resume last session
 kodax --session resume "continue"
 ```
 
-### No Memory vs With Memory
+### Session Patterns
 
 ```bash
 # ❌ No memory: two independent calls
@@ -192,7 +375,7 @@ kodax --session auth-review "Summarize it"        # Agent knows to summarize aut
 kodax --session auth-review "How to fix first issue"  # Agent has context
 ```
 
-### Common Scenarios
+### Workflow Examples
 
 ```bash
 # Code review (multi-turn conversation)
@@ -206,31 +389,70 @@ kodax --session todo-app "Add delete functionality"
 kodax --session todo-app "Write tests"
 ```
 
-### CLI Options
+### Project Mode / Harness Engineering
 
+Project Mode combines bootstrap commands with REPL-side `/project` commands:
+
+```bash
+# Bootstrap project truth
+kodax --init "Build a desktop app"
+
+# Enter REPL and use verifier-gated project commands
+kodax
+/project status
+/project brainstorm
+/project plan
+/project next
+/project verify --last
+/project quality
+
+# Or let the non-REPL loop keep going
+kodax --auto-continue --max-hours 2
 ```
--h, --help [topic]  Show help, or detailed help for a topic
---provider <name>   LLM provider (default: zhipu-coding)
---thinking          Enable thinking mode
---no-confirm        Enable auto mode (skip all confirmations)
---session <id>      Session: resume, list, or specific ID
---parallel          Parallel tool execution
---team <tasks>      Run multiple agents in parallel
---init <task>       Initialize long-running project
---auto-continue     Auto-continue until complete
---max-iter <n>      Maximum iterations (default: 200)
---max-sessions <n>  Maximum sessions for --auto-continue (default: 50)
---max-hours <h>     Maximum hours for --auto-continue (default: 2.0)
+
+### CLI Reference
+
+```text
+kodax                    Start the interactive REPL
+-h, --help [topic]   Show help or topic help
+-p, --print <text>   Run a single task and exit
+-c, --continue       Continue the most recent conversation in this directory
+-r, --resume [id]    Resume a session by ID, or the latest session
+-m, --provider       Provider to use
+--model <name>       Override the model
+--reasoning <mode>   off | auto | quick | balanced | deep
+-t, --thinking       Compatibility alias for --reasoning auto
+-s, --session <op>   Session ID or legacy session operation
+-j, --parallel       Enable parallel tool execution
+--team <tasks>       Run multiple sub-agents in parallel
+--init <task>        Initialize a long-running task
+--auto-continue      Continue long-running tasks until complete
+--max-iter <n>       Max iterations
+--max-sessions <n>   Max sessions for --auto-continue
+--max-hours <n>      Max runtime hours for --auto-continue
 ```
+
+### ACP Server
+
+KodaX can also run as a stdio ACP server for editors and IDEs:
+
+```bash
+kodax acp serve
+kodax acp serve --cwd /path/to/repo --permission-mode accept-edits
+kodax acp serve -m openai --model gpt-5.4 --reasoning balanced
+```
+
+This mode exposes ACP `initialize`, `sessions/new`, `chat/prompt`, `chat/cancel`, streaming session updates, and permission requests while reusing KodaX's normal runtime and tool semantics.
+
+ACP session `cwd` is passed into the coding runtime as an explicit `executionCwd`. If you start the server with `--cwd`, that value pins the execution root for every ACP session. Prompt context, relative file paths, and shell commands stay scoped to that explicit directory without mutating the Node.js process-global working directory.
 
 ### Permission Control
 
-KodaX provides 4-level permission modes for fine-grained control:
+KodaX provides 3 permission modes for fine-grained control:
 
 | Mode | Description | Tools Need Confirmation |
 |------|-------------|------------------------|
 | `plan` | Read-only planning mode | All modification tools blocked |
-| `default` | Safe mode (default) | write, edit, bash |
 | `accept-edits` | Auto-accept file edits | bash only |
 | `auto-in-project` | Full auto within project | None (project-scoped) |
 
@@ -238,14 +460,15 @@ KodaX provides 4-level permission modes for fine-grained control:
 # In REPL, use /mode command
 /mode plan          # Switch to plan mode (read-only)
 /mode accept-edits  # Switch to accept-edits mode
-/mode auto          # Switch to auto-in-project mode
+/mode auto-in-project  # Switch to auto-in-project mode
+/auto                  # Alias for auto-in-project
 
 # Check current mode
 /mode
 ```
 
 **Features:**
-- Auto-switch to `accept-edits` when selecting "always" in default mode
+- In `accept-edits` mode, choosing "always" can persist safe Bash allow-patterns
 - Plan mode includes system prompt context for LLM awareness
 - Permanent protection zones: `.kodax/`, `~/.kodax/`, paths outside project
 - Pattern-based permission: Allow specific Bash commands (e.g., `Bash(npm install)`)
@@ -262,7 +485,9 @@ kodax --help
 
 # Detailed topic help
 kodax -h sessions      # Session management details
+kodax -h acp           # ACP server mode
 kodax -h init          # Long-running project initialization
+kodax -h project       # Project mode / harness workflow
 kodax -h auto          # Auto-continue mode
 kodax -h provider      # LLM provider configuration
 kodax -h thinking      # Thinking/reasoning mode
@@ -270,7 +495,7 @@ kodax -h team          # Multi-agent parallel execution
 kodax -h print         # Print configuration
 ```
 
-### Library Usage
+## Advanced Library Usage
 
 #### Simple Mode (runKodaX)
 
@@ -279,7 +504,7 @@ import { runKodaX, KodaXEvents } from 'kodax';
 
 const events: KodaXEvents = {
   onTextDelta: (text) => process.stdout.write(text),
-  onThinkingDelta: (text, charCount) => console.log(`Thinking: ${charCount} chars`),
+  onThinkingDelta: (text) => console.log(`Thinking delta: ${text.length} chars`),
   onToolResult: (result) => console.log(`Tool ${result.name}: ${result.content.slice(0, 100)}`),
   onComplete: () => console.log('\nDone!'),
   onError: (e) => console.error(e.message),
@@ -287,9 +512,12 @@ const events: KodaXEvents = {
 
 const result = await runKodaX({
   provider: 'zhipu-coding',
-  thinking: true,
+  reasoningMode: 'auto',
+  context: {
+    gitRoot: '/repo',
+    executionCwd: '/repo/packages/service',
+  },
   events,
-  auto: true,
 }, 'What is 1+1?');
 
 console.log(result.lastText);
@@ -302,6 +530,7 @@ import { KodaXClient } from 'kodax';
 
 const client = new KodaXClient({
   provider: 'zhipu-coding',
+  reasoningMode: 'auto',
   events: {
     onTextDelta: (t) => process.stdout.write(t),
   },
@@ -333,6 +562,10 @@ class MyDatabaseStorage implements KodaXSessionStorage {
 
 await runKodaX({
   provider: 'zhipu-coding',
+  context: {
+    gitRoot: '/repo',
+    executionCwd: '/repo',
+  },
   session: {
     id: 'my-session-123',
     storage: new MyDatabaseStorage(),
@@ -349,6 +582,27 @@ await runKodaX({
 | **Call Style** | Function | Class instance |
 | **Context** | Independent each time | Accumulates |
 | **Use Case** | Single tasks, batch processing | Interactive dialogue, multi-step tasks |
+
+### Working Directory Semantics
+
+`runKodaX()` distinguishes between two related but different concepts:
+
+- `context.gitRoot`: the project root used for project-scoped prompts and permission logic.
+- `context.executionCwd`: the working directory used for prompt context, relative tool paths, and shell execution.
+
+If `executionCwd` is omitted, KodaX falls back to `gitRoot`, then `process.cwd()`.
+
+```typescript
+await runKodaX({
+  provider: 'zhipu-coding',
+  context: {
+    gitRoot: '/repo',
+    executionCwd: '/repo/packages/web',
+  },
+}, 'Review the current package and run local checks');
+```
+
+This is especially useful for monorepos where the project root and the active package directory are not the same.
 
 ---
 
@@ -382,7 +636,7 @@ for await (const result of stream) {
 ```
 
 **Key Features**:
-- 10 LLM providers with unified interface
+- 11 LLM providers with unified interface
 - Streaming output support
 - Thinking mode support
 - Error handling and retry logic
@@ -467,7 +721,7 @@ import { runKodaX, KodaXClient, KODAX_TOOLS } from '@kodax/coding';
 // Use runKodaX for single tasks
 const result = await runKodaX({
   provider: 'zhipu-coding',
-  thinking: true,
+  reasoningMode: 'auto',
   events: {
     onTextDelta: (text) => process.stdout.write(text)
   }
@@ -476,6 +730,7 @@ const result = await runKodaX({
 // Or use KodaXClient for continuous sessions
 const client = new KodaXClient({
   provider: 'anthropic',
+  reasoningMode: 'auto',
   events: { ... }
 });
 
@@ -484,7 +739,7 @@ await client.send('Add a function to it'); // Has context from previous message
 ```
 
 **Key Features**:
-- 8 built-in tools (read, write, edit, bash, glob, grep, undo, diff)
+- 8 built-in tools (read, write, edit, bash, glob, grep, undo, ask_user_question)
 - System prompts for coding tasks
 - Agent loop implementation
 - Session management
@@ -508,7 +763,7 @@ import { InkREPL } from '@kodax/repl';
 
 **Key Features**:
 - Ink-based React components
-- 4-level permission control
+- 3 permission modes
 - Built-in commands
 - Real-time streaming display
 - Context usage indicator
@@ -537,18 +792,19 @@ import { InkREPL } from '@kodax/repl';
 
 ---
 
-| Provider | Environment Variable | Thinking | Default Model |
-|----------|---------------------|----------|---------------|
-| anthropic | `ANTHROPIC_API_KEY` | Yes | claude-sonnet-4-6 |
-| openai | `OPENAI_API_KEY` | No | gpt-5.3-codex |
-| kimi | `KIMI_API_KEY` | Yes | k2.5 |
-| kimi-code | `KIMI_API_KEY` | Yes | k2.5 |
-| qwen | `QWEN_API_KEY` | No | qwen3.5-plus |
-| zhipu | `ZHIPU_API_KEY` | No | glm-5 |
-| zhipu-coding | `ZHIPU_API_KEY` | Yes | glm-5 |
-| minimax-coding | `MINIMAX_API_KEY` | Yes | MiniMax-M2.5 |
-| gemini-cli | `GOOGLE_APPLICATION_CREDENTIALS` | Yes | (via gemini CLI) |
-| codex-cli | `GOOGLE_APPLICATION_CREDENTIALS` | Yes | (via codex CLI) |
+| Provider | Environment Variable | Reasoning Support | Default Model |
+|----------|----------------------|-------------------|---------------|
+| anthropic | `ANTHROPIC_API_KEY` | Native budget | claude-sonnet-4-6 |
+| openai | `OPENAI_API_KEY` | Native effort | gpt-5.3-codex |
+| deepseek | `DEEPSEEK_API_KEY` | Native toggle on `deepseek-chat`; model-selected reasoning on `deepseek-reasoner` | deepseek-chat |
+| kimi | `KIMI_API_KEY` | Native effort | k2.5 |
+| kimi-code | `KIMI_API_KEY` | Native budget | k2.5 |
+| qwen | `QWEN_API_KEY` | Native budget | qwen3.5-plus |
+| zhipu | `ZHIPU_API_KEY` | Native budget | glm-5 |
+| zhipu-coding | `ZHIPU_API_KEY` | Native budget | glm-5 |
+| minimax-coding | `MINIMAX_API_KEY` | Native budget | MiniMax-M2.5 |
+| gemini-cli | `GEMINI_API_KEY` | Prompt-only / CLI bridge | (via gemini CLI) |
+| codex-cli | `OPENAI_API_KEY` | Prompt-only / CLI bridge | (via codex CLI) |
 
 ### Examples
 
@@ -559,6 +815,11 @@ kodax --provider zhipu-coding --thinking "Help me optimize this code"
 # Use OpenAI
 export OPENAI_API_KEY=your_key
 kodax --provider openai "Create a REST API"
+
+# Use DeepSeek
+export DEEPSEEK_API_KEY=your_key
+kodax --provider deepseek "Summarize this repository"
+kodax --provider deepseek --model deepseek-reasoner "Think through this refactor plan"
 
 # Resume last session
 kodax --session resume
@@ -574,7 +835,7 @@ kodax --team "Analyze code structure,Check test coverage,Find bugs"
 
 # Long-running project
 kodax --init "Build a Todo application"
-kodax --auto-continue
+kodax --auto-continue --max-hours 2
 ```
 
 ---
@@ -590,7 +851,7 @@ kodax --auto-continue
 | glob | File pattern matching |
 | grep | Content search (supports output_mode) |
 | undo | Revert last modification |
-| diff | Compare files or show changes |
+| ask_user_question | Ask the user to choose between options |
 
 ---
 
@@ -701,7 +962,7 @@ KodaX uses an **English-first** comment style with selective Chinese brief notes
 
 ## Documentation
 
-- [README_CN.md](docs/README_CN.md) - Chinese Documentation
+- [README_CN.md](README_CN.md) - Chinese Documentation
 - [DESIGN.md](docs/DESIGN.md) - Architecture and Implementation Details
 - [TESTING.md](docs/TESTING.md) - Testing Guide
 - [test-guides/](docs/test-guides/) - Feature-specific test guides
@@ -712,4 +973,4 @@ KodaX uses an **English-first** comment style with selective Chinese brief notes
 
 ## License
 
-MIT
+[Apache License 2.0](LICENSE) - Copyright 2026 [icetomoyo](mailto:icetomoyo@gmail.com)

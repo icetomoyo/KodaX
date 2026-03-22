@@ -1,6 +1,6 @@
 # Feature List
 
-_Last Updated: 2026-03-20_
+_Last Updated: 2026-03-22_
 
 ---
 
@@ -8,7 +8,7 @@ _Last Updated: 2026-03-20_
 
 | 字段 | 值 | 说明 |
 |------|-----|------|
-| **Current Release** | v0.6.11 | 最新发布版本（仅供参考） |
+| **Current Release** | v0.6.14 | 最新发布版本（仅供参考） |
 | **Planned Version** | v0.7.0 | 当前规划的版本 |
 
 ---
@@ -30,9 +30,9 @@ _Last Updated: 2026-03-20_
 | v0.6.0 | Released | 6 | 6/6 (100%) |
 | v0.6.10 | Released | 1 | 1/1 (100%) |
 | v0.6.11 | Released | 0 | 0/0 (100%) |
-| v0.6.15 | Planned | 1 | 0/1 (0%) |
-| v0.7.0 | Planned | 5 | 0/5 (0%) |
-| v0.8.0 | Planned | 5 | 0/5 (0%) |
+| v0.6.15 | Completed | 4 | 4/4 (100%) |
+| v0.7.0 | Planned | 6 | 0/6 (0%) |
+| v0.8.0 | Planned | 6 | 0/6 (0%) |
 | v1.0.0 | Planned | 3 | 0/3 (0%) |
 | v0.9.0 | Planned | 1 | 0/1 (0%) |
 
@@ -42,41 +42,46 @@ _Last Updated: 2026-03-20_
 
 | ID | Category | Status | Priority | Title | Planned | Released | Design | Created | Started | Completed |
 |----|----------|--------|----------|-------|---------|----------|--------|---------|---------|-----------|
-| 001 | New | Completed | High | Plan Mode | v0.3.1 | v0.3.1 | [Design](features/v0.3.1.md#001) | 2026-02-18 | 2026-02-18 | 2026-02-18 |
+| 001 | New | Completed | High | 计划模式 | v0.3.1 | v0.3.1 | [Design](features/v0.3.1.md#001) | 2026-02-18 | 2026-02-18 | 2026-02-18 |
 | 002 | Enhancement | Completed | High | 强化 Ask 模式 | v0.3.1 | v0.3.1 | [Design](features/v0.3.1.md#002) | 2026-02-18 | 2026-02-18 | 2026-02-18 |
 | 003 | New | Completed | High | 交互式项目模式 | v0.3.1 | v0.3.1 | [Design](features/v0.3.1.md#003) | 2026-02-19 | 2026-02-19 | 2026-02-19 |
 | 004 | Enhancement | Completed | Medium | 交互式界面改进 | v0.3.3 | v0.3.3 | [Design](features/v0.3.3.md#004) | 2026-02-19 | 2026-02-19 | 2026-02-20 |
 | 005 | Refactor | Completed | High | v0.4.0 架构重构与模块解耦 | v0.4.0 | v0.4.0 | [Design](features/v0.4.0.md#005) | 2026-02-20 | 2026-02-24 | 2026-02-24 |
-| 006 | New | Completed | Critical | Skills 系统 | v0.5.0 | v0.5.10 | [Design](features/v0.5.0.md#006) | 2026-02-25 | 2026-02-28 | 2026-03-05 |
+| 006 | New | Completed | Critical | 技能系统 | v0.5.0 | v0.5.10 | [Design](features/v0.5.0.md#006) | 2026-02-25 | 2026-02-28 | 2026-03-05 |
 | 007 | Enhancement | Planned | Medium | 主题系统完善 | v0.8.0 | - | [Design](features/v0.8.0.md#007) | 2026-02-25 | - | - |
 | 008 | Enhancement | Completed | High | 权限控制体系改进 | v0.5.0 | v0.4.6 | [Design](features/v0.5.0.md#008) | 2026-02-26 | 2026-02-27 | 2026-02-27 |
 | 009 | Refactor | Completed | Critical | 架构重构：AI 层独立 + 权限层分离 | v0.5.0 | v0.5.0 | [Design](features/v0.5.0.md#009) | 2026-02-27 | 2026-02-27 | 2026-02-27 |
-| 010 | Refactor | Completed | Critical | 架构拆分：Agent Core + Skills 独立 | v0.5.0 | v0.5.5 | [Design](features/v0.5.0.md#010) | 2026-03-02 | 2026-03-02 | 2026-03-02 |
-| 011 | Enhancement | Completed | High | 智能上下文压缩 (Compact) | v0.5.0 | v0.5.14 | [Design](features/v0.5.0.md#011) | 2026-03-02 | 2026-03-05 | 2026-03-06 |
+| 010 | Refactor | Completed | Critical | 架构拆分：Agent 核心 + 技能独立 | v0.5.0 | v0.5.5 | [Design](features/v0.5.0.md#010) | 2026-03-02 | 2026-03-02 | 2026-03-02 |
+| 011 | Enhancement | Completed | High | 智能上下文压缩 | v0.5.0 | v0.5.14 | [Design](features/v0.5.0.md#011) | 2026-03-02 | 2026-03-05 | 2026-03-06 |
 | 012 | Enhancement | Completed | High | TUI 自动补全增强 | v0.5.0 | v0.5.13 | [Design](features/v0.5.0.md#012) | 2026-03-02 | 2026-03-05 | 2026-03-05 |
-| 013 | Refactor | Completed | High | Command System 2.0 | v0.6.0 | v0.6.0 | [Design](features/v0.6.0.md#013) | 2026-03-03 | 2026-03-13 | 2026-03-16 |
-| 014 | Refactor | Completed | High | Project Mode Enhancement | v0.5.20 | v0.5.20 | [Design](features/v0.5.20.md) | 2026-03-07 | 2026-03-07 | 2026-03-07 |
-| 015 | Enhancement | Completed | High | Project Mode 2.0 - AI-Driven Development Workflow | v0.6.0 | v0.6.0 | [Design](features/v0.6.0.md#015) | 2026-03-07 | 2026-03-17 | 2026-03-17 |
-| 016 | New | Completed | High | CLI-Based OAuth Providers | v0.5.22 | v0.5.22 | [Design](features/v0.5.22.md) | 2026-03-08 | 2026-03-08 | 2026-03-08 |
+| 013 | Refactor | Completed | High | 命令系统 2.0 | v0.6.0 | v0.6.0 | [Design](features/v0.6.0.md#013) | 2026-03-03 | 2026-03-13 | 2026-03-16 |
+| 014 | Refactor | Completed | High | 项目模式增强 | v0.5.20 | v0.5.20 | [Design](features/v0.5.20.md) | 2026-03-07 | 2026-03-07 | 2026-03-07 |
+| 015 | Enhancement | Completed | High | Project Mode 2.0 - AI-Driven Workflow | v0.6.0 | v0.6.0 | [Design](features/v0.6.0.md#015) | 2026-03-07 | 2026-03-17 | 2026-03-17 |
+| 016 | New | Completed | High | CLI OAuth 认证提供商 | v0.5.22 | v0.5.22 | [Design](features/v0.5.22.md) | 2026-03-08 | 2026-03-08 | 2026-03-08 |
 | 017 | Enhancement | Completed | High | 运行时用户输入插队 | v0.6.0 | v0.6.0 | [Design](features/v0.6.0.md#017) | 2026-03-11 | 2026-03-17 | 2026-03-17 |
 | 018 | New | Planned | High | CodeWiki - 项目知识库系统 | v0.8.0 | - | [Design](features/v0.8.0.md#018) | 2026-03-11 | - | - |
-| 019 | New | Planned | High | Session Tree & Rollback System | v0.7.0 | - | [Design](features/v0.7.0.md#019) | 2026-03-12 | - | - |
+| 019 | New | Planned | High | 会话树与回滚系统 | v0.7.0 | - | [Design](features/v0.7.0.md#019) | 2026-03-12 | - | - |
 | 020 | New | Completed | High | AGENTS.md - 项目级 AI 上下文规则 | v0.6.0 | v0.5.34 | [Design](features/v0.6.0.md#020) | 2026-03-13 | 2026-03-13 | 2026-03-13 |
-| 021 | Enhancement | Completed | High | Provider-Aware Reasoning Budget Matrix | v0.6.0 | v0.5.37 | [Design](features/v0.6.0.md#021) | 2026-03-15 | 2026-03-15 | 2026-03-15 |
-| 022 | New | Planned | High | Multi-Agent Orchestration Layer | v1.0.0 | - | [Design](features/v0.6.0.md#022) | 2026-03-17 | - | - |
-| 023 | Enhancement | Planned | High | Dual-Mode Terminal UX (Inline + Fullscreen TUI) | v1.0.0 | - | [Design](features/v1.0.0.md#023) | 2026-03-17 | - | - |
-| 024 | Enhancement | Completed | High | Project Harness - Action-Level Verified Execution | v0.6.10 | v0.6.10 | [Design](features/v0.6.10.md#feature_024-project-harness---action-level-verified-execution) | 2026-03-18 | 2026-03-18 | 2026-03-18 |
-| 025 | Enhancement | Planned | High | Adaptive Project Intelligence Layer | v0.8.0 | - | [Design](features/v0.8.0.md#feature_025-adaptive-project-intelligence-layer) | 2026-03-18 | - | - |
-| 026 | Internal | Planned | High | Roadmap Integrity and Tracker Consistency Hardening | v0.7.0 | - | [Design](features/v0.7.0.md#feature_026-roadmap-integrity-and-tracker-consistency-hardening) | 2026-03-18 | - | - |
-| 034 | Enhancement | Planned | High | Pi-style Extension API | v0.8.0 | - | [Design](features/v0.8.0.md#034) | 2026-03-20 | - | - |
-| 028 | Enhancement | Planned | High | First-Class Search Retrieval and Evidence Tooling | v0.8.0 | - | [Design](features/v0.8.0.md#feature_028-first-class-search-retrieval-and-evidence-tooling) | 2026-03-18 | - | - |
-| 029 | Enhancement | Planned | High | Provider Adapter Transparency and Semantic Compatibility | v0.7.0 | - | [Design](features/v0.7.0.md#feature_029-provider-adapter-transparency-and-semantic-compatibility) | 2026-03-18 | - | - |
-| 030 | Enhancement | Planned | High | Multi-Surface Delivery | v1.0.0 | - | [Design](features/v1.0.0.md#feature_030-multi-surface-delivery) | 2026-03-18 | - | - |
+| 021 | Enhancement | Completed | High | Provider 感知推理预算矩阵 | v0.6.0 | v0.5.37 | [Design](features/v0.6.0.md#021) | 2026-03-15 | 2026-03-15 | 2026-03-15 |
+| 022 | New | Planned | High | 多 Agent 编排层 | v1.0.0 | - | [Design](features/v0.6.0.md#022) | 2026-03-17 | - | - |
+| 023 | Enhancement | Planned | High | Dual-Mode Terminal UX（行内 + 全屏 TUI） | v1.0.0 | - | [Design](features/v1.0.0.md#023) | 2026-03-17 | - | - |
+| 024 | Enhancement | Completed | High | Project Harness - 动作级验证执行 | v0.6.10 | v0.6.10 | [Design](features/v0.6.10.md#feature_024-project-harness---action-level-verified-execution) | 2026-03-18 | 2026-03-18 | 2026-03-18 |
+| 025 | Enhancement | Planned | High | Adaptive Project Intelligence 层 | v0.8.0 | - | [Design](features/v0.8.0.md#feature_025-adaptive-project-intelligence-layer) | 2026-03-18 | - | - |
+| 026 | Internal | Planned | High | Roadmap Integrity 与 Tracker Consistency 加固 | v0.7.0 | - | [Design](features/v0.7.0.md#feature_026-roadmap-integrity-and-tracker-consistency-hardening) | 2026-03-18 | - | - |
+| 028 | Enhancement | Planned | High | First-Class 搜索检索与证据工具 | v0.8.0 | - | [Design](features/v0.8.0.md#feature_028-first-class-search-retrieval-and-evidence-tooling) | 2026-03-18 | - | - |
+| 029 | Enhancement | Planned | High | Provider Adapter 透明度与语义兼容性 | v0.7.0 | - | [Design](features/v0.7.0.md#feature_029-provider-adapter-transparency-and-semantic-compatibility) | 2026-03-18 | - | - |
+| 030 | Enhancement | Planned | High | 多端交付 | v1.0.0 | - | [Design](features/v1.0.0.md#feature_030-multi-surface-delivery) | 2026-03-18 | - | - |
 | 031 | New | Planned | High | 多模态图片上传支持 | v0.9.0 | - | [Design](features/v0.9.0.md#031) | 2026-03-19 | - | - |
 | 032 | Enhancement | Planned | Medium | JSON 输出模式 (--mode json) | v0.7.0 | - | [Design](features/v0.7.0.md#032) | 2026-03-19 | - | - |
-| 033 | Enhancement | Planned | Medium | REPL Parallel Toggle (/parallel) | v0.6.15 | - | [Design](features/v0.6.15.md#033) | 2026-03-20 | - | - |
-| 035 | New | Planned | High | MCP Bridge Runtime | v0.7.0 | - | [Design](features/v0.7.0.md#035) | 2026-03-20 | - | - |
-### 014: Project Mode Enhancement (COMPLETED)
+| 033 | Enhancement | Completed | Medium | REPL 并行切换 (/parallel) | v0.6.15 | v0.6.15 | [Design](features/v0.6.15.md#033) | 2026-03-20 | 2026-03-21 | 2026-03-21 |
+| 034 | Enhancement | Planned | High | Extension + Capability Runtime | v0.8.0 | - | [Design](features/v0.8.0.md#034) | 2026-03-20 | - | - |
+| 035 | New | Planned | High | MCP 能力 Provider | v0.7.0 | - | [Design](features/v0.7.0.md#035) | 2026-03-20 | - | - |
+| 036 | Enhancement | Completed | Medium | DeepSeek 内置 Provider 支持 | v0.6.15 | v0.6.15 | [Design](features/v0.6.15.md#036) | 2026-03-20 | 2026-03-21 | 2026-03-21 |
+| 037 | Enhancement | Planned | Medium | API Token Usage 真实值优先 + 估算回退 | v0.7.0 | - | [Design](features/v0.7.0.md#037) | 2026-03-21 | - | - |
+| 038 | New | Planned | High | Official Sandbox Extension | v0.8.0 | - | [Design](features/v0.8.0.md#feature_038-official-sandbox-extension) | 2026-03-21 | - | - |
+| 039 | Enhancement | Completed | High | Plan 模式双写白名单（项目说明文档 + 系统临时目录） | v0.6.15 | v0.6.15 | [Design](features/v0.6.15.md#039) | 2026-03-22 | - | 2026-03-22 |
+| 040 | New | Completed | High | ACP Server 支持（供编辑器/IDE 直接调用） | v0.6.15 | v0.6.15 | [Design](features/v0.6.15.md#040) | 2026-03-22 | 2026-03-22 | 2026-03-22 |
+### 014: 项目模式增强 (COMPLETED)
 - **Category**: Refactor
 - **Status**: Completed
 - **Priority**: High
@@ -117,11 +122,11 @@ _Last Updated: 2026-03-20_
 
 ---
 
-### 015: Project Mode 2.0 - AI-Driven Development Workflow (COMPLETED)
+### 015: Project Mode 2.0 - AI-Driven Workflow (COMPLETED)
 
 ---
 
-### 021: Provider-Aware Reasoning Budget Matrix (COMPLETED)
+### 021: Provider 感知推理预算矩阵 (COMPLETED)
 - **Category**: Enhancement
 - **Status**: Completed
 - **Priority**: High
@@ -152,7 +157,7 @@ _Last Updated: 2026-03-20_
 
 ## Feature Details
 
-### 001: Plan Mode (COMPLETED)
+### 001: 计划模式 (COMPLETED)
 - **Category**: New
 - **Status**: Completed
 - **Priority**: High
@@ -292,7 +297,7 @@ REPL 中的长运行项目管理，通过 `/project` 命令组实现。
 
 ---
 
-### 006: Skills 系统 (COMPLETED)
+### 006: 技能系统 (COMPLETED)
 - **Category**: New
 - **Status**: Completed
 - **Priority**: Critical
@@ -428,7 +433,7 @@ REPL 中的长运行项目管理，通过 `/project` 命令组实现。
 
 ---
 
-### 010: 架构拆分：Agent Core + Skills 独立 (COMPLETED)
+### 010: 架构拆分：Agent 核心 + 技能独立 (COMPLETED)
 - **Category**: Refactor
 - **Status**: Completed
 - **Priority**: Critical
@@ -444,7 +449,7 @@ REPL 中的长运行项目管理，通过 `/project` 命令组实现。
 
 **Goals**:
 1. **@kodax/agent** - 通用 Agent 框架（状态机、消息循环、transport 抽象）
-2. **@kodax/skills** - Skills 系统独立包（零依赖，可被任何 Agent 使用）
+2. **@kodax/skills** - 技能系统独立包（零依赖，可被任何 Agent 使用）
 3. **@kodax/coding** - Coding Agent（工具 + Prompts，依赖 agent + skills）
 4. **@kodax/repl** - CLI 应用（纯 UI 和交互）
 
@@ -459,7 +464,7 @@ REPL 中的长运行项目管理，通过 `/project` 命令组实现。
 
 **Key Changes**:
 - 创建 `packages/agent/` - 从 core 提取通用 Agent 框架
-- 创建 `packages/skills/` - 从 repl 提取 Skills 系统
+- 创建 `packages/skills/` - 从 repl 提取 技能系统
 - 重命名 `packages/core/` → `packages/coding/` - Coding 专用工具和 Prompts
 - 简化 `packages/repl/` - 只保留 UI 和交互逻辑
 
@@ -471,7 +476,7 @@ REPL 中的长运行项目管理，通过 `/project` 命令组实现。
 
 ---
 
-### 011: 智能上下文压缩 Compact (COMPLETED)
+### 011: 智能上下文压缩 (COMPLETED)
 - **Category**: Enhancement
 - **Status**: Completed
 - **Priority**: High
@@ -565,7 +570,7 @@ REPL 中的长运行项目管理，通过 `/project` 命令组实现。
 
 ---
 
-### 013: Command System 2.0 (COMPLETED)
+### 013: 命令系统 2.0 (COMPLETED)
 - **Category**: Refactor
 - **Status**: Completed
 - **Priority**: High
@@ -597,7 +602,7 @@ REPL 中的长运行项目管理，通过 `/project` 命令组实现。
 
 ---
 
-### 014: Project Mode Enhancement (COMPLETED)
+### 014: 项目模式增强 (COMPLETED)
 - **Category**: Refactor
 - **Status**: Completed
 - **Priority**: High
@@ -647,7 +652,7 @@ Successfully implemented the redesigned `/project` command system with the follo
 
 ---
 
-### 016: CLI-Based OAuth Providers (COMPLETED)
+### 016: CLI OAuth 认证提供商 (COMPLETED)
 - **Category**: New
 - **Status**: Completed
 - **Priority**: High
@@ -775,7 +780,7 @@ Successfully implemented the redesigned `/project` command system with the follo
 
 ---
 
-### 019: Session Tree & Rollback System (PLANNED)
+### 019: 会话树与回滚系统 (PLANNED)
 - **Category**: New
 - **Status**: Planned
 - **Priority**: High
@@ -884,7 +889,7 @@ interface SessionEntryBase {
 
 ---
 
-### 015: Project Mode 2.0 - AI-Driven Development Workflow (COMPLETED)
+### 015: Project Mode 2.0 - AI-Driven Workflow (COMPLETED)
 - **Category**: Enhancement
 - **Status**: Completed
 - **Priority**: High
@@ -941,7 +946,7 @@ interface SessionEntryBase {
 
 ---
 
-### 022: Multi-Agent Orchestration Layer (IN PROGRESS)
+### 022: 多 Agent 编排层 (IN PROGRESS)
 - **Category**: New
 - **Status**: InProgress
 - **Priority**: High
@@ -977,7 +982,7 @@ interface SessionEntryBase {
 
 ---
 
-### 023: Dual-Mode Terminal UX (Inline + Fullscreen TUI) (PLANNED)
+### 023: Dual-Mode Terminal UX（行内 + 全屏 TUI） (PLANNED)
 - **Category**: Enhancement
 - **Status**: Planned
 - **Priority**: High
@@ -1012,7 +1017,7 @@ Introduce an explicit dual-mode terminal UX roadmap for KodaX: a scrollback-safe
 
 ---
 
-### 024: Project Harness - Action-Level Verified Execution (COMPLETED)
+### 024: Project Harness - 动作级验证执行 (COMPLETED)
 - **Category**: Enhancement
 - **Status**: Completed
 - **Priority**: High
@@ -1051,7 +1056,7 @@ Add an action-level verifier layer to Project Mode so `/project next` and `/proj
 
 ---
 
-### 025: Adaptive Project Intelligence Layer (PLANNED)
+### 025: Adaptive Project Intelligence 层 (PLANNED)
 - **Category**: Enhancement
 - **Status**: Planned
 - **Priority**: High
@@ -1087,7 +1092,7 @@ Build the next KodaX-practice layer on top of Project Harness: deeper but still 
 
 ---
 
-### 026: Roadmap Integrity and Tracker Consistency Hardening (PLANNED)
+### 026: Roadmap Integrity 与 Tracker Consistency 加固 (PLANNED)
 - **Category**: Internal
 - **Status**: Planned
 - **Priority**: High
@@ -1117,7 +1122,7 @@ Harden KodaX's document-driven execution model so `FEATURE_LIST.md`, version des
 
 ---
 
-### 028: First-Class Search Retrieval and Evidence Tooling (PLANNED)
+### 028: First-Class 搜索检索与证据工具 (PLANNED)
 - **Category**: Enhancement
 - **Status**: Planned
 - **Priority**: High
@@ -1147,7 +1152,7 @@ Build native search and retrieval tools for up-to-date research and large-codeba
 
 ---
 
-### 029: Provider Adapter Transparency and Semantic Compatibility (PLANNED)
+### 029: Provider Adapter 透明度与语义兼容性 (PLANNED)
 - **Category**: Enhancement
 - **Status**: Planned
 - **Priority**: High
@@ -1177,7 +1182,7 @@ Clarify and harden the difference between native API providers and CLI-bridge ad
 
 ---
 
-### 030: Multi-Surface Delivery (PLANNED)
+### 030: 多端交付 (PLANNED)
 - **Category**: Enhancement
 - **Status**: Planned
 - **Priority**: High
@@ -1273,35 +1278,47 @@ Expand KodaX from a terminal-first tool into a consistent product across IDE, de
 
 ---
 
-### 033: REPL Parallel Toggle (/parallel) (PLANNED)
+### 033: REPL 并行切换 (/parallel) (COMPLETED)
 - **Category**: Enhancement
-- **Status**: Planned
+- **Status**: Completed
 - **Priority**: Medium
 - **Planned**: v0.6.15
-- **Released**: -
+- **Released**: v0.6.15
 - **Design**: [v0.6.15.md#033](features/v0.6.15.md#033)
 - **Created**: 2026-03-20
-- **Started**: -
-- **Completed**: -
+- **Started**: 2026-03-21
+- **Completed**: 2026-03-21
 
 **Description**:
-将 `--parallel` (并行工具执行) 能力从仅 CLI 启动时指定扩展到 REPL 交互模式中，支持通过 `/parallel` 命令动态切换，并在状态栏显示当前 parallel 状态。
+将 `--parallel` (并行工具执行) 能力从仅 CLI 启动时指定扩展到 REPL 交互模式中，支持通过 `/parallel` 命令动态切换、持久化到用户配置，并在 classic REPL / Ink REPL / 导出的 App 状态栏中一致显示当前执行模式。
 
 **Goals**:
-1. 在 `CurrentConfig` 中添加 `parallel: boolean` 字段
-2. 新增 `/parallel` 命令，支持 toggle on/off 和状态显示
-3. 状态栏显示 parallel 开启状态（类似 thinking/reasoning 的显示方式）
-4. 每次 agent turn 根据 `currentConfig.parallel` 决定是否并行执行工具
+1. ✅ 在 `CurrentConfig` 中添加 `parallel: boolean` 字段
+2. ✅ 新增 `/parallel` 命令，支持 toggle on/off 和状态显示
+3. ✅ 经典 REPL 与 Ink REPL 状态栏显示 `parallel/serial`
+4. ✅ 每次 agent turn 根据 `currentConfig.parallel` 决定是否并行执行工具
+5. ✅ CLI 未显式传入 `-j/--parallel` 时，重启后回落到持久化配置而不是强制覆盖为 `serial`
+6. ✅ 公开 UI `App` 封装向 `StatusBar` 透传 `parallel` 状态
+
+**Implementation Notes**:
+- Added `/parallel` and persisted the toggle in `~/.kodax/config.json`
+- Synced runtime parallel state across classic REPL, Ink REPL, and command callbacks
+- Added execution visibility to `/status`, startup banner, classic status bar, and Ink status bar
+- Fixed CLI option precedence so persisted `/parallel` survives a normal restart unless `-j/--parallel` is explicitly provided
+- Updated the exported `App` UI wrapper so embedded consumers also show `parallel/serial` correctly
+- Verified with targeted Vitest coverage plus `npm run build:packages`
 
 **Key Changes**:
 - 修改 `packages/repl/src/interactive/commands.ts` — 添加 `/parallel` 命令
-- 修改 `packages/repl/src/interactive/context.ts` — CurrentConfig 增加 parallel 字段
-- 修改 `packages/repl/src/ui/InkREPL.tsx` — 状态栏显示 parallel 状态
-- 修改 `packages/repl/src/interactive/invocation-runtime.ts` — 将 parallel 传入 agent options
+- 修改 `packages/repl/src/common/utils.ts` — 读写 `parallel` 用户配置
+- 修改 `packages/repl/src/interactive/repl.ts` 与 `packages/repl/src/ui/InkREPL.tsx` — 同步 runtime `parallel` 状态与 banner/status
+- 修改 `packages/repl/src/interactive/status-bar.ts` 与 `packages/repl/src/ui/components/StatusBar.tsx` — 显示 `parallel/serial`
+- 修改 `packages/repl/src/ui/App.tsx` 与 `packages/repl/src/ui/types.ts` — 导出 UI API 也支持 `parallel`
+- 修改 `src/kodax_cli.ts` — 修复 CLI `parallel` 配置优先级与重启恢复逻辑
 
 ---
 
-### 034: Pi-style Extension API (PLANNED)
+### 034: Extension + Capability Runtime (PLANNED)
 - **Category**: Enhancement
 - **Status**: Planned
 - **Priority**: High
@@ -1311,6 +1328,15 @@ Expand KodaX from a terminal-first tool into a consistent product across IDE, de
 - **Created**: 2026-03-20
 - **Started**: -
 - **Completed**: -
+
+**Updated Direction (2026-03-20)**:
+- 034 的中心不再是“仿照 Pi 做一层 Extension API”，而是建立 KodaX 的 Extension + Capability Runtime。
+- 本地工具继续作为 direct tools 注册，外部大能力面通过 `CapabilityProvider` 接入。
+- 先做 registry cleanup，再做 extension runtime，再做 typed event bus，最后才做 user-facing loading。
+- `KodaXEvents` 保留为 host/UI callback adapter，不再作为扩展总线演进。
+- runtime 主体落在 `packages/coding`，不是 `packages/agent`。
+
+The legacy draft below is retained temporarily for history. Implementation should follow the updated direction and the redesigned section in `docs/features/v0.8.0.md`.
 
 **Description**:
 仿照 pi-mono 的 Extension API 设计统一的 KodaX 扩展接口，允许用户通过单个 `.js` 文件注册自定义工具、命令、provider，并订阅 agent 生命周期事件。取代 KodaX 当前分散的扩展机制（tools Map、CommandRegistry、shell hooks），提供一致的 `KodaXExtensionAPI` 接口。
@@ -1330,7 +1356,7 @@ Expand KodaX from a terminal-first tool into a consistent product across IDE, de
 
 **Inspired by**: [pi-mono Extension System](https://github.com/badlogic/pi-mono)
 
-### 035: MCP Bridge Runtime (PLANNED)
+### 035: MCP 能力 Provider (PLANNED)
 - **Category**: New
 - **Status**: Planned
 - **Priority**: High
@@ -1341,14 +1367,23 @@ Expand KodaX from a terminal-first tool into a consistent product across IDE, de
 - **Started**: -
 - **Completed**: -
 
+**Updated Direction (2026-03-20)**:
+- 035 不再是 REPL 内置 bridge 特例，而是 034 capability runtime 上的第一个大型 provider。
+- 以 tools/resources/prompts 的 lazy discovery、typed describe、structured execution、catalog caching 为主线。
+- JSON catalog 是主数据面，markdown 只保留 debug/export 角色。
+- MCP runtime 由 session/runtime 层托管，不挂死在 `InkREPL.tsx` 启动流程里。
+- v1 模型侧接口收敛为 `mcp_search`、`mcp_describe`、`mcp_call`、`mcp_read_resource`，避免单一 `mcp_call + tools.md`。
+
+The legacy draft below is retained temporarily for history. Implementation should follow the updated direction and the redesigned section in `docs/features/v0.7.0.md`.
+
 **Description**:
 为 KodaX 提供 MCP 生态工具访问能力，无需内置 MCP SDK。采用持久化 Runtime 架构，在 REPL 启动时连接所有配置的 MCP server（长驻子进程），通过单一 `mcp_call` 工具暴露给 LLM，工具 schema 通过文件系统渐进披露。
 
 **Goals**:
 1. **零 MCP SDK 依赖** — 纯 Node.js `child_process` + JSON-RPC 实现客户端（~100 行）
 2. **持久化 Runtime** — REPL 启动时 spawn MCP server 子进程，session 期间保持活跃
-3. **单一 mcp_call 工具** — 通过 `mcp_call(server, tool, args)` 统一路由，不动态修改 KODAX_TOOLS
-4. **渐进式披露** — 工具定义写入 `.kodax/mcp-bridge/` 文件系统，LLM 按需 read 发现
+3. **单一 mcp_call 工具** — 固定描述，不随 server 配置变化，不动态修改 KODAX_TOOLS
+4. **渐进式披露** — 工具定义写入 `~/.kodax/mcp-bridge/` 用户级目录，LLM 按需 read 发现，智能在 LLM 推理而非启动时分析
 5. **配置驱动** — 用户在 `~/.kodax/config.json` 中配置 `mcpServers`
 6. **最小化实现** — 总计 ~325 行新增 + ~50 行修改，只做 `/mcp status` 命令
 
@@ -1358,13 +1393,202 @@ Expand KodaX from a terminal-first tool into a consistent product across IDE, de
 - 行业标准：Claude Code、Cline、Cursor、Goose、OpenCode 全部采用持久连接模式
 - 借鉴 Anthropic "Code Execution with MCP" 范式：工具定义按需加载，98.7% token 减少
 - 单一 mcp_call 模式避免动态修改 KODAX_TOOLS 数组和 KODAX_TOOL_REQUIRED_PARAMS 白名单
+- MCP 内容全部在用户级目录 `~/.kodax/`，不污染项目目录
+
+**Design Decisions**:
+- 固定描述 + tools.md 格式化 + LLM 推理（不做动态描述/label）
 
 **Implementation Plan**: 见 [v0.7.0.md#035](features/v0.7.0.md#035)
 
+### 036: DeepSeek 内置 Provider 支持 (COMPLETED)
+- **Category**: Enhancement
+- **Status**: Completed
+- **Priority**: Medium
+- **Planned**: v0.6.15
+- **Released**: v0.6.15
+- **Design**: [v0.6.15.md#036](features/v0.6.15.md#036)
+- **Created**: 2026-03-20
+- **Started**: 2026-03-21
+- **Completed**: 2026-03-21
+
+**Description**:
+为 KodaX 添加 `deepseek` 作为第 11 个内置 provider，直接接入官方 `https://api.deepseek.com`，并补齐 DeepSeek 在推理流和 tool turn 回放上的真实兼容语义，而不是只停留在 registry 注册层。
+
+**Goals**:
+1. **内置 Provider** — 注册为 `deepseek` 内置 provider，无需用户手动配置 custom provider
+2. **双模型支持** — `deepseek-chat` 作为默认模型，额外暴露 `deepseek-reasoner`
+3. **正确推理语义** — `deepseek-chat` 走原生 thinking toggle，`deepseek-reasoner` 作为模型选择而不是伪装成 `native-effort`
+4. **Tool Turn 回放正确** — assistant `tool_use`、user `tool_result` 和 DeepSeek `reasoning_content` 都能在 OpenAI-compatible 路径下正确回放
+
+**Implementation Notes**:
+- 内置环境变量为 `DEEPSEEK_API_KEY`
+- 默认模型为 `deepseek-chat`，补充模型为 `deepseek-reasoner`
+- provider snapshot 暴露 128K context window / 64K max output token 语义
+- 流式 `reasoning_content` 会映射为 KodaX `thinkingBlocks`，并驱动 `onThinkingDelta()` / `onThinkingEnd()`
+- REPL 的 reasoning capability 展示按当前模型区分 `deepseek-chat` 与 `deepseek-reasoner`
+
+### 037: API Token Usage 真实值优先 + 估算回退 (PLANNED)
+- **Category**: Enhancement
+- **Status**: Planned
+- **Priority**: Medium
+- **Planned**: v0.7.0
+- **Released**: -
+- **Design**: [v0.7.0.md#037](features/v0.7.0.md#037)
+- **Created**: 2026-03-21
+- **Started**: -
+- **Completed**: -
+
+**Description**:
+建立统一的 Token Usage 获取策略：优先使用 API 返回的真实 token 用量，仅在 API 未返回有效 usage 时回退到客户端 `js-tiktoken` 估算。
+
+**背景**:
+- 所有 Provider API 均支持返回 usage 数据，但 KodaX 当前**零提取**
+- CLI bridge 解析器已提取 usage 但在 ACP 协议转换（`pseudo-acp-server.ts`）中被丢弃
+- compaction/context 管理完全依赖客户端估算（`estimateTokens()`），存在误差
+- `KodaXStreamResult` 接口没有 usage 字段，无法传播真实 token 数据
+
+**Goals**:
+1. **扩展 KodaXStreamResult** — 添加可选 `usage` 字段（`inputTokens`, `outputTokens`, `totalTokens`）
+2. **Anthropic 协议族提取** — 从 `message_start` 提取 `input_tokens`，从 `message_delta` 提取 `output_tokens`，合并输出
+3. **OpenAI 协议族提取** — 添加 `stream_options: { include_usage: true }` 参数，从最终 chunk 提取 usage
+4. **CLI Bridge 修复** — 修复 `pseudo-acp-server.ts` 丢失 usage 的问题，将 usage 数据传播至 provider 层
+5. **优先使用真实值** — compaction 等场景优先使用 `usage.totalTokens`，仅在缺失时回退到 `estimateTokens()`
+
+**Provider Usage 调研**:
+
+| Provider | 协议 | Usage 来源 | 当前状态 |
+|----------|------|-----------|---------|
+| Anthropic | Anthropic SSE | `message_start.input_tokens` + `message_delta.usage.output_tokens` | 忽略 |
+| Kimi-code (k2.5) | Anthropic 兼容 | 同上 | 忽略 |
+| MiniMax-coding | Anthropic 兼容 | 同上 | 忽略 |
+| Zhipu-coding | Anthropic 兼容 | 同上 | 忽略 |
+| OpenAI | OpenAI SSE | `stream_options.include_usage` → 最终 chunk | 未启用 |
+| Kimi (Moonshot) | OpenAI 兼容 | 同上 | 未启用 |
+| Qwen (通义) | OpenAI 兼容 | 同上 | 未启用 |
+| Zhipu (智谱 Paas) | OpenAI 兼容 | 同上 | 未启用 |
+| DeepSeek | OpenAI 兼容 | 同上 | 未启用 |
+| Gemini CLI | CLI bridge | `result` 事件 `stats` 字段 | 解析后在 pseudo-acp-server 丢失 |
+| Codex CLI | CLI bridge | `turn.completed` 事件 `usage` 字段 | 解析后在 pseudo-acp-server 丢失 |
+
+**Key Files**:
+- `packages/ai/src/types.ts` — `KodaXStreamResult` 接口扩展
+- `packages/ai/src/providers/anthropic.ts` — 提取 `message_start` + `message_delta` usage
+- `packages/ai/src/providers/openai.ts` — 添加 `stream_options`，提取 usage
+- `packages/ai/src/cli-events/pseudo-acp-server.ts` — 修复 usage 丢失
+- `packages/ai/src/cli-events/acp-base.ts` — 接收 usage 数据
+- `packages/agent/src/tokenizer.ts` — 添加 usage 优先 + fallback 逻辑
+- `packages/agent/src/compaction/compaction.ts` — 优先使用真实 usage
+
+---
+
+### 038: Official Sandbox Extension (PLANNED)
+- **Category**: New
+- **Status**: Planned
+- **Priority**: High
+- **Planned**: v0.8.0
+- **Released**: -
+- **Design**: [v0.8.0.md#feature_038-official-sandbox-extension](features/v0.8.0.md#feature_038-official-sandbox-extension)
+- **Created**: 2026-03-21
+- **Started**: -
+- **Completed**: -
+
+**Description**:
+将 sandbox 定义为 `FEATURE_034` 之上的官方可选扩展包 `@kodax/sandbox`，而不是再做一套 core 权限系统。加载后不接管 agent loop、不替换 provider，而是把少数高风险内建工具替换成带边界的版本：`bash` 走进程级隔离，`read/write/edit/glob/grep/undo` 走路径与搜索边界守卫，并暴露 `/sandbox` 状态命令。
+
+**Goals**:
+1. 将“安全边界”从 REPL 审批语义中解耦出来，避免把 sandbox 继续设计成 Permission System 2.0
+2. 让 `FEATURE_034` 的 extension runtime 成为真正可验证的 runtime foundation，而不是停留在抽象 API
+3. 对 `bash` 提供真实的 process sandbox，对文件类工具提供明确的 host-side guard，避免仅靠事件拦截
+4. 用 `off / workspace / dev` 三个极简 profile 覆盖大多数使用场景，并清晰暴露 degraded 状态
+5. 保持 `@kodax/coding` 极简，真正的安全策略、配置解析、provider 选择与命令展示全部放在 `@kodax/sandbox`
+
+**Key Changes**:
+- 新增 `packages/sandbox/` 包，作为官方 optional extension
+- 依赖 `FEATURE_034` 提供的原子化工具定义、同名工具覆盖语义、built-in tool factories 与 extension loader
+- 新增全局/项目级 sandbox 配置合并与 policy 解析：`~/.kodax/sandbox.json` + `<cwd>/.kodax/sandbox.json`
+- v1 覆盖 `bash`、`read`、`write`、`edit`、`glob`、`grep`、`undo`，并新增 `/sandbox` 命令与状态展示
+- v1 正式支持 `srt` provider；provider 不可用时根据 `enforcement = required | best-effort` 决定 fail-closed 还是显式降级
+
+**Recommended Defaults**:
+- 默认 profile: `workspace`
+- 默认 provider: `auto`（macOS/Linux 优先 `srt`，Windows 明确进入 unsupported/degraded 判断）
+- 默认 enforcement: `required`
+- `workspace` 默认关闭网络；`dev` 才开启常见开发域名 allowlist
+- `workspaceRoot` 优先取 git root，缺失时退回当前 cwd
+
+**Relationship to 034**:
+- 038 是 034 的第一个官方“重度扩展”用例，不是对 034 的替代
+- 034 负责 runtime 插槽，038 负责安全策略与工具替换
+- 事件总线在 038 中只用于初始化、状态和诊断，不承担主要 enforcement
+- REPL 仍可保留 plan / accept-edits / auto-in-project 等 UX 语义，但这些不再被描述为 sandbox 本体
+
+### 039: Plan 模式双写白名单（项目说明文档 + 系统临时目录） (COMPLETED)
+- **Category**: Enhancement
+- **Status**: Completed
+- **Priority**: High
+- **Planned**: v0.6.15
+- **Released**: v0.6.15
+- **Design**: [v0.6.15.md#039](features/v0.6.15.md#039)
+- **Created**: 2026-03-22
+- **Started**: -
+- **Completed**: 2026-03-22
+
+**Description**:
+在保持 Plan 模式“默认禁止写入”的主语义不变的前提下，增加一个严格受限的双写白名单：允许写入当前项目下的 `.agent/plan_mode_doc.md`，以及当前操作系统的系统临时目录，用于计划说明、阶段性草稿和临时产物落盘，但仍然禁止写入其他工作区文件与任意非临时系统路径。
+**Goals**:
+1. **项目内固定文档出口** - 只允许写入 `<workspace>/.agent/plan_mode_doc.md`，为 Plan 模式提供稳定的计划说明文件
+2. **系统临时目录出口** - 允许写入系统临时目录，支持临时草稿、推导中间结果和一次性附件
+3. **跨平台路径约定明确** - Windows 使用 `%TEMP%`/`%TMP%`（通常是 `C:\Users\<user>\AppData\Local\Temp`）；macOS 优先使用 `$TMPDIR`（通常位于 `/var/folders/.../T/`）；Linux 优先使用 `$TMPDIR`，未设置时回退到 `/tmp`
+4. **边界依旧收紧** - 除上述两个位置外，Plan 模式仍禁止任何其他写入、编辑和重命名落盘
+5. **路径归一化安全** - 对符号链接、相对路径、`..` 跳转和大小写差异做归一化校验，避免借白名单绕过写入边界
+
+**Key Changes**:
+- Plan 模式写权限判定从“全禁写”调整为“仅放行两个精确目标”
+- 项目白名单目标固定为 `.agent/plan_mode_doc.md`，不扩展到整个 `.agent/` 目录
+- 系统临时目录白名单按操作系统解析，不把任意名为 `tmp` 的项目目录视作合法出口
+- 工具报错信息需要明确提示允许的两个写入位置及当前系统识别到的临时目录
+- 文档中明确 Windows / macOS / Linux 的临时目录解析优先级，避免实现歧义
+
+### 040: ACP Server 支持（供编辑器/IDE 直接调用） (COMPLETED)
+- **Category**: New
+- **Status**: Completed
+- **Priority**: High
+- **Planned**: v0.6.15
+- **Released**: v0.6.15
+- **Design**: [v0.6.15.md#040](features/v0.6.15.md#040)
+- **Created**: 2026-03-22
+- **Started**: 2026-03-22
+- **Completed**: 2026-03-22
+
+**Description**:
+让 KodaX 从“能够桥接 ACP/CLI 的内部消费者”升级为“能够直接作为 ACP Server 暴露给外部编辑器、IDE 和其他宿主工具调用”的正式能力。外部工具可以通过 ACP 与 KodaX 建立会话、发送 prompt、接收流式文本与工具调用更新，并把 KodaX 当作一个标准 agent 运行时来接入，而不必依赖私有集成方式。
+**Goals**:
+1. **对外 ACP Server 化** - 提供正式的 ACP server 入口，而不只是内部 `pseudo-acp-server` 适配层
+2. **编辑器可直接接入** - 让支持 ACP 的编辑器/IDE 能通过 stdio 或约定启动方式直接调用 KodaX
+3. **会话与流式事件兼容** - 支持 session lifecycle、prompt、cancel、message chunk、tool call update 等核心 ACP 交互
+4. **权限与工具语义保真** - 外部 ACP 调用必须沿用与 REPL 相同的权限模式、工具执行反馈和中断语义
+5. **权限模型不分叉** - ACP 只是接入协议，不引入独立于 REPL 的第二套权限系统；继续复用 `plan / default / accept-edits / auto-in-project`
+6. **公共集成契约清晰** - 文档化启动方式、握手、能力边界和推荐接入姿势，便于第三方宿主稳定集成
+
+**Implementation Notes**:
+- 新增 `src/acp_server.ts`，提供真实 ACP server runtime，并将 ACP session/prompt/cancel 映射到 `runKodaX`
+- 新增 `kodax acp serve` CLI 入口与帮助主题，支持 `cwd / provider / model / reasoning / permission-mode`
+- ACP session update 现已覆盖 assistant 文本流、tool call、tool result、current mode update 和 error 文本桥接
+- ACP 权限请求复用 REPL 的 `plan / default / accept-edits / auto-in-project` 语义，宿主不响应时 fail-closed
+- 增补 ACP 协议测试，覆盖流式事件、permission request、allow_always 模式切换与 cancel
+
+**Key Changes**:
+- 新增用户可见的 ACP server 启动入口，而不是只在 provider/bridge 内部使用 ACP
+- 将现有 `acp-client` / `acp-base` / `pseudo-acp-server` 的内部能力梳理为可对外复用的 server runtime
+- 明确 KodaX 在 ACP 语义中的 session、prompt、cancel、tool call、permission request 映射
+- ACP 权限判定复用 REPL 现有权限层，默认模式下通过 ACP permission request 向宿主请求审批；宿主不支持时必须拒绝高风险操作而不是自动放行
+- 为编辑器/IDE 场景补齐稳定的启动参数、错误输出与能力声明
+- README / 集成文档需要新增“如何把 KodaX 作为 ACP agent 接入外部工具”的说明
+
 ## Summary
-- Total: 34 (15 Planned, 0 In Progress, 19 Completed)
-- By Priority: Critical: 3, High: 27, Medium: 4, Low: 0
-- Current Version: v0.6.11
-- Next Release (v0.6.15): 1 feature (033), 0 completed, 0 in progress
-- Future Releases: v0.7.0 (019, 026, 029, 032, 035), v0.8.0 (007, 018, 025, 028, 034), v0.9.0 (031), v1.0.0 (022, 023, 030)
-- Highest Priority Planned: 019 - Session Tree & Rollback System (High), 026 - Roadmap Integrity and Tracker Consistency Hardening (High), 029 - Provider Adapter Transparency and Semantic Compatibility (High), 031 - 多模态图片上传支持 (High), 035 - MCP Bridge Runtime (High)
+- Total: 40 (17 Planned, 0 In Progress, 23 Completed)
+- By Priority: Critical: 3, High: 30, Medium: 6, Low: 0
+- Current Version: v0.6.14
+- Next Release (v0.6.15): 4 features (033, 036, 039, 040), all completed
+- Future Releases: v0.7.0 (019, 026, 029, 032, 035, 037), v0.8.0 (007, 018, 025, 028, 034, 038), v0.9.0 (031), v1.0.0 (022, 023, 030)
+- Highest Priority Planned: 019 - 会话树与回滚系统 (High), 026 - Roadmap Integrity 与 Tracker Consistency 加固 (High), 029 - Provider Adapter 透明度与语义兼容性 (High), 031 - 多模态图片上传支持 (High), 035 - MCP 能力 Provider (High), 038 - Official Sandbox Extension (High)

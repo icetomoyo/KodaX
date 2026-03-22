@@ -1,6 +1,8 @@
-# Contributing to KodaX
+# Contributing to KodaX / InfCodeX
 
-Thank you for your interest in contributing to KodaX!
+Thank you for your interest in contributing to KodaX / InfCodeX.
+
+> Historical naming note: the repository and CLI still use the `KodaX` / `kodax` names in many places, while some product-facing materials use `InfCodeX`.
 
 ## Development Environment Setup
 
@@ -8,7 +10,7 @@ Thank you for your interest in contributing to KodaX!
 
 - **Node.js** >= 18.0.0
 - **npm** or **yarn**
-- **TypeScript** 5.7+
+- **TypeScript** >= 5.3.0
 
 ### Installation
 
@@ -21,6 +23,7 @@ cd KodaX
 npm install
 
 # Build the project
+npm run build:packages
 npm run build
 
 # Link for global CLI access
@@ -45,7 +48,7 @@ npm link
 
 ## Testing
 
-KodaX uses **Vitest** for testing with a minimum coverage requirement of 80%.
+KodaX / InfCodeX uses **Vitest** for testing.
 
 ### Running Tests
 
@@ -66,7 +69,7 @@ npm test -- --coverage
 ### Writing Tests
 
 - Follow the TDD methodology: write tests first (RED), implement (GREEN), refactor
-- Place test files in `tests/` directory
+- Place test files next to source files: `packages/*/src/**/*.test.ts`
 - Use descriptive test names
 - Aim for 80%+ coverage
 
@@ -80,13 +83,13 @@ npm test -- --coverage
 
 ## Project Structure
 
-KodaX uses a **monorepo architecture** with npm workspaces:
+KodaX / InfCodeX uses a **monorepo architecture** with npm workspaces:
 
 ```
 KodaX/
 ├── packages/
 │   ├── ai/                  # @kodax/ai - Independent LLM abstraction layer
-│   │   └── providers/       # 7 LLM providers (Anthropic, OpenAI, etc.)
+│   │   └── providers/       # 10 LLM providers (Anthropic, OpenAI, etc.)
 │   │
 │   ├── agent/               # @kodax/agent - Generic Agent framework
 │   │   └── session/         # Session management, message handling
@@ -95,7 +98,7 @@ KodaX/
 │   │   └── builtin/         # Built-in skills (code-review, tdd, git-workflow)
 │   │
 │   ├── coding/              # @kodax/coding - Coding Agent (tools + prompts)
-│   │   └── tools/           # 8 tools: read, write, edit, bash, glob, grep, undo, diff
+│   │   └── tools/           # Tool implementations and execution helpers
 │   │
 │   └── repl/                # @kodax/repl - Interactive terminal UI
 │       ├── ui/              # Ink/React components, themes
@@ -109,7 +112,7 @@ KodaX/
 
 ## Pull Request Workflow
 
-1. Create a feature branch from `main`
+1. Create a feature branch from your target integration branch
 2. Write tests first (TDD)
 3. Implement the feature
 4. Ensure all tests pass

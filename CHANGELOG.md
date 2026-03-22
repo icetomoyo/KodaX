@@ -6,6 +6,80 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.6.15] - 2026-03-22
+
+### Added
+- **FEATURE_040: ACP Server Support**: `acp serve` CLI command exposes KodaX as a standard ACP (Agent Client Protocol) agent runtime via stdio; `KodaXAcpServer` class with streaming, permission enforcement, cancel, and mode validation; `ACP_PERMISSION_MODE_IDS` mapping for ACP mode negotiation; fail-closed on unknown permission modes
+- **Execution CWD context**: `resolveExecutionCwd()` utility in `runtime-paths.ts` resolves deterministic working directory from `executionCwd > gitRoot > process.cwd()`; all tools (bash, read, edit, write, glob, grep) now use context-aware CWD instead of `process.cwd()`
+- **Permission mode helpers**: `normalizePermissionMode()` and `isPermissionMode()` with `PERMISSION_MODES` constant for safe mode validation throughout the codebase; `@kodax/repl` re-exports permission helpers for external consumers
+- **`onToolUseStart` input parameter**: Tool start events now include `input` field for full tool call context visibility
+- **`beforeToolExecute` tool ID**: Permission hook receives `toolId` in meta parameter for fine-grained tool tracking
+
+### Changed
+- **Deprecated `default` permission mode removed**: `default` mode migrated to `accept-edits` at runtime and persisted to config; `normalizePermissionMode()` used throughout REPL, executor, and permission context for safe handling
+- **Permission system refactoring**: Extracted `isPathInsideProject()` and `getBashOutsideProjectWriteRisk()` from executor to shared `permission.ts`; executor and ACP server now use shared helpers
+- **Prompt builder CWD-aware**: `buildSystemPrompt()` uses `executionCwd` for git context, project snapshot, and long-running context resolution; feature file paths resolved relative to project root
+- **Renamed "serial" to "sequential"**: Status bar, banner, `/parallel` help text, and all display surfaces now use "sequential" for non-parallel execution mode
+- **GlobalShortcuts parallel sync**: `onSetParallel` callback wired through to keep `currentOptionsRef` in sync when toggling parallel mode via keyboard
+- **`/mode` command**: Description updated from "Switch code/ask mode" to "Switch permission mode"; uses `PERMISSION_MODES` constant instead of hardcoded array
+- **InputPrompt Tab behavior**: Tab key handler no longer returns `true` in all branches, preventing double character insertion on unmatched tab completions
+
+### Documentation
+- Provider count updated to 11 across CLAUDE.md, AGENTS.md, HLD.md (DeepSeek)
+- Feature merge: v0.6.20 content consolidated into v0.6.15; v0.6.20.md deleted
+- docs/features/README.md comprehensive update (providers, commands, release history, feature index 026-040)
+- CHANGELOG.md reference fixed (v0.6.20 → v0.6.15)
+
+### Tests
+- New test files: `builder.test.ts`, `InputPrompt.test.tsx`, `GlobalShortcuts.test.ts`, `ShortcutsRegistry.test.ts`
+- Updated tool tests for `executionCwd` context parameter (grep, glob)
+- Updated status bar tests from "serial" to "sequential"
+- ACP server tests: streaming, permissions, cancel, mode validation, cwd handling, fail-closed
+
+---
+
+## [0.6.14] - 2026-03-22
+
+### Added
+- **FEATURE_039: Plan Mode Write Whitelist**: Allow writes to `.agent/plan_mode_doc.md` and system temp directory during plan mode; path normalization with symlink resolution; cross-platform temp directory expansion (`%TEMP%`, `$TMPDIR`, etc.); block writes to all other paths with clear error messages
+- **DeepSeek Built-in Provider**: Native provider support for DeepSeek AI with configuration via `DEEPSEEK_API_KEY` environment variable
+
+### Fixed
+- **Security: Shell injection in skill-resolver**: Replaced `execSync` with safe `child_process.execFile` API
+- **Security: Direct `!command` execution**: Restricted to safe read-only commands only; write operations now require explicit Bash tool usage
+- **Security: Shell-executor argument sanitization**: Hardened against command injection vectors
+- **ReDoS risk in grep tool**: Escaped user-provided RegExp patterns to prevent catastrophic backtracking
+- **Accidentally committed build artifacts**: Removed 27 compiled `.js`/`.js.map` files from `packages/ai/src/`; hardened `.gitignore` rules
+- **JSON.parse without validation**: Added schema validation in `storage.ts` and `project-storage.ts` to prevent silent data corruption
+- **Sync file I/O blocking**: Replaced `fs.readFileSync` calls in `reasoning-overrides.ts` with async alternatives
+- **Permission race condition**: Fixed mode switch during confirmation dialog causing incorrect permission evaluation
+
+### Changed
+- Clarified plan mode write allowance error messages with guidance on allowed locations
+- Updated permission system with `getPlanModeBlockReason` and `isPlanModeAllowedPath` for precise path-based write control
+- Updated FEATURE_LIST.md with features 039-040 design documents for v0.6.15
+- Expanded KNOWN_ISSUES.md with technical debt inventory
+
+---
+
+## [0.6.13] - 2026-03-21
+
+### Added
+- **FEATURE_033: REPL Parallel Toggle (`/parallel`)**: New `/parallel [on|off|toggle]` command with `/pm` alias to dynamically switch between parallel and serial tool execution during REPL sessions; execution mode persisted to `~/.kodax/config.json` and synced across classic REPL, Ink REPL, status bar, and startup banner
+
+### Documentation
+- **FEATURE_037**: API Token Usage design — real usage value preferred with estimation fallback
+- **FEATURE_035**: MCP Bridge design with user-level paths
+- **FEATURE_034**: Extension + Capability Runtime design
+- **FEATURE_038**: Official Sandbox Extension design for `@kodax/sandbox` optional package
+- **README Language Switcher**: Added English/Chinese toggle link
+
+### Changed
+- Aligned legal and contributor metadata across documentation
+- Refreshed permission mode messaging and CLI help text
+
+---
+
 ## [0.6.12] - 2026-03-19
 
 ### Added

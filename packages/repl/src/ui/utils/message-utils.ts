@@ -198,6 +198,17 @@ export function extractTextContent(content: string | readonly unknown[]): string
   return textParts.join("\n");
 }
 
+function formatSessionTitle(text: string): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return "Untitled Session";
+  }
+
+  return normalized.length > 50
+    ? `${normalized.slice(0, 50)}...`
+    : normalized;
+}
+
 /**
  * Extract the last assistant text from a message list.
  */
@@ -233,12 +244,8 @@ export function resolveAssistantHistoryText(
  */
 export function extractTitle(messages: KodaXMessage[]): string {
   const firstUser = messages.find((m) => m.role === "user");
-  if (firstUser) {
-    const content =
-      typeof firstUser.content === "string" ? firstUser.content : "";
-    return content.slice(0, 50) + (content.length > 50 ? "..." : "");
-  }
-  return "Untitled Session";
+  const content = firstUser ? extractTextContent(firstUser.content) : "";
+  return formatSessionTitle(content);
 }
 
 /**

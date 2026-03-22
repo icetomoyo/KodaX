@@ -37,6 +37,7 @@ export const App: React.FC<AppProps> = ({
   provider,
   onSubmit,
   permissionMode = "accept-edits",
+  parallel = false,
 }) => {
   const { stdout } = useStdout();
   const theme = useMemo(() => getTheme("dark"), []);
@@ -159,6 +160,7 @@ export const App: React.FC<AppProps> = ({
         <StatusBar
           sessionId={state.sessionId}
           permissionMode={permissionMode}
+          parallel={parallel}
           provider={provider}
           model={model}
           tokenUsage={tokenUsage ?? undefined}

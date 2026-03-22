@@ -11,9 +11,12 @@
  * Note: Bash(*) is REJECTED for safety. Use specific command patterns.
  */
 
+import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { PermissionMode, MODIFICATION_TOOLS, FILE_MODIFICATION_TOOLS, BASH_WRITE_COMMANDS, BASH_SAFE_READ_COMMANDS } from './types.js';
+
+const PLAN_MODE_PROJECT_DOC_RELATIVE_PATH = path.join('.agent', 'plan_mode_doc.md');
 
 // ============== Pattern Parsing and Matching ==============
 
@@ -144,6 +147,20 @@ export function isBashReadCommand(command: string): boolean {
   }
 
   return true;
+}
+
+export function getDirectShellBypassBlockReason(command: string): string | null {
+  const normalizedCommand = command.trim();
+
+  if (!normalizedCommand) {
+    return '[Shell: No command provided]';
+  }
+
+  if (isBashReadCommand(normalizedCommand)) {
+    return null;
+  }
+
+  return `[Blocked] Direct !command execution only supports safe read-only commands. Use the bash tool for commands that write files, invoke shells, or require confirmation.`;
 }
 
 // Pre-compile regexes for BASH_WRITE_COMMANDS for performance
@@ -363,6 +380,257 @@ export function isCommandOnProtectedPath(command: string, projectRoot: string): 
     }
   }
   return false;
+}
+
+function normalizePathForComparison(targetPath: string): string {
+  const normalized = path.normalize(targetPath);
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
+function pathsEqual(leftPath: string, rightPath: string): boolean {
+  return normalizePathForComparison(leftPath) === normalizePathForComparison(rightPath);
+}
+
+function isPathInsideDirectory(targetPath: string, directoryPath: string): boolean {
+  const normalizedTarget = normalizePathForComparison(targetPath);
+  const normalizedDirectory = normalizePathForComparison(directoryPath);
+  return normalizedTarget === normalizedDirectory || normalizedTarget.startsWith(normalizedDirectory + path.sep);
+}
+
+/**
+ * Check whether a path stays inside the project root after resolution.
+ */
+export function isPathInsideProject(targetPath: string, projectRoot: string): boolean {
+  try {
+    const resolvedRoot = path.resolve(projectRoot);
+    const resolvedTarget = path.resolve(
+      resolvedRoot,
+      expandSystemTempAlias(expandHomeDirectory(targetPath)),
+    );
+    return isPathInsideDirectory(resolvedTarget, resolvedRoot);
+  } catch {
+    return false;
+  }
+}
+
+function collectAbsolutePathCandidates(command: string): string[] {
+  const matches = command.match(/[A-Za-z]:[\\/][^\s;|&<>(){}'"]+|\/[^\s;|&<>(){}'"]+/g);
+  if (!matches) {
+    return [];
+  }
+
+  return matches.filter(match => !/^(?:\/dev\/|\/proc\/)/i.test(match));
+}
+
+function resolveExistingPathPrefix(targetPath: string): string {
+  const resolved = path.resolve(targetPath);
+  if (fs.existsSync(resolved)) {
+    return fs.realpathSync.native(resolved);
+  }
+
+  const segments: string[] = [];
+  let current = resolved;
+
+  while (!fs.existsSync(current)) {
+    const parent = path.dirname(current);
+    if (parent === current) {
+      return resolved;
+    }
+    segments.unshift(path.basename(current));
+    current = parent;
+  }
+
+  const resolvedPrefix = fs.realpathSync.native(current);
+  return path.join(resolvedPrefix, ...segments);
+}
+
+function expandHomeDirectory(targetPath: string): string {
+  if (targetPath === '~') {
+    return os.homedir();
+  }
+  if (targetPath.startsWith(`~${path.sep}`) || targetPath.startsWith('~/') || targetPath.startsWith('~\\')) {
+    return path.join(os.homedir(), targetPath.slice(2));
+  }
+  return targetPath;
+}
+
+function expandSystemTempAlias(targetPath: string): string {
+  const tempDir = os.tmpdir();
+  const patterns: Array<[RegExp, string]> = [
+    [/^%temp%/i, tempDir],
+    [/^%tmp%/i, tempDir],
+    [/^\$env:temp\b/i, tempDir],
+    [/^\$env:tmp\b/i, tempDir],
+    [/^\$tmpdir\b/i, tempDir],
+    [/^\$temp\b/i, tempDir],
+    [/^\$tmp\b/i, tempDir],
+  ];
+
+  for (const [pattern, replacement] of patterns) {
+    if (pattern.test(targetPath)) {
+      return targetPath.replace(pattern, replacement);
+    }
+  }
+
+  return targetPath;
+}
+
+function resolvePermissionPath(targetPath: string, projectRoot?: string): string {
+  const baseRoot = path.resolve(projectRoot ?? process.cwd());
+  const expanded = expandSystemTempAlias(expandHomeDirectory(targetPath));
+  const resolved = path.isAbsolute(expanded)
+    ? path.resolve(expanded)
+    : path.resolve(baseRoot, expanded);
+  return resolveExistingPathPrefix(resolved);
+}
+
+function getSystemTempDirectories(): string[] {
+  const tempDirs = new Set<string>();
+  const candidates = [os.tmpdir(), process.env.TEMP, process.env.TMP, process.env.TMPDIR]
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+
+  for (const candidate of candidates) {
+    try {
+      tempDirs.add(resolveExistingPathPrefix(candidate));
+    } catch {
+      // Ignore malformed temp env values and fall back to the OS default temp dir.
+    }
+  }
+
+  return Array.from(tempDirs);
+}
+
+export function getPlanModeAllowedWritablePaths(projectRoot?: string): {
+  projectPlanDoc: string;
+  systemTempDirs: string[];
+} {
+  const resolvedRoot = resolveExistingPathPrefix(projectRoot ?? process.cwd());
+  return {
+    projectPlanDoc: path.join(resolvedRoot, PLAN_MODE_PROJECT_DOC_RELATIVE_PATH),
+    systemTempDirs: getSystemTempDirectories(),
+  };
+}
+
+export function isPlanModeAllowedPath(targetPath: string, projectRoot?: string): boolean {
+  const resolvedTarget = resolvePermissionPath(targetPath, projectRoot);
+  const { projectPlanDoc, systemTempDirs } = getPlanModeAllowedWritablePaths(projectRoot);
+
+  if (pathsEqual(resolvedTarget, projectPlanDoc)) {
+    return true;
+  }
+
+  return systemTempDirs.some(tempDir => isPathInsideDirectory(resolvedTarget, tempDir));
+}
+
+function formatPlanModeAllowedLocations(projectRoot?: string): string {
+  const { projectPlanDoc, systemTempDirs } = getPlanModeAllowedWritablePaths(projectRoot);
+  const tempSummary = systemTempDirs[0] ?? os.tmpdir();
+  return `${projectPlanDoc} or the system temp directory (${tempSummary})`;
+}
+
+export function collectBashWriteTargets(command: string): string[] {
+  const targets = new Set<string>();
+  const pushTarget = (value: string | undefined) => {
+    const trimmed = value?.trim().replace(/^['"]|['"]$/g, '');
+    if (trimmed) {
+      targets.add(trimmed);
+    }
+  };
+
+  for (const extractedPath of extractPathsFromCommand(command)) {
+    pushTarget(extractedPath);
+  }
+
+  const redirectPattern = />>?\s*([^\s;|&]+)/g;
+  let redirectMatch: RegExpExecArray | null;
+  while ((redirectMatch = redirectPattern.exec(command)) !== null) {
+    pushTarget(redirectMatch[1]);
+  }
+
+  const powershellWritePattern = /(?:set-content|add-content|out-file|new-item)\s+(?:-path\s+)?(?:"([^"]+)"|'([^']+)'|([^\s;|&]+))/gi;
+  let powershellMatch: RegExpExecArray | null;
+  while ((powershellMatch = powershellWritePattern.exec(command)) !== null) {
+    pushTarget(powershellMatch[1] ?? powershellMatch[2] ?? powershellMatch[3]);
+  }
+
+  const teePattern = /\btee\b(?:\s+-a)?\s+(?:"([^"]+)"|'([^']+)'|([^\s;|&]+))/gi;
+  let teeMatch: RegExpExecArray | null;
+  while ((teeMatch = teePattern.exec(command)) !== null) {
+    pushTarget(teeMatch[1] ?? teeMatch[2] ?? teeMatch[3]);
+  }
+
+  return Array.from(targets);
+}
+
+export function getBashOutsideProjectWriteRisk(
+  command: string,
+  projectRoot: string
+): { dangerous: boolean; reason?: string } {
+  if (!isBashWriteCommand(command)) {
+    return { dangerous: false };
+  }
+
+  const targets = new Set<string>([
+    ...collectBashWriteTargets(command),
+    ...collectAbsolutePathCandidates(command),
+  ]);
+
+  for (const targetPath of targets) {
+    if (!isPathInsideProject(targetPath, projectRoot)) {
+      return {
+        dangerous: true,
+        reason: `Command may modify file outside project: ${targetPath}`,
+      };
+    }
+  }
+
+  return { dangerous: false };
+}
+
+export function getPlanModeBlockReason(
+  toolName: string,
+  input: Record<string, unknown>,
+  projectRoot?: string
+): string | null {
+  const allowedLocations = formatPlanModeAllowedLocations(projectRoot);
+
+  if (FILE_MODIFICATION_TOOLS.has(toolName)) {
+    const targetPath = typeof input.path === 'string' ? input.path : '';
+    if (!targetPath) {
+      return `[Blocked] Tool '${toolName}' is not allowed in plan mode unless it targets ${allowedLocations}.`;
+    }
+
+    if (isPlanModeAllowedPath(targetPath, projectRoot)) {
+      return null;
+    }
+
+    return `[Blocked] Plan mode only allows file modifications in ${allowedLocations}. Requested path: ${targetPath}`;
+  }
+
+  if (toolName === 'undo') {
+    return `[Blocked] Tool 'undo' is not allowed in plan mode. Plan mode only allows file modifications in ${allowedLocations}.`;
+  }
+
+  if (toolName === 'bash') {
+    const command = (input.command as string) ?? '';
+    if (!isBashWriteCommand(command)) {
+      return null;
+    }
+
+    const targets = collectBashWriteTargets(command);
+    if (targets.length === 0) {
+      return `[Blocked] Plan mode only allows bash write operations when every target is either ${allowedLocations}. Could not determine a safe target from: ${command.slice(0, 80)}${command.length > 80 ? '...' : ''}`;
+    }
+
+    const blockedTarget = targets.find(target => !isPlanModeAllowedPath(target, projectRoot));
+    if (!blockedTarget) {
+      return null;
+    }
+
+    return `[Blocked] Plan mode only allows bash write operations in ${allowedLocations}. Blocked target: ${blockedTarget}`;
+  }
+
+  return null;
 }
 
 // ============== Mode Inference ==============

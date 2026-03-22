@@ -4,6 +4,7 @@ import {
   type HistorySeedSourceMessage,
   extractHistorySeedsFromMessage,
   extractLastAssistantText,
+  extractTitle,
   extractTextContent,
   resolveAssistantHistoryText,
 } from "./message-utils.js";
@@ -141,5 +142,20 @@ describe("message-utils", () => {
     );
 
     expect(resolved).toBe("buffered response");
+  });
+
+  it("builds session titles from structured user text blocks", () => {
+    const title = extractTitle([
+      {
+        role: "user",
+        content: [
+          { type: "thinking", thinking: "ignore me" },
+          { type: "text", text: "Triage failing tests" },
+          { type: "text", text: "before release" },
+        ],
+      },
+    ] satisfies KodaXMessage[]);
+
+    expect(title).toBe("Triage failing tests before release");
   });
 });

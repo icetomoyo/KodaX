@@ -6,13 +6,14 @@
 
 import fsSync from 'fs';
 import path from 'path';
-import { KodaXOptions } from '../types.js';
-import { KODAX_FEATURES_FILE, KODAX_PROGRESS_FILE } from '../constants.js';
-import { SYSTEM_PROMPT } from './system.js';
-import { LONG_RUNNING_PROMPT } from './long-running.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { KODAX_FEATURES_FILE, KODAX_PROGRESS_FILE } from '../constants.js';
 import { loadAgentsFiles, formatAgentsForPrompt } from '../context/agents-loader.js';
+import { resolveExecutionCwd } from '../runtime-paths.js';
+import { KodaXOptions } from '../types.js';
+import { LONG_RUNNING_PROMPT } from './long-running.js';
+import { SYSTEM_PROMPT } from './system.js';
 
 const execAsync = promisify(exec);
 
@@ -21,24 +22,28 @@ const execAsync = promisify(exec);
  */
 export async function buildSystemPrompt(options: KodaXOptions, isNewSession: boolean): Promise<string> {
   const contextParts: string[] = [];
+  const executionCwd = resolveExecutionCwd(options.context);
+  const projectRoot = options.context?.gitRoot ? path.resolve(options.context.gitRoot) : executionCwd;
 
   contextParts.push(getEnvContext());
-  contextParts.push(`Working Directory: ${process.cwd()}`);
+  contextParts.push(`Working Directory: ${executionCwd}`);
 
   // Permission mode context removed - now handled by REPL layer
-  // 权限模式上下文已移除 - 现由 REPL 层处理
+  // 权限模式上下文已移除，现由 REPL 层处理
 
   if (isNewSession) {
-    const gitCtx = await getGitContext();
+    const gitCtx = await getGitContext(executionCwd);
     if (gitCtx) contextParts.push(gitCtx);
 
-    const snapshot = await getProjectSnapshot();
+    const snapshot = await getProjectSnapshot(executionCwd);
     if (snapshot) contextParts.push(snapshot);
   }
 
-  const isLongRunning = fsSync.existsSync(path.resolve(KODAX_FEATURES_FILE)) && !options.context?.longRunning;
+  const isLongRunning =
+    fsSync.existsSync(path.resolve(projectRoot, KODAX_FEATURES_FILE)) &&
+    !options.context?.longRunning;
   if (isLongRunning) {
-    const longCtx = await getLongRunningContext();
+    const longCtx = await getLongRunningContext(projectRoot);
     if (longCtx) contextParts.push(longCtx);
   }
 
@@ -49,7 +54,7 @@ export async function buildSystemPrompt(options: KodaXOptions, isNewSession: boo
   }
 
   // Append skills prompt for progressive disclosure (Issue 056)
-  // 追加 skills 系统提示词用于渐进式披露
+  // 追加 skills 提示词，支持按需渐进披露
   if (options.context?.skillsPrompt) {
     prompt += '\n\n' + options.context.skillsPrompt;
   }
@@ -59,10 +64,8 @@ export async function buildSystemPrompt(options: KodaXOptions, isNewSession: boo
   }
 
   // Append AGENTS.md content (Feature 020)
-  // 追加 AGENTS.md 项目上下文规则
-  const cwd = process.cwd();
   const agentsFiles = loadAgentsFiles({
-    cwd,
+    cwd: executionCwd,
     projectRoot: options.context?.gitRoot ?? undefined,
   });
   const agentsContent = formatAgentsForPrompt(agentsFiles);
@@ -88,40 +91,41 @@ function getEnvContext(): string {
 /**
  * 获取 Git 上下文
  */
-async function getGitContext(): Promise<string> {
+async function getGitContext(cwd: string): Promise<string> {
   try {
-    const { stdout: check } = await execAsync('git rev-parse --is-inside-work-tree');
+    const { stdout: check } = await execAsync('git rev-parse --is-inside-work-tree', { cwd });
     if (!check.trim()) return '';
 
     const lines: string[] = [];
 
     try {
-      const { stdout: branch } = await execAsync('git branch --show-current');
+      const { stdout: branch } = await execAsync('git branch --show-current', { cwd });
       if (branch.trim()) lines.push(`Git Branch: ${branch.trim()}`);
-    } catch { }
+    } catch {}
 
     try {
-      const { stdout: status } = await execAsync('git status --short');
+      const { stdout: status } = await execAsync('git status --short', { cwd });
       if (status.trim()) {
         const statusLines = status.trim().split('\n').slice(0, 10);
         lines.push(`Git Status:\n` + statusLines.map((s: string) => `  ${s}`).join('\n'));
         const totalLines = status.trim().split('\n').length;
         if (totalLines > 10) lines.push('  ... (more changes)');
       }
-    } catch { }
+    } catch {}
 
     return lines.join('\n');
-  } catch { return ''; }
+  } catch {
+    return '';
+  }
 }
 
 /**
  * 获取项目快照
  */
-async function getProjectSnapshot(maxDepth = 2, maxFiles = 50): Promise<string> {
+async function getProjectSnapshot(cwd: string, maxDepth = 2, maxFiles = 50): Promise<string> {
   const fs = await import('fs/promises');
   const ignoreDirs = new Set(['.git', '__pycache__', 'node_modules', '.venv', 'venv', 'dist', 'build', '.idea', '.vscode']);
   const ignoreExts = new Set(['.pyc', '.pyo', '.so', '.dll', '.exe', '.bin']);
-  const cwd = process.cwd();
   const lines = [`Project: ${path.basename(cwd)}`];
   let fileCount = 0;
 
@@ -141,10 +145,13 @@ async function getProjectSnapshot(maxDepth = 2, maxFiles = 50): Promise<string> 
       for (const f of files.sort().slice(0, 20)) {
         lines.push(`${indent}  ${f}`);
         fileCount++;
-        if (fileCount >= maxFiles) { lines.push('  ... (more files)'); return; }
+        if (fileCount >= maxFiles) {
+          lines.push('  ... (more files)');
+          return;
+        }
       }
       for (const d of dirs.sort()) await walk(path.join(dir, d), depth + 1);
-    } catch { }
+    } catch {}
   }
 
   await walk(cwd, 0);
@@ -152,12 +159,12 @@ async function getProjectSnapshot(maxDepth = 2, maxFiles = 50): Promise<string> 
 }
 
 /**
- * 获取长运行任务上下文
+ * 获取长任务上下文
  */
-async function getLongRunningContext(): Promise<string> {
+async function getLongRunningContext(cwd: string): Promise<string> {
   const fs = await import('fs/promises');
   const parts: string[] = [];
-  const featuresPath = path.resolve(KODAX_FEATURES_FILE);
+  const featuresPath = path.resolve(cwd, KODAX_FEATURES_FILE);
   if (fsSync.existsSync(featuresPath)) {
     try {
       const features = JSON.parse(await fs.readFile(featuresPath, 'utf-8'));
@@ -167,14 +174,14 @@ async function getLongRunningContext(): Promise<string> {
         const desc = f.description ?? f.name ?? 'Unknown';
         parts.push(`- ${status} ${desc}`);
       }
-    } catch { }
+    } catch {}
   }
-  const progressPath = path.resolve(KODAX_PROGRESS_FILE);
+  const progressPath = path.resolve(cwd, KODAX_PROGRESS_FILE);
   if (fsSync.existsSync(progressPath)) {
     try {
       const progress = await fs.readFile(progressPath, 'utf-8');
       if (progress.trim()) parts.push(`\n## Last Session Progress (from PROGRESS.md)\n\n${progress.slice(0, 1500)}`);
-    } catch { }
+    } catch {}
   }
   return parts.join('\n');
 }

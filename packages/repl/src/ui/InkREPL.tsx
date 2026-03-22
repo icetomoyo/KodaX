@@ -49,6 +49,7 @@ import {
   ConfirmResult,
   createPermissionContext,
   computeConfirmTools,
+  normalizePermissionMode,
   isToolCallAllowed,
   isAlwaysConfirmPath,
   isCommandOnProtectedPath,
@@ -90,7 +91,7 @@ import { prepareInvocationExecution } from "../interactive/invocation-runtime.js
 
 // Extracted modules
 import { MemorySessionStorage, type SessionStorage } from "./utils/session-storage.js";
-import { processSpecialSyntax, isShellCommandSuccess } from "./utils/shell-executor.js";
+import { processSpecialSyntax, isShellCommandHandled } from "./utils/shell-executor.js";
 import {
   extractHistorySeedsFromMessage,
   extractTextContent,
@@ -175,7 +176,7 @@ function resolveInitialReasoningMode(
 const Banner: React.FC<BannerProps> = ({ config, sessionId, workingDir, compactionInfo }) => {
   const theme = getTheme("dark");
   const model = config.model ?? getProviderModel(config.provider) ?? config.provider;
-  const reasoningCapability = getProviderReasoningCapability(config.provider);
+  const reasoningCapability = getProviderReasoningCapability(config.provider, config.model);
   const reasoningCapabilityShort = formatReasoningCapabilityShort(reasoningCapability);
   const terminalWidth = process.stdout.columns ?? 80;
   const dividerWidth = Math.min(60, terminalWidth - 4);
@@ -222,6 +223,12 @@ const Banner: React.FC<BannerProps> = ({ config, sessionId, workingDir, compacti
         </Text>
         <Text color={theme.colors.accent}>
           {config.permissionMode}
+        </Text>
+        <Text dimColor>
+          {" | "}
+        </Text>
+        <Text color={config.parallel ? theme.colors.success : theme.colors.dim}>
+          {config.parallel ? "parallel" : "sequential"}
         </Text>
         {config.reasoningMode !== 'off' && (
           <Text color={theme.colors.warning}>
@@ -553,14 +560,15 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const statusBarProps = useMemo(() => ({
     sessionId: context.sessionId,
     permissionMode: currentConfig.permissionMode,
+    parallel: currentConfig.parallel,
     provider: currentConfig.provider,
     model: currentConfig.model ?? getProviderModel(currentConfig.provider) ?? currentConfig.provider,
     currentTool: displayStreamingState.currentTool,
     thinking: currentConfig.thinking,
     reasoningMode: currentConfig.reasoningMode,
-    reasoningCapability: formatReasoningCapabilityShort(
-      getProviderReasoningCapability(currentConfig.provider),
-    ),
+            reasoningCapability: formatReasoningCapabilityShort(
+              getProviderReasoningCapability(currentConfig.provider, currentConfig.model),
+            ),
     isThinkingActive: displayStreamingState.isThinking,
     thinkingCharCount: displayStreamingState.thinkingCharCount,
     toolInputCharCount: displayStreamingState.toolInputCharCount,
@@ -573,6 +581,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }), [
     context.sessionId,
     currentConfig.permissionMode,
+    currentConfig.parallel,
     currentConfig.provider,
     currentConfig.model,
     currentConfig.thinking,
@@ -686,6 +695,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   // Note: permissionMode and alwaysAllowTools are stored separately for permission checks
   const currentOptionsRef = useRef<InkREPLOptions>({
     ...options,
+    parallel: currentConfig.parallel,
     thinking: currentConfig.thinking,
     reasoningMode: currentConfig.reasoningMode,
     session: {
@@ -1530,6 +1540,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       {
         ...currentOptionsRef.current,
         provider: currentConfig.provider,
+        parallel: currentConfig.parallel,
         thinking: currentConfig.thinking,
         reasoningMode: currentConfig.reasoningMode,
       },
@@ -1772,6 +1783,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             currentOptionsRef.current.thinking = thinking;
             currentOptionsRef.current.reasoningMode = mode;
           },
+          setParallel: (enabled: boolean) => {
+            // Persistence is handled by the command layer; this callback only syncs runtime state and UI.
+            setCurrentConfig((prev) => ({
+              ...prev,
+              parallel: enabled,
+            }));
+            currentOptionsRef.current.parallel = enabled;
+          },
           setPermissionMode: (mode: PermissionMode) => {
             setSessionPermissionMode(mode);
           },
@@ -1788,6 +1807,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             ...currentOptionsRef.current,
             provider: currentConfig.provider,
             model: currentConfig.model,
+            parallel: currentConfig.parallel,
             thinking: currentConfig.thinking,
             reasoningMode: currentConfig.reasoningMode,
             events: createStreamingEvents(), // Include streaming events for /project commands
@@ -2025,8 +2045,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       // Skip if shell command was executed successfully
       if (
         input.trim().startsWith("!") &&
-        (processed.startsWith("[Shell command executed:") ||
-          processed.startsWith("[Shell:"))
+        isShellCommandHandled(processed)
       ) {
         setIsLoading(false);
         stopStreaming();
@@ -2043,6 +2062,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           await runWithPlanMode(processed, {
             ...currentOptionsRef.current,
             provider: currentConfig.provider,
+            parallel: currentConfig.parallel,
             thinking: currentConfig.thinking,
             reasoningMode: currentConfig.reasoningMode,
           });
@@ -2239,6 +2259,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         }}
         onSetPermissionMode={(mode) => {
           setSessionPermissionMode(mode);
+        }}
+        onSetParallel={(enabled) => {
+          currentOptionsRef.current.parallel = enabled;
         }}
         isInputEmpty={isInputEmpty}
         onSavePermissionMode={savePermissionModeUser}
@@ -2489,16 +2512,18 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
   const initialModel = options.model ?? config.model;
   const initialReasoningMode = resolveInitialReasoningMode(options, config);
   const initialThinking = initialReasoningMode !== 'off';
+  const initialParallel = options.parallel ?? config.parallel ?? false;
   // Load permission mode from config file (not from CLI options)
   // CLI is always YOLO mode; REPL uses config file for permission mode
   const initialPermissionMode: PermissionMode =
-    (config.permissionMode as PermissionMode | undefined) ?? 'accept-edits';
+    normalizePermissionMode(config.permissionMode, 'accept-edits') ?? 'accept-edits';
 
   const currentConfig: CurrentConfig = {
     provider: initialProvider,
     model: initialModel,
     thinking: initialThinking,
     reasoningMode: initialReasoningMode,
+    parallel: initialParallel,
     permissionMode: initialPermissionMode,
   };
 

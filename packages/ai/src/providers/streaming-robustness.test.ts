@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KodaXAnthropicCompatProvider } from './anthropic.js';
 import { KodaXOpenAICompatProvider } from './openai.js';
 import type { KodaXMessage, KodaXProviderConfig, KodaXToolDefinition } from '../types.js';
@@ -82,6 +82,10 @@ afterEach(() => {
 });
 
 describe('streaming robustness', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
   it('tracks the last Anthropic delta activity when an incomplete stream ends', async () => {
     const provider = new TestAnthropicProvider({
       messages: {

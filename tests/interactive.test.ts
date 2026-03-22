@@ -161,6 +161,12 @@ describe('BUILTIN_COMMANDS', () => {
     expect(load).toBeDefined();
     expect(sessions).toBeDefined();
   });
+
+  it('should have parallel command', () => {
+    const parallel = BUILTIN_COMMANDS.find(c => c.name === 'parallel');
+    expect(parallel).toBeDefined();
+    expect(parallel?.aliases).toContain('pm');
+  });
 });
 
 // ============== 命令执行测试 ==============
@@ -168,7 +174,14 @@ describe('BUILTIN_COMMANDS', () => {
 describe('executeCommand', () => {
   let context: InteractiveContext;
   let callbacks: CommandCallbacks;
-  let currentConfig: { provider: string; thinking: boolean; auto: boolean; permissionMode?: string };
+  let currentConfig: {
+    provider: string;
+    model?: string;
+    thinking: boolean;
+    reasoningMode: 'off' | 'auto' | 'quick' | 'balanced' | 'deep';
+    parallel: boolean;
+    permissionMode?: string;
+  };
   let exitCalled: boolean;
   let savedSession: { id: string; messages: unknown[]; title: string } | null;
   let loadedSessionId: string | null;
@@ -176,7 +189,13 @@ describe('executeCommand', () => {
 
   beforeEach(async () => {
     context = await createInteractiveContext({});
-    currentConfig = { provider: 'test', thinking: false, auto: false, permissionMode: 'accept-edits' };
+    currentConfig = {
+      provider: 'test',
+      thinking: false,
+      reasoningMode: 'off',
+      parallel: false,
+      permissionMode: 'accept-edits',
+    };
     exitCalled = false;
     savedSession = null;
     loadedSessionId = null;
@@ -256,10 +275,61 @@ describe('executeCommand', () => {
     consoleSpy.mockRestore();
   });
 
+  it('should execute mode command with auto-in-project arg', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await executeCommand({ command: 'mode', args: ['auto-in-project'] }, context, callbacks, currentConfig);
+    expect(currentConfig.permissionMode).toBe('auto-in-project');
+    consoleSpy.mockRestore();
+  });
+
   it('should execute auto command', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     await executeCommand({ command: 'auto', args: [] }, context, callbacks, currentConfig);
     expect(currentConfig.permissionMode).toBe('auto-in-project');
+    consoleSpy.mockRestore();
+  });
+
+  it('should show current parallel execution mode', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await executeCommand({ command: 'parallel', args: [] }, context, callbacks, currentConfig);
+    const output = consoleSpy.mock.calls.map(c => c.join(' ')).join('\n');
+    expect(output).toContain('Tool execution');
+    expect(output).toMatch(/sequential|serial/);
+    consoleSpy.mockRestore();
+  });
+
+  it('should enable parallel execution', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await executeCommand({ command: 'parallel', args: ['on'] }, context, callbacks, currentConfig);
+    expect(currentConfig.parallel).toBe(true);
+    consoleSpy.mockRestore();
+  });
+
+  it('should disable parallel execution', async () => {
+    currentConfig.parallel = true;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await executeCommand({ command: 'parallel', args: ['off'] }, context, callbacks, currentConfig);
+    expect(currentConfig.parallel).toBe(false);
+    consoleSpy.mockRestore();
+  });
+
+  it('should toggle parallel execution', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await executeCommand({ command: 'parallel', args: ['toggle'] }, context, callbacks, currentConfig);
+    expect(currentConfig.parallel).toBe(true);
+
+    await executeCommand({ command: 'parallel', args: ['toggle'] }, context, callbacks, currentConfig);
+    expect(currentConfig.parallel).toBe(false);
+    consoleSpy.mockRestore();
+  });
+
+  it('should reject invalid parallel values', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await executeCommand({ command: 'parallel', args: ['foo'] }, context, callbacks, currentConfig);
+    const output = consoleSpy.mock.calls.map(c => c.join(' ')).join('\n');
+    expect(currentConfig.parallel).toBe(false);
+    expect(output).toContain('Invalid value');
+    expect(output).toContain('Usage: /parallel on|off|toggle');
     consoleSpy.mockRestore();
   });
 
@@ -297,6 +367,7 @@ describe('executeCommand', () => {
     const output = consoleSpy.mock.calls.map(c => c.join(' ')).join('\n');
     expect(output).toContain('Session Status');
     expect(output).toContain('Permission');
+    expect(output).toContain('Execution');
     expect(output).toContain('Session ID');
     consoleSpy.mockRestore();
   });
@@ -316,11 +387,23 @@ describe('executeCommand', () => {
 describe('Command Aliases', () => {
   let context: InteractiveContext;
   let callbacks: CommandCallbacks;
-  let currentConfig: { provider: string; thinking: boolean; auto: boolean; permissionMode?: string };
+  let currentConfig: {
+    provider: string;
+    thinking: boolean;
+    reasoningMode: 'off' | 'auto' | 'quick' | 'balanced' | 'deep';
+    parallel: boolean;
+    permissionMode?: string;
+  };
 
   beforeEach(async () => {
     context = await createInteractiveContext({});
-    currentConfig = { provider: 'test', thinking: false, auto: false, permissionMode: 'accept-edits' };
+    currentConfig = {
+      provider: 'test',
+      thinking: false,
+      reasoningMode: 'off',
+      parallel: false,
+      permissionMode: 'accept-edits',
+    };
     callbacks = {
       exit: () => {},
       saveSession: async () => {},
@@ -408,11 +491,23 @@ describe('Command Aliases', () => {
 describe('Mode Switching Detailed', () => {
   let context: InteractiveContext;
   let callbacks: CommandCallbacks;
-  let currentConfig: { provider: string; thinking: boolean; auto: boolean; permissionMode?: string };
+  let currentConfig: {
+    provider: string;
+    thinking: boolean;
+    reasoningMode: 'off' | 'auto' | 'quick' | 'balanced' | 'deep';
+    parallel: boolean;
+    permissionMode?: string;
+  };
 
   beforeEach(async () => {
     context = await createInteractiveContext({});
-    currentConfig = { provider: 'test', thinking: false, auto: false, permissionMode: 'accept-edits' };
+    currentConfig = {
+      provider: 'test',
+      thinking: false,
+      reasoningMode: 'off',
+      parallel: false,
+      permissionMode: 'accept-edits',
+    };
     callbacks = {
       exit: () => {},
       saveSession: async () => {},
@@ -423,11 +518,11 @@ describe('Mode Switching Detailed', () => {
     };
   });
 
-  it('should start in default mode by default', () => {
+  it('should start in accept-edits mode by default', () => {
     expect(currentConfig.permissionMode).toBe('accept-edits');
   });
 
-  it('should switch to plan mode and back to default', async () => {
+  it('should switch to plan mode and back to accept-edits mode', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     await executeCommand({ command: 'mode', args: ['plan'] }, context, callbacks, currentConfig);
@@ -606,23 +701,21 @@ describe('processSpecialSyntax', () => {
     consoleSpy.mockRestore();
   });
 
-  it('should handle shell command with no output', async () => {
+  it('should block direct shell commands that execute arbitrary code', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    // Use node -e "void(0)" which succeeds with no output (cross-platform)
     const result = await processSpecialSyntax('!node -e "void(0)"');
 
-    expect(result).toContain('[Shell command executed:');
-    expect(result).toContain('(no output)');
+    expect(result).toContain('[Blocked]');
+    expect(result).toContain('safe read-only commands');
 
     consoleSpy.mockRestore();
   });
 
-  it('should handle shell command error', async () => {
+  it('should report failures for safe read-only shell commands', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    // Use a command that will fail
-    const result = await processSpecialSyntax('!exit 1');
+    const result = await processSpecialSyntax('!git show definitely-not-a-real-ref-12345');
 
-    expect(result).toContain('[Shell command failed: exit 1]');
+    expect(result).toContain('[Shell command failed: git show definitely-not-a-real-ref-12345]');
     expect(result).toContain('Error:');
 
     consoleSpy.mockRestore();
@@ -658,14 +751,12 @@ describe('processSpecialSyntax', () => {
     consoleSpy.mockRestore();
   });
 
-  it('should handle shell command with stderr output', async () => {
+  it('should block direct shell commands that rely on custom stderr-producing code', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    // Use a command that writes to stderr (node -e works cross-platform)
     const result = await processSpecialSyntax('!node -e "console.error(\'stderr output\')"');
 
-    expect(result).toContain('[Shell command executed:');
-    expect(result).toContain('stderr');
-    expect(result).toContain('[stderr]');
+    expect(result).toContain('[Blocked]');
+    expect(result).toContain('safe read-only commands');
 
     consoleSpy.mockRestore();
   });
@@ -690,23 +781,22 @@ describe('processSpecialSyntax', () => {
     consoleSpy.mockRestore();
   });
 
-  it('should handle shell command with pipes', async () => {
+  it('should block shell commands that use pipes', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    // Use node for cross-platform pipe support
     const result = await processSpecialSyntax('!node -e "console.log(\'hello\')"');
 
-    expect(result).toContain('[Shell command executed:');
-    expect(result).toContain('hello');
+    expect(result).toContain('[Blocked]');
+    expect(result).toContain('safe read-only commands');
 
     consoleSpy.mockRestore();
   });
 
-  it('should handle non-existent command', async () => {
+  it('should block direct shell commands that are not on the read-only allowlist', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const result = await processSpecialSyntax('!nonexistentcommand12345');
 
-    expect(result).toContain('[Shell command failed:');
-    expect(result).toContain('Error:');
+    expect(result).toContain('[Blocked]');
+    expect(result).toContain('safe read-only commands');
 
     consoleSpy.mockRestore();
   });
@@ -735,10 +825,10 @@ describe('processSpecialSyntax', () => {
 
   it('should handle git command', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const result = await processSpecialSyntax('!git --version');
+    const result = await processSpecialSyntax('!git rev-parse --is-inside-work-tree');
 
     expect(result).toContain('[Shell command executed:');
-    expect(result).toContain('git version');
+    expect(result).toContain('true');
 
     consoleSpy.mockRestore();
   });
@@ -787,11 +877,11 @@ describe('Shell Command Skip Logic (Warp Style)', () => {
     expect(shouldSkipShellCommand('!   ', processed)).toBe(true);
   });
 
-  it('should NOT skip failed shell command - exits with error', async () => {
+  it('should NOT skip failed safe shell commands', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const processed = await processSpecialSyntax('!exit 1');
+    const processed = await processSpecialSyntax('!git show definitely-not-a-real-ref-12345');
 
-    expect(shouldSkipShellCommand('!exit 1', processed)).toBe(false);
+    expect(shouldSkipShellCommand('!git show definitely-not-a-real-ref-12345', processed)).toBe(false);
     consoleSpy.mockRestore();
   });
 
@@ -818,12 +908,11 @@ describe('Shell Command Skip Logic (Warp Style)', () => {
     expect(shouldSkipShellCommand('', '')).toBe(false);
   });
 
-  it('should handle commands that produce no output', async () => {
+  it('should not skip blocked direct shell commands', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    // Use node -e "void(0)" which succeeds with no output (cross-platform)
     const processed = await processSpecialSyntax('!node -e "void(0)"');
 
-    expect(shouldSkipShellCommand('!node -e "void(0)"', processed)).toBe(true);
+    expect(shouldSkipShellCommand('!node -e "void(0)"', processed)).toBe(false);
     consoleSpy.mockRestore();
   });
 });

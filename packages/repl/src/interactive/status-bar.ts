@@ -9,6 +9,7 @@ export interface StatusBarState {
   sessionId: string;
   permissionMode: string;
   reasoningMode?: string;
+  parallel?: boolean;
   provider: string;
   model: string;
   tokenUsage?: {
@@ -63,6 +64,75 @@ function truncateAnsi(str: string, maxVisibleChars: number): string {
   return result;
 }
 
+function stripAnsi(str: string): string {
+  ANSI_REGEX.lastIndex = 0;
+  return str.replace(ANSI_REGEX, '');
+}
+
+function formatExecutionMode(parallel = false): 'parallel' | 'sequential' {
+  return parallel ? 'parallel' : 'sequential';
+}
+
+export function buildStatusBarContent(state: StatusBarState, width = getTerminalWidth()): string {
+  const parts: string[] = [];
+  const shortId = state.sessionId.slice(0, 6);
+
+  parts.push(chalk.dim(`#${shortId}`));
+
+  const modeColor =
+    state.permissionMode === 'plan'
+      ? chalk.blue
+      : state.permissionMode === 'accept-edits'
+        ? chalk.cyan
+        : state.permissionMode === 'auto-in-project'
+          ? chalk.magenta
+          : chalk.green;
+
+  parts.push(modeColor(state.permissionMode));
+
+  if (state.reasoningMode) {
+    parts.push(chalk.yellow(`reason:${state.reasoningMode}`));
+  }
+
+  parts.push(
+    state.parallel
+      ? chalk.green(`exec:${formatExecutionMode(state.parallel)}`)
+      : chalk.dim(`exec:${formatExecutionMode(state.parallel)}`),
+  );
+
+  parts.push(chalk.cyan(state.provider));
+
+  if (state.tokenUsage) {
+    const total = state.tokenUsage.total;
+    const totalStr = total >= 1000 ? `${(total / 1000).toFixed(1)}k` : String(total);
+    parts.push(chalk.dim(`${totalStr}t`));
+  }
+
+  if (state.currentTool) {
+    parts.push(chalk.magenta(`tool:${state.currentTool}`));
+  }
+
+  if (state.projectInfo) {
+    const { completedFeatures, totalFeatures } = state.projectInfo;
+    const percent = totalFeatures > 0
+      ? Math.round((completedFeatures / totalFeatures) * 100)
+      : 0;
+    parts.push(chalk.dim(`${completedFeatures}/${totalFeatures} [${percent}%]`));
+  }
+
+  if (state.messageCount !== undefined) {
+    parts.push(chalk.dim(`${state.messageCount} msgs`));
+  }
+
+  let content = parts.join(chalk.dim(' | '));
+  const visibleWidth = width - 1;
+  if (stripAnsi(content).length > visibleWidth) {
+    content = `${truncateAnsi(content, Math.max(0, visibleWidth - 3))}...`;
+  }
+
+  return content;
+}
+
 export class StatusBar {
   private state: StatusBarState;
   private visible = false;
@@ -108,57 +178,8 @@ export class StatusBar {
 
   private render(): void {
     const width = getTerminalWidth();
-    const parts: string[] = [];
-    const shortId = this.state.sessionId.slice(0, 6);
-
-    parts.push(chalk.dim(`#${shortId}`));
-
-    const modeColor =
-      this.state.permissionMode === 'plan'
-        ? chalk.blue
-        : this.state.permissionMode === 'accept-edits'
-          ? chalk.cyan
-          : this.state.permissionMode === 'auto-in-project'
-            ? chalk.magenta
-            : chalk.green;
-
-    parts.push(modeColor(this.state.permissionMode));
-
-    if (this.state.reasoningMode) {
-      parts.push(chalk.yellow(`reason:${this.state.reasoningMode}`));
-    }
-
-    parts.push(chalk.cyan(this.state.provider));
-
-    if (this.state.tokenUsage) {
-      const total = this.state.tokenUsage.total;
-      const totalStr = total >= 1000 ? `${(total / 1000).toFixed(1)}k` : String(total);
-      parts.push(chalk.dim(`${totalStr}t`));
-    }
-
-    if (this.state.currentTool) {
-      parts.push(chalk.magenta(`tool:${this.state.currentTool}`));
-    }
-
-    if (this.state.projectInfo) {
-      const { completedFeatures, totalFeatures } = this.state.projectInfo;
-      const percent = totalFeatures > 0
-        ? Math.round((completedFeatures / totalFeatures) * 100)
-        : 0;
-      parts.push(chalk.dim(`${completedFeatures}/${totalFeatures} [${percent}%]`));
-    }
-
-    if (this.state.messageCount !== undefined) {
-      parts.push(chalk.dim(`${this.state.messageCount} msgs`));
-    }
-
-    let content = parts.join(chalk.dim(' | '));
-    const visibleWidth = width - 1;
-    if (this.stripAnsi(content).length > visibleWidth) {
-      content = `${truncateAnsi(content, Math.max(0, visibleWidth - 3))}...`;
-    }
-
-    const paddedContent = content + ' '.repeat(Math.max(0, width - this.stripAnsi(content).length));
+    const content = buildStatusBarContent(this.state, width);
+    const paddedContent = content + ' '.repeat(Math.max(0, width - stripAnsi(content).length));
     process.stdout.write(
       ANSI.SAVE_CURSOR +
       ANSI.MOVE_TO_BOTTOM +
@@ -178,11 +199,6 @@ export class StatusBar {
       ANSI.RESTORE_CURSOR,
     );
   }
-
-  private stripAnsi(str: string): string {
-    ANSI_REGEX.lastIndex = 0;
-    return str.replace(ANSI_REGEX, '');
-  }
 }
 
 export function createStatusBarState(
@@ -191,11 +207,13 @@ export function createStatusBarState(
   provider: string,
   model: string,
   reasoningMode = 'off',
+  parallel = false,
 ): StatusBarState {
   return {
     sessionId,
     permissionMode,
     reasoningMode,
+    parallel,
     provider,
     model,
   };

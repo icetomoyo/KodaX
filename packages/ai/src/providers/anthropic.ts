@@ -8,6 +8,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { KodaXBaseProvider } from './base.js';
 import { KodaXProviderError } from '../errors.js';
 import {
+  KodaXContentBlock,
   KodaXProviderConfig,
   KodaXMessage,
   KodaXToolDefinition,
@@ -65,7 +66,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
         const kwargs: Anthropic.Messages.MessageCreateParams = {
           model,
           max_tokens: maxOutputTokens,
-          system,
+          system: this.buildSystemPrompt(system, messages),
           messages: this.convertMessages(messages),
           tools: tools as Anthropic.Messages.Tool[],
           stream: true,
@@ -307,6 +308,29 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
     }, signal, 3, streamOptions?.onRateLimit);
   }
 
+  private serializeSystemMessageContent(content: string | KodaXContentBlock[]): string {
+    if (typeof content === 'string') {
+      return content.trim();
+    }
+
+    return content
+      .filter((block): block is KodaXTextBlock => block.type === 'text')
+      .map((block) => block.text.trim())
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  private buildSystemPrompt(baseSystem: string, messages: KodaXMessage[]): string {
+    const inlineSystemMessages = messages
+      .filter((message) => message.role === 'system')
+      .map((message) => this.serializeSystemMessageContent(message.content))
+      .filter(Boolean);
+
+    return [baseSystem, ...inlineSystemMessages]
+      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      .join('\n\n');
+  }
+
   private convertMessages(messages: KodaXMessage[]): Anthropic.Messages.MessageParam[] {
     // Filter out 'system' role messages - Anthropic API only supports 'user' and 'assistant' in messages array
     // System messages are handled via the separate 'system' parameter
@@ -330,7 +354,12 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
       // 2. tool_result MUST come before text in user messages
       for (const b of m.content) {
         if (b.type === 'tool_result' && m.role === 'user') {
-          content.push({ type: 'tool_result', tool_use_id: b.tool_use_id, content: b.content });
+          content.push({
+            type: 'tool_result',
+            tool_use_id: b.tool_use_id,
+            content: b.content,
+            ...(b.is_error === true ? { is_error: true } : {}),
+          } as Anthropic.Messages.ToolResultBlockParam);
         }
       }
 

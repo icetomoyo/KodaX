@@ -9,7 +9,99 @@
  */
 
 import { execSync } from 'child_process';
+import path from 'path';
 import type { SkillContext, IVariableResolver } from './types.js';
+
+const SAFE_DYNAMIC_CONTEXT_COMMANDS = new Set([
+  'ls', 'cat', 'pwd', 'echo', 'whoami', 'date', 'which', 'whereis', 'tree',
+  'dir', 'type', 'get-childitem', 'get-content', 'select-string', 'get-location',
+  'grep', 'find', 'awk', 'sed', 'head', 'tail', 'less', 'more', 'wc',
+  'git status', 'git diff', 'git log', 'git show', 'git branch',
+  'git remote', 'git ls-files', 'git rev-parse', 'git grep',
+  'node', 'npm', 'yarn', 'pnpm', 'tsc', 'python', 'pip', 'go', 'cargo', 'rustc',
+]);
+
+function isSingleSafeDynamicContextCommand(command: string): boolean {
+  if (!command || !command.trim()) {
+    return false;
+  }
+
+  const normalizedCommand = command.trim().replace(/\s+/g, ' ').toLowerCase();
+
+  for (const safeCmd of SAFE_DYNAMIC_CONTEXT_COMMANDS) {
+    if (normalizedCommand === safeCmd || normalizedCommand.startsWith(`${safeCmd} `)) {
+      if (safeCmd === 'sed') {
+        const parts = normalizedCommand.split(/\s+/);
+        if (parts.some(part => part.startsWith('-i') || part === '--in-place')) {
+          return false;
+        }
+      }
+
+      if (safeCmd === 'awk') {
+        const parts = normalizedCommand.split(/\s+/);
+        if (parts.includes('-f') || parts.includes('--file')) {
+          return false;
+        }
+      }
+
+      const languageTools = ['node', 'npm', 'yarn', 'pnpm', 'tsc', 'python', 'pip', 'go', 'cargo', 'rustc'];
+      if (languageTools.includes(safeCmd)) {
+        const parts = normalizedCommand.split(/\s+/).slice(1);
+        if (parts.length > 0 && !parts.every(part => /^(-v|--version|-h|--help)$/.test(part))) {
+          return false;
+        }
+      }
+
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function isSafeDynamicContextCommand(command: string): boolean {
+  if (!command || !command.trim()) {
+    return false;
+  }
+
+  let normalizedCommand = command.trim().replace(/\\\r?\n/g, ' ');
+
+  const baseIllegalSyntax = /[<>|;`]|\$\(|(?<!&)&(?!&)/;
+  if (baseIllegalSyntax.test(normalizedCommand)) {
+    return false;
+  }
+
+  if (normalizedCommand.includes('\\')) {
+    if (path.sep !== '\\') {
+      const withoutEscapedSpaces = normalizedCommand.replace(/\\ /g, '');
+      if (withoutEscapedSpaces.includes('\\')) {
+        return false;
+      }
+    }
+  }
+
+  const subCommands = normalizedCommand.split(/\s*&&\s*/);
+  if (subCommands.length === 1) {
+    return isSingleSafeDynamicContextCommand(subCommands[0]!);
+  }
+
+  for (const subCommand of subCommands) {
+    const trimmed = subCommand?.trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    if (/^cd\s+/.test(trimmed.toLowerCase())) {
+      continue;
+    }
+
+    if (!isSingleSafeDynamicContextCommand(trimmed)) {
+      return false;
+    }
+  }
+
+  return true;
+}
 
 /**
  * Split arguments string into positional arguments
@@ -154,12 +246,19 @@ export class VariableResolver implements IVariableResolver {
    * Execute a dynamic context command
    */
   private executeDynamicCommand(command: string): string {
+    if (!isSafeDynamicContextCommand(command)) {
+      throw new Error(
+        'Unsafe dynamic context command blocked. Only simple read-only commands are allowed in !`...` blocks.'
+      );
+    }
+
     try {
       const output = execSync(command, {
         cwd: this.context.workingDirectory,
         encoding: 'utf-8',
         timeout: 5000, // 5 second timeout
         maxBuffer: 1024 * 1024, // 1MB max output
+        windowsHide: true,
       });
       return output.trim();
     } catch (error) {

@@ -99,6 +99,11 @@
     // value 可选: "budget" | "effort" | "toggle" | "none"
     "providerReasoningOverrides": {},
 
+    // Tool execution mode
+    // false = sequential execution (default)
+    // true  = parallel execution when independent tools can run concurrently
+    "parallel": false,
+
     // ── Compaction 压缩配置 ────────────────────────────────────
     "compaction": {
         "enabled": true,

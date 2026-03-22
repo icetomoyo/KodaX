@@ -44,7 +44,8 @@ const currentConfig: CurrentConfig = {
   provider: 'zhipu-coding',
   thinking: true,
   reasoningMode: 'auto',
-  permissionMode: 'default' as never,
+  parallel: false,
+  permissionMode: 'accept-edits' as never,
 };
 
 describe('project commands', () => {

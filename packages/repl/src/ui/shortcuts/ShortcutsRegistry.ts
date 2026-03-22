@@ -55,9 +55,11 @@ export class ShortcutsRegistry {
    * 注册快捷键定义
    */
   public register(definition: ShortcutDefinition): void {
+    const existing = this.shortcuts.get(definition.id);
     this.shortcuts.set(definition.id, {
       definition,
-      effectiveBindings: definition.defaultBindings,
+      effectiveBindings: existing?.effectiveBindings ?? definition.defaultBindings,
+      handler: existing?.handler,
     });
   }
 

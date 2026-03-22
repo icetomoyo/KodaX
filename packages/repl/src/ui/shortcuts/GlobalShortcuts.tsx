@@ -30,7 +30,8 @@ export interface GlobalShortcutsProps {
   setShowHelp: (visible: boolean) => void;
   onSetThinking?: (enabled: boolean) => void;
   onSetReasoningMode?: (mode: KodaXReasoningMode) => void;
-  onSetPermissionMode?: (mode: PermissionMode) => void;  // 新增：更新 ref
+  onSetPermissionMode?: (mode: PermissionMode) => void;
+  onSetParallel?: (enabled: boolean) => void;
   isInputEmpty: boolean;
   onSavePermissionMode?: (mode: PermissionMode) => void;
 }
@@ -48,7 +49,8 @@ export function GlobalShortcuts({
   setShowHelp,
   onSetThinking,
   onSetReasoningMode,
-  onSetPermissionMode,  // 新增
+  onSetPermissionMode,
+  onSetParallel,
   isInputEmpty,
   onSavePermissionMode,
 }: GlobalShortcutsProps): null {
@@ -113,8 +115,18 @@ export function GlobalShortcuts({
     const newMode = modeCycle[nextIndex];
 
     setCurrentConfig((prev) => ({ ...prev, permissionMode: newMode }));
-    onSetPermissionMode?.(newMode);  // 新增：更新 ref
+    onSetPermissionMode?.(newMode);
     onSavePermissionMode?.(newMode);
+    setShowHelp(false);
+    return true;
+  });
+
+  useShortcut('toggleParallelMode', () => {
+    const nextValue = !currentConfig.parallel;
+
+    setCurrentConfig((prev) => ({ ...prev, parallel: nextValue }));
+    saveConfig({ parallel: nextValue });
+    onSetParallel?.(nextValue);
     setShowHelp(false);
     return true;
   });

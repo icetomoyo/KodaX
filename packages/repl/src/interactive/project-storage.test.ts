@@ -110,6 +110,24 @@ describe('project-storage brainstorm persistence', () => {
     expect(runs).toEqual([{ featureIndex: 1 }, { featureIndex: 2 }]);
   });
 
+  it('rejects malformed brainstorm session JSON instead of blindly casting it', async () => {
+    const storage = new ProjectStorage(tempDir);
+    const sessionPath = join(storage.getPaths().brainstormProjects, 'bad-session', 'session.json');
+    mkdirSync(dirname(sessionPath), { recursive: true });
+    writeFileSync(
+      sessionPath,
+      JSON.stringify({
+        id: 'bad-session',
+        topic: 'Bad session',
+        status: 'active',
+        turns: 'not-an-array',
+      }),
+      'utf-8',
+    );
+
+    await expect(storage.loadBrainstormSession('bad-session')).resolves.toBeNull();
+  });
+
   it('persists checkpoint and session-tree records under .agent/project', async () => {
     const storage = new ProjectStorage(tempDir);
 

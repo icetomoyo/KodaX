@@ -84,6 +84,17 @@ export class LRUCache<K, V> {
   }
 }
 
+let graphemeSegmenter: Intl.Segmenter | undefined;
+
+function getGraphemeSegmenter(): Intl.Segmenter | undefined {
+  if (typeof Intl === "undefined" || typeof Intl.Segmenter !== "function") {
+    return undefined;
+  }
+
+  graphemeSegmenter ??= new Intl.Segmenter("en", { granularity: "grapheme" });
+  return graphemeSegmenter;
+}
+
 // ============================================================================
 // Code Point Utilities - Code Point 工具
 // ============================================================================
@@ -95,10 +106,13 @@ export class LRUCache<K, V> {
 export function getCodePointLength(str: string): number {
   if (!str) return 0;
 
-  // Use segmenter for proper grapheme cluster counting
-  if (typeof Intl !== "undefined" && Intl.Segmenter) {
-    const segmenter = new Intl.Segmenter("en", { granularity: "grapheme" });
-    return [...segmenter.segment(str)].length;
+  const segmenter = getGraphemeSegmenter();
+  if (segmenter) {
+    let count = 0;
+    for (const _segment of segmenter.segment(str)) {
+      count++;
+    }
+    return count;
   }
 
   // Fallback: use Array.from which handles surrogate pairs but not ZWJ
@@ -156,9 +170,8 @@ export function getVisualWidth(str: string): number {
 
   let width = 0;
 
-  // Use segmenter for proper grapheme cluster handling
-  if (typeof Intl !== "undefined" && Intl.Segmenter) {
-    const segmenter = new Intl.Segmenter("en", { granularity: "grapheme" });
+  const segmenter = getGraphemeSegmenter();
+  if (segmenter) {
     for (const segment of segmenter.segment(str)) {
       width += isWideChar(segment.segment) ? 2 : 1;
     }
@@ -178,12 +191,16 @@ export function getVisualWidth(str: string): number {
 export function getCharAtCodePoint(str: string, index: number): string {
   if (!str || index < 0) return "";
 
-  // Use segmenter for proper grapheme cluster handling
-  if (typeof Intl !== "undefined" && Intl.Segmenter) {
-    const segmenter = new Intl.Segmenter("en", { granularity: "grapheme" });
-    const segments = [...segmenter.segment(str)];
-    if (index >= segments.length) return "";
-    return segments[index]!.segment;
+  const segmenter = getGraphemeSegmenter();
+  if (segmenter) {
+    let currentIndex = 0;
+    for (const segment of segmenter.segment(str)) {
+      if (currentIndex === index) {
+        return segment.segment;
+      }
+      currentIndex++;
+    }
+    return "";
   }
 
   // Fallback: use Array.from
@@ -198,10 +215,13 @@ export function getCharAtCodePoint(str: string, index: number): string {
 export function splitByCodePoints(str: string): string[] {
   if (!str) return [];
 
-  // Use segmenter for proper grapheme cluster handling
-  if (typeof Intl !== "undefined" && Intl.Segmenter) {
-    const segmenter = new Intl.Segmenter("en", { granularity: "grapheme" });
-    return [...segmenter.segment(str)].map((s) => s.segment);
+  const segmenter = getGraphemeSegmenter();
+  if (segmenter) {
+    const segments: string[] = [];
+    for (const segment of segmenter.segment(str)) {
+      segments.push(segment.segment);
+    }
+    return segments;
   }
 
   // Fallback: use Array.from

@@ -8,6 +8,7 @@ import OpenAI from 'openai';
 import { KodaXBaseProvider } from './base.js';
 import { KodaXProviderError } from '../errors.js';
 import {
+  KodaXContentBlock,
   KodaXReasoningCapability,
   KodaXProviderConfig,
   KodaXMessage,
@@ -15,6 +16,8 @@ import {
   KodaXProviderStreamOptions,
   KodaXReasoningRequest,
   KodaXStreamResult,
+  KodaXThinkingBlock,
+  KodaXRedactedThinkingBlock,
   KodaXTextBlock,
   KodaXToolUseBlock,
 } from '../types.js';
@@ -34,6 +37,20 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
 
   protected initClient(): void {
     this.client = new OpenAI({ apiKey: this.getApiKey(), baseURL: this.config.baseUrl });
+  }
+
+  private appendExtraBody(
+    params: Record<string, unknown>,
+    extraBody: Record<string, unknown>,
+  ): void {
+    const current =
+      typeof params.extra_body === 'object' && params.extra_body !== null
+        ? params.extra_body as Record<string, unknown>
+        : {};
+    params.extra_body = {
+      ...current,
+      ...extraBody,
+    };
   }
 
   private applyReasoningCapability(
@@ -66,10 +83,10 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
       }
       case 'native-budget': {
         if (this.name === 'qwen') {
-          params.extra_body = {
+          this.appendExtraBody(params, {
             enable_thinking: true,
             thinking_budget: requestedBudget,
-          };
+          });
         } else if (this.name === 'zhipu') {
           params.thinking = {
             type: 'enabled',
@@ -80,13 +97,22 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
       }
       case 'native-toggle': {
         if (this.name === 'qwen') {
-          params.extra_body = {
+          this.appendExtraBody(params, {
             enable_thinking: true,
-          };
+          });
         } else if (this.name === 'zhipu') {
           params.thinking = {
             type: 'enabled',
           };
+        } else if (
+          this.name === 'deepseek' &&
+          createParams.model === 'deepseek-chat'
+        ) {
+          this.appendExtraBody(params, {
+            thinking: {
+              type: 'enabled',
+            },
+          });
         }
         break;
       }
@@ -130,6 +156,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
 
       const toolCallsMap = new Map<number, { id: string; name: string; arguments: string }>();
       let textContent = '';
+      let thinkingContent = '';
 
       // Issue 084 fix: Track stream completion
       let finishReason: string | null = null;
@@ -221,6 +248,11 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
           textContent += delta.content;
           streamOptions?.onTextDelta?.(delta.content);
         }
+        const reasoningDelta = this.extractReasoningDelta(delta);
+        if (reasoningDelta) {
+          thinkingContent += reasoningDelta;
+          streamOptions?.onThinkingDelta?.(reasoningDelta);
+        }
         if (delta?.tool_calls) {
           for (const tc of delta.tool_calls) {
             const existing = toolCallsMap.get(tc.index) ?? { id: '', name: '', arguments: '' };
@@ -271,21 +303,167 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
 
       const textBlocks: KodaXTextBlock[] = textContent ? [{ type: 'text', text: textContent }] : [];
       const toolBlocks: KodaXToolUseBlock[] = [];
+      const thinkingBlocks: (KodaXThinkingBlock | KodaXRedactedThinkingBlock)[] = [];
+      if (thinkingContent) {
+        thinkingBlocks.push({ type: 'thinking', thinking: thinkingContent });
+        streamOptions?.onThinkingEnd?.(thinkingContent);
+      }
       for (const [, tc] of toolCallsMap) {
         if (tc.id && tc.name) {
           try { toolBlocks.push({ type: 'tool_use', id: tc.id, name: tc.name, input: JSON.parse(tc.arguments) }); }
           catch { toolBlocks.push({ type: 'tool_use', id: tc.id, name: tc.name, input: {} }); }
         }
       }
-      return { textBlocks, toolBlocks, thinkingBlocks: [] };
+      return { textBlocks, toolBlocks, thinkingBlocks };
     }, signal, 3, streamOptions?.onRateLimit);
   }
 
+  private extractReasoningDelta(
+    delta: OpenAI.Chat.Completions.ChatCompletionChunk.Choice.Delta | undefined,
+  ): string {
+    const raw = (delta as Record<string, unknown> | undefined)?.reasoning_content;
+    if (typeof raw === 'string') {
+      return raw;
+    }
+    if (!Array.isArray(raw)) {
+      return '';
+    }
+
+    return raw
+      .map((part) => {
+        if (typeof part === 'string') {
+          return part;
+        }
+        if (
+          typeof part === 'object' &&
+          part !== null &&
+          'text' in part &&
+          typeof (part as { text?: unknown }).text === 'string'
+        ) {
+          return (part as { text: string }).text;
+        }
+        return '';
+      })
+      .join('');
+  }
+
+  private serializeAssistantMessage(
+    contentBlocks: KodaXContentBlock[],
+  ): OpenAI.Chat.ChatCompletionMessageParam[] {
+    const text = contentBlocks
+      .filter((block): block is KodaXTextBlock => block.type === 'text')
+      .map((block) => block.text)
+      .join('\n');
+    const toolCalls = contentBlocks
+      .filter((block): block is KodaXToolUseBlock => block.type === 'tool_use')
+      .map((block) => ({
+        id: block.id,
+        type: 'function' as const,
+        function: {
+          name: block.name,
+          arguments: JSON.stringify(block.input ?? {}),
+        },
+      }));
+    const thinking = contentBlocks
+      .filter(
+        (
+          block,
+        ): block is KodaXThinkingBlock | KodaXRedactedThinkingBlock =>
+          block.type === 'thinking' || block.type === 'redacted_thinking',
+      )
+      .map((block) => block.type === 'thinking' ? block.thinking : '')
+      .filter(Boolean)
+      .join('\n\n');
+
+    if (!text && toolCalls.length === 0) {
+      return [];
+    }
+
+    const message: Record<string, unknown> = {
+      role: 'assistant',
+      content: text || null,
+    };
+
+    if (toolCalls.length > 0) {
+      message.tool_calls = toolCalls;
+      if (this.name === 'deepseek' && thinking) {
+        message.reasoning_content = thinking;
+      }
+    }
+
+    return [message as unknown as OpenAI.Chat.ChatCompletionMessageParam];
+  }
+
+  private serializeUserMessage(
+    contentBlocks: KodaXContentBlock[],
+  ): OpenAI.Chat.ChatCompletionMessageParam[] {
+    const results: OpenAI.Chat.ChatCompletionMessageParam[] = [];
+    const text = contentBlocks
+      .filter((block): block is KodaXTextBlock => block.type === 'text')
+      .map((block) => block.text)
+      .join('\n');
+
+    for (const block of contentBlocks) {
+      if (block.type === 'tool_result') {
+        results.push({
+          role: 'tool',
+          tool_call_id: block.tool_use_id,
+          content: block.content,
+        } as unknown as OpenAI.Chat.ChatCompletionMessageParam);
+      }
+    }
+
+    if (text) {
+      results.push({
+        role: 'user',
+        content: text,
+      });
+    }
+
+    return results;
+  }
+
+  private serializeSystemMessage(
+    content: string | KodaXContentBlock[],
+  ): OpenAI.Chat.ChatCompletionMessageParam[] {
+    if (typeof content === 'string') {
+      return [{
+        role: 'system',
+        content,
+      } as unknown as OpenAI.Chat.ChatCompletionMessageParam];
+    }
+
+    const text = content
+      .filter((block): block is KodaXTextBlock => block.type === 'text')
+      .map((block) => block.text)
+      .join('\n');
+
+    return text
+      ? [{
+          role: 'system',
+          content: text,
+        } as unknown as OpenAI.Chat.ChatCompletionMessageParam]
+      : [];
+  }
+
   private convertMessages(messages: KodaXMessage[]): OpenAI.Chat.ChatCompletionMessageParam[] {
-    return messages.map(m => {
-      if (typeof m.content === 'string') return { role: m.role, content: m.content };
-      const text = (m.content as { type: 'text'; text: string }[]).filter((b): b is { type: 'text'; text: string } => b.type === 'text').map(b => b.text).join('\n');
-      return { role: m.role, content: text };
+    return messages.flatMap((message) => {
+      if (message.role === 'system') {
+        return this.serializeSystemMessage(message.content);
+      }
+
+      if (typeof message.content === 'string') {
+        return [{
+          role: message.role,
+          content: message.content,
+        } as unknown as OpenAI.Chat.ChatCompletionMessageParam];
+      }
+
+      if (message.role === 'assistant') {
+        return this.serializeAssistantMessage(message.content);
+      }
+
+      return this.serializeUserMessage(message.content);
     });
   }
 }

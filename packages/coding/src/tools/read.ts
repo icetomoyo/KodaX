@@ -6,10 +6,11 @@
 
 import fs from 'fs/promises';
 import fsSync from 'fs';
-import path from 'path';
+import type { KodaXToolExecutionContext } from '../types.js';
+import { resolveExecutionPath } from '../runtime-paths.js';
 
-export async function toolRead(input: Record<string, unknown>): Promise<string> {
-  const filePath = path.resolve(input.path as string);
+export async function toolRead(input: Record<string, unknown>, ctx: KodaXToolExecutionContext): Promise<string> {
+  const filePath = resolveExecutionPath(input.path as string, ctx);
   if (!fsSync.existsSync(filePath)) return `[Tool Error] File not found: ${filePath}`;
   const content = await fs.readFile(filePath, 'utf-8');
   const lines = content.split('\n');

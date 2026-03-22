@@ -77,7 +77,11 @@ export abstract class KodaXBaseProvider {
     );
   }
 
-  getConfiguredReasoningCapability(): KodaXReasoningCapability {
+  getConfiguredReasoningCapability(modelOverride?: string): KodaXReasoningCapability {
+    const descriptor = this.getModelDescriptor(modelOverride);
+    if (descriptor?.reasoningCapability) {
+      return descriptor.reasoningCapability;
+    }
     return getReasoningCapability(this.config);
   }
 
@@ -85,7 +89,7 @@ export abstract class KodaXBaseProvider {
     const override = loadReasoningOverride(this.name, this.config, modelOverride);
     return override
       ? reasoningOverrideToCapability(override)
-      : this.getConfiguredReasoningCapability();
+      : this.getConfiguredReasoningCapability(modelOverride);
   }
 
   getReasoningOverride(modelOverride?: string): KodaXReasoningOverride | undefined {

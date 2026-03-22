@@ -11,6 +11,8 @@ export const HELP_BAR_SEGMENTS: HelpBarSegment[] = [
   { text: "  " },
   { text: "Ctrl+O mode" },
   { text: "  " },
+  { text: "Ctrl+P parallel" },
+  { text: "  " },
   { text: "Ctrl+C interrupt" },
   { text: "  " },
   { text: "PgUp review" },

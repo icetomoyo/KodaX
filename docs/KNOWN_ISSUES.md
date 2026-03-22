@@ -1,11 +1,11 @@
 # Known Issues
 
-_Last Updated: 2026-03-19_
+_Last Updated: 2026-03-22_
 
 ---
 
-> **Archive Notice**: 36 issues archived to `ISSUES_ARCHIVED.md` (31 resolved + 1 on 2026-03-11 + 3 Won't Fix on 2026-03-11 + 1 resolved on 2026-03-13).
-> For historical issue records, please see `docs/ISSUES_ARCHIVED.md`.
+> **Archive Notice**: Historical issue records are maintained in `docs/ISSUES_ARCHIVED.md`.
+> This file tracks the active issue backlog only.
 
 ---
 
@@ -35,6 +35,12 @@ _Last Updated: 2026-03-19_
 | 091 | High | Open | 缺少一等公民 MCP / Web Search / Code Search 工具体系 | v0.6.10 | - | 2026-03-18 | - |
 | 092 | High | Open | Team 模式已暴露但原生多 Agent 架构仍未闭环 | v0.6.10 | - | 2026-03-18 | - |
 | 093 | Medium | Open | 缺少 IDE / Desktop / Web 一体化分发表面 | v0.6.10 | - | 2026-03-18 | - |
+| 094 | Medium | Open | 核心工作流文件与函数过大，职责耦合导致重构成本持续上升 | v0.6.13 | - | 2026-03-22 | - |
+| 095 | Medium | Open | Agent / REPL 主流程仍存在重复编排与手写运行时流程 | v0.6.13 | - | 2026-03-22 | - |
+| 096 | Low | Open | 类型边界过宽且共享可变状态较多 | v0.6.13 | - | 2026-03-22 | - |
+| 097 | Medium | Open | 错误处理、阻塞式 I/O 与执行侧副作用清理仍不完整 | v0.6.13 | - | 2026-03-22 | - |
+| 098 | Low | Open | 重复 helper、兼容层导出、魔法数字与硬编码字符串需要收敛 | v0.6.13 | - | 2026-03-22 | - |
+| 099 | Low | Open | 测试辅助代码重复，局部验证资产需要收敛 | v0.6.13 | - | 2026-03-22 | - |
 
 ---
 
@@ -1145,19 +1151,264 @@ _Last Updated: 2026-03-19_
   3. 尚未形成跨表面的产品抽象
 
 - **Proposed Solution**:
-  - 实施 `FEATURE_030 Multi-Surface Delivery`
-  - 在 terminal UX 和 multi-agent 基础稳定后再逐步展开
+- 实施 `FEATURE_030 Multi-Surface Delivery`
+- 在 terminal UX 和 multi-agent 基础稳定后再逐步展开
+
+---
+
+### 094: 核心工作流文件与函数过大，职责耦合导致重构成本持续上升 (OPEN)
+- **Priority**: Medium
+- **Status**: Open
+- **Introduced**: v0.6.13
+- **Created**: 2026-03-22
+
+- **Original Problem**:
+  经本轮逐条核对后确认，仓库里仍有多处核心 runtime 文件与主函数承担了过多职责，已经明显超出“单点修补”可持续维护的范围。相关代码同时混合了参数解析、状态推进、权限判断、会话保存、工具调度、provider 适配与 UI / harness 协调，导致回归风险高、修改面大、代码评审成本持续上升。
+
+- **Expected Behavior**:
+  - 核心工作流应按职责拆分为可单测、可替换的子模块
+  - 入口函数应主要负责编排，不应同时承担解析、执行、持久化和展示细节
+  - handler / evaluator 层应具备清晰的输入输出类型边界
+
+- **Context**:
+  - `packages/repl/src/interactive/project-commands.ts`
+  - `packages/repl/src/interactive/project-harness.ts`
+  - `src/kodax_cli.ts`
+  - `packages/coding/src/agent.ts`
+  - `packages/coding/src/reasoning.ts`
+  - `packages/ai/src/providers/anthropic.ts`
+  - `packages/ai/src/providers/openai.ts`
+
+- **Source Debt IDs**:
+  - `C5`, `C6`, `H1`, `H2`, `H3`, `H4`, `H5`, `H6`, `H7`, `H8`, `H9`
+
+- **Root Cause**:
+  1. 功能长期沿着现有入口持续堆叠，缺少阶段性模块化回收
+  2. 运行时状态与副作用分布在同一层，导致拆分边界不清晰
+  3. 项目 workflow、REPL runtime 与 provider stream 演进速度不一致，最终集中在少数超大文件中
+
+- **Proposed Solution**:
+  - 先从 `project-commands.ts`、`project-harness.ts`、`kodax_cli.ts` 开始按职责拆分
+  - 把 `agent.ts` 的执行编排继续下沉到独立 helper / service 层
+  - 为 provider `stream()` 拆出 event parsing、delta normalization、tool result serialization 等子模块
+
+---
+
+### 095: Agent / REPL 主流程仍存在重复编排与手写运行时流程 (OPEN)
+- **Priority**: Medium
+- **Status**: Open
+- **Introduced**: v0.6.13
+- **Created**: 2026-03-22
+
+- **Original Problem**:
+  虽然本轮已经消掉了一部分重复逻辑，但 agent 与 REPL 主流程里仍残留多段手写的执行编排代码，包括 reroute、权限前置、会话保存、git / shell 调度和直接修改运行时上下文的路径。它们在行为上高度相关，却没有统一抽象，后续继续演进时很容易再次漂移。
+
+- **Expected Behavior**:
+  - 相同语义的运行时流程应复用统一 helper，而不是在多个入口重复实现
+  - 会话持久化、权限执行、reroute 策略和错误分类应集中在清晰的边界层
+  - REPL context 更新应通过收敛后的状态接口完成，而不是在多处直接改写字段
+
+- **Context**:
+  - `packages/coding/src/agent.ts`
+  - `packages/repl/src/interactive/repl.ts`
+  - `packages/coding/src/reasoning.ts`
+  - `packages/coding/src/prompts/builder.ts`
+
+- **Source Debt IDs**:
+  - `H38`, `H39`, `H40`, `H41`, `H44`, `M39`
+
+- **Root Cause**:
+  1. 不同入口在不同时期各自补齐了相似的 runtime 行为
+  2. 会话状态与权限模型缺少统一的 façade 层
+  3. 历史上更强调尽快打通功能路径，而不是抽象复用
+
+- **Proposed Solution**:
+  - 提炼统一的 permission-aware execution helper
+  - 收敛 session snapshot / save / title 更新等流程到可复用 API
+  - 将 reroute / git evidence / shell evidence 之类的相邻逻辑合并到单一编排层
+
+---
+
+### 096: 类型边界过宽且共享可变状态较多 (OPEN)
+- **Priority**: Low
+- **Status**: Open
+- **Introduced**: v0.6.13
+- **Created**: 2026-03-22
+
+- **Original Problem**:
+  当前代码库仍有一批 “先用 `any` / `unknown` / 断言打通，再在下游兜底” 的边界，以及若干共享可变状态、公共可变容器和原地修改对象的实现。这类问题短期不一定直接出错，但会削弱重构信心，也会让 provider / skills / session 相关代码更难建立稳定的类型约束。
+
+- **Expected Behavior**:
+  - 外部输入、provider 事件、skill 上下文和 registry 应尽量使用显式类型与 type guard
+  - 共享状态应最小化暴露面，避免 public mutable collection 和原地修改
+  - session / routing / registry 相关模型应尽量复用统一类型定义
+
+- **Context**:
+  - `packages/ai/src/providers/anthropic.ts`
+  - `packages/coding/src/agent.ts`
+  - `packages/coding/src/acp/pseudo-acp-server.ts`
+  - `packages/skills/src/skill-registry.ts`
+  - `packages/repl/src/interactive/plan-mode.ts`
+  - `packages/repl/src/interactive/new-command.ts`
+  - `packages/repl/src/permission/executor.ts`
+
+- **Source Debt IDs**:
+  - `H10`, `H11`, `H12`, `H13`, `H14`, `H15`, `H16`
+  - `H42`, `H43`, `H44`, `H45`, `H46`, `H47`
+  - `M21`, `M22`, `M23`, `M24`
+  - `M40`, `M42`, `M43`, `M44`, `M46`, `M47`, `M48`, `M49`, `M67`
+  - `L22`, `L27`, `L32`, `L37`
+
+- **Root Cause**:
+  1. 多数边界最初优先保证联通性，类型建模滞后
+  2. registry / session / tool runtime 各自独立演进，导致共享模型碎片化
+  3. 一部分对象被默认当作可变工作区使用，没有及时收敛成不可变接口
+
+- **Proposed Solution**:
+  - 先清理 provider 与 ACP 边界的 `any` / 断言
+  - 为 skill registry、session storage、routing snapshot 建立统一模型
+  - 逐步把 public mutable state 改成受控 accessor 或不可变更新
+
+---
+
+### 097: 错误处理、阻塞式 I/O 与执行侧副作用清理仍不完整 (OPEN)
+- **Priority**: Medium
+- **Status**: Open
+- **Introduced**: v0.6.13
+- **Created**: 2026-03-22
+
+- **Original Problem**:
+  一批较低风险但会持续侵蚀可观测性的技术债仍然存在，包括静默 `catch`、fire-and-forget async 路径、同步文件系统调用、执行链路里的库层 `console.*` 副作用，以及少数仍依赖 shell / editor / discovery 副作用的分支。它们不像前几批安全问题那样紧急，但会让错误更难定位，也会限制后续把运行时行为统一收口。
+
+- **Expected Behavior**:
+  - 静默吞错应仅出现在明确可接受的 best-effort 路径，并附带注释或日志策略
+  - 热路径中的同步 I/O 应迁移到缓存或异步接口
+  - library / loader / discovery 层应避免直接向控制台输出副作用
+  - 命令执行的剩余边角路径应继续向统一执行抽象收敛
+
+- **Context**:
+  - `packages/repl/src/common/utils.ts`
+  - `packages/repl/src/common/compaction-config.ts`
+  - `packages/repl/src/common/permission-config.ts`
+  - `packages/repl/src/interactive/plan-storage.ts`
+  - `packages/repl/src/permission/permission.ts`
+  - `packages/repl/src/permission/executor.ts`
+  - `packages/coding/src/tools/read.ts`
+  - `packages/coding/src/tools/grep.ts`
+  - `packages/skills/src/discovery.ts`
+
+- **Source Debt IDs**:
+  - `H19`, `H20`, `H21`, `H22`, `H23`, `H24`, `H25`, `H26`, `H27`, `H28`, `H29`, `H30`
+  - `H48`, `H51`, `H52`, `H54`, `H55`, `H58`
+  - `M38`
+  - `L10`, `L17`, `L23`, `L26`
+
+- **Root Cause**:
+  1. 早期实现大量依赖 best-effort fallback，缺少统一的日志/遥测约束
+  2. 部分工具和 loader 仍沿用同步 I/O 以降低实现复杂度
+  3. 执行层的命令、编辑器和技能发现路径没有完全统一到同一套运行时约束
+
+- **Proposed Solution**:
+  - 为允许静默失败的路径建立显式注释和统一 helper
+  - 逐步替换热路径同步 I/O，并对保留的同步路径注明原因
+  - 把 loader / discovery / permission 侧的 `console.*` 收敛到 logger
+  - 继续收口剩余 command execution 分支到权限感知的执行抽象
+
+---
+
+### 098: 重复 helper、兼容层导出、魔法数字与硬编码字符串需要收敛 (OPEN)
+- **Priority**: Low
+- **Status**: Open
+- **Introduced**: v0.6.13
+- **Created**: 2026-03-22
+
+- **Original Problem**:
+  经核对后仍有一批低风险但会持续制造噪音的清理项，包括重复 helper、长期保留的兼容层导出、仓库内无人消费的遗留 API、魔法数字、硬编码提示字符串，以及若干轻量级设计瑕疵。单个问题都不大，但累计起来会影响可读性，也会提高理解成本。
+
+- **Expected Behavior**:
+  - helper / utility 应优先复用而不是多处复制
+  - 兼容层与 deprecated 导出应有明确退场计划
+  - 算法阈值、缓存大小和提示文案应以命名常量或共享常量表达
+  - 轻量级设计瑕疵应在不破坏兼容的前提下逐步收敛
+
+- **Context**:
+  - `packages/repl/src/ui/utils/message-utils.ts`
+  - `packages/repl/src/ui/utils/textUtils.ts`
+  - `packages/coding/src/providers/index.ts`
+  - `packages/coding/src/reasoning.ts`
+  - `packages/agent/src/compaction/compaction.ts`
+  - `packages/skills/src/file-tracker.ts`
+  - `packages/skills/src/discovery.ts`
+
+- **Source Debt IDs**:
+  - `H32`, `H33`, `H34`
+  - `M3`, `M4`, `M5`, `M6`, `M7`, `M8`, `M9`, `M11`, `M12`, `M13`, `M14`, `M15`, `M17`, `M18`, `M19`, `M20`
+  - `M26`, `M27`, `M28`, `M29`, `M30`, `M31`, `M32`, `M33`, `M34`, `M35`, `M36`, `M41`, `M45`, `M52`, `M53`, `M54`, `M55`, `M56`, `M58`
+  - `L1`, `L2`, `L3`, `L4`, `L5`, `L6`, `L8`, `L11`, `L12`, `L13`, `L14`, `L18`, `L19`, `L20`, `L21`, `L25`, `L31`, `L33`
+
+- **Root Cause**:
+  1. 多数条目来源于兼容层保留、局部复制粘贴和快速迭代残留
+  2. 一些常量原本只在局部使用，后续没有及时抽象或命名
+  3. 文案、缓存和占位实现长期存在，但缺少集中清理窗口
+
+- **Proposed Solution**:
+  - 先清理无人消费的 helper / export / placeholder
+  - 收敛重复字符串与阈值常量
+  - 对仍需兼容保留的导出明确 deprecation 注释和删除条件
+
+---
+
+### 099: 测试辅助代码重复，局部验证资产需要收敛 (OPEN)
+- **Priority**: Low
+- **Status**: Open
+- **Introduced**: v0.6.13
+- **Created**: 2026-03-22
+
+- **Original Problem**:
+  除了已单独跟踪的 `082 packages/ai 缺少单元测试` 之外，当前测试资产本身也存在一批结构性债务，包括超大的测试文件、重复实现 helper、散落的 scratch / 临时验证脚本，以及若干直接依赖硬编码常量的断言。这类问题会降低新增测试的速度，也会让回归定位变得更慢。
+
+- **Expected Behavior**:
+  - 通用测试 helper 应抽到共享位置，而不是在多个测试文件内重复实现
+  - scratch / 临时验证脚本应清理或迁移到明确的实验目录
+  - 大测试文件应按模块拆开，覆盖目标更清晰
+
+- **Context**:
+  - `packages/repl/src/interactive/interactive.test.ts`
+  - `packages/repl/src/ui/session-history.test.ts`
+  - `packages/repl/src/ui/banner.test.ts`
+  - `tests/kodax_core.test.ts`
+  - `tests/scratch/test-retry.ts`
+
+- **Source Debt IDs**:
+  - `H60`
+  - `M59`, `M60`, `M61`, `M62`, `M63`, `M65`, `M68`
+  - `L28`, `L29`, `L30`
+
+- **Root Cause**:
+  1. 测试在不同阶段由不同模块各自补齐，复用层没有同步建设
+  2. 临时验证资产在问题解决后没有及时回收
+  3. 对测试代码的整洁度要求低于生产代码，导致债务长期累积
+
+- **Proposed Solution**:
+  - 提取共享 test helper，并拆分超大测试文件
+  - 清理或迁移 `tests/scratch` 中已失效的实验资产
+  - 为测试资产建立最小限度的 lint / consistency 约束
 
 ---
 
 ## Summary
-- Total: 20 (12 Open, 8 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 26 (18 Open, 8 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
-- 79 issues archived to ISSUES_ARCHIVED.md (43 previous + 32 resolved + 3 Won't Fix on 2026-03-11 + 1 resolved on 2026-03-13)
+- Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ---
 
 ## Changelog
+
+### 2026-03-22: Technical debt audit merged into canonical issue tracker
+- Verified and landed the fix batch for `C10`, `H17`, `H18`, `H53`, `H59`, `M37`, `M57`, and `M69` during the cleanup pass
+- Rolled the remaining verified technical debt into active issues `094` through `099`, so each unresolved item now has a stable issue home
+- Removed the temporary `docs/TECHNICAL_DEBT.md` document after migrating the remaining backlog into `KNOWN_ISSUES.md`
 
 ### 2026-03-19: Issue 090 resolved
 - Resolved 090: CLI Provider 桥接语义降级：上下文与 MCP 能力丢失 (High Priority)

@@ -24,8 +24,10 @@ class FakeSummaryProvider extends KodaXBaseProvider {
 
   public prompts: string[] = [];
   public systems: string[] = [];
+  public callCount = 0;
 
-  constructor(private readonly summaryText: string = [
+  constructor(
+    private readonly summaryText: string = [
     '## Goal',
     'Continue the current task.',
     '',
@@ -50,7 +52,9 @@ class FakeSummaryProvider extends KodaXBaseProvider {
     '',
     '## Key Context',
     '- packages/agent/src/compaction/compaction.ts',
-  ].join('\n')) {
+  ].join('\n'),
+    private readonly failOnCall?: number,
+  ) {
     super();
   }
 
@@ -61,6 +65,11 @@ class FakeSummaryProvider extends KodaXBaseProvider {
     _thinking?: boolean,
     _streamOptions?: KodaXProviderStreamOptions
   ): Promise<KodaXStreamResult> {
+    this.callCount += 1;
+    if (this.failOnCall && this.callCount === this.failOnCall) {
+      throw new Error('summary failed');
+    }
+
     const prompt = messages[0];
     this.prompts.push(typeof prompt?.content === 'string' ? prompt.content : JSON.stringify(prompt?.content));
     this.systems.push(system);
@@ -188,6 +197,30 @@ describe('compaction', () => {
     expect(toolResults.some(block => typeof block.content === 'string' && block.content.startsWith('[Pruned: bash cat]'))).toBe(true);
     expect(toolResults.some(block => typeof block.content === 'string' && block.content.startsWith('x x x x'))).toBe(true);
     expect(result.messages.some(msg => msg.role === 'assistant' && msg.content === 'retain assistant note')).toBe(true);
+  });
+
+  it('keeps partial summary progress when a later summary attempt fails', async () => {
+    const provider = new FakeSummaryProvider('partial summary', 2);
+    const contextWindow = 200000;
+    const config = {
+      enabled: true,
+      triggerPercent: 10,
+      protectionPercent: 0,
+      rollingSummaryPercent: 100,
+      pruningThresholdTokens: 50000,
+    };
+
+    const messages = buildLongConversation(3, 30000);
+    const result = await compact(messages, config, provider, contextWindow);
+
+    expect(provider.callCount).toBe(2);
+    expect(result.compacted).toBe(true);
+    expect(result.summary).toBe('partial summary');
+    expect(result.entriesRemoved).toBeGreaterThan(0);
+    expect(result.messages[0]).toEqual({
+      role: 'system',
+      content: '[对话历史摘要]\n\npartial summary',
+    });
   });
 });
 

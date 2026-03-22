@@ -20,6 +20,7 @@ export interface AgentsFile {
 }
 
 export interface LoadAgentsOptions {
+  /** Pass cwd explicitly for deterministic prompt building; process.cwd() is only a legacy fallback. */
   cwd?: string;
   kodaxDir?: string;
   projectRoot?: string;

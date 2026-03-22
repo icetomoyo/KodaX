@@ -341,7 +341,7 @@ my-task, custom
 | Package Manager | npm workspaces | - |
 | CLI Framework | Ink (React for CLI) | ^4.x |
 | Test | Vitest | ^1.2.0 |
-| LLM Providers | Anthropic, OpenAI, Zhipu, Kimi, MiniMax, etc. | 10 total |
+| LLM Providers | Anthropic, OpenAI, Zhipu, Kimi, MiniMax, DeepSeek, etc. | 11 total |
 
 ---
 

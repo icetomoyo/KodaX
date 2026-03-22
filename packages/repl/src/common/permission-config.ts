@@ -20,6 +20,7 @@ import path from 'path';
 import os from 'os';
 import {
   PermissionMode,
+  normalizePermissionMode,
   parseAllowedToolPattern,
   isToolCallAllowed,
   generateSavePattern,
@@ -37,7 +38,7 @@ function getProjectConfigFile(): string {
 }
 
 interface PermissionConfigData {
-  permissionMode?: PermissionMode;
+  permissionMode?: string;
   alwaysAllowTools?: string[];
 }
 
@@ -64,7 +65,15 @@ function writeJsonFile(filePath: string, data: Record<string, unknown>): void {
 export function loadPermissionMode(): PermissionMode | undefined {
   // Only use user-level config for permissionMode
   const userConfig = readJsonFile(USER_CONFIG_FILE) as PermissionConfigData;
-  return userConfig.permissionMode;
+  if (userConfig.permissionMode === 'default') {
+    writeJsonFile(USER_CONFIG_FILE, {
+      ...userConfig,
+      permissionMode: 'accept-edits',
+    });
+    return 'accept-edits';
+  }
+
+  return normalizePermissionMode(userConfig.permissionMode, undefined as PermissionMode | undefined);
 }
 
 /**

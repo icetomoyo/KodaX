@@ -81,3 +81,21 @@ export {
 
 // === 会话存储 ===
 export { FileSessionStorage } from "./interactive/storage.js";
+
+// === Permission helpers ===
+export type { PermissionMode, ConfirmResult, PermissionContext } from "./permission/index.js";
+export {
+  computeConfirmTools,
+  PERMISSION_MODES,
+  isPermissionMode,
+  normalizePermissionMode,
+  isToolCallAllowed,
+  isAlwaysConfirmPath,
+  isBashReadCommand,
+  isBashWriteCommand,
+  collectBashWriteTargets,
+  isPathInsideProject,
+  getBashOutsideProjectWriteRisk,
+  generateSavePattern,
+  getPlanModeBlockReason,
+} from "./permission/index.js";

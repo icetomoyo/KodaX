@@ -27,6 +27,16 @@ import {
   formatProjectAlignmentMarkdown,
 } from './project-state.js';
 import type { BrainstormSession } from './project-brainstorm.js';
+import {
+  isBrainstormSession,
+  isFeatureList,
+  isProjectWorkflowState,
+  isRecord,
+} from './json-guards.js';
+
+function hasSessionIdField(value: unknown): value is { sessionId?: string } {
+  return isRecord(value) && (value.sessionId === undefined || typeof value.sessionId === 'string');
+}
 
 export class ProjectStorage {
   private projectDir: string;
@@ -106,7 +116,11 @@ export class ProjectStorage {
     console.warn(`[KodaX] Skipped ${count} malformed ${label} record(s) from ${fileName}.`);
   }
 
-  private async readJsonLinesFile<T>(filePath: string, label: string): Promise<T[]> {
+  private async readJsonLinesFile<T>(
+    filePath: string,
+    label: string,
+    validator?: (value: unknown) => value is T,
+  ): Promise<T[]> {
     const content = await this.readTextFileWithFallback(filePath);
     if (!content.trim()) {
       return [];
@@ -116,7 +130,21 @@ export class ProjectStorage {
     let malformedCount = 0;
     for (const line of content.split('\n').map(item => item.trim()).filter(Boolean)) {
       try {
-        records.push(JSON.parse(line) as T);
+        const parsed = JSON.parse(line);
+        if (validator) {
+          if (validator(parsed)) {
+            records.push(parsed);
+          } else {
+            malformedCount += 1;
+          }
+          continue;
+        }
+
+        if (isRecord(parsed)) {
+          records.push(parsed as T);
+        } else {
+          malformedCount += 1;
+        }
       } catch {
         malformedCount += 1;
       }
@@ -149,10 +177,28 @@ export class ProjectStorage {
     return match?.[1]?.trim() ?? '';
   }
 
-  private async readJsonFile<T>(filePath: string): Promise<T | null> {
+  private async readJsonFile<T>(
+    filePath: string,
+    validator?: (value: unknown) => value is T,
+  ): Promise<T | null> {
     try {
       const content = await fs.readFile(filePath, 'utf-8');
-      return JSON.parse(content) as T;
+      const parsed = JSON.parse(content);
+
+      if (validator) {
+        if (!validator(parsed)) {
+          console.warn(`[KodaX] Ignored malformed JSON structure in ${path.basename(filePath)}.`);
+          return null;
+        }
+        return parsed;
+      }
+
+      if (!isRecord(parsed)) {
+        console.warn(`[KodaX] Ignored non-object JSON structure in ${path.basename(filePath)}.`);
+        return null;
+      }
+
+      return parsed as T;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         return null;
@@ -162,9 +208,12 @@ export class ProjectStorage {
     }
   }
 
-  private async readJsonFileWithFallback<T>(...paths: string[]): Promise<T | null> {
+  private async readJsonFileWithFallback<T>(
+    paths: string[],
+    validator?: (value: unknown) => value is T,
+  ): Promise<T | null> {
     for (const candidate of paths) {
-      const data = await this.readJsonFile<T>(candidate);
+      const data = await this.readJsonFile<T>(candidate, validator);
       if (data) {
         return data;
       }
@@ -201,7 +250,12 @@ export class ProjectStorage {
   async loadFeatures(): Promise<FeatureList | null> {
     try {
       const content = await fs.readFile(this.featuresPath, 'utf-8');
-      return JSON.parse(content) as FeatureList;
+      const parsed = JSON.parse(content);
+      if (!isFeatureList(parsed)) {
+        console.warn(`[KodaX] Ignored malformed feature list in ${path.basename(this.featuresPath)}.`);
+        return null;
+      }
+      return parsed;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         return null;
@@ -248,7 +302,7 @@ export class ProjectStorage {
   }
 
   async loadWorkflowState(): Promise<ProjectWorkflowState | null> {
-    return this.readJsonFile<ProjectWorkflowState>(this.projectStatePath);
+    return this.readJsonFile<ProjectWorkflowState>(this.projectStatePath, isProjectWorkflowState);
   }
 
   async inferWorkflowState(): Promise<ProjectWorkflowState> {
@@ -402,8 +456,11 @@ export class ProjectStorage {
 
   async loadBrainstormSession(sessionId: string): Promise<BrainstormSession | null> {
     return this.readJsonFileWithFallback<BrainstormSession>(
-      this.getBrainstormSessionPath(sessionId),
-      this.getBrainstormSessionPath(sessionId, true),
+      [
+        this.getBrainstormSessionPath(sessionId),
+        this.getBrainstormSessionPath(sessionId, true),
+      ],
+      isBrainstormSession,
     );
   }
 
@@ -416,8 +473,11 @@ export class ProjectStorage {
 
   async loadActiveBrainstormSession(): Promise<BrainstormSession | null> {
     const data = await this.readJsonFileWithFallback<{ sessionId?: string }>(
-      this.brainstormIndexPath,
-      this.legacyBrainstormIndexPath,
+      [
+        this.brainstormIndexPath,
+        this.legacyBrainstormIndexPath,
+      ],
+      hasSessionIdField,
     );
     if (!data?.sessionId) {
       return null;

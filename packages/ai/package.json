@@ -1,6 +1,6 @@
 {
   "name": "@kodax/ai",
-  "version": "0.6.12",
+  "version": "0.6.15",
   "description": "KodaX AI - 独立的 LLM 抽象层，可被其他项目复用",
   "type": "module",
   "main": "dist/index.js",
@@ -20,8 +20,8 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.15.0",
-    "@anthropic-ai/sdk": ">=0.40.0",
-    "openai": ">=4.0.0"
+    "@anthropic-ai/sdk": "^0.80.0",
+    "openai": "^6.32.0"
   },
   "devDependencies": {
     "@types/node": "^22.13.4",
@@ -29,8 +29,8 @@
     "vitest": "^3.2.4"
   },
   "peerDependencies": {
-    "@anthropic-ai/sdk": ">=0.40.0",
-    "openai": ">=4.0.0"
+    "@anthropic-ai/sdk": "^0.80.0",
+    "openai": "^6.32.0"
   },
   "engines": {
     "node": ">=18.0.0"

@@ -7,15 +7,18 @@
 import { spawn } from 'child_process';
 import iconv from 'iconv-lite';
 import { KODAX_DEFAULT_TIMEOUT, KODAX_HARD_TIMEOUT } from '../constants.js';
+import type { KodaXToolExecutionContext } from '../types.js';
+import { resolveExecutionCwd } from '../runtime-paths.js';
 
-export async function toolBash(input: Record<string, unknown>): Promise<string> {
+export async function toolBash(input: Record<string, unknown>, ctx: KodaXToolExecutionContext): Promise<string> {
   const command = input.command as string;
   const userTimeout = input.timeout as number | undefined;
   const timeout = userTimeout ? Math.min(KODAX_HARD_TIMEOUT, userTimeout) : KODAX_DEFAULT_TIMEOUT;
   const capped = userTimeout && userTimeout > KODAX_HARD_TIMEOUT;
+  const cwd = resolveExecutionCwd(ctx);
 
   return new Promise(resolve => {
-    const proc = spawn(command, [], { shell: true, windowsHide: true, cwd: process.cwd() });
+    const proc = spawn(command, [], { shell: true, windowsHide: true, cwd });
     let stdout = Buffer.alloc(0);
     let stderr = Buffer.alloc(0);
     const timer = setTimeout(() => {

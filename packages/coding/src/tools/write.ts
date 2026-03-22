@@ -9,6 +9,7 @@ import fsSync from 'fs';
 import path from 'path';
 import { KodaXToolExecutionContext } from '../types.js';
 import { generateDiff, countChanges } from './diff.js';
+import { resolveExecutionPath } from '../runtime-paths.js';
 
 // 全局文件备份（用于 undo）
 const FILE_BACKUPS = new Map<string, string>();
@@ -18,7 +19,7 @@ export function getFileBackups(): Map<string, string> {
 }
 
 export async function toolWrite(input: Record<string, unknown>, ctx: KodaXToolExecutionContext): Promise<string> {
-  const filePath = path.resolve(input.path as string);
+  const filePath = resolveExecutionPath(input.path as string, ctx);
   const content = input.content as string;
 
   let oldContent = '';
