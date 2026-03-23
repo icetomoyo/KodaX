@@ -4,6 +4,37 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **ACP Lifecycle Logger**: `AcpLogger` module writes structured logs to `stderr` (stdout reserved for ACP protocol); configurable via `KODAX_ACP_LOG` env var (`off|error|info|debug`, default `info`); integrated at all ACP server lifecycle points — attach, initialize, sessions, prompts, cancel, and permission decisions
+
+### Documentation
+- README/README_CN updated with ACP logging documentation
+
+### Tests
+- 2 new ACP integration tests: lifecycle log output and permission negotiation logging
+
+---
+
+## [0.6.16] - 2026-03-23
+
+### Added
+- **ACP Lifecycle Logger (Issue 100)**: `AcpLogger` class writing structured logs to `stderr` with configurable log levels (`KODAX_ACP_LOG=off|error|info|debug`, default `info`); `resolveAcpLogLevel()` for safe level parsing; testable sink injection via `AcpLoggerOptions.sink`; string truncation at 160 chars to prevent log injection
+- **ACP server logging integration**: All lifecycle events now produce structured logs — `attach`, `initialize`, `newSession`, `setSessionMode`, `prompt` (start/finish/fail/skip), `cancel`, `evaluateToolPermission` (all decision paths), `requestPermissionFromClient` (disconnected/requested/failed/dismissed/rejected/granted)
+- **ACP log level control**: `KODAX_ACP_LOG` environment variable and `logLevel` option on `KodaXAcpServerOptions` for runtime log level configuration
+- **CLI help for ACP logging**: `KODAX_ACP_LOG=<level>` documented in both `--help acp` and `--help acp serve` output
+
+### Changed
+- **`dispatchNotification` uses logger**: Replaced raw `console.error` with `AcpLogger.error` for failed notification dispatching
+- **Test infrastructure**: Switched from `console.error` spy to `process.stderr.write` spy for ACP test assertions; existing tests default to `logLevel: 'off'` for isolation
+
+### Documentation
+- README/README_CN: Added ACP lifecycle logging section explaining `stderr` vs `stdout` separation and `KODAX_ACP_LOG` usage
+- KNOWN_ISSUES.md: Issue 100 tracked with full root cause analysis and resolution details
+
+### Tests
+- New test: `writes ACP lifecycle logs to stderr without polluting protocol stdout` — verifies attach, initialize, session, prompt start/finish log output
+- New test: `logs permission negotiation decisions to stderr` — verifies permission requested and granted log output
+
 ---
 
 ## [0.6.15] - 2026-03-22
