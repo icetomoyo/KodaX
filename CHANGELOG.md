@@ -6,6 +6,36 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.6.18] - 2026-03-23
+
+### Added
+- **7 new cli-events test files**: acp-client, codex-parser, command-utils, gemini-parser, prompt-utils, pseudo-acp-server, session
+- **Provider test coverage**: New tests for acp-base, base, custom-providers, cli-bridge-providers, registry
+- **Test infrastructure**: Shared `temp-dir` test helpers in `@kodax/repl` and `@kodax/skills` with auto-cleanup
+- **Project workflow extraction**: `project-harness-core.ts` and `project-workflow.ts` extracted from monolithic `project-harness.ts`
+- **CLI option extraction**: `cli_option_helpers.ts` and `cli_commands.ts` extracted from `kodax_cli.ts`
+- **command-utils module**: Shared argument escaping/splitting helpers for CLI event parsers
+- **skill-registry tests**: New unit tests for skill registry
+
+### Changed
+- **cli-events i18n**: All Chinese comments converted to English across types.ts, acp-client, codex-parser, gemini-parser, executor, prompt-utils, pseudo-acp-server, session
+- **pseudo-acp-server refactoring**: Better separation of concerns and code organization
+- **markdown-render**: Significant refactoring of markdown rendering logic
+- **themes refactoring**: Theme system cleanup
+- **terminalCapabilities refactoring**: Simplified terminal capability detection
+- **project-commands slimmed**: Moved logic to project-harness-core and project-workflow
+- **prompts cleanup**: Removed ~246 lines from interactive prompts module
+- **ACP base provider**: Reliability improvements
+- **Permission system**: Minor fixes in executor and permission modules
+- **message-utils refactoring**: Simplified message rendering utilities
+- **KNOWN_ISSUES.md**: Major cleanup, synced resolution status
+
+### Removed
+- **11 stale `.d.ts.map` files**: Removed compiled declaration map artifacts from `packages/ai/src/`
+- **test-retry.ts**: Removed scratch test file
+
+---
+
 ## [0.6.17] - 2026-03-23
 
 ### Added
