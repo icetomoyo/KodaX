@@ -4,36 +4,48 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.6.17] - 2026-03-23
+
 ### Added
-- **ACP Lifecycle Logger**: `AcpLogger` module writes structured logs to `stderr` (stdout reserved for ACP protocol); configurable via `KODAX_ACP_LOG` env var (`off|error|info|debug`, default `info`); integrated at all ACP server lifecycle points — attach, initialize, sessions, prompts, cancel, and permission decisions
+- **ACP Runtime Event Architecture**: `src/acp_events.ts` introduces typed ACP lifecycle, prompt, permission, and notification-failure events plus the shared `AcpEventEmitter` / `AcpEventSink` abstraction
+- **ACP Event Sink Hook**: `KodaXAcpServerOptions.eventSinks` lets external callers attach custom sinks without touching ACP protocol flow
+- **MiniMax M2.7 Provider**: Default MiniMax model upgraded from M2.5 to M2.7; added model list including M2.7-highspeed, M2.5, M2.5-highspeed, M2.1, M2.1-highspeed, M2
+
+### Changed
+- **ACP server event-driven logging**: `KodaXAcpServer` now emits runtime events via `AcpEventEmitter` instead of composing log strings inside protocol handlers
+- **AcpLogger as event sink**: `AcpLogger` implements `AcpEventSink` and acts as the default `stderr` sink for ACP runtime events
+- **dispatchNotification uses event emission**: Failed notification dispatch emits structured `notification_failed` events
 
 ### Documentation
-- README/README_CN updated with ACP logging documentation
+- README/README_CN and KNOWN_ISSUES issue 100 updated to describe the runtime-events-plus-sink architecture
+- Fixed stale version references across docs (DD.md, config.example.jsonc, docs/features/README.md, test guides)
 
 ### Tests
-- 2 new ACP integration tests: lifecycle log output and permission negotiation logging
+- ACP tests now assert structured runtime events directly, with a smaller stderr integration surface for the default sink
 
 ---
 
 ## [0.6.16] - 2026-03-23
 
 ### Added
-- **ACP Lifecycle Logger (Issue 100)**: `AcpLogger` class writing structured logs to `stderr` with configurable log levels (`KODAX_ACP_LOG=off|error|info|debug`, default `info`); `resolveAcpLogLevel()` for safe level parsing; testable sink injection via `AcpLoggerOptions.sink`; string truncation at 160 chars to prevent log injection
-- **ACP server logging integration**: All lifecycle events now produce structured logs — `attach`, `initialize`, `newSession`, `setSessionMode`, `prompt` (start/finish/fail/skip), `cancel`, `evaluateToolPermission` (all decision paths), `requestPermissionFromClient` (disconnected/requested/failed/dismissed/rejected/granted)
+- **ACP Runtime Event Architecture (Issue 100)**: Added `src/acp_events.ts` with typed ACP lifecycle, prompt, permission, and notification-failure events, plus `AcpEventEmitter` / `AcpEventSink`
+- **ACP Event Sink Logging**: `AcpLogger` now acts as the default `stderr` sink for ACP runtime events; configurable via `KODAX_ACP_LOG=off|error|info|debug` and `KodaXAcpServerOptions.logLevel`
 - **ACP log level control**: `KODAX_ACP_LOG` environment variable and `logLevel` option on `KodaXAcpServerOptions` for runtime log level configuration
 - **CLI help for ACP logging**: `KODAX_ACP_LOG=<level>` documented in both `--help acp` and `--help acp serve` output
 
 ### Changed
-- **`dispatchNotification` uses logger**: Replaced raw `console.error` with `AcpLogger.error` for failed notification dispatching
-- **Test infrastructure**: Switched from `console.error` spy to `process.stderr.write` spy for ACP test assertions; existing tests default to `logLevel: 'off'` for isolation
+- **ACP server logging flow**: `KodaXAcpServer` now emits runtime events instead of directly composing human-readable log lines inside protocol handlers
+- **`dispatchNotification` uses event emission**: Failed notification dispatch now emits structured `notification_failed` events, which the default logger sink renders to `stderr`
+- **Test infrastructure**: ACP tests now record runtime events directly, keep `stderr` assertions for sink integration only, and silence SDK invalid-request noise only in the two error-path tests that need it
 
 ### Documentation
 - README/README_CN: Added ACP lifecycle logging section explaining `stderr` vs `stdout` separation and `KODAX_ACP_LOG` usage
-- KNOWN_ISSUES.md: Issue 100 tracked with full root cause analysis and resolution details
+- KNOWN_ISSUES.md: Issue 100 now documents the landed runtime-events-plus-sink architecture and updated file inventory
 
 ### Tests
-- New test: `writes ACP lifecycle logs to stderr without polluting protocol stdout` — verifies attach, initialize, session, prompt start/finish log output
-- New test: `logs permission negotiation decisions to stderr` — verifies permission requested and granted log output
+- Updated ACP tests assert emitted lifecycle and permission events directly while still verifying default `stderr` sink output
 
 ---
 
