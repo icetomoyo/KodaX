@@ -1454,7 +1454,7 @@ _Last Updated: 2026-03-23_
   4. 原来 notification 发送失败时零散的 `console.error` 已统一收口到 ACP logger
   5. CLI 帮助和 README / README_CN 已补充 `KODAX_ACP_LOG` 说明，方便用户调节 ACP 日志详细度
 
-- **Follow-up Design Note**:
+- **Superseded Design Note (Historical Context)**:
   当前修复解决了“ACP 完全静默、无法排障”的发布阻塞问题，但实现仍偏务实：`acp_server.ts` 直接在生命周期节点里调用 logger，运行时事件与日志文案仍然耦合在一起。
 
   **后续更优雅的重构方向**：
@@ -1469,7 +1469,14 @@ _Last Updated: 2026-03-23_
   - 后续应继续把 ACP 可观测性从“直接写日志”收敛到“运行时事件 + sink”架构
   - 等进入下一轮 ACP 清理时，应优先按这一方案演进，而不是继续在 `acp_server.ts` 内追加零散日志调用
 
+- **Architecture Update**:
+  - The follow-up refactor is now landed: `src/acp_events.ts` defines structured ACP runtime events plus the shared emitter/sink contract.
+  - `src/acp_server.ts` now emits runtime events instead of directly composing log strings in protocol handlers.
+  - `src/acp_logger.ts` now acts as the default `stderr` sink/formatter for those events.
+  - `KodaXAcpServerOptions` now supports `eventSinks`, so additional sinks can be attached without touching ACP protocol flow.
+  - ACP tests now assert runtime events directly and keep only a small `stderr` integration surface for the default sink.
 - **Files Changed**:
+  - `src/acp_events.ts`
   - `src/acp_logger.ts`
   - `src/acp_server.ts`
   - `src/index.ts`

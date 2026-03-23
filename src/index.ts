@@ -12,6 +12,11 @@ export {
   resolveAcpLogLevel,
   type AcpLogLevel,
 } from './acp_logger.js';
+export {
+  AcpEventEmitter,
+  type AcpEventSink,
+  type AcpRuntimeEvent,
+} from './acp_events.js';
 // ACP server API - server `cwd` can pin the session-level executionCwd for prompts and tools.
 export { KodaXAcpServer, runAcpServer, type KodaXAcpServerOptions } from './acp_server.js';
 

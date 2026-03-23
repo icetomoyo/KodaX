@@ -804,7 +804,7 @@ import { InkREPL } from '@kodax/repl';
 | qwen | `QWEN_API_KEY` | Native budget | qwen3.5-plus |
 | zhipu | `ZHIPU_API_KEY` | Native budget | glm-5 |
 | zhipu-coding | `ZHIPU_API_KEY` | Native budget | glm-5 |
-| minimax-coding | `MINIMAX_API_KEY` | Native budget | MiniMax-M2.5 |
+| minimax-coding | `MINIMAX_API_KEY` | Native budget | MiniMax-M2.7 |
 | gemini-cli | `GEMINI_API_KEY` | Prompt-only / CLI bridge | (via gemini CLI) |
 | codex-cli | `OPENAI_API_KEY` | Prompt-only / CLI bridge | (via codex CLI) |
 

@@ -50,6 +50,10 @@ import {
   resolveAcpLogLevel,
   type AcpLogLevel,
 } from './acp_logger.js';
+import {
+  AcpEventEmitter,
+  type AcpEventSink,
+} from './acp_events.js';
 
 export const ACP_PERMISSION_MODE_IDS = ['plan', 'accept-edits', 'auto-in-project'] as const;
 type AcpPermissionMode = (typeof ACP_PERMISSION_MODE_IDS)[number];
@@ -100,6 +104,8 @@ export interface KodaXAcpServerOptions {
   cwd?: string;
   permissionMode?: AcpPermissionMode;
   logLevel?: AcpLogLevel;
+  /** Additional sinks that receive structured ACP runtime events. */
+  eventSinks?: AcpEventSink[];
   agentName?: string;
   agentVersion?: string;
   storage?: FileSessionStorage;
@@ -228,7 +234,7 @@ export class KodaXAcpServer implements Agent {
   private readonly agentName: string;
   private readonly agentVersion: string;
   private readonly storage: FileSessionStorage;
-  private readonly logger: AcpLogger;
+  private readonly events: AcpEventEmitter;
 
   private connection: AgentSideConnection | null = null;
   private readonly sessions = new Map<string, KodaXAcpSessionState>();
@@ -249,8 +255,13 @@ export class KodaXAcpServer implements Agent {
     this.agentName = options.agentName ?? 'kodax-acp-server';
     this.agentVersion = options.agentVersion ?? '0.0.0';
     this.storage = options.storage ?? new FileSessionStorage();
-    this.logger = new AcpLogger({
-      level: resolveAcpLogLevel(options.logLevel ?? process.env.KODAX_ACP_LOG, 'info'),
+    this.events = new AcpEventEmitter({
+      sinks: [
+        ...(options.eventSinks ?? []),
+        new AcpLogger({
+          level: resolveAcpLogLevel(options.logLevel ?? process.env.KODAX_ACP_LOG, 'info'),
+        }),
+      ],
     });
   }
 
@@ -261,7 +272,8 @@ export class KodaXAcpServer implements Agent {
     const stream = ndJsonStream(output, input);
     const connection = new AgentSideConnection(() => this, stream);
     this.connection = connection;
-    this.logger.info('ACP server attached', {
+    this.events.emit({
+      type: 'server_attached',
       agent: this.agentName,
       version: this.agentVersion,
       provider: this.provider,
@@ -274,7 +286,8 @@ export class KodaXAcpServer implements Agent {
     });
     connection.signal.addEventListener('abort', () => {
       this.sessions.forEach((session) => session.activeController?.abort());
-      this.logger.info('ACP connection closed', {
+      this.events.emit({
+        type: 'connection_closed',
         activeSessions: this.sessions.size,
       });
       this.sessions.clear();
@@ -288,7 +301,8 @@ export class KodaXAcpServer implements Agent {
   }
 
   async initialize(_params: InitializeRequest): Promise<InitializeResponse> {
-    this.logger.info('ACP initialize completed', {
+    this.events.emit({
+      type: 'initialize_completed',
       protocolVersion: PROTOCOL_VERSION,
     });
     return {
@@ -326,7 +340,8 @@ export class KodaXAcpServer implements Agent {
       activeController: null,
     };
     this.sessions.set(sessionId, session);
-    this.logger.info('ACP session created', {
+    this.events.emit({
+      type: 'session_created',
       sessionId,
       cwd: session.cwd,
       permissionMode: session.permissionMode,
@@ -348,7 +363,8 @@ export class KodaXAcpServer implements Agent {
     const previousMode = session.permissionMode;
     const nextMode = parseSessionMode(params.modeId);
     session.permissionMode = nextMode;
-    this.logger.info('ACP session mode changed', {
+    this.events.emit({
+      type: 'session_mode_changed',
       sessionId: session.sessionId,
       from: previousMode,
       to: nextMode,
@@ -378,7 +394,8 @@ export class KodaXAcpServer implements Agent {
 
     const task = async (): Promise<PromptResponse> => {
       if (abortController.signal.aborted) {
-        this.logger.info('ACP prompt skipped because session was already aborted', {
+        this.events.emit({
+          type: 'prompt_skipped',
           sessionId: session.sessionId,
         });
         return {
@@ -388,14 +405,16 @@ export class KodaXAcpServer implements Agent {
       }
 
       const promptStartedAt = Date.now();
-      this.logger.info('ACP prompt started', {
+      this.events.emit({
+        type: 'prompt_started',
         sessionId: session.sessionId,
         messageId: params.messageId ?? null,
         chars: promptText.length,
         cwd: session.cwd,
         queueDelayMs: promptStartedAt - promptQueuedAt,
       });
-      this.logger.debug('ACP prompt preview', {
+      this.events.emit({
+        type: 'prompt_preview',
         sessionId: session.sessionId,
         prompt: promptText,
       });
@@ -405,11 +424,13 @@ export class KodaXAcpServer implements Agent {
           this.buildKodaXOptions(session, abortController.signal),
           promptText,
         );
-        const stopReason = abortController.signal.aborted || result.interrupted ? 'cancelled' : 'end_turn';
-        this.logger.info('ACP prompt finished', {
+        const interrupted = !!result.interrupted;
+        const stopReason = abortController.signal.aborted || interrupted ? 'cancelled' : 'end_turn';
+        this.events.emit({
+          type: 'prompt_finished',
           sessionId: session.sessionId,
           stopReason,
-          interrupted: result.interrupted,
+          interrupted,
           durationMs: Date.now() - promptStartedAt,
         });
 
@@ -419,7 +440,8 @@ export class KodaXAcpServer implements Agent {
         };
       } catch (error) {
         if (abortController.signal.aborted || isAbortLikeError(error)) {
-          this.logger.info('ACP prompt cancelled during execution', {
+          this.events.emit({
+            type: 'prompt_cancelled',
             sessionId: session.sessionId,
             durationMs: Date.now() - promptStartedAt,
           });
@@ -430,7 +452,8 @@ export class KodaXAcpServer implements Agent {
         }
 
         const message = error instanceof Error ? error.message : String(error);
-        this.logger.error('ACP prompt failed', {
+        this.events.emit({
+          type: 'prompt_failed',
           sessionId: session.sessionId,
           durationMs: Date.now() - promptStartedAt,
           error: message,
@@ -452,7 +475,8 @@ export class KodaXAcpServer implements Agent {
 
   async cancel(params: { sessionId: string }): Promise<void> {
     const session = this.sessions.get(params.sessionId);
-    this.logger.info('ACP cancel requested', {
+    this.events.emit({
+      type: 'cancel_requested',
       sessionId: params.sessionId,
       active: !!session?.activeController,
     });
@@ -562,7 +586,8 @@ export class KodaXAcpServer implements Agent {
     input: Record<string, unknown>,
     toolId?: string,
   ): Promise<ToolPermissionDecision> {
-    this.logger.debug('ACP evaluating tool permission', {
+    this.events.emit({
+      type: 'tool_permission_evaluated',
       sessionId: session.sessionId,
       tool: toolName,
       toolId: toolId ?? null,
@@ -571,19 +596,23 @@ export class KodaXAcpServer implements Agent {
     if (toolName === 'bash') {
       const command = typeof input.command === 'string' ? input.command : '';
       if (isBashReadCommand(command)) {
-        this.logger.debug('ACP tool permission auto-allowed for read-only bash', {
+        this.events.emit({
+          type: 'tool_permission_resolved',
           sessionId: session.sessionId,
           tool: toolName,
           toolId: toolId ?? null,
+          outcome: 'auto_allowed_read_only_bash',
         });
         return { allowed: true };
       }
 
       if (isToolCallAllowed(toolName, input, session.alwaysAllowTools)) {
-        this.logger.info('ACP tool permission reused remembered allowance', {
+        this.events.emit({
+          type: 'tool_permission_resolved',
           sessionId: session.sessionId,
           tool: toolName,
           toolId: toolId ?? null,
+          outcome: 'auto_allowed_remembered',
         });
         return { allowed: true };
       }
@@ -592,20 +621,24 @@ export class KodaXAcpServer implements Agent {
     if (session.permissionMode === 'plan') {
       const blockReason = getPlanModeBlockReason(toolName, input, session.cwd);
       if (blockReason) {
-        this.logger.info('ACP tool blocked by plan mode', {
+        this.events.emit({
+          type: 'tool_permission_resolved',
           sessionId: session.sessionId,
           tool: toolName,
           toolId: toolId ?? null,
+          outcome: 'blocked_plan_mode',
         });
         return {
           allowed: false,
           override: `${blockReason} Do not try to modify files while planning. Finish the plan first, then hand off to a writable mode.`,
         };
       }
-      this.logger.debug('ACP tool auto-allowed in plan mode', {
+      this.events.emit({
+        type: 'tool_permission_resolved',
         sessionId: session.sessionId,
         tool: toolName,
         toolId: toolId ?? null,
+        outcome: 'auto_allowed_plan_mode',
       });
       return { allowed: true };
     }
@@ -632,10 +665,12 @@ export class KodaXAcpServer implements Agent {
       !needsModeConfirmation &&
       !needsAutoOutsideProjectConfirmation
     ) {
-      this.logger.debug('ACP tool auto-allowed by permission policy', {
+      this.events.emit({
+        type: 'tool_permission_resolved',
         sessionId: session.sessionId,
         tool: toolName,
         toolId: toolId ?? null,
+        outcome: 'auto_allowed_policy',
       });
       return { allowed: true };
     }
@@ -651,10 +686,12 @@ export class KodaXAcpServer implements Agent {
     toolId?: string,
   ): Promise<ToolPermissionDecision> {
     if (!this.connection) {
-      this.logger.error('ACP permission request failed because client is disconnected', {
+      this.events.emit({
+        type: 'tool_permission_resolved',
         sessionId: session.sessionId,
         tool: toolName,
         toolId: toolId ?? null,
+        outcome: 'request_failed_disconnected',
       });
       return {
         allowed: false,
@@ -690,7 +727,8 @@ export class KodaXAcpServer implements Agent {
     };
 
     let response: RequestPermissionResponse;
-    this.logger.info('ACP permission requested', {
+    this.events.emit({
+      type: 'permission_requested',
       sessionId: session.sessionId,
       tool: toolName,
       toolId: toolCall.toolCallId,
@@ -702,10 +740,12 @@ export class KodaXAcpServer implements Agent {
         options: permissionOptions,
       });
     } catch {
-      this.logger.error('ACP permission request did not complete', {
+      this.events.emit({
+        type: 'tool_permission_resolved',
         sessionId: session.sessionId,
         tool: toolName,
         toolId: toolCall.toolCallId,
+        outcome: 'request_failed_incomplete',
       });
       return {
         allowed: false,
@@ -714,10 +754,12 @@ export class KodaXAcpServer implements Agent {
     }
 
     if (response.outcome.outcome !== 'selected') {
-      this.logger.info('ACP permission request dismissed', {
+      this.events.emit({
+        type: 'tool_permission_resolved',
         sessionId: session.sessionId,
         tool: toolName,
         toolId: toolCall.toolCallId,
+        outcome: 'request_dismissed',
       });
       return {
         allowed: false,
@@ -737,10 +779,12 @@ export class KodaXAcpServer implements Agent {
     }
 
     if (response.outcome.optionId === 'reject_once') {
-      this.logger.info('ACP permission rejected', {
+      this.events.emit({
+        type: 'tool_permission_resolved',
         sessionId: session.sessionId,
         tool: toolName,
         toolId: toolCall.toolCallId,
+        outcome: 'request_rejected',
       });
       return {
         allowed: false,
@@ -748,10 +792,12 @@ export class KodaXAcpServer implements Agent {
       };
     }
 
-    this.logger.info('ACP permission granted', {
+    this.events.emit({
+      type: 'tool_permission_resolved',
       sessionId: session.sessionId,
       tool: toolName,
       toolId: toolCall.toolCallId,
+      outcome: 'request_granted',
       remember: response.outcome.optionId === 'allow_always',
     });
     return { allowed: true };
@@ -781,8 +827,10 @@ export class KodaXAcpServer implements Agent {
       }
 
       const message = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Failed to send ${label}`, {
+      this.events.emit({
+        type: 'notification_failed',
         sessionId,
+        label,
         error: message,
       });
     });

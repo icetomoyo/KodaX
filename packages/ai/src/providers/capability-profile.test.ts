@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   getProviderConfiguredCapabilityProfile,
   getProviderList,
+  getProviderModels,
 } from './registry.js';
 
 describe('provider capability profiles', () => {
@@ -45,5 +46,21 @@ describe('provider capability profiles', () => {
 
   it('returns null for unknown providers instead of inventing a native profile', () => {
     expect(getProviderConfiguredCapabilityProfile('unknown-provider')).toBeNull();
+  });
+
+  it('exposes the current MiniMax coding model lineup in snapshot metadata', () => {
+    expect(getProviderModels('minimax-coding')).toEqual([
+      'MiniMax-M2.7',
+      'MiniMax-M2.7-highspeed',
+      'MiniMax-M2.5',
+      'MiniMax-M2.5-highspeed',
+      'MiniMax-M2.1',
+      'MiniMax-M2.1-highspeed',
+      'MiniMax-M2',
+    ]);
+
+    expect(
+      getProviderList().find((provider) => provider.name === 'minimax-coding')?.model,
+    ).toBe('MiniMax-M2.7');
   });
 });

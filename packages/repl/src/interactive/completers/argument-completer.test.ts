@@ -178,6 +178,27 @@ describe('ArgumentCompleter', () => {
         expect(modelNames).toContain('claude-haiku-4-5');
       });
 
+      it('should include the current MiniMax model lineup for minimax-coding', async () => {
+        const completions = await completer.getCompletions('/model minimax-coding/', 23);
+
+        expect(completions.length).toBeGreaterThan(0);
+        expect(completions.every(c => c.display.startsWith('minimax-coding/'))).toBe(true);
+
+        const modelNames = completions.map(c => c.display.replace('minimax-coding/', ''));
+        expect(modelNames).toContain('MiniMax-M2.7');
+        expect(modelNames).toContain('MiniMax-M2.7-highspeed');
+        expect(modelNames).toContain('MiniMax-M2.5');
+      });
+
+      it('should filter MiniMax models by provider/model partial', async () => {
+        const completions = await completer.getCompletions('/model minimax-coding/M2.7', 27);
+
+        expect(completions.map(c => c.display)).toEqual([
+          'minimax-coding/MiniMax-M2.7',
+          'minimax-coding/MiniMax-M2.7-highspeed',
+        ]);
+      });
+
       it('should filter models by partial text after provider/', async () => {
         const completions = await completer.getCompletions('/model anthropic/cl', 20);
 

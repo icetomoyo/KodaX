@@ -168,7 +168,7 @@ export function listProviders(): string[] {
 | qwen | No | qwen3.5-plus | 256K |
 | zhipu | No | glm-5 | 200K |
 | zhipu-coding | Yes | glm-5 | 200K |
-| minimax-coding | Yes | MiniMax-M2.5 | 204.8K |
+| minimax-coding | Yes | MiniMax-M2.7 | 204.8K |
 | gemini-cli | Yes | (via gemini CLI) | Varies |
 | codex-cli | Yes | (via codex CLI) | Varies |
 

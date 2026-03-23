@@ -129,7 +129,7 @@ docs/features/
 | qwen | qwen3.5-plus | native-budget | 256K |
 | zhipu | glm-5 | native-budget | 200K |
 | zhipu-coding | glm-5 | native-budget | 200K |
-| minimax-coding | MiniMax-M2.5 | native-budget | 204K |
+| minimax-coding | MiniMax-M2.7 | native-budget | 204K |
 | gemini-cli | Gemini (CLI) | native-budget | varies |
 | codex-cli | Codex (CLI) | native-budget | varies |
 | deepseek | deepseek-chat | native-toggle | 128K |

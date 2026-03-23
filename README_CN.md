@@ -841,7 +841,7 @@ import { InkREPL } from '@kodax/repl';
 | `openai` | `OPENAI_API_KEY` | 原生 | `gpt-5.3-codex` |
 | `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-chat` 原生 toggle；`deepseek-reasoner` 按模型切换推理 | `deepseek-chat` |
 | `qwen` | `QWEN_API_KEY` | 原生 | `qwen3.5-plus` |
-| `minimax-coding` | `MINIMAX_API_KEY` | 原生 | `MiniMax-M2.5` |
+| `minimax-coding` | `MINIMAX_API_KEY` | 原生 | `MiniMax-M2.7` |
 | `gemini-cli` | `GEMINI_API_KEY` | prompt-only / CLI bridge | `gemini-cli` |
 | `codex-cli` | `OPENAI_API_KEY` | prompt-only / CLI bridge | `codex-cli` |
 

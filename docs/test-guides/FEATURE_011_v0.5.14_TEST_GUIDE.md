@@ -78,7 +78,7 @@
 | qwen | Qwen3.5 Plus | 256,000 |
 | zhipu | GLM-5 | 200,000 |
 | zhipu-coding | GLM-5 | 200,000 |
-| minimax-coding | MiniMax-M2.5 | 204,800 |
+| minimax-coding | MiniMax-M2.7 | 204,800 |
 | kimi | Moonshot V1 | 128,000 |
 
 ### 测试账号

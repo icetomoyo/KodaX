@@ -105,7 +105,15 @@ class MiniMaxCodingProvider extends KodaXAnthropicCompatProvider {
   protected readonly config: KodaXProviderConfig = {
     apiKeyEnv: 'MINIMAX_API_KEY',
     baseUrl: 'https://api.minimaxi.com/anthropic',
-    model: 'MiniMax-M2.5',
+    model: 'MiniMax-M2.7',
+    models: [
+      { id: 'MiniMax-M2.7-highspeed', displayName: 'MiniMax M2.7 Highspeed' },
+      { id: 'MiniMax-M2.5', displayName: 'MiniMax M2.5' },
+      { id: 'MiniMax-M2.5-highspeed', displayName: 'MiniMax M2.5 Highspeed' },
+      { id: 'MiniMax-M2.1', displayName: 'MiniMax M2.1' },
+      { id: 'MiniMax-M2.1-highspeed', displayName: 'MiniMax M2.1 Highspeed' },
+      { id: 'MiniMax-M2', displayName: 'MiniMax M2' },
+    ],
     supportsThinking: true,
     reasoningCapability: 'native-budget',
     contextWindow: 204800,
@@ -274,7 +282,15 @@ export const KODAX_PROVIDER_SNAPSHOTS: Record<ProviderName, ProviderSnapshot> = 
   },
   'minimax-coding': {
     apiKeyEnv: 'MINIMAX_API_KEY',
-    model: 'MiniMax-M2.5',
+    model: 'MiniMax-M2.7',
+    models: [
+      'MiniMax-M2.7-highspeed',
+      'MiniMax-M2.5',
+      'MiniMax-M2.5-highspeed',
+      'MiniMax-M2.1',
+      'MiniMax-M2.1-highspeed',
+      'MiniMax-M2',
+    ],
     reasoningCapability: 'native-budget',
     capabilityProfile: NATIVE_PROVIDER_CAPABILITY_PROFILE,
   },
