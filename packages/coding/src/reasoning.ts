@@ -15,6 +15,11 @@ import {
   KODAX_REASONING_MODE_SEQUENCE,
 } from '@kodax/ai';
 import type { KodaXBaseProvider } from '@kodax/ai';
+import {
+  hasNonTransientRuntimeEvidence,
+  hasTransientRetryEvidence,
+  looksLikeActionableRuntimeEvidence,
+} from './runtime-evidence.js';
 
 export { KODAX_REASONING_MODE_SEQUENCE };
 
@@ -136,30 +141,6 @@ const HIGH_IMPACT_MARKERS = [
   'failure',
 ];
 
-const RUNTIME_EVIDENCE_MARKERS = [
-  'failing test',
-  'tests fail',
-  'test failed',
-  'tests failed',
-  'stack trace',
-  'runtime error',
-  'exception',
-  'assertion failed',
-  'traceback',
-  'stderr',
-  'error log',
-  '[tool error]',
-  '[stderr]',
-  'exit: 1',
-  'exit code 1',
-  'timeout',
-  '超时',
-  '测试失败',
-  '报错',
-  '错误',
-  '异常',
-];
-
 export interface ReasoningPlan {
   mode: KodaXReasoningMode;
   depth: KodaXThinkingDepth;
@@ -224,11 +205,11 @@ const TASK_TYPE_KEYWORDS: Record<
     'merge blocker',
     'diff',
     'changed files',
-    '审查',
-    '评审',
-    'review一下',
-    '过一遍',
-    '改动',
+    '\u5ba1\u67e5',
+    '\u4ee3\u7801\u5ba1\u67e5',
+    'review \u4e00\u4e0b',
+    '\u770b\u4e0b\u6539\u52a8',
+    '\u8bc4\u5ba1',
     'pr',
   ],
   bugfix: [
@@ -241,12 +222,12 @@ const TASK_TYPE_KEYWORDS: Record<
     'traceback',
     'stack trace',
     'runtime error',
-    '报错',
-    '错误',
-    '异常',
-    '挂了',
-    '修复',
-    '失败',
+    '\u62a5\u9519',
+    '\u9519\u8bef',
+    '\u5f02\u5e38',
+    '\u4fee\u590d',
+    '\u5931\u8d25',
+    '\u6392\u67e5',
   ],
   edit: [
     'implement',
@@ -256,12 +237,12 @@ const TASK_TYPE_KEYWORDS: Record<
     'update ',
     'create ',
     'write ',
-    '实现',
-    '新增',
-    '修改',
-    '改一下',
-    '补上',
-    '写一个',
+    '\u5b9e\u73b0',
+    '\u65b0\u589e',
+    '\u4fee\u6539',
+    '\u6539\u4e00\u4e0b',
+    '\u521b\u5efa',
+    '\u5199\u4e00\u4e2a',
   ],
   refactor: [
     'refactor',
@@ -270,12 +251,12 @@ const TASK_TYPE_KEYWORDS: Record<
     'simplify',
     'decouple',
     'rename',
-    '重构',
-    '整理',
-    '拆分',
-    '解耦',
-    '抽象',
-    '简化',
+    '\u91cd\u6784',
+    '\u6e05\u7406',
+    '\u4f18\u5316',
+    '\u7b80\u5316',
+    '\u89e3\u8026',
+    '\u6574\u7406',
   ],
   plan: [
     'plan',
@@ -284,24 +265,24 @@ const TASK_TYPE_KEYWORDS: Record<
     'migration',
     'strategy',
     'roadmap',
-    '方案',
-    '设计',
-    '架构',
-    '迁移',
-    '规划',
-    '路线',
+    '\u8ba1\u5212',
+    '\u8bbe\u8ba1',
+    '\u67b6\u6784',
+    '\u65b9\u6848',
+    '\u7b56\u7565',
+    '\u8def\u7ebf\u56fe',
   ],
   qa: [
     'explain',
     'what is',
     'how does',
     'help me understand',
-    '解释',
-    '为什么',
-    '是什么',
-    '怎么回事',
-    '什么意思',
-    '原理',
+    '\u89e3\u91ca',
+    '\u4e3a\u4ec0\u4e48',
+    '\u662f\u4ec0\u4e48',
+    '\u600e\u4e48\u7406\u89e3',
+    '\u4ec0\u4e48\u610f\u601d',
+    '\u8bf4\u660e',
   ],
 };
 
@@ -500,6 +481,14 @@ export async function maybeCreateAutoReroutePlan(
     return null;
   }
 
+  if (
+    currentPlan.decision.primaryTask === 'review' &&
+    hasTransientRetryEvidence(rerouteEvidenceText) &&
+    !hasNonTransientRuntimeEvidence(rerouteEvidenceText)
+  ) {
+    return null;
+  }
+
   const fallback = buildHeuristicAutoRerouteDecision(currentPlan, rerouteEvidenceText);
   const judged = await judgeAutoRerouteWithLLM(
     provider,
@@ -557,9 +546,18 @@ export function buildHeuristicAutoRerouteDecision(
 ): AutoRerouteDecision {
   const text = assistantText.toLowerCase();
   const hasUncertainty = UNCERTAINTY_MARKERS.some((marker) => text.includes(marker));
-  const hasRuntimeEvidence = RUNTIME_EVIDENCE_MARKERS.some((marker) => text.includes(marker));
+  const hasRuntimeEvidence = hasNonTransientRuntimeEvidence(assistantText);
+  const hasTransientRetryEvidenceOnly =
+    hasTransientRetryEvidence(assistantText) && !hasRuntimeEvidence;
   const hasLowValueReview = LOW_VALUE_REVIEW_MARKERS.some((marker) => text.includes(marker));
   const hasHighImpact = HIGH_IMPACT_MARKERS.some((marker) => text.includes(marker));
+
+  if (currentPlan.decision.primaryTask === 'review' && hasTransientRetryEvidenceOnly) {
+    return {
+      shouldReroute: false,
+      reason: 'Transient retry evidence such as a timeout should be retried before rerouting review into investigation.',
+    };
+  }
 
   if (currentPlan.decision.primaryTask === 'review' && hasRuntimeEvidence) {
     return {
@@ -1009,13 +1007,13 @@ function summarizeRoutingEvidence(
   }
 
   const sessionError = routingEvidence.sessionErrorMetadata?.lastError?.trim();
-  if (sessionError) {
+  if (sessionError && looksLikeRuntimeEvidence(sessionError)) {
     parts.add(`- recent session error: ${truncateEvidence(sessionError)}`);
   }
 
   for (const signal of routingEvidence.additionalSignals ?? []) {
     const normalized = signal.trim();
-    if (!normalized) {
+    if (!normalized || !looksLikeRuntimeEvidence(normalized)) {
       continue;
     }
     parts.add(`- runtime evidence: ${truncateEvidence(normalized)}`);
@@ -1049,12 +1047,7 @@ function summarizeRecentMessageEvidence(messages: KodaXMessage[]): string[] {
 }
 
 function looksLikeRuntimeEvidence(text: string): boolean {
-  const normalized = text.toLowerCase();
-  if (RUNTIME_EVIDENCE_MARKERS.some((marker) => normalized.includes(marker))) {
-    return true;
-  }
-
-  return /\bexit:\s*[1-9]\d*\b/i.test(normalized);
+  return looksLikeActionableRuntimeEvidence(text);
 }
 
 function truncateEvidence(text: string, maxLength = 180): string {
@@ -1115,12 +1108,12 @@ function getRiskLevel(
     text.includes('database') ||
     text.includes('schema') ||
     text.includes('production') ||
-    text.includes('安全') ||
-    text.includes('鉴权') ||
-    text.includes('权限') ||
-    text.includes('迁移') ||
-    text.includes('数据库') ||
-    text.includes('生产')
+    text.includes('\u5b89\u5168') ||
+    text.includes('\u9274\u6743') ||
+    text.includes('\u6743\u9650') ||
+    text.includes('\u8fc1\u79fb') ||
+    text.includes('\u6570\u636e\u5e93') ||
+    text.includes('\u751f\u4ea7')
   ) {
     return 'high';
   }

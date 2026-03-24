@@ -67,6 +67,22 @@ export function createApiContextTokenSnapshot(
   };
 }
 
+export function createCompletedTurnTokenSnapshot(
+  messages: KodaXMessage[],
+  usage?: KodaXTokenUsage | null,
+): KodaXContextTokenSnapshot {
+  if (!hasValidTokenUsage(usage)) {
+    return createEstimatedContextTokenSnapshot(messages);
+  }
+
+  return {
+    currentTokens: usage.totalTokens,
+    baselineEstimatedTokens: estimateTokens(messages),
+    source: 'api',
+    usage,
+  };
+}
+
 export function createContextTokenSnapshot(
   messages: KodaXMessage[],
   usage?: KodaXTokenUsage | null,

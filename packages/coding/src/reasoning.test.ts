@@ -102,6 +102,16 @@ describe('reasoning reroute', () => {
     expect(decision.nextThinkingDepth).toBe('medium');
   });
 
+  it('does not reroute review into investigation on timeout-only evidence', () => {
+    const decision = buildHeuristicAutoRerouteDecision(
+      basePlan,
+      'The command hit a timeout and the stream stalled before any concrete failure evidence was collected.',
+    );
+
+    expect(decision.shouldReroute).toBe(false);
+    expect(decision.reason).toContain('retried before rerouting');
+  });
+
   it('escalates low-value review output into a stricter second pass', () => {
     const decision = buildHeuristicAutoRerouteDecision(
       basePlan,
@@ -151,6 +161,41 @@ describe('reasoning reroute', () => {
     expect(routerPrompt).toContain('recent session error');
     expect(routerPrompt).toContain('recent message evidence');
     expect(routerPrompt).toContain('runtime evidence');
+  });
+
+  it('keeps timeout-only routing evidence out of the router prompt', async () => {
+    const provider = new CapturingProvider(JSON.stringify({
+      primaryTask: 'review',
+      confidence: 0.6,
+      riskLevel: 'medium',
+      recommendedMode: 'pr-review',
+      recommendedThinkingDepth: 'low',
+      reason: 'Timeout alone should not change routing.',
+    }));
+
+    await createReasoningPlan(
+      {
+        provider: 'openai',
+        reasoningMode: 'auto',
+      },
+      'Please review this PR for merge blockers.',
+      provider,
+      {
+        recentMessages: [
+          { role: 'assistant', content: 'The stream timed out before the response finished.' },
+        ],
+        sessionErrorMetadata: {
+          lastError: 'timeout after 60s',
+          consecutiveErrors: 1,
+        },
+        additionalSignals: ['timeout after 60s'],
+      },
+    );
+
+    const routerPrompt = String(provider.lastMessages[0]?.content ?? '');
+    expect(routerPrompt).not.toContain('recent message evidence');
+    expect(routerPrompt).not.toContain('recent session error');
+    expect(routerPrompt).not.toContain('runtime evidence');
   });
 
   it('falls back to heuristic routing when router output is not valid JSON', async () => {
@@ -298,6 +343,37 @@ describe('reasoning reroute', () => {
     const judgePrompt = String(provider.lastMessages[0]?.content ?? '');
     expect(judgePrompt).toContain('Tool evidence:');
     expect(judgePrompt).toContain('runtime error');
+  });
+
+  it('ignores timeout-only review evidence before consulting the reroute judge', async () => {
+    const provider = new CapturingProvider(JSON.stringify({
+      shouldReroute: true,
+      nextPrimaryTask: 'bugfix',
+      nextRecommendedMode: 'investigation',
+      nextThinkingDepth: 'high',
+      reason: 'Timeouts suggest the task should switch into investigation.',
+    }));
+
+    const reroutedPlan = await maybeCreateAutoReroutePlan(
+      provider,
+      {
+        provider: 'openai',
+        reasoningMode: 'auto',
+      },
+      'Review this PR for merge blockers.',
+      basePlan,
+      'The run timed out before producing a stable answer.',
+      {
+        allowDepthEscalation: true,
+        allowTaskReroute: true,
+      },
+      {
+        toolEvidence: '- bash: timeout after 60s with delayed response and no other failure evidence',
+      },
+    );
+
+    expect(reroutedPlan).toBeNull();
+    expect(provider.lastMessages).toEqual([]);
   });
 
   it('treats ambiguous fallback routing as unknown with balanced depth', () => {

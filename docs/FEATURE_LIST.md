@@ -32,7 +32,7 @@ _Last Updated: 2026-03-24_
 | v0.6.11 | Released | 0 | 0/0 (100%) |
 | v0.6.15 | Completed | 4 | 4/4 (100%) |
 | v0.6.20 | Completed | 1 | 1/1 (100%) |
-| v0.7.0 | Planned | 7 | 1/7 (14%) |
+| v0.7.0 | Planned | 7 | 2/7 (29%) |
 | v0.8.0 | Planned | 5 | 0/5 (0%) |
 | v1.0.0 | Planned | 3 | 0/3 (0%) |
 | v0.9.0 | Planned | 1 | 0/1 (0%) |
@@ -78,7 +78,7 @@ _Last Updated: 2026-03-24_
 | 034 | Enhancement | Planned | High | Extension + Capability Runtime | v0.7.0 | - | [Design](features/v0.7.0.md#034) | 2026-03-20 | - | - |
 | 035 | New | Planned | High | MCP 能力 Provider | v0.7.0 | - | [Design](features/v0.7.0.md#035) | 2026-03-20 | - | - |
 | 036 | Enhancement | Completed | Medium | DeepSeek 内置 Provider 支持 | v0.6.15 | v0.6.15 | [Design](features/v0.6.15.md#036) | 2026-03-20 | 2026-03-21 | 2026-03-21 |
-| 037 | Enhancement | Planned | Medium | API Token Usage 真实值优先 + 估算回退 | v0.7.0 | - | [Design](features/v0.7.0.md#037) | 2026-03-21 | - | - |
+| 037 | Enhancement | Completed | Medium | API Token Usage 真实值优先 + 估算回退 | v0.7.0 | - | [Design](features/v0.7.0.md#037) | 2026-03-21 | 2026-03-24 | 2026-03-24 |
 | 038 | New | Planned | High | Official Sandbox Extension | v0.8.0 | - | [Design](features/v0.8.0.md#feature_038-official-sandbox-extension) | 2026-03-21 | - | - |
 | 039 | Enhancement | Completed | High | Plan 模式双写白名单（项目说明文档 + 系统临时目录） | v0.6.15 | v0.6.15 | [Design](features/v0.6.15.md#039) | 2026-03-22 | - | 2026-03-22 |
 | 040 | New | Completed | High | ACP Server 支持（供编辑器/IDE 直接调用） | v0.6.15 | v0.6.15 | [Design](features/v0.6.15.md#040) | 2026-03-22 | 2026-03-22 | 2026-03-22 |
@@ -1441,16 +1441,16 @@ The legacy draft below is retained temporarily for history. Implementation shoul
 - 流式 `reasoning_content` 会映射为 KodaX `thinkingBlocks`，并驱动 `onThinkingDelta()` / `onThinkingEnd()`
 - REPL 的 reasoning capability 展示按当前模型区分 `deepseek-chat` 与 `deepseek-reasoner`
 
-### 037: API Token Usage 真实值优先 + 估算回退 (PLANNED)
+### 037: API Token Usage 真实值优先 + 估算回退 (COMPLETED)
 - **Category**: Enhancement
-- **Status**: Planned
+- **Status**: Completed
 - **Priority**: Medium
 - **Planned**: v0.7.0
 - **Released**: -
 - **Design**: [v0.7.0.md#037](features/v0.7.0.md#037)
 - **Created**: 2026-03-21
-- **Started**: -
-- **Completed**: -
+- **Started**: 2026-03-24
+- **Completed**: 2026-03-24
 
 **Description**:
 建立统一的 Token Usage 获取策略：优先使用 API 返回的真实 token 用量，仅在 API 未返回有效 usage 时回退到客户端 `js-tiktoken` 估算。
@@ -1629,9 +1629,9 @@ The legacy draft below is retained temporarily for history. Implementation shoul
 - 记录 tool result 大小、截断来源与 continuation 提示，为后续诊断“为何会到 1833k tokens”提供直接证据
 
 ## Summary
-- Total: 40 (15 Planned, 0 In Progress, 25 Completed)
+- Total: 40 (14 Planned, 0 In Progress, 26 Completed)
 - By Priority: Critical: 3, High: 31, Medium: 6, Low: 0
 - Current Version: v0.6.15
 - Next Release (v0.6.20): 1 feature (041)
-- Future Releases: v0.6.20 (041), v0.7.0 (019, 026, 029, 032, 034, 035, 037), v0.8.0 (007, 018, 025, 028, 038), v0.9.0 (031), v1.0.0 (022, 023, 030)
+- Future Releases: v0.6.20 (041), v0.7.0 (019, 026, 029, 034, 035), v0.8.0 (007, 018, 025, 028, 038), v0.9.0 (031), v1.0.0 (022, 023, 030)
 - Highest Priority Planned: 019 - 会话树与回滚系统 (High), 026 - Roadmap Integrity 与 Tracker Consistency 加固 (High), 029 - Provider Adapter 透明度与语义兼容性 (High), 031 - 多模态图片上传支持 (High), 034 - Extension + Capability Runtime (High), 035 - MCP 能力 Provider (High), 038 - Official Sandbox Extension (High)

@@ -36,8 +36,10 @@ import {
   maybeCreateAutoReroutePlan,
   type ReasoningPlan,
 } from './reasoning.js';
+import { looksLikeActionableRuntimeEvidence } from './runtime-evidence.js';
 import { resolveExecutionCwd } from './runtime-paths.js';
 import {
+  createCompletedTurnTokenSnapshot,
   createContextTokenSnapshot,
   createEstimatedContextTokenSnapshot,
   rebaseContextTokenSnapshot,
@@ -54,6 +56,23 @@ type RunnableToolCall = {
   name: string;
   input: Record<string, unknown> | undefined;
 };
+type MessageContentBlock = Exclude<KodaXMessage['content'], string>[number];
+
+function isTypedContentBlock(block: unknown): block is MessageContentBlock {
+  return Boolean(block) && typeof block === 'object' && 'type' in block;
+}
+
+function isToolUseContentBlock(
+  block: unknown,
+): block is Extract<MessageContentBlock, { type: 'tool_use' }> {
+  return isTypedContentBlock(block) && block.type === 'tool_use';
+}
+
+function isToolResultContentBlock(
+  block: unknown,
+): block is Extract<MessageContentBlock, { type: 'tool_result' }> {
+  return isTypedContentBlock(block) && block.type === 'tool_result';
+}
 
 /**
  * 验证并修复整个工具调用历史 - Issue 072 enhanced fix
@@ -74,13 +93,13 @@ function validateAndFixToolHistory(messages: KodaXMessage[]): KodaXMessage[] {
       const msg = messages[i];
       if (!msg || typeof msg.content === 'string' || !Array.isArray(msg.content)) continue;
 
-      const toolUses = msg.content.filter((b: any) => b?.type === 'tool_use');
-      const toolResults = msg.content.filter((b: any) => b?.type === 'tool_result');
+      const toolUses = msg.content.filter(isToolUseContentBlock);
+      const toolResults = msg.content.filter(isToolResultContentBlock);
 
       if (toolUses.length > 0 || toolResults.length > 0) {
         console.error(`  [${i}] ${msg.role}:`, {
-          toolUses: toolUses.map((t: any) => ({ id: t.id, name: t.name })),
-          toolResults: toolResults.map((t: any) => ({ tool_use_id: t.tool_use_id }))
+          toolUses: toolUses.map((toolUse) => ({ id: toolUse.id, name: toolUse.name })),
+          toolResults: toolResults.map((toolResult) => ({ tool_use_id: toolResult.tool_use_id }))
         });
       }
     }
@@ -99,7 +118,7 @@ function validateAndFixToolHistory(messages: KodaXMessage[]): KodaXMessage[] {
     }
 
     const content = msg.content;
-    const fixedContent: any[] = [];
+    const fixedContent: typeof content = [];
 
     if (msg.role === 'assistant') {
       // 检查每个 tool_use 是否有匹配的 tool_result
@@ -108,7 +127,7 @@ function validateAndFixToolHistory(messages: KodaXMessage[]): KodaXMessage[] {
 
       if (nextMsg?.role === 'user' && Array.isArray(nextMsg.content)) {
         for (const block of nextMsg.content) {
-          if (block?.type === 'tool_result' && block.tool_use_id) {
+          if (isToolResultContentBlock(block) && block.tool_use_id) {
             resultIds.add(block.tool_use_id);
           }
         }
@@ -116,8 +135,8 @@ function validateAndFixToolHistory(messages: KodaXMessage[]): KodaXMessage[] {
 
       // 过滤掉没有匹配 tool_result 的 tool_use
       for (const block of content) {
-        if (!block || typeof block !== 'object') {
-          fixedContent.push(block);
+        if (!isTypedContentBlock(block)) {
+          fixedContent.push(block as typeof content[number]);
           continue;
         }
 
@@ -145,7 +164,7 @@ function validateAndFixToolHistory(messages: KodaXMessage[]): KodaXMessage[] {
 
       if (prevMsg?.role === 'assistant' && Array.isArray(prevMsg.content)) {
         for (const block of prevMsg.content) {
-          if (block?.type === 'tool_use' && block.id) {
+          if (isToolUseContentBlock(block) && block.id) {
             toolUseIds.add(block.id);
           }
         }
@@ -153,8 +172,8 @@ function validateAndFixToolHistory(messages: KodaXMessage[]): KodaXMessage[] {
 
       // 过滤掉孤立的或空 id 的 tool_result
       for (const block of content) {
-        if (!block || typeof block !== 'object') {
-          fixedContent.push(block);
+        if (!isTypedContentBlock(block)) {
+          fixedContent.push(block as typeof content[number]);
           continue;
         }
 
@@ -688,7 +707,7 @@ export async function runKodaX(
               const msgAtCut = messages[startIndex];
               if (!msgAtCut) break;
               if (msgAtCut.role === 'user' && Array.isArray(msgAtCut.content) &&
-                msgAtCut.content.some((b: any) => b?.type === 'tool_result')) {
+                msgAtCut.content.some(isToolResultContentBlock)) {
                 startIndex++;
                 continue;
               }
@@ -823,13 +842,13 @@ export async function runKodaX(
       events.onStreamEnd?.();
 
       lastText = result.textBlocks.map(b => b.text).join(' ');
-      const providerTokenSnapshot = createContextTokenSnapshot(compacted, result.usage);
+      const preAssistantTokenSnapshot = createContextTokenSnapshot(compacted, result.usage);
 
       // Promise 信号检测
       const [signal, _reason] = checkPromiseSignal(lastText);
       if (signal) {
         if (signal === 'COMPLETE') {
-          emitIterationEnd(iter + 1, providerTokenSnapshot);
+          emitIterationEnd(iter + 1, preAssistantTokenSnapshot);
           events.onComplete?.();
           return {
             success: true,
@@ -845,12 +864,13 @@ export async function runKodaX(
 
       const assistantContent = [...result.thinkingBlocks, ...result.textBlocks, ...result.toolBlocks];
       messages.push({ role: 'assistant', content: assistantContent });
-      contextTokenSnapshot = rebaseContextTokenSnapshot(messages, providerTokenSnapshot);
+      const completedTurnTokenSnapshot = createCompletedTurnTokenSnapshot(messages, result.usage);
+      contextTokenSnapshot = completedTurnTokenSnapshot;
 
       if (result.toolBlocks.length === 0) {
         const shouldYieldToQueuedFollowUp = hasQueuedFollowUp(events);
         if (shouldYieldToQueuedFollowUp) {
-          emitIterationEnd(iter + 1, providerTokenSnapshot);
+          emitIterationEnd(iter + 1, completedTurnTokenSnapshot);
           return {
             success: true,
             lastText,
@@ -891,10 +911,11 @@ export async function runKodaX(
               autoDepthEscalationCount,
               autoTaskRerouteCount,
             } = rerouteState);
+            contextTokenSnapshot = rebaseContextTokenSnapshot(messages, preAssistantTokenSnapshot);
             continue;
           }
         }
-        emitIterationEnd(iter + 1, providerTokenSnapshot);
+        emitIterationEnd(iter + 1, completedTurnTokenSnapshot);
         events.onComplete?.();
         // limitReached 保持 false（初始值）
         break;
@@ -914,7 +935,7 @@ export async function runKodaX(
             retryPrompt = `⚠️ CRITICAL: Your response was TRUNCATED again. This is retry ${incompleteRetryCount}/${KODAX_MAX_INCOMPLETE_RETRIES}.\n\nMISSING PARAMETERS:\n${incomplete.map(i => `- ${i}`).join('\n')}\n\nYOU MUST:\n1. For 'write' tool: Keep content under 50 lines - write structure first, fill in later with 'edit'\n2. For 'edit' tool: Keep new_string under 30 lines - make smaller, focused changes\n3. Provide ALL required parameters in your tool call\n\nIf your response is truncated again, the task will FAIL.\nPROVIDE SHORT, COMPLETE PARAMETERS NOW.`;
           }
           messages.push({ role: 'user', content: retryPrompt });
-          contextTokenSnapshot = rebaseContextTokenSnapshot(messages, providerTokenSnapshot);
+          contextTokenSnapshot = rebaseContextTokenSnapshot(messages, preAssistantTokenSnapshot);
           continue;
         } else {
           // 超过重试次数，过滤掉不完整的工具调用并添加错误结果
@@ -941,7 +962,7 @@ export async function runKodaX(
             }
           }
           messages.push({ role: 'user', content: errorResults });
-          contextTokenSnapshot = rebaseContextTokenSnapshot(messages, providerTokenSnapshot);
+          contextTokenSnapshot = rebaseContextTokenSnapshot(messages, completedTurnTokenSnapshot);
           incompleteRetryCount = 0;
           continue;
         }
@@ -1024,9 +1045,10 @@ export async function runKodaX(
         const shouldYieldToQueuedFollowUp = hasQueuedFollowUp(events);
         // User cancelled - add results and exit loop - 用户取消，添加结果并退出循环
         messages.push({ role: 'user', content: toolResults });
-        contextTokenSnapshot = rebaseContextTokenSnapshot(messages, providerTokenSnapshot);
+        // Tool results are already appended, so emit the post-tool rebased snapshot here.
+        contextTokenSnapshot = rebaseContextTokenSnapshot(messages, completedTurnTokenSnapshot);
         if (shouldYieldToQueuedFollowUp) {
-          emitIterationEnd(iter + 1, providerTokenSnapshot);
+          emitIterationEnd(iter + 1, contextTokenSnapshot);
         }
         events.onStreamEnd?.();
         return {
@@ -1040,11 +1062,12 @@ export async function runKodaX(
       }
 
       messages.push({ role: 'user', content: toolResults });
-      contextTokenSnapshot = rebaseContextTokenSnapshot(messages, providerTokenSnapshot);
+      // Keep UI/context accounting aligned with the tool-result message we just appended.
+      contextTokenSnapshot = rebaseContextTokenSnapshot(messages, completedTurnTokenSnapshot);
 
       const shouldYieldToQueuedFollowUp = hasQueuedFollowUp(events);
       if (shouldYieldToQueuedFollowUp) {
-        emitIterationEnd(iter + 1, providerTokenSnapshot);
+        emitIterationEnd(iter + 1, contextTokenSnapshot);
         return {
           success: true,
           lastText,
@@ -1100,7 +1123,7 @@ export async function runKodaX(
       await saveSessionSnapshot(options, sessionId, { messages, title });
 
       // Notify UI of context usage after each iteration
-      emitIterationEnd(iter + 1, providerTokenSnapshot);
+      emitIterationEnd(iter + 1, contextTokenSnapshot);
     } catch (e) {
       const error = e instanceof Error ? e : new Error(String(e));
 
@@ -1251,24 +1274,7 @@ function summarizeToolEvidence(
 }
 
 function looksLikeToolRuntimeEvidence(content: string): boolean {
-  const normalized = content.toLowerCase();
-  return (
-    normalized.includes('[tool error]') ||
-    normalized.includes('[stderr]') ||
-    normalized.includes('runtime error') ||
-    normalized.includes('exception') ||
-    normalized.includes('traceback') ||
-    normalized.includes('stack trace') ||
-    normalized.includes('failing test') ||
-    normalized.includes('tests failed') ||
-    normalized.includes('test failed') ||
-    normalized.includes('assertion failed') ||
-    normalized.includes('timeout') ||
-    normalized.includes('报错') ||
-    normalized.includes('错误') ||
-    normalized.includes('异常') ||
-    /\bexit:\s*[1-9]\d*\b/i.test(normalized)
-  );
+  return looksLikeActionableRuntimeEvidence(content);
 }
 
 async function getGitRoot(): Promise<string | null> {

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { KodaXMessage, KodaXTokenUsage } from './types.js';
 import {
   createApiContextTokenSnapshot,
+  createCompletedTurnTokenSnapshot,
   createContextTokenSnapshot,
   createEstimatedContextTokenSnapshot,
   hasValidTokenUsage,
@@ -106,6 +107,56 @@ describe('token accounting', () => {
         outputTokens: 10,
         totalTokens: 110,
       },
+    });
+
+    estimateSpy.mockRestore();
+  });
+
+  it('uses totalTokens once an assistant turn has completed', () => {
+    const estimateSpy = vi
+      .spyOn(tokenizer, 'estimateTokens')
+      .mockReturnValueOnce(55)
+      .mockReturnValueOnce(70);
+
+    const snapshot = createCompletedTurnTokenSnapshot(messages, {
+      inputTokens: 100,
+      outputTokens: 10,
+      totalTokens: 110,
+    });
+
+    expect(snapshot).toEqual({
+      currentTokens: 110,
+      baselineEstimatedTokens: 55,
+      source: 'api',
+      usage: {
+        inputTokens: 100,
+        outputTokens: 10,
+        totalTokens: 110,
+      },
+    });
+
+    expect(resolveContextTokenCount(messages, snapshot)).toBe(125);
+
+    estimateSpy.mockRestore();
+  });
+
+  it('falls back to estimation when completed-turn usage is missing or invalid', () => {
+    const estimateSpy = vi.spyOn(tokenizer, 'estimateTokens').mockReturnValue(88);
+
+    expect(createCompletedTurnTokenSnapshot(messages, undefined)).toEqual({
+      currentTokens: 88,
+      baselineEstimatedTokens: 88,
+      source: 'estimate',
+    });
+
+    expect(createCompletedTurnTokenSnapshot(messages, {
+      inputTokens: 20,
+      outputTokens: 30,
+      totalTokens: 10,
+    })).toEqual({
+      currentTokens: 88,
+      baselineEstimatedTokens: 88,
+      source: 'estimate',
     });
 
     estimateSpy.mockRestore();
