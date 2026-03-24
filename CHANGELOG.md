@@ -6,6 +6,15 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.6.20] - 2026-03-24
+
+### Documentation
+- Moved Feature 034 (Extension + Capability Runtime) from v0.8.0 to v0.7.0
+- Updated v0.7.0 feature count to 7, v0.8.0 to 5
+- Synced feature index in FEATURE_LIST.md and features/README.md
+
+---
+
 ## [0.6.19] - 2026-03-24
 
 ### Added
