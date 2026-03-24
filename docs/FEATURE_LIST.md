@@ -32,8 +32,8 @@ _Last Updated: 2026-03-24_
 | v0.6.11 | Released | 0 | 0/0 (100%) |
 | v0.6.15 | Completed | 4 | 4/4 (100%) |
 | v0.6.20 | Completed | 1 | 1/1 (100%) |
-| v0.7.0 | Planned | 6 | 0/6 (0%) |
-| v0.8.0 | Planned | 6 | 0/6 (0%) |
+| v0.7.0 | Planned | 7 | 0/7 (0%) |
+| v0.8.0 | Planned | 5 | 0/5 (0%) |
 | v1.0.0 | Planned | 3 | 0/3 (0%) |
 | v0.9.0 | Planned | 1 | 0/1 (0%) |
 
@@ -75,7 +75,7 @@ _Last Updated: 2026-03-24_
 | 031 | New | Planned | High | 多模态图片上传支持 | v0.9.0 | - | [Design](features/v0.9.0.md#031) | 2026-03-19 | - | - |
 | 032 | Enhancement | Planned | Medium | JSON 输出模式 (--mode json) | v0.7.0 | - | [Design](features/v0.7.0.md#032) | 2026-03-19 | - | - |
 | 033 | Enhancement | Completed | Medium | REPL 并行切换 (/parallel) | v0.6.15 | v0.6.15 | [Design](features/v0.6.15.md#033) | 2026-03-20 | 2026-03-21 | 2026-03-21 |
-| 034 | Enhancement | Planned | High | Extension + Capability Runtime | v0.8.0 | - | [Design](features/v0.8.0.md#034) | 2026-03-20 | - | - |
+| 034 | Enhancement | Planned | High | Extension + Capability Runtime | v0.7.0 | - | [Design](features/v0.7.0.md#034) | 2026-03-20 | - | - |
 | 035 | New | Planned | High | MCP 能力 Provider | v0.7.0 | - | [Design](features/v0.7.0.md#035) | 2026-03-20 | - | - |
 | 036 | Enhancement | Completed | Medium | DeepSeek 内置 Provider 支持 | v0.6.15 | v0.6.15 | [Design](features/v0.6.15.md#036) | 2026-03-20 | 2026-03-21 | 2026-03-21 |
 | 037 | Enhancement | Planned | Medium | API Token Usage 真实值优先 + 估算回退 | v0.7.0 | - | [Design](features/v0.7.0.md#037) | 2026-03-21 | - | - |
@@ -1621,5 +1621,5 @@ The legacy draft below is retained temporarily for history. Implementation shoul
 - By Priority: Critical: 3, High: 31, Medium: 6, Low: 0
 - Current Version: v0.6.15
 - Next Release (v0.6.20): 1 feature (041)
-- Future Releases: v0.6.20 (041), v0.7.0 (019, 026, 029, 032, 035, 037), v0.8.0 (007, 018, 025, 028, 034, 038), v0.9.0 (031), v1.0.0 (022, 023, 030)
-- Highest Priority Planned: 019 - 会话树与回滚系统 (High), 026 - Roadmap Integrity 与 Tracker Consistency 加固 (High), 029 - Provider Adapter 透明度与语义兼容性 (High), 031 - 多模态图片上传支持 (High), 035 - MCP 能力 Provider (High), 038 - Official Sandbox Extension (High)
+- Future Releases: v0.6.20 (041), v0.7.0 (019, 026, 029, 032, 034, 035, 037), v0.8.0 (007, 018, 025, 028, 038), v0.9.0 (031), v1.0.0 (022, 023, 030)
+- Highest Priority Planned: 019 - 会话树与回滚系统 (High), 026 - Roadmap Integrity 与 Tracker Consistency 加固 (High), 029 - Provider Adapter 透明度与语义兼容性 (High), 031 - 多模态图片上传支持 (High), 034 - Extension + Capability Runtime (High), 035 - MCP 能力 Provider (High), 038 - Official Sandbox Extension (High)
