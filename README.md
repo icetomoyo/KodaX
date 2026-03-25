@@ -964,12 +964,15 @@ KodaX uses an **English-first** comment style with selective Chinese brief notes
 
 ## Documentation
 
-- [README_CN.md](README_CN.md) - Chinese Documentation
-- [DESIGN.md](docs/DESIGN.md) - Architecture and Implementation Details
-- [TESTING.md](docs/TESTING.md) - Testing Guide
-- [test-guides/](docs/test-guides/) - Feature-specific test guides
-- [LONG_RUNNING_GUIDE.md](docs/LONG_RUNNING_GUIDE.md) - Long-Running Mode Guide
-- [CHANGELOG.md](CHANGELOG.md) - Version History
+- [README_CN.md](README_CN.md) - Chinese documentation
+- [docs/ADR.md](docs/ADR.md) - Architecture decision records
+- [docs/HLD.md](docs/HLD.md) - High-level design
+- [docs/DD.md](docs/DD.md) - Detailed design
+- [docs/PRD.md](docs/PRD.md) - Product requirements
+- [docs/FEATURE_LIST.md](docs/FEATURE_LIST.md) - Feature tracker and roadmap
+- [docs/features/README.md](docs/features/README.md) - Feature design index
+- [docs/test-guides/](docs/test-guides/) - Feature-specific test guides
+- [CHANGELOG.md](CHANGELOG.md) - Version history
 
 ---
 

@@ -1,377 +1,426 @@
-# KodaX 架构决策记录 (ADR)
+# KodaX Architecture Decision Records
 
-> 记录 KodaX 项目中的关键架构决策及其理由
-
----
-
-## ADR-001: 5层独立架构
-
-### 状态
-✅ 已采纳 (2026-02)
-
-### 背景
-需要设计一个既能作为完整产品使用，又能让各层被其他项目独立复用的架构。
-
-### 决策
-采用 5 层独立架构，每层可独立发布和使用：
-
-```
-CLI Layer          → 命令行入口
-Interactive Layer  → REPL 交互 (Ink UI)
-Coding Layer       → Coding Agent (工具 + Prompts)
-Agent Layer        → 通用 Agent 框架 (Session + Messages)
-AI Layer           → LLM 抽象 (Providers + Stream)
-Skills Layer       → Agent Skills (零外部依赖)
-```
-
-### 理由
-1. **复用性**: 其他项目可以只使用 `@kodax/ai` 作为 LLM 客户端
-2. **测试性**: 每层独立测试，边界清晰
-3. **演进性**: 可以独立升级各层而不影响其他层
-4. **理解性**: 分层降低认知负担
-
-### 后果
-- 需要维护多个 npm 包
-- 包之间的版本协调需要谨慎
+> Last updated: 2026-03-25
+> This ADR set reflects the architecture reset carried by `FEATURE_022`, which promotes KodaX from a command-led coding CLI into an adaptive multi-agent task engine.
 
 ---
 
-## ADR-002: Provider 抽象模式
+## ADR-001: Keep the Layered Monorepo
 
-### 状态
-✅ 已采纳 (2026-02)
+**Status**: Accepted
 
-### 背景
-需要支持多种 LLM 提供商（Anthropic、OpenAI、Google 等），同时保持统一的调用接口。
+KodaX keeps the layered monorepo structure:
 
-### 决策
-采用 **抽象基类 + 注册表** 模式：
+- `@kodax/ai`: provider abstraction
+- `@kodax/agent`: generic session and compaction substrate
+- `@kodax/coding`: headless coding runtime
+- `@kodax/repl`: interactive surfaces
+- `@kodax/skills`: reusable instruction bundles
 
-```typescript
-// 抽象基类
-abstract class KodaXBaseProvider {
-  abstract stream(messages, tools, system): Promise<StreamResult>;
-}
+Reasoning:
 
-// 注册表
-const PROVIDER_REGISTRY = new Map<string, () => KodaXBaseProvider>();
-
-function registerProvider(name: string, factory: () => KodaXBaseProvider): void;
-function getProvider(name: string): KodaXBaseProvider;
-```
-
-### 理由
-1. **扩展性**: 新增 Provider 只需实现基类并注册
-2. **统一接口**: 调用方无需关心具体 Provider
-3. **延迟加载**: 通过工厂函数延迟实例化
-
-### 后果
-- 每个 Provider 需要处理自己的错误转换
-- 需要处理不同 Provider 的能力差异（如 thinking 支持）
+- The layers are already understandable and reusable.
+- The new task engine should be built on top of the current package boundaries, not by collapsing them.
+- `@kodax/coding` remains the correct place for the product-grade runtime, because it already owns prompts, tools, orchestration, and the coding loop.
 
 ---
 
-## ADR-003: 流式输出优先
+## ADR-002: KodaX Becomes an Adaptive Task Engine
 
-### 状态
-✅ 已采纳 (2026-02)
+**Status**: Proposed
 
-### 背景
-LLM 响应可能很长，用户需要实时看到输出，而不是等待全部完成。
+KodaX should no longer treat `Project Mode` as the main product abstraction.
 
-### 决策
-所有 Provider 必须实现流式输出接口：
+The new primary abstraction is a **task**:
 
-```typescript
-interface StreamOptions {
-  onTextDelta?: (text: string) => void;
-  onThinkingDelta?: (text: string) => void;
-  onToolUseStart?: (tool: { name: string; id: string }) => void;
-  onToolResult?: (result: { id: string; content: string }) => void;
-}
-```
+- a task may be a one-shot answer
+- a task may become a managed long-running task
+- a task may require planning, execution, and evaluation
+- a task may require one agent or multiple agents
 
-### 理由
-1. **用户体验**: 实时反馈优于长时间等待
-2. **中断能力**: 可以在输出过程中取消
-3. **调试便利**: 可以看到 Agent 的"思考过程"
+Reasoning:
 
-### 后果
-- 需要处理流式数据的边界情况
-- 测试复杂度增加
+- Users should not need to decide up front whether they are "in project mode".
+- The system should determine whether a request needs discovery, durable state, verification, or multi-agent execution.
+- This aligns better with how users naturally work: they describe intent, not mode.
+
+Consequence:
+
+- `/project` becomes a control surface over managed tasks instead of the product center.
+- `feature_list.json`, `.agent/project/`, session plans, and harness artifacts become part of a broader task-state model.
 
 ---
 
-## ADR-004: 权限模式系统
+## ADR-003: Non-Trivial Tasks Default to Native Multi-Agent Execution
 
-### 状态
-✅ 已采纳 (2026-02)
+**Status**: Proposed
 
-### 背景
-Coding Agent 需要执行可能影响文件系统的操作，需要平衡安全性和效率。
+KodaX should adopt native multi-agent execution for non-trivial work.
 
-### 决策
-采用 4 级权限模式：
+The system should treat the following as separate responsibilities:
 
-| 模式 | 描述 | 需确认的工具 |
-|------|------|-------------|
-| plan | 只读模式 | 所有修改工具被阻止 |
-| default | 安全模式 | write, edit, bash |
-| accept-edits | 自动接受编辑 | bash |
-| auto-in-project | 项目内全自动 | 无 |
+- `Lead`: routing, decomposition, synthesis, escalation
+- `Planner`: scope expansion, success criteria, contract drafting
+- `Generator`: implementation
+- `Evaluator`: skeptical grading, QA, acceptance decisions
 
-### 理由
-1. **渐进信任**: 用户可以根据场景选择信任级别
-2. **安全边界**: 危险路径始终需要确认
-3. **效率平衡**: 常见操作可以自动化
+Reasoning:
 
-### 后果
-- 需要在多个地方检查权限
-- 用户需要理解不同模式的差异
+- A single agent that plans, implements, and self-approves is structurally unreliable.
+- Separating implementation from evaluation is now a load-bearing requirement, not an optimization.
+- Anthropic's 2026 harness work shows that planner/generator/evaluator separation produces materially better long-running outputs than naive single-agent loops.
+
+Consequence:
+
+- Single-agent execution remains only as a low-complexity fallback.
+- KodaX should reason in terms of role separation even when the runtime chooses a minimal harness profile.
 
 ---
 
-## ADR-005: Skills 作为指令模板
+## ADR-004: Replace Sprint-Centric Project Semantics with Contract-Centric Task Semantics
 
-### 状态
-✅ 已采纳 (2026-02)
+**Status**: Proposed
 
-### 背景
-需要一种方式让用户定义可复用的任务模板，如代码审查、TDD 工作流等。
+The system should standardize on **task contracts** rather than hard-coding `project` or `sprint` semantics into the user-facing workflow.
 
-### 决策
-Skills 采用 Markdown 文件格式，作为系统指令注入：
+A task contract defines:
 
-```markdown
-# Code Review Skill
+- the active scope
+- the deliverable
+- the acceptance criteria
+- the evidence expected from evaluation
 
-## Trigger Keywords
-review, 审查代码, 代码检查
+Reasoning:
 
-## Instructions
-1. Review the code for quality
-2. Check for security issues
-3. Suggest improvements
-```
+- The current `/project` workflow is useful but too tied to a specific long-running coding path.
+- Contracts generalize better to bug fixes, reviews, refactors, investigations, and broader long-running app development.
+- Contracts are the right bridge between a high-level prompt and testable work.
 
-### 理由
-1. **简单性**: Markdown 易于编写和维护
-2. **可移植性**: 纯文本文件，可以跨项目共享
-3. **版本控制**: 可以用 Git 管理
+Consequence:
 
-### 后果
-- Skills 不支持复杂逻辑（保持简单是故意的）
-- 需要 Skill 发现和匹配机制
+- Future managed runs should be organized around negotiated contracts.
+- `feature_list.json` remains valid for some tasks, but it stops being the only truth model.
 
 ---
 
-## ADR-006: Ink 作为 CLI UI 框架
+## ADR-005: Evidence, Not Self-Report, Defines Completion
 
-### 状态
-✅ 已采纳 (2026-02)
+**Status**: Accepted
 
-### 背景
-需要构建复杂的交互式终端 UI，包括输入框、消息列表、状态栏等。
+KodaX should continue to treat self-reported completion as insufficient.
 
-### 决策
-使用 Ink (React for CLI) 框架：
+Completion must be derived from evidence such as:
 
-```typescript
-import { render, Box, Text } from 'ink';
+- deterministic checks
+- test results
+- UI/browser verification
+- contract criteria coverage
+- structured evaluator findings
 
-const App = () => (
-  <Box flexDirection="column">
-    <Text color="green">Hello World</Text>
-  </Box>
-);
+Reasoning:
 
-render(<App />);
-```
+- This is already the strongest part of the current `Project Harness`.
+- The next architecture should generalize this approach rather than replace it.
 
-### 理由
-1. **组件化**: React 模式易于构建复杂 UI
-2. **声明式**: 状态驱动的 UI 更新
-3. **生态**: 丰富的 React 组件可复用
+Consequence:
 
-### 后果
-- 需要学习 Ink 的限制和特性
-- 某些终端功能需要自定义实现
+- Evaluators need a first-class evidence model.
+- The storage model should preserve run artifacts, findings, checkpoints, and evaluator decisions.
 
 ---
 
-## ADR-007: 工具注册表模式
+## ADR-006: `/project` Becomes a Transitional Control Surface
 
-### 状态
-✅ 已采纳 (2026-02)
+**Status**: Proposed
 
-### 背景
-Agent 需要调用多种工具（read, write, bash 等），需要统一的注册和调用机制。
+`/project` should remain available, but its role changes.
 
-### 决策
-采用注册表模式：
+It becomes:
 
-```typescript
-type ToolHandler = (input: Record<string, unknown>) => Promise<string>;
+- a state viewer
+- a control plane UI
+- a manual override surface
+- a diagnostic entry point
 
-const TOOL_REGISTRY = new Map<string, ToolHandler>();
+It should stop being the only way to access durable harness behavior.
 
-function registerTool(name: string, handler: ToolHandler): void;
-function getTool(name: string): ToolHandler | undefined;
-```
+Reasoning:
 
-### 理由
-1. **扩展性**: 可以动态注册新工具
-2. **解耦**: 工具实现与 Agent 逻辑分离
-3. **测试性**: 可以单独测试每个工具
-
-### 后果
-- 工具名称冲突需要处理
-- 工具错误需要统一格式
+- Current KodaX users already rely on `/project`.
+- Removing it outright would create unnecessary churn.
+- Internalizing managed execution while keeping `/project` as an inspection and override surface gives the best migration path.
 
 ---
 
-## ADR-008: 会话持久化格式
+## ADR-007: Retire `--team` as a Product Concept
 
-### 状态
-✅ 已采纳 (2026-02)
+**Status**: Proposed
 
-### 背景
-需要持久化会话数据，支持会话恢复和跨会话上下文。
+The current `--team` flow should be treated as legacy orchestration plumbing, not the future multi-agent product.
 
-### 决策
-采用 JSONL 格式存储会话：
+Reasoning:
 
-```jsonl
-{"_type":"meta","title":"Session Title","id":"20260213_143000","gitRoot":"/path"}
-{"role":"user","content":"Hello"}
-{"role":"assistant","content":[{"type":"text","text":"Hi!"}]}
-```
+- It only accepts comma-separated parallel prompts.
+- It lacks role semantics, contract negotiation, evaluator authority, durable task truth, and evidence aggregation.
+- It does not represent the architecture KodaX now wants to ship.
 
-### 理由
-1. **流式写入**: 可以边运行边追加
-2. **可读性**: 纯文本，便于调试
-3. **兼容性**: 标准 JSON 格式
+Consequence:
 
-### 后果
-- 大型会话文件可能较大
-- 需要处理 JSON 解析错误
+- Future documentation should stop presenting `--team` as the multi-agent story.
+- Feature planning should assume `FEATURE_022` replaces it with a real control plane.
 
 ---
 
-## ADR-009: Promise 信号系统
+## ADR-008: Provider Capability Must Influence Harness Shape
 
-### 状态
-✅ 已采纳 (2026-02)
+**Status**: Proposed
 
-### 背景
-长运行模式下，Agent 需要一种方式通知系统任务状态。
+Harness choice should depend on model capability, not just user preference.
 
-### 决策
-Agent 通过特殊 XML 标签发送信号：
+The provider/model capability profile should inform:
 
-```xml
-<promise>COMPLETE</promise>           <!-- 所有任务完成 -->
-<promise>BLOCKED:缺少API Key</promise>  <!-- 需要人工干预 -->
-<promise>DECIDE:选择方案</promise>      <!-- 需要用户决策 -->
-```
+- whether planning is lightweight or explicit
+- whether evaluation is mandatory
+- whether long uninterrupted runs are safe
+- whether stronger resets or stronger decomposition are required
+- expected cost and latency envelopes
 
-### 理由
-1. **非侵入性**: 不改变工具调用方式
-2. **可解析**: XML 格式易于检测
-3. **语义清晰**: 信号含义明确
+Reasoning:
 
-### 后果
-- Agent 需要知道信号格式
-- 需要在输出中检测信号
+- Different providers and models do not fail in the same way.
+- A fixed harness wastes cost on strong models and under-supports weaker ones.
+
+Consequence:
+
+- `FEATURE_029` becomes strategically important, not merely diagnostic.
 
 ---
 
-## ADR-010: 自动补全多源合并
+## ADR-009: Keep the Runtime Headless and Surface-Agnostic
 
-### 状态
-✅ 已采纳 (2026-03)
+**Status**: Accepted
 
-### 背景
-REPL 需要支持多种补全：命令、文件、技能、参数。
+The new task engine should remain headless and reusable across:
 
-### 决策
-采用 Completer 接口 + Provider 协调模式：
+- CLI
+- REPL / TUI
+- ACP / IDE
+- future desktop and web surfaces
 
-```typescript
-interface Completer {
-  canComplete(input: string, cursorPos: number): boolean;
-  getCompletions(input: string, cursorPos: number): Promise<Completion[]>;
-}
+Reasoning:
 
-// 多个 Completer 并行查询，结果合并排序
-class AutocompleteProvider {
-  completers: Completer[];  // SkillCompleter, FileCompleter, CommandCompleter...
-}
-```
+- Multi-surface delivery is a roadmap objective, not a separate product.
+- The control plane, storage model, and agent orchestration logic should not be trapped inside one UI.
 
-### 理由
-1. **职责分离**: 每个 Completer 只负责一种补全
-2. **扩展性**: 新增补全类型只需添加 Completer
-3. **性能**: 并行查询提升响应速度
+Consequence:
 
-### 后果
-- 需要去重和排序合并逻辑
-- 补全结果可能来自多个源
+- `FEATURE_030` depends on the runtime choices made by `FEATURE_022`, `FEATURE_025`, and `FEATURE_034`.
 
 ---
 
-## ADR-011: 触发字符的空白约束
+## ADR-010: Use Simplification as a First-Class Maintenance Rule
 
-### 状态
-✅ 已采纳 (2026-03)
+**Status**: Accepted
 
-### 背景
-`/` 和 `@` 用于触发补全，但它们也可能出现在路径/URL 中。
+KodaX should actively remove harness components once they stop being load-bearing.
 
-### 决策
-触发字符必须位于起始位置或前面有空白字符：
+Reasoning:
 
-```typescript
-// 有效触发
-"/help"           // 起始位置
-"hello /help"     // 前面有空格
-"hello\n/help"    // 前面有换行
+- Better models shift which scaffolding is necessary.
+- A harness that only grows becomes brittle, expensive, and hard to reason about.
+- The goal is not "more agents"; the goal is "the minimum structure that preserves reliability at current model capability".
 
-// 无效触发
-"https://example.com"  // URL 中
-"@src/file.txt"       // 已经在路径中
-```
+Consequence:
 
-### 理由
-1. **避免误触发**: URL/路径中的字符不应触发补全
-2. **符合直觉**: 用户期望补全在"新词"开始时触发
-3. **多行支持**: 换行后的命令也应触发
-
-### 后果
-- 需要检查前置字符
-- `\s` 正则包含换行符
+- Every new harness component should have a clear failure mode it addresses.
+- Feature docs should describe both why a component exists and what would allow it to be removed later.
 
 ---
 
-## 附录: ADR 模板
+## Appendix A: Retained Historical Design Decisions
 
-```markdown
-# ADR-XXX: 标题
+The architecture reset did not invalidate a number of earlier accepted implementation decisions. They remain worth retaining as practical and historical reference.
 
-## 状态
-[提议 | 采纳 | 弃用 | 被替代]
+### A.1 Provider abstraction and registry
 
-## 背景
-描述导致此决策的背景和问题。
+Still valid:
 
-## 决策
-描述所做的决策及其实现方式。
+- providers implement one shared abstraction
+- provider lookup remains registry-based
+- factory-style registration keeps instantiation lazy
 
-## 理由
-1. 理由一
-2. 理由二
+Why it still matters:
 
-## 后果
-- 正面后果
-- 负面后果
-```
+- new harness logic still depends on one provider interface
+- native vs bridge-backed semantics can only be compared cleanly if the abstraction remains explicit
+
+### A.2 Streaming-first output
+
+Still valid:
+
+- providers should prefer streaming output
+- hosts should continue to receive incremental text, thinking, and tool lifecycle updates
+
+Why it still matters:
+
+- task-engine routing does not remove the UX need for real-time feedback
+- evaluators and long-running flows benefit from observable progress
+
+### A.3 Permission modes remain real product behavior
+
+Still valid:
+
+- read-only / plan behavior
+- guarded default mode
+- edit-accepting modes
+- stronger automation within controlled project flows
+
+Why it still matters:
+
+- sandbox and capability work do not replace approval UX
+- task-engine execution still needs a user-facing permission model
+
+### A.4 Skills remain markdown-first instruction bundles
+
+Still valid:
+
+- skills stay lightweight and file-based
+- skill discovery and natural-language triggering remain part of the product
+
+### A.5 Ink is still the current terminal renderer
+
+Still valid:
+
+- Ink remains the current interactive terminal baseline
+
+Why it still matters:
+
+- `FEATURE_023` is an interaction and renderer-evolution feature, not a reason to erase current renderer history
+
+### A.6 Tool registry remains foundational
+
+Still valid:
+
+- tools are still registered and executed through one central runtime contract
+
+Why it still matters:
+
+- `FEATURE_034` evolves this design, but does not remove its importance
+
+### A.7 Session persistence remains foundational
+
+Still valid:
+
+- persistent sessions and resumable history remain core product behavior
+
+Why it still matters:
+
+- `FEATURE_019` extends this into task-aware lineage instead of replacing the need for durable session truth
+
+### A.8 Promise signals and interactive control still matter
+
+Still valid:
+
+- completion / blocked / decision-style control signals remain part of current long-running behavior
+- pending input and interruption flows remain important runtime realities
+
+### A.9 Autocomplete and trigger-behavior history is still useful
+
+Still valid:
+
+- multi-source autocomplete
+- careful trigger-character behavior to avoid false positives in paths and URLs
+
+Why it still matters:
+
+- these decisions still inform terminal UX evolution under `FEATURE_023`
+
+---
+
+## Appendix B: Historical ADR Outline (Pre-Reset)
+
+The earlier ADR file recorded a set of already-adopted implementation decisions in more traditional ADR form. They are preserved here so that historical wording, scope, and rationale are not lost.
+
+### B.1 ADR-001: 5-layer independent architecture
+
+Original intent retained:
+
+- CLI, Interactive, Coding, Agent, AI, plus zero-dependency Skills concerns
+- each layer should remain independently useful and testable
+- architecture should favor reuse and clearer evolution boundaries
+
+### B.2 ADR-002: Provider abstraction pattern
+
+Original intent retained:
+
+- support many providers behind one interface
+- use an abstract base plus registry pattern
+- keep provider differences isolated behind the provider layer
+
+### B.3 ADR-003: Streaming-first output
+
+Original intent retained:
+
+- users should see output incrementally
+- long responses should not block on full completion
+- stream lifecycle events are part of both UX and debugging
+
+### B.4 ADR-004: Permission mode system
+
+Original intent retained:
+
+- balance safety and speed through explicit modes
+- keep dangerous actions gated
+- let trust increase progressively instead of being all-or-nothing
+
+### B.5 ADR-005: Skills as markdown instruction bundles
+
+Original intent retained:
+
+- keep skills lightweight and portable
+- prefer plain markdown for authoring and version control
+- support reusable task templates without a heavy plugin runtime
+
+### B.6 ADR-006: Ink as the CLI UI framework
+
+Original intent retained:
+
+- build interactive terminal UX with React-style composition
+- use a renderer that supports complex TUI state without abandoning the Node stack
+
+### B.7 ADR-007: Tool registry pattern
+
+Original intent retained:
+
+- register tools centrally
+- decouple tool execution logic from the agent loop
+- keep the runtime extensible and testable
+
+### B.8 ADR-008: Session persistence format
+
+Original intent retained:
+
+- persist sessions in append-friendly text formats
+- keep sessions inspectable and resumable
+- support long-running and cross-session continuity
+
+### B.9 ADR-009: Promise signal system
+
+Original intent retained:
+
+- allow the agent to surface explicit control outcomes such as completion, blocked state, and decision requests
+- give the host a structured way to react to long-running flows
+
+### B.10 ADR-010: Multi-source autocomplete
+
+Original intent retained:
+
+- merge completions from commands, files, skills, and other sources
+- keep the completion architecture extensible through specialized completers
+
+### B.11 ADR-011: Trigger-character whitespace rule
+
+Original intent retained:
+
+- avoid false trigger behavior in URLs and file paths
+- require start-of-input or whitespace-aware trigger positions for `/` and `@`

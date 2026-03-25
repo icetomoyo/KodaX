@@ -1,295 +1,390 @@
-# 特性设计文档
+# KodaX Feature Design Index
 
-本目录记录 KodaX 项目特性的设计方案。按版本组织，每个版本文件包含该版本所有特性的设计文档。
+> Last updated: 2026-03-25
+>
+> The current roadmap centers on `FEATURE_022`, which now carries the shift to an adaptive task engine with native multi-agent execution.
 
 ---
 
-## 目录结构
+## 1. How to read this directory
 
-```
+- Released design docs remain historical records.
+- Planned design docs below are the current source of truth.
+- Planned features were reorganized to match the new architecture.
+- `FEATURE_022` is the umbrella feature for the current execution-model shift.
+- `FEATURE_034` remains the runtime substrate and does not conflict with the new control plane design.
+
+### Directory structure
+
+```text
 docs/features/
-├── README.md          # 本文件（索引和概览）
-├── v0.3.1.md          # v0.3.1 — Plan Mode、Ask 模式、项目模式
-├── v0.3.3.md          # v0.3.3 — 交互式界面改进
-├── v0.4.0.md          # v0.4.0 — 架构重构与模块解耦（3 包）
-├── v0.5.0.md          # v0.5.0 — 5 层架构重构、Skills、补全增强
-├── v0.5.20.md         # v0.5.20 — Project Mode Enhancement
-├── v0.5.22.md         # v0.5.22 — CLI-Based OAuth Providers
-├── v0.6.0.md          # v0.6.0 — Command System 2.0、Project Mode 2.0
-├── v0.6.10.md         # v0.6.10 — Project Harness
-├── v0.6.15.md         # v0.6.15 — Parallel Toggle、DeepSeek Provider、Plan 双写白名单、ACP Server
-├── v0.7.0.md          # v0.7.0 — Session Tree & Rollback、JSON 输出等 (Planned)
-├── v0.8.0.md          # v0.8.0 — 主题系统、CodeWiki、Adaptive PI (Planned)
-├── v0.9.0.md          # v0.9.0 — 多模态图片上传 (Planned)
-└── v1.0.0.md          # v1.0.0 — Multi-Agent、Dual-Mode UX (Planned)
+|- README.md          # this file
+|- v0.3.1.md          # plan mode, ask mode, early project mode
+|- v0.3.3.md          # interactive UI improvements
+|- v0.4.0.md          # architecture refactor and module decoupling
+|- v0.5.0.md          # 5-layer architecture, skills, autocomplete
+|- v0.5.20.md         # Project Mode enhancement
+|- v0.5.22.md         # CLI-based OAuth providers
+|- v0.6.0.md          # Command System 2.0, Project Mode 2.0
+|- v0.6.10.md         # Project Harness
+|- v0.6.15.md         # parallel toggle, ACP server, provider growth
+|- v0.6.20.md         # JSON mode, token usage truth, TODO tree
+|- v0.7.0.md          # engine foundation
+|- v0.8.0.md          # knowledge, retrieval, safe runtime
+|- v0.9.0.md          # multimodal inputs
+`- v1.0.0.md          # mature delivery surfaces
 ```
 
 ---
 
-## KodaX 功能总览
+## 2. Current release state
 
-> **版本**: v0.6.15 | **更新日期**: 2026-03-22
+| Item | Value |
+|---|---|
+| Current release | `v0.6.15` |
+| Roadmap reset date | `2026-03-25` |
+| Main architectural direction | `FEATURE_022` -> adaptive task engine + native multi-agent control plane |
 
-### 架构概览
+### Current capability snapshot
 
+The repo already ships a substantial baseline that should remain visible in this index:
+
+- layered monorepo architecture
+- CLI, REPL, and ACP entry surfaces
+- provider abstraction with native and bridge-backed models
+- built-in coding tools, prompts, sessions, permissions, and skills
+- Project Harness, `AGENTS.md`, pending user inputs, and provider-aware reasoning behavior
+
+| Area | Current baseline |
+|---|---|
+| Architecture | modular packages with reusable lower layers |
+| Surfaces | CLI, REPL, ACP |
+| Runtime | coding loop, prompts, tools, sessions |
+| Workflow | Project Harness, `AGENTS.md`, reasoning budget policy |
+| Extensibility | custom providers, skills, commands, early orchestration plumbing |
+
+### Architecture snapshot
+
+```text
+CLI Layer
+  command parse | file storage | event handler
+      ->
+Interactive Layer (REPL)
+  Ink UI | permission control | built-in commands
+      ->
+Coding Layer
+  tools | prompts | agent loop
+      ->
+Agent Layer
+  session management | messages | tokenizer
+      ->
+AI Layer
+  providers | stream handling | errors
+
++ Skills Layer
+  skill discovery | skill execution | natural-language triggers
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        CLI Layer                                 │
-│  Command Parse | File Storage | Event Handler (Spinner)          │
-└─────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│                    Interactive Layer (REPL)                      │
-│  Ink UI | Permission Control | Built-in Commands                │
-└─────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│                     Coding Layer (独立库)                        │
-│  Tools (9) | Prompts | Agent Loop                               │
-└─────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│                     Agent Layer (独立库)                         │
-│  Session Mgmt | Messages | Tokenizer                            │
-└─────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│                       AI Layer (独立库)                          │
-│  Providers (11) | Stream Handling | Error Handling              │
-└─────────────────────────────────────────────────────────────────┘
-                              +
-┌─────────────────────────────────────────────────────────────────┐
-│                     Skills Layer (零依赖)                        │
-│  Skill Discovery | Skill Execution | Natural Language Triggers  │
-└─────────────────────────────────────────────────────────────────┘
-```
 
-### 核心功能
+### Core functionality snapshot
 
-| 功能 | 说明 |
-|------|------|
-| **Agent 循环** | runKodaX() 核心入口，最多 200 次迭代 |
-| **会话管理** | JSONL 格式持久化，Git 项目绑定 |
-| **消息压缩** | Token 超阈值时智能压缩 |
-| **系统提示** | 动态上下文，跨平台命令提示 |
-| **并行工具** | 非 bash 工具自动并行执行 |
-| **权限模式** | 4 级权限（plan / default / accept-edits / auto-in-project） |
+| Capability | Current baseline |
+|---|---|
+| Agent loop | `runKodaX()` core loop with up to 200 iterations |
+| Session management | JSONL persistence with git-aware workspace context |
+| Compaction | token-threshold-based message compaction |
+| Prompting | dynamic system prompt and platform-aware shell guidance |
+| Parallel tools | non-bash tool calls can execute in parallel |
+| Permissions | `plan`, `default`, `accept-edits`, `auto-in-project` |
 
-### CLI 功能
+### CLI surface snapshot
 
-| 参数 | 说明 |
-|------|------|
-| `-h, --help [TOPIC]` | 主题式帮助 |
-| `-p, --print TEXT` | 单次任务模式 |
-| `-c, --continue` | 继续最近会话 |
-| `-t, --thinking` | 扩展思考模式 |
-| `-y, --auto` | 自动模式 |
-| `-j, --parallel` | 并行工具执行 |
-| `--team TASKS` | 并行子 Agent |
-| `--init TASK` | 初始化长运行项目 |
-| `--auto-continue` | 自动继续模式 |
-| `acp serve` | ACP Server 模式，供编辑器/IDE 调用 |
+| Flag or command | Purpose |
+|---|---|
+| `-h, --help [TOPIC]` | topic-oriented help |
+| `-p, --print TEXT` | one-shot task mode |
+| `-c, --continue` | resume latest session |
+| `-t, --thinking` | stronger reasoning mode |
+| `-y, --auto` | auto mode |
+| `-j, --parallel` | parallel tool execution |
+| `--team TASKS` | legacy parallel subagent plumbing |
+| `--init TASK` | start managed long-running work |
+| `--auto-continue` | continue long-running work non-interactively |
+| `acp serve` | ACP server mode for editor and IDE hosts |
 
-### 交互式命令
+### Interactive command snapshot
 
-| 命令 | 说明 |
-|------|------|
-| `/mode [code\|ask]` | 切换交互模式 |
-| `/plan [on\|off\|once]` | Plan 模式管理 |
-| `/model [name]` | 切换 LLM 模型 |
-| `/reasoning [off\|auto\|quick\|balanced\|deep]` | 设置推理预算 |
-| `/parallel [on\|off\|toggle]` | 切换并行工具执行模式 |
-| `/status` | 显示当前状态 |
-| `/project [subcommand]` | 项目管理命令组（brainstorm / plan / next / auto / verify / status / quality） |
-| `@file` | 引用文件 |
-| `!command` | 执行 shell 命令 |
+| Command | Purpose |
+|---|---|
+| `/mode [code|ask]` | switch interaction mode |
+| `/plan [on|off|once]` | manage plan mode |
+| `/model [name]` | switch model |
+| `/reasoning [off|auto|quick|balanced|deep]` | set reasoning budget |
+| `/parallel [on|off|toggle]` | toggle parallel tool execution |
+| `/status` | show current state |
+| `/project [subcommand]` | project and managed-task control surface |
+| `@file` | reference file content |
+| `!command` | run shell command |
 
-### 工具系统
+### Tool system snapshot
 
-| 工具 | 说明 |
-|------|------|
-| read | 读取文件（支持 offset/limit） |
-| write | 写入文件（自动创建目录） |
-| edit | 精确字符串替换（支持 replace_all） |
-| bash | 执行 Shell 命令 |
-| glob | 文件模式搜索 |
-| grep | 正则表达式搜索 |
-| undo | 撤销最后一次修改 |
-| diff | 查看文件差异 |
-| ask-user | 向用户提问获取决策 |
+| Tool | Purpose |
+|---|---|
+| `read` | read files with offset/limit support |
+| `write` | write files and create parent directories |
+| `edit` | exact string replacement with `replace_all` support |
+| `bash` | run shell commands |
+| `glob` | file pattern search |
+| `grep` | regex content search |
+| `undo` | revert last edit |
+| `diff` | inspect file changes |
+| `ask-user` | request user decisions |
 
-### Provider 系统
+### Provider snapshot
 
-| Provider | 默认模型 | Reasoning | Context Window |
-|----------|----------|-----------|----------------|
-| anthropic | claude-sonnet-4-6 | native-budget | 200K |
-| openai | gpt-5.3-codex | native-effort | 400K |
-| kimi | k2.5 | native-effort | 256K |
-| kimi-code | k2.5 | native-budget | 256K |
-| qwen | qwen3.5-plus | native-budget | 256K |
-| zhipu | glm-5 | native-budget | 200K |
-| zhipu-coding | glm-5 | native-budget | 200K |
-| minimax-coding | MiniMax-M2.7 | native-budget | 204K |
-| gemini-cli | Gemini (CLI) | native-budget | varies |
-| codex-cli | Codex (CLI) | native-budget | varies |
-| deepseek | deepseek-chat | native-toggle | 128K |
+| Provider | Default model | Reasoning style | Context window |
+|---|---|---|---|
+| `anthropic` | `claude-sonnet-4-6` | native-budget | 200K |
+| `openai` | `gpt-5.3-codex` | native-effort | 400K |
+| `kimi` | `k2.5` | native-effort | 256K |
+| `kimi-code` | `k2.5` | native-budget | 256K |
+| `qwen` | `qwen3.5-plus` | native-budget | 256K |
+| `zhipu` | `glm-5` | native-budget | 200K |
+| `zhipu-coding` | `glm-5` | native-budget | 200K |
+| `minimax-coding` | `MiniMax-M2.7` | native-budget | 204K |
+| `gemini-cli` | `Gemini (CLI)` | native-budget | varies |
+| `codex-cli` | `Codex (CLI)` | native-budget | varies |
+| `deepseek` | `deepseek-chat` | native-toggle | 128K |
 
-### Reasoning 模式
+### Reasoning mode snapshot
 
-| 模式 | 预算策略 |
-|------|----------|
-| off | 禁用思考 |
-| auto | 由 Provider 智能选择 |
-| quick | 低预算，快速响应 |
-| balanced | 平衡预算，通用场景 |
-| deep | 高预算，复杂推理 |
+| Mode | Budget strategy |
+|---|---|
+| `off` | disable deliberate reasoning |
+| `auto` | provider-aware automatic selection |
+| `quick` | low budget, fast response |
+| `balanced` | balanced budget |
+| `deep` | high budget for harder reasoning |
 
-预算上限根据 Provider 自动调整（Provider-Aware Reasoning Budget Matrix）。
+### Feature highlights already shipped
 
-### 特色功能
+| Highlight | Meaning |
+|---|---|
+| Reasoning modes | provider-aware reasoning budget matrix |
+| Promise signals | `COMPLETE`, `BLOCKED`, `DECIDE` control signals |
+| Parallel execution | parallel non-bash tool execution |
+| Plan mode | plan generation and confirmation workflows |
+| Project Harness | action-level verification and proof-carrying completion |
+| `AGENTS.md` | project-level AI context rules |
+| Pending inputs | runtime user-input interruption queue |
+| ACP server | editor and IDE integration surface |
+| Plan dual-write whitelist | allows `.agent/plan_mode_doc.md` and system temp paths in plan mode |
 
-| 功能 | 说明 |
-|------|------|
-| **Reasoning 模式** | 5 级推理预算，Provider 感知自动调整 |
-| **Promise 信号** | COMPLETE / BLOCKED / DECIDE 信号 |
-| **并行执行** | 非 bash 工具并行执行 |
-| **Plan 模式** | 计划生成与逐步确认 |
-| **Project Mode** | AI 驱动开发工作流（brainstorm / plan / quality） |
-| **Project Harness** | Action 级别验证执行，proof-carrying completion |
-| **AGENTS.md** | 项目级 AI 上下文规则 |
-| **Skills 系统** | Markdown 定义，自然语言触发，自定义扩展 |
-| **运行时输入插队** | Pending Inputs Queue |
-| **ACP Server** | 标准协议，供编辑器/IDE 直接调用 |
-| **Plan 双写白名单** | Plan 模式允许写入 `.agent/plan_mode_doc.md` 和系统临时目录 |
+### Released version map
+
+Released design docs remain useful as implementation history:
+
+| Version range | Main themes |
+|---|---|
+| `v0.3.x` | plan mode, ask mode hardening, interactive project mode, early UI |
+| `v0.4.x` | monorepo refactor and architecture separation |
+| `v0.5.x` | 5-layer architecture, skills, permissions, compaction, provider growth |
+| `v0.6.x` | command system, Project Mode 2.0, Project Harness, ACP, provider-aware reasoning |
+
+### Released versions
+
+| Version | Release date | Feature count | Design doc |
+|---|---|---:|---|
+| `v0.3.1` | `2026-02-19` | 3 | [v0.3.1.md](./v0.3.1.md) |
+| `v0.3.3` | `2026-02-20` | 1 | [v0.3.3.md](./v0.3.3.md) |
+| `v0.4.0` | `2026-02-24` | 1 | [v0.4.0.md](./v0.4.0.md) |
+| `v0.4.6` | `2026-02-27` | 1 | [v0.5.0.md#feature_008-permission-control-system-improvements](./v0.5.0.md#feature_008-permission-control-system-improvements) |
+| `v0.5.0` | `2026-02-27` | 7 | [v0.5.0.md](./v0.5.0.md) |
+| `v0.5.5` | `2026-03-02` | 1 | [v0.5.0.md#feature_010-architecture-split-agent-core--skills](./v0.5.0.md#feature_010-architecture-split-agent-core--skills) |
+| `v0.5.13` | `2026-03-05` | 1 | [v0.5.0.md#feature_012-tui-autocomplete-enhancement](./v0.5.0.md#feature_012-tui-autocomplete-enhancement) |
+| `v0.5.14` | `2026-03-06` | 1 | [v0.5.0.md#feature_011-intelligent-context-compaction](./v0.5.0.md#feature_011-intelligent-context-compaction) |
+| `v0.5.20` | `2026-03-07` | 1 | [v0.5.20.md](./v0.5.20.md) |
+| `v0.5.22` | `2026-03-08` | 1 | [v0.5.22.md](./v0.5.22.md) |
+| `v0.5.34` | `2026-03-13` | 1 | [v0.6.0.md#feature_020-agentsmd-project-level-ai-context-rules](./v0.6.0.md#feature_020-agentsmd-project-level-ai-context-rules) |
+| `v0.5.37` | `2026-03-15` | 1 | [v0.6.0.md#feature_021-provider-aware-reasoning-budget-matrix](./v0.6.0.md#feature_021-provider-aware-reasoning-budget-matrix) |
+| `v0.6.0` | `2026-03-16` | 6 | [v0.6.0.md](./v0.6.0.md) |
+| `v0.6.4` | `2026-03-18` | 1 | [v0.6.0.md#feature_023-history-review-mode-and-mouse-wheel](./v0.6.0.md#feature_023-history-review-mode-and-mouse-wheel) |
+| `v0.6.10` | `2026-03-18` | 1 | [v0.6.10.md](./v0.6.10.md) |
+| `v0.6.13` | `2026-03-21` | 1 | [v0.6.15.md#feature_033-repl-parallel-toggle](./v0.6.15.md#feature_033-repl-parallel-toggle) |
+| `v0.6.14` | `2026-03-22` | 2 | [v0.6.15.md#feature_036-deepseek-built-in-provider](./v0.6.15.md#feature_036-deepseek-built-in-provider) |
+| `v0.6.15` | `2026-03-22` | 4 | [v0.6.15.md](./v0.6.15.md) |
 
 ---
 
-## 已发布版本
+## 3. Planned roadmap
 
-| 版本 | 发布日期 | 特性数 | 设计文档 |
-|------|----------|--------|----------|
-| **v0.3.1** | 2026-02-19 | 3 | [v0.3.1.md](./v0.3.1.md) |
-| **v0.3.3** | 2026-02-20 | 1 | [v0.3.3.md](./v0.3.3.md) |
-| **v0.4.0** | 2026-02-24 | 1 | [v0.4.0.md](./v0.4.0.md) |
-| **v0.4.6** | 2026-02-27 | 1 | [v0.5.0.md#008) |
-| **v0.5.0** | 2026-02-27 | 7 | [v0.5.0.md](./v0.5.0.md) |
-| **v0.5.5** | 2026-03-02 | 1 | [v0.5.0.md#010) |
-| **v0.5.13** | 2026-03-05 | 1 | [v0.5.0.md#012) |
-| **v0.5.14** | 2026-03-06 | 1 | [v0.5.0.md#011) |
-| **v0.5.20** | 2026-03-07 | 1 | [v0.5.20.md](./v0.5.20.md) |
-| **v0.5.22** | 2026-03-08 | 1 | [v0.5.22.md](./v0.5.22.md) |
-| **v0.5.34** | 2026-03-13 | 1 | [v0.6.0.md#020) |
-| **v0.5.37** | 2026-03-15 | 1 | [v0.6.0.md#021) |
-| **v0.6.0** | 2026-03-16 | 6 | [v0.6.0.md](./v0.6.0.md) |
-| **v0.6.4** | 2026-03-18 | 1 | [v0.6.0.md#023) |
-| **v0.6.10** | 2026-03-18 | 1 | [v0.6.10.md](./v0.6.10.md) |
-| **v0.6.11** | 2026-03-19 | 0 | — |
-| **v0.6.12** | 2026-03-19 | 0 | — |
-| **v0.6.13** | 2026-03-21 | 1 | [v0.6.15.md#033) |
-| **v0.6.14** | 2026-03-22 | 2 | [v0.6.15.md#036) |
-| **v0.6.15** | 2026-03-22 | 4 | [v0.6.15.md](./v0.6.15.md) |
+### v0.7.0: Engine Foundation
 
-### 特性索引
+Focus:
 
-| ID | 特性 | 版本 | 说明 |
-|----|------|------|------|
-| 001 | Plan Mode | v0.3.1 | 执行前计划生成与确认 |
-| 002 | 强化 Ask 模式 | v0.3.1 | 只读模式强制执行 |
-| 003 | 交互式项目模式 | v0.3.1 | REPL 中的 `/project` 命令组 |
-| 004 | 交互式界面改进 | v0.3.3 | 多行输入、状态栏、自动补全、Markdown 渲染 |
-| 005 | 架构重构与模块解耦 | v0.4.0 | 重构为 3 个独立 npm 包 |
-| 006 | Skills 系统 | v0.5.10 | Markdown 定义，自然语言触发 |
-| 007 | 主题系统完善 | Planned | 全局主题切换 |
-| 008 | 权限控制体系改进 | v0.4.6 | 4 级权限模式 |
-| 009 | 架构重构：AI 层独立 | v0.5.0 | AI 层 + 权限层分离 |
-| 010 | 架构拆分：Agent Core + Skills 独立 | v0.5.5 | 5 层架构成型 |
-| 011 | 智能上下文压缩 | v0.5.14 | Token 超阈值自动压缩 |
-| 012 | TUI 自动补全增强 | v0.5.13 | 多源合并补全系统 |
-| 013 | Command System 2.0 | v0.6.0 | 用户级命令发现 + LLM 可调用交互工具 |
-| 014 | Project Mode Enhancement | v0.5.20 | AI-First 方法，7 个精简命令 |
-| 015 | Project Mode 2.0 | v0.6.0 | AI 驱动开发工作流（brainstorm, plan, quality） |
-| 016 | CLI-Based OAuth Providers | v0.5.22 | OAuth 认证 Provider |
-| 017 | 运行时用户输入插队 | v0.6.0 | Pending Inputs Queue |
-| 018 | CodeWiki | Planned | 项目知识库系统 |
-| 019 | Session Tree & Rollback | Planned | 会话树与回滚 |
-| 020 | AGENTS.md | v0.5.34 | 项目级 AI 上下文规则 |
-| 021 | Provider-Aware Reasoning Budget | v0.5.37 | Provider 感知推理预算矩阵 |
-| 022 | Multi-Agent Orchestration | Planned | 多 Agent 编排层 |
-| 023 | Dual-Mode Terminal UX | Planned | Inline + Fullscreen TUI |
-| 024 | Project Harness | v0.6.10 | Action 级别验证执行 |
-| 025 | Adaptive Project Intelligence | Planned | 自适应项目智能层 |
-| 026 | Roadmap Integrity 加固 | v0.7.0 | Tracker 一致性与元数据校验 |
-| 028 | First-Class 搜索检索 | v0.8.0 | Web search / code search / 证据工具 |
-| 029 | Provider Adapter 透明度 | v0.7.0 | CLI-bridge 与 native API 能力区分 |
-| 030 | 多端交付 | v1.0.0 | IDE / Desktop / Web 统一产品体验 |
-| 031 | 多模态图片上传 | v0.9.0 | 图片文件路径与粘贴支持 |
-| 032 | JSON 输出模式 | v0.7.0 | `--mode json` 结构化事件输出 |
-| 033 | REPL 并行切换 | v0.6.15 | `/parallel` 运行时动态切换 |
-| 034 | Extension + Capability Runtime | v0.7.0 | Headless programmable runtime for extensions and capabilities |
-| 035 | MCP 能力 Provider | v0.7.0 | MCP 生态工具访问 |
-| 036 | DeepSeek 内置 Provider | v0.6.15 | 第 11 个内置 provider |
-| 037 | API Token Usage 优先 | v0.7.0 | 真实 usage 优先 + 估算回退 |
-| 038 | Official Sandbox Extension | v0.8.0 | `@kodax/sandbox` 可选包 |
-| 039 | Plan 模式双写白名单 | v0.6.15 | `.agent/plan_mode_doc.md` + 系统临时目录 |
-| 040 | ACP Server 支持 | v0.6.15 | 供编辑器/IDE 直接调用的 ACP Server |
+- `FEATURE_022` as the umbrella product feature
+- task-first persistence
+- harness routing
+- native multi-agent control plane
+- provider-aware policy
+- runtime substrate
+
+Features:
+
+- [FEATURE_022](v0.7.0.md#feature_022-adaptive-task-engine-and-native-multi-agent-control-plane)
+- [FEATURE_019](v0.7.0.md#feature_019-session-tree-checkpoints-and-rewindable-task-runs)
+- [FEATURE_025](v0.7.0.md#feature_025-adaptive-task-intelligence-and-harness-router)
+- [FEATURE_026](v0.7.0.md#feature_026-roadmap-integrity-and-planning-hygiene)
+- [FEATURE_029](v0.7.0.md#feature_029-provider-capability-transparency-and-harness-policy)
+- [FEATURE_034](v0.7.0.md#feature_034-extension-and-capability-runtime)
+
+### v0.8.0: Knowledge, Retrieval, and Safe Runtime
+
+Focus:
+
+- knowledge substrate
+- evidence tooling
+- extensible runtime capabilities
+- sandbox safety
+- theme cleanup
+
+Features:
+
+- [FEATURE_007](v0.8.0.md#feature_007-theme-system-consolidation)
+- [FEATURE_018](v0.8.0.md#feature_018-codewiki-and-task-knowledge-substrate)
+- [FEATURE_028](v0.8.0.md#feature_028-first-class-search-retrieval-and-evidence-tooling)
+- [FEATURE_035](v0.8.0.md#feature_035-mcp-capability-provider)
+- [FEATURE_038](v0.8.0.md#feature_038-official-sandbox-extension)
+
+### v0.9.0: Multimodal Inputs
+
+Focus:
+
+- bring non-text artifacts into the task engine
+
+Features:
+
+- [FEATURE_031](v0.9.0.md#feature_031-multimodal-artifact-inputs)
+
+### v1.0.0: Delivery Surfaces
+
+Focus:
+
+- terminal UX maturity
+- cross-surface delivery
+
+Features:
+
+- [FEATURE_023](v1.0.0.md#feature_023-dual-mode-terminal-ux)
+- [FEATURE_030](v1.0.0.md#feature_030-multi-surface-delivery)
 
 ---
 
-## 规划中版本
+## 4. Historical docs
 
-| 版本 | 特性数 | 设计文档 |
-|------|--------|----------|
-| **v0.7.0** | 7 | [v0.7.0.md](./v0.7.0.md) |
-| **v0.8.0** | 5 | [v0.8.0.md](./v0.8.0.md) |
-| **v0.9.0** | 1 | [v0.9.0.md](./v0.9.0.md) |
-| **v1.0.0** | 3 | [v1.0.0.md](./v1.0.0.md) |
+Released or historical design docs remain available:
+
+- `v0.3.1.md`
+- `v0.3.3.md`
+- `v0.4.0.md`
+- `v0.5.0.md`
+- `v0.5.20.md`
+- `v0.5.22.md`
+- `v0.6.0.md`
+- `v0.6.10.md`
+- `v0.6.15.md`
+
+These files remain useful as implementation history, but they are not the source of truth for future architecture.
+
+### Why they still matter
+
+Older docs still carry useful material such as:
+
+- current-state architecture references
+- prior implementation constraints
+- detailed design records for features that were later reframed
+- UX research and migration notes that remain valid after roadmap changes
+
+### Historical feature index snapshot
+
+The current source of truth for planning is [FEATURE_LIST.md](../FEATURE_LIST.md), but the older feature index is still useful as a cross-reference when reading historical design docs.
+
+| ID | Feature | Version | Meaning |
+|---|---|---|---|
+| `001` | Plan Mode | `v0.3.1` | plan generation and confirmation |
+| `002` | Ask Mode hardening | `v0.3.1` | enforce read-only behavior |
+| `003` | Interactive Project Mode | `v0.3.1` | early `/project` command group |
+| `004` | Interactive UI improvements | `v0.3.3` | multiline input, status bar, autocomplete, markdown |
+| `005` | Architecture refactor and module decoupling | `v0.4.0` | refactor into independent packages |
+| `006` | Skills system | `v0.5.0` | markdown-defined, natural-language-triggered skills |
+| `007` | Theme system consolidation | `v0.8.0` | theme cleanup and persistence |
+| `008` | Permission control system improvements | `v0.4.6` | 4 permission modes |
+| `009` | AI layer independence | `v0.5.0` | separate AI and permission concerns |
+| `010` | Agent core + skills split | `v0.5.5` | 5-layer architecture shape |
+| `011` | Intelligent context compaction | `v0.5.14` | token-threshold compaction |
+| `012` | TUI autocomplete enhancement | `v0.5.13` | multi-source completion |
+| `013` | Command System 2.0 | `v0.6.0` | user commands + LLM-callable interaction tools |
+| `014` | Project Mode enhancement | `v0.5.20` | AI-first project workflow |
+| `015` | Project Mode 2.0 | `v0.6.0` | brainstorm, plan, quality workflows |
+| `016` | CLI-based OAuth providers | `v0.5.22` | OAuth-authenticated providers |
+| `017` | Pending Inputs Queue | `v0.6.0` | runtime user-input interruption |
+| `018` | CodeWiki / task knowledge substrate | `v0.8.0` | durable project knowledge |
+| `019` | Session tree, checkpoints, rewindable task runs | `v0.7.0` | task-aware lineage and rollback-friendly state |
+| `020` | `AGENTS.md` | `v0.5.34` | project-level AI context rules |
+| `021` | Provider-aware reasoning budget | `v0.5.37` | provider-aware reasoning matrix |
+| `022` | Adaptive task engine + native multi-agent control plane | `v0.7.0` | umbrella execution-model shift |
+| `023` | Dual-mode terminal UX | `v1.0.0` | inline + stronger TUI interaction model |
+| `024` | Project Harness | `v0.6.10` | action-level verification execution |
+| `025` | Adaptive task intelligence and harness router | `v0.7.0` | task intake and harness selection |
+| `026` | Roadmap integrity and planning hygiene | `v0.7.0` | tracker and metadata consistency |
+| `028` | Search, retrieval, evidence tooling | `v0.8.0` | web/code search and evidence |
+| `029` | Provider capability transparency and harness policy | `v0.7.0` | native vs bridge capability truth |
+| `030` | Multi-surface delivery | `v1.0.0` | IDE / desktop / web surface strategy |
+| `031` | Multimodal artifact inputs | `v0.9.0` | image and artifact input support |
+| `032` | JSON output mode | `v0.6.20` | structured event output |
+| `033` | REPL parallel toggle | `v0.6.15` | runtime `/parallel` toggle |
+| `034` | Extension + capability runtime | `v0.7.0` | programmable headless runtime substrate |
+| `035` | MCP capability provider | `v0.8.0` | MCP ecosystem access |
+| `036` | DeepSeek built-in provider | `v0.6.15` | 11th built-in provider |
+| `037` | API token usage truth-first accounting | `v0.6.20` | real usage preferred, estimate fallback |
+| `038` | Official sandbox extension | `v0.8.0` | optional `@kodax/sandbox` package |
+| `039` | Plan dual-write whitelist | `v0.6.15` | `.agent/plan_mode_doc.md` and temp dir |
+| `040` | ACP server support | `v0.6.15` | ACP server for editors and IDEs |
+| `041` | TODO dependency tree integration | `v0.6.20` | TODO graph and dependency awareness |
 
 ---
 
-## 扩展性
+## 5. Key architecture boundaries
 
-### 自定义 Provider
+### 5.1 `FEATURE_034`
 
-```typescript
-import { KodaXBaseProvider, registerProvider } from '@kodax/ai';
+`FEATURE_034` owns:
 
-class MyProvider extends KodaXBaseProvider {
-  readonly name = 'my-provider';
-  readonly supportsThinking = false;
-  async stream(messages, tools, system) { /* ... */ }
-}
+- extension and capability runtime
+- tool override semantics
+- diagnostics and provenance
+- host-neutral runtime loading
 
-registerProvider('my-provider', () => new MyProvider());
-```
+It does not own:
 
-### 自定义工具
+- task routing
+- role semantics
+- multi-agent control plane
+- completion judgment
 
-```typescript
-import { registerTool } from '@kodax/coding';
-registerTool('my-tool', async (input, context) => 'result');
-```
+### 5.2 `FEATURE_022`
 
-### 自定义 Skill
+`FEATURE_022` is now the umbrella feature for the task-engine transition. Its multi-agent control plane remains central, but it also owns the product-level shift away from mode-led execution.
 
-```bash
-# ~/.kodax/skills/my-skill.md
-# My Custom Skill
-#
-# ## Trigger Keywords
-# my-task, custom
-#
-# ## Instructions
-# 1. Step one
-# 2. Step two
-```
+### 5.3 `FEATURE_025`
+
+`FEATURE_025` generalizes old project intelligence into task intelligence and harness routing for every request, not only explicit project flows.
 
 ---
 
-## 相关文档
+## 6. Related documents
 
-- [FEATURE_LIST.md](../FEATURE_LIST.md) - 特性列表和状态跟踪
-- [HLD.md](../HLD.md) - 高层设计
-- [DD.md](../DD.md) - 详细设计
-- [ADR.md](../ADR.md) - 架构决策记录
-- [PRD.md](../PRD.md) - 产品需求文档
-- [KNOWN_ISSUES.md](../KNOWN_ISSUES.md) - 已知问题
+- [Feature List](../FEATURE_LIST.md)
+- [ADR](../ADR.md)
+- [HLD](../HLD.md)
+- [DD](../DD.md)
+- [PRD](../PRD.md)

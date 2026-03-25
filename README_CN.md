@@ -990,11 +990,15 @@ npm run clean
 
 ## 文档
 
-- [设计文档](DESIGN.md) - 架构和实现细节
-- [长时间运行指南](LONG_RUNNING_GUIDE.md) - `--init` 最佳实践
-- [测试指南](TESTING.md) - 如何测试所有功能
-- [test-guides/](test-guides/) - 功能专用测试指南
-- [更新日志](../CHANGELOG.md) - 版本历史
+- [README.md](README.md) - 英文文档
+- [docs/ADR.md](docs/ADR.md) - 架构决策记录
+- [docs/HLD.md](docs/HLD.md) - 高层设计
+- [docs/DD.md](docs/DD.md) - 详细设计
+- [docs/PRD.md](docs/PRD.md) - 产品需求文档
+- [docs/FEATURE_LIST.md](docs/FEATURE_LIST.md) - Feature 跟踪与路线图索引
+- [docs/features/README.md](docs/features/README.md) - Feature Design 索引
+- [docs/test-guides/](docs/test-guides/) - 功能专用测试指南
+- [CHANGELOG.md](CHANGELOG.md) - 版本历史
 
 
 ---
