@@ -225,7 +225,7 @@ docs/features/
 | 031 | 多模态图片上传 | v0.9.0 | 图片文件路径与粘贴支持 |
 | 032 | JSON 输出模式 | v0.7.0 | `--mode json` 结构化事件输出 |
 | 033 | REPL 并行切换 | v0.6.15 | `/parallel` 运行时动态切换 |
-| 034 | Extension + Capability Runtime | v0.7.0 | 统一扩展接口与能力运行时 |
+| 034 | Extension + Capability Runtime | v0.7.0 | Headless programmable runtime for extensions and capabilities |
 | 035 | MCP 能力 Provider | v0.7.0 | MCP 生态工具访问 |
 | 036 | DeepSeek 内置 Provider | v0.6.15 | 第 11 个内置 provider |
 | 037 | API Token Usage 优先 | v0.7.0 | 真实 usage 优先 + 估算回退 |

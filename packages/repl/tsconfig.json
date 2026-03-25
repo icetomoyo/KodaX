@@ -5,9 +5,9 @@
     "moduleResolution": "NodeNext",
     "baseUrl": ".",
     "paths": {
-      "@kodax/agent": ["../agent"],
-      "@kodax/coding": ["../coding"],
-      "@kodax/skills": ["../skills"]
+      "@kodax/agent": ["../agent/src/index.ts"],
+      "@kodax/coding": ["../coding/src/index.ts"],
+      "@kodax/skills": ["../skills/src/index.ts"]
     },
     "lib": ["ES2022"],
     "jsx": "react-jsx",

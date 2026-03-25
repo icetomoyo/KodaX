@@ -59,7 +59,7 @@ type RunnableToolCall = {
 type MessageContentBlock = Exclude<KodaXMessage['content'], string>[number];
 
 function isTypedContentBlock(block: unknown): block is MessageContentBlock {
-  return Boolean(block) && typeof block === 'object' && 'type' in block;
+  return block !== null && typeof block === 'object' && 'type' in block;
 }
 
 function isToolUseContentBlock(

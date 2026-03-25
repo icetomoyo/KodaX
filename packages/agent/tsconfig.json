@@ -5,7 +5,7 @@
     "moduleResolution": "NodeNext",
     "baseUrl": ".",
     "paths": {
-      "@kodax/ai": ["../ai"]
+      "@kodax/ai": ["../ai/src/index.ts"]
     },
     "lib": ["ES2022"],
     "outDir": "./dist",

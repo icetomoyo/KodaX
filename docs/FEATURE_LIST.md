@@ -1,6 +1,6 @@
 # Feature List
 
-_Last Updated: 2026-03-24_
+_Last Updated: 2026-03-25_
 
 ---
 
@@ -9,7 +9,7 @@ _Last Updated: 2026-03-24_
 | 字段 | 值 | 说明 |
 |------|-----|------|
 | **Current Release** | v0.6.15 | 最新发布版本（仅供参考） |
-| **Planned Version** | v0.6.20 | 当前规划的版本 |
+| **Planned Version** | v0.7.0 | Current planning target |
 
 ---
 
