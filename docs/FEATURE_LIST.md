@@ -1,6 +1,6 @@
 # Feature List
 
-> Last updated: 2026-03-25
+> Last updated: 2026-03-26
 
 ---
 
@@ -10,16 +10,16 @@
 |---|---|
 | Tracked feature IDs | `001-041` (`027` unused) |
 | Total tracked features | `40` |
-| Completed | `27` |
+| Completed | `31` |
 | InProgress | `0` |
-| Planned | `12` |
-| Current released version | `v0.6.15` |
+| Planned | `9` |
+| Current released version | `v0.7.3` |
 
 ### Planned version distribution
 
 | Version | Planned features |
 |---|---|
-| `v0.7.0` | `4` |
+| `v0.7.0` | `2` |
 | `v0.8.0` | `5` |
 | `v0.9.0` | `1` |
 | `v1.0.0` | `2` |
@@ -32,13 +32,10 @@
 |---|---|---|---|---|---|
 | `007` | Theme System Consolidation | Enhancement | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_007-theme-system-consolidation) |
 | `018` | CodeWiki and Task Knowledge Substrate | New | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_018-codewiki-and-task-knowledge-substrate) |
-| `019` | Session Tree, Checkpoints, and Rewindable Task Runs | New | High | `v0.7.0` | [v0.7.0](features/v0.7.0.md#feature_019-session-tree-checkpoints-and-rewindable-task-runs) |
 | `022` | Adaptive Task Engine and Native Multi-Agent Control Plane | New | High | `v0.7.0` | [v0.7.0](features/v0.7.0.md#feature_022-adaptive-task-engine-and-native-multi-agent-control-plane) |
 | `023` | Dual-Mode Terminal UX | Enhancement | High | `v1.0.0` | [v1.0.0](features/v1.0.0.md#feature_023-dual-mode-terminal-ux) |
-| `025` | Adaptive Task Intelligence and Harness Router | Enhancement | High | `v0.7.0` | [v0.7.0](features/v0.7.0.md#feature_025-adaptive-task-intelligence-and-harness-router) |
 | `026` | Roadmap Integrity and Planning Hygiene | Internal | High | `v0.7.0` | [v0.7.0](features/v0.7.0.md#feature_026-roadmap-integrity-and-planning-hygiene) |
 | `028` | First-Class Search, Retrieval, and Evidence Tooling | Enhancement | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_028-first-class-search-retrieval-and-evidence-tooling) |
-| `029` | Provider Capability Transparency and Harness Policy | Enhancement | High | `v0.7.0` | [v0.7.0](features/v0.7.0.md#feature_029-provider-capability-transparency-and-harness-policy) |
 | `030` | Multi-Surface Delivery | Enhancement | High | `v1.0.0` | [v1.0.0](features/v1.0.0.md#feature_030-multi-surface-delivery) |
 | `031` | Multimodal Artifact Inputs | New | High | `v0.9.0` | [v0.9.0](features/v0.9.0.md#feature_031-multimodal-artifact-inputs) |
 | `035` | MCP Capability Provider | New | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_035-mcp-capability-provider) |
@@ -72,12 +69,15 @@
 | `015` | Project Mode 2.0 | `v0.6.0` | [v0.6.0](features/v0.6.0.md) |
 | `016` | CLI-Based OAuth Providers | `v0.5.22` | [v0.5.22](features/v0.5.22.md) |
 | `017` | Pending User Inputs Queue | `v0.6.0` | [v0.6.0](features/v0.6.0.md) |
+| `019` | Session Tree, Checkpoints, and Rewindable Task Runs | `v0.7.2` | [v0.7.0](features/v0.7.0.md#feature_019-session-tree-checkpoints-and-rewindable-task-runs) |
 | `020` | AGENTS.md Workspace Rules | `v0.5.34` | [v0.6.0](features/v0.6.0.md) |
 | `021` | Provider-Aware Reasoning Budget | `v0.5.37` | [v0.6.0](features/v0.6.0.md) |
 | `024` | Project Harness | `v0.6.10` | [v0.6.10](features/v0.6.10.md) |
+| `025` | Adaptive Task Intelligence and Harness Router | `v0.7.4` | [v0.7.0](features/v0.7.0.md#feature_025-adaptive-task-intelligence-and-harness-router) |
+| `029` | Provider Capability Transparency and Harness Policy | `v0.7.1` | [v0.7.0](features/v0.7.0.md#feature_029-provider-capability-transparency-and-harness-policy) |
 | `032` | JSON Output Mode | `v0.6.20` (unreleased) | [v0.6.20](features/v0.6.20.md) |
 | `033` | REPL Parallel Toggle | `v0.6.15` | [v0.6.15](features/v0.6.15.md) |
-| `034` | Extension and Capability Runtime | `v0.7.0` (unreleased) | [v0.7.0](features/v0.7.0.md#feature_034-extension-and-capability-runtime) |
+| `034` | Extension and Capability Runtime | `v0.7.0` | [v0.7.0](features/v0.7.0.md#feature_034-extension-and-capability-runtime) |
 | `036` | DeepSeek Built-in Provider | `v0.6.15` | [v0.6.15](features/v0.6.15.md) |
 | `037` | API Token Usage Priority and Estimation Fallback | `v0.6.20` (unreleased) | [v0.6.20](features/v0.6.20.md) |
 | `039` | Plan-Mode Dual-Write Allowlist | `v0.6.15` | [v0.6.15](features/v0.6.15.md) |

@@ -26,10 +26,15 @@ import {
 } from '../permission/types.js';
 import {
   describeProviderCapabilitySummary,
+  formatProviderCapabilityDetailLines,
+  formatProviderSourceKind,
   describeReasoningCapabilityControl,
   describeReasoningExecution,
   formatReasoningCapabilityShort,
+  getProviderCapabilitySnapshot,
   getProviderCapabilityProfile,
+  getProviderCommonPolicyScenarios,
+  getProviderPolicyDecision,
   getProviderReasoningCapability,
   getProviderAvailableModels,
   getProviderList,
@@ -552,8 +557,8 @@ export const BUILTIN_COMMANDS: Command[] = [
         await callbacks.listSessions();
         return;
       }
-      const success = await callbacks.loadSession(args[0]!);
-      if (!success) {
+      const status = await callbacks.loadSession(args[0]!);
+      if (status === 'missing') {
         console.log(chalk.red(`\n[Session not found: ${args[0]}]`));
       }
     },
@@ -569,6 +574,83 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log(chalk.dim('  /load 20260219_143052') + '# Load session by ID');
       console.log();
       console.log(chalk.dim('  See also: /help sessions, /help save'));
+      console.log();
+    },
+  },
+  {
+    name: 'tree',
+    description: 'Inspect or switch the current session tree',
+    usage: '/tree [entry-id|label] | /tree label <entry-id|label> <name> | /tree unlabel <entry-id|label>',
+    handler: async (args, _context, callbacks) => {
+      if (args.length === 0) {
+        await callbacks.printSessionTree?.();
+        return;
+      }
+
+      const subcommand = args[0]?.trim().toLowerCase();
+      if (subcommand === 'label') {
+        if (args.length < 3) {
+          console.log(chalk.red('\n[Usage: /tree label <entry-id|label> <name>]'));
+          return;
+        }
+        const success = await callbacks.labelSessionBranch?.(args[1]!, args.slice(2).join(' '));
+        if (!success) {
+          console.log(chalk.red(`\n[Tree entry not found: ${args[1]}]`));
+        }
+        return;
+      }
+
+      if (subcommand === 'unlabel') {
+        if (args.length < 2) {
+          console.log(chalk.red('\n[Usage: /tree unlabel <entry-id|label>]'));
+          return;
+        }
+        const success = await callbacks.labelSessionBranch?.(args[1]!, undefined);
+        if (!success) {
+          console.log(chalk.red(`\n[Tree entry not found: ${args[1]}]`));
+        }
+        return;
+      }
+
+      const status = await callbacks.switchSessionBranch?.(args[0]!);
+      if (status === 'missing') {
+        console.log(chalk.red(`\n[Tree entry not found: ${args[0]}]`));
+      }
+    },
+    detailedHelp: () => {
+      console.log(chalk.cyan('\n/tree - Inspect Session Lineage\n'));
+      console.log(chalk.bold('Usage:'));
+      console.log(chalk.dim('  /tree                              ') + 'Show the current session tree');
+      console.log(chalk.dim('  /tree <entry-id|label>             ') + 'Jump to a previous branch point');
+      console.log(chalk.dim('  /tree label <entry-id|label> <name>') + 'Attach a lightweight checkpoint label');
+      console.log(chalk.dim('  /tree unlabel <entry-id|label>     ') + 'Clear an existing checkpoint label');
+      console.log();
+      console.log(chalk.bold('Description:'));
+      console.log(chalk.dim('  Session history is stored as a branchable tree. Use /tree to'));
+      console.log(chalk.dim('  inspect the lineage, revisit an earlier branch safely, and add'));
+      console.log(chalk.dim('  bookmark-style checkpoint labels without changing git state.'));
+      console.log();
+    },
+  },
+  {
+    name: 'fork',
+    description: 'Fork the current branch into a new session',
+    usage: '/fork [entry-id|label]',
+    handler: async (args, _context, callbacks) => {
+      const status = await callbacks.forkSession?.(args[0]);
+      if (status === 'failed') {
+        console.log(chalk.red(`\n[Unable to fork session${args[0] ? ` from ${args[0]}` : ''}]`));
+      }
+    },
+    detailedHelp: () => {
+      console.log(chalk.cyan('\n/fork - Export a Branch to a New Session\n'));
+      console.log(chalk.bold('Usage:'));
+      console.log(chalk.dim('  /fork                 ') + 'Fork from the active branch');
+      console.log(chalk.dim('  /fork <entry-id|label>') + 'Fork from a selected tree node');
+      console.log();
+      console.log(chalk.bold('Description:'));
+      console.log(chalk.dim('  Creates a new session file from the selected branch so you can'));
+      console.log(chalk.dim('  continue there without mutating the current session lineage.'));
       console.log();
     },
   },
@@ -759,6 +841,85 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log(chalk.dim('  /model anthropic             ') + '# Switch to Anthropic (default model)');
       console.log(chalk.dim('  /model openai/gpt-5.4        ') + '# Switch to OpenAI GPT-5.4');
       console.log(chalk.dim('  /model /claude-opus-4-6      ') + '# Switch to Opus within current provider');
+      console.log();
+    },
+  },
+  {
+    name: 'provider',
+    description: 'Inspect provider semantics and policy constraints',
+    usage: '/provider [<provider>[/<model>]]',
+    handler: async (args, _context, _callbacks, currentConfig) => {
+      const input = (args[0] ?? '').trim();
+
+      let targetProvider = currentConfig.provider;
+      let targetModel = currentConfig.model;
+
+      if (input) {
+        if (input.includes('/')) {
+          const slashIndex = input.indexOf('/');
+          targetProvider = input.slice(0, slashIndex).trim();
+          targetModel = input.slice(slashIndex + 1).trim() || undefined;
+        } else {
+          targetProvider = input;
+          targetModel = undefined;
+        }
+      }
+
+      if (!isKnownProvider(targetProvider)) {
+        console.log(chalk.red(`\n[Unknown provider: ${targetProvider}]`));
+        console.log(chalk.dim(`Available: ${getAvailableProviderNames().join(', ')}\n`));
+        return;
+      }
+
+      const snapshot = getProviderCapabilitySnapshot(targetProvider, targetModel);
+      if (!snapshot) {
+        console.log(chalk.red(`\n[Provider details unavailable: ${targetProvider}]`));
+        console.log();
+        return;
+      }
+
+      const commonScenarios = getProviderCommonPolicyScenarios(
+        targetProvider,
+        targetModel,
+        currentConfig.reasoningMode,
+      );
+
+      console.log(chalk.bold('\nProvider Details:\n'));
+      console.log(chalk.dim(`  Provider: ${chalk.cyan(snapshot.provider)}${snapshot.model ? ` / ${chalk.cyan(snapshot.model)}` : ''}`));
+      console.log(chalk.dim(`  Source:   ${formatProviderSourceKind(snapshot.sourceKind)}`));
+      console.log();
+
+      console.log(chalk.bold('Capability Matrix:'));
+      for (const line of formatProviderCapabilityDetailLines(snapshot)) {
+        console.log(chalk.dim(`  - ${line}`));
+      }
+      console.log();
+
+      if (commonScenarios.length > 0) {
+        console.log(chalk.bold('Common Scenarios:'));
+        for (const scenario of commonScenarios) {
+          const color =
+            scenario.decision.status === 'block'
+              ? chalk.red
+              : scenario.decision.status === 'warn'
+                ? chalk.yellow
+                : chalk.green;
+          console.log(color(`  - ${scenario.label}: ${scenario.decision.status.toUpperCase()}`));
+          console.log(chalk.dim(`    ${scenario.decision.summary}`));
+        }
+        console.log();
+      }
+    },
+    detailedHelp: () => {
+      console.log(chalk.cyan('\n/provider - Inspect Provider Semantics\n'));
+      console.log(chalk.bold('Usage:'));
+      console.log(chalk.dim('  /provider                      ') + 'Inspect the current provider/model');
+      console.log(chalk.dim('  /provider <provider>           ') + 'Inspect a provider using its default model');
+      console.log(chalk.dim('  /provider <provider>/<model>   ') + 'Inspect a specific provider/model pair');
+      console.log();
+      console.log(chalk.bold('Description:'));
+      console.log(chalk.dim('  Shows the provider capability matrix and common 029 policy outcomes.'));
+      console.log(chalk.dim('  Use this to understand why long-running, harness, or evidence-heavy flows may warn or block.'));
       console.log();
     },
   },
@@ -1091,7 +1252,7 @@ const COMMAND_CATEGORIES: Record<string, string[]> = {
   General: ['help', 'copy', 'exit', 'clear', 'compact', 'reload', 'extensions', 'status'],
   Permission: ['mode', 'auto'],
   Session: ['new', 'save', 'load', 'sessions', 'history', 'delete'],
-  Settings: ['model', 'thinking', 'reasoning', 'parallel', 'plan'],
+  Settings: ['model', 'provider', 'thinking', 'reasoning', 'parallel', 'plan'],
   Project: ['project'],
   Skills: ['skill'],
 };
@@ -1314,6 +1475,11 @@ function printStatus(context: InteractiveContext, currentConfig: CurrentConfig):
   const tokens = context.contextTokenSnapshot?.currentTokens ?? estimateTokens(context.messages);
   const tokenSource = context.contextTokenSnapshot?.source ?? 'estimate';
   const capabilityProfile = getProviderCapabilityProfile(currentConfig.provider);
+  const generalProviderPolicy = getProviderPolicyDecision(
+    currentConfig.provider,
+    currentConfig.model,
+    currentConfig.reasoningMode,
+  );
   console.log(chalk.bold('\nSession Status:\n'));
   console.log(chalk.dim(`  Provider:    ${chalk.cyan(currentConfig.provider)}${currentConfig.model ? ` / ${chalk.cyan(currentConfig.model)}` : ''}`));
   console.log(chalk.dim(`  Permission:  ${chalk.cyan(currentConfig.permissionMode)}`));
@@ -1325,6 +1491,11 @@ function printStatus(context: InteractiveContext, currentConfig: CurrentConfig):
       ? chalk.yellow(capabilitySummary)
       : chalk.cyan(capabilitySummary);
     console.log(chalk.dim(`  Provider Cap:${' '} ${capabilityColor}`));
+  }
+  if (generalProviderPolicy && generalProviderPolicy.status !== 'allow') {
+    const policyColor =
+      generalProviderPolicy.status === 'block' ? chalk.red : chalk.yellow;
+    console.log(chalk.dim(`  Provider Policy: ${policyColor(generalProviderPolicy.summary)}`));
   }
   console.log(chalk.dim(`  Session ID:  ${context.sessionId}`));
   console.log(chalk.dim(`  Messages:    ${context.messages.length}`));

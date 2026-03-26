@@ -30,6 +30,9 @@ export type {
   KodaXTaskType,
   KodaXExecutionMode,
   KodaXRiskLevel,
+  KodaXTaskComplexity,
+  KodaXTaskWorkIntent,
+  KodaXHarnessProfile,
   KodaXTaskRoutingDecision,
   KodaXThinkingBudgetMap,
   KodaXTaskBudgetOverrides,
@@ -39,9 +42,18 @@ export type {
   KodaXExtensionSessionState,
   KodaXExtensionStoreEntry,
   KodaXExtensionStore,
+  KodaXSessionBranchSummaryEntry,
+  KodaXSessionCompactionEntry,
   KodaXSessionData,
+  KodaXSessionEntry,
+  KodaXSessionEntryBase,
+  KodaXSessionLabelEntry,
+  KodaXSessionLineage,
+  KodaXSessionMessageEntry,
+  KodaXSessionNavigationOptions,
   KodaXSessionMeta,
   KodaXSessionStorage,
+  KodaXSessionTreeNode,
   SessionErrorMetadata,
 } from './types.js';
 
@@ -65,6 +77,18 @@ export {
   generateSessionId,
   extractTitleFromMessages,
 } from './session.js';
+
+export {
+  appendSessionLineageLabel,
+  buildSessionTree,
+  countActiveLineageMessages,
+  createSessionLineage,
+  forkSessionLineage,
+  getSessionLineagePath,
+  getSessionMessagesFromLineage,
+  resolveSessionLineageTarget,
+  setSessionLineageActiveEntry,
+} from './session-lineage.js';
 
 // ============== Tokenizer ==============
 export {

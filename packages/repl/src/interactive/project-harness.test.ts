@@ -171,13 +171,20 @@ describe('project harness', () => {
     ]);
 
     const checkpoints = await storage.readHarnessCheckpoints<{
+      id?: string;
+      checkpointId: string;
       runId: string;
+      taskId?: string;
       featureIndex: number;
       gitHead: string | null;
       gitStatus: string[];
     }>();
     const nodes = await storage.readHarnessSessionNodes<{
+      id?: string;
+      nodeId: string;
       runId: string;
+      taskId?: string;
+      parentId?: string | null;
       parentRunId: string | null;
       checkpointId: string | null;
       featureIndex: number;
@@ -185,12 +192,17 @@ describe('project harness', () => {
 
     expect(result.decision).toBe('verified_complete');
     expect(checkpoints).toHaveLength(1);
+    expect(checkpoints[0]?.id).toBe(checkpoints[0]?.checkpointId);
     expect(checkpoints[0]?.runId).toBe(result.runRecord.runId);
+    expect(checkpoints[0]?.taskId).toBe('feature-0');
     expect(checkpoints[0]?.featureIndex).toBe(0);
     expect(checkpoints[0]?.gitHead ?? null).toBeNull();
     expect(checkpoints[0]?.gitStatus).toEqual([]);
     expect(nodes).toHaveLength(1);
+    expect(nodes[0]?.id).toBe(nodes[0]?.nodeId);
+    expect(nodes[0]?.taskId).toBe('feature-0');
     expect(nodes[0]?.runId).toBe(result.runRecord.runId);
+    expect(nodes[0]?.parentId ?? null).toBeNull();
     expect(nodes[0]?.checkpointId).toContain(result.runRecord.runId);
     expect(nodes[0]?.parentRunId ?? null).toBeNull();
   });
@@ -219,12 +231,14 @@ describe('project harness', () => {
     ]);
 
     const nodes = await storage.readHarnessSessionNodes<{
+      parentId?: string | null;
       runId: string;
       parentRunId: string | null;
     }>();
 
     expect(nodes).toHaveLength(2);
     expect(nodes[1]?.runId).toBe(secondResult.runRecord.runId);
+    expect(nodes[1]?.parentId).toBe(`${firstResult.runRecord.runId}-node`);
     expect(nodes[1]?.parentRunId).toBe(firstResult.runRecord.runId);
   });
 

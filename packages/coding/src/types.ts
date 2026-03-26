@@ -26,6 +26,9 @@ import type {
   KodaXTaskType,
   KodaXExecutionMode,
   KodaXRiskLevel,
+  KodaXTaskComplexity,
+  KodaXTaskWorkIntent,
+  KodaXHarnessProfile,
   KodaXTaskRoutingDecision,
   KodaXThinkingBudgetMap,
   KodaXTaskBudgetOverrides,
@@ -35,9 +38,18 @@ import type {
   KodaXExtensionSessionState,
   KodaXExtensionStoreEntry,
   KodaXExtensionStore,
+  KodaXSessionBranchSummaryEntry,
+  KodaXSessionCompactionEntry,
   KodaXSessionData,
+  KodaXSessionEntry,
+  KodaXSessionEntryBase,
+  KodaXSessionLabelEntry,
+  KodaXSessionLineage,
+  KodaXSessionMessageEntry,
+  KodaXSessionNavigationOptions,
   KodaXSessionMeta,
   KodaXSessionStorage,
+  KodaXSessionTreeNode,
   SessionErrorMetadata,
 } from '@kodax/agent';
 import type { KodaXExtensionRuntime } from './extensions/runtime.js';
@@ -62,6 +74,9 @@ export type {
   KodaXTaskType,
   KodaXExecutionMode,
   KodaXRiskLevel,
+  KodaXTaskComplexity,
+  KodaXTaskWorkIntent,
+  KodaXHarnessProfile,
   KodaXTaskRoutingDecision,
   KodaXThinkingBudgetMap,
   KodaXTaskBudgetOverrides,
@@ -71,9 +86,18 @@ export type {
   KodaXExtensionSessionState,
   KodaXExtensionStoreEntry,
   KodaXExtensionStore,
+  KodaXSessionBranchSummaryEntry,
+  KodaXSessionCompactionEntry,
   KodaXSessionData,
+  KodaXSessionEntry,
+  KodaXSessionEntryBase,
+  KodaXSessionLabelEntry,
+  KodaXSessionLineage,
+  KodaXSessionMessageEntry,
+  KodaXSessionNavigationOptions,
   KodaXSessionMeta,
   KodaXSessionStorage,
+  KodaXSessionTreeNode,
   SessionErrorMetadata,
 };
 
@@ -149,6 +173,18 @@ export interface KodaXContextTokenSnapshot {
   usage?: KodaXTokenUsage;
 }
 
+export interface KodaXProviderPolicyHints {
+  longRunning?: boolean;
+  harness?: 'project';
+  harnessProfile?: KodaXHarnessProfile;
+  evidenceHeavy?: boolean;
+  multimodal?: boolean;
+  capabilityRuntime?: boolean;
+  mcpRequired?: boolean;
+  brainstorm?: boolean;
+  workIntent?: KodaXTaskWorkIntent;
+}
+
 export interface KodaXContextOptions {
   /** Project root used for project-scoped prompts, permissions, and path policy. */
   gitRoot?: string | null;
@@ -168,6 +204,8 @@ export interface KodaXContextOptions {
     featuresFile?: string;
     progressFile?: string;
   };
+  /** Optional semantic hints for provider-policy evaluation. */
+  providerPolicyHints?: KodaXProviderPolicyHints;
   /** Skills system prompt snippet for progressive disclosure - Skills 系统提示词片段（渐进式披露） */
   skillsPrompt?: string;
   /** Internal execution-mode overlay appended to the system prompt */
@@ -199,6 +237,8 @@ export interface KodaXResult {
   signalReason?: string;
   messages: KodaXMessage[];
   sessionId: string;
+  /** Final visible routing decision for this run, including harness and work intent. */
+  routingDecision?: KodaXTaskRoutingDecision;
   /** Best-known token snapshot after the round completes. */
   contextTokenSnapshot?: KodaXContextTokenSnapshot;
   /** 是否被用户中断 (Ctrl+C) */

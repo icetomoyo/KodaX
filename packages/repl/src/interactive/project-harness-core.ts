@@ -1859,16 +1859,18 @@ async function evaluateHarnessRun(
 
   if (options.persist) {
     const gitSnapshot = await getGitSnapshot(projectRoot);
-    const historicalNodes = await options.storage.readHarnessSessionNodes<ProjectHarnessSessionNodeRecord>();
+    const historicalNodes = await options.storage.readLineageSessionNodes<ProjectHarnessSessionNodeRecord>();
     const parentNode = [...historicalNodes]
       .reverse()
       .find(node => node.featureIndex === options.featureIndex)
       ?? historicalNodes[historicalNodes.length - 1]
       ?? null;
     const checkpointRecord: ProjectHarnessCheckpointRecord = {
+      id: buildCheckpointId(runRecord.runId),
       checkpointId: buildCheckpointId(runRecord.runId),
       runId: runRecord.runId,
       featureIndex: runRecord.featureIndex,
+      taskId: `feature-${runRecord.featureIndex}`,
       decision,
       gitHead: gitSnapshot.gitHead,
       gitStatus: gitSnapshot.gitStatus,
@@ -1877,8 +1879,11 @@ async function evaluateHarnessRun(
       createdAt,
     };
     const sessionNodeRecord: ProjectHarnessSessionNodeRecord = {
+      id: buildSessionNodeId(runRecord.runId),
       nodeId: buildSessionNodeId(runRecord.runId),
+      taskId: `feature-${runRecord.featureIndex}`,
       runId: runRecord.runId,
+      parentId: parentNode?.nodeId ?? null,
       parentNodeId: parentNode?.nodeId ?? null,
       parentRunId: parentNode?.runId ?? null,
       featureIndex: runRecord.featureIndex,
@@ -1889,8 +1894,8 @@ async function evaluateHarnessRun(
       createdAt,
     };
     await options.storage.appendHarnessRun(runRecord);
-    await options.storage.appendHarnessCheckpoint(checkpointRecord);
-    await options.storage.appendHarnessSessionNode(sessionNodeRecord);
+    await options.storage.appendLineageCheckpoint(checkpointRecord);
+    await options.storage.appendLineageSessionNode(sessionNodeRecord);
     if (decision !== 'verified_complete') {
       const criticRecord: ProjectHarnessCriticRecord = {
         runId: runRecord.runId,

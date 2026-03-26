@@ -82,6 +82,16 @@ describe('FileSessionStorage', () => {
           dedupeKey: 'latest',
         },
       ],
+      lineage: expect.objectContaining({
+        version: 2,
+        entries: [
+          expect.objectContaining({
+            type: 'message',
+            parentId: null,
+            message: { role: 'user', content: 'hello persisted runtime' },
+          }),
+        ],
+      }),
     });
 
     await expect(storage.list(gitRoot)).resolves.toEqual([
@@ -91,5 +101,75 @@ describe('FileSessionStorage', () => {
         msgCount: 1,
       },
     ]);
+  });
+
+  it('supports branch switching, checkpoint labels, and forking without losing prior history', async () => {
+    const { FileSessionStorage } = await import('./storage.js');
+    const storage = new FileSessionStorage();
+    const gitRoot = path.resolve('C:/Works/GitWorks/KodaX').replace(/\\/g, '/');
+
+    await storage.save('session-tree', {
+      messages: [
+        { role: 'user', content: 'root task' },
+        { role: 'assistant', content: 'first pass' },
+      ],
+      title: 'Tree Session',
+      gitRoot,
+    });
+
+    const initial = await storage.getLineage?.('session-tree');
+    expect(initial?.entries).toHaveLength(2);
+    const rootId = initial?.entries[0]?.id;
+    expect(rootId).toBeTruthy();
+
+    const rewound = await storage.setActiveEntry?.(
+      'session-tree',
+      rootId!,
+      { summarizeCurrentBranch: true },
+    );
+    expect(rewound).toMatchObject({
+      messages: [
+        { role: 'user', content: 'root task' },
+        expect.objectContaining({
+          role: 'user',
+          content: expect.stringContaining('The following is a summary of a branch'),
+        }),
+      ],
+    });
+
+    await storage.save('session-tree', {
+      messages: [
+        ...(rewound?.messages ?? []),
+        { role: 'user', content: 'root task follow-up' },
+        { role: 'assistant', content: 'second pass' },
+      ],
+      title: 'Tree Session',
+      gitRoot,
+    });
+
+    await storage.setLabel?.('session-tree', rootId!, 'checkpoint-a');
+
+    const branched = await storage.getLineage?.('session-tree');
+    expect(branched?.entries.filter((entry: { type: string }) => entry.type === 'label')).toHaveLength(1);
+    expect(branched?.entries.filter((entry: { type: string }) => entry.type === 'branch_summary')).toHaveLength(1);
+    expect(branched?.entries.filter((entry: { type: string }) => entry.type === 'message')).toHaveLength(4);
+
+    const forked = await storage.fork?.('session-tree', 'checkpoint-a', { sessionId: 'forked-tree' });
+    expect(forked?.sessionId).toBe('forked-tree');
+    expect(forked?.data.messages).toEqual([
+      { role: 'user', content: 'root task' },
+    ]);
+
+    await expect(storage.load('session-tree')).resolves.toMatchObject({
+      messages: [
+        { role: 'user', content: 'root task' },
+        expect.objectContaining({
+          role: 'user',
+          content: expect.stringContaining('The following is a summary of a branch'),
+        }),
+        { role: 'user', content: 'root task follow-up' },
+        { role: 'assistant', content: 'second pass' },
+      ],
+    });
   });
 });

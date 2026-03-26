@@ -39,11 +39,16 @@ import { promisify } from 'util';
 import { ErrorCategory } from './error-classification.js';
 import { withRetry } from './retry-handler.js';
 import {
+  buildProviderPolicyHintsForDecision,
   createReasoningPlan,
   maybeCreateAutoReroutePlan,
   reasoningModeToDepth,
   type ReasoningPlan,
 } from './reasoning.js';
+import {
+  buildProviderPolicyPromptNotes,
+  evaluateProviderPolicy,
+} from './provider-policy.js';
 import { looksLikeActionableRuntimeEvidence } from './runtime-evidence.js';
 import { resolveExecutionCwd } from './runtime-paths.js';
 import {
@@ -980,6 +985,7 @@ export async function runKodaX(
     });
     return contextTokenSnapshot;
   };
+  const currentRoutingDecision = () => reasoningPlan.decision;
     events.onSessionStart?.({ provider: initialProvider.name, sessionId });
     await emitActiveExtensionEvent('session:start', { provider: initialProvider.name, sessionId });
 
@@ -1149,6 +1155,26 @@ export async function runKodaX(
       };
 
       const streamProvider = resolveProvider(currentProviderName);
+      const providerPolicy = evaluateProviderPolicy({
+        providerName: currentProviderName,
+        model: currentModelOverride,
+        provider: streamProvider,
+        prompt,
+        options: currentExecution.effectiveOptions,
+        context: currentExecution.effectiveOptions.context,
+        reasoningMode: effectiveProviderReasoningMode,
+        taskType: effectiveReasoningPlan.decision.primaryTask,
+        executionMode: effectiveReasoningPlan.decision.recommendedMode,
+      });
+      if (providerPolicy.status === 'block') {
+        throw new Error(`[Provider Policy] ${providerPolicy.summary}`);
+      }
+      const effectiveSystemPrompt = providerPolicy.issues.length > 0
+        ? [
+          preparedProviderState.systemPrompt,
+          buildProviderPolicyPromptNotes(providerPolicy).join('\n'),
+        ].join('\n\n')
+        : preparedProviderState.systemPrompt;
       if (!streamProvider.isConfigured()) {
         throw new Error(`Provider "${currentProviderName}" not configured. Set ${currentProviderName.toUpperCase().replace('-', '_')}_API_KEY`);
       }
@@ -1189,7 +1215,7 @@ export async function runKodaX(
             : retryTimeoutController.signal;
 
           try {
-            return await streamProvider.stream(compacted, getActiveToolDefinitions(runtimeSessionState.activeTools), preparedProviderState.systemPrompt, effectiveProviderReasoning, {
+            return await streamProvider.stream(compacted, getActiveToolDefinitions(runtimeSessionState.activeTools), effectiveSystemPrompt, effectiveProviderReasoning, {
               onTextDelta: (text) => {
                 resetIdleTimer();
                 void emitActiveExtensionEvent('text:delta', { text });
@@ -1300,6 +1326,7 @@ export async function runKodaX(
             signal: 'COMPLETE',
             messages,
             sessionId,
+            routingDecision: currentRoutingDecision(),
             contextTokenSnapshot,
             limitReached: false,
           };
@@ -1342,6 +1369,7 @@ export async function runKodaX(
             lastText,
             messages,
             sessionId,
+            routingDecision: currentRoutingDecision(),
             contextTokenSnapshot,
             limitReached: false,
           };
@@ -1553,6 +1581,7 @@ export async function runKodaX(
           lastText: 'Operation cancelled by user',
           messages,
           sessionId,
+          routingDecision: currentRoutingDecision(),
           contextTokenSnapshot,
           interrupted: !shouldYieldToQueuedFollowUp,
         };
@@ -1592,6 +1621,7 @@ export async function runKodaX(
           lastText,
           messages,
           sessionId,
+          routingDecision: currentRoutingDecision(),
           contextTokenSnapshot,
           limitReached: false,
         };
@@ -1693,6 +1723,7 @@ export async function runKodaX(
           lastText,
           messages: cleanedMessages,
           sessionId,
+          routingDecision: currentRoutingDecision(),
           contextTokenSnapshot,
           interrupted: true,
           errorMetadata: updatedErrorMetadata,
@@ -1706,6 +1737,7 @@ export async function runKodaX(
         lastText,
         messages: cleanedMessages,  // ✅ Use cleaned messages to prevent error loop
         sessionId,
+        routingDecision: currentRoutingDecision(),
         contextTokenSnapshot,
         errorMetadata: updatedErrorMetadata,
       };
@@ -1735,6 +1767,7 @@ export async function runKodaX(
     signalReason: finalReason,
     messages,
     sessionId,
+    routingDecision: currentRoutingDecision(),
     contextTokenSnapshot,
     limitReached,
   };
@@ -1767,6 +1800,10 @@ async function buildReasoningExecutionState(
     context: {
       ...options.context,
       executionCwd: resolveExecutionCwd(options.context),
+      providerPolicyHints: {
+        ...options.context?.providerPolicyHints,
+        ...buildProviderPolicyHintsForDecision(reasoningPlan.decision),
+      },
       promptOverlay: [
         options.context?.promptOverlay,
         reasoningPlan.promptOverlay,

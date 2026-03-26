@@ -9,15 +9,28 @@ import chalk from 'chalk';
 import type {
   KodaXExtensionSessionRecord,
   KodaXMessage,
+  KodaXSessionData,
+  KodaXSessionEntry,
+  KodaXSessionLineage,
   KodaXSessionMeta,
   KodaXSessionStorage,
 } from '@kodax/coding';
-import { cleanupIncompleteToolCalls } from '@kodax/coding';
+import {
+  appendSessionLineageLabel,
+  cleanupIncompleteToolCalls,
+  countActiveLineageMessages,
+  createSessionLineage,
+  forkSessionLineage,
+  generateSessionId,
+  getSessionMessagesFromLineage,
+  setSessionLineageActiveEntry,
+} from '@kodax/coding';
 import type { SessionData, SessionErrorMetadata } from '../ui/utils/session-storage.js';
 import { getGitRoot, KODAX_SESSIONS_DIR } from '../common/utils.js';
 import {
   isKodaXExtensionSessionRecord,
   isKodaXExtensionSessionState,
+  isKodaXJsonValue,
   isKodaXMessage,
   isRecord,
   isSessionErrorMetadata,
@@ -27,12 +40,40 @@ interface PersistedExtensionRecordLine extends KodaXExtensionSessionRecord {
   _type: 'extension_record';
 }
 
+interface PersistedLineageEntryLine {
+  _type: 'lineage_entry';
+  entry: KodaXSessionEntry;
+}
+
+interface PersistedSessionSnapshot {
+  meta?: KodaXSessionMeta;
+  legacyMessages: KodaXMessage[];
+  lineageEntries: KodaXSessionEntry[];
+  extensionRecords: KodaXExtensionSessionRecord[];
+  malformedCount: number;
+}
+
+interface ResolvedSessionSnapshot {
+  data: SessionData;
+  createdAt?: string;
+}
+
 function warnMalformedSessionData(filePath: string, count: number): void {
   if (count === 0 || process.env.NODE_ENV === 'test') {
     return;
   }
 
-  console.warn(`[KodaX] Skipped ${count} malformed session record(s) from ${path.basename(filePath)}.`);
+  process.stderr.write(
+    `[KodaX] Skipped ${count} malformed session record(s) from ${path.basename(filePath)}.\n`,
+  );
+}
+
+function writeStorageNotice(message: string): void {
+  if (process.env.NODE_ENV === 'test') {
+    return;
+  }
+
+  process.stderr.write(`${message}\n`);
 }
 
 function toExtensionRecordLine(
@@ -44,6 +85,13 @@ function toExtensionRecordLine(
   };
 }
 
+function toLineageEntryLine(entry: KodaXSessionEntry): PersistedLineageEntryLine {
+  return {
+    _type: 'lineage_entry',
+    entry,
+  };
+}
+
 function isPersistedExtensionRecordLine(
   value: unknown,
 ): value is PersistedExtensionRecordLine {
@@ -52,133 +100,363 @@ function isPersistedExtensionRecordLine(
     && isKodaXExtensionSessionRecord(value);
 }
 
-function createSessionMeta(id: string, data: SessionData): KodaXSessionMeta {
+function hasEntryBase(value: unknown): value is { id: string; parentId: string | null; timestamp: string; type: string } {
+  return isRecord(value)
+    && typeof value.id === 'string'
+    && (value.parentId === null || typeof value.parentId === 'string')
+    && typeof value.timestamp === 'string'
+    && typeof value.type === 'string';
+}
+
+function isKodaXSessionEntry(value: unknown): value is KodaXSessionEntry {
+  if (!hasEntryBase(value)) {
+    return false;
+  }
+
+  const entry = value as Record<string, unknown>;
+
+  switch (entry.type) {
+    case 'message':
+      return isKodaXMessage(entry.message);
+    case 'compaction':
+      return typeof entry.summary === 'string'
+        && (entry.firstKeptEntryId === undefined || typeof entry.firstKeptEntryId === 'string')
+        && (entry.tokensBefore === undefined || typeof entry.tokensBefore === 'number');
+    case 'branch_summary':
+      return typeof entry.summary === 'string'
+        && (entry.fromId === undefined || typeof entry.fromId === 'string')
+        && (entry.details === undefined || isKodaXJsonValue(entry.details));
+    case 'label':
+      return typeof entry.targetId === 'string'
+        && (entry.label === undefined || typeof entry.label === 'string');
+    default:
+      return false;
+  }
+}
+
+function isPersistedLineageEntryLine(
+  value: unknown,
+): value is PersistedLineageEntryLine {
+  return isRecord(value)
+    && value._type === 'lineage_entry'
+    && isKodaXSessionEntry(value.entry);
+}
+
+function getLastNavigableEntryId(entries: KodaXSessionEntry[]): string | null {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry && entry.type !== 'label') {
+      return entry.id;
+    }
+  }
+  return null;
+}
+
+function buildLineage(
+  snapshot: PersistedSessionSnapshot,
+): KodaXSessionLineage | undefined {
+  if (snapshot.lineageEntries.length > 0) {
+    return {
+      version: 2,
+      activeEntryId: snapshot.meta?.activeEntryId ?? getLastNavigableEntryId(snapshot.lineageEntries),
+      entries: snapshot.lineageEntries.map((entry) => structuredClone(entry)),
+    };
+  }
+
+  if (snapshot.legacyMessages.length === 0) {
+    return undefined;
+  }
+
+  return createSessionLineage(snapshot.legacyMessages);
+}
+
+function buildSessionData(snapshot: PersistedSessionSnapshot): ResolvedSessionSnapshot {
+  const lineage = buildLineage(snapshot);
+  return {
+    createdAt: snapshot.meta?.createdAt,
+    data: {
+      messages: lineage
+        ? getSessionMessagesFromLineage(lineage)
+        : snapshot.legacyMessages.map((message) => structuredClone(message)),
+      title: snapshot.meta?.title ?? '',
+      gitRoot: snapshot.meta?.gitRoot ?? '',
+      errorMetadata: isSessionErrorMetadata(snapshot.meta?.errorMetadata)
+        ? snapshot.meta?.errorMetadata
+        : undefined,
+      extensionState: isKodaXExtensionSessionState(snapshot.meta?.extensionState)
+        ? snapshot.meta?.extensionState
+        : undefined,
+      extensionRecords: snapshot.extensionRecords.map((record) => ({ ...record })),
+      lineage,
+    },
+  };
+}
+
+function createSessionMeta(
+  id: string,
+  data: SessionData,
+  lineage: KodaXSessionLineage | undefined,
+  createdAt?: string,
+): KodaXSessionMeta {
   return {
     _type: 'meta',
     title: data.title,
     id,
     gitRoot: data.gitRoot,
-    createdAt: new Date().toISOString(),
+    createdAt: createdAt ?? new Date().toISOString(),
     errorMetadata: data.errorMetadata,
     extensionState: data.extensionState,
     extensionRecordCount: data.extensionRecords?.length ?? 0,
+    lineageVersion: lineage?.version,
+    activeEntryId: lineage?.activeEntryId,
+    lineageEntryCount: lineage?.entries.length ?? 0,
+    activeMessageCount: lineage ? countActiveLineageMessages(lineage) : data.messages.length,
   };
 }
 
+async function readPersistedSessionFile(filePath: string): Promise<PersistedSessionSnapshot | null> {
+  if (!fsSync.existsSync(filePath)) {
+    return null;
+  }
+
+  const rawContent = await fs.readFile(filePath, 'utf-8');
+  const trimmedContent = rawContent.trim();
+  if (!trimmedContent) {
+    return null;
+  }
+
+  const snapshot: PersistedSessionSnapshot = {
+    legacyMessages: [],
+    lineageEntries: [],
+    extensionRecords: [],
+    malformedCount: 0,
+  };
+
+  const lines = trimmedContent.split('\n');
+  for (let index = 0; index < lines.length; index += 1) {
+    try {
+      const parsed = JSON.parse(lines[index]!);
+      if (index === 0 && isRecord(parsed) && parsed._type === 'meta') {
+        snapshot.meta = parsed as unknown as KodaXSessionMeta;
+        continue;
+      }
+
+      if (isPersistedLineageEntryLine(parsed)) {
+        snapshot.lineageEntries.push(structuredClone(parsed.entry));
+        continue;
+      }
+
+      if (isPersistedExtensionRecordLine(parsed)) {
+        snapshot.extensionRecords.push({
+          id: parsed.id,
+          extensionId: parsed.extensionId,
+          type: parsed.type,
+          ts: parsed.ts,
+          data: parsed.data,
+          dedupeKey: parsed.dedupeKey,
+        });
+        continue;
+      }
+
+      if (isKodaXMessage(parsed)) {
+        snapshot.legacyMessages.push(structuredClone(parsed));
+        continue;
+      }
+
+      snapshot.malformedCount += 1;
+    } catch {
+      snapshot.malformedCount += 1;
+    }
+  }
+
+  return snapshot;
+}
+
 export class FileSessionStorage implements KodaXSessionStorage {
-  async save(id: string, data: SessionData): Promise<void> {
+  private getSessionFilePath(id: string): string {
+    return path.join(KODAX_SESSIONS_DIR, `${id}.jsonl`);
+  }
+
+  private async readSession(id: string): Promise<ResolvedSessionSnapshot | null> {
+    const filePath = this.getSessionFilePath(id);
+    const snapshot = await readPersistedSessionFile(filePath);
+    if (!snapshot) {
+      return null;
+    }
+
+    warnMalformedSessionData(filePath, snapshot.malformedCount);
+    return buildSessionData(snapshot);
+  }
+
+  private async writeSession(
+    id: string,
+    data: SessionData,
+    createdAt?: string,
+  ): Promise<void> {
     await fs.mkdir(KODAX_SESSIONS_DIR, { recursive: true });
 
-    const meta = createSessionMeta(id, data);
-    const messageLines = data.messages.map((message) => JSON.stringify(message));
+    const targetPath = this.getSessionFilePath(id);
+    const tempPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
+    const lineage = data.lineage
+      ? createSessionLineage(data.messages, data.lineage)
+      : createSessionLineage(data.messages);
+    const meta = createSessionMeta(id, data, lineage, createdAt);
+    const lineageLines = lineage.entries.map((entry) => JSON.stringify(toLineageEntryLine(entry)));
     const extensionRecordLines = (data.extensionRecords ?? [])
       .map((record) => JSON.stringify(toExtensionRecordLine(record)));
-    const lines = [JSON.stringify(meta), ...messageLines, ...extensionRecordLines];
+    const lines = [JSON.stringify(meta), ...lineageLines, ...extensionRecordLines];
 
-    await fs.writeFile(
-      path.join(KODAX_SESSIONS_DIR, `${id}.jsonl`),
-      lines.join('\n'),
-      'utf-8',
-    );
+    try {
+      await fs.writeFile(
+        tempPath,
+        lines.join('\n'),
+        'utf-8',
+      );
+      await fs.rename(tempPath, targetPath);
+    } finally {
+      if (fsSync.existsSync(tempPath)) {
+        await fs.unlink(tempPath).catch(() => undefined);
+      }
+    }
+  }
+
+  async save(id: string, data: SessionData): Promise<void> {
+    const existing = await this.readSession(id);
+    const merged: SessionData = {
+      ...data,
+      extensionState: data.extensionState ?? existing?.data.extensionState,
+      extensionRecords: data.extensionRecords ?? existing?.data.extensionRecords,
+      lineage: createSessionLineage(
+        data.messages,
+        data.lineage ?? existing?.data.lineage,
+      ),
+    };
+    await this.writeSession(id, merged, existing?.createdAt);
   }
 
   async load(id: string): Promise<SessionData | null> {
-    const filePath = path.join(KODAX_SESSIONS_DIR, `${id}.jsonl`);
-    if (!fsSync.existsSync(filePath)) {
+    const resolved = await this.readSession(id);
+    if (!resolved) {
       return null;
     }
 
-    const rawContent = await fs.readFile(filePath, 'utf-8');
-    const trimmedContent = rawContent.trim();
-    if (!trimmedContent) {
-      return null;
-    }
-
-    const lines = trimmedContent.split('\n');
-    const messages: KodaXMessage[] = [];
-    const extensionRecords: KodaXExtensionSessionRecord[] = [];
-    let title = '';
-    let gitRoot = '';
-    let errorMetadata: SessionErrorMetadata | undefined;
-    let extensionState: SessionData['extensionState'];
-    let malformedCount = 0;
-
-    for (let i = 0; i < lines.length; i++) {
-      try {
-        const data = JSON.parse(lines[i]!);
-        if (i === 0 && isRecord(data) && data._type === 'meta') {
-          title = typeof data.title === 'string' ? data.title : '';
-          gitRoot = typeof data.gitRoot === 'string' ? data.gitRoot : '';
-          errorMetadata = isSessionErrorMetadata(data.errorMetadata) ? data.errorMetadata : undefined;
-          extensionState = isKodaXExtensionSessionState(data.extensionState)
-            ? data.extensionState
-            : undefined;
-          continue;
-        }
-
-        if (isPersistedExtensionRecordLine(data)) {
-          extensionRecords.push({
-            id: data.id,
-            extensionId: data.extensionId,
-            type: data.type,
-            ts: data.ts,
-            data: data.data,
-            dedupeKey: data.dedupeKey,
-          });
-          continue;
-        }
-
-        if (isKodaXMessage(data)) {
-          messages.push(data);
-        } else {
-          malformedCount += 1;
-        }
-      } catch {
-        malformedCount += 1;
-      }
-    }
-
-    warnMalformedSessionData(filePath, malformedCount);
+    const { data, createdAt } = resolved;
+    const filePath = this.getSessionFilePath(id);
 
     const currentGitRoot = await getGitRoot();
-    if (currentGitRoot && gitRoot && currentGitRoot !== gitRoot) {
-      console.log(chalk.yellow(`\n[Warning] Session project mismatch:`));
-      console.log(`  Current:  ${currentGitRoot}`);
-      console.log(`  Session:  ${gitRoot}`);
-      console.log(`  Continuing anyway...\n`);
+    if (currentGitRoot && data.gitRoot && currentGitRoot !== data.gitRoot) {
+      writeStorageNotice(chalk.yellow('\n[Warning] Session project mismatch:'));
+      writeStorageNotice(`  Current:  ${currentGitRoot}`);
+      writeStorageNotice(`  Session:  ${data.gitRoot}`);
+      writeStorageNotice('  Continuing anyway...\n');
     }
 
-    if (errorMetadata?.consecutiveErrors && errorMetadata.consecutiveErrors > 0) {
-      const cleaned = cleanupIncompleteToolCalls(messages);
-      if (cleaned !== messages) {
-        console.log(chalk.cyan('[Session Recovery] Cleaned incomplete tool calls from previous session'));
-        errorMetadata.consecutiveErrors = 0;
-        await this.save(id, {
+    if (data.errorMetadata?.consecutiveErrors && data.errorMetadata.consecutiveErrors > 0) {
+      const cleaned = cleanupIncompleteToolCalls(data.messages);
+      if (cleaned !== data.messages) {
+        writeStorageNotice(chalk.cyan('[Session Recovery] Cleaned incomplete tool calls from previous session'));
+        const recovered: SessionData = {
+          ...data,
           messages: cleaned,
-          title,
-          gitRoot,
-          errorMetadata,
-          extensionState,
-          extensionRecords,
-        });
-        return {
-          messages: cleaned,
-          title,
-          gitRoot,
-          errorMetadata,
-          extensionState,
-          extensionRecords,
+          errorMetadata: {
+            ...data.errorMetadata,
+            consecutiveErrors: 0,
+          },
+          lineage: createSessionLineage(cleaned, data.lineage),
         };
+        await this.writeSession(id, recovered, createdAt);
+        return recovered;
       }
     }
 
+    warnMalformedSessionData(filePath, 0);
+    return data;
+  }
+
+  async getLineage(id: string): Promise<KodaXSessionLineage | null> {
+    const resolved = await this.readSession(id);
+    return resolved?.data.lineage ?? null;
+  }
+
+  async setActiveEntry(
+    id: string,
+    selector: string,
+    options?: { summarizeCurrentBranch?: boolean },
+  ): Promise<SessionData | null> {
+    const resolved = await this.readSession(id);
+    if (!resolved?.data.lineage) {
+      return null;
+    }
+
+    const lineage = setSessionLineageActiveEntry(
+      resolved.data.lineage,
+      selector,
+      options,
+    );
+    if (!lineage) {
+      return null;
+    }
+
+    const nextData: SessionData = {
+      ...resolved.data,
+      messages: getSessionMessagesFromLineage(lineage),
+      lineage,
+    };
+    await this.writeSession(id, nextData, resolved.createdAt);
+    return nextData;
+  }
+
+  async setLabel(id: string, selector: string, label?: string): Promise<SessionData | null> {
+    const resolved = await this.readSession(id);
+    if (!resolved?.data.lineage) {
+      return null;
+    }
+
+    const lineage = appendSessionLineageLabel(resolved.data.lineage, selector, label);
+    if (!lineage) {
+      return null;
+    }
+
+    const nextData: SessionData = {
+      ...resolved.data,
+      lineage,
+    };
+    await this.writeSession(id, nextData, resolved.createdAt);
+    return nextData;
+  }
+
+  async fork(
+    id: string,
+    selector?: string,
+    options?: { sessionId?: string; title?: string },
+  ): Promise<{ sessionId: string; data: SessionData } | null> {
+    const resolved = await this.readSession(id);
+    if (!resolved?.data.lineage) {
+      return null;
+    }
+
+    const lineage = forkSessionLineage(resolved.data.lineage, selector);
+    if (!lineage) {
+      return null;
+    }
+
+    const sessionId = options?.sessionId ?? await generateSessionId();
+    const forked: SessionData = {
+      messages: getSessionMessagesFromLineage(lineage),
+      title: options?.title ?? resolved.data.title,
+      gitRoot: resolved.data.gitRoot,
+      extensionState: resolved.data.extensionState
+        ? structuredClone(resolved.data.extensionState)
+        : undefined,
+      extensionRecords: resolved.data.extensionRecords
+        ? structuredClone(resolved.data.extensionRecords)
+        : undefined,
+      lineage,
+    };
+    await this.writeSession(sessionId, forked);
     return {
-      messages,
-      title,
-      gitRoot,
-      errorMetadata,
-      extensionState,
-      extensionRecords,
+      sessionId,
+      data: forked,
     };
   }
 
@@ -210,10 +488,14 @@ export class FileSessionStorage implements KodaXSessionStorage {
             typeof first.extensionRecordCount === 'number' && first.extensionRecordCount > 0
               ? first.extensionRecordCount
               : 0;
+          const activeMessageCount =
+            typeof first.activeMessageCount === 'number' && first.activeMessageCount >= 0
+              ? first.activeMessageCount
+              : Math.max(0, lineCount - 1 - extensionRecordCount);
           sessions.push({
             id: file.replace('.jsonl', ''),
             title: typeof first.title === 'string' ? first.title : '',
-            msgCount: Math.max(0, lineCount - 1 - extensionRecordCount),
+            msgCount: activeMessageCount,
           });
         } else {
           const lineCount = content.split('\n').length;
@@ -228,7 +510,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
   }
 
   async delete(id: string): Promise<void> {
-    const filePath = path.join(KODAX_SESSIONS_DIR, `${id}.jsonl`);
+    const filePath = this.getSessionFilePath(id);
     if (fsSync.existsSync(filePath)) {
       await fs.unlink(filePath);
     }

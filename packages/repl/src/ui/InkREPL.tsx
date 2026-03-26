@@ -31,6 +31,7 @@ import {
 import { AutocompleteContextProvider, useAutocompleteContext } from "./hooks/index.js";
 import { StreamingState, type HistoryItem, KeypressHandlerPriority } from "./types.js";
 import {
+  buildSessionTree,
   KodaXOptions,
   KodaXMessage,
   KodaXReasoningMode,
@@ -70,6 +71,10 @@ import {
   CommandCallbacks,
   CurrentConfig,
 } from "../interactive/commands.js";
+import {
+  enforceSessionTransitionGuard,
+} from "../interactive/session-guardrails.js";
+import { formatSessionTree } from "../interactive/session-tree.js";
 import type { CommandInvocationRequest } from "../commands/types.js";
 import {
   formatReasoningCapabilityShort,
@@ -172,6 +177,15 @@ function resolveInitialReasoningMode(
     return 'auto';
   }
   return 'off';
+}
+
+function logSessionTransitionGuard(
+  status: "warn" | "block",
+  headline: string,
+  details: string[],
+): void {
+  console.log((status === "block" ? chalk.red : chalk.yellow)(headline));
+  details.forEach((detail) => console.log(chalk.dim(detail)));
 }
 
 /**
@@ -1749,18 +1763,27 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           loadSession: async (id: string) => {
             const loaded = await storage.load(id);
             if (loaded) {
+              const allowed = enforceSessionTransitionGuard(
+                currentConfig,
+                "Resuming a saved session",
+                logSessionTransitionGuard,
+              );
+              if (!allowed) {
+                return "blocked";
+              }
               context.messages = loaded.messages;
               context.title = loaded.title;
               context.sessionId = id;
               context.contextTokenSnapshot = undefined;
               setLiveTokenCount(null);
+              setSessionId(id);
               console.log(chalk.green(`[Session loaded: ${id}]`));
-              return true;
+              return "loaded";
             }
-            return false;
+            return "missing";
           },
           listSessions: async () => {
-            const sessions = await storage.list();
+            const sessions = await storage.list(context.gitRoot ?? undefined);
             if (sessions.length === 0) {
               console.log(chalk.dim("\n[No saved sessions]"));
               return;
@@ -1837,7 +1860,90 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             await storage.delete?.(id);
           },
           deleteAllSessions: async () => {
-            await storage.deleteAll?.();
+            await storage.deleteAll?.(context.gitRoot ?? undefined);
+          },
+          printSessionTree: async () => {
+            const lineage = await storage.getLineage?.(context.sessionId);
+            if (!lineage) {
+              console.log(chalk.dim("\n[No session tree available for this session]"));
+              return;
+            }
+
+            const lines = formatSessionTree(buildSessionTree(lineage));
+            console.log(chalk.bold("\nSession Tree:\n"));
+            lines.forEach((line) => console.log(`  ${line}`));
+            console.log();
+          },
+          switchSessionBranch: async (selector: string) => {
+            const allowed = enforceSessionTransitionGuard(
+              currentConfig,
+              "Switching session branches",
+              logSessionTransitionGuard,
+            );
+            if (!allowed) {
+              return "blocked";
+            }
+
+            const loaded = await storage.setActiveEntry?.(
+              context.sessionId,
+              selector,
+              { summarizeCurrentBranch: true },
+            );
+            if (!loaded) {
+              return "missing";
+            }
+
+            context.messages = loaded.messages;
+            context.title = loaded.title;
+            context.contextTokenSnapshot = undefined;
+            setLiveTokenCount(null);
+            console.log(chalk.green(`\n[Switched to tree entry: ${selector}]`));
+            console.log(chalk.dim(`  Messages: ${loaded.messages.length}`));
+            return "switched";
+          },
+          labelSessionBranch: async (selector: string, label?: string) => {
+            const updated = await storage.setLabel?.(context.sessionId, selector, label);
+            if (!updated) {
+              return false;
+            }
+
+            const action = label && label.trim()
+              ? `checkpoint label set: ${label.trim()}`
+              : "checkpoint label cleared";
+            console.log(chalk.green(`\n[${action}]`));
+            return true;
+          },
+          forkSession: async (selector?: string) => {
+            const allowed = enforceSessionTransitionGuard(
+              currentConfig,
+              "Forking a session branch",
+              logSessionTransitionGuard,
+            );
+            if (!allowed) {
+              return "blocked";
+            }
+
+            const forked = await storage.fork?.(context.sessionId, selector);
+            if (!forked) {
+              return "failed";
+            }
+
+            context.sessionId = forked.sessionId;
+            context.messages = forked.data.messages;
+            context.title = forked.data.title;
+            context.contextTokenSnapshot = undefined;
+            const now = new Date().toISOString();
+            context.createdAt = now;
+            context.lastAccessed = now;
+            currentOptionsRef.current.session = {
+              ...currentOptionsRef.current.session,
+              id: forked.sessionId,
+            };
+            setLiveTokenCount(null);
+            setSessionId(forked.sessionId);
+            console.log(chalk.green(`\n[Forked session: ${forked.sessionId}]`));
+            console.log(chalk.dim(`  Messages: ${forked.data.messages.length}`));
+            return "forked";
           },
           setPlanMode: (enabled: boolean) => {
             setPlanMode(enabled);

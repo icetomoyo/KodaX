@@ -1,6 +1,6 @@
 {
   "name": "@kodax/agent",
-  "version": "0.7.0",
+  "version": "0.7.4",
   "description": "KodaX Agent - 通用 Agent 框架，会话管理和消息处理",
   "type": "module",
   "main": "dist/index.js",

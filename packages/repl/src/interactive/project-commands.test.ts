@@ -23,7 +23,7 @@ function createCallbacks(overrides: Partial<CommandCallbacks> = {}): CommandCall
   return {
     exit: () => {},
     saveSession: async () => {},
-    loadSession: async () => false,
+    loadSession: async () => 'missing',
     listSessions: async () => {},
     clearHistory: () => {},
     printHistory: () => {},

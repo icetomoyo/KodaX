@@ -5,6 +5,15 @@
  */
 
 export {
+  appendSessionLineageLabel,
+  buildSessionTree,
+  countActiveLineageMessages,
+  createSessionLineage,
   generateSessionId,
   extractTitleFromMessages,
+  forkSessionLineage,
+  getSessionLineagePath,
+  getSessionMessagesFromLineage,
+  resolveSessionLineageTarget,
+  setSessionLineageActiveEntry,
 } from '@kodax/agent';

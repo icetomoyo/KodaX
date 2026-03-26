@@ -15,6 +15,30 @@ import {
   resolveProvider,
 } from './resolver.js';
 
+const EXPECTED_NATIVE_CUSTOM_PROFILE = {
+  transport: 'native-api',
+  conversationSemantics: 'full-history',
+  mcpSupport: 'native',
+  contextFidelity: 'full',
+  toolCallingFidelity: 'full',
+  sessionSupport: 'full',
+  longRunningSupport: 'full',
+  multimodalSupport: 'none',
+  evidenceSupport: 'full',
+} as const;
+
+const EXPECTED_NATIVE_DEFAULT_PROFILE = {
+  transport: 'native-api',
+  conversationSemantics: 'full-history',
+  mcpSupport: 'none',
+  contextFidelity: 'full',
+  toolCallingFidelity: 'full',
+  sessionSupport: 'full',
+  longRunningSupport: 'full',
+  multimodalSupport: 'none',
+  evidenceSupport: 'full',
+} as const;
+
 const OPENAI_CUSTOM: KodaXCustomProviderConfig = {
   name: 'custom-openai',
   protocol: 'openai',
@@ -72,11 +96,7 @@ describe('custom providers', () => {
     expect(provider.getBaseUrl()).toBe('https://example.test/v1');
     expect(provider.getAvailableModels()).toEqual(['custom-main', 'custom-alt']);
     expect(provider.getConfiguredReasoningCapability()).toBe('native-toggle');
-    expect(provider.getCapabilityProfile()).toEqual({
-      transport: 'native-api',
-      conversationSemantics: 'full-history',
-      mcpSupport: 'native',
-    });
+    expect(provider.getCapabilityProfile()).toEqual(EXPECTED_NATIVE_CUSTOM_PROFILE);
     expect(provider.getContextWindow()).toBe(123456);
   });
 
@@ -125,11 +145,7 @@ describe('custom providers', () => {
         models: ['custom-main', 'custom-alt'],
         configured: true,
         reasoningCapability: 'native-toggle',
-        capabilityProfile: {
-          transport: 'native-api',
-          conversationSemantics: 'full-history',
-          mcpSupport: 'native',
-        },
+        capabilityProfile: EXPECTED_NATIVE_CUSTOM_PROFILE,
         custom: true,
       },
       {
@@ -138,11 +154,7 @@ describe('custom providers', () => {
         models: ['claude-custom', 'claude-custom-fast'],
         configured: false,
         reasoningCapability: 'native-budget',
-        capabilityProfile: {
-          transport: 'native-api',
-          conversationSemantics: 'full-history',
-          mcpSupport: 'none',
-        },
+        capabilityProfile: EXPECTED_NATIVE_DEFAULT_PROFILE,
         custom: true,
       },
     ]);

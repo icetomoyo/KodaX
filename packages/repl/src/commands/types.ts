@@ -52,11 +52,15 @@ export interface CurrentConfig {
   permissionMode: PermissionMode;
 }
 
+export type SessionLoadStatus = 'loaded' | 'missing' | 'blocked';
+export type SessionBranchSwitchStatus = 'switched' | 'missing' | 'blocked';
+export type SessionForkStatus = 'forked' | 'failed' | 'blocked';
+
 export interface CommandCallbacks {
   exit: () => void;
   saveSession: () => Promise<void>;
   startNewSession?: () => void;
-  loadSession: (id: string) => Promise<boolean>;
+  loadSession: (id: string) => Promise<SessionLoadStatus>;
   listSessions: () => Promise<void>;
   clearHistory: () => void;
   printHistory: () => void;
@@ -74,6 +78,10 @@ export interface CommandCallbacks {
   readline?: readline.Interface;
   startCompacting?: () => void;
   stopCompacting?: () => void;
+  printSessionTree?: () => Promise<void>;
+  switchSessionBranch?: (selector: string) => Promise<SessionBranchSwitchStatus>;
+  labelSessionBranch?: (selector: string, label?: string) => Promise<boolean>;
+  forkSession?: (selector?: string) => Promise<SessionForkStatus>;
   ui: UIContext;
 }
 

@@ -46,6 +46,26 @@ describe('provider capability disclosure', () => {
     expect(output).toContain('Session Status');
     expect(output).toContain('Provider Cap:');
     expect(output).toContain('CLI bridge; forwards only the latest user message; MCP unavailable');
+    expect(output).toContain('Provider Policy:');
+    expect(output).toContain('native reasoning control is unavailable on this provider');
+  });
+
+  it('shows the full capability matrix and common policy scenarios in /provider', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const providerCommand = BUILTIN_COMMANDS.find((command) => command.name === 'provider');
+
+    expect(providerCommand).toBeDefined();
+    await providerCommand!.handler([], context, {} as CommandCallbacks, currentConfig);
+
+    const output = logSpy.mock.calls.flat().join('\n');
+    expect(output).toContain('Provider Details:');
+    expect(output).toContain('Source:');
+    expect(output).toContain('Capability Matrix:');
+    expect(output).toContain('Context fidelity: lossy');
+    expect(output).toContain('Long-running support: limited');
+    expect(output).toContain('Common Scenarios:');
+    expect(output).toContain('Long-running task: BLOCK');
+    expect(output).toContain('Project harness: BLOCK');
   });
 
   it('keeps bridge providers marked as configured and prompt-only for reasoning UX', () => {

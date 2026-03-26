@@ -137,9 +137,11 @@ export interface ProjectHarnessRunRecord {
 }
 
 export interface ProjectHarnessCheckpointRecord {
+  id?: string;
   checkpointId: string;
   runId: string;
   featureIndex: number;
+  taskId?: string;
   decision: ProjectHarnessRunRecord['decision'];
   gitHead: string | null;
   gitStatus: string[];
@@ -149,8 +151,11 @@ export interface ProjectHarnessCheckpointRecord {
 }
 
 export interface ProjectHarnessSessionNodeRecord {
+  id?: string;
   nodeId: string;
+  taskId?: string;
   runId: string;
+  parentId?: string | null;
   parentNodeId: string | null;
   parentRunId: string | null;
   featureIndex: number;

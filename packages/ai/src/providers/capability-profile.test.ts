@@ -5,43 +5,55 @@ import {
   getProviderModels,
 } from './registry.js';
 
+const EXPECTED_CLI_BRIDGE_PROFILE = {
+  transport: 'cli-bridge',
+  conversationSemantics: 'last-user-message',
+  mcpSupport: 'none',
+  contextFidelity: 'lossy',
+  toolCallingFidelity: 'limited',
+  sessionSupport: 'stateless',
+  longRunningSupport: 'limited',
+  multimodalSupport: 'none',
+  evidenceSupport: 'limited',
+} as const;
+
+const EXPECTED_NATIVE_PROFILE = {
+  transport: 'native-api',
+  conversationSemantics: 'full-history',
+  mcpSupport: 'none',
+  contextFidelity: 'full',
+  toolCallingFidelity: 'full',
+  sessionSupport: 'full',
+  longRunningSupport: 'full',
+  multimodalSupport: 'none',
+  evidenceSupport: 'full',
+} as const;
+
 describe('provider capability profiles', () => {
   it('marks CLI bridge providers as lossy bridge transports in snapshot metadata', () => {
-    expect(getProviderConfiguredCapabilityProfile('gemini-cli')).toEqual({
-      transport: 'cli-bridge',
-      conversationSemantics: 'last-user-message',
-      mcpSupport: 'none',
-    });
-    expect(getProviderConfiguredCapabilityProfile('codex-cli')).toEqual({
-      transport: 'cli-bridge',
-      conversationSemantics: 'last-user-message',
-      mcpSupport: 'none',
-    });
+    expect(getProviderConfiguredCapabilityProfile('gemini-cli')).toEqual(
+      EXPECTED_CLI_BRIDGE_PROFILE,
+    );
+    expect(getProviderConfiguredCapabilityProfile('codex-cli')).toEqual(
+      EXPECTED_CLI_BRIDGE_PROFILE,
+    );
 
     const providers = getProviderList();
-    expect(providers.find((provider) => provider.name === 'gemini-cli')?.capabilityProfile).toEqual({
-      transport: 'cli-bridge',
-      conversationSemantics: 'last-user-message',
-      mcpSupport: 'none',
-    });
-    expect(providers.find((provider) => provider.name === 'codex-cli')?.capabilityProfile).toEqual({
-      transport: 'cli-bridge',
-      conversationSemantics: 'last-user-message',
-      mcpSupport: 'none',
-    });
+    expect(
+      providers.find((provider) => provider.name === 'gemini-cli')?.capabilityProfile,
+    ).toEqual(EXPECTED_CLI_BRIDGE_PROFILE);
+    expect(
+      providers.find((provider) => provider.name === 'codex-cli')?.capabilityProfile,
+    ).toEqual(EXPECTED_CLI_BRIDGE_PROFILE);
   });
 
   it('keeps native providers on full-history native MCP profiles', () => {
-    expect(getProviderConfiguredCapabilityProfile('anthropic')).toEqual({
-      transport: 'native-api',
-      conversationSemantics: 'full-history',
-      mcpSupport: 'none',
-    });
-    expect(getProviderConfiguredCapabilityProfile('openai')).toEqual({
-      transport: 'native-api',
-      conversationSemantics: 'full-history',
-      mcpSupport: 'none',
-    });
+    expect(getProviderConfiguredCapabilityProfile('anthropic')).toEqual(
+      EXPECTED_NATIVE_PROFILE,
+    );
+    expect(getProviderConfiguredCapabilityProfile('openai')).toEqual(
+      EXPECTED_NATIVE_PROFILE,
+    );
   });
 
   it('returns null for unknown providers instead of inventing a native profile', () => {

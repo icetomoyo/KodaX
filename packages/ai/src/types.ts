@@ -98,10 +98,28 @@ export type KodaXProviderConversationSemantics =
 
 export type KodaXProviderMcpSupport = 'native' | 'none';
 
+export type KodaXProviderContextFidelity = 'full' | 'partial' | 'lossy';
+
+export type KodaXProviderToolCallingFidelity = 'full' | 'limited' | 'none';
+
+export type KodaXProviderSessionSupport = 'full' | 'limited' | 'stateless';
+
+export type KodaXProviderLongRunningSupport = 'full' | 'limited' | 'none';
+
+export type KodaXProviderMultimodalSupport = 'none' | 'image-input' | 'full';
+
+export type KodaXProviderEvidenceSupport = 'full' | 'limited' | 'none';
+
 export interface KodaXProviderCapabilityProfile {
   transport: KodaXProviderTransport;
   conversationSemantics: KodaXProviderConversationSemantics;
   mcpSupport: KodaXProviderMcpSupport;
+  contextFidelity?: KodaXProviderContextFidelity;
+  toolCallingFidelity?: KodaXProviderToolCallingFidelity;
+  sessionSupport?: KodaXProviderSessionSupport;
+  longRunningSupport?: KodaXProviderLongRunningSupport;
+  multimodalSupport?: KodaXProviderMultimodalSupport;
+  evidenceSupport?: KodaXProviderEvidenceSupport;
 }
 
 export type KodaXReasoningOverride =
@@ -141,6 +159,20 @@ export type KodaXExecutionMode =
 
 export type KodaXRiskLevel = 'low' | 'medium' | 'high';
 
+export type KodaXTaskComplexity =
+  | 'simple'
+  | 'moderate'
+  | 'complex'
+  | 'systemic';
+
+export type KodaXTaskWorkIntent = 'append' | 'overwrite' | 'new';
+
+export type KodaXHarnessProfile =
+  | 'H0_DIRECT'
+  | 'H1_EXECUTE_EVAL'
+  | 'H2_PLAN_EXECUTE_EVAL'
+  | 'H3_MULTI_WORKER';
+
 export interface KodaXTaskRoutingDecision {
   primaryTask: KodaXTaskType;
   secondaryTask?: KodaXTaskType;
@@ -148,6 +180,11 @@ export interface KodaXTaskRoutingDecision {
   riskLevel: KodaXRiskLevel;
   recommendedMode: KodaXExecutionMode;
   recommendedThinkingDepth: KodaXThinkingDepth;
+  complexity: KodaXTaskComplexity;
+  workIntent: KodaXTaskWorkIntent;
+  requiresBrainstorm: boolean;
+  harnessProfile: KodaXHarnessProfile;
+  routingNotes?: string[];
   reason: string;
 }
 

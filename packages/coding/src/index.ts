@@ -71,7 +71,15 @@ export type {
   KodaXJsonValue,
   KodaXExtensionSessionRecord,
   KodaXExtensionSessionState,
+  KodaXSessionBranchSummaryEntry,
+  KodaXSessionCompactionEntry,
   KodaXSessionData,
+  KodaXSessionEntry,
+  KodaXSessionEntryBase,
+  KodaXSessionLabelEntry,
+  KodaXSessionLineage,
+  KodaXSessionMessageEntry,
+  KodaXSessionNavigationOptions,
   KodaXSessionMeta,
   KodaXEvents,
   KodaXSessionOptions,
@@ -80,8 +88,10 @@ export type {
   KodaXOptions,
   KodaXResult,
   KodaXSessionStorage,
+  KodaXSessionTreeNode,
   KodaXToolExecutionContext,
   AskUserQuestionOptions,
+  KodaXProviderPolicyHints,
   SessionErrorMetadata,
 } from './types.js';
 
@@ -220,6 +230,15 @@ export {
 export {
   generateSessionId,
   extractTitleFromMessages,
+  appendSessionLineageLabel,
+  buildSessionTree,
+  countActiveLineageMessages,
+  createSessionLineage,
+  forkSessionLineage,
+  getSessionLineagePath,
+  getSessionMessagesFromLineage,
+  resolveSessionLineageTarget,
+  setSessionLineageActiveEntry,
 } from './session.js';
 
 // ============== Message Processing ==============
@@ -313,9 +332,24 @@ export {
   reasoningModeToDepth,
   inferTaskType,
   buildFallbackRoutingDecision,
+  buildProviderPolicyHintsForDecision,
   buildPromptOverlay,
   createReasoningPlan,
 } from './reasoning.js';
+
+export type {
+  KodaXProviderCapabilitySnapshot,
+  KodaXProviderPolicyDecision,
+  KodaXProviderPolicyIssue,
+  KodaXProviderPolicyIssueSeverity,
+  KodaXProviderSourceKind,
+} from './provider-policy.js';
+
+export {
+  buildProviderCapabilitySnapshot,
+  buildProviderPolicyPromptNotes,
+  evaluateProviderPolicy,
+} from './provider-policy.js';
 
 // Client alias
 export { KodaXClient as Client } from './client.js';
