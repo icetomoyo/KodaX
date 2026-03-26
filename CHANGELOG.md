@@ -4,7 +4,37 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-<!-- last-sync: b7b795e -->
+<!-- last-sync: 4e976a2 -->
+
+---
+
+## [0.7.5] - 2026-03-26
+
+### Added
+- **Task engine (FEATURE_022)**: `runManagedTask()` in `packages/coding/src/task-engine.ts` — full managed task lifecycle with contract creation, role assignment, evidence collection, and orchestration verdict; integrates with `runOrchestration` for multi-worker task execution
+- **Task contract types**: `KodaXTaskContract`, `KodaXTaskRoleAssignment`, `KodaXTaskWorkItem`, `KodaXTaskEvidenceArtifact`, `KodaXTaskEvidenceEntry`, `KodaXTaskEvidenceBundle`, `KodaXOrchestrationVerdict`, `KodaXManagedTask` in `@kodax/coding`
+- **Task context types**: `KodaXTaskCapabilityHint`, `KodaXTaskVerificationContract`, `KodaXTaskToolPolicy` for structured verification and tool policy contracts
+- **Task surface tracking**: `KodaXTaskSurface` type (`cli`/`repl`/`project`/`plan`) propagated through execution context to identify managed task entry points
+- **Session scope**: `KodaXSessionScope` (`user`/`managed-task-worker`) on `KodaXSessionData` and `KodaXSessionMeta` for worker session identification; `scope` option on `KodaXSessionOptions`
+- **Project control state**: `ProjectControlState` interface and `createProjectControlState()` factory for tracking workflow mutations separately from derived workflow state
+- **Managed task persistence**: `ProjectStorage` read/write for managed task artifacts (`managed-task.json`) and control state (`control-state.json`)
+- **JSON guards**: Type guards for `ProjectControlState`, `KodaXManagedTask`, `KodaXTaskVerificationContract`, `KodaXTaskToolPolicy`, `KodaXTaskCapabilityHint` in `json-guards.ts`
+- **Orchestration abort propagation**: `AbortSignal` threading from `runOrchestration` options through task runners to agent execution; `mergeAbortSignals()` utility for composite abort handling with `AbortSignal.any` fallback
+- **Orchestration task cancellation**: `buildCancelledTaskResult()` and early-exit loop when external abort signal fires, marking all pending tasks as blocked
+- **Task runner hooks**: `createOptions` and `onResult` callbacks on `CreateKodaXTaskRunnerOptions` for per-task option customization and post-result side effects
+- **New tests**: Task engine integration tests, orchestration abort tests, project storage managed task tests, project harness control state tests, storage scope tests, CLI option helper tests
+
+### Changed
+- **CLI entry points use `runManagedTask`**: `kodax_cli.ts` replaced `runKodaX` with `runManagedTask` for all execution paths (direct, command, print) with `taskSurface: 'cli'`
+- **Project commands use `runManagedTask`**: `/project next` and `/project auto` now execute via `runManagedTask` with project surface, feature metadata, and verification contracts
+- **Workflow state derivation refactored**: `ProjectStorage.inferWorkflowState` replaced with `deriveWorkflowState` that considers control state, alignment truth, and managed task status for more accurate stage inference
+- **Project harness verification integration**: Verification results now map to managed task verdict (`completed`/`blocked`) and update evidence entries with signals
+- **Control state propagated**: Discovery, planning, and execution commands now use `saveProjectControlState` instead of directly mutating workflow state
+
+### Documentation
+- **ADR, DD, HLD, PRD**: Updated architecture decision records, design document, high-level design, and product requirements for FEATURE_022 task engine
+- **Feature design docs**: v0.7.0, v0.8.0, v0.9.0, v1.0.0 feature documents updated for task engine integration and dependency tracking
+- **FEATURE_LIST.md**: Updated with FEATURE_022 progress and cross-feature dependency references
 
 ---
 
