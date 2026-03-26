@@ -17,14 +17,23 @@ import {
   KodaXMessage,
   KodaXResult,
   KodaXReasoningMode,
+  KodaXSessionData,
   runKodaX,
+  appendSessionLineageLabel,
+  buildSessionTree,
+  countActiveLineageMessages,
+  createSessionLineage,
   estimateTokens,
+  forkSessionLineage,
+  generateSessionId as generateCoreSessionId,
+  getSessionMessagesFromLineage,
   KodaXSessionStorage,
   KodaXError,
   KodaXRateLimitError,
   KodaXProviderError,
   KODAX_DEFAULT_PROVIDER,
   registerCustomProviders,
+  setSessionLineageActiveEntry,
   getCustomProvider,
 } from '@kodax/coding';
 import type { AgentsFile } from '@kodax/coding';
@@ -69,6 +78,10 @@ import { ReadlineUIContext } from '../ui/readline-ui.js';
 import { extractLastAssistantText, extractTitle as extractSessionTitle } from '../ui/utils/message-utils.js';
 import { executeShellCommand, isShellCommandHandled } from '../ui/utils/shell-executor.js';
 import { prepareInvocationExecution } from './invocation-runtime.js';
+import {
+  enforceSessionTransitionGuard,
+} from './session-guardrails.js';
+import { formatSessionTree } from './session-tree.js';
 
 // Extended session storage interface (adds list method) - 扩展的会话存储接口（增加 list 方法）
 interface SessionStorage extends KodaXSessionStorage {
@@ -77,21 +90,121 @@ interface SessionStorage extends KodaXSessionStorage {
 
 // Simple in-memory session storage (replaceable with persistent storage) - 简单的内存会话存储（可替换为持久化存储）
 class MemorySessionStorage implements SessionStorage {
-  private sessions = new Map<string, { messages: KodaXMessage[]; title: string; gitRoot: string }>();
+  private sessions = new Map<string, { data: KodaXSessionData; createdAt: string }>();
 
-  async save(id: string, data: { messages: KodaXMessage[]; title: string; gitRoot: string }): Promise<void> {
-    this.sessions.set(id, data);
+  async save(id: string, data: KodaXSessionData): Promise<void> {
+    const existing = this.sessions.get(id);
+    const lineage = createSessionLineage(
+      data.messages,
+      data.lineage ?? existing?.data.lineage,
+    );
+    this.sessions.set(id, {
+      createdAt: existing?.createdAt ?? new Date().toISOString(),
+      data: {
+        ...structuredClone(data),
+        extensionState: data.extensionState ?? existing?.data.extensionState,
+        extensionRecords: data.extensionRecords ?? existing?.data.extensionRecords,
+        lineage,
+      },
+    });
   }
 
-  async load(id: string): Promise<{ messages: KodaXMessage[]; title: string; gitRoot: string } | null> {
-    return this.sessions.get(id) ?? null;
+  async load(id: string): Promise<KodaXSessionData | null> {
+    return structuredClone(this.sessions.get(id)?.data ?? null);
+  }
+
+  async getLineage(id: string) {
+    return structuredClone(this.sessions.get(id)?.data.lineage ?? null);
+  }
+
+  async setActiveEntry(
+    id: string,
+    selector: string,
+    options?: { summarizeCurrentBranch?: boolean },
+  ): Promise<KodaXSessionData | null> {
+    const current = this.sessions.get(id);
+    if (!current?.data.lineage) {
+      return null;
+    }
+
+    const lineage = setSessionLineageActiveEntry(current.data.lineage, selector, options);
+    if (!lineage) {
+      return null;
+    }
+
+    const data: KodaXSessionData = {
+      ...structuredClone(current.data),
+      messages: getSessionMessagesFromLineage(lineage),
+      lineage,
+    };
+    this.sessions.set(id, { ...current, data });
+    return structuredClone(data);
+  }
+
+  async setLabel(id: string, selector: string, label?: string): Promise<KodaXSessionData | null> {
+    const current = this.sessions.get(id);
+    if (!current?.data.lineage) {
+      return null;
+    }
+
+    const lineage = appendSessionLineageLabel(current.data.lineage, selector, label);
+    if (!lineage) {
+      return null;
+    }
+
+    const data: KodaXSessionData = {
+      ...structuredClone(current.data),
+      lineage,
+    };
+    this.sessions.set(id, { ...current, data });
+    return structuredClone(data);
+  }
+
+  async fork(
+    id: string,
+    selector?: string,
+    options?: { sessionId?: string; title?: string },
+  ): Promise<{ sessionId: string; data: KodaXSessionData } | null> {
+    const current = this.sessions.get(id);
+    if (!current?.data.lineage) {
+      return null;
+    }
+
+    const lineage = forkSessionLineage(current.data.lineage, selector);
+    if (!lineage) {
+      return null;
+    }
+
+    const sessionId = options?.sessionId ?? await generateCoreSessionId();
+    const data: KodaXSessionData = {
+      messages: getSessionMessagesFromLineage(lineage),
+      title: options?.title ?? current.data.title,
+      gitRoot: current.data.gitRoot,
+      extensionState: current.data.extensionState
+        ? structuredClone(current.data.extensionState)
+        : undefined,
+      extensionRecords: current.data.extensionRecords
+        ? structuredClone(current.data.extensionRecords)
+        : undefined,
+      lineage,
+    };
+    this.sessions.set(sessionId, {
+      createdAt: new Date().toISOString(),
+      data,
+    });
+    return {
+      sessionId,
+      data: structuredClone(data),
+    };
   }
 
   async list(_gitRoot?: string): Promise<Array<{ id: string; title: string; msgCount: number }>> {
-    return Array.from(this.sessions.entries()).map(([id, data]) => ({
+    return Array.from(this.sessions.entries()).map(([id, session]) => ({
       id,
-      title: data.title,
-      msgCount: data.messages.length,
+      title: session.data.title,
+      msgCount: session.data.lineage
+        ? countActiveLineageMessages(session.data.lineage)
+        : session.data.messages.length,
     }));
   }
 
@@ -179,6 +292,16 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     sessionId: options.session?.id,
     gitRoot,
   });
+
+  const guardSessionTransition = (action: string): boolean => {
+    return enforceSessionTransitionGuard(currentConfig, action, (status, headline, details) => {
+      console.log((status === 'block' ? chalk.red : chalk.yellow)(`\n${headline}`));
+      for (const detail of details) {
+        console.log(chalk.dim(detail));
+      }
+      console.log();
+    });
+  };
 
   // Load compaction config for banner display
   const compactionConfig = await loadCompactionConfig(gitRoot ?? undefined);
@@ -329,18 +452,30 @@ Keyboard Shortcuts:
     loadSession: async (id: string) => {
       const loaded = await storage.load(id);
       if (loaded) {
+        if (!guardSessionTransition('Resuming a saved session')) {
+          return 'blocked';
+        }
         context.messages = loaded.messages;
         context.title = loaded.title;
         context.sessionId = id;
         context.contextTokenSnapshot = undefined;
+        context.lastAccessed = new Date().toISOString();
+        currentOptions.session = {
+          ...currentOptions.session,
+          id,
+        };
+        statusBar?.update({
+          sessionId: id,
+          messageCount: loaded.messages.length,
+        });
         console.log(chalk.green(`\n[Loaded session: ${id}]`));
         console.log(chalk.dim(`  Messages: ${loaded.messages.length}`));
-        return true;
+        return 'loaded';
       }
-      return false;
+      return 'missing';
     },
     listSessions: async () => {
-      const sessions = await storage.list();
+      const sessions = await storage.list(gitRoot ?? undefined);
       if (sessions.length === 0) {
         console.log(chalk.dim('\n[No saved sessions]'));
         return;
@@ -424,7 +559,83 @@ Keyboard Shortcuts:
       await storage.delete?.(id);
     },
     deleteAllSessions: async () => {
-      await storage.deleteAll?.();
+      await storage.deleteAll?.(gitRoot ?? undefined);
+    },
+    printSessionTree: async () => {
+      const lineage = await storage.getLineage?.(context.sessionId);
+      if (!lineage) {
+        console.log(chalk.dim('\n[No session tree available for this session]'));
+        return;
+      }
+
+      const lines = formatSessionTree(buildSessionTree(lineage));
+      console.log(chalk.bold('\nSession Tree:\n'));
+      for (const line of lines) {
+        console.log(`  ${line}`);
+      }
+      console.log();
+    },
+    switchSessionBranch: async (selector: string) => {
+      if (!guardSessionTransition('Switching session branches')) {
+        return 'blocked';
+      }
+
+      const loaded = await storage.setActiveEntry?.(
+        context.sessionId,
+        selector,
+        { summarizeCurrentBranch: true },
+      );
+      if (!loaded) {
+        return 'missing';
+      }
+
+      context.messages = loaded.messages;
+      context.title = loaded.title;
+      context.contextTokenSnapshot = undefined;
+      statusBar?.update({ messageCount: context.messages.length });
+      console.log(chalk.green(`\n[Switched to tree entry: ${selector}]`));
+      console.log(chalk.dim(`  Messages: ${loaded.messages.length}`));
+      return 'switched';
+    },
+    labelSessionBranch: async (selector: string, label?: string) => {
+      const updated = await storage.setLabel?.(context.sessionId, selector, label);
+      if (!updated) {
+        return false;
+      }
+
+      const action = label && label.trim()
+        ? `checkpoint label set: ${label.trim()}`
+        : 'checkpoint label cleared';
+      console.log(chalk.green(`\n[${action}]`));
+      return true;
+    },
+    forkSession: async (selector?: string) => {
+      if (!guardSessionTransition('Forking a session branch')) {
+        return 'blocked';
+      }
+
+      const forked = await storage.fork?.(context.sessionId, selector);
+      if (!forked) {
+        return 'failed';
+      }
+
+      context.sessionId = forked.sessionId;
+      context.messages = forked.data.messages;
+      context.title = forked.data.title;
+      context.contextTokenSnapshot = undefined;
+      context.createdAt = new Date().toISOString();
+      context.lastAccessed = context.createdAt;
+      currentOptions.session = {
+        ...currentOptions.session,
+        id: forked.sessionId,
+      };
+      statusBar?.update({
+        sessionId: forked.sessionId,
+        messageCount: context.messages.length,
+      });
+      console.log(chalk.green(`\n[Forked session: ${forked.sessionId}]`));
+      console.log(chalk.dim(`  Messages: ${forked.data.messages.length}`));
+      return 'forked';
     },
     setPlanMode: (enabled: boolean) => {
       planMode = enabled;

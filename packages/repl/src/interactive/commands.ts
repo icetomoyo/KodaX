@@ -557,8 +557,8 @@ export const BUILTIN_COMMANDS: Command[] = [
         await callbacks.listSessions();
         return;
       }
-      const success = await callbacks.loadSession(args[0]!);
-      if (!success) {
+      const status = await callbacks.loadSession(args[0]!);
+      if (status === 'missing') {
         console.log(chalk.red(`\n[Session not found: ${args[0]}]`));
       }
     },
@@ -574,6 +574,83 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log(chalk.dim('  /load 20260219_143052') + '# Load session by ID');
       console.log();
       console.log(chalk.dim('  See also: /help sessions, /help save'));
+      console.log();
+    },
+  },
+  {
+    name: 'tree',
+    description: 'Inspect or switch the current session tree',
+    usage: '/tree [entry-id|label] | /tree label <entry-id|label> <name> | /tree unlabel <entry-id|label>',
+    handler: async (args, _context, callbacks) => {
+      if (args.length === 0) {
+        await callbacks.printSessionTree?.();
+        return;
+      }
+
+      const subcommand = args[0]?.trim().toLowerCase();
+      if (subcommand === 'label') {
+        if (args.length < 3) {
+          console.log(chalk.red('\n[Usage: /tree label <entry-id|label> <name>]'));
+          return;
+        }
+        const success = await callbacks.labelSessionBranch?.(args[1]!, args.slice(2).join(' '));
+        if (!success) {
+          console.log(chalk.red(`\n[Tree entry not found: ${args[1]}]`));
+        }
+        return;
+      }
+
+      if (subcommand === 'unlabel') {
+        if (args.length < 2) {
+          console.log(chalk.red('\n[Usage: /tree unlabel <entry-id|label>]'));
+          return;
+        }
+        const success = await callbacks.labelSessionBranch?.(args[1]!, undefined);
+        if (!success) {
+          console.log(chalk.red(`\n[Tree entry not found: ${args[1]}]`));
+        }
+        return;
+      }
+
+      const status = await callbacks.switchSessionBranch?.(args[0]!);
+      if (status === 'missing') {
+        console.log(chalk.red(`\n[Tree entry not found: ${args[0]}]`));
+      }
+    },
+    detailedHelp: () => {
+      console.log(chalk.cyan('\n/tree - Inspect Session Lineage\n'));
+      console.log(chalk.bold('Usage:'));
+      console.log(chalk.dim('  /tree                              ') + 'Show the current session tree');
+      console.log(chalk.dim('  /tree <entry-id|label>             ') + 'Jump to a previous branch point');
+      console.log(chalk.dim('  /tree label <entry-id|label> <name>') + 'Attach a lightweight checkpoint label');
+      console.log(chalk.dim('  /tree unlabel <entry-id|label>     ') + 'Clear an existing checkpoint label');
+      console.log();
+      console.log(chalk.bold('Description:'));
+      console.log(chalk.dim('  Session history is stored as a branchable tree. Use /tree to'));
+      console.log(chalk.dim('  inspect the lineage, revisit an earlier branch safely, and add'));
+      console.log(chalk.dim('  bookmark-style checkpoint labels without changing git state.'));
+      console.log();
+    },
+  },
+  {
+    name: 'fork',
+    description: 'Fork the current branch into a new session',
+    usage: '/fork [entry-id|label]',
+    handler: async (args, _context, callbacks) => {
+      const status = await callbacks.forkSession?.(args[0]);
+      if (status === 'failed') {
+        console.log(chalk.red(`\n[Unable to fork session${args[0] ? ` from ${args[0]}` : ''}]`));
+      }
+    },
+    detailedHelp: () => {
+      console.log(chalk.cyan('\n/fork - Export a Branch to a New Session\n'));
+      console.log(chalk.bold('Usage:'));
+      console.log(chalk.dim('  /fork                 ') + 'Fork from the active branch');
+      console.log(chalk.dim('  /fork <entry-id|label>') + 'Fork from a selected tree node');
+      console.log();
+      console.log(chalk.bold('Description:'));
+      console.log(chalk.dim('  Creates a new session file from the selected branch so you can'));
+      console.log(chalk.dim('  continue there without mutating the current session lineage.'));
       console.log();
     },
   },

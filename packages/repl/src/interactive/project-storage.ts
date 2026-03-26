@@ -571,6 +571,8 @@ export class ProjectStorage {
     harnessCritic: string;
     harnessCheckpoints: string;
     harnessSessionTree: string;
+    lineageCheckpoints: string;
+    lineageSessionTree: string;
     harnessEvidence: string;
   } {
     return {
@@ -593,6 +595,8 @@ export class ProjectStorage {
       harnessCritic: this.harnessCriticPath,
       harnessCheckpoints: this.harnessCheckpointsPath,
       harnessSessionTree: this.harnessSessionTreePath,
+      lineageCheckpoints: this.harnessCheckpointsPath,
+      lineageSessionTree: this.harnessSessionTreePath,
       harnessEvidence: this.harnessEvidencePath,
     };
   }
@@ -616,14 +620,22 @@ export class ProjectStorage {
     await fs.appendFile(this.harnessCriticPath, `${JSON.stringify(record)}\n`, 'utf-8');
   }
 
-  async appendHarnessCheckpoint(record: unknown): Promise<void> {
+  async appendLineageCheckpoint(record: unknown): Promise<void> {
     await fs.mkdir(path.dirname(this.harnessCheckpointsPath), { recursive: true });
     await fs.appendFile(this.harnessCheckpointsPath, `${JSON.stringify(record)}\n`, 'utf-8');
   }
 
-  async appendHarnessSessionNode(record: unknown): Promise<void> {
+  async appendLineageSessionNode(record: unknown): Promise<void> {
     await fs.mkdir(path.dirname(this.harnessSessionTreePath), { recursive: true });
     await fs.appendFile(this.harnessSessionTreePath, `${JSON.stringify(record)}\n`, 'utf-8');
+  }
+
+  async appendHarnessCheckpoint(record: unknown): Promise<void> {
+    await this.appendLineageCheckpoint(record);
+  }
+
+  async appendHarnessSessionNode(record: unknown): Promise<void> {
+    await this.appendLineageSessionNode(record);
   }
 
   async readHarnessRuns<T = unknown>(): Promise<T[]> {
@@ -634,12 +646,20 @@ export class ProjectStorage {
     return this.readJsonLinesFile<T>(this.harnessCriticPath, 'harness critic');
   }
 
+  async readLineageCheckpoints<T = unknown>(): Promise<T[]> {
+    return this.readJsonLinesFile<T>(this.harnessCheckpointsPath, 'lineage checkpoint');
+  }
+
+  async readLineageSessionNodes<T = unknown>(): Promise<T[]> {
+    return this.readJsonLinesFile<T>(this.harnessSessionTreePath, 'lineage session-tree');
+  }
+
   async readHarnessCheckpoints<T = unknown>(): Promise<T[]> {
-    return this.readJsonLinesFile<T>(this.harnessCheckpointsPath, 'harness checkpoint');
+    return this.readLineageCheckpoints<T>();
   }
 
   async readHarnessSessionNodes<T = unknown>(): Promise<T[]> {
-    return this.readJsonLinesFile<T>(this.harnessSessionTreePath, 'harness session-tree');
+    return this.readLineageSessionNodes<T>();
   }
 
   async writeHarnessEvidence(featureIndex: number, record: unknown): Promise<void> {
