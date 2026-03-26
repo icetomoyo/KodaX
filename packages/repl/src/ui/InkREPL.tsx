@@ -179,6 +179,15 @@ function resolveInitialReasoningMode(
   return 'off';
 }
 
+function logSessionTransitionGuard(
+  status: "warn" | "block",
+  headline: string,
+  details: string[],
+): void {
+  console.log((status === "block" ? chalk.red : chalk.yellow)(headline));
+  details.forEach((detail) => console.log(chalk.dim(detail)));
+}
+
 /**
  * Banner component - displayed inside Ink UI so it's part of the alternate buffer
  */
@@ -1757,10 +1766,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               const allowed = enforceSessionTransitionGuard(
                 currentConfig,
                 "Resuming a saved session",
-                (status, headline, details) => {
-                  console.log((status === "block" ? chalk.red : chalk.yellow)(headline));
-                  details.forEach((detail) => console.log(chalk.dim(detail)));
-                },
+                logSessionTransitionGuard,
               );
               if (!allowed) {
                 return "blocked";
@@ -1872,10 +1878,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             const allowed = enforceSessionTransitionGuard(
               currentConfig,
               "Switching session branches",
-              (status, headline, details) => {
-                console.log((status === "block" ? chalk.red : chalk.yellow)(headline));
-                details.forEach((detail) => console.log(chalk.dim(detail)));
-              },
+              logSessionTransitionGuard,
             );
             if (!allowed) {
               return "blocked";
@@ -1914,10 +1917,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             const allowed = enforceSessionTransitionGuard(
               currentConfig,
               "Forking a session branch",
-              (status, headline, details) => {
-                console.log((status === "block" ? chalk.red : chalk.yellow)(headline));
-                details.forEach((detail) => console.log(chalk.dim(detail)));
-              },
+              logSessionTransitionGuard,
             );
             if (!allowed) {
               return "blocked";

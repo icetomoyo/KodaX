@@ -15,6 +15,7 @@ type NavigableSessionEntry = Exclude<KodaXSessionEntry, KodaXSessionLabelEntry>;
 
 const ENTRY_ID_LENGTH = 12;
 const MAX_BRANCH_SUMMARY_LENGTH = 600;
+const messageFingerprintCache = new WeakMap<KodaXMessage, string>();
 
 const COMPACTION_SUMMARY_PREFIX = `The conversation history before this point was compacted into the following summary:
 
@@ -75,8 +76,25 @@ function isNavigableEntry(entry: KodaXSessionEntry): entry is NavigableSessionEn
   return entry.type !== 'label';
 }
 
+function serializeMessageContent(content: KodaXMessage['content']): string {
+  return typeof content === 'string'
+    ? `text:${content}`
+    : `json:${JSON.stringify(content)}`;
+}
+
+function getMessageFingerprint(message: KodaXMessage): string {
+  const cached = messageFingerprintCache.get(message);
+  if (cached) {
+    return cached;
+  }
+
+  const fingerprint = `${message.role}:${serializeMessageContent(message.content)}`;
+  messageFingerprintCache.set(message, fingerprint);
+  return fingerprint;
+}
+
 function messagesEqual(left: KodaXMessage, right: KodaXMessage): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
+  return getMessageFingerprint(left) === getMessageFingerprint(right);
 }
 
 function generateEntryId(prefix: 'entry' | 'label' = 'entry'): string {
@@ -303,6 +321,12 @@ function getBranchSegment(
   return path.slice(ancestorIndex + 1);
 }
 
+/**
+ * Reconcile a linear message list against an existing lineage tree.
+ *
+ * Existing matching entries are reused when possible, and only the missing
+ * tail is appended as new message entries.
+ */
 export function createSessionLineage(
   messages: KodaXMessage[],
   previous?: KodaXSessionLineage,
@@ -344,6 +368,11 @@ export function createSessionLineage(
   return lineage;
 }
 
+/**
+ * Walk the lineage from a target entry back to the root.
+ *
+ * Traversal stops safely if malformed data introduces a parent cycle.
+ */
 export function getSessionLineagePath(
   lineage: KodaXSessionLineage,
   targetId: string | null = lineage.activeEntryId,
@@ -367,6 +396,9 @@ export function getSessionLineagePath(
   return path.reverse();
 }
 
+/**
+ * Build the effective LLM-visible message context for the active lineage path.
+ */
 export function getSessionMessagesFromLineage(
   lineage: KodaXSessionLineage,
   targetId: string | null = lineage.activeEntryId,
@@ -376,6 +408,9 @@ export function getSessionMessagesFromLineage(
     .map(cloneMessage);
 }
 
+/**
+ * Resolve an entry selector using either a direct entry id or the latest label.
+ */
 export function resolveSessionLineageTarget(
   lineage: KodaXSessionLineage,
   selector: string,
@@ -397,6 +432,10 @@ export function resolveSessionLineageTarget(
   return labeledTargetId ? byId.get(labeledTargetId) : undefined;
 }
 
+/**
+ * Move the active leaf to a selected target, optionally appending a
+ * branch-summary node that captures the abandoned path.
+ */
 export function setSessionLineageActiveEntry(
   lineage: KodaXSessionLineage,
   selector: string,
@@ -452,6 +491,9 @@ export function setSessionLineageActiveEntry(
   };
 }
 
+/**
+ * Append a label change entry that bookmarks a lineage node.
+ */
 export function appendSessionLineageLabel(
   lineage: KodaXSessionLineage,
   selector: string,
@@ -519,6 +561,9 @@ function cloneForkableEntry(
   }
 }
 
+/**
+ * Export the active lineage path, or a selected target path, into a new tree.
+ */
 export function forkSessionLineage(
   lineage: KodaXSessionLineage,
   selector?: string,
@@ -570,6 +615,9 @@ export function forkSessionLineage(
   };
 }
 
+/**
+ * Convert a lineage into a nested tree structure for UI presentation.
+ */
 export function buildSessionTree(lineage: KodaXSessionLineage): KodaXSessionTreeNode[] {
   const entries = lineage.entries.filter(isNavigableEntry);
   const labels = getResolvedLabels(lineage);
@@ -606,6 +654,9 @@ export function buildSessionTree(lineage: KodaXSessionLineage): KodaXSessionTree
   return roots;
 }
 
+/**
+ * Count the effective context messages on the active lineage path.
+ */
 export function countActiveLineageMessages(lineage: KodaXSessionLineage): number {
   return getSessionMessagesFromLineage(lineage).length;
 }

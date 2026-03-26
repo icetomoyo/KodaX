@@ -15,6 +15,7 @@ import {
   countActiveLineageMessages,
   createSessionLineage,
   forkSessionLineage,
+  generateSessionId as generateCoreSessionId,
   getSessionMessagesFromLineage,
   setSessionLineageActiveEntry,
 } from "@kodax/coding";
@@ -135,7 +136,7 @@ export class MemorySessionStorage implements SessionStorage {
       return null;
     }
 
-    const sessionId = options?.sessionId ?? `${id}-fork-${Date.now()}`;
+    const sessionId = options?.sessionId ?? await generateCoreSessionId();
     const data: SessionData = {
       messages: getSessionMessagesFromLineage(lineage),
       title: options?.title ?? current.title,

@@ -3,6 +3,7 @@ import type { KodaXMessage } from '@kodax/ai';
 import {
   appendSessionLineageLabel,
   buildSessionTree,
+  countActiveLineageMessages,
   createSessionLineage,
   forkSessionLineage,
   getSessionLineagePath,
@@ -16,6 +17,16 @@ function createTextMessage(role: KodaXMessage['role'], content: string): KodaXMe
 }
 
 describe('session lineage helpers', () => {
+  it('creates an empty lineage for empty message lists', () => {
+    const lineage = createSessionLineage([]);
+
+    expect(lineage.activeEntryId).toBeNull();
+    expect(lineage.entries).toEqual([]);
+    expect(getSessionLineagePath(lineage)).toEqual([]);
+    expect(getSessionMessagesFromLineage(lineage)).toEqual([]);
+    expect(countActiveLineageMessages(lineage)).toBe(0);
+  });
+
   it('reuses existing history and branches cleanly from an earlier node', () => {
     const initial = createSessionLineage([
       createTextMessage('user', 'root'),
@@ -57,6 +68,23 @@ describe('session lineage helpers', () => {
     expect(buildSessionTree(forked!)).toHaveLength(1);
   });
 
+  it('forks from the active leaf when no selector is provided', () => {
+    const lineage = createSessionLineage([
+      createTextMessage('user', 'start from root'),
+      createTextMessage('assistant', 'active branch answer'),
+    ]);
+
+    const labeled = appendSessionLineageLabel(lineage, lineage.activeEntryId!, 'active-leaf');
+    const forked = forkSessionLineage(labeled!);
+
+    expect(forked).not.toBeNull();
+    expect(getSessionMessagesFromLineage(forked!)).toEqual([
+      createTextMessage('user', 'start from root'),
+      createTextMessage('assistant', 'active branch answer'),
+    ]);
+    expect(resolveSessionLineageTarget(forked!, 'active-leaf')?.id).toBe(forked!.activeEntryId);
+  });
+
   it('adds a branch summary when switching branches and preserves it for future turns', () => {
     const initial = createSessionLineage([
       createTextMessage('user', 'root request'),
@@ -83,6 +111,55 @@ describe('session lineage helpers', () => {
 
     expect(continued.entries.filter((entry) => entry.type === 'branch_summary')).toHaveLength(1);
     expect(getSessionMessagesFromLineage(continued)).toEqual(branchedMessages);
+  });
+
+  it('skips branch summaries when summarizeCurrentBranch is disabled', () => {
+    const initial = createSessionLineage([
+      createTextMessage('user', 'root request'),
+      createTextMessage('assistant', 'first implementation pass'),
+    ]);
+
+    const rewound = setSessionLineageActiveEntry(initial, initial.entries[0]!.id, {
+      summarizeCurrentBranch: false,
+    });
+
+    expect(rewound).not.toBeNull();
+    expect(rewound!.activeEntryId).toBe(initial.entries[0]!.id);
+    expect(rewound!.entries.filter((entry) => entry.type === 'branch_summary')).toHaveLength(0);
+  });
+
+  it('returns null or undefined for missing selectors', () => {
+    const lineage = createSessionLineage([
+      createTextMessage('user', 'root request'),
+      createTextMessage('assistant', 'leaf'),
+    ]);
+
+    expect(resolveSessionLineageTarget(lineage, 'missing-label')).toBeUndefined();
+    expect(setSessionLineageActiveEntry(lineage, 'missing-label')).toBeNull();
+    expect(appendSessionLineageLabel(lineage, 'missing-label', 'checkpoint')).toBeNull();
+    expect(forkSessionLineage(lineage, 'missing-label')).toBeNull();
+  });
+
+  it('treats orphaned entries as separate roots when building trees', () => {
+    const lineage = createSessionLineage([
+      createTextMessage('user', 'root'),
+      createTextMessage('assistant', 'leaf'),
+    ]);
+    const orphan = {
+      type: 'message' as const,
+      id: 'entry_orphan',
+      parentId: 'entry_missing',
+      timestamp: new Date().toISOString(),
+      message: createTextMessage('assistant', 'orphaned leaf'),
+    };
+
+    const tree = buildSessionTree({
+      ...lineage,
+      entries: [...lineage.entries, orphan],
+    });
+
+    expect(tree).toHaveLength(2);
+    expect(tree.map((node) => node.entry.id)).toContain('entry_orphan');
   });
 
   it('stops path traversal when lineage data contains a cycle', () => {
