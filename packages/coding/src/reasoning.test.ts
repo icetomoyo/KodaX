@@ -11,11 +11,13 @@ import { KodaXBaseProvider } from '@kodax/ai';
 import {
   buildHeuristicAutoRerouteDecision,
   buildFallbackRoutingDecision,
+  buildProviderPolicyHintsForDecision,
   createReasoningPlan,
   inferTaskType,
   maybeCreateAutoReroutePlan,
   type ReasoningPlan,
 } from './reasoning.js';
+import { evaluateProviderPolicy } from './provider-policy.js';
 
 class ThrowingProvider extends KodaXBaseProvider {
   readonly name = 'test-provider';
@@ -75,6 +77,18 @@ class CapturingProvider extends KodaXBaseProvider {
   }
 }
 
+const CLI_BRIDGE_PROFILE = {
+  transport: 'cli-bridge',
+  conversationSemantics: 'last-user-message',
+  mcpSupport: 'none',
+  contextFidelity: 'lossy',
+  toolCallingFidelity: 'limited',
+  sessionSupport: 'stateless',
+  longRunningSupport: 'limited',
+  multimodalSupport: 'none',
+  evidenceSupport: 'limited',
+} as const;
+
 describe('reasoning reroute', () => {
   const basePlan: ReasoningPlan = {
     mode: 'auto',
@@ -85,6 +99,10 @@ describe('reasoning reroute', () => {
       riskLevel: 'medium',
       recommendedMode: 'pr-review',
       recommendedThinkingDepth: 'low',
+      complexity: 'moderate',
+      workIntent: 'new',
+      requiresBrainstorm: false,
+      harnessProfile: 'H1_EXECUTE_EVAL',
       reason: 'Initial routing selected review.',
     },
     promptOverlay: '[Execution Mode: pr-review]',
@@ -155,6 +173,8 @@ describe('reasoning reroute', () => {
     expect(plan.decision.primaryTask).toBe('review');
     expect(plan.decision.riskLevel).toBe('high');
     expect(plan.decision.recommendedMode).toBe('pr-review');
+    expect(plan.decision.harnessProfile).toBe('H1_EXECUTE_EVAL');
+    expect(plan.promptOverlay).toContain('[Harness Profile: H1_EXECUTE_EVAL]');
 
     const routerPrompt = String(provider.lastMessages[0]?.content ?? '');
     expect(routerPrompt).toContain('- git: unavailable');
@@ -386,6 +406,8 @@ describe('reasoning reroute', () => {
     expect(decision.primaryTask).toBe('unknown');
     expect(decision.recommendedThinkingDepth).toBe('medium');
     expect(decision.recommendedMode).toBe('implementation');
+    expect(decision.requiresBrainstorm).toBe(true);
+    expect(decision.harnessProfile).toBe('H2_PLAN_EXECUTE_EVAL');
   });
 
   it('supports task inference across review, bugfix, and planning prompts', () => {
@@ -397,6 +419,122 @@ describe('reasoning reroute', () => {
   it('does not mistake prompt-related requests for PR review', () => {
     expect(inferTaskType('Please improve this prompt for release notes.')).toBe('unknown');
     expect(buildFallbackRoutingDecision('Please improve this prompt for release notes.').primaryTask).toBe('unknown');
+  });
+
+  it('infers append intent and brainstorm-driven H2 routing when asked to extend existing work carefully', () => {
+    const decision = buildFallbackRoutingDecision(
+      'Continue the existing onboarding flow, but brainstorm the safest approach before changing the current logic.',
+    );
+
+    expect(decision.workIntent).toBe('append');
+    expect(decision.requiresBrainstorm).toBe(true);
+    expect(decision.harnessProfile).toBe('H2_PLAN_EXECUTE_EVAL');
+  });
+
+  it('infers overwrite intent when the prompt explicitly asks for replacement work', () => {
+    const decision = buildFallbackRoutingDecision(
+      'Rewrite the current onboarding flow from scratch and replace the existing implementation.',
+    );
+
+    expect(decision.workIntent).toBe('overwrite');
+  });
+
+  it('does not treat generic command-line options wording as a brainstorm trigger', () => {
+    const decision = buildFallbackRoutingDecision(
+      'Update the docs with the supported command line options for this CLI command.',
+    );
+
+    expect(decision.requiresBrainstorm).toBe(false);
+    expect(decision.harnessProfile).toBe('H0_DIRECT');
+  });
+
+  it('does not treat generic flow wording as enough to escalate complexity on its own', () => {
+    const decision = buildFallbackRoutingDecision(
+      'Explain the control flow in this helper.',
+    );
+
+    expect(decision.complexity).toBe('simple');
+  });
+
+  it('routes systemic cross-repo refactors into the multi-worker harness', () => {
+    const decision = buildFallbackRoutingDecision(
+      'Refactor the monorepo architecture across packages and coordinate the whole repo migration.',
+    );
+
+    expect(decision.complexity).toBe('systemic');
+    expect(decision.harnessProfile).toBe('H3_MULTI_WORKER');
+  });
+
+  it('downgrades H3 routing to H1 on lossy bridge providers and records the reason', () => {
+    const providerPolicy = evaluateProviderPolicy({
+      providerName: 'gemini-cli',
+      capabilityProfile: CLI_BRIDGE_PROFILE,
+      reasoningCapability: 'prompt-only',
+      hints: {},
+      reasoningMode: 'balanced',
+    });
+
+    const decision = buildFallbackRoutingDecision(
+      'Refactor the monorepo architecture across packages and coordinate the whole repo migration.',
+      providerPolicy,
+    );
+
+    expect(decision.harnessProfile).toBe('H1_EXECUTE_EVAL');
+    expect(decision.routingNotes).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('Downgraded from H3 to H1'),
+      ]),
+    );
+  });
+
+  it('builds provider-policy hints that stay scoped to evidence-heavy tasks', () => {
+    expect(buildProviderPolicyHintsForDecision({
+      primaryTask: 'review',
+      confidence: 0.9,
+      riskLevel: 'medium',
+      recommendedMode: 'pr-review',
+      recommendedThinkingDepth: 'medium',
+      complexity: 'moderate',
+      workIntent: 'new',
+      requiresBrainstorm: false,
+      harnessProfile: 'H1_EXECUTE_EVAL',
+      reason: 'review task',
+    })).toEqual({
+      harnessProfile: 'H1_EXECUTE_EVAL',
+      evidenceHeavy: true,
+      brainstorm: false,
+      workIntent: 'new',
+    });
+
+    expect(buildProviderPolicyHintsForDecision({
+      primaryTask: 'edit',
+      confidence: 0.9,
+      riskLevel: 'medium',
+      recommendedMode: 'implementation',
+      recommendedThinkingDepth: 'medium',
+      complexity: 'complex',
+      workIntent: 'overwrite',
+      requiresBrainstorm: true,
+      harnessProfile: 'H2_PLAN_EXECUTE_EVAL',
+      reason: 'implementation task',
+    })).toEqual({
+      harnessProfile: 'H2_PLAN_EXECUTE_EVAL',
+      evidenceHeavy: false,
+      brainstorm: true,
+      workIntent: 'overwrite',
+    });
+  });
+
+  it('prefers explicit review language when review and planning signals are tied', () => {
+    expect(
+      inferTaskType('Please review the design.'),
+    ).toBe('review');
+  });
+
+  it('returns unknown when competing task signals tie without an explicit directive', () => {
+    expect(
+      inferTaskType('Please review this bug fix.'),
+    ).toBe('unknown');
   });
 
   it('can spend one depth escalation without consuming task reroute capability', async () => {

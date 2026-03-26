@@ -39,6 +39,7 @@ import { promisify } from 'util';
 import { ErrorCategory } from './error-classification.js';
 import { withRetry } from './retry-handler.js';
 import {
+  buildProviderPolicyHintsForDecision,
   createReasoningPlan,
   maybeCreateAutoReroutePlan,
   reasoningModeToDepth,
@@ -984,6 +985,7 @@ export async function runKodaX(
     });
     return contextTokenSnapshot;
   };
+  const currentRoutingDecision = () => reasoningPlan.decision;
     events.onSessionStart?.({ provider: initialProvider.name, sessionId });
     await emitActiveExtensionEvent('session:start', { provider: initialProvider.name, sessionId });
 
@@ -1158,7 +1160,8 @@ export async function runKodaX(
         model: currentModelOverride,
         provider: streamProvider,
         prompt,
-        options,
+        options: currentExecution.effectiveOptions,
+        context: currentExecution.effectiveOptions.context,
         reasoningMode: effectiveProviderReasoningMode,
         taskType: effectiveReasoningPlan.decision.primaryTask,
         executionMode: effectiveReasoningPlan.decision.recommendedMode,
@@ -1323,6 +1326,7 @@ export async function runKodaX(
             signal: 'COMPLETE',
             messages,
             sessionId,
+            routingDecision: currentRoutingDecision(),
             contextTokenSnapshot,
             limitReached: false,
           };
@@ -1365,6 +1369,7 @@ export async function runKodaX(
             lastText,
             messages,
             sessionId,
+            routingDecision: currentRoutingDecision(),
             contextTokenSnapshot,
             limitReached: false,
           };
@@ -1576,6 +1581,7 @@ export async function runKodaX(
           lastText: 'Operation cancelled by user',
           messages,
           sessionId,
+          routingDecision: currentRoutingDecision(),
           contextTokenSnapshot,
           interrupted: !shouldYieldToQueuedFollowUp,
         };
@@ -1615,6 +1621,7 @@ export async function runKodaX(
           lastText,
           messages,
           sessionId,
+          routingDecision: currentRoutingDecision(),
           contextTokenSnapshot,
           limitReached: false,
         };
@@ -1716,6 +1723,7 @@ export async function runKodaX(
           lastText,
           messages: cleanedMessages,
           sessionId,
+          routingDecision: currentRoutingDecision(),
           contextTokenSnapshot,
           interrupted: true,
           errorMetadata: updatedErrorMetadata,
@@ -1729,6 +1737,7 @@ export async function runKodaX(
         lastText,
         messages: cleanedMessages,  // ✅ Use cleaned messages to prevent error loop
         sessionId,
+        routingDecision: currentRoutingDecision(),
         contextTokenSnapshot,
         errorMetadata: updatedErrorMetadata,
       };
@@ -1758,6 +1767,7 @@ export async function runKodaX(
     signalReason: finalReason,
     messages,
     sessionId,
+    routingDecision: currentRoutingDecision(),
     contextTokenSnapshot,
     limitReached,
   };
@@ -1790,6 +1800,10 @@ async function buildReasoningExecutionState(
     context: {
       ...options.context,
       executionCwd: resolveExecutionCwd(options.context),
+      providerPolicyHints: {
+        ...options.context?.providerPolicyHints,
+        ...buildProviderPolicyHintsForDecision(reasoningPlan.decision),
+      },
       promptOverlay: [
         options.context?.promptOverlay,
         reasoningPlan.promptOverlay,

@@ -2,12 +2,16 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import type {
   KodaXExecutionMode,
+  KodaXHarnessProfile,
   KodaXMessage,
   KodaXOptions,
+  KodaXProviderPolicyHints,
   KodaXReasoningMode,
   SessionErrorMetadata,
+  KodaXTaskComplexity,
   KodaXTaskRoutingDecision,
   KodaXTaskType,
+  KodaXTaskWorkIntent,
   KodaXThinkingDepth,
 } from './types.js';
 import {
@@ -21,7 +25,6 @@ import {
   looksLikeActionableRuntimeEvidence,
 } from './runtime-evidence.js';
 import {
-  buildProviderPolicyPromptNotes,
   evaluateProviderPolicy,
   type KodaXProviderPolicyDecision,
 } from './provider-policy.js';
@@ -85,6 +88,29 @@ const EXECUTION_MODE_OVERLAYS: Record<KodaXExecutionMode, string> = {
   ].join('\n'),
 };
 
+const HARNESS_PROFILE_OVERLAYS: Record<KodaXHarnessProfile, string> = {
+  H0_DIRECT: [
+    '[Harness Profile: H0_DIRECT]',
+    '- Keep the task in a single direct pass unless concrete evidence forces escalation.',
+    '- Prefer concise execution without extra discovery scaffolding.',
+  ].join('\n'),
+  H1_EXECUTE_EVAL: [
+    '[Harness Profile: H1_EXECUTE_EVAL]',
+    '- Execute the task, then self-check the result against the request before finalizing.',
+    '- Prefer evidence-backed completion over speculative confidence.',
+  ].join('\n'),
+  H2_PLAN_EXECUTE_EVAL: [
+    '[Harness Profile: H2_PLAN_EXECUTE_EVAL]',
+    '- Start with a short explicit plan or option framing before making changes.',
+    '- After execution, verify the result and call out any residual uncertainty.',
+  ].join('\n'),
+  H3_MULTI_WORKER: [
+    '[Harness Profile: H3_MULTI_WORKER]',
+    '- Decompose the work into independent slices and treat execution as coordinated multi-track work.',
+    '- Keep contracts, evidence, and merge points explicit so the task can scale beyond one linear pass.',
+  ].join('\n'),
+};
+
 const ROUTER_SYSTEM_PROMPT = [
   'You are a task router for a coding agent.',
   'Classify the user request into one primary task and an optional secondary task.',
@@ -93,6 +119,11 @@ const ROUTER_SYSTEM_PROMPT = [
   'Allowed riskLevel values: low, medium, high.',
   'Allowed recommendedMode values: pr-review, strict-audit, implementation, planning, investigation.',
   'Allowed recommendedThinkingDepth values: off, low, medium, high.',
+  'Allowed complexity values: simple, moderate, complex, systemic.',
+  'Allowed workIntent values: append, overwrite, new.',
+  'Allowed harnessProfile values: H0_DIRECT, H1_EXECUTE_EVAL, H2_PLAN_EXECUTE_EVAL, H3_MULTI_WORKER.',
+  'requiresBrainstorm must be a boolean.',
+  'routingNotes, when present, must be an array of short strings.',
   'Confidence must be a number between 0 and 1.',
   'Prefer conservative decisions when the request is ambiguous.',
 ].join('\n');
@@ -145,6 +176,106 @@ const HIGH_IMPACT_MARKERS = [
   'memory leak',
   'failure',
 ];
+
+const BRAINSTORM_KEYWORDS = [
+  'brainstorm',
+  'explore',
+  'explore options',
+  'option framing',
+  'tradeoff',
+  'trade-off',
+  'safest way',
+  'figure out',
+  'design first',
+  '方案',
+  '思路',
+  '先想',
+  '先设计',
+  '先分析',
+  '先讨论',
+];
+
+const APPEND_INTENT_KEYWORDS = [
+  'continue',
+  'extend',
+  'build on',
+  'follow up',
+  'append',
+  'add to',
+  'based on the existing',
+  '接着',
+  '继续',
+  '补充',
+  '追加',
+  '延续',
+  '扩展现有',
+];
+
+const OVERWRITE_INTENT_KEYWORDS = [
+  'rewrite',
+  'replace',
+  'overwrite',
+  'from scratch',
+  'start over',
+  'regenerate',
+  'redo',
+  '重写',
+  '替换',
+  '覆盖',
+  '推倒重来',
+  '全部改掉',
+  '重新做',
+];
+
+const COMPLEXITY_KEYWORDS: Record<KodaXTaskComplexity, readonly string[]> = {
+  simple: [],
+  moderate: [
+    'screen',
+    'component',
+    'endpoint',
+    'service',
+    'feature',
+    '模块',
+    '功能',
+    '页面',
+  ],
+  complex: [
+    'migration',
+    'architecture',
+    'cross-package',
+    'multi-step',
+    'pipeline',
+    'state machine',
+    'refactor',
+    'monorepo',
+    'across packages',
+    'integration',
+    '迁移',
+    '架构',
+    '跨包',
+    '重构',
+    '流程',
+  ],
+  systemic: [
+    'system-wide',
+    'orchestrate',
+    'multi-agent',
+    'control plane',
+    'runtime substrate',
+    'whole repo',
+    'entire repo',
+    'across the monorepo',
+    '全仓',
+    '全局',
+    '整体架构',
+    '控制面',
+    '多智能体',
+  ],
+};
+
+const COMPLEXITY_MODERATE_THRESHOLD = 2;
+const COMPLEXITY_COMPLEX_THRESHOLD = 4;
+const COMPLEXITY_SYSTEMIC_THRESHOLD = 6;
 
 export interface ReasoningPlan {
   mode: KodaXReasoningMode;
@@ -358,6 +489,15 @@ function inferTaskSignal(prompt: string): {
   }
 
   if (runnerUp && top.score === runnerUp.score) {
+    const preferredTiedTask = resolveTiedTask(prompt, top.task, runnerUp.task);
+    if (preferredTiedTask) {
+      return {
+        task: preferredTiedTask,
+        confidence: FALLBACK_CONFIDENCE_BASE,
+        reason: `Fallback task inference preferred "${preferredTiedTask}" because the request used an explicit directive even though multiple task signals were present.`,
+      };
+    }
+
     return {
       task: 'unknown',
       confidence: FALLBACK_COMPETING_SIGNAL_CONFIDENCE,
@@ -390,6 +530,44 @@ function inferTaskSignal(prompt: string): {
   };
 }
 
+function resolveTiedTask(
+  prompt: string,
+  first: Exclude<KodaXTaskType, 'unknown'>,
+  second: Exclude<KodaXTaskType, 'unknown'>,
+): Exclude<KodaXTaskType, 'unknown'> | null {
+  const normalized = ` ${prompt.toLowerCase()} `;
+  const hasExplicitReview =
+    textHasKeyword(normalized, 'review') ||
+    textHasKeyword(normalized, 'code review') ||
+    textHasKeyword(normalized, 'merge blocker') ||
+    textHasKeyword(normalized, '审查') ||
+    textHasKeyword(normalized, '评审');
+  const hasExplicitFix =
+    textHasKeyword(normalized, 'fix') ||
+    textHasKeyword(normalized, 'bug') ||
+    textHasKeyword(normalized, '修复') ||
+    textHasKeyword(normalized, '报错');
+  const hasExplicitPlan =
+    textHasKeyword(normalized, 'plan') ||
+    textHasKeyword(normalized, 'design') ||
+    textHasKeyword(normalized, '方案') ||
+    textHasKeyword(normalized, '计划');
+
+  if ((first === 'review' || second === 'review') && hasExplicitReview && !hasExplicitFix) {
+    return 'review';
+  }
+
+  if ((first === 'bugfix' || second === 'bugfix') && hasExplicitFix && !hasExplicitReview) {
+    return 'bugfix';
+  }
+
+  if ((first === 'plan' || second === 'plan') && hasExplicitPlan) {
+    return 'plan';
+  }
+
+  return null;
+}
+
 export function inferTaskType(prompt: string): KodaXTaskType {
   return inferTaskSignal(prompt).task;
 }
@@ -409,31 +587,70 @@ function logRoutingDebug(scope: string, error: unknown): void {
 
 export function buildFallbackRoutingDecision(
   prompt: string,
+  providerPolicy?: KodaXProviderPolicyDecision,
 ): KodaXTaskRoutingDecision {
   const inferred = inferTaskSignal(prompt);
   const primaryTask = inferred.task;
-  return {
+  return stabilizeRoutingDecision(prompt, {
     primaryTask,
     confidence: inferred.confidence,
     riskLevel: getRiskLevel(prompt, primaryTask),
     recommendedMode: getExecutionModeForTask(primaryTask),
     recommendedThinkingDepth: getDefaultDepthForTask(primaryTask),
+    complexity: 'moderate',
+    workIntent: 'new',
+    requiresBrainstorm: false,
+    harnessProfile: 'H1_EXECUTE_EVAL',
     reason: inferred.reason,
+  }, providerPolicy);
+}
+
+export function buildProviderPolicyHintsForDecision(
+  decision: KodaXTaskRoutingDecision,
+): KodaXProviderPolicyHints {
+  const evidenceHeavy =
+    decision.primaryTask === 'review' ||
+    decision.primaryTask === 'bugfix' ||
+    decision.recommendedMode === 'pr-review' ||
+    decision.recommendedMode === 'strict-audit' ||
+    decision.recommendedMode === 'investigation';
+
+  return {
+    harnessProfile: decision.harnessProfile,
+    evidenceHeavy,
+    brainstorm: decision.requiresBrainstorm,
+    workIntent: decision.workIntent,
   };
 }
 
 export function buildPromptOverlay(
   decision: KodaXTaskRoutingDecision,
   extraNotes: string[] = [],
-  providerPolicy?: KodaXProviderPolicyDecision,
+  _providerPolicy?: KodaXProviderPolicyDecision,
 ): string {
+  const routingNotes = decision.routingNotes?.map(
+    (note) => `[Task Routing Note] ${note}`,
+  ) ?? [];
+  const workIntentGuidance = buildWorkIntentGuidance(decision.workIntent);
+  const brainstormGuidance = decision.requiresBrainstorm
+    ? [
+      '[Brainstorm Trigger] Resolve ambiguity with a brief option framing before locking in the implementation path.',
+      '- Make the chosen path explicit before performing irreversible edits.',
+    ].join('\n')
+    : null;
+
   return [
     EXECUTION_MODE_OVERLAYS[decision.recommendedMode],
-    `[Task Routing] primary=${decision.primaryTask}; risk=${decision.riskLevel}; confidence=${decision.confidence.toFixed(2)}.`,
+    HARNESS_PROFILE_OVERLAYS[decision.harnessProfile],
+    `[Task Routing] primary=${decision.primaryTask}; risk=${decision.riskLevel}; complexity=${decision.complexity}; intent=${decision.workIntent}; brainstorm=${decision.requiresBrainstorm ? 'yes' : 'no'}; harness=${decision.harnessProfile}; confidence=${decision.confidence.toFixed(2)}.`,
     `[Task Routing Reason] ${decision.reason}`,
-    ...(providerPolicy ? buildProviderPolicyPromptNotes(providerPolicy) : []),
+    `[Work Intent] ${workIntentGuidance}`,
+    brainstormGuidance,
+    ...routingNotes,
     ...extraNotes,
-  ].join('\n');
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 export async function createReasoningPlan(
@@ -473,7 +690,7 @@ export async function createReasoningPlan(
     };
   }
 
-  const fallbackDecision = buildFallbackRoutingDecision(prompt);
+  const fallbackDecision = buildFallbackRoutingDecision(prompt, providerPolicy);
   const depth = mode === 'off' ? 'off' : reasoningModeToDepth(mode);
   const decision: KodaXTaskRoutingDecision = {
     ...fallbackDecision,
@@ -540,7 +757,7 @@ export async function maybeCreateAutoReroutePlan(
     return null;
   }
 
-  const nextDecision = {
+  const nextDecision = stabilizeRoutingDecision(prompt, {
     ...currentPlan.decision,
     primaryTask: normalized.nextPrimaryTask,
     confidence: Math.max(currentPlan.decision.confidence, 0.82),
@@ -551,7 +768,7 @@ export async function maybeCreateAutoReroutePlan(
     recommendedMode: normalized.nextRecommendedMode,
     recommendedThinkingDepth: normalized.nextThinkingDepth,
     reason: normalized.reason,
-  } satisfies KodaXTaskRoutingDecision;
+  } satisfies KodaXTaskRoutingDecision, currentPlan.providerPolicy);
 
   const followUpLabel =
     normalized.kind === 'task-reroute' ? '[Auto Reroute]' : '[Auto Depth Escalation]';
@@ -660,7 +877,7 @@ async function routeTaskWithLLM(
   providerPolicy: KodaXProviderPolicyDecision,
   routingEvidence?: RoutingEvidenceInput,
 ): Promise<KodaXTaskRoutingDecision> {
-  const fallback = buildFallbackRoutingDecision(prompt);
+  const fallback = buildFallbackRoutingDecision(prompt, providerPolicy);
   const repoSummary = await buildRepositoryRoutingSummary(
     options.context?.gitRoot ?? undefined,
     providerPolicy,
@@ -698,10 +915,10 @@ async function routeTaskWithLLM(
 
     const raw = result.textBlocks.map((block) => block.text).join('\n').trim();
     const parsed = parseRoutingDecision(raw);
-    return stabilizeRoutingDecision(prompt, parsed ?? fallback);
+    return stabilizeRoutingDecision(prompt, parsed ?? fallback, providerPolicy);
   } catch (error) {
     logRoutingDebug('task router', error);
-    return stabilizeRoutingDecision(prompt, fallback);
+    return stabilizeRoutingDecision(prompt, fallback, providerPolicy);
   }
 }
 
@@ -801,6 +1018,23 @@ function parseRoutingDecision(
       riskLevel,
       recommendedMode,
       recommendedThinkingDepth,
+      complexity: isTaskComplexity(parsed.complexity)
+        ? parsed.complexity
+        : 'moderate',
+      workIntent: isTaskWorkIntent(parsed.workIntent)
+        ? parsed.workIntent
+        : 'new',
+      requiresBrainstorm: typeof parsed.requiresBrainstorm === 'boolean'
+        ? parsed.requiresBrainstorm
+        : false,
+      harnessProfile: isHarnessProfile(parsed.harnessProfile)
+        ? parsed.harnessProfile
+        : 'H1_EXECUTE_EVAL',
+      routingNotes: Array.isArray(parsed.routingNotes)
+        ? parsed.routingNotes.filter((note): note is string =>
+          typeof note === 'string' && note.trim().length > 0,
+        )
+        : undefined,
       reason:
         typeof parsed.reason === 'string' && parsed.reason.trim()
           ? parsed.reason.trim()
@@ -1115,6 +1349,182 @@ function truncateEvidence(text: string, maxLength = 180): string {
   return `${normalized.slice(0, maxLength - 3)}...`;
 }
 
+function buildWorkIntentGuidance(workIntent: KodaXTaskWorkIntent): string {
+  switch (workIntent) {
+    case 'append':
+      return 'Extend or continue the existing artifact without rewriting stable parts unnecessarily.';
+    case 'overwrite':
+      return 'A substantial rewrite or replacement is expected, but keep the boundaries and consequences explicit.';
+    case 'new':
+    default:
+      return 'Treat this as net-new work unless repo evidence proves the request is really an append or rewrite.';
+  }
+}
+
+function inferWorkIntent(
+  prompt: string,
+  current: KodaXTaskWorkIntent,
+): KodaXTaskWorkIntent {
+  const normalized = ` ${prompt.toLowerCase()} `;
+
+  // Prefer the more destructive interpretation when a prompt mixes "extend" and "rewrite" language.
+  if (OVERWRITE_INTENT_KEYWORDS.some((keyword) => textHasKeyword(normalized, keyword))) {
+    return 'overwrite';
+  }
+
+  if (APPEND_INTENT_KEYWORDS.some((keyword) => textHasKeyword(normalized, keyword))) {
+    return 'append';
+  }
+
+  return current;
+}
+
+function inferComplexity(
+  prompt: string,
+  decision: KodaXTaskRoutingDecision,
+): KodaXTaskComplexity {
+  const normalized = ` ${prompt.toLowerCase()} `;
+  let score = 0;
+
+  for (const keyword of COMPLEXITY_KEYWORDS.moderate) {
+    if (textHasKeyword(normalized, keyword)) {
+      score += 1;
+    }
+  }
+
+  for (const keyword of COMPLEXITY_KEYWORDS.complex) {
+    if (textHasKeyword(normalized, keyword)) {
+      score += 2;
+    }
+  }
+
+  for (const keyword of COMPLEXITY_KEYWORDS.systemic) {
+    if (textHasKeyword(normalized, keyword)) {
+      score += 3;
+    }
+  }
+
+  if (decision.primaryTask === 'refactor' || decision.primaryTask === 'plan') {
+    score += 2;
+  }
+
+  if (decision.riskLevel === 'high') {
+    score += 2;
+  }
+
+  if (decision.workIntent === 'overwrite') {
+    score += 1;
+  }
+
+  // Thresholds bias toward "simple" unless multiple independent signals agree.
+  if (score >= COMPLEXITY_SYSTEMIC_THRESHOLD) {
+    return 'systemic';
+  }
+  if (score >= COMPLEXITY_COMPLEX_THRESHOLD) {
+    return 'complex';
+  }
+  if (score >= COMPLEXITY_MODERATE_THRESHOLD) {
+    return 'moderate';
+  }
+  return 'simple';
+}
+
+function inferRequiresBrainstorm(
+  prompt: string,
+  decision: KodaXTaskRoutingDecision,
+  complexity: KodaXTaskComplexity,
+): boolean {
+  const normalized = ` ${prompt.toLowerCase()} `;
+
+  if (BRAINSTORM_KEYWORDS.some((keyword) => textHasKeyword(normalized, keyword))) {
+    return true;
+  }
+
+  if (decision.primaryTask === 'plan') {
+    return true;
+  }
+
+  if (decision.primaryTask === 'unknown' && decision.confidence < 0.7) {
+    return true;
+  }
+
+  if (complexity === 'systemic') {
+    return true;
+  }
+
+  if (
+    decision.workIntent === 'overwrite' &&
+    (decision.primaryTask === 'refactor' || decision.riskLevel === 'high')
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function selectHarnessProfile(
+  prompt: string,
+  decision: KodaXTaskRoutingDecision,
+  providerPolicy?: KodaXProviderPolicyDecision,
+): {
+  harnessProfile: KodaXHarnessProfile;
+  notes: string[];
+} {
+  const normalized = ` ${prompt.toLowerCase()} `;
+  let harnessProfile: KodaXHarnessProfile;
+
+  if (
+    textHasKeyword(normalized, 'multi-agent') ||
+    textHasKeyword(normalized, 'parallel') ||
+    textHasKeyword(normalized, 'across the monorepo') ||
+    decision.complexity === 'systemic'
+  ) {
+    harnessProfile = 'H3_MULTI_WORKER';
+  } else if (
+    decision.requiresBrainstorm ||
+    decision.primaryTask === 'plan' ||
+    decision.complexity === 'complex' ||
+    (decision.workIntent === 'overwrite' && decision.riskLevel !== 'low')
+  ) {
+    harnessProfile = 'H2_PLAN_EXECUTE_EVAL';
+  } else if (
+    decision.primaryTask === 'review' ||
+    decision.primaryTask === 'bugfix' ||
+    decision.riskLevel !== 'low' ||
+    decision.complexity === 'moderate'
+  ) {
+    harnessProfile = 'H1_EXECUTE_EVAL';
+  } else {
+    harnessProfile = 'H0_DIRECT';
+  }
+
+  const notes: string[] = [];
+  const snapshot = providerPolicy?.snapshot;
+  if (snapshot && harnessProfile === 'H3_MULTI_WORKER') {
+    if (
+      snapshot.contextFidelity === 'lossy' ||
+      snapshot.sessionSupport === 'stateless' ||
+      snapshot.toolCallingFidelity === 'none' ||
+      snapshot.evidenceSupport === 'none'
+    ) {
+      harnessProfile = 'H1_EXECUTE_EVAL';
+      notes.push('Downgraded from H3 to H1 because provider semantics are too lossy for multi-worker coordination.');
+    } else if (
+      snapshot.toolCallingFidelity === 'limited' ||
+      snapshot.evidenceSupport === 'limited' ||
+      snapshot.transport === 'cli-bridge'
+    ) {
+      harnessProfile = 'H2_PLAN_EXECUTE_EVAL';
+      notes.push('Downgraded from H3 to H2 because provider semantics may lose coordination or evidence fidelity.');
+    }
+  }
+
+  return {
+    harnessProfile,
+    notes,
+  };
+}
+
 function getDefaultDepthForTask(taskType: KodaXTaskType): KodaXThinkingDepth {
   switch (taskType) {
     case 'review':
@@ -1235,9 +1645,12 @@ function isRiskLevel(value: unknown): value is 'low' | 'medium' | 'high' {
 function stabilizeRoutingDecision(
   prompt: string,
   decision: KodaXTaskRoutingDecision,
+  providerPolicy?: KodaXProviderPolicyDecision,
 ): KodaXTaskRoutingDecision {
+  let stabilized = decision;
+
   if (decision.primaryTask === 'unknown') {
-    return {
+    stabilized = {
       ...decision,
       recommendedMode: 'implementation',
       recommendedThinkingDepth: 'medium',
@@ -1245,26 +1658,87 @@ function stabilizeRoutingDecision(
     };
   }
 
-  if (decision.primaryTask === 'qa' && decision.confidence < LOW_CONFIDENCE_QA_THRESHOLD) {
-    return {
+  if (stabilized.primaryTask === 'qa' && stabilized.confidence < LOW_CONFIDENCE_QA_THRESHOLD) {
+    stabilized = {
+      ...stabilized,
       primaryTask: 'unknown',
-      confidence: Math.min(decision.confidence, LOW_CONFIDENCE_QA_CAP),
+      confidence: Math.min(stabilized.confidence, LOW_CONFIDENCE_QA_CAP),
       riskLevel: getRiskLevel(prompt, 'unknown'),
       recommendedMode: 'implementation',
       recommendedThinkingDepth: 'medium',
-      reason: `${decision.reason} Low-confidence QA routing was downgraded to unknown so reasoning stays available.`,
+      reason: `${stabilized.reason} Low-confidence QA routing was downgraded to unknown so reasoning stays available.`,
     };
   }
 
-  if (decision.confidence < LOW_CONFIDENCE_OFF_THRESHOLD && decision.recommendedThinkingDepth === 'off') {
-    return {
-      ...decision,
+  if (stabilized.confidence < LOW_CONFIDENCE_OFF_THRESHOLD && stabilized.recommendedThinkingDepth === 'off') {
+    stabilized = {
+      ...stabilized,
       primaryTask: 'unknown',
       recommendedMode: 'implementation',
       recommendedThinkingDepth: 'medium',
-      reason: `${decision.reason} Low-confidence off-mode routing was upgraded to balanced reasoning for safety.`,
+      reason: `${stabilized.reason} Low-confidence off-mode routing was upgraded to balanced reasoning for safety.`,
     };
   }
 
-  return decision;
+  const workIntent = inferWorkIntent(prompt, stabilized.workIntent);
+  const complexity = inferComplexity(
+    prompt,
+    {
+      ...stabilized,
+      workIntent,
+    },
+  );
+  const requiresBrainstorm = inferRequiresBrainstorm(
+    prompt,
+    {
+      ...stabilized,
+      workIntent,
+      complexity,
+    },
+    complexity,
+  );
+  const harnessDecision = selectHarnessProfile(
+    prompt,
+    {
+      ...stabilized,
+      workIntent,
+      complexity,
+      requiresBrainstorm,
+    },
+    providerPolicy,
+  );
+
+  return {
+    ...stabilized,
+    workIntent,
+    complexity,
+    requiresBrainstorm,
+    harnessProfile: harnessDecision.harnessProfile,
+    routingNotes: [
+      ...(stabilized.routingNotes ?? []),
+      ...harnessDecision.notes,
+    ],
+  };
+}
+
+function isTaskComplexity(value: unknown): value is KodaXTaskComplexity {
+  return (
+    value === 'simple' ||
+    value === 'moderate' ||
+    value === 'complex' ||
+    value === 'systemic'
+  );
+}
+
+function isTaskWorkIntent(value: unknown): value is KodaXTaskWorkIntent {
+  return value === 'append' || value === 'overwrite' || value === 'new';
+}
+
+function isHarnessProfile(value: unknown): value is KodaXHarnessProfile {
+  return (
+    value === 'H0_DIRECT' ||
+    value === 'H1_EXECUTE_EVAL' ||
+    value === 'H2_PLAN_EXECUTE_EVAL' ||
+    value === 'H3_MULTI_WORKER'
+  );
 }

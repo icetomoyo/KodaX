@@ -26,6 +26,9 @@ import type {
   KodaXTaskType,
   KodaXExecutionMode,
   KodaXRiskLevel,
+  KodaXTaskComplexity,
+  KodaXTaskWorkIntent,
+  KodaXHarnessProfile,
   KodaXTaskRoutingDecision,
   KodaXThinkingBudgetMap,
   KodaXTaskBudgetOverrides,
@@ -71,6 +74,9 @@ export type {
   KodaXTaskType,
   KodaXExecutionMode,
   KodaXRiskLevel,
+  KodaXTaskComplexity,
+  KodaXTaskWorkIntent,
+  KodaXHarnessProfile,
   KodaXTaskRoutingDecision,
   KodaXThinkingBudgetMap,
   KodaXTaskBudgetOverrides,
@@ -170,10 +176,13 @@ export interface KodaXContextTokenSnapshot {
 export interface KodaXProviderPolicyHints {
   longRunning?: boolean;
   harness?: 'project';
+  harnessProfile?: KodaXHarnessProfile;
   evidenceHeavy?: boolean;
   multimodal?: boolean;
   capabilityRuntime?: boolean;
   mcpRequired?: boolean;
+  brainstorm?: boolean;
+  workIntent?: KodaXTaskWorkIntent;
 }
 
 export interface KodaXContextOptions {
@@ -228,6 +237,8 @@ export interface KodaXResult {
   signalReason?: string;
   messages: KodaXMessage[];
   sessionId: string;
+  /** Final visible routing decision for this run, including harness and work intent. */
+  routingDecision?: KodaXTaskRoutingDecision;
   /** Best-known token snapshot after the round completes. */
   contextTokenSnapshot?: KodaXContextTokenSnapshot;
   /** 是否被用户中断 (Ctrl+C) */

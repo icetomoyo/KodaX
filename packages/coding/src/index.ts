@@ -332,6 +332,7 @@ export {
   reasoningModeToDepth,
   inferTaskType,
   buildFallbackRoutingDecision,
+  buildProviderPolicyHintsForDecision,
   buildPromptOverlay,
   createReasoningPlan,
 } from './reasoning.js';

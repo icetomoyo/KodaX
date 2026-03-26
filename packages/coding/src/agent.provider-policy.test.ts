@@ -97,6 +97,7 @@ describe('runKodaX provider policy integration', () => {
 
     expect(result.success).toBe(false);
     expect(result.errorMetadata?.lastError).toMatch(/\[Provider Policy\]/);
+    expect(result.routingDecision?.harnessProfile).toBe('H2_PLAN_EXECUTE_EVAL');
     expect(Feature029BridgeProvider.calls).toEqual([]);
   });
 
@@ -120,6 +121,16 @@ describe('runKodaX provider policy integration', () => {
     expect(Feature029BridgeProvider.calls[0]?.system).toContain(
       '[Provider Constraint] WARN:',
     );
+    expect(Feature029BridgeProvider.calls[0]?.system).toContain(
+      '[Harness Profile: H1_EXECUTE_EVAL]',
+    );
+    expect(
+      Feature029BridgeProvider.calls[0]?.system.match(
+        new RegExp(`\\[Provider Policy\\] provider=${TEST_PROVIDER_NAME}; status=warn\\.`, 'g'),
+      )?.length ?? 0,
+    ).toBe(1);
+    expect(result.routingDecision?.primaryTask).toBe('review');
+    expect(result.routingDecision?.harnessProfile).toBe('H1_EXECUTE_EVAL');
   });
 
   it('allows benign text-only prompts that merely mention MCP, project mode, or screenshots', async () => {
@@ -133,11 +144,12 @@ describe('runKodaX provider policy integration', () => {
 
     expect(result.success).toBe(true);
     expect(Feature029BridgeProvider.calls).toHaveLength(1);
-    expect(Feature029BridgeProvider.calls[0]?.system).toContain(
-      `[Provider Policy] provider=${TEST_PROVIDER_NAME}; status=allow.`,
+    expect(Feature029BridgeProvider.calls[0]?.system).not.toContain(
+      '[Provider Policy]',
     );
     expect(Feature029BridgeProvider.calls[0]?.system).not.toContain(
       '[Provider Constraint]',
     );
+    expect(result.routingDecision?.harnessProfile).toBe('H0_DIRECT');
   });
 });

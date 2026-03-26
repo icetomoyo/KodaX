@@ -207,6 +207,9 @@ function resolveProviderPolicyHints(
       options.hints?.harness
       ?? context?.providerPolicyHints?.harness
       ?? promptHints.harness,
+    harnessProfile:
+      options.hints?.harnessProfile
+      ?? context?.providerPolicyHints?.harnessProfile,
     evidenceHeavy: pickBoolean(
       options.hints?.evidenceHeavy,
       context?.providerPolicyHints?.evidenceHeavy,
@@ -227,6 +230,15 @@ function resolveProviderPolicyHints(
       context?.providerPolicyHints?.mcpRequired,
       promptHints.mcpRequired,
     ),
+    brainstorm: pickBoolean(
+      options.hints?.brainstorm,
+      context?.providerPolicyHints?.brainstorm,
+      promptHints.brainstorm,
+    ),
+    workIntent:
+      options.hints?.workIntent
+      ?? context?.providerPolicyHints?.workIntent
+      ?? promptHints.workIntent,
   };
 }
 
@@ -384,6 +396,62 @@ export function evaluateProviderPolicy(
         summary: 'project harness verification is constrained on this provider',
         detail:
           'Project harness flows may lose evidence fidelity because this provider only offers limited tool-calling or evidence support.',
+      });
+    }
+  }
+
+  if (hints.harnessProfile === 'H3_MULTI_WORKER') {
+    if (
+      snapshot.contextFidelity === 'lossy' ||
+      snapshot.sessionSupport === 'stateless' ||
+      snapshot.toolCallingFidelity === 'none' ||
+      snapshot.evidenceSupport === 'none'
+    ) {
+      pushIssue(issues, {
+        code: 'multi-worker-harness-blocked',
+        severity: 'block',
+        summary: 'multi-worker harness selection is unsafe on this provider',
+        detail:
+          'H3 multi-worker routing needs durable context, tool execution, and evidence fidelity, but this provider cannot safely preserve those semantics.',
+      });
+    } else if (
+      snapshot.transport === 'cli-bridge' ||
+      snapshot.toolCallingFidelity === 'limited' ||
+      snapshot.evidenceSupport === 'limited' ||
+      snapshot.sessionSupport === 'limited'
+    ) {
+      pushIssue(issues, {
+        code: 'multi-worker-harness-limited',
+        severity: 'warn',
+        summary: 'multi-worker harness selection is degraded on this provider',
+        detail:
+          'H3 multi-worker routing may lose coordination fidelity because this provider only offers limited session, tool, or evidence semantics.',
+      });
+    }
+  }
+
+  if (hints.harnessProfile === 'H2_PLAN_EXECUTE_EVAL') {
+    if (
+      snapshot.toolCallingFidelity === 'none' ||
+      snapshot.evidenceSupport === 'none'
+    ) {
+      pushIssue(issues, {
+        code: 'plan-execute-eval-limited',
+        severity: 'warn',
+        summary: 'plan-execute-eval routing is constrained on this provider',
+        detail:
+          'H2 routing remains available, but the provider cannot fully preserve execution or evidence semantics for the evaluation step.',
+      });
+    } else if (
+      snapshot.transport === 'cli-bridge' ||
+      snapshot.contextFidelity === 'lossy'
+    ) {
+      pushIssue(issues, {
+        code: 'plan-execute-eval-bridge',
+        severity: 'warn',
+        summary: 'plan-execute-eval routing may lose fidelity on bridge providers',
+        detail:
+          'H2 routing should stay inspectable, but bridge-backed providers can lose context or semantic parity across the planning and evaluation phases.',
       });
     }
   }

@@ -159,6 +159,20 @@ export type KodaXExecutionMode =
 
 export type KodaXRiskLevel = 'low' | 'medium' | 'high';
 
+export type KodaXTaskComplexity =
+  | 'simple'
+  | 'moderate'
+  | 'complex'
+  | 'systemic';
+
+export type KodaXTaskWorkIntent = 'append' | 'overwrite' | 'new';
+
+export type KodaXHarnessProfile =
+  | 'H0_DIRECT'
+  | 'H1_EXECUTE_EVAL'
+  | 'H2_PLAN_EXECUTE_EVAL'
+  | 'H3_MULTI_WORKER';
+
 export interface KodaXTaskRoutingDecision {
   primaryTask: KodaXTaskType;
   secondaryTask?: KodaXTaskType;
@@ -166,6 +180,11 @@ export interface KodaXTaskRoutingDecision {
   riskLevel: KodaXRiskLevel;
   recommendedMode: KodaXExecutionMode;
   recommendedThinkingDepth: KodaXThinkingDepth;
+  complexity: KodaXTaskComplexity;
+  workIntent: KodaXTaskWorkIntent;
+  requiresBrainstorm: boolean;
+  harnessProfile: KodaXHarnessProfile;
+  routingNotes?: string[];
   reason: string;
 }
 
