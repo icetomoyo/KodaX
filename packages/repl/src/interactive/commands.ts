@@ -26,10 +26,15 @@ import {
 } from '../permission/types.js';
 import {
   describeProviderCapabilitySummary,
+  formatProviderCapabilityDetailLines,
+  formatProviderSourceKind,
   describeReasoningCapabilityControl,
   describeReasoningExecution,
   formatReasoningCapabilityShort,
+  getProviderCapabilitySnapshot,
   getProviderCapabilityProfile,
+  getProviderCommonPolicyScenarios,
+  getProviderPolicyDecision,
   getProviderReasoningCapability,
   getProviderAvailableModels,
   getProviderList,
@@ -763,6 +768,85 @@ export const BUILTIN_COMMANDS: Command[] = [
     },
   },
   {
+    name: 'provider',
+    description: 'Inspect provider semantics and policy constraints',
+    usage: '/provider [<provider>[/<model>]]',
+    handler: async (args, _context, _callbacks, currentConfig) => {
+      const input = (args[0] ?? '').trim();
+
+      let targetProvider = currentConfig.provider;
+      let targetModel = currentConfig.model;
+
+      if (input) {
+        if (input.includes('/')) {
+          const slashIndex = input.indexOf('/');
+          targetProvider = input.slice(0, slashIndex).trim();
+          targetModel = input.slice(slashIndex + 1).trim() || undefined;
+        } else {
+          targetProvider = input;
+          targetModel = undefined;
+        }
+      }
+
+      if (!isKnownProvider(targetProvider)) {
+        console.log(chalk.red(`\n[Unknown provider: ${targetProvider}]`));
+        console.log(chalk.dim(`Available: ${getAvailableProviderNames().join(', ')}\n`));
+        return;
+      }
+
+      const snapshot = getProviderCapabilitySnapshot(targetProvider, targetModel);
+      if (!snapshot) {
+        console.log(chalk.red(`\n[Provider details unavailable: ${targetProvider}]`));
+        console.log();
+        return;
+      }
+
+      const commonScenarios = getProviderCommonPolicyScenarios(
+        targetProvider,
+        targetModel,
+        currentConfig.reasoningMode,
+      );
+
+      console.log(chalk.bold('\nProvider Details:\n'));
+      console.log(chalk.dim(`  Provider: ${chalk.cyan(snapshot.provider)}${snapshot.model ? ` / ${chalk.cyan(snapshot.model)}` : ''}`));
+      console.log(chalk.dim(`  Source:   ${formatProviderSourceKind(snapshot.sourceKind)}`));
+      console.log();
+
+      console.log(chalk.bold('Capability Matrix:'));
+      for (const line of formatProviderCapabilityDetailLines(snapshot)) {
+        console.log(chalk.dim(`  - ${line}`));
+      }
+      console.log();
+
+      if (commonScenarios.length > 0) {
+        console.log(chalk.bold('Common Scenarios:'));
+        for (const scenario of commonScenarios) {
+          const color =
+            scenario.decision.status === 'block'
+              ? chalk.red
+              : scenario.decision.status === 'warn'
+                ? chalk.yellow
+                : chalk.green;
+          console.log(color(`  - ${scenario.label}: ${scenario.decision.status.toUpperCase()}`));
+          console.log(chalk.dim(`    ${scenario.decision.summary}`));
+        }
+        console.log();
+      }
+    },
+    detailedHelp: () => {
+      console.log(chalk.cyan('\n/provider - Inspect Provider Semantics\n'));
+      console.log(chalk.bold('Usage:'));
+      console.log(chalk.dim('  /provider                      ') + 'Inspect the current provider/model');
+      console.log(chalk.dim('  /provider <provider>           ') + 'Inspect a provider using its default model');
+      console.log(chalk.dim('  /provider <provider>/<model>   ') + 'Inspect a specific provider/model pair');
+      console.log();
+      console.log(chalk.bold('Description:'));
+      console.log(chalk.dim('  Shows the provider capability matrix and common 029 policy outcomes.'));
+      console.log(chalk.dim('  Use this to understand why long-running, harness, or evidence-heavy flows may warn or block.'));
+      console.log();
+    },
+  },
+  {
     name: 'thinking',
     aliases: ['think', 't'],
     description: 'Show or change reasoning mode (compat alias)',
@@ -1091,7 +1175,7 @@ const COMMAND_CATEGORIES: Record<string, string[]> = {
   General: ['help', 'copy', 'exit', 'clear', 'compact', 'reload', 'extensions', 'status'],
   Permission: ['mode', 'auto'],
   Session: ['new', 'save', 'load', 'sessions', 'history', 'delete'],
-  Settings: ['model', 'thinking', 'reasoning', 'parallel', 'plan'],
+  Settings: ['model', 'provider', 'thinking', 'reasoning', 'parallel', 'plan'],
   Project: ['project'],
   Skills: ['skill'],
 };
@@ -1314,6 +1398,11 @@ function printStatus(context: InteractiveContext, currentConfig: CurrentConfig):
   const tokens = context.contextTokenSnapshot?.currentTokens ?? estimateTokens(context.messages);
   const tokenSource = context.contextTokenSnapshot?.source ?? 'estimate';
   const capabilityProfile = getProviderCapabilityProfile(currentConfig.provider);
+  const generalProviderPolicy = getProviderPolicyDecision(
+    currentConfig.provider,
+    currentConfig.model,
+    currentConfig.reasoningMode,
+  );
   console.log(chalk.bold('\nSession Status:\n'));
   console.log(chalk.dim(`  Provider:    ${chalk.cyan(currentConfig.provider)}${currentConfig.model ? ` / ${chalk.cyan(currentConfig.model)}` : ''}`));
   console.log(chalk.dim(`  Permission:  ${chalk.cyan(currentConfig.permissionMode)}`));
@@ -1325,6 +1414,11 @@ function printStatus(context: InteractiveContext, currentConfig: CurrentConfig):
       ? chalk.yellow(capabilitySummary)
       : chalk.cyan(capabilitySummary);
     console.log(chalk.dim(`  Provider Cap:${' '} ${capabilityColor}`));
+  }
+  if (generalProviderPolicy && generalProviderPolicy.status !== 'allow') {
+    const policyColor =
+      generalProviderPolicy.status === 'block' ? chalk.red : chalk.yellow;
+    console.log(chalk.dim(`  Provider Policy: ${policyColor(generalProviderPolicy.summary)}`));
   }
   console.log(chalk.dim(`  Session ID:  ${context.sessionId}`));
   console.log(chalk.dim(`  Messages:    ${context.messages.length}`));

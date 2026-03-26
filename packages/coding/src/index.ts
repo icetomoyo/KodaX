@@ -82,6 +82,7 @@ export type {
   KodaXSessionStorage,
   KodaXToolExecutionContext,
   AskUserQuestionOptions,
+  KodaXProviderPolicyHints,
   SessionErrorMetadata,
 } from './types.js';
 
@@ -316,6 +317,20 @@ export {
   buildPromptOverlay,
   createReasoningPlan,
 } from './reasoning.js';
+
+export type {
+  KodaXProviderCapabilitySnapshot,
+  KodaXProviderPolicyDecision,
+  KodaXProviderPolicyIssue,
+  KodaXProviderPolicyIssueSeverity,
+  KodaXProviderSourceKind,
+} from './provider-policy.js';
+
+export {
+  buildProviderCapabilitySnapshot,
+  buildProviderPolicyPromptNotes,
+  evaluateProviderPolicy,
+} from './provider-policy.js';
 
 // Client alias
 export { KodaXClient as Client } from './client.js';

@@ -19,6 +19,7 @@ import {
   CLI_BRIDGE_PROVIDER_CAPABILITY_PROFILE,
   cloneCapabilityProfile,
   NATIVE_PROVIDER_CAPABILITY_PROFILE,
+  normalizeCapabilityProfile,
 } from './capability-profile.js';
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
@@ -397,3 +398,5 @@ export function getProviderModels(name: string): string[] {
 export function isProviderName(name: string): name is ProviderName {
   return name in KODAX_PROVIDERS;
 }
+
+export { normalizeCapabilityProfile };

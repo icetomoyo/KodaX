@@ -52,6 +52,18 @@ vi.mock('../cli-events/acp-client.js', () => ({
 
 const { KodaXAcpProvider } = await import('./acp-base.js');
 
+const EXPECTED_CLI_BRIDGE_PROFILE = {
+  transport: 'cli-bridge',
+  conversationSemantics: 'last-user-message',
+  mcpSupport: 'none',
+  contextFidelity: 'lossy',
+  toolCallingFidelity: 'limited',
+  sessionSupport: 'stateless',
+  longRunningSupport: 'limited',
+  multimodalSupport: 'none',
+  evidenceSupport: 'limited',
+} as const;
+
 class TestAcpProvider extends KodaXAcpProvider {
   readonly name = 'test-acp';
   readonly supportsThinking = false;
@@ -89,19 +101,11 @@ describe('KodaXAcpProvider', () => {
     const provider = new TestAcpProvider();
 
     expect(provider.isConfigured()).toBe(true);
-    expect(provider.getCapabilityProfile()).toEqual({
-      transport: 'cli-bridge',
-      conversationSemantics: 'last-user-message',
-      mcpSupport: 'none',
-    });
+    expect(provider.getCapabilityProfile()).toEqual(EXPECTED_CLI_BRIDGE_PROFILE);
 
     const first = provider.getCapabilityProfile();
     first.transport = 'native-api';
-    expect(provider.getCapabilityProfile()).toEqual({
-      transport: 'cli-bridge',
-      conversationSemantics: 'last-user-message',
-      mcpSupport: 'none',
-    });
+    expect(provider.getCapabilityProfile()).toEqual(EXPECTED_CLI_BRIDGE_PROFILE);
   });
 
   it('streams prompt updates, relays ACP session events, and reuses ACP sessions', async () => {

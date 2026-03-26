@@ -20,6 +20,11 @@ import {
   hasTransientRetryEvidence,
   looksLikeActionableRuntimeEvidence,
 } from './runtime-evidence.js';
+import {
+  buildProviderPolicyPromptNotes,
+  evaluateProviderPolicy,
+  type KodaXProviderPolicyDecision,
+} from './provider-policy.js';
 
 export { KODAX_REASONING_MODE_SEQUENCE };
 
@@ -146,6 +151,7 @@ export interface ReasoningPlan {
   depth: KodaXThinkingDepth;
   decision: KodaXTaskRoutingDecision;
   promptOverlay: string;
+  providerPolicy?: KodaXProviderPolicyDecision;
 }
 
 export interface RoutingEvidenceInput {
@@ -419,11 +425,13 @@ export function buildFallbackRoutingDecision(
 export function buildPromptOverlay(
   decision: KodaXTaskRoutingDecision,
   extraNotes: string[] = [],
+  providerPolicy?: KodaXProviderPolicyDecision,
 ): string {
   return [
     EXECUTION_MODE_OVERLAYS[decision.recommendedMode],
     `[Task Routing] primary=${decision.primaryTask}; risk=${decision.riskLevel}; confidence=${decision.confidence.toFixed(2)}.`,
     `[Task Routing Reason] ${decision.reason}`,
+    ...(providerPolicy ? buildProviderPolicyPromptNotes(providerPolicy) : []),
     ...extraNotes,
   ].join('\n');
 }
@@ -435,14 +443,33 @@ export async function createReasoningPlan(
   routingEvidence?: RoutingEvidenceInput,
 ): Promise<ReasoningPlan> {
   const mode = resolveReasoningMode(options);
+  const providerPolicy = evaluateProviderPolicy({
+    providerName: provider.name,
+    model: options.modelOverride ?? options.model,
+    provider,
+    prompt,
+    options,
+    reasoningMode: mode,
+  });
 
   if (mode === 'auto') {
-    const decision = await routeTaskWithLLM(provider, prompt, options, routingEvidence);
+    const decision = await routeTaskWithLLM(
+      provider,
+      prompt,
+      options,
+      providerPolicy,
+      routingEvidence,
+    );
     return {
       mode,
       depth: decision.recommendedThinkingDepth,
-      promptOverlay: buildPromptOverlay(decision),
+      promptOverlay: buildPromptOverlay(
+        decision,
+        providerPolicy.routingNotes,
+        providerPolicy,
+      ),
       decision,
+      providerPolicy,
     };
   }
 
@@ -456,8 +483,13 @@ export async function createReasoningPlan(
   return {
     mode,
     depth,
-    promptOverlay: buildPromptOverlay(decision),
+    promptOverlay: buildPromptOverlay(
+      decision,
+      providerPolicy.routingNotes,
+      providerPolicy,
+    ),
     decision,
+    providerPolicy,
   };
 }
 
@@ -533,10 +565,11 @@ export async function maybeCreateAutoReroutePlan(
     mode: currentPlan.mode,
     depth: nextDecision.recommendedThinkingDepth,
     decision: nextDecision,
+    providerPolicy: currentPlan.providerPolicy,
     promptOverlay: buildPromptOverlay(nextDecision, [
       followUpGuidance,
       `${followUpLabel} Focus on high-confidence, high-signal output for this follow-up pass.`,
-    ]),
+    ], currentPlan.providerPolicy),
   };
 }
 
@@ -624,11 +657,13 @@ async function routeTaskWithLLM(
   provider: KodaXBaseProvider,
   prompt: string,
   options: KodaXOptions,
+  providerPolicy: KodaXProviderPolicyDecision,
   routingEvidence?: RoutingEvidenceInput,
 ): Promise<KodaXTaskRoutingDecision> {
   const fallback = buildFallbackRoutingDecision(prompt);
   const repoSummary = await buildRepositoryRoutingSummary(
     options.context?.gitRoot ?? undefined,
+    providerPolicy,
     routingEvidence,
   );
 
@@ -944,6 +979,7 @@ function normalizeDepthEscalationDecision(
 
 async function buildRepositoryRoutingSummary(
   gitRoot?: string,
+  providerPolicy?: KodaXProviderPolicyDecision,
   routingEvidence?: RoutingEvidenceInput,
 ): Promise<string> {
   const parts: string[] = [];
@@ -972,6 +1008,27 @@ async function buildRepositoryRoutingSummary(
   const recentEvidence = summarizeRoutingEvidence(routingEvidence);
   if (recentEvidence.length > 0) {
     parts.push(...recentEvidence);
+  }
+
+  if (providerPolicy) {
+    parts.push(
+      [
+        `- provider semantics: ${providerPolicy.snapshot.provider}${providerPolicy.snapshot.model ? `/${providerPolicy.snapshot.model}` : ''}`,
+        `transport=${providerPolicy.snapshot.transport}`,
+        `context=${providerPolicy.snapshot.contextFidelity}`,
+        `toolCalling=${providerPolicy.snapshot.toolCallingFidelity}`,
+        `session=${providerPolicy.snapshot.sessionSupport}`,
+        `longRunning=${providerPolicy.snapshot.longRunningSupport}`,
+        `multimodal=${providerPolicy.snapshot.multimodalSupport}`,
+        `evidence=${providerPolicy.snapshot.evidenceSupport}`,
+        `mcp=${providerPolicy.snapshot.mcpSupport}`,
+        `reasoning=${providerPolicy.snapshot.reasoningCapability}`,
+      ].join('; '),
+    );
+
+    for (const issue of providerPolicy.issues) {
+      parts.push(`- provider constraint (${issue.severity}): ${issue.summary}`);
+    }
   }
 
   return parts.length > 0 ? parts.join('\n') : '- git: clean or unavailable';

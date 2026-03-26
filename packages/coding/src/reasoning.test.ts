@@ -161,6 +161,8 @@ describe('reasoning reroute', () => {
     expect(routerPrompt).toContain('recent session error');
     expect(routerPrompt).toContain('recent message evidence');
     expect(routerPrompt).toContain('runtime evidence');
+    expect(routerPrompt).toContain('- provider semantics: capturing-provider');
+    expect(routerPrompt).toContain('transport=native-api');
   });
 
   it('keeps timeout-only routing evidence out of the router prompt', async () => {

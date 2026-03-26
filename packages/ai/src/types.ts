@@ -98,10 +98,28 @@ export type KodaXProviderConversationSemantics =
 
 export type KodaXProviderMcpSupport = 'native' | 'none';
 
+export type KodaXProviderContextFidelity = 'full' | 'partial' | 'lossy';
+
+export type KodaXProviderToolCallingFidelity = 'full' | 'limited' | 'none';
+
+export type KodaXProviderSessionSupport = 'full' | 'limited' | 'stateless';
+
+export type KodaXProviderLongRunningSupport = 'full' | 'limited' | 'none';
+
+export type KodaXProviderMultimodalSupport = 'none' | 'image-input' | 'full';
+
+export type KodaXProviderEvidenceSupport = 'full' | 'limited' | 'none';
+
 export interface KodaXProviderCapabilityProfile {
   transport: KodaXProviderTransport;
   conversationSemantics: KodaXProviderConversationSemantics;
   mcpSupport: KodaXProviderMcpSupport;
+  contextFidelity?: KodaXProviderContextFidelity;
+  toolCallingFidelity?: KodaXProviderToolCallingFidelity;
+  sessionSupport?: KodaXProviderSessionSupport;
+  longRunningSupport?: KodaXProviderLongRunningSupport;
+  multimodalSupport?: KodaXProviderMultimodalSupport;
+  evidenceSupport?: KodaXProviderEvidenceSupport;
 }
 
 export type KodaXReasoningOverride =

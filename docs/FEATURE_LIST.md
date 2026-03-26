@@ -1,6 +1,6 @@
 # Feature List
 
-> Last updated: 2026-03-25
+> Last updated: 2026-03-26
 
 ---
 
@@ -10,16 +10,16 @@
 |---|---|
 | Tracked feature IDs | `001-041` (`027` unused) |
 | Total tracked features | `40` |
-| Completed | `27` |
+| Completed | `28` |
 | InProgress | `0` |
-| Planned | `12` |
+| Planned | `11` |
 | Current released version | `v0.6.15` |
 
 ### Planned version distribution
 
 | Version | Planned features |
 |---|---|
-| `v0.7.0` | `4` |
+| `v0.7.0` | `3` |
 | `v0.8.0` | `5` |
 | `v0.9.0` | `1` |
 | `v1.0.0` | `2` |
@@ -38,7 +38,6 @@
 | `025` | Adaptive Task Intelligence and Harness Router | Enhancement | High | `v0.7.0` | [v0.7.0](features/v0.7.0.md#feature_025-adaptive-task-intelligence-and-harness-router) |
 | `026` | Roadmap Integrity and Planning Hygiene | Internal | High | `v0.7.0` | [v0.7.0](features/v0.7.0.md#feature_026-roadmap-integrity-and-planning-hygiene) |
 | `028` | First-Class Search, Retrieval, and Evidence Tooling | Enhancement | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_028-first-class-search-retrieval-and-evidence-tooling) |
-| `029` | Provider Capability Transparency and Harness Policy | Enhancement | High | `v0.7.0` | [v0.7.0](features/v0.7.0.md#feature_029-provider-capability-transparency-and-harness-policy) |
 | `030` | Multi-Surface Delivery | Enhancement | High | `v1.0.0` | [v1.0.0](features/v1.0.0.md#feature_030-multi-surface-delivery) |
 | `031` | Multimodal Artifact Inputs | New | High | `v0.9.0` | [v0.9.0](features/v0.9.0.md#feature_031-multimodal-artifact-inputs) |
 | `035` | MCP Capability Provider | New | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_035-mcp-capability-provider) |
@@ -75,6 +74,7 @@
 | `020` | AGENTS.md Workspace Rules | `v0.5.34` | [v0.6.0](features/v0.6.0.md) |
 | `021` | Provider-Aware Reasoning Budget | `v0.5.37` | [v0.6.0](features/v0.6.0.md) |
 | `024` | Project Harness | `v0.6.10` | [v0.6.10](features/v0.6.10.md) |
+| `029` | Provider Capability Transparency and Harness Policy | `v0.7.0` (unreleased) | [v0.7.0](features/v0.7.0.md#feature_029-provider-capability-transparency-and-harness-policy) |
 | `032` | JSON Output Mode | `v0.6.20` (unreleased) | [v0.6.20](features/v0.6.20.md) |
 | `033` | REPL Parallel Toggle | `v0.6.15` | [v0.6.15](features/v0.6.15.md) |
 | `034` | Extension and Capability Runtime | `v0.7.0` (unreleased) | [v0.7.0](features/v0.7.0.md#feature_034-extension-and-capability-runtime) |

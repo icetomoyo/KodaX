@@ -149,6 +149,15 @@ export interface KodaXContextTokenSnapshot {
   usage?: KodaXTokenUsage;
 }
 
+export interface KodaXProviderPolicyHints {
+  longRunning?: boolean;
+  harness?: 'project';
+  evidenceHeavy?: boolean;
+  multimodal?: boolean;
+  capabilityRuntime?: boolean;
+  mcpRequired?: boolean;
+}
+
 export interface KodaXContextOptions {
   /** Project root used for project-scoped prompts, permissions, and path policy. */
   gitRoot?: string | null;
@@ -168,6 +177,8 @@ export interface KodaXContextOptions {
     featuresFile?: string;
     progressFile?: string;
   };
+  /** Optional semantic hints for provider-policy evaluation. */
+  providerPolicyHints?: KodaXProviderPolicyHints;
   /** Skills system prompt snippet for progressive disclosure - Skills 系统提示词片段（渐进式披露） */
   skillsPrompt?: string;
   /** Internal execution-mode overlay appended to the system prompt */

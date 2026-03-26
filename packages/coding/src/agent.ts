@@ -44,6 +44,10 @@ import {
   reasoningModeToDepth,
   type ReasoningPlan,
 } from './reasoning.js';
+import {
+  buildProviderPolicyPromptNotes,
+  evaluateProviderPolicy,
+} from './provider-policy.js';
 import { looksLikeActionableRuntimeEvidence } from './runtime-evidence.js';
 import { resolveExecutionCwd } from './runtime-paths.js';
 import {
@@ -1149,6 +1153,25 @@ export async function runKodaX(
       };
 
       const streamProvider = resolveProvider(currentProviderName);
+      const providerPolicy = evaluateProviderPolicy({
+        providerName: currentProviderName,
+        model: currentModelOverride,
+        provider: streamProvider,
+        prompt,
+        options,
+        reasoningMode: effectiveProviderReasoningMode,
+        taskType: effectiveReasoningPlan.decision.primaryTask,
+        executionMode: effectiveReasoningPlan.decision.recommendedMode,
+      });
+      if (providerPolicy.status === 'block') {
+        throw new Error(`[Provider Policy] ${providerPolicy.summary}`);
+      }
+      const effectiveSystemPrompt = providerPolicy.issues.length > 0
+        ? [
+          preparedProviderState.systemPrompt,
+          buildProviderPolicyPromptNotes(providerPolicy).join('\n'),
+        ].join('\n\n')
+        : preparedProviderState.systemPrompt;
       if (!streamProvider.isConfigured()) {
         throw new Error(`Provider "${currentProviderName}" not configured. Set ${currentProviderName.toUpperCase().replace('-', '_')}_API_KEY`);
       }
@@ -1189,7 +1212,7 @@ export async function runKodaX(
             : retryTimeoutController.signal;
 
           try {
-            return await streamProvider.stream(compacted, getActiveToolDefinitions(runtimeSessionState.activeTools), preparedProviderState.systemPrompt, effectiveProviderReasoning, {
+            return await streamProvider.stream(compacted, getActiveToolDefinitions(runtimeSessionState.activeTools), effectiveSystemPrompt, effectiveProviderReasoning, {
               onTextDelta: (text) => {
                 resetIdleTimer();
                 void emitActiveExtensionEvent('text:delta', { text });
