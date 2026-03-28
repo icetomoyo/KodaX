@@ -5,6 +5,7 @@ import type {
   KodaXJsonValue,
   KodaXManagedTask,
   KodaXMessage,
+  KodaXSessionUiHistoryItem,
   SessionErrorMetadata,
 } from '@kodax/coding';
 import type { BrainstormSession } from './project-brainstorm.js';
@@ -185,6 +186,25 @@ export function isProjectWorkflowState(value: unknown): value is ProjectWorkflow
     && (value.latestExecutionSummary === undefined || typeof value.latestExecutionSummary === 'string');
 }
 
+export function isKodaXSessionUiHistoryItem(value: unknown): value is KodaXSessionUiHistoryItem {
+  return isRecord(value)
+    && typeof value.type === 'string'
+    && (
+      value.type === 'user'
+      || value.type === 'assistant'
+      || value.type === 'system'
+      || value.type === 'thinking'
+      || value.type === 'error'
+      || value.type === 'info'
+      || value.type === 'hint'
+    )
+    && typeof value.text === 'string';
+}
+
+export function isKodaXSessionUiHistory(value: unknown): value is KodaXSessionUiHistoryItem[] {
+  return Array.isArray(value) && value.every(isKodaXSessionUiHistoryItem);
+}
+
 export function isProjectControlState(value: unknown): value is ProjectControlState {
   if (!isRecord(value)) {
     return false;
@@ -271,6 +291,15 @@ export function isKodaXManagedTask(value: unknown): value is KodaXManagedTask {
     && typeof contract.recommendedMode === 'string'
     && typeof contract.requiresBrainstorm === 'boolean'
     && typeof contract.reason === 'string'
+    && (contract.contractSummary === undefined || typeof contract.contractSummary === 'string')
+    && Array.isArray(contract.successCriteria)
+    && contract.successCriteria.every((item) => typeof item === 'string')
+    && Array.isArray(contract.requiredEvidence)
+    && contract.requiredEvidence.every((item) => typeof item === 'string')
+    && Array.isArray(contract.constraints)
+    && contract.constraints.every((item) => typeof item === 'string')
+    && (contract.contractCreatedByAssignmentId === undefined || typeof contract.contractCreatedByAssignmentId === 'string')
+    && (contract.contractUpdatedAt === undefined || typeof contract.contractUpdatedAt === 'string')
     && (contract.metadata === undefined || (
       isRecord(contract.metadata)
       && Object.values(contract.metadata).every(isKodaXJsonValue)

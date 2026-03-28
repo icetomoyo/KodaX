@@ -6,7 +6,7 @@
 
 import type { CursorPosition } from "./utils/text-buffer.js";
 import type { PermissionMode } from "../permission/types.js";
-import type { KodaXReasoningMode } from "@kodax/coding";
+import type { KodaXAgentMode, KodaXReasoningMode } from "@kodax/coding";
 
 // === Keyboard Events - 键盘事件 ===
 
@@ -144,6 +144,7 @@ export interface InputPromptProps {
 export interface StatusBarProps {
   sessionId: string;
   permissionMode: PermissionMode;
+  agentMode: KodaXAgentMode;
   parallel?: boolean;
   provider: string;
   model: string;
@@ -212,6 +213,7 @@ export interface AppProps {
   provider: string;
   onSubmit: (input: string) => Promise<void>;
   permissionMode?: PermissionMode;
+  agentMode?: KodaXAgentMode;
   parallel?: boolean;
 }
 

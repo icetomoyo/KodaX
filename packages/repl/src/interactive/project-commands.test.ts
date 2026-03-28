@@ -42,6 +42,7 @@ const currentConfig: CurrentConfig = {
   provider: 'zhipu-coding',
   thinking: true,
   reasoningMode: 'auto',
+  agentMode: 'ama',
   parallel: false,
   permissionMode: 'accept-edits' as never,
 };

@@ -72,7 +72,8 @@ describe('runOrchestration', () => {
     const handoff = JSON.parse(
       await readFile(path.join(workspaceDir, 'tasks', '03-summarize', 'handoff.json'), 'utf8')
     );
-    expect(Object.keys(handoff)).toEqual(['research', 'review']);
+    expect(handoff.dependencies.map((dependency: { id: string }) => dependency.id).sort()).toEqual(['research', 'review']);
+    expect(await readFile(path.join(workspaceDir, 'tasks', '03-summarize', 'handoff.md'), 'utf8')).toContain('# Dependency Handoff');
 
     const trace = await readFile(path.join(workspaceDir, 'trace.ndjson'), 'utf8');
     expect(trace).toContain('"type":"task_started"');
@@ -155,6 +156,7 @@ describe('runOrchestration', () => {
 describe('createKodaXTaskRunner', () => {
   it('assembles preferred-agent and dependency handoff context before calling runKodaX', async () => {
     const workspaceDir = await createTempDir('kodax-runner-');
+    const dependencyOutput = 'dependency output '.repeat(120);
     let capturedRunOptions: unknown;
     let capturedPrompt: unknown;
     const runAgent = vi.fn(async (runOptions: unknown, prompt: unknown) => {
@@ -192,7 +194,7 @@ describe('createKodaXTaskRunner', () => {
         durationMs: 1000,
         result: {
           success: true,
-          output: 'dependency output',
+          output: dependencyOutput,
           summary: 'dependency summary',
         },
       },
@@ -227,8 +229,12 @@ describe('createKodaXTaskRunner', () => {
       maxIter: 12,
     });
     expect(String(capturedPrompt)).toContain('Preferred agent: Writer');
-    expect(String(capturedPrompt)).toContain('Dependency handoff:');
+    expect(String(capturedPrompt)).toContain('Dependency handoff artifacts:');
+    expect(String(capturedPrompt)).toContain('handoff.json');
+    expect(String(capturedPrompt)).toContain('handoff.md');
     expect(String(capturedPrompt)).toContain('dependency summary');
+    expect(String(capturedPrompt)).toContain('Result artifact:');
+    expect(String(capturedPrompt)).toContain('Output excerpt: dependency output');
     expect(String(capturedPrompt)).toContain('Write the final summary.');
   });
 

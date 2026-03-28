@@ -55,6 +55,8 @@ export type {
   KodaXSessionScope,
   KodaXSessionStorage,
   KodaXSessionTreeNode,
+  KodaXSessionUiHistoryItem,
+  KodaXSessionUiHistoryItemType,
   SessionErrorMetadata,
 } from './types.js';
 

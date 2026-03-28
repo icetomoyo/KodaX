@@ -16,6 +16,12 @@ import { toolGlob } from './glob.js';
 import { toolGrep } from './grep.js';
 import { toolUndo } from './undo.js';
 import { toolAskUserQuestion } from './ask-user-question.js';
+import { toolRepoOverview } from './repo-overview.js';
+import { toolChangedScope } from './changed-scope.js';
+import { toolModuleContext } from './module-context.js';
+import { toolSymbolContext } from './symbol-context.js';
+import { toolProcessContext } from './process-context.js';
+import { toolImpactEstimate } from './impact-estimate.js';
 
 const TOOL_REGISTRY: ToolRegistry = new Map();
 let nextToolRegistrationId = 0;
@@ -230,6 +236,92 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['question', 'options'],
     },
     handler: toolAskUserQuestion,
+  },
+  {
+    name: 'repo_overview',
+    description: 'Summarize the repository structure, key areas, entry hints, and stored repo-intelligence snapshot for the current workspace.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target_path: { type: 'string', description: 'Optional path inside the workspace to resolve the repository root from' },
+        refresh: { type: 'boolean', description: 'When true, rebuild the repo overview snapshot before returning it' },
+      },
+    },
+    handler: toolRepoOverview,
+  },
+  {
+    name: 'changed_scope',
+    description: 'Analyze which files, areas, and categories are touched by the current git diff or a comparison range.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target_path: { type: 'string', description: 'Optional path inside the workspace to resolve the repository root from' },
+        scope: {
+          type: 'string',
+          enum: ['unstaged', 'staged', 'all', 'compare'],
+          description: 'Which git change set to inspect. Defaults to all.',
+        },
+        base_ref: { type: 'string', description: 'Base ref used when scope=compare. Defaults to HEAD~1.' },
+        refresh_overview: { type: 'boolean', description: 'When true, rebuild the repo overview snapshot before analyzing changes' },
+      },
+    },
+    handler: toolChangedScope,
+  },
+  {
+    name: 'module_context',
+    description: 'Return a task-shaped module capsule with dependencies, entry files, symbols, tests, docs, and follow-up handles.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        module: { type: 'string', description: 'Module id, label, or package name to inspect' },
+        target_path: { type: 'string', description: 'Optional path used to infer the enclosing module' },
+        refresh: { type: 'boolean', description: 'When true, rebuild repo intelligence before returning the module capsule' },
+      },
+    },
+    handler: toolModuleContext,
+  },
+  {
+    name: 'symbol_context',
+    description: 'Return definition, probable callers/callees, imports, and alternatives for a repository symbol.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        symbol: { type: 'string', description: 'The symbol name to inspect' },
+        module: { type: 'string', description: 'Optional module hint to disambiguate the symbol search' },
+        target_path: { type: 'string', description: 'Optional path inside the workspace to resolve the repository root from' },
+        refresh: { type: 'boolean', description: 'When true, rebuild repo intelligence before returning the symbol capsule' },
+      },
+    },
+    handler: toolSymbolContext,
+  },
+  {
+    name: 'process_context',
+    description: 'Return an approximate static execution/process capsule for an entry symbol, module, or path.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        entry: { type: 'string', description: 'Entry symbol or file hint for the process to trace' },
+        module: { type: 'string', description: 'Optional module hint used to select a process capsule' },
+        target_path: { type: 'string', description: 'Optional path used to infer the relevant module or entry file' },
+        refresh: { type: 'boolean', description: 'When true, rebuild repo intelligence before returning the process capsule' },
+      },
+    },
+    handler: toolProcessContext,
+  },
+  {
+    name: 'impact_estimate',
+    description: 'Estimate blast radius for a symbol, path, or module using local intelligence plus changed-scope overlap.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        symbol: { type: 'string', description: 'Optional symbol to estimate impact for' },
+        module: { type: 'string', description: 'Optional module to estimate impact for' },
+        path: { type: 'string', description: 'Optional repository-relative or absolute path to estimate impact for' },
+        target_path: { type: 'string', description: 'Optional path used to resolve the repository root from' },
+        refresh: { type: 'boolean', description: 'When true, rebuild repo intelligence before returning the impact estimate' },
+      },
+    },
+    handler: toolImpactEstimate,
   },
 ];
 

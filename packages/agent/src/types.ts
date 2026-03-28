@@ -125,11 +125,26 @@ export interface KodaXSessionTreeNode {
 
 export type KodaXSessionScope = 'user' | 'managed-task-worker';
 
+export type KodaXSessionUiHistoryItemType =
+  | 'user'
+  | 'assistant'
+  | 'system'
+  | 'thinking'
+  | 'error'
+  | 'info'
+  | 'hint';
+
+export interface KodaXSessionUiHistoryItem {
+  type: KodaXSessionUiHistoryItemType;
+  text: string;
+}
+
 export interface KodaXSessionData {
   messages: KodaXMessage[];
   title: string;
   gitRoot: string;
   scope?: KodaXSessionScope;
+  uiHistory?: KodaXSessionUiHistoryItem[];
   errorMetadata?: SessionErrorMetadata;
   extensionState?: KodaXExtensionSessionState;
   extensionRecords?: KodaXExtensionSessionRecord[];
@@ -143,6 +158,7 @@ export interface KodaXSessionMeta {
   gitRoot: string;
   createdAt: string;
   scope?: KodaXSessionScope;
+  uiHistory?: KodaXSessionUiHistoryItem[];
   extensionState?: KodaXExtensionSessionState;
   extensionRecordCount?: number;
   lineageVersion?: 2;

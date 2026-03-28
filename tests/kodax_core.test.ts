@@ -16,7 +16,7 @@ import {
   estimateTokens,
   checkIncompleteToolCalls,
   KODAX_TOOLS,
-  KODAX_TOOL_REQUIRED_PARAMS,
+  getRequiredToolParams,
   KODAX_PROVIDERS,
   getProvider,
   runKodaX,
@@ -118,14 +118,14 @@ describe('Core Module Exports', () => {
 
   it('should export KODAX_TOOLS array', () => {
     expect(Array.isArray(KODAX_TOOLS)).toBe(true);
-    expect(KODAX_TOOLS.length).toBe(8);
+    expect(KODAX_TOOLS.length).toBe(14);
   });
 
-  it('should export KODAX_TOOL_REQUIRED_PARAMS', () => {
-    expect(typeof KODAX_TOOL_REQUIRED_PARAMS).toBe('object');
-    expect(KODAX_TOOL_REQUIRED_PARAMS.read).toContain('path');
-    expect(KODAX_TOOL_REQUIRED_PARAMS.write).toContain('path');
-    expect(KODAX_TOOL_REQUIRED_PARAMS.write).toContain('content');
+  it('should export getRequiredToolParams', () => {
+    expect(typeof getRequiredToolParams).toBe('function');
+    expect(getRequiredToolParams('read')).toContain('path');
+    expect(getRequiredToolParams('write')).toContain('path');
+    expect(getRequiredToolParams('write')).toContain('content');
   });
 
   it('should export KODAX_PROVIDERS', () => {
@@ -359,7 +359,7 @@ describe('Spinner Animation', () => {
 // ============== 工具定义测试 ==============
 
 describe('Tool Definitions', () => {
-  it('should have all 7 tools', () => {
+  it('should have all built-in tools', () => {
     const toolNames = KODAX_TOOLS.map(t => t.name);
     expect(toolNames).toContain('read');
     expect(toolNames).toContain('write');
@@ -368,6 +368,13 @@ describe('Tool Definitions', () => {
     expect(toolNames).toContain('glob');
     expect(toolNames).toContain('grep');
     expect(toolNames).toContain('undo');
+    expect(toolNames).toContain('ask_user_question');
+    expect(toolNames).toContain('repo_overview');
+    expect(toolNames).toContain('changed_scope');
+    expect(toolNames).toContain('module_context');
+    expect(toolNames).toContain('symbol_context');
+    expect(toolNames).toContain('process_context');
+    expect(toolNames).toContain('impact_estimate');
   });
 
   it('should have proper schema for read tool', () => {

@@ -15,6 +15,7 @@ describe('session tree commands', () => {
       model: 'gpt-5.4',
       thinking: true,
       reasoningMode: 'auto',
+      agentMode: 'ama',
       parallel: true,
       permissionMode: 'accept-edits',
     };

@@ -54,6 +54,7 @@ describe('/compact command', () => {
       provider: 'zhipu-coding',
       thinking: true,
       reasoningMode: 'auto',
+      agentMode: 'ama',
       parallel: false,
       permissionMode: 'accept-edits',
     };

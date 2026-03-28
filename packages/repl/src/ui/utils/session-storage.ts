@@ -62,6 +62,7 @@ export class MemorySessionStorage implements SessionStorage {
     this.sessions.set(id, {
       ...structuredClone(data),
       scope: data.scope ?? existing?.scope ?? 'user',
+      uiHistory: data.uiHistory ?? existing?.uiHistory,
       extensionState: data.extensionState ?? existing?.extensionState,
       extensionRecords: data.extensionRecords ?? existing?.extensionRecords,
       lineage: createSessionLineage(

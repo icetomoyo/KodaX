@@ -20,6 +20,7 @@ import {
   SessionErrorMetadata,
 } from './types.js';
 import type { KodaXMessage } from '@kodax/ai';
+import path from 'path';
 import { KodaXClient } from './client.js';
 import { resolveProvider } from './providers/index.js';
 import {
@@ -51,6 +52,14 @@ import {
 } from './provider-policy.js';
 import { looksLikeActionableRuntimeEvidence } from './runtime-evidence.js';
 import { resolveExecutionCwd } from './runtime-paths.js';
+import { buildRepoIntelligenceContext } from './repo-intelligence/index.js';
+import {
+  getImpactEstimate,
+  getModuleContext,
+  getRepoRoutingSignals,
+  renderImpactEstimate,
+  renderModuleContext,
+} from './repo-intelligence/query.js';
 import {
   createCompletedTurnTokenSnapshot,
   createContextTokenSnapshot,
@@ -936,6 +945,18 @@ export async function runKodaX(
 
   await runtime?.hydrateSession(sessionId);
 
+  const repoRoutingSignals = options.context?.repoRoutingSignals
+    ?? (
+      (options.context?.executionCwd || options.context?.gitRoot)
+        ? await getRepoRoutingSignals({
+          executionCwd,
+          gitRoot: options.context?.gitRoot ?? undefined,
+        }, {
+          refresh: messages.length === 1,
+        }).catch(() => null)
+        : null
+    );
+
   let reasoningPlan = await createReasoningPlan({
     ...options,
     provider: currentProviderName,
@@ -943,6 +964,7 @@ export async function runKodaX(
   }, prompt, initialProvider, {
     recentMessages: messages.slice(0, -1),
     sessionErrorMetadata: errorMetadata,
+    repoSignals: repoRoutingSignals ?? undefined,
   });
   let currentExecution = await buildReasoningExecutionState(
     {
@@ -1780,6 +1802,97 @@ export async function runKodaX(
   }
 }
 
+async function buildAutoRepoIntelligenceContext(
+  options: KodaXOptions,
+  reasoningPlan: ReasoningPlan,
+  isNewSession: boolean,
+): Promise<string | undefined> {
+  const decision = reasoningPlan.decision;
+  const includeRepoOverview =
+    isNewSession
+    || decision.primaryTask === 'plan'
+    || decision.harnessProfile !== 'H0_DIRECT'
+    || decision.complexity !== 'simple';
+  const includeChangedScope =
+    decision.primaryTask === 'review'
+    || decision.primaryTask === 'bugfix'
+    || decision.primaryTask === 'edit'
+    || decision.primaryTask === 'refactor';
+
+  if (!includeRepoOverview && !includeChangedScope) {
+    return options.context?.repoIntelligenceContext;
+  }
+
+  try {
+    const activeModuleTargetPath = options.context?.executionCwd ? '.' : undefined;
+    const repoContext = {
+      executionCwd: options.context?.executionCwd,
+      gitRoot: options.context?.gitRoot ?? undefined,
+    };
+    const generatedContext = await buildRepoIntelligenceContext({
+      executionCwd: options.context?.executionCwd,
+      gitRoot: options.context?.gitRoot ?? undefined,
+    }, {
+      includeRepoOverview,
+      includeChangedScope,
+      refreshOverview: isNewSession,
+      changedScope: 'all',
+    });
+
+    const includeActiveModule =
+      decision.primaryTask === 'review'
+      || decision.primaryTask === 'bugfix'
+      || decision.primaryTask === 'edit'
+      || decision.primaryTask === 'refactor';
+    let moduleContext = '';
+    let impactContext = '';
+    let fallbackGuidance = '';
+
+    if (includeActiveModule) {
+      const moduleResult = await getModuleContext(repoContext, {
+        targetPath: activeModuleTargetPath,
+        refresh: isNewSession,
+      }).catch(() => null);
+
+      if (moduleResult) {
+        moduleContext = ['## Active Module Intelligence', renderModuleContext(moduleResult)].join('\n');
+      }
+
+      const impactResult = await getImpactEstimate(repoContext, {
+        targetPath: activeModuleTargetPath,
+        refresh: isNewSession,
+      }).catch(() => null);
+
+      if (impactResult) {
+        impactContext = ['## Active Impact Intelligence', renderImpactEstimate(impactResult)].join('\n');
+      }
+
+      const lowConfidence =
+        (moduleResult?.confidence ?? 1) < 0.72
+        || (impactResult?.confidence ?? 1) < 0.72;
+      if (lowConfidence || (!moduleResult && !impactResult)) {
+        fallbackGuidance = [
+          '## Repo Intelligence Guidance',
+          '- Current repository intelligence is low-confidence for this area.',
+          '- Validate critical edits with `module_context`, `symbol_context`, `grep`, and `read` before committing to a change.',
+        ].join('\n');
+      }
+    }
+
+    return [
+      options.context?.repoIntelligenceContext,
+      generatedContext,
+      moduleContext,
+      impactContext,
+      fallbackGuidance,
+    ]
+      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      .join('\n\n');
+  } catch {
+    return options.context?.repoIntelligenceContext;
+  }
+}
+
 async function buildReasoningExecutionState(
   options: KodaXOptions,
   reasoningPlan: ReasoningPlan,
@@ -1795,12 +1908,19 @@ async function buildReasoningExecutionState(
     executionMode: KodaXExecutionMode;
   };
 }> {
+  const repoIntelligenceContext = await buildAutoRepoIntelligenceContext(
+    options,
+    reasoningPlan,
+    isNewSession,
+  );
+
   const effectiveOptions: KodaXOptions = {
     ...options,
     reasoningMode: reasoningPlan.mode,
     context: {
       ...options.context,
       executionCwd: resolveExecutionCwd(options.context),
+      repoIntelligenceContext,
       providerPolicyHints: {
         ...options.context?.providerPolicyHints,
         ...buildProviderPolicyHintsForDecision(reasoningPlan.decision),

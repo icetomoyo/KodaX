@@ -33,6 +33,7 @@ import {
   isKodaXExtensionSessionState,
   isKodaXJsonValue,
   isKodaXMessage,
+  isKodaXSessionUiHistory,
   isRecord,
   isSessionErrorMetadata,
 } from './json-guards.js';
@@ -175,16 +176,19 @@ function buildSessionData(snapshot: PersistedSessionSnapshot): ResolvedSessionSn
   const lineage = buildLineage(snapshot);
   return {
     createdAt: snapshot.meta?.createdAt,
-    data: {
-      messages: lineage
-        ? getSessionMessagesFromLineage(lineage)
-        : snapshot.legacyMessages.map((message) => structuredClone(message)),
-      title: snapshot.meta?.title ?? '',
-      gitRoot: snapshot.meta?.gitRoot ?? '',
-      scope: snapshot.meta?.scope ?? 'user',
-      errorMetadata: isSessionErrorMetadata(snapshot.meta?.errorMetadata)
-        ? snapshot.meta?.errorMetadata
-        : undefined,
+      data: {
+        messages: lineage
+          ? getSessionMessagesFromLineage(lineage)
+          : snapshot.legacyMessages.map((message) => structuredClone(message)),
+        title: snapshot.meta?.title ?? '',
+        gitRoot: snapshot.meta?.gitRoot ?? '',
+        scope: snapshot.meta?.scope ?? 'user',
+        uiHistory: isKodaXSessionUiHistory(snapshot.meta?.uiHistory)
+          ? snapshot.meta.uiHistory.map((item) => ({ ...item }))
+          : undefined,
+        errorMetadata: isSessionErrorMetadata(snapshot.meta?.errorMetadata)
+          ? snapshot.meta?.errorMetadata
+          : undefined,
       extensionState: isKodaXExtensionSessionState(snapshot.meta?.extensionState)
         ? snapshot.meta?.extensionState
         : undefined,
@@ -207,6 +211,7 @@ function createSessionMeta(
     gitRoot: data.gitRoot,
     createdAt: createdAt ?? new Date().toISOString(),
     scope: data.scope ?? 'user',
+    uiHistory: data.uiHistory,
     errorMetadata: data.errorMetadata,
     extensionState: data.extensionState,
     extensionRecordCount: data.extensionRecords?.length ?? 0,
@@ -328,6 +333,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
     const merged: SessionData = {
       ...data,
       scope: data.scope ?? existing?.data.scope ?? 'user',
+      uiHistory: data.uiHistory ?? existing?.data.uiHistory,
       extensionState: data.extensionState ?? existing?.data.extensionState,
       extensionRecords: data.extensionRecords ?? existing?.data.extensionRecords,
       lineage: createSessionLineage(
@@ -449,6 +455,9 @@ export class FileSessionStorage implements KodaXSessionStorage {
       messages: getSessionMessagesFromLineage(lineage),
       title: options?.title ?? resolved.data.title,
       gitRoot: resolved.data.gitRoot,
+      uiHistory: resolved.data.uiHistory
+        ? resolved.data.uiHistory.map((item) => ({ ...item }))
+        : undefined,
       extensionState: resolved.data.extensionState
         ? structuredClone(resolved.data.extensionState)
         : undefined,

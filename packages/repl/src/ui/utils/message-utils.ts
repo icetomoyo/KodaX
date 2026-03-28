@@ -238,6 +238,24 @@ export function resolveAssistantHistoryText(
 }
 
 /**
+ * Resolve the final assistant text for a completed round.
+ * Prefer persisted assistant content first, then streamed text,
+ * and only fall back to managed-task metadata summaries when no
+ * full assistant body is available.
+ */
+export function resolveCompletedAssistantText(
+  messages: KodaXMessage[],
+  streamedText: string,
+  managedSummary?: string,
+  lastText?: string
+): string {
+  return resolveAssistantHistoryText(messages, streamedText)
+    || managedSummary?.trim()
+    || lastText?.trim()
+    || "";
+}
+
+/**
  * Extract a session title from the first user message.
  */
 export function extractTitle(messages: KodaXMessage[]): string {

@@ -184,6 +184,10 @@ export interface KodaXTaskRoutingDecision {
   workIntent: KodaXTaskWorkIntent;
   requiresBrainstorm: boolean;
   harnessProfile: KodaXHarnessProfile;
+  soloBoundaryConfidence?: number;
+  needsIndependentQA?: boolean;
+  routingSource?: 'model' | 'fallback' | 'retried-model' | 'retried-fallback';
+  routingAttempts?: number;
   routingNotes?: string[];
   reason: string;
 }

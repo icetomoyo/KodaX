@@ -186,6 +186,10 @@ describe('project-storage brainstorm persistence', () => {
         recommendedMode: 'implementation',
         requiresBrainstorm: false,
         reason: 'Test fixture',
+        contractSummary: 'Persist managed task state under project storage.',
+        successCriteria: ['Managed task state survives reload.'],
+        requiredEvidence: ['Persisted managed-task artifacts exist.'],
+        constraints: ['Keep task state under .agent/project.'],
         metadata: {
           featureIndex: 1,
           projectMode: 'next',

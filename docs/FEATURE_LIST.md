@@ -1,6 +1,6 @@
 # Feature 总表
 
-> Last updated: 2026-03-26
+> Last updated: 2026-03-28
 
 > 中文阅读说明：
 > 这份 `FEATURE_LIST` 是 roadmap 的总索引。
@@ -13,11 +13,11 @@
 
 | Item | Value |
 |---|---|
-| Tracked feature IDs | `001-041` (`027` unused) |
-| Total tracked features | `40` |
-| Completed | `32` |
+| Tracked feature IDs | `001-043` |
+| Total tracked features | `43` |
+| Completed | `34` |
 | InProgress | `0` |
-| Planned | `8` |
+| Planned | `9` |
 | Current released version | `v0.7.4` |
 
 ### 各版本待做分布
@@ -25,8 +25,9 @@
 | Version | Planned features |
 |---|---|
 | `v0.7.0` | `1` |
-| `v0.8.0` | `5` |
-| `v0.9.0` | `1` |
+| `v0.7.20` | `1` |
+| `v0.8.0` | `3` |
+| `v0.9.0` | `3` |
 | `v1.0.0` | `2` |
 
 ---
@@ -36,12 +37,12 @@
 | ID | Title | Category | Priority | Planned | Design |
 |---|---|---|---|---|---|
 | `007` | Theme System Consolidation | Enhancement | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_007-theme-system-consolidation) |
-| `018` | Task-Aware Repository Intelligence Substrate | New | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_018-task-aware-repository-intelligence-substrate) |
 | `023` | Dual-Mode Terminal UX | Enhancement | High | `v1.0.0` | [v1.0.0](features/v1.0.0.md#feature_023-dual-mode-terminal-ux) |
-| `026` | Roadmap Integrity and Planning Hygiene | Internal | High | `v0.7.0` | [v0.7.0](features/v0.7.0.md#feature_026-roadmap-integrity-and-planning-hygiene) |
-| `028` | First-Class Retrieval, Context, and Evidence Tooling | Enhancement | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_028-first-class-retrieval-context-and-evidence-tooling) |
+| `026` | Roadmap Integrity and Planning Hygiene | Internal | High | `v0.7.20` | [v0.7.20](features/v0.7.20.md#feature_026-roadmap-integrity-and-planning-hygiene) |
 | `030` | Multi-Surface Delivery | Enhancement | High | `v1.0.0` | [v1.0.0](features/v1.0.0.md#feature_030-multi-surface-delivery) |
 | `031` | Multimodal Artifact Inputs | New | High | `v0.9.0` | [v0.9.0](features/v0.9.0.md#feature_031-multimodal-artifact-inputs) |
+| `042` | Incremental Repository Intelligence Refresh and Java/C++ Structural Semantics | Enhancement | High | `v0.9.0` | [v0.9.0](features/v0.9.0.md#feature_042-incremental-repository-intelligence-refresh-and-javac-structural-semantics) |
+| `043` | Harness Calibration, Pivoting, Profiling, and Safe Checkpoints | Enhancement | High | `v0.9.0` | [v0.9.0](features/v0.9.0.md#feature_043-harness-calibration-pivoting-profiling-and-safe-checkpoints) |
 | `035` | MCP Capability Provider | New | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_035-mcp-capability-provider) |
 | `038` | Official Sandbox Extension | New | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_038-official-sandbox-extension) |
 
@@ -75,12 +76,15 @@
 | `015` | Project Mode 2.0 | `v0.6.0` | [v0.6.0](features/v0.6.0.md) |
 | `016` | CLI-Based OAuth Providers | `v0.5.22` | [v0.5.22](features/v0.5.22.md) |
 | `017` | Pending User Inputs Queue | `v0.6.0` | [v0.6.0](features/v0.6.0.md) |
+| `018` | Task-Aware Repository Intelligence Substrate | `v0.7.10` | [v0.7.10](features/v0.7.10.md#feature_018-task-aware-repository-intelligence-substrate) |
 | `019` | Session Tree, Checkpoints, and Rewindable Task Runs | `v0.7.2` | [v0.7.0](features/v0.7.0.md#feature_019-session-tree-checkpoints-and-rewindable-task-runs) |
 | `020` | AGENTS.md Workspace Rules | `v0.5.34` | [v0.6.0](features/v0.6.0.md) |
 | `021` | Provider-Aware Reasoning Budget | `v0.5.37` | [v0.6.0](features/v0.6.0.md) |
 | `022` | Adaptive Task Engine and Native Multi-Agent Control Plane | `v0.7.4` | [v0.7.0](features/v0.7.0.md#feature_022-adaptive-task-engine-and-native-multi-agent-control-plane) |
 | `024` | Project Harness | `v0.6.10` | [v0.6.10](features/v0.6.10.md) |
 | `025` | Adaptive Task Intelligence and Harness Router | `v0.7.4` | [v0.7.0](features/v0.7.0.md#feature_025-adaptive-task-intelligence-and-harness-router) |
+| `027` | Adaptive Multi-Agent Mode Toggle and Team-Mode Sunset | `v0.7.10` | [v0.7.10](features/v0.7.10.md#feature_027-adaptive-multi-agent-mode-toggle-and-team-mode-sunset) |
+| `028` | First-Class Retrieval, Context, and Evidence Tooling | `v0.7.10` | [v0.7.10](features/v0.7.10.md#feature_028-first-class-retrieval-context-and-evidence-tooling) |
 | `029` | Provider Capability Transparency and Harness Policy | `v0.7.1` | [v0.7.0](features/v0.7.0.md#feature_029-provider-capability-transparency-and-harness-policy) |
 | `032` | JSON Output Mode | `v0.6.20` (unreleased) | [v0.6.20](features/v0.6.20.md) |
 | `033` | REPL Parallel Toggle | `v0.6.15` | [v0.6.15](features/v0.6.15.md) |

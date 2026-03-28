@@ -1,6 +1,6 @@
 # KodaX Feature 设计索引
 
-> Last updated: 2026-03-26
+> Last updated: 2026-03-28
 >
 > 当前 roadmap 以 `FEATURE_022` 为中心。
 > 它承载的是从旧执行模型转向 `adaptive task engine + native multi-agent execution` 的架构变化。
@@ -53,8 +53,10 @@ docs/features/
 |- v0.6.15.md         # parallel toggle, ACP server, provider growth
 |- v0.6.20.md         # JSON mode, token usage truth, TODO tree
 |- v0.7.0.md          # engine foundation
+|- v0.7.10.md         # repository intelligence, multi-agent mode toggle, retrieval tooling
+|- v0.7.20.md         # roadmap integrity and planning hygiene
 |- v0.8.0.md          # knowledge, retrieval, safe runtime
-|- v0.9.0.md          # multimodal inputs
+|- v0.9.0.md          # multimodal inputs + harness maturation
 `- v1.0.0.md          # mature delivery surfaces
 ```
 
@@ -126,10 +128,11 @@ AI Layer
 | `-h, --help [TOPIC]` | topic-oriented help |
 | `-p, --print TEXT` | one-shot task mode |
 | `-c, --continue` | resume latest session |
+| `--agent-mode sa|ama` | switch between `SA` and `AMA` execution modes |
 | `-t, --thinking` | stronger reasoning mode |
 | `-y, --auto` | auto mode |
 | `-j, --parallel` | parallel tool execution |
-| `--team TASKS` | legacy parallel subagent plumbing |
+| `--team TASKS` | deprecated legacy multi-agent entry |
 | `--init TASK` | start managed long-running work |
 | `--auto-continue` | continue long-running work non-interactively |
 | `acp serve` | ACP server mode for editor and IDE hosts |
@@ -142,6 +145,7 @@ AI Layer
 | `/plan [on|off|once]` | manage plan mode |
 | `/model [name]` | switch model |
 | `/reasoning [off|auto|quick|balanced|deep]` | set reasoning budget |
+| `/agent-mode [sa|ama|toggle]` | switch execution mode between `SA` and `AMA` |
 | `/parallel [on|off|toggle]` | toggle parallel tool execution |
 | `/status` | show current state |
 | `/project [subcommand]` | project and managed-task control surface |
@@ -235,6 +239,8 @@ Released design docs remain useful as implementation history:
 | `v0.6.13` | `2026-03-21` | 1 | [v0.6.15.md#feature_033-repl-parallel-toggle](./v0.6.15.md#feature_033-repl-parallel-toggle) |
 | `v0.6.14` | `2026-03-22` | 2 | [v0.6.15.md#feature_036-deepseek-built-in-provider](./v0.6.15.md#feature_036-deepseek-built-in-provider) |
 | `v0.6.15` | `2026-03-22` | 4 | [v0.6.15.md](./v0.6.15.md) |
+| `v0.7.0` | `2026-03-25` | 5 | [v0.7.0.md](./v0.7.0.md) |
+| `v0.7.10` | `2026-03-27` | 3 | [v0.7.10.md](./v0.7.10.md) |
 
 ---
 
@@ -256,37 +262,48 @@ Features:
 - [FEATURE_022](v0.7.0.md#feature_022-adaptive-task-engine-and-native-multi-agent-control-plane)
 - [FEATURE_019](v0.7.0.md#feature_019-session-tree-checkpoints-and-rewindable-task-runs)
 - [FEATURE_025](v0.7.0.md#feature_025-adaptive-task-intelligence-and-harness-router)
-- [FEATURE_026](v0.7.0.md#feature_026-roadmap-integrity-and-planning-hygiene)
 - [FEATURE_029](v0.7.0.md#feature_029-provider-capability-transparency-and-harness-policy)
 - [FEATURE_034](v0.7.0.md#feature_034-extension-and-capability-runtime)
+
+### v0.7.20: Roadmap Integrity
+
+Focus:
+
+- roadmap and tracker consistency
+- planning hygiene tooling
+- design doc integrity validation
+
+Features:
+
+- [FEATURE_026](v0.7.20.md#feature_026-roadmap-integrity-and-planning-hygiene)
 
 ### v0.8.0: Knowledge, Retrieval, and Safe Runtime
 
 Focus:
 
-- knowledge substrate
-- evidence tooling
-- extensible runtime capabilities
+- capability providers
 - sandbox safety
 - theme cleanup
 
 Features:
 
 - [FEATURE_007](v0.8.0.md#feature_007-theme-system-consolidation)
-- [FEATURE_018](v0.8.0.md#feature_018-task-aware-repository-intelligence-substrate)
-- [FEATURE_028](v0.8.0.md#feature_028-first-class-retrieval-context-and-evidence-tooling)
 - [FEATURE_035](v0.8.0.md#feature_035-mcp-capability-provider)
 - [FEATURE_038](v0.8.0.md#feature_038-official-sandbox-extension)
 
-### v0.9.0: Multimodal Inputs
+### v0.9.0: Multimodal Inputs and Harness Maturation
 
 Focus:
 
 - bring non-text artifacts into the task engine
+- continue evolving the adaptive project / AMA harness into a more calibratable, pivot-capable, and safe long-running system
+- continue repo-intelligence maturation without changing the public surface
 
 Features:
 
 - [FEATURE_031](v0.9.0.md#feature_031-multimodal-artifact-inputs)
+- [FEATURE_042](v0.9.0.md#feature_042-incremental-repository-intelligence-refresh-and-javac-structural-semantics)
+- [FEATURE_043](v0.9.0.md#feature_043-harness-calibration-pivoting-profiling-and-safe-checkpoints)
 
 ### v1.0.0: Delivery Surfaces
 
@@ -350,7 +367,7 @@ The current source of truth for planning is [FEATURE_LIST.md](../FEATURE_LIST.md
 | `015` | Project Mode 2.0 | `v0.6.0` | brainstorm, plan, quality workflows |
 | `016` | CLI-based OAuth providers | `v0.5.22` | OAuth-authenticated providers |
 | `017` | Pending Inputs Queue | `v0.6.0` | runtime user-input interruption |
-| `018` | task-aware repo intelligence substrate | `v0.8.0` | durable repository intelligence for the task engine |
+| `018` | task-aware repo intelligence substrate | `v0.7.10` | durable repository intelligence for the task engine |
 | `019` | Session tree, checkpoints, rewindable task runs | `v0.7.0` | task-aware lineage and rollback-friendly state |
 | `020` | `AGENTS.md` | `v0.5.34` | project-level AI context rules |
 | `021` | Provider-aware reasoning budget | `v0.5.37` | provider-aware reasoning matrix |
@@ -358,8 +375,9 @@ The current source of truth for planning is [FEATURE_LIST.md](../FEATURE_LIST.md
 | `023` | Dual-mode terminal UX | `v1.0.0` | inline + stronger TUI interaction model |
 | `024` | Project Harness | `v0.6.10` | action-level verification execution |
 | `025` | Adaptive task intelligence and harness router | `v0.7.0` | task intake and harness selection |
-| `026` | Roadmap integrity and planning hygiene | `v0.7.0` | tracker and metadata consistency |
-| `028` | Retrieval, context, evidence tooling | `v0.8.0` | progressive local/external retrieval and evidence |
+| `026` | Roadmap integrity and planning hygiene | `v0.7.20` | tracker and metadata consistency |
+| `027` | Adaptive multi-agent mode toggle and team-mode sunset | `v0.7.10` | explicit `SA` / `AMA` control and legacy `--team` retirement |
+| `028` | Retrieval, context, evidence tooling | `v0.7.10` | progressive local/external retrieval and evidence |
 | `029` | Provider capability transparency and harness policy | `v0.7.0` | native vs bridge capability truth |
 | `030` | Multi-surface delivery | `v1.0.0` | IDE / desktop / web surface strategy |
 | `031` | Multimodal artifact inputs | `v0.9.0` | image and artifact input support |
@@ -373,6 +391,7 @@ The current source of truth for planning is [FEATURE_LIST.md](../FEATURE_LIST.md
 | `039` | Plan dual-write whitelist | `v0.6.15` | `.agent/plan_mode_doc.md` and temp dir |
 | `040` | ACP server support | `v0.6.15` | ACP server for editors and IDEs |
 | `041` | TODO dependency tree integration | `v0.6.20` | TODO graph and dependency awareness |
+| `043` | Harness calibration, pivoting, profiling, and safe checkpoints | `v0.9.0` | Phase 2 maturation for the adaptive project / AMA harness |
 
 ---
 

@@ -36,6 +36,12 @@ export { toolGlob } from './glob.js';
 export { toolGrep } from './grep.js';
 export { toolUndo } from './undo.js';
 export { toolAskUserQuestion } from './ask-user-question.js';
+export { toolRepoOverview } from './repo-overview.js';
+export { toolChangedScope } from './changed-scope.js';
+export { toolModuleContext } from './module-context.js';
+export { toolSymbolContext } from './symbol-context.js';
+export { toolProcessContext } from './process-context.js';
+export { toolImpactEstimate } from './impact-estimate.js';
 export {
   DEFAULT_TOOL_OUTPUT_MAX_BYTES,
   DEFAULT_TOOL_OUTPUT_MAX_LINES,

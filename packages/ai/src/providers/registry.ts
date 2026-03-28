@@ -75,8 +75,8 @@ class ZhipuCodingProvider extends KodaXAnthropicCompatProvider {
     baseUrl: 'https://open.bigmodel.cn/api/anthropic',
     model: 'glm-5',
     models: [
+      { id: 'glm-5.1', displayName: 'GLM-5.1' },
       { id: 'glm-5-turbo', displayName: 'GLM-5 Turbo' },
-      { id: 'glm-4.7', displayName: 'GLM-4.7' },
     ],
     supportsThinking: true,
     reasoningCapability: 'native-budget',
@@ -196,8 +196,8 @@ class ZhipuProvider extends KodaXOpenAICompatProvider {
     baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
     model: 'glm-5',
     models: [
+      { id: 'glm-5.1', displayName: 'GLM-5.1' },
       { id: 'glm-5-turbo', displayName: 'GLM-5 Turbo' },
-      { id: 'glm-4.7', displayName: 'GLM-4.7' },
     ],
     supportsThinking: true,
     reasoningCapability: 'native-budget',
@@ -270,14 +270,14 @@ export const KODAX_PROVIDER_SNAPSHOTS: Record<ProviderName, ProviderSnapshot> = 
   zhipu: {
     apiKeyEnv: 'ZHIPU_API_KEY',
     model: 'glm-5',
-    models: ['glm-5-turbo', 'glm-4.7'],
+    models: ['glm-5.1', 'glm-5-turbo'],
     reasoningCapability: 'native-budget',
     capabilityProfile: NATIVE_PROVIDER_CAPABILITY_PROFILE,
   },
   'zhipu-coding': {
     apiKeyEnv: 'ZHIPU_API_KEY',
     model: 'glm-5',
-    models: ['glm-5-turbo', 'glm-4.7'],
+    models: ['glm-5.1', 'glm-5-turbo'],
     reasoningCapability: 'native-budget',
     capabilityProfile: NATIVE_PROVIDER_CAPABILITY_PROFILE,
   },

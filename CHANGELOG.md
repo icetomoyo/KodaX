@@ -4,7 +4,35 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-<!-- last-sync: 4e976a2 -->
+<!-- last-sync: HEAD -->
+
+---
+
+## [0.7.10] - 2026-03-28
+
+### Added
+- **Repository intelligence substrate (FEATURE_018)**: Task-aware repository intelligence layer under `.agent/repo-intelligence/` with durable artifacts — `repo-overview.json`, `changed-scope.json`, `module-index.json`, `symbol-index.json`, `process-index.json`, `repo-intelligence-manifest.json` — supporting incremental refresh, freshness metadata, and language-tiered extraction (TS/JS via AST, Python, Go, Rust, Java, C++)
+- **Intelligence query surfaces**: Six first-class retrieval tools — `repo_overview`, `module_context`, `symbol_context`, `process_context`, `impact_estimate`, `changed_scope` — returning structured capsules with freshness, confidence, evidence, and progressive disclosure (FEATURE_028)
+- **Repo-intelligence tools**: `repo-overview.ts`, `module-context.ts`, `symbol-context.ts`, `process-context.ts`, `impact-estimate.ts`, `changed-scope.ts`, `internal.ts`, and `query.ts` in `packages/coding/src/tools/` and `packages/coding/src/repo-intelligence/`
+- **Adaptive multi-agent mode toggle (FEATURE_027)**: Persistent `agentMode` setting (`sa`/`ama`) with CLI (`--agent-mode`), REPL (`/agent-mode`), and keyboard shortcut (`Alt+M`) entry points; status bar shows `KodaX - SA` or `KodaX - AMA`
+- **SA mode execution constraint**: Single-Agent mode clamps execution to single-agent path while preserving task routing, metadata, and managed-task artifacts — reducing token cost
+- **`--team` deprecation**: `--team` removed from main product surface, retained as deprecated compatibility path that warns and refuses execution
+- **Agent mode shortcut**: `Alt+M` default shortcut for runtime SA/AMA toggle with command fallback
+- **Prompt-time intelligence injection**: Automatic active-module and active-impact injection for edit/review/refactor flows via `buildPromptOverlay()`
+- **Routing enrichment**: `stabilizeRoutingDecision()` now consumes lightweight repo-intelligence signals to raise complexity, bias planning, and choose safer harness profiles
+- **Task evidence snapshots**: Managed tasks persist task-scoped retrieval snapshots (repo overview, changed scope, active module, impact) into evidence bundles
+- **New types**: Intelligence capsule types, confidence tiers, freshness metadata, language capability tiers in `@kodax/coding` and `@kodax/ai`
+- **New tests**: Repo-intelligence tool tests, reasoning tests for intelligence-aware routing, agent mode tests, status bar mode display tests, shortcut tests
+
+### Changed
+- **CLI entry points**: `kodax_cli.ts` updated for `--agent-mode` flag and deprecated `--team` handling
+- **Reasoning pipeline expanded**: `reasoning.ts` (+495 lines) enriched with repo-intelligence signals, language-tiered extraction, and low-confidence fallback guidance
+- **Task engine expanded**: `task-engine.ts` (+2645 lines) with intelligence query integration, evidence snapshot persistence, and managed-task lifecycle enrichment
+- **Orchestration updated**: `orchestration.ts` refactored for intelligence-aware task dispatch and SA mode constraint propagation
+- **REPL UI updated**: `InkREPL.tsx` gains agent mode display, mode toggle handling, and mode-aware rendering; `StatusBar` shows current agent mode
+- **Session storage**: `storage.ts` gains `agentMode` persistence in session metadata
+- **Provider registry**: Provider capability checks updated for intelligence-query-aware policy evaluation
+- **Documentation**: v0.7.0, v0.8.0, v0.9.0 feature docs, FEATURE_LIST, KNOWN_ISSUES, and feature README updated for 018/027/028
 
 ---
 

@@ -8,6 +8,7 @@ import { InteractiveContext, InteractiveMode } from './context.js';
 import {
   estimateTokens,
   type ExtensionRuntimeDiagnostics,
+  type KodaXAgentMode,
   KODAX_REASONING_MODE_SEQUENCE,
   getActiveExtensionRuntime,
   isKnownProvider,
@@ -1019,6 +1020,50 @@ export const BUILTIN_COMMANDS: Command[] = [
     },
   },
   {
+    name: 'agent-mode',
+    aliases: ['am'],
+    description: 'Show or set agent mode',
+    usage: '/agent-mode [ama|sa|toggle]',
+    handler: async (args, _context, callbacks, currentConfig) => {
+      if (args.length === 0) {
+        console.log(chalk.dim(`\nAgent mode: ${chalk.cyan(currentConfig.agentMode.toUpperCase())}`));
+        console.log(chalk.dim('Usage: /agent-mode [ama|sa|toggle]\n'));
+        return;
+      }
+
+      const raw = args[0]?.toLowerCase();
+      const nextMode: KodaXAgentMode | undefined =
+        raw === 'toggle'
+          ? (currentConfig.agentMode === 'ama' ? 'sa' : 'ama')
+          : raw === 'ama' || raw === 'sa'
+            ? raw
+            : undefined;
+
+      if (!nextMode) {
+        console.log(chalk.red(`\n[Invalid agent mode: ${args[0]}]`));
+        console.log(chalk.dim('Usage: /agent-mode [ama|sa|toggle]\n'));
+        return;
+      }
+
+      const persistence = applyAgentMode(nextMode, callbacks, currentConfig);
+      printPersistedCommandStatus(`Agent mode: ${nextMode.toUpperCase()}`, persistence);
+    },
+    detailedHelp: () => {
+      console.log(chalk.cyan('\n/agent-mode - Adaptive Multi-Agent Mode Control\n'));
+      console.log(chalk.bold('Usage:'));
+      console.log(chalk.dim('  /agent-mode            ') + 'Show current agent mode');
+      console.log(chalk.dim('  /agent-mode ama        ') + 'Enable adaptive multi-agent mode');
+      console.log(chalk.dim('  /agent-mode sa         ') + 'Force single-agent execution');
+      console.log(chalk.dim('  /agent-mode toggle     ') + 'Switch between AMA and SA');
+      console.log(chalk.dim('  /am                    ') + 'Alias for /agent-mode');
+      console.log();
+      console.log(chalk.bold('Description:'));
+      console.log(chalk.dim('  AMA keeps adaptive multi-agent harness selection enabled.'));
+      console.log(chalk.dim('  SA keeps routing and task artifacts, but forces single-agent execution to save tokens.'));
+      console.log();
+    },
+  },
+  {
     name: 'parallel',
     aliases: ['pm'],
     description: 'Show or toggle parallel tool execution',
@@ -1252,7 +1297,7 @@ const COMMAND_CATEGORIES: Record<string, string[]> = {
   General: ['help', 'copy', 'exit', 'clear', 'compact', 'reload', 'extensions', 'status'],
   Permission: ['mode', 'auto'],
   Session: ['new', 'save', 'load', 'sessions', 'history', 'delete'],
-  Settings: ['model', 'provider', 'thinking', 'reasoning', 'parallel', 'plan'],
+  Settings: ['model', 'provider', 'thinking', 'reasoning', 'agent-mode', 'parallel', 'plan'],
   Project: ['project'],
   Skills: ['skill'],
 };
@@ -1320,6 +1365,22 @@ function applyReasoningMode(
   } else {
     currentConfig.reasoningMode = mode;
     currentConfig.thinking = thinking;
+  }
+
+  return persistence;
+}
+
+function applyAgentMode(
+  mode: KodaXAgentMode,
+  callbacks: CommandCallbacks,
+  currentConfig: CurrentConfig,
+): ConfigPersistenceResult {
+  const persistence = persistUserConfig({ agentMode: mode });
+
+  if (callbacks.setAgentMode) {
+    callbacks.setAgentMode(mode);
+  } else {
+    currentConfig.agentMode = mode;
   }
 
   return persistence;
@@ -1484,6 +1545,7 @@ function printStatus(context: InteractiveContext, currentConfig: CurrentConfig):
   console.log(chalk.dim(`  Provider:    ${chalk.cyan(currentConfig.provider)}${currentConfig.model ? ` / ${chalk.cyan(currentConfig.model)}` : ''}`));
   console.log(chalk.dim(`  Permission:  ${chalk.cyan(currentConfig.permissionMode)}`));
   console.log(chalk.dim(`  Reasoning:   ${chalk.cyan(currentConfig.reasoningMode)}`));
+  console.log(chalk.dim(`  Agent Mode:  ${chalk.cyan(currentConfig.agentMode.toUpperCase())}`));
   console.log(chalk.dim(`  Execution:   ${chalk.cyan(describeParallelExecution(currentConfig.parallel))}`));
   if (capabilityProfile) {
     const capabilitySummary = describeProviderCapabilitySummary(capabilityProfile);

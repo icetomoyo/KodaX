@@ -1,5 +1,6 @@
 import { Command, InvalidArgumentError } from 'commander';
 import {
+  KodaXAgentMode,
   KodaXOptions,
   KodaXExtensionRuntime,
   KodaXReasoningMode,
@@ -14,6 +15,7 @@ import {
 
 export const ACP_PERMISSION_MODES: PermissionMode[] = ['plan', 'accept-edits', 'auto-in-project'];
 export const CLI_OUTPUT_MODES = ['text', 'json'] as const;
+export const KODAX_AGENT_MODES = ['ama', 'sa'] as const;
 export type CliOutputMode = typeof CLI_OUTPUT_MODES[number];
 
 export interface CliOptions {
@@ -21,6 +23,7 @@ export interface CliOptions {
   model?: string;
   thinking: boolean;
   reasoningMode: KodaXReasoningMode;
+  agentMode: KodaXAgentMode;
   outputMode: CliOutputMode;
   extensions?: string[];
   extensionRuntime?: KodaXExtensionRuntime;
@@ -95,6 +98,17 @@ export function parsePermissionModeOption(value: string): PermissionMode {
   );
 }
 
+export function parseAgentModeOption(value: string): KodaXAgentMode {
+  const normalized = value.trim().toLowerCase();
+  if ((KODAX_AGENT_MODES as readonly string[]).includes(normalized)) {
+    return normalized as KodaXAgentMode;
+  }
+
+  throw new InvalidArgumentError(
+    `Expected one of: ${KODAX_AGENT_MODES.join(', ')}.`,
+  );
+}
+
 export function resolveCliReasoningMode(
   program: Command,
   opts: Record<string, unknown>,
@@ -139,6 +153,24 @@ export function resolveCliParallel(
   return config.parallel ?? false;
 }
 
+export function resolveCliAgentMode(
+  program: Command,
+  opts: Record<string, unknown>,
+  config: { agentMode?: KodaXAgentMode },
+): KodaXAgentMode {
+  const agentModeSource = program.getOptionValueSource('agentMode');
+  if (agentModeSource === 'cli' && typeof opts.agentMode === 'string') {
+    if (!(KODAX_AGENT_MODES as readonly string[]).includes(opts.agentMode)) {
+      throw new Error(
+        `Invalid agent mode "${opts.agentMode}". Expected one of: ${KODAX_AGENT_MODES.join(', ')}`,
+      );
+    }
+    return opts.agentMode as KodaXAgentMode;
+  }
+
+  return config.agentMode ?? 'ama';
+}
+
 export function mergeConfiguredExtensions(
   cliExtensions: string[] = [],
   configExtensions: string[] = [],
@@ -168,7 +200,9 @@ export function parseOptionalNonNegativeInt(value: string | undefined): number |
 
   const parsed = Number.parseInt(trimmed, 10);
   if (!Number.isFinite(parsed) || parsed < 0) {
-    return undefined;
+    throw new InvalidArgumentError(
+      `Expected a non-negative integer, got "${value}".`,
+    );
   }
 
   return parsed;
@@ -190,7 +224,9 @@ export function parsePositiveNumberWithFallback(value: string | undefined, fallb
 
   const parsed = Number.parseFloat(trimmed);
   if (!Number.isFinite(parsed) || parsed <= 0) {
-    return fallback;
+    throw new InvalidArgumentError(
+      `Expected a positive number, got "${value}".`,
+    );
   }
 
   return parsed;
@@ -202,6 +238,7 @@ export function createKodaXOptions(cliOptions: CliOptions, isPrintMode = false):
     model: cliOptions.model,
     thinking: cliOptions.thinking,
     reasoningMode: cliOptions.reasoningMode,
+    agentMode: cliOptions.agentMode,
     maxIter: cliOptions.maxIter,
     parallel: cliOptions.parallel,
     extensionRuntime: cliOptions.extensionRuntime,

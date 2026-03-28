@@ -29,13 +29,19 @@ import {
   useKeypress,
 } from "./contexts/index.js";
 import { AutocompleteContextProvider, useAutocompleteContext } from "./hooks/index.js";
-import { StreamingState, type HistoryItem, KeypressHandlerPriority } from "./types.js";
+import {
+  StreamingState,
+  type CreatableHistoryItem,
+  type HistoryItem,
+  KeypressHandlerPriority,
+} from "./types.js";
 import {
   buildSessionTree,
   KodaXOptions,
   KodaXMessage,
   KodaXReasoningMode,
   KodaXResult,
+  KodaXSessionUiHistoryItem,
   runManagedTask,
   KODAX_DEFAULT_PROVIDER,
   KodaXTerminalError,
@@ -99,9 +105,9 @@ import { MemorySessionStorage, type SessionStorage } from "./utils/session-stora
 import { processSpecialSyntax, isShellCommandHandled } from "./utils/shell-executor.js";
 import {
   extractHistorySeedsFromMessage,
+  resolveCompletedAssistantText,
   extractTextContent,
   extractTitle,
-  resolveAssistantHistoryText,
 } from "./utils/message-utils.js";
 import { withCapture, ConsoleCapturer } from "./utils/console-capturer.js";
 import { emitRetryHistoryItem } from "./utils/retry-history.js";
@@ -179,6 +185,76 @@ function resolveInitialReasoningMode(
   return 'off';
 }
 
+function buildManagedTaskTranscriptItems(result: KodaXResult): string[] {
+  const task = result.managedTask;
+  if (!task) {
+    return [];
+  }
+
+  const orderByAssignment = new Map(
+    task.roleAssignments.map((assignment, index) => [assignment.id, index]),
+  );
+  const finalAssignmentId = task.verdict.decidedByAssignmentId;
+  const finalRound = Math.max(
+    0,
+    ...task.evidence.entries
+      .filter((entry) => entry.assignmentId === finalAssignmentId)
+      .map((entry) => entry.round ?? 1),
+  );
+
+  return task.evidence.entries
+    .filter((entry) => entry.output?.trim())
+    .sort((left, right) => {
+      const roundDelta = (left.round ?? 1) - (right.round ?? 1);
+      if (roundDelta !== 0) {
+        return roundDelta;
+      }
+      return (orderByAssignment.get(left.assignmentId) ?? 0) - (orderByAssignment.get(right.assignmentId) ?? 0);
+    })
+    .filter((entry) => !(
+      entry.assignmentId === finalAssignmentId
+      && (entry.round ?? 1) === finalRound
+    ))
+    .map((entry) => {
+      const roundLabel = (entry.round ?? 1) > 1 ? ` · Round ${entry.round}` : '';
+      return `[${entry.title ?? entry.assignmentId}${roundLabel}]\n${entry.output!.trim()}`;
+    });
+}
+
+function toPersistedUiHistoryItem(
+  item: { type: HistoryItem["type"]; text?: string },
+): KodaXSessionUiHistoryItem | undefined {
+  if (item.type === "tool_group") {
+    return undefined;
+  }
+
+  const text = typeof item.text === "string" ? item.text.trimEnd() : "";
+  if (!text) {
+    return undefined;
+  }
+
+  return {
+    type: item.type,
+    text,
+  };
+}
+
+function serializeUiHistorySnapshot(
+  items: readonly HistoryItem[],
+): KodaXSessionUiHistoryItem[] {
+  return items
+    .map((item) => toPersistedUiHistoryItem(item))
+    .filter((item): item is KodaXSessionUiHistoryItem => Boolean(item));
+}
+
+function serializeCreatableHistoryItems(
+  items: readonly CreatableHistoryItem[],
+): KodaXSessionUiHistoryItem[] {
+  return items
+    .map((item) => toPersistedUiHistoryItem(item))
+    .filter((item): item is KodaXSessionUiHistoryItem => Boolean(item));
+}
+
 function logSessionTransitionGuard(
   status: "warn" | "block",
   headline: string,
@@ -235,6 +311,12 @@ const Banner: React.FC<BannerProps> = ({ config, sessionId, workingDir, compacti
         </Text>
         <Text dimColor>
           {` [${reasoningCapabilityShort}]`}
+        </Text>
+        <Text dimColor>
+          {" | "}
+        </Text>
+        <Text color={theme.colors.primary}>
+          {config.agentMode.toUpperCase()}
         </Text>
         <Text dimColor>
           {" | "}
@@ -412,7 +494,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const [canQueueFollowUps, setCanQueueFollowUps] = useState(false);
   const [liveTokenCount, setLiveTokenCount] = useState<number | null>(null); // Live token count for real-time display
   const lastCompactionTokensBeforeRef = useRef<number | null>(null);
-  const persistContextStateRef = useRef<(() => Promise<void>) | null>(null);
+  const persistContextStateRef = useRef<((uiHistoryOverride?: KodaXSessionUiHistoryItem[]) => Promise<void>) | null>(null);
   const [isInputEmpty, setIsInputEmpty] = useState(true); // Track if input is empty for ? shortcut
   const [inputText, setInputText] = useState("");
   const [isReviewingHistory, setIsReviewingHistory] = useState(false);
@@ -581,6 +663,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const statusBarProps = useMemo(() => ({
     sessionId: context.sessionId,
     permissionMode: currentConfig.permissionMode,
+    agentMode: currentConfig.agentMode,
     parallel: currentConfig.parallel,
     provider: currentConfig.provider,
     model: currentConfig.model ?? getProviderModel(currentConfig.provider) ?? currentConfig.provider,
@@ -602,6 +685,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }), [
     context.sessionId,
     currentConfig.permissionMode,
+    currentConfig.agentMode,
     currentConfig.parallel,
     currentConfig.provider,
     currentConfig.model,
@@ -719,6 +803,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     parallel: currentConfig.parallel,
     thinking: currentConfig.thinking,
     reasoningMode: currentConfig.reasoningMode,
+    agentMode: currentConfig.agentMode,
     session: {
       ...options.session,
       id: context.sessionId,
@@ -1067,6 +1152,16 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   // Only sync if history is empty to avoid duplicates (Issue 046)
   useEffect(() => {
     if (context.messages.length > 0 && history.length === 0) {
+      if (context.uiHistory?.length) {
+        for (const item of context.uiHistory) {
+          addHistoryItem({
+            type: item.type,
+            text: item.text,
+          });
+        }
+        return;
+      }
+
       for (const msg of context.messages) {
         const historySeeds = extractHistorySeedsFromMessage(msg);
         for (const item of historySeeds) {
@@ -1074,7 +1169,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         }
       }
     }
-  }, [context.messages, history.length, addHistoryItem]);
+  }, [context.messages, context.uiHistory, history.length, addHistoryItem]);
 
   // Preload skills on mount to ensure they're available for first /skill:xxx call
   // Issue 059: Skills lazy loading caused first skill invocation to fail
@@ -1473,19 +1568,22 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     );
   };
 
-  const persistContextState = useCallback(async () => {
+  const persistContextState = useCallback(async (uiHistoryOverride?: KodaXSessionUiHistoryItem[]) => {
     if (context.messages.length === 0) {
       return;
     }
 
     const title = extractTitle(context.messages);
+    const persistedUiHistory = uiHistoryOverride ?? serializeUiHistorySnapshot(history);
     context.title = title;
+    context.uiHistory = persistedUiHistory;
     await storage.save(context.sessionId, {
       messages: context.messages,
       title,
       gitRoot: context.gitRoot ?? "",
+      uiHistory: persistedUiHistory,
     });
-  }, [context, storage]);
+  }, [context, history, storage]);
 
   useEffect(() => {
     persistContextStateRef.current = persistContextState;
@@ -1499,7 +1597,27 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     context.contextTokenSnapshot = result.contextTokenSnapshot;
 
     const finalThinking = getThinkingContent().trim();
-    const finalResponse = resolveAssistantHistoryText(result.messages, getFullResponse());
+    const finalResponse = resolveCompletedAssistantText(
+      result.messages,
+      getFullResponse(),
+      result.managedTask?.verdict.summary,
+      result.lastText,
+    );
+    const managedTranscriptItems = buildManagedTaskTranscriptItems(result);
+    const persistedAdditions: CreatableHistoryItem[] = [
+      ...(finalThinking ? [{ type: "thinking" as const, text: finalThinking }] : []),
+      ...managedTranscriptItems.map((text) => ({ type: "assistant" as const, text })),
+      ...(finalResponse
+        ? [{
+            type: "assistant" as const,
+            text: result.interrupted ? `${finalResponse}\n\n[Interrupted]` : finalResponse,
+          }]
+        : []),
+    ];
+    const nextUiHistory = [
+      ...serializeUiHistorySnapshot(history),
+      ...serializeCreatableHistoryItems(persistedAdditions),
+    ];
 
     clearThinkingContent();
     clearResponse();
@@ -1511,14 +1629,21 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       });
     }
 
+    for (const transcript of managedTranscriptItems) {
+      addHistoryItem({
+        type: "assistant",
+        text: transcript,
+      });
+    }
+
     if (finalResponse) {
       addHistoryItem({
         type: "assistant",
         text: result.interrupted ? `${finalResponse}\n\n[Interrupted]` : finalResponse,
-      });
+        });
     }
 
-    await persistContextState();
+    await persistContextState(nextUiHistory);
   }, [
     addHistoryItem,
     clearResponse,
@@ -1526,6 +1651,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     context,
     getFullResponse,
     getThinkingContent,
+    history,
     persistContextState,
   ]);
 
@@ -1620,6 +1746,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
       const initialMessages = prepared.mode === "fork" ? [] : context.messages;
       const result = await runAgentRound(prepared.options, prepared.prompt, initialMessages);
+      const persistedHistoryBase = serializeUiHistorySnapshot(history);
+      const persistedAdditions: CreatableHistoryItem[] = [];
 
       if (prepared.mode === "fork") {
         const lastAssistant = result.messages.slice().reverse().find((msg) => msg.role === "assistant");
@@ -1630,15 +1758,25 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           });
           for (const item of extractHistorySeedsFromMessage(lastAssistant)) {
             addHistoryItem(item);
+            persistedAdditions.push(item);
           }
         }
       } else {
         context.messages = result.messages;
         context.contextTokenSnapshot = result.contextTokenSnapshot;
         appendLastAssistantToHistory(result.messages);
+        const lastAssistant = result.messages[result.messages.length - 1];
+        if (lastAssistant?.role === "assistant") {
+          for (const item of extractHistorySeedsFromMessage(lastAssistant)) {
+            persistedAdditions.push(item);
+          }
+        }
       }
 
-      await persistContextState();
+      await persistContextState([
+        ...persistedHistoryBase,
+        ...serializeCreatableHistoryItems(persistedAdditions),
+      ]);
       await prepared.finalize();
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
@@ -1743,6 +1881,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
                 messages: context.messages,
                 title,
                 gitRoot: context.gitRoot ?? "",
+                uiHistory: serializeUiHistorySnapshot(history),
               });
             }
           },
@@ -1751,6 +1890,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             const now = new Date().toISOString();
             context.sessionId = nextSessionId;
             context.title = "";
+            context.uiHistory = [];
             context.contextTokenSnapshot = undefined;
             context.createdAt = now;
             context.lastAccessed = now;
@@ -1759,6 +1899,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               id: nextSessionId,
             };
             setLiveTokenCount(null);
+            clearUIHistory();
             setSessionId(nextSessionId);
           },
           loadSession: async (id: string) => {
@@ -1773,10 +1914,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
                 return "blocked";
               }
               context.messages = loaded.messages;
+              context.uiHistory = loaded.uiHistory;
               context.title = loaded.title;
               context.sessionId = id;
               context.contextTokenSnapshot = undefined;
               setLiveTokenCount(null);
+              clearUIHistory();
               setSessionId(id);
               console.log(chalk.green(`[Session loaded: ${id}]`));
               return "loaded";
@@ -1800,6 +1943,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           clearHistory: () => {
             // Only clear UI history, not context.messages
             // context.messages should only be cleared by specific commands like /clear
+            context.uiHistory = [];
             clearUIHistory();
           },
           printHistory: () => {
@@ -1845,6 +1989,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             }));
             currentOptionsRef.current.thinking = thinking;
             currentOptionsRef.current.reasoningMode = mode;
+          },
+          setAgentMode: (mode) => {
+            setCurrentConfig((prev) => ({
+              ...prev,
+              agentMode: mode,
+            }));
+            currentOptionsRef.current.agentMode = mode;
           },
           setParallel: (enabled: boolean) => {
             // Persistence is handled by the command layer; this callback only syncs runtime state and UI.
@@ -1895,9 +2046,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             }
 
             context.messages = loaded.messages;
+            context.uiHistory = loaded.uiHistory;
             context.title = loaded.title;
             context.contextTokenSnapshot = undefined;
             setLiveTokenCount(null);
+            clearUIHistory();
             console.log(chalk.green(`\n[Switched to tree entry: ${selector}]`));
             console.log(chalk.dim(`  Messages: ${loaded.messages.length}`));
             return "switched";
@@ -1931,6 +2084,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
             context.sessionId = forked.sessionId;
             context.messages = forked.data.messages;
+            context.uiHistory = forked.data.uiHistory;
             context.title = forked.data.title;
             context.contextTokenSnapshot = undefined;
             const now = new Date().toISOString();
@@ -1941,6 +2095,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               id: forked.sessionId,
             };
             setLiveTokenCount(null);
+            clearUIHistory();
             setSessionId(forked.sessionId);
             console.log(chalk.green(`\n[Forked session: ${forked.sessionId}]`));
             console.log(chalk.dim(`  Messages: ${forked.data.messages.length}`));
@@ -1956,6 +2111,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             parallel: currentConfig.parallel,
             thinking: currentConfig.thinking,
             reasoningMode: currentConfig.reasoningMode,
+            agentMode: currentConfig.agentMode,
             events: createStreamingEvents(), // Include streaming events for /project commands
           }),
           reloadAgentsFiles: async (): Promise<AgentsFile[]> => {
@@ -2165,6 +2321,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             parallel: currentConfig.parallel,
             thinking: currentConfig.thinking,
             reasoningMode: currentConfig.reasoningMode,
+            agentMode: currentConfig.agentMode,
           });
         } catch (err) {
           const error = err instanceof Error ? err : new Error(String(err));
@@ -2356,6 +2513,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         onSetReasoningMode={(mode) => {
           currentOptionsRef.current.reasoningMode = mode;
           currentOptionsRef.current.thinking = mode !== 'off';
+        }}
+        onSetAgentMode={(mode) => {
+          currentOptionsRef.current.agentMode = mode;
         }}
         onSetPermissionMode={(mode) => {
           setSessionPermissionMode(mode);
@@ -2611,6 +2771,7 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
   const initialProvider = options.provider ?? config.provider ?? KODAX_DEFAULT_PROVIDER;
   const initialModel = options.model ?? config.model;
   const initialReasoningMode = resolveInitialReasoningMode(options, config);
+  const initialAgentMode = options.agentMode ?? config.agentMode ?? 'ama';
   const initialThinking = initialReasoningMode !== 'off';
   const initialParallel = options.parallel ?? config.parallel ?? false;
   // Load permission mode from config file (not from CLI options)
@@ -2623,6 +2784,7 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
     model: initialModel,
     thinking: initialThinking,
     reasoningMode: initialReasoningMode,
+    agentMode: initialAgentMode,
     parallel: initialParallel,
     permissionMode: initialPermissionMode,
   };
@@ -2630,6 +2792,7 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
   // Handle session resume/load
   let sessionId = options.session?.id;
   let existingMessages: KodaXMessage[] = [];
+  let existingUiHistory: KodaXSessionUiHistoryItem[] | undefined;
   let sessionTitle = "";
   const gitRoot = (await getGitRoot().catch(() => null)) ?? undefined;
 
@@ -2656,6 +2819,7 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
     const loaded = await storage.load(options.session.id);
     if (loaded) {
       existingMessages = loaded.messages;
+      existingUiHistory = loaded.uiHistory;
       sessionTitle = loaded.title;
       sessionId = options.session.id;
       console.log(chalk.green(`[Session loaded: ${options.session.id}]`));
@@ -2670,6 +2834,7 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
         const loaded = await storage.load(recentSession.id);
         if (loaded) {
           existingMessages = loaded.messages;
+          existingUiHistory = loaded.uiHistory;
           sessionTitle = loaded.title;
           sessionId = recentSession.id;
           console.log(chalk.green(`[Continuing session: ${recentSession.id}]`));
@@ -2683,6 +2848,7 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
     sessionId,
     gitRoot,
     existingMessages,
+    existingUiHistory,
   });
   context.title = sessionTitle;
 

@@ -103,6 +103,7 @@ class MemorySessionStorage implements SessionStorage {
       data: {
         ...structuredClone(data),
         scope: data.scope ?? existing?.data.scope ?? 'user',
+        uiHistory: data.uiHistory ?? existing?.data.uiHistory,
         extensionState: data.extensionState ?? existing?.data.extensionState,
         extensionRecords: data.extensionRecords ?? existing?.data.extensionRecords,
         lineage,
@@ -258,6 +259,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   const initialProvider = options.provider ?? config.provider ?? KODAX_DEFAULT_PROVIDER;
   const initialModel = options.model ?? config.model;
   const initialReasoningMode = resolveInitialReasoningMode(options, config);
+  const initialAgentMode = options.agentMode ?? (config as { agentMode?: 'ama' | 'sa' }).agentMode ?? 'ama';
   const initialThinking = initialReasoningMode !== 'off';
   const initialParallel = options.parallel ?? (config as { parallel?: boolean }).parallel ?? false;
   const initialPermissionMode: PermissionMode =
@@ -275,6 +277,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     model: initialModel,
     thinking: initialThinking,
     reasoningMode: initialReasoningMode,
+    agentMode: initialAgentMode,
     parallel: initialParallel,
     permissionMode: initialPermissionMode,
   };

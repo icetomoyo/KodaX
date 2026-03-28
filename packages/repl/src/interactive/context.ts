@@ -2,7 +2,11 @@
  * KodaX Interactive Context Management - 交互式上下文管理
  */
 
-import type { KodaXContextTokenSnapshot, KodaXMessage } from '@kodax/coding';
+import type {
+  KodaXContextTokenSnapshot,
+  KodaXMessage,
+  KodaXSessionUiHistoryItem,
+} from '@kodax/coding';
 
 // Interactive mode - 交互模式
 export type InteractiveMode = 'code' | 'ask';
@@ -10,6 +14,7 @@ export type InteractiveMode = 'code' | 'ask';
 // Interactive session context - 交互式会话上下文
 export interface InteractiveContext {
   messages: KodaXMessage[];
+  uiHistory?: KodaXSessionUiHistoryItem[];
   contextTokenSnapshot?: KodaXContextTokenSnapshot;
   sessionId: string;
   title: string;
@@ -24,9 +29,11 @@ export async function createInteractiveContext(options: {
   sessionId?: string;
   gitRoot?: string;
   existingMessages?: KodaXMessage[];
+  existingUiHistory?: KodaXSessionUiHistoryItem[];
 }): Promise<InteractiveContext> {
   return {
     messages: options.existingMessages ?? [],
+    uiHistory: options.existingUiHistory?.map((item) => ({ ...item })),
     sessionId: options.sessionId ?? generateSessionId(),
     title: '',
     gitRoot: options.gitRoot,

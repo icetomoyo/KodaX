@@ -23,11 +23,13 @@ import {
   ACP_PERMISSION_MODES,
   createKodaXOptions,
   mergeConfiguredExtensions,
+  parseAgentModeOption,
   parseOptionalNonNegativeInt,
   parseNonNegativeIntWithFallback,
   parseOutputModeOption,
   parsePermissionModeOption,
   parsePositiveNumberWithFallback,
+  resolveCliAgentMode,
   resolveCliParallel,
   resolveCliReasoningMode,
   type CliOutputMode,
@@ -47,9 +49,7 @@ import {
   runManagedTask,
   KodaXClient,
   KodaXEvents,
-  createKodaXTaskRunner,
   KodaXReasoningMode,
-  runOrchestration,
   createExtensionRuntime,
   KODAX_DEFAULT_PROVIDER,
   KODAX_FEATURES_FILE,
@@ -60,13 +60,11 @@ import {
   KODAX_TOOLS,
   KodaXTerminalError,
 } from '@kodax/coding';
-import type { KodaXAgentWorkerSpec } from '@kodax/coding';
 import {
   getGitRoot,
   loadConfig,
   getFeatureProgress,
   checkAllFeaturesComplete,
-  rateLimitedCall,
   buildInitPrompt,
   FileSessionStorage,
   KODAX_CONFIG_FILE,
@@ -79,8 +77,10 @@ export {
   KODAX_COMMANDS_DIR,
   loadCommands,
   parseCommandCall,
+  parseAgentModeOption,
   parsePermissionModeOption,
   processCommandCall,
+  resolveCliAgentMode,
   resolveCliParallel,
 };
 export type { KodaXCommand, KodaXCommandContext };
@@ -99,6 +99,7 @@ const CLI_HELP_TOPICS: Record<string, () => void> = {
     console.log(chalk.dim('  -m, --provider <name>        ') + 'Provider to use');
     console.log(chalk.dim('  --model <name>               ') + 'Model override');
     console.log(chalk.dim('  --reasoning <mode>           ') + 'Reasoning mode: off, auto, quick, balanced, deep');
+    console.log(chalk.dim('  --agent-mode <mode>          ') + 'Agent mode: ama, sa');
     console.log(chalk.dim('  -t, --thinking               ') + 'Compatibility alias for --reasoning auto');
     console.log(chalk.dim('  --permission-mode <mode>     ') + 'Initial mode: plan, accept-edits, auto-in-project');
     console.log(chalk.dim('  KODAX_ACP_LOG=<level>        ') + 'stderr log level: off, error, info, debug\n');
@@ -252,6 +253,7 @@ const CLI_HELP_TOPICS: Record<string, () => void> = {
     console.log(chalk.dim('  Use off, auto, quick, balanced, or deep depending on the task.\n'));
     console.log(chalk.bold('Options:'));
     console.log(chalk.dim('  --reasoning <mode>   ') + 'Set reasoning mode: off, auto, quick, balanced, deep');
+    console.log(chalk.dim('  --agent-mode <mode>  ') + 'Set agent mode: ama, sa');
     console.log(chalk.dim('  -t, --thinking       ') + 'Compatibility alias for --reasoning auto\n');
     console.log(chalk.bold('Examples:'));
     console.log(chalk.dim('  kodax --reasoning deep "design the architecture"   ') + '# High-depth reasoning');
@@ -260,12 +262,12 @@ const CLI_HELP_TOPICS: Record<string, () => void> = {
     console.log(chalk.dim('  /reasoning balanced                                 ') + '# Set in REPL\n');
   },
   team: () => {
-    console.log(chalk.cyan('\nTeam Mode (Parallel Agents)\n'));
+    console.log(chalk.cyan('\nTeam Mode (Deprecated)\n'));
     console.log(chalk.bold('Overview:'));
-    console.log(chalk.dim('  Experimental orchestration-based parallel execution for loosely coupled tasks.'));
-    console.log(chalk.dim('  Best for independent subtasks; it is not yet a fully shared-context multi-agent runtime.\n'));
+    console.log(chalk.dim('  Legacy orchestration-based parallel execution for loosely coupled tasks.'));
+    console.log(chalk.dim('  Prefer --agent-mode ama|sa for the product path. --team is being sunset.\n'));
     console.log(chalk.bold('Options:'));
-    console.log(chalk.dim('  --team <tasks>      ') + 'Comma-separated tasks');
+    console.log(chalk.dim('  --team <tasks>      ') + 'Deprecated legacy option');
     console.log(chalk.dim('  -j, --parallel      ') + 'Enable parallel tool execution\n');
     console.log(chalk.bold('Examples:'));
     console.log(chalk.dim('  kodax --team "fix auth tests,update docs,clean logs"'));
@@ -503,11 +505,12 @@ function showBasicHelp(): void {
   console.log('  --model NAME            Model override for the selected provider');
   console.log('  -t, --thinking          Compatibility alias for --reasoning auto');
   console.log('  --reasoning MODE        Reasoning mode: off, auto, quick, balanced, deep');
+  console.log('  --agent-mode MODE       Agent mode: ama, sa');
   console.log('  -y, --auto              Backward-compat alias; no effect in non-REPL CLI');
   console.log('  -s, --session OP        Legacy session operations: list, resume, delete <id>, delete-all, or raw session ID');
   console.log('  --no-session            Disable session persistence (print mode only)');
   console.log('  -j, --parallel          Parallel tool execution');
-  console.log('  --team TASKS            Run multiple sub-agents in parallel');
+  console.log('  --team TASKS            Deprecated legacy parallel team mode');
   console.log('  --init TASK             Initialize a long-running task');
   console.log('  --append                Deprecated compatibility alias for the old append flow');
   console.log('  --overwrite             With --init: overwrite existing feature_list.json');
@@ -561,13 +564,14 @@ async function main() {
     .option('--model <name>', 'Model override')
     .option('-t, --thinking', 'Compatibility alias for --reasoning auto')
     .option('--reasoning <mode>', 'Reasoning mode: off, auto, quick, balanced, deep')
+    .option('--agent-mode <mode>', 'Agent mode: ama, sa', parseAgentModeOption)
     .option('-y, --auto', 'Backward-compat alias; no effect in non-REPL CLI')
     .option('-s, --session <op>', 'Legacy session operations: list, resume, delete <id>, delete-all, or raw session ID')
     .option('-j, --parallel', 'Parallel tool execution')
     .option('--extension <path>', 'Load local extension module (.js/.mjs/.cjs/.ts/.mts/.cts)', collectRepeatedOption, [])
     .option('--no-session', 'Disable session persistence (print mode only)')
     // Long options.
-    .option('--team <tasks>', 'Run multiple sub-agents in parallel (comma-separated)')
+    .option('--team <tasks>', 'Deprecated: legacy parallel team mode')
     .option('--init <task>', 'Initialize a long-running task')
     .option('--append', 'Deprecated compatibility alias for the old append flow')
     .option('--overwrite', 'With --init: overwrite existing feature_list.json')
@@ -911,6 +915,7 @@ async function main() {
   const config = loadConfig();
   const configWithExtensions = config as typeof config & { extensions?: string[] };
   const reasoningMode = resolveCliReasoningMode(program, opts, config);
+  const agentMode = resolveCliAgentMode(program, opts, config);
   const parallel = resolveCliParallel(program, opts, config);
   const configuredExtensions = Array.isArray(configWithExtensions.extensions)
     ? configWithExtensions.extensions
@@ -935,6 +940,7 @@ async function main() {
     model: opts.model ?? config.model,
     thinking: reasoningMode !== 'off',
     reasoningMode,
+    agentMode,
     outputMode: (opts.mode as CliOutputMode | undefined) ?? 'text',
     extensions: activeExtensions,
     session: opts.session,
@@ -953,6 +959,13 @@ async function main() {
     noSession: opts.noSession ?? false,
     print: opts.print ? true : false,
   };
+
+  if (options.team) {
+    console.error(chalk.red('\n[Deprecated] --team has been sunset.'));
+    console.error(chalk.dim('Use --agent-mode ama for adaptive multi-agent execution, or --agent-mode sa for single-agent execution.\n'));
+    process.exitCode = 1;
+    return;
+  }
 
   // 婵犵數濮烽弫鎼佸磻閻愬樊鐒芥繛鍡樻尭鐟欙箓鎮楅敐搴′簽闁崇懓绉电换娑橆啅椤旇崵鍑归梺绋块閿曘倝婀侀梺缁樏Ο濠囧磿韫囨洜纾奸柍褜鍓熷畷鍗炍熼崷顓犵暰闂備線娼ч悧鍡涘箠鎼搭煈鏁傞柕澶嗘櫆閻?
   if (options.session === 'list') {
@@ -1194,116 +1207,6 @@ New: {"features": [
     }
   }
 
-  // --team: 濠电姴鐥夐弶搴撳亾濡や焦鍙忛柣鎴ｆ绾惧鏌ｉ幇顒佹儓缁炬儳鐏濋埞鎴﹀磼濞戞瑥浠╅梺閫炲苯鍘哥紒鑸靛哺閻涱喚鈧綆鍠楅崑鎰亜閹板灚绶氬?Agent
-  if (options.team) {
-    const tasks = options.team.split(',').map(t => t.trim()).filter(Boolean);
-    if (tasks.length === 0) { console.log('Error: No tasks specified for --team'); process.exit(1); }
-
-    console.log(chalk.cyan(`[KodaX Team] Running ${tasks.length} tasks with ${options.provider}`));
-    if (options.reasoningMode !== 'off') {
-      console.log(chalk.cyan(`[KodaX Team] Reasoning mode: ${options.reasoningMode}`));
-    }
-    const runId = `team-${new Date().toISOString().replace(/[:.]/g, '-')}`;
-    const workspaceDir = path.resolve('.kodax', 'orchestration', runId);
-    console.log(chalk.dim(`[KodaX Team] Workspace: ${workspaceDir}`));
-
-    // Serialize agent output to keep team-mode logs readable.
-    const streamLock = { locked: false, queue: [] as (() => void)[] };
-    const printedHeaders = new Set<string>();
-    async function acquireStreamLock(): Promise<void> {
-      while (streamLock.locked) {
-        await new Promise<void>(resolve => streamLock.queue.push(resolve));
-      }
-      streamLock.locked = true;
-    }
-    function releaseStreamLock(): void {
-      streamLock.locked = false;
-      const next = streamLock.queue.shift();
-      if (next) next();
-    }
-
-    const MAX_SUB_ROUNDS = 10;
-    const orchestrationTasks: KodaXAgentWorkerSpec[] = tasks.map((task, index) => ({
-      id: `task-${index + 1}`,
-      title: `Team Task ${index + 1}`,
-      prompt: task,
-      execution: 'parallel',
-      budget: {
-        reasoningMode: options.reasoningMode,
-        thinking: options.thinking,
-        maxIter: MAX_SUB_ROUNDS,
-      },
-      metadata: {
-        taskIndex: index + 1,
-      },
-    }));
-    const runner = createKodaXTaskRunner({
-      baseOptions: {
-        provider: options.provider,
-        thinking: options.thinking,
-        reasoningMode: options.reasoningMode,
-        maxIter: MAX_SUB_ROUNDS,
-      },
-      rateLimit: (operation) => rateLimitedCall(operation),
-      createEvents: (task) => ({
-        onTextDelta: async (text: string) => {
-          await acquireStreamLock();
-          const taskPreview = task.prompt.slice(0, 50) + (task.prompt.length > 50 ? '...' : '');
-          if (!printedHeaders.has(task.id)) {
-            console.log(chalk.cyan(`\n[Agent ${task.metadata?.taskIndex ?? task.id}] ${chalk.dim(taskPreview)}`));
-            printedHeaders.add(task.id);
-          }
-          process.stdout.write(text);
-          releaseStreamLock();
-        },
-        onToolResult: (result: { id: string; name: string; content: string }) => {
-          console.log(
-            chalk.green(
-              `[Agent ${task.metadata?.taskIndex ?? task.id} Result] ${result.content.slice(0, 100)}...`
-            )
-          );
-        },
-      }),
-    });
-    const orchestration = await runOrchestration({
-      runId,
-      workspaceDir,
-      maxParallel: tasks.length,
-      tasks: orchestrationTasks,
-      runner,
-    });
-
-    console.log('\n' + '='.repeat(60));
-    console.log(chalk.green(`[KodaX Team] Results Summary:`));
-    console.log('='.repeat(60));
-    for (let i = 0; i < tasks.length; i++) {
-      const taskResult = orchestration.taskResults[`task-${i + 1}`];
-      console.log(chalk.yellow(`\n[Task ${i + 1}] ${tasks[i]!.slice(0, 50)}${tasks[i]!.length > 50 ? '...' : ''}`));
-      if (!taskResult) {
-        console.log(chalk.red('[Result] Missing task result'));
-        continue;
-      }
-
-      if (taskResult.status === 'completed') {
-        const resultText = typeof taskResult.result.output === 'string'
-          ? taskResult.result.output
-          : taskResult.result.summary ?? '';
-        if (resultText) {
-          const preview = resultText.length > 300 ? resultText.slice(-300) : resultText;
-          console.log(chalk.green(`[Result] ...${preview}`));
-        } else {
-          console.log(chalk.green('[Result] Completed with no textual output'));
-        }
-      } else {
-        console.log(chalk.red(`[${taskResult.status.toUpperCase()}] ${taskResult.result.error ?? taskResult.result.summary ?? 'Task did not complete successfully'}`));
-      }
-    }
-    console.log('\n' + '='.repeat(60));
-    console.log(chalk.green(`[KodaX Team] Summary: ${orchestration.summary.completed} completed, ${orchestration.summary.failed} failed, ${orchestration.summary.blocked} blocked`));
-    console.log(chalk.dim(`[KodaX Team] Artifacts saved to ${workspaceDir}`));
-    return;
-  }
-
   // Command dispatch for /command-style invocations.
   if (userPrompt.startsWith('/')) {
     const parsed = parseCommandCall(userPrompt);
@@ -1349,6 +1252,7 @@ New: {"features": [
         model: kodaXOptions.model,
         thinking: kodaXOptions.thinking,
         reasoningMode: kodaXOptions.reasoningMode,
+        agentMode: kodaXOptions.agentMode,
         maxIter: kodaXOptions.maxIter,
         parallel: kodaXOptions.parallel,
         extensionRuntime: kodaXOptions.extensionRuntime,

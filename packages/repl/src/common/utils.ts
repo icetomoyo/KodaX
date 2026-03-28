@@ -26,6 +26,7 @@ import {
   type KodaXProviderPolicyDecision,
   type KodaXProviderPolicyHints,
   type KodaXReasoningCapability,
+  type KodaXAgentMode,
   type KodaXReasoningMode,
   type KodaXReasoningOverride,
   type KodaXCustomProviderConfig,
@@ -421,6 +422,7 @@ export function loadConfig(): {
   model?: string;
   thinking?: boolean;
   reasoningMode?: KodaXReasoningMode;
+  agentMode?: KodaXAgentMode;
   parallel?: boolean;
   permissionMode?: string;
   providerReasoningOverrides?: Record<string, KodaXReasoningOverride>;
@@ -435,6 +437,7 @@ export function loadConfig(): {
         model?: string;
         thinking?: boolean;
         reasoningMode?: KodaXReasoningMode;
+        agentMode?: KodaXAgentMode;
         parallel?: boolean;
         permissionMode?: string;
         providerReasoningOverrides?: Record<string, KodaXReasoningOverride>;
@@ -459,6 +462,7 @@ export function saveConfig(config: {
   model?: string;
   thinking?: boolean;
   reasoningMode?: KodaXReasoningMode;
+  agentMode?: KodaXAgentMode;
   parallel?: boolean;
   permissionMode?: string;
   providerReasoningOverrides?: Record<string, KodaXReasoningOverride>;

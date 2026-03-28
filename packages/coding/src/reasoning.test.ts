@@ -465,6 +465,42 @@ describe('reasoning reroute', () => {
     expect(decision.harnessProfile).toBe('H3_MULTI_WORKER');
   });
 
+  it('lets repo-intelligence signals raise routing complexity and planning bias', () => {
+    const decision = buildFallbackRoutingDecision(
+      'Update the service implementation.',
+      undefined,
+      {
+        repoSignals: {
+          changedFileCount: 9,
+          touchedModuleCount: 3,
+          changedModules: ['packages/app', 'packages/shared', 'packages/core'],
+          crossModule: true,
+          riskHints: ['Multiple package boundaries are changing together.'],
+          activeModuleId: 'packages/app',
+          activeModuleConfidence: 0.88,
+          activeImpactConfidence: 0.8,
+          impactedModuleCount: 4,
+          impactedSymbolCount: 7,
+          predominantCapabilityTier: 'high',
+          suggestedComplexity: 'complex',
+          plannerBias: true,
+          investigationBias: false,
+          lowConfidence: false,
+        },
+      },
+    );
+
+    expect(decision.complexity).toBe('complex');
+    expect(decision.harnessProfile).toBe('H2_PLAN_EXECUTE_EVAL');
+    expect(decision.recommendedMode).toBe('planning');
+    expect(decision.routingNotes).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('Repository intelligence elevated task complexity'),
+        expect.stringContaining('cross-module impact'),
+      ]),
+    );
+  });
+
   it('downgrades H3 routing to H1 on lossy bridge providers and records the reason', () => {
     const providerPolicy = evaluateProviderPolicy({
       providerName: 'gemini-cli',
@@ -523,6 +559,51 @@ describe('reasoning reroute', () => {
       brainstorm: true,
       workIntent: 'overwrite',
     });
+  });
+
+  it('includes repo-intelligence signals in the router prompt', async () => {
+    const provider = new CapturingProvider(JSON.stringify({
+      primaryTask: 'edit',
+      confidence: 0.86,
+      riskLevel: 'medium',
+      recommendedMode: 'implementation',
+      recommendedThinkingDepth: 'medium',
+      reason: 'Implementation request in a cross-module area.',
+    }));
+
+    await createReasoningPlan(
+      {
+        provider: 'openai',
+        reasoningMode: 'auto',
+      },
+      'Update the service implementation.',
+      provider,
+      {
+        repoSignals: {
+          changedFileCount: 6,
+          touchedModuleCount: 2,
+          changedModules: ['packages/app', 'packages/shared'],
+          crossModule: true,
+          riskHints: ['Changed scope crosses package boundaries.'],
+          activeModuleId: 'packages/app',
+          activeModuleConfidence: 0.7,
+          activeImpactConfidence: 0.68,
+          impactedModuleCount: 3,
+          impactedSymbolCount: 5,
+          predominantCapabilityTier: 'high',
+          suggestedComplexity: 'complex',
+          plannerBias: true,
+          investigationBias: true,
+          lowConfidence: true,
+        },
+      },
+    );
+
+    const routerPrompt = String(provider.lastMessages[0]?.content ?? '');
+    expect(routerPrompt).toContain('repo intelligence: changedFiles=6');
+    expect(routerPrompt).toContain('crossModule=yes');
+    expect(routerPrompt).toContain('active module: packages/app');
+    expect(routerPrompt).toContain('repo risk hint: Changed scope crosses package boundaries.');
   });
 
   it('prefers explicit review language when review and planning signals are tied', () => {

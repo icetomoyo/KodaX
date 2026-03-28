@@ -122,6 +122,7 @@ function formatBusyStatus({
 export function getStatusBarText({
   sessionId,
   permissionMode,
+  agentMode,
   parallel = false,
   provider,
   model,
@@ -139,7 +140,7 @@ export function getStatusBarText({
 }: StatusBarProps): string {
   const parts: string[] = [];
 
-  parts.push('KodaX');
+  parts.push(`KodaX - ${agentMode.toUpperCase()}`);
   parts.push(permissionMode.toUpperCase());
   parts.push(parallel ? 'parallel' : 'sequential');
 
@@ -180,6 +181,7 @@ export function getStatusBarText({
 export const StatusBar: React.FC<StatusBarProps> = ({
   sessionId,
   permissionMode,
+  agentMode,
   parallel = false,
   provider,
   model,
@@ -199,7 +201,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
 
   // 1: KodaX
   // No background, just primary color bold
-  const kodaxDisplay = <Text color={theme.colors.primary} bold>KodaX</Text>;
+  const kodaxDisplay = <Text color={theme.colors.primary} bold>{`KodaX - ${agentMode.toUpperCase()}`}</Text>;
 
   // 2: Mode (plan -> blue, accept-edits -> green, auto-in-project -> orange)
   const modeColor = useMemo(() => {

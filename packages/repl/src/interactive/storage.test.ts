@@ -43,6 +43,10 @@ describe('FileSessionStorage', () => {
       messages: [{ role: 'user', content: 'hello persisted runtime' }],
       title: 'Persisted Runtime',
       gitRoot,
+      uiHistory: [
+        { type: 'user', text: 'hello persisted runtime' },
+        { type: 'assistant', text: 'managed transcript survives resume' },
+      ],
       extensionState: {
         'api:extension:C:/repo/extensions/sample.mjs': {
           phase: 'collecting',
@@ -66,6 +70,10 @@ describe('FileSessionStorage', () => {
       title: 'Persisted Runtime',
       gitRoot,
       scope: 'user',
+      uiHistory: [
+        { type: 'user', text: 'hello persisted runtime' },
+        { type: 'assistant', text: 'managed transcript survives resume' },
+      ],
       errorMetadata: undefined,
       extensionState: {
         'api:extension:C:/repo/extensions/sample.mjs': {

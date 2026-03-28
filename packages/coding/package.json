@@ -22,11 +22,14 @@
     "@kodax/agent": "*",
     "@kodax/ai": ">=0.5.0",
     "@kodax/skills": "*",
-    "tsx": "^4.21.0"
+    "@lezer/go": "^1.0.1",
+    "@lezer/python": "^1.1.18",
+    "@lezer/rust": "^1.0.2",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.3"
   },
   "devDependencies": {
     "@types/node": "^22.13.4",
-    "typescript": "^5.7.3",
     "vitest": "^3.2.4"
   },
   "peerDependencies": {

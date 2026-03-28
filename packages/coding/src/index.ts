@@ -82,11 +82,22 @@ export type {
   KodaXSessionNavigationOptions,
   KodaXSessionMeta,
   KodaXSessionScope,
+  KodaXSessionUiHistoryItem,
+  KodaXSessionUiHistoryItemType,
   KodaXEvents,
   KodaXSessionOptions,
   KodaXContextTokenSnapshot,
   KodaXContextOptions,
   KodaXTaskCapabilityHint,
+  KodaXTaskVerificationCriterion,
+  KodaXRuntimeVerificationContract,
+  KodaXVerificationScorecard,
+  KodaXVerificationScorecardCriterion,
+  KodaXBudgetExtensionRequest,
+  KodaXManagedBudgetSnapshot,
+  KodaXMemoryStrategy,
+  KodaXBudgetDisclosureZone,
+  KodaXAgentMode,
   KodaXOptions,
   KodaXResult,
   KodaXTaskSurface,
@@ -102,6 +113,7 @@ export type {
   KodaXTaskVerificationContract,
   KodaXOrchestrationVerdict,
   KodaXManagedTask,
+  KodaXManagedTaskRuntimeState,
   KodaXSessionStorage,
   KodaXSessionTreeNode,
   KodaXToolExecutionContext,
@@ -218,6 +230,13 @@ export {
   toolGlob,
   toolGrep,
   toolUndo,
+  toolAskUserQuestion,
+  toolRepoOverview,
+  toolChangedScope,
+  toolModuleContext,
+  toolSymbolContext,
+  toolProcessContext,
+  toolImpactEstimate,
   DEFAULT_TOOL_OUTPUT_MAX_BYTES,
   DEFAULT_TOOL_OUTPUT_MAX_LINES,
   READ_DEFAULT_LIMIT,
@@ -231,6 +250,62 @@ export {
   applyToolResultGuardrail,
   getToolResultPolicy,
 } from './tools/index.js';
+
+// ============== Repo Intelligence ==============
+
+export type {
+  RepoAreaKind,
+  ChangedFileStatus,
+  RepoAreaOverview,
+  RepoOverview,
+  ChangedScopeAreaSummary,
+  ChangedFileEntry,
+  ChangedScopeReport,
+} from './repo-intelligence/index.js';
+
+export {
+  buildRepoOverview,
+  getRepoOverview,
+  buildRepoIntelligenceContext,
+  renderRepoOverview,
+  analyzeChangedScope,
+  renderChangedScope,
+} from './repo-intelligence/index.js';
+
+export type {
+  RepoLanguageId,
+  LanguageCapabilityTier,
+  RepoLanguageSupport,
+  RepoSymbolKind,
+  RepoSymbolReference,
+  RepoSymbolRecord,
+  ModuleCapsule,
+  ProcessStep,
+  ProcessCapsule,
+  RepoIntelligenceIndex,
+  ModuleContextResult,
+  SymbolContextResult,
+  ProcessContextResult,
+  ImpactEstimateResult,
+} from './repo-intelligence/query.js';
+
+export type {
+  KodaXRepoRoutingSignals,
+} from './types.js';
+
+export {
+  buildRepoIntelligenceIndex,
+  getRepoIntelligenceIndex,
+  getRepoRoutingSignals,
+  getModuleContext,
+  getSymbolContext,
+  getProcessContext,
+  getImpactEstimate,
+  renderModuleContext,
+  renderSymbolContext,
+  renderProcessContext,
+  renderImpactEstimate,
+} from './repo-intelligence/query.js';
 
 // ============== Prompts ==============
 

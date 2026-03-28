@@ -4,6 +4,7 @@
 
 import type {
   AgentsFile,
+  KodaXAgentMode,
   KodaXOptions,
   KodaXReasoningMode,
 } from '@kodax/coding';
@@ -48,6 +49,7 @@ export interface CurrentConfig {
   model?: string;
   thinking: boolean;
   reasoningMode: KodaXReasoningMode;
+  agentMode: KodaXAgentMode;
   parallel: boolean;
   permissionMode: PermissionMode;
 }
@@ -67,6 +69,7 @@ export interface CommandCallbacks {
   switchProvider?: (provider: string, model?: string) => void;
   setThinking?: (enabled: boolean) => void;
   setReasoningMode?: (mode: KodaXReasoningMode) => void;
+  setAgentMode?: (mode: KodaXAgentMode) => void;
   setParallel?: (enabled: boolean) => void;
   setPermissionMode?: (mode: PermissionMode) => void;
   deleteSession?: (id: string) => Promise<void>;

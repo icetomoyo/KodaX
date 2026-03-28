@@ -47,6 +47,10 @@ export async function buildSystemPrompt(options: KodaXOptions, isNewSession: boo
     if (longCtx) contextParts.push(longCtx);
   }
 
+  if (options.context?.repoIntelligenceContext) {
+    contextParts.push(options.context.repoIntelligenceContext);
+  }
+
   let prompt = SYSTEM_PROMPT.replace('{context}', contextParts.join('\n\n'));
 
   if (isLongRunning) {

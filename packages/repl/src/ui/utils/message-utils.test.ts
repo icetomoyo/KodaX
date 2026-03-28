@@ -8,6 +8,7 @@ import {
   extractTextContent,
   formatMessagePreview,
   resolveAssistantHistoryText,
+  resolveCompletedAssistantText,
 } from "./message-utils.js";
 
 describe("message-utils", () => {
@@ -143,6 +144,31 @@ describe("message-utils", () => {
     );
 
     expect(resolved).toBe("buffered response");
+  });
+
+  it("prefers the persisted final assistant body over managed-task summaries", () => {
+    const resolved = resolveCompletedAssistantText(
+      [
+        { role: "user", content: "hello" },
+        { role: "assistant", content: "full final assistant body" },
+      ] satisfies KodaXMessage[],
+      "streamed preview",
+      "managed summary",
+      "lastText fallback"
+    );
+
+    expect(resolved).toBe("full final assistant body");
+  });
+
+  it("falls back to managed-task summaries only when no full assistant body exists", () => {
+    const resolved = resolveCompletedAssistantText(
+      [{ role: "user", content: "hello" }] satisfies KodaXMessage[],
+      "",
+      "managed summary",
+      "lastText fallback"
+    );
+
+    expect(resolved).toBe("managed summary");
   });
 
   it("builds session titles from structured user text blocks", () => {

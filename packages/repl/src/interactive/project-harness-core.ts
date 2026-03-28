@@ -8,7 +8,9 @@ import type {
   KodaXMessage,
   KodaXOptions,
   KodaXTaskCapabilityHint,
+  KodaXTaskVerificationCriterion,
   KodaXTaskVerificationContract,
+  KodaXRuntimeVerificationContract,
 } from '@kodax/coding';
 import type { ProjectFeature } from './project-state.js';
 import { isRecord, isStringArray } from './json-guards.js';
@@ -1419,6 +1421,29 @@ export class ProjectHarnessAttempt {
     const requiredChecks = this.config.checks
       .filter(check => check.required)
       .map(check => `${check.id}: ${check.command}`);
+    const criteria: KodaXTaskVerificationCriterion[] = this.config.checks
+      .filter(check => check.required)
+      .map((check, index) => ({
+        id: check.id,
+        label: check.id,
+        description: `Required project harness check: ${check.command}`,
+        threshold: 75,
+        weight: index === 0 ? 0.4 : 0.2,
+        requiredEvidence: [
+          `Report execution evidence for check ${check.id}.`,
+        ],
+      }));
+    const runtime: KodaXRuntimeVerificationContract = {
+      cwd: getProjectRoot(this.storage),
+      uiFlows: buildVerificationCapabilityHints(this.feature, this.config)
+        .some((hint) => /agent-browser|playwright/i.test(hint.name))
+        ? [
+          `Exercise the critical flow for feature #${this.featureIndex} and reject completion on visible or console failures.`,
+        ]
+        : undefined,
+      apiChecks: requiredChecks.filter(check => /api|http|endpoint|curl/i.test(check)),
+      dbChecks: requiredChecks.filter(check => /\bdb\b|database|sql/i.test(check)),
+    };
 
     return {
       summary: `Project Harness verification for feature #${this.featureIndex} in ${this.mode} mode.`,
@@ -1429,6 +1454,12 @@ export class ProjectHarnessAttempt {
       ],
       requiredEvidence,
       requiredChecks,
+      rubricFamily: buildVerificationCapabilityHints(this.feature, this.config)
+        .some((hint) => /agent-browser|playwright/i.test(hint.name))
+        ? 'frontend'
+        : 'functionality',
+      criteria,
+      runtime,
       capabilityHints: buildVerificationCapabilityHints(this.feature, this.config),
     };
   }

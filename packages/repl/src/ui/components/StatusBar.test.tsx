@@ -8,6 +8,7 @@ describe("StatusBar", () => {
     const text = getStatusBarText({
       sessionId: "session-1",
       permissionMode: "accept-edits",
+      agentMode: "ama",
       provider: "anthropic",
       model: "sonnet",
       thinking: true,
@@ -24,6 +25,7 @@ describe("StatusBar", () => {
     const text = getStatusBarText({
       sessionId: "session-1",
       permissionMode: "accept-edits",
+      agentMode: "ama",
       provider: "anthropic",
       model: "sonnet",
       currentTool: "shell_command",
@@ -39,6 +41,7 @@ describe("StatusBar", () => {
       <StatusBar
         sessionId="session-1"
         permissionMode="accept-edits"
+        agentMode="ama"
         provider="anthropic"
         model="sonnet"
         currentTool="shell_command"
@@ -54,6 +57,7 @@ describe("StatusBar", () => {
     const text = getStatusBarText({
       sessionId: "session-1",
       permissionMode: "accept-edits",
+      agentMode: "ama",
       provider: "anthropic",
       model: "sonnet",
       currentTool: "shell_command",
@@ -69,6 +73,7 @@ describe("StatusBar", () => {
     const text = getStatusBarText({
       sessionId: "session-1",
       permissionMode: "accept-edits",
+      agentMode: "ama",
       parallel: true,
       provider: "anthropic",
       model: "sonnet",
@@ -81,6 +86,7 @@ describe("StatusBar", () => {
     const text = getStatusBarText({
       sessionId: "session-1",
       permissionMode: "accept-edits",
+      agentMode: "sa",
       parallel: false,
       provider: "anthropic",
       model: "sonnet",
@@ -88,5 +94,17 @@ describe("StatusBar", () => {
 
     expect(text).toContain("sequential");
     expect(text).not.toContain("serial");
+  });
+
+  it("shows agent mode in the first status segment", () => {
+    const text = getStatusBarText({
+      sessionId: "session-1",
+      permissionMode: "accept-edits",
+      agentMode: "sa",
+      provider: "anthropic",
+      model: "sonnet",
+    });
+
+    expect(text).toContain("KodaX - SA");
   });
 });
