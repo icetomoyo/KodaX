@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+<!-- last-sync: HEAD -->
+
+---
+
+## [0.7.11] - 2026-03-30
+
 ### Added
 - **Skill-aware AMA role projection**: skill invocations now carry `skillInvocation` metadata into managed execution, `Scout` emits a `skill-map`, and AMA roles consume role-specific skill views instead of sharing the same raw skill prompt
 - **Skill artifacts for managed tasks**: managed workspaces now persist `skill-execution.md`, `skill-map.json`, and `skill-map.md`
@@ -39,10 +45,6 @@ All notable changes to this project will be documented in this file.
 - Added / expanded tests for `task-engine`, `reasoning`, `tool-display`, `live-streaming`, `StatusBar`, `invocation-runtime`, `types-legacy`, and `InkREPL.interrupted`
 
 <!-- last-sync: HEAD -->
-
----
-
-## [0.7.10] - 2026-03-28
 
 ### Added
 - **Repository intelligence substrate (FEATURE_018)**: Task-aware repository intelligence layer under `.agent/repo-intelligence/` with durable artifacts — `repo-overview.json`, `changed-scope.json`, `module-index.json`, `symbol-index.json`, `process-index.json`, `repo-intelligence-manifest.json` — supporting incremental refresh, freshness metadata, and language-tiered extraction (TS/JS via AST, Python, Go, Rust, Java, C++)
