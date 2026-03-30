@@ -38,3 +38,6 @@ coverage/
 .env
 .env.local
 .env.*.local
+
+# Temp
+.tmp/

@@ -38,6 +38,17 @@ describe('GeminiCLIExecutor', () => {
       '--approval-mode',
       'yolo',
     ]);
+
+    expect(executor.buildArgsForTest({ prompt: 'switch', model: 'gemini-2.5-flash' })).toEqual([
+      '-m',
+      'gemini-2.5-flash',
+      '-p',
+      'switch',
+      '--output-format',
+      'stream-json',
+      '--approval-mode',
+      'yolo',
+    ]);
   });
 
   it('parses init, message, tool, result, and error events', () => {

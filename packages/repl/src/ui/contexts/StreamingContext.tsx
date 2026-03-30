@@ -584,9 +584,13 @@ export function createStreamingManager(): StreamingManager {
         ...state,
         iterationHistory: [],
         currentIteration: 1,
+        maxIter: DEFAULT_STREAMING_STATE.maxIter,
         thinkingContent: "",
         thinkingCharCount: 0,
         currentResponse: "",
+        currentTool: undefined,
+        toolInputCharCount: 0,
+        toolInputContent: "",
       };
       notify();
     },

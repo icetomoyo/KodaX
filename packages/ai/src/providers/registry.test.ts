@@ -7,6 +7,7 @@ import {
   isProviderConfigured,
 } from './registry.js';
 import { KodaXProviderError } from '../errors.js';
+import { getCodexCliDefaultModel, getGeminiCliDefaultModel } from './cli-bridge-models.js';
 
 describe('provider registry', () => {
   afterEach(() => {
@@ -17,8 +18,8 @@ describe('provider registry', () => {
     const gemini = getProviderList().find((provider) => provider.name === 'gemini-cli');
     const codex = getProviderList().find((provider) => provider.name === 'codex-cli');
 
-    expect(gemini?.model).toBe('gemini-cli');
-    expect(codex?.model).toBe('codex-cli');
+    expect(gemini?.model).toBe(getGeminiCliDefaultModel());
+    expect(codex?.model).toBe(getCodexCliDefaultModel());
   });
 
   it('tracks API-key backed providers through environment configuration', () => {

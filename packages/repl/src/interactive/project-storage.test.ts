@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { KodaXManagedTask } from '@kodax/coding';
 import { createTempDirSync, removeTempDirSync } from '../test-utils/temp-dir.js';
 import {
   appendBrainstormExchange,
@@ -8,7 +9,7 @@ import {
   createBrainstormSession,
   formatBrainstormTranscript,
 } from './project-brainstorm.js';
-import { ProjectStorage } from './project-storage.js';
+import { ProjectStorage, type ProjectLightweightRunRecord } from './project-storage.js';
 
 describe('project-storage brainstorm persistence', () => {
   let tempDir = '';
@@ -95,6 +96,31 @@ describe('project-storage brainstorm persistence', () => {
     expect(storage.getPaths().sessionPlan).toContain('.agent');
   });
 
+  it('derives workflow stage from minimal control state instead of persisting a stage machine', async () => {
+    const storage = new ProjectStorage(tempDir);
+    await storage.writeAlignment({
+      sourcePrompt: 'Need a discovery flow',
+      confirmedRequirements: [],
+      constraints: [],
+      nonGoals: [],
+      acceptedTradeoffs: [],
+      successCriteria: [],
+      openQuestions: [],
+      updatedAt: '2026-03-26T10:00:00.000Z',
+    });
+    await storage.saveControlState({
+      scope: 'project',
+      discoveryStepIndex: 0,
+      lastUpdated: '2026-03-26T10:00:00.000Z',
+    });
+
+    const state = await storage.loadWorkflowState();
+
+    expect(state?.stage).toBe('discovering');
+    expect(state?.discoveryStepIndex).toBe(0);
+    expect(storage.getPaths().projectControl).toContain('.agent');
+  });
+
   it('skips malformed harness run lines instead of failing the entire read', async () => {
     const storage = new ProjectStorage(tempDir);
     mkdirSync(dirname(storage.getPaths().harnessRuns), { recursive: true });
@@ -140,6 +166,134 @@ describe('project-storage brainstorm persistence', () => {
     ]);
     expect(storage.getPaths().harnessCheckpoints).toContain('.agent');
     expect(storage.getPaths().harnessSessionTree).toContain('.agent');
+  });
+
+  it('persists managed task state under .agent/project', async () => {
+    const storage = new ProjectStorage(tempDir);
+    const managedTask: KodaXManagedTask = {
+      contract: {
+        taskId: 'task-1',
+        surface: 'project',
+        objective: 'Implement managed task persistence',
+        createdAt: '2026-03-26T10:00:00.000Z',
+        updatedAt: '2026-03-26T10:05:00.000Z',
+        status: 'blocked',
+        primaryTask: 'edit',
+        workIntent: 'append',
+        complexity: 'moderate',
+        riskLevel: 'medium',
+        harnessProfile: 'H1_EXECUTE_EVAL',
+        recommendedMode: 'implementation',
+        requiresBrainstorm: false,
+        reason: 'Test fixture',
+        contractSummary: 'Persist managed task state under project storage.',
+        successCriteria: ['Managed task state survives reload.'],
+        requiredEvidence: ['Persisted managed-task artifacts exist.'],
+        constraints: ['Keep task state under .agent/project.'],
+        metadata: {
+          featureIndex: 1,
+          projectMode: 'next',
+        },
+      },
+      roleAssignments: [
+        {
+          id: 'generator',
+          role: 'generator',
+          title: 'Generator',
+          dependsOn: [],
+          status: 'completed',
+          summary: 'Implementation draft ready',
+          sessionId: 'session-1',
+        },
+        {
+          id: 'evaluator',
+          role: 'evaluator',
+          title: 'Evaluator',
+          dependsOn: ['generator'],
+          status: 'blocked',
+          summary: 'Missing verification evidence',
+          sessionId: 'session-2',
+        },
+      ],
+      workItems: [
+        {
+          id: 'generator',
+          assignmentId: 'generator',
+          description: 'Implement the feature',
+          execution: 'serial',
+        },
+        {
+          id: 'evaluator',
+          assignmentId: 'evaluator',
+          description: 'Judge readiness',
+          execution: 'serial',
+        },
+      ],
+      evidence: {
+        workspaceDir: join(tempDir, '.agent', 'project', 'managed-tasks', 'task-1'),
+        runId: 'task-1',
+        artifacts: [
+          {
+            kind: 'json',
+            path: join(tempDir, '.agent', 'project', 'managed-tasks', 'task-1', 'summary.json'),
+          },
+        ],
+        entries: [
+          {
+            assignmentId: 'evaluator',
+            role: 'evaluator',
+            status: 'blocked',
+            summary: 'Need more evidence',
+            sessionId: 'session-2',
+            signal: 'BLOCKED',
+            signalReason: 'Tests missing',
+          },
+        ],
+        routingNotes: ['H1 selected for evaluator separation'],
+      },
+      verdict: {
+        status: 'blocked',
+        decidedByAssignmentId: 'evaluator',
+        summary: 'Need more evidence',
+        signal: 'BLOCKED',
+        signalReason: 'Tests missing',
+      },
+    };
+
+    await storage.saveManagedTask(managedTask);
+
+    await expect(storage.loadManagedTask()).resolves.toEqual(managedTask);
+    expect(storage.getPaths().managedTaskState).toContain('.agent');
+    expect(storage.getPaths().managedTasksRoot).toContain('.agent');
+  });
+
+  it('persists lightweight direct run records and uses them for workflow summaries when managed tasks are absent', async () => {
+    const storage = new ProjectStorage(tempDir);
+    const record: ProjectLightweightRunRecord = {
+      status: 'completed',
+      summary: 'Direct project analysis completed without the managed harness.',
+      sessionId: 'session-direct-project',
+      taskSurface: 'project',
+      agentMode: 'sa',
+      executionMode: 'direct',
+      featureIndex: 2,
+      changedFiles: ['packages/repl/src/interactive/project-commands.ts'],
+      checks: ['Confirm status output'],
+      evidence: ['Reviewed direct analysis output'],
+      blockers: [],
+      nextStep: '/project next --no-confirm',
+      createdAt: '2026-03-29T10:00:00.000Z',
+      updatedAt: '2026-03-29T10:05:00.000Z',
+    };
+
+    await storage.saveLightweightRunRecord(record);
+
+    await expect(storage.loadLightweightRunRecord()).resolves.toEqual(record);
+
+    const state = await storage.loadWorkflowState();
+    expect(state?.latestExecutionSummary).toBe(record.summary);
+    expect(state?.currentFeatureIndex).toBe(2);
+    expect(storage.getPaths().lightweightRunRecord).toContain('.agent');
   });
 
   it('deletes project runtime artifacts under .agent/project on full reset', async () => {

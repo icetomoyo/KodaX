@@ -16,8 +16,55 @@ const UNTITLED_SESSION_TITLE = "Untitled Session";
 const SESSION_TITLE_MAX_LENGTH = 50;
 const MESSAGE_PREVIEW_MAX_LENGTH = 60;
 const TRUNCATION_SUFFIX = "...";
+const CONTROL_PLANE_MARKERS = [
+  "[Managed Task]",
+  "[Managed Task Protocol Retry]",
+  "Assigned native agent identity:",
+  "Tool policy:",
+  "Blocked tools:",
+  "Allowed shell patterns:",
+  "Dependency handoff artifacts:",
+  "Dependency summary preview:",
+  "Preferred agent:",
+  "Read structured bundle first:",
+  "Read human summary next:",
+];
+const CONTROL_PLANE_PATTERNS = [
+  /(?:^|\n)You are the [^\n]+ role for a managed KodaX task\./,
+  /(?:^|\n)Primary task:/,
+  /(?:^|\n)Work intent:/,
+  /(?:^|\n)Complexity:/,
+  /(?:^|\n)Risk:/,
+  /(?:^|\n)Harness:/,
+  /(?:^|\n)Brainstorm required:/,
+];
 const LEGACY_THINKING_BLOCK_RE =
   /(^|\r?\n)\[Thinking\]\r?\n([\s\S]*?)\r?\n\[\/Thinking\](?=\r?\n|$)/g;
+
+function findControlPlaneCutIndex(text: string): number {
+  let cutIndex = -1;
+
+  for (const marker of CONTROL_PLANE_MARKERS) {
+    const idx = text.indexOf(marker);
+    if (idx >= 0 && (cutIndex === -1 || idx < cutIndex)) {
+      cutIndex = idx;
+    }
+  }
+
+  for (const pattern of CONTROL_PLANE_PATTERNS) {
+    const match = pattern.exec(text);
+    if (match && match.index >= 0 && (cutIndex === -1 || match.index < cutIndex)) {
+      cutIndex = match.index;
+    }
+  }
+
+  return cutIndex;
+}
+
+function hasControlPlaneSignal(text: string): boolean {
+  return CONTROL_PLANE_MARKERS.some((marker) => text.includes(marker))
+    || CONTROL_PLANE_PATTERNS.some((pattern) => pattern.test(text));
+}
 
 function collectTextBlocks(content: readonly unknown[]): string[] {
   const textParts: string[] = [];
@@ -235,6 +282,55 @@ export function resolveAssistantHistoryText(
   streamedText: string
 ): string {
   return extractLastAssistantText(messages) || streamedText.trim();
+}
+
+/**
+ * Resolve the final assistant text for a completed round.
+ * Prefer persisted assistant content first, then streamed text,
+ * and only fall back to managed-task metadata summaries when no
+ * full assistant body is available.
+ */
+export function resolveCompletedAssistantText(
+  messages: KodaXMessage[],
+  streamedText: string,
+  managedSummary?: string,
+  lastText?: string
+): string {
+  const candidates = [
+    extractLastAssistantText(messages),
+    streamedText.trim(),
+    managedSummary?.trim() ?? "",
+    lastText?.trim() ?? "",
+  ];
+  for (const candidate of candidates) {
+    const sanitized = sanitizeUserFacingAssistantText(candidate);
+    if (sanitized) {
+      return sanitized;
+    }
+  }
+  return "";
+}
+
+export function sanitizeUserFacingAssistantText(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  const cutIndex = findControlPlaneCutIndex(trimmed);
+
+  if (cutIndex === 0) {
+    return "";
+  }
+
+  return (cutIndex > 0 ? trimmed.slice(0, cutIndex) : trimmed).trim();
+}
+
+export function isControlPlaneOnlyAssistantText(text: string): boolean {
+  const trimmed = text.trim();
+  return trimmed.length > 0
+    && sanitizeUserFacingAssistantText(trimmed).length === 0
+    && hasControlPlaneSignal(trimmed);
 }
 
 /**

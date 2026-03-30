@@ -25,6 +25,14 @@ export type {
   KodaXTaskType,
   KodaXExecutionMode,
   KodaXRiskLevel,
+  KodaXTaskComplexity,
+  KodaXTaskWorkIntent,
+  KodaXTaskFamily,
+  KodaXTaskActionability,
+  KodaXExecutionPattern,
+  KodaXMutationSurface,
+  KodaXAssuranceIntent,
+  KodaXHarnessProfile,
   KodaXTaskRoutingDecision,
   KodaXThinkingBudgetMap,
   KodaXTaskBudgetOverrides,
@@ -66,13 +74,86 @@ export interface KodaXExtensionSessionRecord {
 
 export type KodaXExtensionSessionState = Record<string, Record<string, KodaXJsonValue>>;
 
+export interface KodaXSessionEntryBase {
+  id: string;
+  parentId: string | null;
+  timestamp: string;
+}
+
+export interface KodaXSessionMessageEntry extends KodaXSessionEntryBase {
+  type: 'message';
+  message: KodaXMessage;
+}
+
+export interface KodaXSessionCompactionEntry extends KodaXSessionEntryBase {
+  type: 'compaction';
+  summary: string;
+  firstKeptEntryId?: string;
+  tokensBefore?: number;
+}
+
+export interface KodaXSessionBranchSummaryEntry extends KodaXSessionEntryBase {
+  type: 'branch_summary';
+  summary: string;
+  fromId?: string;
+  details?: KodaXJsonValue;
+}
+
+export interface KodaXSessionLabelEntry extends KodaXSessionEntryBase {
+  type: 'label';
+  targetId: string;
+  label?: string;
+}
+
+export type KodaXSessionEntry =
+  | KodaXSessionMessageEntry
+  | KodaXSessionCompactionEntry
+  | KodaXSessionBranchSummaryEntry
+  | KodaXSessionLabelEntry;
+
+export interface KodaXSessionLineage {
+  version: 2;
+  activeEntryId: string | null;
+  entries: KodaXSessionEntry[];
+}
+
+export interface KodaXSessionNavigationOptions {
+  summarizeCurrentBranch?: boolean;
+}
+
+export interface KodaXSessionTreeNode {
+  entry: Exclude<KodaXSessionEntry, KodaXSessionLabelEntry>;
+  children: KodaXSessionTreeNode[];
+  label?: string;
+  active: boolean;
+}
+
+export type KodaXSessionScope = 'user' | 'managed-task-worker';
+
+export type KodaXSessionUiHistoryItemType =
+  | 'user'
+  | 'assistant'
+  | 'system'
+  | 'thinking'
+  | 'error'
+  | 'info'
+  | 'hint';
+
+export interface KodaXSessionUiHistoryItem {
+  type: KodaXSessionUiHistoryItemType;
+  text: string;
+}
+
 export interface KodaXSessionData {
   messages: KodaXMessage[];
   title: string;
   gitRoot: string;
+  scope?: KodaXSessionScope;
+  uiHistory?: KodaXSessionUiHistoryItem[];
   errorMetadata?: SessionErrorMetadata;
   extensionState?: KodaXExtensionSessionState;
   extensionRecords?: KodaXExtensionSessionRecord[];
+  lineage?: KodaXSessionLineage;
 }
 
 export interface KodaXSessionMeta {
@@ -81,8 +162,14 @@ export interface KodaXSessionMeta {
   id: string;
   gitRoot: string;
   createdAt: string;
+  scope?: KodaXSessionScope;
+  uiHistory?: KodaXSessionUiHistoryItem[];
   extensionState?: KodaXExtensionSessionState;
   extensionRecordCount?: number;
+  lineageVersion?: 2;
+  activeEntryId?: string | null;
+  lineageEntryCount?: number;
+  activeMessageCount?: number;
   /** Error metadata for recovery - 错误元数据用于恢复 */
   errorMetadata?: SessionErrorMetadata;
 }
@@ -153,6 +240,18 @@ export interface KodaXExtensionStore {
 export interface KodaXSessionStorage {
   save(id: string, data: KodaXSessionData): Promise<void>;
   load(id: string): Promise<KodaXSessionData | null>;
+  getLineage?(id: string): Promise<KodaXSessionLineage | null>;
+  setActiveEntry?(
+    id: string,
+    selector: string,
+    options?: KodaXSessionNavigationOptions,
+  ): Promise<KodaXSessionData | null>;
+  setLabel?(id: string, selector: string, label?: string): Promise<KodaXSessionData | null>;
+  fork?(
+    id: string,
+    selector?: string,
+    options?: { sessionId?: string; title?: string },
+  ): Promise<{ sessionId: string; data: KodaXSessionData } | null>;
   list?(gitRoot?: string): Promise<Array<{ id: string; title: string; msgCount: number }>>;
   delete?(id: string): Promise<void>;
   deleteAll?(gitRoot?: string): Promise<void>;

@@ -48,6 +48,15 @@ export type ProjectWorkflowStage =
 
 export type ProjectWorkflowScope = 'project' | 'change_request';
 
+export interface ProjectControlState {
+  scope: ProjectWorkflowScope;
+  activeRequestId?: string;
+  discoveryStepIndex: number;
+  lastUpdated: string;
+  lastPlannedAt?: string;
+  latestExecutionSummary?: string;
+}
+
 export interface ProjectWorkflowState {
   stage: ProjectWorkflowStage;
   scope: ProjectWorkflowScope;
@@ -155,6 +164,17 @@ export function createProjectWorkflowState(
       : DEFAULT_DISCOVERY_OPEN_QUESTIONS.length,
     lastUpdated: timestamp,
     discoveryStepIndex: 0,
+  };
+}
+
+export function createProjectControlState(
+  scope: ProjectWorkflowScope = 'project',
+  timestamp = new Date().toISOString(),
+): ProjectControlState {
+  return {
+    scope,
+    discoveryStepIndex: 0,
+    lastUpdated: timestamp,
   };
 }
 

@@ -1,75 +1,65 @@
-# KodaX Detailed Design
+# KodaX 详细设计（DD）
 
-> Last updated: 2026-03-25
+> Last updated: 2026-03-29
 >
-> This document defines the target internal model for the architecture shift carried by `FEATURE_022`: the adaptive task engine, native multi-agent control plane, and runtime substrate.
+> 这份 DD 描述当前 task engine 的内部模型：
+> single-agent first、intent-first、skill-aware、evidence-driven。
+
+## 中文导读
+
+如果你只想快速理解当前实现，请优先看：
+
+1. `Core Domain Model`
+2. `Routing Pipeline`
+3. `Control Plane Flows`
+4. `Skill Map and Role Projections`
+5. `Runtime / UI Semantics`
 
 ---
 
-## 1. Scope
+## 1. 范围说明
 
-This document covers:
+这份文档覆盖：
 
-- task-first persistence
-- intent classification and harness routing
-- native multi-agent role boundaries
+- task-first intake
+- intent gate / scout / harness selection
+- `H0 / H1 / H2` 三层执行语义
+- `skill-map` 与 role-aware skill projection
 - evidence-driven completion
-- provider-aware harness policy
-- the boundary between the new control plane and `FEATURE_034`
+- user-visible work / round / tool disclosure 规则
 
-This document does not define:
+这份文档不展开：
 
-- full UI behavior for every surface
-- every built-in command syntax
-- implementation details for every future capability package
+- 每个 surface 的完整 UI 视觉细节
+- 每条内建命令的逐条行为说明
+- 未来并行执行或 `H3` 的潜在设计
 
 ---
 
-## 2. Core Domain Model
+## 2. 核心领域模型
 
-### 2.1 Task envelope
-
-Every incoming request that survives intake becomes a normalized task envelope.
+### 2.1 Task shape
 
 ```ts
-type TaskKind =
-  | "answer"
-  | "read"
+type TaskFamily =
+  | "conversation"
+  | "lookup"
   | "review"
-  | "edit"
-  | "bugfix"
-  | "refactor"
-  | "research"
-  | "design"
-  | "long_running";
+  | "implementation"
+  | "investigation"
+  | "planning"
+  | "ambiguous";
 
-type ComplexityBand = "L0" | "L1" | "L2" | "L3";
+type TaskActionability = "non_actionable" | "actionable" | "ambiguous";
 
-type ChangeIntent =
-  | "read_only"
-  | "append"
-  | "overwrite"
-  | "new_task"
-  | "unknown";
+type ExecutionPattern = "direct" | "checked-direct" | "coordinated";
 
-interface TaskEnvelope {
-  id: string;
-  createdAt: string;
-  updatedAt: string;
-  workspaceRoot: string | null;
-  executionCwd: string | null;
-  sourceSurface: "cli" | "repl" | "acp" | "other";
-  rawRequest: string;
-  normalizedRequest: string;
-  kind: TaskKind;
-  complexity: ComplexityBand;
-  changeIntent: ChangeIntent;
-  needsBrainstorm: boolean;
-  needsDurableState: boolean;
-  requestedByUser: {
-    sessionId?: string;
-    actor?: string;
-  };
+interface IntentGateDecision {
+  taskFamily: TaskFamily;
+  actionability: TaskActionability;
+  executionPattern: ExecutionPattern;
+  shouldUseRepoSignals: boolean;
+  shouldUseModelRouter: boolean;
 }
 ```
 
@@ -79,156 +69,86 @@ interface TaskEnvelope {
 type HarnessProfile =
   | "H0_DIRECT"
   | "H1_EXECUTE_EVAL"
-  | "H2_PLAN_EXECUTE_EVAL"
-  | "H3_MULTI_WORKER";
-
-interface HarnessSelection {
-  profile: HarnessProfile;
-  reasonCodes: string[];
-  providerPolicy: ProviderPolicySnapshot;
-  escalationAllowed: boolean;
-}
+  | "H2_PLAN_EXECUTE_EVAL";
 ```
+
+说明：
+
+- `SA` 不是 harness profile，而是 agent mode
+- `H3_MULTI_WORKER` 已删除
 
 ### 2.3 Role model
 
 ```ts
 type AgentRole =
-  | "lead"
+  | "direct"
+  | "scout"
   | "planner"
   | "generator"
-  | "evaluator"
-  | "worker_research"
-  | "worker_test"
-  | "worker_refactor"
-  | "worker_ui";
+  | "evaluator";
+```
 
-interface RoleAssignment {
-  role: AgentRole;
-  instanceId: string;
-  modelRef?: string;
-  providerRef?: string;
-  ownership?: {
-    files?: string[];
-    modules?: string[];
-    taskSlice?: string;
-  };
-  status: "pending" | "active" | "completed" | "failed";
+关键约束：
+
+- `Scout` 只存在于 pre-harness 阶段
+- `Planner / Generator / Evaluator` 构成 H2 主 graph
+
+### 2.4 Skill invocation and map
+
+```ts
+interface SkillInvocationContext {
+  name: string;
+  path: string;
+  description?: string;
+  arguments?: string;
+  allowedTools?: string;
+  context?: string;
+  agent?: string;
+  model?: string;
+  hookEvents?: string[];
+  expandedContent: string;
+}
+
+type SkillProjectionConfidence = "high" | "medium" | "low";
+
+interface SkillMap {
+  skillSummary: string;
+  executionObligations: string[];
+  verificationObligations: string[];
+  requiredEvidence: string[];
+  ambiguities: string[];
+  projectionConfidence: SkillProjectionConfidence;
+  rawSkillFallbackAllowed: boolean;
+  allowedTools?: string;
+  preferredAgent?: string;
+  preferredModel?: string;
+  invocationContext?: string;
+  hookEvents?: string[];
 }
 ```
 
-### 2.4 Contract model
-
-The contract is the task-local source of truth.
+### 2.5 Contract / handoff / verdict
 
 ```ts
 interface TaskContract {
-  taskId: string;
-  version: number;
-  goal: string;
-  scope: string[];
-  outOfScope: string[];
-  assumptions: string[];
+  summary?: string;
+  successCriteria: string[];
+  requiredEvidence: string[];
   constraints: string[];
-  changeIntent: ChangeIntent;
-  successCriteria: ContractCriterion[];
-  requiredEvidence: EvidenceRequirement[];
-  approvalNeeded?: string[];
-  createdBy: "lead" | "planner";
-  createdAt: string;
 }
 
-interface ContractCriterion {
-  id: string;
-  label: string;
-  kind: "behavior" | "code" | "test" | "design" | "integration";
-  severity: "must" | "should";
+interface TaskHandoff {
+  status: "ready" | "incomplete" | "blocked";
+  summary?: string;
+  evidence: string[];
+  followup: string[];
 }
 
-interface EvidenceRequirement {
-  id: string;
-  type: "deterministic_check" | "artifact" | "test" | "review" | "behavioral";
-  label: string;
-  required: boolean;
-}
-```
-
-### 2.5 Evidence model
-
-```ts
-type EvidenceVerdict = "pass" | "fail" | "warning" | "unknown";
-
-interface EvidenceBlock {
-  id: string;
-  taskId: string;
-  source:
-    | "generator"
-    | "evaluator"
-    | "tool"
-    | "test"
-    | "search"
-    | "review"
-    | "human";
-  category:
-    | "code_change"
-    | "deterministic_check"
-    | "behavioral_check"
-    | "contract_review"
-    | "artifact"
-    | "research";
-  summary: string;
-  detailsRef?: string;
-  verdict: EvidenceVerdict;
-  timestamp: string;
-}
-```
-
-### 2.6 Decision model
-
-```ts
-type TaskDecisionType =
-  | "intake"
-  | "routing"
-  | "contract"
-  | "assignment"
-  | "retry"
-  | "escalation"
-  | "completion"
-  | "blocked";
-
-interface TaskDecision {
-  id: string;
-  taskId: string;
-  type: TaskDecisionType;
-  actor: "lead" | "planner" | "evaluator" | "system";
-  summary: string;
-  reasonCodes: string[];
-  timestamp: string;
-}
-```
-
-### 2.7 Session tree and checkpoints
-
-`FEATURE_019` expands the old session model into task-aware lineage.
-
-```ts
-interface SessionNode {
-  id: string;
-  taskId: string;
-  parentId: string | null;
-  role: AgentRole;
-  summary: string;
-  messageRef: string;
-  createdAt: string;
-}
-
-interface TaskCheckpoint {
-  id: string;
-  taskId: string;
-  label?: string;
-  sessionNodeId?: string;
-  artifactRefs: string[];
-  createdAt: string;
+interface TaskVerdict {
+  status: "accept" | "revise" | "blocked";
+  reason?: string;
+  nextHarness?: "H1_EXECUTE_EVAL" | "H2_PLAN_EXECUTE_EVAL";
+  followup: string[];
 }
 ```
 
@@ -236,620 +156,370 @@ interface TaskCheckpoint {
 
 ## 3. Storage Layout
 
-### 3.1 Canonical layout
-
 ```text
 .agent/
-  tasks/
+  managed-tasks/
     <task-id>/
-      task.json
-      intake.json
+      managed-task.json
       contract.json
-      plan.md
-      role-assignments.json
-      decisions.jsonl
-      evidence/
-        index.jsonl
-        *.json
-      runs/
-        *.json
-      checkpoints/
-        index.jsonl
-      session-tree/
-        nodes.jsonl
-      artifacts/
-        *.md
-        *.json
+      round-history.json
+      budget.json
+      runtime-contract.json
+      runtime-execution.md
+      scorecard.json
+      skill-execution.md
+      skill-map.json
+      skill-map.md
+      rounds/
+        round-01/
+          run.json
+          summary.json
+          feedback.json
+          feedback.md
 ```
 
-### 3.2 File responsibilities
+说明：
 
-| File | Purpose |
-|---|---|
-| `task.json` | task envelope and high-level status |
-| `intake.json` | raw intake reasoning and routing input |
-| `contract.json` | active contract |
-| `plan.md` | human-readable execution plan |
-| `role-assignments.json` | active role assignments |
-| `decisions.jsonl` | append-only decision log |
-| `evidence/index.jsonl` | append-only evidence index |
-| `runs/*.json` | per-run orchestration trace |
-| `checkpoints/index.jsonl` | rewindable checkpoints |
-| `session-tree/nodes.jsonl` | multi-role conversation lineage |
-
-### 3.3 Backward compatibility
-
-During migration, the engine may read from:
-
-- `feature_list.json`
-- `PROGRESS.md`
-- `.agent/project/`
-
-But new truth should be written under `.agent/tasks/<task-id>/`.
+- raw skill 与 skill-map 都是 artifact-first 的持久化工件
+- downstream roles 优先消费 artifact，而不是依赖长 prompt 摘要
 
 ---
 
-## 4. Intake and Routing Pipeline
+## 4. Routing Pipeline
 
-### 4.1 Intake phases
+### 4.1 Intent gate
 
-1. Normalize request text.
-2. Capture workspace and session context.
-3. Classify task kind.
-4. Estimate complexity.
-5. Infer read-only vs append vs overwrite.
-6. Decide whether brainstorm is required.
-7. Decide whether durable state is required.
-8. Select harness profile.
+入口首先做极轻判断：
 
-### 4.2 Complexity heuristics
+- greeting / conversation
+- lookup / code navigation
+- 明显 actionable family
+- ambiguous
 
-Routing should use simple, inspectable heuristics first:
+约束：
 
-- user asks for edits or file changes
-- request spans multiple modules
-- existing project state exists
-- request is ambiguous or architectural
-- verification cost is non-trivial
-- provider capability is weak for requested behavior
+- 非 actionable 输入不得因 dirty repo 升级到 H1/H2
+- `lookup` 默认 direct，不吃 repo scaling
 
-Example policy:
+### 4.2 Scout stage
 
-- read-only explanation -> `L0`
-- small explicit file change -> `L1`
-- medium request with design uncertainty -> `L2`
-- long-running or cross-module delivery -> `L3`
+未被 direct short-circuit 的请求进入 `Scout`。
 
-### 4.3 Append vs overwrite inference
+Scout 的职责：
 
-Inputs:
+- 确认任务是否值得进入 H1/H2
+- 收集 `scope facts`
+- 最多少量补 `overview evidence`
+- 若存在 skill，则读取完整 skill 并生成 `skill-map`
 
-- explicit user language
-- existing task state
-- current repo status
-- current task contract
+Scout 输出 `kodax-task-scout`，其中至少包含：
 
-Rules:
+- summary
+- confirmed_harness
+- required_evidence
+- optional `skill-map` fields
 
-- destructive overwrite must be surfaced clearly
-- inference may be automatic
-- dangerous state transitions still require confirmation
+### 4.3 Harness selection
 
-### 4.4 Brainstorm trigger policy
+当前默认映射：
 
-Brainstorm should be auto-triggered when:
-
-- the user states an outcome, not an implementation
-- there are multiple plausible architectural directions
-- a large request lacks acceptance criteria
-- overwrite vs append is unclear
-
-This replaces the old assumption that brainstorm is only entered through `/project brainstorm`.
+- `conversation` / `lookup` -> `H0_DIRECT`
+- 低风险 actionable -> `H1_EXECUTE_EVAL`
+- 需要 contract / deep evidence / stronger verification -> `H2_PLAN_EXECUTE_EVAL`
 
 ---
 
-## 5. Control Plane
+## 5. Control Plane Flows
 
-### 5.1 Lead loop
+### 5.1 SA
 
-The Lead owns orchestration:
-
-```ts
-while (!taskDone) {
-  if (!contract) buildContract();
-  assignRoles();
-  collectOutputs();
-  evaluateEvidence();
-  if (needsRetry) refineAndRetry();
-  if (needsEscalation) escalateHarness();
-  if (verdictReached) break;
-}
+```text
+user request -> direct runner
 ```
 
-Lead responsibilities:
+特点：
 
-- own task status
-- preserve invariants
-- decide retries and escalation
-- prevent the generator from self-certifying completion
+- 不进入 AMA
+- 不创建 managed task graph
+- skill 直接以完整 expanded form 生效
 
-### 5.2 Planner flow
+### 5.2 AMA H0
 
-Planner outputs:
-
-- scope
-- assumptions
-- decomposition
-- success criteria
-- proposed evidence requirements
-
-The Planner should not dominate execution after handoff unless the Lead requests replanning.
-
-### 5.3 Generator flow
-
-Generator outputs:
-
-- code changes
-- artifact changes
-- implementation notes
-- self-reported claims
-
-These claims are advisory only until evaluated.
-
-### 5.4 Evaluator flow
-
-Evaluator inputs:
-
-- current contract
-- generator outputs
-- deterministic check outputs
-- evidence index
-
-Evaluator outputs:
-
-- verdict per criterion
-- missing evidence list
-- retry guidance
-- blocked reasons
-
-### 5.5 Multi-worker flow
-
-`H3_MULTI_WORKER` may create specialized workers with bounded ownership.
-
-Rules:
-
-- each worker needs a clear slice
-- overlapping write sets should be avoided
-- synthesis remains centralized
-- evaluator remains independent of generators
-
----
-
-## 6. Evidence-Driven Completion
-
-### 6.1 Completion rule
-
-A task is complete only when:
-
-1. contract criteria are satisfied
-2. required evidence exists
-3. evaluator verdict is sufficiently positive
-4. no blocking risk remains unacknowledged
-
-### 6.2 Evidence classes
-
-Recommended minimum classes:
-
-- deterministic checks
-- test results
-- code-diff or artifact references
-- behavioral verification where available
-- explicit evaluator review summary
-
-### 6.3 Verdict record
-
-```ts
-interface CompletionVerdict {
-  taskId: string;
-  status: "complete" | "blocked" | "needs_retry";
-  satisfiedCriteria: string[];
-  failedCriteria: string[];
-  missingEvidence: string[];
-  summary: string;
-  decidedAt: string;
-}
+```text
+intent gate -> direct runner
 ```
 
-This verdict should be persisted, not inferred from chat text.
+或：
 
----
-
-## 7. Provider-Aware Harness Policy
-
-### 7.1 Provider policy snapshot
-
-```ts
-interface ProviderPolicySnapshot {
-  provider: string;
-  model?: string;
-  provenance: "native" | "bridge";
-  supportsThinkingControl: boolean;
-  supportsToolCalling: boolean;
-  supportsMultimodalInput: boolean;
-  contextReliability: "high" | "medium" | "low";
-  orchestrationWarnings: string[];
-}
+```text
+intent gate -> Scout -> H0 direct runner
 ```
 
-### 7.2 Routing impact
+Scout downshift 到 H0 时，系统必须重新回到 direct path 收口，而不是把 Scout 口吻直接回给用户。
 
-Examples:
+### 5.3 AMA H1
 
-- low tool reliability may require stronger evaluation
-- bridge-backed providers may disable some harness shapes
-- weak context fidelity may force smaller worker scopes
-- no multimodal support blocks image-centric evaluation
+Current implementation note:
+- `H0` downshifts no longer hand off to a second direct agent; Scout can complete `H0_DIRECT` itself when it already has enough evidence.
+- `H1` stays lightweight: Generator + light Evaluator only, no Planner, no contract negotiation, no default multi-round refinement.
+- `read-only` and `docs-only` work may use `H1` only after an explicit stronger-check request and must never upgrade from `H1` to `H2`.
+- Scout must stop after producing a medium-rich cheap-facts handoff for H1; it must not keep exploring to build a mini-plan.
 
-### 7.3 Why this matters
-
-KodaX must stop pretending native and bridge providers are interchangeable when they are not.
-
----
-
-## 8. Boundary with FEATURE_034
-
-This boundary is critical.
-
-### 8.1 What `FEATURE_034` owns
-
-`FEATURE_034` is the runtime substrate. It owns:
-
-- extension loading
-- capability registration
-- tool override semantics
-- diagnostics and provenance
-- structured capability results
-- host-neutral runtime participation
-
-### 8.2 What `FEATURE_034` does not own
-
-It does not own:
-
-- task decomposition
-- role policy
-- harness selection
-- evaluator authority
-- cross-agent completion semantics
-- long-running task truth model
-
-### 8.3 Relationship to other features
-
-| Feature | Owns |
-|---|---|
-| `019` | session tree, checkpoints, lineage |
-| `022` | native multi-agent control plane |
-| `025` | task intelligence and harness routing |
-| `034` | extension and capability runtime |
-| `035` | MCP capability provider |
-| `038` | official sandbox extension |
-
-If `034` starts absorbing orchestration or task semantics, the architecture becomes muddled again.
-
----
-
-## 9. Compatibility Surface
-
-### 9.1 `/project`
-
-`/project` becomes a facade over managed tasks:
-
-- create or continue task
-- inspect plan
-- inspect evidence
-- trigger verify
-- pause, resume, or override routing
-
-### 9.2 `--init`
-
-`--init` becomes a convenience way to create a task envelope with durable state enabled.
-
-### 9.3 `--auto-continue`
-
-`--auto-continue` becomes a non-REPL task runner over the same task engine.
-
-### 9.4 `--team`
-
-`--team` should be downgraded to one of:
-
-- compatibility alias
-- hidden debug entry point
-- explicit deprecation path
-
-It should no longer define the product story for multi-agent work.
-
----
-
-## 10. Integration with Current Codebase
-
-### 10.1 Existing components to preserve
-
-Current strengths should be reused:
-
-- prompt builder and long-running prompt rules
-- orchestration runtime primitives
-- project harness verifier patterns
-- `.agent/project/` persistence ideas
-
-### 10.2 Expected migration targets
-
-| Current component | Future role |
-|---|---|
-| long-running prompt injection | hint layer for `H2` and `H3` |
-| project storage | source material for task store migration |
-| orchestration runtime | substrate for `FEATURE_022` |
-| `/project` commands | control surface facade |
-| project harness | evidence and evaluation seed |
-
----
-
-## 11. Implementation Priorities
-
-1. Establish task-first persistence.
-2. Establish harness router and control-plane skeleton.
-3. Add role separation and evaluator authority.
-4. Migrate `/project` and auto-continue flows onto the new engine.
-5. Retire `--team` as a product concept.
-6. Expand knowledge, retrieval, sandbox, and multi-surface features on top.
-
----
-
-## 12. References
-
-- [ADR](ADR.md)
-- [HLD](HLD.md)
-- [PRD](PRD.md)
-- [Feature Roadmap](features/README.md)
-
----
-
-## Appendix A: Current Runtime Reference
-
-This appendix retains compact current-state details that are still useful while migrating toward the target design.
-
-### A.1 Current core runtime concepts
-
-Current KodaX still revolves around a few existing primitives:
-
-- `KodaXMessage`
-- `KodaXToolDefinition`
-- `KodaXOptions`
-- `PermissionMode`
-- `KodaXEvents`
-
-These are part of the migration surface even if the target design introduces richer task-engine models.
-
-### A.2 Current provider model
-
-The current provider layer still follows:
-
-- abstract provider base
-- registry-based lookup
-- provider-specific stream implementations
-- mixed native and bridge-backed providers
-
-This matters because `FEATURE_029` and `FEATURE_022` build on top of it rather than replacing it wholesale.
-
-### A.3 Current tool model
-
-The current tool layer still relies on:
-
-- a centralized registry
-- named tool handlers
-- built-in tool schemas
-- host-mediated confirmation and permission behavior
-
-`FEATURE_034` evolves this into a stronger capability/runtime model, but implementation work must still account for the existing registry and built-in tools.
-
-### A.4 Current host callback model
-
-The current system already exposes host-driven lifecycle behavior through callback/event-style interfaces such as:
-
-- streaming deltas
-- tool start/result notifications
-- completion/error notifications
-- confirmation hooks
-- before-tool-execute style checks
-
-This matters because the target extension/runtime model should separate host callbacks from extension hooks without losing existing host integration behavior.
-
----
-
-## Appendix B: Restored Current Runtime Design Notes
-
-This appendix restores concrete current-state design material from the earlier DD so migration work keeps a clear picture of the runtime that exists today.
-
-### B.1 Current core types retained
-
-Representative current runtime concepts still include:
-
-```ts
-type PermissionMode =
-  | "plan"
-  | "default"
-  | "accept-edits"
-  | "auto-in-project";
-
-interface KodaXOptions {
-  provider: string;
-  thinking?: boolean;
-  maxIter?: number;
-  parallel?: boolean;
-  auto?: boolean;
-  mode?: PermissionMode;
-}
+```text
+Scout -> Generator -> Evaluator
 ```
 
-Other important current concepts retained from the earlier DD:
+约束：
 
-- `KodaXMessage`
-- `KodaXContentBlock`
-- `KodaXToolDefinition`
-- `KodaXEvents`
-- `KodaXResult`
+- 仍然只有一个主执行者
+- evaluator 只做 post-hoc accept / revise / blocked
+- 最多一次同层 revise，再决定是否升 H2
 
-These remain part of the migration surface even if the target architecture adds `TaskEnvelope`, `TaskContract`, and `EvidenceBlock`.
+### 5.4 AMA H2
 
-### B.2 Current event system retained
-
-The earlier DD recorded an event/callback model that is still useful implementation reference:
-
-- `onTextDelta`
-- `onThinkingDelta`
-- `onThinkingEnd`
-- `onToolUseStart`
-- `onToolResult`
-- `onToolInputDelta`
-- `onStreamEnd`
-- `onSessionStart`
-- `onIterationStart`
-- `onCompact`
-- `onRetry`
-- `onComplete`
-- `onError`
-- `onConfirm`
-- `beforeToolExecute`
-
-This matters because host callbacks already exist and should be preserved while extension hooks evolve separately.
-
-### B.3 Current provider system retained
-
-The previous DD contained concrete provider-shape notes that still apply:
-
-```ts
-abstract class KodaXBaseProvider {
-  abstract stream(
-    messages: unknown[],
-    tools: unknown[],
-    system: string,
-    thinking?: boolean,
-    streamOptions?: unknown
-  ): Promise<unknown>;
-}
-
-const PROVIDER_REGISTRY = new Map<string, () => KodaXBaseProvider>();
+```text
+Scout -> Planner -> Generator <-> Evaluator
 ```
 
-Still-useful properties of the current provider system:
+约束：
 
-- registry-based lookup
-- per-provider capability differences
-- mixed native and bridge-backed implementations
-- provider-specific environment and error handling
+- `Planner` 必须先交 `kodax-task-contract`
+- 缺 contract 时先重试 `Planner`
+- `Generator` 只有在存在可消费 contract 时才执行
+- `Evaluator` 只做 targeted spot-check 与 verdict
 
-### B.4 Current tool system retained
+---
 
-The earlier DD also captured the current tool model:
+## 6. Evidence Layering
 
-```ts
-type ToolHandler = (
-  input: Record<string, unknown>,
-  context: unknown
-) => Promise<string>;
+### 6.1 Three-layer model
 
-const TOOL_REGISTRY = new Map<string, ToolHandler>();
+```text
+scope facts
+  -> overview evidence
+    -> deep evidence
 ```
 
-Current built-in tool family still includes:
+`scope facts` 例如：
 
+- changed files / lines / modules
+- reviewScale / risk / task family
+
+`overview evidence` 例如：
+
+- `changed_diff_bundle`
+- repo_overview
+- 关键入口 / 类型 / 测试变化摘要
+
+`deep evidence` 例如：
+
+- `changed_diff`
 - `read`
-- `write`
-- `edit`
-- `bash`
-- `glob`
-- `grep`
-- `undo`
-- `diff`
-- `ask-user`
+- file-by-file verification
+- tests / runtime checks
 
-This tool registry remains the substrate that `FEATURE_034` evolves into a broader capability runtime.
+### 6.2 Role consumption rules
 
-### B.5 Current agent-loop notes retained
+- `Scout`: scope facts + 少量 overview
+- `Planner`: scope facts + overview + skill-map
+- `Generator`: deep evidence + full skill
+- `Evaluator`: contract/handoff + targeted deep evidence + skill-map
 
-The older DD recorded a useful simplified shape of the current loop:
+---
 
-1. resolve provider and options
-2. resolve or load session state
-3. append the user message
-4. stream model output
-5. build assistant content blocks
-6. inspect control signals
-7. execute tool calls
-8. append tool results and continue
-9. persist session state and return result
+## 7. Skill Map and Role Projections
 
-Important current details retained:
+当前 skill 不是为多角色原生设计的，因此 AMA 通过 `Scout -> skill-map` 做适配。
 
-- default max iterations around `200`
-- compaction before or during long runs
-- signal parsing from assistant output
-- tool execution woven into the same loop
+### 7.1 Projection rules
 
-### B.6 Promise-signal notes retained
+- `Scout`
+  - reads full skill
+  - emits `skill-map`
+- `Planner`
+  - reads `skill-map`
+  - does not default to raw skill
+- `Generator`
+  - reads full skill + `skill-map`
+- `Evaluator`
+  - reads `skill-map`
+  - may reopen raw skill only when `projectionConfidence=low` or claims conflict
 
-The current long-running system still relies on explicit completion/control signals such as:
+### 7.2 Fallback behavior
 
-- `COMPLETE`
-- `BLOCKED`
-- `DECIDE`
+如果 skill 不规范：
 
-The exact representation may evolve, but this history still matters because managed execution already contains a notion of structured control beyond plain chat text.
+- `skill-map` 允许低置信度
+- `ambiguities` 必须显式记录缺失项
+- `Planner` 将缺口写进 `required_evidence / constraints`
+- `Evaluator` 获得 raw skill fallback 权限
 
-### B.7 Permission-system notes retained
+---
 
-Still-useful current-state details:
+## 7.5 Same-role round summaries
 
-- `plan` blocks mutation
-- `default` asks for confirmation on risky mutation and shell behavior
-- `accept-edits` removes most edit confirmations but still treats shell more carefully
-- `auto-in-project` enables stronger automation within project boundaries
+为了保持非-generator 角色的低成本连续性，runtime 会为：
+- `Scout`
+- `Planner`
+- `Evaluator`
 
-The earlier DD also preserved pattern-based permission ideas and protected-path handling. Those remain relevant to future sandbox integration and approval UX.
+写入结构化 `same-role summary`。
 
-### B.8 Skills-system notes retained
+该摘要至少覆盖：
+- 上一轮该角色的目标
+- 已确认结论
+- 未决问题
+- 下一轮需要延续的判断
 
-The previous DD recorded baseline skill behavior that should remain visible:
+运行规则：
+- 这些角色继续使用 `reset-handoff`
+- 下一轮通过显式输入重新注入 summary
+- 不恢复完整私有会话历史
+- `Generator` 不使用这套机制
 
-- discovery from user and project skill directories
-- markdown-first skill format
-- natural-language triggering rather than command-only invocation
-- coexistence of built-in and custom skills
+---
 
-### B.9 Project and managed-workflow notes retained
+## 8. Tool Policy and Enforcement
 
-Before the task-engine reframing, the DD already described long-running project workflows such as:
+当前实现通过 role-level `toolPolicy` + `beforeToolExecute` 做硬约束。
 
-- `/project init`
-- `/project status`
-- `/project next`
-- `/project auto`
-- `/project edit`
-- `/project reset`
-- `/project analyze`
+示意规则：
 
-Those flows are no longer the permanent top-level abstraction, but they remain crucial migration input because:
+- `Scout`
+  - allow: `changed_scope`, `repo_overview`, `changed_diff_bundle`, small reads
+  - block: deep diff paging, mutation
+- `Planner`
+  - allow: overview evidence only
+  - block: linear `changed_diff` paging, mutation
+- `Generator`
+  - owns deep evidence / execution
+- `Evaluator`
+  - allow: verification tools and targeted reads
+  - block: mutation
 
-- they already define durable artifacts
-- they already encode long-running workflow expectations
-- they already contain the strongest existing verification semantics
+---
 
-### B.10 REPL and UI notes retained
+## 9. Budget and Runtime Semantics
 
-Useful current-state details from the earlier DD remain:
+### 9.1 Global work budget
 
-- Ink-based component structure
-- command-driven REPL interaction
-- autocomplete across multiple sources
-- history review and waiting/input distinctions
-- theme and status rendering concerns
+AMA 默认使用统一的 `globalWorkBudget`：
 
-These continue to matter for `FEATURE_023`.
+- 初始 `200`
+- 使用量达到 90% 时可申请 `+200`
+- 可多次申请
+
+### 9.2 Role guidance vs user-visible budget
+
+系统内部仍可保留 role guidance：
+
+- `softMaxIter`
+- `hardMaxIter`
+- plannedRounds / refinementCap
+
+但这些只用于 runtime 调优，不应直接作为用户主进度语义。
+
+### 9.3 User-visible rules
+
+- 默认显示 `Work used/total`
+- `Round` 只在真实额外 pass 存在时显示
+- AMA 不应回退显示 `Iter x/y`
+
+### 9.4 Project + SA persistence
+
+`Project` 与 `SA / AMA` 是正交维度。
+
+当执行 `Project + SA` 时：
+- 不创建 `managed-task.json`
+- 不创建 planner/generator/evaluator graph
+- direct run 结束后写入 `lightweight run record`
+
+该记录至少包含：
+- `status`
+- `summary`
+- `sessionId`
+- `taskSurface`
+- `agentMode`
+- `executionMode`
+- `featureIndex / requestId / project metadata`
+- `changedFiles`
+- `checks`
+- `evidence`
+- `blockers`
+- `nextStep`
+- timestamps
+
+读取优先级：
+- 若存在 managed task，project surfaces 继续优先读取 managed task
+- 若不存在 managed task，但存在 lightweight run record，则使用该记录补足 status / latest summary / next-step guidance
+
+---
+
+## 10. UI / Transcript Semantics
+
+### 10.1 Tool disclosure
+
+`ToolCall.input` 是主要披露来源，preview 只做补充。
+
+显示优先级：
+
+- `bash`: exact command
+- diff/read/search tools: path / scope / range / pattern
+
+### 10.2 Evaluator public answer
+
+Evaluator 的内部职责保留在：
+
+- verdict block
+- artifact / transcript
+
+用户最终答案必须：
+
+- 直接面向用户
+- 不以“我验证了 Generator 的结论”开头
+- 不把 Generator / Planner 当成用户面对对象
+- 不保留 `Confirmed:`、`I now have sufficient evidence ...`、`Let me verify ...` 之类的内部核查前导段落
+
+### 10.3 Transcript retention
+
+non-terminal worker transcript 仍然保留，以支持可观测性与调试。
+
+但 public answer contract 必须与内部 verdict 语义分离。
+
+---
+
+## 11. Command / Skill Runtime Integration
+
+命令与 skill 继续走统一 invocation runtime。
+
+当前约束：
+
+- builtin / discovered command 共享 `CommandDefinition` 元数据模型
+- skill invocation metadata 会被挂入 `options.context`
+- skill 的 AMA 适配发生在 managed-task runtime，而不是 command schema
+
+---
+
+## 12. 与相关 Feature 的边界
+
+- `FEATURE_019`: durable state / lineage / checkpoints
+- `FEATURE_022`: AMA/SA 主骨架
+- `FEATURE_025`: intent-first routing
+- `FEATURE_027`: agent mode UX
+- `FEATURE_028`: retrieval / evidence tooling
+- `FEATURE_029`: provider policy
+- `FEATURE_034`: capability runtime
+
+---
+
+## 13. Routing Ceiling Rules
+
+The current execution ceiling is intentionally strict:
+
+- `mutationSurface = read-only` defaults to `SA/H0`.
+- `mutationSurface = docs-only` defaults to `SA/H0`.
+- Only an explicit user request for stronger checking may move `read-only` or `docs-only` work to `H1_EXECUTE_EVAL`.
+- `read-only` and `docs-only` tasks must never escalate to `H2_PLAN_EXECUTE_EVAL`.
+- `reviewScale`, repo size, and changed-scope signals are evidence-planning inputs only; they do not determine topology.
+- `H2_PLAN_EXECUTE_EVAL` is reserved for long-running code/system mutation work with real verification value.
+- H2 starts with a single main pass. Additional passes require a structured evaluator failure.

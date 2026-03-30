@@ -10,6 +10,8 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { fileURLToPath } from 'url';
 import {
+  buildProviderCapabilitySnapshot,
+  evaluateProviderPolicy,
   getProviderConfiguredCapabilityProfile,
   getProviderConfiguredReasoningCapability,
   getProviderList as getBuiltInProviderList,
@@ -18,8 +20,13 @@ import {
   getCustomProviderList,
   getCustomProvider,
   isProviderConfigured as isBuiltInProviderConfigured,
+  resolveProvider,
   type KodaXProviderCapabilityProfile,
+  type KodaXProviderCapabilitySnapshot,
+  type KodaXProviderPolicyDecision,
+  type KodaXProviderPolicyHints,
   type KodaXReasoningCapability,
+  type KodaXAgentMode,
   type KodaXReasoningMode,
   type KodaXReasoningOverride,
   type KodaXCustomProviderConfig,
@@ -198,6 +205,78 @@ export function getProviderCapabilityProfile(
   }
 }
 
+function getProviderCapabilityMetadata(
+  name: string,
+  model?: string,
+): {
+  capabilityProfile: KodaXProviderCapabilityProfile;
+  reasoningCapability: KodaXReasoningCapability | 'unknown';
+} | null {
+  const capabilityProfile = getProviderCapabilityProfile(name);
+  const reasoningCapability = getProviderReasoningCapability(name, model);
+
+  if (capabilityProfile) {
+    return {
+      capabilityProfile,
+      reasoningCapability,
+    };
+  }
+
+  try {
+    const provider = resolveProvider(name);
+    return {
+      capabilityProfile: provider.getCapabilityProfile(),
+      reasoningCapability: provider.getReasoningCapability(model),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function getProviderCapabilitySnapshot(
+  name: string,
+  model?: string,
+): KodaXProviderCapabilitySnapshot | null {
+  const metadata = getProviderCapabilityMetadata(name, model);
+  if (!metadata) {
+    return null;
+  }
+
+  return buildProviderCapabilitySnapshot({
+    providerName: name,
+    model,
+    capabilityProfile: metadata.capabilityProfile,
+    reasoningCapability:
+      metadata.reasoningCapability === 'unknown'
+        ? undefined
+        : metadata.reasoningCapability,
+  });
+}
+
+export function getProviderPolicyDecision(
+  name: string,
+  model: string | undefined,
+  reasoningMode: KodaXReasoningMode,
+  hints?: KodaXProviderPolicyHints,
+): KodaXProviderPolicyDecision | null {
+  const metadata = getProviderCapabilityMetadata(name, model);
+  if (!metadata) {
+    return null;
+  }
+
+  return evaluateProviderPolicy({
+    providerName: name,
+    model,
+    capabilityProfile: metadata.capabilityProfile,
+    reasoningCapability:
+      metadata.reasoningCapability === 'unknown'
+        ? undefined
+        : metadata.reasoningCapability,
+    reasoningMode,
+    hints,
+  });
+}
+
 export function describeProviderCapabilitySummary(
   profile: KodaXProviderCapabilityProfile,
 ): string {
@@ -343,6 +422,7 @@ export function loadConfig(): {
   model?: string;
   thinking?: boolean;
   reasoningMode?: KodaXReasoningMode;
+  agentMode?: KodaXAgentMode;
   parallel?: boolean;
   permissionMode?: string;
   providerReasoningOverrides?: Record<string, KodaXReasoningOverride>;
@@ -357,6 +437,7 @@ export function loadConfig(): {
         model?: string;
         thinking?: boolean;
         reasoningMode?: KodaXReasoningMode;
+        agentMode?: KodaXAgentMode;
         parallel?: boolean;
         permissionMode?: string;
         providerReasoningOverrides?: Record<string, KodaXReasoningOverride>;
@@ -381,6 +462,7 @@ export function saveConfig(config: {
   model?: string;
   thinking?: boolean;
   reasoningMode?: KodaXReasoningMode;
+  agentMode?: KodaXAgentMode;
   parallel?: boolean;
   permissionMode?: string;
   providerReasoningOverrides?: Record<string, KodaXReasoningOverride>;
@@ -412,6 +494,83 @@ export async function getGitRoot(): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+export function formatProviderSourceKind(
+  sourceKind: KodaXProviderCapabilitySnapshot['sourceKind'],
+): string {
+  switch (sourceKind) {
+    case 'builtin':
+      return 'Built-in';
+    case 'runtime':
+      return 'Runtime extension';
+    case 'custom':
+      return 'Custom config';
+    case 'unknown':
+    default:
+      return 'Unknown';
+  }
+}
+
+export function formatProviderCapabilityDetailLines(
+  snapshot: KodaXProviderCapabilitySnapshot,
+): string[] {
+  const transport =
+    snapshot.transport === 'cli-bridge' ? 'CLI bridge' : 'Native API';
+  const conversation =
+    snapshot.conversationSemantics === 'last-user-message'
+      ? 'latest-user-message only'
+      : 'full conversation history';
+
+  return [
+    `Source: ${formatProviderSourceKind(snapshot.sourceKind)}`,
+    `Transport: ${transport}`,
+    `Conversation semantics: ${conversation}`,
+    `Context fidelity: ${snapshot.contextFidelity}`,
+    `Tool calling: ${snapshot.toolCallingFidelity}`,
+    `Session behavior: ${snapshot.sessionSupport}`,
+    `Long-running support: ${snapshot.longRunningSupport}`,
+    `Evidence-heavy flows: ${snapshot.evidenceSupport}`,
+    `Multimodal support: ${snapshot.multimodalSupport}`,
+    `MCP support: ${snapshot.mcpSupport}`,
+    `Reasoning control: ${describeReasoningCapabilityControl(snapshot.reasoningCapability)}`,
+  ];
+}
+
+export function getProviderCommonPolicyScenarios(
+  name: string,
+  model: string | undefined,
+  reasoningMode: KodaXReasoningMode,
+): Array<{ label: string; decision: KodaXProviderPolicyDecision }> {
+  const scenarios: Array<{
+    label: string;
+    hints: KodaXProviderPolicyHints;
+  }> = [
+    { label: 'General coding', hints: {} },
+    { label: 'Evidence-heavy review', hints: { evidenceHeavy: true } },
+    { label: 'Long-running task', hints: { longRunning: true } },
+    {
+      label: 'Project harness',
+      hints: { longRunning: true, harness: 'project', evidenceHeavy: true },
+    },
+  ];
+
+  return scenarios
+    .map((scenario) => ({
+      label: scenario.label,
+      decision: getProviderPolicyDecision(
+        name,
+        model,
+        reasoningMode,
+        scenario.hints,
+      ),
+    }))
+    .filter(
+      (
+        scenario,
+      ): scenario is { label: string; decision: KodaXProviderPolicyDecision } =>
+        scenario.decision !== null,
+    );
 }
 
 // Feature type definition

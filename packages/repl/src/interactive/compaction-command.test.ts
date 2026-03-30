@@ -41,7 +41,7 @@ describe('/compact command', () => {
     callbacks = {
       exit: vi.fn(),
       saveSession: vi.fn(async () => {}),
-      loadSession: vi.fn(async () => true),
+      loadSession: vi.fn(async (): Promise<'loaded'> => 'loaded') as CommandCallbacks['loadSession'],
       listSessions: vi.fn(async () => {}),
       clearHistory: vi.fn(),
       printHistory: vi.fn(),
@@ -54,6 +54,7 @@ describe('/compact command', () => {
       provider: 'zhipu-coding',
       thinking: true,
       reasoningMode: 'auto',
+      agentMode: 'ama',
       parallel: false,
       permissionMode: 'accept-edits',
     };

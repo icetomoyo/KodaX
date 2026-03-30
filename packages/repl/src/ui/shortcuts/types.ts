@@ -19,6 +19,7 @@ export type ShortcutActionId =
   | 'showHelp' // ? - 显示帮助
   | 'toggleThinking' // Ctrl+T - 切换 Extended Thinking
   | 'togglePermissionMode' // Ctrl+O / Shift+Tab - 切换权限模式
+  | 'toggleAgentMode' // Alt+M - 切换 AMA / SA
   | 'toggleParallelMode' // Ctrl+P - 切换并行/顺序执行
   | 'submitInput' // Enter - 提交输入
   // Input shortcuts - 输入快捷键

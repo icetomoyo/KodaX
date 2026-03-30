@@ -3,7 +3,15 @@ import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import { exec as execCallback } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { KodaXEvents, KodaXMessage, KodaXOptions } from '@kodax/coding';
+import type {
+  KodaXEvents,
+  KodaXMessage,
+  KodaXOptions,
+  KodaXTaskCapabilityHint,
+  KodaXTaskVerificationCriterion,
+  KodaXTaskVerificationContract,
+  KodaXRuntimeVerificationContract,
+} from '@kodax/coding';
 import type { ProjectFeature } from './project-state.js';
 import { isRecord, isStringArray } from './json-guards.js';
 import { ProjectStorage } from './project-storage.js';
@@ -42,6 +50,20 @@ function isProjectHarnessCompletionReport(value: unknown): value is ProjectHarne
     && (value.blockers === undefined || isStringArray(value.blockers));
 }
 
+function dedupeCapabilityHints(hints: KodaXTaskCapabilityHint[]): KodaXTaskCapabilityHint[] {
+  const seen = new Set<string>();
+  const result: KodaXTaskCapabilityHint[] = [];
+  for (const hint of hints) {
+    const key = `${hint.kind}:${hint.name}`.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(hint);
+  }
+  return result;
+}
+
 const execAsync = promisify(execCallback);
 const TEST_EVIDENCE_PATTERNS = [
   /tdd first/i,
@@ -65,6 +87,7 @@ const LAYER_INDEPENDENCE_PATTERNS = [
   /package dependenc/i,
 ] as const;
 const DEFAULT_PACKAGE_LAYER_ORDER = ['ai', 'agent', 'skills', 'coding', 'repl', 'cli'] as const;
+const FRONTEND_VERIFICATION_PATTERN = /\b(frontend|front-end|ui|browser|page|screen|playwright|e2e|webapp|visual)\b/i;
 const REPAIR_PLAYBOOKS: Array<{
   id: string;
   matches: Array<string | RegExp>;
@@ -103,6 +126,64 @@ const REPAIR_PLAYBOOKS: Array<{
     ],
   },
 ];
+
+function buildVerificationCapabilityHints(
+  feature: ProjectFeature,
+  config: ProjectHarnessConfig,
+): KodaXTaskCapabilityHint[] {
+  const hints: KodaXTaskCapabilityHint[] = [];
+  const combinedText = [
+    feature.name,
+    feature.description,
+    ...(feature.steps ?? []),
+  ].filter(Boolean).join(' ');
+
+  if (FRONTEND_VERIFICATION_PATTERN.test(combinedText)) {
+    hints.push(
+      {
+        kind: 'skill',
+        name: 'agent-browser',
+        details: 'Use browser automation when the evaluator needs to inspect the real frontend flow.',
+      },
+      {
+        kind: 'tool',
+        name: 'playwright',
+        details: 'Preferred browser runner for end-to-end evaluator verification.',
+      },
+      {
+        kind: 'workflow',
+        name: 'frontend-verification',
+        details: 'Open the app, exercise the critical path, and reject completion on visible or console failures.',
+      },
+    );
+  }
+
+  for (const check of config.checks) {
+    hints.push({
+      kind: 'command',
+      name: check.id,
+      details: check.command,
+    });
+
+    if (/playwright|cypress|e2e/i.test(check.command)) {
+      hints.push(
+        {
+          kind: 'skill',
+          name: 'agent-browser',
+          details: `Support the "${check.id}" check with browser automation evidence.`,
+        },
+        {
+          kind: 'tool',
+          name: 'playwright',
+          details: `Run or inspect the browser suite required by "${check.id}".`,
+        },
+      );
+    }
+  }
+
+  return dedupeCapabilityHints(hints);
+}
+
 const FEATURE_KEYWORD_STOP_WORDS = new Set([
   'add',
   'build',
@@ -1322,6 +1403,67 @@ export class ProjectHarnessAttempt {
     };
   }
 
+  describeVerificationContract(): KodaXTaskVerificationContract {
+    const requiredEvidence = [
+      'Return a valid <project-harness>{...}</project-harness> completion block.',
+      'Provide concrete changedFiles and evidence items for the completed work.',
+    ];
+    if (this.config.completionRules.requireProgressUpdate) {
+      requiredEvidence.push('Update PROGRESS.md with fresh execution evidence.');
+    }
+    if (this.config.invariants?.requireTestEvidenceOnComplete) {
+      requiredEvidence.push('Report the exact tests, checks, or browser validation that were executed.');
+    }
+    if (this.config.invariants?.requireDocUpdateOnArchitectureChange) {
+      requiredEvidence.push('Include doc or ADR evidence when the change affects architecture or boundaries.');
+    }
+
+    const requiredChecks = this.config.checks
+      .filter(check => check.required)
+      .map(check => `${check.id}: ${check.command}`);
+    const criteria: KodaXTaskVerificationCriterion[] = this.config.checks
+      .filter(check => check.required)
+      .map((check, index) => ({
+        id: check.id,
+        label: check.id,
+        description: `Required project harness check: ${check.command}`,
+        threshold: 75,
+        weight: index === 0 ? 0.4 : 0.2,
+        requiredEvidence: [
+          `Report execution evidence for check ${check.id}.`,
+        ],
+      }));
+    const runtime: KodaXRuntimeVerificationContract = {
+      cwd: getProjectRoot(this.storage),
+      uiFlows: buildVerificationCapabilityHints(this.feature, this.config)
+        .some((hint) => /agent-browser|playwright/i.test(hint.name))
+        ? [
+          `Exercise the critical flow for feature #${this.featureIndex} and reject completion on visible or console failures.`,
+        ]
+        : undefined,
+      apiChecks: requiredChecks.filter(check => /api|http|endpoint|curl/i.test(check)),
+      dbChecks: requiredChecks.filter(check => /\bdb\b|database|sql/i.test(check)),
+    };
+
+    return {
+      summary: `Project Harness verification for feature #${this.featureIndex} in ${this.mode} mode.`,
+      instructions: [
+        'The evaluator must independently verify the result instead of trusting generator claims.',
+        'Reject completion if any required evidence or deterministic check is missing.',
+        'Do not edit feature_list.json or .agent/project/harness/** directly during verification.',
+      ],
+      requiredEvidence,
+      requiredChecks,
+      rubricFamily: buildVerificationCapabilityHints(this.feature, this.config)
+        .some((hint) => /agent-browser|playwright/i.test(hint.name))
+        ? 'frontend'
+        : 'functionality',
+      criteria,
+      runtime,
+      capabilityHints: buildVerificationCapabilityHints(this.feature, this.config),
+    };
+  }
+
   async verify(messages: KodaXMessage[]): Promise<ProjectHarnessVerificationResult> {
     const completionReport = parseCompletionReport(messages);
     return evaluateHarnessRun({
@@ -1859,16 +2001,18 @@ async function evaluateHarnessRun(
 
   if (options.persist) {
     const gitSnapshot = await getGitSnapshot(projectRoot);
-    const historicalNodes = await options.storage.readHarnessSessionNodes<ProjectHarnessSessionNodeRecord>();
+    const historicalNodes = await options.storage.readLineageSessionNodes<ProjectHarnessSessionNodeRecord>();
     const parentNode = [...historicalNodes]
       .reverse()
       .find(node => node.featureIndex === options.featureIndex)
       ?? historicalNodes[historicalNodes.length - 1]
       ?? null;
     const checkpointRecord: ProjectHarnessCheckpointRecord = {
+      id: buildCheckpointId(runRecord.runId),
       checkpointId: buildCheckpointId(runRecord.runId),
       runId: runRecord.runId,
       featureIndex: runRecord.featureIndex,
+      taskId: `feature-${runRecord.featureIndex}`,
       decision,
       gitHead: gitSnapshot.gitHead,
       gitStatus: gitSnapshot.gitStatus,
@@ -1877,8 +2021,11 @@ async function evaluateHarnessRun(
       createdAt,
     };
     const sessionNodeRecord: ProjectHarnessSessionNodeRecord = {
+      id: buildSessionNodeId(runRecord.runId),
       nodeId: buildSessionNodeId(runRecord.runId),
+      taskId: `feature-${runRecord.featureIndex}`,
       runId: runRecord.runId,
+      parentId: parentNode?.nodeId ?? null,
       parentNodeId: parentNode?.nodeId ?? null,
       parentRunId: parentNode?.runId ?? null,
       featureIndex: runRecord.featureIndex,
@@ -1889,8 +2036,8 @@ async function evaluateHarnessRun(
       createdAt,
     };
     await options.storage.appendHarnessRun(runRecord);
-    await options.storage.appendHarnessCheckpoint(checkpointRecord);
-    await options.storage.appendHarnessSessionNode(sessionNodeRecord);
+    await options.storage.appendLineageCheckpoint(checkpointRecord);
+    await options.storage.appendLineageSessionNode(sessionNodeRecord);
     if (decision !== 'verified_complete') {
       const criticRecord: ProjectHarnessCriticRecord = {
         runId: runRecord.runId,

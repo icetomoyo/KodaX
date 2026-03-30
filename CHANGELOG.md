@@ -4,6 +4,209 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+<!-- last-sync: HEAD -->
+
+---
+
+## [0.7.12] - 2026-03-30
+
+### Fixed
+- Resolve mojibake (garbled text) in `kodax --help` output, CLI descriptions, and code comments across `kodax_cli.ts` — replaced 16 garbled strings with proper English text
+- Fix garbled CJK keyword regex in `reasoning.ts` by referencing existing clean pattern constants instead of inline mojibake
+- Replace `路` separator with `→` in StatusBar routing/scout status display
+- Propagate CLI model selection through ACP bridge
+
+### Changed
+- Add `.npmrc` to pin `registry.npmmirror.com` for consistent lockfile across machines
+
+---
+
+## [0.7.11] - 2026-03-30
+
+### Added
+- **Skill-aware AMA role projection**: skill invocations now carry `skillInvocation` metadata into managed execution, `Scout` emits a `skill-map`, and AMA roles consume role-specific skill views instead of sharing the same raw skill prompt
+- **Skill artifacts for managed tasks**: managed workspaces now persist `skill-execution.md`, `skill-map.json`, and `skill-map.md`
+- **Same-role round summaries for non-generator roles**: `Scout`, `Planner`, and `Evaluator` now persist a compact previous-round summary that is re-injected on later rounds without restoring full private chat history
+- **Global work-budget approval loop**: AMA runs use a unified `globalWorkBudget` with repeated `+200` approval extensions near the 90% threshold
+- **Improved tool disclosure**: REPL tool summaries now prefer target path/scope/cmd details, including explicit `bash` command display
+- **Interrupted-response persistence test coverage**: new UI regression coverage for Ctrl+C persistence queuing
+- **FEATURE_044**: Durable Compression Anchors and Artifact Recall spec added to v0.8.0 feature docs
+
+### Changed
+- **AMA simplified**: `H3_MULTI_WORKER`, default `Admission`, `Lead`, and `Contract Reviewer` were removed from the main runtime graph; AMA now operates with `H0_DIRECT`, `H1_EXECUTE_EVAL`, and `H2_PLAN_EXECUTE_EVAL`
+- **Routing ceilings tightened**: `read-only` and `docs-only` work now stay on `SA/H0` by default, may use `H1` only when the user explicitly asks for stronger checking, and can no longer enter `H2_PLAN_EXECUTE_EVAL`
+- **Repo scale semantics narrowed**: `reviewScale`, repo size, and changed-scope signals now shape evidence strategy only instead of forcing a heavier harness
+- **H2 default pass count reduced**: coordinated mutation work now starts with a single main pass and opens extra passes only after structured evaluator failure
+- **SA semantics clarified**: `SA` now bypasses AMA entirely and runs through the direct single-agent path
+- **Project + SA continuity clarified**: project-aware direct runs now persist a lightweight run record for status, latest summary, and next-step guidance without entering the managed-task graph
+- **Intent-first routing**: lightweight `conversation` / `lookup` inputs short-circuit before dirty-repo complexity can escalate them
+- **Scout and Planner evidence boundaries tightened**: Scout stays pre-harness, Planner is restricted to scope facts plus overview evidence, and Generator owns deep evidence passes
+- **Pre-Scout routing notes neutralized**: live AMA routing notes now stay provisional until Scout confirms the final harness
+- **Status bar semantics updated**: `Work used/total` is the primary AMA budget signal; `Round` appears only when a real extra pass exists; AMA no longer falls back to user-visible `Iter x/y`
+- **Evaluator public-answer contract tightened**: review answers are written directly for the user instead of narrating evaluator-vs-generator meta-review
+- **Command metadata parity improved**: builtin commands now align more closely with discovered command metadata fields
+- **Core docs refreshed**: HLD, DD, ADR, PRD, feature designs, and roadmap notes now match the current SA/AMA/skill architecture
+
+### Fixed
+- Interrupted managed tasks now filter empty/control-plane placeholder evidence from transcript rendering and queue the last visible response for background persistence
+- Mixed lookup/actionable prompts no longer short-circuit onto the pure lookup path
+- H1 revise no longer auto-escalates on the first evaluator retry
+- H1 read-only Generator now receives both runtime write guards and explicit prompt guidance to stay non-mutating
+- Scout downshifts now complete as Scout-owned `H0_DIRECT` runs instead of handing off to a second direct agent or leaking scout-flavored output
+
+### Tests
+- Added / expanded tests for `task-engine`, `reasoning`, `tool-display`, `live-streaming`, `StatusBar`, `invocation-runtime`, `types-legacy`, and `InkREPL.interrupted`
+
+<!-- last-sync: HEAD -->
+
+### Added
+- **Repository intelligence substrate (FEATURE_018)**: Task-aware repository intelligence layer under `.agent/repo-intelligence/` with durable artifacts — `repo-overview.json`, `changed-scope.json`, `module-index.json`, `symbol-index.json`, `process-index.json`, `repo-intelligence-manifest.json` — supporting incremental refresh, freshness metadata, and language-tiered extraction (TS/JS via AST, Python, Go, Rust, Java, C++)
+- **Intelligence query surfaces**: Six first-class retrieval tools — `repo_overview`, `module_context`, `symbol_context`, `process_context`, `impact_estimate`, `changed_scope` — returning structured capsules with freshness, confidence, evidence, and progressive disclosure (FEATURE_028)
+- **Repo-intelligence tools**: `repo-overview.ts`, `module-context.ts`, `symbol-context.ts`, `process-context.ts`, `impact-estimate.ts`, `changed-scope.ts`, `internal.ts`, and `query.ts` in `packages/coding/src/tools/` and `packages/coding/src/repo-intelligence/`
+- **Adaptive multi-agent mode toggle (FEATURE_027)**: Persistent `agentMode` setting (`sa`/`ama`) with CLI (`--agent-mode`), REPL (`/agent-mode`), and keyboard shortcut (`Alt+M`) entry points; status bar shows `KodaX - SA` or `KodaX - AMA`
+- **SA mode execution constraint**: Single-Agent mode clamps execution to single-agent path while preserving task routing, metadata, and managed-task artifacts — reducing token cost
+- **`--team` deprecation**: `--team` removed from main product surface, retained as deprecated compatibility path that warns and refuses execution
+- **Agent mode shortcut**: `Alt+M` default shortcut for runtime SA/AMA toggle with command fallback
+- **Prompt-time intelligence injection**: Automatic active-module and active-impact injection for edit/review/refactor flows via `buildPromptOverlay()`
+- **Routing enrichment**: `stabilizeRoutingDecision()` now consumes lightweight repo-intelligence signals to raise complexity, bias planning, and choose safer harness profiles
+- **Task evidence snapshots**: Managed tasks persist task-scoped retrieval snapshots (repo overview, changed scope, active module, impact) into evidence bundles
+- **New types**: Intelligence capsule types, confidence tiers, freshness metadata, language capability tiers in `@kodax/coding` and `@kodax/ai`
+- **New tests**: Repo-intelligence tool tests, reasoning tests for intelligence-aware routing, agent mode tests, status bar mode display tests, shortcut tests
+
+### Changed
+- **CLI entry points**: `kodax_cli.ts` updated for `--agent-mode` flag and deprecated `--team` handling
+- **Reasoning pipeline expanded**: `reasoning.ts` (+495 lines) enriched with repo-intelligence signals, language-tiered extraction, and low-confidence fallback guidance
+- **Task engine expanded**: `task-engine.ts` (+2645 lines) with intelligence query integration, evidence snapshot persistence, and managed-task lifecycle enrichment
+- **Orchestration updated**: `orchestration.ts` refactored for intelligence-aware task dispatch and SA mode constraint propagation
+- **REPL UI updated**: `InkREPL.tsx` gains agent mode display, mode toggle handling, and mode-aware rendering; `StatusBar` shows current agent mode
+- **Session storage**: `storage.ts` gains `agentMode` persistence in session metadata
+- **Provider registry**: Provider capability checks updated for intelligence-query-aware policy evaluation
+- **Documentation**: v0.7.0, v0.8.0, v0.9.0 feature docs, FEATURE_LIST, KNOWN_ISSUES, and feature README updated for 018/027/028
+
+---
+
+## [0.7.5] - 2026-03-26
+
+### Added
+- **Task engine (FEATURE_022)**: `runManagedTask()` in `packages/coding/src/task-engine.ts` — full managed task lifecycle with contract creation, role assignment, evidence collection, and orchestration verdict; integrates with `runOrchestration` for multi-worker task execution
+- **Task contract types**: `KodaXTaskContract`, `KodaXTaskRoleAssignment`, `KodaXTaskWorkItem`, `KodaXTaskEvidenceArtifact`, `KodaXTaskEvidenceEntry`, `KodaXTaskEvidenceBundle`, `KodaXOrchestrationVerdict`, `KodaXManagedTask` in `@kodax/coding`
+- **Task context types**: `KodaXTaskCapabilityHint`, `KodaXTaskVerificationContract`, `KodaXTaskToolPolicy` for structured verification and tool policy contracts
+- **Task surface tracking**: `KodaXTaskSurface` type (`cli`/`repl`/`project`/`plan`) propagated through execution context to identify managed task entry points
+- **Session scope**: `KodaXSessionScope` (`user`/`managed-task-worker`) on `KodaXSessionData` and `KodaXSessionMeta` for worker session identification; `scope` option on `KodaXSessionOptions`
+- **Project control state**: `ProjectControlState` interface and `createProjectControlState()` factory for tracking workflow mutations separately from derived workflow state
+- **Managed task persistence**: `ProjectStorage` read/write for managed task artifacts (`managed-task.json`) and control state (`control-state.json`)
+- **JSON guards**: Type guards for `ProjectControlState`, `KodaXManagedTask`, `KodaXTaskVerificationContract`, `KodaXTaskToolPolicy`, `KodaXTaskCapabilityHint` in `json-guards.ts`
+- **Orchestration abort propagation**: `AbortSignal` threading from `runOrchestration` options through task runners to agent execution; `mergeAbortSignals()` utility for composite abort handling with `AbortSignal.any` fallback
+- **Orchestration task cancellation**: `buildCancelledTaskResult()` and early-exit loop when external abort signal fires, marking all pending tasks as blocked
+- **Task runner hooks**: `createOptions` and `onResult` callbacks on `CreateKodaXTaskRunnerOptions` for per-task option customization and post-result side effects
+- **New tests**: Task engine integration tests, orchestration abort tests, project storage managed task tests, project harness control state tests, storage scope tests, CLI option helper tests
+
+### Changed
+- **CLI entry points use `runManagedTask`**: `kodax_cli.ts` replaced `runKodaX` with `runManagedTask` for all execution paths (direct, command, print) with `taskSurface: 'cli'`
+- **Project commands use `runManagedTask`**: `/project next` and `/project auto` now execute via `runManagedTask` with project surface, feature metadata, and verification contracts
+- **Workflow state derivation refactored**: `ProjectStorage.inferWorkflowState` replaced with `deriveWorkflowState` that considers control state, alignment truth, and managed task status for more accurate stage inference
+- **Project harness verification integration**: Verification results now map to managed task verdict (`completed`/`blocked`) and update evidence entries with signals
+- **Control state propagated**: Discovery, planning, and execution commands now use `saveProjectControlState` instead of directly mutating workflow state
+
+### Documentation
+- **ADR, DD, HLD, PRD**: Updated architecture decision records, design document, high-level design, and product requirements for FEATURE_022 task engine
+- **Feature design docs**: v0.7.0, v0.8.0, v0.9.0, v1.0.0 feature documents updated for task engine integration and dependency tracking
+- **FEATURE_LIST.md**: Updated with FEATURE_022 progress and cross-feature dependency references
+
+---
+
+## [0.7.4] - 2026-03-26
+
+### Added
+- **Task complexity inference (FEATURE_025)**: Weighted keyword scoring across 4 tiers — `simple`, `moderate`, `complex`, `systemic` — with language-aware Chinese and English keyword sets; cross-referenced with task type, risk level, and work intent for calibrated results
+- **Work intent detection**: `inferWorkIntent()` classifies requests as `append`, `overwrite`, or `new` based on explicit keyword signals; destructive interpretation preferred when append and rewrite language conflict
+- **Brainstorm trigger**: `inferRequiresBrainstorm()` detects ambiguity that warrants option framing — triggered by brainstorm keywords, low-confidence unknown tasks, systemic complexity, or high-risk overwrites
+- **Harness profile selection**: `selectHarnessProfile()` maps routing decisions to 4 execution profiles (`H0_DIRECT`, `H1_EXECUTE_EVAL`, `H2_PLAN_EXECUTE_EVAL`, `H3_MULTI_WORKER`) based on task characteristics; automatically downgrades to H1/H2 on lossy bridge providers with recorded routing notes
+- **Harness profile prompt overlays**: Dedicated system prompt fragments for each harness profile that guide the LLM's execution strategy
+- **Tied task resolution**: `resolveTiedTask()` breaks score ties by checking for explicit directive keywords (review, fix, plan) in the prompt, falling back to `unknown` when no clear winner exists
+- **Provider policy hints for decisions**: `buildProviderPolicyHintsForDecision()` converts a routing decision into policy hints — `harnessProfile`, `evidenceHeavy`, `brainstorm`, `workIntent` — threaded through execution context for downstream policy evaluation
+- **Harness-aware provider policy rules**: New block/warn rules for `H3_MULTI_WORKER` (blocked on lossy/stateless providers, warned on limited) and `H2_PLAN_EXECUTE_EVAL` (warned on bridge/lossy providers)
+- **Routing decision on KodaXResult**: `routingDecision` field on `KodaXResult` exposes the final visible routing decision including harness profile and work intent to callers
+- **Extended KodaXProviderPolicyHints**: New `harnessProfile`, `brainstorm`, and `workIntent` fields for context-aware policy evaluation
+- **New types**: `KodaXTaskComplexity`, `KodaXTaskWorkIntent`, `KodaXHarnessProfile` in `@kodax/ai`; re-exported through `@kodax/agent` and `@kodax/coding`
+- **Extended routing decision**: `KodaXTaskRoutingDecision` gains `complexity`, `workIntent`, `requiresBrainstorm`, `harnessProfile`, and optional `routingNotes` fields
+- **New tests**: 10 new reasoning tests (append/overwrite intent, brainstorm triggers, complexity tiers, H3 harness selection, provider downgrade, policy hints, tied task resolution), 2 new provider-policy tests (H3 block, H2 warn), expanded agent policy integration tests
+
+### Changed
+- **`stabilizeRoutingDecision` enriched**: Now runs full inference pipeline — work intent, complexity, brainstorm, harness profile — on every routing decision (fallback and LLM-routed) instead of only handling edge cases
+- **Prompt overlay expanded**: `buildPromptOverlay()` now includes harness profile, work intent guidance, brainstorm trigger, and routing notes alongside the existing execution mode and task routing fields
+- **Auto-reroute preserves enriched decision**: `maybeCreateAutoReroutePlan()` threads provider policy through `stabilizeRoutingDecision` so enriched fields are recalculated on reroute
+- **Policy evaluation context passed to streaming**: `evaluateProviderPolicy` call in agent loop now receives `effectiveOptions` and `context` separately for accurate hint resolution
+- **Agent loop threads routing decision to result**: All exit paths in `runKodaX` (success, error, cancel, yield, limit) now include `routingDecision` on the result
+- **Provider policy hints threaded through execution context**: `buildReasoningExecutionState` injects `buildProviderPolicyHintsForDecision` into context's `providerPolicyHints` so downstream calls see the routing-derived hints
+- **Router system prompt expanded**: LLM task router now accepts and validates `complexity`, `workIntent`, `harnessProfile`, `requiresBrainstorm`, and `routingNotes` fields
+
+---
+
+## [0.7.3] - 2026-03-26
+
+### Changed
+- **Message fingerprint caching**: `messagesEqual()` now uses a `WeakMap`-based fingerprint cache to avoid repeated `JSON.stringify` during lineage reconciliation, reducing deduplication cost for repeated calls
+- **Fork session ID generation**: `MemorySessionStorage.fork()` uses `generateSessionId()` from `@kodax/coding` instead of a timestamp-based fallback for consistent session ID format
+- **Guard reporter extraction**: Duplicated session transition guard callback in `InkREPL.tsx` extracted into shared `logSessionTransitionGuard()` helper
+
+### Added
+- **API documentation**: JSDoc comments added to all exported session lineage functions (`createSessionLineage`, `getSessionLineagePath`, `getSessionMessagesFromLineage`, `resolveSessionLineageTarget`, `setSessionLineageActiveEntry`, `appendSessionLineageLabel`, `forkSessionLineage`, `buildSessionTree`, `countActiveLineageMessages`)
+- **New session lineage tests**: Empty lineage edge case, fork from active leaf without selector, skip branch summaries when `summarizeCurrentBranch` is disabled, missing selector null returns, orphaned entries rendered as separate roots
+
+---
+
+## [0.7.2] - 2026-03-26
+
+### Added
+- **Session lineage tree (FEATURE_019)**: `packages/agent/src/session-lineage.ts` — branchable session history with parent-child entry relationships, automatic deduplication, and immutable data structures; supports four entry types: `message`, `compaction`, `branch_summary`, and `label`
+- **Session tree visualization**: `formatSessionTree()` renders the lineage as a tree with branch indicators, active-path markers, entry IDs, and optional checkpoint labels
+- **Branch-and-continue navigation**: `setSessionLineageActiveEntry()` navigates to any tree node by entry ID or label; automatically summarizes abandoned branches into `branch_summary` entries for context preservation
+- **Checkpoint labels**: `appendSessionLineageLabel()` attaches lightweight bookmark labels to any tree node; resolved via `getResolvedLabels()` with last-wins semantics and support for clearing labels
+- **Session forking**: `forkSessionLineage()` deep-clones a branch path into an independent lineage with new entry IDs and preserved labels, enabling parallel exploration without mutating the source session
+- **`/tree` REPL command**: Inspect, navigate, and label session branches — `/tree` displays the tree, `/tree <selector>` jumps to a node, `/tree label` and `/tree unlabel` manage checkpoint labels
+- **`/fork` REPL command**: Export a branch into a new independent session file, optionally from a specific tree node
+- **Session transition guardrails**: `evaluateSessionTransitionPolicy()` checks provider capability (session support) before session load, branch switch, or fork operations; blocks operations on stateless providers, warns on limited support
+- **Extended `KodaXSessionStorage` interface**: New optional methods `getLineage`, `setActiveEntry`, `setLabel`, and `fork` for storage backends to support lineage operations
+- **Session data model additions**: `KodaXSessionLineage`, `KodaXSessionEntry` (4 variants), `KodaXSessionNavigationOptions`, `KodaXSessionTreeNode` types; `KodaXSessionData` gains optional `lineage` field; `KodaXSessionMeta` gains lineage metadata fields
+- **Lineage-aware JSONL persistence**: `storage.ts` reads and writes `lineage_entry` records alongside `meta` and `extension_record` lines; backward-compatible migration from legacy flat message arrays via `createSessionLineage()`
+- **Lineage-aware session storage utilities**: `session-storage.ts` (Ink) and `MemorySessionStorage` (readline) both support lineage operations with `structuredClone` for immutability
+- **Lineage-aware session listing**: `list()` reports active branch message count via `countActiveLineageMessages()` when lineage is present
+- **Lineage storage helpers in project-harness**: `readLineageCheckpoints`, `readLineageSessionNodes`, `appendLineageCheckpoint`, `appendLineageSessionNode` with backward-compatible aliases
+- **Project harness record schema additions**: `ProjectHarnessCheckpointRecord` and `ProjectHarnessSessionNodeRecord` gain `id` and `taskId` fields for lineage tracking
+- **New tests**: `session-lineage.test.ts`, `session-tree-command.test.ts`, `session-guardrails.test.ts`, expanded `storage.test.ts`
+
+### Changed
+- **`loadSession` callback returns typed status**: `Promise<boolean>` replaced with `Promise<SessionLoadStatus>` (`loaded`/`missing`/`blocked`) to distinguish missing sessions from provider-guarded blocks
+- **`deleteAll` scoped by git root**: `deleteAll()` now accepts optional `gitRoot` parameter for project-scoped session cleanup
+- **Session save preserves extension state**: Both storage backends merge existing `extensionState` and `extensionRecords` on save for incremental updates
+- **Session load returns cloned data**: `load()` now returns `structuredClone` to prevent accidental mutation of cached session state
+- **Project harness persistence method rename**: Internal storage methods migrated to lineage-aware naming; old names kept as backward-compatible aliases
+
+---
+
+## [0.7.1] - 2026-03-26
+
+### Added
+- **Provider capability dimensions (FEATURE_029)**: Six new typed capability dimensions — `contextFidelity`, `toolCallingFidelity`, `sessionSupport`, `longRunningSupport`, `multimodalSupport`, `evidenceSupport` — added to `KodaXProviderCapabilityProfile` in `@kodax/ai`
+- **Normalized capability profile**: `NormalizedKodaXProviderCapabilityProfile` type and `normalizeCapabilityProfile()` function ensuring all capability fields have explicit values with sensible defaults
+- **Provider policy engine**: `packages/coding/src/provider-policy.ts` — `evaluateProviderPolicy()` evaluates provider constraints against task context (multimodal, MCP, long-running, project-harness, evidence-heavy, reasoning-control scenarios) and returns `block`/`warn`/`allow` decisions with routing notes
+- **Policy-aware routing**: Provider policy wired into `createReasoningPlan()` and `buildPromptOverlay()` — routing prompts now include provider constraint notes; `buildRepositoryRoutingSummary` includes provider semantics for LLM routing decisions
+- **Agent loop policy enforcement**: `evaluateProviderPolicy()` called in `runKodaX()` before streaming; `block` decisions throw errors, `warn` decisions append notes to system prompt
+- **`/provider` REPL command**: Inspect provider capability matrix and common policy scenarios with color-coded block/warn/allow indicators; supports `/provider <name>[/<model>]` syntax
+- **Provider capability snapshot helpers**: `getProviderCapabilitySnapshot`, `formatProviderCapabilityDetailLines`, `formatProviderSourceKind`, `getProviderCommonPolicyScenarios`, `getProviderPolicyDecision` in `@kodax/repl`
+- **Provider policy types**: `KodaXProviderPolicyDecision`, `KodaXProviderPolicyIssue`, `KodaXProviderPolicyHint`, `KodaXProviderSourceKind` types in `@kodax/coding`
+- **New tests**: `provider-policy.test.ts`, `agent.provider-policy.test.ts`, expanded `provider-capabilities.test.ts`; updated existing provider tests for 6 new capability fields
+
+### Changed
+- **Capability profiles expanded**: Native providers declare `full` across all 6 new dimensions; CLI bridge providers declare `lossy`/`limited`/`stateless` as appropriate
+- **`cloneCapabilityProfile` normalized**: Now returns profile with all capability fields populated via `normalizeCapabilityProfile`
+- **Existing provider tests updated**: `acp-base`, `capability-profile`, `cli-bridge-providers`, `custom-providers` tests updated for 6 new profile fields
+
+### Documentation
+- **FEATURE_034 design doc**: Capability profile section updated with 6 new dimensions
+- **FEATURE_LIST.md**: Updated to reflect FEATURE_029 completion
+
 ---
 
 ## [0.7.0] - 2026-03-25

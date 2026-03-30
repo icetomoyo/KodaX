@@ -29,6 +29,16 @@ function user(id: string, text: string): HistoryItem {
   };
 }
 
+function info(id: string, text: string, icon = "\u23F3"): HistoryItem {
+  return {
+    id,
+    type: "info",
+    text,
+    icon,
+    timestamp: Date.now(),
+  };
+}
+
 describe("transcript-layout", () => {
   it("preserves the final assistant line without a trailing newline", () => {
     const rows = buildTranscriptRows({
@@ -65,6 +75,17 @@ describe("transcript-layout", () => {
     expect(text).not.toContain("tail line");
   });
 
+  it("renders info items in a compact single-line-first format", () => {
+    const rows = buildTranscriptRows({
+      items: [info("info-1", "Stream stalled · retry 1/3 in 2s")],
+      viewportWidth: 80,
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text).toContain("\u23F3 Stream stalled · retry 1/3 in 2s");
+    expect(text).not.toContain("Info");
+  });
+
   it("includes streaming and loading rows in a single transcript", () => {
     const rows = buildTranscriptRows({
       items: [],
@@ -94,6 +115,7 @@ describe("transcript-layout", () => {
     expect(text).toContain("thinking details");
     expect(text).toContain("partial response");
     expect(text).toContain("read_file");
+    expect(text).toContain("* tools: read_file");
   });
 
   it("shows thinking char counts while the model is still thinking", () => {
@@ -106,7 +128,140 @@ describe("transcript-layout", () => {
     });
 
     const text = rows.map((row) => row.text).join("\n");
-    expect(text).toContain("(42 chars)...");
+    expect(text).toContain("[Thinking] 42 chars...");
+  });
+
+  it("truncates live thinking to a 400 character preview", () => {
+    const thinking = "A".repeat(450);
+    const rows = buildTranscriptRows({
+      items: [],
+      viewportWidth: 80,
+      isLoading: true,
+      isThinking: true,
+      thinkingContent: thinking,
+      thinkingCharCount: thinking.length,
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text).toContain("thinking truncated in live view");
+    expect(text).not.toContain("A".repeat(430));
+  });
+
+  it("shows full thinking in review mode", () => {
+    const thinking = "B".repeat(450);
+    const rows = buildTranscriptRows({
+      items: [],
+      viewportWidth: 80,
+      isLoading: true,
+      isThinking: true,
+      thinkingContent: thinking,
+      thinkingCharCount: thinking.length,
+      showFullThinking: true,
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text.replace(/\n/g, "")).toContain("B".repeat(430));
+    expect(text).not.toContain("thinking truncated in live view");
+  });
+
+  it("shows AMA harness level and active worker in the live thinking row", () => {
+    const rows = buildTranscriptRows({
+      items: [],
+      viewportWidth: 80,
+      isLoading: true,
+      isThinking: true,
+      thinkingCharCount: 42,
+      managedAgentMode: "ama",
+      managedHarnessProfile: "H2_PLAN_EXECUTE_EVAL",
+      managedWorkerTitle: "Planner",
+      managedRound: 2,
+      managedMaxRounds: 6,
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text).toContain("[AMA H2 - Planner] 42 chars round 2/6...");
+  });
+
+  it("uses a neutral Scout prefix during preflight instead of leaking the final harness", () => {
+    const rows = buildTranscriptRows({
+      items: [],
+      viewportWidth: 80,
+      isLoading: true,
+      isThinking: true,
+      thinkingCharCount: 42,
+      managedAgentMode: "ama",
+      managedPhase: "preflight",
+      managedHarnessProfile: "H2_PLAN_EXECUTE_EVAL",
+      managedWorkerTitle: "Scout",
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text).toContain("[AMA Scout] 42 chars...");
+    expect(text).not.toContain("[AMA H2");
+  });
+
+  it("uses a neutral routing prefix before Scout confirms the final harness", () => {
+    const rows = buildTranscriptRows({
+      items: [],
+      viewportWidth: 100,
+      isLoading: true,
+      currentTool: "changed_scope",
+      managedAgentMode: "ama",
+      managedPhase: "routing",
+      managedHarnessProfile: "H1_EXECUTE_EVAL",
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text).toContain("[AMA Routing] [Tools] changed_scope...");
+    expect(text).not.toContain("[AMA H1");
+  });
+
+  it("does not leak round 1/2 in the initial AMA live thinking row", () => {
+    const rows = buildTranscriptRows({
+      items: [],
+      viewportWidth: 80,
+      isLoading: true,
+      isThinking: true,
+      thinkingCharCount: 42,
+      managedAgentMode: "ama",
+      managedHarnessProfile: "H2_PLAN_EXECUTE_EVAL",
+      managedWorkerTitle: "Planner",
+      managedRound: 1,
+      managedMaxRounds: 2,
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text).toContain("[AMA H2 - Planner] 42 chars...");
+    expect(text).not.toContain("round 1/2");
+  });
+
+  it("falls back to the last live activity label when thinking has no visible chars yet", () => {
+    const rows = buildTranscriptRows({
+      items: [],
+      viewportWidth: 80,
+      isLoading: true,
+      isThinking: true,
+      lastLiveActivityLabel: "[Planner] changed_diff_bundle",
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text).toContain("[Thinking] [Planner] changed_diff_bundle...");
+  });
+
+  it("shows AMA harness level and active worker in the live tool row", () => {
+    const rows = buildTranscriptRows({
+      items: [],
+      viewportWidth: 80,
+      isLoading: true,
+      currentTool: "changed_diff",
+      toolInputCharCount: 18,
+      managedAgentMode: "ama",
+      managedHarnessProfile: "H2_PLAN_EXECUTE_EVAL",
+      managedWorkerTitle: "Planner",
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text).toContain("[AMA H2 - Planner] [Tools] changed_diff (18 chars)...");
   });
 
   it("formats tool rows with progress and errors", () => {
@@ -132,9 +287,166 @@ describe("transcript-layout", () => {
     });
 
     const text = rows.map((row) => row.text).join("\n");
-    expect(text).toContain("write_file");
-    expect(text).toContain("Progress: 50%");
+    expect(text).toContain("write_file (50%)");
     expect(text).toContain("denied");
+  });
+
+  it("formats tool summaries from structured preview text in tool groups", () => {
+    const rows = buildTranscriptRows({
+      items: [
+        {
+          id: "tool-group-2",
+          type: "tool_group",
+          timestamp: Date.now(),
+          tools: [
+            {
+              id: "tool-2",
+              name: "[Planner] changed_diff_bundle",
+              status: ToolCallStatus.Success,
+              startTime: Date.now(),
+              endTime: Date.now() + 10,
+              input: {
+                preview: "{\"paths\":[\"packages/coding/src/task-engine.ts\"],\"limit_per_path\":120}",
+              },
+            },
+          ],
+        },
+      ],
+      viewportWidth: 100,
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text).toContain("[Planner] changed_diff_bundle");
+    expect(text).toContain("packages/coding/src/task-engine.ts");
+    expect(text).toContain("limit=120");
+    expect(text).toContain("(10ms)");
+  });
+
+  it("shows detailed tool output only when review mode is enabled", () => {
+    const baseTool = {
+      id: "tool-3",
+      name: "[Lead] changed_diff",
+      status: ToolCallStatus.Success,
+      startTime: Date.now(),
+      endTime: Date.now() + 10,
+      input: {
+        preview: "{\"path\":\"packages/coding/src/task-engine.ts\",\"offset\":1171,\"limit\":120}",
+      },
+      output: "Changed diff for packages/coding/src/task-engine.ts\nShowing diff lines 1171-1320 of 3096\n+ const example = true;",
+    };
+
+    const normalRows = buildTranscriptRows({
+      items: [
+        {
+          id: "tool-group-3",
+          type: "tool_group",
+          timestamp: Date.now(),
+          tools: [baseTool],
+        },
+      ],
+      viewportWidth: 100,
+    });
+
+    const reviewRows = buildTranscriptRows({
+      items: [
+        {
+          id: "tool-group-4",
+          type: "tool_group",
+          timestamp: Date.now(),
+          tools: [baseTool],
+        },
+      ],
+      viewportWidth: 100,
+      showDetailedTools: true,
+    });
+
+    expect(normalRows.map((row) => row.text).join("\n")).not.toContain("Showing diff lines 1171-1320 of 3096");
+    expect(reviewRows.map((row) => row.text).join("\n")).toContain("Showing diff lines 1171-1320 of 3096");
+  });
+
+  it("shows compact live tool summaries when tool input preview is available", () => {
+    const rows = buildTranscriptRows({
+      items: [],
+      viewportWidth: 100,
+      isLoading: true,
+      currentTool: "changed_diff_bundle",
+      toolInputContent: "{\"paths\":[\"packages/coding/src/task-engine.ts\"],\"limit_per_path\":120}",
+      managedAgentMode: "ama",
+      managedHarnessProfile: "H2_PLAN_EXECUTE_EVAL",
+      managedWorkerTitle: "Planner",
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text).toContain("[AMA H2 - Planner] [Tools] changed_diff_bundle - packages/coding/src/task-engine.ts - limit=120...");
+  });
+
+  it("prefers the last live tool activity label while a tool is active", () => {
+    const rows = buildTranscriptRows({
+      items: [],
+      viewportWidth: 140,
+      isLoading: true,
+      currentTool: "changed_diff_bundle",
+      toolInputContent: "{\"paths\":[\"packages/coding/src/task-engine.ts\"],\"limit_per_path\":120}",
+      lastLiveActivityLabel: "[Tools] [Planner] changed_diff_bundle - 4 files - packages/repl/src/ui/utils/message-utils.ts (107ms)",
+      managedAgentMode: "ama",
+      managedHarnessProfile: "H2_PLAN_EXECUTE_EVAL",
+      managedWorkerTitle: "Planner",
+    });
+
+    const text = rows.map((row) => row.text).join("\n").replace(/\n/g, " ");
+    expect(text).toContain("[AMA H2 - Planner] [Tools] changed_diff_bundle - 4 files - packages/repl/src/ui/utils/message-utils.ts (107ms)...");
+    expect(text).not.toContain("[AMA H2 - Planner] [Tools] [Planner]");
+  });
+
+  it("does not repeat the active worker in AMA live tool labels", () => {
+    const rows = buildTranscriptRows({
+      items: [],
+      viewportWidth: 140,
+      isLoading: true,
+      currentTool: "changed_diff",
+      lastLiveActivityLabel: "[Tools] [Generator] changed_diff - packages/coding/src/task-engine.ts - offset=1775 - limit=480",
+      managedAgentMode: "ama",
+      managedHarnessProfile: "H2_PLAN_EXECUTE_EVAL",
+      managedWorkerTitle: "Generator",
+    });
+
+    const text = rows.map((row) => row.text).join("\n").replace(/\n/g, " ");
+    expect(text).toContain("[AMA H2 - Generator] [Tools] changed_diff - packages/coding/src/task-engine.ts - offset=1775 - limit=480...");
+    expect(text).not.toContain("[AMA H2 - Generator] [Tools] [Generator]");
+  });
+
+  it("does not repeat the active worker in AMA live thinking labels", () => {
+    const rows = buildTranscriptRows({
+      items: [],
+      viewportWidth: 120,
+      isLoading: true,
+      isThinking: true,
+      lastLiveActivityLabel: "[Thinking] [Planner]",
+      managedAgentMode: "ama",
+      managedHarnessProfile: "H2_PLAN_EXECUTE_EVAL",
+      managedWorkerTitle: "Planner",
+    });
+
+    const text = rows.map((row) => row.text).join("\n").replace(/\n/g, " ");
+    expect(text).toContain("[AMA H2 - Planner] [Thinking]...");
+    expect(text).not.toContain("[AMA H2 - Planner] [Thinking] [Planner]");
+  });
+
+  it("normalizes lowercase thinking activity labels to [Thinking]", () => {
+    const rows = buildTranscriptRows({
+      items: [],
+      viewportWidth: 120,
+      isLoading: true,
+      isThinking: true,
+      lastLiveActivityLabel: "[Planner] thinking",
+      managedAgentMode: "ama",
+      managedHarnessProfile: "H2_PLAN_EXECUTE_EVAL",
+      managedWorkerTitle: "Planner",
+    });
+
+    const text = rows.map((row) => row.text).join("\n").replace(/\n/g, " ");
+    expect(text).toContain("[AMA H2 - Planner] [Thinking]...");
+    expect(text).not.toContain("[AMA H2 - Planner] thinking...");
   });
 
   it("builds transcript sections that preserve row order when flattened", () => {

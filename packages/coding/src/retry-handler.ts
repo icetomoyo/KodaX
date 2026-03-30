@@ -18,7 +18,13 @@ import { classifyError } from './error-classification.js';
 export async function withRetry<T>(
   fn: () => Promise<T>,
   defaultClassification: ErrorClassification,
-  onRetry?: (attempt: number, maxRetries: number, delay: number) => void
+  onRetry?: (
+    attempt: number,
+    maxRetries: number,
+    delay: number,
+    error: Error,
+    classification: ErrorClassification,
+  ) => void
 ): Promise<T> {
   let lastError: Error | undefined;
   let currentClassification = defaultClassification;
@@ -52,7 +58,7 @@ export async function withRetry<T>(
 
       // 通知重试
       if (onRetry) {
-        onRetry(attempt + 1, currentClassification.maxRetries, delay);
+        onRetry(attempt + 1, currentClassification.maxRetries, delay, lastError, currentClassification);
       }
 
       // 等待后重试

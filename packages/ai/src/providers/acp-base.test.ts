@@ -11,7 +11,7 @@ const acpMockState = vi.hoisted(() => ({
   instances: [] as MockAcpClient[],
   nextSessionId: 1,
   promptImpl: undefined as
-    | ((client: MockAcpClient, text: string, sessionId: string, signal?: AbortSignal) => Promise<{
+    | ((client: MockAcpClient, text: string, sessionId: string, signal?: AbortSignal, options?: { model?: string }) => Promise<{
       usage?: {
         inputTokens: number;
         outputTokens: number;
@@ -31,8 +31,8 @@ class MockAcpClient {
   readonly connect = vi.fn(async () => {});
   readonly createNewSession = vi.fn(async () => `acp-session-${acpMockState.nextSessionId++}`);
   readonly disconnect = vi.fn(() => {});
-  readonly prompt = vi.fn(async (text: string, sessionId: string, signal?: AbortSignal) => {
-    return await acpMockState.promptImpl?.(this, text, sessionId, signal);
+  readonly prompt = vi.fn(async (text: string, sessionId: string, signal?: AbortSignal, options?: { model?: string }) => {
+    return await acpMockState.promptImpl?.(this, text, sessionId, signal, options);
   });
 
   constructor(
@@ -51,6 +51,18 @@ vi.mock('../cli-events/acp-client.js', () => ({
 }));
 
 const { KodaXAcpProvider } = await import('./acp-base.js');
+
+const EXPECTED_CLI_BRIDGE_PROFILE = {
+  transport: 'cli-bridge',
+  conversationSemantics: 'last-user-message',
+  mcpSupport: 'none',
+  contextFidelity: 'lossy',
+  toolCallingFidelity: 'limited',
+  sessionSupport: 'stateless',
+  longRunningSupport: 'limited',
+  multimodalSupport: 'none',
+  evidenceSupport: 'limited',
+} as const;
 
 class TestAcpProvider extends KodaXAcpProvider {
   readonly name = 'test-acp';
@@ -89,19 +101,11 @@ describe('KodaXAcpProvider', () => {
     const provider = new TestAcpProvider();
 
     expect(provider.isConfigured()).toBe(true);
-    expect(provider.getCapabilityProfile()).toEqual({
-      transport: 'cli-bridge',
-      conversationSemantics: 'last-user-message',
-      mcpSupport: 'none',
-    });
+    expect(provider.getCapabilityProfile()).toEqual(EXPECTED_CLI_BRIDGE_PROFILE);
 
     const first = provider.getCapabilityProfile();
     first.transport = 'native-api';
-    expect(provider.getCapabilityProfile()).toEqual({
-      transport: 'cli-bridge',
-      conversationSemantics: 'last-user-message',
-      mcpSupport: 'none',
-    });
+    expect(provider.getCapabilityProfile()).toEqual(EXPECTED_CLI_BRIDGE_PROFILE);
   });
 
   it('streams prompt updates, relays ACP session events, and reuses ACP sessions', async () => {
@@ -186,6 +190,22 @@ describe('KodaXAcpProvider', () => {
       outputTokens: 15,
       totalTokens: 105,
     });
+  });
+
+  it('forwards model overrides into ACP prompt requests', async () => {
+    const provider = new TestAcpProvider();
+
+    acpMockState.promptImpl = async (_client, _text, _sessionId, _signal, options) => {
+      expect(options?.model).toBe('codex-mini');
+    };
+
+    await provider.stream(
+      [{ role: 'user', content: 'latest prompt' }],
+      [] as KodaXToolDefinition[],
+      'system',
+      undefined,
+      { sessionId: 'thread-model', modelOverride: 'codex-mini' },
+    );
   });
 
   it('fails closed when the backing CLI executor is not installed', async () => {

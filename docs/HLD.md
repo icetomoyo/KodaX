@@ -1,663 +1,459 @@
-# KodaX High-Level Design
+# KodaX 高层设计（HLD）
 
-> Last updated: 2026-03-25
+> Last updated: 2026-03-29
 >
-> This document reflects the architecture reset carried by `FEATURE_022`, which turns KodaX from a command-led coding CLI into an adaptive multi-agent task engine.
+> 这份文档描述 `FEATURE_022` 当前已经落地的高层架构：
+> KodaX 现在是一个以 `task` 为中心、强调“极简且智能”的执行引擎。
+
+## 中文导读
+
+阅读这份 HLD 时，可以先抓住 6 个核心判断：
+
+1. `SA` 与 `AMA` 是用户可见的执行模式，但不是两套完全独立的产品。
+2. `SA` 完全不走 AMA；它是单 agent 直接执行路径。
+3. `AMA` 只保留 `H0 / H1 / H2` 三层；`H3` 已移除。
+4. `Scout` 是 pre-harness 角色，只负责判断/牵引，不属于 H2 主 graph。
+5. `H2` 的核心骨架固定为 `Planner -> Generator <-> Evaluator`。
+6. `Work` 是用户可见的主预算语义；`Round` 只在真实额外 pass 存在时出现。
+7. `Project` 与 `SA / AMA` 是正交维度；`Project + SA` 是一等路径，但只写 lightweight run record，不写 managed task。
 
 ---
 
-## 1. Product Thesis
+## 1. 产品主张
 
-KodaX should no longer be modeled as:
+KodaX 不应再被理解为：
 
-- a single coding agent with optional long-running modes
-- a CLI where the user must decide up front whether to enter "project mode"
-- a product whose multi-agent story is a visible `--team` flag
+- 一个要求用户先切 mode 再提问的 CLI
+- 一个把多智能体默认做成“角色越多越稳”的系统
+- 一个把 `Project Mode` 当作唯一长流程入口的产品
 
-KodaX should instead be modeled as:
+当前更准确的理解应该是：
 
-- an adaptive task engine
-- with native multi-agent execution for non-trivial work
-- evidence-driven completion
-- durable task state
-- host-agnostic runtime contracts
+- 一个 single-agent first 的 `task engine`
+- 一个在必要时才升级到 coordinated harness 的执行系统
+- 一个以 `evidence`、`contract`、`verdict` 为核心真相面的 runtime
+- 一个能跨 CLI / REPL / ACP 复用的 headless substrate
 
-The user experience goal is simple:
+对应的用户体验目标是：
 
-- ask for work in natural language
-- let KodaX decide whether the task needs routing, planning, multiple agents, or verification
-- expose controls only when the user wants to inspect, steer, or override the system
-
----
-
-## 2. Design Goals
-
-### 2.1 Primary goals
-
-1. Make task complexity routing invisible by default.
-2. Separate planning, generation, and evaluation responsibilities.
-3. Treat completion as evidence, not self-report.
-4. Preserve state across long-running and interrupted work.
-5. Keep the runtime reusable across CLI, REPL, ACP, and future surfaces.
-6. Keep the product minimal even as orchestration becomes more powerful.
-
-### 2.2 Non-goals
-
-1. Do not force heavyweight multi-agent execution on trivial prompts.
-2. Do not make `/project` the primary product abstraction.
-3. Do not present `--team` as the future orchestration model.
-4. Do not let the generator also be the final judge of completion.
-5. Do not tie the architecture to one provider or one harness shape.
+- 简单问题要像单 agent 一样直接完成
+- 复杂问题才逐步增加 planning / verification ceremony
+- 用户默认只感知结果与必要进度，不需要先理解内部角色图
 
 ---
 
-## 3. System Overview
+## 2. 设计目标与非目标
 
-KodaX is organized around six conceptual layers:
+### 2.1 核心目标
+
+1. 默认把复杂度判断隐藏在系统内部，不要求用户先选 mode。
+2. 让简单任务保持直接、快速、低 ceremony。
+3. 让复杂任务在升级后有清晰的 contract / evidence / verdict 结构。
+4. 让 skill 能进入 AMA，但不污染所有角色。
+5. 让 tool / budget / verification 的关键过程对用户可见，但不喧宾夺主。
+
+### 2.2 非目标
+
+1. 不再保留 `H3_MULTI_WORKER` 这种默认并行层级。
+2. 不再把 `Lead / Admission / Contract Reviewer` 当作主骨架。
+3. 不把 skill 做成独立于 task engine 的第二套 orchestrator。
+4. 不把内部 worker iter 暴露成用户可见的主进度语义。
+
+---
+
+## 3. 系统概览
 
 ```text
 Surfaces
-  -> Task Intake and Harness Router
-    -> Multi-Agent Control Plane
-      -> Coding Runtime and Capability Substrate
-        -> Provider and Execution Adapters
-          -> Durable Task State and Evidence Store
+  -> Intent Gate / Direct Path
+    -> Scout (pre-harness only)
+      -> AMA Control Plane
+        -> Coding Runtime and Capability Substrate
+          -> Provider / Tool / Skill Adapters
+            -> Durable Task State and Evidence Store
 ```
 
 ### 3.1 Surfaces
 
-Surfaces are the user-facing or host-facing entry points:
+用户或宿主的入口包括：
 
-- CLI one-shot mode
+- CLI one-shot
 - interactive REPL
 - ACP server
-- future IDE, desktop, and web surfaces
+- future IDE / desktop / web surfaces
 
-Surfaces should not own task logic. They only collect input, render progress, request approvals, and display results.
+这些表面只负责收集输入、显示状态、触发审批、展示结果，不拥有任务逻辑。
 
-### 3.2 Task Intake and Harness Router
+### 3.2 Intent Gate 与 Direct Path
 
-The router is the first durable decision point for every request. It decides:
+每个请求都会先经过极轻的 intent gate：
 
-- task type
-- complexity level
-- whether the task is append vs overwrite vs new work
-- whether discovery or brainstorm is needed
-- whether durable task state is required
-- which harness profile to use
-- whether multi-agent execution is required
+- `conversation`
+- `lookup`
+- 明显轻量解释/导航问答
 
-### 3.3 Multi-Agent Control Plane
+命中的请求直接走 `H0_DIRECT` 或 `SA` direct path，不读 dirty repo，不起 managed ceremony。
 
-The control plane manages role assignment, sequencing, evidence flow, retries, and synthesis.
+### 3.3 Scout
 
-Default role vocabulary:
+`Scout` 是 pre-harness 单 agent 牵引层。
 
-- `Lead`
-- `Planner`
-- `Generator`
-- `Evaluator`
-- optional specialized `Worker` roles
+它的职责是：
 
-### 3.4 Coding Runtime and Capability Substrate
+- 判断任务是否 actionable
+- 判断是否值得进入 `H1 / H2`
+- 收集 `scope facts`
+- 最多少量补 `overview evidence`
+- 如果 skill 被激活，则读取完整 expanded skill 并生成 `skill-map`
 
-This layer provides:
+它**不是** H2 内的长期角色。
+
+### 3.4 AMA Control Plane
+
+AMA 当前只保留 3 个执行层级：
+
+| Profile | Typical task | Shape |
+|---|---|---|
+| `H0_DIRECT` | 对话、lookup、极轻说明 | direct |
+| `H1_EXECUTE_EVAL` | 中低风险但值得独立检查的任务 | checked-direct |
+| `H2_PLAN_EXECUTE_EVAL` | 需要 contract、deep evidence、独立验收的复杂任务 | coordinated |
+
+`H3_MULTI_WORKER` 已被移除。
+
+### 3.5 Coding Runtime and Capability Substrate
+
+这层提供：
 
 - prompt building
 - tool execution
-- extension loading
-- structured capability registration
+- skill invocation
 - session handling
-- checkpoint and event plumbing
+- checkpoint / artifact plumbing
+- verification and evidence capture
 
-This substrate should remain host-agnostic and reusable.
+它保持 headless，供多个 surface 复用。
 
-### 3.5 Provider and Execution Adapters
+### 3.6 Durable Task State
 
-This layer abstracts:
+所有非平凡 managed task 都有持久化事实面，例如：
 
-- native model providers
-- CLI bridge providers
-- future capability providers
-- sandbox and execution providers
-
-Provider capability must affect harness decisions. KodaX should not assume all providers can support the same orchestration behavior.
-
-### 3.6 Durable Task State and Evidence Store
-
-Every non-trivial task should have durable artifacts:
-
-- intake summary
-- contract
-- plan
-- run trace
-- evidence
-- checkpoints
-- session tree / task lineage
-- final verdict
-
-This replaces the idea that only explicit "project mode" work deserves persistent truth.
+- `managed-task.json`
+- `contract.json`
+- `round-history.json`
+- `budget.json`
+- `runtime-contract.json`
+- `scorecard.json`
+- `skill-execution.md`
+- `skill-map.json`
+- `skill-map.md`
 
 ---
 
-## 4. Harness Profiles
+## 4. 执行形态
 
-KodaX should choose among four default harness profiles.
+### 4.1 SA
 
-| Profile | Typical task | Roles | Durability | Verification |
-|---|---|---|---|---|
-| `H0_DIRECT` | simple Q&A, small read-only lookup | one agent | optional | lightweight only |
-| `H1_EXECUTE_EVAL` | small code change, low ambiguity | generator + evaluator | yes | required |
-| `H2_PLAN_EXECUTE_EVAL` | medium task, moderate ambiguity | planner + generator + evaluator | yes | required |
-| `H3_MULTI_WORKER` | large, long-running, cross-module work | lead + planner + workers + evaluator | yes | strong evidence loop |
+`SA` = 单 agent 直接执行。
 
-Rules:
+关键约束：
 
-- trivial read-only work may stay in `H0_DIRECT`
-- any write-capable task should normally be at least `H1_EXECUTE_EVAL`
-- any ambiguous or architectural task should normally be at least `H2_PLAN_EXECUTE_EVAL`
-- any long-running or cross-cutting task should normally be `H3_MULTI_WORKER`
+- 完全脱离 AMA
+- 不走 Scout
+- 不创建 managed worker graph
+- 不暴露 AMA breadcrumb / round / budget ceremony
+
+如果 skill 被触发，`SA` 直接消费完整 expanded skill。
+
+### 4.2 AMA H0
+
+`AMA-H0` 用于：
+
+- conversation
+- lookup
+- 明显轻量问答
+- Scout 调研后确认可直接收口的任务
+
+它仍是 direct path，不做独立 evaluator。
+
+### 4.3 AMA H1
+
+`AMA-H1` 是 checked-direct：
+
+- 一个主执行者完成任务
+- 结尾允许一个轻量 `Evaluator` 做 post-hoc 检查
+- evaluator 只做 accept / revise / blocked
+- 最多一次同层 revise，再决定是否升级 H2
+
+### 4.4 AMA H2
+
+`AMA-H2` 是唯一完整 harness：
+
+```text
+Planner -> Generator <-> Evaluator
+```
+
+关键原则：
+
+- `Planner` 负责 contract、风险、evidence checklist、slice plan
+- `Generator` 负责 deep evidence 与实际执行
+- `Evaluator` 负责 targeted spot-check 和最终 verdict
+- `Planner` 缺 contract 时，必须先打回 `Planner`，不能让 `Generator` 静默全仓兜底
 
 ---
 
-## 5. Role Model
+## 5. 角色模型
 
-### 5.1 Lead
+### 5.1 Scout
 
-Responsibilities:
+职责：
 
-- own the task envelope
-- choose and adapt harness profile
-- assign work to roles
-- decide when to continue, retry, escalate, or stop
-- synthesize the final user-facing result
+- 判断是否进入 harness
+- 提供 pre-harness summary
+- 生成 `skill-map`
 
-The Lead should not be the sole judge of completion.
+输入层级：
+
+- `scope facts`
+- 少量 `overview evidence`
+- 完整 raw skill（若 skill 被激活）
 
 ### 5.2 Planner
 
-Responsibilities:
+职责：
 
-- expand the user request into an actionable contract
-- identify assumptions, scope, and constraints
-- propose task decomposition
-- decide where brainstorm or clarification is required
+- 生成 `kodax-task-contract`
+- 定义成功标准
+- 列出 required evidence / constraints
 
-The Planner should avoid prematurely locking low-level implementation details unless needed.
+输入层级：
+
+- `scope facts`
+- `overview evidence`
+- `skill-map`
+
+默认**不**读取 raw skill，也不线性翻大 diff。
 
 ### 5.3 Generator
 
-Responsibilities:
+职责：
 
-- read the contract and current context
-- perform code changes or produce artifacts
-- record claims and outputs
-- stop short of self-certifying completion
+- 执行任务
+- 深挖证据
+- 交付 `kodax-task-handoff`
+
+输入层级：
+
+- `deep evidence`
+- 完整 raw skill
+- `skill-map`
+- planner contract
 
 ### 5.4 Evaluator
 
-Responsibilities:
+职责：
 
-- review contract compliance
-- run deterministic checks
-- inspect evidence quality
-- challenge optimistic completion claims
-- produce pass/fail or graded verdicts with reasons
+- 检查 handoff 是否满足 contract
+- 做 targeted spot-check
+- 输出 `kodax-task-verdict`
 
-The Evaluator is a load-bearing role. Reliability depends on this separation.
+输入层级：
 
-### 5.5 Specialized workers
+- contract
+- generator handoff
+- `skill-map`
+- 定点 `deep evidence`
 
-Examples:
+它默认不读取 raw skill；只有 `projectionConfidence=low` 或 claim 冲突时才 fallback。
 
-- research worker
-- test worker
-- refactor worker
-- UI worker
-- retrieval or evidence worker
+### 5.5 Same-role summary continuity
 
-These should be used only when the write scope or responsibility boundary is clear.
+`Scout`、`Planner`、`Evaluator` 继续默认使用 `reset-handoff`，但跨轮不再完全依赖隐式 artifact continuity。
+
+当前语义：
+- 每轮结束时，为非-generator 角色写入 compact same-role summary
+- 下一轮同角色运行时，显式注入上一轮摘要
+- 不恢复这些角色的完整私有对话历史
+- `Generator` 仍是主要深度上下文消费者
 
 ---
 
-## 6. Task Lifecycle
+## 6. Skill 集成
+
+skill 不再作为“整段 prompt 平铺给所有角色”的全局上下文。
+
+当前采用：
 
 ```text
-User request
-  -> Intake
-  -> Intent classification
-  -> Complexity scoring
-  -> Harness selection
-  -> Contract creation
-  -> Role assignment
-  -> Execution loop
-  -> Evaluation loop
-  -> Synthesis
-  -> Final verdict and persisted state
+skill invocation
+  -> Scout reads full expanded skill
+    -> emits skill-map
+      -> Planner consumes skill-map
+      -> Generator consumes full skill + skill-map
+      -> Evaluator consumes skill-map (+ raw fallback only when needed)
 ```
 
-### 6.1 Intake
+`skill-map` 至少包含：
 
-The intake layer produces a normalized task envelope:
+- `skillSummary`
+- `executionObligations`
+- `verificationObligations`
+- `requiredEvidence`
+- `ambiguities`
+- `projectionConfidence`
+- `allowedTools / hooks / model / context`
 
-- raw request
-- workspace context
-- active session context
-- inferred task family
-- inferred risk level
+这保证了：
 
-### 6.2 Contract creation
-
-The contract is the task-local source of truth. It should capture:
-
-- requested outcome
-- scope
-- append vs overwrite decision
-- explicit constraints
-- success criteria
-- required evidence
-
-### 6.3 Execution loop
-
-Execution follows the contract. The Lead may revise routing if new evidence shows the initial harness profile was too weak or too strong.
-
-### 6.4 Evaluation loop
-
-The evaluator verifies:
-
-- legality
-- completeness
-- quality
-- evidence sufficiency
-- regressions
-
-If evaluation fails, the task returns to execution with explicit failure reasons.
-
-### 6.5 Synthesis
-
-The final response should be based on:
-
-- contract status
-- persisted evidence
-- open risks
-- user-visible outcome
+- `Planner` 不被完整 workflow 污染
+- `Generator` 仍能按 skill 执行
+- `Evaluator` 保持独立性
 
 ---
 
-## 7. Durable State Model
+## 7. 证据分层
 
-The persistent unit shifts from "project mode workspace" to "task".
+AMA 现在显式区分三层证据：
 
-Recommended layout:
+### 7.1 Scope facts
 
-```text
-.agent/
-  tasks/
-    <task-id>/
-      task.json
-      intake.json
-      contract.json
-      plan.md
-      decisions.jsonl
-      evidence/
-      checkpoints/
-      session-tree/
-      runs/
-      artifacts/
-```
+- changed files / lines / modules
+- task family / risk / reviewScale
+- repo spread and scope hints
 
-### 7.1 Why task-first persistence
+### 7.2 Overview evidence
 
-This allows:
+- `changed_diff_bundle`
+- 高优先文件概览
+- 关键类型 / 入口 / 测试变化摘要
 
-- short tasks to stay light
-- medium tasks to gain structure when needed
-- long tasks to accumulate robust state
-- old project-mode artifacts to be absorbed rather than duplicated
+### 7.3 Deep evidence
 
-### 7.2 Relationship to current project artifacts
+- `changed_diff`
+- `read`
+- 逐条 claim 验证
+- 必要测试 / 检查
 
-Current artifacts remain useful:
+角色消费规则：
 
-- `feature_list.json`
-- `PROGRESS.md`
-- `.agent/project/`
+- `Scout`: scope facts + 少量 overview
+- `Planner`: scope facts + overview
+- `Generator`: deep evidence
+- `Evaluator`: contract/handoff + targeted deep evidence
 
-But they should be reinterpreted as transitional, project-shaped task state rather than the permanent product model.
+### 7.4 Project surface 与执行拓扑
 
----
+`Project` 描述任务语境；`SA / AMA` 描述执行拓扑。
 
-## 8. Transitional Product Surface
+合法组合包括：
+- `repl + sa`
+- `repl + ama`
+- `project + sa`
+- `project + ama`
 
-### 8.1 `/project`
+其中：
+- `Project + AMA` = project-aware managed execution
+- `Project + SA` = project-aware direct execution
 
-`/project` remains valuable, but its role changes from primary workflow entry to control surface:
-
-- inspect task state
-- view plan or evidence
-- trigger manual verify
-- intervene in routing
-- resume or pause a managed task
-
-### 8.2 `--init` and `--auto-continue`
-
-These remain as compatibility-oriented entry points for long-running work, but the internal engine should treat them as alternate ways to create or continue managed tasks.
-
-### 8.3 `--team`
-
-`--team` should be retired as a product concept.
-
-Possible handling:
-
-- keep temporarily as a thin compatibility alias
-- route it into the new control plane
-- stop documenting it as the future orchestration model
+`Project + SA` 不进入 managed-task graph，也不伪装成 mini-AMA；但会写一份 lightweight run record，用于：
+- `/project status`
+- latest execution summary
+- 推荐下一步
 
 ---
 
-## 9. Capability and Provider Strategy
+## 8. 用户可见语义
 
-### 9.1 Capability runtime
+### 8.1 Budget
 
-The extension and capability runtime should provide:
+用户默认看到的主预算语义是：
 
-- tool registration and override
-- capability metadata
-- diagnostics
-- reload behavior
-- structured results
+- `Work used/total`
 
-This is the substrate for search, sandbox, MCP, and future runtime packages.
+初始预算：
 
-### 9.2 Provider-aware harness policy
+- AMA 默认从 `Work x/200` 开始
 
-The router must consider provider characteristics such as:
+当使用量达到 90% 且系统判断仍值得继续时：
 
-- context behavior
-- reasoning control semantics
-- tool-calling reliability
-- bridge-vs-native provenance
-- multimodal support
+- 请求用户审批
+- 每次批准 `+200`
+- 可多次追加
 
-This prevents false equivalence across providers.
+### 8.2 Round
 
----
+`Round` 不再表示预分配的容量。
 
-## 10. Roadmap Alignment
+它只在真实额外 pass 已被分配/进入时才显示，例如：
 
-The architecture reset changes planned feature ownership.
+- evaluator request revise
+- H1 -> H2 upgrade 后继续
+- 获批预算后继续 refinement
 
-### 10.1 v0.7.0 foundation
+任务刚开始时，不应显示 `Round 1/2`。
 
-- `FEATURE_019` Session Tree, Checkpoints, and Rewindable Task Runs
-- `FEATURE_022` Native Multi-Agent Control Plane
-- `FEATURE_025` Adaptive Task Intelligence and Harness Router
-- `FEATURE_026` Roadmap Integrity and Planning Hygiene
-- `FEATURE_029` Provider Capability Transparency and Harness Policy
-- `FEATURE_034` Extension and Capability Runtime
+### 8.3 Tool disclosure
 
-### 10.2 v0.8.0 enrichment
+工具摘要必须优先显示：
 
-- `FEATURE_007` Theme System Consolidation
-- `FEATURE_018` CodeWiki and Task Knowledge Substrate
-- `FEATURE_028` First-Class Search, Retrieval, and Evidence Tooling
-- `FEATURE_035` MCP Capability Provider
-- `FEATURE_038` Official Sandbox Extension
+- `bash`: `cmd=<exact command>`
+- `changed_diff`: path + range
+- `changed_diff_bundle`: file count + representative path
+- `read`: path + offset/limit
+- `glob/grep`: pattern + scope/path
 
-### 10.3 later delivery
+不应只剩裸工具名。
 
-- `FEATURE_031` Multimodal Artifact Inputs
-- `FEATURE_023` Dual-Mode Terminal UX
-- `FEATURE_030` Multi-Surface Delivery
+### 8.4 Evaluator public answer
+
+Evaluator 的内部职责保留在 verdict / artifact 中。
+
+用户最终答案：
+
+- 应直接面向用户交付结果
+- 不应说“我验证了 Generator 的结论”
+- 不应把 Generator / Planner 当作用户面对的对象
 
 ---
 
-## 11. Migration Principles
+## 9. Transitional Product Surface
 
-1. Reuse existing project harness strengths instead of discarding them.
-2. Move persistent truth from project-only semantics to task-first semantics.
-3. Keep user-visible compatibility while changing the internal engine.
-4. Prefer evidence loops over heavier prompts.
-5. Remove scaffolding when models or runtime guarantees make it unnecessary.
+### 9.1 `/project`
 
----
+`/project` 继续存在，但它是 managed task 的 control surface：
 
-## 12. References
+- inspection
+- resume / pause / verify
+- artifact browsing
 
-- [ADR](ADR.md)
-- [PRD](PRD.md)
-- [Detailed Design](DD.md)
-- [Feature Roadmap](features/README.md)
+它不再是唯一的长流程产品抽象。
 
----
+### 9.2 `--team`
 
-## Appendix A: Current System Reference
+`--team` 已退出主产品语义。
 
-The sections above describe the target architecture. This appendix retains a compact reference to the current system shape so migration work does not lose contact with the existing codebase.
-
-### A.1 Current layered packaging
-
-Current package layout remains:
-
-```text
-KodaX/
-  packages/
-    ai/
-    agent/
-    coding/
-    repl/
-    skills/
-  src/
-    kodax_cli.ts
-```
-
-### A.2 Current package dependency direction
-
-```text
-CLI/root
-  -> REPL
-    -> Coding
-      -> Agent
-        -> AI
-      -> Skills
-```
-
-This remains an important migration constraint:
-
-- no circular dependencies
-- reusable lower layers
-- product-grade logic primarily in `@kodax/coding` and `@kodax/repl`
-
-### A.3 Current runtime patterns worth preserving
-
-Current KodaX already relies on patterns that the new architecture should preserve rather than erase:
-
-- provider abstraction + registry
-- streaming-first output
-- centralized tool registry and execution
-- session persistence
-- permission modes
-- skills and command discovery
-
-### A.4 Current product surfaces
-
-Today KodaX already spans:
-
-- one-shot CLI execution
-- interactive REPL/TUI behavior
-- ACP server support
-- long-running project/harness flows
-
-The target task engine should absorb these surfaces rather than fork them into separate architectures.
+如果仍保留兼容入口，也只应视为 deprecated plumbing，而不是未来主故事。
 
 ---
 
-## Appendix B: Restored Pre-Reset HLD Notes
+## 10. 参考 Feature
 
-This appendix restores higher-detail current-state notes from the earlier HLD so the new target architecture does not erase the practical structure of the existing system.
+- `FEATURE_019`: session tree、checkpoints、rewindable runs
+- `FEATURE_022`: adaptive task engine + AMA/SA 执行骨架
+- `FEATURE_025`: intent-first routing and harness selection
+- `FEATURE_027`: SA / AMA 模式切换
+- `FEATURE_028`: retrieval / evidence tooling
+- `FEATURE_029`: provider-aware harness policy
+- `FEATURE_034`: extension / capability runtime
 
-### B.1 Design philosophy retained
+---
 
-The earlier HLD centered on:
+## 11. Routing Ceiling Update
 
-- extreme lightness
-- LLM-first behavior instead of overgrown rule systems
-- reusable layered packaging
-- zero-config startup with sensible defaults
+This routing update keeps KodaX lightweight by default:
 
-Those values remain valid and still explain many present implementation choices.
-
-### B.2 Layered architecture snapshot
-
-```text
-CLI Layer
-  command parse | file storage | event handler
-      ↓
-Interactive Layer (REPL)
-  Ink UI | permission control | built-in commands
-      ↓
-Coding Layer
-  tools | prompts | agent loop
-      ↓
-Agent Layer
-  session management | messages | tokenizer
-      ↓
-AI Layer
-  providers | stream handling | error handling
-```
-
-Important retained point:
-
-- `Skills` behave like a sidecar layer that can be loaded without dragging in the whole runtime.
-
-### B.3 Module structure retained
-
-```text
-KodaX/
-├── packages/
-│   ├── ai/       # provider abstraction
-│   ├── agent/    # session and agent substrate
-│   ├── coding/   # coding runtime
-│   ├── repl/     # interactive surface
-│   └── skills/   # zero-dependency skills layer
-├── src/          # CLI entry
-└── docs/         # documentation
-```
-
-Current dependency direction remains:
-
-```text
-CLI/root
-  -> REPL
-    -> Coding
-      -> Agent
-        -> AI
-      -> Skills
-```
-
-### B.4 Core design patterns retained
-
-#### Provider abstraction and registry
-
-Still a foundational pattern:
-
-- shared base provider contract
-- lazy registration and lookup
-- provider-specific streaming implementations hidden behind one surface
-
-#### Tool registry
-
-Still a foundational pattern:
-
-- centralized tool registration
-- standard handler contract
-- decoupled tool implementations
-
-#### Streaming-first output
-
-Still a foundational pattern:
-
-- incremental text/thinking/tool events
-- better observability and cancelability
-- compatible with long-running and verifier-heavy flows
-
-#### Permission modes
-
-Still a foundational pattern:
-
-- `plan`
-- `default`
-- `accept-edits`
-- `auto-in-project`
-
-These remain user-facing safety semantics even as deeper sandboxing evolves.
-
-### B.5 Current data-flow notes retained
-
-#### Agent loop
-
-The current runtime still broadly follows:
-
-1. build messages
-2. call provider in streaming mode
-3. collect text/thinking/tool blocks
-4. execute tools if needed
-5. append tool results
-6. continue or finish
-7. persist session state
-
-#### Session persistence
-
-Retained current-state traits:
-
-- JSONL-style append-friendly persistence
-- git-root-aware session identity
-- resumable message history
-
-### B.6 Extension and customization notes retained
-
-Current customization paths still matter:
-
-- custom providers via registration
-- custom tools via the tool registry
-- custom skills via markdown files in user and project directories
-
-These are the baseline extension paths that `FEATURE_034` should evolve, not discard.
-
-### B.7 Safety boundary notes retained
-
-The older HLD carried several practical safety boundaries that are still relevant:
-
-- protected config paths such as `.kodax/` and `~/.kodax/`
-- stronger confirmation outside the project root
-- permission-mode-specific write and shell restrictions
-
-These boundaries still inform both approval UX and future sandbox profiles.
-
-### B.8 Performance notes retained
-
-Important current performance strategies remain:
-
-- token-aware compaction
-- bounded context growth
-- selective parallel tool execution
-- streaming-first UX to reduce perceived latency
-
-### B.9 Technology baseline retained
-
-| Category | Baseline |
-|---|---|
-| Runtime | Node.js `>= 20.0.0` |
-| Language | TypeScript `>= 5.3.0` |
-| Package manager | npm workspaces |
-| Current terminal renderer | Ink |
-| Test framework | Vitest |
-
-### B.10 Future extension themes retained
-
-The earlier HLD's extension themes are still relevant, even though they now map to different feature ownership:
-
-- multi-agent coordination
-- richer plugin and capability ecosystems
-- VS Code / IDE integration
-- stronger visual and remote surfaces
+- `read-only` work stays on the direct path unless the user explicitly asks for a stronger second pass.
+- `docs-only` work stays on the direct path unless the user explicitly asks for a stronger second pass.
+- `read-only` and `docs-only` tasks must never enter `H2_PLAN_EXECUTE_EVAL`.
+- `reviewScale`, repo size, changed file count, and changed line count now affect evidence strategy only.
+- `H2_PLAN_EXECUTE_EVAL` is reserved for long-running mutation work that changes code or system state and benefits from contract plus executable verification.
+- H2 now defaults to one main pass; extra passes require a structured evaluator failure rather than default ceremony.

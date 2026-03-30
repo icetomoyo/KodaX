@@ -14,7 +14,7 @@ class ExposedCodexCLIExecutor extends CodexCLIExecutor {
 
 describe('CodexCLIExecutor', () => {
   it('builds fresh and resume argument lists correctly', () => {
-    const executor = new ExposedCodexCLIExecutor();
+    const executor = new ExposedCodexCLIExecutor({ model: 'gpt-5.4' });
 
     expect(executor.buildArgsForTest({ prompt: 'ship it' })).toEqual([
       'exec',
@@ -31,6 +31,26 @@ describe('CodexCLIExecutor', () => {
       '--json',
       '--full-auto',
     ]);
+
+    expect(executor.buildArgsForTest({ prompt: 'ship it', model: 'gpt-5.4' })).toEqual([
+      'exec',
+      '--json',
+      '--full-auto',
+      '-m',
+      'gpt-5.4',
+      'ship it',
+    ]);
+
+    expect(executor.buildArgsForTest({ prompt: 'continue', sessionId: 'thread-1', model: 'gpt-5.4' })).toEqual([
+      'exec',
+      'resume',
+      'thread-1',
+      '-m',
+      'gpt-5.4',
+      'continue',
+      '--json',
+      '--full-auto',
+    ]);
   });
 
   it('parses Codex thread, message, tool, completion, and failure events', () => {
@@ -43,7 +63,7 @@ describe('CodexCLIExecutor', () => {
       type: 'session_start',
       timestamp: 1234,
       sessionId: 'thread-1',
-      model: 'codex',
+      model: 'gpt-5.4',
       raw: { type: 'thread.started', thread_id: 'thread-1' },
     });
 

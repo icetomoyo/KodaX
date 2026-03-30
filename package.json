@@ -1,6 +1,6 @@
 {
   "name": "kodax",
-  "version": "0.7.0",
+  "version": "0.7.12",
   "description": "极致轻量化 Coding Agent - TypeScript 实现，支持7种LLM提供商",
   "type": "module",
   "private": true,
@@ -19,7 +19,7 @@
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "npm run build:packages && tsc",
     "build:packages": "tsc -b tsconfig.build.json && npm run copy:builtin -w @kodax/skills",
     "dev": "tsx src/kodax_cli.ts",
     "dev:cli": "tsx src/kodax_cli.ts",

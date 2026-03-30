@@ -181,4 +181,39 @@ describe('prepareInvocationExecution', () => {
 
     expect(prepared.options?.modelOverride).toBe('claude-sonnet-4-6');
   });
+
+  it('passes raw user input and skill invocation metadata into the prepared context', async () => {
+    const prepared = await prepareInvocationExecution(
+      { provider: 'anthropic', context: { promptOverlay: '[base]' } },
+      {
+        prompt: 'Expanded skill body',
+        source: 'skill',
+        displayName: 'review-skill',
+        skillInvocation: {
+          name: 'review-skill',
+          path: '/tmp/review-skill/SKILL.md',
+          description: 'Review the current repository changes.',
+          arguments: '--focus coding',
+          allowedTools: 'Read, Grep, Bash(git status)',
+          context: 'fork',
+          agent: 'reviewer',
+          argumentHint: '--focus <area>',
+          model: 'sonnet',
+          hookEvents: ['UserPromptSubmit'],
+          expandedContent: '# Review Skill\nUse the full workflow.',
+        },
+      },
+      '/skill:review-skill --focus coding',
+      vi.fn(),
+    );
+
+    expect(prepared.mode).toBe('inline');
+    expect(prepared.options?.context?.rawUserInput).toBe('/skill:review-skill --focus coding');
+    expect(prepared.options?.context?.skillInvocation).toEqual(
+      expect.objectContaining({
+        name: 'review-skill',
+        expandedContent: '# Review Skill\nUse the full workflow.',
+      }),
+    );
+  });
 });

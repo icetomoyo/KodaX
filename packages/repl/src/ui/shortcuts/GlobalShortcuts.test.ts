@@ -33,6 +33,7 @@ describe('GlobalShortcuts', () => {
       model: 'gpt-5.4',
       thinking: false,
       reasoningMode: 'off',
+      agentMode: 'ama',
       parallel: false,
       permissionMode: 'accept-edits',
     };
@@ -66,6 +67,49 @@ describe('GlobalShortcuts', () => {
     expect(currentConfig.parallel).toBe(true);
     expect(saveConfigMock).toHaveBeenCalledWith({ parallel: true });
     expect(onSetParallel).toHaveBeenCalledWith(true);
+    expect(setShowHelp).toHaveBeenCalledWith(false);
+  });
+
+  it('lets Alt+M toggle agent mode and persist the change', () => {
+    let currentConfig: CurrentConfig = {
+      provider: 'openai',
+      model: 'gpt-5.4',
+      thinking: false,
+      reasoningMode: 'off',
+      agentMode: 'ama',
+      parallel: false,
+      permissionMode: 'accept-edits',
+    };
+
+    const setShowHelp = vi.fn();
+    const onSetAgentMode = vi.fn();
+
+    GlobalShortcuts({
+      currentConfig,
+      setCurrentConfig: (updater) => {
+        currentConfig =
+          typeof updater === 'function'
+            ? updater(currentConfig)
+            : updater;
+      },
+      isLoading: false,
+      abort: vi.fn(),
+      stopThinking: vi.fn(),
+      clearThinkingContent: vi.fn(),
+      setCurrentTool: vi.fn(),
+      setIsLoading: vi.fn(),
+      onToggleHelp: vi.fn(),
+      setShowHelp,
+      onSetAgentMode,
+      isInputEmpty: true,
+    });
+
+    const handler = shortcutHandlers.get('toggleAgentMode');
+    expect(handler).toBeDefined();
+    expect(handler?.()).toBe(true);
+    expect(currentConfig.agentMode).toBe('sa');
+    expect(saveConfigMock).toHaveBeenCalledWith({ agentMode: 'sa' });
+    expect(onSetAgentMode).toHaveBeenCalledWith('sa');
     expect(setShowHelp).toHaveBeenCalledWith(false);
   });
 });

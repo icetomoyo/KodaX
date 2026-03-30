@@ -6,7 +6,7 @@
 
 import type { CursorPosition } from "./utils/text-buffer.js";
 import type { PermissionMode } from "../permission/types.js";
-import type { KodaXReasoningMode } from "@kodax/coding";
+import type { KodaXAgentMode, KodaXReasoningMode } from "@kodax/coding";
 
 // === Keyboard Events - 键盘事件 ===
 
@@ -144,6 +144,7 @@ export interface InputPromptProps {
 export interface StatusBarProps {
   sessionId: string;
   permissionMode: PermissionMode;
+  agentMode: KodaXAgentMode;
   parallel?: boolean;
   provider: string;
   model: string;
@@ -181,6 +182,14 @@ export interface StatusBarProps {
   };
   /** Whether current busy/thinking status should be visible in the bar */
   showBusyStatus?: boolean;
+  managedPhase?: "starting" | "routing" | "preflight" | "round" | "worker" | "upgrade" | "completed";
+  managedHarnessProfile?: string;
+  managedWorkerTitle?: string;
+  managedRound?: number;
+  managedMaxRounds?: number;
+  managedGlobalWorkBudget?: number;
+  managedBudgetUsage?: number;
+  managedBudgetApprovalRequired?: boolean;
 }
 
 /**
@@ -212,6 +221,7 @@ export interface AppProps {
   provider: string;
   onSubmit: (input: string) => Promise<void>;
   permissionMode?: PermissionMode;
+  agentMode?: KodaXAgentMode;
   parallel?: boolean;
 }
 
@@ -268,6 +278,7 @@ export interface ToolCall {
   name: string;
   status: ToolCallStatus;
   input?: Record<string, unknown>;
+  preview?: string;
   output?: unknown;
   error?: string;
   progress?: number; // 0-100

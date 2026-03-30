@@ -19,9 +19,21 @@ import {
   CLI_BRIDGE_PROVIDER_CAPABILITY_PROFILE,
   cloneCapabilityProfile,
   NATIVE_PROVIDER_CAPABILITY_PROFILE,
+  normalizeCapabilityProfile,
 } from './capability-profile.js';
+import {
+  getCodexCliDefaultModel,
+  getCodexCliKnownModels,
+  getGeminiCliDefaultModel,
+  getGeminiCliKnownModels,
+} from './cli-bridge-models.js';
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
+
+const GEMINI_CLI_DEFAULT_MODEL = getGeminiCliDefaultModel();
+const GEMINI_CLI_MODELS = getGeminiCliKnownModels();
+const CODEX_CLI_DEFAULT_MODEL = getCodexCliDefaultModel();
+const CODEX_CLI_MODELS = getCodexCliKnownModels();
 
 // ============== Provider 名称类型 ==============
 
@@ -74,8 +86,8 @@ class ZhipuCodingProvider extends KodaXAnthropicCompatProvider {
     baseUrl: 'https://open.bigmodel.cn/api/anthropic',
     model: 'glm-5',
     models: [
+      { id: 'glm-5.1', displayName: 'GLM-5.1' },
       { id: 'glm-5-turbo', displayName: 'GLM-5 Turbo' },
-      { id: 'glm-4.7', displayName: 'GLM-4.7' },
     ],
     supportsThinking: true,
     reasoningCapability: 'native-budget',
@@ -195,8 +207,8 @@ class ZhipuProvider extends KodaXOpenAICompatProvider {
     baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
     model: 'glm-5',
     models: [
+      { id: 'glm-5.1', displayName: 'GLM-5.1' },
       { id: 'glm-5-turbo', displayName: 'GLM-5 Turbo' },
-      { id: 'glm-4.7', displayName: 'GLM-4.7' },
     ],
     supportsThinking: true,
     reasoningCapability: 'native-budget',
@@ -269,14 +281,14 @@ export const KODAX_PROVIDER_SNAPSHOTS: Record<ProviderName, ProviderSnapshot> = 
   zhipu: {
     apiKeyEnv: 'ZHIPU_API_KEY',
     model: 'glm-5',
-    models: ['glm-5-turbo', 'glm-4.7'],
+    models: ['glm-5.1', 'glm-5-turbo'],
     reasoningCapability: 'native-budget',
     capabilityProfile: NATIVE_PROVIDER_CAPABILITY_PROFILE,
   },
   'zhipu-coding': {
     apiKeyEnv: 'ZHIPU_API_KEY',
     model: 'glm-5',
-    models: ['glm-5-turbo', 'glm-4.7'],
+    models: ['glm-5.1', 'glm-5-turbo'],
     reasoningCapability: 'native-budget',
     capabilityProfile: NATIVE_PROVIDER_CAPABILITY_PROFILE,
   },
@@ -296,13 +308,15 @@ export const KODAX_PROVIDER_SNAPSHOTS: Record<ProviderName, ProviderSnapshot> = 
   },
   'gemini-cli': {
     apiKeyEnv: 'GEMINI_API_KEY',
-    model: 'gemini-cli',
+    model: GEMINI_CLI_DEFAULT_MODEL,
+    models: GEMINI_CLI_MODELS.filter((model) => model !== GEMINI_CLI_DEFAULT_MODEL),
     reasoningCapability: 'prompt-only',
     capabilityProfile: CLI_BRIDGE_PROVIDER_CAPABILITY_PROFILE,
   },
   'codex-cli': {
     apiKeyEnv: 'OPENAI_API_KEY',
-    model: 'codex-cli',
+    model: CODEX_CLI_DEFAULT_MODEL,
+    models: CODEX_CLI_MODELS.filter((model) => model !== CODEX_CLI_DEFAULT_MODEL),
     reasoningCapability: 'prompt-only',
     capabilityProfile: CLI_BRIDGE_PROVIDER_CAPABILITY_PROFILE,
   },
@@ -397,3 +411,5 @@ export function getProviderModels(name: string): string[] {
 export function isProviderName(name: string): name is ProviderName {
   return name in KODAX_PROVIDERS;
 }
+
+export { normalizeCapabilityProfile };

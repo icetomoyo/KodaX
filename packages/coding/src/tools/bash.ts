@@ -75,6 +75,14 @@ function decodeCollector(collector: TailCollector): string {
   return buffer.toString('utf-8');
 }
 
+function buildBashTruncationHint(command: string): string {
+  const normalized = command.trim().toLowerCase();
+  if (/^git\s+(diff|show)\b/.test(normalized)) {
+    return '[Bash output truncated to the tail. For large reviews, prefer changed_scope first and then changed_diff slices per file instead of broad git diff/show output.]';
+  }
+  return '[Bash output truncated to the tail. Narrow the command or redirect output to a file if you need more context.]';
+}
+
 export async function toolBash(input: Record<string, unknown>, ctx: KodaXToolExecutionContext): Promise<string> {
   const command = input.command as string;
   const userTimeout = input.timeout as number | undefined;
@@ -148,9 +156,10 @@ export async function toolBash(input: Record<string, unknown>, ctx: KodaXToolExe
       if (stderr.totalBytes > stderr.keptBytes) {
         captureNotes.push(`stderr kept last ${formatSize(stderr.keptBytes)} of ${formatSize(stderr.totalBytes)}`);
       }
+      const hint = buildBashTruncationHint(command);
       const note = captureNotes.length > 0
-        ? `\n\n[Bash output truncated to the tail. ${captureNotes.join('; ')}. Narrow the command or redirect output to a file if you need more context.]`
-        : `\n\n[Bash output truncated to the tail. Narrow the command or redirect output to a file if you need more context.]`;
+        ? `\n\n${hint.replace(/\]$/, ` ${captureNotes.join('; ')}.]`)}`
+        : `\n\n${hint}`;
       resolve(`${preview.content}${note}`);
     });
     proc.on('error', error => {

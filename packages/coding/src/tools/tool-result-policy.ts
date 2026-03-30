@@ -46,6 +46,18 @@ const TOOL_RESULT_POLICIES: Record<string, ToolResultPolicy> = {
     direction: 'head',
     spillToFile: true,
   },
+  changed_diff: {
+    maxLines: 1400,
+    maxBytes: 48 * 1024,
+    direction: 'head',
+    spillToFile: true,
+  },
+  changed_diff_bundle: {
+    maxLines: 1600,
+    maxBytes: 56 * 1024,
+    direction: 'head',
+    spillToFile: true,
+  },
   write: {
     maxLines: 350,
     maxBytes: 24 * 1024,
@@ -69,9 +81,13 @@ function buildToolResultHint(toolName: string): string {
     case 'read':
       return 'Use read with offset/limit or grep to continue with a smaller slice.';
     case 'bash':
-      return 'Narrow the command, pipe to head/tail, or redirect output to a file before reading it.';
+      return 'Narrow the command, or redirect output to a file before reading it.';
     case 'grep':
       return 'Narrow the pattern or path, or switch to files_with_matches/count first.';
+    case 'changed_diff':
+      return 'Continue with changed_diff offset/limit, or switch to read for current-file context after identifying the relevant patch slice.';
+    case 'changed_diff_bundle':
+      return 'Use changed_diff_bundle to sweep high-priority files first, then switch to changed_diff or read for a specific suspicious file.';
     case 'write':
     case 'edit':
       return 'Inspect the file with read instead of relying on a huge diff preview.';

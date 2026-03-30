@@ -101,6 +101,7 @@ export interface OrchestrationRunOptions<TTask extends OrchestrationWorkerSpec =
   runner: OrchestrationWorkerRunner<TTask, TOutput>;
   runId?: string;
   maxParallel?: number;
+  signal?: AbortSignal;
   events?: OrchestrationRunEvents<TTask, TOutput>;
 }
 
@@ -130,6 +131,23 @@ export interface CreateKodaXTaskRunnerOptions<TTask extends KodaXAgentWorkerSpec
   rateLimit?: <T>(operation: () => Promise<T>) => Promise<T>;
   buildPrompt?: (task: TTask, context: OrchestrationTaskContext<TTask, string>) => string;
   createEvents?: (task: TTask, context: OrchestrationTaskContext<TTask, string>) => KodaXEvents;
+  createOptions?: (
+    task: TTask,
+    context: OrchestrationTaskContext<TTask, string>,
+    defaultOptions: KodaXOptions,
+  ) => KodaXOptions;
+  onResult?: (
+    task: TTask,
+    context: OrchestrationTaskContext<TTask, string>,
+    result: KodaXResult,
+  ) => KodaXResult | void | Promise<KodaXResult | void>;
+  runTask?: (
+    task: TTask,
+    context: OrchestrationTaskContext<TTask, string>,
+    preparedOptions: KodaXOptions,
+    prompt: string,
+    executeDefault: () => Promise<KodaXResult>,
+  ) => Promise<KodaXResult>;
 }
 
 interface InternalTaskRecord<TTask extends OrchestrationWorkerSpec> {
@@ -162,6 +180,9 @@ function truncateText(value: string, maxLength = 1600): string {
   }
   return `${value.slice(0, Math.max(0, maxLength - 3))}...`;
 }
+
+const DEPENDENCY_OUTPUT_MAX_LENGTH = 8000;
+const DEPENDENCY_PROMPT_EXCERPT_MAX_LENGTH = 1200;
 
 function createErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -246,6 +267,147 @@ async function appendTrace(filePath: string, event: OrchestrationTraceEvent): Pr
   await appendFile(filePath, `${JSON.stringify(event)}\n`, 'utf8');
 }
 
+function createDependencyHandoffBundle<TTask extends OrchestrationWorkerSpec, TOutput>(
+  taskDir: string,
+  dependencyResults: Record<string, OrchestrationCompletedTask<TTask, TOutput>>,
+): {
+  taskDir: string;
+  generatedAt: string;
+  dependencies: Array<{
+    id: string;
+    title: string;
+    status: OrchestrationTaskStatus;
+    taskDir: string;
+    summary: string;
+    resultArtifact: string;
+    summaryArtifact?: string;
+    artifacts: OrchestrationArtifact[];
+    outputExcerpt?: string;
+  }>;
+} {
+  return {
+    taskDir,
+    generatedAt: new Date().toISOString(),
+    dependencies: Object.values(dependencyResults).map((dependency) => {
+      const output = typeof dependency.result.output === 'string'
+        ? dependency.result.output
+        : undefined;
+      const summary = dependency.result.summary
+        ?? dependency.result.error
+        ?? 'No summary available.';
+      return {
+        id: dependency.id,
+        title: dependency.title,
+        status: dependency.status,
+        taskDir: dependency.taskDir,
+        summary,
+        resultArtifact: path.join(dependency.taskDir, 'result.json'),
+        summaryArtifact: dependency.result.summary
+          ? path.join(dependency.taskDir, 'summary.md')
+          : undefined,
+        artifacts: dependency.result.artifacts ?? [],
+        outputExcerpt: output
+          ? truncateText(output, DEPENDENCY_OUTPUT_MAX_LENGTH)
+          : undefined,
+      };
+    }),
+  };
+}
+
+function renderDependencyHandoffMarkdown(
+  bundle: ReturnType<typeof createDependencyHandoffBundle>,
+): string {
+  if (bundle.dependencies.length === 0) {
+    return '# Dependency Handoff\n\nNo upstream dependencies.\n';
+  }
+
+  return [
+    '# Dependency Handoff',
+    '',
+    ...bundle.dependencies.flatMap((dependency) => [
+      `## ${dependency.id} (${dependency.title})`,
+      `- Status: ${dependency.status}`,
+      `- Result artifact: ${dependency.resultArtifact}`,
+      dependency.summaryArtifact
+        ? `- Summary artifact: ${dependency.summaryArtifact}`
+        : undefined,
+      dependency.artifacts.length > 0
+        ? ['- Additional artifacts:', ...dependency.artifacts.map((artifact) => `  - ${artifact.kind}: ${artifact.path}${artifact.description ? ` (${artifact.description})` : ''}`)].join('\n')
+        : undefined,
+      `- Summary: ${dependency.summary}`,
+      dependency.outputExcerpt
+        ? ['- Output excerpt:', '```text', dependency.outputExcerpt, '```'].join('\n')
+        : undefined,
+      '',
+    ].filter((line): line is string => Boolean(line))),
+  ].join('\n');
+}
+
+async function writeDependencyHandoffArtifacts<TTask extends OrchestrationWorkerSpec, TOutput>(
+  taskDir: string,
+  dependencyResults: Record<string, OrchestrationCompletedTask<TTask, TOutput>>,
+): Promise<void> {
+  const bundle = createDependencyHandoffBundle(taskDir, dependencyResults);
+  await writeJsonFile(path.join(taskDir, 'handoff.json'), bundle);
+  await writeFile(
+    path.join(taskDir, 'handoff.md'),
+    `${renderDependencyHandoffMarkdown(bundle).trimEnd()}\n`,
+    'utf8',
+  );
+}
+
+function mergeAbortSignals(...signals: Array<AbortSignal | undefined>): AbortSignal | undefined {
+  const activeSignals = signals.filter((signal): signal is AbortSignal => Boolean(signal));
+  if (activeSignals.length === 0) {
+    return undefined;
+  }
+  if (activeSignals.length === 1) {
+    return activeSignals[0];
+  }
+  if (typeof AbortSignal.any === 'function') {
+    return AbortSignal.any(activeSignals);
+  }
+
+  const controller = new AbortController();
+  const listeners: Array<{ signal: AbortSignal; listener: () => void }> = [];
+  const abortWithReason = (signal: AbortSignal): void => {
+    if (controller.signal.aborted) {
+      return;
+    }
+    controller.abort(signal.reason ?? new Error('Operation aborted.'));
+    for (const entry of listeners) {
+      entry.signal.removeEventListener('abort', entry.listener);
+    }
+  };
+
+  for (const signal of activeSignals) {
+    if (signal.aborted) {
+      abortWithReason(signal);
+      break;
+    }
+    const listener = () => abortWithReason(signal);
+    listeners.push({ signal, listener });
+    signal.addEventListener('abort', listener, { once: true });
+  }
+
+  return controller.signal;
+}
+
+function formatAbortMessage(signal: AbortSignal | undefined): string {
+  const reason = signal?.reason;
+  if (reason instanceof Error && reason.message.trim()) {
+    return `Orchestration cancelled: ${reason.message}`;
+  }
+  if (typeof reason === 'string' && reason.trim()) {
+    return `Orchestration cancelled: ${reason}`;
+  }
+  return 'Orchestration cancelled by user.';
+}
+
+function shouldSuppressLifecycleEvents(signal: AbortSignal | undefined): boolean {
+  return Boolean(signal?.aborted);
+}
+
 async function withTimeout<T>(
   operation: () => Promise<T>,
   timeoutMs: number | undefined,
@@ -295,6 +457,34 @@ function buildBlockedTaskResult<TTask extends OrchestrationWorkerSpec, TOutput>(
       summary: error,
       metadata: {
         blockedBy: dependencyFailures,
+      },
+    },
+  };
+}
+
+function buildCancelledTaskResult<TTask extends OrchestrationWorkerSpec, TOutput>(
+  record: InternalTaskRecord<TTask>,
+  startedAt: string,
+  completedAt: string,
+  message: string,
+): OrchestrationCompletedTask<TTask, TOutput> {
+  return {
+    id: record.task.id,
+    title: record.task.title,
+    task: record.task,
+    status: 'blocked',
+    taskDir: record.taskDir,
+    startedAt,
+    completedAt,
+    durationMs: Math.max(0, new Date(completedAt).getTime() - new Date(startedAt).getTime()),
+    result: {
+      success: false,
+      error: message,
+      summary: message,
+      metadata: {
+        signal: 'BLOCKED',
+        signalReason: message,
+        cancelled: true,
       },
     },
   };
@@ -362,6 +552,28 @@ async function executeTaskRecord<TTask extends OrchestrationWorkerSpec, TOutput>
   tracePath: string,
   completed: Map<string, OrchestrationCompletedTask<TTask, TOutput>>
 ): Promise<OrchestrationCompletedTask<TTask, TOutput>> {
+  if (options.signal?.aborted) {
+    const startedAt = new Date().toISOString();
+    const blocked = buildCancelledTaskResult<TTask, TOutput>(
+      record,
+      startedAt,
+      new Date().toISOString(),
+      formatAbortMessage(options.signal),
+    );
+    await writeDependencyHandoffArtifacts(record.taskDir, {});
+    await writeJsonFile(path.join(record.taskDir, 'result.json'), blocked);
+    await writeFile(path.join(record.taskDir, 'summary.md'), `${blocked.result.summary}\n`, 'utf8');
+    await appendTrace(tracePath, {
+      type: 'task_blocked',
+      timestamp: blocked.completedAt,
+      runId,
+      taskId: record.task.id,
+      status: 'blocked',
+      message: blocked.result.summary,
+    });
+    return blocked;
+  }
+
   const startedAt = new Date().toISOString();
   const dependencyResults = Object.fromEntries(
     (record.task.dependsOn ?? [])
@@ -372,7 +584,7 @@ async function executeTaskRecord<TTask extends OrchestrationWorkerSpec, TOutput>
       .filter((entry): entry is [string, OrchestrationCompletedTask<TTask, TOutput>] => Boolean(entry))
   );
 
-  await writeJsonFile(path.join(record.taskDir, 'handoff.json'), dependencyResults);
+  await writeDependencyHandoffArtifacts(record.taskDir, dependencyResults);
   await appendTrace(tracePath, {
     type: 'task_started',
     timestamp: startedAt,
@@ -383,7 +595,9 @@ async function executeTaskRecord<TTask extends OrchestrationWorkerSpec, TOutput>
       execution: record.task.execution ?? 'serial',
     },
   });
-  await options.events?.onTaskStart?.(record.task);
+  if (!shouldSuppressLifecycleEvents(options.signal)) {
+    await options.events?.onTaskStart?.(record.task);
+  }
 
   const emit = async (message: string): Promise<void> => {
     const timestamp = new Date().toISOString();
@@ -395,10 +609,13 @@ async function executeTaskRecord<TTask extends OrchestrationWorkerSpec, TOutput>
       taskId: record.task.id,
       message,
     });
-    await options.events?.onTaskMessage?.(record.task, message);
+    if (!shouldSuppressLifecycleEvents(options.signal)) {
+      await options.events?.onTaskMessage?.(record.task, message);
+    }
   };
 
   const controller = new AbortController();
+  const executionSignal = mergeAbortSignals(options.signal, controller.signal);
   let normalizedResult: OrchestrationWorkerResult<TOutput>;
   let status: OrchestrationTaskStatus;
 
@@ -412,7 +629,7 @@ async function executeTaskRecord<TTask extends OrchestrationWorkerSpec, TOutput>
           taskDir: record.taskDir,
           dependencyResults,
           emit,
-          signal: controller.signal,
+          signal: executionSignal,
         }),
         record.task.timeoutMs,
         controller
@@ -456,7 +673,9 @@ async function executeTaskRecord<TTask extends OrchestrationWorkerSpec, TOutput>
     status,
     message: normalizedResult.summary ?? normalizedResult.error,
   });
-  await options.events?.onTaskComplete?.(record.task, finished);
+  if (!shouldSuppressLifecycleEvents(options.signal)) {
+    await options.events?.onTaskComplete?.(record.task, finished);
+  }
   return finished;
 }
 
@@ -495,6 +714,38 @@ export async function runOrchestration<TTask extends OrchestrationWorkerSpec, TO
   const completed = new Map<string, OrchestrationCompletedTask<TTask, TOutput>>();
 
   while (pending.size > 0) {
+    if (options.signal?.aborted) {
+      const message = formatAbortMessage(options.signal);
+      for (const record of records) {
+        if (!pending.has(record.task.id)) {
+          continue;
+        }
+        const startedAt = new Date().toISOString();
+        const blocked = buildCancelledTaskResult<TTask, TOutput>(
+          record,
+          startedAt,
+          new Date().toISOString(),
+          message,
+        );
+        await writeJsonFile(path.join(record.taskDir, 'result.json'), blocked);
+        await writeFile(path.join(record.taskDir, 'summary.md'), `${blocked.result.summary}\n`, 'utf8');
+        await appendTrace(tracePath, {
+          type: 'task_blocked',
+          timestamp: blocked.completedAt,
+          runId,
+          taskId: record.task.id,
+          status: 'blocked',
+          message: blocked.result.summary,
+        });
+        if (!shouldSuppressLifecycleEvents(options.signal)) {
+          await options.events?.onTaskComplete?.(record.task, blocked);
+        }
+        completed.set(record.task.id, blocked);
+        pending.delete(record.task.id);
+      }
+      break;
+    }
+
     let blockedAny = false;
 
     for (const record of records) {
@@ -514,14 +765,17 @@ export async function runOrchestration<TTask extends OrchestrationWorkerSpec, TO
         startedAt,
         new Date().toISOString()
       );
-      await writeJsonFile(path.join(record.taskDir, 'handoff.json'), Object.fromEntries(
-        (record.task.dependsOn ?? [])
-          .map((dependencyId) => {
-            const dependency = completed.get(dependencyId);
-            return dependency ? [dependencyId, dependency] : undefined;
-          })
-          .filter((entry): entry is [string, OrchestrationCompletedTask<TTask, TOutput>] => Boolean(entry))
-      ));
+      await writeDependencyHandoffArtifacts(
+        record.taskDir,
+        Object.fromEntries(
+          (record.task.dependsOn ?? [])
+            .map((dependencyId) => {
+              const dependency = completed.get(dependencyId);
+              return dependency ? [dependencyId, dependency] : undefined;
+            })
+            .filter((entry): entry is [string, OrchestrationCompletedTask<TTask, TOutput>] => Boolean(entry))
+        ),
+      );
       await writeJsonFile(path.join(record.taskDir, 'result.json'), blocked);
       await writeFile(path.join(record.taskDir, 'summary.md'), `${blocked.result.summary}\n`, 'utf8');
       await appendTrace(tracePath, {
@@ -532,7 +786,9 @@ export async function runOrchestration<TTask extends OrchestrationWorkerSpec, TO
         status: 'blocked',
         message: blocked.result.summary,
       });
-      await options.events?.onTaskComplete?.(record.task, blocked);
+      if (!shouldSuppressLifecycleEvents(options.signal)) {
+        await options.events?.onTaskComplete?.(record.task, blocked);
+      }
       completed.set(record.task.id, blocked);
       pending.delete(record.task.id);
       blockedAny = true;
@@ -556,6 +812,10 @@ export async function runOrchestration<TTask extends OrchestrationWorkerSpec, TO
     const batch = parallelReady.length > 0 && maxParallel > 1
       ? parallelReady.slice(0, maxParallel)
       : [ready[0]!];
+
+    if (options.signal?.aborted) {
+      continue;
+    }
 
     const results = await Promise.all(
       batch.map((record) => executeTaskRecord(record, options, runId, tracePath, completed))
@@ -618,16 +878,31 @@ function formatDependencyHandoff<TTask extends KodaXAgentWorkerSpec>(
   }
 
   return [
-    'Dependency handoff:',
+    'Dependency handoff artifacts:',
+    `- Read structured bundle first: ${path.join(context.taskDir, 'handoff.json')}`,
+    `- Read human summary next: ${path.join(context.taskDir, 'handoff.md')}`,
+    'Dependency summary preview:',
     ...dependencies.map((dependency) => {
-      const body = dependency.result.summary
-        ?? (typeof dependency.result.output === 'string' ? dependency.result.output : dependency.result.error)
+      const summary = dependency.result.summary
+        ?? dependency.result.error
         ?? 'No summary available.';
       return [
         `- ${dependency.id} (${dependency.title})`,
         `  Status: ${dependency.status}`,
-        `  Summary: ${truncateText(body)}`,
-      ].join('\n');
+        `  Summary: ${truncateText(summary, 600)}`,
+        `  Result artifact: ${path.join(dependency.taskDir, 'result.json')}`,
+        dependency.result.summary
+          ? `  Summary artifact: ${path.join(dependency.taskDir, 'summary.md')}`
+          : undefined,
+        dependency.result.artifacts?.length
+          ? `  Additional artifacts: ${dependency.result.artifacts.map((artifact) => artifact.path).join(', ')}`
+          : undefined,
+        typeof dependency.result.output === 'string'
+          ? `  Output excerpt: ${truncateText(dependency.result.output, DEPENDENCY_PROMPT_EXCERPT_MAX_LENGTH)}`
+          : undefined,
+      ]
+        .filter((line): line is string => Boolean(line))
+        .join('\n');
     }),
   ].join('\n');
 }
@@ -681,6 +956,7 @@ export function createKodaXTaskRunner<TTask extends KodaXAgentWorkerSpec = KodaX
       `Launching worker with reasoning=${task.budget?.reasoningMode ?? options.baseOptions.reasoningMode ?? 'auto'} maxIter=${task.budget?.maxIter ?? options.baseOptions.maxIter ?? 'default'}`
     );
 
+    const effectiveAbortSignal = mergeAbortSignals(options.baseOptions.abortSignal, context.signal);
     const mergedEvents: KodaXEvents = {
       ...baseEvents,
       ...taskEvents,
@@ -688,7 +964,6 @@ export function createKodaXTaskRunner<TTask extends KodaXAgentWorkerSpec = KodaX
       onToolResult: (result) => {
         baseEvents.onToolResult?.(result);
         taskEvents.onToolResult?.(result);
-        void context.emit(`Tool ${result.name} finished: ${truncateText(result.content, 240)}`);
       },
     };
 
@@ -700,31 +975,59 @@ export function createKodaXTaskRunner<TTask extends KodaXAgentWorkerSpec = KodaX
       parallel: task.parallelTools ?? options.baseOptions.parallel,
       thinking: task.budget?.thinking ?? options.baseOptions.thinking,
       reasoningMode: task.budget?.reasoningMode ?? options.baseOptions.reasoningMode,
-      abortSignal: context.signal,
+      abortSignal: effectiveAbortSignal,
       events: mergedEvents,
     };
+    const preparedRunOptions = options.createOptions
+      ? options.createOptions(task, context, runOptions)
+      : runOptions;
 
-    const execute = () => runAgent(runOptions, prompt);
-    const result = options.rateLimit
-      ? await options.rateLimit(execute)
-      : await execute();
+    const execute = () => runAgent(preparedRunOptions, prompt);
+    const executeDefault = () => options.rateLimit
+      ? options.rateLimit(execute)
+      : execute();
+    const result = options.runTask
+      ? await options.runTask(task, context, preparedRunOptions, prompt, executeDefault)
+      : await executeDefault();
+    const transformedResult = await options.onResult?.(task, context, result) ?? result;
+
+    if (transformedResult.interrupted && effectiveAbortSignal?.aborted) {
+      const message = formatAbortMessage(effectiveAbortSignal);
+      return {
+        success: false,
+        output: transformedResult.lastText,
+        summary: message,
+        error: message,
+        metadata: {
+          sessionId: transformedResult.sessionId,
+          signal: 'BLOCKED',
+          signalReason: message,
+          interrupted: true,
+          limitReached: transformedResult.limitReached ?? false,
+        },
+      };
+    }
 
     await context.emit(
-      result.signal
-        ? `Worker finished with signal=${result.signal}${result.signalReason ? ` (${result.signalReason})` : ''}`
+      transformedResult.signal
+        ? `Worker finished with signal=${transformedResult.signal}${transformedResult.signalReason ? ` (${transformedResult.signalReason})` : ''}`
         : 'Worker finished successfully'
     );
 
     return {
-      success: result.success,
-      output: result.lastText,
-      summary: truncateText(result.lastText || 'No textual output produced.'),
+      success: transformedResult.success,
+      output: transformedResult.lastText,
+      summary: truncateText(
+        transformedResult.lastText
+          || transformedResult.signalReason
+          || (transformedResult.interrupted ? 'Worker interrupted before producing a textual result.' : 'No textual output produced.'),
+      ),
       metadata: {
-        sessionId: result.sessionId,
-        signal: result.signal ?? null,
-        signalReason: result.signalReason ?? null,
-        interrupted: result.interrupted ?? false,
-        limitReached: result.limitReached ?? false,
+        sessionId: transformedResult.sessionId,
+        signal: transformedResult.signal ?? null,
+        signalReason: transformedResult.signalReason ?? null,
+        interrupted: transformedResult.interrupted ?? false,
+        limitReached: transformedResult.limitReached ?? false,
       },
     };
   };

@@ -1,0 +1,162 @@
+import { describe, expect, it } from "vitest";
+import { ToolCallStatus } from "./types.js";
+import {
+  buildManagedTaskTranscriptItems,
+  buildRoundHistoryItems,
+  shouldShowStatusBarBusyStatus,
+} from "./InkREPL.js";
+
+describe("buildManagedTaskTranscriptItems", () => {
+  it("prefers compact role summaries over full internal reports", () => {
+    const items = buildManagedTaskTranscriptItems({
+      success: true,
+      messages: [],
+      lastText: "## Final Findings\n\n- The final answer.",
+      managedTask: {
+        runtime: {
+          rawRoutingDecision: {
+            harnessProfile: "H2_PLAN_EXECUTE_EVAL",
+            routingSource: "model",
+            primaryTask: "review",
+            soloBoundaryConfidence: 0.82,
+            needsIndependentQA: true,
+          },
+          finalRoutingDecision: {
+            harnessProfile: "H2_PLAN_EXECUTE_EVAL",
+            reviewTarget: "general",
+            reviewScale: "massive",
+          },
+        },
+        roleAssignments: [
+          { id: "planner", role: "planner", title: "Planner" },
+          { id: "generator", role: "generator", title: "Generator" },
+          { id: "evaluator", role: "evaluator", title: "Evaluator" },
+        ],
+        evidence: {
+          entries: [
+            {
+              assignmentId: "generator",
+              title: "Generator",
+              role: "generator",
+              round: 1,
+              status: "completed",
+              summary: "Generator summarized the deep review findings.",
+              output: "## Huge Generator Report\n\n- Lots of duplicated detail.",
+            },
+            {
+              assignmentId: "evaluator",
+              title: "Evaluator",
+              role: "evaluator",
+              round: 1,
+              status: "completed",
+              summary: "Evaluator accepted the review.",
+              output: "## Final Findings\n\n- The final answer.",
+            },
+          ],
+        },
+        verdict: {
+          decidedByAssignmentId: "evaluator",
+        },
+      },
+    } as any);
+
+    const transcript = items.join("\n\n");
+    expect(transcript).toContain("Generator summarized the deep review findings.");
+    expect(transcript).not.toContain("## Huge Generator Report");
+    expect(transcript).not.toContain("## Final Findings");
+  });
+
+  it("keeps the final round transcript visible when the managed run is interrupted", () => {
+    const items = buildManagedTaskTranscriptItems({
+      success: false,
+      interrupted: true,
+      messages: [],
+      lastText: "## Partial Findings\n\n- The evaluator report was interrupted.",
+      managedTask: {
+        runtime: {
+          rawRoutingDecision: {
+            harnessProfile: "H1_EXECUTE_EVAL",
+            routingSource: "model",
+            primaryTask: "review",
+            soloBoundaryConfidence: 0.82,
+            needsIndependentQA: true,
+          },
+          finalRoutingDecision: {
+            harnessProfile: "H1_EXECUTE_EVAL",
+            reviewTarget: "general",
+            reviewScale: "large",
+          },
+        },
+        roleAssignments: [
+          { id: "generator", role: "generator", title: "Generator" },
+          { id: "evaluator", role: "evaluator", title: "Evaluator" },
+        ],
+        evidence: {
+          entries: [
+            {
+              assignmentId: "evaluator",
+              title: "Evaluator",
+              role: "evaluator",
+              round: 1,
+              status: "completed",
+              summary: "Evaluator identified three blocking issues.",
+              output: "## Partial Findings\n\n- The evaluator report was interrupted.",
+            },
+          ],
+        },
+        verdict: {
+          decidedByAssignmentId: "evaluator",
+          signalReason: "Orchestration cancelled: This operation was aborted",
+        },
+      },
+    } as any);
+
+    const transcript = items.join("\n\n");
+    expect(transcript).toContain("Evaluator identified three blocking issues.");
+  });
+});
+
+describe("buildRoundHistoryItems", () => {
+  it("keeps tool groups even when a round also has assistant text", () => {
+    const items = buildRoundHistoryItems({
+      thinking: "Reviewing the key diff.",
+      response: "Found one issue.",
+      toolCalls: [
+        {
+          id: "tool-1",
+          name: "changed_diff",
+          status: ToolCallStatus.Success,
+          startTime: 100,
+          endTime: 220,
+          input: {
+            preview: "{\"path\":\"packages/coding/src/task-engine.ts\",\"offset\":1775,\"limit\":480}",
+          },
+        },
+      ],
+      toolNames: ["changed_diff"],
+    });
+
+    expect(items).toHaveLength(3);
+    expect(items[0]).toMatchObject({ type: "thinking" });
+    expect(items[1]).toMatchObject({ type: "tool_group" });
+    expect(items[2]).toMatchObject({ type: "assistant", text: "Found one issue." });
+  });
+});
+
+describe("shouldShowStatusBarBusyStatus", () => {
+  it("hides duplicate busy text while AMA live loading is active", () => {
+    expect(shouldShowStatusBarBusyStatus({
+      agentMode: "ama",
+      isLivePaused: false,
+      isLoading: true,
+    })).toBe(false);
+  });
+
+  it("keeps busy text visible for SA live loading", () => {
+    expect(shouldShowStatusBarBusyStatus({
+      agentMode: "sa",
+      isLivePaused: false,
+      isLoading: true,
+    })).toBe(true);
+  });
+});

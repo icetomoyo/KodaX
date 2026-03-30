@@ -20,6 +20,7 @@ import {
   SessionErrorMetadata,
 } from './types.js';
 import type { KodaXMessage } from '@kodax/ai';
+import path from 'path';
 import { KodaXClient } from './client.js';
 import { resolveProvider } from './providers/index.js';
 import {
@@ -39,13 +40,26 @@ import { promisify } from 'util';
 import { ErrorCategory } from './error-classification.js';
 import { withRetry } from './retry-handler.js';
 import {
+  buildProviderPolicyHintsForDecision,
   createReasoningPlan,
   maybeCreateAutoReroutePlan,
   reasoningModeToDepth,
   type ReasoningPlan,
 } from './reasoning.js';
+import {
+  buildProviderPolicyPromptNotes,
+  evaluateProviderPolicy,
+} from './provider-policy.js';
 import { looksLikeActionableRuntimeEvidence } from './runtime-evidence.js';
 import { resolveExecutionCwd } from './runtime-paths.js';
+import { buildRepoIntelligenceContext } from './repo-intelligence/index.js';
+import {
+  getImpactEstimate,
+  getModuleContext,
+  getRepoRoutingSignals,
+  renderImpactEstimate,
+  renderModuleContext,
+} from './repo-intelligence/query.js';
 import {
   createCompletedTurnTokenSnapshot,
   createContextTokenSnapshot,
@@ -125,6 +139,36 @@ function normalizeRuntimeModelSelection(
     normalized.model = next.model.trim();
   }
   return normalized;
+}
+
+function describeTransientProviderRetry(error: Error): string {
+  const message = error.message.toLowerCase();
+  if (error.name === 'StreamIncompleteError' || message.includes('stream incomplete')) {
+    return 'Stream interrupted before completion';
+  }
+  if (message.includes('stream stalled') || message.includes('delayed response') || message.includes('60s idle')) {
+    return 'Stream stalled';
+  }
+  if (message.includes('hard timeout') || message.includes('10 minutes')) {
+    return 'Provider response timed out';
+  }
+  if (
+    message.includes('socket hang up')
+    || message.includes('connection error')
+    || message.includes('econnrefused')
+    || message.includes('enotfound')
+    || message.includes('fetch failed')
+    || message.includes('network')
+  ) {
+    return 'Provider connection error';
+  }
+  if (message.includes('timeout') || message.includes('etimedout')) {
+    return 'Provider request timed out';
+  }
+  if (message.includes('aborted')) {
+    return 'Provider stream aborted';
+  }
+  return 'Transient provider error';
 }
 
 function createRuntimeExtensionState(
@@ -595,6 +639,7 @@ async function saveSessionSnapshot(
     messages: data.messages,
     title: data.title,
     gitRoot,
+    scope: options.session.scope ?? 'user',
     errorMetadata: data.errorMetadata,
     extensionState: data.runtimeSessionState
       ? snapshotRuntimeExtensionState(data.runtimeSessionState.extensionState)
@@ -642,6 +687,56 @@ async function maybeBuildAutoReroutePlan(
   }
 }
 
+function looksLikeReviewProgressUpdate(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return [
+    'now let me',
+    'let me look',
+    'let me check',
+    'let me inspect',
+    'now i will',
+    '现在让我',
+    '让我看看',
+    '让我检查',
+    '我现在来',
+    '接下来我',
+    '下面我来',
+  ].some((prefix) => normalized.startsWith(prefix));
+}
+
+function isReviewFinalAnswerCandidate(
+  prompt: string,
+  reasoningPlan: ReasoningPlan,
+  lastText: string,
+): boolean {
+  if (reasoningPlan.decision.primaryTask !== 'review') {
+    return true;
+  }
+
+  const normalizedPrompt = prompt.toLowerCase();
+  const normalizedText = lastText.trim();
+  if (!normalizedText || looksLikeReviewProgressUpdate(normalizedText)) {
+    return false;
+  }
+
+  if (normalizedText.length >= 600) {
+    return true;
+  }
+
+  return /\b(must fix|finding|optional improvements|final assessment|verdict)\b/i.test(normalizedText)
+    || /(必须修复|问题|建议|结论|评审报告|最终评审)/.test(normalizedText)
+    || /^\s*(?:[-*]|\d+\.)\s+/m.test(normalizedText)
+    || /\b(must[- ]fix|strict review|pr review|code review)\b/i.test(normalizedPrompt);
+}
+
+function hasStrongToolFailureEvidence(toolEvidence: string): boolean {
+  return /\b(fail(?:ed|ure)?|error|blocked|exception|traceback|assert|regression|not found|timeout|console error|permission denied)\b/i
+    .test(toolEvidence);
+}
+
 async function maybeAdvanceAutoReroute(params: {
   provider: ReturnType<typeof resolveProvider>;
   options: KodaXOptions;
@@ -656,6 +751,7 @@ async function maybeAdvanceAutoReroute(params: {
   isNewSession: boolean;
   retryLabelPrefix: string;
   toolEvidence?: string;
+  allowTaskReroute?: boolean;
   onApply?: () => Promise<void> | void;
   persistSession?: {
     sessionId: string;
@@ -686,7 +782,7 @@ async function maybeAdvanceAutoReroute(params: {
     params.lastText,
     {
       allowDepthEscalation: params.autoDepthEscalationCount === 0,
-      allowTaskReroute: params.autoTaskRerouteCount === 0,
+      allowTaskReroute: (params.allowTaskReroute ?? true) && params.autoTaskRerouteCount === 0,
     },
     params.toolEvidence,
   );
@@ -930,6 +1026,18 @@ export async function runKodaX(
 
   await runtime?.hydrateSession(sessionId);
 
+  const repoRoutingSignals = options.context?.repoRoutingSignals
+    ?? (
+      (options.context?.executionCwd || options.context?.gitRoot)
+        ? await getRepoRoutingSignals({
+          executionCwd,
+          gitRoot: options.context?.gitRoot ?? undefined,
+        }, {
+          refresh: messages.length === 1,
+        }).catch(() => null)
+        : null
+    );
+
   let reasoningPlan = await createReasoningPlan({
     ...options,
     provider: currentProviderName,
@@ -937,6 +1045,7 @@ export async function runKodaX(
   }, prompt, initialProvider, {
     recentMessages: messages.slice(0, -1),
     sessionErrorMetadata: errorMetadata,
+    repoSignals: repoRoutingSignals ?? undefined,
   });
   let currentExecution = await buildReasoningExecutionState(
     {
@@ -958,6 +1067,8 @@ export async function runKodaX(
   let autoDepthEscalationCount = 0;
   let autoTaskRerouteCount = 0;
   const autoFollowUpLimit = 2;
+  let preAnswerJudgeConsumed = false;
+  let postToolJudgeConsumed = false;
 
   let lastText = '';
   let incompleteRetryCount = 0;
@@ -980,6 +1091,7 @@ export async function runKodaX(
     });
     return contextTokenSnapshot;
   };
+  const currentRoutingDecision = () => reasoningPlan.decision;
     events.onSessionStart?.({ provider: initialProvider.name, sessionId });
     await emitActiveExtensionEvent('session:start', { provider: initialProvider.name, sessionId });
 
@@ -1149,6 +1261,26 @@ export async function runKodaX(
       };
 
       const streamProvider = resolveProvider(currentProviderName);
+      const providerPolicy = evaluateProviderPolicy({
+        providerName: currentProviderName,
+        model: currentModelOverride,
+        provider: streamProvider,
+        prompt,
+        options: currentExecution.effectiveOptions,
+        context: currentExecution.effectiveOptions.context,
+        reasoningMode: effectiveProviderReasoningMode,
+        taskType: effectiveReasoningPlan.decision.primaryTask,
+        executionMode: effectiveReasoningPlan.decision.recommendedMode,
+      });
+      if (providerPolicy.status === 'block') {
+        throw new Error(`[Provider Policy] ${providerPolicy.summary}`);
+      }
+      const effectiveSystemPrompt = providerPolicy.issues.length > 0
+        ? [
+          preparedProviderState.systemPrompt,
+          buildProviderPolicyPromptNotes(providerPolicy).join('\n'),
+        ].join('\n\n')
+        : preparedProviderState.systemPrompt;
       if (!streamProvider.isConfigured()) {
         throw new Error(`Provider "${currentProviderName}" not configured. Set ${currentProviderName.toUpperCase().replace('-', '_')}_API_KEY`);
       }
@@ -1189,7 +1321,7 @@ export async function runKodaX(
             : retryTimeoutController.signal;
 
           try {
-            return await streamProvider.stream(compacted, getActiveToolDefinitions(runtimeSessionState.activeTools), preparedProviderState.systemPrompt, effectiveProviderReasoning, {
+            return await streamProvider.stream(compacted, getActiveToolDefinitions(runtimeSessionState.activeTools), effectiveSystemPrompt, effectiveProviderReasoning, {
               onTextDelta: (text) => {
                 resetIdleTimer();
                 void emitActiveExtensionEvent('text:delta', { text });
@@ -1247,9 +1379,9 @@ export async function runKodaX(
           retryDelay: 1000,
           shouldCleanup: true,
         },
-        (attempt, maxRetries, delay) => {
+        (attempt, maxRetries, delay, error) => {
           events.onRetry?.(
-            `API error, retrying in ${Math.round(delay / 1000)}s (${attempt}/${maxRetries})`,
+            `${describeTransientProviderRetry(error)} · retry ${attempt}/${maxRetries} in ${Math.round(delay / 1000)}s`,
             attempt,
             maxRetries
           );
@@ -1300,6 +1432,7 @@ export async function runKodaX(
             signal: 'COMPLETE',
             messages,
             sessionId,
+            routingDecision: currentRoutingDecision(),
             contextTokenSnapshot,
             limitReached: false,
           };
@@ -1342,6 +1475,7 @@ export async function runKodaX(
             lastText,
             messages,
             sessionId,
+            routingDecision: currentRoutingDecision(),
             contextTokenSnapshot,
             limitReached: false,
           };
@@ -1350,8 +1484,11 @@ export async function runKodaX(
         if (
           effectiveReasoningPlan.mode === 'auto' &&
           autoFollowUpCount < autoFollowUpLimit &&
-          (autoDepthEscalationCount === 0 || autoTaskRerouteCount === 0)
+          (autoDepthEscalationCount === 0 || autoTaskRerouteCount === 0) &&
+          !preAnswerJudgeConsumed &&
+          isReviewFinalAnswerCandidate(prompt, effectiveReasoningPlan, lastText)
         ) {
+          preAnswerJudgeConsumed = true;
           const rerouteState = await maybeAdvanceAutoReroute({
             provider,
             options,
@@ -1365,6 +1502,7 @@ export async function runKodaX(
             events,
             isNewSession: messages.length === 1,
             retryLabelPrefix: 'Auto',
+            allowTaskReroute: !options.context?.disableAutoTaskReroute,
             onApply: () => {
               messages.pop();
             },
@@ -1553,6 +1691,7 @@ export async function runKodaX(
           lastText: 'Operation cancelled by user',
           messages,
           sessionId,
+          routingDecision: currentRoutingDecision(),
           contextTokenSnapshot,
           interrupted: !shouldYieldToQueuedFollowUp,
         };
@@ -1592,6 +1731,7 @@ export async function runKodaX(
           lastText,
           messages,
           sessionId,
+          routingDecision: currentRoutingDecision(),
           contextTokenSnapshot,
           limitReached: false,
         };
@@ -1600,10 +1740,12 @@ export async function runKodaX(
       if (
         effectiveReasoningPlan.mode === 'auto' &&
         autoFollowUpCount < autoFollowUpLimit &&
-        (autoDepthEscalationCount === 0 || autoTaskRerouteCount === 0)
+        (autoDepthEscalationCount === 0 || autoTaskRerouteCount === 0) &&
+        !postToolJudgeConsumed
       ) {
         const toolEvidence = summarizeToolEvidence(result.toolBlocks, toolResults);
-        if (toolEvidence) {
+        if (toolEvidence && hasStrongToolFailureEvidence(toolEvidence)) {
+          postToolJudgeConsumed = true;
           const rerouteState = await maybeAdvanceAutoReroute({
             provider,
             options,
@@ -1618,6 +1760,7 @@ export async function runKodaX(
             isNewSession: false,
             retryLabelPrefix: 'Post-tool auto',
             toolEvidence,
+            allowTaskReroute: !options.context?.disableAutoTaskReroute,
             persistSession: {
               sessionId,
               messages,
@@ -1693,6 +1836,7 @@ export async function runKodaX(
           lastText,
           messages: cleanedMessages,
           sessionId,
+          routingDecision: currentRoutingDecision(),
           contextTokenSnapshot,
           interrupted: true,
           errorMetadata: updatedErrorMetadata,
@@ -1706,6 +1850,7 @@ export async function runKodaX(
         lastText,
         messages: cleanedMessages,  // ✅ Use cleaned messages to prevent error loop
         sessionId,
+        routingDecision: currentRoutingDecision(),
         contextTokenSnapshot,
         errorMetadata: updatedErrorMetadata,
       };
@@ -1735,6 +1880,7 @@ export async function runKodaX(
     signalReason: finalReason,
     messages,
     sessionId,
+    routingDecision: currentRoutingDecision(),
     contextTokenSnapshot,
     limitReached,
   };
@@ -1743,6 +1889,97 @@ export async function runKodaX(
     if (options.extensionRuntime && options.extensionRuntime !== previousActiveRuntime) {
       setActiveExtensionRuntime(previousActiveRuntime);
     }
+  }
+}
+
+async function buildAutoRepoIntelligenceContext(
+  options: KodaXOptions,
+  reasoningPlan: ReasoningPlan,
+  isNewSession: boolean,
+): Promise<string | undefined> {
+  const decision = reasoningPlan.decision;
+  const includeRepoOverview =
+    isNewSession
+    || decision.primaryTask === 'plan'
+    || decision.harnessProfile !== 'H0_DIRECT'
+    || decision.complexity !== 'simple';
+  const includeChangedScope =
+    decision.primaryTask === 'review'
+    || decision.primaryTask === 'bugfix'
+    || decision.primaryTask === 'edit'
+    || decision.primaryTask === 'refactor';
+
+  if (!includeRepoOverview && !includeChangedScope) {
+    return options.context?.repoIntelligenceContext;
+  }
+
+  try {
+    const activeModuleTargetPath = options.context?.executionCwd ? '.' : undefined;
+    const repoContext = {
+      executionCwd: options.context?.executionCwd,
+      gitRoot: options.context?.gitRoot ?? undefined,
+    };
+    const generatedContext = await buildRepoIntelligenceContext({
+      executionCwd: options.context?.executionCwd,
+      gitRoot: options.context?.gitRoot ?? undefined,
+    }, {
+      includeRepoOverview,
+      includeChangedScope,
+      refreshOverview: isNewSession,
+      changedScope: 'all',
+    });
+
+    const includeActiveModule =
+      decision.primaryTask === 'review'
+      || decision.primaryTask === 'bugfix'
+      || decision.primaryTask === 'edit'
+      || decision.primaryTask === 'refactor';
+    let moduleContext = '';
+    let impactContext = '';
+    let fallbackGuidance = '';
+
+    if (includeActiveModule) {
+      const moduleResult = await getModuleContext(repoContext, {
+        targetPath: activeModuleTargetPath,
+        refresh: isNewSession,
+      }).catch(() => null);
+
+      if (moduleResult) {
+        moduleContext = ['## Active Module Intelligence', renderModuleContext(moduleResult)].join('\n');
+      }
+
+      const impactResult = await getImpactEstimate(repoContext, {
+        targetPath: activeModuleTargetPath,
+        refresh: isNewSession,
+      }).catch(() => null);
+
+      if (impactResult) {
+        impactContext = ['## Active Impact Intelligence', renderImpactEstimate(impactResult)].join('\n');
+      }
+
+      const lowConfidence =
+        (moduleResult?.confidence ?? 1) < 0.72
+        || (impactResult?.confidence ?? 1) < 0.72;
+      if (lowConfidence || (!moduleResult && !impactResult)) {
+        fallbackGuidance = [
+          '## Repo Intelligence Guidance',
+          '- Current repository intelligence is low-confidence for this area.',
+          '- Validate critical edits with `module_context`, `symbol_context`, `grep`, and `read` before committing to a change.',
+        ].join('\n');
+      }
+    }
+
+    return [
+      options.context?.repoIntelligenceContext,
+      generatedContext,
+      moduleContext,
+      impactContext,
+      fallbackGuidance,
+    ]
+      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      .join('\n\n');
+  } catch {
+    return options.context?.repoIntelligenceContext;
   }
 }
 
@@ -1761,12 +1998,23 @@ async function buildReasoningExecutionState(
     executionMode: KodaXExecutionMode;
   };
 }> {
+  const repoIntelligenceContext = await buildAutoRepoIntelligenceContext(
+    options,
+    reasoningPlan,
+    isNewSession,
+  );
+
   const effectiveOptions: KodaXOptions = {
     ...options,
     reasoningMode: reasoningPlan.mode,
     context: {
       ...options.context,
       executionCwd: resolveExecutionCwd(options.context),
+      repoIntelligenceContext,
+      providerPolicyHints: {
+        ...options.context?.providerPolicyHints,
+        ...buildProviderPolicyHintsForDecision(reasoningPlan.decision),
+      },
       promptOverlay: [
         options.context?.promptOverlay,
         reasoningPlan.promptOverlay,

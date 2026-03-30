@@ -1,7 +1,9 @@
 # KodaX Architecture Decision Records
 
-> Last updated: 2026-03-25
-> This ADR set reflects the architecture reset carried by `FEATURE_022`, which promotes KodaX from a command-led coding CLI into an adaptive multi-agent task engine.
+> Last updated: 2026-03-30
+>
+> 这组 ADR 反映当前 `FEATURE_022` 之后的执行模型：
+> single-agent first、按证据升级 harness、skill-aware AMA。
 
 ---
 
@@ -9,418 +11,265 @@
 
 **Status**: Accepted
 
-KodaX keeps the layered monorepo structure:
+KodaX 继续保持分层 monorepo：
 
-- `@kodax/ai`: provider abstraction
-- `@kodax/agent`: generic session and compaction substrate
-- `@kodax/coding`: headless coding runtime
-- `@kodax/repl`: interactive surfaces
-- `@kodax/skills`: reusable instruction bundles
-
-Reasoning:
-
-- The layers are already understandable and reusable.
-- The new task engine should be built on top of the current package boundaries, not by collapsing them.
-- `@kodax/coding` remains the correct place for the product-grade runtime, because it already owns prompts, tools, orchestration, and the coding loop.
-
----
-
-## ADR-002: KodaX Becomes an Adaptive Task Engine
-
-**Status**: Proposed
-
-KodaX should no longer treat `Project Mode` as the main product abstraction.
-
-The new primary abstraction is a **task**:
-
-- a task may be a one-shot answer
-- a task may become a managed long-running task
-- a task may require planning, execution, and evaluation
-- a task may require one agent or multiple agents
+- `@kodax/ai`
+- `@kodax/agent`
+- `@kodax/coding`
+- `@kodax/repl`
+- `@kodax/skills`
 
 Reasoning:
 
-- Users should not need to decide up front whether they are "in project mode".
-- The system should determine whether a request needs discovery, durable state, verification, or multi-agent execution.
-- This aligns better with how users naturally work: they describe intent, not mode.
-
-Consequence:
-
-- `/project` becomes a control surface over managed tasks instead of the product center.
-- `feature_list.json`, `.agent/project/`, session plans, and harness artifacts become part of a broader task-state model.
+- 当前边界仍然清晰且可复用。
+- task engine 的增强应建立在现有层次之上，而不是把层全部揉平。
 
 ---
 
-## ADR-003: Non-Trivial Tasks Default to Native Multi-Agent Execution
-
-**Status**: Proposed
-
-KodaX should adopt native multi-agent execution for non-trivial work.
-
-The system should treat the following as separate responsibilities:
-
-- `Lead`: routing, decomposition, synthesis, escalation
-- `Planner`: scope expansion, success criteria, contract drafting
-- `Generator`: implementation
-- `Evaluator`: skeptical grading, QA, acceptance decisions
-
-Reasoning:
-
-- A single agent that plans, implements, and self-approves is structurally unreliable.
-- Separating implementation from evaluation is now a load-bearing requirement, not an optimization.
-- Anthropic's 2026 harness work shows that planner/generator/evaluator separation produces materially better long-running outputs than naive single-agent loops.
-
-Consequence:
-
-- Single-agent execution remains only as a low-complexity fallback.
-- KodaX should reason in terms of role separation even when the runtime chooses a minimal harness profile.
-
----
-
-## ADR-004: Replace Sprint-Centric Project Semantics with Contract-Centric Task Semantics
-
-**Status**: Proposed
-
-The system should standardize on **task contracts** rather than hard-coding `project` or `sprint` semantics into the user-facing workflow.
-
-A task contract defines:
-
-- the active scope
-- the deliverable
-- the acceptance criteria
-- the evidence expected from evaluation
-
-Reasoning:
-
-- The current `/project` workflow is useful but too tied to a specific long-running coding path.
-- Contracts generalize better to bug fixes, reviews, refactors, investigations, and broader long-running app development.
-- Contracts are the right bridge between a high-level prompt and testable work.
-
-Consequence:
-
-- Future managed runs should be organized around negotiated contracts.
-- `feature_list.json` remains valid for some tasks, but it stops being the only truth model.
-
----
-
-## ADR-005: Evidence, Not Self-Report, Defines Completion
+## ADR-002: KodaX Becomes a Task Engine
 
 **Status**: Accepted
 
-KodaX should continue to treat self-reported completion as insufficient.
-
-Completion must be derived from evidence such as:
-
-- deterministic checks
-- test results
-- UI/browser verification
-- contract criteria coverage
-- structured evaluator findings
-
-Reasoning:
-
-- This is already the strongest part of the current `Project Harness`.
-- The next architecture should generalize this approach rather than replace it.
+KodaX 的一等抽象是 `task`，不是旧的 `Project Mode`。
 
 Consequence:
 
-- Evaluators need a first-class evidence model.
-- The storage model should preserve run artifacts, findings, checkpoints, and evaluator decisions.
+- `/project` 变成 control surface
+- task contract / evidence / verdict 成为统一事实面
 
 ---
 
-## ADR-006: `/project` Becomes a Transitional Control Surface
-
-**Status**: Proposed
-
-`/project` should remain available, but its role changes.
-
-It becomes:
-
-- a state viewer
-- a control plane UI
-- a manual override surface
-- a diagnostic entry point
-
-It should stop being the only way to access durable harness behavior.
-
-Reasoning:
-
-- Current KodaX users already rely on `/project`.
-- Removing it outright would create unnecessary churn.
-- Internalizing managed execution while keeping `/project` as an inspection and override surface gives the best migration path.
-
----
-
-## ADR-007: Retire `--team` as a Product Concept
-
-**Status**: Proposed
-
-The current `--team` flow should be treated as legacy orchestration plumbing, not the future multi-agent product.
-
-Reasoning:
-
-- It only accepts comma-separated parallel prompts.
-- It lacks role semantics, contract negotiation, evaluator authority, durable task truth, and evidence aggregation.
-- It does not represent the architecture KodaX now wants to ship.
-
-Consequence:
-
-- Future documentation should stop presenting `--team` as the multi-agent story.
-- Feature planning should assume `FEATURE_022` replaces it with a real control plane.
-
----
-
-## ADR-008: Provider Capability Must Influence Harness Shape
-
-**Status**: Proposed
-
-Harness choice should depend on model capability, not just user preference.
-
-The provider/model capability profile should inform:
-
-- whether planning is lightweight or explicit
-- whether evaluation is mandatory
-- whether long uninterrupted runs are safe
-- whether stronger resets or stronger decomposition are required
-- expected cost and latency envelopes
-
-Reasoning:
-
-- Different providers and models do not fail in the same way.
-- A fixed harness wastes cost on strong models and under-supports weaker ones.
-
-Consequence:
-
-- `FEATURE_029` becomes strategically important, not merely diagnostic.
-
----
-
-## ADR-009: Keep the Runtime Headless and Surface-Agnostic
+## ADR-003: Single-Agent First, Harness On Demand
 
 **Status**: Accepted
 
-The new task engine should remain headless and reusable across:
+系统默认从单 agent 语义出发，仅在证据表明必要时升级到 AMA harness。
 
-- CLI
-- REPL / TUI
-- ACP / IDE
-- future desktop and web surfaces
+核心执行形态：
+
+- `SA`: single-agent direct
+- `AMA-H0`: direct
+- `AMA-H1`: checked-direct
+- `AMA-H2`: coordinated
 
 Reasoning:
 
-- Multi-surface delivery is a roadmap objective, not a separate product.
-- The control plane, storage model, and agent orchestration logic should not be trapped inside one UI.
-
-Consequence:
-
-- `FEATURE_030` depends on the runtime choices made by `FEATURE_022`, `FEATURE_025`, and `FEATURE_034`.
+- 简单任务不应先经历多角色 ceremony。
+- 用户应当感觉系统“先试着直接做，再在需要时变强”。
 
 ---
 
-## ADR-010: Use Simplification as a First-Class Maintenance Rule
+## ADR-004: Remove `H3_MULTI_WORKER` from the Default Runtime
 
 **Status**: Accepted
 
-KodaX should actively remove harness components once they stop being load-bearing.
+默认 runtime 不再保留 `H3_MULTI_WORKER`。
 
 Reasoning:
 
-- Better models shift which scaffolding is necessary.
-- A harness that only grows becomes brittle, expensive, and hard to reason about.
-- The goal is not "more agents"; the goal is "the minimum structure that preserves reliability at current model capability".
+- 缺乏清晰收益边界
+- 容易带来角色膨胀、token 浪费、流式展示混乱
 
 Consequence:
 
-- Every new harness component should have a clear failure mode it addresses.
-- Feature docs should describe both why a component exists and what would allow it to be removed later.
+- AMA 只保留 `H0 / H1 / H2`
+- 如未来重新引入并行执行，应作为新的受控设计，而不是历史残留
 
 ---
 
-## Appendix A: Retained Historical Design Decisions
+## ADR-005: `Scout` Is Pre-Harness, Not a Long-Lived H2 Role
 
-The architecture reset did not invalidate a number of earlier accepted implementation decisions. They remain worth retaining as practical and historical reference.
+**Status**: Accepted
 
-### A.1 Provider abstraction and registry
+`Scout` 只负责 pre-harness 判断和牵引，不进入 H2 主 graph。
 
-Still valid:
+Reasoning:
 
-- providers implement one shared abstraction
-- provider lookup remains registry-based
-- factory-style registration keeps instantiation lazy
-
-Why it still matters:
-
-- new harness logic still depends on one provider interface
-- native vs bridge-backed semantics can only be compared cleanly if the abstraction remains explicit
-
-### A.2 Streaming-first output
-
-Still valid:
-
-- providers should prefer streaming output
-- hosts should continue to receive incremental text, thinking, and tool lifecycle updates
-
-Why it still matters:
-
-- task-engine routing does not remove the UX need for real-time feedback
-- evaluators and long-running flows benefit from observable progress
-
-### A.3 Permission modes remain real product behavior
-
-Still valid:
-
-- read-only / plan behavior
-- guarded default mode
-- edit-accepting modes
-- stronger automation within controlled project flows
-
-Why it still matters:
-
-- sandbox and capability work do not replace approval UX
-- task-engine execution still needs a user-facing permission model
-
-### A.4 Skills remain markdown-first instruction bundles
-
-Still valid:
-
-- skills stay lightweight and file-based
-- skill discovery and natural-language triggering remain part of the product
-
-### A.5 Ink is still the current terminal renderer
-
-Still valid:
-
-- Ink remains the current interactive terminal baseline
-
-Why it still matters:
-
-- `FEATURE_023` is an interaction and renderer-evolution feature, not a reason to erase current renderer history
-
-### A.6 Tool registry remains foundational
-
-Still valid:
-
-- tools are still registered and executed through one central runtime contract
-
-Why it still matters:
-
-- `FEATURE_034` evolves this design, but does not remove its importance
-
-### A.7 Session persistence remains foundational
-
-Still valid:
-
-- persistent sessions and resumable history remain core product behavior
-
-Why it still matters:
-
-- `FEATURE_019` extends this into task-aware lineage instead of replacing the need for durable session truth
-
-### A.8 Promise signals and interactive control still matter
-
-Still valid:
-
-- completion / blocked / decision-style control signals remain part of current long-running behavior
-- pending input and interruption flows remain important runtime realities
-
-### A.9 Autocomplete and trigger-behavior history is still useful
-
-Still valid:
-
-- multi-source autocomplete
-- careful trigger-character behavior to avoid false positives in paths and URLs
-
-Why it still matters:
-
-- these decisions still inform terminal UX evolution under `FEATURE_023`
+- 避免 H2 角色图再次膨胀
+- 保持 `Planner -> Generator <-> Evaluator` 作为唯一完整 harness 骨架
 
 ---
 
-## Appendix B: Historical ADR Outline (Pre-Reset)
+## ADR-006: H2 Uses `Planner -> Generator <-> Evaluator`
 
-The earlier ADR file recorded a set of already-adopted implementation decisions in more traditional ADR form. They are preserved here so that historical wording, scope, and rationale are not lost.
+**Status**: Accepted
 
-### B.1 ADR-001: 5-layer independent architecture
+H2 的唯一完整骨架是：
 
-Original intent retained:
+```text
+Planner -> Generator <-> Evaluator
+```
 
-- CLI, Interactive, Coding, Agent, AI, plus zero-dependency Skills concerns
-- each layer should remain independently useful and testable
-- architecture should favor reuse and clearer evolution boundaries
+Consequence:
 
-### B.2 ADR-002: Provider abstraction pattern
+- `Planner` 负责 contract
+- `Generator` 负责 deep evidence / execution
+- `Evaluator` 负责 targeted spot-check / verdict
 
-Original intent retained:
+`Lead`、默认 `Admission`、`Contract Reviewer` 不再是主骨架角色。
 
-- support many providers behind one interface
-- use an abstract base plus registry pattern
-- keep provider differences isolated behind the provider layer
+---
 
-### B.3 ADR-003: Streaming-first output
+## ADR-007: Skills Stay as Invocation Playbooks, Adapted via `skill-map`
 
-Original intent retained:
+**Status**: Accepted
 
-- users should see output incrementally
-- long responses should not block on full completion
-- stream lifecycle events are part of both UX and debugging
+skill 仍然是 invocation/playbook，而不是新的多角色协议。
 
-### B.4 ADR-004: Permission mode system
+当 skill 进入 AMA 时：
 
-Original intent retained:
+- `Scout` 读取完整 expanded skill
+- `Scout` 生成 `skill-map`
+- `Planner / Generator / Evaluator` 各自读取不同层次的 skill 视图
 
-- balance safety and speed through explicit modes
-- keep dangerous actions gated
-- let trust increase progressively instead of being all-or-nothing
+Reasoning:
 
-### B.5 ADR-005: Skills as markdown instruction bundles
+- 保留 skill 的智能性
+- 避免 raw skill workflow 平铺污染所有角色
 
-Original intent retained:
+---
 
-- keep skills lightweight and portable
-- prefer plain markdown for authoring and version control
-- support reusable task templates without a heavy plugin runtime
+## ADR-008: Evidence, Not Self-Report, Defines Completion
 
-### B.6 ADR-006: Ink as the CLI UI framework
+**Status**: Accepted
 
-Original intent retained:
+完成必须由 evidence + verdict 决定，而不是执行者自报完成。
 
-- build interactive terminal UX with React-style composition
-- use a renderer that supports complex TUI state without abandoning the Node stack
+Consequence:
 
-### B.7 ADR-007: Tool registry pattern
+- `Planner` 交 contract
+- `Generator` 交 handoff
+- `Evaluator` 交 verdict
+- 缺 block 不得推进下游
 
-Original intent retained:
+---
 
-- register tools centrally
-- decouple tool execution logic from the agent loop
-- keep the runtime extensible and testable
+## ADR-009: Work Is the Primary User-Visible Budget Signal
 
-### B.8 ADR-008: Session persistence format
+**Status**: Accepted
 
-Original intent retained:
+用户可见的主预算语义是 `Work used/total`。
 
-- persist sessions in append-friendly text formats
-- keep sessions inspectable and resumable
-- support long-running and cross-session continuity
+`Round` 仅在真实额外 pass 存在时出现。
 
-### B.9 ADR-009: Promise signal system
+Reasoning:
 
-Original intent retained:
+- 用户需要理解成本，但不应暴露底层 worker iter 噪音
+- `Iter x/y` 对 AMA 用户不可解释
 
-- allow the agent to surface explicit control outcomes such as completion, blocked state, and decision requests
-- give the host a structured way to react to long-running flows
+---
 
-### B.10 ADR-010: Multi-source autocomplete
+## ADR-010: Evaluator’s Internal Review Must Not Leak into the Public Answer
 
-Original intent retained:
+**Status**: Accepted
 
-- merge completions from commands, files, skills, and other sources
-- keep the completion architecture extensible through specialized completers
+Evaluator 可以在内部评估 Generator handoff，但这种元评估不应出现在用户最终答案里。
 
-### B.11 ADR-011: Trigger-character whitespace rule
+Consequence:
 
-Original intent retained:
+- 内部判断写入 verdict / transcript
+- 用户答案直接面向用户交付结果
 
-- avoid false trigger behavior in URLs and file paths
-- require start-of-input or whitespace-aware trigger positions for `/` and `@`
+---
+
+## ADR-011: `/project` Remains a Transitional Control Surface
+
+**Status**: Accepted
+
+`/project` 继续存在，但不再是主产品抽象。
+
+它负责：
+
+- inspection
+- resume / pause / verify
+- artifact browsing
+
+---
+
+## ADR-012: `Project` and `SA / AMA` Are Orthogonal Dimensions
+
+**Status**: Accepted
+
+`Project` 描述任务语境，`SA / AMA` 描述执行拓扑；二者可以合法组合。
+
+Consequence:
+
+- `Project + AMA` 继续使用完整 managed-task 语义
+- `Project + SA` 是 first-class path，不是降级或非法路径
+- `Project + SA` 不进入 managed-task graph，但会写 lightweight direct-run record 以支撑 status / summary / next-step continuity
+
+---
+
+## ADR-013: Non-Generator Roles Share Distilled Same-Role Summaries
+
+**Status**: Accepted
+
+`Scout`、`Planner`、`Evaluator` 保持 `reset-handoff`，但跨轮显式共享 distilled same-role summary。
+
+Reasoning:
+
+- 这些角色需要跨轮连续性，但不应恢复完整私有历史
+- summary 注入比隐式依赖 artifacts 更稳定、更可控
+- `Generator` 继续作为主要深度上下文消费者
+
+---
+
+## ADR-014: `H0_DIRECT` Means Single-Agent Finish
+
+**Status**: Accepted
+
+`H0` 的核心不是“完全没有判断阶段”，而是“最终没有多 agent handoff”。
+
+Consequence:
+
+- `H0` 允许两种合法形态：
+  - `Direct H0`
+  - `Scout-complete H0`
+- 如果 `Scout` 判定 `H0_DIRECT` 且证据已足够，则由 `Scout` 直接给最终用户答案
+- 不允许 `Scout` 判定 `H0` 后再 handoff 给第二个 direct agent
+
+---
+
+## ADR-015: Read-Only and Docs-Only Work Are Capped Below `H2`
+
+**Status**: Accepted
+
+`read-only` 与 `docs-only` 任务永远不进入 `H2`。
+
+Consequence:
+
+- 这类任务默认停留在 `H0`
+- 只有用户明确要求 `double-check`、`second pass`、`更强审查` 或等价意图时，才允许进入 `H1`
+- `reviewScale`、repo 规模、diff 大小、模块数量只影响 evidence strategy，不得单独抬高 harness
+
+---
+
+## ADR-016: `H1` Is Lightweight Checked-Direct, Not Mini-`H2`
+
+**Status**: Accepted
+
+`H1` 的设计目标是“轻快但有轻度质量保障”，而不是缩小版的 coordinated harness。
+
+Consequence:
+
+- `H1` 固定为 `Generator + 轻量 Evaluator`
+- 无 `Planner`
+- 无 contract negotiation
+- 无默认多轮 refine
+- `Scout` 进入 `H1` 后立即停手，只交付中等丰富、严格受限的 cheap-facts handoff
+- `Evaluator` 只检查：
+  - 是否对题
+  - 是否漏项
+  - 关键 claim 是否有证据
+  - 是否明显过度自信
+- `read-only/docs-only` 的 `H1` 最多只允许一次短 revise；失败后返回 `best-effort + limits`，不升级到 `H2`
+
+---
+
+## ADR-017: `--team` Is Not a Product Mode
+
+**Status**: Accepted
+
+`--team` 不再是主产品故事的一部分。
+
+如果保留兼容入口，也只应视为 deprecated plumbing。

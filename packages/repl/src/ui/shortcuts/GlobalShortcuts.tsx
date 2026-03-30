@@ -9,6 +9,7 @@
 import type React from 'react';
 import chalk from 'chalk';
 import {
+  type KodaXAgentMode,
   KODAX_REASONING_MODE_SEQUENCE,
   type KodaXReasoningMode,
 } from '@kodax/coding';
@@ -30,6 +31,7 @@ export interface GlobalShortcutsProps {
   setShowHelp: (visible: boolean) => void;
   onSetThinking?: (enabled: boolean) => void;
   onSetReasoningMode?: (mode: KodaXReasoningMode) => void;
+  onSetAgentMode?: (mode: KodaXAgentMode) => void;
   onSetPermissionMode?: (mode: PermissionMode) => void;
   onSetParallel?: (enabled: boolean) => void;
   isInputEmpty: boolean;
@@ -49,6 +51,7 @@ export function GlobalShortcuts({
   setShowHelp,
   onSetThinking,
   onSetReasoningMode,
+  onSetAgentMode,
   onSetPermissionMode,
   onSetParallel,
   isInputEmpty,
@@ -117,6 +120,16 @@ export function GlobalShortcuts({
     setCurrentConfig((prev) => ({ ...prev, permissionMode: newMode }));
     onSetPermissionMode?.(newMode);
     onSavePermissionMode?.(newMode);
+    setShowHelp(false);
+    return true;
+  });
+
+  useShortcut('toggleAgentMode', () => {
+    const nextMode: KodaXAgentMode = currentConfig.agentMode === 'ama' ? 'sa' : 'ama';
+
+    setCurrentConfig((prev) => ({ ...prev, agentMode: nextMode }));
+    saveConfig({ agentMode: nextMode });
+    onSetAgentMode?.(nextMode);
     setShowHelp(false);
     return true;
   });

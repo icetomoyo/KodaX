@@ -2,7 +2,7 @@ import { calculateVisualLayout } from "./textUtils.js";
 import {
   HELP_BAR_HORIZONTAL_PADDING,
   HELP_BAR_SPACER_ROWS,
-  HELP_BAR_TEXT,
+  buildHelpBarText,
   MESSAGE_LIST_VERTICAL_PADDING_ROWS,
 } from "../constants/layout.js";
 
@@ -109,7 +109,7 @@ export function calculateViewportBudget(options: ViewportBudgetOptions): Viewpor
 
   const helpRows = showHelp
     ? wrapLineCount(
-        HELP_BAR_TEXT,
+        buildHelpBarText(),
         Math.max(1, terminalWidth - HELP_BAR_HORIZONTAL_PADDING)
       ) + HELP_BAR_SPACER_ROWS
     : 0;

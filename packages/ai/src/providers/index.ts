@@ -8,6 +8,7 @@ export { KodaXBaseProvider } from './base.js';
 export { KodaXAnthropicCompatProvider } from './anthropic.js';
 export { KodaXOpenAICompatProvider } from './openai.js';
 export {
+  normalizeCapabilityProfile,
   KODAX_PROVIDERS,
   KODAX_PROVIDER_SNAPSHOTS,
   KODAX_DEFAULT_PROVIDER,

@@ -37,6 +37,7 @@ export const App: React.FC<AppProps> = ({
   provider,
   onSubmit,
   permissionMode = "accept-edits",
+  agentMode = "ama",
   parallel = false,
 }) => {
   const { stdout } = useStdout();
@@ -160,6 +161,7 @@ export const App: React.FC<AppProps> = ({
         <StatusBar
           sessionId={state.sessionId}
           permissionMode={permissionMode}
+          agentMode={agentMode}
           parallel={parallel}
           provider={provider}
           model={model}

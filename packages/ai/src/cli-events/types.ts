@@ -86,5 +86,6 @@ export interface CLIExecutorConfig {
 export interface CLIExecutionOptions {
     prompt: string;
     sessionId?: string; // Session identifier for resume flows
+    model?: string; // Model override for CLIs that support explicit selection
     signal?: AbortSignal; // Cancellation signal
 }

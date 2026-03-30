@@ -16,6 +16,8 @@ describe('tool registry', () => {
   it('derives required params from the active tool schema', () => {
     expect(getRequiredToolParams('read')).toEqual(['path']);
     expect(getRequiredToolParams('ask_user_question')).toEqual(['question', 'options']);
+    expect(getRequiredToolParams('changed_diff')).toEqual(['path']);
+    expect(getRequiredToolParams('changed_diff_bundle')).toEqual(['paths']);
   });
 
   it('supports same-name override and restore via disposer', async () => {

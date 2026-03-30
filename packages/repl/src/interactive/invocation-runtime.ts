@@ -523,6 +523,13 @@ export async function prepareInvocationExecution(
     options: {
       ...baseOptions,
       modelOverride,
+      context: {
+        ...baseOptions.context,
+        rawUserInput,
+        skillInvocation: request.source === 'skill'
+          ? request.skillInvocation
+          : baseOptions.context?.skillInvocation,
+      },
       events: wrappedEvents,
     },
     finalize,

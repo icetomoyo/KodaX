@@ -1,6 +1,11 @@
 import { ToolCallStatus, type HistoryItem, type Theme, type ToolCall } from "../types.js";
 import type { IterationRecord } from "../contexts/StreamingContext.js";
 import { calculateVisualLayout } from "./textUtils.js";
+import {
+  collapseToolCalls,
+  formatCollapsedToolInlineText,
+  formatLiveToolLabel,
+} from "./tool-display.js";
 
 export type TranscriptColorToken =
   | "primary"
@@ -45,6 +50,32 @@ export interface TranscriptBuildOptions {
   iterationHistory?: IterationRecord[];
   currentIteration?: number;
   isCompacting?: boolean;
+  managedAgentMode?: string;
+  managedPhase?: "starting" | "routing" | "preflight" | "round" | "worker" | "upgrade" | "completed";
+  managedHarnessProfile?: string;
+  managedWorkerTitle?: string;
+  managedRound?: number;
+  managedMaxRounds?: number;
+  managedGlobalWorkBudget?: number;
+  managedBudgetUsage?: number;
+  managedBudgetApprovalRequired?: boolean;
+  lastLiveActivityLabel?: string;
+  showFullThinking?: boolean;
+  showDetailedTools?: boolean;
+}
+
+const THINKING_PREVIEW_MAX_CHARS = 400;
+
+function normalizeManagedLiveActivityLabel(label: string | undefined, workerTitle?: string): string | undefined {
+  if (!label || !workerTitle) {
+    return label;
+  }
+  const escapedWorkerTitle = workerTitle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return label
+    .replace(new RegExp(`^\\[Tools\\]\\s+\\[${escapedWorkerTitle}\\]\\s+`, "i"), "[Tools] ")
+    .replace(new RegExp(`^\\[Thinking\\]\\s+\\[${escapedWorkerTitle}\\]\\s*`, "i"), "[Thinking] ")
+    .replace(new RegExp(`^\\[${escapedWorkerTitle}\\]\\s+thinking\\b`, "i"), "[Thinking]")
+    .trim();
 }
 
 function formatTimestamp(timestamp: number): string {
@@ -53,13 +84,6 @@ function formatTimestamp(timestamp: number): string {
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-
-function formatDuration(startTime: number, endTime?: number): string {
-  if (!endTime) return "";
-  const ms = endTime - startTime;
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
 }
 
 function getToolStatusIcon(status: ToolCallStatus): string {
@@ -151,20 +175,31 @@ function getBodyWidth(viewportWidth: number, indent = 0): number {
   return Math.max(20, viewportWidth - indent);
 }
 
+function formatHarnessProfileShort(harnessProfile?: string): string | undefined {
+  switch (harnessProfile) {
+    case "H0_DIRECT":
+      return "H0";
+    case "H1_EXECUTE_EVAL":
+      return "H1";
+    case "H2_PLAN_EXECUTE_EVAL":
+      return "H2";
+    default:
+      return harnessProfile;
+  }
+}
+
 function buildToolRows(
   rows: TranscriptRow[],
   itemKey: string,
   tool: ToolCall,
-  viewportWidth: number
+  count: number,
+  viewportWidth: number,
+  showDetailedTools = false,
 ): void {
-  const preview = tool.input ? JSON.stringify(tool.input) : "";
-  const previewText =
-    preview.length > 0 ? ` ${preview.slice(0, 50)}${preview.length > 50 ? "..." : ""}` : "";
-
   pushWrappedRows(
     rows,
     `${itemKey}-tool-${tool.id}-main`,
-    `${getToolStatusIcon(tool.status)} ${tool.name}${previewText}`,
+    `${getToolStatusIcon(tool.status)} ${formatCollapsedToolInlineText({ tool, count })}`,
     getBodyWidth(viewportWidth, 2),
     {
       color: getToolStatusColor(tool.status),
@@ -172,16 +207,6 @@ function buildToolRows(
       bold: tool.status === ToolCallStatus.Executing,
     }
   );
-
-  if (tool.progress !== undefined && tool.status === ToolCallStatus.Executing) {
-    pushWrappedRows(
-      rows,
-      `${itemKey}-tool-${tool.id}-progress`,
-      `Progress: ${tool.progress}%`,
-      getBodyWidth(viewportWidth, 4),
-      { color: "dim", indent: 4 }
-    );
-  }
 
   if (tool.error) {
     pushWrappedRows(
@@ -193,15 +218,30 @@ function buildToolRows(
     );
   }
 
-  const duration = formatDuration(tool.startTime, tool.endTime);
-  if (duration) {
-    pushWrappedRows(
-      rows,
-      `${itemKey}-tool-${tool.id}-duration`,
-      `Completed in ${duration}`,
-      getBodyWidth(viewportWidth, 4),
-      { color: "dim", indent: 4 }
-    );
+  if (showDetailedTools && typeof tool.output === "string" && tool.output.trim()) {
+    const outputLines = tool.output
+      .trim()
+      .split(/\r?\n/)
+      .slice(0, 8);
+    outputLines.forEach((line, index) => {
+      pushWrappedRows(
+        rows,
+        `${itemKey}-tool-${tool.id}-output-${index}`,
+        line,
+        getBodyWidth(viewportWidth, 4),
+        { color: "dim", indent: 4 }
+      );
+    });
+    const totalLineCount = tool.output.trim().split(/\r?\n/).length;
+    if (totalLineCount > outputLines.length) {
+      pushWrappedRows(
+        rows,
+        `${itemKey}-tool-${tool.id}-output-more`,
+        `... (${totalLineCount - outputLines.length} more lines)`,
+        getBodyWidth(viewportWidth, 4),
+        { color: "dim", indent: 4 }
+      );
+    }
   }
 }
 
@@ -221,6 +261,15 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
     iterationHistory = [],
     currentIteration = 1,
     isCompacting = false,
+    managedAgentMode,
+    managedPhase,
+    managedHarnessProfile,
+    managedWorkerTitle,
+    managedRound,
+    managedMaxRounds,
+    lastLiveActivityLabel,
+    showFullThinking = false,
+    showDetailedTools = false,
   } = options;
 
   const rows: TranscriptRow[] = [];
@@ -291,7 +340,9 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
           viewportWidth,
           { color: "accent", bold: true }
         );
-        item.tools.forEach((tool) => buildToolRows(rows, item.id, tool, viewportWidth));
+        collapseToolCalls(item.tools).forEach((group) => (
+          buildToolRows(rows, item.id, group.tool, group.count, viewportWidth, showDetailedTools)
+        ));
         pushBlankRow(rows, `${item.id}-blank`);
         break;
       case "thinking":
@@ -318,13 +369,8 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
         pushBlankRow(rows, `${item.id}-blank`);
         break;
       case "info":
-        pushWrappedRows(rows, `${item.id}-header`, `${item.icon ?? "\u2139"} Info`, viewportWidth, {
+        pushWrappedRows(rows, `${item.id}-body`, `${item.icon ?? "\u2139"} ${item.text}`, viewportWidth, {
           color: "info",
-          bold: true,
-        });
-        pushWrappedRows(rows, `${item.id}-body`, item.text, getBodyWidth(viewportWidth, 2), {
-          color: "info",
-          indent: 2,
         });
         pushBlankRow(rows, `${item.id}-blank`);
         break;
@@ -386,6 +432,16 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
         }
       }
 
+      if (record.toolsUsed.length > 0) {
+        pushWrappedRows(
+          rows,
+          `iteration-${record.iteration}-tools`,
+          `* tools: ${record.toolsUsed.join(", ")}`,
+          getBodyWidth(viewportWidth, 1),
+          { color: "accent", indent: 1 }
+        );
+      }
+
       pushBlankRow(rows, `iteration-${record.iteration}-blank`);
     });
 
@@ -397,11 +453,14 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
   }
 
   if (isLoading && thinkingContent) {
+    const thinkingPreview = showFullThinking || thinkingContent.length <= THINKING_PREVIEW_MAX_CHARS
+      ? thinkingContent
+      : `${thinkingContent.slice(0, THINKING_PREVIEW_MAX_CHARS)}\n\n... (thinking truncated in live view; press PgUp to review full reasoning)`;
     pushWrappedRows(rows, "thinking-stream-header", "Thinking", viewportWidth, {
       color: "thinking",
       italic: true,
     });
-    pushWrappedRows(rows, "thinking-stream-body", thinkingContent, getBodyWidth(viewportWidth, 2), {
+    pushWrappedRows(rows, "thinking-stream-body", thinkingPreview, getBodyWidth(viewportWidth, 2), {
       color: "thinking",
       indent: 2,
       italic: true,
@@ -424,18 +483,34 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
   if (isLoading) {
     let loadingText = "Thinking";
     let prefix = "";
+    const managedHarnessShort = formatHarnessProfileShort(managedHarnessProfile);
+    const normalizedLiveActivityLabel = normalizeManagedLiveActivityLabel(lastLiveActivityLabel, managedWorkerTitle);
+    const managedPrefix = managedPhase === "routing"
+      ? `[${managedAgentMode ? managedAgentMode.toUpperCase() : 'AMA'} Routing] `
+      : managedPhase === "preflight"
+        ? `[${managedAgentMode ? managedAgentMode.toUpperCase() : 'AMA'} Scout${managedWorkerTitle && managedWorkerTitle !== "Scout" ? ` - ${managedWorkerTitle}` : ''}] `
+        : managedHarnessProfile
+          ? `[${managedAgentMode ? managedAgentMode.toUpperCase() : 'AMA'} ${managedHarnessShort ?? managedHarnessProfile}${managedWorkerTitle ? ` - ${managedWorkerTitle}` : ''}] `
+          : "";
     if (isCompacting) {
       loadingText = "Compacting";
     } else if (currentTool) {
-      prefix = "[Tool] ";
-      loadingText = toolInputContent
-        ? `${currentTool} (${toolInputContent}...)`
-        : toolInputCharCount > 0
-          ? `${currentTool} (${toolInputCharCount} chars)`
-          : `Executing ${currentTool}...`;
+      prefix = managedPrefix || "[Tool] ";
+      loadingText = normalizedLiveActivityLabel?.startsWith("[Tools]")
+        ? normalizedLiveActivityLabel
+        : formatLiveToolLabel(currentTool, toolInputContent, toolInputCharCount);
     } else if (isThinking) {
-      prefix = "[Thinking] ";
-      loadingText = thinkingCharCount > 0 ? `(${thinkingCharCount} chars)` : "processing...";
+      prefix = managedPrefix || "[Thinking] ";
+      const roundSuffix = managedRound && managedMaxRounds && managedRound > 1
+        ? ` round ${managedRound}/${managedMaxRounds}`
+        : "";
+      loadingText = thinkingCharCount > 0
+        ? `${thinkingCharCount} chars${roundSuffix}`
+        : normalizedLiveActivityLabel
+          ? `${normalizedLiveActivityLabel}${roundSuffix}`
+          : `processing${roundSuffix}`;
+    } else if (normalizedLiveActivityLabel) {
+      loadingText = normalizedLiveActivityLabel;
     }
 
     pushWrappedRows(
@@ -453,15 +528,17 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
 export function buildStaticTranscriptSections(
   items: HistoryItem[],
   viewportWidth: number,
-  maxLines = 1000
+  maxLines = 1000,
+  showDetailedTools = false,
 ): TranscriptSection[] {
-  return buildHistoryItemTranscriptSections(items, viewportWidth, maxLines);
+  return buildHistoryItemTranscriptSections(items, viewportWidth, maxLines, showDetailedTools);
 }
 
 export function buildHistoryItemTranscriptSections(
   items: HistoryItem[],
   viewportWidth: number,
-  maxLines = 1000
+  maxLines = 1000,
+  showDetailedTools = false,
 ): TranscriptSection[] {
   return items.map((item) => ({
     key: item.id,
@@ -469,6 +546,7 @@ export function buildHistoryItemTranscriptSections(
       items: [item],
       viewportWidth,
       maxLines,
+      showDetailedTools,
     }),
   }));
 }

@@ -49,6 +49,16 @@ export const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
     configurable: true,
   },
   {
+    id: 'toggleAgentMode',
+    name: 'Toggle Agent Mode',
+    description: 'Switch between AMA and SA',
+    defaultBindings: [{ key: 'm', meta: true }],
+    context: 'global',
+    priority: 150,
+    category: 'mode',
+    configurable: true,
+  },
+  {
     id: 'toggleParallelMode',
     name: 'Toggle Parallel',
     description: 'Toggle between parallel and sequential tool execution',

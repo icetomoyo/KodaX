@@ -10,10 +10,15 @@ export function createRetryHistoryItem(
   attempt: number,
   maxAttempts: number,
 ): CreatableHistoryItem {
+  const trimmed = reason.trim();
+  const text = /\bretry\s+\d+\/\d+\b/i.test(trimmed) || /\b\d+\/\d+\b/.test(trimmed)
+    ? trimmed
+    : `${trimmed} · retry ${attempt}/${maxAttempts}`;
+
   return {
     type: "info",
-    icon: "⏳",
-    text: `${reason}\n   Retry attempt ${attempt}/${maxAttempts}`,
+    icon: "\u23F3",
+    text,
   };
 }
 

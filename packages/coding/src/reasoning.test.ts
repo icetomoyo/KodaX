@@ -11,11 +11,14 @@ import { KodaXBaseProvider } from '@kodax/ai';
 import {
   buildHeuristicAutoRerouteDecision,
   buildFallbackRoutingDecision,
+  buildProviderPolicyHintsForDecision,
   createReasoningPlan,
+  inferIntentGate,
   inferTaskType,
   maybeCreateAutoReroutePlan,
   type ReasoningPlan,
 } from './reasoning.js';
+import { evaluateProviderPolicy } from './provider-policy.js';
 
 class ThrowingProvider extends KodaXBaseProvider {
   readonly name = 'test-provider';
@@ -75,6 +78,18 @@ class CapturingProvider extends KodaXBaseProvider {
   }
 }
 
+const CLI_BRIDGE_PROFILE = {
+  transport: 'cli-bridge',
+  conversationSemantics: 'last-user-message',
+  mcpSupport: 'none',
+  contextFidelity: 'lossy',
+  toolCallingFidelity: 'limited',
+  sessionSupport: 'stateless',
+  longRunningSupport: 'limited',
+  multimodalSupport: 'none',
+  evidenceSupport: 'limited',
+} as const;
+
 describe('reasoning reroute', () => {
   const basePlan: ReasoningPlan = {
     mode: 'auto',
@@ -85,6 +100,10 @@ describe('reasoning reroute', () => {
       riskLevel: 'medium',
       recommendedMode: 'pr-review',
       recommendedThinkingDepth: 'low',
+      complexity: 'moderate',
+      workIntent: 'new',
+      requiresBrainstorm: false,
+      harnessProfile: 'H1_EXECUTE_EVAL',
       reason: 'Initial routing selected review.',
     },
     promptOverlay: '[Execution Mode: pr-review]',
@@ -125,12 +144,12 @@ describe('reasoning reroute', () => {
 
   it('uses structured router output and includes runtime evidence in the routing prompt', async () => {
     const provider = new CapturingProvider(JSON.stringify({
-      primaryTask: 'review',
+      primaryTask: 'bugfix',
       confidence: 0.91,
       riskLevel: 'high',
-      recommendedMode: 'pr-review',
-      recommendedThinkingDepth: 'low',
-      reason: 'Review-specific request with failing tests.',
+      recommendedMode: 'debug',
+      recommendedThinkingDepth: 'medium',
+      reason: 'Bugfix request with failing tests.',
     }));
 
     const plan = await createReasoningPlan(
@@ -138,7 +157,7 @@ describe('reasoning reroute', () => {
         provider: 'openai',
         reasoningMode: 'auto',
       },
-      'Please review this PR for merge blockers.',
+      'Please investigate why npm test is failing and fix it.',
       provider,
       {
         recentMessages: [
@@ -152,15 +171,19 @@ describe('reasoning reroute', () => {
       },
     );
 
-    expect(plan.decision.primaryTask).toBe('review');
-    expect(plan.decision.riskLevel).toBe('high');
-    expect(plan.decision.recommendedMode).toBe('pr-review');
+    expect(plan.decision.primaryTask).toBe('bugfix');
+    expect(['medium', 'high']).toContain(plan.decision.riskLevel);
+    expect(plan.decision.recommendedMode).toBe('investigation');
+    expect(plan.decision.mutationSurface).toBe('code');
+    expect(plan.promptOverlay).toContain('[Execution Mode: investigation]');
 
     const routerPrompt = String(provider.lastMessages[0]?.content ?? '');
     expect(routerPrompt).toContain('- git: unavailable');
     expect(routerPrompt).toContain('recent session error');
     expect(routerPrompt).toContain('recent message evidence');
     expect(routerPrompt).toContain('runtime evidence');
+    expect(routerPrompt).toContain('- provider semantics: capturing-provider');
+    expect(routerPrompt).toContain('transport=native-api');
   });
 
   it('keeps timeout-only routing evidence out of the router prompt', async () => {
@@ -227,7 +250,7 @@ describe('reasoning reroute', () => {
           provider: 'openai',
           reasoningMode: 'auto',
         },
-        'Review this PR for blockers.',
+        'Investigate why npm test is failing and fix it.',
         provider,
       );
 
@@ -376,7 +399,7 @@ describe('reasoning reroute', () => {
     expect(provider.lastMessages).toEqual([]);
   });
 
-  it('treats ambiguous fallback routing as unknown with balanced depth', () => {
+  it('treats ambiguous fallback routing as unknown and keeps the initial path direct', () => {
     const decision = buildFallbackRoutingDecision(
       'Take a look at this area and help me think through the safest way to handle it.',
     );
@@ -384,6 +407,8 @@ describe('reasoning reroute', () => {
     expect(decision.primaryTask).toBe('unknown');
     expect(decision.recommendedThinkingDepth).toBe('medium');
     expect(decision.recommendedMode).toBe('implementation');
+    expect(decision.requiresBrainstorm).toBe(true);
+    expect(decision.harnessProfile).toBe('H0_DIRECT');
   });
 
   it('supports task inference across review, bugfix, and planning prompts', () => {
@@ -395,6 +420,338 @@ describe('reasoning reroute', () => {
   it('does not mistake prompt-related requests for PR review', () => {
     expect(inferTaskType('Please improve this prompt for release notes.')).toBe('unknown');
     expect(buildFallbackRoutingDecision('Please improve this prompt for release notes.').primaryTask).toBe('unknown');
+  });
+
+  it('infers append intent while keeping the initial fallback path direct for careful extensions', () => {
+    const decision = buildFallbackRoutingDecision(
+      'Continue the existing onboarding flow, but brainstorm the safest approach before changing the current logic.',
+    );
+
+    expect(decision.workIntent).toBe('append');
+    expect(decision.requiresBrainstorm).toBe(true);
+    expect(decision.harnessProfile).toBe('H0_DIRECT');
+  });
+
+  it('infers overwrite intent when the prompt explicitly asks for replacement work', () => {
+    const decision = buildFallbackRoutingDecision(
+      'Rewrite the current onboarding flow from scratch and replace the existing implementation.',
+    );
+
+    expect(decision.workIntent).toBe('overwrite');
+  });
+
+  it('does not treat generic command-line options wording as a brainstorm trigger', () => {
+    const decision = buildFallbackRoutingDecision(
+      'Update the docs with the supported command line options for this CLI command.',
+    );
+
+    expect(decision.requiresBrainstorm).toBe(false);
+    expect(decision.harnessProfile).toBe('H0_DIRECT');
+  });
+
+  it('does not treat generic flow wording as enough to escalate complexity on its own', () => {
+    const decision = buildFallbackRoutingDecision(
+      'Explain the control flow in this helper.',
+    );
+
+    expect(decision.complexity).toBe('simple');
+  });
+
+  it('routes systemic cross-repo refactors into H2 coordinated execution', () => {
+    const decision = buildFallbackRoutingDecision(
+      'Refactor the monorepo architecture across packages and coordinate the whole repo migration.',
+    );
+
+    expect(decision.complexity).toBe('systemic');
+    expect(decision.harnessProfile).toBe('H2_PLAN_EXECUTE_EVAL');
+  });
+
+  it('lets repo-intelligence signals raise routing complexity and planning bias', () => {
+    const decision = buildFallbackRoutingDecision(
+      'Update the service implementation.',
+      undefined,
+      {
+        repoSignals: {
+          changedFileCount: 9,
+          changedLineCount: 1480,
+          addedLineCount: 910,
+          deletedLineCount: 570,
+          touchedModuleCount: 3,
+          changedModules: ['packages/app', 'packages/shared', 'packages/core'],
+          crossModule: true,
+          riskHints: ['Multiple package boundaries are changing together.'],
+          activeModuleId: 'packages/app',
+          activeModuleConfidence: 0.88,
+          activeImpactConfidence: 0.8,
+          impactedModuleCount: 4,
+          impactedSymbolCount: 7,
+          predominantCapabilityTier: 'high',
+          suggestedComplexity: 'complex',
+          plannerBias: true,
+          investigationBias: false,
+          lowConfidence: false,
+        },
+      },
+    );
+
+    expect(decision.complexity).toBe('complex');
+    expect(decision.harnessProfile).toBe('H2_PLAN_EXECUTE_EVAL');
+    expect(decision.recommendedMode).toBe('planning');
+    expect(decision.routingNotes).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('Repository intelligence elevated task complexity'),
+        expect.stringContaining('cross-module impact'),
+      ]),
+    );
+  });
+
+  it('downgrades H2 routing to H1 on lossy bridge providers and records the reason', () => {
+    const providerPolicy = evaluateProviderPolicy({
+      providerName: 'gemini-cli',
+      capabilityProfile: CLI_BRIDGE_PROFILE,
+      reasoningCapability: 'prompt-only',
+      hints: {},
+      reasoningMode: 'balanced',
+    });
+
+    const decision = buildFallbackRoutingDecision(
+      'Refactor the monorepo architecture across packages and coordinate the whole repo migration.',
+      providerPolicy,
+    );
+
+    expect(decision.harnessProfile).toBe('H1_EXECUTE_EVAL');
+    expect(decision.routingNotes).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('Downgraded from H2 to H1'),
+      ]),
+    );
+  });
+
+  it('builds provider-policy hints that stay scoped to evidence-heavy tasks', () => {
+    expect(buildProviderPolicyHintsForDecision({
+      primaryTask: 'review',
+      confidence: 0.9,
+      riskLevel: 'medium',
+      recommendedMode: 'pr-review',
+      recommendedThinkingDepth: 'medium',
+      complexity: 'moderate',
+      workIntent: 'new',
+      requiresBrainstorm: false,
+      harnessProfile: 'H1_EXECUTE_EVAL',
+      reason: 'review task',
+    })).toEqual({
+      harnessProfile: 'H1_EXECUTE_EVAL',
+      evidenceHeavy: true,
+      brainstorm: false,
+      workIntent: 'new',
+    });
+
+    expect(buildProviderPolicyHintsForDecision({
+      primaryTask: 'edit',
+      confidence: 0.9,
+      riskLevel: 'medium',
+      recommendedMode: 'implementation',
+      recommendedThinkingDepth: 'medium',
+      complexity: 'complex',
+      workIntent: 'overwrite',
+      requiresBrainstorm: true,
+      harnessProfile: 'H2_PLAN_EXECUTE_EVAL',
+      reason: 'implementation task',
+    })).toEqual({
+      harnessProfile: 'H2_PLAN_EXECUTE_EVAL',
+      evidenceHeavy: false,
+      brainstorm: true,
+      workIntent: 'overwrite',
+    });
+  });
+
+  it('includes repo-intelligence signals in the router prompt', async () => {
+    const provider = new CapturingProvider(JSON.stringify({
+      primaryTask: 'edit',
+      confidence: 0.86,
+      riskLevel: 'medium',
+      recommendedMode: 'implementation',
+      recommendedThinkingDepth: 'medium',
+      reason: 'Implementation request in a cross-module area.',
+    }));
+
+    await createReasoningPlan(
+      {
+        provider: 'openai',
+        reasoningMode: 'auto',
+      },
+      'Update the service implementation.',
+      provider,
+      {
+        repoSignals: {
+          changedFileCount: 6,
+          changedLineCount: 1320,
+          addedLineCount: 740,
+          deletedLineCount: 580,
+          touchedModuleCount: 2,
+          changedModules: ['packages/app', 'packages/shared'],
+          crossModule: true,
+          riskHints: ['Changed scope crosses package boundaries.'],
+          activeModuleId: 'packages/app',
+          activeModuleConfidence: 0.7,
+          activeImpactConfidence: 0.68,
+          impactedModuleCount: 3,
+          impactedSymbolCount: 5,
+          predominantCapabilityTier: 'high',
+          suggestedComplexity: 'complex',
+          plannerBias: true,
+          investigationBias: true,
+          lowConfidence: true,
+        },
+      },
+    );
+
+    const routerPrompt = String(provider.lastMessages[0]?.content ?? '');
+    expect(routerPrompt).toContain('repo intelligence: changedFiles=6');
+    expect(routerPrompt).toContain('crossModule=yes');
+    expect(routerPrompt).toContain('active module: packages/app');
+    expect(routerPrompt).toContain('repo risk hint: Changed scope crosses package boundaries.');
+  });
+
+  it('keeps massive reviews on the direct path and records their scale for evidence strategy', () => {
+    const decision = buildFallbackRoutingDecision(
+      'Please review this change set for merge blockers.',
+      undefined,
+      {
+        repoSignals: {
+          changedFileCount: 52,
+          changedLineCount: 7241,
+          addedLineCount: 4810,
+          deletedLineCount: 2431,
+          touchedModuleCount: 4,
+          changedModules: ['packages/app', 'packages/shared', 'packages/repl', 'src'],
+          crossModule: false,
+          riskHints: ['Large review surface.'],
+          activeModuleId: 'packages/app',
+          activeModuleConfidence: 0.64,
+          activeImpactConfidence: 0.61,
+          impactedModuleCount: 4,
+          impactedSymbolCount: 21,
+          predominantCapabilityTier: 'high',
+          suggestedComplexity: 'complex',
+          plannerBias: true,
+          investigationBias: false,
+          lowConfidence: false,
+          reviewScale: 'massive',
+        },
+      },
+    );
+
+    expect(decision.primaryTask).toBe('review');
+    expect(decision.harnessProfile).toBe('H0_DIRECT');
+    expect(decision.mutationSurface).toBe('read-only');
+    expect(decision.needsIndependentQA).toBe(false);
+    expect(decision.topologyCeiling).toBe('H0_DIRECT');
+    expect(decision.reviewScale).toBe('massive');
+  });
+
+  it('does not let prompt-declared massive review scope force H2', () => {
+    const decision = buildFallbackRoutingDecision(
+      'Please review this 50 file, 7000 lines change set and call out merge blockers.',
+    );
+
+    expect(decision.primaryTask).toBe('review');
+    expect(decision.harnessProfile).toBe('H0_DIRECT');
+    expect(decision.mutationSurface).toBe('read-only');
+    expect(decision.topologyCeiling).toBe('H0_DIRECT');
+    expect(decision.reviewScale).toBe('massive');
+  });
+
+  it('allows read-only review to opt into H1 only when the user explicitly asks for a second pass', () => {
+    const decision = buildFallbackRoutingDecision(
+      'Please review this change set and do a second pass to double-check the important findings.',
+    );
+
+    expect(decision.primaryTask).toBe('review');
+    expect(decision.mutationSurface).toBe('read-only');
+    expect(decision.assuranceIntent).toBe('explicit-check');
+    expect(decision.needsIndependentQA).toBe(true);
+    expect(decision.harnessProfile).toBe('H1_EXECUTE_EVAL');
+    expect(decision.topologyCeiling).toBe('H1_EXECUTE_EVAL');
+  });
+
+  it('keeps docs-only work out of H2 even when the request is broad', () => {
+    const decision = buildFallbackRoutingDecision(
+      'Write the PRD, ADR, and design docs for this feature and keep the docs consistent across the repo.',
+    );
+
+    expect(decision.mutationSurface).toBe('docs-only');
+    expect(decision.harnessProfile).toBe('H0_DIRECT');
+    expect(decision.topologyCeiling).toBe('H0_DIRECT');
+  });
+
+  it('lets docs-only work opt into H1 when the user explicitly asks for a second pass', () => {
+    const decision = buildFallbackRoutingDecision(
+      'Write the PRD and ADR for this feature, then do a second pass to double-check the docs for gaps.',
+    );
+
+    expect(decision.mutationSurface).toBe('docs-only');
+    expect(decision.assuranceIntent).toBe('explicit-check');
+    expect(decision.harnessProfile).toBe('H1_EXECUTE_EVAL');
+    expect(decision.topologyCeiling).toBe('H1_EXECUTE_EVAL');
+  });
+
+  it('routes pure Chinese review prompts to read-only H0 by default', () => {
+    const decision = buildFallbackRoutingDecision('请评审一下当前代码改动，指出关键问题。');
+
+    expect(decision.primaryTask).toBe('review');
+    expect(decision.mutationSurface).toBe('read-only');
+    expect(decision.harnessProfile).toBe('H0_DIRECT');
+    expect(decision.topologyCeiling).toBe('H0_DIRECT');
+  });
+
+  it('routes pure Chinese docs prompts to docs-only H0 by default', () => {
+    const decision = buildFallbackRoutingDecision('请写需求文档和设计文档，并整理 README。');
+
+    expect(decision.mutationSurface).toBe('docs-only');
+    expect(decision.harnessProfile).toBe('H0_DIRECT');
+    expect(decision.topologyCeiling).toBe('H0_DIRECT');
+  });
+
+  it('lets pure Chinese review prompts opt into H1 only with explicit stronger-check language', () => {
+    const decision = buildFallbackRoutingDecision('请评审当前代码改动，并再检查一遍关键结论。');
+
+    expect(decision.primaryTask).toBe('review');
+    expect(decision.mutationSurface).toBe('read-only');
+    expect(decision.assuranceIntent).toBe('explicit-check');
+    expect(decision.harnessProfile).toBe('H1_EXECUTE_EVAL');
+    expect(decision.topologyCeiling).toBe('H1_EXECUTE_EVAL');
+  });
+
+  it('prefers explicit review language when review and planning signals are tied', () => {
+    expect(
+      inferTaskType('Please review the design.'),
+    ).toBe('review');
+  });
+
+  it('does not short-circuit mixed lookup plus implementation prompts onto the lookup path', () => {
+    expect(
+      inferIntentGate('先告诉我状态栏在哪个文件，然后改一下它'),
+    ).toMatchObject({
+      taskFamily: 'implementation',
+      executionPattern: 'checked-direct',
+    });
+  });
+
+  it('keeps pure lookup prompts on the direct lookup path', () => {
+    expect(
+      inferIntentGate('现在状态栏是在哪个文件管理的？'),
+    ).toMatchObject({
+      taskFamily: 'lookup',
+      executionPattern: 'direct',
+      shouldUseRepoSignals: false,
+    });
+  });
+
+  it('returns unknown when competing task signals tie without an explicit directive', () => {
+    expect(
+      inferTaskType('Please review this bug fix.'),
+    ).toBe('unknown');
   });
 
   it('can spend one depth escalation without consuming task reroute capability', async () => {

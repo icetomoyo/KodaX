@@ -49,6 +49,65 @@ describe('project harness', () => {
     expect(String(allowed)).toContain('Blocked by Project Harness');
   });
 
+  it('describes a verification contract that exposes browser-testing hints for frontend work', async () => {
+    const storage = new ProjectStorage(tempDir);
+    await storage.writeHarnessConfig({
+      version: 1,
+      generatedAt: '2026-03-26T10:00:00.000Z',
+      protectedArtifacts: ['feature_list.json', '.agent/project/harness'],
+      checks: [
+        {
+          id: 'playwright-e2e',
+          command: 'npx playwright test',
+          required: true,
+        },
+      ],
+      completionRules: {
+        requireProgressUpdate: true,
+        requireChecksPass: true,
+        requireCompletionReport: true,
+      },
+      advisoryRules: {
+        warnOnLargeUnrelatedDiff: true,
+        warnOnRepeatedFailure: true,
+      },
+      invariants: {
+        requireTestEvidenceOnComplete: true,
+        requireDocUpdateOnArchitectureChange: false,
+        enforcePackageBoundaryImports: false,
+        requireDeclaredWorkspaceDependencies: false,
+        requireFeatureChecklistCoverageOnComplete: false,
+        requireSessionPlanChecklistCoverage: false,
+        checklistCoverageMinimum: 0,
+        sourceNotes: [],
+      },
+      exceptions: {
+        allowedImportSpecifiers: [],
+        skipChecklistFeaturePatterns: [],
+      },
+      repairPolicy: {
+        codeOverrides: {},
+        customPlaybooks: [],
+      },
+    });
+    await storage.saveFeatures({
+      features: [
+        {
+          description: 'Add frontend signup UI flow',
+          steps: ['Verify the browser path with Playwright'],
+        },
+      ],
+    });
+
+    const feature = await storage.getFeatureByIndex(0);
+    const attempt = await createProjectHarnessAttempt(storage, feature!, 0, 'next', 1);
+    const contract = attempt.describeVerificationContract();
+
+    expect(contract.requiredChecks).toContain('playwright-e2e: npx playwright test');
+    expect(contract.requiredEvidence).toContain('Report the exact tests, checks, or browser validation that were executed.');
+    expect(contract.capabilityHints?.map((hint) => hint.name)).toEqual(expect.arrayContaining(['agent-browser', 'playwright']));
+  });
+
   it('blocks shell commands that try to modify feature_list.json', async () => {
     const storage = new ProjectStorage(tempDir);
     const feature = await storage.getFeatureByIndex(0);
@@ -171,13 +230,20 @@ describe('project harness', () => {
     ]);
 
     const checkpoints = await storage.readHarnessCheckpoints<{
+      id?: string;
+      checkpointId: string;
       runId: string;
+      taskId?: string;
       featureIndex: number;
       gitHead: string | null;
       gitStatus: string[];
     }>();
     const nodes = await storage.readHarnessSessionNodes<{
+      id?: string;
+      nodeId: string;
       runId: string;
+      taskId?: string;
+      parentId?: string | null;
       parentRunId: string | null;
       checkpointId: string | null;
       featureIndex: number;
@@ -185,12 +251,17 @@ describe('project harness', () => {
 
     expect(result.decision).toBe('verified_complete');
     expect(checkpoints).toHaveLength(1);
+    expect(checkpoints[0]?.id).toBe(checkpoints[0]?.checkpointId);
     expect(checkpoints[0]?.runId).toBe(result.runRecord.runId);
+    expect(checkpoints[0]?.taskId).toBe('feature-0');
     expect(checkpoints[0]?.featureIndex).toBe(0);
     expect(checkpoints[0]?.gitHead ?? null).toBeNull();
     expect(checkpoints[0]?.gitStatus).toEqual([]);
     expect(nodes).toHaveLength(1);
+    expect(nodes[0]?.id).toBe(nodes[0]?.nodeId);
+    expect(nodes[0]?.taskId).toBe('feature-0');
     expect(nodes[0]?.runId).toBe(result.runRecord.runId);
+    expect(nodes[0]?.parentId ?? null).toBeNull();
     expect(nodes[0]?.checkpointId).toContain(result.runRecord.runId);
     expect(nodes[0]?.parentRunId ?? null).toBeNull();
   });
@@ -219,12 +290,14 @@ describe('project harness', () => {
     ]);
 
     const nodes = await storage.readHarnessSessionNodes<{
+      parentId?: string | null;
       runId: string;
       parentRunId: string | null;
     }>();
 
     expect(nodes).toHaveLength(2);
     expect(nodes[1]?.runId).toBe(secondResult.runRecord.runId);
+    expect(nodes[1]?.parentId).toBe(`${firstResult.runRecord.runId}-node`);
     expect(nodes[1]?.parentRunId).toBe(firstResult.runRecord.runId);
   });
 

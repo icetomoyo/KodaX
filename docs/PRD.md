@@ -1,504 +1,287 @@
-# KodaX Product Requirements
+# KodaX 产品需求文档（PRD）
 
-> Last updated: 2026-03-25
+> Last updated: 2026-03-30
 >
-> This PRD captures the product shift tracked by `FEATURE_022`: from "CLI plus Project Mode" to "adaptive task engine with native multi-agent execution."
+> 本 PRD 描述当前 `FEATURE_022` 之后的产品语义：
+> KodaX 是一个“极简且智能”的 task engine。
+
+## 中文导读
+
+当前产品承诺可以概括为：
+
+1. 用户直接提出请求，不需要先选 mode。
+2. 简单任务应像单 agent 一样快速完成。
+3. 复杂任务才应逐步增加 planning / verification ceremony。
+4. skill 可以参与复杂任务，但不会把所有角色都污染成同一份 workflow。
+5. 用户主要感知 `Work`、工具目标、最终结果，而不是内部控制面的噪音。
 
 ---
 
-## 1. Product Position
+## 1. 产品定位
 
-KodaX is a coding system for people who want:
+KodaX 面向这样一类用户：
 
-- a lightweight and inspectable codebase
-- strong provider flexibility
-- reliable long-running execution
-- minimal user-facing mode switching
-- a path from terminal use to embedded and multi-surface use
+- 希望 terminal 体验足够直接
+- 希望复杂代码任务又足够可靠
+- 希望系统能自动判断什么时候该“想得更深”
+- 希望结果有 evidence 和 verification 支撑
 
-The product should feel simple, but its internal execution model should be sophisticated.
-
-The key shift is:
-
-- old model: a single agent plus optional project workflows
-- new model: a task engine that decides when planning, multiple agents, and verification are needed
+外在体验要尽量简单，内部执行模型可以很强，但不应把复杂度直接暴露给用户。
 
 ---
 
-## 2. User Promise
+## 2. 用户承诺
 
-When a user asks KodaX to do work, KodaX should:
+当用户要求 KodaX 完成一项工作时，KodaX 应该：
 
-1. understand whether the task is simple or complex
-2. choose the right execution shape automatically
-3. preserve task truth when the work is long-running
-4. avoid trusting the executor's self-report
-5. give the user inspection and override tools without forcing upfront mode decisions
+1. 自动判断任务是否简单
+2. 简单任务直接完成
+3. 复杂任务逐步升级到更强执行形态
+4. 不盲信执行者的自我汇报
+5. 在需要时给出清楚的 contract、evidence 和 final answer
 
-In short:
+一句话总结：
 
-- minimal on the outside
-- intelligent in the middle
-- reliable at the end
-
----
-
-## 3. Product Principles
-
-### 3.1 Invisible mode selection
-
-Users should not have to decide whether they are in "project mode", "brainstorm mode", or "multi-agent mode" before they can ask for work.
-
-### 3.2 Native multi-agent for non-trivial work
-
-Non-trivial tasks should default to role separation:
-
-- planning
-- execution
-- evaluation
-
-Single-agent execution is a fallback, not the main architecture.
-
-### 3.3 Evidence over optimism
-
-Completion should depend on evidence and evaluator judgment, not the executor saying "done".
-
-### 3.4 Durable task state
-
-Long-running work needs persisted truth:
-
-- task envelope
-- contract
-- plan
-- evidence
-- checkpoints
-- lineage
-
-### 3.5 Provider-aware behavior
-
-KodaX should adapt to the actual semantics of the selected provider instead of assuming every provider behaves like the best native implementation.
-
-### 3.6 Progressive simplification
-
-As models and runtime guarantees improve, KodaX should remove scaffolding that is no longer load-bearing.
+- 外面尽量简单
+- 中间足够智能
+- 最终结果足够可靠
 
 ---
 
-## 4. Primary User Journeys
+## 3. 产品原则
 
-### 4.1 Quick answer
+### 3.1 Single-Agent First
 
-User intent:
+默认先按单 agent 体验设计产品。
 
-- explain code
-- summarize a file
-- answer a conceptual question
+### 3.2 Harness On Demand
 
-Expected behavior:
+只有证据表明任务复杂度更高时，才升级到 AMA。
 
-- lightweight routing
-- no unnecessary task ceremony
-- fast answer
+### 3.3 Evidence Before Confidence
 
-### 4.2 Directed code change
+完成判定依赖 evidence 和 verdict，而不是“模型说 done 了”。
 
-User intent:
+### 3.4 Role Separation Without Role Bloat
 
-- make a small edit
-- fix a bug
-- add a focused behavior
+复杂任务需要角色分工，但不应堆出过重图。
 
-Expected behavior:
+### 3.5 Skill as Progressive Disclosure
 
-- automatic detection that evaluation is needed
-- generator plus evaluator flow
-- clear summary of what changed and what was verified
+skill 是 invocation/playbook，不是新的产品 mode。
 
-### 4.3 Ambiguous or architectural request
+### 3.6 Work-First UX
 
-User intent:
+预算与进度对用户的主要呈现应是：
 
-- "build X"
-- "improve this system"
-- "make this production-ready"
-
-Expected behavior:
-
-- auto-triggered discovery or brainstorm
-- contract creation before major execution
-- explicit scope and assumptions
-
-### 4.4 Long-running delivery
-
-User intent:
-
-- multi-file refactor
-- feature delivery across many turns
-- sustained work over time
-
-Expected behavior:
-
-- durable task state
-- checkpoints
-- evidence accumulation
-- native multi-agent orchestration
-- resumable execution
+- `Work used/total`
+- 明确的工具目标
+- 直接面向用户的结果
 
 ---
 
-## 5. Core Product Capabilities
+## 4. 当前执行形态
 
-### 5.1 Task intake and routing
+### 4.1 SA
 
-The system must determine:
+`SA` 完全脱离 AMA，单 agent 直接到底。
 
-- task kind
-- complexity
-- risk
-- append vs overwrite
-- whether brainstorm is needed
-- whether durable state is required
-- which harness profile to use
+适用场景：
 
-### 5.2 Native multi-agent execution
+- 用户明确要求单 agent 成本控制
+- 不需要 AMA ceremony 的任务
 
-The system must support:
+### 4.2 AMA-H0
 
-- `Lead`
-- `Planner`
-- `Generator`
-- `Evaluator`
-- optional specialist workers
+direct path，但 `H0` 的核心不是“完全没有判断阶段”，而是“最终单 agent 收口”。
 
-### 5.3 Evidence-driven verification
+适合：
 
-The system must support:
+- conversation
+- lookup
+- 明显轻量说明
+- 默认的 `read-only / docs-only` 工作
+- 经 `Scout` 少量调研后仍可直接收口的任务（`Scout-complete H0`）
 
-- deterministic checks
-- evaluator review
-- evidence capture
-- completion verdicts
-- retry loops when evidence is insufficient
+约束：
 
-### 5.4 Durable task memory
+- 若 `Scout` 确认 `H0_DIRECT` 且证据足够，则由 `Scout` 直接完成
+- 不允许 `Scout` 判定 `H0` 后再 handoff 给第二个 direct agent
 
-The system must persist:
+### 4.3 AMA-H1
 
-- task envelope
-- contract
-- decisions
-- evidence
-- checkpoints
-- session tree / lineage
+lightweight checked-direct。
 
-### 5.5 Capability substrate
+适合：
 
-The system must support:
+- 用户明确要求 `double-check / second pass / 更强审查` 的 `read-only / docs-only` 任务
+- 中低风险但值得一次轻量独立检查的 mutation 任务
 
-- extensible tools and capabilities
-- sandbox and MCP as optional runtime capabilities
-- structured result transport
-- host-neutral loading
+约束：
 
-### 5.6 Multi-surface readiness
+- 固定为 `Generator + 轻量 Evaluator`
+- 无 `Planner`
+- 无 contract negotiation
+- 无默认多轮 refine
+- `read-only / docs-only` 的 `H1` 最多只允许一次短 revise；失败后返回 `best-effort + limits`，不升级到 `H2`
 
-The runtime must be reusable across:
+### 4.4 AMA-H2
 
-- terminal
-- ACP host integrations
-- future IDE and desktop surfaces
+coordinated harness。
 
----
+固定骨架：
 
-## 6. Target User Experience
+```text
+Planner -> Generator <-> Evaluator
+```
 
-### 6.1 What the user should feel
+适合：
 
-- "I can just ask."
-- "The system knows when to think harder."
-- "The system does not overcomplicate simple tasks."
-- "Long-running work feels managed instead of fragile."
-- "When KodaX says a task is done, it can explain why."
+- 真正长时的 `code / system` mutation work
+- 需要明确 deliverable / done criteria / 可执行 QA 的任务
 
-### 6.2 What the user should not need to think about
+不适合：
 
-- whether to manually enter project mode
-- whether to manually request brainstorm mode
-- whether to manually choose multi-agent architecture
-- whether the executor is self-grading its own work
+- `large review` 本身
+- 文档写作 / 改写
+- 需求分析 / 测试总结等只读任务
+
+约束：
+
+- 默认单主 pass
+- 只有结构化 failure 才开启额外 pass
 
 ---
 
-## 7. Transitional UX Policy
+## 5. 用户旅程
 
-### 7.1 `/project`
+### 5.1 Quick answer / lookup
 
-`/project` remains available, but its role changes:
+用户感受应该是：
 
-- status and inspection
-- manual override
-- resume, pause, or verify
-- artifact browsing
+- 提问
+- 很快得到答案
+- 不需要理解内部角色
 
-It is no longer the conceptual center of the product.
+### 5.2 Focused code task
 
-### 7.2 `--init` and `--auto-continue`
+用户感受应该是：
 
-These stay as compatibility and convenience entry points, but should route into the same task engine used by natural requests.
+- 系统知道何时需要额外校验
+- 结果说明清楚改了什么、查了什么、证据是什么
 
-### 7.3 `--team`
+### 5.3 Complex review or architecture task
 
-`--team` should stop being treated as the main multi-agent product story.
+用户感受应该是：
 
-If retained temporarily, it should be documented as legacy or compatibility-oriented behavior.
+- 系统先判断复杂度
+- 再进入更强的 contract / evidence / evaluation 流程
+- 复杂度增加时是合理的，不是无端 ceremony
 
----
+### 5.4 Skill-assisted task
 
-## 8. Out-of-Scope Ideas
+用户感受应该是：
 
-The architecture reset intentionally avoids:
-
-- mandatory heavyweight multi-agent execution for every prompt
-- hidden or opaque score systems without inspectable evidence
-- unlimited branch-search or auto-generated harness code
-- using the extension runtime as a catch-all orchestration layer
+- skill 改变了系统对任务的理解与执行方式
+- 但不会让整个系统变得僵硬、脚本化、机械
 
 ---
 
-## 9. Success Criteria
+## 6. Skill 产品语义
 
-### 9.1 Product outcomes
+当前 skill 的产品语义是：
 
-1. Users can issue long-running requests without first choosing "project mode".
-2. Non-trivial write tasks use independent evaluation by default.
-3. Managed tasks survive interruption with durable state.
-4. Provider differences are explicit instead of silently flattened.
-5. KodaX can evolve into IDE, desktop, and remote surfaces without rewriting the core engine.
+- 用户 prompt 的渐进式提示词/工作手册
+- 可在 direct path 中完整生效
+- 进入 AMA 时，通过 `Scout -> skill-map` 做角色投影
 
-### 9.2 Quality outcomes
+用户无需知道 `skill-map` 这个内部名词，但应该感受到：
 
-1. Fewer false-positive "done" states.
-2. Clearer reasoning about append vs overwrite.
-3. Better behavior on ambiguous tasks.
-4. Better trust in long-running automation.
+- Planner 更懂目标与约束
+- Generator 更懂怎么执行
+- Evaluator 更懂怎么验证
 
 ---
 
-## 10. Roadmap Strategy
+## 7. 可见性与信任
 
-### 10.1 Foundation release: v0.7.0
+### 7.1 工具披露
 
-Goals:
+用户应该能看出系统到底在做什么：
 
-- install the new core engine shape
-- make multi-agent native
-- make task routing explicit
-- keep `034` as the runtime substrate
+- `bash` 运行了什么命令
+- diff/read/search 到底看了哪个文件或范围
 
-Features:
+### 7.2 Budget 披露
 
-- `019` Session Tree, Checkpoints, and Rewindable Task Runs
-- `022` Native Multi-Agent Control Plane
-- `025` Adaptive Task Intelligence and Harness Router
-- `026` Roadmap Integrity and Planning Hygiene
-- `029` Provider Capability Transparency and Harness Policy
-- `034` Extension and Capability Runtime
+默认让用户看到：
 
-### 10.2 Enrichment release: v0.8.0
+- `Work x/200`
 
-Goals:
+只有真实进入额外 pass，才看到 `Round`。
 
-- deepen retrieval, knowledge, and runtime safety
+### 7.3 Evaluator 输出
 
-Features:
-
-- `007` Theme System Consolidation
-- `018` CodeWiki and Task Knowledge Substrate
-- `028` First-Class Search, Retrieval, and Evidence Tooling
-- `035` MCP Capability Provider
-- `038` Official Sandbox Extension
-
-### 10.3 Delivery releases
-
-Later priorities:
-
-- `031` Multimodal Artifact Inputs
-- `023` Dual-Mode Terminal UX
-- `030` Multi-Surface Delivery
+最终用户答案必须直接面向用户，不应是“review 的 review”。
 
 ---
 
-## 11. Dependencies and Boundaries
+## 8. 核心能力清单
 
-### 11.1 Runtime substrate
+系统必须支持：
 
-`FEATURE_034` is necessary and should remain strong, but it is not the multi-agent control plane.
-
-### 11.2 Verification substrate
-
-The existing project harness ideas remain valuable, but they should be generalized into task-level evidence and evaluator semantics.
-
-### 11.3 Legacy project artifacts
-
-Current project truth files and `.agent/project/` remain useful as migration inputs, not as the permanent core abstraction.
-
----
-
-## 12. References
-
-- [ADR](ADR.md)
-- [HLD](HLD.md)
-- [Detailed Design](DD.md)
-- [Feature Roadmap](features/README.md)
+- intent gate
+- scout pre-harness gating
+- `H0 / H1 / H2`
+- contract / handoff / verdict 协议
+- skill-aware managed execution
+- durable artifacts
+- provider-aware policy
+- explicit tool disclosure
 
 ---
 
-## Appendix A: Retained Product Baseline and Constraints
+## 9. Transitional UX Policy
 
-The sections above define the target product direction after the `FEATURE_022` shift. The appendix below restores important baseline product information from the earlier PRD so implementation work still has access to the current-product frame, constraints, and release history.
+### 9.1 `/project`
 
-### A.1 Original product positioning
+作为 managed task control surface 保留。
 
-KodaX remains a lightweight TypeScript coding agent with:
+### 9.2 `--agent-mode`
 
-- a layered architecture whose lower layers can be reused independently
-- broad multi-provider support
-- explicit permission modes and tool confirmations
-- extension points across providers, tools, and skills
+`SA / AMA` 是正式、可见、可切换的产品控制面。
 
-That baseline still matters even as the product shifts from "CLI plus Project Mode" to a task engine.
+### 9.3 `--team`
 
-### A.2 Target users retained
+不再作为主产品故事的一部分。
 
-| User type | Typical use | Core need |
-|---|---|---|
-| Independent developers | daily coding assistance | speed, low cost, provider choice |
-| Team developers | review, refactor, guided edits | consistency, configurability, permissions |
-| DevOps and automation users | CI/CD, unattended flows | automation, reliability, long-running behavior |
-| AI builders and researchers | agent experiments | modularity, reusability, inspectability |
+---
 
-### A.3 Current core feature baseline
+## 10. Success Criteria
 
-| Capability | Baseline value | Priority in the old PRD |
-|---|---|---|
-| Multi-provider support | Anthropic, OpenAI, Google-adjacent, Zhipu, Kimi, MiniMax, DeepSeek, bridge-backed providers | `P0` |
-| Interactive REPL | Ink / React terminal UI with streaming output | `P0` |
-| Tool set | read, write, edit, bash, glob, grep, undo, diff, ask-user | `P0` |
-| Permission modes | `plan`, `default`, `accept-edits`, `auto-in-project` | `P0` |
-| Session management | save, resume, list, delete | `P1` |
-| Thinking / reasoning mode | supported on capable providers | `P1` |
-| Parallel tool execution | multi-tool parallelism where safe | `P1` |
-| Skills system | markdown-defined reusable instruction bundles | `P1` |
-| Long-running flows | project workflows, harness, resumable automation | `P2` |
-| Multi-agent work | now re-scoped under `FEATURE_022` | `P2` historically, now foundational |
+### 10.1 用户体验
 
-### A.4 Technical constraints retained
+- 简单问题不被多角色 ceremony 拖慢
+- 复杂问题的 planning / verification 让用户感到“更可靠”，而不是“更乱”
 
-| Area | Constraint |
-|---|---|
-| Runtime | Node.js `>= 20.0.0` |
-| Language | TypeScript `>= 5.3.0` |
-| CLI stack | Ink (`React for CLI`) remains the current renderer baseline |
-| Tests | Vitest remains the primary test framework |
-| Packaging | npm workspaces monorepo |
-| Licensing | allow Apache / BSD / MIT style dependencies; avoid GPL / SSPL |
-| Architecture | packages should remain independently useful where practical |
-| Dependency direction | no circular dependencies |
-| Quality bar | target high type safety and strong test coverage |
+### 10.2 可解释性
 
-### A.5 Functional requirements by layer retained
+- 用户能看懂主要预算语义
+- 用户能看懂系统在操作什么对象
 
-#### `@kodax/ai`
+### 10.3 结果可信度
 
-Still requires:
+- 复杂任务有 contract / evidence / verdict
+- 最终答案不泄露内部元评估口吻
 
-- shared provider abstraction
-- unified streaming interface
-- provider registry
-- normalized errors
-- provider-aware reasoning controls where supported
+---
 
-#### `@kodax/agent`
+## 11. 相关 Feature
 
-Still requires:
-
-- session management
-- message persistence and reconstruction
-- compaction-friendly message handling
-- token estimation support
-
-#### `@kodax/skills`
-
-Still requires:
-
-- skill discovery from user and project locations
-- markdown-first skill execution
-- natural-language triggering
-- support for built-in and custom skills
-
-#### `@kodax/coding`
-
-Still requires:
-
-- tool definitions and execution
-- prompt construction
-- coding loop orchestration
-- permission integration
-- long-running and harness-friendly runtime behavior
-
-#### `@kodax/repl`
-
-Still requires:
-
-- interactive terminal UX
-- permission controls
-- built-in commands
-- autocomplete
-- theme support
-- managed task and project control surfaces
-
-### A.6 Non-functional requirements retained
-
-| Area | Retained expectation |
-|---|---|
-| First response latency | aim for a fast first token / first visible response |
-| Memory | avoid unnecessary runtime bloat |
-| Type safety | keep public APIs strongly typed |
-| Testability | components should remain independently testable |
-| Cross-platform support | Windows, macOS, and Linux remain supported targets |
-| Documentation | public interfaces and major workflows should remain documented |
-
-### A.7 Release history retained
-
-Important shipped milestones from the previous PRD remain useful as product history:
-
-- `v0.5.x`: 5-layer architecture stabilized
-- `v0.5.33`: autocomplete system and broader provider set
-- `v0.6.0`: Command System 2.0 and Project Mode 2.0
-- `v0.6.4`: history review mode and mouse-wheel interaction improvements
-- `v0.6.10`: Project Harness and artifact migration
-- `v0.6.15`: ACP server, provider growth, pending inputs, and runtime controls
-
-The target state has changed, but these milestones remain part of the path that led to the current architecture.
-
-### A.8 Risk baseline retained
-
-| Risk | Why it still matters | Typical mitigation |
-|---|---|---|
-| Provider API changes | can break integrations quickly | isolate through provider abstraction |
-| Dependency vulnerabilities | affect local execution trust | dependency review and updates |
-| Context and token limits | still shape runtime behavior | compaction and provider-aware policy |
-| Concurrency hazards | affect tool safety and determinism | guarded parallelism and explicit ownership |
-| False-positive completion | more serious under automation | evaluator separation and evidence model |
-
-### A.9 Glossary retained
-
-| Term | Meaning |
-|---|---|
-| Provider | implementation of a model backend |
-| Tool | callable runtime capability exposed to the agent |
-| Skill | reusable instruction bundle |
-| Session | persisted conversation/runtime history |
-| Task | first-class managed work unit in the new architecture |
-| Contract | task-local scope and completion criteria |
-| Evidence | persisted proof used for completion judgment |
+- `FEATURE_019`
+- `FEATURE_022`
+- `FEATURE_025`
+- `FEATURE_027`
+- `FEATURE_028`
+- `FEATURE_029`
+- `FEATURE_034`

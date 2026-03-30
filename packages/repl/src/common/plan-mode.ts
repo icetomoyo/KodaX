@@ -3,7 +3,7 @@
  * Plan Mode 主逻辑 - 分步执行任务
  */
 
-import { runKodaX, KodaXOptions } from '@kodax/coding';
+import { runManagedTask, KodaXOptions } from '@kodax/coding';
 import { planStorage, ExecutionPlan } from './plan-storage.js';
 import chalk from 'chalk';
 import * as readline from 'readline';
@@ -38,7 +38,13 @@ async function generatePlan(prompt: string, options: KodaXOptions): Promise<stri
     maxIter: 1,  // Generate plan only, don't execute tools
   };
 
-  const result = await runKodaX(planOptions,
+  const result = await runManagedTask({
+      ...planOptions,
+      context: {
+        ...planOptions.context,
+        taskSurface: 'plan',
+      },
+    },
     prompt + '\n\n[SYSTEM: Please generate a plan only, do not execute any tools. Respond with the plan format specified in your instructions.]'
   );
 
@@ -143,7 +149,13 @@ async function executePlan(
         }
       };
 
-      await runKodaX(stepOptions, `Execute this step: ${step.description}`);
+      await runManagedTask({
+        ...stepOptions,
+        context: {
+          ...stepOptions.context,
+          taskSurface: 'plan',
+        },
+      }, `Execute this step: ${step.description}`);
 
       step.status = 'done';
       step.executedAt = new Date().toISOString();

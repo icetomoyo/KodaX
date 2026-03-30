@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * KodaX CLI - 闂傚倸鍊搁崐椋庣矆娓氣偓楠炲鏁嶉崟顓犵厯闂佸湱鍎ら〃鍛村垂閸屾稓绡€闂傚牊渚楅崕蹇曠磼閻欌偓閸ｏ綁寮婚弴銏犻唶婵犻潧娲らˇ鈺呮⒑缁嬫鍎愰柨鏇樺灲楠炲啫顫滈埀顒勫箖濞嗘挻鍤嬫繛鍫熷椤ュ鏌ｆ惔銏╁晱闁哥姵顨嗙换娑欑節閸パ嗘憰? *
- * UI 闂傚倸鍊峰ù鍥敋瑜忛幑銏ゅ箳濡も偓绾剧粯绻涢幋娆忕仼缁炬崘顕ч埞鎴︽偐閹绘帩浠惧銈庡亝濞叉牠婀侀梺绋跨箰閸氬绱為幋锔界厽妞ゆ挾鍣ュ▓婊堟煛鐏炲墽銆掑ù鐙呯畵瀹曟粏顦┑顔兼搐閳规垿鎮欓懠顒€顣洪梺缁樼墪閵堟悂鐛崘銊ф殝闁逛絻娅曢悗璇测攽閻愬弶顥為柛銊ь攰閹筋偊姊婚崒娆愮グ妞ゆ泦鍛板С闁兼祴鏅涢崹婵囩箾閸℃ê濮冪紒璇叉閹鈽夊▎妯煎姺闂佸磭绮鑽ゆ閹烘鐭楁俊顖濇瑜颁苟ner闂傚倸鍊搁崐椋庢濮橆剦鐒界憸宥堢亱闂佸搫鍟崐褰掝敃閼恒儲鍙忔俊顖濇婢瑰嫰姊洪崹顕呭剳闁荤喎缍婇弻宥堫檨闁告挾鍠栭悰顔界節閸屾鏂€闁诲函缍嗛崑鍕枔閵堝鈷戦柛娑橈攻鐏忣偊鏌ら崘鑼煟闁诡喗鐟╁鎾閳锯偓閹锋椽姊洪崨濠勨槈闁挎洏鍊濋幃姗€鏁冮埀顒勬箒濠电姴艌閸嬫挾绱掗鐣屾噰鐎规洘妞介崺鈧い鎺嶉檷娴滄粓鏌熸潏鍓у埌闁告梻鏁婚弻娑滅疀閹惧墎鍔梺鍝勫閸撴繈骞忛崨瀛橆棃婵炴垶甯掓禍鐐節闂堟侗鍎戠€规挷绶氶幃妤呮晲鎼粹剝鐏嶉梺鐟扮湴閸庣敻寮诲☉姘勃闁告挆鈧Σ鍫ユ⒑鐞涒€充壕濡炪倖鎸鹃崰鎾剁不? */
-
+ * KodaX CLI — Command-line entry point.
+ * UI module: Ink-based interactive REPL with managed task lifecycle.
+ */
 import { Command } from 'commander';
 import chalk from 'chalk';
 import fs from 'fs/promises';
@@ -23,11 +23,13 @@ import {
   ACP_PERMISSION_MODES,
   createKodaXOptions,
   mergeConfiguredExtensions,
+  parseAgentModeOption,
   parseOptionalNonNegativeInt,
   parseNonNegativeIntWithFallback,
   parseOutputModeOption,
   parsePermissionModeOption,
   parsePositiveNumberWithFallback,
+  resolveCliAgentMode,
   resolveCliParallel,
   resolveCliReasoningMode,
   type CliOutputMode,
@@ -44,11 +46,10 @@ const version = fsSync.existsSync(packageJsonPath)
 
 import {
   runKodaX,
+  runManagedTask,
   KodaXClient,
   KodaXEvents,
-  createKodaXTaskRunner,
   KodaXReasoningMode,
-  runOrchestration,
   createExtensionRuntime,
   KODAX_DEFAULT_PROVIDER,
   KODAX_FEATURES_FILE,
@@ -59,13 +60,11 @@ import {
   KODAX_TOOLS,
   KodaXTerminalError,
 } from '@kodax/coding';
-import type { KodaXAgentWorkerSpec } from '@kodax/coding';
 import {
   getGitRoot,
   loadConfig,
   getFeatureProgress,
   checkAllFeaturesComplete,
-  rateLimitedCall,
   buildInitPrompt,
   FileSessionStorage,
   KODAX_CONFIG_FILE,
@@ -78,12 +77,14 @@ export {
   KODAX_COMMANDS_DIR,
   loadCommands,
   parseCommandCall,
+  parseAgentModeOption,
   parsePermissionModeOption,
   processCommandCall,
+  resolveCliAgentMode,
   resolveCliParallel,
 };
 export type { KodaXCommand, KodaXCommandContext };
-// ============== CLI 闂傚倸鍊峰ù鍥х暦閸偅鍙忛柡澶嬪殮瑜版帒绀嬫い鎴ｆ硶缁犳岸姊洪幖鐐插姉闁哄懏鐩畷鐟扳攽鐎ｎ剙褰勯梺鎼炲劘閸斿秶绮堥崘顔界厸闁糕剝顭囬惌瀣煏閸パ冾伃鐎殿噮鍣ｅ畷鎺戭潩椤戣法甯涢梺?==============
+// ============== CLI Help Topics ==============
 
 const CLI_HELP_TOPICS: Record<string, () => void> = {
   acp: () => {
@@ -98,6 +99,7 @@ const CLI_HELP_TOPICS: Record<string, () => void> = {
     console.log(chalk.dim('  -m, --provider <name>        ') + 'Provider to use');
     console.log(chalk.dim('  --model <name>               ') + 'Model override');
     console.log(chalk.dim('  --reasoning <mode>           ') + 'Reasoning mode: off, auto, quick, balanced, deep');
+    console.log(chalk.dim('  --agent-mode <mode>          ') + 'Agent mode: ama, sa');
     console.log(chalk.dim('  -t, --thinking               ') + 'Compatibility alias for --reasoning auto');
     console.log(chalk.dim('  --permission-mode <mode>     ') + 'Initial mode: plan, accept-edits, auto-in-project');
     console.log(chalk.dim('  KODAX_ACP_LOG=<level>        ') + 'stderr log level: off, error, info, debug\n');
@@ -251,6 +253,7 @@ const CLI_HELP_TOPICS: Record<string, () => void> = {
     console.log(chalk.dim('  Use off, auto, quick, balanced, or deep depending on the task.\n'));
     console.log(chalk.bold('Options:'));
     console.log(chalk.dim('  --reasoning <mode>   ') + 'Set reasoning mode: off, auto, quick, balanced, deep');
+    console.log(chalk.dim('  --agent-mode <mode>  ') + 'Set agent mode: ama, sa');
     console.log(chalk.dim('  -t, --thinking       ') + 'Compatibility alias for --reasoning auto\n');
     console.log(chalk.bold('Examples:'));
     console.log(chalk.dim('  kodax --reasoning deep "design the architecture"   ') + '# High-depth reasoning');
@@ -259,12 +262,12 @@ const CLI_HELP_TOPICS: Record<string, () => void> = {
     console.log(chalk.dim('  /reasoning balanced                                 ') + '# Set in REPL\n');
   },
   team: () => {
-    console.log(chalk.cyan('\nTeam Mode (Parallel Agents)\n'));
+    console.log(chalk.cyan('\nTeam Mode (Deprecated)\n'));
     console.log(chalk.bold('Overview:'));
-    console.log(chalk.dim('  Experimental orchestration-based parallel execution for loosely coupled tasks.'));
-    console.log(chalk.dim('  Best for independent subtasks; it is not yet a fully shared-context multi-agent runtime.\n'));
+    console.log(chalk.dim('  Legacy orchestration-based parallel execution for loosely coupled tasks.'));
+    console.log(chalk.dim('  Prefer --agent-mode ama|sa for the product path. --team is being sunset.\n'));
     console.log(chalk.bold('Options:'));
-    console.log(chalk.dim('  --team <tasks>      ') + 'Comma-separated tasks');
+    console.log(chalk.dim('  --team <tasks>      ') + 'Deprecated legacy option');
     console.log(chalk.dim('  -j, --parallel      ') + 'Enable parallel tool execution\n');
     console.log(chalk.bold('Examples:'));
     console.log(chalk.dim('  kodax --team "fix auth tests,update docs,clean logs"'));
@@ -487,7 +490,7 @@ function printSkillSubcommandHelp(name: string): boolean {
 
 function showBasicHelp(): void {
   const providerNames = getAvailableProviderNames().join(', ');
-  console.log('KodaX - 闂傚倸鍊搁崐椋庣矆娓氣偓楠炴牠顢曢敂缁樻櫈闂佸憡娲﹂崐瀣亹閹烘垹鍊炲銈嗗坊閸嬫捇鏌涘顒佽础闁规彃鎲￠幆鏃堝煡閸℃瑥濮烘俊鐐€曠换鎰板箠閹邦喖濮柍褜鍓欓埞鎴︻敊閺傘倓绶甸梺鍛婃尰瀹€鎼併€侀弮鍫熸櫢闁绘ɑ鏋奸幏?Coding Agent\n');
+  console.log('KodaX - Intelligent Coding Agent\n');
   console.log('Usage: kodax [options] [prompt]');
   console.log('       kodax "your task"');
   console.log('       kodax /command_name\n');
@@ -502,11 +505,12 @@ function showBasicHelp(): void {
   console.log('  --model NAME            Model override for the selected provider');
   console.log('  -t, --thinking          Compatibility alias for --reasoning auto');
   console.log('  --reasoning MODE        Reasoning mode: off, auto, quick, balanced, deep');
+  console.log('  --agent-mode MODE       Agent mode: ama, sa');
   console.log('  -y, --auto              Backward-compat alias; no effect in non-REPL CLI');
   console.log('  -s, --session OP        Legacy session operations: list, resume, delete <id>, delete-all, or raw session ID');
   console.log('  --no-session            Disable session persistence (print mode only)');
   console.log('  -j, --parallel          Parallel tool execution');
-  console.log('  --team TASKS            Run multiple sub-agents in parallel');
+  console.log('  --team TASKS            Deprecated legacy parallel team mode');
   console.log('  --init TASK             Initialize a long-running task');
   console.log('  --append                Deprecated compatibility alias for the old append flow');
   console.log('  --overwrite             With --init: overwrite existing feature_list.json');
@@ -544,11 +548,10 @@ async function main() {
   const argv = process.argv.slice(2);
   const program = new Command()
     .name('kodax')
-    .description('KodaX - 闂傚倸鍊搁崐椋庣矆娓氣偓楠炴牠顢曢敂缁樻櫈闂佸憡娲﹂崐瀣亹閹烘垹鍊炲銈嗗坊閸嬫捇鏌涘顒佽础闁规彃鎲￠幆鏃堝煡閸℃瑥濮烘俊鐐€曠换鎰板箠閹邦喖濮柍褜鍓欓埞鎴︻敊閺傘倓绶甸梺鍛婃尰瀹€鎼併€侀弮鍫熸櫢闁绘ɑ鏋奸幏?Coding Agent')
+    .description('KodaX - Intelligent Coding Agent')
     .version(version)
     // Disable commander default help so the custom topic help can take over.
     .helpOption(false)
-    // 闂傚倸鍊搁崐鐑芥嚄閸洖鍌ㄧ憸鏃堝Υ閸愨晜鍎熼柕蹇嬪焺濞茬鈹戦悩璇у伐闁绘锕畷鎴﹀煛閸涱喚鍘介梺閫涘嵆濞佳勬櫠娴煎瓨鐓?help 闂傚倸鍊搁崐鎼佸磹妞嬪孩顐介柨鐔哄Т绾惧鏌涢弴銊ョ€柛銉墯閸嬨劎绱掔€ｎ収鍤﹂柕澹偓閸嬫捇鐛崹顔煎濡炪倧缂氶崡鍐差嚕閺屻儺鏁嗛柛鏇ㄥ墰閸樺崬顪冮妶鍡楀闁稿﹥娲熷鎼佸箣閿旂晫鍘搁梺绯曞墲椤洭鎯岄幒妤佺厸鐎光偓閳ь剟宕伴弽褜娼栫憸鐗堝笒缁犳稒銇勯弴鐐村櫤鐞氾箓姊洪懡銈呮瀾缂侇喖瀛╅弲璺何旈崨顔间簵闂佽法鍠撴慨鎾嫅閻斿吋鐓曟繛鎴濆船閺嬫稓绱掗崜浣镐粶闁宠鍨块幃鈺呭箵閹哄棗浜剧憸鐗堝吹婢跺ň鏀介悗锝庡亐閹锋椽鏌℃径灞戒沪濠㈢懓妫濊棟闁挎洖鍊哥粻褰掓倵濞戞瑯鐒介柣顓炴湰娣?
     .option('-h, --help [topic]', 'Show help, or detailed help for a topic')
     // Short options.
     .option('-p, --print <text>', 'Print mode: run single task and exit')
@@ -560,13 +563,14 @@ async function main() {
     .option('--model <name>', 'Model override')
     .option('-t, --thinking', 'Compatibility alias for --reasoning auto')
     .option('--reasoning <mode>', 'Reasoning mode: off, auto, quick, balanced, deep')
+    .option('--agent-mode <mode>', 'Agent mode: ama, sa', parseAgentModeOption)
     .option('-y, --auto', 'Backward-compat alias; no effect in non-REPL CLI')
     .option('-s, --session <op>', 'Legacy session operations: list, resume, delete <id>, delete-all, or raw session ID')
     .option('-j, --parallel', 'Parallel tool execution')
     .option('--extension <path>', 'Load local extension module (.js/.mjs/.cjs/.ts/.mts/.cts)', collectRepeatedOption, [])
     .option('--no-session', 'Disable session persistence (print mode only)')
     // Long options.
-    .option('--team <tasks>', 'Run multiple sub-agents in parallel (comma-separated)')
+    .option('--team <tasks>', 'Deprecated: legacy parallel team mode')
     .option('--init <task>', 'Initialize a long-running task')
     .option('--append', 'Deprecated compatibility alias for the old append flow')
     .option('--overwrite', 'With --init: overwrite existing feature_list.json')
@@ -906,10 +910,11 @@ async function main() {
   }
 
   const opts = program.opts();
-  // 闂傚倸鍊搁崐椋庣矆娓氣偓楠炲鍨鹃幇浣圭稁缂傚倷鐒﹁摫闁告瑥绻橀弻鐔碱敍閿濆洣姹楅悷婊呭鐢帡鎮欐繝鍐︿簻闁瑰搫绉烽崗宀勬煕濡濮嶉柟顔筋殜閻涱噣宕归鐓庮潛婵犵數鍋涢惇浼村礉閹存繍鍤曢柟闂寸绾惧ジ鏌ｉ幇顒夊殶闁告ɑ鎮傚铏圭矙閹稿孩鎷辩紒鐐緲缁夊綊骞嗙仦杞挎梹鎷呴搹璇″晭闂備胶纭堕崜婵嬪礉閺囥垺鍊堕柡灞诲劜閻撴稑霉閿濆懏鎲搁弫鍫ユ倵鐟欏嫭绀€闁靛牆鎲￠幈銊╁焵椤掑嫭鐓冮柍杞扮閺嗙偞銇勯幘鑸靛殌闁宠鍨块幃娆撴嚑椤掍焦鍠栫紓鍌欑贰閸犳牠鎳熼鐐寸畳闂備胶绮崹鐓幬涢崟顖涘€堕柧蹇ｅ亗缁诲棙銇勯弽銊︾殤婵絿鍋ら弻娑氣偓锝庡亝鐏忕敻鏌熼崣澶嬪唉鐎规洜鍠栭、鏇㈠閳╁啫娈樼紓鍌氬€搁崐椋庢閿熺姴闂い鏇楀亾鐎规洖缍婇獮搴ㄦ寠婢跺矈鍞甸梺璇插嚱缂嶅棝宕伴弽褎绾梻鍌欑閹测剝绗熷Δ浣侯洸婵犲﹤瀚々鏌ユ煕閹炬鎳忛敍蹇擃渻閵堝棙灏柛鈺佸铻為柟瀵稿Х绾惧ジ鏌?
+  // Parse CLI options and merge with config defaults.
   const config = loadConfig();
   const configWithExtensions = config as typeof config & { extensions?: string[] };
   const reasoningMode = resolveCliReasoningMode(program, opts, config);
+  const agentMode = resolveCliAgentMode(program, opts, config);
   const parallel = resolveCliParallel(program, opts, config);
   const configuredExtensions = Array.isArray(configWithExtensions.extensions)
     ? configWithExtensions.extensions
@@ -934,6 +939,7 @@ async function main() {
     model: opts.model ?? config.model,
     thinking: reasoningMode !== 'off',
     reasoningMode,
+    agentMode,
     outputMode: (opts.mode as CliOutputMode | undefined) ?? 'text',
     extensions: activeExtensions,
     session: opts.session,
@@ -953,7 +959,14 @@ async function main() {
     print: opts.print ? true : false,
   };
 
-  // 婵犵數濮烽弫鎼佸磻閻愬樊鐒芥繛鍡樻尭鐟欙箓鎮楅敐搴′簽闁崇懓绉电换娑橆啅椤旇崵鍑归梺绋块閿曘倝婀侀梺缁樏Ο濠囧磿韫囨洜纾奸柍褜鍓熷畷鍗炍熼崷顓犵暰闂備線娼ч悧鍡涘箠鎼搭煈鏁傞柕澶嗘櫆閻?
+  if (options.team) {
+    console.error(chalk.red('\n[Deprecated] --team has been sunset.'));
+    console.error(chalk.dim('Use --agent-mode ama for adaptive multi-agent execution, or --agent-mode sa for single-agent execution.\n'));
+    process.exitCode = 1;
+    return;
+  }
+
+  // Session list: show all saved sessions.
   if (options.session === 'list') {
     const storage = new FileSessionStorage();
     const sessions = await storage.list();
@@ -974,7 +987,7 @@ async function main() {
       showCliHelpTopics();
       return;
     }
-    // 闂傚倸鍊搁崐椋庣矆娓氣偓楠炴牠顢曢敃鈧悿顕€鏌ｅΔ鈧悧濠囧矗韫囨稒鐓涘璺侯儏閻掗箖鏌涢妶鍡樼闁靛洤瀚伴獮鎺楀箣濠垫劒鎮ｉ梻浣告惈椤戝嫮娆㈠璺虹畺濞寸姴顑愰弫宥夋煥濠靛棙鍣洪柣蹇旀尵缁辨挻鎷呴悷鏉款潔濡炪們鍔岄敃顏勵嚕婵犳碍鏅搁柣妯垮皺椤︽澘顪冮妶鍡楀闁瑰啿娲獮鎰板礃椤旇В鎷洪梻鍌氱墛缁嬫帗寰勯崟顓涘亾閸忓浜剧紓浣割儓濞夋洟寮抽敂鐣岀鐎瑰壊鍠曠花濂告煕婵犲嫮甯涘ǎ鍥э躬椤㈡稑顭ㄩ崨顓狀偧闂佽瀛╃喊宥嗙箾婵犲洤钃熼柨婵嗩槸椤懘鏌嶆潪鎷屽厡濞寸厧娲娲传閵夈儛锝夋煟濡や緡娈滄?
+  // No topic specified: show basic help overview.
     showBasicHelp();
     return;
   }
@@ -1001,7 +1014,7 @@ async function main() {
     extensionRuntime.activate();
   }
 
-  // -r / --resume 婵犵數濮烽弫鎼佸磻閻愬搫鍨傞柛顐ｆ礀缁犱即鏌涘┑鍕姢闁活厽鎹囬弻鐔虹磼閵忕姵鐏嶉梺?id: 婵犵數濮烽弫鎼佸磻濞戙垺鍋ら柕濞炬櫅閸氬綊骞栧ǎ顒€濡肩痪鎯х秺閺岀喖鎮欓鈧崝璺衡攽椤旇棄鈻曢柡灞稿墲瀵板嫮鈧綁娼ч崝宀勬⒑閹肩偛鈧牕煤閻斿吋鍋傛い鎰剁畱閻愬﹪鏌曟繛褉鍋撻柡瀣濮婅櫣绮欏▎鎯у壉闂佽鐡曢褔顢氶妷鈺佺妞ゆ挻绋戞禍楣冩煥濠靛棛鍑归柟鍙夊劤闇夐柣妯垮皺閹界姷绱掔紒妯兼创鐎殿喖鐖奸獮瀣攽閸パ€鍋撻娑氱闁挎繂鎳忔径鍕繆閻愭壆鐭欐?
+  // -r / --resume without ID: list sessions, then resume the latest.
   if (opts.resume === true) {
     try {
       const storage = new FileSessionStorage();
@@ -1013,7 +1026,7 @@ async function main() {
         sessions.forEach((s, i) => {
           console.log(`  ${i + 1}. ${s.id} [${s.msgCount} msgs] ${s.title}`);
         });
-        // 婵犵數濮甸鏍窗濡ゅ啯鏆滄俊銈呭暟閻瑩鏌熼悜妯镐粶闁逞屽墾缁犳挸鐣锋總绋课ㄦい鏃囧Г濞呭秴鈹戦悩鍨毄濠殿喚鏁搁崰濠傤吋婢跺鈧潡鎮归崶褎鈻曢柣鏂挎閹娼幏宀婂妳闂佺楠哥换鎴﹀Φ閸曨喚鐤€閻庯綆浜滄慨銏㈢磽娴ｄ粙鍝洪悽顖涘笩閻忓啯绻濋悽闈浶㈤柛濠冩倐閻涱噣骞囬鍓э紳婵炶揪缍€椤鎮￠妷鈺傜厽閹烘娊宕濇惔锝呭灊婵炲棙鍔曠欢鐐烘煙閺夎法浠涢柡鍛矒閺岀喖鎳濋悧鍫濇锭缂備焦褰冨陇妫熼梺鍐叉惈閹冲繘鍩涢幋锔界厱婵犻潧妫楅顐㈩熆瑜庨崝娆撳蓟濞戞埃鍋撻敐搴′簼鐎规洖鐬奸埀顒侇問閸犳牠鎮ユ總绋挎槬闁跨喓濮寸壕鍏兼叏濡搫鑸归悽顖氭捣缁?
+        // Auto-select the most recent session for resume.
         const selected = sessions[0]!;
         options.resume = selected.id;
         console.log(chalk.cyan(`\nResuming session: ${selected.id}`));
@@ -1023,7 +1036,7 @@ async function main() {
     }
   }
 
-  // --auto-continue: 闂傚倸鍊搁崐鐑芥嚄閸洖鍌ㄧ憸鏃堝Υ閸愨晜鍎熼柕蹇嬪焺濞茬鈹戦悩璇у伐閻庢凹鍙冨畷锝堢疀濞戞瑧鍘撻柡澶屽仦婢瑰棛鎷规导瀛樼厱闁靛牆妫▓鏇㈡煏閸パ冾伂缂佺姵鐩獮姗€骞栭鐕佹＇缂?
+  // --auto-continue: run non-REPL session loop across pending features.
   if (options.autoContinue) {
     if (!fsSync.existsSync(path.resolve(KODAX_FEATURES_FILE))) {
       console.log(chalk.red(`[Error] --auto-continue requires a long-running project.`));
@@ -1079,7 +1092,13 @@ async function main() {
         session: sessionCount === 1 ? firstSessionId : undefined,
       }, false);
 
-      const result = await runKodaX(kodaXOptions, prompt);
+      const result = await runManagedTask({
+        ...kodaXOptions,
+        context: {
+          ...kodaXOptions.context,
+          taskSurface: 'cli',
+        },
+      }, prompt);
       emitJsonRunResultIfNeeded(options.outputMode, result);
 
       if (!result.success) {
@@ -1116,7 +1135,7 @@ async function main() {
     return;
   }
 
-  // --init: 闂傚倸鍊搁崐椋庣矆娓氣偓楠炲鏁嶉崟顒佹濠德板€曢崯顖氱暦閺屻儲鐓曠€光偓閳ь剟宕曢幋鐘电闁哄稁鍘介悡娆撴煟濡も偓閻楀﹦娆㈤懠顒傜＜闁逞屽墮閻ｆ繈宕熼鍌氬箰闁诲骸绠嶉崕杈殽閹间胶宓佹俊銈勭劍閸欏繘鏌ㄥ┑鍡橆棞濠殿喖绉归弻鈥崇暆鐎ｎ剛鐦堥悗瑙勬礃閿曘垺淇婂宀婃Щ闂佺粯鎸鹃崰搴ㄥ煘閹达箑鐓￠柛鈩冦仦缁ㄥジ鏌ｆ惔锝囨嚄闁告劕澧介崝閿嬬節閻㈤潧校闁肩懓澧界划璇测槈濞嗗秳绨婚梺鍝勭Ф閺佸摜绮欐繝姘厸闁稿本顨呮禍鎯р攽閻樺灚鏆╅柛瀣洴椤㈡岸顢橀悢绋垮伎婵°倧绲介崰姘跺极鐎ｎ剚鍠愰幖娣妼缁?
+  // --init: generate feature_list.json and initialize project truth files.
   if (options.init) {
     const currentDate = new Date().toISOString().split('T')[0];
     const currentOS = process.platform === 'win32' ? 'Windows' : 'Unix/Linux';
@@ -1187,116 +1206,6 @@ New: {"features": [
     }
   }
 
-  // --team: 濠电姴鐥夐弶搴撳亾濡や焦鍙忛柣鎴ｆ绾惧鏌ｉ幇顒佹儓缁炬儳鐏濋埞鎴﹀磼濞戞瑥浠╅梺閫炲苯鍘哥紒鑸靛哺閻涱喚鈧綆鍠楅崑鎰亜閹板灚绶氬?Agent
-  if (options.team) {
-    const tasks = options.team.split(',').map(t => t.trim()).filter(Boolean);
-    if (tasks.length === 0) { console.log('Error: No tasks specified for --team'); process.exit(1); }
-
-    console.log(chalk.cyan(`[KodaX Team] Running ${tasks.length} tasks with ${options.provider}`));
-    if (options.reasoningMode !== 'off') {
-      console.log(chalk.cyan(`[KodaX Team] Reasoning mode: ${options.reasoningMode}`));
-    }
-    const runId = `team-${new Date().toISOString().replace(/[:.]/g, '-')}`;
-    const workspaceDir = path.resolve('.kodax', 'orchestration', runId);
-    console.log(chalk.dim(`[KodaX Team] Workspace: ${workspaceDir}`));
-
-    // Serialize agent output to keep team-mode logs readable.
-    const streamLock = { locked: false, queue: [] as (() => void)[] };
-    const printedHeaders = new Set<string>();
-    async function acquireStreamLock(): Promise<void> {
-      while (streamLock.locked) {
-        await new Promise<void>(resolve => streamLock.queue.push(resolve));
-      }
-      streamLock.locked = true;
-    }
-    function releaseStreamLock(): void {
-      streamLock.locked = false;
-      const next = streamLock.queue.shift();
-      if (next) next();
-    }
-
-    const MAX_SUB_ROUNDS = 10;
-    const orchestrationTasks: KodaXAgentWorkerSpec[] = tasks.map((task, index) => ({
-      id: `task-${index + 1}`,
-      title: `Team Task ${index + 1}`,
-      prompt: task,
-      execution: 'parallel',
-      budget: {
-        reasoningMode: options.reasoningMode,
-        thinking: options.thinking,
-        maxIter: MAX_SUB_ROUNDS,
-      },
-      metadata: {
-        taskIndex: index + 1,
-      },
-    }));
-    const runner = createKodaXTaskRunner({
-      baseOptions: {
-        provider: options.provider,
-        thinking: options.thinking,
-        reasoningMode: options.reasoningMode,
-        maxIter: MAX_SUB_ROUNDS,
-      },
-      rateLimit: (operation) => rateLimitedCall(operation),
-      createEvents: (task) => ({
-        onTextDelta: async (text: string) => {
-          await acquireStreamLock();
-          const taskPreview = task.prompt.slice(0, 50) + (task.prompt.length > 50 ? '...' : '');
-          if (!printedHeaders.has(task.id)) {
-            console.log(chalk.cyan(`\n[Agent ${task.metadata?.taskIndex ?? task.id}] ${chalk.dim(taskPreview)}`));
-            printedHeaders.add(task.id);
-          }
-          process.stdout.write(text);
-          releaseStreamLock();
-        },
-        onToolResult: (result: { id: string; name: string; content: string }) => {
-          console.log(
-            chalk.green(
-              `[Agent ${task.metadata?.taskIndex ?? task.id} Result] ${result.content.slice(0, 100)}...`
-            )
-          );
-        },
-      }),
-    });
-    const orchestration = await runOrchestration({
-      runId,
-      workspaceDir,
-      maxParallel: tasks.length,
-      tasks: orchestrationTasks,
-      runner,
-    });
-
-    console.log('\n' + '='.repeat(60));
-    console.log(chalk.green(`[KodaX Team] Results Summary:`));
-    console.log('='.repeat(60));
-    for (let i = 0; i < tasks.length; i++) {
-      const taskResult = orchestration.taskResults[`task-${i + 1}`];
-      console.log(chalk.yellow(`\n[Task ${i + 1}] ${tasks[i]!.slice(0, 50)}${tasks[i]!.length > 50 ? '...' : ''}`));
-      if (!taskResult) {
-        console.log(chalk.red('[Result] Missing task result'));
-        continue;
-      }
-
-      if (taskResult.status === 'completed') {
-        const resultText = typeof taskResult.result.output === 'string'
-          ? taskResult.result.output
-          : taskResult.result.summary ?? '';
-        if (resultText) {
-          const preview = resultText.length > 300 ? resultText.slice(-300) : resultText;
-          console.log(chalk.green(`[Result] ...${preview}`));
-        } else {
-          console.log(chalk.green('[Result] Completed with no textual output'));
-        }
-      } else {
-        console.log(chalk.red(`[${taskResult.status.toUpperCase()}] ${taskResult.result.error ?? taskResult.result.summary ?? 'Task did not complete successfully'}`));
-      }
-    }
-    console.log('\n' + '='.repeat(60));
-    console.log(chalk.green(`[KodaX Team] Summary: ${orchestration.summary.completed} completed, ${orchestration.summary.failed} failed, ${orchestration.summary.blocked} blocked`));
-    console.log(chalk.dim(`[KodaX Team] Artifacts saved to ${workspaceDir}`));
-    return;
-  }
-
   // Command dispatch for /command-style invocations.
   if (userPrompt.startsWith('/')) {
     const parsed = parseCommandCall(userPrompt);
@@ -1309,10 +1218,22 @@ New: {"features": [
           commandName,
           args,
           commands,
-          (prompt: string) => runKodaX(kodaXOptions, prompt)
+          (prompt: string) => runManagedTask({
+            ...kodaXOptions,
+            context: {
+              ...kodaXOptions.context,
+              taskSurface: 'cli',
+            },
+          }, prompt)
         );
         if (commandPrompt) {
-          const result = await runKodaX(kodaXOptions, commandPrompt);
+          const result = await runManagedTask({
+            ...kodaXOptions,
+            context: {
+              ...kodaXOptions.context,
+              taskSurface: 'cli',
+            },
+          }, commandPrompt);
           emitJsonRunResultIfNeeded(options.outputMode, result);
           return;
         }
@@ -1330,12 +1251,13 @@ New: {"features": [
         model: kodaXOptions.model,
         thinking: kodaXOptions.thinking,
         reasoningMode: kodaXOptions.reasoningMode,
+        agentMode: kodaXOptions.agentMode,
         maxIter: kodaXOptions.maxIter,
         parallel: kodaXOptions.parallel,
         extensionRuntime: kodaXOptions.extensionRuntime,
         session: kodaXOptions.session,
         storage: new FileSessionStorage(),
-        // 婵犵數濮烽弫鎼佸磻閻愬搫鍨傞柛顐ｆ礀缁犱即鏌涘┑鍕姢闁活厽鎸鹃埀顒冾潐濞叉牕煤閿曞偊缍栭柡鍥ュ灪閻撴洘銇勯幇鍓佺ɑ缂佲偓閸愵喗鐓?events闂傚倸鍊搁崐鐑芥倿閿旈敮鍋撶粭娑樻噽閻瑩鏌熸潏楣冩闁稿孩顨婇弻娑氫沪閸撗€妲堝銈嗘礋娴滃爼寮诲澶婁紶闁告洦鍓欏▍锝囩磽娴ｆ彃浜鹃梺绋挎湰婢规洟宕戦幘鑽ゅ祦闁割煈鍠栨慨搴ㄦ煟鎼淬垹鍤柛锝忕秮楠?Ink UI 闂傚倸鍊搁崐椋庣矆娓氣偓楠炲鏁撻悩鑼槷濠碘槅鍨跺Λ鍧楁倿婵犲啰绠鹃柛鈩兩戠亸浼存煕?
+        // Use FileSessionStorage for persisted sessions; Ink manages its own UI state.
       });
     } catch (error) {
       if (error instanceof KodaXTerminalError) {
@@ -1354,15 +1276,21 @@ New: {"features": [
     return;
   }
 
-  // 闂傚倸鍊搁崐椋庣矆娓氣偓楠炴牠顢曢妶鍌氫壕婵鍘ф晶顖炴煛閸涙澘鐓愮紒鍌涘笧閳ь剨缍嗛埀顒夊弿闂勫嫰骞堥妸銉庣喖宕稿Δ鈧幗鐢告⒑閸濆嫭顥炵紒顔肩Ч婵＄敻宕熼姘辩潉闂佺鏈懝鐐濮椻偓閹泛顫濋崡鐐╂瀰濠殿喖锕ュ浠嬬嵁閹邦厽鍎熼柨婵嗗€归～宥嗙節閻㈤潧浠╅柛瀣姍閳ワ妇绮甸惃鈧瑃 濠电姷鏁告慨鐑姐€傞挊澹╋綁宕ㄩ弶鎴濈€銈呯箰閻楀棝鎮為崹顐犱簻闁瑰搫妫楁禍鍓х磼閸撗嗘闁告ɑ鍎抽埥澶愭偨缁嬭法鍔﹀銈嗗笂閼冲墎绮绘ィ鍐╃厵閻庣數顭堟禒锕傛倶韫囨洖顣奸柟渚垮妽缁绘繈宕熼鈧▓宀勬煣閼姐倕浠遍柡灞炬礋瀹曠厧鈹戦崶鑸碉骏婵＄偑鍊愰弲婵嬪礂濮椻偓楠炲啳銇愰幒鎴犲€為梺闈涱焾閸庡磭绮婂畡閭︽富闁靛牆楠告禍鏍煕婵犲啰绠炵€殿喖顭烽弫鎾绘偐閼碱剦妲版俊鐐€栭幐鍡涘礃閳哄倻褰庣紓?
+  // No prompt + --print: show basic help and exit.
   if (!userPrompt && !options.init && options.print) {
     showBasicHelp();
     return;
   }
 
-  // 濠电姷鏁告慨鐢割敊閺嶎厼绐楁俊銈呭暞瀹曟煡鏌熼柇锕€鏋涚紒韬插€曢湁闁绘ê妯婇崕鎰版煕鐎ｎ亶妯€闁哄被鍊楃划娆戞崉閵娿倗椹冲┑鐐茬摠閸ゅ酣宕愬┑瀣摕闁绘柨鍚嬮悞浠嬫煥閺囨浜鹃梺璇茬箻娴滃爼寮婚敓鐘茬劦?
+  // Run a single managed task in print mode and exit.
   const kodaXOptions = createKodaXOptions(options, options.print ?? false);
-  const result = await runKodaX(kodaXOptions, userPrompt);
+  const result = await runManagedTask({
+    ...kodaXOptions,
+    context: {
+      ...kodaXOptions.context,
+      taskSurface: 'cli',
+    },
+  }, userPrompt);
   emitJsonRunResultIfNeeded(options.outputMode, result);
 }
 

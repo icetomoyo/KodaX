@@ -27,13 +27,16 @@ interface CodexRawEvent {
 }
 
 export class CodexCLIExecutor extends CLIExecutor {
-    constructor(config?: Partial<CLIExecutorConfig>) {
+    private model: string;
+
+    constructor(config?: Partial<CLIExecutorConfig> & { model?: string }) {
         super({
             command: 'codex',
             baseArgs: ['exec', '--json', '--full-auto'],
             timeout: 300000,
             ...config,
         });
+        this.model = config?.model ?? 'gpt-5.4';
     }
 
     protected async checkInstalled(): Promise<boolean> {
@@ -41,6 +44,9 @@ export class CodexCLIExecutor extends CLIExecutor {
     }
 
     protected buildArgs(options: CLIExecutionOptions): string[] {
+        this.model = options.model ?? this.model;
+        const modelArgs = options.model ? ['-m', options.model] : [];
+
         // Codex CLI shapes:
         //   first prompt: codex exec --json --full-auto "prompt"
         //   resume flow:  codex exec resume <session_id> "prompt" --json --full-auto
@@ -50,13 +56,14 @@ export class CodexCLIExecutor extends CLIExecutor {
             // Resume an existing Codex session.
             return [
                 'exec', 'resume', options.sessionId,
+                ...modelArgs,
                 options.prompt,
                 ...this.config.baseArgs.filter(a => a !== 'exec'), // `exec` was inserted manually above.
             ];
         }
 
         // Fresh execution.
-        return [...this.config.baseArgs, options.prompt];
+        return [...this.config.baseArgs, ...modelArgs, options.prompt];
     }
 
     protected parseLine(line: string): CLIEvent | null {
@@ -79,7 +86,7 @@ export class CodexCLIExecutor extends CLIExecutor {
                     type: 'session_start',
                     timestamp,
                     sessionId: raw.thread_id ?? '',
-                    model: 'codex',
+                    model: this.model,
                     raw,
                 };
 

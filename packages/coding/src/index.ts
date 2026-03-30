@@ -53,6 +53,7 @@ export type {
   KodaXTaskType,
   KodaXExecutionMode,
   KodaXRiskLevel,
+  KodaXReviewScale,
   KodaXTaskRoutingDecision,
   KodaXThinkingBudgetMap,
   KodaXTaskBudgetOverrides,
@@ -71,17 +72,59 @@ export type {
   KodaXJsonValue,
   KodaXExtensionSessionRecord,
   KodaXExtensionSessionState,
+  KodaXSessionBranchSummaryEntry,
+  KodaXSessionCompactionEntry,
   KodaXSessionData,
+  KodaXSessionEntry,
+  KodaXSessionEntryBase,
+  KodaXSessionLabelEntry,
+  KodaXSessionLineage,
+  KodaXSessionMessageEntry,
+  KodaXSessionNavigationOptions,
   KodaXSessionMeta,
+  KodaXSessionScope,
+  KodaXSessionUiHistoryItem,
+  KodaXSessionUiHistoryItemType,
   KodaXEvents,
   KodaXSessionOptions,
   KodaXContextTokenSnapshot,
   KodaXContextOptions,
+  KodaXTaskCapabilityHint,
+  KodaXTaskVerificationCriterion,
+  KodaXRuntimeVerificationContract,
+  KodaXSkillInvocationContext,
+  KodaXSkillMap,
+  KodaXSkillProjectionConfidence,
+  KodaXRoleRoundSummary,
+  KodaXVerificationScorecard,
+  KodaXVerificationScorecardCriterion,
+  KodaXBudgetExtensionRequest,
+  KodaXManagedBudgetSnapshot,
+  KodaXMemoryStrategy,
+  KodaXBudgetDisclosureZone,
+  KodaXAgentMode,
+  KodaXManagedTaskStatusEvent,
   KodaXOptions,
   KodaXResult,
+  KodaXTaskSurface,
+  KodaXTaskStatus,
+  KodaXTaskRole,
+  KodaXTaskContract,
+  KodaXTaskRoleAssignment,
+  KodaXTaskWorkItem,
+  KodaXTaskEvidenceArtifact,
+  KodaXTaskEvidenceEntry,
+  KodaXTaskEvidenceBundle,
+  KodaXTaskToolPolicy,
+  KodaXTaskVerificationContract,
+  KodaXOrchestrationVerdict,
+  KodaXManagedTask,
+  KodaXManagedTaskRuntimeState,
   KodaXSessionStorage,
+  KodaXSessionTreeNode,
   KodaXToolExecutionContext,
   AskUserQuestionOptions,
+  KodaXProviderPolicyHints,
   SessionErrorMetadata,
 } from './types.js';
 
@@ -193,6 +236,14 @@ export {
   toolGlob,
   toolGrep,
   toolUndo,
+  toolAskUserQuestion,
+  toolRepoOverview,
+  toolChangedScope,
+  toolChangedDiff,
+  toolModuleContext,
+  toolSymbolContext,
+  toolProcessContext,
+  toolImpactEstimate,
   DEFAULT_TOOL_OUTPUT_MAX_BYTES,
   DEFAULT_TOOL_OUTPUT_MAX_LINES,
   READ_DEFAULT_LIMIT,
@@ -207,6 +258,62 @@ export {
   getToolResultPolicy,
 } from './tools/index.js';
 
+// ============== Repo Intelligence ==============
+
+export type {
+  RepoAreaKind,
+  ChangedFileStatus,
+  RepoAreaOverview,
+  RepoOverview,
+  ChangedScopeAreaSummary,
+  ChangedFileEntry,
+  ChangedScopeReport,
+} from './repo-intelligence/index.js';
+
+export {
+  buildRepoOverview,
+  getRepoOverview,
+  buildRepoIntelligenceContext,
+  renderRepoOverview,
+  analyzeChangedScope,
+  renderChangedScope,
+} from './repo-intelligence/index.js';
+
+export type {
+  RepoLanguageId,
+  LanguageCapabilityTier,
+  RepoLanguageSupport,
+  RepoSymbolKind,
+  RepoSymbolReference,
+  RepoSymbolRecord,
+  ModuleCapsule,
+  ProcessStep,
+  ProcessCapsule,
+  RepoIntelligenceIndex,
+  ModuleContextResult,
+  SymbolContextResult,
+  ProcessContextResult,
+  ImpactEstimateResult,
+} from './repo-intelligence/query.js';
+
+export type {
+  KodaXRepoRoutingSignals,
+} from './types.js';
+
+export {
+  buildRepoIntelligenceIndex,
+  getRepoIntelligenceIndex,
+  getRepoRoutingSignals,
+  getModuleContext,
+  getSymbolContext,
+  getProcessContext,
+  getImpactEstimate,
+  renderModuleContext,
+  renderSymbolContext,
+  renderProcessContext,
+  renderImpactEstimate,
+} from './repo-intelligence/query.js';
+
 // ============== Prompts ==============
 
 export {
@@ -220,6 +327,15 @@ export {
 export {
   generateSessionId,
   extractTitleFromMessages,
+  appendSessionLineageLabel,
+  buildSessionTree,
+  countActiveLineageMessages,
+  createSessionLineage,
+  forkSessionLineage,
+  getSessionLineagePath,
+  getSessionMessagesFromLineage,
+  resolveSessionLineageTarget,
+  setSessionLineageActiveEntry,
 } from './session.js';
 
 // ============== Message Processing ==============
@@ -245,6 +361,10 @@ export {
   cleanupIncompleteToolCalls,
   validateAndFixToolHistory,
 } from './agent.js';
+
+export {
+  runManagedTask,
+} from './task-engine.js';
 
 export type {
   CapabilityKind,
@@ -313,9 +433,24 @@ export {
   reasoningModeToDepth,
   inferTaskType,
   buildFallbackRoutingDecision,
+  buildProviderPolicyHintsForDecision,
   buildPromptOverlay,
   createReasoningPlan,
 } from './reasoning.js';
+
+export type {
+  KodaXProviderCapabilitySnapshot,
+  KodaXProviderPolicyDecision,
+  KodaXProviderPolicyIssue,
+  KodaXProviderPolicyIssueSeverity,
+  KodaXProviderSourceKind,
+} from './provider-policy.js';
+
+export {
+  buildProviderCapabilitySnapshot,
+  buildProviderPolicyPromptNotes,
+  evaluateProviderPolicy,
+} from './provider-policy.js';
 
 // Client alias
 export { KodaXClient as Client } from './client.js';

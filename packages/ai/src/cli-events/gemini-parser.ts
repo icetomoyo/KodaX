@@ -46,7 +46,7 @@ export class GeminiCLIExecutor extends CLIExecutor {
     }
 
     protected buildArgs(options: CLIExecutionOptions): string[] {
-        const args = ['-m', this.model];
+        const args = ['-m', options.model ?? this.model];
 
         // Resume uses `-r`; fresh prompts use `-p`.
         if (options.sessionId) {

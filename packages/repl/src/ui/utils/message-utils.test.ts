@@ -7,7 +7,10 @@ import {
   extractTitle,
   extractTextContent,
   formatMessagePreview,
+  isControlPlaneOnlyAssistantText,
   resolveAssistantHistoryText,
+  resolveCompletedAssistantText,
+  sanitizeUserFacingAssistantText,
 } from "./message-utils.js";
 
 describe("message-utils", () => {
@@ -145,6 +148,31 @@ describe("message-utils", () => {
     expect(resolved).toBe("buffered response");
   });
 
+  it("prefers the persisted final assistant body over managed-task summaries", () => {
+    const resolved = resolveCompletedAssistantText(
+      [
+        { role: "user", content: "hello" },
+        { role: "assistant", content: "full final assistant body" },
+      ] satisfies KodaXMessage[],
+      "streamed preview",
+      "managed summary",
+      "lastText fallback"
+    );
+
+    expect(resolved).toBe("full final assistant body");
+  });
+
+  it("falls back to managed-task summaries only when no full assistant body exists", () => {
+    const resolved = resolveCompletedAssistantText(
+      [{ role: "user", content: "hello" }] satisfies KodaXMessage[],
+      "",
+      "managed summary",
+      "lastText fallback"
+    );
+
+    expect(resolved).toBe("managed summary");
+  });
+
   it("builds session titles from structured user text blocks", () => {
     const title = extractTitle([
       {
@@ -173,5 +201,32 @@ describe("message-utils", () => {
 
   it("formats previews with a shared truncation rule", () => {
     expect(formatMessagePreview("line 1\nline 2", 8)).toBe("line 1 l...");
+  });
+
+  it("strips managed-task prompt scaffolding from assistant text", () => {
+    const text = [
+      "You are the Evaluator role for a managed KodaX task.",
+      "",
+      "Primary task: review",
+      "Work intent: new",
+      "Harness: H1_EXECUTE_EVAL",
+      "",
+      "Tool policy:",
+      "Allowed shell patterns:",
+    ].join("\n");
+
+    expect(sanitizeUserFacingAssistantText(text)).toBe("");
+    expect(isControlPlaneOnlyAssistantText(text)).toBe(true);
+  });
+
+  it("keeps user-facing text before control-plane scaffolding", () => {
+    const text = [
+      "Here are the final findings.",
+      "",
+      "You are the Evaluator role for a managed KodaX task.",
+      "Primary task: review",
+    ].join("\n");
+
+    expect(sanitizeUserFacingAssistantText(text)).toBe("Here are the final findings.");
   });
 });

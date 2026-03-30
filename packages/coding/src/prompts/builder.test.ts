@@ -31,4 +31,21 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain(`Working Directory: ${executionCwd}`);
     expect(prompt).toContain(`Project: ${path.basename(executionCwd)}`);
   });
+
+  it('appends repository intelligence context when provided', async () => {
+    const executionCwd = await createTempDir('kodax-prompt-repo-intel-');
+    cleanupDirs.push(executionCwd);
+
+    const prompt = await buildSystemPrompt({
+      provider: 'openai',
+      context: {
+        executionCwd,
+        gitRoot: executionCwd,
+        repoIntelligenceContext: '## Repository Intelligence\nRepository overview for sample-workspace',
+      },
+    }, false);
+
+    expect(prompt).toContain('## Repository Intelligence');
+    expect(prompt).toContain('Repository overview for sample-workspace');
+  });
 });

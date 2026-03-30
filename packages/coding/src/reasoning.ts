@@ -2,12 +2,22 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import type {
   KodaXExecutionMode,
+  KodaXHarnessProfile,
   KodaXMessage,
   KodaXOptions,
+  KodaXProviderPolicyHints,
+  KodaXRepoRoutingSignals,
   KodaXReasoningMode,
   SessionErrorMetadata,
+  KodaXTaskComplexity,
   KodaXTaskRoutingDecision,
+  KodaXTaskFamily,
+  KodaXTaskActionability,
   KodaXTaskType,
+  KodaXTaskWorkIntent,
+  KodaXExecutionPattern,
+  KodaXMutationSurface,
+  KodaXAssuranceIntent,
   KodaXThinkingDepth,
 } from './types.js';
 import {
@@ -20,6 +30,10 @@ import {
   hasTransientRetryEvidence,
   looksLikeActionableRuntimeEvidence,
 } from './runtime-evidence.js';
+import {
+  evaluateProviderPolicy,
+  type KodaXProviderPolicyDecision,
+} from './provider-policy.js';
 
 export { KODAX_REASONING_MODE_SEQUENCE };
 
@@ -48,6 +62,17 @@ const THINKING_DEPTH_ORDER: Record<KodaXThinkingDepth, number> = {
 };
 
 const EXECUTION_MODE_OVERLAYS: Record<KodaXExecutionMode, string> = {
+  conversation: [
+    '[Execution Mode: conversation]',
+    '- Answer conversationally and directly.',
+    '- Do not expand into repo analysis, planning, or tool-heavy investigation unless the user asks for work.',
+  ].join('\n'),
+  lookup: [
+    '[Execution Mode: lookup]',
+    '- Answer the navigation or lookup question directly.',
+    '- Prefer precise paths, symbols, or locations over broad commentary.',
+    '- Do not escalate into planning or validation ceremony unless the user explicitly asks for deeper analysis.',
+  ].join('\n'),
   'pr-review': [
     '[Execution Mode: pr-review]',
     '- Report only high-confidence, actionable issues that materially affect correctness, reliability, security, or merge readiness.',
@@ -80,14 +105,45 @@ const EXECUTION_MODE_OVERLAYS: Record<KodaXExecutionMode, string> = {
   ].join('\n'),
 };
 
+const HARNESS_PROFILE_OVERLAYS: Record<KodaXHarnessProfile, string> = {
+  H0_DIRECT: [
+    '[Harness Profile: H0_DIRECT]',
+    '- Keep the task in a single direct pass unless concrete evidence forces escalation.',
+    '- Prefer concise execution without extra discovery scaffolding.',
+  ].join('\n'),
+  H1_EXECUTE_EVAL: [
+    '[Harness Profile: H1_EXECUTE_EVAL]',
+    '- Execute the task, then self-check the result against the request before finalizing.',
+    '- Prefer evidence-backed completion over speculative confidence.',
+  ].join('\n'),
+  H2_PLAN_EXECUTE_EVAL: [
+    '[Harness Profile: H2_PLAN_EXECUTE_EVAL]',
+    '- Start with a short explicit plan or option framing before making changes.',
+    '- After execution, verify the result and call out any residual uncertainty.',
+  ].join('\n'),
+};
+
 const ROUTER_SYSTEM_PROMPT = [
   'You are a task router for a coding agent.',
   'Classify the user request into one primary task and an optional secondary task.',
   'Return valid JSON only.',
-  'Allowed primaryTask and secondaryTask values: review, bugfix, edit, refactor, plan, qa, unknown.',
+  'Allowed primaryTask and secondaryTask values: conversation, lookup, review, bugfix, edit, refactor, plan, qa, unknown.',
+  'Allowed taskFamily values: conversation, lookup, review, implementation, investigation, planning, ambiguous.',
+  'Allowed actionability values: non_actionable, actionable, ambiguous.',
+  'Allowed mutationSurface values: read-only, docs-only, code, system.',
+  'Allowed assuranceIntent values: default, explicit-check.',
   'Allowed riskLevel values: low, medium, high.',
-  'Allowed recommendedMode values: pr-review, strict-audit, implementation, planning, investigation.',
+  'Allowed recommendedMode values: conversation, lookup, pr-review, strict-audit, implementation, planning, investigation.',
   'Allowed recommendedThinkingDepth values: off, low, medium, high.',
+  'Allowed complexity values: simple, moderate, complex, systemic.',
+  'Allowed workIntent values: append, overwrite, new.',
+  'Allowed executionPattern values: direct, checked-direct, coordinated.',
+  'Allowed harnessProfile values: H0_DIRECT, H1_EXECUTE_EVAL, H2_PLAN_EXECUTE_EVAL.',
+  'Allowed topologyCeiling values: H0_DIRECT, H1_EXECUTE_EVAL, H2_PLAN_EXECUTE_EVAL.',
+  'requiresBrainstorm must be a boolean.',
+  'soloBoundaryConfidence must be a number between 0 and 1.',
+  'needsIndependentQA must be a boolean.',
+  'routingNotes, when present, must be an array of short strings.',
   'Confidence must be a number between 0 and 1.',
   'Prefer conservative decisions when the request is ambiguous.',
 ].join('\n');
@@ -102,6 +158,9 @@ const AUTO_REROUTE_SYSTEM_PROMPT = [
   'Only reroute when there is clear evidence the first pass was mismatched, too uncertain, or too low-value.',
   'Prefer no reroute unless the evidence is strong.',
 ].join('\n');
+
+const STRUCTURED_DECISION_MAX_ATTEMPTS = 3;
+const SOLO_BOUNDARY_DIRECT_THRESHOLD = 0.75;
 
 const UNCERTAINTY_MARKERS = [
   'not enough context',
@@ -141,17 +200,119 @@ const HIGH_IMPACT_MARKERS = [
   'failure',
 ];
 
+const BRAINSTORM_KEYWORDS = [
+  'brainstorm',
+  'explore',
+  'explore options',
+  'option framing',
+  'tradeoff',
+  'trade-off',
+  'safest way',
+  'figure out',
+  'design first',
+  '方案',
+  '思路',
+  '先想',
+  '先设计',
+  '先分析',
+  '先讨论',
+];
+
+const APPEND_INTENT_KEYWORDS = [
+  'continue',
+  'extend',
+  'build on',
+  'follow up',
+  'append',
+  'add to',
+  'based on the existing',
+  '接着',
+  '继续',
+  '补充',
+  '追加',
+  '延续',
+  '扩展现有',
+];
+
+const OVERWRITE_INTENT_KEYWORDS = [
+  'rewrite',
+  'replace',
+  'overwrite',
+  'from scratch',
+  'start over',
+  'regenerate',
+  'redo',
+  '重写',
+  '替换',
+  '覆盖',
+  '推倒重来',
+  '全部改掉',
+  '重新做',
+];
+
+const COMPLEXITY_KEYWORDS: Record<KodaXTaskComplexity, readonly string[]> = {
+  simple: [],
+  moderate: [
+    'screen',
+    'component',
+    'endpoint',
+    'service',
+    'feature',
+    '模块',
+    '功能',
+    '页面',
+  ],
+  complex: [
+    'migration',
+    'architecture',
+    'cross-package',
+    'multi-step',
+    'pipeline',
+    'state machine',
+    'refactor',
+    'monorepo',
+    'across packages',
+    'integration',
+    '迁移',
+    '架构',
+    '跨包',
+    '重构',
+    '流程',
+  ],
+  systemic: [
+    'system-wide',
+    'orchestrate',
+    'multi-agent',
+    'control plane',
+    'runtime substrate',
+    'whole repo',
+    'entire repo',
+    'across the monorepo',
+    '全仓',
+    '全局',
+    '整体架构',
+    '控制面',
+    '多智能体',
+  ],
+};
+
+const COMPLEXITY_MODERATE_THRESHOLD = 2;
+const COMPLEXITY_COMPLEX_THRESHOLD = 4;
+const COMPLEXITY_SYSTEMIC_THRESHOLD = 6;
+
 export interface ReasoningPlan {
   mode: KodaXReasoningMode;
   depth: KodaXThinkingDepth;
   decision: KodaXTaskRoutingDecision;
   promptOverlay: string;
+  providerPolicy?: KodaXProviderPolicyDecision;
 }
 
 export interface RoutingEvidenceInput {
   recentMessages?: KodaXMessage[];
   sessionErrorMetadata?: SessionErrorMetadata;
   additionalSignals?: string[];
+  repoSignals?: KodaXRepoRoutingSignals;
 }
 
 export interface AutoRerouteEvidence {
@@ -171,6 +332,13 @@ export type ReasoningFollowUpKind = 'depth-escalation' | 'task-reroute';
 export interface ReasoningFollowUpPlan extends ReasoningPlan {
   kind: ReasoningFollowUpKind;
 }
+
+const REVIEW_LARGE_FILE_THRESHOLD = 10;
+const REVIEW_LARGE_LINE_THRESHOLD = 1200;
+const REVIEW_LARGE_MODULE_THRESHOLD = 3;
+const REVIEW_MASSIVE_FILE_THRESHOLD = 30;
+const REVIEW_MASSIVE_LINE_THRESHOLD = 4000;
+const REVIEW_MASSIVE_MODULE_THRESHOLD = 5;
 
 export function resolveReasoningMode(options: KodaXOptions): KodaXReasoningMode {
   if (options.reasoningMode) {
@@ -198,6 +366,33 @@ const TASK_TYPE_KEYWORDS: Record<
   Exclude<KodaXTaskType, 'unknown'>,
   readonly string[]
 > = {
+  conversation: [
+    'hello',
+    'hi',
+    'hey',
+    '你好',
+    '嗨',
+    '早上好',
+    '下午好',
+    '晚上好',
+  ],
+  lookup: [
+    'where is',
+    'which file',
+    'what file',
+    'where does',
+    'where do',
+    'located',
+    'defined',
+    '在哪个文件',
+    '在哪',
+    '在哪里',
+    '哪个文件',
+    '哪个函数',
+    '哪里定义',
+    '文件位置',
+    '在哪管理',
+  ],
   review: [
     'review',
     'code review',
@@ -329,6 +524,290 @@ function scoreTaskTypeKeywords(text: string, keywords: readonly string[]): numbe
   return score;
 }
 
+export interface KodaXIntentGateDecision {
+  primaryTask: KodaXTaskType;
+  taskFamily: KodaXTaskFamily;
+  actionability: KodaXTaskActionability;
+  executionPattern: KodaXExecutionPattern;
+  shouldUseRepoSignals: boolean;
+  shouldUseModelRouter: boolean;
+  reason: string;
+}
+
+const GREETING_ONLY_PATTERN = /^(?:\s|[!,.?，。！？])*?(?:hi|hello|hey|yo|你好|嗨|哈喽|早上好|下午好|晚上好)(?:\s|[!,.?，。！？])*$/i;
+const LOOKUP_PATTERN = /\b(where is|which file|what file|where does|where do|defined in|located in|file manages|manages this|which component|which function)\b/i;
+const LOOKUP_PATTERN_ZH = /在哪个文件|在哪管理|在哪里定义|哪个文件|哪个函数|哪个组件|文件位置|在哪\b|在哪里\b/;
+const REVIEW_PATTERN = /\b(review|code review|audit|pr|pull request|merge blocker|look at the changes|changed files)\b/i;
+const REVIEW_PATTERN_ZH = /审查|评审|review一下|看下改动|代码改动/;
+const PLAN_PATTERN = /\b(plan|design|architecture|proposal|strategy|roadmap)\b/i;
+const PLAN_PATTERN_ZH = /计划|设计|架构|方案|策略|路线图/;
+const INVESTIGATION_PATTERN = /\b(debug|investigate|root cause|why is|why does|failing|failure|runtime error|stack trace|traceback)\b/i;
+const INVESTIGATION_PATTERN_ZH = /排查|定位问题|根因|为什么|报错|错误|异常|失败/;
+const IMPLEMENTATION_PATTERN = /\b(implement|add|change|modify|update|create|write|fix|refactor|rewrite|replace)\b/i;
+const IMPLEMENTATION_PATTERN_ZH = /实现|新增|修改|创建|写一个|修复|重构|改一下|替换/;
+
+const DOCS_ONLY_PATTERN = /\b(docs?|documentation|readme|changelog|release notes?|spec|proposal|design doc|requirements?|prd|adr|hld|dd|feature list|known issues?)\b/i;
+const DOCS_ONLY_PATTERN_ZH = /\u6587\u6863|\u8bf4\u660e\u6587\u6863|\u8bbe\u8ba1\u6587\u6863|\u9700\u6c42\u6587\u6863|PRD|ADR|HLD|DD|CHANGELOG|README|\u529f\u80fd\u6e05\u5355|\u5df2\u77e5\u95ee\u9898/u;
+const EXPLICIT_ASSURANCE_PATTERN = /\b(double[- ]check|re-check|recheck|second pass|second opinion|cross-check|cross check|independently verify|independent review|independent audit|strict audit|extra scrutiny|verify twice)\b/i;
+const EXPLICIT_ASSURANCE_PATTERN_ZH = /\u518d\u68c0\u67e5|\u518d\u5ba1\u67e5|\u53cc\u91cd\u68c0\u67e5|\u7b2c\u4e8c\u904d|\u7b2c\u4e8c\u8f6e|\u4e8c\u6b21\u5ba1\u67e5|\u4ea4\u53c9\u68c0\u67e5|\u72ec\u7acb\u9a8c\u8bc1|\u72ec\u7acb\u5ba1\u67e5|\u66f4\u5f3a\u5ba1\u67e5/u;
+const CODE_MUTATION_OBJECT_PATTERN = /\b(code|implementation|function|class|component|module|endpoint|service|repo|repository|file|files|test|bug|feature|script|api|ui|backend|frontend)\b/i;
+const CODE_MUTATION_OBJECT_PATTERN_ZH = /\u4ee3\u7801|\u5b9e\u73b0|\u51fd\u6570|\u7c7b|\u7ec4\u4ef6|\u6a21\u5757|\u63a5\u53e3|\u670d\u52a1|\u4ed3\u5e93|\u6587\u4ef6|\u6d4b\u8bd5|bug|\u529f\u80fd|\u811a\u672c|API|\u754c\u9762|\u540e\u7aef|\u524d\u7aef/u;
+const SYSTEM_MUTATION_PATTERN = /\b(deploy|deployment|restart|reboot|migrate database|run migration|seed database|provision|install dependency|install package|upgrade dependency|kill process|start server|stop server|apply terraform)\b/i;
+const SYSTEM_MUTATION_PATTERN_ZH = /\u90e8\u7f72|\u91cd\u542f|\u91cd\u542f\u670d\u52a1|\u8fd0\u884c\u8fc1\u79fb|\u8fc1\u79fb\u6570\u636e\u5e93|\u521d\u59cb\u5316\u6570\u636e\u5e93|\u5b89\u88c5\u4f9d\u8d56|\u5347\u7ea7\u4f9d\u8d56|\u6740\u8fdb\u7a0b|\u542f\u52a8\u670d\u52a1|\u505c\u6b62\u670d\u52a1|\u5e94\u7528terraform/u;
+
+const GREETING_ONLY_PATTERN_ZH_CLEAN = /^(?:\s|[!,.?，。！]*)?(?:你好|哈喽|早上好|下午好|晚上好)(?:\s|[!,.?，。！]*)*$/u;
+const LOOKUP_PATTERN_ZH_CLEAN = /在哪个文件|哪个文件|在哪定义|定义在|哪个函数|哪个组件|文件位置|在哪里/u;
+const REVIEW_PATTERN_ZH_CLEAN = /审查|评审|review一下|看下改动|代码改动|审阅/u;
+const PLAN_PATTERN_ZH_CLEAN = /计划|设计|架构|方案|策略|路线图/u;
+const INVESTIGATION_PATTERN_ZH_CLEAN = /排查|定位问题|根因|为什么|报错|错误|异常|失败/u;
+const IMPLEMENTATION_PATTERN_ZH_CLEAN = /实现|新增|修改|创建|写一个|修复|重构|改一下|替换/u;
+const DOCS_ONLY_PATTERN_ZH_CLEAN = /文档|说明文档|设计文档|需求文档|PRD|ADR|HLD|DD|CHANGELOG|README|功能清单|已知问题/u;
+const EXPLICIT_ASSURANCE_PATTERN_ZH_CLEAN = /再检查|再审查|双重检查|第二遍|第二轮|二次审查|交叉检查|独立验证|独立审查|更强审查/u;
+const CODE_MUTATION_OBJECT_PATTERN_ZH_CLEAN = /代码|实现|函数|类|组件|模块|接口|服务|仓库|文件|测试|bug|功能|脚本|API|界面|后端|前端/u;
+const SYSTEM_MUTATION_PATTERN_ZH_CLEAN = /部署|重启|重启服务|迁移数据库|运行迁移|初始化数据库|安装依赖|升级依赖|杀进程|启动服务|停止服务|应用terraform/u;
+const CODE_MUTATION_TARGET_PATTERN_ZH_CLEAN = /代码|实现|函数|类|组件|模块|接口|bug|功能|前端|后端|脚本/u;
+const CODE_MUTATION_VERB_PATTERN_ZH_CLEAN = /实现|新增|修改|更新|创建|编写|修复|重构|补丁|重写|替换|编辑|重命名/u;
+
+function isGreetingOnlyPrompt(text: string): boolean {
+  return GREETING_ONLY_PATTERN.test(text) || GREETING_ONLY_PATTERN_ZH_CLEAN.test(text);
+}
+
+export function inferIntentGate(prompt: string): KodaXIntentGateDecision {
+  const trimmed = prompt.trim();
+  if (!trimmed) {
+    return {
+      primaryTask: 'conversation',
+      taskFamily: 'conversation',
+      actionability: 'non_actionable',
+      executionPattern: 'direct',
+      shouldUseRepoSignals: false,
+      shouldUseModelRouter: false,
+      reason: 'Empty input is treated as non-actionable conversation.',
+    };
+  }
+
+  if (isGreetingOnlyPrompt(trimmed)) {
+    return {
+      primaryTask: 'conversation',
+      taskFamily: 'conversation',
+      actionability: 'non_actionable',
+      executionPattern: 'direct',
+      shouldUseRepoSignals: false,
+      shouldUseModelRouter: false,
+      reason: 'Pure greeting input should stay conversational and must not be escalated by repository state.',
+    };
+  }
+
+  const hasLookupSignal = LOOKUP_PATTERN.test(trimmed) || LOOKUP_PATTERN_ZH_CLEAN.test(trimmed);
+  const hasReviewSignal = REVIEW_PATTERN.test(trimmed) || REVIEW_PATTERN_ZH_CLEAN.test(trimmed);
+  const hasPlanSignal = PLAN_PATTERN.test(trimmed) || PLAN_PATTERN_ZH_CLEAN.test(trimmed);
+  const hasInvestigationSignal = INVESTIGATION_PATTERN.test(trimmed) || INVESTIGATION_PATTERN_ZH_CLEAN.test(trimmed);
+  const hasImplementationSignal = IMPLEMENTATION_PATTERN.test(trimmed) || IMPLEMENTATION_PATTERN_ZH_CLEAN.test(trimmed);
+
+  if (hasReviewSignal) {
+    return {
+      primaryTask: 'review',
+      taskFamily: 'review',
+      actionability: 'actionable',
+      executionPattern: 'checked-direct',
+      shouldUseRepoSignals: true,
+      shouldUseModelRouter: false,
+      reason: 'Explicit review language should stay on the lightweight review path unless later evidence explicitly justifies stronger assurance.',
+    };
+  }
+
+  if (hasPlanSignal) {
+    return {
+      primaryTask: 'plan',
+      taskFamily: 'planning',
+      actionability: 'actionable',
+      executionPattern: 'coordinated',
+      shouldUseRepoSignals: true,
+      shouldUseModelRouter: true,
+      reason: 'Planning and design requests may benefit from coordinated execution.',
+    };
+  }
+
+  if (hasInvestigationSignal) {
+    return {
+      primaryTask: 'bugfix',
+      taskFamily: 'investigation',
+      actionability: 'actionable',
+      executionPattern: 'checked-direct',
+      shouldUseRepoSignals: true,
+      shouldUseModelRouter: true,
+      reason: 'Debugging and root-cause work starts as investigation.',
+    };
+  }
+
+  if (hasImplementationSignal) {
+    return {
+      primaryTask: 'edit',
+      taskFamily: 'implementation',
+      actionability: 'actionable',
+      executionPattern: 'checked-direct',
+      shouldUseRepoSignals: true,
+      shouldUseModelRouter: true,
+      reason: 'Implementation and editing work is actionable and may later escalate if the evidence warrants it.',
+    };
+  }
+
+  if (hasLookupSignal) {
+    return {
+      primaryTask: 'lookup',
+      taskFamily: 'lookup',
+      actionability: 'actionable',
+      executionPattern: 'direct',
+      shouldUseRepoSignals: false,
+      shouldUseModelRouter: false,
+      reason: 'Pure codebase lookup/navigation queries should stay on the direct path.',
+    };
+  }
+
+  return {
+    primaryTask: 'unknown',
+    taskFamily: 'ambiguous',
+    actionability: 'ambiguous',
+    executionPattern: 'direct',
+    shouldUseRepoSignals: false,
+    shouldUseModelRouter: false,
+    reason: 'Ambiguous requests stay lightweight until there is stronger task evidence.',
+  };
+}
+
+function inferTaskFamilyFromPrimaryTask(primaryTask: KodaXTaskType): KodaXTaskFamily {
+  switch (primaryTask) {
+    case 'conversation':
+      return 'conversation';
+    case 'lookup':
+    case 'qa':
+      return 'lookup';
+    case 'review':
+      return 'review';
+    case 'bugfix':
+      return 'investigation';
+    case 'plan':
+      return 'planning';
+    case 'edit':
+    case 'refactor':
+      return 'implementation';
+    case 'unknown':
+    default:
+      return 'ambiguous';
+  }
+}
+
+function defaultExecutionPatternForFamily(taskFamily: KodaXTaskFamily): KodaXExecutionPattern {
+  switch (taskFamily) {
+    case 'conversation':
+    case 'lookup':
+      return 'direct';
+    case 'review':
+    case 'investigation':
+      return 'checked-direct';
+    case 'planning':
+    case 'implementation':
+      return 'coordinated';
+    case 'ambiguous':
+    default:
+      return 'direct';
+  }
+}
+
+function deriveIntentFields(
+  prompt: string,
+  decision: Pick<KodaXTaskRoutingDecision, 'primaryTask' | 'taskFamily' | 'actionability' | 'executionPattern'>,
+): Pick<KodaXTaskRoutingDecision, 'taskFamily' | 'actionability' | 'executionPattern'> {
+  const gate = inferIntentGate(prompt);
+  const taskFamily = decision.taskFamily ?? inferTaskFamilyFromPrimaryTask(decision.primaryTask);
+  const actionability = decision.actionability
+    ?? (taskFamily === 'conversation' ? 'non_actionable' : taskFamily === 'ambiguous' ? gate.actionability : 'actionable');
+  const executionPattern = decision.executionPattern ?? defaultExecutionPatternForFamily(taskFamily);
+  return {
+    taskFamily,
+    actionability,
+    executionPattern,
+  };
+}
+
+function deriveMutationSurface(
+  prompt: string,
+  decision: Pick<KodaXTaskRoutingDecision, 'primaryTask' | 'taskFamily'>,
+): KodaXMutationSurface {
+  const normalized = ` ${prompt.toLowerCase()} `;
+  const hasCjk = /[\u3400-\u9fff]/u.test(prompt);
+  const hasDocsSignal = DOCS_ONLY_PATTERN.test(prompt) || (hasCjk && DOCS_ONLY_PATTERN_ZH_CLEAN.test(prompt));
+  const hasSystemSignal = SYSTEM_MUTATION_PATTERN.test(prompt) || (hasCjk && SYSTEM_MUTATION_PATTERN_ZH_CLEAN.test(prompt));
+  const hasCodeObjectSignal = CODE_MUTATION_OBJECT_PATTERN.test(normalized) || (hasCjk && CODE_MUTATION_OBJECT_PATTERN_ZH_CLEAN.test(prompt));
+  const hasStrongCodeTarget = /\b(code|implementation|function|class|component|module|endpoint|service|bug|script|api|ui|backend|frontend)\b/i.test(normalized)
+    || (hasCjk && CODE_MUTATION_OBJECT_PATTERN_ZH_CLEAN.test(prompt));
+  const hasMutationVerb = /\b(implement|add|modify|update|create|write|fix|refactor|rewrite|replace|edit|patch|rename)\b/i.test(normalized)
+    || (hasCjk && CODE_MUTATION_VERB_PATTERN_ZH_CLEAN.test(prompt));
+  const hasStrongCodeTargetByChinese = hasCjk && CODE_MUTATION_TARGET_PATTERN_ZH_CLEAN.test(prompt);
+  const hasMutationVerbByChinese = hasCjk && CODE_MUTATION_VERB_PATTERN_ZH_CLEAN.test(prompt);
+  const hasStructuralRepoTarget = /\b(monorepo|repo|repository|package|packages|architecture|migration)\b/i.test(normalized);
+  const hasStructuralMutationVerb = /\b(refactor|rewrite|reorganize|migrate|split|merge|consolidate|rename)\b/i.test(normalized);
+  const safeHasStrongCodeTarget = /\b(code|implementation|function|class|component|module|endpoint|service|bug|script|api|ui|backend|frontend)\b/i.test(normalized)
+    || hasStrongCodeTargetByChinese;
+  const safeHasMutationVerb = /\b(implement|add|modify|update|create|write|fix|refactor|rewrite|replace|edit|patch|rename)\b/i.test(normalized)
+    || hasMutationVerbByChinese;
+
+  if (decision.primaryTask === 'review' && !safeHasMutationVerb && !hasSystemSignal) {
+    return hasDocsSignal && !safeHasStrongCodeTarget
+      ? 'docs-only'
+      : 'read-only';
+  }
+
+  const likelyCodeMutation = decision.primaryTask === 'edit'
+    || decision.primaryTask === 'refactor'
+    || decision.taskFamily === 'implementation'
+    || (decision.primaryTask === 'bugfix' && safeHasMutationVerb)
+    || (safeHasMutationVerb && safeHasStrongCodeTarget)
+    || (hasStructuralMutationVerb && hasStructuralRepoTarget);
+
+  if (hasDocsSignal && !hasSystemSignal && !safeHasStrongCodeTarget && decision.primaryTask !== 'refactor') {
+    return 'docs-only';
+  }
+
+  if (hasSystemSignal) {
+    return 'system';
+  }
+
+  if (likelyCodeMutation) {
+    return 'code';
+  }
+
+  return 'read-only';
+}
+
+function deriveAssuranceIntent(
+  prompt: string,
+  decision: Pick<KodaXTaskRoutingDecision, 'recommendedMode'>,
+): KodaXAssuranceIntent {
+  const hasCjk = /[\u3400-\u9fff]/u.test(prompt);
+  if (
+    EXPLICIT_ASSURANCE_PATTERN.test(prompt)
+    || (hasCjk && EXPLICIT_ASSURANCE_PATTERN_ZH_CLEAN.test(prompt))
+    || decision.recommendedMode === 'strict-audit'
+  ) {
+    return 'explicit-check';
+  }
+  return 'default';
+}
+
+function deriveTopologyCeiling(
+  mutationSurface: KodaXMutationSurface,
+  assuranceIntent: KodaXAssuranceIntent,
+): KodaXHarnessProfile {
+  if (mutationSurface === 'read-only' || mutationSurface === 'docs-only') {
+    return assuranceIntent === 'explicit-check'
+      ? 'H1_EXECUTE_EVAL'
+      : 'H0_DIRECT';
+  }
+
+  return 'H2_PLAN_EXECUTE_EVAL';
+}
+
 function inferTaskSignal(prompt: string): {
   task: KodaXTaskType;
   confidence: number;
@@ -352,6 +831,15 @@ function inferTaskSignal(prompt: string): {
   }
 
   if (runnerUp && top.score === runnerUp.score) {
+    const preferredTiedTask = resolveTiedTask(prompt, top.task, runnerUp.task);
+    if (preferredTiedTask) {
+      return {
+        task: preferredTiedTask,
+        confidence: FALLBACK_CONFIDENCE_BASE,
+        reason: `Fallback task inference preferred "${preferredTiedTask}" because the request used an explicit directive even though multiple task signals were present.`,
+      };
+    }
+
     return {
       task: 'unknown',
       confidence: FALLBACK_COMPETING_SIGNAL_CONFIDENCE,
@@ -384,6 +872,44 @@ function inferTaskSignal(prompt: string): {
   };
 }
 
+function resolveTiedTask(
+  prompt: string,
+  first: Exclude<KodaXTaskType, 'unknown'>,
+  second: Exclude<KodaXTaskType, 'unknown'>,
+): Exclude<KodaXTaskType, 'unknown'> | null {
+  const normalized = ` ${prompt.toLowerCase()} `;
+  const hasExplicitReview =
+    textHasKeyword(normalized, 'review') ||
+    textHasKeyword(normalized, 'code review') ||
+    textHasKeyword(normalized, 'merge blocker') ||
+    textHasKeyword(normalized, '审查') ||
+    textHasKeyword(normalized, '评审');
+  const hasExplicitFix =
+    textHasKeyword(normalized, 'fix') ||
+    textHasKeyword(normalized, 'bug') ||
+    textHasKeyword(normalized, '修复') ||
+    textHasKeyword(normalized, '报错');
+  const hasExplicitPlan =
+    textHasKeyword(normalized, 'plan') ||
+    textHasKeyword(normalized, 'design') ||
+    textHasKeyword(normalized, '方案') ||
+    textHasKeyword(normalized, '计划');
+
+  if ((first === 'review' || second === 'review') && hasExplicitReview && !hasExplicitFix) {
+    return 'review';
+  }
+
+  if ((first === 'bugfix' || second === 'bugfix') && hasExplicitFix && !hasExplicitReview) {
+    return 'bugfix';
+  }
+
+  if ((first === 'plan' || second === 'plan') && hasExplicitPlan) {
+    return 'plan';
+  }
+
+  return null;
+}
+
 export function inferTaskType(prompt: string): KodaXTaskType {
   return inferTaskSignal(prompt).task;
 }
@@ -391,6 +917,31 @@ export function inferTaskType(prompt: string): KodaXTaskType {
 function isRoutingDebugEnabled(): boolean {
   const value = process.env[ROUTING_DEBUG_ENV_VAR]?.trim().toLowerCase();
   return value === '1' || value === 'true' || value === 'yes' || value === 'on';
+}
+
+function complexityRank(value: KodaXTaskComplexity): number {
+  switch (value) {
+    case 'simple':
+      return 0;
+    case 'moderate':
+      return 1;
+    case 'complex':
+      return 2;
+    case 'systemic':
+      return 3;
+    default:
+      return 0;
+  }
+}
+
+function maxComplexity(
+  left: KodaXTaskComplexity,
+  right?: KodaXTaskComplexity,
+): KodaXTaskComplexity {
+  if (!right) {
+    return left;
+  }
+  return complexityRank(right) > complexityRank(left) ? right : left;
 }
 
 function logRoutingDebug(scope: string, error: unknown): void {
@@ -403,29 +954,101 @@ function logRoutingDebug(scope: string, error: unknown): void {
 
 export function buildFallbackRoutingDecision(
   prompt: string,
+  providerPolicy?: KodaXProviderPolicyDecision,
+  routingEvidence?: RoutingEvidenceInput,
 ): KodaXTaskRoutingDecision {
+  const gate = inferIntentGate(prompt);
+  if (!gate.shouldUseModelRouter) {
+    const primaryTask = gate.primaryTask;
+    return stabilizeRoutingDecision(prompt, {
+      primaryTask,
+      confidence: gate.actionability === 'non_actionable' ? 0.98 : 0.9,
+      riskLevel: 'low',
+      recommendedMode: getExecutionModeForTask(primaryTask),
+      recommendedThinkingDepth: getDefaultDepthForTask(primaryTask),
+      complexity: 'simple',
+      workIntent: 'new',
+      requiresBrainstorm: false,
+      harnessProfile: 'H0_DIRECT',
+      taskFamily: gate.taskFamily,
+      actionability: gate.actionability,
+      executionPattern: gate.executionPattern,
+      routingSource: 'fallback',
+      routingAttempts: 1,
+      reason: gate.reason,
+    }, providerPolicy, routingEvidence);
+  }
+
   const inferred = inferTaskSignal(prompt);
   const primaryTask = inferred.task;
-  return {
+  return stabilizeRoutingDecision(prompt, {
     primaryTask,
+    taskFamily: inferTaskFamilyFromPrimaryTask(primaryTask),
+    actionability: primaryTask === 'unknown' ? 'ambiguous' : 'actionable',
+    executionPattern: defaultExecutionPatternForFamily(inferTaskFamilyFromPrimaryTask(primaryTask)),
     confidence: inferred.confidence,
     riskLevel: getRiskLevel(prompt, primaryTask),
     recommendedMode: getExecutionModeForTask(primaryTask),
     recommendedThinkingDepth: getDefaultDepthForTask(primaryTask),
+    complexity: 'moderate',
+    workIntent: 'new',
+    requiresBrainstorm: false,
+    harnessProfile: 'H1_EXECUTE_EVAL',
+    routingSource: 'fallback',
+    routingAttempts: 1,
     reason: inferred.reason,
+  }, providerPolicy, routingEvidence);
+}
+
+export function buildProviderPolicyHintsForDecision(
+  decision: KodaXTaskRoutingDecision,
+): KodaXProviderPolicyHints {
+  const evidenceHeavy =
+    decision.primaryTask === 'review' ||
+    decision.primaryTask === 'bugfix' ||
+    decision.recommendedMode === 'pr-review' ||
+    decision.recommendedMode === 'strict-audit' ||
+    decision.recommendedMode === 'investigation';
+
+  return {
+    harnessProfile: decision.harnessProfile,
+    evidenceHeavy,
+    brainstorm: decision.requiresBrainstorm,
+    workIntent: decision.workIntent,
   };
 }
 
 export function buildPromptOverlay(
   decision: KodaXTaskRoutingDecision,
   extraNotes: string[] = [],
+  _providerPolicy?: KodaXProviderPolicyDecision,
 ): string {
+  const routingNotes = decision.routingNotes?.map(
+    (note) => `[Task Routing Note] ${note}`,
+  ) ?? [];
+  const workIntentGuidance = buildWorkIntentGuidance(decision.workIntent);
+  const brainstormGuidance = decision.requiresBrainstorm
+    ? [
+      '[Brainstorm Trigger] Resolve ambiguity with a brief option framing before locking in the implementation path.',
+      '- Make the chosen path explicit before performing irreversible edits.',
+    ].join('\n')
+    : null;
+
   return [
     EXECUTION_MODE_OVERLAYS[decision.recommendedMode],
-    `[Task Routing] primary=${decision.primaryTask}; risk=${decision.riskLevel}; confidence=${decision.confidence.toFixed(2)}.`,
+    HARNESS_PROFILE_OVERLAYS[decision.harnessProfile],
+    `[Task Routing] primary=${decision.primaryTask}; family=${decision.taskFamily ?? 'unknown'}; actionability=${decision.actionability ?? 'unknown'}; mutationSurface=${decision.mutationSurface ?? 'unknown'}; assuranceIntent=${decision.assuranceIntent ?? 'default'}; pattern=${decision.executionPattern ?? 'unknown'}; risk=${decision.riskLevel}; complexity=${decision.complexity}; intent=${decision.workIntent}; brainstorm=${decision.requiresBrainstorm ? 'yes' : 'no'}; harness=${decision.harnessProfile}; topologyCeiling=${decision.topologyCeiling ?? 'none'}; upgradeCeiling=${decision.upgradeCeiling ?? 'none'}; reviewScale=${decision.reviewScale ?? 'unknown'}; confidence=${decision.confidence.toFixed(2)}.`,
+    decision.soloBoundaryConfidence !== undefined
+      ? `[Task Routing Signals] soloBoundaryConfidence=${decision.soloBoundaryConfidence.toFixed(2)}; needsIndependentQA=${decision.needsIndependentQA ? 'yes' : 'no'}; source=${decision.routingSource ?? 'unknown'}; attempts=${decision.routingAttempts ?? 1}.`
+      : undefined,
     `[Task Routing Reason] ${decision.reason}`,
+    `[Work Intent] ${workIntentGuidance}`,
+    brainstormGuidance,
+    ...routingNotes,
     ...extraNotes,
-  ].join('\n');
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 export async function createReasoningPlan(
@@ -435,18 +1058,75 @@ export async function createReasoningPlan(
   routingEvidence?: RoutingEvidenceInput,
 ): Promise<ReasoningPlan> {
   const mode = resolveReasoningMode(options);
+  const intentGate = inferIntentGate(prompt);
+  const providerPolicy = evaluateProviderPolicy({
+    providerName: provider.name,
+    model: options.modelOverride ?? options.model,
+    provider,
+    prompt,
+    options,
+    reasoningMode: mode,
+  });
 
-  if (mode === 'auto') {
-    const decision = await routeTaskWithLLM(provider, prompt, options, routingEvidence);
+  if (!intentGate.shouldUseModelRouter) {
+    const decision = buildFallbackRoutingDecision(
+      prompt,
+      providerPolicy,
+      routingEvidence,
+    );
+    const depth = mode === 'off'
+      ? 'off'
+      : mode === 'auto'
+        ? decision.recommendedThinkingDepth
+        : reasoningModeToDepth(mode);
+    const finalDecision = {
+      ...decision,
+      recommendedThinkingDepth: depth,
+      routingNotes: [
+        ...(decision.routingNotes ?? []),
+        intentGate.reason,
+      ],
+    };
+
     return {
       mode,
-      depth: decision.recommendedThinkingDepth,
-      promptOverlay: buildPromptOverlay(decision),
-      decision,
+      depth,
+      promptOverlay: buildPromptOverlay(
+        finalDecision,
+        providerPolicy.routingNotes,
+        providerPolicy,
+      ),
+      decision: finalDecision,
+      providerPolicy,
     };
   }
 
-  const fallbackDecision = buildFallbackRoutingDecision(prompt);
+  if (mode === 'auto') {
+    const decision = await routeTaskWithLLM(
+      provider,
+      prompt,
+      options,
+      providerPolicy,
+      routingEvidence,
+    );
+    return {
+      mode,
+      depth: decision.recommendedThinkingDepth,
+      promptOverlay: buildPromptOverlay(
+        decision,
+        providerPolicy.routingNotes,
+        providerPolicy,
+      ),
+      decision,
+      providerPolicy,
+    };
+  }
+
+  const fallbackDecision = buildFallbackRoutingDecision(
+    prompt,
+    providerPolicy,
+    routingEvidence,
+  );
   const depth = mode === 'off' ? 'off' : reasoningModeToDepth(mode);
   const decision: KodaXTaskRoutingDecision = {
     ...fallbackDecision,
@@ -456,8 +1136,13 @@ export async function createReasoningPlan(
   return {
     mode,
     depth,
-    promptOverlay: buildPromptOverlay(decision),
+    promptOverlay: buildPromptOverlay(
+      decision,
+      providerPolicy.routingNotes,
+      providerPolicy,
+    ),
     decision,
+    providerPolicy,
   };
 }
 
@@ -508,7 +1193,7 @@ export async function maybeCreateAutoReroutePlan(
     return null;
   }
 
-  const nextDecision = {
+  const nextDecision = stabilizeRoutingDecision(prompt, {
     ...currentPlan.decision,
     primaryTask: normalized.nextPrimaryTask,
     confidence: Math.max(currentPlan.decision.confidence, 0.82),
@@ -519,7 +1204,7 @@ export async function maybeCreateAutoReroutePlan(
     recommendedMode: normalized.nextRecommendedMode,
     recommendedThinkingDepth: normalized.nextThinkingDepth,
     reason: normalized.reason,
-  } satisfies KodaXTaskRoutingDecision;
+  } satisfies KodaXTaskRoutingDecision, currentPlan.providerPolicy);
 
   const followUpLabel =
     normalized.kind === 'task-reroute' ? '[Auto Reroute]' : '[Auto Depth Escalation]';
@@ -533,10 +1218,11 @@ export async function maybeCreateAutoReroutePlan(
     mode: currentPlan.mode,
     depth: nextDecision.recommendedThinkingDepth,
     decision: nextDecision,
+    providerPolicy: currentPlan.providerPolicy,
     promptOverlay: buildPromptOverlay(nextDecision, [
       followUpGuidance,
       `${followUpLabel} Focus on high-confidence, high-signal output for this follow-up pass.`,
-    ]),
+    ], currentPlan.providerPolicy),
   };
 }
 
@@ -624,15 +1310,16 @@ async function routeTaskWithLLM(
   provider: KodaXBaseProvider,
   prompt: string,
   options: KodaXOptions,
+  providerPolicy: KodaXProviderPolicyDecision,
   routingEvidence?: RoutingEvidenceInput,
 ): Promise<KodaXTaskRoutingDecision> {
-  const fallback = buildFallbackRoutingDecision(prompt);
+  const fallback = buildFallbackRoutingDecision(prompt, providerPolicy, routingEvidence);
   const repoSummary = await buildRepositoryRoutingSummary(
     options.context?.gitRoot ?? undefined,
+    providerPolicy,
     routingEvidence,
   );
-
-  try {
+  const decision = await retryStructuredDecision('task router', options, async () => {
     const messages: KodaXMessage[] = [
       {
         role: 'user',
@@ -662,12 +1349,133 @@ async function routeTaskWithLLM(
     );
 
     const raw = result.textBlocks.map((block) => block.text).join('\n').trim();
-    const parsed = parseRoutingDecision(raw);
-    return stabilizeRoutingDecision(prompt, parsed ?? fallback);
-  } catch (error) {
-    logRoutingDebug('task router', error);
-    return stabilizeRoutingDecision(prompt, fallback);
+    return parseRoutingDecision(raw);
+  });
+
+  if (!decision.value) {
+    return stabilizeRoutingDecision(prompt, {
+      ...fallback,
+      routingSource: decision.retried ? 'retried-fallback' : 'fallback',
+      routingAttempts: decision.attempts,
+      routingNotes: [
+        ...(fallback.routingNotes ?? []),
+        `Structured router fell back after ${decision.attempts} attempt${decision.attempts === 1 ? '' : 's'}.`,
+      ],
+    }, providerPolicy, routingEvidence);
   }
+
+  return stabilizeRoutingDecision(prompt, {
+    ...decision.value,
+    routingSource: decision.retried ? 'retried-model' : 'model',
+    routingAttempts: decision.attempts,
+  }, providerPolicy, routingEvidence);
+}
+
+function clampUnitInterval(value: number, fallback = 0.5): number {
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.max(0, Math.min(1, value));
+}
+
+function createErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+async function waitForStructuredDecisionBackoff(
+  attempt: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  const delayMs = Math.min(1500, 250 * 2 ** Math.max(0, attempt - 1));
+  if (delayMs <= 0) {
+    return;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error('Structured decision retry aborted.'));
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, delayMs);
+
+    function onAbort(): void {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      reject(new Error('Structured decision retry aborted.'));
+    }
+
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+function isNonRetryableStructuredDecisionError(error: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted) {
+    return true;
+  }
+
+  const message = createErrorMessage(error).toLowerCase();
+  return (
+    message.includes('aborted')
+    || message.includes('aborterror')
+    || message.includes('unauthorized')
+    || message.includes('forbidden')
+    || message.includes('authentication')
+    || message.includes('invalid request')
+    || message.includes('not supported')
+    || message.includes('unsupported')
+    || message.includes('policy')
+    || message.includes('refus')
+  );
+}
+
+async function retryStructuredDecision<T>(
+  label: string,
+  options: KodaXOptions,
+  execute: () => Promise<T | null>,
+): Promise<{ value: T | null; attempts: number; retried: boolean }> {
+  let attempts = 0;
+  let lastError: unknown;
+
+  while (attempts < STRUCTURED_DECISION_MAX_ATTEMPTS) {
+    attempts += 1;
+    try {
+      const value = await execute();
+      if (value !== null) {
+        return {
+          value,
+          attempts,
+          retried: attempts > 1,
+        };
+      }
+      lastError = new Error(`${label} returned invalid or incomplete structured output.`);
+    } catch (error) {
+      lastError = error;
+      if (isNonRetryableStructuredDecisionError(error, options.abortSignal)) {
+        break;
+      }
+    }
+
+      if (attempts < STRUCTURED_DECISION_MAX_ATTEMPTS) {
+        if (process.env.KODAX_DEBUG_ROUTING) {
+          options.events?.onRetry?.(`${label} structured decision retry`, attempts, STRUCTURED_DECISION_MAX_ATTEMPTS);
+        }
+        await waitForStructuredDecisionBackoff(attempts, options.abortSignal);
+      }
+  }
+
+  logRoutingDebug(label, lastError);
+  return {
+    value: null,
+    attempts,
+    retried: attempts > 1,
+  };
 }
 
 async function judgeAutoRerouteWithLLM(
@@ -678,7 +1486,7 @@ async function judgeAutoRerouteWithLLM(
   assistantText: string,
   evidence?: AutoRerouteEvidence,
 ): Promise<AutoRerouteDecision | null> {
-  try {
+  const decision = await retryStructuredDecision('reroute judge', options, async () => {
     const messages: KodaXMessage[] = [
       {
         role: 'user',
@@ -716,10 +1524,9 @@ async function judgeAutoRerouteWithLLM(
 
     const raw = result.textBlocks.map((block) => block.text).join('\n').trim();
     return parseAutoRerouteDecision(raw);
-  } catch (error) {
-    logRoutingDebug('reroute judge', error);
-    return null;
-  }
+  });
+
+  return decision.value;
 }
 
 function parseRoutingDecision(
@@ -746,6 +1553,43 @@ function parseRoutingDecision(
       parsed.confidence <= 1
         ? parsed.confidence
         : null;
+    const soloBoundaryConfidence =
+      typeof parsed.soloBoundaryConfidence === 'number'
+      && parsed.soloBoundaryConfidence >= 0
+      && parsed.soloBoundaryConfidence <= 1
+        ? parsed.soloBoundaryConfidence
+        : undefined;
+    const needsIndependentQA =
+      typeof parsed.needsIndependentQA === 'boolean'
+        ? parsed.needsIndependentQA
+        : undefined;
+    const reviewScale =
+      parsed.reviewScale === 'small'
+      || parsed.reviewScale === 'large'
+      || parsed.reviewScale === 'massive'
+        ? parsed.reviewScale
+        : undefined;
+    const taskFamily = isTaskFamily(parsed.taskFamily)
+      ? parsed.taskFamily
+      : undefined;
+    const actionability = isTaskActionability(parsed.actionability)
+      ? parsed.actionability
+      : undefined;
+    const executionPattern = isExecutionPattern(parsed.executionPattern)
+      ? parsed.executionPattern
+      : undefined;
+    const mutationSurface = isMutationSurface(parsed.mutationSurface)
+      ? parsed.mutationSurface
+      : undefined;
+    const assuranceIntent = isAssuranceIntent(parsed.assuranceIntent)
+      ? parsed.assuranceIntent
+      : undefined;
+    const topologyCeiling = isHarnessProfile(parsed.topologyCeiling)
+      ? parsed.topologyCeiling
+      : undefined;
+    const upgradeCeiling = isHarnessProfile(parsed.upgradeCeiling)
+      ? parsed.upgradeCeiling
+      : undefined;
 
     if (
       !primaryTask ||
@@ -763,9 +1607,45 @@ function parseRoutingDecision(
         ? parsed.secondaryTask
         : undefined,
       confidence,
+      taskFamily,
+      actionability,
+      executionPattern,
+      mutationSurface,
+      assuranceIntent,
       riskLevel,
       recommendedMode,
       recommendedThinkingDepth,
+      complexity: isTaskComplexity(parsed.complexity)
+        ? parsed.complexity
+        : 'moderate',
+      workIntent: isTaskWorkIntent(parsed.workIntent)
+        ? parsed.workIntent
+        : 'new',
+      requiresBrainstorm: typeof parsed.requiresBrainstorm === 'boolean'
+        ? parsed.requiresBrainstorm
+        : false,
+      harnessProfile: isHarnessProfile(parsed.harnessProfile)
+        ? parsed.harnessProfile
+        : 'H1_EXECUTE_EVAL',
+      topologyCeiling,
+      upgradeCeiling,
+      reviewScale,
+      soloBoundaryConfidence,
+      needsIndependentQA,
+      routingSource: parsed.routingSource === 'model'
+        || parsed.routingSource === 'fallback'
+        || parsed.routingSource === 'retried-model'
+        || parsed.routingSource === 'retried-fallback'
+        ? parsed.routingSource
+        : undefined,
+      routingAttempts: typeof parsed.routingAttempts === 'number' && parsed.routingAttempts > 0
+        ? parsed.routingAttempts
+        : undefined,
+      routingNotes: Array.isArray(parsed.routingNotes)
+        ? parsed.routingNotes.filter((note): note is string =>
+          typeof note === 'string' && note.trim().length > 0,
+        )
+        : undefined,
       reason:
         typeof parsed.reason === 'string' && parsed.reason.trim()
           ? parsed.reason.trim()
@@ -944,6 +1824,7 @@ function normalizeDepthEscalationDecision(
 
 async function buildRepositoryRoutingSummary(
   gitRoot?: string,
+  providerPolicy?: KodaXProviderPolicyDecision,
   routingEvidence?: RoutingEvidenceInput,
 ): Promise<string> {
   const parts: string[] = [];
@@ -972,6 +1853,32 @@ async function buildRepositoryRoutingSummary(
   const recentEvidence = summarizeRoutingEvidence(routingEvidence);
   if (recentEvidence.length > 0) {
     parts.push(...recentEvidence);
+  }
+
+  const repoSignalSummary = summarizeRepoRoutingSignals(routingEvidence?.repoSignals);
+  if (repoSignalSummary.length > 0) {
+    parts.push(...repoSignalSummary);
+  }
+
+  if (providerPolicy) {
+    parts.push(
+      [
+        `- provider semantics: ${providerPolicy.snapshot.provider}${providerPolicy.snapshot.model ? `/${providerPolicy.snapshot.model}` : ''}`,
+        `transport=${providerPolicy.snapshot.transport}`,
+        `context=${providerPolicy.snapshot.contextFidelity}`,
+        `toolCalling=${providerPolicy.snapshot.toolCallingFidelity}`,
+        `session=${providerPolicy.snapshot.sessionSupport}`,
+        `longRunning=${providerPolicy.snapshot.longRunningSupport}`,
+        `multimodal=${providerPolicy.snapshot.multimodalSupport}`,
+        `evidence=${providerPolicy.snapshot.evidenceSupport}`,
+        `mcp=${providerPolicy.snapshot.mcpSupport}`,
+        `reasoning=${providerPolicy.snapshot.reasoningCapability}`,
+      ].join('; '),
+    );
+
+    for (const issue of providerPolicy.issues) {
+      parts.push(`- provider constraint (${issue.severity}): ${issue.summary}`);
+    }
   }
 
   return parts.length > 0 ? parts.join('\n') : '- git: clean or unavailable';
@@ -1058,8 +1965,242 @@ function truncateEvidence(text: string, maxLength = 180): string {
   return `${normalized.slice(0, maxLength - 3)}...`;
 }
 
+function buildWorkIntentGuidance(workIntent: KodaXTaskWorkIntent): string {
+  switch (workIntent) {
+    case 'append':
+      return 'Extend or continue the existing artifact without rewriting stable parts unnecessarily.';
+    case 'overwrite':
+      return 'A substantial rewrite or replacement is expected, but keep the boundaries and consequences explicit.';
+    case 'new':
+    default:
+      return 'Treat this as net-new work unless repo evidence proves the request is really an append or rewrite.';
+  }
+}
+
+function inferWorkIntent(
+  prompt: string,
+  current: KodaXTaskWorkIntent,
+): KodaXTaskWorkIntent {
+  const normalized = ` ${prompt.toLowerCase()} `;
+
+  // Prefer the more destructive interpretation when a prompt mixes "extend" and "rewrite" language.
+  if (OVERWRITE_INTENT_KEYWORDS.some((keyword) => textHasKeyword(normalized, keyword))) {
+    return 'overwrite';
+  }
+
+  if (APPEND_INTENT_KEYWORDS.some((keyword) => textHasKeyword(normalized, keyword))) {
+    return 'append';
+  }
+
+  return current;
+}
+
+function inferComplexity(
+  prompt: string,
+  decision: KodaXTaskRoutingDecision,
+): KodaXTaskComplexity {
+  const normalized = ` ${prompt.toLowerCase()} `;
+  let score = 0;
+
+  for (const keyword of COMPLEXITY_KEYWORDS.moderate) {
+    if (textHasKeyword(normalized, keyword)) {
+      score += 1;
+    }
+  }
+
+  for (const keyword of COMPLEXITY_KEYWORDS.complex) {
+    if (textHasKeyword(normalized, keyword)) {
+      score += 2;
+    }
+  }
+
+  for (const keyword of COMPLEXITY_KEYWORDS.systemic) {
+    if (textHasKeyword(normalized, keyword)) {
+      score += 3;
+    }
+  }
+
+  if (decision.primaryTask === 'refactor' || decision.primaryTask === 'plan') {
+    score += 2;
+  }
+
+  if (decision.riskLevel === 'high') {
+    score += 2;
+  }
+
+  if (decision.workIntent === 'overwrite') {
+    score += 1;
+  }
+
+  // Thresholds bias toward "simple" unless multiple independent signals agree.
+  if (score >= COMPLEXITY_SYSTEMIC_THRESHOLD) {
+    return 'systemic';
+  }
+  if (score >= COMPLEXITY_COMPLEX_THRESHOLD) {
+    return 'complex';
+  }
+  if (score >= COMPLEXITY_MODERATE_THRESHOLD) {
+    return 'moderate';
+  }
+  return 'simple';
+}
+
+function inferRequiresBrainstorm(
+  prompt: string,
+  decision: KodaXTaskRoutingDecision,
+  complexity: KodaXTaskComplexity,
+): boolean {
+  const normalized = ` ${prompt.toLowerCase()} `;
+
+  if (BRAINSTORM_KEYWORDS.some((keyword) => textHasKeyword(normalized, keyword))) {
+    return true;
+  }
+
+  if (decision.primaryTask === 'plan') {
+    return true;
+  }
+
+  if (decision.primaryTask === 'unknown' && decision.confidence < 0.7) {
+    return true;
+  }
+
+  if (complexity === 'systemic') {
+    return true;
+  }
+
+  if (
+    decision.workIntent === 'overwrite' &&
+    (decision.primaryTask === 'refactor' || decision.riskLevel === 'high')
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+const HARNESS_ORDER: KodaXHarnessProfile[] = [
+  'H0_DIRECT',
+  'H1_EXECUTE_EVAL',
+  'H2_PLAN_EXECUTE_EVAL',
+];
+
+function getHarnessRank(harness: KodaXHarnessProfile): number {
+  return HARNESS_ORDER.indexOf(harness);
+}
+
+function selectHarnessProfile(
+  prompt: string,
+  decision: KodaXTaskRoutingDecision,
+  providerPolicy?: KodaXProviderPolicyDecision,
+): {
+  harnessProfile: KodaXHarnessProfile;
+  upgradeCeiling?: KodaXHarnessProfile;
+  notes: string[];
+} {
+  let harnessProfile: KodaXHarnessProfile;
+  let upgradeCeiling = decision.upgradeCeiling;
+  const taskFamily = decision.taskFamily ?? inferTaskFamilyFromPrimaryTask(decision.primaryTask);
+  const actionability = decision.actionability ?? (taskFamily === 'conversation' ? 'non_actionable' : taskFamily === 'ambiguous' ? 'ambiguous' : 'actionable');
+  const mutationSurface = deriveMutationSurface(prompt, {
+    primaryTask: decision.primaryTask,
+    taskFamily,
+  });
+  const assuranceIntent = deriveAssuranceIntent(prompt, decision);
+  const topologyCeiling = deriveTopologyCeiling(mutationSurface, assuranceIntent);
+
+  if (actionability !== 'actionable' || taskFamily === 'conversation' || taskFamily === 'lookup') {
+    return {
+      harnessProfile: 'H0_DIRECT',
+      upgradeCeiling: undefined,
+      notes: actionability === 'non_actionable'
+        ? ['Intent gate kept a non-actionable request on the direct path.']
+        : ['Intent gate kept this lightweight lookup/ambiguous request on the direct path.'],
+    };
+  }
+
+  if (mutationSurface === 'read-only' || mutationSurface === 'docs-only') {
+    harnessProfile = assuranceIntent === 'explicit-check'
+      ? 'H1_EXECUTE_EVAL'
+      : 'H0_DIRECT';
+    upgradeCeiling = topologyCeiling;
+  } else {
+    const needsCoordinatedHarness = mutationSurface === 'system'
+      ? (
+        decision.requiresBrainstorm
+        || decision.needsIndependentQA
+        || decision.riskLevel === 'high'
+        || decision.complexity === 'complex'
+        || decision.complexity === 'systemic'
+        || decision.workIntent === 'overwrite'
+      )
+      : (
+        decision.requiresBrainstorm
+        || decision.complexity === 'systemic'
+        || (
+          decision.complexity === 'complex'
+          && (
+            taskFamily === 'implementation'
+            || decision.primaryTask === 'edit'
+            || decision.primaryTask === 'refactor'
+            || decision.workIntent === 'overwrite'
+            || decision.needsIndependentQA
+          )
+        )
+      );
+
+    if (needsCoordinatedHarness) {
+      harnessProfile = 'H2_PLAN_EXECUTE_EVAL';
+    } else if (
+      decision.needsIndependentQA
+      || decision.soloBoundaryConfidence === undefined
+      || decision.soloBoundaryConfidence < SOLO_BOUNDARY_DIRECT_THRESHOLD
+      || decision.riskLevel !== 'low'
+      || decision.complexity === 'moderate'
+      || decision.workIntent === 'overwrite'
+    ) {
+      harnessProfile = 'H1_EXECUTE_EVAL';
+    } else {
+      harnessProfile = 'H0_DIRECT';
+    }
+    upgradeCeiling = topologyCeiling;
+  }
+
+  const notes: string[] = [];
+  if (getHarnessRank(harnessProfile) > getHarnessRank(topologyCeiling)) {
+    notes.push(`Topology ceiling kept the task at or below ${topologyCeiling} because ${mutationSurface} work should stay lightweight by default.`);
+    harnessProfile = topologyCeiling;
+    upgradeCeiling = topologyCeiling;
+  }
+
+  const snapshot = providerPolicy?.snapshot;
+  if (
+    snapshot
+    && harnessProfile === 'H2_PLAN_EXECUTE_EVAL'
+    && (
+      snapshot.contextFidelity === 'lossy'
+      || snapshot.sessionSupport === 'stateless'
+      || snapshot.toolCallingFidelity === 'none'
+      || snapshot.evidenceSupport === 'none'
+    )
+  ) {
+    harnessProfile = 'H1_EXECUTE_EVAL';
+    upgradeCeiling = undefined;
+    notes.push('Downgraded from H2 to H1 because provider semantics are too lossy for coordinated execution.');
+  }
+
+  return {
+    harnessProfile,
+    upgradeCeiling: harnessProfile === 'H0_DIRECT' ? undefined : upgradeCeiling,
+    notes,
+  };
+}
+
 function getDefaultDepthForTask(taskType: KodaXTaskType): KodaXThinkingDepth {
   switch (taskType) {
+    case 'conversation':
+      return 'off';
+    case 'lookup':
+      return 'low';
     case 'review':
       return 'low';
     case 'bugfix':
@@ -1080,6 +2221,10 @@ function getExecutionModeForTask(
   taskType: KodaXTaskType,
 ): KodaXExecutionMode {
   switch (taskType) {
+    case 'conversation':
+      return 'conversation';
+    case 'lookup':
+      return 'lookup';
     case 'review':
       return 'pr-review';
     case 'bugfix':
@@ -1100,6 +2245,10 @@ function getRiskLevel(
   taskType: KodaXTaskType,
 ): 'low' | 'medium' | 'high' {
   const text = prompt.toLowerCase();
+
+  if (taskType === 'conversation' || taskType === 'lookup') {
+    return 'low';
+  }
 
   if (
     text.includes('security') ||
@@ -1125,6 +2274,125 @@ function getRiskLevel(
   return 'low';
 }
 
+function computeSoloBoundaryConfidence(
+  prompt: string,
+  decision: Pick<
+    KodaXTaskRoutingDecision,
+    'primaryTask' | 'complexity' | 'riskLevel' | 'requiresBrainstorm' | 'workIntent' | 'reviewScale'
+  >,
+  repoSignals?: KodaXRepoRoutingSignals,
+): number {
+  let score = 0.9;
+  const normalized = ` ${prompt.toLowerCase()} `;
+
+  if (decision.primaryTask === 'review') {
+    score -= 0.12;
+    if (decision.reviewScale === 'large') {
+      score -= 0.16;
+    } else if (decision.reviewScale === 'massive') {
+      score -= 0.28;
+    }
+  } else if (decision.primaryTask === 'bugfix') {
+    score -= 0.08;
+  } else if (decision.primaryTask === 'plan') {
+    score -= 0.24;
+  }
+
+  if (decision.riskLevel === 'medium') {
+    score -= 0.12;
+  } else if (decision.riskLevel === 'high') {
+    score -= 0.26;
+  }
+
+  if (decision.complexity === 'moderate') {
+    score -= 0.12;
+  } else if (decision.complexity === 'complex') {
+    score -= 0.28;
+  } else if (decision.complexity === 'systemic') {
+    score -= 0.42;
+  }
+
+  if (decision.requiresBrainstorm) {
+    score -= 0.18;
+  }
+  if (decision.workIntent === 'overwrite') {
+    score -= 0.08;
+  }
+
+  if (
+    /\b(strict review|must[- ]fix|independently verify|browser test|playwright|e2e|frontend verify)\b/.test(normalized)
+  ) {
+    score -= 0.2;
+  }
+
+  if (repoSignals) {
+    if (repoSignals.changedFileCount >= 3) {
+      score -= 0.12;
+    }
+    if (repoSignals.changedLineCount >= REVIEW_LARGE_LINE_THRESHOLD) {
+      score -= 0.14;
+    }
+    if (repoSignals.changedLineCount >= REVIEW_MASSIVE_LINE_THRESHOLD) {
+      score -= 0.14;
+    }
+    if (repoSignals.touchedModuleCount >= 2) {
+      score -= 0.16;
+    }
+    if ((repoSignals.impactedModuleCount ?? 0) >= 2) {
+      score -= 0.14;
+    }
+    if (repoSignals.crossModule) {
+      score -= 0.2;
+    }
+    if (repoSignals.lowConfidence) {
+      score -= 0.08;
+    }
+  }
+
+  return clampUnitInterval(score, 0.5);
+}
+
+function computeNeedsIndependentQA(
+  prompt: string,
+  decision: Pick<
+    KodaXTaskRoutingDecision,
+    'primaryTask' | 'complexity' | 'riskLevel' | 'requiresBrainstorm' | 'reviewScale'
+  >,
+  repoSignals?: KodaXRepoRoutingSignals,
+): boolean {
+  const normalized = ` ${prompt.toLowerCase()} `;
+  if (
+    /\b(must[- ]fix|strict review|audit|independently verify|browser test|playwright|e2e|console errors?|api check|db check)\b/.test(normalized)
+  ) {
+    return true;
+  }
+
+  if (
+    decision.primaryTask === 'plan'
+    || decision.primaryTask === 'qa'
+    || decision.riskLevel === 'high'
+    || decision.complexity === 'complex'
+    || decision.complexity === 'systemic'
+    || decision.requiresBrainstorm
+  ) {
+    return true;
+  }
+
+  if (repoSignals) {
+    if (repoSignals.crossModule || repoSignals.lowConfidence) {
+      return true;
+    }
+    if ((repoSignals.impactedModuleCount ?? 0) >= 2 || repoSignals.touchedModuleCount >= 2) {
+      return true;
+    }
+    if (repoSignals.changedLineCount >= REVIEW_LARGE_LINE_THRESHOLD) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function ensureMinimumDepth(
   current: KodaXThinkingDepth,
   minimum: Exclude<KodaXThinkingDepth, 'off'>,
@@ -1136,6 +2404,8 @@ function ensureMinimumDepth(
 
 function isTaskType(value: unknown): value is KodaXTaskType {
   return (
+    value === 'conversation' ||
+    value === 'lookup' ||
     value === 'review' ||
     value === 'bugfix' ||
     value === 'edit' ||
@@ -1148,6 +2418,8 @@ function isTaskType(value: unknown): value is KodaXTaskType {
 
 function isExecutionMode(value: unknown): value is KodaXExecutionMode {
   return (
+    value === 'conversation' ||
+    value === 'lookup' ||
     value === 'pr-review' ||
     value === 'strict-audit' ||
     value === 'implementation' ||
@@ -1175,12 +2447,178 @@ function isRiskLevel(value: unknown): value is 'low' | 'medium' | 'high' {
   return value === 'low' || value === 'medium' || value === 'high';
 }
 
+function isTaskFamily(value: unknown): value is KodaXTaskFamily {
+  return (
+    value === 'conversation' ||
+    value === 'lookup' ||
+    value === 'review' ||
+    value === 'implementation' ||
+    value === 'investigation' ||
+    value === 'planning' ||
+    value === 'ambiguous'
+  );
+}
+
+function isTaskActionability(value: unknown): value is KodaXTaskActionability {
+  return value === 'non_actionable' || value === 'actionable' || value === 'ambiguous';
+}
+
+function isExecutionPattern(value: unknown): value is KodaXExecutionPattern {
+  return value === 'direct' || value === 'checked-direct' || value === 'coordinated';
+}
+
+function isMutationSurface(value: unknown): value is KodaXMutationSurface {
+  return value === 'read-only' || value === 'docs-only' || value === 'code' || value === 'system';
+}
+
+function isAssuranceIntent(value: unknown): value is KodaXAssuranceIntent {
+  return value === 'default' || value === 'explicit-check';
+}
+
+function applyRepoSignalsToDecision(
+  stabilized: KodaXTaskRoutingDecision,
+  inferredComplexity: KodaXTaskComplexity,
+  complexity: KodaXTaskComplexity,
+  repoSignals: KodaXRepoRoutingSignals | undefined,
+): {
+  recommendedMode: KodaXExecutionMode;
+  recommendedThinkingDepth: KodaXThinkingDepth;
+  repoNotes: string[];
+} {
+  let recommendedMode = stabilized.recommendedMode;
+  let recommendedThinkingDepth = stabilized.recommendedThinkingDepth;
+  const repoNotes: string[] = [];
+
+  if (!repoSignals) {
+    return {
+      recommendedMode,
+      recommendedThinkingDepth,
+      repoNotes,
+    };
+  }
+
+  if (
+    repoSignals.suggestedComplexity
+    && complexityRank(repoSignals.suggestedComplexity) > complexityRank(inferredComplexity)
+  ) {
+    repoNotes.push(
+      `Repository intelligence elevated task complexity to ${repoSignals.suggestedComplexity} (changedFiles=${repoSignals.changedFileCount}, touchedModules=${repoSignals.touchedModuleCount}, impactedModules=${repoSignals.impactedModuleCount ?? 0}).`,
+    );
+  }
+
+  if (repoSignals.crossModule) {
+    repoNotes.push('Repository intelligence indicates cross-module impact; keep evidence and merge boundaries explicit.');
+  }
+
+  if (repoSignals.lowConfidence) {
+    repoNotes.push('Repository intelligence for the active area is low-confidence; validate critical conclusions with direct file evidence.');
+  }
+
+  if (
+    repoSignals.investigationBias
+    && (stabilized.primaryTask === 'review' || stabilized.primaryTask === 'bugfix')
+    && recommendedMode !== 'investigation'
+  ) {
+    recommendedMode = 'investigation';
+    if (recommendedThinkingDepth === 'off' || recommendedThinkingDepth === 'low') {
+      recommendedThinkingDepth = 'medium';
+    }
+    repoNotes.push('Repository intelligence shifted execution toward investigation because the active area is low-confidence or high-blast-radius.');
+  } else if (
+    repoSignals.plannerBias
+    && stabilized.primaryTask !== 'review'
+    && stabilized.primaryTask !== 'bugfix'
+    && recommendedMode === 'implementation'
+    && (complexity === 'complex' || complexity === 'systemic')
+  ) {
+    recommendedMode = 'planning';
+    if (recommendedThinkingDepth === 'off' || recommendedThinkingDepth === 'low') {
+      recommendedThinkingDepth = 'medium';
+    }
+    repoNotes.push('Repository intelligence shifted execution toward planning because the task spans multiple modules or dependencies.');
+  }
+
+  return {
+    recommendedMode,
+    recommendedThinkingDepth,
+    repoNotes,
+  };
+}
+
+function parsePromptInteger(prompt: string, regex: RegExp): number | undefined {
+  const match = regex.exec(prompt);
+  if (!match?.[1]) {
+    return undefined;
+  }
+
+  const rawValue = match[1].replace(/,/g, '').toLowerCase();
+  const multiplier = rawValue.endsWith('k') ? 1000 : 1;
+  const numeric = rawValue.endsWith('k') ? rawValue.slice(0, -1) : rawValue;
+  const value = Number.parseFloat(numeric);
+  if (!Number.isFinite(value) || value <= 0) {
+    return undefined;
+  }
+  return Math.round(value * multiplier);
+}
+
+function inferPromptReviewScale(prompt: string): {
+  changedFileCount?: number;
+  changedLineCount?: number;
+  reviewScale?: KodaXTaskRoutingDecision['reviewScale'];
+} {
+  const changedFileCount = parsePromptInteger(
+    prompt,
+    /(?:^|[\s(,])(\d[\d,]*(?:\.\d+)?k?)\s*(?:changed\s+)?files?\b/i,
+  );
+  const changedLineCount = parsePromptInteger(
+    prompt,
+    /(?:^|[\s(,])(\d[\d,]*(?:\.\d+)?k?)\s*(?:changed\s+)?lines?\b/i,
+  );
+
+  let reviewScale: KodaXTaskRoutingDecision['reviewScale'];
+  if (
+    (changedFileCount ?? 0) >= REVIEW_MASSIVE_FILE_THRESHOLD
+    || (changedLineCount ?? 0) >= REVIEW_MASSIVE_LINE_THRESHOLD
+  ) {
+    reviewScale = 'massive';
+  } else if (
+    (changedFileCount ?? 0) >= REVIEW_LARGE_FILE_THRESHOLD
+    || (changedLineCount ?? 0) >= REVIEW_LARGE_LINE_THRESHOLD
+  ) {
+    reviewScale = 'large';
+  }
+
+  return {
+    changedFileCount,
+    changedLineCount,
+    reviewScale,
+  };
+}
+
+function deriveReviewScaleFromSignals(
+  repoSignals?: KodaXRepoRoutingSignals,
+  prompt?: string,
+): KodaXTaskRoutingDecision['reviewScale'] | undefined {
+  if (repoSignals?.reviewScale) {
+    return repoSignals.reviewScale;
+  }
+  return inferPromptReviewScale(prompt ?? '').reviewScale;
+}
+
 function stabilizeRoutingDecision(
   prompt: string,
   decision: KodaXTaskRoutingDecision,
+  providerPolicy?: KodaXProviderPolicyDecision,
+  routingEvidence?: RoutingEvidenceInput,
 ): KodaXTaskRoutingDecision {
-  if (decision.primaryTask === 'unknown') {
-    return {
+  let stabilized = decision;
+  const intentFields = deriveIntentFields(prompt, decision);
+  const repoSignalsAllowed = intentFields.actionability === 'actionable'
+    && intentFields.taskFamily !== 'conversation'
+    && intentFields.taskFamily !== 'lookup';
+
+  if (decision.primaryTask === 'unknown' && intentFields.taskFamily === 'ambiguous') {
+    stabilized = {
       ...decision,
       recommendedMode: 'implementation',
       recommendedThinkingDepth: 'medium',
@@ -1188,26 +2626,233 @@ function stabilizeRoutingDecision(
     };
   }
 
-  if (decision.primaryTask === 'qa' && decision.confidence < LOW_CONFIDENCE_QA_THRESHOLD) {
-    return {
+  if (stabilized.primaryTask === 'qa' && stabilized.confidence < LOW_CONFIDENCE_QA_THRESHOLD) {
+    stabilized = {
+      ...stabilized,
       primaryTask: 'unknown',
-      confidence: Math.min(decision.confidence, LOW_CONFIDENCE_QA_CAP),
+      confidence: Math.min(stabilized.confidence, LOW_CONFIDENCE_QA_CAP),
       riskLevel: getRiskLevel(prompt, 'unknown'),
       recommendedMode: 'implementation',
       recommendedThinkingDepth: 'medium',
-      reason: `${decision.reason} Low-confidence QA routing was downgraded to unknown so reasoning stays available.`,
+      reason: `${stabilized.reason} Low-confidence QA routing was downgraded to unknown so reasoning stays available.`,
     };
   }
 
-  if (decision.confidence < LOW_CONFIDENCE_OFF_THRESHOLD && decision.recommendedThinkingDepth === 'off') {
-    return {
-      ...decision,
+  if (stabilized.confidence < LOW_CONFIDENCE_OFF_THRESHOLD && stabilized.recommendedThinkingDepth === 'off') {
+    stabilized = {
+      ...stabilized,
       primaryTask: 'unknown',
       recommendedMode: 'implementation',
       recommendedThinkingDepth: 'medium',
-      reason: `${decision.reason} Low-confidence off-mode routing was upgraded to balanced reasoning for safety.`,
+      reason: `${stabilized.reason} Low-confidence off-mode routing was upgraded to balanced reasoning for safety.`,
     };
   }
 
-  return decision;
+  const workIntent = inferWorkIntent(prompt, stabilized.workIntent);
+  const repoSignals = repoSignalsAllowed ? routingEvidence?.repoSignals : undefined;
+  const inferredComplexity = inferComplexity(
+    prompt,
+    {
+      ...stabilized,
+      workIntent,
+    },
+  );
+  const complexity = repoSignalsAllowed
+    ? maxComplexity(inferredComplexity, repoSignals?.suggestedComplexity)
+    : inferredComplexity;
+  const reviewScale = decision.reviewScale ?? deriveReviewScaleFromSignals(repoSignals, prompt);
+  const mutationSurface = deriveMutationSurface(prompt, {
+    primaryTask: stabilized.primaryTask,
+    taskFamily: intentFields.taskFamily,
+  });
+  const assuranceIntent = deriveAssuranceIntent(prompt, stabilized);
+  const topologyCeiling = deriveTopologyCeiling(
+    mutationSurface,
+    assuranceIntent,
+  );
+  const requiresBrainstorm = inferRequiresBrainstorm(
+    prompt,
+    {
+      ...stabilized,
+      workIntent,
+      complexity,
+      reviewScale,
+      mutationSurface,
+      assuranceIntent,
+      topologyCeiling,
+    },
+    complexity,
+  ) || Boolean(
+    repoSignals?.plannerBias
+    && (complexity === 'complex' || complexity === 'systemic'),
+  );
+  const soloBoundaryConfidence = clampUnitInterval(
+    decision.soloBoundaryConfidence
+      ?? computeSoloBoundaryConfidence(
+        prompt,
+        {
+          primaryTask: stabilized.primaryTask,
+          complexity,
+          riskLevel: stabilized.riskLevel,
+          requiresBrainstorm,
+          workIntent,
+          reviewScale,
+        },
+      repoSignals,
+    ),
+    0.5,
+  );
+  const computedNeedsIndependentQA = decision.needsIndependentQA
+    ?? computeNeedsIndependentQA(
+      prompt,
+      {
+        primaryTask: stabilized.primaryTask,
+        complexity,
+        riskLevel: stabilized.riskLevel,
+        requiresBrainstorm,
+        reviewScale,
+      },
+      repoSignals,
+    );
+  const needsIndependentQA = (mutationSurface === 'read-only' || mutationSurface === 'docs-only')
+    ? assuranceIntent === 'explicit-check'
+    : computedNeedsIndependentQA;
+  const harnessDecision = selectHarnessProfile(
+    prompt,
+    {
+      ...stabilized,
+      workIntent,
+      complexity,
+      requiresBrainstorm,
+      reviewScale,
+      soloBoundaryConfidence,
+      needsIndependentQA,
+      mutationSurface,
+      assuranceIntent,
+      topologyCeiling,
+    },
+    providerPolicy,
+  );
+  const {
+    recommendedMode,
+    recommendedThinkingDepth,
+    repoNotes,
+  } = applyRepoSignalsToDecision(
+    {
+      ...stabilized,
+      taskFamily: intentFields.taskFamily,
+      actionability: intentFields.actionability,
+      executionPattern: intentFields.executionPattern,
+    },
+    inferredComplexity,
+    complexity,
+    repoSignals,
+  );
+
+  let nextRecommendedMode = recommendedMode;
+  let nextThinkingDepth = recommendedThinkingDepth;
+  const finalExecutionPattern: KodaXExecutionPattern = harnessDecision.harnessProfile === 'H2_PLAN_EXECUTE_EVAL'
+      ? 'coordinated'
+      : harnessDecision.harnessProfile === 'H1_EXECUTE_EVAL'
+        ? 'checked-direct'
+        : 'direct';
+
+  if (intentFields.taskFamily === 'conversation') {
+    nextRecommendedMode = 'conversation';
+    nextThinkingDepth = 'off';
+  } else if (intentFields.taskFamily === 'lookup') {
+    nextRecommendedMode = 'lookup';
+    nextThinkingDepth = recommendedThinkingDepth === 'high' ? 'medium' : recommendedThinkingDepth;
+  }
+
+  return {
+    ...stabilized,
+    taskFamily: intentFields.taskFamily,
+    actionability: intentFields.actionability,
+    executionPattern: finalExecutionPattern,
+    mutationSurface,
+    assuranceIntent,
+    recommendedMode: nextRecommendedMode,
+    recommendedThinkingDepth: nextThinkingDepth,
+    workIntent,
+    complexity,
+    requiresBrainstorm,
+    topologyCeiling,
+    reviewScale,
+    soloBoundaryConfidence,
+    needsIndependentQA,
+    harnessProfile: harnessDecision.harnessProfile,
+    upgradeCeiling: harnessDecision.upgradeCeiling,
+    routingSource: stabilized.routingSource ?? 'fallback',
+    routingAttempts: stabilized.routingAttempts ?? 1,
+    routingNotes: [
+      ...(stabilized.routingNotes ?? []),
+      ...harnessDecision.notes,
+      ...repoNotes,
+      ...(repoSignalsAllowed ? [] : ['Intent gate ignored repository scaling signals for this request.']),
+    ],
+  };
+}
+
+function summarizeRepoRoutingSignals(
+  signals?: KodaXRepoRoutingSignals,
+): string[] {
+  if (!signals) {
+    return [];
+  }
+
+  const parts: string[] = [
+    [
+      '- repo intelligence:',
+      `changedFiles=${signals.changedFileCount}`,
+      `changedLines=${signals.changedLineCount}`,
+      `touchedModules=${signals.touchedModuleCount}`,
+      `crossModule=${signals.crossModule ? 'yes' : 'no'}`,
+      `plannerBias=${signals.plannerBias ? 'yes' : 'no'}`,
+      `investigationBias=${signals.investigationBias ? 'yes' : 'no'}`,
+      `lowConfidence=${signals.lowConfidence ? 'yes' : 'no'}`,
+      signals.suggestedComplexity ? `suggestedComplexity=${signals.suggestedComplexity}` : null,
+      signals.reviewScale ? `reviewScale=${signals.reviewScale}` : null,
+      signals.predominantCapabilityTier ? `capability=${signals.predominantCapabilityTier}` : null,
+    ]
+      .filter(Boolean)
+      .join(' '),
+  ];
+
+  if (signals.activeModuleId) {
+    parts.push(
+      `- active module: ${signals.activeModuleId} confidence=${(signals.activeModuleConfidence ?? 0).toFixed(2)} impactedModules=${signals.impactedModuleCount ?? 0} impactedSymbols=${signals.impactedSymbolCount ?? 0}`,
+    );
+  }
+
+  if (signals.changedModules.length > 0) {
+    parts.push(`- touched modules: ${signals.changedModules.slice(0, 6).join(', ')}`);
+  }
+
+  for (const hint of signals.riskHints.slice(0, 4)) {
+    parts.push(`- repo risk hint: ${hint}`);
+  }
+
+  return parts;
+}
+
+function isTaskComplexity(value: unknown): value is KodaXTaskComplexity {
+  return (
+    value === 'simple' ||
+    value === 'moderate' ||
+    value === 'complex' ||
+    value === 'systemic'
+  );
+}
+
+function isTaskWorkIntent(value: unknown): value is KodaXTaskWorkIntent {
+  return value === 'append' || value === 'overwrite' || value === 'new';
+}
+
+function isHarnessProfile(value: unknown): value is KodaXHarnessProfile {
+  return (
+    value === 'H0_DIRECT' ||
+    value === 'H1_EXECUTE_EVAL' ||
+    value === 'H2_PLAN_EXECUTE_EVAL'
+  );
 }

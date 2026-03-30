@@ -180,7 +180,12 @@ export abstract class KodaXAcpProvider extends KodaXBaseProvider {
         let promptResponse: Awaited<ReturnType<AcpClient['prompt']>> | undefined;
 
         try {
-            promptResponse = await this._client.prompt(promptText, acpSessionId, signal);
+            promptResponse = await this._client.prompt(
+                promptText,
+                acpSessionId,
+                signal,
+                { model: streamOptions?.modelOverride },
+            );
         } catch (err) {
             if (err instanceof Error && err.name === 'AbortError') {
                 // User cancellation is expected.

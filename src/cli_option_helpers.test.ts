@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   buildSessionOptions,
   mergeConfiguredExtensions,
+  parseAgentModeOption,
+  parseNonNegativeIntWithFallback,
+  parseOptionalNonNegativeInt,
   parseOutputModeOption,
+  parsePositiveNumberWithFallback,
   validateCliModeSelection,
   type CliOptions,
 } from './cli_option_helpers.js';
@@ -12,6 +16,7 @@ function createCliOptions(overrides: Partial<CliOptions> = {}): CliOptions {
     provider: 'openai',
     thinking: true,
     reasoningMode: 'auto',
+    agentMode: 'ama',
     outputMode: 'text',
     parallel: false,
     append: false,
@@ -71,6 +76,61 @@ describe('buildSessionOptions', () => {
     );
 
     expect(options).toBeUndefined();
+  });
+
+  it('marks persisted CLI sessions as user-scoped', () => {
+    const options = buildSessionOptions(
+      createCliOptions({ continue: true }),
+    );
+
+    expect(options).toMatchObject({
+      resume: true,
+      scope: 'user',
+    });
+  });
+});
+
+describe('parseAgentModeOption', () => {
+  it('accepts SA mode case-insensitively', () => {
+    expect(parseAgentModeOption('SA')).toBe('sa');
+  });
+
+  it('rejects unsupported agent modes', () => {
+    expect(() => parseAgentModeOption('team')).toThrow(
+      'Expected one of: ama, sa.',
+    );
+  });
+});
+
+describe('numeric CLI helpers', () => {
+  it('accepts a valid non-negative integer', () => {
+    expect(parseOptionalNonNegativeInt('12')).toBe(12);
+  });
+
+  it('throws on invalid non-negative integers instead of silently swallowing them', () => {
+    expect(() => parseOptionalNonNegativeInt('abc')).toThrow(
+      'Expected a non-negative integer, got "abc".',
+    );
+  });
+
+  it('uses the fallback for absent non-negative integer values', () => {
+    expect(parseNonNegativeIntWithFallback(undefined, 50)).toBe(50);
+  });
+
+  it('throws on invalid fallback-backed integer values', () => {
+    expect(() => parseNonNegativeIntWithFallback('-1', 50)).toThrow(
+      'Expected a non-negative integer, got "-1".',
+    );
+  });
+
+  it('uses the fallback for absent positive numeric values', () => {
+    expect(parsePositiveNumberWithFallback(undefined, 2)).toBe(2);
+  });
+
+  it('throws on invalid positive numeric values', () => {
+    expect(() => parsePositiveNumberWithFallback('0', 2)).toThrow(
+      'Expected a positive number, got "0".',
+    );
   });
 });
 

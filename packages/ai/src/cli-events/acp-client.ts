@@ -101,13 +101,30 @@ export class AcpClient {
         return session.sessionId;
     }
 
-    async prompt(text: string, sessionId: string, signal?: AbortSignal): Promise<PromptResponse> {
+    async prompt(
+        text: string,
+        sessionId: string,
+        signal?: AbortSignal,
+        options?: { model?: string },
+    ): Promise<PromptResponse> {
         if (!this.client) throw new Error('Client not connected');
 
-        let responsePromise = this.client.prompt({
+        const request: {
+            sessionId: string;
+            prompt: Array<{ type: 'text'; text: string }>;
+            model?: string;
+        } = {
             sessionId,
             prompt: [{ type: 'text', text }]
-        });
+        };
+
+        if (options?.model) {
+            request.model = options.model;
+        }
+
+        let responsePromise = (this.client as unknown as {
+            prompt: (params: typeof request) => Promise<PromptResponse>;
+        }).prompt(request);
 
         if (signal) {
             const onAbort = () => {

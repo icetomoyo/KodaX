@@ -34,6 +34,10 @@ import {
   type TranscriptSection,
   type TranscriptRow,
 } from "../utils/transcript-layout.js";
+import {
+  collapseToolCalls,
+  formatCollapsedToolInlineText,
+} from "../utils/tool-display.js";
 
 // === Types ===
 
@@ -64,6 +68,26 @@ export interface MessageListProps {
   currentIteration?: number;
   /** Whether context compaction is in progress */
   isCompacting?: boolean;
+  /** Managed-task agent mode shown in live transcript state */
+  agentMode?: "sa" | "ama";
+  /** Managed-task phase shown in live transcript state */
+  managedPhase?: "starting" | "routing" | "preflight" | "round" | "worker" | "upgrade" | "completed";
+  /** Managed-task harness profile shown in live transcript state */
+  managedHarnessProfile?: string;
+  /** Managed-task active worker title shown in live transcript state */
+  managedWorkerTitle?: string;
+  /** Managed-task current round */
+  managedRound?: number;
+  /** Managed-task maximum rounds */
+  managedMaxRounds?: number;
+  /** Managed-task global work budget */
+  managedGlobalWorkBudget?: number;
+  /** Managed-task current work usage */
+  managedBudgetUsage?: number;
+  /** Whether the run is waiting on budget approval */
+  managedBudgetApprovalRequired?: boolean;
+  /** Last known live activity label used when the stream is between deltas */
+  lastLiveActivityLabel?: string;
   /** Visible viewport rows for transcript slicing */
   viewportRows?: number;
   /** Optional width override for deterministic transcript layout */
@@ -103,16 +127,6 @@ function truncateLines(text: string, maxLines: number): { lines: string[]; hasMo
   const displayLines = lines.slice(0, maxLines);
   const hasMore = lines.length > maxLines;
   return { lines: displayLines, hasMore };
-}
-
-/**
- * Format tool execution duration.
- */
-function formatDuration(startTime: number, endTime?: number): string {
-  if (!endTime) return "";
-  const ms = endTime - startTime;
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
 }
 
 /**
@@ -239,39 +253,20 @@ const SystemItemRenderer: React.FC<{ item: HistoryItemSystem; theme: Theme }> = 
 /**
  * Tool call renderer.
  */
-const ToolCallRenderer: React.FC<{ tool: ToolCall; theme: Theme }> = memo(({ tool, theme }) => {
+const ToolCallRenderer: React.FC<{ tool: ToolCall; count?: number; theme: Theme }> = memo(({ tool, count = 1, theme }) => {
   const icon = getToolStatusIcon(tool.status);
   const color = getToolStatusColor(tool.status, theme);
-  const duration = formatDuration(tool.startTime, tool.endTime);
-
   return (
     <Box flexDirection="column" marginLeft={2}>
       <Box>
         <Text color={color}>{icon} </Text>
         <Text color={theme.colors.text} bold>
-          {tool.name}
+          {formatCollapsedToolInlineText({ tool, count })}
         </Text>
-        {tool.input && (
-          <Text dimColor>
-            {" "}
-            {JSON.stringify(tool.input).slice(0, 50)}
-            {JSON.stringify(tool.input).length > 50 ? "..." : ""}
-          </Text>
-        )}
       </Box>
-      {tool.progress !== undefined && tool.status === ToolCallStatus.Executing && (
-        <Box marginLeft={2}>
-          <Text dimColor>Progress: {tool.progress}%</Text>
-        </Box>
-      )}
       {tool.error && (
         <Box marginLeft={2}>
           <Text color={theme.colors.error}>{tool.error}</Text>
-        </Box>
-      )}
-      {duration && (
-        <Box marginLeft={2}>
-          <Text dimColor>Completed in {duration}</Text>
         </Box>
       )}
     </Box>
@@ -281,19 +276,27 @@ const ToolCallRenderer: React.FC<{ tool: ToolCall; theme: Theme }> = memo(({ too
 /**
  * Tool group renderer
  */
-const ToolGroupRenderer: React.FC<{ item: HistoryItemToolGroup; theme: Theme }> = memo(({ item, theme }) => (
-  <Box flexDirection="column" marginBottom={1}>
-    <Box>
-      <Text color={theme.colors.accent} bold>
-        Tools
-      </Text>
-      <Text dimColor> [{formatTimestamp(item.timestamp)}]</Text>
+const ToolGroupRenderer: React.FC<{ item: HistoryItemToolGroup; theme: Theme }> = memo(({ item, theme }) => {
+  const groupedTools = collapseToolCalls(item.tools);
+  return (
+    <Box flexDirection="column" marginBottom={1}>
+      <Box>
+        <Text color={theme.colors.accent} bold>
+          Tools
+        </Text>
+        <Text dimColor> [{formatTimestamp(item.timestamp)}]</Text>
+      </Box>
+      {groupedTools.map((group) => (
+        <ToolCallRenderer
+          key={`${group.tool.id}-${group.count}`}
+          tool={group.tool}
+          count={group.count}
+          theme={theme}
+        />
+      ))}
     </Box>
-    {item.tools.map((tool) => (
-      <ToolCallRenderer key={tool.id} tool={tool} theme={theme} />
-    ))}
-  </Box>
-));
+  );
+});
 
 /**
  * Thinking content renderer
@@ -334,14 +337,10 @@ const ErrorItemRenderer: React.FC<{ item: HistoryItemError; theme: Theme }> = me
  */
 const InfoItemRenderer: React.FC<{ item: HistoryItemInfo; theme: Theme }> = memo(({ item, theme }) => (
   <Box flexDirection="column" marginBottom={1}>
-    <Box>
-      <Text color={theme.colors.info} bold>
-        {item.icon ?? "\u2139"} Info
-      </Text>
-    </Box>
-    <Box marginLeft={2}>
-      <Text color={theme.colors.info}>{item.text}</Text>
-    </Box>
+    <Text color={theme.colors.info}>
+      <Text bold>{item.icon ?? "\u2139"} </Text>
+      {item.text}
+    </Text>
   </Box>
 ));
 
@@ -484,6 +483,16 @@ export const MessageList: React.FC<MessageListProps> = ({
   iterationHistory = [],
   currentIteration = 1,
   isCompacting = false,
+  agentMode,
+  managedPhase,
+  managedHarnessProfile,
+  managedWorkerTitle,
+  managedRound,
+  managedMaxRounds,
+  managedGlobalWorkBudget,
+  managedBudgetUsage,
+  managedBudgetApprovalRequired,
+  lastLiveActivityLabel,
   viewportRows,
   viewportWidth,
   scrollOffset = 0,
@@ -498,8 +507,8 @@ export const MessageList: React.FC<MessageListProps> = ({
     [items]
   );
   const staticSections = useMemo(
-    () => buildStaticTranscriptSections(staticItems, terminalWidth, maxLines),
-    [staticItems, terminalWidth, maxLines]
+    () => buildStaticTranscriptSections(staticItems, terminalWidth, maxLines, windowed),
+    [staticItems, terminalWidth, maxLines, windowed]
   );
 
   if (items.length === 0 && !isLoading) {
@@ -515,7 +524,8 @@ export const MessageList: React.FC<MessageListProps> = ({
       const historySections = buildHistoryItemTranscriptSections(
         windowed ? items : activeItems,
         terminalWidth,
-        maxLines
+        maxLines,
+        windowed
       );
       const pendingSection = buildDynamicTranscriptSection("active-pending", {
         items: [],
@@ -532,6 +542,18 @@ export const MessageList: React.FC<MessageListProps> = ({
         iterationHistory,
         currentIteration,
         isCompacting,
+        managedAgentMode: agentMode,
+        managedPhase,
+        managedHarnessProfile,
+        managedWorkerTitle,
+        managedRound,
+        managedMaxRounds,
+        managedGlobalWorkBudget,
+        managedBudgetUsage,
+        managedBudgetApprovalRequired,
+        lastLiveActivityLabel,
+        showFullThinking: windowed,
+        showDetailedTools: windowed,
       });
 
       return pendingSection.rows.length > 0
@@ -555,6 +577,15 @@ export const MessageList: React.FC<MessageListProps> = ({
       iterationHistory,
       currentIteration,
       isCompacting,
+      agentMode,
+      managedPhase,
+      managedHarnessProfile,
+      managedWorkerTitle,
+      managedRound,
+      managedMaxRounds,
+      managedGlobalWorkBudget,
+      managedBudgetUsage,
+      managedBudgetApprovalRequired,
     ]
   );
   const transcriptRows = useMemo(

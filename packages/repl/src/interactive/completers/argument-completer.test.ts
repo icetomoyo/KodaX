@@ -190,6 +190,18 @@ describe('ArgumentCompleter', () => {
         expect(modelNames).toContain('MiniMax-M2.5');
       });
 
+      it('should expose the default CLI bridge model for codex-cli two-stage completion', async () => {
+        const completions = await completer.getCompletions('/model codex-cli/', 18);
+
+        expect(completions.map(c => c.display)).toContain('codex-cli/gpt-5.4');
+      });
+
+      it('should expose the default CLI bridge model for gemini-cli two-stage completion', async () => {
+        const completions = await completer.getCompletions('/model gemini-cli/', 19);
+
+        expect(completions.map(c => c.display)).toContain('gemini-cli/auto-gemini-3');
+      });
+
       it('should filter MiniMax models by provider/model partial', async () => {
         const completions = await completer.getCompletions('/model minimax-coding/M2.7', 27);
 

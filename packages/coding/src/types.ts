@@ -26,6 +26,14 @@ import type {
   KodaXTaskType,
   KodaXExecutionMode,
   KodaXRiskLevel,
+  KodaXTaskComplexity,
+  KodaXTaskWorkIntent,
+  KodaXTaskFamily,
+  KodaXTaskActionability,
+  KodaXExecutionPattern,
+  KodaXMutationSurface,
+  KodaXAssuranceIntent,
+  KodaXHarnessProfile,
   KodaXTaskRoutingDecision,
   KodaXThinkingBudgetMap,
   KodaXTaskBudgetOverrides,
@@ -35,11 +43,24 @@ import type {
   KodaXExtensionSessionState,
   KodaXExtensionStoreEntry,
   KodaXExtensionStore,
+  KodaXSessionBranchSummaryEntry,
+  KodaXSessionCompactionEntry,
   KodaXSessionData,
+  KodaXSessionEntry,
+  KodaXSessionEntryBase,
+  KodaXSessionLabelEntry,
+  KodaXSessionLineage,
+  KodaXSessionMessageEntry,
+  KodaXSessionNavigationOptions,
+  KodaXSessionScope,
   KodaXSessionMeta,
   KodaXSessionStorage,
+  KodaXSessionTreeNode,
+  KodaXSessionUiHistoryItem,
+  KodaXSessionUiHistoryItemType,
   SessionErrorMetadata,
 } from '@kodax/agent';
+import type { KodaXReviewScale } from '@kodax/ai';
 import type { KodaXExtensionRuntime } from './extensions/runtime.js';
 
 // Re-export all types from @kodax/agent
@@ -62,6 +83,15 @@ export type {
   KodaXTaskType,
   KodaXExecutionMode,
   KodaXRiskLevel,
+  KodaXTaskComplexity,
+  KodaXTaskWorkIntent,
+  KodaXTaskFamily,
+  KodaXTaskActionability,
+  KodaXExecutionPattern,
+  KodaXMutationSurface,
+  KodaXAssuranceIntent,
+  KodaXHarnessProfile,
+  KodaXReviewScale,
   KodaXTaskRoutingDecision,
   KodaXThinkingBudgetMap,
   KodaXTaskBudgetOverrides,
@@ -71,9 +101,21 @@ export type {
   KodaXExtensionSessionState,
   KodaXExtensionStoreEntry,
   KodaXExtensionStore,
+  KodaXSessionBranchSummaryEntry,
+  KodaXSessionCompactionEntry,
   KodaXSessionData,
+  KodaXSessionEntry,
+  KodaXSessionEntryBase,
+  KodaXSessionLabelEntry,
+  KodaXSessionLineage,
+  KodaXSessionMessageEntry,
+  KodaXSessionNavigationOptions,
+  KodaXSessionScope,
   KodaXSessionMeta,
   KodaXSessionStorage,
+  KodaXSessionTreeNode,
+  KodaXSessionUiHistoryItem,
+  KodaXSessionUiHistoryItemType,
   SessionErrorMetadata,
 };
 
@@ -116,6 +158,7 @@ export interface KodaXEvents {
   onProviderRateLimit?: (attempt: number, maxRetries: number, delayMs: number) => void;
   onComplete?: () => void;
   onError?: (error: Error) => void;
+  onManagedTaskStatus?: (status: KodaXManagedTaskStatusEvent) => void;
 
   // 用户交互（可选，由 REPL 层实现）
   /** Tool execution hook - called before tool execution, return false to block - 工具执行前回调 */
@@ -134,6 +177,7 @@ export interface KodaXSessionOptions {
   id?: string;
   resume?: boolean;
   autoResume?: boolean;
+  scope?: KodaXSessionScope;
   storage?: KodaXSessionStorage;
   initialMessages?: KodaXMessage[];
 }
@@ -147,6 +191,213 @@ export interface KodaXContextTokenSnapshot {
   source: 'api' | 'estimate';
   /** Optional turn usage from the latest provider response. */
   usage?: KodaXTokenUsage;
+}
+
+export interface KodaXProviderPolicyHints {
+  longRunning?: boolean;
+  harness?: 'project';
+  harnessProfile?: KodaXHarnessProfile;
+  evidenceHeavy?: boolean;
+  multimodal?: boolean;
+  capabilityRuntime?: boolean;
+  mcpRequired?: boolean;
+  brainstorm?: boolean;
+  workIntent?: KodaXTaskWorkIntent;
+}
+
+export interface KodaXRepoRoutingSignals {
+  workspaceRoot?: string;
+  changedFileCount: number;
+  changedLineCount: number;
+  addedLineCount: number;
+  deletedLineCount: number;
+  touchedModuleCount: number;
+  changedModules: string[];
+  crossModule: boolean;
+  reviewScale?: KodaXReviewScale;
+  riskHints: string[];
+  activeModuleId?: string;
+  activeModuleConfidence?: number;
+  activeImpactConfidence?: number;
+  impactedModuleCount?: number;
+  impactedSymbolCount?: number;
+  predominantCapabilityTier?: 'high' | 'medium' | 'low';
+  suggestedComplexity?: KodaXTaskComplexity;
+  plannerBias: boolean;
+  investigationBias: boolean;
+  lowConfidence: boolean;
+}
+
+export interface KodaXTaskCapabilityHint {
+  kind: 'skill' | 'tool' | 'command' | 'workflow';
+  name: string;
+  details?: string;
+}
+
+export interface KodaXTaskVerificationCriterion {
+  id: string;
+  label: string;
+  description: string;
+  threshold: number;
+  weight: number;
+  requiredEvidence?: string[];
+}
+
+export interface KodaXRuntimeVerificationContract {
+  startupCommand?: string;
+  cwd?: string;
+  env?: Record<string, string>;
+  readySignal?: string;
+  baseUrl?: string;
+  uiFlows?: string[];
+  apiChecks?: string[];
+  dbChecks?: string[];
+  fixtures?: string[];
+}
+
+export interface KodaXTaskVerificationContract {
+  summary?: string;
+  instructions?: string[];
+  requiredEvidence?: string[];
+  requiredChecks?: string[];
+  capabilityHints?: KodaXTaskCapabilityHint[];
+  rubricFamily?: 'code-review' | 'frontend' | 'product-completeness' | 'functionality' | 'code-quality';
+  criteria?: KodaXTaskVerificationCriterion[];
+  runtime?: KodaXRuntimeVerificationContract;
+}
+
+export type KodaXSkillProjectionConfidence = 'high' | 'medium' | 'low';
+
+export interface KodaXSkillInvocationContext {
+  name: string;
+  path: string;
+  description?: string;
+  arguments?: string;
+  allowedTools?: string;
+  context?: 'fork';
+  agent?: string;
+  argumentHint?: string;
+  model?: string;
+  hookEvents?: string[];
+  expandedContent: string;
+}
+
+export interface KodaXSkillMap {
+  skillSummary: string;
+  executionObligations: string[];
+  verificationObligations: string[];
+  requiredEvidence: string[];
+  ambiguities: string[];
+  projectionConfidence: KodaXSkillProjectionConfidence;
+  rawSkillFallbackAllowed: boolean;
+  allowedTools?: string;
+  preferredAgent?: string;
+  preferredModel?: string;
+  invocationContext?: 'fork';
+  hookEvents?: string[];
+}
+
+export interface KodaXTaskToolPolicy {
+  summary: string;
+  allowedTools?: string[];
+  blockedTools?: string[];
+  allowedShellPatterns?: string[];
+  allowedWritePathPatterns?: string[];
+}
+
+export type KodaXAgentMode = 'ama' | 'sa';
+export type KodaXMemoryStrategy = 'continuous' | 'compact' | 'reset-handoff';
+export type KodaXBudgetDisclosureZone = 'green' | 'yellow' | 'orange' | 'red';
+
+export interface KodaXManagedTaskHarnessTransition {
+  from: KodaXHarnessProfile;
+  to: KodaXHarnessProfile;
+  round: number;
+  source: 'scout' | 'evaluator';
+  reason?: string;
+  approved: boolean;
+  denialReason?: string;
+}
+
+export interface KodaXManagedTaskStatusEvent {
+  agentMode: KodaXAgentMode;
+  harnessProfile: KodaXHarnessProfile;
+  activeWorkerId?: string;
+  activeWorkerTitle?: string;
+  currentRound?: number;
+  maxRounds?: number;
+  phase?: 'starting' | 'routing' | 'preflight' | 'round' | 'worker' | 'upgrade' | 'completed';
+  note?: string;
+  upgradeCeiling?: KodaXHarnessProfile;
+  globalWorkBudget?: number;
+  budgetUsage?: number;
+  budgetApprovalRequired?: boolean;
+}
+
+export interface KodaXVerificationScorecardCriterion {
+  id: string;
+  label: string;
+  threshold: number;
+  score: number;
+  passed: boolean;
+  weight: number;
+  requiredEvidence?: string[];
+  evidence?: string[];
+  reason?: string;
+}
+
+export interface KodaXVerificationScorecard {
+  rubricFamily?: KodaXTaskVerificationContract['rubricFamily'];
+  overallScore: number;
+  verdict: 'accept' | 'revise' | 'blocked';
+  criteria: KodaXVerificationScorecardCriterion[];
+  trend?: 'improving' | 'flat' | 'regressing';
+  summary?: string;
+}
+
+export interface KodaXRoleRoundSummary {
+  role: KodaXTaskRole;
+  round: number;
+  objective: string;
+  confirmedConclusions: string[];
+  unresolvedQuestions: string[];
+  nextFocus: string[];
+  summary: string;
+  sourceWorkerId?: string;
+  updatedAt: string;
+}
+
+export interface KodaXBudgetExtensionRequest {
+  requestedIters: 1 | 2 | 3;
+  reason: string;
+  completionExpectation: string;
+  confidenceToFinish: number;
+  fallbackIfDenied: string;
+}
+
+export interface KodaXManagedBudgetSnapshot {
+  totalBudget: number;
+  reserveBudget: number;
+  reserveRemaining: number;
+  upgradeReserveBudget?: number;
+  upgradeReserveRemaining?: number;
+  plannedRounds: number;
+  currentRound: number;
+  spentBudget: number;
+  remainingBudget: number;
+  workerId?: string;
+  role?: KodaXTaskRole;
+  currentHarness?: KodaXHarnessProfile;
+  upgradeCeiling?: KodaXHarnessProfile;
+  zone?: KodaXBudgetDisclosureZone;
+  showExactRoundCounter?: boolean;
+  allowExtensionRequest?: boolean;
+  mustConverge?: boolean;
+  softMaxIter?: number;
+  hardMaxIter?: number;
+  extensionGrantedIters?: number;
+  extensionDenied?: boolean;
+  extensionReason?: string;
 }
 
 export interface KodaXContextOptions {
@@ -168,10 +419,27 @@ export interface KodaXContextOptions {
     featuresFile?: string;
     progressFile?: string;
   };
+  /** Optional semantic hints for provider-policy evaluation. */
+  providerPolicyHints?: KodaXProviderPolicyHints;
+  /** Optional repository routing signals that downstream planning layers can reuse. */
+  repoRoutingSignals?: KodaXRepoRoutingSignals;
+  disableAutoTaskReroute?: boolean;
   /** Skills system prompt snippet for progressive disclosure - Skills 系统提示词片段（渐进式披露） */
   skillsPrompt?: string;
+  rawUserInput?: string;
+  skillInvocation?: KodaXSkillInvocationContext;
+  /** Optional repository-intelligence snapshot injected into the system prompt. */
+  repoIntelligenceContext?: string;
   /** Internal execution-mode overlay appended to the system prompt */
   promptOverlay?: string;
+  /** Optional task-engine surface label used to track managed tasks across UX entry points. */
+  taskSurface?: KodaXTaskSurface;
+  /** Optional directory where managed task artifacts should be written. */
+  managedTaskWorkspaceDir?: string;
+  /** Optional structured metadata carried into the managed task contract. */
+  taskMetadata?: Record<string, KodaXJsonValue>;
+  /** Optional structured verification contract carried into managed tasks. */
+  taskVerification?: KodaXTaskVerificationContract;
 }
 
 export interface KodaXOptions {
@@ -180,6 +448,7 @@ export interface KodaXOptions {
   modelOverride?: string;
   thinking?: boolean;
   reasoningMode?: KodaXReasoningMode;
+  agentMode?: KodaXAgentMode;
   maxIter?: number;
   parallel?: boolean;
   session?: KodaXSessionOptions;
@@ -192,6 +461,146 @@ export interface KodaXOptions {
 
 // ============== 结果类型 ==============
 
+export type KodaXTaskSurface = 'cli' | 'repl' | 'project' | 'plan';
+export type KodaXTaskStatus = 'planned' | 'running' | 'blocked' | 'failed' | 'completed';
+export type KodaXTaskRole = 'direct' | 'scout' | 'planner' | 'generator' | 'evaluator';
+
+export interface KodaXTaskContract {
+  taskId: string;
+  surface: KodaXTaskSurface;
+  objective: string;
+  createdAt: string;
+  updatedAt: string;
+  status: KodaXTaskStatus;
+  primaryTask: KodaXTaskType;
+  workIntent: KodaXTaskWorkIntent;
+  complexity: KodaXTaskComplexity;
+  riskLevel: KodaXRiskLevel;
+  harnessProfile: KodaXHarnessProfile;
+  recommendedMode: KodaXExecutionMode;
+  requiresBrainstorm: boolean;
+  reason: string;
+  contractSummary?: string;
+  successCriteria: string[];
+  requiredEvidence: string[];
+  constraints: string[];
+  contractCreatedByAssignmentId?: string;
+  contractUpdatedAt?: string;
+  metadata?: Record<string, KodaXJsonValue>;
+  verification?: KodaXTaskVerificationContract;
+}
+
+export interface KodaXTaskRoleAssignment {
+  id: string;
+  role: KodaXTaskRole;
+  title: string;
+  dependsOn: string[];
+  status: KodaXTaskStatus;
+  agent?: string;
+  toolPolicy?: KodaXTaskToolPolicy;
+  summary?: string;
+  sessionId?: string;
+}
+
+export interface KodaXTaskWorkItem {
+  id: string;
+  assignmentId: string;
+  description: string;
+  execution: 'serial' | 'parallel';
+}
+
+export interface KodaXTaskEvidenceArtifact {
+  kind: 'json' | 'text' | 'markdown';
+  path: string;
+  description?: string;
+}
+
+export interface KodaXTaskEvidenceEntry {
+  assignmentId: string;
+  role: KodaXTaskRole;
+  status: KodaXTaskStatus;
+  title?: string;
+  round?: number;
+  summary?: string;
+  output?: string;
+  sessionId?: string;
+  signal?: 'COMPLETE' | 'BLOCKED' | 'DECIDE';
+  signalReason?: string;
+}
+
+export interface KodaXTaskEvidenceBundle {
+  workspaceDir: string;
+  runId?: string;
+  artifacts: KodaXTaskEvidenceArtifact[];
+  entries: KodaXTaskEvidenceEntry[];
+  routingNotes: string[];
+}
+
+export interface KodaXOrchestrationVerdict {
+  status: KodaXTaskStatus;
+  decidedByAssignmentId: string;
+  summary: string;
+  signal?: 'COMPLETE' | 'BLOCKED' | 'DECIDE';
+  signalReason?: string;
+  disposition?: 'complete' | 'blocked' | 'needs_continuation';
+  continuationSuggested?: boolean;
+}
+
+export interface KodaXManagedTaskRuntimeState {
+  budget?: KodaXManagedBudgetSnapshot;
+  scorecard?: KodaXVerificationScorecard;
+  qualityAssuranceMode?: 'required' | 'optional';
+  memoryStrategies?: Record<string, KodaXMemoryStrategy>;
+  memoryNotes?: Record<string, string>;
+  roleRoundSummaries?: Partial<Record<KodaXTaskRole, KodaXRoleRoundSummary>>;
+  routingAttempts?: number;
+  routingSource?: KodaXTaskRoutingDecision['routingSource'];
+  currentHarness?: KodaXHarnessProfile;
+  upgradeCeiling?: KodaXHarnessProfile;
+  harnessTransitions?: KodaXManagedTaskHarnessTransition[];
+  scoutDecision?: {
+    summary: string;
+    recommendedHarness: KodaXHarnessProfile;
+    readyForUpgrade: boolean;
+    scope?: string[];
+    requiredEvidence?: string[];
+    reviewFilesOrAreas?: string[];
+    evidenceAcquisitionMode?: 'overview' | 'diff-bundle' | 'diff-slice' | 'file-read';
+    skillSummary?: string;
+    executionObligations?: string[];
+    verificationObligations?: string[];
+    ambiguities?: string[];
+    projectionConfidence?: KodaXSkillProjectionConfidence;
+  };
+  skillMap?: KodaXSkillMap;
+  completionContractStatus?: Record<string, 'ready' | 'incomplete' | 'blocked' | 'missing'>;
+  rawRoutingDecision?: KodaXTaskRoutingDecision;
+  finalRoutingDecision?: KodaXTaskRoutingDecision;
+  routingOverrideReason?: string;
+  providerRuntimeBehavior?: {
+    downgraded?: boolean;
+    reasons: string[];
+  };
+  degradedContinue?: boolean;
+  reviewFilesOrAreas?: string[];
+  toolOutputTruncated?: boolean;
+  toolOutputTruncationNotes?: string[];
+  evidenceAcquisitionMode?: 'overview' | 'diff-bundle' | 'diff-slice' | 'file-read';
+  consecutiveEvidenceOnlyIterations?: number;
+  globalWorkBudget?: number;
+  budgetUsage?: number;
+  budgetApprovalRequired?: boolean;
+}
+
+export interface KodaXManagedTask {
+  contract: KodaXTaskContract;
+  roleAssignments: KodaXTaskRoleAssignment[];
+  workItems: KodaXTaskWorkItem[];
+  evidence: KodaXTaskEvidenceBundle;
+  verdict: KodaXOrchestrationVerdict;
+  runtime?: KodaXManagedTaskRuntimeState;
+}
+
 export interface KodaXResult {
   success: boolean;
   lastText: string;
@@ -199,6 +608,10 @@ export interface KodaXResult {
   signalReason?: string;
   messages: KodaXMessage[];
   sessionId: string;
+  /** Final visible routing decision for this run, including harness and work intent. */
+  routingDecision?: KodaXTaskRoutingDecision;
+  /** Managed task summary produced by the task engine for this run. */
+  managedTask?: KodaXManagedTask;
   /** Best-known token snapshot after the round completes. */
   contextTokenSnapshot?: KodaXContextTokenSnapshot;
   /** 是否被用户中断 (Ctrl+C) */
