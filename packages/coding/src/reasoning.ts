@@ -740,9 +740,9 @@ function deriveMutationSurface(
   const hasSystemSignal = SYSTEM_MUTATION_PATTERN.test(prompt) || (hasCjk && SYSTEM_MUTATION_PATTERN_ZH_CLEAN.test(prompt));
   const hasCodeObjectSignal = CODE_MUTATION_OBJECT_PATTERN.test(normalized) || (hasCjk && CODE_MUTATION_OBJECT_PATTERN_ZH_CLEAN.test(prompt));
   const hasStrongCodeTarget = /\b(code|implementation|function|class|component|module|endpoint|service|bug|script|api|ui|backend|frontend)\b/i.test(normalized)
-    || (hasCjk && /浠ｇ爜|瀹炵幇|鍑芥暟|绫?|缁勪欢|妯″潡|鏈嶅姟|bug|鍔熻兘|鑴氭湰|鍚庣|鍓嶇/.test(prompt));
+    || (hasCjk && CODE_MUTATION_OBJECT_PATTERN_ZH_CLEAN.test(prompt));
   const hasMutationVerb = /\b(implement|add|modify|update|create|write|fix|refactor|rewrite|replace|edit|patch|rename)\b/i.test(normalized)
-    || (hasCjk && /瀹炵幇|鏂板|淇敼|鍒涘缓|淇|閲嶆瀯|鏇挎崲|閲嶅啓|缂栬緫/.test(prompt));
+    || (hasCjk && CODE_MUTATION_VERB_PATTERN_ZH_CLEAN.test(prompt));
   const hasStrongCodeTargetByChinese = hasCjk && CODE_MUTATION_TARGET_PATTERN_ZH_CLEAN.test(prompt);
   const hasMutationVerbByChinese = hasCjk && CODE_MUTATION_VERB_PATTERN_ZH_CLEAN.test(prompt);
   const hasStructuralRepoTarget = /\b(monorepo|repo|repository|package|packages|architecture|migration)\b/i.test(normalized);

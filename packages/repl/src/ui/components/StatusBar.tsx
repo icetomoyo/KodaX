@@ -207,7 +207,7 @@ function formatBusyStatus({
 
   if (legacyManagedPhase === 'routing') {
     if (currentTool) {
-      return `Routing 路 ${formatToolStatus(currentTool, toolInputCharCount, toolInputContent)}`;
+      return `Routing \u2192 ${formatToolStatus(currentTool, toolInputCharCount, toolInputContent)}`;
     }
     if (isThinkingActive) {
       return formatThinkingStatus('Routing', thinkingCharCount);
@@ -218,7 +218,7 @@ function formatBusyStatus({
   if (legacyManagedPhase === 'preflight') {
     const scoutLabel = managedWorkerTitle ? `Scout - ${managedWorkerTitle}` : 'Scout';
     if (currentTool) {
-      return `${scoutLabel} 路 ${formatToolStatus(currentTool, toolInputCharCount, toolInputContent)}`;
+      return `${scoutLabel} \u2192 ${formatToolStatus(currentTool, toolInputCharCount, toolInputContent)}`;
     }
     if (isThinkingActive) {
       return formatThinkingStatus(scoutLabel, thinkingCharCount);
