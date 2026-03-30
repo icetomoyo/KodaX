@@ -8,6 +8,19 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.7.12] - 2026-03-30
+
+### Fixed
+- Resolve mojibake (garbled text) in `kodax --help` output, CLI descriptions, and code comments across `kodax_cli.ts` — replaced 16 garbled strings with proper English text
+- Fix garbled CJK keyword regex in `reasoning.ts` by referencing existing clean pattern constants instead of inline mojibake
+- Replace `路` separator with `→` in StatusBar routing/scout status display
+- Propagate CLI model selection through ACP bridge
+
+### Changed
+- Add `.npmrc` to pin `registry.npmmirror.com` for consistent lockfile across machines
+
+---
+
 ## [0.7.11] - 2026-03-30
 
 ### Added
