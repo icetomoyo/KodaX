@@ -44,7 +44,7 @@ import {
   isBashReadCommand,
   isPathInsideProject,
   isToolCallAllowed,
-  loadConfig,
+  prepareRuntimeConfig,
 } from '@kodax/repl';
 import {
   AcpLogger,
@@ -259,7 +259,7 @@ export class KodaXAcpServer implements Agent {
   private promptQueue: Promise<unknown> = Promise.resolve();
 
   constructor(options: KodaXAcpServerOptions = {}) {
-    const config = loadConfig();
+    const config = prepareRuntimeConfig();
     this.provider = options.provider ?? config.provider ?? KODAX_DEFAULT_PROVIDER;
     this.model = options.model;
     this.thinking = options.thinking ?? config.thinking ?? false;

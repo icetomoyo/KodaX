@@ -1,6 +1,6 @@
 import * as readline from 'readline';
 import chalk from 'chalk';
-import { PREVIEW_MAX_LENGTH } from '../common/utils.js';
+import { buildToolConfirmationDisplay } from '../common/tool-confirmation.js';
 import type { ConfirmResult, PermissionMode } from '../permission/types.js';
 import { supportsUnicode as terminalSupportsUnicode } from '../ui/utils/terminalCapabilities.js';
 
@@ -146,7 +146,6 @@ export async function confirmToolExecution(
 ): Promise<ConfirmResult> {
   const {
     isOutsideProject = false,
-    reason,
     isProtectedPath = false,
     permissionMode = 'accept-edits',
   } = options ?? {};
@@ -154,18 +153,18 @@ export async function confirmToolExecution(
 
   let message: string;
   let promptOptions: ConfirmOption[];
+  const displayInput = {
+    ...input,
+    ...(isOutsideProject ? { _outsideProject: true } : {}),
+    ...(isProtectedPath ? { _alwaysConfirm: true } : {}),
+  };
+  const display = buildToolConfirmationDisplay(tool, displayInput);
+  const detailLines = display.details.map((line) => `  ${chalk.dim(line)}`);
 
   if (isOutsideProject || isProtectedPath) {
     message = `${chalk.yellow(symbols.warning)} Safety Warning`;
-    if (reason) {
-      message += `\n  ${chalk.dim(reason)}`;
-    }
-
-    if (tool === 'write' || tool === 'edit') {
-      message += `\n  ${chalk.dim(`File: ${input.path}`)}`;
-    } else if (tool === 'bash') {
-      const commandPreview = (input.command as string)?.slice(0, 50) ?? '';
-      message += `\n  ${chalk.dim(`Command: ${commandPreview}${commandPreview.length >= 50 ? '...' : ''}`)}`;
+    if (detailLines.length > 0) {
+      message += `\n${detailLines.join('\n')}`;
     }
 
     promptOptions = [
@@ -173,22 +172,9 @@ export async function confirmToolExecution(
       { key: 'n', label: 'No', description: 'Cancel', value: 'no' },
     ];
   } else {
-    switch (tool) {
-      case 'bash': {
-        const commandPreview = (input.command as string)?.slice(0, PREVIEW_MAX_LENGTH) ?? '';
-        const suffix = commandPreview.length >= PREVIEW_MAX_LENGTH ? '...' : '';
-        message = `Execute bash command?\n  ${chalk.dim(commandPreview + suffix)}`;
-        break;
-      }
-      case 'write':
-        message = `Write to file?\n  ${chalk.dim(`Path: ${input.path}`)}`;
-        break;
-      case 'edit':
-        message = `Edit file?\n  ${chalk.dim(`Path: ${input.path}`)}`;
-        break;
-      default:
-        message = `Execute tool: ${tool}?`;
-        break;
+    message = display.title;
+    if (detailLines.length > 0) {
+      message += `\n${detailLines.join('\n')}`;
     }
 
     promptOptions = permissionMode === 'accept-edits'

@@ -8,6 +8,35 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.7.13] - 2026-03-31
+
+### Added
+- **FEATURE_045: Provider Stream Resilience and Graceful Recovery**: Comprehensive stream resilience improvements across all provider layers — expanded transient error detection with 21 message patterns, retry delay interruptible via AbortSignal, enhanced streaming robustness for Anthropic/OpenAI/custom providers
+- **User-Agent compatibility mode**: New `userAgentMode` config field (`compat`/`sdk`) on custom and built-in providers to control User-Agent header for gateway compatibility
+- **Shell environment hydration**: Resolve API keys and PATH from login shell profiles (bash/zsh/fish) when not available in the current process environment; null-delimited parsing with sentinel-based extraction
+- **Multi-tool call tracking**: Refactored single `activeToolCall` into array-based `activeToolCalls` for concurrent tool call tracking in the UI layer
+- **Tool confirmation module**: Extracted `buildToolConfirmationPrompt` into dedicated `tool-confirmation.ts` with network/delete command detection
+- **Managed task live status label**: New `formatManagedTaskLiveStatusLabel` for phase-aware status rendering with worker prefix trimming
+- **`onToolInputDelta` metadata**: Stream callback now receives optional `toolId` for multi-tool correlation
+- **New types**: `KodaXProviderUserAgentMode`, `ShellEnvRunner` utility type
+- **New tests**: Stream resilience (40+ lines), reasoning (75+ lines), task engine (470+ lines), error classification (25+ lines), retry handler (26+ lines), custom providers (104+ lines), InkREPL managed transcript (17+ lines), live streaming (43+ lines), transcript layout (81+ lines), CLI option helpers (47+ lines), ACP server (26+ lines), StatusBar (18+ lines), tool display (6+ lines), extension runtime (123+ lines), provider capability tests (77+ lines)
+
+### Changed
+- **Error classification unified**: Duplicated inline transient pattern checks replaced with `TRANSIENT_MESSAGE_PATTERNS` array and `matchesTransientMessage()` helper
+- **Retry delay abortable**: `withRetry()` now accepts optional `AbortSignal`; `waitForRetryDelay()` resolves immediately on abort instead of waiting for the full delay
+- **Tool preview length**: Truncation limit increased from 100 to 240 characters for better tool input visibility
+- **Managed task breadcrumb**: Added `round` phase support with note propagation
+- **Transcript layout enhanced**: Expanded with new row types and improved formatting
+
+### Removed
+- **pi-docs directory**: Deleted obsolete `docs/pi-docs/` reference documentation (28 files, ~13k lines)
+
+### Documentation
+- **FEATURE_LIST.md**: Added FEATURE_045 (Provider Stream Resilience), updated tracked feature count to 45
+- **v0.7.15 feature design**: New design doc for FEATURE_045
+
+---
+
 ## [0.7.12] - 2026-03-30
 
 ### Fixed

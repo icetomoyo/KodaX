@@ -68,6 +68,57 @@ class Feature034TestProvider extends KodaXBaseProvider {
   }
 }
 
+class Feature034ParallelProvider extends KodaXBaseProvider {
+  readonly name = TEST_PROVIDER_NAME;
+  readonly supportsThinking = true;
+  protected readonly config: KodaXProviderConfig = {
+    apiKeyEnv: TEST_PROVIDER_API_KEY_ENV,
+    model: 'baseline-model',
+    supportsThinking: true,
+  };
+
+  async stream(
+    messages: KodaXMessage[],
+    _tools: KodaXToolDefinition[],
+    _system: string,
+    _reasoning?: boolean | KodaXReasoningRequest,
+    _streamOptions?: KodaXProviderStreamOptions,
+    _signal?: AbortSignal,
+  ): Promise<KodaXStreamResult> {
+    const lastMessage = messages[messages.length - 1];
+    const hasToolResults = lastMessage?.role === 'user'
+      && Array.isArray(lastMessage.content)
+      && lastMessage.content.some((block) => block.type === 'tool_result');
+
+    if (hasToolResults) {
+      return {
+        textBlocks: [{ type: 'text', text: 'parallel tools complete' }],
+        toolBlocks: [],
+        thinkingBlocks: [],
+        usage: {
+          inputTokens: 10,
+          outputTokens: 5,
+          totalTokens: 15,
+        },
+      };
+    }
+
+    return {
+      textBlocks: [],
+      toolBlocks: [
+        { type: 'tool_use', id: 'tool-a', name: 'slow_tool', input: { label: 'a', delayMs: 60 } },
+        { type: 'tool_use', id: 'tool-b', name: 'slow_tool', input: { label: 'b', delayMs: 60 } },
+      ],
+      thinkingBlocks: [],
+      usage: {
+        inputTokens: 10,
+        outputTokens: 5,
+        totalTokens: 15,
+      },
+    };
+  }
+}
+
 describe('runKodaX extension runtime integration', () => {
   let tempDir: string;
 
@@ -82,7 +133,16 @@ describe('runKodaX extension runtime integration', () => {
     delete process.env[TEST_PROVIDER_API_KEY_ENV];
     delete (globalThis as typeof globalThis & {
       __feature034ProviderClass?: typeof Feature034TestProvider;
+      __feature034ParallelProviderClass?: typeof Feature034ParallelProvider;
+      __feature034ParallelMetrics?: { active: number; max: number };
     }).__feature034ProviderClass;
+    delete (globalThis as typeof globalThis & {
+      __feature034ParallelProviderClass?: typeof Feature034ParallelProvider;
+      __feature034ParallelMetrics?: { active: number; max: number };
+    }).__feature034ParallelProviderClass;
+    delete (globalThis as typeof globalThis & {
+      __feature034ParallelMetrics?: { active: number; max: number };
+    }).__feature034ParallelMetrics;
     const runtime = getActiveExtensionRuntime();
     if (runtime) {
       await runtime.dispose();
@@ -327,5 +387,68 @@ describe('runKodaX extension runtime integration', () => {
 
     await previousRuntime.dispose();
     await requestedRuntime.dispose();
+  });
+
+  it('runs independent extension tools concurrently when parallel mode is enabled', async () => {
+    const extensionPath = path.join(tempDir, 'feature-034-parallel-tools.mjs');
+    await writeFile(
+      extensionPath,
+      `export default function(api) {
+        api.registerModelProvider({
+          name: '${TEST_PROVIDER_NAME}',
+          factory: () => new (globalThis.__feature034ParallelProviderClass)(),
+        });
+        api.registerTool({
+          name: 'slow_tool',
+          description: 'Delay briefly and report concurrency',
+          input_schema: {
+            type: 'object',
+            properties: {
+              label: { type: 'string' },
+              delayMs: { type: 'number' }
+            },
+            required: ['label', 'delayMs']
+          },
+          handler: async (input) => {
+            const metrics = globalThis.__feature034ParallelMetrics;
+            metrics.active += 1;
+            metrics.max = Math.max(metrics.max, metrics.active);
+            await new Promise((resolve) => setTimeout(resolve, Number(input.delayMs)));
+            metrics.active -= 1;
+            return String(input.label);
+          }
+        });
+      }`,
+      'utf8',
+    );
+
+    (globalThis as typeof globalThis & {
+      __feature034ParallelProviderClass?: typeof Feature034ParallelProvider;
+      __feature034ParallelMetrics?: { active: number; max: number };
+    }).__feature034ParallelProviderClass = Feature034ParallelProvider;
+    (globalThis as typeof globalThis & {
+      __feature034ParallelMetrics?: { active: number; max: number };
+    }).__feature034ParallelMetrics = { active: 0, max: 0 };
+
+    const runtime = createExtensionRuntime();
+    await runtime.loadExtension(extensionPath);
+
+    const result = await runKodaX(
+      {
+        provider: TEST_PROVIDER_NAME,
+        extensionRuntime: runtime,
+        parallel: true,
+      },
+      'start feature 034 parallel tools',
+    );
+    const metrics = (globalThis as typeof globalThis & {
+      __feature034ParallelMetrics?: { active: number; max: number };
+    }).__feature034ParallelMetrics;
+
+    expect(result.success).toBe(true);
+    expect(result.lastText).toBe('parallel tools complete');
+    expect(metrics?.max).toBe(2);
+
+    await runtime.dispose();
   });
 });

@@ -402,6 +402,27 @@ describe('openai reasoning capability', () => {
     expect(onThinkingEnd).toHaveBeenCalledWith('Need to inspect the file first.');
   });
 
+  it('emits tool input deltas with tool ids for concurrent-safe consumers', async () => {
+    const create = vi.fn().mockResolvedValue(createDeepSeekToolStream());
+    const onToolInputDelta = vi.fn();
+    const provider = new TestOpenAIProvider('deepseek', 'native-toggle', {
+      chat: { completions: { create } },
+    }, {
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-chat',
+    });
+
+    await provider.stream(MESSAGES, TOOLS, 'system', reasoning, {
+      onToolInputDelta,
+    });
+
+    expect(onToolInputDelta).toHaveBeenCalledWith(
+      'read',
+      '{"path":"package.json"}',
+      { toolId: 'call_1' },
+    );
+  });
+
   it('preserves historical system summary messages for openai-compatible providers', async () => {
     const create = vi.fn().mockResolvedValue(createCompletedOpenAIStream());
     const provider = new TestOpenAIProvider('deepseek', 'native-toggle', {

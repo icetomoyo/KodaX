@@ -16,11 +16,23 @@ const { runKodaXMock } = vi.hoisted(() => ({
   runKodaXMock: vi.fn(),
 }));
 
+const { prepareRuntimeConfigMock } = vi.hoisted(() => ({
+  prepareRuntimeConfigMock: vi.fn(),
+}));
+
 vi.mock('@kodax/coding', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@kodax/coding')>();
   return {
     ...actual,
     runKodaX: runKodaXMock,
+  };
+});
+
+vi.mock('@kodax/repl', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@kodax/repl')>();
+  return {
+    ...actual,
+    prepareRuntimeConfig: prepareRuntimeConfigMock,
   };
 });
 
@@ -118,6 +130,12 @@ async function createHarness(options: {
 describe('KodaXAcpServer', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    prepareRuntimeConfigMock.mockReturnValue({
+      provider: 'openai',
+      thinking: false,
+      reasoningMode: 'auto',
+      permissionMode: 'accept-edits',
+    });
     stderrLines.length = 0;
     stderrWriteSpy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
       stderrLines.push(String(chunk).replace(/\r?\n$/, ''));
@@ -177,6 +195,14 @@ describe('KodaXAcpServer', () => {
         }),
       ]),
     );
+  });
+
+  it('hydrates runtime config during ACP server construction', () => {
+    new KodaXAcpServer({
+      logLevel: 'off',
+    });
+
+    expect(prepareRuntimeConfigMock).toHaveBeenCalledTimes(1);
   });
 
   it('bridges tool permission requests through ACP', async () => {

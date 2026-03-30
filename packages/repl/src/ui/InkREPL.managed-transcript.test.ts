@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ToolCallStatus } from "./types.js";
 import {
+  appendPersistedUiHistorySnapshot,
   buildManagedTaskTranscriptItems,
   buildRoundHistoryItems,
   shouldShowStatusBarBusyStatus,
@@ -140,6 +141,22 @@ describe("buildRoundHistoryItems", () => {
     expect(items[0]).toMatchObject({ type: "thinking" });
     expect(items[1]).toMatchObject({ type: "tool_group" });
     expect(items[2]).toMatchObject({ type: "assistant", text: "Found one issue." });
+  });
+});
+
+describe("appendPersistedUiHistorySnapshot", () => {
+  it("accumulates back-to-back persisted additions on the latest snapshot", () => {
+    const afterFirstAppend = appendPersistedUiHistorySnapshot([], [
+      { type: "info", text: "> AMA Routing - Routing ready" },
+    ]);
+    const afterSecondAppend = appendPersistedUiHistorySnapshot(afterFirstAppend, [
+      { type: "info", text: "> AMA H1 - Starting refinement round 2" },
+    ]);
+
+    expect(afterSecondAppend).toEqual([
+      { type: "info", text: "> AMA Routing - Routing ready" },
+      { type: "info", text: "> AMA H1 - Starting refinement round 2" },
+    ]);
   });
 });
 

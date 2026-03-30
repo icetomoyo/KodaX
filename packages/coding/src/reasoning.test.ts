@@ -748,6 +748,81 @@ describe('reasoning reroute', () => {
     });
   });
 
+  it('treats empty input as lightweight conversation with no repo or model work', () => {
+    expect(inferIntentGate('   ')).toMatchObject({
+      taskFamily: 'conversation',
+      actionability: 'non_actionable',
+      executionPattern: 'direct',
+      shouldUseRepoSignals: false,
+      shouldUseModelRouter: false,
+    });
+  });
+
+  it('keeps greeting-only prompts conversational', () => {
+    expect(inferIntentGate('hello')).toMatchObject({
+      taskFamily: 'conversation',
+      actionability: 'non_actionable',
+      executionPattern: 'direct',
+      shouldUseRepoSignals: false,
+      shouldUseModelRouter: false,
+    });
+  });
+
+  it('routes pure review prompts to checked-direct without model routing', () => {
+    expect(inferIntentGate('Please review the current changes for merge blockers.')).toMatchObject({
+      taskFamily: 'review',
+      executionPattern: 'checked-direct',
+      shouldUseRepoSignals: true,
+      shouldUseModelRouter: false,
+    });
+  });
+
+  it('keeps review priority ahead of implementation when both signals are present', () => {
+    expect(inferIntentGate('Please review this bug fix and then update the code if needed.')).toMatchObject({
+      taskFamily: 'review',
+      executionPattern: 'checked-direct',
+      shouldUseRepoSignals: true,
+      shouldUseModelRouter: false,
+    });
+  });
+
+  it('routes pure planning prompts to coordinated execution', () => {
+    expect(inferIntentGate('Please plan the rollout for this refactor.')).toMatchObject({
+      taskFamily: 'planning',
+      executionPattern: 'coordinated',
+      shouldUseRepoSignals: true,
+      shouldUseModelRouter: true,
+    });
+  });
+
+  it('routes investigation prompts to checked-direct debugging work', () => {
+    expect(inferIntentGate('Investigate why the retry loop still fails in production.')).toMatchObject({
+      taskFamily: 'investigation',
+      executionPattern: 'checked-direct',
+      shouldUseRepoSignals: true,
+      shouldUseModelRouter: true,
+    });
+  });
+
+  it('routes pure implementation prompts to checked-direct execution', () => {
+    expect(inferIntentGate('Implement the new status bar layout.')).toMatchObject({
+      taskFamily: 'implementation',
+      executionPattern: 'checked-direct',
+      shouldUseRepoSignals: true,
+      shouldUseModelRouter: true,
+    });
+  });
+
+  it('keeps ambiguous prompts on the direct path', () => {
+    expect(inferIntentGate('Thoughts on this?')).toMatchObject({
+      taskFamily: 'ambiguous',
+      actionability: 'ambiguous',
+      executionPattern: 'direct',
+      shouldUseRepoSignals: false,
+      shouldUseModelRouter: false,
+    });
+  });
+
   it('returns unknown when competing task signals tie without an explicit directive', () => {
     expect(
       inferTaskType('Please review this bug fix.'),

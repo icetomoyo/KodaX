@@ -268,6 +268,7 @@ export interface KodaXModelDescriptor {
 }
 
 export type KodaXProtocolFamily = 'anthropic' | 'openai';
+export type KodaXProviderUserAgentMode = 'compat' | 'sdk';
 
 export interface KodaXCustomProviderConfig {
   name: string;
@@ -276,6 +277,12 @@ export interface KodaXCustomProviderConfig {
   apiKeyEnv: string;
   model: string;
   models?: string[];
+  /**
+   * Controls which User-Agent header compatibility providers send.
+   * - compat: send "KodaX" for gateways that block the official SDK UA
+   * - sdk: keep the upstream SDK default User-Agent
+   */
+  userAgentMode?: KodaXProviderUserAgentMode;
   supportsThinking?: boolean;
   reasoningCapability?: KodaXReasoningCapability;
   capabilityProfile?: KodaXProviderCapabilityProfile;
@@ -290,6 +297,8 @@ export interface KodaXProviderConfig {
   model: string;
   /** Additional available models beyond the default */
   models?: readonly KodaXModelDescriptor[];
+  /** Compatibility providers may override the SDK User-Agent when needed. */
+  userAgentMode?: KodaXProviderUserAgentMode;
   supportsThinking: boolean;
   reasoningCapability?: KodaXReasoningCapability;
   capabilityProfile?: KodaXProviderCapabilityProfile;
@@ -309,7 +318,11 @@ export interface KodaXProviderStreamOptions {
   onTextDelta?: (text: string) => void;
   onThinkingDelta?: (text: string) => void;
   onThinkingEnd?: (thinking: string) => void;
-  onToolInputDelta?: (toolName: string, partialJson: string) => void;
+  onToolInputDelta?: (
+    toolName: string,
+    partialJson: string,
+    meta?: { toolId?: string },
+  ) => void;
   /** 当底层 API 遇到 Rate Limit 进行重试时触发 */
   onRateLimit?: (attempt: number, maxRetries: number, delayMs: number) => void;
   /** 会话标识，用于多轮对话上下文恢复 */

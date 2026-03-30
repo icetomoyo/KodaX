@@ -156,6 +156,24 @@ describe("StatusBar", () => {
     expect(text).toContain("session-1 | H2 - Planner");
   });
 
+  it("prefers the aggregate tool count in the status bar when tools are running", () => {
+    const text = getStatusBarText({
+      sessionId: "session-1",
+      permissionMode: "accept-edits",
+      agentMode: "ama",
+      provider: "anthropic",
+      model: "sonnet",
+      currentTool: "shell_command",
+      toolInputCharCount: 120,
+      activeToolCount: 3,
+      managedHarnessProfile: "H2_PLAN_EXECUTE_EVAL",
+      managedWorkerTitle: "Scout",
+    });
+
+    expect(text).toContain("session-1 | H2 - Scout - 3 tools running");
+    expect(text).not.toContain("Bash (120 chars)");
+  });
+
   it("hides the initial round counter for AMA and only shows work on the first pass", () => {
     const text = getStatusBarText({
       sessionId: "session-1",

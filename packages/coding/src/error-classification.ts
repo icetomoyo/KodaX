@@ -21,6 +21,32 @@ export interface ErrorClassification {
   shouldCleanup: boolean;
 }
 
+const TRANSIENT_MESSAGE_PATTERNS = [
+  /\bstream incomplete\b/i,
+  /\bstream interrupted\b/i,
+  /\bstream stalled\b/i,
+  /\bdelayed response\b/i,
+  /\btimed out\b/i,
+  /\btimeout\b/i,
+  /\bnetwork\b/i,
+  /\bconnection error\b/i,
+  /\bconnection reset\b/i,
+  /\bconnection closed\b/i,
+  /\bsocket hang up\b/i,
+  /\bfetch failed\b/i,
+  /\beconnrefused\b/i,
+  /\beconnreset\b/i,
+  /\betimedout\b/i,
+  /\benotfound\b/i,
+  /\beai_again\b/i,
+  /\bother side closed\b/i,
+  /\baborted\b/i,
+];
+
+function matchesTransientMessage(message: string): boolean {
+  return TRANSIENT_MESSAGE_PATTERNS.some((pattern) => pattern.test(message));
+}
+
 /**
  * 分类错误以确定适当的恢复策略
  */
@@ -86,15 +112,7 @@ export function classifyError(error: Error): ErrorClassification {
   if (error instanceof KodaXProviderError) {
     // 检查是否为可重试的 API 错误
     const msg = error.message.toLowerCase();
-    if (msg.includes('timeout') ||
-        msg.includes('network') ||
-        msg.includes('connection error') ||
-        msg.includes('econnrefused') ||
-        msg.includes('etimedout') ||
-        msg.includes('enotfound') ||
-        msg.includes('fetch failed') ||
-        msg.includes('socket hang up') ||
-        msg.includes('aborted')) {
+    if (matchesTransientMessage(msg)) {
       return {
         category: ErrorCategory.TRANSIENT,
         retryable: true,
@@ -116,13 +134,7 @@ export function classifyError(error: Error): ErrorClassification {
 
   // 检查通用网络错误模式
   const msg = error.message.toLowerCase();
-  if (msg.includes('timeout') ||
-      msg.includes('network') ||
-      msg.includes('connection error') ||
-      msg.includes('econnrefused') ||
-      msg.includes('etimedout') ||
-      msg.includes('fetch failed') ||
-      msg.includes('aborted')) {
+  if (matchesTransientMessage(msg)) {
     return {
       category: ErrorCategory.TRANSIENT,
       retryable: true,

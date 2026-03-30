@@ -162,7 +162,7 @@ function describeTransientProviderRetry(error: Error): string {
   ) {
     return 'Provider connection error';
   }
-  if (message.includes('timeout') || message.includes('etimedout')) {
+  if (message.includes('timed out') || message.includes('timeout') || message.includes('etimedout')) {
     return 'Provider request timed out';
   }
   if (message.includes('aborted')) {
@@ -949,7 +949,9 @@ export async function runKodaX(
   const compactionConfig = await loadCompactionConfig(options.context?.gitRoot ?? undefined);
   const initialProvider = resolveProvider(currentProviderName);
   if (!initialProvider.isConfigured()) {
-    throw new Error(`Provider "${currentProviderName}" not configured. Set ${currentProviderName.toUpperCase().replace('-', '_')}_API_KEY`);
+    throw new Error(
+      `Provider "${currentProviderName}" not configured. Set ${initialProvider.getApiKeyEnv()}`,
+    );
   }
 
   // 处理 autoResume/resume：自动加载当前目录最近会话
@@ -1102,7 +1104,9 @@ export async function runKodaX(
       runtimeThinkingLevel = runtimeSessionState.thinkingLevel;
       const provider = resolveProvider(currentProviderName);
       if (!provider.isConfigured()) {
-        throw new Error(`Provider "${currentProviderName}" not configured. Set ${currentProviderName.toUpperCase().replace('-', '_')}_API_KEY`);
+        throw new Error(
+          `Provider "${currentProviderName}" not configured. Set ${provider.getApiKeyEnv()}`,
+        );
       }
       const contextWindow = compactionConfig.contextWindow
         ?? provider.getContextWindow?.()
@@ -1282,7 +1286,9 @@ export async function runKodaX(
         ].join('\n\n')
         : preparedProviderState.systemPrompt;
       if (!streamProvider.isConfigured()) {
-        throw new Error(`Provider "${currentProviderName}" not configured. Set ${currentProviderName.toUpperCase().replace('-', '_')}_API_KEY`);
+        throw new Error(
+          `Provider "${currentProviderName}" not configured. Set ${streamProvider.getApiKeyEnv()}`,
+        );
       }
 
       await emitActiveExtensionEvent('provider:selected', {
@@ -1337,9 +1343,9 @@ export async function runKodaX(
                 void emitActiveExtensionEvent('thinking:end', { thinking });
                 events.onThinkingEnd?.(thinking);
               },
-              onToolInputDelta: (name, json) => {
+              onToolInputDelta: (name, json, meta) => {
                 resetIdleTimer();
-                events.onToolInputDelta?.(name, json);
+                events.onToolInputDelta?.(name, json, meta);
               },
               onRateLimit: (attempt, max, delay) => {
                 resetIdleTimer(); // 重试限制时也重置，因为底层 Provider 会自己等待
@@ -1385,7 +1391,8 @@ export async function runKodaX(
             attempt,
             maxRetries
           );
-        }
+        },
+        options.abortSignal,
       );
 
       // 流式输出结束，通知 CLI 层

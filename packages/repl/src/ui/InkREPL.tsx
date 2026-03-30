@@ -90,6 +90,7 @@ import {
   getProviderModel,
   getProviderReasoningCapability,
 } from "../common/utils.js";
+import { buildToolConfirmationPrompt } from "../common/tool-confirmation.js";
 import { KODAX_VERSION } from "../common/utils.js";
 import { runWithPlanMode } from "../common/plan-mode.js";
 import { saveAlwaysAllowToolPattern, loadAlwaysAllowTools, savePermissionModeUser } from "../common/permission-config.js";
@@ -118,6 +119,7 @@ import { withCapture, ConsoleCapturer } from "./utils/console-capturer.js";
 import { emitRetryHistoryItem } from "./utils/retry-history.js";
 import {
   formatManagedTaskBreadcrumb,
+  formatManagedTaskLiveStatusLabel,
   mergeLiveThinkingContent,
 } from "./utils/live-streaming.js";
 import { buildManagedRunContext } from "./utils/managed-run-context.js";
@@ -166,6 +168,7 @@ interface ReviewSnapshot {
   thinkingContent: string;
   currentResponse: string;
   currentTool?: string;
+  activeToolCalls: ToolCall[];
   toolInputCharCount: number;
   toolInputContent: string;
   lastLiveActivityLabel?: string;
@@ -305,7 +308,7 @@ function buildManagedTaskRoutingTranscript(task: NonNullable<KodaXResult["manage
   return lines.join("\n");
 }
 
-function truncateToolPreview(value: string, maxLength = 100): string {
+function truncateToolPreview(value: string, maxLength = 240): string {
   const trimmed = value.trim();
   if (!trimmed) {
     return "";
@@ -338,6 +341,17 @@ function formatManagedLiveToolLabel(tool: ToolCall, workerTitle?: string): strin
     `[Tools] ${formatToolCallInlineText(tool)}`,
     workerTitle,
   ) ?? `[Tools] ${formatToolCallInlineText(tool)}`;
+}
+
+function stripToolRolePrefix(toolName: string): string {
+  return toolName
+    .replace(/^\[[^\]]+\]\s+/, "")
+    .replace(/^[A-Za-z][A-Za-z0-9_-]*:\s*/, "")
+    .trim();
+}
+
+function normalizeToolNameForMatch(toolName: string): string {
+  return stripToolRolePrefix(toolName).toLowerCase();
 }
 
 function sanitizeInterruptedAssistantText(text: string): string {
@@ -485,6 +499,19 @@ function serializeCreatableHistoryItems(
   return items
     .map((item) => toPersistedUiHistoryItem(item))
     .filter((item): item is KodaXSessionUiHistoryItem => Boolean(item));
+}
+
+export function appendPersistedUiHistorySnapshot(
+  currentHistory: readonly KodaXSessionUiHistoryItem[],
+  items: readonly CreatableHistoryItem[],
+): KodaXSessionUiHistoryItem[] {
+  if (items.length === 0) {
+    return [...currentHistory];
+  }
+  return [
+    ...currentHistory,
+    ...serializeCreatableHistoryItems(items),
+  ];
 }
 
 function logSessionTransitionGuard(
@@ -667,9 +694,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const { history } = useUIState();
   const { addHistoryItem, clearHistory: clearUIHistory, setSessionId } = useUIActions();
   const historyRef = useRef(history);
+  const persistedUiHistoryRef = useRef<KodaXSessionUiHistoryItem[]>(
+    serializeUiHistorySnapshot(history),
+  );
 
   useEffect(() => {
     historyRef.current = history;
+    persistedUiHistoryRef.current = serializeUiHistorySnapshot(history);
   }, [history]);
 
   // Get terminal dimensions for fixed layout.
@@ -747,35 +778,145 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const managedTaskBreadcrumbRef = useRef<string | null>(null);
   const iterationToolsRef = useRef<string[]>([]);
   const iterationToolCallsRef = useRef<ToolCall[]>([]);
-  const activeToolCallRef = useRef<ToolCall | null>(null);
+  const [activeToolCalls, setActiveToolCalls] = useState<ToolCall[]>([]);
+  const activeToolCallsRef = useRef<ToolCall[]>([]);
 
-  const syncActiveToolCall = useCallback((updater: (tool: ToolCall) => ToolCall) => {
-    const current = activeToolCallRef.current;
-    if (!current) {
+  const setLiveToolCalls = useCallback((nextToolCalls: ToolCall[]) => {
+    activeToolCallsRef.current = nextToolCalls;
+    setActiveToolCalls(nextToolCalls);
+  }, []);
+
+  const upsertIterationToolCall = useCallback((nextTool: ToolCall) => {
+    const existingIndex = iterationToolCallsRef.current.findIndex((tool) => tool.id === nextTool.id);
+    if (existingIndex === -1) {
+      iterationToolCallsRef.current = [...iterationToolCallsRef.current, nextTool];
       return;
     }
-    const next = updater(current);
-    activeToolCallRef.current = next;
     iterationToolCallsRef.current = iterationToolCallsRef.current.map((tool) => (
-      tool.id === next.id ? next : tool
+      tool.id === nextTool.id ? nextTool : tool
     ));
   }, []);
 
-  const finalizeActiveToolCall = useCallback((status: ToolCallStatus, error?: string, output?: unknown) => {
-    let finalizedTool: ToolCall | null = null;
-    syncActiveToolCall((tool) => {
-      finalizedTool = {
+  const findLatestExecutingTool = useCallback((toolName?: string): ToolCall | undefined => {
+    const executingTools = activeToolCallsRef.current.filter((tool) => tool.status === ToolCallStatus.Executing);
+    if (executingTools.length === 0) {
+      return undefined;
+    }
+
+    if (toolName) {
+      const normalizedName = normalizeToolNameForMatch(toolName);
+      for (let index = executingTools.length - 1; index >= 0; index -= 1) {
+        const candidate = executingTools[index];
+        if (normalizeToolNameForMatch(candidate.name) === normalizedName) {
+          return candidate;
+        }
+      }
+    }
+
+    return executingTools[executingTools.length - 1];
+  }, []);
+
+  const syncCurrentToolFromLiveCalls = useCallback(() => {
+    const latestExecutingTool = findLatestExecutingTool();
+    setCurrentTool(latestExecutingTool ? stripToolRolePrefix(latestExecutingTool.name) : undefined);
+  }, [findLatestExecutingTool, setCurrentTool]);
+
+  const addLiveToolCall = useCallback((toolCall: ToolCall) => {
+    upsertIterationToolCall(toolCall);
+    setLiveToolCalls([
+      ...activeToolCallsRef.current.filter((tool) => tool.id !== toolCall.id),
+      toolCall,
+    ]);
+    syncCurrentToolFromLiveCalls();
+    return toolCall;
+  }, [setLiveToolCalls, syncCurrentToolFromLiveCalls, upsertIterationToolCall]);
+
+  const updateLiveToolCallById = useCallback((toolId: string, updater: (tool: ToolCall) => ToolCall) => {
+    const current = activeToolCallsRef.current.find((tool) => tool.id === toolId);
+    if (!current) {
+      return null;
+    }
+    const next = updater(current);
+    upsertIterationToolCall(next);
+    setLiveToolCalls(activeToolCallsRef.current.map((tool) => (
+      tool.id === toolId ? next : tool
+    )));
+    syncCurrentToolFromLiveCalls();
+    return next;
+  }, [setLiveToolCalls, syncCurrentToolFromLiveCalls, upsertIterationToolCall]);
+
+  const updateExecutingTool = useCallback((
+    toolId: string | undefined,
+    toolName: string | undefined,
+    updater: (tool: ToolCall) => ToolCall,
+  ) => {
+    if (toolId) {
+      const updated = updateLiveToolCallById(toolId, updater);
+      if (updated) {
+        return updated;
+      }
+    }
+    const target = findLatestExecutingTool(toolName);
+    if (!target) {
+      return null;
+    }
+    return updateLiveToolCallById(target.id, updater);
+  }, [findLatestExecutingTool, updateLiveToolCallById]);
+
+  const finalizeLiveToolCall = useCallback((
+    toolId: string | undefined,
+    status: ToolCallStatus,
+    error?: string,
+    output?: unknown,
+    fallbackToolName?: string,
+  ) => {
+    const resolvedToolId = toolId ?? findLatestExecutingTool(fallbackToolName)?.id;
+    if (!resolvedToolId) {
+      return null;
+    }
+    return updateLiveToolCallById(resolvedToolId, (tool) => ({
+      ...tool,
+      status,
+      endTime: Date.now(),
+      error,
+      output,
+    }));
+  }, [findLatestExecutingTool, updateLiveToolCallById]);
+
+  const finalizeAllExecutingToolCalls = useCallback((
+    status: ToolCallStatus,
+    resolvePatch: (tool: ToolCall) => Pick<ToolCall, "error" | "output">,
+  ): ToolCall[] => {
+    const finalizedAt = Date.now();
+    const updates = new Map<string, ToolCall>();
+    for (const tool of activeToolCallsRef.current) {
+      if (tool.status !== ToolCallStatus.Executing) {
+        continue;
+      }
+      const patch = resolvePatch(tool);
+      updates.set(tool.id, {
         ...tool,
         status,
-        endTime: Date.now(),
-        error,
-        output,
-      };
-      return finalizedTool;
-    });
-    activeToolCallRef.current = null;
-    return finalizedTool;
-  }, [syncActiveToolCall]);
+        endTime: finalizedAt,
+        ...patch,
+      });
+    }
+
+    if (updates.size === 0) {
+      return [];
+    }
+
+    iterationToolCallsRef.current = iterationToolCallsRef.current.map((tool) => (
+      updates.get(tool.id) ?? tool
+    ));
+    setLiveToolCalls(activeToolCallsRef.current.map((tool) => updates.get(tool.id) ?? tool));
+    syncCurrentToolFromLiveCalls();
+    return [...updates.values()];
+  }, [setLiveToolCalls, syncCurrentToolFromLiveCalls]);
+
+  const resetLiveToolCalls = useCallback(() => {
+    setLiveToolCalls([]);
+  }, [setLiveToolCalls]);
 
   // Shortcuts context.
   const { showHelp, toggleHelp, setShowHelp } = useShortcutsContext();
@@ -882,6 +1023,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     thinkingContent: streamingState.thinkingContent,
     currentResponse: streamingState.currentResponse,
     currentTool: streamingState.currentTool,
+    activeToolCalls,
     toolInputCharCount: streamingState.toolInputCharCount,
     toolInputContent: streamingState.toolInputContent,
     lastLiveActivityLabel,
@@ -898,6 +1040,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     streamingState.thinkingContent,
     streamingState.currentResponse,
     streamingState.currentTool,
+    activeToolCalls,
     streamingState.toolInputCharCount,
     streamingState.toolInputContent,
     lastLiveActivityLabel,
@@ -926,6 +1069,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     thinkingContent: displaySnapshot?.thinkingContent ?? streamingState.thinkingContent,
     currentResponse: displaySnapshot?.currentResponse ?? streamingState.currentResponse,
     currentTool: displaySnapshot?.currentTool ?? streamingState.currentTool,
+    activeToolCalls: displaySnapshot?.activeToolCalls ?? activeToolCalls,
     toolInputCharCount: displaySnapshot?.toolInputCharCount ?? streamingState.toolInputCharCount,
     toolInputContent: displaySnapshot?.toolInputContent ?? streamingState.toolInputContent,
     lastLiveActivityLabel: displaySnapshot?.lastLiveActivityLabel ?? lastLiveActivityLabel,
@@ -947,6 +1091,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     provider: currentConfig.provider,
     model: currentConfig.model ?? getProviderModel(currentConfig.provider) ?? currentConfig.provider,
     currentTool: displayStreamingState.currentTool,
+    activeToolCount: displayStreamingState.activeToolCalls.filter((tool) => tool.status === ToolCallStatus.Executing).length,
     thinking: currentConfig.thinking,
     reasoningMode: currentConfig.reasoningMode,
             reasoningCapability: formatReasoningCapabilityShort(
@@ -983,6 +1128,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     currentConfig.thinking,
     currentConfig.reasoningMode,
     displayStreamingState.currentTool,
+    displayStreamingState.activeToolCalls,
     displayStreamingState.isThinking,
     displayStreamingState.thinkingCharCount,
     displayStreamingState.toolInputCharCount,
@@ -1234,7 +1380,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   useKeypress(
     KeypressHandlerPriority.Critical,
     (key) => {
-      const hasTranscript = displayItems.length > 0 || !!displayStreamingState.currentResponse || !!displayStreamingState.thinkingContent;
+      const hasTranscript = displayItems.length > 0
+        || !!displayStreamingState.currentResponse
+        || !!displayStreamingState.thinkingContent
+        || displayStreamingState.activeToolCalls.length > 0;
 
       if ((key.ctrl && key.name === "y") || (key.meta && key.name === "z")) {
         if (!isReviewingHistory) {
@@ -1316,6 +1465,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       displayItems,
       displayStreamingState.currentResponse,
       displayStreamingState.thinkingContent,
+      displayStreamingState.activeToolCalls,
       historyScrollOffset,
       reviewPageSize,
       reviewWheelStep,
@@ -1557,17 +1707,19 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         startTime: Date.now(),
         input: tool.input,
       };
-      activeToolCallRef.current = toolCall;
-      iterationToolCallsRef.current = [...iterationToolCallsRef.current, toolCall];
-      setCurrentTool(tool.name);
+      addLiveToolCall(toolCall);
       setLastLiveActivityLabel(
         formatManagedLiveToolLabel(toolCall, managedTaskStatusRef.current?.activeWorkerTitle),
       );
     },
-    onToolInputDelta: (_toolName: string, partialJson: string) => {
+    onToolInputDelta: (
+      toolName: string,
+      partialJson: string,
+      meta?: { toolId?: string },
+    ) => {
       appendToolInputChars(partialJson.length);
       appendToolInputContent(partialJson); // Issue 068 Phase 4: track tool input content.
-      syncActiveToolCall((tool) => {
+      const updatedTool = updateExecutingTool(meta?.toolId, toolName, (tool) => {
         const currentPreview = tool.preview ?? "";
         const preview = truncateToolPreview(`${currentPreview}${partialJson}`);
         return {
@@ -1578,9 +1730,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             : (preview ? { preview } : undefined),
         };
       });
-      if (activeToolCallRef.current) {
+      if (updatedTool) {
         setLastLiveActivityLabel(
-          formatManagedLiveToolLabel(activeToolCallRef.current, managedTaskStatusRef.current?.activeWorkerTitle),
+          formatManagedLiveToolLabel(updatedTool, managedTaskStatusRef.current?.activeWorkerTitle),
         );
       }
     },
@@ -1588,7 +1740,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       const content = typeof result.content === "string" ? result.content : String(result.content ?? "");
       const trimmedContent = truncateToolOutputPreview(content);
       if (/^\[(?:Tool Error|Error)\]/.test(content)) {
-        const finalizedTool = finalizeActiveToolCall(ToolCallStatus.Error, trimmedContent, trimmedContent);
+        const finalizedTool = finalizeLiveToolCall(
+          result.id,
+          ToolCallStatus.Error,
+          trimmedContent,
+          trimmedContent,
+          result.name,
+        );
         if (finalizedTool) {
           setLastLiveActivityLabel(
             formatManagedLiveToolLabel(finalizedTool, managedTaskStatusRef.current?.activeWorkerTitle),
@@ -1597,7 +1755,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         return;
       }
       if (/^\[(?:Cancelled|Blocked)\]/.test(content)) {
-        const finalizedTool = finalizeActiveToolCall(ToolCallStatus.Cancelled, undefined, trimmedContent);
+        const finalizedTool = finalizeLiveToolCall(
+          result.id,
+          ToolCallStatus.Cancelled,
+          undefined,
+          trimmedContent,
+          result.name,
+        );
         if (finalizedTool) {
           setLastLiveActivityLabel(
             formatManagedLiveToolLabel(finalizedTool, managedTaskStatusRef.current?.activeWorkerTitle),
@@ -1605,7 +1769,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         }
         return;
       }
-      const finalizedTool = finalizeActiveToolCall(ToolCallStatus.Success, undefined, trimmedContent || undefined);
+      const finalizedTool = finalizeLiveToolCall(
+        result.id,
+        ToolCallStatus.Success,
+        undefined,
+        trimmedContent || undefined,
+        result.name,
+      );
       if (finalizedTool) {
         setLastLiveActivityLabel(
           formatManagedLiveToolLabel(finalizedTool, managedTaskStatusRef.current?.activeWorkerTitle),
@@ -1613,13 +1783,15 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
     },
     onStreamEnd: () => {
-      if (activeToolCallRef.current?.status === ToolCallStatus.Executing) {
-        const finalizedTool = finalizeActiveToolCall(ToolCallStatus.Cancelled, "Stream ended before the tool completed.");
-        if (finalizedTool) {
-          setLastLiveActivityLabel(
-            formatManagedLiveToolLabel(finalizedTool, managedTaskStatusRef.current?.activeWorkerTitle),
-          );
-        }
+      const finalizedTools = finalizeAllExecutingToolCalls(
+        ToolCallStatus.Cancelled,
+        () => ({ error: "Stream ended before the tool completed.", output: undefined }),
+      );
+      const lastFinalizedTool = finalizedTools[finalizedTools.length - 1];
+      if (lastFinalizedTool) {
+        setLastLiveActivityLabel(
+          formatManagedLiveToolLabel(lastFinalizedTool, managedTaskStatusRef.current?.activeWorkerTitle),
+        );
       }
       stopThinking();
       clearToolInputContent();
@@ -1627,18 +1799,21 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     },
     hasPendingInputs: () => pendingInputsRef.current.length > 0,
     onError: (error: Error) => {
-      if (activeToolCallRef.current?.name) {
+      const latestExecutingTool = findLatestExecutingTool();
+      if (latestExecutingTool?.name) {
         setLastLiveActivityLabel(
-          formatManagedLiveToolLabel(activeToolCallRef.current, managedTaskStatusRef.current?.activeWorkerTitle),
+          formatManagedLiveToolLabel(latestExecutingTool, managedTaskStatusRef.current?.activeWorkerTitle),
         );
       }
-      if (activeToolCallRef.current?.status === ToolCallStatus.Executing) {
-        const finalizedTool = finalizeActiveToolCall(ToolCallStatus.Error, error.message);
-        if (finalizedTool) {
-          setLastLiveActivityLabel(
-            formatManagedLiveToolLabel(finalizedTool, managedTaskStatusRef.current?.activeWorkerTitle),
-          );
-        }
+      const finalizedTools = finalizeAllExecutingToolCalls(
+        ToolCallStatus.Error,
+        () => ({ error: error.message, output: undefined }),
+      );
+      const lastFinalizedTool = finalizedTools[finalizedTools.length - 1];
+      if (lastFinalizedTool) {
+        setLastLiveActivityLabel(
+          formatManagedLiveToolLabel(lastFinalizedTool, managedTaskStatusRef.current?.activeWorkerTitle),
+        );
       }
       // Classify error to provide better user feedback
       const classification = classifyError(error);
@@ -1688,23 +1863,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     onManagedTaskStatus: (status) => {
       managedTaskStatusRef.current = status;
       setManagedTaskStatus(status);
-      if (status.activeWorkerTitle) {
-        const harnessShort = status.harnessProfile
-          ?.replace('H0_DIRECT', 'H0')
-          .replace('H1_EXECUTE_EVAL', 'H1')
-          .replace('H2_PLAN_EXECUTE_EVAL', 'H2');
-        if (status.phase === "preflight") {
-          setLastLiveActivityLabel("[Phase] Scout preflight");
-        } else if (status.phase === "routing") {
-          setLastLiveActivityLabel("[Routing]");
-        } else {
-          setLastLiveActivityLabel(`[Phase] ${status.agentMode.toUpperCase()} ${harnessShort ?? status.harnessProfile}${status.activeWorkerTitle ? ` - ${status.activeWorkerTitle}` : ""}`);
-        }
-      } else if (status.phase === "routing" && status.note) {
-        setLastLiveActivityLabel(`[Routing] ${status.note}`);
+      const liveStatusLabel = formatManagedTaskLiveStatusLabel(status);
+      if (liveStatusLabel) {
+        setLastLiveActivityLabel(liveStatusLabel);
       }
-        const breadcrumb = formatManagedTaskBreadcrumb(status);
-        if (breadcrumb && breadcrumb !== managedTaskBreadcrumbRef.current) {
+      const breadcrumb = formatManagedTaskBreadcrumb(status);
+      if (breadcrumb && breadcrumb !== managedTaskBreadcrumbRef.current) {
         const breadcrumbItem: CreatableHistoryItem = {
           type: "info",
           icon: ">",
@@ -1762,7 +1926,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       startNewIteration(iter);
       iterationToolsRef.current = [];
       iterationToolCallsRef.current = [];
-      activeToolCallRef.current = null;
+      resetLiveToolCalls();
       clearToolInputContent();
       setCurrentTool(undefined);
       setLastLiveActivityLabel(
@@ -1999,42 +2163,19 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     getThinkingContent,
     getFullResponse,
     setLastLiveActivityLabel,
-    syncActiveToolCall,
-    finalizeActiveToolCall,
+    addLiveToolCall,
+    updateExecutingTool,
+    finalizeLiveToolCall,
+    finalizeAllExecutingToolCalls,
+    findLatestExecutingTool,
+    resetLiveToolCalls,
     streamingState.currentTool,
   ]);
 
   // Helper function to show confirmation dialog
 
   const showConfirmDialog = (tool: string, input: Record<string, unknown>): Promise<ConfirmResult> => {
-    // Build confirmation prompt text.
-    let promptText: string;
-
-    // Handle simple confirm dialog (used by project commands, etc.)
-    // Handle the simple confirmation dialog used by project commands and similar flows.
-    if (tool === "confirm" && input._message) {
-      promptText = input._message as string;
-    } else {
-      const inputPreview = input.path
-        ? ` ${input.path as string}`
-        : input.command
-          ? ` ${(input.command as string).slice(0, 60)}${(input.command as string).length > 60 ? '...' : ''}`
-          : '';
-
-      switch (tool) {
-        case 'bash':
-          promptText = `Execute bash command?${inputPreview}`;
-          break;
-        case 'write':
-          promptText = `Write to file?${inputPreview}`;
-          break;
-        case 'edit':
-          promptText = `Edit file?${inputPreview}`;
-          break;
-        default:
-          promptText = `Execute ${tool}?`;
-      }
-    }
+    const promptText = buildToolConfirmationPrompt(tool, input);
 
     // Return a promise that resolves when the user answers.
     return new Promise<ConfirmResult>((resolve) => {
@@ -2084,7 +2225,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     }
 
     const title = extractTitle(context.messages);
-    const persistedUiHistory = uiHistoryOverride ?? serializeUiHistorySnapshot(history);
+    const persistedUiHistory = uiHistoryOverride ?? persistedUiHistoryRef.current;
+    persistedUiHistoryRef.current = persistedUiHistory;
     context.title = title;
     context.uiHistory = persistedUiHistory;
     await storage.save(context.sessionId, {
@@ -2093,9 +2235,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       gitRoot: context.gitRoot ?? "",
       uiHistory: persistedUiHistory,
     });
-  }, [context, history, storage]);
+  }, [context, storage]);
 
   const persistContextStateInBackground = useCallback((uiHistoryOverride?: KodaXSessionUiHistoryItem[]) => {
+    if (uiHistoryOverride !== undefined) {
+      persistedUiHistoryRef.current = uiHistoryOverride;
+    }
     const queuedSave = persistContextStateQueueRef.current
       .catch(() => {})
       .then(() => persistContextState(uiHistoryOverride));
@@ -2123,10 +2268,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     if (items.length === 0) {
       return;
     }
-    const nextUiHistory = [
-      ...serializeUiHistorySnapshot(historyRef.current),
-      ...serializeCreatableHistoryItems(items),
-    ];
+    const nextUiHistory = appendPersistedUiHistorySnapshot(persistedUiHistoryRef.current, items);
+    persistedUiHistoryRef.current = nextUiHistory;
     void persistContextStateInBackground(nextUiHistory);
   }, [persistContextStateInBackground]);
 
@@ -2203,7 +2346,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
     iterationToolsRef.current = [];
     iterationToolCallsRef.current = [];
-    activeToolCallRef.current = null;
+    resetLiveToolCalls();
     clearToolInputContent();
     setCurrentTool(undefined);
     setLastLiveActivityLabel(undefined);
@@ -2223,6 +2366,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     getThinkingContent,
     history,
     persistContextStateInBackground,
+    resetLiveToolCalls,
     setCurrentTool,
     setLastLiveActivityLabel,
     streamingState.currentIteration,
@@ -2434,7 +2578,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       setLastLiveActivityLabel(undefined);
       iterationToolsRef.current = [];
       iterationToolCallsRef.current = [];
-      activeToolCallRef.current = null;
+      resetLiveToolCalls();
       clearResponse();
       clearToolInputContent();
       setCurrentTool(undefined);
@@ -3036,6 +3180,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       runQueueableAgentSequence,
       startCompacting,
       stopCompacting,
+      resetLiveToolCalls,
     ]
   );
 
@@ -3102,6 +3247,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               thinkingContent={displayStreamingState.thinkingContent}
               streamingResponse={displayStreamingState.currentResponse}
               currentTool={displayStreamingState.currentTool}
+              activeToolCalls={displayStreamingState.activeToolCalls}
               toolInputCharCount={displayStreamingState.toolInputCharCount}
               toolInputContent={displayStreamingState.toolInputContent}
               iterationHistory={displayStreamingState.iterationHistory}
@@ -3315,16 +3461,11 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
   const storage = options.storage ?? new MemorySessionStorage();
 
   // Load config
-  const { loadConfig, getGitRoot } = await import("../common/utils.js");
+  const { prepareRuntimeConfig, getGitRoot } = await import("../common/utils.js");
   const { loadCompactionConfig } = await import("../common/compaction-config.js");
-  const { resolveProvider, registerCustomProviders } = await import("@kodax/coding");
+  const { resolveProvider } = await import("@kodax/coding");
 
-  const config = loadConfig();
-
-  // Initialize custom providers from config.
-  if (config.customProviders?.length) {
-    registerCustomProviders(config.customProviders);
-  }
+  const config = prepareRuntimeConfig();
 
   const initialProvider = options.provider ?? config.provider ?? KODAX_DEFAULT_PROVIDER;
   const initialModel = options.model ?? config.model;

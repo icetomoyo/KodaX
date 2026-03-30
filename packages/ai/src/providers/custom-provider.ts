@@ -13,6 +13,33 @@ import { KodaXBaseProvider } from './base.js';
 import { KodaXAnthropicCompatProvider } from './anthropic.js';
 import { KodaXOpenAICompatProvider } from './openai.js';
 
+const VALID_CUSTOM_PROVIDER_USER_AGENT_MODES = new Set(['compat', 'sdk']);
+
+export function validateCustomProviderConfig(
+  custom: KodaXCustomProviderConfig,
+): void {
+  if (!custom.name || !custom.baseUrl || !custom.apiKeyEnv || !custom.model) {
+    throw new Error(
+      `Custom provider requires name, baseUrl, apiKeyEnv, and model. Got: ${JSON.stringify({ name: custom.name, baseUrl: custom.baseUrl, apiKeyEnv: custom.apiKeyEnv, model: custom.model })}`,
+    );
+  }
+
+  if (custom.protocol !== 'anthropic' && custom.protocol !== 'openai') {
+    throw new Error(
+      `Unknown protocol "${custom.protocol}" for custom provider "${custom.name}". Must be "anthropic" or "openai".`,
+    );
+  }
+
+  if (
+    custom.userAgentMode !== undefined
+    && !VALID_CUSTOM_PROVIDER_USER_AGENT_MODES.has(custom.userAgentMode)
+  ) {
+    throw new Error(
+      `Unknown userAgentMode "${custom.userAgentMode}" for custom provider "${custom.name}". Must be "compat" or "sdk".`,
+    );
+  }
+}
+
 function buildProviderConfig(custom: KodaXCustomProviderConfig): KodaXProviderConfig {
   const models = custom.models?.length
     ? custom.models.map(id => ({ id }))
@@ -23,6 +50,7 @@ function buildProviderConfig(custom: KodaXCustomProviderConfig): KodaXProviderCo
     model: custom.model,
     baseUrl: custom.baseUrl,
     models,
+    userAgentMode: custom.userAgentMode,
     supportsThinking: custom.supportsThinking ?? false,
     reasoningCapability: custom.reasoningCapability ?? 'none',
     capabilityProfile: custom.capabilityProfile,
@@ -33,14 +61,7 @@ function buildProviderConfig(custom: KodaXCustomProviderConfig): KodaXProviderCo
 }
 
 export function createCustomProvider(custom: KodaXCustomProviderConfig): KodaXBaseProvider {
-  if (!custom.name || !custom.baseUrl || !custom.apiKeyEnv || !custom.model) {
-    throw new Error(
-      `Custom provider requires name, baseUrl, apiKeyEnv, and model. Got: ${JSON.stringify({ name: custom.name, baseUrl: custom.baseUrl, apiKeyEnv: custom.apiKeyEnv, model: custom.model })}`
-    );
-  }
-  if (custom.protocol !== 'anthropic' && custom.protocol !== 'openai') {
-    throw new Error(`Unknown protocol "${custom.protocol}" for custom provider "${custom.name}". Must be "anthropic" or "openai".`);
-  }
+  validateCustomProviderConfig(custom);
 
   const config = buildProviderConfig(custom);
 

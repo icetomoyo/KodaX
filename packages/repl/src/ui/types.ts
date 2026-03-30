@@ -154,6 +154,7 @@ export interface StatusBarProps {
     total: number;
   };
   currentTool?: string;
+  activeToolCount?: number;
   thinking?: boolean;
   reasoningMode?: KodaXReasoningMode;
   reasoningCapability?: string;

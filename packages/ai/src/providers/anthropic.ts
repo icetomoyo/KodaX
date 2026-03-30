@@ -27,6 +27,16 @@ import {
   resolveThinkingBudget,
 } from '../reasoning.js';
 
+const KODAX_ANTHROPIC_COMPAT_USER_AGENT = 'KodaX';
+
+function getAnthropicCompatDefaultHeaders(
+  config: KodaXProviderConfig,
+): Record<string, string> | undefined {
+  return config.userAgentMode === 'sdk'
+    ? undefined
+    : { 'User-Agent': KODAX_ANTHROPIC_COMPAT_USER_AGENT };
+}
+
 type AnthropicUsageLike = {
   input_tokens?: number | null;
   output_tokens?: number | null;
@@ -91,7 +101,14 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
   protected client!: Anthropic;
 
   protected initClient(): void {
-    this.client = new Anthropic({ apiKey: this.getApiKey(), baseURL: this.config.baseUrl });
+    const defaultHeaders = getAnthropicCompatDefaultHeaders(this.config);
+    this.client = new Anthropic({
+      apiKey: this.getApiKey(),
+      baseURL: this.config.baseUrl,
+      // Some Anthropic-compatible gateways block the SDK's default
+      // "Anthropic/JS ..." user agent even when the request is otherwise valid.
+      ...(defaultHeaders ? { defaultHeaders } : {}),
+    });
   }
 
   async stream(
@@ -252,7 +269,11 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
             streamOptions?.onTextDelta?.(delta.text ?? '');
           } else if (delta.type === 'input_json_delta') {
             currentToolInput += delta.partial_json ?? '';
-            streamOptions?.onToolInputDelta?.(currentToolName, delta.partial_json ?? '');
+            streamOptions?.onToolInputDelta?.(
+              currentToolName,
+              delta.partial_json ?? '',
+              currentToolId ? { toolId: currentToolId } : undefined,
+            );
           }
         } else if (event.type === 'content_block_stop') {
           lastEventTime = Date.now();  // Issue 084: Track last event time
@@ -301,7 +322,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
           lastEventTime = Date.now();
           if (process.env.KODAX_DEBUG_STREAM) {
             const duration = Date.now() - streamStartTime;
-            console.error(`[Stream] message_stop received after ${duration}ms`);
+            this.logStreamDiagnostic(`[Stream] message_stop received after ${duration}ms`);
           }
         } else if (event.type === 'message_delta') {
           // Issue 084 fix: Track message_delta events (contain stop_reason, usage)
@@ -313,7 +334,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
           if (process.env.KODAX_DEBUG_STREAM) {
             const delta = (event as any).delta;
             if (delta?.stop_reason) {
-              console.error(`[Stream] message_delta with stop_reason: ${delta.stop_reason}`);
+              this.logStreamDiagnostic(`[Stream] message_delta with stop_reason: ${delta.stop_reason}`);
             }
           }
         } else if (event.type === 'message_start') {
@@ -324,7 +345,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
             usage,
           );
           if (process.env.KODAX_DEBUG_STREAM) {
-            console.error('[Stream] message_start received');
+            this.logStreamDiagnostic('[Stream] message_start received');
           }
         }
       }
@@ -344,7 +365,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
             : typeof signal.reason === 'string'
               ? signal.reason
               : 'Request aborted';
-          console.error('[Stream] Stream ended after abort before message_stop:', {
+          this.logStreamDiagnostic('[Stream] Stream ended after abort before message_stop:', {
             duration,
             lastEventAge,
             reason,
@@ -361,7 +382,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
           `This may indicate a network disconnection or API timeout.`
         );
         error.name = 'StreamIncompleteError';
-        console.error('[Stream] Incomplete stream detected:', {
+        this.logStreamDiagnostic('[Stream] Incomplete stream detected:', {
           duration,
           lastEventAge,
           textBlocks: textBlocks.length,

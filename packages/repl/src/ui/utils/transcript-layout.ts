@@ -45,6 +45,7 @@ export interface TranscriptBuildOptions {
   thinkingContent?: string;
   streamingResponse?: string;
   currentTool?: string;
+  activeToolCalls?: ToolCall[];
   toolInputCharCount?: number;
   toolInputContent?: string;
   iterationHistory?: IterationRecord[];
@@ -245,6 +246,38 @@ function buildToolRows(
   }
 }
 
+function buildLiveToolRows(
+  rows: TranscriptRow[],
+  itemKey: string,
+  tool: ToolCall,
+  viewportWidth: number,
+): void {
+  const isExecuting = tool.status === ToolCallStatus.Executing;
+  const prefix = isExecuting ? "" : `${getToolStatusIcon(tool.status)} `;
+  pushWrappedRows(
+    rows,
+    `${itemKey}-tool-${tool.id}-main`,
+    `${prefix}${formatCollapsedToolInlineText({ tool, count: 1 })}`,
+    getBodyWidth(viewportWidth, 2),
+    {
+      color: getToolStatusColor(tool.status),
+      indent: 2,
+      bold: isExecuting,
+      spinner: isExecuting,
+    }
+  );
+
+  if (tool.error) {
+    pushWrappedRows(
+      rows,
+      `${itemKey}-tool-${tool.id}-error`,
+      tool.error,
+      getBodyWidth(viewportWidth, 4),
+      { color: "error", indent: 4 }
+    );
+  }
+}
+
 export function buildTranscriptRows(options: TranscriptBuildOptions): TranscriptRow[] {
   const {
     items,
@@ -256,6 +289,7 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
     thinkingContent = "",
     streamingResponse = "",
     currentTool,
+    activeToolCalls = [],
     toolInputCharCount = 0,
     toolInputContent = "",
     iterationHistory = [],
@@ -492,8 +526,51 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
         : managedHarnessProfile
           ? `[${managedAgentMode ? managedAgentMode.toUpperCase() : 'AMA'} ${managedHarnessShort ?? managedHarnessProfile}${managedWorkerTitle ? ` - ${managedWorkerTitle}` : ''}] `
           : "";
+    const activeToolCount = activeToolCalls.filter((tool) => tool.status === ToolCallStatus.Executing).length;
+    const completedToolCount = activeToolCalls.filter((tool) => tool.status === ToolCallStatus.Success).length;
+    const erroredToolCount = activeToolCalls.filter((tool) => tool.status === ToolCallStatus.Error).length;
+    const cancelledToolCount = activeToolCalls.filter((tool) => tool.status === ToolCallStatus.Cancelled).length;
+    const shouldRenderLiveToolBlock = activeToolCalls.length > 0 && (activeToolCount > 0 || !streamingResponse);
+    let renderedStickyToolBlock = false;
+
     if (isCompacting) {
       loadingText = "Compacting";
+    } else if (shouldRenderLiveToolBlock) {
+      const summaryParts: string[] = [];
+      if (activeToolCount > 0) {
+        summaryParts.push(`${activeToolCount} running`);
+      }
+      if (completedToolCount > 0) {
+        summaryParts.push(`${completedToolCount} done`);
+      }
+      if (erroredToolCount > 0) {
+        summaryParts.push(`${erroredToolCount} error`);
+      }
+      if (cancelledToolCount > 0) {
+        summaryParts.push(`${cancelledToolCount} cancelled`);
+      }
+      if (summaryParts.length === 0) {
+        summaryParts.push(`${activeToolCalls.length} tools`);
+      }
+      pushWrappedRows(
+        rows,
+        "loading-tools-header",
+        `${managedPrefix}[Tools] ${summaryParts.join(", ")}`,
+        viewportWidth,
+        {
+          color: "primary",
+          bold: true,
+          spinner: activeToolCount > 0,
+        }
+      );
+      activeToolCalls.forEach((tool) => {
+        buildLiveToolRows(rows, "loading-tools", tool, viewportWidth);
+      });
+      pushBlankRow(rows, "loading-tools-blank");
+      renderedStickyToolBlock = true;
+      if (activeToolCount > 0) {
+        return rows;
+      }
     } else if (currentTool) {
       prefix = managedPrefix || "[Tool] ";
       loadingText = normalizedLiveActivityLabel?.startsWith("[Tools]")
@@ -509,7 +586,7 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
         : normalizedLiveActivityLabel
           ? `${normalizedLiveActivityLabel}${roundSuffix}`
           : `processing${roundSuffix}`;
-    } else if (normalizedLiveActivityLabel) {
+    } else if (normalizedLiveActivityLabel && !renderedStickyToolBlock) {
       loadingText = normalizedLiveActivityLabel;
     }
 

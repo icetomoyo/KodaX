@@ -24,7 +24,8 @@ export async function withRetry<T>(
     delay: number,
     error: Error,
     classification: ErrorClassification,
-  ) => void
+  ) => void,
+  signal?: AbortSignal,
 ): Promise<T> {
   let lastError: Error | undefined;
   let currentClassification = defaultClassification;
@@ -62,10 +63,34 @@ export async function withRetry<T>(
       }
 
       // 等待后重试
-      await new Promise(resolve => setTimeout(resolve, delay));
+      await waitForRetryDelay(delay, signal);
     }
   }
 
   // 理论上不会到达这里，但 TypeScript 需要它
   throw lastError ?? new Error('Unexpected end of retry loop');
+}
+
+function waitForRetryDelay(delay: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason instanceof Error ? signal.reason : new DOMException('Request aborted', 'AbortError'));
+      return;
+    }
+
+    let timeoutId: ReturnType<typeof setTimeout>;
+
+    const onAbort = () => {
+      clearTimeout(timeoutId);
+      signal?.removeEventListener('abort', onAbort);
+      reject(signal.reason instanceof Error ? signal.reason : new DOMException('Request aborted', 'AbortError'));
+    };
+
+    timeoutId = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, delay);
+
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }

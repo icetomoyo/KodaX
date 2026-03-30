@@ -1,6 +1,6 @@
 # Feature 总表
 
-> Last updated: 2026-03-30
+> Last updated: 2026-03-31
 
 > 中文阅读说明：
 > 这份 `FEATURE_LIST` 是 roadmap 的总索引。
@@ -13,18 +13,18 @@
 
 | Item | Value |
 |---|---|
-| Tracked feature IDs | `001-044` |
-| Total tracked features | `44` |
+| Tracked feature IDs | `001-045` |
+| Total tracked features | `45` |
 | Completed | `34` |
 | InProgress | `0` |
-| Planned | `10` |
+| Planned | `11` |
 | Current released version | `v0.7.10` |
 
 ### 各版本待做分布
 
 | Version | Planned features |
 |---|---|
-| `v0.7.0` | `1` |
+| `v0.7.15` | `1` |
 | `v0.7.20` | `1` |
 | `v0.8.0` | `4` |
 | `v0.9.0` | `3` |
@@ -37,6 +37,7 @@
 | ID | Title | Category | Priority | Planned | Design |
 |---|---|---|---|---|---|
 | `007` | Theme System Consolidation | Enhancement | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_007-theme-system-consolidation) |
+| `045` | Provider Stream Resilience and Graceful Recovery | Enhancement | High | `v0.7.15` | [v0.7.15](features/v0.7.15.md#feature_045-provider-stream-resilience-and-graceful-recovery) |
 | `023` | Dual-Mode Terminal UX | Enhancement | High | `v1.0.0` | [v1.0.0](features/v1.0.0.md#feature_023-dual-mode-terminal-ux) |
 | `026` | Roadmap Integrity and Planning Hygiene | Internal | High | `v0.7.20` | [v0.7.20](features/v0.7.20.md#feature_026-roadmap-integrity-and-planning-hygiene) |
 | `030` | Multi-Surface Delivery | Enhancement | High | `v1.0.0` | [v1.0.0](features/v1.0.0.md#feature_030-multi-surface-delivery) |

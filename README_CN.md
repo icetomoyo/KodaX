@@ -92,11 +92,14 @@ CLI 默认配置可以写到 `~/.kodax/config.json`：
       "protocol": "openai",
       "baseUrl": "https://example.com/v1",
       "apiKeyEnv": "MY_LLM_API_KEY",
-      "model": "my-model"
+      "model": "my-model",
+      "userAgentMode": "compat"
     }
   ]
 }
 ```
+
+`userAgentMode` 默认是 `"compat"`，会发送 `KodaX` 而不是官方 SDK 的 `User-Agent`。只有在你的网关明确要求官方 SDK 头时，再改成 `"sdk"`。
 
 ### 3. 进入 REPL 或执行单次任务
 
@@ -136,6 +139,7 @@ registerCustomProviders([
     baseUrl: 'https://example.com/v1',
     apiKeyEnv: 'MY_LLM_API_KEY',
     model: 'my-model',
+    userAgentMode: 'compat',
   },
 ]);
 

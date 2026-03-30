@@ -126,6 +126,13 @@ describe('custom providers', () => {
         protocol: 'bogus' as KodaXCustomProviderConfig['protocol'],
       }),
     ).toThrowError(/unknown protocol/i);
+
+    expect(() =>
+      createCustomProvider({
+        ...cloneConfig(OPENAI_CUSTOM),
+        userAgentMode: 'official' as KodaXCustomProviderConfig['userAgentMode'],
+      }),
+    ).toThrowError(/unknown useragentmode/i);
   });
 
   it('tracks registered custom providers without instantiating them', () => {
@@ -174,6 +181,86 @@ describe('custom providers', () => {
     expect(getCustomProvider('missing-provider')).toBeUndefined();
   });
 
+  it('overrides the OpenAI SDK user agent for compatibility gateways', async () => {
+    vi.stubEnv('CUSTOM_OPENAI_API_KEY', 'configured-key');
+    const provider = createCustomProvider(cloneConfig(OPENAI_CUSTOM)) as any;
+
+    const request = await provider.client.buildRequest({
+      method: 'post',
+      path: '/chat/completions',
+      body: {
+        model: provider.getModel(),
+        messages: [{ role: 'user', content: 'hello' }],
+        stream: false,
+      },
+    });
+
+    expect(request.req.headers.get('user-agent')).toBe('KodaX');
+  });
+
+  it('keeps the OpenAI SDK user agent when custom providers opt into sdk mode', async () => {
+    vi.stubEnv('CUSTOM_OPENAI_API_KEY', 'configured-key');
+    const provider = createCustomProvider(
+      cloneConfig({
+        ...OPENAI_CUSTOM,
+        userAgentMode: 'sdk',
+      }),
+    ) as any;
+
+    const request = await provider.client.buildRequest({
+      method: 'post',
+      path: '/chat/completions',
+      body: {
+        model: provider.getModel(),
+        messages: [{ role: 'user', content: 'hello' }],
+        stream: false,
+      },
+    });
+
+    expect(request.req.headers.get('user-agent')).toMatch(/^OpenAI\/JS/i);
+  });
+
+  it('overrides the Anthropic SDK user agent for compatibility gateways', async () => {
+    vi.stubEnv('CUSTOM_ANTHROPIC_API_KEY', 'configured-key');
+    const provider = createCustomProvider(cloneConfig(ANTHROPIC_CUSTOM)) as any;
+
+    const request = await provider.client.buildRequest({
+      method: 'post',
+      path: '/v1/messages',
+      body: {
+        model: provider.getModel(),
+        max_tokens: 128,
+        messages: [{ role: 'user', content: 'hello' }],
+        stream: false,
+      },
+    });
+
+    expect(request.req.headers.get('user-agent')).toBe('KodaX');
+  });
+
+  it('keeps the Anthropic SDK user agent when custom providers opt into sdk mode', async () => {
+    vi.stubEnv('CUSTOM_ANTHROPIC_API_KEY', 'configured-key');
+    const provider = createCustomProvider(
+      cloneConfig({
+        ...ANTHROPIC_CUSTOM,
+        userAgentMode: 'sdk',
+      }),
+    ) as any;
+
+    const request = await provider.client.buildRequest({
+      method: 'post',
+      path: '/v1/messages',
+      body: {
+        model: provider.getModel(),
+        max_tokens: 128,
+        messages: [{ role: 'user', content: 'hello' }],
+        stream: false,
+      },
+    });
+
+    expect(request.req.headers.get('user-agent')).toMatch(/^Anthropic\/JS/i);
+  });
+
   it('rejects duplicate custom provider names during registration', () => {
     expect(() =>
       registerCustomProviders([
@@ -181,6 +268,23 @@ describe('custom providers', () => {
         cloneConfig({ ...OPENAI_CUSTOM, baseUrl: 'https://duplicate.test/v1' }),
       ]),
     ).toThrowError(/duplicate custom provider name/i);
+  });
+
+  it('rejects invalid userAgentMode during registration without mutating the existing registry', () => {
+    vi.stubEnv('CUSTOM_OPENAI_API_KEY', 'configured-key');
+    registerCustomProviders([cloneConfig(OPENAI_CUSTOM)]);
+
+    expect(() =>
+      registerCustomProviders([
+        cloneConfig({
+          ...ANTHROPIC_CUSTOM,
+          userAgentMode: 'official' as KodaXCustomProviderConfig['userAgentMode'],
+        }),
+      ]),
+    ).toThrowError(/unknown useragentmode/i);
+
+    expect(getCustomProviderNames()).toEqual(['custom-openai']);
+    expect(getCustomProvider('custom-openai')?.getModel()).toBe('custom-main');
   });
 
   it('warns when a custom provider shadows a built-in one, while the built-in still wins', () => {

@@ -90,12 +90,18 @@ interface ManagedTaskRepoIntelligenceSnapshot {
   artifacts: KodaXTaskEvidenceArtifact[];
 }
 
+interface ManagedTaskRepoIntelligenceContext {
+  executionCwd?: string;
+  gitRoot?: string;
+}
+
 interface ManagedTaskVerdictDirective {
   source: 'evaluator' | 'worker';
   status: 'accept' | 'revise' | 'blocked';
   reason?: string;
   followups: string[];
   userFacingText: string;
+  userAnswer?: string;
   artifactPath?: string;
   nextHarness?: KodaXTaskRoutingDecision['harnessProfile'];
 }
@@ -2499,6 +2505,11 @@ function createRolePrompt(
       'Do not describe yourself as reviewing or judging another role.',
       'Keep evaluator-only reasoning inside the final verdict block and supporting artifacts.',
     ].join('\n');
+  const parallelBatchGuidance = [
+    'When multiple read-only tool calls are independent, emit them in the same response so parallel mode can run them together.',
+    'Only serialize tool calls when a later call depends on an earlier result.',
+    'Keep parallel batches focused: prefer a few narrow grep/read/diff calls over many tiny sequential probes.',
+  ].join('\n');
   const scoutReviewEvidenceGuidance = reviewLikeTask
     ? [
       'For large or history-based reviews, stay at the scope-facts level first: changed_scope -> repo_overview (only when needed) -> a small amount of changed_diff_bundle for high-priority files.',
@@ -2587,6 +2598,7 @@ function createRolePrompt(
         metadataSection,
         verificationSection,
         toolPolicySection,
+        parallelBatchGuidance,
         scoutSkillSection,
         previousRoleSummarySection,
         'Decide whether this task should stay direct or escalate to H1/H2. Prefer a direct answer whenever the task can be completed safely without heavier coordination.',
@@ -2631,6 +2643,7 @@ function createRolePrompt(
         metadataSection,
         verificationSection,
         toolPolicySection,
+        parallelBatchGuidance,
         plannerSkillSection,
         previousRoleSummarySection,
         plannerReviewEvidenceGuidance,
@@ -2662,6 +2675,7 @@ function createRolePrompt(
         metadataSection,
         verificationSection,
         toolPolicySection,
+        parallelBatchGuidance,
         generatorSkillSection,
         reviewPresentationRule,
         generatorReviewEvidenceGuidance,
@@ -2686,6 +2700,7 @@ function createRolePrompt(
         metadataSection,
         verificationSection,
         toolPolicySection,
+        parallelBatchGuidance,
         evaluatorSkillSection,
         previousRoleSummarySection,
         reviewPresentationRule,
@@ -2714,13 +2729,14 @@ function createRolePrompt(
           `Append a final fenced block named \`\`\`${MANAGED_TASK_VERDICT_BLOCK}\` with this exact shape:`,
           `status: accept|revise|blocked`,
           'reason: <one-line reason>',
+          'user_answer: <optional final user-facing answer; multi-line content may continue on following lines>',
           decision.harnessProfile === 'H1_EXECUTE_EVAL'
             ? undefined
             : 'next_harness: <optional stronger harness when revise requires it>',
           'followup:',
           '- <required next step>',
           '- <optional second next step>',
-          'Keep the user-facing answer above the block. Use status=revise when more execution should happen before acceptance.',
+          'Prefer putting the final user-facing answer in user_answer:. If omitted, keep the user-facing answer above the block. Use status=revise when more execution should happen before acceptance.',
         ].join('\n'),
       ].filter((section): section is string => Boolean(section)).join('\n\n');
     case 'direct':
@@ -3174,8 +3190,8 @@ function sanitizeEvaluatorPublicAnswer(text: string): string {
   const remaining = [...paragraphs];
   let removedInternalFraming = false;
 
-  const evaluatorFramingPattern = /\b(generator|planner|evaluator|verdict|contract|handoff|managed task)\b/i;
-  const evaluatorActionPattern = /\b(confirm|confirmed|verify|verified|verification|evaluate|evaluated|evaluation|judge|judged|judging|grade|graded|grading|spot-check|spot check|inspect|inspected|checking)\b/i;
+  const internalRolePattern = /\b(generator|planner|evaluator|verdict|contract|handoff|managed task)\b/i;
+  const internalMetaPattern = /\b(spot-check|spot check|verification|double-check|double check|sufficient evidence)\b/i;
   const explicitProcessLeadPattern = /^(confirmed:|i now have sufficient evidence\b|let me (?:verify|check|double-check|review)\b|now let me\b|good\.\s*now let me\b|from the code i(?:'ve| have)? already (?:read|checked|reviewed)\b|here is my final evaluation\b)/i;
 
   while (remaining.length > 0) {
@@ -3192,18 +3208,14 @@ function sanitizeEvaluatorPublicAnswer(text: string): string {
       continue;
     }
 
-    const mentionsInternalRole = evaluatorFramingPattern.test(paragraph);
-    const mentionsEvaluationAction = evaluatorActionPattern.test(paragraph);
-    const isGenericEvaluationLead = /^here is my final evaluation\b/i.test(paragraph)
-      || (/^i(?:'ve| have)? completed\b/i.test(paragraph) && mentionsEvaluationAction);
     const isExplicitProcessLead = explicitProcessLeadPattern.test(paragraph);
-    const isFirstPersonProcessLead = /^i\b/i.test(paragraph) && mentionsEvaluationAction;
+    const isInternalProcessLead = /^i\b/i.test(paragraph)
+      && internalRolePattern.test(paragraph)
+      && internalMetaPattern.test(paragraph);
 
     if (
       isExplicitProcessLead
-      || isGenericEvaluationLead
-      || (mentionsInternalRole && mentionsEvaluationAction)
-      || isFirstPersonProcessLead
+      || isInternalProcessLead
     ) {
       remaining.shift();
       removedInternalFraming = true;
@@ -3484,44 +3496,77 @@ function parseManagedTaskVerdictDirective(text: string): ManagedTaskVerdictDirec
   const visibleText = sanitizeManagedUserFacingText(text.slice(0, match.index ?? text.length).trim());
   let status: ManagedTaskVerdictDirective['status'] | undefined;
   let reason: string | undefined;
+  let userAnswer: string | undefined;
   let nextHarness: ManagedTaskVerdictDirective['nextHarness'];
   const followups: string[] = [];
-  let inFollowups = false;
+  let activeSection: 'followup' | 'user_answer' | undefined;
+  let userAnswerLines: string[] = [];
+
+  const flushUserAnswer = () => {
+    if (userAnswerLines.length === 0) {
+      return;
+    }
+    userAnswer = userAnswerLines.join('\n').trim() || undefined;
+    userAnswerLines = [];
+  };
 
   for (const rawLine of body.split(/\r?\n/)) {
     const line = rawLine.trim();
+    const normalized = line.toLowerCase();
+    const fieldMatch = normalized.match(/^(status|reason|user_answer|next_harness|followup):\s*(.*)$/);
+    if (activeSection === 'user_answer' && fieldMatch && fieldMatch[1] !== 'user_answer') {
+      flushUserAnswer();
+      activeSection = undefined;
+    }
     if (!line) {
+      if (activeSection === 'user_answer') {
+        userAnswerLines.push('');
+      }
       continue;
     }
-    if (line.toLowerCase().startsWith('status:')) {
+    if (normalized.startsWith('status:')) {
       const candidate = line.slice('status:'.length).trim().toLowerCase();
       if (candidate === 'accept' || candidate === 'revise' || candidate === 'blocked') {
         status = candidate;
       }
-      inFollowups = false;
+      activeSection = undefined;
       continue;
     }
-      if (line.toLowerCase().startsWith('reason:')) {
-        reason = line.slice('reason:'.length).trim();
-        inFollowups = false;
-        continue;
+    if (normalized.startsWith('reason:')) {
+      reason = line.slice('reason:'.length).trim();
+      activeSection = undefined;
+      continue;
+    }
+    if (normalized.startsWith('user_answer:')) {
+      flushUserAnswer();
+      activeSection = 'user_answer';
+      const firstLine = rawLine.replace(/^\s*user_answer:\s*/i, '');
+      userAnswerLines.push(firstLine);
+      continue;
+    }
+    if (normalized.startsWith('next_harness:')) {
+      const candidate = line.slice('next_harness:'.length).trim();
+      if (candidate === 'H1_EXECUTE_EVAL' || candidate === 'H2_PLAN_EXECUTE_EVAL') {
+        nextHarness = candidate;
       }
-      if (line.toLowerCase().startsWith('next_harness:')) {
-        const candidate = line.slice('next_harness:'.length).trim();
-        if (candidate === 'H1_EXECUTE_EVAL' || candidate === 'H2_PLAN_EXECUTE_EVAL') {
-          nextHarness = candidate;
-        }
-        inFollowups = false;
-        continue;
-      }
-      if (line.toLowerCase().startsWith('followup:')) {
-        inFollowups = true;
-        continue;
-      }
-    if (inFollowups) {
+      activeSection = undefined;
+      continue;
+    }
+    if (normalized.startsWith('followup:')) {
+      flushUserAnswer();
+      activeSection = 'followup';
+      continue;
+    }
+    if (activeSection === 'user_answer') {
+      userAnswerLines.push(rawLine);
+      continue;
+    }
+    if (activeSection === 'followup') {
       followups.push(line.replace(/^-+\s*/, '').trim());
     }
   }
+
+  flushUserAnswer();
 
   if (!status) {
     return undefined;
@@ -3529,13 +3574,14 @@ function parseManagedTaskVerdictDirective(text: string): ManagedTaskVerdictDirec
 
   return {
     source: 'evaluator',
-      status,
-      reason,
-      nextHarness,
-      followups: followups.filter(Boolean),
-      userFacingText: visibleText,
-    };
-  }
+    status,
+    reason,
+    nextHarness,
+    followups: followups.filter(Boolean),
+    userFacingText: visibleText,
+    userAnswer,
+  };
+}
 
 function parseManagedTaskContractDirective(text: string): ManagedTaskContractDirective | undefined {
   const match = text.match(new RegExp(String.raw`(?:\r?\n)?\`\`\`${MANAGED_TASK_CONTRACT_BLOCK}\s*([\s\S]*?)\`\`\`\s*$`, 'i'));
@@ -3745,7 +3791,10 @@ function sanitizeManagedWorkerResult(
     return { result };
   }
 
-  const sanitizedText = sanitizeEvaluatorPublicAnswer(directive.userFacingText || text) || (directive.userFacingText || text);
+  const preferredUserText = directive.userAnswer?.trim() || directive.userFacingText || text;
+  const sanitizedText = directive.userAnswer?.trim()
+    ? preferredUserText
+    : sanitizeEvaluatorPublicAnswer(preferredUserText) || preferredUserText;
   return {
     directive,
     result: {
@@ -4001,8 +4050,12 @@ function createWorkerEvents(
         name: forwardStream ? result.name : `${worker.title}:${result.name}`,
       });
     },
-    onToolInputDelta: (toolName, partialJson) => {
-      baseEvents?.onToolInputDelta?.(forwardStream ? toolName : `${worker.title}:${toolName}`, partialJson);
+    onToolInputDelta: (toolName, partialJson, meta) => {
+      baseEvents?.onToolInputDelta?.(
+        forwardStream ? toolName : `${worker.title}:${toolName}`,
+        partialJson,
+        meta,
+      );
     },
     onRetry: baseEvents?.onRetry,
     onProviderRateLimit: baseEvents?.onProviderRateLimit,
@@ -4074,12 +4127,21 @@ function mergeEvidenceArtifacts(
   return Array.from(merged.values());
 }
 
-async function captureManagedTaskRepoIntelligence(
+function resolveManagedTaskRepoIntelligenceContext(
   options: KodaXOptions,
+): ManagedTaskRepoIntelligenceContext {
+  return {
+    executionCwd: options.context?.executionCwd?.trim() || undefined,
+    gitRoot: options.context?.gitRoot?.trim() || undefined,
+  };
+}
+
+async function captureManagedTaskRepoIntelligence(
+  context: ManagedTaskRepoIntelligenceContext,
   workspaceDir: string,
 ): Promise<ManagedTaskRepoIntelligenceSnapshot> {
-  const executionCwd = options.context?.executionCwd?.trim();
-  const gitRoot = options.context?.gitRoot?.trim();
+  const executionCwd = context.executionCwd;
+  const gitRoot = context.gitRoot;
   if (!executionCwd && !gitRoot) {
     return { artifacts: [] };
   }
@@ -4176,11 +4238,25 @@ async function captureManagedTaskRepoIntelligence(
   return { artifacts };
 }
 
+function scheduleManagedTaskRepoIntelligenceCapture(
+  context: ManagedTaskRepoIntelligenceContext,
+  workspaceDir: string,
+): void {
+  queueMicrotask(() => {
+    void captureManagedTaskRepoIntelligence(context, workspaceDir).catch((error) => {
+      debugLogRepoIntelligence('Background task-scoped repo intelligence capture failed.', error);
+    });
+  });
+}
+
 async function attachManagedTaskRepoIntelligence(
   options: KodaXOptions,
   task: KodaXManagedTask,
 ): Promise<KodaXManagedTask> {
-  const snapshot = await captureManagedTaskRepoIntelligence(options, task.evidence.workspaceDir);
+  const snapshot = await captureManagedTaskRepoIntelligence(
+    resolveManagedTaskRepoIntelligenceContext(options),
+    task.evidence.workspaceDir,
+  );
   if (snapshot.artifacts.length === 0) {
     return task;
   }
@@ -5821,7 +5897,6 @@ export async function runManagedTask(
       managedOptions.context?.skillInvocation,
       skillMap,
     );
-    scoutShape.task = await attachManagedTaskRepoIntelligence(managedOptions, scoutShape.task);
     const scoutRoleRoundSummary = buildManagedWorkerRoundSummary(
       scoutShape.task,
       scoutShape.workers[0]!,
@@ -5886,6 +5961,10 @@ export async function runManagedTask(
       upgradeCeiling: finalRoutingDecision.upgradeCeiling,
       ...buildManagedStatusBudgetFields(scoutCompleteBudgetController),
     });
+    scheduleManagedTaskRepoIntelligenceCapture(
+      resolveManagedTaskRepoIntelligenceContext(managedOptions),
+      scoutShape.workspaceDir,
+    );
     return {
       ...scoutExecution.result,
       managedTask: scoutManagedTask,

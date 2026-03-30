@@ -35,7 +35,7 @@ describe('createJsonEvents', () => {
     events.onIterationStart?.(1, 5);
     events.onTextDelta?.('hello');
     events.onToolUseStart?.({ id: 'tool-1', name: 'read', input: { path: 'README.md' } });
-    events.onToolInputDelta?.('read', '{"path":"README.md"}');
+    events.onToolInputDelta?.('read', '{"path":"README.md"}', { toolId: 'tool-1' });
     events.onToolResult?.({ id: 'tool-1', name: 'read', content: 'file contents' });
     events.onIterationEnd?.({
       iter: 1,
@@ -59,6 +59,7 @@ describe('createJsonEvents', () => {
         type: 'tool.input.delta',
         toolName: 'read',
         partialJson: '{"path":"README.md"}',
+        toolId: 'tool-1',
       },
       {
         type: 'tool.result',
