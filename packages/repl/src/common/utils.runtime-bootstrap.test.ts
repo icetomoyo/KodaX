@@ -47,6 +47,7 @@ describe('runtime bootstrap helpers', () => {
           '__KODAX_SHELL_ENV_START__\0',
           'CUSTOM_OPENAI_API_KEY=from-shell\0',
           'EXISTING_TOKEN=override-attempt\0',
+          'TERM=dumb\0',
           'PATH=/opt/homebrew/bin:/usr/bin\0',
         ].join(''),
         stderr: '',
@@ -66,16 +67,23 @@ describe('runtime bootstrap helpers', () => {
       expect(env.CUSTOM_OPENAI_API_KEY).toBe('from-shell');
       expect(env.EXISTING_TOKEN).toBe('keep-me');
       expect(env.PATH).toBe('/usr/bin');
-        expect(run).toHaveBeenCalledWith(
-          '/bin/zsh',
-          ['-ic', "printf '%s\\0' '__KODAX_SHELL_ENV_START__'; env -0"],
-          expect.objectContaining({
-            encoding: 'utf8',
-            timeout: 5000,
-            windowsHide: true,
+      expect(env.TERM).toBeUndefined();
+      expect(run).toHaveBeenCalledWith(
+        '/bin/zsh',
+        ['-ic', "printf '%s\\0' '__KODAX_SHELL_ENV_START__'; env -0"],
+        expect.objectContaining({
+          encoding: 'utf8',
+          env: expect.objectContaining({
+            SHELL: '/bin/zsh',
+            TERM: 'dumb',
           }),
-        );
-      });
+          timeout: 5000,
+          windowsHide: true,
+          detached: true,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        }),
+      );
+    });
 
       it('uses fish interactive mode with a separate command flag', () => {
         const env: NodeJS.ProcessEnv = {
@@ -107,8 +115,14 @@ describe('runtime bootstrap helpers', () => {
           ['-i', '-c', "printf '%s\\0' '__KODAX_SHELL_ENV_START__'; env -0"],
           expect.objectContaining({
             encoding: 'utf8',
+            env: expect.objectContaining({
+              SHELL: '/usr/bin/fish',
+              TERM: 'dumb',
+            }),
             timeout: 5000,
             windowsHide: true,
+            detached: true,
+            stdio: ['ignore', 'pipe', 'pipe'],
           }),
         );
       });

@@ -1,5 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { createHash } from 'node:crypto';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { resolveExecutionCwd } from '../runtime-paths.js';
@@ -11,8 +12,11 @@ const execFileAsync = promisify(execFile);
 const REPO_INTELLIGENCE_DIR = path.join('.agent', 'repo-intelligence');
 const MANIFEST_FILE = 'manifest.json';
 const OVERVIEW_FILE = 'repo-overview.json';
+const OVERVIEW_INVENTORY_FILE = 'repo-overview-inventory.json';
+const OVERVIEW_BASELINE_FILE = 'repo-overview-baseline.json';
+const OVERVIEW_BASELINE_INVENTORY_FILE = 'repo-overview-inventory-baseline.json';
 const CHANGED_SCOPE_FILE = 'changed-scope.json';
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 3;
 const MAX_TRACKED_FILES = 12000;
 const MAX_OUTPUT_AREAS = 8;
 const MAX_OUTPUT_FILES = 20;
@@ -67,6 +71,11 @@ const CONFIG_FILE_NAMES = new Set([
   'build.gradle.kts',
   'Makefile',
   'Dockerfile',
+]);
+const AREA_LABEL_MANIFEST_NAMES = new Set([
+  'package.json',
+  'pyproject.toml',
+  'Cargo.toml',
 ]);
 const KEY_DOC_NAMES = new Set([
   'README.md',
@@ -146,6 +155,23 @@ export interface RepoOverview {
   areas: RepoAreaOverview[];
 }
 
+export interface RepoOverviewInventory {
+  schemaVersion: number;
+  workspaceRoot: string;
+  overviewGeneratedAt: string;
+  source: 'git' | 'filesystem';
+  allFiles: string[];
+  sourceFiles: string[];
+}
+
+export interface RepoOverviewSnapshot {
+  workspaceRoot: string;
+  source: 'git' | 'filesystem';
+  overview: RepoOverview;
+  inventory: RepoOverviewInventory | null;
+  dirtyPaths?: string[];
+}
+
 export interface ChangedScopeAreaSummary {
   areaId: string;
   label: string;
@@ -196,6 +222,24 @@ interface ChangedLineStats {
   deletedLineCount: number;
 }
 
+interface RepoOverviewManifest {
+  schemaVersion: number;
+  generatedAt: string;
+  workspaceRoot: string;
+  git: GitSummary | null;
+  snapshotKind: 'clean' | 'dirty';
+  head?: string;
+  branch?: string;
+  dirtyPathsFingerprint?: string;
+  dirtySemanticFingerprint?: string;
+}
+
+interface DirtyOverviewIdentity {
+  dirtyPaths: string[];
+  dirtyPathsFingerprint: string;
+  dirtySemanticFingerprint: string;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
@@ -231,6 +275,38 @@ function isRepoOverviewPayload(value: unknown): value is RepoOverview {
     && value.areas.every((area) => isRepoAreaOverview(area));
 }
 
+function isRepoOverviewInventoryPayload(value: unknown): value is RepoOverviewInventory {
+  return isRecord(value)
+    && typeof value.schemaVersion === 'number'
+    && typeof value.workspaceRoot === 'string'
+    && typeof value.overviewGeneratedAt === 'string'
+    && (value.source === 'git' || value.source === 'filesystem')
+    && Array.isArray(value.allFiles)
+    && value.allFiles.every((filePath) => typeof filePath === 'string')
+    && Array.isArray(value.sourceFiles)
+    && value.sourceFiles.every((filePath) => typeof filePath === 'string');
+}
+
+function isGitSummaryPayload(value: unknown): value is GitSummary {
+  return isRecord(value)
+    && (value.branch === undefined || typeof value.branch === 'string')
+    && (value.head === undefined || typeof value.head === 'string')
+    && (value.hasUncommittedChanges === undefined || typeof value.hasUncommittedChanges === 'boolean');
+}
+
+function isRepoOverviewManifestPayload(value: unknown): value is RepoOverviewManifest {
+  return isRecord(value)
+    && typeof value.schemaVersion === 'number'
+    && typeof value.generatedAt === 'string'
+    && typeof value.workspaceRoot === 'string'
+    && (value.git === null || isGitSummaryPayload(value.git))
+    && (value.snapshotKind === 'clean' || value.snapshotKind === 'dirty')
+    && (value.head === undefined || typeof value.head === 'string')
+    && (value.branch === undefined || typeof value.branch === 'string')
+    && (value.dirtyPathsFingerprint === undefined || typeof value.dirtyPathsFingerprint === 'string')
+    && (value.dirtySemanticFingerprint === undefined || typeof value.dirtySemanticFingerprint === 'string');
+}
+
 async function runGit(args: string[], cwd: string): Promise<string> {
   const result = await execFileAsync('git', args, {
     cwd,
@@ -258,6 +334,31 @@ async function ensureStorageDir(workspaceRoot: string): Promise<string> {
 
 function normalizeRelativePath(filePath: string): string {
   return filePath.replace(/\\/g, '/').replace(/^\.\//, '');
+}
+
+function computePathFingerprint(filePaths: Iterable<string>): string {
+  const hash = createHash('sha256');
+  for (const filePath of Array.from(filePaths, (entry) => normalizeRelativePath(entry)).sort((left, right) => left.localeCompare(right))) {
+    hash.update(filePath);
+    hash.update('|');
+  }
+  return hash.digest('hex');
+}
+
+function isAreaLabelSensitiveManifestPath(filePath: string): boolean {
+  return AREA_LABEL_MANIFEST_NAMES.has(path.posix.basename(normalizeRelativePath(filePath)));
+}
+
+function sameNormalizedPathList(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  for (let index = 0; index < left.length; index += 1) {
+    if (normalizeRelativePath(left[index] ?? '') !== normalizeRelativePath(right[index] ?? '')) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function isManagedMetadataPath(filePath: string): boolean {
@@ -505,31 +606,149 @@ export async function collectWorkspaceFilesForSource(
   return walkFilesystemFiles(workspaceRoot);
 }
 
-export async function buildRepoOverview(
-  context: Pick<KodaXToolExecutionContext, 'executionCwd' | 'gitRoot'>,
-  targetPath?: string,
-): Promise<RepoOverview> {
-  const baseDir = resolveExecutionCwd(context);
-  const targetDir = await resolveTargetDirectory(targetPath ? path.resolve(baseDir, targetPath) : baseDir);
-  const { workspaceRoot, source } = await resolveWorkspaceRoot(targetDir);
-  const { files, truncated } = await collectWorkspaceFilesForSource(workspaceRoot, source);
-  const git = await getGitSummary(workspaceRoot, source);
-  const manifests = files.filter((file) => CONFIG_FILE_NAMES.has(path.posix.basename(file))).slice(0, 12);
-  const keyDocs = files
-    .filter((file) => KEY_DOC_NAMES.has(file) || (/^README/i.test(path.posix.basename(file)) && DOC_EXTENSIONS.has(path.extname(file).toLowerCase())))
-    .slice(0, 8);
-  const entryHints = files
-    .filter((file) => ENTRY_HINT_BASENAMES.includes(path.posix.basename(file)))
-    .slice(0, 8);
+export async function readRepoOverviewInventory(
+  workspaceRoot: string,
+  overviewGeneratedAt?: string,
+): Promise<RepoOverviewInventory | null> {
+  const inventory = await readStoredRepoOverviewInventory(workspaceRoot, OVERVIEW_INVENTORY_FILE);
+  if (!inventory) {
+    return null;
+  }
+  if (inventory.schemaVersion !== SCHEMA_VERSION) {
+    return null;
+  }
+  if (overviewGeneratedAt && inventory.overviewGeneratedAt !== overviewGeneratedAt) {
+    return null;
+  }
+  return inventory;
+}
 
-  const fileStats = {
-    totalFiles: files.length,
-    sourceFiles: files.filter((file) => classifyFileCategory(file) === 'source').length,
-    docFiles: files.filter((file) => classifyFileCategory(file) === 'docs').length,
-    testFiles: files.filter((file) => classifyFileCategory(file) === 'tests').length,
-    configFiles: files.filter((file) => classifyFileCategory(file) === 'config').length,
+export async function collectWorkspaceDirtyPaths(workspaceRoot: string): Promise<string[]> {
+  const output = await runGit(['status', '--porcelain=v1', '-z', '--untracked-files=all'], workspaceRoot);
+  const chunks = output.split('\0');
+  const dirtyPaths = new Set<string>();
+
+  for (let index = 0; index < chunks.length; index += 1) {
+    const chunk = chunks[index];
+    if (!chunk || chunk.length < 4) {
+      continue;
+    }
+
+    const status = chunk.slice(0, 2);
+    const primaryPath = normalizeRelativePath(chunk.slice(3));
+    if (primaryPath && !isManagedMetadataPath(primaryPath)) {
+      dirtyPaths.add(primaryPath);
+    }
+
+    if (status.includes('R') || status.includes('C')) {
+      const secondaryPath = normalizeRelativePath(chunks[index + 1] ?? '');
+      if (secondaryPath && !isManagedMetadataPath(secondaryPath)) {
+        dirtyPaths.add(secondaryPath);
+      }
+      index += 1;
+    }
+  }
+
+  return Array.from(dirtyPaths).sort((left, right) => left.localeCompare(right));
+}
+
+async function readStoredRepoOverview(
+  workspaceRoot: string,
+  fileName: string,
+): Promise<RepoOverview | null> {
+  return safeReadJson<RepoOverview>(
+    path.join(workspaceRoot, REPO_INTELLIGENCE_DIR, fileName),
+    isRepoOverviewPayload,
+  );
+}
+
+async function readStoredRepoOverviewInventory(
+  workspaceRoot: string,
+  fileName: string,
+): Promise<RepoOverviewInventory | null> {
+  return safeReadJson<RepoOverviewInventory>(
+    path.join(workspaceRoot, REPO_INTELLIGENCE_DIR, fileName),
+    isRepoOverviewInventoryPayload,
+  );
+}
+
+async function readStoredRepoOverviewManifest(
+  workspaceRoot: string,
+): Promise<RepoOverviewManifest | null> {
+  return safeReadJson<RepoOverviewManifest>(
+    path.join(workspaceRoot, REPO_INTELLIGENCE_DIR, MANIFEST_FILE),
+    isRepoOverviewManifestPayload,
+  );
+}
+
+async function computeDirtySemanticFingerprint(
+  workspaceRoot: string,
+  dirtyPaths: string[],
+): Promise<string> {
+  const hash = createHash('sha256');
+  hash.update(computePathFingerprint(dirtyPaths));
+
+  for (const filePath of dirtyPaths) {
+    const absolutePath = path.join(workspaceRoot, filePath);
+    hash.update(filePath);
+    hash.update(':');
+    try {
+      await fs.stat(absolutePath);
+      hash.update('present:');
+      if (isAreaLabelSensitiveManifestPath(filePath)) {
+        const content = await fs.readFile(absolutePath, 'utf8');
+        hash.update(createHash('sha256').update(content).digest('hex'));
+      }
+    } catch (error) {
+      const code = isRecord(error) && typeof error.code === 'string' ? error.code : undefined;
+      hash.update(code === 'ENOENT' ? 'missing' : 'unreadable');
+    }
+    hash.update('|');
+  }
+
+  return hash.digest('hex');
+}
+
+async function buildDirtyOverviewIdentity(
+  workspaceRoot: string,
+  dirtyPaths: string[],
+): Promise<DirtyOverviewIdentity> {
+  const normalizedPaths = dirtyPaths
+    .map((filePath) => normalizeRelativePath(filePath))
+    .sort((left, right) => left.localeCompare(right));
+
+  return {
+    dirtyPaths: normalizedPaths,
+    dirtyPathsFingerprint: computePathFingerprint(normalizedPaths),
+    dirtySemanticFingerprint: await computeDirtySemanticFingerprint(workspaceRoot, normalizedPaths),
   };
+}
 
+async function applyDirtyPathPatchToFiles(
+  workspaceRoot: string,
+  files: string[],
+  dirtyPaths: string[],
+): Promise<string[]> {
+  const fileSet = new Set(files.map((filePath) => normalizeRelativePath(filePath)));
+  for (const filePath of dirtyPaths) {
+    const absolutePath = path.join(workspaceRoot, filePath);
+    if (await exists(absolutePath)) {
+      fileSet.add(filePath);
+    } else {
+      fileSet.delete(filePath);
+    }
+  }
+  return Array.from(fileSet).sort((left, right) => left.localeCompare(right));
+}
+
+async function buildRepoOverviewArtifacts(
+  workspaceRoot: string,
+  source: 'git' | 'filesystem',
+  files: string[],
+  truncated: boolean,
+  git?: GitSummary,
+): Promise<{ overview: RepoOverview; inventory: RepoOverviewInventory }> {
+  const normalizedFiles = files.map((filePath) => normalizeRelativePath(filePath));
   const overview: RepoOverview = {
     schemaVersion: SCHEMA_VERSION,
     workspaceRoot,
@@ -537,53 +756,366 @@ export async function buildRepoOverview(
     generatedAt: new Date().toISOString(),
     truncated,
     git,
-    fileStats,
-    manifests,
-    keyDocs,
-    entryHints,
-    areas: await buildAreas(workspaceRoot, files),
+    fileStats: {
+      totalFiles: normalizedFiles.length,
+      sourceFiles: normalizedFiles.filter((file) => classifyFileCategory(file) === 'source').length,
+      docFiles: normalizedFiles.filter((file) => classifyFileCategory(file) === 'docs').length,
+      testFiles: normalizedFiles.filter((file) => classifyFileCategory(file) === 'tests').length,
+      configFiles: normalizedFiles.filter((file) => classifyFileCategory(file) === 'config').length,
+    },
+    manifests: normalizedFiles.filter((file) => CONFIG_FILE_NAMES.has(path.posix.basename(file))).slice(0, 12),
+    keyDocs: normalizedFiles
+      .filter((file) => KEY_DOC_NAMES.has(file) || (/^README/i.test(path.posix.basename(file)) && DOC_EXTENSIONS.has(path.extname(file).toLowerCase())))
+      .slice(0, 8),
+    entryHints: normalizedFiles
+      .filter((file) => ENTRY_HINT_BASENAMES.includes(path.posix.basename(file)))
+      .slice(0, 8),
+    areas: await buildAreas(workspaceRoot, normalizedFiles),
   };
 
-  const storageRoot = await ensureStorageDir(workspaceRoot);
-  await fs.writeFile(path.join(storageRoot, MANIFEST_FILE), `${JSON.stringify({
+  return {
+    overview,
+    inventory: {
+      schemaVersion: SCHEMA_VERSION,
+      workspaceRoot,
+      overviewGeneratedAt: overview.generatedAt,
+      source,
+      allFiles: [...normalizedFiles].sort((left, right) => left.localeCompare(right)),
+      sourceFiles: normalizedFiles
+        .filter((filePath) => classifyFileCategory(filePath) === 'source')
+        .sort((left, right) => left.localeCompare(right)),
+    },
+  };
+}
+
+async function writeRepoOverviewArtifacts(
+  storageRoot: string,
+  overview: RepoOverview,
+  inventory: RepoOverviewInventory,
+  options: { writeBaseline?: boolean; dirtyIdentity?: DirtyOverviewIdentity } = {},
+): Promise<void> {
+  const manifestPayload: RepoOverviewManifest = {
     schemaVersion: SCHEMA_VERSION,
     generatedAt: overview.generatedAt,
     workspaceRoot: overview.workspaceRoot,
     git: overview.git ?? null,
-  }, null, 2)}\n`, 'utf8');
+    snapshotKind: overview.source === 'git' && overview.git?.hasUncommittedChanges === true ? 'dirty' : 'clean',
+    head: overview.git?.head,
+    branch: overview.git?.branch,
+    dirtyPathsFingerprint: options.dirtyIdentity?.dirtyPathsFingerprint,
+    dirtySemanticFingerprint: options.dirtyIdentity?.dirtySemanticFingerprint,
+  };
+  await fs.writeFile(path.join(storageRoot, MANIFEST_FILE), `${JSON.stringify(manifestPayload, null, 2)}\n`, 'utf8');
   await fs.writeFile(path.join(storageRoot, OVERVIEW_FILE), `${JSON.stringify(overview, null, 2)}\n`, 'utf8');
+  await fs.writeFile(path.join(storageRoot, OVERVIEW_INVENTORY_FILE), `${JSON.stringify(inventory, null, 2)}\n`, 'utf8');
 
+  if (options.writeBaseline === true) {
+    await fs.writeFile(path.join(storageRoot, OVERVIEW_BASELINE_FILE), `${JSON.stringify(overview, null, 2)}\n`, 'utf8');
+    await fs.writeFile(path.join(storageRoot, OVERVIEW_BASELINE_INVENTORY_FILE), `${JSON.stringify(inventory, null, 2)}\n`, 'utf8');
+  }
+}
+
+function canUseOverviewBaseline(
+  baselineOverview: RepoOverview | null,
+  baselineInventory: RepoOverviewInventory | null,
+  liveGit: GitSummary | undefined,
+): baselineOverview is RepoOverview {
+  return Boolean(
+    liveGit?.hasUncommittedChanges === true
+      && baselineOverview
+      && baselineInventory
+      && baselineOverview.schemaVersion === SCHEMA_VERSION
+      && baselineInventory.schemaVersion === SCHEMA_VERSION
+      && baselineOverview.source === 'git'
+      && baselineInventory.source === 'git'
+      && baselineOverview.git?.hasUncommittedChanges !== true
+      && baselineOverview.git?.head
+      && baselineOverview.git?.head === liveGit.head
+      && baselineOverview.git?.branch === liveGit.branch
+      && baselineInventory.workspaceRoot === baselineOverview.workspaceRoot
+      && baselineInventory.overviewGeneratedAt === baselineOverview.generatedAt,
+  );
+}
+
+function canDirectReuseDirtyOverview(
+  cachedOverview: RepoOverview | null,
+  cachedManifest: RepoOverviewManifest | null,
+  liveGit: GitSummary | undefined,
+  dirtyIdentity: DirtyOverviewIdentity,
+): cachedOverview is RepoOverview {
+  return Boolean(
+    cachedOverview
+      && cachedManifest
+      && cachedOverview.schemaVersion === SCHEMA_VERSION
+      && cachedManifest.schemaVersion === SCHEMA_VERSION
+      && cachedOverview.source === 'git'
+      && cachedOverview.generatedAt === cachedManifest.generatedAt
+      && cachedOverview.workspaceRoot === cachedManifest.workspaceRoot
+      && cachedManifest.snapshotKind === 'dirty'
+      && liveGit?.hasUncommittedChanges === true
+      && cachedManifest.head === liveGit.head
+      && cachedManifest.branch === liveGit.branch
+      && cachedManifest.dirtyPathsFingerprint === dirtyIdentity.dirtyPathsFingerprint
+      && cachedManifest.dirtySemanticFingerprint === dirtyIdentity.dirtySemanticFingerprint,
+  );
+}
+
+async function tryBuildDirtyRepoOverviewFromBaseline(
+  workspaceRoot: string,
+  liveGit: GitSummary,
+  dirtyIdentity: DirtyOverviewIdentity,
+): Promise<RepoOverview | null> {
+  const baselineOverview = await readStoredRepoOverview(workspaceRoot, OVERVIEW_BASELINE_FILE);
+  const baselineInventory = await readStoredRepoOverviewInventory(workspaceRoot, OVERVIEW_BASELINE_INVENTORY_FILE);
+  if (!canUseOverviewBaseline(baselineOverview, baselineInventory, liveGit)) {
+    return null;
+  }
+  const stableBaselineInventory = baselineInventory!;
+  const { dirtyPaths } = dirtyIdentity;
+
+  const baselineFileSet = new Set(stableBaselineInventory.allFiles);
+  if (baselineOverview.truncated) {
+    for (const filePath of dirtyPaths) {
+      const absolutePath = path.join(workspaceRoot, filePath);
+      if (!baselineFileSet.has(filePath) || await exists(absolutePath) === false) {
+        return null;
+      }
+    }
+  }
+
+  const fileSet = new Set(baselineFileSet);
+  for (const filePath of dirtyPaths) {
+    const absolutePath = path.join(workspaceRoot, filePath);
+    if (await exists(absolutePath)) {
+      fileSet.add(filePath);
+    } else {
+      fileSet.delete(filePath);
+    }
+  }
+
+  const patchedFiles = Array.from(fileSet).sort((left, right) => left.localeCompare(right));
+  const truncated = baselineOverview.truncated || patchedFiles.length > MAX_TRACKED_FILES;
+  const effectiveFiles = truncated ? patchedFiles.slice(0, MAX_TRACKED_FILES) : patchedFiles;
+  const { overview, inventory } = await buildRepoOverviewArtifacts(
+    workspaceRoot,
+    'git',
+    effectiveFiles,
+    truncated,
+    liveGit,
+  );
+  const storageRoot = await ensureStorageDir(workspaceRoot);
+  await writeRepoOverviewArtifacts(storageRoot, overview, inventory, {
+    dirtyIdentity,
+  });
   return overview;
+}
+
+async function canDirectReuseFilesystemOverview(
+  workspaceRoot: string,
+  cachedOverview: RepoOverview | null,
+  cachedInventory: RepoOverviewInventory | null,
+  liveFiles: string[],
+  liveTruncated: boolean,
+): Promise<boolean> {
+  if (
+    !cachedOverview
+    || !cachedInventory
+    || cachedOverview.schemaVersion !== SCHEMA_VERSION
+    || cachedOverview.source !== 'filesystem'
+    || cachedInventory.schemaVersion !== SCHEMA_VERSION
+    || cachedInventory.source !== 'filesystem'
+    || cachedInventory.workspaceRoot !== workspaceRoot
+    || cachedInventory.overviewGeneratedAt !== cachedOverview.generatedAt
+    || cachedOverview.truncated !== liveTruncated
+  ) {
+    return false;
+  }
+
+  const normalizedLiveFiles = liveFiles
+    .map((filePath) => normalizeRelativePath(filePath))
+    .sort((left, right) => left.localeCompare(right));
+  if (!sameNormalizedPathList(cachedInventory.allFiles, normalizedLiveFiles)) {
+    return false;
+  }
+
+  for (const area of cachedOverview.areas) {
+    if (await readAreaLabel(workspaceRoot, area.root) !== area.label) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+async function buildRepoOverviewSnapshotForWorkspace(
+  workspaceRoot: string,
+  source: 'git' | 'filesystem',
+  git: GitSummary | undefined,
+  dirtyIdentity?: DirtyOverviewIdentity,
+  collected?: { files: string[]; truncated: boolean },
+): Promise<RepoOverviewSnapshot> {
+  const { files, truncated } = collected ?? await collectWorkspaceFilesForSource(workspaceRoot, source);
+  const patchedFiles = source === 'git' && dirtyIdentity?.dirtyPaths.length
+    ? await applyDirtyPathPatchToFiles(workspaceRoot, files, dirtyIdentity.dirtyPaths)
+    : files.map((filePath) => normalizeRelativePath(filePath));
+  const effectiveTruncated = truncated || patchedFiles.length > MAX_TRACKED_FILES;
+  const effectiveFiles = effectiveTruncated ? patchedFiles.slice(0, MAX_TRACKED_FILES) : patchedFiles;
+  const storageRoot = await ensureStorageDir(workspaceRoot);
+  const { overview, inventory } = await buildRepoOverviewArtifacts(
+    workspaceRoot,
+    source,
+    effectiveFiles,
+    effectiveTruncated,
+    git,
+  );
+  await writeRepoOverviewArtifacts(storageRoot, overview, inventory, {
+    writeBaseline: source === 'git' && git?.hasUncommittedChanges !== true,
+    dirtyIdentity,
+  });
+
+  return {
+    workspaceRoot,
+    source,
+    overview,
+    inventory,
+    dirtyPaths: dirtyIdentity?.dirtyPaths,
+  };
+}
+
+export async function resolveRepoOverviewSnapshot(
+  context: Pick<KodaXToolExecutionContext, 'executionCwd' | 'gitRoot'>,
+  options: { targetPath?: string; refresh?: boolean } = {},
+): Promise<RepoOverviewSnapshot> {
+  const baseDir = resolveExecutionCwd(context);
+  const targetDir = await resolveTargetDirectory(options.targetPath ? path.resolve(baseDir, options.targetPath) : baseDir);
+  const { workspaceRoot, source } = await resolveWorkspaceRoot(targetDir);
+  const cached = await readStoredRepoOverview(workspaceRoot, OVERVIEW_FILE);
+  const cachedManifest = await readStoredRepoOverviewManifest(workspaceRoot);
+  let liveGit: GitSummary | undefined;
+  let dirtyIdentity: DirtyOverviewIdentity | undefined;
+
+  if (!options.refresh) {
+    liveGit = await getGitSummary(workspaceRoot, source);
+    if (source !== 'git') {
+      const cachedInventory = cached?.schemaVersion === SCHEMA_VERSION
+        ? await readRepoOverviewInventory(workspaceRoot, cached.generatedAt)
+        : null;
+      const filesystemFiles = await collectWorkspaceFilesForSource(workspaceRoot, source);
+      if (await canDirectReuseFilesystemOverview(
+        workspaceRoot,
+        cached,
+        cachedInventory,
+        filesystemFiles.files,
+        filesystemFiles.truncated,
+      )) {
+        return {
+          workspaceRoot,
+          source,
+          overview: cached!,
+          inventory: cachedInventory,
+        };
+      }
+
+      return buildRepoOverviewSnapshotForWorkspace(
+        workspaceRoot,
+        source,
+        liveGit,
+        undefined,
+        filesystemFiles,
+      );
+    }
+
+    const gitMatches = source === 'git'
+      && (
+        cached?.schemaVersion === SCHEMA_VERSION
+        && liveGit?.hasUncommittedChanges !== true
+        && cached.git?.head === liveGit?.head
+        && cached.git?.branch === liveGit?.branch
+        && cached.git?.hasUncommittedChanges === liveGit?.hasUncommittedChanges
+      );
+    if (gitMatches && cached) {
+      return {
+        workspaceRoot,
+        source,
+        overview: cached,
+        inventory: await readRepoOverviewInventory(workspaceRoot, cached.generatedAt),
+      };
+    }
+
+    if (source === 'git' && liveGit?.hasUncommittedChanges === true) {
+      const dirtyPaths = await collectWorkspaceDirtyPaths(workspaceRoot).catch((error) => {
+        debugLogRepoIntelligence('Could not collect dirty workspace paths for repo overview.', error);
+        return null;
+      });
+      if (dirtyPaths) {
+        dirtyIdentity = await buildDirtyOverviewIdentity(workspaceRoot, dirtyPaths);
+        if (canDirectReuseDirtyOverview(cached, cachedManifest, liveGit, dirtyIdentity)) {
+          return {
+            workspaceRoot,
+            source,
+            overview: cached,
+            inventory: await readRepoOverviewInventory(workspaceRoot, cached.generatedAt),
+            dirtyPaths: dirtyIdentity.dirtyPaths,
+          };
+        }
+
+        const dirtyOverview = await tryBuildDirtyRepoOverviewFromBaseline(workspaceRoot, liveGit, dirtyIdentity);
+        if (dirtyOverview) {
+          return {
+            workspaceRoot,
+            source,
+            overview: dirtyOverview,
+            inventory: await readRepoOverviewInventory(workspaceRoot, dirtyOverview.generatedAt),
+            dirtyPaths: dirtyIdentity.dirtyPaths,
+          };
+        }
+      }
+    }
+
+    return buildRepoOverviewSnapshotForWorkspace(
+      workspaceRoot,
+      source,
+      liveGit,
+      dirtyIdentity,
+    );
+  }
+
+  liveGit = await getGitSummary(workspaceRoot, source);
+  if (source === 'git' && liveGit?.hasUncommittedChanges === true) {
+    const dirtyPaths = await collectWorkspaceDirtyPaths(workspaceRoot).catch((error) => {
+      debugLogRepoIntelligence('Could not collect dirty workspace paths for refreshed repo overview.', error);
+      return null;
+    });
+    if (dirtyPaths) {
+      dirtyIdentity = await buildDirtyOverviewIdentity(workspaceRoot, dirtyPaths);
+    }
+  }
+
+  return buildRepoOverviewSnapshotForWorkspace(
+    workspaceRoot,
+    source,
+    liveGit,
+    dirtyIdentity,
+  );
+}
+
+export async function buildRepoOverview(
+  context: Pick<KodaXToolExecutionContext, 'executionCwd' | 'gitRoot'>,
+  targetPath?: string,
+): Promise<RepoOverview> {
+  const snapshot = await resolveRepoOverviewSnapshot(context, {
+    targetPath,
+    refresh: true,
+  });
+  return snapshot.overview;
 }
 
 export async function getRepoOverview(
   context: Pick<KodaXToolExecutionContext, 'executionCwd' | 'gitRoot'>,
   options: { targetPath?: string; refresh?: boolean } = {},
 ): Promise<RepoOverview> {
-  const baseDir = resolveExecutionCwd(context);
-  const targetDir = await resolveTargetDirectory(options.targetPath ? path.resolve(baseDir, options.targetPath) : baseDir);
-  const { workspaceRoot, source } = await resolveWorkspaceRoot(targetDir);
-  const storageRoot = path.join(workspaceRoot, REPO_INTELLIGENCE_DIR);
-  const cached = await safeReadJson<RepoOverview>(
-    path.join(storageRoot, OVERVIEW_FILE),
-    isRepoOverviewPayload,
-  );
-
-  if (!options.refresh && cached?.schemaVersion === SCHEMA_VERSION) {
-    const liveGit = await getGitSummary(workspaceRoot, source);
-    const gitMatches = source !== 'git'
-      || (
-        liveGit?.hasUncommittedChanges !== true
-        && cached.git?.head === liveGit?.head
-        && cached.git?.branch === liveGit?.branch
-        && cached.git?.hasUncommittedChanges === liveGit?.hasUncommittedChanges
-      );
-    if (gitMatches) {
-      return cached;
-    }
-  }
-
-  return buildRepoOverview(context, options.targetPath);
+  const snapshot = await resolveRepoOverviewSnapshot(context, options);
+  return snapshot.overview;
 }
 
 function formatList(label: string, items: string[]): string[] {
@@ -643,22 +1175,22 @@ export async function buildRepoIntelligenceContext(
   const sections: string[] = [];
   const includeRepoOverview = options.includeRepoOverview !== false;
   const includeChangedScope = options.includeChangedScope === true;
-
-  if (includeRepoOverview) {
-    const overview = await getRepoOverview(context, {
+  const snapshot = includeRepoOverview || includeChangedScope
+    ? await resolveRepoOverviewSnapshot(context, {
       targetPath: options.targetPath,
       refresh: options.refreshOverview,
-    });
-    sections.push(['## Repository Intelligence', renderRepoOverview(overview)].join('\n'));
+    })
+    : null;
+
+  if (includeRepoOverview && snapshot) {
+    sections.push(['## Repository Intelligence', renderRepoOverview(snapshot.overview)].join('\n'));
   }
 
-  if (includeChangedScope) {
+  if (includeChangedScope && snapshot) {
     try {
-      const report = await analyzeChangedScope(context, {
-        targetPath: options.targetPath,
+      const report = await analyzeChangedScopeFromSnapshot(snapshot, {
         scope: options.changedScope ?? 'all',
         baseRef: options.baseRef,
-        refreshOverview: options.refreshOverview,
       });
       sections.push(['## Repository Change Scope', renderChangedScope(report)].join('\n'));
     } catch {
@@ -877,11 +1409,22 @@ export async function analyzeChangedScope(
     refreshOverview?: boolean;
   } = {},
 ): Promise<ChangedScopeReport> {
-  const scope = options.scope ?? 'all';
-  const overview = await getRepoOverview(context, {
+  const snapshot = await resolveRepoOverviewSnapshot(context, {
     targetPath: options.targetPath,
     refresh: options.refreshOverview,
   });
+  return analyzeChangedScopeFromSnapshot(snapshot, options);
+}
+
+export async function analyzeChangedScopeFromSnapshot(
+  snapshot: RepoOverviewSnapshot,
+  options: {
+    scope?: 'unstaged' | 'staged' | 'all' | 'compare';
+    baseRef?: string;
+  } = {},
+): Promise<ChangedScopeReport> {
+  const scope = options.scope ?? 'all';
+  const overview = snapshot.overview;
 
   if (overview.source !== 'git') {
     throw new Error('changed_scope requires a git-backed workspace.');

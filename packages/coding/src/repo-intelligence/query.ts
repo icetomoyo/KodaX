@@ -8,23 +8,27 @@ import type { SyntaxNode } from '@lezer/common';
 import ts from 'typescript';
 import type { KodaXRepoRoutingSignals, KodaXToolExecutionContext } from '../types.js';
 import {
-  analyzeChangedScope,
+  analyzeChangedScopeFromSnapshot,
   collectWorkspaceFilesForSource,
-  getRepoOverview,
   type ChangedScopeReport,
   type RepoAreaKind,
   type RepoAreaOverview,
   type RepoOverview,
+  type RepoOverviewInventory,
+  type RepoOverviewSnapshot,
+  resolveRepoOverviewSnapshot,
 } from './index.js';
 import { debugLogRepoIntelligence, safeReadJson } from './internal.js';
 
 const REPO_INTELLIGENCE_DIR = path.join('.agent', 'repo-intelligence');
 const QUERY_INDEX_FILE = 'repo-intelligence-index.json';
 const QUERY_MANIFEST_FILE = 'repo-intelligence-manifest.json';
+const FILE_ANALYSIS_INDEX_FILE = 'file-analysis-index.json';
+const DIRTY_SOURCE_HINT_FILE = 'repo-intelligence-dirty-source-hint.json';
 const MODULE_INDEX_FILE = 'module-index.json';
 const SYMBOL_INDEX_FILE = 'symbol-index.json';
 const PROCESS_INDEX_FILE = 'process-index.json';
-const QUERY_SCHEMA_VERSION = 2;
+const QUERY_SCHEMA_VERSION = 9;
 const MAX_FILE_BYTES = 512 * 1024;
 const MAX_SYMBOLS_PER_FILE = 40;
 const MAX_PROCESS_STEPS = 8;
@@ -150,9 +154,12 @@ interface RepoIntelligenceManifest {
   workspaceRoot: string;
   generatedAt: string;
   overviewGeneratedAt: string;
+  overviewFingerprint: string;
+  workspaceSnapshot: RepoWorkspaceSnapshot;
   sourceFileCount: number;
   sourceFingerprint: string;
   languageBreakdown: RepoLanguageSupport[];
+  sourceStates: RepoSourceFileState[];
 }
 
 interface ExtractedSymbol {
@@ -173,6 +180,60 @@ interface FileAnalysis {
   capabilityTier: LanguageCapabilityTier;
   importPaths: string[];
   symbols: RepoSymbolRecord[];
+}
+
+interface RepoSourceFileState {
+  filePath: string;
+  fileFingerprint: string;
+  language: RepoLanguageId;
+  moduleId: string;
+  analyzerVersion: number;
+}
+
+interface RepoWorkspaceSnapshot {
+  source: 'git' | 'filesystem';
+  branch?: string;
+  head?: string;
+  hasUncommittedChanges?: boolean;
+}
+
+interface CachedRepoSymbolRecord {
+  id: string;
+  name: string;
+  qualifiedName: string;
+  kind: RepoSymbolKind;
+  line: number;
+  signature: string;
+  exported: boolean;
+  calls: string[];
+  confidence: number;
+}
+
+interface CachedFileAnalysisEntry {
+  importPaths: string[];
+  symbols: CachedRepoSymbolRecord[];
+}
+
+interface FileAnalysisIndexPayload {
+  schemaVersion: number;
+  workspaceRoot: string;
+  generatedAt: string;
+  sourceFingerprint: string;
+  analyses: Record<string, CachedFileAnalysisEntry | null>;
+}
+
+interface DirtySourceHintPayload {
+  schemaVersion: number;
+  workspaceRoot: string;
+  branch?: string;
+  head?: string;
+  queryGeneratedAt: string;
+  overviewFingerprint: string;
+  sourceFingerprint: string;
+  sourceFileCount: number;
+  dirtyPathsFingerprint: string;
+  dirtySourceFingerprint: string;
+  dirtySourcePaths: string[];
 }
 
 interface TypeScriptSymbolDraft {
@@ -197,6 +258,152 @@ function isRepoIntelligenceIndexPayload(value: unknown): value is RepoIntelligen
     && Array.isArray(value.modules)
     && Array.isArray(value.symbols)
     && Array.isArray(value.processes);
+}
+
+function isRepoLanguageId(value: unknown): value is RepoLanguageId {
+  return value === 'typescript'
+    || value === 'javascript'
+    || value === 'python'
+    || value === 'java'
+    || value === 'go'
+    || value === 'rust'
+    || value === 'cpp'
+    || value === 'unknown';
+}
+
+function isLanguageCapabilityTier(value: unknown): value is LanguageCapabilityTier {
+  return value === 'high' || value === 'medium' || value === 'low';
+}
+
+function isRepoSymbolKind(value: unknown): value is RepoSymbolKind {
+  return value === 'function'
+    || value === 'class'
+    || value === 'interface'
+    || value === 'type'
+    || value === 'enum'
+    || value === 'struct'
+    || value === 'trait'
+    || value === 'method'
+    || value === 'constant';
+}
+
+function isRepoLanguageSupportPayload(value: unknown): value is RepoLanguageSupport {
+  return isRecord(value)
+    && isRepoLanguageId(value.language)
+    && isLanguageCapabilityTier(value.capabilityTier)
+    && typeof value.fileCount === 'number';
+}
+
+function isRepoSymbolReferencePayload(value: unknown): value is RepoSymbolReference {
+  return isRecord(value)
+    && typeof value.symbolId === 'string'
+    && typeof value.name === 'string'
+    && typeof value.filePath === 'string'
+    && typeof value.moduleId === 'string'
+    && (value.reason === 'same-module' || value.reason === 'imported-module' || value.reason === 'name-match');
+}
+
+function isRepoSymbolRecordPayload(value: unknown): value is RepoSymbolRecord {
+  return isRecord(value)
+    && typeof value.id === 'string'
+    && typeof value.name === 'string'
+    && typeof value.qualifiedName === 'string'
+    && isRepoSymbolKind(value.kind)
+    && typeof value.filePath === 'string'
+    && typeof value.moduleId === 'string'
+    && isRepoLanguageId(value.language)
+    && isLanguageCapabilityTier(value.capabilityTier)
+    && typeof value.line === 'number'
+    && typeof value.signature === 'string'
+    && typeof value.exported === 'boolean'
+    && Array.isArray(value.calls)
+    && value.calls.every((call) => typeof call === 'string')
+    && Array.isArray(value.callTargets)
+    && value.callTargets.every((target) => isRepoSymbolReferencePayload(target))
+    && Array.isArray(value.importPaths)
+    && value.importPaths.every((importPath) => typeof importPath === 'string')
+    && typeof value.confidence === 'number';
+}
+
+function isRepoSourceFileStatePayload(value: unknown): value is RepoSourceFileState {
+  return isRecord(value)
+    && typeof value.filePath === 'string'
+    && typeof value.fileFingerprint === 'string'
+    && isRepoLanguageId(value.language)
+    && typeof value.moduleId === 'string'
+    && typeof value.analyzerVersion === 'number';
+}
+
+function isRepoWorkspaceSnapshotPayload(value: unknown): value is RepoWorkspaceSnapshot {
+  return isRecord(value)
+    && (value.source === 'git' || value.source === 'filesystem')
+    && (value.branch === undefined || typeof value.branch === 'string')
+    && (value.head === undefined || typeof value.head === 'string')
+    && (value.hasUncommittedChanges === undefined || typeof value.hasUncommittedChanges === 'boolean');
+}
+
+function isRepoIntelligenceManifestPayload(value: unknown): value is RepoIntelligenceManifest {
+  return isRecord(value)
+    && typeof value.schemaVersion === 'number'
+    && typeof value.workspaceRoot === 'string'
+    && typeof value.generatedAt === 'string'
+    && typeof value.overviewGeneratedAt === 'string'
+    && typeof value.overviewFingerprint === 'string'
+    && isRepoWorkspaceSnapshotPayload(value.workspaceSnapshot)
+    && typeof value.sourceFileCount === 'number'
+    && typeof value.sourceFingerprint === 'string'
+    && Array.isArray(value.languageBreakdown)
+    && value.languageBreakdown.every((entry) => isRepoLanguageSupportPayload(entry))
+    && Array.isArray(value.sourceStates)
+    && value.sourceStates.every((entry) => isRepoSourceFileStatePayload(entry));
+}
+
+function isCachedRepoSymbolRecordPayload(value: unknown): value is CachedRepoSymbolRecord {
+  return isRecord(value)
+    && typeof value.id === 'string'
+    && typeof value.name === 'string'
+    && typeof value.qualifiedName === 'string'
+    && isRepoSymbolKind(value.kind)
+    && typeof value.line === 'number'
+    && typeof value.signature === 'string'
+    && typeof value.exported === 'boolean'
+    && Array.isArray(value.calls)
+    && value.calls.every((call) => typeof call === 'string')
+    && typeof value.confidence === 'number';
+}
+
+function isCachedFileAnalysisEntryPayload(value: unknown): value is CachedFileAnalysisEntry {
+  return isRecord(value)
+    && Array.isArray(value.importPaths)
+    && value.importPaths.every((importPath) => typeof importPath === 'string')
+    && Array.isArray(value.symbols)
+    && value.symbols.every((symbol) => isCachedRepoSymbolRecordPayload(symbol));
+}
+
+function isFileAnalysisIndexPayload(value: unknown): value is FileAnalysisIndexPayload {
+  return isRecord(value)
+    && typeof value.schemaVersion === 'number'
+    && typeof value.workspaceRoot === 'string'
+    && typeof value.generatedAt === 'string'
+    && typeof value.sourceFingerprint === 'string'
+    && isRecord(value.analyses)
+    && Object.values(value.analyses).every((analysis) => analysis === null || isCachedFileAnalysisEntryPayload(analysis));
+}
+
+function isDirtySourceHintPayload(value: unknown): value is DirtySourceHintPayload {
+  return isRecord(value)
+    && typeof value.schemaVersion === 'number'
+    && typeof value.workspaceRoot === 'string'
+    && (value.branch === undefined || typeof value.branch === 'string')
+    && (value.head === undefined || typeof value.head === 'string')
+    && typeof value.queryGeneratedAt === 'string'
+    && typeof value.overviewFingerprint === 'string'
+    && typeof value.sourceFingerprint === 'string'
+    && typeof value.sourceFileCount === 'number'
+    && typeof value.dirtyPathsFingerprint === 'string'
+    && typeof value.dirtySourceFingerprint === 'string'
+    && Array.isArray(value.dirtySourcePaths)
+    && value.dirtySourcePaths.every((filePath) => typeof filePath === 'string');
 }
 
 function normalizeRelativePath(filePath: string): string {
@@ -239,15 +446,30 @@ function capabilityTierForLanguage(language: RepoLanguageId): LanguageCapability
     case 'typescript':
     case 'javascript':
     case 'python':
-      return 'high';
-    case 'java':
     case 'go':
     case 'rust':
+      return 'high';
+    case 'java':
       return 'medium';
     case 'cpp':
     case 'unknown':
     default:
       return 'low';
+  }
+}
+
+function analyzerVersionForLanguage(language: RepoLanguageId): number {
+  switch (language) {
+    case 'typescript':
+    case 'javascript':
+    case 'python':
+    case 'java':
+    case 'go':
+    case 'rust':
+    case 'cpp':
+    case 'unknown':
+    default:
+      return 1;
   }
 }
 
@@ -288,21 +510,301 @@ async function ensureStorageDir(workspaceRoot: string): Promise<string> {
   return storageRoot;
 }
 
-async function computeSourceFingerprint(
-  workspaceRoot: string,
-  sourceFiles: string[],
-): Promise<string> {
+interface SourceFileBuckets {
+  typeScriptFiles: string[];
+  pythonFiles: string[];
+  goFiles: string[];
+  rustFiles: string[];
+  fallbackFiles: string[];
+}
+
+interface RepoIntelligenceWorkspaceInputs {
+  overview: RepoOverview;
+  overviewFingerprint: string;
+  workspaceSnapshot: RepoWorkspaceSnapshot;
+  inventory: RepoOverviewInventory | null;
+  workspaceRoot: string;
+  storageRoot: string;
+  allFiles: string[];
+  areaByFile: Map<string, RepoAreaOverview>;
+  filesByAreaId: Map<string, string[]>;
+  testFilesByAreaId: Map<string, string[]>;
+  docFilesByAreaId: Map<string, string[]>;
+  sourceFiles: string[];
+  sourceStates?: RepoSourceFileState[];
+  sourceFingerprint?: string;
+  sourceFileSet: Set<string>;
+  dirtyPaths?: string[];
+  dirtyPathsFingerprint?: string;
+  dirtySourceFingerprint?: string;
+  dirtySourceStateMap?: Map<string, RepoSourceFileState>;
+  moduleAliases: Map<string, string>;
+  buckets: SourceFileBuckets;
+}
+
+interface RepoIntelligencePreflight {
+  workspaceRoot: string;
+  storageRoot: string;
+  workspaceSnapshot: RepoWorkspaceSnapshot;
+  overviewGeneratedAt: string;
+  dirtyPaths?: string[];
+  dirtyPathsFingerprint?: string;
+  dirtySourcePaths: string[];
+  dirtySourceStateMap?: Map<string, RepoSourceFileState>;
+  dirtySourceFingerprint?: string;
+}
+
+function computeFileFingerprint(
+  filePath: string,
+  size: number,
+  mtimeMs: number,
+): string {
+  return createHash('sha256')
+    .update(normalizeRelativePath(filePath))
+    .update(':')
+    .update(String(size))
+    .update(':')
+    .update(String(Math.trunc(mtimeMs)))
+    .digest('hex');
+}
+
+function computeSourceFingerprint(
+  sourceStates: RepoSourceFileState[],
+): string {
   const hash = createHash('sha256');
-  for (const filePath of sourceFiles) {
-    const stat = await fs.stat(path.join(workspaceRoot, filePath));
-    hash.update(filePath);
+  for (const state of sourceStates) {
+    hash.update(state.filePath);
     hash.update(':');
-    hash.update(String(stat.size));
-    hash.update(':');
-    hash.update(String(Math.trunc(stat.mtimeMs)));
+    hash.update(state.fileFingerprint);
     hash.update('|');
   }
   return hash.digest('hex');
+}
+
+function computeOverviewFingerprint(
+  overview: RepoOverview,
+  allFiles: string[],
+): string {
+  const hash = createHash('sha256');
+  hash.update(overview.workspaceRoot);
+  hash.update('|');
+  hash.update(overview.source);
+  hash.update('|');
+  for (const area of overview.areas) {
+    hash.update(area.id);
+    hash.update(':');
+    hash.update(area.label);
+    hash.update(':');
+    hash.update(area.kind);
+    hash.update(':');
+    hash.update(area.root);
+    hash.update(':');
+    hash.update(String(area.fileCount));
+    hash.update(':');
+    hash.update(area.manifests.join(','));
+    hash.update(':');
+    hash.update(area.sampleFiles.join(','));
+    hash.update('|');
+  }
+  for (const filePath of allFiles) {
+    hash.update(filePath);
+    hash.update('|');
+  }
+  return hash.digest('hex');
+}
+
+function computePathFingerprint(
+  filePaths: Iterable<string>,
+): string {
+  const hash = createHash('sha256');
+  for (const filePath of Array.from(filePaths, (entry) => normalizeRelativePath(entry)).sort((left, right) => left.localeCompare(right))) {
+    hash.update(filePath);
+    hash.update('|');
+  }
+  return hash.digest('hex');
+}
+
+function workspaceSnapshotFromOverview(overview: RepoOverview): RepoWorkspaceSnapshot {
+  return {
+    source: overview.source,
+    branch: overview.git?.branch,
+    head: overview.git?.head,
+    hasUncommittedChanges: overview.git?.hasUncommittedChanges,
+  };
+}
+
+function isCleanGitSnapshot(snapshot: RepoWorkspaceSnapshot): boolean {
+  return snapshot.source === 'git' && snapshot.hasUncommittedChanges !== true;
+}
+
+function sameWorkspaceSnapshot(
+  left: RepoWorkspaceSnapshot,
+  right: RepoWorkspaceSnapshot,
+): boolean {
+  return left.source === right.source
+    && left.branch === right.branch
+    && left.head === right.head
+    && left.hasUncommittedChanges === right.hasUncommittedChanges;
+}
+
+function shouldPersistRepoIntelligenceBaseline(
+  inputs: RepoIntelligenceWorkspaceInputs,
+): boolean {
+  return inputs.workspaceSnapshot.source !== 'git' || isCleanGitSnapshot(inputs.workspaceSnapshot);
+}
+
+function getDirtySourcePathsForInputs(
+  inputs: Pick<RepoIntelligenceWorkspaceInputs, 'dirtyPaths' | 'sourceFileSet'>,
+): string[] {
+  return (inputs.dirtyPaths ?? [])
+    .filter((filePath) => inputs.sourceFileSet.has(filePath))
+    .sort((left, right) => left.localeCompare(right));
+}
+
+async function buildRepoIntelligencePreflight(
+  snapshot: RepoOverviewSnapshot,
+): Promise<RepoIntelligencePreflight> {
+  const workspaceRoot = snapshot.workspaceRoot;
+  const storageRoot = await ensureStorageDir(workspaceRoot);
+  const workspaceSnapshot = workspaceSnapshotFromOverview(snapshot.overview);
+  const dirtyPaths = snapshot.dirtyPaths
+    ? Array.from(new Set(snapshot.dirtyPaths.map((filePath) => normalizeRelativePath(filePath))))
+      .sort((left, right) => left.localeCompare(right))
+    : undefined;
+  const dirtyPathsFingerprint = dirtyPaths
+    ? computePathFingerprint(dirtyPaths)
+    : undefined;
+  const dirtySourcePaths = (dirtyPaths ?? [])
+    .filter((filePath) => SOURCE_EXTENSIONS.has(path.extname(filePath).toLowerCase()))
+    .sort((left, right) => left.localeCompare(right));
+  const existingDirtySourcePaths: string[] = [];
+  for (const filePath of dirtySourcePaths) {
+    if (await exists(path.join(workspaceRoot, filePath))) {
+      existingDirtySourcePaths.push(filePath);
+    }
+  }
+  const dirtySourceStateMap = existingDirtySourcePaths.length > 0
+    ? await collectSourceFileStateMap(
+      workspaceRoot,
+      existingDirtySourcePaths,
+      new Map<string, RepoAreaOverview>(),
+      snapshot.overview.areas,
+    )
+    : undefined;
+
+  return {
+    workspaceRoot,
+    storageRoot,
+    workspaceSnapshot,
+    overviewGeneratedAt: snapshot.overview.generatedAt,
+    dirtyPaths,
+    dirtyPathsFingerprint,
+    dirtySourcePaths,
+    dirtySourceStateMap,
+    dirtySourceFingerprint: dirtyPaths
+      ? computeSourceFingerprint(
+        dirtySourceStateMap
+          ? Array.from(dirtySourceStateMap.values()).sort((left, right) => left.filePath.localeCompare(right.filePath))
+          : [],
+      )
+      : undefined,
+  };
+}
+
+async function collectSourceFileStates(
+  workspaceRoot: string,
+  sourceFiles: string[],
+  areaByFile: Map<string, RepoAreaOverview>,
+  overviewAreas: RepoAreaOverview[],
+): Promise<RepoSourceFileState[]> {
+  const states: RepoSourceFileState[] = [];
+  for (const filePath of sourceFiles) {
+    const normalizedFilePath = normalizeRelativePath(filePath);
+    const stat = await fs.stat(path.join(workspaceRoot, normalizedFilePath));
+    const language = languageFromFile(normalizedFilePath);
+    states.push({
+      filePath: normalizedFilePath,
+      fileFingerprint: computeFileFingerprint(normalizedFilePath, stat.size, stat.mtimeMs),
+      language,
+      moduleId: areaByFile.get(normalizedFilePath)?.id ?? findAreaForFile(normalizedFilePath, overviewAreas).id,
+      analyzerVersion: analyzerVersionForLanguage(language),
+    });
+  }
+  return states.sort((left, right) => left.filePath.localeCompare(right.filePath));
+}
+
+async function collectSourceFileStateMap(
+  workspaceRoot: string,
+  sourceFiles: Iterable<string>,
+  areaByFile: Map<string, RepoAreaOverview>,
+  overviewAreas: RepoAreaOverview[],
+): Promise<Map<string, RepoSourceFileState>> {
+  const normalizedFiles = Array.from(new Set(
+    Array.from(sourceFiles, (filePath) => normalizeRelativePath(filePath)),
+  )).sort((left, right) => left.localeCompare(right));
+  const states = await collectSourceFileStates(workspaceRoot, normalizedFiles, areaByFile, overviewAreas);
+  return new Map(states.map((state) => [state.filePath, state]));
+}
+
+function serializeCachedFileAnalysisEntry(analysis: FileAnalysis | null): CachedFileAnalysisEntry | null {
+  if (!analysis) {
+    return null;
+  }
+
+  return {
+    importPaths: analysis.importPaths,
+    symbols: analysis.symbols.map((symbol) => ({
+      id: symbol.id,
+      name: symbol.name,
+      qualifiedName: symbol.qualifiedName,
+      kind: symbol.kind,
+      line: symbol.line,
+      signature: symbol.signature,
+      exported: symbol.exported,
+      calls: symbol.calls,
+      confidence: symbol.confidence,
+    })),
+  };
+}
+
+function hydrateCachedFileAnalysis(
+  filePath: string,
+  state: RepoSourceFileState,
+  cached: CachedFileAnalysisEntry | null,
+): FileAnalysis | null {
+  if (!cached) {
+    return null;
+  }
+
+  return {
+    filePath,
+    moduleId: state.moduleId,
+    language: state.language,
+    capabilityTier: capabilityTierForLanguage(state.language),
+    importPaths: cached.importPaths,
+    symbols: cached.symbols.map((symbol) => ({
+      ...symbol,
+      filePath,
+      moduleId: state.moduleId,
+      language: state.language,
+      capabilityTier: capabilityTierForLanguage(state.language),
+      importPaths: cached.importPaths,
+      callTargets: [],
+    })),
+  };
+}
+
+function bucketSourceFiles(sourceFiles: string[]): SourceFileBuckets {
+  return {
+    typeScriptFiles: sourceFiles.filter((filePath) => isTypeScriptLikeLanguage(languageFromFile(filePath))),
+    pythonFiles: sourceFiles.filter((filePath) => languageFromFile(filePath) === 'python'),
+    goFiles: sourceFiles.filter((filePath) => languageFromFile(filePath) === 'go'),
+    rustFiles: sourceFiles.filter((filePath) => languageFromFile(filePath) === 'rust'),
+    fallbackFiles: sourceFiles.filter((filePath) => {
+      const language = languageFromFile(filePath);
+      return !isTypeScriptLikeLanguage(language) && language !== 'python' && language !== 'go' && language !== 'rust';
+    }),
+  };
 }
 
 function isTypeScriptLikeLanguage(language: RepoLanguageId): boolean {
@@ -2192,17 +2694,56 @@ function buildProcessCapsules(
   return processes;
 }
 
-export async function buildRepoIntelligenceIndex(
-  context: Pick<KodaXToolExecutionContext, 'executionCwd' | 'gitRoot'>,
-  options: { targetPath?: string; refresh?: boolean } = {},
-): Promise<RepoIntelligenceIndex> {
-  const overview = await getRepoOverview(context, {
-    targetPath: options.targetPath,
-    refresh: options.refresh,
-  });
-  const workspaceRoot = overview.workspaceRoot;
-  const storageRoot = await ensureStorageDir(workspaceRoot);
-  const { files: allFiles } = await collectWorkspaceFilesForSource(workspaceRoot, overview.source);
+function orderedSourceFilesForBuild(buckets: SourceFileBuckets): string[] {
+  return [
+    ...buckets.typeScriptFiles,
+    ...buckets.pythonFiles,
+    ...buckets.goFiles,
+    ...buckets.rustFiles,
+    ...buckets.fallbackFiles,
+  ];
+}
+
+function collectLanguageBreakdown(analyses: FileAnalysis[]): RepoLanguageSupport[] {
+  const languageCounts = new Map<RepoLanguageId, number>();
+  for (const analysis of analyses) {
+    languageCounts.set(analysis.language, (languageCounts.get(analysis.language) ?? 0) + 1);
+  }
+  return Array.from(languageCounts.entries()).map(([language, fileCount]) => ({
+    language,
+    capabilityTier: capabilityTierForLanguage(language),
+    fileCount,
+  }));
+}
+
+async function prepareRepoIntelligenceBuildInputsFromSnapshot(
+  snapshot: RepoOverviewSnapshot,
+  options: { preflight?: RepoIntelligencePreflight } = {},
+): Promise<RepoIntelligenceWorkspaceInputs> {
+  const overview = snapshot.overview;
+  const workspaceRoot = snapshot.workspaceRoot;
+  const preflight = options.preflight;
+  const storageRoot = preflight?.storageRoot ?? await ensureStorageDir(workspaceRoot);
+  const inventory = snapshot.inventory;
+  const fallbackFiles = inventory
+    ? null
+    : await collectWorkspaceFilesForSource(workspaceRoot, overview.source);
+  const dirtyPaths = preflight?.dirtyPaths ?? snapshot.dirtyPaths;
+  const allFileSet = new Set(
+    (inventory?.allFiles ?? fallbackFiles?.files ?? [])
+      .map((filePath) => normalizeRelativePath(filePath)),
+  );
+  if (dirtyPaths && dirtyPaths.length > 0) {
+    for (const filePath of dirtyPaths) {
+      const absolutePath = path.join(workspaceRoot, filePath);
+      if (await exists(absolutePath)) {
+        allFileSet.add(filePath);
+      } else {
+        allFileSet.delete(filePath);
+      }
+    }
+  }
+  const allFiles = Array.from(allFileSet).sort((left, right) => left.localeCompare(right));
   const {
     areaByFile,
     filesByAreaId,
@@ -2211,48 +2752,153 @@ export async function buildRepoIntelligenceIndex(
   } = buildAreaFileLookups(allFiles, overview.areas);
   const sourceFiles = allFiles.filter((filePath) => SOURCE_EXTENSIONS.has(path.extname(filePath).toLowerCase()));
   const sourceFileSet = new Set(sourceFiles);
-  const moduleAliases = buildModuleAliases(overview.areas);
-  const sourceFingerprint = await computeSourceFingerprint(workspaceRoot, sourceFiles);
-  const typeScriptFiles = sourceFiles.filter((filePath) => isTypeScriptLikeLanguage(languageFromFile(filePath)));
-  const pythonFiles = sourceFiles.filter((filePath) => languageFromFile(filePath) === 'python');
-  const goFiles = sourceFiles.filter((filePath) => languageFromFile(filePath) === 'go');
-  const rustFiles = sourceFiles.filter((filePath) => languageFromFile(filePath) === 'rust');
-  const fallbackFiles = sourceFiles.filter((filePath) => {
-    const language = languageFromFile(filePath);
-    return !isTypeScriptLikeLanguage(language) && language !== 'python' && language !== 'go' && language !== 'rust';
-  });
-
-  const tsAnalyses = await analyzeTypeScriptFiles(
+  const dirtyPathsFingerprint = preflight?.dirtyPathsFingerprint ?? (dirtyPaths ? computePathFingerprint(dirtyPaths) : undefined);
+  const dirtySourceFiles = preflight?.dirtySourcePaths
+    ? preflight.dirtySourcePaths.filter((filePath) => sourceFileSet.has(filePath))
+    : dirtyPaths
+      ? dirtyPaths.filter((filePath) => sourceFileSet.has(filePath))
+    : [];
+  const dirtySourceStateMap = preflight?.dirtySourceStateMap
+    ?? (dirtySourceFiles.length > 0
+      ? await collectSourceFileStateMap(
+        workspaceRoot,
+        dirtySourceFiles,
+        areaByFile,
+        overview.areas,
+      )
+      : undefined);
+  const dirtySourceFingerprint = preflight?.dirtySourceFingerprint
+    ?? (dirtyPaths
+      ? computeSourceFingerprint(
+        dirtySourceStateMap
+          ? Array.from(dirtySourceStateMap.values()).sort((left, right) => left.filePath.localeCompare(right.filePath))
+          : [],
+      )
+      : undefined);
+  return {
+    overview,
+    overviewFingerprint: computeOverviewFingerprint(overview, allFiles),
+    workspaceSnapshot: preflight?.workspaceSnapshot ?? workspaceSnapshotFromOverview(overview),
+    inventory,
     workspaceRoot,
-    typeScriptFiles,
-    overview.areas,
+    storageRoot,
+    allFiles,
+    areaByFile,
+    filesByAreaId,
+    testFilesByAreaId,
+    docFilesByAreaId,
+    sourceFiles,
     sourceFileSet,
-    moduleAliases,
-  );
-  const pythonAnalyses = await analyzePythonFiles(
-    workspaceRoot,
-    pythonFiles,
-    overview.areas,
-  );
-  const goAnalyses = await analyzeGoFiles(
-    workspaceRoot,
-    goFiles,
-    overview.areas,
-  );
-  const rustAnalyses = await analyzeRustFiles(
-    workspaceRoot,
-    rustFiles,
-    overview.areas,
-  );
-  const fallbackAnalyses = (await Promise.all(
-    fallbackFiles.map((filePath) => analyzeSourceFile(
-      workspaceRoot,
-      filePath,
-      areaByFile.get(filePath)?.id ?? overview.areas[0]!.id,
-    )),
-  )).filter((analysis): analysis is FileAnalysis => analysis !== null);
-  const analyses = [...tsAnalyses, ...pythonAnalyses, ...goAnalyses, ...rustAnalyses, ...fallbackAnalyses];
+    dirtyPaths,
+    dirtyPathsFingerprint,
+    dirtySourceFingerprint,
+    dirtySourceStateMap,
+    moduleAliases: buildModuleAliases(overview.areas),
+    buckets: bucketSourceFiles(sourceFiles),
+  };
+}
 
+function finalizeRepoIntelligenceBuildInputs(
+  base: RepoIntelligenceWorkspaceInputs,
+  sourceStates: RepoSourceFileState[],
+): RepoIntelligenceWorkspaceInputs {
+  return {
+    ...base,
+    sourceStates,
+    sourceFingerprint: computeSourceFingerprint(sourceStates),
+  };
+}
+
+async function analyzeSourceFilesForBuild(
+  inputs: RepoIntelligenceWorkspaceInputs,
+  sourceFiles: string[],
+): Promise<Map<string, FileAnalysis | null>> {
+  const analysisEntries = new Map<string, FileAnalysis | null>(
+    sourceFiles.map((filePath) => [filePath, null]),
+  );
+  const buckets = bucketSourceFiles(sourceFiles);
+
+  if (buckets.typeScriptFiles.length > 0) {
+    const analyses = await analyzeTypeScriptFiles(
+      inputs.workspaceRoot,
+      buckets.typeScriptFiles,
+      inputs.overview.areas,
+      inputs.sourceFileSet,
+      inputs.moduleAliases,
+    );
+    for (const analysis of analyses) {
+      analysisEntries.set(analysis.filePath, analysis);
+    }
+  }
+
+  if (buckets.pythonFiles.length > 0) {
+    const analyses = await analyzePythonFiles(
+      inputs.workspaceRoot,
+      buckets.pythonFiles,
+      inputs.overview.areas,
+    );
+    for (const analysis of analyses) {
+      analysisEntries.set(analysis.filePath, analysis);
+    }
+  }
+
+  if (buckets.goFiles.length > 0) {
+    const analyses = await analyzeGoFiles(
+      inputs.workspaceRoot,
+      buckets.goFiles,
+      inputs.overview.areas,
+    );
+    for (const analysis of analyses) {
+      analysisEntries.set(analysis.filePath, analysis);
+    }
+  }
+
+  if (buckets.rustFiles.length > 0) {
+    const analyses = await analyzeRustFiles(
+      inputs.workspaceRoot,
+      buckets.rustFiles,
+      inputs.overview.areas,
+    );
+    for (const analysis of analyses) {
+      analysisEntries.set(analysis.filePath, analysis);
+    }
+  }
+
+  if (buckets.fallbackFiles.length > 0) {
+    const analyses = await Promise.all(
+      buckets.fallbackFiles.map((filePath) => analyzeSourceFile(
+        inputs.workspaceRoot,
+        filePath,
+        inputs.areaByFile.get(filePath)?.id ?? inputs.overview.areas[0]!.id,
+      )),
+    );
+    for (const [index, analysis] of analyses.entries()) {
+      analysisEntries.set(buckets.fallbackFiles[index]!, analysis ?? null);
+    }
+  }
+
+  return analysisEntries;
+}
+
+function collectOrderedAnalyses(
+  inputs: RepoIntelligenceWorkspaceInputs,
+  analysisEntries: Map<string, FileAnalysis | null>,
+): FileAnalysis[] {
+  return orderedSourceFilesForBuild(inputs.buckets)
+    .flatMap((filePath) => {
+      const analysis = analysisEntries.get(filePath) ?? null;
+      return analysis ? [analysis] : [];
+    });
+}
+
+async function materializeRepoIntelligenceIndex(
+  inputs: RepoIntelligenceWorkspaceInputs,
+  analysisEntries: Map<string, FileAnalysis | null>,
+): Promise<RepoIntelligenceIndex> {
+  if (!inputs.sourceStates || !inputs.sourceFingerprint) {
+    throw new Error('materializeRepoIntelligenceIndex requires source state metadata.');
+  }
+  const analyses = collectOrderedAnalyses(inputs, analysisEntries);
   const symbols = analyses.flatMap((analysis) => analysis.symbols);
   const symbolsByName = new Map<string, RepoSymbolRecord[]>();
   for (const symbol of symbols) {
@@ -2268,9 +2914,9 @@ export async function buildRepoIntelligenceIndex(
       const resolvedModule = resolveImportToModule(
         importPath,
         symbol.filePath,
-        sourceFileSet,
-        overview.areas,
-        moduleAliases,
+        inputs.sourceFileSet,
+        inputs.overview.areas,
+        inputs.moduleAliases,
       );
       if (resolvedModule) {
         importedModules.add(resolvedModule);
@@ -2321,7 +2967,7 @@ export async function buildRepoIntelligenceIndex(
     entryFiles: string[];
   }>();
 
-  for (const area of overview.areas) {
+  for (const area of inputs.overview.areas) {
     moduleDrafts.set(area.id, {
       dependencies: new Set<string>(),
       dependents: new Set<string>(),
@@ -2351,9 +2997,9 @@ export async function buildRepoIntelligenceIndex(
       const resolvedModule = resolveImportToModule(
         importPath,
         analysis.filePath,
-        sourceFileSet,
-        overview.areas,
-        moduleAliases,
+        inputs.sourceFileSet,
+        inputs.overview.areas,
+        inputs.moduleAliases,
       );
       if (resolvedModule && resolvedModule !== analysis.moduleId) {
         nextDependencies.add(resolvedModule);
@@ -2384,7 +3030,7 @@ export async function buildRepoIntelligenceIndex(
 
   const modules = Array.from(moduleDrafts.entries())
     .map(([moduleId, draft]) => {
-      const area = overview.areas.find((candidate) => candidate.id === moduleId);
+      const area = inputs.overview.areas.find((candidate) => candidate.id === moduleId);
       if (!area) {
         return null;
       }
@@ -2402,20 +3048,20 @@ export async function buildRepoIntelligenceIndex(
         label: area.label,
         kind: area.kind,
         root: area.root,
-        fileCount: filesByAreaId.get(area.id)?.length ?? 0,
+        fileCount: inputs.filesByAreaId.get(area.id)?.length ?? 0,
         sourceFileCount: draft.sourceFileCount,
         symbolCount: draft.symbolCount,
         languages,
         topSymbols: symbolsWithTargets
-      .filter((symbol) => symbol.moduleId === moduleId)
-      .sort((left, right) => Number(right.exported) - Number(left.exported) || right.confidence - left.confidence)
-      .slice(0, 6)
+          .filter((symbol) => symbol.moduleId === moduleId)
+          .sort((left, right) => Number(right.exported) - Number(left.exported) || right.confidence - left.confidence)
+          .slice(0, 6)
           .map((symbol) => symbol.name),
         dependencies,
         dependents,
         entryFiles: draft.entryFiles,
-        keyTests: (testFilesByAreaId.get(moduleId) ?? []).slice(0, 4),
-        keyDocs: (docFilesByAreaId.get(moduleId) ?? []).slice(0, 4),
+        keyTests: (inputs.testFilesByAreaId.get(moduleId) ?? []).slice(0, 4),
+        keyDocs: (inputs.docFilesByAreaId.get(moduleId) ?? []).slice(0, 4),
         sampleFiles: area.sampleFiles.slice(0, 5),
         processIds: [] as string[],
         confidence: Math.min(
@@ -2426,6 +3072,7 @@ export async function buildRepoIntelligenceIndex(
     })
     .filter((module): module is ModuleCapsule => module !== null)
     .sort((left, right) => right.symbolCount - left.symbolCount || left.moduleId.localeCompare(right.moduleId));
+
   const processes = buildProcessCapsules(modules, symbolsWithTargets);
   const processIdsByModule = new Map<string, string[]>();
   for (const process of processes) {
@@ -2438,23 +3085,14 @@ export async function buildRepoIntelligenceIndex(
     processIds: processIdsByModule.get(module.moduleId) ?? [],
   }));
 
-  const languageCounts = new Map<RepoLanguageId, number>();
-  for (const analysis of analyses) {
-    languageCounts.set(analysis.language, (languageCounts.get(analysis.language) ?? 0) + 1);
-  }
-
   const index: RepoIntelligenceIndex = {
     schemaVersion: QUERY_SCHEMA_VERSION,
-    workspaceRoot,
+    workspaceRoot: inputs.workspaceRoot,
     generatedAt: new Date().toISOString(),
-    overviewGeneratedAt: overview.generatedAt,
-    sourceFileCount: sourceFiles.length,
-    sourceFingerprint,
-    languages: Array.from(languageCounts.entries()).map(([language, fileCount]) => ({
-      language,
-      capabilityTier: capabilityTierForLanguage(language),
-      fileCount,
-    })),
+    overviewGeneratedAt: inputs.overview.generatedAt,
+    sourceFileCount: inputs.sourceFiles.length,
+    sourceFingerprint: inputs.sourceFingerprint,
+    languages: collectLanguageBreakdown(analyses),
     modules: modulesWithProcesses,
     symbols: symbolsWithTargets,
     processes,
@@ -2462,50 +3100,605 @@ export async function buildRepoIntelligenceIndex(
 
   const manifest: RepoIntelligenceManifest = {
     schemaVersion: QUERY_SCHEMA_VERSION,
-    workspaceRoot,
+    workspaceRoot: inputs.workspaceRoot,
     generatedAt: index.generatedAt,
-    overviewGeneratedAt: overview.generatedAt,
-    sourceFileCount: sourceFiles.length,
-    sourceFingerprint,
+    overviewGeneratedAt: inputs.overview.generatedAt,
+    overviewFingerprint: inputs.overviewFingerprint,
+    workspaceSnapshot: inputs.workspaceSnapshot,
+    sourceFileCount: inputs.sourceFiles.length,
+    sourceFingerprint: inputs.sourceFingerprint,
     languageBreakdown: index.languages,
+    sourceStates: inputs.sourceStates,
   };
-  await writeJsonFileAtomic(path.join(storageRoot, QUERY_MANIFEST_FILE), manifest);
-  await writeJsonFileAtomic(path.join(storageRoot, MODULE_INDEX_FILE), modulesWithProcesses);
-  await writeJsonFileAtomic(path.join(storageRoot, SYMBOL_INDEX_FILE), symbolsWithTargets);
-  await writeJsonFileAtomic(path.join(storageRoot, PROCESS_INDEX_FILE), processes);
-  await writeJsonFileAtomic(path.join(storageRoot, QUERY_INDEX_FILE), index);
+
+  const fileAnalysisIndex: FileAnalysisIndexPayload = {
+    schemaVersion: QUERY_SCHEMA_VERSION,
+    workspaceRoot: inputs.workspaceRoot,
+    generatedAt: index.generatedAt,
+    sourceFingerprint: inputs.sourceFingerprint,
+    analyses: Object.fromEntries(inputs.sourceFiles.map((filePath) => [
+      filePath,
+      serializeCachedFileAnalysisEntry(analysisEntries.get(filePath) ?? null),
+    ])),
+  };
+  const dirtySourcePaths = getDirtySourcePathsForInputs(inputs);
+  const dirtySourceHint: DirtySourceHintPayload = {
+    schemaVersion: QUERY_SCHEMA_VERSION,
+    workspaceRoot: inputs.workspaceRoot,
+    branch: inputs.workspaceSnapshot.branch,
+    head: inputs.workspaceSnapshot.head,
+    queryGeneratedAt: index.generatedAt,
+    overviewFingerprint: inputs.overviewFingerprint,
+    sourceFingerprint: inputs.sourceFingerprint,
+    sourceFileCount: inputs.sourceFiles.length,
+    dirtyPathsFingerprint: inputs.dirtyPathsFingerprint ?? computePathFingerprint(inputs.dirtyPaths ?? []),
+    dirtySourceFingerprint: inputs.dirtySourceFingerprint ?? computeSourceFingerprint([]),
+    dirtySourcePaths,
+  };
+
+  await writeJsonFileAtomic(path.join(inputs.storageRoot, MODULE_INDEX_FILE), modulesWithProcesses);
+  await writeJsonFileAtomic(path.join(inputs.storageRoot, SYMBOL_INDEX_FILE), symbolsWithTargets);
+  await writeJsonFileAtomic(path.join(inputs.storageRoot, PROCESS_INDEX_FILE), processes);
+  await writeJsonFileAtomic(path.join(inputs.storageRoot, QUERY_INDEX_FILE), index);
+  await writeJsonFileAtomic(path.join(inputs.storageRoot, DIRTY_SOURCE_HINT_FILE), dirtySourceHint);
+  if (shouldPersistRepoIntelligenceBaseline(inputs)) {
+    await writeJsonFileAtomic(path.join(inputs.storageRoot, QUERY_MANIFEST_FILE), manifest);
+    await writeJsonFileAtomic(path.join(inputs.storageRoot, FILE_ANALYSIS_INDEX_FILE), fileAnalysisIndex);
+  }
 
   return index;
+}
+
+async function buildRepoIntelligenceIndexFromInputs(
+  inputs: RepoIntelligenceWorkspaceInputs,
+): Promise<RepoIntelligenceIndex> {
+  const sourceStates = await collectSourceFileStates(
+    inputs.workspaceRoot,
+    inputs.sourceFiles,
+    inputs.areaByFile,
+    inputs.overview.areas,
+  );
+  const completeInputs = finalizeRepoIntelligenceBuildInputs(inputs, sourceStates);
+  const analysisEntries = await analyzeSourceFilesForBuild(completeInputs, completeInputs.sourceFiles);
+  return materializeRepoIntelligenceIndex(completeInputs, analysisEntries);
+}
+
+async function readRepoIntelligenceManifest(
+  storageRoot: string,
+): Promise<RepoIntelligenceManifest | null> {
+  return safeReadJson<RepoIntelligenceManifest>(
+    path.join(storageRoot, QUERY_MANIFEST_FILE),
+    isRepoIntelligenceManifestPayload,
+  );
+}
+
+async function readFileAnalysisIndex(
+  storageRoot: string,
+): Promise<FileAnalysisIndexPayload | null> {
+  return safeReadJson<FileAnalysisIndexPayload>(
+    path.join(storageRoot, FILE_ANALYSIS_INDEX_FILE),
+    isFileAnalysisIndexPayload,
+  );
+}
+
+async function readDirtySourceHint(
+  storageRoot: string,
+): Promise<DirtySourceHintPayload | null> {
+  return safeReadJson<DirtySourceHintPayload>(
+    path.join(storageRoot, DIRTY_SOURCE_HINT_FILE),
+    isDirtySourceHintPayload,
+  );
+}
+
+function hasOwnAnalysisEntry(
+  analyses: FileAnalysisIndexPayload['analyses'],
+  filePath: string,
+): boolean {
+  return Object.prototype.hasOwnProperty.call(analyses, filePath);
+}
+
+function hasCompatibleIncrementalCache(
+  inputs: RepoIntelligenceWorkspaceInputs,
+  manifest: RepoIntelligenceManifest,
+  fileAnalysisIndex: FileAnalysisIndexPayload,
+): boolean {
+  return manifest.schemaVersion === QUERY_SCHEMA_VERSION
+    && fileAnalysisIndex.schemaVersion === QUERY_SCHEMA_VERSION
+    && manifest.workspaceRoot === inputs.workspaceRoot
+    && fileAnalysisIndex.workspaceRoot === inputs.workspaceRoot
+    && manifest.workspaceSnapshot.source === inputs.workspaceSnapshot.source
+    && manifest.sourceStates.length === manifest.sourceFileCount
+    && fileAnalysisIndex.sourceFingerprint === manifest.sourceFingerprint;
+}
+
+function canDirectReuseCleanCachedQueryIndex(
+  inputs: RepoIntelligenceWorkspaceInputs,
+  manifest: RepoIntelligenceManifest,
+): boolean {
+  return isCleanGitSnapshot(inputs.workspaceSnapshot)
+    && sameWorkspaceSnapshot(manifest.workspaceSnapshot, inputs.workspaceSnapshot)
+    && manifest.overviewFingerprint === inputs.overviewFingerprint
+    && manifest.sourceFileCount === inputs.sourceFiles.length;
+}
+
+function canDirectReuseDirtyCachedQueryIndex(
+  inputs: RepoIntelligenceWorkspaceInputs,
+  dirtySourceHint: DirtySourceHintPayload | null,
+): boolean {
+  return Boolean(
+    inputs.workspaceSnapshot.source === 'git'
+      && inputs.workspaceSnapshot.hasUncommittedChanges === true
+      && dirtySourceHint
+      && dirtySourceHint.schemaVersion === QUERY_SCHEMA_VERSION
+      && dirtySourceHint.workspaceRoot === inputs.workspaceRoot
+      && dirtySourceHint.head === inputs.workspaceSnapshot.head
+      && dirtySourceHint.branch === inputs.workspaceSnapshot.branch
+      && dirtySourceHint.overviewFingerprint === inputs.overviewFingerprint
+      && dirtySourceHint.sourceFileCount === inputs.sourceFiles.length
+      && dirtySourceHint.dirtyPathsFingerprint === inputs.dirtyPathsFingerprint
+      && dirtySourceHint.dirtySourceFingerprint === inputs.dirtySourceFingerprint,
+  );
+}
+
+async function tryDirectReuseCleanCachedQueryIndexFromPreflight(
+  preflight: RepoIntelligencePreflight,
+): Promise<RepoIntelligenceIndex | null> {
+  if (!isCleanGitSnapshot(preflight.workspaceSnapshot)) {
+    return null;
+  }
+
+  const manifest = await readRepoIntelligenceManifest(preflight.storageRoot);
+  if (
+    !manifest
+    || manifest.schemaVersion !== QUERY_SCHEMA_VERSION
+    || manifest.workspaceRoot !== preflight.workspaceRoot
+    || !sameWorkspaceSnapshot(manifest.workspaceSnapshot, preflight.workspaceSnapshot)
+    || manifest.overviewGeneratedAt !== preflight.overviewGeneratedAt
+  ) {
+    return null;
+  }
+
+  const cached = await safeReadJson<RepoIntelligenceIndex>(
+    path.join(preflight.storageRoot, QUERY_INDEX_FILE),
+    isRepoIntelligenceIndexPayload,
+  );
+  if (
+    cached?.schemaVersion !== QUERY_SCHEMA_VERSION
+    || cached.workspaceRoot !== preflight.workspaceRoot
+    || cached.overviewGeneratedAt !== manifest.overviewGeneratedAt
+    || cached.sourceFileCount !== manifest.sourceFileCount
+    || cached.sourceFingerprint !== manifest.sourceFingerprint
+  ) {
+    return null;
+  }
+
+  return cached;
+}
+
+async function tryDirectReuseDirtyCachedQueryIndexFromPreflight(
+  preflight: RepoIntelligencePreflight,
+): Promise<RepoIntelligenceIndex | null> {
+  if (
+    preflight.workspaceSnapshot.source !== 'git'
+    || preflight.workspaceSnapshot.hasUncommittedChanges !== true
+  ) {
+    return null;
+  }
+
+  const dirtySourceHint = await readDirtySourceHint(preflight.storageRoot);
+  if (
+    !dirtySourceHint
+    || dirtySourceHint.schemaVersion !== QUERY_SCHEMA_VERSION
+    || dirtySourceHint.workspaceRoot !== preflight.workspaceRoot
+    || dirtySourceHint.head !== preflight.workspaceSnapshot.head
+    || dirtySourceHint.branch !== preflight.workspaceSnapshot.branch
+    || dirtySourceHint.dirtyPathsFingerprint !== preflight.dirtyPathsFingerprint
+    || dirtySourceHint.dirtySourceFingerprint !== preflight.dirtySourceFingerprint
+  ) {
+    return null;
+  }
+
+  const cached = await safeReadJson<RepoIntelligenceIndex>(
+    path.join(preflight.storageRoot, QUERY_INDEX_FILE),
+    isRepoIntelligenceIndexPayload,
+  );
+  if (
+    cached?.schemaVersion !== QUERY_SCHEMA_VERSION
+    || cached.workspaceRoot !== preflight.workspaceRoot
+    || cached.overviewGeneratedAt !== preflight.overviewGeneratedAt
+    || cached.generatedAt !== dirtySourceHint.queryGeneratedAt
+    || cached.sourceFileCount !== dirtySourceHint.sourceFileCount
+    || cached.sourceFingerprint !== dirtySourceHint.sourceFingerprint
+  ) {
+    return null;
+  }
+
+  return cached;
+}
+
+function mapSourceStatesByFile(
+  sourceStates: RepoSourceFileState[],
+): Map<string, RepoSourceFileState> {
+  return new Map(sourceStates.map((state) => [state.filePath, state]));
+}
+
+function buildCompleteInputsFromSourceStates(
+  inputs: RepoIntelligenceWorkspaceInputs,
+  sourceStatesByFile: Map<string, RepoSourceFileState>,
+): RepoIntelligenceWorkspaceInputs | null {
+  const sourceStates = inputs.sourceFiles
+    .map((filePath) => sourceStatesByFile.get(filePath))
+    .filter((state): state is RepoSourceFileState => state !== undefined);
+
+  if (sourceStates.length !== inputs.sourceFiles.length) {
+    return null;
+  }
+
+  return finalizeRepoIntelligenceBuildInputs(inputs, sourceStates);
+}
+
+function classifyChangedOrNewSourceFiles(
+  sourceStates: RepoSourceFileState[],
+  previousByFile: Map<string, RepoSourceFileState>,
+): Set<string> | null {
+  const changedOrNewFiles = new Set<string>();
+  for (const state of sourceStates) {
+    const previousState = previousByFile.get(state.filePath);
+    if (!previousState) {
+      changedOrNewFiles.add(state.filePath);
+      continue;
+    }
+    if (previousState.analyzerVersion !== state.analyzerVersion) {
+      return null;
+    }
+    if (
+      previousState.fileFingerprint !== state.fileFingerprint
+      || previousState.language !== state.language
+      || previousState.moduleId !== state.moduleId
+    ) {
+      changedOrNewFiles.add(state.filePath);
+    }
+  }
+  return changedOrNewFiles;
+}
+
+async function buildIncrementalAnalysisEntries(
+  inputs: RepoIntelligenceWorkspaceInputs,
+  previousByFile: Map<string, RepoSourceFileState>,
+  fileAnalysisIndex: FileAnalysisIndexPayload,
+  changedOrNewFiles: Set<string>,
+): Promise<Map<string, FileAnalysis | null> | null> {
+  if (!inputs.sourceStates) {
+    return null;
+  }
+
+  const sourceStatesByFile = mapSourceStatesByFile(inputs.sourceStates);
+  const shouldReanalyzeTypeScript = Array.from(changedOrNewFiles).some((filePath) => {
+    const state = sourceStatesByFile.get(filePath);
+    return state ? isTypeScriptLikeLanguage(state.language) : false;
+  });
+
+  const filesToAnalyze = new Set<string>();
+  for (const state of inputs.sourceStates) {
+    if (shouldReanalyzeTypeScript && isTypeScriptLikeLanguage(state.language)) {
+      filesToAnalyze.add(state.filePath);
+      continue;
+    }
+    if (changedOrNewFiles.has(state.filePath)) {
+      filesToAnalyze.add(state.filePath);
+    }
+  }
+
+  const analysisEntries = new Map<string, FileAnalysis | null>();
+  for (const state of inputs.sourceStates) {
+    if (filesToAnalyze.has(state.filePath)) {
+      continue;
+    }
+    if (!hasOwnAnalysisEntry(fileAnalysisIndex.analyses, state.filePath)) {
+      return null;
+    }
+    analysisEntries.set(
+      state.filePath,
+      hydrateCachedFileAnalysis(
+        state.filePath,
+        state,
+        fileAnalysisIndex.analyses[state.filePath] ?? null,
+      ),
+    );
+  }
+
+  if (filesToAnalyze.size > 0) {
+    const freshAnalyses = await analyzeSourceFilesForBuild(
+      inputs,
+      inputs.sourceFiles.filter((filePath) => filesToAnalyze.has(filePath)),
+    );
+    for (const filePath of filesToAnalyze) {
+      analysisEntries.set(filePath, freshAnalyses.get(filePath) ?? null);
+    }
+  }
+
+  for (const state of inputs.sourceStates) {
+    if (!analysisEntries.has(state.filePath)) {
+      return null;
+    }
+    const analysis = analysisEntries.get(state.filePath) ?? null;
+    if (
+      analysis
+      && (
+        analysis.filePath !== state.filePath
+        || analysis.moduleId !== state.moduleId
+        || analysis.language !== state.language
+      )
+    ) {
+      return null;
+    }
+    if (previousByFile.get(state.filePath)?.analyzerVersion !== undefined
+      && previousByFile.get(state.filePath)?.analyzerVersion !== state.analyzerVersion) {
+      return null;
+    }
+  }
+
+  return analysisEntries;
+}
+
+async function tryGitDirtyIncrementalRepoIntelligenceBuild(
+  inputs: RepoIntelligenceWorkspaceInputs,
+  manifest: RepoIntelligenceManifest,
+  fileAnalysisIndex: FileAnalysisIndexPayload,
+): Promise<RepoIntelligenceIndex | null> {
+  if (
+    inputs.workspaceSnapshot.source !== 'git'
+    || inputs.workspaceSnapshot.hasUncommittedChanges !== true
+    || manifest.workspaceSnapshot.source !== 'git'
+    || inputs.workspaceSnapshot.head !== manifest.workspaceSnapshot.head
+    || inputs.workspaceSnapshot.branch !== manifest.workspaceSnapshot.branch
+  ) {
+    return null;
+  }
+
+  const dirtyPaths = new Set(inputs.dirtyPaths ?? []);
+  const dirtySourceHint = await readDirtySourceHint(inputs.storageRoot);
+  const previousDirtySourcePaths = new Set(
+    dirtySourceHint
+    && dirtySourceHint.workspaceRoot === inputs.workspaceRoot
+    && dirtySourceHint.head === inputs.workspaceSnapshot.head
+    && dirtySourceHint.branch === inputs.workspaceSnapshot.branch
+      ? dirtySourceHint.dirtySourcePaths
+      : [],
+  );
+  const previousByFile = mapSourceStatesByFile(manifest.sourceStates);
+  const sourceStateMap = new Map<string, RepoSourceFileState>();
+  const filesNeedingFreshState = new Set<string>();
+  const precomputedDirtyStates = inputs.dirtySourceStateMap ?? new Map<string, RepoSourceFileState>();
+
+  for (const filePath of inputs.sourceFiles) {
+    const previousState = previousByFile.get(filePath);
+    if (!previousState) {
+      if (!dirtyPaths.has(filePath)) {
+        return null;
+      }
+      filesNeedingFreshState.add(filePath);
+      continue;
+    }
+
+    if (dirtyPaths.has(filePath) || previousDirtySourcePaths.has(filePath)) {
+      filesNeedingFreshState.add(filePath);
+      continue;
+    }
+
+    sourceStateMap.set(filePath, previousState);
+  }
+
+  if (filesNeedingFreshState.size > 0) {
+    const missingFreshStateFiles = new Set<string>();
+    for (const filePath of filesNeedingFreshState) {
+      const precomputedState = precomputedDirtyStates.get(filePath);
+      if (precomputedState) {
+        sourceStateMap.set(filePath, precomputedState);
+        continue;
+      }
+      missingFreshStateFiles.add(filePath);
+    }
+
+    if (missingFreshStateFiles.size > 0) {
+      const freshStates = await collectSourceFileStateMap(
+        inputs.workspaceRoot,
+        missingFreshStateFiles,
+        inputs.areaByFile,
+        inputs.overview.areas,
+      );
+      for (const [filePath, state] of freshStates.entries()) {
+        sourceStateMap.set(filePath, state);
+      }
+    }
+  }
+
+  const completeInputs = buildCompleteInputsFromSourceStates(inputs, sourceStateMap);
+  if (!completeInputs?.sourceStates) {
+    return null;
+  }
+
+  const changedOrNewFiles = classifyChangedOrNewSourceFiles(completeInputs.sourceStates, previousByFile);
+  if (!changedOrNewFiles) {
+    return null;
+  }
+
+  const analysisEntries = await buildIncrementalAnalysisEntries(
+    completeInputs,
+    previousByFile,
+    fileAnalysisIndex,
+    changedOrNewFiles,
+  );
+  if (!analysisEntries) {
+    return null;
+  }
+
+  return materializeRepoIntelligenceIndex(completeInputs, analysisEntries);
+}
+
+async function tryStatBasedIncrementalRepoIntelligenceBuild(
+  inputs: RepoIntelligenceWorkspaceInputs,
+  manifest: RepoIntelligenceManifest,
+  fileAnalysisIndex: FileAnalysisIndexPayload,
+): Promise<RepoIntelligenceIndex | null> {
+  const freshStateMap = await collectSourceFileStateMap(
+    inputs.workspaceRoot,
+    inputs.sourceFiles,
+    inputs.areaByFile,
+    inputs.overview.areas,
+  );
+  const completeInputs = buildCompleteInputsFromSourceStates(inputs, freshStateMap);
+  if (!completeInputs?.sourceStates) {
+    return null;
+  }
+
+  const previousByFile = mapSourceStatesByFile(manifest.sourceStates);
+  const changedOrNewFiles = classifyChangedOrNewSourceFiles(completeInputs.sourceStates, previousByFile);
+  if (!changedOrNewFiles) {
+    return null;
+  }
+
+  const analysisEntries = await buildIncrementalAnalysisEntries(
+    completeInputs,
+    previousByFile,
+    fileAnalysisIndex,
+    changedOrNewFiles,
+  );
+  if (!analysisEntries) {
+    return null;
+  }
+
+  return materializeRepoIntelligenceIndex(completeInputs, analysisEntries);
+}
+
+async function tryIncrementalRepoIntelligenceBuild(
+  inputs: RepoIntelligenceWorkspaceInputs,
+  manifest: RepoIntelligenceManifest | null,
+): Promise<RepoIntelligenceIndex | null> {
+  if (!manifest) {
+    return null;
+  }
+  const fileAnalysisIndex = await readFileAnalysisIndex(inputs.storageRoot);
+
+  if (!fileAnalysisIndex) {
+    return null;
+  }
+
+  if (!hasCompatibleIncrementalCache(inputs, manifest, fileAnalysisIndex)) {
+    return null;
+  }
+
+  const gitDirtyResult = await tryGitDirtyIncrementalRepoIntelligenceBuild(inputs, manifest, fileAnalysisIndex);
+  if (gitDirtyResult) {
+    return gitDirtyResult;
+  }
+
+  return tryStatBasedIncrementalRepoIntelligenceBuild(inputs, manifest, fileAnalysisIndex);
+}
+
+async function getRepoIntelligenceIndexFromInputs(
+  inputs: RepoIntelligenceWorkspaceInputs,
+  refresh = false,
+): Promise<RepoIntelligenceIndex> {
+  const manifest = !refresh
+    ? await readRepoIntelligenceManifest(inputs.storageRoot)
+    : null;
+  const dirtySourceHint = !refresh && inputs.workspaceSnapshot.source === 'git' && inputs.workspaceSnapshot.hasUncommittedChanges === true
+    ? await readDirtySourceHint(inputs.storageRoot)
+    : null;
+
+  if (
+    manifest
+    && canDirectReuseCleanCachedQueryIndex(inputs, manifest)
+  ) {
+    const cached = await safeReadJson<RepoIntelligenceIndex>(
+      path.join(inputs.storageRoot, QUERY_INDEX_FILE),
+      isRepoIntelligenceIndexPayload,
+    );
+    if (
+      cached?.schemaVersion === QUERY_SCHEMA_VERSION
+      && cached.workspaceRoot === inputs.workspaceRoot
+      && cached.overviewGeneratedAt === manifest.overviewGeneratedAt
+      && cached.sourceFileCount === manifest.sourceFileCount
+      && cached.sourceFingerprint === manifest.sourceFingerprint
+    ) {
+      return cached;
+    }
+  }
+
+  if (canDirectReuseDirtyCachedQueryIndex(inputs, dirtySourceHint)) {
+    const cached = await safeReadJson<RepoIntelligenceIndex>(
+      path.join(inputs.storageRoot, QUERY_INDEX_FILE),
+      isRepoIntelligenceIndexPayload,
+    );
+    if (
+      cached?.schemaVersion === QUERY_SCHEMA_VERSION
+      && cached.workspaceRoot === inputs.workspaceRoot
+      && cached.generatedAt === dirtySourceHint?.queryGeneratedAt
+      && cached.sourceFileCount === dirtySourceHint.sourceFileCount
+      && cached.sourceFingerprint === dirtySourceHint.sourceFingerprint
+    ) {
+      return cached;
+    }
+  }
+
+  if (!refresh) {
+    const incrementallyRebuilt = await tryIncrementalRepoIntelligenceBuild(inputs, manifest);
+    if (incrementallyRebuilt) {
+      return incrementallyRebuilt;
+    }
+  }
+
+  return buildRepoIntelligenceIndexFromInputs(inputs);
+}
+
+async function getRepoIntelligenceIndexFromSnapshot(
+  snapshot: RepoOverviewSnapshot,
+  refresh = false,
+): Promise<RepoIntelligenceIndex> {
+  if (refresh) {
+    const inputs = await prepareRepoIntelligenceBuildInputsFromSnapshot(snapshot);
+    return getRepoIntelligenceIndexFromInputs(inputs, true);
+  }
+
+  const preflight = await buildRepoIntelligencePreflight(snapshot);
+  const cleanCached = await tryDirectReuseCleanCachedQueryIndexFromPreflight(preflight);
+  if (cleanCached) {
+    return cleanCached;
+  }
+
+  const dirtyCached = await tryDirectReuseDirtyCachedQueryIndexFromPreflight(preflight);
+  if (dirtyCached) {
+    return dirtyCached;
+  }
+
+  const inputs = await prepareRepoIntelligenceBuildInputsFromSnapshot(snapshot, {
+    preflight,
+  });
+  return getRepoIntelligenceIndexFromInputs(inputs, false);
+}
+
+export async function buildRepoIntelligenceIndex(
+  context: Pick<KodaXToolExecutionContext, 'executionCwd' | 'gitRoot'>,
+  options: { targetPath?: string; refresh?: boolean } = {},
+): Promise<RepoIntelligenceIndex> {
+  const snapshot = await resolveRepoOverviewSnapshot(context, {
+    targetPath: options.targetPath,
+    refresh: options.refresh,
+  });
+  const inputs = await prepareRepoIntelligenceBuildInputsFromSnapshot(snapshot);
+  return buildRepoIntelligenceIndexFromInputs(inputs);
 }
 
 export async function getRepoIntelligenceIndex(
   context: Pick<KodaXToolExecutionContext, 'executionCwd' | 'gitRoot'>,
   options: { targetPath?: string; refresh?: boolean } = {},
 ): Promise<RepoIntelligenceIndex> {
-  const overview = await getRepoOverview(context, {
+  const snapshot = await resolveRepoOverviewSnapshot(context, {
     targetPath: options.targetPath,
     refresh: options.refresh,
   });
-  const storageRoot = path.join(overview.workspaceRoot, REPO_INTELLIGENCE_DIR);
-  const { files: allFiles } = await collectWorkspaceFilesForSource(overview.workspaceRoot, overview.source);
-  const sourceFiles = allFiles.filter((filePath) => SOURCE_EXTENSIONS.has(path.extname(filePath).toLowerCase()));
-  const sourceFingerprint = await computeSourceFingerprint(overview.workspaceRoot, sourceFiles);
-  const cached = await safeReadJson<RepoIntelligenceIndex>(
-    path.join(storageRoot, QUERY_INDEX_FILE),
-    isRepoIntelligenceIndexPayload,
-  );
-  if (
-    !options.refresh
-    && cached?.schemaVersion === QUERY_SCHEMA_VERSION
-    && cached.workspaceRoot === overview.workspaceRoot
-    && cached.overviewGeneratedAt === overview.generatedAt
-    && cached.sourceFileCount === sourceFiles.length
-    && cached.sourceFingerprint === sourceFingerprint
-  ) {
-    return cached;
-  }
-
-  return buildRepoIntelligenceIndex(context, options);
+  return getRepoIntelligenceIndexFromSnapshot(snapshot, options.refresh === true);
 }
 
 export interface ModuleContextResult {
@@ -2881,13 +4074,15 @@ export async function getImpactEstimate(
   context: Pick<KodaXToolExecutionContext, 'executionCwd' | 'gitRoot'>,
   options: { symbol?: string; module?: string; path?: string; targetPath?: string; refresh?: boolean },
 ): Promise<ImpactEstimateResult> {
-  const index = await getRepoIntelligenceIndex(context, options);
+  const snapshot = await resolveRepoOverviewSnapshot(context, {
+    targetPath: options.targetPath,
+    refresh: options.refresh,
+  });
+  const index = await getRepoIntelligenceIndexFromSnapshot(snapshot, options.refresh === true);
   let changedScope: ChangedScopeReport | undefined;
   try {
-    changedScope = await analyzeChangedScope(context, {
-      targetPath: options.targetPath,
+    changedScope = await analyzeChangedScopeFromSnapshot(snapshot, {
       scope: 'all',
-      refreshOverview: options.refresh,
     });
   } catch (error) {
     debugLogRepoIntelligence('impact_estimate could not load changed scope.', error);
@@ -2900,20 +4095,15 @@ export async function getRepoRoutingSignals(
   context: Pick<KodaXToolExecutionContext, 'executionCwd' | 'gitRoot'>,
   options: { targetPath?: string; refresh?: boolean } = {},
 ): Promise<KodaXRepoRoutingSignals> {
-  const repoContext = {
-    executionCwd: context.executionCwd,
-    gitRoot: context.gitRoot,
-  };
+  const snapshot = await resolveRepoOverviewSnapshot(context, {
+    targetPath: options.targetPath,
+    refresh: options.refresh,
+  });
   const activeModuleTargetPath = options.targetPath ?? (context.executionCwd ? '.' : undefined);
   const [index, changedScope] = await Promise.all([
-    getRepoIntelligenceIndex(repoContext, {
-      targetPath: options.targetPath,
-      refresh: options.refresh,
-    }),
-    analyzeChangedScope(repoContext, {
-      targetPath: options.targetPath,
+    getRepoIntelligenceIndexFromSnapshot(snapshot, options.refresh === true),
+    analyzeChangedScopeFromSnapshot(snapshot, {
       scope: 'all',
-      refreshOverview: options.refresh,
     }).catch((error) => {
       debugLogRepoIntelligence('Routing signals could not load changed scope.', error);
       return null;

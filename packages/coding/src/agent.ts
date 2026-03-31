@@ -1034,8 +1034,6 @@ export async function runKodaX(
         ? await getRepoRoutingSignals({
           executionCwd,
           gitRoot: options.context?.gitRoot ?? undefined,
-        }, {
-          refresh: messages.length === 1,
         }).catch(() => null)
         : null
     );

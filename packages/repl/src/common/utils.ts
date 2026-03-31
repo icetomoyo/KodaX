@@ -62,8 +62,12 @@ type ShellEnvRunner = (
     maxBuffer: number;
     timeout: number;
     windowsHide: boolean;
+    detached: boolean;
+    stdio: ['ignore', 'pipe', 'pipe'];
   },
 ) => SpawnSyncReturns<string>;
+
+const SHELL_ENV_PROBE_TERM = 'dumb';
 
 function buildShellEnvCommand(shellPath: string): { args: string[]; sentinel: string } {
   const shellName = path.basename(shellPath).toLowerCase();
@@ -132,12 +136,18 @@ export function hydrateProcessEnvFromShell(options: {
 
   const { args, sentinel } = buildShellEnvCommand(shellPath);
   const run = options.run ?? spawnSync;
+  const shellProbeEnv: NodeJS.ProcessEnv = {
+    ...env,
+    TERM: SHELL_ENV_PROBE_TERM,
+  };
   const result = run(shellPath, args, {
     encoding: 'utf8',
-    env,
+    env: shellProbeEnv,
     maxBuffer: 1024 * 1024,
     timeout: 5000,
     windowsHide: true,
+    detached: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
 
   if (result.status !== 0 || !result.stdout) {
@@ -151,6 +161,10 @@ export function hydrateProcessEnvFromShell(options: {
   let applied = false;
 
   for (const [key, value] of Object.entries(shellEnv)) {
+    // TERM is probe-only; applying it back would misrepresent the live terminal.
+    if (key === 'TERM') {
+      continue;
+    }
     if (env[key] !== undefined) {
       continue;
     }
