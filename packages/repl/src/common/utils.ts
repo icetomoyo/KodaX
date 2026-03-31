@@ -6,7 +6,7 @@
 import fsSync from 'fs';
 import path from 'path';
 import os from 'os';
-import { exec } from 'child_process';
+import { exec, spawnSync, type SpawnSyncReturns } from 'child_process';
 import { promisify } from 'util';
 import { fileURLToPath } from 'url';
 import {
@@ -20,6 +20,7 @@ import {
   getCustomProviderList,
   getCustomProvider,
   isProviderConfigured as isBuiltInProviderConfigured,
+  registerCustomProviders,
   resolveProvider,
   type KodaXProviderCapabilityProfile,
   type KodaXProviderCapabilitySnapshot,
@@ -43,6 +44,7 @@ export const KODAX_CONFIG_FILE = path.join(KODAX_DIR, 'config.json');
 export const PREVIEW_MAX_LENGTH = 60;
 
 let cachedVersion: string | null = null;
+let shellEnvironmentHydrated = false;
 type FeatureProgressSnapshot = {
   completed: number;
   total: number;
@@ -50,6 +52,140 @@ type FeatureProgressSnapshot = {
   mtimeMs: number;
 };
 let cachedFeatureProgress: FeatureProgressSnapshot | null = null;
+
+type ShellEnvRunner = (
+  command: string,
+  args: string[],
+  options: {
+    encoding: 'utf8';
+    env: NodeJS.ProcessEnv;
+    maxBuffer: number;
+    timeout: number;
+    windowsHide: boolean;
+  },
+) => SpawnSyncReturns<string>;
+
+function buildShellEnvCommand(shellPath: string): { args: string[]; sentinel: string } {
+  const shellName = path.basename(shellPath).toLowerCase();
+  const sentinel = '__KODAX_SHELL_ENV_START__';
+  const command = `printf '%s\\0' '${sentinel}'; env -0`;
+
+  if (shellName === 'fish') {
+    return { args: ['-i', '-c', command], sentinel };
+  }
+
+  const args =
+    shellName === 'bash' || shellName === 'zsh'
+      ? ['-ic', command]
+      : ['-lc', command];
+
+  return { args, sentinel };
+}
+
+function parseNullDelimitedShellEnv(stdout: string, sentinel: string): Record<string, string> {
+  const marker = `${sentinel}\0`;
+  const markerIndex = stdout.lastIndexOf(marker);
+  if (markerIndex === -1) {
+    return {};
+  }
+
+  const payload = stdout.slice(markerIndex + marker.length);
+  const env: Record<string, string> = {};
+
+  for (const entry of payload.split('\0')) {
+    if (!entry) {
+      continue;
+    }
+
+    const separatorIndex = entry.indexOf('=');
+    if (separatorIndex <= 0) {
+      continue;
+    }
+
+    env[entry.slice(0, separatorIndex)] = entry.slice(separatorIndex + 1);
+  }
+
+  return env;
+}
+
+export function hydrateProcessEnvFromShell(options: {
+  env?: NodeJS.ProcessEnv;
+  platform?: NodeJS.Platform;
+  run?: ShellEnvRunner;
+  shell?: string;
+} = {}): boolean {
+  const env = options.env ?? process.env;
+  const platform = options.platform ?? process.platform;
+
+  if (platform === 'win32') {
+    return false;
+  }
+
+  if (env.KODAX_DISABLE_SHELL_ENV_HYDRATION === '1') {
+    return false;
+  }
+
+  const shellPath = options.shell ?? env.SHELL;
+  if (!shellPath || !path.isAbsolute(shellPath)) {
+    return false;
+  }
+
+  const { args, sentinel } = buildShellEnvCommand(shellPath);
+  const run = options.run ?? spawnSync;
+  const result = run(shellPath, args, {
+    encoding: 'utf8',
+    env,
+    maxBuffer: 1024 * 1024,
+    timeout: 5000,
+    windowsHide: true,
+  });
+
+  if (result.status !== 0 || !result.stdout) {
+    return false;
+  }
+
+  const stdout = typeof result.stdout === 'string'
+    ? result.stdout
+    : result.stdout.toString('utf8');
+  const shellEnv = parseNullDelimitedShellEnv(stdout, sentinel);
+  let applied = false;
+
+  for (const [key, value] of Object.entries(shellEnv)) {
+    if (env[key] !== undefined) {
+      continue;
+    }
+    env[key] = value;
+    applied = true;
+  }
+
+  return applied;
+}
+
+function ensureShellEnvironmentHydrated(): void {
+  if (shellEnvironmentHydrated) {
+    return;
+  }
+
+  shellEnvironmentHydrated = true;
+  try {
+    hydrateProcessEnvFromShell();
+  } catch {
+    // Shell env hydration is best-effort. Falling back to the inherited
+    // process env keeps startup resilient in restricted runtimes.
+  }
+}
+
+// Test-only helper to keep module-level hydration state from leaking across
+// multiple cases running in the same process.
+export function resetShellEnvironmentHydrationForTesting(): void {
+  shellEnvironmentHydrated = false;
+}
+
+export function registerConfiguredCustomProviders(config: {
+  customProviders?: KodaXCustomProviderConfig[];
+}): void {
+  registerCustomProviders(config.customProviders ?? []);
+}
 
 function normalizeConfiguredExtensions(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) {
@@ -454,6 +590,13 @@ export function loadConfig(): {
     // Unreadable user config should fall back to defaults instead of breaking startup.
   }
   return {};
+}
+
+export function prepareRuntimeConfig(): ReturnType<typeof loadConfig> {
+  ensureShellEnvironmentHydrated();
+  const config = loadConfig();
+  registerConfiguredCustomProviders(config);
+  return config;
 }
 
 // Save config to ~/.kodax/config.json

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   formatManagedTaskBreadcrumb,
+  formatManagedTaskLiveStatusLabel,
   formatSilentIterationToolsSummary,
   mergeLiveThinkingContent,
 } from "./live-streaming.js";
@@ -57,6 +58,48 @@ describe("live-streaming", () => {
       phase: "routing",
       note: "AMA routing: raw=H0_DIRECT(model) -> final=H2_PLAN_EXECUTE_EVAL reason=large current-diff review",
     })).toBe("AMA Routing - Routing ready");
+  });
+
+  it("formats managed-task round breadcrumbs", () => {
+    expect(formatManagedTaskBreadcrumb({
+      agentMode: "ama",
+      harnessProfile: "H1_EXECUTE_EVAL",
+      currentRound: 2,
+      maxRounds: 2,
+      phase: "round",
+      note: "Starting refinement round 2",
+    })).toBe("AMA H1 - Starting refinement round 2");
+  });
+
+  it("formats managed-task live labels for round updates without a worker title", () => {
+    expect(formatManagedTaskLiveStatusLabel({
+      agentMode: "ama",
+      harnessProfile: "H2_PLAN_EXECUTE_EVAL",
+      currentRound: 2,
+      maxRounds: 3,
+      phase: "round",
+      note: "Additional work budget approved (+200). Continuing the run.",
+    })).toBe("[Round] Additional work budget approved (+200). Continuing the run.");
+  });
+
+  it("keeps the scout note in managed-task live labels during preflight", () => {
+    expect(formatManagedTaskLiveStatusLabel({
+      agentMode: "ama",
+      harnessProfile: "H2_PLAN_EXECUTE_EVAL",
+      activeWorkerTitle: "Scout",
+      phase: "preflight",
+      note: "Scout analyzing task complexity",
+    })).toBe("[Scout] analyzing task complexity");
+  });
+
+  it("keeps worker completion notes in managed-task live labels", () => {
+    expect(formatManagedTaskLiveStatusLabel({
+      agentMode: "ama",
+      harnessProfile: "H1_EXECUTE_EVAL",
+      activeWorkerTitle: "Planner",
+      phase: "worker",
+      note: "Planner completed",
+    })).toBe("[Phase] AMA H1 - Planner - completed");
   });
 
   it("formats silent tool-only iteration summaries", () => {

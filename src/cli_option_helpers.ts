@@ -171,6 +171,36 @@ export function resolveCliAgentMode(
   return config.agentMode ?? 'ama';
 }
 
+export function resolveCliModelSelection(
+  requestedProvider: string | undefined,
+  requestedModel: string | undefined,
+  configuredProvider: string | undefined,
+  configuredModel: string | undefined,
+): string | undefined {
+  if (requestedModel) {
+    return requestedModel;
+  }
+
+  if (!configuredModel) {
+    return undefined;
+  }
+
+  if (!requestedProvider) {
+    return configuredModel;
+  }
+
+  if (!configuredProvider) {
+    // If the user explicitly switches providers, only preserve a configured
+    // model when we know it belongs to the same provider. Providerless saved
+    // models are ambiguous and can silently target an incompatible backend.
+    return undefined;
+  }
+
+  return requestedProvider === configuredProvider
+    ? configuredModel
+    : undefined;
+}
+
 export function mergeConfiguredExtensions(
   cliExtensions: string[] = [],
   configExtensions: string[] = [],

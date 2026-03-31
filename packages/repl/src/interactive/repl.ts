@@ -32,7 +32,6 @@ import {
   KodaXRateLimitError,
   KodaXProviderError,
   KODAX_DEFAULT_PROVIDER,
-  registerCustomProviders,
   setSessionLineageActiveEntry,
   getCustomProvider,
 } from '@kodax/coding';
@@ -40,7 +39,7 @@ import type { AgentsFile } from '@kodax/coding';
 import type { PermissionMode, ConfirmResult } from '../permission/types.js';
 import { computeConfirmTools, FILE_MODIFICATION_TOOLS, normalizePermissionMode } from '../permission/types.js';
 import { isToolCallAllowed, isAlwaysConfirmPath, isBashReadCommand, getPlanModeBlockReason } from '../permission/permission.js';
-import { getGitRoot, loadConfig, getProviderModel, getProviderAvailableModels, KODAX_VERSION } from '../common/utils.js';
+import { getGitRoot, prepareRuntimeConfig, getProviderModel, getProviderAvailableModels, KODAX_VERSION } from '../common/utils.js';
 import {
   InteractiveContext,
   InteractiveMode,
@@ -249,13 +248,9 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   const storage = options.storage ?? new MemorySessionStorage();
 
   // Load config (priority: CLI args > config file > defaults) - 加载配置（优先级：CLI参数 > 配置文件 > 默认值）
-  const config = loadConfig();
+  const config = prepareRuntimeConfig();
 
   // Initialize custom providers from config - 从配置初始化自定义 Provider
-  if (config.customProviders?.length) {
-    registerCustomProviders(config.customProviders);
-  }
-
   const initialProvider = options.provider ?? config.provider ?? KODAX_DEFAULT_PROVIDER;
   const initialModel = options.model ?? config.model;
   const initialReasoningMode = resolveInitialReasoningMode(options, config);

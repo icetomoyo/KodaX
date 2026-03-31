@@ -34,7 +34,7 @@ type JsonEvent =
   | { type: 'thinking.delta'; text: string }
   | { type: 'thinking.end'; thinking: string }
   | { type: 'tool.start'; id: string; name: string; input?: Record<string, unknown> }
-  | { type: 'tool.input.delta'; toolName: string; partialJson: string }
+  | { type: 'tool.input.delta'; toolName: string; partialJson: string; toolId?: string }
   | { type: 'tool.result'; id: string; name: string; content: string }
   | { type: 'stream.end' }
   | { type: 'compact.start' }
@@ -115,11 +115,12 @@ export function createJsonEvents(options: JsonEventOutputOptions = {}): KodaXEve
       });
     },
 
-    onToolInputDelta: (toolName, partialJson) => {
+    onToolInputDelta: (toolName, partialJson, meta) => {
       writeJsonLine(stdout, {
         type: 'tool.input.delta',
         toolName,
         partialJson,
+        toolId: meta?.toolId,
       });
     },
 

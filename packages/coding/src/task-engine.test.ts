@@ -1,16 +1,32 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ReasoningPlan } from './reasoning.js';
-import type { KodaXManagedTaskStatusEvent, KodaXTaskRoutingDecision } from './types.js';
+import type { KodaXManagedTaskStatusEvent, KodaXRepoRoutingSignals, KodaXTaskRoutingDecision } from './types.js';
 
 const {
   mockCreateReasoningPlan,
+  mockAnalyzeChangedScope,
+  mockGetImpactEstimate,
+  mockGetModuleContext,
+  mockGetRepoOverview,
+  mockRenderChangedScope,
+  mockRenderImpactEstimate,
+  mockRenderModuleContext,
+  mockRenderRepoOverview,
   mockResolveProvider,
   mockRunDirectKodaX,
 } = vi.hoisted(() => ({
+  mockAnalyzeChangedScope: vi.fn(),
   mockCreateReasoningPlan: vi.fn(),
+  mockGetImpactEstimate: vi.fn(),
+  mockGetModuleContext: vi.fn(),
+  mockGetRepoOverview: vi.fn(),
+  mockRenderChangedScope: vi.fn(() => 'Changed scope summary'),
+  mockRenderImpactEstimate: vi.fn(() => 'Impact estimate summary'),
+  mockRenderModuleContext: vi.fn(() => 'Module context summary'),
+  mockRenderRepoOverview: vi.fn(() => 'Repository overview summary'),
   mockResolveProvider: vi.fn(() => ({ name: 'anthropic' })),
   mockRunDirectKodaX: vi.fn(),
 }));
@@ -32,6 +48,28 @@ vi.mock('./reasoning.js', async () => {
   return {
     ...actual,
     createReasoningPlan: mockCreateReasoningPlan,
+  };
+});
+
+vi.mock('./repo-intelligence/index.js', async () => {
+  const actual = await vi.importActual<typeof import('./repo-intelligence/index.js')>('./repo-intelligence/index.js');
+  return {
+    ...actual,
+    analyzeChangedScope: mockAnalyzeChangedScope,
+    getRepoOverview: mockGetRepoOverview,
+    renderChangedScope: mockRenderChangedScope,
+    renderRepoOverview: mockRenderRepoOverview,
+  };
+});
+
+vi.mock('./repo-intelligence/query.js', async () => {
+  const actual = await vi.importActual<typeof import('./repo-intelligence/query.js')>('./repo-intelligence/query.js');
+  return {
+    ...actual,
+    getImpactEstimate: mockGetImpactEstimate,
+    getModuleContext: mockGetModuleContext,
+    renderImpactEstimate: mockRenderImpactEstimate,
+    renderModuleContext: mockRenderModuleContext,
   };
 });
 
@@ -72,6 +110,25 @@ function buildPlan(
       soloBoundaryConfidence: 0.9,
       ...overrides,
     },
+  };
+}
+
+function buildRepoRoutingSignals(
+  overrides: Partial<KodaXRepoRoutingSignals> = {},
+): KodaXRepoRoutingSignals {
+  return {
+    changedFileCount: 1,
+    changedLineCount: 10,
+    addedLineCount: 6,
+    deletedLineCount: 4,
+    touchedModuleCount: 1,
+    changedModules: ['src/task-engine.ts'],
+    crossModule: false,
+    riskHints: [],
+    plannerBias: false,
+    investigationBias: false,
+    lowConfidence: false,
+    ...overrides,
   };
 }
 
@@ -156,20 +213,66 @@ function buildVerdictResponse(
   visibleText: string,
   status: 'accept' | 'revise' | 'blocked',
   reason: string,
+  options?: {
+    followups?: string[];
+    nextHarness?: 'H1_EXECUTE_EVAL' | 'H2_PLAN_EXECUTE_EVAL';
+    userAnswer?: string;
+  },
 ): string {
+  const followups = options?.followups?.length ? options.followups : ['none'];
   return [
     visibleText,
     '```kodax-task-verdict',
     `status: ${status}`,
     `reason: ${reason}`,
+    ...(options?.userAnswer === undefined
+      ? []
+      : [
+        'user_answer:',
+        ...options.userAnswer.split('\n'),
+      ]),
+    ...(options?.nextHarness ? [`next_harness: ${options.nextHarness}`] : []),
     'followup:',
-    '- none',
+    ...followups.map((item) => `- ${item}`),
     '```',
   ].join('\n');
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+async function waitForFileContent(filePath: string, attempts = 40): Promise<string> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await readFile(filePath, 'utf8');
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(`Timed out waiting for ${filePath}`);
+}
+
 afterEach(async () => {
+  delete process.env.KODAX_DEBUG_REPO_INTELLIGENCE;
+
+  mockAnalyzeChangedScope.mockReset();
   mockCreateReasoningPlan.mockReset();
+  mockGetImpactEstimate.mockReset();
+  mockGetModuleContext.mockReset();
+  mockGetRepoOverview.mockReset();
+  mockRenderChangedScope.mockClear();
+  mockRenderImpactEstimate.mockClear();
+  mockRenderModuleContext.mockClear();
+  mockRenderRepoOverview.mockClear();
   mockResolveProvider.mockClear();
   mockRunDirectKodaX.mockReset();
 
@@ -400,14 +503,19 @@ describe('runManagedTask', () => {
     const generatorPrompt = prompts.find((item) => item.includes('You are the Generator role'));
     const evaluatorPrompt = prompts.find((item) => item.includes('You are the Evaluator role'));
     expect(scoutPrompt).toContain('If you confirm H1 or H2, stop after the cheap-facts pass.');
+    expect(scoutPrompt).toContain('When multiple read-only tool calls are independent, emit them in the same response so parallel mode can run them together.');
     expect(generatorPrompt).toContain('This is lightweight H1 checked-direct execution, not mini-H2.');
     expect(generatorPrompt).toContain('Reuse its cheap-facts summary, scope notes, and evidence-acquisition hints instead of rebuilding them from scratch.');
     expect(generatorPrompt).toContain('Consume the Scout handoff before collecting more evidence.');
+    expect(generatorPrompt).toContain('Only serialize tool calls when a later call depends on an earlier result.');
     expect(generatorPrompt).toContain('This H1 run is read-only. Do not mutate files, code, or system state.');
     expect(generatorPrompt).not.toContain('Consume the Scout handoff and Planner contract before collecting more evidence.');
     expect(evaluatorPrompt).toContain('When status=revise, keep the user-facing text short and specific');
     expect(evaluatorPrompt).toContain('Do not write a full polished final report when status=revise.');
     expect(evaluatorPrompt).toContain('Start from the Scout handoff and Generator handoff.');
+    expect(evaluatorPrompt).toContain('Keep parallel batches focused: prefer a few narrow grep/read/diff calls over many tiny sequential probes.');
+    expect(evaluatorPrompt).toContain('user_answer: <optional final user-facing answer; multi-line content may continue on following lines>');
+    expect(evaluatorPrompt).toContain('Prefer putting the final user-facing answer in user_answer:');
     expect(evaluatorPrompt).not.toContain('Start from the Planner contract and Generator handoff.');
   });
 
@@ -1273,6 +1381,7 @@ describe('runManagedTask', () => {
     expect(scoutPrompt).toContain('Full expanded skill (authoritative execution reference):');
     expect(scoutPrompt).toContain('Inspect the target files.');
     expect(plannerPrompt).toContain('Skill map:');
+    expect(plannerPrompt).toContain('When multiple read-only tool calls are independent, emit them in the same response so parallel mode can run them together.');
     expect(plannerPrompt).toContain('Projection confidence: low');
     expect(plannerPrompt).not.toContain('Full expanded skill (authoritative execution reference):');
     expect(generatorPrompt).toContain('Full expanded skill (authoritative execution reference):');
@@ -1381,5 +1490,360 @@ describe('runManagedTask', () => {
     expect(result.lastText).not.toContain('From the code I already read');
     expect(result.lastText).not.toContain('verified the Generator');
     expect(result.lastText).not.toContain('final evaluation');
+  });
+
+  it('prefers structured user_answer content over legacy visible text in evaluator verdicts', async () => {
+    const workspaceRoot = await createTempDir('kodax-task-engine-evaluator-user-answer-');
+    const structuredUserAnswer = [
+      "I've completed the final review of the retry path and found two regressions that still need to be called out.",
+      '',
+      '## Findings',
+      '',
+      '- The retry counter still resets on timeout.',
+    ].join('\n');
+
+    mockCreateReasoningPlan.mockResolvedValue(
+      buildPlan({
+        primaryTask: 'review',
+        taskFamily: 'review',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'pr-review',
+        complexity: 'moderate',
+        riskLevel: 'high',
+        harnessProfile: 'H1_EXECUTE_EVAL',
+        needsIndependentQA: true,
+        mutationSurface: 'read-only',
+        assuranceIntent: 'explicit-check',
+        topologyCeiling: 'H1_EXECUTE_EVAL',
+        upgradeCeiling: 'H1_EXECUTE_EVAL',
+        reason: 'Explicit double-check review should use lightweight checked-direct evaluation.',
+      }),
+    );
+
+    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
+      if (workerPrompt.includes('You are the Scout role')) {
+        return buildAssistantResult(
+          buildScoutResponse('Scout confirmed H1 for the review.', 'H1_EXECUTE_EVAL'),
+          { sessionId: 'session-scout-evaluator-user-answer' },
+        );
+      }
+      if (workerPrompt.includes('You are the Generator role')) {
+        return buildAssistantResult(
+          buildHandoffResponse('Generator completed the checked-direct review pass.'),
+          { sessionId: 'session-generator-evaluator-user-answer' },
+        );
+      }
+      if (workerPrompt.includes('You are the Evaluator role')) {
+        return buildAssistantResult(
+          buildVerdictResponse(
+            [
+              'Confirmed: the verifier has enough evidence to finish the review.',
+              '',
+              'I now have sufficient evidence to deliver the final review.',
+            ].join('\n'),
+            'accept',
+            'The review is complete and well-supported.',
+            {
+              userAnswer: structuredUserAnswer,
+            },
+          ),
+          { sessionId: 'session-evaluator-user-answer' },
+        );
+      }
+      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 120)}`);
+    });
+
+    const result = await runManagedTask(
+      {
+        provider: 'anthropic',
+        agentMode: 'ama',
+        context: {
+          managedTaskWorkspaceDir: workspaceRoot,
+        },
+      },
+      'Please review the current repository changes and do a second pass before sending the final review.',
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.lastText).toBe(structuredUserAnswer);
+    expect(result.lastText).not.toContain('Confirmed:');
+    expect(result.lastText).not.toContain('I now have sufficient evidence');
+  });
+
+  it.each([
+    'I checked the null-handling path and found two regressions that still need to be called out.',
+    'I reviewed the null-handling path and identified two regressions that still need to be called out.',
+    "I've completed the final review of the retry path and found two regressions that still need to be called out.",
+  ])('preserves legitimate technical lead paragraphs in evaluator public answers: %s', async (leadParagraph) => {
+    const workspaceRoot = await createTempDir('kodax-task-engine-evaluator-technical-lead-');
+
+    mockCreateReasoningPlan.mockResolvedValue(
+      buildPlan({
+        primaryTask: 'review',
+        taskFamily: 'review',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'pr-review',
+        complexity: 'moderate',
+        riskLevel: 'high',
+        harnessProfile: 'H1_EXECUTE_EVAL',
+        needsIndependentQA: true,
+        mutationSurface: 'read-only',
+        assuranceIntent: 'explicit-check',
+        topologyCeiling: 'H1_EXECUTE_EVAL',
+        upgradeCeiling: 'H1_EXECUTE_EVAL',
+        reason: 'Explicit double-check review should use lightweight checked-direct evaluation.',
+      }),
+    );
+
+    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
+      if (workerPrompt.includes('You are the Scout role')) {
+        return buildAssistantResult(
+          buildScoutResponse('Scout confirmed H1 for the review.', 'H1_EXECUTE_EVAL'),
+          { sessionId: 'session-scout-evaluator-technical' },
+        );
+      }
+      if (workerPrompt.includes('You are the Generator role')) {
+        return buildAssistantResult(
+          buildHandoffResponse('Generator completed the checked-direct review pass.'),
+          { sessionId: 'session-generator-evaluator-technical' },
+        );
+      }
+      if (workerPrompt.includes('You are the Evaluator role')) {
+        return buildAssistantResult(
+          buildVerdictResponse(
+            [
+              leadParagraph,
+              '',
+              '## Findings',
+              '',
+              '- The fallback branch still leaks stale state.',
+            ].join('\n'),
+            'accept',
+            'The review is complete and well-supported.',
+          ),
+          { sessionId: 'session-evaluator-technical-lead' },
+        );
+      }
+      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 120)}`);
+    });
+
+    const result = await runManagedTask(
+      {
+        provider: 'anthropic',
+        agentMode: 'ama',
+        context: {
+          managedTaskWorkspaceDir: workspaceRoot,
+        },
+      },
+      'Please review the current repository changes and do a second pass before sending the final review.',
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.lastText).toContain(leadParagraph);
+    expect(result.lastText).toContain('## Findings');
+    expect(result.lastText).toContain('The fallback branch still leaks stale state.');
+  });
+
+  it('does not block Scout H0 completion on task-scoped repo-intelligence capture', async () => {
+    const workspaceRoot = await createTempDir('kodax-task-engine-h0-background-root-');
+    const repoRoot = await createTempDir('kodax-task-engine-h0-background-repo-');
+    const moduleGate = createDeferred<void>();
+
+    mockCreateReasoningPlan.mockResolvedValue(
+      buildPlan({
+        primaryTask: 'review',
+        taskFamily: 'review',
+        complexity: 'moderate',
+        riskLevel: 'medium',
+        harnessProfile: 'H0_DIRECT',
+        reason: 'Review stays on Scout and should return without waiting for repo snapshotting.',
+      }),
+    );
+    mockGetRepoOverview.mockResolvedValue({ kind: 'overview', workspaceRoot: repoRoot });
+    mockAnalyzeChangedScope.mockResolvedValue({ kind: 'changed-scope' });
+    mockGetModuleContext.mockImplementation(async () => {
+      await moduleGate.promise;
+      return { kind: 'module-context' };
+    });
+    mockGetImpactEstimate.mockResolvedValue({ kind: 'impact-estimate' });
+
+    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
+      if (workerPrompt.includes('You are the Scout role')) {
+        return buildAssistantResult(
+          buildScoutResponse('Scout can complete this review directly.', 'H0_DIRECT'),
+          { sessionId: 'session-scout-h0-background' },
+        );
+      }
+      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 120)}`);
+    });
+
+    const result = await Promise.race([
+      runManagedTask(
+        {
+          provider: 'anthropic',
+          agentMode: 'ama',
+          context: {
+            managedTaskWorkspaceDir: workspaceRoot,
+            executionCwd: repoRoot,
+            gitRoot: repoRoot,
+            repoRoutingSignals: buildRepoRoutingSignals({ workspaceRoot: repoRoot }),
+          },
+        },
+        'Please inspect the current changes and tell me if the review can finish directly.',
+      ),
+      new Promise<never>((_resolve, reject) => {
+        setTimeout(() => reject(new Error('runManagedTask unexpectedly waited on background repo-intelligence capture.')), 250);
+      }),
+    ]);
+
+    expect(result.success).toBe(true);
+    expect(result.lastText).toContain('Scout can complete this review directly.');
+    expect(result.managedTask?.evidence.artifacts.some((artifact) => artifact.path.includes(`${path.sep}repo-intelligence${path.sep}`))).toBe(false);
+
+    moduleGate.resolve();
+
+    const summaryPath = path.join(result.managedTask!.evidence.workspaceDir, 'repo-intelligence', 'summary.md');
+    const summaryContent = await waitForFileContent(summaryPath);
+    expect(summaryContent).toContain('Repository overview summary');
+    expect(summaryContent).toContain('Changed scope summary');
+    expect(summaryContent).toContain('Module context summary');
+    expect(summaryContent).toContain('Impact estimate summary');
+  });
+
+  it('keeps task-scoped repo-intelligence attached synchronously for H1 managed runs', async () => {
+    const workspaceRoot = await createTempDir('kodax-task-engine-h1-repo-intelligence-root-');
+    const repoRoot = await createTempDir('kodax-task-engine-h1-repo-intelligence-repo-');
+
+    mockCreateReasoningPlan.mockResolvedValue(
+      buildPlan({
+        primaryTask: 'review',
+        taskFamily: 'review',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'pr-review',
+        complexity: 'moderate',
+        riskLevel: 'high',
+        harnessProfile: 'H1_EXECUTE_EVAL',
+        needsIndependentQA: true,
+        mutationSurface: 'read-only',
+        assuranceIntent: 'explicit-check',
+        topologyCeiling: 'H1_EXECUTE_EVAL',
+        upgradeCeiling: 'H1_EXECUTE_EVAL',
+        reason: 'H1 should keep task-scoped repo intelligence on the synchronous path.',
+      }),
+    );
+    mockGetRepoOverview.mockResolvedValue({ kind: 'overview', workspaceRoot: repoRoot });
+    mockAnalyzeChangedScope.mockResolvedValue({ kind: 'changed-scope' });
+    mockGetModuleContext.mockResolvedValue({ kind: 'module-context' });
+    mockGetImpactEstimate.mockResolvedValue({ kind: 'impact-estimate' });
+
+    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
+      if (workerPrompt.includes('You are the Scout role')) {
+        return buildAssistantResult(
+          buildScoutResponse('Scout confirmed H1 for the review.', 'H1_EXECUTE_EVAL'),
+          { sessionId: 'session-scout-h1-sync-repo-intelligence' },
+        );
+      }
+      if (workerPrompt.includes('You are the Generator role')) {
+        return buildAssistantResult(
+          buildHandoffResponse('Generator completed the checked-direct review pass.'),
+          { sessionId: 'session-generator-h1-sync-repo-intelligence' },
+        );
+      }
+      if (workerPrompt.includes('You are the Evaluator role')) {
+        return buildAssistantResult(
+          buildVerdictResponse(
+            ['## Findings', '', '- The review is complete.'].join('\n'),
+            'accept',
+            'The review is complete and well-supported.',
+          ),
+          { sessionId: 'session-evaluator-h1-sync-repo-intelligence' },
+        );
+      }
+      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 120)}`);
+    });
+
+    const result = await runManagedTask(
+      {
+        provider: 'anthropic',
+        agentMode: 'ama',
+        context: {
+          managedTaskWorkspaceDir: workspaceRoot,
+          executionCwd: repoRoot,
+          gitRoot: repoRoot,
+          repoRoutingSignals: buildRepoRoutingSignals({ workspaceRoot: repoRoot }),
+        },
+      },
+      'Please review the current repository changes and do a second pass before sending the final review.',
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.managedTask?.evidence.artifacts.map((artifact) => artifact.path)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(`${path.sep}repo-intelligence${path.sep}summary.md`),
+        expect.stringContaining(`${path.sep}repo-intelligence${path.sep}repo-overview.json`),
+      ]),
+    );
+
+    const summaryPath = path.join(result.managedTask!.evidence.workspaceDir, 'repo-intelligence', 'summary.md');
+    await expect(readFile(summaryPath, 'utf8')).resolves.toContain('Repository overview summary');
+    expect(mockGetModuleContext).toHaveBeenCalledTimes(1);
+    expect(mockGetImpactEstimate).toHaveBeenCalledTimes(1);
+  });
+
+  it('logs and tolerates background repo-intelligence failures after H0 completion', async () => {
+    const workspaceRoot = await createTempDir('kodax-task-engine-h0-background-failure-root-');
+    const repoRoot = await createTempDir('kodax-task-engine-h0-background-failure-repo-');
+    const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    process.env.KODAX_DEBUG_REPO_INTELLIGENCE = '1';
+
+    mockCreateReasoningPlan.mockResolvedValue(
+      buildPlan({
+        primaryTask: 'review',
+        taskFamily: 'review',
+        complexity: 'moderate',
+        riskLevel: 'medium',
+        harnessProfile: 'H0_DIRECT',
+        reason: 'Background repo snapshot failures should be logged without affecting the final answer.',
+      }),
+    );
+    mockGetRepoOverview.mockRejectedValue(new Error('repo overview failed'));
+    mockAnalyzeChangedScope.mockRejectedValue(new Error('changed scope failed'));
+    mockGetModuleContext.mockRejectedValue(new Error('module context failed'));
+    mockGetImpactEstimate.mockRejectedValue(new Error('impact estimate failed'));
+
+    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
+      if (workerPrompt.includes('You are the Scout role')) {
+        return buildAssistantResult(
+          buildScoutResponse('Scout can complete this review directly.', 'H0_DIRECT'),
+          { sessionId: 'session-scout-h0-background-failure' },
+        );
+      }
+      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 120)}`);
+    });
+
+    try {
+      const result = await runManagedTask(
+        {
+          provider: 'anthropic',
+          agentMode: 'ama',
+          context: {
+            managedTaskWorkspaceDir: workspaceRoot,
+            executionCwd: repoRoot,
+            gitRoot: repoRoot,
+            repoRoutingSignals: buildRepoRoutingSignals({ workspaceRoot: repoRoot }),
+          },
+        },
+        'Please inspect the current changes and finish directly if safe.',
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.lastText).toContain('Scout can complete this review directly.');
+
+      await vi.waitFor(() => {
+        expect(debugSpy).toHaveBeenCalled();
+      });
+    } finally {
+      debugSpy.mockRestore();
+    }
   });
 });

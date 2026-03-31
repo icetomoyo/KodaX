@@ -128,7 +128,11 @@ export interface KodaXEvents {
   onThinkingEnd?: (thinking: string) => void;
   onToolUseStart?: (tool: { name: string; id: string; input?: Record<string, unknown> }) => void;
   onToolResult?: (result: { id: string; name: string; content: string }) => void;
-  onToolInputDelta?: (toolName: string, partialJson: string) => void;
+  onToolInputDelta?: (
+    toolName: string,
+    partialJson: string,
+    meta?: { toolId?: string },
+  ) => void;
   onStreamEnd?: () => void;
 
   // 状态通知

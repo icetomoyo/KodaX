@@ -46,6 +46,9 @@ Prefer specialized tools over shell for file operations:
 - Use edit to modify existing files instead of sed or awk when possible
 - Use write to create new files instead of echo redirection or heredocs
 - Use glob or grep for file discovery and content search before falling back to shell
+- When multiple read-only tool calls are independent, emit them in the same response so parallel mode can run them together
+- Only serialize tool calls when a later call depends on an earlier result
+- Keep parallel batches focused: prefer a few narrow grep/read/diff calls over many tiny sequential probes
 
 Read is intentionally bounded:
 - A single read call only returns a limited slice of a file
@@ -80,7 +83,7 @@ Different platforms have different commands:
 - NEVER use \`mkdir\` before writing files - the write tool handles directory creation
 - If you truly need an empty directory: \`mkdir dir\` (Windows) or \`mkdir -p dir\` (Unix)
 
-If you see "not recognized" or a similar shell lookup error, the command does not exist on this platform. Try the platform equivalent.
+If you see "not recognized", "不是内部或外部命令", or a similar shell lookup error, the command does not exist on this platform. Try the platform equivalent.
 
 ## Multi-step Tasks
 

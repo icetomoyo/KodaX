@@ -30,6 +30,7 @@ import {
   parsePermissionModeOption,
   parsePositiveNumberWithFallback,
   resolveCliAgentMode,
+  resolveCliModelSelection,
   resolveCliParallel,
   resolveCliReasoningMode,
   type CliOutputMode,
@@ -62,7 +63,7 @@ import {
 } from '@kodax/coding';
 import {
   getGitRoot,
-  loadConfig,
+  prepareRuntimeConfig,
   getFeatureProgress,
   checkAllFeaturesComplete,
   buildInitPrompt,
@@ -911,7 +912,7 @@ async function main() {
 
   const opts = program.opts();
   // Parse CLI options and merge with config defaults.
-  const config = loadConfig();
+  const config = prepareRuntimeConfig();
   const configWithExtensions = config as typeof config & { extensions?: string[] };
   const reasoningMode = resolveCliReasoningMode(program, opts, config);
   const agentMode = resolveCliAgentMode(program, opts, config);
@@ -932,11 +933,18 @@ async function main() {
     (value) => !dedupedCliExtensions.includes(value),
   );
   const activeExtensions = mergeConfiguredExtensions(dedupedCliExtensions, configuredOnlyExtensions);
+  const selectedProvider = opts.provider ?? config.provider ?? KODAX_DEFAULT_PROVIDER;
+  const selectedModel = resolveCliModelSelection(
+    opts.provider,
+    opts.model,
+    config.provider,
+    config.model,
+  );
   // -y/--auto is kept for backward compatibility but has no effect in CLI.
   const options: CliOptions = {
     // Priority: CLI args > config file > defaults.
-    provider: opts.provider ?? config.provider ?? KODAX_DEFAULT_PROVIDER,
-    model: opts.model ?? config.model,
+    provider: selectedProvider,
+    model: selectedModel,
     thinking: reasoningMode !== 'off',
     reasoningMode,
     agentMode,

@@ -30,4 +30,29 @@ describe('classifyError', () => {
       shouldCleanup: true,
     });
   });
+
+  it('treats provider timed out wording as transient', () => {
+    const error = new KodaXProviderError(
+      'newapi-anthropic API error: Request timed out.',
+      'newapi-anthropic',
+    );
+
+    expect(classifyError(error)).toMatchObject({
+      category: ErrorCategory.TRANSIENT,
+      retryable: true,
+      maxRetries: 3,
+      shouldCleanup: true,
+    });
+  });
+
+  it('treats stalled generic errors as transient', () => {
+    const error = new Error('Stream stalled or delayed response (60s idle)');
+
+    expect(classifyError(error)).toMatchObject({
+      category: ErrorCategory.TRANSIENT,
+      retryable: true,
+      maxRetries: 2,
+      shouldCleanup: true,
+    });
+  });
 });

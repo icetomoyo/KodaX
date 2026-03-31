@@ -75,6 +75,12 @@ describe("tool-display", () => {
     )).toBe("bash - cmd=git status --short");
   });
 
+  it("keeps longer command targets visible in bash summaries", () => {
+    const command = "node scripts/run-task.js --workspace packages/repl --file packages/repl/src/ui/InkREPL.tsx --pattern activeToolCalls";
+
+    expect(formatToolSummary("bash", { command })).toContain("packages/repl/src/ui/InkREPL.tsx");
+  });
+
   it("formats glob summaries with pattern and scope", () => {
     expect(formatToolSummary(
       "glob",

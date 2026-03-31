@@ -62,4 +62,30 @@ describe('withRetry', () => {
 
     timeoutSpy.mockRestore();
   });
+
+  it('stops waiting for the next retry when the abort signal fires', async () => {
+    const timeoutSpy = vi
+      .spyOn(globalThis, 'setTimeout')
+      .mockImplementation((callback: Parameters<typeof setTimeout>[0]) => {
+        return 0 as unknown as ReturnType<typeof setTimeout>;
+      });
+    const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout').mockImplementation(() => {});
+
+    const controller = new AbortController();
+    const pending = withRetry(
+      async () => {
+        throw new KodaXNetworkError('timed out during retryable call', true);
+      },
+      transientTimeoutClassification,
+      undefined,
+      controller.signal,
+    );
+
+    controller.abort();
+
+    await expect(pending).rejects.toThrow(/abort/i);
+
+    timeoutSpy.mockRestore();
+    clearTimeoutSpy.mockRestore();
+  });
 });

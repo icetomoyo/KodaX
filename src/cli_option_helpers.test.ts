@@ -7,6 +7,7 @@ import {
   parseOptionalNonNegativeInt,
   parseOutputModeOption,
   parsePositiveNumberWithFallback,
+  resolveCliModelSelection,
   validateCliModeSelection,
   type CliOptions,
 } from './cli_option_helpers.js';
@@ -146,5 +147,51 @@ describe('mergeConfiguredExtensions', () => {
       './config-ext.mjs',
       './local-ext.mjs',
     ]);
+  });
+});
+
+describe('resolveCliModelSelection', () => {
+  it('uses the configured model when the provider is unchanged', () => {
+    expect(
+      resolveCliModelSelection(
+        undefined,
+        undefined,
+        'zhipu-coding',
+        'glm-5.1',
+      ),
+    ).toBe('glm-5.1');
+  });
+
+  it('does not carry a configured model across provider switches', () => {
+    expect(
+      resolveCliModelSelection(
+        'newapi-openai',
+        undefined,
+        'zhipu-coding',
+        'glm-5.1',
+      ),
+    ).toBeUndefined();
+  });
+
+  it('drops an ambiguous configured model when the CLI explicitly switches providers', () => {
+    expect(
+      resolveCliModelSelection(
+        'newapi-openai',
+        undefined,
+        undefined,
+        'gpt-4o',
+      ),
+    ).toBeUndefined();
+  });
+
+  it('prefers an explicit CLI model override', () => {
+    expect(
+      resolveCliModelSelection(
+        'newapi-openai',
+        'gpt-5',
+        'zhipu-coding',
+        'glm-5.1',
+      ),
+    ).toBe('gpt-5');
   });
 });

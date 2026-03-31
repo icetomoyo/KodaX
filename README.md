@@ -72,11 +72,14 @@ If you need a custom base URL or an OpenAI/Anthropic-compatible endpoint, define
       "protocol": "openai",
       "baseUrl": "https://example.com/v1",
       "apiKeyEnv": "MY_LLM_API_KEY",
-      "model": "my-model"
+      "model": "my-model",
+      "userAgentMode": "compat"
     }
   ]
 }
 ```
+
+`userAgentMode` defaults to `"compat"`, which sends `KodaX` instead of the official SDK User-Agent. Switch it to `"sdk"` only when your gateway expects the upstream SDK header.
 
 ### 3. Start in REPL or run a one-shot task
 
@@ -116,6 +119,7 @@ registerCustomProviders([
     baseUrl: 'https://example.com/v1',
     apiKeyEnv: 'MY_LLM_API_KEY',
     model: 'my-model',
+    userAgentMode: 'compat',
   },
 ]);
 

@@ -78,11 +78,13 @@ async function captureError(fn: () => Promise<unknown>): Promise<Error> {
 }
 
 afterEach(() => {
+  delete process.env.KODAX_DEBUG_STREAM;
   vi.restoreAllMocks();
 });
 
 describe('streaming robustness', () => {
   beforeEach(() => {
+    delete process.env.KODAX_DEBUG_STREAM;
     vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
@@ -108,6 +110,7 @@ describe('streaming robustness', () => {
     expect(error.message).toContain('Stream incomplete: message_stop event not received');
     expect(lastEventAge).not.toBeNull();
     expect(Number(lastEventAge?.[1])).toBeLessThan(50);
+    expect(console.error).not.toHaveBeenCalled();
   });
 
   it('treats an Anthropic abort as AbortError instead of Stream incomplete', async () => {
@@ -136,6 +139,7 @@ describe('streaming robustness', () => {
 
     expect(error.name).toBe('AbortError');
     expect(error.message).toContain('Stream stalled or delayed response (60s idle)');
+    expect(console.error).not.toHaveBeenCalled();
   });
 
   it('treats an OpenAI-compatible abort as AbortError instead of Stream incomplete', async () => {
@@ -172,6 +176,7 @@ describe('streaming robustness', () => {
 
     expect(error.name).toBe('AbortError');
     expect(error.message).toContain('Stream stalled or delayed response (60s idle)');
+    expect(console.error).not.toHaveBeenCalled();
   });
 
   it('still reports genuine OpenAI-compatible truncation as an incomplete stream', async () => {
@@ -198,5 +203,40 @@ describe('streaming robustness', () => {
 
     expect(error.name).toBe('KodaXProviderError');
     expect(error.message).toContain('Stream incomplete: finish_reason not received');
+    expect(console.error).not.toHaveBeenCalled();
+  });
+
+  it('emits stream diagnostics only when KODAX_DEBUG_STREAM is enabled', async () => {
+    process.env.KODAX_DEBUG_STREAM = '1';
+    const controller = new AbortController();
+    const provider = new TestAnthropicProvider({
+      messages: {
+        create: vi.fn().mockResolvedValue(
+          createAsyncIterable(
+            [
+              { type: 'content_block_start', content_block: { type: 'text' } },
+              { type: 'content_block_delta', delta: { type: 'text_delta', text: 'Hello' } },
+            ],
+            {
+              onDone: () => {
+                controller.abort(new Error('Stream stalled or delayed response (60s idle)'));
+              },
+            },
+          ),
+        ),
+      },
+    });
+
+    const error = await captureError(() =>
+      provider.stream(MESSAGES, TOOLS, 'system', false, undefined, controller.signal),
+    );
+
+    expect(error.name).toBe('AbortError');
+    expect(console.error).toHaveBeenCalledWith(
+      '[Stream] Stream ended after abort before message_stop:',
+      expect.objectContaining({
+        reason: 'Stream stalled or delayed response (60s idle)',
+      }),
+    );
   });
 });

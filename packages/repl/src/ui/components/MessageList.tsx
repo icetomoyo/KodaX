@@ -58,6 +58,8 @@ export interface MessageListProps {
   streamingResponse?: string;
   /** Name of the tool currently being executed. */
   currentTool?: string;
+  /** Tool calls in the active response, including completed items from the current live batch. */
+  activeToolCalls?: ToolCall[];
   /** Character count for the current tool input preview. */
   toolInputCharCount?: number;
   /** Tool input content preview for display */
@@ -478,6 +480,7 @@ export const MessageList: React.FC<MessageListProps> = ({
   thinkingContent = "",
   streamingResponse = "",
   currentTool,
+  activeToolCalls,
   toolInputCharCount = 0,
   toolInputContent = "",
   iterationHistory = [],
@@ -537,6 +540,7 @@ export const MessageList: React.FC<MessageListProps> = ({
         thinkingContent,
         streamingResponse,
         currentTool,
+        activeToolCalls,
         toolInputCharCount,
         toolInputContent,
         iterationHistory,
@@ -572,6 +576,7 @@ export const MessageList: React.FC<MessageListProps> = ({
       thinkingContent,
       streamingResponse,
       currentTool,
+      activeToolCalls,
       toolInputCharCount,
       toolInputContent,
       iterationHistory,
@@ -586,6 +591,7 @@ export const MessageList: React.FC<MessageListProps> = ({
       managedGlobalWorkBudget,
       managedBudgetUsage,
       managedBudgetApprovalRequired,
+      lastLiveActivityLabel,
     ]
   );
   const transcriptRows = useMemo(

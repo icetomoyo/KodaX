@@ -51,6 +51,8 @@ describe('SYSTEM_PROMPT Content Verification', () => {
     const content = await fs.readFile(systemPromptPath, 'utf-8');
     expect(content).toContain('## Tool Usage');
     expect(content).toContain('Prefer specialized tools over shell for file operations:');
+    expect(content).toContain('When multiple read-only tool calls are independent, emit them in the same response so parallel mode can run them together');
+    expect(content).toContain('Only serialize tool calls when a later call depends on an earlier result');
     expect(content).toContain('Do NOT create temporary scripts or scratch files in the project root');
     expect(content).toContain('## Shell Commands');
     expect(content).toContain('Reserve shell commands for terminal operations');

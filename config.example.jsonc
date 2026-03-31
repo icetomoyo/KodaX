@@ -60,6 +60,9 @@
     //
     //         // 可选字段 (Optional)
     //         "models": ["codellama", "mistral"],  // 可选模型列表 (不含默认模型)
+    //         "userAgentMode": "compat",      // User-Agent mode: "compat" | "sdk" (default: "compat")
+    //                                           compat = send "KodaX" for compatibility gateways that block SDK UAs
+    //                                           sdk = keep the official upstream SDK User-Agent
     //         "supportsThinking": false,         // 是否支持 thinking (默认: false)
     //         "reasoningCapability": "none",     // 推理能力: "none"|"native-budget"|"native-effort"|"native-toggle"|"prompt-only" (默认: "none")
     //         "contextWindow": 128000,           // 上下文窗口大小 (token 数)
@@ -74,6 +77,7 @@
     //         "apiKeyEnv": "PROXY_API_KEY",
     //         "model": "claude-sonnet-4-6",
     //         "models": ["claude-opus-4-6", "claude-haiku-4-5"],
+    //         "userAgentMode": "compat",
     //         "supportsThinking": true,
     //         "reasoningCapability": "native-budget",
     //         "contextWindow": 200000,

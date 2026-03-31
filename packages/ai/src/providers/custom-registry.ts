@@ -8,7 +8,10 @@
 
 import type { KodaXCustomProviderConfig } from '../types.js';
 import type { KodaXBaseProvider } from './base.js';
-import { createCustomProvider } from './custom-provider.js';
+import {
+  createCustomProvider,
+  validateCustomProviderConfig,
+} from './custom-provider.js';
 import { KODAX_PROVIDERS } from './registry.js';
 import {
   cloneCapabilityProfile,
@@ -24,10 +27,11 @@ const customFactories = new Map<string, CustomProviderFactory>();
  * Register custom providers from config. Replaces all existing custom providers.
  */
 export function registerCustomProviders(configs: KodaXCustomProviderConfig[]): void {
-  customProviders.clear();
-  customFactories.clear();
   const seen = new Set<string>();
+  const nextProviders = new Map<string, KodaXCustomProviderConfig>();
+  const nextFactories = new Map<string, CustomProviderFactory>();
   for (const config of configs) {
+    validateCustomProviderConfig(config);
     if (seen.has(config.name)) {
       throw new Error(`Duplicate custom provider name: "${config.name}". Each custom provider must have a unique name.`);
     }
@@ -35,8 +39,17 @@ export function registerCustomProviders(configs: KodaXCustomProviderConfig[]): v
       console.warn(`[kodax] Custom provider "${config.name}" shadows a built-in provider. The built-in provider will be used. Choose a different name to use your custom provider.`);
     }
     seen.add(config.name);
-    customProviders.set(config.name, config);
-    customFactories.set(config.name, () => createCustomProvider(config));
+    nextProviders.set(config.name, config);
+    nextFactories.set(config.name, () => createCustomProvider(config));
+  }
+
+  customProviders.clear();
+  customFactories.clear();
+  for (const [name, config] of nextProviders) {
+    customProviders.set(name, config);
+  }
+  for (const [name, factory] of nextFactories) {
+    customFactories.set(name, factory);
   }
 }
 

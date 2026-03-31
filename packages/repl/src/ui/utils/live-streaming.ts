@@ -35,6 +35,52 @@ export function mergeLiveThinkingContent(currentThinking: string, finalThinking:
   return finalThinking;
 }
 
+function trimRepeatedWorkerPrefix(note: string | undefined, workerTitle?: string): string | undefined {
+  if (!note) {
+    return undefined;
+  }
+  if (!workerTitle) {
+    return note;
+  }
+
+  return note.replace(
+    new RegExp(`^${workerTitle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[-: ]*`, "i"),
+    "",
+  ).trim();
+}
+
+export function formatManagedTaskLiveStatusLabel(
+  status: KodaXManagedTaskStatusEvent,
+): string | undefined {
+  const harness = formatHarnessProfileShort(status.harnessProfile) ?? status.harnessProfile;
+  const trimmedNote = trimRepeatedWorkerPrefix(status.note, status.activeWorkerTitle);
+
+  if (status.activeWorkerTitle) {
+    if (status.phase === "preflight") {
+      return trimmedNote ? `[Scout] ${trimmedNote}` : "[Phase] Scout preflight";
+    }
+    if (status.phase === "routing") {
+      return trimmedNote ? `[Routing] ${trimmedNote}` : "[Routing]";
+    }
+    const prefix = `[Phase] ${status.agentMode.toUpperCase()} ${harness}${status.activeWorkerTitle ? ` - ${status.activeWorkerTitle}` : ""}`;
+    return trimmedNote ? `${prefix} - ${trimmedNote}` : prefix;
+  }
+
+  if (status.phase === "routing" && trimmedNote) {
+    return `[Routing] ${trimmedNote}`;
+  }
+
+  if (status.phase === "round" && trimmedNote) {
+    return `[Round] ${trimmedNote}`;
+  }
+
+  if (status.phase === "preflight") {
+    return "[Phase] Scout preflight";
+  }
+
+  return undefined;
+}
+
 export function formatManagedTaskBreadcrumb(
   status: KodaXManagedTaskStatusEvent,
 ): string | undefined {
@@ -53,6 +99,8 @@ export function formatManagedTaskBreadcrumb(
       return status.note ? `${prefix} - ${status.note}` : `${prefix} - Managed task starting`;
     case "preflight":
       return status.note ? `${scoutPrefix} - ${status.note}` : `${scoutPrefix} - Scout preflight starting`;
+    case "round":
+      return status.note ? `${prefix} - ${status.note}` : `${prefix} - Managed task round update${roundSuffix}`;
     case "worker":
       return `${prefix} - ${status.activeWorkerTitle ?? "Worker"} starting${roundSuffix}`;
     case "upgrade":

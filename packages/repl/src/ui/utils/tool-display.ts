@@ -7,7 +7,7 @@ export type ToolSummaryGroup = {
   count: number;
 };
 
-function truncateValue(value: string, maxLength = 72): string {
+function truncateValue(value: string, maxLength = 120): string {
   return value.length > maxLength ? `${value.slice(0, maxLength - 3)}...` : value;
 }
 
@@ -222,7 +222,7 @@ function pushRangeSummary(
     ?? extractFieldFromPreview(preview, "target_ref");
 
   if (baseRef && targetRef) {
-    parts.push(truncateValue(`${baseRef}...${targetRef}`, 56));
+    parts.push(truncateValue(`${baseRef}...${targetRef}`, 88));
   }
 }
 
@@ -298,7 +298,7 @@ function summarizeToolDetails(toolName: string, input: ToolInputValue): string[]
     const command = readFirstString(record, "command")
       ?? extractFieldFromPreview(preview, "command");
     if (command) {
-      parts.push(`cmd=${truncateValue(command, 52)}`);
+      parts.push(`cmd=${truncateValue(command, 140)}`);
     }
     return parts;
   }
@@ -312,7 +312,7 @@ function summarizeToolDetails(toolName: string, input: ToolInputValue): string[]
       ?? extractFieldFromPreview(preview, "directory")
       ?? extractFieldFromPreview(preview, "cwd");
     if (pattern) {
-      parts.push(`pattern=${truncateValue(pattern, 48)}`);
+      parts.push(`pattern=${truncateValue(pattern, 96)}`);
     }
     if (scope) {
       parts.push(truncateValue(scope));
@@ -330,7 +330,7 @@ function summarizeToolDetails(toolName: string, input: ToolInputValue): string[]
       ?? extractFieldFromPreview(preview, "directory")
       ?? extractFieldFromPreview(preview, "cwd");
     if (pattern) {
-      parts.push(`pattern=${truncateValue(pattern, 48)}`);
+      parts.push(`pattern=${truncateValue(pattern, 96)}`);
     }
     if (scope) {
       parts.push(truncateValue(scope));

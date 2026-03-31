@@ -380,6 +380,87 @@ describe("transcript-layout", () => {
     expect(text).toContain("[AMA H2 - Planner] [Tools] changed_diff_bundle - packages/coding/src/task-engine.ts - limit=120...");
   });
 
+  it("renders a live multi-tool block for concurrent tools", () => {
+    const rows = buildTranscriptRows({
+      items: [],
+      viewportWidth: 140,
+      isLoading: true,
+      managedAgentMode: "ama",
+      managedHarnessProfile: "H2_PLAN_EXECUTE_EVAL",
+      managedWorkerTitle: "Scout",
+      activeToolCalls: [
+        {
+          id: "tool-1",
+          name: "[Scout] changed_scope",
+          status: ToolCallStatus.Success,
+          startTime: 100,
+          endTime: 184,
+          input: { paths: ["packages/coding/src"] },
+        },
+        {
+          id: "tool-2",
+          name: "[Scout] repo_overview",
+          status: ToolCallStatus.Executing,
+          startTime: 120,
+          input: { path: "packages/coding/src" },
+        },
+        {
+          id: "tool-3",
+          name: "[Scout] read",
+          status: ToolCallStatus.Executing,
+          startTime: 130,
+          input: {
+            path: "packages/coding/src/task-engine.ts",
+            offset: 3160,
+            limit: 80,
+          },
+        },
+      ],
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text).toContain("[AMA H2 - Scout] [Tools] 2 running, 1 done");
+    expect(text).toContain("[Scout] changed_scope - packages/coding/src (84ms)");
+    expect(text).toContain("[Scout] repo_overview - packages/coding/src");
+    expect(text).toContain("[Scout] read - packages/coding/src/task-engine.ts - offset=3160 - limit=80");
+  });
+
+  it("keeps the completed live tool block visible until the response starts", () => {
+    const rows = buildTranscriptRows({
+      items: [],
+      viewportWidth: 140,
+      isLoading: true,
+      activeToolCalls: [
+        {
+          id: "tool-1",
+          name: "[Scout] changed_scope",
+          status: ToolCallStatus.Success,
+          startTime: 100,
+          endTime: 184,
+          input: { paths: ["packages/coding/src"] },
+        },
+        {
+          id: "tool-2",
+          name: "[Scout] read",
+          status: ToolCallStatus.Success,
+          startTime: 120,
+          endTime: 210,
+          input: {
+            path: "packages/coding/src/task-engine.ts",
+            offset: 3160,
+            limit: 80,
+          },
+        },
+      ],
+      lastLiveActivityLabel: "[Tools] [Scout] read - packages/coding/src/task-engine.ts - offset=3160 - limit=80 (90ms)",
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text).toContain("[Tools] 2 done");
+    expect(text).toContain("[Scout] changed_scope - packages/coding/src (84ms)");
+    expect(text).toContain("[Scout] read - packages/coding/src/task-engine.ts - offset=3160 - limit=80 (90ms)");
+  });
+
   it("prefers the last live tool activity label while a tool is active", () => {
     const rows = buildTranscriptRows({
       items: [],

@@ -509,10 +509,10 @@ export function createStreamingManager(): StreamingManager {
     appendToolInputContent: (text: string) => {
       // Limit content to ~100 chars for display (no need to store full input)
       // 限制内容为 ~100 字符用于显示（无需存储完整输入）
-      if (state.toolInputContent.length < 100) {
+      if (state.toolInputContent.length < 240) {
         state = {
           ...state,
-          toolInputContent: (state.toolInputContent + text).slice(0, 100),
+          toolInputContent: (state.toolInputContent + text).slice(0, 240),
         };
         notify();
       }

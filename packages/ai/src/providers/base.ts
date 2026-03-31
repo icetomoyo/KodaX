@@ -71,6 +71,10 @@ export abstract class KodaXBaseProvider {
     return this.config.baseUrl;
   }
 
+  getApiKeyEnv(): string {
+    return this.config.apiKeyEnv;
+  }
+
   getCapabilityProfile(): KodaXProviderCapabilityProfile {
     return cloneCapabilityProfile(
       this.config.capabilityProfile ?? NATIVE_PROVIDER_CAPABILITY_PROFILE,
@@ -178,6 +182,16 @@ export abstract class KodaXBaseProvider {
     const key = process.env[this.config.apiKeyEnv];
     if (!key) throw new Error(`${this.config.apiKeyEnv} not set`);
     return key;
+  }
+
+  protected shouldLogStreamDiagnostics(): boolean {
+    return Boolean(process.env.KODAX_DEBUG_STREAM);
+  }
+
+  protected logStreamDiagnostic(...args: unknown[]): void {
+    if (this.shouldLogStreamDiagnostics()) {
+      console.error(...args);
+    }
   }
 
   protected normalizeReasoning(

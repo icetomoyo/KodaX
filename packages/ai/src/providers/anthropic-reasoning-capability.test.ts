@@ -59,6 +59,44 @@ function createCompletedAnthropicStream(options?: {
   };
 }
 
+function createToolUseAnthropicStream(): AsyncIterable<unknown> {
+  return {
+    [Symbol.asyncIterator]() {
+      let index = 0;
+      const events = [
+        { type: 'message_start', message: { usage: {} } },
+        {
+          type: 'content_block_start',
+          content_block: {
+            type: 'tool_use',
+            id: 'tool_1',
+            name: 'read',
+          },
+        },
+        {
+          type: 'content_block_delta',
+          delta: {
+            type: 'input_json_delta',
+            partial_json: '{"path":"README.md"}',
+          },
+        },
+        { type: 'content_block_stop' },
+        { type: 'message_stop' },
+      ];
+      return {
+        next: async () => {
+          if (index >= events.length) {
+            return { done: true, value: undefined };
+          }
+          const value = events[index];
+          index += 1;
+          return { done: false, value };
+        },
+      };
+    },
+  };
+}
+
 class TestAnthropicProvider extends KodaXAnthropicCompatProvider {
   readonly name = 'test-anthropic';
   protected readonly config: KodaXProviderConfig;
@@ -200,5 +238,23 @@ describe('anthropic reasoning capability', () => {
 
     const kwargs = create.mock.calls[0]?.[0];
     expect(kwargs).not.toHaveProperty('thinking');
+  });
+
+  it('emits tool input deltas with tool ids for concurrent-safe consumers', async () => {
+    const create = vi.fn().mockResolvedValue(createToolUseAnthropicStream());
+    const onToolInputDelta = vi.fn();
+    const provider = new TestAnthropicProvider('native-budget', {
+      messages: { create },
+    });
+
+    await provider.stream(MESSAGES, TOOLS, 'system', reasoning, {
+      onToolInputDelta,
+    });
+
+    expect(onToolInputDelta).toHaveBeenCalledWith(
+      'read',
+      '{"path":"README.md"}',
+      { toolId: 'tool_1' },
+    );
   });
 });

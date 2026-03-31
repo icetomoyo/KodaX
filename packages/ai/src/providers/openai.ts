@@ -30,6 +30,16 @@ import {
   resolveThinkingBudget,
 } from '../reasoning.js';
 
+const KODAX_OPENAI_COMPAT_USER_AGENT = 'KodaX';
+
+function getOpenAICompatDefaultHeaders(
+  config: KodaXProviderConfig,
+): Record<string, string> | undefined {
+  return config.userAgentMode === 'sdk'
+    ? undefined
+    : { 'User-Agent': KODAX_OPENAI_COMPAT_USER_AGENT };
+}
+
 type OpenAIUsageLike = {
   prompt_tokens?: number;
   completion_tokens?: number;
@@ -70,7 +80,14 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
   protected client!: OpenAI;
 
   protected initClient(): void {
-    this.client = new OpenAI({ apiKey: this.getApiKey(), baseURL: this.config.baseUrl });
+    const defaultHeaders = getOpenAICompatDefaultHeaders(this.config);
+    this.client = new OpenAI({
+      apiKey: this.getApiKey(),
+      baseURL: this.config.baseUrl,
+      // Some OpenAI-compatible gateways block the SDK's default
+      // "OpenAI/JS ..." user agent even when the payload itself is valid.
+      ...(defaultHeaders ? { defaultHeaders } : {}),
+    });
   }
 
   private appendExtraBody(
@@ -325,7 +342,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
           finishReason = choice.finish_reason;
           if (process.env.KODAX_DEBUG_STREAM) {
             const duration = Date.now() - streamStartTime;
-            console.error(`[Stream] finish_reason: ${finishReason} after ${duration}ms`);
+            this.logStreamDiagnostic(`[Stream] finish_reason: ${finishReason} after ${duration}ms`);
           }
         }
 
@@ -345,7 +362,11 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
             if (tc.function?.name) existing.name = tc.function.name;
             if (tc.function?.arguments) {
               existing.arguments += tc.function.arguments;
-              streamOptions?.onToolInputDelta?.(existing.name, tc.function.arguments);
+              streamOptions?.onToolInputDelta?.(
+                existing.name,
+                tc.function.arguments,
+                existing.id ? { toolId: existing.id } : undefined,
+              );
             }
             toolCallsMap.set(tc.index, existing);
           }
@@ -363,7 +384,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
             : typeof signal.reason === 'string'
               ? signal.reason
               : 'Request aborted';
-          console.error('[Stream] Stream ended after abort before finish_reason:', {
+          this.logStreamDiagnostic('[Stream] Stream ended after abort before finish_reason:', {
             duration,
             reason,
             textContentLength: textContent.length,
@@ -378,7 +399,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
           `This may indicate a network disconnection or API timeout.`
         );
         error.name = 'StreamIncompleteError';
-        console.error('[Stream] Incomplete stream detected:', {
+        this.logStreamDiagnostic('[Stream] Incomplete stream detected:', {
           duration,
           textContentLength: textContent.length,
           toolCallsCount: toolCallsMap.size

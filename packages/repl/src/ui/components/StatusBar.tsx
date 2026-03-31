@@ -143,6 +143,7 @@ function formatToolStatus(
 }
 
 function formatBusyStatus({
+  activeToolCount,
   currentTool,
   isThinkingActive,
   thinkingCharCount,
@@ -154,6 +155,7 @@ function formatBusyStatus({
   managedWorkerTitle,
 }: Pick<
   StatusBarProps,
+  | 'activeToolCount'
   | 'currentTool'
   | 'isThinkingActive'
   | 'thinkingCharCount'
@@ -164,11 +166,18 @@ function formatBusyStatus({
   | 'managedHarnessProfile'
   | 'managedWorkerTitle'
 >): string | undefined {
+  const runningToolsLabel = activeToolCount && activeToolCount > 0
+    ? `${activeToolCount} tool${activeToolCount === 1 ? '' : 's'} running`
+    : undefined;
+
   if (isCompacting) {
     return 'Compacting';
   }
 
   if (managedPhase === 'routing') {
+    if (runningToolsLabel) {
+      return `Routing - ${runningToolsLabel}`;
+    }
     if (currentTool) {
       return `Routing - ${formatToolStatus(currentTool, toolInputCharCount, toolInputContent)}`;
     }
@@ -182,6 +191,9 @@ function formatBusyStatus({
     const scoutLabel = managedWorkerTitle && managedWorkerTitle !== 'Scout'
       ? `Scout - ${managedWorkerTitle}`
       : 'Scout';
+    if (runningToolsLabel) {
+      return `${scoutLabel} - ${runningToolsLabel}`;
+    }
     if (currentTool) {
       return `${scoutLabel} - ${formatToolStatus(currentTool, toolInputCharCount, toolInputContent)}`;
     }
@@ -194,6 +206,9 @@ function formatBusyStatus({
   if (managedHarnessProfile) {
     const harness = formatHarnessProfileShort(managedHarnessProfile);
     const roleLabel = `${harness}${managedWorkerTitle ? ` - ${managedWorkerTitle}` : ''}`;
+    if (runningToolsLabel) {
+      return `${roleLabel} - ${runningToolsLabel}`;
+    }
     if (currentTool) {
       return `${roleLabel} - ${formatToolStatus(currentTool, toolInputCharCount, toolInputContent)}`;
     }
@@ -206,6 +221,9 @@ function formatBusyStatus({
   const legacyManagedPhase = managedPhase as StatusBarProps['managedPhase'];
 
   if (legacyManagedPhase === 'routing') {
+    if (runningToolsLabel) {
+      return `Routing \u2192 ${runningToolsLabel}`;
+    }
     if (currentTool) {
       return `Routing \u2192 ${formatToolStatus(currentTool, toolInputCharCount, toolInputContent)}`;
     }
@@ -217,6 +235,9 @@ function formatBusyStatus({
 
   if (legacyManagedPhase === 'preflight') {
     const scoutLabel = managedWorkerTitle ? `Scout - ${managedWorkerTitle}` : 'Scout';
+    if (runningToolsLabel) {
+      return `${scoutLabel} \u2192 ${runningToolsLabel}`;
+    }
     if (currentTool) {
       return `${scoutLabel} \u2192 ${formatToolStatus(currentTool, toolInputCharCount, toolInputContent)}`;
     }
@@ -229,6 +250,9 @@ function formatBusyStatus({
   if (managedHarnessProfile) {
     const harness = formatHarnessProfileShort(managedHarnessProfile);
     const roleLabel = `${harness}${managedWorkerTitle ? ` - ${managedWorkerTitle}` : ''}`;
+    if (runningToolsLabel) {
+      return `${roleLabel} \u2192 ${runningToolsLabel}`;
+    }
     if (currentTool) {
       return `${roleLabel} · ${formatToolStatus(currentTool, toolInputCharCount, toolInputContent)}`;
     }
@@ -236,6 +260,10 @@ function formatBusyStatus({
       return formatThinkingStatus(roleLabel, thinkingCharCount);
     }
     return roleLabel;
+  }
+
+  if (runningToolsLabel) {
+    return runningToolsLabel;
   }
 
   if (currentTool) {
@@ -320,6 +348,7 @@ export function getStatusBarText({
   model,
   tokenUsage,
   currentTool,
+  activeToolCount,
   thinking,
   isThinkingActive,
   thinkingCharCount,
@@ -367,7 +396,8 @@ export function getStatusBarText({
   }
 
   const busyStatus = showBusyStatus
-    ? formatBusyStatus({
+      ? formatBusyStatus({
+        activeToolCount,
         currentTool,
         isThinkingActive,
         thinkingCharCount,
@@ -409,6 +439,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   model,
   tokenUsage,
   currentTool,
+  activeToolCount,
   thinking,
   isThinkingActive,
   thinkingCharCount,
@@ -491,6 +522,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   const sessionToolDisplay = useMemo(() => {
     const busyStatus = showBusyStatus
       ? formatBusyStatus({
+          activeToolCount,
           currentTool,
           isThinkingActive,
           thinkingCharCount,
@@ -517,12 +549,14 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   }, [
     sessionId,
     currentTool,
+    activeToolCount,
     isThinkingActive,
     thinkingCharCount,
     isCompacting,
     toolInputCharCount,
     toolInputContent,
     showBusyStatus,
+    managedPhase,
     managedHarnessProfile,
     managedWorkerTitle,
   ]);

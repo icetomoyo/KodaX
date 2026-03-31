@@ -7,7 +7,7 @@
 import chalk from 'chalk';
 import readline from 'readline';
 import type { KodaXEvents } from '@kodax/coding';
-import { PREVIEW_MAX_LENGTH } from '../common/utils.js';
+import { buildToolConfirmationDisplay } from '../common/tool-confirmation.js';
 import type { ConfirmResult } from '../permission/types.js';
 
 // ============== Spinner Animation - Spinner 动画 ==============
@@ -77,13 +77,10 @@ async function confirmAction(name: string, input: Record<string, unknown>): Prom
   return new Promise(resolve => {
     let prompt: string;
     const optionsHint = isProtectedPath ? '(y/n)' : '(y/a/n)';
+    const display = buildToolConfirmationDisplay(name, input);
+    const detailBlock = display.details.length > 0 ? `\n${display.details.join('\n')}\n` : ' ';
 
-    switch (name) {
-      case 'bash': prompt = `[Confirm] Execute: ${(input.command as string)?.slice(0, PREVIEW_MAX_LENGTH)}...? ${optionsHint} `; break;
-      case 'write': prompt = `[Confirm] Write to ${input.path}? ${optionsHint} `; break;
-      case 'edit': prompt = `[Confirm] Edit ${input.path}? ${optionsHint} `; break;
-      default: prompt = `[Confirm] Execute ${name}? ${optionsHint} `;
-    }
+    prompt = `[Confirm] ${display.title}${detailBlock}${optionsHint} `;
 
     rl.question(prompt, ans => {
       rl.close();
@@ -153,7 +150,7 @@ export function createCliEvents(showSessionId = true): KodaXEvents {
       spinner.updateText(`Executing ${tool.name}...`);
     },
 
-    onToolInputDelta: (toolName: string, json: string) => {
+    onToolInputDelta: (toolName: string, json: string, _meta?: { toolId?: string }) => {
       const charCount = json.length;
       if (spinner && !spinner.isStopped()) {
         spinner.updateText(`Receiving ${toolName}... (${charCount} chars)`);
