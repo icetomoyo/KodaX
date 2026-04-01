@@ -1,6 +1,6 @@
 # Feature 总表
 
-> Last updated: 2026-03-31
+> Last updated: 2026-04-01
 
 > 中文阅读说明：
 > 这份 `FEATURE_LIST` 是 roadmap 的总索引。
@@ -13,11 +13,11 @@
 
 | Item | Value |
 |---|---|
-| Tracked feature IDs | `001-045` |
-| Total tracked features | `45` |
+| Tracked feature IDs | `001-051` |
+| Total tracked features | `51` |
 | Completed | `34` |
 | InProgress | `0` |
-| Planned | `11` |
+| Planned | `17` |
 | Current released version | `v0.7.10` |
 
 ### 各版本待做分布
@@ -26,7 +26,8 @@
 |---|---|
 | `v0.7.15` | `1` |
 | `v0.7.20` | `1` |
-| `v0.8.0` | `4` |
+| `v0.7.25` | `1` |
+| `v0.8.0` | `9` |
 | `v0.9.0` | `3` |
 | `v1.0.0` | `2` |
 
@@ -38,6 +39,12 @@
 |---|---|---|---|---|---|
 | `007` | Theme System Consolidation | Enhancement | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_007-theme-system-consolidation) |
 | `045` | Provider Stream Resilience and Graceful Recovery | Enhancement | High | `v0.7.15` | [v0.7.15](features/v0.7.15.md#feature_045-provider-stream-resilience-and-graceful-recovery) |
+| `046` | AMA Handoff Integrity and Final-Answer Convergence | Enhancement | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_046-ama-handoff-integrity-and-final-answer-convergence) |
+| `047` | Invisible Adaptive Parallelism and Evidence-Driven Fan-Out | Enhancement | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_047-invisible-adaptive-parallelism-and-evidence-driven-fan-out) |
+| `048` | Sectionized Prompt Assembly and Dynamic Capability Truth | Enhancement | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_048-sectionized-prompt-assembly-and-dynamic-capability-truth) |
+| `049` | First-Class Search, Fetch, Code Search, and Semantic Retrieval | Enhancement | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_049-first-class-search-fetch-code-search-and-semantic-retrieval) |
+| `050` | Prompt Contracts, Snapshots, and Regression Evaluation | Internal | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_050-prompt-contracts-snapshots-and-regression-evaluation) |
+| `051` | Host-Aware Fullscreen TUI Substrate and Transcript UX | Enhancement | High | `v0.7.25` | [v0.7.25](features/v0.7.25.md#feature_051-host-aware-fullscreen-tui-substrate-and-transcript-ux) |
 | `023` | Dual-Mode Terminal UX | Enhancement | High | `v1.0.0` | [v1.0.0](features/v1.0.0.md#feature_023-dual-mode-terminal-ux) |
 | `026` | Roadmap Integrity and Planning Hygiene | Internal | High | `v0.7.20` | [v0.7.20](features/v0.7.20.md#feature_026-roadmap-integrity-and-planning-hygiene) |
 | `030` | Multi-Surface Delivery | Enhancement | High | `v1.0.0` | [v1.0.0](features/v1.0.0.md#feature_030-multi-surface-delivery) |
