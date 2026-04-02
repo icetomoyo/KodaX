@@ -79,18 +79,26 @@ function waitForRetryDelay(delay: number, signal?: AbortSignal): Promise<void> {
     }
 
     let timeoutId: ReturnType<typeof setTimeout>;
+    const abortSignal = signal;
+
+    if (!abortSignal) {
+      timeoutId = setTimeout(() => {
+        resolve();
+      }, delay);
+      return;
+    }
 
     const onAbort = () => {
       clearTimeout(timeoutId);
-      signal?.removeEventListener('abort', onAbort);
-      reject(signal.reason instanceof Error ? signal.reason : new DOMException('Request aborted', 'AbortError'));
+      abortSignal.removeEventListener('abort', onAbort);
+      reject(abortSignal.reason instanceof Error ? abortSignal.reason : new DOMException('Request aborted', 'AbortError'));
     };
 
     timeoutId = setTimeout(() => {
-      signal?.removeEventListener('abort', onAbort);
+      abortSignal.removeEventListener('abort', onAbort);
       resolve();
     }, delay);
 
-    signal?.addEventListener('abort', onAbort, { once: true });
+    abortSignal.addEventListener('abort', onAbort, { once: true });
   });
 }
