@@ -6,7 +6,7 @@
  */
 
 import type { ArgumentDefinition, CommandArgumentsRegistry } from './argument-completer.js';
-import { getAvailableProviderNames, isKnownProvider } from '@kodax/coding';
+import { REPOINTEL_DEFAULT_ENDPOINT, getAvailableProviderNames, isKnownProvider } from '@kodax/coding';
 import { getProviderAvailableModels } from '../../common/utils.js';
 
 /**
@@ -218,6 +218,132 @@ const DELETE_ARGS: ArgumentDefinition[] = [
   },
 ];
 
+const REPOINTEL_SUBCOMMAND_ARGS: ArgumentDefinition[] = [
+  {
+    name: 'status',
+    description: 'Inspect the current repo-intelligence runtime state',
+    type: 'enum',
+  },
+  {
+    name: 'warm',
+    description: 'Warm or start the local premium runtime if available',
+    type: 'enum',
+  },
+  {
+    name: 'mode',
+    description: 'Switch repo-intelligence runtime mode',
+    type: 'enum',
+  },
+  {
+    name: 'trace',
+    description: 'Toggle repo-intelligence trace output',
+    type: 'enum',
+  },
+  {
+    name: 'endpoint',
+    description: 'Inspect or override the local repointel daemon endpoint',
+    type: 'enum',
+  },
+  {
+    name: 'bin',
+    description: 'Inspect or override the local repointel command or path',
+    type: 'enum',
+  },
+];
+
+const REPOINTEL_MODE_ARGS: ArgumentDefinition[] = [
+  {
+    name: 'auto',
+    description: 'Resolve to premium-native when available, otherwise fall back to oss',
+    type: 'enum',
+  },
+  {
+    name: 'off',
+    description: 'Disable repo-intelligence injection',
+    type: 'enum',
+  },
+  {
+    name: 'oss',
+    description: 'Use only the public OSS repo-intelligence baseline',
+    type: 'enum',
+  },
+  {
+    name: 'premium-shared',
+    description: 'Use premium without the native KodaX auto lane',
+    type: 'enum',
+  },
+  {
+    name: 'premium-native',
+    description: 'Use premium through the native KodaX bridge',
+    type: 'enum',
+  },
+];
+
+const REPOINTEL_TRACE_ARGS: ArgumentDefinition[] = [
+  {
+    name: 'on',
+    description: 'Enable repo-intelligence trace output',
+    type: 'enum',
+  },
+  {
+    name: 'off',
+    description: 'Disable repo-intelligence trace output',
+    type: 'enum',
+  },
+  {
+    name: 'toggle',
+    description: 'Toggle repo-intelligence trace output',
+    type: 'enum',
+  },
+];
+
+const REPOINTEL_RESETTABLE_ARGS: ArgumentDefinition[] = [
+  {
+    name: 'default',
+    description: 'Clear the override and use the default value again',
+    type: 'enum',
+  },
+];
+
+function getRepointelArgs(argParts: string[]): ArgumentDefinition[] {
+  const [subcommand = ''] = argParts;
+  const normalizedSubcommand = subcommand.toLowerCase();
+  const effectiveLength = argParts.length === 1 && argParts[0] === '' ? 0 : argParts.length;
+
+  if (effectiveLength <= 1) {
+    return REPOINTEL_SUBCOMMAND_ARGS;
+  }
+
+  if (effectiveLength > 2) {
+    return [];
+  }
+
+  if (normalizedSubcommand === 'mode') {
+    return REPOINTEL_MODE_ARGS;
+  }
+
+  if (normalizedSubcommand === 'trace') {
+    return REPOINTEL_TRACE_ARGS;
+  }
+
+  if (normalizedSubcommand === 'endpoint') {
+    return [
+      ...REPOINTEL_RESETTABLE_ARGS,
+      {
+        name: REPOINTEL_DEFAULT_ENDPOINT,
+        description: 'Default local repointel daemon endpoint',
+        type: 'string',
+      },
+    ];
+  }
+
+  if (normalizedSubcommand === 'bin') {
+    return REPOINTEL_RESETTABLE_ARGS;
+  }
+
+  return [];
+}
+
 /**
  * Global command arguments registry
  * 全局命令参数注册表
@@ -246,11 +372,15 @@ export const COMMAND_ARGUMENTS: CommandArgumentsRegistry = new Map([
  * For /model, supports two-stage completion when partial contains provider/.
  */
 const MODEL_COMMAND_NAMES = new Set(['model', 'm']);
+const REPOINTEL_COMMAND_NAMES = new Set(['repointel', 'ri']);
 
-export function getCommandArguments(commandName: string, partial?: string): ArgumentDefinition[] {
+export function getCommandArguments(commandName: string, partial?: string, argParts: string[] = []): ArgumentDefinition[] {
   const key = commandName.toLowerCase();
   if (MODEL_COMMAND_NAMES.has(key)) {
     return getModelArgs(partial);
+  }
+  if (REPOINTEL_COMMAND_NAMES.has(key)) {
+    return getRepointelArgs(argParts);
   }
   return COMMAND_ARGUMENTS.get(key) ?? [];
 }

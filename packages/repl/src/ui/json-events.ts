@@ -8,6 +8,7 @@
 import type {
   KodaXContextTokenSnapshot,
   KodaXEvents,
+  KodaXRepoIntelligenceTraceEvent,
   KodaXTokenUsage,
 } from '@kodax/coding';
 
@@ -43,6 +44,13 @@ type JsonEvent =
   | { type: 'compact.end' }
   | { type: 'retry'; reason: string; attempt: number; maxAttempts: number }
   | { type: 'provider.rate_limit'; attempt: number; maxRetries: number; delayMs: number }
+  | {
+      type: 'repo_intelligence.trace';
+      stage: KodaXRepoIntelligenceTraceEvent['stage'];
+      summary: string;
+      capability?: KodaXRepoIntelligenceTraceEvent['capability'];
+      trace?: KodaXRepoIntelligenceTraceEvent['trace'];
+    }
   | { type: 'complete' };
 
 type JsonErrorEvent = {
@@ -175,6 +183,16 @@ export function createJsonEvents(options: JsonEventOutputOptions = {}): KodaXEve
         attempt,
         maxRetries,
         delayMs,
+      });
+    },
+
+    onRepoIntelligenceTrace: (event) => {
+      writeJsonLine(stdout, {
+        type: 'repo_intelligence.trace',
+        stage: event.stage,
+        summary: event.summary,
+        capability: event.capability,
+        trace: event.trace,
       });
     },
 

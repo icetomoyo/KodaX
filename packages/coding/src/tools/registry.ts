@@ -27,6 +27,21 @@ import { toolImpactEstimate } from './impact-estimate.js';
 const TOOL_REGISTRY: ToolRegistry = new Map();
 let nextToolRegistrationId = 0;
 
+export const REPO_INTELLIGENCE_WORKING_TOOL_NAMES = [
+  'repo_overview',
+  'changed_scope',
+  'changed_diff',
+  'changed_diff_bundle',
+  'module_context',
+  'symbol_context',
+  'process_context',
+  'impact_estimate',
+] as const;
+
+const REPO_INTELLIGENCE_WORKING_TOOL_NAME_SET = new Set<string>(
+  REPO_INTELLIGENCE_WORKING_TOOL_NAMES,
+);
+
 function extractRequiredParams(
   inputSchema: KodaXToolDefinition['input_schema'] | undefined,
 ): string[] {
@@ -476,6 +491,16 @@ export function listToolDefinitions(): KodaXToolDefinition[] {
   return listTools()
     .map((name) => getToolDefinition(name))
     .filter((definition): definition is KodaXToolDefinition => definition !== undefined);
+}
+
+export function isRepoIntelligenceWorkingToolName(name: string): boolean {
+  return REPO_INTELLIGENCE_WORKING_TOOL_NAME_SET.has(name);
+}
+
+export function filterRepoIntelligenceWorkingToolNames<T extends string>(
+  toolNames: readonly T[],
+): T[] {
+  return toolNames.filter((name) => !isRepoIntelligenceWorkingToolName(name));
 }
 
 export async function executeTool(

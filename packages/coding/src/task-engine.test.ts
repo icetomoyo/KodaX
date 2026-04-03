@@ -1,8 +1,9 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
+import { existsSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ReasoningPlan } from './reasoning.js';
+import { buildAmaControllerDecision, type ReasoningPlan } from './reasoning.js';
 import type { KodaXManagedTaskStatusEvent, KodaXRepoRoutingSignals, KodaXTaskRoutingDecision } from './types.js';
 
 const {
@@ -66,10 +67,17 @@ vi.mock('./repo-intelligence/query.js', async () => {
   const actual = await vi.importActual<typeof import('./repo-intelligence/query.js')>('./repo-intelligence/query.js');
   return {
     ...actual,
-    getImpactEstimate: mockGetImpactEstimate,
-    getModuleContext: mockGetModuleContext,
     renderImpactEstimate: mockRenderImpactEstimate,
     renderModuleContext: mockRenderModuleContext,
+  };
+});
+
+vi.mock('./repo-intelligence/runtime.js', async () => {
+  const actual = await vi.importActual<typeof import('./repo-intelligence/runtime.js')>('./repo-intelligence/runtime.js');
+  return {
+    ...actual,
+    getImpactEstimate: mockGetImpactEstimate,
+    getModuleContext: mockGetModuleContext,
   };
 });
 
@@ -83,33 +91,55 @@ async function createTempDir(prefix: string): Promise<string> {
   return dir;
 }
 
+async function removeDirWithRetries(dir: string): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      await rm(dir, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!(error instanceof Error) || !/EBUSY|EPERM/i.test(error.message)) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
+}
+
 function buildPlan(
   overrides: Partial<KodaXTaskRoutingDecision> = {},
 ): ReasoningPlan {
+  const decision: KodaXTaskRoutingDecision = {
+    primaryTask: 'edit',
+    taskFamily: 'implementation',
+    actionability: 'actionable',
+    executionPattern: 'direct',
+    confidence: 0.9,
+    riskLevel: 'low',
+    recommendedMode: 'implementation',
+    recommendedThinkingDepth: 'low',
+    complexity: 'simple',
+    workIntent: 'new',
+    requiresBrainstorm: false,
+    harnessProfile: 'H0_DIRECT',
+    reason: 'Default direct plan.',
+    routingSource: 'model',
+    routingAttempts: 1,
+    needsIndependentQA: false,
+    soloBoundaryConfidence: 0.9,
+    ...overrides,
+  };
   return {
     mode: 'auto',
     depth: 'low',
     promptOverlay: '[Routing] test',
-    decision: {
-      primaryTask: 'edit',
-      taskFamily: 'implementation',
-      actionability: 'actionable',
-      executionPattern: 'direct',
-      confidence: 0.9,
-      riskLevel: 'low',
-      recommendedMode: 'implementation',
-      recommendedThinkingDepth: 'low',
-      complexity: 'simple',
-      workIntent: 'new',
-      requiresBrainstorm: false,
-      harnessProfile: 'H0_DIRECT',
-      reason: 'Default direct plan.',
-      routingSource: 'model',
-      routingAttempts: 1,
-      needsIndependentQA: false,
-      soloBoundaryConfidence: 0.9,
-      ...overrides,
-    },
+    decision,
+    amaControllerDecision: buildAmaControllerDecision(decision),
   };
 }
 
@@ -261,6 +291,26 @@ async function waitForFileContent(filePath: string, attempts = 40): Promise<stri
   throw lastError instanceof Error ? lastError : new Error(`Timed out waiting for ${filePath}`);
 }
 
+async function waitForFileContentContaining(
+  filePath: string,
+  expectedFragments: string[],
+  attempts = 120,
+): Promise<string> {
+  let lastContent = '';
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      lastContent = await readFile(filePath, 'utf8');
+      if (expectedFragments.every((fragment) => lastContent.includes(fragment))) {
+        return lastContent;
+      }
+    } catch {
+      // Keep retrying until the background write completes.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Timed out waiting for ${filePath} to contain: ${expectedFragments.join(', ')}\nLast content:\n${lastContent}`);
+}
+
 afterEach(async () => {
   delete process.env.KODAX_DEBUG_REPO_INTELLIGENCE;
 
@@ -279,7 +329,7 @@ afterEach(async () => {
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
     if (dir) {
-      await rm(dir, { recursive: true, force: true });
+      await removeDirWithRetries(dir);
     }
   }
 });
@@ -382,11 +432,846 @@ describe('runManagedTask', () => {
       '请快速 review 一下这个很小的改动',
     );
 
-    expect(mockRunDirectKodaX).toHaveBeenCalledTimes(1);
+    expect(mockRunDirectKodaX).toHaveBeenCalledTimes(2);
     expect(result.managedTask?.contract.harnessProfile).toBe('H0_DIRECT');
-    expect(result.managedTask?.roleAssignments.map((item) => item.role)).toEqual(['scout']);
+    expect(result.managedTask?.roleAssignments.map((item) => item.role)).toEqual(['generator']);
     expect(result.routingDecision?.harnessProfile).toBe('H0_DIRECT');
-    expect(result.lastText).toContain('Scout determined this is small enough to answer directly.');
+    expect(result.lastText.trim().length).toBeGreaterThan(0);
+  });
+
+  it('runs tactical review child fan-out inside AMA H0 and keeps the parent as final authority', async () => {
+    const workspaceRoot = await createTempDir('kodax-task-engine-tactical-review-');
+    mockCreateReasoningPlan.mockResolvedValue(
+      buildPlan({
+        primaryTask: 'review',
+        taskFamily: 'review',
+        actionability: 'actionable',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'pr-review',
+        complexity: 'moderate',
+        riskLevel: 'medium',
+        harnessProfile: 'H0_DIRECT',
+        mutationSurface: 'read-only',
+        topologyCeiling: 'H0_DIRECT',
+        reason: 'Read-only review should stay tactical and use hidden child validators.',
+      }),
+    );
+    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
+      if (workerPrompt.includes('You are the Scout role')) {
+        return buildAssistantResult(
+          buildScoutResponse(
+            'Scout kept the task on H0 and recommended tactical validation.',
+            'H0_DIRECT',
+          ),
+          { sessionId: 'session-scout-tactical-review' },
+        );
+      }
+      if (workerPrompt.includes('You are the Tactical Review Scanner')) {
+        return buildAssistantResult(
+          [
+            'Scanner found two candidate findings worth validation.',
+            '```kodax-review-findings',
+            JSON.stringify({
+              summary: 'Scanner identified two candidate findings.',
+              findings: [
+                {
+                  id: 'finding-1',
+                  title: 'Null guard removed',
+                  claim: 'The retry path dropped a defensive null guard.',
+                  priority: 'high',
+                  files: ['packages/coding/src/reasoning.ts'],
+                  evidence: ['Null guard disappeared from the retry path.'],
+                },
+                {
+                  id: 'finding-2',
+                  title: 'Timeout reset regression',
+                  claim: 'Timeout still resets the counter unexpectedly.',
+                  priority: 'medium',
+                  files: ['packages/coding/src/task-engine.ts'],
+                  evidence: ['Timeout branch still mutates the counter.'],
+                },
+              ],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-scan-tactical-review' },
+        );
+      }
+      if (workerPrompt.includes('[Finding ID] finding-1')) {
+        return buildAssistantResult(
+          [
+            buildHandoffResponse('Validator confirmed the null guard issue is real.'),
+            '```kodax-child-result',
+            JSON.stringify({
+              childId: 'finding-1',
+              fanoutClass: 'finding-validation',
+              status: 'completed',
+              disposition: 'valid',
+              summary: 'Finding 1 is valid.',
+              evidenceRefs: ['packages/coding/src/reasoning.ts'],
+              contradictions: [],
+              artifactPaths: [],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-validator-1' },
+        );
+      }
+      if (workerPrompt.includes('[Finding ID] finding-2')) {
+        return buildAssistantResult(
+          [
+            buildHandoffResponse('Validator ruled the timeout reset report a false positive.', 'ready'),
+            '```kodax-child-result',
+            JSON.stringify({
+              childId: 'finding-2',
+              fanoutClass: 'finding-validation',
+              status: 'completed',
+              disposition: 'false-positive',
+              summary: 'Finding 2 is a false positive.',
+              evidenceRefs: ['packages/coding/src/task-engine.ts'],
+              contradictions: ['The timeout branch preserves the counter in the current code.'],
+              artifactPaths: [],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-validator-2' },
+        );
+      }
+      if (workerPrompt.includes('You are the Tactical Review Reducer')) {
+        return buildAssistantResult(
+          buildVerdictResponse(
+            'Reducer completed the tactical review.',
+            'accept',
+            'Validator evidence is sufficient for the final review.',
+            {
+              userAnswer: [
+                '## Findings',
+                '',
+                '- The retry path dropped a defensive null guard and can now dereference a missing value.',
+                '',
+                'No other validator-backed findings remain.',
+              ].join('\n'),
+            },
+          ),
+          { sessionId: 'session-review-reducer' },
+        );
+      }
+      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 160)}`);
+    });
+
+    const result = await runManagedTask(
+      {
+        provider: 'anthropic',
+        agentMode: 'ama',
+        context: {
+          managedTaskWorkspaceDir: workspaceRoot,
+        },
+      },
+      'Please review the current changes for merge blockers.',
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.lastText).toContain('## Findings');
+    expect(result.lastText).toContain('dropped a defensive null guard');
+    expect(result.lastText).not.toContain('Timeout reset regression');
+    expect(result.managedTask?.runtime?.amaProfile).toBe('tactical');
+    expect(result.managedTask?.runtime?.amaFanout?.class).toBe('finding-validation');
+    expect(result.managedTask?.runtime?.childContextBundles).toHaveLength(2);
+    expect(result.managedTask?.runtime?.childAgentResults).toHaveLength(2);
+    expect(result.managedTask?.runtime?.parentReductionContract).toEqual(
+      expect.objectContaining({
+        owner: 'parent',
+        strategy: 'evaluator-assisted',
+        collapseChildTranscripts: true,
+      }),
+    );
+    expect(result.managedTask?.roleAssignments.map((assignment) => assignment.id)).toEqual(
+      expect.arrayContaining(['review-scan', 'validator-01', 'validator-02', 'review-reducer']),
+    );
+    expect(result.managedTask?.evidence.artifacts.map((artifact) => artifact.path)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('review-findings.json'),
+        expect.stringContaining('child-result.json'),
+        expect.stringContaining('child-result-ledger.json'),
+      ]),
+    );
+  });
+
+  it('keeps overflow tactical review findings in the ledger and defers the unscheduled bundles', async () => {
+    const workspaceRoot = await createTempDir('kodax-task-engine-tactical-review-overflow-');
+    mockCreateReasoningPlan.mockResolvedValue(
+      buildPlan({
+        primaryTask: 'review',
+        taskFamily: 'review',
+        actionability: 'actionable',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'pr-review',
+        complexity: 'moderate',
+        riskLevel: 'medium',
+        harnessProfile: 'H0_DIRECT',
+        mutationSurface: 'read-only',
+        reviewScale: 'large',
+        topologyCeiling: 'H0_DIRECT',
+        reason: 'Read-only review should stay tactical and defer overflow findings through the scheduler.',
+      }),
+    );
+    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
+      if (workerPrompt.includes('You are the Scout role')) {
+        return buildAssistantResult(
+          buildScoutResponse(
+            'Scout kept the task on H0 and recommended tactical validation.',
+            'H0_DIRECT',
+          ),
+          { sessionId: 'session-scout-tactical-review-overflow' },
+        );
+      }
+      if (workerPrompt.includes('You are the Tactical Review Scanner')) {
+        return buildAssistantResult(
+          [
+            'Scanner found four candidate findings worth validation.',
+            '```kodax-review-findings',
+            JSON.stringify({
+              summary: 'Scanner identified four candidate findings.',
+              findings: [
+                {
+                  id: 'finding-1',
+                  title: 'Null guard removed',
+                  claim: 'The retry path dropped a defensive null guard.',
+                  priority: 'high',
+                  files: ['packages/coding/src/reasoning.ts'],
+                  evidence: ['Null guard disappeared from the retry path.'],
+                },
+                {
+                  id: 'finding-2',
+                  title: 'Timeout reset regression',
+                  claim: 'Timeout still resets the counter unexpectedly.',
+                  priority: 'medium',
+                  files: ['packages/coding/src/task-engine.ts'],
+                  evidence: ['Timeout branch still mutates the counter.'],
+                },
+                {
+                  id: 'finding-3',
+                  title: 'Budget note missing',
+                  claim: 'The degraded continue note is not emitted on blocked runs.',
+                  priority: 'medium',
+                  files: ['packages/coding/src/task-engine.ts'],
+                  evidence: ['Blocked runs no longer append the degraded note.'],
+                },
+                {
+                  id: 'finding-4',
+                  title: 'Deferred review candidate',
+                  claim: 'One more finding should remain deferred when the child budget is exhausted.',
+                  priority: 'low',
+                  files: ['packages/coding/src/task-engine.ts'],
+                  evidence: ['Fourth finding exists only to exercise scheduler deferral.'],
+                },
+              ],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-scan-tactical-review-overflow' },
+        );
+      }
+      if (workerPrompt.includes('[Finding ID] finding-1')) {
+        return buildAssistantResult(
+          [
+            buildHandoffResponse('Validator confirmed the null guard issue is real.'),
+            '```kodax-child-result',
+            JSON.stringify({
+              childId: 'finding-1',
+              fanoutClass: 'finding-validation',
+              status: 'completed',
+              disposition: 'valid',
+              summary: 'Finding 1 is valid.',
+              evidenceRefs: ['packages/coding/src/reasoning.ts'],
+              contradictions: [],
+              artifactPaths: [],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-validator-overflow-1' },
+        );
+      }
+      if (workerPrompt.includes('[Finding ID] finding-2')) {
+        return buildAssistantResult(
+          [
+            buildHandoffResponse('Validator ruled the timeout reset report a false positive.'),
+            '```kodax-child-result',
+            JSON.stringify({
+              childId: 'finding-2',
+              fanoutClass: 'finding-validation',
+              status: 'completed',
+              disposition: 'false-positive',
+              summary: 'Finding 2 is a false positive.',
+              evidenceRefs: ['packages/coding/src/task-engine.ts'],
+              contradictions: ['The timeout branch preserves the counter in the current code.'],
+              artifactPaths: [],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-validator-overflow-2' },
+        );
+      }
+      if (workerPrompt.includes('[Finding ID] finding-3')) {
+        return buildAssistantResult(
+          [
+            buildHandoffResponse('Validator confirmed the degraded-note issue is real.'),
+            '```kodax-child-result',
+            JSON.stringify({
+              childId: 'finding-3',
+              fanoutClass: 'finding-validation',
+              status: 'completed',
+              disposition: 'valid',
+              summary: 'Finding 3 is valid.',
+              evidenceRefs: ['packages/coding/src/task-engine.ts'],
+              contradictions: [],
+              artifactPaths: [],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-validator-overflow-3' },
+        );
+      }
+      if (workerPrompt.includes('You are the Tactical Review Reducer')) {
+        return buildAssistantResult(
+          buildVerdictResponse(
+            'Reducer tried to finalize the tactical review.',
+            'accept',
+            'Validator evidence is sufficient for the final review.',
+            {
+              userAnswer: [
+                '## Findings',
+                '',
+                '- Finding 1 is valid.',
+                '- Finding 3 is valid.',
+              ].join('\n'),
+            },
+          ),
+          { sessionId: 'session-review-reducer-overflow' },
+        );
+      }
+      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 160)}`);
+    });
+
+    const result = await runManagedTask(
+      {
+        provider: 'anthropic',
+        agentMode: 'ama',
+        context: {
+          managedTaskWorkspaceDir: workspaceRoot,
+        },
+      },
+      'Please review the current changes for merge blockers.',
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.lastText).toContain('The review cannot be finalized yet');
+    expect(result.lastText).toContain('Deferred review candidate');
+    expect(result.lastText).toContain('Finding 1 is valid.');
+    expect(result.managedTask?.runtime?.childContextBundles).toHaveLength(4);
+    expect(result.managedTask?.runtime?.childAgentResults).toHaveLength(3);
+    expect(result.managedTask?.runtime?.fanoutSchedulerPlan?.scheduledBundleIds).toEqual([
+      'finding-1',
+      'finding-2',
+      'finding-3',
+    ]);
+    expect(result.managedTask?.runtime?.fanoutSchedulerPlan?.deferredBundleIds).toEqual(['finding-4']);
+    expect(result.managedTask?.runtime?.fanoutSchedulerPlan?.branches).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ bundleId: 'finding-1', status: 'completed' }),
+        expect.objectContaining({ bundleId: 'finding-2', status: 'completed' }),
+        expect.objectContaining({ bundleId: 'finding-3', status: 'completed' }),
+        expect.objectContaining({ bundleId: 'finding-4', status: 'deferred' }),
+      ]),
+    );
+  });
+
+  it('fails closed when a validator omits kodax-child-result and ignores reducer optimism without ledger proof', async () => {
+    const workspaceRoot = await createTempDir('kodax-task-engine-tactical-review-fail-closed-');
+    mockCreateReasoningPlan.mockResolvedValue(
+      buildPlan({
+        primaryTask: 'review',
+        taskFamily: 'review',
+        actionability: 'actionable',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'pr-review',
+        complexity: 'moderate',
+        riskLevel: 'medium',
+        harnessProfile: 'H0_DIRECT',
+        mutationSurface: 'read-only',
+        topologyCeiling: 'H0_DIRECT',
+        reason: 'Read-only review should stay tactical and fail closed on malformed child results.',
+      }),
+    );
+    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
+      if (workerPrompt.includes('You are the Scout role')) {
+        return buildAssistantResult(
+          buildScoutResponse(
+            'Scout kept the task on H0 and recommended tactical validation.',
+            'H0_DIRECT',
+          ),
+          { sessionId: 'session-scout-tactical-review-fail-closed' },
+        );
+      }
+      if (workerPrompt.includes('You are the Tactical Review Scanner')) {
+        return buildAssistantResult(
+          [
+            'Scanner found two candidate findings worth validation.',
+            '```kodax-review-findings',
+            JSON.stringify({
+              summary: 'Scanner identified two candidate findings.',
+              findings: [
+                {
+                  id: 'finding-1',
+                  title: 'Missing structured validator output',
+                  claim: 'The child validator never returns a structured result.',
+                  priority: 'high',
+                  files: ['packages/coding/src/task-engine.ts'],
+                  evidence: ['This finding exists to exercise fail-closed reduction.'],
+                },
+                {
+                  id: 'finding-2',
+                  title: 'False-positive sibling',
+                  claim: 'The sibling finding should still be evaluated normally.',
+                  priority: 'medium',
+                  files: ['packages/coding/src/task-engine.ts'],
+                  evidence: ['This sibling finding provides a structured comparison point.'],
+                },
+              ],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-scan-tactical-review-fail-closed' },
+        );
+      }
+      if (workerPrompt.includes('[Finding ID] finding-1')) {
+        return buildAssistantResult(
+          buildHandoffResponse('Validator insists the finding is real but forgets the structured block.'),
+          { sessionId: 'session-validator-fail-closed-1' },
+        );
+      }
+      if (workerPrompt.includes('[Finding ID] finding-2')) {
+        return buildAssistantResult(
+          [
+            buildHandoffResponse('Validator ruled the sibling report a false positive.'),
+            '```kodax-child-result',
+            JSON.stringify({
+              childId: 'finding-2',
+              fanoutClass: 'finding-validation',
+              status: 'completed',
+              disposition: 'false-positive',
+              summary: 'Finding 2 is a false positive.',
+              evidenceRefs: ['packages/coding/src/task-engine.ts'],
+              contradictions: ['The sibling issue does not reproduce in the current code.'],
+              artifactPaths: [],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-validator-fail-closed-2' },
+        );
+      }
+      if (workerPrompt.includes('You are the Tactical Review Reducer')) {
+        return buildAssistantResult(
+          buildVerdictResponse(
+            'Reducer believes the review is complete.',
+            'accept',
+            'The reducer thinks the review is done.',
+            {
+              userAnswer: [
+                '## Findings',
+                '',
+                '- Reducer says the first finding is valid and ready to publish.',
+              ].join('\n'),
+            },
+          ),
+          { sessionId: 'session-review-reducer-fail-closed' },
+        );
+      }
+      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 160)}`);
+    });
+
+    const result = await runManagedTask(
+      {
+        provider: 'anthropic',
+        agentMode: 'ama',
+        context: {
+          managedTaskWorkspaceDir: workspaceRoot,
+        },
+      },
+      'Please review the current changes for merge blockers.',
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.lastText).toContain('The review cannot be finalized yet');
+    expect(result.lastText).toContain('Missing structured validator output');
+    expect(result.lastText).not.toContain('Reducer says the first finding is valid and ready to publish.');
+    expect(result.managedTask?.runtime?.childAgentResults).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          childId: 'finding-1',
+          disposition: 'needs-more-evidence',
+          contradictions: ['Missing or malformed structured child result.'],
+        }),
+      ]),
+    );
+    expect(result.managedTask?.evidence.artifacts.map((artifact) => artifact.path)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('child-result-ledger.json'),
+        expect.stringContaining('child-result-ledger.md'),
+      ]),
+    );
+  });
+
+  it('fails closed when structured child results are missing a ready handoff or completion status', async () => {
+    const workspaceRoot = await createTempDir('kodax-task-engine-tactical-review-handoff-contract-');
+    mockCreateReasoningPlan.mockResolvedValue(
+      buildPlan({
+        primaryTask: 'review',
+        taskFamily: 'review',
+        actionability: 'actionable',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'pr-review',
+        complexity: 'moderate',
+        riskLevel: 'medium',
+        harnessProfile: 'H0_DIRECT',
+        mutationSurface: 'read-only',
+        topologyCeiling: 'H0_DIRECT',
+        reason: 'Read-only review should fail closed on incomplete child contracts.',
+      }),
+    );
+    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
+      if (workerPrompt.includes('You are the Scout role')) {
+        return buildAssistantResult(
+          buildScoutResponse(
+            'Scout kept the task on H0 and recommended tactical validation.',
+            'H0_DIRECT',
+          ),
+          { sessionId: 'session-scout-tactical-review-handoff-contract' },
+        );
+      }
+      if (workerPrompt.includes('You are the Tactical Review Scanner')) {
+        return buildAssistantResult(
+          [
+            'Scanner found two candidate findings worth validation.',
+            '```kodax-review-findings',
+            JSON.stringify({
+              summary: 'Scanner identified two candidate findings.',
+              findings: [
+                {
+                  id: 'finding-1',
+                  title: 'Missing handoff',
+                  claim: 'The validator returns a structured result without a ready handoff.',
+                  priority: 'high',
+                  files: ['packages/coding/src/task-engine.ts'],
+                  evidence: ['This finding exists to exercise handoff fail-closed behavior.'],
+                },
+                {
+                  id: 'finding-2',
+                  title: 'Blocked structured result',
+                  claim: 'The validator returns a structured result that is not completed.',
+                  priority: 'medium',
+                  files: ['packages/coding/src/task-engine.ts'],
+                  evidence: ['This finding exists to exercise child status fail-closed behavior.'],
+                },
+              ],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-scan-tactical-review-handoff-contract' },
+        );
+      }
+      if (workerPrompt.includes('[Finding ID] finding-1')) {
+        return buildAssistantResult(
+          [
+            '```kodax-child-result',
+            JSON.stringify({
+              childId: 'finding-1',
+              fanoutClass: 'finding-validation',
+              status: 'completed',
+              disposition: 'valid',
+              summary: 'Finding 1 would be valid if the handoff existed.',
+              evidenceRefs: ['packages/coding/src/task-engine.ts'],
+              contradictions: [],
+              artifactPaths: [],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-validator-handoff-contract-1' },
+        );
+      }
+      if (workerPrompt.includes('[Finding ID] finding-2')) {
+        return buildAssistantResult(
+          [
+            buildHandoffResponse('Validator could not complete the check but still emitted a result.', 'ready'),
+            '```kodax-child-result',
+            JSON.stringify({
+              childId: 'finding-2',
+              fanoutClass: 'finding-validation',
+              status: 'blocked',
+              disposition: 'valid',
+              summary: 'Finding 2 is not actually complete.',
+              evidenceRefs: ['packages/coding/src/task-engine.ts'],
+              contradictions: ['The validator stopped before producing a complete result.'],
+              artifactPaths: [],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-validator-handoff-contract-2' },
+        );
+      }
+      if (workerPrompt.includes('You are the Tactical Review Reducer')) {
+        return buildAssistantResult(
+          buildVerdictResponse(
+            'Reducer tried to finalize the tactical review.',
+            'accept',
+            'The reducer thinks the review is done.',
+            {
+              userAnswer: [
+                '## Findings',
+                '',
+                '- Reducer says both findings are ready to publish.',
+              ].join('\n'),
+            },
+          ),
+          { sessionId: 'session-review-reducer-handoff-contract' },
+        );
+      }
+      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 160)}`);
+    });
+
+    const result = await runManagedTask(
+      {
+        provider: 'anthropic',
+        agentMode: 'ama',
+        context: {
+          managedTaskWorkspaceDir: workspaceRoot,
+        },
+      },
+      'Please review the current changes for merge blockers.',
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.lastText).toContain('The review cannot be finalized yet');
+    expect(result.lastText).toContain('Missing handoff');
+    expect(result.lastText).toContain('Blocked structured result');
+    expect(result.lastText).not.toContain('Reducer says both findings are ready to publish.');
+    expect(result.managedTask?.runtime?.childAgentResults).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          childId: 'finding-1',
+          disposition: 'needs-more-evidence',
+          contradictions: ['Missing validator handoff block.'],
+        }),
+        expect.objectContaining({
+          childId: 'finding-2',
+          disposition: 'needs-more-evidence',
+          contradictions: ['Structured child result status was blocked.'],
+        }),
+      ]),
+    );
+  });
+
+  it('canonicalizes duplicate scanner finding ids before scheduling validator branches', async () => {
+    const workspaceRoot = await createTempDir('kodax-task-engine-tactical-review-duplicates-');
+    let findingOneValidatorRuns = 0;
+    const statuses: KodaXManagedTaskStatusEvent[] = [];
+    mockCreateReasoningPlan.mockResolvedValue(
+      buildPlan({
+        primaryTask: 'review',
+        taskFamily: 'review',
+        actionability: 'actionable',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'pr-review',
+        complexity: 'moderate',
+        riskLevel: 'medium',
+        harnessProfile: 'H0_DIRECT',
+        mutationSurface: 'read-only',
+        topologyCeiling: 'H0_DIRECT',
+        reason: 'Read-only review should canonicalize duplicate findings before validation.',
+      }),
+    );
+    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
+      if (workerPrompt.includes('You are the Scout role')) {
+        return buildAssistantResult(
+          buildScoutResponse(
+            'Scout kept the task on H0 and recommended tactical validation.',
+            'H0_DIRECT',
+          ),
+          { sessionId: 'session-scout-tactical-review-duplicates' },
+        );
+      }
+      if (workerPrompt.includes('You are the Tactical Review Scanner')) {
+        return buildAssistantResult(
+          [
+            'Scanner found three candidate findings, including one duplicate id.',
+            '```kodax-review-findings',
+            JSON.stringify({
+              summary: 'Scanner identified three candidate findings with one duplicate id.',
+              findings: [
+                {
+                  id: 'finding-1',
+                  title: 'Canonical finding',
+                  claim: 'The canonical finding should only validate once.',
+                  priority: 'high',
+                  files: ['packages/coding/src/task-engine.ts'],
+                  evidence: ['First occurrence.'],
+                },
+                {
+                  id: 'finding-1',
+                  title: 'Duplicate finding',
+                  claim: 'The duplicate should not create a second validator.',
+                  priority: 'medium',
+                  files: ['packages/coding/src/task-engine.ts'],
+                  evidence: ['Duplicate occurrence.'],
+                },
+                {
+                  id: 'finding-2',
+                  title: 'Sibling finding',
+                  claim: 'The sibling finding should validate normally.',
+                  priority: 'medium',
+                  files: ['packages/coding/src/reasoning.ts'],
+                  evidence: ['Independent sibling finding.'],
+                },
+              ],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-scan-tactical-review-duplicates' },
+        );
+      }
+      if (workerPrompt.includes('[Finding ID] finding-1')) {
+        findingOneValidatorRuns += 1;
+        return buildAssistantResult(
+          [
+            buildHandoffResponse('Validator confirmed the canonical finding.'),
+            '```kodax-child-result',
+            JSON.stringify({
+              childId: 'finding-1',
+              fanoutClass: 'finding-validation',
+              status: 'completed',
+              disposition: 'valid',
+              summary: 'Finding 1 is valid.',
+              evidenceRefs: ['packages/coding/src/task-engine.ts'],
+              contradictions: [],
+              artifactPaths: [],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-validator-duplicates-1' },
+        );
+      }
+      if (workerPrompt.includes('[Finding ID] finding-2')) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        return buildAssistantResult(
+          [
+            buildHandoffResponse('Validator ruled the sibling finding a false positive.'),
+            '```kodax-child-result',
+            JSON.stringify({
+              childId: 'finding-2',
+              fanoutClass: 'finding-validation',
+              status: 'completed',
+              disposition: 'false-positive',
+              summary: 'Finding 2 is a false positive.',
+              evidenceRefs: ['packages/coding/src/reasoning.ts'],
+              contradictions: ['The sibling issue does not reproduce.'],
+              artifactPaths: [],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-validator-duplicates-2' },
+        );
+      }
+      if (workerPrompt.includes('You are the Tactical Review Reducer')) {
+        return buildAssistantResult(
+          buildVerdictResponse(
+            'Reducer completed the tactical review.',
+            'accept',
+            'Validator evidence is sufficient for the final review.',
+            {
+              userAnswer: [
+                '## Findings',
+                '',
+                '- The canonical finding is valid.',
+              ].join('\n'),
+            },
+          ),
+          { sessionId: 'session-review-reducer-duplicates' },
+        );
+      }
+      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 160)}`);
+    });
+
+    const result = await runManagedTask(
+      {
+        provider: 'anthropic',
+        agentMode: 'ama',
+        events: {
+          onManagedTaskStatus: (status) => {
+            statuses.push(status);
+          },
+        },
+        context: {
+          managedTaskWorkspaceDir: workspaceRoot,
+        },
+      },
+      'Please review the current changes for merge blockers.',
+    );
+
+    expect(result.success).toBe(true);
+    expect(findingOneValidatorRuns).toBe(1);
+    expect(result.managedTask?.runtime?.childContextBundles).toHaveLength(2);
+    expect(result.managedTask?.runtime?.fanoutSchedulerPlan?.branches.map((branch) => branch.bundleId)).toEqual([
+      'finding-1',
+      'finding-2',
+    ]);
+    expect(result.managedTask?.runtime?.childAgentResults).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ childId: 'finding-1' }),
+        expect.objectContaining({ childId: 'finding-2' }),
+      ]),
+    );
+    const fanoutWorkerCounts = statuses
+      .filter((status) => status.phase === 'worker' && status.childFanoutClass === 'finding-validation')
+      .map((status) => status.childFanoutCount);
+    expect(fanoutWorkerCounts).toContain(2);
+    expect(fanoutWorkerCounts).toContain(1);
+    expect(fanoutWorkerCounts).toContain(0);
+  });
+
+  it('keeps mutation-focused AMA tactical investigation on the direct path when child fan-out is inadmissible', async () => {
+    mockCreateReasoningPlan.mockResolvedValue(
+      buildPlan({
+        primaryTask: 'bugfix',
+        taskFamily: 'investigation',
+        actionability: 'actionable',
+        executionPattern: 'direct',
+        recommendedMode: 'investigation',
+        complexity: 'moderate',
+        riskLevel: 'medium',
+        harnessProfile: 'H0_DIRECT',
+        mutationSurface: 'code',
+        topologyCeiling: 'H0_DIRECT',
+        reason: 'Mutation investigation should stay direct without hidden child fan-out.',
+      }),
+    );
+    mockRunDirectKodaX.mockResolvedValue(
+      buildAssistantResult('I investigated the failing test and identified the direct code fix path.'),
+    );
+
+    const result = await runManagedTask(
+      {
+        provider: 'anthropic',
+        agentMode: 'ama',
+      },
+      'Investigate the failing test and patch the implementation.',
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.managedTask?.contract.harnessProfile).toBe('H0_DIRECT');
+    expect(result.managedTask?.runtime?.childContextBundles ?? []).toHaveLength(0);
+    expect(result.managedTask?.runtime?.childAgentResults ?? []).toHaveLength(0);
+    const prompts = mockRunDirectKodaX.mock.calls.map((call) => String(call[1] ?? ''));
+    expect(prompts.some((prompt) => prompt.includes('Tactical Review'))).toBe(false);
   });
 
   it('keeps project read-only scout preflight on optional QA instead of auto-marking it required', async () => {
@@ -920,6 +1805,90 @@ describe('runManagedTask', () => {
       expect.arrayContaining(['changed_scope', 'repo_overview', 'changed_diff_bundle']),
     );
     expect(plannerAssignment?.toolPolicy?.allowedTools).not.toContain('changed_diff');
+  });
+
+  it('treats off mode as a strict repo-intelligence working-plane disable', async () => {
+    const workspaceRoot = await createTempDir('kodax-task-engine-off-mode-');
+
+    mockCreateReasoningPlan.mockResolvedValue(
+      buildPlan({
+        primaryTask: 'review',
+        taskFamily: 'review',
+        executionPattern: 'coordinated',
+        recommendedMode: 'pr-review',
+        complexity: 'moderate',
+        riskLevel: 'medium',
+        harnessProfile: 'H2_PLAN_EXECUTE_EVAL',
+        needsIndependentQA: true,
+        mutationSurface: 'read-only',
+      }),
+    );
+    mockGetRepoOverview.mockImplementation(async () => {
+      throw new Error('repo_overview should not run in off mode');
+    });
+    mockAnalyzeChangedScope.mockImplementation(async () => {
+      throw new Error('changed_scope should not run in off mode');
+    });
+    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
+      if (workerPrompt.includes('You are the Scout role')) {
+        return buildAssistantResult(
+          buildScoutResponse('Scout stayed in cheap-facts mode.', 'H2_PLAN_EXECUTE_EVAL'),
+          { sessionId: 'session-scout-off' },
+        );
+      }
+      if (workerPrompt.includes('You are the Planner role')) {
+        return buildAssistantResult(
+          buildContractResponse('Planner produced an off-mode contract.'),
+          { sessionId: 'session-planner-off' },
+        );
+      }
+      if (workerPrompt.includes('You are the Generator role')) {
+        return buildAssistantResult(
+          buildHandoffResponse('Generator completed the off-mode review pass.'),
+          { sessionId: 'session-generator-off' },
+        );
+      }
+      if (workerPrompt.includes('You are the Evaluator role')) {
+        return buildAssistantResult(
+          buildVerdictResponse(
+            'Evaluator accepted the off-mode review.',
+            'accept',
+            'Off mode stayed on general-purpose evidence only.',
+          ),
+          { sessionId: 'session-evaluator-off' },
+        );
+      }
+      return buildAssistantResult('fallback');
+    });
+
+    const result = await runManagedTask(
+      {
+        provider: 'anthropic',
+        session: { id: 'session-off-mode' } as any,
+        context: {
+          executionCwd: workspaceRoot,
+          managedTaskWorkspaceDir: workspaceRoot,
+          repoIntelligenceMode: 'off',
+        },
+      },
+      'Review the current task with repo intelligence fully disabled.',
+    );
+
+    expect(result.success).toBe(true);
+    const plannerAssignment = result.managedTask?.roleAssignments.find((assignment) => assignment.role === 'planner');
+    expect(plannerAssignment?.toolPolicy?.allowedTools).toEqual(
+      expect.arrayContaining(['glob', 'grep', 'read']),
+    );
+    expect(plannerAssignment?.toolPolicy?.allowedTools).not.toContain('repo_overview');
+    expect(plannerAssignment?.toolPolicy?.allowedTools).not.toContain('changed_scope');
+    expect(plannerAssignment?.toolPolicy?.allowedTools).not.toContain('changed_diff');
+    expect(plannerAssignment?.toolPolicy?.allowedTools).not.toContain('changed_diff_bundle');
+
+    const workspaceDir = result.managedTask?.evidence.workspaceDir;
+    expect(workspaceDir).toBeTruthy();
+    expect(existsSync(path.join(workspaceDir!, 'repo-intelligence'))).toBe(false);
+    expect(mockGetRepoOverview).not.toHaveBeenCalled();
+    expect(mockAnalyzeChangedScope).not.toHaveBeenCalled();
   });
 
   it('requests more work budget at 90% usage and extends explicit-check H1 for one more revise pass', async () => {
@@ -1686,6 +2655,7 @@ describe('runManagedTask', () => {
             managedTaskWorkspaceDir: workspaceRoot,
             executionCwd: repoRoot,
             gitRoot: repoRoot,
+            repoIntelligenceMode: 'oss',
             repoRoutingSignals: buildRepoRoutingSignals({ workspaceRoot: repoRoot }),
           },
         },
@@ -1703,7 +2673,12 @@ describe('runManagedTask', () => {
     moduleGate.resolve();
 
     const summaryPath = path.join(result.managedTask!.evidence.workspaceDir, 'repo-intelligence', 'summary.md');
-    const summaryContent = await waitForFileContent(summaryPath);
+    const summaryContent = await waitForFileContentContaining(summaryPath, [
+      'Repository overview summary',
+      'Changed scope summary',
+      'Module context summary',
+      'Impact estimate summary',
+    ]);
     expect(summaryContent).toContain('Repository overview summary');
     expect(summaryContent).toContain('Changed scope summary');
     expect(summaryContent).toContain('Module context summary');
@@ -1770,6 +2745,7 @@ describe('runManagedTask', () => {
           managedTaskWorkspaceDir: workspaceRoot,
           executionCwd: repoRoot,
           gitRoot: repoRoot,
+          repoIntelligenceMode: 'oss',
           repoRoutingSignals: buildRepoRoutingSignals({ workspaceRoot: repoRoot }),
         },
       },
@@ -1830,6 +2806,7 @@ describe('runManagedTask', () => {
             managedTaskWorkspaceDir: workspaceRoot,
             executionCwd: repoRoot,
             gitRoot: repoRoot,
+            repoIntelligenceMode: 'oss',
             repoRoutingSignals: buildRepoRoutingSignals({ workspaceRoot: repoRoot }),
           },
         },

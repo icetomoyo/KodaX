@@ -1,6 +1,6 @@
 # Feature 总表
 
-> Last updated: 2026-04-01
+> Last updated: 2026-04-02
 
 > 中文阅读说明：
 > 这份 `FEATURE_LIST` 是 roadmap 的总索引。
@@ -13,11 +13,11 @@
 
 | Item | Value |
 |---|---|
-| Tracked feature IDs | `001-051` |
-| Total tracked features | `51` |
+| Tracked feature IDs | `001-053` |
+| Total tracked features | `53` |
 | Completed | `34` |
 | InProgress | `0` |
-| Planned | `17` |
+| Planned | `19` |
 | Current released version | `v0.7.10` |
 
 ### 各版本待做分布
@@ -27,8 +27,8 @@
 | `v0.7.15` | `1` |
 | `v0.7.20` | `1` |
 | `v0.7.25` | `1` |
-| `v0.8.0` | `9` |
-| `v0.9.0` | `3` |
+| `v0.8.0` | `10` |
+| `v0.9.0` | `4` |
 | `v1.0.0` | `2` |
 
 ---
@@ -41,6 +41,7 @@
 | `045` | Provider Stream Resilience and Graceful Recovery | Enhancement | High | `v0.7.15` | [v0.7.15](features/v0.7.15.md#feature_045-provider-stream-resilience-and-graceful-recovery) |
 | `046` | AMA Handoff Integrity and Final-Answer Convergence | Enhancement | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_046-ama-handoff-integrity-and-final-answer-convergence) |
 | `047` | Invisible Adaptive Parallelism and Evidence-Driven Fan-Out | Enhancement | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_047-invisible-adaptive-parallelism-and-evidence-driven-fan-out) |
+| `052` | Dual-Profile AMA Harness and Child Fan-Out Boundaries | Enhancement | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_052-dual-profile-ama-harness-and-child-fan-out-boundaries) |
 | `048` | Sectionized Prompt Assembly and Dynamic Capability Truth | Enhancement | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_048-sectionized-prompt-assembly-and-dynamic-capability-truth) |
 | `049` | First-Class Search, Fetch, Code Search, and Semantic Retrieval | Enhancement | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_049-first-class-search-fetch-code-search-and-semantic-retrieval) |
 | `050` | Prompt Contracts, Snapshots, and Regression Evaluation | Internal | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_050-prompt-contracts-snapshots-and-regression-evaluation) |
@@ -51,6 +52,7 @@
 | `031` | Multimodal Artifact Inputs | New | High | `v0.9.0` | [v0.9.0](features/v0.9.0.md#feature_031-multimodal-artifact-inputs) |
 | `044` | Durable Compression Anchors and Artifact Recall | Enhancement | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_044-durable-compression-anchors-and-artifact-recall) |
 | `042` | Incremental Repository Intelligence Refresh and Java/C++ Structural Semantics | Enhancement | High | `v0.9.0` | [v0.9.0](features/v0.9.0.md#feature_042-incremental-repository-intelligence-refresh-and-javac-structural-semantics) |
+| `053` | Canonical Repo Identity and Managed Worktree Runtime | Enhancement | High | `v0.9.0` | [v0.9.0](features/v0.9.0.md#feature_053-canonical-repo-identity-and-managed-worktree-runtime) |
 | `043` | Harness Calibration, Pivoting, Profiling, and Safe Checkpoints | Enhancement | High | `v0.9.0` | [v0.9.0](features/v0.9.0.md#feature_043-harness-calibration-pivoting-profiling-and-safe-checkpoints) |
 | `035` | MCP Capability Provider | New | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_035-mcp-capability-provider) |
 | `038` | Official Sandbox Extension | New | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_038-official-sandbox-extension) |

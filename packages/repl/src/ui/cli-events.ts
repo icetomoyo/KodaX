@@ -172,6 +172,11 @@ export function createCliEvents(showSessionId = true): KodaXEvents {
       console.log(chalk.green(`[Result] ${result.content.slice(0, 300)}${result.content.length > 300 ? '...' : ''}`));
     },
 
+    onRepoIntelligenceTrace: (event) => {
+      if (spinner) { spinner.stop(); spinner = null; }
+      console.log(chalk.dim(`[RepoIntel] ${event.summary}`));
+    },
+
     onStreamEnd: () => {
       // Stop globalSpinner (may be created in input_json_delta) - 停止 globalSpinner（在 input_json_delta 中可能创建的）
       if (globalSpinner && !globalSpinner.isStopped()) {

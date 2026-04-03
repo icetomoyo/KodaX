@@ -79,7 +79,10 @@ export function buildFanoutSchedulerPlan(
   ];
   const maxParallel = Math.max(
     1,
-    Math.min(scheduledBundles.length, requestedChildren),
+    Math.min(
+      scheduledBundles.length,
+      requestedChildren,
+    ),
   );
 
   return {

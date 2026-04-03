@@ -12,7 +12,7 @@
 
 import type { Completer, Completion } from '../autocomplete.js';
 import { findCommandSlashIndex } from '../autocomplete.js';
-import { COMMAND_ARGUMENTS, getCommandArguments } from './command-arguments.js';
+import { getCommandArguments } from './command-arguments.js';
 
 /**
  * Argument definition for autocomplete
@@ -63,7 +63,7 @@ export class ArgumentCompleter implements Completer {
     }
 
     const commandName = afterSlash.slice(1).toLowerCase();
-    return COMMAND_ARGUMENTS.has(commandName) || getCommandArguments(commandName).length > 0;
+    return getCommandArguments(commandName).length > 0;
   }
 
   /**
@@ -96,10 +96,7 @@ export class ArgumentCompleter implements Completer {
 
     // Get argument definitions for this command
     // 获取此命令的参数定义
-    const staticArgs = COMMAND_ARGUMENTS.get(commandName);
-    const argumentDefs = (staticArgs && staticArgs.length > 0)
-      ? staticArgs
-      : getCommandArguments(commandName, currentPartial);
+    const argumentDefs = getCommandArguments(commandName, currentPartial, argParts);
     if (!argumentDefs || argumentDefs.length === 0) {
       return [];
     }

@@ -14,6 +14,7 @@ export type {
 } from './types.js';
 export {
   KODAX_TOOLS,
+  REPO_INTELLIGENCE_WORKING_TOOL_NAMES,
   registerTool,
   getTool,
   getToolDefinition,
@@ -26,6 +27,8 @@ export {
   getRequiredToolParams,
   listTools,
   listToolDefinitions,
+  isRepoIntelligenceWorkingToolName,
+  filterRepoIntelligenceWorkingToolNames,
   executeTool,
 } from './registry.js';
 export { toolRead } from './read.js';

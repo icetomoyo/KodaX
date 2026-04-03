@@ -44,6 +44,32 @@ export interface CliOptions {
   print?: boolean;
 }
 
+function resolveRepoIntelligenceModeFromEnv():
+  | 'auto'
+  | 'off'
+  | 'oss'
+  | 'premium-shared'
+  | 'premium-native'
+  | undefined {
+  const value = process.env.KODAX_REPO_INTELLIGENCE_MODE?.trim();
+  if (
+    value === 'auto'
+    || value === 'off'
+    || value === 'oss'
+    || value === 'premium-shared'
+    || value === 'premium-native'
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
+function resolveRepoIntelligenceTraceFromEnv(): boolean | undefined {
+  return process.env.KODAX_REPO_INTELLIGENCE_TRACE === '1'
+    ? true
+    : undefined;
+}
+
 export function parseOutputModeOption(value: string): CliOutputMode {
   const normalized = value.trim().toLowerCase();
   if (normalized === 'json') {
@@ -273,6 +299,10 @@ export function createKodaXOptions(cliOptions: CliOptions, isPrintMode = false):
     parallel: cliOptions.parallel,
     extensionRuntime: cliOptions.extensionRuntime,
     session: buildSessionOptions(cliOptions),
+    context: {
+      repoIntelligenceMode: resolveRepoIntelligenceModeFromEnv(),
+      repoIntelligenceTrace: resolveRepoIntelligenceTraceFromEnv(),
+    },
     events: cliOptions.outputMode === 'json'
       ? createJsonEvents()
       : createCliEvents(!isPrintMode),

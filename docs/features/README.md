@@ -1,6 +1,6 @@
 # KodaX Feature Design Index
 
-> Last updated: 2026-04-01
+> Last updated: 2026-04-02
 >
 > Current released version: `v0.7.10`
 >
@@ -47,7 +47,7 @@ The current execution model is:
 | [v0.7.15.md](./v0.7.15.md) | Provider resilience, retry UX, and graceful recovery |
 | [v0.7.20.md](./v0.7.20.md) | Roadmap integrity and planning hygiene, plus historical staging notes for features re-homed to `v0.8.0` |
 | [v0.7.25.md](./v0.7.25.md) | Host-aware TUI substrate, transcript verbosity, and review-fallback demotion |
-| [v0.8.0.md](./v0.8.0.md) | MCP substrate, prompt architecture, retrieval/evidence tooling, invisible parallelism, durable memory, and safe runtime |
+| [v0.8.0.md](./v0.8.0.md) | Dual-profile AMA, MCP substrate, prompt architecture, retrieval/evidence tooling, invisible parallelism, durable memory, and safe runtime |
 | [v0.9.0.md](./v0.9.0.md) | Multimodal inputs and harness maturation |
 | [v1.0.0.md](./v1.0.0.md) | Delivery surfaces |
 

@@ -138,6 +138,11 @@ export type {
   KodaXToolExecutionContext,
   AskUserQuestionOptions,
   KodaXProviderPolicyHints,
+  KodaXRepoIntelligenceCapability,
+  KodaXRepoIntelligenceMode,
+  KodaXRepoIntelligenceResolvedMode,
+  KodaXRepoIntelligenceTraceEvent,
+  KodaXRepoIntelligenceTrace,
   SessionErrorMetadata,
 } from './types.js';
 
@@ -321,6 +326,25 @@ export {
   getSymbolContext,
   getProcessContext,
   getImpactEstimate,
+} from './repo-intelligence/runtime.js';
+
+export type {
+  RepoIntelligenceRuntimeInspection,
+  RepoIntelligenceRuntimeWarmResult,
+} from './repo-intelligence/premium-client.js';
+
+export {
+  resolveRepoIntelligenceRuntimeConfig,
+  resolveRepoIntelligenceMode,
+  inspectRepoIntelligenceRuntime,
+  warmRepoIntelligenceRuntime,
+} from './repo-intelligence/premium-client.js';
+
+export {
+  REPOINTEL_DEFAULT_ENDPOINT,
+} from './repo-intelligence/premium-contract.js';
+
+export {
   renderModuleContext,
   renderSymbolContext,
   renderProcessContext,

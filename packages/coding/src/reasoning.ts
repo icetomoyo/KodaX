@@ -308,7 +308,7 @@ export interface ReasoningPlan {
   mode: KodaXReasoningMode;
   depth: KodaXThinkingDepth;
   decision: KodaXTaskRoutingDecision;
-  amaControllerDecision?: KodaXAmaControllerDecision;
+  amaControllerDecision: KodaXAmaControllerDecision;
   promptOverlay: string;
   providerPolicy?: KodaXProviderPolicyDecision;
 }

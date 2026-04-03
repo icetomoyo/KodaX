@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ToolCallStatus } from "./types.js";
 import {
   appendPersistedUiHistorySnapshot,
+  buildAmaWorkStripFromStatus,
   buildManagedTaskTranscriptItems,
   buildRoundHistoryItems,
   shouldShowStatusBarBusyStatus,
@@ -175,5 +176,28 @@ describe("shouldShowStatusBarBusyStatus", () => {
       isLivePaused: false,
       isLoading: true,
     })).toBe(true);
+  });
+});
+
+describe("buildAmaWorkStripFromStatus", () => {
+  it("hides the strip outside AMA loading", () => {
+    expect(buildAmaWorkStripFromStatus({
+      agentMode: "sa",
+      childFanoutClass: "finding-validation",
+      childFanoutCount: 2,
+    }, true)).toBeUndefined();
+    expect(buildAmaWorkStripFromStatus({
+      agentMode: "ama",
+      childFanoutClass: "finding-validation",
+      childFanoutCount: 2,
+    }, false)).toBeUndefined();
+  });
+
+  it("formats AMA child fan-out as a compact work strip", () => {
+    expect(buildAmaWorkStripFromStatus({
+      agentMode: "ama",
+      childFanoutClass: "finding-validation",
+      childFanoutCount: 3,
+    }, true)).toBe("Validating 3 findings");
   });
 });

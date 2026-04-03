@@ -5,11 +5,16 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { resolveExecutionCwd } from '../runtime-paths.js';
 import type { KodaXToolExecutionContext } from '../types.js';
-import { debugLogRepoIntelligence, safeReadJson } from './internal.js';
+import {
+  debugLogRepoIntelligence,
+  resolveRepoIntelligenceStorageDir,
+  safeReadJson,
+  writeJsonFileAtomic,
+} from './internal.js';
 
 const execFileAsync = promisify(execFile);
 
-const REPO_INTELLIGENCE_DIR = path.join('.agent', 'repo-intelligence');
+const DEFAULT_REPO_INTELLIGENCE_DIR = path.join('.agent', 'repo-intelligence');
 const MANIFEST_FILE = 'manifest.json';
 const OVERVIEW_FILE = 'repo-overview.json';
 const OVERVIEW_INVENTORY_FILE = 'repo-overview-inventory.json';
@@ -327,7 +332,7 @@ async function exists(targetPath: string): Promise<boolean> {
 }
 
 async function ensureStorageDir(workspaceRoot: string): Promise<string> {
-  const storageRoot = path.join(workspaceRoot, REPO_INTELLIGENCE_DIR);
+  const storageRoot = path.join(workspaceRoot, getRepoIntelligenceDir());
   await fs.mkdir(storageRoot, { recursive: true });
   return storageRoot;
 }
@@ -657,7 +662,7 @@ async function readStoredRepoOverview(
   fileName: string,
 ): Promise<RepoOverview | null> {
   return safeReadJson<RepoOverview>(
-    path.join(workspaceRoot, REPO_INTELLIGENCE_DIR, fileName),
+    path.join(workspaceRoot, getRepoIntelligenceDir(), fileName),
     isRepoOverviewPayload,
   );
 }
@@ -667,7 +672,7 @@ async function readStoredRepoOverviewInventory(
   fileName: string,
 ): Promise<RepoOverviewInventory | null> {
   return safeReadJson<RepoOverviewInventory>(
-    path.join(workspaceRoot, REPO_INTELLIGENCE_DIR, fileName),
+    path.join(workspaceRoot, getRepoIntelligenceDir(), fileName),
     isRepoOverviewInventoryPayload,
   );
 }
@@ -676,7 +681,7 @@ async function readStoredRepoOverviewManifest(
   workspaceRoot: string,
 ): Promise<RepoOverviewManifest | null> {
   return safeReadJson<RepoOverviewManifest>(
-    path.join(workspaceRoot, REPO_INTELLIGENCE_DIR, MANIFEST_FILE),
+    path.join(workspaceRoot, getRepoIntelligenceDir(), MANIFEST_FILE),
     isRepoOverviewManifestPayload,
   );
 }
@@ -805,13 +810,13 @@ async function writeRepoOverviewArtifacts(
     dirtyPathsFingerprint: options.dirtyIdentity?.dirtyPathsFingerprint,
     dirtySemanticFingerprint: options.dirtyIdentity?.dirtySemanticFingerprint,
   };
-  await fs.writeFile(path.join(storageRoot, MANIFEST_FILE), `${JSON.stringify(manifestPayload, null, 2)}\n`, 'utf8');
-  await fs.writeFile(path.join(storageRoot, OVERVIEW_FILE), `${JSON.stringify(overview, null, 2)}\n`, 'utf8');
-  await fs.writeFile(path.join(storageRoot, OVERVIEW_INVENTORY_FILE), `${JSON.stringify(inventory, null, 2)}\n`, 'utf8');
+  await writeJsonFileAtomic(path.join(storageRoot, MANIFEST_FILE), manifestPayload);
+  await writeJsonFileAtomic(path.join(storageRoot, OVERVIEW_FILE), overview);
+  await writeJsonFileAtomic(path.join(storageRoot, OVERVIEW_INVENTORY_FILE), inventory);
 
   if (options.writeBaseline === true) {
-    await fs.writeFile(path.join(storageRoot, OVERVIEW_BASELINE_FILE), `${JSON.stringify(overview, null, 2)}\n`, 'utf8');
-    await fs.writeFile(path.join(storageRoot, OVERVIEW_BASELINE_INVENTORY_FILE), `${JSON.stringify(inventory, null, 2)}\n`, 'utf8');
+    await writeJsonFileAtomic(path.join(storageRoot, OVERVIEW_BASELINE_FILE), overview);
+    await writeJsonFileAtomic(path.join(storageRoot, OVERVIEW_BASELINE_INVENTORY_FILE), inventory);
   }
 }
 
@@ -1504,7 +1509,7 @@ export async function analyzeChangedScopeFromSnapshot(
   };
 
   const storageRoot = await ensureStorageDir(overview.workspaceRoot);
-  await fs.writeFile(path.join(storageRoot, CHANGED_SCOPE_FILE), `${JSON.stringify(report, null, 2)}\n`, 'utf8');
+  await writeJsonFileAtomic(path.join(storageRoot, CHANGED_SCOPE_FILE), report);
   return report;
 }
 
@@ -1552,4 +1557,7 @@ export function renderChangedScope(report: ChangedScopeReport): string {
   }
 
   return lines.join('\n');
+}
+function getRepoIntelligenceDir(): string {
+  return resolveRepoIntelligenceStorageDir(DEFAULT_REPO_INTELLIGENCE_DIR);
 }

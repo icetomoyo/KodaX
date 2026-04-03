@@ -451,4 +451,50 @@ describe('runKodaX extension runtime integration', () => {
 
     await runtime.dispose();
   });
+
+  it('removes repo-intelligence working tools from the provider-visible tool list in off mode', async () => {
+    const extensionPath = path.join(tempDir, 'feature-034-off-mode-tools.mjs');
+    await writeFile(
+      extensionPath,
+      `export default function(api) {
+        api.registerModelProvider({
+          name: '${TEST_PROVIDER_NAME}',
+          factory: () => new (globalThis.__feature034ProviderClass)(),
+        });
+      }`,
+      'utf8',
+    );
+
+    (globalThis as typeof globalThis & {
+      __feature034ProviderClass?: typeof Feature034TestProvider;
+    }).__feature034ProviderClass = Feature034TestProvider;
+
+    const runtime = createExtensionRuntime();
+    await runtime.loadExtension(extensionPath);
+
+    const result = await runKodaX(
+      {
+        provider: TEST_PROVIDER_NAME,
+        extensionRuntime: runtime,
+        context: {
+          repoIntelligenceMode: 'off',
+        },
+      },
+      'summarize this workspace',
+    );
+
+    expect(result.success).toBe(true);
+    expect(Feature034TestProvider.calls).toHaveLength(1);
+    const toolNames = Feature034TestProvider.calls[0]?.tools.map((tool) => tool.name) ?? [];
+    expect(toolNames).toContain('read');
+    expect(toolNames).toContain('glob');
+    expect(toolNames).not.toContain('repo_overview');
+    expect(toolNames).not.toContain('changed_scope');
+    expect(toolNames).not.toContain('changed_diff');
+    expect(toolNames).not.toContain('changed_diff_bundle');
+    expect(toolNames).not.toContain('module_context');
+    expect(toolNames).not.toContain('impact_estimate');
+
+    await runtime.dispose();
+  });
 });

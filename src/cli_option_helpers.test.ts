@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildSessionOptions,
+  createKodaXOptions,
   mergeConfiguredExtensions,
   parseAgentModeOption,
   parseNonNegativeIntWithFallback,
@@ -88,6 +89,34 @@ describe('buildSessionOptions', () => {
       resume: true,
       scope: 'user',
     });
+  });
+});
+
+describe('createKodaXOptions', () => {
+  it('projects repo intelligence mode and trace flags from runtime env into context', () => {
+    const previousMode = process.env.KODAX_REPO_INTELLIGENCE_MODE;
+    const previousTrace = process.env.KODAX_REPO_INTELLIGENCE_TRACE;
+    process.env.KODAX_REPO_INTELLIGENCE_MODE = 'premium-native';
+    process.env.KODAX_REPO_INTELLIGENCE_TRACE = '1';
+
+    try {
+      const options = createKodaXOptions(createCliOptions());
+      expect(options.context).toMatchObject({
+        repoIntelligenceMode: 'premium-native',
+        repoIntelligenceTrace: true,
+      });
+    } finally {
+      if (previousMode === undefined) {
+        delete process.env.KODAX_REPO_INTELLIGENCE_MODE;
+      } else {
+        process.env.KODAX_REPO_INTELLIGENCE_MODE = previousMode;
+      }
+      if (previousTrace === undefined) {
+        delete process.env.KODAX_REPO_INTELLIGENCE_TRACE;
+      } else {
+        process.env.KODAX_REPO_INTELLIGENCE_TRACE = previousTrace;
+      }
+    }
   });
 });
 

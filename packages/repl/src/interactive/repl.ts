@@ -19,6 +19,7 @@ import {
   KodaXReasoningMode,
   KodaXSessionData,
   runManagedTask,
+  resolveRepoIntelligenceRuntimeConfig,
   appendSessionLineageLabel,
   buildSessionTree,
   countActiveLineageMessages,
@@ -259,6 +260,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   const initialParallel = options.parallel ?? (config as { parallel?: boolean }).parallel ?? false;
   const initialPermissionMode: PermissionMode =
     normalizePermissionMode((config as { permissionMode?: string }).permissionMode, 'accept-edits') ?? 'accept-edits';
+  const repoIntelligenceRuntime = resolveRepoIntelligenceRuntimeConfig();
 
   const configuredTheme = (config as { theme?: string }).theme;
   if (configuredTheme) {
@@ -275,6 +277,10 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     agentMode: initialAgentMode,
     parallel: initialParallel,
     permissionMode: initialPermissionMode,
+    repoIntelligenceMode: repoIntelligenceRuntime.mode,
+    repointelEndpoint: repoIntelligenceRuntime.endpoint,
+    repointelBin: repoIntelligenceRuntime.bin,
+    repoIntelligenceTrace: repoIntelligenceRuntime.trace,
   };
 
   // Local permission state - 本地权限状态
@@ -413,6 +419,11 @@ Keyboard Shortcuts:
     parallel: initialParallel,
     reasoningMode: initialReasoningMode,
     thinking: initialThinking,
+    context: {
+      ...options.context,
+      repoIntelligenceMode: repoIntelligenceRuntime.mode,
+      repoIntelligenceTrace: repoIntelligenceRuntime.trace,
+    },
     session: {
       ...options.session,
       id: context.sessionId,
@@ -556,6 +567,44 @@ Keyboard Shortcuts:
       statusBar?.update({ permissionMode: mode });
       // Note: permissionMode is no longer part of KodaXOptions
       // Permission control is handled locally via beforeToolExecute callback
+    },
+    setRepoIntelligenceRuntime: (update) => {
+      if (update.mode !== undefined) {
+        currentConfig.repoIntelligenceMode = update.mode;
+        process.env.KODAX_REPO_INTELLIGENCE_MODE = update.mode;
+        currentOptions.context = {
+          ...currentOptions.context,
+          repoIntelligenceMode: update.mode,
+        };
+      }
+      if (update.trace !== undefined) {
+        currentConfig.repoIntelligenceTrace = update.trace;
+        if (update.trace) {
+          process.env.KODAX_REPO_INTELLIGENCE_TRACE = '1';
+        } else {
+          delete process.env.KODAX_REPO_INTELLIGENCE_TRACE;
+        }
+        currentOptions.context = {
+          ...currentOptions.context,
+          repoIntelligenceTrace: update.trace,
+        };
+      }
+      if (update.endpoint !== undefined) {
+        currentConfig.repointelEndpoint = update.endpoint ?? undefined;
+        if (update.endpoint) {
+          process.env.KODAX_REPOINTEL_ENDPOINT = update.endpoint;
+        } else {
+          delete process.env.KODAX_REPOINTEL_ENDPOINT;
+        }
+      }
+      if (update.bin !== undefined) {
+        currentConfig.repointelBin = update.bin ?? undefined;
+        if (update.bin) {
+          process.env.KODAX_REPOINTEL_BIN = update.bin;
+        } else {
+          delete process.env.KODAX_REPOINTEL_BIN;
+        }
+      }
     },
     deleteSession: async (id: string) => {
       await storage.delete?.(id);

@@ -85,4 +85,29 @@ describe("viewport-budget", () => {
     expect(budget.reviewHintRows).toBeGreaterThan(0);
     expect(budget.messageRows).toBeGreaterThan(0);
   });
+
+  it("accounts for the AMA work strip without collapsing message rows", () => {
+    const withoutStrip = calculateViewportBudget({
+      terminalRows: 24,
+      terminalWidth: 80,
+      inputText: "",
+      suggestionsReserved: false,
+      showHelp: false,
+      statusBarText: "status",
+    });
+    const withStrip = calculateViewportBudget({
+      terminalRows: 24,
+      terminalWidth: 80,
+      inputText: "",
+      workStripText: "Validating 3 findings",
+      suggestionsReserved: false,
+      showHelp: false,
+      statusBarText: "status",
+    });
+
+    expect(withStrip.workStripRows).toBeGreaterThan(0);
+    expect(withStrip.reservedBottomRows).toBeGreaterThan(withoutStrip.reservedBottomRows);
+    expect(withStrip.messageRows).toBeLessThan(withoutStrip.messageRows);
+    expect(withStrip.messageRows).toBeGreaterThan(0);
+  });
 });

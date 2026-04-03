@@ -37,6 +37,26 @@ describe('createJsonEvents', () => {
     events.onToolUseStart?.({ id: 'tool-1', name: 'read', input: { path: 'README.md' } });
     events.onToolInputDelta?.('read', '{"path":"README.md"}', { toolId: 'tool-1' });
     events.onToolResult?.({ id: 'tool-1', name: 'read', content: 'file contents' });
+    events.onRepoIntelligenceTrace?.({
+      stage: 'preturn',
+      summary: 'stage=preturn | mode=premium-native/premium/native/ok',
+      capability: {
+        mode: 'premium-native',
+        engine: 'premium',
+        bridge: 'native',
+        level: 'enhanced',
+        status: 'ok',
+        warnings: [],
+      },
+      trace: {
+        mode: 'premium-native',
+        engine: 'premium',
+        bridge: 'native',
+        triggeredAt: '2026-04-01T00:00:00.000Z',
+        source: 'premium',
+        daemonLatencyMs: 12,
+      },
+    });
     events.onIterationEnd?.({
       iter: 1,
       maxIter: 5,
@@ -66,6 +86,27 @@ describe('createJsonEvents', () => {
         id: 'tool-1',
         name: 'read',
         content: 'file contents',
+      },
+      {
+        type: 'repo_intelligence.trace',
+        stage: 'preturn',
+        summary: 'stage=preturn | mode=premium-native/premium/native/ok',
+        capability: {
+          mode: 'premium-native',
+          engine: 'premium',
+          bridge: 'native',
+          level: 'enhanced',
+          status: 'ok',
+          warnings: [],
+        },
+        trace: {
+          mode: 'premium-native',
+          engine: 'premium',
+          bridge: 'native',
+          triggeredAt: '2026-04-01T00:00:00.000Z',
+          source: 'premium',
+          daemonLatencyMs: 12,
+        },
       },
       {
         type: 'iteration.end',

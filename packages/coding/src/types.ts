@@ -170,6 +170,7 @@ export interface KodaXEvents {
   hasPendingInputs?: () => boolean;
   onRetry?: (reason: string, attempt: number, maxAttempts: number) => void;
   onProviderRateLimit?: (attempt: number, maxRetries: number, delayMs: number) => void;
+  onRepoIntelligenceTrace?: (event: KodaXRepoIntelligenceTraceEvent) => void;
   onComplete?: () => void;
   onError?: (error: Error) => void;
   onManagedTaskStatus?: (status: KodaXManagedTaskStatusEvent) => void;
@@ -219,6 +220,54 @@ export interface KodaXProviderPolicyHints {
   workIntent?: KodaXTaskWorkIntent;
 }
 
+export type KodaXRepoIntelligenceMode =
+  | 'auto'
+  | 'off'
+  | 'oss'
+  | 'premium-shared'
+  | 'premium-native';
+
+export type KodaXRepoIntelligenceResolvedMode =
+  | 'off'
+  | 'oss'
+  | 'premium-shared'
+  | 'premium-native';
+
+export interface KodaXRepoIntelligenceCapability {
+  mode: KodaXRepoIntelligenceResolvedMode;
+  engine: 'oss' | 'premium';
+  bridge: 'none' | 'shared' | 'native';
+  level: 'basic' | 'enhanced';
+  status: 'ok' | 'limited' | 'unavailable' | 'warming';
+  warnings: string[];
+  contractVersion?: number;
+}
+
+export interface KodaXRepoIntelligenceTrace {
+  mode: KodaXRepoIntelligenceResolvedMode;
+  engine: 'oss' | 'premium';
+  bridge: 'none' | 'shared' | 'native';
+  triggeredAt: string;
+  source: 'fallback' | 'premium';
+  daemonLatencyMs?: number;
+  cliLatencyMs?: number;
+  cacheHit?: boolean;
+  capsuleBytes?: number;
+  capsuleEstimatedTokens?: number;
+}
+
+export interface KodaXRepoIntelligenceTraceEvent {
+  stage: 'routing' | 'preturn' | 'module' | 'impact' | 'task-snapshot';
+  summary: string;
+  capability?: KodaXRepoIntelligenceCapability;
+  trace?: KodaXRepoIntelligenceTrace;
+}
+
+export interface KodaXRepoIntelligenceCarrier {
+  capability?: KodaXRepoIntelligenceCapability;
+  trace?: KodaXRepoIntelligenceTrace;
+}
+
 export interface KodaXRepoRoutingSignals {
   workspaceRoot?: string;
   changedFileCount: number;
@@ -240,6 +289,8 @@ export interface KodaXRepoRoutingSignals {
   plannerBias: boolean;
   investigationBias: boolean;
   lowConfidence: boolean;
+  capability?: KodaXRepoIntelligenceCapability;
+  trace?: KodaXRepoIntelligenceTrace;
 }
 
 export interface KodaXTaskCapabilityHint {
@@ -416,6 +467,8 @@ export interface KodaXManagedTaskStatusEvent {
   harnessProfile: KodaXHarnessProfile;
   activeWorkerId?: string;
   activeWorkerTitle?: string;
+  childFanoutClass?: KodaXAmaFanoutClass;
+  childFanoutCount?: number;
   currentRound?: number;
   maxRounds?: number;
   phase?: 'starting' | 'routing' | 'preflight' | 'round' | 'worker' | 'upgrade' | 'completed';
@@ -515,6 +568,10 @@ export interface KodaXContextOptions {
   providerPolicyHints?: KodaXProviderPolicyHints;
   /** Optional repository routing signals that downstream planning layers can reuse. */
   repoRoutingSignals?: KodaXRepoRoutingSignals;
+  /** Optional repo-intelligence mode override for this run. */
+  repoIntelligenceMode?: KodaXRepoIntelligenceMode;
+  /** Optional repo-intelligence trace toggle for this run. */
+  repoIntelligenceTrace?: boolean;
   disableAutoTaskReroute?: boolean;
   /** Skills system prompt snippet for progressive disclosure - Skills 系统提示词片段（渐进式披露） */
   skillsPrompt?: string;
@@ -639,6 +696,14 @@ export interface KodaXOrchestrationVerdict {
 }
 
 export interface KodaXManagedTaskRuntimeState {
+  amaProfile?: KodaXAmaProfile;
+  amaTactics?: KodaXAmaTactic[];
+  amaFanout?: KodaXAmaFanoutPolicy;
+  amaControllerReason?: string;
+  childContextBundles?: KodaXChildContextBundle[];
+  childAgentResults?: KodaXChildAgentResult[];
+  parentReductionContract?: KodaXParentReductionContract;
+  fanoutSchedulerPlan?: KodaXFanoutSchedulerPlan;
   budget?: KodaXManagedBudgetSnapshot;
   scorecard?: KodaXVerificationScorecard;
   qualityAssuranceMode?: 'required' | 'optional';

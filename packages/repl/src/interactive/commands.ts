@@ -9,8 +9,11 @@ import {
   estimateTokens,
   type ExtensionRuntimeDiagnostics,
   type KodaXAgentMode,
+  type KodaXRepoIntelligenceMode,
+  type RepoIntelligenceRuntimeInspection,
   KODAX_REASONING_MODE_SEQUENCE,
   getActiveExtensionRuntime,
+  inspectRepoIntelligenceRuntime,
   isKnownProvider,
   getAvailableProviderNames,
   resolveProvider,
@@ -18,6 +21,7 @@ import {
   type ExtensionCommandResult,
   type KodaXReasoningMode,
   KodaXOptions,
+  warmRepoIntelligenceRuntime,
 } from '@kodax/coding';
 import type { AgentsFile } from '@kodax/coding';
 import {
@@ -455,7 +459,7 @@ export const BUILTIN_COMMANDS: Command[] = [
     aliases: ['info', 'ctx'],
     description: 'Show current session status',
     handler: async (_args, context, _callbacks, currentConfig) => {
-      printStatus(context, currentConfig);
+      await printStatus(context, currentConfig);
     },
     detailedHelp: () => {
       console.log(chalk.cyan('\n/status - Show Session Status\n'));
@@ -470,6 +474,161 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log(chalk.dim('  - Estimated token usage'));
       console.log(chalk.dim('  - Git root directory'));
       console.log(chalk.dim('  - Session timestamps'));
+      console.log(chalk.dim('  - Repo-intelligence mode and active runtime summary'));
+      console.log();
+    },
+  },
+  {
+    name: 'repointel',
+    aliases: ['ri'],
+    description: 'Inspect or control the repo-intelligence premium runtime',
+    usage: '/repointel [status|mode|trace|warm|endpoint|bin]',
+    handler: async (args, _context, callbacks, currentConfig) => {
+      const subcommand = args[0]?.toLowerCase() ?? 'status';
+
+      if (subcommand === 'status') {
+        const inspection = await inspectRepoIntelligenceRuntime({
+          mode: currentConfig.repoIntelligenceMode,
+          trace: currentConfig.repoIntelligenceTrace,
+          probePremium: true,
+        });
+        printRepoIntelligenceInspection(inspection);
+        return;
+      }
+
+      if (subcommand === 'warm') {
+        const result = await warmRepoIntelligenceRuntime({
+          mode: currentConfig.repoIntelligenceMode,
+          trace: currentConfig.repoIntelligenceTrace,
+        });
+        printRepoIntelligenceWarmResult(result);
+        return;
+      }
+
+      if (subcommand === 'mode') {
+        if (args.length === 1) {
+          console.log(chalk.dim(`\nCurrent repo-intelligence mode: ${chalk.cyan(currentConfig.repoIntelligenceMode ?? 'auto')}`));
+          console.log(chalk.dim('Usage: /repointel mode [auto|off|oss|premium-shared|premium-native]\n'));
+          return;
+        }
+
+        const mode = normalizeRepoIntelligenceMode(args[1]);
+        if (!mode) {
+          console.log(chalk.red(`\n[Invalid repo-intelligence mode: ${args[1]}]`));
+          console.log(chalk.dim('Usage: /repointel mode [auto|off|oss|premium-shared|premium-native]\n'));
+          return;
+        }
+
+        const persistence = applyRepoIntelligenceRuntimeConfig(
+          { mode },
+          { repoIntelligenceMode: mode },
+          callbacks,
+          currentConfig,
+        );
+        printPersistedCommandStatus(`Repo intelligence mode: ${mode}`, persistence);
+        return;
+      }
+
+      if (subcommand === 'trace') {
+        const raw = args[1]?.toLowerCase();
+        if (!raw) {
+          console.log(chalk.dim(`\nCurrent repo-intelligence trace: ${chalk.cyan(currentConfig.repoIntelligenceTrace ? 'on' : 'off')}`));
+          console.log(chalk.dim('Usage: /repointel trace [on|off|toggle]\n'));
+          return;
+        }
+
+        const nextValue = resolveToggleFlag(raw, currentConfig.repoIntelligenceTrace ?? false);
+        if (nextValue === null) {
+          console.log(chalk.red(`\n[Invalid trace value: ${args[1]}]`));
+          console.log(chalk.dim('Usage: /repointel trace [on|off|toggle]\n'));
+          return;
+        }
+
+        const persistence = applyRepoIntelligenceRuntimeConfig(
+          { trace: nextValue },
+          { repoIntelligenceTrace: nextValue },
+          callbacks,
+          currentConfig,
+        );
+        printPersistedCommandStatus(`Repo intelligence trace: ${nextValue ? 'on' : 'off'}`, persistence);
+        return;
+      }
+
+      if (subcommand === 'endpoint') {
+        if (args.length === 1) {
+          const inspection = await inspectRepoIntelligenceRuntime({
+            mode: currentConfig.repoIntelligenceMode,
+            trace: currentConfig.repoIntelligenceTrace,
+          });
+          console.log(chalk.dim(`\nCurrent repointel endpoint: ${chalk.cyan(inspection.endpoint)}`));
+          console.log(chalk.dim('Usage: /repointel endpoint [http://host:port|default]\n'));
+          return;
+        }
+
+        const nextEndpoint = normalizeRuntimeOverride(args[1]);
+        const persistence = applyRepoIntelligenceRuntimeConfig(
+          { endpoint: nextEndpoint },
+          { repointelEndpoint: nextEndpoint ?? undefined },
+          callbacks,
+          currentConfig,
+        );
+        printPersistedCommandStatus(
+          `Repointel endpoint: ${nextEndpoint ?? 'default'}`,
+          persistence,
+        );
+        return;
+      }
+
+      if (subcommand === 'bin') {
+        if (args.length === 1) {
+          const inspection = await inspectRepoIntelligenceRuntime({
+            mode: currentConfig.repoIntelligenceMode,
+            trace: currentConfig.repoIntelligenceTrace,
+          });
+          console.log(chalk.dim(`\nCurrent repointel bin: ${chalk.cyan(inspection.bin)}`));
+          console.log(chalk.dim('Usage: /repointel bin [<path-or-command>|default]\n'));
+          return;
+        }
+
+        const nextBin = normalizeRuntimeOverride(args.slice(1).join(' '));
+        const persistence = applyRepoIntelligenceRuntimeConfig(
+          { bin: nextBin },
+          { repointelBin: nextBin ?? undefined },
+          callbacks,
+          currentConfig,
+        );
+        printPersistedCommandStatus(
+          `Repointel bin: ${nextBin ?? 'default'}`,
+          persistence,
+        );
+        return;
+      }
+
+      console.log(chalk.red(`\n[Unknown /repointel subcommand: ${args[0]}]`));
+      console.log(chalk.dim('Usage: /repointel [status|mode|trace|warm|endpoint|bin]\n'));
+    },
+    detailedHelp: () => {
+      console.log(chalk.cyan('\n/repointel - Repo-Intelligence Runtime Control\n'));
+      console.log(chalk.bold('Usage:'));
+      console.log(chalk.dim('  /repointel                             ') + 'Show current repo-intelligence and premium runtime status');
+      console.log(chalk.dim('  /repointel status                      ') + 'Probe the local premium frontdoor and print detailed status');
+      console.log(chalk.dim('  /repointel mode auto                   ') + 'Prefer premium-native when available, otherwise fall back to OSS');
+      console.log(chalk.dim('  /repointel mode off                    ') + 'Strictly disable repo-intelligence working tools and auto lane for this session');
+      console.log(chalk.dim('  /repointel mode oss                    ') + 'Force the OSS baseline only');
+      console.log(chalk.dim('  /repointel mode premium-shared         ') + 'Use premium without KodaX native auto lane');
+      console.log(chalk.dim('  /repointel mode premium-native         ') + 'Use the KodaX flagship premium path');
+      console.log(chalk.dim('  /repointel trace on|off|toggle         ') + 'Toggle repo-intelligence trace output');
+      console.log(chalk.dim('  /repointel endpoint http://127.0.0.1:47891') + 'Override the local premium daemon endpoint');
+      console.log(chalk.dim('  /repointel endpoint default            ') + 'Clear the endpoint override and use the default');
+      console.log(chalk.dim('  /repointel bin repointel               ') + 'Use a PATH-visible repointel command');
+      console.log(chalk.dim('  /repointel bin <path>                  ') + 'Use an explicit repointel launcher path');
+      console.log(chalk.dim('  /repointel bin default                 ') + 'Clear the bin override and use the default command');
+      console.log(chalk.dim('  /repointel warm                        ') + 'Try to start or warm the local premium daemon');
+      console.log();
+      console.log(chalk.bold('Notes:'));
+      console.log(chalk.dim('  - /status now includes a compact repo-intelligence summary.'));
+      console.log(chalk.dim('  - /repointel warm is operational: it can warm the premium runtime even when your current mode is oss/off.'));
+      console.log(chalk.dim('  - If the local service cannot be started, KodaX will continue with the OSS baseline and this command will explain why.'));
       console.log();
     },
   },
@@ -1284,7 +1443,7 @@ const COMMAND_CATEGORIES: Record<string, string[]> = {
   General: ['help', 'copy', 'exit', 'clear', 'compact', 'reload', 'extensions', 'status'],
   Permission: ['mode', 'auto'],
   Session: ['new', 'save', 'load', 'sessions', 'history', 'delete'],
-  Settings: ['model', 'provider', 'thinking', 'reasoning', 'agent-mode', 'parallel', 'plan'],
+  Settings: ['model', 'provider', 'thinking', 'reasoning', 'agent-mode', 'parallel', 'plan', 'repointel'],
   Project: ['project'],
   Skills: ['skill'],
 };
@@ -1305,9 +1464,56 @@ function describeParallelExecution(enabled: boolean): 'parallel' | 'sequential' 
   return enabled ? 'parallel' : 'sequential';
 }
 
+const REPO_INTELLIGENCE_MODES: KodaXRepoIntelligenceMode[] = [
+  'auto',
+  'off',
+  'oss',
+  'premium-shared',
+  'premium-native',
+];
+
 type ConfigPersistenceResult =
   | { saved: true }
   | { saved: false; error: Error };
+
+function normalizeRepoIntelligenceMode(
+  value: string | undefined,
+): KodaXRepoIntelligenceMode | null {
+  if (!value) {
+    return null;
+  }
+
+  return REPO_INTELLIGENCE_MODES.includes(value as KodaXRepoIntelligenceMode)
+    ? value as KodaXRepoIntelligenceMode
+    : null;
+}
+
+function normalizeRuntimeOverride(value: string | undefined): string | null {
+  const normalized = value?.trim();
+  if (!normalized || normalized === 'default' || normalized === 'reset' || normalized === 'clear') {
+    return null;
+  }
+  return normalized;
+}
+
+function resolveToggleFlag(
+  value: string | undefined,
+  currentValue: boolean,
+): boolean | null {
+  if (!value) {
+    return null;
+  }
+  if (value === 'toggle') {
+    return !currentValue;
+  }
+  if (value === 'on' || value === 'true' || value === '1') {
+    return true;
+  }
+  if (value === 'off' || value === 'false' || value === '0') {
+    return false;
+  }
+  return null;
+}
 
 function persistUserConfig(
   config: Parameters<typeof saveConfig>[0],
@@ -1387,6 +1593,105 @@ function applyParallelMode(
   }
 
   return persistence;
+}
+
+function applyRepoIntelligenceRuntimeConfig(
+  update: {
+    mode?: KodaXRepoIntelligenceMode;
+    endpoint?: string | null;
+    bin?: string | null;
+    trace?: boolean;
+  },
+  persistedConfig: {
+    repoIntelligenceMode?: KodaXRepoIntelligenceMode;
+    repointelEndpoint?: string | undefined;
+    repointelBin?: string | undefined;
+    repoIntelligenceTrace?: boolean;
+  },
+  callbacks: CommandCallbacks,
+  currentConfig: CurrentConfig,
+): ConfigPersistenceResult {
+  const persistence = persistUserConfig(persistedConfig);
+
+  if (callbacks.setRepoIntelligenceRuntime) {
+    callbacks.setRepoIntelligenceRuntime(update);
+  } else {
+    if (update.mode !== undefined) {
+      currentConfig.repoIntelligenceMode = update.mode;
+    }
+    if (update.endpoint !== undefined) {
+      currentConfig.repointelEndpoint = update.endpoint ?? undefined;
+    }
+    if (update.bin !== undefined) {
+      currentConfig.repointelBin = update.bin ?? undefined;
+    }
+    if (update.trace !== undefined) {
+      currentConfig.repoIntelligenceTrace = update.trace;
+    }
+  }
+
+  return persistence;
+}
+
+function formatRepoIntelligenceSummary(
+  inspection: RepoIntelligenceRuntimeInspection,
+): string {
+  const requestedLabel = inspection.configuredMode === inspection.requestedMode
+    ? inspection.configuredMode
+    : `${inspection.configuredMode} -> ${inspection.requestedMode}`;
+  const activeLabel = `${inspection.effectiveEngine}/${inspection.effectiveBridge}`;
+  const transportLabel = inspection.transport ? `, ${inspection.transport}` : '';
+  const fallbackLabel = inspection.fallbackToOss ? ', fallback=oss' : '';
+  return `${requestedLabel} => ${activeLabel} (${inspection.status}${transportLabel}${fallbackLabel})`;
+}
+
+function printRepoIntelligenceInspection(
+  inspection: RepoIntelligenceRuntimeInspection,
+): void {
+  console.log(chalk.bold('\nRepo Intelligence:\n'));
+  console.log(chalk.dim(`  Configured:  ${chalk.cyan(inspection.configuredMode)}`));
+  console.log(chalk.dim(`  Requested:   ${chalk.cyan(inspection.requestedMode)}`));
+  console.log(chalk.dim(`  Active:      ${chalk.cyan(`${inspection.effectiveEngine}/${inspection.effectiveBridge}`)}`));
+  console.log(chalk.dim(`  Status:      ${chalk.cyan(inspection.status)}${inspection.transport ? chalk.dim(` (${inspection.transport})`) : ''}`));
+  console.log(chalk.dim(`  Trace:       ${chalk.cyan(inspection.traceEnabled ? 'on' : 'off')}`));
+  console.log(chalk.dim(`  Endpoint:    ${inspection.endpoint}`));
+  console.log(chalk.dim(`  Bin:         ${inspection.bin}`));
+  if (inspection.clientBuildId) {
+    console.log(chalk.dim(`  Client ID:   ${inspection.clientBuildId}`));
+  }
+  if (inspection.daemonBuildId) {
+    console.log(chalk.dim(`  Daemon ID:   ${inspection.daemonBuildId}`));
+  }
+  if (inspection.daemonPid !== undefined) {
+    console.log(chalk.dim(`  Daemon PID:  ${inspection.daemonPid}`));
+  }
+  if (inspection.daemonStartedAt) {
+    console.log(chalk.dim(`  Daemon Up:   ${inspection.daemonStartedAt}`));
+  }
+  if (inspection.fallbackToOss) {
+    console.log(chalk.yellow('  Fallback:    OSS baseline is currently active'));
+  }
+  if (inspection.error) {
+    console.log(chalk.red(`  Error:       ${inspection.error}`));
+  }
+  for (const warning of inspection.warnings) {
+    console.log(chalk.yellow(`  Warning:     ${warning}`));
+  }
+  console.log();
+}
+
+function printRepoIntelligenceWarmResult(
+  result: Awaited<ReturnType<typeof warmRepoIntelligenceRuntime>>,
+): void {
+  if (result.warmed) {
+    console.log(chalk.green('\n[repointel warmed successfully]'));
+  } else {
+    console.log(chalk.yellow('\n[repointel warm did not reach a ready daemon state]'));
+  }
+  if (result.warmLatencyMs !== undefined) {
+    console.log(chalk.dim(`  Warm latency: ${result.warmLatencyMs} ms`));
+  }
+  printRepoIntelligenceInspection(result);
 }
 
 function printCommandSection(
@@ -1519,7 +1824,7 @@ function printDetailedHelp(commandName: string): void {
 }
 
 // Print status.
-function printStatus(context: InteractiveContext, currentConfig: CurrentConfig): void {
+async function printStatus(context: InteractiveContext, currentConfig: CurrentConfig): Promise<void> {
   const tokens = context.contextTokenSnapshot?.currentTokens ?? estimateTokens(context.messages);
   const tokenSource = context.contextTokenSnapshot?.source ?? 'estimate';
   const capabilityProfile = getProviderCapabilityProfile(currentConfig.provider);
@@ -1549,6 +1854,11 @@ function printStatus(context: InteractiveContext, currentConfig: CurrentConfig):
   console.log(chalk.dim(`  Session ID:  ${context.sessionId}`));
   console.log(chalk.dim(`  Messages:    ${context.messages.length}`));
   console.log(chalk.dim(`  Tokens:      ~${tokens} (${tokenSource})`));
+  const repoInspection = await inspectRepoIntelligenceRuntime({
+    mode: currentConfig.repoIntelligenceMode,
+    trace: currentConfig.repoIntelligenceTrace,
+  });
+  console.log(chalk.dim(`  Repo Intel:  ${chalk.cyan(formatRepoIntelligenceSummary(repoInspection))}`));
   if (context.gitRoot) {
     console.log(chalk.dim(`  Git Root:    ${context.gitRoot}`));
   }

@@ -32,6 +32,7 @@ export interface ViewportBudgetOptions {
   inputText: string;
   inputPrompt?: string;
   pendingInputSummary?: string;
+  workStripText?: string;
   suggestionsReserved: boolean;
   showHelp: boolean;
   statusBarText: string;
@@ -46,6 +47,7 @@ export interface ViewportBudgetResult {
   messageRows: number;
   reservedBottomRows: number;
   pendingInputRows: number;
+  workStripRows: number;
   inputRows: number;
   suggestionsRows: number;
   helpRows: number;
@@ -91,6 +93,7 @@ export function calculateViewportBudget(options: ViewportBudgetOptions): Viewpor
     inputText,
     inputPrompt = ">",
     pendingInputSummary,
+    workStripText,
     suggestionsReserved,
     showHelp,
     statusBarText,
@@ -103,6 +106,9 @@ export function calculateViewportBudget(options: ViewportBudgetOptions): Viewpor
 
   const pendingInputRows = pendingInputSummary
     ? wrapLineCount(pendingInputSummary, Math.max(1, terminalWidth - 2))
+    : 0;
+  const workStripRows = workStripText
+    ? wrapLineCount(workStripText, Math.max(1, terminalWidth - 2))
     : 0;
   const inputRows = calculateInputPromptRows(inputText, terminalWidth, inputPrompt);
   const suggestionsRows = suggestionsReserved ? 8 : 0;
@@ -170,7 +176,7 @@ export function calculateViewportBudget(options: ViewportBudgetOptions): Viewpor
     : 0;
 
   const reservedBottomRows =
-    pendingInputRows + inputRows + suggestionsRows + helpRows + statusRows + confirmRows + uiRequestRows + reviewHintRows;
+    pendingInputRows + workStripRows + inputRows + suggestionsRows + helpRows + statusRows + confirmRows + uiRequestRows + reviewHintRows;
   const messageRows = Math.max(
     1,
     terminalRows - reservedBottomRows - MESSAGE_LIST_VERTICAL_PADDING_ROWS
@@ -180,6 +186,7 @@ export function calculateViewportBudget(options: ViewportBudgetOptions): Viewpor
     messageRows,
     reservedBottomRows,
     pendingInputRows,
+    workStripRows,
     inputRows,
     suggestionsRows,
     helpRows,

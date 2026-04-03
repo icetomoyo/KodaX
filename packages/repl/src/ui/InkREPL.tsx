@@ -16,6 +16,7 @@ import { InputPrompt } from "./components/InputPrompt.js";
 import { MessageList } from "./components/MessageList.js";
 import { ThinkingIndicator } from "./components/LoadingIndicator.js";
 import { PendingInputsIndicator } from "./components/PendingInputsIndicator.js";
+import { AmaWorkStrip, formatAmaWorkStripText } from "./components/AmaWorkStrip.js";
 import { StatusBar, getStatusBarText } from "./components/StatusBar.js";
 import { SuggestionsDisplay } from "./components/SuggestionsDisplay.js";
 import {
@@ -51,6 +52,7 @@ import {
   classifyError,
   ErrorCategory,
   loadAgentsFiles,
+  resolveRepoIntelligenceRuntimeConfig,
 } from "@kodax/coding";
 import type { AgentsFile } from "@kodax/coding";
 import { estimateTokens } from "@kodax/agent";
@@ -172,6 +174,7 @@ interface ReviewSnapshot {
   toolInputCharCount: number;
   toolInputContent: string;
   lastLiveActivityLabel?: string;
+  workStripText?: string;
   iterationHistory: import("./contexts/StreamingContext.js").IterationRecord[];
   currentIteration: number;
   isCompacting: boolean;
@@ -465,6 +468,16 @@ export function shouldShowStatusBarBusyStatus({
     return false;
   }
   return true;
+}
+
+export function buildAmaWorkStripFromStatus(
+  status: Pick<KodaXManagedTaskStatusEvent, "agentMode" | "childFanoutClass" | "childFanoutCount"> | null | undefined,
+  isLoading: boolean,
+): string | undefined {
+  if (!isLoading || !status || status.agentMode !== "ama") {
+    return undefined;
+  }
+  return formatAmaWorkStripText(status.childFanoutClass, status.childFanoutCount);
 }
 
 function toPersistedUiHistoryItem(
@@ -774,8 +787,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const [reviewSnapshot, setReviewSnapshot] = useState<ReviewSnapshot | null>(null);
   const [managedTaskStatus, setManagedTaskStatus] = useState<KodaXManagedTaskStatusEvent | null>(null);
   const [lastLiveActivityLabel, setLastLiveActivityLabel] = useState<string | undefined>(undefined);
+  const [visibleWorkStripText, setVisibleWorkStripText] = useState<string | undefined>(undefined);
   const managedTaskStatusRef = useRef<KodaXManagedTaskStatusEvent | null>(null);
   const managedTaskBreadcrumbRef = useRef<string | null>(null);
+  const showWorkStripTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const hideWorkStripTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const iterationToolsRef = useRef<string[]>([]);
   const iterationToolCallsRef = useRef<ToolCall[]>([]);
   const [activeToolCalls, setActiveToolCalls] = useState<ToolCall[]>([]);
@@ -934,6 +950,16 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }, [autocomplete]);
   const [shouldReserveSuggestionsSpace, setShouldReserveSuggestionsSpace] = useState(false);
   const lastSubmitCounterRef = useRef(submitCounter);
+  const clearWorkStripTimers = useCallback(() => {
+    if (showWorkStripTimeoutRef.current) {
+      clearTimeout(showWorkStripTimeoutRef.current);
+      showWorkStripTimeoutRef.current = null;
+    }
+    if (hideWorkStripTimeoutRef.current) {
+      clearTimeout(hideWorkStripTimeoutRef.current);
+      hideWorkStripTimeoutRef.current = null;
+    }
+  }, []);
 
   // 建议一旦出现，就持续预留 8 行，直到用户真正提交一条消息。
   useEffect(() => {
@@ -1027,6 +1053,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     toolInputCharCount: streamingState.toolInputCharCount,
     toolInputContent: streamingState.toolInputContent,
     lastLiveActivityLabel,
+    workStripText: visibleWorkStripText,
     iterationHistory: streamingState.iterationHistory,
     currentIteration: streamingState.currentIteration,
     isCompacting: streamingState.isCompacting,
@@ -1044,6 +1071,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     streamingState.toolInputCharCount,
     streamingState.toolInputContent,
     lastLiveActivityLabel,
+    visibleWorkStripText,
     streamingState.iterationHistory,
     streamingState.currentIteration,
     streamingState.isCompacting,
@@ -1077,6 +1105,63 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     currentIteration: displaySnapshot?.currentIteration ?? streamingState.currentIteration,
     isCompacting: displaySnapshot?.isCompacting ?? streamingState.isCompacting,
   };
+  const rawWorkStripText = useMemo(
+    () => buildAmaWorkStripFromStatus(managedTaskStatus, isLoading),
+    [managedTaskStatus, isLoading],
+  );
+  const displayWorkStripText = displaySnapshot?.workStripText ?? visibleWorkStripText;
+
+  useEffect(() => {
+    if (rawWorkStripText) {
+      if (hideWorkStripTimeoutRef.current) {
+        clearTimeout(hideWorkStripTimeoutRef.current);
+        hideWorkStripTimeoutRef.current = null;
+      }
+      if (visibleWorkStripText === rawWorkStripText) {
+        return;
+      }
+      if (visibleWorkStripText) {
+        if (showWorkStripTimeoutRef.current) {
+          clearTimeout(showWorkStripTimeoutRef.current);
+          showWorkStripTimeoutRef.current = null;
+        }
+        setVisibleWorkStripText(rawWorkStripText);
+        return;
+      }
+      if (showWorkStripTimeoutRef.current) {
+        clearTimeout(showWorkStripTimeoutRef.current);
+      }
+      showWorkStripTimeoutRef.current = setTimeout(() => {
+        setVisibleWorkStripText(rawWorkStripText);
+        showWorkStripTimeoutRef.current = null;
+      }, 400);
+      return;
+    }
+
+    if (!visibleWorkStripText) {
+      if (showWorkStripTimeoutRef.current) {
+        clearTimeout(showWorkStripTimeoutRef.current);
+        showWorkStripTimeoutRef.current = null;
+      }
+      return;
+    }
+
+    if (showWorkStripTimeoutRef.current) {
+      clearTimeout(showWorkStripTimeoutRef.current);
+      showWorkStripTimeoutRef.current = null;
+    }
+    if (hideWorkStripTimeoutRef.current) {
+      clearTimeout(hideWorkStripTimeoutRef.current);
+    }
+    hideWorkStripTimeoutRef.current = setTimeout(() => {
+      setVisibleWorkStripText(undefined);
+      hideWorkStripTimeoutRef.current = null;
+    }, 300);
+  }, [clearWorkStripTimers, rawWorkStripText, visibleWorkStripText]);
+
+  useEffect(() => () => {
+    clearWorkStripTimers();
+  }, [clearWorkStripTimers]);
 
   const reviewHintText = useMemo(() => {
     if (!isReviewingHistory) return undefined;
@@ -1155,6 +1240,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       terminalWidth,
       inputText,
       pendingInputSummary,
+      workStripText: displayWorkStripText,
       suggestionsReserved: suggestionsReservedForLayout,
       showHelp,
       statusBarText,
@@ -1187,6 +1273,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       terminalWidth,
       inputText,
       pendingInputSummary,
+      displayWorkStripText,
       suggestionsReservedForLayout,
       showHelp,
       statusBarText,
@@ -1243,6 +1330,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     thinking: currentConfig.thinking,
     reasoningMode: currentConfig.reasoningMode,
     agentMode: currentConfig.agentMode,
+    context: {
+      ...options.context,
+      repoIntelligenceMode: currentConfig.repoIntelligenceMode,
+      repoIntelligenceTrace: currentConfig.repoIntelligenceTrace,
+    },
     session: {
       ...options.session,
       id: context.sessionId,
@@ -2576,6 +2668,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       managedTaskStatusRef.current = null;
       managedTaskBreadcrumbRef.current = null;
       setLastLiveActivityLabel(undefined);
+      clearWorkStripTimers();
+      setVisibleWorkStripText(undefined);
       iterationToolsRef.current = [];
       iterationToolCallsRef.current = [];
       resetLiveToolCalls();
@@ -2734,6 +2828,47 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           },
           setPermissionMode: (mode: PermissionMode) => {
             setSessionPermissionMode(mode);
+          },
+          setRepoIntelligenceRuntime: (update) => {
+            setCurrentConfig((prev) => ({
+              ...prev,
+              ...(update.mode !== undefined ? { repoIntelligenceMode: update.mode } : {}),
+              ...(update.endpoint !== undefined ? { repointelEndpoint: update.endpoint ?? undefined } : {}),
+              ...(update.bin !== undefined ? { repointelBin: update.bin ?? undefined } : {}),
+              ...(update.trace !== undefined ? { repoIntelligenceTrace: update.trace } : {}),
+            }));
+            if (update.mode !== undefined) {
+              process.env.KODAX_REPO_INTELLIGENCE_MODE = update.mode;
+              currentOptionsRef.current.context = {
+                ...currentOptionsRef.current.context,
+                repoIntelligenceMode: update.mode,
+              };
+            }
+            if (update.trace !== undefined) {
+              if (update.trace) {
+                process.env.KODAX_REPO_INTELLIGENCE_TRACE = '1';
+              } else {
+                delete process.env.KODAX_REPO_INTELLIGENCE_TRACE;
+              }
+              currentOptionsRef.current.context = {
+                ...currentOptionsRef.current.context,
+                repoIntelligenceTrace: update.trace,
+              };
+            }
+            if (update.endpoint !== undefined) {
+              if (update.endpoint) {
+                process.env.KODAX_REPOINTEL_ENDPOINT = update.endpoint;
+              } else {
+                delete process.env.KODAX_REPOINTEL_ENDPOINT;
+              }
+            }
+            if (update.bin !== undefined) {
+              if (update.bin) {
+                process.env.KODAX_REPOINTEL_BIN = update.bin;
+              } else {
+                delete process.env.KODAX_REPOINTEL_BIN;
+              }
+            }
           },
           deleteSession: async (id: string) => {
             await storage.delete?.(id);
@@ -3181,6 +3316,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       startCompacting,
       stopCompacting,
       resetLiveToolCalls,
+      clearWorkStripTimers,
     ]
   );
 
@@ -3338,6 +3474,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           </Box>
         )}
 
+        {displayWorkStripText && (
+          <AmaWorkStrip text={displayWorkStripText} />
+        )}
+
         {/* Status Bar */}
         <Box>
           {/* 状态栏渲染和预算共用同一份文本格式化规则，尽量减少窄终端下的换行偏差。 */}
@@ -3477,6 +3617,7 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
   // CLI is always YOLO mode; REPL uses config file for permission mode
   const initialPermissionMode: PermissionMode =
     normalizePermissionMode(config.permissionMode, 'accept-edits') ?? 'accept-edits';
+  const repoIntelligenceRuntime = resolveRepoIntelligenceRuntimeConfig();
 
   const currentConfig: CurrentConfig = {
     provider: initialProvider,
@@ -3486,6 +3627,10 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
     agentMode: initialAgentMode,
     parallel: initialParallel,
     permissionMode: initialPermissionMode,
+    repoIntelligenceMode: repoIntelligenceRuntime.mode,
+    repointelEndpoint: repoIntelligenceRuntime.endpoint,
+    repointelBin: repoIntelligenceRuntime.bin,
+    repoIntelligenceTrace: repoIntelligenceRuntime.trace,
   };
 
   // Handle session resume/load

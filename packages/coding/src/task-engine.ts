@@ -11,6 +11,7 @@ import {
 } from './orchestration.js';
 import { resolveProvider } from './providers/index.js';
 import {
+  buildAmaControllerDecision,
   buildFallbackRoutingDecision,
   buildPromptOverlay,
   buildProviderPolicyHintsForDecision,
@@ -21,6 +22,12 @@ import {
   type ReasoningPlan,
 } from './reasoning.js';
 import {
+  applyFanoutBranchTransition,
+  buildFanoutSchedulerPlan,
+  countActiveFanoutBranches,
+  createFanoutSchedulerInput,
+} from './fanout-scheduler.js';
+import {
   analyzeChangedScope,
   getRepoOverview,
   renderChangedScope,
@@ -30,26 +37,42 @@ import { debugLogRepoIntelligence } from './repo-intelligence/internal.js';
 import {
   getImpactEstimate,
   getModuleContext,
+  getRepoPreturnBundle,
   getRepoRoutingSignals,
+  resolveKodaXAutoRepoMode,
+} from './repo-intelligence/runtime.js';
+import {
   renderImpactEstimate,
   renderModuleContext,
 } from './repo-intelligence/query.js';
+import { filterRepoIntelligenceWorkingToolNames, isRepoIntelligenceWorkingToolName } from './tools/index.js';
+import { createRepoIntelligenceTraceEvent } from './repo-intelligence/trace-events.js';
 import type {
+  KodaXAmaControllerDecision,
+  KodaXAmaFanoutClass,
   KodaXAgentMode,
   KodaXBudgetDisclosureZone,
   KodaXBudgetExtensionRequest,
+  KodaXChildAgentResult,
+  KodaXChildContextBundle,
   KodaXEvents,
+  KodaXFanoutBranchRecord,
+  KodaXFanoutSchedulerPlan,
   KodaXHarnessProfile,
   KodaXJsonValue,
   KodaXManagedTaskHarnessTransition,
   KodaXManagedTask,
+  KodaXManagedTaskRuntimeState,
   KodaXManagedBudgetSnapshot,
   KodaXManagedTaskStatusEvent,
   KodaXMemoryStrategy,
   KodaXOptions,
+  KodaXRepoIntelligenceCarrier,
+  KodaXRepoIntelligenceMode,
   KodaXRepoRoutingSignals,
   KodaXResult,
   KodaXRoleRoundSummary,
+  KodaXParentReductionContract,
   KodaXSessionData,
   KodaXSessionStorage,
   KodaXSkillInvocationContext,
@@ -84,6 +107,7 @@ interface ManagedTaskShape {
   routingPromptOverlay?: string;
   qualityAssuranceMode: ManagedTaskQualityAssuranceMode;
   providerPolicy?: ReasoningPlan['providerPolicy'];
+  amaControllerDecision: KodaXAmaControllerDecision;
 }
 
 interface ManagedTaskRepoIntelligenceSnapshot {
@@ -93,6 +117,7 @@ interface ManagedTaskRepoIntelligenceSnapshot {
 interface ManagedTaskRepoIntelligenceContext {
   executionCwd?: string;
   gitRoot?: string;
+  repoIntelligenceMode?: KodaXRepoIntelligenceMode;
 }
 
 interface ManagedTaskVerdictDirective {
@@ -104,6 +129,27 @@ interface ManagedTaskVerdictDirective {
   userAnswer?: string;
   artifactPath?: string;
   nextHarness?: KodaXTaskRoutingDecision['harnessProfile'];
+}
+
+function shouldEmitRepoIntelligenceTrace(options: KodaXOptions): boolean {
+  return options.context?.repoIntelligenceTrace === true
+    || process.env.KODAX_REPO_INTELLIGENCE_TRACE === '1';
+}
+
+function emitManagedRepoIntelligenceTrace(
+  events: KodaXEvents | undefined,
+  options: KodaXOptions,
+  stage: 'routing' | 'preturn' | 'module' | 'impact' | 'task-snapshot',
+  carrier: KodaXRepoIntelligenceCarrier | null | undefined,
+  detail?: string,
+): void {
+  if (!events?.onRepoIntelligenceTrace || !shouldEmitRepoIntelligenceTrace(options) || !carrier) {
+    return;
+  }
+  const traceEvent = createRepoIntelligenceTraceEvent(stage, carrier, detail);
+  if (traceEvent) {
+    events.onRepoIntelligenceTrace(traceEvent);
+  }
 }
 
 interface ManagedTaskScoutDirective {
@@ -136,6 +182,30 @@ interface ManagedTaskHandoffDirective {
   evidence: string[];
   followup: string[];
   userFacingText: string;
+}
+
+interface TacticalReviewFinding {
+  id: string;
+  title: string;
+  claim: string;
+  priority: 'high' | 'medium' | 'low';
+  files: string[];
+  evidence: string[];
+}
+
+interface TacticalReviewFindingsDirective {
+  summary: string;
+  findings: TacticalReviewFinding[];
+  userFacingText: string;
+}
+
+interface TacticalChildResultLedger {
+  generatedAt: string;
+  fanoutClass: KodaXFanoutSchedulerPlan['fanoutClass'];
+  reductionStrategy: KodaXParentReductionContract['strategy'];
+  branches: KodaXFanoutSchedulerPlan['branches'];
+  bundles: KodaXChildContextBundle[];
+  childResults: KodaXChildAgentResult[];
 }
 
 interface ManagedTaskRoundExecution {
@@ -316,6 +386,12 @@ const MANAGED_TASK_CONTRACT_BLOCK = 'kodax-task-contract';
 const MANAGED_TASK_VERDICT_BLOCK = 'kodax-task-verdict';
 const MANAGED_TASK_SCOUT_BLOCK = 'kodax-task-scout';
 const MANAGED_TASK_HANDOFF_BLOCK = 'kodax-task-handoff';
+const TACTICAL_REVIEW_FINDINGS_BLOCK = 'kodax-review-findings';
+const TACTICAL_CHILD_RESULT_BLOCK = 'kodax-child-result';
+const TACTICAL_CHILD_RESULT_ARTIFACT_JSON = 'child-result.json';
+const TACTICAL_CHILD_HANDOFF_JSON = 'dependency-handoff.json';
+const TACTICAL_CHILD_LEDGER_JSON = 'child-result-ledger.json';
+const TACTICAL_CHILD_LEDGER_MARKDOWN = 'child-result-ledger.md';
 const MANAGED_TASK_BUDGET_REQUEST_BLOCK = 'kodax-budget-request';
 const MANAGED_TASK_MAX_REFINEMENT_ROUND_CAP = 2;
 const MANAGED_TASK_MIN_REFINEMENT_ROUNDS = 1;
@@ -430,14 +506,17 @@ function applyScoutDecisionToPlan(
       ...(ceilingNote ? [ceilingNote] : []),
     ],
   };
+  const amaControllerDecision = buildAmaControllerDecision(decision);
 
   return {
     ...plan,
     decision,
+    amaControllerDecision,
     promptOverlay: buildPromptOverlay(
       decision,
       plan.providerPolicy?.routingNotes,
       plan.providerPolicy,
+      amaControllerDecision,
     ),
   };
 }
@@ -1886,7 +1965,13 @@ function applyCurrentDiffReviewRoutingFloor(
       plan: {
         ...plan,
         decision: finalDecision,
-        promptOverlay: buildPromptOverlay(finalDecision, plan.providerPolicy?.routingNotes, plan.providerPolicy),
+        amaControllerDecision: buildAmaControllerDecision(finalDecision),
+        promptOverlay: buildPromptOverlay(
+          finalDecision,
+          plan.providerPolicy?.routingNotes,
+          plan.providerPolicy,
+          buildAmaControllerDecision(finalDecision),
+        ),
       },
       rawDecision,
       reviewTarget,
@@ -1908,7 +1993,13 @@ function applyCurrentDiffReviewRoutingFloor(
     plan: {
       ...plan,
       decision: finalDecision,
-      promptOverlay: buildPromptOverlay(finalDecision, plan.providerPolicy?.routingNotes, plan.providerPolicy),
+      amaControllerDecision: buildAmaControllerDecision(finalDecision),
+      promptOverlay: buildPromptOverlay(
+        finalDecision,
+        plan.providerPolicy?.routingNotes,
+        plan.providerPolicy,
+        buildAmaControllerDecision(finalDecision),
+      ),
     },
     rawDecision,
     reviewTarget,
@@ -1946,15 +2037,27 @@ async function createManagedReasoningPlan(
   const shouldLoadRepoSignals = intentGate.shouldUseRepoSignals && Boolean(
     options.context?.executionCwd || options.context?.gitRoot,
   );
+  const autoRepoMode = resolveKodaXAutoRepoMode(options.context?.repoIntelligenceMode);
   const repoRoutingSignals = options.context?.repoRoutingSignals
     ?? (
-      shouldLoadRepoSignals
+      shouldLoadRepoSignals && autoRepoMode !== 'off'
         ? await getRepoRoutingSignals({
           executionCwd: options.context?.executionCwd,
           gitRoot: options.context?.gitRoot ?? undefined,
+        }, {
+          mode: autoRepoMode,
         }).catch(() => null)
         : null
     );
+  emitManagedRepoIntelligenceTrace(
+    options.events,
+    options,
+    'routing',
+    repoRoutingSignals,
+    repoRoutingSignals?.activeModuleId
+      ? `active_module=${repoRoutingSignals.activeModuleId}`
+      : undefined,
+  );
   try {
     const provider = resolveProvider(options.provider);
     const plan = await createReasoningPlan(options, prompt, provider, {
@@ -1994,6 +2097,16 @@ async function createManagedReasoningPlan(
           `Managed task engine used heuristic fallback routing because provider-backed routing was unavailable: ${error instanceof Error ? error.message : String(error)}`,
         ],
       },
+      amaControllerDecision: buildAmaControllerDecision({
+        ...decision,
+        recommendedThinkingDepth: depth,
+        routingSource: 'retried-fallback',
+        routingAttempts: Math.max(decision.routingAttempts ?? 1, MANAGED_TASK_ROUTER_MAX_RETRIES),
+        routingNotes: [
+          ...(decision.routingNotes ?? []),
+          `Managed task engine used heuristic fallback routing because provider-backed routing was unavailable: ${error instanceof Error ? error.message : String(error)}`,
+        ],
+      }),
       promptOverlay: buildPromptOverlay({
         ...decision,
         recommendedThinkingDepth: depth,
@@ -2042,25 +2155,44 @@ function buildManagedWorkerToolPolicy(
   verification: KodaXTaskVerificationContract | undefined,
   harnessProfile?: KodaXTaskRoutingDecision['harnessProfile'],
   mutationSurface?: KodaXTaskRoutingDecision['mutationSurface'],
+  repoIntelligenceMode?: KodaXRepoIntelligenceMode,
 ): KodaXTaskToolPolicy | undefined {
+  const strictRepoIntelligenceOff = resolveKodaXAutoRepoMode(repoIntelligenceMode) === 'off';
+  const finalizeToolPolicy = (
+    policy: KodaXTaskToolPolicy | undefined,
+  ): KodaXTaskToolPolicy | undefined => {
+    if (!policy || !strictRepoIntelligenceOff || !policy.allowedTools) {
+      return policy;
+    }
+
+    return {
+      ...policy,
+      allowedTools: filterRepoIntelligenceWorkingToolNames(policy.allowedTools),
+      summary: [
+        policy.summary,
+        'Repo-intelligence working tools are disabled in off mode; rely on general-purpose read/glob/grep evidence instead.',
+      ].join(' '),
+    };
+  };
+
   switch (role) {
     case 'scout':
-      return {
+      return finalizeToolPolicy({
         summary: 'Scout is a pre-harness guide. It may inspect scope facts and a small amount of overview evidence, but must not deep-page raw diffs, verify claims file-by-file, mutate files, or execute implementation steps.',
         blockedTools: [...WRITE_ONLY_TOOLS],
         allowedTools: [...SCOUT_ALLOWED_TOOLS],
         allowedShellPatterns: INSPECTION_SHELL_PATTERNS,
-      };
+      });
     case 'planner':
-      return {
+      return finalizeToolPolicy({
         summary: 'Planner may inspect scope facts and overview evidence to produce a sprint contract, but must not linearly page raw diffs, perform deep claim verification, mutate files, or execute implementation steps.',
         blockedTools: [...WRITE_ONLY_TOOLS],
         allowedTools: [...PLANNER_ALLOWED_TOOLS],
         allowedShellPatterns: INSPECTION_SHELL_PATTERNS,
-      };
+      });
     case 'generator':
       if (harnessProfile === 'H1_EXECUTE_EVAL' && mutationSurface === 'read-only') {
-        return {
+        return finalizeToolPolicy({
           summary: 'H1 read-only Generator must stay non-mutating. It may inspect scoped evidence and run only limited inspection or explicitly required verification commands, but it must not edit files, rewrite artifacts, or perform mutating shell actions.',
           blockedTools: [...WRITE_ONLY_TOOLS],
           allowedTools: [...H1_READONLY_GENERATOR_ALLOWED_TOOLS],
@@ -2068,22 +2200,22 @@ function buildManagedWorkerToolPolicy(
             ...INSPECTION_SHELL_PATTERNS,
             ...buildRuntimeVerificationShellPatterns(verification),
           ])),
-        };
+        });
       }
       if (harnessProfile === 'H1_EXECUTE_EVAL' && mutationSurface === 'docs-only') {
-        return {
+        return finalizeToolPolicy({
           summary: 'H1 docs-only Generator may edit documentation artifacts, but only when the target paths are clearly documentation files. It must not modify source code, configuration, build outputs, or system state.',
           allowedWritePathPatterns: [...DOCS_ONLY_WRITE_PATH_PATTERNS],
           allowedShellPatterns: Array.from(new Set([
             ...INSPECTION_SHELL_PATTERNS,
             ...buildRuntimeVerificationShellPatterns(verification),
           ])),
-        };
+        });
       }
       return undefined;
     case 'evaluator':
       if (harnessProfile === 'H1_EXECUTE_EVAL') {
-        return {
+        return finalizeToolPolicy({
           summary: 'H1 Evaluator is a lightweight checker. It may only do targeted spot-checks against the Generator handoff and must not broad-scan the repo, deep-page large diffs, or run broad test sweeps unless the verification contract explicitly requires them.',
           blockedTools: [...WRITE_ONLY_TOOLS],
           allowedTools: [...H1_EVALUATOR_ALLOWED_TOOLS],
@@ -2091,16 +2223,16 @@ function buildManagedWorkerToolPolicy(
             ...INSPECTION_SHELL_PATTERNS,
             ...buildRuntimeVerificationShellPatterns(verification),
           ])),
-        };
+        });
       }
-      return {
+      return finalizeToolPolicy({
         summary: 'Verification agents may inspect the repo and run verification commands, including browser, startup, API, and runtime checks declared by the verification contract, but must not edit project files or mutate control-plane artifacts.',
         blockedTools: [...WRITE_ONLY_TOOLS],
         allowedShellPatterns: [
           ...VERIFICATION_SHELL_PATTERNS,
           ...buildRuntimeVerificationShellPatterns(verification),
         ],
-      };
+      });
     default:
       return undefined;
   }
@@ -2505,6 +2637,12 @@ function createRolePrompt(
       'Do not describe yourself as reviewing or judging another role.',
       'Keep evaluator-only reasoning inside the final verdict block and supporting artifacts.',
     ].join('\n');
+  const repoWorkingToolsEnabled = toolPolicy?.allowedTools
+    ? toolPolicy.allowedTools.some((toolName) => isRepoIntelligenceWorkingToolName(toolName))
+    : true;
+  const diffPagingToolsEnabled = toolPolicy?.allowedTools
+    ? toolPolicy.allowedTools.includes('changed_diff') || toolPolicy.allowedTools.includes('changed_diff_bundle')
+    : true;
   const parallelBatchGuidance = [
     'When multiple read-only tool calls are independent, emit them in the same response so parallel mode can run them together.',
     'Only serialize tool calls when a later call depends on an earlier result.',
@@ -2512,15 +2650,23 @@ function createRolePrompt(
   ].join('\n');
   const scoutReviewEvidenceGuidance = reviewLikeTask
     ? [
-      'For large or history-based reviews, stay at the scope-facts level first: changed_scope -> repo_overview (only when needed) -> a small amount of changed_diff_bundle for high-priority files.',
-      'Do not linearly page changed_diff slices or verify individual claims. You are only deciding whether the task should stay direct or move into a heavier harness.',
+      repoWorkingToolsEnabled
+        ? 'For large or history-based reviews, stay at the scope-facts level first: changed_scope -> repo_overview (only when needed) -> a small amount of changed_diff_bundle for high-priority files.'
+        : 'For large or history-based reviews in off mode, stay at cheap facts first with glob/grep/read and avoid rebuilding a repo-intelligence-style scope pass.',
+      diffPagingToolsEnabled
+        ? 'Do not linearly page changed_diff slices or verify individual claims. You are only deciding whether the task should stay direct or move into a heavier harness.'
+        : 'Do not linearly page raw file content or verify individual claims. You are only deciding whether the task should stay direct or move into a heavier harness.',
       'When one file dominates the diff, summarize the risk and first-inspection areas instead of paging through the whole file.',
     ].join('\n')
     : undefined;
   const plannerReviewEvidenceGuidance = reviewLikeTask
     ? [
-      'Plan from scope facts plus overview evidence only: changed_scope -> repo_overview (only when needed) -> changed_diff_bundle for high-priority files.',
-      'Do not linearly page changed_diff slices for large files. If a bundle flags a critical entrypoint or type, use at most a small pinpoint read to anchor the contract.',
+      repoWorkingToolsEnabled
+        ? 'Plan from scope facts plus overview evidence only: changed_scope -> repo_overview (only when needed) -> changed_diff_bundle for high-priority files.'
+        : 'In off mode, plan from general-purpose evidence only: use glob/grep/read to anchor the contract without assuming repo-intelligence scope tooling is available.',
+      diffPagingToolsEnabled
+        ? 'Do not linearly page changed_diff slices for large files. If a bundle flags a critical entrypoint or type, use at most a small pinpoint read to anchor the contract.'
+        : 'Do not linearly page raw file content for large files. Use at most a small pinpoint read to anchor the contract.',
       'If overview evidence is still incomplete, record the missing proof in required_evidence or constraints instead of omitting the contract.',
     ].join('\n')
     : undefined;
@@ -2529,15 +2675,23 @@ function createRolePrompt(
         decision.harnessProfile === 'H1_EXECUTE_EVAL'
           ? [
             'Consume the Scout handoff before collecting more evidence.',
-            'Own the focused deep-evidence pass: use changed_diff/read only on the handoff\'s priority files, suspicious areas, and unresolved claims.',
+            diffPagingToolsEnabled
+              ? 'Own the focused deep-evidence pass: use changed_diff/read only on the handoff\'s priority files, suspicious areas, and unresolved claims.'
+              : 'Own the focused deep-evidence pass with read/grep only on the handoff\'s priority files, suspicious areas, and unresolved claims.',
             'Do not restart whole-repo evidence gathering unless the Scout handoff explicitly leaves critical scope unresolved.',
-            'When one file dominates the diff, prefer fewer larger changed_diff slices (roughly limit=360-480) over repeated 100-150 line paging.',
+            diffPagingToolsEnabled
+              ? 'When one file dominates the diff, prefer fewer larger changed_diff slices (roughly limit=360-480) over repeated 100-150 line paging.'
+              : 'When one file dominates the evidence, prefer fewer larger read slices over repeated tiny paging.',
           ]
           : [
             'Consume the Scout handoff and Planner contract before collecting more evidence.',
-            'Own the deep evidence pass: use changed_diff/read to inspect the contract\'s flagged files, suspicious areas, and unresolved claims.',
+            diffPagingToolsEnabled
+              ? 'Own the deep evidence pass: use changed_diff/read to inspect the contract\'s flagged files, suspicious areas, and unresolved claims.'
+              : 'Own the deep evidence pass: use read/grep to inspect the contract\'s flagged files, suspicious areas, and unresolved claims.',
             'Do not restart whole-repo evidence gathering unless the contract explicitly leaves critical scope unresolved.',
-            'When one file dominates the diff, prefer fewer larger changed_diff slices (roughly limit=360-480) over repeated 100-150 line paging.',
+            diffPagingToolsEnabled
+              ? 'When one file dominates the diff, prefer fewer larger changed_diff slices (roughly limit=360-480) over repeated 100-150 line paging.'
+              : 'When one file dominates the evidence, prefer fewer larger read slices over repeated tiny paging.',
           ]
       ).join('\n')
     : undefined;
@@ -2564,13 +2718,21 @@ function createRolePrompt(
         decision.harnessProfile === 'H1_EXECUTE_EVAL'
           ? [
             'Start from the Scout handoff and Generator handoff.',
-            'Use targeted spot-checks on the highest-risk claims with changed_diff/read. Do not repeat the Generator\'s full deep-evidence pass unless the handoff is contradictory or structurally incomplete.',
-            'When a tool reports truncated output, narrow the follow-up by path or offset, or switch from changed_diff to changed_diff_bundle instead of repeating the same broad request.',
+            diffPagingToolsEnabled
+              ? 'Use targeted spot-checks on the highest-risk claims with changed_diff/read. Do not repeat the Generator\'s full deep-evidence pass unless the handoff is contradictory or structurally incomplete.'
+              : 'Use targeted spot-checks on the highest-risk claims with read/grep. Do not repeat the Generator\'s full deep-evidence pass unless the handoff is contradictory or structurally incomplete.',
+            diffPagingToolsEnabled
+              ? 'When a tool reports truncated output, narrow the follow-up by path or offset, or switch from changed_diff to changed_diff_bundle instead of repeating the same broad request.'
+              : 'When a tool reports truncated output, narrow the follow-up by path or offset instead of repeating the same broad request.',
           ]
           : [
             'Start from the Planner contract and Generator handoff.',
-            'Use targeted spot-checks on the highest-risk claims with changed_diff/read. Do not repeat the full deep-evidence pass unless the handoff is contradictory or structurally incomplete.',
-            'When a tool reports truncated output, narrow the follow-up by path or offset, or switch from changed_diff to changed_diff_bundle instead of repeating the same broad request.',
+            diffPagingToolsEnabled
+              ? 'Use targeted spot-checks on the highest-risk claims with changed_diff/read. Do not repeat the full deep-evidence pass unless the handoff is contradictory or structurally incomplete.'
+              : 'Use targeted spot-checks on the highest-risk claims with read/grep. Do not repeat the full deep-evidence pass unless the handoff is contradictory or structurally incomplete.',
+            diffPagingToolsEnabled
+              ? 'When a tool reports truncated output, narrow the follow-up by path or offset, or switch from changed_diff to changed_diff_bundle instead of repeating the same broad request.'
+              : 'When a tool reports truncated output, narrow the follow-up by path or offset instead of repeating the same broad request.',
           ]
       ).join('\n')
     : undefined;
@@ -2752,6 +2914,7 @@ function buildManagedTaskWorkers(
   verification: KodaXTaskVerificationContract | undefined,
   qualityAssuranceMode: ManagedTaskQualityAssuranceMode,
   rolePromptContext: ManagedRolePromptContext | undefined,
+  repoIntelligenceMode?: KodaXRepoIntelligenceMode,
   phase: 'initial' | 'refinement' = 'initial',
 ): { terminalWorkerId: string; workers: ManagedTaskWorkerSpec[] } {
   const evaluatorRequired = qualityAssuranceMode === 'required';
@@ -2767,7 +2930,13 @@ function buildManagedTaskWorkers(
     execution?: ManagedTaskWorkerSpec['execution'],
   ): ManagedTaskWorkerSpec => {
     const agent = buildManagedWorkerAgent(role, id);
-    const toolPolicy = buildManagedWorkerToolPolicy(role, verification, decision.harnessProfile, decision.mutationSurface);
+    const toolPolicy = buildManagedWorkerToolPolicy(
+      role,
+      verification,
+      decision.harnessProfile,
+      decision.mutationSurface,
+      repoIntelligenceMode,
+    );
     const worker: ManagedTaskWorkerSpec = {
       id,
       title,
@@ -2845,6 +3014,44 @@ function buildManagedTaskWorkers(
   };
 }
 
+function createParentReductionContract(
+  controllerDecision: KodaXAmaControllerDecision,
+): KodaXParentReductionContract {
+  return {
+    owner: 'parent',
+    strategy: controllerDecision.profile === 'managed'
+      ? 'evaluator-assisted'
+      : controllerDecision.fanout.admissible
+        ? 'evaluator-assisted'
+        : 'direct-parent',
+    collapseChildTranscripts: true,
+    summary: controllerDecision.profile === 'managed'
+      ? 'Parent authority remains singular while managed verifier/reducer roles converge the child outputs.'
+      : controllerDecision.fanout.admissible
+        ? 'Parent authority remains singular while tactical child outputs are reduced through an evaluator-assisted pass.'
+        : 'Parent keeps direct ownership of the final answer without child reduction.',
+    requiredArtifacts: controllerDecision.fanout.admissible
+      ? ['child-result-ledger', 'dependency-handoff']
+      : [],
+  };
+}
+
+function applyAmaRuntimeState(
+  runtime: KodaXManagedTaskRuntimeState | undefined,
+  controllerDecision: KodaXAmaControllerDecision,
+): KodaXManagedTaskRuntimeState {
+  return {
+    ...runtime,
+    amaProfile: controllerDecision.profile,
+    amaTactics: controllerDecision.tactics,
+    amaFanout: controllerDecision.fanout,
+    amaControllerReason: controllerDecision.reason,
+    parentReductionContract: runtime?.parentReductionContract ?? createParentReductionContract(controllerDecision),
+    childContextBundles: runtime?.childContextBundles ?? [],
+    childAgentResults: runtime?.childAgentResults ?? [],
+  };
+}
+
 function createTaskShape(
   options: KodaXOptions,
   prompt: string,
@@ -2858,6 +3065,7 @@ function createTaskShape(
   const workerRolePromptContext = withManagedSkillArtifactPromptPaths(rolePromptContext, workspaceDir);
   const createdAt = new Date().toISOString();
   const qualityAssuranceMode = resolveManagedTaskQualityAssuranceMode(options, plan);
+  const amaControllerDecision = plan.amaControllerDecision;
   const normalizedVerification = options.context?.taskVerification
     ? {
         ...options.context.taskVerification,
@@ -2920,6 +3128,7 @@ function createTaskShape(
         summary: 'Task is running in direct fallback mode.',
       },
       runtime: {
+        ...applyAmaRuntimeState(undefined, amaControllerDecision),
         routingAttempts: plan.decision.routingAttempts,
         routingSource: plan.decision.routingSource,
         currentHarness: plan.decision.harnessProfile,
@@ -2937,6 +3146,7 @@ function createTaskShape(
       routingPromptOverlay: plan.promptOverlay,
       qualityAssuranceMode,
       providerPolicy: plan.providerPolicy,
+      amaControllerDecision,
     };
   }
 
@@ -2947,6 +3157,7 @@ function createTaskShape(
     normalizedVerification,
     qualityAssuranceMode,
     workerRolePromptContext,
+    options.context?.repoIntelligenceMode,
   );
   const task: KodaXManagedTask = {
     contract: {
@@ -2998,6 +3209,7 @@ function createTaskShape(
       summary: 'Task is running under the managed task engine.',
     },
     runtime: {
+      ...applyAmaRuntimeState(undefined, amaControllerDecision),
       routingAttempts: plan.decision.routingAttempts,
       routingSource: plan.decision.routingSource,
       currentHarness: plan.decision.harnessProfile,
@@ -3015,6 +3227,7 @@ function createTaskShape(
     routingPromptOverlay: plan.promptOverlay,
     qualityAssuranceMode,
     providerPolicy: plan.providerPolicy,
+    amaControllerDecision,
   };
 }
 
@@ -3038,7 +3251,13 @@ function createScoutCompleteTaskShape(
     },
     rolePromptContext,
   );
-  const scoutToolPolicy = buildManagedWorkerToolPolicy('scout', baseShape.task.contract.verification, 'H0_DIRECT');
+  const scoutToolPolicy = buildManagedWorkerToolPolicy(
+    'scout',
+    baseShape.task.contract.verification,
+    'H0_DIRECT',
+    undefined,
+    options.context?.repoIntelligenceMode,
+  );
   const scoutAgent = buildManagedWorkerAgent('scout', 'scout');
 
   return {
@@ -3100,6 +3319,910 @@ function createScoutCompleteTaskShape(
         currentHarness: 'H0_DIRECT',
       },
     },
+  };
+}
+
+function shouldRunTacticalReviewFanout(
+  agentMode: KodaXAgentMode,
+  surface: KodaXTaskSurface,
+  plan: ReasoningPlan,
+  decision: KodaXTaskRoutingDecision,
+  scoutDirective: ManagedTaskScoutDirective,
+): boolean {
+  return agentMode === 'ama'
+    && surface !== 'project'
+    && decision.primaryTask === 'review'
+    && decision.executionPattern === 'checked-direct'
+    && decision.harnessProfile === 'H0_DIRECT'
+    && scoutDirective.confirmedHarness === 'H0_DIRECT'
+    && plan.amaControllerDecision.profile === 'tactical'
+    && plan.amaControllerDecision.fanout.admissible
+    && plan.amaControllerDecision.fanout.class === 'finding-validation';
+}
+
+function createTacticalReviewBaseShape(
+  options: KodaXOptions,
+  originalTask: string,
+  plan: ReasoningPlan,
+  rolePromptContext?: ManagedRolePromptContext,
+): ManagedTaskShape {
+  const baseShape = createTaskShape(
+    options,
+    originalTask,
+    originalTask,
+    {
+      ...plan,
+      decision: {
+        ...plan.decision,
+        harnessProfile: 'H0_DIRECT',
+      },
+    },
+    rolePromptContext,
+  );
+  const scanToolPolicy = buildManagedWorkerToolPolicy(
+    'generator',
+    baseShape.task.contract.verification,
+    'H0_DIRECT',
+    'read-only',
+    options.context?.repoIntelligenceMode,
+  );
+  const scanAgent = buildManagedWorkerAgent('generator', 'review-scan');
+
+  return {
+    ...baseShape,
+    terminalWorkerId: 'review-reducer',
+    workers: [],
+    task: {
+      ...baseShape.task,
+      roleAssignments: [
+        {
+          id: 'review-scan',
+          role: 'generator',
+          title: 'Review Scanner',
+          dependsOn: [],
+          status: 'running',
+          agent: scanAgent,
+          toolPolicy: scanToolPolicy,
+        },
+      ],
+      workItems: [
+        {
+          id: 'review-scan',
+          assignmentId: 'review-scan',
+          description: 'Scan the review surface and emit candidate findings for child validation.',
+          execution: 'serial',
+        },
+      ],
+      verdict: {
+        ...baseShape.task.verdict,
+        decidedByAssignmentId: 'review-reducer',
+        summary: 'AMA Tactical review is preparing hidden finding-validation shards.',
+      },
+    },
+  };
+}
+
+function buildTacticalReviewScannerPrompt(
+  originalTask: string,
+  plan: ReasoningPlan,
+  scoutDirective: ManagedTaskScoutDirective,
+): string {
+  return [
+    'You are the Tactical Review Scanner for a KodaX AMA task.',
+    `[AMA profile] ${plan.amaControllerDecision.profile}`,
+    `[Task] ${originalTask}`,
+    `[Routing] primary=${plan.decision.primaryTask}; mode=${plan.decision.recommendedMode}; harness=${plan.decision.harnessProfile}; reviewScale=${plan.decision.reviewScale ?? 'unknown'}.`,
+    scoutDirective.summary ? `[Scout summary] ${scoutDirective.summary}` : undefined,
+    scoutDirective.reviewFilesOrAreas?.length
+      ? `Focus areas: ${scoutDirective.reviewFilesOrAreas.join(', ')}`
+      : undefined,
+    'Identify at most the highest-signal candidate findings that are worth independent validation.',
+    'Do not write the final review yet.',
+    [
+      `Append a final JSON fenced block named \`\`\`${TACTICAL_REVIEW_FINDINGS_BLOCK}\`\`\` with this exact shape:`,
+      '{"summary":"<one-line scanner summary>","findings":[{"id":"finding-1","title":"<short title>","claim":"<specific claim to validate>","priority":"high|medium|low","files":["<path>"],"evidence":["<short evidence note>"]}]}',
+    ].join('\n'),
+    'If you do not find any strong candidates, still return the best visible review summary before the fenced block and use an empty findings array.',
+  ].filter((section): section is string => Boolean(section)).join('\n\n');
+}
+
+function buildTacticalReviewValidatorPrompt(
+  originalTask: string,
+  finding: TacticalReviewFinding,
+  scoutDirective: ManagedTaskScoutDirective,
+): string {
+  return [
+    'You are a Tactical Review Validator child for one candidate finding.',
+    `[Task] ${originalTask}`,
+    `[Finding ID] ${finding.id}`,
+    `[Finding Title] ${finding.title}`,
+    `[Claim] ${finding.claim}`,
+    finding.files.length > 0 ? `Relevant files: ${finding.files.join(', ')}` : undefined,
+    finding.evidence.length > 0 ? `Scanner evidence: ${finding.evidence.join(' | ')}` : undefined,
+    scoutDirective.summary ? `[Scout summary] ${scoutDirective.summary}` : undefined,
+    'Validate only this finding. Do not broad-scan the repo and do not restate the whole review.',
+    'Decide whether the finding is valid, a false positive, or still missing evidence.',
+    [
+      `Append a final fenced block named \`\`\`${MANAGED_TASK_HANDOFF_BLOCK}\`\`\` with this exact shape:`,
+      'status: <ready|incomplete|blocked>',
+      'summary: <one-line validator summary>',
+      'evidence:',
+      '- <evidence item>',
+      'followup:',
+      '- <follow-up or "none">',
+    ].join('\n'),
+    [
+      `Then append a JSON fenced block named \`\`\`${TACTICAL_CHILD_RESULT_BLOCK}\`\`\` with this exact shape:`,
+      `{"childId":"${finding.id}","fanoutClass":"finding-validation","status":"completed","disposition":"valid|false-positive|needs-more-evidence","summary":"<one-line verdict>","evidenceRefs":["<artifact or file reference>"],"contradictions":["<contradiction or empty>"],"artifactPaths":[]}`,
+    ].join('\n'),
+  ].filter((section): section is string => Boolean(section)).join('\n\n');
+}
+
+function buildTacticalChildArtifactPaths(taskDir: string): {
+  childResultPath: string;
+  handoffPath: string;
+} {
+  return {
+    childResultPath: path.join(taskDir, TACTICAL_CHILD_RESULT_ARTIFACT_JSON),
+    handoffPath: path.join(taskDir, TACTICAL_CHILD_HANDOFF_JSON),
+  };
+}
+
+async function writeTacticalChildHandoffArtifact(
+  filePath: string,
+  directive: ManagedTaskHandoffDirective,
+): Promise<void> {
+  await writeFile(
+    filePath,
+    `${JSON.stringify({
+      status: directive.status,
+      summary: directive.summary ?? null,
+      evidence: directive.evidence,
+      followup: directive.followup,
+      userFacingText: directive.userFacingText,
+    }, null, 2)}\n`,
+    'utf8',
+  );
+}
+
+function canonicalizeTacticalReviewFindings(
+  findings: TacticalReviewFinding[],
+): {
+  findings: TacticalReviewFinding[];
+  duplicateIds: string[];
+} {
+  const canonicalFindings: TacticalReviewFinding[] = [];
+  const seen = new Set<string>();
+  const duplicateIds = new Set<string>();
+
+  for (const finding of findings) {
+    if (seen.has(finding.id)) {
+      duplicateIds.add(finding.id);
+      continue;
+    }
+    seen.add(finding.id);
+    canonicalFindings.push(finding);
+  }
+
+  return {
+    findings: canonicalFindings,
+    duplicateIds: Array.from(duplicateIds),
+  };
+}
+
+function buildTacticalChildResultLedger(
+  fanoutSchedulerPlan: KodaXFanoutSchedulerPlan,
+  childContextBundles: KodaXChildContextBundle[],
+  childResults: KodaXChildAgentResult[],
+  parentReductionContract: KodaXParentReductionContract,
+): TacticalChildResultLedger {
+  return {
+    generatedAt: new Date().toISOString(),
+    fanoutClass: fanoutSchedulerPlan.fanoutClass,
+    reductionStrategy: parentReductionContract.strategy,
+    branches: fanoutSchedulerPlan.branches,
+    bundles: childContextBundles,
+    childResults,
+  };
+}
+
+function renderTacticalChildResultLedgerMarkdown(
+  ledger: TacticalChildResultLedger,
+): string {
+  return [
+    '# Tactical Child Result Ledger',
+    '',
+    `- Fan-out class: ${ledger.fanoutClass}`,
+    `- Reduction strategy: ${ledger.reductionStrategy}`,
+    '',
+    '## Branches',
+    ...ledger.branches.map((branch) => (
+      [
+        `- ${branch.bundleId}: ${branch.status}`,
+        branch.workerId ? `  - worker: ${branch.workerId}` : undefined,
+        branch.childId ? `  - child: ${branch.childId}` : undefined,
+        branch.reason ? `  - reason: ${branch.reason}` : undefined,
+      ].filter((line): line is string => Boolean(line)).join('\n')
+    )),
+    '',
+    '## Child Results',
+    ...(ledger.childResults.length > 0
+      ? ledger.childResults.map((result) => (
+          [
+            `- ${result.childId}: ${result.disposition}`,
+            `  - status: ${result.status}`,
+            `  - summary: ${result.summary}`,
+            result.evidenceRefs.length > 0 ? `  - evidence: ${result.evidenceRefs.join(', ')}` : undefined,
+            result.contradictions.length > 0 ? `  - contradictions: ${result.contradictions.join(' | ')}` : undefined,
+          ].filter((line): line is string => Boolean(line)).join('\n')
+        ))
+      : ['- No child results recorded yet.']),
+  ].join('\n');
+}
+
+async function writeTacticalChildResultLedger(
+  workspaceDir: string,
+  fanoutSchedulerPlan: KodaXFanoutSchedulerPlan,
+  childContextBundles: KodaXChildContextBundle[],
+  childResults: KodaXChildAgentResult[],
+  parentReductionContract: KodaXParentReductionContract,
+  options?: {
+    includeMarkdown?: boolean;
+  },
+): Promise<KodaXTaskEvidenceArtifact[]> {
+  const ledger = buildTacticalChildResultLedger(
+    fanoutSchedulerPlan,
+    childContextBundles,
+    childResults,
+    parentReductionContract,
+  );
+  const jsonPath = path.join(workspaceDir, TACTICAL_CHILD_LEDGER_JSON);
+  await writeFile(jsonPath, `${JSON.stringify(ledger, null, 2)}\n`, 'utf8');
+  const artifacts: KodaXTaskEvidenceArtifact[] = [
+    {
+      kind: 'json',
+      path: jsonPath,
+      description: 'Authoritative child result ledger for AMA tactical fan-out.',
+    },
+  ];
+  if (options?.includeMarkdown !== false) {
+    const markdownPath = path.join(workspaceDir, TACTICAL_CHILD_LEDGER_MARKDOWN);
+    await writeFile(markdownPath, `${renderTacticalChildResultLedgerMarkdown(ledger).trimEnd()}\n`, 'utf8');
+    artifacts.push({
+      kind: 'markdown',
+      path: markdownPath,
+      description: 'Human-readable child result ledger summary.',
+    });
+  }
+  return artifacts;
+}
+
+function buildTacticalReviewReducerPrompt(
+  originalTask: string,
+  findings: TacticalReviewFinding[],
+  childResultLedgerPath: string,
+): string {
+  return [
+    'You are the Tactical Review Reducer for a KodaX AMA task.',
+    `[Task] ${originalTask}`,
+    `Candidate findings under validation: ${findings.map((finding) => finding.id).join(', ')}`,
+    `Authoritative child-result ledger: ${childResultLedgerPath}`,
+    'Read the child-result ledger first. Use dependency handoff only to locate supporting artifacts.',
+    'Do not treat raw child output excerpts as authoritative. Only keep findings that survived validation in the ledger with concrete evidence.',
+    'Do not describe yourself as verifying or judging other roles. Return the final user-facing review directly.',
+    [
+      `Append a final fenced block named \`\`\`${MANAGED_TASK_VERDICT_BLOCK}\`\`\` with this exact shape:`,
+      'status: <accept|revise|blocked>',
+      'reason: <one-line reason>',
+      'user_answer:',
+      '<full final user-facing review>',
+      'followup:',
+      '- <optional follow-up or "none">',
+    ].join('\n'),
+  ].join('\n\n');
+}
+
+async function runTacticalReviewScanner(
+  options: KodaXOptions,
+  task: KodaXManagedTask,
+  worker: ManagedTaskWorkerSpec,
+  routingPromptOverlay: string | undefined,
+  qualityAssuranceMode: ManagedTaskQualityAssuranceMode,
+  sessionStorage: KodaXSessionStorage | undefined,
+  controller: ManagedTaskBudgetController,
+): Promise<{ result: KodaXResult; directive?: TacticalReviewFindingsDirective; artifactPath?: string }> {
+  const preparedOptions = buildWorkerRunOptions(
+    options,
+    task,
+    worker,
+    'review-reducer',
+    routingPromptOverlay,
+    qualityAssuranceMode,
+    sessionStorage,
+    'reset-handoff',
+    createBudgetSnapshot(controller, task.contract.harnessProfile, 1, 'generator', worker.id),
+    controller,
+  );
+  const result = await runDirectKodaX(preparedOptions, worker.prompt);
+  const text = extractMessageText(result) || result.lastText;
+  const directive = parseTacticalReviewFindingsDirective(text);
+  let artifactPath: string | undefined;
+  if (directive) {
+    artifactPath = path.join(task.evidence.workspaceDir, 'review-findings.json');
+    await writeFile(
+      artifactPath,
+      `${JSON.stringify(directive, null, 2)}\n`,
+      'utf8',
+    );
+  }
+  return { result, directive, artifactPath };
+}
+
+async function runTacticalReviewFlow(
+  managedOptions: KodaXOptions,
+  originalTask: string,
+  plan: ReasoningPlan,
+  scoutExecution: { result: KodaXResult; directive: ManagedTaskScoutDirective },
+  rawRoutingDecision: KodaXTaskRoutingDecision,
+  finalRoutingDecision: KodaXTaskRoutingDecision,
+  routingOverrideReason: string | undefined,
+  skillMap: KodaXSkillMap | undefined,
+  agentMode: KodaXAgentMode,
+  scoutBudgetController: ManagedTaskBudgetController,
+): Promise<KodaXResult> {
+  const shape = createTacticalReviewBaseShape(
+    managedOptions,
+    originalTask,
+    plan,
+    {
+      originalTask,
+      skillInvocation: managedOptions.context?.skillInvocation,
+      skillMap: skillMap ?? undefined,
+    },
+  );
+  const budgetController = createManagedBudgetController(managedOptions, plan, agentMode);
+  budgetController.spentBudget = Math.max(budgetController.spentBudget, scoutBudgetController.spentBudget);
+  const sessionStorage = new ManagedWorkerSessionStorage();
+  await mkdir(shape.workspaceDir, { recursive: true });
+  const skillArtifacts = await writeManagedSkillArtifacts(
+    shape.workspaceDir,
+    managedOptions.context?.skillInvocation,
+    skillMap ?? undefined,
+  );
+  shape.task = {
+    ...shape.task,
+    runtime: {
+      ...applyManagedBudgetRuntimeState(shape.task.runtime, budgetController),
+      budget: createBudgetSnapshot(budgetController, shape.task.contract.harnessProfile, 1, 'generator', 'review-scan'),
+      rawRoutingDecision,
+      finalRoutingDecision,
+      routingOverrideReason,
+      qualityAssuranceMode: shape.qualityAssuranceMode,
+      scoutDecision: {
+        summary: scoutExecution.directive.summary ?? 'Scout completed.',
+        recommendedHarness: finalRoutingDecision.harnessProfile,
+        readyForUpgrade: false,
+        scope: scoutExecution.directive.scope,
+        requiredEvidence: scoutExecution.directive.requiredEvidence,
+        reviewFilesOrAreas: scoutExecution.directive.reviewFilesOrAreas,
+        evidenceAcquisitionMode: scoutExecution.directive.evidenceAcquisitionMode,
+        skillSummary: scoutExecution.directive.skillMap?.skillSummary,
+        executionObligations: scoutExecution.directive.skillMap?.executionObligations,
+        verificationObligations: scoutExecution.directive.skillMap?.verificationObligations,
+        ambiguities: scoutExecution.directive.skillMap?.ambiguities,
+        projectionConfidence: scoutExecution.directive.skillMap?.projectionConfidence,
+      },
+      skillMap: skillMap ?? undefined,
+      evidenceAcquisitionMode: scoutExecution.directive.evidenceAcquisitionMode ?? 'overview',
+      reviewFilesOrAreas: scoutExecution.directive.reviewFilesOrAreas,
+    },
+    evidence: {
+      ...shape.task.evidence,
+      artifacts: mergeEvidenceArtifacts(shape.task.evidence.artifacts, skillArtifacts),
+      entries: [
+        ...shape.task.evidence.entries,
+        {
+          assignmentId: 'scout',
+          title: 'Scout',
+          role: 'scout',
+          round: 0,
+          status: scoutExecution.result.success ? 'completed' : 'failed',
+          summary: scoutExecution.directive.summary,
+          output: scoutExecution.directive.userFacingText || extractMessageText(scoutExecution.result),
+          sessionId: scoutExecution.result.sessionId,
+          signal: scoutExecution.result.signal,
+          signalReason: scoutExecution.result.signalReason,
+        },
+      ],
+    },
+  };
+
+  const scannerToolPolicy = buildManagedWorkerToolPolicy(
+    'generator',
+    shape.task.contract.verification,
+    'H0_DIRECT',
+    'read-only',
+    managedOptions.context?.repoIntelligenceMode,
+  );
+  const scannerWorker: ManagedTaskWorkerSpec = {
+    id: 'review-scan',
+    role: 'generator',
+    title: 'Review Scanner',
+    agent: buildManagedWorkerAgent('generator', 'review-scan'),
+    toolPolicy: scannerToolPolicy,
+    terminalAuthority: false,
+    prompt: buildTacticalReviewScannerPrompt(
+      originalTask,
+      plan,
+      scoutExecution.directive,
+    ),
+    metadata: {
+      role: 'generator',
+      agent: buildManagedWorkerAgent('generator', 'review-scan'),
+      tacticalChild: false,
+    },
+  };
+  scannerWorker.beforeToolExecute = createToolPolicyHook(scannerWorker);
+
+  const scannerExecution = await runTacticalReviewScanner(
+    managedOptions,
+    shape.task,
+    scannerWorker,
+    shape.routingPromptOverlay,
+    shape.qualityAssuranceMode,
+    sessionStorage,
+    budgetController,
+  );
+  const scannerDirective = scannerExecution.directive;
+  const scannerOutput = sanitizeManagedUserFacingText(
+    extractMessageText(scannerExecution.result) || scannerExecution.result.lastText,
+  );
+
+  shape.task = {
+    ...shape.task,
+    evidence: {
+      ...shape.task.evidence,
+      artifacts: mergeEvidenceArtifacts(
+        shape.task.evidence.artifacts,
+        scannerExecution.artifactPath
+          ? [{
+              kind: 'json',
+              path: scannerExecution.artifactPath,
+              description: 'Tactical review candidate findings.',
+            }]
+          : [],
+      ),
+      entries: [
+        ...shape.task.evidence.entries,
+        {
+          assignmentId: 'review-scan',
+          title: 'Review Scanner',
+          role: 'generator',
+          round: 1,
+          status: scannerExecution.result.success ? 'completed' : 'failed',
+          summary: scannerDirective?.summary ?? truncateText(scannerOutput || 'Review scanner completed.'),
+          output: scannerOutput,
+          sessionId: scannerExecution.result.sessionId,
+          signal: scannerExecution.result.signal,
+          signalReason: scannerExecution.result.signalReason,
+        },
+      ],
+    },
+  };
+
+  const scannerFindings = scannerDirective?.findings ?? [];
+  if (scannerFindings.length === 0) {
+    const completionStatus: KodaXTaskStatus = scannerExecution.result.success ? 'completed' : 'failed';
+    const completedTask: KodaXManagedTask = {
+      ...shape.task,
+      contract: {
+        ...shape.task.contract,
+        status: completionStatus,
+        updatedAt: new Date().toISOString(),
+      },
+      verdict: {
+        ...shape.task.verdict,
+        status: completionStatus,
+        summary: scannerDirective?.summary ?? (scannerOutput || 'Review scanner finished without promotable findings.'),
+      },
+      runtime: {
+        ...shape.task.runtime,
+        scorecard: createVerificationScorecard(shape.task, undefined),
+      },
+    };
+    await writeManagedTaskArtifacts(
+      shape.workspaceDir,
+      completedTask,
+      {
+        success: scannerExecution.result.success,
+        lastText: scannerOutput || scannerExecution.result.lastText,
+        sessionId: scannerExecution.result.sessionId,
+        signal: scannerExecution.result.signal,
+        signalReason: scannerExecution.result.signalReason,
+      },
+      undefined,
+    );
+    return mergeManagedTaskIntoResult(
+      {
+        ...scannerExecution.result,
+        lastText: scannerOutput || scannerExecution.result.lastText,
+        routingDecision: finalRoutingDecision,
+      },
+      completedTask,
+    );
+  }
+
+  const {
+    findings,
+    duplicateIds: duplicateFindingIds,
+  } = canonicalizeTacticalReviewFindings(scannerFindings);
+  const duplicateFindingNote = duplicateFindingIds.length > 0
+    ? `Canonicalized repeated scanner finding IDs: ${duplicateFindingIds.join(', ')}.`
+    : undefined;
+  if (duplicateFindingNote) {
+    shape.task = {
+      ...shape.task,
+      evidence: {
+        ...shape.task.evidence,
+        entries: shape.task.evidence.entries.map((entry) => (
+          entry.assignmentId === 'review-scan'
+            ? {
+              ...entry,
+              summary: `${entry.summary ?? 'Review scanner completed.'} ${duplicateFindingNote}`.trim(),
+              output: [entry.output, duplicateFindingNote].filter(Boolean).join('\n\n'),
+            }
+            : entry
+        )),
+      },
+    };
+  }
+
+  const childContextBundles: KodaXChildContextBundle[] = findings.map((finding) => ({
+    id: finding.id,
+    fanoutClass: 'finding-validation',
+    objective: finding.claim,
+    scopeSummary: finding.title,
+    evidenceRefs: finding.evidence,
+    constraints: [
+      'Validate only this candidate finding.',
+      'Do not broad-scan the repo.',
+    ],
+    readOnly: true,
+  }));
+  const parentReductionContract = shape.task.runtime?.parentReductionContract
+    ?? createParentReductionContract(plan.amaControllerDecision);
+  const schedulerInput = createFanoutSchedulerInput(
+    plan.amaControllerDecision,
+    childContextBundles,
+    parentReductionContract,
+  );
+  let fanoutSchedulerPlan: KodaXFanoutSchedulerPlan = schedulerInput
+    ? buildFanoutSchedulerPlan(schedulerInput)
+    : {
+      enabled: false,
+      profile: plan.amaControllerDecision.profile,
+      fanoutClass: 'finding-validation',
+      branches: childContextBundles.map((bundle) => ({
+        bundleId: bundle.id,
+        status: 'deferred' as const,
+        reason: 'AMA controller did not admit fan-out for this run.',
+      })),
+      scheduledBundleIds: [],
+      deferredBundleIds: childContextBundles.map((bundle) => bundle.id),
+      maxParallel: 1,
+      mergeStrategy: parentReductionContract.strategy,
+      cancellationPolicy: 'none',
+      reason: 'AMA controller did not admit fan-out for this run.',
+      };
+  let childLedgerArtifacts: KodaXTaskEvidenceArtifact[] = [];
+  const findingsById = new Map(findings.map((finding) => [finding.id, finding] as const));
+  const scheduledFindings = fanoutSchedulerPlan.scheduledBundleIds
+    .map((bundleId) => findingsById.get(bundleId))
+    .filter((finding): finding is TacticalReviewFinding => Boolean(finding));
+  shape.task = {
+    ...shape.task,
+    runtime: {
+      ...shape.task.runtime,
+      childContextBundles,
+      parentReductionContract,
+      fanoutSchedulerPlan,
+    },
+  };
+
+  const validatorToolPolicy = buildManagedWorkerToolPolicy(
+    'generator',
+    shape.task.contract.verification,
+    'H0_DIRECT',
+    'read-only',
+    managedOptions.context?.repoIntelligenceMode,
+  );
+  const reducerToolPolicy = buildManagedWorkerToolPolicy(
+    'evaluator',
+    shape.task.contract.verification,
+    'H0_DIRECT',
+    'read-only',
+    managedOptions.context?.repoIntelligenceMode,
+  );
+  const validators: ManagedTaskWorkerSpec[] = scheduledFindings.map((finding, index) => {
+    const worker: ManagedTaskWorkerSpec = {
+      id: `validator-${String(index + 1).padStart(2, '0')}`,
+      role: 'generator',
+      title: `Finding Validator ${index + 1}: ${truncateText(finding.title, 60)}`,
+      execution: 'parallel',
+      agent: buildManagedWorkerAgent('generator', finding.id),
+      toolPolicy: validatorToolPolicy,
+      terminalAuthority: false,
+      metadata: {
+        role: 'generator',
+        fanoutClass: 'finding-validation',
+        findingId: finding.id,
+      },
+      prompt: buildTacticalReviewValidatorPrompt(
+        originalTask,
+        finding,
+        scoutExecution.directive,
+      ),
+    };
+    worker.beforeToolExecute = createToolPolicyHook(worker);
+    fanoutSchedulerPlan = applyFanoutBranchTransition(fanoutSchedulerPlan, {
+      type: 'assign',
+      bundleId: finding.id,
+      workerId: worker.id,
+    });
+    return worker;
+  });
+  const reducer: ManagedTaskWorkerSpec = {
+    id: 'review-reducer',
+    role: 'evaluator',
+    title: 'Review Reducer',
+    dependsOn: validators.map((worker) => worker.id),
+    agent: buildManagedWorkerAgent('evaluator', 'review-reducer'),
+    toolPolicy: reducerToolPolicy,
+    terminalAuthority: true,
+    metadata: {
+      role: 'evaluator',
+      reductionStrategy: 'evaluator-assisted',
+    },
+    prompt: buildTacticalReviewReducerPrompt(
+      originalTask,
+      scheduledFindings,
+      path.join(shape.workspaceDir, TACTICAL_CHILD_LEDGER_JSON),
+    ),
+  };
+  reducer.beforeToolExecute = createToolPolicyHook(reducer);
+
+  shape.workers = [...validators, reducer];
+  shape.terminalWorkerId = reducer.id;
+  const roleAssignments: KodaXManagedTask['roleAssignments'] = [
+    ...shape.task.roleAssignments.map((assignment) => (
+      assignment.id === 'review-scan'
+        ? {
+          ...assignment,
+          status: 'completed' as const,
+          summary: [
+            scannerDirective?.summary ?? truncateText(scannerOutput || 'Review scanner completed.'),
+            duplicateFindingNote,
+          ].filter(Boolean).join(' '),
+        }
+        : assignment
+    )),
+    ...shape.workers.map((worker) => ({
+      id: worker.id,
+      role: worker.role,
+      title: worker.title,
+      dependsOn: worker.dependsOn ?? [],
+      status: 'planned' as const,
+      agent: worker.agent,
+      toolPolicy: worker.toolPolicy,
+    })),
+  ];
+  shape.task = {
+    ...shape.task,
+    runtime: {
+      ...shape.task.runtime,
+      fanoutSchedulerPlan,
+    },
+    roleAssignments,
+    workItems: [
+      ...shape.task.workItems,
+      ...shape.workers.map((worker) => ({
+        id: worker.id,
+        assignmentId: worker.id,
+        description: worker.title,
+        execution: worker.execution ?? 'serial',
+      })),
+    ],
+    verdict: {
+      ...shape.task.verdict,
+      decidedByAssignmentId: reducer.id,
+      summary: 'AMA Tactical review is validating candidate findings in parallel.',
+    },
+  };
+
+  const workerResults = new Map<string, KodaXResult>();
+  const childResults: KodaXChildAgentResult[] = [];
+  const childArtifacts: KodaXTaskEvidenceArtifact[] = [];
+  let directive: ManagedTaskVerdictDirective | undefined;
+  const tacticalRunner = createKodaXTaskRunner<ManagedTaskWorkerSpec>({
+    baseOptions: managedOptions,
+    runAgent: runDirectKodaX,
+    createOptions: (worker, _context, defaultOptions) => buildWorkerRunOptions(
+      defaultOptions,
+      shape.task,
+      worker,
+      shape.terminalWorkerId,
+      shape.routingPromptOverlay,
+      shape.qualityAssuranceMode,
+      sessionStorage,
+      resolveManagedMemoryStrategy(managedOptions, plan, worker.role, 1),
+      createBudgetSnapshot(budgetController, shape.task.contract.harnessProfile, 1, worker.role, worker.id),
+      budgetController,
+    ),
+    runTask: async (worker, _context, preparedOptions, promptText, executeDefault) => {
+      if (worker.role === 'evaluator') {
+        childLedgerArtifacts = await writeTacticalChildResultLedger(
+          shape.workspaceDir,
+          fanoutSchedulerPlan,
+          childContextBundles,
+          childResults,
+          parentReductionContract,
+          { includeMarkdown: false },
+        );
+      }
+      const execution = await runManagedWorkerTask(
+        worker,
+        preparedOptions,
+        promptText,
+        executeDefault,
+        budgetController,
+      );
+      return execution.result;
+    },
+    onResult: async (worker, context, result) => {
+      const sanitized = worker.role === 'evaluator'
+        ? sanitizeManagedWorkerResult(result, { enforceVerdictBlock: true })
+        : sanitizeHandoffResult(result, worker.title);
+      workerResults.set(worker.id, sanitized.result);
+      if (worker.role === 'evaluator') {
+        directive = sanitized.directive as ManagedTaskVerdictDirective | undefined;
+      } else {
+        const artifactPaths = buildTacticalChildArtifactPaths(context.taskDir);
+        const handoffDirective = sanitized.directive as ManagedTaskHandoffDirective | undefined;
+        if (handoffDirective) {
+          await writeTacticalChildHandoffArtifact(artifactPaths.handoffPath, handoffDirective);
+          childArtifacts.push({
+            kind: 'json',
+            path: artifactPaths.handoffPath,
+            description: `Dependency handoff for ${String(worker.metadata?.findingId ?? worker.id)}`,
+          });
+        }
+        const parsedChildResult = parseChildAgentResult(extractMessageText(result) || result.lastText);
+        const normalizedChildResult = normalizeTacticalChildResult(
+          worker,
+          handoffDirective,
+          sanitized.result,
+          parsedChildResult,
+          artifactPaths,
+        );
+        await writeFile(
+          artifactPaths.childResultPath,
+          `${JSON.stringify(normalizedChildResult, null, 2)}\n`,
+          'utf8',
+        );
+        upsertChildAgentResult(childResults, normalizedChildResult);
+        fanoutSchedulerPlan = applyFanoutBranchTransition(fanoutSchedulerPlan, {
+          type: 'complete',
+          bundleId: String(worker.metadata?.findingId ?? worker.id),
+          childId: normalizedChildResult.childId,
+        });
+        childArtifacts.push({
+          kind: 'json',
+          path: artifactPaths.childResultPath,
+          description: `Child-agent result for ${normalizedChildResult.childId}`,
+        });
+      }
+      return sanitized.result;
+    },
+  });
+
+  const roundWorkspaceDir = path.join(shape.workspaceDir, 'rounds', 'round-01');
+  const orchestrationResult = await runOrchestration<ManagedTaskWorkerSpec, string>({
+    workspaceDir: roundWorkspaceDir,
+    runId: `${shape.task.contract.taskId}-tactical-review`,
+    maxParallel: fanoutSchedulerPlan.maxParallel,
+    tasks: shape.workers,
+    runner: tacticalRunner,
+    events: createTacticalFanoutStatusEvents(
+      managedOptions.events,
+      agentMode,
+      shape.task.contract.harnessProfile,
+      () => fanoutSchedulerPlan,
+    ),
+  });
+
+  let managedTask = applyOrchestrationResultToTask(
+    shape.task,
+    shape.terminalWorkerId,
+    orchestrationResult,
+    workerResults,
+    1,
+    roundWorkspaceDir,
+  );
+  childLedgerArtifacts = await writeTacticalChildResultLedger(
+    shape.workspaceDir,
+    fanoutSchedulerPlan,
+    childContextBundles,
+    childResults,
+    parentReductionContract,
+  );
+  managedTask = {
+    ...managedTask,
+    evidence: {
+      ...managedTask.evidence,
+      artifacts: mergeEvidenceArtifacts(
+        managedTask.evidence.artifacts,
+        childArtifacts,
+        childLedgerArtifacts,
+      ),
+    },
+    runtime: {
+      ...managedTask.runtime,
+      childContextBundles,
+      childAgentResults: childResults,
+      fanoutSchedulerPlan,
+      scorecard: createVerificationScorecard(managedTask, directive),
+    },
+  };
+  directive = applyTacticalParentReduction(
+    directive,
+    fanoutSchedulerPlan,
+    childContextBundles,
+    childResults,
+  );
+  managedTask = applyManagedTaskDirective(managedTask, directive);
+  const terminalResult = workerResults.get(shape.terminalWorkerId);
+  const preferredPublicText = directive?.userAnswer?.trim() || directive?.userFacingText;
+  if (terminalResult && directive && preferredPublicText) {
+    workerResults.set(shape.terminalWorkerId, {
+      ...terminalResult,
+      success: directive.status === 'accept',
+      lastText: preferredPublicText,
+      signal: directive.status === 'accept' ? terminalResult.signal : 'BLOCKED',
+      signalReason: directive.status === 'accept'
+        ? terminalResult.signalReason
+        : directive.reason ?? terminalResult.signalReason,
+      messages: replaceLastAssistantMessage(terminalResult.messages, preferredPublicText),
+    });
+  }
+
+  const result = buildFallbackManagedResult(
+    managedTask,
+    workerResults,
+    shape.terminalWorkerId,
+  );
+  await writeManagedTaskArtifacts(
+    shape.workspaceDir,
+    managedTask,
+    {
+      success: result.success,
+      lastText: result.lastText,
+      sessionId: result.sessionId,
+      signal: result.signal,
+      signalReason: result.signalReason,
+    },
+    directive,
+  );
+  managedOptions.events?.onManagedTaskStatus?.({
+    agentMode,
+    harnessProfile: managedTask.contract.harnessProfile,
+    activeWorkerId: shape.terminalWorkerId,
+    activeWorkerTitle: reducer.title,
+    phase: 'completed',
+    note: managedTask.verdict.summary,
+  });
+  return {
+    ...result,
+    routingDecision: finalRoutingDecision,
   };
 }
 
@@ -3580,6 +4703,324 @@ function parseManagedTaskVerdictDirective(text: string): ManagedTaskVerdictDirec
     followups: followups.filter(Boolean),
     userFacingText: visibleText,
     userAnswer,
+  };
+}
+
+function parseJsonFencedBlock<T>(text: string, blockName: string): T | undefined {
+  const match = text.match(new RegExp(String.raw`(?:\r?\n)?\`\`\`${blockName}\s*([\s\S]*?)\`\`\`\s*$`, 'i'));
+  if (!match) {
+    return undefined;
+  }
+
+  const body = match[1]?.trim();
+  if (!body) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(body) as T;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseTacticalReviewFindingsDirective(
+  text: string,
+): TacticalReviewFindingsDirective | undefined {
+  const directive = parseJsonFencedBlock<{
+    summary?: string;
+    findings?: Array<{
+      id?: string;
+      title?: string;
+      claim?: string;
+      priority?: 'high' | 'medium' | 'low';
+      files?: string[];
+      evidence?: string[];
+    }>;
+  }>(text, TACTICAL_REVIEW_FINDINGS_BLOCK);
+  if (!directive) {
+    return undefined;
+  }
+
+  const findings = (directive.findings ?? [])
+    .map((finding, index): TacticalReviewFinding | undefined => {
+      const title = finding.title?.trim();
+      const claim = finding.claim?.trim();
+      if (!title || !claim) {
+        return undefined;
+      }
+      return {
+        id: finding.id?.trim() || `finding-${index + 1}`,
+        title,
+        claim,
+        priority: finding.priority ?? 'medium',
+        files: finding.files?.map((item) => item.trim()).filter(Boolean) ?? [],
+        evidence: finding.evidence?.map((item) => item.trim()).filter(Boolean) ?? [],
+      };
+    })
+    .filter((finding): finding is TacticalReviewFinding => Boolean(finding));
+  if (findings.length === 0) {
+    return undefined;
+  }
+
+  const visibleMatch = text.match(new RegExp(String.raw`([\s\S]*?)\r?\n?\`\`\`${TACTICAL_REVIEW_FINDINGS_BLOCK}\s*[\s\S]*\`\`\`\s*$`, 'i'));
+  const visibleText = sanitizeManagedUserFacingText((visibleMatch?.[1] ?? '').trim());
+
+  return {
+    summary: directive.summary?.trim() || 'Review scanner identified candidate findings for validation.',
+    findings,
+    userFacingText: visibleText,
+  };
+}
+
+function parseChildAgentResult(text: string): KodaXChildAgentResult | undefined {
+  const parsed = parseJsonFencedBlock<KodaXChildAgentResult>(text, TACTICAL_CHILD_RESULT_BLOCK);
+  if (!parsed) {
+    return undefined;
+  }
+  if (!parsed.childId || !parsed.fanoutClass || !parsed.status || !parsed.disposition || !parsed.summary) {
+    return undefined;
+  }
+  return {
+    ...parsed,
+    evidenceRefs: parsed.evidenceRefs ?? [],
+    contradictions: parsed.contradictions ?? [],
+    artifactPaths: parsed.artifactPaths ?? [],
+  };
+}
+
+function hasRequiredTacticalChildArtifacts(
+  artifactPaths: string[],
+  requiredArtifacts: string[],
+): boolean {
+  if (requiredArtifacts.length === 0) {
+    return true;
+  }
+  const normalizedNames = artifactPaths.map((artifactPath) => path.basename(artifactPath).toLowerCase());
+  return requiredArtifacts.every((artifactName) => normalizedNames.includes(artifactName.toLowerCase()));
+}
+
+function createFailClosedChildAgentResult(
+  worker: ManagedTaskWorkerSpec,
+  result: KodaXResult,
+  options?: {
+    summary?: string;
+    contradictions?: string[];
+    artifactPaths?: string[];
+    childId?: string;
+    fanoutClass?: KodaXAmaFanoutClass;
+    status?: KodaXChildAgentResult['status'];
+  },
+): KodaXChildAgentResult {
+  const childId = options?.childId ?? String(worker.metadata?.findingId ?? worker.id);
+  const fanoutClass = options?.fanoutClass ?? (
+    worker.metadata?.fanoutClass === 'finding-validation'
+    || worker.metadata?.fanoutClass === 'evidence-scan'
+    || worker.metadata?.fanoutClass === 'module-triage'
+    || worker.metadata?.fanoutClass === 'hypothesis-check'
+      ? worker.metadata.fanoutClass
+      : 'finding-validation'
+  );
+  const summary = options?.summary ?? (
+    result.success
+      ? `Structured ${TACTICAL_CHILD_RESULT_BLOCK} output was missing or malformed; treat ${childId} as unresolved.`
+      : result.signalReason?.trim()
+        || `Validator did not finish cleanly for ${childId}; treat it as unresolved.`
+  );
+
+  return {
+    childId,
+    fanoutClass,
+    status: options?.status ?? (
+      result.success
+        ? 'failed'
+        : result.signal === 'BLOCKED'
+          ? 'blocked'
+          : 'failed'
+    ),
+    disposition: 'needs-more-evidence',
+    summary,
+    evidenceRefs: [],
+    contradictions: options?.contradictions ?? [
+      'Missing or malformed structured child result.',
+    ],
+    artifactPaths: options?.artifactPaths ?? [],
+    sessionId: result.sessionId,
+  };
+}
+
+function normalizeTacticalChildResult(
+  worker: ManagedTaskWorkerSpec,
+  handoffDirective: ManagedTaskHandoffDirective | undefined,
+  result: KodaXResult,
+  parsedChildResult: KodaXChildAgentResult | undefined,
+  artifactPaths: {
+    childResultPath: string;
+    handoffPath: string;
+  },
+): KodaXChildAgentResult {
+  const fallbackChildId = String(worker.metadata?.findingId ?? worker.id);
+  const fallbackFanoutClass: KodaXAmaFanoutClass = worker.metadata?.fanoutClass === 'finding-validation'
+    || worker.metadata?.fanoutClass === 'evidence-scan'
+    || worker.metadata?.fanoutClass === 'module-triage'
+    || worker.metadata?.fanoutClass === 'hypothesis-check'
+      ? worker.metadata.fanoutClass
+      : 'finding-validation';
+  const normalizedArtifactPaths = Array.from(new Set([
+    ...(parsedChildResult?.artifactPaths ?? []),
+    artifactPaths.childResultPath,
+    ...(handoffDirective ? [artifactPaths.handoffPath] : []),
+  ]));
+  const childId = parsedChildResult?.childId || fallbackChildId;
+  const fanoutClass = parsedChildResult?.fanoutClass || fallbackFanoutClass;
+  const requiredArtifacts = [
+    TACTICAL_CHILD_RESULT_ARTIFACT_JSON,
+    TACTICAL_CHILD_HANDOFF_JSON,
+  ];
+
+  if (!handoffDirective) {
+    return createFailClosedChildAgentResult(worker, result, {
+      childId,
+      fanoutClass,
+      status: 'blocked',
+      summary: `Validator omitted required ${MANAGED_TASK_HANDOFF_BLOCK}; treat ${childId} as unresolved.`,
+      contradictions: ['Missing validator handoff block.'],
+      artifactPaths: normalizedArtifactPaths,
+    });
+  }
+
+  if (handoffDirective.status !== 'ready') {
+    return createFailClosedChildAgentResult(worker, result, {
+      childId,
+      fanoutClass,
+      status: handoffDirective.status === 'blocked' ? 'blocked' : 'failed',
+      summary: `Validator handoff reported ${handoffDirective.status}; treat ${childId} as unresolved.`,
+      contradictions: [`Validator handoff status was ${handoffDirective.status}.`],
+      artifactPaths: normalizedArtifactPaths,
+    });
+  }
+
+  if (!parsedChildResult) {
+    return createFailClosedChildAgentResult(worker, result, {
+      childId,
+      fanoutClass,
+      status: 'failed',
+      summary: `Structured ${TACTICAL_CHILD_RESULT_BLOCK} output was missing or malformed; treat ${childId} as unresolved.`,
+      contradictions: ['Missing or malformed structured child result.'],
+      artifactPaths: normalizedArtifactPaths,
+    });
+  }
+
+  if (parsedChildResult.status !== 'completed') {
+    return createFailClosedChildAgentResult(worker, result, {
+      childId,
+      fanoutClass,
+      status: parsedChildResult.status === 'blocked' ? 'blocked' : 'failed',
+      summary: `Structured child result for ${childId} reported status=${parsedChildResult.status}; treat it as unresolved.`,
+      contradictions: [`Structured child result status was ${parsedChildResult.status}.`],
+      artifactPaths: normalizedArtifactPaths,
+    });
+  }
+
+  if (!hasRequiredTacticalChildArtifacts(normalizedArtifactPaths, requiredArtifacts)) {
+    return createFailClosedChildAgentResult(worker, result, {
+      childId,
+      fanoutClass,
+      status: 'failed',
+      summary: `Required child artifacts were missing for ${childId}; treat it as unresolved.`,
+      contradictions: ['Required child artifacts were missing.'],
+      artifactPaths: normalizedArtifactPaths,
+    });
+  }
+
+  return {
+    ...parsedChildResult,
+    childId,
+    fanoutClass,
+    artifactPaths: normalizedArtifactPaths,
+    sessionId: parsedChildResult.sessionId ?? result.sessionId,
+  };
+}
+
+function upsertChildAgentResult(
+  childResults: KodaXChildAgentResult[],
+  childResult: KodaXChildAgentResult,
+): void {
+  const existingIndex = childResults.findIndex((candidate) => candidate.childId === childResult.childId);
+  if (existingIndex >= 0) {
+    childResults.splice(existingIndex, 1, childResult);
+    return;
+  }
+  childResults.push(childResult);
+}
+
+function renderFailClosedTacticalReviewAnswer(
+  childContextBundles: KodaXChildContextBundle[],
+  childResults: KodaXChildAgentResult[],
+  unresolvedBranches: KodaXFanoutBranchRecord[],
+): string {
+  const bundleTitleById = new Map(
+    childContextBundles.map((bundle) => [bundle.id, bundle.scopeSummary ?? bundle.objective] as const),
+  );
+  const validResults = childResults.filter((result) => result.disposition === 'valid');
+
+  return [
+    '## Review Status',
+    '',
+    'The review cannot be finalized yet because not every candidate finding has a trustworthy structured child result.',
+    '',
+    '## Unresolved Findings',
+    ...unresolvedBranches.map((branch) => `- ${bundleTitleById.get(branch.bundleId) ?? branch.bundleId}`),
+    '',
+    '## Confirmed Findings',
+    ...(validResults.length > 0
+      ? validResults.map((result) => `- ${result.summary}`)
+      : ['- No validator-backed findings are ready to publish yet.']),
+    '',
+    '## Next Step',
+    '',
+    '- Re-run validation for the unresolved findings before treating the review as complete.',
+  ].join('\n');
+}
+
+function applyTacticalParentReduction(
+  directive: ManagedTaskVerdictDirective | undefined,
+  fanoutSchedulerPlan: KodaXFanoutSchedulerPlan,
+  childContextBundles: KodaXChildContextBundle[],
+  childResults: KodaXChildAgentResult[],
+): ManagedTaskVerdictDirective | undefined {
+  const unresolvedBranches = fanoutSchedulerPlan.branches.filter((branch) => {
+    if (branch.status === 'deferred' || branch.status === 'cancelled') {
+      return true;
+    }
+    const childResult = childResults.find((candidate) => candidate.childId === (branch.childId ?? branch.bundleId));
+    if (!childResult) {
+      return branch.status === 'scheduled';
+    }
+    return childResult.status !== 'completed'
+      || childResult.disposition === 'needs-more-evidence';
+  });
+  if (unresolvedBranches.length === 0) {
+    return directive;
+  }
+
+  const reason = `Structured child validation remains incomplete for ${unresolvedBranches.map((branch) => branch.bundleId).join(', ')}.`;
+  const userAnswer = renderFailClosedTacticalReviewAnswer(
+    childContextBundles,
+    childResults,
+    unresolvedBranches,
+  );
+
+  return {
+    source: 'evaluator',
+    status: 'revise',
+    reason,
+    followups: [
+      'Re-run validation for every unresolved or deferred child finding before finalizing the review.',
+    ],
+    userFacingText: userAnswer,
+    userAnswer,
+    artifactPath: directive?.artifactPath,
   };
 }
 
@@ -4133,12 +5574,14 @@ function resolveManagedTaskRepoIntelligenceContext(
   return {
     executionCwd: options.context?.executionCwd?.trim() || undefined,
     gitRoot: options.context?.gitRoot?.trim() || undefined,
+    repoIntelligenceMode: options.context?.repoIntelligenceMode,
   };
 }
 
 async function captureManagedTaskRepoIntelligence(
   context: ManagedTaskRepoIntelligenceContext,
   workspaceDir: string,
+  options?: KodaXOptions,
 ): Promise<ManagedTaskRepoIntelligenceSnapshot> {
   const executionCwd = context.executionCwd;
   const gitRoot = context.gitRoot;
@@ -4150,6 +5593,10 @@ async function captureManagedTaskRepoIntelligence(
     executionCwd: executionCwd ?? gitRoot ?? process.cwd(),
     gitRoot: gitRoot ?? undefined,
   };
+  const autoRepoMode = resolveKodaXAutoRepoMode(context.repoIntelligenceMode);
+  if (autoRepoMode === 'off') {
+    return { artifacts: [] };
+  }
   const repoSnapshotDir = path.join(workspaceDir, 'repo-intelligence');
   await mkdir(repoSnapshotDir, { recursive: true });
 
@@ -4157,6 +5604,7 @@ async function captureManagedTaskRepoIntelligence(
   const summarySections: string[] = [];
 
   const activeModuleTargetPath = executionCwd ? '.' : undefined;
+  let preturnBundle: Awaited<ReturnType<typeof getRepoPreturnBundle>> | null = null;
 
   try {
     const overview = await getRepoOverview(repoContext, { refresh: false });
@@ -4190,11 +5638,40 @@ async function captureManagedTaskRepoIntelligence(
   }
 
   if (activeModuleTargetPath) {
-    try {
-      const moduleContext = await getModuleContext(repoContext, {
+    if (autoRepoMode === 'premium-native') {
+      preturnBundle = await getRepoPreturnBundle(repoContext, {
         targetPath: activeModuleTargetPath,
         refresh: false,
+        mode: autoRepoMode,
+      }).catch(() => null);
+      if (preturnBundle && options) {
+        emitManagedRepoIntelligenceTrace(
+          options.events,
+          options,
+          'preturn',
+          preturnBundle,
+          preturnBundle.summary,
+        );
+      }
+    }
+
+    try {
+      const moduleContext = preturnBundle?.moduleContext ?? await getModuleContext(repoContext, {
+        targetPath: activeModuleTargetPath,
+        refresh: false,
+        mode: autoRepoMode,
       });
+      if (options) {
+        const moduleId = (moduleContext as { module?: { moduleId?: string } })?.module?.moduleId
+          ?? activeModuleTargetPath;
+        emitManagedRepoIntelligenceTrace(
+          options.events,
+          options,
+          'module',
+          moduleContext,
+          `module=${moduleId}`,
+        );
+      }
       const moduleContextPath = path.join(repoSnapshotDir, 'active-module.json');
       await writeFile(moduleContextPath, `${JSON.stringify(moduleContext, null, 2)}\n`, 'utf8');
       artifacts.push({
@@ -4208,10 +5685,22 @@ async function captureManagedTaskRepoIntelligence(
     }
 
     try {
-      const impactEstimate = await getImpactEstimate(repoContext, {
+      const impactEstimate = preturnBundle?.impactEstimate ?? await getImpactEstimate(repoContext, {
         targetPath: activeModuleTargetPath,
         refresh: false,
+        mode: autoRepoMode,
       });
+      if (options) {
+        const impactTarget = (impactEstimate as { target?: { label?: string } })?.target?.label
+          ?? activeModuleTargetPath;
+        emitManagedRepoIntelligenceTrace(
+          options.events,
+          options,
+          'impact',
+          impactEstimate,
+          `target=${impactTarget}`,
+        );
+      }
       const impactEstimatePath = path.join(repoSnapshotDir, 'impact-estimate.json');
       await writeFile(impactEstimatePath, `${JSON.stringify(impactEstimate, null, 2)}\n`, 'utf8');
       artifacts.push({
@@ -4228,6 +5717,15 @@ async function captureManagedTaskRepoIntelligence(
   if (summarySections.length > 0) {
     const summaryPath = path.join(repoSnapshotDir, 'summary.md');
     await writeFile(summaryPath, `${summarySections.join('\n\n')}\n`, 'utf8');
+    if (options) {
+      emitManagedRepoIntelligenceTrace(
+        options.events,
+        options,
+        'task-snapshot',
+        preturnBundle?.moduleContext ?? preturnBundle?.impactEstimate ?? null,
+        `workspace_dir=${repoSnapshotDir}`,
+      );
+    }
     artifacts.unshift({
       kind: 'markdown',
       path: summaryPath,
@@ -4241,9 +5739,10 @@ async function captureManagedTaskRepoIntelligence(
 function scheduleManagedTaskRepoIntelligenceCapture(
   context: ManagedTaskRepoIntelligenceContext,
   workspaceDir: string,
+  options?: KodaXOptions,
 ): void {
   queueMicrotask(() => {
-    void captureManagedTaskRepoIntelligence(context, workspaceDir).catch((error) => {
+    void captureManagedTaskRepoIntelligence(context, workspaceDir, options).catch((error) => {
       debugLogRepoIntelligence('Background task-scoped repo intelligence capture failed.', error);
     });
   });
@@ -4256,6 +5755,7 @@ async function attachManagedTaskRepoIntelligence(
   const snapshot = await captureManagedTaskRepoIntelligence(
     resolveManagedTaskRepoIntelligenceContext(options),
     task.evidence.workspaceDir,
+    options,
   );
   if (snapshot.artifacts.length === 0) {
     return task;
@@ -4506,7 +6006,13 @@ async function runManagedScoutStage(
   plan: ReasoningPlan,
   controller: ManagedTaskBudgetController,
 ): Promise<{ result: KodaXResult; directive: ManagedTaskScoutDirective }> {
-  const toolPolicy = buildManagedWorkerToolPolicy('scout', options.context?.taskVerification, plan.decision.harnessProfile);
+  const toolPolicy = buildManagedWorkerToolPolicy(
+    'scout',
+    options.context?.taskVerification,
+    plan.decision.harnessProfile,
+    undefined,
+    options.context?.repoIntelligenceMode,
+  );
   const agent = buildManagedWorkerAgent('scout', 'scout');
   const originalTask = resolveManagedOriginalTask(options.context, prompt);
   const basePrompt = createRolePrompt(
@@ -5012,7 +6518,7 @@ function buildFallbackManagedResult(
   if (fallbackResult) {
     const finalText = applyDegradedContinueNote(
       task,
-      extractMessageText(fallbackResult) || fallbackResult.lastText || task.verdict.summary,
+      task.verdict.summary || extractMessageText(fallbackResult) || fallbackResult.lastText,
     );
     return mergeManagedTaskIntoResult(
       {
@@ -5426,6 +6932,50 @@ function createManagedOrchestrationEvents(
   };
 }
 
+function createTacticalFanoutStatusEvents(
+  baseEvents: KodaXEvents | undefined,
+  agentMode: KodaXAgentMode,
+  harnessProfile: KodaXTaskRoutingDecision['harnessProfile'],
+  getPlan: () => KodaXFanoutSchedulerPlan,
+): OrchestrationRunEvents<ManagedTaskWorkerSpec, string> | undefined {
+  if (!baseEvents?.onManagedTaskStatus) {
+    return undefined;
+  }
+
+  const buildStatus = (
+    task: ManagedTaskWorkerSpec,
+    note?: string,
+  ): KodaXManagedTaskStatusEvent => {
+    const childFanoutClass = task.metadata?.fanoutClass === 'finding-validation'
+      || task.metadata?.fanoutClass === 'evidence-scan'
+      || task.metadata?.fanoutClass === 'module-triage'
+      || task.metadata?.fanoutClass === 'hypothesis-check'
+      ? task.metadata.fanoutClass
+      : undefined;
+    return {
+      agentMode,
+      harnessProfile,
+      activeWorkerId: task.id,
+      activeWorkerTitle: task.title,
+      phase: 'worker',
+      note,
+      childFanoutClass,
+      childFanoutCount: childFanoutClass ? countActiveFanoutBranches(getPlan()) : undefined,
+    };
+  };
+
+  return {
+    onTaskStart: async (task) => {
+      baseEvents.onManagedTaskStatus?.(buildStatus(task));
+    },
+    onTaskComplete: async (task, completed) => {
+      baseEvents.onManagedTaskStatus?.(
+        buildStatus(task, `${task.title} ${completed.status}`),
+      );
+    },
+  };
+}
+
 async function executeManagedTaskRound(
   options: KodaXOptions,
   task: KodaXManagedTask,
@@ -5658,13 +7208,14 @@ function applyManagedTaskDirective(
   if (!directive) {
     return task;
   }
+  const preferredPublicText = directive.userAnswer?.trim() || directive.userFacingText;
 
   if (directive.status === 'accept') {
     return {
       ...task,
       verdict: {
         ...task.verdict,
-        summary: directive.userFacingText || task.verdict.summary,
+        summary: preferredPublicText || task.verdict.summary,
         disposition: 'complete',
         continuationSuggested: false,
       },
@@ -5683,7 +7234,7 @@ function applyManagedTaskDirective(
     verdict: {
       ...task.verdict,
       status: 'blocked',
-      summary: directive.userFacingText || task.verdict.summary,
+      summary: preferredPublicText || task.verdict.summary,
       signal: 'BLOCKED',
       signalReason,
       disposition,
@@ -5874,6 +7425,27 @@ export async function runManagedTask(
     plan.decision,
     managedPlanning.reviewTarget,
   );
+  if (shouldRunTacticalReviewFanout(
+    agentMode,
+    getManagedTaskSurface(managedOptions),
+    plan,
+    finalRoutingDecision,
+    scoutExecution.directive,
+  )) {
+    return runTacticalReviewFlow(
+      managedOptions,
+      managedOriginalTask,
+      plan,
+      scoutExecution,
+      rawRoutingDecision,
+      finalRoutingDecision,
+      routingOverrideReason,
+      skillMap,
+      agentMode,
+      scoutBudgetController,
+    );
+  }
+
   if (scoutExecution.directive.confirmedHarness === 'H0_DIRECT') {
     const scoutShape = createScoutCompleteTaskShape(
       managedOptions,
@@ -5964,6 +7536,7 @@ export async function runManagedTask(
     scheduleManagedTaskRepoIntelligenceCapture(
       resolveManagedTaskRepoIntelligenceContext(managedOptions),
       scoutShape.workspaceDir,
+      managedOptions,
     );
     return {
       ...scoutExecution.result,
@@ -6094,6 +7667,7 @@ export async function runManagedTask(
             skillMap: managedTask.runtime?.skillMap,
             previousRoleSummaries: managedTask.runtime?.roleRoundSummaries,
           }, shape.workspaceDir),
+          managedOptions.context?.repoIntelligenceMode,
           nextPhase,
         ));
     pendingInitialWorkerSet = undefined;
@@ -6273,6 +7847,7 @@ export async function runManagedTask(
             skillMap: managedTask.runtime?.skillMap,
             previousRoleSummaries: managedTask.runtime?.roleRoundSummaries,
           }, shape.workspaceDir),
+          managedOptions.context?.repoIntelligenceMode,
           'initial',
         );
         managedTask = synchronizeManagedTaskGraph(

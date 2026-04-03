@@ -118,7 +118,7 @@ describe('Core Module Exports', () => {
 
   it('should export KODAX_TOOLS array', () => {
     expect(Array.isArray(KODAX_TOOLS)).toBe(true);
-    expect(KODAX_TOOLS.length).toBe(14);
+    expect(KODAX_TOOLS.length).toBe(16);
   });
 
   it('should export getRequiredToolParams', () => {

@@ -579,6 +579,10 @@ export function loadConfig(): {
   providerModels?: Record<string, string[]>;
   customProviders?: KodaXCustomProviderConfig[];
   extensions?: string[];
+  repoIntelligenceMode?: 'auto' | 'off' | 'oss' | 'premium-shared' | 'premium-native';
+  repointelEndpoint?: string;
+  repointelBin?: string;
+  repoIntelligenceTrace?: boolean;
 } {
   try {
     if (fsSync.existsSync(KODAX_CONFIG_FILE)) {
@@ -594,6 +598,10 @@ export function loadConfig(): {
         providerModels?: Record<string, string[]>;
         customProviders?: KodaXCustomProviderConfig[];
         extensions?: unknown;
+        repoIntelligenceMode?: 'auto' | 'off' | 'oss' | 'premium-shared' | 'premium-native';
+        repointelEndpoint?: string;
+        repointelBin?: string;
+        repoIntelligenceTrace?: boolean;
       };
       return migrateLegacyPermissionModeInConfig({
         ...parsed,
@@ -606,9 +614,25 @@ export function loadConfig(): {
   return {};
 }
 
+function applyRepoIntelligenceRuntimeEnv(config: ReturnType<typeof loadConfig>): void {
+  if (config.repoIntelligenceMode && !process.env.KODAX_REPO_INTELLIGENCE_MODE) {
+    process.env.KODAX_REPO_INTELLIGENCE_MODE = config.repoIntelligenceMode;
+  }
+  if (config.repointelEndpoint && !process.env.KODAX_REPOINTEL_ENDPOINT) {
+    process.env.KODAX_REPOINTEL_ENDPOINT = config.repointelEndpoint;
+  }
+  if (config.repointelBin && !process.env.KODAX_REPOINTEL_BIN) {
+    process.env.KODAX_REPOINTEL_BIN = config.repointelBin;
+  }
+  if (config.repoIntelligenceTrace === true && !process.env.KODAX_REPO_INTELLIGENCE_TRACE) {
+    process.env.KODAX_REPO_INTELLIGENCE_TRACE = '1';
+  }
+}
+
 export function prepareRuntimeConfig(): ReturnType<typeof loadConfig> {
   ensureShellEnvironmentHydrated();
   const config = loadConfig();
+  applyRepoIntelligenceRuntimeEnv(config);
   registerConfiguredCustomProviders(config);
   return config;
 }
@@ -626,6 +650,10 @@ export function saveConfig(config: {
   providerModels?: Record<string, string[]>;
   customProviders?: KodaXCustomProviderConfig[];
   extensions?: string[];
+  repoIntelligenceMode?: 'auto' | 'off' | 'oss' | 'premium-shared' | 'premium-native';
+  repointelEndpoint?: string;
+  repointelBin?: string;
+  repoIntelligenceTrace?: boolean;
 }): void {
   const current = loadConfig();
   const merged = { ...current, ...config };

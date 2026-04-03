@@ -45,6 +45,12 @@ describe('ArgumentCompleter', () => {
       expect(completer.canComplete('/delete ', 8)).toBe(true);
     });
 
+    it('should trigger on /repointel command and alias', () => {
+      expect(completer.canComplete('/repointel ', 11)).toBe(true);
+      expect(completer.canComplete('/ri ', 4)).toBe(true);
+      expect(completer.canComplete('/repointel mode ', 16)).toBe(true);
+    });
+
     it('should trigger on aliased commands', () => {
       expect(completer.canComplete('/t ', 3)).toBe(true); // thinking alias
     });
@@ -254,6 +260,64 @@ describe('ArgumentCompleter', () => {
         expect(completions.some(c => c.display === 'on')).toBe(true);
         expect(completions.some(c => c.display === 'off')).toBe(true);
         expect(completions.some(c => c.display === 'once')).toBe(true);
+      });
+    });
+
+    describe('/repointel command', () => {
+      it('should return top-level subcommands', async () => {
+        const completions = await completer.getCompletions('/repointel ', 11);
+
+        expect(completions.some(c => c.display === 'status')).toBe(true);
+        expect(completions.some(c => c.display === 'warm')).toBe(true);
+        expect(completions.some(c => c.display === 'mode')).toBe(true);
+        expect(completions.some(c => c.display === 'trace')).toBe(true);
+        expect(completions.some(c => c.display === 'endpoint')).toBe(true);
+        expect(completions.some(c => c.display === 'bin')).toBe(true);
+      });
+
+      it('should support alias completion through /ri', async () => {
+        const completions = await completer.getCompletions('/ri ', 4);
+
+        expect(completions.some(c => c.display === 'status')).toBe(true);
+        expect(completions.some(c => c.display === 'mode')).toBe(true);
+      });
+
+      it('should return runtime modes after /repointel mode', async () => {
+        const completions = await completer.getCompletions('/repointel mode ', 16);
+
+        expect(completions.some(c => c.display === 'auto')).toBe(true);
+        expect(completions.some(c => c.display === 'oss')).toBe(true);
+        expect(completions.some(c => c.display === 'premium-shared')).toBe(true);
+        expect(completions.some(c => c.display === 'premium-native')).toBe(true);
+      });
+
+      it('should filter runtime modes by partial input', async () => {
+        const completions = await completer.getCompletions('/repointel mode pre', 19);
+
+        expect(completions.map(c => c.display)).toEqual([
+          'premium-shared',
+          'premium-native',
+        ]);
+      });
+
+      it('should return trace toggles after /repointel trace', async () => {
+        const completions = await completer.getCompletions('/repointel trace ', 17);
+
+        expect(completions.map(c => c.display)).toContain('on');
+        expect(completions.map(c => c.display)).toContain('off');
+        expect(completions.map(c => c.display)).toContain('toggle');
+      });
+
+      it('should return endpoint reset helpers after /repointel endpoint', async () => {
+        const completions = await completer.getCompletions('/repointel endpoint ', 20);
+
+        expect(completions.map(c => c.display)).toContain('default');
+        expect(completions.map(c => c.display)).toContain('http://127.0.0.1:47891');
+      });
+
+      it('should stop suggesting after a complete second-level repointel argument', async () => {
+        const completions = await completer.getCompletions('/repointel mode premium-native ', 31);
+        expect(completions).toEqual([]);
       });
     });
 

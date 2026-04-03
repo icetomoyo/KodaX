@@ -189,9 +189,9 @@ describe('reasoning reroute', () => {
     expect(plan.decision.recommendedMode).toBe('investigation');
     expect(plan.decision.mutationSurface).toBe('code');
     expect(plan.promptOverlay).toContain('[Execution Mode: investigation]');
-    expect(plan.amaControllerDecision?.profile).toBe('tactical');
-    expect(plan.amaControllerDecision?.fanout.admissible).toBe(false);
-    expect(plan.amaControllerDecision?.tactics).not.toContain('child-fanout');
+    expect(plan.amaControllerDecision.profile).toBe('tactical');
+    expect(plan.amaControllerDecision.fanout.admissible).toBe(false);
+    expect(plan.amaControllerDecision.tactics).not.toContain('child-fanout');
 
     const routerPrompt = String(provider.lastMessages[0]?.content ?? '');
     expect(routerPrompt).toContain('- git: unavailable');

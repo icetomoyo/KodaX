@@ -11,6 +11,8 @@ import {
   KodaXEvents,
   KodaXJsonValue,
   KodaXOptions,
+  KodaXRepoIntelligenceCarrier,
+  KodaXRepoIntelligenceMode,
   KodaXReasoningMode,
   KodaXResult,
   KodaXTaskType,
@@ -25,6 +27,7 @@ import { KodaXClient } from './client.js';
 import { resolveProvider } from './providers/index.js';
 import {
   executeTool,
+  filterRepoIntelligenceWorkingToolNames,
   getRequiredToolParams,
   listToolDefinitions,
 } from './tools/index.js';
@@ -56,10 +59,15 @@ import { buildRepoIntelligenceContext } from './repo-intelligence/index.js';
 import {
   getImpactEstimate,
   getModuleContext,
+  getRepoPreturnBundle,
   getRepoRoutingSignals,
+  resolveKodaXAutoRepoMode,
+} from './repo-intelligence/runtime.js';
+import {
   renderImpactEstimate,
   renderModuleContext,
 } from './repo-intelligence/query.js';
+import { createRepoIntelligenceTraceEvent } from './repo-intelligence/trace-events.js';
 import {
   createCompletedTurnTokenSnapshot,
   createContextTokenSnapshot,
@@ -104,6 +112,27 @@ interface ProviderPrepareState {
   reasoningMode?: KodaXReasoningMode;
   systemPrompt: string;
   blockedReason?: string;
+}
+
+function shouldEmitRepoIntelligenceTrace(options: KodaXOptions): boolean {
+  return options.context?.repoIntelligenceTrace === true
+    || process.env.KODAX_REPO_INTELLIGENCE_TRACE === '1';
+}
+
+function emitRepoIntelligenceTrace(
+  events: KodaXEvents | undefined,
+  options: KodaXOptions,
+  stage: 'routing' | 'preturn' | 'module' | 'impact',
+  carrier: KodaXRepoIntelligenceCarrier | null | undefined,
+  detail?: string,
+): void {
+  if (!events?.onRepoIntelligenceTrace || !shouldEmitRepoIntelligenceTrace(options) || !carrier) {
+    return;
+  }
+  const traceEvent = createRepoIntelligenceTraceEvent(stage, carrier, detail);
+  if (traceEvent) {
+    events.onRepoIntelligenceTrace(traceEvent);
+  }
 }
 
 function isTypedContentBlock(block: unknown): block is MessageContentBlock {
@@ -308,14 +337,26 @@ function createExtensionRuntimeSessionController(
 
 function getActiveToolDefinitions(
   activeToolNames: string[],
+  repoIntelligenceMode?: KodaXRepoIntelligenceMode,
 ): ReturnType<typeof listToolDefinitions> {
   const allTools = listToolDefinitions();
   if (activeToolNames.length === 0) {
     return [];
   }
 
-  const allowed = new Set(activeToolNames);
+  const allowed = new Set(
+    getRuntimeActiveToolNames(activeToolNames, repoIntelligenceMode),
+  );
   return allTools.filter((tool) => allowed.has(tool.name));
+}
+
+function getRuntimeActiveToolNames(
+  activeToolNames: string[],
+  repoIntelligenceMode?: KodaXRepoIntelligenceMode,
+): string[] {
+  return resolveKodaXAutoRepoMode(repoIntelligenceMode) === 'off'
+    ? filterRepoIntelligenceWorkingToolNames(activeToolNames)
+    : activeToolNames;
 }
 
 function appendQueuedRuntimeMessages(
@@ -1028,15 +1069,27 @@ export async function runKodaX(
 
   await runtime?.hydrateSession(sessionId);
 
+  const autoRepoMode = resolveKodaXAutoRepoMode(options.context?.repoIntelligenceMode);
   const repoRoutingSignals = options.context?.repoRoutingSignals
     ?? (
-      (options.context?.executionCwd || options.context?.gitRoot)
+      autoRepoMode !== 'off' && (options.context?.executionCwd || options.context?.gitRoot)
         ? await getRepoRoutingSignals({
           executionCwd,
           gitRoot: options.context?.gitRoot ?? undefined,
+        }, {
+          mode: autoRepoMode,
         }).catch(() => null)
         : null
     );
+  emitRepoIntelligenceTrace(
+    events,
+    options,
+    'routing',
+    repoRoutingSignals,
+    repoRoutingSignals?.activeModuleId
+      ? `active_module=${repoRoutingSignals.activeModuleId}`
+      : undefined,
+  );
 
   let reasoningPlan = await createReasoningPlan({
     ...options,
@@ -1325,7 +1378,10 @@ export async function runKodaX(
             : retryTimeoutController.signal;
 
           try {
-            return await streamProvider.stream(compacted, getActiveToolDefinitions(runtimeSessionState.activeTools), effectiveSystemPrompt, effectiveProviderReasoning, {
+            return await streamProvider.stream(compacted, getActiveToolDefinitions(
+              runtimeSessionState.activeTools,
+              options.context?.repoIntelligenceMode,
+            ), effectiveSystemPrompt, effectiveProviderReasoning, {
               onTextDelta: (text) => {
                 resetIdleTimer();
                 void emitActiveExtensionEvent('text:delta', { text });
@@ -1611,7 +1667,10 @@ export async function runKodaX(
                   id: tc.id,
                   name: tc.name,
                   input: tc.input as Record<string, unknown> | undefined,
-                }, ctx, runtimeSessionState.activeTools),
+                }, ctx, getRuntimeActiveToolNames(
+                  runtimeSessionState.activeTools,
+                  options.context?.repoIntelligenceMode,
+                )),
                 ctx,
               )
             ).content,
@@ -1628,7 +1687,10 @@ export async function runKodaX(
                 id: tc.id,
                 name: tc.name,
                 input: tc.input as Record<string, unknown> | undefined,
-              }, ctx, runtimeSessionState.activeTools),
+                }, ctx, getRuntimeActiveToolNames(
+                  runtimeSessionState.activeTools,
+                  options.context?.repoIntelligenceMode,
+                )),
               ctx,
             )
           ).content;
@@ -1654,7 +1716,10 @@ export async function runKodaX(
                 id: tc.id,
                 name: tc.name,
                 input: tc.input as Record<string, unknown> | undefined,
-              }, ctx, runtimeSessionState.activeTools),
+                }, ctx, getRuntimeActiveToolNames(
+                  runtimeSessionState.activeTools,
+                  options.context?.repoIntelligenceMode,
+                )),
               ctx,
             )
           ).content;
@@ -1901,7 +1966,13 @@ async function buildAutoRepoIntelligenceContext(
   options: KodaXOptions,
   reasoningPlan: ReasoningPlan,
   isNewSession: boolean,
+  events?: KodaXEvents,
 ): Promise<string | undefined> {
+  const autoRepoMode = resolveKodaXAutoRepoMode(options.context?.repoIntelligenceMode);
+  if (autoRepoMode === 'off') {
+    return options.context?.repoIntelligenceContext;
+  }
+
   const decision = reasoningPlan.decision;
   const includeRepoOverview =
     isNewSession
@@ -1942,23 +2013,57 @@ async function buildAutoRepoIntelligenceContext(
     let moduleContext = '';
     let impactContext = '';
     let fallbackGuidance = '';
+    let premiumContext = '';
 
-    if (includeActiveModule) {
-      const moduleResult = await getModuleContext(repoContext, {
+    let moduleResult: Awaited<ReturnType<typeof getModuleContext>> | null = null;
+    let impactResult: Awaited<ReturnType<typeof getImpactEstimate>> | null = null;
+
+    if (includeActiveModule && autoRepoMode === 'premium-native') {
+      const preturn = await getRepoPreturnBundle(repoContext, {
         targetPath: activeModuleTargetPath,
         refresh: isNewSession,
+        mode: autoRepoMode,
+      }).catch(() => null);
+      if (preturn) {
+        emitRepoIntelligenceTrace(events, options, 'preturn', preturn, preturn.summary);
+        moduleResult = preturn.moduleContext ?? null;
+        impactResult = preturn.impactEstimate ?? null;
+        premiumContext = preturn.repoContext ?? '';
+      }
+    }
+
+    if (includeActiveModule) {
+      moduleResult = moduleResult ?? await getModuleContext(repoContext, {
+        targetPath: activeModuleTargetPath,
+        refresh: isNewSession,
+        mode: autoRepoMode,
       }).catch(() => null);
 
       if (moduleResult) {
+        emitRepoIntelligenceTrace(
+          events,
+          options,
+          'module',
+          moduleResult,
+          `module=${moduleResult.module.moduleId}`,
+        );
         moduleContext = ['## Active Module Intelligence', renderModuleContext(moduleResult)].join('\n');
       }
 
-      const impactResult = await getImpactEstimate(repoContext, {
+      impactResult = impactResult ?? await getImpactEstimate(repoContext, {
         targetPath: activeModuleTargetPath,
         refresh: isNewSession,
+        mode: autoRepoMode,
       }).catch(() => null);
 
       if (impactResult) {
+        emitRepoIntelligenceTrace(
+          events,
+          options,
+          'impact',
+          impactResult,
+          `target=${impactResult.target.label}`,
+        );
         impactContext = ['## Active Impact Intelligence', renderImpactEstimate(impactResult)].join('\n');
       }
 
@@ -1976,6 +2081,7 @@ async function buildAutoRepoIntelligenceContext(
 
     return [
       options.context?.repoIntelligenceContext,
+      premiumContext,
       generatedContext,
       moduleContext,
       impactContext,
@@ -2007,6 +2113,7 @@ async function buildReasoningExecutionState(
     options,
     reasoningPlan,
     isNewSession,
+    options.events,
   );
 
   const effectiveOptions: KodaXOptions = {
