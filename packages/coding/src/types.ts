@@ -62,6 +62,12 @@ import type {
 } from '@kodax/agent';
 import type { KodaXReviewScale } from '@kodax/ai';
 import type { KodaXExtensionRuntime } from './extensions/runtime.js';
+import type {
+  FailureStage,
+  ResilienceErrorClass,
+  RecoveryAction,
+  RecoveryLadderStep,
+} from './resilience/types.js';
 
 // Re-export all types from @kodax/agent
 export type {
@@ -160,6 +166,8 @@ export interface KodaXEvents {
   hasPendingInputs?: () => boolean;
   onRetry?: (reason: string, attempt: number, maxAttempts: number) => void;
   onProviderRateLimit?: (attempt: number, maxRetries: number, delayMs: number) => void;
+  /** Structured provider recovery event (Feature 045) */
+  onProviderRecovery?: (event: ProviderRecoveryEvent) => void;
   onComplete?: () => void;
   onError?: (error: Error) => void;
   onManagedTaskStatus?: (status: KodaXManagedTaskStatusEvent) => void;
@@ -173,6 +181,35 @@ export interface KodaXEvents {
   ) => Promise<boolean | string>;
   /** Ask user a question interactively - Issue 069 - 交互式向用户提问 */
   askUser?: (options: AskUserQuestionOptions) => Promise<string>;
+}
+
+
+// ============== Provider Recovery Event (Feature 045) ==============
+
+/**
+ * Structured event emitted during provider recovery.
+ * Provides fine-grained information about the failure, recovery strategy,
+ * and current state of the retry ladder.
+ */
+export interface ProviderRecoveryEvent {
+  /** The failure stage when the error occurred. */
+  stage: FailureStage;
+  /** The classified error class. */
+  errorClass: ResilienceErrorClass;
+  /** Current attempt number (1-based). */
+  attempt: number;
+  /** Maximum automatic retry attempts. */
+  maxAttempts: number;
+  /** Delay before next attempt (ms). */
+  delayMs: number;
+  /** The recovery action being taken. */
+  recoveryAction: RecoveryAction;
+  /** Step in the recovery ladder (1-4). */
+  ladderStep: RecoveryLadderStep;
+  /** Whether non-streaming fallback has been used. */
+  fallbackUsed: boolean;
+  /** Server-provided Retry-After value (ms), if available. */
+  serverRetryAfterMs?: number;
 }
 
 // ============== Agent 选项 ==============

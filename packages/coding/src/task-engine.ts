@@ -2045,6 +2045,12 @@ function buildManagedWorkerToolPolicy(
 ): KodaXTaskToolPolicy | undefined {
   switch (role) {
     case 'scout':
+      // DD §5.3: "Scout can complete H0_DIRECT itself when it already has enough evidence."
+      // When Scout is the terminal H0 worker, it needs full tool access (undefined = no restrictions).
+      // For H1/H2 pre-harness Scout, keep the traditional read-only policy.
+      if (harnessProfile === 'H0_DIRECT') {
+        return undefined;
+      }
       return {
         summary: 'Scout is a pre-harness guide. It may inspect scope facts and a small amount of overview evidence, but must not deep-page raw diffs, verify claims file-by-file, mutate files, or execute implementation steps.',
         blockedTools: [...WRITE_ONLY_TOOLS],

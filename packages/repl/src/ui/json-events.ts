@@ -42,6 +42,17 @@ type JsonEvent =
   | { type: 'compact.stats'; tokensBefore: number; tokensAfter: number }
   | { type: 'compact.end' }
   | { type: 'retry'; reason: string; attempt: number; maxAttempts: number }
+  | {
+      type: 'provider.recovery';
+      stage: string;
+      reasonCode: string;
+      attempt: number;
+      maxAttempts: number;
+      delayMs: number;
+      nextAt: number;
+      recoveryAction: string;
+      fallbackUsed: boolean;
+    }
   | { type: 'provider.rate_limit'; attempt: number; maxRetries: number; delayMs: number }
   | { type: 'complete' };
 

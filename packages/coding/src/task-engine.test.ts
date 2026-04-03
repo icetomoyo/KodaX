@@ -387,6 +387,11 @@ describe('runManagedTask', () => {
     expect(result.managedTask?.roleAssignments.map((item) => item.role)).toEqual(['scout']);
     expect(result.routingDecision?.harnessProfile).toBe('H0_DIRECT');
     expect(result.lastText).toContain('Scout determined this is small enough to answer directly.');
+
+    // Verify Scout H0 has no tool restrictions (undefined toolPolicy)
+    const scoutAssignment = result.managedTask?.roleAssignments.find((a) => a.role === 
+'scout');
+    expect(scoutAssignment?.toolPolicy).toBeUndefined();
   });
 
   it('keeps project read-only scout preflight on optional QA instead of auto-marking it required', async () => {
