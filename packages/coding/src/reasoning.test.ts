@@ -9,6 +9,7 @@ import type {
 } from '@kodax/ai';
 import { KodaXBaseProvider } from '@kodax/ai';
 import {
+  buildAmaControllerDecision,
   buildHeuristicAutoRerouteDecision,
   buildFallbackRoutingDecision,
   buildProviderPolicyHintsForDecision,
@@ -106,6 +107,18 @@ describe('reasoning reroute', () => {
       harnessProfile: 'H1_EXECUTE_EVAL',
       reason: 'Initial routing selected review.',
     },
+    amaControllerDecision: buildAmaControllerDecision({
+      primaryTask: 'review',
+      confidence: 0.9,
+      riskLevel: 'medium',
+      recommendedMode: 'pr-review',
+      recommendedThinkingDepth: 'low',
+      complexity: 'moderate',
+      workIntent: 'new',
+      requiresBrainstorm: false,
+      harnessProfile: 'H1_EXECUTE_EVAL',
+      reason: 'Initial routing selected review.',
+    }),
     promptOverlay: '[Execution Mode: pr-review]',
   };
 
@@ -176,6 +189,9 @@ describe('reasoning reroute', () => {
     expect(plan.decision.recommendedMode).toBe('investigation');
     expect(plan.decision.mutationSurface).toBe('code');
     expect(plan.promptOverlay).toContain('[Execution Mode: investigation]');
+    expect(plan.amaControllerDecision.profile).toBe('tactical');
+    expect(plan.amaControllerDecision.fanout.admissible).toBe(false);
+    expect(plan.amaControllerDecision.tactics).not.toContain('child-fanout');
 
     const routerPrompt = String(provider.lastMessages[0]?.content ?? '');
     expect(routerPrompt).toContain('- git: unavailable');
@@ -464,6 +480,103 @@ describe('reasoning reroute', () => {
 
     expect(decision.complexity).toBe('systemic');
     expect(decision.harnessProfile).toBe('H2_PLAN_EXECUTE_EVAL');
+  });
+
+  it('selects managed AMA profile only when heavier coordination remains load-bearing', () => {
+    const tactical = buildAmaControllerDecision(
+      buildFallbackRoutingDecision('Please review this change set for merge blockers.'),
+    );
+    const managed = buildAmaControllerDecision(
+      buildFallbackRoutingDecision('Refactor the monorepo architecture across packages and coordinate the whole repo migration.'),
+    );
+
+    expect(tactical.profile).toBe('tactical');
+    expect(tactical.fanout.admissible).toBe(true);
+    expect(tactical.fanout.class).toBe('finding-validation');
+    expect(managed.profile).toBe('managed');
+    expect(managed.tactics).toEqual(
+      expect.arrayContaining(['planning-pass', 'verification-pass', 'repair-loop']),
+    );
+  });
+
+  it('does not expose child-fanout when fanout is inadmissible on a direct mutation task', () => {
+    const decision = buildAmaControllerDecision(
+      {
+        primaryTask: 'bugfix',
+        taskFamily: 'investigation',
+        actionability: 'actionable',
+        executionPattern: 'direct',
+        recommendedMode: 'investigation',
+        recommendedThinkingDepth: 'low',
+        complexity: 'moderate',
+        riskLevel: 'medium',
+        harnessProfile: 'H0_DIRECT',
+        mutationSurface: 'code',
+        confidence: 0.92,
+        workIntent: 'new',
+        requiresBrainstorm: false,
+        reason: 'Small mutation investigation should stay direct.',
+      },
+    );
+
+    expect(decision.profile).toBe('tactical');
+    expect(decision.fanout.admissible).toBe(false);
+    expect(decision.tactics).not.toContain('child-fanout');
+  });
+
+  it('keeps read-only investigation evidence-scan taxonomy inactive until runtime support lands', () => {
+    const decision = buildAmaControllerDecision(
+      {
+        primaryTask: 'bugfix',
+        taskFamily: 'investigation',
+        actionability: 'actionable',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'investigation',
+        recommendedThinkingDepth: 'medium',
+        complexity: 'moderate',
+        riskLevel: 'medium',
+        harnessProfile: 'H0_DIRECT',
+        mutationSurface: 'read-only',
+        confidence: 0.88,
+        workIntent: 'new',
+        requiresBrainstorm: false,
+        reason: 'Read-only investigation can use bounded evidence fan-out.',
+      },
+    );
+
+    expect(decision.profile).toBe('tactical');
+    expect(decision.fanout.admissible).toBe(false);
+    expect(decision.fanout.class).toBeUndefined();
+    expect(decision.fanout.reason).toContain('Evidence-scan shards remain defined for future rollout');
+    expect(decision.tactics).not.toContain('child-fanout');
+    expect(decision.tactics).not.toContain('planning-pass');
+  });
+
+  it('keeps lookup module-triage taxonomy inactive until runtime support lands', () => {
+    const decision = buildAmaControllerDecision(
+      {
+        primaryTask: 'lookup',
+        taskFamily: 'lookup',
+        actionability: 'actionable',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'implementation',
+        recommendedThinkingDepth: 'medium',
+        complexity: 'moderate',
+        riskLevel: 'low',
+        harnessProfile: 'H0_DIRECT',
+        mutationSurface: 'read-only',
+        confidence: 0.84,
+        workIntent: 'new',
+        requiresBrainstorm: false,
+        reason: 'Lookup work may eventually use module-triage fan-out, but runtime support is not landed yet.',
+      },
+    );
+
+    expect(decision.profile).toBe('tactical');
+    expect(decision.fanout.admissible).toBe(false);
+    expect(decision.fanout.class).toBeUndefined();
+    expect(decision.fanout.reason).toContain('Module-triage shards remain defined for future rollout');
+    expect(decision.tactics).not.toContain('child-fanout');
   });
 
   it('lets repo-intelligence signals raise routing complexity and planning bias', () => {

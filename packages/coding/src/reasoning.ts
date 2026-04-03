@@ -1,6 +1,10 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import type {
+  KodaXAmaControllerDecision,
+  KodaXAmaFanoutClass,
+  KodaXAmaProfile,
+  KodaXAmaTactic,
   KodaXExecutionMode,
   KodaXHarnessProfile,
   KodaXMessage,
@@ -304,6 +308,7 @@ export interface ReasoningPlan {
   mode: KodaXReasoningMode;
   depth: KodaXThinkingDepth;
   decision: KodaXTaskRoutingDecision;
+  amaControllerDecision: KodaXAmaControllerDecision;
   promptOverlay: string;
   providerPolicy?: KodaXProviderPolicyDecision;
 }
@@ -1018,10 +1023,183 @@ export function buildProviderPolicyHintsForDecision(
   };
 }
 
+function dedupeAmaTactics(
+  tactics: KodaXAmaTactic[],
+): KodaXAmaTactic[] {
+  return Array.from(new Set(tactics));
+}
+
+function resolveAmaFanoutClass(
+  decision: KodaXTaskRoutingDecision,
+): KodaXAmaFanoutClass | undefined {
+  if (decision.primaryTask === 'review') {
+    return 'finding-validation';
+  }
+  if (
+    decision.primaryTask === 'bugfix'
+    || decision.recommendedMode === 'investigation'
+  ) {
+    return decision.mutationSurface === 'read-only'
+      ? 'evidence-scan'
+      : 'hypothesis-check';
+  }
+  if (decision.primaryTask === 'lookup') {
+    return 'module-triage';
+  }
+  return undefined;
+}
+
+function resolveAmaFanoutMaxChildren(
+  decision: KodaXTaskRoutingDecision,
+): number | undefined {
+  if (decision.primaryTask === 'review') {
+    switch (decision.reviewScale) {
+      case 'massive':
+        return 4;
+      case 'large':
+        return 3;
+      default:
+        return 2;
+    }
+  }
+  if (
+    decision.primaryTask === 'bugfix'
+    || decision.recommendedMode === 'investigation'
+  ) {
+    return 2;
+  }
+  return undefined;
+}
+
+function isAmaFanoutClassActive(
+  fanoutClass: KodaXAmaFanoutClass | undefined,
+  decision: KodaXTaskRoutingDecision,
+): boolean {
+  if (!fanoutClass) {
+    return false;
+  }
+
+  if (
+    decision.primaryTask === 'plan'
+    || decision.taskFamily === 'conversation'
+    || decision.taskFamily === 'ambiguous'
+  ) {
+    return false;
+  }
+
+  switch (fanoutClass) {
+    case 'finding-validation':
+      return true;
+    case 'module-triage':
+    case 'evidence-scan':
+      return false;
+    case 'hypothesis-check':
+      return false;
+    default:
+      return false;
+  }
+}
+
+export function buildAmaControllerDecision(
+  decision: KodaXTaskRoutingDecision,
+): KodaXAmaControllerDecision {
+  const readOnlyLike = decision.mutationSurface === 'read-only'
+    || decision.mutationSurface === 'docs-only';
+  const managed =
+    decision.harnessProfile === 'H2_PLAN_EXECUTE_EVAL'
+    || decision.primaryTask === 'plan'
+    || decision.complexity === 'systemic'
+    || (
+      decision.complexity === 'complex'
+      && decision.mutationSurface === 'code'
+      && Boolean(decision.needsIndependentQA)
+    )
+    || (
+      decision.requiresBrainstorm
+      && decision.mutationSurface === 'code'
+    );
+  const profile: KodaXAmaProfile = managed ? 'managed' : 'tactical';
+  const fanoutClass = resolveAmaFanoutClass(decision);
+  const activeFanoutClass = isAmaFanoutClassActive(fanoutClass, decision)
+    ? fanoutClass
+    : undefined;
+  const fanoutAdmissible = Boolean(activeFanoutClass);
+
+  const tactics = dedupeAmaTactics([
+    'direct',
+    ...(profile === 'managed' ? ['planning-pass', 'verification-pass', 'repair-loop'] as KodaXAmaTactic[] : []),
+    ...(decision.harnessProfile !== 'H0_DIRECT' || Boolean(decision.needsIndependentQA) ? ['verification-pass'] as KodaXAmaTactic[] : []),
+    ...(fanoutAdmissible ? ['child-fanout'] as KodaXAmaTactic[] : []),
+  ]);
+
+  const fanoutReason = !fanoutClass
+    ? 'No high-value shard class was detected for this task.'
+    : !fanoutAdmissible
+      ? fanoutClass === 'hypothesis-check'
+        ? 'Hypothesis-check shards remain defined for future rollout, but mutation-side child fan-out is intentionally disabled for now.'
+        : fanoutClass === 'evidence-scan'
+          ? 'Evidence-scan shards remain defined for future rollout, but the current runtime only backs review finding-validation fan-out.'
+          : fanoutClass === 'module-triage'
+            ? 'Module-triage shards remain defined for future rollout, but the current runtime only backs review finding-validation fan-out.'
+        : 'Child fan-out stays disabled because this rollout only activates read-only tactical shard classes that are already backed by runtime support.'
+      : activeFanoutClass === 'finding-validation'
+        ? 'Review work benefits from finding-level validation shards to keep the main context focused on synthesis.'
+        : activeFanoutClass === 'evidence-scan'
+          ? 'Investigation work benefits from bounded evidence shards before the parent commits to a diagnosis.'
+          : activeFanoutClass === 'module-triage'
+            ? 'Lookup work can shard module triage when the task stays read-only.'
+            : 'Investigation work benefits from hypothesis-check shards when multiple explanations can be tested independently.';
+
+  const upgradeTriggers: string[] = [];
+  if (profile === 'tactical') {
+    if (decision.harnessProfile === 'H2_PLAN_EXECUTE_EVAL') {
+      upgradeTriggers.push('Existing routing already requires H2 managed coordination.');
+    }
+    if (decision.complexity === 'complex' || decision.complexity === 'systemic') {
+      upgradeTriggers.push('Complex or systemic work may outgrow tactical reduction and need managed coordination.');
+    }
+    if (decision.requiresBrainstorm) {
+      upgradeTriggers.push('Explicit option framing or plan-first work should upgrade into managed planning.');
+    }
+  } else {
+    upgradeTriggers.push('Managed profile stays active because the task needs explicit planning, QA, or multi-round convergence.');
+  }
+
+  return {
+    profile,
+    tactics,
+    fanout: {
+      admissible: fanoutAdmissible,
+      class: activeFanoutClass,
+      reason: fanoutReason,
+      maxChildren: fanoutAdmissible ? resolveAmaFanoutMaxChildren(decision) : undefined,
+      requiresReadOnly: fanoutAdmissible && readOnlyLike ? true : undefined,
+    },
+    reason: profile === 'managed'
+      ? 'AMA controller selected the managed profile because explicit coordination, planning, or heavier assurance remains load-bearing.'
+      : 'AMA controller selected the tactical profile so one main agent can stay in control while using hidden tactics only when they reduce context pressure.',
+    upgradeTriggers,
+  };
+}
+
+function buildAmaControllerOverlay(
+  controller: KodaXAmaControllerDecision,
+): string {
+  return [
+    `[AMA Controller] profile=${controller.profile}; tactics=${controller.tactics.join(',')}; fanoutAdmissible=${controller.fanout.admissible ? 'yes' : 'no'}; fanoutClass=${controller.fanout.class ?? 'none'}; maxChildren=${controller.fanout.maxChildren ?? 'n/a'}.`,
+    `[AMA Controller Reason] ${controller.reason}`,
+    `[AMA Fan-Out] ${controller.fanout.reason}`,
+    controller.upgradeTriggers.length > 0
+      ? `[AMA Upgrade Triggers] ${controller.upgradeTriggers.join(' ')}`
+      : undefined,
+  ].filter(Boolean).join('\n');
+}
+
 export function buildPromptOverlay(
   decision: KodaXTaskRoutingDecision,
   extraNotes: string[] = [],
   _providerPolicy?: KodaXProviderPolicyDecision,
+  amaControllerDecision: KodaXAmaControllerDecision = buildAmaControllerDecision(decision),
 ): string {
   const routingNotes = decision.routingNotes?.map(
     (note) => `[Task Routing Note] ${note}`,
@@ -1037,6 +1215,7 @@ export function buildPromptOverlay(
   return [
     EXECUTION_MODE_OVERLAYS[decision.recommendedMode],
     HARNESS_PROFILE_OVERLAYS[decision.harnessProfile],
+    buildAmaControllerOverlay(amaControllerDecision),
     `[Task Routing] primary=${decision.primaryTask}; family=${decision.taskFamily ?? 'unknown'}; actionability=${decision.actionability ?? 'unknown'}; mutationSurface=${decision.mutationSurface ?? 'unknown'}; assuranceIntent=${decision.assuranceIntent ?? 'default'}; pattern=${decision.executionPattern ?? 'unknown'}; risk=${decision.riskLevel}; complexity=${decision.complexity}; intent=${decision.workIntent}; brainstorm=${decision.requiresBrainstorm ? 'yes' : 'no'}; harness=${decision.harnessProfile}; topologyCeiling=${decision.topologyCeiling ?? 'none'}; upgradeCeiling=${decision.upgradeCeiling ?? 'none'}; reviewScale=${decision.reviewScale ?? 'unknown'}; confidence=${decision.confidence.toFixed(2)}.`,
     decision.soloBoundaryConfidence !== undefined
       ? `[Task Routing Signals] soloBoundaryConfidence=${decision.soloBoundaryConfidence.toFixed(2)}; needsIndependentQA=${decision.needsIndependentQA ? 'yes' : 'no'}; source=${decision.routingSource ?? 'unknown'}; attempts=${decision.routingAttempts ?? 1}.`
@@ -1087,14 +1266,17 @@ export async function createReasoningPlan(
         intentGate.reason,
       ],
     };
+    const amaControllerDecision = buildAmaControllerDecision(finalDecision);
 
     return {
       mode,
       depth,
+      amaControllerDecision,
       promptOverlay: buildPromptOverlay(
         finalDecision,
         providerPolicy.routingNotes,
         providerPolicy,
+        amaControllerDecision,
       ),
       decision: finalDecision,
       providerPolicy,
@@ -1109,13 +1291,16 @@ export async function createReasoningPlan(
       providerPolicy,
       routingEvidence,
     );
+    const amaControllerDecision = buildAmaControllerDecision(decision);
     return {
       mode,
       depth: decision.recommendedThinkingDepth,
+      amaControllerDecision,
       promptOverlay: buildPromptOverlay(
         decision,
         providerPolicy.routingNotes,
         providerPolicy,
+        amaControllerDecision,
       ),
       decision,
       providerPolicy,
@@ -1132,14 +1317,17 @@ export async function createReasoningPlan(
     ...fallbackDecision,
     recommendedThinkingDepth: depth,
   };
+  const amaControllerDecision = buildAmaControllerDecision(decision);
 
   return {
     mode,
     depth,
+    amaControllerDecision,
     promptOverlay: buildPromptOverlay(
       decision,
       providerPolicy.routingNotes,
       providerPolicy,
+      amaControllerDecision,
     ),
     decision,
     providerPolicy,
@@ -1218,11 +1406,12 @@ export async function maybeCreateAutoReroutePlan(
     mode: currentPlan.mode,
     depth: nextDecision.recommendedThinkingDepth,
     decision: nextDecision,
+    amaControllerDecision: buildAmaControllerDecision(nextDecision),
     providerPolicy: currentPlan.providerPolicy,
     promptOverlay: buildPromptOverlay(nextDecision, [
       followUpGuidance,
       `${followUpLabel} Focus on high-confidence, high-signal output for this follow-up pass.`,
-    ], currentPlan.providerPolicy),
+    ], currentPlan.providerPolicy, buildAmaControllerDecision(nextDecision)),
   };
 }
 
