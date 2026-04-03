@@ -64,6 +64,7 @@ export class MemorySessionStorage implements SessionStorage {
       scope: data.scope ?? existing?.scope ?? 'user',
       uiHistory: data.uiHistory ?? existing?.uiHistory,
       extensionState: data.extensionState ?? existing?.extensionState,
+      artifactLedger: data.artifactLedger ?? existing?.artifactLedger,
       extensionRecords: data.extensionRecords ?? existing?.extensionRecords,
       lineage: createSessionLineage(
         data.messages,
@@ -145,6 +146,9 @@ export class MemorySessionStorage implements SessionStorage {
       gitRoot: current.gitRoot,
       extensionState: current.extensionState
         ? structuredClone(current.extensionState)
+        : undefined,
+      artifactLedger: current.artifactLedger
+        ? structuredClone(current.artifactLedger)
         : undefined,
       extensionRecords: current.extensionRecords
         ? structuredClone(current.extensionRecords)

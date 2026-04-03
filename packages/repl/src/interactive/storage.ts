@@ -9,6 +9,7 @@ import chalk from 'chalk';
 import type {
   KodaXExtensionSessionRecord,
   KodaXMessage,
+  KodaXSessionArtifactLedgerEntry,
   KodaXSessionData,
   KodaXSessionEntry,
   KodaXSessionLineage,
@@ -47,10 +48,16 @@ interface PersistedLineageEntryLine {
   entry: KodaXSessionEntry;
 }
 
+interface PersistedArtifactLedgerLine {
+  _type: 'artifact_ledger_entry';
+  entry: KodaXSessionArtifactLedgerEntry;
+}
+
 interface PersistedSessionSnapshot {
   meta?: KodaXSessionMeta;
   legacyMessages: KodaXMessage[];
   lineageEntries: KodaXSessionEntry[];
+  artifactLedger: KodaXSessionArtifactLedgerEntry[];
   extensionRecords: KodaXExtensionSessionRecord[];
   malformedCount: number;
 }
@@ -90,6 +97,13 @@ function toExtensionRecordLine(
 function toLineageEntryLine(entry: KodaXSessionEntry): PersistedLineageEntryLine {
   return {
     _type: 'lineage_entry',
+    entry,
+  };
+}
+
+function toArtifactLedgerLine(entry: KodaXSessionArtifactLedgerEntry): PersistedArtifactLedgerLine {
+  return {
+    _type: 'artifact_ledger_entry',
     entry,
   };
 }
@@ -144,6 +158,30 @@ function isPersistedLineageEntryLine(
     && isKodaXSessionEntry(value.entry);
 }
 
+function isKodaXSessionArtifactLedgerEntry(
+  value: unknown,
+): value is KodaXSessionArtifactLedgerEntry {
+  return isRecord(value)
+    && typeof value.id === 'string'
+    && typeof value.kind === 'string'
+    && typeof value.target === 'string'
+    && typeof value.timestamp === 'string'
+    && (value.sourceTool === undefined || typeof value.sourceTool === 'string')
+    && (value.action === undefined || typeof value.action === 'string')
+    && (value.displayTarget === undefined || typeof value.displayTarget === 'string')
+    && (value.summary === undefined || typeof value.summary === 'string')
+    && (value.sessionEntryId === undefined || typeof value.sessionEntryId === 'string')
+    && (value.metadata === undefined || isKodaXJsonValue(value.metadata));
+}
+
+function isPersistedArtifactLedgerLine(
+  value: unknown,
+): value is PersistedArtifactLedgerLine {
+  return isRecord(value)
+    && value._type === 'artifact_ledger_entry'
+    && isKodaXSessionArtifactLedgerEntry(value.entry);
+}
+
 function getLastNavigableEntryId(entries: KodaXSessionEntry[]): string | null {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
@@ -194,6 +232,10 @@ function buildSessionData(snapshot: PersistedSessionSnapshot): ResolvedSessionSn
         : undefined,
       extensionRecords: snapshot.extensionRecords.map((record) => ({ ...record })),
       lineage,
+      artifactLedger: snapshot.artifactLedger.map((entry) => ({
+        ...entry,
+        metadata: entry.metadata ? structuredClone(entry.metadata) : undefined,
+      })),
     },
   };
 }
@@ -215,6 +257,7 @@ function createSessionMeta(
     errorMetadata: data.errorMetadata,
     extensionState: data.extensionState,
     extensionRecordCount: data.extensionRecords?.length ?? 0,
+    artifactLedgerCount: data.artifactLedger?.length ?? 0,
     lineageVersion: lineage?.version,
     activeEntryId: lineage?.activeEntryId,
     lineageEntryCount: lineage?.entries.length ?? 0,
@@ -236,6 +279,7 @@ async function readPersistedSessionFile(filePath: string): Promise<PersistedSess
   const snapshot: PersistedSessionSnapshot = {
     legacyMessages: [],
     lineageEntries: [],
+    artifactLedger: [],
     extensionRecords: [],
     malformedCount: 0,
   };
@@ -251,6 +295,14 @@ async function readPersistedSessionFile(filePath: string): Promise<PersistedSess
 
       if (isPersistedLineageEntryLine(parsed)) {
         snapshot.lineageEntries.push(structuredClone(parsed.entry));
+        continue;
+      }
+
+      if (isPersistedArtifactLedgerLine(parsed)) {
+        snapshot.artifactLedger.push({
+          ...parsed.entry,
+          metadata: parsed.entry.metadata ? structuredClone(parsed.entry.metadata) : undefined,
+        });
         continue;
       }
 
@@ -310,9 +362,11 @@ export class FileSessionStorage implements KodaXSessionStorage {
       : createSessionLineage(data.messages);
     const meta = createSessionMeta(id, data, lineage, createdAt);
     const lineageLines = lineage.entries.map((entry) => JSON.stringify(toLineageEntryLine(entry)));
+    const artifactLedgerLines = (data.artifactLedger ?? [])
+      .map((entry) => JSON.stringify(toArtifactLedgerLine(entry)));
     const extensionRecordLines = (data.extensionRecords ?? [])
       .map((record) => JSON.stringify(toExtensionRecordLine(record)));
-    const lines = [JSON.stringify(meta), ...lineageLines, ...extensionRecordLines];
+    const lines = [JSON.stringify(meta), ...lineageLines, ...artifactLedgerLines, ...extensionRecordLines];
 
     try {
       await fs.writeFile(
@@ -335,6 +389,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
       scope: data.scope ?? existing?.data.scope ?? 'user',
       uiHistory: data.uiHistory ?? existing?.data.uiHistory,
       extensionState: data.extensionState ?? existing?.data.extensionState,
+      artifactLedger: data.artifactLedger ?? existing?.data.artifactLedger,
       extensionRecords: data.extensionRecords ?? existing?.data.extensionRecords,
       lineage: createSessionLineage(
         data.messages,
@@ -460,6 +515,9 @@ export class FileSessionStorage implements KodaXSessionStorage {
         : undefined,
       extensionState: resolved.data.extensionState
         ? structuredClone(resolved.data.extensionState)
+        : undefined,
+      artifactLedger: resolved.data.artifactLedger
+        ? structuredClone(resolved.data.artifactLedger)
         : undefined,
       extensionRecords: resolved.data.extensionRecords
         ? structuredClone(resolved.data.extensionRecords)

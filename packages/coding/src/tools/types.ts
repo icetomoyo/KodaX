@@ -31,3 +31,41 @@ export interface ToolRegistrationOptions {
 }
 
 export type ToolRegistry = Map<string, RegisteredToolDefinition[]>;
+
+export type KodaXRetrievalToolName =
+  | 'web_search'
+  | 'web_fetch'
+  | 'code_search'
+  | 'semantic_lookup';
+
+export type KodaXRetrievalScope = 'workspace' | 'remote';
+export type KodaXRetrievalTrust = 'workspace' | 'provider' | 'open-world';
+export type KodaXRetrievalFreshness = 'fresh' | 'snapshot' | 'unknown';
+
+export interface KodaXRetrievalArtifact {
+  kind: 'url' | 'path' | 'symbol' | 'module' | 'process' | 'provider';
+  label: string;
+  value: string;
+}
+
+export interface KodaXRetrievalItem {
+  title: string;
+  locator?: string;
+  snippet?: string;
+  score?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface KodaXRetrievalResult {
+  tool: KodaXRetrievalToolName;
+  query?: string;
+  scope: KodaXRetrievalScope;
+  trust: KodaXRetrievalTrust;
+  freshness: KodaXRetrievalFreshness;
+  provider?: string;
+  summary: string;
+  content?: string;
+  items: KodaXRetrievalItem[];
+  artifacts?: KodaXRetrievalArtifact[];
+  metadata?: Record<string, unknown>;
+}

@@ -52,11 +52,14 @@ export type {
   KodaXExtensionSessionState,
   KodaXExtensionStoreEntry,
   KodaXExtensionStore,
+  KodaXCompactMemoryProgress,
+  KodaXCompactMemorySeed,
   KodaXSessionBranchSummaryEntry,
   KodaXSessionCompactionEntry,
   KodaXSessionData,
   KodaXSessionEntry,
   KodaXSessionEntryBase,
+  KodaXSessionArtifactLedgerEntry,
   KodaXSessionLabelEntry,
   KodaXSessionLineage,
   KodaXSessionMessageEntry,
@@ -93,6 +96,7 @@ export {
 
 export {
   appendSessionLineageLabel,
+  applySessionCompaction,
   buildSessionTree,
   countActiveLineageMessages,
   createSessionLineage,
@@ -116,14 +120,18 @@ export {
 
 // ============== Compaction ==============
 export type {
+  CompactionAnchor,
   CompactionConfig,
   CompactionDetails,
+  CompactionUpdate,
   CompactionResult,
   FileOperations,
 } from './compaction/types.js';
 
 export {
+  extractArtifactLedger,
   extractFileOps,
+  mergeArtifactLedger,
   mergeFileOps,
 } from './compaction/file-tracker.js';
 

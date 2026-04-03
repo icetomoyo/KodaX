@@ -95,6 +95,11 @@ export interface KodaXSessionCompactionEntry extends KodaXSessionEntryBase {
   summary: string;
   firstKeptEntryId?: string;
   tokensBefore?: number;
+  tokensAfter?: number;
+  artifactLedgerId?: string;
+  reason?: string;
+  details?: KodaXJsonValue;
+  memorySeed?: KodaXCompactMemorySeed;
 }
 
 export interface KodaXSessionBranchSummaryEntry extends KodaXSessionEntryBase {
@@ -115,6 +120,46 @@ export type KodaXSessionEntry =
   | KodaXSessionCompactionEntry
   | KodaXSessionBranchSummaryEntry
   | KodaXSessionLabelEntry;
+
+export interface KodaXSessionArtifactLedgerEntry {
+  id: string;
+  kind:
+    | 'file_read'
+    | 'file_modified'
+    | 'file_created'
+    | 'file_deleted'
+    | 'path_scope'
+    | 'search_scope'
+    | 'command_scope'
+    | 'check_result'
+    | 'decision'
+    | 'tombstone';
+  sourceTool?: string;
+  action?: string;
+  target: string;
+  displayTarget?: string;
+  summary?: string;
+  sessionEntryId?: string;
+  timestamp: string;
+  metadata?: Record<string, KodaXJsonValue>;
+}
+
+export interface KodaXCompactMemoryProgress {
+  completed: string[];
+  inProgress: string[];
+  blockers: string[];
+}
+
+export interface KodaXCompactMemorySeed {
+  objective?: string;
+  constraints: string[];
+  progress: KodaXCompactMemoryProgress;
+  keyDecisions: string[];
+  nextSteps: string[];
+  keyContext: string[];
+  importantTargets: string[];
+  tombstones: string[];
+}
 
 export interface KodaXSessionLineage {
   version: 2;
@@ -159,6 +204,7 @@ export interface KodaXSessionData {
   extensionState?: KodaXExtensionSessionState;
   extensionRecords?: KodaXExtensionSessionRecord[];
   lineage?: KodaXSessionLineage;
+  artifactLedger?: KodaXSessionArtifactLedgerEntry[];
 }
 
 export interface KodaXSessionMeta {
@@ -171,6 +217,7 @@ export interface KodaXSessionMeta {
   uiHistory?: KodaXSessionUiHistoryItem[];
   extensionState?: KodaXExtensionSessionState;
   extensionRecordCount?: number;
+  artifactLedgerCount?: number;
   lineageVersion?: 2;
   activeEntryId?: string | null;
   lineageEntryCount?: number;

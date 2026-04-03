@@ -6,6 +6,7 @@
 
 import type { KodaXBaseProvider, KodaXMessage } from '@kodax/ai';
 import type { CompactionDetails } from './types.js';
+import type { KodaXCompactMemorySeed } from '../types.js';
 import { serializeConversation } from './utils.js';
 
 const SUMMARIZATION_SYSTEM_PROMPT = `You are a context summarization assistant.
@@ -172,4 +173,94 @@ export async function generateSummary(
   );
 
   return result.textBlocks.map(block => block.text).join('\n');
+}
+
+function parseListSection(section: string): string[] {
+  return section
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('- ') || /^\d+\.\s/.test(line))
+    .map((line) => line.replace(/^-\s+/, '').replace(/^\d+\.\s+/, '').trim())
+    .filter((line) => line.length > 0 && line.toLowerCase() !== 'none');
+}
+
+function parseTaggedLines(summary: string, tagName: string): string[] {
+  const match = summary.match(new RegExp(`<${tagName}>\\s*([\\s\\S]*?)\\s*<\\/${tagName}>`, 'i'));
+  if (!match?.[1]) {
+    return [];
+  }
+  return match[1]
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
+function readSection(summary: string, heading: string, nextHeadings: string[]): string {
+  const headingPattern = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const nextHeadingPattern = nextHeadings
+    .map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('|');
+  const regex = new RegExp(
+    `${headingPattern}\\s*([\\s\\S]*?)(?=\\n(?:${nextHeadingPattern})\\b|\\n---|$)`,
+    'i',
+  );
+  return summary.match(regex)?.[1]?.trim() ?? '';
+}
+
+function readSingleParagraph(section: string): string | undefined {
+  const cleaned = section
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+  return cleaned || undefined;
+}
+
+export function extractCompactMemorySeed(
+  summary: string,
+  details: CompactionDetails,
+): KodaXCompactMemorySeed {
+  const constraints = parseListSection(
+    readSection(summary, '## Constraints & Preferences', ['## Progress']),
+  );
+  const completed = parseListSection(
+    readSection(summary, '### Completed', ['### In Progress', '### Blockers']),
+  );
+  const inProgress = parseListSection(
+    readSection(summary, '### In Progress', ['### Blockers', '## Key Decisions']),
+  );
+  const blockers = parseListSection(
+    readSection(summary, '### Blockers', ['## Key Decisions']),
+  );
+  const keyDecisions = parseListSection(
+    readSection(summary, '## Key Decisions', ['## Next Steps']),
+  );
+  const nextSteps = parseListSection(
+    readSection(summary, '## Next Steps', ['## Key Context']),
+  );
+  const keyContext = parseListSection(
+    readSection(summary, '## Key Context', ['<read-files>', '<modified-files>']),
+  );
+  const importantTargets = Array.from(new Set([
+    ...parseTaggedLines(summary, 'read-files'),
+    ...parseTaggedLines(summary, 'modified-files'),
+    ...details.readFiles,
+    ...details.modifiedFiles,
+  ]));
+
+  return {
+    objective: readSingleParagraph(readSection(summary, '## Goal', ['## Constraints & Preferences'])),
+    constraints,
+    progress: {
+      completed,
+      inProgress,
+      blockers,
+    },
+    keyDecisions,
+    nextSteps,
+    keyContext,
+    importantTargets,
+    tombstones: blockers.filter((entry) => /skip|avoid|won't|wont|abandon|failed/i.test(entry)),
+  };
 }

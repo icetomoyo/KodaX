@@ -3,6 +3,10 @@
  */
 
 import type { KodaXMessage } from '@kodax/ai';
+import type {
+  KodaXCompactMemorySeed,
+  KodaXSessionArtifactLedgerEntry,
+} from '../types.js';
 
 export interface CompactionConfig {
   /** Whether automatic compaction is enabled. */
@@ -34,6 +38,23 @@ export interface CompactionDetails {
   modifiedFiles: string[];
 }
 
+export interface CompactionAnchor {
+  summary: string;
+  tokensBefore: number;
+  tokensAfter: number;
+  entriesRemoved: number;
+  reason: string;
+  artifactLedgerId?: string;
+  details?: CompactionDetails;
+  memorySeed?: KodaXCompactMemorySeed;
+}
+
+export interface CompactionUpdate {
+  anchor?: CompactionAnchor;
+  artifactLedger?: KodaXSessionArtifactLedgerEntry[];
+  memorySeed?: KodaXCompactMemorySeed;
+}
+
 export interface CompactionResult {
   compacted: boolean;
   messages: KodaXMessage[];
@@ -42,6 +63,9 @@ export interface CompactionResult {
   tokensAfter: number;
   entriesRemoved: number;
   details?: CompactionDetails;
+  artifactLedger?: KodaXSessionArtifactLedgerEntry[];
+  anchor?: CompactionAnchor;
+  memorySeed?: KodaXCompactMemorySeed;
 }
 
 export interface FileOperations {

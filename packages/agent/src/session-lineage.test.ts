@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { KodaXMessage } from '@kodax/ai';
 import {
   appendSessionLineageLabel,
+  applySessionCompaction,
   buildSessionTree,
   countActiveLineageMessages,
   createSessionLineage,
@@ -177,5 +178,66 @@ describe('session lineage helpers', () => {
       root.id,
       leaf.id,
     ]);
+  });
+
+  it('applies compaction anchors as first-class lineage entries and keeps the compacted tail active', () => {
+    const initial = createSessionLineage([
+      createTextMessage('user', 'root task'),
+      createTextMessage('assistant', 'first pass'),
+      createTextMessage('user', 'follow-up'),
+      createTextMessage('assistant', 'latest pass'),
+    ]);
+
+    const compacted = applySessionCompaction(
+      initial,
+      [
+        { role: 'system', content: '[对话历史摘要]\n\nCompacted summary' },
+        createTextMessage('assistant', 'latest pass'),
+      ],
+      {
+        summary: 'Compacted summary',
+        tokensBefore: 1000,
+        tokensAfter: 200,
+        artifactLedgerId: 'ledger_123',
+        reason: 'automatic_compaction',
+        details: {
+          readFiles: ['packages/a.ts'],
+          modifiedFiles: ['packages/b.ts'],
+        },
+        memorySeed: {
+          objective: 'Continue the latest pass',
+          constraints: ['Keep the fix minimal'],
+          progress: {
+            completed: ['Compacted older context'],
+            inProgress: ['Finish the latest pass'],
+            blockers: [],
+          },
+          keyDecisions: ['Use compact anchor'],
+          nextSteps: ['Resume from latest pass'],
+          keyContext: ['packages/a.ts'],
+          importantTargets: ['packages/b.ts'],
+          tombstones: [],
+        },
+      },
+    );
+
+    const compactionEntry = compacted.entries.find((entry) => entry.type === 'compaction');
+    expect(compactionEntry).toEqual(expect.objectContaining({
+      type: 'compaction',
+      summary: 'Compacted summary',
+      tokensBefore: 1000,
+      tokensAfter: 200,
+      artifactLedgerId: 'ledger_123',
+      reason: 'automatic_compaction',
+      firstKeptEntryId: expect.any(String),
+      memorySeed: expect.objectContaining({
+        objective: 'Continue the latest pass',
+      }),
+    }));
+    expect(getSessionMessagesFromLineage(compacted)).toEqual([
+      { role: 'system', content: '[对话历史摘要]\n\nCompacted summary' },
+      createTextMessage('assistant', 'latest pass'),
+    ]);
+    expect(compacted.activeEntryId).toBe(compacted.entries[compacted.entries.length - 1]?.id ?? null);
   });
 });

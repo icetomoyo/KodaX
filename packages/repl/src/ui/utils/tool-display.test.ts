@@ -95,6 +95,34 @@ describe("tool-display", () => {
     )).toBe("grep - pattern=H2_PLAN_EXECUTE_EVAL - packages/coding/src");
   });
 
+  it("formats web_search summaries with query and provider", () => {
+    expect(formatToolSummary(
+      "web_search",
+      { query: "kodax ama tactical fanout", provider_id: "web-cap" },
+    )).toBe("web_search - query=kodax ama tactical fanout - provider=web-cap");
+  });
+
+  it("formats web_fetch summaries with url", () => {
+    expect(formatToolSummary(
+      "web_fetch",
+      { url: "https://example.com/spec" },
+    )).toBe("web_fetch - https://example.com/spec");
+  });
+
+  it("formats semantic_lookup summaries with query and target path", () => {
+    expect(formatToolSummary(
+      "semantic_lookup",
+      { query: "NameService", target_path: "packages/app" },
+    )).toBe("semantic_lookup - query=NameService - packages/app");
+  });
+
+  it("formats code_search summaries with provider", () => {
+    expect(formatToolSummary(
+      "code_search",
+      { query: "NameService", provider_id: "provider-1" },
+    )).toBe("code_search - query=NameService - provider=provider-1");
+  });
+
   it("collapses repeated tool calls into a single summary", () => {
     const groups = collapseToolCalls([
       {

@@ -338,6 +338,55 @@ function summarizeToolDetails(toolName: string, input: ToolInputValue): string[]
     return parts;
   }
 
+  if (baseToolName === "web_fetch") {
+    const url = readFirstString(record, "url")
+      ?? extractFieldFromPreview(preview, "url");
+    const providerId = readFirstString(record, "provider_id", "providerId")
+      ?? extractFieldFromPreview(preview, "provider_id")
+      ?? extractFieldFromPreview(preview, "providerId");
+    const capabilityId = readFirstString(record, "capability_id", "capabilityId")
+      ?? extractFieldFromPreview(preview, "capability_id")
+      ?? extractFieldFromPreview(preview, "capabilityId");
+    if (url) {
+      parts.push(truncateValue(url, 120));
+    }
+    if (providerId) {
+      parts.push(`provider=${truncateValue(providerId, 48)}`);
+    }
+    if (capabilityId) {
+      parts.push(`cap=${truncateValue(capabilityId, 48)}`);
+    }
+    return parts;
+  }
+
+  if (baseToolName === "web_search" || baseToolName === "code_search" || baseToolName === "semantic_lookup") {
+    const query = readFirstString(record, "query", "pattern")
+      ?? extractFieldFromPreview(preview, "query")
+      ?? extractFieldFromPreview(preview, "pattern");
+    const scope = readFirstString(record, "path", "target_path", "targetPath")
+      ?? extractFieldFromPreview(preview, "path")
+      ?? extractFieldFromPreview(preview, "target_path")
+      ?? extractFieldFromPreview(preview, "targetPath");
+    const providerId = readFirstString(record, "provider_id", "providerId")
+      ?? extractFieldFromPreview(preview, "provider_id")
+      ?? extractFieldFromPreview(preview, "providerId");
+    const limit = readNumber(record?.limit)
+      ?? extractNumberFromPreview(preview, "limit");
+    if (query) {
+      parts.push(`query=${truncateValue(query, 96)}`);
+    }
+    if (scope) {
+      parts.push(truncateValue(scope, 72));
+    }
+    if (providerId) {
+      parts.push(`provider=${truncateValue(providerId, 48)}`);
+    }
+    if (limit !== undefined) {
+      parts.push(`limit=${limit}`);
+    }
+    return parts;
+  }
+
   pushPathSummary(parts, record, preview, true);
   pushNumericSummary(
     parts,

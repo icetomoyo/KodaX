@@ -5,6 +5,8 @@
 import type {
   KodaXContextTokenSnapshot,
   KodaXMessage,
+  KodaXSessionArtifactLedgerEntry,
+  KodaXSessionLineage,
   KodaXSessionUiHistoryItem,
 } from '@kodax/coding';
 
@@ -16,6 +18,8 @@ export interface InteractiveContext {
   messages: KodaXMessage[];
   uiHistory?: KodaXSessionUiHistoryItem[];
   contextTokenSnapshot?: KodaXContextTokenSnapshot;
+  lineage?: KodaXSessionLineage;
+  artifactLedger?: KodaXSessionArtifactLedgerEntry[];
   sessionId: string;
   title: string;
   gitRoot?: string;
@@ -30,10 +34,14 @@ export async function createInteractiveContext(options: {
   gitRoot?: string;
   existingMessages?: KodaXMessage[];
   existingUiHistory?: KodaXSessionUiHistoryItem[];
+  existingLineage?: KodaXSessionLineage;
+  existingArtifactLedger?: KodaXSessionArtifactLedgerEntry[];
 }): Promise<InteractiveContext> {
   return {
     messages: options.existingMessages ?? [],
     uiHistory: options.existingUiHistory?.map((item) => ({ ...item })),
+    lineage: options.existingLineage ? structuredClone(options.existingLineage) : undefined,
+    artifactLedger: options.existingArtifactLedger?.map((entry) => ({ ...entry, metadata: entry.metadata ? { ...entry.metadata } : undefined })),
     sessionId: options.sessionId ?? generateSessionId(),
     title: '',
     gitRoot: options.gitRoot,

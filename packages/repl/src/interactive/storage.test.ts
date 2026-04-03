@@ -2,6 +2,7 @@ import os from 'os';
 import path from 'path';
 import { mkdtemp, readFile, rm, writeFile } from 'fs/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { applySessionCompaction, createSessionLineage } from '@kodax/coding';
 
 describe('FileSessionStorage', () => {
   let tempHome: string;
@@ -63,6 +64,19 @@ describe('FileSessionStorage', () => {
           dedupeKey: 'latest',
         },
       ],
+      artifactLedger: [
+        {
+          id: 'artifact-1',
+          kind: 'file_read',
+          sourceTool: 'read',
+          action: 'read',
+          target: 'src/app.ts',
+          displayTarget: 'src/app.ts',
+          summary: 'Read src/app.ts',
+          timestamp: '2026-04-03T00:00:00.000Z',
+          metadata: { reason: 'resume' },
+        },
+      ],
     });
 
     await expect(storage.load('session-1')).resolves.toEqual({
@@ -75,6 +89,19 @@ describe('FileSessionStorage', () => {
         { type: 'assistant', text: 'managed transcript survives resume' },
       ],
       errorMetadata: undefined,
+      artifactLedger: [
+        {
+          id: 'artifact-1',
+          kind: 'file_read',
+          sourceTool: 'read',
+          action: 'read',
+          target: 'src/app.ts',
+          displayTarget: 'src/app.ts',
+          summary: 'Read src/app.ts',
+          timestamp: '2026-04-03T00:00:00.000Z',
+          metadata: { reason: 'resume' },
+        },
+      ],
       extensionState: {
         'api:extension:C:/repo/extensions/sample.mjs': {
           phase: 'collecting',
@@ -180,6 +207,97 @@ describe('FileSessionStorage', () => {
         { role: 'assistant', content: 'second pass' },
       ],
     });
+  });
+
+  it('persists compaction anchors and artifact ledgers through JSONL round-trips', async () => {
+    const { FileSessionStorage } = await import('./storage.js');
+    const storage = new FileSessionStorage();
+    const gitRoot = path.resolve('C:/Works/GitWorks/KodaX').replace(/\\/g, '/');
+
+    const baseLineage = createSessionLineage([
+      { role: 'user', content: 'root task' },
+      { role: 'assistant', content: 'initial implementation' },
+    ]);
+    const lineage = applySessionCompaction(
+      baseLineage,
+      [
+        { role: 'system', content: '[对话历史摘要]\n\nCompacted summary' },
+        { role: 'assistant', content: 'continue from summary' },
+      ],
+      {
+        summary: 'Compacted summary',
+        tokensBefore: 1000,
+        tokensAfter: 250,
+        artifactLedgerId: 'ledger_abc123',
+        reason: 'automatic_compaction',
+        details: {
+          readFiles: ['src/app.ts'],
+          modifiedFiles: ['src/feature.ts'],
+        },
+        memorySeed: {
+          objective: 'Continue from summary',
+          constraints: ['Keep scope tight'],
+          progress: {
+            completed: ['Compacted old context'],
+            inProgress: ['Resume latest implementation'],
+            blockers: [],
+          },
+          keyDecisions: ['Keep the summary durable'],
+          nextSteps: ['Continue the feature'],
+          keyContext: ['src/app.ts'],
+          importantTargets: ['src/feature.ts'],
+          tombstones: [],
+        },
+      },
+    );
+
+    await storage.save('session-compacted', {
+      messages: [
+        { role: 'system', content: '[对话历史摘要]\n\nCompacted summary' },
+        { role: 'assistant', content: 'continue from summary' },
+      ],
+      title: 'Compacted Session',
+      gitRoot,
+      lineage,
+      artifactLedger: [
+        {
+          id: 'artifact-1',
+          kind: 'file_modified',
+          sourceTool: 'edit',
+          action: 'edit',
+          target: 'src/feature.ts',
+          displayTarget: 'src/feature.ts',
+          summary: 'Edited src/feature.ts',
+          timestamp: '2026-04-03T00:00:00.000Z',
+        },
+      ],
+    });
+
+    await expect(storage.load('session-compacted')).resolves.toEqual(
+      expect.objectContaining({
+        title: 'Compacted Session',
+        artifactLedger: [
+          expect.objectContaining({
+            id: 'artifact-1',
+            kind: 'file_modified',
+            target: 'src/feature.ts',
+          }),
+        ],
+        lineage: expect.objectContaining({
+          entries: expect.arrayContaining([
+            expect.objectContaining({
+              type: 'compaction',
+              summary: 'Compacted summary',
+              artifactLedgerId: 'ledger_abc123',
+              firstKeptEntryId: expect.any(String),
+              memorySeed: expect.objectContaining({
+                objective: 'Continue from summary',
+              }),
+            }),
+          ]),
+        }),
+      }),
+    );
   });
 
   it('hides managed-task worker sessions from default session listing and sorts by createdAt', async () => {

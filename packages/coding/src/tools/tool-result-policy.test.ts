@@ -59,5 +59,7 @@ describe('tool result guardrail', () => {
   it('exposes tool-specific policy', () => {
     expect(getToolResultPolicy('bash').direction).toBe('tail');
     expect(getToolResultPolicy('read').direction).toBe('head');
+    expect(getToolResultPolicy('web_fetch').maxBytes).toBe(24 * 1024);
+    expect(getToolResultPolicy('semantic_lookup').spillToFile).toBe(true);
   });
 });

@@ -39,13 +39,16 @@ import {
   KeypressHandlerPriority,
 } from "./types.js";
 import {
+  applySessionCompaction,
   buildSessionTree,
+  createSessionLineage,
   KodaXOptions,
   KodaXMessage,
   KodaXManagedTaskStatusEvent,
   KodaXReasoningMode,
   KodaXResult,
   KodaXSessionUiHistoryItem,
+  mergeArtifactLedger,
   runManagedTask,
   KODAX_DEFAULT_PROVIDER,
   KodaXTerminalError,
@@ -54,7 +57,12 @@ import {
   loadAgentsFiles,
   resolveRepoIntelligenceRuntimeConfig,
 } from "@kodax/coding";
-import type { AgentsFile } from "@kodax/coding";
+import type {
+  AgentsFile,
+  CompactionUpdate,
+  KodaXSessionArtifactLedgerEntry,
+  KodaXSessionLineage,
+} from "@kodax/coding";
 import { estimateTokens } from "@kodax/agent";
 import {
   PermissionMode,
@@ -181,7 +189,7 @@ interface ReviewSnapshot {
 }
 
 type StreamingEvents = import("@kodax/coding").KodaXEvents & {
-  onCompactedMessages?: (messages: KodaXMessage[]) => void;
+  onCompactedMessages?: (messages: KodaXMessage[], update?: CompactionUpdate) => void;
 };
 
 const PLAN_MODE_BLOCK_GUIDANCE =
@@ -2190,8 +2198,17 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       lastCompactionTokensBeforeRef.current = info.tokensBefore;
       setLiveTokenCount(info.tokensAfter);
     },
-    onCompactedMessages: (messages: KodaXMessage[]) => {
+    onCompactedMessages: (messages: KodaXMessage[], update?: CompactionUpdate) => {
       context.messages = messages;
+      if (update?.artifactLedger && update.artifactLedger.length > 0) {
+        context.artifactLedger = mergeArtifactLedger(
+          context.artifactLedger ?? [],
+          update.artifactLedger,
+        );
+      }
+      context.lineage = update?.anchor
+        ? applySessionCompaction(context.lineage, messages, update.anchor)
+        : createSessionLineage(messages, context.lineage);
       const currentTokens = estimateTokens(messages);
       context.contextTokenSnapshot = {
         currentTokens,
@@ -2321,11 +2338,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     persistedUiHistoryRef.current = persistedUiHistory;
     context.title = title;
     context.uiHistory = persistedUiHistory;
+    context.lineage = createSessionLineage(context.messages, context.lineage);
     await storage.save(context.sessionId, {
       messages: context.messages,
       title,
       gitRoot: context.gitRoot ?? "",
       uiHistory: persistedUiHistory,
+      lineage: context.lineage,
+      artifactLedger: context.artifactLedger,
     });
   }, [context, storage]);
 
@@ -2698,11 +2718,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             if (context.messages.length > 0) {
               const title = extractTitle(context.messages);
               context.title = title;
+              context.lineage = createSessionLineage(context.messages, context.lineage);
               await storage.save(context.sessionId, {
                 messages: context.messages,
                 title,
                 gitRoot: context.gitRoot ?? "",
                 uiHistory: serializeUiHistorySnapshot(history),
+                lineage: context.lineage,
+                artifactLedger: context.artifactLedger,
               });
             }
           },
@@ -2713,6 +2736,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             context.title = "";
             context.uiHistory = [];
             context.contextTokenSnapshot = undefined;
+            context.lineage = undefined;
+            context.artifactLedger = undefined;
             context.createdAt = now;
             context.lastAccessed = now;
             currentOptionsRef.current.session = {
@@ -2736,6 +2761,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               }
               context.messages = loaded.messages;
               context.uiHistory = loaded.uiHistory;
+              context.lineage = loaded.lineage;
+              context.artifactLedger = loaded.artifactLedger;
               context.title = loaded.title;
               context.sessionId = id;
               context.contextTokenSnapshot = undefined;
@@ -3637,6 +3664,8 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
   let sessionId = options.session?.id;
   let existingMessages: KodaXMessage[] = [];
   let existingUiHistory: KodaXSessionUiHistoryItem[] | undefined;
+  let existingLineage: KodaXSessionLineage | undefined;
+  let existingArtifactLedger: KodaXSessionArtifactLedgerEntry[] | undefined;
   let sessionTitle = "";
   const gitRoot = (await getGitRoot().catch(() => null)) ?? undefined;
 
@@ -3664,6 +3693,8 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
     if (loaded) {
       existingMessages = loaded.messages;
       existingUiHistory = loaded.uiHistory;
+      existingLineage = loaded.lineage;
+      existingArtifactLedger = loaded.artifactLedger;
       sessionTitle = loaded.title;
       sessionId = options.session.id;
       console.log(chalk.green(`[Session loaded: ${options.session.id}]`));
@@ -3679,6 +3710,8 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
         if (loaded) {
           existingMessages = loaded.messages;
           existingUiHistory = loaded.uiHistory;
+          existingLineage = loaded.lineage;
+          existingArtifactLedger = loaded.artifactLedger;
           sessionTitle = loaded.title;
           sessionId = recentSession.id;
           console.log(chalk.green(`[Continuing session: ${recentSession.id}]`));
@@ -3693,6 +3726,8 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
     gitRoot,
     existingMessages,
     existingUiHistory,
+    existingLineage,
+    existingArtifactLedger,
   });
   context.title = sessionTitle;
 

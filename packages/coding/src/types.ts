@@ -48,11 +48,14 @@ import type {
   KodaXExtensionSessionState,
   KodaXExtensionStoreEntry,
   KodaXExtensionStore,
+  KodaXCompactMemoryProgress,
+  KodaXCompactMemorySeed,
   KodaXSessionBranchSummaryEntry,
   KodaXSessionCompactionEntry,
   KodaXSessionData,
   KodaXSessionEntry,
   KodaXSessionEntryBase,
+  KodaXSessionArtifactLedgerEntry,
   KodaXSessionLabelEntry,
   KodaXSessionLineage,
   KodaXSessionMessageEntry,
@@ -66,6 +69,7 @@ import type {
   SessionErrorMetadata,
 } from '@kodax/agent';
 import type { KodaXReviewScale } from '@kodax/ai';
+import type { CompactionUpdate } from '@kodax/agent';
 import type { KodaXExtensionRuntime } from './extensions/runtime.js';
 
 // Re-export all types from @kodax/agent
@@ -111,11 +115,14 @@ export type {
   KodaXExtensionSessionState,
   KodaXExtensionStoreEntry,
   KodaXExtensionStore,
+  KodaXCompactMemoryProgress,
+  KodaXCompactMemorySeed,
   KodaXSessionBranchSummaryEntry,
   KodaXSessionCompactionEntry,
   KodaXSessionData,
   KodaXSessionEntry,
   KodaXSessionEntryBase,
+  KodaXSessionArtifactLedgerEntry,
   KodaXSessionLabelEntry,
   KodaXSessionLineage,
   KodaXSessionMessageEntry,
@@ -163,7 +170,7 @@ export interface KodaXEvents {
   /** Emitted when compaction changes the context so UI can refresh token usage immediately */
   onCompactStats?: (info: { tokensBefore: number; tokensAfter: number }) => void;
   /** Emitted with the rewritten message history when automatic compaction changes the context. */
-  onCompactedMessages?: (messages: KodaXMessage[]) => void;
+  onCompactedMessages?: (messages: KodaXMessage[], update?: CompactionUpdate) => void;
   /** Emitted to silently dismiss the compaction UI if compaction aborted or completed without changes */
   onCompactEnd?: () => void;
   /** Whether the caller has queued follow-up input waiting for the next round */
@@ -803,6 +810,8 @@ export interface KodaXToolExecutionContext {
   gitRoot?: string;
   /** Working directory used to resolve relative paths and execute shell commands. */
   executionCwd?: string;
+  /** Shared extension capability runtime used by retrieval-family tools. */
+  extensionRuntime?: KodaXExtensionRuntime;
   /** Ask user a question interactively - 交互式向用户提问 (Issue 069) */
   askUser?: (options: AskUserQuestionOptions) => Promise<string>;
 }

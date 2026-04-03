@@ -34,7 +34,7 @@ import {
 import { buildSystemPrompt } from './prompts/index.js';
 import { generateSessionId, extractTitleFromMessages } from './session.js';
 import { checkIncompleteToolCalls } from './messages.js';
-import { compact as intelligentCompact, needsCompaction, type CompactionConfig } from '@kodax/agent';
+import { compact as intelligentCompact, needsCompaction, type CompactionConfig, type CompactionUpdate } from '@kodax/agent';
 import { loadCompactionConfig } from './compaction-config.js';
 import { estimateTokens } from './tokenizer.js';
 import { KODAX_MAX_INCOMPLETE_RETRIES, PROMISE_PATTERN } from './constants.js';
@@ -1046,6 +1046,7 @@ export async function runKodaX(
     backups: new Map(),
     gitRoot: options.context?.gitRoot ?? undefined,
     executionCwd,
+    extensionRuntime: runtime ?? undefined,
     askUser: events.askUser, // Issue 069: Pass askUser callback from events
   };
   let contextTokenSnapshot = rebaseContextTokenSnapshot(
@@ -1190,6 +1191,7 @@ export async function runKodaX(
       // Compaction: 统一使用智能压缩，废除遗留的粗暴截断
       let compacted: KodaXMessage[];
       let didCompactMessages = false;
+      let compactionUpdate: CompactionUpdate | undefined;
 
       // 判断是否需要压缩：只依据智能压缩阈值 (默认 75%)
       const currentTokens = resolveContextTokenCount(messages, contextTokenSnapshot);
@@ -1215,6 +1217,11 @@ export async function runKodaX(
           if (result.compacted) {
             compacted = result.messages;
             didCompactMessages = true;
+            compactionUpdate = {
+              anchor: result.anchor,
+              artifactLedger: result.artifactLedger,
+              memorySeed: result.memorySeed,
+            };
             events.onCompactStats?.({
               tokensBefore: result.tokensBefore,
               tokensAfter: result.tokensAfter,
@@ -1289,7 +1296,7 @@ export async function runKodaX(
       messages = compacted;
       if (didCompactMessages) {
         contextTokenSnapshot = createEstimatedContextTokenSnapshot(messages);
-        events.onCompactedMessages?.(messages);
+        events.onCompactedMessages?.(messages, compactionUpdate);
       }
 
       const preparedProviderState = await applyProviderPrepareHook({

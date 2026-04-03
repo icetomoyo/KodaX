@@ -11,6 +11,13 @@ export type {
   RegisteredToolDefinition,
   ToolDefinitionSource,
   ToolRegistrationOptions,
+  KodaXRetrievalToolName,
+  KodaXRetrievalScope,
+  KodaXRetrievalTrust,
+  KodaXRetrievalFreshness,
+  KodaXRetrievalArtifact,
+  KodaXRetrievalItem,
+  KodaXRetrievalResult,
 } from './types.js';
 export {
   KODAX_TOOLS,
@@ -46,6 +53,18 @@ export { toolModuleContext } from './module-context.js';
 export { toolSymbolContext } from './symbol-context.js';
 export { toolProcessContext } from './process-context.js';
 export { toolImpactEstimate } from './impact-estimate.js';
+export { toolWebSearch } from './web-search.js';
+export { toolWebFetch } from './web-fetch.js';
+export { toolCodeSearch } from './code-search.js';
+export { toolSemanticLookup } from './semantic-lookup.js';
+export {
+  stripHtmlToText,
+  extractHtmlTitle,
+  renderRetrievalResult,
+  finalizeRetrievalResult,
+  convertProviderSearchResults,
+  convertCapabilityReadResult,
+} from './retrieval.js';
 export {
   DEFAULT_TOOL_OUTPUT_MAX_BYTES,
   DEFAULT_TOOL_OUTPUT_MAX_LINES,

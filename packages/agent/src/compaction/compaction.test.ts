@@ -28,31 +28,31 @@ class FakeSummaryProvider extends KodaXBaseProvider {
 
   constructor(
     private readonly summaryText: string = [
-    '## Goal',
-    'Continue the current task.',
-    '',
-    '## Constraints & Preferences',
-    '- None',
-    '',
-    '## Progress',
-    '### Completed',
-    '- [x] Captured the important history',
-    '',
-    '### In Progress',
-    '- [ ] Continue implementation',
-    '',
-    '### Blockers',
-    '- None',
-    '',
-    '## Key Decisions',
-    '- **Compaction**: Keep the summary concise',
-    '',
-    '## Next Steps',
-    '1. Continue from the latest code state',
-    '',
-    '## Key Context',
-    '- packages/agent/src/compaction/compaction.ts',
-  ].join('\n'),
+      '## Goal',
+      'Continue the current task.',
+      '',
+      '## Constraints & Preferences',
+      '- None',
+      '',
+      '## Progress',
+      '### Completed',
+      '- [x] Captured the important history',
+      '',
+      '### In Progress',
+      '- [ ] Continue implementation',
+      '',
+      '### Blockers',
+      '- None',
+      '',
+      '## Key Decisions',
+      '- **Compaction**: Keep the summary concise',
+      '',
+      '## Next Steps',
+      '1. Continue from the latest code state',
+      '',
+      '## Key Context',
+      '- packages/agent/src/compaction/compaction.ts',
+    ].join('\n'),
     private readonly failOnCall?: number,
   ) {
     super();
@@ -63,7 +63,7 @@ class FakeSummaryProvider extends KodaXBaseProvider {
     _tools: KodaXToolDefinition[],
     system: string,
     _thinking?: boolean,
-    _streamOptions?: KodaXProviderStreamOptions
+    _streamOptions?: KodaXProviderStreamOptions,
   ): Promise<KodaXStreamResult> {
     this.callCount += 1;
     if (this.failOnCall && this.callCount === this.failOnCall) {
@@ -148,7 +148,7 @@ describe('compaction', () => {
     const result = await compact(messages, config, provider, contextWindow);
 
     const targetTokens = Math.floor(
-      contextWindow * ((config.protectionPercent + 0.4 * (config.triggerPercent - config.protectionPercent)) / 100)
+      contextWindow * ((config.protectionPercent + 0.4 * (config.triggerPercent - config.protectionPercent)) / 100),
     );
 
     expect(result.compacted).toBe(true);
@@ -201,15 +201,25 @@ describe('compaction', () => {
     const result = await compact(messages, config, provider, contextWindow);
     const toolResults = result.messages
       .filter((msg): msg is KodaXMessage & { role: 'user'; content: NonNullable<KodaXMessage['content']> } =>
-        msg.role === 'user' && Array.isArray(msg.content)
+        msg.role === 'user' && Array.isArray(msg.content),
       )
-      .flatMap(msg => msg.content as KodaXContentBlock[])
+      .flatMap((msg) => msg.content as KodaXContentBlock[])
       .filter((block): block is KodaXToolResultBlock => block.type === 'tool_result');
 
     expect(result.compacted).toBe(true);
-    expect(toolResults.some(block => typeof block.content === 'string' && block.content.startsWith('[Pruned: bash cat]'))).toBe(true);
-    expect(toolResults.some(block => typeof block.content === 'string' && block.content.startsWith('x x x x'))).toBe(true);
-    expect(result.messages.some(msg => msg.role === 'assistant' && msg.content === 'retain assistant note')).toBe(true);
+    expect(toolResults.some((block) => typeof block.content === 'string' && block.content.startsWith('[Pruned: cat output-'))).toBe(true);
+    expect(toolResults.some((block) => typeof block.content === 'string' && block.content.startsWith('x x x x'))).toBe(true);
+    expect(result.messages.some((msg) => msg.role === 'assistant' && msg.content === 'retain assistant note')).toBe(true);
+    expect(result.artifactLedger?.some((entry) => entry.kind === 'command_scope' && entry.action === 'cat')).toBe(true);
+    expect(result.memorySeed).toEqual(expect.objectContaining({
+      importantTargets: expect.any(Array),
+      progress: expect.objectContaining({
+        completed: expect.any(Array),
+        inProgress: expect.any(Array),
+        blockers: expect.any(Array),
+      }),
+    }));
+    expect(result.anchor?.artifactLedgerId).toMatch(/^ledger_/);
   });
 
   it('keeps partial summary progress when a later summary attempt fails', async () => {
@@ -230,9 +240,27 @@ describe('compaction', () => {
     expect(result.compacted).toBe(true);
     expect(result.summary).toBe('partial summary');
     expect(result.entriesRemoved).toBeGreaterThan(0);
-    expect(result.messages[0]).toEqual({
+    expect(result.messages[0]).toEqual(expect.objectContaining({
       role: 'system',
-      content: '[对话历史摘要]\n\npartial summary',
+      content: expect.stringContaining('partial summary'),
+    }));
+    expect(result.anchor).toEqual(expect.objectContaining({
+      summary: 'partial summary',
+      reason: 'automatic_compaction',
+    }));
+    expect(result.memorySeed).toEqual({
+      objective: undefined,
+      constraints: [],
+      progress: {
+        completed: [],
+        inProgress: [],
+        blockers: [],
+      },
+      keyDecisions: [],
+      nextSteps: [],
+      keyContext: [],
+      importantTargets: [],
+      tombstones: [],
     });
   });
 });
@@ -247,7 +275,7 @@ describe('summary generator', () => {
       { readFiles: ['a.ts'], modifiedFiles: ['b.ts'] },
       'Focus on risks',
       'CUSTOM SYSTEM',
-      'Previous summary'
+      'Previous summary',
     );
 
     expect(provider.systems[0]).toBe('CUSTOM SYSTEM');
