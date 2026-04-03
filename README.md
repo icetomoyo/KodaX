@@ -874,11 +874,11 @@ export {
 # Development mode (using tsx)
 npm run dev "your task"
 
-# Build all packages
-npm run build:packages
-
 # Build
 npm run build
+
+# Optional: only build workspace packages
+npm run build:packages
 
 # Run tests
 npm test
@@ -886,6 +886,23 @@ npm test
 # Clean
 npm run clean
 ```
+
+### Repo Intelligence cache directories
+
+KodaX now uses two repo-intelligence cache locations on disk:
+
+- `.agent/repo-intelligence/`
+  - OSS baseline repo-intelligence artifacts and existing task-engine snapshots.
+- `.repointel/`
+  - Premium `repointel` workspace cache shared by the local daemon/native frontdoor.
+
+They are intentionally separated so:
+
+- OSS fallback stays available even when premium is disabled or unavailable.
+- Premium cache does not pollute OSS artifacts.
+- KodaX and other hosts can share the same premium workspace cache.
+
+`.repointel/` is a local generated directory and should not be committed.
 
 ---
 

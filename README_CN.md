@@ -905,11 +905,11 @@ kodax --auto-continue --max-sessions 20 --max-hours 4.0
 # 开发模式
 npm run dev "你的任务"
 
-# 构建所有包
-npm run build:packages
-
 # 构建
 npm run build
+
+# 可选：只构建 workspace packages
+npm run build:packages
 
 # 测试
 npm test
@@ -917,6 +917,23 @@ npm test
 # 清理
 npm run clean
 ```
+
+### Repo Intelligence 缓存目录
+
+KodaX 现在会把 Repo Intelligence 的本地缓存分成两条路径：
+
+- `.agent/repo-intelligence/`
+  - OSS baseline 的索引、缓存和现有 task-engine 产物。
+- `.repointel/`
+  - premium `repointel` 的 workspace 级共享缓存，供本地 daemon / native frontdoor 使用。
+
+这样拆开的目的很明确：
+
+- premium 不可用时，OSS fallback 仍然可以稳定工作。
+- premium 缓存不会污染 OSS 产物目录。
+- KodaX 和其他宿主可以共享同一份 premium workspace cache。
+
+`.repointel/` 是本地生成目录，不应该提交到 Git。
 
 ---
 
