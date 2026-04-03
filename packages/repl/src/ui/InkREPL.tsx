@@ -135,6 +135,17 @@ import {
 import { buildManagedRunContext } from "./utils/managed-run-context.js";
 import { formatToolCallInlineText } from "./utils/tool-display.js";
 import { calculateViewportBudget } from "./utils/viewport-budget.js";
+import {
+  buildTranscriptBrowseHint,
+  createTranscriptDisplayState,
+  enterTranscriptHistory,
+  exitTranscriptHistory,
+  shouldPauseLiveTranscript,
+  shouldWindowTranscript,
+  supportsTranscriptMouseHistory,
+  toggleTranscriptVerbosityState,
+} from "./utils/transcript-state.js";
+import { detectTerminalHostProfile } from "./utils/terminal-host-profile.js";
 import { formatPendingInputsSummary, MAX_PENDING_INPUTS } from "./utils/pending-inputs.js";
 import { runQueuedPromptSequence } from "./utils/queued-prompt-sequence.js";
 import { capHistoryByTranscriptRows, sliceHistoryToRecentRounds } from "./utils/transcript-layout.js";
@@ -783,6 +794,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const [submitCounter, setSubmitCounter] = useState(0); // Counter to trigger clear on submit
   const [canQueueFollowUps, setCanQueueFollowUps] = useState(false);
   const [liveTokenCount, setLiveTokenCount] = useState<number | null>(null); // Live token count for real-time display
+  const terminalHostProfile = useMemo(() => detectTerminalHostProfile(), []);
   const lastCompactionTokensBeforeRef = useRef<number | null>(null);
   const persistContextStateRef = useRef<((uiHistoryOverride?: KodaXSessionUiHistoryItem[]) => Promise<void>) | null>(null);
   const persistContextStateQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -790,7 +802,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const interruptPersistenceQueuedRef = useRef(false);
   const [isInputEmpty, setIsInputEmpty] = useState(true); // Track if input is empty for ? shortcut
   const [inputText, setInputText] = useState("");
-  const [isReviewingHistory, setIsReviewingHistory] = useState(false);
+  const [transcriptDisplayState, setTranscriptDisplayState] = useState(() => (
+    createTranscriptDisplayState(terminalHostProfile)
+  ));
   const [historyScrollOffset, setHistoryScrollOffset] = useState(0);
   const [reviewSnapshot, setReviewSnapshot] = useState<ReviewSnapshot | null>(null);
   const [managedTaskStatus, setManagedTaskStatus] = useState<KodaXManagedTaskStatusEvent | null>(null);
@@ -1046,7 +1060,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }, [confirmRequest, currentConfig.permissionMode]);
 
   const isAwaitingUserInteraction = !!confirmRequest || !!uiRequest;
-  const isLivePaused = isReviewingHistory || isAwaitingUserInteraction;
+  const isReviewingHistory = transcriptDisplayState.followMode === "browsing-history";
+  const isTranscriptVerbose = transcriptDisplayState.verbosity === "verbose";
+  const transcriptOwnsViewport = shouldWindowTranscript(transcriptDisplayState);
+  const isLivePaused = shouldPauseLiveTranscript(transcriptDisplayState) || isAwaitingUserInteraction;
   const suggestionsReservedForLayout = shouldReserveSuggestionsSpace && !isReviewingHistory;
 
   const createReviewSnapshot = useCallback((): ReviewSnapshot => ({
@@ -1172,9 +1189,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }, [clearWorkStripTimers]);
 
   const reviewHintText = useMemo(() => {
-    if (!isReviewingHistory) return undefined;
-    return "Reviewing history - live updates paused | Wheel/PgUp/PgDn/j/k scroll | Esc/End/Ctrl+Y/Alt+Z resume";
-  }, [isReviewingHistory]);
+    return buildTranscriptBrowseHint(transcriptDisplayState);
+  }, [transcriptDisplayState]);
 
   const statusBarProps = useMemo(() => ({
     sessionId: context.sessionId,
@@ -1300,13 +1316,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     [reviewPageSize]
   );
 
-  const enterHistoryReview = useCallback((nextOffset?: number) => {
-    setIsReviewingHistory(true);
-    setHistoryScrollOffset((prev) => nextOffset ?? prev);
+  const enterHistoryReview = useCallback(() => {
+    setTranscriptDisplayState((prev) => enterTranscriptHistory(prev));
   }, []);
 
   const exitHistoryReview = useCallback(() => {
-    setIsReviewingHistory(false);
+    setTranscriptDisplayState((prev) => exitTranscriptHistory(prev));
     setHistoryScrollOffset(0);
   }, []);
 
@@ -1315,7 +1330,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       return;
     }
 
-    if (!isReviewingHistory) {
+    if (!supportsTranscriptMouseHistory(transcriptDisplayState)) {
       return;
     }
 
@@ -1328,7 +1343,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         // Ignore terminal cleanup failures.
       }
     };
-  }, [isReviewingHistory]);
+  }, [transcriptDisplayState]);
 
   // Refs for callbacks
   // Note: permissionMode and alwaysAllowTools are stored separately for permission checks
@@ -1355,6 +1370,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const setSessionPermissionMode = useCallback((mode: PermissionMode) => {
     setCurrentConfig((prev) => ({ ...prev, permissionMode: mode }));
     permissionModeRef.current = mode;
+  }, []);
+  const toggleTranscriptVerbosity = useCallback(() => {
+    setTranscriptDisplayState((prev) => toggleTranscriptVerbosityState(prev));
   }, []);
   const pendingInputsRef = useRef<string[]>(streamingState.pendingInputs);
   const userInterruptedRef = useRef(false);
@@ -1488,7 +1506,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       if ((key.ctrl && key.name === "y") || (key.meta && key.name === "z")) {
         if (!isReviewingHistory) {
           if (!hasTranscript) return true;
-          enterHistoryReview(0);
+          enterHistoryReview();
           return true;
         }
 
@@ -1499,7 +1517,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       if (key.name === "pageup") {
         if (!hasTranscript) return true;
 
-        setIsReviewingHistory(true);
+        enterHistoryReview();
         setHistoryScrollOffset((prev) => prev + reviewPageSize);
         return true;
       }
@@ -1534,11 +1552,17 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
 
       if (key.name === "wheelup") {
+        if (!supportsTranscriptMouseHistory(transcriptDisplayState)) {
+          return false;
+        }
         setHistoryScrollOffset((prev) => prev + reviewWheelStep);
         return true;
       }
 
       if (key.name === "wheeldown") {
+        if (!supportsTranscriptMouseHistory(transcriptDisplayState)) {
+          return false;
+        }
         if (historyScrollOffset === 0) {
           exitHistoryReview();
           return true;
@@ -1571,6 +1595,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       reviewWheelStep,
       enterHistoryReview,
       exitHistoryReview,
+      transcriptDisplayState,
     ]
   );
 
@@ -2144,7 +2169,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         const result = await showConfirmDialog(tool, input);
 
         // === RACE CONDITION FIX: Re-evaluate permission mode ===
-        // The user might have pressed Ctrl+O to switch to 'plan' mode
+        // The user might have toggled transcript verbosity or permission mode mid-session.
         // WHILE the confirmation dialog was open and waiting.
         if (permissionModeRef.current === 'plan' && (FILE_MODIFICATION_TOOLS.has(tool) || tool === 'undo')) {
           return false;
@@ -3368,6 +3393,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           currentOptionsRef.current.reasoningMode = mode;
           currentOptionsRef.current.thinking = mode !== 'off';
         }}
+        onToggleTranscriptVerbosity={toggleTranscriptVerbosity}
         onSetAgentMode={(mode) => {
           currentOptionsRef.current.agentMode = mode;
         }}
@@ -3432,7 +3458,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               viewportWidth={terminalWidth}
               scrollOffset={historyScrollOffset}
               animateSpinners={!isLivePaused}
-              windowed={isReviewingHistory}
+              windowed={transcriptOwnsViewport}
+              showFullThinking={isTranscriptVerbose || isReviewingHistory}
+              showDetailedTools={isTranscriptVerbose || isReviewingHistory}
             />
           </Box>
         )}
@@ -3456,7 +3484,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             onSubmit={handleSubmit}
             prompt=">"
             placeholder={isReviewingHistory
-              ? "Reviewing history... Press Esc, End, Ctrl+Y, or Alt+Z to resume."
+              ? "Browsing transcript history... Press Esc, End, Ctrl+Y, or Alt+Z to resume."
               : isLoading
               ? canQueueFollowUps
                 ? "Queue a follow-up for the next round..."

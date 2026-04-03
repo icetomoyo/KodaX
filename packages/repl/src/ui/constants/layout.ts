@@ -15,6 +15,7 @@ const HELP_BAR_PINNED_SHORTCUTS: Array<{
 }> = [
   { id: "showHelp", label: "toggle help", bold: true },
   { id: "toggleThinking", label: "reasoning" },
+  { id: "toggleTranscriptVerbosity", label: "verbosity" },
   { id: "togglePermissionMode", label: "mode" },
   { id: "toggleAgentMode", label: "AMA/SA" },
   { id: "toggleParallelMode", label: "parallel" },
@@ -51,7 +52,7 @@ export function buildHelpBarSegments(): HelpBarSegment[] {
   return [
     ...shortcutSegments,
     { text: "  " },
-    { text: "PgUp review" },
+    { text: "PgUp history" },
     { text: "  " },
     { text: "Round=outer Iter=worker" },
     { text: "  " },

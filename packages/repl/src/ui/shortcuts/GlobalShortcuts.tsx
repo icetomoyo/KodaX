@@ -31,6 +31,7 @@ export interface GlobalShortcutsProps {
   setShowHelp: (visible: boolean) => void;
   onSetThinking?: (enabled: boolean) => void;
   onSetReasoningMode?: (mode: KodaXReasoningMode) => void;
+  onToggleTranscriptVerbosity?: () => void;
   onSetAgentMode?: (mode: KodaXAgentMode) => void;
   onSetPermissionMode?: (mode: PermissionMode) => void;
   onSetParallel?: (enabled: boolean) => void;
@@ -51,6 +52,7 @@ export function GlobalShortcuts({
   setShowHelp,
   onSetThinking,
   onSetReasoningMode,
+  onToggleTranscriptVerbosity,
   onSetAgentMode,
   onSetPermissionMode,
   onSetParallel,
@@ -107,6 +109,12 @@ export function GlobalShortcuts({
     });
     onSetReasoningMode?.(nextMode);
     onSetThinking?.(thinking);
+    setShowHelp(false);
+    return true;
+  });
+
+  useShortcut('toggleTranscriptVerbosity', () => {
+    onToggleTranscriptVerbosity?.();
     setShowHelp(false);
     return true;
   });

@@ -100,6 +100,10 @@ export interface MessageListProps {
   animateSpinners?: boolean;
   /** Whether to render the transcript as a windowed viewport owned by the app */
   windowed?: boolean;
+  /** Whether thinking content should render in verbose form */
+  showFullThinking?: boolean;
+  /** Whether tool details should render in verbose form */
+  showDetailedTools?: boolean;
 }
 
 export interface HistoryItemRendererProps {
@@ -501,6 +505,8 @@ export const MessageList: React.FC<MessageListProps> = ({
   scrollOffset = 0,
   animateSpinners = true,
   windowed = false,
+  showFullThinking = false,
+  showDetailedTools = false,
 }) => {
   const theme = useMemo(() => getTheme("dark"), []);
   const { stdout } = useStdout();
@@ -510,8 +516,8 @@ export const MessageList: React.FC<MessageListProps> = ({
     [items]
   );
   const staticSections = useMemo(
-    () => buildStaticTranscriptSections(staticItems, terminalWidth, maxLines, windowed),
-    [staticItems, terminalWidth, maxLines, windowed]
+    () => buildStaticTranscriptSections(staticItems, terminalWidth, maxLines, showDetailedTools),
+    [staticItems, terminalWidth, maxLines, showDetailedTools]
   );
 
   if (items.length === 0 && !isLoading) {
@@ -556,8 +562,8 @@ export const MessageList: React.FC<MessageListProps> = ({
         managedBudgetUsage,
         managedBudgetApprovalRequired,
         lastLiveActivityLabel,
-        showFullThinking: windowed,
-        showDetailedTools: windowed,
+        showFullThinking,
+        showDetailedTools,
       });
 
       return pendingSection.rows.length > 0
@@ -592,6 +598,8 @@ export const MessageList: React.FC<MessageListProps> = ({
       managedBudgetUsage,
       managedBudgetApprovalRequired,
       lastLiveActivityLabel,
+      showFullThinking,
+      showDetailedTools,
     ]
   );
   const transcriptRows = useMemo(

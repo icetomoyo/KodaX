@@ -18,7 +18,8 @@ export type ShortcutActionId =
   | 'clearScreen' // Ctrl+L - 清屏
   | 'showHelp' // ? - 显示帮助
   | 'toggleThinking' // Ctrl+T - 切换 Extended Thinking
-  | 'togglePermissionMode' // Ctrl+O / Shift+Tab - 切换权限模式
+  | 'toggleTranscriptVerbosity' // Ctrl+O - toggle transcript verbosity
+  | 'togglePermissionMode' // Shift+Tab - 切换权限模式
   | 'toggleAgentMode' // Alt+M - 切换 AMA / SA
   | 'toggleParallelMode' // Ctrl+P - 切换并行/顺序执行
   | 'submitInput' // Enter - 提交输入
