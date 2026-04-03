@@ -141,6 +141,12 @@ export {
 
 export {
   generateSummary,
+  buildCompactionPromptSnapshot,
+} from './compaction/summary-generator.js';
+export type {
+  KodaXCompactionPromptVariant,
+  KodaXCompactionPromptSection,
+  KodaXCompactionPromptSnapshot,
 } from './compaction/summary-generator.js';
 
 export {

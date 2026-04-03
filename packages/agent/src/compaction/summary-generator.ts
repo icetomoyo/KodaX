@@ -4,6 +4,7 @@
  * Generates continuation-oriented summaries for compacted conversations.
  */
 
+import { createHash } from 'crypto';
 import type { KodaXBaseProvider, KodaXMessage } from '@kodax/ai';
 import type { CompactionDetails } from './types.js';
 import type { KodaXCompactMemorySeed } from '../types.js';
@@ -138,6 +139,182 @@ Output format (strict markdown):
 
 Keep every section concise.`;
 
+export type KodaXCompactionPromptVariant = 'initial-summary' | 'update-summary';
+
+export interface KodaXCompactionPromptSection {
+  id: string;
+  title: string;
+  owner: 'compaction';
+  feature: 'FEATURE_044' | 'FEATURE_050';
+  slot: 'conversation' | 'history' | 'instructions' | 'tracking';
+  order: number;
+  stability: 'stable' | 'dynamic' | 'specialist';
+  inclusionReason: string;
+  content: string;
+}
+
+export interface KodaXCompactionPromptSnapshot {
+  kind: 'specialist';
+  specialist: 'compaction-summary';
+  variant: KodaXCompactionPromptVariant;
+  systemPrompt: string;
+  userPrompt: string;
+  sections: KodaXCompactionPromptSection[];
+  hash: string;
+}
+
+function createCompactionPromptSection(
+  section: Omit<KodaXCompactionPromptSection, 'owner'>,
+): KodaXCompactionPromptSection {
+  return {
+    ...section,
+    owner: 'compaction',
+    content: section.content.trim(),
+  };
+}
+
+function renderCompactionPromptSections(
+  sections: KodaXCompactionPromptSection[],
+): string {
+  return [...sections]
+    .sort((left, right) => left.order - right.order)
+    .map((section) => section.content.trim())
+    .filter(Boolean)
+    .join('\n\n')
+    .trim();
+}
+
+export function buildCompactionPromptSnapshot(args: {
+  messages: KodaXMessage[];
+  details: CompactionDetails;
+  customInstructions?: string;
+  systemPrompt?: string;
+  previousSummary?: string;
+}): KodaXCompactionPromptSnapshot {
+  const {
+    messages,
+    details,
+    customInstructions,
+    systemPrompt,
+    previousSummary,
+  } = args;
+  const trimmedCustomInstructions = customInstructions?.trim();
+  const trimmedPreviousSummary = previousSummary?.trim();
+
+  const sections: KodaXCompactionPromptSection[] = [
+    createCompactionPromptSection({
+      id: 'conversation',
+      title: 'Conversation Transcript',
+      feature: 'FEATURE_050',
+      slot: 'conversation',
+      order: 100,
+      stability: 'dynamic',
+      inclusionReason:
+        'Always include the bounded conversation transcript so the specialist prompt summarizes concrete state instead of memory.',
+      content: `<conversation>\n${serializeConversation(messages)}\n</conversation>`,
+    }),
+  ];
+
+  if (trimmedPreviousSummary) {
+    sections.push(
+      createCompactionPromptSection({
+        id: 'previous-summary',
+        title: 'Previous Summary',
+        feature: 'FEATURE_050',
+        slot: 'history',
+        order: 200,
+        stability: 'dynamic',
+        inclusionReason:
+          'Include the prior compact summary when merging new history into an existing continuation anchor.',
+        content: `<previous-summary>\n${trimmedPreviousSummary}\n</previous-summary>`,
+      }),
+    );
+  }
+
+  const baseInstructions = trimmedPreviousSummary ? UPDATE_SUMMARY_PROMPT : SUMMARY_PROMPT;
+  sections.push(
+    createCompactionPromptSection({
+      id: trimmedPreviousSummary ? 'update-instructions' : 'summary-instructions',
+      title: trimmedPreviousSummary ? 'Update Summary Instructions' : 'Summary Instructions',
+      feature: 'FEATURE_044',
+      slot: 'instructions',
+      order: 300,
+      stability: 'specialist',
+      inclusionReason:
+        'Always include the continuation-oriented compaction instructions so summary quality remains aligned with recall and continuation goals.',
+      content: baseInstructions,
+    }),
+  );
+
+  if (trimmedCustomInstructions) {
+    sections.push(
+      createCompactionPromptSection({
+        id: 'custom-instructions',
+        title: 'Custom Instructions',
+        feature: 'FEATURE_050',
+        slot: 'instructions',
+        order: 350,
+        stability: 'dynamic',
+        inclusionReason:
+          'Include explicit custom guidance only when the caller adds compaction-specific instructions.',
+        content: `Additional instructions: ${trimmedCustomInstructions}`,
+      }),
+    );
+  }
+
+  sections.push(
+    createCompactionPromptSection({
+      id: 'file-tracking',
+      title: 'File Tracking',
+      feature: 'FEATURE_044',
+      slot: 'tracking',
+      order: 400,
+      stability: 'dynamic',
+      inclusionReason:
+        'Always include file tracking so compact summaries preserve continuation-critical read and modified targets.',
+      content: [
+        '---',
+        'File tracking:',
+        `Read files: ${
+          details.readFiles.length > 0 ? details.readFiles.join(', ') : 'None'
+        }`,
+        `Modified files: ${
+          details.modifiedFiles.length > 0
+            ? details.modifiedFiles.join(', ')
+            : 'None'
+        }`,
+      ].join('\n'),
+    }),
+  );
+
+  const userPrompt = renderCompactionPromptSections(sections);
+  const resolvedSystemPrompt = systemPrompt || SUMMARIZATION_SYSTEM_PROMPT;
+  const variant: KodaXCompactionPromptVariant = trimmedPreviousSummary
+    ? 'update-summary'
+    : 'initial-summary';
+  const hash = createHash('sha256')
+    .update(
+      JSON.stringify({
+        kind: 'specialist',
+        specialist: 'compaction-summary',
+        variant,
+        systemPrompt: resolvedSystemPrompt,
+        sections,
+      }),
+    )
+    .digest('hex');
+
+  return {
+    kind: 'specialist',
+    specialist: 'compaction-summary',
+    variant,
+    systemPrompt: resolvedSystemPrompt,
+    userPrompt,
+    sections,
+    hash,
+  };
+}
+
 export async function generateSummary(
   messages: KodaXMessage[],
   provider: KodaXBaseProvider,
@@ -146,27 +323,18 @@ export async function generateSummary(
   systemPrompt?: string,
   previousSummary?: string
 ): Promise<string> {
-  const conversationText = serializeConversation(messages);
-
-  let basePrompt = previousSummary ? UPDATE_SUMMARY_PROMPT : SUMMARY_PROMPT;
-  if (customInstructions) {
-    basePrompt = `${basePrompt}\n\nAdditional instructions: ${customInstructions}`;
-  }
-
-  let promptText = `<conversation>\n${conversationText}\n</conversation>\n\n`;
-  if (previousSummary) {
-    promptText += `<previous-summary>\n${previousSummary}\n</previous-summary>\n\n`;
-  }
-  promptText += basePrompt;
-
-  promptText += `\n\n---\nFile tracking:\n`;
-  promptText += `Read files: ${details.readFiles.length > 0 ? details.readFiles.join(', ') : 'None'}\n`;
-  promptText += `Modified files: ${details.modifiedFiles.length > 0 ? details.modifiedFiles.join(', ') : 'None'}\n`;
+  const promptSnapshot = buildCompactionPromptSnapshot({
+    messages,
+    details,
+    customInstructions,
+    systemPrompt,
+    previousSummary,
+  });
 
   const result = await provider.stream(
-    [{ role: 'user', content: promptText }],
+    [{ role: 'user', content: promptSnapshot.userPrompt }],
     [],
-    systemPrompt || SUMMARIZATION_SYSTEM_PROMPT,
+    promptSnapshot.systemPrompt,
     false,
     undefined,
     undefined

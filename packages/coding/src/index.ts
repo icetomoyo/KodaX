@@ -377,6 +377,20 @@ export {
   SYSTEM_PROMPT,
   LONG_RUNNING_PROMPT,
   buildSystemPrompt,
+  buildSystemPromptSnapshot,
+  PROMPT_SECTION_REGISTRY,
+  buildPromptSnapshot,
+  createPromptSection,
+  orderPromptSections,
+  renderPromptSections,
+} from './prompts/index.js';
+export type {
+  KodaXPromptSectionSlot,
+  KodaXPromptSectionStability,
+  KodaXPromptSectionDefinition,
+  KodaXPromptSection,
+  KodaXPromptSnapshotMetadata,
+  KodaXPromptSnapshot,
 } from './prompts/index.js';
 
 // ============== Session ==============

@@ -21,7 +21,15 @@ export { extractArtifactLedger, extractFileOps, mergeArtifactLedger, mergeFileOp
 export { serializeConversation } from './utils.js';
 
 // Summary Generator
-export { generateSummary } from './summary-generator.js';
+export {
+  generateSummary,
+  buildCompactionPromptSnapshot,
+} from './summary-generator.js';
+export type {
+  KodaXCompactionPromptVariant,
+  KodaXCompactionPromptSection,
+  KodaXCompactionPromptSnapshot,
+} from './summary-generator.js';
 
 // Compaction Core
 export { needsCompaction, compact } from './compaction.js';
