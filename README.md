@@ -331,20 +331,20 @@ Install the shared thin skill from the public repo:
 
 ```powershell
 # Cross-platform primary entrypoint
-node .\clients\repointel\install.mjs --host codex
-node .\clients\repointel\install.mjs --host claude --workspace-root C:\path\to\workspace
-node .\clients\repointel\install.mjs --host opencode --workspace-root C:\path\to\workspace
+node .\clients\repointel\scripts\install.mjs --host codex
+node .\clients\repointel\scripts\install.mjs --host claude --workspace-root C:\path\to\workspace
+node .\clients\repointel\scripts\install.mjs --host opencode --workspace-root C:\path\to\workspace
 ```
 
 Useful helper scripts:
 
-- `clients/repointel/demo.mjs`: run a local premium demo flow against a temporary endpoint.
-- `clients/repointel/doctor.mjs`: inspect local premium setup, bridge status, daemon reachability, and host skill installation.
-- `clients/repointel/install.mjs`: install the shared thin skill into Codex / Claude / OpenCode host paths.
+- `clients/repointel/scripts/demo.mjs`: run a local premium demo flow against a temporary endpoint.
+- `clients/repointel/scripts/doctor.mjs`: inspect local premium setup, bridge status, daemon reachability, and host skill installation.
+- `clients/repointel/scripts/install.mjs`: install the shared thin skill into Codex / Claude / OpenCode host paths.
 
 The installable shared skill itself lives at:
 
-- `clients/repointel/skill/SKILL.md`
+- `clients/repointel/SKILL.md`
 
 ## Project Mode
 

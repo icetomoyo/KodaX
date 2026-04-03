@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(scriptDir, '..', '..');
+const repoRoot = path.resolve(scriptDir, '..', '..', '..');
 const defaultPublicRepoRoot = repoRoot;
 const defaultPrivateRepoRoot = path.resolve(repoRoot, '..', 'KodaX-private');
 
@@ -128,7 +128,7 @@ function main() {
   console.log('Next commands you can run manually:');
   console.log(`  cd ${args.publicRepoRoot}`);
   console.log('  kodax --repo-intelligence premium-native --repo-intelligence-trace');
-  console.log(`  node ${path.join(args.publicRepoRoot, 'clients', 'repointel', 'install.mjs')} --host codex`);
+  console.log(`  node ${path.join(args.publicRepoRoot, 'clients', 'repointel', 'scripts', 'install.mjs')} --host codex`);
 }
 
 try {

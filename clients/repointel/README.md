@@ -1,43 +1,45 @@
 # Repointel Host Integration
 
-`clients/repointel/` is the complete third-party host integration unit for Phase 1.
+`clients/repointel/` is the complete third-party host integration unit for Phase 1, organized as a standard Claude Code skill directory.
 
-It intentionally keeps these assets together:
-- `skill/`
-  - the installable shared skill directory
-  - contains `SKILL.md` and supporting reference files
-- `install.mjs`
-  - installs the shared skill into a host-specific target path
-- `doctor.mjs`
-  - validates local premium setup, daemon reachability, and installed host skill
-- `demo.mjs`
-  - runs a local premium demo flow against a temporary endpoint
+```
+clients/repointel/
+├── SKILL.md           # Skill entrypoint (required)
+├── reference.md       # Command reference for Claude
+├── scripts/
+│   ├── install.mjs    # Installs the skill into a host-specific target path
+│   ├── doctor.mjs     # Validates local premium setup, daemon reachability, and installed host skill
+│   └── demo.mjs       # Runs a local premium demo flow against a temporary endpoint
+└── README.md
+```
 
-This structure is intentional:
-- premium logic lives in local `repointel`, not in host-specific wrappers
-- the skill and the helper scripts belong to the same integration surface
-- keeping them together is cleaner than scattering host tooling across the repo root
+This structure follows the [Claude Code Skills specification](https://code.claude.com/docs/en/skills):
+
+- `SKILL.md` is the entrypoint that Claude reads when the skill is invoked
+- `reference.md` is a supporting file with detailed command reference
+- `scripts/` contains helper scripts Claude can execute or reference
+- Premium logic lives in local `repointel`, not in host-specific wrappers
 
 ## Normal usage
 
 Install the shared skill into a host-specific target path:
 
 ```powershell
-node .\clients\repointel\install.mjs --host codex
-node .\clients\repointel\install.mjs --host claude --workspace-root C:\path\to\workspace
-node .\clients\repointel\install.mjs --host opencode --workspace-root C:\path\to\workspace
+node .\clients\repointel\scripts\install.mjs --host codex
+node .\clients\repointel\scripts\install.mjs --host claude --workspace-root C:\path\to\workspace
+node .\clients\repointel\scripts\install.mjs --host opencode --workspace-root C:\path\to\workspace
 ```
 
 Run diagnostics:
 
 ```powershell
-node .\clients\repointel\doctor.mjs --host none
+node .\clients\repointel\scripts\doctor.mjs --host none
 ```
 
 Run a local demo flow:
 
 ```powershell
-node .\clients\repointel\demo.mjs --skip-build
+node .\clients\repointel\scripts\demo.mjs --skip-build
 ```
 
 ## Phase 1 rules
@@ -46,11 +48,3 @@ node .\clients\repointel\demo.mjs --skip-build
 - It is not the premium engine.
 - It only teaches hosts when to call local `repointel` and how to handle `ok`, `limited`, `warming`, and `unavailable`.
 - Premium task policy, context packing, routing, and impact logic remain closed inside [`KodaX-private`](/C:/Works/GitWorks/KodaX-author/KodaX-private).
-
-## Why this shape
-
-The installable skill itself now lives under `skill/`, which matches the Claude Skills model more closely:
-
-- an installable skill is a directory with `SKILL.md` as the entrypoint
-- optional supporting files live next to it
-- repo-maintainer helper scripts stay in the surrounding integration folder instead of being copied into the installed host skill

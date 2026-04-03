@@ -16,6 +16,9 @@ Assume the normal user-facing setup is native-first:
 ## Additional resources
 
 - For exact command syntax, payload shapes, and response fields, see [reference.md](reference.md).
+- For installation into host environments, see [scripts/install.mjs](scripts/install.mjs).
+- For diagnostics and health checks, see [scripts/doctor.mjs](scripts/doctor.mjs).
+- For a local premium demo flow, see [scripts/demo.mjs](scripts/demo.mjs).
 
 ## When to use it
 

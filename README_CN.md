@@ -330,23 +330,23 @@ KodaX 支持这些模式：
 
 现在的标准使用方式是：
 
-- 用 `clients/repointel/install.mjs` 把 shared skill 安装到目标宿主需要的位置
-- 用 `clients/repointel/doctor.mjs` 检查本地 premium / daemon / host skill 安装状态
-- 用 `clients/repointel/demo.mjs` 做本地演示和验证
+- 用 `clients/repointel/scripts/install.mjs` 把 shared skill 安装到目标宿主需要的位置
+- 用 `clients/repointel/scripts/doctor.mjs` 检查本地 premium / daemon / host skill 安装状态
+- 用 `clients/repointel/scripts/demo.mjs` 做本地演示和验证
 
 示例：
 
 ```powershell
-node .\clients\repointel\install.mjs --host codex
-node .\clients\repointel\install.mjs --host claude --workspace-root C:\path\to\workspace
-node .\clients\repointel\install.mjs --host opencode --workspace-root C:\path\to\workspace
+node .\clients\repointel\scripts\install.mjs --host codex
+node .\clients\repointel\scripts\install.mjs --host claude --workspace-root C:\path\to\workspace
+node .\clients\repointel\scripts\install.mjs --host opencode --workspace-root C:\path\to\workspace
 ```
 
 补充说明：
 
-- 可安装的 skill 目录入口是 `clients/repointel/skill/SKILL.md`
-- `clients/repointel/skill/` 里放的是会真正安装到第三方宿主里的技能文件
-- `clients/repointel/install.mjs`、`doctor.mjs`、`demo.mjs` 是仓库维护脚本，不会被复制进最终宿主 skill 目录
+- 可安装的 skill 目录入口是 `clients/repointel/SKILL.md`
+- `clients/repointel/` 整个目录遵循 Claude Code Skills 规范，`SKILL.md` 是入口，`reference.md` 是辅助参考文件
+- `scripts/install.mjs`、`doctor.mjs`、`demo.mjs` 是仓库维护脚本，位于 `scripts/` 子目录
 - 所以 `clients/repointel/` 现在承载的是完整的第三方宿主集成单元，而不只是一个单独的 skill 文件
 
 也就是说：

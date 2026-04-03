@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(scriptDir, '..', '..');
+const repoRoot = path.resolve(scriptDir, '..', '..', '..');
 const defaultPublicRepoRoot = repoRoot;
 const defaultPrivateRepoRoot = path.resolve(repoRoot, '..', 'KodaX-private');
 

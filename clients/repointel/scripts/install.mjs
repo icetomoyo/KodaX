@@ -7,8 +7,8 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(scriptDir, '..', '..');
-const skillSourceDir = path.join(scriptDir, 'skill');
+const repoRoot = path.resolve(scriptDir, '..', '..', '..');
+const skillSourceDir = path.resolve(scriptDir, '..');
 
 function parseArgs(argv) {
   const parsed = {
@@ -39,7 +39,7 @@ function parseArgs(argv) {
 
 function assertHost(host) {
   if (!['codex', 'claude', 'opencode', 'all'].includes(host)) {
-    throw new Error('Usage: node clients/repointel/install.mjs --host <codex|claude|opencode|all> [--workspace-root <path>] [--run-doctor]');
+    throw new Error('Usage: node clients/repointel/scripts/install.mjs --host <codex|claude|opencode|all> [--workspace-root <path>] [--run-doctor]');
   }
 }
 
