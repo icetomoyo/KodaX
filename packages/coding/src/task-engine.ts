@@ -199,6 +199,21 @@ interface TacticalReviewFindingsDirective {
   userFacingText: string;
 }
 
+interface TacticalInvestigationShard {
+  id: string;
+  question: string;
+  scope: string;
+  priority: 'high' | 'medium' | 'low';
+  files: string[];
+  evidence: string[];
+}
+
+interface TacticalInvestigationShardsDirective {
+  summary: string;
+  shards: TacticalInvestigationShard[];
+  userFacingText: string;
+}
+
 interface TacticalChildResultLedger {
   generatedAt: string;
   fanoutClass: KodaXFanoutSchedulerPlan['fanoutClass'];
@@ -387,6 +402,7 @@ const MANAGED_TASK_VERDICT_BLOCK = 'kodax-task-verdict';
 const MANAGED_TASK_SCOUT_BLOCK = 'kodax-task-scout';
 const MANAGED_TASK_HANDOFF_BLOCK = 'kodax-task-handoff';
 const TACTICAL_REVIEW_FINDINGS_BLOCK = 'kodax-review-findings';
+const TACTICAL_INVESTIGATION_SHARDS_BLOCK = 'kodax-investigation-shards';
 const TACTICAL_CHILD_RESULT_BLOCK = 'kodax-child-result';
 const TACTICAL_CHILD_RESULT_ARTIFACT_JSON = 'child-result.json';
 const TACTICAL_CHILD_HANDOFF_JSON = 'dependency-handoff.json';
@@ -3340,6 +3356,24 @@ function shouldRunTacticalReviewFanout(
     && plan.amaControllerDecision.fanout.class === 'finding-validation';
 }
 
+function shouldRunTacticalInvestigationFanout(
+  agentMode: KodaXAgentMode,
+  surface: KodaXTaskSurface,
+  plan: ReasoningPlan,
+  decision: KodaXTaskRoutingDecision,
+  scoutDirective: ManagedTaskScoutDirective,
+): boolean {
+  return agentMode === 'ama'
+    && surface !== 'project'
+    && (decision.primaryTask === 'bugfix' || decision.recommendedMode === 'investigation')
+    && decision.mutationSurface === 'read-only'
+    && decision.harnessProfile === 'H0_DIRECT'
+    && scoutDirective.confirmedHarness === 'H0_DIRECT'
+    && plan.amaControllerDecision.profile === 'tactical'
+    && plan.amaControllerDecision.fanout.admissible
+    && plan.amaControllerDecision.fanout.class === 'evidence-scan';
+}
+
 function createTacticalReviewBaseShape(
   options: KodaXOptions,
   originalTask: string,
@@ -3402,6 +3436,68 @@ function createTacticalReviewBaseShape(
   };
 }
 
+function createTacticalInvestigationBaseShape(
+  options: KodaXOptions,
+  originalTask: string,
+  plan: ReasoningPlan,
+  rolePromptContext?: ManagedRolePromptContext,
+): ManagedTaskShape {
+  const baseShape = createTaskShape(
+    options,
+    originalTask,
+    originalTask,
+    {
+      ...plan,
+      decision: {
+        ...plan.decision,
+        harnessProfile: 'H0_DIRECT',
+      },
+    },
+    rolePromptContext,
+  );
+  const scanToolPolicy = buildManagedWorkerToolPolicy(
+    'generator',
+    baseShape.task.contract.verification,
+    'H0_DIRECT',
+    'read-only',
+    options.context?.repoIntelligenceMode,
+  );
+  const scanAgent = buildManagedWorkerAgent('generator', 'investigation-scan');
+
+  return {
+    ...baseShape,
+    terminalWorkerId: 'investigation-reducer',
+    workers: [],
+    task: {
+      ...baseShape.task,
+      roleAssignments: [
+        {
+          id: 'investigation-scan',
+          role: 'generator',
+          title: 'Investigation Scanner',
+          dependsOn: [],
+          status: 'running',
+          agent: scanAgent,
+          toolPolicy: scanToolPolicy,
+        },
+      ],
+      workItems: [
+        {
+          id: 'investigation-scan',
+          assignmentId: 'investigation-scan',
+          description: 'Scan the investigation surface and emit bounded evidence shards for child validation.',
+          execution: 'serial',
+        },
+      ],
+      verdict: {
+        ...baseShape.task.verdict,
+        decidedByAssignmentId: 'investigation-reducer',
+        summary: 'AMA Tactical investigation is preparing hidden evidence-scan shards.',
+      },
+    },
+  };
+}
+
 function buildTacticalReviewScannerPrompt(
   originalTask: string,
   plan: ReasoningPlan,
@@ -3423,6 +3519,31 @@ function buildTacticalReviewScannerPrompt(
       '{"summary":"<one-line scanner summary>","findings":[{"id":"finding-1","title":"<short title>","claim":"<specific claim to validate>","priority":"high|medium|low","files":["<path>"],"evidence":["<short evidence note>"]}]}',
     ].join('\n'),
     'If you do not find any strong candidates, still return the best visible review summary before the fenced block and use an empty findings array.',
+  ].filter((section): section is string => Boolean(section)).join('\n\n');
+}
+
+function buildTacticalInvestigationScannerPrompt(
+  originalTask: string,
+  plan: ReasoningPlan,
+  scoutDirective: ManagedTaskScoutDirective,
+): string {
+  return [
+    'You are the Tactical Investigation Scanner for a KodaX AMA task.',
+    `[AMA profile] ${plan.amaControllerDecision.profile}`,
+    `[Task] ${originalTask}`,
+    `[Routing] primary=${plan.decision.primaryTask}; mode=${plan.decision.recommendedMode}; harness=${plan.decision.harnessProfile}; mutationSurface=${plan.decision.mutationSurface ?? 'unknown'}.`,
+    scoutDirective.summary ? `[Scout summary] ${scoutDirective.summary}` : undefined,
+    scoutDirective.scope.length > 0 ? `Scout scope: ${scoutDirective.scope.join(' | ')}` : undefined,
+    scoutDirective.requiredEvidence.length > 0
+      ? `Required evidence: ${scoutDirective.requiredEvidence.join(' | ')}`
+      : undefined,
+    'Identify at most the highest-signal bounded evidence questions that should be validated independently before the parent commits to a diagnosis.',
+    'Do not write the final diagnosis yet and do not broaden the scope into a full repo sweep.',
+    [
+      `Append a final JSON fenced block named \`\`\`${TACTICAL_INVESTIGATION_SHARDS_BLOCK}\`\`\` with this exact shape:`,
+      '{"summary":"<one-line investigation scanner summary>","shards":[{"id":"shard-1","question":"<single evidence question to validate>","scope":"<focused scope summary>","priority":"high|medium|low","files":["<path>"],"evidence":["<why this shard matters>"]}]}',
+    ].join('\n'),
+    'If you do not find any bounded evidence shards, still return the best visible investigation update before the fenced block and use an empty shards array.',
   ].filter((section): section is string => Boolean(section)).join('\n\n');
 }
 
@@ -3454,6 +3575,39 @@ function buildTacticalReviewValidatorPrompt(
     [
       `Then append a JSON fenced block named \`\`\`${TACTICAL_CHILD_RESULT_BLOCK}\`\`\` with this exact shape:`,
       `{"childId":"${finding.id}","fanoutClass":"finding-validation","status":"completed","disposition":"valid|false-positive|needs-more-evidence","summary":"<one-line verdict>","evidenceRefs":["<artifact or file reference>"],"contradictions":["<contradiction or empty>"],"artifactPaths":[]}`,
+    ].join('\n'),
+  ].filter((section): section is string => Boolean(section)).join('\n\n');
+}
+
+function buildTacticalInvestigationValidatorPrompt(
+  originalTask: string,
+  shard: TacticalInvestigationShard,
+  scoutDirective: ManagedTaskScoutDirective,
+): string {
+  return [
+    'You are a Tactical Investigation Validator child for one bounded evidence shard.',
+    `[Task] ${originalTask}`,
+    `[Shard ID] ${shard.id}`,
+    `[Question] ${shard.question}`,
+    `[Scope] ${shard.scope}`,
+    `[Priority] ${shard.priority}`,
+    shard.files.length > 0 ? `Relevant files: ${shard.files.join(', ')}` : undefined,
+    shard.evidence.length > 0 ? `Scanner evidence: ${shard.evidence.join(' | ')}` : undefined,
+    scoutDirective.summary ? `[Scout summary] ${scoutDirective.summary}` : undefined,
+    'Validate only this evidence question. Do not broad-scan the repo and do not restate the entire investigation.',
+    'Decide whether the shard supports the current diagnosis, weakens it, or still needs more evidence.',
+    [
+      `Append a final fenced block named \`\`\`${MANAGED_TASK_HANDOFF_BLOCK}\`\`\` with this exact shape:`,
+      'status: <ready|incomplete|blocked>',
+      'summary: <one-line validator summary>',
+      'evidence:',
+      '- <evidence item>',
+      'followup:',
+      '- <follow-up or "none">',
+    ].join('\n'),
+    [
+      `Then append a JSON fenced block named \`\`\`${TACTICAL_CHILD_RESULT_BLOCK}\`\`\` with this exact shape:`,
+      `{"childId":"${shard.id}","fanoutClass":"evidence-scan","status":"completed","disposition":"valid|false-positive|needs-more-evidence","summary":"<one-line verdict>","evidenceRefs":["<artifact or file reference>"],"contradictions":["<contradiction or empty>"],"artifactPaths":[]}`,
     ].join('\n'),
   ].filter((section): section is string => Boolean(section)).join('\n\n');
 }
@@ -3508,6 +3662,48 @@ function canonicalizeTacticalReviewFindings(
     findings: canonicalFindings,
     duplicateIds: Array.from(duplicateIds),
   };
+}
+
+function canonicalizeTacticalInvestigationShards(
+  shards: TacticalInvestigationShard[],
+): {
+  shards: TacticalInvestigationShard[];
+  duplicateIds: string[];
+} {
+  const canonicalShards: TacticalInvestigationShard[] = [];
+  const seen = new Set<string>();
+  const duplicateIds = new Set<string>();
+
+  for (const shard of shards) {
+    if (seen.has(shard.id)) {
+      duplicateIds.add(shard.id);
+      continue;
+    }
+    seen.add(shard.id);
+    canonicalShards.push(shard);
+  }
+
+  return {
+    shards: canonicalShards,
+    duplicateIds: Array.from(duplicateIds),
+  };
+}
+
+function resolveTacticalWorkerBundleId(worker: ManagedTaskWorkerSpec): string {
+  const metadata = worker.metadata ?? {};
+  const candidate = metadata.findingId ?? metadata.bundleId ?? worker.id;
+  return typeof candidate === 'string' && candidate.trim() ? candidate : worker.id;
+}
+
+function resolveTacticalWorkerFanoutClass(
+  worker: ManagedTaskWorkerSpec,
+): KodaXAmaFanoutClass {
+  return worker.metadata?.fanoutClass === 'finding-validation'
+    || worker.metadata?.fanoutClass === 'evidence-scan'
+    || worker.metadata?.fanoutClass === 'module-triage'
+    || worker.metadata?.fanoutClass === 'hypothesis-check'
+      ? worker.metadata.fanoutClass
+      : 'finding-validation';
 }
 
 function buildTacticalChildResultLedger(
@@ -3622,6 +3818,31 @@ function buildTacticalReviewReducerPrompt(
   ].join('\n\n');
 }
 
+function buildTacticalInvestigationReducerPrompt(
+  originalTask: string,
+  shards: TacticalInvestigationShard[],
+  childResultLedgerPath: string,
+): string {
+  return [
+    'You are the Tactical Investigation Reducer for a KodaX AMA task.',
+    `[Task] ${originalTask}`,
+    `Evidence shards under validation: ${shards.map((shard) => shard.id).join(', ')}`,
+    `Authoritative child-result ledger: ${childResultLedgerPath}`,
+    'Read the child-result ledger first. Use dependency handoff only to locate supporting artifacts.',
+    'Do not trust raw child transcript excerpts as authoritative. Only use ledger-backed child results and concrete evidence references.',
+    'Return a direct user-facing investigation update or diagnosis, not a meta-evaluation of other roles.',
+    [
+      `Append a final fenced block named \`\`\`${MANAGED_TASK_VERDICT_BLOCK}\`\`\` with this exact shape:`,
+      'status: <accept|revise|blocked>',
+      'reason: <one-line reason>',
+      'user_answer:',
+      '<full direct user-facing diagnosis or investigation update>',
+      'followup:',
+      '- <optional follow-up or "none">',
+    ].join('\n'),
+  ].join('\n\n');
+}
+
 async function runTacticalReviewScanner(
   options: KodaXOptions,
   task: KodaXManagedTask,
@@ -3649,6 +3870,42 @@ async function runTacticalReviewScanner(
   let artifactPath: string | undefined;
   if (directive) {
     artifactPath = path.join(task.evidence.workspaceDir, 'review-findings.json');
+    await writeFile(
+      artifactPath,
+      `${JSON.stringify(directive, null, 2)}\n`,
+      'utf8',
+    );
+  }
+  return { result, directive, artifactPath };
+}
+
+async function runTacticalInvestigationScanner(
+  options: KodaXOptions,
+  task: KodaXManagedTask,
+  worker: ManagedTaskWorkerSpec,
+  routingPromptOverlay: string | undefined,
+  qualityAssuranceMode: ManagedTaskQualityAssuranceMode,
+  sessionStorage: KodaXSessionStorage | undefined,
+  controller: ManagedTaskBudgetController,
+): Promise<{ result: KodaXResult; directive?: TacticalInvestigationShardsDirective; artifactPath?: string }> {
+  const preparedOptions = buildWorkerRunOptions(
+    options,
+    task,
+    worker,
+    'investigation-reducer',
+    routingPromptOverlay,
+    qualityAssuranceMode,
+    sessionStorage,
+    'reset-handoff',
+    createBudgetSnapshot(controller, task.contract.harnessProfile, 1, 'generator', worker.id),
+    controller,
+  );
+  const result = await runDirectKodaX(preparedOptions, worker.prompt);
+  const text = extractMessageText(result) || result.lastText;
+  const directive = parseTacticalInvestigationShardsDirective(text);
+  let artifactPath: string | undefined;
+  if (directive) {
+    artifactPath = path.join(task.evidence.workspaceDir, 'investigation-shards.json');
     await writeFile(
       artifactPath,
       `${JSON.stringify(directive, null, 2)}\n`,
@@ -4177,6 +4434,574 @@ async function runTacticalReviewFlow(
     directive,
     fanoutSchedulerPlan,
     childContextBundles,
+    childResults,
+  );
+  managedTask = applyManagedTaskDirective(managedTask, directive);
+  const terminalResult = workerResults.get(shape.terminalWorkerId);
+  const preferredPublicText = directive?.userAnswer?.trim() || directive?.userFacingText;
+  if (terminalResult && directive && preferredPublicText) {
+    workerResults.set(shape.terminalWorkerId, {
+      ...terminalResult,
+      success: directive.status === 'accept',
+      lastText: preferredPublicText,
+      signal: directive.status === 'accept' ? terminalResult.signal : 'BLOCKED',
+      signalReason: directive.status === 'accept'
+        ? terminalResult.signalReason
+        : directive.reason ?? terminalResult.signalReason,
+      messages: replaceLastAssistantMessage(terminalResult.messages, preferredPublicText),
+    });
+  }
+
+  const result = buildFallbackManagedResult(
+    managedTask,
+    workerResults,
+    shape.terminalWorkerId,
+  );
+  await writeManagedTaskArtifacts(
+    shape.workspaceDir,
+    managedTask,
+    {
+      success: result.success,
+      lastText: result.lastText,
+      sessionId: result.sessionId,
+      signal: result.signal,
+      signalReason: result.signalReason,
+    },
+    directive,
+  );
+  managedOptions.events?.onManagedTaskStatus?.({
+    agentMode,
+    harnessProfile: managedTask.contract.harnessProfile,
+    activeWorkerId: shape.terminalWorkerId,
+    activeWorkerTitle: reducer.title,
+    phase: 'completed',
+    note: managedTask.verdict.summary,
+  });
+  return {
+    ...result,
+    routingDecision: finalRoutingDecision,
+  };
+}
+
+async function runTacticalInvestigationFlow(
+  managedOptions: KodaXOptions,
+  originalTask: string,
+  plan: ReasoningPlan,
+  scoutExecution: { result: KodaXResult; directive: ManagedTaskScoutDirective },
+  rawRoutingDecision: KodaXTaskRoutingDecision,
+  finalRoutingDecision: KodaXTaskRoutingDecision,
+  routingOverrideReason: string | undefined,
+  skillMap: KodaXSkillMap | undefined,
+  agentMode: KodaXAgentMode,
+  scoutBudgetController: ManagedTaskBudgetController,
+): Promise<KodaXResult> {
+  const shape = createTacticalInvestigationBaseShape(
+    managedOptions,
+    originalTask,
+    plan,
+    {
+      originalTask,
+      skillInvocation: managedOptions.context?.skillInvocation,
+      skillMap: skillMap ?? undefined,
+    },
+  );
+  const budgetController = createManagedBudgetController(managedOptions, plan, agentMode);
+  budgetController.spentBudget = Math.max(budgetController.spentBudget, scoutBudgetController.spentBudget);
+  const sessionStorage = new ManagedWorkerSessionStorage();
+  await mkdir(shape.workspaceDir, { recursive: true });
+  const skillArtifacts = await writeManagedSkillArtifacts(
+    shape.workspaceDir,
+    managedOptions.context?.skillInvocation,
+    skillMap ?? undefined,
+  );
+  shape.task = {
+    ...shape.task,
+    runtime: {
+      ...applyManagedBudgetRuntimeState(shape.task.runtime, budgetController),
+      budget: createBudgetSnapshot(budgetController, shape.task.contract.harnessProfile, 1, 'generator', 'investigation-scan'),
+      rawRoutingDecision,
+      finalRoutingDecision,
+      routingOverrideReason,
+      qualityAssuranceMode: shape.qualityAssuranceMode,
+      scoutDecision: {
+        summary: scoutExecution.directive.summary ?? 'Scout completed.',
+        recommendedHarness: finalRoutingDecision.harnessProfile,
+        readyForUpgrade: false,
+        scope: scoutExecution.directive.scope,
+        requiredEvidence: scoutExecution.directive.requiredEvidence,
+        reviewFilesOrAreas: scoutExecution.directive.reviewFilesOrAreas,
+        evidenceAcquisitionMode: scoutExecution.directive.evidenceAcquisitionMode,
+        skillSummary: scoutExecution.directive.skillMap?.skillSummary,
+        executionObligations: scoutExecution.directive.skillMap?.executionObligations,
+        verificationObligations: scoutExecution.directive.skillMap?.verificationObligations,
+        ambiguities: scoutExecution.directive.skillMap?.ambiguities,
+        projectionConfidence: scoutExecution.directive.skillMap?.projectionConfidence,
+      },
+      skillMap: skillMap ?? undefined,
+      evidenceAcquisitionMode: scoutExecution.directive.evidenceAcquisitionMode ?? 'overview',
+      reviewFilesOrAreas: scoutExecution.directive.reviewFilesOrAreas,
+    },
+    evidence: {
+      ...shape.task.evidence,
+      artifacts: mergeEvidenceArtifacts(shape.task.evidence.artifacts, skillArtifacts),
+      entries: [
+        ...shape.task.evidence.entries,
+        {
+          assignmentId: 'scout',
+          title: 'Scout',
+          role: 'scout',
+          round: 0,
+          status: scoutExecution.result.success ? 'completed' : 'failed',
+          summary: scoutExecution.directive.summary,
+          output: scoutExecution.directive.userFacingText || extractMessageText(scoutExecution.result),
+          sessionId: scoutExecution.result.sessionId,
+          signal: scoutExecution.result.signal,
+          signalReason: scoutExecution.result.signalReason,
+        },
+      ],
+    },
+  };
+
+  const scannerToolPolicy = buildManagedWorkerToolPolicy(
+    'generator',
+    shape.task.contract.verification,
+    'H0_DIRECT',
+    'read-only',
+    managedOptions.context?.repoIntelligenceMode,
+  );
+  const scannerWorker: ManagedTaskWorkerSpec = {
+    id: 'investigation-scan',
+    role: 'generator',
+    title: 'Investigation Scanner',
+    agent: buildManagedWorkerAgent('generator', 'investigation-scan'),
+    toolPolicy: scannerToolPolicy,
+    terminalAuthority: false,
+    prompt: buildTacticalInvestigationScannerPrompt(
+      originalTask,
+      plan,
+      scoutExecution.directive,
+    ),
+    metadata: {
+      role: 'generator',
+      agent: buildManagedWorkerAgent('generator', 'investigation-scan'),
+      tacticalChild: false,
+    },
+  };
+  scannerWorker.beforeToolExecute = createToolPolicyHook(scannerWorker);
+
+  const scannerExecution = await runTacticalInvestigationScanner(
+    managedOptions,
+    shape.task,
+    scannerWorker,
+    shape.routingPromptOverlay,
+    shape.qualityAssuranceMode,
+    sessionStorage,
+    budgetController,
+  );
+  const scannerDirective = scannerExecution.directive;
+  const scannerOutput = sanitizeManagedUserFacingText(
+    extractMessageText(scannerExecution.result) || scannerExecution.result.lastText,
+  );
+
+  shape.task = {
+    ...shape.task,
+    evidence: {
+      ...shape.task.evidence,
+      artifacts: mergeEvidenceArtifacts(
+        shape.task.evidence.artifacts,
+        scannerExecution.artifactPath
+          ? [{
+              kind: 'json',
+              path: scannerExecution.artifactPath,
+              description: 'Tactical investigation evidence shards.',
+            }]
+          : [],
+      ),
+      entries: [
+        ...shape.task.evidence.entries,
+        {
+          assignmentId: 'investigation-scan',
+          title: 'Investigation Scanner',
+          role: 'generator',
+          round: 1,
+          status: scannerExecution.result.success ? 'completed' : 'failed',
+          summary: scannerDirective?.summary ?? truncateText(scannerOutput || 'Investigation scanner completed.'),
+          output: scannerOutput,
+          sessionId: scannerExecution.result.sessionId,
+          signal: scannerExecution.result.signal,
+          signalReason: scannerExecution.result.signalReason,
+        },
+      ],
+    },
+  };
+
+  const scannerShards = scannerDirective?.shards ?? [];
+  if (scannerShards.length === 0) {
+    const completionStatus: KodaXTaskStatus = scannerExecution.result.success ? 'completed' : 'failed';
+    const completedTask: KodaXManagedTask = {
+      ...shape.task,
+      contract: {
+        ...shape.task.contract,
+        status: completionStatus,
+        updatedAt: new Date().toISOString(),
+      },
+      verdict: {
+        ...shape.task.verdict,
+        status: completionStatus,
+        summary: scannerDirective?.summary ?? (scannerOutput || 'Investigation scanner finished without promotable evidence shards.'),
+      },
+      runtime: {
+        ...shape.task.runtime,
+        scorecard: createVerificationScorecard(shape.task, undefined),
+      },
+    };
+    await writeManagedTaskArtifacts(
+      shape.workspaceDir,
+      completedTask,
+      {
+        success: scannerExecution.result.success,
+        lastText: scannerOutput || scannerExecution.result.lastText,
+        sessionId: scannerExecution.result.sessionId,
+        signal: scannerExecution.result.signal,
+        signalReason: scannerExecution.result.signalReason,
+      },
+      undefined,
+    );
+    return mergeManagedTaskIntoResult(
+      {
+        ...scannerExecution.result,
+        lastText: scannerOutput || scannerExecution.result.lastText,
+        routingDecision: finalRoutingDecision,
+      },
+      completedTask,
+    );
+  }
+
+  const {
+    shards,
+    duplicateIds: duplicateShardIds,
+  } = canonicalizeTacticalInvestigationShards(scannerShards);
+  const duplicateShardNote = duplicateShardIds.length > 0
+    ? `Canonicalized repeated investigation shard IDs: ${duplicateShardIds.join(', ')}.`
+    : undefined;
+  if (duplicateShardNote) {
+    shape.task = {
+      ...shape.task,
+      evidence: {
+        ...shape.task.evidence,
+        entries: shape.task.evidence.entries.map((entry) => (
+          entry.assignmentId === 'investigation-scan'
+            ? {
+                ...entry,
+                summary: `${entry.summary ?? 'Investigation scanner completed.'} ${duplicateShardNote}`.trim(),
+                output: [entry.output, duplicateShardNote].filter(Boolean).join('\n\n'),
+              }
+            : entry
+        )),
+      },
+    };
+  }
+
+  const childContextBundles: KodaXChildContextBundle[] = shards.map((shard) => ({
+    id: shard.id,
+    fanoutClass: 'evidence-scan',
+    objective: shard.question,
+    scopeSummary: shard.scope,
+    evidenceRefs: shard.evidence,
+    constraints: [
+      'Validate only this evidence question.',
+      'Do not broad-scan the repo.',
+    ],
+    readOnly: true,
+  }));
+  const parentReductionContract = shape.task.runtime?.parentReductionContract
+    ?? createParentReductionContract(plan.amaControllerDecision);
+  const schedulerInput = createFanoutSchedulerInput(
+    plan.amaControllerDecision,
+    childContextBundles,
+    parentReductionContract,
+  );
+  let fanoutSchedulerPlan: KodaXFanoutSchedulerPlan = schedulerInput
+    ? buildFanoutSchedulerPlan(schedulerInput)
+    : {
+        enabled: false,
+        profile: plan.amaControllerDecision.profile,
+        fanoutClass: 'evidence-scan',
+        branches: childContextBundles.map((bundle) => ({
+          bundleId: bundle.id,
+          status: 'deferred' as const,
+          reason: 'AMA controller did not admit fan-out for this run.',
+        })),
+        scheduledBundleIds: [],
+        deferredBundleIds: childContextBundles.map((bundle) => bundle.id),
+        maxParallel: 1,
+        mergeStrategy: parentReductionContract.strategy,
+        cancellationPolicy: 'none',
+        reason: 'AMA controller did not admit fan-out for this run.',
+      };
+  let childLedgerArtifacts: KodaXTaskEvidenceArtifact[] = [];
+  const shardsById = new Map(shards.map((shard) => [shard.id, shard] as const));
+  const scheduledShards = fanoutSchedulerPlan.scheduledBundleIds
+    .map((bundleId) => shardsById.get(bundleId))
+    .filter((shard): shard is TacticalInvestigationShard => Boolean(shard));
+  shape.task = {
+    ...shape.task,
+    runtime: {
+      ...shape.task.runtime,
+      childContextBundles,
+      parentReductionContract,
+      fanoutSchedulerPlan,
+    },
+  };
+
+  const validatorToolPolicy = buildManagedWorkerToolPolicy(
+    'generator',
+    shape.task.contract.verification,
+    'H0_DIRECT',
+    'read-only',
+    managedOptions.context?.repoIntelligenceMode,
+  );
+  const reducerToolPolicy = buildManagedWorkerToolPolicy(
+    'evaluator',
+    shape.task.contract.verification,
+    'H0_DIRECT',
+    'read-only',
+    managedOptions.context?.repoIntelligenceMode,
+  );
+  const validators: ManagedTaskWorkerSpec[] = scheduledShards.map((shard, index) => {
+    const worker: ManagedTaskWorkerSpec = {
+      id: `evidence-validator-${String(index + 1).padStart(2, '0')}`,
+      role: 'generator',
+      title: `Evidence Validator ${index + 1}: ${truncateText(shard.scope, 60)}`,
+      execution: 'parallel',
+      agent: buildManagedWorkerAgent('generator', shard.id),
+      toolPolicy: validatorToolPolicy,
+      terminalAuthority: false,
+      metadata: {
+        role: 'generator',
+        fanoutClass: 'evidence-scan',
+        bundleId: shard.id,
+      },
+      prompt: buildTacticalInvestigationValidatorPrompt(
+        originalTask,
+        shard,
+        scoutExecution.directive,
+      ),
+    };
+    worker.beforeToolExecute = createToolPolicyHook(worker);
+    fanoutSchedulerPlan = applyFanoutBranchTransition(fanoutSchedulerPlan, {
+      type: 'assign',
+      bundleId: shard.id,
+      workerId: worker.id,
+    });
+    return worker;
+  });
+  const reducer: ManagedTaskWorkerSpec = {
+    id: 'investigation-reducer',
+    role: 'evaluator',
+    title: 'Investigation Reducer',
+    dependsOn: validators.map((worker) => worker.id),
+    agent: buildManagedWorkerAgent('evaluator', 'investigation-reducer'),
+    toolPolicy: reducerToolPolicy,
+    terminalAuthority: true,
+    metadata: {
+      role: 'evaluator',
+      reductionStrategy: 'evaluator-assisted',
+    },
+    prompt: buildTacticalInvestigationReducerPrompt(
+      originalTask,
+      scheduledShards,
+      path.join(shape.workspaceDir, TACTICAL_CHILD_LEDGER_JSON),
+    ),
+  };
+  reducer.beforeToolExecute = createToolPolicyHook(reducer);
+
+  shape.workers = [...validators, reducer];
+  shape.terminalWorkerId = reducer.id;
+  const roleAssignments: KodaXManagedTask['roleAssignments'] = [
+    ...shape.task.roleAssignments.map((assignment) => (
+      assignment.id === 'investigation-scan'
+        ? {
+            ...assignment,
+            status: 'completed' as const,
+            summary: [
+              scannerDirective?.summary ?? truncateText(scannerOutput || 'Investigation scanner completed.'),
+              duplicateShardNote,
+            ].filter(Boolean).join(' '),
+          }
+        : assignment
+    )),
+    ...shape.workers.map((worker) => ({
+      id: worker.id,
+      role: worker.role,
+      title: worker.title,
+      dependsOn: worker.dependsOn ?? [],
+      status: 'planned' as const,
+      agent: worker.agent,
+      toolPolicy: worker.toolPolicy,
+    })),
+  ];
+  shape.task = {
+    ...shape.task,
+    runtime: {
+      ...shape.task.runtime,
+      fanoutSchedulerPlan,
+    },
+    roleAssignments,
+    workItems: [
+      ...shape.task.workItems,
+      ...shape.workers.map((worker) => ({
+        id: worker.id,
+        assignmentId: worker.id,
+        description: worker.title,
+        execution: worker.execution ?? 'serial',
+      })),
+    ],
+    verdict: {
+      ...shape.task.verdict,
+      decidedByAssignmentId: reducer.id,
+      summary: 'AMA Tactical investigation is validating evidence shards in parallel.',
+    },
+  };
+
+  const workerResults = new Map<string, KodaXResult>();
+  const childResults: KodaXChildAgentResult[] = [];
+  const childArtifacts: KodaXTaskEvidenceArtifact[] = [];
+  let directive: ManagedTaskVerdictDirective | undefined;
+  const tacticalRunner = createKodaXTaskRunner<ManagedTaskWorkerSpec>({
+    baseOptions: managedOptions,
+    runAgent: runDirectKodaX,
+    createOptions: (worker, _context, defaultOptions) => buildWorkerRunOptions(
+      defaultOptions,
+      shape.task,
+      worker,
+      shape.terminalWorkerId,
+      shape.routingPromptOverlay,
+      shape.qualityAssuranceMode,
+      sessionStorage,
+      resolveManagedMemoryStrategy(managedOptions, plan, worker.role, 1),
+      createBudgetSnapshot(budgetController, shape.task.contract.harnessProfile, 1, worker.role, worker.id),
+      budgetController,
+    ),
+    runTask: async (worker, _context, preparedOptions, promptText, executeDefault) => {
+      if (worker.role === 'evaluator') {
+        childLedgerArtifacts = await writeTacticalChildResultLedger(
+          shape.workspaceDir,
+          fanoutSchedulerPlan,
+          childContextBundles,
+          childResults,
+          parentReductionContract,
+          { includeMarkdown: false },
+        );
+      }
+      const execution = await runManagedWorkerTask(
+        worker,
+        preparedOptions,
+        promptText,
+        executeDefault,
+        budgetController,
+      );
+      return execution.result;
+    },
+    onResult: async (worker, context, result) => {
+      const sanitized = worker.role === 'evaluator'
+        ? sanitizeManagedWorkerResult(result, { enforceVerdictBlock: true })
+        : sanitizeHandoffResult(result, worker.title);
+      workerResults.set(worker.id, sanitized.result);
+      if (worker.role === 'evaluator') {
+        directive = sanitized.directive as ManagedTaskVerdictDirective | undefined;
+      } else {
+        const artifactPaths = buildTacticalChildArtifactPaths(context.taskDir);
+        const handoffDirective = sanitized.directive as ManagedTaskHandoffDirective | undefined;
+        if (handoffDirective) {
+          await writeTacticalChildHandoffArtifact(artifactPaths.handoffPath, handoffDirective);
+          childArtifacts.push({
+            kind: 'json',
+            path: artifactPaths.handoffPath,
+            description: `Dependency handoff for ${resolveTacticalWorkerBundleId(worker)}`,
+          });
+        }
+        const parsedChildResult = parseChildAgentResult(extractMessageText(result) || result.lastText);
+        const normalizedChildResult = normalizeTacticalChildResult(
+          worker,
+          handoffDirective,
+          sanitized.result,
+          parsedChildResult,
+          artifactPaths,
+        );
+        await writeFile(
+          artifactPaths.childResultPath,
+          `${JSON.stringify(normalizedChildResult, null, 2)}\n`,
+          'utf8',
+        );
+        upsertChildAgentResult(childResults, normalizedChildResult);
+        fanoutSchedulerPlan = applyFanoutBranchTransition(fanoutSchedulerPlan, {
+          type: 'complete',
+          bundleId: resolveTacticalWorkerBundleId(worker),
+          childId: normalizedChildResult.childId,
+        });
+        childArtifacts.push({
+          kind: 'json',
+          path: artifactPaths.childResultPath,
+          description: `Child-agent result for ${normalizedChildResult.childId}`,
+        });
+      }
+      return sanitized.result;
+    },
+  });
+
+  const roundWorkspaceDir = path.join(shape.workspaceDir, 'rounds', 'round-01');
+  const orchestrationResult = await runOrchestration<ManagedTaskWorkerSpec, string>({
+    workspaceDir: roundWorkspaceDir,
+    runId: `${shape.task.contract.taskId}-tactical-investigation`,
+    maxParallel: fanoutSchedulerPlan.maxParallel,
+    tasks: shape.workers,
+    runner: tacticalRunner,
+    events: createTacticalFanoutStatusEvents(
+      managedOptions.events,
+      agentMode,
+      shape.task.contract.harnessProfile,
+      () => fanoutSchedulerPlan,
+    ),
+  });
+
+  let managedTask = applyOrchestrationResultToTask(
+    shape.task,
+    shape.terminalWorkerId,
+    orchestrationResult,
+    workerResults,
+    1,
+    roundWorkspaceDir,
+  );
+  childLedgerArtifacts = await writeTacticalChildResultLedger(
+    shape.workspaceDir,
+    fanoutSchedulerPlan,
+    childContextBundles,
+    childResults,
+    parentReductionContract,
+  );
+  managedTask = {
+    ...managedTask,
+    evidence: {
+      ...managedTask.evidence,
+      artifacts: mergeEvidenceArtifacts(
+        managedTask.evidence.artifacts,
+        childArtifacts,
+        childLedgerArtifacts,
+      ),
+    },
+    runtime: {
+      ...managedTask.runtime,
+      childContextBundles,
+      childAgentResults: childResults,
+      fanoutSchedulerPlan,
+      scorecard: createVerificationScorecard(managedTask, directive),
+    },
+  };
+  directive = applyTacticalInvestigationParentReduction(
+    directive,
+    fanoutSchedulerPlan,
+    shards,
     childResults,
   );
   managedTask = applyManagedTaskDirective(managedTask, directive);
@@ -4773,6 +5598,52 @@ function parseTacticalReviewFindingsDirective(
   };
 }
 
+function parseTacticalInvestigationShardsDirective(
+  text: string,
+): TacticalInvestigationShardsDirective | undefined {
+  const directive = parseJsonFencedBlock<{
+    summary?: string;
+    shards?: Array<{
+      id?: string;
+      question?: string;
+      scope?: string;
+      priority?: 'high' | 'medium' | 'low';
+      files?: string[];
+      evidence?: string[];
+    }>;
+  }>(text, TACTICAL_INVESTIGATION_SHARDS_BLOCK);
+  if (!directive) {
+    return undefined;
+  }
+
+  const shards = (directive.shards ?? [])
+    .map((shard, index): TacticalInvestigationShard | undefined => {
+      const question = shard.question?.trim();
+      const scope = shard.scope?.trim();
+      if (!question || !scope) {
+        return undefined;
+      }
+      return {
+        id: shard.id?.trim() || `shard-${index + 1}`,
+        question,
+        scope,
+        priority: shard.priority ?? 'medium',
+        files: shard.files?.map((item) => item.trim()).filter(Boolean) ?? [],
+        evidence: shard.evidence?.map((item) => item.trim()).filter(Boolean) ?? [],
+      };
+    })
+    .filter((shard): shard is TacticalInvestigationShard => Boolean(shard));
+
+  const visibleMatch = text.match(new RegExp(String.raw`([\s\S]*?)\r?\n?\`\`\`${TACTICAL_INVESTIGATION_SHARDS_BLOCK}\s*[\s\S]*\`\`\`\s*$`, 'i'));
+  const visibleText = sanitizeManagedUserFacingText((visibleMatch?.[1] ?? '').trim());
+
+  return {
+    summary: directive.summary?.trim() || 'Investigation scanner identified bounded evidence shards for validation.',
+    shards,
+    userFacingText: visibleText,
+  };
+}
+
 function parseChildAgentResult(text: string): KodaXChildAgentResult | undefined {
   const parsed = parseJsonFencedBlock<KodaXChildAgentResult>(text, TACTICAL_CHILD_RESULT_BLOCK);
   if (!parsed) {
@@ -4812,15 +5683,8 @@ function createFailClosedChildAgentResult(
     status?: KodaXChildAgentResult['status'];
   },
 ): KodaXChildAgentResult {
-  const childId = options?.childId ?? String(worker.metadata?.findingId ?? worker.id);
-  const fanoutClass = options?.fanoutClass ?? (
-    worker.metadata?.fanoutClass === 'finding-validation'
-    || worker.metadata?.fanoutClass === 'evidence-scan'
-    || worker.metadata?.fanoutClass === 'module-triage'
-    || worker.metadata?.fanoutClass === 'hypothesis-check'
-      ? worker.metadata.fanoutClass
-      : 'finding-validation'
-  );
+  const childId = options?.childId ?? resolveTacticalWorkerBundleId(worker);
+  const fanoutClass = options?.fanoutClass ?? resolveTacticalWorkerFanoutClass(worker);
   const summary = options?.summary ?? (
     result.success
       ? `Structured ${TACTICAL_CHILD_RESULT_BLOCK} output was missing or malformed; treat ${childId} as unresolved.`
@@ -4859,13 +5723,8 @@ function normalizeTacticalChildResult(
     handoffPath: string;
   },
 ): KodaXChildAgentResult {
-  const fallbackChildId = String(worker.metadata?.findingId ?? worker.id);
-  const fallbackFanoutClass: KodaXAmaFanoutClass = worker.metadata?.fanoutClass === 'finding-validation'
-    || worker.metadata?.fanoutClass === 'evidence-scan'
-    || worker.metadata?.fanoutClass === 'module-triage'
-    || worker.metadata?.fanoutClass === 'hypothesis-check'
-      ? worker.metadata.fanoutClass
-      : 'finding-validation';
+  const fallbackChildId = resolveTacticalWorkerBundleId(worker);
+  const fallbackFanoutClass = resolveTacticalWorkerFanoutClass(worker);
   const normalizedArtifactPaths = Array.from(new Set([
     ...(parsedChildResult?.artifactPaths ?? []),
     artifactPaths.childResultPath,
@@ -4983,6 +5842,68 @@ function renderFailClosedTacticalReviewAnswer(
   ].join('\n');
 }
 
+function renderFailClosedTacticalInvestigationAnswer(
+  shards: TacticalInvestigationShard[],
+  childResults: KodaXChildAgentResult[],
+  unresolvedBranches: KodaXFanoutBranchRecord[],
+): string {
+  const shardById = new Map(shards.map((shard) => [shard.id, shard] as const));
+  const validResults = childResults.filter((result) => result.disposition === 'valid');
+  const falsePositiveResults = childResults.filter((result) => result.disposition === 'false-positive');
+  const unresolvedLabels = unresolvedBranches.map((branch) => {
+    const shard = shardById.get(branch.bundleId);
+    return shard ? `${shard.scope} (${shard.priority})` : branch.bundleId;
+  });
+
+  if (unresolvedLabels.length === 0 && validResults.length === 0) {
+    return [
+      '## Investigation Status',
+      '',
+      'The investigation is still inconclusive because the validated evidence collected so far does not support the current diagnosis.',
+      '',
+      '## Missing Evidence',
+      '- No unresolved evidence shards remain, but the current lead still lacks validator-backed support.',
+      '',
+      '## Supporting Evidence',
+      '- No shard has yet produced validator-backed evidence that confirms the diagnosis.',
+      '',
+      '## Rejected Or Weakened Leads',
+      ...(falsePositiveResults.length > 0
+        ? falsePositiveResults.map((result) => `- ${result.summary}`)
+        : ['- None yet.']),
+      '',
+      '## Next Step',
+      '',
+      '- Reframe the current diagnosis or gather new evidence before treating this investigation as settled.',
+    ].join('\n');
+  }
+
+  return [
+    '## Investigation Status',
+    '',
+    'The investigation is still inconclusive because one or more evidence shards are unresolved or waiting on trustworthy validation.',
+    '',
+    '## Missing Evidence',
+    ...(unresolvedLabels.length > 0
+      ? unresolvedLabels.map((label) => `- ${label}`)
+      : ['- Additional corroborating evidence is still needed before accepting the diagnosis.']),
+    '',
+    '## Supporting Evidence',
+    ...(validResults.length > 0
+      ? validResults.map((result) => `- ${result.summary}`)
+      : ['- No shard has yet produced validator-backed evidence that confirms the diagnosis.']),
+    '',
+    '## Rejected Or Weakened Leads',
+    ...(falsePositiveResults.length > 0
+      ? falsePositiveResults.map((result) => `- ${result.summary}`)
+      : ['- None yet.']),
+    '',
+    '## Next Step',
+    '',
+    '- Gather or re-run the unresolved high-priority evidence shards before treating this investigation as settled.',
+  ].join('\n');
+}
+
 function applyTacticalParentReduction(
   directive: ManagedTaskVerdictDirective | undefined,
   fanoutSchedulerPlan: KodaXFanoutSchedulerPlan,
@@ -5017,6 +5938,59 @@ function applyTacticalParentReduction(
     reason,
     followups: [
       'Re-run validation for every unresolved or deferred child finding before finalizing the review.',
+    ],
+    userFacingText: userAnswer,
+    userAnswer,
+    artifactPath: directive?.artifactPath,
+  };
+}
+
+function applyTacticalInvestigationParentReduction(
+  directive: ManagedTaskVerdictDirective | undefined,
+  fanoutSchedulerPlan: KodaXFanoutSchedulerPlan,
+  shards: TacticalInvestigationShard[],
+  childResults: KodaXChildAgentResult[],
+): ManagedTaskVerdictDirective | undefined {
+  const childResultById = new Map(
+    childResults.map((result) => [result.childId, result] as const),
+  );
+  const shardById = new Map(shards.map((shard) => [shard.id, shard] as const));
+  const unresolvedBranches = fanoutSchedulerPlan.branches.filter((branch) => {
+    if (branch.status === 'deferred' || branch.status === 'cancelled') {
+      return true;
+    }
+    const childResult = childResultById.get(branch.childId ?? branch.bundleId);
+    if (!childResult) {
+      return branch.status === 'scheduled';
+    }
+    return childResult.status !== 'completed'
+      || childResult.disposition === 'needs-more-evidence';
+  });
+  const unresolvedHighPriority = unresolvedBranches.filter((branch) => shardById.get(branch.bundleId)?.priority === 'high');
+  const hasValidEvidence = childResults.some((result) => result.disposition === 'valid');
+
+  if (unresolvedHighPriority.length === 0 && hasValidEvidence) {
+    return directive;
+  }
+
+  const unresolvedIds = unresolvedBranches.map((branch) => branch.bundleId);
+  const reason = unresolvedHighPriority.length > 0
+    ? `High-priority evidence shards remain unresolved: ${unresolvedHighPriority.map((branch) => branch.bundleId).join(', ')}.`
+    : hasValidEvidence
+      ? `Investigation evidence remains incomplete for ${unresolvedIds.join(', ')}.`
+      : 'Validated evidence does not support accepting the current diagnosis yet.';
+  const userAnswer = renderFailClosedTacticalInvestigationAnswer(
+    shards,
+    childResults,
+    unresolvedBranches,
+  );
+
+  return {
+    source: 'evaluator',
+    status: 'revise',
+    reason,
+    followups: [
+      'Re-run or expand the unresolved evidence shards before treating the investigation as complete.',
     ],
     userFacingText: userAnswer,
     userAnswer,
@@ -7433,6 +8407,27 @@ export async function runManagedTask(
     scoutExecution.directive,
   )) {
     return runTacticalReviewFlow(
+      managedOptions,
+      managedOriginalTask,
+      plan,
+      scoutExecution,
+      rawRoutingDecision,
+      finalRoutingDecision,
+      routingOverrideReason,
+      skillMap,
+      agentMode,
+      scoutBudgetController,
+    );
+  }
+
+  if (shouldRunTacticalInvestigationFanout(
+    agentMode,
+    getManagedTaskSurface(managedOptions),
+    plan,
+    finalRoutingDecision,
+    scoutExecution.directive,
+  )) {
+    return runTacticalInvestigationFlow(
       managedOptions,
       managedOriginalTask,
       plan,

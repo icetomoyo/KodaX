@@ -1238,6 +1238,793 @@ describe('runManagedTask', () => {
     expect(fanoutWorkerCounts).toContain(0);
   });
 
+  it('runs tactical read-only investigation fan-out inside AMA H0 and keeps the parent as final authority', async () => {
+    const workspaceRoot = await createTempDir('kodax-task-engine-tactical-investigation-');
+    const statuses: KodaXManagedTaskStatusEvent[] = [];
+    mockCreateReasoningPlan.mockResolvedValue(
+      buildPlan({
+        primaryTask: 'bugfix',
+        taskFamily: 'investigation',
+        actionability: 'actionable',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'investigation',
+        complexity: 'moderate',
+        riskLevel: 'medium',
+        harnessProfile: 'H0_DIRECT',
+        mutationSurface: 'read-only',
+        topologyCeiling: 'H0_DIRECT',
+        reason: 'Read-only investigation should stay tactical and validate evidence in parallel.',
+      }),
+    );
+    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
+      if (workerPrompt.includes('You are the Scout role')) {
+        return buildAssistantResult(
+          buildScoutResponse(
+            'Scout kept the investigation on H0 and recommended bounded evidence validation.',
+            'H0_DIRECT',
+          ),
+          { sessionId: 'session-scout-tactical-investigation' },
+        );
+      }
+      if (workerPrompt.includes('You are the Tactical Investigation Scanner')) {
+        return buildAssistantResult(
+          [
+            'Scanner found two evidence shards worth validating.',
+            '```kodax-investigation-shards',
+            JSON.stringify({
+              summary: 'Scanner identified two investigation shards.',
+              shards: [
+                {
+                  id: 'shard-1',
+                  question: 'Does the retry path swallow the root cause error?',
+                  scope: 'Retry root-cause propagation',
+                  priority: 'high',
+                  files: ['packages/coding/src/task-engine.ts'],
+                  evidence: ['Retry branch wraps errors before surfacing them.'],
+                },
+                {
+                  id: 'shard-2',
+                  question: 'Is the timeout counter reset still a real contributor?',
+                  scope: 'Timeout counter branch',
+                  priority: 'medium',
+                  files: ['packages/coding/src/reasoning.ts'],
+                  evidence: ['Timeout branch was previously blamed in the report.'],
+                },
+              ],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-scan-tactical-investigation' },
+        );
+      }
+      if (workerPrompt.includes('[Shard ID] shard-1')) {
+        return buildAssistantResult(
+          [
+            buildHandoffResponse('Validator confirmed the retry path hides the root cause.'),
+            '```kodax-child-result',
+            JSON.stringify({
+              childId: 'shard-1',
+              fanoutClass: 'evidence-scan',
+              status: 'completed',
+              disposition: 'valid',
+              summary: 'Shard 1 confirmed the retry path hides the root cause error.',
+              evidenceRefs: ['packages/coding/src/task-engine.ts'],
+              contradictions: [],
+              artifactPaths: [],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-investigation-validator-1' },
+        );
+      }
+      if (workerPrompt.includes('[Shard ID] shard-2')) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        return buildAssistantResult(
+          [
+            buildHandoffResponse('Validator ruled the timeout counter reset out as a primary cause.'),
+            '```kodax-child-result',
+            JSON.stringify({
+              childId: 'shard-2',
+              fanoutClass: 'evidence-scan',
+              status: 'completed',
+              disposition: 'false-positive',
+              summary: 'Shard 2 weakens the timeout-counter theory.',
+              evidenceRefs: ['packages/coding/src/reasoning.ts'],
+              contradictions: ['Timeout counter state remains intact in the current code path.'],
+              artifactPaths: [],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-investigation-validator-2' },
+        );
+      }
+      if (workerPrompt.includes('You are the Tactical Investigation Reducer')) {
+        return buildAssistantResult(
+          buildVerdictResponse(
+            'Reducer completed the tactical investigation.',
+            'accept',
+            'Validator evidence is sufficient for the parent diagnosis.',
+            {
+              userAnswer: [
+                '## Investigation Update',
+                '',
+                'The retry path is still the most likely root cause because it hides the original error before surfacing it.',
+                '',
+                'The timeout-counter hypothesis did not hold up under validator-backed evidence.',
+              ].join('\n'),
+            },
+          ),
+          { sessionId: 'session-investigation-reducer' },
+        );
+      }
+      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 160)}`);
+    });
+
+    const result = await runManagedTask(
+      {
+        provider: 'anthropic',
+        agentMode: 'ama',
+        events: {
+          onManagedTaskStatus: (status) => {
+            statuses.push(status);
+          },
+        },
+        context: {
+          managedTaskWorkspaceDir: workspaceRoot,
+        },
+      },
+      'Investigate why the retry path still reports the wrong failure to users.',
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.lastText).toContain('## Investigation Update');
+    expect(result.lastText).toContain('retry path is still the most likely root cause');
+    expect(result.managedTask?.runtime?.amaProfile).toBe('tactical');
+    expect(result.managedTask?.runtime?.amaFanout?.class).toBe('evidence-scan');
+    expect(result.managedTask?.runtime?.childContextBundles).toHaveLength(2);
+    expect(result.managedTask?.runtime?.childAgentResults).toHaveLength(2);
+    expect(result.managedTask?.runtime?.fanoutSchedulerPlan?.fanoutClass).toBe('evidence-scan');
+    const fanoutWorkerCounts = statuses
+      .filter((status) => status.phase === 'worker' && status.childFanoutClass === 'evidence-scan')
+      .map((status) => status.childFanoutCount);
+    expect(fanoutWorkerCounts).toContain(2);
+    expect(fanoutWorkerCounts).toContain(1);
+    expect(fanoutWorkerCounts).toContain(0);
+  });
+
+  it('keeps overflow tactical investigation shards in the ledger and forces revise when a high-priority shard is deferred', async () => {
+    const workspaceRoot = await createTempDir('kodax-task-engine-tactical-investigation-overflow-');
+    mockCreateReasoningPlan.mockResolvedValue(
+      buildPlan({
+        primaryTask: 'bugfix',
+        taskFamily: 'investigation',
+        actionability: 'actionable',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'investigation',
+        complexity: 'moderate',
+        riskLevel: 'medium',
+        harnessProfile: 'H0_DIRECT',
+        mutationSurface: 'read-only',
+        topologyCeiling: 'H0_DIRECT',
+        reason: 'Read-only investigation should defer overflow evidence shards through the scheduler.',
+      }),
+    );
+    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
+      if (workerPrompt.includes('You are the Scout role')) {
+        return buildAssistantResult(
+          buildScoutResponse(
+            'Scout kept the investigation on H0 and recommended bounded evidence validation.',
+            'H0_DIRECT',
+          ),
+          { sessionId: 'session-scout-tactical-investigation-overflow' },
+        );
+      }
+      if (workerPrompt.includes('You are the Tactical Investigation Scanner')) {
+        return buildAssistantResult(
+          [
+            'Scanner found four evidence shards worth validating.',
+            '```kodax-investigation-shards',
+            JSON.stringify({
+              summary: 'Scanner identified four investigation shards.',
+              shards: [
+                {
+                  id: 'shard-1',
+                  question: 'Does the retry path hide the root cause?',
+                  scope: 'Retry root-cause propagation',
+                  priority: 'high',
+                  files: ['packages/coding/src/task-engine.ts'],
+                  evidence: ['Retry wrapper still suppresses the underlying error.'],
+                },
+                {
+                  id: 'shard-2',
+                  question: 'Does the timeout counter remain intact?',
+                  scope: 'Timeout counter branch',
+                  priority: 'medium',
+                  files: ['packages/coding/src/reasoning.ts'],
+                  evidence: ['Timeout counter branch is implicated in the report.'],
+                },
+                {
+                  id: 'shard-3',
+                  question: 'Does the logger preserve the hidden root cause text?',
+                  scope: 'Logger root-cause handoff',
+                  priority: 'high',
+                  files: ['packages/coding/src/task-engine.ts'],
+                  evidence: ['Logger handoff may still hide the message.'],
+                },
+                {
+                  id: 'shard-4',
+                  question: 'Is a tertiary metrics path involved?',
+                  scope: 'Metrics side-path',
+                  priority: 'low',
+                  files: ['packages/coding/src/task-engine.ts'],
+                  evidence: ['Low-priority branch used to exercise deferral.'],
+                },
+              ],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-scan-tactical-investigation-overflow' },
+        );
+      }
+      if (workerPrompt.includes('[Shard ID] shard-1')) {
+        return buildAssistantResult(
+          [
+            buildHandoffResponse('Validator confirmed the retry path issue.'),
+            '```kodax-child-result',
+            JSON.stringify({
+              childId: 'shard-1',
+              fanoutClass: 'evidence-scan',
+              status: 'completed',
+              disposition: 'valid',
+              summary: 'Shard 1 confirmed the retry path hides the root cause.',
+              evidenceRefs: ['packages/coding/src/task-engine.ts'],
+              contradictions: [],
+              artifactPaths: [],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-investigation-overflow-1' },
+        );
+      }
+      if (workerPrompt.includes('[Shard ID] shard-2')) {
+        return buildAssistantResult(
+          [
+            buildHandoffResponse('Validator weakened the timeout branch theory.'),
+            '```kodax-child-result',
+            JSON.stringify({
+              childId: 'shard-2',
+              fanoutClass: 'evidence-scan',
+              status: 'completed',
+              disposition: 'false-positive',
+              summary: 'Shard 2 weakens the timeout branch theory.',
+              evidenceRefs: ['packages/coding/src/reasoning.ts'],
+              contradictions: ['Timeout state remains intact.'],
+              artifactPaths: [],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-investigation-overflow-2' },
+        );
+      }
+      if (workerPrompt.includes('You are the Tactical Investigation Reducer')) {
+        return buildAssistantResult(
+          buildVerdictResponse(
+            'Reducer tried to finalize the investigation.',
+            'accept',
+            'Reducer thinks the evidence is enough.',
+            {
+              userAnswer: [
+                '## Investigation Update',
+                '',
+                'Reducer says the retry path diagnosis is complete.',
+              ].join('\n'),
+            },
+          ),
+          { sessionId: 'session-investigation-reducer-overflow' },
+        );
+      }
+      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 160)}`);
+    });
+
+    const result = await runManagedTask(
+      {
+        provider: 'anthropic',
+        agentMode: 'ama',
+        context: {
+          managedTaskWorkspaceDir: workspaceRoot,
+        },
+      },
+      'Investigate why the retry path still reports the wrong failure to users.',
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.lastText).toContain('The investigation is still inconclusive');
+    expect(result.lastText).toContain('Logger root-cause handoff (high)');
+    expect(result.managedTask?.runtime?.childContextBundles).toHaveLength(4);
+    expect(result.managedTask?.runtime?.childAgentResults).toHaveLength(2);
+    expect(result.managedTask?.runtime?.fanoutSchedulerPlan?.scheduledBundleIds).toEqual(['shard-1', 'shard-2']);
+    expect(result.managedTask?.runtime?.fanoutSchedulerPlan?.deferredBundleIds).toEqual(['shard-3', 'shard-4']);
+  });
+
+  it('canonicalizes duplicate investigation shard ids before scheduling validator branches', async () => {
+    const workspaceRoot = await createTempDir('kodax-task-engine-tactical-investigation-duplicates-');
+    let shardOneValidatorRuns = 0;
+    mockCreateReasoningPlan.mockResolvedValue(
+      buildPlan({
+        primaryTask: 'bugfix',
+        taskFamily: 'investigation',
+        actionability: 'actionable',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'investigation',
+        complexity: 'moderate',
+        riskLevel: 'medium',
+        harnessProfile: 'H0_DIRECT',
+        mutationSurface: 'read-only',
+        topologyCeiling: 'H0_DIRECT',
+        reason: 'Read-only investigation should canonicalize duplicate shards before validation.',
+      }),
+    );
+    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
+      if (workerPrompt.includes('You are the Scout role')) {
+        return buildAssistantResult(
+          buildScoutResponse(
+            'Scout kept the investigation on H0 and recommended bounded evidence validation.',
+            'H0_DIRECT',
+          ),
+          { sessionId: 'session-scout-tactical-investigation-duplicates' },
+        );
+      }
+      if (workerPrompt.includes('You are the Tactical Investigation Scanner')) {
+        return buildAssistantResult(
+          [
+            'Scanner found three shards, including one duplicate id.',
+            '```kodax-investigation-shards',
+            JSON.stringify({
+              summary: 'Scanner identified three investigation shards with one duplicate id.',
+              shards: [
+                {
+                  id: 'shard-1',
+                  question: 'Does the retry path hide the root cause?',
+                  scope: 'Retry root-cause propagation',
+                  priority: 'high',
+                  files: ['packages/coding/src/task-engine.ts'],
+                  evidence: ['First occurrence.'],
+                },
+                {
+                  id: 'shard-1',
+                  question: 'Duplicate shard should not run twice.',
+                  scope: 'Duplicate retry shard',
+                  priority: 'medium',
+                  files: ['packages/coding/src/task-engine.ts'],
+                  evidence: ['Duplicate occurrence.'],
+                },
+                {
+                  id: 'shard-2',
+                  question: 'Does the logger preserve the root cause?',
+                  scope: 'Logger handoff',
+                  priority: 'medium',
+                  files: ['packages/coding/src/task-engine.ts'],
+                  evidence: ['Independent sibling shard.'],
+                },
+              ],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-scan-tactical-investigation-duplicates' },
+        );
+      }
+      if (workerPrompt.includes('[Shard ID] shard-1')) {
+        shardOneValidatorRuns += 1;
+        return buildAssistantResult(
+          [
+            buildHandoffResponse('Validator confirmed the canonical shard.'),
+            '```kodax-child-result',
+            JSON.stringify({
+              childId: 'shard-1',
+              fanoutClass: 'evidence-scan',
+              status: 'completed',
+              disposition: 'valid',
+              summary: 'Shard 1 is valid.',
+              evidenceRefs: ['packages/coding/src/task-engine.ts'],
+              contradictions: [],
+              artifactPaths: [],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-investigation-duplicates-1' },
+        );
+      }
+      if (workerPrompt.includes('[Shard ID] shard-2')) {
+        return buildAssistantResult(
+          [
+            buildHandoffResponse('Validator weakened the sibling shard.'),
+            '```kodax-child-result',
+            JSON.stringify({
+              childId: 'shard-2',
+              fanoutClass: 'evidence-scan',
+              status: 'completed',
+              disposition: 'false-positive',
+              summary: 'Shard 2 is a false positive.',
+              evidenceRefs: ['packages/coding/src/task-engine.ts'],
+              contradictions: ['Sibling shard does not reproduce.'],
+              artifactPaths: [],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-investigation-duplicates-2' },
+        );
+      }
+      if (workerPrompt.includes('You are the Tactical Investigation Reducer')) {
+        return buildAssistantResult(
+          buildVerdictResponse(
+            'Reducer completed the tactical investigation.',
+            'accept',
+            'Validator evidence is sufficient for the parent diagnosis.',
+            {
+              userAnswer: [
+                '## Investigation Update',
+                '',
+                'The canonical shard is valid.',
+              ].join('\n'),
+            },
+          ),
+          { sessionId: 'session-investigation-reducer-duplicates' },
+        );
+      }
+      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 160)}`);
+    });
+
+    const result = await runManagedTask(
+      {
+        provider: 'anthropic',
+        agentMode: 'ama',
+        context: {
+          managedTaskWorkspaceDir: workspaceRoot,
+        },
+      },
+      'Investigate why the retry path still reports the wrong failure to users.',
+    );
+
+    expect(result.success).toBe(true);
+    expect(shardOneValidatorRuns).toBe(1);
+    expect(result.managedTask?.runtime?.childContextBundles).toHaveLength(2);
+    expect(result.managedTask?.runtime?.fanoutSchedulerPlan?.branches.map((branch) => branch.bundleId)).toEqual([
+      'shard-1',
+      'shard-2',
+    ]);
+  });
+
+  it('fails closed when a tactical investigation shard omits a structured child result', async () => {
+    const workspaceRoot = await createTempDir('kodax-task-engine-tactical-investigation-fail-closed-');
+    mockCreateReasoningPlan.mockResolvedValue(
+      buildPlan({
+        primaryTask: 'bugfix',
+        taskFamily: 'investigation',
+        actionability: 'actionable',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'investigation',
+        complexity: 'moderate',
+        riskLevel: 'medium',
+        harnessProfile: 'H0_DIRECT',
+        mutationSurface: 'read-only',
+        topologyCeiling: 'H0_DIRECT',
+        reason: 'Read-only investigation should fail closed on malformed child results.',
+      }),
+    );
+    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
+      if (workerPrompt.includes('You are the Scout role')) {
+        return buildAssistantResult(
+          buildScoutResponse(
+            'Scout kept the investigation on H0 and recommended bounded evidence validation.',
+            'H0_DIRECT',
+          ),
+          { sessionId: 'session-scout-tactical-investigation-fail-closed' },
+        );
+      }
+      if (workerPrompt.includes('You are the Tactical Investigation Scanner')) {
+        return buildAssistantResult(
+          [
+            'Scanner found two investigation shards worth validation.',
+            '```kodax-investigation-shards',
+            JSON.stringify({
+              summary: 'Scanner identified two investigation shards.',
+              shards: [
+                {
+                  id: 'shard-1',
+                  question: 'Does the retry path hide the root cause?',
+                  scope: 'Retry root-cause propagation',
+                  priority: 'high',
+                  files: ['packages/coding/src/task-engine.ts'],
+                  evidence: ['This shard exercises fail-closed reduction.'],
+                },
+                {
+                  id: 'shard-2',
+                  question: 'Is the timeout branch involved?',
+                  scope: 'Timeout branch',
+                  priority: 'medium',
+                  files: ['packages/coding/src/reasoning.ts'],
+                  evidence: ['Sibling shard provides a structured comparison point.'],
+                },
+              ],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-scan-tactical-investigation-fail-closed' },
+        );
+      }
+      if (workerPrompt.includes('[Shard ID] shard-1')) {
+        return buildAssistantResult(
+          buildHandoffResponse('Validator insists the retry shard is valid but forgets the structured block.'),
+          { sessionId: 'session-investigation-fail-closed-1' },
+        );
+      }
+      if (workerPrompt.includes('[Shard ID] shard-2')) {
+        return buildAssistantResult(
+          [
+            buildHandoffResponse('Validator weakened the sibling shard.'),
+            '```kodax-child-result',
+            JSON.stringify({
+              childId: 'shard-2',
+              fanoutClass: 'evidence-scan',
+              status: 'completed',
+              disposition: 'false-positive',
+              summary: 'Shard 2 weakens the timeout branch theory.',
+              evidenceRefs: ['packages/coding/src/reasoning.ts'],
+              contradictions: ['Timeout branch is not implicated by current evidence.'],
+              artifactPaths: [],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-investigation-fail-closed-2' },
+        );
+      }
+      if (workerPrompt.includes('You are the Tactical Investigation Reducer')) {
+        return buildAssistantResult(
+          buildVerdictResponse(
+            'Reducer believes the investigation is complete.',
+            'accept',
+            'Reducer thinks the investigation is done.',
+            {
+              userAnswer: [
+                '## Investigation Update',
+                '',
+                'Reducer says the retry shard is confirmed.',
+              ].join('\n'),
+            },
+          ),
+          { sessionId: 'session-investigation-reducer-fail-closed' },
+        );
+      }
+      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 160)}`);
+    });
+
+    const result = await runManagedTask(
+      {
+        provider: 'anthropic',
+        agentMode: 'ama',
+        context: {
+          managedTaskWorkspaceDir: workspaceRoot,
+        },
+      },
+      'Investigate why the retry path still reports the wrong failure to users.',
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.lastText).toContain('The investigation is still inconclusive');
+    expect(result.lastText).toContain('Retry root-cause propagation (high)');
+    expect(result.lastText).not.toContain('Reducer says the retry shard is confirmed.');
+    expect(result.managedTask?.runtime?.childAgentResults).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          childId: 'shard-1',
+          disposition: 'needs-more-evidence',
+          contradictions: ['Missing or malformed structured child result.'],
+        }),
+      ]),
+    );
+  });
+
+  it('treats fully-completed but unsupported investigation evidence as an unsupported diagnosis, not as missing evidence', async () => {
+    const workspaceRoot = await createTempDir('kodax-task-engine-tactical-investigation-unsupported-');
+    mockCreateReasoningPlan.mockResolvedValue(
+      buildPlan({
+        primaryTask: 'bugfix',
+        taskFamily: 'investigation',
+        actionability: 'actionable',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'investigation',
+        complexity: 'moderate',
+        riskLevel: 'medium',
+        harnessProfile: 'H0_DIRECT',
+        mutationSurface: 'read-only',
+        topologyCeiling: 'H0_DIRECT',
+        reason: 'Read-only investigation should distinguish unsupported diagnoses from missing evidence.',
+      }),
+    );
+    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
+      if (workerPrompt.includes('You are the Scout role')) {
+        return buildAssistantResult(
+          buildScoutResponse(
+            'Scout kept the investigation on H0 and recommended bounded evidence validation.',
+            'H0_DIRECT',
+          ),
+          { sessionId: 'session-scout-tactical-investigation-unsupported' },
+        );
+      }
+      if (workerPrompt.includes('You are the Tactical Investigation Scanner')) {
+        return buildAssistantResult(
+          [
+            'Scanner found two evidence shards worth validating.',
+            '```kodax-investigation-shards',
+            JSON.stringify({
+              summary: 'Scanner identified two investigation shards.',
+              shards: [
+                {
+                  id: 'shard-1',
+                  question: 'Does the retry wrapper hide the original error?',
+                  scope: 'Retry wrapper',
+                  priority: 'high',
+                  files: ['packages/coding/src/task-engine.ts'],
+                  evidence: ['Current lead depends on this shard.'],
+                },
+                {
+                  id: 'shard-2',
+                  question: 'Does the logger drop the root cause text?',
+                  scope: 'Logger handoff',
+                  priority: 'medium',
+                  files: ['packages/coding/src/task-engine.ts'],
+                  evidence: ['Secondary supporting shard.'],
+                },
+              ],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-scan-tactical-investigation-unsupported' },
+        );
+      }
+      if (workerPrompt.includes('[Shard ID] shard-1')) {
+        return buildAssistantResult(
+          [
+            buildHandoffResponse('Validator found no support for the retry-wrapper diagnosis.'),
+            '```kodax-child-result',
+            JSON.stringify({
+              childId: 'shard-1',
+              fanoutClass: 'evidence-scan',
+              status: 'completed',
+              disposition: 'false-positive',
+              summary: 'Shard 1 does not support the retry-wrapper diagnosis.',
+              evidenceRefs: ['packages/coding/src/task-engine.ts'],
+              contradictions: ['Retry wrapper preserves the original error in the current code path.'],
+              artifactPaths: [],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-investigation-unsupported-1' },
+        );
+      }
+      if (workerPrompt.includes('[Shard ID] shard-2')) {
+        return buildAssistantResult(
+          [
+            buildHandoffResponse('Validator found no support for the logger-handoff diagnosis.'),
+            '```kodax-child-result',
+            JSON.stringify({
+              childId: 'shard-2',
+              fanoutClass: 'evidence-scan',
+              status: 'completed',
+              disposition: 'false-positive',
+              summary: 'Shard 2 does not support the logger-handoff diagnosis.',
+              evidenceRefs: ['packages/coding/src/task-engine.ts'],
+              contradictions: ['Logger handoff preserves the root cause text.'],
+              artifactPaths: [],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-investigation-unsupported-2' },
+        );
+      }
+      if (workerPrompt.includes('You are the Tactical Investigation Reducer')) {
+        return buildAssistantResult(
+          buildVerdictResponse(
+            'Reducer thinks the investigation can be accepted.',
+            'accept',
+            'Reducer optimism should be ignored when no validator-backed support exists.',
+            {
+              userAnswer: [
+                '## Investigation Update',
+                '',
+                'Reducer says the current diagnosis is confirmed.',
+              ].join('\n'),
+            },
+          ),
+          { sessionId: 'session-investigation-reducer-unsupported' },
+        );
+      }
+      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 160)}`);
+    });
+
+    const result = await runManagedTask(
+      {
+        provider: 'anthropic',
+        agentMode: 'ama',
+        context: {
+          managedTaskWorkspaceDir: workspaceRoot,
+        },
+      },
+      'Investigate why the retry path still reports the wrong failure to users.',
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.lastText).toContain('validated evidence collected so far does not support the current diagnosis');
+    expect(result.lastText).toContain('No unresolved evidence shards remain');
+    expect(result.lastText).toContain('does not support the retry-wrapper diagnosis');
+    expect(result.lastText).not.toContain('Reducer says the current diagnosis is confirmed.');
+  });
+
+  it('accepts an empty investigation shard block as structured scanner output and records the scanner artifact', async () => {
+    const workspaceRoot = await createTempDir('kodax-task-engine-tactical-investigation-empty-shards-');
+    mockCreateReasoningPlan.mockResolvedValue(
+      buildPlan({
+        primaryTask: 'bugfix',
+        taskFamily: 'investigation',
+        actionability: 'actionable',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'investigation',
+        complexity: 'moderate',
+        riskLevel: 'medium',
+        harnessProfile: 'H0_DIRECT',
+        mutationSurface: 'read-only',
+        topologyCeiling: 'H0_DIRECT',
+        reason: 'Read-only investigation should preserve an explicit empty shard contract from the scanner.',
+      }),
+    );
+    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
+      if (workerPrompt.includes('You are the Scout role')) {
+        return buildAssistantResult(
+          buildScoutResponse(
+            'Scout kept the investigation on H0 and recommended bounded evidence validation.',
+            'H0_DIRECT',
+          ),
+          { sessionId: 'session-scout-tactical-investigation-empty-shards' },
+        );
+      }
+      if (workerPrompt.includes('You are the Tactical Investigation Scanner')) {
+        return buildAssistantResult(
+          [
+            'Scanner found no bounded evidence shards worth splitting out.',
+            '```kodax-investigation-shards',
+            JSON.stringify({
+              summary: 'Scanner found no bounded investigation shards.',
+              shards: [],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-scan-tactical-investigation-empty-shards' },
+        );
+      }
+      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 160)}`);
+    });
+
+    const result = await runManagedTask(
+      {
+        provider: 'anthropic',
+        agentMode: 'ama',
+        context: {
+          managedTaskWorkspaceDir: workspaceRoot,
+        },
+      },
+      'Investigate why the retry path still reports the wrong failure to users.',
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.lastText).toContain('Scanner found no bounded evidence shards worth splitting out.');
+    expect(result.managedTask?.runtime?.childContextBundles ?? []).toHaveLength(0);
+    expect(result.managedTask?.evidence.artifacts.map((artifact) => artifact.path)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('investigation-shards.json'),
+      ]),
+    );
+  });
+
   it('keeps mutation-focused AMA tactical investigation on the direct path when child fan-out is inadmissible', async () => {
     mockCreateReasoningPlan.mockResolvedValue(
       buildPlan({

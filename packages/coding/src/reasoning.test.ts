@@ -524,7 +524,7 @@ describe('reasoning reroute', () => {
     expect(decision.tactics).not.toContain('child-fanout');
   });
 
-  it('keeps read-only investigation evidence-scan taxonomy inactive until runtime support lands', () => {
+  it('exposes read-only investigation evidence-scan fan-out once the tactical runtime lands', () => {
     const decision = buildAmaControllerDecision(
       {
         primaryTask: 'bugfix',
@@ -545,11 +545,37 @@ describe('reasoning reroute', () => {
     );
 
     expect(decision.profile).toBe('tactical');
+    expect(decision.fanout.admissible).toBe(true);
+    expect(decision.fanout.class).toBe('evidence-scan');
+    expect(decision.fanout.reason).toContain('Investigation work benefits from bounded evidence shards');
+    expect(decision.tactics).toContain('child-fanout');
+    expect(decision.tactics).not.toContain('planning-pass');
+  });
+
+  it('keeps managed-profile investigation evidence-scan fan-out inactive in this rollout', () => {
+    const decision = buildAmaControllerDecision(
+      {
+        primaryTask: 'bugfix',
+        taskFamily: 'investigation',
+        actionability: 'actionable',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'investigation',
+        recommendedThinkingDepth: 'medium',
+        complexity: 'systemic',
+        riskLevel: 'high',
+        harnessProfile: 'H2_PLAN_EXECUTE_EVAL',
+        mutationSurface: 'read-only',
+        confidence: 0.88,
+        workIntent: 'new',
+        requiresBrainstorm: false,
+        reason: 'Managed investigation should not activate read-only fan-out in this rollout.',
+      },
+    );
+
+    expect(decision.profile).toBe('managed');
     expect(decision.fanout.admissible).toBe(false);
     expect(decision.fanout.class).toBeUndefined();
-    expect(decision.fanout.reason).toContain('Evidence-scan shards remain defined for future rollout');
     expect(decision.tactics).not.toContain('child-fanout');
-    expect(decision.tactics).not.toContain('planning-pass');
   });
 
   it('keeps lookup module-triage taxonomy inactive until runtime support lands', () => {

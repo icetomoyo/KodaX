@@ -1090,8 +1090,14 @@ function isAmaFanoutClassActive(
   switch (fanoutClass) {
     case 'finding-validation':
       return true;
-    case 'module-triage':
     case 'evidence-scan':
+      return decision.mutationSurface === 'read-only'
+        && decision.harnessProfile === 'H0_DIRECT'
+        && (
+          decision.primaryTask === 'bugfix'
+          || decision.recommendedMode === 'investigation'
+        );
+    case 'module-triage':
       return false;
     case 'hypothesis-check':
       return false;
@@ -1120,7 +1126,7 @@ export function buildAmaControllerDecision(
     );
   const profile: KodaXAmaProfile = managed ? 'managed' : 'tactical';
   const fanoutClass = resolveAmaFanoutClass(decision);
-  const activeFanoutClass = isAmaFanoutClassActive(fanoutClass, decision)
+  const activeFanoutClass = profile === 'tactical' && isAmaFanoutClassActive(fanoutClass, decision)
     ? fanoutClass
     : undefined;
   const fanoutAdmissible = Boolean(activeFanoutClass);
@@ -1138,9 +1144,9 @@ export function buildAmaControllerDecision(
       ? fanoutClass === 'hypothesis-check'
         ? 'Hypothesis-check shards remain defined for future rollout, but mutation-side child fan-out is intentionally disabled for now.'
         : fanoutClass === 'evidence-scan'
-          ? 'Evidence-scan shards remain defined for future rollout, but the current runtime only backs review finding-validation fan-out.'
+          ? 'Evidence-scan shards only activate for tactical H0 read-only investigation in the current rollout.'
           : fanoutClass === 'module-triage'
-            ? 'Module-triage shards remain defined for future rollout, but the current runtime only backs review finding-validation fan-out.'
+            ? 'Module-triage shards remain defined for future rollout, but the current runtime only backs review validation and read-only investigation fan-out.'
         : 'Child fan-out stays disabled because this rollout only activates read-only tactical shard classes that are already backed by runtime support.'
       : activeFanoutClass === 'finding-validation'
         ? 'Review work benefits from finding-level validation shards to keep the main context focused on synthesis.'
