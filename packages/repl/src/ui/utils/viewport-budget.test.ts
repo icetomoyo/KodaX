@@ -28,6 +28,8 @@ describe("viewport-budget", () => {
     expect(budget.helpRows).toBeGreaterThanOrEqual(2);
     expect(budget.statusRows).toBeGreaterThanOrEqual(1);
     expect(budget.confirmRows).toBeGreaterThanOrEqual(5);
+    expect(budget.footerRows).toBeGreaterThan(0);
+    expect(budget.slots.find((slot) => slot.name === "footer")?.rows).toBe(budget.footerRows);
     expect(budget.messageRows).toBeGreaterThan(0);
   });
 
@@ -109,5 +111,30 @@ describe("viewport-budget", () => {
     expect(withStrip.reservedBottomRows).toBeGreaterThan(withoutStrip.reservedBottomRows);
     expect(withStrip.messageRows).toBeLessThan(withoutStrip.messageRows);
     expect(withStrip.messageRows).toBeGreaterThan(0);
+  });
+
+  it("tracks overlay rows separately when suggestions and dialogs use overlay mode", () => {
+    const budget = calculateViewportBudget({
+      terminalRows: 24,
+      terminalWidth: 80,
+      inputText: "",
+      suggestionsReserved: true,
+      suggestionsMode: "overlay",
+      dialogMode: "overlay",
+      showHelp: false,
+      statusBarText: "status",
+      confirmPrompt: "Apply changes?",
+      confirmInstruction: "Press y to confirm",
+      historySearch: {
+        query: "planner",
+        selectedExcerpt: "Planner is active in this transcript entry",
+        matchCount: 3,
+      },
+    });
+
+    expect(budget.overlayRows).toBeGreaterThan(0);
+    expect(budget.footerRows).toBe(budget.inputRows);
+    expect(budget.historySearchRows).toBeGreaterThan(0);
+    expect(budget.slots.find((slot) => slot.name === "overlay")?.rows).toBe(budget.overlayRows);
   });
 });

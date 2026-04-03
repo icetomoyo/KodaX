@@ -63,6 +63,7 @@ export interface TranscriptBuildOptions {
   lastLiveActivityLabel?: string;
   showFullThinking?: boolean;
   showDetailedTools?: boolean;
+  expandedItemKeys?: ReadonlySet<string>;
 }
 
 const THINKING_PREVIEW_MAX_CHARS = 400;
@@ -616,6 +617,7 @@ export function buildHistoryItemTranscriptSections(
   viewportWidth: number,
   maxLines = 1000,
   showDetailedTools = false,
+  expandedItemKeys?: ReadonlySet<string>,
 ): TranscriptSection[] {
   return items.map((item) => ({
     key: item.id,
@@ -623,7 +625,7 @@ export function buildHistoryItemTranscriptSections(
       items: [item],
       viewportWidth,
       maxLines,
-      showDetailedTools,
+      showDetailedTools: showDetailedTools || Boolean(expandedItemKeys?.has(item.id)),
     }),
   }));
 }
@@ -719,6 +721,32 @@ export function getVisibleTranscriptRows(
   const end = Math.max(0, rows.length - clampedOffset);
   const start = Math.max(0, end - viewportRows);
   return rows.slice(start, end);
+}
+
+export function resolveScrollOffsetForTranscriptItem(
+  sections: TranscriptSection[],
+  targetItemId: string | undefined,
+  viewportRows: number | undefined,
+): number {
+  if (!targetItemId || !viewportRows || viewportRows <= 0) {
+    return 0;
+  }
+
+  const rows = flattenTranscriptSections(sections);
+  const targetSection = sections.find((section) => section.key === targetItemId);
+  if (!targetSection || targetSection.rows.length === 0) {
+    return 0;
+  }
+
+  const targetRowKey = targetSection.rows[0]?.key;
+  const rowIndex = rows.findIndex((row) => row.key === targetRowKey);
+  if (rowIndex === -1) {
+    return 0;
+  }
+
+  const desiredStart = Math.max(0, rowIndex - Math.floor(viewportRows / 3));
+  const desiredEnd = Math.min(rows.length, desiredStart + viewportRows);
+  return Math.max(0, rows.length - desiredEnd);
 }
 
 export function resolveTranscriptColor(

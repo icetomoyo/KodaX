@@ -46,6 +46,16 @@ export const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
     configurable: true,
   },
   {
+    id: 'openTranscriptSearch',
+    name: 'Search Transcript',
+    description: 'Open transcript history search',
+    defaultBindings: [{ key: 'f', ctrl: true }],
+    context: 'global',
+    priority: 150,
+    category: 'navigation',
+    configurable: true,
+  },
+  {
     id: 'togglePermissionMode',
     name: 'Cycle Permissions',
     description: 'Cycle permission mode: plan, accept-edits, auto-in-project',

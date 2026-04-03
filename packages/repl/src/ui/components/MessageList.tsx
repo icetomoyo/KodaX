@@ -104,6 +104,10 @@ export interface MessageListProps {
   showFullThinking?: boolean;
   /** Whether tool details should render in verbose form */
   showDetailedTools?: boolean;
+  /** Optional selected transcript item id for browse mode affordances */
+  selectedItemId?: string;
+  /** Optional expanded transcript item ids */
+  expandedItemKeys?: ReadonlySet<string>;
 }
 
 export interface HistoryItemRendererProps {
@@ -412,8 +416,10 @@ const TranscriptRowRenderer: React.FC<{
   row: TranscriptRow;
   theme: Theme;
   animateSpinners?: boolean;
-}> = memo(({ row, theme, animateSpinners = true }) => {
+  selected?: boolean;
+}> = memo(({ row, theme, animateSpinners = true, selected = false }) => {
   const color = resolveTranscriptColor(theme, row.color);
+  const prefix = selected ? "▎ " : "";
 
   return (
     <Box marginLeft={row.indent ?? 0}>
@@ -423,7 +429,13 @@ const TranscriptRowRenderer: React.FC<{
           <Text> </Text>
         </>
       )}
-      <Text color={color} bold={row.bold} italic={row.italic} dimColor={row.color === "dim"}>
+      <Text
+        color={selected ? theme.colors.accent : color}
+        bold={row.bold || selected}
+        italic={row.italic}
+        dimColor={!selected && row.color === "dim"}
+      >
+        {prefix}
         {row.text || " "}
       </Text>
     </Box>
@@ -507,6 +519,8 @@ export const MessageList: React.FC<MessageListProps> = ({
   windowed = false,
   showFullThinking = false,
   showDetailedTools = false,
+  selectedItemId,
+  expandedItemKeys,
 }) => {
   const theme = useMemo(() => getTheme("dark"), []);
   const { stdout } = useStdout();
@@ -534,7 +548,8 @@ export const MessageList: React.FC<MessageListProps> = ({
         windowed ? items : activeItems,
         terminalWidth,
         maxLines,
-        windowed
+        windowed,
+        expandedItemKeys,
       );
       const pendingSection = buildDynamicTranscriptSection("active-pending", {
         items: [],
@@ -634,6 +649,7 @@ export const MessageList: React.FC<MessageListProps> = ({
           row={row}
           theme={theme}
           animateSpinners={animateSpinners}
+          selected={selectedItemId ? row.key.startsWith(`${selectedItemId}-`) : false}
         />
       ))}
     </Box>

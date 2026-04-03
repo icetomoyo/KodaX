@@ -12,13 +12,17 @@
 
 import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { render, Box, useApp, Text, Static, useInput, useStdout } from "ink";
-import { InputPrompt } from "./components/InputPrompt.js";
-import { MessageList } from "./components/MessageList.js";
-import { ThinkingIndicator } from "./components/LoadingIndicator.js";
+import clipboard from "clipboardy";
 import { PendingInputsIndicator } from "./components/PendingInputsIndicator.js";
 import { AmaWorkStrip, formatAmaWorkStripText } from "./components/AmaWorkStrip.js";
-import { StatusBar, getStatusBarText } from "./components/StatusBar.js";
-import { SuggestionsDisplay } from "./components/SuggestionsDisplay.js";
+import { StatusBar } from "./components/StatusBar.js";
+import { FullscreenTranscriptLayout } from "./components/FullscreenTranscriptLayout.js";
+import { TranscriptViewport } from "./components/TranscriptViewport.js";
+import { PromptComposer } from "./components/PromptComposer.js";
+import { PromptFooter } from "./components/PromptFooter.js";
+import { PromptSuggestionsSurface } from "./components/PromptSuggestionsSurface.js";
+import { DialogSurface } from "./components/DialogSurface.js";
+import { BackgroundTaskBar } from "./components/BackgroundTaskBar.js";
 import {
   UIStateProvider,
   useUIState,
@@ -137,9 +141,16 @@ import { formatToolCallInlineText } from "./utils/tool-display.js";
 import { calculateViewportBudget } from "./utils/viewport-budget.js";
 import {
   buildTranscriptBrowseHint,
+  closeTranscriptSearch,
   createTranscriptDisplayState,
   enterTranscriptHistory,
   exitTranscriptHistory,
+  jumpTranscriptToLatest,
+  openTranscriptSearch,
+  setTranscriptSearchMatchIndex,
+  setTranscriptScrollAnchor,
+  setTranscriptSelectedItem,
+  setTranscriptStickyPromptVisible,
   shouldPauseLiveTranscript,
   shouldWindowTranscript,
   supportsTranscriptMouseHistory,
@@ -148,7 +159,22 @@ import {
 import { detectTerminalHostProfile } from "./utils/terminal-host-profile.js";
 import { formatPendingInputsSummary, MAX_PENDING_INPUTS } from "./utils/pending-inputs.js";
 import { runQueuedPromptSequence } from "./utils/queued-prompt-sequence.js";
-import { capHistoryByTranscriptRows, sliceHistoryToRecentRounds } from "./utils/transcript-layout.js";
+import {
+  buildHistoryItemTranscriptSections,
+  capHistoryByTranscriptRows,
+  resolveScrollOffsetForTranscriptItem,
+  sliceHistoryToRecentRounds,
+} from "./utils/transcript-layout.js";
+import {
+  buildTranscriptSearchSummary,
+  buildTranscriptCopyText,
+  createTranscriptSearchIndex,
+  getSelectableTranscriptItemIds,
+  moveTranscriptSelection,
+  searchTranscriptIndex,
+  stepTranscriptSearchMatch,
+  summarizeTranscriptItem,
+} from "./utils/transcript-search.js";
 import {
   getAskUserDialogTitle,
   resolveAskUserDismissChoice,
@@ -157,6 +183,8 @@ import {
   type SelectOption,
 } from "./utils/ask-user.js";
 import { buildHelpBarSegments } from "./constants/layout.js";
+import { buildStatusBarViewModel } from "./view-models/status-bar.js";
+import { buildBackgroundTaskViewModel } from "./view-models/background-task.js";
 
 // REPL options
 export interface InkREPLOptions extends KodaXOptions {
@@ -567,12 +595,11 @@ const Banner: React.FC<BannerProps> = ({ config, sessionId, workingDir, compacti
   const dividerWidth = Math.min(60, terminalWidth - 4);
 
   const logoLines = [
-    "  ██╗  ██╗  ██████╗  ██████╗    █████╗   ██╗  ██╗",
-    "  ██║ ██╔╝ ██╔═══██╗ ██╔══██╗  ██╔══██╗  ╚██╗██╔╝",
-    "  █████╔╝  ██║   ██║ ██║  ██║  ███████║   ╚███╔╝ ",
-    "  ██╔═██╗  ██║   ██║ ██║  ██║  ██╔══██║   ██╔██╗ ",
-    "  ██║  ██╗ ╚██████╔╝ ██████╔╝  ██║  ██║  ██╔╝ ██╗",
-    "  ╚═╝  ╚═╝  ╚═════╝  ╚═════╝   ╚═╝  ╚═╝  ╚═╝  ╚═╝",
+    "  _  __          _        __  __",
+    " | |/ /___   __| | __ _ \\ \\/ /",
+    " | ' // _ \\\\ / _` |/ _` | \\\\  / ",
+    " | . \\ (_) | (_| | (_| | /  \\ ",
+    " |_|\\_\\___/ \\__,_|\\__,_|/_/\\_\\",
   ];
 
   // Compute compaction display values
@@ -660,52 +687,6 @@ const Banner: React.FC<BannerProps> = ({ config, sessionId, workingDir, compacti
         {"  "}
         {"-".repeat(dividerWidth)}
       </Text>
-    </Box>
-  );
-};
-
-/**
- * AutocompleteSuggestions - Renders autocomplete suggestions from context
- * Shows suggestions below input, reserves space after first appearance
- * 在建议首次出现后继续预留固定高度，避免消息区和底部区来回跳动
- *
- *
- * Behavior:
- * 1. No suggestions initially -> no space reserved
- * 2. Suggestions appear -> reserve 8 lines
- * 3. Suggestions disappear (Esc/input change) -> keep 8 lines
- * 4. Message sent (submitCounter changes) -> remove 8 lines
- */
-const AutocompleteSuggestions: React.FC<{
-  reserveSpace: boolean;
-  width: number;
-  hidden?: boolean;
-}> = ({ reserveSpace, width, hidden = false }) => {
-  const autocomplete = useAutocompleteContext();
-
-  if (hidden) {
-    return null;
-  }
-
-  if (!autocomplete) {
-    return reserveSpace ? <Box height={8} /> : null;
-  }
-
-  const { state, suggestions } = autocomplete;
-  const hasSuggestions = state.visible && suggestions.length > 0;
-  if (!hasSuggestions) {
-    return reserveSpace ? <Box height={8} /> : null;
-  }
-
-  return (
-    <Box height={8}>
-      <SuggestionsDisplay
-        suggestions={suggestions}
-        selectedIndex={state.selectedIndex}
-        visible={state.visible}
-        maxVisible={7}
-        width={Math.max(20, width - 2)}
-      />
     </Box>
   );
 };
@@ -806,6 +787,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     createTranscriptDisplayState(terminalHostProfile)
   ));
   const [historyScrollOffset, setHistoryScrollOffset] = useState(0);
+  const [expandedTranscriptItemIds, setExpandedTranscriptItemIds] = useState<Set<string>>(() => new Set());
   const [reviewSnapshot, setReviewSnapshot] = useState<ReviewSnapshot | null>(null);
   const [managedTaskStatus, setManagedTaskStatus] = useState<KodaXManagedTaskStatusEvent | null>(null);
   const [lastLiveActivityLabel, setLastLiveActivityLabel] = useState<string | undefined>(undefined);
@@ -983,14 +965,16 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     }
   }, []);
 
-  // 建议一旦出现，就持续预留 8 行，直到用户真正提交一条消息。
+  // Keep reserving suggestion space after the first appearance so the footer
+  // layout does not jump while the user edits the prompt.
   useEffect(() => {
     if (hasVisibleSuggestions && !shouldReserveSuggestionsSpace) {
       setShouldReserveSuggestionsSpace(true);
     }
   }, [hasVisibleSuggestions, shouldReserveSuggestionsSpace]);
 
-  // 提交后再释放预留空间，这样 Esc/输入变化不会让底部高度瞬间收缩。
+  // Only release reserved suggestion space after submit so inline suggestion
+  // visibility changes do not collapse the footer immediately.
   useEffect(() => {
     if (submitCounter !== lastSubmitCounterRef.current) {
       lastSubmitCounterRef.current = submitCounter;
@@ -1025,6 +1009,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     | null
   >(null);
   const uiResolveRef = useRef<((value: string | undefined) => void) | null>(null);
+  const [historySearchQuery, setHistorySearchQuery] = useState("");
+  const [historySearchSelectedIndex, setHistorySearchSelectedIndex] = useState(0);
 
   // Issue 070: Calculate context token usage for status bar display
   // Issue 070: Calculate context token usage for status bar display
@@ -1059,7 +1045,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     return "Press (y) yes, (n) no";
   }, [confirmRequest, currentConfig.permissionMode]);
 
-  const isAwaitingUserInteraction = !!confirmRequest || !!uiRequest;
+  const isHistorySearchActive = transcriptDisplayState.searchMode === "history";
+  const isAwaitingUserInteraction = !!confirmRequest || !!uiRequest || isHistorySearchActive;
   const isReviewingHistory = transcriptDisplayState.followMode === "browsing-history";
   const isTranscriptVerbose = transcriptDisplayState.verbosity === "verbose";
   const transcriptOwnsViewport = shouldWindowTranscript(transcriptDisplayState);
@@ -1135,6 +1122,34 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     [managedTaskStatus, isLoading],
   );
   const displayWorkStripText = displaySnapshot?.workStripText ?? visibleWorkStripText;
+  const selectableTranscriptItemIds = useMemo(
+    () => getSelectableTranscriptItemIds(displayItems),
+    [displayItems],
+  );
+  const selectedTranscriptItemId = transcriptDisplayState.selectedItemId;
+  const selectedTranscriptItemIndex = selectedTranscriptItemId
+    ? selectableTranscriptItemIds.indexOf(selectedTranscriptItemId)
+    : -1;
+  const selectedTranscriptItemSummary = useMemo(
+    () => summarizeTranscriptItem(displayItems.find((item) => item.id === selectedTranscriptItemId)),
+    [displayItems, selectedTranscriptItemId],
+  );
+  const transcriptSearchIndex = useMemo(
+    () => createTranscriptSearchIndex(displayItems),
+    [displayItems],
+  );
+  const historySearchMatches = useMemo(
+    () => searchTranscriptIndex(transcriptSearchIndex, historySearchQuery),
+    [transcriptSearchIndex, historySearchQuery],
+  );
+  const clampedHistorySearchSelectedIndex = useMemo(
+    () => Math.min(historySearchSelectedIndex, Math.max(0, historySearchMatches.length - 1)),
+    [historySearchMatches.length, historySearchSelectedIndex],
+  );
+  const historySearchStatusText = useMemo(
+    () => buildTranscriptSearchSummary(historySearchMatches, clampedHistorySearchSelectedIndex),
+    [clampedHistorySearchSelectedIndex, historySearchMatches],
+  );
 
   useEffect(() => {
     if (rawWorkStripText) {
@@ -1191,6 +1206,71 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const reviewHintText = useMemo(() => {
     return buildTranscriptBrowseHint(transcriptDisplayState);
   }, [transcriptDisplayState]);
+
+  const stickyPromptText = useMemo(() => {
+    if (!transcriptDisplayState.supportsStickyPrompt || !transcriptDisplayState.stickyPromptVisible) {
+      return undefined;
+    }
+
+    if (isHistorySearchActive) {
+      const query = historySearchQuery.trim();
+      return query
+        ? `Searching transcript for "${query}"`
+        : "Searching transcript history";
+    }
+
+    if (isAwaitingUserInteraction) {
+      return "Interaction active - transcript follow is paused";
+    }
+
+    if (isReviewingHistory) {
+      return "Browsing transcript history";
+    }
+
+    return undefined;
+  }, [
+    historySearchQuery,
+    isAwaitingUserInteraction,
+    isHistorySearchActive,
+    isReviewingHistory,
+    transcriptDisplayState.stickyPromptVisible,
+    transcriptDisplayState.supportsStickyPrompt,
+  ]);
+
+  const jumpToLatestText = useMemo(() => {
+    if (!transcriptOwnsViewport || !transcriptDisplayState.supportsViewportChrome) {
+      return undefined;
+    }
+    if (!transcriptDisplayState.jumpToLatestAvailable) {
+      return undefined;
+    }
+    return "Jump to latest: End";
+  }, [
+    transcriptDisplayState.jumpToLatestAvailable,
+    transcriptDisplayState.supportsViewportChrome,
+    transcriptOwnsViewport,
+  ]);
+
+  useEffect(() => {
+    setTranscriptDisplayState((prev) => {
+      let next = setTranscriptScrollAnchor(prev, historyScrollOffset);
+      next = setTranscriptStickyPromptVisible(next, isReviewingHistory || isAwaitingUserInteraction);
+      next = setTranscriptSearchMatchIndex(next, clampedHistorySearchSelectedIndex);
+      return next;
+    });
+  }, [
+    clampedHistorySearchSelectedIndex,
+    historyScrollOffset,
+    isAwaitingUserInteraction,
+    isReviewingHistory,
+  ]);
+
+  useEffect(() => {
+    if (historySearchSelectedIndex === clampedHistorySearchSelectedIndex) {
+      return;
+    }
+    setHistorySearchSelectedIndex(clampedHistorySearchSelectedIndex);
+  }, [clampedHistorySearchSelectedIndex, historySearchSelectedIndex]);
 
   const statusBarProps = useMemo(() => ({
     sessionId: context.sessionId,
@@ -1251,14 +1331,60 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     managedTaskStatus,
   ]);
 
-  const statusBarText = useMemo(() => getStatusBarText(statusBarProps), [statusBarProps]);
+  const statusBarViewModel = useMemo(
+    () => buildStatusBarViewModel(statusBarProps),
+    [statusBarProps],
+  );
+  const statusBarText = statusBarViewModel.text;
   const pendingInputSummary = useMemo(
     () => formatPendingInputsSummary(streamingState.pendingInputs),
     [streamingState.pendingInputs]
   );
+  const footerHeaderLeft = useMemo(() => {
+    if (historySearchQuery.trim()) {
+      return `Search: ${historySearchQuery.trim()}`;
+    }
+    if (streamingState.pendingInputs.length > 0) {
+      return `Queued follow-ups: ${streamingState.pendingInputs.length}`;
+    }
+    return undefined;
+  }, [historySearchQuery, streamingState.pendingInputs.length]);
+  const footerHeaderRight = useMemo(() => {
+    const hostMode = transcriptDisplayState.supportsFullscreenLayout ? "fullscreen" : "fallback";
+    return `${terminalHostProfile} | ${transcriptDisplayState.verbosity} | ${hostMode}`;
+  }, [terminalHostProfile, transcriptDisplayState.supportsFullscreenLayout, transcriptDisplayState.verbosity]);
+  const backgroundTaskViewModel = useMemo(
+    () => buildBackgroundTaskViewModel({
+      isLoading: displayIsLoading,
+      activeWorkerTitle: managedTaskStatus?.activeWorkerTitle,
+      activePhase: managedTaskStatus?.phase ?? (currentConfig.agentMode === "ama" ? "AMA active" : "Working"),
+      parallelText: displayWorkStripText,
+    }),
+    [currentConfig.agentMode, displayIsLoading, displayWorkStripText, managedTaskStatus],
+  );
+  const useOverlaySurface =
+    transcriptDisplayState.supportsOverlaySurface
+    && transcriptDisplayState.supportsSearchViewport
+    && transcriptOwnsViewport;
+  const historySearchBudgetState = useMemo(
+    () => (
+      isHistorySearchActive
+        ? {
+            query: historySearchQuery,
+            matches: historySearchMatches.map((match) => ({
+              itemId: match.itemId,
+              excerpt: match.excerpt,
+            })),
+            selectedIndex: clampedHistorySearchSelectedIndex,
+          }
+        : null
+    ),
+    [clampedHistorySearchSelectedIndex, historySearchMatches, historySearchQuery, isHistorySearchActive],
+  );
   const terminalRows = stdout.rows || process.stdout.rows || 24;
   const viewportBudget = useMemo(
-    // 统一预算所有底部区块占用的行数，消息区只拿剩余可见行，避免最后一行被布局副作用裁掉。
+    // Budget transcript, footer, overlay, status, and task slots together so
+    // the viewport always receives a stable number of visible rows.
     () => calculateViewportBudget({
       terminalRows,
       terminalWidth,
@@ -1266,10 +1392,20 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       pendingInputSummary,
       workStripText: displayWorkStripText,
       suggestionsReserved: suggestionsReservedForLayout,
+      suggestionsMode: useOverlaySurface ? "overlay" : "inline",
       showHelp,
       statusBarText,
       confirmPrompt: confirmRequest?.prompt,
       confirmInstruction,
+      dialogMode: useOverlaySurface ? "overlay" : "inline",
+      historySearch: historySearchBudgetState
+        ? {
+            query: historySearchBudgetState.query,
+            selectedExcerpt:
+              historySearchBudgetState.matches[historySearchBudgetState.selectedIndex]?.excerpt,
+            matchCount: historySearchBudgetState.matches.length,
+          }
+        : null,
       reviewHint: reviewHintText,
       uiRequest: uiRequest
         ? uiRequest.kind === "select"
@@ -1299,13 +1435,32 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       pendingInputSummary,
       displayWorkStripText,
       suggestionsReservedForLayout,
+      useOverlaySurface,
       showHelp,
       statusBarText,
       confirmRequest,
       confirmInstruction,
+      historySearchBudgetState,
       reviewHintText,
       uiRequest,
     ]
+  );
+  const suggestionsSurface = useMemo(
+    () => (
+      <PromptSuggestionsSurface
+        reserveSpace={suggestionsReservedForLayout}
+        width={terminalWidth}
+        hidden={isReviewingHistory || isHistorySearchActive}
+        mode={useOverlaySurface ? "overlay" : "inline"}
+      />
+    ),
+    [
+      suggestionsReservedForLayout,
+      terminalWidth,
+      isReviewingHistory,
+      isHistorySearchActive,
+      useOverlaySurface,
+    ],
   );
   const reviewPageSize = useMemo(
     () => Math.max(1, viewportBudget.messageRows - 2),
@@ -1315,15 +1470,201 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     () => Math.max(3, Math.floor(reviewPageSize / 4)),
     [reviewPageSize]
   );
+  const transcriptMaxLines = isTranscriptVerbose || isReviewingHistory ? 1000 : 12;
+
+  const alignTranscriptSelection = useCallback((itemId: string | undefined) => {
+    if (!itemId) {
+      return;
+    }
+    const sections = buildHistoryItemTranscriptSections(
+      displayItems,
+      terminalWidth,
+      transcriptMaxLines,
+      isTranscriptVerbose || isReviewingHistory,
+      expandedTranscriptItemIds,
+    );
+    const nextOffset = resolveScrollOffsetForTranscriptItem(
+      sections,
+      itemId,
+      viewportBudget.messageRows,
+    );
+    setHistoryScrollOffset(nextOffset);
+  }, [
+    displayItems,
+    terminalWidth,
+    transcriptMaxLines,
+    isTranscriptVerbose,
+    isReviewingHistory,
+    expandedTranscriptItemIds,
+    viewportBudget.messageRows,
+  ]);
+
+  const selectTranscriptItem = useCallback((itemId: string | undefined) => {
+    setTranscriptDisplayState((prev) => setTranscriptSelectedItem(prev, itemId));
+    if (itemId) {
+      alignTranscriptSelection(itemId);
+    }
+  }, [alignTranscriptSelection]);
+
+  const cycleTranscriptSelection = useCallback((direction: "prev" | "next") => {
+    const nextItemId = moveTranscriptSelection(
+      selectableTranscriptItemIds,
+      selectedTranscriptItemId,
+      direction,
+    );
+    if (nextItemId) {
+      selectTranscriptItem(nextItemId);
+    }
+  }, [selectableTranscriptItemIds, selectedTranscriptItemId, selectTranscriptItem]);
+
+  const toggleSelectedTranscriptDetail = useCallback(() => {
+    if (!selectedTranscriptItemId) {
+      return;
+    }
+    setExpandedTranscriptItemIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(selectedTranscriptItemId)) {
+        next.delete(selectedTranscriptItemId);
+      } else {
+        next.add(selectedTranscriptItemId);
+      }
+      return next;
+    });
+  }, [selectedTranscriptItemId]);
+
+  const copySelectedTranscriptItem = useCallback(async () => {
+    if (!selectedTranscriptItemId) {
+      return;
+    }
+    const selectedItem = displayItems.find((item) => item.id === selectedTranscriptItemId);
+    const copyText = buildTranscriptCopyText(selectedItem);
+    if (!copyText) {
+      return;
+    }
+    try {
+      await clipboard.write(copyText);
+      addHistoryItem({
+        type: "info",
+        text: "Copied selected transcript entry to clipboard.",
+      });
+    } catch (error) {
+      addHistoryItem({
+        type: "error",
+        text: `Failed to copy transcript entry: ${error instanceof Error ? error.message : String(error)}`,
+      });
+    }
+  }, [addHistoryItem, displayItems, selectedTranscriptItemId]);
+
+  const openHistorySearchSurface = useCallback(() => {
+    if (!displayItems.length || confirmRequest || uiRequest) {
+      return;
+    }
+    const anchorItemId = selectedTranscriptItemId ?? displayItems[displayItems.length - 1]?.id;
+    setTranscriptDisplayState((prev) => openTranscriptSearch(prev, {
+      anchorItemId,
+      initialMatchIndex: 0,
+    }));
+    setHistorySearchQuery("");
+    setHistorySearchSelectedIndex(0);
+  }, [confirmRequest, displayItems, selectedTranscriptItemId, uiRequest]);
+
+  const closeHistorySearchSurface = useCallback((options?: { restoreFollowMode?: boolean }) => {
+    setTranscriptDisplayState((prev) =>
+      closeTranscriptSearch(prev, { restoreFollowMode: options?.restoreFollowMode ?? true }),
+    );
+    setHistorySearchQuery("");
+    setHistorySearchSelectedIndex(0);
+  }, []);
+  const historySearchDialogState = useMemo(
+    () => (
+      isHistorySearchActive
+        ? {
+            query: historySearchQuery,
+            matches: historySearchMatches.map((match) => ({
+              itemId: match.itemId,
+              excerpt: match.excerpt,
+            })),
+            selectedIndex: clampedHistorySearchSelectedIndex,
+          }
+        : null
+    ),
+    [clampedHistorySearchSelectedIndex, historySearchMatches, historySearchQuery, isHistorySearchActive],
+  );
+
+  const dialogConfirmState = useMemo(
+    () => (
+      confirmRequest
+        ? { prompt: confirmRequest.prompt, instruction: confirmInstruction }
+        : null
+    ),
+    [confirmInstruction, confirmRequest],
+  );
+
+  const dialogRequestState = useMemo(() => {
+    if (!uiRequest) {
+      return null;
+    }
+    if (uiRequest.kind === "select") {
+      return {
+        kind: "select" as const,
+        title: uiRequest.title,
+        options: uiRequest.options,
+        buffer: uiRequest.buffer,
+        error: uiRequest.error,
+        visibleSelectOptions: viewportBudget.visibleSelectOptions,
+      };
+    }
+    return {
+      kind: "input" as const,
+      prompt: uiRequest.prompt,
+      defaultValue: uiRequest.defaultValue,
+      buffer: uiRequest.buffer,
+      error: uiRequest.error,
+    };
+  }, [uiRequest, viewportBudget.visibleSelectOptions]);
+  const dialogSurface = useMemo(
+    () => (
+      <DialogSurface
+        confirm={dialogConfirmState}
+        request={dialogRequestState}
+        historySearch={historySearchDialogState}
+      />
+    ),
+    [dialogConfirmState, dialogRequestState, historySearchDialogState],
+  );
+  const overlaySurface = useMemo(() => {
+    if (!useOverlaySurface) {
+      return undefined;
+    }
+    return (
+      <Box flexDirection="column">
+        {suggestionsSurface}
+        {dialogSurface}
+      </Box>
+    );
+  }, [dialogSurface, suggestionsSurface, useOverlaySurface]);
 
   const enterHistoryReview = useCallback(() => {
     setTranscriptDisplayState((prev) => enterTranscriptHistory(prev));
   }, []);
 
   const exitHistoryReview = useCallback(() => {
-    setTranscriptDisplayState((prev) => exitTranscriptHistory(prev));
+    setTranscriptDisplayState((prev) => jumpTranscriptToLatest(exitTranscriptHistory(prev)));
     setHistoryScrollOffset(0);
+    setHistorySearchQuery("");
+    setHistorySearchSelectedIndex(0);
   }, []);
+
+  useEffect(() => {
+    if (!isReviewingHistory) {
+      return;
+    }
+    if (selectedTranscriptItemId && selectableTranscriptItemIds.includes(selectedTranscriptItemId)) {
+      return;
+    }
+    const fallbackItemId = selectableTranscriptItemIds[selectableTranscriptItemIds.length - 1];
+    setTranscriptDisplayState((prev) => setTranscriptSelectedItem(prev, fallbackItemId));
+  }, [isReviewingHistory, selectableTranscriptItemIds, selectedTranscriptItemId]);
 
   useEffect(() => {
     if (!process.stdout.isTTY) {
@@ -1526,6 +1867,43 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         return false;
       }
 
+      if (transcriptDisplayState.searchMode === "history") {
+        if (key.name === "escape") {
+          closeHistorySearchSurface({ restoreFollowMode: true });
+          return true;
+        }
+        if (key.name === "backspace") {
+          setHistorySearchQuery((prev) => prev.slice(0, -1));
+          setHistorySearchSelectedIndex(0);
+          return true;
+        }
+        if (key.name === "down") {
+          setHistorySearchSelectedIndex((prev) =>
+            stepTranscriptSearchMatch(historySearchMatches.length, prev, "next"),
+          );
+          return true;
+        }
+        if (key.name === "up") {
+          setHistorySearchSelectedIndex((prev) =>
+            stepTranscriptSearchMatch(historySearchMatches.length, prev, "prev"),
+          );
+          return true;
+        }
+        if (key.name === "enter") {
+          const match = historySearchMatches[clampedHistorySearchSelectedIndex];
+          if (match) {
+            selectTranscriptItem(match.itemId);
+            closeHistorySearchSurface({ restoreFollowMode: false });
+          }
+          return true;
+        }
+        if (key.insertable && key.sequence) {
+          setHistorySearchQuery((prev) => prev + key.sequence);
+          setHistorySearchSelectedIndex(0);
+          return true;
+        }
+      }
+
       if (key.name === "escape") {
         exitHistoryReview();
         return true;
@@ -1582,6 +1960,26 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         return true;
       }
 
+      if (key.name === "left") {
+        cycleTranscriptSelection("prev");
+        return true;
+      }
+
+      if (key.name === "right") {
+        cycleTranscriptSelection("next");
+        return true;
+      }
+
+      if (!key.ctrl && !key.meta && !key.shift && key.name === "c") {
+        void copySelectedTranscriptItem();
+        return true;
+      }
+
+      if (!key.ctrl && !key.meta && !key.shift && key.name === "v") {
+        toggleSelectedTranscriptDetail();
+        return true;
+      }
+
       return false;
     },
     [
@@ -1596,6 +1994,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       enterHistoryReview,
       exitHistoryReview,
       transcriptDisplayState,
+      clampedHistorySearchSelectedIndex,
+      historySearchMatches,
+      openHistorySearchSurface,
+      closeHistorySearchSurface,
+      cycleTranscriptSelection,
+      copySelectedTranscriptItem,
+      toggleSelectedTranscriptDetail,
+      selectTranscriptItem,
     ]
   );
 
@@ -3394,6 +3800,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           currentOptionsRef.current.thinking = mode !== 'off';
         }}
         onToggleTranscriptVerbosity={toggleTranscriptVerbosity}
+        onOpenTranscriptSearch={openHistorySearchSurface}
+        canOpenTranscriptSearch={!confirmRequest && !uiRequest}
         onSetAgentMode={(mode) => {
           currentOptionsRef.current.agentMode = mode;
         }}
@@ -3422,182 +3830,106 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         </Static>
       )}
 
-      {/* Message History - flexGrow to fill remaining space */}
 
-      <Box flexDirection="column" flexGrow={1} overflowY="hidden">
-        {displayItems.length > 0 && (
-          <Box flexDirection="column">
-            {/* 保留完整 transcript，避免响应结束后只剩最后一屏内容。 */}
-            <MessageList
-              items={displayItems}
-              isLoading={displayIsLoading}
-              isThinking={displayStreamingState.isThinking}
-              thinkingCharCount={displayStreamingState.thinkingCharCount}
-              thinkingContent={displayStreamingState.thinkingContent}
-              streamingResponse={displayStreamingState.currentResponse}
-              currentTool={displayStreamingState.currentTool}
-              activeToolCalls={displayStreamingState.activeToolCalls}
-              toolInputCharCount={displayStreamingState.toolInputCharCount}
-              toolInputContent={displayStreamingState.toolInputContent}
-              iterationHistory={displayStreamingState.iterationHistory}
-              currentIteration={displayStreamingState.currentIteration}
-              isCompacting={displayStreamingState.isCompacting}
-              agentMode={currentConfig.agentMode}
-              managedPhase={displayIsLoading ? managedTaskStatus?.phase : undefined}
-              managedHarnessProfile={
-                displayIsLoading ? managedTaskStatus?.harnessProfile : undefined
-              }
-              managedWorkerTitle={displayIsLoading ? managedTaskStatus?.activeWorkerTitle : undefined}
-              managedRound={displayIsLoading ? managedTaskStatus?.currentRound : undefined}
-              managedMaxRounds={displayIsLoading ? managedTaskStatus?.maxRounds : undefined}
-              managedGlobalWorkBudget={displayIsLoading ? managedTaskStatus?.globalWorkBudget : undefined}
-              managedBudgetUsage={displayIsLoading ? managedTaskStatus?.budgetUsage : undefined}
-              managedBudgetApprovalRequired={displayIsLoading ? managedTaskStatus?.budgetApprovalRequired : undefined}
-              lastLiveActivityLabel={displayStreamingState.lastLiveActivityLabel}
-              viewportRows={viewportBudget.messageRows}
-              viewportWidth={terminalWidth}
-              scrollOffset={historyScrollOffset}
-              animateSpinners={!isLivePaused}
-              windowed={transcriptOwnsViewport}
-              showFullThinking={isTranscriptVerbose || isReviewingHistory}
-              showDetailedTools={isTranscriptVerbose || isReviewingHistory}
-            />
-          </Box>
-        )}
-
-        {/* Loading/Thinking Indicator */}
-        {displayIsLoading && displayItems.length === 0 && (
-          <Box>
-            <ThinkingIndicator message="Thinking" showSpinner />
-          </Box>
-        )}
-      </Box>
-
-      {/* Fixed bottom section: Input + Suggestions + Status */}
-      {/* Fixed bottom section: Input + Suggestions + Status */}
-      <Box flexDirection="column" flexShrink={0}>
-        {/* Input Area - always at fixed position */}
-        {/* Input area - always at a fixed position */}
-        <Box flexDirection="column">
-          <PendingInputsIndicator pendingInputs={streamingState.pendingInputs} />
-          <InputPrompt
-            onSubmit={handleSubmit}
-            prompt=">"
-            placeholder={isReviewingHistory
-              ? "Browsing transcript history... Press Esc, End, Ctrl+Y, or Alt+Z to resume."
-              : isLoading
-              ? canQueueFollowUps
-                ? "Queue a follow-up for the next round..."
-                : "Agent is busy..."
-              : "Type a message..."}
-            focus={!confirmRequest && !uiRequest && !isReviewingHistory}
-            cwd={process.cwd()}
-            gitRoot={options.context?.gitRoot || context.gitRoot}
-            onInputChange={handleInputChange}
+      <FullscreenTranscriptLayout
+        width={terminalWidth}
+        stickyHeaderText={stickyPromptText}
+        jumpToLatestText={jumpToLatestText}
+        transcript={
+          <TranscriptViewport
+            items={displayItems}
+            isLoading={displayIsLoading}
+            isThinking={displayStreamingState.isThinking}
+            thinkingCharCount={displayStreamingState.thinkingCharCount}
+            thinkingContent={displayStreamingState.thinkingContent}
+            streamingResponse={displayStreamingState.currentResponse}
+            currentTool={displayStreamingState.currentTool}
+            activeToolCalls={displayStreamingState.activeToolCalls}
+            toolInputCharCount={displayStreamingState.toolInputCharCount}
+            toolInputContent={displayStreamingState.toolInputContent}
+            iterationHistory={displayStreamingState.iterationHistory}
+            currentIteration={displayStreamingState.currentIteration}
+            isCompacting={displayStreamingState.isCompacting}
+            agentMode={currentConfig.agentMode}
+            managedPhase={displayIsLoading ? managedTaskStatus?.phase : undefined}
+            managedHarnessProfile={displayIsLoading ? managedTaskStatus?.harnessProfile : undefined}
+            managedWorkerTitle={displayIsLoading ? managedTaskStatus?.activeWorkerTitle : undefined}
+            managedRound={displayIsLoading ? managedTaskStatus?.currentRound : undefined}
+            managedMaxRounds={displayIsLoading ? managedTaskStatus?.maxRounds : undefined}
+            managedGlobalWorkBudget={displayIsLoading ? managedTaskStatus?.globalWorkBudget : undefined}
+            managedBudgetUsage={displayIsLoading ? managedTaskStatus?.budgetUsage : undefined}
+            managedBudgetApprovalRequired={displayIsLoading ? managedTaskStatus?.budgetApprovalRequired : undefined}
+            lastLiveActivityLabel={displayStreamingState.lastLiveActivityLabel}
+            viewportRows={viewportBudget.messageRows}
+            viewportWidth={terminalWidth}
+            scrollOffset={historyScrollOffset}
+            animateSpinners={!isLivePaused}
+            windowed={transcriptOwnsViewport}
+            maxLines={transcriptMaxLines}
+            showFullThinking={isTranscriptVerbose || isReviewingHistory}
+            showDetailedTools={isTranscriptVerbose || isReviewingHistory}
+            selectedItemId={selectedTranscriptItemId}
+            expandedItemKeys={expandedTranscriptItemIds}
+            browseHintText={reviewHintText}
+            selectedSummary={isReviewingHistory ? selectedTranscriptItemSummary : undefined}
+            selectedIndex={Math.max(0, selectedTranscriptItemIndex)}
+            selectedTotal={selectableTranscriptItemIds.length}
+            canCopySelection={isReviewingHistory && Boolean(selectedTranscriptItemId)}
+            canToggleSelectionDetail={isReviewingHistory && Boolean(selectedTranscriptItemId)}
+            searchStatusText={!useOverlaySurface ? historySearchStatusText : undefined}
           />
-        </Box>
-
-        {/* Autocomplete Suggestions - fixed 8-line container, expands downward */}
-
-        {/* 这里始终占据预算层计算出来的高度，不把消息区的裁切交给 Ink 自己“碰运气”。 */}
-        <AutocompleteSuggestions
-          reserveSpace={suggestionsReservedForLayout}
-          width={terminalWidth}
-          hidden={isReviewingHistory}
-        />
-
-        {/* Keyboard Shortcuts Help Bar - shown when ? is pressed (Issue 083) */}
-        {/* Keyboard shortcuts help bar - shown when ? is pressed */}
-        {showHelp && (
-          <Box flexDirection="column" paddingX={1}>
-              <Text dimColor>
-                {buildHelpBarSegments().map((segment, index) => (
-                  <Text key={`${segment.text}-${index}`} color={segment.color} bold={segment.bold}>
-                    {segment.text}
-                  </Text>
-                ))}
-            </Text>
-          </Box>
-        )}
-
-        {/* Spacer between help and status bar */}
-        {showHelp && <Box><Text> </Text></Box>}
-
-        {reviewHintText && (
-          <Box paddingX={1}>
-            <Text dimColor>{reviewHintText}</Text>
-          </Box>
-        )}
-
-        {displayWorkStripText && (
-          <AmaWorkStrip text={displayWorkStripText} />
-        )}
-
-        {/* Status Bar */}
-        <Box>
-          {/* 状态栏渲染和预算共用同一份文本格式化规则，尽量减少窄终端下的换行偏差。 */}
-          <StatusBar {...statusBarProps} />
-        </Box>
-
-        {/* Confirmation dialog */}
-        {confirmRequest && (
-          <Box
-            flexDirection="column"
-            borderStyle="round"
-            borderColor="yellow"
-            paddingX={1}
-            marginTop={1}
-          >
-            <Text color="yellow" bold>
-              [Confirm] {confirmRequest.prompt}
-            </Text>
-            {confirmInstruction && (
-              <Text dimColor>{confirmInstruction}</Text>
-            )}
-          </Box>
-        )}
-
-        {uiRequest && (
-          <Box
-            flexDirection="column"
-            borderStyle="round"
-            borderColor="cyan"
-            paddingX={1}
-            marginTop={1}
-          >
-            {uiRequest.kind === "select" ? (
+        }
+        overlay={overlaySurface}
+        footer={
+          <PromptFooter
+            headerLeft={footerHeaderLeft ? <Text dimColor>{footerHeaderLeft}</Text> : undefined}
+            headerRight={footerHeaderRight ? <Text dimColor>{footerHeaderRight}</Text> : undefined}
+            pendingInputs={<PendingInputsIndicator pendingInputs={streamingState.pendingInputs} />}
+            composer={
+              <PromptComposer
+                onSubmit={handleSubmit}
+                prompt=">"
+                placeholder={isReviewingHistory
+                  ? "Browsing transcript history... Press Esc, End, Ctrl+Y, or Alt+Z to resume."
+                  : isLoading
+                  ? canQueueFollowUps
+                    ? "Queue a follow-up for the next round..."
+                    : "Agent is busy..."
+                  : "Type a message..."}
+                focus={!confirmRequest && !uiRequest && !isReviewingHistory && !isHistorySearchActive}
+                cwd={process.cwd()}
+                gitRoot={options.context?.gitRoot || context.gitRoot}
+                onInputChange={handleInputChange}
+              />
+            }
+            suggestions={useOverlaySurface ? undefined : suggestionsSurface}
+            helpBar={showHelp ? (
               <>
-                <Text color="cyan" bold>
-                  [Select] {uiRequest.title}
-                </Text>
-                {/* 选项列表按 viewport budget 截断，保证输入区和最新消息至少还能保住一部分可见。 */}
-                {uiRequest.options.slice(0, viewportBudget.visibleSelectOptions).map((option, index) => (
-                  <Text key={`${option.value}-${index}`} dimColor>
-                    {`${index + 1}. ${option.label}${option.description ? ` - ${option.description}` : ""}`}
+                <Box flexDirection="column" paddingX={1}>
+                  <Text dimColor>
+                    {buildHelpBarSegments().map((segment, index) => (
+                      <Text key={`${segment.text}-${index}`} color={segment.color} bold={segment.bold}>
+                        {segment.text}
+                      </Text>
+                    ))}
                   </Text>
-                ))}
-                {uiRequest.options.length > viewportBudget.visibleSelectOptions && (
-                  <Text dimColor>{`${uiRequest.options.length - viewportBudget.visibleSelectOptions} more choices...`}</Text>
-                )}
-                <Text dimColor>{`Choice: ${uiRequest.buffer || "(type a number)"}`}</Text>
-                <Text dimColor>Press Enter to confirm, Esc to cancel</Text>
+                </Box>
+                <Box><Text> </Text></Box>
               </>
+            ) : undefined}
+            taskBar={transcriptDisplayState.supportsFullscreenLayout ? (
+              <BackgroundTaskBar
+                primaryText={backgroundTaskViewModel.primaryText}
+                parallelText={backgroundTaskViewModel.parallelText}
+              />
             ) : (
-              <>
-                <Text color="cyan" bold>
-                  [Input] {uiRequest.prompt}
-                </Text>
-                {uiRequest.defaultValue !== undefined && (
-                  <Text dimColor>{`Default: ${uiRequest.defaultValue}`}</Text>
-                )}
-                <Text dimColor>{`Value: ${uiRequest.buffer || "(type your response)"}`}</Text>
-                <Text dimColor>Press Enter to confirm, Esc to cancel</Text>
-              </>
+              <AmaWorkStrip text={backgroundTaskViewModel.parallelText} />
             )}
-            {uiRequest.error && <Text color="red">{uiRequest.error}</Text>}
-          </Box>
-        )}
-      </Box>
+            statusLine={<Box><StatusBar {...statusBarProps} /></Box>}
+            dialogSurface={useOverlaySurface ? undefined : dialogSurface}
+          />
+        }
+      />
     </Box>
   );
 };

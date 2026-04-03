@@ -19,6 +19,7 @@ export type ShortcutActionId =
   | 'showHelp' // ? - 显示帮助
   | 'toggleThinking' // Ctrl+T - 切换 Extended Thinking
   | 'toggleTranscriptVerbosity' // Ctrl+O - toggle transcript verbosity
+  | 'openTranscriptSearch' // Ctrl+F - search transcript history
   | 'togglePermissionMode' // Shift+Tab - 切换权限模式
   | 'toggleAgentMode' // Alt+M - 切换 AMA / SA
   | 'toggleParallelMode' // Ctrl+P - 切换并行/顺序执行

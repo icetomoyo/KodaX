@@ -40,6 +40,14 @@ describe("terminal-host-profile", () => {
       ownsViewportByDefault: true,
       supportsMouseTracking: true,
       bufferingMode: "live",
+      supportsFullscreenLayout: true,
+      supportsOverlaySurface: true,
+      supportsSelection: true,
+      supportsCopyOnSelect: true,
+      supportsWheelHistory: true,
+      supportsViewportChrome: true,
+      supportsSearchViewport: true,
+      supportsStickyPrompt: true,
     });
   });
 });

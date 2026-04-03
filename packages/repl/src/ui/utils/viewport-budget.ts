@@ -26,6 +26,14 @@ export type ViewportBudgetUIRequest =
   | ViewportBudgetSelectRequest
   | ViewportBudgetInputRequest;
 
+export type ViewportBudgetSurfaceMode = "inline" | "overlay";
+
+export interface ViewportBudgetHistorySearchState {
+  query: string;
+  selectedExcerpt?: string;
+  matchCount: number;
+}
+
 export interface ViewportBudgetOptions {
   terminalRows: number;
   terminalWidth: number;
@@ -34,13 +42,28 @@ export interface ViewportBudgetOptions {
   pendingInputSummary?: string;
   workStripText?: string;
   suggestionsReserved: boolean;
+  suggestionsMode?: ViewportBudgetSurfaceMode;
   showHelp: boolean;
   statusBarText: string;
   confirmPrompt?: string;
   confirmInstruction?: string;
   uiRequest?: ViewportBudgetUIRequest | null;
+  dialogMode?: ViewportBudgetSurfaceMode;
+  historySearch?: ViewportBudgetHistorySearchState | null;
   maxVisibleSelectOptions?: number;
   reviewHint?: string;
+}
+
+export type ViewportBudgetSlotName =
+  | "transcript"
+  | "footer"
+  | "overlay"
+  | "status"
+  | "task-bar";
+
+export interface ViewportBudgetSlot {
+  name: ViewportBudgetSlotName;
+  rows: number;
 }
 
 export interface ViewportBudgetResult {
@@ -54,8 +77,12 @@ export interface ViewportBudgetResult {
   statusRows: number;
   confirmRows: number;
   uiRequestRows: number;
+  historySearchRows: number;
+  footerRows: number;
+  overlayRows: number;
   visibleSelectOptions: number;
   reviewHintRows: number;
+  slots: ViewportBudgetSlot[];
 }
 
 function wrapLineCount(text: string, width: number): number {
@@ -95,11 +122,14 @@ export function calculateViewportBudget(options: ViewportBudgetOptions): Viewpor
     pendingInputSummary,
     workStripText,
     suggestionsReserved,
+    suggestionsMode = "inline",
     showHelp,
     statusBarText,
     confirmPrompt,
     confirmInstruction,
     uiRequest,
+    dialogMode = "inline",
+    historySearch,
     maxVisibleSelectOptions = 5,
     reviewHint,
   } = options;
@@ -171,16 +201,53 @@ export function calculateViewportBudget(options: ViewportBudgetOptions): Viewpor
     }
   }
 
+  let historySearchRows = 0;
+  if (historySearch) {
+    const innerWidth = Math.max(1, terminalWidth - 4);
+    historySearchRows =
+      1 +
+      2 +
+      wrapLineCount(
+        `Query: ${historySearch.query || "(type to search)"}`,
+        innerWidth
+      ) +
+      (historySearch.matchCount === 0
+        ? wrapLineCount("No matches yet", innerWidth)
+        : wrapLineCount(
+            `${Math.max(1, historySearch.matchCount)} matches`,
+            innerWidth
+          ) +
+          wrapLineCount(historySearch.selectedExcerpt || "", innerWidth)) +
+      1;
+  }
+
   const reviewHintRows = reviewHint
     ? wrapLineCount(reviewHint, Math.max(1, terminalWidth - 2))
     : 0;
 
+  const footerRows =
+    pendingInputRows +
+    inputRows +
+    helpRows +
+    reviewHintRows +
+    (suggestionsMode === "inline" ? suggestionsRows : 0) +
+    (dialogMode === "inline" ? confirmRows + uiRequestRows + historySearchRows : 0);
+  const overlayRows =
+    (suggestionsMode === "overlay" ? suggestionsRows : 0) +
+    (dialogMode === "overlay" ? confirmRows + uiRequestRows + historySearchRows : 0);
   const reservedBottomRows =
-    pendingInputRows + workStripRows + inputRows + suggestionsRows + helpRows + statusRows + confirmRows + uiRequestRows + reviewHintRows;
+    footerRows + workStripRows + statusRows + overlayRows;
   const messageRows = Math.max(
     1,
     terminalRows - reservedBottomRows - MESSAGE_LIST_VERTICAL_PADDING_ROWS
   );
+  const slots: ViewportBudgetSlot[] = [
+    { name: "transcript", rows: messageRows },
+    { name: "footer", rows: footerRows },
+    { name: "overlay", rows: overlayRows },
+    { name: "status", rows: statusRows },
+    { name: "task-bar", rows: workStripRows },
+  ];
 
   return {
     messageRows,
@@ -193,7 +260,11 @@ export function calculateViewportBudget(options: ViewportBudgetOptions): Viewpor
     statusRows,
     confirmRows,
     uiRequestRows,
+    historySearchRows,
+    footerRows,
+    overlayRows,
     visibleSelectOptions,
     reviewHintRows,
+    slots,
   };
 }

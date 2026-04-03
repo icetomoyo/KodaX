@@ -16,6 +16,14 @@ export interface TerminalHostCapabilities {
   ownsViewportByDefault: boolean;
   supportsMouseTracking: boolean;
   bufferingMode: "live" | "buffered-fallback";
+  supportsFullscreenLayout: boolean;
+  supportsOverlaySurface: boolean;
+  supportsSelection: boolean;
+  supportsCopyOnSelect: boolean;
+  supportsWheelHistory: boolean;
+  supportsViewportChrome: boolean;
+  supportsSearchViewport: boolean;
+  supportsStickyPrompt: boolean;
 }
 
 export function detectTerminalHostProfile(
@@ -56,6 +64,14 @@ export function getTerminalHostCapabilities(
         ownsViewportByDefault: true,
         supportsMouseTracking: true,
         bufferingMode: "live",
+        supportsFullscreenLayout: true,
+        supportsOverlaySurface: true,
+        supportsSelection: true,
+        supportsCopyOnSelect: false,
+        supportsWheelHistory: true,
+        supportsViewportChrome: true,
+        supportsSearchViewport: true,
+        supportsStickyPrompt: true,
       };
     case "native_vt":
       return {
@@ -63,6 +79,14 @@ export function getTerminalHostCapabilities(
         ownsViewportByDefault: true,
         supportsMouseTracking: true,
         bufferingMode: "live",
+        supportsFullscreenLayout: true,
+        supportsOverlaySurface: true,
+        supportsSelection: true,
+        supportsCopyOnSelect: true,
+        supportsWheelHistory: true,
+        supportsViewportChrome: true,
+        supportsSearchViewport: true,
+        supportsStickyPrompt: true,
       };
     case "degraded_vt":
       return {
@@ -70,6 +94,14 @@ export function getTerminalHostCapabilities(
         ownsViewportByDefault: false,
         supportsMouseTracking: false,
         bufferingMode: "buffered-fallback",
+        supportsFullscreenLayout: false,
+        supportsOverlaySurface: false,
+        supportsSelection: true,
+        supportsCopyOnSelect: false,
+        supportsWheelHistory: false,
+        supportsViewportChrome: false,
+        supportsSearchViewport: false,
+        supportsStickyPrompt: false,
       };
     case "unsupported_control_host":
     default:
@@ -78,6 +110,14 @@ export function getTerminalHostCapabilities(
         ownsViewportByDefault: false,
         supportsMouseTracking: false,
         bufferingMode: "buffered-fallback",
+        supportsFullscreenLayout: false,
+        supportsOverlaySurface: false,
+        supportsSelection: false,
+        supportsCopyOnSelect: false,
+        supportsWheelHistory: false,
+        supportsViewportChrome: false,
+        supportsSearchViewport: false,
+        supportsStickyPrompt: false,
       };
   }
 }

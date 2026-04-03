@@ -149,4 +149,41 @@ describe('GlobalShortcuts', () => {
     expect(saveConfigMock).not.toHaveBeenCalled();
     expect(setShowHelp).toHaveBeenCalledWith(false);
   });
+
+  it('does not open transcript search while interactive dialogs are active', () => {
+    const currentConfig: CurrentConfig = {
+      provider: 'openai',
+      model: 'gpt-5.4',
+      thinking: false,
+      reasoningMode: 'off',
+      agentMode: 'ama',
+      parallel: false,
+      permissionMode: 'accept-edits',
+    };
+
+    const setShowHelp = vi.fn();
+    const onOpenTranscriptSearch = vi.fn();
+
+    GlobalShortcuts({
+      currentConfig,
+      setCurrentConfig: vi.fn(),
+      isLoading: false,
+      abort: vi.fn(),
+      stopThinking: vi.fn(),
+      clearThinkingContent: vi.fn(),
+      setCurrentTool: vi.fn(),
+      setIsLoading: vi.fn(),
+      onToggleHelp: vi.fn(),
+      setShowHelp,
+      onOpenTranscriptSearch,
+      canOpenTranscriptSearch: false,
+      isInputEmpty: true,
+    });
+
+    const handler = shortcutHandlers.get('openTranscriptSearch');
+    expect(handler).toBeDefined();
+    expect(handler?.()).toBe(false);
+    expect(onOpenTranscriptSearch).not.toHaveBeenCalled();
+    expect(setShowHelp).not.toHaveBeenCalled();
+  });
 });
