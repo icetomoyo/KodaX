@@ -397,6 +397,150 @@ describe('runManagedTask', () => {
     expect(mockRunDirectKodaX).toHaveBeenCalledTimes(1);
   });
 
+  it('runs tactical read-only lookup fan-out inside AMA H0 and keeps the parent as final authority', async () => {
+    const workspaceRoot = await createTempDir('kodax-task-engine-tactical-lookup-');
+    const statuses: KodaXManagedTaskStatusEvent[] = [];
+    mockCreateReasoningPlan.mockResolvedValue(
+      buildPlan({
+        primaryTask: 'lookup',
+        taskFamily: 'lookup',
+        actionability: 'actionable',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'lookup',
+        complexity: 'moderate',
+        riskLevel: 'low',
+        harnessProfile: 'H0_DIRECT',
+        mutationSurface: 'read-only',
+        topologyCeiling: 'H0_DIRECT',
+        reason: 'Read-only lookup should stay tactical and validate module triage in parallel.',
+      }),
+    );
+    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
+      if (workerPrompt.includes('You are the Scout role')) {
+        return buildAssistantResult(
+          buildScoutResponse(
+            'Scout kept the lookup on H0 and recommended bounded module triage.',
+            'H0_DIRECT',
+          ),
+          { sessionId: 'session-scout-tactical-lookup' },
+        );
+      }
+      if (workerPrompt.includes('You are the Tactical Lookup Scanner')) {
+        return buildAssistantResult(
+          [
+            'Scanner found two module-triage shards worth validating.',
+            '```kodax-lookup-shards',
+            JSON.stringify({
+              summary: 'Scanner identified two lookup shards.',
+              shards: [
+                {
+                  id: 'lookup-1',
+                  question: 'Does StatusBar.tsx own the live status rendering?',
+                  scope: 'Status bar live rendering',
+                  priority: 'high',
+                  paths: ['packages/repl/src/ui/components/StatusBar.tsx'],
+                  rationale: ['The component name matches the user-visible surface directly.'],
+                },
+                {
+                  id: 'lookup-2',
+                  question: 'Is InkREPL.tsx only a wrapper around the status bar?',
+                  scope: 'InkREPL wrapper role',
+                  priority: 'medium',
+                  paths: ['packages/repl/src/ui/InkREPL.tsx'],
+                  rationale: ['This path could still own orchestration rather than rendering.'],
+                },
+              ],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-scan-tactical-lookup' },
+        );
+      }
+      if (workerPrompt.includes('[Shard ID] lookup-1')) {
+        return buildAssistantResult(
+          [
+            buildHandoffResponse('Validator confirmed StatusBar.tsx owns the live status rendering.'),
+            '```kodax-child-result',
+            JSON.stringify({
+              childId: 'lookup-1',
+              fanoutClass: 'module-triage',
+              status: 'completed',
+              disposition: 'valid',
+              summary: 'Lookup shard 1 confirms StatusBar.tsx owns the live status rendering.',
+              evidenceRefs: ['packages/repl/src/ui/components/StatusBar.tsx'],
+              contradictions: [],
+              artifactPaths: [],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-lookup-validator-1' },
+        );
+      }
+      if (workerPrompt.includes('[Shard ID] lookup-2')) {
+        return buildAssistantResult(
+          [
+            buildHandoffResponse('Validator found InkREPL.tsx orchestrates layout but does not own live status rendering.'),
+            '```kodax-child-result',
+            JSON.stringify({
+              childId: 'lookup-2',
+              fanoutClass: 'module-triage',
+              status: 'completed',
+              disposition: 'false-positive',
+              summary: 'Lookup shard 2 weakens the idea that InkREPL.tsx owns the live status rendering.',
+              evidenceRefs: ['packages/repl/src/ui/InkREPL.tsx'],
+              contradictions: ['InkREPL composes the footer but does not render the status component itself.'],
+              artifactPaths: [],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-lookup-validator-2' },
+        );
+      }
+      if (workerPrompt.includes('You are the Tactical Lookup Reducer')) {
+        return buildAssistantResult(
+          buildVerdictResponse(
+            'Reducer completed the tactical lookup.',
+            'accept',
+            'Validator evidence is sufficient for the parent lookup answer.',
+            {
+              userAnswer: [
+                'The live status rendering is owned by `packages/repl/src/ui/components/StatusBar.tsx`.',
+                '',
+                '`InkREPL.tsx` still orchestrates the surrounding layout, but it is not the component that renders the live status line itself.',
+              ].join('\n'),
+            },
+          ),
+          { sessionId: 'session-lookup-reducer' },
+        );
+      }
+      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 160)}`);
+    });
+
+    const result = await runManagedTask(
+      {
+        provider: 'anthropic',
+        agentMode: 'ama',
+        events: {
+          onManagedTaskStatus: (status) => {
+            statuses.push(status);
+          },
+        },
+        context: {
+          managedTaskWorkspaceDir: workspaceRoot,
+        },
+      },
+      'Where is the live status rendering logic defined right now?',
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.lastText).toContain('packages/repl/src/ui/components/StatusBar.tsx');
+    expect(result.managedTask?.runtime?.amaProfile).toBe('tactical');
+    expect(result.managedTask?.runtime?.amaFanout?.class).toBe('module-triage');
+    expect(result.managedTask?.runtime?.childContextBundles).toHaveLength(2);
+    expect(result.managedTask?.runtime?.fanoutSchedulerPlan?.fanoutClass).toBe('module-triage');
+    expect(statuses.some((status) => status.childFanoutClass === 'module-triage')).toBe(true);
+  });
+
   it('lets Scout downshift a managed run back to H0 and return early', async () => {
     mockCreateReasoningPlan.mockResolvedValue(
       buildPlan({
@@ -1382,14 +1526,180 @@ describe('runManagedTask', () => {
     expect(result.managedTask?.runtime?.amaProfile).toBe('tactical');
     expect(result.managedTask?.runtime?.amaFanout?.class).toBe('evidence-scan');
     expect(result.managedTask?.runtime?.childContextBundles).toHaveLength(2);
-    expect(result.managedTask?.runtime?.childAgentResults).toHaveLength(2);
+    expect(result.managedTask?.runtime?.childAgentResults).toHaveLength(1);
     expect(result.managedTask?.runtime?.fanoutSchedulerPlan?.fanoutClass).toBe('evidence-scan');
+    expect(result.managedTask?.runtime?.fanoutSchedulerPlan?.cancellationPolicy).toBe('winner-cancel');
+    expect(result.managedTask?.runtime?.fanoutSchedulerPlan?.branches).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          bundleId: 'shard-2',
+          status: 'cancelled',
+        }),
+      ]),
+    );
     const fanoutWorkerCounts = statuses
       .filter((status) => status.phase === 'worker' && status.childFanoutClass === 'evidence-scan')
       .map((status) => status.childFanoutCount);
     expect(fanoutWorkerCounts).toContain(2);
-    expect(fanoutWorkerCounts).toContain(1);
     expect(fanoutWorkerCounts).toContain(0);
+  });
+
+  it('applies deterministic winner-cancel for investigation once a high-priority shard is sufficient', async () => {
+    const workspaceRoot = await createTempDir('kodax-task-engine-tactical-investigation-cancel-');
+    mockCreateReasoningPlan.mockResolvedValue(
+      buildPlan({
+        primaryTask: 'bugfix',
+        taskFamily: 'investigation',
+        actionability: 'actionable',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'investigation',
+        complexity: 'moderate',
+        riskLevel: 'medium',
+        harnessProfile: 'H0_DIRECT',
+        mutationSurface: 'read-only',
+        topologyCeiling: 'H0_DIRECT',
+        reason: 'Read-only investigation should cancel lower-priority shards once a high-priority winner is clear.',
+      }),
+    );
+    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
+      if (workerPrompt.includes('You are the Scout role')) {
+        return buildAssistantResult(
+          buildScoutResponse(
+            'Scout kept the investigation on H0 and recommended bounded evidence validation.',
+            'H0_DIRECT',
+          ),
+          { sessionId: 'session-scout-tactical-investigation-cancel' },
+        );
+      }
+      if (workerPrompt.includes('You are the Tactical Investigation Scanner')) {
+        return buildAssistantResult(
+          [
+            'Scanner found two evidence shards worth validating.',
+            '```kodax-investigation-shards',
+            JSON.stringify({
+              summary: 'Scanner identified two investigation shards.',
+              shards: [
+                {
+                  id: 'shard-1',
+                  question: 'Does the retry path hide the root cause?',
+                  scope: 'Retry root-cause propagation',
+                  priority: 'high',
+                  files: ['packages/coding/src/task-engine.ts'],
+                  evidence: ['This is the decisive shard for the current diagnosis.'],
+                },
+                {
+                  id: 'shard-2',
+                  question: 'Does the metrics side-path contribute anything material?',
+                  scope: 'Metrics side-path',
+                  priority: 'low',
+                  files: ['packages/coding/src/task-engine.ts'],
+                  evidence: ['This shard should be cancellable once the primary cause is confirmed.'],
+                },
+              ],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-scan-tactical-investigation-cancel' },
+        );
+      }
+      if (workerPrompt.includes('[Shard ID] shard-1')) {
+        return buildAssistantResult(
+          [
+            buildHandoffResponse('Validator confirmed the retry path hides the root cause.'),
+            '```kodax-child-result',
+            JSON.stringify({
+              childId: 'shard-1',
+              fanoutClass: 'evidence-scan',
+              status: 'completed',
+              disposition: 'valid',
+              summary: 'Shard 1 confirmed the retry path hides the root cause.',
+              evidenceRefs: ['packages/coding/src/task-engine.ts'],
+              contradictions: [],
+              artifactPaths: [],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-investigation-cancel-1' },
+        );
+      }
+      if (workerPrompt.includes('[Shard ID] shard-2')) {
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        return buildAssistantResult(
+          [
+            buildHandoffResponse('Late validator result should be ignored after cancellation.'),
+            '```kodax-child-result',
+            JSON.stringify({
+              childId: 'shard-2',
+              fanoutClass: 'evidence-scan',
+              status: 'completed',
+              disposition: 'false-positive',
+              summary: 'Shard 2 eventually completed, but the parent had already cancelled it.',
+              evidenceRefs: ['packages/coding/src/task-engine.ts'],
+              contradictions: ['Late result should not affect the finalized diagnosis.'],
+              artifactPaths: [],
+            }),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-investigation-cancel-2' },
+        );
+      }
+      if (workerPrompt.includes('You are the Tactical Investigation Reducer')) {
+        return buildAssistantResult(
+          buildVerdictResponse(
+            'Reducer completed the tactical investigation.',
+            'accept',
+            'High-priority validator evidence is sufficient for the diagnosis.',
+            {
+              userAnswer: [
+                '## Investigation Update',
+                '',
+                'The retry path remains the confirmed root cause.',
+              ].join('\n'),
+            },
+          ),
+          { sessionId: 'session-investigation-reducer-cancel' },
+        );
+      }
+      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 160)}`);
+    });
+
+    const result = await runManagedTask(
+      {
+        provider: 'anthropic',
+        agentMode: 'ama',
+        context: {
+          managedTaskWorkspaceDir: workspaceRoot,
+        },
+      },
+      'Investigate why the retry path still reports the wrong failure to users.',
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.lastText).toContain('retry path remains the confirmed root cause');
+    expect(result.managedTask?.runtime?.fanoutSchedulerPlan?.cancellationPolicy).toBe('winner-cancel');
+    expect(result.managedTask?.runtime?.fanoutSchedulerPlan?.branches).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          bundleId: 'shard-2',
+          status: 'cancelled',
+        }),
+      ]),
+    );
+    expect(result.managedTask?.runtime?.childAgentResults).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          childId: 'shard-1',
+          disposition: 'valid',
+        }),
+      ]),
+    );
+    expect(result.managedTask?.runtime?.childAgentResults).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          childId: 'shard-2',
+        }),
+      ]),
+    );
   });
 
   it('keeps overflow tactical investigation shards in the ledger and forces revise when a high-priority shard is deferred', async () => {

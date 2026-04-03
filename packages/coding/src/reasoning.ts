@@ -1098,7 +1098,10 @@ function isAmaFanoutClassActive(
           || decision.recommendedMode === 'investigation'
         );
     case 'module-triage':
-      return false;
+      return decision.mutationSurface === 'read-only'
+        && decision.harnessProfile === 'H0_DIRECT'
+        && decision.executionPattern === 'checked-direct'
+        && decision.primaryTask === 'lookup';
     case 'hypothesis-check':
       return false;
     default:
@@ -1145,8 +1148,8 @@ export function buildAmaControllerDecision(
         ? 'Hypothesis-check shards remain defined for future rollout, but mutation-side child fan-out is intentionally disabled for now.'
         : fanoutClass === 'evidence-scan'
           ? 'Evidence-scan shards only activate for tactical H0 read-only investigation in the current rollout.'
-          : fanoutClass === 'module-triage'
-            ? 'Module-triage shards remain defined for future rollout, but the current runtime only backs review validation and read-only investigation fan-out.'
+        : fanoutClass === 'module-triage'
+            ? 'Module-triage shards only activate for tactical H0 read-only lookup in the current rollout.'
         : 'Child fan-out stays disabled because this rollout only activates read-only tactical shard classes that are already backed by runtime support.'
       : activeFanoutClass === 'finding-validation'
         ? 'Review work benefits from finding-level validation shards to keep the main context focused on synthesis.'

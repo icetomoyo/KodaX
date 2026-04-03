@@ -21,6 +21,18 @@ function createBundles(count: number): KodaXChildContextBundle[] {
   }));
 }
 
+function createEvidenceBundles(count: number): KodaXChildContextBundle[] {
+  return Array.from({ length: count }, (_, index) => ({
+    id: `shard-${index + 1}`,
+    fanoutClass: 'evidence-scan',
+    objective: `Validate evidence shard ${index + 1}`,
+    scopeSummary: `Evidence shard ${index + 1}`,
+    evidenceRefs: [`evidence:${index + 1}`],
+    constraints: ['Read-only'],
+    readOnly: true,
+  }));
+}
+
 const reductionContract: KodaXParentReductionContract = {
   owner: 'parent',
   strategy: 'evaluator-assisted',
@@ -197,6 +209,30 @@ describe('fanout scheduler', () => {
       }),
     );
     expect(countActiveFanoutBranches(cancelledPlan)).toBe(1);
+  });
+
+  it('assigns winner-cancel policy to evidence-scan schedules', () => {
+    const decision = buildAmaControllerDecision({
+      ...buildFallbackRoutingDecision('Investigate why this read-only bug still happens.'),
+      primaryTask: 'bugfix',
+      taskFamily: 'investigation',
+      executionPattern: 'checked-direct',
+      recommendedMode: 'investigation',
+      mutationSurface: 'read-only',
+      harnessProfile: 'H0_DIRECT',
+      confidence: 0.9,
+    });
+    const input = createFanoutSchedulerInput(
+      decision,
+      createEvidenceBundles(2),
+      reductionContract,
+    );
+
+    expect(input).toBeDefined();
+    const plan = buildFanoutSchedulerPlan(input!);
+
+    expect(plan.fanoutClass).toBe('evidence-scan');
+    expect(plan.cancellationPolicy).toBe('winner-cancel');
   });
 
   it('fails fast when a lifecycle transition targets an unknown bundle id', () => {

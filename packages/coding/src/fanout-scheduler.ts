@@ -23,6 +23,20 @@ function dedupeBundles(
   return unique;
 }
 
+function resolveFanoutCancellationPolicy(
+  fanoutClass: KodaXFanoutSchedulerInput['fanoutClass'],
+): KodaXFanoutSchedulerPlan['cancellationPolicy'] {
+  switch (fanoutClass) {
+    case 'evidence-scan':
+      return 'winner-cancel';
+    case 'finding-validation':
+    case 'module-triage':
+    case 'hypothesis-check':
+    default:
+      return 'none';
+  }
+}
+
 export function createFanoutSchedulerInput(
   controllerDecision: KodaXAmaControllerDecision,
   bundles: KodaXChildContextBundle[],
@@ -56,7 +70,7 @@ export function buildFanoutSchedulerPlan(
       deferredBundleIds: [],
       maxParallel: 1,
       mergeStrategy: input.reductionStrategy,
-      cancellationPolicy: 'none',
+      cancellationPolicy: resolveFanoutCancellationPolicy(input.fanoutClass),
       reason: 'No child bundles matched the requested fan-out class.',
     };
   }
@@ -94,7 +108,7 @@ export function buildFanoutSchedulerPlan(
     deferredBundleIds: deferredBundles.map((bundle) => bundle.id),
     maxParallel,
     mergeStrategy: input.reductionStrategy,
-    cancellationPolicy: 'none',
+    cancellationPolicy: resolveFanoutCancellationPolicy(input.fanoutClass),
     reason: deferredBundles.length > 0
       ? `Scheduled ${scheduledBundles.length} child bundles and deferred ${deferredBundles.length} to stay within the current AMA fan-out budget.`
       : `Scheduled ${scheduledBundles.length} child bundles for ${input.fanoutClass}.`,

@@ -578,14 +578,14 @@ describe('reasoning reroute', () => {
     expect(decision.tactics).not.toContain('child-fanout');
   });
 
-  it('keeps lookup module-triage taxonomy inactive until runtime support lands', () => {
+  it('exposes read-only lookup module-triage fan-out once the tactical runtime lands', () => {
     const decision = buildAmaControllerDecision(
       {
         primaryTask: 'lookup',
         taskFamily: 'lookup',
         actionability: 'actionable',
         executionPattern: 'checked-direct',
-        recommendedMode: 'implementation',
+        recommendedMode: 'lookup',
         recommendedThinkingDepth: 'medium',
         complexity: 'moderate',
         riskLevel: 'low',
@@ -594,14 +594,41 @@ describe('reasoning reroute', () => {
         confidence: 0.84,
         workIntent: 'new',
         requiresBrainstorm: false,
-        reason: 'Lookup work may eventually use module-triage fan-out, but runtime support is not landed yet.',
+        reason: 'Read-only lookup can shard module triage once the tactical runtime lands.',
+      },
+    );
+
+    expect(decision.profile).toBe('tactical');
+    expect(decision.fanout.admissible).toBe(true);
+    expect(decision.fanout.class).toBe('module-triage');
+    expect(decision.fanout.reason).toContain('Lookup work can shard module triage');
+    expect(decision.tactics).toContain('child-fanout');
+  });
+
+  it('keeps direct lookup work on the non-fanout path in this rollout', () => {
+    const decision = buildAmaControllerDecision(
+      {
+        primaryTask: 'lookup',
+        taskFamily: 'lookup',
+        actionability: 'actionable',
+        executionPattern: 'direct',
+        recommendedMode: 'lookup',
+        recommendedThinkingDepth: 'medium',
+        complexity: 'moderate',
+        riskLevel: 'low',
+        harnessProfile: 'H0_DIRECT',
+        mutationSurface: 'read-only',
+        confidence: 0.84,
+        workIntent: 'new',
+        requiresBrainstorm: false,
+        reason: 'Direct lookup should stay lightweight and avoid hidden child fan-out.',
       },
     );
 
     expect(decision.profile).toBe('tactical');
     expect(decision.fanout.admissible).toBe(false);
     expect(decision.fanout.class).toBeUndefined();
-    expect(decision.fanout.reason).toContain('Module-triage shards remain defined for future rollout');
+    expect(decision.fanout.reason).toContain('Module-triage shards only activate for tactical H0 read-only lookup');
     expect(decision.tactics).not.toContain('child-fanout');
   });
 
