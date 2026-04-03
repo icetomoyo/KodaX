@@ -25,6 +25,12 @@ export interface CompactionConfig {
   rollingSummaryPercent?: number;
   /** Prune oversized tool results when they exceed roughly this many tokens. Defaults to 500. */
   pruningThresholdTokens?: number;
+  /**
+   * Gap ratio for prune fast-return. After pruning, if remaining tokens still exceed
+   * triggerTokens * pruningGapRatio, the system continues to the summarization path
+   * instead of returning early. Defaults to 0.8.
+   */
+  pruningGapRatio?: number;
   /** Optional override for the provider context window. */
   contextWindow?: number;
 }

@@ -121,7 +121,8 @@ export async function compact(
   const prunedQueue = [...prunedMessages, ...toProtect];
   const triggerTokens = getTriggerTokens(config, contextWindow);
 
-  if (pruneResult.hasPruned && estimateTokens(prunedQueue) <= triggerTokens) {
+  const pruningGapRatio = config.pruningGapRatio ?? 0.8;
+  if (pruneResult.hasPruned && estimateTokens(prunedQueue) <= triggerTokens * pruningGapRatio) {
     const finalMessages = previousSummary
       ? [createSummaryMessage(previousSummary), ...prunedQueue]
       : prunedQueue;

@@ -28,6 +28,10 @@
     "@kodax/skills": "*"
   },
   "devDependencies": {
+    "@lezer/common": "^1.5.1",
+    "@lezer/go": "^1.0.1",
+    "@lezer/python": "^1.1.18",
+    "@lezer/rust": "^1.0.2",
     "@types/node": "^22.13.4",
     "vitest": "^3.2.4"
   },
