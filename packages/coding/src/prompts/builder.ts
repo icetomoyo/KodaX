@@ -121,6 +121,17 @@ export async function buildSystemPromptSnapshot(
     );
   }
 
+  const mcpCapabilityContext = await options.extensionRuntime?.getCapabilityPromptContext('mcp');
+  if (mcpCapabilityContext?.trim()) {
+    sections.push(
+      createPromptSection(
+        'mcp-capability-context',
+        mcpCapabilityContext,
+        'Include runtime-owned MCP capability truth only when active MCP servers are configured.',
+      ),
+    );
+  }
+
   if (isLongRunning) {
     sections.push(
       createPromptSection(

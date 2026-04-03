@@ -423,6 +423,43 @@ describe('KodaXExtensionRuntime', () => {
     expect(runtime.listCapabilityProviders()).toEqual([]);
   });
 
+  it('supports runtime-owned capability providers with prompt context and diagnostics metadata', async () => {
+    const runtime = createExtensionRuntime();
+    const refreshSpy = vi.fn(async () => undefined);
+
+    runtime.registerCapabilityProvider({
+      id: 'runtime-provider',
+      kinds: ['tool'],
+      getPromptContext: () => '## Runtime Capability\nUse runtime-owned tools.',
+      getDiagnostics: () => ({ serverCount: 1, trust: 'workspace' }),
+      refresh: refreshSpy,
+    });
+
+    await expect(runtime.getCapabilityPromptContext('runtime-provider')).resolves.toBe(
+      '## Runtime Capability\nUse runtime-owned tools.',
+    );
+    await expect(runtime.refreshCapabilityProviders('runtime-provider')).resolves.toBeUndefined();
+    expect(refreshSpy).toHaveBeenCalledTimes(1);
+    expect(runtime.getDiagnostics().capabilityProviders).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'runtime-provider',
+          source: expect.objectContaining({
+            kind: 'runtime',
+            id: 'runtime:capability:runtime-provider',
+            label: 'runtime-provider',
+          }),
+          metadata: {
+            serverCount: 1,
+            trust: 'workspace',
+          },
+        }),
+      ]),
+    );
+
+    await runtime.dispose();
+  });
+
   it('keeps the previous extension active when a hot reload fails', async () => {
     const extensionPath = path.join(tempDir, 'reloadable-extension.mjs');
     const ctx: KodaXToolExecutionContext = {

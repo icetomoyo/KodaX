@@ -359,6 +359,53 @@ function summarizeToolDetails(toolName: string, input: ToolInputValue): string[]
     return parts;
   }
 
+  if (baseToolName === "mcp_describe" || baseToolName === "mcp_read_resource") {
+    const id = readFirstString(record, "id")
+      ?? extractFieldFromPreview(preview, "id");
+    if (id) {
+      parts.push(truncateValue(id, 120));
+    }
+    return parts;
+  }
+
+  if (baseToolName === "mcp_call") {
+    const id = readFirstString(record, "id")
+      ?? extractFieldFromPreview(preview, "id");
+    const argsRecord = asRecord(record?.args);
+    const argCount = argsRecord ? Object.keys(argsRecord).length : undefined;
+    if (id) {
+      parts.push(truncateValue(id, 120));
+    }
+    if (argCount !== undefined) {
+      parts.push(`args=${argCount}`);
+    }
+    return parts;
+  }
+
+  if (baseToolName === "mcp_search") {
+    const query = readFirstString(record, "query")
+      ?? extractFieldFromPreview(preview, "query");
+    const server = readFirstString(record, "server")
+      ?? extractFieldFromPreview(preview, "server");
+    const kind = readFirstString(record, "kind")
+      ?? extractFieldFromPreview(preview, "kind");
+    const limit = readNumber(record?.limit)
+      ?? extractNumberFromPreview(preview, "limit");
+    if (query) {
+      parts.push(`query=${truncateValue(query, 96)}`);
+    }
+    if (server) {
+      parts.push(`server=${truncateValue(server, 48)}`);
+    }
+    if (kind) {
+      parts.push(`kind=${kind}`);
+    }
+    if (limit !== undefined) {
+      parts.push(`limit=${limit}`);
+    }
+    return parts;
+  }
+
   if (baseToolName === "web_search" || baseToolName === "code_search" || baseToolName === "semantic_lookup") {
     const query = readFirstString(record, "query", "pattern")
       ?? extractFieldFromPreview(preview, "query")

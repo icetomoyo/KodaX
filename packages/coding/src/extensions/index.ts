@@ -35,3 +35,7 @@ export {
   emitActiveExtensionEvent,
   runActiveExtensionHook,
 } from './runtime.js';
+
+export {
+  registerConfiguredMcpCapabilityProvider,
+} from '../capabilities/providers/mcp/index.js';

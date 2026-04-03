@@ -132,6 +132,15 @@ export const PROMPT_SECTION_REGISTRY: Record<string, KodaXPromptSectionDefinitio
     order: 100,
     stability: 'dynamic',
   },
+  'mcp-capability-context': {
+    id: 'mcp-capability-context',
+    title: 'MCP Capability Context',
+    owner: 'reasoning',
+    feature: 'FEATURE_035',
+    slot: 'capability-truth',
+    order: 200,
+    stability: 'dynamic',
+  },
   'long-running-overlay': {
     id: 'long-running-overlay',
     title: 'Long-Running Overlay',

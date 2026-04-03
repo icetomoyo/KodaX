@@ -52,6 +52,7 @@ import {
   KodaXEvents,
   KodaXReasoningMode,
   createExtensionRuntime,
+  registerConfiguredMcpCapabilityProvider,
   KODAX_DEFAULT_PROVIDER,
   KODAX_FEATURES_FILE,
   KODAX_PROGRESS_FILE,
@@ -85,6 +86,12 @@ export {
   resolveCliParallel,
 };
 export type { KodaXCommand, KodaXCommandContext };
+
+function hasConfiguredMcpServers(config: { mcp?: { servers?: Record<string, { connect?: string }> } }): boolean {
+  return Object.values(config.mcp?.servers ?? {}).some(
+    (server) => (server.connect ?? 'lazy') !== 'disabled',
+  );
+}
 // ============== CLI Help Topics ==============
 
 const CLI_HELP_TOPICS: Record<string, () => void> = {
@@ -977,6 +984,7 @@ async function main() {
     (value) => !dedupedCliExtensions.includes(value),
   );
   const activeExtensions = mergeConfiguredExtensions(dedupedCliExtensions, configuredOnlyExtensions);
+  const hasActiveMcp = hasConfiguredMcpServers(configWithExtensions);
   const selectedProvider = opts.provider ?? config.provider ?? KODAX_DEFAULT_PROVIDER;
   const selectedModel = resolveCliModelSelection(
     opts.provider,
@@ -1046,8 +1054,9 @@ async function main() {
 
   validateCliModeSelection(options, { resumeWithoutId: opts.resume === true });
 
-  if ((options.extensions?.length ?? 0) > 0) {
+  if ((options.extensions?.length ?? 0) > 0 || hasActiveMcp) {
     const extensionRuntime = createExtensionRuntime({ config });
+    await registerConfiguredMcpCapabilityProvider(extensionRuntime, configWithExtensions.mcp);
     const extensionLoader = extensionRuntime as typeof extensionRuntime & {
       loadExtensions: (
         paths: string[],

@@ -123,6 +123,27 @@ describe("tool-display", () => {
     )).toBe("code_search - query=NameService - provider=provider-1");
   });
 
+  it("formats mcp_search summaries with server and kind", () => {
+    expect(formatToolSummary(
+      "mcp_search",
+      { query: "filesystem", server: "local-fs", kind: "tool", limit: 4 },
+    )).toBe("mcp_search - query=filesystem - server=local-fs - kind=tool - limit=4");
+  });
+
+  it("formats mcp_describe summaries with capability id", () => {
+    expect(formatToolSummary(
+      "mcp_describe",
+      { id: "mcp:local-fs:tool:read_file" },
+    )).toBe("mcp_describe - mcp:local-fs:tool:read_file");
+  });
+
+  it("formats mcp_call summaries with arg count", () => {
+    expect(formatToolSummary(
+      "mcp_call",
+      { id: "mcp:local-fs:tool:read_file", args: { path: "README.md", mode: "text" } },
+    )).toBe("mcp_call - mcp:local-fs:tool:read_file - args=2");
+  });
+
   it("collapses repeated tool calls into a single summary", () => {
     const groups = collapseToolCalls([
       {

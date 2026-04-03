@@ -36,7 +36,11 @@ export type KodaXRetrievalToolName =
   | 'web_search'
   | 'web_fetch'
   | 'code_search'
-  | 'semantic_lookup';
+  | 'semantic_lookup'
+  | 'mcp_search'
+  | 'mcp_describe'
+  | 'mcp_call'
+  | 'mcp_read_resource';
 
 export type KodaXRetrievalScope = 'workspace' | 'remote';
 export type KodaXRetrievalTrust = 'workspace' | 'provider' | 'open-world';

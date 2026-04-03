@@ -97,6 +97,11 @@ export type {
   KodaXSessionOptions,
   KodaXContextTokenSnapshot,
   KodaXContextOptions,
+  KodaXMcpTransport,
+  KodaXMcpConnectMode,
+  KodaXMcpTrust,
+  KodaXMcpServerConfig,
+  KodaXMcpConfig,
   KodaXTaskCapabilityHint,
   KodaXTaskVerificationCriterion,
   KodaXRuntimeVerificationContract,
@@ -487,6 +492,7 @@ export {
   createExtensionRuntime,
   setActiveExtensionRuntime,
   getActiveExtensionRuntime,
+  registerConfiguredMcpCapabilityProvider,
 } from './extensions/index.js';
 
 // ============== Orchestration ==============

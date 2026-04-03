@@ -27,6 +27,10 @@ import { toolWebSearch } from './web-search.js';
 import { toolWebFetch } from './web-fetch.js';
 import { toolCodeSearch } from './code-search.js';
 import { toolSemanticLookup } from './semantic-lookup.js';
+import { toolMcpSearch } from './mcp-search.js';
+import { toolMcpDescribe } from './mcp-describe.js';
+import { toolMcpCall } from './mcp-call.js';
+import { toolMcpReadResource } from './mcp-read-resource.js';
 
 const TOOL_REGISTRY: ToolRegistry = new Map();
 let nextToolRegistrationId = 0;
@@ -267,6 +271,65 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['query'],
     },
     handler: toolSemanticLookup,
+  },
+  {
+    name: 'mcp_search',
+    description: 'Search active MCP tools, resources, and prompts through the shared capability runtime.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Search query to run against active MCP catalogs' },
+        server: { type: 'string', description: 'Optional MCP server id filter' },
+        kind: {
+          type: 'string',
+          enum: ['tool', 'resource', 'prompt'],
+          description: 'Optional MCP capability family filter',
+        },
+        limit: { type: 'number', description: 'Maximum number of search results to return' },
+      },
+      required: ['query'],
+    },
+    handler: toolMcpSearch,
+  },
+  {
+    name: 'mcp_describe',
+    description: 'Describe a specific MCP capability by id, including schemas, trust, and provenance.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'MCP capability id from mcp_search' },
+      },
+      required: ['id'],
+    },
+    handler: toolMcpDescribe,
+  },
+  {
+    name: 'mcp_call',
+    description: 'Invoke an MCP tool capability by id with structured arguments.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'MCP tool capability id from mcp_search' },
+        args: {
+          type: 'object',
+          description: 'Structured arguments for the MCP tool call',
+        },
+      },
+      required: ['id'],
+    },
+    handler: toolMcpCall,
+  },
+  {
+    name: 'mcp_read_resource',
+    description: 'Read an MCP resource capability by id.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'MCP resource capability id from mcp_search' },
+      },
+      required: ['id'],
+    },
+    handler: toolMcpReadResource,
   },
   {
     name: 'undo',

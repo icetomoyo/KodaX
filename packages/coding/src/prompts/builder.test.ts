@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { KODAX_FEATURES_FILE, KODAX_PROGRESS_FILE } from '../constants.js';
+import { createExtensionRuntime } from '../extensions/runtime.js';
 import { buildSystemPrompt, buildSystemPromptSnapshot } from './builder.js';
 
 async function createTempDir(prefix: string): Promise<string> {
@@ -194,5 +195,37 @@ describe('buildSystemPrompt', () => {
     expect(snapshot.sections.some((section) => section.id === 'long-running-overlay')).toBe(true);
     expect(snapshot.rendered).toContain('## Feature List (from feature_list.json)');
     expect(snapshot.rendered).toContain('## Long-Running Task Mode');
+  });
+
+  it('injects MCP capability truth when the extension runtime exposes it', async () => {
+    const executionCwd = await createTempDir('kodax-prompt-mcp-');
+    cleanupDirs.push(executionCwd);
+    const runtime = createExtensionRuntime();
+    runtime.registerCapabilityProvider({
+      id: 'mcp',
+      kinds: ['tool', 'resource', 'prompt'],
+      getPromptContext: () => [
+        '## MCP Capability Provider',
+        'Use mcp_search before calling mcp_call directly.',
+      ].join('\n'),
+    });
+
+    const snapshot = await buildSystemPromptSnapshot(
+      {
+        provider: 'openai',
+        extensionRuntime: runtime,
+        context: {
+          executionCwd,
+          gitRoot: executionCwd,
+        },
+      },
+      false,
+    );
+
+    expect(snapshot.sections.some((section) => section.id === 'mcp-capability-context')).toBe(true);
+    expect(snapshot.rendered).toContain('## MCP Capability Provider');
+    expect(snapshot.rendered).toContain('Use mcp_search before calling mcp_call directly.');
+
+    await runtime.dispose();
   });
 });

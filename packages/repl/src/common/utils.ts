@@ -30,6 +30,7 @@ import {
   type KodaXAgentMode,
   type KodaXReasoningMode,
   type KodaXReasoningOverride,
+  type KodaXMcpConfig,
   type KodaXCustomProviderConfig,
 } from '@kodax/coding';
 
@@ -579,6 +580,7 @@ export function loadConfig(): {
   providerModels?: Record<string, string[]>;
   customProviders?: KodaXCustomProviderConfig[];
   extensions?: string[];
+  mcp?: KodaXMcpConfig;
   repoIntelligenceMode?: 'auto' | 'off' | 'oss' | 'premium-shared' | 'premium-native';
   repointelEndpoint?: string;
   repointelBin?: string;
@@ -598,6 +600,7 @@ export function loadConfig(): {
         providerModels?: Record<string, string[]>;
         customProviders?: KodaXCustomProviderConfig[];
         extensions?: unknown;
+        mcp?: KodaXMcpConfig;
         repoIntelligenceMode?: 'auto' | 'off' | 'oss' | 'premium-shared' | 'premium-native';
         repointelEndpoint?: string;
         repointelBin?: string;
@@ -650,6 +653,7 @@ export function saveConfig(config: {
   providerModels?: Record<string, string[]>;
   customProviders?: KodaXCustomProviderConfig[];
   extensions?: string[];
+  mcp?: KodaXMcpConfig;
   repoIntelligenceMode?: 'auto' | 'off' | 'oss' | 'premium-shared' | 'premium-native';
   repointelEndpoint?: string;
   repointelBin?: string;

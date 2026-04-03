@@ -57,6 +57,10 @@ export { toolWebSearch } from './web-search.js';
 export { toolWebFetch } from './web-fetch.js';
 export { toolCodeSearch } from './code-search.js';
 export { toolSemanticLookup } from './semantic-lookup.js';
+export { toolMcpSearch } from './mcp-search.js';
+export { toolMcpDescribe } from './mcp-describe.js';
+export { toolMcpCall } from './mcp-call.js';
+export { toolMcpReadResource } from './mcp-read-resource.js';
 export {
   stripHtmlToText,
   extractHtmlTitle,
