@@ -3,17 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "ink-testing-library";
 import type { KeyInfo } from "../types.js";
 
-const {
-  moveMock,
-  clearMock,
-  resetHistoryMock,
-  handlerRef,
-} = vi.hoisted(() => ({
-  moveMock: vi.fn(),
-  clearMock: vi.fn(),
-  resetHistoryMock: vi.fn(),
+const { handlerRef, controllerHandleKeyMock, textInputPropsRef } = vi.hoisted(() => ({
   handlerRef: {
     current: undefined as ((key: KeyInfo) => boolean) | undefined,
+  },
+  controllerHandleKeyMock: vi.fn<(key: KeyInfo) => boolean>(),
+  textInputPropsRef: {
+    current: undefined as Record<string, unknown> | undefined,
   },
 }));
 
@@ -24,7 +20,10 @@ vi.mock("ink", () => ({
 }));
 
 vi.mock("./TextInput.js", () => ({
-  TextInput: () => null,
+  TextInput: (props: Record<string, unknown>) => {
+    textInputPropsRef.current = props;
+    return null;
+  },
 }));
 
 vi.mock("../contexts/KeypressContext.js", () => ({
@@ -37,47 +36,6 @@ vi.mock("../contexts/KeypressContext.js", () => ({
   },
 }));
 
-vi.mock("../hooks/useTextBuffer.js", () => ({
-  useTextBuffer: () => ({
-    buffer: { getAbsoluteOffset: () => 0 },
-    text: "",
-    cursor: { row: 0, col: 0 },
-    lines: [""],
-    setText: vi.fn(),
-    replaceRange: vi.fn(),
-    clear: clearMock,
-    move: moveMock,
-    insert: vi.fn(),
-    backspace: vi.fn(),
-    newline: vi.fn(),
-    delete: vi.fn(),
-  }),
-}));
-
-vi.mock("../hooks/useInputHistory.js", () => ({
-  useInputHistory: () => ({
-    add: vi.fn(),
-    navigateUp: vi.fn(),
-    navigateDown: vi.fn(),
-    reset: resetHistoryMock,
-    saveTempInput: vi.fn(),
-  }),
-}));
-
-vi.mock("../hooks/useAutocomplete.js", () => ({
-  useAutocomplete: () => ({
-    state: { visible: false },
-    suggestions: [],
-    handleInput: vi.fn(),
-    handleTab: vi.fn(),
-    handleEnter: vi.fn(),
-    handleUp: vi.fn(),
-    handleDown: vi.fn(),
-    handleEscape: vi.fn(),
-  }),
-  useAutocompleteContext: () => null,
-}));
-
 vi.mock("../themes/index.js", () => ({
   getTheme: () => ({
     colors: {
@@ -88,8 +46,13 @@ vi.mock("../themes/index.js", () => ({
   }),
 }));
 
-vi.mock("../utils/autocomplete-replacement.js", () => ({
-  buildAutocompleteReplacement: vi.fn(),
+vi.mock("../utils/prompt-input-controller.js", () => ({
+  usePromptInputController: () => ({
+    text: "",
+    cursor: { row: 2, col: 3 },
+    lines: ["one", "two"],
+    handleKey: controllerHandleKeyMock,
+  }),
 }));
 
 import { InputPrompt } from "./InputPrompt.js";
@@ -110,28 +73,40 @@ describe("InputPrompt", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     handlerRef.current = undefined;
+    textInputPropsRef.current = undefined;
     render(<InputPrompt onSubmit={vi.fn()} />);
     expect(handlerRef.current).toBeDefined();
   });
 
-  it("does not consume unhandled ctrl shortcuts", () => {
-    const handledThinking = handlerRef.current?.(
-      createKey({ name: "t", sequence: "\u0014", ctrl: true }),
-    );
-    const handledParallel = handlerRef.current?.(
-      createKey({ name: "p", sequence: "\u0010", ctrl: true }),
-    );
+  it("delegates key handling to the prompt input controller", () => {
+    const key = createKey({ name: "a", sequence: "a", insertable: true });
+    controllerHandleKeyMock.mockReturnValueOnce(true);
 
-    expect(handledThinking).toBe(false);
-    expect(handledParallel).toBe(false);
-  });
-
-  it("still handles local ctrl navigation shortcuts", () => {
-    const handled = handlerRef.current?.(
-      createKey({ name: "a", sequence: "\u0001", ctrl: true }),
-    );
+    const handled = handlerRef.current?.(key);
 
     expect(handled).toBe(true);
-    expect(moveMock).toHaveBeenCalledWith("home");
+    expect(controllerHandleKeyMock).toHaveBeenCalledWith(key);
+  });
+
+  it("preserves unhandled keys for lower-priority handlers", () => {
+    const key = createKey({ name: "t", sequence: "\u0014", ctrl: true });
+    controllerHandleKeyMock.mockReturnValueOnce(false);
+
+    const handled = handlerRef.current?.(key);
+
+    expect(handled).toBe(false);
+    expect(controllerHandleKeyMock).toHaveBeenCalledWith(key);
+  });
+
+  it("renders the text input from controller state", () => {
+    expect(textInputPropsRef.current).toMatchObject({
+      lines: ["one", "two"],
+      cursorRow: 2,
+      cursorCol: 3,
+      prompt: ">",
+      placeholder: "Type a message...",
+      focus: true,
+      theme: "dark",
+    });
   });
 });
