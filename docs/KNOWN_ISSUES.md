@@ -48,6 +48,8 @@ _Last Updated: 2026-03-28_
 | 103 | Low | Resolved | Managed-task planning recomputes repo routing signals in the same workspace | v0.7.5 | v0.7.5 | 2026-03-28 | 2026-03-28 |
 | 104 | Low | Resolved | Repo-intelligence cache JSON is read without runtime shape validation | v0.7.5 | v0.7.5 | 2026-03-28 | 2026-03-28 |
 
+| 105 | Medium | Open | kodax -c 历史记录未注入 LLM 上下文 - resume 路径可能存在 gitRoot 过滤不一致 | v0.7.14 | - | 2026-04-03 | - |
+
 ---
 
 ## Issue Details
@@ -1716,16 +1718,86 @@ _Last Updated: 2026-03-28_
   - `packages/coding/src/repo-intelligence/index.ts`
   - `packages/coding/src/repo-intelligence/query.ts`
 
+
+### 105: kodax -c 历史记录未注入 LLM 上下文 - resume 路径可能存在 gitRoot 过滤不一致 (OPEN)
+- **Priority**: Medium
+- **Status**: Open
+- **Introduced**: v0.7.14
+- **Created**: 2026-04-03
+
+- **Original Problem**:
+  用户报告使用 `kodax -c`（继续最近会话）后，之前的历史记录没有正常注入 LLM 上下文。
+  LLM 似乎"忘记"了之前的对话内容，表现为不认识之前讨论过的内容。
+
+- **Expected Behavior**:
+  - `kodax -c` 应该自动加载当前目录最近的会话历史
+  - 历史消息应该作为 `initialMessages` 注入 LLM 上下文
+  - UI 应显示 `[Continuing session: xxx]` 横幅
+
+- **Code Path Analysis**:
+
+  代码链完整，但存在多个潜在故障点：
+
+  **1. CLI → buildSessionOptions** (`src/cli_option_helpers.ts:295-297`)
+  - 设置 `resume: true`，未传 `autoResume`。✅ 正确
+
+  **2. InkREPL 交互模式** (`packages/repl/src/ui/InkREPL.tsx:3527-3543`)
+  - 使用 `storage.list(gitRoot)` 过滤当前目录会话。✅ 正确
+
+  **3. agent.ts runKodaX** (`packages/coding/src/agent.ts:959-962`)
+  - ⚠️ **潜在问题 1**: `storage.list()` 不传 `gitRoot`，虽然内部会调用 `getGitRoot()` 获取默认值，
+    但在 managed task worker 路径中 cwd 可能不是用户的项目目录，导致找不到匹配会话。
+
+  **4. initialMessages 优先级** (`packages/coding/src/agent.ts:979-982`)
+  - ✅ 逻辑正确：`initialMessages` 优先，否则从 storage 加载
+
+  **5. managed task worker 路径** (`packages/coding/src/task-engine.ts:4091-4096`)
+  - ⚠️ **潜在问题 2**: compact 策略下 `initialMessages` 设为 `undefined`，不传递原始历史。
+    虽然这是设计意图（compact 应该用 compactInitialMessages），但可能导致历史丢失。
+
+  **6. storage.list gitRoot 过滤** (`packages/repl/src/interactive/storage.ts:501-504`)
+  - ⚠️ **潜在问题 3**: 如果会话保存时没有记录 gitRoot（旧版本），
+    `sessionGitRoot` 为空字符串，会被过滤掉，导致找不到任何会话。
+
+- **Ambiguities**:
+  1. 用户描述可能指 LLM 没有接收历史（代码路径完整但可能有运行时故障）
+  2. 也可能指 UI 没有显示历史（不同的显示问题）
+  3. 需确认 `[Continuing session: xxx]` 横幅是否出现，以判断是加载阶段还是注入阶段的问题
+  4. 可能与特定 memory strategy 有关（compact vs continuous）
+
+- **Reproduction Steps** (待确认):
+  1. 在项目目录中启动 `kodax` 并进行多轮对话
+  2. 退出后执行 `kodax -c`
+  3. 检查是否出现 `[Continuing session: xxx]` 横幅
+  4. 询问 LLM 之前讨论的内容，确认是否记得
+
+- **Proposed Investigation**:
+  1. 添加调试日志确认 `storage.list()` 在 `agent.ts` 中是否返回有效会话
+  2. 确认 `initialMessages` 是否正确传递到 `runKodaX`
+  3. 检查旧版本保存的会话是否缺少 `gitRoot` 字段
+  4. 对比 `InkREPL` 和 `agent.ts` 中 `storage.list()` 的参数差异
+
+- **Context**:
+  - `src/cli_option_helpers.ts` - buildSessionOptions
+  - `src/kodax_cli.ts` - CLI -c 选项处理
+  - `packages/repl/src/ui/InkREPL.tsx` - 交互模式 session resume
+  - `packages/coding/src/agent.ts` - runKodaX session loading
+  - `packages/coding/src/task-engine.ts` - createWorkerSession
+  - `packages/repl/src/interactive/storage.ts` - FileSessionStorage.list
+
 ---
 
 ## Summary
-- Total: 31 (10 Open, 21 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 32 (11 Open, 21 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
----
-
 ## Changelog
+
+### 2026-04-03: Issue 105 added
+- Added 105: kodax -c 历史记录未注入 LLM 上下文 - resume 路径可能存在 gitRoot 过滤不一致 (Medium Priority)
+- 代码链分析完成，确认代码路径完整但存在多个潜在故障点
+- 主要关注: agent.ts 中 storage.list() 未传 gitRoot 参数、旧会话缺少 gitRoot 字段、compact 策略下 initialMessages 不传递
 
 ### 2026-03-28: Issues 102-104 resolved
 - Resolved 102: Repo-intelligence now reuses the same source-aware file collector across overview and query/index layers

@@ -94,6 +94,7 @@ export type {
   KodaXSessionUiHistoryItem,
   KodaXSessionUiHistoryItemType,
   KodaXEvents,
+  ProviderRecoveryEvent,
   KodaXSessionOptions,
   KodaXContextTokenSnapshot,
   KodaXContextOptions,
@@ -561,3 +562,39 @@ export type {
   AgentsFile,
   LoadAgentsOptions,
 } from './context/agents-loader.js';
+
+
+// ============== Resilience (Feature 045) ==============
+export type {
+  ResilienceErrorClass,
+  FailureStage,
+  RecoveryAction,
+  RecoveryLadderStep,
+  ResilienceClassification,
+  ProviderExecutionState,
+  RecoveryDecision,
+  RecoveryResult,
+  ProviderResilienceConfig,
+  ProviderResiliencePolicy,
+} from './resilience/types.js';
+
+export {
+  DEFAULT_RESILIENCE_CONFIG,
+  resolveResilienceConfig,
+} from './resilience/config.js';
+
+export {
+  classifyResilienceError,
+} from './resilience/classifier.js';
+
+export {
+  StableBoundaryTracker,
+} from './resilience/stable-boundary.js';
+
+export {
+  ProviderRecoveryCoordinator,
+} from './resilience/recovery-coordinator.js';
+
+export {
+  reconstructMessagesWithToolGuard,
+} from './resilience/tool-guard.js';

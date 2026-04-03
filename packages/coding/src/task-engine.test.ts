@@ -576,11 +576,15 @@ describe('runManagedTask', () => {
       '请快速 review 一下这个很小的改动',
     );
 
-    expect(mockRunDirectKodaX).toHaveBeenCalledTimes(2);
+    expect(mockRunDirectKodaX).toHaveBeenCalledTimes(1);
     expect(result.managedTask?.contract.harnessProfile).toBe('H0_DIRECT');
-    expect(result.managedTask?.roleAssignments.map((item) => item.role)).toEqual(['generator']);
+    expect(result.managedTask?.roleAssignments.map((item) => item.role)).toEqual(['scout']);
     expect(result.routingDecision?.harnessProfile).toBe('H0_DIRECT');
-    expect(result.lastText.trim().length).toBeGreaterThan(0);
+    expect(result.lastText).toContain('Scout determined this is small enough to answer directly.');
+
+    // Verify Scout H0 has no tool restrictions (undefined toolPolicy)
+    const scoutAssignment = result.managedTask?.roleAssignments.find((a) => a.role === 'scout');
+    expect(scoutAssignment?.toolPolicy).toBeUndefined();
   });
 
   it('runs tactical review child fan-out inside AMA H0 and keeps the parent as final authority', async () => {

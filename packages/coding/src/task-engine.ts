@@ -2210,6 +2210,12 @@ function buildManagedWorkerToolPolicy(
 
   switch (role) {
     case 'scout':
+      // DD §5.3: "Scout can complete H0_DIRECT itself when it already has enough evidence."
+      // When Scout is the terminal H0 worker, it needs full tool access (undefined = no restrictions).
+      // For H1/H2 pre-harness Scout, keep the traditional read-only policy.
+      if (harnessProfile === 'H0_DIRECT') {
+        return undefined;
+      }
       return finalizeToolPolicy({
         summary: 'Scout is a pre-harness guide. It may inspect scope facts and a small amount of overview evidence, but must not deep-page raw diffs, verify claims file-by-file, mutate files, or execute implementation steps.',
         blockedTools: [...WRITE_ONLY_TOOLS],
@@ -9388,6 +9394,7 @@ export async function runManagedTask(
   );
   const initialBudgetController = createManagedBudgetController(managedOptions, plan, agentMode);
 
+  const scoutInitialHarnessProfile = finalRoutingDecision.harnessProfile;
   managedOptions.events?.onManagedTaskStatus?.({
     agentMode,
     harnessProfile: finalRoutingDecision.harnessProfile,
@@ -9444,7 +9451,9 @@ export async function runManagedTask(
     plan.decision,
     managedPlanning.reviewTarget,
   );
-  if (shouldRunTacticalReviewFanout(
+  const scoutDowngradedToDirect = scoutInitialHarnessProfile !== 'H0_DIRECT'
+    && scoutExecution.directive.confirmedHarness === 'H0_DIRECT';
+  if (!scoutDowngradedToDirect && shouldRunTacticalReviewFanout(
     agentMode,
     getManagedTaskSurface(managedOptions),
     plan,
@@ -9465,7 +9474,7 @@ export async function runManagedTask(
     );
   }
 
-  if (shouldRunTacticalInvestigationFanout(
+  if (!scoutDowngradedToDirect && shouldRunTacticalInvestigationFanout(
     agentMode,
     getManagedTaskSurface(managedOptions),
     plan,
@@ -9486,7 +9495,7 @@ export async function runManagedTask(
     );
   }
 
-  if (shouldRunTacticalLookupFanout(
+  if (!scoutDowngradedToDirect && shouldRunTacticalLookupFanout(
     agentMode,
     getManagedTaskSurface(managedOptions),
     plan,

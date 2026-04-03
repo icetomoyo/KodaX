@@ -42,6 +42,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { ErrorCategory } from './error-classification.js';
 import { withRetry } from './retry-handler.js';
+import { resolveResilienceConfig, classifyResilienceError } from './resilience/index.js';
 import {
   buildProviderPolicyHintsForDecision,
   createReasoningPlan,
@@ -1356,8 +1357,10 @@ export async function runKodaX(
 
       // 流式调用 Provider - with automatic retry for transient errors
       // 注入 API 硬超时保护：防止大型 payload 导致 API 静默丢包引发无限等待
-      const API_HARD_TIMEOUT_MS = 600_000; // Issue 084: 提升到 10 分钟硬超时
-      const API_IDLE_TIMEOUT_MS = 60_000;  // Issue 084: 60 秒空闲/停滞超时，如果有 delta 刷新则重置
+      // Feature 045: resilience config replaces hardcoded timeouts
+      const resilienceCfg = resolveResilienceConfig(currentProviderName);
+      const API_HARD_TIMEOUT_MS = resilienceCfg.requestTimeoutMs; // Issue 084: 提升到 10 分钟硬超时
+      const API_IDLE_TIMEOUT_MS = resilienceCfg.streamIdleTimeoutMs;  // Issue 084: 60 秒空闲/停滞超时，如果有 delta 刷新则重置
 
       const result = await withRetry(
         async () => {
@@ -1447,6 +1450,26 @@ export async function runKodaX(
           shouldCleanup: true,
         },
         (attempt, maxRetries, delay, error) => {
+          // Feature 045: emit structured recovery event
+          try {
+            const classified = classifyResilienceError(error);
+            const isPreDelta = classified.failureStage === 'before_first_delta'
+              || classified.failureStage === 'before_request_accepted';
+            events.onProviderRecovery?.({
+              stage: classified.failureStage,
+              errorClass: classified.errorClass,
+              attempt,
+              maxAttempts: maxRetries,
+              delayMs: delay,
+              recoveryAction: classified.retryable
+                ? (isPreDelta ? 'fresh_connection_retry' as const : 'stable_boundary_retry' as const)
+                : 'manual_continue' as const,
+              ladderStep: classified.retryable ? (isPreDelta ? 1 : 2) : 4,
+              fallbackUsed: false,
+            });
+          } catch { /* graceful degradation */ }
+
+          // Legacy onRetry (backward compatible)
           events.onRetry?.(
             `${describeTransientProviderRetry(error)} · retry ${attempt}/${maxRetries} in ${Math.round(delay / 1000)}s`,
             attempt,
