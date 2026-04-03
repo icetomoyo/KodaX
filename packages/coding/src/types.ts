@@ -34,6 +34,11 @@ import type {
   KodaXMutationSurface,
   KodaXAssuranceIntent,
   KodaXHarnessProfile,
+  KodaXAmaProfile,
+  KodaXAmaTactic,
+  KodaXAmaFanoutClass,
+  KodaXAmaFanoutPolicy,
+  KodaXAmaControllerDecision,
   KodaXTaskRoutingDecision,
   KodaXThinkingBudgetMap,
   KodaXTaskBudgetOverrides,
@@ -91,6 +96,11 @@ export type {
   KodaXMutationSurface,
   KodaXAssuranceIntent,
   KodaXHarnessProfile,
+  KodaXAmaProfile,
+  KodaXAmaTactic,
+  KodaXAmaFanoutClass,
+  KodaXAmaFanoutPolicy,
+  KodaXAmaControllerDecision,
   KodaXReviewScale,
   KodaXTaskRoutingDecision,
   KodaXThinkingBudgetMap,
@@ -307,6 +317,84 @@ export interface KodaXTaskToolPolicy {
   blockedTools?: string[];
   allowedShellPatterns?: string[];
   allowedWritePathPatterns?: string[];
+}
+
+export interface KodaXChildContextBundle {
+  id: string;
+  fanoutClass: KodaXAmaFanoutClass;
+  objective: string;
+  scopeSummary?: string;
+  evidenceRefs: string[];
+  constraints: string[];
+  readOnly: boolean;
+}
+
+export interface KodaXChildAgentResult {
+  childId: string;
+  fanoutClass: KodaXAmaFanoutClass;
+  status: 'completed' | 'blocked' | 'failed';
+  disposition: 'candidate' | 'valid' | 'false-positive' | 'needs-more-evidence';
+  summary: string;
+  evidenceRefs: string[];
+  contradictions: string[];
+  artifactPaths?: string[];
+  sessionId?: string;
+}
+
+export interface KodaXParentReductionContract {
+  owner: 'parent';
+  strategy: 'direct-parent' | 'evaluator-assisted' | 'reducer-child';
+  collapseChildTranscripts: boolean;
+  summary: string;
+  requiredArtifacts: string[];
+}
+
+export interface KodaXFanoutSchedulerInput {
+  profile: KodaXAmaProfile;
+  fanoutClass: KodaXAmaFanoutClass;
+  maxChildren?: number;
+  bundles: KodaXChildContextBundle[];
+  reductionStrategy: KodaXParentReductionContract['strategy'];
+}
+
+export type KodaXFanoutBranchLifecycle = 'scheduled' | 'deferred' | 'completed' | 'cancelled';
+
+export interface KodaXFanoutBranchRecord {
+  bundleId: string;
+  status: KodaXFanoutBranchLifecycle;
+  workerId?: string;
+  childId?: string;
+  reason?: string;
+}
+
+export type KodaXFanoutBranchTransition =
+  | {
+    type: 'assign';
+    bundleId: string;
+    workerId: string;
+  }
+  | {
+    type: 'complete';
+    bundleId: string;
+    childId?: string;
+  }
+  | {
+    type: 'cancel';
+    bundleId: string;
+    reason: string;
+  };
+
+export interface KodaXFanoutSchedulerPlan {
+  enabled: boolean;
+  profile: KodaXAmaProfile;
+  fanoutClass: KodaXAmaFanoutClass;
+  branches: KodaXFanoutBranchRecord[];
+  scheduledBundleIds: string[];
+  deferredBundleIds: string[];
+  maxParallel: number;
+  mergeStrategy: KodaXParentReductionContract['strategy'];
+  cancellationPolicy: 'none' | 'winner-cancel' | 'budget-cancel';
+  reason: string;
 }
 
 export type KodaXAgentMode = 'ama' | 'sa';

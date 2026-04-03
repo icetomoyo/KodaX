@@ -210,6 +210,37 @@ export type KodaXReviewScale =
   | 'large'
   | 'massive';
 
+export type KodaXAmaProfile = 'tactical' | 'managed';
+
+export type KodaXAmaTactic =
+  | 'direct'
+  | 'child-fanout'
+  | 'planning-pass'
+  | 'verification-pass'
+  | 'repair-loop';
+
+export type KodaXAmaFanoutClass =
+  | 'finding-validation'
+  | 'evidence-scan'
+  | 'module-triage'
+  | 'hypothesis-check';
+
+export interface KodaXAmaFanoutPolicy {
+  admissible: boolean;
+  class?: KodaXAmaFanoutClass;
+  reason: string;
+  maxChildren?: number;
+  requiresReadOnly?: boolean;
+}
+
+export interface KodaXAmaControllerDecision {
+  profile: KodaXAmaProfile;
+  tactics: KodaXAmaTactic[];
+  fanout: KodaXAmaFanoutPolicy;
+  reason: string;
+  upgradeTriggers: string[];
+}
+
 export interface KodaXTaskRoutingDecision {
   primaryTask: KodaXTaskType;
   secondaryTask?: KodaXTaskType;

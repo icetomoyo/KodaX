@@ -53,6 +53,11 @@ export type {
   KodaXTaskType,
   KodaXExecutionMode,
   KodaXRiskLevel,
+  KodaXAmaProfile,
+  KodaXAmaTactic,
+  KodaXAmaFanoutClass,
+  KodaXAmaFanoutPolicy,
+  KodaXAmaControllerDecision,
   KodaXReviewScale,
   KodaXTaskRoutingDecision,
   KodaXThinkingBudgetMap,
@@ -116,6 +121,14 @@ export type {
   KodaXTaskEvidenceEntry,
   KodaXTaskEvidenceBundle,
   KodaXTaskToolPolicy,
+  KodaXChildContextBundle,
+  KodaXChildAgentResult,
+  KodaXParentReductionContract,
+  KodaXFanoutSchedulerInput,
+  KodaXFanoutBranchLifecycle,
+  KodaXFanoutBranchTransition,
+  KodaXFanoutBranchRecord,
+  KodaXFanoutSchedulerPlan,
   KodaXTaskVerificationContract,
   KodaXOrchestrationVerdict,
   KodaXManagedTask,
@@ -363,6 +376,17 @@ export {
 } from './agent.js';
 
 export {
+  buildFanoutSchedulerPlan,
+  createFanoutSchedulerInput,
+  applyFanoutBranchTransition,
+  countActiveFanoutBranches,
+  getFanoutBranch,
+  assignFanoutBranchWorker,
+  markFanoutBranchCompleted,
+  markFanoutBranchCancelled,
+} from './fanout-scheduler.js';
+
+export {
   runManagedTask,
 } from './task-engine.js';
 
@@ -432,6 +456,7 @@ export {
   resolveReasoningMode,
   reasoningModeToDepth,
   inferTaskType,
+  buildAmaControllerDecision,
   buildFallbackRoutingDecision,
   buildProviderPolicyHintsForDecision,
   buildPromptOverlay,
