@@ -36,3 +36,63 @@ export type { SuggestionsDisplayProps } from "./SuggestionsDisplay.js";
 
 export { PendingInputsIndicator } from "./PendingInputsIndicator.js";
 export type { PendingInputsIndicatorProps } from "./PendingInputsIndicator.js";
+
+export { FullscreenTranscriptLayout } from "./FullscreenTranscriptLayout.js";
+export type { FullscreenTranscriptLayoutProps } from "./FullscreenTranscriptLayout.js";
+
+export { TranscriptViewport } from "./TranscriptViewport.js";
+export type { TranscriptViewportProps } from "./TranscriptViewport.js";
+
+export { PromptComposer } from "./PromptComposer.js";
+export type { PromptComposerProps } from "./PromptComposer.js";
+
+export {
+  PromptFooter,
+  PromptFooterLeftSide,
+  PromptFooterRightSide,
+} from "./PromptFooter.js";
+export type {
+  PromptFooterProps,
+  PromptFooterSurfaceItem,
+  PromptFooterLeftSideProps,
+  PromptFooterRightSideProps,
+} from "./PromptFooter.js";
+
+export { PromptHelpMenu } from "./PromptHelpMenu.js";
+export type { PromptHelpMenuProps } from "./PromptHelpMenu.js";
+
+export { PromptSuggestionsSurface } from "./PromptSuggestionsSurface.js";
+export type { PromptSuggestionsSurfaceProps } from "./PromptSuggestionsSurface.js";
+
+export { DialogSurface } from "./DialogSurface.js";
+export type {
+  DialogSurfaceProps,
+  DialogSurfaceConfirmState,
+  DialogSurfaceUIRequestState,
+  DialogSurfaceHistorySearchState,
+  DialogSelectOption,
+} from "./DialogSurface.js";
+
+export { BackgroundTaskBar } from "./BackgroundTaskBar.js";
+export type { BackgroundTaskBarProps, BackgroundTaskBarItem } from "./BackgroundTaskBar.js";
+
+export { QueuedCommandsSurface } from "./QueuedCommandsSurface.js";
+export type { QueuedCommandsSurfaceProps } from "./QueuedCommandsSurface.js";
+
+export { StatusNoticesSurface } from "./StatusNoticesSurface.js";
+export type { StatusNoticesSurfaceProps } from "./StatusNoticesSurface.js";
+
+export { NotificationsSurface } from "./NotificationsSurface.js";
+export type {
+  NotificationsSurfaceProps,
+  NotificationSurfaceItem,
+} from "./NotificationsSurface.js";
+
+export { StashNotice } from "./StashNotice.js";
+export type { StashNoticeProps } from "./StashNotice.js";
+
+export { MessageSelector } from "./MessageSelector.js";
+export type { MessageSelectorProps } from "./MessageSelector.js";
+
+export { MessageActions } from "./MessageActions.js";
+export type { MessageActionsProps } from "./MessageActions.js";

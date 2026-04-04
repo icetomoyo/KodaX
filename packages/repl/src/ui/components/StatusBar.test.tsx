@@ -2,6 +2,7 @@ import React from "react";
 import { describe, expect, it } from "vitest";
 import { render } from "ink-testing-library";
 import { StatusBar, getStatusBarText } from "./StatusBar.js";
+import { buildStatusBarViewModel } from "../view-models/status-bar.js";
 
 describe("StatusBar", () => {
   it("includes thinking char counts in budget text", () => {
@@ -51,6 +52,30 @@ describe("StatusBar", () => {
 
     expect(lastFrame()).toContain("Bash");
     expect(lastFrame()).not.toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
+  });
+
+  it("preserves the current visible status text when rendering from the view model", () => {
+    const props = {
+      sessionId: "session-1",
+      permissionMode: "accept-edits" as const,
+      agentMode: "ama" as any,
+      provider: "anthropic",
+      model: "sonnet",
+      currentTool: "shell_command",
+      toolInputCharCount: 12,
+      currentIteration: 3,
+      maxIter: 9,
+    };
+
+    const expectedText = getStatusBarText(props);
+    const { lastFrame } = render(
+      <StatusBar
+        {...props}
+        viewModel={buildStatusBarViewModel(props)}
+      />,
+    );
+
+    expect(lastFrame()).toContain(expectedText);
   });
 
   it("can hide busy status while preserving the rest of the bar", () => {
@@ -152,6 +177,7 @@ describe("StatusBar", () => {
 
     expect(text).toContain("H2 - Planner");
     expect(text).not.toContain("AMA H2 - Planner");
+    expect(text).toContain("H2 - Planner - Bash (12 chars)");
     expect(text).toContain("Bash (12 chars)");
     expect(text).toContain("session-1 | H2 - Planner");
   });

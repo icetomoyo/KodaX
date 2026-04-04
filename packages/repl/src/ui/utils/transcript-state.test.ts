@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   buildTranscriptBrowseHint,
+  closeTranscriptSearch,
   createTranscriptDisplayState,
   enterTranscriptHistory,
   exitTranscriptHistory,
+  openTranscriptSearch,
+  setTranscriptSearchAnchor,
+  setTranscriptSearchMatchIndex,
   shouldPauseLiveTranscript,
   shouldWindowTranscript,
   supportsTranscriptMouseHistory,
@@ -61,5 +65,44 @@ describe("transcript-state", () => {
 
     expect(buildTranscriptBrowseHint(active)).toContain("Browsing transcript history");
     expect(buildTranscriptBrowseHint(createTranscriptDisplayState("xtermjs_host"))).toBeUndefined();
+  });
+
+  it("restores live follow when transcript search is cancelled from follow-bottom", () => {
+    const initial = createTranscriptDisplayState("native_vt");
+    const searching = openTranscriptSearch(initial);
+    const closed = closeTranscriptSearch(searching, { restoreFollowMode: true });
+
+    expect(searching.followMode).toBe("browsing-history");
+    expect(searching.searchMode).toBe("history");
+    expect(closed.followMode).toBe("follow-bottom");
+    expect(closed.searchMode).toBe("closed");
+    expect(closed.selectedItemId).toBeUndefined();
+  });
+
+  it("preserves history browsing when transcript search closes after opening in history mode", () => {
+    const browsing = enterTranscriptHistory(createTranscriptDisplayState("native_vt"));
+    const searching = openTranscriptSearch(browsing);
+    const closed = closeTranscriptSearch(searching, { restoreFollowMode: true });
+
+    expect(closed.followMode).toBe("browsing-history");
+    expect(closed.searchMode).toBe("closed");
+  });
+
+  it("tracks transcript search anchor and current match separately from follow mode", () => {
+    const initial = createTranscriptDisplayState("native_vt");
+    const anchored = setTranscriptSearchAnchor(initial, "assistant-1");
+    const indexed = setTranscriptSearchMatchIndex(anchored, 3);
+    const searching = openTranscriptSearch(indexed, { anchorItemId: "assistant-1", initialMatchIndex: 3 });
+
+    expect(searching.searchAnchorItemId).toBe("assistant-1");
+    expect(searching.currentMatchIndex).toBe(3);
+    expect(searching.followMode).toBe("browsing-history");
+  });
+
+  it("allows transcript search to keep the query active while clearing the current match", () => {
+    const initial = createTranscriptDisplayState("native_vt");
+    const searching = setTranscriptSearchMatchIndex(openTranscriptSearch(initial), -1);
+
+    expect(searching.currentMatchIndex).toBe(-1);
   });
 });

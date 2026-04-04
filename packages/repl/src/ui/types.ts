@@ -27,11 +27,15 @@ export interface KeyInfo {
 
 export type { CursorPosition };
 
+export type PromptEditingMode = "idle" | "typing" | "pasting";
+
 export interface UseTextBufferReturn {
   buffer: import("./utils/text-buffer.js").TextBuffer;
   text: string;
   cursor: CursorPosition;
   lines: string[];
+  isPasting: boolean;
+  editingMode: PromptEditingMode;
   setText: (text: string) => void;
   replaceRange: (start: number, end: number, replacement: string) => void;
   insert: (text: string, options?: { paste?: boolean }) => void;
@@ -40,6 +44,9 @@ export interface UseTextBufferReturn {
   delete: () => void;
   move: (direction: "up" | "down" | "left" | "right" | "home" | "end") => void;
   moveToEnd: () => void;
+  killLineRight: () => void;
+  killLineLeft: () => void;
+  deleteWordLeft: () => void;
   clear: () => void;
   undo: () => boolean;
   redo: () => boolean;

@@ -364,6 +364,38 @@ describe("transcript-layout", () => {
     expect(reviewRows.map((row) => row.text).join("\n")).toContain("Showing diff lines 1171-1320 of 3096");
   });
 
+  it("shows detailed tool input previews when the transcript is expanded", () => {
+    const rows = buildTranscriptRows({
+      items: [
+        {
+          id: "tool-group-input",
+          type: "tool_group",
+          timestamp: Date.now(),
+          tools: [
+            {
+              id: "tool-input-1",
+              name: "changed_diff",
+              status: ToolCallStatus.Success,
+              startTime: Date.now(),
+              endTime: Date.now() + 10,
+              input: {
+                path: "packages/repl/src/ui/InkREPL.tsx",
+                offset: 42,
+                limit: 80,
+              },
+            },
+          ],
+        },
+      ],
+      viewportWidth: 100,
+      showDetailedTools: true,
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text).toContain("input:");
+    expect(text).toContain("\"path\": \"packages/repl/src/ui/InkREPL.tsx\"");
+  });
+
   it("shows compact live tool summaries when tool input preview is available", () => {
     const rows = buildTranscriptRows({
       items: [],

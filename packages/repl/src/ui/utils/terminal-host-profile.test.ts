@@ -40,6 +40,31 @@ describe("terminal-host-profile", () => {
       ownsViewportByDefault: true,
       supportsMouseTracking: true,
       bufferingMode: "live",
+      supportsFullscreenLayout: true,
+      supportsOverlaySurface: true,
+      supportsSelection: true,
+      supportsCopyOnSelect: true,
+      supportsWheelHistory: true,
+      supportsViewportChrome: true,
+      supportsSearchViewport: true,
+      supportsStickyPrompt: true,
+    });
+  });
+
+  it("keeps degraded hosts on the conservative non-selection fallback path", () => {
+    expect(getTerminalHostCapabilities("degraded_vt")).toEqual({
+      profile: "degraded_vt",
+      ownsViewportByDefault: false,
+      supportsMouseTracking: false,
+      bufferingMode: "buffered-fallback",
+      supportsFullscreenLayout: false,
+      supportsOverlaySurface: false,
+      supportsSelection: false,
+      supportsCopyOnSelect: false,
+      supportsWheelHistory: false,
+      supportsViewportChrome: false,
+      supportsSearchViewport: false,
+      supportsStickyPrompt: false,
     });
   });
 });
