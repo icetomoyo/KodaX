@@ -17,9 +17,14 @@ interface StatusBarRendererProps extends StatusBarProps {
 }
 
 function resolveViewModelSegmentColor(
-  tone: StatusBarViewModel["segments"][number]["tone"] | undefined,
+  segment: StatusBarViewModel["segments"][number],
   theme: ReturnType<typeof getTheme>,
 ): string {
+  if (segment.color) {
+    const themeColor = theme.colors[segment.color as keyof typeof theme.colors];
+    return themeColor ?? segment.color;
+  }
+  const tone = segment.tone;
   switch (tone) {
     case "primary":
       return theme.colors.primary;
@@ -54,7 +59,7 @@ export const StatusBar: React.FC<StatusBarRendererProps> = ({
       {resolvedViewModel.segments.map((segment, index) => (
         <React.Fragment key={segment.id}>
           <Text
-            color={resolveViewModelSegmentColor(segment.tone, theme)}
+            color={resolveViewModelSegmentColor(segment, theme)}
             bold={segment.bold}
           >
             {segment.text}

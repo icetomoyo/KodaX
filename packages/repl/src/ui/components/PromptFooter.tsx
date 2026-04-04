@@ -2,6 +2,8 @@ import React from "react";
 import { Box, Text } from "ink";
 import { getTheme } from "../themes/index.js";
 
+const ITEM_SEPARATOR = " \u00B7 ";
+
 export interface PromptFooterSurfaceItem {
   id: string;
   label: string;
@@ -28,7 +30,7 @@ export const PromptFooterLeftSide: React.FC<PromptFooterLeftSideProps> = ({
           <Text color={item.accent ? theme.colors.accent : theme.colors.dim} bold={item.accent}>
             {item.label}
           </Text>
-          {index < visibleItems.length - 1 ? <Text dimColor> · </Text> : null}
+          {index < visibleItems.length - 1 ? <Text dimColor>{ITEM_SEPARATOR}</Text> : null}
         </React.Fragment>
       ))}
     </Box>
@@ -55,7 +57,7 @@ export const PromptFooterRightSide: React.FC<PromptFooterRightSideProps> = ({
           <Text color={item.accent ? theme.colors.primary : theme.colors.dim} bold={item.accent}>
             {item.label}
           </Text>
-          {index < visibleItems.length - 1 ? <Text dimColor> · </Text> : null}
+          {index < visibleItems.length - 1 ? <Text dimColor>{ITEM_SEPARATOR}</Text> : null}
         </React.Fragment>
       ))}
     </Box>
