@@ -13,16 +13,18 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { render, Box, useApp, Text, Static, useInput, useStdout } from "ink";
 import clipboard from "clipboardy";
-import { PendingInputsIndicator } from "./components/PendingInputsIndicator.js";
 import { AmaWorkStrip, formatAmaWorkStripText } from "./components/AmaWorkStrip.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { FullscreenTranscriptLayout } from "./components/FullscreenTranscriptLayout.js";
 import { TranscriptViewport } from "./components/TranscriptViewport.js";
 import { PromptComposer } from "./components/PromptComposer.js";
 import { PromptFooter } from "./components/PromptFooter.js";
+import { PromptHelpMenu } from "./components/PromptHelpMenu.js";
 import { PromptSuggestionsSurface } from "./components/PromptSuggestionsSurface.js";
 import { DialogSurface } from "./components/DialogSurface.js";
 import { BackgroundTaskBar } from "./components/BackgroundTaskBar.js";
+import { QueuedCommandsSurface } from "./components/QueuedCommandsSurface.js";
+import { StatusNoticesSurface } from "./components/StatusNoticesSurface.js";
 import {
   UIStateProvider,
   useUIState,
@@ -1389,7 +1391,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       terminalRows,
       terminalWidth,
       inputText,
+      footerHeaderText: footerHeaderRight,
       pendingInputSummary,
+      statusNoticeSummary: footerHeaderLeft,
       workStripText: displayWorkStripText,
       suggestionsReserved: suggestionsReservedForLayout,
       suggestionsMode: useOverlaySurface ? "overlay" : "inline",
@@ -1432,7 +1436,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       terminalRows,
       terminalWidth,
       inputText,
+      footerHeaderRight,
       pendingInputSummary,
+      footerHeaderLeft,
       displayWorkStripText,
       suggestionsReservedForLayout,
       useOverlaySurface,
@@ -3882,9 +3888,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         overlay={overlaySurface}
         footer={
           <PromptFooter
-            headerLeft={footerHeaderLeft ? <Text dimColor>{footerHeaderLeft}</Text> : undefined}
             headerRight={footerHeaderRight ? <Text dimColor>{footerHeaderRight}</Text> : undefined}
-            pendingInputs={<PendingInputsIndicator pendingInputs={streamingState.pendingInputs} />}
+            pendingInputs={<QueuedCommandsSurface pendingInputs={streamingState.pendingInputs} />}
             composer={
               <PromptComposer
                 onSubmit={handleSubmit}
@@ -3903,19 +3908,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               />
             }
             suggestions={useOverlaySurface ? undefined : suggestionsSurface}
-            helpBar={showHelp ? (
-              <>
-                <Box flexDirection="column" paddingX={1}>
-                  <Text dimColor>
-                    {buildHelpBarSegments().map((segment, index) => (
-                      <Text key={`${segment.text}-${index}`} color={segment.color} bold={segment.bold}>
-                        {segment.text}
-                      </Text>
-                    ))}
-                  </Text>
-                </Box>
-                <Box><Text> </Text></Box>
-              </>
+            helpMenu={showHelp ? (
+              <PromptHelpMenu segments={buildHelpBarSegments()} />
             ) : undefined}
             taskBar={transcriptDisplayState.supportsFullscreenLayout ? (
               <BackgroundTaskBar
@@ -3925,6 +3919,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             ) : (
               <AmaWorkStrip text={backgroundTaskViewModel.parallelText} />
             )}
+            statusNotices={footerHeaderLeft ? (
+              <StatusNoticesSurface notices={[footerHeaderLeft]} />
+            ) : undefined}
             statusLine={<Box><StatusBar {...statusBarProps} /></Box>}
             dialogSurface={useOverlaySurface ? undefined : dialogSurface}
           />

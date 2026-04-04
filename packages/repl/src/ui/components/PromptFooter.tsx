@@ -37,8 +37,9 @@ export interface PromptFooterProps {
   pendingInputs?: React.ReactNode;
   composer: React.ReactNode;
   suggestions?: React.ReactNode;
-  helpBar?: React.ReactNode;
+  helpMenu?: React.ReactNode;
   browseHint?: React.ReactNode;
+  statusNotices?: React.ReactNode;
   taskBar?: React.ReactNode;
   statusLine?: React.ReactNode;
   dialogSurface?: React.ReactNode;
@@ -50,8 +51,9 @@ export const PromptFooter: React.FC<PromptFooterProps> = ({
   pendingInputs,
   composer,
   suggestions,
-  helpBar,
+  helpMenu,
   browseHint,
+  statusNotices,
   taskBar,
   statusLine,
   dialogSurface,
@@ -67,8 +69,9 @@ export const PromptFooter: React.FC<PromptFooterProps> = ({
       {pendingInputs}
       {composer}
       {suggestions}
-      {helpBar}
+      {helpMenu}
       {browseHint}
+      {statusNotices}
       {taskBar}
       {statusLine}
       {dialogSurface}

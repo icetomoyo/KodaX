@@ -17,15 +17,19 @@ describe("viewport-budget", () => {
       terminalRows: 24,
       terminalWidth: 80,
       inputText: "hello world",
+      footerHeaderText: "native_vt | verbose | fullscreen",
       suggestionsReserved: true,
       showHelp: true,
+      statusNoticeSummary: "Search: planner",
       statusBarText: "KodaX | PLAN | auto/B | session123 * Read | openai/gpt | 10.0k/200.0k #####----- 5%",
       confirmPrompt: "Apply changes?",
       confirmInstruction: "Press (y) yes, (n) no",
     });
 
+    expect(budget.headerRows).toBeGreaterThanOrEqual(1);
     expect(budget.suggestionsRows).toBe(8);
     expect(budget.helpRows).toBeGreaterThanOrEqual(2);
+    expect(budget.statusNoticeRows).toBeGreaterThanOrEqual(1);
     expect(budget.statusRows).toBeGreaterThanOrEqual(1);
     expect(budget.confirmRows).toBeGreaterThanOrEqual(5);
     expect(budget.footerRows).toBeGreaterThan(0);
@@ -46,6 +50,32 @@ describe("viewport-budget", () => {
 
     expect(budget.pendingInputRows).toBeGreaterThan(0);
     expect(budget.messageRows).toBeGreaterThan(0);
+  });
+
+  it("reserves footer space for header and status notice surfaces", () => {
+    const withoutSurfaces = calculateViewportBudget({
+      terminalRows: 24,
+      terminalWidth: 48,
+      inputText: "",
+      suggestionsReserved: false,
+      showHelp: false,
+      statusBarText: "status",
+    });
+    const withSurfaces = calculateViewportBudget({
+      terminalRows: 24,
+      terminalWidth: 48,
+      inputText: "",
+      footerHeaderText: "native_vt | compact | fullscreen",
+      statusNoticeSummary: "Search: planner",
+      suggestionsReserved: false,
+      showHelp: false,
+      statusBarText: "status",
+    });
+
+    expect(withSurfaces.headerRows).toBeGreaterThan(0);
+    expect(withSurfaces.statusNoticeRows).toBeGreaterThan(0);
+    expect(withSurfaces.footerRows).toBeGreaterThan(withoutSurfaces.footerRows);
+    expect(withSurfaces.messageRows).toBeLessThan(withoutSurfaces.messageRows);
   });
 
   it("clamps select dialog options and keeps message rows positive", () => {

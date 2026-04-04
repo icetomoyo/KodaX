@@ -1,6 +1,7 @@
 import { calculateVisualLayout } from "./textUtils.js";
 import {
   HELP_BAR_HORIZONTAL_PADDING,
+  HELP_MENU_CHROME_ROWS,
   HELP_BAR_SPACER_ROWS,
   buildHelpBarText,
   MESSAGE_LIST_VERTICAL_PADDING_ROWS,
@@ -39,7 +40,9 @@ export interface ViewportBudgetOptions {
   terminalWidth: number;
   inputText: string;
   inputPrompt?: string;
+  footerHeaderText?: string;
   pendingInputSummary?: string;
+  statusNoticeSummary?: string;
   workStripText?: string;
   suggestionsReserved: boolean;
   suggestionsMode?: ViewportBudgetSurfaceMode;
@@ -69,11 +72,13 @@ export interface ViewportBudgetSlot {
 export interface ViewportBudgetResult {
   messageRows: number;
   reservedBottomRows: number;
+  headerRows: number;
   pendingInputRows: number;
   workStripRows: number;
   inputRows: number;
   suggestionsRows: number;
   helpRows: number;
+  statusNoticeRows: number;
   statusRows: number;
   confirmRows: number;
   uiRequestRows: number;
@@ -119,7 +124,9 @@ export function calculateViewportBudget(options: ViewportBudgetOptions): Viewpor
     terminalWidth,
     inputText,
     inputPrompt = ">",
+    footerHeaderText,
     pendingInputSummary,
+    statusNoticeSummary,
     workStripText,
     suggestionsReserved,
     suggestionsMode = "inline",
@@ -134,8 +141,14 @@ export function calculateViewportBudget(options: ViewportBudgetOptions): Viewpor
     reviewHint,
   } = options;
 
+  const headerRows = footerHeaderText
+    ? wrapLineCount(footerHeaderText, Math.max(1, terminalWidth - 2))
+    : 0;
   const pendingInputRows = pendingInputSummary
     ? wrapLineCount(pendingInputSummary, Math.max(1, terminalWidth - 2))
+    : 0;
+  const statusNoticeRows = statusNoticeSummary
+    ? wrapLineCount(statusNoticeSummary, Math.max(1, terminalWidth - 2))
     : 0;
   const workStripRows = workStripText
     ? wrapLineCount(workStripText, Math.max(1, terminalWidth - 2))
@@ -147,7 +160,7 @@ export function calculateViewportBudget(options: ViewportBudgetOptions): Viewpor
     ? wrapLineCount(
         buildHelpBarText(),
         Math.max(1, terminalWidth - HELP_BAR_HORIZONTAL_PADDING)
-      ) + HELP_BAR_SPACER_ROWS
+      ) + HELP_BAR_SPACER_ROWS + HELP_MENU_CHROME_ROWS
     : 0;
 
   const statusRows = wrapLineCount(statusBarText, Math.max(1, terminalWidth - 2));
@@ -226,9 +239,11 @@ export function calculateViewportBudget(options: ViewportBudgetOptions): Viewpor
     : 0;
 
   const footerRows =
+    headerRows +
     pendingInputRows +
     inputRows +
     helpRows +
+    statusNoticeRows +
     reviewHintRows +
     (suggestionsMode === "inline" ? suggestionsRows : 0) +
     (dialogMode === "inline" ? confirmRows + uiRequestRows + historySearchRows : 0);
@@ -252,11 +267,13 @@ export function calculateViewportBudget(options: ViewportBudgetOptions): Viewpor
   return {
     messageRows,
     reservedBottomRows,
+    headerRows,
     pendingInputRows,
     workStripRows,
     inputRows,
     suggestionsRows,
     helpRows,
+    statusNoticeRows,
     statusRows,
     confirmRows,
     uiRequestRows,

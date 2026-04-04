@@ -49,6 +49,9 @@ export type { PromptComposerProps } from "./PromptComposer.js";
 export { PromptFooter, PromptFooterLeft, PromptFooterRight } from "./PromptFooter.js";
 export type { PromptFooterProps, PromptFooterLeftProps, PromptFooterRightProps } from "./PromptFooter.js";
 
+export { PromptHelpMenu } from "./PromptHelpMenu.js";
+export type { PromptHelpMenuProps } from "./PromptHelpMenu.js";
+
 export { PromptSuggestionsSurface } from "./PromptSuggestionsSurface.js";
 export type { PromptSuggestionsSurfaceProps } from "./PromptSuggestionsSurface.js";
 
@@ -63,6 +66,12 @@ export type {
 
 export { BackgroundTaskBar } from "./BackgroundTaskBar.js";
 export type { BackgroundTaskBarProps } from "./BackgroundTaskBar.js";
+
+export { QueuedCommandsSurface } from "./QueuedCommandsSurface.js";
+export type { QueuedCommandsSurfaceProps } from "./QueuedCommandsSurface.js";
+
+export { StatusNoticesSurface } from "./StatusNoticesSurface.js";
+export type { StatusNoticesSurfaceProps } from "./StatusNoticesSurface.js";
 
 export { MessageSelector } from "./MessageSelector.js";
 export type { MessageSelectorProps } from "./MessageSelector.js";

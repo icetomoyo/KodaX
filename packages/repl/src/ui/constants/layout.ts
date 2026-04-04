@@ -70,4 +70,5 @@ export function buildHelpBarText(): string {
 
 export const HELP_BAR_HORIZONTAL_PADDING = 2;
 export const HELP_BAR_SPACER_ROWS = 1;
+export const HELP_MENU_CHROME_ROWS = 4;
 export const MESSAGE_LIST_VERTICAL_PADDING_ROWS = 2;
