@@ -37,6 +37,7 @@ const mocks = vi.hoisted(() => {
     killLineRightMock: vi.fn(),
     killLineLeftMock: vi.fn(),
     deleteWordLeftMock: vi.fn(),
+    resetTransientStateMock: vi.fn(),
     handleInputMock: vi.fn(),
     handleTabMock: vi.fn(() => state.tabCompletion),
     handleEnterMock: vi.fn(() => state.enterCompletion),
@@ -82,6 +83,7 @@ vi.mock("../hooks/useTextBuffer.js", () => ({
     killLineRight: mocks.killLineRightMock,
     killLineLeft: mocks.killLineLeftMock,
     deleteWordLeft: mocks.deleteWordLeftMock,
+    resetTransientState: mocks.resetTransientStateMock,
   }),
 }));
 
@@ -298,6 +300,7 @@ describe("prompt-input-controller", () => {
     instance.rerender(React.createElement(Harness, { focus: false }));
 
     expect(mocks.handleEscapeMock).toHaveBeenCalledTimes(1);
+    expect(mocks.resetTransientStateMock).toHaveBeenCalledTimes(1);
   });
 
   it("leaves unrelated ctrl shortcuts for lower-priority handlers", () => {

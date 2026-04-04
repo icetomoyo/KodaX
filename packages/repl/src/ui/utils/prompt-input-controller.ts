@@ -160,6 +160,7 @@ export function usePromptInputController({
     lines,
     isPasting,
     editingMode,
+    resetTransientState,
     setText,
     replaceRange,
     clear,
@@ -202,10 +203,11 @@ export function usePromptInputController({
     }
 
     lastEscPressRef.current = 0;
+    resetTransientState();
     if (autocompleteState.visible) {
       handleAutocompleteEscape();
     }
-  }, [autocompleteState.visible, focus, handleAutocompleteEscape]);
+  }, [autocompleteState.visible, focus, handleAutocompleteEscape, resetTransientState]);
 
   const prevTextRef = useRef(text);
   useEffect(() => {

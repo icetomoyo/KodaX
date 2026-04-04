@@ -33,6 +33,11 @@ export interface TranscriptDisplayState {
   currentMatchIndex: number;
 }
 
+export type TranscriptSelectionCapabilityState = Pick<
+  TranscriptDisplayState,
+  "followMode" | "supportsSelection" | "supportsCopyOnSelect"
+>;
+
 export function createTranscriptDisplayState(
   hostProfile: TerminalHostProfile,
 ): TranscriptDisplayState {
@@ -229,6 +234,18 @@ export function supportsTranscriptMouseHistory(
   state: TranscriptDisplayState,
 ): boolean {
   return state.followMode === "browsing-history" && state.supportsWheelHistory;
+}
+
+export function ownsTranscriptSelectionPath(
+  state: TranscriptSelectionCapabilityState,
+): boolean {
+  return state.followMode === "browsing-history" && state.supportsSelection;
+}
+
+export function supportsPassiveTranscriptCopyOnSelect(
+  state: TranscriptSelectionCapabilityState,
+): boolean {
+  return ownsTranscriptSelectionPath(state) && state.supportsCopyOnSelect;
 }
 
 export function buildTranscriptBrowseHint(

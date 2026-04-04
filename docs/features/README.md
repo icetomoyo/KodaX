@@ -1,6 +1,6 @@
 # KodaX Feature Design Index
 
-> Last updated: 2026-04-02
+> Last updated: 2026-04-04
 >
 > Current released version: `v0.7.10`
 >
@@ -48,7 +48,7 @@ The current execution model is:
 | [v0.7.20.md](./v0.7.20.md) | Roadmap integrity and planning hygiene, plus historical staging notes for features re-homed to `v0.8.0` |
 | [v0.7.25.md](./v0.7.25.md) | Host-aware TUI substrate, transcript verbosity, and review-fallback demotion |
 | [v0.8.0.md](./v0.8.0.md) | Dual-profile AMA, MCP substrate, prompt architecture, retrieval/evidence tooling, invisible parallelism, durable memory, and safe runtime |
-| [v0.9.0.md](./v0.9.0.md) | Multimodal inputs and harness maturation |
+| [v0.9.0.md](./v0.9.0.md) | Multimodal inputs, harness maturation, and REPL substrate hardening |
 | [v1.0.0.md](./v1.0.0.md) | Delivery surfaces |
 
 ## Historical release docs
@@ -71,3 +71,6 @@ These documents remain useful as implementation history, but they are not the so
 - Historical docs may still mention old role names or layer boundaries as part of migration history.
 - The active architecture should be interpreted through the top-level docs, not by reading an older release doc in isolation.
 - When a historical doc and a current doc disagree, the current doc wins.
+- `FEATURE_051` is now the completed visible-shell close-out for the REPL.
+- `FEATURE_055` carries the remaining REPL substrate hardening without reopening the shell surface.
+- `FEATURE_046 / 047 / 052` describe AMA substrate and fan-out rules; they do not authorize a heavier multi-agent REPL surface by themselves.
