@@ -15,9 +15,9 @@
 |---|---|
 | Tracked feature IDs | `001-056` |
 | Total tracked features | `56` |
-| Completed | `48` |
+| Completed | `49` |
 | InProgress | `0` |
-| Planned | `8` |
+| Planned | `7` |
 | Current released version | `v0.7.14` |
 
 ### 各版本待做分布
@@ -35,7 +35,7 @@
 
 ## 进行中的 Feature
 
-_当前没有 InProgress feature。下一步按 `v0.7.30` 顺序启动 `FEATURE_038`。_
+_当前没有 InProgress feature。下一步按 `v0.7.30` 顺序启动 `FEATURE_042`。_
 
 ---
 
@@ -49,7 +49,6 @@ _当前没有 InProgress feature。下一步按 `v0.7.30` 顺序启动 `FEATURE_
 | `030` | Multi-Surface Delivery | Enhancement | High | `v1.0.0` | [v1.0.0](features/v1.0.0.md#feature_030-multi-surface-delivery) |
 | `031` | Multimodal Artifact Inputs | New | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_031-multimodal-artifact-inputs) |
 | `042` | Incremental Repository Intelligence Refresh and Java/C++ Structural Semantics | Enhancement | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_042-incremental-repository-intelligence-refresh-and-javac-structural-semantics) |
-| `038` | Official Sandbox Extension | New | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_038-official-sandbox-extension) |
 | `056` | Tool Interaction Maturity and Transcript-Native Explanation Layer | Enhancement | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_056-tool-interaction-maturity-and-transcript-native-explanation-layer) |
 
 ---
@@ -124,6 +123,7 @@ _当前没有 InProgress feature。下一步按 `v0.7.30` 顺序启动 `FEATURE_
 | `055` | REPL Substrate Hardening and Summary-Only AMA UX | `v0.9.0` (unreleased) | [v0.9.0](features/v0.9.0.md#feature_055-repl-substrate-hardening-and-summary-only-ama-ux) |
 | `054` | AMA-Project Convergence: Absorb Project Mode into Adaptive H2 | `v0.7.30` (unreleased) | [v0.7.30](features/v0.7.30.md#feature_054-ama-project-convergence-absorb-project-mode-into-adaptive-h2) |
 | `043` | Harness Calibration, Pivoting, Profiling, and Safe Checkpoints | `v0.7.30` (unreleased) | [v0.7.30](features/v0.7.30.md#feature_043-harness-calibration-pivoting-profiling-and-safe-checkpoints) |
+| `038` | Official Sandbox Extension | `v0.7.30` (unreleased) | [v0.7.30](features/v0.7.30.md#feature_038-official-sandbox-extension) |
 
 > `FEATURE_051` close-out posture: keep the current REPL status/footer/task/message surfaces frozen, limit follow-up work to invisible substrate maturity for transcript, scroll/selection, and input behavior, and treat the design doc as a completed close-out record rather than an open rollout plan.
 

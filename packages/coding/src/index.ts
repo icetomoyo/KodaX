@@ -496,6 +496,8 @@ export type {
   KodaXExtensionAPI,
   KodaXExtensionActivationResult,
   KodaXExtensionModule,
+  OfficialSandboxMode,
+  OfficialSandboxOptions,
 } from './extensions/index.js';
 
 export {
@@ -504,6 +506,7 @@ export {
   setActiveExtensionRuntime,
   getActiveExtensionRuntime,
   registerConfiguredMcpCapabilityProvider,
+  registerOfficialSandboxExtension,
 } from './extensions/index.js';
 
 // ============== Orchestration ==============

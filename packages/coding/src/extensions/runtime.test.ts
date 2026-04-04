@@ -9,6 +9,7 @@ import {
   createExtensionRuntime,
   emitActiveExtensionEvent,
   getActiveExtensionRuntime,
+  registerOfficialSandboxExtension,
   runActiveExtensionHook,
 } from './index.js';
 
@@ -456,6 +457,93 @@ describe('KodaXExtensionRuntime', () => {
         }),
       ]),
     );
+
+    await runtime.dispose();
+  });
+
+  it('registers an official sandbox policy provider with guarded tool overrides and honest mode diagnostics', async () => {
+    const workspaceRoot = path.join(tempDir, 'workspace');
+    const outsideRoot = path.join(tempDir, 'outside');
+    await mkdir(workspaceRoot, { recursive: true });
+    await mkdir(outsideRoot, { recursive: true });
+    await writeFile(path.join(workspaceRoot, 'inside.txt'), 'inside', 'utf8');
+    await writeFile(path.join(outsideRoot, 'outside.txt'), 'outside', 'utf8');
+
+    const runtime = createExtensionRuntime();
+    registerOfficialSandboxExtension(runtime, {
+      workspaceRoot,
+      mode: 'enforced',
+    });
+
+    expect(runtime.getDiagnostics().capabilityProviders).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'official-sandbox',
+          metadata: expect.objectContaining({
+            mode: 'enforced',
+            workspaceRoot,
+            guardedTools: ['write', 'edit', 'bash'],
+          }),
+        }),
+      ]),
+    );
+
+    await expect(runtime.readCapability('official-sandbox', 'policy')).resolves.toEqual(
+      expect.objectContaining({
+        kind: 'resource',
+        structuredContent: expect.objectContaining({
+          mode: 'enforced',
+          workspaceRoot,
+          guardedTools: ['write', 'edit', 'bash'],
+        }),
+      }),
+    );
+
+    const ctx: KodaXToolExecutionContext = {
+      backups: new Map(),
+      executionCwd: workspaceRoot,
+      gitRoot: workspaceRoot,
+    };
+
+    await expect(
+      executeTool('write', {
+        path: path.join(workspaceRoot, 'inside.txt'),
+        content: 'updated',
+      }, ctx),
+    ).resolves.toContain('File updated:');
+
+    await expect(
+      executeTool('write', {
+        path: path.join(outsideRoot, 'outside.txt'),
+        content: 'blocked',
+      }, ctx),
+    ).resolves.toContain('Blocked by official sandbox (enforced)');
+
+    await expect(
+      executeTool('edit', {
+        path: path.join(outsideRoot, 'outside.txt'),
+        old_string: 'outside',
+        new_string: 'blocked',
+      }, ctx),
+    ).resolves.toContain('Blocked by official sandbox (enforced)');
+
+    await expect(
+      runtime.runHook('tool:before', {
+        name: 'bash',
+        input: { command: 'git reset --hard HEAD~1' },
+        executionCwd: workspaceRoot,
+        gitRoot: workspaceRoot,
+      }),
+    ).resolves.toContain('Command matches destructive policy: git reset --hard');
+
+    await expect(
+      runtime.runHook('tool:before', {
+        name: 'bash',
+        input: { command: 'git status' },
+        executionCwd: workspaceRoot,
+        gitRoot: workspaceRoot,
+      }),
+    ).resolves.toBeUndefined();
 
     await runtime.dispose();
   });

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createExtensionRuntime,
   getActiveExtensionRuntime,
+  registerOfficialSandboxExtension,
 } from '@kodax/coding';
 import { BUILTIN_COMMANDS, executeCommand, getCommandRegistry } from './commands.js';
 
@@ -218,5 +219,25 @@ describe('extension command host adapters', () => {
     expect(output).toContain('Failures:');
     expect(output).toContain('reload exploded');
     expect(output).toContain('stable-cmd');
+  });
+
+  it('prints official sandbox policy metadata through the existing extensions diagnostics surface', async () => {
+    const runtime = createExtensionRuntime().activate();
+    registerOfficialSandboxExtension(runtime, {
+      workspaceRoot: tempDir,
+      mode: 'best_effort',
+    });
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const extensionsCommand = BUILTIN_COMMANDS.find((cmd) => cmd.name === 'extensions');
+    expect(extensionsCommand).toBeDefined();
+    await extensionsCommand!.handler([], {} as never, {} as never, {} as never);
+
+    const output = logSpy.mock.calls.flat().join('\n');
+    expect(output).toContain('official-sandbox [resource]');
+    expect(output).toContain('mode=best_effort');
+    expect(output).toContain(`workspaceRoot=${tempDir}`);
+    expect(output).toContain('guardedTools=write, edit, bash');
   });
 });

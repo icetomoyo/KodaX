@@ -17,6 +17,10 @@ import {
   registerTool,
 } from '../tools/index.js';
 import type {
+  LocalToolDefinition,
+  ToolRegistrationOptions,
+} from '../tools/types.js';
+import type {
   KodaXExtensionSessionRecord,
   KodaXExtensionStore,
   KodaXJsonValue,
@@ -365,6 +369,34 @@ export class KodaXExtensionRuntime {
     if (provider.dispose) {
       this.runtimeDisposables.push(() => provider.dispose?.());
     }
+    return dispose;
+  }
+
+  registerTool(
+    definition: LocalToolDefinition,
+    options: ToolRegistrationOptions = {},
+  ): () => void {
+    const source = options.source ?? {
+      kind: 'extension' as const,
+      id: `runtime:tool:${definition.name}`,
+      label: definition.name,
+    };
+    const dispose = registerTool(definition, { source });
+    this.runtimeDisposables.push(dispose);
+    return dispose;
+  }
+
+  registerHook<THook extends keyof ExtensionHookMap>(
+    hook: THook,
+    handler: ExtensionHookMap[THook],
+    options: { source?: ExtensionContributionSource } = {},
+  ): () => void {
+    const source = options.source ?? this.createRuntimeSource(
+      `runtime:hook:${String(hook)}`,
+      String(hook),
+    );
+    const dispose = this.registerHookHandler(hook, handler, source);
+    this.runtimeDisposables.push(dispose);
     return dispose;
   }
 

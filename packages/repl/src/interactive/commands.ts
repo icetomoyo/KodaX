@@ -448,7 +448,8 @@ export const BUILTIN_COMMANDS: Command[] = [
       if (diagnostics.capabilityProviders.length > 0) {
         console.log(chalk.bold('Capability Providers:'));
         for (const provider of diagnostics.capabilityProviders) {
-          console.log(chalk.dim(`  - ${provider.id} [${provider.kinds.join(', ')}]`));
+          const metadata = formatExtensionDiagnosticMetadata(provider.metadata);
+          console.log(chalk.dim(`  - ${provider.id} [${provider.kinds.join(', ')}]${metadata ? `  ${metadata}` : ''}`));
         }
         console.log();
       }
@@ -2007,6 +2008,30 @@ function getActiveExtensionCommand(name: string): ExtensionCommandDefinition | u
 
 function formatExtensionCommandUsage(command: ExtensionCommandDefinition): string {
   return command.usage ?? `/${command.name}`;
+}
+
+function formatExtensionDiagnosticValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.map((entry) => String(entry)).join(', ');
+  }
+  if (value && typeof value === 'object') {
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+function formatExtensionDiagnosticMetadata(
+  metadata: Record<string, unknown> | undefined,
+): string | undefined {
+  if (!metadata) {
+    return undefined;
+  }
+
+  const entries = Object.entries(metadata)
+    .filter(([, value]) => value !== undefined)
+    .map(([key, value]) => `${key}=${formatExtensionDiagnosticValue(value)}`);
+
+  return entries.length > 0 ? entries.join(' | ') : undefined;
 }
 
 function getExtensionRuntimeDiagnostics(runtime: NonNullable<ReturnType<typeof getActiveExtensionRuntime>>): ExtensionRuntimeDiagnostics {
