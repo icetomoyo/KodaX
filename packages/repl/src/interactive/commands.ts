@@ -70,6 +70,7 @@ import {
   type CurrentConfig,
 } from '../commands/types.js';
 import { registerAllCommands } from '../commands/index.js';
+import { formatWorkspaceTruth } from './workspace-runtime.js';
 
 // Re-export types needed by downstream modules.
 export type { CommandCallbacks, CurrentConfig } from '../commands/types.js';
@@ -124,6 +125,14 @@ function printProjectMigrationGuidance(): void {
   console.log();
 }
 
+function printWorkspaceUnchangedNote(context: InteractiveContext): void {
+  if (context.runtimeInfo?.workspaceRoot) {
+    console.log(chalk.dim(`  Workspace unchanged: ${formatWorkspaceTruth(context.runtimeInfo)}`));
+  } else {
+    console.log(chalk.dim('  Workspace unchanged.'));
+  }
+}
+
 export const BUILTIN_COMMANDS: Command[] = [
   {
     name: 'help',
@@ -154,9 +163,10 @@ export const BUILTIN_COMMANDS: Command[] = [
     name: 'exit',
     aliases: ['quit', 'q', 'bye'],
     description: 'Exit interactive mode',
-    handler: async (_args, _context, callbacks) => {
+    handler: async (_args, context, callbacks) => {
       await callbacks.saveSession();
       console.log(chalk.green('\nSession saved. Goodbye!'));
+      printWorkspaceUnchangedNote(context);
       callbacks.exit();
     },
     detailedHelp: () => {
@@ -168,6 +178,7 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log(chalk.bold('Description:'));
       console.log(chalk.dim('  Saves the current conversation session and exits interactive mode.'));
       console.log(chalk.dim('  Sessions can be resumed later with /load or CLI -c option.'));
+      console.log(chalk.dim('  Exiting never removes or mutates the current workspace.'));
       console.log();
     },
   },
@@ -474,13 +485,14 @@ export const BUILTIN_COMMANDS: Command[] = [
     name: 'status',
     aliases: ['info', 'ctx'],
     description: 'Show current session status',
-    handler: async (_args, context, _callbacks, currentConfig) => {
-      await printStatus(context, currentConfig);
+    handler: async (args, context, _callbacks, currentConfig) => {
+      await printStatus(context, currentConfig, args);
     },
     detailedHelp: () => {
       console.log(chalk.cyan('\n/status - Show Session Status\n'));
       console.log(chalk.bold('Usage:'));
       console.log(chalk.dim('  /status            ') + 'Display current session information');
+      console.log(chalk.dim('  /status workspace  ') + 'Show deeper workspace/runtime details');
       console.log(chalk.dim('  /info, /ctx        ') + 'Aliases for /status');
       console.log();
       console.log(chalk.bold('Displays:'));
@@ -488,7 +500,7 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log(chalk.dim('  - Session ID'));
       console.log(chalk.dim('  - Message count'));
       console.log(chalk.dim('  - Estimated token usage'));
-      console.log(chalk.dim('  - Git root directory'));
+      console.log(chalk.dim('  - Current workspace truth'));
       console.log(chalk.dim('  - Session timestamps'));
       console.log(chalk.dim('  - Repo-intelligence mode and active runtime summary'));
       console.log();
@@ -691,9 +703,10 @@ export const BUILTIN_COMMANDS: Command[] = [
   {
     name: 'save',
     description: 'Save current session',
-    handler: async (_args, _context, callbacks) => {
+    handler: async (_args, context, callbacks) => {
       await callbacks.saveSession();
       console.log(chalk.green('\n[Session saved]'));
+      printWorkspaceUnchangedNote(context);
     },
     detailedHelp: () => {
       console.log(chalk.cyan('\n/save - Save Current Session\n'));
@@ -704,6 +717,7 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log(chalk.dim('  Manually saves the current conversation session.'));
       console.log(chalk.dim('  Sessions are auto-saved after each message, but you can'));
       console.log(chalk.dim('  use this to ensure the session is persisted.'));
+      console.log(chalk.dim('  Saving updates session storage only; the current workspace stays untouched.'));
       console.log();
       console.log(chalk.dim('  See also: /help load, /help sessions'));
       console.log();
@@ -735,6 +749,10 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log(chalk.bold('Examples:'));
       console.log(chalk.dim('  /load              ') + '# See all sessions');
       console.log(chalk.dim('  /load 20260219_143052') + '# Load session by ID');
+      console.log();
+      console.log(chalk.bold('Workspace behavior:'));
+      console.log(chalk.dim('  /load can resume sessions from sibling workspaces in the same canonical repo.'));
+      console.log(chalk.dim('  If a saved workspace is unavailable, KodaX explains the fallback before loading.'));
       console.log();
       console.log(chalk.dim('  See also: /help sessions, /help save'));
       console.log();
@@ -832,7 +850,8 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log();
       console.log(chalk.bold('Description:'));
       console.log(chalk.dim('  Shows recent conversation sessions with their IDs,'));
-      console.log(chalk.dim('  message counts, and titles. Use /load <id> to resume.'));
+      console.log(chalk.dim('  message counts, titles, and workspace truth. Use /load <id> to resume.'));
+      console.log(chalk.dim('  This keeps sibling worktree sessions inspectable without a persistent cockpit.'));
       console.log();
       console.log(chalk.dim('  See also: /help load, /help delete'));
       console.log();
@@ -862,7 +881,7 @@ export const BUILTIN_COMMANDS: Command[] = [
     aliases: ['rm', 'del'],
     description: 'Delete a session',
     usage: '/delete <session-id> or /delete all',
-    handler: async (args, _context, callbacks) => {
+    handler: async (args, context, callbacks) => {
       if (args.length === 0) {
         console.log(chalk.red('\n[Usage: /delete <session-id> or /delete all]'));
         await callbacks.listSessions?.();
@@ -871,9 +890,11 @@ export const BUILTIN_COMMANDS: Command[] = [
       if (args[0] === 'all') {
         await callbacks.deleteAllSessions?.();
         console.log(chalk.green('\n[All sessions deleted]'));
+        printWorkspaceUnchangedNote(context);
       } else {
         await callbacks.deleteSession?.(args[0]!);
         console.log(chalk.green(`\n[Session deleted: ${args[0]}]`));
+        printWorkspaceUnchangedNote(context);
       }
     },
     detailedHelp: () => {
@@ -887,6 +908,10 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log(chalk.bold('Examples:'));
       console.log(chalk.dim('  /delete 20260219_143052') + '  # Delete specific session');
       console.log(chalk.dim('  /delete all        ') + '# Delete all sessions');
+      console.log();
+      console.log(chalk.bold('Workspace behavior:'));
+      console.log(chalk.dim('  Deletes saved session records only.'));
+      console.log(chalk.dim('  Current workspaces and checkouts remain untouched.'));
       console.log();
       console.log(chalk.yellow('  Warning: /delete all cannot be undone!'));
       console.log();
@@ -1830,7 +1855,12 @@ function printDetailedHelp(commandName: string): void {
 }
 
 // Print status.
-async function printStatus(context: InteractiveContext, currentConfig: CurrentConfig): Promise<void> {
+async function printStatus(
+  context: InteractiveContext,
+  currentConfig: CurrentConfig,
+  args: string[] = [],
+): Promise<void> {
+  const detailMode = args[0]?.toLowerCase();
   const tokens = context.contextTokenSnapshot?.currentTokens ?? estimateTokens(context.messages);
   const tokenSource = context.contextTokenSnapshot?.source ?? 'estimate';
   const capabilityProfile = getProviderCapabilityProfile(currentConfig.provider);
@@ -1865,8 +1895,21 @@ async function printStatus(context: InteractiveContext, currentConfig: CurrentCo
     trace: currentConfig.repoIntelligenceTrace,
   });
   console.log(chalk.dim(`  Repo Intel:  ${chalk.cyan(formatRepoIntelligenceSummary(repoInspection))}`));
-  if (context.gitRoot) {
-    console.log(chalk.dim(`  Git Root:    ${context.gitRoot}`));
+  if (context.runtimeInfo?.workspaceRoot) {
+    console.log(chalk.dim(`  Workspace:   ${chalk.cyan(formatWorkspaceTruth(context.runtimeInfo))}`));
+  } else if (context.gitRoot) {
+    console.log(chalk.dim(`  Workspace:   ${chalk.cyan(context.gitRoot)}`));
+  }
+  if (detailMode === 'workspace' || detailMode === 'worktree' || detailMode === 'runtime') {
+    if (context.runtimeInfo?.canonicalRepoRoot) {
+      console.log(chalk.dim(`  Canonical:   ${context.runtimeInfo.canonicalRepoRoot}`));
+    }
+    if (context.runtimeInfo?.executionCwd) {
+      console.log(chalk.dim(`  Exec CWD:    ${context.runtimeInfo.executionCwd}`));
+    }
+    if (context.runtimeInfo?.workspaceKind) {
+      console.log(chalk.dim(`  Kind:        ${context.runtimeInfo.workspaceKind}`));
+    }
   }
   console.log(chalk.dim(`  Created:     ${context.createdAt}`));
   console.log(chalk.dim(`  Last Active: ${context.lastAccessed}`));
@@ -2055,7 +2098,7 @@ async function executeExtensionCommand(
   const result = await command.handler(args, {
     sessionId: context.sessionId,
     gitRoot: context.gitRoot,
-    workingDirectory: context.gitRoot ?? process.cwd(),
+    workingDirectory: context.runtimeInfo?.executionCwd ?? context.gitRoot ?? process.cwd(),
     reloadExtensions: () => runtime.reloadExtensions(),
     getDiagnostics: () => getExtensionRuntimeDiagnostics(runtime),
     logger: {

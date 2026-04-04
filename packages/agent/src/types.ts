@@ -194,10 +194,21 @@ export interface KodaXSessionUiHistoryItem {
   text: string;
 }
 
+export type KodaXSessionWorkspaceKind = 'detected' | 'managed';
+
+export interface KodaXSessionRuntimeInfo {
+  canonicalRepoRoot?: string;
+  workspaceRoot?: string;
+  executionCwd?: string;
+  branch?: string;
+  workspaceKind?: KodaXSessionWorkspaceKind;
+}
+
 export interface KodaXSessionData {
   messages: KodaXMessage[];
   title: string;
   gitRoot: string;
+  runtimeInfo?: KodaXSessionRuntimeInfo;
   scope?: KodaXSessionScope;
   uiHistory?: KodaXSessionUiHistoryItem[];
   errorMetadata?: SessionErrorMetadata;
@@ -212,6 +223,7 @@ export interface KodaXSessionMeta {
   title: string;
   id: string;
   gitRoot: string;
+  runtimeInfo?: KodaXSessionRuntimeInfo;
   createdAt: string;
   scope?: KodaXSessionScope;
   uiHistory?: KodaXSessionUiHistoryItem[];
@@ -304,7 +316,12 @@ export interface KodaXSessionStorage {
     selector?: string,
     options?: { sessionId?: string; title?: string },
   ): Promise<{ sessionId: string; data: KodaXSessionData } | null>;
-  list?(gitRoot?: string): Promise<Array<{ id: string; title: string; msgCount: number }>>;
+  list?(gitRoot?: string): Promise<Array<{
+    id: string;
+    title: string;
+    msgCount: number;
+    runtimeInfo?: KodaXSessionRuntimeInfo;
+  }>>;
   delete?(id: string): Promise<void>;
   deleteAll?(gitRoot?: string): Promise<void>;
 }

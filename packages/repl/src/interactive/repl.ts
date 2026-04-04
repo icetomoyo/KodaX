@@ -81,10 +81,21 @@ import {
   enforceSessionTransitionGuard,
 } from './session-guardrails.js';
 import { formatSessionTree } from './session-tree.js';
+import {
+  formatWorkspaceTruth,
+  inspectWorkspaceRuntime,
+  resolveSessionRuntimeInfo,
+  workspaceExists,
+} from './workspace-runtime.js';
 
 // Extended session storage interface (adds list method) - 扩展的会话存储接口（增加 list 方法）
 interface SessionStorage extends KodaXSessionStorage {
-  list(gitRoot?: string): Promise<Array<{ id: string; title: string; msgCount: number }>>;
+  list(gitRoot?: string): Promise<Array<{
+    id: string;
+    title: string;
+    msgCount: number;
+    runtimeInfo?: KodaXSessionData['runtimeInfo'];
+  }>>;
 }
 
 // Simple in-memory session storage (replaceable with persistent storage) - 简单的内存会话存储（可替换为持久化存储）
@@ -181,6 +192,9 @@ class MemorySessionStorage implements SessionStorage {
       messages: getSessionMessagesFromLineage(lineage),
       title: options?.title ?? current.data.title,
       gitRoot: current.data.gitRoot,
+      runtimeInfo: current.data.runtimeInfo
+        ? structuredClone(current.data.runtimeInfo)
+        : undefined,
       scope: current.data.scope ?? 'user',
       extensionState: current.data.extensionState
         ? structuredClone(current.data.extensionState)
@@ -200,7 +214,12 @@ class MemorySessionStorage implements SessionStorage {
     };
   }
 
-  async list(_gitRoot?: string): Promise<Array<{ id: string; title: string; msgCount: number }>> {
+  async list(_gitRoot?: string): Promise<Array<{
+    id: string;
+    title: string;
+    msgCount: number;
+    runtimeInfo?: KodaXSessionData['runtimeInfo'];
+  }>> {
     return Array.from(this.sessions.entries())
       .filter(([, session]) => (session.data.scope ?? 'user') === 'user')
       .map(([id, session]) => ({
@@ -209,6 +228,11 @@ class MemorySessionStorage implements SessionStorage {
         msgCount: session.data.lineage
           ? countActiveLineageMessages(session.data.lineage)
           : session.data.messages.length,
+        ...(session.data.runtimeInfo
+          ? {
+            runtimeInfo: structuredClone(session.data.runtimeInfo),
+          }
+          : {}),
       }));
   }
 
@@ -219,6 +243,29 @@ class MemorySessionStorage implements SessionStorage {
   async deleteAll(_gitRoot?: string): Promise<void> {
     this.sessions.clear();
   }
+}
+
+function applyRuntimeContext(
+  context: InteractiveContext,
+  currentOptions: RepLOptions,
+  runtimeInfo: InteractiveContext['runtimeInfo'],
+): void {
+  context.runtimeInfo = runtimeInfo;
+  context.gitRoot = runtimeInfo?.workspaceRoot ?? context.gitRoot;
+  currentOptions.context = {
+    ...currentOptions.context,
+    gitRoot: context.gitRoot,
+    executionCwd: runtimeInfo?.executionCwd ?? process.cwd(),
+  };
+}
+
+function printWorkspaceEntryNotice(runtimeInfo: InteractiveContext['runtimeInfo']): void {
+  if (!runtimeInfo?.workspaceRoot) {
+    return;
+  }
+
+  console.log(chalk.dim(`  Workspace: ${formatWorkspaceTruth(runtimeInfo)}`));
+  console.log(chalk.dim('  Use /status workspace for runtime details.\n'));
 }
 
 // REPL options - REPL 选项
@@ -244,7 +291,8 @@ function resolveInitialReasoningMode(
 
 // Run interactive mode - 运行交互式模式
 export async function runInteractiveMode(options: RepLOptions): Promise<void> {
-  const gitRoot = await getGitRoot() ?? undefined;
+  const startupRuntime = await inspectWorkspaceRuntime({ cwd: process.cwd() });
+  const gitRoot = startupRuntime.workspaceRoot ?? await getGitRoot() ?? undefined;
   const storage = options.storage ?? new MemorySessionStorage();
 
   // Load config (priority: CLI args > config file > defaults) - 加载配置（优先级：CLI参数 > 配置文件 > 默认值）
@@ -298,6 +346,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   const context = await createInteractiveContext({
     sessionId: options.session?.id,
     gitRoot,
+    runtimeInfo: startupRuntime,
   });
 
   const guardSessionTransition = (action: string): boolean => {
@@ -323,7 +372,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   const reloadAgentsFiles = async (): Promise<AgentsFile[]> => {
     return loadAgentsFiles({
       cwd: process.cwd(),
-      projectRoot: gitRoot ?? undefined,
+      projectRoot: context.gitRoot ?? undefined,
     });
   };
   let agentsFiles = await reloadAgentsFiles();
@@ -334,11 +383,12 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     triggerPercent: compactionConfig.triggerPercent,
     enabled: compactionConfig.enabled,
   }, agentsFiles);
+  printWorkspaceEntryNotice(startupRuntime);
 
   // Detect and show project hint - 检测并显示项目提示
 
   // Create autocomplete - 创建自动补全器
-  const completer = createCompleter(gitRoot ?? process.cwd());
+  const completer = createCompleter(() => context.gitRoot ?? process.cwd());
 
   const rl = readline.createInterface({
     input: process.stdin,
@@ -419,6 +469,8 @@ Keyboard Shortcuts:
     thinking: initialThinking,
     context: {
       ...options.context,
+      gitRoot,
+      executionCwd: startupRuntime.executionCwd,
       repoIntelligenceMode: repoIntelligenceRuntime.mode,
       repoIntelligenceTrace: repoIntelligenceRuntime.trace,
     },
@@ -441,7 +493,8 @@ Keyboard Shortcuts:
         await storage.save(context.sessionId, {
           messages: context.messages,
           title,
-          gitRoot: gitRoot ?? '',
+          gitRoot: context.gitRoot ?? '',
+          runtimeInfo: context.runtimeInfo,
         });
       }
     },
@@ -451,6 +504,7 @@ Keyboard Shortcuts:
       context.contextTokenSnapshot = undefined;
       context.createdAt = new Date().toISOString();
       context.lastAccessed = context.createdAt;
+      applyRuntimeContext(context, currentOptions, startupRuntime);
       currentOptions.session = {
         ...currentOptions.session,
         id: context.sessionId,
@@ -466,11 +520,30 @@ Keyboard Shortcuts:
         if (!guardSessionTransition('Resuming a saved session')) {
           return 'blocked';
         }
+        const currentWorkspaceRuntime = await inspectWorkspaceRuntime({ cwd: process.cwd() });
+        const savedRuntime = resolveSessionRuntimeInfo(loaded);
+        let appliedRuntime = savedRuntime ?? currentWorkspaceRuntime;
+        if (savedRuntime?.workspaceRoot && !workspaceExists(savedRuntime)) {
+          console.log(chalk.yellow('\n[Saved workspace unavailable]'));
+          console.log(chalk.dim(`  Session workspace: ${formatWorkspaceTruth(savedRuntime)}`));
+          console.log(chalk.dim(`  Falling back to current workspace: ${formatWorkspaceTruth(currentWorkspaceRuntime)}`));
+          appliedRuntime = currentWorkspaceRuntime;
+        } else if (
+          savedRuntime?.workspaceRoot
+          && currentWorkspaceRuntime.workspaceRoot
+          && savedRuntime.workspaceRoot !== currentWorkspaceRuntime.workspaceRoot
+        ) {
+          console.log(chalk.cyan('\n[Loading sibling workspace session]'));
+          console.log(chalk.dim(`  Current workspace: ${formatWorkspaceTruth(currentWorkspaceRuntime)}`));
+          console.log(chalk.dim(`  Session workspace: ${formatWorkspaceTruth(savedRuntime)}`));
+        }
+
         context.messages = loaded.messages;
         context.title = loaded.title;
         context.sessionId = id;
         context.contextTokenSnapshot = undefined;
         context.lastAccessed = new Date().toISOString();
+        applyRuntimeContext(context, currentOptions, appliedRuntime);
         currentOptions.session = {
           ...currentOptions.session,
           id,
@@ -481,22 +554,34 @@ Keyboard Shortcuts:
         });
         console.log(chalk.green(`\n[Loaded session: ${id}]`));
         console.log(chalk.dim(`  Messages: ${loaded.messages.length}`));
+        if (context.runtimeInfo?.workspaceRoot) {
+          console.log(chalk.dim(`  Workspace: ${formatWorkspaceTruth(context.runtimeInfo)}`));
+        }
         return 'loaded';
       }
       return 'missing';
     },
-    listSessions: async () => {
-      const sessions = await storage.list(gitRoot ?? undefined);
-      if (sessions.length === 0) {
-        console.log(chalk.dim('\n[No saved sessions]'));
-        return;
+      listSessions: async () => {
+        const sessions = await storage.list(context.gitRoot ?? undefined);
+        if (sessions.length === 0) {
+          console.log(chalk.dim('\n[No saved sessions]'));
+          return;
       }
       console.log(chalk.bold('\nRecent Sessions:\n'));
-      for (const s of sessions.slice(0, 10)) {
-        console.log(`  ${chalk.cyan(s.id)} ${chalk.dim(`(${s.msgCount} messages)`)} ${s.title.slice(0, 40)}`);
-      }
-      console.log();
-    },
+        if (context.runtimeInfo?.workspaceRoot) {
+          console.log(chalk.dim(`  Current workspace: ${formatWorkspaceTruth(context.runtimeInfo)}`));
+          console.log();
+        }
+        for (const s of sessions.slice(0, 10)) {
+          console.log(`  ${chalk.cyan(s.id)} ${chalk.dim(`(${s.msgCount} messages)`)} ${s.title.slice(0, 40)}`);
+          if (s.runtimeInfo?.workspaceRoot) {
+            const sameWorkspace = context.runtimeInfo?.workspaceRoot === s.runtimeInfo.workspaceRoot;
+            const suffix = sameWorkspace ? ' (current workspace)' : '';
+            console.log(chalk.dim(`      workspace: ${formatWorkspaceTruth(s.runtimeInfo)}${suffix}`));
+          }
+        }
+        console.log();
+      },
     clearHistory: () => {
       context.messages = [];
       context.contextTokenSnapshot = undefined;
@@ -608,7 +693,7 @@ Keyboard Shortcuts:
       await storage.delete?.(id);
     },
     deleteAllSessions: async () => {
-      await storage.deleteAll?.(gitRoot ?? undefined);
+      await storage.deleteAll?.(context.gitRoot ?? undefined);
     },
     printSessionTree: async () => {
       const lineage = await storage.getLineage?.(context.sessionId);
@@ -674,6 +759,7 @@ Keyboard Shortcuts:
       context.contextTokenSnapshot = undefined;
       context.createdAt = new Date().toISOString();
       context.lastAccessed = context.createdAt;
+      applyRuntimeContext(context, currentOptions, resolveSessionRuntimeInfo(forked.data) ?? context.runtimeInfo);
       currentOptions.session = {
         ...currentOptions.session,
         id: forked.sessionId,
@@ -831,7 +917,8 @@ Keyboard Shortcuts:
           await storage.save(context.sessionId, {
             messages: context.messages,
             title,
-            gitRoot: gitRoot ?? '',
+            gitRoot: context.gitRoot ?? '',
+            runtimeInfo: context.runtimeInfo,
           });
         }
       }
@@ -899,7 +986,8 @@ Keyboard Shortcuts:
         await storage.save(context.sessionId, {
           messages: context.messages,
           title,
-          gitRoot: gitRoot ?? '',
+          gitRoot: context.gitRoot ?? '',
+          runtimeInfo: context.runtimeInfo,
         });
       }
       await prepared.finalize();
@@ -976,6 +1064,7 @@ Keyboard Shortcuts:
                 messages: context.messages,
                 title,
                 gitRoot: context.gitRoot ?? '',
+                runtimeInfo: context.runtimeInfo,
               });
             }
           }
@@ -1066,7 +1155,8 @@ Keyboard Shortcuts:
         await storage.save(context.sessionId, {
           messages: context.messages,
           title,
-          gitRoot: gitRoot ?? '',
+          gitRoot: context.gitRoot ?? '',
+          runtimeInfo: context.runtimeInfo,
         });
       }
     } catch (err) {

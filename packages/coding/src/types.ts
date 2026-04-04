@@ -62,10 +62,12 @@ import type {
   KodaXSessionNavigationOptions,
   KodaXSessionScope,
   KodaXSessionMeta,
+  KodaXSessionRuntimeInfo,
   KodaXSessionStorage,
   KodaXSessionTreeNode,
   KodaXSessionUiHistoryItem,
   KodaXSessionUiHistoryItemType,
+  KodaXSessionWorkspaceKind,
   SessionErrorMetadata,
 } from '@kodax/agent';
 import type { KodaXReviewScale } from '@kodax/ai';
@@ -135,10 +137,12 @@ export type {
   KodaXSessionNavigationOptions,
   KodaXSessionScope,
   KodaXSessionMeta,
+  KodaXSessionRuntimeInfo,
   KodaXSessionStorage,
   KodaXSessionTreeNode,
   KodaXSessionUiHistoryItem,
   KodaXSessionUiHistoryItemType,
+  KodaXSessionWorkspaceKind,
   SessionErrorMetadata,
 };
 

@@ -66,10 +66,12 @@ export type {
   KodaXSessionNavigationOptions,
   KodaXSessionMeta,
   KodaXSessionScope,
+  KodaXSessionRuntimeInfo,
   KodaXSessionStorage,
   KodaXSessionTreeNode,
   KodaXSessionUiHistoryItem,
   KodaXSessionUiHistoryItemType,
+  KodaXSessionWorkspaceKind,
   SessionErrorMetadata,
 } from './types.js';
 

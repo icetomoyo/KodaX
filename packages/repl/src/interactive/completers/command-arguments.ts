@@ -146,6 +146,24 @@ const PLAN_ARGS: ArgumentDefinition[] = [
   },
 ];
 
+const STATUS_ARGS: ArgumentDefinition[] = [
+  {
+    name: 'workspace',
+    description: 'Inspect current workspace/runtime truth in more detail',
+    type: 'enum',
+  },
+  {
+    name: 'runtime',
+    description: 'Alias for workspace runtime inspection',
+    type: 'enum',
+  },
+  {
+    name: 'worktree',
+    description: 'Alias for workspace runtime inspection',
+    type: 'enum',
+  },
+];
+
 /**
  * Project command arguments - /project 命令参数
  */
@@ -358,6 +376,9 @@ export const COMMAND_ARGUMENTS: CommandArgumentsRegistry = new Map([
   // 'model' and 'm' handled dynamically in getCommandArguments()
   ['plan', PLAN_ARGS],
   ['p', PLAN_ARGS], // alias
+  ['status', STATUS_ARGS],
+  ['info', STATUS_ARGS],
+  ['ctx', STATUS_ARGS],
   ['delete', DELETE_ARGS],
   ['rm', DELETE_ARGS], // alias
   ['del', DELETE_ARGS], // alias

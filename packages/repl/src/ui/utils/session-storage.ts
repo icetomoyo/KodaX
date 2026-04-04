@@ -8,6 +8,7 @@ import type {
   KodaXSessionData,
   KodaXSessionLineage,
   KodaXSessionNavigationOptions,
+  KodaXSessionRuntimeInfo,
   SessionErrorMetadata,
 } from "@kodax/coding";
 import {
@@ -46,7 +47,12 @@ export interface SessionStorage {
     selector?: string,
     options?: { sessionId?: string; title?: string },
   ): Promise<{ sessionId: string; data: SessionData } | null>;
-  list(gitRoot?: string): Promise<Array<{ id: string; title: string; msgCount: number }>>;
+  list(gitRoot?: string): Promise<Array<{
+    id: string;
+    title: string;
+    msgCount: number;
+    runtimeInfo?: KodaXSessionRuntimeInfo;
+  }>>;
   delete?(id: string): Promise<void>;
   deleteAll?(gitRoot?: string): Promise<void>;
 }

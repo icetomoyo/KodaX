@@ -7,6 +7,7 @@ import type {
   KodaXMessage,
   KodaXSessionArtifactLedgerEntry,
   KodaXSessionLineage,
+  KodaXSessionRuntimeInfo,
   KodaXSessionUiHistoryItem,
 } from '@kodax/coding';
 
@@ -23,6 +24,7 @@ export interface InteractiveContext {
   sessionId: string;
   title: string;
   gitRoot?: string;
+  runtimeInfo?: KodaXSessionRuntimeInfo;
   createdAt: string;
   lastAccessed: string;
   // Note: mode moved to CurrentConfig to avoid scattered state - 注意：mode 已移至 CurrentConfig 管理，避免状态分散
@@ -32,6 +34,7 @@ export interface InteractiveContext {
 export async function createInteractiveContext(options: {
   sessionId?: string;
   gitRoot?: string;
+  runtimeInfo?: KodaXSessionRuntimeInfo;
   existingMessages?: KodaXMessage[];
   existingUiHistory?: KodaXSessionUiHistoryItem[];
   existingLineage?: KodaXSessionLineage;
@@ -45,6 +48,7 @@ export async function createInteractiveContext(options: {
     sessionId: options.sessionId ?? generateSessionId(),
     title: '',
     gitRoot: options.gitRoot,
+    runtimeInfo: options.runtimeInfo,
     createdAt: new Date().toISOString(),
     lastAccessed: new Date().toISOString(),
   };

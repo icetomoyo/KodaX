@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { BUILTIN_COMMANDS, getCommandRegistry } from './commands.js';
+import { BUILTIN_COMMANDS, getCommandRegistry, type CommandCallbacks } from './commands.js';
+import { createInteractiveContext } from './context.js';
 
 describe('help command output', () => {
   beforeEach(() => {
@@ -68,5 +69,51 @@ describe('help command output', () => {
     expect(output).toContain('/project - Legacy Project Surface Retired');
     expect(output).toContain('/agent-mode ama');
     expect(output).toContain('FEATURE_054');
+  });
+
+  it('documents workspace-aware session semantics for save/load/sessions/delete', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const saveCommand = BUILTIN_COMMANDS.find((cmd) => cmd.name === 'save');
+    const loadCommand = BUILTIN_COMMANDS.find((cmd) => cmd.name === 'load');
+    const sessionsCommand = BUILTIN_COMMANDS.find((cmd) => cmd.name === 'sessions');
+    const deleteCommand = BUILTIN_COMMANDS.find((cmd) => cmd.name === 'delete');
+
+    saveCommand?.detailedHelp?.();
+    loadCommand?.detailedHelp?.();
+    sessionsCommand?.detailedHelp?.();
+    deleteCommand?.detailedHelp?.();
+
+    const output = logSpy.mock.calls.flat().join('\n');
+    expect(output).toContain('Saving updates session storage only');
+    expect(output).toContain('sibling workspaces in the same canonical repo');
+    expect(output).toContain('workspace truth');
+    expect(output).toContain('Current workspaces and checkouts remain untouched');
+  });
+
+  it('keeps workspace unchanged when saving, exiting, or deleting sessions', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const context = await createInteractiveContext({
+      gitRoot: 'C:/repo/worktrees/runtime-docs',
+      runtimeInfo: {
+        canonicalRepoRoot: 'C:/repo',
+        workspaceRoot: 'C:/repo/worktrees/runtime-docs',
+        executionCwd: 'C:/repo/worktrees/runtime-docs/packages/repl',
+        branch: 'feature/runtime-docs',
+        workspaceKind: 'managed',
+      },
+    });
+    const callbacks = {
+      saveSession: vi.fn(async () => {}),
+      exit: vi.fn(),
+      deleteSession: vi.fn(async () => {}),
+    } as unknown as CommandCallbacks;
+
+    await BUILTIN_COMMANDS.find((cmd) => cmd.name === 'save')!.handler([], context, callbacks, {} as never);
+    await BUILTIN_COMMANDS.find((cmd) => cmd.name === 'delete')!.handler(['session-1'], context, callbacks, {} as never);
+    await BUILTIN_COMMANDS.find((cmd) => cmd.name === 'exit')!.handler([], context, callbacks, {} as never);
+
+    const output = logSpy.mock.calls.flat().join('\n');
+    expect(output).toContain('Workspace unchanged');
+    expect(output).toContain('feature/runtime-docs');
   });
 });

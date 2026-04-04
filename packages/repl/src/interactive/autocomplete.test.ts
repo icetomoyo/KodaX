@@ -158,6 +158,33 @@ describe('FileCompleter boundaries', () => {
       await fs.rm(tempDir, { recursive: true, force: true });
     }
   });
+
+  it('can follow a dynamic workspace root after session/runtime changes', async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-autocomplete-dynamic-'));
+    const firstRoot = path.join(tempDir, 'first');
+    const secondRoot = path.join(tempDir, 'second');
+
+    try {
+      await fs.mkdir(firstRoot, { recursive: true });
+      await fs.mkdir(secondRoot, { recursive: true });
+      await fs.writeFile(path.join(firstRoot, 'alpha.txt'), 'alpha');
+      await fs.writeFile(path.join(secondRoot, 'beta.txt'), 'beta');
+
+      let currentRoot = firstRoot;
+      const scopedCompleter = new FileCompleter(() => currentRoot);
+
+      const firstCompletions = await scopedCompleter.getCompletions('@', 1);
+      expect(firstCompletions.some((item) => item.display === 'alpha.txt')).toBe(true);
+      expect(firstCompletions.some((item) => item.display === 'beta.txt')).toBe(false);
+
+      currentRoot = secondRoot;
+      const secondCompletions = await scopedCompleter.getCompletions('@', 1);
+      expect(secondCompletions.some((item) => item.display === 'alpha.txt')).toBe(false);
+      expect(secondCompletions.some((item) => item.display === 'beta.txt')).toBe(true);
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('findCommandSlashIndex', () => {

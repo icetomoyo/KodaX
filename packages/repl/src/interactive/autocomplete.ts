@@ -61,12 +61,12 @@ export function findCommandSlashIndex(beforeCursor: string): number {
  * Example: @src/u -> Tab completes to @src/utils/ - 例如: @src/u -> Tab 补全为 @src/utils/
  */
 export class FileCompleter implements Completer {
-  private cwd: string;
+  private cwdSource?: string | (() => string);
   private cache = new Map<string, { entries: string[]; expiresAt: number }>();
   private cacheTimeout = 5000; // 5 second cache - 5 秒缓存
 
-  constructor(cwd?: string) {
-    this.cwd = cwd ?? process.cwd();
+  constructor(cwd?: string | (() => string)) {
+    this.cwdSource = cwd;
   }
 
   canComplete(input: string, cursorPos: number): boolean {
@@ -96,10 +96,11 @@ export class FileCompleter implements Completer {
 
     const afterAt = beforeCursor.slice(lastAtIndex + 1);
     const completions: Completion[] = [];
+    const cwd = this.resolveCwd();
 
     // Parse path - 解析路径
     const lastSlash = afterAt.lastIndexOf('/');
-    const dir = lastSlash === -1 ? this.cwd : path.join(this.cwd, afterAt.slice(0, lastSlash));
+    const dir = lastSlash === -1 ? cwd : path.join(cwd, afterAt.slice(0, lastSlash));
     const prefix = lastSlash === -1 ? afterAt : afterAt.slice(lastSlash + 1);
 
     try {
@@ -123,6 +124,14 @@ export class FileCompleter implements Completer {
     }
 
     return completions;
+  }
+
+  private resolveCwd(): string {
+    if (typeof this.cwdSource === 'function') {
+      return this.cwdSource();
+    }
+
+    return this.cwdSource ?? process.cwd();
   }
 
   private async readdir(dir: string): Promise<string[]> {
@@ -279,7 +288,7 @@ export class CommandCompleter implements Completer {
  *
  * Compatible with Node.js readline completer interface - 与 Node.js readline 的 completer 接口兼容
  */
-export function createCompleter(cwd?: string): (line: string) => Promise<[string[], string]> {
+export function createCompleter(cwd?: string | (() => string)): (line: string) => Promise<[string[], string]> {
   const fileCompleter = new FileCompleter(cwd);
   const commandCompleter = new CommandCompleter();
 

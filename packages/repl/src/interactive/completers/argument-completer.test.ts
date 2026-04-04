@@ -45,6 +45,11 @@ describe('ArgumentCompleter', () => {
       expect(completer.canComplete('/delete ', 8)).toBe(true);
     });
 
+    it('should trigger on /status command', () => {
+      expect(completer.canComplete('/status ', 8)).toBe(true);
+      expect(completer.canComplete('/ctx ', 5)).toBe(true);
+    });
+
     it('should not expose retired /project argument completion', async () => {
       expect(completer.canComplete('/project ', 9)).toBe(true);
       const completions = await completer.getCompletions('/project ', 9);
@@ -255,6 +260,16 @@ describe('ArgumentCompleter', () => {
 
         // Unknown provider with / format — no completions
         expect(completions.length).toBe(0);
+      });
+    });
+
+    describe('/status command', () => {
+      it('should return workspace/runtime detail arguments', async () => {
+        const completions = await completer.getCompletions('/status ', 8);
+
+        expect(completions.map(c => c.display)).toEqual(
+          expect.arrayContaining(['workspace', 'runtime', 'worktree'])
+        );
       });
     });
 
