@@ -1,8 +1,10 @@
 export {
+  buildProjectHarnessProfileSnapshot,
   ProjectHarnessAttempt,
   formatProjectHarnessPivotSummary,
   createProjectHarnessAttempt,
   formatProjectHarnessCheckpointSummary,
+  formatProjectHarnessProfileSummary,
   formatProjectHarnessSummary,
   loadOrCreateProjectHarnessConfig,
   readLatestHarnessCheckpoint,
@@ -215,6 +217,34 @@ export interface ProjectHarnessPivotRecord {
   reason: string;
   summary: string;
   createdAt: string;
+}
+
+export interface ProjectHarnessProfileCount {
+  name: string;
+  count: number;
+}
+
+export interface ProjectHarnessProfileDimension {
+  name: Exclude<keyof ProjectHarnessScorecard, 'overall'>;
+  score: number;
+}
+
+export interface ProjectHarnessProfileSnapshot {
+  featureIndex?: number;
+  totalRuns: number;
+  decisions: Record<ProjectHarnessRunRecord['decision'], number>;
+  calibrationCases: number;
+  falsePassCases: number;
+  falseFailCases: number;
+  pivotCount: number;
+  checkpointCount: number;
+  latestRunId: string | null;
+  latestCheckpointId: string | null;
+  latestPivotId: string | null;
+  averageScorecard: ProjectHarnessScorecard | null;
+  weakestDimensions: ProjectHarnessProfileDimension[];
+  recurringFailureCodes: ProjectHarnessProfileCount[];
+  recurringRepairPlaybooks: ProjectHarnessProfileCount[];
 }
 
 export interface ProjectHarnessVerificationResult {

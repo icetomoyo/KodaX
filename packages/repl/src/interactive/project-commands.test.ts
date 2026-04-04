@@ -15,6 +15,7 @@ vi.mock('@kodax/coding', async () => {
 
 import { createInteractiveContext } from './context.js';
 import { detectAndShowProjectHint, handleProjectCommand, printProjectHelp } from './project-commands.js';
+import { createProjectHarnessAttempt, recordHarnessPivot } from './project-harness.js';
 import { ProjectStorage } from './project-storage.js';
 import { createBrainstormSession, formatBrainstormTranscript } from './project-brainstorm.js';
 import type { CommandCallbacks, CurrentConfig } from './commands.js';
@@ -847,6 +848,8 @@ describe('project commands', () => {
     const verifyOutput = logSpy.mock.calls.flat().join('\n');
     expect(verifyOutput).toContain('/project verify - Deterministic Re-check');
     expect(verifyOutput).toContain('needs_review');
+    expect(verifyOutput).toContain('Project Harness Profile');
+    expect(verifyOutput).toContain('Calibration corpus');
   });
 
   it('reruns deterministic checks during /project verify against the current workspace state', async () => {
@@ -920,6 +923,39 @@ describe('project commands', () => {
     expect(verifyOutput).toContain('retryable_failure');
     expect(verifyOutput).toContain('verify-check:fail');
     expect(verifyOutput).toContain('Evidence completeness');
+    expect(verifyOutput).toContain('Project Harness Profile');
+    expect(verifyOutput).toContain('Ablation focus');
+  });
+
+  it('summarizes checkpoint and pivot state through /project verify without adding a new surface', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const context = await createInteractiveContext({});
+    const storage = new ProjectStorage(tempDir);
+    const feature = await storage.getFeatureByIndex(1);
+    expect(feature).not.toBeNull();
+
+    const attempt = await createProjectHarnessAttempt(storage, feature!, 1, 'next', 1);
+    await attempt.verify([
+      {
+        role: 'assistant',
+        content: 'No completion report here.',
+      } as never,
+    ]);
+    await recordHarnessPivot(storage, 1, {
+      reason: 'Repeated proof gaps suggest the current implementation path should change.',
+    });
+
+    await handleProjectCommand(
+      ['verify', '1'],
+      context,
+      createCallbacks(),
+      currentConfig,
+    );
+
+    const output = logSpy.mock.calls.flat().join('\n');
+    expect(output).toContain('Project Harness Safe Checkpoint');
+    expect(output).toContain('Project Harness Pivot');
+    expect(output).toContain('Project Harness Profile');
   });
 
   it('records manual override evidence for /project mark', async () => {

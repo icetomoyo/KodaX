@@ -3,8 +3,10 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTempDirSync, removeTempDirSync } from '../test-utils/temp-dir.js';
 import {
+  buildProjectHarnessProfileSnapshot,
   createProjectHarnessAttempt,
   formatProjectHarnessCheckpointSummary,
+  formatProjectHarnessProfileSummary,
   formatProjectHarnessPivotSummary,
   loadOrCreateProjectHarnessConfig,
   readLatestHarnessCheckpoint,
@@ -1175,5 +1177,48 @@ Milestone: Checks are green.
     const latestPivot = await readLatestHarnessPivot(storage, 0);
     expect(latestPivot?.pivotId).toBe(pivot.pivotId);
     expect(formatProjectHarnessPivotSummary(latestPivot!)).toContain('Project Harness Pivot');
+  });
+
+  it('builds a summary-only harness profile snapshot with calibration, pivot, checkpoint, and ablation hints', async () => {
+    const storage = new ProjectStorage(tempDir);
+    const feature = await storage.getFeatureByIndex(0);
+    expect(feature).not.toBeNull();
+
+    const firstAttempt = await createProjectHarnessAttempt(storage, feature!, 0, 'next', 1);
+    await firstAttempt.verify([
+      {
+        role: 'assistant',
+        content: 'No completion report here.',
+      } as never,
+    ]);
+
+    const secondAttempt = await createProjectHarnessAttempt(storage, feature!, 0, 'next', 2);
+    await secondAttempt.verify([
+      {
+        role: 'assistant',
+        content: 'Still no completion report.',
+      } as never,
+    ]);
+
+    await recordManualHarnessOverride(storage, 0, 'done');
+    await recordHarnessPivot(storage, 0, {
+      reason: 'Repeated proof gaps suggest the current implementation path should change.',
+    });
+
+    const profile = await buildProjectHarnessProfileSnapshot(storage, 0);
+
+    expect(profile.totalRuns).toBe(2);
+    expect(profile.decisions.retryable_failure).toBe(2);
+    expect(profile.calibrationCases).toBe(1);
+    expect(profile.falseFailCases).toBe(1);
+    expect(profile.pivotCount).toBe(1);
+    expect(profile.checkpointCount).toBe(2);
+    expect(profile.recurringFailureCodes).toContainEqual({
+      name: 'missing_completion_report',
+      count: 2,
+    });
+    expect(profile.weakestDimensions.length).toBeGreaterThan(0);
+    expect(formatProjectHarnessProfileSummary(profile)).toContain('Project Harness Profile');
+    expect(formatProjectHarnessProfileSummary(profile)).toContain('Ablation focus');
   });
 });

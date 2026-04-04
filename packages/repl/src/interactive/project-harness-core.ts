@@ -21,6 +21,9 @@ import type {
   ProjectHarnessCalibrationLabel,
   ProjectHarnessCheckConfig,
   ProjectHarnessCheckpointRecord,
+  ProjectHarnessProfileCount,
+  ProjectHarnessProfileDimension,
+  ProjectHarnessProfileSnapshot,
   ProjectHarnessCheckResult,
   ProjectHarnessCompletionReport,
   ProjectHarnessConfig,
@@ -1613,6 +1616,211 @@ export function formatProjectHarnessPivotSummary(
 
   if (pivot.failureCodes.length > 0) {
     lines.push(`- Failure codes: ${pivot.failureCodes.join(', ')}`);
+  }
+
+  return lines.join('\n');
+}
+
+function buildHistogramSummary(items: string[]): ProjectHarnessProfileCount[] {
+  const counts = new Map<string, number>();
+  for (const item of items) {
+    counts.set(item, (counts.get(item) ?? 0) + 1);
+  }
+
+  return [...counts.entries()]
+    .filter(([, count]) => count > 1)
+    .sort((left, right) => {
+      if (right[1] !== left[1]) {
+        return right[1] - left[1];
+      }
+      return left[0].localeCompare(right[0]);
+    })
+    .slice(0, 3)
+    .map(([name, count]) => ({ name, count }));
+}
+
+function averageScorecards(scorecards: ProjectHarnessScorecard[]): ProjectHarnessScorecard | null {
+  if (scorecards.length === 0) {
+    return null;
+  }
+
+  const totals: ProjectHarnessScorecard = {
+    legality: 0,
+    checks: 0,
+    featureRelevance: 0,
+    evidenceCompleteness: 0,
+    qualityDelta: 0,
+    stallResistance: 0,
+    costEfficiency: 0,
+    overall: 0,
+  };
+
+  for (const scorecard of scorecards) {
+    totals.legality += scorecard.legality;
+    totals.checks += scorecard.checks;
+    totals.featureRelevance += scorecard.featureRelevance;
+    totals.evidenceCompleteness += scorecard.evidenceCompleteness;
+    totals.qualityDelta += scorecard.qualityDelta;
+    totals.stallResistance += scorecard.stallResistance;
+    totals.costEfficiency += scorecard.costEfficiency;
+    totals.overall += scorecard.overall;
+  }
+
+  const count = scorecards.length;
+  return {
+    legality: Math.round(totals.legality / count),
+    checks: Math.round(totals.checks / count),
+    featureRelevance: Math.round(totals.featureRelevance / count),
+    evidenceCompleteness: Math.round(totals.evidenceCompleteness / count),
+    qualityDelta: Math.round(totals.qualityDelta / count),
+    stallResistance: Math.round(totals.stallResistance / count),
+    costEfficiency: Math.round(totals.costEfficiency / count),
+    overall: Math.round(totals.overall / count),
+  };
+}
+
+function weakestScorecardDimensions(scorecard: ProjectHarnessScorecard | null): ProjectHarnessProfileDimension[] {
+  if (!scorecard) {
+    return [];
+  }
+
+  const dimensions: ProjectHarnessProfileDimension[] = [
+    { name: 'legality', score: scorecard.legality },
+    { name: 'checks', score: scorecard.checks },
+    { name: 'featureRelevance', score: scorecard.featureRelevance },
+    { name: 'evidenceCompleteness', score: scorecard.evidenceCompleteness },
+    { name: 'qualityDelta', score: scorecard.qualityDelta },
+    { name: 'stallResistance', score: scorecard.stallResistance },
+    { name: 'costEfficiency', score: scorecard.costEfficiency },
+  ];
+
+  return dimensions
+    .sort((left, right) => {
+      if (left.score !== right.score) {
+        return left.score - right.score;
+      }
+      return left.name.localeCompare(right.name);
+    })
+    .slice(0, 2);
+}
+
+export async function buildProjectHarnessProfileSnapshot(
+  storage: ProjectStorage,
+  featureIndex?: number,
+): Promise<ProjectHarnessProfileSnapshot> {
+  const [runs, calibrationCases, pivots, checkpoints, critics] = await Promise.all([
+    storage.readHarnessRuns<ProjectHarnessRunRecord>(),
+    storage.readHarnessCalibrationCases<ProjectHarnessCalibrationCaseRecord>(),
+    storage.readHarnessPivots<ProjectHarnessPivotRecord>(),
+    storage.readHarnessCheckpoints<ProjectHarnessCheckpointRecord>(),
+    storage.readHarnessCritics<ProjectHarnessCriticRecord>(),
+  ]);
+
+  const filteredRuns = featureIndex === undefined
+    ? runs
+    : runs.filter(run => run.featureIndex === featureIndex);
+  const filteredCalibrationCases = featureIndex === undefined
+    ? calibrationCases
+    : calibrationCases.filter(item => item.featureIndex === featureIndex);
+  const filteredPivots = featureIndex === undefined
+    ? pivots
+    : pivots.filter(item => item.featureIndex === featureIndex);
+  const filteredCheckpoints = featureIndex === undefined
+    ? checkpoints
+    : checkpoints.filter(item => item.featureIndex === featureIndex);
+  const filteredCritics = featureIndex === undefined
+    ? critics
+    : critics.filter(item => item.featureIndex === featureIndex);
+
+  const decisions: ProjectHarnessProfileSnapshot['decisions'] = {
+    verified_complete: 0,
+    retryable_failure: 0,
+    needs_review: 0,
+    blocked: 0,
+  };
+  for (const run of filteredRuns) {
+    decisions[run.decision] += 1;
+  }
+
+  const averageScorecard = averageScorecards(
+    filteredRuns
+      .map(run => run.scorecard)
+      .filter((scorecard): scorecard is ProjectHarnessScorecard => Boolean(scorecard)),
+  );
+
+  const recurringFailureCodes = buildHistogramSummary(
+    filteredRuns.flatMap(run => run.failureCodes ?? []),
+  );
+  const recurringRepairPlaybooks = buildHistogramSummary(
+    filteredCritics.flatMap(critic => critic.repairPlaybooks),
+  );
+
+  return {
+    featureIndex,
+    totalRuns: filteredRuns.length,
+    decisions,
+    calibrationCases: filteredCalibrationCases.length,
+    falsePassCases: filteredCalibrationCases.filter(item => item.label === 'false_pass').length,
+    falseFailCases: filteredCalibrationCases.filter(item => item.label === 'false_fail').length,
+    pivotCount: filteredPivots.length,
+    checkpointCount: filteredCheckpoints.length,
+    latestRunId: filteredRuns.length > 0 ? filteredRuns[filteredRuns.length - 1]?.runId ?? null : null,
+    latestCheckpointId: filteredCheckpoints.length > 0
+      ? filteredCheckpoints[filteredCheckpoints.length - 1]?.checkpointId ?? null
+      : null,
+    latestPivotId: filteredPivots.length > 0 ? filteredPivots[filteredPivots.length - 1]?.pivotId ?? null : null,
+    averageScorecard,
+    weakestDimensions: weakestScorecardDimensions(averageScorecard),
+    recurringFailureCodes,
+    recurringRepairPlaybooks,
+  };
+}
+
+export function formatProjectHarnessProfileSummary(
+  profile: ProjectHarnessProfileSnapshot,
+): string {
+  const scopeLabel = typeof profile.featureIndex === 'number'
+    ? `feature #${profile.featureIndex}`
+    : 'all harnessed features';
+  const lines = [
+    '## Project Harness Profile',
+    `- Scope: ${scopeLabel}`,
+    `- Runs: ${profile.totalRuns} (verified_complete ${profile.decisions.verified_complete}, retryable_failure ${profile.decisions.retryable_failure}, needs_review ${profile.decisions.needs_review}, blocked ${profile.decisions.blocked})`,
+    `- Calibration corpus: ${profile.calibrationCases} (false_fail ${profile.falseFailCases}, false_pass ${profile.falsePassCases})`,
+    `- Pivots: ${profile.pivotCount}`,
+    `- Safe checkpoints: ${profile.checkpointCount}`,
+  ];
+
+  if (profile.averageScorecard) {
+    lines.push(
+      `- Average score: ${profile.averageScorecard.overall} (legality ${profile.averageScorecard.legality}, checks ${profile.averageScorecard.checks}, relevance ${profile.averageScorecard.featureRelevance}, evidence ${profile.averageScorecard.evidenceCompleteness}, quality ${profile.averageScorecard.qualityDelta}, stall ${profile.averageScorecard.stallResistance}, cost ${profile.averageScorecard.costEfficiency})`,
+    );
+  }
+
+  if (profile.weakestDimensions.length > 0) {
+    lines.push(
+      `- Ablation focus: ${profile.weakestDimensions.map(item => `${item.name} ${item.score}`).join(', ')}`,
+    );
+  }
+
+  if (profile.recurringFailureCodes.length > 0) {
+    lines.push(
+      `- Repeated failure codes: ${profile.recurringFailureCodes.map(item => `${item.name} x${item.count}`).join(', ')}`,
+    );
+  }
+
+  if (profile.recurringRepairPlaybooks.length > 0) {
+    lines.push(
+      `- Repeated repair playbooks: ${profile.recurringRepairPlaybooks.map(item => `${item.name} x${item.count}`).join(', ')}`,
+    );
+  }
+
+  if (profile.latestCheckpointId) {
+    lines.push(`- Latest checkpoint: ${profile.latestCheckpointId}`);
+  }
+
+  if (profile.latestPivotId) {
+    lines.push(`- Latest pivot: ${profile.latestPivotId}`);
   }
 
   return lines.join('\n');

@@ -15,8 +15,8 @@
 |---|---|
 | Tracked feature IDs | `001-056` |
 | Total tracked features | `56` |
-| Completed | `47` |
-| InProgress | `1` |
+| Completed | `48` |
+| InProgress | `0` |
 | Planned | `8` |
 | Current released version | `v0.7.14` |
 
@@ -26,7 +26,7 @@
 |---|---|
 | `v0.7.20` | `1` |
 | `v0.7.25` | `0` |
-| `v0.7.30` | `5` |
+| `v0.7.30` | `4` |
 | `v0.8.0` | `1` |
 | `v0.9.0` | `0` |
 | `v1.0.0` | `1` |
@@ -35,9 +35,7 @@
 
 ## 进行中的 Feature
 
-| ID | Title | Category | Priority | Planned | Design |
-|---|---|---|---|---|---|
-| `043` | Harness Calibration, Pivoting, Profiling, and Safe Checkpoints | Enhancement | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_043-harness-calibration-pivoting-profiling-and-safe-checkpoints) |
+_当前没有 InProgress feature。下一步按 `v0.7.30` 顺序启动 `FEATURE_038`。_
 
 ---
 
@@ -125,6 +123,7 @@
 | `053` | Canonical Repo Identity and Managed Worktree Runtime | `v0.7.30` (unreleased) | [v0.7.30](features/v0.7.30.md#feature_053-canonical-repo-identity-and-managed-worktree-runtime) |
 | `055` | REPL Substrate Hardening and Summary-Only AMA UX | `v0.9.0` (unreleased) | [v0.9.0](features/v0.9.0.md#feature_055-repl-substrate-hardening-and-summary-only-ama-ux) |
 | `054` | AMA-Project Convergence: Absorb Project Mode into Adaptive H2 | `v0.7.30` (unreleased) | [v0.7.30](features/v0.7.30.md#feature_054-ama-project-convergence-absorb-project-mode-into-adaptive-h2) |
+| `043` | Harness Calibration, Pivoting, Profiling, and Safe Checkpoints | `v0.7.30` (unreleased) | [v0.7.30](features/v0.7.30.md#feature_043-harness-calibration-pivoting-profiling-and-safe-checkpoints) |
 
 > `FEATURE_051` close-out posture: keep the current REPL status/footer/task/message surfaces frozen, limit follow-up work to invisible substrate maturity for transcript, scroll/selection, and input behavior, and treat the design doc as a completed close-out record rather than an open rollout plan.
 
