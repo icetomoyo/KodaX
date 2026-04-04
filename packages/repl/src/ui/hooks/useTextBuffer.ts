@@ -165,6 +165,21 @@ export function useTextBuffer(options: UseTextBufferOptions = {}): UseTextBuffer
     syncState();
   }, [buffer, syncState]);
 
+  const handleKillLineRight = useCallback(() => {
+    buffer.killLineRight();
+    syncState();
+  }, [buffer, syncState]);
+
+  const handleKillLineLeft = useCallback(() => {
+    buffer.killLineLeft();
+    syncState();
+  }, [buffer, syncState]);
+
+  const handleDeleteWordLeft = useCallback(() => {
+    buffer.deleteWordLeft();
+    syncState();
+  }, [buffer, syncState]);
+
   // handleInput - process keyboard input - 处理键盘输入
   const handleInput = useCallback(
     (key: KeyInfo): boolean => {
@@ -287,6 +302,9 @@ export function useTextBuffer(options: UseTextBufferOptions = {}): UseTextBuffer
     delete: handleDelete,
     move: handleMove,
     moveToEnd: handleMoveToEnd,
+    killLineRight: handleKillLineRight,
+    killLineLeft: handleKillLineLeft,
+    deleteWordLeft: handleDeleteWordLeft,
     clear: handleClear,
     undo: handleUndo,
     redo: handleRedo,

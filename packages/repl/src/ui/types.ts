@@ -40,6 +40,9 @@ export interface UseTextBufferReturn {
   delete: () => void;
   move: (direction: "up" | "down" | "left" | "right" | "home" | "end") => void;
   moveToEnd: () => void;
+  killLineRight: () => void;
+  killLineLeft: () => void;
+  deleteWordLeft: () => void;
   clear: () => void;
   undo: () => boolean;
   redo: () => boolean;

@@ -34,6 +34,9 @@ const mocks = vi.hoisted(() => {
     deleteMock: vi.fn(),
     undoMock: vi.fn(() => true),
     redoMock: vi.fn(() => true),
+    killLineRightMock: vi.fn(),
+    killLineLeftMock: vi.fn(),
+    deleteWordLeftMock: vi.fn(),
     handleInputMock: vi.fn(),
     handleTabMock: vi.fn(() => state.tabCompletion),
     handleEnterMock: vi.fn(() => state.enterCompletion),
@@ -74,6 +77,9 @@ vi.mock("../hooks/useTextBuffer.js", () => ({
     delete: mocks.deleteMock,
     undo: mocks.undoMock,
     redo: mocks.redoMock,
+    killLineRight: mocks.killLineRightMock,
+    killLineLeft: mocks.killLineLeftMock,
+    deleteWordLeft: mocks.deleteWordLeftMock,
   }),
 }));
 
@@ -96,6 +102,7 @@ vi.mock("./autocomplete-replacement.js", () => ({
 }));
 
 import {
+  resolvePromptEditingCommand,
   resolvePromptEnterBehavior,
   resolvePromptEscapeBehavior,
   shouldUseHistoryNavigation,
@@ -162,6 +169,17 @@ describe("prompt-input-controller", () => {
       isAutocompleteVisible: false,
       isLineContinuation: false,
     })).toBe("newline");
+
+    expect(resolvePromptEditingCommand({
+      name: "k",
+      ctrl: true,
+      meta: false,
+    })).toBe("kill-line-right");
+    expect(resolvePromptEditingCommand({
+      name: "backspace",
+      ctrl: false,
+      meta: true,
+    })).toBe("delete-word-left");
   });
 
   it("submits the accepted autocomplete completion on enter", () => {
@@ -278,5 +296,28 @@ describe("prompt-input-controller", () => {
     render(React.createElement(Harness));
 
     expect(controller?.handleKey(createKey({ name: "t", sequence: "\u0014", ctrl: true }))).toBe(false);
+  });
+
+  it("handles shell-style editing shortcuts through the prompt controller", () => {
+    let controller: ReturnType<typeof usePromptInputController> | undefined;
+
+    const Harness = () => {
+      controller = usePromptInputController({ onSubmit: vi.fn() });
+      return null;
+    };
+
+    render(React.createElement(Harness));
+
+    expect(controller?.handleKey(createKey({ name: "k", sequence: "\u000b", ctrl: true }))).toBe(true);
+    expect(mocks.killLineRightMock).toHaveBeenCalledTimes(1);
+
+    expect(controller?.handleKey(createKey({ name: "u", sequence: "\u0015", ctrl: true }))).toBe(true);
+    expect(mocks.killLineLeftMock).toHaveBeenCalledTimes(1);
+
+    expect(controller?.handleKey(createKey({ name: "w", sequence: "\u0017", ctrl: true }))).toBe(true);
+    expect(mocks.deleteWordLeftMock).toHaveBeenCalledTimes(1);
+
+    expect(controller?.handleKey(createKey({ name: "backspace", sequence: "\u001b\u007f", meta: true }))).toBe(true);
+    expect(mocks.deleteWordLeftMock).toHaveBeenCalledTimes(2);
   });
 });

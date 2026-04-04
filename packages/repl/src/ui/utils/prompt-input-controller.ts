@@ -37,6 +37,15 @@ export type PromptEnterBehavior =
   | "line-continuation"
   | "submit";
 
+export type PromptEditingCommand =
+  | "move-home"
+  | "move-end"
+  | "undo"
+  | "redo"
+  | "kill-line-right"
+  | "kill-line-left"
+  | "delete-word-left";
+
 const DOUBLE_ESC_INTERVAL = 500;
 
 export function shouldUseHistoryNavigation(
@@ -92,6 +101,37 @@ export function resolvePromptEnterBehavior(options: {
   return "submit";
 }
 
+export function resolvePromptEditingCommand(
+  key: Pick<KeyInfo, "ctrl" | "meta" | "name">,
+): PromptEditingCommand | undefined {
+  if (key.meta && key.name === "backspace") {
+    return "delete-word-left";
+  }
+
+  if (!key.ctrl) {
+    return undefined;
+  }
+
+  switch (key.name) {
+    case "a":
+      return "move-home";
+    case "e":
+      return "move-end";
+    case "z":
+      return "undo";
+    case "y":
+      return "redo";
+    case "k":
+      return "kill-line-right";
+    case "u":
+      return "kill-line-left";
+    case "w":
+      return "delete-word-left";
+    default:
+      return undefined;
+  }
+}
+
 export function usePromptInputController({
   onSubmit,
   onExit,
@@ -120,6 +160,9 @@ export function usePromptInputController({
     delete: deleteChar,
     undo,
     redo,
+    killLineRight,
+    killLineLeft,
+    deleteWordLeft,
   } = useTextBuffer({
     initialValue,
     onTextChange: onInputChange,
@@ -310,6 +353,35 @@ export function usePromptInputController({
       return true;
     }
 
+    const editingCommand = resolvePromptEditingCommand(key);
+    if (editingCommand) {
+      switch (editingCommand) {
+        case "move-home":
+          move("home");
+          return true;
+        case "move-end":
+          move("end");
+          return true;
+        case "undo":
+          undo();
+          return true;
+        case "redo":
+          redo();
+          return true;
+        case "kill-line-right":
+          killLineRight();
+          return true;
+        case "kill-line-left":
+          killLineLeft();
+          return true;
+        case "delete-word-left":
+          deleteWordLeft();
+          return true;
+        default:
+          break;
+      }
+    }
+
     if (key.name === "backspace") {
       backspace();
       return true;
@@ -353,25 +425,6 @@ export function usePromptInputController({
       }
     }
 
-    if (key.ctrl) {
-      switch (key.name) {
-        case "a":
-          move("home");
-          return true;
-        case "e":
-          move("end");
-          return true;
-        case "z":
-          undo();
-          return true;
-        case "y":
-          redo();
-          return true;
-        default:
-          return false;
-      }
-    }
-
     if (key.insertable && !key.ctrl && !key.meta) {
       insert(key.sequence, key.sequence.length > 1 ? { paste: true } : undefined);
       return true;
@@ -393,6 +446,8 @@ export function usePromptInputController({
     handleEnter,
     handleTab,
     lines,
+    killLineLeft,
+    killLineRight,
     move,
     navigateDown,
     navigateUp,
@@ -405,6 +460,7 @@ export function usePromptInputController({
     submitCurrentText,
     suggestions.length,
     text.length,
+    deleteWordLeft,
     undo,
   ]);
 
