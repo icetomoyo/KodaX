@@ -1,12 +1,16 @@
 import React from "react";
 import { Box, Text } from "ink";
 
+export interface FullscreenTranscriptChromeSlot {
+  text?: string;
+}
+
 export interface FullscreenTranscriptLayoutProps {
   transcript: React.ReactNode;
   footer: React.ReactNode;
   overlay?: React.ReactNode;
-  stickyHeaderText?: string;
-  jumpToLatestText?: string;
+  stickyHeader?: FullscreenTranscriptChromeSlot;
+  jumpToLatest?: FullscreenTranscriptChromeSlot;
   width?: number;
 }
 
@@ -14,22 +18,22 @@ export const FullscreenTranscriptLayout: React.FC<FullscreenTranscriptLayoutProp
   transcript,
   footer,
   overlay,
-  stickyHeaderText,
-  jumpToLatestText,
+  stickyHeader,
+  jumpToLatest,
   width,
 }) => {
   return (
     <Box flexDirection="column" width={width} flexGrow={1} flexShrink={0}>
       <Box flexDirection="column" flexGrow={1} overflowY="hidden">
-        {stickyHeaderText ? (
+        {stickyHeader?.text ? (
           <Box paddingX={1}>
-            <Text dimColor>{stickyHeaderText}</Text>
+            <Text dimColor>{stickyHeader.text}</Text>
           </Box>
         ) : null}
         {transcript}
-        {jumpToLatestText ? (
+        {jumpToLatest?.text ? (
           <Box paddingX={1}>
-            <Text dimColor>{jumpToLatestText}</Text>
+            <Text dimColor>{jumpToLatest.text}</Text>
           </Box>
         ) : null}
       </Box>

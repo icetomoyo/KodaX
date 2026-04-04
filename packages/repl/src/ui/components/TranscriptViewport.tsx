@@ -5,41 +5,56 @@ import { MessageList } from "./MessageList.js";
 import { MessageActions } from "./MessageActions.js";
 import { MessageSelector } from "./MessageSelector.js";
 
-export interface TranscriptViewportProps extends MessageListProps {
-  browseHintText?: string;
-  selectedSummary?: string;
-  selectedIndex?: number;
-  selectedTotal?: number;
-  selectedKindLabel?: string;
-  selectedDetailExpanded?: boolean;
-  canCopySelection?: boolean;
+export interface TranscriptViewportBrowseState {
+  hintText?: string;
+}
+
+export interface TranscriptViewportSelectionState {
+  summary?: string;
+  index?: number;
+  total?: number;
+  kindLabel?: string;
+  detailExpanded?: boolean;
+  canCopy?: boolean;
   canCopyToolInput?: boolean;
-  canToggleSelectionDetail?: boolean;
-  searchStatusText?: string;
-  searchMatchCount?: number;
-  searchSurface?: React.ReactNode;
+  canToggleDetail?: boolean;
+}
+
+export interface TranscriptViewportSearchState {
+  statusText?: string;
+  matchCount?: number;
+  surface?: React.ReactNode;
+}
+
+export interface TranscriptViewportProps extends MessageListProps {
+  browse?: TranscriptViewportBrowseState;
+  selection?: TranscriptViewportSelectionState;
+  search?: TranscriptViewportSearchState;
 }
 
 export const TranscriptViewport: React.FC<TranscriptViewportProps> = ({
-  browseHintText,
-  selectedSummary,
-  selectedIndex = 0,
-  selectedTotal = 0,
-  selectedKindLabel,
-  selectedDetailExpanded = false,
-  canCopySelection = false,
-  canCopyToolInput = false,
-  canToggleSelectionDetail = false,
-  searchStatusText,
-  searchMatchCount = 0,
-  searchSurface,
+  browse,
+  selection,
+  search,
   ...messageListProps
 }) => {
+  const selectedSummary = selection?.summary;
+  const selectedIndex = selection?.index ?? 0;
+  const selectedTotal = selection?.total ?? 0;
+  const selectedKindLabel = selection?.kindLabel;
+  const selectedDetailExpanded = selection?.detailExpanded ?? false;
+  const canCopySelection = selection?.canCopy ?? false;
+  const canCopyToolInput = selection?.canCopyToolInput ?? false;
+  const canToggleSelectionDetail = selection?.canToggleDetail ?? false;
+  const searchStatusText = search?.statusText;
+  const searchMatchCount = search?.matchCount ?? 0;
+  const searchSurface = search?.surface;
+
   return (
     <Box flexDirection="column" flexGrow={1}>
-      {browseHintText ? (
+      {browse?.hintText ? (
         <Box paddingX={1}>
-          <Text dimColor>{browseHintText}</Text>
+          <Text dimColor>{browse.hintText}</Text>
         </Box>
       ) : null}
       {selectedSummary ? (

@@ -9,17 +9,21 @@ describe("TranscriptViewport", () => {
     const { lastFrame } = render(
       <TranscriptViewport
         items={[]}
-        browseHintText="Browsing"
-        selectedSummary="Planner response"
-        selectedIndex={0}
-        selectedTotal={3}
-        selectedKindLabel="assistant"
-        selectedDetailExpanded
-        canCopySelection
-        canCopyToolInput
-        searchSurface={<Text>2 matches</Text>}
-        searchStatusText="1/2 transcript matches"
-        searchMatchCount={2}
+        browse={{ hintText: "Browsing" }}
+        selection={{
+          summary: "Planner response",
+          index: 0,
+          total: 3,
+          kindLabel: "assistant",
+          detailExpanded: true,
+          canCopy: true,
+          canCopyToolInput: true,
+        }}
+        search={{
+          surface: <Text>2 matches</Text>,
+          statusText: "1/2 transcript matches",
+          matchCount: 2,
+        }}
       />,
     );
 

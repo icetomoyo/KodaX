@@ -11,8 +11,8 @@ describe("FullscreenTranscriptLayout", () => {
         transcript={<Text>Transcript</Text>}
         overlay={<Text>Overlay</Text>}
         footer={<Text>Footer</Text>}
-        stickyHeaderText="Sticky prompt"
-        jumpToLatestText="Jump to latest"
+        stickyHeader={{ text: "Sticky prompt" }}
+        jumpToLatest={{ text: "Jump to latest" }}
       />,
     );
 

@@ -142,7 +142,6 @@ import { buildManagedRunContext } from "./utils/managed-run-context.js";
 import { formatToolCallInlineText } from "./utils/tool-display.js";
 import { calculateViewportBudget } from "./utils/viewport-budget.js";
 import {
-  buildTranscriptBrowseHint,
   closeTranscriptSearch,
   createTranscriptDisplayState,
   enterTranscriptHistory,
@@ -162,9 +161,7 @@ import { detectTerminalHostProfile } from "./utils/terminal-host-profile.js";
 import { formatPendingInputsSummary, MAX_PENDING_INPUTS } from "./utils/pending-inputs.js";
 import { runQueuedPromptSequence } from "./utils/queued-prompt-sequence.js";
 import {
-  buildHistoryItemTranscriptSections,
   capHistoryByTranscriptRows,
-  resolveScrollOffsetForTranscriptItem,
   sliceHistoryToRecentRounds,
 } from "./utils/transcript-layout.js";
 import {
@@ -179,6 +176,14 @@ import {
   searchTranscriptIndex,
   stepTranscriptSearchMatch,
 } from "./utils/transcript-search.js";
+import {
+  buildTranscriptChromeModel,
+  incrementTranscriptScrollOffset,
+  resolveTranscriptPageSize,
+  resolveTranscriptSearchAnchorItemId,
+  resolveTranscriptSelectionOffset,
+  resolveTranscriptWheelStep,
+} from "./utils/transcript-scroll-controller.js";
 import {
   getAskUserDialogTitle,
   resolveAskUserDismissChoice,
@@ -1216,53 +1221,24 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     clearWorkStripTimers();
   }, [clearWorkStripTimers]);
 
-  const reviewHintText = useMemo(() => {
-    return buildTranscriptBrowseHint(transcriptDisplayState);
-  }, [transcriptDisplayState]);
-
-  const stickyPromptText = useMemo(() => {
-    if (!transcriptDisplayState.supportsStickyPrompt || !transcriptDisplayState.stickyPromptVisible) {
-      return undefined;
-    }
-
-    if (isHistorySearchActive) {
-      const query = historySearchQuery.trim();
-      return query
-        ? `Searching transcript for "${query}"`
-        : "Searching transcript history";
-    }
-
-    if (isAwaitingUserInteraction) {
-      return "Interaction active - transcript follow is paused";
-    }
-
-    if (isReviewingHistory) {
-      return "Browsing transcript history";
-    }
-
-    return undefined;
-  }, [
-    historySearchQuery,
-    isAwaitingUserInteraction,
-    isHistorySearchActive,
-    isReviewingHistory,
-    transcriptDisplayState.stickyPromptVisible,
-    transcriptDisplayState.supportsStickyPrompt,
-  ]);
-
-  const jumpToLatestText = useMemo(() => {
-    if (!transcriptOwnsViewport || !transcriptDisplayState.supportsViewportChrome) {
-      return undefined;
-    }
-    if (!transcriptDisplayState.jumpToLatestAvailable) {
-      return undefined;
-    }
-    return "Jump to latest: End";
-  }, [
-    transcriptDisplayState.jumpToLatestAvailable,
-    transcriptDisplayState.supportsViewportChrome,
-    transcriptOwnsViewport,
-  ]);
+  const transcriptChrome = useMemo(
+    () => buildTranscriptChromeModel({
+      state: transcriptDisplayState,
+      ownsViewport: transcriptOwnsViewport,
+      isAwaitingUserInteraction,
+      isHistorySearchActive,
+      isReviewingHistory,
+      historySearchQuery,
+    }),
+    [
+      historySearchQuery,
+      isAwaitingUserInteraction,
+      isHistorySearchActive,
+      isReviewingHistory,
+      transcriptDisplayState,
+      transcriptOwnsViewport,
+    ],
+  );
 
   useEffect(() => {
     setTranscriptDisplayState((prev) => {
@@ -1446,7 +1422,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             matchCount: historySearchBudgetState.matches.length,
           }
         : null,
-      reviewHint: reviewHintText,
+      reviewHint: transcriptChrome.browseHintText,
       uiRequest: uiRequest
         ? uiRequest.kind === "select"
           ? {
@@ -1483,7 +1459,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       confirmRequest,
       confirmInstruction,
       historySearchBudgetState,
-      reviewHintText,
+      transcriptChrome.browseHintText,
       uiRequest,
     ]
   );
@@ -1505,12 +1481,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     ],
   );
   const reviewPageSize = useMemo(
-    () => Math.max(1, viewportBudget.messageRows - 2),
-    [viewportBudget.messageRows]
+    () => resolveTranscriptPageSize(viewportBudget.messageRows),
+    [viewportBudget.messageRows],
   );
   const reviewWheelStep = useMemo(
-    () => Math.max(3, Math.floor(reviewPageSize / 4)),
-    [reviewPageSize]
+    () => resolveTranscriptWheelStep(reviewPageSize),
+    [reviewPageSize],
   );
   const transcriptMaxLines = isTranscriptVerbose || isReviewingHistory ? 1000 : 12;
 
@@ -1518,18 +1494,15 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     if (!itemId) {
       return;
     }
-    const sections = buildHistoryItemTranscriptSections(
-      displayItems,
+    const nextOffset = resolveTranscriptSelectionOffset({
+      items: displayItems,
       terminalWidth,
       transcriptMaxLines,
-      isTranscriptVerbose || isReviewingHistory,
-      expandedTranscriptItemIds,
-    );
-    const nextOffset = resolveScrollOffsetForTranscriptItem(
-      sections,
+      viewportRows: viewportBudget.messageRows,
       itemId,
-      viewportBudget.messageRows,
-    );
+      expandedItemKeys: expandedTranscriptItemIds,
+      showDetailedTools: isTranscriptVerbose || isReviewingHistory,
+    });
     setHistoryScrollOffset(nextOffset);
   }, [
     displayItems,
@@ -1624,7 +1597,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     if (!displayItems.length || confirmRequest || uiRequest) {
       return;
     }
-    const anchorItemId = selectedTranscriptItemId ?? displayItems[displayItems.length - 1]?.id;
+    const anchorItemId = resolveTranscriptSearchAnchorItemId(
+      displayItems,
+      selectedTranscriptItemId,
+    );
     setTranscriptDisplayState((prev) => openTranscriptSearch(prev, {
       anchorItemId,
       initialMatchIndex: 0,
@@ -1924,7 +1900,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         if (!hasTranscript) return true;
 
         enterHistoryReview();
-        setHistoryScrollOffset((prev) => prev + reviewPageSize);
+        setHistoryScrollOffset((prev) => incrementTranscriptScrollOffset(prev, reviewPageSize));
         return true;
       }
 
@@ -1990,7 +1966,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           return true;
         }
 
-        setHistoryScrollOffset((prev) => Math.max(0, prev - reviewPageSize));
+        setHistoryScrollOffset((prev) => incrementTranscriptScrollOffset(prev, -reviewPageSize));
         return true;
       }
 
@@ -1998,7 +1974,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         if (!supportsTranscriptMouseHistory(transcriptDisplayState)) {
           return false;
         }
-        setHistoryScrollOffset((prev) => prev + reviewWheelStep);
+        setHistoryScrollOffset((prev) => incrementTranscriptScrollOffset(prev, reviewWheelStep));
         return true;
       }
 
@@ -2011,17 +1987,17 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           return true;
         }
 
-        setHistoryScrollOffset((prev) => Math.max(0, prev - reviewWheelStep));
+        setHistoryScrollOffset((prev) => incrementTranscriptScrollOffset(prev, -reviewWheelStep));
         return true;
       }
 
       if (key.name === "j" || key.name === "down") {
-        setHistoryScrollOffset((prev) => Math.max(0, prev - 1));
+        setHistoryScrollOffset((prev) => incrementTranscriptScrollOffset(prev, -1));
         return true;
       }
 
       if (key.name === "k" || key.name === "up") {
-        setHistoryScrollOffset((prev) => prev + 1);
+        setHistoryScrollOffset((prev) => incrementTranscriptScrollOffset(prev, 1));
         return true;
       }
 
@@ -3904,8 +3880,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
       <FullscreenTranscriptLayout
         width={terminalWidth}
-        stickyHeaderText={stickyPromptText}
-        jumpToLatestText={jumpToLatestText}
+        stickyHeader={{ text: transcriptChrome.stickyHeaderText }}
+        jumpToLatest={{ text: transcriptChrome.jumpToLatestText }}
         transcript={
           <TranscriptViewport
             items={displayItems}
@@ -3941,17 +3917,21 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             showDetailedTools={isTranscriptVerbose || isReviewingHistory}
             selectedItemId={selectedTranscriptItemId}
             expandedItemKeys={expandedTranscriptItemIds}
-            browseHintText={reviewHintText}
-            selectedSummary={isReviewingHistory ? selectedTranscriptItemSummary?.summary : undefined}
-            selectedIndex={Math.max(0, selectedTranscriptItemIndex)}
-            selectedTotal={selectableTranscriptItemIds.length}
-            selectedKindLabel={isReviewingHistory ? selectedTranscriptItemSummary?.kindLabel : undefined}
-            selectedDetailExpanded={isReviewingHistory ? isSelectedTranscriptItemExpanded : false}
-            canCopySelection={isReviewingHistory && Boolean(selectedTranscriptItemId)}
-            canCopyToolInput={isReviewingHistory && canCopySelectedToolInput}
-            canToggleSelectionDetail={isReviewingHistory && Boolean(selectedTranscriptItemId)}
-            searchStatusText={!useOverlaySurface ? historySearchStatusText : undefined}
-            searchMatchCount={!useOverlaySurface ? historySearchMatches.length : 0}
+            browse={{ hintText: transcriptChrome.browseHintText }}
+            selection={{
+              summary: isReviewingHistory ? selectedTranscriptItemSummary?.summary : undefined,
+              index: Math.max(0, selectedTranscriptItemIndex),
+              total: selectableTranscriptItemIds.length,
+              kindLabel: isReviewingHistory ? selectedTranscriptItemSummary?.kindLabel : undefined,
+              detailExpanded: isReviewingHistory ? isSelectedTranscriptItemExpanded : false,
+              canCopy: isReviewingHistory && Boolean(selectedTranscriptItemId),
+              canCopyToolInput: isReviewingHistory && canCopySelectedToolInput,
+              canToggleDetail: isReviewingHistory && Boolean(selectedTranscriptItemId),
+            }}
+            search={{
+              statusText: !useOverlaySurface ? historySearchStatusText : undefined,
+              matchCount: !useOverlaySurface ? historySearchMatches.length : 0,
+            }}
           />
         }
         overlay={overlaySurface}
