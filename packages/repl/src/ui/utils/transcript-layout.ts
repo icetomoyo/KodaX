@@ -67,6 +67,8 @@ export interface TranscriptBuildOptions {
 }
 
 const THINKING_PREVIEW_MAX_CHARS = 400;
+const THINKING_PREVIEW_TRUNCATION_HINT =
+  "... (thinking truncated in compact view; press PgUp to review full reasoning)";
 
 function normalizeManagedLiveActivityLabel(label: string | undefined, workerTitle?: string): string | undefined {
   if (!label || !workerTitle) {
@@ -142,9 +144,30 @@ function wrapText(text: string, width: number): string[] {
   return layout.visualLines.length > 0 ? layout.visualLines : [""];
 }
 
-function getLogicalLineSlice(text: string, maxLines: number): string[] {
-  const logicalLines = text.split("\n");
-  return logicalLines.slice(0, maxLines);
+function buildThinkingPreview(
+  text: string,
+  maxLines: number,
+  showFullThinking: boolean,
+): string {
+  if (showFullThinking) {
+    return text;
+  }
+
+  const logicalLines = text.split(/\r?\n/);
+  const truncatedByLines = logicalLines.length > maxLines;
+  const lineLimitedText = truncatedByLines
+    ? logicalLines.slice(0, maxLines).join("\n")
+    : text;
+  const truncatedByChars = lineLimitedText.length > THINKING_PREVIEW_MAX_CHARS;
+  const previewBody = truncatedByChars
+    ? lineLimitedText.slice(0, THINKING_PREVIEW_MAX_CHARS)
+    : lineLimitedText;
+
+  if (!truncatedByLines && !truncatedByChars) {
+    return text;
+  }
+
+  return `${previewBody}\n\n${THINKING_PREVIEW_TRUNCATION_HINT}`;
 }
 
 function pushWrappedRows(
@@ -362,23 +385,13 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
           viewportWidth,
           { color: "secondary", bold: true, spinner: item.isStreaming }
         );
-        const truncatedLines = getLogicalLineSlice(item.text, maxLines);
         pushWrappedRows(
           rows,
           `${item.id}-body`,
-          truncatedLines.join("\n"),
+          item.text,
           getBodyWidth(viewportWidth, 2),
           { color: "text", indent: 2 }
         );
-        if (item.text.split("\n").length > maxLines) {
-          pushWrappedRows(
-            rows,
-            `${item.id}-more`,
-            `... (${item.text.split("\n").length - maxLines} more lines)`,
-            getBodyWidth(viewportWidth, 2),
-            { color: "dim", indent: 2 }
-          );
-        }
         pushBlankRow(rows, `${item.id}-blank`);
         break;
       }
@@ -410,17 +423,20 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
         pushBlankRow(rows, `${item.id}-blank`);
         break;
       case "thinking":
+        {
+          const preview = buildThinkingPreview(item.text, maxLines, showFullThinking);
         pushWrappedRows(rows, `${item.id}-header`, "Thinking", viewportWidth, {
           color: "thinking",
           italic: true,
         });
-        pushWrappedRows(rows, `${item.id}-body`, item.text, getBodyWidth(viewportWidth, 2), {
+        pushWrappedRows(rows, `${item.id}-body`, preview, getBodyWidth(viewportWidth, 2), {
           color: "thinking",
           indent: 2,
           italic: true,
         });
         pushBlankRow(rows, `${item.id}-blank`);
         break;
+        }
       case "error":
         pushWrappedRows(rows, `${item.id}-header`, "\u2717 Error", viewportWidth, {
           color: "error",
@@ -517,9 +533,7 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
   }
 
   if (isLoading && thinkingContent) {
-    const thinkingPreview = showFullThinking || thinkingContent.length <= THINKING_PREVIEW_MAX_CHARS
-      ? thinkingContent
-      : `${thinkingContent.slice(0, THINKING_PREVIEW_MAX_CHARS)}\n\n... (thinking truncated in live view; press PgUp to review full reasoning)`;
+    const thinkingPreview = buildThinkingPreview(thinkingContent, maxLines, showFullThinking);
     pushWrappedRows(rows, "thinking-stream-header", "Thinking", viewportWidth, {
       color: "thinking",
       italic: true,

@@ -49,6 +49,18 @@ describe("transcript-layout", () => {
     expect(rows.some((row) => row.text.includes("Final line must stay visible"))).toBe(true);
   });
 
+  it("keeps persisted assistant output intact even when compact maxLines is small", () => {
+    const rows = buildTranscriptRows({
+      items: [assistant(Array.from({ length: 8 }, (_, index) => `line ${index + 1}`).join("\n"))],
+      viewportWidth: 80,
+      maxLines: 5,
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text).toContain("line 8");
+    expect(text).not.toContain("more lines");
+  });
+
   it("keeps the latest rows when slicing a transcript viewport", () => {
     const rows = buildTranscriptRows({
       items: [assistant(["one", "two", "three", "four", "five", "tail line"].join("\n"))],
@@ -143,7 +155,7 @@ describe("transcript-layout", () => {
     });
 
     const text = rows.map((row) => row.text).join("\n");
-    expect(text).toContain("thinking truncated in live view");
+    expect(text).toContain("thinking truncated in compact view");
     expect(text).not.toContain("A".repeat(430));
   });
 
@@ -161,7 +173,48 @@ describe("transcript-layout", () => {
 
     const text = rows.map((row) => row.text).join("\n");
     expect(text.replace(/\n/g, "")).toContain("B".repeat(430));
-    expect(text).not.toContain("thinking truncated in live view");
+    expect(text).not.toContain("thinking truncated in compact view");
+  });
+
+  it("truncates persisted thinking blocks in compact mode using transcript maxLines", () => {
+    const rows = buildTranscriptRows({
+      items: [
+        {
+          id: "thinking-1",
+          type: "thinking",
+          text: Array.from({ length: 20 }, (_, index) => `line ${index + 1}`).join("\n"),
+          timestamp: Date.now(),
+        },
+      ],
+      viewportWidth: 80,
+      maxLines: 5,
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text).toContain("line 1");
+    expect(text).toContain("line 5");
+    expect(text).toContain("thinking truncated in compact view");
+    expect(text).not.toContain("line 6");
+  });
+
+  it("does not truncate persisted thinking blocks when full thinking is enabled", () => {
+    const rows = buildTranscriptRows({
+      items: [
+        {
+          id: "thinking-2",
+          type: "thinking",
+          text: Array.from({ length: 8 }, (_, index) => `detail ${index + 1}`).join("\n"),
+          timestamp: Date.now(),
+        },
+      ],
+      viewportWidth: 80,
+      maxLines: 5,
+      showFullThinking: true,
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text).toContain("detail 8");
+    expect(text).not.toContain("thinking truncated in compact view");
   });
 
   it("shows AMA harness level and active worker in the live thinking row", () => {
