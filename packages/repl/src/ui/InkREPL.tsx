@@ -118,6 +118,7 @@ import { runWithPlanMode } from "../common/plan-mode.js";
 import { saveAlwaysAllowToolPattern, loadAlwaysAllowTools, savePermissionModeUser } from "../common/permission-config.js";
 import { initializeSkillRegistry, getSkillRegistry } from "@kodax/skills";
 import { getTheme } from "./themes/index.js";
+import { KODAX_BANNER_LOGO_LINES } from "./constants/banner-logo.js";
 import chalk from "chalk";
 import {
   ShortcutsProvider,
@@ -609,14 +610,6 @@ const Banner: React.FC<BannerProps> = ({ config, sessionId, workingDir, compacti
   const terminalWidth = process.stdout.columns ?? 80;
   const dividerWidth = Math.min(60, terminalWidth - 4);
 
-  const logoLines = [
-    "  _  __          _        __  __",
-    " | |/ /___   __| | __ _ \\ \\/ /",
-    " | ' // _ \\\\ / _` |/ _` | \\\\  / ",
-    " | . \\ (_) | (_| | (_| | /  \\ ",
-    " |_|\\_\\___/ \\__,_|\\__,_|/_/\\_\\",
-  ];
-
   // Compute compaction display values
   const ctxK = compactionInfo ? Math.round(compactionInfo.contextWindow / 1000) : 0;
   const triggerK = compactionInfo ? Math.round(compactionInfo.contextWindow * compactionInfo.triggerPercent / 100 / 1000) : 0;
@@ -624,7 +617,7 @@ const Banner: React.FC<BannerProps> = ({ config, sessionId, workingDir, compacti
   return (
     <Box flexDirection="column" marginBottom={1}>
       {/* Logo */}
-      {logoLines.map((line, i) => (
+      {KODAX_BANNER_LOGO_LINES.map((line, i) => (
         <Text key={i} color={theme.colors.primary}>
           {line}
         </Text>

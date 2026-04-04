@@ -2,7 +2,13 @@ import React from "react";
 import { describe, expect, it } from "vitest";
 import { render } from "ink-testing-library";
 import { Text } from "ink";
-import { PromptFooter } from "./PromptFooter.js";
+import {
+  PromptFooter,
+  PromptFooterLeftSide,
+  PromptFooterRightSide,
+} from "./PromptFooter.js";
+
+const BULLET_SEPARATOR = " \u00B7 ";
 
 describe("PromptFooter", () => {
   it("renders footer surfaces including help, notices, task bar, and dialog surface", () => {
@@ -42,5 +48,26 @@ describe("PromptFooter", () => {
     expect(frame.indexOf("Dialog")).toBeLessThan(frame.indexOf("Help Menu"));
     expect(frame.indexOf("Help Menu")).toBeLessThan(frame.indexOf("Task Bar"));
     expect(frame.indexOf("Task Bar")).toBeLessThan(frame.indexOf("Status Line"));
+  });
+
+  it("preserves the original bullet separators for footer header items", () => {
+    const { lastFrame } = render(
+      <PromptFooter
+        left={<PromptFooterLeftSide items={[
+          { id: "history", label: "History" },
+          { id: "queue", label: "Queue 2", accent: true },
+        ]} />}
+        right={<PromptFooterRightSide items={[
+          { id: "host", label: "native_vt" },
+          { id: "verbosity", label: "verbose", accent: true },
+        ]} />}
+        composer={<Text>Composer</Text>}
+      />,
+    );
+
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain(`History${BULLET_SEPARATOR}Queue 2`);
+    expect(frame).toContain(`native_vt${BULLET_SEPARATOR}verbose`);
+    expect(frame).not.toContain("路");
   });
 });

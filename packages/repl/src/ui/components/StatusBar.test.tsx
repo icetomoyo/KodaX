@@ -4,6 +4,8 @@ import { render } from "ink-testing-library";
 import { StatusBar, getStatusBarText } from "./StatusBar.js";
 import { buildStatusBarViewModel } from "../view-models/status-bar.js";
 
+const BULLET_SEPARATOR = " \u00B7 ";
+
 describe("StatusBar", () => {
   it("includes thinking char counts in budget text", () => {
     const text = getStatusBarText({
@@ -76,6 +78,33 @@ describe("StatusBar", () => {
     );
 
     expect(lastFrame()).toContain(expectedText);
+  });
+
+  it("preserves the original per-segment colors in the view model", () => {
+    const viewModel = buildStatusBarViewModel({
+      sessionId: "session-1",
+      permissionMode: "accept-edits",
+      agentMode: "ama",
+      parallel: true,
+      provider: "anthropic",
+      model: "sonnet",
+      reasoningMode: "auto",
+      contextUsage: {
+        currentTokens: 40_000,
+        contextWindow: 200_000,
+        triggerPercent: 80,
+      },
+    });
+
+    expect(viewModel.segments.map((segment) => segment.color)).toEqual([
+      "primary",
+      "green",
+      "green",
+      "cyan",
+      "dim",
+      "secondary",
+      "green",
+    ]);
   });
 
   it("can hide busy status while preserving the rest of the bar", () => {
@@ -180,6 +209,25 @@ describe("StatusBar", () => {
     expect(text).toContain("H2 - Planner - Bash (12 chars)");
     expect(text).toContain("Bash (12 chars)");
     expect(text).toContain("session-1 | H2 - Planner");
+  });
+
+  it("uses the original bullet separator inside multi-part iteration progress", () => {
+    const text = getStatusBarText({
+      sessionId: "session-1",
+      permissionMode: "accept-edits",
+      agentMode: "ama",
+      provider: "anthropic",
+      model: "sonnet",
+      managedHarnessProfile: "H2_PLAN_EXECUTE_EVAL",
+      managedWorkerTitle: "Planner",
+      managedRound: 2,
+      managedMaxRounds: 6,
+      managedGlobalWorkBudget: 200,
+      managedBudgetUsage: 87,
+    });
+
+    expect(text).toContain(`Round 2/6${BULLET_SEPARATOR}Work 87/200`);
+    expect(text).not.toContain("璺");
   });
 
   it("prefers the aggregate tool count in the status bar when tools are running", () => {

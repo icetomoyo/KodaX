@@ -4,6 +4,20 @@ const ITERATION_SYMBOL = "\u{1F504}";
 const BAR_FILLED = "\u2588";
 const BAR_EMPTY = "\u2592";
 const TOKEN_ARROW = "\u2192";
+const INLINE_SEPARATOR = " \u00B7 ";
+
+export interface StatusBarSegment {
+  id: string;
+  text: string;
+  color?: string;
+  tone?: "primary" | "accent" | "success" | "warning" | "error" | "dim";
+  bold?: boolean;
+}
+
+export interface StatusBarViewModel {
+  text: string;
+  segments: StatusBarSegment[];
+}
 
 function formatReasoningModeShort(mode: string): string {
   switch (mode) {
@@ -44,6 +58,22 @@ function formatReasoningCapabilityShort(capability?: string): string {
   }
 }
 
+function getReasoningColor(mode: string): string {
+  switch (mode) {
+    case "off":
+      return "dim";
+    case "quick":
+      return "green";
+    case "balanced":
+      return "yellow";
+    case "deep":
+      return "magenta";
+    case "auto":
+    default:
+      return "cyan";
+  }
+}
+
 function formatTokenCount(count: number): string {
   if (count >= 1_000_000) {
     return `${(count / 1_000_000).toFixed(1)}M`;
@@ -58,6 +88,38 @@ function createMiniProgressBar(percent: number): string {
   const filled = Math.min(10, Math.max(0, Math.round(percent / 10)));
   const empty = 10 - filled;
   return `${BAR_FILLED.repeat(filled)}${BAR_EMPTY.repeat(empty)}`;
+}
+
+function getContextColor(
+  currentTokens: number,
+  contextWindow: number,
+  triggerPercent: number,
+): string {
+  if (contextWindow === 0) {
+    return "green";
+  }
+  const percent = (currentTokens / contextWindow) * 100;
+  const warningThreshold = triggerPercent * (2 / 3);
+  if (percent >= triggerPercent) {
+    return "red";
+  }
+  if (percent >= warningThreshold) {
+    return "yellow";
+  }
+  return "green";
+}
+
+function getPermissionModeColor(permissionMode: StatusBarProps["permissionMode"]): string {
+  switch (permissionMode.toLowerCase()) {
+    case "plan":
+      return "blue";
+    case "accept-edits":
+      return "green";
+    case "auto-in-project":
+      return "warning";
+    default:
+      return "magenta";
+  }
 }
 
 function formatToolAction(currentTool: string): string {
@@ -208,62 +270,15 @@ function formatBusyStatus({
     return roleLabel;
   }
 
-  const legacyManagedPhase = managedPhase as StatusBarProps["managedPhase"];
-
-  if (legacyManagedPhase === "routing") {
-    if (runningToolsLabel) {
-      return `Routing \u2192 ${runningToolsLabel}`;
-    }
-    if (currentTool) {
-      return `Routing \u2192 ${formatToolStatus(currentTool, toolInputCharCount, toolInputContent)}`;
-    }
-    if (isThinkingActive) {
-      return formatThinkingStatus("Routing", thinkingCharCount);
-    }
-    return "Routing";
-  }
-
-  if (legacyManagedPhase === "preflight") {
-    const scoutLabel = managedWorkerTitle ? `Scout - ${managedWorkerTitle}` : "Scout";
-    if (runningToolsLabel) {
-      return `${scoutLabel} \u2192 ${runningToolsLabel}`;
-    }
-    if (currentTool) {
-      return `${scoutLabel} \u2192 ${formatToolStatus(currentTool, toolInputCharCount, toolInputContent)}`;
-    }
-    if (isThinkingActive) {
-      return formatThinkingStatus(scoutLabel, thinkingCharCount);
-    }
-    return scoutLabel;
-  }
-
-  if (managedHarnessProfile) {
-    const harness = formatHarnessProfileShort(managedHarnessProfile);
-    const roleLabel = `${harness}${managedWorkerTitle ? ` - ${managedWorkerTitle}` : ""}`;
-    if (runningToolsLabel) {
-      return `${roleLabel} \u2192 ${runningToolsLabel}`;
-    }
-    if (currentTool) {
-      return `${roleLabel} · ${formatToolStatus(currentTool, toolInputCharCount, toolInputContent)}`;
-    }
-    if (isThinkingActive) {
-      return formatThinkingStatus(roleLabel, thinkingCharCount);
-    }
-    return roleLabel;
-  }
-
   if (runningToolsLabel) {
     return runningToolsLabel;
   }
-
   if (currentTool) {
     return formatToolStatus(currentTool, toolInputCharCount, toolInputContent);
   }
-
   if (isThinkingActive) {
     return formatThinkingStatus("Thinking", thinkingCharCount);
   }
-
   return undefined;
 }
 
@@ -328,95 +343,67 @@ function formatLabeledIterationStatus(
   }
   return `${ITERATION_SYMBOL} ${segments
     .map((segment) => `${segment.label} ${segment.current}/${segment.max}`)
-    .join(" 路 ")}`;
+    .join(INLINE_SEPARATOR)}`;
 }
 
-export interface StatusBarSegment {
-  id: string;
-  text: string;
-  tone?: "primary" | "accent" | "success" | "warning" | "error" | "dim";
-  bold?: boolean;
-}
+function buildStatusBarSegments(props: StatusBarProps): StatusBarSegment[] {
+  const {
+    sessionId,
+    permissionMode,
+    agentMode,
+    parallel = false,
+    provider,
+    model,
+    tokenUsage,
+    currentTool,
+    activeToolCount,
+    thinking,
+    isThinkingActive,
+    thinkingCharCount,
+    reasoningMode = thinking ? "auto" : "off",
+    reasoningCapability,
+    isCompacting,
+    toolInputCharCount,
+    toolInputContent,
+    currentIteration,
+    maxIter,
+    contextUsage,
+    showBusyStatus = true,
+    managedPhase,
+    managedHarnessProfile,
+    managedWorkerTitle,
+    managedRound,
+    managedMaxRounds,
+    managedGlobalWorkBudget,
+    managedBudgetUsage,
+  } = props;
 
-export interface StatusBarViewModel {
-  text: string;
-  segments: StatusBarSegment[];
-}
-
-function inferSegmentTone(
-  segment: string,
-  index: number,
-): StatusBarSegment["tone"] {
-  if (index === 0) {
-    return "primary";
-  }
-  if (/error|failed|denied/i.test(segment)) {
-    return "error";
-  }
-  if (/warning|fallback|approve|approval/i.test(segment)) {
-    return "warning";
-  }
-  if (/thinking|routing|scout|round|work|parallel|sequential/i.test(segment)) {
-    return "accent";
-  }
-  if (/done|success/i.test(segment)) {
-    return "success";
-  }
-  return "dim";
-}
-
-function buildSegmentsFromText(text: string): StatusBarSegment[] {
-  return text
-    .split(" | ")
-    .map((segment) => segment.trim())
-    .filter(Boolean)
-    .map((segment, index) => ({
-      id: `segment-${index}`,
-      text: segment,
-      tone: inferSegmentTone(segment, index),
-      bold: index === 0,
-    }));
-}
-
-export function getStatusBarText({
-  sessionId,
-  permissionMode,
-  agentMode,
-  parallel = false,
-  provider,
-  model,
-  tokenUsage,
-  currentTool,
-  activeToolCount,
-  thinking,
-  isThinkingActive,
-  thinkingCharCount,
-  reasoningMode = thinking ? "auto" : "off",
-  reasoningCapability,
-  isCompacting,
-  toolInputCharCount,
-  toolInputContent,
-  currentIteration,
-  maxIter,
-  contextUsage,
-  showBusyStatus = true,
-  managedPhase,
-  managedHarnessProfile,
-  managedWorkerTitle,
-  managedRound,
-  managedMaxRounds,
-  managedGlobalWorkBudget,
-  managedBudgetUsage,
-}: StatusBarProps): string {
-  const parts: string[] = [];
-
-  parts.push(`KodaX - ${agentMode.toUpperCase()}`);
-  parts.push(permissionMode.toUpperCase());
-  parts.push(parallel ? "parallel" : "sequential");
+  const segments: StatusBarSegment[] = [
+    {
+      id: "agent-mode",
+      text: `KodaX - ${agentMode.toUpperCase()}`,
+      color: "primary",
+      bold: true,
+    },
+    {
+      id: "permission-mode",
+      text: permissionMode.toUpperCase(),
+      color: getPermissionModeColor(permissionMode),
+    },
+    {
+      id: "execution-mode",
+      text: parallel ? "parallel" : "sequential",
+      color: parallel ? "green" : "gray",
+    },
+  ];
 
   const rModeShort = formatReasoningModeShort(reasoningMode);
   const rCapShort = formatReasoningCapabilityShort(reasoningCapability);
-  parts.push(reasoningCapability ? `${rModeShort}/${rCapShort}` : rModeShort);
+  segments.push({
+    id: "reasoning-mode",
+    text: reasoningCapability ? `${rModeShort}/${rCapShort}` : rModeShort,
+    color: getReasoningColor(reasoningMode),
+  });
 
   const iterationSegments = resolveIterationSegments({
     agentMode,
@@ -431,8 +418,25 @@ export function getStatusBarText({
   });
   const iterationStatus = formatLabeledIterationStatus(iterationSegments);
   if (iterationStatus) {
-    parts.push(iterationStatus);
+    const ratio = Math.max(...iterationSegments.map((segment) => segment.current / segment.max));
+    let color = "green";
+    if (ratio >= 0.8) {
+      color = "red";
+    } else if (ratio >= 0.5) {
+      color = "yellow";
+    }
+    segments.push({
+      id: "iteration-status",
+      text: iterationStatus,
+      color,
+    });
   }
+
+  segments.push({
+    id: "session-id",
+    text: sessionId,
+    color: "dim",
+  });
 
   const busyStatus = showBusyStatus
     ? formatBusyStatus({
@@ -448,33 +452,58 @@ export function getStatusBarText({
         managedWorkerTitle,
       })
     : undefined;
-  parts.push(sessionId);
+
   if (busyStatus) {
-    parts.push(busyStatus);
+    segments.push({
+      id: "busy-status",
+      text: busyStatus,
+      color: "dim",
+    });
   }
-  parts.push(`${provider}/${model}`);
+
+  segments.push({
+    id: "provider-model",
+    text: `${provider}/${model}`,
+    color: "secondary",
+  });
 
   if (contextUsage && contextUsage.contextWindow !== 0) {
     const percent = Math.round((contextUsage.currentTokens / contextUsage.contextWindow) * 100);
     const currentStr = formatTokenCount(contextUsage.currentTokens);
     const windowStr = formatTokenCount(contextUsage.contextWindow);
     const progressBar = createMiniProgressBar(percent);
-    parts.push(`${currentStr}/${windowStr} ${progressBar} ${percent}%`);
+    segments.push({
+      id: "context-usage",
+      text: `${currentStr}/${windowStr} ${progressBar} ${percent}%`,
+      color: getContextColor(
+        contextUsage.currentTokens,
+        contextUsage.contextWindow,
+        contextUsage.triggerPercent,
+      ),
+    });
   }
 
   if (tokenUsage) {
-    parts.push(`${tokenUsage.input}${TOKEN_ARROW}${tokenUsage.output} (${tokenUsage.total})`);
+    segments.push({
+      id: "token-usage",
+      text: `${tokenUsage.input}${TOKEN_ARROW}${tokenUsage.output} (${tokenUsage.total})`,
+      color: "dim",
+    });
   }
 
-  return parts.join(" | ");
+  return segments;
+}
+
+export function getStatusBarText(props: StatusBarProps): string {
+  return buildStatusBarSegments(props).map((segment) => segment.text).join(" | ");
 }
 
 export function buildStatusBarViewModel(
   props: StatusBarProps,
 ): StatusBarViewModel {
-  const text = getStatusBarText(props);
+  const segments = buildStatusBarSegments(props);
   return {
-    text,
-    segments: buildSegmentsFromText(text),
+    text: segments.map((segment) => segment.text).join(" | "),
+    segments,
   };
 }
