@@ -3,6 +3,7 @@ import {
   createTranscriptDisplayState,
   enterTranscriptHistory,
   ownsTranscriptSelectionPath,
+  resolveTranscriptSelectedItemId,
   supportsPassiveTranscriptCopyOnSelect,
 } from "./transcript-state.js";
 
@@ -29,5 +30,28 @@ describe("transcript-state selection capabilities", () => {
     expect(supportsPassiveTranscriptCopyOnSelect(nativeBrowsing)).toBe(true);
     expect(supportsPassiveTranscriptCopyOnSelect(xtermBrowsing)).toBe(false);
     expect(supportsPassiveTranscriptCopyOnSelect(degradedBrowsing)).toBe(false);
+  });
+
+  it("only keeps selected ids that remain valid inside the owned selection path", () => {
+    const browsingNative = enterTranscriptHistory(
+      createTranscriptDisplayState("native_vt"),
+    );
+    const liveNative = createTranscriptDisplayState("native_vt");
+
+    expect(resolveTranscriptSelectedItemId(
+      browsingNative,
+      ["assistant-1", "tool-1"],
+      "tool-1",
+    )).toBe("tool-1");
+    expect(resolveTranscriptSelectedItemId(
+      browsingNative,
+      ["assistant-1", "tool-1"],
+      "missing",
+    )).toBeUndefined();
+    expect(resolveTranscriptSelectedItemId(
+      liveNative,
+      ["assistant-1", "tool-1"],
+      "tool-1",
+    )).toBeUndefined();
   });
 });

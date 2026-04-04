@@ -72,5 +72,6 @@ These documents remain useful as implementation history, but they are not the so
 - The active architecture should be interpreted through the top-level docs, not by reading an older release doc in isolation.
 - When a historical doc and a current doc disagree, the current doc wins.
 - `FEATURE_051` is now the completed visible-shell close-out for the REPL.
-- `FEATURE_055` carries the remaining REPL substrate hardening without reopening the shell surface.
+- `FEATURE_055` closes the remaining REPL substrate hardening without reopening the shell surface.
 - `FEATURE_046 / 047 / 052` describe AMA substrate and fan-out rules; they do not authorize a heavier multi-agent REPL surface by themselves.
+- For REPL/TUI context, read `051 -> 055 -> 046/047/052` in that order.

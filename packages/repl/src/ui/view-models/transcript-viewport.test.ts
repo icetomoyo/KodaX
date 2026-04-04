@@ -1,39 +1,71 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildTranscriptSelectionRuntimeState,
   buildTranscriptSearchViewModel,
   buildTranscriptSelectionViewModel,
 } from "./transcript-viewport.js";
 
 describe("transcript-viewport view model", () => {
-  it("hides transcript selection capabilities outside the owned browsing path", () => {
-    expect(buildTranscriptSelectionViewModel({
-      state: {
-        followMode: "follow-bottom",
-        supportsSelection: true,
-        supportsCopyOnSelect: true,
-      },
-      itemSummary: { summary: "Assistant response", kindLabel: "assistant" },
-      selectedItemId: "assistant-1",
-      selectedItemIndex: 0,
-      selectableCount: 3,
-      canCopyToolInput: false,
-      isExpanded: false,
-    })).toBeUndefined();
-  });
-
-  it("builds copy and navigation capabilities from host-aware selection truth", () => {
-    expect(buildTranscriptSelectionViewModel({
+  it("normalizes transcript selection and action capabilities from the owned browsing path", () => {
+    expect(buildTranscriptSelectionRuntimeState({
       state: {
         followMode: "browsing-history",
         supportsSelection: true,
         supportsCopyOnSelect: false,
       },
-      itemSummary: { summary: "Tool call: changed_diff", kindLabel: "tool" },
+      selectableItemIds: ["assistant-1", "tool-1", "assistant-2"],
+      selectedItemId: "tool-1",
+      selectedItemType: "tool_group",
+      isExpanded: true,
+    })).toEqual({
+      selectionEnabled: true,
       selectedItemId: "tool-1",
       selectedItemIndex: 1,
-      selectableCount: 3,
-      canCopyToolInput: true,
-      isExpanded: true,
+      position: { current: 2, total: 3 },
+      detailState: "expanded",
+      copyCapabilities: {
+        message: true,
+        toolInput: true,
+        copyOnSelect: false,
+      },
+      toggleDetail: true,
+      navigationCapabilities: {
+        selection: true,
+      },
+    });
+  });
+
+  it("hides transcript selection capabilities outside the owned browsing path", () => {
+    expect(buildTranscriptSelectionViewModel({
+      runtime: buildTranscriptSelectionRuntimeState({
+        state: {
+          followMode: "follow-bottom",
+          supportsSelection: true,
+          supportsCopyOnSelect: true,
+        },
+        selectableItemIds: ["assistant-1", "assistant-2", "assistant-3"],
+        selectedItemId: "assistant-1",
+        selectedItemType: "assistant",
+        isExpanded: false,
+      }),
+      itemSummary: { summary: "Assistant response", kindLabel: "assistant" },
+    })).toBeUndefined();
+  });
+
+  it("builds copy and navigation capabilities from host-aware selection truth", () => {
+    expect(buildTranscriptSelectionViewModel({
+      runtime: buildTranscriptSelectionRuntimeState({
+        state: {
+          followMode: "browsing-history",
+          supportsSelection: true,
+          supportsCopyOnSelect: false,
+        },
+        selectableItemIds: ["assistant-1", "tool-1", "assistant-2"],
+        selectedItemId: "tool-1",
+        selectedItemType: "tool_group",
+        isExpanded: true,
+      }),
+      itemSummary: { summary: "Tool call: changed_diff", kindLabel: "tool" },
     })).toEqual({
       itemSummary: "Tool call: changed_diff",
       itemKind: "tool",

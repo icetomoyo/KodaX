@@ -155,15 +155,14 @@ import {
   enterTranscriptHistory,
   exitTranscriptHistory,
   jumpTranscriptToLatest,
-  ownsTranscriptSelectionPath,
   openTranscriptSearch,
+  resolveTranscriptSelectedItemId,
   setTranscriptSearchMatchIndex,
   setTranscriptScrollAnchor,
   setTranscriptSelectedItem,
   setTranscriptStickyPromptVisible,
   shouldPauseLiveTranscript,
   shouldWindowTranscript,
-  supportsPassiveTranscriptCopyOnSelect,
   supportsTranscriptMouseHistory,
   toggleTranscriptVerbosityState,
 } from "./utils/transcript-state.js";
@@ -209,6 +208,7 @@ import {
 } from "./view-models/ama-summary.js";
 import {
   buildTranscriptSearchViewModel,
+  buildTranscriptSelectionRuntimeState,
   buildTranscriptSelectionViewModel,
 } from "./view-models/transcript-viewport.js";
 
@@ -1148,20 +1148,39 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     () => getSelectableTranscriptItemIds(displayItems),
     [displayItems],
   );
-  const supportsTranscriptSelection = ownsTranscriptSelectionPath(transcriptDisplayState);
-  const supportsTranscriptCopyOnSelect = supportsPassiveTranscriptCopyOnSelect(
-    transcriptDisplayState,
+  const selectedTranscriptItemId = useMemo(
+    () => resolveTranscriptSelectedItemId(
+      transcriptDisplayState,
+      selectableTranscriptItemIds,
+      transcriptDisplayState.selectedItemId,
+    ),
+    [selectableTranscriptItemIds, transcriptDisplayState],
   );
-  const selectedTranscriptItemId = supportsTranscriptSelection
-    ? transcriptDisplayState.selectedItemId
-    : undefined;
   const selectedTranscriptItem = useMemo(
     () => displayItems.find((item) => item.id === selectedTranscriptItemId),
     [displayItems, selectedTranscriptItemId],
   );
-  const selectedTranscriptItemIndex = selectedTranscriptItemId
-    ? selectableTranscriptItemIds.indexOf(selectedTranscriptItemId)
-    : -1;
+  const transcriptSelectionRuntime = useMemo(
+    () => buildTranscriptSelectionRuntimeState({
+      state: transcriptDisplayState,
+      selectableItemIds: selectableTranscriptItemIds,
+      selectedItemId: selectedTranscriptItemId,
+      selectedItemType: selectedTranscriptItem?.type,
+      isExpanded: selectedTranscriptItemId
+        ? expandedTranscriptItemIds.has(selectedTranscriptItemId)
+        : false,
+    }),
+    [
+      expandedTranscriptItemIds,
+      selectableTranscriptItemIds,
+      selectedTranscriptItem?.type,
+      selectedTranscriptItemId,
+      transcriptDisplayState,
+    ],
+  );
+  const supportsTranscriptSelection = transcriptSelectionRuntime.selectionEnabled;
+  const supportsTranscriptCopyOnSelect = transcriptSelectionRuntime.copyCapabilities.copyOnSelect;
+  const selectedTranscriptItemIndex = transcriptSelectionRuntime.selectedItemIndex;
   const selectedTranscriptItemSummary = useMemo(
     () => buildTranscriptSelectionSummary(selectedTranscriptItem),
     [selectedTranscriptItem],
@@ -1187,11 +1206,15 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     () => buildTranscriptSearchSummary(historySearchMatches, clampedHistorySearchSelectedIndex),
     [clampedHistorySearchSelectedIndex, historySearchMatches],
   );
-  const isSelectedTranscriptItemExpanded = selectedTranscriptItemId
-    ? expandedTranscriptItemIds.has(selectedTranscriptItemId)
-    : false;
+  const isSelectedTranscriptItemExpanded = transcriptSelectionRuntime.detailState === "expanded";
+  const canCycleTranscriptSelection =
+    transcriptSelectionRuntime.navigationCapabilities.selection;
+  const canCopySelectedTranscriptItem =
+    transcriptSelectionRuntime.copyCapabilities.message;
   const canCopySelectedToolInput =
-    supportsTranscriptSelection && selectedTranscriptItem?.type === "tool_group";
+    transcriptSelectionRuntime.copyCapabilities.toolInput;
+  const canToggleSelectedTranscriptDetail =
+    transcriptSelectionRuntime.toggleDetail;
 
   useEffect(() => {
     if (rawWorkStripText) {
@@ -1466,22 +1489,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     && transcriptOwnsViewport;
   const transcriptSelectionState = useMemo(
     () => buildTranscriptSelectionViewModel({
-      state: transcriptDisplayState,
+      runtime: transcriptSelectionRuntime,
       itemSummary: selectedTranscriptItemSummary,
-      selectedItemId: selectedTranscriptItemId,
-      selectedItemIndex: selectedTranscriptItemIndex,
-      selectableCount: selectableTranscriptItemIds.length,
-      canCopyToolInput: canCopySelectedToolInput,
-      isExpanded: isSelectedTranscriptItemExpanded,
     }),
     [
-      canCopySelectedToolInput,
-      isSelectedTranscriptItemExpanded,
-      selectableTranscriptItemIds.length,
-      selectedTranscriptItemId,
-      selectedTranscriptItemIndex,
       selectedTranscriptItemSummary,
-      transcriptDisplayState,
+      transcriptSelectionRuntime,
     ],
   );
   const transcriptSearchState = useMemo(
@@ -1648,7 +1661,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }, [alignTranscriptSelection]);
 
   const cycleTranscriptSelection = useCallback((direction: "prev" | "next") => {
-    if (!supportsTranscriptSelection) {
+    if (!canCycleTranscriptSelection) {
       return;
     }
     const nextItemId = moveTranscriptSelection(
@@ -1659,10 +1672,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     if (nextItemId) {
       selectTranscriptItem(nextItemId);
     }
-  }, [selectableTranscriptItemIds, selectedTranscriptItemId, selectTranscriptItem, supportsTranscriptSelection]);
+  }, [canCycleTranscriptSelection, selectableTranscriptItemIds, selectedTranscriptItemId, selectTranscriptItem]);
 
   const toggleSelectedTranscriptDetail = useCallback(() => {
-    if (!supportsTranscriptSelection || !selectedTranscriptItemId) {
+    if (!canToggleSelectedTranscriptDetail || !selectedTranscriptItemId) {
       return;
     }
     setExpandedTranscriptItemIds((prev) => {
@@ -1674,10 +1687,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
       return next;
     });
-  }, [selectedTranscriptItemId, supportsTranscriptSelection]);
+  }, [canToggleSelectedTranscriptDetail, selectedTranscriptItemId]);
 
   const copySelectedTranscriptItem = useCallback(async () => {
-    if (!supportsTranscriptSelection || !selectedTranscriptItem) {
+    if (!canCopySelectedTranscriptItem || !selectedTranscriptItem) {
       return;
     }
     const copyText = buildTranscriptCopyText(selectedTranscriptItem);
@@ -1696,10 +1709,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         text: `Failed to copy transcript entry: ${error instanceof Error ? error.message : String(error)}`,
       });
     }
-  }, [addHistoryItem, selectedTranscriptItem, supportsTranscriptSelection]);
+  }, [addHistoryItem, canCopySelectedTranscriptItem, selectedTranscriptItem]);
 
   const copySelectedTranscriptToolInput = useCallback(async () => {
-    if (!supportsTranscriptSelection || !selectedTranscriptItem) {
+    if (!canCopySelectedToolInput || !selectedTranscriptItem) {
       return;
     }
 
@@ -1720,7 +1733,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         text: `Failed to copy tool input: ${error instanceof Error ? error.message : String(error)}`,
       });
     }
-  }, [addHistoryItem, selectedTranscriptItem, supportsTranscriptSelection]);
+  }, [addHistoryItem, canCopySelectedToolInput, selectedTranscriptItem]);
 
   const openHistorySearchSurface = useCallback(() => {
     if (!displayItems.length || confirmRequest || uiRequest) {
@@ -1853,6 +1866,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }, []);
 
   useEffect(() => {
+    if (supportsTranscriptSelection || !transcriptDisplayState.selectedItemId) {
+      return;
+    }
+
+    setTranscriptDisplayState((prev) => setTranscriptSelectedItem(prev, undefined));
+  }, [supportsTranscriptSelection, transcriptDisplayState.selectedItemId]);
+
+  useEffect(() => {
     if (!isReviewingHistory || !supportsTranscriptSelection) {
       return;
     }
@@ -1864,7 +1885,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }, [isReviewingHistory, selectableTranscriptItemIds, selectedTranscriptItemId, supportsTranscriptSelection]);
 
   useEffect(() => {
-    if (!isReviewingHistory || !supportsTranscriptSelection || !supportsTranscriptCopyOnSelect) {
+    if (!isReviewingHistory || !canCopySelectedTranscriptItem || !supportsTranscriptCopyOnSelect) {
       lastAutoCopiedTranscriptItemIdRef.current = undefined;
       return;
     }
@@ -1895,7 +1916,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     isReviewingHistory,
     selectedTranscriptItem,
     selectedTranscriptItemId,
-    supportsTranscriptSelection,
+    canCopySelectedTranscriptItem,
     supportsTranscriptCopyOnSelect,
   ]);
 
@@ -2201,7 +2222,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
 
       if (key.name === "left") {
-        if (!supportsTranscriptSelection) {
+        if (!canCycleTranscriptSelection) {
           return false;
         }
         cycleTranscriptSelection("prev");
@@ -2209,7 +2230,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
 
       if (key.name === "right") {
-        if (!supportsTranscriptSelection) {
+        if (!canCycleTranscriptSelection) {
           return false;
         }
         cycleTranscriptSelection("next");
@@ -2217,7 +2238,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
 
       if (!key.ctrl && !key.meta && !key.shift && key.name === "c") {
-        if (!supportsTranscriptSelection) {
+        if (!canCopySelectedTranscriptItem) {
           return false;
         }
         void copySelectedTranscriptItem();
@@ -2225,7 +2246,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
 
       if (!key.ctrl && !key.meta && !key.shift && key.name === "i") {
-        if (!supportsTranscriptSelection) {
+        if (!canCopySelectedToolInput) {
           return false;
         }
         void copySelectedTranscriptToolInput();
@@ -2233,7 +2254,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
 
       if (!key.ctrl && !key.meta && !key.shift && key.name === "v") {
-        if (!supportsTranscriptSelection) {
+        if (!canToggleSelectedTranscriptDetail) {
           return false;
         }
         toggleSelectedTranscriptDetail();
@@ -2254,15 +2275,18 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       enterHistoryReview,
       exitHistoryReview,
       transcriptDisplayState,
-      supportsTranscriptSelection,
+      canCycleTranscriptSelection,
       clampedHistorySearchSelectedIndex,
       historySearchMatches,
       openHistorySearchSurface,
       closeHistorySearchSurface,
       disarmHistorySearchSelection,
       cycleTranscriptSelection,
+      canCopySelectedTranscriptItem,
       copySelectedTranscriptItem,
+      canCopySelectedToolInput,
       copySelectedTranscriptToolInput,
+      canToggleSelectedTranscriptDetail,
       toggleSelectedTranscriptDetail,
       selectTranscriptItem,
     ]

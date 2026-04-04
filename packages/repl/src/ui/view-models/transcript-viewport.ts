@@ -11,17 +11,41 @@ import type {
 } from "../utils/transcript-state.js";
 import {
   ownsTranscriptSelectionPath,
+  resolveTranscriptSelectedItemId,
   supportsPassiveTranscriptCopyOnSelect,
 } from "../utils/transcript-state.js";
 
-export interface BuildTranscriptSelectionViewModelOptions {
-  state: TranscriptSelectionCapabilityState;
-  itemSummary?: TranscriptSelectionSummary;
+export interface TranscriptSelectionRuntimeState {
+  selectionEnabled: boolean;
   selectedItemId?: string;
   selectedItemIndex: number;
-  selectableCount: number;
-  canCopyToolInput: boolean;
+  position?: {
+    current: number;
+    total: number;
+  };
+  detailState: "compact" | "expanded";
+  copyCapabilities: {
+    message: boolean;
+    toolInput: boolean;
+    copyOnSelect: boolean;
+  };
+  toggleDetail: boolean;
+  navigationCapabilities: {
+    selection: boolean;
+  };
+}
+
+export interface BuildTranscriptSelectionRuntimeStateOptions {
+  state: TranscriptSelectionCapabilityState;
+  selectableItemIds: readonly string[];
+  selectedItemId?: string;
+  selectedItemType?: string;
   isExpanded: boolean;
+}
+
+export interface BuildTranscriptSelectionViewModelOptions {
+  runtime: TranscriptSelectionRuntimeState;
+  itemSummary?: TranscriptSelectionSummary;
 }
 
 export interface BuildTranscriptSearchViewModelOptions {
@@ -33,34 +57,57 @@ export interface BuildTranscriptSearchViewModelOptions {
   useOverlaySurface: boolean;
 }
 
+export function buildTranscriptSelectionRuntimeState(
+  options: BuildTranscriptSelectionRuntimeStateOptions,
+): TranscriptSelectionRuntimeState {
+  const selectionEnabled = ownsTranscriptSelectionPath(options.state);
+  const selectedItemId = resolveTranscriptSelectedItemId(
+    options.state,
+    options.selectableItemIds,
+    options.selectedItemId,
+  );
+  const selectedItemIndex = selectedItemId
+    ? options.selectableItemIds.indexOf(selectedItemId)
+    : -1;
+
+  return {
+    selectionEnabled,
+    selectedItemId,
+    selectedItemIndex,
+    position: selectedItemId
+      ? {
+        current: Math.max(1, selectedItemIndex + 1),
+        total: options.selectableItemIds.length,
+      }
+      : undefined,
+    detailState: selectedItemId && options.isExpanded ? "expanded" : "compact",
+    copyCapabilities: {
+      message: Boolean(selectedItemId),
+      toolInput: Boolean(selectedItemId) && options.selectedItemType === "tool_group",
+      copyOnSelect: supportsPassiveTranscriptCopyOnSelect(options.state),
+    },
+    toggleDetail: Boolean(selectedItemId),
+    navigationCapabilities: {
+      selection: options.selectableItemIds.length > 1,
+    },
+  };
+}
+
 export function buildTranscriptSelectionViewModel(
   options: BuildTranscriptSelectionViewModelOptions,
 ): TranscriptViewportSelectionState | undefined {
-  const selectionEnabled = ownsTranscriptSelectionPath(options.state);
-  if (!selectionEnabled) {
+  if (!options.runtime.selectionEnabled) {
     return undefined;
   }
 
   return {
     itemSummary: options.itemSummary?.summary,
     itemKind: options.itemSummary?.kindLabel,
-    position: options.selectedItemId
-      ? {
-        current: Math.max(1, options.selectedItemIndex + 1),
-        total: options.selectableCount,
-      }
-      : undefined,
-    detailState:
-      options.selectedItemId && options.isExpanded ? "expanded" : "compact",
-    copyCapabilities: {
-      message: Boolean(options.selectedItemId),
-      toolInput: options.canCopyToolInput,
-      copyOnSelect: supportsPassiveTranscriptCopyOnSelect(options.state),
-    },
-    toggleDetail: Boolean(options.selectedItemId),
-    navigationCapabilities: {
-      selection: options.selectableCount > 1,
-    },
+    position: options.runtime.position,
+    detailState: options.runtime.detailState,
+    copyCapabilities: options.runtime.copyCapabilities,
+    toggleDetail: options.runtime.toggleDetail,
+    navigationCapabilities: options.runtime.navigationCapabilities,
   };
 }
 

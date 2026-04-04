@@ -242,6 +242,18 @@ export function ownsTranscriptSelectionPath(
   return state.followMode === "browsing-history" && state.supportsSelection;
 }
 
+export function resolveTranscriptSelectedItemId(
+  state: TranscriptSelectionCapabilityState,
+  selectableItemIds: readonly string[],
+  selectedItemId: string | undefined,
+): string | undefined {
+  if (!ownsTranscriptSelectionPath(state) || !selectedItemId) {
+    return undefined;
+  }
+
+  return selectableItemIds.includes(selectedItemId) ? selectedItemId : undefined;
+}
+
 export function supportsPassiveTranscriptCopyOnSelect(
   state: TranscriptSelectionCapabilityState,
 ): boolean {
