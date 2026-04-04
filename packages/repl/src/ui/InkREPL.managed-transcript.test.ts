@@ -159,6 +159,36 @@ describe("appendPersistedUiHistorySnapshot", () => {
       { type: "info", text: "> AMA H1 - Starting refinement round 2" },
     ]);
   });
+
+  it("keeps the latest user prompt when a round later adds only tool output", () => {
+    const afterPrompt = appendPersistedUiHistorySnapshot([
+      { type: "assistant", text: "Round 1 answer" },
+    ], [
+      { type: "user", text: "Round 2 prompt" },
+    ]);
+
+    const afterToolOnlyUpdate = appendPersistedUiHistorySnapshot(afterPrompt, [
+      {
+        type: "tool_group",
+        tools: [
+          {
+            id: "tool-2",
+            name: "changed_diff",
+            status: ToolCallStatus.Success,
+            startTime: 100,
+            input: {
+              preview: "{\"path\":\"packages/repl/src/ui/InkREPL.tsx\"}",
+            },
+          },
+        ],
+      },
+    ]);
+
+    expect(afterToolOnlyUpdate).toEqual([
+      { type: "assistant", text: "Round 1 answer" },
+      { type: "user", text: "Round 2 prompt" },
+    ]);
+  });
 });
 
 describe("shouldShowStatusBarBusyStatus", () => {

@@ -7514,6 +7514,7 @@ function createWorkerEvents(
       );
     },
     onRetry: baseEvents?.onRetry,
+    onProviderRecovery: baseEvents?.onProviderRecovery,
     onProviderRateLimit: baseEvents?.onProviderRateLimit,
     onError: baseEvents?.onError,
     onStreamEnd: () => {

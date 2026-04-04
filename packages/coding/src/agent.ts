@@ -21,15 +21,18 @@ import {
   KodaXToolResultBlock,
   SessionErrorMetadata,
 } from './types.js';
-import type { KodaXMessage } from '@kodax/ai';
+import type { KodaXMessage, KodaXStreamResult } from '@kodax/ai';
 import path from 'path';
+import fsSync from 'fs';
 import { KodaXClient } from './client.js';
 import { resolveProvider } from './providers/index.js';
 import {
   executeTool,
   filterRepoIntelligenceWorkingToolNames,
   getRequiredToolParams,
+  inspectEditFailure,
   listToolDefinitions,
+  parseEditToolError,
 } from './tools/index.js';
 import { buildSystemPrompt } from './prompts/index.js';
 import { generateSessionId, extractTitleFromMessages } from './session.js';
@@ -40,9 +43,17 @@ import { estimateTokens } from './tokenizer.js';
 import { KODAX_MAX_INCOMPLETE_RETRIES, PROMISE_PATTERN } from './constants.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { ErrorCategory } from './error-classification.js';
-import { withRetry } from './retry-handler.js';
-import { resolveResilienceConfig, classifyResilienceError } from './resilience/index.js';
+import { waitForRetryDelay } from './retry-handler.js';
+import {
+  resolveResilienceConfig,
+  classifyResilienceError,
+  ProviderRecoveryCoordinator,
+  StableBoundaryTracker,
+  telemetryBoundary,
+  telemetryClassify,
+  telemetryDecision,
+  telemetryRecovery,
+} from './resilience/index.js';
 import {
   buildProviderPolicyHintsForDecision,
   createReasoningPlan,
@@ -55,7 +66,7 @@ import {
   evaluateProviderPolicy,
 } from './provider-policy.js';
 import { looksLikeActionableRuntimeEvidence } from './runtime-evidence.js';
-import { resolveExecutionCwd } from './runtime-paths.js';
+import { resolveExecutionCwd, resolveExecutionPath } from './runtime-paths.js';
 import { buildRepoIntelligenceContext } from './repo-intelligence/index.js';
 import {
   getImpactEstimate,
@@ -100,6 +111,10 @@ interface RuntimeSessionState {
   extensionState: Map<string, Map<string, KodaXJsonValue>>;
   extensionRecords: KodaXExtensionSessionRecord[];
   activeTools: string[];
+  editRecoveryAttempts: Map<string, number>;
+  blockedEditWrites: Set<string>;
+  lastToolErrorCode?: string;
+  lastToolResultBytes?: number;
   modelSelection: {
     provider?: string;
     model?: string;
@@ -699,6 +714,196 @@ function createToolResultBlock(toolUseId: string, content: string): KodaXToolRes
   };
 }
 
+function shouldDebugResilience(): boolean {
+  return process.env.KODAX_DEBUG_STREAM === '1' || process.env.KODAX_DEBUG_RESILIENCE === '1';
+}
+
+function emitResilienceDebug(label: string, payload: Record<string, unknown>): void {
+  if (!shouldDebugResilience()) {
+    return;
+  }
+  console.error(label, payload);
+}
+
+function extractStructuredToolErrorCode(content: string): string | undefined {
+  const match = /^\[Tool Error\]\s+[^:]+:\s+([A-Z_]+):/.exec(content.trim());
+  return match?.[1];
+}
+
+function resolveToolTargetPath(
+  toolCall: RunnableToolCall,
+  ctx: KodaXToolExecutionContext,
+): string | undefined {
+  const pathValue = toolCall.input?.path;
+  if (typeof pathValue !== 'string' || pathValue.trim().length === 0) {
+    return undefined;
+  }
+  return resolveExecutionPath(pathValue, ctx);
+}
+
+function clearEditRecoveryStateForPath(
+  runtimeSessionState: RuntimeSessionState,
+  resolvedPath: string | undefined,
+): void {
+  if (!resolvedPath) {
+    return;
+  }
+  runtimeSessionState.editRecoveryAttempts.delete(resolvedPath);
+  runtimeSessionState.blockedEditWrites.delete(resolvedPath);
+}
+
+function maybeBlockExistingFileWrite(
+  toolCall: RunnableToolCall,
+  ctx: KodaXToolExecutionContext,
+  runtimeSessionState: RuntimeSessionState,
+): string | undefined {
+  if (toolCall.name !== 'write') {
+    return undefined;
+  }
+
+  const resolvedPath = resolveToolTargetPath(toolCall, ctx);
+  if (!resolvedPath || !runtimeSessionState.blockedEditWrites.has(resolvedPath)) {
+    return undefined;
+  }
+
+  if (!fsSync.existsSync(resolvedPath)) {
+    runtimeSessionState.blockedEditWrites.delete(resolvedPath);
+    return undefined;
+  }
+
+  return `[Tool Error] write: BLOCKED_AFTER_EDIT_FAILURE: Refusing to rewrite existing file ${resolvedPath} while edit anchor recovery is in progress. Retry with edit using a smaller unique anchor or use insert_after_anchor.`;
+}
+
+async function buildEditRecoveryUserMessage(
+  toolCall: RunnableToolCall,
+  toolResult: string,
+  runtimeSessionState: RuntimeSessionState,
+  ctx: KodaXToolExecutionContext,
+): Promise<string | undefined> {
+  const code = parseEditToolError(toolResult);
+  if (!code) {
+    return undefined;
+  }
+
+  const pathValue = typeof toolCall.input?.path === 'string' ? toolCall.input.path : undefined;
+  const resolvedPath = resolveToolTargetPath(toolCall, ctx);
+  if (!pathValue || !resolvedPath) {
+    return undefined;
+  }
+
+  runtimeSessionState.blockedEditWrites.add(resolvedPath);
+  const attempt = (runtimeSessionState.editRecoveryAttempts.get(resolvedPath) ?? 0) + 1;
+  runtimeSessionState.editRecoveryAttempts.set(resolvedPath, attempt);
+  runtimeSessionState.lastToolErrorCode = code;
+
+  if (code === 'EDIT_TOO_LARGE') {
+    emitResilienceDebug('[edit:recovery]', {
+      code,
+      path: resolvedPath,
+      attempt,
+      action: 'split-edit',
+    });
+    return [
+      `The previous edit for ${resolvedPath} failed with ${code}.`,
+      'Do not use write to replace the existing file.',
+      'Split the change into smaller edit calls, or use insert_after_anchor when you are appending a new section after a unique heading.',
+    ].join('\n');
+  }
+
+  if (attempt > 2) {
+    emitResilienceDebug('[edit:recovery]', {
+      code,
+      path: resolvedPath,
+      attempt,
+      action: 'stop-auto-recovery',
+    });
+    return [
+      `The previous edit for ${resolvedPath} failed with ${code}, and automatic anchor recovery is exhausted.`,
+      'Do not escalate to a whole-file write.',
+      'Choose a smaller unique anchor manually, or switch to insert_after_anchor if this is a section append.',
+    ].join('\n');
+  }
+
+  const windowLines = attempt === 1 ? 120 : 400;
+  const diagnostic = await inspectEditFailure(pathValue, String(toolCall.input?.old_string ?? ''), ctx, windowLines);
+  const primary = diagnostic.candidates[0];
+  const alternates = diagnostic.candidates.slice(1, 3);
+
+  emitResilienceDebug('[edit:recovery]', {
+    code,
+    path: resolvedPath,
+    attempt,
+    windowLines,
+    candidateCount: diagnostic.candidates.length,
+  });
+
+  const lines: string[] = [
+    `The previous edit for ${resolvedPath} failed with ${code}.`,
+    'Do not use write to rewrite the existing file.',
+    'Retry with edit using a smaller unique old_string, or use insert_after_anchor when you are appending a new section.',
+  ];
+
+  if (primary) {
+    lines.push('');
+    lines.push(`Best nearby anchor window (${primary.startLine}-${primary.endLine}):`);
+    lines.push('```text');
+    lines.push(primary.excerpt);
+    lines.push('```');
+  }
+
+  if (alternates.length > 0) {
+    lines.push('');
+    lines.push('Other nearby candidate anchors:');
+    for (const candidate of alternates) {
+      lines.push(`- lines ${candidate.startLine}-${candidate.endLine}: ${candidate.preview}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+function updateToolOutcomeTracking(
+  toolCall: RunnableToolCall,
+  toolResult: string,
+  runtimeSessionState: RuntimeSessionState,
+  ctx: KodaXToolExecutionContext,
+): void {
+  const resolvedPath = resolveToolTargetPath(toolCall, ctx);
+  runtimeSessionState.lastToolResultBytes = Buffer.byteLength(toolResult, 'utf8');
+  runtimeSessionState.lastToolErrorCode = extractStructuredToolErrorCode(toolResult);
+
+  if (toolCall.name === 'edit') {
+    if (!parseEditToolError(toolResult)) {
+      clearEditRecoveryStateForPath(runtimeSessionState, resolvedPath);
+    }
+    return;
+  }
+
+  if (toolCall.name === 'insert_after_anchor' && !isToolResultErrorContent(toolResult)) {
+    clearEditRecoveryStateForPath(runtimeSessionState, resolvedPath);
+  }
+}
+
+function estimateProviderPayloadBytes(messages: KodaXMessage[], systemPrompt: string): number {
+  return Buffer.byteLength(JSON.stringify({
+    systemPrompt,
+    messages,
+  }), 'utf8');
+}
+
+function bucketProviderPayloadSize(bytes: number): string {
+  if (bytes < 16 * 1024) {
+    return 'small';
+  }
+  if (bytes < 64 * 1024) {
+    return 'medium';
+  }
+  if (bytes < 192 * 1024) {
+    return 'large';
+  }
+  return 'xlarge';
+}
+
 async function maybeBuildAutoReroutePlan(
   provider: ReturnType<typeof resolveProvider>,
   options: KodaXOptions,
@@ -933,6 +1138,7 @@ async function executeToolCall(
   events: KodaXEvents,
   toolCall: RunnableToolCall,
   ctx: KodaXToolExecutionContext,
+  runtimeSessionState: RuntimeSessionState,
   activeToolNames?: string[],
 ): Promise<string> {
   await emitActiveExtensionEvent('tool:start', {
@@ -960,6 +1166,11 @@ async function executeToolCall(
 
   if (activeToolNames && !activeToolNames.includes(toolCall.name)) {
     return `[Tool Error] ${toolCall.name}: Tool is not active in the current runtime.`;
+  }
+
+  const blockedWrite = maybeBlockExistingFileWrite(toolCall, ctx, runtimeSessionState);
+  if (blockedWrite) {
+    return blockedWrite;
   }
 
   return executeTool(toolCall.name, toolCall.input ?? {}, ctx);
@@ -1059,6 +1270,8 @@ export async function runKodaX(
     extensionState: createRuntimeExtensionState(loadedExtensionState),
     extensionRecords: loadedExtensionRecords?.map((record) => ({ ...record })) ?? [],
     activeTools: runtimeDefaults?.activeTools ?? listToolDefinitions().map((tool) => tool.name),
+    editRecoveryAttempts: new Map(),
+    blockedEditWrites: new Set(),
     modelSelection: {
       provider: currentProviderName,
       model: currentModelOverride,
@@ -1361,44 +1574,80 @@ export async function runKodaX(
       const resilienceCfg = resolveResilienceConfig(currentProviderName);
       const API_HARD_TIMEOUT_MS = resilienceCfg.requestTimeoutMs; // Issue 084: 提升到 10 分钟硬超时
       const API_IDLE_TIMEOUT_MS = resilienceCfg.streamIdleTimeoutMs;  // Issue 084: 60 秒空闲/停滞超时，如果有 delta 刷新则重置
+      let providerMessages = compacted;
+      let result!: KodaXStreamResult;
+      let attempt = 0;
+      const boundaryTracker = new StableBoundaryTracker();
+      const recoveryCoordinator = new ProviderRecoveryCoordinator(boundaryTracker, {
+        ...resilienceCfg,
+        enableNonStreamingFallback:
+          resilienceCfg.enableNonStreamingFallback && streamProvider.supportsNonStreamingFallback(),
+      });
+      const activeToolDefinitions = getActiveToolDefinitions(
+        runtimeSessionState.activeTools,
+        options.context?.repoIntelligenceMode,
+      );
 
-      const result = await withRetry(
-        async () => {
-          const retryTimeoutController = new AbortController();
-          
-          let hardTimer = setTimeout(() => {
-            retryTimeoutController.abort(new Error("API Hard Timeout (10 minutes)"));
-          }, API_HARD_TIMEOUT_MS);
-          
-          let idleTimer = setTimeout(() => {
-            retryTimeoutController.abort(new Error("Stream stalled or delayed response (60s idle)"));
-          }, API_IDLE_TIMEOUT_MS);
+      while (true) {
+        attempt += 1;
+        boundaryTracker.beginRequest(
+          currentProviderName,
+          currentModelOverride ?? streamProvider.getModel(),
+          providerMessages,
+          attempt,
+          false,
+        );
+        telemetryBoundary(boundaryTracker.snapshot());
 
-          const resetIdleTimer = () => {
-            clearTimeout(idleTimer);
-            if (!retryTimeoutController.signal.aborted) {
-              idleTimer = setTimeout(() => {
-                retryTimeoutController.abort(new Error("Stream stalled or delayed response (60s idle)"));
-              }, API_IDLE_TIMEOUT_MS);
-            }
-          };
+        const retryTimeoutController = new AbortController();
+        let hardTimer = setTimeout(() => {
+          retryTimeoutController.abort(new Error("API Hard Timeout (10 minutes)"));
+        }, API_HARD_TIMEOUT_MS);
 
-          const retrySignal = options.abortSignal
-            ? AbortSignal.any([options.abortSignal, retryTimeoutController.signal])
-            : retryTimeoutController.signal;
+        let idleTimer = setTimeout(() => {
+          retryTimeoutController.abort(new Error("Stream stalled or delayed response (60s idle)"));
+        }, API_IDLE_TIMEOUT_MS);
 
-          try {
-            return await streamProvider.stream(compacted, getActiveToolDefinitions(
-              runtimeSessionState.activeTools,
-              options.context?.repoIntelligenceMode,
-            ), effectiveSystemPrompt, effectiveProviderReasoning, {
+        const resetIdleTimer = () => {
+          clearTimeout(idleTimer);
+          if (!retryTimeoutController.signal.aborted) {
+            idleTimer = setTimeout(() => {
+              retryTimeoutController.abort(new Error("Stream stalled or delayed response (60s idle)"));
+            }, API_IDLE_TIMEOUT_MS);
+          }
+        };
+
+        const retrySignal = options.abortSignal
+          ? AbortSignal.any([options.abortSignal, retryTimeoutController.signal])
+          : retryTimeoutController.signal;
+
+        const payloadBytes = estimateProviderPayloadBytes(providerMessages, effectiveSystemPrompt);
+        emitResilienceDebug('[resilience:request]', {
+          provider: currentProviderName,
+          attempt,
+          fallbackActive: false,
+          payloadBytes,
+          payloadBucket: bucketProviderPayloadSize(payloadBytes),
+          lastToolErrorCode: runtimeSessionState.lastToolErrorCode,
+          lastToolResultBytes: runtimeSessionState.lastToolResultBytes,
+        });
+
+        try {
+          result = await streamProvider.stream(
+            providerMessages,
+            activeToolDefinitions,
+            effectiveSystemPrompt,
+            effectiveProviderReasoning,
+            {
               onTextDelta: (text) => {
                 resetIdleTimer();
+                boundaryTracker.markTextDelta(text);
                 void emitActiveExtensionEvent('text:delta', { text });
                 events.onTextDelta?.(text);
               },
               onThinkingDelta: (text) => {
                 resetIdleTimer();
+                boundaryTracker.markThinkingDelta(text);
                 void emitActiveExtensionEvent('thinking:delta', { text });
                 events.onThinkingDelta?.(text);
               },
@@ -1409,75 +1658,142 @@ export async function runKodaX(
               },
               onToolInputDelta: (name, json, meta) => {
                 resetIdleTimer();
+                boundaryTracker.markToolInputStart(meta?.toolId ?? `pending:${name}`);
                 events.onToolInputDelta?.(name, json, meta);
               },
-              onRateLimit: (attempt, max, delay) => {
-                resetIdleTimer(); // 重试限制时也重置，因为底层 Provider 会自己等待
+              onRateLimit: (rateAttempt, max, delay) => {
+                resetIdleTimer();
                 void emitActiveExtensionEvent('provider:rate-limit', {
                   provider: currentProviderName,
-                  attempt,
+                  attempt: rateAttempt,
                   maxRetries: max,
                   delayMs: delay,
                 });
-                events.onProviderRateLimit?.(attempt, max, delay);
+                events.onProviderRateLimit?.(rateAttempt, max, delay);
               },
               modelOverride: currentModelOverride,
               signal: retrySignal,
-            }, retrySignal);
-          } catch (e) {
-            // Issue 084 fix: Differentiate between user abort and our internal watchdog abort
-            if (e instanceof Error && e.name === 'AbortError') {
-              // If it's our internal watchdog that triggered the abort (idle or hard timeout)
-              if (retryTimeoutController.signal.aborted && !options.abortSignal?.aborted) {
-                const reason = retryTimeoutController.signal.reason?.message ?? "Stream stalled";
-                // Convert internal timeout to network error so it triggers automatic retry
-                const { KodaXNetworkError } = await import('@kodax/ai');
-                throw new KodaXNetworkError(reason, true);
-              }
-            }
-            throw e;
-          } finally {
-            clearTimeout(hardTimer);
-            clearTimeout(idleTimer);
-          }
-        },
-        // Default retry classification for provider calls
-        {
-          category: ErrorCategory.TRANSIENT,
-          retryable: true,
-          maxRetries: 2,
-          retryDelay: 1000,
-          shouldCleanup: true,
-        },
-        (attempt, maxRetries, delay, error) => {
-          // Feature 045: emit structured recovery event
-          try {
-            const classified = classifyResilienceError(error);
-            const isPreDelta = classified.failureStage === 'before_first_delta'
-              || classified.failureStage === 'before_request_accepted';
-            events.onProviderRecovery?.({
-              stage: classified.failureStage,
-              errorClass: classified.errorClass,
-              attempt,
-              maxAttempts: maxRetries,
-              delayMs: delay,
-              recoveryAction: classified.retryable
-                ? (isPreDelta ? 'fresh_connection_retry' as const : 'stable_boundary_retry' as const)
-                : 'manual_continue' as const,
-              ladderStep: classified.retryable ? (isPreDelta ? 1 : 2) : 4,
-              fallbackUsed: false,
-            });
-          } catch { /* graceful degradation */ }
-
-          // Legacy onRetry (backward compatible)
-          events.onRetry?.(
-            `${describeTransientProviderRetry(error)} · retry ${attempt}/${maxRetries} in ${Math.round(delay / 1000)}s`,
-            attempt,
-            maxRetries
+            },
+            retrySignal,
           );
-        },
-        options.abortSignal,
-      );
+
+          messages = providerMessages;
+          break;
+        } catch (rawError) {
+          let error = rawError instanceof Error ? rawError : new Error(String(rawError));
+          if (error.name === 'AbortError' && retryTimeoutController.signal.aborted && !options.abortSignal?.aborted) {
+            const reason = retryTimeoutController.signal.reason?.message ?? 'Stream stalled';
+            const { KodaXNetworkError } = await import('@kodax/ai');
+            error = new KodaXNetworkError(reason, true);
+          }
+
+          const failureStage = boundaryTracker.inferFailureStage();
+          const classified = classifyResilienceError(error, failureStage);
+          telemetryClassify(error, classified);
+          const decision = recoveryCoordinator.decideRecoveryAction(error, classified, attempt);
+          telemetryDecision(decision, attempt);
+
+          events.onProviderRecovery?.({
+            stage: decision.failureStage,
+            errorClass: decision.reasonCode,
+            attempt,
+            maxAttempts: resilienceCfg.maxRetries,
+            delayMs: decision.delayMs,
+            recoveryAction: decision.action,
+            ladderStep: decision.ladderStep,
+            fallbackUsed: decision.shouldUseNonStreaming,
+            serverRetryAfterMs: decision.serverRetryAfterMs,
+          });
+
+          if (!events.onProviderRecovery && decision.action !== 'manual_continue') {
+            events.onRetry?.(
+              `${describeTransientProviderRetry(error)} · retry ${attempt}/${resilienceCfg.maxRetries} in ${Math.round(decision.delayMs / 1000)}s`,
+              attempt,
+              resilienceCfg.maxRetries,
+            );
+          }
+
+          if (decision.shouldUseNonStreaming) {
+            const fallbackBytes = estimateProviderPayloadBytes(providerMessages, effectiveSystemPrompt);
+            emitResilienceDebug('[resilience:fallback]', {
+              provider: currentProviderName,
+              attempt,
+              payloadBytes: fallbackBytes,
+              payloadBucket: bucketProviderPayloadSize(fallbackBytes),
+            });
+
+            try {
+              const fallbackTimeoutController = new AbortController();
+              const fallbackSignal = options.abortSignal
+                ? AbortSignal.any([options.abortSignal, fallbackTimeoutController.signal])
+                : fallbackTimeoutController.signal;
+              const fallbackHardTimer = setTimeout(() => {
+                fallbackTimeoutController.abort(new Error("API Hard Timeout (10 minutes)"));
+              }, API_HARD_TIMEOUT_MS);
+              try {
+                clearTimeout(idleTimer);
+                clearTimeout(hardTimer);
+                boundaryTracker.beginRequest(
+                  currentProviderName,
+                  currentModelOverride ?? streamProvider.getModel(),
+                  providerMessages,
+                  attempt,
+                  true,
+                );
+                telemetryBoundary(boundaryTracker.snapshot());
+                result = await streamProvider.complete(
+                  providerMessages,
+                  activeToolDefinitions,
+                  effectiveSystemPrompt,
+                  effectiveProviderReasoning,
+                  {
+                    onTextDelta: (text) => {
+                      boundaryTracker.markTextDelta(text);
+                      void emitActiveExtensionEvent('text:delta', { text });
+                      events.onTextDelta?.(text);
+                    },
+                    onThinkingDelta: (text) => {
+                      boundaryTracker.markThinkingDelta(text);
+                      void emitActiveExtensionEvent('thinking:delta', { text });
+                      events.onThinkingDelta?.(text);
+                    },
+                    onThinkingEnd: (thinking) => {
+                      void emitActiveExtensionEvent('thinking:end', { thinking });
+                      events.onThinkingEnd?.(thinking);
+                    },
+                    modelOverride: currentModelOverride,
+                    signal: fallbackSignal,
+                  },
+                  fallbackSignal,
+                );
+                messages = providerMessages;
+                break;
+              } finally {
+                clearTimeout(fallbackHardTimer);
+              }
+            } catch (fallbackError) {
+              error = fallbackError instanceof Error ? fallbackError : new Error(String(fallbackError));
+            }
+          }
+
+          if (decision.action === 'manual_continue' || attempt >= resilienceCfg.maxRetries) {
+            messages = providerMessages;
+            throw error;
+          }
+
+          const recovery = recoveryCoordinator.executeRecovery(providerMessages, decision);
+          telemetryRecovery(decision.action, recovery);
+          providerMessages = recovery.messages;
+
+          clearTimeout(hardTimer);
+          clearTimeout(idleTimer);
+          await waitForRetryDelay(decision.delayMs, options.abortSignal);
+          continue;
+        } finally {
+          clearTimeout(hardTimer);
+          clearTimeout(idleTimer);
+        }
+      }
 
       // 流式输出结束，通知 CLI 层
       events.onStreamEnd?.();
@@ -1680,6 +1996,7 @@ export async function runKodaX(
 
       // 执行工具
       const toolResults: KodaXToolResultBlock[] = [];
+      const editRecoveryMessages: string[] = [];
 
       if (options.parallel && result.toolBlocks.length > 1) {
         // 分离 bash（顺序）和非 bash（并行）
@@ -1697,7 +2014,7 @@ export async function runKodaX(
                   id: tc.id,
                   name: tc.name,
                   input: tc.input as Record<string, unknown> | undefined,
-                }, ctx, getRuntimeActiveToolNames(
+                }, ctx, runtimeSessionState, getRuntimeActiveToolNames(
                   runtimeSessionState.activeTools,
                   options.context?.repoIntelligenceMode,
                 )),
@@ -1717,7 +2034,7 @@ export async function runKodaX(
                 id: tc.id,
                 name: tc.name,
                 input: tc.input as Record<string, unknown> | undefined,
-                }, ctx, getRuntimeActiveToolNames(
+                }, ctx, runtimeSessionState, getRuntimeActiveToolNames(
                   runtimeSessionState.activeTools,
                   options.context?.repoIntelligenceMode,
                 )),
@@ -1729,6 +2046,13 @@ export async function runKodaX(
 
         for (const tc of result.toolBlocks) {
           const content = resultMap.get(tc.id) ?? '[Error] No result';
+          updateToolOutcomeTracking(tc, content, runtimeSessionState, ctx);
+          if (tc.name === 'edit' && isToolResultErrorContent(content)) {
+            const recoveryMessage = await buildEditRecoveryUserMessage(tc, content, runtimeSessionState, ctx);
+            if (recoveryMessage) {
+              editRecoveryMessages.push(recoveryMessage);
+            }
+          }
           await emitActiveExtensionEvent('tool:result', {
             id: tc.id,
             name: tc.name,
@@ -1746,13 +2070,20 @@ export async function runKodaX(
                 id: tc.id,
                 name: tc.name,
                 input: tc.input as Record<string, unknown> | undefined,
-                }, ctx, getRuntimeActiveToolNames(
+                }, ctx, runtimeSessionState, getRuntimeActiveToolNames(
                   runtimeSessionState.activeTools,
                   options.context?.repoIntelligenceMode,
                 )),
               ctx,
             )
           ).content;
+          updateToolOutcomeTracking(tc, content, runtimeSessionState, ctx);
+          if (tc.name === 'edit' && isToolResultErrorContent(content)) {
+            const recoveryMessage = await buildEditRecoveryUserMessage(tc, content, runtimeSessionState, ctx);
+            if (recoveryMessage) {
+              editRecoveryMessages.push(recoveryMessage);
+            }
+          }
           await emitActiveExtensionEvent('tool:result', {
             id: tc.id,
             name: tc.name,
@@ -1798,6 +2129,12 @@ export async function runKodaX(
       }
 
       messages.push({ role: 'user', content: toolResults });
+      if (editRecoveryMessages.length > 0) {
+        messages.push({
+          role: 'user',
+          content: editRecoveryMessages.join('\n\n'),
+        });
+      }
       // Keep UI/context accounting aligned with the tool-result message we just appended.
       contextTokenSnapshot = rebaseContextTokenSnapshot(messages, completedTurnTokenSnapshot);
       await settleExtensionTurn(sessionId, lastText, runtimeSessionState, {

@@ -446,4 +446,41 @@ describe('openai reasoning capability', () => {
       { role: 'user', content: 'Continue the task' },
     ]);
   });
+
+  it('preserves array-based non-streaming assistant content during fallback completion', async () => {
+    const create = vi.fn().mockResolvedValue({
+      choices: [
+        {
+          message: {
+            content: [
+              { type: 'text', text: 'Recovered ' },
+              { type: 'text', text: 'response' },
+            ],
+            tool_calls: [],
+          },
+        },
+      ],
+      usage: {
+        prompt_tokens: 10,
+        completion_tokens: 2,
+        total_tokens: 12,
+      },
+    });
+    const onTextDelta = vi.fn();
+    const provider = new TestOpenAIProvider('deepseek', 'native-toggle', {
+      chat: { completions: { create } },
+    }, {
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-chat',
+    });
+
+    const result = await provider.complete(MESSAGES, TOOLS, 'system', reasoning, {
+      onTextDelta,
+    });
+
+    expect(result.textBlocks).toEqual([
+      { type: 'text', text: 'Recovered response' },
+    ]);
+    expect(onTextDelta).toHaveBeenCalledWith('Recovered response');
+  });
 });

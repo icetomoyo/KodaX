@@ -188,6 +188,20 @@ export function createJsonEvents(options: JsonEventOutputOptions = {}): KodaXEve
       });
     },
 
+    onProviderRecovery: (event) => {
+      writeJsonLine(stdout, {
+        type: 'provider.recovery',
+        stage: event.stage,
+        reasonCode: event.errorClass,
+        attempt: event.attempt,
+        maxAttempts: event.maxAttempts,
+        delayMs: event.delayMs,
+        nextAt: Date.now() + event.delayMs,
+        recoveryAction: event.recoveryAction,
+        fallbackUsed: event.fallbackUsed,
+      });
+    },
+
     onProviderRateLimit: (attempt, maxRetries, delayMs) => {
       writeJsonLine(stdout, {
         type: 'provider.rate_limit',

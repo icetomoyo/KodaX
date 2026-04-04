@@ -396,6 +396,132 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
     }, signal, 3, streamOptions?.onRateLimit);
   }
 
+  override supportsNonStreamingFallback(): boolean {
+    return true;
+  }
+
+  override async complete(
+    messages: KodaXMessage[],
+    tools: KodaXToolDefinition[],
+    system: string,
+    reasoning?: boolean | KodaXReasoningRequest,
+    streamOptions?: KodaXProviderStreamOptions,
+    signal?: AbortSignal,
+  ): Promise<KodaXStreamResult> {
+    return this.withRateLimit(async () => {
+      const normalizedReasoning = this.normalizeReasoning(reasoning);
+      const maxOutputTokens = this.config.maxOutputTokens ?? KODAX_MAX_TOKENS;
+      const model = streamOptions?.modelOverride ?? this.config.model;
+      const initialCapability = normalizedReasoning.enabled
+        ? this.getReasoningCapability(model)
+        : 'none';
+      const attempts: Array<'native-budget' | 'native-toggle' | 'none'> = normalizedReasoning.enabled
+        ? this.getReasoningFallbackChain(initialCapability)
+            .filter((capability): capability is 'native-budget' | 'native-toggle' | 'none' =>
+              capability === 'native-budget' ||
+              capability === 'native-toggle' ||
+              capability === 'none',
+            )
+        : ['none'];
+
+      const buildRequest = (
+        capability: 'native-budget' | 'native-toggle' | 'none',
+      ): Anthropic.Messages.MessageCreateParams => {
+        const kwargs: Anthropic.Messages.MessageCreateParams = {
+          model,
+          max_tokens: maxOutputTokens,
+          system: this.buildSystemPrompt(system, messages),
+          messages: this.convertMessages(messages),
+          tools: tools as Anthropic.Messages.Tool[],
+        };
+
+        if (capability === 'native-budget') {
+          const requestedBudget = resolveThinkingBudget(
+            this.config,
+            normalizedReasoning.depth,
+            normalizedReasoning.taskType,
+          );
+          kwargs.thinking = {
+            type: 'enabled',
+            budget_tokens: clampThinkingBudget(requestedBudget, maxOutputTokens),
+          };
+        } else if (capability === 'native-toggle') {
+          kwargs.thinking = {
+            type: 'enabled',
+          } as Anthropic.Messages.ThinkingConfigParam;
+        }
+
+        return kwargs;
+      };
+
+      let response: Awaited<ReturnType<typeof this.client.messages.create>> | undefined;
+      let lastError: unknown;
+
+      for (const capability of attempts) {
+        try {
+          response = await this.client.messages.create(
+            buildRequest(capability),
+            signal ? { signal } : {},
+          );
+          if (capability !== initialCapability) {
+            this.persistReasoningCapabilityOverride(capability, model);
+          }
+          break;
+        } catch (error) {
+          lastError = error;
+          const fallbackTerms =
+            capability === 'native-budget'
+              ? ['budget_tokens', 'thinking']
+              : capability === 'native-toggle'
+                ? ['thinking']
+                : [];
+
+          if (!this.shouldFallbackForReasoningError(error, ...fallbackTerms)) {
+            throw error;
+          }
+        }
+      }
+
+      if (!response) {
+        throw lastError ?? new KodaXProviderError(
+          'All reasoning capability attempts failed without a captured error',
+          this.name,
+        );
+      }
+
+      const textBlocks: KodaXTextBlock[] = [];
+      const toolBlocks: KodaXToolUseBlock[] = [];
+      const thinkingBlocks: (KodaXThinkingBlock | KodaXRedactedThinkingBlock)[] = [];
+
+      for (const block of (response as Anthropic.Messages.Message).content as Array<any>) {
+        if (block.type === 'text') {
+          textBlocks.push({ type: 'text', text: block.text });
+          streamOptions?.onTextDelta?.(block.text);
+        } else if (block.type === 'thinking') {
+          thinkingBlocks.push({ type: 'thinking', thinking: block.thinking, signature: block.signature ?? '' });
+          streamOptions?.onThinkingDelta?.(block.thinking);
+          streamOptions?.onThinkingEnd?.(block.thinking);
+        } else if (block.type === 'redacted_thinking') {
+          thinkingBlocks.push({ type: 'redacted_thinking', data: block.data });
+        } else if (block.type === 'tool_use') {
+          toolBlocks.push({
+            type: 'tool_use',
+            id: block.id,
+            name: block.name,
+            input: typeof block.input === 'object' && block.input !== null ? block.input : {},
+          });
+        }
+      }
+
+      return {
+        textBlocks,
+        toolBlocks,
+        thinkingBlocks,
+        usage: normalizeAnthropicUsage((response as Anthropic.Messages.Message).usage),
+      };
+    }, signal, 3, streamOptions?.onRateLimit);
+  }
+
   private serializeSystemMessageContent(content: string | KodaXContentBlock[]): string {
     if (typeof content === 'string') {
       return content.trim();

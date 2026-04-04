@@ -37,6 +37,16 @@ describe('createJsonEvents', () => {
     events.onToolUseStart?.({ id: 'tool-1', name: 'read', input: { path: 'README.md' } });
     events.onToolInputDelta?.('read', '{"path":"README.md"}', { toolId: 'tool-1' });
     events.onToolResult?.({ id: 'tool-1', name: 'read', content: 'file contents' });
+    events.onProviderRecovery?.({
+      stage: 'mid_stream_text',
+      errorClass: 'stream_idle_timeout',
+      attempt: 1,
+      maxAttempts: 3,
+      delayMs: 5000,
+      recoveryAction: 'stable_boundary_retry',
+      ladderStep: 2,
+      fallbackUsed: false,
+    });
     events.onRepoIntelligenceTrace?.({
       stage: 'preturn',
       summary: 'stage=preturn | mode=premium-native/premium/native/ok',
@@ -86,6 +96,17 @@ describe('createJsonEvents', () => {
         id: 'tool-1',
         name: 'read',
         content: 'file contents',
+      },
+      {
+        type: 'provider.recovery',
+        stage: 'mid_stream_text',
+        reasonCode: 'stream_idle_timeout',
+        attempt: 1,
+        maxAttempts: 3,
+        delayMs: 5000,
+        nextAt: expect.any(Number),
+        recoveryAction: 'stable_boundary_retry',
+        fallbackUsed: false,
       },
       {
         type: 'repo_intelligence.trace',

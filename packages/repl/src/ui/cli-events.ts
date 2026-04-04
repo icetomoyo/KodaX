@@ -226,6 +226,15 @@ export function createCliEvents(showSessionId = true): KodaXEvents {
       console.log(chalk.yellow(`[KodaX] Retry ${attempt}/${maxAttempts}: ${reason}`));
     },
 
+    onProviderRecovery: (event) => {
+      const action = event.recoveryAction === 'non_streaming_fallback'
+        ? 'switching to non-streaming fallback'
+        : event.recoveryAction === 'manual_continue'
+          ? 'awaiting manual continue'
+          : `recovering ${event.attempt}/${event.maxAttempts}`;
+      console.log(chalk.yellow(`[KodaX] ${action} (${event.errorClass}, ${event.stage})`));
+    },
+
     onComplete: () => {
       if (spinner) { spinner.stop(); spinner = null; }
       console.log(chalk.green('\n[KodaX] Done!'));

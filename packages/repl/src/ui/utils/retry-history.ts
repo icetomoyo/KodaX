@@ -1,3 +1,4 @@
+import type { ProviderRecoveryEvent } from "@kodax/coding";
 import type { CreatableHistoryItem } from "../types.js";
 
 /**
@@ -31,70 +32,67 @@ export function emitRetryHistoryItem(
   addHistoryItem(createRetryHistoryItem(reason, attempt, maxAttempts));
 }
 
-
 /**
- * Build a recovery history item from a structured ProviderRecoveryEvent (Feature 045).
- * Generates context-aware messages based on the recovery action and failure stage.
+ * Build a recovery history item from a structured ProviderRecoveryEvent.
  */
 export function createRecoveryHistoryItem(
-  event: import('@kodax/coding').ProviderRecoveryEvent,
-): import('../types.js').CreatableHistoryItem {
+  event: ProviderRecoveryEvent,
+): CreatableHistoryItem {
   const { recoveryAction, attempt, maxAttempts, delayMs, stage, fallbackUsed } = event;
   const delaySec = Math.round(delayMs / 1000);
 
-  if (recoveryAction === 'manual_continue') {
+  if (recoveryAction === "manual_continue") {
     return {
-      type: 'info',
-      icon: '\u26A0',
+      type: "info",
+      icon: "\u26A0",
       text: 'Recovery exhausted. Type "continue" to retry or "stop" to cancel.',
     };
   }
 
-  if (recoveryAction === 'non_streaming_fallback' || fallbackUsed) {
+  if (recoveryAction === "non_streaming_fallback" || fallbackUsed) {
     return {
-      type: 'info',
-      icon: '\u23F3',
-      text: 'Stream unstable, switching to non-streaming mode',
+      type: "info",
+      icon: "\u23F3",
+      text: "Stream unstable, switching to non-streaming mode",
     };
   }
 
-  // Determine description based on failure stage
   let description: string;
   switch (stage) {
-    case 'before_first_delta':
-    case 'before_request_accepted':
-      description = 'Provider request timed out';
+    case "before_first_delta":
+    case "before_request_accepted":
+      description = "Provider request timed out";
       break;
-    case 'mid_stream_text':
-    case 'mid_stream_thinking':
-      description = 'Stream interrupted after partial output';
+    case "mid_stream_text":
+    case "mid_stream_thinking":
+      description = "Stream interrupted after partial output";
       break;
-    case 'mid_stream_tool_input':
-      description = 'Stream interrupted during tool input';
+    case "mid_stream_tool_input":
+      description = "Stream interrupted during tool input";
       break;
-    case 'post_tool_execution_pre_assistant_close':
-      description = 'Stream interrupted after tool execution';
+    case "post_tool_execution_pre_assistant_close":
+      description = "Stream interrupted after tool execution";
       break;
     default:
-      description = 'Stream interrupted';
+      description = "Stream interrupted";
       break;
   }
 
-  const action = recoveryAction === 'stable_boundary_retry' ? 'recovering' : 'retrying';
+  const action = recoveryAction === "stable_boundary_retry" ? "recovering" : "retrying";
   const text = delaySec > 0
-    ? `${description} \u00B7 ${action} ${attempt}/${maxAttempts} in ${delaySec}s`
-    : `${description} \u00B7 ${action} ${attempt}/${maxAttempts}`;
+    ? `${description} · ${action} ${attempt}/${maxAttempts} in ${delaySec}s`
+    : `${description} · ${action} ${attempt}/${maxAttempts}`;
 
   return {
-    type: 'info',
-    icon: '\u23F3',
+    type: "info",
+    icon: "\u23F3",
     text,
   };
 }
 
 export function emitRecoveryHistoryItem(
-  addHistoryItem: (item: import('../types.js').CreatableHistoryItem) => void,
-  event: import('@kodax/coding').ProviderRecoveryEvent,
+  addHistoryItem: (item: CreatableHistoryItem) => void,
+  event: ProviderRecoveryEvent,
 ): void {
   addHistoryItem(createRecoveryHistoryItem(event));
 }

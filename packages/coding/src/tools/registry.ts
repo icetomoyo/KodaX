@@ -11,6 +11,7 @@ import type {
 import { toolRead } from './read.js';
 import { toolWrite } from './write.js';
 import { toolEdit } from './edit.js';
+import { toolInsertAfterAnchor } from './insert-after-anchor.js';
 import { toolBash } from './bash.js';
 import { toolGlob } from './glob.js';
 import { toolGrep } from './grep.js';
@@ -155,7 +156,7 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
   },
   {
     name: 'edit',
-    description: 'Perform exact string replacement in a file. Large diff previews may be summarized.',
+    description: 'Perform safe exact-or-normalized string replacement in a file. If the anchor is unstable, retry with a smaller unique snippet instead of rewriting the whole file.',
     input_schema: {
       type: 'object',
       properties: {
@@ -167,6 +168,20 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['path', 'old_string', 'new_string'],
     },
     handler: toolEdit,
+  },
+  {
+    name: 'insert_after_anchor',
+    description: 'Insert content after a unique anchor without rewriting the whole file. Prefer this for appending new sections to existing docs or configs.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'The file to update' },
+        anchor: { type: 'string', description: 'A unique heading or nearby marker to insert after' },
+        content: { type: 'string', description: 'The content to insert after the anchor' },
+      },
+      required: ['path', 'anchor', 'content'],
+    },
+    handler: toolInsertAfterAnchor,
   },
   {
     name: 'bash',

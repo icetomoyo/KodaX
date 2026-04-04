@@ -59,7 +59,6 @@ const TIMEOUT_PATTERNS = [
 const STREAM_INCOMPLETE_PATTERNS = [
   /\bstream incomplete\b/i,
   /\bstream interrupted\b/i,
-  /\bstream stalled\b/i,
 ];
 
 const IDLE_TIMEOUT_PATTERNS = [

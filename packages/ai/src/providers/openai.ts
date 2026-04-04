@@ -73,6 +73,45 @@ function normalizeOpenAIUsage(usage: OpenAIUsageLike): KodaXTokenUsage | undefin
   };
 }
 
+function isOpenAIFunctionToolCall(
+  toolCall: OpenAI.Chat.Completions.ChatCompletionMessageToolCall | null | undefined,
+): toolCall is OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall {
+  if (!toolCall) {
+    return false;
+  }
+  return toolCall.type === 'function' && 'function' in toolCall;
+}
+
+function extractOpenAIMessageText(content: unknown): string {
+  if (typeof content === 'string') {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return '';
+  }
+
+  return content
+    .map((part) => {
+      if (!part || typeof part !== 'object') {
+        return '';
+      }
+
+      const directText = Reflect.get(part, 'text');
+      if (typeof directText === 'string') {
+        return directText;
+      }
+
+      if (directText && typeof directText === 'object') {
+        const nestedValue = Reflect.get(directText, 'value');
+        return typeof nestedValue === 'string' ? nestedValue : '';
+      }
+
+      return '';
+    })
+    .filter(Boolean)
+    .join('');
+}
+
 export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
   abstract override readonly name: string;
   readonly supportsThinking = true;
@@ -421,6 +460,142 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         }
       }
       return { textBlocks, toolBlocks, thinkingBlocks, usage };
+    }, signal, 3, streamOptions?.onRateLimit);
+  }
+
+  override supportsNonStreamingFallback(): boolean {
+    return true;
+  }
+
+  override async complete(
+    messages: KodaXMessage[],
+    tools: KodaXToolDefinition[],
+    system: string,
+    reasoning?: boolean | KodaXReasoningRequest,
+    streamOptions?: KodaXProviderStreamOptions,
+    signal?: AbortSignal,
+  ): Promise<KodaXStreamResult> {
+    return this.withRateLimit(async () => {
+      const fullMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+        { role: 'system', content: system },
+        ...this.convertMessages(messages),
+      ];
+      const openaiTools = tools.map((tool) => ({
+        type: 'function' as const,
+        function: {
+          name: tool.name,
+          description: tool.description,
+          parameters: tool.input_schema,
+        },
+      }));
+
+      const normalizedReasoning = this.normalizeReasoning(reasoning);
+      const model = streamOptions?.modelOverride ?? this.config.model;
+      const initialCapability =
+        isReasoningEnabled(normalizedReasoning)
+          ? this.getReasoningCapability(model)
+          : 'none';
+      const attempts: Array<'native-budget' | 'native-effort' | 'native-toggle' | 'none'> = isReasoningEnabled(normalizedReasoning)
+        ? this.getReasoningFallbackChain(initialCapability)
+            .filter((capability): capability is 'native-budget' | 'native-effort' | 'native-toggle' | 'none' =>
+              capability === 'native-budget' ||
+              capability === 'native-effort' ||
+              capability === 'native-toggle' ||
+              capability === 'none',
+            )
+        : ['none'];
+      const createParams: OpenAI.Chat.ChatCompletionCreateParamsNonStreaming = {
+        model,
+        messages: fullMessages,
+        tools: openaiTools,
+        max_completion_tokens:
+          this.config.maxOutputTokens ?? KODAX_MAX_TOKENS,
+      };
+
+      let response: OpenAI.Chat.Completions.ChatCompletion | undefined;
+      let lastError: unknown;
+
+      for (const capability of attempts) {
+        const attemptParams: OpenAI.Chat.ChatCompletionCreateParamsNonStreaming = {
+          ...createParams,
+        };
+
+        this.resetReasoningCapabilityParams(
+          attemptParams as unknown as Record<string, unknown>,
+        );
+        this.applyReasoningCapability(attemptParams as unknown as OpenAI.Chat.ChatCompletionCreateParamsStreaming, capability, normalizedReasoning);
+
+        try {
+          response = await this.client.chat.completions.create(
+            attemptParams,
+            signal ? { signal } : {},
+          ) as OpenAI.Chat.Completions.ChatCompletion;
+          if (capability !== initialCapability) {
+            this.persistReasoningCapabilityOverride(capability, model);
+          }
+          break;
+        } catch (error) {
+          lastError = error;
+          if (
+            !this.shouldFallbackForReasoningError(
+              error,
+              ...this.getFallbackTerms(capability),
+            )
+          ) {
+            throw error;
+          }
+        }
+      }
+
+      if (!response) {
+        throw lastError ?? new KodaXProviderError(
+          'All reasoning capability attempts failed without a captured error',
+          this.name,
+        );
+      }
+
+      const choice = response.choices[0];
+      const message = choice?.message;
+      const textContent = extractOpenAIMessageText(message?.content);
+      const reasoningContent = '';
+      const toolBlocks: KodaXToolUseBlock[] = (message?.tool_calls ?? [])
+        .filter(isOpenAIFunctionToolCall)
+        .map((toolCall) => {
+          try {
+            return {
+              type: 'tool_use' as const,
+              id: toolCall.id,
+              name: toolCall.function.name,
+              input: toolCall.function.arguments ? JSON.parse(toolCall.function.arguments) : {},
+            };
+          } catch {
+            return {
+              type: 'tool_use' as const,
+              id: toolCall.id,
+              name: toolCall.function.name,
+              input: {},
+            };
+          }
+        });
+
+      if (textContent) {
+        streamOptions?.onTextDelta?.(textContent);
+      }
+
+      const textBlocks: KodaXTextBlock[] = textContent ? [{ type: 'text', text: textContent }] : [];
+      const thinkingBlocks: (KodaXThinkingBlock | KodaXRedactedThinkingBlock)[] = [];
+      if (reasoningContent) {
+        thinkingBlocks.push({ type: 'thinking', thinking: reasoningContent });
+        streamOptions?.onThinkingDelta?.(reasoningContent);
+        streamOptions?.onThinkingEnd?.(reasoningContent);
+      }
+
+      return {
+        textBlocks,
+        toolBlocks,
+        thinkingBlocks,
+        usage: normalizeOpenAIUsage(response.usage as OpenAIUsageLike),
+      };
     }, signal, 3, streamOptions?.onRateLimit);
   }
 

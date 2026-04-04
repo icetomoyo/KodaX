@@ -71,7 +71,7 @@ export async function withRetry<T>(
   throw lastError ?? new Error('Unexpected end of retry loop');
 }
 
-function waitForRetryDelay(delay: number, signal?: AbortSignal): Promise<void> {
+export function waitForRetryDelay(delay: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(signal.reason instanceof Error ? signal.reason : new DOMException('Request aborted', 'AbortError'));

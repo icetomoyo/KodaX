@@ -25,6 +25,7 @@ describe('tool registry', () => {
     expect(getRequiredToolParams('mcp_read_resource')).toEqual(['id']);
     expect(getRequiredToolParams('changed_diff')).toEqual(['path']);
     expect(getRequiredToolParams('changed_diff_bundle')).toEqual(['paths']);
+    expect(getRequiredToolParams('insert_after_anchor')).toEqual(['path', 'anchor', 'content']);
   });
 
   it('supports same-name override and restore via disposer', async () => {

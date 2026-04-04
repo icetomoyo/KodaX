@@ -126,7 +126,7 @@ import {
   extractTitle,
 } from "./utils/message-utils.js";
 import { withCapture, ConsoleCapturer } from "./utils/console-capturer.js";
-import { emitRetryHistoryItem } from "./utils/retry-history.js";
+import { emitRecoveryHistoryItem, emitRetryHistoryItem } from "./utils/retry-history.js";
 import {
   formatManagedTaskBreadcrumb,
   formatManagedTaskLiveStatusLabel,
@@ -1985,6 +1985,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     onRetry: (reason: string, attempt: number, maxAttempts: number) => {
       emitRetryHistoryItem(addHistoryItem, reason, attempt, maxAttempts);
     },
+    onProviderRecovery: (event) => {
+      emitRecoveryHistoryItem(addHistoryItem, event);
+    },
     onManagedTaskStatus: (status) => {
       managedTaskStatusRef.current = status;
       setManagedTaskStatus(status);
@@ -2420,6 +2423,19 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     persistHistoryAdditionsInBackground(items);
   }, [addHistoryItem, persistHistoryAdditionsInBackground]);
 
+  const appendHistoryItemsToCurrentSnapshot = useCallback((items: readonly CreatableHistoryItem[]) => {
+    if (items.length === 0) {
+      return;
+    }
+    for (const item of items) {
+      addHistoryItem(item);
+    }
+    persistedUiHistoryRef.current = appendPersistedUiHistorySnapshot(
+      persistedUiHistoryRef.current,
+      items,
+    );
+  }, [addHistoryItem]);
+
   useEffect(() => {
     appendHistoryItemsWithPersistenceRef.current = appendHistoryItemsWithPersistence;
     return () => {
@@ -2455,10 +2471,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           }]
         : []),
     ];
-    const nextUiHistory = [
-      ...serializeUiHistorySnapshot(history),
-      ...serializeCreatableHistoryItems(persistedAdditions),
-    ];
+    const nextUiHistory = appendPersistedUiHistorySnapshot(
+      persistedUiHistoryRef.current,
+      persistedAdditions,
+    );
 
     clearThinkingContent();
     clearResponse();
@@ -2501,7 +2517,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     context,
     getFullResponse,
     getThinkingContent,
-    history,
     persistContextStateInBackground,
     resetLiveToolCalls,
     setCurrentTool,
@@ -2602,7 +2617,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
       const initialMessages = prepared.mode === "fork" ? [] : context.messages;
       const result = await runAgentRound(prepared.options, prepared.prompt, initialMessages);
-      const persistedHistoryBase = serializeUiHistorySnapshot(history);
+      const persistedHistoryBase = persistedUiHistoryRef.current;
       const persistedAdditions: CreatableHistoryItem[] = [];
 
       if (prepared.mode === "fork") {
@@ -2629,10 +2644,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         }
       }
 
-      await persistContextState([
-        ...persistedHistoryBase,
-        ...serializeCreatableHistoryItems(persistedAdditions),
-      ]);
+      await persistContextState(
+        appendPersistedUiHistorySnapshot(persistedHistoryBase, persistedAdditions),
+      );
       await prepared.finalize();
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
@@ -2688,17 +2702,17 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       // Issue: When user sends new message during streaming, partial content was lost
       const currentFullResponse = sanitizeInterruptedAssistantText(getFullResponse());
       if (currentFullResponse) {
-        addHistoryItem({
+        appendHistoryItemsToCurrentSnapshot([{
           type: "assistant",
           text: currentFullResponse + "\n\n[Interrupted]",
-        });
+        }]);
       }
 
       // Add user message to UI history
-      addHistoryItem({
+      appendHistoryItemsToCurrentSnapshot([{
         type: "user",
         text: input,
-      });
+      }]);
       setInputText("");
       setIsInputEmpty(true);
 
@@ -2748,7 +2762,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
                 messages: context.messages,
                 title,
                 gitRoot: context.gitRoot ?? "",
-                uiHistory: serializeUiHistorySnapshot(history),
+                uiHistory: persistedUiHistoryRef.current,
                 lineage: context.lineage,
                 artifactLedger: context.artifactLedger,
               });
@@ -3362,6 +3376,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       getSignal,
       getFullResponse,
       getThinkingContent,
+      appendHistoryItemsToCurrentSnapshot,
       appendLastAssistantToHistory,
       persistContextState,
       runQueueableAgentSequence,

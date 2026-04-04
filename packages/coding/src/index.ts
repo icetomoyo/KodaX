@@ -266,6 +266,7 @@ export {
   toolRead,
   toolWrite,
   toolEdit,
+  toolInsertAfterAnchor,
   toolBash,
   toolGlob,
   toolGrep,
@@ -300,6 +301,13 @@ export {
   persistToolOutput,
   applyToolResultGuardrail,
   getToolResultPolicy,
+  inspectEditFailure,
+  parseEditToolError,
+} from './tools/index.js';
+
+export type {
+  EditRecoveryDiagnostic,
+  EditToolErrorCode,
 } from './tools/index.js';
 
 // ============== Repo Intelligence ==============
