@@ -27,6 +27,7 @@ import {
   HistoryItemRenderer,
   splitMessageHistorySections,
 } from "../../packages/repl/src/ui/components/MessageList.js";
+import { getTheme } from "../../packages/repl/src/ui/themes/index.js";
 
 // === Test Helpers ===
 
@@ -133,6 +134,27 @@ describe("MessageList", () => {
 
       expect(lastFrame()).toContain("No messages");
     });
+
+    it("can transition between empty and populated states without changing hook order", () => {
+      const populatedItems: HistoryItem[] = [createUserItem("Hello after empty state")];
+      const { lastFrame, rerender } = render(
+        <MessageList items={[]} viewportRows={DEFAULT_VIEWPORT_ROWS} viewportWidth={80} />
+      );
+
+      expect(lastFrame()).toContain("No messages");
+
+      rerender(
+        <MessageList
+          items={populatedItems}
+          viewportRows={DEFAULT_VIEWPORT_ROWS}
+          viewportWidth={80}
+        />
+      );
+      expect(lastFrame()).toContain("Hello after empty state");
+
+      rerender(<MessageList items={[]} viewportRows={DEFAULT_VIEWPORT_ROWS} viewportWidth={80} />);
+      expect(lastFrame()).toContain("No messages");
+    });
   });
 
   describe("single items", () => {
@@ -202,12 +224,12 @@ describe("MessageList", () => {
       expect(lastFrame()).toContain("Something went wrong");
     });
 
-    it("should render info item", () => {
+    it("should render info item in the compact icon-first format", () => {
       const items: HistoryItem[] = [createInfoItem("Session started")];
       const { lastFrame } = render(<MessageList items={items} viewportRows={DEFAULT_VIEWPORT_ROWS} viewportWidth={80} />);
 
-      expect(lastFrame()).toContain("Info");
       expect(lastFrame()).toContain("Session started");
+      expect(lastFrame()).not.toContain(" Info");
     });
 
     it("should render hint item", () => {
@@ -615,6 +637,20 @@ describe("HistoryItemRenderer", () => {
     const { lastFrame } = render(<HistoryItemRenderer item={item} />);
 
     expect(lastFrame()).toContain("Tip: use arrows");
+  });
+
+  it("can transition between implicit and explicit themes without changing hook order", () => {
+    const item = createAssistantItem("Theme-safe assistant message");
+    const theme = getTheme("dark");
+    const { lastFrame, rerender } = render(<HistoryItemRenderer item={item} />);
+
+    expect(lastFrame()).toContain("Theme-safe assistant message");
+
+    rerender(<HistoryItemRenderer item={item} theme={theme} />);
+    expect(lastFrame()).toContain("Theme-safe assistant message");
+
+    rerender(<HistoryItemRenderer item={item} />);
+    expect(lastFrame()).toContain("Theme-safe assistant message");
   });
 });
 
