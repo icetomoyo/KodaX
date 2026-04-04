@@ -177,6 +177,22 @@ function getBodyWidth(viewportWidth: number, indent = 0): number {
   return Math.max(20, viewportWidth - indent);
 }
 
+function buildToolInputPreview(tool: ToolCall): string[] {
+  if (!tool.input) {
+    return [];
+  }
+
+  const serializedInput = JSON.stringify(tool.input, null, 2)?.trim();
+  if (!serializedInput) {
+    return [];
+  }
+
+  return serializedInput
+    .split(/\r?\n/)
+    .slice(0, 6)
+    .map((line: string, index: number) => (index === 0 ? `input: ${line}` : line));
+}
+
 function formatHarnessProfileShort(harnessProfile?: string): string | undefined {
   switch (harnessProfile) {
     case "H0_DIRECT":
@@ -218,6 +234,19 @@ function buildToolRows(
       getBodyWidth(viewportWidth, 4),
       { color: "error", indent: 4 }
     );
+  }
+
+  if (showDetailedTools) {
+    const inputLines = buildToolInputPreview(tool);
+    inputLines.forEach((line, index) => {
+      pushWrappedRows(
+        rows,
+        `${itemKey}-tool-${tool.id}-input-${index}`,
+        line,
+        getBodyWidth(viewportWidth, 4),
+        { color: "dim", indent: 4 }
+      );
+    });
   }
 
   if (showDetailedTools && typeof tool.output === "string" && tool.output.trim()) {

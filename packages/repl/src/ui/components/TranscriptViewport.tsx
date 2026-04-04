@@ -10,9 +10,13 @@ export interface TranscriptViewportProps extends MessageListProps {
   selectedSummary?: string;
   selectedIndex?: number;
   selectedTotal?: number;
+  selectedKindLabel?: string;
+  selectedDetailExpanded?: boolean;
   canCopySelection?: boolean;
+  canCopyToolInput?: boolean;
   canToggleSelectionDetail?: boolean;
   searchStatusText?: string;
+  searchMatchCount?: number;
   searchSurface?: React.ReactNode;
 }
 
@@ -21,9 +25,13 @@ export const TranscriptViewport: React.FC<TranscriptViewportProps> = ({
   selectedSummary,
   selectedIndex = 0,
   selectedTotal = 0,
+  selectedKindLabel,
+  selectedDetailExpanded = false,
   canCopySelection = false,
+  canCopyToolInput = false,
   canToggleSelectionDetail = false,
   searchStatusText,
+  searchMatchCount = 0,
   searchSurface,
   ...messageListProps
 }) => {
@@ -39,12 +47,17 @@ export const TranscriptViewport: React.FC<TranscriptViewportProps> = ({
           summary={selectedSummary}
           selectedIndex={Math.max(0, selectedIndex)}
           total={selectedTotal}
+          kindLabel={selectedKindLabel}
+          detailExpanded={selectedDetailExpanded}
         />
       ) : null}
-      {(canCopySelection || canToggleSelectionDetail) ? (
+      {(canCopySelection || canCopyToolInput || canToggleSelectionDetail || searchMatchCount > 0) ? (
         <MessageActions
           canCopy={canCopySelection}
+          canCopyToolInput={canCopyToolInput}
           canToggleDetail={canToggleSelectionDetail}
+          searchActive={Boolean(searchStatusText)}
+          searchMatchCount={searchMatchCount}
         />
       ) : null}
       {searchStatusText ? (

@@ -12,6 +12,11 @@ export interface TranscriptSearchIndexEntry {
   searchText: string;
 }
 
+export interface TranscriptSelectionSummary {
+  summary: string;
+  kindLabel: string;
+}
+
 function buildSearchText(item: HistoryItem): string {
   switch (item.type) {
     case "tool_group":
@@ -127,6 +132,33 @@ export function buildTranscriptSearchSummary(
   return `${safeIndex + 1}/${matches.length} transcript matches`;
 }
 
+export function resolveTranscriptSearchMatchIndex(
+  index: TranscriptSearchIndexEntry[],
+  matches: TranscriptSearchMatch[],
+  anchorItemId: string | undefined,
+): number {
+  if (matches.length === 0) {
+    return 0;
+  }
+
+  if (!anchorItemId) {
+    return 0;
+  }
+
+  const exactMatchIndex = matches.findIndex((match) => match.itemId === anchorItemId);
+  if (exactMatchIndex >= 0) {
+    return exactMatchIndex;
+  }
+
+  const anchorIndex = index.find((entry) => entry.itemId === anchorItemId)?.itemIndex;
+  if (anchorIndex === undefined) {
+    return 0;
+  }
+
+  const nextMatchIndex = matches.findIndex((match) => match.itemIndex >= anchorIndex);
+  return nextMatchIndex >= 0 ? nextMatchIndex : 0;
+}
+
 export function summarizeTranscriptItem(item: HistoryItem | undefined): string | undefined {
   if (!item) {
     return undefined;
@@ -151,6 +183,35 @@ export function summarizeTranscriptItem(item: HistoryItem | undefined): string |
       return "Hint";
     default:
       return "Transcript entry";
+  }
+}
+
+export function buildTranscriptSelectionSummary(
+  item: HistoryItem | undefined,
+): TranscriptSelectionSummary | undefined {
+  if (!item) {
+    return undefined;
+  }
+
+  switch (item.type) {
+    case "assistant":
+      return { summary: "Assistant response", kindLabel: "assistant" };
+    case "user":
+      return { summary: "User prompt", kindLabel: "user" };
+    case "system":
+      return { summary: "System note", kindLabel: "system" };
+    case "thinking":
+      return { summary: "Thinking trace", kindLabel: "thinking" };
+    case "tool_group":
+      return { summary: summarizeToolGroup(item), kindLabel: "tool" };
+    case "error":
+      return { summary: "Error entry", kindLabel: "error" };
+    case "info":
+      return { summary: "Info note", kindLabel: "info" };
+    case "hint":
+      return { summary: "Hint", kindLabel: "hint" };
+    default:
+      return { summary: "Transcript entry", kindLabel: "entry" };
   }
 }
 
@@ -222,4 +283,31 @@ export function buildTranscriptCopyText(item: HistoryItem | undefined): string |
     default:
       return undefined;
   }
+}
+
+export function buildTranscriptToolInputCopyText(
+  item: HistoryItem | undefined,
+): string | undefined {
+  if (!item || item.type !== "tool_group") {
+    return undefined;
+  }
+
+  const serializedTools = item.tools
+    .map((tool) => {
+      if (!tool.input) {
+        return undefined;
+      }
+
+      const normalizedInput = typeof tool.input === "string"
+        ? tool.input
+        : JSON.stringify(tool.input, null, 2);
+      if (!normalizedInput?.trim()) {
+        return undefined;
+      }
+
+      return [`Tool: ${tool.name}`, normalizedInput].join("\n");
+    })
+    .filter((value): value is string => Boolean(value));
+
+  return serializedTools.length > 0 ? serializedTools.join("\n\n") : undefined;
 }

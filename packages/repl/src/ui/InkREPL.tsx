@@ -170,12 +170,14 @@ import {
 import {
   buildTranscriptSearchSummary,
   buildTranscriptCopyText,
+  buildTranscriptSelectionSummary,
+  buildTranscriptToolInputCopyText,
   createTranscriptSearchIndex,
   getSelectableTranscriptItemIds,
   moveTranscriptSelection,
+  resolveTranscriptSearchMatchIndex,
   searchTranscriptIndex,
   stepTranscriptSearchMatch,
-  summarizeTranscriptItem,
 } from "./utils/transcript-search.js";
 import {
   getAskUserDialogTitle,
@@ -1013,6 +1015,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const uiResolveRef = useRef<((value: string | undefined) => void) | null>(null);
   const [historySearchQuery, setHistorySearchQuery] = useState("");
   const [historySearchSelectedIndex, setHistorySearchSelectedIndex] = useState(0);
+  const lastHistorySearchQueryRef = useRef("");
 
   // Issue 070: Calculate context token usage for status bar display
   // Issue 070: Calculate context token usage for status bar display
@@ -1129,12 +1132,16 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     [displayItems],
   );
   const selectedTranscriptItemId = transcriptDisplayState.selectedItemId;
+  const selectedTranscriptItem = useMemo(
+    () => displayItems.find((item) => item.id === selectedTranscriptItemId),
+    [displayItems, selectedTranscriptItemId],
+  );
   const selectedTranscriptItemIndex = selectedTranscriptItemId
     ? selectableTranscriptItemIds.indexOf(selectedTranscriptItemId)
     : -1;
   const selectedTranscriptItemSummary = useMemo(
-    () => summarizeTranscriptItem(displayItems.find((item) => item.id === selectedTranscriptItemId)),
-    [displayItems, selectedTranscriptItemId],
+    () => buildTranscriptSelectionSummary(selectedTranscriptItem),
+    [selectedTranscriptItem],
   );
   const transcriptSearchIndex = useMemo(
     () => createTranscriptSearchIndex(displayItems),
@@ -1152,6 +1159,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     () => buildTranscriptSearchSummary(historySearchMatches, clampedHistorySearchSelectedIndex),
     [clampedHistorySearchSelectedIndex, historySearchMatches],
   );
+  const isSelectedTranscriptItemExpanded = selectedTranscriptItemId
+    ? expandedTranscriptItemIds.has(selectedTranscriptItemId)
+    : false;
+  const canCopySelectedToolInput = selectedTranscriptItem?.type === "tool_group";
 
   useEffect(() => {
     if (rawWorkStripText) {
@@ -1273,6 +1284,31 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     }
     setHistorySearchSelectedIndex(clampedHistorySearchSelectedIndex);
   }, [clampedHistorySearchSelectedIndex, historySearchSelectedIndex]);
+
+  useEffect(() => {
+    if (!isHistorySearchActive) {
+      lastHistorySearchQueryRef.current = historySearchQuery;
+      return;
+    }
+
+    if (historySearchQuery === lastHistorySearchQueryRef.current) {
+      return;
+    }
+
+    lastHistorySearchQueryRef.current = historySearchQuery;
+    const nextIndex = resolveTranscriptSearchMatchIndex(
+      transcriptSearchIndex,
+      historySearchMatches,
+      transcriptDisplayState.searchAnchorItemId,
+    );
+    setHistorySearchSelectedIndex(nextIndex);
+  }, [
+    historySearchMatches,
+    historySearchQuery,
+    isHistorySearchActive,
+    transcriptDisplayState.searchAnchorItemId,
+    transcriptSearchIndex,
+  ]);
 
   const statusBarProps = useMemo(() => ({
     sessionId: context.sessionId,
@@ -1539,11 +1575,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }, [selectedTranscriptItemId]);
 
   const copySelectedTranscriptItem = useCallback(async () => {
-    if (!selectedTranscriptItemId) {
+    if (!selectedTranscriptItem) {
       return;
     }
-    const selectedItem = displayItems.find((item) => item.id === selectedTranscriptItemId);
-    const copyText = buildTranscriptCopyText(selectedItem);
+    const copyText = buildTranscriptCopyText(selectedTranscriptItem);
     if (!copyText) {
       return;
     }
@@ -1559,7 +1594,31 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         text: `Failed to copy transcript entry: ${error instanceof Error ? error.message : String(error)}`,
       });
     }
-  }, [addHistoryItem, displayItems, selectedTranscriptItemId]);
+  }, [addHistoryItem, selectedTranscriptItem]);
+
+  const copySelectedTranscriptToolInput = useCallback(async () => {
+    if (!selectedTranscriptItem) {
+      return;
+    }
+
+    const copyText = buildTranscriptToolInputCopyText(selectedTranscriptItem);
+    if (!copyText) {
+      return;
+    }
+
+    try {
+      await clipboard.write(copyText);
+      addHistoryItem({
+        type: "info",
+        text: "Copied selected tool input to clipboard.",
+      });
+    } catch (error) {
+      addHistoryItem({
+        type: "error",
+        text: `Failed to copy tool input: ${error instanceof Error ? error.message : String(error)}`,
+      });
+    }
+  }, [addHistoryItem, selectedTranscriptItem]);
 
   const openHistorySearchSurface = useCallback(() => {
     if (!displayItems.length || confirmRequest || uiRequest) {
@@ -1981,6 +2040,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         return true;
       }
 
+      if (!key.ctrl && !key.meta && !key.shift && key.name === "i") {
+        void copySelectedTranscriptToolInput();
+        return true;
+      }
+
       if (!key.ctrl && !key.meta && !key.shift && key.name === "v") {
         toggleSelectedTranscriptDetail();
         return true;
@@ -2006,6 +2070,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       closeHistorySearchSurface,
       cycleTranscriptSelection,
       copySelectedTranscriptItem,
+      copySelectedTranscriptToolInput,
       toggleSelectedTranscriptDetail,
       selectTranscriptItem,
     ]
@@ -3877,12 +3942,16 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             selectedItemId={selectedTranscriptItemId}
             expandedItemKeys={expandedTranscriptItemIds}
             browseHintText={reviewHintText}
-            selectedSummary={isReviewingHistory ? selectedTranscriptItemSummary : undefined}
+            selectedSummary={isReviewingHistory ? selectedTranscriptItemSummary?.summary : undefined}
             selectedIndex={Math.max(0, selectedTranscriptItemIndex)}
             selectedTotal={selectableTranscriptItemIds.length}
+            selectedKindLabel={isReviewingHistory ? selectedTranscriptItemSummary?.kindLabel : undefined}
+            selectedDetailExpanded={isReviewingHistory ? isSelectedTranscriptItemExpanded : false}
             canCopySelection={isReviewingHistory && Boolean(selectedTranscriptItemId)}
+            canCopyToolInput={isReviewingHistory && canCopySelectedToolInput}
             canToggleSelectionDetail={isReviewingHistory && Boolean(selectedTranscriptItemId)}
             searchStatusText={!useOverlaySurface ? historySearchStatusText : undefined}
+            searchMatchCount={!useOverlaySurface ? historySearchMatches.length : 0}
           />
         }
         overlay={overlaySurface}
