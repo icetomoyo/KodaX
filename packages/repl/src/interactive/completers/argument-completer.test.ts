@@ -45,6 +45,12 @@ describe('ArgumentCompleter', () => {
       expect(completer.canComplete('/delete ', 8)).toBe(true);
     });
 
+    it('should not expose retired /project argument completion', async () => {
+      expect(completer.canComplete('/project ', 9)).toBe(true);
+      const completions = await completer.getCompletions('/project ', 9);
+      expect(completions).toEqual([]);
+    });
+
     it('should trigger on /repointel command and alias', () => {
       expect(completer.canComplete('/repointel ', 11)).toBe(true);
       expect(completer.canComplete('/ri ', 4)).toBe(true);

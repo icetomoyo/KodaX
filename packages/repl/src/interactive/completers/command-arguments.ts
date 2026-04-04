@@ -358,8 +358,6 @@ export const COMMAND_ARGUMENTS: CommandArgumentsRegistry = new Map([
   // 'model' and 'm' handled dynamically in getCommandArguments()
   ['plan', PLAN_ARGS],
   ['p', PLAN_ARGS], // alias
-  ['project', PROJECT_ARGS],
-  ['proj', PROJECT_ARGS], // alias
   ['delete', DELETE_ARGS],
   ['rm', DELETE_ARGS], // alias
   ['del', DELETE_ARGS], // alias

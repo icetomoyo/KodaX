@@ -14,7 +14,6 @@
 import { FileCompleter, CommandCompleter, findCommandSlashIndex, type Completer, type Completion } from './autocomplete.js';
 import { SkillCompleter } from './completers/skill-completer.js';
 import { ArgumentCompleter } from './completers/argument-completer.js';
-import { ProjectCompleter } from './completers/project-completer.js';
 import { sortCandidatesCombined } from './fuzzy.js';
 
 /**
@@ -99,7 +98,6 @@ export class AutocompleteProvider {
     // 顺序很重要：更具体的补全器优先
     this.completers = [
       new SkillCompleter(this.options.gitRoot),
-      new ProjectCompleter(), // Feature index and option completion
       new ArgumentCompleter(),
       new CommandCompleter(),
       new FileCompleter(this.options.cwd),

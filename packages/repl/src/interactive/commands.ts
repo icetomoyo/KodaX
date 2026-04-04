@@ -48,7 +48,6 @@ import {
 } from '../common/utils.js';
 import { savePermissionModeUser } from '../common/permission-config.js';
 import { runWithPlanMode, listPlans, resumePlan, clearCompletedPlans } from '../common/plan-mode.js';
-import { handleProjectCommand, printProjectHelp } from './project-commands.js';
 import { compact } from '@kodax/agent';
 import type { CompactionConfig } from '@kodax/agent';
 import { loadCompactionConfig } from '../common/compaction-config.js';
@@ -107,6 +106,24 @@ function createManualCompactionConfig(
   };
 }
 
+const LEGACY_PROJECT_COMMAND_NAMES = new Set(['project', 'proj']);
+
+function printProjectMigrationGuidance(): void {
+  console.log(chalk.cyan('\n/project - Legacy Project Surface Retired\n'));
+  console.log(chalk.bold('What changed:'));
+  console.log(chalk.dim('  The old /project product surface has been retired under FEATURE_054.'));
+  console.log(chalk.dim('  Planning and brainstorm now belong to AMA H2 inside the main authority.'));
+  console.log();
+  console.log(chalk.bold('Use instead:'));
+  console.log(chalk.dim('  /agent-mode ama        ') + 'Enable adaptive multi-agent execution');
+  console.log(chalk.dim('  <describe the task>    ') + 'Let AMA route Planner/Generator/Evaluator as needed');
+  console.log(chalk.dim('  /status                ') + 'Inspect current runtime posture');
+  console.log();
+  console.log(chalk.bold('Reference:'));
+  console.log(chalk.dim('  docs/features/v0.7.30.md#feature_054-ama-project-convergence-absorb-project-mode-into-adaptive-h2'));
+  console.log();
+}
+
 export const BUILTIN_COMMANDS: Command[] = [
   {
     name: 'help',
@@ -130,7 +147,6 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log(chalk.bold('Examples:'));
       console.log(chalk.dim('  /help              ') + '# List all commands');
       console.log(chalk.dim('  /help mode         ') + '# Detailed help for /mode');
-      console.log(chalk.dim('  /help project      ') + '# Detailed help for /project');
       console.log();
     },
   },
@@ -1380,16 +1396,6 @@ export const BUILTIN_COMMANDS: Command[] = [
     },
   },
   {
-    name: 'project',
-    aliases: ['proj'],
-    description: 'Project long-running task management',
-    usage: '/project [init|status|plan|quality|brainstorm|next|auto|verify|pause|list|mark|progress]',
-    handler: async (args, context, callbacks, currentConfig) => {
-      return await handleProjectCommand(args, context, callbacks, currentConfig);
-    },
-    detailedHelp: printProjectHelp,
-  },
-  {
     name: 'skills',
     description: '(Deprecated) Use /skill instead',
     usage: '/skill',
@@ -1444,7 +1450,6 @@ const COMMAND_CATEGORIES: Record<string, string[]> = {
   Permission: ['mode', 'auto'],
   Session: ['new', 'save', 'load', 'sessions', 'history', 'delete'],
   Settings: ['model', 'provider', 'thinking', 'reasoning', 'agent-mode', 'parallel', 'plan', 'repointel'],
-  Project: ['project'],
   Skills: ['skill'],
 };
 
@@ -1724,10 +1729,6 @@ function printHelp(): void {
     }
     printCommandSection(category, commands);
 
-    if (category === 'Project') {
-      console.log(chalk.dim('    Subcommands: init, status, plan, quality, brainstorm, next, auto, verify, pause, list, mark, progress'));
-      console.log();
-    }
   }
 
   const dynamicSections = new Map<string, Array<{ name: string; aliases?: string[]; description: string }>>();
@@ -1783,6 +1784,11 @@ function printHelp(): void {
 
 // Print detailed help for a specific command.
 function printDetailedHelp(commandName: string): void {
+  if (LEGACY_PROJECT_COMMAND_NAMES.has(commandName.toLowerCase())) {
+    printProjectMigrationGuidance();
+    return;
+  }
+
   // Lazy initialization.
   if (commandRegistry.size === 0) {
     initCommandRegistry();
@@ -2120,6 +2126,11 @@ export async function executeCommand(
   callbacks: CommandCallbacks,
   currentConfig: CurrentConfig
 ): Promise<CommandResult> {
+  if (LEGACY_PROJECT_COMMAND_NAMES.has(parsed.command.toLowerCase())) {
+    printProjectMigrationGuidance();
+    return true;
+  }
+
   // Lazy initialization.
   if (commandRegistry.size === 0) {
     initCommandRegistry(context.gitRoot);

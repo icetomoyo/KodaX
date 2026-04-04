@@ -32,6 +32,12 @@ describe('CommandCompleter boundaries', () => {
     expect(completions.some((item) => item.display === '/new')).toBe(true);
   });
 
+  it('does not expose the retired /project shell in command completions', async () => {
+    const completions = await completer.getCompletions('/pro', 4);
+    expect(completions.some((item) => item.display === '/project')).toBe(false);
+    expect(completions.some((item) => item.display === '/proj')).toBe(false);
+  });
+
   it('refreshes command completions after runtime registration', async () => {
     const registry = getCommandRegistry();
     registry.unregister('deploy');

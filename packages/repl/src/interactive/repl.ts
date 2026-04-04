@@ -57,7 +57,6 @@ import {
 import { runWithPlanMode } from '../common/plan-mode.js';
 import { loadCompactionConfig } from '../common/compaction-config.js';
 import { loadAlwaysAllowTools, saveAlwaysAllowToolPattern } from '../common/permission-config.js';
-import { detectAndShowProjectHint } from './project-commands.js';
 import {
   confirmToolExecution,
   getTerminalWidth,
@@ -337,7 +336,6 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   }, agentsFiles);
 
   // Detect and show project hint - 检测并显示项目提示
-  await detectAndShowProjectHint();
 
   // Create autocomplete - 创建自动补全器
   const completer = createCompleter(gitRoot ?? process.cwd());
