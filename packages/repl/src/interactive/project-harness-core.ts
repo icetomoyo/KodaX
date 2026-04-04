@@ -17,6 +17,8 @@ import { isRecord, isStringArray } from './json-guards.js';
 import { ProjectStorage } from './project-storage.js';
 import { buildProjectQualityReport } from './project-quality.js';
 import type {
+  ProjectHarnessCalibrationCaseRecord,
+  ProjectHarnessCalibrationLabel,
   ProjectHarnessCheckConfig,
   ProjectHarnessCheckpointRecord,
   ProjectHarnessCheckResult,
@@ -255,6 +257,28 @@ function buildCheckpointId(runId: string): string {
 
 function buildSessionNodeId(runId: string): string {
   return `${runId}-node`;
+}
+
+function buildCalibrationCaseId(runId: string, label: ProjectHarnessCalibrationLabel): string {
+  return `${runId}-${label}`;
+}
+
+function getCalibrationExpectedDecision(label: ProjectHarnessCalibrationLabel): ProjectHarnessRunRecord['decision'] {
+  return label === 'false_fail' ? 'verified_complete' : 'needs_review';
+}
+
+function formatCalibrationSummary(
+  run: ProjectHarnessRunRecord,
+  label: ProjectHarnessCalibrationLabel,
+  summary?: string,
+): string {
+  if (summary && summary.trim().length > 0) {
+    return summary.trim();
+  }
+
+  return label === 'false_fail'
+    ? `Manual review accepted feature #${run.featureIndex} after harness returned ${run.decision}.`
+    : `Manual review rejected a previously verified completion for feature #${run.featureIndex}.`;
 }
 
 function extractAssistantText(messages: KodaXMessage[]): string {
@@ -1506,6 +1530,75 @@ export async function readLatestHarnessRun(
   return runs.length > 0 ? runs[runs.length - 1] ?? null : null;
 }
 
+export async function readLatestHarnessCheckpoint(
+  storage: ProjectStorage,
+  featureIndex?: number,
+): Promise<ProjectHarnessCheckpointRecord | null> {
+  const checkpoints = await storage.readLineageCheckpoints<ProjectHarnessCheckpointRecord>();
+  const filtered = featureIndex === undefined
+    ? checkpoints
+    : checkpoints.filter(checkpoint => checkpoint.featureIndex === featureIndex);
+  return filtered.length > 0 ? filtered[filtered.length - 1] ?? null : null;
+}
+
+export function formatProjectHarnessCheckpointSummary(
+  checkpoint: ProjectHarnessCheckpointRecord,
+): string {
+  const lines = [
+    '## Project Harness Safe Checkpoint',
+    `- Checkpoint: ${checkpoint.checkpointId}`,
+    `- Feature: #${checkpoint.featureIndex}`,
+    `- Decision: ${checkpoint.decision}`,
+    `- Git HEAD: ${checkpoint.gitHead ?? 'unknown'}`,
+  ];
+
+  if (checkpoint.changedFiles.length > 0) {
+    lines.push(`- Changed files: ${checkpoint.changedFiles.join(', ')}`);
+  }
+
+  if (checkpoint.gitStatus.length > 0) {
+    lines.push(`- Git status: ${checkpoint.gitStatus.join(' | ')}`);
+  }
+
+  return lines.join('\n');
+}
+
+export async function recordHarnessCalibrationCase(
+  storage: ProjectStorage,
+  run: ProjectHarnessRunRecord,
+  options: {
+    label: ProjectHarnessCalibrationLabel;
+    summary?: string;
+  },
+): Promise<ProjectHarnessCalibrationCaseRecord> {
+  const caseId = buildCalibrationCaseId(run.runId, options.label);
+  const existingCases = await storage.readHarnessCalibrationCases<ProjectHarnessCalibrationCaseRecord>();
+  const existing = existingCases.find(item => item.caseId === caseId);
+  if (existing) {
+    return existing;
+  }
+
+  const checkpoints = await storage.readLineageCheckpoints<ProjectHarnessCheckpointRecord>();
+  const checkpoint = [...checkpoints].reverse().find(item => item.runId === run.runId) ?? null;
+  const createdAt = new Date().toISOString();
+  const record: ProjectHarnessCalibrationCaseRecord = {
+    id: caseId,
+    caseId,
+    runId: run.runId,
+    featureIndex: run.featureIndex,
+    label: options.label,
+    observedDecision: run.decision,
+    expectedDecision: getCalibrationExpectedDecision(options.label),
+    checkpointId: checkpoint?.checkpointId ?? null,
+    failureCodes: [...(run.failureCodes ?? [])],
+    summary: formatCalibrationSummary(run, options.label, options.summary),
+    createdAt,
+  };
+
+  await storage.appendHarnessCalibrationCase(record);
+  return record;
+}
+
 export async function reverifyProjectHarnessRun(
   storage: ProjectStorage,
   run: ProjectHarnessRunRecord,
@@ -1526,6 +1619,19 @@ export async function reverifyProjectHarnessRun(
   });
 }
 
+export async function replayHarnessCalibrationCase(
+  storage: ProjectStorage,
+  caseRecord: ProjectHarnessCalibrationCaseRecord,
+): Promise<ProjectHarnessVerificationResult> {
+  const runs = await storage.readHarnessRuns<ProjectHarnessRunRecord>();
+  const run = runs.find(item => item.runId === caseRecord.runId);
+  if (!run) {
+    throw new Error(`Harness calibration case ${caseRecord.caseId} points to missing run ${caseRecord.runId}.`);
+  }
+
+  return reverifyProjectHarnessRun(storage, run);
+}
+
 export async function recordManualHarnessOverride(
   storage: ProjectStorage,
   featureIndex: number,
@@ -1543,6 +1649,26 @@ export async function recordManualHarnessOverride(
     updatedAt: now,
     overrideStatus: status,
   });
+
+  const runs = await storage.readHarnessRuns<ProjectHarnessRunRecord>();
+  const latestRun = [...runs].reverse().find(run => run.featureIndex === featureIndex) ?? null;
+  if (!latestRun) {
+    return;
+  }
+
+  if (status === 'done' && latestRun.decision !== 'verified_complete') {
+    await recordHarnessCalibrationCase(storage, latestRun, {
+      label: 'false_fail',
+      summary: `Manual override marked feature #${featureIndex} as done after harness returned ${latestRun.decision}.`,
+    });
+  }
+
+  if (status === 'skip' && latestRun.decision === 'verified_complete') {
+    await recordHarnessCalibrationCase(storage, latestRun, {
+      label: 'false_pass',
+      summary: `Manual override rejected a previously verified completion for feature #${featureIndex}.`,
+    });
+  }
 }
 
 export function formatProjectHarnessSummary(run: ProjectHarnessRunRecord): string {

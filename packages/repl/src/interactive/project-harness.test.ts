@@ -4,7 +4,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTempDirSync, removeTempDirSync } from '../test-utils/temp-dir.js';
 import {
   createProjectHarnessAttempt,
+  formatProjectHarnessCheckpointSummary,
   loadOrCreateProjectHarnessConfig,
+  readLatestHarnessCheckpoint,
+  recordManualHarnessOverride,
+  replayHarnessCalibrationCase,
   reverifyProjectHarnessRun,
 } from './project-harness.js';
 import { ProjectStorage } from './project-storage.js';
@@ -1055,5 +1059,90 @@ Milestone: Checks are green.
 
     expect(result.runRecord.scorecard?.overall).toBeLessThan(70);
     expect(result.runRecord.scorecard?.stallResistance).toBeLessThan(100);
+  });
+
+  it('persists false-fail calibration cases and can replay them deterministically', async () => {
+    const storage = new ProjectStorage(tempDir);
+    const feature = await storage.getFeatureByIndex(0);
+    expect(feature).not.toBeNull();
+
+    const attempt = await createProjectHarnessAttempt(storage, feature!, 0, 'next', 1);
+    const result = await attempt.verify([
+      {
+        role: 'assistant',
+        content: 'No completion report here.',
+      } as never,
+    ]);
+
+    expect(result.decision).toBe('retryable_failure');
+
+    await recordManualHarnessOverride(storage, 0, 'done');
+
+    const cases = await storage.readHarnessCalibrationCases<{
+      caseId: string;
+      label: string;
+      runId: string;
+      checkpointId: string | null;
+    }>();
+    expect(cases).toHaveLength(1);
+    expect(cases[0]?.label).toBe('false_fail');
+    expect(cases[0]?.runId).toBe(result.runRecord.runId);
+    expect(cases[0]?.checkpointId).toContain(result.runRecord.runId);
+
+    const replay = await replayHarnessCalibrationCase(storage, cases[0] as never);
+    expect(replay.decision).toBe(result.decision);
+
+    const checkpoint = await readLatestHarnessCheckpoint(storage, 0);
+    expect(checkpoint?.runId).toBe(result.runRecord.runId);
+    expect(formatProjectHarnessCheckpointSummary(checkpoint!)).toContain('Project Harness Safe Checkpoint');
+  });
+
+  it('persists false-pass calibration cases when manual review rejects a verified completion', async () => {
+    const storage = new ProjectStorage(tempDir);
+    const feature = await storage.getFeatureByIndex(0);
+    expect(feature).not.toBeNull();
+
+    const attempt = await createProjectHarnessAttempt(storage, feature!, 0, 'next', 1);
+    await storage.appendProgress('## Session 8\n\nVerifier work completed.\n');
+    const result = await attempt.verify([
+      {
+        role: 'assistant',
+        content: '<project-harness>{"status":"complete","summary":"Implemented the verifier flow.","evidence":["Updated progress."],"tests":["manual"],"changedFiles":["src/feature.ts"]}</project-harness>',
+      } as never,
+    ]);
+
+    expect(result.decision).toBe('verified_complete');
+
+    await recordManualHarnessOverride(storage, 0, 'skip');
+
+    const cases = await storage.readHarnessCalibrationCases<{
+      label: string;
+      observedDecision: string;
+      expectedDecision: string;
+    }>();
+    expect(cases).toHaveLength(1);
+    expect(cases[0]?.label).toBe('false_pass');
+    expect(cases[0]?.observedDecision).toBe('verified_complete');
+    expect(cases[0]?.expectedDecision).toBe('needs_review');
+  });
+
+  it('does not duplicate the same calibration case on repeated manual overrides', async () => {
+    const storage = new ProjectStorage(tempDir);
+    const feature = await storage.getFeatureByIndex(0);
+    expect(feature).not.toBeNull();
+
+    const attempt = await createProjectHarnessAttempt(storage, feature!, 0, 'next', 1);
+    await attempt.verify([
+      {
+        role: 'assistant',
+        content: 'No completion report here.',
+      } as never,
+    ]);
+
+    await recordManualHarnessOverride(storage, 0, 'done');
+    await recordManualHarnessOverride(storage, 0, 'done');
+
+    const cases = await storage.readHarnessCalibrationCases();
+    expect(cases).toHaveLength(1);
   });
 });

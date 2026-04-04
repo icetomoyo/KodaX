@@ -16,8 +16,8 @@
 | Tracked feature IDs | `001-056` |
 | Total tracked features | `56` |
 | Completed | `47` |
-| InProgress | `0` |
-| Planned | `9` |
+| InProgress | `1` |
+| Planned | `8` |
 | Current released version | `v0.7.14` |
 
 ### 各版本待做分布
@@ -26,7 +26,7 @@
 |---|---|
 | `v0.7.20` | `1` |
 | `v0.7.25` | `0` |
-| `v0.7.30` | `6` |
+| `v0.7.30` | `5` |
 | `v0.8.0` | `1` |
 | `v0.9.0` | `0` |
 | `v1.0.0` | `1` |
@@ -35,7 +35,9 @@
 
 ## 进行中的 Feature
 
-当前无 InProgress feature。
+| ID | Title | Category | Priority | Planned | Design |
+|---|---|---|---|---|---|
+| `043` | Harness Calibration, Pivoting, Profiling, and Safe Checkpoints | Enhancement | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_043-harness-calibration-pivoting-profiling-and-safe-checkpoints) |
 
 ---
 
@@ -49,7 +51,6 @@
 | `030` | Multi-Surface Delivery | Enhancement | High | `v1.0.0` | [v1.0.0](features/v1.0.0.md#feature_030-multi-surface-delivery) |
 | `031` | Multimodal Artifact Inputs | New | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_031-multimodal-artifact-inputs) |
 | `042` | Incremental Repository Intelligence Refresh and Java/C++ Structural Semantics | Enhancement | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_042-incremental-repository-intelligence-refresh-and-javac-structural-semantics) |
-| `043` | Harness Calibration, Pivoting, Profiling, and Safe Checkpoints | Enhancement | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_043-harness-calibration-pivoting-profiling-and-safe-checkpoints) |
 | `038` | Official Sandbox Extension | New | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_038-official-sandbox-extension) |
 | `056` | Tool Interaction Maturity and Transcript-Native Explanation Layer | Enhancement | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_056-tool-interaction-maturity-and-transcript-native-explanation-layer) |
 

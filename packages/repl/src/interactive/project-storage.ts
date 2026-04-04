@@ -110,6 +110,7 @@ export class ProjectStorage {
   private harnessConfigPath: string;
   private harnessRunsPath: string;
   private harnessCriticPath: string;
+  private harnessCalibrationPath: string;
   private harnessCheckpointsPath: string;
   private harnessSessionTreePath: string;
   private harnessEvidencePath: string;
@@ -137,6 +138,7 @@ export class ProjectStorage {
     this.harnessConfigPath = path.join(this.harnessRootPath, 'config.generated.json');
     this.harnessRunsPath = path.join(this.harnessRootPath, 'runs.jsonl');
     this.harnessCriticPath = path.join(this.harnessRootPath, 'critic.jsonl');
+    this.harnessCalibrationPath = path.join(this.harnessRootPath, 'calibration.jsonl');
     this.harnessCheckpointsPath = path.join(this.projectArtifactsRoot, 'checkpoints', 'index.jsonl');
     this.harnessSessionTreePath = path.join(this.projectArtifactsRoot, 'session-tree', 'nodes.jsonl');
     this.harnessEvidencePath = path.join(this.harnessRootPath, 'evidence');
@@ -823,6 +825,7 @@ export class ProjectStorage {
     harnessConfig: string;
     harnessRuns: string;
     harnessCritic: string;
+    harnessCalibration: string;
     harnessCheckpoints: string;
     harnessSessionTree: string;
     lineageCheckpoints: string;
@@ -851,6 +854,7 @@ export class ProjectStorage {
       harnessConfig: this.harnessConfigPath,
       harnessRuns: this.harnessRunsPath,
       harnessCritic: this.harnessCriticPath,
+      harnessCalibration: this.harnessCalibrationPath,
       harnessCheckpoints: this.harnessCheckpointsPath,
       harnessSessionTree: this.harnessSessionTreePath,
       lineageCheckpoints: this.harnessCheckpointsPath,
@@ -878,6 +882,11 @@ export class ProjectStorage {
     await fs.appendFile(this.harnessCriticPath, `${JSON.stringify(record)}\n`, 'utf-8');
   }
 
+  async appendHarnessCalibrationCase(record: unknown): Promise<void> {
+    await fs.mkdir(this.harnessRootPath, { recursive: true });
+    await fs.appendFile(this.harnessCalibrationPath, `${JSON.stringify(record)}\n`, 'utf-8');
+  }
+
   async appendLineageCheckpoint(record: unknown): Promise<void> {
     await fs.mkdir(path.dirname(this.harnessCheckpointsPath), { recursive: true });
     await fs.appendFile(this.harnessCheckpointsPath, `${JSON.stringify(record)}\n`, 'utf-8');
@@ -902,6 +911,10 @@ export class ProjectStorage {
 
   async readHarnessCritics<T = unknown>(): Promise<T[]> {
     return this.readJsonLinesFile<T>(this.harnessCriticPath, 'harness critic');
+  }
+
+  async readHarnessCalibrationCases<T = unknown>(): Promise<T[]> {
+    return this.readJsonLinesFile<T>(this.harnessCalibrationPath, 'harness calibration');
   }
 
   async readLineageCheckpoints<T = unknown>(): Promise<T[]> {

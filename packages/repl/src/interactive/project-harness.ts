@@ -1,10 +1,14 @@
 export {
   ProjectHarnessAttempt,
   createProjectHarnessAttempt,
+  formatProjectHarnessCheckpointSummary,
   formatProjectHarnessSummary,
   loadOrCreateProjectHarnessConfig,
+  readLatestHarnessCheckpoint,
   readLatestHarnessRun,
+  recordHarnessCalibrationCase,
   recordManualHarnessOverride,
+  replayHarnessCalibrationCase,
   reverifyProjectHarnessRun,
 } from './project-harness-core.js';
 
@@ -178,6 +182,22 @@ export interface ProjectHarnessEvidenceRecord {
   reportedTests?: string[];
   completionSummary?: string;
   updatedAt: string;
+}
+
+export type ProjectHarnessCalibrationLabel = 'false_pass' | 'false_fail';
+
+export interface ProjectHarnessCalibrationCaseRecord {
+  id?: string;
+  caseId: string;
+  runId: string;
+  featureIndex: number;
+  label: ProjectHarnessCalibrationLabel;
+  observedDecision: ProjectHarnessRunRecord['decision'];
+  expectedDecision: ProjectHarnessRunRecord['decision'];
+  checkpointId: string | null;
+  failureCodes: string[];
+  summary: string;
+  createdAt: string;
 }
 
 export interface ProjectHarnessVerificationResult {
