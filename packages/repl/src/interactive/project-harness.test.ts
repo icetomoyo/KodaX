@@ -5,8 +5,11 @@ import { createTempDirSync, removeTempDirSync } from '../test-utils/temp-dir.js'
 import {
   createProjectHarnessAttempt,
   formatProjectHarnessCheckpointSummary,
+  formatProjectHarnessPivotSummary,
   loadOrCreateProjectHarnessConfig,
   readLatestHarnessCheckpoint,
+  readLatestHarnessPivot,
+  recordHarnessPivot,
   recordManualHarnessOverride,
   replayHarnessCalibrationCase,
   reverifyProjectHarnessRun,
@@ -1144,5 +1147,33 @@ Milestone: Checks are green.
 
     const cases = await storage.readHarnessCalibrationCases();
     expect(cases).toHaveLength(1);
+  });
+
+  it('records an explicit pivot with preserved checkpoint linkage', async () => {
+    const storage = new ProjectStorage(tempDir);
+    const feature = await storage.getFeatureByIndex(0);
+    expect(feature).not.toBeNull();
+
+    const attempt = await createProjectHarnessAttempt(storage, feature!, 0, 'next', 1);
+    const result = await attempt.verify([
+      {
+        role: 'assistant',
+        content: 'No completion report here.',
+      } as never,
+    ]);
+
+    expect(result.decision).toBe('retryable_failure');
+
+    const pivot = await recordHarnessPivot(storage, 0, {
+      reason: 'Repeated proof gaps suggest the current implementation path should change.',
+    });
+
+    expect(pivot.fromRunId).toBe(result.runRecord.runId);
+    expect(pivot.fromCheckpointId).toContain(result.runRecord.runId);
+    expect(pivot.failureCodes).toContain('missing_completion_report');
+
+    const latestPivot = await readLatestHarnessPivot(storage, 0);
+    expect(latestPivot?.pivotId).toBe(pivot.pivotId);
+    expect(formatProjectHarnessPivotSummary(latestPivot!)).toContain('Project Harness Pivot');
   });
 });

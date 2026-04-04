@@ -28,6 +28,7 @@ import type {
   ProjectHarnessEvidenceRecord,
   ProjectHarnessExceptionConfig,
   ProjectHarnessInvariantConfig,
+  ProjectHarnessPivotRecord,
   ProjectHarnessRepairPlaybookDefinition,
   ProjectHarnessRepairPolicyConfig,
   ProjectHarnessRuleSources,
@@ -263,6 +264,10 @@ function buildCalibrationCaseId(runId: string, label: ProjectHarnessCalibrationL
   return `${runId}-${label}`;
 }
 
+function buildPivotId(runId: string): string {
+  return `${runId}-pivot`;
+}
+
 function getCalibrationExpectedDecision(label: ProjectHarnessCalibrationLabel): ProjectHarnessRunRecord['decision'] {
   return label === 'false_fail' ? 'verified_complete' : 'needs_review';
 }
@@ -279,6 +284,22 @@ function formatCalibrationSummary(
   return label === 'false_fail'
     ? `Manual review accepted feature #${run.featureIndex} after harness returned ${run.decision}.`
     : `Manual review rejected a previously verified completion for feature #${run.featureIndex}.`;
+}
+
+function formatPivotSummary(
+  run: ProjectHarnessRunRecord,
+  reason: string,
+  summary?: string,
+): string {
+  if (summary && summary.trim().length > 0) {
+    return summary.trim();
+  }
+
+  const failureText = (run.failureCodes ?? []).length > 0
+    ? ` Failure codes: ${(run.failureCodes ?? []).join(', ')}.`
+    : '';
+
+  return `Pivot feature #${run.featureIndex} away from ${run.decision}. Reason: ${reason}.${failureText}`;
 }
 
 function extractAssistantText(messages: KodaXMessage[]): string {
@@ -1563,6 +1584,40 @@ export function formatProjectHarnessCheckpointSummary(
   return lines.join('\n');
 }
 
+export async function readLatestHarnessPivot(
+  storage: ProjectStorage,
+  featureIndex?: number,
+): Promise<ProjectHarnessPivotRecord | null> {
+  const pivots = await storage.readHarnessPivots<ProjectHarnessPivotRecord>();
+  const filtered = featureIndex === undefined
+    ? pivots
+    : pivots.filter(pivot => pivot.featureIndex === featureIndex);
+  return filtered.length > 0 ? filtered[filtered.length - 1] ?? null : null;
+}
+
+export function formatProjectHarnessPivotSummary(
+  pivot: ProjectHarnessPivotRecord,
+): string {
+  const lines = [
+    '## Project Harness Pivot',
+    `- Pivot: ${pivot.pivotId}`,
+    `- Feature: #${pivot.featureIndex}`,
+    `- From run: ${pivot.fromRunId}`,
+    `- Reason: ${pivot.reason}`,
+    `- Summary: ${pivot.summary}`,
+  ];
+
+  if (pivot.fromCheckpointId) {
+    lines.push(`- Checkpoint: ${pivot.fromCheckpointId}`);
+  }
+
+  if (pivot.failureCodes.length > 0) {
+    lines.push(`- Failure codes: ${pivot.failureCodes.join(', ')}`);
+  }
+
+  return lines.join('\n');
+}
+
 export async function recordHarnessCalibrationCase(
   storage: ProjectStorage,
   run: ProjectHarnessRunRecord,
@@ -1596,6 +1651,46 @@ export async function recordHarnessCalibrationCase(
   };
 
   await storage.appendHarnessCalibrationCase(record);
+  return record;
+}
+
+export async function recordHarnessPivot(
+  storage: ProjectStorage,
+  featureIndex: number,
+  options: {
+    reason: string;
+    summary?: string;
+  },
+): Promise<ProjectHarnessPivotRecord> {
+  const runs = await storage.readHarnessRuns<ProjectHarnessRunRecord>();
+  const run = [...runs].reverse().find(item => item.featureIndex === featureIndex);
+  if (!run) {
+    throw new Error(`Cannot pivot feature #${featureIndex} because no harness run exists yet.`);
+  }
+
+  const pivotId = buildPivotId(run.runId);
+  const existingPivots = await storage.readHarnessPivots<ProjectHarnessPivotRecord>();
+  const existing = existingPivots.find(item => item.pivotId === pivotId);
+  if (existing) {
+    return existing;
+  }
+
+  const checkpoint = await readLatestHarnessCheckpoint(storage, featureIndex);
+  const record: ProjectHarnessPivotRecord = {
+    id: pivotId,
+    pivotId,
+    featureIndex,
+    fromRunId: run.runId,
+    fromCheckpointId: checkpoint?.checkpointId ?? null,
+    evidenceFeatureIndex: featureIndex,
+    decision: run.decision,
+    failureCodes: [...(run.failureCodes ?? [])],
+    reason: options.reason,
+    summary: formatPivotSummary(run, options.reason, options.summary),
+    createdAt: new Date().toISOString(),
+  };
+
+  await storage.appendHarnessPivot(record);
   return record;
 }
 

@@ -333,4 +333,25 @@ describe('project-storage brainstorm persistence', () => {
     expect(storage.getPaths().harnessCalibration).toContain('.agent');
     expect(storage.getPaths().harnessCalibration).toContain('calibration.jsonl');
   });
+
+  it('persists pivot records under the harness root', async () => {
+    const storage = new ProjectStorage(tempDir);
+    const record = {
+      pivotId: 'feature-0-run-1-pivot',
+      featureIndex: 0,
+      fromRunId: 'feature-0-run-1',
+      fromCheckpointId: 'feature-0-run-1-checkpoint',
+      evidenceFeatureIndex: 0,
+      decision: 'needs_review',
+      failureCodes: ['stall_repeated_failure'],
+      reason: 'Verifier keeps stalling on the same proof gap.',
+      summary: 'Pivot away from the stalled path and keep the latest checkpoint.',
+      createdAt: '2026-04-05T12:15:00.000Z',
+    };
+
+    await storage.appendHarnessPivot(record);
+
+    await expect(storage.readHarnessPivots()).resolves.toEqual([record]);
+    expect(storage.getPaths().harnessPivots).toContain('pivots.jsonl');
+  });
 });

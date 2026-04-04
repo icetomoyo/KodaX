@@ -1,13 +1,16 @@
 export {
   ProjectHarnessAttempt,
+  formatProjectHarnessPivotSummary,
   createProjectHarnessAttempt,
   formatProjectHarnessCheckpointSummary,
   formatProjectHarnessSummary,
   loadOrCreateProjectHarnessConfig,
   readLatestHarnessCheckpoint,
+  readLatestHarnessPivot,
   readLatestHarnessRun,
   recordHarnessCalibrationCase,
   recordManualHarnessOverride,
+  recordHarnessPivot,
   replayHarnessCalibrationCase,
   reverifyProjectHarnessRun,
 } from './project-harness-core.js';
@@ -196,6 +199,20 @@ export interface ProjectHarnessCalibrationCaseRecord {
   expectedDecision: ProjectHarnessRunRecord['decision'];
   checkpointId: string | null;
   failureCodes: string[];
+  summary: string;
+  createdAt: string;
+}
+
+export interface ProjectHarnessPivotRecord {
+  id?: string;
+  pivotId: string;
+  featureIndex: number;
+  fromRunId: string;
+  fromCheckpointId: string | null;
+  evidenceFeatureIndex: number;
+  decision: ProjectHarnessRunRecord['decision'];
+  failureCodes: string[];
+  reason: string;
   summary: string;
   createdAt: string;
 }
