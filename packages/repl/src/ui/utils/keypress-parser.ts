@@ -123,8 +123,8 @@ export function parseKeypress(sequence: string, inBracketedPaste: boolean = fals
     meta: false,
     shift: false,
     insertable: false,
+    isPasted: false,
   };
-
   if (!sequence || sequence.length === 0) {
     return key;
   }
@@ -542,11 +542,14 @@ export class KeypressParser {
    * Emit keypress event to all listeners - 发送按键事件给所有监听器
    */
   private emit(key: KeyInfo): void {
+    // Inject bracketed paste state into key before emitting - 注入粘贴模式状态到 key
+    if (this.inBracketedPaste) {
+      key.isPasted = true;
+    }
     for (const listener of this.listeners) {
       listener(key);
     }
   }
-
   /**
    * Clear buffer - 清空缓冲区
    */

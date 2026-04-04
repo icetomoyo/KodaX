@@ -437,10 +437,9 @@ export function usePromptInputController({
     }
 
     if (key.insertable && !key.ctrl && !key.meta) {
-      insert(key.sequence, key.sequence.length > 1 ? { paste: true } : undefined);
+      insert(key.sequence, key.isPasted ? { paste: true } : undefined);
       return true;
     }
-
     return false;
   }, [
     acceptCompletion,
