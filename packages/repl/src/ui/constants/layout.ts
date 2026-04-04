@@ -54,6 +54,8 @@ export function buildHelpBarSegments(): HelpBarSegment[] {
     { text: "  " },
     { text: "PgUp history" },
     { text: "  " },
+    { text: "Ctrl+W/K/U edit" },
+    { text: "  " },
     { text: "Round=outer Iter=worker" },
     { text: "  " },
     { text: "/", color: "cyan" },

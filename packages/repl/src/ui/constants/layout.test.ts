@@ -7,5 +7,6 @@ describe("help bar layout", () => {
     const helpSegments = buildHelpBarSegments();
     expect(helpText).toContain("Alt+M AMA/SA");
     expect(helpSegments.some((segment) => segment.text === "Alt+M AMA/SA")).toBe(true);
+    expect(helpText).toContain("Ctrl+W/K/U edit");
   });
 });
