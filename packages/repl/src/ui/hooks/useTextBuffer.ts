@@ -211,6 +211,17 @@ export function useTextBuffer(options: UseTextBufferOptions = {}): UseTextBuffer
     });
   }, [buffer, syncState]);
 
+  const handleResetTransientState = useCallback(() => {
+    if (pasteResetTimeoutRef.current) {
+      clearTimeout(pasteResetTimeoutRef.current);
+      pasteResetTimeoutRef.current = null;
+    }
+    syncState({
+      isPasting: false,
+      editingMode: buffer.text ? "typing" : "idle",
+    });
+  }, [buffer, syncState]);
+
   // handleInput - process keyboard input - 处理键盘输入
   const handleInput = useCallback(
     (key: KeyInfo): boolean => {
@@ -330,6 +341,7 @@ export function useTextBuffer(options: UseTextBufferOptions = {}): UseTextBuffer
     lines: state.lines,
     isPasting: state.isPasting,
     editingMode: state.editingMode,
+    resetTransientState: handleResetTransientState,
     setText: handleSetText,
     replaceRange: handleReplaceRange,
     insert: handleInsert,

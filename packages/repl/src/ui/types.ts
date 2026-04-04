@@ -36,6 +36,7 @@ export interface UseTextBufferReturn {
   lines: string[];
   isPasting: boolean;
   editingMode: PromptEditingMode;
+  resetTransientState: () => void;
   setText: (text: string) => void;
   replaceRange: (start: number, end: number, replacement: string) => void;
   insert: (text: string, options?: { paste?: boolean }) => void;
