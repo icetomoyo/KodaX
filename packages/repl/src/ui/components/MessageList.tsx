@@ -381,7 +381,8 @@ export const HistoryItemRenderer: React.FC<HistoryItemRendererProps> = memo(({
   theme: themeProp,
   maxLines = 1000, // Increased from 20 to avoid truncation (Issue 046)
 }) => {
-  const theme = themeProp ?? useMemo(() => getTheme("dark"), []);
+  const fallbackTheme = useMemo(() => getTheme("dark"), []);
+  const theme = themeProp ?? fallbackTheme;
 
   switch (item.type) {
     case "user":
@@ -533,14 +534,7 @@ export const MessageList: React.FC<MessageListProps> = ({
     () => buildStaticTranscriptSections(staticItems, terminalWidth, maxLines, showDetailedTools),
     [staticItems, terminalWidth, maxLines, showDetailedTools]
   );
-
-  if (items.length === 0 && !isLoading) {
-    return (
-      <Box paddingY={1}>
-        <Text dimColor>No messages yet. Start typing to begin.</Text>
-      </Box>
-    );
-  }
+  const showEmptyState = items.length === 0 && !isLoading;
 
   const transcriptSections = useMemo(
     () => {
@@ -628,6 +622,14 @@ export const MessageList: React.FC<MessageListProps> = ({
       : transcriptRows),
     [transcriptRows, viewportRows, scrollOffset, windowed]
   );
+
+  if (showEmptyState) {
+    return (
+      <Box paddingY={1}>
+        <Text dimColor>No messages yet. Start typing to begin.</Text>
+      </Box>
+    );
+  }
 
   return (
     <Box flexDirection="column" paddingY={1}>
