@@ -96,7 +96,7 @@ export function getTerminalHostCapabilities(
         bufferingMode: "buffered-fallback",
         supportsFullscreenLayout: false,
         supportsOverlaySurface: false,
-        supportsSelection: true,
+        supportsSelection: false,
         supportsCopyOnSelect: false,
         supportsWheelHistory: false,
         supportsViewportChrome: false,

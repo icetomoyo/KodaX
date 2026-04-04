@@ -162,6 +162,7 @@ describe("prompt-input-controller", () => {
       shift: false,
       isAutocompleteVisible: true,
       isLineContinuation: false,
+      isPasting: false,
     })).toBe("accept-completion-and-submit");
 
     expect(resolvePromptEnterBehavior({
@@ -170,6 +171,7 @@ describe("prompt-input-controller", () => {
       shift: false,
       isAutocompleteVisible: false,
       isLineContinuation: false,
+      isPasting: false,
     })).toBe("newline");
 
     expect(resolvePromptEditingCommand({
@@ -207,6 +209,17 @@ describe("prompt-input-controller", () => {
     expect(mocks.addHistoryMock).toHaveBeenCalledWith("completed result");
     expect(submitMock).toHaveBeenCalledWith("completed result");
     expect(mocks.clearMock).toHaveBeenCalled();
+  });
+
+  it("treats enter as newline while paste mode is active", () => {
+    expect(resolvePromptEnterBehavior({
+      keyName: "return",
+      ctrl: false,
+      shift: false,
+      isAutocompleteVisible: false,
+      isLineContinuation: false,
+      isPasting: true,
+    })).toBe("newline");
   });
 
   it("uses history navigation only at the first and last logical lines", () => {

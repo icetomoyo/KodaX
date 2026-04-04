@@ -1,6 +1,6 @@
 # Feature 总表
 
-> Last updated: 2026-04-03
+> Last updated: 2026-04-04
 
 > 中文阅读说明：
 > 这份 `FEATURE_LIST` 是 roadmap 的总索引。
@@ -108,6 +108,8 @@
 | `050` | Prompt Contracts, Snapshots, and Regression Evaluation | `v0.8.0` (unreleased) | [v0.8.0](features/v0.8.0.md#feature_050-prompt-contracts-snapshots-and-regression-evaluation) |
 | `051` | Host-Aware Fullscreen TUI Substrate and Transcript UX | `v0.7.25` (unreleased) | [v0.7.25](features/v0.7.25.md#feature_051-host-aware-fullscreen-tui-substrate-and-transcript-ux) |
 | `052` | Dual-Profile AMA Harness and Child Fan-Out Boundaries | `v0.8.0` (unreleased) | [v0.8.0](features/v0.8.0.md#feature_052-dual-profile-ama-harness-and-child-fan-out-boundaries) |
+
+> `FEATURE_051` close-out posture: keep the current REPL status/footer/task/message surfaces frozen, and limit follow-up work to invisible substrate maturity for transcript, scroll/selection, and input behavior.
 
 ---
 

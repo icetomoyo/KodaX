@@ -22,7 +22,7 @@ describe("PromptFooter", () => {
       />,
     );
 
-    const frame = lastFrame();
+    const frame = lastFrame() ?? "";
     expect(frame).toContain("History");
     expect(frame).toContain("native_vt | verbose");
     expect(frame).toContain("Queued 2 follow-ups");
@@ -34,5 +34,13 @@ describe("PromptFooter", () => {
     expect(frame).toContain("Task Bar");
     expect(frame).toContain("Status Line");
     expect(frame).toContain("Dialog");
+
+    expect(frame.indexOf("History")).toBeLessThan(frame.indexOf("Queued 2 follow-ups"));
+    expect(frame.indexOf("Queued 2 follow-ups")).toBeLessThan(frame.indexOf("Search: planner"));
+    expect(frame.indexOf("Search: planner")).toBeLessThan(frame.indexOf("Composer"));
+    expect(frame.indexOf("Composer")).toBeLessThan(frame.indexOf("Dialog"));
+    expect(frame.indexOf("Dialog")).toBeLessThan(frame.indexOf("Help Menu"));
+    expect(frame.indexOf("Help Menu")).toBeLessThan(frame.indexOf("Task Bar"));
+    expect(frame.indexOf("Task Bar")).toBeLessThan(frame.indexOf("Status Line"));
   });
 });

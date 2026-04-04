@@ -1143,7 +1143,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     () => getSelectableTranscriptItemIds(displayItems),
     [displayItems],
   );
-  const selectedTranscriptItemId = transcriptDisplayState.selectedItemId;
+  const supportsTranscriptSelection = transcriptDisplayState.supportsSelection;
+  const selectedTranscriptItemId = supportsTranscriptSelection
+    ? transcriptDisplayState.selectedItemId
+    : undefined;
   const selectedTranscriptItem = useMemo(
     () => displayItems.find((item) => item.id === selectedTranscriptItemId),
     [displayItems, selectedTranscriptItemId],
@@ -1179,7 +1182,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const isSelectedTranscriptItemExpanded = selectedTranscriptItemId
     ? expandedTranscriptItemIds.has(selectedTranscriptItemId)
     : false;
-  const canCopySelectedToolInput = selectedTranscriptItem?.type === "tool_group";
+  const canCopySelectedToolInput =
+    supportsTranscriptSelection && selectedTranscriptItem?.type === "tool_group";
 
   useEffect(() => {
     if (rawWorkStripText) {
@@ -1616,6 +1620,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }, [alignTranscriptSelection]);
 
   const cycleTranscriptSelection = useCallback((direction: "prev" | "next") => {
+    if (!supportsTranscriptSelection) {
+      return;
+    }
     const nextItemId = moveTranscriptSelection(
       selectableTranscriptItemIds,
       selectedTranscriptItemId,
@@ -1624,10 +1631,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     if (nextItemId) {
       selectTranscriptItem(nextItemId);
     }
-  }, [selectableTranscriptItemIds, selectedTranscriptItemId, selectTranscriptItem]);
+  }, [selectableTranscriptItemIds, selectedTranscriptItemId, selectTranscriptItem, supportsTranscriptSelection]);
 
   const toggleSelectedTranscriptDetail = useCallback(() => {
-    if (!selectedTranscriptItemId) {
+    if (!supportsTranscriptSelection || !selectedTranscriptItemId) {
       return;
     }
     setExpandedTranscriptItemIds((prev) => {
@@ -1639,10 +1646,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
       return next;
     });
-  }, [selectedTranscriptItemId]);
+  }, [selectedTranscriptItemId, supportsTranscriptSelection]);
 
   const copySelectedTranscriptItem = useCallback(async () => {
-    if (!selectedTranscriptItem) {
+    if (!supportsTranscriptSelection || !selectedTranscriptItem) {
       return;
     }
     const copyText = buildTranscriptCopyText(selectedTranscriptItem);
@@ -1661,10 +1668,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         text: `Failed to copy transcript entry: ${error instanceof Error ? error.message : String(error)}`,
       });
     }
-  }, [addHistoryItem, selectedTranscriptItem]);
+  }, [addHistoryItem, selectedTranscriptItem, supportsTranscriptSelection]);
 
   const copySelectedTranscriptToolInput = useCallback(async () => {
-    if (!selectedTranscriptItem) {
+    if (!supportsTranscriptSelection || !selectedTranscriptItem) {
       return;
     }
 
@@ -1685,7 +1692,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         text: `Failed to copy tool input: ${error instanceof Error ? error.message : String(error)}`,
       });
     }
-  }, [addHistoryItem, selectedTranscriptItem]);
+  }, [addHistoryItem, selectedTranscriptItem, supportsTranscriptSelection]);
 
   const openHistorySearchSurface = useCallback(() => {
     if (!displayItems.length || confirmRequest || uiRequest) {
@@ -1818,7 +1825,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }, []);
 
   useEffect(() => {
-    if (!isReviewingHistory) {
+    if (!isReviewingHistory || !supportsTranscriptSelection) {
       return;
     }
     if (selectedTranscriptItemId && selectableTranscriptItemIds.includes(selectedTranscriptItemId)) {
@@ -1826,10 +1833,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     }
     const fallbackItemId = selectableTranscriptItemIds[selectableTranscriptItemIds.length - 1];
     setTranscriptDisplayState((prev) => setTranscriptSelectedItem(prev, fallbackItemId));
-  }, [isReviewingHistory, selectableTranscriptItemIds, selectedTranscriptItemId]);
+  }, [isReviewingHistory, selectableTranscriptItemIds, selectedTranscriptItemId, supportsTranscriptSelection]);
 
   useEffect(() => {
-    if (!isReviewingHistory || !transcriptDisplayState.supportsCopyOnSelect) {
+    if (!isReviewingHistory || !supportsTranscriptSelection || !transcriptDisplayState.supportsCopyOnSelect) {
       lastAutoCopiedTranscriptItemIdRef.current = undefined;
       return;
     }
@@ -1860,6 +1867,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     isReviewingHistory,
     selectedTranscriptItem,
     selectedTranscriptItemId,
+    supportsTranscriptSelection,
     transcriptDisplayState.supportsCopyOnSelect,
   ]);
 
@@ -2087,7 +2095,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           );
           return true;
         }
-        if (key.name === "enter") {
+        if (key.name === "enter" || key.name === "return") {
           const match = historySearchMatches[clampedHistorySearchSelectedIndex];
           if (match) {
             selectTranscriptItem(match.itemId);
@@ -2165,26 +2173,41 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
 
       if (key.name === "left") {
+        if (!supportsTranscriptSelection) {
+          return false;
+        }
         cycleTranscriptSelection("prev");
         return true;
       }
 
       if (key.name === "right") {
+        if (!supportsTranscriptSelection) {
+          return false;
+        }
         cycleTranscriptSelection("next");
         return true;
       }
 
       if (!key.ctrl && !key.meta && !key.shift && key.name === "c") {
+        if (!supportsTranscriptSelection) {
+          return false;
+        }
         void copySelectedTranscriptItem();
         return true;
       }
 
       if (!key.ctrl && !key.meta && !key.shift && key.name === "i") {
+        if (!supportsTranscriptSelection) {
+          return false;
+        }
         void copySelectedTranscriptToolInput();
         return true;
       }
 
       if (!key.ctrl && !key.meta && !key.shift && key.name === "v") {
+        if (!supportsTranscriptSelection) {
+          return false;
+        }
         toggleSelectedTranscriptDetail();
         return true;
       }
@@ -2203,6 +2226,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       enterHistoryReview,
       exitHistoryReview,
       transcriptDisplayState,
+      supportsTranscriptSelection,
       clampedHistorySearchSelectedIndex,
       historySearchMatches,
       openHistorySearchSurface,
@@ -4083,26 +4107,26 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             selectedItemId={selectedTranscriptItemId}
             expandedItemKeys={expandedTranscriptItemIds}
             browse={{ hintText: transcriptChrome.browseHintText }}
-            selection={{
-              itemSummary: isReviewingHistory ? selectedTranscriptItemSummary?.summary : undefined,
-              itemKind: isReviewingHistory ? selectedTranscriptItemSummary?.kindLabel : undefined,
-              position: isReviewingHistory && selectedTranscriptItemId
-                ? {
-                  current: Math.max(1, selectedTranscriptItemIndex + 1),
-                  total: selectableTranscriptItemIds.length,
-                }
-                : undefined,
-              detailState: isReviewingHistory && isSelectedTranscriptItemExpanded ? "expanded" : "compact",
-              copyCapabilities: {
-                message: isReviewingHistory && Boolean(selectedTranscriptItemId),
-                toolInput: isReviewingHistory && canCopySelectedToolInput,
-                copyOnSelect: isReviewingHistory && transcriptDisplayState.supportsCopyOnSelect,
-              },
-              toggleDetail: isReviewingHistory && Boolean(selectedTranscriptItemId),
-              navigationCapabilities: {
-                selection: isReviewingHistory && selectableTranscriptItemIds.length > 1,
-              },
-            }}
+              selection={{
+                itemSummary: isReviewingHistory && supportsTranscriptSelection ? selectedTranscriptItemSummary?.summary : undefined,
+                itemKind: isReviewingHistory && supportsTranscriptSelection ? selectedTranscriptItemSummary?.kindLabel : undefined,
+                position: isReviewingHistory && supportsTranscriptSelection && selectedTranscriptItemId
+                  ? {
+                    current: Math.max(1, selectedTranscriptItemIndex + 1),
+                    total: selectableTranscriptItemIds.length,
+                  }
+                  : undefined,
+                detailState: isReviewingHistory && supportsTranscriptSelection && isSelectedTranscriptItemExpanded ? "expanded" : "compact",
+                copyCapabilities: {
+                  message: isReviewingHistory && supportsTranscriptSelection && Boolean(selectedTranscriptItemId),
+                  toolInput: isReviewingHistory && canCopySelectedToolInput,
+                  copyOnSelect: isReviewingHistory && supportsTranscriptSelection && transcriptDisplayState.supportsCopyOnSelect,
+                },
+                toggleDetail: isReviewingHistory && supportsTranscriptSelection && Boolean(selectedTranscriptItemId),
+                navigationCapabilities: {
+                  selection: isReviewingHistory && supportsTranscriptSelection && selectableTranscriptItemIds.length > 1,
+                },
+              }}
             search={{
               query: historySearchQuery,
               matches: historySearchMatches,

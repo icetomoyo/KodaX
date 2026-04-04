@@ -88,8 +88,13 @@ export function resolvePromptEnterBehavior(options: {
   shift: boolean;
   isAutocompleteVisible: boolean;
   isLineContinuation: boolean;
+  isPasting: boolean;
 }): PromptEnterBehavior {
   if (options.keyName === "newline" || (options.keyName === "return" && (options.ctrl || options.shift))) {
+    return "newline";
+  }
+
+  if (options.isPasting) {
     return "newline";
   }
 
@@ -403,6 +408,7 @@ export function usePromptInputController({
         shift: key.shift,
         isAutocompleteVisible,
         isLineContinuation: Boolean(lines[cursor.row]?.endsWith("\\")),
+        isPasting,
       });
 
       switch (enterBehavior) {
@@ -466,6 +472,7 @@ export function usePromptInputController({
     suggestions.length,
     text.length,
     deleteWordLeft,
+    isPasting,
     undo,
   ]);
 

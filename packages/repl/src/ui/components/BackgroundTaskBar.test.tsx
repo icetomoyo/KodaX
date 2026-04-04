@@ -20,4 +20,12 @@ describe("BackgroundTaskBar", () => {
     expect(frame).toContain("Parallel evidence pass (2)");
     expect(frame).toContain("PgUp history");
   });
+
+  it("stays hidden when there is no summary content to show", () => {
+    const { lastFrame } = render(
+      <BackgroundTaskBar items={[]} />,
+    );
+
+    expect(lastFrame()).toBe("");
+  });
 });
