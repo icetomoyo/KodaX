@@ -70,8 +70,28 @@ describe("transcript-scroll-controller", () => {
       { id: "assistant-1", type: "assistant", text: "world", timestamp: Date.now() },
     ] satisfies HistoryItem[];
 
-    expect(resolveTranscriptSearchAnchorItemId(items, "user-1")).toBe("user-1");
-    expect(resolveTranscriptSearchAnchorItemId(items, undefined)).toBe("assistant-1");
+    expect(resolveTranscriptSearchAnchorItemId({
+      items,
+      selectedItemId: "user-1",
+    })).toBe("user-1");
+    expect(resolveTranscriptSearchAnchorItemId({ items })).toBe("assistant-1");
+  });
+
+  it("anchors transcript search to the current viewport when browsing history", () => {
+    const items = [
+      { id: "user-1", type: "user", text: "first", timestamp: Date.now() },
+      { id: "assistant-1", type: "assistant", text: "second", timestamp: Date.now() },
+      { id: "user-2", type: "user", text: "third", timestamp: Date.now() },
+    ] satisfies HistoryItem[];
+
+    expect(resolveTranscriptSearchAnchorItemId({
+      items,
+      terminalWidth: 80,
+      transcriptMaxLines: 1000,
+      viewportRows: 3,
+      scrollOffset: 3,
+      preferViewportAnchor: true,
+    })).toBe("assistant-1");
   });
 
   it("calculates a stable selection offset for transcript browsing", () => {

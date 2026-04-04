@@ -248,6 +248,25 @@ describe("prompt-input-controller", () => {
     expect(controller?.handleKey(createKey({ name: "escape" }))).toBe(false);
   });
 
+  it("dismisses autocomplete when prompt focus is lost", () => {
+    mocks.state.visible = true;
+    mocks.state.suggestions = [{ id: "1", text: "completed" }];
+
+    const submitMock = vi.fn();
+
+    const Harness = ({ focus }: { focus: boolean }) => {
+      usePromptInputController({ onSubmit: submitMock, focus });
+      return null;
+    };
+
+    const instance = render(React.createElement(Harness, { focus: true }));
+    expect(mocks.handleEscapeMock).not.toHaveBeenCalled();
+
+    instance.rerender(React.createElement(Harness, { focus: false }));
+
+    expect(mocks.handleEscapeMock).toHaveBeenCalledTimes(1);
+  });
+
   it("leaves unrelated ctrl shortcuts for lower-priority handlers", () => {
     let controller: ReturnType<typeof usePromptInputController> | undefined;
 

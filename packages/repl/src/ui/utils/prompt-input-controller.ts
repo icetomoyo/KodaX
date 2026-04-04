@@ -143,6 +143,17 @@ export function usePromptInputController({
     handleEscape: handleAutocompleteEscape,
   } = contextAutocomplete ?? localAutocomplete;
 
+  useEffect(() => {
+    if (focus) {
+      return;
+    }
+
+    lastEscPressRef.current = 0;
+    if (autocompleteState.visible) {
+      handleAutocompleteEscape();
+    }
+  }, [autocompleteState.visible, focus, handleAutocompleteEscape]);
+
   const prevTextRef = useRef(text);
   useEffect(() => {
     if (!autocompleteEnabled) {

@@ -34,6 +34,7 @@ export interface GlobalShortcutsProps {
   onToggleTranscriptVerbosity?: () => void;
   onOpenTranscriptSearch?: () => void;
   canOpenTranscriptSearch?: boolean;
+  isInteractiveDialogActive?: boolean;
   onSetAgentMode?: (mode: KodaXAgentMode) => void;
   onSetPermissionMode?: (mode: PermissionMode) => void;
   onSetParallel?: (enabled: boolean) => void;
@@ -57,6 +58,7 @@ export function GlobalShortcuts({
   onToggleTranscriptVerbosity,
   onOpenTranscriptSearch,
   canOpenTranscriptSearch = true,
+  isInteractiveDialogActive = false,
   onSetAgentMode,
   onSetPermissionMode,
   onSetParallel,
@@ -83,6 +85,9 @@ export function GlobalShortcuts({
   useShortcut(
     'showHelp',
     () => {
+      if (isInteractiveDialogActive) {
+        return false;
+      }
       if (isInputEmpty) {
         onToggleHelp();
         return true;
@@ -93,6 +98,9 @@ export function GlobalShortcuts({
   );
 
   useShortcut('toggleThinking', () => {
+    if (isInteractiveDialogActive) {
+      return false;
+    }
     const currentIndex = KODAX_REASONING_MODE_SEQUENCE.indexOf(
       currentConfig.reasoningMode,
     );
@@ -118,13 +126,16 @@ export function GlobalShortcuts({
   });
 
   useShortcut('toggleTranscriptVerbosity', () => {
+    if (isInteractiveDialogActive) {
+      return false;
+    }
     onToggleTranscriptVerbosity?.();
     setShowHelp(false);
     return true;
   });
 
   useShortcut('openTranscriptSearch', () => {
-    if (!canOpenTranscriptSearch) {
+    if (isInteractiveDialogActive || !canOpenTranscriptSearch) {
       return false;
     }
     onOpenTranscriptSearch?.();
@@ -133,6 +144,9 @@ export function GlobalShortcuts({
   });
 
   useShortcut('togglePermissionMode', () => {
+    if (isInteractiveDialogActive) {
+      return false;
+    }
     const modeCycle: PermissionMode[] = ['plan', 'accept-edits', 'auto-in-project'];
     const currentIndex = modeCycle.indexOf(currentConfig.permissionMode);
     const nextIndex = (currentIndex + 1) % modeCycle.length;
@@ -146,6 +160,9 @@ export function GlobalShortcuts({
   });
 
   useShortcut('toggleAgentMode', () => {
+    if (isInteractiveDialogActive) {
+      return false;
+    }
     const nextMode: KodaXAgentMode = currentConfig.agentMode === 'ama' ? 'sa' : 'ama';
 
     setCurrentConfig((prev) => ({ ...prev, agentMode: nextMode }));
@@ -156,6 +173,9 @@ export function GlobalShortcuts({
   });
 
   useShortcut('toggleParallelMode', () => {
+    if (isInteractiveDialogActive) {
+      return false;
+    }
     const nextValue = !currentConfig.parallel;
 
     setCurrentConfig((prev) => ({ ...prev, parallel: nextValue }));

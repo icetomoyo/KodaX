@@ -1598,8 +1598,17 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       return;
     }
     const anchorItemId = resolveTranscriptSearchAnchorItemId(
-      displayItems,
-      selectedTranscriptItemId,
+      {
+        items: displayItems,
+        selectedItemId: selectedTranscriptItemId,
+        terminalWidth,
+        transcriptMaxLines,
+        viewportRows: viewportBudget.messageRows,
+        scrollOffset: historyScrollOffset,
+        expandedItemKeys: expandedTranscriptItemIds,
+        showDetailedTools: isTranscriptVerbose || isReviewingHistory,
+        preferViewportAnchor: isReviewingHistory,
+      },
     );
     setTranscriptDisplayState((prev) => openTranscriptSearch(prev, {
       anchorItemId,
@@ -1607,7 +1616,19 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     }));
     setHistorySearchQuery("");
     setHistorySearchSelectedIndex(0);
-  }, [confirmRequest, displayItems, selectedTranscriptItemId, uiRequest]);
+  }, [
+    confirmRequest,
+    displayItems,
+    expandedTranscriptItemIds,
+    historyScrollOffset,
+    isReviewingHistory,
+    isTranscriptVerbose,
+    selectedTranscriptItemId,
+    terminalWidth,
+    transcriptMaxLines,
+    uiRequest,
+    viewportBudget.messageRows,
+  ]);
 
   const closeHistorySearchSurface = useCallback((options?: { restoreFollowMode?: boolean }) => {
     setTranscriptDisplayState((prev) =>
@@ -3849,6 +3870,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         onToggleTranscriptVerbosity={toggleTranscriptVerbosity}
         onOpenTranscriptSearch={openHistorySearchSurface}
         canOpenTranscriptSearch={!confirmRequest && !uiRequest}
+        isInteractiveDialogActive={Boolean(confirmRequest || uiRequest)}
         onSetAgentMode={(mode) => {
           currentOptionsRef.current.agentMode = mode;
         }}

@@ -5,6 +5,8 @@ import {
 } from "./transcript-state.js";
 import {
   buildHistoryItemTranscriptSections,
+  flattenTranscriptSections,
+  getVisibleTranscriptRows,
   resolveScrollOffsetForTranscriptItem,
 } from "./transcript-layout.js";
 
@@ -116,9 +118,58 @@ export function resolveTranscriptSelectionOffset(
   );
 }
 
+export interface TranscriptSearchAnchorOptions {
+  items: HistoryItem[];
+  selectedItemId?: string;
+  terminalWidth?: number;
+  transcriptMaxLines?: number;
+  viewportRows?: number;
+  scrollOffset?: number;
+  expandedItemKeys?: ReadonlySet<string>;
+  showDetailedTools?: boolean;
+  preferViewportAnchor?: boolean;
+}
+
 export function resolveTranscriptSearchAnchorItemId(
-  items: HistoryItem[],
-  selectedItemId: string | undefined,
+  options: TranscriptSearchAnchorOptions,
 ): string | undefined {
-  return selectedItemId ?? items[items.length - 1]?.id;
+  const {
+    items,
+    selectedItemId,
+    terminalWidth = 80,
+    transcriptMaxLines = 1000,
+    viewportRows,
+    scrollOffset = 0,
+    expandedItemKeys,
+    showDetailedTools = false,
+    preferViewportAnchor = false,
+  } = options;
+
+  if (selectedItemId && items.some((item) => item.id === selectedItemId)) {
+    return selectedItemId;
+  }
+
+  if (preferViewportAnchor && scrollOffset > 0 && viewportRows && viewportRows > 0) {
+    const sections = buildHistoryItemTranscriptSections(
+      items,
+      terminalWidth,
+      transcriptMaxLines,
+      showDetailedTools,
+      expandedItemKeys,
+    );
+    const visibleRows = getVisibleTranscriptRows(
+      flattenTranscriptSections(sections),
+      viewportRows,
+      scrollOffset,
+    );
+    const firstVisibleRowKey = visibleRows[0]?.key;
+    const firstVisibleSection = firstVisibleRowKey
+      ? sections.find((section) => section.rows.some((row) => row.key === firstVisibleRowKey))
+      : undefined;
+    if (firstVisibleSection?.key) {
+      return firstVisibleSection.key;
+    }
+  }
+
+  return items[items.length - 1]?.id;
 }
