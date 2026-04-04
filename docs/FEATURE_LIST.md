@@ -13,11 +13,11 @@
 
 | Item | Value |
 |---|---|
-| Tracked feature IDs | `001-053` |
-| Total tracked features | `53` |
+| Tracked feature IDs | `001-054` |
+| Total tracked features | `54` |
 | Completed | `44` |
 | InProgress | `0` |
-| Planned | `9` |
+| Planned | `10` |
 | Current released version | `v0.7.14` |
 
 ### 各版本待做分布
@@ -25,6 +25,7 @@
 | Version | Planned features |
 |---|---|
 | `v0.7.20` | `1` |
+| `v0.7.25` | `1` |
 | `v0.8.0` | `2` |
 | `v0.9.0` | `4` |
 | `v1.0.0` | `2` |
@@ -44,6 +45,7 @@
 | `053` | Canonical Repo Identity and Managed Worktree Runtime | Enhancement | High | `v0.9.0` | [v0.9.0](features/v0.9.0.md#feature_053-canonical-repo-identity-and-managed-worktree-runtime) |
 | `043` | Harness Calibration, Pivoting, Profiling, and Safe Checkpoints | Enhancement | High | `v0.9.0` | [v0.9.0](features/v0.9.0.md#feature_043-harness-calibration-pivoting-profiling-and-safe-checkpoints) |
 | `038` | Official Sandbox Extension | New | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_038-official-sandbox-extension) |
+| `054` | AMA-Project Convergence: Absorb Project Mode into Adaptive H2 | Refactor | High | `v0.7.25` | [v0.7.25](features/v0.7.25.md#feature_054-ama-project-convergence-absorb-project-mode-into-adaptive-h2) |
 
 ---
 
@@ -55,7 +57,7 @@
 - `read-only / docs-only` 默认停留在 `H0`，只有用户明确要求更强校验时才允许 `H1`，永远不进入 `H2`。
 - `H1` 是 `Generator + 轻量 Evaluator` 的 lightweight checked-direct：无 `Planner`、无 contract negotiation、无默认多轮 refine。
 - `H2` 主骨架固定为 `Planner -> Generator <-> Evaluator`，只留给真正长时的 `code / system` mutation work，且默认单主 pass。
-- `Project + SA` 是一等路径，但只写 lightweight run record，不写 managed task。
+- `Project` 模式已融合进 AMA H2（`FEATURE_054`）；Planner 承担 brainstorm 能力；`/project` 命令组废弃。
 - `kodax -c` 属于 `user session` 恢复语义，不属于 internal worker-session recovery。
 
 ---

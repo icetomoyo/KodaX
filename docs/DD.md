@@ -425,33 +425,53 @@ AMA 默认使用统一的 `globalWorkBudget`：
 - `Round` 只在真实额外 pass 存在时显示
 - AMA 不应回退显示 `Iter x/y`
 
-### 9.4 Project + SA persistence
+### 9.4 Project mode convergence into AMA H2
 
-`Project` 与 `SA / AMA` 是正交维度。
+> **变更说明**（`FEATURE_054`）：`Project` 不再是与 `SA / AMA` 正交的独立维度。
+> Project 模式的全部能力（brainstorm、plan、execute、evaluate）已融合进 AMA H2 的自适应流程。
 
-当执行 `Project + SA` 时：
-- 不创建 `managed-task.json`
-- 不创建 planner/generator/evaluator graph
-- direct run 结束后写入 `lightweight run record`
+#### 9.4.1 核心决策
 
-该记录至少包含：
-- `status`
-- `summary`
-- `sessionId`
-- `taskSurface`
-- `agentMode`
-- `executionMode`
-- `featureIndex / requestId / project metadata`
-- `changedFiles`
-- `checks`
-- `evidence`
-- `blockers`
-- `nextStep`
-- timestamps
+1. **`/project` 命令组全部废弃**——用户无需学任何 `/project` 命令，AMA 根据请求复杂度自动选择 H0/H1/H2。
+2. **Brainstorm 是 Planner 的内建能力**——不是独立 Agent 或独立阶段。Planner 在信息不充分时使用 `ask_user_question` 进行多轮对齐，然后生成 `kodax-task-contract`。
+3. **持久化统一到 `managed-tasks/`**——`.agent/project/` 不再作为独立的持久化路径。所有状态（alignment、brainstorm 记录、evidence、checkpoints）统一存入 `.agent/managed-tasks/<id>/`。
 
-读取优先级：
-- 若存在 managed task，project surfaces 继续优先读取 managed task
-- 若不存在 managed task，但存在 lightweight run record，则使用该记录补足 status / latest summary / next-step guidance
+#### 9.4.2 Planner 的 brainstorm 工作模式
+
+Planner 接收 Scout 的 scope facts 后有两种自然过渡的工作模式：
+
+- **需求清晰**：直接生成 `kodax-task-contract`
+- **需求模糊**：用 `ask_user_question` 多轮对齐（brainstorm）→ 再生成 contract
+
+这两种模式由 Planner 自行判断，不需要外部路由切换。
+
+`inferRequiresBrainstorm()` 的输出从"prompt overlay 一句话"改为"提示 Planner 需要多轮对齐"。Planner prompt 中明确加入 brainstorm 能力描述；task-engine 层面在 `requiresBrainstorm=true` 时为 Planner 提供 `ask_user_question` 工具权限和更宽松的交互预算。
+
+#### 9.4.3 废弃的命令与替代
+
+| 废弃命令 | 替代方案 |
+|---------|---------|
+| `/project init` | 用户直接说需求，AMA 自动创建 managed task |
+| `/project brainstorm` | Planner 的 brainstorm 工作模式（自动触发或用户说"先讨论"） |
+| `/project plan` | AMA Planner 自动生成 contract |
+| `/project next/auto` | AMA round-based execution 自动推进 |
+| `/project quality/verify` | AMA Evaluator 自动检查 |
+| `/project status` | 用户自然语言询问进度，AMA 从 managed task 读取回答 |
+
+#### 9.4.4 持久化迁移
+
+| 数据 | 原位置 | 新位置 | 处理 |
+|------|--------|--------|------|
+| alignment | `.agent/project/alignment.md` | `.agent/managed-tasks/<id>/alignment.md` | 迁入 |
+| brainstorm 记录 | `.agent/project/brainstorm/` | `.agent/managed-tasks/<id>/brainstorm.md` | 合并迁入 |
+| evidence | `.agent/project/evidence/` | `.agent/managed-tasks/<id>/evidence/` | 迁入 |
+| checkpoints | `.agent/project/checkpoints/` | `.agent/managed-tasks/<id>/checkpoints/` | 迁入 |
+| session plan | `.agent/project/session_plan.md` | 被 `contract.json` 替代 | 废弃 |
+| control-state / project-state | `.agent/project/` | 被 managed task lifecycle 替代 | 废弃 |
+| harness config / runs | `.agent/project/harness/` | 被 AMA 自适应替代 | 废弃 |
+| lightweight run record | `.agent/project/lightweight-run.json` | 不再需要 | 废弃 |
+
+已存在的 `.agent/project/` 目录由用户自行处理，系统不做自动迁移。
 
 ---
 
