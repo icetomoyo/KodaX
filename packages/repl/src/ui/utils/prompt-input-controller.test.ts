@@ -67,6 +67,8 @@ vi.mock("../hooks/useTextBuffer.js", () => ({
     text: mocks.state.text,
     cursor: mocks.state.cursor,
     lines: mocks.state.lines,
+    isPasting: false,
+    editingMode: "idle",
     setText: mocks.setTextMock,
     replaceRange: mocks.replaceRangeMock,
     clear: mocks.clearMock,

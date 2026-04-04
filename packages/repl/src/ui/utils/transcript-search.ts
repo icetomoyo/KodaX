@@ -113,6 +113,10 @@ export function stepTranscriptSearchMatch(
     return 0;
   }
 
+  if (currentMatchIndex < 0) {
+    return direction === "next" ? 0 : matchCount - 1;
+  }
+
   if (direction === "next") {
     return (currentMatchIndex + 1) % matchCount;
   }
@@ -126,6 +130,10 @@ export function buildTranscriptSearchSummary(
 ): string | undefined {
   if (matches.length === 0) {
     return undefined;
+  }
+
+  if (currentMatchIndex < 0) {
+    return `${matches.length} transcript matches`;
   }
 
   const safeIndex = Math.min(Math.max(currentMatchIndex, 0), matches.length - 1);

@@ -11,15 +11,15 @@ describe("FullscreenTranscriptLayout", () => {
         transcript={<Text>Transcript</Text>}
         overlay={<Text>Overlay</Text>}
         footer={<Text>Footer</Text>}
-        stickyHeader={{ text: "Sticky prompt" }}
-        jumpToLatest={{ text: "Jump to latest" }}
+        stickyHeader={{ visible: true, label: "Sticky prompt" }}
+        jumpToLatest={{ visible: true, label: "Jump to latest", hint: "End" }}
       />,
     );
 
     const frame = lastFrame();
     expect(frame).toContain("Sticky prompt");
     expect(frame).toContain("Transcript");
-    expect(frame).toContain("Jump to latest");
+    expect(frame).toContain("Jump to latest: End");
     expect(frame).toContain("Overlay");
     expect(frame).toContain("Footer");
   });

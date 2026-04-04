@@ -1,3 +1,5 @@
+import type { BackgroundTaskBarItem } from "../components/BackgroundTaskBar.js";
+
 export interface BackgroundTaskViewModelInput {
   isLoading: boolean;
   activeWorkerTitle?: string;
@@ -6,35 +8,64 @@ export interface BackgroundTaskViewModelInput {
 }
 
 export interface BackgroundTaskViewModel {
-  primaryText?: string;
-  parallelText?: string;
+  items: BackgroundTaskBarItem[];
+  overflowLabel?: string;
+  ctaHint?: string;
 }
 
 export function buildBackgroundTaskViewModel(
   input: BackgroundTaskViewModelInput,
 ): BackgroundTaskViewModel {
+  const items: BackgroundTaskBarItem[] = [];
+
+  if (input.isLoading) {
+    if (input.activeWorkerTitle) {
+      items.push({
+        id: "primary-worker",
+        label: `${input.activeWorkerTitle} active`,
+        accent: true,
+        selected: true,
+      });
+    } else if (input.activePhase) {
+      items.push({
+        id: "primary-phase",
+        label: input.activePhase,
+        accent: true,
+        selected: true,
+      });
+    } else {
+      items.push({
+        id: "primary-generic",
+        label: "Agent active",
+        accent: true,
+        selected: true,
+      });
+    }
+  }
+
+  if (input.parallelText) {
+    items.push({
+      id: "parallel",
+      label: input.parallelText,
+    });
+  }
+
+  const [visibleOne, visibleTwo, visibleThree, ...rest] = items;
+  const visibleItems = [visibleOne, visibleTwo, visibleThree].filter(
+    (item): item is BackgroundTaskBarItem => Boolean(item),
+  );
+
   if (!input.isLoading) {
     return {
-      parallelText: input.parallelText,
-    };
-  }
-
-  if (input.activeWorkerTitle) {
-    return {
-      primaryText: `${input.activeWorkerTitle} active`,
-      parallelText: input.parallelText,
-    };
-  }
-
-  if (input.activePhase) {
-    return {
-      primaryText: input.activePhase,
-      parallelText: input.parallelText,
+      items: visibleItems,
+      overflowLabel: rest.length > 0 ? `+${rest.length} more` : undefined,
+      ctaHint: input.parallelText ? "PgUp history" : undefined,
     };
   }
 
   return {
-    primaryText: "Agent active",
-    parallelText: input.parallelText,
+    items: visibleItems,
+    overflowLabel: rest.length > 0 ? `+${rest.length} more` : undefined,
+    ctaHint: input.parallelText ? "PgUp history" : undefined,
   };
 }

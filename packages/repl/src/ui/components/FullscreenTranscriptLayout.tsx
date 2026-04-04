@@ -2,7 +2,11 @@ import React from "react";
 import { Box, Text } from "ink";
 
 export interface FullscreenTranscriptChromeSlot {
-  text?: string;
+  visible?: boolean;
+  label?: string;
+  hint?: string;
+  onTrigger?: () => void;
+  tone?: "dim" | "accent";
 }
 
 export interface FullscreenTranscriptLayoutProps {
@@ -22,20 +26,25 @@ export const FullscreenTranscriptLayout: React.FC<FullscreenTranscriptLayoutProp
   jumpToLatest,
   width,
 }) => {
+  const renderChromeSlot = (slot: FullscreenTranscriptChromeSlot | undefined) => {
+    if (!slot?.visible || !slot.label) {
+      return null;
+    }
+
+    const text = slot.hint ? `${slot.label}: ${slot.hint}` : slot.label;
+    return (
+      <Box paddingX={1}>
+        <Text dimColor={slot.tone !== "accent"}>{text}</Text>
+      </Box>
+    );
+  };
+
   return (
     <Box flexDirection="column" width={width} flexGrow={1} flexShrink={0}>
       <Box flexDirection="column" flexGrow={1} overflowY="hidden">
-        {stickyHeader?.text ? (
-          <Box paddingX={1}>
-            <Text dimColor>{stickyHeader.text}</Text>
-          </Box>
-        ) : null}
+        {renderChromeSlot(stickyHeader)}
         {transcript}
-        {jumpToLatest?.text ? (
-          <Box paddingX={1}>
-            <Text dimColor>{jumpToLatest.text}</Text>
-          </Box>
-        ) : null}
+        {renderChromeSlot(jumpToLatest)}
       </Box>
       {overlay}
       <Box flexDirection="column" flexShrink={0}>

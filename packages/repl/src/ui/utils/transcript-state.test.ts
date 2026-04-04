@@ -98,4 +98,11 @@ describe("transcript-state", () => {
     expect(searching.currentMatchIndex).toBe(3);
     expect(searching.followMode).toBe("browsing-history");
   });
+
+  it("allows transcript search to keep the query active while clearing the current match", () => {
+    const initial = createTranscriptDisplayState("native_vt");
+    const searching = setTranscriptSearchMatchIndex(openTranscriptSearch(initial), -1);
+
+    expect(searching.currentMatchIndex).toBe(-1);
+  });
 });

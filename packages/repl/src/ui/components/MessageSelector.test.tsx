@@ -7,11 +7,10 @@ describe("MessageSelector", () => {
   it("renders item kind and detail density for the current selection", () => {
     const { lastFrame } = render(
       <MessageSelector
-        summary="Tool call: changed_diff"
-        kindLabel="tool"
-        selectedIndex={1}
-        total={4}
-        detailExpanded
+        itemSummary="Tool call: changed_diff"
+        itemKind="tool"
+        position={{ current: 2, total: 4 }}
+        detailState="expanded"
       />,
     );
 

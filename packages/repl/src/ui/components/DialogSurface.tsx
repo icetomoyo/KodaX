@@ -119,8 +119,16 @@ export const DialogSurface: React.FC<DialogSurfaceProps> = ({
           <Text dimColor>No matches yet</Text>
         ) : (
           <>
-            <Text dimColor>{`${historySearch.selectedIndex + 1}/${historySearch.matches.length} matches`}</Text>
-            <Text dimColor>{historySearch.matches[historySearch.selectedIndex]?.excerpt ?? ""}</Text>
+            <Text dimColor>
+              {historySearch.selectedIndex < 0
+                ? `${historySearch.matches.length} matches`
+                : `${historySearch.selectedIndex + 1}/${historySearch.matches.length} matches`}
+            </Text>
+            <Text dimColor>
+              {historySearch.selectedIndex < 0
+                ? "Scroll to keep browsing, or use Up/Down to jump between matches."
+                : historySearch.matches[historySearch.selectedIndex]?.excerpt ?? ""}
+            </Text>
           </>
         )}
         <Text dimColor>Enter jump | Up/Down cycle | Esc cancel</Text>

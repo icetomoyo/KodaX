@@ -30,4 +30,21 @@ describe("DialogSurface", () => {
     expect(frame).toContain("planner");
     expect(frame).toContain("Planner is active");
   });
+
+  it("keeps the query visible when transcript search is disarmed", () => {
+    const { lastFrame } = render(
+      <DialogSurface
+        historySearch={{
+          query: "planner",
+          matches: [{ itemId: "assistant-1", excerpt: "Planner is active" }],
+          selectedIndex: -1,
+        }}
+      />,
+    );
+
+    const frame = lastFrame();
+    expect(frame).toContain("planner");
+    expect(frame).toContain("1 matches");
+    expect(frame).toContain("Scroll to keep browsing");
+  });
 });

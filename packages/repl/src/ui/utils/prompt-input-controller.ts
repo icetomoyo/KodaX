@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { useAutocomplete, useAutocompleteContext, type SelectedCompletion } from "../hooks/useAutocomplete.js";
 import { useInputHistory } from "../hooks/useInputHistory.js";
 import { useTextBuffer } from "../hooks/useTextBuffer.js";
-import type { KeyInfo } from "../types.js";
+import type { KeyInfo, PromptEditingMode } from "../types.js";
 import { buildAutocompleteReplacement } from "./autocomplete-replacement.js";
 
 export interface PromptInputControllerOptions {
@@ -22,6 +22,9 @@ export interface PromptInputControllerResult {
   text: string;
   cursor: { row: number; col: number };
   lines: string[];
+  isPasting: boolean;
+  terminalFocused: boolean;
+  editingMode: PromptEditingMode;
   handleKey: (key: KeyInfo) => boolean;
 }
 
@@ -150,6 +153,8 @@ export function usePromptInputController({
     text,
     cursor,
     lines,
+    isPasting,
+    editingMode,
     setText,
     replaceRange,
     clear,
@@ -468,6 +473,9 @@ export function usePromptInputController({
     text,
     cursor,
     lines,
+    isPasting,
+    terminalFocused: focus,
+    editingMode,
     handleKey,
   };
 }

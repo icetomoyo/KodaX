@@ -1,20 +1,21 @@
 import React from "react";
 import { Box, Text } from "ink";
 import { getTheme } from "../themes/index.js";
-import type { HelpBarSegment } from "../constants/layout.js";
+import type { HelpMenuSection } from "../constants/layout.js";
 
 export interface PromptHelpMenuProps {
-  segments: HelpBarSegment[];
+  sections: HelpMenuSection[];
   title?: string;
 }
 
 export const PromptHelpMenu: React.FC<PromptHelpMenuProps> = ({
-  segments,
+  sections,
   title = "Help",
 }) => {
   const theme = getTheme("dark");
 
-  if (segments.length === 0) {
+  const visibleSections = sections.filter((section) => section.items.length > 0);
+  if (visibleSections.length === 0) {
     return null;
   }
 
@@ -29,13 +30,14 @@ export const PromptHelpMenu: React.FC<PromptHelpMenuProps> = ({
       <Text color={theme.colors.accent} bold>
         {title}
       </Text>
-      <Text dimColor>
-        {segments.map((segment, index) => (
-          <Text key={`${segment.text}-${index}`} color={segment.color} bold={segment.bold}>
-            {segment.text}
+      {visibleSections.map((section) => (
+        <Box key={section.id} flexDirection="column">
+          <Text color={theme.colors.primary} bold>
+            {section.title}
           </Text>
-        ))}
-      </Text>
+          <Text dimColor>{section.items.map((item) => item.label).join(" | ")}</Text>
+        </Box>
+      ))}
     </Box>
   );
 };

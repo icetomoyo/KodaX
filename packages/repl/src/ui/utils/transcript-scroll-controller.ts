@@ -12,8 +12,16 @@ import {
 
 export interface TranscriptChromeModel {
   browseHintText?: string;
-  stickyHeaderText?: string;
-  jumpToLatestText?: string;
+  stickyHeader?: {
+    visible: boolean;
+    label: string;
+  };
+  jumpToLatest?: {
+    visible: boolean;
+    label: string;
+    hint?: string;
+    tone?: "dim" | "accent";
+  };
 }
 
 export interface TranscriptChromeOptions {
@@ -39,29 +47,43 @@ export function buildTranscriptChromeModel(
 
   const browseHintText = buildTranscriptBrowseHint(state);
 
-  let stickyHeaderText: string | undefined;
+  let stickyHeader: TranscriptChromeModel["stickyHeader"];
   if (state.supportsStickyPrompt && state.stickyPromptVisible) {
     if (isHistorySearchActive) {
       const query = historySearchQuery.trim();
-      stickyHeaderText = query
-        ? `Searching transcript for "${query}"`
-        : "Searching transcript history";
+      stickyHeader = {
+        visible: true,
+        label: query
+          ? `Searching transcript for "${query}"`
+          : "Searching transcript history",
+      };
     } else if (isAwaitingUserInteraction) {
-      stickyHeaderText = "Interaction active - transcript follow is paused";
+      stickyHeader = {
+        visible: true,
+        label: "Interaction active - transcript follow is paused",
+      };
     } else if (isReviewingHistory) {
-      stickyHeaderText = "Browsing transcript history";
+      stickyHeader = {
+        visible: true,
+        label: "Browsing transcript history",
+      };
     }
   }
 
-  const jumpToLatestText =
+  const jumpToLatest =
     ownsViewport && state.supportsViewportChrome && state.jumpToLatestAvailable
-      ? "Jump to latest: End"
+      ? {
+        visible: true,
+        label: "Jump to latest",
+        hint: "End",
+        tone: "accent" as const,
+      }
       : undefined;
 
   return {
     browseHintText,
-    stickyHeaderText,
-    jumpToLatestText,
+    stickyHeader,
+    jumpToLatest,
   };
 }
 

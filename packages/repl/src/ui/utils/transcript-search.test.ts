@@ -87,6 +87,9 @@ describe("transcript-search", () => {
     expect(stepTranscriptSearchMatch(matches.length, 0, "next")).toBe(1);
     expect(stepTranscriptSearchMatch(matches.length, 1, "next")).toBe(0);
     expect(stepTranscriptSearchMatch(matches.length, 0, "prev")).toBe(1);
+    expect(stepTranscriptSearchMatch(matches.length, -1, "next")).toBe(0);
+    expect(stepTranscriptSearchMatch(matches.length, -1, "prev")).toBe(1);
     expect(buildTranscriptSearchSummary(matches, 1)).toBe("2/2 transcript matches");
+    expect(buildTranscriptSearchSummary(matches, -1)).toBe("2 transcript matches");
   });
 });

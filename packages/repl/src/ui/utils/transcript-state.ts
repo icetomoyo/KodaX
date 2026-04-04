@@ -206,7 +206,7 @@ export function setTranscriptSearchMatchIndex(
 ): TranscriptDisplayState {
   return {
     ...state,
-    currentMatchIndex: Math.max(0, currentMatchIndex),
+    currentMatchIndex: Math.max(-1, currentMatchIndex),
   };
 }
 

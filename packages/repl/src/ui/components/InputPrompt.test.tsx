@@ -51,6 +51,9 @@ vi.mock("../utils/prompt-input-controller.js", () => ({
     text: "",
     cursor: { row: 2, col: 3 },
     lines: ["one", "two"],
+    isPasting: true,
+    terminalFocused: false,
+    editingMode: "pasting",
     handleKey: controllerHandleKeyMock,
   }),
 }));
@@ -106,6 +109,9 @@ describe("InputPrompt", () => {
       prompt: ">",
       placeholder: "Type a message...",
       focus: true,
+      terminalFocused: false,
+      isPasting: true,
+      editingMode: "pasting",
       theme: "dark",
     });
   });

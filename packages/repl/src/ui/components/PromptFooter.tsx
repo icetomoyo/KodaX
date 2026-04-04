@@ -1,80 +1,114 @@
 import React from "react";
-import { Box } from "ink";
+import { Box, Text } from "ink";
+import { getTheme } from "../themes/index.js";
 
-export interface PromptFooterLeftProps {
-  children?: React.ReactNode;
+export interface PromptFooterSurfaceItem {
+  id: string;
+  label: string;
+  accent?: boolean;
 }
 
-export const PromptFooterLeft: React.FC<PromptFooterLeftProps> = ({ children }) => {
-  if (!children) {
+export interface PromptFooterLeftSideProps {
+  items?: readonly PromptFooterSurfaceItem[];
+}
+
+export const PromptFooterLeftSide: React.FC<PromptFooterLeftSideProps> = ({
+  items = [],
+}) => {
+  const visibleItems = items.filter((item) => item.label.trim().length > 0);
+  const theme = getTheme("dark");
+  if (visibleItems.length === 0) {
     return null;
   }
+
   return (
     <Box flexGrow={1}>
-      {children}
+      {visibleItems.map((item, index) => (
+        <React.Fragment key={item.id}>
+          <Text color={item.accent ? theme.colors.accent : theme.colors.dim} bold={item.accent}>
+            {item.label}
+          </Text>
+          {index < visibleItems.length - 1 ? <Text dimColor> · </Text> : null}
+        </React.Fragment>
+      ))}
     </Box>
   );
 };
 
-export interface PromptFooterRightProps {
-  children?: React.ReactNode;
+export interface PromptFooterRightSideProps {
+  items?: readonly PromptFooterSurfaceItem[];
 }
 
-export const PromptFooterRight: React.FC<PromptFooterRightProps> = ({ children }) => {
-  if (!children) {
+export const PromptFooterRightSide: React.FC<PromptFooterRightSideProps> = ({
+  items = [],
+}) => {
+  const visibleItems = items.filter((item) => item.label.trim().length > 0);
+  const theme = getTheme("dark");
+  if (visibleItems.length === 0) {
     return null;
   }
+
   return (
     <Box justifyContent="flex-end">
-      {children}
+      {visibleItems.map((item, index) => (
+        <React.Fragment key={item.id}>
+          <Text color={item.accent ? theme.colors.primary : theme.colors.dim} bold={item.accent}>
+            {item.label}
+          </Text>
+          {index < visibleItems.length - 1 ? <Text dimColor> · </Text> : null}
+        </React.Fragment>
+      ))}
     </Box>
   );
 };
 
 export interface PromptFooterProps {
-  headerLeft?: React.ReactNode;
-  headerRight?: React.ReactNode;
-  pendingInputs?: React.ReactNode;
+  left?: React.ReactNode;
+  right?: React.ReactNode;
+  queued?: React.ReactNode;
+  stashNotice?: React.ReactNode;
+  notifications?: React.ReactNode;
+  inlineNotices?: React.ReactNode;
   composer: React.ReactNode;
-  suggestions?: React.ReactNode;
-  helpMenu?: React.ReactNode;
-  browseHint?: React.ReactNode;
-  statusNotices?: React.ReactNode;
+  inlineSuggestions?: React.ReactNode;
+  helpSurface?: React.ReactNode;
   taskBar?: React.ReactNode;
   statusLine?: React.ReactNode;
-  dialogSurface?: React.ReactNode;
+  inlineDialogs?: React.ReactNode;
 }
 
 export const PromptFooter: React.FC<PromptFooterProps> = ({
-  headerLeft,
-  headerRight,
-  pendingInputs,
+  left,
+  right,
+  queued,
+  stashNotice,
+  notifications,
+  inlineNotices,
   composer,
-  suggestions,
-  helpMenu,
-  browseHint,
-  statusNotices,
+  inlineSuggestions,
+  helpSurface,
   taskBar,
   statusLine,
-  dialogSurface,
+  inlineDialogs,
 }) => {
   return (
     <Box flexDirection="column">
-      {(headerLeft || headerRight) ? (
+      {(left || right) ? (
         <Box paddingX={1}>
-          <PromptFooterLeft>{headerLeft}</PromptFooterLeft>
-          <PromptFooterRight>{headerRight}</PromptFooterRight>
+          <Box flexGrow={1}>{left}</Box>
+          {right}
         </Box>
       ) : null}
-      {pendingInputs}
+      {queued}
+      {stashNotice}
+      {notifications}
+      {inlineNotices}
       {composer}
-      {suggestions}
-      {helpMenu}
-      {browseHint}
-      {statusNotices}
+      {inlineSuggestions}
+      {inlineDialogs}
+      {helpSurface}
       {taskBar}
       {statusLine}
-      {dialogSurface}
     </Box>
   );
 };

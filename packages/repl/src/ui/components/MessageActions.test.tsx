@@ -6,12 +6,21 @@ import { MessageActions } from "./MessageActions.js";
 describe("MessageActions", () => {
   it("renders available transcript actions", () => {
     const { lastFrame } = render(
-      <MessageActions canCopy canCopyToolInput canToggleDetail searchActive searchMatchCount={3} />,
+      <MessageActions
+        copyMessage
+        copyToolInput
+        copyOnSelect
+        toggleDetail
+        selectionNavigation
+        matchNavigation
+      />,
     );
 
     const frame = lastFrame();
+    expect(frame).toContain("select");
     expect(frame).toContain("C copy");
     expect(frame).toContain("I copy input");
+    expect(frame).toContain("Select copies");
     expect(frame).toContain("V toggle detail");
     expect(frame).toContain("Up/Down matches");
   });

@@ -3,32 +3,40 @@ import { Box, Text } from "ink";
 import { getTheme } from "../themes/index.js";
 
 export interface MessageActionsProps {
-  canCopy?: boolean;
-  canCopyToolInput?: boolean;
-  canToggleDetail?: boolean;
-  searchActive?: boolean;
-  searchMatchCount?: number;
+  copyMessage?: boolean;
+  copyToolInput?: boolean;
+  copyOnSelect?: boolean;
+  toggleDetail?: boolean;
+  selectionNavigation?: boolean;
+  matchNavigation?: boolean;
 }
 
 export const MessageActions: React.FC<MessageActionsProps> = ({
-  canCopy = false,
-  canCopyToolInput = false,
-  canToggleDetail = false,
-  searchActive = false,
-  searchMatchCount = 0,
+  copyMessage = false,
+  copyToolInput = false,
+  copyOnSelect = false,
+  toggleDetail = false,
+  selectionNavigation = false,
+  matchNavigation = false,
 }) => {
   const theme = getTheme("dark");
   const actions: string[] = [];
-  if (canCopy) {
+  if (selectionNavigation) {
+    actions.push("\u2190/\u2192 select");
+  }
+  if (copyMessage) {
     actions.push("C copy");
   }
-  if (canCopyToolInput) {
+  if (copyToolInput) {
     actions.push("I copy input");
   }
-  if (canToggleDetail) {
+  if (copyOnSelect) {
+    actions.push("Select copies");
+  }
+  if (toggleDetail) {
     actions.push("V toggle detail");
   }
-  if (searchActive && searchMatchCount > 0) {
+  if (matchNavigation) {
     actions.push("Up/Down matches");
   }
 

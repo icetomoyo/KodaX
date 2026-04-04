@@ -3,7 +3,7 @@ import {
   HELP_BAR_HORIZONTAL_PADDING,
   HELP_MENU_CHROME_ROWS,
   HELP_BAR_SPACER_ROWS,
-  buildHelpBarText,
+  buildHelpMenuSections,
   MESSAGE_LIST_VERTICAL_PADDING_ROWS,
 } from "../constants/layout.js";
 
@@ -42,6 +42,8 @@ export interface ViewportBudgetOptions {
   inputPrompt?: string;
   footerHeaderText?: string;
   pendingInputSummary?: string;
+  stashNoticeSummary?: string;
+  notificationSummary?: string;
   statusNoticeSummary?: string;
   workStripText?: string;
   suggestionsReserved: boolean;
@@ -74,6 +76,8 @@ export interface ViewportBudgetResult {
   reservedBottomRows: number;
   headerRows: number;
   pendingInputRows: number;
+  stashNoticeRows: number;
+  notificationRows: number;
   workStripRows: number;
   inputRows: number;
   suggestionsRows: number;
@@ -126,6 +130,8 @@ export function calculateViewportBudget(options: ViewportBudgetOptions): Viewpor
     inputPrompt = ">",
     footerHeaderText,
     pendingInputSummary,
+    stashNoticeSummary,
+    notificationSummary,
     statusNoticeSummary,
     workStripText,
     suggestionsReserved,
@@ -147,6 +153,12 @@ export function calculateViewportBudget(options: ViewportBudgetOptions): Viewpor
   const pendingInputRows = pendingInputSummary
     ? wrapLineCount(pendingInputSummary, Math.max(1, terminalWidth - 2))
     : 0;
+  const stashNoticeRows = stashNoticeSummary
+    ? wrapLineCount(stashNoticeSummary, Math.max(1, terminalWidth - 2))
+    : 0;
+  const notificationRows = notificationSummary
+    ? wrapLineCount(notificationSummary, Math.max(1, terminalWidth - 2))
+    : 0;
   const statusNoticeRows = statusNoticeSummary
     ? wrapLineCount(statusNoticeSummary, Math.max(1, terminalWidth - 2))
     : 0;
@@ -157,10 +169,21 @@ export function calculateViewportBudget(options: ViewportBudgetOptions): Viewpor
   const suggestionsRows = suggestionsReserved ? 8 : 0;
 
   const helpRows = showHelp
-    ? wrapLineCount(
-        buildHelpBarText(),
-        Math.max(1, terminalWidth - HELP_BAR_HORIZONTAL_PADDING)
-      ) + HELP_BAR_SPACER_ROWS + HELP_MENU_CHROME_ROWS
+    ? (
+        HELP_BAR_SPACER_ROWS +
+        HELP_MENU_CHROME_ROWS +
+        buildHelpMenuSections().reduce((sum, section) => (
+          sum +
+          wrapLineCount(
+            section.title,
+            Math.max(1, terminalWidth - HELP_BAR_HORIZONTAL_PADDING),
+          ) +
+          wrapLineCount(
+            section.items.map((item) => item.label).join(" | "),
+            Math.max(1, terminalWidth - HELP_BAR_HORIZONTAL_PADDING),
+          )
+        ), 0)
+      )
     : 0;
 
   const statusRows = wrapLineCount(statusBarText, Math.max(1, terminalWidth - 2));
@@ -241,6 +264,8 @@ export function calculateViewportBudget(options: ViewportBudgetOptions): Viewpor
   const footerRows =
     headerRows +
     pendingInputRows +
+    stashNoticeRows +
+    notificationRows +
     inputRows +
     helpRows +
     statusNoticeRows +
@@ -269,6 +294,8 @@ export function calculateViewportBudget(options: ViewportBudgetOptions): Viewpor
     reservedBottomRows,
     headerRows,
     pendingInputRows,
+    stashNoticeRows,
+    notificationRows,
     workStripRows,
     inputRows,
     suggestionsRows,

@@ -35,8 +35,16 @@ describe("transcript-scroll-controller", () => {
     });
 
     expect(model.browseHintText).toContain("Browsing transcript history");
-    expect(model.stickyHeaderText).toBe("Browsing transcript history");
-    expect(model.jumpToLatestText).toBe("Jump to latest: End");
+    expect(model.stickyHeader).toEqual({
+      visible: true,
+      label: "Browsing transcript history",
+    });
+    expect(model.jumpToLatest).toEqual({
+      visible: true,
+      label: "Jump to latest",
+      hint: "End",
+      tone: "accent",
+    });
   });
 
   it("prefers transcript search chrome text while search is active", () => {
@@ -54,7 +62,10 @@ describe("transcript-scroll-controller", () => {
       historySearchQuery: "router",
     });
 
-    expect(model.stickyHeaderText).toBe('Searching transcript for "router"');
+    expect(model.stickyHeader).toEqual({
+      visible: true,
+      label: 'Searching transcript for "router"',
+    });
   });
 
   it("resolves page and wheel steps from viewport rows", () => {

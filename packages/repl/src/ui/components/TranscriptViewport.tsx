@@ -10,20 +10,33 @@ export interface TranscriptViewportBrowseState {
 }
 
 export interface TranscriptViewportSelectionState {
-  summary?: string;
-  index?: number;
-  total?: number;
-  kindLabel?: string;
-  detailExpanded?: boolean;
-  canCopy?: boolean;
-  canCopyToolInput?: boolean;
-  canToggleDetail?: boolean;
+  itemSummary?: string;
+  itemKind?: string;
+  position?: {
+    current: number;
+    total: number;
+  };
+  detailState?: "compact" | "expanded";
+  copyCapabilities?: {
+    message?: boolean;
+    toolInput?: boolean;
+    copyOnSelect?: boolean;
+  };
+  toggleDetail?: boolean;
+  navigationCapabilities?: {
+    selection?: boolean;
+  };
 }
 
 export interface TranscriptViewportSearchState {
+  query?: string;
+  matches?: Array<{ itemId: string; excerpt: string }>;
+  currentMatchIndex?: number;
+  anchorItemId?: string;
   statusText?: string;
-  matchCount?: number;
   surface?: React.ReactNode;
+  onNext?: () => void;
+  onPrev?: () => void;
 }
 
 export interface TranscriptViewportProps extends MessageListProps {
@@ -38,16 +51,18 @@ export const TranscriptViewport: React.FC<TranscriptViewportProps> = ({
   search,
   ...messageListProps
 }) => {
-  const selectedSummary = selection?.summary;
-  const selectedIndex = selection?.index ?? 0;
-  const selectedTotal = selection?.total ?? 0;
-  const selectedKindLabel = selection?.kindLabel;
-  const selectedDetailExpanded = selection?.detailExpanded ?? false;
-  const canCopySelection = selection?.canCopy ?? false;
-  const canCopyToolInput = selection?.canCopyToolInput ?? false;
-  const canToggleSelectionDetail = selection?.canToggleDetail ?? false;
+  const selectedSummary = selection?.itemSummary;
+  const selectedPosition = selection?.position;
+  const selectedKindLabel = selection?.itemKind;
+  const selectedDetailState = selection?.detailState ?? "compact";
+  const copyCapabilities = selection?.copyCapabilities;
+  const canCopySelection = copyCapabilities?.message ?? false;
+  const canCopyToolInput = copyCapabilities?.toolInput ?? false;
+  const supportsCopyOnSelect = copyCapabilities?.copyOnSelect ?? false;
+  const canToggleSelectionDetail = selection?.toggleDetail ?? false;
+  const canNavigateSelection = selection?.navigationCapabilities?.selection ?? false;
   const searchStatusText = search?.statusText;
-  const searchMatchCount = search?.matchCount ?? 0;
+  const searchMatchCount = search?.matches?.length ?? 0;
   const searchSurface = search?.surface;
 
   return (
@@ -59,20 +74,20 @@ export const TranscriptViewport: React.FC<TranscriptViewportProps> = ({
       ) : null}
       {selectedSummary ? (
         <MessageSelector
-          summary={selectedSummary}
-          selectedIndex={Math.max(0, selectedIndex)}
-          total={selectedTotal}
-          kindLabel={selectedKindLabel}
-          detailExpanded={selectedDetailExpanded}
+          itemSummary={selectedSummary}
+          itemKind={selectedKindLabel}
+          position={selectedPosition}
+          detailState={selectedDetailState}
         />
       ) : null}
-      {(canCopySelection || canCopyToolInput || canToggleSelectionDetail || searchMatchCount > 0) ? (
+      {(canCopySelection || canCopyToolInput || supportsCopyOnSelect || canToggleSelectionDetail || canNavigateSelection || searchMatchCount > 0) ? (
         <MessageActions
-          canCopy={canCopySelection}
-          canCopyToolInput={canCopyToolInput}
-          canToggleDetail={canToggleSelectionDetail}
-          searchActive={Boolean(searchStatusText)}
-          searchMatchCount={searchMatchCount}
+          copyMessage={canCopySelection}
+          copyToolInput={canCopyToolInput}
+          copyOnSelect={supportsCopyOnSelect}
+          toggleDetail={canToggleSelectionDetail}
+          selectionNavigation={canNavigateSelection}
+          matchNavigation={Boolean(searchStatusText) && searchMatchCount > 0}
         />
       ) : null}
       {searchStatusText ? (

@@ -6,7 +6,7 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { TextBuffer, type CursorPosition } from "../utils/text-buffer.js";
-import type { KeyInfo, UseTextBufferReturn } from "../types.js";
+import type { KeyInfo, PromptEditingMode, UseTextBufferReturn } from "../types.js";
 
 export interface UseTextBufferOptions {
   initialValue?: string;
@@ -29,6 +29,8 @@ interface TextBufferState {
   text: string;
   cursor: CursorPosition;
   lines: string[];
+  isPasting: boolean;
+  editingMode: PromptEditingMode;
 }
 
 export function useTextBuffer(options: UseTextBufferOptions = {}): UseTextBufferReturn {
@@ -39,12 +41,15 @@ export function useTextBuffer(options: UseTextBufferOptions = {}): UseTextBuffer
   // Paste detection state - 粘贴检测状态
   const lastInputTimeRef = useRef<number>(0);
   const consecutiveCharsRef = useRef<number>(0);
+  const pasteResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // React state - use single state object for atomic updates (Issue 036) - React 状态 - 使用单一状态对象保证原子更新（Issue 036）
   const [state, setState] = useState<TextBufferState>({
     text: initialValue,
     cursor: { row: 0, col: 0 },
     lines: [""],
+    isPasting: false,
+    editingMode: initialValue ? "typing" : "idle",
   });
 
   // Initialize TextBuffer - 初始化 TextBuffer
@@ -58,20 +63,40 @@ export function useTextBuffer(options: UseTextBufferOptions = {}): UseTextBuffer
   const buffer = bufferRef.current;
 
   // Sync state - atomic updates, avoiding intermediate states (Issue 036 fix) - 同步状态 - 原子更新，避免中间状态（Issue 036 修复）
-  const syncState = useCallback(() => {
-    setState({
+  const syncState = useCallback((overrides?: Partial<Pick<TextBufferState, "isPasting" | "editingMode">>) => {
+    setState((prev) => ({
       text: buffer.text,
       cursor: buffer.cursor,
       lines: buffer.lines,
-    });
+      isPasting: overrides?.isPasting ?? prev.isPasting,
+      editingMode: overrides?.editingMode ?? prev.editingMode,
+    }));
     onTextChange?.(buffer.text);
   }, [buffer, onTextChange]);
+
+  const schedulePasteReset = useCallback(() => {
+    if (pasteResetTimeoutRef.current) {
+      clearTimeout(pasteResetTimeoutRef.current);
+    }
+
+    pasteResetTimeoutRef.current = setTimeout(() => {
+      setState((prev) => ({
+        ...prev,
+        isPasting: false,
+        editingMode: prev.text ? "typing" : "idle",
+      }));
+      pasteResetTimeoutRef.current = null;
+    }, 120);
+  }, []);
 
   // setText
   const handleSetText = useCallback(
     (newText: string) => {
       buffer.setText(newText);
-      syncState();
+      syncState({
+        isPasting: false,
+        editingMode: newText ? "typing" : "idle",
+      });
     },
     [buffer, syncState]
   );
@@ -80,7 +105,10 @@ export function useTextBuffer(options: UseTextBufferOptions = {}): UseTextBuffer
   const handleReplaceRange = useCallback(
     (start: number, end: number, replacement: string) => {
       buffer.replaceRange(start, end, replacement);
-      syncState();
+      syncState({
+        isPasting: false,
+        editingMode: buffer.text ? "typing" : "idle",
+      });
     },
     [buffer, syncState]
   );
@@ -103,27 +131,42 @@ export function useTextBuffer(options: UseTextBufferOptions = {}): UseTextBuffer
       lastInputTimeRef.current = now;
 
       buffer.insert(insertText, { paste: isPaste });
-      syncState();
+      syncState({
+        isPasting: isPaste,
+        editingMode: isPaste ? "pasting" : "typing",
+      });
+      if (isPaste) {
+        schedulePasteReset();
+      }
     },
-    [buffer, syncState]
+    [buffer, schedulePasteReset, syncState]
   );
 
   // newline
   const handleNewline = useCallback(() => {
     buffer.newline();
-    syncState();
+    syncState({
+      isPasting: false,
+      editingMode: "typing",
+    });
   }, [buffer, syncState]);
 
   // backspace
   const handleBackspace = useCallback(() => {
     buffer.backspace();
-    syncState();
+    syncState({
+      isPasting: false,
+      editingMode: buffer.text ? "typing" : "idle",
+    });
   }, [buffer, syncState]);
 
   // delete
   const handleDelete = useCallback(() => {
     buffer.delete();
-    syncState();
+    syncState({
+      isPasting: false,
+      editingMode: buffer.text ? "typing" : "idle",
+    });
   }, [buffer, syncState]);
 
   // move
@@ -138,7 +181,10 @@ export function useTextBuffer(options: UseTextBufferOptions = {}): UseTextBuffer
   // clear
   const handleClear = useCallback(() => {
     buffer.clear();
-    syncState();
+    syncState({
+      isPasting: false,
+      editingMode: "idle",
+    });
   }, [buffer, syncState]);
 
   // undo
@@ -167,17 +213,26 @@ export function useTextBuffer(options: UseTextBufferOptions = {}): UseTextBuffer
 
   const handleKillLineRight = useCallback(() => {
     buffer.killLineRight();
-    syncState();
+    syncState({
+      isPasting: false,
+      editingMode: buffer.text ? "typing" : "idle",
+    });
   }, [buffer, syncState]);
 
   const handleKillLineLeft = useCallback(() => {
     buffer.killLineLeft();
-    syncState();
+    syncState({
+      isPasting: false,
+      editingMode: buffer.text ? "typing" : "idle",
+    });
   }, [buffer, syncState]);
 
   const handleDeleteWordLeft = useCallback(() => {
     buffer.deleteWordLeft();
-    syncState();
+    syncState({
+      isPasting: false,
+      editingMode: buffer.text ? "typing" : "idle",
+    });
   }, [buffer, syncState]);
 
   // handleInput - process keyboard input - 处理键盘输入
@@ -285,6 +340,9 @@ export function useTextBuffer(options: UseTextBufferOptions = {}): UseTextBuffer
   // Cleanup - 清理
   useEffect(() => {
     return () => {
+      if (pasteResetTimeoutRef.current) {
+        clearTimeout(pasteResetTimeoutRef.current);
+      }
       bufferRef.current = null;
     };
   }, []);
@@ -294,6 +352,8 @@ export function useTextBuffer(options: UseTextBufferOptions = {}): UseTextBuffer
     text: state.text,
     cursor: state.cursor,
     lines: state.lines,
+    isPasting: state.isPasting,
+    editingMode: state.editingMode,
     setText: handleSetText,
     replaceRange: handleReplaceRange,
     insert: handleInsert,

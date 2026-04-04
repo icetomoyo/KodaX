@@ -6,6 +6,7 @@ import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { getTheme } from '../themes/index.js';
 import type { StatusBarProps } from '../types.js';
+import type { StatusBarViewModel } from '../view-models/status-bar.js';
 
 const ITERATION_SYMBOL = '\u{1F504}';
 const BAR_FILLED = '\u2588';
@@ -430,7 +431,33 @@ export function getStatusBarText({
   return parts.join(' | ');
 }
 
-export const StatusBar: React.FC<StatusBarProps> = ({
+interface StatusBarRendererProps extends StatusBarProps {
+  viewModel?: StatusBarViewModel;
+}
+
+function resolveViewModelSegmentColor(
+  tone: StatusBarViewModel["segments"][number]["tone"] | undefined,
+  theme: ReturnType<typeof getTheme>,
+): string {
+  switch (tone) {
+    case 'primary':
+      return theme.colors.primary;
+    case 'accent':
+      return theme.colors.accent;
+    case 'success':
+      return theme.colors.success;
+    case 'warning':
+      return theme.colors.warning;
+    case 'error':
+      return theme.colors.error;
+    case 'dim':
+    default:
+      return theme.colors.dim;
+  }
+}
+
+export const StatusBar: React.FC<StatusBarRendererProps> = ({
+  viewModel,
   sessionId,
   permissionMode,
   agentMode,
@@ -461,6 +488,24 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   managedBudgetUsage,
 }) => {
   const theme = useMemo(() => getTheme('dark'), []);
+
+  if (viewModel) {
+    return (
+      <Box paddingX={1}>
+        {viewModel.segments.map((segment, index) => (
+          <React.Fragment key={segment.id}>
+            <Text
+              color={resolveViewModelSegmentColor(segment.tone, theme)}
+              bold={segment.bold}
+            >
+              {segment.text}
+            </Text>
+            {index < viewModel.segments.length - 1 ? <Text dimColor> | </Text> : null}
+          </React.Fragment>
+        ))}
+      </Box>
+    );
+  }
 
   const kodaxDisplay = <Text color={theme.colors.primary} bold>{`KodaX - ${agentMode.toUpperCase()}`}</Text>;
 

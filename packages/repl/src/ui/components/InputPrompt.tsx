@@ -38,7 +38,14 @@ export const InputPrompt: React.FC<InputPromptAutocompleteProps> = ({
   onInputChange,
 }) => {
   const { exit } = useApp();
-  const { cursor, lines, handleKey } = usePromptInputController({
+  const {
+    cursor,
+    lines,
+    handleKey,
+    isPasting,
+    terminalFocused,
+    editingMode,
+  } = usePromptInputController({
     onSubmit,
     onExit: exit,
     focus,
@@ -64,6 +71,9 @@ export const InputPrompt: React.FC<InputPromptAutocompleteProps> = ({
         prompt={prompt}
         placeholder={placeholder}
         focus={focus}
+        terminalFocused={terminalFocused}
+        isPasting={isPasting}
+        editingMode={editingMode}
         theme="dark"
       />
     </Box>

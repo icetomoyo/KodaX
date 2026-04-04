@@ -8,6 +8,7 @@ import React, { useMemo, useState, useEffect } from "react";
 import { Text, Box, useStdout } from "ink";
 import stringWidth from "string-width";
 import { getTheme } from "../themes/index.js";
+import type { PromptEditingMode } from "../types.js";
 import {
   calculateVisualLayout,
   calculateVisualCursorFromLayout,
@@ -22,6 +23,9 @@ export interface TextInputProps {
   prompt?: string;
   placeholder?: string;
   focus?: boolean;
+  terminalFocused?: boolean;
+  isPasting?: boolean;
+  editingMode?: PromptEditingMode;
   theme?: string;
   width?: number;
 }
@@ -75,6 +79,9 @@ export const TextInput: React.FC<TextInputProps> = ({
   prompt = ">",
   placeholder = "Type your message...",
   focus = true,
+  terminalFocused = true,
+  isPasting = false,
+  editingMode = "idle",
   theme: themeName = "dark",
   width: propWidth,
 }) => {
@@ -110,6 +117,8 @@ export const TextInput: React.FC<TextInputProps> = ({
 
   // Use visual layout rendering for all input (including empty and single-line) - 所有输入使用视觉布局渲染（包括空输入和单行）
   const divider = generateDivider(terminalWidth);
+  const showCursor = focus && terminalFocused;
+  const pasteHintVisible = isPasting && lines.some((line) => line.length > 0);
 
   // TypeScript non-null assertion: visualLayout and visualCursor are  // TypeScript 非空断言：visualLayout 和 visualCursor 保证非空
   const layout = visualLayout!;
@@ -119,13 +128,18 @@ export const TextInput: React.FC<TextInputProps> = ({
     <Box flexDirection="column" width={propWidth}>
       {/* Top divider - 顶部分隔线 */}
       <Text dimColor>{divider}</Text>
+      {pasteHintVisible ? (
+        <Box>
+          <Text dimColor>{editingMode === "pasting" ? "Pasting input..." : "Editing input..."}</Text>
+        </Box>
+      ) : null}
 
       {/* Content lines - 内容行 */}
       {layout.visualLines.length === 0 || (layout.visualLines.length === 1 && layout.visualLines[0] === "") ? (
         // Empty input - show placeholder and cursor - 空输入 - 显示占位符和光标
         <Box>
           <Text color={theme.colors.primary}>{prompt} </Text>
-          {focus ? (
+          {showCursor ? (
             <>
               <Text backgroundColor={theme.colors.primary} color="#000000"> </Text>
               <Text dimColor>{placeholder}</Text>
@@ -140,7 +154,7 @@ export const TextInput: React.FC<TextInputProps> = ({
           const linePrompt = visualRowIndex === 0 ? prompt : " ".repeat(promptWidth - 1);
 
           // Current line needs to show cursor - 当前行需要显示光标
-          if (isCurrentVisualLine && focus) {
+          if (isCurrentVisualLine && showCursor) {
             const { before, current, after } = splitAtVisualColumn(visualLine, vCursor.col);
             const cursorChar = current || " ";
 

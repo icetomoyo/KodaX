@@ -3,32 +3,30 @@ import { Box, Text } from "ink";
 import { getTheme } from "../themes/index.js";
 
 export interface MessageSelectorProps {
-  summary?: string;
-  selectedIndex: number;
-  total: number;
-  kindLabel?: string;
-  detailExpanded?: boolean;
+  itemSummary?: string;
+  itemKind?: string;
+  position?: {
+    current: number;
+    total: number;
+  };
+  detailState?: "compact" | "expanded";
 }
 
 export const MessageSelector: React.FC<MessageSelectorProps> = ({
-  summary,
-  selectedIndex,
-  total,
-  kindLabel,
-  detailExpanded = false,
+  itemSummary,
+  itemKind,
+  position,
+  detailState = "compact",
 }) => {
   const theme = getTheme("dark");
-  if (!summary || total <= 0) {
+  if (!itemSummary || !position || position.total <= 0) {
     return null;
   }
-
-  const detailLabel = detailExpanded ? "expanded" : "compact";
-  const kindPrefix = kindLabel ? `${kindLabel}: ` : "";
 
   return (
     <Box paddingX={1}>
       <Text color={theme.colors.dim}>
-        {`Selected ${selectedIndex + 1}/${total}: ${kindPrefix}${summary} [${detailLabel}]`}
+        {`Selected ${position.current}/${position.total}: ${itemKind ? `${itemKind}: ` : ""}${itemSummary} [${detailState}]`}
       </Text>
     </Box>
   );
