@@ -551,8 +551,14 @@ const INVESTIGATION_PATTERN_ZH = /排查|定位问题|根因|为什么|报错|�
 const IMPLEMENTATION_PATTERN = /\b(implement|add|change|modify|update|create|write|fix|refactor|rewrite|replace)\b/i;
 const IMPLEMENTATION_PATTERN_ZH = /实现|新增|修改|创建|写一个|修复|重构|改一下|替换/;
 
-const DOCS_ONLY_PATTERN = /\b(docs?|documentation|readme|changelog|release notes?|spec|proposal|design doc|requirements?|prd|adr|hld|dd|feature list|known issues?)\b/i;
+const DOCS_ONLY_PATTERN = /\b(docs?|documentation|readme|changelog|release notes?|spec|proposal|design doc|requirements?|prd|adr|hld|dd|guide|runbook|playbook|feature list|known issues?)\b/i;
 const DOCS_ONLY_PATTERN_ZH = /\u6587\u6863|\u8bf4\u660e\u6587\u6863|\u8bbe\u8ba1\u6587\u6863|\u9700\u6c42\u6587\u6863|PRD|ADR|HLD|DD|CHANGELOG|README|\u529f\u80fd\u6e05\u5355|\u5df2\u77e5\u95ee\u9898/u;
+const DOCS_QUALIFIED_TECHNICAL_TARGET_PATTERN = /\b(?:api|backend|frontend|service|module|endpoint|component|architecture|package|migration|schema|database|auth|sdk|cli)\s+(?:docs?|documentation|guide|readme|changelog|spec|proposal|design doc|requirements?|prd|adr|hld|dd|runbook|playbook)\b|\b(?:docs?|documentation|guide|readme|changelog|spec|proposal|design doc|requirements?|prd|adr|hld|dd|runbook|playbook)\s+(?:for|about|on)\s+(?:the\s+)?(?:api|backend|frontend|service|module|endpoint|component|architecture|package|migration|schema|database|auth|sdk|cli)\b/i;
+const DOCS_QUALIFIED_TECHNICAL_TARGET_PATTERN_ZH = /(?:API|\u540e\u7aef|\u524d\u7aef|\u670d\u52a1|\u6a21\u5757|\u63a5\u53e3|\u7ec4\u4ef6|\u67b6\u6784|\u5305|\u8fc1\u79fb|\u6570\u636e\u5e93|\u8ba4\u8bc1)(?:[\u4e00-\u9fffA-Za-z0-9_\-\/\\.\s]{0,8})(?:\u6587\u6863|\u8bf4\u660e\u6587\u6863|README|CHANGELOG|PRD|ADR|HLD|DD|\u6307\u5357)/u;
+const EXPLICIT_CODE_MUTATION_ANCHOR_PATTERN = /\b(?:implementation|source code|code comments?|function|class|component|bug|script|tests?|ui)\b/i;
+const EXPLICIT_CODE_MUTATION_ANCHOR_PATTERN_ZH = /\u4ee3\u7801\u6ce8\u91ca|\u5b9e\u73b0|\u51fd\u6570|\u7c7b|\u7ec4\u4ef6|bug|\u811a\u672c|\u6d4b\u8bd5|\u754c\u9762/u;
+const NO_CODE_CHANGE_PATTERN = /\b(?:do not|don't|dont|without|no)\b[\s\S]{0,12}\b(?:change|modify|edit|touch|rewrite|update|mutate)\b[\s\S]{0,8}\bcode\b|\bno code changes?\b/i;
+const NO_CODE_CHANGE_PATTERN_ZH = /\u4e0d\u6539\u4ee3\u7801|\u4e0d\u8981\u6539\u4ee3\u7801|\u4e0d\u4fee\u6539\u4ee3\u7801|\u4e0d\u8981\u4fee\u6539\u4ee3\u7801|\u53ea\u6539\u6587\u6863|\u53ea\u66f4\u65b0\u6587\u6863|\u4ec5\u6539\u6587\u6863|\u4ec5\u66f4\u65b0\u6587\u6863/u;
 const EXPLICIT_ASSURANCE_PATTERN = /\b(double[- ]check|re-check|recheck|second pass|second opinion|cross-check|cross check|independently verify|independent review|independent audit|strict audit|extra scrutiny|verify twice)\b/i;
 const EXPLICIT_ASSURANCE_PATTERN_ZH = /\u518d\u68c0\u67e5|\u518d\u5ba1\u67e5|\u53cc\u91cd\u68c0\u67e5|\u7b2c\u4e8c\u904d|\u7b2c\u4e8c\u8f6e|\u4e8c\u6b21\u5ba1\u67e5|\u4ea4\u53c9\u68c0\u67e5|\u72ec\u7acb\u9a8c\u8bc1|\u72ec\u7acb\u5ba1\u67e5|\u66f4\u5f3a\u5ba1\u67e5/u;
 const CODE_MUTATION_OBJECT_PATTERN = /\b(code|implementation|function|class|component|module|endpoint|service|repo|repository|file|files|test|bug|feature|script|api|ui|backend|frontend)\b/i;
@@ -742,6 +748,11 @@ function deriveMutationSurface(
   const normalized = ` ${prompt.toLowerCase()} `;
   const hasCjk = /[\u3400-\u9fff]/u.test(prompt);
   const hasDocsSignal = DOCS_ONLY_PATTERN.test(prompt) || (hasCjk && DOCS_ONLY_PATTERN_ZH_CLEAN.test(prompt));
+  const hasDocQualifiedTechnicalTarget = DOCS_QUALIFIED_TECHNICAL_TARGET_PATTERN.test(prompt)
+    || (hasCjk && DOCS_QUALIFIED_TECHNICAL_TARGET_PATTERN_ZH.test(prompt));
+  const hasExplicitCodeMutationAnchor = EXPLICIT_CODE_MUTATION_ANCHOR_PATTERN.test(prompt)
+    || (hasCjk && EXPLICIT_CODE_MUTATION_ANCHOR_PATTERN_ZH.test(prompt));
+  const hasNoCodeGuard = NO_CODE_CHANGE_PATTERN.test(prompt) || (hasCjk && NO_CODE_CHANGE_PATTERN_ZH.test(prompt));
   const hasSystemSignal = SYSTEM_MUTATION_PATTERN.test(prompt) || (hasCjk && SYSTEM_MUTATION_PATTERN_ZH_CLEAN.test(prompt));
   const hasCodeObjectSignal = CODE_MUTATION_OBJECT_PATTERN.test(normalized) || (hasCjk && CODE_MUTATION_OBJECT_PATTERN_ZH_CLEAN.test(prompt));
   const hasStrongCodeTarget = /\b(code|implementation|function|class|component|module|endpoint|service|bug|script|api|ui|backend|frontend)\b/i.test(normalized)
@@ -756,9 +767,13 @@ function deriveMutationSurface(
     || hasStrongCodeTargetByChinese;
   const safeHasMutationVerb = /\b(implement|add|modify|update|create|write|fix|refactor|rewrite|replace|edit|patch|rename)\b/i.test(normalized)
     || hasMutationVerbByChinese;
+  const effectiveStrongCodeTarget = (safeHasStrongCodeTarget && !hasDocQualifiedTechnicalTarget)
+    || hasExplicitCodeMutationAnchor;
+  const effectiveStructuralRepoTarget = hasStructuralRepoTarget && !hasDocQualifiedTechnicalTarget;
+  const explicitDocsOnlyGuard = hasDocsSignal && !hasSystemSignal && hasNoCodeGuard;
 
   if (decision.primaryTask === 'review' && !safeHasMutationVerb && !hasSystemSignal) {
-    return hasDocsSignal && !safeHasStrongCodeTarget
+    return hasDocsSignal && (explicitDocsOnlyGuard || !effectiveStrongCodeTarget)
       ? 'docs-only'
       : 'read-only';
   }
@@ -767,10 +782,14 @@ function deriveMutationSurface(
     || decision.primaryTask === 'refactor'
     || decision.taskFamily === 'implementation'
     || (decision.primaryTask === 'bugfix' && safeHasMutationVerb)
-    || (safeHasMutationVerb && safeHasStrongCodeTarget)
-    || (hasStructuralMutationVerb && hasStructuralRepoTarget);
+    || (safeHasMutationVerb && effectiveStrongCodeTarget)
+    || (hasStructuralMutationVerb && effectiveStructuralRepoTarget);
 
-  if (hasDocsSignal && !hasSystemSignal && !safeHasStrongCodeTarget && decision.primaryTask !== 'refactor') {
+  if (explicitDocsOnlyGuard && decision.primaryTask !== 'refactor') {
+    return 'docs-only';
+  }
+
+  if (hasDocsSignal && !hasSystemSignal && !effectiveStrongCodeTarget && decision.primaryTask !== 'refactor') {
     return 'docs-only';
   }
 

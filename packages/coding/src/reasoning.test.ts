@@ -1045,4 +1045,68 @@ describe('reasoning reroute', () => {
     expect(reroutedPlan?.decision.primaryTask).toBe('bugfix');
     expect(reroutedPlan?.decision.recommendedMode).toBe('investigation');
   });
+
+  it('keeps API documentation-only edits on the docs-only path when code changes are forbidden', () => {
+    const decision = buildFallbackRoutingDecision(
+      'Update API docs and README only. Do not change code.',
+    );
+
+    expect(decision.primaryTask).toBe('edit');
+    expect(decision.mutationSurface).toBe('docs-only');
+    expect(decision.harnessProfile).toBe('H0_DIRECT');
+    expect(decision.topologyCeiling).toBe('H0_DIRECT');
+  });
+
+  it('keeps backend and module documentation rewrites out of H2 when the prompt is docs-scoped', () => {
+    const decision = buildFallbackRoutingDecision(
+      'Rewrite the ADR and module documentation only. Do not change code.',
+    );
+
+    expect(decision.primaryTask).toBe('edit');
+    expect(decision.mutationSurface).toBe('docs-only');
+    expect(decision.harnessProfile).toBe('H0_DIRECT');
+    expect(decision.topologyCeiling).toBe('H0_DIRECT');
+  });
+
+  it('still treats mixed implementation plus docs requests as code work', () => {
+    const decision = buildFallbackRoutingDecision(
+      'Update the backend service implementation and refresh the API docs.',
+    );
+
+    expect(decision.primaryTask).toBe('edit');
+    expect(decision.mutationSurface).toBe('code');
+    expect(decision.topologyCeiling).toBe('H2_PLAN_EXECUTE_EVAL');
+  });
+
+  it('keeps technical documentation edits on docs-only even without an explicit no-code suffix', () => {
+    const decision = buildFallbackRoutingDecision(
+      'Update backend service docs only.',
+    );
+
+    expect(decision.primaryTask).toBe('edit');
+    expect(decision.mutationSurface).toBe('docs-only');
+    expect(decision.harnessProfile).toBe('H0_DIRECT');
+    expect(decision.topologyCeiling).toBe('H0_DIRECT');
+  });
+
+  it('treats migration guides with explicit no-code constraints as docs-only work', () => {
+    const decision = buildFallbackRoutingDecision(
+      'Only update the migration guide; do not run migrations or change code.',
+    );
+
+    expect(decision.primaryTask).toBe('edit');
+    expect(decision.mutationSurface).toBe('docs-only');
+    expect(decision.harnessProfile).toBe('H0_DIRECT');
+    expect(decision.topologyCeiling).toBe('H0_DIRECT');
+  });
+
+  it('does not let code-comment edits hide behind README-only phrasing', () => {
+    const decision = buildFallbackRoutingDecision(
+      'Update code comments and README only.',
+    );
+
+    expect(decision.primaryTask).toBe('edit');
+    expect(decision.mutationSurface).toBe('code');
+    expect(decision.topologyCeiling).toBe('H2_PLAN_EXECUTE_EVAL');
+  });
 });
