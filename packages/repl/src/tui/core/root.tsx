@@ -1,16 +1,10 @@
 import process from "node:process";
 import { Stream } from "node:stream";
 import type { ComponentType, PropsWithChildren, ReactNode } from "react";
-import {
-  default as InkBox,
-} from "./substrate/ink/components/Box.js";
-import {
-  default as InkText,
-} from "./substrate/ink/components/Text.js";
-import {
-  default as InkStatic,
-} from "./substrate/ink/components/Static.js";
-import Ink from "./substrate/ink/ink.js";
+import InkBox from "./primitives/Box.js";
+import InkText from "./primitives/Text.js";
+import InkStatic from "./primitives/Static.js";
+import Ink from "./renderer.js";
 
 type InkInstance = InstanceType<typeof Ink>;
 
@@ -125,8 +119,8 @@ function getInstance(
     localInstances.set(stdout, instance);
   } else if (instance.isConcurrent !== concurrent) {
     console.warn(
-      `Warning: render() was called with concurrent: ${concurrent}, but the existing renderer for this stdout uses concurrent: ${instance.isConcurrent}. ` +
-      `The concurrent option only takes effect on the first render. Call unmount() first if you need to change the rendering mode.`,
+      `Warning: render() was called with concurrent: ${concurrent}, but the existing renderer for this stdout uses concurrent: ${instance.isConcurrent}. `
+      + "The concurrent option only takes effect on the first render. Call unmount() first if you need to change the rendering mode.",
     );
   }
 

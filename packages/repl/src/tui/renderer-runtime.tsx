@@ -13,7 +13,7 @@ import {
   Text as LegacyInkText,
   Static as LegacyInkStatic,
   type Key,
-} from "./legacy-ink-substrate.js";
+} from "./core/root.js";
 import {
   render as localRender,
   type RenderOptions,

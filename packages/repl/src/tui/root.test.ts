@@ -22,7 +22,7 @@ const mocks = vi.hoisted(() => {
   };
 });
 
-vi.mock("./substrate/ink/ink.js", () => ({
+vi.mock("./core/renderer.js", () => ({
   default: mocks.InkMock,
 }));
 

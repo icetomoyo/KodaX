@@ -5,7 +5,7 @@ import {
   useTerminalSize,
   useTerminalWrite,
 } from "../index.js";
-import { getRendererInstance } from "../legacy-ink-substrate.js";
+import { getRendererInstance } from "../core/root.js";
 import {
   buildAlternateScreenEnterSequence,
   buildAlternateScreenExitSequence,
