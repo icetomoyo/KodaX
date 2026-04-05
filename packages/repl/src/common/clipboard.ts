@@ -16,6 +16,17 @@ export interface ClipboardWriteResult {
   path: "native" | "tmux-buffer" | "osc52";
 }
 
+function shouldPreferNativeClipboard(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+): boolean {
+  if (env.SSH_CONNECTION) {
+    return false;
+  }
+
+  return platform === "win32" || platform === "darwin" || platform === "linux";
+}
+
 function buildOscSequence(
   text: string,
   env: NodeJS.ProcessEnv,
@@ -130,33 +141,38 @@ export async function copyTextToClipboard(
   const env = options.env ?? process.env;
   const platform = options.platform ?? process.platform;
   const value = text.trimEnd();
+  const oscSequence = buildOscSequence(value, env);
 
   if (!value) {
     throw new Error("Nothing to copy.");
   }
 
-  if (options.terminalWrite?.(buildOscSequence(value, env))) {
-    return { path: "osc52" };
-  }
-
-  if (await tryTmuxClipboard(value, env)) {
-    return { path: "tmux-buffer" };
-  }
-
-  try {
-    if (await tryNativeClipboard(value, env, platform)) {
-      return { path: "native" };
+  if (shouldPreferNativeClipboard(env, platform)) {
+    try {
+      if (await tryNativeClipboard(value, env, platform)) {
+        return { path: "native" };
+      }
+    } catch {
+      // Fall through to tmux / OSC 52 paths.
     }
-  } catch {
-    // Fall through to the final tmux / OSC 52 retry path.
   }
 
   if (await tryTmuxClipboard(value, env)) {
     return { path: "tmux-buffer" };
   }
 
-  if (options.terminalWrite?.(buildOscSequence(value, env))) {
+  if (options.terminalWrite?.(oscSequence)) {
     return { path: "osc52" };
+  }
+
+  if (!shouldPreferNativeClipboard(env, platform)) {
+    try {
+      if (await tryNativeClipboard(value, env, platform)) {
+        return { path: "native" };
+      }
+    } catch {
+      // Fall through to the final error path.
+    }
   }
 
   throw new Error("Unable to access any clipboard path.");

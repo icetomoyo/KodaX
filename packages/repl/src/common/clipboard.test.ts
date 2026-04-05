@@ -27,12 +27,33 @@ describe("copyTextToClipboard", () => {
     spawnMock.mockReset();
   });
 
-  it("prioritizes OSC 52 when the terminal writer accepts the payload", async () => {
+  it("prefers the native clipboard on local Windows terminals", async () => {
+    spawnMock.mockImplementation(() => new MockChildProcess());
     const terminalWrite = vi.fn(() => true);
 
     await expect(copyTextToClipboard("hello world", {
       terminalWrite,
       env: {},
+      platform: "win32",
+    })).resolves.toEqual({ path: "native" });
+
+    expect(terminalWrite).not.toHaveBeenCalled();
+    expect(spawnMock).toHaveBeenCalledWith(
+      "clip",
+      [],
+      expect.objectContaining({
+        stdio: ["pipe", "ignore", "pipe"],
+        windowsHide: true,
+      }),
+    );
+  });
+
+  it("uses OSC 52 when running remotely and the terminal writer accepts the payload", async () => {
+    const terminalWrite = vi.fn(() => true);
+
+    await expect(copyTextToClipboard("hello world", {
+      terminalWrite,
+      env: { SSH_CONNECTION: "remote" },
       platform: "win32",
     })).resolves.toEqual({ path: "osc52" });
 
