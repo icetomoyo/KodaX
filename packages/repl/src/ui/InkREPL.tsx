@@ -4413,7 +4413,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         width={terminalWidth}
         stickyHeader={transcriptChrome.stickyHeader}
         jumpToLatest={transcriptChrome.jumpToLatest}
-        transcript={
+        transcript={!fullscreenPolicy.enabled || !transcriptOwnsViewport ? (
           <TranscriptViewport
             items={displayItems}
             isLoading={displayIsLoading}
@@ -4453,7 +4453,51 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             selection={transcriptSelectionState}
             search={transcriptSearchState}
           />
-        }
+        ) : undefined}
+        renderTranscriptWindow={fullscreenPolicy.enabled && transcriptOwnsViewport
+          ? (window) => (
+            <TranscriptViewport
+              items={displayItems}
+              isLoading={displayIsLoading}
+              isThinking={transcriptStreamingState.isThinking}
+              thinkingCharCount={transcriptStreamingState.thinkingCharCount}
+              thinkingContent={transcriptStreamingState.thinkingContent}
+              streamingResponse={transcriptStreamingState.currentResponse}
+              currentTool={transcriptStreamingState.currentTool}
+              activeToolCalls={transcriptStreamingState.activeToolCalls}
+              toolInputCharCount={transcriptStreamingState.toolInputCharCount}
+              toolInputContent={transcriptStreamingState.toolInputContent}
+              iterationHistory={transcriptStreamingState.iterationHistory}
+              currentIteration={transcriptStreamingState.currentIteration}
+              isCompacting={transcriptStreamingState.isCompacting}
+              agentMode={currentConfig.agentMode}
+              managedPhase={displayIsLoading ? managedTaskStatus?.phase : undefined}
+              managedHarnessProfile={displayIsLoading ? managedTaskStatus?.harnessProfile : undefined}
+              managedWorkerTitle={displayIsLoading ? managedTaskStatus?.activeWorkerTitle : undefined}
+              managedRound={displayIsLoading ? managedTaskStatus?.currentRound : undefined}
+              managedMaxRounds={displayIsLoading ? managedTaskStatus?.maxRounds : undefined}
+              managedGlobalWorkBudget={displayIsLoading ? managedTaskStatus?.globalWorkBudget : undefined}
+              managedBudgetUsage={displayIsLoading ? managedTaskStatus?.budgetUsage : undefined}
+              managedBudgetApprovalRequired={displayIsLoading ? managedTaskStatus?.budgetApprovalRequired : undefined}
+              lastLiveActivityLabel={transcriptStreamingState.lastLiveActivityLabel}
+              viewportRows={viewportBudget.messageRows}
+              viewportWidth={terminalWidth}
+              scrollOffset={historyScrollOffset}
+              animateSpinners={!isLivePaused && fullscreenPolicy.transcriptSpinnerAnimation}
+              windowed
+              visibleWindow={{ start: window.start, end: window.end }}
+              maxLines={transcriptMaxLines}
+              showFullThinking={isTranscriptVerbose || isReviewingHistory}
+              showDetailedTools={isTranscriptVerbose || isReviewingHistory}
+              selectedItemId={selectedTranscriptItemId}
+              expandedItemKeys={expandedTranscriptItemIds}
+              onMetricsChange={handleTranscriptMetricsChange}
+              browse={{ hintText: transcriptChrome.browseHintText }}
+              selection={transcriptSelectionState}
+              search={transcriptSearchState}
+            />
+          )
+          : undefined}
         overlay={overlaySurface}
         scrollTop={historyScrollOffset}
         scrollHeight={transcriptScrollHeight}

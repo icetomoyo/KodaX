@@ -18,6 +18,15 @@ export interface ScrollBoxHandle {
   subscribe: (listener: () => void) => () => void;
 }
 
+export interface ScrollBoxWindow {
+  start: number;
+  end: number;
+  scrollTop: number;
+  scrollHeight: number;
+  viewportHeight: number;
+  sticky: boolean;
+}
+
 export interface ScrollBoxProps {
   children: React.ReactNode;
   width?: number | string;
@@ -30,6 +39,7 @@ export interface ScrollBoxProps {
   scrollRef?: React.Ref<ScrollBoxHandle>;
   onScrollTopChange?: (nextScrollTop: number) => void;
   onStickyChange?: (sticky: boolean) => void;
+  renderWindow?: (window: ScrollBoxWindow) => React.ReactNode;
 }
 
 interface ScrollSnapshot {
@@ -44,6 +54,22 @@ function clampScrollTop(snapshot: ScrollSnapshot, nextScrollTop: number): number
   return Math.max(0, Math.min(Math.floor(nextScrollTop), maxScrollTop));
 }
 
+function resolveScrollWindow(snapshot: ScrollSnapshot): ScrollBoxWindow {
+  const viewportHeight = Math.max(0, snapshot.viewportHeight);
+  const clampedOffset = clampScrollTop(snapshot, snapshot.scrollTop);
+  const end = Math.max(0, snapshot.scrollHeight - clampedOffset);
+  const start = Math.max(0, end - viewportHeight);
+
+  return {
+    start,
+    end,
+    scrollTop: clampedOffset,
+    scrollHeight: snapshot.scrollHeight,
+    viewportHeight,
+    sticky: snapshot.sticky,
+  };
+}
+
 export const ScrollBox: React.FC<ScrollBoxProps> = ({
   children,
   width,
@@ -56,6 +82,7 @@ export const ScrollBox: React.FC<ScrollBoxProps> = ({
   scrollRef,
   onScrollTopChange,
   onStickyChange,
+  renderWindow,
 }) => {
   const listenersRef = useRef(new Set<() => void>());
   const snapshotRef = useRef<ScrollSnapshot>({
@@ -149,6 +176,16 @@ export const ScrollBox: React.FC<ScrollBoxProps> = ({
 
   useImperativeHandle(scrollRef, () => handle, [handle]);
 
+  const windowState = useMemo(
+    () => resolveScrollWindow({
+      scrollTop,
+      scrollHeight,
+      viewportHeight,
+      sticky: stickyScroll,
+    }),
+    [scrollHeight, scrollTop, stickyScroll, viewportHeight],
+  );
+
   return (
     <Box
       flexDirection="column"
@@ -157,7 +194,7 @@ export const ScrollBox: React.FC<ScrollBoxProps> = ({
       width={width}
       overflowY="hidden"
     >
-      {children}
+      {renderWindow ? renderWindow(windowState) : children}
     </Box>
   );
 };

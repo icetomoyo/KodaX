@@ -1,6 +1,6 @@
 import React from "react";
 import { Box, Text } from "../index.js";
-import { ScrollBox, type ScrollBoxHandle } from "./ScrollBox.js";
+import { ScrollBox, type ScrollBoxHandle, type ScrollBoxWindow } from "./ScrollBox.js";
 
 export interface FullscreenChromeSlot {
   visible?: boolean;
@@ -10,7 +10,8 @@ export interface FullscreenChromeSlot {
 }
 
 export interface FullscreenLayoutProps {
-  scrollable: React.ReactNode;
+  scrollable?: React.ReactNode;
+  renderScrollableWindow?: (window: ScrollBoxWindow) => React.ReactNode;
   bottom: React.ReactNode;
   overlay?: React.ReactNode;
   stickyHeader?: FullscreenChromeSlot;
@@ -27,6 +28,7 @@ export interface FullscreenLayoutProps {
 
 export const FullscreenLayout: React.FC<FullscreenLayoutProps> = ({
   scrollable,
+  renderScrollableWindow,
   bottom,
   overlay,
   stickyHeader,
@@ -65,6 +67,15 @@ export const FullscreenLayout: React.FC<FullscreenLayoutProps> = ({
           scrollRef={scrollRef}
           onScrollTopChange={onScrollTopChange}
           onStickyChange={onStickyChange}
+          renderWindow={renderScrollableWindow
+            ? (window) => (
+              <>
+                {renderChromeSlot(stickyHeader)}
+                {renderScrollableWindow(window)}
+                {renderChromeSlot(jumpToLatest)}
+              </>
+            )
+            : undefined}
         >
           {renderChromeSlot(stickyHeader)}
           {scrollable}

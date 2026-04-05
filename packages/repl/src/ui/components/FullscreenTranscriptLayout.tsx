@@ -1,6 +1,6 @@
 import React from "react";
 import { FullscreenLayout } from "../../tui/components/FullscreenLayout.js";
-import type { ScrollBoxHandle } from "../../tui/components/ScrollBox.js";
+import type { ScrollBoxHandle, ScrollBoxWindow } from "../../tui/components/ScrollBox.js";
 
 export interface FullscreenTranscriptChromeSlot {
   visible?: boolean;
@@ -11,7 +11,8 @@ export interface FullscreenTranscriptChromeSlot {
 }
 
 export interface FullscreenTranscriptLayoutProps {
-  transcript: React.ReactNode;
+  transcript?: React.ReactNode;
+  renderTranscriptWindow?: (window: ScrollBoxWindow) => React.ReactNode;
   footer: React.ReactNode;
   overlay?: React.ReactNode;
   stickyHeader?: FullscreenTranscriptChromeSlot;
@@ -28,6 +29,7 @@ export interface FullscreenTranscriptLayoutProps {
 
 export const FullscreenTranscriptLayout: React.FC<FullscreenTranscriptLayoutProps> = ({
   transcript,
+  renderTranscriptWindow,
   footer,
   overlay,
   stickyHeader,
@@ -47,6 +49,7 @@ export const FullscreenTranscriptLayout: React.FC<FullscreenTranscriptLayoutProp
       stickyHeader={stickyHeader}
       jumpToLatest={jumpToLatest}
       scrollable={transcript}
+      renderScrollableWindow={renderTranscriptWindow}
       overlay={overlay}
       bottom={footer}
       scrollTop={scrollTop}

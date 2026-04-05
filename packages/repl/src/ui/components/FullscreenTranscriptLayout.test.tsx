@@ -23,5 +23,20 @@ describe("FullscreenTranscriptLayout", () => {
     expect(frame).toContain("Overlay");
     expect(frame).toContain("Footer");
   });
+
+  it("can render transcript content from the renderer-owned window", () => {
+    const { lastFrame } = render(
+      <FullscreenTranscriptLayout
+        renderTranscriptWindow={(window) => <Text>{`Window ${window.start}-${window.end}`}</Text>}
+        footer={<Text>Footer</Text>}
+        scrollTop={10}
+        scrollHeight={120}
+        viewportHeight={20}
+      />,
+    );
+
+    expect(lastFrame()).toContain("Window 90-110");
+    expect(lastFrame()).toContain("Footer");
+  });
 });
 

@@ -51,4 +51,21 @@ describe("ScrollBox", () => {
     expect(listener).toHaveBeenCalled();
     unsubscribe?.();
   });
+
+  it("computes the visible window inside the renderer boundary", () => {
+    const { lastFrame } = render(
+      <ScrollBox
+        scrollTop={10}
+        scrollHeight={120}
+        viewportHeight={20}
+        renderWindow={(window) => (
+          <Text>{`window:${window.start}-${window.end}`}</Text>
+        )}
+      >
+        <Text>ignored</Text>
+      </ScrollBox>,
+    );
+
+    expect(lastFrame()).toContain("window:90-110");
+  });
 });

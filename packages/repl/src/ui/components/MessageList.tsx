@@ -113,6 +113,11 @@ export interface MessageListProps {
     scrollHeight: number;
     viewportHeight: number;
   }) => void;
+  /** Optional renderer-owned visible window range */
+  visibleWindow?: {
+    start: number;
+    end: number;
+  };
 }
 
 export interface HistoryItemRendererProps {
@@ -528,6 +533,7 @@ export const MessageList: React.FC<MessageListProps> = ({
   selectedItemId,
   expandedItemKeys,
   onMetricsChange,
+  visibleWindow,
 }) => {
   const theme = useMemo(() => getTheme("dark"), []);
   const { stdout } = useStdout();
@@ -623,10 +629,15 @@ export const MessageList: React.FC<MessageListProps> = ({
   );
 
   const visibleRows = useMemo(
-    () => (windowed
-      ? getVisibleTranscriptRows(transcriptRows, viewportRows, scrollOffset)
-      : transcriptRows),
-    [transcriptRows, viewportRows, scrollOffset, windowed]
+    () => {
+      if (visibleWindow) {
+        return transcriptRows.slice(visibleWindow.start, visibleWindow.end);
+      }
+      return windowed
+        ? getVisibleTranscriptRows(transcriptRows, viewportRows, scrollOffset)
+        : transcriptRows;
+    },
+    [transcriptRows, viewportRows, scrollOffset, visibleWindow, windowed]
   );
 
   useEffect(() => {
