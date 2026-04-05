@@ -20,8 +20,8 @@ import {
 } from "./root.js";
 import parseKeypress, {
   nonAlphanumericKeys,
-} from "./substrate/ink/parse-keypress.js";
-import { createInputParser } from "./substrate/ink/input-parser.js";
+} from "./core/parse-keypress.js";
+import { createInputParser } from "./core/input-parser.js";
 
 type InkRenderOptions = RenderOptions;
 export interface StdoutState {
