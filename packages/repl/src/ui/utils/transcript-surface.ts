@@ -92,3 +92,14 @@ export function shouldUseAlternateScreenShell(
 ): boolean {
   return fullscreenEnabled && surface !== "transcript";
 }
+
+export function shouldUseManagedMainScreenMouseTracking(
+  fullscreenEnabled: boolean,
+  surface: TranscriptSurface,
+): boolean {
+  if (!fullscreenEnabled) {
+    return true;
+  }
+
+  return surface !== "transcript";
+}

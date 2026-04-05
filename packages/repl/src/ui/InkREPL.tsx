@@ -245,6 +245,7 @@ import {
   countPendingTranscriptUpdates,
   resolveTranscriptSurfaceItems,
   shouldUseAlternateScreenShell,
+  shouldUseManagedMainScreenMouseTracking,
   type TranscriptSnapshot,
 } from "./utils/transcript-surface.js";
 
@@ -2461,9 +2462,17 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     fullscreenPolicy.enabled,
     transcriptDisplayState.surface,
   );
+  const useManagedMainScreenMouseTracking = shouldUseManagedMainScreenMouseTracking(
+    fullscreenPolicy.enabled,
+    transcriptDisplayState.surface,
+  );
 
   useEffect(() => {
     if (useAlternateScreenShell) {
+      return;
+    }
+
+    if (!useManagedMainScreenMouseTracking) {
       return;
     }
 
@@ -2484,7 +2493,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         // Ignore terminal cleanup failures.
       }
     };
-  }, [fullscreenPolicy.mouseClicks, fullscreenPolicy.mouseWheel, stdout, useAlternateScreenShell]);
+  }, [
+    fullscreenPolicy.mouseClicks,
+    fullscreenPolicy.mouseWheel,
+    stdout,
+    useAlternateScreenShell,
+    useManagedMainScreenMouseTracking,
+  ]);
 
   // Refs for callbacks
   // Note: permissionMode and alwaysAllowTools are stored separately for permission checks
@@ -2566,14 +2581,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
       // Ctrl+C immediately interrupts.
       if (key.ctrl && key.name === "c") {
+        if (transcriptTextSelection) {
+          void copySelectedTranscriptText();
+          return true;
+        }
         queueInterruptedPersistence();
         userInterruptedRef.current = true;
         abort();
-        stopThinking();
-        clearThinkingContent();
-        setCurrentTool(undefined);
-        setIsLoading(false);
-        console.log(chalk.yellow("\n[Interrupted]"));
         return true;
       }
 
@@ -2602,11 +2616,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           queueInterruptedPersistence();
           userInterruptedRef.current = true;
           abort();
-          stopThinking();
-          clearThinkingContent();
-          setCurrentTool(undefined);
-          setIsLoading(false);
-          console.log(chalk.yellow("\n[Interrupted]"));
           return true;
         }
 
@@ -2626,10 +2635,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       removeLastPendingInput,
       queueInterruptedPersistence,
       abort,
-      stopThinking,
-      clearThinkingContent,
-      setCurrentTool,
-      setIsLoading,
+      copySelectedTranscriptText,
+      transcriptTextSelection,
     ]
   );
 
@@ -2646,6 +2653,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         && key.mouse
         && fullscreenPolicy.mouseClicks
         && transcriptDisplayState.supportsMouseTracking
+        && useManagedMainScreenMouseTracking
       ) {
         if (key.mouse.button !== "left") {
           return false;
@@ -2976,6 +2984,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       transcriptTextSelection,
       resolveTranscriptMouseTarget,
       transcriptDisplayState.supportsMouseTracking,
+      useManagedMainScreenMouseTracking,
       updateTranscriptMouseSelection,
       viewportBudget.messageRows,
     ]
@@ -3827,14 +3836,32 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     return flushPendingPersistContextState();
   }, [flushPendingPersistContextState]);
 
-  const requestGracefulExit = useCallback(() => {
-    void (async () => {
-      await persistContextStateQueueRef.current.catch(() => {});
-      setIsRunning(false);
-      onExit();
-      exit();
-    })();
-  }, [exit, onExit]);
+  const requestGracefulExit = useCallback(async () => {
+    abort();
+    stopStreaming();
+    stopThinking();
+    clearThinkingContent();
+    clearToolInputContent();
+    clearResponse();
+    setCurrentTool(undefined);
+    setIsLoading(false);
+
+    await persistContextStateQueueRef.current.catch(() => {});
+    setIsRunning(false);
+    exit();
+    onExit();
+  }, [
+    abort,
+    clearResponse,
+    clearThinkingContent,
+    clearToolInputContent,
+    exit,
+    onExit,
+    setCurrentTool,
+    setIsLoading,
+    stopStreaming,
+    stopThinking,
+  ]);
 
   useEffect(() => {
     persistContextStateRef.current = persistContextStateInBackground;
@@ -4194,9 +4221,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       if (parsed) {
         // Create command callbacks
         const callbacks: CommandCallbacks = {
-          exit: () => {
-            requestGracefulExit();
-          },
+          exit: requestGracefulExit,
           saveSession: async () => {
             if (context.messages.length > 0) {
               const title = extractTitle(context.messages);

@@ -4,6 +4,7 @@ import {
   countPendingTranscriptUpdates,
   resolveTranscriptSurfaceItems,
   shouldUseAlternateScreenShell,
+  shouldUseManagedMainScreenMouseTracking,
 } from "./transcript-surface.js";
 
 describe("transcript-surface", () => {
@@ -99,5 +100,12 @@ describe("transcript-surface", () => {
     expect(shouldUseAlternateScreenShell(true, "prompt")).toBe(true);
     expect(shouldUseAlternateScreenShell(true, "transcript")).toBe(false);
     expect(shouldUseAlternateScreenShell(false, "prompt")).toBe(false);
+  });
+
+  it("disables managed mouse tracking for fullscreen transcript mode on the main screen", () => {
+    expect(shouldUseManagedMainScreenMouseTracking(true, "prompt")).toBe(true);
+    expect(shouldUseManagedMainScreenMouseTracking(true, "transcript")).toBe(false);
+    expect(shouldUseManagedMainScreenMouseTracking(false, "prompt")).toBe(true);
+    expect(shouldUseManagedMainScreenMouseTracking(false, "transcript")).toBe(true);
   });
 });
