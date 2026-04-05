@@ -9,7 +9,7 @@ type BoxStyle = Record<string, any> & {
   overflow?: string;
 };
 
-interface BoxProps extends React.PropsWithChildren<BoxStyle> {
+export interface BoxProps extends React.PropsWithChildren<BoxStyle> {
   backgroundColor?: string;
   "aria-label"?: string;
   "aria-hidden"?: boolean;

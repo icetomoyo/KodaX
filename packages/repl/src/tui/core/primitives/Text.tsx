@@ -4,7 +4,7 @@ import colorize from "../colorize.js";
 import { accessibilityContext } from "../contexts/AccessibilityContext.js";
 import { backgroundContext } from "../contexts/BackgroundContext.js";
 
-interface TextProps extends React.PropsWithChildren {
+export interface TextProps extends React.PropsWithChildren {
   color?: string;
   backgroundColor?: string;
   dimColor?: boolean;

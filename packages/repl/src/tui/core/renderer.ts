@@ -1,12 +1,12 @@
 import type { ReactNode } from "react";
-import VendoredInk from "../substrate/ink/ink.js";
+import Engine from "./engine.js";
 
-interface VendoredInkInstance extends InstanceType<typeof VendoredInk> {
+interface EngineInstance extends InstanceType<typeof Engine> {
   setAltScreenActive?: (active: boolean, mouseTracking?: boolean) => void;
   clearTextSelection?: () => void;
 }
 
-export type RendererOptions = ConstructorParameters<typeof VendoredInk>[0];
+export type RendererOptions = ConstructorParameters<typeof Engine>[0];
 
 export interface RendererInstanceHandle {
   readonly isConcurrent: boolean;
@@ -19,34 +19,34 @@ export interface RendererInstanceHandle {
 }
 
 export default class KodaXRenderer implements RendererInstanceHandle {
-  private readonly vendoredInstance: VendoredInkInstance;
+  private readonly engineInstance: EngineInstance;
 
   readonly isConcurrent: boolean;
 
   constructor(options: RendererOptions) {
-    this.vendoredInstance = new VendoredInk(options) as VendoredInkInstance;
-    this.isConcurrent = this.vendoredInstance.isConcurrent;
+    this.engineInstance = new Engine(options) as EngineInstance;
+    this.isConcurrent = this.engineInstance.isConcurrent;
   }
 
   render = (node: ReactNode) => {
-    this.vendoredInstance.render(node);
+    this.engineInstance.render(node);
   };
 
   unmount = (error?: unknown) => {
-    this.vendoredInstance.unmount(error);
+    this.engineInstance.unmount(error);
   };
 
-  waitUntilExit = () => this.vendoredInstance.waitUntilExit();
+  waitUntilExit = () => this.engineInstance.waitUntilExit();
 
   clear = () => {
-    this.vendoredInstance.clear();
+    this.engineInstance.clear();
   };
 
   setAltScreenActive = (active: boolean, mouseTracking?: boolean) => {
-    this.vendoredInstance.setAltScreenActive?.(active, mouseTracking);
+    this.engineInstance.setAltScreenActive?.(active, mouseTracking);
   };
 
   clearTextSelection = () => {
-    this.vendoredInstance.clearTextSelection?.();
+    this.engineInstance.clearTextSelection?.();
   };
 }
