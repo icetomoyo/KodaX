@@ -1,3 +1,4 @@
+import process from "node:process";
 import React, {
   createContext,
   useContext,
@@ -12,9 +13,6 @@ import {
   Text as InkText,
   Static as InkStatic,
   useInput as inkUseInput,
-  useStdout as inkUseStdout,
-  useStdin as inkUseStdin,
-  useApp as inkUseApp,
 } from "ink";
 import {
   render as localRender,
@@ -22,11 +20,22 @@ import {
 } from "./root.js";
 
 type InkRenderOptions = RenderOptions;
-type StdoutState = ReturnType<typeof inkUseStdout>;
-type StdinState = ReturnType<typeof inkUseStdin>;
-type AppState = ReturnType<typeof inkUseApp>;
+export interface StdoutState {
+  readonly stdout: NodeJS.WriteStream;
+}
+
+export interface StdinState {
+  readonly stdin: NodeJS.ReadStream;
+  readonly setRawMode: (isEnabled: boolean) => void;
+  readonly isRawModeSupported: boolean;
+}
+
+export interface AppState {
+  readonly exit: () => void;
+}
+
 type OutputStream = StdoutState["stdout"];
-type InputStream = StdinState["stdin"];
+type InputStream = NodeJS.ReadStream;
 type TerminalInputChunk = Buffer | string;
 
 interface TerminalInputSource {
@@ -66,8 +75,8 @@ function resolveTerminalSize(stdout: OutputStream | undefined): TerminalSize {
 }
 
 interface TuiRuntimeContextValue {
-  stdout: StdoutState["stdout"];
-  stdin: StdinState["stdin"];
+  stdout: OutputStream;
+  stdin: InputStream;
   setRawMode: StdinState["setRawMode"];
   isRawModeSupported: StdinState["isRawModeSupported"];
   exit: AppState["exit"];
@@ -78,6 +87,10 @@ interface TuiRuntimeContextValue {
 }
 
 const TuiRuntimeContext = createContext<TuiRuntimeContextValue | null>(null);
+
+interface MutableTuiRuntimeContextValue extends TuiRuntimeContextValue {
+  attachExit: (exit: () => void) => void;
+}
 
 function hasRawModeSubscribers(subscriptions: ReadonlySet<TerminalInputSubscription>): boolean {
   for (const subscription of subscriptions) {
@@ -181,99 +194,137 @@ export function createTerminalInputController({
 
 interface TuiRuntimeProviderProps {
   children: React.ReactNode;
-  renderOptions?: InkRenderOptions;
+  runtime: TuiRuntimeContextValue;
 }
 
 const TuiRuntimeProvider: React.FC<TuiRuntimeProviderProps> = ({
   children,
-  renderOptions,
+  runtime,
 }) => {
-  const stdoutState = inkUseStdout();
-  const stdinState = inkUseStdin();
-  const appState = inkUseApp();
-  const output = renderOptions?.stdout ?? stdoutState.stdout;
-  const input = renderOptions?.stdin ?? stdinState.stdin;
   const [terminalSize, setTerminalSize] = useState<TerminalSize>(
-    () => resolveTerminalSize(output),
+    () => runtime.terminalSize,
   );
 
   useEffect(() => {
-    setTerminalSize(resolveTerminalSize(output));
+    setTerminalSize(resolveTerminalSize(runtime.stdout));
 
-    if (typeof output?.on !== "function" || typeof output?.off !== "function") {
+    if (typeof runtime.stdout?.on !== "function" || typeof runtime.stdout?.off !== "function") {
       return;
     }
 
     const handleResize = () => {
-      setTerminalSize(resolveTerminalSize(output));
+      setTerminalSize(resolveTerminalSize(runtime.stdout));
     };
 
-    output.on("resize", handleResize);
+    runtime.stdout.on("resize", handleResize);
     return () => {
-      output.off?.("resize", handleResize);
+      runtime.stdout.off?.("resize", handleResize);
     };
-  }, [output]);
+  }, [runtime.stdout]);
 
   const writeRaw = useCallback((chunk: string): boolean => {
-    if (typeof output?.write !== "function") {
+    if (typeof runtime.stdout?.write !== "function") {
       return false;
     }
 
-    output.write(chunk);
+    runtime.stdout.write(chunk);
     return true;
-  }, [output]);
+  }, [runtime.stdout]);
 
   const inputController = useMemo(
     () => createTerminalInputController({
-      stdin: input,
-      setRawMode: stdinState.setRawMode,
-      isRawModeSupported: stdinState.isRawModeSupported,
+      stdin: runtime.stdin,
+      setRawMode: runtime.setRawMode,
+      isRawModeSupported: runtime.isRawModeSupported,
     }),
-    [input, stdinState.isRawModeSupported, stdinState.setRawMode],
+    [runtime.stdin, runtime.isRawModeSupported, runtime.setRawMode],
   );
 
   useEffect(() => () => {
     inputController.dispose();
   }, [inputController]);
 
-  const runtime = useMemo<TuiRuntimeContextValue>(() => ({
-    stdout: output,
-    stdin: input,
-    setRawMode: stdinState.setRawMode,
-    isRawModeSupported: stdinState.isRawModeSupported,
-    exit: appState.exit,
+  const value = useMemo<TuiRuntimeContextValue>(() => ({
+    stdout: runtime.stdout,
+    stdin: runtime.stdin,
+    setRawMode: runtime.setRawMode,
+    isRawModeSupported: runtime.isRawModeSupported,
+    exit: runtime.exit,
     terminalSize,
-    isTTY: output?.isTTY === true,
+    isTTY: runtime.stdout?.isTTY === true,
     writeRaw,
     subscribeInput: inputController.subscribe,
   }), [
-    appState.exit,
-    input,
     inputController.subscribe,
-    stdinState.isRawModeSupported,
-    stdinState.setRawMode,
-    output,
+    runtime.exit,
+    runtime.isRawModeSupported,
+    runtime.setRawMode,
+    runtime.stdin,
+    runtime.stdout,
+    inputController.subscribe,
     terminalSize,
     writeRaw,
   ]);
 
   return (
-    <TuiRuntimeContext.Provider value={runtime}>
+    <TuiRuntimeContext.Provider value={value}>
       {children}
     </TuiRuntimeContext.Provider>
   );
 };
 
+function createRuntimeValue(
+  options: InkRenderOptions | undefined,
+): MutableTuiRuntimeContextValue {
+  const stdout = options?.stdout ?? process.stdout;
+  const stdin = options?.stdin ?? process.stdin;
+  const setRawMode = (enabled: boolean) => {
+    if (typeof stdin?.setRawMode === "function") {
+      stdin.setRawMode(enabled);
+    }
+  };
+
+  let instanceExit: (() => void) | undefined;
+
+  return {
+    stdout,
+    stdin,
+    setRawMode,
+    isRawModeSupported: typeof stdin?.setRawMode === "function",
+    exit: () => {
+      instanceExit?.();
+    },
+    terminalSize: resolveTerminalSize(stdout),
+    isTTY: stdout?.isTTY === true,
+    writeRaw: (chunk: string) => {
+      if (typeof stdout?.write !== "function") {
+        return false;
+      }
+
+      stdout.write(chunk);
+      return true;
+    },
+    subscribeInput: () => () => undefined,
+    attachExit(exit: () => void) {
+      instanceExit = exit;
+    },
+  };
+}
+
 export function render(
   node: React.ReactNode,
   options?: InkRenderOptions,
 ): ReturnType<typeof localRender> {
-  return localRender(
-    <TuiRuntimeProvider renderOptions={options}>
+  const runtime = createRuntimeValue(options);
+  const instance = localRender(
+    <TuiRuntimeProvider runtime={runtime}>
       {node}
     </TuiRuntimeProvider>,
     options,
   );
+
+  runtime.attachExit(instance.unmount);
+  return instance;
 }
 
 export const Box = InkBox;
@@ -282,53 +333,38 @@ export const Static = InkStatic;
 export const useInput = inkUseInput;
 
 export function useStdout(): StdoutState {
-  const inkState = inkUseStdout();
   const runtime = useContext(TuiRuntimeContext);
-
-  if (!runtime) {
-    return inkState;
-  }
-
   return {
-    ...inkState,
-    stdout: runtime.stdout ?? inkState.stdout,
+    stdout: runtime?.stdout ?? process.stdout,
   };
 }
 
 export function useStdin(): StdinState {
-  const inkState = inkUseStdin();
   const runtime = useContext(TuiRuntimeContext);
-
-  if (!runtime) {
-    return inkState;
-  }
+  const stdin = runtime?.stdin ?? process.stdin;
+  const setRawMode = runtime?.setRawMode ?? ((enabled: boolean) => {
+    if (typeof stdin?.setRawMode === "function") {
+      stdin.setRawMode(enabled);
+    }
+  });
 
   return {
-    ...inkState,
-    stdin: runtime.stdin ?? inkState.stdin,
-    setRawMode: runtime.setRawMode,
-    isRawModeSupported: runtime.isRawModeSupported,
+    stdin,
+    setRawMode,
+    isRawModeSupported: runtime?.isRawModeSupported ?? (typeof stdin?.setRawMode === "function"),
   };
 }
 
 export function useApp(): AppState {
-  const inkState = inkUseApp();
   const runtime = useContext(TuiRuntimeContext);
-
-  if (!runtime) {
-    return inkState;
-  }
-
   return {
-    ...inkState,
-    exit: runtime.exit,
+    exit: runtime?.exit ?? (() => undefined),
   };
 }
 
 export function useTerminalOutput(): OutputStream {
-  const inkState = inkUseStdout();
   const runtime = useContext(TuiRuntimeContext);
-  return runtime?.stdout ?? inkState.stdout;
+  return runtime?.stdout ?? process.stdout;
 }
 
 export function useTerminalSize(): TerminalSize {
