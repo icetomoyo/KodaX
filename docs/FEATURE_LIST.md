@@ -16,8 +16,8 @@
 | Tracked feature IDs | `001-056` |
 | Total tracked features | `56` |
 | Completed | `51` |
-| InProgress | `0` |
-| Planned | `5` |
+| InProgress | `1` |
+| Planned | `4` |
 | Current released version | `v0.7.14` |
 
 ### 各版本待做分布
@@ -26,7 +26,7 @@
 |---|---|
 | `v0.7.20` | `1` |
 | `v0.7.25` | `0` |
-| `v0.7.30` | `2` |
+| `v0.7.30` | `1` |
 | `v0.8.0` | `1` |
 | `v0.9.0` | `0` |
 | `v1.0.0` | `1` |
@@ -35,7 +35,9 @@
 
 ## 进行中的 Feature
 
-_当前没有 InProgress feature。下一步按 `v0.7.30` 顺序启动 `FEATURE_056`。_
+| ID | Title | Planned | Design |
+|---|---|---|---|
+| `056` | Tool Interaction Maturity and Transcript-Native Explanation Layer | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_056-tool-interaction-maturity-and-transcript-native-explanation-layer) |
 
 ---
 

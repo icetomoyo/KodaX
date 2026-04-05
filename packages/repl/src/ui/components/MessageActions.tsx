@@ -25,16 +25,16 @@ export const MessageActions: React.FC<MessageActionsProps> = ({
     actions.push("\u2190/\u2192 select");
   }
   if (copyMessage) {
-    actions.push("C copy");
+    actions.push("C copy result");
   }
   if (copyToolInput) {
-    actions.push("I copy input");
+    actions.push("I copy tool input");
   }
   if (copyOnSelect) {
     actions.push("Select copies");
   }
   if (toggleDetail) {
-    actions.push("V toggle detail");
+    actions.push("V details");
   }
   if (matchNavigation) {
     actions.push("Up/Down matches");

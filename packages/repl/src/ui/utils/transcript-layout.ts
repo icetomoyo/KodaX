@@ -4,6 +4,7 @@ import { calculateVisualLayout } from "./textUtils.js";
 import {
   collapseToolCalls,
   formatCollapsedToolInlineText,
+  formatToolFailureExplanation,
   formatLiveToolLabel,
 } from "./tool-display.js";
 
@@ -249,15 +250,19 @@ function buildToolRows(
     }
   );
 
-  if (tool.error) {
+  const failureExplanation = formatToolFailureExplanation(tool);
+  failureExplanation.forEach((line, index) => {
     pushWrappedRows(
       rows,
-      `${itemKey}-tool-${tool.id}-error`,
-      tool.error,
+      `${itemKey}-tool-${tool.id}-explanation-${index}`,
+      line,
       getBodyWidth(viewportWidth, 4),
-      { color: "error", indent: 4 }
+      {
+        color: line.startsWith("Error:") ? "error" : "dim",
+        indent: 4,
+      }
     );
-  }
+  });
 
   if (showDetailedTools) {
     const inputLines = buildToolInputPreview(tool);
@@ -320,15 +325,19 @@ function buildLiveToolRows(
     }
   );
 
-  if (tool.error) {
+  const failureExplanation = formatToolFailureExplanation(tool);
+  failureExplanation.forEach((line, index) => {
     pushWrappedRows(
       rows,
-      `${itemKey}-tool-${tool.id}-error`,
-      tool.error,
+      `${itemKey}-tool-${tool.id}-explanation-${index}`,
+      line,
       getBodyWidth(viewportWidth, 4),
-      { color: "error", indent: 4 }
+      {
+        color: line.startsWith("Error:") ? "error" : "dim",
+        indent: 4,
+      }
     );
-  }
+  });
 }
 
 export function buildTranscriptRows(options: TranscriptBuildOptions): TranscriptRow[] {

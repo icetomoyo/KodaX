@@ -5,6 +5,7 @@ import {
   formatCollapsedToolInlineText,
   formatLiveToolLabel,
   formatToolCallInlineText,
+  formatToolFailureExplanation,
   formatToolSummary,
 } from "./tool-display.js";
 
@@ -37,6 +38,17 @@ describe("tool-display", () => {
 
     expect(formatToolCallInlineText(tool))
       .toBe("[Planner] changed_diff_bundle - packages/coding/src/task-engine.ts - limit=120 (118ms)");
+  });
+
+  it("formats awaiting-approval tool text with explicit status detail", () => {
+    const tool: ToolCall = {
+      id: "tool-awaiting",
+      name: "write_file",
+      status: ToolCallStatus.AwaitingApproval,
+      startTime: 100,
+    };
+
+    expect(formatToolCallInlineText(tool)).toBe("write_file (awaiting approval)");
   });
 
   it("formats completed diff tools from their output details", () => {
@@ -170,5 +182,21 @@ describe("tool-display", () => {
     expect(groups).toHaveLength(1);
     expect(formatCollapsedToolInlineText(groups[0]!))
       .toBe("changed_diff_bundle - packages/coding/src/task-engine.ts - limit=120 (118ms) x2");
+  });
+
+  it("builds compact failure explanations from error and output", () => {
+    const tool: ToolCall = {
+      id: "tool-fail",
+      name: "bash",
+      status: ToolCallStatus.Error,
+      startTime: 100,
+      error: "permission denied",
+      output: "fatal: permission denied\nsee more details in debug log",
+    };
+
+    expect(formatToolFailureExplanation(tool)).toEqual([
+      "Error: permission denied",
+      "Last output: fatal: permission denied",
+    ]);
   });
 });

@@ -340,8 +340,36 @@ describe("transcript-layout", () => {
     });
 
     const text = rows.map((row) => row.text).join("\n");
-    expect(text).toContain("write_file (50%)");
-    expect(text).toContain("denied");
+    expect(text).toContain("write_file (running - 50%)");
+    expect(text).toContain("Error: denied");
+  });
+
+  it("adds compact last-output context for failed tools without opening detailed review", () => {
+    const rows = buildTranscriptRows({
+      items: [
+        {
+          id: "tool-group-3",
+          type: "tool_group",
+          timestamp: Date.now(),
+          tools: [
+            {
+              id: "tool-3",
+              name: "bash",
+              status: ToolCallStatus.Error,
+              startTime: Date.now(),
+              error: "permission denied",
+              output: "fatal: permission denied\nstack trace line 2",
+            },
+          ],
+        },
+      ],
+      viewportWidth: 80,
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text).toContain("bash (failed)");
+    expect(text).toContain("Error: permission denied");
+    expect(text).toContain("Last output: fatal: permission denied");
   });
 
   it("formats tool summaries from structured preview text in tool groups", () => {

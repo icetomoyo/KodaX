@@ -11,6 +11,16 @@ function truncateValue(value: string, maxLength = 120): string {
   return value.length > maxLength ? `${value.slice(0, maxLength - 3)}...` : value;
 }
 
+function extractFirstMeaningfulLine(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  return value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean);
+}
+
 function splitDisplayToolName(toolName: string): { rolePrefix?: string; toolLabel: string } {
   const match = toolName.match(/^\[([^\]]+)\]\s+(.*)$/);
   if (!match) {
@@ -520,6 +530,47 @@ function formatDuration(startTime: number, endTime?: number): string | undefined
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+function formatToolStatusDetail(tool: ToolCall): string | undefined {
+  switch (tool.status) {
+    case ToolCallStatus.Scheduled:
+      return "scheduled";
+    case ToolCallStatus.Validating:
+      return "validating";
+    case ToolCallStatus.AwaitingApproval:
+      return "awaiting approval";
+    case ToolCallStatus.Executing:
+      return "running";
+    case ToolCallStatus.Error:
+      return "failed";
+    case ToolCallStatus.Cancelled:
+      return "cancelled";
+    default:
+      return undefined;
+  }
+}
+
+export function formatToolFailureExplanation(tool: ToolCall): string[] {
+  const errorLine = extractFirstMeaningfulLine(tool.error);
+  const outputLine = typeof tool.output === "string"
+    ? extractFirstMeaningfulLine(tool.output)
+    : undefined;
+  const lines: string[] = [];
+
+  if (errorLine) {
+    lines.push(`Error: ${truncateValue(errorLine, 220)}`);
+  }
+
+  if (
+    tool.status === ToolCallStatus.Error
+    && outputLine
+    && (!errorLine || outputLine.toLowerCase() !== errorLine.toLowerCase())
+  ) {
+    lines.push(`Last output: ${truncateValue(outputLine, 220)}`);
+  }
+
+  return lines;
+}
+
 export function formatToolSummary(toolName: string, input?: ToolInputValue): string {
   return formatToolDetailSummary(toolName, summarizeToolDetails(toolName, input));
 }
@@ -531,11 +582,12 @@ export function formatToolCallInlineText(tool: ToolCall): string {
   const summary = outputDetails.length > 0
     ? formatToolDetailSummary(tool.name, outputDetails)
     : formatToolSummary(tool.name, tool.input);
+  const statusDetail = formatToolStatusDetail(tool);
   const duration = formatDuration(tool.startTime, tool.endTime);
   const progress = tool.status === ToolCallStatus.Executing && tool.progress !== undefined
     ? `${tool.progress}%`
     : undefined;
-  const suffixParts = [progress, duration].filter(Boolean);
+  const suffixParts = [statusDetail, progress, duration].filter(Boolean);
   return suffixParts.length > 0 ? `${summary} (${suffixParts.join(" - ")})` : summary;
 }
 
