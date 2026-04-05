@@ -15,9 +15,9 @@
 |---|---|
 | Tracked feature IDs | `001-056` |
 | Total tracked features | `56` |
-| Completed | `49` |
+| Completed | `50` |
 | InProgress | `0` |
-| Planned | `7` |
+| Planned | `6` |
 | Current released version | `v0.7.14` |
 
 ### 各版本待做分布
@@ -26,7 +26,7 @@
 |---|---|
 | `v0.7.20` | `1` |
 | `v0.7.25` | `0` |
-| `v0.7.30` | `4` |
+| `v0.7.30` | `3` |
 | `v0.8.0` | `1` |
 | `v0.9.0` | `0` |
 | `v1.0.0` | `1` |
@@ -48,7 +48,6 @@ _当前没有 InProgress feature。下一步按 `v0.7.30` 顺序启动 `FEATURE_
 | `026` | Roadmap Integrity and Planning Hygiene | Internal | High | `v0.7.20` | [v0.7.20](features/v0.7.20.md#feature_026-roadmap-integrity-and-planning-hygiene) |
 | `030` | Multi-Surface Delivery | Enhancement | High | `v1.0.0` | [v1.0.0](features/v1.0.0.md#feature_030-multi-surface-delivery) |
 | `031` | Multimodal Artifact Inputs | New | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_031-multimodal-artifact-inputs) |
-| `042` | Incremental Repository Intelligence Refresh and Java/C++ Structural Semantics | Enhancement | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_042-incremental-repository-intelligence-refresh-and-javac-structural-semantics) |
 | `056` | Tool Interaction Maturity and Transcript-Native Explanation Layer | Enhancement | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_056-tool-interaction-maturity-and-transcript-native-explanation-layer) |
 
 ---
@@ -117,6 +116,7 @@ _当前没有 InProgress feature。下一步按 `v0.7.30` 顺序启动 `FEATURE_
 | `048` | Sectionized Prompt Assembly and Dynamic Capability Truth | `v0.8.0` (unreleased) | [v0.8.0](features/v0.8.0.md#feature_048-sectionized-prompt-assembly-and-dynamic-capability-truth) |
 | `049` | First-Class Search, Fetch, Code Search, and Semantic Retrieval | `v0.8.0` (unreleased) | [v0.8.0](features/v0.8.0.md#feature_049-first-class-search-fetch-code-search-and-semantic-retrieval) |
 | `050` | Prompt Contracts, Snapshots, and Regression Evaluation | `v0.8.0` (unreleased) | [v0.8.0](features/v0.8.0.md#feature_050-prompt-contracts-snapshots-and-regression-evaluation) |
+| `042` | Incremental Repository Intelligence Refresh and Java/C++ Structural Semantics | `v0.7.30` (unreleased) | [v0.7.30](features/v0.7.30.md#feature_042-incremental-repository-intelligence-refresh-and-javac-structural-semantics) |
 | `051` | Host-Aware Fullscreen TUI Substrate and Transcript UX | `v0.7.25` (unreleased) | [v0.7.25](features/v0.7.25.md#feature_051-host-aware-fullscreen-tui-substrate-and-transcript-ux) |
 | `052` | Dual-Profile AMA Harness and Child Fan-Out Boundaries | `v0.8.0` (unreleased) | [v0.8.0](features/v0.8.0.md#feature_052-dual-profile-ama-harness-and-child-fan-out-boundaries) |
 | `053` | Canonical Repo Identity and Managed Worktree Runtime | `v0.7.30` (unreleased) | [v0.7.30](features/v0.7.30.md#feature_053-canonical-repo-identity-and-managed-worktree-runtime) |

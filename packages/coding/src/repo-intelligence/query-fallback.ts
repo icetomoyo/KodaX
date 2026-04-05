@@ -27,7 +27,8 @@ import { buildRepoIntelligenceMetadataLines } from './trace-events.js';
 const DEFAULT_REPO_INTELLIGENCE_DIR = path.join('.agent', 'repo-intelligence');
 const QUERY_INDEX_FILE = 'repo-intelligence-index.json';
 const QUERY_MANIFEST_FILE = 'repo-intelligence-manifest.json';
-const QUERY_SCHEMA_VERSION = 10;
+const QUERY_ANALYSIS_CACHE_FILE = 'repo-intelligence-analysis-cache.json';
+const QUERY_SCHEMA_VERSION = 11;
 const MAX_FILE_BYTES = 256 * 1024;
 const MAX_ANALYZED_FILES = 250;
 const MAX_MODULE_SYMBOLS = 8;
@@ -155,6 +156,13 @@ interface RepoIntelligenceManifest {
   sourceFingerprint: string;
 }
 
+interface RepoIntelligenceAnalysisCache {
+  schemaVersion: number;
+  workspaceRoot: string;
+  generatedAt: string;
+  entries: CachedFileAnalysis[];
+}
+
 export interface ModuleContextResult {
   module: ModuleCapsule;
   freshness: string;
@@ -213,11 +221,22 @@ interface ExtractedSymbol {
 interface FallbackFileAnalysis {
   filePath: string;
   moduleId: string;
+  sourceSignature: string;
   language: RepoLanguageId;
   capabilityTier: LanguageCapabilityTier;
   importPaths: string[];
   symbols: ExtractedSymbol[];
-  content: string;
+  callCandidates: string[];
+}
+
+interface CachedFileAnalysis extends Omit<FallbackFileAnalysis, 'callCandidates'> {
+  callCandidates: string[];
+}
+
+interface SourceFileSnapshot {
+  filePath: string;
+  moduleId: string;
+  sourceSignature: string;
 }
 
 type RepoContext = Pick<KodaXToolExecutionContext, 'executionCwd' | 'gitRoot'>;
@@ -308,12 +327,14 @@ function resolveIndexFiles(workspaceRoot: string): {
   storageRoot: string;
   indexPath: string;
   manifestPath: string;
+  analysisCachePath: string;
 } {
   const storageRoot = resolveStorageRoot(workspaceRoot);
   return {
     storageRoot,
     indexPath: path.join(storageRoot, QUERY_INDEX_FILE),
     manifestPath: path.join(storageRoot, QUERY_MANIFEST_FILE),
+    analysisCachePath: path.join(storageRoot, QUERY_ANALYSIS_CACHE_FILE),
   };
 }
 
@@ -335,6 +356,40 @@ function isManifestPayload(value: unknown): value is RepoIntelligenceManifest {
     && typeof (value as RepoIntelligenceManifest).workspaceRoot === 'string'
     && typeof (value as RepoIntelligenceManifest).generatedAt === 'string'
     && typeof (value as RepoIntelligenceManifest).overviewGeneratedAt === 'string';
+}
+
+function isExtractedSymbolPayload(value: unknown): value is ExtractedSymbol {
+  return typeof value === 'object'
+    && value !== null
+    && typeof (value as ExtractedSymbol).name === 'string'
+    && typeof (value as ExtractedSymbol).kind === 'string'
+    && typeof (value as ExtractedSymbol).line === 'number'
+    && typeof (value as ExtractedSymbol).signature === 'string'
+    && typeof (value as ExtractedSymbol).exported === 'boolean';
+}
+
+function isCachedFileAnalysisPayload(value: unknown): value is CachedFileAnalysis {
+  return typeof value === 'object'
+    && value !== null
+    && typeof (value as CachedFileAnalysis).filePath === 'string'
+    && typeof (value as CachedFileAnalysis).moduleId === 'string'
+    && typeof (value as CachedFileAnalysis).sourceSignature === 'string'
+    && typeof (value as CachedFileAnalysis).language === 'string'
+    && typeof (value as CachedFileAnalysis).capabilityTier === 'string'
+    && Array.isArray((value as CachedFileAnalysis).importPaths)
+    && Array.isArray((value as CachedFileAnalysis).symbols)
+    && ((value as CachedFileAnalysis).symbols as unknown[]).every(isExtractedSymbolPayload)
+    && Array.isArray((value as CachedFileAnalysis).callCandidates);
+}
+
+function isAnalysisCachePayload(value: unknown): value is RepoIntelligenceAnalysisCache {
+  return typeof value === 'object'
+    && value !== null
+    && (value as RepoIntelligenceAnalysisCache).schemaVersion === QUERY_SCHEMA_VERSION
+    && typeof (value as RepoIntelligenceAnalysisCache).workspaceRoot === 'string'
+    && typeof (value as RepoIntelligenceAnalysisCache).generatedAt === 'string'
+    && Array.isArray((value as RepoIntelligenceAnalysisCache).entries)
+    && ((value as RepoIntelligenceAnalysisCache).entries as unknown[]).every(isCachedFileAnalysisPayload);
 }
 
 async function ensureDir(targetPath: string): Promise<void> {
@@ -361,6 +416,15 @@ async function readCachedIndex(
     return null;
   }
   return indexPayload;
+}
+
+async function readAnalysisCache(workspaceRoot: string): Promise<Map<string, CachedFileAnalysis>> {
+  const { analysisCachePath } = resolveIndexFiles(workspaceRoot);
+  const payload = await safeReadJson<unknown>(analysisCachePath);
+  if (!isAnalysisCachePayload(payload) || payload.workspaceRoot !== workspaceRoot) {
+    return new Map<string, CachedFileAnalysis>();
+  }
+  return new Map(payload.entries.map((entry) => [entry.filePath, entry]));
 }
 
 function withinModuleRoot(filePath: string, root: string): boolean {
@@ -582,10 +646,30 @@ function extractRustSymbols(content: string): ExtractedSymbol[] {
 
 function extractJavaOrCppSymbols(content: string, language: RepoLanguageId): ExtractedSymbol[] {
   const symbols: ExtractedSymbol[] = [];
-  for (const match of content.matchAll(/(^|\n)\s*(?:public\s+)?class\s+([A-Za-z_][A-Za-z0-9_]*)/g)) {
+  const typePatterns: Array<{ regex: RegExp; kind: RepoSymbolKind }> = [
+    { regex: /(^|\n)\s*(?:public\s+)?class\s+([A-Za-z_][A-Za-z0-9_]*)/g, kind: 'class' },
+    { regex: /(^|\n)\s*(?:public\s+)?interface\s+([A-Za-z_][A-Za-z0-9_]*)/g, kind: 'interface' },
+    { regex: /(^|\n)\s*(?:public\s+)?enum(?:\s+class)?\s+([A-Za-z_][A-Za-z0-9_]*)/g, kind: 'enum' },
+    { regex: /(^|\n)\s*struct\s+([A-Za-z_][A-Za-z0-9_]*)/g, kind: 'struct' },
+  ];
+  for (const { regex, kind } of typePatterns) {
+    for (const match of content.matchAll(regex)) {
+      symbols.push({
+        name: match[2],
+        kind,
+        line: lineNumberForOffset(content, match.index ?? 0),
+        signature: match[0].trim(),
+        exported: true,
+      });
+    }
+  }
+  const recordRegex = language === 'java'
+    ? /(^|\n)\s*(?:public\s+)?record\s+([A-Za-z_][A-Za-z0-9_]*)/g
+    : null;
+  for (const match of recordRegex ? content.matchAll(recordRegex) : []) {
     symbols.push({
       name: match[2],
-      kind: 'class',
+      kind: 'type',
       line: lineNumberForOffset(content, match.index ?? 0),
       signature: match[0].trim(),
       exported: true,
@@ -594,17 +678,20 @@ function extractJavaOrCppSymbols(content: string, language: RepoLanguageId): Ext
   const methodRegex = language === 'java'
     ? /(^|\n)\s*(?:public|private|protected)?\s*(?:static\s+)?[A-Za-z0-9_<>\[\]]+\s+([A-Za-z_][A-Za-z0-9_]*)\s*\([^;{)]*\)\s*\{/g
     : /(^|\n)\s*[A-Za-z0-9_:<>\*&\s]+\s+([A-Za-z_][A-Za-z0-9_:]*)\s*\([^;{)]*\)\s*\{/g;
-  for (const match of content.matchAll(methodRegex)) {
-    const rawName = match[2];
-    const name = rawName.includes('::') ? rawName.split('::').at(-1)! : rawName;
-    symbols.push({
-      name,
-      kind: 'method',
-      line: lineNumberForOffset(content, match.index ?? 0),
-      signature: match[0].trim().split('\n')[0] ?? name,
-      exported: language !== 'java' || match[0].includes('public'),
-    });
-  }
+    for (const match of content.matchAll(methodRegex)) {
+      const rawName = match[2];
+      const name = rawName.includes('::') ? rawName.split('::').at(-1)! : rawName;
+      const kind: RepoSymbolKind = language === 'cpp' && !rawName.includes('::')
+        ? 'function'
+        : 'method';
+      symbols.push({
+        name,
+        kind,
+        line: lineNumberForOffset(content, match.index ?? 0),
+        signature: match[0].trim().split('\n')[0] ?? name,
+        exported: language !== 'java' || match[0].includes('public'),
+      });
+    }
   return symbols;
 }
 
@@ -632,13 +719,19 @@ function resolveImportToFile(
   currentFilePath: string,
   knownFiles: Set<string>,
 ): string | null {
-  if (!importPath.startsWith('.')) {
-    return null;
-  }
   const baseDir = path.posix.dirname(currentFilePath);
   const normalizedBase = baseDir === '.' ? '' : baseDir;
-  const rawResolved = normalizeRelativePath(path.posix.normalize(path.posix.join(normalizedBase, importPath)));
-  const candidates = [
+  const dottedResolved = importPath.includes('.')
+    ? normalizeRelativePath(importPath.replace(/\./g, '/'))
+    : importPath;
+  const rawCandidates = importPath.startsWith('.')
+    ? [normalizeRelativePath(path.posix.normalize(path.posix.join(normalizedBase, importPath)))]
+    : [
+      normalizeRelativePath(importPath),
+      normalizeRelativePath(path.posix.normalize(path.posix.join(normalizedBase, importPath))),
+      normalizeRelativePath(dottedResolved),
+    ];
+  const candidates = Array.from(new Set(rawCandidates.flatMap((rawResolved) => ([
     rawResolved,
     `${rawResolved}.ts`,
     `${rawResolved}.tsx`,
@@ -649,10 +742,14 @@ function resolveImportToFile(
     `${rawResolved}.rs`,
     `${rawResolved}.java`,
     `${rawResolved}.cpp`,
+    `${rawResolved}.cc`,
+    `${rawResolved}.cxx`,
+    `${rawResolved}.hpp`,
+    `${rawResolved}.h`,
     `${rawResolved}/index.ts`,
     `${rawResolved}/index.js`,
     `${rawResolved}/__init__.py`,
-  ];
+  ]))));
   return candidates.find((candidate) => knownFiles.has(candidate)) ?? null;
 }
 
@@ -673,6 +770,7 @@ async function analyzeSourceFile(
   workspaceRoot: string,
   filePath: string,
   moduleId: string,
+  sourceSignature: string,
 ): Promise<FallbackFileAnalysis | null> {
   const absolutePath = path.join(workspaceRoot, filePath);
   const stat = await fs.stat(absolutePath);
@@ -684,11 +782,12 @@ async function analyzeSourceFile(
   return {
     filePath,
     moduleId,
+    sourceSignature,
     language,
     capabilityTier: capabilityTierForLanguage(language),
     importPaths: extractImports(content, language),
     symbols: dedupeByName(extractSymbols(content, language)),
-    content,
+    callCandidates: extractCallCandidates(content),
   };
 }
 
@@ -697,25 +796,51 @@ async function collectSourceFileCandidates(
 ): Promise<string[]> {
   return snapshot.inventory?.sourceFiles
     ?? (await collectWorkspaceFilesForSource(snapshot.workspaceRoot, snapshot.source)).files
-      .filter((filePath) => SOURCE_EXTENSIONS.has(path.extname(filePath).toLowerCase()))
-      .map((filePath) => normalizeRelativePath(filePath));
+        .filter((filePath) => SOURCE_EXTENSIONS.has(path.extname(filePath).toLowerCase()))
+        .map((filePath) => normalizeRelativePath(filePath));
 }
 
-async function computeSourceFingerprint(
-  workspaceRoot: string,
+async function buildSourceFileSnapshots(
+  snapshot: RepoOverviewSnapshot,
   sourceFiles: string[],
-): Promise<string> {
-  const fingerprintParts: string[] = [];
+): Promise<SourceFileSnapshot[]> {
+  const moduleAreas = snapshot.overview.areas.length > 0
+    ? snapshot.overview.areas
+    : [{
+      id: '.',
+      label: path.basename(snapshot.workspaceRoot),
+      kind: 'root' as const,
+      root: '.',
+      fileCount: sourceFiles.length,
+      manifests: snapshot.overview.manifests,
+      sampleFiles: [],
+    }];
+  const snapshots: SourceFileSnapshot[] = [];
   for (const filePath of sourceFiles.slice(0, MAX_ANALYZED_FILES)) {
     try {
-      const stat = await fs.stat(path.join(workspaceRoot, filePath));
-      fingerprintParts.push(`${filePath}:${stat.size}:${Math.trunc(stat.mtimeMs)}`);
+      const stat = await fs.stat(path.join(snapshot.workspaceRoot, filePath));
+      snapshots.push({
+        filePath,
+        moduleId: pickModuleAreaForFile(filePath, moduleAreas).id,
+        sourceSignature: buildSourceSignature(filePath, stat),
+      });
     } catch (error) {
       debugLogRepoIntelligence(`Fallback repo intelligence could not stat ${filePath} for fingerprinting.`, error);
-      fingerprintParts.push(`${filePath}:missing`);
+      snapshots.push({
+        filePath,
+        moduleId: pickModuleAreaForFile(filePath, moduleAreas).id,
+        sourceSignature: `${filePath}:missing`,
+      });
     }
   }
-  return hashValues([workspaceRoot, ...fingerprintParts]);
+  return snapshots;
+}
+
+function computeSourceFingerprint(
+  workspaceRoot: string,
+  sourceFiles: SourceFileSnapshot[],
+): string {
+  return hashValues([workspaceRoot, ...sourceFiles.map((file) => file.sourceSignature)]);
 }
 
 function buildRepoLanguageSupport(analyses: FallbackFileAnalysis[]): RepoLanguageSupport[] {
@@ -740,11 +865,32 @@ function buildSymbolRecordId(moduleId: string, filePath: string, name: string, l
   return hashValues([moduleId, filePath, name, line]);
 }
 
-function collectLikelyCalls(content: string, symbolNames: string[]): string[] {
+function buildSourceSignature(filePath: string, stat: { size: number; mtimeMs: number }): string {
+  return `${filePath}:${stat.size}:${Math.trunc(stat.mtimeMs)}`;
+}
+
+function extractCallCandidates(content: string): string[] {
+  const candidates = new Set<string>();
+  const blocked = new Set(['if', 'for', 'while', 'switch', 'catch', 'return', 'sizeof', 'delete', 'new']);
+  for (const match of content.matchAll(/\b([A-Za-z_][A-Za-z0-9_:]*)\s*\(/g)) {
+    const rawCandidate = match[1] ?? '';
+    const candidate = rawCandidate.includes('::') ? rawCandidate.split('::').at(-1) ?? rawCandidate : rawCandidate;
+    if (!candidate || blocked.has(candidate)) {
+      continue;
+    }
+    candidates.add(candidate);
+    if (candidates.size >= 128) {
+      break;
+    }
+  }
+  return Array.from(candidates.values());
+}
+
+function collectLikelyCalls(callCandidates: string[], symbolNames: string[]): string[] {
+  const availableNames = new Set(callCandidates);
   const calls = new Set<string>();
   for (const symbolName of symbolNames) {
-    const pattern = new RegExp(`\\b${symbolName.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}\\s*\\(`, 'g');
-    if (pattern.test(content)) {
+    if (availableNames.has(symbolName)) {
       calls.add(symbolName);
     }
   }
@@ -860,7 +1006,7 @@ function buildSymbolRecords(
 
   const records: RepoSymbolRecord[] = [];
   for (const analysis of analyses) {
-    const fileLevelCalls = collectLikelyCalls(analysis.content, knownNames);
+    const fileLevelCalls = collectLikelyCalls(analysis.callCandidates, knownNames);
     for (const symbol of analysis.symbols) {
       const record: RepoSymbolRecord = {
         id: buildSymbolRecordId(analysis.moduleId, analysis.filePath, symbol.name, symbol.line),
@@ -987,30 +1133,29 @@ function buildProcesses(
 
 async function buildIndexFromSnapshot(
   snapshot: RepoOverviewSnapshot,
-  sourceFileCandidates: string[],
+  sourceFiles: SourceFileSnapshot[],
   sourceFingerprint: string,
-): Promise<RepoIntelligenceIndex> {
-  const analyzedFiles = sourceFileCandidates.slice(0, MAX_ANALYZED_FILES);
-  const moduleAreas = snapshot.overview.areas.length > 0
-    ? snapshot.overview.areas
-    : [{
-      id: '.',
-      label: path.basename(snapshot.workspaceRoot),
-      kind: 'root' as const,
-      root: '.',
-      fileCount: analyzedFiles.length,
-      manifests: snapshot.overview.manifests,
-      sampleFiles: [],
-    }];
+  totalSourceFileCount: number,
+): Promise<{ index: RepoIntelligenceIndex; analyses: FallbackFileAnalysis[] }> {
+  const cachedAnalyses = await readAnalysisCache(snapshot.workspaceRoot);
   const analyses = (await Promise.all(
-    analyzedFiles.map((filePath) => analyzeSourceFile(
-      snapshot.workspaceRoot,
-      filePath,
-      pickModuleAreaForFile(filePath, moduleAreas).id,
-    ).catch((error) => {
-      debugLogRepoIntelligence(`Fallback repo intelligence skipped unreadable source file ${filePath}.`, error);
-      return null;
-    })),
+    sourceFiles.map(async (sourceFile) => {
+      const cached = cachedAnalyses.get(sourceFile.filePath);
+      if (cached && cached.moduleId === sourceFile.moduleId && cached.sourceSignature === sourceFile.sourceSignature) {
+        return cached;
+      }
+      try {
+        return await analyzeSourceFile(
+          snapshot.workspaceRoot,
+          sourceFile.filePath,
+          sourceFile.moduleId,
+          sourceFile.sourceSignature,
+        );
+      } catch (error) {
+        debugLogRepoIntelligence(`Fallback repo intelligence skipped unreadable source file ${sourceFile.filePath}.`, error);
+        return null;
+      }
+    }),
   )).filter((analysis): analysis is FallbackFileAnalysis => analysis !== null);
 
   const modules = buildModules(snapshot, analyses);
@@ -1021,33 +1166,54 @@ async function buildIndexFromSnapshot(
   const generatedAt = new Date().toISOString();
 
   return {
-    schemaVersion: QUERY_SCHEMA_VERSION,
-    workspaceRoot: snapshot.workspaceRoot,
-    generatedAt,
-    overviewGeneratedAt: snapshot.overview.generatedAt,
-    sourceFileCount: sourceFileCandidates.length,
-    sourceFingerprint,
-    languages,
-    modules,
-    symbols,
-    processes,
+    index: {
+      schemaVersion: QUERY_SCHEMA_VERSION,
+      workspaceRoot: snapshot.workspaceRoot,
+      generatedAt,
+      overviewGeneratedAt: snapshot.overview.generatedAt,
+      sourceFileCount: totalSourceFileCount,
+      sourceFingerprint,
+      languages,
+      modules,
+      symbols,
+      processes,
+    },
+    analyses,
   };
 }
 
-async function writeIndexArtifacts(index: RepoIntelligenceIndex): Promise<void> {
-  const { storageRoot, indexPath, manifestPath } = resolveIndexFiles(index.workspaceRoot);
+async function writeIndexArtifacts(
+  index: RepoIntelligenceIndex,
+  analyses: FallbackFileAnalysis[],
+): Promise<void> {
+  const { storageRoot, indexPath, manifestPath, analysisCachePath } = resolveIndexFiles(index.workspaceRoot);
   await ensureDir(storageRoot);
   await Promise.all([
-    writeJsonFileAtomic(indexPath, index),
-    writeJsonFileAtomic(manifestPath, {
-      schemaVersion: QUERY_SCHEMA_VERSION,
+      writeJsonFileAtomic(indexPath, index),
+      writeJsonFileAtomic(manifestPath, {
+        schemaVersion: QUERY_SCHEMA_VERSION,
       workspaceRoot: index.workspaceRoot,
       generatedAt: index.generatedAt,
-      overviewGeneratedAt: index.overviewGeneratedAt,
-      sourceFileCount: index.sourceFileCount,
-      sourceFingerprint: index.sourceFingerprint,
-    } satisfies RepoIntelligenceManifest),
-  ]);
+        overviewGeneratedAt: index.overviewGeneratedAt,
+        sourceFileCount: index.sourceFileCount,
+        sourceFingerprint: index.sourceFingerprint,
+      } satisfies RepoIntelligenceManifest),
+      writeJsonFileAtomic(analysisCachePath, {
+        schemaVersion: QUERY_SCHEMA_VERSION,
+        workspaceRoot: index.workspaceRoot,
+        generatedAt: index.generatedAt,
+        entries: analyses.map((analysis) => ({
+          filePath: analysis.filePath,
+          moduleId: analysis.moduleId,
+          sourceSignature: analysis.sourceSignature,
+          language: analysis.language,
+          capabilityTier: analysis.capabilityTier,
+          importPaths: analysis.importPaths,
+          symbols: analysis.symbols,
+          callCandidates: analysis.callCandidates,
+        })),
+      } satisfies RepoIntelligenceAnalysisCache),
+    ]);
 }
 
 function buildFreshnessLabel(index: RepoIntelligenceIndex): string {
@@ -1198,9 +1364,15 @@ export async function buildRepoIntelligenceIndex(
     refresh: options.refresh,
   });
   const sourceFileCandidates = await collectSourceFileCandidates(snapshot);
-  const sourceFingerprint = await computeSourceFingerprint(snapshot.workspaceRoot, sourceFileCandidates);
-  const index = await buildIndexFromSnapshot(snapshot, sourceFileCandidates, sourceFingerprint);
-  await writeIndexArtifacts(index);
+  const sourceFiles = await buildSourceFileSnapshots(snapshot, sourceFileCandidates);
+  const sourceFingerprint = computeSourceFingerprint(snapshot.workspaceRoot, sourceFiles);
+  const { index, analyses } = await buildIndexFromSnapshot(
+    snapshot,
+    sourceFiles,
+    sourceFingerprint,
+    sourceFileCandidates.length,
+  );
+  await writeIndexArtifacts(index, analyses);
   return index;
 }
 
@@ -1213,15 +1385,21 @@ export async function getRepoIntelligenceIndex(
     refresh: options.refresh,
   });
   const sourceFileCandidates = await collectSourceFileCandidates(snapshot);
-  const sourceFingerprint = await computeSourceFingerprint(snapshot.workspaceRoot, sourceFileCandidates);
+  const sourceFiles = await buildSourceFileSnapshots(snapshot, sourceFileCandidates);
+  const sourceFingerprint = computeSourceFingerprint(snapshot.workspaceRoot, sourceFiles);
   if (!options.refresh) {
     const cached = await readCachedIndex(snapshot.workspaceRoot, snapshot.overview.generatedAt, sourceFingerprint);
     if (cached) {
       return cached;
     }
   }
-  const index = await buildIndexFromSnapshot(snapshot, sourceFileCandidates, sourceFingerprint);
-  await writeIndexArtifacts(index);
+  const { index, analyses } = await buildIndexFromSnapshot(
+    snapshot,
+    sourceFiles,
+    sourceFingerprint,
+    sourceFileCandidates.length,
+  );
+  await writeIndexArtifacts(index, analyses);
   return index;
 }
 
