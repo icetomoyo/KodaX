@@ -5,8 +5,8 @@
  * Support HistoryItem types: user, assistant, tool_group, thinking, error, info, and hint.
  */
 
-import React, { useMemo, memo } from "react";
-import { Box, Static, Text, useStdout } from "ink";
+import React, { useEffect, useMemo, memo } from "react";
+import { Box, Static, Text, useStdout } from "../tui.js";
 import { getTheme } from "../themes/index.js";
 import { Spinner } from "./LoadingIndicator.js";
 import type { Theme } from "../types.js";
@@ -108,6 +108,11 @@ export interface MessageListProps {
   selectedItemId?: string;
   /** Optional expanded transcript item ids */
   expandedItemKeys?: ReadonlySet<string>;
+  /** Optional transcript metrics callback for owned scroll controllers */
+  onMetricsChange?: (metrics: {
+    scrollHeight: number;
+    viewportHeight: number;
+  }) => void;
 }
 
 export interface HistoryItemRendererProps {
@@ -420,7 +425,7 @@ const TranscriptRowRenderer: React.FC<{
   selected?: boolean;
 }> = memo(({ row, theme, animateSpinners = true, selected = false }) => {
   const color = resolveTranscriptColor(theme, row.color);
-  const prefix = selected ? "▎ " : "";
+  const prefix = selected ? "鈻?" : "";
 
   return (
     <Box marginLeft={row.indent ?? 0}>
@@ -522,6 +527,7 @@ export const MessageList: React.FC<MessageListProps> = ({
   showDetailedTools = false,
   selectedItemId,
   expandedItemKeys,
+  onMetricsChange,
 }) => {
   const theme = useMemo(() => getTheme("dark"), []);
   const { stdout } = useStdout();
@@ -623,6 +629,13 @@ export const MessageList: React.FC<MessageListProps> = ({
     [transcriptRows, viewportRows, scrollOffset, windowed]
   );
 
+  useEffect(() => {
+    onMetricsChange?.({
+      scrollHeight: transcriptRows.length,
+      viewportHeight: viewportRows ?? transcriptRows.length,
+    });
+  }, [onMetricsChange, transcriptRows.length, viewportRows]);
+
   if (showEmptyState) {
     return (
       <Box paddingY={1}>
@@ -712,3 +725,4 @@ export const SimpleMessageDisplay: React.FC<{
     </Box>
   );
 };
+

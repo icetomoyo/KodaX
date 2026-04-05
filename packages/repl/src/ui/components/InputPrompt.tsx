@@ -1,12 +1,12 @@
 /**
- * InputPrompt - Input prompt component - 杈撳叆鎻愮ず缁勪欢
+ * InputPrompt - Input prompt component - 鏉堟挸鍙嗛幓鎰仛缂佸嫪娆?
  *
  * Integrates multi-line input, history navigation, keyboard shortcuts
- * through a dedicated prompt input controller. - 閫氳繃鐙珛鐨勮緭鍏ユ帶鍒跺櫒闆嗘垚澶氳杈撳叆銆佸巻鍙插鑸拰閿洏蹇嵎閿€?
+ * through a dedicated prompt input controller. - 闁俺绻冮悪顒傜彌閻ㄥ嫯绶崗銉﹀付閸掕泛娅掗梿鍡樺灇婢舵俺顢戞潏鎾冲弳閵嗕礁宸婚崣鎻掝嚤閼割亜鎷伴柨顔炬磸韫囶偅宓庨柨顔衡偓?
  */
 
 import React, { useState } from "react";
-import { Box, Text, useApp } from "ink";
+import { Box, Text, useApp } from "../tui.js";
 import { TextInput } from "./TextInput.js";
 import { useKeypress } from "../contexts/KeypressContext.js";
 import { getTheme } from "../themes/index.js";
@@ -15,14 +15,14 @@ import { usePromptInputController } from "../utils/prompt-input-controller.js";
 
 /**
  * Extended props for InputPrompt with autocomplete support
- * InputPrompt 鐨勬墿灞曞睘鎬э紝鏀寔鑷姩琛ュ叏
+ * InputPrompt 閻ㄥ嫭澧跨仦鏇炵潣閹嶇礉閺€顖涘瘮閼奉亜濮╃悰銉ュ弿
  */
 export interface InputPromptAutocompleteProps extends InputPromptProps {
-  /** Working directory for file completion - 鏂囦欢琛ュ叏鐨勫伐浣滅洰褰?*/
+  /** Working directory for file completion - 閺傚洣娆㈢悰銉ュ弿閻ㄥ嫬浼愭担婊呮窗瑜?*/
   cwd?: string;
-  /** Git root for skill discovery - 鎶€鑳藉彂鐜扮殑 Git 鏍圭洰褰?*/
+  /** Git root for skill discovery - 閹垛偓閼宠棄褰傞悳鎵畱 Git 閺嶅湱娲拌ぐ?*/
   gitRoot?: string;
-  /** Whether autocomplete is enabled (default: true) - 鏄惁鍚敤鑷姩琛ュ叏锛堥粯璁わ細true锛?*/
+  /** Whether autocomplete is enabled (default: true) - 閺勵垰鎯侀崥顖滄暏閼奉亜濮╃悰銉ュ弿閿涘牓绮拋銈忕窗true閿?*/
   autocompleteEnabled?: boolean;
 }
 
@@ -81,7 +81,7 @@ export const InputPrompt: React.FC<InputPromptAutocompleteProps> = ({
 };
 
 /**
- * Simplified InputPrompt - single-line mode - 绠€鍖栫増 InputPrompt - 鍗曡妯″紡
+ * Simplified InputPrompt - single-line mode - 缁犫偓閸栨牜澧?InputPrompt - 閸楁洝顢戝Ο鈥崇础
  */
 export const SimpleInputPrompt: React.FC<{
   onSubmit: (text: string) => void;
@@ -161,3 +161,4 @@ export const SimpleInputPrompt: React.FC<{
     </Box>
   );
 };
+

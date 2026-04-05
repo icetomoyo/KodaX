@@ -1,8 +1,8 @@
 /**
  * StreamingContext - Streaming Response Handling
  *
- * Reference implementation based on Gemini CLI's StreamingContext architecture - 参考 Gemini CLI 的 StreamingContext 架构实现
- * Manages streaming response state, cancellation operations, and error handling - 管理流式响应状态、取消操作和错误处理
+ * Reference implementation based on Gemini CLI's StreamingContext architecture - 鍙傝€?Gemini CLI 鐨?StreamingContext 鏋舵瀯瀹炵幇
+ * Manages streaming response state, cancellation operations, and error handling - 绠＄悊娴佸紡鍝嶅簲鐘舵€併€佸彇娑堟搷浣滃拰閿欒澶勭悊
  */
 
 import React, {
@@ -20,144 +20,144 @@ import { MAX_PENDING_INPUTS } from "../utils/pending-inputs.js";
 // === Types ===
 
 /**
- * Iteration record - 迭代记录
- * Stores a snapshot of one iteration's thinking and response - 存储一轮迭代的 thinking 和响应快照
+ * Iteration record - 杩唬璁板綍
+ * Stores a snapshot of one iteration's thinking and response - 瀛樺偍涓€杞凯浠ｇ殑 thinking 鍜屽搷搴斿揩鐓?
  */
 export interface IterationRecord {
-  /** Iteration number (1-based) - 迭代序号（从1开始） */
+  /** Iteration number (1-based) - 杩唬搴忓彿锛堜粠1寮€濮嬶級 */
   iteration: number;
-  /** Thinking content summary (truncated) - Thinking 内容摘要（截断） */
+  /** Thinking content summary (truncated) - Thinking 鍐呭鎽樿锛堟埅鏂級 */
   thinkingSummary: string;
-  /** Full thinking content length - 完整 thinking 内容长度 */
+  /** Full thinking content length - 瀹屾暣 thinking 鍐呭闀垮害 */
   thinkingLength: number;
-  /** Response content - 响应内容 */
+  /** Response content - 鍝嶅簲鍐呭 */
   response: string;
-  /** Tools used in this iteration - 本轮使用的工具 */
+  /** Tools used in this iteration - 鏈疆浣跨敤鐨勫伐鍏?*/
   toolsUsed: string[];
 }
 
 /**
- * Streaming context value - 流式上下文值
+ * Streaming context value - 娴佸紡涓婁笅鏂囧€?
  */
 export interface StreamingContextValue {
-  /** 当前流式状态 */
+  /** 褰撳墠娴佸紡鐘舵€?*/
   state: StreamingState;
 
-  /** 当前正在流式传输的响应 */
+  /** 褰撳墠姝ｅ湪娴佸紡浼犺緭鐨勫搷搴?*/
   currentResponse: string;
 
-  /** 错误信息 */
+  /** 閿欒淇℃伅 */
   error?: string;
 
-  /** 用于取消请求的 AbortController */
+  /** 鐢ㄤ簬鍙栨秷璇锋眰鐨?AbortController */
   abortController?: AbortController;
 
-  /** 是否正在 thinking */
+  /** 鏄惁姝ｅ湪 thinking */
   isThinking: boolean;
 
-  /** Thinking 字符计数 */
+  /** Thinking 瀛楃璁℃暟 */
   thinkingCharCount: number;
 
-  /** Thinking 内容 (用于UI显示) */
+  /** Thinking 鍐呭 (鐢ㄤ簬UI鏄剧ず) */
   thinkingContent: string;
 
-  /** 当前执行的工具名称 */
+  /** 褰撳墠鎵ц鐨勫伐鍏峰悕绉?*/
   currentTool?: string;
 
-  /** 工具输入字符计数 */
+  /** 宸ュ叿杈撳叆瀛楃璁℃暟 */
   toolInputCharCount: number;
 
-  /** 工具输入内容 (用于UI显示参数摘要) */
+  /** 宸ュ叿杈撳叆鍐呭 (鐢ㄤ簬UI鏄剧ず鍙傛暟鎽樿) */
   toolInputContent: string;
 
-  /** Iteration history - 迭代历史 */
+  /** Iteration history - 杩唬鍘嗗彶 */
   iterationHistory: IterationRecord[];
 
-  /** Current iteration number (1-based) - 当前迭代序号（从1开始） */
+  /** Current iteration number (1-based) - 褰撳墠杩唬搴忓彿锛堜粠1寮€濮嬶級 */
   currentIteration: number;
 
-  /** Maximum iterations allowed - 最大允许迭代次数 */
+  /** Maximum iterations allowed - 鏈€澶у厑璁歌凯浠ｆ鏁?*/
   maxIter: number;
 
-  /** 是否正在压缩上下文 */
+  /** 鏄惁姝ｅ湪鍘嬬缉涓婁笅鏂?*/
   isCompacting: boolean;
   pendingInputs: string[];
 }
 
 /**
- * Streaming actions interface - 流式操作接口
+ * Streaming actions interface - 娴佸紡鎿嶄綔鎺ュ彛
  */
 export interface StreamingActions {
-  /** 开始流式响应 */
+  /** 寮€濮嬫祦寮忓搷搴?*/
   startStreaming: () => void;
 
-  /** 停止流式响应 */
+  /** 鍋滄娴佸紡鍝嶅簲 */
   stopStreaming: () => void;
 
-  /** 追加响应文本 */
+  /** 杩藉姞鍝嶅簲鏂囨湰 */
   appendResponse: (text: string) => void;
 
-  /** 清空响应 */
+  /** 娓呯┖鍝嶅簲 */
   clearResponse: () => void;
 
-  /** 设置错误 */
+  /** 璁剧疆閿欒 */
   setError: (error: string | undefined) => void;
 
-  /** 取消当前流式响应 */
+  /** 鍙栨秷褰撳墠娴佸紡鍝嶅簲 */
   abort: () => void;
 
-  /** 重置状态 */
+  /** 閲嶇疆鐘舵€?*/
   reset: () => void;
 
-  /** 开始 thinking */
+  /** 寮€濮?thinking */
   startThinking: () => void;
 
-  /** 追加 thinking 字符数 */
+  /** 杩藉姞 thinking 瀛楃鏁?*/
   appendThinkingChars: (count: number) => void;
 
-  /** 追加 thinking 内容 */
+  /** 杩藉姞 thinking 鍐呭 */
   appendThinkingContent: (text: string) => void;
 
-  /** 结束 thinking */
+  /** 缁撴潫 thinking */
   stopThinking: () => void;
 
-  /** 清空 thinking 内容 (响应完成时调用) */
+  /** 娓呯┖ thinking 鍐呭 (鍝嶅簲瀹屾垚鏃惰皟鐢? */
   clearThinkingContent: () => void;
 
-  /** 设置当前工具 */
+  /** 璁剧疆褰撳墠宸ュ叿 */
   setCurrentTool: (tool: string | undefined) => void;
 
-  /** 追加工具输入字符数 */
+  /** 杩藉姞宸ュ叿杈撳叆瀛楃鏁?*/
   appendToolInputChars: (count: number) => void;
 
-  /** 追加工具输入内容 */
+  /** 杩藉姞宸ュ叿杈撳叆鍐呭 */
   appendToolInputContent: (text: string) => void;
 
-  /** 清空工具输入内容 */
+  /** 娓呯┖宸ュ叿杈撳叆鍐呭 */
   clearToolInputContent: () => void;
 
-  /** 获取当前的 AbortSignal (用于传递给 API 请求) */
+  /** 鑾峰彇褰撳墠鐨?AbortSignal (鐢ㄤ簬浼犻€掔粰 API 璇锋眰) */
   getSignal: () => AbortSignal | undefined;
 
-  /** 获取完整响应内容（包括缓冲区中未刷新的内容）- 用于中断时保存 */
+  /** 鑾峰彇瀹屾暣鍝嶅簲鍐呭锛堝寘鎷紦鍐插尯涓湭鍒锋柊鐨勫唴瀹癸級- 鐢ㄤ簬涓柇鏃朵繚瀛?*/
   getFullResponse: () => string;
 
-  /** 获取完整 thinking 内容（包括缓冲区中未刷新的内容）- 用于持久化历史记录 */
+  /** 鑾峰彇瀹屾暣 thinking 鍐呭锛堝寘鎷紦鍐插尯涓湭鍒锋柊鐨勫唴瀹癸級- 鐢ㄤ簬鎸佷箙鍖栧巻鍙茶褰?*/
   getThinkingContent: () => string;
 
-  /** Start a new iteration - saves current content to history and clears for next round - 开始新迭代，保存当前内容到历史并清空 */
+  /** Start a new iteration - saves current content to history and clears for next round - 寮€濮嬫柊杩唬锛屼繚瀛樺綋鍓嶅唴瀹瑰埌鍘嗗彶骞舵竻绌?*/
   startNewIteration: (iteration: number) => void;
 
-  /** Clear iteration history - 清空迭代历史 */
+  /** Clear iteration history - 娓呯┖杩唬鍘嗗彶 */
   clearIterationHistory: () => void;
 
-  /** Set maximum iterations - 设置最大迭代次数 */
+  /** Set maximum iterations - 璁剧疆鏈€澶ц凯浠ｆ鏁?*/
   setMaxIter: (maxIter: number) => void;
 
-  /** 开始压缩上下文 */
+  /** 寮€濮嬪帇缂╀笂涓嬫枃 */
   startCompacting: () => void;
 
-  /** 结束压缩上下文 */
+  /** 缁撴潫鍘嬬缉涓婁笅鏂?*/
   stopCompacting: () => void;
   addPendingInput: (input: string) => void;
   removeLastPendingInput: () => void;
@@ -167,7 +167,7 @@ export interface StreamingActions {
 }
 
 /**
- * State change listener - 状态变更监听器
+ * State change listener - 鐘舵€佸彉鏇寸洃鍚櫒
  */
 export type StreamingStateListener = (state: StreamingContextValue) => void;
 
@@ -186,7 +186,7 @@ const DEFAULT_STREAMING_STATE: StreamingContextValue = {
   toolInputContent: "",
   iterationHistory: [],
   currentIteration: 1,
-  maxIter: 200, // Default max iterations - 默认最大迭代次数
+  maxIter: 200, // Default max iterations - 榛樿鏈€澶ц凯浠ｆ鏁?
   isCompacting: false,
   pendingInputs: [],
 };
@@ -194,91 +194,91 @@ const DEFAULT_STREAMING_STATE: StreamingContextValue = {
 // === Streaming Manager ===
 
 /**
- * Streaming manager interface - 流式管理器接口
+ * Streaming manager interface - 娴佸紡绠＄悊鍣ㄦ帴鍙?
  */
 export interface StreamingManager {
-  /** 获取当前状态 */
+  /** 鑾峰彇褰撳墠鐘舵€?*/
   getState: () => StreamingContextValue;
 
-  /** 设置流式状态 */
+  /** 璁剧疆娴佸紡鐘舵€?*/
   setState: (state: StreamingState) => void;
 
-  /** 开始流式响应 */
+  /** 寮€濮嬫祦寮忓搷搴?*/
   startStreaming: () => void;
 
-  /** 停止流式响应 */
+  /** 鍋滄娴佸紡鍝嶅簲 */
   stopStreaming: () => void;
 
-  /** 追加响应文本 */
+  /** 杩藉姞鍝嶅簲鏂囨湰 */
   appendResponse: (text: string) => void;
 
-  /** 清空响应 */
+  /** 娓呯┖鍝嶅簲 */
   clearResponse: () => void;
 
-  /** 设置错误 */
+  /** 璁剧疆閿欒 */
   setError: (error: string | undefined) => void;
 
-  /** 取消当前流式响应 */
+  /** 鍙栨秷褰撳墠娴佸紡鍝嶅簲 */
   abort: () => void;
 
-  /** 重置状态 */
+  /** 閲嶇疆鐘舵€?*/
   reset: () => void;
 
-  /** 是否正在流式传输 */
+  /** 鏄惁姝ｅ湪娴佸紡浼犺緭 */
   isStreaming: () => boolean;
 
-  /** 订阅状态变更 */
+  /** 璁㈤槄鐘舵€佸彉鏇?*/
   subscribe: (listener: StreamingStateListener) => () => void;
 
-  /** 开始 thinking */
+  /** 寮€濮?thinking */
   startThinking: () => void;
 
-  /** 追加 thinking 字符数 */
+  /** 杩藉姞 thinking 瀛楃鏁?*/
   appendThinkingChars: (count: number) => void;
 
-  /** 追加 thinking 内容 */
+  /** 杩藉姞 thinking 鍐呭 */
   appendThinkingContent: (text: string) => void;
 
-  /** 结束 thinking */
+  /** 缁撴潫 thinking */
   stopThinking: () => void;
 
-  /** 清空 thinking 内容 (响应完成时调用) */
+  /** 娓呯┖ thinking 鍐呭 (鍝嶅簲瀹屾垚鏃惰皟鐢? */
   clearThinkingContent: () => void;
 
-  /** 设置当前工具 */
+  /** 璁剧疆褰撳墠宸ュ叿 */
   setCurrentTool: (tool: string | undefined) => void;
 
-  /** 追加工具输入字符数 */
+  /** 杩藉姞宸ュ叿杈撳叆瀛楃鏁?*/
   appendToolInputChars: (count: number) => void;
 
-  /** 追加工具输入内容 */
+  /** 杩藉姞宸ュ叿杈撳叆鍐呭 */
   appendToolInputContent: (text: string) => void;
 
-  /** 清空工具输入内容 */
+  /** 娓呯┖宸ュ叿杈撳叆鍐呭 */
   clearToolInputContent: () => void;
 
-  /** 获取当前的 AbortSignal */
+  /** 鑾峰彇褰撳墠鐨?AbortSignal */
   getSignal: () => AbortSignal | undefined;
 
-  /** 获取完整响应内容（包括缓冲区中未刷新的内容） */
+  /** 鑾峰彇瀹屾暣鍝嶅簲鍐呭锛堝寘鎷紦鍐插尯涓湭鍒锋柊鐨勫唴瀹癸級 */
   getFullResponse: () => string;
 
-  /** 获取完整 thinking 内容（包括缓冲区中未刷新的内容） */
+  /** 鑾峰彇瀹屾暣 thinking 鍐呭锛堝寘鎷紦鍐插尯涓湭鍒锋柊鐨勫唴瀹癸級 */
   getThinkingContent: () => string;
 
-  /** Start a new iteration - 开始新迭代 */
+  /** Start a new iteration - 寮€濮嬫柊杩唬 */
   startNewIteration: (iteration: number) => void;
 
-  /** Clear iteration history - 清空迭代历史 */
+  /** Clear iteration history - 娓呯┖杩唬鍘嗗彶 */
   clearIterationHistory: () => void;
 
-  /** Set maximum iterations - 设置最大迭代次数 */
+  /** Set maximum iterations - 璁剧疆鏈€澶ц凯浠ｆ鏁?*/
   setMaxIter: (maxIter: number) => void;
 
-  /** Start compacting context - 开始压缩上下文 */
+  /** Start compacting context - 寮€濮嬪帇缂╀笂涓嬫枃 */
   startCompacting: () => void;
 
-  /** Stop compacting context - 结束压缩上下文 */
+  /** Stop compacting context - 缁撴潫鍘嬬缉涓婁笅鏂?*/
   stopCompacting: () => void;
   addPendingInput: (input: string) => void;
   removeLastPendingInput: () => void;
@@ -288,25 +288,25 @@ export interface StreamingManager {
 }
 
 /**
- * Create streaming manager - 创建流式管理器
+ * Create streaming manager - 鍒涘缓娴佸紡绠＄悊鍣?
  *
- * Issue 048 fix: Use batch updates to reduce render frequency - Issue 048 修复: 使用批量更新减少渲染频率
- * - Buffer streaming text and thinking content to 80ms cycle - 流式文本和 thinking 内容缓冲到 80ms 周期
- * - Sync with Spinner animation to avoid race conditions - 与 Spinner 动画同步，避免竞态条件
+ * Issue 048 fix: Use batch updates to reduce render frequency - Issue 048 淇: 浣跨敤鎵归噺鏇存柊鍑忓皯娓叉煋棰戠巼
+ * - Buffer streaming text and thinking content to 80ms cycle - 娴佸紡鏂囨湰鍜?thinking 鍐呭缂撳啿鍒?80ms 鍛ㄦ湡
+ * - Sync with Spinner animation to avoid race conditions - 涓?Spinner 鍔ㄧ敾鍚屾锛岄伩鍏嶇珵鎬佹潯浠?
  */
 export function createStreamingManager(): StreamingManager {
   let state: StreamingContextValue = { ...DEFAULT_STREAMING_STATE };
   const listeners = new Set<StreamingStateListener>();
 
-  // === Batch update buffer (Issue 048) - 批量更新缓冲区 (Issue 048) ===
+  // === Batch update buffer (Issue 048) - 鎵归噺鏇存柊缂撳啿鍖?(Issue 048) ===
   let pendingResponseText = "";
   let pendingThinkingText = "";
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
-   * Flush interval (ms) - 刷新间隔
-   * - 80ms syncs with Spinner animation frame - 80ms 与 Spinner 动画帧同步
-   * - User perceives as instant response within 100ms - 100ms 内的用户感知为即时响应
+   * Flush interval (ms) - 鍒锋柊闂撮殧
+   * - 80ms syncs with Spinner animation frame - 80ms 涓?Spinner 鍔ㄧ敾甯у悓姝?
+   * - User perceives as instant response within 100ms - 100ms 鍐呯殑鐢ㄦ埛鎰熺煡涓哄嵆鏃跺搷搴?
    */
   const FLUSH_INTERVAL = 80;
 
@@ -317,7 +317,7 @@ export function createStreamingManager(): StreamingManager {
   };
 
   /**
-   * Immediately apply buffer content and notify - 立即应用缓冲区内容并通知
+   * Immediately apply buffer content and notify - 绔嬪嵆搴旂敤缂撳啿鍖哄唴瀹瑰苟閫氱煡
    */
   const flushPendingUpdates = () => {
     if (flushTimer) {
@@ -340,7 +340,7 @@ export function createStreamingManager(): StreamingManager {
   };
 
   /**
-   * Schedule delayed flush - 安排延迟刷新
+   * Schedule delayed flush - 瀹夋帓寤惰繜鍒锋柊
    */
   const scheduleFlush = () => {
     if (!flushTimer) {
@@ -352,13 +352,13 @@ export function createStreamingManager(): StreamingManager {
     getState: () => state,
 
     setState: (newState: StreamingState) => {
-      flushPendingUpdates(); // Flush before state change - 状态切换前刷新
+      flushPendingUpdates(); // Flush before state change - 鐘舵€佸垏鎹㈠墠鍒锋柊
       state = { ...state, state: newState };
       notify();
     },
 
     startStreaming: () => {
-      flushPendingUpdates(); // Flush before starting - 开始前刷新
+      flushPendingUpdates(); // Flush before starting - 寮€濮嬪墠鍒锋柊
       state = {
         ...state,
         state: StreamingState.Responding,
@@ -369,7 +369,7 @@ export function createStreamingManager(): StreamingManager {
     },
 
     stopStreaming: () => {
-      flushPendingUpdates(); // Flush before stopping to ensure all content displays - 停止前刷新，确保所有内容显示
+      flushPendingUpdates(); // Flush before stopping to ensure all content displays - 鍋滄鍓嶅埛鏂帮紝纭繚鎵€鏈夊唴瀹规樉绀?
       state = {
         ...state,
         state: StreamingState.Idle,
@@ -384,7 +384,7 @@ export function createStreamingManager(): StreamingManager {
     },
 
     clearResponse: () => {
-      flushPendingUpdates(); // Flush before clearing - 清空前刷新
+      flushPendingUpdates(); // Flush before clearing - 娓呯┖鍓嶅埛鏂?
       state = {
         ...state,
         currentResponse: "",
@@ -393,7 +393,7 @@ export function createStreamingManager(): StreamingManager {
     },
 
     setError: (error: string | undefined) => {
-      flushPendingUpdates(); // Flush before setting error - 错误前刷新
+      flushPendingUpdates(); // Flush before setting error - 閿欒鍓嶅埛鏂?
       state = {
         ...state,
         error,
@@ -403,8 +403,7 @@ export function createStreamingManager(): StreamingManager {
     },
 
     abort: () => {
-      flushPendingUpdates(); // Flush before aborting to ensure received content displays - 中断前刷新，确保已接收内容显示
-      state.abortController?.abort();
+      flushPendingUpdates(); // Flush before aborting to ensure received content displays - 涓柇鍓嶅埛鏂帮紝纭繚宸叉帴鏀跺唴瀹规樉绀?      state.abortController?.abort();
       state = {
         ...state,
         state: StreamingState.Idle,
@@ -415,7 +414,7 @@ export function createStreamingManager(): StreamingManager {
     },
 
     reset: () => {
-      flushPendingUpdates(); // Flush before resetting - 重置前刷新
+      flushPendingUpdates(); // Flush before resetting - 閲嶇疆鍓嶅埛鏂?
       state.abortController?.abort();
       state = { ...DEFAULT_STREAMING_STATE };
       notify();
@@ -436,7 +435,7 @@ export function createStreamingManager(): StreamingManager {
     },
 
     startThinking: () => {
-      flushPendingUpdates(); // Flush before starting thinking - 开始 thinking 前刷新
+      flushPendingUpdates(); // Flush before starting thinking - 寮€濮?thinking 鍓嶅埛鏂?
       state = {
         ...state,
         isThinking: true,
@@ -447,7 +446,7 @@ export function createStreamingManager(): StreamingManager {
     },
 
     appendThinkingChars: (count: number) => {
-      // Character count doesn't need batch update, update directly - 字符计数不需要批量更新，直接更新
+      // Character count doesn't need batch update, update directly - 瀛楃璁℃暟涓嶉渶瑕佹壒閲忔洿鏂帮紝鐩存帴鏇存柊
       state = {
         ...state,
         isThinking: true,
@@ -462,21 +461,21 @@ export function createStreamingManager(): StreamingManager {
     },
 
     stopThinking: () => {
-      flushPendingUpdates(); // Flush before stopping - 停止前刷新
+      flushPendingUpdates(); // Flush before stopping - 鍋滄鍓嶅埛鏂?
       // Don't clear thinkingContent - preserve it for display
       // Only reset isThinking flag to hide the Thinking indicator
       state = {
         ...state,
         isThinking: false,
         thinkingCharCount: 0,
-        // thinkingContent is preserved for display - thinkingContent 保留用于显示
+        // thinkingContent is preserved for display - thinkingContent 淇濈暀鐢ㄤ簬鏄剧ず
       };
       notify();
     },
 
     clearThinkingContent: () => {
-      flushPendingUpdates(); // Flush before clearing - 清空前刷新
-      // Clear thinking content when response completes - 响应完成时清除 thinking 内容
+      flushPendingUpdates(); // Flush before clearing - 娓呯┖鍓嶅埛鏂?
+      // Clear thinking content when response completes - 鍝嶅簲瀹屾垚鏃舵竻闄?thinking 鍐呭
       state = {
         ...state,
         isThinking: false,
@@ -487,7 +486,7 @@ export function createStreamingManager(): StreamingManager {
     },
 
     setCurrentTool: (tool: string | undefined) => {
-      flushPendingUpdates(); // Flush before tool switch - 工具切换前刷新
+      flushPendingUpdates(); // Flush before tool switch - 宸ュ叿鍒囨崲鍓嶅埛鏂?
       state = {
         ...state,
         currentTool: tool,
@@ -498,7 +497,7 @@ export function createStreamingManager(): StreamingManager {
     },
 
     appendToolInputChars: (count: number) => {
-      // Character count doesn't need batch update, update directly - 字符计数不需要批量更新，直接更新
+      // Character count doesn't need batch update, update directly - 瀛楃璁℃暟涓嶉渶瑕佹壒閲忔洿鏂帮紝鐩存帴鏇存柊
       state = {
         ...state,
         toolInputCharCount: state.toolInputCharCount + count,
@@ -508,7 +507,7 @@ export function createStreamingManager(): StreamingManager {
 
     appendToolInputContent: (text: string) => {
       // Limit content to ~100 chars for display (no need to store full input)
-      // 限制内容为 ~100 字符用于显示（无需存储完整输入）
+      // 闄愬埗鍐呭涓?~100 瀛楃鐢ㄤ簬鏄剧ず锛堟棤闇€瀛樺偍瀹屾暣杈撳叆锛?
       if (state.toolInputContent.length < 240) {
         state = {
           ...state,
@@ -530,31 +529,31 @@ export function createStreamingManager(): StreamingManager {
 
     getFullResponse: () => {
       // Return current response + any pending buffered content
-      // 返回当前响应 + 缓冲区中未刷新的内容
+      // 杩斿洖褰撳墠鍝嶅簲 + 缂撳啿鍖轰腑鏈埛鏂扮殑鍐呭
       return state.currentResponse + pendingResponseText;
     },
 
     getThinkingContent: () => {
       // Return current thinking + any pending buffered content
-      // 返回当前 thinking + 缓冲区中未刷新的内容
+      // 杩斿洖褰撳墠 thinking + 缂撳啿鍖轰腑鏈埛鏂扮殑鍐呭
       return state.thinkingContent + pendingThinkingText;
     },
 
     /**
      * Start a new iteration - clears current content for next round
-     * 开始新迭代 - 清空当前内容准备下一轮
+     * 寮€濮嬫柊杩唬 - 娓呯┖褰撳墠鍐呭鍑嗗涓嬩竴杞?
      * Note: Content is already saved to history by onIterationStart callback in InkREPL
-     * 注意：内容已经通过 InkREPL 的 onIterationStart 回调保存到 history
+     * 娉ㄦ剰锛氬唴瀹瑰凡缁忛€氳繃 InkREPL 鐨?onIterationStart 鍥炶皟淇濆瓨鍒?history
      */
     startNewIteration: (iteration: number) => {
-      flushPendingUpdates(); // Flush before clearing - 清空前刷新
+      flushPendingUpdates(); // Flush before clearing - 娓呯┖鍓嶅埛鏂?
 
       // Just clear current content for next iteration - only clear if there's content
-      // 清空当前内容准备下一轮 - 只有在有内容时才清空
+      // 娓呯┖褰撳墠鍐呭鍑嗗涓嬩竴杞?- 鍙湁鍦ㄦ湁鍐呭鏃舵墠娓呯┖
       if (state.thinkingContent || state.currentResponse) {
         state = {
           ...state,
-          // Clear current content for next iteration - 清空当前内容准备下一轮
+          // Clear current content for next iteration - 娓呯┖褰撳墠鍐呭鍑嗗涓嬩竴杞?
           thinkingContent: "",
           thinkingCharCount: 0,
           currentResponse: "",
@@ -565,7 +564,7 @@ export function createStreamingManager(): StreamingManager {
           currentIteration: iteration,
         };
       } else {
-        // No content, just update iteration number - 没有内容，只更新迭代号
+        // No content, just update iteration number - 娌℃湁鍐呭锛屽彧鏇存柊杩唬鍙?
         state = {
           ...state,
           currentIteration: iteration,
@@ -576,7 +575,7 @@ export function createStreamingManager(): StreamingManager {
     },
 
     /**
-     * Clear iteration history - 清空迭代历史
+     * Clear iteration history - 娓呯┖杩唬鍘嗗彶
      */
     clearIterationHistory: () => {
       flushPendingUpdates();
@@ -596,7 +595,7 @@ export function createStreamingManager(): StreamingManager {
     },
 
     /**
-     * Set maximum iterations - 设置最大迭代次数
+     * Set maximum iterations - 璁剧疆鏈€澶ц凯浠ｆ鏁?
      */
     setMaxIter: (maxIter: number) => {
       flushPendingUpdates();
@@ -608,7 +607,7 @@ export function createStreamingManager(): StreamingManager {
     },
 
     /**
-     * Start compacting context - 开始压缩上下文
+     * Start compacting context - 寮€濮嬪帇缂╀笂涓嬫枃
      */
     startCompacting: () => {
       flushPendingUpdates();
@@ -620,7 +619,7 @@ export function createStreamingManager(): StreamingManager {
     },
 
     /**
-     * Stop compacting context - 结束压缩上下文
+     * Stop compacting context - 缁撴潫鍘嬬缉涓婁笅鏂?
      */
     stopCompacting: () => {
       flushPendingUpdates();
@@ -718,7 +717,7 @@ export interface StreamingProviderProps {
 // === Provider ===
 
 /**
- * StreamingProvider - Provides streaming response management - 提供流式响应管理
+ * StreamingProvider - Provides streaming response management - 鎻愪緵娴佸紡鍝嶅簲绠＄悊
  */
 export function StreamingProvider({
   children,
@@ -727,7 +726,7 @@ export function StreamingProvider({
   const managerRef = useRef<StreamingManager>(createStreamingManager());
   const [, forceUpdate] = useReducer((x) => x + 1, 0);
 
-  // Subscribe to state changes - 订阅状态变更
+  // Subscribe to state changes - 璁㈤槄鐘舵€佸彉鏇?
   useEffect(() => {
     const unsubscribe = managerRef.current.subscribe((state) => {
       forceUpdate();
@@ -901,7 +900,7 @@ export function StreamingProvider({
 // === Hooks ===
 
 /**
- * Get streaming state - 获取流式状态
+ * Get streaming state - 鑾峰彇娴佸紡鐘舵€?
  */
 export function useStreamingState(): StreamingContextValue {
   const context = useContext(StreamingContextValueContext);
@@ -912,7 +911,7 @@ export function useStreamingState(): StreamingContextValue {
 }
 
 /**
- * Get streaming actions - 获取流式操作
+ * Get streaming actions - 鑾峰彇娴佸紡鎿嶄綔
  */
 export function useStreamingActions(): StreamingActions {
   const context = useContext(StreamingActionsContext);
@@ -923,7 +922,7 @@ export function useStreamingActions(): StreamingActions {
 }
 
 /**
- * Get complete streaming state and actions - 获取完整流式状态和操作
+ * Get complete streaming state and actions - 鑾峰彇瀹屾暣娴佸紡鐘舵€佸拰鎿嶄綔
  */
 export function useStreaming(): {
   state: StreamingContextValue;

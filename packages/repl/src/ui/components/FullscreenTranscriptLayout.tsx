@@ -1,5 +1,6 @@
 import React from "react";
-import { Box, Text } from "ink";
+import { FullscreenLayout } from "../../tui/components/FullscreenLayout.js";
+import type { ScrollBoxHandle } from "../../tui/components/ScrollBox.js";
 
 export interface FullscreenTranscriptChromeSlot {
   visible?: boolean;
@@ -16,6 +17,13 @@ export interface FullscreenTranscriptLayoutProps {
   stickyHeader?: FullscreenTranscriptChromeSlot;
   jumpToLatest?: FullscreenTranscriptChromeSlot;
   width?: number;
+  scrollTop?: number;
+  scrollHeight?: number;
+  viewportHeight?: number;
+  stickyScroll?: boolean;
+  scrollRef?: React.Ref<ScrollBoxHandle>;
+  onScrollTopChange?: (nextScrollTop: number) => void;
+  onStickyChange?: (sticky: boolean) => void;
 }
 
 export const FullscreenTranscriptLayout: React.FC<FullscreenTranscriptLayoutProps> = ({
@@ -25,31 +33,29 @@ export const FullscreenTranscriptLayout: React.FC<FullscreenTranscriptLayoutProp
   stickyHeader,
   jumpToLatest,
   width,
+  scrollTop = 0,
+  scrollHeight = 0,
+  viewportHeight = 0,
+  stickyScroll = true,
+  scrollRef,
+  onScrollTopChange,
+  onStickyChange,
 }) => {
-  const renderChromeSlot = (slot: FullscreenTranscriptChromeSlot | undefined) => {
-    if (!slot?.visible || !slot.label) {
-      return null;
-    }
-
-    const text = slot.hint ? `${slot.label}: ${slot.hint}` : slot.label;
-    return (
-      <Box paddingX={1}>
-        <Text dimColor={slot.tone !== "accent"}>{text}</Text>
-      </Box>
-    );
-  };
-
   return (
-    <Box flexDirection="column" width={width} flexGrow={1} flexShrink={0}>
-      <Box flexDirection="column" flexGrow={1} overflowY="hidden">
-        {renderChromeSlot(stickyHeader)}
-        {transcript}
-        {renderChromeSlot(jumpToLatest)}
-      </Box>
-      {overlay}
-      <Box flexDirection="column" flexShrink={0}>
-        {footer}
-      </Box>
-    </Box>
+    <FullscreenLayout
+      width={width}
+      stickyHeader={stickyHeader}
+      jumpToLatest={jumpToLatest}
+      scrollable={transcript}
+      overlay={overlay}
+      bottom={footer}
+      scrollTop={scrollTop}
+      scrollHeight={scrollHeight}
+      viewportHeight={viewportHeight}
+      stickyScroll={stickyScroll}
+      scrollRef={scrollRef}
+      onScrollTopChange={onScrollTopChange}
+      onStickyChange={onStickyChange}
+    />
   );
 };

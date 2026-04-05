@@ -11,8 +11,9 @@
  */
 
 import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
-import { render, Box, useApp, Text, Static, useInput, useStdout } from "ink";
+import { render, Box, useApp, Text, Static, useInput, useStdout } from "./tui.js";
 import clipboard from "clipboardy";
+import { AlternateScreen, type ScrollBoxHandle } from "../tui/index.js";
 import { AmaWorkStrip } from "./components/AmaWorkStrip.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { FullscreenTranscriptLayout } from "./components/FullscreenTranscriptLayout.js";
@@ -149,6 +150,7 @@ import {
 import { buildManagedRunContext } from "./utils/managed-run-context.js";
 import { formatToolCallInlineText } from "./utils/tool-display.js";
 import { calculateViewportBudget } from "./utils/viewport-budget.js";
+import { calculateVisualLayout } from "./utils/textUtils.js";
 import {
   closeTranscriptSearch,
   createTranscriptDisplayState,
@@ -166,7 +168,13 @@ import {
   supportsTranscriptMouseHistory,
   toggleTranscriptVerbosityState,
 } from "./utils/transcript-state.js";
-import { detectTerminalHostProfile } from "./utils/terminal-host-profile.js";
+import {
+  detectTerminalHostProfile,
+  resolveEffectiveTuiRendererMode,
+  resolveFullscreenPolicy,
+  type EffectiveTuiRendererMode,
+  type FullscreenPolicy,
+} from "./utils/terminal-host-profile.js";
 import { formatPendingInputsSummary, MAX_PENDING_INPUTS } from "./utils/pending-inputs.js";
 import { runQueuedPromptSequence } from "./utils/queued-prompt-sequence.js";
 import {
@@ -224,6 +232,8 @@ interface InkREPLProps {
   context: InteractiveContext;
   storage: SessionStorage;
   compactionInfo?: { contextWindow: number; triggerPercent: number; enabled: boolean };
+  rendererMode: EffectiveTuiRendererMode;
+  fullscreenPolicy: FullscreenPolicy;
   onExit: () => void;
 }
 
@@ -232,6 +242,7 @@ interface BannerProps {
   config: CurrentConfig;
   sessionId: string;
   workingDir: string;
+  terminalWidth: number;
   compactionInfo?: { contextWindow: number; triggerPercent: number; enabled: boolean };
 }
 
@@ -526,21 +537,16 @@ export function buildRoundHistoryItems({
 }
 
 export function shouldShowStatusBarBusyStatus({
-  agentMode,
   isLivePaused,
   isLoading,
 }: {
-  agentMode: string;
   isLivePaused: boolean;
   isLoading: boolean;
 }): boolean {
   if (isLivePaused) {
     return false;
   }
-  if (agentMode === "ama" && isLoading) {
-    return false;
-  }
-  return true;
+  return isLoading;
 }
 
 export function buildAmaWorkStripFromStatus(
@@ -568,12 +574,54 @@ function toPersistedUiHistoryItem(
   };
 }
 
+const MAX_PERSISTED_UI_HISTORY_ITEMS = 150;
+const MAX_PERSISTED_UI_HISTORY_ROUNDS = 50;
+
+export function trimPersistedUiHistorySnapshot(
+  items: readonly KodaXSessionUiHistoryItem[],
+): KodaXSessionUiHistoryItem[] {
+  if (items.length === 0) {
+    return [];
+  }
+
+  const userIndices: number[] = [];
+  for (let index = 0; index < items.length; index += 1) {
+    if (items[index]?.type === "user") {
+      userIndices.push(index);
+    }
+  }
+
+  let trimmed = [...items];
+  if (userIndices.length > MAX_PERSISTED_UI_HISTORY_ROUNDS) {
+    const startIndex = userIndices[userIndices.length - MAX_PERSISTED_UI_HISTORY_ROUNDS] ?? 0;
+    trimmed = items.slice(startIndex);
+  }
+
+  if (trimmed.length > MAX_PERSISTED_UI_HISTORY_ITEMS) {
+    const windowed = trimmed.slice(-MAX_PERSISTED_UI_HISTORY_ITEMS);
+    const firstUserIndex = windowed.findIndex((item) => item.type === "user");
+    trimmed = firstUserIndex > 0 ? windowed.slice(firstUserIndex) : windowed;
+  }
+
+  return [...trimmed];
+}
+
+function normalizePersistedUiHistory(
+  items: readonly KodaXSessionUiHistoryItem[] | undefined,
+): KodaXSessionUiHistoryItem[] | undefined {
+  if (!items) {
+    return undefined;
+  }
+
+  return trimPersistedUiHistorySnapshot(items);
+}
+
 function serializeUiHistorySnapshot(
   items: readonly HistoryItem[],
 ): KodaXSessionUiHistoryItem[] {
-  return items
+  return trimPersistedUiHistorySnapshot(items
     .map((item) => toPersistedUiHistoryItem(item))
-    .filter((item): item is KodaXSessionUiHistoryItem => Boolean(item));
+    .filter((item): item is KodaXSessionUiHistoryItem => Boolean(item)));
 }
 
 function serializeCreatableHistoryItems(
@@ -589,12 +637,12 @@ export function appendPersistedUiHistorySnapshot(
   items: readonly CreatableHistoryItem[],
 ): KodaXSessionUiHistoryItem[] {
   if (items.length === 0) {
-    return [...currentHistory];
+    return trimPersistedUiHistorySnapshot(currentHistory);
   }
-  return [
+  return trimPersistedUiHistorySnapshot([
     ...currentHistory,
     ...serializeCreatableHistoryItems(items),
-  ];
+  ]);
 }
 
 function logSessionTransitionGuard(
@@ -609,12 +657,17 @@ function logSessionTransitionGuard(
 /**
  * Banner component - displayed inside Ink UI so it's part of the alternate buffer
  */
-const Banner: React.FC<BannerProps> = ({ config, sessionId, workingDir, compactionInfo }) => {
+const Banner: React.FC<BannerProps> = ({
+  config,
+  sessionId,
+  workingDir,
+  terminalWidth,
+  compactionInfo,
+}) => {
   const theme = getTheme("dark");
   const model = config.model ?? getProviderModel(config.provider) ?? config.provider;
   const reasoningCapability = getProviderReasoningCapability(config.provider, config.model);
   const reasoningCapabilityShort = formatReasoningCapabilityShort(reasoningCapability);
-  const terminalWidth = process.stdout.columns ?? 80;
   const dividerWidth = Math.min(60, terminalWidth - 4);
 
   // Compute compaction display values
@@ -706,6 +759,51 @@ const Banner: React.FC<BannerProps> = ({ config, sessionId, workingDir, compacti
   );
 };
 
+function countWrappedBannerRows(text: string, width: number): number {
+  return Math.max(
+    1,
+    calculateVisualLayout(
+      text.length > 0 ? text.split("\n") : [""],
+      Math.max(1, width),
+      0,
+      0,
+    ).visualLines.length,
+  );
+}
+
+function estimateBannerRows(props: BannerProps): number {
+  const model = props.config.model ?? getProviderModel(props.config.provider) ?? props.config.provider;
+  const reasoningCapability = getProviderReasoningCapability(
+    props.config.provider,
+    props.config.model,
+  );
+  const reasoningCapabilityShort = formatReasoningCapabilityShort(reasoningCapability);
+  const dividerWidth = Math.min(60, props.terminalWidth - 4);
+  const ctxK = props.compactionInfo ? Math.round(props.compactionInfo.contextWindow / 1000) : 0;
+  const triggerK = props.compactionInfo
+    ? Math.round(props.compactionInfo.contextWindow * props.compactionInfo.triggerPercent / 100 / 1000)
+    : 0;
+  const versionLine = `  v${KODAX_VERSION} | ${props.config.provider}/${model} [${reasoningCapabilityShort}] | ${props.config.agentMode.toUpperCase()} | ${props.config.permissionMode} | ${props.config.parallel ? "parallel" : "sequential"}${props.config.reasoningMode !== "off" ? ` +reason:${props.config.reasoningMode}` : ""}`;
+  const compactionLine = props.compactionInfo
+    ? `  Context: ${ctxK}k | Compaction: ${props.compactionInfo.enabled ? "on" : "off"} @ ${props.compactionInfo.triggerPercent}% (${triggerK}k)`
+    : undefined;
+  const sessionLine = `  Session: ${props.sessionId} | Working: ${props.workingDir}`;
+  const dividerLine = `  ${"-".repeat(dividerWidth)}`;
+  const lines = [
+    ...KODAX_BANNER_LOGO_LINES,
+    versionLine,
+    ...(compactionLine ? [compactionLine] : []),
+    dividerLine,
+    sessionLine,
+    dividerLine,
+  ];
+
+  return lines.reduce(
+    (sum, line) => sum + countWrappedBannerRows(line, props.terminalWidth),
+    0,
+  ) + 1;
+}
+
 /**
  * Inner REPL component that uses contexts
  */
@@ -714,6 +812,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   config,
   context,
   storage,
+  rendererMode,
+  fullscreenPolicy,
   onExit,
   compactionInfo,
 }) => {
@@ -794,14 +894,26 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const lastCompactionTokensBeforeRef = useRef<number | null>(null);
   const persistContextStateRef = useRef<((uiHistoryOverride?: KodaXSessionUiHistoryItem[]) => Promise<void>) | null>(null);
   const persistContextStateQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const persistContextStateRunnerRef = useRef<Promise<void> | null>(null);
+  const pendingPersistContextStateRef = useRef<{
+    requested: boolean;
+    uiHistoryOverride: KodaXSessionUiHistoryItem[] | undefined;
+  }>({
+    requested: false,
+    uiHistoryOverride: undefined,
+  });
   const appendHistoryItemsWithPersistenceRef = useRef<((items: readonly CreatableHistoryItem[]) => void) | null>(null);
   const interruptPersistenceQueuedRef = useRef(false);
   const [isInputEmpty, setIsInputEmpty] = useState(true); // Track if input is empty for ? shortcut
   const [inputText, setInputText] = useState("");
   const [transcriptDisplayState, setTranscriptDisplayState] = useState(() => (
-    createTranscriptDisplayState(terminalHostProfile)
+    createTranscriptDisplayState(terminalHostProfile, {
+      rendererMode,
+    })
   ));
   const [historyScrollOffset, setHistoryScrollOffset] = useState(0);
+  const [transcriptScrollHeight, setTranscriptScrollHeight] = useState(0);
+  const transcriptScrollRef = useRef<ScrollBoxHandle | null>(null);
   const [expandedTranscriptItemIds, setExpandedTranscriptItemIds] = useState<Set<string>>(() => new Set());
   const [reviewSnapshot, setReviewSnapshot] = useState<ReviewSnapshot | null>(null);
   const [managedTaskStatus, setManagedTaskStatus] = useState<KodaXManagedTaskStatusEvent | null>(null);
@@ -1134,6 +1246,22 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     currentIteration: displaySnapshot?.currentIteration ?? streamingState.currentIteration,
     isCompacting: displaySnapshot?.isCompacting ?? streamingState.isCompacting,
   };
+  const transcriptStreamingState = fullscreenPolicy.streamingPreview
+    ? displayStreamingState
+    : {
+      ...displayStreamingState,
+      isThinking: false,
+      thinkingCharCount: 0,
+      thinkingContent: "",
+      currentResponse: "",
+      currentTool: undefined,
+      activeToolCalls: [] as ToolCall[],
+      toolInputCharCount: 0,
+      toolInputContent: "",
+      lastLiveActivityLabel: undefined,
+      iterationHistory: [],
+      currentIteration: displayStreamingState.currentIteration,
+    };
   const amaSummaryViewModel = useMemo(
     () => buildAmaSummaryViewModel({
       status: managedTaskStatus,
@@ -1356,7 +1484,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     contextUsage,
     isCompacting: displayStreamingState.isCompacting,
     showBusyStatus: shouldShowStatusBarBusyStatus({
-      agentMode: currentConfig.agentMode,
       isLivePaused,
       isLoading: displayIsLoading,
     }),
@@ -1531,11 +1658,31 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     [clampedHistorySearchSelectedIndex, historySearchMatches, historySearchQuery, isHistorySearchActive],
   );
   const terminalRows = stdout.rows || process.stdout.rows || 24;
+  const bannerProps = useMemo<BannerProps>(() => ({
+    config: currentConfig,
+    sessionId: context.sessionId,
+    workingDir: options.context?.gitRoot || process.cwd(),
+    terminalWidth,
+    compactionInfo: compactionInfo ?? undefined,
+  }), [
+    compactionInfo,
+    context.sessionId,
+    currentConfig,
+    options.context?.gitRoot,
+    terminalWidth,
+  ]);
+  const bannerRows = useMemo(
+    () => (fullscreenPolicy.enabled && showBanner ? estimateBannerRows(bannerProps) : 0),
+    [bannerProps, fullscreenPolicy.enabled, showBanner],
+  );
+  const budgetedTerminalRows = fullscreenPolicy.enabled
+    ? Math.max(1, terminalRows - bannerRows)
+    : terminalRows;
   const viewportBudget = useMemo(
     // Budget transcript, footer, overlay, status, and task slots together so
     // the viewport always receives a stable number of visible rows.
     () => calculateViewportBudget({
-      terminalRows,
+      terminalRows: budgetedTerminalRows,
       terminalWidth,
       inputText,
       footerHeaderText: footerHeaderSummary,
@@ -1582,7 +1729,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         : null,
     }),
     [
-      terminalRows,
+      budgetedTerminalRows,
       terminalWidth,
       inputText,
       footerHeaderSummary,
@@ -1628,6 +1775,44 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     [reviewPageSize],
   );
   const transcriptMaxLines = isTranscriptVerbose || isReviewingHistory ? 1000 : 12;
+  const handleTranscriptMetricsChange = useCallback((metrics: {
+    scrollHeight: number;
+    viewportHeight: number;
+  }) => {
+    setTranscriptScrollHeight(metrics.scrollHeight);
+  }, []);
+
+  useEffect(() => {
+    const maxScrollOffset = Math.max(0, transcriptScrollHeight - viewportBudget.messageRows);
+    setHistoryScrollOffset((prev) => Math.min(prev, maxScrollOffset));
+  }, [transcriptScrollHeight, viewportBudget.messageRows]);
+
+  const scrollTranscriptTo = useCallback((nextScrollOffset: number) => {
+    if (transcriptScrollRef.current) {
+      transcriptScrollRef.current.scrollTo(nextScrollOffset);
+      return;
+    }
+
+    setHistoryScrollOffset(Math.max(0, nextScrollOffset));
+  }, []);
+
+  const scrollTranscriptBy = useCallback((delta: number) => {
+    if (transcriptScrollRef.current) {
+      transcriptScrollRef.current.scrollBy(delta);
+      return;
+    }
+
+    setHistoryScrollOffset((prev) => incrementTranscriptScrollOffset(prev, delta));
+  }, []);
+
+  const scrollTranscriptToBottom = useCallback(() => {
+    if (transcriptScrollRef.current) {
+      transcriptScrollRef.current.scrollToBottom();
+      return;
+    }
+
+    setHistoryScrollOffset(0);
+  }, []);
 
   const alignTranscriptSelection = useCallback((itemId: string | undefined) => {
     if (!itemId) {
@@ -1642,7 +1827,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       expandedItemKeys: expandedTranscriptItemIds,
       showDetailedTools: isTranscriptVerbose || isReviewingHistory,
     });
-    setHistoryScrollOffset(nextOffset);
+    scrollTranscriptTo(nextOffset);
   }, [
     displayItems,
     terminalWidth,
@@ -1650,6 +1835,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     isTranscriptVerbose,
     isReviewingHistory,
     expandedTranscriptItemIds,
+    scrollTranscriptTo,
     viewportBudget.messageRows,
   ]);
 
@@ -1860,10 +2046,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
   const exitHistoryReview = useCallback(() => {
     setTranscriptDisplayState((prev) => jumpTranscriptToLatest(exitTranscriptHistory(prev)));
-    setHistoryScrollOffset(0);
+    scrollTranscriptToBottom();
     setHistorySearchQuery("");
     setHistorySearchSelectedIndex(0);
-  }, []);
+  }, [scrollTranscriptToBottom]);
 
   useEffect(() => {
     if (supportsTranscriptSelection || !transcriptDisplayState.selectedItemId) {
@@ -1921,6 +2107,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   ]);
 
   useEffect(() => {
+    if (fullscreenPolicy.enabled) {
+      return;
+    }
+
     if (!process.stdout.isTTY) {
       return;
     }
@@ -1938,7 +2128,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         // Ignore terminal cleanup failures.
       }
     };
-  }, [transcriptDisplayState]);
+  }, [fullscreenPolicy.enabled, transcriptDisplayState]);
 
   // Refs for callbacks
   // Note: permissionMode and alwaysAllowTools are stored separately for permission checks
@@ -2114,7 +2304,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
         enterHistoryReview();
         disarmHistorySearchSelection();
-        setHistoryScrollOffset((prev) => incrementTranscriptScrollOffset(prev, reviewPageSize));
+        scrollTranscriptBy(reviewPageSize);
         return true;
       }
 
@@ -2171,7 +2361,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
       if (key.name === "home") {
         disarmHistorySearchSelection();
-        setHistoryScrollOffset(1_000_000);
+        scrollTranscriptTo(Math.max(0, transcriptScrollHeight - viewportBudget.messageRows));
         return true;
       }
 
@@ -2182,7 +2372,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         }
 
         disarmHistorySearchSelection();
-        setHistoryScrollOffset((prev) => incrementTranscriptScrollOffset(prev, -reviewPageSize));
+        scrollTranscriptBy(-reviewPageSize);
         return true;
       }
 
@@ -2191,7 +2381,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           return false;
         }
         disarmHistorySearchSelection();
-        setHistoryScrollOffset((prev) => incrementTranscriptScrollOffset(prev, reviewWheelStep));
+        scrollTranscriptBy(reviewWheelStep);
         return true;
       }
 
@@ -2205,19 +2395,19 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         }
 
         disarmHistorySearchSelection();
-        setHistoryScrollOffset((prev) => incrementTranscriptScrollOffset(prev, -reviewWheelStep));
+        scrollTranscriptBy(-reviewWheelStep);
         return true;
       }
 
       if (key.name === "j" || key.name === "down") {
         disarmHistorySearchSelection();
-        setHistoryScrollOffset((prev) => incrementTranscriptScrollOffset(prev, -1));
+        scrollTranscriptBy(-1);
         return true;
       }
 
       if (key.name === "k" || key.name === "up") {
         disarmHistorySearchSelection();
-        setHistoryScrollOffset((prev) => incrementTranscriptScrollOffset(prev, 1));
+        scrollTranscriptBy(1);
         return true;
       }
 
@@ -2270,11 +2460,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       displayStreamingState.thinkingContent,
       displayStreamingState.activeToolCalls,
       historyScrollOffset,
+      transcriptScrollHeight,
       reviewPageSize,
       reviewWheelStep,
       enterHistoryReview,
       exitHistoryReview,
       transcriptDisplayState,
+      scrollTranscriptBy,
+      scrollTranscriptTo,
       canCycleTranscriptSelection,
       clampedHistorySearchSelectedIndex,
       historySearchMatches,
@@ -2289,6 +2482,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       canToggleSelectedTranscriptDetail,
       toggleSelectedTranscriptDetail,
       selectTranscriptItem,
+      viewportBudget.messageRows,
     ]
   );
 
@@ -2446,7 +2640,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   useEffect(() => {
     if (context.messages.length > 0 && history.length === 0) {
       if (context.uiHistory?.length) {
-        for (const item of context.uiHistory) {
+        const persistedHistory = trimPersistedUiHistorySnapshot(context.uiHistory);
+        if (persistedHistory.length !== context.uiHistory.length) {
+          context.uiHistory = persistedHistory;
+        }
+        for (const item of persistedHistory) {
           addHistoryItem({
             type: item.type,
             text: item.text,
@@ -3049,37 +3247,71 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     );
   };
 
+  const reconcileContextLineage = useCallback((messages: readonly KodaXMessage[]): KodaXSessionLineage => {
+    const nextLineage = createSessionLineage([...messages], context.lineage);
+    context.lineage = nextLineage;
+    return nextLineage;
+  }, [context]);
+
   const persistContextState = useCallback(async (uiHistoryOverride?: KodaXSessionUiHistoryItem[]) => {
     if (context.messages.length === 0) {
       return;
     }
 
     const title = extractTitle(context.messages);
-    const persistedUiHistory = uiHistoryOverride ?? persistedUiHistoryRef.current;
+    const persistedUiHistory = trimPersistedUiHistorySnapshot(
+      uiHistoryOverride ?? persistedUiHistoryRef.current,
+    );
     persistedUiHistoryRef.current = persistedUiHistory;
     context.title = title;
     context.uiHistory = persistedUiHistory;
-    context.lineage = createSessionLineage(context.messages, context.lineage);
+    const lineage = context.lineage ?? reconcileContextLineage(context.messages);
+    context.lineage = lineage;
     await storage.save(context.sessionId, {
       messages: context.messages,
       title,
       gitRoot: context.gitRoot ?? "",
       uiHistory: persistedUiHistory,
-      lineage: context.lineage,
+      lineage,
       artifactLedger: context.artifactLedger,
     });
-  }, [context, storage]);
+  }, [context, reconcileContextLineage, storage]);
+
+  const flushPendingPersistContextState = useCallback(() => {
+    if (persistContextStateRunnerRef.current) {
+      return persistContextStateRunnerRef.current;
+    }
+
+    const run = (async () => {
+      try {
+        while (pendingPersistContextStateRef.current.requested) {
+          pendingPersistContextStateRef.current.requested = false;
+          const nextUiHistory = pendingPersistContextStateRef.current.uiHistoryOverride;
+          pendingPersistContextStateRef.current.uiHistoryOverride = undefined;
+          await persistContextState(nextUiHistory);
+        }
+      } finally {
+        persistContextStateRunnerRef.current = null;
+        if (pendingPersistContextStateRef.current.requested) {
+          void flushPendingPersistContextState();
+        }
+      }
+    })();
+
+    persistContextStateRunnerRef.current = run;
+    persistContextStateQueueRef.current = run;
+    return run;
+  }, [persistContextState]);
 
   const persistContextStateInBackground = useCallback((uiHistoryOverride?: KodaXSessionUiHistoryItem[]) => {
     if (uiHistoryOverride !== undefined) {
-      persistedUiHistoryRef.current = uiHistoryOverride;
+      const trimmedUiHistory = trimPersistedUiHistorySnapshot(uiHistoryOverride);
+      persistedUiHistoryRef.current = trimmedUiHistory;
+      pendingPersistContextStateRef.current.uiHistoryOverride = trimmedUiHistory;
     }
-    const queuedSave = persistContextStateQueueRef.current
-      .catch(() => {})
-      .then(() => persistContextState(uiHistoryOverride));
-    persistContextStateQueueRef.current = queuedSave.catch(() => {});
-    return queuedSave;
-  }, [persistContextState]);
+    pendingPersistContextStateRef.current.requested = true;
+    return flushPendingPersistContextState();
+  }, [flushPendingPersistContextState]);
 
   const requestGracefulExit = useCallback(() => {
     void (async () => {
@@ -3139,6 +3371,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const recordCompletedAgentRound = useCallback(async (result: KodaXResult) => {
     context.messages = result.messages;
     context.contextTokenSnapshot = result.contextTokenSnapshot;
+    reconcileContextLineage(result.messages);
 
     const finalThinking = getThinkingContent().trim();
     const finalResponse = resolveCompletedAssistantText(
@@ -3211,6 +3444,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     getFullResponse,
     getThinkingContent,
     persistContextStateInBackground,
+    reconcileContextLineage,
     resetLiveToolCalls,
     setCurrentTool,
     setLastLiveActivityLabel,
@@ -3320,6 +3554,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             role: "assistant",
             content: lastAssistant.content,
           });
+          reconcileContextLineage(context.messages);
           for (const item of extractHistorySeedsFromMessage(lastAssistant)) {
             addHistoryItem(item);
             persistedAdditions.push(item);
@@ -3328,6 +3563,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       } else {
         context.messages = result.messages;
         context.contextTokenSnapshot = result.contextTokenSnapshot;
+        reconcileContextLineage(result.messages);
         appendLastAssistantToHistory(result.messages);
         const lastAssistant = result.messages[result.messages.length - 1];
         if (lastAssistant?.role === "assistant") {
@@ -3354,6 +3590,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     currentConfig.thinking,
     planMode,
     persistContextState,
+    reconcileContextLineage,
     runAgentRound,
   ]);
 
@@ -3450,13 +3687,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             if (context.messages.length > 0) {
               const title = extractTitle(context.messages);
               context.title = title;
-              context.lineage = createSessionLineage(context.messages, context.lineage);
+              const lineage = context.lineage ?? reconcileContextLineage(context.messages);
+              context.lineage = lineage;
               await storage.save(context.sessionId, {
                 messages: context.messages,
                 title,
                 gitRoot: context.gitRoot ?? "",
                 uiHistory: persistedUiHistoryRef.current,
-                lineage: context.lineage,
+                lineage,
                 artifactLedger: context.artifactLedger,
               });
             }
@@ -3470,6 +3708,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             context.contextTokenSnapshot = undefined;
             context.lineage = undefined;
             context.artifactLedger = undefined;
+            persistedUiHistoryRef.current = [];
             context.createdAt = now;
             context.lastAccessed = now;
             currentOptionsRef.current.session = {
@@ -3492,12 +3731,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
                 return "blocked";
               }
               context.messages = loaded.messages;
-              context.uiHistory = loaded.uiHistory;
+              context.uiHistory = normalizePersistedUiHistory(loaded.uiHistory);
               context.lineage = loaded.lineage;
               context.artifactLedger = loaded.artifactLedger;
               context.title = loaded.title;
               context.sessionId = id;
               context.contextTokenSnapshot = undefined;
+              persistedUiHistoryRef.current = context.uiHistory ?? [];
               setLiveTokenCount(null);
               clearUIHistory();
               setSessionId(id);
@@ -3667,9 +3907,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             }
 
             context.messages = loaded.messages;
-            context.uiHistory = loaded.uiHistory;
+            context.uiHistory = normalizePersistedUiHistory(loaded.uiHistory);
             context.title = loaded.title;
             context.contextTokenSnapshot = undefined;
+            persistedUiHistoryRef.current = context.uiHistory ?? [];
             setLiveTokenCount(null);
             clearUIHistory();
             console.log(chalk.green(`\n[Switched to tree entry: ${selector}]`));
@@ -3705,9 +3946,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
             context.sessionId = forked.sessionId;
             context.messages = forked.data.messages;
-            context.uiHistory = forked.data.uiHistory;
+            context.uiHistory = normalizePersistedUiHistory(forked.data.uiHistory);
             context.title = forked.data.title;
             context.contextTokenSnapshot = undefined;
+            persistedUiHistoryRef.current = context.uiHistory ?? [];
             const now = new Date().toISOString();
             context.createdAt = now;
             context.lastAccessed = now;
@@ -4072,6 +4314,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       appendHistoryItemsToCurrentSnapshot,
       appendLastAssistantToHistory,
       persistContextState,
+      reconcileContextLineage,
       runQueueableAgentSequence,
       startCompacting,
       stopCompacting,
@@ -4080,8 +4323,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     ]
   );
 
-  return (
-    <Box flexDirection="column" width={terminalWidth} flexShrink={0} flexGrow={0}>
+  const shellBody = (
+    <Box
+      flexDirection="column"
+      width={terminalWidth}
+      flexShrink={0}
+      flexGrow={fullscreenPolicy.enabled ? 1 : 0}
+    >
       {/* Global Shortcuts - registers keyboard shortcuts (Issue 083) */}
       <GlobalShortcuts
         currentConfig={currentConfig}
@@ -4118,20 +4366,19 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         onSavePermissionMode={savePermissionModeUser}
       />
 
-      {/* Banner - shown once at start, using Static to prevent re-rendering */}
-      {showBanner && (
+      {/* Banner - render inside the fullscreen tree so its height is budgeted correctly */}
+      {showBanner && (fullscreenPolicy.enabled ? (
+        <Banner {...bannerProps} />
+      ) : (
         <Static items={[1]}>
           {() => (
             <Banner
               key="banner"
-              config={currentConfig}
-              sessionId={context.sessionId}
-              workingDir={options.context?.gitRoot || process.cwd()}
-              compactionInfo={compactionInfo ?? undefined}
+              {...bannerProps}
             />
           )}
         </Static>
-      )}
+      ))}
 
 
       <FullscreenTranscriptLayout
@@ -4142,17 +4389,17 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           <TranscriptViewport
             items={displayItems}
             isLoading={displayIsLoading}
-            isThinking={displayStreamingState.isThinking}
-            thinkingCharCount={displayStreamingState.thinkingCharCount}
-            thinkingContent={displayStreamingState.thinkingContent}
-            streamingResponse={displayStreamingState.currentResponse}
-            currentTool={displayStreamingState.currentTool}
-            activeToolCalls={displayStreamingState.activeToolCalls}
-            toolInputCharCount={displayStreamingState.toolInputCharCount}
-            toolInputContent={displayStreamingState.toolInputContent}
-            iterationHistory={displayStreamingState.iterationHistory}
-            currentIteration={displayStreamingState.currentIteration}
-            isCompacting={displayStreamingState.isCompacting}
+            isThinking={transcriptStreamingState.isThinking}
+            thinkingCharCount={transcriptStreamingState.thinkingCharCount}
+            thinkingContent={transcriptStreamingState.thinkingContent}
+            streamingResponse={transcriptStreamingState.currentResponse}
+            currentTool={transcriptStreamingState.currentTool}
+            activeToolCalls={transcriptStreamingState.activeToolCalls}
+            toolInputCharCount={transcriptStreamingState.toolInputCharCount}
+            toolInputContent={transcriptStreamingState.toolInputContent}
+            iterationHistory={transcriptStreamingState.iterationHistory}
+            currentIteration={transcriptStreamingState.currentIteration}
+            isCompacting={transcriptStreamingState.isCompacting}
             agentMode={currentConfig.agentMode}
             managedPhase={displayIsLoading ? managedTaskStatus?.phase : undefined}
             managedHarnessProfile={displayIsLoading ? managedTaskStatus?.harnessProfile : undefined}
@@ -4162,23 +4409,30 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             managedGlobalWorkBudget={displayIsLoading ? managedTaskStatus?.globalWorkBudget : undefined}
             managedBudgetUsage={displayIsLoading ? managedTaskStatus?.budgetUsage : undefined}
             managedBudgetApprovalRequired={displayIsLoading ? managedTaskStatus?.budgetApprovalRequired : undefined}
-            lastLiveActivityLabel={displayStreamingState.lastLiveActivityLabel}
+            lastLiveActivityLabel={transcriptStreamingState.lastLiveActivityLabel}
             viewportRows={viewportBudget.messageRows}
             viewportWidth={terminalWidth}
             scrollOffset={historyScrollOffset}
-            animateSpinners={!isLivePaused}
+            animateSpinners={!isLivePaused && fullscreenPolicy.transcriptSpinnerAnimation}
             windowed={transcriptOwnsViewport}
             maxLines={transcriptMaxLines}
             showFullThinking={isTranscriptVerbose || isReviewingHistory}
             showDetailedTools={isTranscriptVerbose || isReviewingHistory}
             selectedItemId={selectedTranscriptItemId}
             expandedItemKeys={expandedTranscriptItemIds}
+            onMetricsChange={handleTranscriptMetricsChange}
             browse={{ hintText: transcriptChrome.browseHintText }}
             selection={transcriptSelectionState}
             search={transcriptSearchState}
           />
         }
         overlay={overlaySurface}
+        scrollTop={historyScrollOffset}
+        scrollHeight={transcriptScrollHeight}
+        viewportHeight={viewportBudget.messageRows}
+        stickyScroll={!isReviewingHistory && !isAwaitingUserInteraction && historyScrollOffset === 0}
+        scrollRef={transcriptScrollRef}
+        onScrollTopChange={setHistoryScrollOffset}
         footer={
           <PromptFooter
             left={<PromptFooterLeftSide items={footerLeftItems} />}
@@ -4226,6 +4480,18 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       />
     </Box>
   );
+
+  if (fullscreenPolicy.enabled) {
+    return (
+      <AlternateScreen
+        mouseTracking={fullscreenPolicy.mouseWheel || fullscreenPolicy.mouseClicks}
+      >
+        {shellBody}
+      </AlternateScreen>
+    );
+  }
+
+  return shellBody;
 };
 
 /**
@@ -4280,6 +4546,9 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
   }
 
   const storage = options.storage ?? new MemorySessionStorage();
+  const terminalHostProfile = detectTerminalHostProfile();
+  const rendererMode = resolveEffectiveTuiRendererMode();
+  const fullscreenPolicy = resolveFullscreenPolicy(terminalHostProfile, rendererMode);
 
   // Load config
   const { prepareRuntimeConfig, getGitRoot } = await import("../common/utils.js");
@@ -4346,7 +4615,7 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
     const loaded = await storage.load(options.session.id);
     if (loaded) {
       existingMessages = loaded.messages;
-      existingUiHistory = loaded.uiHistory;
+      existingUiHistory = normalizePersistedUiHistory(loaded.uiHistory);
       existingLineage = loaded.lineage;
       existingArtifactLedger = loaded.artifactLedger;
       sessionTitle = loaded.title;
@@ -4363,7 +4632,7 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
         const loaded = await storage.load(recentSession.id);
         if (loaded) {
           existingMessages = loaded.messages;
-          existingUiHistory = loaded.uiHistory;
+          existingUiHistory = normalizePersistedUiHistory(loaded.uiHistory);
           existingLineage = loaded.lineage;
           existingArtifactLedger = loaded.artifactLedger;
           sessionTitle = loaded.title;
@@ -4398,6 +4667,8 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
         context={context}
         storage={storage}
         compactionInfo={compactionInfo}
+        rendererMode={rendererMode}
+        fullscreenPolicy={fullscreenPolicy}
         onExit={() => {
           console.log(chalk.dim("\n[Exiting KodaX...]"));
         }}

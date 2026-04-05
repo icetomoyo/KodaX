@@ -70,6 +70,8 @@ import {
   buildInitPrompt,
   FileSessionStorage,
   KODAX_CONFIG_FILE,
+  resolveInteractiveSurfacePreference,
+  runInteractiveMode,
   runInkInteractiveMode,
   type PermissionMode,
 } from '@kodax/repl';
@@ -1304,10 +1306,20 @@ New: {"features": [
   // No prompt and not in print/init mode: enter interactive mode
   if (!userPrompt && !options.init && !options.print) {
     const kodaXOptions = createKodaXOptions(options, false);
+    const interactiveSurface = resolveInteractiveSurfacePreference();
+    const useClassicInteractiveMode = interactiveSurface === 'classic';
     // Pass FileSessionStorage for persisted sessions.
-    // Avoid forwarding CLI events or permission settings because Ink manages its own UI state.
     try {
-      await runInkInteractiveMode({
+      if (useClassicInteractiveMode) {
+        console.error(chalk.dim(
+          '\n[Terminal compatibility] Using classic REPL because this terminal host cannot safely run the fullscreen TUI.',
+        ));
+        console.error(chalk.dim(
+          'Set KODAX_FORCE_INK=1 or KODAX_TUI_RENDERER=owned to override, or KODAX_FORCE_CLASSIC_REPL=1 to keep this mode everywhere.\n',
+        ));
+      }
+
+      const interactiveOptions = {
         provider: kodaXOptions.provider,
         model: kodaXOptions.model,
         thinking: kodaXOptions.thinking,
@@ -1318,8 +1330,13 @@ New: {"features": [
         extensionRuntime: kodaXOptions.extensionRuntime,
         session: kodaXOptions.session,
         storage: new FileSessionStorage(),
-        // Use FileSessionStorage for persisted sessions; Ink manages its own UI state.
-      });
+      };
+
+      if (useClassicInteractiveMode) {
+        await runInteractiveMode(interactiveOptions);
+      } else {
+        await runInkInteractiveMode(interactiveOptions);
+      }
     } catch (error) {
       if (error instanceof KodaXTerminalError) {
         console.error(chalk.red(`\n[Error] ${error.message}`));

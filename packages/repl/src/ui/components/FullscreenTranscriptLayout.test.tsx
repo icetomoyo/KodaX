@@ -1,7 +1,7 @@
 import React from "react";
 import { describe, expect, it } from "vitest";
 import { render } from "ink-testing-library";
-import { Text } from "ink";
+import { Text } from "../tui.js";
 import { FullscreenTranscriptLayout } from "./FullscreenTranscriptLayout.js";
 
 describe("FullscreenTranscriptLayout", () => {
@@ -24,3 +24,4 @@ describe("FullscreenTranscriptLayout", () => {
     expect(frame).toContain("Footer");
   });
 });
+

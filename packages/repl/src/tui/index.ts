@@ -1,4 +1,16 @@
 export {
+  render,
+  Box,
+  Text,
+  Static,
+  useInput,
+  useStdout,
+  useStdin,
+  useApp,
+} from "ink";
+export type { Key } from "ink";
+
+export {
   detectTerminalRenderHost,
   detectTerminalHostProfile,
   getTerminalHostCapabilities,
@@ -13,7 +25,7 @@ export {
   resolveInteractiveSurfacePreference,
   isOwnedRendererPreferred,
   isClassicReplForced,
-} from "../../tui/runtime.js";
+} from "./runtime.js";
 export type {
   EffectiveTuiRendererMode,
   FullscreenPolicy,
@@ -23,4 +35,9 @@ export type {
   TerminalHostProfile,
   TerminalRenderHost,
   TuiRendererMode,
-} from "../../tui/runtime.js";
+} from "./runtime.js";
+
+export { AlternateScreen } from "./components/AlternateScreen.js";
+export { FullscreenLayout } from "./components/FullscreenLayout.js";
+export { ScrollBox } from "./components/ScrollBox.js";
+export type { ScrollBoxHandle } from "./components/ScrollBox.js";

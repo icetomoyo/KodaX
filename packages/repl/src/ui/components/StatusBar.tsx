@@ -3,7 +3,7 @@
  */
 
 import React, { useMemo } from "react";
-import { Box, Text } from "ink";
+import { Box, Text } from "../tui.js";
 import { getTheme } from "../themes/index.js";
 import type { StatusBarProps } from "../types.js";
 import {
@@ -90,3 +90,4 @@ export const SimpleStatusBar: React.FC<{
     </Box>
   );
 };
+

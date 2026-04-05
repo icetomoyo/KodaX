@@ -9,7 +9,7 @@
  */
 
 import React, { useMemo } from "react";
-import { Text, Box } from "ink";
+import { Text, Box } from "../tui.js";
 import { useTheme } from "../contexts/UIStateContext.js";
 import type { Suggestion } from "../types.js";
 import { truncateByVisualWidth, getVisualWidth } from "../utils/textUtils.js";

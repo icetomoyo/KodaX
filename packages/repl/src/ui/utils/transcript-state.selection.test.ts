@@ -27,7 +27,7 @@ describe("transcript-state selection capabilities", () => {
       createTranscriptDisplayState("degraded_vt"),
     );
 
-    expect(supportsPassiveTranscriptCopyOnSelect(nativeBrowsing)).toBe(true);
+    expect(supportsPassiveTranscriptCopyOnSelect(nativeBrowsing)).toBe(false);
     expect(supportsPassiveTranscriptCopyOnSelect(xtermBrowsing)).toBe(false);
     expect(supportsPassiveTranscriptCopyOnSelect(degradedBrowsing)).toBe(false);
   });

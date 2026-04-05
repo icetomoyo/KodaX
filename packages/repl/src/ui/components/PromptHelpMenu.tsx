@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, Text } from "ink";
+import { Box, Text } from "../tui.js";
 import { getTheme } from "../themes/index.js";
 import type { HelpMenuSection } from "../constants/layout.js";
 
@@ -41,3 +41,4 @@ export const PromptHelpMenu: React.FC<PromptHelpMenuProps> = ({
     </Box>
   );
 };
+

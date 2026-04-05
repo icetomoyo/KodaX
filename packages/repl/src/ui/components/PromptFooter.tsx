@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, Text } from "ink";
+import { Box, Text } from "../tui.js";
 import { getTheme } from "../themes/index.js";
 
 const ITEM_SEPARATOR = " \u00B7 ";
@@ -114,3 +114,4 @@ export const PromptFooter: React.FC<PromptFooterProps> = ({
     </Box>
   );
 };
+

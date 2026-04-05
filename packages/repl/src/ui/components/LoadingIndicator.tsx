@@ -6,7 +6,7 @@
  */
 
 import React, { useMemo, useState, useEffect } from "react";
-import { Box, Text } from "ink";
+import { Box, Text } from "../tui.js";
 import { getTheme } from "../themes/index.js";
 import type { Theme } from "../types.js";
 

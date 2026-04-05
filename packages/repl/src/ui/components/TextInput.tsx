@@ -1,11 +1,11 @@
 /**
- * TextInput - Multi-line text input component - 多行文本输入组件
+ * TextInput - Multi-line text input component - 澶氳鏂囨湰杈撳叆缁勪欢
  *
- * Display text content and render cursor - 显示文本内容并渲染光标
+ * Display text content and render cursor - 鏄剧ず鏂囨湰鍐呭骞舵覆鏌撳厜鏍?
  */
 
 import React, { useMemo, useState, useEffect } from "react";
-import { Text, Box, useStdout } from "ink";
+import { Text, Box, useStdout } from "../tui.js";
 import stringWidth from "string-width";
 import { getTheme } from "../themes/index.js";
 import type { PromptEditingMode } from "../types.js";
@@ -31,12 +31,12 @@ export interface TextInputProps {
 }
 
 /**
- * Maximum divider width (prevent performance issues with very wide terminals) - 分隔线最大宽度（防止超宽终端性能问题）
+ * Maximum divider width (prevent performance issues with very wide terminals) - 鍒嗛殧绾挎渶澶у搴︼紙闃叉瓒呭缁堢鎬ц兘闂锛?
  */
 const MAX_DIVIDER_WIDTH = 200;
 
 /**
- * Generate divider line - 生成分隔线
+ * Generate divider line - 鐢熸垚鍒嗛殧绾?
  */
 function generateDivider(width: number): string {
   const safeWidth = Math.min(MAX_DIVIDER_WIDTH, Math.max(1, width));
@@ -44,24 +44,24 @@ function generateDivider(width: number): string {
 }
 
 /**
- * Hook to get terminal width - 获取终端宽度的 Hook
+ * Hook to get terminal width - 鑾峰彇缁堢瀹藉害鐨?Hook
  */
 function useTerminalWidth(): number {
   const { stdout } = useStdout();
   const [width, setWidth] = useState(() => {
-    // Use stdout or process.stdout on initialization - 初始化时使用 stdout 或 process.stdout
+    // Use stdout or process.stdout on initialization - 鍒濆鍖栨椂浣跨敤 stdout 鎴?process.stdout
     return stdout?.columns ?? process.stdout?.columns ?? 80;
   });
 
   useEffect(() => {
     const handleResize = () => {
       // Use process.stdout.columns instead of stdout in closure
-      // because closure value may be stale - 使用 process.stdout.columns 而非闭包中的 stdout，因为闭包中的值可能过时
+      // because closure value may be stale - 浣跨敤 process.stdout.columns 鑰岄潪闂寘涓殑 stdout锛屽洜涓洪棴鍖呬腑鐨勫€煎彲鑳借繃鏃?
       const newWidth = process.stdout?.columns ?? stdout?.columns ?? 80;
       setWidth(newWidth);
     };
 
-    // Listen for terminal resize events - 监听终端 resize 事件
+    // Listen for terminal resize events - 鐩戝惉缁堢 resize 浜嬩欢
     process.stdout?.on("resize", handleResize);
 
     return () => {
@@ -88,12 +88,12 @@ export const TextInput: React.FC<TextInputProps> = ({
   const theme = useMemo(() => getTheme(themeName), [themeName]);
   const terminalWidth = propWidth ?? useTerminalWidth();
 
-  // Calculate prompt width (for alignment) - 计算提示符宽度（用于对齐）
+  // Calculate prompt width (for alignment) - 璁＄畻鎻愮ず绗﹀搴︼紙鐢ㄤ簬瀵归綈锛?
   const promptWidth = stringWidth(prompt) + 1; // +1 for space
 
-  // Calculate visual layout for wrapping - 计算视觉布局用于换行
+  // Calculate visual layout for wrapping - 璁＄畻瑙嗚甯冨眬鐢ㄤ簬鎹㈣
   const visualLayout = useMemo(() => {
-    // Calculate available width for text (excluding prompt) - 计算文本可用宽度（排除提示符）
+    // Calculate available width for text (excluding prompt) - 璁＄畻鏂囨湰鍙敤瀹藉害锛堟帓闄ゆ彁绀虹锛?
     const availableWidth = Math.max(20, terminalWidth - promptWidth);
 
     return calculateVisualLayout(
@@ -104,7 +104,7 @@ export const TextInput: React.FC<TextInputProps> = ({
     );
   }, [lines, terminalWidth, cursorRow, cursorCol, promptWidth]);
 
-  // Calculate visual cursor position - 计算视觉光标位置
+  // Calculate visual cursor position - 璁＄畻瑙嗚鍏夋爣浣嶇疆
   const visualCursor = useMemo(() => {
     if (!visualLayout) return null;
 
@@ -115,18 +115,18 @@ export const TextInput: React.FC<TextInputProps> = ({
     return { row: visualRow, col: visualCol };
   }, [visualLayout, cursorRow, cursorCol]);
 
-  // Use visual layout rendering for all input (including empty and single-line) - 所有输入使用视觉布局渲染（包括空输入和单行）
+  // Use visual layout rendering for all input (including empty and single-line) - 鎵€鏈夎緭鍏ヤ娇鐢ㄨ瑙夊竷灞€娓叉煋锛堝寘鎷┖杈撳叆鍜屽崟琛岋級
   const divider = generateDivider(terminalWidth);
   const showCursor = focus && terminalFocused;
   const pasteHintVisible = isPasting && lines.some((line) => line.length > 0);
 
-  // TypeScript non-null assertion: visualLayout and visualCursor are  // TypeScript 非空断言：visualLayout 和 visualCursor 保证非空
+  // TypeScript non-null assertion: visualLayout and visualCursor are  // TypeScript 闈炵┖鏂█锛歷isualLayout 鍜?visualCursor 淇濊瘉闈炵┖
   const layout = visualLayout!;
   const vCursor = visualCursor!;
 
   return (
     <Box flexDirection="column" width={propWidth}>
-      {/* Top divider - 顶部分隔线 */}
+      {/* Top divider - 椤堕儴鍒嗛殧绾?*/}
       <Text dimColor>{divider}</Text>
       {pasteHintVisible ? (
         <Box>
@@ -134,9 +134,9 @@ export const TextInput: React.FC<TextInputProps> = ({
         </Box>
       ) : null}
 
-      {/* Content lines - 内容行 */}
+      {/* Content lines - 鍐呭琛?*/}
       {layout.visualLines.length === 0 || (layout.visualLines.length === 1 && layout.visualLines[0] === "") ? (
-        // Empty input - show placeholder and cursor - 空输入 - 显示占位符和光标
+        // Empty input - show placeholder and cursor - 绌鸿緭鍏?- 鏄剧ず鍗犱綅绗﹀拰鍏夋爣
         <Box>
           <Text color={theme.colors.primary}>{prompt} </Text>
           {showCursor ? (
@@ -153,7 +153,7 @@ export const TextInput: React.FC<TextInputProps> = ({
           const isCurrentVisualLine = visualRowIndex === vCursor.row;
           const linePrompt = visualRowIndex === 0 ? prompt : " ".repeat(promptWidth - 1);
 
-          // Current line needs to show cursor - 当前行需要显示光标
+          // Current line needs to show cursor - 褰撳墠琛岄渶瑕佹樉绀哄厜鏍?
           if (isCurrentVisualLine && showCursor) {
             const { before, current, after } = splitAtVisualColumn(visualLine, vCursor.col);
             const cursorChar = current || " ";
@@ -170,7 +170,7 @@ export const TextInput: React.FC<TextInputProps> = ({
             );
           }
 
-          // Non-current line - 非当前行
+          // Non-current line - 闈炲綋鍓嶈
           return (
             <Box key={visualRowIndex}>
               <Text color={theme.colors.dim}>{linePrompt} </Text>
@@ -180,14 +180,14 @@ export const TextInput: React.FC<TextInputProps> = ({
         })
       )}
 
-      {/* Bottom divider - 底部分隔线 */}
+      {/* Bottom divider - 搴曢儴鍒嗛殧绾?*/}
       <Text dimColor>{divider}</Text>
     </Box>
   );
 };
 
 /**
- * Single-line TextInput (simplified version) - 单行 TextInput（简化版）
+ * Single-line TextInput (simplified version) - 鍗曡 TextInput锛堢畝鍖栫増锛?
  */
 export const SingleLineTextInput: React.FC<{
   value: string;
@@ -225,3 +225,4 @@ export const SingleLineTextInput: React.FC<{
     </Box>
   );
 };
+

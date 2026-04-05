@@ -28,8 +28,8 @@ describe("transcript-state", () => {
     const state = createTranscriptDisplayState("degraded_vt");
 
     expect(state.buffering).toBe("buffered-fallback");
-    expect(state.ownsViewportByDefault).toBe(false);
-    expect(shouldWindowTranscript(state)).toBe(false);
+    expect(state.ownsViewportByDefault).toBe(true);
+    expect(shouldWindowTranscript(state)).toBe(true);
   });
 
   it("toggles verbosity without changing follow mode", () => {
@@ -56,7 +56,7 @@ describe("transcript-state", () => {
     const degraded = enterTranscriptHistory(createTranscriptDisplayState("degraded_vt"));
     const native = enterTranscriptHistory(createTranscriptDisplayState("native_vt"));
 
-    expect(supportsTranscriptMouseHistory(degraded)).toBe(false);
+    expect(supportsTranscriptMouseHistory(degraded)).toBe(true);
     expect(supportsTranscriptMouseHistory(native)).toBe(true);
   });
 

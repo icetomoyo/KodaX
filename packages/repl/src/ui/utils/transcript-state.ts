@@ -1,6 +1,7 @@
 import {
   getTerminalHostCapabilities,
   type TerminalHostProfile,
+  type EffectiveTuiRendererMode,
 } from "./terminal-host-profile.js";
 
 export type TranscriptVerbosity = "compact" | "verbose";
@@ -38,10 +39,17 @@ export type TranscriptSelectionCapabilityState = Pick<
   "followMode" | "supportsSelection" | "supportsCopyOnSelect"
 >;
 
+export interface TranscriptDisplayStateOptions {
+  rendererMode?: EffectiveTuiRendererMode;
+}
+
 export function createTranscriptDisplayState(
   hostProfile: TerminalHostProfile,
+  options: TranscriptDisplayStateOptions = {},
 ): TranscriptDisplayState {
-  const capabilities = getTerminalHostCapabilities(hostProfile);
+  const capabilities = getTerminalHostCapabilities(hostProfile, {
+    rendererMode: options.rendererMode ?? "owned",
+  });
   return {
     hostProfile,
     verbosity: "compact",

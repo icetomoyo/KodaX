@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, Text } from "ink";
+import { Box, Text } from "../tui.js";
 import type { KodaXAmaFanoutClass } from "@kodax/coding";
 import { getTheme } from "../themes/index.js";
 
@@ -44,3 +44,4 @@ export const AmaWorkStrip: React.FC<AmaWorkStripProps> = ({ text }) => {
     </Box>
   );
 };
+

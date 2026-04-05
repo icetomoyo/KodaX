@@ -8,7 +8,7 @@
  */
 
 import { useEffect, useCallback, useRef } from "react";
-import { useStdin } from "ink";
+import { useStdin } from "../tui.js";
 import { KeypressParser, parseKeypress } from "../utils/keypress-parser.js";
 import type { KeyInfo } from "../types.js";
 

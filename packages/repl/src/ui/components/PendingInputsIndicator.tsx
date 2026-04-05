@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, Text } from "ink";
+import { Box, Text } from "../tui.js";
 import { getTheme } from "../themes/index.js";
 import { formatPendingInputsSummary } from "../utils/pending-inputs.js";
 
@@ -24,3 +24,4 @@ export const PendingInputsIndicator: React.FC<PendingInputsIndicatorProps> = ({
     </Box>
   );
 };
+

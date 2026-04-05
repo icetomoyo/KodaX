@@ -357,9 +357,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
 
     const targetPath = this.getSessionFilePath(id);
     const tempPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
-    const lineage = data.lineage
-      ? createSessionLineage(data.messages, data.lineage)
-      : createSessionLineage(data.messages);
+    const lineage = data.lineage ?? createSessionLineage(data.messages);
     const meta = createSessionMeta(id, data, lineage, createdAt);
     const lineageLines = lineage.entries.map((entry) => JSON.stringify(toLineageEntryLine(entry)));
     const artifactLedgerLines = (data.artifactLedger ?? [])
@@ -391,9 +389,9 @@ export class FileSessionStorage implements KodaXSessionStorage {
       extensionState: data.extensionState ?? existing?.data.extensionState,
       artifactLedger: data.artifactLedger ?? existing?.data.artifactLedger,
       extensionRecords: data.extensionRecords ?? existing?.data.extensionRecords,
-      lineage: createSessionLineage(
+      lineage: data.lineage ?? createSessionLineage(
         data.messages,
-        data.lineage ?? existing?.data.lineage,
+        existing?.data.lineage,
       ),
     };
     await this.writeSession(id, merged, existing?.createdAt);

@@ -4,6 +4,7 @@
 
 import chalk from 'chalk';
 import { getTerminalWidth } from './prompts.js';
+import { hasMainScreenRenderScrollRisk } from '../ui/utils/terminal-host-profile.js';
 
 export interface StatusBarState {
   sessionId: string;
@@ -221,6 +222,10 @@ export function createStatusBarState(
 
 export function supportsStatusBar(): boolean {
   if (!process.stdout.isTTY) {
+    return false;
+  }
+
+  if (hasMainScreenRenderScrollRisk()) {
     return false;
   }
 
