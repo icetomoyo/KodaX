@@ -2,6 +2,7 @@ import React from "react";
 import { Box, Text } from "../tui.js";
 import type { KodaXAmaFanoutClass } from "@kodax/coding";
 import { getTheme } from "../themes/index.js";
+import { Spinner } from "./LoadingIndicator.js";
 
 export function formatAmaWorkStripText(
   fanoutClass?: KodaXAmaFanoutClass,
@@ -27,19 +28,28 @@ export function formatAmaWorkStripText(
 
 export interface AmaWorkStripProps {
   text?: string;
+  showSpinner?: boolean;
 }
 
-export const AmaWorkStrip: React.FC<AmaWorkStripProps> = ({ text }) => {
+export const AmaWorkStrip: React.FC<AmaWorkStripProps> = ({
+  text,
+  showSpinner = false,
+}) => {
   const theme = getTheme("dark");
 
-  if (!text) {
+  if (!text && !showSpinner) {
     return null;
   }
 
   return (
     <Box>
+      {showSpinner ? (
+        <Box marginRight={1}>
+          <Spinner />
+        </Box>
+      ) : null}
       <Text color={theme.colors.primary} dimColor>
-        {text}
+        {text ?? "Agent active"}
       </Text>
     </Box>
   );

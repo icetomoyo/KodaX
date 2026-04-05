@@ -40,6 +40,11 @@ export function buildAmaSummaryViewModel(options: {
   isLoading: boolean;
   agentMode: KodaXAgentMode;
   parallelTextOverride?: string;
+  currentTool?: string;
+  toolInputCharCount?: number;
+  toolInputContent?: string;
+  liveActivityLabel?: string;
+  isThinkingActive?: boolean;
 }): AmaSummaryViewModel {
   const workStripText = buildAmaWorkStripFromStatus(
     options.status,
@@ -53,8 +58,13 @@ export function buildAmaSummaryViewModel(options: {
       activeWorkerTitle: options.status?.activeWorkerTitle,
       activePhase:
         options.status?.phase
-        ?? (options.agentMode === "ama" ? "AMA active" : "Working"),
+        ?? (options.agentMode === "ama" ? "AMA active" : undefined),
       parallelText: options.parallelTextOverride ?? workStripText,
+      currentTool: options.currentTool,
+      toolInputCharCount: options.toolInputCharCount,
+      toolInputContent: options.toolInputContent,
+      liveActivityLabel: options.liveActivityLabel,
+      isThinkingActive: options.isThinkingActive,
     }),
   };
 }

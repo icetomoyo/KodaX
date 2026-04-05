@@ -25,4 +25,13 @@ describe("AmaWorkStrip", () => {
 
     expect(lastFrame()).toContain("Parallel evidence pass (2)");
   });
+
+  it("can show spinner-based liveness without moving activity into the status bar", () => {
+    const { lastFrame } = render(
+      <AmaWorkStrip text="Parallel evidence pass (2)" showSpinner />,
+    );
+
+    expect(lastFrame()).toContain("⠋");
+    expect(lastFrame()).toContain("Parallel evidence pass (2)");
+  });
 });

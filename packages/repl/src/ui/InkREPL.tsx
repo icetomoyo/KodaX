@@ -539,11 +539,16 @@ export function buildRoundHistoryItems({
 export function shouldShowStatusBarBusyStatus({
   isLivePaused,
   isLoading,
+  hasSpinnerLiveness,
 }: {
   isLivePaused: boolean;
   isLoading: boolean;
+  hasSpinnerLiveness: boolean;
 }): boolean {
   if (isLivePaused) {
+    return false;
+  }
+  if (isLoading && hasSpinnerLiveness) {
     return false;
   }
   return isLoading;
@@ -1460,6 +1465,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     transcriptDisplayState.searchAnchorItemId,
     transcriptSearchIndex,
   ]);
+  const showTaskBarSpinner = displayIsLoading
+    && !isLivePaused
+    && !fullscreenPolicy.transcriptSpinnerAnimation;
 
   const statusBarProps = useMemo(() => ({
     sessionId: context.sessionId,
@@ -1486,6 +1494,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     showBusyStatus: shouldShowStatusBarBusyStatus({
       isLivePaused,
       isLoading: displayIsLoading,
+      hasSpinnerLiveness: !isLivePaused && (
+        fullscreenPolicy.transcriptSpinnerAnimation || showTaskBarSpinner
+      ),
     }),
     managedPhase: displayIsLoading ? managedTaskStatus?.phase : undefined,
     managedHarnessProfile: displayIsLoading ? managedTaskStatus?.harnessProfile : undefined,
@@ -1516,6 +1527,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     contextUsage,
     isLivePaused,
     displayIsLoading,
+    fullscreenPolicy.transcriptSpinnerAnimation,
+    showTaskBarSpinner,
     managedTaskStatus,
   ]);
 
@@ -1607,8 +1620,23 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       isLoading: displayIsLoading,
       agentMode: currentConfig.agentMode,
       parallelTextOverride: displayWorkStripText,
+      currentTool: displayStreamingState.currentTool,
+      toolInputCharCount: displayStreamingState.toolInputCharCount,
+      toolInputContent: displayStreamingState.toolInputContent,
+      liveActivityLabel: displayStreamingState.lastLiveActivityLabel,
+      isThinkingActive: displayStreamingState.isThinking,
     }).backgroundTask,
-    [currentConfig.agentMode, displayIsLoading, displayWorkStripText, managedTaskStatus],
+    [
+      currentConfig.agentMode,
+      displayIsLoading,
+      displayStreamingState.currentTool,
+      displayStreamingState.isThinking,
+      displayStreamingState.lastLiveActivityLabel,
+      displayStreamingState.toolInputCharCount,
+      displayStreamingState.toolInputContent,
+      displayWorkStripText,
+      managedTaskStatus,
+    ],
   );
   const useOverlaySurface =
     transcriptDisplayState.supportsOverlaySurface
@@ -4469,9 +4497,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
                 items={backgroundTaskViewModel.items}
                 overflowLabel={backgroundTaskViewModel.overflowLabel}
                 ctaHint={backgroundTaskViewModel.ctaHint}
+                showSpinner={showTaskBarSpinner}
               />
             ) : (
-              <AmaWorkStrip text={displayWorkStripText} />
+              <AmaWorkStrip
+                text={displayWorkStripText}
+                showSpinner={showTaskBarSpinner}
+              />
             )}
             statusLine={<Box><StatusBar {...statusBarProps} viewModel={statusBarViewModel} /></Box>}
             inlineDialogs={useOverlaySurface ? undefined : dialogSurface}

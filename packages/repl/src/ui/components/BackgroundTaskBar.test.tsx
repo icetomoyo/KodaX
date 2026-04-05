@@ -21,6 +21,18 @@ describe("BackgroundTaskBar", () => {
     expect(frame).toContain("PgUp history");
   });
 
+  it("renders a spinner when live work is active outside the transcript lane", () => {
+    const { lastFrame } = render(
+      <BackgroundTaskBar
+        items={[{ id: "worker", label: "Planner active", accent: true, selected: true }]}
+        showSpinner
+      />,
+    );
+
+    expect(lastFrame()).toContain("⠋");
+    expect(lastFrame()).toContain("Planner active");
+  });
+
   it("stays hidden when there is no summary content to show", () => {
     const { lastFrame } = render(
       <BackgroundTaskBar items={[]} />,

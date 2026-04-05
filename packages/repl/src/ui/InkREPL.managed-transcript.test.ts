@@ -207,17 +207,19 @@ describe("appendPersistedUiHistorySnapshot", () => {
 });
 
 describe("shouldShowStatusBarBusyStatus", () => {
-  it("keeps busy text visible while AMA live loading is active", () => {
+  it("hides busy text when spinner liveness is already visible", () => {
     expect(shouldShowStatusBarBusyStatus({
       isLivePaused: false,
       isLoading: true,
-    })).toBe(true);
+      hasSpinnerLiveness: true,
+    })).toBe(false);
   });
 
-  it("keeps busy text visible for SA live loading", () => {
+  it("keeps busy text visible when no spinner channel is available", () => {
     expect(shouldShowStatusBarBusyStatus({
       isLivePaused: false,
       isLoading: true,
+      hasSpinnerLiveness: false,
     })).toBe(true);
   });
 });

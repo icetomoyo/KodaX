@@ -1,10 +1,16 @@
 import type { BackgroundTaskBarItem } from "../components/BackgroundTaskBar.js";
+import { formatLiveToolLabel } from "../utils/tool-display.js";
 
 export interface BackgroundTaskViewModelInput {
   isLoading: boolean;
   activeWorkerTitle?: string;
   activePhase?: string;
   parallelText?: string;
+  currentTool?: string;
+  toolInputCharCount?: number;
+  toolInputContent?: string;
+  liveActivityLabel?: string;
+  isThinkingActive?: boolean;
 }
 
 export interface BackgroundTaskViewModel {
@@ -13,12 +19,29 @@ export interface BackgroundTaskViewModel {
   ctaHint?: string;
 }
 
+function stripLiveActivityPrefix(label: string): string {
+  return label.replace(/^\[[^\]]+\]\s*/, "").trim();
+}
+
 export function buildBackgroundTaskViewModel(
   input: BackgroundTaskViewModelInput,
 ): BackgroundTaskViewModel {
   const items: BackgroundTaskBarItem[] = [];
 
   if (input.isLoading) {
+    const liveToolLabel = input.currentTool
+      ? stripLiveActivityPrefix(
+        formatLiveToolLabel(
+          input.currentTool,
+          input.toolInputContent ?? "",
+          input.toolInputCharCount ?? 0,
+        ),
+      )
+      : undefined;
+    const liveActivityLabel = input.liveActivityLabel
+      ? stripLiveActivityPrefix(input.liveActivityLabel)
+      : undefined;
+
     if (input.activeWorkerTitle) {
       items.push({
         id: "primary-worker",
@@ -30,6 +53,27 @@ export function buildBackgroundTaskViewModel(
       items.push({
         id: "primary-phase",
         label: input.activePhase,
+        accent: true,
+        selected: true,
+      });
+    } else if (liveActivityLabel) {
+      items.push({
+        id: "primary-live-activity",
+        label: liveActivityLabel,
+        accent: true,
+        selected: true,
+      });
+    } else if (liveToolLabel) {
+      items.push({
+        id: "primary-tool",
+        label: liveToolLabel,
+        accent: true,
+        selected: true,
+      });
+    } else if (input.isThinkingActive) {
+      items.push({
+        id: "primary-thinking",
+        label: "Thinking",
         accent: true,
         selected: true,
       });
