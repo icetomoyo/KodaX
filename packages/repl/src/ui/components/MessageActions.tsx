@@ -11,15 +11,14 @@ export interface MessageActionsProps {
   matchNavigation?: boolean;
 }
 
-export const MessageActions: React.FC<MessageActionsProps> = ({
+export function buildMessageActionsText({
   copyMessage = false,
   copyToolInput = false,
   copyOnSelect = false,
   toggleDetail = false,
   selectionNavigation = false,
   matchNavigation = false,
-}) => {
-  const theme = getTheme("dark");
+}: MessageActionsProps): string | undefined {
   const actions: string[] = [];
   if (selectionNavigation) {
     actions.push("\u2190/\u2192 select");
@@ -40,13 +39,34 @@ export const MessageActions: React.FC<MessageActionsProps> = ({
     actions.push("Up/Down matches");
   }
 
-  if (actions.length === 0) {
+  return actions.length > 0 ? actions.join(" | ") : undefined;
+}
+
+export const MessageActions: React.FC<MessageActionsProps> = ({
+  copyMessage = false,
+  copyToolInput = false,
+  copyOnSelect = false,
+  toggleDetail = false,
+  selectionNavigation = false,
+  matchNavigation = false,
+}) => {
+  const theme = getTheme("dark");
+  const actionsText = buildMessageActionsText({
+    copyMessage,
+    copyToolInput,
+    copyOnSelect,
+    toggleDetail,
+    selectionNavigation,
+    matchNavigation,
+  });
+
+  if (!actionsText) {
     return null;
   }
 
   return (
     <Box paddingX={1}>
-      <Text color={theme.colors.dim}>{actions.join(" | ")}</Text>
+      <Text color={theme.colors.dim}>{actionsText}</Text>
     </Box>
   );
 };

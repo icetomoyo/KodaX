@@ -24,6 +24,7 @@ export interface FullscreenLayoutProps {
   scrollRef?: React.Ref<ScrollBoxHandle>;
   onScrollTopChange?: (nextScrollTop: number) => void;
   onStickyChange?: (sticky: boolean) => void;
+  onWindowChange?: (window: ScrollBoxWindow) => void;
 }
 
 export const FullscreenLayout: React.FC<FullscreenLayoutProps> = ({
@@ -41,6 +42,7 @@ export const FullscreenLayout: React.FC<FullscreenLayoutProps> = ({
   scrollRef,
   onScrollTopChange,
   onStickyChange,
+  onWindowChange,
 }) => {
   const renderChromeSlot = (slot: FullscreenChromeSlot | undefined) => {
     if (!slot?.visible || !slot.label) {
@@ -60,6 +62,7 @@ export const FullscreenLayout: React.FC<FullscreenLayoutProps> = ({
 
   return (
     <Box flexDirection="column" width={width} flexGrow={1} flexShrink={0}>
+      {renderChromeSlot(stickyHeader)}
       <Box flexDirection="column" flexGrow={1} overflowY="hidden">
         <ScrollBox
           width={width}
@@ -70,20 +73,12 @@ export const FullscreenLayout: React.FC<FullscreenLayoutProps> = ({
           scrollRef={scrollRef}
           onScrollTopChange={onScrollTopChange}
           onStickyChange={onStickyChange}
-          renderWindow={renderScrollableWindow
-            ? (window) => (
-              <>
-                {renderChromeSlot(stickyHeader)}
-                {renderScrollableWindow(window)}
-                {renderChromeSlot(jumpToLatest)}
-              </>
-            )
-            : undefined}
+          onWindowChange={onWindowChange}
+          renderWindow={renderScrollableWindow}
         >
-          {renderChromeSlot(stickyHeader)}
           {scrollable}
-          {renderChromeSlot(jumpToLatest)}
         </ScrollBox>
+        {renderChromeSlot(jumpToLatest)}
         {overlay}
       </Box>
       <Box flexDirection="column" flexShrink={0}>

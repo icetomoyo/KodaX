@@ -68,4 +68,28 @@ describe("ScrollBox", () => {
 
     expect(lastFrame()).toContain("window:90-110");
   });
+
+  it("applies clamp bounds to the rendered window immediately", async () => {
+    const ref = React.createRef<ScrollBoxHandle>();
+    const { lastFrame } = render(
+      <ScrollBox
+        scrollRef={ref}
+        scrollTop={10}
+        scrollHeight={120}
+        viewportHeight={20}
+        renderWindow={(window) => (
+          <Text>{`window:${window.start}-${window.end}`}</Text>
+        )}
+      >
+        <Text>ignored</Text>
+      </ScrollBox>,
+    );
+
+    expect(lastFrame()).toContain("window:90-110");
+
+    ref.current?.setClampBounds(undefined, 5);
+    await vi.waitFor(() => {
+      expect(lastFrame()).toContain("window:95-115");
+    });
+  });
 });

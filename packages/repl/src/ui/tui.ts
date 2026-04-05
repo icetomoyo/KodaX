@@ -7,5 +7,9 @@ export {
   useStdout,
   useStdin,
   useApp,
+  useTerminalInput,
+  useTerminalOutput,
+  useTerminalSize,
+  useTerminalWrite,
 } from "../tui/index.js";
-export type { Key } from "../tui/index.js";
+export type { Key, TerminalInputOptions, TerminalSize } from "../tui/index.js";

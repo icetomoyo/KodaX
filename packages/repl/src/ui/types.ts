@@ -22,6 +22,12 @@ export interface KeyInfo {
   shift: boolean;
   insertable: boolean; // Whether can be inserted into text - 是否可以插入到文本中
   isPasted?: boolean; // Whether inside bracketed paste (terminal protocol) - 是否在粘贴模式中（终端协议）
+  mouse?: {
+    action: "press" | "release" | "drag" | "move" | "wheel";
+    button: "left" | "middle" | "right" | "wheelup" | "wheeldown" | "unknown";
+    row: number;
+    column: number;
+  };
 }
 // === Text Buffer - 文本缓冲区 ===
 

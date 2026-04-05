@@ -213,13 +213,13 @@ describe("terminal-host-profile", () => {
     expect(getTerminalHostCapabilities("xtermjs_host")).toEqual({
       profile: "xtermjs_host",
       ownsViewportByDefault: true,
-      supportsMouseTracking: false,
+      supportsMouseTracking: true,
       bufferingMode: "live",
       supportsFullscreenLayout: true,
       supportsOverlaySurface: true,
       supportsSelection: true,
       supportsCopyOnSelect: false,
-      supportsWheelHistory: false,
+      supportsWheelHistory: true,
       supportsViewportChrome: true,
       supportsSearchViewport: true,
       supportsStickyPrompt: true,
@@ -230,13 +230,13 @@ describe("terminal-host-profile", () => {
     expect(getTerminalHostCapabilities("degraded_vt")).toEqual({
       profile: "degraded_vt",
       ownsViewportByDefault: true,
-      supportsMouseTracking: false,
+      supportsMouseTracking: true,
       bufferingMode: "buffered-fallback",
       supportsFullscreenLayout: true,
       supportsOverlaySurface: true,
       supportsSelection: true,
       supportsCopyOnSelect: false,
-      supportsWheelHistory: false,
+      supportsWheelHistory: true,
       supportsViewportChrome: true,
       supportsSearchViewport: true,
       supportsStickyPrompt: true,
@@ -246,16 +246,16 @@ describe("terminal-host-profile", () => {
   it("builds fullscreen policies for owned and legacy renderer modes", () => {
     expect(resolveFullscreenPolicy("degraded_vt", "owned")).toEqual({
       enabled: true,
-      mouseWheel: false,
-      mouseClicks: false,
+      mouseWheel: true,
+      mouseClicks: true,
       streamingPreview: false,
-      transcriptSpinnerAnimation: false,
+      transcriptSpinnerAnimation: true,
     });
 
     expect(resolveFullscreenPolicy("xtermjs_host", "owned")).toEqual({
       enabled: true,
-      mouseWheel: false,
-      mouseClicks: false,
+      mouseWheel: true,
+      mouseClicks: true,
       streamingPreview: true,
       transcriptSpinnerAnimation: true,
     });

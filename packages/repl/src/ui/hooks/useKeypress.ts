@@ -1,11 +1,13 @@
 /**
  * useKeypress - Keyboard event handling Hook
  *
- * Wraps the local TUI facade's useInput helper and normalizes key metadata.
+ * Wraps KodaX's KeypressContext so UI keyboard handling stays on the local
+ * input pipeline instead of depending on Ink's useInput.
  */
 
-import { useInput, useApp, type Key } from "../tui.js";
+import { useApp } from "../tui.js";
 import { useCallback, useRef } from "react";
+import { useKeypress as useContextKeypress } from "../contexts/KeypressContext.js";
 import type { KeyInfo } from "../types.js";
 
 export interface UseKeypressOptions {
@@ -17,48 +19,18 @@ export interface UseKeypressOptions {
 
 const DOUBLE_ESC_INTERVAL_MS = 500;
 
-function keyToKeyInfo(char: string, key: Key): KeyInfo {
-  let name = "";
-  let insertable = false;
-
-  if (key.upArrow) name = "up";
-  else if (key.downArrow) name = "down";
-  else if (key.leftArrow) name = "left";
-  else if (key.rightArrow) name = "right";
-  else if (key.return) name = "return";
-  else if (key.escape) name = "escape";
-  else if (key.backspace) name = "backspace";
-  else if (key.delete) name = "delete";
-  else if (key.tab) name = "tab";
-  else {
-    name = char;
-    insertable = char.length === 1 && char.charCodeAt(0) >= 32 && !key.ctrl && !key.meta;
-  }
-
-  return {
-    name,
-    sequence: char,
-    ctrl: key.ctrl ?? false,
-    meta: key.meta ?? false,
-    shift: key.shift ?? false,
-    insertable,
-  };
-}
-
 export function useKeypress(options: UseKeypressOptions = {}) {
   const { onKey, onEsc, onCtrlC, enabled = true } = options;
   const lastEscTimeRef = useRef<number>(0);
   const { exit } = useApp();
 
   const handleInput = useCallback(
-    (char: string, key: Key) => {
+    (keyInfo: KeyInfo) => {
       if (!enabled) {
-        return;
+        return false;
       }
 
-      const keyInfo = keyToKeyInfo(char, key);
-
-      if (key.escape) {
+      if (keyInfo.name === "escape") {
         const now = Date.now();
         const isDoubleEsc = now - lastEscTimeRef.current < DOUBLE_ESC_INTERVAL_MS;
         lastEscTimeRef.current = now;
@@ -69,26 +41,29 @@ export function useKeypress(options: UseKeypressOptions = {}) {
 
         onEsc?.();
         onKey?.(keyInfo);
-        return;
+        return true;
       }
 
-      if (key.ctrl && char === "c") {
+      if (keyInfo.ctrl && keyInfo.name === "c") {
         onCtrlC?.();
         onKey?.(keyInfo);
-        return;
+        return true;
       }
 
-      if (key.ctrl && char === "d") {
+      if (keyInfo.ctrl && keyInfo.name === "d") {
         exit();
-        return;
+        return true;
       }
 
       onKey?.(keyInfo);
+      return false;
     },
     [enabled, exit, onCtrlC, onEsc, onKey],
   );
 
-  useInput(handleInput, { isActive: enabled });
+  useContextKeypress(handleInput, {
+    isActive: enabled,
+  });
 
   return {
     lastEscTime: lastEscTimeRef.current,

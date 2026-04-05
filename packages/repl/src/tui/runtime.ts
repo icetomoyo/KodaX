@@ -273,25 +273,25 @@ export function resolveFullscreenPolicy(
       return {
         enabled: true,
         mouseWheel: true,
-        mouseClicks: false,
+        mouseClicks: true,
         streamingPreview: true,
         transcriptSpinnerAnimation: true,
       };
     case "xtermjs_host":
       return {
         enabled: true,
-        mouseWheel: false,
-        mouseClicks: false,
+        mouseWheel: true,
+        mouseClicks: true,
         streamingPreview: true,
         transcriptSpinnerAnimation: true,
       };
     case "degraded_vt":
       return {
         enabled: true,
-        mouseWheel: false,
-        mouseClicks: false,
+        mouseWheel: true,
+        mouseClicks: true,
         streamingPreview: false,
-        transcriptSpinnerAnimation: false,
+        transcriptSpinnerAnimation: true,
       };
     case "tmux_control_mode":
     case "unsupported_control_host":

@@ -5,6 +5,7 @@ import {
 } from "./transcript-state.js";
 import {
   buildHistoryItemTranscriptSections,
+  type TranscriptRenderModel,
   flattenTranscriptSections,
   getVisibleTranscriptRows,
   resolveScrollOffsetForTranscriptItem,
@@ -62,6 +63,11 @@ export function buildTranscriptChromeModel(
         visible: true,
         label: "Interaction active - transcript follow is paused",
       };
+    } else if (isReviewingHistory) {
+      stickyHeader = {
+        visible: true,
+        label: "Browsing transcript history",
+      };
     }
   }
 
@@ -99,6 +105,7 @@ export function incrementTranscriptScrollOffset(
 
 export interface TranscriptSelectionOffsetOptions {
   items: HistoryItem[];
+  renderModel?: TranscriptRenderModel;
   terminalWidth: number;
   transcriptMaxLines: number;
   viewportRows: number | undefined;
@@ -112,6 +119,7 @@ export function resolveTranscriptSelectionOffset(
 ): number {
   const {
     items,
+    renderModel,
     terminalWidth,
     transcriptMaxLines,
     viewportRows,
@@ -120,7 +128,7 @@ export function resolveTranscriptSelectionOffset(
     showDetailedTools = false,
   } = options;
 
-  const sections = buildHistoryItemTranscriptSections(
+  const sections = renderModel?.sections ?? buildHistoryItemTranscriptSections(
     items,
     terminalWidth,
     transcriptMaxLines,
@@ -137,6 +145,7 @@ export function resolveTranscriptSelectionOffset(
 
 export interface TranscriptSearchAnchorOptions {
   items: HistoryItem[];
+  renderModel?: TranscriptRenderModel;
   selectedItemId?: string;
   terminalWidth?: number;
   transcriptMaxLines?: number;
@@ -152,6 +161,7 @@ export function resolveTranscriptSearchAnchorItemId(
 ): string | undefined {
   const {
     items,
+    renderModel,
     selectedItemId,
     terminalWidth = 80,
     transcriptMaxLines = 1000,
@@ -167,15 +177,16 @@ export function resolveTranscriptSearchAnchorItemId(
   }
 
   if (preferViewportAnchor && scrollOffset > 0 && viewportRows && viewportRows > 0) {
-    const sections = buildHistoryItemTranscriptSections(
+    const sections = renderModel?.sections ?? buildHistoryItemTranscriptSections(
       items,
       terminalWidth,
       transcriptMaxLines,
       showDetailedTools,
       expandedItemKeys,
     );
+    const rows = renderModel?.rows ?? flattenTranscriptSections(sections);
     const visibleRows = getVisibleTranscriptRows(
-      flattenTranscriptSections(sections),
+      rows,
       viewportRows,
       scrollOffset,
     );

@@ -2,8 +2,8 @@ import React, { useMemo } from "react";
 import { Box, Text } from "../tui.js";
 import type { MessageListProps } from "./MessageList.js";
 import { MessageList } from "./MessageList.js";
-import { MessageActions } from "./MessageActions.js";
-import { MessageSelector } from "./MessageSelector.js";
+import { MessageActions, buildMessageActionsText } from "./MessageActions.js";
+import { MessageSelector, buildMessageSelectorText } from "./MessageSelector.js";
 import { calculateVisualLayout } from "../utils/textUtils.js";
 
 export interface TranscriptViewportBrowseState {
@@ -44,6 +44,7 @@ export interface TranscriptViewportProps extends MessageListProps {
   browse?: TranscriptViewportBrowseState;
   selection?: TranscriptViewportSelectionState;
   search?: TranscriptViewportSearchState;
+  chromeMode?: "inline" | "hidden";
 }
 
 function countWrappedRows(text: string, width: number): number {
@@ -62,8 +63,10 @@ export const TranscriptViewport: React.FC<TranscriptViewportProps> = ({
   browse,
   selection,
   search,
+  chromeMode = "inline",
   ...messageListProps
 }) => {
+  const inlineChromeVisible = chromeMode === "inline";
   const selectedSummary = selection?.itemSummary;
   const selectedPosition = selection?.position;
   const selectedKindLabel = selection?.itemKind;
@@ -79,31 +82,20 @@ export const TranscriptViewport: React.FC<TranscriptViewportProps> = ({
   const searchSurface = search?.surface;
   const viewportWidth = messageListProps.viewportWidth ?? 80;
   const chromeWidth = Math.max(1, viewportWidth - 2);
-  const selectionText = selectedSummary && selectedPosition
-    ? `Selected ${selectedPosition.current}/${selectedPosition.total}: ${selectedKindLabel ? `${selectedKindLabel}: ` : ""}${selectedSummary} [${selectedDetailState}]`
-    : undefined;
-  const actionsText = useMemo(() => {
-    const actions: string[] = [];
-    if (canNavigateSelection) {
-      actions.push("\u2190/\u2192 select");
-    }
-    if (canCopySelection) {
-      actions.push("C copy");
-    }
-    if (canCopyToolInput) {
-      actions.push("I copy input");
-    }
-    if (supportsCopyOnSelect) {
-      actions.push("Select copies");
-    }
-    if (canToggleSelectionDetail) {
-      actions.push("V toggle detail");
-    }
-    if (Boolean(searchStatusText) && searchMatchCount > 0) {
-      actions.push("Up/Down matches");
-    }
-    return actions.length > 0 ? actions.join(" | ") : undefined;
-  }, [
+  const selectionText = buildMessageSelectorText({
+    itemSummary: selectedSummary,
+    itemKind: selectedKindLabel,
+    position: selectedPosition,
+    detailState: selectedDetailState,
+  });
+  const actionsText = useMemo(() => buildMessageActionsText({
+    copyMessage: canCopySelection,
+    copyToolInput: canCopyToolInput,
+    copyOnSelect: supportsCopyOnSelect,
+    toggleDetail: canToggleSelectionDetail,
+    selectionNavigation: canNavigateSelection,
+    matchNavigation: Boolean(searchStatusText) && searchMatchCount > 0,
+  }), [
     canCopySelection,
     canCopyToolInput,
     canNavigateSelection,
@@ -113,6 +105,9 @@ export const TranscriptViewport: React.FC<TranscriptViewportProps> = ({
     supportsCopyOnSelect,
   ]);
   const chromeRows = useMemo(() => {
+    if (!inlineChromeVisible) {
+      return 0;
+    }
     let rows = 0;
     if (browse?.hintText) {
       rows += countWrappedRows(browse.hintText, chromeWidth);
@@ -130,19 +125,19 @@ export const TranscriptViewport: React.FC<TranscriptViewportProps> = ({
       rows += 1;
     }
     return rows;
-  }, [actionsText, browse?.hintText, chromeWidth, searchStatusText, searchSurface, selectionText]);
+  }, [actionsText, browse?.hintText, chromeWidth, inlineChromeVisible, searchStatusText, searchSurface, selectionText]);
   const adjustedViewportRows = typeof messageListProps.viewportRows === "number"
     ? Math.max(1, messageListProps.viewportRows - chromeRows)
     : messageListProps.viewportRows;
 
   return (
     <Box flexDirection="column" flexGrow={1}>
-      {browse?.hintText ? (
+      {inlineChromeVisible && browse?.hintText ? (
         <Box paddingX={1}>
           <Text dimColor>{browse.hintText}</Text>
         </Box>
       ) : null}
-      {selectedSummary ? (
+      {inlineChromeVisible && selectedSummary ? (
         <MessageSelector
           itemSummary={selectedSummary}
           itemKind={selectedKindLabel}
@@ -150,7 +145,7 @@ export const TranscriptViewport: React.FC<TranscriptViewportProps> = ({
           detailState={selectedDetailState}
         />
       ) : null}
-      {(canCopySelection || canCopyToolInput || supportsCopyOnSelect || canToggleSelectionDetail || canNavigateSelection || searchMatchCount > 0) ? (
+      {inlineChromeVisible && (canCopySelection || canCopyToolInput || supportsCopyOnSelect || canToggleSelectionDetail || canNavigateSelection || searchMatchCount > 0) ? (
         <MessageActions
           copyMessage={canCopySelection}
           copyToolInput={canCopyToolInput}
@@ -160,12 +155,12 @@ export const TranscriptViewport: React.FC<TranscriptViewportProps> = ({
           matchNavigation={Boolean(searchStatusText) && searchMatchCount > 0}
         />
       ) : null}
-      {searchStatusText ? (
+      {inlineChromeVisible && searchStatusText ? (
         <Box paddingX={1}>
           <Text dimColor>{searchStatusText}</Text>
         </Box>
       ) : null}
-      {searchSurface}
+      {inlineChromeVisible ? searchSurface : null}
       <MessageList
         {...messageListProps}
         viewportRows={adjustedViewportRows}

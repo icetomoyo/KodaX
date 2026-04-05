@@ -23,6 +23,7 @@ export type TranscriptColorToken =
 export interface TranscriptRow {
   key: string;
   text: string;
+  itemId?: string;
   color?: TranscriptColorToken;
   indent?: number;
   bold?: boolean;
@@ -64,6 +65,16 @@ export interface TranscriptBuildOptions {
   showFullThinking?: boolean;
   showDetailedTools?: boolean;
   expandedItemKeys?: ReadonlySet<string>;
+}
+
+export interface TranscriptRenderModel {
+  staticSections: TranscriptSection[];
+  sections: TranscriptSection[];
+  rows: TranscriptRow[];
+}
+
+export interface TranscriptRenderModelOptions extends TranscriptBuildOptions {
+  windowed?: boolean;
 }
 
 const THINKING_PREVIEW_MAX_CHARS = 400;
@@ -168,6 +179,16 @@ function buildThinkingPreview(
   }
 
   return `${previewBody}\n\n${THINKING_PREVIEW_TRUNCATION_HINT}`;
+}
+
+function findActiveRoundStartIndex(items: HistoryItem[]): number {
+  for (let i = items.length - 1; i >= 0; i--) {
+    if (items[i]?.type === "user") {
+      return i;
+    }
+  }
+
+  return 0;
 }
 
 function pushWrappedRows(
@@ -369,13 +390,14 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
           `${item.id}-header`,
           `You [${formatTimestamp(item.timestamp)}]`,
           viewportWidth,
-          { color: "primary", bold: true }
+          { color: "primary", bold: true, itemId: item.id }
         );
         pushWrappedRows(rows, `${item.id}-body`, item.text, getBodyWidth(viewportWidth, 2), {
           color: "text",
           indent: 2,
+          itemId: item.id,
         });
-        pushBlankRow(rows, `${item.id}-blank`);
+        rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
         break;
       case "assistant": {
         pushWrappedRows(
@@ -383,16 +405,16 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
           `${item.id}-header`,
           `Assistant [${formatTimestamp(item.timestamp)}]`,
           viewportWidth,
-          { color: "secondary", bold: true, spinner: item.isStreaming }
+          { color: "secondary", bold: true, spinner: item.isStreaming, itemId: item.id }
         );
         pushWrappedRows(
           rows,
           `${item.id}-body`,
           item.text,
           getBodyWidth(viewportWidth, 2),
-          { color: "text", indent: 2 }
+          { color: "text", indent: 2, itemId: item.id }
         );
-        pushBlankRow(rows, `${item.id}-blank`);
+        rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
         break;
       }
       case "system":
@@ -401,13 +423,14 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
           `${item.id}-header`,
           `System [${formatTimestamp(item.timestamp)}]`,
           viewportWidth,
-          { color: "dim", bold: true }
+          { color: "dim", bold: true, itemId: item.id }
         );
         pushWrappedRows(rows, `${item.id}-body`, item.text, getBodyWidth(viewportWidth, 2), {
           color: "dim",
           indent: 2,
+          itemId: item.id,
         });
-        pushBlankRow(rows, `${item.id}-blank`);
+        rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
         break;
       case "tool_group":
         pushWrappedRows(
@@ -415,12 +438,12 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
           `${item.id}-header`,
           `Tools [${formatTimestamp(item.timestamp)}]`,
           viewportWidth,
-          { color: "accent", bold: true }
+          { color: "accent", bold: true, itemId: item.id }
         );
         collapseToolCalls(item.tools).forEach((group) => (
           buildToolRows(rows, item.id, group.tool, group.count, viewportWidth, showDetailedTools)
         ));
-        pushBlankRow(rows, `${item.id}-blank`);
+        rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
         break;
       case "thinking":
         {
@@ -428,42 +451,49 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
         pushWrappedRows(rows, `${item.id}-header`, "Thinking", viewportWidth, {
           color: "thinking",
           italic: true,
+          itemId: item.id,
         });
         pushWrappedRows(rows, `${item.id}-body`, preview, getBodyWidth(viewportWidth, 2), {
           color: "thinking",
           indent: 2,
           italic: true,
+          itemId: item.id,
         });
-        pushBlankRow(rows, `${item.id}-blank`);
+        rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
         break;
         }
       case "error":
         pushWrappedRows(rows, `${item.id}-header`, "\u2717 Error", viewportWidth, {
           color: "error",
           bold: true,
+          itemId: item.id,
         });
         pushWrappedRows(rows, `${item.id}-body`, item.text, getBodyWidth(viewportWidth, 2), {
           color: "error",
           indent: 2,
+          itemId: item.id,
         });
-        pushBlankRow(rows, `${item.id}-blank`);
+        rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
         break;
       case "info":
         pushWrappedRows(rows, `${item.id}-body`, `${item.icon ?? "\u2139"} ${item.text}`, viewportWidth, {
           color: "info",
+          itemId: item.id,
         });
-        pushBlankRow(rows, `${item.id}-blank`);
+        rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
         break;
       case "hint":
         pushWrappedRows(rows, `${item.id}-header`, "\u{1F4A1} Hint", viewportWidth, {
           color: "hint",
           bold: true,
+          itemId: item.id,
         });
         pushWrappedRows(rows, `${item.id}-body`, item.text, getBodyWidth(viewportWidth, 2), {
           color: "dim",
           indent: 2,
+          itemId: item.id,
         });
-        pushBlankRow(rows, `${item.id}-blank`);
+        rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
         break;
       default:
         break;
@@ -683,8 +713,82 @@ export function buildDynamicTranscriptSection(
   };
 }
 
+export function buildTranscriptRenderModel(
+  options: TranscriptRenderModelOptions,
+): TranscriptRenderModel {
+  const {
+    items,
+    viewportWidth,
+    maxLines = 1000,
+    windowed = false,
+    showDetailedTools = false,
+    expandedItemKeys,
+    ...dynamicOptions
+  } = options;
+
+  const activeRoundStartIndex = findActiveRoundStartIndex(items);
+  const staticItems = windowed ? [] : items.slice(0, activeRoundStartIndex);
+  const activeItems = windowed ? items : items.slice(activeRoundStartIndex);
+  const staticSections = windowed
+    ? []
+    : buildStaticTranscriptSections(staticItems, viewportWidth, maxLines, showDetailedTools);
+  const sections = buildHistoryItemTranscriptSections(
+    activeItems,
+    viewportWidth,
+    maxLines,
+    showDetailedTools,
+    expandedItemKeys,
+  );
+  const pendingSection = buildDynamicTranscriptSection("active-pending", {
+    ...dynamicOptions,
+    items: [],
+    viewportWidth,
+    maxLines,
+    showDetailedTools,
+    expandedItemKeys,
+  });
+  const nextSections = pendingSection.rows.length > 0
+    ? [...sections, pendingSection]
+    : sections;
+
+  return {
+    staticSections,
+    sections: nextSections,
+    rows: flattenTranscriptSections(nextSections),
+  };
+}
+
 export function flattenTranscriptSections(sections: TranscriptSection[]): TranscriptRow[] {
   return sections.flatMap((section) => section.rows);
+}
+
+export function resolveVisibleTranscriptRows(
+  rows: TranscriptRow[],
+  options: {
+    start?: number;
+    end?: number;
+    viewportRows?: number;
+    scrollOffset?: number;
+    windowed?: boolean;
+  } = {},
+): TranscriptRow[] {
+  const {
+    start,
+    end,
+    viewportRows,
+    scrollOffset = 0,
+    windowed = false,
+  } = options;
+
+  if (typeof start === "number" && typeof end === "number") {
+    return rows.slice(Math.max(0, start), Math.max(0, end));
+  }
+
+  if (windowed) {
+    return getVisibleTranscriptRows(rows, viewportRows, scrollOffset);
+  }
+
+  return rows;
 }
 
 export function sliceHistoryToRecentRounds(

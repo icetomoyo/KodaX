@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildTranscriptRenderModel,
+} from "./transcript-layout.js";
+import {
   buildTranscriptChromeModel,
   incrementTranscriptScrollOffset,
   resolveTranscriptPageSize,
@@ -103,6 +106,29 @@ describe("transcript-scroll-controller", () => {
       scrollOffset: 3,
       preferViewportAnchor: true,
     })).toBe("assistant-1");
+  });
+
+  it("keeps explicit selection ahead of the viewport anchor in owned mode", () => {
+    const items = [
+      { id: "user-1", type: "user", text: "first", timestamp: Date.now() },
+      { id: "assistant-1", type: "assistant", text: "second", timestamp: Date.now() },
+      { id: "user-2", type: "user", text: "third", timestamp: Date.now() },
+    ] satisfies HistoryItem[];
+
+    const renderModel = buildTranscriptRenderModel({
+      items,
+      viewportWidth: 80,
+      windowed: true,
+    });
+
+    expect(resolveTranscriptSearchAnchorItemId({
+      items,
+      renderModel,
+      selectedItemId: "user-1",
+      viewportRows: 3,
+      scrollOffset: 3,
+      preferViewportAnchor: true,
+    })).toBe("user-1");
   });
 
   it("calculates a stable selection offset for transcript browsing", () => {

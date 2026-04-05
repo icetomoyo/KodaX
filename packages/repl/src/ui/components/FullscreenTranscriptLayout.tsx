@@ -25,6 +25,7 @@ export interface FullscreenTranscriptLayoutProps {
   scrollRef?: React.Ref<ScrollBoxHandle>;
   onScrollTopChange?: (nextScrollTop: number) => void;
   onStickyChange?: (sticky: boolean) => void;
+  onWindowChange?: (window: ScrollBoxWindow) => void;
 }
 
 export const FullscreenTranscriptLayout: React.FC<FullscreenTranscriptLayoutProps> = ({
@@ -42,6 +43,7 @@ export const FullscreenTranscriptLayout: React.FC<FullscreenTranscriptLayoutProp
   scrollRef,
   onScrollTopChange,
   onStickyChange,
+  onWindowChange,
 }) => {
   return (
     <FullscreenLayout
@@ -59,6 +61,7 @@ export const FullscreenTranscriptLayout: React.FC<FullscreenTranscriptLayoutProp
       scrollRef={scrollRef}
       onScrollTopChange={onScrollTopChange}
       onStickyChange={onStickyChange}
+      onWindowChange={onWindowChange}
     />
   );
 };

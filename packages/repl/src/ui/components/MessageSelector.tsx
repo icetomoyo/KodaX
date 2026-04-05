@@ -12,6 +12,19 @@ export interface MessageSelectorProps {
   detailState?: "compact" | "expanded";
 }
 
+export function buildMessageSelectorText({
+  itemSummary,
+  itemKind,
+  position,
+  detailState = "compact",
+}: MessageSelectorProps): string | undefined {
+  if (!itemSummary || !position || position.total <= 0) {
+    return undefined;
+  }
+
+  return `Selected ${position.current}/${position.total}: ${itemKind ? `${itemKind}: ` : ""}${itemSummary} [${detailState}]`;
+}
+
 export const MessageSelector: React.FC<MessageSelectorProps> = ({
   itemSummary,
   itemKind,
@@ -19,14 +32,21 @@ export const MessageSelector: React.FC<MessageSelectorProps> = ({
   detailState = "compact",
 }) => {
   const theme = getTheme("dark");
-  if (!itemSummary || !position || position.total <= 0) {
+  const text = buildMessageSelectorText({
+    itemSummary,
+    itemKind,
+    position,
+    detailState,
+  });
+
+  if (!text) {
     return null;
   }
 
   return (
     <Box paddingX={1}>
       <Text color={theme.colors.dim}>
-        {`Selected ${position.current}/${position.total}: ${itemKind ? `${itemKind}: ` : ""}${itemSummary} [${detailState}]`}
+        {text}
       </Text>
     </Box>
   );

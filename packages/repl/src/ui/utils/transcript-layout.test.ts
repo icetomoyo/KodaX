@@ -3,6 +3,7 @@ import { ToolCallStatus, type HistoryItem } from "../types.js";
 import {
   buildDynamicTranscriptSection,
   buildHistoryItemTranscriptSections,
+  buildTranscriptRenderModel,
   buildTranscriptRows,
   buildStaticTranscriptSections,
   capHistoryByTranscriptRows,
@@ -664,6 +665,32 @@ describe("transcript-layout", () => {
     expect(sections[1]?.key).toBe("assistant-1");
     expect(sections[0]?.rows.some((row) => row.text.includes("prompt"))).toBe(true);
     expect(sections[1]?.rows.some((row) => row.text.includes("answer"))).toBe(true);
+  });
+
+  it("builds a windowed transcript render model with rows owned outside MessageList", () => {
+    const model = buildTranscriptRenderModel({
+      items: [
+        {
+          id: "user-1",
+          type: "user",
+          text: "prompt",
+          timestamp: Date.now(),
+        },
+        {
+          id: "assistant-1",
+          type: "assistant",
+          text: "answer",
+          timestamp: Date.now(),
+        },
+      ],
+      viewportWidth: 80,
+      windowed: true,
+    });
+
+    const text = model.rows.map((row) => row.text).join("\n");
+    expect(model.staticSections).toHaveLength(0);
+    expect(text).toContain("prompt");
+    expect(text).toContain("answer");
   });
 
   it("keeps only the most recent user-defined rounds", () => {

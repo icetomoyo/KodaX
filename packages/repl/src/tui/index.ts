@@ -7,8 +7,14 @@ export {
   useStdout,
   useStdin,
   useApp,
-} from "ink";
-export type { Key } from "ink";
+  useTerminalOutput,
+  useTerminalSize,
+  useTerminalWrite,
+  useTerminalInput,
+} from "./renderer-runtime.js";
+export type { Key, TerminalInputOptions, TerminalSize } from "./renderer-runtime.js";
+export { createRoot } from "./root.js";
+export type { RenderOptions, RenderInstance, TuiRoot } from "./root.js";
 
 export {
   detectTerminalRenderHost,
@@ -40,4 +46,4 @@ export type {
 export { AlternateScreen } from "./components/AlternateScreen.js";
 export { FullscreenLayout } from "./components/FullscreenLayout.js";
 export { ScrollBox } from "./components/ScrollBox.js";
-export type { ScrollBoxHandle } from "./components/ScrollBox.js";
+export type { ScrollBoxHandle, ScrollBoxWindow } from "./components/ScrollBox.js";
