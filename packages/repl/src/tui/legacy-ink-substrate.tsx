@@ -16,6 +16,11 @@ type InkInstance = InstanceType<typeof Ink>;
 
 const localInstances = new WeakMap<NodeJS.WriteStream, InkInstance>();
 
+export interface TuiRendererInstance {
+  setAltScreenActive?: (active: boolean, mouseTracking?: boolean) => void;
+  clearTextSelection?: () => void;
+}
+
 export interface RenderOptions {
   stdout?: NodeJS.WriteStream;
   stdin?: NodeJS.ReadStream;
@@ -126,6 +131,12 @@ function getInstance(
   }
 
   return instance;
+}
+
+export function getRendererInstance(
+  stdout: NodeJS.WriteStream,
+): TuiRendererInstance | undefined {
+  return localInstances.get(stdout) as TuiRendererInstance | undefined;
 }
 
 export function render(

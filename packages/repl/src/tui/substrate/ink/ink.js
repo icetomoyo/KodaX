@@ -122,6 +122,7 @@ const Ink = class Ink {
     hasPendingThrottledRender = false;
     kittyProtocolEnabled = false;
     cancelKittyDetection;
+    altScreenActive = false;
     constructor(options) {
         autoBind(this);
         this.options = options;
@@ -242,6 +243,14 @@ const Ink = class Ink {
         this.cursorPosition = position;
         this.log.setCursorPosition(position);
     };
+    setAltScreenActive(active) {
+        this.altScreenActive = active;
+    }
+    clearTextSelection() {
+        // The fullscreen REPL owns transcript text selection outside the
+        // vendored substrate for now, so there is no renderer-local state to
+        // clear here yet.
+    }
     restoreLastOutput = () => {
         // Clear() resets log-update's cursor state, so replay the latest cursor intent
         // before restoring output after external stdout/stderr writes.
@@ -335,11 +344,17 @@ const Ink = class Ink {
             if (sync) {
                 this.options.stdout.write(bsu);
             }
-            this.options.stdout.write(ansiEscapes.clearTerminal + this.fullStaticOutput + output);
+            if (this.altScreenActive) {
+                this.log.clear();
+                this.log(outputToRender);
+            }
+            else {
+                this.options.stdout.write(ansiEscapes.clearTerminal + this.fullStaticOutput + output);
+                this.log.sync(outputToRender);
+            }
             this.lastOutput = output;
             this.lastOutputToRender = outputToRender;
             this.lastOutputHeight = outputHeight;
-            this.log.sync(outputToRender);
             if (sync) {
                 this.options.stdout.write(esu);
             }

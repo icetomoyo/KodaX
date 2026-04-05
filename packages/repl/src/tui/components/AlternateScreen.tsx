@@ -5,23 +5,24 @@ import {
   useTerminalSize,
   useTerminalWrite,
 } from "../index.js";
-
-const ENTER_ALT_SCREEN = "\x1b[?1049h";
-const EXIT_ALT_SCREEN = "\x1b[?1049l";
-const CLEAR_AND_HOME = "\x1b[2J\x1b[H";
-const ENABLE_MOUSE_TRACKING = "\x1b[?1000h\x1b[?1006h";
-const DISABLE_MOUSE_TRACKING = "\x1b[?1000l\x1b[?1006l";
+import { getRendererInstance } from "../legacy-ink-substrate.js";
+import {
+  buildAlternateScreenEnterSequence,
+  buildAlternateScreenExitSequence,
+} from "../core/termio.js";
 
 export interface AlternateScreenProps {
   children: React.ReactNode;
   mouseTracking?: boolean;
   enabled?: boolean;
+  clearOnEnter?: boolean;
 }
 
 export const AlternateScreen: React.FC<AlternateScreenProps> = ({
   children,
   mouseTracking = true,
   enabled = true,
+  clearOnEnter = false,
 }) => {
   const output = useTerminalOutput();
   const { rows } = useTerminalSize();
@@ -36,21 +37,23 @@ export const AlternateScreen: React.FC<AlternateScreenProps> = ({
       return;
     }
 
+    const rendererInstance = getRendererInstance(output);
     if (!writeRaw(
-      ENTER_ALT_SCREEN
-      + CLEAR_AND_HOME
-      + (mouseTracking ? ENABLE_MOUSE_TRACKING : ""),
+      buildAlternateScreenEnterSequence({
+        mouseTracking,
+        clearOnEnter,
+      }),
     )) {
       return;
     }
+    rendererInstance?.setAltScreenActive?.(true, mouseTracking);
 
     return () => {
-      writeRaw(
-        (mouseTracking ? DISABLE_MOUSE_TRACKING : "")
-        + EXIT_ALT_SCREEN,
-      );
+      rendererInstance?.clearTextSelection?.();
+      rendererInstance?.setAltScreenActive?.(false);
+      writeRaw(buildAlternateScreenExitSequence({ mouseTracking }));
     };
-  }, [isInteractiveStdout, mouseTracking, writeRaw]);
+  }, [clearOnEnter, isInteractiveStdout, mouseTracking, output, writeRaw]);
 
   return (
     <Box
