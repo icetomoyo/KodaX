@@ -14,37 +14,26 @@ describe("DialogSurface", () => {
     expect(frame).toContain("Apply changes?");
   });
 
-  it("renders history search state", () => {
+  it("renders input requests", () => {
     const { lastFrame } = render(
       <DialogSurface
-        historySearch={{
-          query: "planner",
-          matches: [{ itemId: "assistant-1", excerpt: "Planner is active" }],
-          selectedIndex: 0,
+        request={{
+          kind: "input",
+          prompt: "Workspace name",
+          defaultValue: "kodax",
+          buffer: "workspace-a",
         }}
       />,
     );
 
     const frame = lastFrame();
-    expect(frame).toContain("[Search]");
-    expect(frame).toContain("planner");
-    expect(frame).toContain("Planner is active");
+    expect(frame).toContain("[Input]");
+    expect(frame).toContain("Workspace name");
+    expect(frame).toContain("workspace-a");
   });
 
-  it("keeps the query visible when transcript search is disarmed", () => {
-    const { lastFrame } = render(
-      <DialogSurface
-        historySearch={{
-          query: "planner",
-          matches: [{ itemId: "assistant-1", excerpt: "Planner is active" }],
-          selectedIndex: -1,
-        }}
-      />,
-    );
-
-    const frame = lastFrame();
-    expect(frame).toContain("planner");
-    expect(frame).toContain("1 matches");
-    expect(frame).toContain("Scroll to keep browsing");
+  it("renders nothing when no dialog state is active", () => {
+    const { lastFrame } = render(<DialogSurface />);
+    expect(lastFrame()).toBe("");
   });
 });

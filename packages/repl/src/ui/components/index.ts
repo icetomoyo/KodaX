@@ -69,7 +69,6 @@ export type {
   DialogSurfaceProps,
   DialogSurfaceConfirmState,
   DialogSurfaceUIRequestState,
-  DialogSurfaceHistorySearchState,
   DialogSelectOption,
 } from "./DialogSurface.js";
 

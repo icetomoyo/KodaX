@@ -231,9 +231,22 @@ const Ink = class Ink {
         this.cursorPosition = position;
         this.log.setCursorPosition(position);
     };
+    resetOutputTracking = () => {
+        this.log.reset?.();
+        this.lastOutput = '';
+        this.lastOutputToRender = '';
+        this.lastOutputHeight = 0;
+        this.cursorPosition = undefined;
+    };
     setAltScreenActive(active, mouseTracking) {
+        const nextMouseTracking = mouseTracking ?? false;
+        const changed = this.altScreenActive !== active
+            || this.mouseTrackingActive !== nextMouseTracking;
         this.altScreenActive = active;
-        this.mouseTrackingActive = mouseTracking ?? false;
+        this.mouseTrackingActive = nextMouseTracking;
+        if (changed) {
+            this.resetOutputTracking();
+        }
     }
     clearTextSelection() {
     }

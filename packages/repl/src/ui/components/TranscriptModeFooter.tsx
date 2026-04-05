@@ -2,6 +2,8 @@ import React from "react";
 import { Box, Text } from "../tui.js";
 import { getTheme } from "../themes/index.js";
 
+const ITEM_SEPARATOR = " | ";
+
 export interface TranscriptModeFooterProps {
   searchActive?: boolean;
   searchQuery?: string;
@@ -53,13 +55,13 @@ export const TranscriptModeFooter: React.FC<TranscriptModeFooterProps> = ({
     <Box flexDirection="column">
       <Box paddingX={1}>
         <Text color={theme.colors.dim}>{statusText}</Text>
-        <Text dimColor>{" · "}</Text>
+        <Text dimColor>{ITEM_SEPARATOR}</Text>
         <Text color={theme.colors.dim}>{helpText}</Text>
         {(searchCountText || updateText) ? <Box flexGrow={1} /> : null}
         {searchCountText ? (
           <>
             <Text dimColor>{searchCountText}</Text>
-            {updateText ? <Text dimColor>{" · "}</Text> : null}
+            {updateText ? <Text dimColor>{ITEM_SEPARATOR}</Text> : null}
           </>
         ) : null}
         {updateText ? (
@@ -73,7 +75,9 @@ export const TranscriptModeFooter: React.FC<TranscriptModeFooterProps> = ({
           {supplementalPrimaryText ? (
             <Text color={theme.colors.dim}>{supplementalPrimaryText}</Text>
           ) : null}
-          {supplementalPrimaryText && trimmedNoticeText ? <Text dimColor>{" · "}</Text> : null}
+          {supplementalPrimaryText && trimmedNoticeText ? (
+            <Text dimColor>{ITEM_SEPARATOR}</Text>
+          ) : null}
           {trimmedNoticeText ? (
             <Text color={theme.colors.accent} bold>
               {trimmedNoticeText}

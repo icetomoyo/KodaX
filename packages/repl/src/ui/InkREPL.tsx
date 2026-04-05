@@ -1879,40 +1879,23 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     transcriptFooterActionSummary,
     transcriptFooterSelectionSummary,
   ]);
+  const normalizedTranscriptFooterSecondaryText = useMemo(
+    () => transcriptFooterSecondaryText?.replaceAll(" 路 ", " | "),
+    [transcriptFooterSecondaryText],
+  );
   const transcriptFooterBudgetNotices = useMemo(() => {
     const notices: string[] = [];
-    if (transcriptFooterSecondaryText) {
-      notices.push(transcriptFooterSecondaryText);
+    if (normalizedTranscriptFooterSecondaryText) {
+      notices.push(normalizedTranscriptFooterSecondaryText);
     }
     if (selectionCopyNotice) {
       notices.push(selectionCopyNotice);
     }
     return notices;
-  }, [selectionCopyNotice, transcriptFooterSecondaryText]);
+  }, [normalizedTranscriptFooterSecondaryText, selectionCopyNotice]);
   const activeFooterNotices = isTranscriptMode
     ? transcriptFooterBudgetNotices
     : promptFooterNotices;
-  const historySearchBudgetState = useMemo(
-    () => (
-      isHistorySearchActive && !isTranscriptMode
-        ? {
-            query: historySearchQuery,
-            matches: historySearchMatches.map((match) => ({
-              itemId: match.itemId,
-              excerpt: match.excerpt,
-            })),
-            selectedIndex: clampedHistorySearchSelectedIndex,
-          }
-        : null
-    ),
-    [
-      clampedHistorySearchSelectedIndex,
-      historySearchMatches,
-      historySearchQuery,
-      isHistorySearchActive,
-      isTranscriptMode,
-    ],
-  );
   const terminalRows = stdout.rows || process.stdout.rows || 24;
   const bannerProps = useMemo<BannerProps>(() => ({
     config: currentConfig,
@@ -1957,14 +1940,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       confirmPrompt: confirmRequest?.prompt,
       confirmInstruction,
       dialogMode: useOverlaySurface ? "overlay" : "inline",
-      historySearch: historySearchBudgetState
-        ? {
-            query: historySearchBudgetState.query,
-            selectedExcerpt:
-              historySearchBudgetState.matches[historySearchBudgetState.selectedIndex]?.excerpt,
-            matchCount: historySearchBudgetState.matches.length,
-          }
-        : null,
       reviewHint: fullscreenPolicy.enabled && transcriptOwnsViewport
         ? undefined
         : transcriptChrome.browseHintText,
@@ -2006,7 +1981,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       confirmRequest,
       confirmInstruction,
       fullscreenPolicy.enabled,
-      historySearchBudgetState,
       transcriptChrome.browseHintText,
       transcriptOwnsViewport,
       uiRequest,
@@ -2017,7 +1991,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       <PromptSuggestionsSurface
         reserveSpace={suggestionsReservedForLayout}
         width={terminalWidth}
-        hidden={isTranscriptMode || isHistorySearchActive}
+        hidden={isTranscriptMode}
         mode={useOverlaySurface ? "overlay" : "inline"}
       />
     ),
@@ -2025,7 +1999,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       suggestionsReservedForLayout,
       terminalWidth,
       isTranscriptMode,
-      isHistorySearchActive,
       useOverlaySurface,
     ],
   );
@@ -2328,7 +2301,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }, [ownedTranscriptRenderModel?.rows, transcriptAnimateSpinners]);
 
   const openHistorySearchSurface = useCallback(() => {
-    if (!displayItems.length || confirmRequest || uiRequest) {
+    if (!isTranscriptMode || !displayItems.length || confirmRequest || uiRequest) {
       return;
     }
     clearTranscriptMouseSelection();
@@ -2365,6 +2338,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     uiRequest,
     viewportBudget.messageRows,
     clearTranscriptMouseSelection,
+    isTranscriptMode,
   ]);
 
   const closeHistorySearchSurface = useCallback(() => {
@@ -2379,27 +2353,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     }
     setHistorySearchSelectedIndex(-1);
   }, [historySearchMatches.length, isHistorySearchActive]);
-  const historySearchDialogState = useMemo(
-    () => (
-      isHistorySearchActive && !isTranscriptMode
-        ? {
-            query: historySearchQuery,
-            matches: historySearchMatches.map((match) => ({
-              itemId: match.itemId,
-              excerpt: match.excerpt,
-            })),
-            selectedIndex: clampedHistorySearchSelectedIndex,
-          }
-        : null
-    ),
-    [
-      clampedHistorySearchSelectedIndex,
-      historySearchMatches,
-      historySearchQuery,
-      isHistorySearchActive,
-      isTranscriptMode,
-    ],
-  );
 
   const dialogConfirmState = useMemo(
     () => (
@@ -2437,10 +2390,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       <DialogSurface
         confirm={dialogConfirmState}
         request={dialogRequestState}
-        historySearch={historySearchDialogState}
       />
     ),
-    [dialogConfirmState, dialogRequestState, historySearchDialogState],
+    [dialogConfirmState, dialogRequestState],
   );
   const overlaySurface = useMemo(() => {
     if (!useOverlaySurface) {
@@ -5172,7 +5124,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         }}
         onToggleTranscriptMode={toggleTranscriptMode}
         onOpenTranscriptSearch={openHistorySearchSurface}
-        canOpenTranscriptSearch={!confirmRequest && !uiRequest}
+        canOpenTranscriptSearch={isTranscriptMode && !confirmRequest && !uiRequest}
         isInteractiveDialogActive={Boolean(confirmRequest || uiRequest)}
         onSetAgentMode={(mode) => {
           currentOptionsRef.current.agentMode = mode;

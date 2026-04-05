@@ -73,6 +73,14 @@ const createStandard = (stream, { showCursor = false } = {}) => {
             hasHiddenCursor = false;
         }
     };
+    render.reset = () => {
+        previousOutput = '';
+        previousLineCount = 0;
+        previousCursorPosition = undefined;
+        cursorWasShown = false;
+        cursorPosition = undefined;
+        cursorDirty = false;
+    };
     render.sync = (str) => {
         const activeCursor = cursorDirty ? cursorPosition : undefined;
         cursorDirty = false;
@@ -207,6 +215,14 @@ const createIncremental = (stream, { showCursor = false } = {}) => {
             cliCursor.show(stream);
             hasHiddenCursor = false;
         }
+    };
+    render.reset = () => {
+        previousOutput = '';
+        previousLines = [];
+        previousCursorPosition = undefined;
+        cursorWasShown = false;
+        cursorPosition = undefined;
+        cursorDirty = false;
     };
     render.sync = (str) => {
         const activeCursor = cursorDirty ? cursorPosition : undefined;

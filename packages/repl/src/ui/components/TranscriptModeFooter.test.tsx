@@ -23,7 +23,7 @@ describe("TranscriptModeFooter", () => {
         searchCount={5}
         searchDetailText="...planner chooses the filesystem edit path..."
         pendingLiveUpdates={3}
-        secondaryText="Selected 2/9 · C copy"
+        secondaryText="Selected 2/9 | C copy"
         noticeText="Copied selection"
       />,
     );
@@ -38,5 +38,6 @@ describe("TranscriptModeFooter", () => {
     expect(normalizedFrame).toContain("updates");
     expect(normalizedFrame).toContain("filesystem edit path");
     expect(normalizedFrame).toContain("Copied selection");
+    expect(frame).not.toContain("路");
   });
 });
