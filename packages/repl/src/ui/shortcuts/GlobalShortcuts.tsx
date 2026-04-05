@@ -31,7 +31,7 @@ export interface GlobalShortcutsProps {
   setShowHelp: (visible: boolean) => void;
   onSetThinking?: (enabled: boolean) => void;
   onSetReasoningMode?: (mode: KodaXReasoningMode) => void;
-  onToggleTranscriptVerbosity?: () => void;
+  onToggleTranscriptMode?: () => void;
   onOpenTranscriptSearch?: () => void;
   canOpenTranscriptSearch?: boolean;
   isInteractiveDialogActive?: boolean;
@@ -55,7 +55,7 @@ export function GlobalShortcuts({
   setShowHelp,
   onSetThinking,
   onSetReasoningMode,
-  onToggleTranscriptVerbosity,
+  onToggleTranscriptMode,
   onOpenTranscriptSearch,
   canOpenTranscriptSearch = true,
   isInteractiveDialogActive = false,
@@ -125,11 +125,11 @@ export function GlobalShortcuts({
     return true;
   });
 
-  useShortcut('toggleTranscriptVerbosity', () => {
+  useShortcut('toggleTranscriptMode', () => {
     if (isInteractiveDialogActive) {
       return false;
     }
-    onToggleTranscriptVerbosity?.();
+    onToggleTranscriptMode?.();
     setShowHelp(false);
     return true;
   });

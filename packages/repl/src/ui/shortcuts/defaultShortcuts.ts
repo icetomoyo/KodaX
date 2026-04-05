@@ -36,9 +36,9 @@ export const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
     configurable: true,
   },
   {
-    id: 'toggleTranscriptVerbosity',
-    name: 'Toggle Transcript Detail',
-    description: 'Toggle transcript verbosity between compact and verbose',
+    id: 'toggleTranscriptMode',
+    name: 'Toggle Transcript Mode',
+    description: 'Toggle transcript mode on or off',
     defaultBindings: [{ key: 'o', ctrl: true }],
     context: 'global',
     priority: 150,
@@ -48,7 +48,7 @@ export const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
   {
     id: 'openTranscriptSearch',
     name: 'Search Transcript',
-    description: 'Open transcript history search',
+    description: 'Open transcript search',
     defaultBindings: [{ key: 'f', ctrl: true }],
     context: 'global',
     priority: 150,

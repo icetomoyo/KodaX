@@ -103,13 +103,13 @@ export function buildBackgroundTaskViewModel(
     return {
       items: visibleItems,
       overflowLabel: rest.length > 0 ? `+${rest.length} more` : undefined,
-      ctaHint: input.parallelText ? "PgUp history" : undefined,
+      ctaHint: input.parallelText ? "Ctrl+O transcript" : undefined,
     };
   }
 
   return {
     items: visibleItems,
     overflowLabel: rest.length > 0 ? `+${rest.length} more` : undefined,
-    ctaHint: input.parallelText ? "PgUp history" : undefined,
+    ctaHint: input.parallelText ? "Ctrl+O transcript" : undefined,
   };
 }

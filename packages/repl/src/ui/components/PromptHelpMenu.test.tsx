@@ -12,14 +12,14 @@ describe("PromptHelpMenu", () => {
             id: "global",
             title: "Global",
             items: [
-              { id: "verbosity", label: "Ctrl+O Toggle Transcript Detail" },
+              { id: "transcript", label: "Ctrl+O Toggle Transcript Mode" },
               { id: "search", label: "Ctrl+F Search Transcript" },
             ],
           },
           {
             id: "transcript",
             title: "Transcript",
-            items: [{ id: "history", label: "PgUp history browse" }],
+            items: [{ id: "history", label: "PgUp/PgDn/j/k scroll" }],
           },
         ]}
       />,
@@ -28,9 +28,9 @@ describe("PromptHelpMenu", () => {
     const frame = lastFrame();
     expect(frame).toContain("Help");
     expect(frame).toContain("Global");
-    expect(frame).toContain("Ctrl+O Toggle Transcript Detail");
+    expect(frame).toContain("Ctrl+O Toggle Transcript Mode");
     expect(frame).toContain("Ctrl+F Search Transcript");
     expect(frame).toContain("Transcript");
-    expect(frame).toContain("PgUp history browse");
+    expect(frame).toContain("PgUp/PgDn/j/k scroll");
   });
 });

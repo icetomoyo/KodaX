@@ -1,50 +1,50 @@
 import { describe, expect, it } from "vitest";
 import {
   createTranscriptDisplayState,
-  enterTranscriptHistory,
+  enterTranscriptMode,
   ownsTranscriptSelectionPath,
   resolveTranscriptSelectedItemId,
   supportsPassiveTranscriptCopyOnSelect,
 } from "./transcript-state.js";
 
 describe("transcript-state selection capabilities", () => {
-  it("only enables the owned selection path while browsing history", () => {
+  it("keeps the owned selection path host-driven instead of transcript-mode gated", () => {
     const liveNative = createTranscriptDisplayState("native_vt");
-    const browsingNative = enterTranscriptHistory(liveNative);
+    const transcriptNative = enterTranscriptMode(liveNative);
 
-    expect(ownsTranscriptSelectionPath(liveNative)).toBe(false);
-    expect(ownsTranscriptSelectionPath(browsingNative)).toBe(true);
+    expect(ownsTranscriptSelectionPath(liveNative)).toBe(true);
+    expect(ownsTranscriptSelectionPath(transcriptNative)).toBe(true);
   });
 
   it("limits passive copy-on-select to hosts that allow it", () => {
-    const nativeBrowsing = enterTranscriptHistory(
+    const nativeTranscript = enterTranscriptMode(
       createTranscriptDisplayState("native_vt"),
     );
-    const xtermBrowsing = enterTranscriptHistory(
+    const xtermTranscript = enterTranscriptMode(
       createTranscriptDisplayState("xtermjs_host"),
     );
-    const degradedBrowsing = enterTranscriptHistory(
+    const degradedTranscript = enterTranscriptMode(
       createTranscriptDisplayState("degraded_vt"),
     );
 
-    expect(supportsPassiveTranscriptCopyOnSelect(nativeBrowsing)).toBe(false);
-    expect(supportsPassiveTranscriptCopyOnSelect(xtermBrowsing)).toBe(false);
-    expect(supportsPassiveTranscriptCopyOnSelect(degradedBrowsing)).toBe(false);
+    expect(supportsPassiveTranscriptCopyOnSelect(nativeTranscript)).toBe(false);
+    expect(supportsPassiveTranscriptCopyOnSelect(xtermTranscript)).toBe(false);
+    expect(supportsPassiveTranscriptCopyOnSelect(degradedTranscript)).toBe(false);
   });
 
-  it("only keeps selected ids that remain valid inside the owned selection path", () => {
-    const browsingNative = enterTranscriptHistory(
+  it("only keeps selected ids that remain valid while selection is supported", () => {
+    const transcriptNative = enterTranscriptMode(
       createTranscriptDisplayState("native_vt"),
     );
     const liveNative = createTranscriptDisplayState("native_vt");
 
     expect(resolveTranscriptSelectedItemId(
-      browsingNative,
+      transcriptNative,
       ["assistant-1", "tool-1"],
       "tool-1",
     )).toBe("tool-1");
     expect(resolveTranscriptSelectedItemId(
-      browsingNative,
+      transcriptNative,
       ["assistant-1", "tool-1"],
       "missing",
     )).toBeUndefined();
@@ -52,6 +52,6 @@ describe("transcript-state selection capabilities", () => {
       liveNative,
       ["assistant-1", "tool-1"],
       "tool-1",
-    )).toBeUndefined();
+    )).toBe("tool-1");
   });
 });

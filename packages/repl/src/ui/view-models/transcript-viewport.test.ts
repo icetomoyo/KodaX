@@ -9,7 +9,7 @@ describe("transcript-viewport view model", () => {
   it("normalizes transcript selection and action capabilities from the owned browsing path", () => {
     expect(buildTranscriptSelectionRuntimeState({
       state: {
-        followMode: "browsing-history",
+        surface: "prompt",
         supportsSelection: true,
         supportsCopyOnSelect: false,
       },
@@ -35,12 +35,12 @@ describe("transcript-viewport view model", () => {
     });
   });
 
-  it("hides transcript selection capabilities outside the owned browsing path", () => {
+  it("hides transcript selection capabilities when the host cannot support selection", () => {
     expect(buildTranscriptSelectionViewModel({
       runtime: buildTranscriptSelectionRuntimeState({
         state: {
-          followMode: "follow-bottom",
-          supportsSelection: true,
+          surface: "prompt",
+          supportsSelection: false,
           supportsCopyOnSelect: true,
         },
         selectableItemIds: ["assistant-1", "assistant-2", "assistant-3"],
@@ -56,7 +56,7 @@ describe("transcript-viewport view model", () => {
     expect(buildTranscriptSelectionViewModel({
       runtime: buildTranscriptSelectionRuntimeState({
         state: {
-          followMode: "browsing-history",
+          surface: "transcript",
           supportsSelection: true,
           supportsCopyOnSelect: false,
         },

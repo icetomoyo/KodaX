@@ -11,8 +11,7 @@
  */
 
 import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
-import { render, Box, useApp, Text, Static, useStdout } from "./tui.js";
-import clipboard from "clipboardy";
+import { render, Box, useApp, Text, Static, useStdout, useTerminalWrite } from "./tui.js";
 import { AlternateScreen, type ScrollBoxHandle, type ScrollBoxWindow } from "../tui/index.js";
 import { AmaWorkStrip } from "./components/AmaWorkStrip.js";
 import { StatusBar } from "./components/StatusBar.js";
@@ -120,6 +119,7 @@ import { buildToolConfirmationPrompt } from "../common/tool-confirmation.js";
 import { KODAX_VERSION } from "../common/utils.js";
 import { runWithPlanMode } from "../common/plan-mode.js";
 import { saveAlwaysAllowToolPattern, loadAlwaysAllowTools, savePermissionModeUser } from "../common/permission-config.js";
+import { copyTextToClipboard } from "../common/clipboard.js";
 import { initializeSkillRegistry, getSkillRegistry } from "@kodax/skills";
 import { getTheme } from "./themes/index.js";
 import { KODAX_BANNER_LOGO_LINES } from "./constants/banner-logo.js";
@@ -156,18 +156,18 @@ import { calculateVisualLayout } from "./utils/textUtils.js";
 import {
   closeTranscriptSearch,
   createTranscriptDisplayState,
-  enterTranscriptHistory,
-  exitTranscriptHistory,
+  enterTranscriptMode,
+  exitTranscriptMode,
   jumpTranscriptToLatest,
   openTranscriptSearch,
   resolveTranscriptSelectedItemId,
+  setTranscriptPendingLiveUpdates,
   setTranscriptSearchMatchIndex,
   setTranscriptScrollAnchor,
   setTranscriptSelectedItem,
   setTranscriptStickyPromptVisible,
   shouldPauseLiveTranscript,
   shouldWindowTranscript,
-  toggleTranscriptVerbosityState,
 } from "./utils/transcript-state.js";
 import {
   detectTerminalHostProfile,
@@ -840,6 +840,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 }) => {
   const { exit } = useApp();
   const { stdout } = useStdout();
+  const writeTerminal = useTerminalWrite();
   const { history } = useUIState();
   const { addHistoryItem, clearHistory: clearUIHistory, setSessionId } = useUIActions();
   const historyRef = useRef(history);
@@ -941,7 +942,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const [transcriptTextSelection, setTranscriptTextSelection] = useState<TranscriptTextSelection | undefined>(undefined);
   const [selectionCopyNotice, setSelectionCopyNotice] = useState<string | undefined>(undefined);
   const [expandedTranscriptItemIds, setExpandedTranscriptItemIds] = useState<Set<string>>(() => new Set());
-  const [reviewSnapshot, setReviewSnapshot] = useState<ReviewSnapshot | null>(null);
+  const [transcriptSnapshot, setTranscriptSnapshot] = useState<ReviewSnapshot | null>(null);
   const [managedTaskStatus, setManagedTaskStatus] = useState<KodaXManagedTaskStatusEvent | null>(null);
   const [lastLiveActivityLabel, setLastLiveActivityLabel] = useState<string | undefined>(undefined);
   const [visibleWorkStripText, setVisibleWorkStripText] = useState<string | undefined>(undefined);
@@ -1201,16 +1202,15 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }, [confirmRequest, currentConfig.permissionMode]);
 
   const isHistorySearchActive = transcriptDisplayState.searchMode === "history";
+  const isTranscriptMode = transcriptDisplayState.surface === "transcript";
   const isAwaitingUserInteraction = !!confirmRequest || !!uiRequest || isHistorySearchActive;
-  const isReviewingHistory = transcriptDisplayState.followMode === "browsing-history";
-  const isTranscriptVerbose = transcriptDisplayState.verbosity === "verbose";
-  const transcriptMaxLines = isTranscriptVerbose || isReviewingHistory ? 1000 : 12;
+  const transcriptMaxLines = isTranscriptMode ? 1000 : 12;
   const transcriptOwnsViewport = shouldWindowTranscript(transcriptDisplayState);
-  const isLivePaused = shouldPauseLiveTranscript(transcriptDisplayState) || isAwaitingUserInteraction;
-  const suggestionsReservedForLayout = shouldReserveSuggestionsSpace && !isReviewingHistory;
+  const isLivePaused = shouldPauseLiveTranscript(transcriptDisplayState);
+  const suggestionsReservedForLayout = shouldReserveSuggestionsSpace && !isTranscriptMode;
 
-  const createReviewSnapshot = useCallback((): ReviewSnapshot => ({
-    items: isReviewingHistory ? reviewHistory : renderHistory,
+  const createTranscriptSnapshot = useCallback((): ReviewSnapshot => ({
+    items: reviewHistory,
     isLoading,
     isThinking: streamingState.isThinking,
     thinkingCharCount: streamingState.thinkingCharCount,
@@ -1228,7 +1228,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }), [
     renderHistory,
     reviewHistory,
-    isReviewingHistory,
     isLoading,
     streamingState.isThinking,
     streamingState.thinkingCharCount,
@@ -1246,19 +1245,47 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   ]);
 
   useEffect(() => {
-    if (isLivePaused) {
-      setReviewSnapshot((prev) => prev ?? createReviewSnapshot());
+    if (isTranscriptMode) {
+      setTranscriptSnapshot((prev) => prev ?? createTranscriptSnapshot());
       return;
     }
 
-    setReviewSnapshot(null);
-  }, [isLivePaused, createReviewSnapshot]);
+    setTranscriptSnapshot(null);
+  }, [createTranscriptSnapshot, isTranscriptMode]);
 
-  const displaySnapshot = reviewSnapshot;
-  const displayItems = displaySnapshot?.items ?? renderHistory;
-  const displayIsLoading = isAwaitingUserInteraction
-    ? false
-    : displaySnapshot?.isLoading ?? isLoading;
+  const pendingTranscriptUpdateCount = useMemo(() => {
+    if (!isTranscriptMode || !transcriptSnapshot) {
+      return 0;
+    }
+
+    let pending = Math.max(0, reviewHistory.length - transcriptSnapshot.items.length);
+    if (isLoading !== transcriptSnapshot.isLoading) {
+      pending += 1;
+    }
+    if (streamingState.currentResponse !== transcriptSnapshot.currentResponse) {
+      pending += 1;
+    }
+    if (streamingState.thinkingContent !== transcriptSnapshot.thinkingContent) {
+      pending += 1;
+    }
+    if (activeToolCalls.length !== transcriptSnapshot.activeToolCalls.length) {
+      pending += 1;
+    }
+
+    return pending;
+  }, [
+    activeToolCalls.length,
+    isLoading,
+    isTranscriptMode,
+    reviewHistory.length,
+    streamingState.currentResponse,
+    streamingState.thinkingContent,
+    transcriptSnapshot,
+  ]);
+
+  const displaySnapshot = isTranscriptMode ? transcriptSnapshot : null;
+  const displayItems = displaySnapshot?.items ?? (isTranscriptMode ? reviewHistory : renderHistory);
+  const displayIsLoading = displaySnapshot?.isLoading ?? isLoading;
   const displayStreamingState = {
     isThinking: displaySnapshot?.isThinking ?? streamingState.isThinking,
     thinkingCharCount: displaySnapshot?.thinkingCharCount ?? streamingState.thinkingCharCount,
@@ -1318,8 +1345,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         managedBudgetApprovalRequired: displayIsLoading ? managedTaskStatus?.budgetApprovalRequired : undefined,
         lastLiveActivityLabel: transcriptStreamingState.lastLiveActivityLabel,
         windowed: true,
-        showFullThinking: isTranscriptVerbose || isReviewingHistory,
-        showDetailedTools: isTranscriptVerbose || isReviewingHistory,
+        showFullThinking: isTranscriptMode,
+        showDetailedTools: isTranscriptMode,
         expandedItemKeys: expandedTranscriptItemIds,
       })
       : undefined,
@@ -1328,8 +1355,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       displayIsLoading,
       displayItems,
       expandedTranscriptItemIds,
-      isReviewingHistory,
-      isTranscriptVerbose,
+      isTranscriptMode,
       managedTaskStatus?.activeWorkerTitle,
       managedTaskStatus?.budgetApprovalRequired,
       managedTaskStatus?.budgetUsage,
@@ -1495,14 +1521,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       ownsViewport: transcriptOwnsViewport,
       isAwaitingUserInteraction,
       isHistorySearchActive,
-      isReviewingHistory,
+      isTranscriptMode,
       historySearchQuery,
     }),
     [
       historySearchQuery,
       isAwaitingUserInteraction,
       isHistorySearchActive,
-      isReviewingHistory,
+      isTranscriptMode,
       transcriptDisplayState,
       transcriptOwnsViewport,
     ],
@@ -1511,7 +1537,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   useEffect(() => {
     setTranscriptDisplayState((prev) => {
       let next = setTranscriptScrollAnchor(prev, historyScrollOffset);
-      next = setTranscriptStickyPromptVisible(next, isReviewingHistory || isAwaitingUserInteraction);
+      next = setTranscriptPendingLiveUpdates(next, pendingTranscriptUpdateCount);
+      next = setTranscriptStickyPromptVisible(
+        next,
+        isTranscriptMode || isHistorySearchActive || isAwaitingUserInteraction,
+      );
       next = setTranscriptSearchMatchIndex(next, clampedHistorySearchSelectedIndex);
       return next;
     });
@@ -1519,7 +1549,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     clampedHistorySearchSelectedIndex,
     historyScrollOffset,
     isAwaitingUserInteraction,
-    isReviewingHistory,
+    isHistorySearchActive,
+    isTranscriptMode,
+    pendingTranscriptUpdateCount,
   ]);
 
   useEffect(() => {
@@ -1632,17 +1664,17 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const footerHeaderViewModel = useMemo(
     () => buildFooterHeaderViewModel({
       isHistorySearchActive,
-      isReviewingHistory,
+      isTranscriptMode,
       pendingInputCount: streamingState.pendingInputs.length,
       buffering: transcriptDisplayState.buffering,
-      verbosity: transcriptDisplayState.verbosity,
+      pendingLiveUpdates: pendingTranscriptUpdateCount,
     }),
     [
       isHistorySearchActive,
-      isReviewingHistory,
+      isTranscriptMode,
+      pendingTranscriptUpdateCount,
       streamingState.pendingInputs.length,
       transcriptDisplayState.buffering,
-      transcriptDisplayState.verbosity,
     ],
   );
   const footerLeftItems = footerHeaderViewModel.leftItems;
@@ -1697,11 +1729,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     if (!inputText.trim()) {
       return undefined;
     }
-    if (isReviewingHistory || isHistorySearchActive) {
-      return "Draft preserved while browsing transcript";
+    if (isTranscriptMode || isHistorySearchActive) {
+      return "Draft preserved while viewing transcript";
     }
     return undefined;
-  }, [inputText, isHistorySearchActive, isReviewingHistory]);
+  }, [inputText, isHistorySearchActive, isTranscriptMode]);
   const backgroundTaskViewModel = useMemo(
     () => buildAmaSummaryViewModel({
       status: managedTaskStatus,
@@ -1782,8 +1814,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     }
     if (historySearchStatusText) {
       notices.unshift(historySearchStatusText);
-    } else if (isReviewingHistory) {
-      notices.unshift("Browsing transcript history · PgUp/PgDn/j/k scroll · Esc/End/Ctrl+Y/Alt+Z resume");
+    } else if (isTranscriptMode) {
+      notices.unshift("Transcript Mode · PgUp/PgDn/j/k scroll · q/Esc/Ctrl+O back to live");
     }
     if (selectionNotice) {
       notices.push(selectionNotice);
@@ -1798,7 +1830,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     fullscreenPolicy.enabled,
     historySearchMatches.length,
     historySearchStatusText,
-    isReviewingHistory,
+    isTranscriptMode,
     selectionCopyNotice,
     transcriptTextSelection,
     transcriptOwnsViewport,
@@ -1925,14 +1957,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       <PromptSuggestionsSurface
         reserveSpace={suggestionsReservedForLayout}
         width={terminalWidth}
-        hidden={isReviewingHistory || isHistorySearchActive}
+        hidden={isTranscriptMode || isHistorySearchActive}
         mode={useOverlaySurface ? "overlay" : "inline"}
       />
     ),
     [
       suggestionsReservedForLayout,
       terminalWidth,
-      isReviewingHistory,
+      isTranscriptMode,
       isHistorySearchActive,
       useOverlaySurface,
     ],
@@ -2026,7 +2058,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     }
 
     try {
-      await clipboard.write(copyText);
+      await copyTextToClipboard(copyText, { terminalWrite: writeTerminal });
       setSelectionCopyNotice(
         `Copied ${selection.rowCount} selected line${selection.rowCount === 1 ? "" : "s"} to clipboard.`,
       );
@@ -2038,7 +2070,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       });
       return false;
     }
-  }, [addHistoryItem, transcriptTextSelection]);
+  }, [addHistoryItem, transcriptTextSelection, writeTerminal]);
 
   const alignTranscriptSelection = useCallback((itemId: string | undefined) => {
     if (!itemId) {
@@ -2051,15 +2083,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       viewportRows: viewportBudget.messageRows,
       itemId,
       expandedItemKeys: expandedTranscriptItemIds,
-      showDetailedTools: isTranscriptVerbose || isReviewingHistory,
+      showDetailedTools: isTranscriptMode,
     });
     scrollTranscriptTo(nextOffset);
   }, [
     displayItems,
     terminalWidth,
     transcriptMaxLines,
-    isTranscriptVerbose,
-    isReviewingHistory,
+    isTranscriptMode,
     expandedTranscriptItemIds,
     scrollTranscriptTo,
     viewportBudget.messageRows,
@@ -2110,7 +2141,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       return;
     }
     try {
-      await clipboard.write(copyText);
+      await copyTextToClipboard(copyText, { terminalWrite: writeTerminal });
       addHistoryItem({
         type: "info",
         text: "Copied selected transcript entry to clipboard.",
@@ -2121,7 +2152,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         text: `Failed to copy transcript entry: ${error instanceof Error ? error.message : String(error)}`,
       });
     }
-  }, [addHistoryItem, canCopySelectedTranscriptItem, selectedTranscriptItem]);
+  }, [addHistoryItem, canCopySelectedTranscriptItem, selectedTranscriptItem, writeTerminal]);
 
   const copySelectedTranscriptToolInput = useCallback(async () => {
     if (!canCopySelectedToolInput || !selectedTranscriptItem) {
@@ -2134,7 +2165,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     }
 
     try {
-      await clipboard.write(copyText);
+      await copyTextToClipboard(copyText, { terminalWrite: writeTerminal });
       addHistoryItem({
         type: "info",
         text: "Copied selected tool input to clipboard.",
@@ -2145,7 +2176,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         text: `Failed to copy tool input: ${error instanceof Error ? error.message : String(error)}`,
       });
     }
-  }, [addHistoryItem, canCopySelectedToolInput, selectedTranscriptItem]);
+  }, [addHistoryItem, canCopySelectedToolInput, selectedTranscriptItem, writeTerminal]);
   const resolveTranscriptMouseTarget = useCallback((row: number, column: number) => {
     if (!fullscreenPolicy.enabled || !transcriptOwnsViewport) {
       return undefined;
@@ -2217,21 +2248,18 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       return;
     }
     clearTranscriptMouseSelection();
-    const viewportAnchorItemId = transcriptOwnsViewport
-      ? transcriptVisibleRowsRef.current.find((row) => row.itemId)?.itemId
-      : undefined;
     const anchorItemId = resolveTranscriptSearchAnchorItemId(
       {
         items: displayItems,
-        selectedItemId: selectedTranscriptItemId ?? viewportAnchorItemId,
+        selectedItemId: selectedTranscriptItemId,
         renderModel: ownedTranscriptRenderModel,
         terminalWidth,
         transcriptMaxLines,
         viewportRows: viewportBudget.messageRows,
         scrollOffset: historyScrollOffset,
         expandedItemKeys: expandedTranscriptItemIds,
-        showDetailedTools: isTranscriptVerbose || isReviewingHistory,
-        preferViewportAnchor: isReviewingHistory,
+        showDetailedTools: isTranscriptMode,
+        preferViewportAnchor: true,
       },
     );
     setTranscriptDisplayState((prev) => openTranscriptSearch(prev, {
@@ -2245,10 +2273,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     displayItems,
     expandedTranscriptItemIds,
     historyScrollOffset,
-    isReviewingHistory,
-    isTranscriptVerbose,
+    isTranscriptMode,
     selectedTranscriptItemId,
-    transcriptOwnsViewport,
     ownedTranscriptRenderModel,
     terminalWidth,
     transcriptMaxLines,
@@ -2257,10 +2283,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     clearTranscriptMouseSelection,
   ]);
 
-  const closeHistorySearchSurface = useCallback((options?: { restoreFollowMode?: boolean }) => {
-    setTranscriptDisplayState((prev) =>
-      closeTranscriptSearch(prev, { restoreFollowMode: options?.restoreFollowMode ?? true }),
-    );
+  const closeHistorySearchSurface = useCallback(() => {
+    setTranscriptDisplayState((prev) => closeTranscriptSearch(prev));
     setHistorySearchQuery("");
     setHistorySearchSelectedIndex(0);
     clearTranscriptMouseSelection();
@@ -2340,17 +2364,25 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     );
   }, [dialogSurface, suggestionsSurface, useOverlaySurface]);
 
-  const enterHistoryReview = useCallback(() => {
-    setTranscriptDisplayState((prev) => enterTranscriptHistory(prev));
-  }, []);
-
-  const exitHistoryReview = useCallback(() => {
-    setTranscriptDisplayState((prev) => jumpTranscriptToLatest(exitTranscriptHistory(prev)));
+  const exitTranscriptModeSurface = useCallback(() => {
+    setTranscriptDisplayState((prev) => jumpTranscriptToLatest(exitTranscriptMode(prev)));
     scrollTranscriptToBottom();
     setHistorySearchQuery("");
     setHistorySearchSelectedIndex(0);
     clearTranscriptMouseSelection();
   }, [clearTranscriptMouseSelection, scrollTranscriptToBottom]);
+
+  const toggleTranscriptMode = useCallback(() => {
+    if (isTranscriptMode) {
+      exitTranscriptModeSurface();
+      return;
+    }
+
+    setTranscriptDisplayState((prev) => enterTranscriptMode(prev));
+    setHistorySearchQuery("");
+    setHistorySearchSelectedIndex(0);
+    clearTranscriptMouseSelection();
+  }, [clearTranscriptMouseSelection, exitTranscriptModeSurface, isTranscriptMode]);
 
   useEffect(() => {
     if (supportsTranscriptSelection || !transcriptDisplayState.selectedItemId) {
@@ -2361,7 +2393,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }, [supportsTranscriptSelection, transcriptDisplayState.selectedItemId]);
 
   useEffect(() => {
-    if (!isReviewingHistory || !supportsTranscriptSelection) {
+    if (!isTranscriptMode || !supportsTranscriptSelection) {
       return;
     }
     if (selectedTranscriptItemId && selectableTranscriptItemIds.includes(selectedTranscriptItemId)) {
@@ -2369,10 +2401,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     }
     const fallbackItemId = selectableTranscriptItemIds[selectableTranscriptItemIds.length - 1];
     setTranscriptDisplayState((prev) => setTranscriptSelectedItem(prev, fallbackItemId));
-  }, [isReviewingHistory, selectableTranscriptItemIds, selectedTranscriptItemId, supportsTranscriptSelection]);
+  }, [isTranscriptMode, selectableTranscriptItemIds, selectedTranscriptItemId, supportsTranscriptSelection]);
 
   useEffect(() => {
-    if (!isReviewingHistory || !canCopySelectedTranscriptItem || !supportsTranscriptCopyOnSelect) {
+    if (!isTranscriptMode || !canCopySelectedTranscriptItem || !supportsTranscriptCopyOnSelect) {
       lastAutoCopiedTranscriptItemIdRef.current = undefined;
       return;
     }
@@ -2400,25 +2432,18 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       return;
     }
 
-    void clipboard.write(copyText).catch(() => {
+    void copyTextToClipboard(copyText, { terminalWrite: writeTerminal }).catch(() => {
       // Ignore clipboard failures for passive copy-on-select.
     });
   }, [
-    isReviewingHistory,
+    isTranscriptMode,
     selectedTranscriptItem,
     selectedTranscriptItemId,
     canCopySelectedTranscriptItem,
     supportsTranscriptCopyOnSelect,
     transcriptTextSelection,
+    writeTerminal,
   ]);
-
-  useEffect(() => {
-    if (isReviewingHistory) {
-      return;
-    }
-
-    clearTranscriptMouseSelection();
-  }, [clearTranscriptMouseSelection, isReviewingHistory]);
 
   useEffect(() => {
     if (fullscreenPolicy.enabled) {
@@ -2469,9 +2494,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const setSessionPermissionMode = useCallback((mode: PermissionMode) => {
     setCurrentConfig((prev) => ({ ...prev, permissionMode: mode }));
     permissionModeRef.current = mode;
-  }, []);
-  const toggleTranscriptVerbosity = useCallback(() => {
-    setTranscriptDisplayState((prev) => toggleTranscriptVerbosityState(prev));
   }, []);
   const pendingInputsRef = useRef<string[]>(streamingState.pendingInputs);
   const userInterruptedRef = useRef(false);
@@ -2540,7 +2562,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
       // ESC requires a double-press to interrupt.
       if (key.name === "escape") {
-        if (isReviewingHistory || isAwaitingUserInteraction) {
+        if (isTranscriptMode || isAwaitingUserInteraction) {
           return false;
         }
 
@@ -2580,7 +2602,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     },
     [
       isLoading,
-      isReviewingHistory,
+      isTranscriptMode,
       isAwaitingUserInteraction,
       isInputEmpty,
       streamingState.pendingInputs.length,
@@ -2619,9 +2641,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             return false;
           }
 
-          if (!isReviewingHistory) {
-            enterHistoryReview();
-          }
           disarmHistorySearchSelection();
           mouseSelectionRef.current = {
             anchor: target.point,
@@ -2673,21 +2692,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         }
       }
 
-      if ((key.ctrl && key.name === "y") || (key.meta && key.name === "z")) {
-        if (!isReviewingHistory) {
-          if (!hasTranscript) return true;
-          enterHistoryReview();
-          return true;
-        }
-
-        exitHistoryReview();
-        return true;
-      }
-
       if (key.name === "pageup") {
         if (!hasTranscript) return true;
-
-        enterHistoryReview();
         disarmHistorySearchSelection();
         scrollTranscriptBy(reviewPageSize);
         return true;
@@ -2696,9 +2702,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       if (key.name === "wheelup") {
         if (!transcriptDisplayState.supportsWheelHistory || !hasTranscript) {
           return false;
-        }
-        if (!isReviewingHistory) {
-          enterHistoryReview();
         }
         disarmHistorySearchSelection();
         scrollTranscriptBy(reviewWheelStep);
@@ -2709,11 +2712,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         if (!transcriptDisplayState.supportsWheelHistory) {
           return false;
         }
-        if (!isReviewingHistory) {
-          return true;
-        }
         if (historyScrollOffset === 0) {
-          exitHistoryReview();
           return true;
         }
 
@@ -2722,13 +2721,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         return true;
       }
 
-      if (!isReviewingHistory) {
-        return false;
-      }
-
       if (transcriptDisplayState.searchMode === "history") {
         if (key.name === "escape") {
-          closeHistorySearchSurface({ restoreFollowMode: true });
+          closeHistorySearchSurface();
           return true;
         }
         if (key.name === "backspace") {
@@ -2752,7 +2747,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           const match = historySearchMatches[clampedHistorySearchSelectedIndex];
           if (match) {
             selectTranscriptItem(match.itemId);
-            closeHistorySearchSurface({ restoreFollowMode: false });
+            closeHistorySearchSurface();
           }
           return true;
         }
@@ -2763,13 +2758,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         }
       }
 
-      if (key.name === "escape") {
-        exitHistoryReview();
+      if (isTranscriptMode && (!key.ctrl && !key.meta) && key.name === "q") {
+        exitTranscriptModeSurface();
         return true;
       }
 
-      if (key.name === "end") {
-        exitHistoryReview();
+      if (isTranscriptMode && key.name === "escape") {
+        exitTranscriptModeSurface();
         return true;
       }
 
@@ -2780,14 +2775,23 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
 
       if (key.name === "pagedown") {
-        if (historyScrollOffset === 0) {
-          exitHistoryReview();
-          return true;
-        }
-
         disarmHistorySearchSelection();
         scrollTranscriptBy(-reviewPageSize);
         return true;
+      }
+
+      if (key.name === "end") {
+        if (isTranscriptMode) {
+          exitTranscriptModeSurface();
+          return true;
+        }
+        scrollTranscriptToBottom();
+        clearTranscriptMouseSelection();
+        return true;
+      }
+
+      if (!isTranscriptMode) {
+        return false;
       }
 
       if (key.name === "j" || key.name === "down") {
@@ -2799,6 +2803,16 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       if (key.name === "k" || key.name === "up") {
         disarmHistorySearchSelection();
         scrollTranscriptBy(1);
+        return true;
+      }
+
+      if (!key.ctrl && !key.meta && key.name === "g" && key.shift) {
+        scrollTranscriptToBottom();
+        return true;
+      }
+
+      if (!key.ctrl && !key.meta && key.name === "g" && !key.shift) {
+        scrollTranscriptTo(Math.max(0, effectiveTranscriptScrollHeight - viewportBudget.messageRows));
         return true;
       }
 
@@ -2846,10 +2860,29 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         return true;
       }
 
+      if (!key.ctrl && !key.meta && key.name === "n") {
+        if (historySearchMatches.length === 0) {
+          return false;
+        }
+        setHistorySearchSelectedIndex((prev) => {
+          const nextIndex = stepTranscriptSearchMatch(
+            historySearchMatches.length,
+            prev,
+            key.shift ? "prev" : "next",
+          );
+          const match = historySearchMatches[nextIndex];
+          if (match) {
+            selectTranscriptItem(match.itemId);
+          }
+          return nextIndex;
+        });
+        return true;
+      }
+
       return false;
     },
     [
-      isReviewingHistory,
+      isTranscriptMode,
       displayItems,
       displayStreamingState.currentResponse,
       displayStreamingState.thinkingContent,
@@ -2858,11 +2891,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       effectiveTranscriptScrollHeight,
       reviewPageSize,
       reviewWheelStep,
-      enterHistoryReview,
-      exitHistoryReview,
+      exitTranscriptModeSurface,
       transcriptDisplayState,
       scrollTranscriptBy,
       scrollTranscriptTo,
+      scrollTranscriptToBottom,
       canCycleTranscriptSelection,
       clampedHistorySearchSelectedIndex,
       clearTranscriptMouseSelection,
@@ -3484,7 +3517,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         const result = await showConfirmDialog(tool, input);
 
         // === RACE CONDITION FIX: Re-evaluate permission mode ===
-        // The user might have toggled transcript verbosity or permission mode mid-session.
+        // The user might have toggled transcript mode or permission mode mid-session.
         // WHILE the confirmation dialog was open and waiting.
         if (permissionModeRef.current === 'plan' && (FILE_MODIFICATION_TOOLS.has(tool) || tool === 'undo')) {
           return false;
@@ -4770,7 +4803,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           currentOptionsRef.current.reasoningMode = mode;
           currentOptionsRef.current.thinking = mode !== 'off';
         }}
-        onToggleTranscriptVerbosity={toggleTranscriptVerbosity}
+        onToggleTranscriptMode={toggleTranscriptMode}
         onOpenTranscriptSearch={openHistorySearchSurface}
         canOpenTranscriptSearch={!confirmRequest && !uiRequest}
         isInteractiveDialogActive={Boolean(confirmRequest || uiRequest)}
@@ -4837,8 +4870,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               animateSpinners={!isLivePaused && fullscreenPolicy.transcriptSpinnerAnimation}
               windowed={transcriptOwnsViewport}
               maxLines={transcriptMaxLines}
-              showFullThinking={isTranscriptVerbose || isReviewingHistory}
-              showDetailedTools={isTranscriptVerbose || isReviewingHistory}
+              showFullThinking={isTranscriptMode}
+              showDetailedTools={isTranscriptMode}
               selectedItemId={selectedTranscriptItemId}
               selectedTextRanges={transcriptTextSelection?.rowRanges}
               transcriptModel={ownedTranscriptRenderModel}
@@ -4912,8 +4945,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
                     transcriptModel={ownedTranscriptRenderModel}
                     visibleRowsOverride={visibleRows}
                     maxLines={transcriptMaxLines}
-                    showFullThinking={isTranscriptVerbose || isReviewingHistory}
-                    showDetailedTools={isTranscriptVerbose || isReviewingHistory}
+                    showFullThinking={isTranscriptMode}
+                    showDetailedTools={isTranscriptMode}
                     selectedItemId={selectedTranscriptItemId}
                     selectedTextRanges={transcriptTextSelection?.rowRanges}
                     expandedItemKeys={expandedTranscriptItemIds}
@@ -4930,7 +4963,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         scrollTop={historyScrollOffset}
         scrollHeight={effectiveTranscriptScrollHeight}
         viewportHeight={viewportBudget.messageRows}
-        stickyScroll={!isReviewingHistory && !isAwaitingUserInteraction && historyScrollOffset === 0}
+        stickyScroll={!isTranscriptMode && !isAwaitingUserInteraction && historyScrollOffset === 0}
         scrollRef={transcriptScrollRef}
         onWindowChange={handleTranscriptWindowChange}
         onScrollTopChange={setHistoryScrollOffset}
@@ -4944,23 +4977,25 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             inlineNotices={transcriptFooterNotices.length > 0 ? (
               <StatusNoticesSurface notices={transcriptFooterNotices} />
             ) : undefined}
-            composer={
+            composer={isTranscriptMode ? (
+              <Box paddingX={1}>
+                <Text dimColor>Transcript Mode - Press Ctrl+O, q, or Esc to return to live.</Text>
+              </Box>
+            ) : (
               <PromptComposer
                 onSubmit={handleSubmit}
                 prompt=">"
-                placeholder={isReviewingHistory
-                  ? "Browsing transcript history... Press Esc, End, Ctrl+Y, or Alt+Z to resume."
-                  : isLoading
+                placeholder={isLoading
                   ? canQueueFollowUps
                     ? "Queue a follow-up for the next round..."
                     : "Agent is busy..."
                   : "Type a message..."}
-                focus={!confirmRequest && !uiRequest && !isReviewingHistory && !isHistorySearchActive}
+                focus={!confirmRequest && !uiRequest && !isHistorySearchActive}
                 cwd={process.cwd()}
                 gitRoot={options.context?.gitRoot || context.gitRoot}
                 onInputChange={handleInputChange}
               />
-            }
+            )}
             inlineSuggestions={useOverlaySurface ? undefined : suggestionsSurface}
             helpSurface={showHelp ? (
               <PromptHelpMenu sections={buildHelpMenuSections()} />

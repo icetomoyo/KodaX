@@ -3,25 +3,26 @@ import {
   buildTranscriptBrowseHint,
   closeTranscriptSearch,
   createTranscriptDisplayState,
-  enterTranscriptHistory,
-  exitTranscriptHistory,
+  enterTranscriptMode,
+  exitTranscriptMode,
   openTranscriptSearch,
+  setTranscriptPendingLiveUpdates,
+  setTranscriptScrollAnchor,
   setTranscriptSearchAnchor,
   setTranscriptSearchMatchIndex,
   shouldPauseLiveTranscript,
   shouldWindowTranscript,
   supportsTranscriptMouseHistory,
-  toggleTranscriptVerbosityState,
 } from "./transcript-state.js";
 
 describe("transcript-state", () => {
-  it("creates a live owned transcript state for native VT hosts", () => {
+  it("creates a prompt-surface transcript state for native VT hosts", () => {
     const state = createTranscriptDisplayState("native_vt");
 
-    expect(state.verbosity).toBe("compact");
-    expect(state.followMode).toBe("follow-bottom");
+    expect(state.surface).toBe("prompt");
     expect(state.buffering).toBe("live");
     expect(state.ownsViewportByDefault).toBe(true);
+    expect(state.pendingLiveUpdates).toBe(0);
   });
 
   it("creates a buffered fallback state for degraded hosts", () => {
@@ -32,63 +33,59 @@ describe("transcript-state", () => {
     expect(shouldWindowTranscript(state)).toBe(true);
   });
 
-  it("toggles verbosity without changing follow mode", () => {
-    const initial = createTranscriptDisplayState("native_vt");
-    const next = toggleTranscriptVerbosityState(initial);
+  it("enters and exits transcript mode independently from scroll anchoring", () => {
+    const initial = setTranscriptScrollAnchor(createTranscriptDisplayState("native_vt"), 6);
+    const transcript = enterTranscriptMode(initial);
+    const resumed = exitTranscriptMode(transcript);
 
-    expect(next.verbosity).toBe("verbose");
-    expect(next.followMode).toBe("follow-bottom");
+    expect(transcript.surface).toBe("transcript");
+    expect(shouldPauseLiveTranscript(transcript)).toBe(true);
+    expect(resumed.surface).toBe("prompt");
+    expect(resumed.scrollAnchor).toBe(0);
   });
 
-  it("enters and exits transcript history independently from verbosity", () => {
-    const initial = toggleTranscriptVerbosityState(createTranscriptDisplayState("native_vt"));
-    const browsing = enterTranscriptHistory(initial);
-    const resumed = exitTranscriptHistory(browsing);
+  it("tracks pending transcript updates only while transcript mode is active", () => {
+    const prompt = setTranscriptPendingLiveUpdates(
+      createTranscriptDisplayState("native_vt"),
+      4,
+    );
+    const transcript = setTranscriptPendingLiveUpdates(
+      enterTranscriptMode(createTranscriptDisplayState("native_vt")),
+      4,
+    );
 
-    expect(browsing.followMode).toBe("browsing-history");
-    expect(browsing.verbosity).toBe("verbose");
-    expect(shouldPauseLiveTranscript(browsing)).toBe(true);
-    expect(resumed.followMode).toBe("follow-bottom");
-    expect(resumed.verbosity).toBe("verbose");
+    expect(prompt.jumpToLatestAvailable).toBe(false);
+    expect(transcript.pendingLiveUpdates).toBe(4);
+    expect(transcript.jumpToLatestAvailable).toBe(true);
   });
 
-  it("only enables mouse history scrolling when the host supports it and history is active", () => {
-    const degraded = enterTranscriptHistory(createTranscriptDisplayState("degraded_vt"));
-    const native = enterTranscriptHistory(createTranscriptDisplayState("native_vt"));
+  it("keeps mouse history support host-driven instead of transcript-mode gated", () => {
+    const prompt = createTranscriptDisplayState("native_vt");
+    const transcript = enterTranscriptMode(createTranscriptDisplayState("native_vt"));
 
-    expect(supportsTranscriptMouseHistory(degraded)).toBe(true);
-    expect(supportsTranscriptMouseHistory(native)).toBe(true);
+    expect(supportsTranscriptMouseHistory(prompt)).toBe(true);
+    expect(supportsTranscriptMouseHistory(transcript)).toBe(true);
   });
 
-  it("builds a browsing hint only while transcript history is active", () => {
-    const active = enterTranscriptHistory(createTranscriptDisplayState("xtermjs_host"));
+  it("builds a transcript-mode hint only while transcript mode is active", () => {
+    const active = enterTranscriptMode(createTranscriptDisplayState("xtermjs_host"));
 
-    expect(buildTranscriptBrowseHint(active)).toContain("Browsing transcript history");
+    expect(buildTranscriptBrowseHint(active)).toContain("Transcript Mode");
     expect(buildTranscriptBrowseHint(createTranscriptDisplayState("xtermjs_host"))).toBeUndefined();
   });
 
-  it("restores live follow when transcript search is cancelled from follow-bottom", () => {
+  it("opens transcript search by switching to transcript mode", () => {
     const initial = createTranscriptDisplayState("native_vt");
-    const searching = openTranscriptSearch(initial);
-    const closed = closeTranscriptSearch(searching, { restoreFollowMode: true });
+    const searching = openTranscriptSearch(initial, { anchorItemId: "assistant-1" });
+    const closed = closeTranscriptSearch(searching);
 
-    expect(searching.followMode).toBe("browsing-history");
+    expect(searching.surface).toBe("transcript");
     expect(searching.searchMode).toBe("history");
-    expect(closed.followMode).toBe("follow-bottom");
-    expect(closed.searchMode).toBe("closed");
-    expect(closed.selectedItemId).toBeUndefined();
-  });
-
-  it("preserves history browsing when transcript search closes after opening in history mode", () => {
-    const browsing = enterTranscriptHistory(createTranscriptDisplayState("native_vt"));
-    const searching = openTranscriptSearch(browsing);
-    const closed = closeTranscriptSearch(searching, { restoreFollowMode: true });
-
-    expect(closed.followMode).toBe("browsing-history");
+    expect(closed.surface).toBe("transcript");
     expect(closed.searchMode).toBe("closed");
   });
 
-  it("tracks transcript search anchor and current match separately from follow mode", () => {
+  it("tracks transcript search anchor and current match separately from transcript mode", () => {
     const initial = createTranscriptDisplayState("native_vt");
     const anchored = setTranscriptSearchAnchor(initial, "assistant-1");
     const indexed = setTranscriptSearchMatchIndex(anchored, 3);
@@ -96,7 +93,7 @@ describe("transcript-state", () => {
 
     expect(searching.searchAnchorItemId).toBe("assistant-1");
     expect(searching.currentMatchIndex).toBe(3);
-    expect(searching.followMode).toBe("browsing-history");
+    expect(searching.surface).toBe("transcript");
   });
 
   it("allows transcript search to keep the query active while clearing the current match", () => {

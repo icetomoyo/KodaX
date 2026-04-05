@@ -160,7 +160,7 @@ describe("transcript-layout", () => {
     expect(text).not.toContain("A".repeat(430));
   });
 
-  it("shows full thinking in review mode", () => {
+  it("shows full thinking in transcript mode", () => {
     const thinking = "B".repeat(450);
     const rows = buildTranscriptRows({
       items: [],
@@ -376,7 +376,7 @@ describe("transcript-layout", () => {
     expect(text).toContain("(10ms)");
   });
 
-  it("shows detailed tool output only when review mode is enabled", () => {
+  it("shows detailed tool output only when transcript mode is enabled", () => {
     const baseTool = {
       id: "tool-3",
       name: "[Lead] changed_diff",

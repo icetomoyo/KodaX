@@ -4,14 +4,12 @@ import {
   type EffectiveTuiRendererMode,
 } from "./terminal-host-profile.js";
 
-export type TranscriptVerbosity = "compact" | "verbose";
-export type TranscriptFollowMode = "follow-bottom" | "browsing-history";
+export type TranscriptSurface = "prompt" | "transcript";
 export type TranscriptBufferingMode = "live" | "buffered-fallback";
 
 export interface TranscriptDisplayState {
   hostProfile: TerminalHostProfile;
-  verbosity: TranscriptVerbosity;
-  followMode: TranscriptFollowMode;
+  surface: TranscriptSurface;
   buffering: TranscriptBufferingMode;
   ownsViewportByDefault: boolean;
   supportsMouseTracking: boolean;
@@ -29,14 +27,14 @@ export interface TranscriptDisplayState {
   selectionMode: "none" | "message";
   selectedItemId?: string;
   searchMode: "closed" | "history";
-  searchReturnFollowMode?: TranscriptFollowMode;
   searchAnchorItemId?: string;
   currentMatchIndex: number;
+  pendingLiveUpdates: number;
 }
 
 export type TranscriptSelectionCapabilityState = Pick<
   TranscriptDisplayState,
-  "followMode" | "supportsSelection" | "supportsCopyOnSelect"
+  "surface" | "supportsSelection" | "supportsCopyOnSelect"
 >;
 
 export interface TranscriptDisplayStateOptions {
@@ -52,8 +50,7 @@ export function createTranscriptDisplayState(
   });
   return {
     hostProfile,
-    verbosity: "compact",
-    followMode: "follow-bottom",
+    surface: "prompt",
     buffering: capabilities.bufferingMode,
     ownsViewportByDefault: capabilities.ownsViewportByDefault,
     supportsMouseTracking: capabilities.supportsMouseTracking,
@@ -71,45 +68,51 @@ export function createTranscriptDisplayState(
     selectionMode: "none",
     selectedItemId: undefined,
     searchMode: "closed",
-    searchReturnFollowMode: undefined,
     searchAnchorItemId: undefined,
     currentMatchIndex: 0,
+    pendingLiveUpdates: 0,
   };
 }
 
-export function toggleTranscriptVerbosityState(
+export function enterTranscriptMode(
   state: TranscriptDisplayState,
 ): TranscriptDisplayState {
   return {
     ...state,
-    verbosity: state.verbosity === "compact" ? "verbose" : "compact",
+    surface: "transcript",
+    jumpToLatestAvailable: state.pendingLiveUpdates > 0,
   };
 }
 
-export function enterTranscriptHistory(
+export function exitTranscriptMode(
   state: TranscriptDisplayState,
 ): TranscriptDisplayState {
   return {
     ...state,
-    followMode: "browsing-history",
-    jumpToLatestAvailable: state.scrollAnchor > 0,
-  };
-}
-
-export function exitTranscriptHistory(
-  state: TranscriptDisplayState,
-): TranscriptDisplayState {
-  return {
-    ...state,
-    followMode: "follow-bottom",
+    surface: "prompt",
     scrollAnchor: 0,
     jumpToLatestAvailable: false,
     selectionMode: "none",
     selectedItemId: undefined,
     searchMode: "closed",
-    searchReturnFollowMode: undefined,
     searchAnchorItemId: undefined,
     currentMatchIndex: 0,
+    pendingLiveUpdates: 0,
+  };
+}
+
+export function setTranscriptPendingLiveUpdates(
+  state: TranscriptDisplayState,
+  pendingLiveUpdates: number,
+): TranscriptDisplayState {
+  const nextPendingUpdates = Math.max(0, pendingLiveUpdates);
+  return {
+    ...state,
+    pendingLiveUpdates: nextPendingUpdates,
+    jumpToLatestAvailable:
+      state.surface === "transcript"
+        ? nextPendingUpdates > 0
+        : state.scrollAnchor > 0,
   };
 }
 
@@ -122,7 +125,9 @@ export function setTranscriptScrollAnchor(
     ...state,
     scrollAnchor: nextAnchor,
     jumpToLatestAvailable:
-      state.followMode === "browsing-history" ? nextAnchor > 0 : false,
+      state.surface === "transcript"
+        ? state.pendingLiveUpdates > 0
+        : nextAnchor > 0,
   };
 }
 
@@ -131,14 +136,15 @@ export function jumpTranscriptToLatest(
 ): TranscriptDisplayState {
   return {
     ...state,
-    followMode: "follow-bottom",
+    surface: "prompt",
     scrollAnchor: 0,
     jumpToLatestAvailable: false,
-    selectionMode: state.selectionMode === "message" ? "message" : "none",
+    selectionMode: "none",
+    selectedItemId: undefined,
     searchMode: "closed",
-    searchReturnFollowMode: undefined,
     searchAnchorItemId: undefined,
     currentMatchIndex: 0,
+    pendingLiveUpdates: 0,
   };
 }
 
@@ -169,35 +175,20 @@ export function openTranscriptSearch(
 ): TranscriptDisplayState {
   return {
     ...state,
-    followMode: "browsing-history",
-    jumpToLatestAvailable:
-      state.followMode === "browsing-history" ? state.scrollAnchor > 0 : false,
+    surface: "transcript",
     searchMode: "history",
-    searchReturnFollowMode: state.searchReturnFollowMode ?? state.followMode,
     searchAnchorItemId: options?.anchorItemId ?? state.selectedItemId ?? state.searchAnchorItemId,
     currentMatchIndex: Math.max(0, options?.initialMatchIndex ?? state.currentMatchIndex),
+    jumpToLatestAvailable: state.pendingLiveUpdates > 0,
   };
 }
 
 export function closeTranscriptSearch(
   state: TranscriptDisplayState,
-  options?: { restoreFollowMode?: boolean },
 ): TranscriptDisplayState {
-  const restoreFollowMode = options?.restoreFollowMode ?? false;
-  const shouldRestoreLiveFollow =
-    restoreFollowMode && state.searchReturnFollowMode === "follow-bottom";
-
   return {
     ...state,
-    followMode: shouldRestoreLiveFollow ? "follow-bottom" : state.followMode,
-    scrollAnchor: shouldRestoreLiveFollow ? 0 : state.scrollAnchor,
-    jumpToLatestAvailable: shouldRestoreLiveFollow
-      ? false
-      : state.jumpToLatestAvailable,
-    selectionMode: shouldRestoreLiveFollow ? "none" : state.selectionMode,
-    selectedItemId: shouldRestoreLiveFollow ? undefined : state.selectedItemId,
     searchMode: "closed",
-    searchReturnFollowMode: undefined,
     searchAnchorItemId: undefined,
     currentMatchIndex: 0,
   };
@@ -226,28 +217,25 @@ export function setTranscriptSearchMatchIndex(
 export function shouldWindowTranscript(
   state: TranscriptDisplayState,
 ): boolean {
-  return (
-    state.supportsFullscreenLayout
-    && (state.ownsViewportByDefault || state.followMode === "browsing-history")
-  );
+  return state.supportsFullscreenLayout && state.ownsViewportByDefault;
 }
 
 export function shouldPauseLiveTranscript(
   state: TranscriptDisplayState,
 ): boolean {
-  return state.followMode === "browsing-history";
+  return state.surface === "transcript";
 }
 
 export function supportsTranscriptMouseHistory(
   state: TranscriptDisplayState,
 ): boolean {
-  return state.followMode === "browsing-history" && state.supportsWheelHistory;
+  return state.supportsWheelHistory;
 }
 
 export function ownsTranscriptSelectionPath(
   state: TranscriptSelectionCapabilityState,
 ): boolean {
-  return state.followMode === "browsing-history" && state.supportsSelection;
+  return state.supportsSelection;
 }
 
 export function resolveTranscriptSelectedItemId(
@@ -265,16 +253,16 @@ export function resolveTranscriptSelectedItemId(
 export function supportsPassiveTranscriptCopyOnSelect(
   state: TranscriptSelectionCapabilityState,
 ): boolean {
-  return ownsTranscriptSelectionPath(state) && state.supportsCopyOnSelect;
+  return state.supportsSelection && state.supportsCopyOnSelect;
 }
 
 export function buildTranscriptBrowseHint(
   state: TranscriptDisplayState,
 ): string | undefined {
-  if (state.followMode !== "browsing-history") {
+  if (state.surface !== "transcript") {
     return undefined;
   }
 
   const wheelHint = state.supportsMouseTracking ? "Wheel/" : "";
-  return `Browsing transcript history - live updates paused | ${wheelHint}PgUp/PgDn/j/k scroll | Esc/End/Ctrl+Y/Alt+Z resume`;
+  return `Transcript Mode | ${wheelHint}PgUp/PgDn/j/k scroll | n/N matches | q/Esc/Ctrl+O back to live`;
 }

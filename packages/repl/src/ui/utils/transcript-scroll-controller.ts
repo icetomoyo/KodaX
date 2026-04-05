@@ -30,7 +30,7 @@ export interface TranscriptChromeOptions {
   ownsViewport: boolean;
   isAwaitingUserInteraction: boolean;
   isHistorySearchActive: boolean;
-  isReviewingHistory: boolean;
+  isTranscriptMode: boolean;
   historySearchQuery: string;
 }
 
@@ -42,7 +42,7 @@ export function buildTranscriptChromeModel(
     ownsViewport,
     isAwaitingUserInteraction,
     isHistorySearchActive,
-    isReviewingHistory,
+    isTranscriptMode,
     historySearchQuery,
   } = options;
 
@@ -56,30 +56,41 @@ export function buildTranscriptChromeModel(
         visible: true,
         label: query
           ? `Searching transcript for "${query}"`
-          : "Searching transcript history",
+          : "Searching transcript",
+      };
+    } else if (isTranscriptMode) {
+      stickyHeader = {
+        visible: true,
+        label: "Transcript Mode",
       };
     } else if (isAwaitingUserInteraction) {
       stickyHeader = {
         visible: true,
-        label: "Interaction active - transcript follow is paused",
-      };
-    } else if (isReviewingHistory) {
-      stickyHeader = {
-        visible: true,
-        label: "Browsing transcript history",
+        label: "Interaction active",
       };
     }
   }
 
-  const jumpToLatest =
-    ownsViewport && state.supportsViewportChrome && state.jumpToLatestAvailable
-      ? {
+  let jumpToLatest: TranscriptChromeModel["jumpToLatest"];
+  if (ownsViewport && state.supportsViewportChrome) {
+    if (isTranscriptMode && state.pendingLiveUpdates > 0) {
+      jumpToLatest = {
         visible: true,
-        label: "Jump to latest",
+        label: state.pendingLiveUpdates === 1
+          ? "1 new update"
+          : `${state.pendingLiveUpdates} new updates`,
+        hint: "Ctrl+O",
+        tone: "accent",
+      };
+    } else if (!isTranscriptMode && state.jumpToLatestAvailable) {
+      jumpToLatest = {
+        visible: true,
+        label: "Back to live",
         hint: "End",
-        tone: "accent" as const,
-      }
-      : undefined;
+        tone: "accent",
+      };
+    }
+  }
 
   return {
     browseHintText,

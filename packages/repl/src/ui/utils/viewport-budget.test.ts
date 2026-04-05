@@ -102,7 +102,7 @@ describe("viewport-budget", () => {
     expect(budget.messageRows).toBeGreaterThan(0);
   });
 
-  it("can drop reserved suggestion space while still accounting for the review hint", () => {
+  it("can drop reserved suggestion space while still accounting for the transcript hint", () => {
     const budget = calculateViewportBudget({
       terminalRows: 24,
       terminalWidth: 80,
@@ -110,7 +110,7 @@ describe("viewport-budget", () => {
       suggestionsReserved: false,
       showHelp: false,
       statusBarText: "status",
-      reviewHint: "Reviewing history - live updates paused | Esc/End/Ctrl+Y/Alt+Z resume",
+      reviewHint: "Transcript Mode | PgUp/PgDn/j/k scroll | q/Esc/Ctrl+O back to live",
     });
 
     expect(budget.suggestionsRows).toBe(0);
