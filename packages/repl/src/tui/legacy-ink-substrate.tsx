@@ -1,26 +1,95 @@
 import process from "node:process";
 import { Stream } from "node:stream";
-import type { ReactNode } from "react";
+import type { ComponentType, PropsWithChildren, ReactNode } from "react";
 import {
-  Box as InkBox,
-  Text as InkText,
-  Static as InkStatic,
-  useInput as inkUseInput,
-} from "ink";
-import type { Key as InkKey } from "ink";
-import Ink from "../../../../node_modules/ink/build/ink.js";
-import type {
-  Instance as InkRenderInstance,
-  RenderOptions as InkRenderOptions,
-} from "../../../../node_modules/ink/build/render.js";
+  default as InkBox,
+} from "./substrate/ink/components/Box.js";
+import {
+  default as InkText,
+} from "./substrate/ink/components/Text.js";
+import {
+  default as InkStatic,
+} from "./substrate/ink/components/Static.js";
+import inkUseInput from "./substrate/ink/hooks/use-input.js";
+import Ink from "./substrate/ink/ink.js";
 
 type InkInstance = InstanceType<typeof Ink>;
 
 const localInstances = new WeakMap<NodeJS.WriteStream, InkInstance>();
 
-export type RenderOptions = InkRenderOptions;
-export type RenderInstance = InkRenderInstance;
-export type Key = InkKey;
+export interface RenderOptions {
+  stdout?: NodeJS.WriteStream;
+  stdin?: NodeJS.ReadStream;
+  stderr?: NodeJS.WriteStream;
+  debug?: boolean;
+  exitOnCtrlC?: boolean;
+  patchConsole?: boolean;
+  onRender?: (metrics: { renderTime: number }) => void;
+  isScreenReaderEnabled?: boolean;
+  maxFps?: number;
+  incrementalRendering?: boolean;
+  concurrent?: boolean;
+  kittyKeyboard?: {
+    mode?: "auto" | "enabled" | "disabled";
+    flags?: string[];
+  };
+}
+
+export interface RenderInstance {
+  rerender: (node: ReactNode) => void;
+  unmount: (error?: unknown) => void;
+  waitUntilExit: () => Promise<unknown>;
+  cleanup: () => void;
+  clear: () => void;
+}
+
+export interface Key {
+  upArrow: boolean;
+  downArrow: boolean;
+  leftArrow: boolean;
+  rightArrow: boolean;
+  pageDown: boolean;
+  pageUp: boolean;
+  home: boolean;
+  end: boolean;
+  return: boolean;
+  escape: boolean;
+  ctrl: boolean;
+  shift: boolean;
+  tab: boolean;
+  backspace: boolean;
+  delete: boolean;
+  meta: boolean;
+  super: boolean;
+  hyper: boolean;
+  capsLock: boolean;
+  numLock: boolean;
+  eventType?: "press" | "repeat" | "release";
+}
+
+export interface TextProps extends PropsWithChildren {
+  color?: string;
+  backgroundColor?: string;
+  dimColor?: boolean;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  strikethrough?: boolean;
+  inverse?: boolean;
+  wrap?: "wrap" | "truncate" | "truncate-middle";
+  "aria-label"?: string;
+  "aria-hidden"?: boolean;
+}
+
+export type BoxProps = PropsWithChildren<Record<string, unknown>>;
+
+export interface StaticProps<Item> {
+  items: readonly Item[];
+  children: (item: Item, index: number) => ReactNode;
+  style?: Record<string, unknown>;
+}
+
+type InputHandler = (input: string, key: Key) => void;
 
 export interface TuiRoot {
   render: (node: ReactNode) => void;
@@ -134,7 +203,12 @@ export function createRoot(options: RenderOptions = {}): TuiRoot {
   };
 }
 
-export const Box = InkBox;
-export const Text = InkText;
-export const Static = InkStatic;
-export const useInput = inkUseInput;
+export const Box = InkBox as unknown as ComponentType<BoxProps>;
+export const Text = InkText as unknown as ComponentType<TextProps>;
+export const Static = InkStatic as unknown as (<Item>(
+  props: StaticProps<Item>,
+) => ReactNode);
+export const useInput = inkUseInput as (
+  inputHandler: InputHandler,
+  options?: { isActive?: boolean },
+) => void;
