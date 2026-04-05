@@ -165,7 +165,6 @@ import {
   setTranscriptStickyPromptVisible,
   shouldPauseLiveTranscript,
   shouldWindowTranscript,
-  supportsTranscriptMouseHistory,
   toggleTranscriptVerbosityState,
 } from "./utils/transcript-state.js";
 import {
@@ -1703,9 +1702,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     () => (fullscreenPolicy.enabled && showBanner ? estimateBannerRows(bannerProps) : 0),
     [bannerProps, fullscreenPolicy.enabled, showBanner],
   );
-  const budgetedTerminalRows = fullscreenPolicy.enabled
-    ? Math.max(1, terminalRows - bannerRows)
-    : terminalRows;
+  const fullscreenBannerRows = fullscreenPolicy.enabled && showBanner ? bannerRows : 0;
+  const budgetedTerminalRows = terminalRows;
   const viewportBudget = useMemo(
     // Budget transcript, footer, overlay, status, and task slots together so
     // the viewport always receives a stable number of visible rows.
@@ -1803,6 +1801,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     [reviewPageSize],
   );
   const transcriptMaxLines = isTranscriptVerbose || isReviewingHistory ? 1000 : 12;
+  const effectiveTranscriptScrollHeight = fullscreenPolicy.enabled
+    ? transcriptScrollHeight + fullscreenBannerRows
+    : transcriptScrollHeight;
   const handleTranscriptMetricsChange = useCallback((metrics: {
     scrollHeight: number;
     viewportHeight: number;
@@ -1811,9 +1812,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }, []);
 
   useEffect(() => {
-    const maxScrollOffset = Math.max(0, transcriptScrollHeight - viewportBudget.messageRows);
+    const maxScrollOffset = Math.max(0, effectiveTranscriptScrollHeight - viewportBudget.messageRows);
     setHistoryScrollOffset((prev) => Math.min(prev, maxScrollOffset));
-  }, [transcriptScrollHeight, viewportBudget.messageRows]);
+  }, [effectiveTranscriptScrollHeight, viewportBudget.messageRows]);
 
   const scrollTranscriptTo = useCallback((nextScrollOffset: number) => {
     if (transcriptScrollRef.current) {
@@ -2139,24 +2140,24 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       return;
     }
 
-    if (!process.stdout.isTTY) {
+    if (stdout?.isTTY !== true) {
       return;
     }
 
-    if (!supportsTranscriptMouseHistory(transcriptDisplayState)) {
+    if (!fullscreenPolicy.mouseWheel) {
       return;
     }
 
-    process.stdout.write("\x1b[?1000h\x1b[?1006h");
+    stdout.write?.("\x1b[?1000h\x1b[?1006h");
 
     return () => {
       try {
-        process.stdout.write("\x1b[?1000l\x1b[?1006l");
+        stdout.write?.("\x1b[?1000l\x1b[?1006l");
       } catch {
         // Ignore terminal cleanup failures.
       }
     };
-  }, [fullscreenPolicy.enabled, transcriptDisplayState]);
+  }, [fullscreenPolicy.enabled, fullscreenPolicy.mouseWheel, stdout]);
 
   // Refs for callbacks
   // Note: permissionMode and alwaysAllowTools are stored separately for permission checks
@@ -2336,6 +2337,35 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         return true;
       }
 
+      if (key.name === "wheelup") {
+        if (!transcriptDisplayState.supportsWheelHistory || !hasTranscript) {
+          return false;
+        }
+        if (!isReviewingHistory) {
+          enterHistoryReview();
+        }
+        disarmHistorySearchSelection();
+        scrollTranscriptBy(reviewWheelStep);
+        return true;
+      }
+
+      if (key.name === "wheeldown") {
+        if (!transcriptDisplayState.supportsWheelHistory) {
+          return false;
+        }
+        if (!isReviewingHistory) {
+          return true;
+        }
+        if (historyScrollOffset === 0) {
+          exitHistoryReview();
+          return true;
+        }
+
+        disarmHistorySearchSelection();
+        scrollTranscriptBy(-reviewWheelStep);
+        return true;
+      }
+
       if (!isReviewingHistory) {
         return false;
       }
@@ -2389,7 +2419,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
       if (key.name === "home") {
         disarmHistorySearchSelection();
-        scrollTranscriptTo(Math.max(0, transcriptScrollHeight - viewportBudget.messageRows));
+        scrollTranscriptTo(Math.max(0, effectiveTranscriptScrollHeight - viewportBudget.messageRows));
         return true;
       }
 
@@ -2401,29 +2431,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
         disarmHistorySearchSelection();
         scrollTranscriptBy(-reviewPageSize);
-        return true;
-      }
-
-      if (key.name === "wheelup") {
-        if (!supportsTranscriptMouseHistory(transcriptDisplayState)) {
-          return false;
-        }
-        disarmHistorySearchSelection();
-        scrollTranscriptBy(reviewWheelStep);
-        return true;
-      }
-
-      if (key.name === "wheeldown") {
-        if (!supportsTranscriptMouseHistory(transcriptDisplayState)) {
-          return false;
-        }
-        if (historyScrollOffset === 0) {
-          exitHistoryReview();
-          return true;
-        }
-
-        disarmHistorySearchSelection();
-        scrollTranscriptBy(-reviewWheelStep);
         return true;
       }
 
@@ -2488,7 +2495,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       displayStreamingState.thinkingContent,
       displayStreamingState.activeToolCalls,
       historyScrollOffset,
-      transcriptScrollHeight,
+      effectiveTranscriptScrollHeight,
       reviewPageSize,
       reviewWheelStep,
       enterHistoryReview,
@@ -4394,10 +4401,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         onSavePermissionMode={savePermissionModeUser}
       />
 
-      {/* Banner - render inside the fullscreen tree so its height is budgeted correctly */}
-      {showBanner && (fullscreenPolicy.enabled ? (
-        <Banner {...bannerProps} />
-      ) : (
+      {/* Banner - in non-fullscreen mode this remains part of scrollback history */}
+      {showBanner && (!fullscreenPolicy.enabled ? (
         <Static items={[1]}>
           {() => (
             <Banner
@@ -4406,7 +4411,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             />
           )}
         </Static>
-      ))}
+      ) : null)}
 
 
       <FullscreenTranscriptLayout
@@ -4414,48 +4419,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         stickyHeader={transcriptChrome.stickyHeader}
         jumpToLatest={transcriptChrome.jumpToLatest}
         transcript={!fullscreenPolicy.enabled || !transcriptOwnsViewport ? (
-          <TranscriptViewport
-            items={displayItems}
-            isLoading={displayIsLoading}
-            isThinking={transcriptStreamingState.isThinking}
-            thinkingCharCount={transcriptStreamingState.thinkingCharCount}
-            thinkingContent={transcriptStreamingState.thinkingContent}
-            streamingResponse={transcriptStreamingState.currentResponse}
-            currentTool={transcriptStreamingState.currentTool}
-            activeToolCalls={transcriptStreamingState.activeToolCalls}
-            toolInputCharCount={transcriptStreamingState.toolInputCharCount}
-            toolInputContent={transcriptStreamingState.toolInputContent}
-            iterationHistory={transcriptStreamingState.iterationHistory}
-            currentIteration={transcriptStreamingState.currentIteration}
-            isCompacting={transcriptStreamingState.isCompacting}
-            agentMode={currentConfig.agentMode}
-            managedPhase={displayIsLoading ? managedTaskStatus?.phase : undefined}
-            managedHarnessProfile={displayIsLoading ? managedTaskStatus?.harnessProfile : undefined}
-            managedWorkerTitle={displayIsLoading ? managedTaskStatus?.activeWorkerTitle : undefined}
-            managedRound={displayIsLoading ? managedTaskStatus?.currentRound : undefined}
-            managedMaxRounds={displayIsLoading ? managedTaskStatus?.maxRounds : undefined}
-            managedGlobalWorkBudget={displayIsLoading ? managedTaskStatus?.globalWorkBudget : undefined}
-            managedBudgetUsage={displayIsLoading ? managedTaskStatus?.budgetUsage : undefined}
-            managedBudgetApprovalRequired={displayIsLoading ? managedTaskStatus?.budgetApprovalRequired : undefined}
-            lastLiveActivityLabel={transcriptStreamingState.lastLiveActivityLabel}
-            viewportRows={viewportBudget.messageRows}
-            viewportWidth={terminalWidth}
-            scrollOffset={historyScrollOffset}
-            animateSpinners={!isLivePaused && fullscreenPolicy.transcriptSpinnerAnimation}
-            windowed={transcriptOwnsViewport}
-            maxLines={transcriptMaxLines}
-            showFullThinking={isTranscriptVerbose || isReviewingHistory}
-            showDetailedTools={isTranscriptVerbose || isReviewingHistory}
-            selectedItemId={selectedTranscriptItemId}
-            expandedItemKeys={expandedTranscriptItemIds}
-            onMetricsChange={handleTranscriptMetricsChange}
-            browse={{ hintText: transcriptChrome.browseHintText }}
-            selection={transcriptSelectionState}
-            search={transcriptSearchState}
-          />
-        ) : undefined}
-        renderTranscriptWindow={fullscreenPolicy.enabled && transcriptOwnsViewport
-          ? (window) => (
+          <Box flexDirection="column">
+            {fullscreenPolicy.enabled && showBanner ? <Banner {...bannerProps} /> : null}
             <TranscriptViewport
               items={displayItems}
               isLoading={displayIsLoading}
@@ -4484,8 +4449,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               viewportWidth={terminalWidth}
               scrollOffset={historyScrollOffset}
               animateSpinners={!isLivePaused && fullscreenPolicy.transcriptSpinnerAnimation}
-              windowed
-              visibleWindow={{ start: window.start, end: window.end }}
+              windowed={transcriptOwnsViewport}
               maxLines={transcriptMaxLines}
               showFullThinking={isTranscriptVerbose || isReviewingHistory}
               showDetailedTools={isTranscriptVerbose || isReviewingHistory}
@@ -4496,11 +4460,63 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               selection={transcriptSelectionState}
               search={transcriptSearchState}
             />
+          </Box>
+        ) : undefined}
+        renderTranscriptWindow={fullscreenPolicy.enabled && transcriptOwnsViewport
+          ? (window) => (
+            <Box flexDirection="column">
+              {showBanner && window.start < fullscreenBannerRows ? (
+                <Banner {...bannerProps} />
+              ) : null}
+              <TranscriptViewport
+                items={displayItems}
+                isLoading={displayIsLoading}
+                isThinking={transcriptStreamingState.isThinking}
+                thinkingCharCount={transcriptStreamingState.thinkingCharCount}
+                thinkingContent={transcriptStreamingState.thinkingContent}
+                streamingResponse={transcriptStreamingState.currentResponse}
+                currentTool={transcriptStreamingState.currentTool}
+                activeToolCalls={transcriptStreamingState.activeToolCalls}
+                toolInputCharCount={transcriptStreamingState.toolInputCharCount}
+                toolInputContent={transcriptStreamingState.toolInputContent}
+                iterationHistory={transcriptStreamingState.iterationHistory}
+                currentIteration={transcriptStreamingState.currentIteration}
+                isCompacting={transcriptStreamingState.isCompacting}
+                agentMode={currentConfig.agentMode}
+                managedPhase={displayIsLoading ? managedTaskStatus?.phase : undefined}
+                managedHarnessProfile={displayIsLoading ? managedTaskStatus?.harnessProfile : undefined}
+                managedWorkerTitle={displayIsLoading ? managedTaskStatus?.activeWorkerTitle : undefined}
+                managedRound={displayIsLoading ? managedTaskStatus?.currentRound : undefined}
+                managedMaxRounds={displayIsLoading ? managedTaskStatus?.maxRounds : undefined}
+                managedGlobalWorkBudget={displayIsLoading ? managedTaskStatus?.globalWorkBudget : undefined}
+                managedBudgetUsage={displayIsLoading ? managedTaskStatus?.budgetUsage : undefined}
+                managedBudgetApprovalRequired={displayIsLoading ? managedTaskStatus?.budgetApprovalRequired : undefined}
+                lastLiveActivityLabel={transcriptStreamingState.lastLiveActivityLabel}
+                viewportRows={viewportBudget.messageRows}
+                viewportWidth={terminalWidth}
+                scrollOffset={historyScrollOffset}
+                animateSpinners={!isLivePaused && fullscreenPolicy.transcriptSpinnerAnimation}
+                windowed
+                visibleWindow={{
+                  start: Math.max(0, window.start - fullscreenBannerRows),
+                  end: Math.max(0, window.end - fullscreenBannerRows),
+                }}
+                maxLines={transcriptMaxLines}
+                showFullThinking={isTranscriptVerbose || isReviewingHistory}
+                showDetailedTools={isTranscriptVerbose || isReviewingHistory}
+                selectedItemId={selectedTranscriptItemId}
+                expandedItemKeys={expandedTranscriptItemIds}
+                onMetricsChange={handleTranscriptMetricsChange}
+                browse={{ hintText: transcriptChrome.browseHintText }}
+                selection={transcriptSelectionState}
+                search={transcriptSearchState}
+              />
+            </Box>
           )
           : undefined}
         overlay={overlaySurface}
         scrollTop={historyScrollOffset}
-        scrollHeight={transcriptScrollHeight}
+        scrollHeight={effectiveTranscriptScrollHeight}
         viewportHeight={viewportBudget.messageRows}
         stickyScroll={!isReviewingHistory && !isAwaitingUserInteraction && historyScrollOffset === 0}
         scrollRef={transcriptScrollRef}
