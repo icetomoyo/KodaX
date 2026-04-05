@@ -182,7 +182,6 @@ import { formatPendingInputsSummary, MAX_PENDING_INPUTS } from "./utils/pending-
 import { runQueuedPromptSequence } from "./utils/queued-prompt-sequence.js";
 import {
   buildTranscriptRenderModel,
-  capHistoryByTranscriptRows,
   resolveVisibleTranscriptRows,
   sliceHistoryToRecentRounds,
   type TranscriptRow,
@@ -241,6 +240,13 @@ import {
   buildTranscriptSelectionRuntimeState,
   buildTranscriptSelectionViewModel,
 } from "./view-models/transcript-viewport.js";
+import {
+  captureTranscriptSnapshot,
+  countPendingTranscriptUpdates,
+  resolveTranscriptSurfaceItems,
+  shouldUseAlternateScreenShell,
+  type TranscriptSnapshot,
+} from "./utils/transcript-surface.js";
 
 // REPL options
 export interface InkREPLOptions extends KodaXOptions {
@@ -266,24 +272,6 @@ interface BannerProps {
   workingDir: string;
   terminalWidth: number;
   compactionInfo?: { contextWindow: number; triggerPercent: number; enabled: boolean };
-}
-
-interface ReviewSnapshot {
-  items: HistoryItem[];
-  isLoading: boolean;
-  isThinking: boolean;
-  thinkingCharCount: number;
-  thinkingContent: string;
-  currentResponse: string;
-  currentTool?: string;
-  activeToolCalls: ToolCall[];
-  toolInputCharCount: number;
-  toolInputContent: string;
-  lastLiveActivityLabel?: string;
-  workStripText?: string;
-  iterationHistory: import("./contexts/StreamingContext.js").IterationRecord[];
-  currentIteration: number;
-  isCompacting: boolean;
 }
 
 type StreamingEvents = import("@kodax/coding").KodaXEvents & {
@@ -872,19 +860,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   // A "round" = one user input + AI response(s)
   // Full history remains in state, only rendering is limited
   const MAX_VISIBLE_ROUNDS = 20;
-  const REVIEW_VISIBLE_ROUNDS = 50;
-  const REVIEW_MAX_TRANSCRIPT_ROWS = 4000;
   const renderHistory = useMemo(() => {
     return sliceHistoryToRecentRounds(history, MAX_VISIBLE_ROUNDS);
   }, [history]);
-  const reviewHistory = useMemo(() => {
-    const recentRounds = sliceHistoryToRecentRounds(history, REVIEW_VISIBLE_ROUNDS);
-    return capHistoryByTranscriptRows(
-      recentRounds,
-      terminalWidth,
-      REVIEW_MAX_TRANSCRIPT_ROWS
-    );
-  }, [history, terminalWidth]);
+  const transcriptHistory = history;
 
   const streamingState = useStreamingState();
   const {
@@ -955,7 +934,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const [transcriptTextSelection, setTranscriptTextSelection] = useState<TranscriptTextSelection | undefined>(undefined);
   const [selectionCopyNotice, setSelectionCopyNotice] = useState<string | undefined>(undefined);
   const [expandedTranscriptItemIds, setExpandedTranscriptItemIds] = useState<Set<string>>(() => new Set());
-  const [transcriptSnapshot, setTranscriptSnapshot] = useState<ReviewSnapshot | null>(null);
+  const [transcriptSnapshot, setTranscriptSnapshot] = useState<TranscriptSnapshot | null>(null);
   const [managedTaskStatus, setManagedTaskStatus] = useState<KodaXManagedTaskStatusEvent | null>(null);
   const [lastLiveActivityLabel, setLastLiveActivityLabel] = useState<string | undefined>(undefined);
   const [visibleWorkStripText, setVisibleWorkStripText] = useState<string | undefined>(undefined);
@@ -1222,8 +1201,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const isLivePaused = shouldPauseLiveTranscript(transcriptDisplayState);
   const suggestionsReservedForLayout = shouldReserveSuggestionsSpace && !isTranscriptMode;
 
-  const createTranscriptSnapshot = useCallback((): ReviewSnapshot => ({
-    items: reviewHistory,
+  const createTranscriptSnapshot = useCallback((): TranscriptSnapshot => captureTranscriptSnapshot({
+    items: transcriptHistory,
     isLoading,
     isThinking: streamingState.isThinking,
     thinkingCharCount: streamingState.thinkingCharCount,
@@ -1239,8 +1218,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     currentIteration: streamingState.currentIteration,
     isCompacting: streamingState.isCompacting,
   }), [
-    renderHistory,
-    reviewHistory,
+    transcriptHistory,
     isLoading,
     streamingState.isThinking,
     streamingState.thinkingCharCount,
@@ -1266,38 +1244,31 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     setTranscriptSnapshot(null);
   }, [createTranscriptSnapshot, isTranscriptMode]);
 
-  const pendingTranscriptUpdateCount = useMemo(() => {
-    if (!isTranscriptMode || !transcriptSnapshot) {
-      return 0;
-    }
-
-    let pending = Math.max(0, reviewHistory.length - transcriptSnapshot.items.length);
-    if (isLoading !== transcriptSnapshot.isLoading) {
-      pending += 1;
-    }
-    if (streamingState.currentResponse !== transcriptSnapshot.currentResponse) {
-      pending += 1;
-    }
-    if (streamingState.thinkingContent !== transcriptSnapshot.thinkingContent) {
-      pending += 1;
-    }
-    if (activeToolCalls.length !== transcriptSnapshot.activeToolCalls.length) {
-      pending += 1;
-    }
-
-    return pending;
-  }, [
+  const pendingTranscriptUpdateCount = useMemo(() => countPendingTranscriptUpdates({
+    isTranscriptMode,
+    snapshot: transcriptSnapshot,
+    currentItemsLength: transcriptHistory.length,
+    isLoading,
+    currentResponse: streamingState.currentResponse,
+    thinkingContent: streamingState.thinkingContent,
+    activeToolCallsLength: activeToolCalls.length,
+  }), [
     activeToolCalls.length,
     isLoading,
     isTranscriptMode,
-    reviewHistory.length,
+    transcriptHistory.length,
     streamingState.currentResponse,
     streamingState.thinkingContent,
     transcriptSnapshot,
   ]);
 
   const displaySnapshot = isTranscriptMode ? transcriptSnapshot : null;
-  const displayItems = displaySnapshot?.items ?? (isTranscriptMode ? reviewHistory : renderHistory);
+  const displayItems = resolveTranscriptSurfaceItems({
+    surface: transcriptDisplayState.surface,
+    snapshot: displaySnapshot,
+    promptItems: renderHistory,
+    transcriptItems: transcriptHistory,
+  });
   const displayIsLoading = displaySnapshot?.isLoading ?? isLoading;
   const displayStreamingState = {
     isThinking: displaySnapshot?.isThinking ?? streamingState.isThinking,
@@ -2486,8 +2457,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     writeTerminal,
   ]);
 
+  const useAlternateScreenShell = shouldUseAlternateScreenShell(
+    fullscreenPolicy.enabled,
+    transcriptDisplayState.surface,
+  );
+
   useEffect(() => {
-    if (fullscreenPolicy.enabled) {
+    if (useAlternateScreenShell) {
       return;
     }
 
@@ -2495,7 +2471,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       return;
     }
 
-    if (!fullscreenPolicy.mouseWheel) {
+    if (!fullscreenPolicy.mouseWheel && !fullscreenPolicy.mouseClicks) {
       return;
     }
 
@@ -2508,7 +2484,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         // Ignore terminal cleanup failures.
       }
     };
-  }, [fullscreenPolicy.enabled, fullscreenPolicy.mouseWheel, stdout]);
+  }, [fullscreenPolicy.mouseClicks, fullscreenPolicy.mouseWheel, stdout, useAlternateScreenShell]);
 
   // Refs for callbacks
   // Note: permissionMode and alwaysAllowTools are stored separately for permission checks
@@ -5211,7 +5187,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     </Box>
   );
 
-  if (fullscreenPolicy.enabled) {
+  if (useAlternateScreenShell) {
     return (
       <AlternateScreen
         mouseTracking={fullscreenPolicy.mouseWheel || fullscreenPolicy.mouseClicks}
