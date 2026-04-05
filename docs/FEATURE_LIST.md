@@ -15,8 +15,8 @@
 |---|---|
 | Tracked feature IDs | `001-056` |
 | Total tracked features | `56` |
-| Completed | `51` |
-| InProgress | `1` |
+| Completed | `50` |
+| InProgress | `2` |
 | Planned | `4` |
 | Current released version | `v0.7.14` |
 
@@ -37,6 +37,7 @@
 
 | ID | Title | Planned | Design |
 |---|---|---|---|
+| `031` | Multimodal Artifact Inputs | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_031-multimodal-artifact-inputs) |
 | `056` | Tool Interaction Maturity and Transcript-Native Explanation Layer | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_056-tool-interaction-maturity-and-transcript-native-explanation-layer) |
 
 ---
@@ -49,7 +50,6 @@
 | `023` | Dual-Mode Terminal UX | Enhancement | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_023-dual-mode-terminal-ux) |
 | `026` | Roadmap Integrity and Planning Hygiene | Internal | High | `v0.7.20` | [v0.7.20](features/v0.7.20.md#feature_026-roadmap-integrity-and-planning-hygiene) |
 | `030` | Multi-Surface Delivery | Enhancement | High | `v1.0.0` | [v1.0.0](features/v1.0.0.md#feature_030-multi-surface-delivery) |
-| `056` | Tool Interaction Maturity and Transcript-Native Explanation Layer | Enhancement | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_056-tool-interaction-maturity-and-transcript-native-explanation-layer) |
 
 ---
 
@@ -129,6 +129,8 @@
 > `FEATURE_051` close-out posture: keep the current REPL status/footer/task/message surfaces frozen, limit follow-up work to invisible substrate maturity for transcript, scroll/selection, and input behavior, and treat the design doc as a completed close-out record rather than an open rollout plan.
 
 > `FEATURE_055` completed the follow-up REPL hardening work: docs-first substrate maturity, summary-only AMA mapping, and no new visible worker/task shell.
+
+> `FEATURE_031` has been reopened for prompt/artifact alignment: inline image refs must become provider-safe structured multimodal inputs rather than leaking raw `@image-path` syntax into model-facing text.
 
 ---
 
