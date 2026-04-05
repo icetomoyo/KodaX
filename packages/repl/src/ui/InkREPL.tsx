@@ -2105,6 +2105,17 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
     setHistoryScrollOffset(0);
   }, []);
+  const showClipboardNotice = useCallback((message: string | undefined) => {
+    const trimmedMessage = message?.trim();
+    if (!trimmedMessage) {
+      return;
+    }
+    setSelectionCopyNotice(trimmedMessage);
+  }, []);
+  const buildClipboardFailureNotice = useCallback((prefix: string, error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    return `${prefix}: ${message}`;
+  }, []);
   const copySelectedTranscriptText = useCallback(async (selectionOverride?: TranscriptTextSelection) => {
     const selection = selectionOverride ?? transcriptTextSelection;
     if (!selection) {
@@ -2118,18 +2129,17 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
     try {
       await copyTextToClipboard(copyText, { terminalWrite: writeTerminal });
-      setSelectionCopyNotice(
+      showClipboardNotice(
         `Copied ${selection.rowCount} selected line${selection.rowCount === 1 ? "" : "s"} to clipboard.`,
       );
       return true;
     } catch (error) {
-      addHistoryItem({
-        type: "error",
-        text: `Failed to copy transcript selection: ${error instanceof Error ? error.message : String(error)}`,
-      });
+      showClipboardNotice(
+        buildClipboardFailureNotice("Failed to copy transcript selection", error),
+      );
       return false;
     }
-  }, [addHistoryItem, transcriptTextSelection, writeTerminal]);
+  }, [buildClipboardFailureNotice, showClipboardNotice, transcriptTextSelection, writeTerminal]);
 
   const alignTranscriptSelection = useCallback((itemId: string | undefined) => {
     if (!itemId) {
@@ -2201,17 +2211,19 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     }
     try {
       await copyTextToClipboard(copyText, { terminalWrite: writeTerminal });
-      addHistoryItem({
-        type: "info",
-        text: "Copied selected transcript entry to clipboard.",
-      });
+      showClipboardNotice("Copied selected transcript entry to clipboard.");
     } catch (error) {
-      addHistoryItem({
-        type: "error",
-        text: `Failed to copy transcript entry: ${error instanceof Error ? error.message : String(error)}`,
-      });
+      showClipboardNotice(
+        buildClipboardFailureNotice("Failed to copy transcript entry", error),
+      );
     }
-  }, [addHistoryItem, canCopySelectedTranscriptItem, selectedTranscriptItem, writeTerminal]);
+  }, [
+    buildClipboardFailureNotice,
+    canCopySelectedTranscriptItem,
+    selectedTranscriptItem,
+    showClipboardNotice,
+    writeTerminal,
+  ]);
 
   const copySelectedTranscriptToolInput = useCallback(async () => {
     if (!canCopySelectedToolInput || !selectedTranscriptItem) {
@@ -2225,17 +2237,19 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
     try {
       await copyTextToClipboard(copyText, { terminalWrite: writeTerminal });
-      addHistoryItem({
-        type: "info",
-        text: "Copied selected tool input to clipboard.",
-      });
+      showClipboardNotice("Copied selected tool input to clipboard.");
     } catch (error) {
-      addHistoryItem({
-        type: "error",
-        text: `Failed to copy tool input: ${error instanceof Error ? error.message : String(error)}`,
-      });
+      showClipboardNotice(
+        buildClipboardFailureNotice("Failed to copy tool input", error),
+      );
     }
-  }, [addHistoryItem, canCopySelectedToolInput, selectedTranscriptItem, writeTerminal]);
+  }, [
+    buildClipboardFailureNotice,
+    canCopySelectedToolInput,
+    selectedTranscriptItem,
+    showClipboardNotice,
+    writeTerminal,
+  ]);
   const resolveTranscriptMouseTarget = useCallback((row: number, column: number) => {
     if (!fullscreenPolicy.enabled || !transcriptOwnsViewport) {
       return undefined;
@@ -2247,7 +2261,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const updateTranscriptMouseSelection = useCallback((
     anchorPoint: TranscriptScreenPoint,
     focusPoint: TranscriptScreenPoint,
-    options?: { selectFullRowOnCollapsed?: boolean },
+    options?: {
+      selectFullRowOnCollapsed?: boolean;
+      updateSelectedItem?: boolean;
+    },
   ) => {
     const nextSelection = buildTranscriptScreenSelection(
       ownedTranscriptRenderModel?.rows ?? transcriptVisibleRowsRef.current,
@@ -2263,7 +2280,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     const focusedRow = (ownedTranscriptRenderModel?.rows ?? transcriptVisibleRowsRef.current)[
       Math.max(0, Math.min(focusPoint.modelRowIndex, (ownedTranscriptRenderModel?.rows ?? transcriptVisibleRowsRef.current).length - 1))
     ];
-    if (focusedRow?.itemId) {
+    if (options?.updateSelectedItem && focusedRow?.itemId) {
       setTranscriptDisplayState((prev) => setTranscriptSelectedItem(prev, focusedRow.itemId));
     }
     return nextSelection;
@@ -2705,6 +2722,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           updateTranscriptMouseSelection(
             mouseSelectionRef.current.anchor,
             dragTarget.point,
+            { updateSelectedItem: isTranscriptMode },
           );
           return true;
         }
@@ -2735,7 +2753,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           const nextTextSelection = updateTranscriptMouseSelection(
             nextSelection.anchor,
             nextSelection.focus,
-            { selectFullRowOnCollapsed: false },
+            {
+              selectFullRowOnCollapsed: false,
+              updateSelectedItem: isTranscriptMode,
+            },
           );
           if (nextTextSelection) {
             void copySelectedTranscriptText(nextTextSelection);

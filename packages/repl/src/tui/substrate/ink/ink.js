@@ -344,16 +344,19 @@ const Ink = class Ink {
             if (sync) {
                 this.options.stdout.write(bsu);
             }
+            const fullFrameOutput = this.fullStaticOutput + outputToRender;
             if (this.altScreenActive) {
                 this.log.clear();
-                this.log(outputToRender);
+                this.log(fullFrameOutput);
             }
             else {
                 this.options.stdout.write(ansiEscapes.clearTerminal + this.fullStaticOutput + output);
                 this.log.sync(outputToRender);
             }
             this.lastOutput = output;
-            this.lastOutputToRender = outputToRender;
+            this.lastOutputToRender = this.altScreenActive
+                ? fullFrameOutput
+                : outputToRender;
             this.lastOutputHeight = outputHeight;
             if (sync) {
                 this.options.stdout.write(esu);
