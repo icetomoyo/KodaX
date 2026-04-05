@@ -9,11 +9,12 @@ import React, {
   useRef,
 } from "react";
 import {
-  Box as InkBox,
-  Text as InkText,
-  Static as InkStatic,
-  useInput as inkUseInput,
-} from "ink";
+  Box as LegacyInkBox,
+  Text as LegacyInkText,
+  Static as LegacyInkStatic,
+  useInput as legacyInkUseInput,
+  type Key,
+} from "./legacy-ink-substrate.js";
 import {
   render as localRender,
   type RenderOptions,
@@ -327,10 +328,10 @@ export function render(
   return instance;
 }
 
-export const Box = InkBox;
-export const Text = InkText;
-export const Static = InkStatic;
-export const useInput = inkUseInput;
+export const Box = LegacyInkBox;
+export const Text = LegacyInkText;
+export const Static = LegacyInkStatic;
+export const useInput = legacyInkUseInput;
 
 export function useStdout(): StdoutState {
   const runtime = useContext(TuiRuntimeContext);
@@ -439,4 +440,4 @@ export function useTerminalInput(
   }, [runtime, stdin, isActive, rawMode, isRawModeSupported, setRawMode]);
 }
 
-export type { Key } from "ink";
+export type { Key };
