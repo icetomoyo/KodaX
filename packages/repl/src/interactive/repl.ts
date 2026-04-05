@@ -13,11 +13,14 @@ import chalk from 'chalk';
 export { runInkInteractiveMode } from '../ui/index.js';
 export type { InkREPLOptions } from '../ui/index.js';
 import {
+  extractArtifactLedger,
+  KodaXInputArtifact,
   KodaXOptions,
   KodaXMessage,
   KodaXResult,
   KodaXReasoningMode,
   KodaXSessionData,
+  mergeArtifactLedger,
   runManagedTask,
   resolveRepoIntelligenceRuntimeConfig,
   appendSessionLineageLabel,
@@ -87,6 +90,7 @@ import {
   resolveSessionRuntimeInfo,
   workspaceExists,
 } from './workspace-runtime.js';
+import { preparePromptInputArtifacts } from '../common/input-artifacts.js';
 
 // Extended session storage interface (adds list method) - 扩展的会话存储接口（增加 list 方法）
 interface SessionStorage extends KodaXSessionStorage {
@@ -426,7 +430,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   // Keyboard shortcut mapping - 键盘快捷键映射
   const KEYBOARD_SHORTCUTS_HELP = `
 Keyboard Shortcuts:
-  Tab       Auto-complete (@files, /commands)
+  Tab       Auto-complete (@paths, /commands)
   Esc+Esc   Edit last message
   Ctrl+T    Cycle reasoning mode
   Ctrl+E    Open external editor
@@ -495,6 +499,7 @@ Keyboard Shortcuts:
           title,
           gitRoot: context.gitRoot ?? '',
           runtimeInfo: context.runtimeInfo,
+          artifactLedger: context.artifactLedger,
         });
       }
     },
@@ -502,6 +507,7 @@ Keyboard Shortcuts:
       context.sessionId = generateInteractiveSessionId();
       context.title = '';
       context.contextTokenSnapshot = undefined;
+      context.artifactLedger = undefined;
       context.createdAt = new Date().toISOString();
       context.lastAccessed = context.createdAt;
       applyRuntimeContext(context, currentOptions, startupRuntime);
@@ -542,6 +548,7 @@ Keyboard Shortcuts:
         context.title = loaded.title;
         context.sessionId = id;
         context.contextTokenSnapshot = undefined;
+        context.artifactLedger = loaded.artifactLedger;
         context.lastAccessed = new Date().toISOString();
         applyRuntimeContext(context, currentOptions, appliedRuntime);
         currentOptions.session = {
@@ -1025,7 +1032,14 @@ Keyboard Shortcuts:
         if (trimmed.startsWith('!') && isShellCommandHandled(processed)) {
           continue;
         }
-        context.messages.push({ role: 'user', content: processed });
+        const preparedArtifacts = preparePromptInputArtifacts(
+          processed,
+          currentOptions.context?.executionCwd ?? process.cwd(),
+        );
+        for (const warning of preparedArtifacts.warnings) {
+          console.log(chalk.yellow(`\n${warning}`));
+        }
+        context.messages.push({ role: 'user', content: preparedArtifacts.messageContent });
         lastUserMessage = trimmed;
         statusBar?.update({ messageCount: context.messages.length });
 
@@ -1037,6 +1051,12 @@ Keyboard Shortcuts:
               provider: currentConfig.provider,
               thinking: currentConfig.thinking,
               reasoningMode: currentConfig.reasoningMode,
+              context: {
+                ...currentOptions.context,
+                ...(preparedArtifacts.inputArtifacts.length > 0
+                  ? { inputArtifacts: preparedArtifacts.inputArtifacts }
+                  : {}),
+              },
             });
           } else {
             const result = await runManagedTask(
@@ -1049,12 +1069,19 @@ Keyboard Shortcuts:
                 context: {
                   ...currentOptions.context,
                   taskSurface: 'repl',
+                  ...(preparedArtifacts.inputArtifacts.length > 0
+                    ? { inputArtifacts: preparedArtifacts.inputArtifacts }
+                    : {}),
                 },
               },
               processed
             );
             context.messages = result.messages;
             context.contextTokenSnapshot = result.contextTokenSnapshot;
+            context.artifactLedger = mergeArtifactLedger(
+              context.artifactLedger ?? [],
+              extractArtifactLedger(result.messages),
+            );
 
             // Auto save - 自动保存
             if (context.messages.length > 0) {
@@ -1065,6 +1092,7 @@ Keyboard Shortcuts:
                 title,
                 gitRoot: context.gitRoot ?? '',
                 runtimeInfo: context.runtimeInfo,
+                artifactLedger: context.artifactLedger,
               });
             }
           }
@@ -1111,7 +1139,14 @@ Keyboard Shortcuts:
     }
 
     // Add user message to context - 添加用户消息到上下文
-    context.messages.push({ role: 'user', content: processed });
+    const preparedArtifacts = preparePromptInputArtifacts(
+      processed,
+      currentOptions.context?.executionCwd ?? process.cwd(),
+    );
+    for (const warning of preparedArtifacts.warnings) {
+      console.log(chalk.yellow(`\n${warning}`));
+    }
+    context.messages.push({ role: 'user', content: preparedArtifacts.messageContent });
 
     // Save last user message (for Esc+Esc editing) - 保存最后一条用户消息 (用于 Esc+Esc 编辑)
     lastUserMessage = trimmed;
@@ -1127,6 +1162,12 @@ Keyboard Shortcuts:
           provider: currentConfig.provider,
           thinking: currentConfig.thinking,
           reasoningMode: currentConfig.reasoningMode,
+          context: {
+            ...currentOptions.context,
+            ...(preparedArtifacts.inputArtifacts.length > 0
+              ? { inputArtifacts: preparedArtifacts.inputArtifacts }
+              : {}),
+          },
         });
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
@@ -1137,11 +1178,21 @@ Keyboard Shortcuts:
 
     // Run Agent - 运行 Agent
     try {
-      const result = await runAgentRound(currentOptions, context, processed);
+      const result = await runAgentRound(
+        currentOptions,
+        context,
+        processed,
+        context.messages,
+        preparedArtifacts.inputArtifacts,
+      );
 
       // Update context messages (runKodaX returns complete message list) - 更新上下文中的消息（runKodaX 返回完整的消息列表）
       context.messages = result.messages;
       context.contextTokenSnapshot = result.contextTokenSnapshot;
+      context.artifactLedger = mergeArtifactLedger(
+        context.artifactLedger ?? [],
+        extractArtifactLedger(result.messages),
+      );
 
       // Update status bar - 更新状态栏
       statusBar?.update({
@@ -1157,6 +1208,7 @@ Keyboard Shortcuts:
           title,
           gitRoot: context.gitRoot ?? '',
           runtimeInfo: context.runtimeInfo,
+          artifactLedger: context.artifactLedger,
         });
       }
     } catch (err) {
@@ -1370,7 +1422,7 @@ function needsContinuation(input: string): boolean {
 
 // Process special syntax - 处理特殊语法
 export async function processSpecialSyntax(input: string): Promise<string> {
-  // @file syntax: add file content to context - @file 语法：添加文件内容到上下文
+  // @path syntax: attach image artifacts to context - @path 语法：将图片工件附加到上下文
   const fileRefs = input.match(/@[\w./-]+/g);
   if (fileRefs) {
     for (const ref of fileRefs) {
@@ -1394,7 +1446,8 @@ async function runAgentRound(
   options: KodaXOptions,
   context: InteractiveContext,
   prompt: string,
-  initialMessages: KodaXMessage[] = context.messages
+  initialMessages: KodaXMessage[] = context.messages,
+  inputArtifacts?: readonly KodaXInputArtifact[],
 ): Promise<KodaXResult> {
   // Create event callbacks - 创建事件回调
   const events = options.events ?? {};
@@ -1412,6 +1465,9 @@ async function runAgentRound(
         ...options.context,
         contextTokenSnapshot: context.contextTokenSnapshot,
         taskSurface: 'repl',
+        ...(inputArtifacts && inputArtifacts.length > 0
+          ? { inputArtifacts: [...inputArtifacts] }
+          : {}),
       },
     },
     prompt
@@ -1475,7 +1531,7 @@ function printStartupBanner(config: CurrentConfig, mode: string, compactionInfo?
   console.log(chalk.hex(theme.colors.primary)('    /mode      ') + chalk.hex(theme.colors.dim)('Switch permission mode'));
   console.log(chalk.hex(theme.colors.primary)('    /parallel  ') + chalk.hex(theme.colors.dim)('Toggle parallel tool execution'));
   console.log(chalk.hex(theme.colors.primary)('    /clear     ') + chalk.hex(theme.colors.dim)('Clear conversation'));
-  console.log(chalk.hex(theme.colors.primary)('    @file      ') + chalk.hex(theme.colors.dim)('Add file to context'));
+  console.log(chalk.hex(theme.colors.primary)('    @path      ') + chalk.hex(theme.colors.dim)('Attach image to context'));
   console.log(chalk.hex(theme.colors.primary)('    !cmd       ') + chalk.hex(theme.colors.dim)('Run read-only shell command'));
   console.log(chalk.hex(theme.colors.dim)('\n  Keyboard: Tab (complete) | Esc+Esc (edit last) | Ctrl+T (reasoning) | Ctrl+E (editor) | Ctrl+R (history)\n'));
 }

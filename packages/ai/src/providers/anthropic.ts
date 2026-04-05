@@ -26,6 +26,7 @@ import {
   clampThinkingBudget,
   resolveThinkingBudget,
 } from '../reasoning.js';
+import { readImageFileAsBase64, resolveImageMediaType } from './image-serialization.js';
 
 const KODAX_ANTHROPIC_COMPAT_USER_AGENT = 'KodaX';
 
@@ -123,6 +124,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
       const normalizedReasoning = this.normalizeReasoning(reasoning);
       const maxOutputTokens = this.config.maxOutputTokens ?? KODAX_MAX_TOKENS;
       const model = streamOptions?.modelOverride ?? this.config.model;
+      const convertedMessages = await this.convertMessages(messages);
       const initialCapability = normalizedReasoning.enabled
         ? this.getReasoningCapability(model)
         : 'none';
@@ -142,7 +144,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
           model,
           max_tokens: maxOutputTokens,
           system: this.buildSystemPrompt(system, messages),
-          messages: this.convertMessages(messages),
+          messages: convertedMessages,
           tools: tools as Anthropic.Messages.Tool[],
           stream: true,
         };
@@ -412,6 +414,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
       const normalizedReasoning = this.normalizeReasoning(reasoning);
       const maxOutputTokens = this.config.maxOutputTokens ?? KODAX_MAX_TOKENS;
       const model = streamOptions?.modelOverride ?? this.config.model;
+      const convertedMessages = await this.convertMessages(messages);
       const initialCapability = normalizedReasoning.enabled
         ? this.getReasoningCapability(model)
         : 'none';
@@ -431,7 +434,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
           model,
           max_tokens: maxOutputTokens,
           system: this.buildSystemPrompt(system, messages),
-          messages: this.convertMessages(messages),
+          messages: convertedMessages,
           tools: tools as Anthropic.Messages.Tool[],
         };
 
@@ -545,11 +548,17 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
       .join('\n\n');
   }
 
-  private convertMessages(messages: KodaXMessage[]): Anthropic.Messages.MessageParam[] {
+  private async convertMessages(messages: KodaXMessage[]): Promise<Anthropic.Messages.MessageParam[]> {
     // Filter out 'system' role messages - Anthropic API only supports 'user' and 'assistant' in messages array
     // System messages are handled via the separate 'system' parameter
-    return messages.filter(m => m.role !== 'system').map(m => {
-      if (typeof m.content === 'string') return { role: m.role, content: m.content };
+    const converted: Anthropic.Messages.MessageParam[] = [];
+
+    for (const m of messages.filter((message) => message.role !== 'system')) {
+      const role: 'user' | 'assistant' = m.role === 'user' ? 'user' : 'assistant';
+      if (typeof m.content === 'string') {
+        converted.push({ role, content: m.content });
+        continue;
+      }
       const content: Anthropic.Messages.ContentBlockParam[] = [];
 
       // CRITICAL: Anthropic requires tool_result to be FIRST in user messages
@@ -584,12 +593,25 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
         }
       }
 
-      // 4. text blocks (must come after tool_result in user messages)
+      // 4. text/image blocks (must come after tool_result in user messages)
       for (const b of m.content) {
-        if (b.type === 'text') content.push({ type: 'text', text: b.text });
+        if (b.type === 'text') {
+          content.push({ type: 'text', text: b.text });
+        } else if (b.type === 'image' && m.role === 'user') {
+          content.push({
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: resolveImageMediaType(b.path, b.mediaType),
+              data: await readImageFileAsBase64(b.path),
+            },
+          } as any);
+        }
       }
 
-      return { role: m.role, content };
-    }) as Anthropic.Messages.MessageParam[];
+      converted.push({ role: m.role, content } as Anthropic.Messages.MessageParam);
+    }
+
+    return converted;
   }
 }

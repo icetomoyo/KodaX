@@ -118,6 +118,9 @@ function isKodaXContentBlock(value: unknown): value is KodaXContentBlock {
       return typeof value.tool_use_id === 'string'
         && typeof value.content === 'string'
         && (value.is_error === undefined || typeof value.is_error === 'boolean');
+    case 'image':
+      return typeof value.path === 'string'
+        && (value.mediaType === undefined || typeof value.mediaType === 'string');
     case 'thinking':
       return typeof value.thinking === 'string'
         && (value.signature === undefined || typeof value.signature === 'string');
@@ -332,7 +335,12 @@ export function isKodaXManagedTask(value: unknown): value is KodaXManagedTask {
     && Array.isArray(evidence.artifacts)
     && evidence.artifacts.every((artifact) =>
       isRecord(artifact)
-      && (artifact.kind === 'json' || artifact.kind === 'text' || artifact.kind === 'markdown')
+      && (
+        artifact.kind === 'json'
+        || artifact.kind === 'text'
+        || artifact.kind === 'markdown'
+        || artifact.kind === 'image'
+      )
       && typeof artifact.path === 'string'
       && (artifact.description === undefined || typeof artifact.description === 'string')
     )

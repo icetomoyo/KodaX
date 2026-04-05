@@ -27,6 +27,7 @@
 // New code should import directly from @kodax/ai
 
 export type {
+  KodaXImageBlock,
   KodaXContentBlock,
   KodaXTextBlock,
   KodaXToolUseBlock,
@@ -129,6 +130,7 @@ export type {
   KodaXTaskRoleAssignment,
   KodaXTaskWorkItem,
   KodaXTaskEvidenceArtifact,
+  KodaXInputArtifact,
   KodaXTaskEvidenceEntry,
   KodaXTaskEvidenceBundle,
   KodaXTaskToolPolicy,
@@ -436,6 +438,12 @@ export {
   type CompactionUpdate,
   checkIncompleteToolCalls,
 } from './messages.js';
+
+export {
+  buildPromptMessageContent,
+  extractComparableUserMessageText,
+  extractPromptComparableText,
+} from './input-artifacts.js';
 
 // ============== Tokenizer ==============
 

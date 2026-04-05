@@ -15,9 +15,9 @@
 |---|---|
 | Tracked feature IDs | `001-056` |
 | Total tracked features | `56` |
-| Completed | `50` |
+| Completed | `51` |
 | InProgress | `0` |
-| Planned | `6` |
+| Planned | `5` |
 | Current released version | `v0.7.14` |
 
 ### 各版本待做分布
@@ -26,7 +26,7 @@
 |---|---|
 | `v0.7.20` | `1` |
 | `v0.7.25` | `0` |
-| `v0.7.30` | `3` |
+| `v0.7.30` | `2` |
 | `v0.8.0` | `1` |
 | `v0.9.0` | `0` |
 | `v1.0.0` | `1` |
@@ -35,7 +35,7 @@
 
 ## 进行中的 Feature
 
-_当前没有 InProgress feature。下一步按 `v0.7.30` 顺序启动 `FEATURE_042`。_
+_当前没有 InProgress feature。下一步按 `v0.7.30` 顺序启动 `FEATURE_056`。_
 
 ---
 
@@ -47,7 +47,6 @@ _当前没有 InProgress feature。下一步按 `v0.7.30` 顺序启动 `FEATURE_
 | `023` | Dual-Mode Terminal UX | Enhancement | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_023-dual-mode-terminal-ux) |
 | `026` | Roadmap Integrity and Planning Hygiene | Internal | High | `v0.7.20` | [v0.7.20](features/v0.7.20.md#feature_026-roadmap-integrity-and-planning-hygiene) |
 | `030` | Multi-Surface Delivery | Enhancement | High | `v1.0.0` | [v1.0.0](features/v1.0.0.md#feature_030-multi-surface-delivery) |
-| `031` | Multimodal Artifact Inputs | New | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_031-multimodal-artifact-inputs) |
 | `056` | Tool Interaction Maturity and Transcript-Native Explanation Layer | Enhancement | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_056-tool-interaction-maturity-and-transcript-native-explanation-layer) |
 
 ---

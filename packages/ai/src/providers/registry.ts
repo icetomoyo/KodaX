@@ -18,6 +18,7 @@ import { KodaXProviderError } from '../errors.js';
 import {
   CLI_BRIDGE_PROVIDER_CAPABILITY_PROFILE,
   cloneCapabilityProfile,
+  IMAGE_INPUT_NATIVE_PROVIDER_CAPABILITY_PROFILE,
   NATIVE_PROVIDER_CAPABILITY_PROFILE,
   normalizeCapabilityProfile,
 } from './capability-profile.js';
@@ -240,14 +241,14 @@ export const KODAX_PROVIDER_SNAPSHOTS: Record<ProviderName, ProviderSnapshot> = 
     model: 'claude-sonnet-4-6',
     models: ['claude-opus-4-6', 'claude-haiku-4-5'],
     reasoningCapability: 'native-budget',
-    capabilityProfile: NATIVE_PROVIDER_CAPABILITY_PROFILE,
+    capabilityProfile: IMAGE_INPUT_NATIVE_PROVIDER_CAPABILITY_PROFILE,
   },
   openai: {
     apiKeyEnv: 'OPENAI_API_KEY',
     model: 'gpt-5.3-codex',
     models: ['gpt-5.4', 'gpt-5.3-codex-spark'],
     reasoningCapability: 'native-effort',
-    capabilityProfile: NATIVE_PROVIDER_CAPABILITY_PROFILE,
+    capabilityProfile: IMAGE_INPUT_NATIVE_PROVIDER_CAPABILITY_PROFILE,
   },
   deepseek: {
     apiKeyEnv: 'DEEPSEEK_API_KEY',

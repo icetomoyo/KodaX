@@ -399,6 +399,7 @@ describe('runManagedTask', () => {
 
   it('runs tactical read-only lookup fan-out inside AMA H0 and keeps the parent as final authority', async () => {
     const workspaceRoot = await createTempDir('kodax-task-engine-tactical-lookup-');
+    const evidenceImagePath = path.join(workspaceRoot, 'statusbar.png');
     const statuses: KodaXManagedTaskStatusEvent[] = [];
     mockCreateReasoningPlan.mockResolvedValue(
       buildPlan({
@@ -527,6 +528,15 @@ describe('runManagedTask', () => {
         },
         context: {
           managedTaskWorkspaceDir: workspaceRoot,
+          inputArtifacts: [
+            {
+              kind: 'image',
+              path: evidenceImagePath,
+              mediaType: 'image/png',
+              source: 'user-inline',
+              description: 'Attached image statusbar.png',
+            },
+          ],
         },
       },
       'Where is the live status rendering logic defined right now?',
@@ -538,6 +548,11 @@ describe('runManagedTask', () => {
     expect(result.managedTask?.runtime?.amaFanout?.class).toBe('module-triage');
     expect(result.managedTask?.runtime?.childContextBundles).toHaveLength(2);
     expect(result.managedTask?.runtime?.fanoutSchedulerPlan?.fanoutClass).toBe('module-triage');
+    expect(
+      result.managedTask?.evidence.artifacts.some(
+        (artifact) => artifact.kind === 'image' && artifact.path === evidenceImagePath,
+      ),
+    ).toBe(true);
     expect(statuses.some((status) => status.childFanoutClass === 'module-triage')).toBe(true);
   });
 

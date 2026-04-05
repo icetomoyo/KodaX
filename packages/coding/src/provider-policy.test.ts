@@ -29,6 +29,11 @@ const NATIVE_MCP_PROFILE = {
   evidenceSupport: 'full',
 } as const;
 
+const IMAGE_INPUT_NATIVE_PROFILE = {
+  ...NATIVE_MCP_PROFILE,
+  multimodalSupport: 'image-input',
+} as const;
+
 describe('provider policy', () => {
   it('builds a normalized capability snapshot for bridge providers', () => {
     const snapshot = buildProviderCapabilitySnapshot({
@@ -212,6 +217,28 @@ describe('provider policy', () => {
         'multimodal-unsupported',
       ]),
     );
+  });
+
+  it('detects image artifacts from context and allows them on image-input native providers', () => {
+    const decision = evaluateProviderPolicy({
+      providerName: 'openai',
+      capabilityProfile: IMAGE_INPUT_NATIVE_PROFILE,
+      reasoningCapability: 'native-effort',
+      context: {
+        inputArtifacts: [
+          {
+            kind: 'image',
+            path: 'C:/repo/assets/mockup.png',
+            source: 'user-inline',
+            mediaType: 'image/png',
+          },
+        ],
+      },
+      reasoningMode: 'balanced',
+    });
+
+    expect(decision.status).toBe('allow');
+    expect(decision.issues).toEqual([]);
   });
 
   it('allows MCP-native capability workflows on full native providers', () => {

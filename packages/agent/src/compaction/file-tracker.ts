@@ -27,6 +27,12 @@ function isToolUseBlock(block: KodaXContentBlock): block is KodaXToolUseBlock {
   return block.type === 'tool_use';
 }
 
+function isImageBlock(
+  block: KodaXContentBlock,
+): block is Extract<KodaXContentBlock, { type: 'image' }> {
+  return block.type === 'image';
+}
+
 function createLedgerId(): string {
   return `artifact_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
 }
@@ -238,6 +244,19 @@ function buildArtifactEntry(block: KodaXToolUseBlock): KodaXSessionArtifactLedge
   );
 }
 
+function buildImageArtifactEntry(
+  block: Extract<KodaXContentBlock, { type: 'image' }>,
+): KodaXSessionArtifactLedgerEntry {
+  return createLedgerEntry(
+    'image_input',
+    'user-input',
+    'attach',
+    block.path,
+    `Attached image ${block.path}`,
+    block.mediaType ? { mediaType: block.mediaType } : undefined,
+  );
+}
+
 function ledgerDedupKey(entry: KodaXSessionArtifactLedgerEntry): string {
   return [
     entry.kind,
@@ -297,6 +316,11 @@ export function extractArtifactLedger(
     }
 
     for (const block of msg.content) {
+      if (isImageBlock(block) && msg.role === 'user') {
+        entries.push(buildImageArtifactEntry(block));
+        continue;
+      }
+
       if (!isToolUseBlock(block)) {
         continue;
       }

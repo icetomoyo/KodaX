@@ -55,6 +55,8 @@ import {
   applySessionCompaction,
   buildSessionTree,
   createSessionLineage,
+  extractArtifactLedger,
+  KodaXInputArtifact,
   KodaXOptions,
   KodaXMessage,
   KodaXManagedTaskStatusEvent,
@@ -127,6 +129,7 @@ import {
   GlobalShortcuts,
 } from "./shortcuts/index.js";
 import { prepareInvocationExecution } from "../interactive/invocation-runtime.js";
+import { preparePromptInputArtifacts } from "../common/input-artifacts.js";
 
 // Extracted modules
 import { MemorySessionStorage, type SessionStorage } from "./utils/session-storage.js";
@@ -3018,7 +3021,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const runAgentRound = async (
     opts: KodaXOptions,
     prompt: string,
-    initialMessages: KodaXMessage[] = context.messages
+    initialMessages: KodaXMessage[] = context.messages,
+    inputArtifacts?: readonly KodaXInputArtifact[],
   ): Promise<KodaXResult> => {
     const events = createStreamingEvents();
 
@@ -3033,6 +3037,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       context.contextTokenSnapshot,
       skillsPrompt,
     );
+    if (inputArtifacts && inputArtifacts.length > 0) {
+      managedRunContext.inputArtifacts = [...inputArtifacts];
+    }
 
     return runManagedTask(
       {
@@ -3139,6 +3146,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const recordCompletedAgentRound = useCallback(async (result: KodaXResult) => {
     context.messages = result.messages;
     context.contextTokenSnapshot = result.contextTokenSnapshot;
+    context.artifactLedger = mergeArtifactLedger(
+      context.artifactLedger ?? [],
+      extractArtifactLedger(result.messages),
+    );
 
     const finalThinking = getThinkingContent().trim();
     const finalResponse = resolveCompletedAssistantText(
@@ -3919,16 +3930,41 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       // runKodaX (agent.ts:76) will add the prompt to messages automatically.
       // If we push here, the message gets duplicated (Issue 046).
 
+      const inputArtifactCwd =
+        currentOptionsRef.current.context?.executionCwd ?? process.cwd();
+      const emitArtifactWarnings = (warnings: readonly string[]) => {
+        if (warnings.length === 0) {
+          return;
+        }
+        appendHistoryItemsWithPersistence(
+          warnings.map((text) => ({
+            type: "info" as const,
+            text,
+          })),
+        );
+      };
+
       // Run with plan mode if enabled
       if (planMode) {
+        const preparedArtifacts = preparePromptInputArtifacts(
+          processed,
+          inputArtifactCwd,
+        );
+        emitArtifactWarnings(preparedArtifacts.warnings);
         try {
-          await runWithPlanMode(processed, {
+          await runWithPlanMode(preparedArtifacts.promptText, {
             ...currentOptionsRef.current,
             provider: currentConfig.provider,
             parallel: currentConfig.parallel,
             thinking: currentConfig.thinking,
             reasoningMode: currentConfig.reasoningMode,
             agentMode: currentConfig.agentMode,
+            context: {
+              ...currentOptionsRef.current.context,
+              ...(preparedArtifacts.inputArtifacts.length > 0
+                ? { inputArtifacts: preparedArtifacts.inputArtifacts }
+                : {}),
+            },
           });
         } catch (err) {
           const error = err instanceof Error ? err : new Error(String(err));
@@ -3971,7 +4007,19 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       try {
         await runQueueableAgentSequence(
           processed,
-          async (prompt) => runAgentRound(currentOptionsRef.current, prompt),
+          async (prompt) => {
+            const preparedArtifacts = preparePromptInputArtifacts(
+              prompt,
+              currentOptionsRef.current.context?.executionCwd ?? process.cwd(),
+            );
+            emitArtifactWarnings(preparedArtifacts.warnings);
+            return runAgentRound(
+              currentOptionsRef.current,
+              preparedArtifacts.promptText,
+              context.messages,
+              preparedArtifacts.inputArtifacts,
+            );
+          },
         );
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));

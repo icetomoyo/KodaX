@@ -7,6 +7,7 @@
 // ============== Re-export AI Types from @kodax/ai ==============
 
 export type {
+  KodaXImageBlock,
   KodaXTextBlock,
   KodaXToolUseBlock,
   KodaXToolResultBlock,
@@ -130,10 +131,11 @@ export interface KodaXSessionArtifactLedgerEntry {
     | 'file_deleted'
     | 'path_scope'
     | 'search_scope'
-    | 'command_scope'
-    | 'check_result'
-    | 'decision'
-    | 'tombstone';
+      | 'command_scope'
+      | 'check_result'
+      | 'decision'
+      | 'image_input'
+      | 'tombstone';
   sourceTool?: string;
   action?: string;
   target: string;

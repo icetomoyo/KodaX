@@ -3157,7 +3157,7 @@ function createTaskShape(
       ],
       evidence: {
         workspaceDir,
-        artifacts: [],
+        artifacts: buildContextInputEvidenceArtifacts(options.context),
         entries: [],
         routingNotes: plan.decision.routingNotes ?? [],
       },
@@ -3238,7 +3238,7 @@ function createTaskShape(
     })),
     evidence: {
       workspaceDir,
-      artifacts: [],
+      artifacts: buildContextInputEvidenceArtifacts(options.context),
       entries: [],
       routingNotes: plan.decision.routingNotes ?? [],
     },
@@ -7582,6 +7582,20 @@ function mergeEvidenceArtifacts(
     }
   }
   return Array.from(merged.values());
+}
+
+function buildContextInputEvidenceArtifacts(
+  context: KodaXOptions['context'] | undefined,
+): KodaXTaskEvidenceArtifact[] {
+  return (context?.inputArtifacts ?? []).flatMap((artifact) => (
+    artifact.kind === 'image'
+      ? [{
+          kind: 'image' as const,
+          path: artifact.path,
+          description: artifact.description ?? 'Input image artifact',
+        }]
+      : []
+  ));
 }
 
 function resolveManagedTaskRepoIntelligenceContext(

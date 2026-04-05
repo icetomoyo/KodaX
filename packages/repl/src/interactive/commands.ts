@@ -1799,7 +1799,7 @@ function printHelp(): void {
   }
 
   console.log(chalk.dim('Special syntax:'));
-  console.log(`  ${chalk.cyan('@file')}             Add file to context`);
+  console.log(`  ${chalk.cyan('@path')}             Attach image to context`);
   console.log(`  ${chalk.cyan('!command')}         Execute shell command`);
   console.log();
   console.log(chalk.dim('Skills:'));

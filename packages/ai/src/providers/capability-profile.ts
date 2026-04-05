@@ -22,6 +22,11 @@ export const NATIVE_PROVIDER_CAPABILITY_PROFILE: KodaXProviderCapabilityProfile 
   evidenceSupport: 'full',
 };
 
+export const IMAGE_INPUT_NATIVE_PROVIDER_CAPABILITY_PROFILE: KodaXProviderCapabilityProfile = {
+  ...NATIVE_PROVIDER_CAPABILITY_PROFILE,
+  multimodalSupport: 'image-input',
+};
+
 export const CLI_BRIDGE_PROVIDER_CAPABILITY_PROFILE: KodaXProviderCapabilityProfile = {
   transport: 'cli-bridge',
   conversationSemantics: 'last-user-message',

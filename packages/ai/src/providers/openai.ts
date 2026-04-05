@@ -29,6 +29,7 @@ import {
   mapDepthToOpenAIReasoningEffort,
   resolveThinkingBudget,
 } from '../reasoning.js';
+import { buildImageDataUrl } from './image-serialization.js';
 
 const KODAX_OPENAI_COMPAT_USER_AGENT = 'KodaX';
 
@@ -262,7 +263,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
     return this.withRateLimit(async () => {
       const fullMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
         { role: 'system', content: system },
-        ...this.convertMessages(messages),
+        ...await this.convertMessages(messages),
       ];
       const openaiTools = tools.map(t => ({ type: 'function' as const, function: { name: t.name, description: t.description, parameters: t.input_schema } }));
 
@@ -478,7 +479,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
     return this.withRateLimit(async () => {
       const fullMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
         { role: 'system', content: system },
-        ...this.convertMessages(messages),
+        ...await this.convertMessages(messages),
       ];
       const openaiTools = tools.map((tool) => ({
         type: 'function' as const,
@@ -675,14 +676,17 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
     return [message as unknown as OpenAI.Chat.ChatCompletionMessageParam];
   }
 
-  private serializeUserMessage(
+  private async serializeUserMessage(
     contentBlocks: KodaXContentBlock[],
-  ): OpenAI.Chat.ChatCompletionMessageParam[] {
+  ): Promise<OpenAI.Chat.ChatCompletionMessageParam[]> {
     const results: OpenAI.Chat.ChatCompletionMessageParam[] = [];
     const text = contentBlocks
       .filter((block): block is KodaXTextBlock => block.type === 'text')
       .map((block) => block.text)
       .join('\n');
+    const imageBlocks = contentBlocks.filter(
+      (block): block is Extract<KodaXContentBlock, { type: 'image' }> => block.type === 'image',
+    );
 
     for (const block of contentBlocks) {
       if (block.type === 'tool_result') {
@@ -694,12 +698,36 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
       }
     }
 
+    if (imageBlocks.length === 0) {
+      if (text) {
+        results.push({
+          role: 'user',
+          content: text,
+        });
+      }
+      return results;
+    }
+
+    const content: Array<Record<string, unknown>> = [];
     if (text) {
-      results.push({
-        role: 'user',
-        content: text,
+      content.push({
+        type: 'text',
+        text,
       });
     }
+    for (const block of imageBlocks) {
+      content.push({
+        type: 'image_url',
+        image_url: {
+          url: await buildImageDataUrl(block.path, block.mediaType),
+        },
+      });
+    }
+
+    results.push({
+      role: 'user',
+      content,
+    } as unknown as OpenAI.Chat.ChatCompletionMessageParam);
 
     return results;
   }
@@ -727,24 +755,31 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
       : [];
   }
 
-  private convertMessages(messages: KodaXMessage[]): OpenAI.Chat.ChatCompletionMessageParam[] {
-    return messages.flatMap((message) => {
+  private async convertMessages(messages: KodaXMessage[]): Promise<OpenAI.Chat.ChatCompletionMessageParam[]> {
+    const converted: OpenAI.Chat.ChatCompletionMessageParam[] = [];
+
+    for (const message of messages) {
       if (message.role === 'system') {
-        return this.serializeSystemMessage(message.content);
+        converted.push(...this.serializeSystemMessage(message.content));
+        continue;
       }
 
       if (typeof message.content === 'string') {
-        return [{
+        converted.push({
           role: message.role,
           content: message.content,
-        } as unknown as OpenAI.Chat.ChatCompletionMessageParam];
+        } as unknown as OpenAI.Chat.ChatCompletionMessageParam);
+        continue;
       }
 
       if (message.role === 'assistant') {
-        return this.serializeAssistantMessage(message.content);
+        converted.push(...this.serializeAssistantMessage(message.content));
+        continue;
       }
 
-      return this.serializeUserMessage(message.content);
-    });
+      converted.push(...await this.serializeUserMessage(message.content));
+    }
+
+    return converted;
   }
 }

@@ -7,6 +7,7 @@
 
 // ============== Types ==============
 export type {
+  KodaXImageBlock,
   KodaXTextBlock,
   KodaXToolUseBlock,
   KodaXToolResultBlock,

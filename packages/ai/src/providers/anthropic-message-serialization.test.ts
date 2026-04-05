@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { tmpdir } from 'node:os';
 import { KodaXAnthropicCompatProvider } from './anthropic.js';
 import type {
   KodaXMessage,
@@ -7,6 +10,13 @@ import type {
 } from '../types.js';
 
 const TOOLS: KodaXToolDefinition[] = [];
+const tempDirs: string[] = [];
+
+async function createTempDir(prefix: string): Promise<string> {
+  const dir = await mkdtemp(path.join(tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
 
 function createCompletedAnthropicStream(): AsyncIterable<unknown> {
   return {
@@ -49,6 +59,16 @@ class TestAnthropicProvider extends KodaXAnthropicCompatProvider {
 }
 
 describe('anthropic message serialization', () => {
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    while (tempDirs.length > 0) {
+      const dir = tempDirs.pop();
+      if (dir) {
+        await rm(dir, { recursive: true, force: true });
+      }
+    }
+  });
+
   it('preserves inline system summaries and tool_result error flags', async () => {
     const create = vi.fn().mockResolvedValue(createCompletedAnthropicStream());
     const provider = new TestAnthropicProvider({
@@ -76,6 +96,44 @@ describe('anthropic message serialization', () => {
       type: 'tool_result',
       tool_use_id: 'tool_1',
       is_error: true,
+    });
+  });
+
+  it('serializes image input blocks as base64 image parts', async () => {
+    const cwd = await createTempDir('kodax-anthropic-images-');
+    const imagePath = path.join(cwd, 'diagram.png');
+    await writeFile(imagePath, 'fake-image');
+    const create = vi.fn().mockResolvedValue(createCompletedAnthropicStream());
+    const provider = new TestAnthropicProvider({
+      messages: { create },
+    });
+    const messages: KodaXMessage[] = [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Please inspect this image.' },
+          { type: 'image', path: imagePath, mediaType: 'image/png' },
+        ],
+      },
+    ];
+
+    await provider.stream(messages, TOOLS, 'Base system prompt');
+
+    const kwargs = create.mock.calls[0]?.[0];
+    expect(kwargs.messages).toHaveLength(1);
+    expect(kwargs.messages[0]).toMatchObject({
+      role: 'user',
+      content: [
+        { type: 'text', text: 'Please inspect this image.' },
+        {
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: 'image/png',
+            data: expect.any(String),
+          },
+        },
+      ],
     });
   });
 });

@@ -55,6 +55,10 @@ import {
   telemetryRecovery,
 } from './resilience/index.js';
 import {
+  buildPromptMessageContent,
+  extractComparableUserMessageText,
+} from './input-artifacts.js';
+import {
   buildProviderPolicyHintsForDecision,
   createReasoningPlan,
   maybeCreateAutoReroutePlan,
@@ -1245,9 +1249,12 @@ export async function runKodaX(
 
   // 防止消息重复推入：如果 initialMessages 的最后一条已经是当前 prompt，跳过 push
   const lastMsg = messages[messages.length - 1];
-  const isDuplicate = lastMsg?.role === 'user' && lastMsg.content === prompt;
+  const isDuplicate = extractComparableUserMessageText(lastMsg) === prompt;
   if (!isDuplicate) {
-    messages.push({ role: 'user', content: prompt });
+    messages.push({
+      role: 'user',
+      content: buildPromptMessageContent(prompt, options.context?.inputArtifacts),
+    });
   }
   if (!title) title = prompt.slice(0, 50) + (prompt.length > 50 ? '...' : '');
 

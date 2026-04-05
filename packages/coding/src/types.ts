@@ -8,6 +8,7 @@
 // 通用 Agent 类型从 @kodax/agent 导入
 
 import type {
+  KodaXImageBlock,
   KodaXTextBlock,
   KodaXToolUseBlock,
   KodaXToolResultBlock,
@@ -82,6 +83,7 @@ import type {
 
 // Re-export all types from @kodax/agent
 export type {
+  KodaXImageBlock,
   KodaXTextBlock,
   KodaXToolUseBlock,
   KodaXToolResultBlock,
@@ -648,6 +650,8 @@ export interface KodaXContextOptions {
   skillInvocation?: KodaXSkillInvocationContext;
   /** Optional repository-intelligence snapshot injected into the system prompt. */
   repoIntelligenceContext?: string;
+  /** Optional user-supplied artifacts carried with the current prompt. */
+  inputArtifacts?: KodaXInputArtifact[];
   /** Internal execution-mode overlay appended to the system prompt */
   promptOverlay?: string;
   /** Optional task-engine surface label used to track managed tasks across UX entry points. */
@@ -728,8 +732,16 @@ export interface KodaXTaskWorkItem {
 }
 
 export interface KodaXTaskEvidenceArtifact {
-  kind: 'json' | 'text' | 'markdown';
+  kind: 'json' | 'text' | 'markdown' | 'image';
   path: string;
+  description?: string;
+}
+
+export interface KodaXInputArtifact {
+  kind: 'image';
+  path: string;
+  mediaType?: string;
+  source: 'user-inline';
   description?: string;
 }
 
