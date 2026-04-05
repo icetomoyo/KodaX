@@ -18,6 +18,7 @@ import { StatusBar } from "./components/StatusBar.js";
 import { FullscreenTranscriptLayout } from "./components/FullscreenTranscriptLayout.js";
 import { TranscriptModeFooter } from "./components/TranscriptModeFooter.js";
 import { TranscriptViewport } from "./components/TranscriptViewport.js";
+import { PromptTranscriptSurface } from "./components/PromptTranscriptSurface.js";
 import { buildMessageActionsText } from "./components/MessageActions.js";
 import { buildMessageSelectorText } from "./components/MessageSelector.js";
 import { PromptComposer } from "./components/PromptComposer.js";
@@ -4933,52 +4934,47 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     rendererWindow?: Pick<ScrollBoxWindow, "start" | "end" | "scrollHeight" | "viewportHeight" | "scrollTop" | "viewportTop" | "pendingDelta" | "sticky">;
     visibleRowsOverride?: TranscriptRow[];
   }) => (
-    <Box flexDirection="column">
-      {options?.bannerVisible ? <Banner {...bannerProps} /> : null}
-      <TranscriptViewport
-        items={displayItems}
-        isLoading={displayIsLoading}
-        isThinking={transcriptStreamingState.isThinking}
-        thinkingCharCount={transcriptStreamingState.thinkingCharCount}
-        thinkingContent={transcriptStreamingState.thinkingContent}
-        streamingResponse={transcriptStreamingState.currentResponse}
-        currentTool={transcriptStreamingState.currentTool}
-        activeToolCalls={transcriptStreamingState.activeToolCalls}
-        toolInputCharCount={transcriptStreamingState.toolInputCharCount}
-        toolInputContent={transcriptStreamingState.toolInputContent}
-        iterationHistory={transcriptStreamingState.iterationHistory}
-        currentIteration={transcriptStreamingState.currentIteration}
-        isCompacting={transcriptStreamingState.isCompacting}
-        agentMode={currentConfig.agentMode}
-        managedPhase={displayIsLoading ? managedTaskStatus?.phase : undefined}
-        managedHarnessProfile={displayIsLoading ? managedTaskStatus?.harnessProfile : undefined}
-        managedWorkerTitle={displayIsLoading ? managedTaskStatus?.activeWorkerTitle : undefined}
-        managedRound={displayIsLoading ? managedTaskStatus?.currentRound : undefined}
-        managedMaxRounds={displayIsLoading ? managedTaskStatus?.maxRounds : undefined}
-        managedGlobalWorkBudget={displayIsLoading ? managedTaskStatus?.globalWorkBudget : undefined}
-        managedBudgetUsage={displayIsLoading ? managedTaskStatus?.budgetUsage : undefined}
-        managedBudgetApprovalRequired={displayIsLoading ? managedTaskStatus?.budgetApprovalRequired : undefined}
-        lastLiveActivityLabel={transcriptStreamingState.lastLiveActivityLabel}
-        viewportRows={viewportBudget.messageRows}
-        viewportWidth={terminalWidth}
-        scrollOffset={historyScrollOffset}
-        animateSpinners={options?.rendererWindow ? transcriptAnimateSpinners : (!isLivePaused && fullscreenPolicy.transcriptSpinnerAnimation)}
-        windowed={Boolean(options?.rendererWindow)}
-        rendererWindow={options?.rendererWindow}
-        transcriptModel={ownedTranscriptRenderModel}
-        visibleRowsOverride={options?.visibleRowsOverride}
-        maxLines={transcriptMaxLines}
-        showFullThinking={false}
-        showDetailedTools={false}
-        selectedItemId={undefined}
-        selectedTextRanges={transcriptTextSelection?.rowRanges}
-        expandedItemKeys={expandedTranscriptItemIds}
-        onMetricsChange={handleTranscriptMetricsChange}
-        onVisibleRowsChange={handleVisibleTranscriptRowsChange}
-        browse={undefined}
-        chromeMode={options?.rendererWindow ? "hidden" : "inline"}
-      />
-    </Box>
+    <PromptTranscriptSurface
+      banner={options?.bannerVisible ? <Banner {...bannerProps} /> : undefined}
+      items={displayItems}
+      isLoading={displayIsLoading}
+      isThinking={transcriptStreamingState.isThinking}
+      thinkingCharCount={transcriptStreamingState.thinkingCharCount}
+      thinkingContent={transcriptStreamingState.thinkingContent}
+      streamingResponse={transcriptStreamingState.currentResponse}
+      currentTool={transcriptStreamingState.currentTool}
+      activeToolCalls={transcriptStreamingState.activeToolCalls}
+      toolInputCharCount={transcriptStreamingState.toolInputCharCount}
+      toolInputContent={transcriptStreamingState.toolInputContent}
+      iterationHistory={transcriptStreamingState.iterationHistory}
+      currentIteration={transcriptStreamingState.currentIteration}
+      isCompacting={transcriptStreamingState.isCompacting}
+      agentMode={currentConfig.agentMode}
+      managedPhase={displayIsLoading ? managedTaskStatus?.phase : undefined}
+      managedHarnessProfile={displayIsLoading ? managedTaskStatus?.harnessProfile : undefined}
+      managedWorkerTitle={displayIsLoading ? managedTaskStatus?.activeWorkerTitle : undefined}
+      managedRound={displayIsLoading ? managedTaskStatus?.currentRound : undefined}
+      managedMaxRounds={displayIsLoading ? managedTaskStatus?.maxRounds : undefined}
+      managedGlobalWorkBudget={displayIsLoading ? managedTaskStatus?.globalWorkBudget : undefined}
+      managedBudgetUsage={displayIsLoading ? managedTaskStatus?.budgetUsage : undefined}
+      managedBudgetApprovalRequired={displayIsLoading ? managedTaskStatus?.budgetApprovalRequired : undefined}
+      lastLiveActivityLabel={transcriptStreamingState.lastLiveActivityLabel}
+      viewportRows={viewportBudget.messageRows}
+      viewportWidth={terminalWidth}
+      scrollOffset={historyScrollOffset}
+      animateSpinners={options?.rendererWindow ? transcriptAnimateSpinners : (!isLivePaused && fullscreenPolicy.transcriptSpinnerAnimation)}
+      windowed={Boolean(options?.rendererWindow)}
+      rendererWindow={options?.rendererWindow}
+      transcriptModel={ownedTranscriptRenderModel}
+      visibleRowsOverride={options?.visibleRowsOverride}
+      maxLines={transcriptMaxLines}
+      showFullThinking={false}
+      showDetailedTools={false}
+      selectedTextRanges={transcriptTextSelection?.rowRanges}
+      expandedItemKeys={expandedTranscriptItemIds}
+      onMetricsChange={handleTranscriptMetricsChange}
+      onVisibleRowsChange={handleVisibleTranscriptRowsChange}
+    />
   ), [
     bannerProps,
     currentConfig.agentMode,
@@ -4998,10 +4994,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     managedTaskStatus?.maxRounds,
     managedTaskStatus?.phase,
     ownedTranscriptRenderModel,
-    selectedTranscriptItemId,
     terminalWidth,
     transcriptAnimateSpinners,
-    transcriptChrome.browseHintText,
     transcriptMaxLines,
     transcriptStreamingState.activeToolCalls,
     transcriptStreamingState.currentIteration,
