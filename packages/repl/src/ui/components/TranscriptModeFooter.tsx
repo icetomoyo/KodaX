@@ -7,6 +7,7 @@ export interface TranscriptModeFooterProps {
   searchQuery?: string;
   searchCurrent?: number;
   searchCount?: number;
+  searchDetailText?: string;
   pendingLiveUpdates?: number;
   secondaryText?: string;
   noticeText?: string;
@@ -17,17 +18,19 @@ export const TranscriptModeFooter: React.FC<TranscriptModeFooterProps> = ({
   searchQuery = "",
   searchCurrent = 0,
   searchCount = 0,
+  searchDetailText,
   pendingLiveUpdates = 0,
   secondaryText,
   noticeText,
 }) => {
   const theme = getTheme("dark");
   const trimmedQuery = searchQuery.trim();
+  const trimmedSearchDetailText = searchDetailText?.trim();
   const trimmedSecondaryText = secondaryText?.trim();
   const trimmedNoticeText = noticeText?.trim();
   const statusText = searchActive
     ? trimmedQuery
-      ? `Search /${trimmedQuery}`
+      ? `Search transcript /${trimmedQuery}`
       : "Search transcript"
     : "Showing detailed transcript";
   const helpText = searchActive
@@ -41,19 +44,22 @@ export const TranscriptModeFooter: React.FC<TranscriptModeFooterProps> = ({
   const searchCountText = searchActive && searchCount > 0
     ? `${Math.max(0, searchCurrent)}/${searchCount}`
     : undefined;
-  const showSupplementalRow = Boolean(trimmedSecondaryText || trimmedNoticeText);
+  const supplementalPrimaryText = searchActive
+    ? trimmedSearchDetailText
+    : trimmedSecondaryText;
+  const showSupplementalRow = Boolean(supplementalPrimaryText || trimmedNoticeText);
 
   return (
     <Box flexDirection="column">
       <Box paddingX={1}>
         <Text color={theme.colors.dim}>{statusText}</Text>
-        <Text dimColor>{" · "}</Text>
+        <Text dimColor>{" 路 "}</Text>
         <Text color={theme.colors.dim}>{helpText}</Text>
         {(searchCountText || updateText) ? <Box flexGrow={1} /> : null}
         {searchCountText ? (
           <>
             <Text dimColor>{searchCountText}</Text>
-            {updateText ? <Text dimColor>{" · "}</Text> : null}
+            {updateText ? <Text dimColor>{" 路 "}</Text> : null}
           </>
         ) : null}
         {updateText ? (
@@ -64,10 +70,10 @@ export const TranscriptModeFooter: React.FC<TranscriptModeFooterProps> = ({
       </Box>
       {showSupplementalRow ? (
         <Box paddingX={1}>
-          {trimmedSecondaryText ? (
-            <Text color={theme.colors.dim}>{trimmedSecondaryText}</Text>
+          {supplementalPrimaryText ? (
+            <Text color={theme.colors.dim}>{supplementalPrimaryText}</Text>
           ) : null}
-          {trimmedSecondaryText && trimmedNoticeText ? <Text dimColor>{" · "}</Text> : null}
+          {supplementalPrimaryText && trimmedNoticeText ? <Text dimColor>{" 路 "}</Text> : null}
           {trimmedNoticeText ? (
             <Text color={theme.colors.accent} bold>
               {trimmedNoticeText}

@@ -1466,6 +1466,31 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     () => buildTranscriptSearchSummary(historySearchMatches, clampedHistorySearchSelectedIndex),
     [clampedHistorySearchSelectedIndex, historySearchMatches],
   );
+  const historySearchDetailText = useMemo(() => {
+    if (!isHistorySearchActive) {
+      return undefined;
+    }
+
+    const trimmedQuery = historySearchQuery.trim();
+    if (!trimmedQuery) {
+      return "Type to search transcript";
+    }
+
+    if (historySearchMatches.length === 0) {
+      return "No matches yet";
+    }
+
+    if (clampedHistorySearchSelectedIndex < 0) {
+      return `${historySearchMatches.length} matches · use n/N or Enter to jump`;
+    }
+
+    return historySearchMatches[clampedHistorySearchSelectedIndex]?.excerpt;
+  }, [
+    clampedHistorySearchSelectedIndex,
+    historySearchMatches,
+    historySearchQuery,
+    isHistorySearchActive,
+  ]);
   const isSelectedTranscriptItemExpanded = transcriptSelectionRuntime.detailState === "expanded";
   const canCycleTranscriptSelection =
     transcriptSelectionRuntime.navigationCapabilities.selection;
@@ -1838,13 +1863,22 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     ],
   );
   const transcriptFooterSecondaryText = useMemo(() => {
-    const parts = [
-      transcriptFooterSelectionSummary,
-      transcriptFooterActionSummary,
-      ...baseFooterNotices.filter((notice) => !notice.startsWith("Search: ")),
-    ].filter((value): value is string => Boolean(value && value.trim().length > 0));
-    return parts.join(" · ");
-  }, [baseFooterNotices, transcriptFooterActionSummary, transcriptFooterSelectionSummary]);
+    const parts = isHistorySearchActive
+      ? [historySearchDetailText]
+      : [
+          transcriptFooterSelectionSummary,
+          transcriptFooterActionSummary,
+          ...baseFooterNotices.filter((notice) => !notice.startsWith("Search: ")),
+        ];
+    const normalizedParts = parts.filter((value): value is string => Boolean(value && value.trim().length > 0));
+    return normalizedParts.join(" · ");
+  }, [
+    baseFooterNotices,
+    historySearchDetailText,
+    isHistorySearchActive,
+    transcriptFooterActionSummary,
+    transcriptFooterSelectionSummary,
+  ]);
   const transcriptFooterBudgetNotices = useMemo(() => {
     const notices: string[] = [];
     if (transcriptFooterSecondaryText) {
@@ -1860,7 +1894,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     : promptFooterNotices;
   const historySearchBudgetState = useMemo(
     () => (
-      isHistorySearchActive
+      isHistorySearchActive && !isTranscriptMode
         ? {
             query: historySearchQuery,
             matches: historySearchMatches.map((match) => ({
@@ -1871,7 +1905,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           }
         : null
     ),
-    [clampedHistorySearchSelectedIndex, historySearchMatches, historySearchQuery, isHistorySearchActive],
+    [
+      clampedHistorySearchSelectedIndex,
+      historySearchMatches,
+      historySearchQuery,
+      isHistorySearchActive,
+      isTranscriptMode,
+    ],
   );
   const terminalRows = stdout.rows || process.stdout.rows || 24;
   const bannerProps = useMemo<BannerProps>(() => ({
@@ -2341,7 +2381,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }, [historySearchMatches.length, isHistorySearchActive]);
   const historySearchDialogState = useMemo(
     () => (
-      isHistorySearchActive
+      isHistorySearchActive && !isTranscriptMode
         ? {
             query: historySearchQuery,
             matches: historySearchMatches.map((match) => ({
@@ -2352,7 +2392,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           }
         : null
     ),
-    [clampedHistorySearchSelectedIndex, historySearchMatches, historySearchQuery, isHistorySearchActive],
+    [
+      clampedHistorySearchSelectedIndex,
+      historySearchMatches,
+      historySearchQuery,
+      isHistorySearchActive,
+      isTranscriptMode,
+    ],
   );
 
   const dialogConfirmState = useMemo(
@@ -4921,6 +4967,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           searchQuery={historySearchQuery}
           searchCurrent={historySearchMatches.length > 0 ? clampedHistorySearchSelectedIndex + 1 : 0}
           searchCount={historySearchMatches.length}
+          searchDetailText={historySearchDetailText}
           pendingLiveUpdates={pendingTranscriptUpdateCount}
           secondaryText={transcriptFooterSecondaryText}
           noticeText={selectionCopyNotice}

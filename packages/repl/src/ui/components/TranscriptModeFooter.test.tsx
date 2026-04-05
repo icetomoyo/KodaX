@@ -7,7 +7,7 @@ describe("TranscriptModeFooter", () => {
   it("renders transcript browsing guidance by default", () => {
     const { lastFrame } = render(<TranscriptModeFooter />);
 
-    const frame = lastFrame();
+    const frame = lastFrame() ?? "";
     expect(frame).toContain("Showing detailed transcript");
     expect(frame).toContain("PgUp/PgDn/j/k scroll");
     expect(frame).toContain("/ search");
@@ -21,18 +21,22 @@ describe("TranscriptModeFooter", () => {
         searchQuery="planner"
         searchCurrent={2}
         searchCount={5}
+        searchDetailText="...planner chooses the filesystem edit path..."
         pendingLiveUpdates={3}
-        secondaryText="Selected 2/9 · C copy"
+        secondaryText="Selected 2/9 路 C copy"
         noticeText="Copied selection"
       />,
     );
 
-    const frame = lastFrame();
-    expect(frame).toContain("Search /planne");
-    expect(frame).toContain("Enter select");
-    expect(frame).toContain("2/5");
-    expect(frame).toContain("3 new updates");
-    expect(frame).toContain("Selected 2/9");
-    expect(frame).toContain("Copied selection");
+    const frame = lastFrame() ?? "";
+    const normalizedFrame = frame.replace(/\s+/g, " ");
+    expect(normalizedFrame).toContain("Search transcript");
+    expect(normalizedFrame).toContain("/planner");
+    expect(normalizedFrame).toContain("Enter select");
+    expect(normalizedFrame).toContain("2/5");
+    expect(normalizedFrame).toContain("3 new");
+    expect(normalizedFrame).toContain("updates");
+    expect(normalizedFrame).toContain("filesystem edit path");
+    expect(normalizedFrame).toContain("Copied selection");
   });
 });
