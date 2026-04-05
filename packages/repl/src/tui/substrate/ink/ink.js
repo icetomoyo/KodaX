@@ -1,11 +1,11 @@
-// @ts-nocheck
+ï»¿// @ts-nocheck
 import process from 'node:process';
 import React from 'react';
 import { throttle } from 'es-toolkit/compat';
 import ansiEscapes from 'ansi-escapes';
 import isInCi from 'is-in-ci';
 import autoBind from 'auto-bind';
-import signalExit from 'signal-exit';
+import { onExit as signalExit } from 'signal-exit';
 import patchConsole from 'patch-console';
 import { LegacyRoot, ConcurrentRoot } from 'react-reconciler/constants.js';
 import Yoga from 'yoga-layout';
@@ -327,7 +327,7 @@ const Ink = class Ink {
             this.fullStaticOutput += staticOutput;
         }
         // Detect fullscreen: output fills or exceeds terminal height.
-        // Only apply when writing to a real TTY â€?piped output always gets trailing newlines.
+        // Only apply when writing to a real TTY éˆ¥?piped output always gets trailing newlines.
         const isFullscreen = this.options.stdout.isTTY && outputHeight >= this.options.stdout.rows;
         const outputToRender = isFullscreen ? output : output + '\n';
         if (this.lastOutputHeight >= this.options.stdout.rows) {
@@ -512,7 +512,7 @@ const Ink = class Ink {
         instances.delete(this.options.stdout);
         // Ensure all queued writes have been processed before resolving the
         // exit promise. For real writable streams, queue an empty write as a
-        // barrier â€?its callback fires only after all prior writes complete.
+        // barrier éˆ¥?its callback fires only after all prior writes complete.
         // For non-stream objects (e.g. test spies), resolve on next tick.
         //
         // When called from signal-exit during process shutdown (error is a
@@ -646,3 +646,4 @@ const Ink = class Ink {
     }
 };
 export default Ink;
+

@@ -10,7 +10,6 @@ import {
 import {
   default as InkStatic,
 } from "./substrate/ink/components/Static.js";
-import inkUseInput from "./substrate/ink/hooks/use-input.js";
 import Ink from "./substrate/ink/ink.js";
 
 type InkInstance = InstanceType<typeof Ink>;
@@ -88,8 +87,6 @@ export interface StaticProps<Item> {
   children: (item: Item, index: number) => ReactNode;
   style?: Record<string, unknown>;
 }
-
-type InputHandler = (input: string, key: Key) => void;
 
 export interface TuiRoot {
   render: (node: ReactNode) => void;
@@ -208,7 +205,3 @@ export const Text = InkText as unknown as ComponentType<TextProps>;
 export const Static = InkStatic as unknown as (<Item>(
   props: StaticProps<Item>,
 ) => ReactNode);
-export const useInput = inkUseInput as (
-  inputHandler: InputHandler,
-  options?: { isActive?: boolean },
-) => void;

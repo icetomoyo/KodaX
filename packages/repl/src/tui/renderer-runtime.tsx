@@ -12,13 +12,16 @@ import {
   Box as LegacyInkBox,
   Text as LegacyInkText,
   Static as LegacyInkStatic,
-  useInput as legacyInkUseInput,
   type Key,
 } from "./legacy-ink-substrate.js";
 import {
   render as localRender,
   type RenderOptions,
 } from "./root.js";
+import parseKeypress, {
+  nonAlphanumericKeys,
+} from "./substrate/ink/parse-keypress.js";
+import { createInputParser } from "./substrate/ink/input-parser.js";
 
 type InkRenderOptions = RenderOptions;
 export interface StdoutState {
@@ -67,6 +70,25 @@ export interface TerminalInputController {
   ) => () => void;
   dispose: () => void;
 }
+
+interface CompatParsedKeypress {
+  name: string;
+  sequence: string;
+  ctrl: boolean;
+  shift: boolean;
+  meta: boolean;
+  option?: boolean;
+  super?: boolean;
+  hyper?: boolean;
+  capsLock?: boolean;
+  numLock?: boolean;
+  eventType?: "press" | "repeat" | "release";
+  isKittyProtocol?: boolean;
+  isPrintable?: boolean;
+  text?: string;
+}
+
+const COMPAT_ESCAPE_TIMEOUT_MS = 50;
 
 function resolveTerminalSize(stdout: OutputStream | undefined): TerminalSize {
   return {
@@ -331,7 +353,145 @@ export function render(
 export const Box = LegacyInkBox;
 export const Text = LegacyInkText;
 export const Static = LegacyInkStatic;
-export const useInput = legacyInkUseInput;
+
+function createCompatKeypress(
+  keypress: CompatParsedKeypress,
+): { input: string; key: Key } {
+  const key: Key = {
+    upArrow: keypress.name === "up",
+    downArrow: keypress.name === "down",
+    leftArrow: keypress.name === "left",
+    rightArrow: keypress.name === "right",
+    pageDown: keypress.name === "pagedown",
+    pageUp: keypress.name === "pageup",
+    home: keypress.name === "home",
+    end: keypress.name === "end",
+    return: keypress.name === "return",
+    escape: keypress.name === "escape",
+    ctrl: keypress.ctrl,
+    shift: keypress.shift,
+    tab: keypress.name === "tab",
+    backspace: keypress.name === "backspace",
+    delete: keypress.name === "delete",
+    meta: keypress.meta || keypress.name === "escape" || keypress.option === true,
+    super: keypress.super ?? false,
+    hyper: keypress.hyper ?? false,
+    capsLock: keypress.capsLock ?? false,
+    numLock: keypress.numLock ?? false,
+    eventType: keypress.eventType,
+  };
+
+  let input = "";
+
+  if (keypress.isKittyProtocol) {
+    if (keypress.isPrintable) {
+      input = keypress.text ?? keypress.name;
+    } else if (keypress.ctrl && keypress.name.length === 1) {
+      input = keypress.name;
+    }
+  } else if (keypress.ctrl) {
+    input = keypress.name;
+  } else {
+    input = keypress.sequence;
+  }
+
+  if (!keypress.isKittyProtocol && nonAlphanumericKeys.includes(keypress.name)) {
+    input = "";
+  }
+
+  if (input.startsWith("\u001b")) {
+    input = input.slice(1);
+  }
+
+  if (
+    input.length === 1 &&
+    typeof input[0] === "string" &&
+    /[A-Z]/.test(input[0])
+  ) {
+    key.shift = true;
+  }
+
+  return { input, key };
+}
+
+export function useInput(
+  inputHandler: (input: string, key: Key) => void,
+  options: { isActive?: boolean } = {},
+): void {
+  const { isActive = true } = options;
+  const handlerRef = useRef(inputHandler);
+  const parserRef = useRef<ReturnType<typeof createInputParser> | null>(null);
+  const escapeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    handlerRef.current = inputHandler;
+  }, [inputHandler]);
+
+  useEffect(() => {
+    if (!isActive) {
+      parserRef.current = null;
+      if (escapeTimeoutRef.current) {
+        clearTimeout(escapeTimeoutRef.current);
+        escapeTimeoutRef.current = null;
+      }
+      return;
+    }
+
+    parserRef.current = createInputParser();
+
+    return () => {
+      parserRef.current?.reset();
+      parserRef.current = null;
+      if (escapeTimeoutRef.current) {
+        clearTimeout(escapeTimeoutRef.current);
+        escapeTimeoutRef.current = null;
+      }
+    };
+  }, [isActive]);
+
+  const emitCompatKeypress = useCallback((sequence: string) => {
+    const { input, key } = createCompatKeypress(
+      parseKeypress(sequence) as CompatParsedKeypress,
+    );
+
+    if (input === "c" && key.ctrl) {
+      return;
+    }
+
+    handlerRef.current(input, key);
+  }, []);
+
+  useTerminalInput((data) => {
+    if (!isActive) {
+      return;
+    }
+
+    if (escapeTimeoutRef.current) {
+      clearTimeout(escapeTimeoutRef.current);
+      escapeTimeoutRef.current = null;
+    }
+
+    const parser = parserRef.current;
+    const chunk = typeof data === "string" ? data : data.toString("utf8");
+    const sequences = parser?.push(chunk) ?? [chunk];
+
+    for (const sequence of sequences) {
+      emitCompatKeypress(sequence);
+    }
+
+    if (chunk.length > 0) {
+      escapeTimeoutRef.current = setTimeout(() => {
+        const pending = parserRef.current?.flushPendingEscape();
+        if (pending) {
+          emitCompatKeypress(pending);
+        }
+      }, COMPAT_ESCAPE_TIMEOUT_MS);
+    }
+  }, {
+    isActive,
+    rawMode: true,
+  });
+}
 
 export function useStdout(): StdoutState {
   const runtime = useContext(TuiRuntimeContext);
