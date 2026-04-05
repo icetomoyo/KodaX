@@ -1881,22 +1881,26 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   );
   const fullscreenBannerRows = fullscreenPolicy.enabled && showBanner ? bannerRows : 0;
   const budgetedTerminalRows = terminalRows;
+  const footerBudgetInputText = isTranscriptMode ? "" : inputText;
+  const footerBudgetPendingInputSummary = isTranscriptMode ? undefined : pendingInputSummary;
+  const footerBudgetWorkStripText = isTranscriptMode ? undefined : displayWorkStripText;
+  const footerBudgetShowHelp = isTranscriptMode ? false : showHelp;
   const viewportBudget = useMemo(
     // Budget transcript, footer, overlay, status, and task slots together so
     // the viewport always receives a stable number of visible rows.
     () => calculateViewportBudget({
       terminalRows: budgetedTerminalRows,
       terminalWidth,
-      inputText,
+      inputText: footerBudgetInputText,
       footerHeaderText: footerHeaderSummary,
-      pendingInputSummary,
+      pendingInputSummary: footerBudgetPendingInputSummary,
       stashNoticeSummary: stashNoticeText,
       notificationSummary: footerNotificationSummary,
       statusNoticeSummary: activeFooterNotices.join(" | "),
-      workStripText: displayWorkStripText,
+      workStripText: footerBudgetWorkStripText,
       suggestionsReserved: suggestionsReservedForLayout,
       suggestionsMode: useOverlaySurface ? "overlay" : "inline",
-      showHelp,
+      showHelp: footerBudgetShowHelp,
       statusBarText,
       confirmPrompt: confirmRequest?.prompt,
       confirmInstruction,
@@ -1936,16 +1940,16 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     [
       budgetedTerminalRows,
       terminalWidth,
-      inputText,
+      footerBudgetInputText,
       footerHeaderSummary,
-      pendingInputSummary,
+      footerBudgetPendingInputSummary,
       stashNoticeText,
       footerNotificationSummary,
       activeFooterNotices,
-      displayWorkStripText,
+      footerBudgetWorkStripText,
       suggestionsReservedForLayout,
       useOverlaySurface,
-      showHelp,
+      footerBudgetShowHelp,
       statusBarText,
       confirmRequest,
       confirmInstruction,
