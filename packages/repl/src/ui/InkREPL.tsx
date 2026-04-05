@@ -16,6 +16,7 @@ import { AlternateScreen, type ScrollBoxHandle, type ScrollBoxWindow } from "../
 import { AmaWorkStrip } from "./components/AmaWorkStrip.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { FullscreenTranscriptLayout } from "./components/FullscreenTranscriptLayout.js";
+import { TranscriptModeFooter } from "./components/TranscriptModeFooter.js";
 import { TranscriptViewport } from "./components/TranscriptViewport.js";
 import { buildMessageActionsText } from "./components/MessageActions.js";
 import { buildMessageSelectorText } from "./components/MessageSelector.js";
@@ -1790,58 +1791,61 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       useOverlaySurface,
     ],
   );
-  const transcriptFooterNotices = useMemo(() => {
-    if (!fullscreenPolicy.enabled || !transcriptOwnsViewport) {
-      return baseFooterNotices;
-    }
-
+  const promptFooterNotices = useMemo(() => {
     const notices = [...baseFooterNotices];
-    const textSelectionSummary = buildTranscriptTextSelectionSummary(transcriptTextSelection);
-    const selectionNotice = textSelectionSummary
-      ? textSelectionSummary
-      : buildMessageSelectorText(transcriptSelectionState ?? {});
-    const actionNotice = buildMessageActionsText({
-      copyMessage: Boolean(transcriptTextSelection) || transcriptSelectionRuntime.copyCapabilities.message,
-      copyToolInput: transcriptSelectionRuntime.copyCapabilities.toolInput,
-      copyOnSelect: transcriptSelectionRuntime.copyCapabilities.copyOnSelect,
-      toggleDetail: transcriptSelectionRuntime.toggleDetail,
-      selectionNavigation: transcriptSelectionRuntime.navigationCapabilities.selection,
-      matchNavigation: Boolean(historySearchStatusText) && historySearchMatches.length > 0,
-    });
-
     if (selectionCopyNotice) {
       notices.unshift(selectionCopyNotice);
     }
-    if (historySearchStatusText) {
-      notices.unshift(historySearchStatusText);
-    } else if (isTranscriptMode) {
-      notices.unshift("Transcript Mode · PgUp/PgDn/j/k scroll · q/Esc/Ctrl+O back to live");
-    }
-    if (selectionNotice) {
-      notices.push(selectionNotice);
-    }
-    if (actionNotice) {
-      notices.push(actionNotice);
-    }
-
     return notices;
-  }, [
-    baseFooterNotices,
-    fullscreenPolicy.enabled,
-    historySearchMatches.length,
-    historySearchStatusText,
-    isTranscriptMode,
-    selectionCopyNotice,
-    transcriptTextSelection,
-    transcriptOwnsViewport,
-    transcriptSearchState,
-    transcriptSelectionRuntime.copyCapabilities.copyOnSelect,
-    transcriptSelectionRuntime.copyCapabilities.message,
-    transcriptSelectionRuntime.copyCapabilities.toolInput,
-    transcriptSelectionRuntime.navigationCapabilities.selection,
-    transcriptSelectionRuntime.toggleDetail,
-    transcriptSelectionState,
-  ]);
+  }, [baseFooterNotices, selectionCopyNotice]);
+  const transcriptFooterSelectionSummary = useMemo(() => {
+    const textSelectionSummary = buildTranscriptTextSelectionSummary(transcriptTextSelection);
+    return textSelectionSummary
+      ? textSelectionSummary
+      : buildMessageSelectorText(transcriptSelectionState ?? {});
+  }, [transcriptTextSelection, transcriptSelectionState]);
+  const transcriptFooterActionSummary = useMemo(
+    () =>
+      buildMessageActionsText({
+        copyMessage: Boolean(transcriptTextSelection) || transcriptSelectionRuntime.copyCapabilities.message,
+        copyToolInput: transcriptSelectionRuntime.copyCapabilities.toolInput,
+        copyOnSelect: transcriptSelectionRuntime.copyCapabilities.copyOnSelect,
+        toggleDetail: transcriptSelectionRuntime.toggleDetail,
+        selectionNavigation: transcriptSelectionRuntime.navigationCapabilities.selection,
+        matchNavigation: Boolean(historySearchStatusText) && historySearchMatches.length > 0,
+      }),
+    [
+      historySearchMatches.length,
+      historySearchStatusText,
+      transcriptTextSelection,
+      transcriptSelectionRuntime.copyCapabilities.copyOnSelect,
+      transcriptSelectionRuntime.copyCapabilities.message,
+      transcriptSelectionRuntime.copyCapabilities.toolInput,
+      transcriptSelectionRuntime.navigationCapabilities.selection,
+      transcriptSelectionRuntime.toggleDetail,
+    ],
+  );
+  const transcriptFooterSecondaryText = useMemo(() => {
+    const parts = [
+      transcriptFooterSelectionSummary,
+      transcriptFooterActionSummary,
+      ...baseFooterNotices.filter((notice) => !notice.startsWith("Search: ")),
+    ].filter((value): value is string => Boolean(value && value.trim().length > 0));
+    return parts.join(" · ");
+  }, [baseFooterNotices, transcriptFooterActionSummary, transcriptFooterSelectionSummary]);
+  const transcriptFooterBudgetNotices = useMemo(() => {
+    const notices: string[] = [];
+    if (transcriptFooterSecondaryText) {
+      notices.push(transcriptFooterSecondaryText);
+    }
+    if (selectionCopyNotice) {
+      notices.push(selectionCopyNotice);
+    }
+    return notices;
+  }, [selectionCopyNotice, transcriptFooterSecondaryText]);
+  const activeFooterNotices = isTranscriptMode
+    ? transcriptFooterBudgetNotices
+    : promptFooterNotices;
   const historySearchBudgetState = useMemo(
     () => (
       isHistorySearchActive
@@ -1888,7 +1892,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       pendingInputSummary,
       stashNoticeSummary: stashNoticeText,
       notificationSummary: footerNotificationSummary,
-      statusNoticeSummary: transcriptFooterNotices.join(" | "),
+      statusNoticeSummary: activeFooterNotices.join(" | "),
       workStripText: displayWorkStripText,
       suggestionsReserved: suggestionsReservedForLayout,
       suggestionsMode: useOverlaySurface ? "overlay" : "inline",
@@ -1937,7 +1941,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       pendingInputSummary,
       stashNoticeText,
       footerNotificationSummary,
-      transcriptFooterNotices,
+      activeFooterNotices,
       displayWorkStripText,
       suggestionsReservedForLayout,
       useOverlaySurface,
@@ -2363,7 +2367,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       </Box>
     );
   }, [dialogSurface, suggestionsSurface, useOverlaySurface]);
-
   const exitTranscriptModeSurface = useCallback(() => {
     setTranscriptDisplayState((prev) => jumpTranscriptToLatest(exitTranscriptMode(prev)));
     scrollTranscriptToBottom();
@@ -2756,6 +2759,18 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           setHistorySearchSelectedIndex(0);
           return true;
         }
+      }
+
+      if (
+        isTranscriptMode
+        && !isHistorySearchActive
+        && !key.ctrl
+        && !key.meta
+        && key.insertable
+        && key.sequence === "/"
+      ) {
+        openHistorySearchSurface();
+        return true;
       }
 
       if (isTranscriptMode && (!key.ctrl && !key.meta) && key.name === "q") {
@@ -4777,6 +4792,72 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     ]
   );
 
+  const promptFooterSurface = (
+    <PromptFooter
+      left={<PromptFooterLeftSide items={footerLeftItems} />}
+      right={<PromptFooterRightSide items={footerRightItems} />}
+      queued={<QueuedCommandsSurface pendingInputs={streamingState.pendingInputs} />}
+      stashNotice={<StashNotice text={stashNoticeText} />}
+      notifications={<NotificationsSurface notifications={footerNotifications} />}
+      inlineNotices={promptFooterNotices.length > 0 ? (
+        <StatusNoticesSurface notices={promptFooterNotices} />
+      ) : undefined}
+      composer={(
+        <PromptComposer
+          onSubmit={handleSubmit}
+          prompt=">"
+          placeholder={isLoading
+            ? canQueueFollowUps
+              ? "Queue a follow-up for the next round..."
+              : "Agent is busy..."
+            : "Type a message..."}
+          focus={!confirmRequest && !uiRequest && !isHistorySearchActive}
+          cwd={process.cwd()}
+          gitRoot={options.context?.gitRoot || context.gitRoot}
+          onInputChange={handleInputChange}
+        />
+      )}
+      inlineSuggestions={useOverlaySurface ? undefined : suggestionsSurface}
+      helpSurface={showHelp ? (
+        <PromptHelpMenu sections={buildHelpMenuSections()} />
+      ) : undefined}
+      taskBar={transcriptDisplayState.supportsFullscreenLayout ? (
+        <BackgroundTaskBar
+          items={backgroundTaskViewModel.items}
+          overflowLabel={backgroundTaskViewModel.overflowLabel}
+          ctaHint={backgroundTaskViewModel.ctaHint}
+          showSpinner={showTaskBarSpinner}
+        />
+      ) : (
+        <AmaWorkStrip
+          text={displayWorkStripText}
+          showSpinner={showTaskBarSpinner}
+        />
+      )}
+      statusLine={<Box><StatusBar {...statusBarProps} viewModel={statusBarViewModel} /></Box>}
+      inlineDialogs={useOverlaySurface ? undefined : dialogSurface}
+    />
+  );
+  const transcriptFooterSurface = (
+    <PromptFooter
+      left={<PromptFooterLeftSide items={footerLeftItems} />}
+      right={<PromptFooterRightSide items={footerRightItems} />}
+      stashNotice={<StashNotice text={stashNoticeText} />}
+      notifications={<NotificationsSurface notifications={footerNotifications} />}
+      composer={(
+        <TranscriptModeFooter
+          searchActive={isHistorySearchActive}
+          searchQuery={historySearchQuery}
+          searchCurrent={historySearchMatches.length > 0 ? clampedHistorySearchSelectedIndex + 1 : 0}
+          searchCount={historySearchMatches.length}
+          pendingLiveUpdates={pendingTranscriptUpdateCount}
+          secondaryText={transcriptFooterSecondaryText}
+          noticeText={selectionCopyNotice}
+        />
+      )}
+      statusLine={<Box><StatusBar {...statusBarProps} viewModel={statusBarViewModel} /></Box>}
+    />
+  );
   const shellBody = (
     <Box
       flexDirection="column"
@@ -4878,9 +4959,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               expandedItemKeys={expandedTranscriptItemIds}
               onMetricsChange={handleTranscriptMetricsChange}
               onVisibleRowsChange={handleVisibleTranscriptRowsChange}
-              browse={{ hintText: transcriptChrome.browseHintText }}
-              selection={transcriptSelectionState}
-              search={transcriptSearchState}
+              browse={isTranscriptMode ? undefined : { hintText: transcriptChrome.browseHintText }}
+              selection={isTranscriptMode ? transcriptSelectionState : undefined}
+              search={isTranscriptMode ? transcriptSearchState : undefined}
+              chromeMode={isTranscriptMode ? "hidden" : "inline"}
             />
           </Box>
         ) : undefined}
@@ -4953,6 +5035,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
                     onMetricsChange={handleTranscriptMetricsChange}
                     onVisibleRowsChange={handleVisibleTranscriptRowsChange}
                     chromeMode="hidden"
+                    selection={isTranscriptMode ? transcriptSelectionState : undefined}
+                    search={isTranscriptMode ? transcriptSearchState : undefined}
                   />
                 </Box>
               );
@@ -4967,56 +5051,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         scrollRef={transcriptScrollRef}
         onWindowChange={handleTranscriptWindowChange}
         onScrollTopChange={setHistoryScrollOffset}
-        footer={
-          <PromptFooter
-            left={<PromptFooterLeftSide items={footerLeftItems} />}
-            right={<PromptFooterRightSide items={footerRightItems} />}
-            queued={<QueuedCommandsSurface pendingInputs={streamingState.pendingInputs} />}
-            stashNotice={<StashNotice text={stashNoticeText} />}
-            notifications={<NotificationsSurface notifications={footerNotifications} />}
-            inlineNotices={transcriptFooterNotices.length > 0 ? (
-              <StatusNoticesSurface notices={transcriptFooterNotices} />
-            ) : undefined}
-            composer={isTranscriptMode ? (
-              <Box paddingX={1}>
-                <Text dimColor>Transcript Mode - Press Ctrl+O, q, or Esc to return to live.</Text>
-              </Box>
-            ) : (
-              <PromptComposer
-                onSubmit={handleSubmit}
-                prompt=">"
-                placeholder={isLoading
-                  ? canQueueFollowUps
-                    ? "Queue a follow-up for the next round..."
-                    : "Agent is busy..."
-                  : "Type a message..."}
-                focus={!confirmRequest && !uiRequest && !isHistorySearchActive}
-                cwd={process.cwd()}
-                gitRoot={options.context?.gitRoot || context.gitRoot}
-                onInputChange={handleInputChange}
-              />
-            )}
-            inlineSuggestions={useOverlaySurface ? undefined : suggestionsSurface}
-            helpSurface={showHelp ? (
-              <PromptHelpMenu sections={buildHelpMenuSections()} />
-            ) : undefined}
-            taskBar={transcriptDisplayState.supportsFullscreenLayout ? (
-              <BackgroundTaskBar
-                items={backgroundTaskViewModel.items}
-                overflowLabel={backgroundTaskViewModel.overflowLabel}
-                ctaHint={backgroundTaskViewModel.ctaHint}
-                showSpinner={showTaskBarSpinner}
-              />
-            ) : (
-              <AmaWorkStrip
-                text={displayWorkStripText}
-                showSpinner={showTaskBarSpinner}
-              />
-            )}
-            statusLine={<Box><StatusBar {...statusBarProps} viewModel={statusBarViewModel} /></Box>}
-            inlineDialogs={useOverlaySurface ? undefined : dialogSurface}
-          />
-        }
+        footer={isTranscriptMode ? transcriptFooterSurface : promptFooterSurface}
       />
     </Box>
   );
