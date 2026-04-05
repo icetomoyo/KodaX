@@ -4,11 +4,11 @@ import type { ComponentType, PropsWithChildren, ReactNode } from "react";
 import InkBox from "./primitives/Box.js";
 import InkText from "./primitives/Text.js";
 import InkStatic from "./primitives/Static.js";
-import Ink from "./renderer.js";
+import KodaXRenderer, {
+  type RendererInstanceHandle,
+} from "./renderer.js";
 
-type InkInstance = InstanceType<typeof Ink>;
-
-const localInstances = new WeakMap<NodeJS.WriteStream, InkInstance>();
+const localInstances = new WeakMap<NodeJS.WriteStream, RendererInstanceHandle>();
 
 export interface TuiRendererInstance {
   setAltScreenActive?: (active: boolean, mouseTracking?: boolean) => void;
@@ -109,9 +109,9 @@ function getOptions(
 
 function getInstance(
   stdout: NodeJS.WriteStream,
-  createInstance: () => InkInstance,
+  createInstance: () => RendererInstanceHandle,
   concurrent: boolean,
-): InkInstance {
+): RendererInstanceHandle {
   let instance = localInstances.get(stdout);
 
   if (!instance) {
@@ -152,7 +152,7 @@ export function render(
 
   const instance = getInstance(
     inkOptions.stdout,
-    () => new Ink(inkOptions),
+    () => new KodaXRenderer(inkOptions),
     inkOptions.concurrent ?? false,
   );
 
@@ -185,7 +185,7 @@ export function createRoot(options: RenderOptions = {}): TuiRoot {
     ...options,
   };
 
-  const instance = new Ink(inkOptions);
+  const instance = new KodaXRenderer(inkOptions);
   localInstances.set(inkOptions.stdout, instance);
 
   return {
