@@ -270,7 +270,6 @@ export function resolveFullscreenPolicy(
 
   switch (host) {
     case "native_vt":
-    case "xtermjs_host":
       return {
         enabled: true,
         mouseWheel: true,
@@ -278,10 +277,18 @@ export function resolveFullscreenPolicy(
         streamingPreview: true,
         transcriptSpinnerAnimation: true,
       };
+    case "xtermjs_host":
+      return {
+        enabled: true,
+        mouseWheel: false,
+        mouseClicks: false,
+        streamingPreview: true,
+        transcriptSpinnerAnimation: true,
+      };
     case "degraded_vt":
       return {
         enabled: true,
-        mouseWheel: true,
+        mouseWheel: false,
         mouseClicks: false,
         streamingPreview: false,
         transcriptSpinnerAnimation: false,

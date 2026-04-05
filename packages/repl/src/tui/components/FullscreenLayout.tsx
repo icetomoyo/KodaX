@@ -54,6 +54,9 @@ export const FullscreenLayout: React.FC<FullscreenLayoutProps> = ({
       </Box>
     );
   };
+  const viewportChromeRows = (stickyHeader?.visible && stickyHeader.label ? 1 : 0)
+    + (jumpToLatest?.visible && jumpToLatest.label ? 1 : 0);
+  const scrollViewportHeight = Math.max(0, viewportHeight - viewportChromeRows);
 
   return (
     <Box flexDirection="column" width={width} flexGrow={1} flexShrink={0}>
@@ -62,7 +65,7 @@ export const FullscreenLayout: React.FC<FullscreenLayoutProps> = ({
           width={width}
           scrollTop={scrollTop}
           scrollHeight={scrollHeight}
-          viewportHeight={viewportHeight}
+          viewportHeight={scrollViewportHeight}
           stickyScroll={stickyScroll}
           scrollRef={scrollRef}
           onScrollTopChange={onScrollTopChange}

@@ -62,11 +62,6 @@ export function buildTranscriptChromeModel(
         visible: true,
         label: "Interaction active - transcript follow is paused",
       };
-    } else if (isReviewingHistory) {
-      stickyHeader = {
-        visible: true,
-        label: "Browsing transcript history",
-      };
     }
   }
 
