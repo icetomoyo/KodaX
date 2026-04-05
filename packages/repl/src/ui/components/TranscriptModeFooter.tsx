@@ -53,13 +53,13 @@ export const TranscriptModeFooter: React.FC<TranscriptModeFooterProps> = ({
     <Box flexDirection="column">
       <Box paddingX={1}>
         <Text color={theme.colors.dim}>{statusText}</Text>
-        <Text dimColor>{" 路 "}</Text>
+        <Text dimColor>{" · "}</Text>
         <Text color={theme.colors.dim}>{helpText}</Text>
         {(searchCountText || updateText) ? <Box flexGrow={1} /> : null}
         {searchCountText ? (
           <>
             <Text dimColor>{searchCountText}</Text>
-            {updateText ? <Text dimColor>{" 路 "}</Text> : null}
+            {updateText ? <Text dimColor>{" · "}</Text> : null}
           </>
         ) : null}
         {updateText ? (
@@ -73,7 +73,7 @@ export const TranscriptModeFooter: React.FC<TranscriptModeFooterProps> = ({
           {supplementalPrimaryText ? (
             <Text color={theme.colors.dim}>{supplementalPrimaryText}</Text>
           ) : null}
-          {supplementalPrimaryText && trimmedNoticeText ? <Text dimColor>{" 路 "}</Text> : null}
+          {supplementalPrimaryText && trimmedNoticeText ? <Text dimColor>{" · "}</Text> : null}
           {trimmedNoticeText ? (
             <Text color={theme.colors.accent} bold>
               {trimmedNoticeText}

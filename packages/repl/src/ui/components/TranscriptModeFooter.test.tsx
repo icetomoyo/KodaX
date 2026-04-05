@@ -23,7 +23,7 @@ describe("TranscriptModeFooter", () => {
         searchCount={5}
         searchDetailText="...planner chooses the filesystem edit path..."
         pendingLiveUpdates={3}
-        secondaryText="Selected 2/9 路 C copy"
+        secondaryText="Selected 2/9 · C copy"
         noticeText="Copied selection"
       />,
     );
