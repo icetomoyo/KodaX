@@ -207,20 +207,20 @@ describe("appendPersistedUiHistorySnapshot", () => {
 });
 
 describe("shouldShowStatusBarBusyStatus", () => {
-  it("hides busy text when spinner liveness is already visible", () => {
+  it("keeps busy text visible while the prompt surface is loading", () => {
     expect(shouldShowStatusBarBusyStatus({
       isLivePaused: false,
       isLoading: true,
       hasSpinnerLiveness: true,
-    })).toBe(false);
+    })).toBe(true);
   });
 
-  it("keeps busy text visible when no spinner channel is available", () => {
+  it("hides busy text when live transcript updates are paused", () => {
     expect(shouldShowStatusBarBusyStatus({
-      isLivePaused: false,
+      isLivePaused: true,
       isLoading: true,
       hasSpinnerLiveness: false,
-    })).toBe(true);
+    })).toBe(false);
   });
 });
 

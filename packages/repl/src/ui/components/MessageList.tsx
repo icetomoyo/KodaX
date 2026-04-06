@@ -104,6 +104,8 @@ export interface MessageListProps {
   showFullThinking?: boolean;
   /** Whether tool details should render in verbose form */
   showDetailedTools?: boolean;
+  /** Whether prompt/live progress helper rows should render inside the transcript */
+  showLiveProgressRows?: boolean;
   /** Optional selected transcript item id for browse mode affordances */
   selectedItemId?: string;
   /** Optional expanded transcript item ids */
@@ -556,6 +558,7 @@ export const MessageList: React.FC<MessageListProps> = ({
   windowed = false,
   showFullThinking = false,
   showDetailedTools = false,
+  showLiveProgressRows = true,
   selectedItemId,
   expandedItemKeys,
   onMetricsChange,
@@ -600,6 +603,7 @@ export const MessageList: React.FC<MessageListProps> = ({
       windowed,
       showFullThinking,
       showDetailedTools,
+      showLiveProgressRows,
       expandedItemKeys,
     }),
     [
@@ -632,6 +636,7 @@ export const MessageList: React.FC<MessageListProps> = ({
       windowed,
       showFullThinking,
       showDetailedTools,
+      showLiveProgressRows,
       expandedItemKeys,
     ],
   );

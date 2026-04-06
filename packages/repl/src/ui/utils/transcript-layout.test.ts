@@ -131,6 +131,47 @@ describe("transcript-layout", () => {
     expect(text).toContain("* tools: read_file");
   });
 
+  it("can suppress prompt-surface live progress rows while keeping streamed content", () => {
+    const rows = buildTranscriptRows({
+      items: [],
+      viewportWidth: 60,
+      isLoading: true,
+      isThinking: true,
+      thinkingCharCount: 42,
+      thinkingContent: "thinking details",
+      streamingResponse: "partial response",
+      currentIteration: 2,
+      iterationHistory: [
+        {
+          iteration: 1,
+          thinkingSummary: "summary",
+          thinkingLength: 120,
+          response: "response snippet",
+          toolsUsed: ["read_file"],
+        },
+      ],
+      currentTool: "read_file",
+      activeToolCalls: [
+        {
+          id: "tool-1",
+          name: "read_file",
+          status: ToolCallStatus.Executing,
+          input: { path: "path/to/file" },
+          startTime: Date.now(),
+        },
+      ],
+      toolInputCharCount: 12,
+      toolInputContent: "path/to/file",
+      showLiveProgressRows: false,
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text).toContain("partial response");
+    expect(text).not.toContain("thinking details");
+    expect(text).not.toContain("Round 1");
+    expect(text).not.toContain("* tools: read_file");
+  });
+
   it("shows thinking char counts while the model is still thinking", () => {
     const rows = buildTranscriptRows({
       items: [],

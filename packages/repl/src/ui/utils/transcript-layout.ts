@@ -64,6 +64,7 @@ export interface TranscriptBuildOptions {
   lastLiveActivityLabel?: string;
   showFullThinking?: boolean;
   showDetailedTools?: boolean;
+  showLiveProgressRows?: boolean;
   expandedItemKeys?: ReadonlySet<string>;
 }
 
@@ -378,6 +379,7 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
     lastLiveActivityLabel,
     showFullThinking = false,
     showDetailedTools = false,
+    showLiveProgressRows = true,
   } = options;
 
   const rows: TranscriptRow[] = [];
@@ -500,7 +502,7 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
     }
   }
 
-  if (iterationHistory.length > 0) {
+  if (showLiveProgressRows && iterationHistory.length > 0) {
     iterationHistory.forEach((record) => {
       pushWrappedRows(
         rows,
@@ -562,7 +564,7 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
     pushBlankRow(rows, "iteration-current-blank");
   }
 
-  if (isLoading && thinkingContent) {
+  if (showLiveProgressRows && isLoading && thinkingContent) {
     const thinkingPreview = buildThinkingPreview(thinkingContent, maxLines, showFullThinking);
     pushWrappedRows(rows, "thinking-stream-header", "Thinking", viewportWidth, {
       color: "thinking",
@@ -588,7 +590,7 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
     pushBlankRow(rows, "streaming-blank");
   }
 
-  if (isLoading) {
+  if (showLiveProgressRows && isLoading) {
     let loadingText = "Thinking";
     let prefix = "";
     const managedHarnessShort = formatHarnessProfileShort(managedHarnessProfile);

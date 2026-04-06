@@ -13,7 +13,6 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { render, Box, useApp, Text, Static, useStdout, useStdin, useTerminalWrite } from "./tui.js";
 import { AlternateScreen, type ScrollBoxHandle, type ScrollBoxWindow } from "../tui/index.js";
-import { AmaWorkStrip } from "./components/AmaWorkStrip.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { FullscreenTranscriptLayout } from "./components/FullscreenTranscriptLayout.js";
 import { TranscriptModeFooter } from "./components/TranscriptModeFooter.js";
@@ -30,7 +29,6 @@ import {
 import { PromptHelpMenu } from "./components/PromptHelpMenu.js";
 import { PromptSuggestionsSurface } from "./components/PromptSuggestionsSurface.js";
 import { DialogSurface } from "./components/DialogSurface.js";
-import { BackgroundTaskBar } from "./components/BackgroundTaskBar.js";
 import { QueuedCommandsSurface } from "./components/QueuedCommandsSurface.js";
 import { NotificationsSurface } from "./components/NotificationsSurface.js";
 import { StatusNoticesSurface } from "./components/StatusNoticesSurface.js";
@@ -559,19 +557,13 @@ export function buildRoundHistoryItems({
 export function shouldShowStatusBarBusyStatus({
   isLivePaused,
   isLoading,
-  hasSpinnerLiveness,
+  hasSpinnerLiveness: _hasSpinnerLiveness,
 }: {
   isLivePaused: boolean;
   isLoading: boolean;
   hasSpinnerLiveness: boolean;
 }): boolean {
-  if (isLivePaused) {
-    return false;
-  }
-  if (isLoading && hasSpinnerLiveness) {
-    return false;
-  }
-  return isLoading;
+  return isLoading && !isLivePaused;
 }
 
 export function buildAmaWorkStripFromStatus(
@@ -1202,9 +1194,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const isHistorySearchActive = transcriptDisplayState.searchMode === "history";
   const isTranscriptMode = transcriptDisplayState.surface === "transcript";
   const isAwaitingUserInteraction = !!confirmRequest || !!uiRequest || isHistorySearchActive;
+  const promptHasTranscriptActivity = renderHistory.length > 0
+    || activeToolCalls.length > 0
+    || Boolean(streamingState.currentResponse)
+    || Boolean(streamingState.thinkingContent);
   const promptShouldVirtualizeShell = transcriptDisplayState.surface === "prompt"
     && (
       isLoading
+      || promptHasTranscriptActivity
       || isAwaitingUserInteraction
       || historyScrollOffset > 0
       || transcriptTextSelection !== undefined
@@ -1631,10 +1628,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     transcriptDisplayState.searchAnchorItemId,
     transcriptSearchIndex,
   ]);
-  const showTaskBarSpinner = displayIsLoading
-    && !isLivePaused
-    && !fullscreenPolicy.transcriptSpinnerAnimation;
-
   const statusBarProps = useMemo(() => ({
     sessionId: context.sessionId,
     permissionMode: currentConfig.permissionMode,
@@ -1651,8 +1644,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             ),
     isThinkingActive: displayStreamingState.isThinking,
     thinkingCharCount: displayStreamingState.thinkingCharCount,
-    toolInputCharCount: displayStreamingState.toolInputCharCount,
-    toolInputContent: displayStreamingState.toolInputContent,
+    toolInputCharCount: isTranscriptMode ? displayStreamingState.toolInputCharCount : 0,
+    toolInputContent: isTranscriptMode ? displayStreamingState.toolInputContent : "",
     currentIteration: displayStreamingState.currentIteration,
     maxIter: streamingState.maxIter,
     contextUsage,
@@ -1660,9 +1653,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     showBusyStatus: shouldShowStatusBarBusyStatus({
       isLivePaused,
       isLoading: displayIsLoading,
-      hasSpinnerLiveness: !isLivePaused && (
-        fullscreenPolicy.transcriptSpinnerAnimation || showTaskBarSpinner
-      ),
+      hasSpinnerLiveness: !isLivePaused && fullscreenPolicy.transcriptSpinnerAnimation,
     }),
     managedPhase: displayIsLoading ? managedTaskStatus?.phase : undefined,
     managedHarnessProfile: displayIsLoading ? managedTaskStatus?.harnessProfile : undefined,
@@ -1693,8 +1684,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     contextUsage,
     isLivePaused,
     displayIsLoading,
+    isTranscriptMode,
     fullscreenPolicy.transcriptSpinnerAnimation,
-    showTaskBarSpinner,
     managedTaskStatus,
   ]);
 
@@ -1780,30 +1771,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     }
     return undefined;
   }, [inputText, isHistorySearchActive, isTranscriptMode]);
-  const backgroundTaskViewModel = useMemo(
-    () => buildAmaSummaryViewModel({
-      status: managedTaskStatus,
-      isLoading: displayIsLoading,
-      agentMode: currentConfig.agentMode,
-      parallelTextOverride: displayWorkStripText,
-      currentTool: displayStreamingState.currentTool,
-      toolInputCharCount: displayStreamingState.toolInputCharCount,
-      toolInputContent: displayStreamingState.toolInputContent,
-      liveActivityLabel: displayStreamingState.lastLiveActivityLabel,
-      isThinkingActive: displayStreamingState.isThinking,
-    }).backgroundTask,
-    [
-      currentConfig.agentMode,
-      displayIsLoading,
-      displayStreamingState.currentTool,
-      displayStreamingState.isThinking,
-      displayStreamingState.lastLiveActivityLabel,
-      displayStreamingState.toolInputCharCount,
-      displayStreamingState.toolInputContent,
-      displayWorkStripText,
-      managedTaskStatus,
-    ],
-  );
   const useOverlaySurface =
     transcriptDisplayState.supportsOverlaySurface
     && transcriptDisplayState.supportsSearchViewport
@@ -1926,7 +1893,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const budgetedTerminalRows = terminalRows;
   const footerBudgetInputText = isTranscriptMode ? "" : inputText;
   const footerBudgetPendingInputSummary = isTranscriptMode ? undefined : pendingInputSummary;
-  const footerBudgetWorkStripText = isTranscriptMode ? undefined : displayWorkStripText;
+  const footerBudgetWorkStripText = undefined;
   const footerBudgetShowHelp = isTranscriptMode ? false : showHelp;
   const viewportBudget = useMemo(
     // Budget transcript, footer, overlay, status, and task slots together so
@@ -4959,19 +4926,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       helpSurface={showHelp ? (
         <PromptHelpMenu sections={buildHelpMenuSections()} />
       ) : undefined}
-      taskBar={transcriptDisplayState.supportsFullscreenLayout ? (
-        <BackgroundTaskBar
-          items={backgroundTaskViewModel.items}
-          overflowLabel={backgroundTaskViewModel.overflowLabel}
-          ctaHint={backgroundTaskViewModel.ctaHint}
-          showSpinner={showTaskBarSpinner}
-        />
-      ) : (
-        <AmaWorkStrip
-          text={displayWorkStripText}
-          showSpinner={showTaskBarSpinner}
-        />
-      )}
       statusLine={<Box><StatusBar {...statusBarProps} viewModel={statusBarViewModel} /></Box>}
       inlineDialogs={useOverlaySurface ? undefined : dialogSurface}
     />
@@ -5030,7 +4984,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       viewportRows={viewportBudget.messageRows}
       viewportWidth={terminalWidth}
       scrollOffset={historyScrollOffset}
-      animateSpinners={options?.rendererWindow ? transcriptAnimateSpinners : (!isLivePaused && fullscreenPolicy.transcriptSpinnerAnimation)}
+      animateSpinners={false}
       windowed={Boolean(options?.rendererWindow)}
       rendererWindow={options?.rendererWindow}
       transcriptModel={ownedTranscriptRenderModel}
@@ -5038,6 +4992,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       maxLines={transcriptMaxLines}
       showFullThinking={false}
       showDetailedTools={false}
+      showLiveProgressRows={false}
       selectedTextRanges={transcriptTextSelection?.rowRanges}
       expandedItemKeys={expandedTranscriptItemIds}
       onMetricsChange={handleTranscriptMetricsChange}
