@@ -123,6 +123,9 @@ const Ink = class Ink {
     kittyProtocolEnabled = false;
     cancelKittyDetection;
     altScreenActive = false;
+    shellMode;
+    mouseTrackingActive = false;
+    shellTransitionPhase = undefined;
     constructor(options) {
         autoBind(this);
         this.options = options;
@@ -178,6 +181,7 @@ const Ink = class Ink {
         this.lastOutputHeight = 0;
         this.lastTerminalWidth = this.getTerminalWidth();
         this.fullStaticOutput = '';
+        this.shellMode = options.shellMode ?? 'virtual';
         const rootTag = options.concurrent ? ConcurrentRoot : LegacyRoot;
         this.container = reconciler.createContainer(this.rootNode, rootTag, null, false, null, 'id', () => { }, () => { }, () => { }, () => { });
         this.unsubscribeExit = signalExit(this.unmount, { alwaysLast: false });
@@ -238,6 +242,20 @@ const Ink = class Ink {
         this.lastOutputHeight = 0;
         this.cursorPosition = undefined;
     };
+    beginShellTransition(phase) {
+        this.shellTransitionPhase = phase;
+        this.resetOutputTracking();
+    }
+    setShellMode(mode, mouseTracking) {
+        const nextMouseTracking = mouseTracking ?? false;
+        const changed = this.shellMode !== mode
+            || this.mouseTrackingActive !== nextMouseTracking;
+        this.shellMode = mode;
+        this.mouseTrackingActive = nextMouseTracking;
+        if (changed) {
+            this.resetOutputTracking();
+        }
+    }
     setAltScreenActive(active, mouseTracking) {
         const nextMouseTracking = mouseTracking ?? false;
         const changed = this.altScreenActive !== active
@@ -247,6 +265,7 @@ const Ink = class Ink {
         if (changed) {
             this.resetOutputTracking();
         }
+        this.shellTransitionPhase = undefined;
     }
     clearTextSelection() {
     }
@@ -338,6 +357,9 @@ const Ink = class Ink {
             const fullFrameOutput = this.fullStaticOutput + outputToRender;
             if (this.altScreenActive) {
                 this.log.clear();
+                this.log(fullFrameOutput);
+            }
+            else if (this.shellMode === 'main-screen') {
                 this.log(fullFrameOutput);
             }
             else {
@@ -491,6 +513,7 @@ const Ink = class Ink {
             }
         }
         this.kittyProtocolEnabled = false;
+        this.shellTransitionPhase = undefined;
         if (this.options.concurrent) {
             reconciler.updateContainer(null, this.container, null, noop);
         }

@@ -12,6 +12,13 @@ const localInstances = new WeakMap<NodeJS.WriteStream, RendererInstanceHandle>()
 
 export interface TuiRendererInstance {
   setAltScreenActive?: (active: boolean, mouseTracking?: boolean) => void;
+  setShellMode?: (
+    mode: "virtual" | "main-screen",
+    mouseTracking?: boolean,
+  ) => void;
+  beginShellTransition?: (
+    phase: "enter-alt-screen" | "exit-alt-screen",
+  ) => void;
   clearTextSelection?: () => void;
 }
 
@@ -27,6 +34,7 @@ export interface RenderOptions {
   maxFps?: number;
   incrementalRendering?: boolean;
   concurrent?: boolean;
+  shellMode?: "virtual" | "main-screen";
   kittyKeyboard?: {
     mode?: "auto" | "enabled" | "disabled";
     flags?: string[];

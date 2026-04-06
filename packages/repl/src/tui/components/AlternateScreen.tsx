@@ -38,6 +38,8 @@ export const AlternateScreen: React.FC<AlternateScreenProps> = ({
     }
 
     const rendererInstance = getRendererInstance(output);
+    rendererInstance?.setShellMode?.("virtual", mouseTracking);
+    rendererInstance?.beginShellTransition?.("enter-alt-screen");
     if (!writeRaw(
       buildAlternateScreenEnterSequence({
         mouseTracking,
@@ -49,6 +51,7 @@ export const AlternateScreen: React.FC<AlternateScreenProps> = ({
     rendererInstance?.setAltScreenActive?.(true, mouseTracking);
 
     return () => {
+      rendererInstance?.beginShellTransition?.("exit-alt-screen");
       rendererInstance?.clearTextSelection?.();
       rendererInstance?.setAltScreenActive?.(false);
       writeRaw(buildAlternateScreenExitSequence({ mouseTracking }));

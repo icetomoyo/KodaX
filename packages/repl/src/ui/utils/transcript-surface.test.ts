@@ -3,8 +3,10 @@ import {
   captureTranscriptSnapshot,
   countPendingTranscriptUpdates,
   resolveTranscriptSurfaceItems,
+  resolveFullscreenShellMode,
   shouldUseAlternateScreenShell,
   shouldUseManagedMainScreenMouseTracking,
+  shouldUseRendererViewportShell,
 } from "./transcript-surface.js";
 
 describe("transcript-surface", () => {
@@ -97,15 +99,59 @@ describe("transcript-surface", () => {
   });
 
   it("uses the alternate screen only for the live prompt surface", () => {
-    expect(shouldUseAlternateScreenShell(true, "prompt")).toBe(true);
-    expect(shouldUseAlternateScreenShell(true, "transcript")).toBe(false);
-    expect(shouldUseAlternateScreenShell(false, "prompt")).toBe(false);
+    const virtualPrompt = {
+      enabled: true,
+      promptShell: "virtual",
+      mouseWheel: true,
+      mouseClicks: true,
+      streamingPreview: true,
+      transcriptSpinnerAnimation: true,
+    } as const;
+    const mainScreenPrompt = {
+      ...virtualPrompt,
+      promptShell: "main-screen",
+    } as const;
+    const disabled = {
+      ...virtualPrompt,
+      enabled: false,
+      promptShell: "main-screen",
+      mouseWheel: false,
+      mouseClicks: false,
+      streamingPreview: false,
+      transcriptSpinnerAnimation: false,
+    } as const;
+
+    expect(resolveFullscreenShellMode(virtualPrompt, "prompt")).toBe("virtual");
+    expect(resolveFullscreenShellMode(virtualPrompt, "transcript")).toBe("main-screen");
+    expect(resolveFullscreenShellMode(mainScreenPrompt, "prompt")).toBe("main-screen");
+    expect(resolveFullscreenShellMode(disabled, "prompt")).toBe("main-screen");
+
+    expect(shouldUseAlternateScreenShell(virtualPrompt, "prompt")).toBe(true);
+    expect(shouldUseAlternateScreenShell(virtualPrompt, "transcript")).toBe(false);
+    expect(shouldUseAlternateScreenShell(mainScreenPrompt, "prompt")).toBe(false);
+    expect(shouldUseAlternateScreenShell(disabled, "prompt")).toBe(false);
   });
 
-  it("disables managed mouse tracking for fullscreen transcript mode on the main screen", () => {
-    expect(shouldUseManagedMainScreenMouseTracking(true, "prompt")).toBe(true);
-    expect(shouldUseManagedMainScreenMouseTracking(true, "transcript")).toBe(false);
-    expect(shouldUseManagedMainScreenMouseTracking(false, "prompt")).toBe(true);
-    expect(shouldUseManagedMainScreenMouseTracking(false, "transcript")).toBe(true);
+  it("keeps main-screen shells on native terminal mouse behavior and only virtualizes the prompt shell", () => {
+    const virtualPrompt = {
+      enabled: true,
+      promptShell: "virtual",
+      mouseWheel: true,
+      mouseClicks: true,
+      streamingPreview: true,
+      transcriptSpinnerAnimation: true,
+    } as const;
+    const mainScreenPrompt = {
+      ...virtualPrompt,
+      promptShell: "main-screen",
+    } as const;
+
+    expect(shouldUseManagedMainScreenMouseTracking(virtualPrompt, "prompt")).toBe(false);
+    expect(shouldUseManagedMainScreenMouseTracking(mainScreenPrompt, "prompt")).toBe(false);
+    expect(shouldUseManagedMainScreenMouseTracking(virtualPrompt, "transcript")).toBe(false);
+
+    expect(shouldUseRendererViewportShell(virtualPrompt, "prompt")).toBe(true);
+    expect(shouldUseRendererViewportShell(virtualPrompt, "transcript")).toBe(false);
+    expect(shouldUseRendererViewportShell(mainScreenPrompt, "prompt")).toBe(false);
   });
 });

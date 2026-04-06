@@ -38,6 +38,7 @@ export interface TerminalHostCapabilities {
 
 export interface FullscreenPolicy {
   enabled: boolean;
+  promptShell: "virtual" | "main-screen";
   mouseWheel: boolean;
   mouseClicks: boolean;
   streamingPreview: boolean;
@@ -241,6 +242,7 @@ export function resolveFullscreenPolicy(
       case "native_vt":
         return {
           enabled: false,
+          promptShell: "main-screen",
           mouseWheel: false,
           mouseClicks: false,
           streamingPreview: true,
@@ -250,6 +252,7 @@ export function resolveFullscreenPolicy(
       case "degraded_vt":
         return {
           enabled: false,
+          promptShell: "main-screen",
           mouseWheel: false,
           mouseClicks: false,
           streamingPreview: false,
@@ -260,6 +263,7 @@ export function resolveFullscreenPolicy(
       default:
         return {
           enabled: false,
+          promptShell: "main-screen",
           mouseWheel: false,
           mouseClicks: false,
           streamingPreview: false,
@@ -272,6 +276,7 @@ export function resolveFullscreenPolicy(
     case "native_vt":
       return {
         enabled: true,
+        promptShell: "virtual",
         mouseWheel: true,
         mouseClicks: true,
         streamingPreview: true,
@@ -280,6 +285,7 @@ export function resolveFullscreenPolicy(
     case "xtermjs_host":
       return {
         enabled: true,
+        promptShell: "main-screen",
         mouseWheel: true,
         mouseClicks: true,
         streamingPreview: true,
@@ -288,6 +294,7 @@ export function resolveFullscreenPolicy(
     case "degraded_vt":
       return {
         enabled: true,
+        promptShell: "main-screen",
         mouseWheel: true,
         mouseClicks: true,
         streamingPreview: false,
@@ -298,6 +305,7 @@ export function resolveFullscreenPolicy(
     default:
       return {
         enabled: false,
+        promptShell: "main-screen",
         mouseWheel: false,
         mouseClicks: false,
         streamingPreview: false,

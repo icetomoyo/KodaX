@@ -3,6 +3,13 @@ import Engine from "./engine.js";
 
 interface EngineInstance extends InstanceType<typeof Engine> {
   setAltScreenActive?: (active: boolean, mouseTracking?: boolean) => void;
+  setShellMode?: (
+    mode: "virtual" | "main-screen",
+    mouseTracking?: boolean,
+  ) => void;
+  beginShellTransition?: (
+    phase: "enter-alt-screen" | "exit-alt-screen",
+  ) => void;
   clearTextSelection?: () => void;
 }
 
@@ -15,6 +22,8 @@ export interface RendererInstanceHandle {
   waitUntilExit: () => Promise<unknown>;
   clear: () => void;
   setAltScreenActive?: (active: boolean, mouseTracking?: boolean) => void;
+  setShellMode?: (mode: "virtual" | "main-screen", mouseTracking?: boolean) => void;
+  beginShellTransition?: (phase: "enter-alt-screen" | "exit-alt-screen") => void;
   clearTextSelection?: () => void;
 }
 
@@ -44,6 +53,14 @@ export default class KodaXRenderer implements RendererInstanceHandle {
 
   setAltScreenActive = (active: boolean, mouseTracking?: boolean) => {
     this.engineInstance.setAltScreenActive?.(active, mouseTracking);
+  };
+
+  setShellMode = (mode: "virtual" | "main-screen", mouseTracking?: boolean) => {
+    this.engineInstance.setShellMode?.(mode, mouseTracking);
+  };
+
+  beginShellTransition = (phase: "enter-alt-screen" | "exit-alt-screen") => {
+    this.engineInstance.beginShellTransition?.(phase);
   };
 
   clearTextSelection = () => {

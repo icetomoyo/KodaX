@@ -1,6 +1,7 @@
 import type { IterationRecord } from "../contexts/StreamingContext.js";
 import type { HistoryItem, ToolCall } from "../types.js";
 import type { TranscriptSurface } from "./transcript-state.js";
+import type { FullscreenPolicy } from "./terminal-host-profile.js";
 
 export interface TranscriptSnapshot {
   items: HistoryItem[];
@@ -86,20 +87,41 @@ export function resolveTranscriptSurfaceItems(
     : [...options.promptItems];
 }
 
+export type FullscreenShellMode = "virtual" | "main-screen";
+
+export function resolveFullscreenShellMode(
+  fullscreenPolicy: FullscreenPolicy,
+  surface: TranscriptSurface,
+): FullscreenShellMode {
+  if (!fullscreenPolicy.enabled) {
+    return "main-screen";
+  }
+
+  if (surface === "transcript") {
+    return "main-screen";
+  }
+
+  return fullscreenPolicy.promptShell;
+}
+
 export function shouldUseAlternateScreenShell(
-  fullscreenEnabled: boolean,
+  fullscreenPolicy: FullscreenPolicy,
   surface: TranscriptSurface,
 ): boolean {
-  return fullscreenEnabled && surface !== "transcript";
+  return resolveFullscreenShellMode(fullscreenPolicy, surface) === "virtual";
 }
 
 export function shouldUseManagedMainScreenMouseTracking(
-  fullscreenEnabled: boolean,
+  fullscreenPolicy: FullscreenPolicy,
   surface: TranscriptSurface,
 ): boolean {
-  if (!fullscreenEnabled) {
-    return true;
-  }
+  return false;
+}
 
-  return surface !== "transcript";
+export function shouldUseRendererViewportShell(
+  fullscreenPolicy: FullscreenPolicy,
+  surface: TranscriptSurface,
+): boolean {
+  return fullscreenPolicy.enabled
+    && resolveFullscreenShellMode(fullscreenPolicy, surface) === "virtual";
 }

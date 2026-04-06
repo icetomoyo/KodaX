@@ -246,6 +246,7 @@ describe("terminal-host-profile", () => {
   it("builds fullscreen policies for owned and legacy renderer modes", () => {
     expect(resolveFullscreenPolicy("degraded_vt", "owned")).toEqual({
       enabled: true,
+      promptShell: "main-screen",
       mouseWheel: true,
       mouseClicks: true,
       streamingPreview: false,
@@ -254,6 +255,7 @@ describe("terminal-host-profile", () => {
 
     expect(resolveFullscreenPolicy("xtermjs_host", "owned")).toEqual({
       enabled: true,
+      promptShell: "main-screen",
       mouseWheel: true,
       mouseClicks: true,
       streamingPreview: true,
@@ -262,6 +264,7 @@ describe("terminal-host-profile", () => {
 
     expect(resolveFullscreenPolicy("native_vt", "legacy")).toEqual({
       enabled: false,
+      promptShell: "main-screen",
       mouseWheel: false,
       mouseClicks: false,
       streamingPreview: true,

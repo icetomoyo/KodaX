@@ -222,6 +222,7 @@ import {
   type TranscriptTextSelection,
 } from "../tui/core/selection.js";
 import { resolveTranscriptDragEdgeScrollDirection } from "../tui/core/scroll.js";
+import { getRendererInstance } from "../tui/core/root.js";
 import {
   getAskUserDialogTitle,
   resolveAskUserDismissChoice,
@@ -244,8 +245,9 @@ import {
   captureTranscriptSnapshot,
   countPendingTranscriptUpdates,
   resolveTranscriptSurfaceItems,
+  resolveFullscreenShellMode,
   shouldUseAlternateScreenShell,
-  shouldUseManagedMainScreenMouseTracking,
+  shouldUseRendererViewportShell,
   type TranscriptSnapshot,
 } from "./utils/transcript-surface.js";
 
@@ -1199,7 +1201,22 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const isTranscriptMode = transcriptDisplayState.surface === "transcript";
   const isAwaitingUserInteraction = !!confirmRequest || !!uiRequest || isHistorySearchActive;
   const transcriptMaxLines = isTranscriptMode ? 1000 : 12;
-  const transcriptOwnsViewport = shouldWindowTranscript(transcriptDisplayState);
+  const fullscreenShellMode = resolveFullscreenShellMode(
+    fullscreenPolicy,
+    transcriptDisplayState.surface,
+  );
+  const useAlternateScreenShell = shouldUseAlternateScreenShell(
+    fullscreenPolicy,
+    transcriptDisplayState.surface,
+  );
+  const useRendererViewportShell = shouldUseRendererViewportShell(
+    fullscreenPolicy,
+    transcriptDisplayState.surface,
+  );
+  const useRendererOwnedMouseTracking = useAlternateScreenShell
+    && (fullscreenPolicy.mouseWheel || fullscreenPolicy.mouseClicks);
+  const transcriptOwnsViewport = shouldWindowTranscript(transcriptDisplayState)
+    && useRendererViewportShell;
   const isLivePaused = shouldPauseLiveTranscript(transcriptDisplayState);
   const suggestionsReservedForLayout = shouldReserveSuggestionsSpace && !isTranscriptMode;
 
@@ -2459,47 +2476,24 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     writeTerminal,
   ]);
 
-  const useAlternateScreenShell = shouldUseAlternateScreenShell(
-    fullscreenPolicy.enabled,
-    transcriptDisplayState.surface,
-  );
-  const useManagedMainScreenMouseTracking = shouldUseManagedMainScreenMouseTracking(
-    fullscreenPolicy.enabled,
-    transcriptDisplayState.surface,
-  );
-
   useEffect(() => {
-    if (useAlternateScreenShell) {
-      return;
-    }
-
-    if (!useManagedMainScreenMouseTracking) {
-      return;
-    }
-
     if (stdout?.isTTY !== true) {
       return;
     }
 
-    if (!fullscreenPolicy.mouseWheel && !fullscreenPolicy.mouseClicks) {
-      return;
+    const rendererInstance = getRendererInstance(stdout);
+    rendererInstance?.setShellMode?.(
+      fullscreenShellMode,
+      useRendererOwnedMouseTracking,
+    );
+    if (!useAlternateScreenShell) {
+      rendererInstance?.setAltScreenActive?.(false);
     }
-
-    stdout.write?.("\x1b[?1000h\x1b[?1006h");
-
-    return () => {
-      try {
-        stdout.write?.("\x1b[?1000l\x1b[?1006l");
-      } catch {
-        // Ignore terminal cleanup failures.
-      }
-    };
   }, [
-    fullscreenPolicy.mouseClicks,
-    fullscreenPolicy.mouseWheel,
+    fullscreenShellMode,
     stdout,
     useAlternateScreenShell,
-    useManagedMainScreenMouseTracking,
+    useRendererOwnedMouseTracking,
   ]);
 
   // Refs for callbacks
@@ -2582,7 +2576,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
       // Ctrl+C immediately interrupts.
       if (key.ctrl && key.name === "c") {
-        if (transcriptTextSelection) {
+        if (isTranscriptMode && transcriptTextSelection) {
           void copySelectedTranscriptText();
           return true;
         }
@@ -2654,7 +2648,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         && key.mouse
         && fullscreenPolicy.mouseClicks
         && transcriptDisplayState.supportsMouseTracking
-        && useManagedMainScreenMouseTracking
+        && useRendererOwnedMouseTracking
       ) {
         if (key.mouse.button !== "left") {
           return false;
@@ -2985,7 +2979,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       transcriptTextSelection,
       resolveTranscriptMouseTarget,
       transcriptDisplayState.supportsMouseTracking,
-      useManagedMainScreenMouseTracking,
+      useRendererOwnedMouseTracking,
       updateTranscriptMouseSelection,
       viewportBudget.messageRows,
     ]
@@ -3197,6 +3191,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   // Create KodaXEvents for streaming updates
   const createStreamingEvents = useCallback((): StreamingEvents => ({
     onThinkingDelta: (text: string) => {
+      if (userInterruptedRef.current) {
+        return;
+      }
       if (streamingState.currentTool) {
         setCurrentTool(undefined);
         clearToolInputContent();
@@ -3214,6 +3211,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       appendThinkingContent(text);
     },
     onThinkingEnd: (thinking: string) => {
+      if (userInterruptedRef.current) {
+        return;
+      }
       const currentThinking = getThinkingContent();
       const mergedThinking = mergeLiveThinkingContent(currentThinking, thinking);
       if (mergedThinking && mergedThinking !== currentThinking) {
@@ -3225,6 +3225,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       stopThinking();
     },
     onTextDelta: (text: string) => {
+      if (userInterruptedRef.current) {
+        return;
+      }
       if (streamingState.currentTool) {
         setCurrentTool(undefined);
         clearToolInputContent();
@@ -3234,6 +3237,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       appendResponse(text);
     },
     onToolUseStart: (tool: { name: string; id: string; input?: Record<string, unknown> }) => {
+      if (userInterruptedRef.current) {
+        return;
+      }
       if (!iterationToolsRef.current.includes(tool.name)) {
         iterationToolsRef.current = [...iterationToolsRef.current, tool.name];
       }
@@ -3257,6 +3263,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       partialJson: string,
       meta?: { toolId?: string },
     ) => {
+      if (userInterruptedRef.current) {
+        return;
+      }
       appendToolInputChars(partialJson.length);
       appendToolInputContent(partialJson); // Issue 068 Phase 4: track tool input content.
       const updatedTool = updateExecutingTool(meta?.toolId, toolName, (tool) => {
@@ -3277,6 +3286,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
     },
     onToolResult: (result) => {
+      if (userInterruptedRef.current) {
+        return;
+      }
       const content = typeof result.content === "string" ? result.content : String(result.content ?? "");
       const trimmedContent = truncateToolOutputPreview(content);
       if (/^\[(?:Tool Error|Error)\]/.test(content)) {
@@ -3398,12 +3410,21 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       console.log(''); // Empty line for readability
     },
     onRetry: (reason: string, attempt: number, maxAttempts: number) => {
+      if (userInterruptedRef.current) {
+        return;
+      }
       emitRetryHistoryItem(addHistoryItem, reason, attempt, maxAttempts);
     },
     onProviderRecovery: (event) => {
+      if (userInterruptedRef.current) {
+        return;
+      }
       emitRecoveryHistoryItem(addHistoryItem, event);
     },
     onManagedTaskStatus: (status) => {
+      if (userInterruptedRef.current) {
+        return;
+      }
       managedTaskStatusRef.current = status;
       setManagedTaskStatus(status);
       const liveStatusLabel = formatManagedTaskLiveStatusLabel(status);
@@ -3426,6 +3447,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
     },
     onProviderRateLimit: (attempt: number, maxAttempts: number, delayMs: number) => {
+      if (userInterruptedRef.current) {
+        return;
+      }
       addHistoryItem({
         type: "info",
         icon: "\u23F3",
@@ -3435,6 +3459,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     // Iteration start - called at the beginning of each agent iteration
     // Iteration start: called at the beginning of each agent iteration.
     onIterationStart: (iter: number, maxIter: number) => {
+      if (userInterruptedRef.current) {
+        return;
+      }
       // Update max iterations if provided
 
       if (maxIter) {
@@ -3838,6 +3865,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }, [flushPendingPersistContextState]);
 
   const requestGracefulExit = useCallback(async () => {
+    userInterruptedRef.current = true;
     abort();
     stopStreaming();
     stopThinking();
@@ -3849,11 +3877,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
     await persistContextStateQueueRef.current.catch(() => {});
     setIsRunning(false);
-    exit();
     if (isRawModeSupported && stdin?.isRaw) {
       setRawMode(false);
     }
     stdin?.pause?.();
+    exit();
     onExit();
   }, [
     abort,
@@ -5105,6 +5133,16 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     transcriptTextSelection?.rowRanges,
     viewportBudget.messageRows,
   ]);
+  const currentTranscriptSurface = isTranscriptMode
+    ? renderTranscriptModeSurface({
+      bannerVisible: fullscreenPolicy.enabled && !useRendererViewportShell && showBanner,
+    })
+    : renderPromptSurfaceTranscript({
+      bannerVisible: fullscreenPolicy.enabled && !useRendererViewportShell && showBanner,
+    });
+  const currentFooterSurface = isTranscriptMode
+    ? transcriptFooterSurface
+    : promptFooterSurface;
   const shellBody = (
     <Box
       flexDirection="column"
@@ -5160,63 +5198,69 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         </Static>
       ) : null)}
 
+      {useRendererViewportShell ? (
+        <FullscreenTranscriptLayout
+          width={terminalWidth}
+          stickyHeader={transcriptChrome.stickyHeader}
+          jumpToLatest={transcriptChrome.jumpToLatest}
+          transcript={!fullscreenPolicy.enabled || !transcriptOwnsViewport ? (
+            (isTranscriptMode
+              ? renderTranscriptModeSurface({ bannerVisible: fullscreenPolicy.enabled && showBanner })
+              : renderPromptSurfaceTranscript({ bannerVisible: fullscreenPolicy.enabled && showBanner }))
+          ) : undefined}
+          renderTranscriptWindow={fullscreenPolicy.enabled && transcriptOwnsViewport
+            ? (window) => (
+              (() => {
+                const adjustedWindow = {
+                  ...window,
+                  start: Math.max(0, window.start - fullscreenBannerRows),
+                  end: Math.max(0, window.end - fullscreenBannerRows),
+                  viewportTop: Math.max(0, window.viewportTop - fullscreenBannerRows),
+                  viewportHeight: Math.max(
+                    0,
+                    window.viewportHeight - (showBanner && window.start < fullscreenBannerRows
+                      ? fullscreenBannerRows
+                      : 0),
+                  ),
+                };
+                const visibleRows = resolveVisibleTranscriptRows(
+                  ownedTranscriptRenderModel?.rows ?? [],
+                  {
+                    start: adjustedWindow.start,
+                    end: adjustedWindow.end,
+                  },
+                );
 
-      <FullscreenTranscriptLayout
-        width={terminalWidth}
-        stickyHeader={transcriptChrome.stickyHeader}
-        jumpToLatest={transcriptChrome.jumpToLatest}
-        transcript={!fullscreenPolicy.enabled || !transcriptOwnsViewport ? (
-          (isTranscriptMode
-            ? renderTranscriptModeSurface({ bannerVisible: fullscreenPolicy.enabled && showBanner })
-            : renderPromptSurfaceTranscript({ bannerVisible: fullscreenPolicy.enabled && showBanner }))
-        ) : undefined}
-        renderTranscriptWindow={fullscreenPolicy.enabled && transcriptOwnsViewport
-          ? (window) => (
-            (() => {
-              const adjustedWindow = {
-                ...window,
-                start: Math.max(0, window.start - fullscreenBannerRows),
-                end: Math.max(0, window.end - fullscreenBannerRows),
-                viewportTop: Math.max(0, window.viewportTop - fullscreenBannerRows),
-                viewportHeight: Math.max(
-                  0,
-                  window.viewportHeight - (showBanner && window.start < fullscreenBannerRows
-                    ? fullscreenBannerRows
-                    : 0),
-                ),
-              };
-              const visibleRows = resolveVisibleTranscriptRows(
-                ownedTranscriptRenderModel?.rows ?? [],
-                {
-                  start: adjustedWindow.start,
-                  end: adjustedWindow.end,
-                },
-              );
-
-              return isTranscriptMode
-                ? renderTranscriptModeSurface({
-                  bannerVisible: showBanner && window.start < fullscreenBannerRows,
-                  rendererWindow: adjustedWindow,
-                  visibleRowsOverride: visibleRows,
-                })
-                : renderPromptSurfaceTranscript({
-                  bannerVisible: showBanner && window.start < fullscreenBannerRows,
-                  rendererWindow: adjustedWindow,
-                  visibleRowsOverride: visibleRows,
-                });
-            })()
-          )
-          : undefined}
-        overlay={overlaySurface}
-        scrollTop={historyScrollOffset}
-        scrollHeight={effectiveTranscriptScrollHeight}
-        viewportHeight={viewportBudget.messageRows}
-        stickyScroll={!isTranscriptMode && !isAwaitingUserInteraction && historyScrollOffset === 0}
-        scrollRef={transcriptScrollRef}
-        onWindowChange={handleTranscriptWindowChange}
-        onScrollTopChange={setHistoryScrollOffset}
-        footer={isTranscriptMode ? transcriptFooterSurface : promptFooterSurface}
-      />
+                return isTranscriptMode
+                  ? renderTranscriptModeSurface({
+                    bannerVisible: showBanner && window.start < fullscreenBannerRows,
+                    rendererWindow: adjustedWindow,
+                    visibleRowsOverride: visibleRows,
+                  })
+                  : renderPromptSurfaceTranscript({
+                    bannerVisible: showBanner && window.start < fullscreenBannerRows,
+                    rendererWindow: adjustedWindow,
+                    visibleRowsOverride: visibleRows,
+                  });
+              })()
+            )
+            : undefined}
+          overlay={overlaySurface}
+          scrollTop={historyScrollOffset}
+          scrollHeight={effectiveTranscriptScrollHeight}
+          viewportHeight={viewportBudget.messageRows}
+          stickyScroll={!isTranscriptMode && !isAwaitingUserInteraction && historyScrollOffset === 0}
+          scrollRef={transcriptScrollRef}
+          onWindowChange={handleTranscriptWindowChange}
+          onScrollTopChange={setHistoryScrollOffset}
+          footer={currentFooterSurface}
+        />
+      ) : (
+        <Box flexDirection="column" flexGrow={1} flexShrink={0}>
+          {currentTranscriptSurface}
+          {currentFooterSurface}
+        </Box>
+      )}
     </Box>
   );
 
@@ -5399,7 +5443,8 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
   try {
     // Render Ink app
     // Issue 058/060: Ink 6.x options to reduce flickering
-    const { waitUntilExit } = render(
+    let exitMessageRequested = false;
+    const { waitUntilExit, cleanup } = render(
       <InkREPL
         options={options}
         config={currentConfig}
@@ -5409,7 +5454,7 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
         rendererMode={rendererMode}
         fullscreenPolicy={fullscreenPolicy}
         onExit={() => {
-          console.log(chalk.dim("\n[Exiting KodaX...]"));
+          exitMessageRequested = true;
         }}
       />,
       {
@@ -5420,11 +5465,20 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
         // Note: incrementalRendering disabled - causes cursor positioning issues with custom TextInput
         // Ink 6.x still has synchronized updates (auto-enabled) which helps reduce flickering
         maxFps: 30,          // Ink 6.3.0+: Limit frame rate to reduce flickering
+        shellMode: fullscreenPolicy.enabled ? fullscreenPolicy.promptShell : "main-screen",
       }
     );
 
     // Wait for exit
     await waitUntilExit();
+    cleanup();
+    if (process.stdin.isTTY === true && typeof process.stdin.setRawMode === "function" && process.stdin.isRaw) {
+      process.stdin.setRawMode(false);
+    }
+    process.stdin.pause?.();
+    if (exitMessageRequested) {
+      console.log(chalk.dim("\n[Exiting KodaX...]"));
+    }
   } catch (error) {
     // If Ink fails due to raw mode, throw terminal error
     if (error instanceof Error && error.message.includes("Raw mode")) {
