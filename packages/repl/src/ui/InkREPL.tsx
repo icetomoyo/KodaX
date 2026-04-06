@@ -11,7 +11,7 @@
  */
 
 import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
-import { render, Box, useApp, Text, Static, useStdout, useTerminalWrite } from "./tui.js";
+import { render, Box, useApp, Text, Static, useStdout, useStdin, useTerminalWrite } from "./tui.js";
 import { AlternateScreen, type ScrollBoxHandle, type ScrollBoxWindow } from "../tui/index.js";
 import { AmaWorkStrip } from "./components/AmaWorkStrip.js";
 import { StatusBar } from "./components/StatusBar.js";
@@ -841,6 +841,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 }) => {
   const { exit } = useApp();
   const { stdout } = useStdout();
+  const { stdin, setRawMode, isRawModeSupported } = useStdin();
   const writeTerminal = useTerminalWrite();
   const { history } = useUIState();
   const { addHistoryItem, clearHistory: clearUIHistory, setSessionId } = useUIActions();
@@ -3849,6 +3850,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     await persistContextStateQueueRef.current.catch(() => {});
     setIsRunning(false);
     exit();
+    if (isRawModeSupported && stdin?.isRaw) {
+      setRawMode(false);
+    }
+    stdin?.pause?.();
     onExit();
   }, [
     abort,
@@ -3856,9 +3861,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     clearThinkingContent,
     clearToolInputContent,
     exit,
+    isRawModeSupported,
     onExit,
     setCurrentTool,
     setIsLoading,
+    setRawMode,
+    stdin,
     stopStreaming,
     stopThinking,
   ]);
