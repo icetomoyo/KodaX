@@ -89,9 +89,14 @@ export function resolveTranscriptSurfaceItems(
 
 export type FullscreenShellMode = "virtual" | "main-screen";
 
+export interface ResolveFullscreenShellModeOptions {
+  promptBusy?: boolean;
+}
+
 export function resolveFullscreenShellMode(
   fullscreenPolicy: FullscreenPolicy,
   surface: TranscriptSurface,
+  options: ResolveFullscreenShellModeOptions = {},
 ): FullscreenShellMode {
   if (!fullscreenPolicy.enabled) {
     return "main-screen";
@@ -101,14 +106,19 @@ export function resolveFullscreenShellMode(
     return "main-screen";
   }
 
+  if (options.promptBusy) {
+    return "virtual";
+  }
+
   return fullscreenPolicy.promptShell;
 }
 
 export function shouldUseAlternateScreenShell(
   fullscreenPolicy: FullscreenPolicy,
   surface: TranscriptSurface,
+  options: ResolveFullscreenShellModeOptions = {},
 ): boolean {
-  return resolveFullscreenShellMode(fullscreenPolicy, surface) === "virtual";
+  return resolveFullscreenShellMode(fullscreenPolicy, surface, options) === "virtual";
 }
 
 export function shouldUseManagedMainScreenMouseTracking(
@@ -121,7 +131,8 @@ export function shouldUseManagedMainScreenMouseTracking(
 export function shouldUseRendererViewportShell(
   fullscreenPolicy: FullscreenPolicy,
   surface: TranscriptSurface,
+  options: ResolveFullscreenShellModeOptions = {},
 ): boolean {
   return fullscreenPolicy.enabled
-    && resolveFullscreenShellMode(fullscreenPolicy, surface) === "virtual";
+    && resolveFullscreenShellMode(fullscreenPolicy, surface, options) === "virtual";
 }

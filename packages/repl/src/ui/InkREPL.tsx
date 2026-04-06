@@ -1205,14 +1205,26 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const fullscreenShellMode = resolveFullscreenShellMode(
     fullscreenPolicy,
     transcriptDisplayState.surface,
+    {
+      promptBusy: transcriptDisplayState.surface === "prompt"
+        && (isLoading || isAwaitingUserInteraction),
+    },
   );
   const useAlternateScreenShell = shouldUseAlternateScreenShell(
     fullscreenPolicy,
     transcriptDisplayState.surface,
+    {
+      promptBusy: transcriptDisplayState.surface === "prompt"
+        && (isLoading || isAwaitingUserInteraction),
+    },
   );
   const useRendererViewportShell = shouldUseRendererViewportShell(
     fullscreenPolicy,
     transcriptDisplayState.surface,
+    {
+      promptBusy: transcriptDisplayState.surface === "prompt"
+        && (isLoading || isAwaitingUserInteraction),
+    },
   );
   const useRendererOwnedMouseTracking = useAlternateScreenShell
     && (fullscreenPolicy.mouseWheel || fullscreenPolicy.mouseClicks);
@@ -3887,6 +3899,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         setRawMode(false);
       }
       stdin?.pause?.();
+      stdin?.unref?.();
       exit();
       onExit();
     })();
@@ -5488,6 +5501,7 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
       process.stdin.setRawMode(false);
     }
     process.stdin.pause?.();
+    process.stdin.unref?.();
     if (exitMessageRequested) {
       console.log(chalk.dim("\n[Exiting KodaX...]"));
     }

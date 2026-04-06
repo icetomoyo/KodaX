@@ -125,11 +125,13 @@ describe("transcript-surface", () => {
     expect(resolveFullscreenShellMode(virtualPrompt, "transcript")).toBe("main-screen");
     expect(resolveFullscreenShellMode(mainScreenPrompt, "prompt")).toBe("main-screen");
     expect(resolveFullscreenShellMode(disabled, "prompt")).toBe("main-screen");
+    expect(resolveFullscreenShellMode(mainScreenPrompt, "prompt", { promptBusy: true })).toBe("virtual");
 
     expect(shouldUseAlternateScreenShell(virtualPrompt, "prompt")).toBe(true);
     expect(shouldUseAlternateScreenShell(virtualPrompt, "transcript")).toBe(false);
     expect(shouldUseAlternateScreenShell(mainScreenPrompt, "prompt")).toBe(false);
     expect(shouldUseAlternateScreenShell(disabled, "prompt")).toBe(false);
+    expect(shouldUseAlternateScreenShell(mainScreenPrompt, "prompt", { promptBusy: true })).toBe(true);
   });
 
   it("keeps main-screen shells on native terminal mouse behavior and only virtualizes the prompt shell", () => {
@@ -153,5 +155,6 @@ describe("transcript-surface", () => {
     expect(shouldUseRendererViewportShell(virtualPrompt, "prompt")).toBe(true);
     expect(shouldUseRendererViewportShell(virtualPrompt, "transcript")).toBe(false);
     expect(shouldUseRendererViewportShell(mainScreenPrompt, "prompt")).toBe(false);
+    expect(shouldUseRendererViewportShell(mainScreenPrompt, "prompt", { promptBusy: true })).toBe(true);
   });
 });
