@@ -49,7 +49,7 @@ function buildOscSequence(
 async function execClipboardCommand(
   command: string,
   args: string[],
-  input: string,
+  input: string | Buffer,
 ): Promise<boolean> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -76,6 +76,25 @@ async function execClipboardCommand(
   });
 }
 
+function buildWindowsClipboardCandidates(
+  text: string,
+): Array<[string, string[], string | Buffer]> {
+  const script =
+    "$stream = [Console]::OpenStandardInput(); " +
+    "$buffer = New-Object byte[] 8192; " +
+    "$memory = New-Object System.IO.MemoryStream; " +
+    "while (($read = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) { $memory.Write($buffer, 0, $read) }; " +
+    "$text = [System.Text.Encoding]::UTF8.GetString($memory.ToArray()); " +
+    "Set-Clipboard -Value $text";
+  const utf8Input = Buffer.from(text, "utf8");
+
+  return [
+    ["powershell", ["-NoProfile", "-NonInteractive", "-Command", script], utf8Input],
+    ["pwsh", ["-NoProfile", "-NonInteractive", "-Command", script], utf8Input],
+    ["clip", [], text],
+  ];
+}
+
 async function tryNativeClipboard(
   text: string,
   env: NodeJS.ProcessEnv,
@@ -86,8 +105,22 @@ async function tryNativeClipboard(
   }
 
   switch (platform) {
-    case "win32":
-      return execClipboardCommand("clip", [], text);
+    case "win32": {
+      const candidates = buildWindowsClipboardCandidates(text);
+
+      for (const [command, args, input] of candidates) {
+        try {
+          const success = await execClipboardCommand(command, args, input);
+          if (success) {
+            return true;
+          }
+        } catch {
+          // Try the next candidate.
+        }
+      }
+
+      return false;
+    }
     case "darwin":
       return execClipboardCommand("pbcopy", [], text);
     case "linux": {

@@ -108,7 +108,6 @@ function getOptions(
   if (stdout instanceof Stream) {
     return {
       stdout,
-      stdin: process.stdin,
     };
   }
 

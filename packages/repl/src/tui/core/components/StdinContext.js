@@ -1,9 +1,18 @@
 import { EventEmitter } from 'node:events';
-import process from 'node:process';
 import { createContext } from 'react';
 
+const fallbackStdin = {
+    isTTY: false,
+    isRaw: false,
+    on() { },
+    off() { },
+    pause() { },
+    resume() { },
+    setRawMode() { },
+};
+
 const StdinContext = createContext({
-    stdin: process.stdin,
+    stdin: fallbackStdin,
     internal_eventEmitter: new EventEmitter(),
     setRawMode() { },
     isRawModeSupported: false,

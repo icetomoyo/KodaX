@@ -52,6 +52,23 @@ describe("transcript-viewport view model", () => {
     })).toBeUndefined();
   });
 
+  it("keeps transcript item chrome hidden until an item is explicitly focused", () => {
+    expect(buildTranscriptSelectionViewModel({
+      runtime: buildTranscriptSelectionRuntimeState({
+        state: {
+          surface: "transcript",
+          supportsSelection: true,
+          supportsCopyOnSelect: false,
+        },
+        selectableItemIds: ["assistant-1", "assistant-2"],
+        selectedItemId: undefined,
+        selectedItemType: "assistant",
+        isExpanded: false,
+      }),
+      itemSummary: { summary: "Assistant response", kindLabel: "assistant" },
+    })).toBeUndefined();
+  });
+
   it("builds copy and navigation capabilities from host-aware selection truth", () => {
     expect(buildTranscriptSelectionViewModel({
       runtime: buildTranscriptSelectionRuntimeState({

@@ -39,8 +39,13 @@ describe("copyTextToClipboard", () => {
 
     expect(terminalWrite).not.toHaveBeenCalled();
     expect(spawnMock).toHaveBeenCalledWith(
-      "clip",
-      [],
+      "powershell",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        expect.stringContaining("UTF8.GetString"),
+      ],
       expect.objectContaining({
         stdio: ["pipe", "ignore", "pipe"],
         windowsHide: true,
@@ -71,6 +76,42 @@ describe("copyTextToClipboard", () => {
     })).resolves.toEqual({ path: "native" });
 
     expect(spawnMock).toHaveBeenCalledWith(
+      "powershell",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        expect.stringContaining("UTF8.GetString"),
+      ],
+      expect.objectContaining({
+        stdio: ["pipe", "ignore", "pipe"],
+        windowsHide: true,
+      }),
+    );
+  });
+
+  it("falls back to clip when PowerShell clipboard commands are unavailable", async () => {
+    spawnMock
+      .mockImplementationOnce(() => {
+        const child = new MockChildProcess();
+        queueMicrotask(() => child.emit("error", new Error("powershell unavailable")));
+        return child;
+      })
+      .mockImplementationOnce(() => {
+        const child = new MockChildProcess();
+        queueMicrotask(() => child.emit("error", new Error("pwsh unavailable")));
+        return child;
+      })
+      .mockImplementationOnce(() => new MockChildProcess());
+
+    await expect(copyTextToClipboard("你好，KodaX", {
+      terminalWrite: () => false,
+      env: {},
+      platform: "win32",
+    })).resolves.toEqual({ path: "native" });
+
+    expect(spawnMock).toHaveBeenNthCalledWith(
+      3,
       "clip",
       [],
       expect.objectContaining({

@@ -22,7 +22,9 @@ export function buildMessageSelectorText({
     return undefined;
   }
 
-  return `Selected ${position.current}/${position.total}: ${itemKind ? `${itemKind}: ` : ""}${itemSummary} [${detailState}]`;
+  const detailLabel = detailState === "expanded" ? "expanded" : "compact";
+  const kindPrefix = itemKind ? `${itemKind}: ` : "";
+  return `Selected item ${position.current}/${position.total}: ${kindPrefix}${itemSummary} | ${detailLabel}`;
 }
 
 export const MessageSelector: React.FC<MessageSelectorProps> = ({

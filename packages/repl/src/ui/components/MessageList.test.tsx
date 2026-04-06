@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { render } from "ink-testing-library";
 import { MessageList } from "./MessageList.js";
 import { buildTranscriptRenderModel } from "../utils/transcript-layout.js";
+import { Box, Text } from "../tui.js";
 
 describe("MessageList", () => {
   it("uses the renderer-owned window when provided", () => {
@@ -87,5 +88,34 @@ describe("MessageList", () => {
     const frame = lastFrame();
     expect(frame).toContain("Second line");
     expect(frame).not.toContain("First line");
+  });
+
+  it("reserves viewport rows for windowed transcript content so footer chrome stays at the bottom", () => {
+    const { lastFrame } = render(
+      <Box flexDirection="column">
+        <MessageList
+          items={[
+            {
+              id: "info-1",
+              type: "info",
+              timestamp: 1,
+              text: "Only row",
+            },
+          ]}
+          windowed
+          viewportRows={4}
+          viewportWidth={80}
+        />
+        <Text>FOOTER</Text>
+      </Box>,
+    );
+
+    const frame = lastFrame() ?? "";
+    const lines = frame.split("\n");
+    const rowIndex = lines.findIndex((line) => line.includes("Only row"));
+    const footerIndex = lines.findIndex((line) => line.includes("FOOTER"));
+
+    expect(rowIndex).toBeGreaterThanOrEqual(0);
+    expect(footerIndex).toBeGreaterThan(rowIndex + 2);
   });
 });

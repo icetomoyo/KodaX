@@ -32,12 +32,12 @@ export const TranscriptModeFooter: React.FC<TranscriptModeFooterProps> = ({
   const trimmedNoticeText = noticeText?.trim();
   const statusText = searchActive
     ? trimmedQuery
-      ? `Search transcript /${trimmedQuery}`
-      : "Search transcript"
-    : "Showing detailed transcript";
+      ? `Search /${trimmedQuery}`
+      : "Search"
+    : "Transcript browser";
   const helpText = searchActive
-    ? "Enter select | n/N next match | Esc close | Ctrl+O/q back to live"
-    : "PgUp/PgDn/j/k scroll | / search | Ctrl+O/q/Esc back to live";
+    ? "Enter open | N/Shift+N next/prev | Esc close | Ctrl+O/q back"
+    : "PgUp/PgDn page | j/k scroll | / search | Ctrl+O/q/Esc back";
   const updateText = pendingLiveUpdates > 0
     ? pendingLiveUpdates === 1
       ? "1 new update"

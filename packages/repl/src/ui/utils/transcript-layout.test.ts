@@ -9,6 +9,7 @@ import {
   capHistoryByTranscriptRows,
   flattenTranscriptSections,
   getVisibleTranscriptRows,
+  materializeTranscriptRenderModel,
   sliceHistoryToRecentRounds,
 } from "./transcript-layout.js";
 
@@ -732,6 +733,31 @@ describe("transcript-layout", () => {
     expect(model.staticSections).toHaveLength(0);
     expect(text).toContain("prompt");
     expect(text).toContain("answer");
+  });
+
+  it("materializes static transcript sections into inline rows for main-screen transcript surfaces", () => {
+    const model = buildTranscriptRenderModel({
+      items: [
+        user("user-1", "first prompt"),
+        assistant("first answer"),
+        user("user-2", "second prompt"),
+        assistant("second answer"),
+      ],
+      viewportWidth: 80,
+      windowed: false,
+      showDetailedTools: true,
+    });
+
+    expect(model.staticSections.length).toBeGreaterThan(0);
+
+    const materialized = materializeTranscriptRenderModel(model);
+    const text = materialized.rows.map((row) => row.text).join("\n");
+
+    expect(materialized.staticSections).toHaveLength(0);
+    expect(text).toContain("first prompt");
+    expect(text).toContain("first answer");
+    expect(text).toContain("second prompt");
+    expect(text).toContain("second answer");
   });
 
   it("keeps only the most recent user-defined rounds", () => {

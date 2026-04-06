@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildPromptSurfaceItems,
   captureTranscriptSnapshot,
   countPendingTranscriptUpdates,
+  resolveTranscriptInteractionPolicy,
   resolveTranscriptSurfaceItems,
   resolveFullscreenShellMode,
   shouldUseAlternateScreenShell,
   shouldUseManagedMainScreenMouseTracking,
   shouldUseRendererViewportShell,
 } from "./transcript-surface.js";
+import { ToolCallStatus } from "../types.js";
 
 describe("transcript-surface", () => {
   it("captures the full transcript items for transcript mode snapshots", () => {
@@ -63,6 +66,82 @@ describe("transcript-surface", () => {
       promptItems,
       transcriptItems,
     })).toEqual(transcriptItems);
+  });
+
+  it("builds a compact prompt surface item list with compact thinking but without hint rows", () => {
+    const promptItems = buildPromptSurfaceItems([
+      {
+        id: "user-1",
+        type: "user",
+        timestamp: 1,
+        text: "hello",
+      },
+      {
+        id: "thinking-1",
+        type: "thinking",
+        timestamp: 2,
+        text: "internal reasoning",
+      },
+      {
+        id: "tools-1",
+        type: "tool_group",
+        timestamp: 3,
+        tools: [
+          { id: "tool-1", name: "read_file", status: ToolCallStatus.Success },
+          { id: "tool-2", name: "read_file", status: ToolCallStatus.Success },
+          { id: "tool-3", name: "search_code", status: ToolCallStatus.Success },
+        ] as any,
+      },
+      {
+        id: "assistant-1",
+        type: "assistant",
+        timestamp: 4,
+        text: "done",
+      },
+      {
+        id: "info-1",
+        type: "info",
+        timestamp: 5,
+        text: "Using Scout",
+      },
+    ] as any);
+
+    expect(promptItems).toEqual([
+      {
+        id: "user-1",
+        type: "user",
+        timestamp: 1,
+        text: "hello",
+      },
+      {
+        id: "thinking-1",
+        type: "thinking",
+        timestamp: 2,
+        text: "internal reasoning",
+      },
+      {
+        id: "tools-1",
+        type: "tool_group",
+        timestamp: 3,
+        tools: [
+          { id: "tool-1", name: "read_file", status: ToolCallStatus.Success },
+          { id: "tool-2", name: "read_file", status: ToolCallStatus.Success },
+          { id: "tool-3", name: "search_code", status: ToolCallStatus.Success },
+        ],
+      },
+      {
+        id: "assistant-1",
+        type: "assistant",
+        timestamp: 4,
+        text: "done",
+      },
+      {
+        id: "info-1",
+        type: "info",
+        timestamp: 5,
+        text: "Using Scout",
+      },
+    ]);
   });
 
   it("counts pending transcript updates against the full transcript snapshot", () => {
@@ -125,13 +204,11 @@ describe("transcript-surface", () => {
     expect(resolveFullscreenShellMode(virtualPrompt, "transcript")).toBe("main-screen");
     expect(resolveFullscreenShellMode(mainScreenPrompt, "prompt")).toBe("main-screen");
     expect(resolveFullscreenShellMode(disabled, "prompt")).toBe("main-screen");
-    expect(resolveFullscreenShellMode(mainScreenPrompt, "prompt", { promptBusy: true })).toBe("virtual");
 
     expect(shouldUseAlternateScreenShell(virtualPrompt, "prompt")).toBe(true);
     expect(shouldUseAlternateScreenShell(virtualPrompt, "transcript")).toBe(false);
     expect(shouldUseAlternateScreenShell(mainScreenPrompt, "prompt")).toBe(false);
     expect(shouldUseAlternateScreenShell(disabled, "prompt")).toBe(false);
-    expect(shouldUseAlternateScreenShell(mainScreenPrompt, "prompt", { promptBusy: true })).toBe(true);
   });
 
   it("keeps main-screen shells on native terminal mouse behavior and only virtualizes the prompt shell", () => {
@@ -155,6 +232,39 @@ describe("transcript-surface", () => {
     expect(shouldUseRendererViewportShell(virtualPrompt, "prompt")).toBe(true);
     expect(shouldUseRendererViewportShell(virtualPrompt, "transcript")).toBe(false);
     expect(shouldUseRendererViewportShell(mainScreenPrompt, "prompt")).toBe(false);
-    expect(shouldUseRendererViewportShell(mainScreenPrompt, "prompt", { promptBusy: true })).toBe(true);
+
+    expect(resolveTranscriptInteractionPolicy(virtualPrompt, "prompt")).toEqual({
+      shellMode: "virtual",
+      usesAlternateScreenShell: true,
+      usesRendererViewportShell: true,
+      usesRendererMouseTracking: true,
+      usesManagedMouseClicks: true,
+      usesManagedMouseWheel: true,
+      usesManagedSelection: true,
+      usesManagedWheelHistory: true,
+      usesNativeMainScreenScrollback: false,
+    });
+    expect(resolveTranscriptInteractionPolicy(virtualPrompt, "transcript")).toEqual({
+      shellMode: "main-screen",
+      usesAlternateScreenShell: false,
+      usesRendererViewportShell: false,
+      usesRendererMouseTracking: false,
+      usesManagedMouseClicks: false,
+      usesManagedMouseWheel: false,
+      usesManagedSelection: false,
+      usesManagedWheelHistory: false,
+      usesNativeMainScreenScrollback: true,
+    });
+    expect(resolveTranscriptInteractionPolicy(mainScreenPrompt, "prompt")).toEqual({
+      shellMode: "main-screen",
+      usesAlternateScreenShell: false,
+      usesRendererViewportShell: false,
+      usesRendererMouseTracking: false,
+      usesManagedMouseClicks: false,
+      usesManagedMouseWheel: false,
+      usesManagedSelection: false,
+      usesManagedWheelHistory: false,
+      usesNativeMainScreenScrollback: true,
+    });
   });
 });

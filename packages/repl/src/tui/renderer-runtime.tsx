@@ -115,6 +115,32 @@ interface MutableTuiRuntimeContextValue extends TuiRuntimeContextValue {
   attachExit: (exit: () => void) => void;
 }
 
+const fallbackStdout = {
+  isTTY: false,
+  columns: 80,
+  rows: 24,
+  write: () => true,
+  on: () => undefined,
+  off: () => undefined,
+} as unknown as OutputStream;
+
+const fallbackStderr = {
+  isTTY: false,
+  write: () => true,
+  on: () => undefined,
+  off: () => undefined,
+} as unknown as NodeJS.WriteStream;
+
+const fallbackStdin = {
+  isTTY: false,
+  isRaw: false,
+  on: () => undefined,
+  off: () => undefined,
+  pause: () => undefined,
+  resume: () => undefined,
+  setRawMode: () => undefined,
+} as unknown as InputStream;
+
 function hasRawModeSubscribers(subscriptions: ReadonlySet<TerminalInputSubscription>): boolean {
   for (const subscription of subscriptions) {
     if (subscription.rawMode) {
@@ -496,13 +522,13 @@ export function useInput(
 export function useStdout(): StdoutState {
   const runtime = useContext(TuiRuntimeContext);
   return {
-    stdout: runtime?.stdout ?? process.stdout,
+    stdout: runtime?.stdout ?? fallbackStdout,
   };
 }
 
 export function useStdin(): StdinState {
   const runtime = useContext(TuiRuntimeContext);
-  const stdin = runtime?.stdin ?? process.stdin;
+  const stdin = runtime?.stdin ?? fallbackStdin;
   const setRawMode = runtime?.setRawMode ?? ((enabled: boolean) => {
     if (typeof stdin?.setRawMode === "function") {
       stdin.setRawMode(enabled);
@@ -525,7 +551,7 @@ export function useApp(): AppState {
 
 export function useTerminalOutput(): OutputStream {
   const runtime = useContext(TuiRuntimeContext);
-  return runtime?.stdout ?? process.stdout;
+  return runtime?.stdout ?? fallbackStdout;
 }
 
 export function useTerminalSize(): TerminalSize {

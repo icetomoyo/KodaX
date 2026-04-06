@@ -87,16 +87,48 @@ export function resolveTranscriptSurfaceItems(
     : [...options.promptItems];
 }
 
+export function buildPromptSurfaceItems(
+  items: readonly HistoryItem[],
+): HistoryItem[] {
+  const promptItems: HistoryItem[] = [];
+
+  for (const item of items) {
+    switch (item.type) {
+      case "user":
+      case "assistant":
+      case "system":
+      case "error":
+      case "tool_group":
+      case "thinking":
+      case "info":
+        promptItems.push({ ...item });
+        break;
+      case "hint":
+      default:
+        break;
+    }
+  }
+
+  return promptItems;
+}
+
 export type FullscreenShellMode = "virtual" | "main-screen";
 
-export interface ResolveFullscreenShellModeOptions {
-  promptBusy?: boolean;
+export interface TranscriptSurfaceInteractionPolicy {
+  shellMode: FullscreenShellMode;
+  usesAlternateScreenShell: boolean;
+  usesRendererViewportShell: boolean;
+  usesRendererMouseTracking: boolean;
+  usesManagedMouseClicks: boolean;
+  usesManagedMouseWheel: boolean;
+  usesManagedSelection: boolean;
+  usesManagedWheelHistory: boolean;
+  usesNativeMainScreenScrollback: boolean;
 }
 
 export function resolveFullscreenShellMode(
   fullscreenPolicy: FullscreenPolicy,
   surface: TranscriptSurface,
-  options: ResolveFullscreenShellModeOptions = {},
 ): FullscreenShellMode {
   if (!fullscreenPolicy.enabled) {
     return "main-screen";
@@ -106,33 +138,54 @@ export function resolveFullscreenShellMode(
     return "main-screen";
   }
 
-  if (options.promptBusy) {
-    return "virtual";
-  }
-
   return fullscreenPolicy.promptShell;
 }
 
 export function shouldUseAlternateScreenShell(
   fullscreenPolicy: FullscreenPolicy,
   surface: TranscriptSurface,
-  options: ResolveFullscreenShellModeOptions = {},
 ): boolean {
-  return resolveFullscreenShellMode(fullscreenPolicy, surface, options) === "virtual";
+  return resolveFullscreenShellMode(fullscreenPolicy, surface) === "virtual";
 }
 
 export function shouldUseManagedMainScreenMouseTracking(
   fullscreenPolicy: FullscreenPolicy,
   surface: TranscriptSurface,
 ): boolean {
+  void fullscreenPolicy;
+  void surface;
   return false;
 }
 
 export function shouldUseRendererViewportShell(
   fullscreenPolicy: FullscreenPolicy,
   surface: TranscriptSurface,
-  options: ResolveFullscreenShellModeOptions = {},
 ): boolean {
   return fullscreenPolicy.enabled
-    && resolveFullscreenShellMode(fullscreenPolicy, surface, options) === "virtual";
+    && resolveFullscreenShellMode(fullscreenPolicy, surface) === "virtual";
+}
+
+export function resolveTranscriptInteractionPolicy(
+  fullscreenPolicy: FullscreenPolicy,
+  surface: TranscriptSurface,
+): TranscriptSurfaceInteractionPolicy {
+  const shellMode = resolveFullscreenShellMode(fullscreenPolicy, surface);
+  const usesAlternateScreenShell = fullscreenPolicy.enabled && shellMode === "virtual";
+  const usesRendererViewportShell = fullscreenPolicy.enabled && shellMode === "virtual";
+  const usesRendererMouseTracking = usesAlternateScreenShell
+    && (fullscreenPolicy.mouseWheel || fullscreenPolicy.mouseClicks);
+  const usesManagedMouseClicks = usesRendererMouseTracking && fullscreenPolicy.mouseClicks;
+  const usesManagedMouseWheel = usesRendererViewportShell && fullscreenPolicy.mouseWheel;
+
+  return {
+    shellMode,
+    usesAlternateScreenShell,
+    usesRendererViewportShell,
+    usesRendererMouseTracking,
+    usesManagedMouseClicks,
+    usesManagedMouseWheel,
+    usesManagedSelection: usesRendererViewportShell,
+    usesManagedWheelHistory: usesManagedMouseWheel,
+    usesNativeMainScreenScrollback: !usesRendererViewportShell,
+  };
 }

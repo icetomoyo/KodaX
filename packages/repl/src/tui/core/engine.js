@@ -242,30 +242,49 @@ const Ink = class Ink {
         this.lastOutputHeight = 0;
         this.cursorPosition = undefined;
     };
+    usesVirtualShellOwnership = (options = {}) => {
+        const shellMode = options.shellMode ?? this.shellMode;
+        const altScreenActive = options.altScreenActive ?? this.altScreenActive;
+        const shellTransitionPhase = options.shellTransitionPhase ?? this.shellTransitionPhase;
+        return altScreenActive
+            || shellMode === 'virtual'
+            || shellTransitionPhase !== undefined;
+    };
     beginShellTransition(phase) {
         this.shellTransitionPhase = phase;
         this.resetOutputTracking();
     }
     setShellMode(mode, mouseTracking) {
+        const previousMode = this.shellMode;
+        const previousMouseTracking = this.mouseTrackingActive;
+        const previousVirtualOwnership = this.usesVirtualShellOwnership();
         const nextMouseTracking = mouseTracking ?? false;
-        const changed = this.shellMode !== mode
-            || this.mouseTrackingActive !== nextMouseTracking;
         this.shellMode = mode;
         this.mouseTrackingActive = nextMouseTracking;
-        if (changed) {
+        const nextVirtualOwnership = this.usesVirtualShellOwnership();
+        const shellOwnershipChanged = previousMode !== mode
+            && (previousVirtualOwnership || nextVirtualOwnership);
+        const managedMouseTrackingChanged = previousMouseTracking !== nextMouseTracking
+            && nextVirtualOwnership;
+        if (shellOwnershipChanged || managedMouseTrackingChanged) {
             this.resetOutputTracking();
         }
     }
     setAltScreenActive(active, mouseTracking) {
+        const previousAltScreenActive = this.altScreenActive;
+        const previousMouseTracking = this.mouseTrackingActive;
+        const previousVirtualOwnership = this.usesVirtualShellOwnership();
         const nextMouseTracking = mouseTracking ?? false;
-        const changed = this.altScreenActive !== active
-            || this.mouseTrackingActive !== nextMouseTracking;
         this.altScreenActive = active;
         this.mouseTrackingActive = nextMouseTracking;
-        if (changed) {
+        this.shellTransitionPhase = undefined;
+        const nextVirtualOwnership = this.usesVirtualShellOwnership();
+        const altScreenChanged = previousAltScreenActive !== active;
+        const managedMouseTrackingChanged = previousMouseTracking !== nextMouseTracking
+            && (previousVirtualOwnership || nextVirtualOwnership);
+        if (altScreenChanged || managedMouseTrackingChanged) {
             this.resetOutputTracking();
         }
-        this.shellTransitionPhase = undefined;
     }
     clearTextSelection() {
     }
@@ -347,9 +366,12 @@ const Ink = class Ink {
         if (hasStaticOutput) {
             this.fullStaticOutput += staticOutput;
         }
-        const isFullscreen = this.options.stdout.isTTY && outputHeight >= this.options.stdout.rows;
-        const outputToRender = isFullscreen ? output : output + '\n';
-        if (this.lastOutputHeight >= this.options.stdout.rows) {
+        const usesVirtualFullscreenShell = this.usesVirtualShellOwnership();
+        const shouldUseFullscreenFrameOwnership = this.options.stdout.isTTY
+            && outputHeight >= this.options.stdout.rows
+            && usesVirtualFullscreenShell;
+        const outputToRender = shouldUseFullscreenFrameOwnership ? output : output + '\n';
+        if (this.lastOutputHeight >= this.options.stdout.rows && usesVirtualFullscreenShell) {
             const sync = shouldSynchronize(this.options.stdout);
             if (sync) {
                 this.options.stdout.write(bsu);

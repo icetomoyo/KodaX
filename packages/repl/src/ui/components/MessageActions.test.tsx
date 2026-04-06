@@ -19,9 +19,9 @@ describe("MessageActions", () => {
     const frame = lastFrame();
     expect(frame).toContain("select");
     expect(frame).toContain("C copy");
-    expect(frame).toContain("I copy input");
-    expect(frame).toContain("Select copies");
-    expect(frame).toContain("V toggle detail");
-    expect(frame).toContain("Up/Down matches");
+    expect(frame).toContain("I copy tool input");
+    expect(frame).toContain("Mouse select copies");
+    expect(frame).toContain("expand/collapse");
+    expect(frame).toContain("next/prev match");
   });
 });

@@ -764,6 +764,17 @@ export function flattenTranscriptSections(sections: TranscriptSection[]): Transc
   return sections.flatMap((section) => section.rows);
 }
 
+export function materializeTranscriptRenderModel(
+  model: TranscriptRenderModel,
+): TranscriptRenderModel {
+  const sections = [...model.staticSections, ...model.sections];
+  return {
+    staticSections: [],
+    sections,
+    rows: flattenTranscriptSections(sections),
+  };
+}
+
 export function resolveVisibleTranscriptRows(
   rows: TranscriptRow[],
   options: {

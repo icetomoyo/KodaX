@@ -78,6 +78,30 @@ describe("viewport-budget", () => {
     expect(withSurfaces.messageRows).toBeLessThan(withoutSurfaces.messageRows);
   });
 
+  it("reserves footer space for a prompt activity row so status/footer do not overlap", () => {
+    const withoutActivity = calculateViewportBudget({
+      terminalRows: 24,
+      terminalWidth: 48,
+      inputText: "",
+      suggestionsReserved: false,
+      showHelp: false,
+      statusBarText: "status",
+    });
+    const withActivity = calculateViewportBudget({
+      terminalRows: 24,
+      terminalWidth: 48,
+      inputText: "",
+      activitySummary: "Thinking (128 chars)",
+      suggestionsReserved: false,
+      showHelp: false,
+      statusBarText: "status",
+    });
+
+    expect(withActivity.activityRows).toBeGreaterThan(0);
+    expect(withActivity.footerRows).toBeGreaterThan(withoutActivity.footerRows);
+    expect(withActivity.messageRows).toBeLessThan(withoutActivity.messageRows);
+  });
+
   it("clamps select dialog options and keeps message rows positive", () => {
     const budget = calculateViewportBudget({
       terminalRows: 16,

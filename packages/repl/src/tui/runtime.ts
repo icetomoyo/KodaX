@@ -284,20 +284,20 @@ export function resolveFullscreenPolicy(
       };
     case "xtermjs_host":
       return {
-        enabled: true,
+        enabled: false,
         promptShell: "main-screen",
-        mouseWheel: true,
-        mouseClicks: true,
+        mouseWheel: false,
+        mouseClicks: false,
         streamingPreview: true,
         transcriptSpinnerAnimation: true,
       };
     case "degraded_vt":
       return {
-        enabled: true,
+        enabled: false,
         promptShell: "main-screen",
-        mouseWheel: true,
-        mouseClicks: true,
-        streamingPreview: false,
+        mouseWheel: false,
+        mouseClicks: false,
+        streamingPreview: true,
         transcriptSpinnerAnimation: true,
       };
     case "tmux_control_mode":
@@ -327,7 +327,7 @@ export function getTerminalHostCapabilities(
 
   return {
     profile,
-    ownsViewportByDefault: policy.enabled,
+    ownsViewportByDefault: policy.enabled && policy.promptShell === "virtual",
     supportsMouseTracking: policy.mouseWheel || policy.mouseClicks,
     bufferingMode: policy.streamingPreview ? "live" : "buffered-fallback",
     supportsFullscreenLayout: policy.enabled,

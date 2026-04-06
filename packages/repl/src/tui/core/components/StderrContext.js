@@ -1,8 +1,14 @@
-import process from 'node:process';
 import { createContext } from 'react';
 
+const fallbackStderr = {
+    isTTY: false,
+    write() { return true; },
+    on() { },
+    off() { },
+};
+
 const StderrContext = createContext({
-    stderr: process.stderr,
+    stderr: fallbackStderr,
     write() { },
 });
 

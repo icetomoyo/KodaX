@@ -41,6 +41,7 @@ export interface ViewportBudgetOptions {
   inputText: string;
   inputPrompt?: string;
   footerHeaderText?: string;
+  activitySummary?: string;
   pendingInputSummary?: string;
   stashNoticeSummary?: string;
   notificationSummary?: string;
@@ -75,6 +76,7 @@ export interface ViewportBudgetResult {
   messageRows: number;
   reservedBottomRows: number;
   headerRows: number;
+  activityRows: number;
   pendingInputRows: number;
   stashNoticeRows: number;
   notificationRows: number;
@@ -129,6 +131,7 @@ export function calculateViewportBudget(options: ViewportBudgetOptions): Viewpor
     inputText,
     inputPrompt = ">",
     footerHeaderText,
+    activitySummary,
     pendingInputSummary,
     stashNoticeSummary,
     notificationSummary,
@@ -149,6 +152,9 @@ export function calculateViewportBudget(options: ViewportBudgetOptions): Viewpor
 
   const headerRows = footerHeaderText
     ? wrapLineCount(footerHeaderText, Math.max(1, terminalWidth - 2))
+    : 0;
+  const activityRows = activitySummary
+    ? wrapLineCount(activitySummary, Math.max(1, terminalWidth - 2))
     : 0;
   const pendingInputRows = pendingInputSummary
     ? wrapLineCount(pendingInputSummary, Math.max(1, terminalWidth - 2))
@@ -263,6 +269,7 @@ export function calculateViewportBudget(options: ViewportBudgetOptions): Viewpor
 
   const footerRows =
     headerRows +
+    activityRows +
     pendingInputRows +
     stashNoticeRows +
     notificationRows +
@@ -293,6 +300,7 @@ export function calculateViewportBudget(options: ViewportBudgetOptions): Viewpor
     messageRows,
     reservedBottomRows,
     headerRows,
+    activityRows,
     pendingInputRows,
     stashNoticeRows,
     notificationRows,

@@ -21,22 +21,22 @@ export function buildMessageActionsText({
 }: MessageActionsProps): string | undefined {
   const actions: string[] = [];
   if (selectionNavigation) {
-    actions.push("\u2190/\u2192 select");
+    actions.push("\u2190/\u2192 prev/next item");
   }
   if (copyMessage) {
-    actions.push("C copy");
+    actions.push("C copy block");
   }
   if (copyToolInput) {
-    actions.push("I copy input");
+    actions.push("I copy tool input");
   }
   if (copyOnSelect) {
-    actions.push("Select copies");
+    actions.push("Mouse select copies");
   }
   if (toggleDetail) {
-    actions.push("V toggle detail");
+    actions.push("V expand/collapse item");
   }
   if (matchNavigation) {
-    actions.push("Up/Down matches");
+    actions.push("N/Shift+N next/prev match");
   }
 
   return actions.length > 0 ? actions.join(" | ") : undefined;

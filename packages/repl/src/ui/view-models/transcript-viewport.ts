@@ -96,7 +96,7 @@ export function buildTranscriptSelectionRuntimeState(
 export function buildTranscriptSelectionViewModel(
   options: BuildTranscriptSelectionViewModelOptions,
 ): TranscriptViewportSelectionState | undefined {
-  if (!options.runtime.selectionEnabled) {
+  if (!options.runtime.selectionEnabled || !options.runtime.selectedItemId) {
     return undefined;
   }
 

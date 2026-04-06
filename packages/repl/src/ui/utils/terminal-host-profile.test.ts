@@ -209,55 +209,55 @@ describe("terminal-host-profile", () => {
     });
   });
 
-  it("assigns fullscreen owned capabilities to xtermjs hosts", () => {
+  it("keeps xtermjs hosts on the native main-screen path by default", () => {
     expect(getTerminalHostCapabilities("xtermjs_host")).toEqual({
       profile: "xtermjs_host",
-      ownsViewportByDefault: true,
-      supportsMouseTracking: true,
+      ownsViewportByDefault: false,
+      supportsMouseTracking: false,
       bufferingMode: "live",
-      supportsFullscreenLayout: true,
-      supportsOverlaySurface: true,
+      supportsFullscreenLayout: false,
+      supportsOverlaySurface: false,
       supportsSelection: true,
       supportsCopyOnSelect: false,
-      supportsWheelHistory: true,
-      supportsViewportChrome: true,
-      supportsSearchViewport: true,
-      supportsStickyPrompt: true,
+      supportsWheelHistory: false,
+      supportsViewportChrome: false,
+      supportsSearchViewport: false,
+      supportsStickyPrompt: false,
     });
   });
 
-  it("keeps degraded hosts fullscreen but disables transcript streaming preview", () => {
+  it("keeps degraded hosts on native main-screen while preserving live streaming preview", () => {
     expect(getTerminalHostCapabilities("degraded_vt")).toEqual({
       profile: "degraded_vt",
-      ownsViewportByDefault: true,
-      supportsMouseTracking: true,
-      bufferingMode: "buffered-fallback",
-      supportsFullscreenLayout: true,
-      supportsOverlaySurface: true,
+      ownsViewportByDefault: false,
+      supportsMouseTracking: false,
+      bufferingMode: "live",
+      supportsFullscreenLayout: false,
+      supportsOverlaySurface: false,
       supportsSelection: true,
       supportsCopyOnSelect: false,
-      supportsWheelHistory: true,
-      supportsViewportChrome: true,
-      supportsSearchViewport: true,
-      supportsStickyPrompt: true,
+      supportsWheelHistory: false,
+      supportsViewportChrome: false,
+      supportsSearchViewport: false,
+      supportsStickyPrompt: false,
     });
   });
 
   it("builds fullscreen policies for owned and legacy renderer modes", () => {
     expect(resolveFullscreenPolicy("degraded_vt", "owned")).toEqual({
-      enabled: true,
+      enabled: false,
       promptShell: "main-screen",
-      mouseWheel: true,
-      mouseClicks: true,
-      streamingPreview: false,
+      mouseWheel: false,
+      mouseClicks: false,
+      streamingPreview: true,
       transcriptSpinnerAnimation: true,
     });
 
     expect(resolveFullscreenPolicy("xtermjs_host", "owned")).toEqual({
-      enabled: true,
+      enabled: false,
       promptShell: "main-screen",
-      mouseWheel: true,
-      mouseClicks: true,
+      mouseWheel: false,
+      mouseClicks: false,
       streamingPreview: true,
       transcriptSpinnerAnimation: true,
     });

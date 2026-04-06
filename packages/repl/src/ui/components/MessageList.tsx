@@ -658,6 +658,9 @@ export const MessageList: React.FC<MessageListProps> = ({
     },
     [rendererWindow?.end, rendererWindow?.start, scrollOffset, transcriptRows, viewportRows, visibleRowsOverride, windowed]
   );
+  const fillerRowCount = windowed && typeof viewportRows === "number"
+    ? Math.max(0, viewportRows - visibleRows.length)
+    : 0;
 
   useEffect(() => {
     onMetricsChange?.({
@@ -703,6 +706,11 @@ export const MessageList: React.FC<MessageListProps> = ({
           selectedItem={selectedItemId ? row.key.startsWith(`${selectedItemId}-`) : false}
           selectionRange={selectedTextRanges?.get(row.key)}
         />
+      ))}
+      {Array.from({ length: fillerRowCount }, (_, index) => (
+        <Box key={`transcript-filler-${index}`}>
+          <Text> </Text>
+        </Box>
       ))}
     </Box>
   );
