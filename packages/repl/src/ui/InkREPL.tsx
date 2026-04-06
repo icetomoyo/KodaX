@@ -254,6 +254,7 @@ import {
 // REPL options
 export interface InkREPLOptions extends KodaXOptions {
   storage?: SessionStorage;
+  hardExitOnClose?: boolean;
 }
 
 // Ink REPL Props
@@ -1201,29 +1202,33 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const isHistorySearchActive = transcriptDisplayState.searchMode === "history";
   const isTranscriptMode = transcriptDisplayState.surface === "transcript";
   const isAwaitingUserInteraction = !!confirmRequest || !!uiRequest || isHistorySearchActive;
+  const promptShouldVirtualizeShell = transcriptDisplayState.surface === "prompt"
+    && (
+      isLoading
+      || isAwaitingUserInteraction
+      || historyScrollOffset > 0
+      || transcriptTextSelection !== undefined
+    );
   const transcriptMaxLines = isTranscriptMode ? 1000 : 12;
   const fullscreenShellMode = resolveFullscreenShellMode(
     fullscreenPolicy,
     transcriptDisplayState.surface,
     {
-      promptBusy: transcriptDisplayState.surface === "prompt"
-        && (isLoading || isAwaitingUserInteraction),
+      promptBusy: promptShouldVirtualizeShell,
     },
   );
   const useAlternateScreenShell = shouldUseAlternateScreenShell(
     fullscreenPolicy,
     transcriptDisplayState.surface,
     {
-      promptBusy: transcriptDisplayState.surface === "prompt"
-        && (isLoading || isAwaitingUserInteraction),
+      promptBusy: promptShouldVirtualizeShell,
     },
   );
   const useRendererViewportShell = shouldUseRendererViewportShell(
     fullscreenPolicy,
     transcriptDisplayState.surface,
     {
-      promptBusy: transcriptDisplayState.surface === "prompt"
-        && (isLoading || isAwaitingUserInteraction),
+      promptBusy: promptShouldVirtualizeShell,
     },
   );
   const useRendererOwnedMouseTracking = useAlternateScreenShell
@@ -2589,10 +2594,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
       // Ctrl+C immediately interrupts.
       if (key.ctrl && key.name === "c") {
-        if (isTranscriptMode && transcriptTextSelection) {
-          void copySelectedTranscriptText();
-          return true;
-        }
         queueInterruptedPersistence();
         userInterruptedRef.current = true;
         abort();
@@ -2643,8 +2644,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       removeLastPendingInput,
       queueInterruptedPersistence,
       abort,
-      copySelectedTranscriptText,
-      transcriptTextSelection,
     ]
   );
 
@@ -2764,7 +2763,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
 
       if (key.name === "wheelup") {
-        if (!transcriptDisplayState.supportsWheelHistory || !hasTranscript) {
+        if (
+          !useRendererViewportShell
+          || !transcriptDisplayState.supportsWheelHistory
+          || !hasTranscript
+        ) {
           return false;
         }
         disarmHistorySearchSelection();
@@ -2773,7 +2776,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
 
       if (key.name === "wheeldown") {
-        if (!transcriptDisplayState.supportsWheelHistory) {
+        if (
+          !useRendererViewportShell
+          || !transcriptDisplayState.supportsWheelHistory
+        ) {
           return false;
         }
         if (historyScrollOffset === 0) {
@@ -2992,6 +2998,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       transcriptTextSelection,
       resolveTranscriptMouseTarget,
       transcriptDisplayState.supportsMouseTracking,
+      useRendererViewportShell,
       useRendererOwnedMouseTracking,
       updateTranscriptMouseSelection,
       viewportBudget.messageRows,
@@ -5504,6 +5511,23 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
     process.stdin.unref?.();
     if (exitMessageRequested) {
       console.log(chalk.dim("\n[Exiting KodaX...]"));
+    }
+    const shouldHardExitOnClose = options.hardExitOnClose ?? (process.env.VITEST !== "true");
+    if (exitMessageRequested && shouldHardExitOnClose) {
+      const exitCode = process.exitCode ?? 0;
+      let exitScheduled = false;
+      const requestProcessExit = () => {
+        if (exitScheduled) {
+          return;
+        }
+        exitScheduled = true;
+        process.exit(exitCode);
+      };
+
+      const exitTimer = setTimeout(requestProcessExit, 0);
+      exitTimer.unref?.();
+      process.stdout.write("", requestProcessExit);
+      return;
     }
   } catch (error) {
     // If Ink fails due to raw mode, throw terminal error
