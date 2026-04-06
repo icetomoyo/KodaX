@@ -921,6 +921,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   });
   const appendHistoryItemsWithPersistenceRef = useRef<((items: readonly CreatableHistoryItem[]) => void) | null>(null);
   const interruptPersistenceQueuedRef = useRef(false);
+  const gracefulExitRunnerRef = useRef<Promise<void> | null>(null);
   const [isInputEmpty, setIsInputEmpty] = useState(true); // Track if input is empty for ? shortcut
   const [inputText, setInputText] = useState("");
   const [transcriptDisplayState, setTranscriptDisplayState] = useState(() => (
@@ -3865,24 +3866,35 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }, [flushPendingPersistContextState]);
 
   const requestGracefulExit = useCallback(async () => {
-    userInterruptedRef.current = true;
-    abort();
-    stopStreaming();
-    stopThinking();
-    clearThinkingContent();
-    clearToolInputContent();
-    clearResponse();
-    setCurrentTool(undefined);
-    setIsLoading(false);
-
-    await persistContextStateQueueRef.current.catch(() => {});
-    setIsRunning(false);
-    if (isRawModeSupported && stdin?.isRaw) {
-      setRawMode(false);
+    if (gracefulExitRunnerRef.current) {
+      return gracefulExitRunnerRef.current;
     }
-    stdin?.pause?.();
-    exit();
-    onExit();
+
+    const run = (async () => {
+      userInterruptedRef.current = true;
+      abort();
+      stopStreaming();
+      stopThinking();
+      clearThinkingContent();
+      clearToolInputContent();
+      clearResponse();
+      setCurrentTool(undefined);
+      setIsLoading(false);
+
+      await persistContextStateQueueRef.current.catch(() => {});
+      setIsRunning(false);
+      if (isRawModeSupported && stdin?.isRaw) {
+        setRawMode(false);
+      }
+      stdin?.pause?.();
+      exit();
+      onExit();
+    })();
+
+    gracefulExitRunnerRef.current = run.finally(() => {
+      gracefulExitRunnerRef.current = null;
+    });
+    return gracefulExitRunnerRef.current;
   }, [
     abort,
     clearResponse,
