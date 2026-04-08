@@ -7,6 +7,8 @@ export type ToolSummaryGroup = {
   count: number;
 };
 
+export type ToolExplanationTone = "error" | "accent" | "primary" | "dim";
+
 function truncateValue(value: string, maxLength = 120): string {
   return value.length > maxLength ? `${value.slice(0, maxLength - 3)}...` : value;
 }
@@ -590,6 +592,38 @@ function formatToolStatusDetail(tool: ToolCall): string | undefined {
   }
 }
 
+function formatToolProgressExplanation(tool: ToolCall): string[] {
+  switch (tool.status) {
+    case ToolCallStatus.Scheduled:
+      return ["Queued: waiting to start"];
+    case ToolCallStatus.Validating:
+      return ["Validating: checking inputs and policy"];
+    case ToolCallStatus.AwaitingApproval:
+      return ["Waiting: approval required before execution"];
+    case ToolCallStatus.Executing:
+      return tool.progress !== undefined
+        ? [`Progress: ${tool.progress}% complete`]
+        : ["Running: waiting for tool output"];
+    case ToolCallStatus.Cancelled:
+      return ["Cancelled before completion"];
+    default:
+      return [];
+  }
+}
+
+export function resolveToolExplanationTone(line: string): ToolExplanationTone {
+  if (line.startsWith("Error:")) {
+    return "error";
+  }
+  if (line.startsWith("Waiting:")) {
+    return "accent";
+  }
+  if (line.startsWith("Progress:") || line.startsWith("Running:")) {
+    return "primary";
+  }
+  return "dim";
+}
+
 export function formatToolFailureExplanation(tool: ToolCall): string[] {
   const errorLine = extractFirstMeaningfulLine(tool.error);
   const outputLine = typeof tool.output === "string"
@@ -614,7 +648,7 @@ export function formatToolFailureExplanation(tool: ToolCall): string[] {
 
 export function formatToolResultExplanation(tool: ToolCall): string[] {
   if (typeof tool.output !== "string" || !tool.output.trim()) {
-    return [];
+    return formatToolProgressExplanation(tool);
   }
 
   const baseToolName = stripRolePrefix(tool.name).toLowerCase();
@@ -623,7 +657,7 @@ export function formatToolResultExplanation(tool: ToolCall): string[] {
   }
 
   if (tool.status !== ToolCallStatus.Success) {
-    return [];
+    return formatToolProgressExplanation(tool);
   }
 
   if (baseToolName.includes("changed_diff_bundle")) {

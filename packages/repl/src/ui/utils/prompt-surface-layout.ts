@@ -10,6 +10,8 @@ import { calculateVisualLayout } from "./textUtils.js";
 import {
   collapseToolCalls,
   formatCollapsedToolInlineText,
+  formatToolResultExplanation,
+  resolveToolExplanationTone,
 } from "./tool-display.js";
 
 export interface PromptSurfaceRenderModelOptions {
@@ -149,19 +151,20 @@ function buildPromptToolRows(
     },
   );
 
-  if (tool.error?.trim()) {
+  const compactExplanation = formatToolResultExplanation(tool);
+  compactExplanation.forEach((line, index) => {
     pushWrappedRows(
       rows,
-      `${itemId}-tool-${tool.id}-error`,
-      tool.error.trim(),
+      `${itemId}-tool-${tool.id}-explanation-${index}`,
+      line,
       bodyWidth(viewportWidth, 4),
       {
-        color: "error",
+        color: resolveToolExplanationTone(line),
         indent: 4,
         itemId,
       },
     );
-  }
+  });
 }
 
 function buildPromptSurfaceSection(

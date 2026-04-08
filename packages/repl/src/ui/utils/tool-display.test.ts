@@ -240,4 +240,31 @@ describe("tool-display", () => {
       "First file: packages/a.ts",
     ]);
   });
+
+  it("builds progress explanations for long-running executing tools", () => {
+    const tool: ToolCall = {
+      id: "tool-progress",
+      name: "bash",
+      status: ToolCallStatus.Executing,
+      startTime: 100,
+      progress: 50,
+    };
+
+    expect(formatToolResultExplanation(tool)).toEqual([
+      "Progress: 50% complete",
+    ]);
+  });
+
+  it("builds waiting explanations for tools blocked on approval", () => {
+    const tool: ToolCall = {
+      id: "tool-awaiting",
+      name: "write_file",
+      status: ToolCallStatus.AwaitingApproval,
+      startTime: 100,
+    };
+
+    expect(formatToolResultExplanation(tool)).toEqual([
+      "Waiting: approval required before execution",
+    ]);
+  });
 });

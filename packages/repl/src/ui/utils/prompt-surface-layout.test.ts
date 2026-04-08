@@ -48,6 +48,28 @@ describe("prompt-surface-layout", () => {
     expect(text).toContain("thinking truncated; press Ctrl+O to inspect full reasoning");
   });
 
+  it("renders compact tool progress explanations on the prompt surface", () => {
+    const model = buildPromptSurfaceRenderModel({
+      items: [
+        {
+          id: "tools-approval",
+          type: "tool_group",
+          timestamp: 2,
+          tools: [
+            { id: "tool-1", name: "write_file", status: ToolCallStatus.AwaitingApproval, startTime: 1 },
+          ],
+        },
+      ] as any,
+      viewportWidth: 80,
+      streamingResponse: "",
+      isLoading: true,
+    });
+
+    const text = model.rows.map((row) => row.text).join("\n");
+    expect(text).toContain("write_file (awaiting approval)");
+    expect(text).toContain("Waiting: approval required before execution");
+  });
+
   it("adds only a single live assistant block for streaming prompt text", () => {
     const model = buildPromptSurfaceRenderModel({
       items: [],

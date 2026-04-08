@@ -384,6 +384,32 @@ describe("transcript-layout", () => {
 
     const text = rows.map((row) => row.text).join("\n");
     expect(text).toContain("write_file (running - 50%)");
+    expect(text).toContain("Progress: 50% complete");
+  });
+
+  it("adds a compact waiting explanation for approval-blocked tools", () => {
+    const rows = buildTranscriptRows({
+      items: [
+        {
+          id: "tool-group-awaiting",
+          type: "tool_group",
+          timestamp: Date.now(),
+          tools: [
+            {
+              id: "tool-awaiting",
+              name: "write_file",
+              status: ToolCallStatus.AwaitingApproval,
+              startTime: Date.now(),
+            },
+          ],
+        },
+      ],
+      viewportWidth: 80,
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text).toContain("write_file (awaiting approval)");
+    expect(text).toContain("Waiting: approval required before execution");
   });
 
   it("adds compact last-output context for failed tools without opening detailed review", () => {
@@ -615,6 +641,7 @@ describe("transcript-layout", () => {
     expect(text).toContain("[Scout] changed_scope - packages/coding/src (84ms)");
     expect(text).toContain("[Scout] repo_overview - packages/coding/src");
     expect(text).toContain("[Scout] read - packages/coding/src/task-engine.ts - offset=3160 - limit=80");
+    expect(text).toContain("Running: waiting for tool output");
   });
 
   it("keeps the completed live tool block visible until the response starts", () => {

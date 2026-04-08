@@ -6,6 +6,7 @@ import {
   formatCollapsedToolInlineText,
   formatToolResultExplanation,
   formatLiveToolLabel,
+  resolveToolExplanationTone,
 } from "./tool-display.js";
 
 export type TranscriptColorToken =
@@ -274,13 +275,14 @@ function buildToolRows(
 
   const compactExplanation = formatToolResultExplanation(tool);
   compactExplanation.forEach((line, index) => {
+    const tone = resolveToolExplanationTone(line);
     pushWrappedRows(
       rows,
       `${itemKey}-tool-${tool.id}-explanation-${index}`,
       line,
       getBodyWidth(viewportWidth, 4),
       {
-        color: line.startsWith("Error:") ? "error" : "dim",
+        color: tone,
         indent: 4,
       }
     );
@@ -349,13 +351,14 @@ function buildLiveToolRows(
 
   const compactExplanation = formatToolResultExplanation(tool);
   compactExplanation.forEach((line, index) => {
+    const tone = resolveToolExplanationTone(line);
     pushWrappedRows(
       rows,
       `${itemKey}-tool-${tool.id}-explanation-${index}`,
       line,
       getBodyWidth(viewportWidth, 4),
       {
-        color: line.startsWith("Error:") ? "error" : "dim",
+        color: tone,
         indent: 4,
       }
     );

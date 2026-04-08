@@ -41,13 +41,13 @@ describe("surface-chrome", () => {
       isHistorySearchActive: false,
       historySearchDetailText: "should not show",
       selectionSummary: "1 line selected",
-      actionSummary: "c copy | v expand",
+      actionSummary: "C copy | V details",
       showAllActive: false,
       baseFooterNotices: ["Search: abc", "Queued follow-ups: 1"],
-    })).toBe("1 line selected | c copy | v expand");
+    })).toBe("1 line selected | C copy | V details");
 
-    expect(buildTranscriptFooterBudgetNotices("1 line selected | c copy", "Copied selection")).toEqual([
-      "1 line selected | c copy",
+    expect(buildTranscriptFooterBudgetNotices("1 line selected | C copy", "Copied selection")).toEqual([
+      "1 line selected | C copy",
       "Copied selection",
     ]);
 
@@ -96,10 +96,10 @@ describe("surface-chrome", () => {
       baseFooterNotices: ["Queued follow-ups: 1"],
     })).toEqual({
       selectionSummary: undefined,
-      actionSummary: "\u2190/\u2192 prev/next item | C copy block | Mouse select copies | V expand/collapse item",
-      secondaryText: "\u2190/\u2192 prev/next item | C copy block | Mouse select copies | V expand/collapse item",
+      actionSummary: "\u2190/\u2192 browse | C copy | Mouse select copies | V details | Esc clear",
+      secondaryText: "\u2190/\u2192 browse | C copy | Mouse select copies | V details | Esc clear",
       budgetNotices: [
-        "\u2190/\u2192 prev/next item | C copy block | Mouse select copies | V expand/collapse item",
+        "\u2190/\u2192 browse | C copy | Mouse select copies | V details | Esc clear",
         "Copied selection",
       ],
     });

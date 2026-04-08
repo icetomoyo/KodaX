@@ -15,8 +15,8 @@
 |---|---|
 | Tracked feature IDs | `001-058` |
 | Total tracked features | `58` |
-| Completed | `51` |
-| InProgress | `2` |
+| Completed | `52` |
+| InProgress | `1` |
 | Planned | `5` |
 | Current released version | `v0.7.14` |
 
@@ -38,7 +38,6 @@
 | ID | Title | Planned | Design |
 |---|---|---|---|
 | `057` | Claude-Aligned TUI Substrate Refactor | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_057-claude-aligned-tui-substrate-refactor) |
-| `056` | Tool Interaction Maturity and Transcript-Native Explanation Layer | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_056-tool-interaction-maturity-and-transcript-native-explanation-layer) |
 
 ---
 
@@ -125,6 +124,7 @@
 | `052` | Dual-Profile AMA Harness and Child Fan-Out Boundaries | `v0.8.0` (unreleased) | [v0.8.0](features/v0.8.0.md#feature_052-dual-profile-ama-harness-and-child-fan-out-boundaries) |
 | `053` | Canonical Repo Identity and Managed Worktree Runtime | `v0.7.30` (unreleased) | [v0.7.30](features/v0.7.30.md#feature_053-canonical-repo-identity-and-managed-worktree-runtime) |
 | `055` | REPL Substrate Hardening and Summary-Only AMA UX | `v0.9.0` (unreleased) | [v0.9.0](features/v0.9.0.md#feature_055-repl-substrate-hardening-and-summary-only-ama-ux) |
+| `056` | Tool Interaction Maturity and Transcript-Native Explanation Layer | `v0.7.30` (unreleased) | [v0.7.30](features/v0.7.30.md#feature_056-tool-interaction-maturity-and-transcript-native-explanation-layer) |
 | `054` | AMA-Project Convergence: Absorb Project Mode into Adaptive H2 | `v0.7.30` (unreleased) | [v0.7.30](features/v0.7.30.md#feature_054-ama-project-convergence-absorb-project-mode-into-adaptive-h2) |
 | `043` | Harness Calibration, Pivoting, Profiling, and Safe Checkpoints | `v0.7.30` (unreleased) | [v0.7.30](features/v0.7.30.md#feature_043-harness-calibration-pivoting-profiling-and-safe-checkpoints) |
 | `038` | Official Sandbox Extension | `v0.7.30` (unreleased) | [v0.7.30](features/v0.7.30.md#feature_038-official-sandbox-extension) |
