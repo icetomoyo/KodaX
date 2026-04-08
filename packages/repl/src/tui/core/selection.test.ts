@@ -31,4 +31,16 @@ describe("transcript screen selection", () => {
 
     expect(selection).toBeUndefined();
   });
+
+  it("keeps wide-character selections aligned to grapheme indices", () => {
+    const selection = buildTranscriptScreenSelection(
+      [{ key: "row-cjk", text: "你好A" }],
+      { rowKey: "row-cjk", modelRowIndex: 0, column: 1 },
+      { rowKey: "row-cjk", modelRowIndex: 0, column: 2 },
+    );
+
+    expect(selection?.text).toBe("好");
+    expect(selection?.charCount).toBe(1);
+    expect(selection?.rowRanges.get("row-cjk")).toEqual({ start: 1, end: 2 });
+  });
 });

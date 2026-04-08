@@ -216,6 +216,10 @@ import {
   useTranscriptViewportScrollController,
 } from "./utils/transcript-scroll-controller.js";
 import {
+  resolveTranscriptOwnedWindowGeometry,
+  type TranscriptOwnedWindowGeometry,
+} from "./utils/transcript-window-geometry.js";
+import {
   buildTranscriptRowIndexByKey,
   buildTranscriptScreenBuffer,
   type TranscriptScreenBuffer,
@@ -964,7 +968,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     scrollBy: scrollTranscriptBy,
     scrollToBottom: scrollTranscriptToBottom,
   } = useTranscriptViewportScrollController();
-  const transcriptScrollWindowRef = useRef<ScrollBoxWindow | null>(null);
+  const transcriptRawWindowRef = useRef<ScrollBoxWindow | null>(null);
+  const transcriptOwnedWindowGeometryRef = useRef<TranscriptOwnedWindowGeometry | null>(null);
   const transcriptVisibleRowsRef = useRef<TranscriptRow[]>([]);
   const transcriptScreenBufferRef = useRef<TranscriptScreenBuffer | null>(null);
   const mouseSelectionRef = useRef<TranscriptMouseSelectionState | null>(null);
@@ -2208,40 +2213,51 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       setTranscriptScrollHeight(metrics.scrollHeight);
     }
   }, [activeTranscriptRenderModel]);
+  const resolveOwnedTranscriptWindow = useCallback((window: ScrollBoxWindow) => (
+    resolveTranscriptOwnedWindowGeometry({
+      window,
+      stickyHeader: transcriptChrome.stickyHeader,
+      width: terminalWidth,
+      bannerVisible: showBanner && window.start < fullscreenBannerRows,
+      fullscreenBannerRows,
+    })
+  ), [
+    fullscreenBannerRows,
+    showBanner,
+    terminalWidth,
+    transcriptChrome.stickyHeader,
+  ]);
   const rebuildTranscriptScreenBuffer = useCallback((
     rows = transcriptVisibleRowsRef.current,
-    window = transcriptScrollWindowRef.current,
+    geometry = transcriptRawWindowRef.current
+      ? resolveOwnedTranscriptWindow(transcriptRawWindowRef.current)
+      : transcriptOwnedWindowGeometryRef.current,
   ) => {
-    if (!window || rows.length === 0) {
+    if (!geometry || rows.length === 0) {
       transcriptScreenBufferRef.current = null;
       return;
     }
 
-    const stickyHeaderRows = transcriptChrome.stickyHeader?.visible && transcriptChrome.stickyHeader.label
-      ? 1
-      : 0;
-    const bannerVisibleRows = showBanner && window.start < fullscreenBannerRows
-      ? fullscreenBannerRows
-      : 0;
+    transcriptOwnedWindowGeometryRef.current = geometry;
     transcriptScreenBufferRef.current = buildTranscriptScreenBuffer(rows, {
       allRows: activeTranscriptRenderModel?.rows ?? rows,
       rowIndexByKey: transcriptRowIndexByKey,
-      topOffsetRows: stickyHeaderRows + bannerVisibleRows,
-      viewportHeight: window.viewportHeight,
+      topOffsetRows: geometry.topOffsetRows,
+      viewportHeight: geometry.contentWindow.viewportHeight,
       animateSpinners: transcriptAnimateSpinners,
     });
   }, [
-    fullscreenBannerRows,
-      activeTranscriptRenderModel?.rows,
-    showBanner,
+    activeTranscriptRenderModel?.rows,
+    resolveOwnedTranscriptWindow,
     transcriptAnimateSpinners,
-    transcriptChrome.stickyHeader,
     transcriptRowIndexByKey,
   ]);
   const handleTranscriptWindowChange = useCallback((window: ScrollBoxWindow) => {
-    transcriptScrollWindowRef.current = window;
-    rebuildTranscriptScreenBuffer(transcriptVisibleRowsRef.current, window);
-  }, [rebuildTranscriptScreenBuffer]);
+    transcriptRawWindowRef.current = window;
+    const geometry = resolveOwnedTranscriptWindow(window);
+    transcriptOwnedWindowGeometryRef.current = geometry;
+    rebuildTranscriptScreenBuffer(transcriptVisibleRowsRef.current, geometry);
+  }, [rebuildTranscriptScreenBuffer, resolveOwnedTranscriptWindow]);
   const handleVisibleTranscriptRowsChange = useCallback((rows: TranscriptRow[]) => {
     transcriptVisibleRowsRef.current = rows;
     rebuildTranscriptScreenBuffer(rows);
@@ -5459,18 +5475,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           renderTranscriptWindow={fullscreenPolicy.enabled && transcriptOwnsViewport
             ? (window) => (
               (() => {
-                const adjustedWindow = {
-                  ...window,
-                  start: Math.max(0, window.start - fullscreenBannerRows),
-                  end: Math.max(0, window.end - fullscreenBannerRows),
-                  viewportTop: Math.max(0, window.viewportTop - fullscreenBannerRows),
-                  viewportHeight: Math.max(
-                    0,
-                    window.viewportHeight - (showBanner && window.start < fullscreenBannerRows
-                      ? fullscreenBannerRows
-                      : 0),
-                  ),
-                };
+                const geometry = resolveOwnedTranscriptWindow(window);
+                const adjustedWindow = geometry.contentWindow;
                 const visibleRows = resolveVisibleTranscriptRows(
                   ownedTranscriptRenderModel?.rows ?? [],
                   {

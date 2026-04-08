@@ -1,5 +1,9 @@
 import type { TranscriptScreenPoint } from "../../tui/core/screen.js";
 import type { TranscriptRow } from "./transcript-layout.js";
+import {
+  charAtTranscriptText,
+  getTranscriptTextLength,
+} from "./transcript-text-metrics.js";
 
 export type TranscriptSelectionGestureMode = "char" | "word" | "line";
 
@@ -89,11 +93,12 @@ export function resolveTranscriptSelectionSpanAt(
     return {
       kind,
       start: { ...point, column: 0 },
-      end: { ...point, column: text.length },
+      end: { ...point, column: getTranscriptTextLength(text) },
     };
   }
 
-  if (text.length === 0) {
+  const textLength = getTranscriptTextLength(text);
+  if (textLength === 0) {
     return {
       kind,
       start: { ...point, column: 0 },
@@ -101,19 +106,19 @@ export function resolveTranscriptSelectionSpanAt(
     };
   }
 
-  let column = Math.max(0, Math.min(text.length - 1, point.column));
-  if (point.column === text.length) {
-    column = text.length - 1;
+  let column = Math.max(0, Math.min(textLength - 1, point.column));
+  if (point.column === textLength) {
+    column = textLength - 1;
   }
 
-  const klass = charClass(text.charAt(column));
+  const klass = charClass(charAtTranscriptText(text, column));
   let start = column;
   let end = column + 1;
 
-  while (start > 0 && charClass(text.charAt(start - 1)) === klass) {
+  while (start > 0 && charClass(charAtTranscriptText(text, start - 1)) === klass) {
     start -= 1;
   }
-  while (end < text.length && charClass(text.charAt(end)) === klass) {
+  while (end < textLength && charClass(charAtTranscriptText(text, end)) === klass) {
     end += 1;
   }
 

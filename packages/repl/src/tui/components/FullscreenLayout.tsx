@@ -1,7 +1,10 @@
 import React from "react";
 import { Box, Text } from "../index.js";
 import { ScrollBox, type ScrollBoxHandle, type ScrollBoxWindow } from "./ScrollBox.js";
-import { calculateVisualLayout } from "../../ui/utils/textUtils.js";
+import {
+  measureFullscreenChromeSlotRows,
+  resolveFullscreenChromeSlotText,
+} from "./fullscreen-layout-utils.js";
 
 export interface FullscreenChromeSlot {
   visible?: boolean;
@@ -26,34 +29,6 @@ export interface FullscreenLayoutProps {
   onScrollTopChange?: (nextScrollTop: number) => void;
   onStickyChange?: (sticky: boolean) => void;
   onWindowChange?: (window: ScrollBoxWindow) => void;
-}
-
-const DEFAULT_LAYOUT_WIDTH = 80;
-
-function resolveChromeSlotText(slot: FullscreenChromeSlot | undefined): string | undefined {
-  if (!slot?.visible || !slot.label) {
-    return undefined;
-  }
-
-  return slot.hint ? `${slot.label}: ${slot.hint}` : slot.label;
-}
-
-function measureChromeSlotRows(
-  slotText: string | undefined,
-  width: number | string | undefined,
-): number {
-  if (!slotText) {
-    return 0;
-  }
-
-  const availableWidth = Math.max(
-    1,
-    (typeof width === "number" ? width : DEFAULT_LAYOUT_WIDTH) - 2,
-  );
-  return Math.max(
-    1,
-    calculateVisualLayout(slotText.split("\n"), availableWidth, 0, 0).visualLines.length,
-  );
 }
 
 export const FullscreenLayout: React.FC<FullscreenLayoutProps> = ({
@@ -83,9 +58,9 @@ export const FullscreenLayout: React.FC<FullscreenLayoutProps> = ({
       </Box>
     );
   };
-  const stickyHeaderText = resolveChromeSlotText(stickyHeader);
-  const jumpToLatestText = resolveChromeSlotText(jumpToLatest);
-  const stickyHeaderRows = measureChromeSlotRows(stickyHeaderText, width);
+  const stickyHeaderText = resolveFullscreenChromeSlotText(stickyHeader);
+  const jumpToLatestText = resolveFullscreenChromeSlotText(jumpToLatest);
+  const stickyHeaderRows = measureFullscreenChromeSlotRows(stickyHeaderText, width);
   const stickyHeaderNode = renderChromeSlot(stickyHeader, stickyHeaderText);
   const jumpToLatestNode = overlay ? null : renderChromeSlot(jumpToLatest, jumpToLatestText);
   const effectiveViewportHeight = Math.max(0, viewportHeight - stickyHeaderRows);

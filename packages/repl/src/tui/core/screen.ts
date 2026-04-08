@@ -1,4 +1,8 @@
 import type { TranscriptRow } from "../../ui/utils/transcript-layout.js";
+import {
+  getTranscriptTextDisplayWidth,
+  getTranscriptTextLength,
+} from "../../ui/utils/transcript-text-metrics.js";
 
 export interface TranscriptScreenRow {
   key: string;
@@ -6,6 +10,7 @@ export interface TranscriptScreenRow {
   modelRowIndex: number;
   screenRow: number;
   text: string;
+  textLength: number;
   textStartColumn: number;
   textEndColumn: number;
 }
@@ -64,14 +69,16 @@ export function buildTranscriptScreenBuffer(
   const rows = visibleRows.map<TranscriptScreenRow>((row, index) => {
     const text = normalizeTranscriptRowText(row);
     const textStartColumn = resolveTranscriptTextStartColumn(row, options);
+    const textLength = getTranscriptTextLength(text);
     return {
       key: row.key,
       row,
       modelRowIndex: indexByKey.get(row.key) ?? index,
       screenRow: topOffsetRows + index + 1,
       text,
+      textLength,
       textStartColumn,
-      textEndColumn: textStartColumn + text.length,
+      textEndColumn: textStartColumn + getTranscriptTextDisplayWidth(text),
     };
   });
 

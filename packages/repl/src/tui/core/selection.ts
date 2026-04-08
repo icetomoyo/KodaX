@@ -1,6 +1,9 @@
 import type { TranscriptRow } from "../../ui/utils/transcript-layout.js";
 import type { TranscriptScreenPoint } from "./screen.js";
-import { resolveTranscriptTextStartColumn } from "./screen.js";
+import {
+  getTranscriptTextLength,
+  sliceTranscriptText,
+} from "../../ui/utils/transcript-text-metrics.js";
 
 export interface TranscriptRowSelectionRange {
   start: number;
@@ -35,25 +38,6 @@ function comparePoints(
   return left.column - right.column;
 }
 
-function resolveTranscriptTextColumn(
-  row: TranscriptRow,
-  screenColumn: number,
-  options: BuildTranscriptSelectionOptions = {},
-): number {
-  const normalizedColumn = Math.max(1, Math.floor(screenColumn));
-  const text = normalizeTranscriptRowText(row);
-  const textStartColumn = resolveTranscriptTextStartColumn(row, options);
-  return Math.max(0, Math.min(text.length, normalizedColumn - textStartColumn));
-}
-
-function resolveAbsoluteScreenColumn(
-  row: TranscriptRow,
-  column: number,
-  options: BuildTranscriptSelectionOptions = {},
-): number {
-  return resolveTranscriptTextStartColumn(row, options) + Math.max(0, column);
-}
-
 export function buildTranscriptScreenSelection(
   rows: readonly TranscriptRow[],
   anchor: TranscriptScreenPoint,
@@ -84,7 +68,7 @@ export function buildTranscriptScreenSelection(
   const effectiveEndPoint = selectFullRowOnCollapsed && isCollapsed
     ? {
         ...endPoint,
-        column: normalizeTranscriptRowText(endRow).length,
+        column: getTranscriptTextLength(normalizeTranscriptRowText(endRow)),
       }
     : endPoint;
 
@@ -103,27 +87,20 @@ export function buildTranscriptScreenSelection(
     }
 
     const rowText = normalizeTranscriptRowText(row);
+    const rowTextLength = getTranscriptTextLength(rowText);
     const start = rowIndex === effectiveStartPoint.modelRowIndex
-      ? resolveTranscriptTextColumn(
-          row,
-          resolveAbsoluteScreenColumn(row, effectiveStartPoint.column, options),
-          options,
-        )
+      ? effectiveStartPoint.column
       : 0;
     const end = rowIndex === effectiveEndPoint.modelRowIndex
-      ? resolveTranscriptTextColumn(
-          row,
-          resolveAbsoluteScreenColumn(row, effectiveEndPoint.column, options),
-          options,
-        )
-      : rowText.length;
-    const safeStart = Math.max(0, Math.min(start, rowText.length));
-    const safeEnd = Math.max(safeStart, Math.min(end, rowText.length));
-    const segment = rowText.slice(safeStart, safeEnd);
+      ? effectiveEndPoint.column
+      : rowTextLength;
+    const safeStart = Math.max(0, Math.min(start, rowTextLength));
+    const safeEnd = Math.max(safeStart, Math.min(end, rowTextLength));
+    const segment = sliceTranscriptText(rowText, safeStart, safeEnd);
 
     if (safeEnd > safeStart) {
       rowRanges.set(row.key, { start: safeStart, end: safeEnd });
-      charCount += segment.length;
+      charCount += safeEnd - safeStart;
     }
 
     segments.push(segment);

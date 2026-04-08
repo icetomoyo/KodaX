@@ -1,4 +1,9 @@
 import type { TranscriptRow } from "./transcript-layout.js";
+import {
+  getTranscriptTextLength,
+  resolveTranscriptTextIndexAtVisualColumn,
+  sliceTranscriptText,
+} from "./transcript-text-metrics.js";
 
 export interface TranscriptSelectionPoint {
   rowIndex: number;
@@ -45,7 +50,10 @@ export function resolveTranscriptTextColumn(
   const normalizedColumn = Math.max(1, Math.floor(column));
   const text = normalizeTranscriptRowText(row);
   const textStartColumn = resolveTextStartColumn(row, options);
-  return Math.max(0, Math.min(text.length, normalizedColumn - textStartColumn));
+  return resolveTranscriptTextIndexAtVisualColumn(
+    text,
+    normalizedColumn - textStartColumn,
+  );
 }
 
 function compareSelectionPoints(
@@ -91,19 +99,20 @@ export function buildTranscriptTextSelection(
     }
 
     const rowText = normalizeTranscriptRowText(row);
+    const rowTextLength = getTranscriptTextLength(rowText);
     const start = rowIndex === effectiveStartPoint.rowIndex
       ? resolveTranscriptTextColumn(row, effectiveStartPoint.column, options)
       : 0;
     const end = rowIndex === effectiveEndPoint.rowIndex
       ? resolveTranscriptTextColumn(row, effectiveEndPoint.column, options)
-      : rowText.length;
-    const safeStart = Math.max(0, Math.min(start, rowText.length));
-    const safeEnd = Math.max(safeStart, Math.min(end, rowText.length));
-    const segment = rowText.slice(safeStart, safeEnd);
+      : rowTextLength;
+    const safeStart = Math.max(0, Math.min(start, rowTextLength));
+    const safeEnd = Math.max(safeStart, Math.min(end, rowTextLength));
+    const segment = sliceTranscriptText(rowText, safeStart, safeEnd);
 
     if (safeEnd > safeStart) {
       rowRanges.set(row.key, { start: safeStart, end: safeEnd });
-      charCount += segment.length;
+      charCount += safeEnd - safeStart;
     }
 
     segments.push(segment);

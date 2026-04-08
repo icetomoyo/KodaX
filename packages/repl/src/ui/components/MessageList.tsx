@@ -33,6 +33,7 @@ import {
   type TranscriptSection,
   type TranscriptRow,
 } from "../utils/transcript-layout.js";
+import { sliceTranscriptText } from "../utils/transcript-text-metrics.js";
 import {
   collapseToolCalls,
   formatCollapsedToolInlineText,
@@ -444,13 +445,13 @@ const TranscriptRowRenderer: React.FC<{
   const normalizedText = row.text === " " ? "" : row.text;
   const baseText = normalizedText || " ";
   const selectedText = selectionRange && normalizedText
-    ? normalizedText.slice(selectionRange.start, selectionRange.end)
+    ? sliceTranscriptText(normalizedText, selectionRange.start, selectionRange.end)
     : "";
   const beforeSelection = selectionRange && normalizedText
-    ? normalizedText.slice(0, selectionRange.start)
+    ? sliceTranscriptText(normalizedText, 0, selectionRange.start)
     : normalizedText;
   const afterSelection = selectionRange && normalizedText
-    ? normalizedText.slice(selectionRange.end)
+    ? sliceTranscriptText(normalizedText, selectionRange.end)
     : "";
   const accentWholeRow = selectedItem && !selectionRange;
   const dimColor = !accentWholeRow && row.color === "dim";

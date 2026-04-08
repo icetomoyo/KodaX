@@ -3,6 +3,7 @@ import type {
   TranscriptScreenPoint,
   TranscriptScreenRow,
 } from "./screen.js";
+import { resolveTranscriptTextIndexAtVisualColumn } from "../../ui/utils/transcript-text-metrics.js";
 
 export interface TranscriptScreenHit {
   screenRow: TranscriptScreenRow;
@@ -14,9 +15,9 @@ function clampTextColumn(
   screenColumn: number,
 ): number {
   const safeScreenColumn = Math.max(1, Math.floor(screenColumn));
-  return Math.max(
-    0,
-    Math.min(row.text.length, safeScreenColumn - row.textStartColumn),
+  return resolveTranscriptTextIndexAtVisualColumn(
+    row.text,
+    safeScreenColumn - row.textStartColumn,
   );
 }
 

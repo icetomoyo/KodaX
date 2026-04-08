@@ -23,4 +23,16 @@ describe("transcript hit test", () => {
     expect(clampTranscriptScreenHit(buffer, 1, 1)?.point.rowKey).toBe("row-1");
     expect(clampTranscriptScreenHit(buffer, 10, 1)?.point.rowKey).toBe("row-2");
   });
+
+  it("maps wide-character cells onto grapheme indices instead of UTF-16 columns", () => {
+    const wideBuffer = buildTranscriptScreenBuffer([
+      { key: "row-cjk", text: "你好A" },
+    ]);
+
+    expect(hitTestTranscriptScreen(wideBuffer, 1, 1)?.point.column).toBe(0);
+    expect(hitTestTranscriptScreen(wideBuffer, 1, 2)?.point.column).toBe(0);
+    expect(hitTestTranscriptScreen(wideBuffer, 1, 3)?.point.column).toBe(1);
+    expect(hitTestTranscriptScreen(wideBuffer, 1, 5)?.point.column).toBe(2);
+    expect(hitTestTranscriptScreen(wideBuffer, 1, 6)?.point.column).toBe(3);
+  });
 });

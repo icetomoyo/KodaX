@@ -31,4 +31,17 @@ describe("transcript screen buffer", () => {
       textStartColumn: 3,
     });
   });
+
+  it("tracks transcript row display width using rendered cell width, not UTF-16 length", () => {
+    const buffer = buildTranscriptScreenBuffer([
+      { key: "row-cjk", text: "你好A" },
+    ]);
+
+    expect(buffer.rows[0]).toMatchObject({
+      key: "row-cjk",
+      textLength: 3,
+      textStartColumn: 1,
+      textEndColumn: 6,
+    });
+  });
 });

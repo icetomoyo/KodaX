@@ -47,4 +47,14 @@ describe("transcript text selection", () => {
     expect(selection?.text).toBe("Beta");
     expect(buildTranscriptTextSelectionSummary(selection)).toBe("Selected 4 chars");
   });
+
+  it("maps wide-character columns using rendered cell width", () => {
+    const cjkRow: TranscriptRow = { key: "row-cjk", text: "你好A" };
+
+    expect(resolveTranscriptTextColumn(cjkRow, 1)).toBe(0);
+    expect(resolveTranscriptTextColumn(cjkRow, 2)).toBe(0);
+    expect(resolveTranscriptTextColumn(cjkRow, 3)).toBe(1);
+    expect(resolveTranscriptTextColumn(cjkRow, 5)).toBe(2);
+    expect(resolveTranscriptTextColumn(cjkRow, 6)).toBe(3);
+  });
 });

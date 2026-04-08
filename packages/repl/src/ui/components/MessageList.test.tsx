@@ -162,4 +162,38 @@ describe("MessageList", () => {
     expect(footerIndex).toBeGreaterThanOrEqual(2);
     expect(footerIndex).toBeLessThanOrEqual(2);
   });
+
+  it("renders transcript text selections using grapheme-aware ranges", () => {
+    const { lastFrame } = render(
+      <MessageList
+        items={[
+          {
+            id: "assistant-1",
+            type: "assistant",
+            timestamp: 1,
+            text: "你好A",
+          },
+        ]}
+        transcriptModel={{
+          staticSections: [],
+          sections: [
+            {
+              key: "assistant-1",
+              rows: [{ key: "assistant-1-body-0", text: "你好A", itemId: "assistant-1" }],
+            },
+          ],
+          rows: [{ key: "assistant-1-body-0", text: "你好A", itemId: "assistant-1" }],
+        }}
+        visibleRowsOverride={[
+          { key: "assistant-1-body-0", text: "你好A", itemId: "assistant-1" },
+        ]}
+        selectedTextRanges={new Map([
+          ["assistant-1-body-0", { start: 1, end: 2 }],
+        ])}
+        windowed
+      />,
+    );
+
+    expect(lastFrame()).toContain("你好A");
+  });
 });
