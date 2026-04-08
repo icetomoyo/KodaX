@@ -82,6 +82,11 @@ export const TranscriptViewport: React.FC<TranscriptViewportProps> = ({
   const searchSurface = search?.surface;
   const viewportWidth = messageListProps.viewportWidth ?? 80;
   const chromeWidth = Math.max(1, viewportWidth - 2);
+  const dismissAction = search?.query?.trim()
+    ? "close-search"
+    : (selectedSummary || canCopySelection || canCopyToolInput || canToggleSelectionDetail || canNavigateSelection)
+      ? "clear"
+      : undefined;
   const selectionText = buildMessageSelectorText({
     itemSummary: selectedSummary,
     itemKind: selectedKindLabel,
@@ -95,11 +100,13 @@ export const TranscriptViewport: React.FC<TranscriptViewportProps> = ({
     toggleDetail: canToggleSelectionDetail,
     selectionNavigation: canNavigateSelection,
     matchNavigation: Boolean(searchStatusText) && searchMatchCount > 0,
+    dismissAction,
   }), [
     canCopySelection,
     canCopyToolInput,
     canNavigateSelection,
     canToggleSelectionDetail,
+    dismissAction,
     searchMatchCount,
     searchStatusText,
     supportsCopyOnSelect,
@@ -153,6 +160,7 @@ export const TranscriptViewport: React.FC<TranscriptViewportProps> = ({
           toggleDetail={canToggleSelectionDetail}
           selectionNavigation={canNavigateSelection}
           matchNavigation={Boolean(searchStatusText) && searchMatchCount > 0}
+          dismissAction={dismissAction}
         />
       ) : null}
       {inlineChromeVisible && searchStatusText ? (

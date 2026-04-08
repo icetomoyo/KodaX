@@ -183,6 +183,7 @@ export function buildTranscriptFooterViewModel(
       toggleDetail: false,
       selectionNavigation: false,
       matchNavigation: false,
+      dismissAction: "clear",
     })
     : options.selectionState?.itemSummary
       ? buildMessageActionsText({
@@ -192,6 +193,7 @@ export function buildTranscriptFooterViewModel(
         toggleDetail: Boolean(options.selectionState?.toggleDetail),
         selectionNavigation: Boolean(navigationCapabilities?.selection),
         matchNavigation: false,
+        dismissAction: "clear",
       })
     : undefined;
   const secondaryText = buildTranscriptFooterSecondaryText({

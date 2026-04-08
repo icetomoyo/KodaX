@@ -13,15 +13,18 @@ describe("MessageActions", () => {
         toggleDetail
         selectionNavigation
         matchNavigation
+        dismissAction="clear"
       />,
     );
 
     const frame = lastFrame();
-    expect(frame).toContain("select");
+    expect(frame).toContain("browse");
     expect(frame).toContain("C copy");
-    expect(frame).toContain("I copy tool args");
+    expect(frame).toContain("I tool input");
     expect(frame).toContain("Mouse select copies");
-    expect(frame).toContain("expand/collapse");
-    expect(frame).toContain("next/prev match");
+    expect(frame).toContain("V details");
+    expect(frame).toContain("N/Shift+N matches");
+    expect(frame).toContain("Esc");
+    expect(frame).toContain("clear");
   });
 });
