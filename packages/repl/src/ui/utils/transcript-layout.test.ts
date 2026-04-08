@@ -198,7 +198,7 @@ describe("transcript-layout", () => {
     });
 
     const text = rows.map((row) => row.text).join("\n");
-    expect(text).toContain("thinking truncated in compact view");
+    expect(text).toContain("thinking truncated; press Ctrl+O to inspect full reasoning");
     expect(text).not.toContain("A".repeat(430));
   });
 
@@ -216,7 +216,7 @@ describe("transcript-layout", () => {
 
     const text = rows.map((row) => row.text).join("\n");
     expect(text.replace(/\n/g, "")).toContain("B".repeat(430));
-    expect(text).not.toContain("thinking truncated in compact view");
+    expect(text).not.toContain("thinking truncated; press Ctrl+O to inspect full reasoning");
   });
 
   it("truncates persisted thinking blocks in compact mode using transcript maxLines", () => {
@@ -236,7 +236,7 @@ describe("transcript-layout", () => {
     const text = rows.map((row) => row.text).join("\n");
     expect(text).toContain("line 1");
     expect(text).toContain("line 5");
-    expect(text).toContain("thinking truncated in compact view");
+    expect(text).toContain("thinking truncated; press Ctrl+O to inspect full reasoning");
     expect(text).not.toContain("line 6");
   });
 
@@ -257,7 +257,7 @@ describe("transcript-layout", () => {
 
     const text = rows.map((row) => row.text).join("\n");
     expect(text).toContain("detail 8");
-    expect(text).not.toContain("thinking truncated in compact view");
+    expect(text).not.toContain("thinking truncated; press Ctrl+O to inspect full reasoning");
   });
 
   it("shows AMA harness level and active worker in the live thinking row", () => {

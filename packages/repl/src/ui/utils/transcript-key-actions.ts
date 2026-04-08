@@ -12,11 +12,13 @@ export type TranscriptKeyboardAction =
   | { kind: "history-search-step"; direction: "next" | "prev" }
   | { kind: "history-search-submit" }
   | { kind: "history-search-append"; text: string }
+  | { kind: "clear-selection-focus" }
   | { kind: "exit-transcript" }
   | { kind: "scroll-line-down" }
   | { kind: "scroll-line-up" }
   | { kind: "jump-oldest" }
   | { kind: "jump-latest" }
+  | { kind: "toggle-show-all" }
   | { kind: "cycle-selection"; direction: "prev" | "next" }
   | { kind: "copy-selection" }
   | { kind: "copy-item" }
@@ -30,6 +32,7 @@ export interface ResolveTranscriptKeyboardActionOptions {
   isHistorySearchActive: boolean;
   historySearchMatchCount: number;
   hasTextSelection: boolean;
+  hasFocusedItem: boolean;
   canCopySelectedItem: boolean;
   canCopySelectedToolInput: boolean;
   canToggleSelectedDetail: boolean;
@@ -45,6 +48,7 @@ export function resolveTranscriptKeyboardAction(
     isHistorySearchActive,
     historySearchMatchCount,
     hasTextSelection,
+    hasFocusedItem,
     canCopySelectedItem,
     canCopySelectedToolInput,
     canToggleSelectedDetail,
@@ -92,6 +96,9 @@ export function resolveTranscriptKeyboardAction(
   }
 
   if (isTranscriptMode && key.name === "escape") {
+    if (hasTextSelection || hasFocusedItem) {
+      return { kind: "clear-selection-focus" };
+    }
     return { kind: "exit-transcript" };
   }
 
@@ -109,6 +116,10 @@ export function resolveTranscriptKeyboardAction(
 
   if (!isTranscriptMode) {
     return { kind: "none" };
+  }
+
+  if (key.ctrl && !key.meta && key.name === "e") {
+    return { kind: "toggle-show-all" };
   }
 
   if (key.name === "j" || key.name === "down") {
@@ -173,4 +184,3 @@ export function resolveTranscriptKeyboardAction(
 
   return { kind: "none" };
 }
-

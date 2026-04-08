@@ -4,7 +4,6 @@ import {
   HELP_MENU_CHROME_ROWS,
   HELP_BAR_SPACER_ROWS,
   buildHelpMenuSections,
-  MESSAGE_LIST_VERTICAL_PADDING_ROWS,
 } from "../constants/layout.js";
 
 export interface ViewportBudgetSelectRequest {
@@ -38,6 +37,7 @@ export interface ViewportBudgetHistorySearchState {
 export interface ViewportBudgetOptions {
   terminalRows: number;
   terminalWidth: number;
+  windowedTranscript?: boolean;
   inputText: string;
   inputPrompt?: string;
   footerHeaderText?: string;
@@ -121,13 +121,17 @@ export function calculateInputPromptRows(
   );
 
   const contentRows = Math.max(1, layout.visualLines.length);
-  return contentRows + 4;
+  // TextInput renders a top divider, the content block, and a bottom divider.
+  // Prompt-specific outer padding is intentionally omitted so fullscreen bottom
+  // slots stay closer to Claude's fixed footer/input stack.
+  return contentRows + 2;
 }
 
 export function calculateViewportBudget(options: ViewportBudgetOptions): ViewportBudgetResult {
   const {
     terminalRows,
     terminalWidth,
+    windowedTranscript = false,
     inputText,
     inputPrompt = ">",
     footerHeaderText,
@@ -283,10 +287,10 @@ export function calculateViewportBudget(options: ViewportBudgetOptions): Viewpor
     (suggestionsMode === "overlay" ? suggestionsRows : 0) +
     (dialogMode === "overlay" ? confirmRows + uiRequestRows + historySearchRows : 0);
   const reservedBottomRows =
-    footerRows + workStripRows + statusRows + overlayRows;
+    footerRows + workStripRows + statusRows;
   const messageRows = Math.max(
     1,
-    terminalRows - reservedBottomRows - MESSAGE_LIST_VERTICAL_PADDING_ROWS
+    terminalRows - reservedBottomRows
   );
   const slots: ViewportBudgetSlot[] = [
     { name: "transcript", rows: messageRows },

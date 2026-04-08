@@ -42,11 +42,10 @@ describe("TranscriptViewport", () => {
 
     const frame = lastFrame();
     expect(frame).toContain("Browsing");
-    expect(frame).toContain("Selected item 1/3");
-    expect(frame).toContain("assistant: Planner response");
-    expect(frame).toContain("select");
+    expect(frame).not.toContain("Selected item 1/3");
+    expect(frame).not.toContain("assistant: Planner response");
     expect(frame).toContain("C copy");
-    expect(frame).toContain("I copy tool input");
+    expect(frame).toContain("I copy tool args");
     expect(frame).toContain("Mouse select copies");
     expect(frame).toContain("1/2 transcript matches");
     expect(frame).toContain("2 matches");

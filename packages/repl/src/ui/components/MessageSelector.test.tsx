@@ -15,8 +15,8 @@ describe("MessageSelector", () => {
     );
 
     const frame = lastFrame();
-    expect(frame).toContain("Selected 2/4");
+    expect(frame).toContain("Selected item 2/4");
     expect(frame).toContain("tool: Tool call: changed_diff");
-    expect(frame).toContain("[expanded]");
+    expect(frame).toContain("expanded");
   });
 });

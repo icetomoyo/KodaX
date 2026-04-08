@@ -11,7 +11,9 @@ function createHandlers() {
     submitHistorySearchSelection: vi.fn(),
     appendHistorySearchQuery: vi.fn(),
     openHistorySearchSurface: vi.fn(),
+    clearTranscriptSelectionFocus: vi.fn(),
     exitTranscriptModeSurface: vi.fn(),
+    toggleTranscriptShowAll: vi.fn(),
     scrollTranscriptHome: vi.fn(),
     scrollTranscriptToBottom: vi.fn(),
     cycleTranscriptSelection: vi.fn(),
@@ -69,5 +71,34 @@ describe("transcript-interaction-controller", () => {
     })).toBe(true);
     expect(promptHandlers.scrollTranscriptToBottom).toHaveBeenCalledTimes(1);
     expect(promptHandlers.exitTranscriptModeSurface).not.toHaveBeenCalled();
+  });
+
+  it("clears transcript focus without exiting when requested", () => {
+    const handlers = createHandlers();
+
+    expect(executeTranscriptKeyboardAction({
+      action: { kind: "clear-selection-focus" },
+      hasTranscript: true,
+      isTranscriptMode: true,
+      pageScrollDelta: 12,
+      ...handlers,
+    })).toBe(true);
+
+    expect(handlers.clearTranscriptSelectionFocus).toHaveBeenCalledTimes(1);
+    expect(handlers.exitTranscriptModeSurface).not.toHaveBeenCalled();
+  });
+
+  it("toggles transcript show-all through the controller", () => {
+    const handlers = createHandlers();
+
+    expect(executeTranscriptKeyboardAction({
+      action: { kind: "toggle-show-all" },
+      hasTranscript: true,
+      isTranscriptMode: true,
+      pageScrollDelta: 12,
+      ...handlers,
+    })).toBe(true);
+
+    expect(handlers.toggleTranscriptShowAll).toHaveBeenCalledTimes(1);
   });
 });

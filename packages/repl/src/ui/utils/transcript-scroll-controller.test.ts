@@ -65,7 +65,7 @@ describe("transcript-scroll-controller", () => {
       historySearchQuery: "",
     });
 
-    expect(model.browseHintText).toContain("Transcript Mode");
+    expect(model.browseHintText).toContain("Transcript");
     expect(model.stickyHeader).toEqual({
       visible: true,
       label: "Transcript Mode",

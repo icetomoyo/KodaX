@@ -1,4 +1,13 @@
+import {
+  useCallback,
+  useRef,
+  useState,
+  type Dispatch,
+  type MutableRefObject,
+  type SetStateAction,
+} from "react";
 import type { HistoryItem } from "../types.js";
+import type { ScrollBoxHandle } from "../../tui/components/ScrollBox.js";
 import {
   buildTranscriptBrowseHint,
   type TranscriptDisplayState,
@@ -112,6 +121,86 @@ export function incrementTranscriptScrollOffset(
   delta: number,
 ): number {
   return Math.max(0, currentOffset + delta);
+}
+
+export function clampTranscriptScrollOffset(
+  currentOffset: number,
+  scrollHeight: number,
+  viewportHeight: number,
+): number {
+  const maxScrollOffset = Math.max(0, scrollHeight - viewportHeight);
+  return Math.min(Math.max(0, currentOffset), maxScrollOffset);
+}
+
+export interface TranscriptViewportScrollController {
+  scrollRef: MutableRefObject<ScrollBoxHandle | null>;
+  scrollOffset: number;
+  sticky: boolean;
+  setScrollOffset: Dispatch<SetStateAction<number>>;
+  setSticky: Dispatch<SetStateAction<boolean>>;
+  handleScrollTopChange: (nextScrollTop: number) => void;
+  handleStickyChange: (sticky: boolean) => void;
+  scrollTo: (nextScrollOffset: number) => void;
+  scrollBy: (delta: number) => void;
+  scrollToBottom: () => void;
+}
+
+export function useTranscriptViewportScrollController(
+): TranscriptViewportScrollController {
+  const scrollRef = useRef<ScrollBoxHandle | null>(null);
+  const [scrollOffset, setScrollOffset] = useState(0);
+  const [sticky, setSticky] = useState(true);
+
+  const handleScrollTopChange = useCallback((nextScrollTop: number) => {
+    setScrollOffset(Math.max(0, nextScrollTop));
+  }, []);
+
+  const handleStickyChange = useCallback((nextSticky: boolean) => {
+    setSticky(nextSticky);
+  }, []);
+
+  const scrollTo = useCallback((nextScrollOffset: number) => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTo(nextScrollOffset);
+      return;
+    }
+
+    setScrollOffset(Math.max(0, nextScrollOffset));
+    setSticky(nextScrollOffset === 0);
+  }, []);
+
+  const scrollBy = useCallback((delta: number) => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollBy(delta);
+      return;
+    }
+
+    setScrollOffset((prev) => incrementTranscriptScrollOffset(prev, delta));
+    setSticky(false);
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollToBottom();
+      return;
+    }
+
+    setScrollOffset(0);
+    setSticky(true);
+  }, []);
+
+  return {
+    scrollRef,
+    scrollOffset,
+    sticky,
+    setScrollOffset,
+    setSticky,
+    handleScrollTopChange,
+    handleStickyChange,
+    scrollTo,
+    scrollBy,
+    scrollToBottom,
+  };
 }
 
 export interface TranscriptSelectionOffsetOptions {

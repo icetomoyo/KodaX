@@ -243,16 +243,11 @@ const Ink = class Ink {
         this.cursorPosition = undefined;
     };
     usesVirtualShellOwnership = (options = {}) => {
-        const shellMode = options.shellMode ?? this.shellMode;
         const altScreenActive = options.altScreenActive ?? this.altScreenActive;
-        const shellTransitionPhase = options.shellTransitionPhase ?? this.shellTransitionPhase;
-        return altScreenActive
-            || shellMode === 'virtual'
-            || shellTransitionPhase !== undefined;
+        return altScreenActive;
     };
     beginShellTransition(phase) {
         this.shellTransitionPhase = phase;
-        this.resetOutputTracking();
     }
     setShellMode(mode, mouseTracking) {
         const previousMode = this.shellMode;
@@ -292,6 +287,7 @@ const Ink = class Ink {
         this.log.setCursorPosition(this.cursorPosition);
         this.log(this.lastOutputToRender || this.lastOutput + '\n');
     };
+    shouldRestoreManagedShellAfterExternalWrite = () => this.altScreenActive;
     calculateLayout = () => {
         const terminalWidth = this.getTerminalWidth();
         this.rootNode.yogaNode.setWidth(terminalWidth);
@@ -366,12 +362,12 @@ const Ink = class Ink {
         if (hasStaticOutput) {
             this.fullStaticOutput += staticOutput;
         }
-        const usesVirtualFullscreenShell = this.usesVirtualShellOwnership();
+        const usesManagedVirtualFullscreenShell = this.altScreenActive;
         const shouldUseFullscreenFrameOwnership = this.options.stdout.isTTY
             && outputHeight >= this.options.stdout.rows
-            && usesVirtualFullscreenShell;
+            && usesManagedVirtualFullscreenShell;
         const outputToRender = shouldUseFullscreenFrameOwnership ? output : output + '\n';
-        if (this.lastOutputHeight >= this.options.stdout.rows && usesVirtualFullscreenShell) {
+        if (this.lastOutputHeight >= this.options.stdout.rows && usesManagedVirtualFullscreenShell) {
             const sync = shouldSynchronize(this.options.stdout);
             if (sync) {
                 this.options.stdout.write(bsu);
@@ -379,9 +375,6 @@ const Ink = class Ink {
             const fullFrameOutput = this.fullStaticOutput + outputToRender;
             if (this.altScreenActive) {
                 this.log.clear();
-                this.log(fullFrameOutput);
-            }
-            else if (this.shellMode === 'main-screen') {
                 this.log(fullFrameOutput);
             }
             else {
@@ -440,6 +433,10 @@ const Ink = class Ink {
             this.options.stdout.write(data);
             return;
         }
+        if (!this.shouldRestoreManagedShellAfterExternalWrite()) {
+            this.options.stdout.write(data);
+            return;
+        }
         const sync = shouldSynchronize(this.options.stdout);
         if (sync) {
             this.options.stdout.write(bsu);
@@ -461,6 +458,10 @@ const Ink = class Ink {
             return;
         }
         if (isInCi) {
+            this.options.stderr.write(data);
+            return;
+        }
+        if (!this.shouldRestoreManagedShellAfterExternalWrite()) {
             this.options.stderr.write(data);
             return;
         }

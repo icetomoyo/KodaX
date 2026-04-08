@@ -22,6 +22,7 @@ describe("transcript-key-actions", () => {
       isHistorySearchActive: false,
       historySearchMatchCount: 0,
       hasTextSelection: false,
+      hasFocusedItem: false,
       canCopySelectedItem: false,
       canCopySelectedToolInput: false,
       canToggleSelectedDetail: false,
@@ -34,6 +35,7 @@ describe("transcript-key-actions", () => {
       isHistorySearchActive: false,
       historySearchMatchCount: 0,
       hasTextSelection: false,
+      hasFocusedItem: false,
       canCopySelectedItem: false,
       canCopySelectedToolInput: false,
       canToggleSelectedDetail: false,
@@ -48,6 +50,7 @@ describe("transcript-key-actions", () => {
       isHistorySearchActive: true,
       historySearchMatchCount: 2,
       hasTextSelection: false,
+      hasFocusedItem: false,
       canCopySelectedItem: false,
       canCopySelectedToolInput: false,
       canToggleSelectedDetail: false,
@@ -60,6 +63,7 @@ describe("transcript-key-actions", () => {
       isHistorySearchActive: true,
       historySearchMatchCount: 2,
       hasTextSelection: false,
+      hasFocusedItem: false,
       canCopySelectedItem: false,
       canCopySelectedToolInput: false,
       canToggleSelectedDetail: false,
@@ -74,6 +78,7 @@ describe("transcript-key-actions", () => {
       isHistorySearchActive: false,
       historySearchMatchCount: 0,
       hasTextSelection: true,
+      hasFocusedItem: false,
       canCopySelectedItem: true,
       canCopySelectedToolInput: false,
       canToggleSelectedDetail: false,
@@ -86,6 +91,7 @@ describe("transcript-key-actions", () => {
       isHistorySearchActive: false,
       historySearchMatchCount: 0,
       hasTextSelection: false,
+      hasFocusedItem: true,
       canCopySelectedItem: true,
       canCopySelectedToolInput: false,
       canToggleSelectedDetail: false,
@@ -100,6 +106,7 @@ describe("transcript-key-actions", () => {
       isHistorySearchActive: false,
       historySearchMatchCount: 0,
       hasTextSelection: false,
+      hasFocusedItem: false,
       canCopySelectedItem: false,
       canCopySelectedToolInput: false,
       canToggleSelectedDetail: false,
@@ -112,11 +119,80 @@ describe("transcript-key-actions", () => {
       isHistorySearchActive: false,
       historySearchMatchCount: 3,
       hasTextSelection: false,
+      hasFocusedItem: false,
       canCopySelectedItem: false,
       canCopySelectedToolInput: false,
       canToggleSelectedDetail: false,
       canCycleTranscriptSelection: false,
     })).toEqual({ kind: "search-match-nav", direction: "prev" });
   });
-});
 
+  it("maps Ctrl+E to toggle show all in transcript mode", () => {
+    expect(resolveTranscriptKeyboardAction({
+      key: createKey({ name: "e", ctrl: true }),
+      isTranscriptMode: true,
+      isHistorySearchActive: false,
+      historySearchMatchCount: 0,
+      hasTextSelection: false,
+      hasFocusedItem: false,
+      canCopySelectedItem: false,
+      canCopySelectedToolInput: false,
+      canToggleSelectedDetail: false,
+      canCycleTranscriptSelection: false,
+    })).toEqual({ kind: "toggle-show-all" });
+
+    expect(resolveTranscriptKeyboardAction({
+      key: createKey({ name: "e", ctrl: true }),
+      isTranscriptMode: false,
+      isHistorySearchActive: false,
+      historySearchMatchCount: 0,
+      hasTextSelection: false,
+      hasFocusedItem: false,
+      canCopySelectedItem: false,
+      canCopySelectedToolInput: false,
+      canToggleSelectedDetail: false,
+      canCycleTranscriptSelection: false,
+    })).toEqual({ kind: "none" });
+  });
+
+  it("uses escape to clear selection/focus before exiting transcript", () => {
+    expect(resolveTranscriptKeyboardAction({
+      key: createKey({ name: "escape" }),
+      isTranscriptMode: true,
+      isHistorySearchActive: false,
+      historySearchMatchCount: 0,
+      hasTextSelection: true,
+      hasFocusedItem: false,
+      canCopySelectedItem: false,
+      canCopySelectedToolInput: false,
+      canToggleSelectedDetail: false,
+      canCycleTranscriptSelection: false,
+    })).toEqual({ kind: "clear-selection-focus" });
+
+    expect(resolveTranscriptKeyboardAction({
+      key: createKey({ name: "escape" }),
+      isTranscriptMode: true,
+      isHistorySearchActive: false,
+      historySearchMatchCount: 0,
+      hasTextSelection: false,
+      hasFocusedItem: true,
+      canCopySelectedItem: true,
+      canCopySelectedToolInput: true,
+      canToggleSelectedDetail: true,
+      canCycleTranscriptSelection: true,
+    })).toEqual({ kind: "clear-selection-focus" });
+
+    expect(resolveTranscriptKeyboardAction({
+      key: createKey({ name: "escape" }),
+      isTranscriptMode: true,
+      isHistorySearchActive: false,
+      historySearchMatchCount: 0,
+      hasTextSelection: false,
+      hasFocusedItem: false,
+      canCopySelectedItem: false,
+      canCopySelectedToolInput: false,
+      canToggleSelectedDetail: false,
+      canCycleTranscriptSelection: false,
+    })).toEqual({ kind: "exit-transcript" });
+  });
+});

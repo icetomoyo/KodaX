@@ -13,11 +13,11 @@
 
 | Item | Value |
 |---|---|
-| Tracked feature IDs | `001-057` |
-| Total tracked features | `57` |
+| Tracked feature IDs | `001-058` |
+| Total tracked features | `58` |
 | Completed | `45` |
 | InProgress | `0` |
-| Planned | `12` |
+| Planned | `13` |
 | Current released version | `v0.7.14` |
 
 ### 各版本待做分布
@@ -27,7 +27,7 @@
 | `v0.7.20` | `1` |
 | `v0.7.25` | `0` |
 | `v0.7.30` | `9` |
-| `v0.8.0` | `1` |
+| `v0.8.0` | `2` |
 | `v0.9.0` | `0` |
 | `v1.0.0` | `1` |
 
@@ -39,7 +39,8 @@
 |---|---|---|---|---|---|
 | `007` | Theme System Consolidation | Enhancement | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_007-theme-system-consolidation) |
 | `023` | Dual-Mode Terminal UX | Enhancement | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_023-dual-mode-terminal-ux) |
-| `057` | Renderer-Owned TUI Compatibility Layer | Refactor | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_057-renderer-owned-tui-compatibility-layer) |
+| `057` | Claude-Aligned TUI Substrate Refactor | Refactor | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_057-claude-aligned-tui-substrate-refactor) |
+| `058` | Transcript Native Scrollback Dump | Enhancement | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_058-transcript-native-scrollback-dump) |
 | `026` | Roadmap Integrity and Planning Hygiene | Internal | High | `v0.7.20` | [v0.7.20](features/v0.7.20.md#feature_026-roadmap-integrity-and-planning-hygiene) |
 | `030` | Multi-Surface Delivery | Enhancement | High | `v1.0.0` | [v1.0.0](features/v1.0.0.md#feature_030-multi-surface-delivery) |
 | `031` | Multimodal Artifact Inputs | New | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_031-multimodal-artifact-inputs) |

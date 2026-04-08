@@ -70,4 +70,26 @@ describe("tui root", () => {
     expect(mocks.clear).toHaveBeenCalledTimes(1);
     expect(mocks.unmount).toHaveBeenCalledTimes(1);
   });
+
+  it("uses local no-op streams when no explicit terminal streams are provided", () => {
+    render("fallback");
+
+    expect(mocks.InkMock).toHaveBeenCalledTimes(1);
+    const options = mocks.InkMock.mock.calls[0]?.[0];
+    expect(options.stdout).toBeDefined();
+    expect(options.stdin).toBeDefined();
+    expect(options.stderr).toBeDefined();
+    expect(options.stdout).not.toBe(process.stdout);
+    expect(options.stdin).not.toBe(process.stdin);
+    expect(options.stderr).not.toBe(process.stderr);
+  });
+
+  it("disables console patching for the local renderer root by default", () => {
+    const root = createRoot();
+
+    expect(mocks.InkMock).toHaveBeenCalledTimes(1);
+    const options = mocks.InkMock.mock.calls[0]?.[0];
+    expect(options.patchConsole).toBe(false);
+    root.unmount();
+  });
 });

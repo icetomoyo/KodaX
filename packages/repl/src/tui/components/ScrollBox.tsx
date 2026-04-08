@@ -39,6 +39,7 @@ export interface ScrollBoxProps {
   width?: number | string;
   flexGrow?: number;
   flexShrink?: number;
+  paddingTop?: number;
   scrollTop?: number;
   scrollHeight?: number;
   viewportHeight?: number;
@@ -125,6 +126,7 @@ export const ScrollBox: React.FC<ScrollBoxProps> = ({
   width,
   flexGrow = 1,
   flexShrink = 0,
+  paddingTop = 0,
   scrollTop = 0,
   scrollHeight = 0,
   viewportHeight = 0,
@@ -196,11 +198,15 @@ export const ScrollBox: React.FC<ScrollBoxProps> = ({
     };
 
     const result = commitSnapshot(next);
+    if (result.previous.sticky !== stickyScroll) {
+      onStickyChange?.(stickyScroll);
+    }
     if (result.window.scrollTop !== scrollTop) {
       onScrollTopChange?.(result.window.scrollTop);
     }
   }, [
     commitSnapshot,
+    onStickyChange,
     onScrollTopChange,
     scrollHeight,
     scrollTop,
@@ -305,6 +311,7 @@ export const ScrollBox: React.FC<ScrollBoxProps> = ({
       flexGrow={flexGrow}
       flexShrink={flexShrink}
       width={width}
+      paddingTop={paddingTop}
       overflowY="hidden"
     >
       {renderWindow ? renderWindow(windowState) : children}

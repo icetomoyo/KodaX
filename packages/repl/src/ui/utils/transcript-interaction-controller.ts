@@ -13,7 +13,9 @@ export interface ExecuteTranscriptKeyboardActionOptions {
   submitHistorySearchSelection: () => void;
   appendHistorySearchQuery: (text: string) => void;
   openHistorySearchSurface: () => void;
+  clearTranscriptSelectionFocus: () => void;
   exitTranscriptModeSurface: () => void;
+  toggleTranscriptShowAll: () => void;
   scrollTranscriptHome: () => void;
   scrollTranscriptToBottom: () => void;
   cycleTranscriptSelection: (direction: "prev" | "next") => void;
@@ -55,8 +57,14 @@ export function executeTranscriptKeyboardAction(
     case "open-history-search":
       options.openHistorySearchSurface();
       return true;
+    case "clear-selection-focus":
+      options.clearTranscriptSelectionFocus();
+      return true;
     case "exit-transcript":
       options.exitTranscriptModeSurface();
+      return true;
+    case "toggle-show-all":
+      options.toggleTranscriptShowAll();
       return true;
     case "scroll-home":
     case "jump-oldest":

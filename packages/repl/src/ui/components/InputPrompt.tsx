@@ -63,7 +63,7 @@ export const InputPrompt: React.FC<InputPromptAutocompleteProps> = ({
   );
 
   return (
-    <Box flexDirection="column" marginY={1}>
+    <Box flexDirection="column">
       <TextInput
         lines={lines}
         cursorRow={cursor.row}

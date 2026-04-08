@@ -190,5 +190,30 @@ describe("viewport-budget", () => {
     expect(budget.footerRows).toBe(budget.inputRows);
     expect(budget.historySearchRows).toBeGreaterThan(0);
     expect(budget.slots.find((slot) => slot.name === "overlay")?.rows).toBe(budget.overlayRows);
+    expect(budget.reservedBottomRows).toBe(
+      budget.footerRows + budget.workStripRows + budget.statusRows,
+    );
+  });
+
+  it("keeps transcript and prompt message rows aligned with stable bottom-slot budgeting", () => {
+    const inlineBudget = calculateViewportBudget({
+      terminalRows: 24,
+      terminalWidth: 80,
+      inputText: "",
+      suggestionsReserved: false,
+      showHelp: false,
+      statusBarText: "status",
+    });
+    const windowedBudget = calculateViewportBudget({
+      terminalRows: 24,
+      terminalWidth: 80,
+      windowedTranscript: true,
+      inputText: "",
+      suggestionsReserved: false,
+      showHelp: false,
+      statusBarText: "status",
+    });
+
+    expect(windowedBudget.messageRows).toBe(inlineBudget.messageRows);
   });
 });

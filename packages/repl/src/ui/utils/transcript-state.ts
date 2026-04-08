@@ -263,6 +263,5 @@ export function buildTranscriptBrowseHint(
     return undefined;
   }
 
-  const wheelHint = state.supportsMouseTracking ? "Wheel/" : "";
-  return `Transcript Mode | ${wheelHint}PgUp/PgDn/j/k scroll | n/N matches | q/Esc/Ctrl+O back to live`;
+  return "Transcript | PgUp/PgDn page | j/k scroll | \u2190/\u2192 select | / search | n/N matches | q/Esc/Ctrl+O back";
 }

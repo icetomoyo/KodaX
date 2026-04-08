@@ -90,7 +90,7 @@ describe("MessageList", () => {
     expect(frame).not.toContain("First line");
   });
 
-  it("reserves viewport rows for windowed transcript content so footer chrome stays at the bottom", () => {
+  it("does not inject filler rows for windowed transcript content without a renderer window", () => {
     const { lastFrame } = render(
       <Box flexDirection="column">
         <MessageList
@@ -116,6 +116,50 @@ describe("MessageList", () => {
     const footerIndex = lines.findIndex((line) => line.includes("FOOTER"));
 
     expect(rowIndex).toBeGreaterThanOrEqual(0);
-    expect(footerIndex).toBeGreaterThan(rowIndex + 2);
+    expect(footerIndex).toBeGreaterThanOrEqual(rowIndex + 1);
+    expect(footerIndex).toBeLessThanOrEqual(rowIndex + 2);
+  });
+
+  it("keeps renderer-window transcript output tight without synthetic filler rows", () => {
+    const { lastFrame } = render(
+      <Box flexDirection="column">
+        <MessageList
+          items={[
+            {
+              id: "info-1",
+              type: "info",
+              timestamp: 1,
+              text: "Row 1",
+            },
+            {
+              id: "info-2",
+              type: "info",
+              timestamp: 2,
+              text: "Row 2",
+            },
+          ]}
+          windowed
+          viewportRows={8}
+          rendererWindow={{
+            start: 0,
+            end: 2,
+            scrollTop: 0,
+            scrollHeight: 2,
+            viewportHeight: 2,
+            viewportTop: 0,
+            pendingDelta: 0,
+            sticky: true,
+          }}
+        />
+        <Text>FOOTER</Text>
+      </Box>,
+    );
+
+    const frame = lastFrame() ?? "";
+    const lines = frame.split("\n");
+    const footerIndex = lines.findIndex((line) => line.includes("FOOTER"));
+
+    expect(footerIndex).toBeGreaterThanOrEqual(2);
+    expect(footerIndex).toBeLessThanOrEqual(2);
   });
 });

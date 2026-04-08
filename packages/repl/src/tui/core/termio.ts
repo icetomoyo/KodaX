@@ -2,8 +2,16 @@ export const ENTER_ALT_SCREEN = "\x1b[?1049h";
 export const EXIT_ALT_SCREEN = "\x1b[?1049l";
 export const HOME_CURSOR = "\x1b[H";
 export const CLEAR_SCREEN = "\x1b[2J";
-export const ENABLE_MOUSE_TRACKING = "\x1b[?1000h\x1b[?1006h";
-export const DISABLE_MOUSE_TRACKING = "\x1b[?1000l\x1b[?1006l";
+// Mouse tracking:
+// - 1000: press/release + wheel
+// - 1002: button-motion drag events
+// - 1006: SGR coordinates
+//
+// We intentionally stop at 1002 for now. Claude also enables 1003 all-motion
+// for hover, but KodaX does not yet expose a renderer-native hover path that
+// can distinguish passive motion from drag safely.
+export const ENABLE_MOUSE_TRACKING = "\x1b[?1000h\x1b[?1002h\x1b[?1006h";
+export const DISABLE_MOUSE_TRACKING = "\x1b[?1006l\x1b[?1002l\x1b[?1000l";
 
 export interface AlternateScreenSequenceOptions {
   mouseTracking?: boolean;

@@ -45,6 +45,7 @@ describe("prompt-surface-layout", () => {
     expect(text).toContain("Thinking");
     expect(text).toContain("First reasoning step");
     expect(text).not.toContain("Fifth reasoning step");
+    expect(text).toContain("thinking truncated; press Ctrl+O to inspect full reasoning");
   });
 
   it("adds only a single live assistant block for streaming prompt text", () => {
@@ -76,5 +77,19 @@ describe("prompt-surface-layout", () => {
     expect(text).toContain("Thinking");
     expect(text).toContain("Reasoning about the repository state");
     expect(text).not.toContain("Assistant");
+  });
+
+  it("adds a transcript-oriented hint when live thinking is truncated", () => {
+    const model = buildPromptSurfaceRenderModel({
+      items: [],
+      viewportWidth: 80,
+      streamingResponse: "",
+      isThinking: true,
+      thinkingContent: Array.from({ length: 8 }, (_, index) => `reason ${index + 1}`).join("\n"),
+      isLoading: true,
+    });
+
+    const text = model.rows.map((row) => row.text).join("\n");
+    expect(text).toContain("thinking truncated; press Ctrl+O to inspect full reasoning");
   });
 });

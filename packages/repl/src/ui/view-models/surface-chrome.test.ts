@@ -42,13 +42,32 @@ describe("surface-chrome", () => {
       historySearchDetailText: "should not show",
       selectionSummary: "1 line selected",
       actionSummary: "c copy | v expand",
+      showAllActive: false,
       baseFooterNotices: ["Search: abc", "Queued follow-ups: 1"],
-    })).toBe("1 line selected | c copy | v expand | Queued follow-ups: 1");
+    })).toBe("1 line selected | c copy | v expand");
 
     expect(buildTranscriptFooterBudgetNotices("1 line selected | c copy", "Copied selection")).toEqual([
       "1 line selected | c copy",
       "Copied selection",
     ]);
+
+    expect(buildTranscriptFooterSecondaryText({
+      isHistorySearchActive: false,
+      historySearchDetailText: undefined,
+      selectionSummary: undefined,
+      actionSummary: undefined,
+      showAllActive: false,
+      baseFooterNotices: [],
+    })).toBe("\u2190/\u2192 enter select mode | Ctrl+E show all | Mouse drag selects text");
+
+    expect(buildTranscriptFooterSecondaryText({
+      isHistorySearchActive: true,
+      historySearchDetailText: undefined,
+      selectionSummary: undefined,
+      actionSummary: undefined,
+      showAllActive: false,
+      baseFooterNotices: [],
+    })).toBe("\u2190/\u2192 enter select mode | Ctrl+E show all | Mouse drag selects text");
   });
 
   it("builds transcript footer view model from selection and search state", () => {
@@ -73,19 +92,20 @@ describe("surface-chrome", () => {
       isHistorySearchActive: false,
       historySearchDetailText: undefined,
       historySearchHasMatches: true,
+      showAllActive: false,
       baseFooterNotices: ["Queued follow-ups: 1"],
     })).toEqual({
-      selectionSummary: "Selected item 2/4: assistant: Assistant response | compact",
-      actionSummary: "\u2190/\u2192 prev/next item | C copy block | Mouse select copies | V expand/collapse item | N/Shift+N next/prev match",
-      secondaryText: "Selected item 2/4: assistant: Assistant response | compact | \u2190/\u2192 prev/next item | C copy block | Mouse select copies | V expand/collapse item | N/Shift+N next/prev match | Queued follow-ups: 1",
+      selectionSummary: undefined,
+      actionSummary: "\u2190/\u2192 prev/next item | C copy block | Mouse select copies | V expand/collapse item",
+      secondaryText: "\u2190/\u2192 prev/next item | C copy block | Mouse select copies | V expand/collapse item",
       budgetNotices: [
-        "Selected item 2/4: assistant: Assistant response | compact | \u2190/\u2192 prev/next item | C copy block | Mouse select copies | V expand/collapse item | N/Shift+N next/prev match | Queued follow-ups: 1",
+        "\u2190/\u2192 prev/next item | C copy block | Mouse select copies | V expand/collapse item",
         "Copied selection",
       ],
     });
   });
 
-  it("keeps transcript footer in search-first mode when no item is focused", () => {
+  it("keeps transcript footer compact when no item is focused", () => {
     expect(buildTranscriptFooterViewModel({
       textSelection: undefined,
       selectionState: undefined,
@@ -93,13 +113,34 @@ describe("surface-chrome", () => {
       isHistorySearchActive: false,
       historySearchDetailText: undefined,
       historySearchHasMatches: true,
+      showAllActive: false,
       baseFooterNotices: ["Queued follow-ups: 1"],
     })).toEqual({
       selectionSummary: undefined,
-      actionSummary: "N/Shift+N next/prev match",
-      secondaryText: "N/Shift+N next/prev match | Queued follow-ups: 1",
+      actionSummary: undefined,
+      secondaryText: "\u2190/\u2192 enter select mode | Ctrl+E show all | Mouse drag selects text",
       budgetNotices: [
-        "N/Shift+N next/prev match | Queued follow-ups: 1",
+        "\u2190/\u2192 enter select mode | Ctrl+E show all | Mouse drag selects text",
+      ],
+    });
+  });
+
+  it("shows collapse guidance when show-all is active", () => {
+    expect(buildTranscriptFooterViewModel({
+      textSelection: undefined,
+      selectionState: undefined,
+      copySelectionNotice: undefined,
+      isHistorySearchActive: false,
+      historySearchDetailText: undefined,
+      historySearchHasMatches: true,
+      showAllActive: true,
+      baseFooterNotices: [],
+    })).toEqual({
+      selectionSummary: undefined,
+      actionSummary: undefined,
+      secondaryText: "\u2190/\u2192 enter select mode | Ctrl+E collapse | Mouse drag selects text",
+      budgetNotices: [
+        "\u2190/\u2192 enter select mode | Ctrl+E collapse | Mouse drag selects text",
       ],
     });
   });

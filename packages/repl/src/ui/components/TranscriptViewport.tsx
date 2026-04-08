@@ -137,7 +137,7 @@ export const TranscriptViewport: React.FC<TranscriptViewportProps> = ({
           <Text dimColor>{browse.hintText}</Text>
         </Box>
       ) : null}
-      {inlineChromeVisible && selectedSummary ? (
+      {inlineChromeVisible && false ? (
         <MessageSelector
           itemSummary={selectedSummary}
           itemKind={selectedKindLabel}

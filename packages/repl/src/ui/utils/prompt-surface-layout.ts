@@ -23,6 +23,8 @@ export interface PromptSurfaceRenderModelOptions {
 
 const PROMPT_THINKING_PREVIEW_MAX_LINES = 4;
 const PROMPT_THINKING_PREVIEW_MAX_CHARS = 240;
+const PROMPT_THINKING_TRUNCATION_HINT =
+  "... (thinking truncated; press Ctrl+O to inspect full reasoning)";
 
 function buildPromptThinkingPreview(text: string): string {
   const logicalLines = text
@@ -34,12 +36,14 @@ function buildPromptThinkingPreview(text: string): string {
   }
 
   const lineLimited = logicalLines.slice(0, PROMPT_THINKING_PREVIEW_MAX_LINES).join("\n");
-  if (lineLimited.length <= PROMPT_THINKING_PREVIEW_MAX_CHARS && logicalLines.length <= PROMPT_THINKING_PREVIEW_MAX_LINES) {
+  const truncatedByLines = logicalLines.length > PROMPT_THINKING_PREVIEW_MAX_LINES;
+  const truncatedByChars = lineLimited.length > PROMPT_THINKING_PREVIEW_MAX_CHARS;
+  if (!truncatedByLines && !truncatedByChars) {
     return lineLimited;
   }
 
   const charLimited = lineLimited.slice(0, PROMPT_THINKING_PREVIEW_MAX_CHARS).trimEnd();
-  return `${charLimited}...`;
+  return `${charLimited}\n\n${PROMPT_THINKING_TRUNCATION_HINT}`;
 }
 
 function formatTimestamp(timestamp: number): string {

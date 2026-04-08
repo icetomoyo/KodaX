@@ -36,37 +36,96 @@ describe("transcript-viewport view model", () => {
   });
 
   it("hides transcript selection capabilities when the host cannot support selection", () => {
+    const runtime = buildTranscriptSelectionRuntimeState({
+      state: {
+        surface: "prompt",
+        supportsSelection: false,
+        supportsCopyOnSelect: true,
+      },
+      selectableItemIds: ["assistant-1", "assistant-2", "assistant-3"],
+      selectedItemId: "assistant-1",
+      selectedItemType: "assistant",
+      isExpanded: false,
+    });
+
+    expect(runtime).toEqual({
+      selectionEnabled: false,
+      selectedItemId: undefined,
+      selectedItemIndex: -1,
+      position: undefined,
+      detailState: "compact",
+      copyCapabilities: {
+        message: false,
+        toolInput: false,
+        copyOnSelect: false,
+      },
+      toggleDetail: false,
+      navigationCapabilities: {
+        selection: false,
+      },
+    });
+
     expect(buildTranscriptSelectionViewModel({
-      runtime: buildTranscriptSelectionRuntimeState({
-        state: {
-          surface: "prompt",
-          supportsSelection: false,
-          supportsCopyOnSelect: true,
-        },
-        selectableItemIds: ["assistant-1", "assistant-2", "assistant-3"],
-        selectedItemId: "assistant-1",
-        selectedItemType: "assistant",
-        isExpanded: false,
-      }),
+      runtime,
       itemSummary: { summary: "Assistant response", kindLabel: "assistant" },
     })).toBeUndefined();
   });
 
   it("keeps transcript item chrome hidden until an item is explicitly focused", () => {
+    const runtime = buildTranscriptSelectionRuntimeState({
+      state: {
+        surface: "transcript",
+        supportsSelection: true,
+        supportsCopyOnSelect: false,
+      },
+      selectableItemIds: ["assistant-1", "assistant-2"],
+      selectedItemId: undefined,
+      selectedItemType: "assistant",
+      isExpanded: false,
+    });
+
+    expect(runtime.navigationCapabilities.selection).toBe(false);
+
     expect(buildTranscriptSelectionViewModel({
-      runtime: buildTranscriptSelectionRuntimeState({
-        state: {
-          surface: "transcript",
-          supportsSelection: true,
-          supportsCopyOnSelect: false,
-        },
-        selectableItemIds: ["assistant-1", "assistant-2"],
-        selectedItemId: undefined,
-        selectedItemType: "assistant",
-        isExpanded: false,
-      }),
+      runtime,
       itemSummary: { summary: "Assistant response", kindLabel: "assistant" },
     })).toBeUndefined();
+  });
+
+  it("keeps transcript item chrome hidden when there are no selectable items", () => {
+    const runtime = buildTranscriptSelectionRuntimeState({
+      state: {
+        surface: "transcript",
+        supportsSelection: true,
+        supportsCopyOnSelect: false,
+      },
+      selectableItemIds: [],
+      selectedItemId: undefined,
+      selectedItemType: "assistant",
+      isExpanded: false,
+    });
+
+    expect(runtime.navigationCapabilities.selection).toBe(false);
+    expect(buildTranscriptSelectionViewModel({
+      runtime,
+      itemSummary: { summary: "Assistant response", kindLabel: "assistant" },
+    })).toBeUndefined();
+  });
+
+  it("keeps transcript item navigation available as a secondary capability once items exist", () => {
+    const runtime = buildTranscriptSelectionRuntimeState({
+      state: {
+        surface: "transcript",
+        supportsSelection: true,
+        supportsCopyOnSelect: false,
+      },
+      selectableItemIds: ["assistant-1", "tool-1"],
+      selectedItemId: "tool-1",
+      selectedItemType: "tool_group",
+      isExpanded: false,
+    });
+
+    expect(runtime.navigationCapabilities.selection).toBe(true);
   });
 
   it("builds copy and navigation capabilities from host-aware selection truth", () => {

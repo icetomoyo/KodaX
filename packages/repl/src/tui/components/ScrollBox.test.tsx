@@ -69,6 +69,36 @@ describe("ScrollBox", () => {
     expect(lastFrame()).toContain("window:90-110");
   });
 
+  it("notifies sticky changes when the controlled sticky flag flips", async () => {
+    const onStickyChange = vi.fn();
+
+    const StickyHarness: React.FC = () => {
+      const [sticky, setSticky] = useState(true);
+
+      React.useEffect(() => {
+        setSticky(false);
+      }, []);
+
+      return (
+        <ScrollBox
+          scrollTop={0}
+          scrollHeight={120}
+          viewportHeight={20}
+          stickyScroll={sticky}
+          onStickyChange={onStickyChange}
+        >
+          <Text>Transcript</Text>
+        </ScrollBox>
+      );
+    };
+
+    render(<StickyHarness />);
+
+    await vi.waitFor(() => {
+      expect(onStickyChange).toHaveBeenCalledWith(false);
+    });
+  });
+
   it("applies clamp bounds to the rendered window immediately", async () => {
     const ref = React.createRef<ScrollBoxHandle>();
     const { lastFrame } = render(

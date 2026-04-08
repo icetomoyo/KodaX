@@ -25,10 +25,10 @@ describe("transcript-state", () => {
     expect(state.pendingLiveUpdates).toBe(0);
   });
 
-  it("creates a buffered fallback state for degraded hosts", () => {
+  it("creates an owned live transcript state for degraded hosts", () => {
     const state = createTranscriptDisplayState("degraded_vt");
 
-    expect(state.buffering).toBe("buffered-fallback");
+    expect(state.buffering).toBe("live");
     expect(state.ownsViewportByDefault).toBe(true);
     expect(shouldWindowTranscript(state)).toBe(true);
   });
@@ -70,7 +70,8 @@ describe("transcript-state", () => {
   it("builds a transcript-mode hint only while transcript mode is active", () => {
     const active = enterTranscriptMode(createTranscriptDisplayState("xtermjs_host"));
 
-    expect(buildTranscriptBrowseHint(active)).toContain("Transcript Mode");
+    expect(buildTranscriptBrowseHint(active)).toContain("Transcript |");
+    expect(buildTranscriptBrowseHint(active)).toContain("←/→ select");
     expect(buildTranscriptBrowseHint(createTranscriptDisplayState("xtermjs_host"))).toBeUndefined();
   });
 

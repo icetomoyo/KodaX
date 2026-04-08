@@ -6,6 +6,7 @@ import {
   resolveTranscriptInteractionPolicy,
   resolveTranscriptSurfaceItems,
   resolveFullscreenShellMode,
+  shouldOwnTranscriptViewport,
   shouldUseAlternateScreenShell,
   shouldUseManagedMainScreenMouseTracking,
   shouldUseRendererViewportShell,
@@ -181,6 +182,7 @@ describe("transcript-surface", () => {
     const virtualPrompt = {
       enabled: true,
       promptShell: "virtual",
+      transcriptShell: "virtual",
       mouseWheel: true,
       mouseClicks: true,
       streamingPreview: true,
@@ -194,6 +196,7 @@ describe("transcript-surface", () => {
       ...virtualPrompt,
       enabled: false,
       promptShell: "main-screen",
+      transcriptShell: "main-screen",
       mouseWheel: false,
       mouseClicks: false,
       streamingPreview: false,
@@ -201,12 +204,12 @@ describe("transcript-surface", () => {
     } as const;
 
     expect(resolveFullscreenShellMode(virtualPrompt, "prompt")).toBe("virtual");
-    expect(resolveFullscreenShellMode(virtualPrompt, "transcript")).toBe("main-screen");
+    expect(resolveFullscreenShellMode(virtualPrompt, "transcript")).toBe("virtual");
     expect(resolveFullscreenShellMode(mainScreenPrompt, "prompt")).toBe("main-screen");
     expect(resolveFullscreenShellMode(disabled, "prompt")).toBe("main-screen");
 
     expect(shouldUseAlternateScreenShell(virtualPrompt, "prompt")).toBe(true);
-    expect(shouldUseAlternateScreenShell(virtualPrompt, "transcript")).toBe(false);
+    expect(shouldUseAlternateScreenShell(virtualPrompt, "transcript")).toBe(true);
     expect(shouldUseAlternateScreenShell(mainScreenPrompt, "prompt")).toBe(false);
     expect(shouldUseAlternateScreenShell(disabled, "prompt")).toBe(false);
   });
@@ -215,6 +218,7 @@ describe("transcript-surface", () => {
     const virtualPrompt = {
       enabled: true,
       promptShell: "virtual",
+      transcriptShell: "virtual",
       mouseWheel: true,
       mouseClicks: true,
       streamingPreview: true,
@@ -230,7 +234,7 @@ describe("transcript-surface", () => {
     expect(shouldUseManagedMainScreenMouseTracking(virtualPrompt, "transcript")).toBe(false);
 
     expect(shouldUseRendererViewportShell(virtualPrompt, "prompt")).toBe(true);
-    expect(shouldUseRendererViewportShell(virtualPrompt, "transcript")).toBe(false);
+    expect(shouldUseRendererViewportShell(virtualPrompt, "transcript")).toBe(true);
     expect(shouldUseRendererViewportShell(mainScreenPrompt, "prompt")).toBe(false);
 
     expect(resolveTranscriptInteractionPolicy(virtualPrompt, "prompt")).toEqual({
@@ -245,15 +249,15 @@ describe("transcript-surface", () => {
       usesNativeMainScreenScrollback: false,
     });
     expect(resolveTranscriptInteractionPolicy(virtualPrompt, "transcript")).toEqual({
-      shellMode: "main-screen",
-      usesAlternateScreenShell: false,
-      usesRendererViewportShell: false,
-      usesRendererMouseTracking: false,
-      usesManagedMouseClicks: false,
-      usesManagedMouseWheel: false,
-      usesManagedSelection: false,
-      usesManagedWheelHistory: false,
-      usesNativeMainScreenScrollback: true,
+      shellMode: "virtual",
+      usesAlternateScreenShell: true,
+      usesRendererViewportShell: true,
+      usesRendererMouseTracking: true,
+      usesManagedMouseClicks: true,
+      usesManagedMouseWheel: true,
+      usesManagedSelection: true,
+      usesManagedWheelHistory: true,
+      usesNativeMainScreenScrollback: false,
     });
     expect(resolveTranscriptInteractionPolicy(mainScreenPrompt, "prompt")).toEqual({
       shellMode: "main-screen",
@@ -266,5 +270,21 @@ describe("transcript-surface", () => {
       usesManagedWheelHistory: false,
       usesNativeMainScreenScrollback: true,
     });
+  });
+
+  it("lets transcript own the viewport whenever its shell is virtual, even on hosts whose prompt defaults to main-screen", () => {
+    const mixedShellPolicy = {
+      enabled: true,
+      promptShell: "main-screen",
+      transcriptShell: "virtual",
+      mouseWheel: true,
+      mouseClicks: true,
+      streamingPreview: true,
+      transcriptSpinnerAnimation: true,
+    } as const;
+
+    expect(shouldOwnTranscriptViewport(mixedShellPolicy, "prompt", false)).toBe(false);
+    expect(shouldOwnTranscriptViewport(mixedShellPolicy, "prompt", true)).toBe(false);
+    expect(shouldOwnTranscriptViewport(mixedShellPolicy, "transcript", false)).toBe(true);
   });
 });

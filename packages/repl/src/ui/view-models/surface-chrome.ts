@@ -1,10 +1,13 @@
 import { buildMessageActionsText } from "../components/MessageActions.js";
-import { buildMessageSelectorText } from "../components/MessageSelector.js";
 import type { TranscriptViewportSelectionState } from "../components/TranscriptViewport.js";
 import {
   buildTranscriptScreenSelectionSummary,
   type TranscriptTextSelection,
 } from "../../tui/core/selection.js";
+
+function buildDefaultTranscriptSecondaryText(showAllActive = false): string {
+  return `\u2190/\u2192 enter select mode | Ctrl+E ${showAllActive ? "collapse" : "show all"} | Mouse drag selects text`;
+}
 
 export interface SurfaceNotification {
   id: string;
@@ -105,6 +108,7 @@ export interface BuildTranscriptFooterSecondaryTextOptions {
   historySearchDetailText?: string;
   selectionSummary?: string;
   actionSummary?: string;
+  showAllActive?: boolean;
   baseFooterNotices: readonly string[];
 }
 
@@ -116,7 +120,6 @@ export function buildTranscriptFooterSecondaryText(
     : [
         options.selectionSummary,
         options.actionSummary,
-        ...options.baseFooterNotices.filter((notice) => !notice.startsWith("Search: ")),
       ];
 
   const normalizedParts = parts.filter(
@@ -124,7 +127,7 @@ export function buildTranscriptFooterSecondaryText(
   );
 
   if (normalizedParts.length === 0) {
-    return undefined;
+    return buildDefaultTranscriptSecondaryText(options.showAllActive);
   }
 
   return normalizedParts.join(" | ");
@@ -154,6 +157,7 @@ export interface BuildTranscriptFooterViewModelOptions {
   isHistorySearchActive: boolean;
   historySearchDetailText?: string;
   historySearchHasMatches: boolean;
+  showAllActive?: boolean;
   baseFooterNotices: readonly string[];
 }
 
@@ -169,21 +173,33 @@ export function buildTranscriptFooterViewModel(
 ): TranscriptFooterViewModel {
   const copyCapabilities = options.selectionState?.copyCapabilities;
   const navigationCapabilities = options.selectionState?.navigationCapabilities;
-  const selectionSummary = buildTranscriptScreenSelectionSummary(options.textSelection)
-    ?? buildMessageSelectorText(options.selectionState ?? {});
-  const actionSummary = buildMessageActionsText({
-    copyMessage: Boolean(options.textSelection) || Boolean(copyCapabilities?.message),
-    copyToolInput: Boolean(copyCapabilities?.toolInput),
-    copyOnSelect: Boolean(copyCapabilities?.copyOnSelect),
-    toggleDetail: Boolean(options.selectionState?.toggleDetail),
-    selectionNavigation: Boolean(navigationCapabilities?.selection),
-    matchNavigation: options.historySearchHasMatches,
-  });
+  const textSelectionSummary = buildTranscriptScreenSelectionSummary(options.textSelection);
+  const selectionSummary = textSelectionSummary;
+  const actionSummary = options.textSelection
+    ? buildMessageActionsText({
+      copyMessage: true,
+      copyToolInput: false,
+      copyOnSelect: Boolean(copyCapabilities?.copyOnSelect),
+      toggleDetail: false,
+      selectionNavigation: false,
+      matchNavigation: false,
+    })
+    : options.selectionState?.itemSummary
+      ? buildMessageActionsText({
+        copyMessage: Boolean(copyCapabilities?.message),
+        copyToolInput: Boolean(copyCapabilities?.toolInput),
+        copyOnSelect: Boolean(copyCapabilities?.copyOnSelect),
+        toggleDetail: Boolean(options.selectionState?.toggleDetail),
+        selectionNavigation: Boolean(navigationCapabilities?.selection),
+        matchNavigation: false,
+      })
+    : undefined;
   const secondaryText = buildTranscriptFooterSecondaryText({
     isHistorySearchActive: options.isHistorySearchActive,
     historySearchDetailText: options.historySearchDetailText,
     selectionSummary,
     actionSummary,
+    showAllActive: options.showAllActive,
     baseFooterNotices: options.baseFooterNotices,
   });
 

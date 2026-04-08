@@ -80,7 +80,7 @@ export interface TranscriptRenderModelOptions extends TranscriptBuildOptions {
 
 const THINKING_PREVIEW_MAX_CHARS = 400;
 const THINKING_PREVIEW_TRUNCATION_HINT =
-  "... (thinking truncated in compact view; press PgUp to review full reasoning)";
+  "... (thinking truncated; press Ctrl+O to inspect full reasoning)";
 
 function normalizeManagedLiveActivityLabel(label: string | undefined, workerTitle?: string): string | undefined {
   if (!label || !workerTitle) {

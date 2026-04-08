@@ -325,8 +325,8 @@ const TuiRuntimeProvider: React.FC<TuiRuntimeProviderProps> = ({
 function createRuntimeValue(
   options: InkRenderOptions | undefined,
 ): MutableTuiRuntimeContextValue {
-  const stdout = options?.stdout ?? process.stdout;
-  const stdin = options?.stdin ?? process.stdin;
+  const stdout = options?.stdout ?? fallbackStdout;
+  const stdin = options?.stdin ?? fallbackStdin;
   const setRawMode = (enabled: boolean) => {
     if (typeof stdin?.setRawMode === "function") {
       stdin.setRawMode(enabled);

@@ -658,18 +658,18 @@ export const MessageList: React.FC<MessageListProps> = ({
     },
     [rendererWindow?.end, rendererWindow?.start, scrollOffset, transcriptRows, viewportRows, visibleRowsOverride, windowed]
   );
-  const fillerRowCount = windowed && typeof viewportRows === "number"
-    ? Math.max(0, viewportRows - visibleRows.length)
-    : 0;
+  const effectiveViewportRows = rendererWindow
+    ? Math.max(0, rendererWindow.viewportHeight)
+    : viewportRows;
 
   useEffect(() => {
     onMetricsChange?.({
       scrollHeight: transcriptRows.length,
       viewportHeight: rendererWindow
         ? Math.max(0, rendererWindow.viewportHeight)
-        : (viewportRows ?? transcriptRows.length),
+        : (effectiveViewportRows ?? transcriptRows.length),
     });
-  }, [onMetricsChange, rendererWindow, transcriptRows.length, viewportRows]);
+  }, [effectiveViewportRows, onMetricsChange, rendererWindow, transcriptRows.length]);
 
   useEffect(() => {
     onVisibleRowsChange?.(visibleRows);
@@ -684,7 +684,7 @@ export const MessageList: React.FC<MessageListProps> = ({
   }
 
   return (
-    <Box flexDirection="column" paddingY={1}>
+    <Box flexDirection="column">
       {!windowed && staticSections.length > 0 && (
         <Static items={staticSections}>
           {(section) => (
@@ -706,11 +706,6 @@ export const MessageList: React.FC<MessageListProps> = ({
           selectedItem={selectedItemId ? row.key.startsWith(`${selectedItemId}-`) : false}
           selectionRange={selectedTextRanges?.get(row.key)}
         />
-      ))}
-      {Array.from({ length: fillerRowCount }, (_, index) => (
-        <Box key={`transcript-filler-${index}`}>
-          <Text> </Text>
-        </Box>
       ))}
     </Box>
   );

@@ -27,7 +27,7 @@ export function buildMessageActionsText({
     actions.push("C copy block");
   }
   if (copyToolInput) {
-    actions.push("I copy tool input");
+    actions.push("I copy tool args");
   }
   if (copyOnSelect) {
     actions.push("Mouse select copies");

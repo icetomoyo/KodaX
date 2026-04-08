@@ -1,4 +1,3 @@
-import process from "node:process";
 import { Stream } from "node:stream";
 import type { ComponentType, PropsWithChildren, ReactNode } from "react";
 import InkBox from "./primitives/Box.js";
@@ -9,6 +8,32 @@ import KodaXRenderer, {
 } from "./renderer.js";
 
 const localInstances = new WeakMap<NodeJS.WriteStream, RendererInstanceHandle>();
+
+const fallbackStdout = {
+  isTTY: false,
+  columns: 80,
+  rows: 24,
+  write: () => true,
+  on: () => undefined,
+  off: () => undefined,
+} as unknown as NodeJS.WriteStream;
+
+const fallbackStderr = {
+  isTTY: false,
+  write: () => true,
+  on: () => undefined,
+  off: () => undefined,
+} as unknown as NodeJS.WriteStream;
+
+const fallbackStdin = {
+  isTTY: false,
+  isRaw: false,
+  on: () => undefined,
+  off: () => undefined,
+  pause: () => undefined,
+  resume: () => undefined,
+  setRawMode: () => undefined,
+} as unknown as NodeJS.ReadStream;
 
 export interface TuiRendererInstance {
   setAltScreenActive?: (active: boolean, mouseTracking?: boolean) => void;
@@ -145,16 +170,16 @@ export function render(
   options?: NodeJS.WriteStream | RenderOptions,
 ): RenderInstance {
   const inkOptions = {
-    stdout: process.stdout,
-    stdin: process.stdin,
-    stderr: process.stderr,
+    stdout: fallbackStdout,
+    stdin: fallbackStdin,
+    stderr: fallbackStderr,
     debug: false,
     exitOnCtrlC: true,
-    patchConsole: true,
-    maxFps: 30,
-    incrementalRendering: false,
-    concurrent: false,
-    ...getOptions(options),
+      patchConsole: false,
+      maxFps: 30,
+      incrementalRendering: false,
+      concurrent: false,
+      ...getOptions(options),
   };
 
   const instance = getInstance(
@@ -180,16 +205,16 @@ export function render(
 
 export function createRoot(options: RenderOptions = {}): TuiRoot {
   const inkOptions = {
-    stdout: process.stdout,
-    stdin: process.stdin,
-    stderr: process.stderr,
+    stdout: fallbackStdout,
+    stdin: fallbackStdin,
+    stderr: fallbackStderr,
     debug: false,
     exitOnCtrlC: true,
-    patchConsole: true,
-    maxFps: 30,
-    incrementalRendering: false,
-    concurrent: false,
-    ...options,
+      patchConsole: false,
+      maxFps: 30,
+      incrementalRendering: false,
+      concurrent: false,
+      ...options,
   };
 
   const instance = new KodaXRenderer(inkOptions);

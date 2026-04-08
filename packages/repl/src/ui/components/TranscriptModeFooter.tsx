@@ -6,6 +6,8 @@ const ITEM_SEPARATOR = " | ";
 
 export interface TranscriptModeFooterProps {
   searchActive?: boolean;
+  selectionActive?: boolean;
+  showAllActive?: boolean;
   searchQuery?: string;
   searchCurrent?: number;
   searchCount?: number;
@@ -17,6 +19,8 @@ export interface TranscriptModeFooterProps {
 
 export const TranscriptModeFooter: React.FC<TranscriptModeFooterProps> = ({
   searchActive = false,
+  selectionActive = false,
+  showAllActive = false,
   searchQuery = "",
   searchCurrent = 0,
   searchCount = 0,
@@ -34,10 +38,12 @@ export const TranscriptModeFooter: React.FC<TranscriptModeFooterProps> = ({
     ? trimmedQuery
       ? `Search /${trimmedQuery}`
       : "Search"
-    : "Transcript browser";
+    : "Transcript";
   const helpText = searchActive
-    ? "Enter open | N/Shift+N next/prev | Esc close | Ctrl+O/q back"
-    : "PgUp/PgDn page | j/k scroll | / search | Ctrl+O/q/Esc back";
+    ? `Enter jump | n/N next/prev | Ctrl+E ${showAllActive ? "collapse" : "show all"} | Esc close | Ctrl+O/q back`
+    : selectionActive
+      ? `PgUp/PgDn page | j/k scroll | / search | n/N matches | Ctrl+E ${showAllActive ? "collapse" : "show all"} | Esc clear focus | Ctrl+O/q back`
+      : `PgUp/PgDn page | j/k scroll | \u2190/\u2192 select | / search | n/N matches | Ctrl+E ${showAllActive ? "collapse" : "show all"} | Ctrl+O/q/Esc back`;
   const updateText = pendingLiveUpdates > 0
     ? pendingLiveUpdates === 1
       ? "1 new update"
@@ -47,7 +53,7 @@ export const TranscriptModeFooter: React.FC<TranscriptModeFooterProps> = ({
     ? `${Math.max(0, searchCurrent)}/${searchCount}`
     : undefined;
   const supplementalPrimaryText = searchActive
-    ? trimmedSearchDetailText
+    ? (trimmedSearchDetailText || trimmedSecondaryText)
     : trimmedSecondaryText;
   const showSupplementalRow = Boolean(supplementalPrimaryText || trimmedNoticeText);
 

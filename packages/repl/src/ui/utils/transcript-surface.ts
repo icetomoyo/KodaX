@@ -135,7 +135,7 @@ export function resolveFullscreenShellMode(
   }
 
   if (surface === "transcript") {
-    return "main-screen";
+    return fullscreenPolicy.transcriptShell;
   }
 
   return fullscreenPolicy.promptShell;
@@ -188,4 +188,16 @@ export function resolveTranscriptInteractionPolicy(
     usesManagedWheelHistory: usesManagedMouseWheel,
     usesNativeMainScreenScrollback: !usesRendererViewportShell,
   };
+}
+
+export function shouldOwnTranscriptViewport(
+  fullscreenPolicy: FullscreenPolicy,
+  surface: TranscriptSurface,
+  ownsViewportByDefault: boolean,
+): boolean {
+  if (!shouldUseRendererViewportShell(fullscreenPolicy, surface)) {
+    return false;
+  }
+
+  return surface === "transcript" || ownsViewportByDefault;
 }

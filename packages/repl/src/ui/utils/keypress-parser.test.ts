@@ -50,6 +50,20 @@ describe("keypress-parser mouse wheel", () => {
     });
   });
 
+  it("parses SGR button-motion drag sequences", () => {
+    const drag = parseKeypress("\x1b[<32;16;9M");
+
+    expect(drag).toMatchObject({
+      name: "mouse",
+      mouse: {
+        action: "drag",
+        button: "left",
+        column: 16,
+        row: 9,
+      },
+    });
+  });
+
   it("extracts wheel sequences from the streaming parser", () => {
     const parser = new KeypressParser();
     const events: string[] = [];
