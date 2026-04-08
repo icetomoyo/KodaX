@@ -240,7 +240,10 @@ import {
 } from "./utils/ask-user.js";
 import { buildHelpMenuSections } from "./constants/layout.js";
 import { buildStatusBarViewModel } from "./view-models/status-bar.js";
-import { buildPromptActivityText } from "./view-models/surface-liveness.js";
+import {
+  buildPromptActivityViewModel,
+  buildPromptPlaceholderText,
+} from "./view-models/surface-liveness.js";
 import { buildSurfaceStatusBarProps } from "./view-models/surface-status.js";
 import { buildTranscriptSearchChrome } from "./view-models/transcript-search.js";
 import {
@@ -1936,8 +1939,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     ],
   );
 
-  const promptBusyText = useMemo(
-    () => buildPromptActivityText({
+  const promptWaitingReason = confirmRequest
+    ? "confirm"
+    : uiRequest?.kind;
+  const promptActivityViewModel = useMemo(
+    () => buildPromptActivityViewModel({
       isTranscriptMode,
       isLoading: statusBarIsLoading,
       streamingState: effectivePromptStreamingState,
@@ -1948,6 +1954,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           workerTitle: managedTaskStatus?.activeWorkerTitle,
         }
         : undefined,
+      waitingReason: promptWaitingReason,
     }),
     [
       effectivePromptStreamingState.activeToolCalls,
@@ -1961,9 +1968,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       managedTaskStatus?.activeWorkerTitle,
       managedTaskStatus?.harnessProfile,
       managedTaskStatus?.phase,
+      promptWaitingReason,
       statusBarIsLoading,
     ],
   );
+  const promptBusyText = promptActivityViewModel?.text;
 
   const statusBarViewModel = useMemo(
     () => buildStatusBarViewModel(statusBarProps),
@@ -5187,21 +5196,32 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       inlineNotices={promptFooterNotices.length > 0 ? (
         <StatusNoticesSurface notices={promptFooterNotices} />
       ) : undefined}
-      activityBar={promptBusyText ? (
+      activityBar={promptActivityViewModel ? (
         <Box paddingX={1}>
-          <Spinner color={getTheme("dark").colors.accent} />
-          <Text color={getTheme("dark").colors.accent}> {promptBusyText}</Text>
+          {promptActivityViewModel.showSpinner ? (
+            <Spinner color={getTheme("dark").colors.accent} />
+          ) : null}
+          <Text
+            color={
+              promptActivityViewModel.kind === "waiting"
+                ? getTheme("dark").colors.warning
+                : getTheme("dark").colors.accent
+            }
+          >
+            {promptActivityViewModel.showSpinner ? " " : ""}
+            {promptActivityViewModel.text}
+          </Text>
         </Box>
       ) : undefined}
       composer={(
         <PromptComposer
           onSubmit={handleSubmit}
           prompt=">"
-          placeholder={isLoading
-            ? canQueueFollowUps
-              ? "Queue a follow-up for the next round..."
-              : "Agent is busy..."
-            : "Type a message..."}
+          placeholder={buildPromptPlaceholderText({
+            isLoading,
+            canQueueFollowUps,
+            waitingReason: promptWaitingReason,
+          })}
           focus={!confirmRequest && !uiRequest && !isHistorySearchActive}
           cwd={process.cwd()}
           gitRoot={options.context?.gitRoot || context.gitRoot}

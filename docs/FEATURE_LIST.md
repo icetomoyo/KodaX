@@ -15,9 +15,9 @@
 |---|---|
 | Tracked feature IDs | `001-058` |
 | Total tracked features | `58` |
-| Completed | `52` |
+| Completed | `53` |
 | InProgress | `1` |
-| Planned | `5` |
+| Planned | `4` |
 | Current released version | `v0.7.14` |
 
 ### 各版本待做分布
@@ -26,7 +26,7 @@
 |---|---|
 | `v0.7.20` | `1` |
 | `v0.7.25` | `0` |
-| `v0.7.30` | `1` |
+| `v0.7.30` | `0` |
 | `v0.8.0` | `2` |
 | `v0.9.0` | `0` |
 | `v1.0.0` | `1` |
@@ -46,7 +46,6 @@
 | ID | Title | Category | Priority | Planned | Design |
 |---|---|---|---|---|---|
 | `007` | Theme System Consolidation | Enhancement | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_007-theme-system-consolidation) |
-| `023` | Dual-Mode Terminal UX | Enhancement | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_023-dual-mode-terminal-ux) |
 | `058` | Transcript Native Scrollback Dump | Enhancement | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_058-transcript-native-scrollback-dump) |
 | `026` | Roadmap Integrity and Planning Hygiene | Internal | High | `v0.7.20` | [v0.7.20](features/v0.7.20.md#feature_026-roadmap-integrity-and-planning-hygiene) |
 | `030` | Multi-Surface Delivery | Enhancement | High | `v1.0.0` | [v1.0.0](features/v1.0.0.md#feature_030-multi-surface-delivery) |
@@ -97,6 +96,7 @@
 | `020` | AGENTS.md Workspace Rules | `v0.5.34` | [v0.6.0](features/v0.6.0.md) |
 | `021` | Provider-Aware Reasoning Budget | `v0.5.37` | [v0.6.0](features/v0.6.0.md) |
 | `022` | Adaptive Task Engine and Native Multi-Agent Control Plane | `v0.7.4` | [v0.7.0](features/v0.7.0.md#feature_022-adaptive-task-engine-and-native-multi-agent-control-plane) |
+| `023` | Dual-Mode Terminal UX | `v0.7.30` (unreleased) | [v0.7.30](features/v0.7.30.md#feature_023-dual-mode-terminal-ux) |
 | `024` | Project Harness | `v0.6.10` | [v0.6.10](features/v0.6.10.md) |
 | `025` | Adaptive Task Intelligence and Harness Router | `v0.7.4` | [v0.7.0](features/v0.7.0.md#feature_025-adaptive-task-intelligence-and-harness-router) |
 | `027` | Adaptive Multi-Agent Mode Toggle and Team-Mode Sunset | `v0.7.10` | [v0.7.10](features/v0.7.10.md#feature_027-adaptive-multi-agent-mode-toggle-and-team-mode-sunset) |
