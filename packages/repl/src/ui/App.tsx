@@ -1,23 +1,23 @@
 /**
- * App - KodaX CLI Root Component - KodaX CLI 根组件
+ * App - KodaX CLI root component.
  *
- * Integrates all UI components, manages application state - 整合所有 UI 组件，管理应用状态
+ * Integrates all UI components and manages application state.
  */
 
 import React, { useState, useCallback, useMemo } from "react";
-import { Box, Text, useStdout } from "ink";
+import { Box, Text, useStdout } from "./tui.js";
 import { InputPrompt } from "./components/InputPrompt.js";
 import { MessageList } from "./components/MessageList.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { getTheme } from "./themes/index.js";
 import type { AppProps, Message, AppState, HistoryItem } from "./types.js";
 
-// Generate unique ID - 生成唯一 ID
+// Generate unique ID.
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-// Convert Message to HistoryItem - 将 Message 转换为 HistoryItem
+// Convert Message to HistoryItem.
 function messageToHistoryItem(msg: Message): HistoryItem {
   const base = { id: msg.id, timestamp: msg.timestamp };
   switch (msg.role) {
@@ -43,29 +43,34 @@ export const App: React.FC<AppProps> = ({
   const { stdout } = useStdout();
   const theme = useMemo(() => getTheme("dark"), []);
 
-  // Application state - 应用状态
+  void stdout;
+  void theme;
+
+  // Application state.
   const [state, setState] = useState<AppState>({
     messages: [],
     isLoading: false,
     sessionId: generateId(),
   });
 
-  // Token usage statistics - Token 使用统计
+  // Token usage statistics.
   const [tokenUsage, setTokenUsage] = useState<{
     input: number;
     output: number;
     total: number;
   } | null>(null);
 
-  // Current executing tool - 当前执行的工具
+  // Current executing tool.
   const [currentTool, setCurrentTool] = useState<string | undefined>();
 
-  // Handle user input submission - 处理用户输入提交
+  // Handle user input submission.
   const handleSubmit = useCallback(
     async (input: string) => {
-      if (!input.trim()) return;
+      if (!input.trim()) {
+        return;
+      }
 
-      // 添加用户消息
+      // Add the user message.
       const userMessage: Message = {
         id: generateId(),
         role: "user",
@@ -80,12 +85,12 @@ export const App: React.FC<AppProps> = ({
       }));
 
       try {
-        // Call external handler - 调用外部处理函数
+        // Call the external handler.
         await onSubmit(input);
 
-        // Add assistant response (in actual implementation, added externally) - 添加助手响应 (实际实现中由外部添加)
+        // Assistant responses are added externally in the real app.
       } catch (error) {
-        // Add error message - 添加错误消息
+        // Add the error message.
         const errorMessage: Message = {
           id: generateId(),
           role: "system",
@@ -105,10 +110,10 @@ export const App: React.FC<AppProps> = ({
         }));
       }
     },
-    [onSubmit]
+    [onSubmit],
   );
 
-  // Public method: add message - 公开方法：添加消息
+  // Public method: add message.
   const addMessage = useCallback((role: Message["role"], content: string) => {
     const message: Message = {
       id: generateId(),
@@ -123,7 +128,7 @@ export const App: React.FC<AppProps> = ({
     }));
   }, []);
 
-  // Public method: update token usage - 公开方法：更新 Token 使用
+  // Public method: update token usage.
   const updateTokenUsage = useCallback((input: number, output: number) => {
     setTokenUsage({
       input,
@@ -132,14 +137,18 @@ export const App: React.FC<AppProps> = ({
     });
   }, []);
 
-  // Public method: set current tool - 公开方法：设置当前工具
+  // Public method: set the current tool.
   const setTool = useCallback((tool: string | undefined) => {
     setCurrentTool(tool);
   }, []);
 
+  void addMessage;
+  void updateTokenUsage;
+  void setTool;
+
   return (
     <Box flexDirection="column">
-      {/* Message list area - 消息列表区域 */}
+      {/* Message list area */}
       <Box flexGrow={1} flexDirection="column" overflow="hidden">
         <MessageList
           items={state.messages.map(messageToHistoryItem)}
@@ -147,7 +156,7 @@ export const App: React.FC<AppProps> = ({
         />
       </Box>
 
-      {/* Input area - 输入区域 */}
+      {/* Input area */}
       <Box flexShrink={0}>
         <InputPrompt
           onSubmit={handleSubmit}
@@ -156,7 +165,7 @@ export const App: React.FC<AppProps> = ({
         />
       </Box>
 
-      {/* Status bar - 状态栏 */}
+      {/* Status bar */}
       <Box flexShrink={0}>
         <StatusBar
           sessionId={state.sessionId}
@@ -174,7 +183,7 @@ export const App: React.FC<AppProps> = ({
 };
 
 /**
- * Simplified App - for testing only - 简化版 App - 仅用于测试
+ * Simplified App for testing only.
  */
 export const SimpleApp: React.FC<{
   model: string;
@@ -204,7 +213,7 @@ export const SimpleApp: React.FC<{
   );
 };
 
-// Export public method types - 导出公开方法类型
+// Export public method types.
 export interface AppHandle {
   addMessage: (role: Message["role"], content: string) => void;
   updateTokenUsage: (input: number, output: number) => void;

@@ -1,4 +1,4 @@
-import type { TranscriptBufferingMode, TranscriptVerbosity } from "../utils/transcript-state.js";
+import type { TranscriptBufferingMode } from "../utils/transcript-state.js";
 
 export interface FooterHeaderItem {
   id: string;
@@ -14,10 +14,10 @@ export interface FooterHeaderViewModel {
 
 export interface FooterHeaderViewModelInput {
   isHistorySearchActive: boolean;
-  isReviewingHistory: boolean;
+  isTranscriptMode: boolean;
   pendingInputCount: number;
   buffering: TranscriptBufferingMode;
-  verbosity: TranscriptVerbosity;
+  pendingLiveUpdates: number;
 }
 
 export function buildFooterHeaderViewModel(
@@ -27,8 +27,8 @@ export function buildFooterHeaderViewModel(
 
   if (input.isHistorySearchActive) {
     leftItems.push({ id: "search", label: "Search", accent: true });
-  } else if (input.isReviewingHistory) {
-    leftItems.push({ id: "history", label: "History" });
+  } else if (input.isTranscriptMode) {
+    leftItems.push({ id: "transcript", label: "Transcript" });
   }
 
   if (input.pendingInputCount > 0) {
@@ -40,15 +40,22 @@ export function buildFooterHeaderViewModel(
 
   if (
     input.buffering === "buffered-fallback"
-    && (input.isHistorySearchActive || input.isReviewingHistory)
+    && (input.isHistorySearchActive || input.isTranscriptMode)
   ) {
     leftItems.push({ id: "buffered", label: "Buffered" });
   }
 
-  const rightItems: FooterHeaderItem[] = [];
-  if (input.verbosity === "verbose") {
-    rightItems.push({ id: "verbosity", label: "verbose", accent: true });
+  if (input.isTranscriptMode && input.pendingLiveUpdates > 0) {
+    leftItems.push({
+      id: "updates",
+      label: input.pendingLiveUpdates === 1
+        ? "1 update"
+        : `${input.pendingLiveUpdates} updates`,
+      accent: true,
+    });
   }
+
+  const rightItems: FooterHeaderItem[] = [];
 
   const summary = [...leftItems, ...rightItems]
     .map((item) => item.label.trim())

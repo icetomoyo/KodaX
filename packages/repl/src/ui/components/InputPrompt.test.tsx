@@ -16,6 +16,14 @@ const { handlerRef, controllerHandleKeyMock, textInputPropsRef } = vi.hoisted(()
 vi.mock("ink", () => ({
   Box: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
   Text: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
+  Static: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
+  useInput: vi.fn(),
+  useStdout: () => ({ stdout: undefined }),
+  useStdin: () => ({
+    stdin: undefined,
+    setRawMode: vi.fn(),
+    isRawModeSupported: false,
+  }),
   useApp: () => ({ exit: vi.fn() }),
 }));
 

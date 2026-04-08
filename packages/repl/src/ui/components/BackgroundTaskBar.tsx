@@ -1,6 +1,7 @@
 import React from "react";
-import { Box, Text } from "ink";
+import { Box, Text } from "../tui.js";
 import { getTheme } from "../themes/index.js";
+import { Spinner } from "./LoadingIndicator.js";
 
 export interface BackgroundTaskBarItem {
   id: string;
@@ -14,6 +15,7 @@ export interface BackgroundTaskBarProps {
   items: readonly BackgroundTaskBarItem[];
   overflowLabel?: string;
   ctaHint?: string;
+  showSpinner?: boolean;
 }
 
 function Pill({
@@ -42,14 +44,20 @@ export const BackgroundTaskBar: React.FC<BackgroundTaskBarProps> = ({
   items,
   overflowLabel,
   ctaHint,
+  showSpinner = false,
 }) => {
   const visibleItems = items.filter((item) => item.label.trim().length > 0);
-  if (visibleItems.length === 0 && !overflowLabel && !ctaHint) {
+  if (visibleItems.length === 0 && !overflowLabel && !ctaHint && !showSpinner) {
     return null;
   }
 
   return (
     <Box flexDirection="row" paddingX={1}>
+      {showSpinner ? (
+        <Box marginRight={1}>
+          <Spinner />
+        </Box>
+      ) : null}
       {visibleItems.map((item) => (
         <Pill
           key={item.id}
@@ -63,3 +71,4 @@ export const BackgroundTaskBar: React.FC<BackgroundTaskBarProps> = ({
     </Box>
   );
 };
+

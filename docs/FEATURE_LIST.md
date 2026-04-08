@@ -13,11 +13,11 @@
 
 | Item | Value |
 |---|---|
-| Tracked feature IDs | `001-056` |
-| Total tracked features | `56` |
+| Tracked feature IDs | `001-058` |
+| Total tracked features | `58` |
 | Completed | `50` |
-| InProgress | `2` |
-| Planned | `4` |
+| InProgress | `3` |
+| Planned | `5` |
 | Current released version | `v0.7.14` |
 
 ### 各版本待做分布
@@ -27,7 +27,7 @@
 | `v0.7.20` | `1` |
 | `v0.7.25` | `0` |
 | `v0.7.30` | `1` |
-| `v0.8.0` | `1` |
+| `v0.8.0` | `2` |
 | `v0.9.0` | `0` |
 | `v1.0.0` | `1` |
 
@@ -38,6 +38,7 @@
 | ID | Title | Planned | Design |
 |---|---|---|---|
 | `031` | Multimodal Artifact Inputs | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_031-multimodal-artifact-inputs) |
+| `057` | Claude-Aligned TUI Substrate Refactor | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_057-claude-aligned-tui-substrate-refactor) |
 | `056` | Tool Interaction Maturity and Transcript-Native Explanation Layer | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_056-tool-interaction-maturity-and-transcript-native-explanation-layer) |
 
 ---
@@ -48,6 +49,7 @@
 |---|---|---|---|---|---|
 | `007` | Theme System Consolidation | Enhancement | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_007-theme-system-consolidation) |
 | `023` | Dual-Mode Terminal UX | Enhancement | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_023-dual-mode-terminal-ux) |
+| `058` | Transcript Native Scrollback Dump | Enhancement | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_058-transcript-native-scrollback-dump) |
 | `026` | Roadmap Integrity and Planning Hygiene | Internal | High | `v0.7.20` | [v0.7.20](features/v0.7.20.md#feature_026-roadmap-integrity-and-planning-hygiene) |
 | `030` | Multi-Surface Delivery | Enhancement | High | `v1.0.0` | [v1.0.0](features/v1.0.0.md#feature_030-multi-surface-delivery) |
 
@@ -64,6 +66,7 @@
 - `FEATURE_054` 的目标方向是把 `Project` 模式吸收进 AMA H2；后续设计应默认以“单主 authority + Planner 吸收 brainstorm”为目标，不再扩独立 project/planner 表面。
 - `kodax -c` 属于 `user session` 恢复语义，不属于 internal worker-session recovery。
 - `FEATURE_023` 只应继续承担更高层 terminal/delivery ergonomics，不应重新打开 `FEATURE_051 / FEATURE_055` 已冻结的 REPL shell。
+- `FEATURE_057` 是 `FEATURE_023` 下的 renderer-boundary 迁移切片：目标是保留当前 shell 的视觉与信息架构，同时把 transcript/prompt/footer 的视口隔离和 host-aware 降级下沉到自有渲染层，而不是重做一个新的 shell。
 - `FEATURE_031` 只承担 multimodal artifact intake，不应滑向 gallery、media workbench 或 design-review surface。
 - `FEATURE_042` 只应继续加强 repo-intelligence substrate，不应扩成 repo graph / workbench UI。
 - `FEATURE_038 / 043 / 053 / 054 / 056` 与 `023 / 031 / 042` 现统一收编到 `v0.7.30`，便于在同一版本内同步推进 runtime clarity、harness safety 与 transcript-native interaction maturity。

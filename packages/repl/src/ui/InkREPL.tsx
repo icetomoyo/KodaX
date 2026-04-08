@@ -11,12 +11,13 @@
  */
 
 import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
-import { render, Box, useApp, Text, Static, useInput, useStdout } from "ink";
-import clipboard from "clipboardy";
-import { AmaWorkStrip } from "./components/AmaWorkStrip.js";
+import { render, Box, useApp, Text, Static, useStdout, useStdin, useTerminalWrite } from "./tui.js";
+import { AlternateScreen, type ScrollBoxWindow } from "../tui/index.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { FullscreenTranscriptLayout } from "./components/FullscreenTranscriptLayout.js";
-import { TranscriptViewport } from "./components/TranscriptViewport.js";
+import { TranscriptModeFooter } from "./components/TranscriptModeFooter.js";
+import { PromptTranscriptSurface } from "./components/PromptTranscriptSurface.js";
+import { TranscriptModeSurface } from "./components/TranscriptModeSurface.js";
 import { PromptComposer } from "./components/PromptComposer.js";
 import {
   PromptFooter,
@@ -26,11 +27,11 @@ import {
 import { PromptHelpMenu } from "./components/PromptHelpMenu.js";
 import { PromptSuggestionsSurface } from "./components/PromptSuggestionsSurface.js";
 import { DialogSurface } from "./components/DialogSurface.js";
-import { BackgroundTaskBar } from "./components/BackgroundTaskBar.js";
 import { QueuedCommandsSurface } from "./components/QueuedCommandsSurface.js";
 import { NotificationsSurface } from "./components/NotificationsSurface.js";
 import { StatusNoticesSurface } from "./components/StatusNoticesSurface.js";
 import { StashNotice } from "./components/StashNotice.js";
+import { Spinner } from "./components/LoadingIndicator.js";
 import { buildFooterHeaderViewModel } from "./view-models/footer-header.js";
 import {
   UIStateProvider,
@@ -119,6 +120,7 @@ import { buildToolConfirmationPrompt } from "../common/tool-confirmation.js";
 import { KODAX_VERSION } from "../common/utils.js";
 import { runWithPlanMode } from "../common/plan-mode.js";
 import { saveAlwaysAllowToolPattern, loadAlwaysAllowTools, savePermissionModeUser } from "../common/permission-config.js";
+import { copyTextToClipboard } from "../common/clipboard.js";
 import { initializeSkillRegistry, getSkillRegistry } from "@kodax/skills";
 import { getTheme } from "./themes/index.js";
 import { KODAX_BANNER_LOGO_LINES } from "./constants/banner-logo.js";
@@ -152,32 +154,48 @@ import {
 import { buildManagedRunContext } from "./utils/managed-run-context.js";
 import { formatToolCallInlineText } from "./utils/tool-display.js";
 import { calculateViewportBudget } from "./utils/viewport-budget.js";
+import { calculateVisualLayout } from "./utils/textUtils.js";
 import {
   closeTranscriptSearch,
   createTranscriptDisplayState,
-  enterTranscriptHistory,
-  exitTranscriptHistory,
+  enterTranscriptMode,
+  exitTranscriptMode,
   jumpTranscriptToLatest,
   openTranscriptSearch,
   resolveTranscriptSelectedItemId,
+  setTranscriptPendingLiveUpdates,
   setTranscriptSearchMatchIndex,
   setTranscriptScrollAnchor,
   setTranscriptSelectedItem,
   setTranscriptStickyPromptVisible,
   shouldPauseLiveTranscript,
   shouldWindowTranscript,
-  supportsTranscriptMouseHistory,
-  toggleTranscriptVerbosityState,
 } from "./utils/transcript-state.js";
-import { detectTerminalHostProfile } from "./utils/terminal-host-profile.js";
+import {
+  detectTerminalHostProfile,
+  resolveEffectiveTuiRendererMode,
+  resolveFullscreenPolicy,
+  type EffectiveTuiRendererMode,
+  type FullscreenPolicy,
+} from "./utils/terminal-host-profile.js";
 import { formatPendingInputsSummary, MAX_PENDING_INPUTS } from "./utils/pending-inputs.js";
 import { runQueuedPromptSequence } from "./utils/queued-prompt-sequence.js";
 import {
-  capHistoryByTranscriptRows,
-  sliceHistoryToRecentRounds,
-} from "./utils/transcript-layout.js";
+  hasTranscriptInputActivity,
+  resolveStreamingInterruptAction,
+  resolveTranscriptPointerAction,
+} from "./utils/transcript-input-policy.js";
+import { resolveTranscriptKeyboardAction } from "./utils/transcript-key-actions.js";
+import { executeTranscriptKeyboardAction } from "./utils/transcript-interaction-controller.js";
 import {
-  buildTranscriptSearchSummary,
+  buildTranscriptRenderModel,
+  materializeTranscriptRenderModel,
+  resolveVisibleTranscriptRows,
+  sliceHistoryToRecentRounds,
+  type TranscriptRow,
+} from "./utils/transcript-layout.js";
+import { buildPromptSurfaceRenderModel } from "./utils/prompt-surface-layout.js";
+import {
   buildTranscriptCopyText,
   buildTranscriptSelectionSummary,
   buildTranscriptToolInputCopyText,
@@ -190,12 +208,29 @@ import {
 } from "./utils/transcript-search.js";
 import {
   buildTranscriptChromeModel,
-  incrementTranscriptScrollOffset,
+  clampTranscriptScrollOffset,
   resolveTranscriptPageSize,
   resolveTranscriptSearchAnchorItemId,
   resolveTranscriptSelectionOffset,
   resolveTranscriptWheelStep,
+  useTranscriptViewportScrollController,
 } from "./utils/transcript-scroll-controller.js";
+import {
+  buildTranscriptRowIndexByKey,
+  buildTranscriptScreenBuffer,
+  type TranscriptScreenBuffer,
+  type TranscriptScreenPoint,
+} from "../tui/core/screen.js";
+import {
+  clampTranscriptScreenHit,
+  hitTestTranscriptScreen,
+} from "../tui/core/hit-test.js";
+import {
+  buildTranscriptScreenSelection,
+  type TranscriptTextSelection,
+} from "../tui/core/selection.js";
+import { resolveTranscriptDragEdgeScrollDirection } from "../tui/core/scroll.js";
+import { getRendererInstance } from "../tui/core/root.js";
 import {
   getAskUserDialogTitle,
   resolveAskUserDismissChoice,
@@ -205,19 +240,46 @@ import {
 } from "./utils/ask-user.js";
 import { buildHelpMenuSections } from "./constants/layout.js";
 import { buildStatusBarViewModel } from "./view-models/status-bar.js";
+import { buildPromptActivityText } from "./view-models/surface-liveness.js";
+import { buildSurfaceStatusBarProps } from "./view-models/surface-status.js";
+import { buildTranscriptSearchChrome } from "./view-models/transcript-search.js";
+import {
+  buildBaseFooterNotices,
+  buildFooterNotifications,
+  buildPromptFooterNotices,
+  buildStashNoticeText,
+  buildTranscriptFooterViewModel,
+} from "./view-models/surface-chrome.js";
 import {
   buildAmaSummaryViewModel,
   buildAmaWorkStripFromStatus as buildAmaWorkStripTextFromStatus,
 } from "./view-models/ama-summary.js";
 import {
-  buildTranscriptSearchViewModel,
   buildTranscriptSelectionRuntimeState,
   buildTranscriptSelectionViewModel,
 } from "./view-models/transcript-viewport.js";
+import {
+  buildPromptSurfaceItems,
+  captureTranscriptSnapshot,
+  countPendingTranscriptUpdates,
+  resolveTranscriptInteractionPolicy,
+  resolveTranscriptSurfaceItems,
+  shouldOwnTranscriptViewport,
+  type TranscriptSnapshot,
+} from "./utils/transcript-surface.js";
+import {
+  extendTranscriptSelectionSpan,
+  resolveTranscriptMultiClickState,
+  resolveTranscriptSelectionSpanAt,
+  type TranscriptMultiClickTrackerState,
+  type TranscriptSelectionGestureMode,
+  type TranscriptSelectionSpan,
+} from "./utils/transcript-selection-gestures.js";
 
 // REPL options
 export interface InkREPLOptions extends KodaXOptions {
   storage?: SessionStorage;
+  hardExitOnClose?: boolean;
 }
 
 // Ink REPL Props
@@ -227,6 +289,8 @@ interface InkREPLProps {
   context: InteractiveContext;
   storage: SessionStorage;
   compactionInfo?: { contextWindow: number; triggerPercent: number; enabled: boolean };
+  rendererMode: EffectiveTuiRendererMode;
+  fullscreenPolicy: FullscreenPolicy;
   onExit: () => void;
 }
 
@@ -235,30 +299,21 @@ interface BannerProps {
   config: CurrentConfig;
   sessionId: string;
   workingDir: string;
+  terminalWidth: number;
   compactionInfo?: { contextWindow: number; triggerPercent: number; enabled: boolean };
-}
-
-interface ReviewSnapshot {
-  items: HistoryItem[];
-  isLoading: boolean;
-  isThinking: boolean;
-  thinkingCharCount: number;
-  thinkingContent: string;
-  currentResponse: string;
-  currentTool?: string;
-  activeToolCalls: ToolCall[];
-  toolInputCharCount: number;
-  toolInputContent: string;
-  lastLiveActivityLabel?: string;
-  workStripText?: string;
-  iterationHistory: import("./contexts/StreamingContext.js").IterationRecord[];
-  currentIteration: number;
-  isCompacting: boolean;
 }
 
 type StreamingEvents = import("@kodax/coding").KodaXEvents & {
   onCompactedMessages?: (messages: KodaXMessage[], update?: CompactionUpdate) => void;
 };
+
+interface TranscriptMouseSelectionState {
+  anchor: TranscriptScreenPoint;
+  focus: TranscriptScreenPoint;
+  didDrag: boolean;
+  mode: TranscriptSelectionGestureMode;
+  anchorSpan?: TranscriptSelectionSpan;
+}
 
 const PLAN_MODE_BLOCK_GUIDANCE =
   "Do not try to modify files while planning. Finish the plan first, then use ask_user_question with intent \"plan-handoff\" to ask whether this session should switch to accept-edits and continue.";
@@ -529,21 +584,15 @@ export function buildRoundHistoryItems({
 }
 
 export function shouldShowStatusBarBusyStatus({
-  agentMode,
   isLivePaused,
   isLoading,
+  hasSpinnerLiveness: _hasSpinnerLiveness,
 }: {
-  agentMode: string;
   isLivePaused: boolean;
   isLoading: boolean;
+  hasSpinnerLiveness: boolean;
 }): boolean {
-  if (isLivePaused) {
-    return false;
-  }
-  if (agentMode === "ama" && isLoading) {
-    return false;
-  }
-  return true;
+  return isLoading && !isLivePaused;
 }
 
 export function buildAmaWorkStripFromStatus(
@@ -571,12 +620,54 @@ function toPersistedUiHistoryItem(
   };
 }
 
+const MAX_PERSISTED_UI_HISTORY_ITEMS = 150;
+const MAX_PERSISTED_UI_HISTORY_ROUNDS = 50;
+
+export function trimPersistedUiHistorySnapshot(
+  items: readonly KodaXSessionUiHistoryItem[],
+): KodaXSessionUiHistoryItem[] {
+  if (items.length === 0) {
+    return [];
+  }
+
+  const userIndices: number[] = [];
+  for (let index = 0; index < items.length; index += 1) {
+    if (items[index]?.type === "user") {
+      userIndices.push(index);
+    }
+  }
+
+  let trimmed = [...items];
+  if (userIndices.length > MAX_PERSISTED_UI_HISTORY_ROUNDS) {
+    const startIndex = userIndices[userIndices.length - MAX_PERSISTED_UI_HISTORY_ROUNDS] ?? 0;
+    trimmed = items.slice(startIndex);
+  }
+
+  if (trimmed.length > MAX_PERSISTED_UI_HISTORY_ITEMS) {
+    const windowed = trimmed.slice(-MAX_PERSISTED_UI_HISTORY_ITEMS);
+    const firstUserIndex = windowed.findIndex((item) => item.type === "user");
+    trimmed = firstUserIndex > 0 ? windowed.slice(firstUserIndex) : windowed;
+  }
+
+  return [...trimmed];
+}
+
+function normalizePersistedUiHistory(
+  items: readonly KodaXSessionUiHistoryItem[] | undefined,
+): KodaXSessionUiHistoryItem[] | undefined {
+  if (!items) {
+    return undefined;
+  }
+
+  return trimPersistedUiHistorySnapshot(items);
+}
+
 function serializeUiHistorySnapshot(
   items: readonly HistoryItem[],
 ): KodaXSessionUiHistoryItem[] {
-  return items
+  return trimPersistedUiHistorySnapshot(items
     .map((item) => toPersistedUiHistoryItem(item))
-    .filter((item): item is KodaXSessionUiHistoryItem => Boolean(item));
+    .filter((item): item is KodaXSessionUiHistoryItem => Boolean(item)));
 }
 
 function serializeCreatableHistoryItems(
@@ -592,12 +683,12 @@ export function appendPersistedUiHistorySnapshot(
   items: readonly CreatableHistoryItem[],
 ): KodaXSessionUiHistoryItem[] {
   if (items.length === 0) {
-    return [...currentHistory];
+    return trimPersistedUiHistorySnapshot(currentHistory);
   }
-  return [
+  return trimPersistedUiHistorySnapshot([
     ...currentHistory,
     ...serializeCreatableHistoryItems(items),
-  ];
+  ]);
 }
 
 function logSessionTransitionGuard(
@@ -612,12 +703,17 @@ function logSessionTransitionGuard(
 /**
  * Banner component - displayed inside Ink UI so it's part of the alternate buffer
  */
-const Banner: React.FC<BannerProps> = ({ config, sessionId, workingDir, compactionInfo }) => {
+const Banner: React.FC<BannerProps> = ({
+  config,
+  sessionId,
+  workingDir,
+  terminalWidth,
+  compactionInfo,
+}) => {
   const theme = getTheme("dark");
   const model = config.model ?? getProviderModel(config.provider) ?? config.provider;
   const reasoningCapability = getProviderReasoningCapability(config.provider, config.model);
   const reasoningCapabilityShort = formatReasoningCapabilityShort(reasoningCapability);
-  const terminalWidth = process.stdout.columns ?? 80;
   const dividerWidth = Math.min(60, terminalWidth - 4);
 
   // Compute compaction display values
@@ -709,6 +805,51 @@ const Banner: React.FC<BannerProps> = ({ config, sessionId, workingDir, compacti
   );
 };
 
+function countWrappedBannerRows(text: string, width: number): number {
+  return Math.max(
+    1,
+    calculateVisualLayout(
+      text.length > 0 ? text.split("\n") : [""],
+      Math.max(1, width),
+      0,
+      0,
+    ).visualLines.length,
+  );
+}
+
+function estimateBannerRows(props: BannerProps): number {
+  const model = props.config.model ?? getProviderModel(props.config.provider) ?? props.config.provider;
+  const reasoningCapability = getProviderReasoningCapability(
+    props.config.provider,
+    props.config.model,
+  );
+  const reasoningCapabilityShort = formatReasoningCapabilityShort(reasoningCapability);
+  const dividerWidth = Math.min(60, props.terminalWidth - 4);
+  const ctxK = props.compactionInfo ? Math.round(props.compactionInfo.contextWindow / 1000) : 0;
+  const triggerK = props.compactionInfo
+    ? Math.round(props.compactionInfo.contextWindow * props.compactionInfo.triggerPercent / 100 / 1000)
+    : 0;
+  const versionLine = `  v${KODAX_VERSION} | ${props.config.provider}/${model} [${reasoningCapabilityShort}] | ${props.config.agentMode.toUpperCase()} | ${props.config.permissionMode} | ${props.config.parallel ? "parallel" : "sequential"}${props.config.reasoningMode !== "off" ? ` +reason:${props.config.reasoningMode}` : ""}`;
+  const compactionLine = props.compactionInfo
+    ? `  Context: ${ctxK}k | Compaction: ${props.compactionInfo.enabled ? "on" : "off"} @ ${props.compactionInfo.triggerPercent}% (${triggerK}k)`
+    : undefined;
+  const sessionLine = `  Session: ${props.sessionId} | Working: ${props.workingDir}`;
+  const dividerLine = `  ${"-".repeat(dividerWidth)}`;
+  const lines = [
+    ...KODAX_BANNER_LOGO_LINES,
+    versionLine,
+    ...(compactionLine ? [compactionLine] : []),
+    dividerLine,
+    sessionLine,
+    dividerLine,
+  ];
+
+  return lines.reduce(
+    (sum, line) => sum + countWrappedBannerRows(line, props.terminalWidth),
+    0,
+  ) + 1;
+}
+
 /**
  * Inner REPL component that uses contexts
  */
@@ -717,11 +858,15 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   config,
   context,
   storage,
+  rendererMode,
+  fullscreenPolicy,
   onExit,
   compactionInfo,
 }) => {
   const { exit } = useApp();
   const { stdout } = useStdout();
+  const { stdin, setRawMode, isRawModeSupported } = useStdin();
+  const writeTerminal = useTerminalWrite();
   const { history } = useUIState();
   const { addHistoryItem, clearHistory: clearUIHistory, setSessionId } = useUIActions();
   const historyRef = useRef(history);
@@ -741,19 +886,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   // A "round" = one user input + AI response(s)
   // Full history remains in state, only rendering is limited
   const MAX_VISIBLE_ROUNDS = 20;
-  const REVIEW_VISIBLE_ROUNDS = 50;
-  const REVIEW_MAX_TRANSCRIPT_ROWS = 4000;
   const renderHistory = useMemo(() => {
     return sliceHistoryToRecentRounds(history, MAX_VISIBLE_ROUNDS);
   }, [history]);
-  const reviewHistory = useMemo(() => {
-    const recentRounds = sliceHistoryToRecentRounds(history, REVIEW_VISIBLE_ROUNDS);
-    return capHistoryByTranscriptRows(
-      recentRounds,
-      terminalWidth,
-      REVIEW_MAX_TRANSCRIPT_ROWS
-    );
-  }, [history, terminalWidth]);
+  const transcriptHistory = history;
 
   const streamingState = useStreamingState();
   const {
@@ -797,16 +933,53 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const lastCompactionTokensBeforeRef = useRef<number | null>(null);
   const persistContextStateRef = useRef<((uiHistoryOverride?: KodaXSessionUiHistoryItem[]) => Promise<void>) | null>(null);
   const persistContextStateQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const persistContextStateRunnerRef = useRef<Promise<void> | null>(null);
+  const pendingPersistContextStateRef = useRef<{
+    requested: boolean;
+    uiHistoryOverride: KodaXSessionUiHistoryItem[] | undefined;
+  }>({
+    requested: false,
+    uiHistoryOverride: undefined,
+  });
   const appendHistoryItemsWithPersistenceRef = useRef<((items: readonly CreatableHistoryItem[]) => void) | null>(null);
   const interruptPersistenceQueuedRef = useRef(false);
+  const gracefulExitRunnerRef = useRef<Promise<void> | null>(null);
   const [isInputEmpty, setIsInputEmpty] = useState(true); // Track if input is empty for ? shortcut
   const [inputText, setInputText] = useState("");
   const [transcriptDisplayState, setTranscriptDisplayState] = useState(() => (
-    createTranscriptDisplayState(terminalHostProfile)
+    createTranscriptDisplayState(terminalHostProfile, {
+      rendererMode,
+    })
   ));
-  const [historyScrollOffset, setHistoryScrollOffset] = useState(0);
+  const [showAllInTranscript, setShowAllInTranscript] = useState(false);
+  const [transcriptScrollHeight, setTranscriptScrollHeight] = useState(0);
+  const {
+    scrollRef: transcriptScrollRef,
+    scrollOffset: historyScrollOffset,
+    sticky: viewportSticky,
+    setScrollOffset: setHistoryScrollOffset,
+    handleScrollTopChange: handleTranscriptScrollTopChange,
+    handleStickyChange: handleViewportStickyChange,
+    scrollTo: scrollTranscriptTo,
+    scrollBy: scrollTranscriptBy,
+    scrollToBottom: scrollTranscriptToBottom,
+  } = useTranscriptViewportScrollController();
+  const transcriptScrollWindowRef = useRef<ScrollBoxWindow | null>(null);
+  const transcriptVisibleRowsRef = useRef<TranscriptRow[]>([]);
+  const transcriptScreenBufferRef = useRef<TranscriptScreenBuffer | null>(null);
+  const mouseSelectionRef = useRef<TranscriptMouseSelectionState | null>(null);
+  const transcriptMultiClickRef = useRef<TranscriptMultiClickTrackerState>({
+    time: 0,
+    row: -1,
+    column: -1,
+    count: 0,
+  });
+  const [promptTextSelection, setPromptTextSelection] = useState<TranscriptTextSelection | undefined>(undefined);
+  const [transcriptModeTextSelection, setTranscriptModeTextSelection] = useState<TranscriptTextSelection | undefined>(undefined);
+  const [selectionCopyNotice, setSelectionCopyNotice] = useState<string | undefined>(undefined);
   const [expandedTranscriptItemIds, setExpandedTranscriptItemIds] = useState<Set<string>>(() => new Set());
-  const [reviewSnapshot, setReviewSnapshot] = useState<ReviewSnapshot | null>(null);
+  const [transcriptSnapshot, setTranscriptSnapshot] = useState<TranscriptSnapshot | null>(null);
+  const [promptSurfaceSnapshot, setPromptSurfaceSnapshot] = useState<TranscriptSnapshot | null>(null);
   const [managedTaskStatus, setManagedTaskStatus] = useState<KodaXManagedTaskStatusEvent | null>(null);
   const [lastLiveActivityLabel, setLastLiveActivityLabel] = useState<string | undefined>(undefined);
   const [visibleWorkStripText, setVisibleWorkStripText] = useState<string | undefined>(undefined);
@@ -1066,15 +1239,30 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }, [confirmRequest, currentConfig.permissionMode]);
 
   const isHistorySearchActive = transcriptDisplayState.searchMode === "history";
+  const isTranscriptMode = transcriptDisplayState.surface === "transcript";
   const isAwaitingUserInteraction = !!confirmRequest || !!uiRequest || isHistorySearchActive;
-  const isReviewingHistory = transcriptDisplayState.followMode === "browsing-history";
-  const isTranscriptVerbose = transcriptDisplayState.verbosity === "verbose";
-  const transcriptOwnsViewport = shouldWindowTranscript(transcriptDisplayState);
-  const isLivePaused = shouldPauseLiveTranscript(transcriptDisplayState) || isAwaitingUserInteraction;
-  const suggestionsReservedForLayout = shouldReserveSuggestionsSpace && !isReviewingHistory;
+  const transcriptMaxLines = isTranscriptMode ? 1000 : 12;
+  const surfaceInteractionPolicy = resolveTranscriptInteractionPolicy(
+    fullscreenPolicy,
+    transcriptDisplayState.surface,
+  );
+  const fullscreenShellMode = surfaceInteractionPolicy.shellMode;
+  const useAlternateScreenShell = surfaceInteractionPolicy.usesAlternateScreenShell;
+  const useRendererViewportShell = surfaceInteractionPolicy.usesRendererViewportShell;
+  const useRendererOwnedMouseTracking = surfaceInteractionPolicy.usesRendererMouseTracking;
+  const useManagedMouseClicks = surfaceInteractionPolicy.usesManagedMouseClicks;
+  const useManagedMouseWheel = surfaceInteractionPolicy.usesManagedMouseWheel;
+  const useManagedSelection = surfaceInteractionPolicy.usesManagedSelection;
+  const transcriptOwnsViewport = shouldOwnTranscriptViewport(
+    fullscreenPolicy,
+    transcriptDisplayState.surface,
+    shouldWindowTranscript(transcriptDisplayState),
+  );
+  const isLivePaused = shouldPauseLiveTranscript(transcriptDisplayState);
+  const suggestionsReservedForLayout = shouldReserveSuggestionsSpace && !isTranscriptMode;
 
-  const createReviewSnapshot = useCallback((): ReviewSnapshot => ({
-    items: isReviewingHistory ? reviewHistory : renderHistory,
+  const createTranscriptSnapshot = useCallback((): TranscriptSnapshot => captureTranscriptSnapshot({
+    items: transcriptHistory,
     isLoading,
     isThinking: streamingState.isThinking,
     thinkingCharCount: streamingState.thinkingCharCount,
@@ -1090,9 +1278,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     currentIteration: streamingState.currentIteration,
     isCompacting: streamingState.isCompacting,
   }), [
-    renderHistory,
-    reviewHistory,
-    isReviewingHistory,
+    transcriptHistory,
     isLoading,
     streamingState.isThinking,
     streamingState.thinkingCharCount,
@@ -1110,33 +1296,345 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   ]);
 
   useEffect(() => {
-    if (isLivePaused) {
-      setReviewSnapshot((prev) => prev ?? createReviewSnapshot());
+    if (isTranscriptMode) {
+      setTranscriptSnapshot((prev) => prev ?? createTranscriptSnapshot());
       return;
     }
 
-    setReviewSnapshot(null);
-  }, [isLivePaused, createReviewSnapshot]);
+    setTranscriptSnapshot(null);
+  }, [createTranscriptSnapshot, isTranscriptMode]);
 
-  const displaySnapshot = reviewSnapshot;
-  const displayItems = displaySnapshot?.items ?? renderHistory;
-  const displayIsLoading = isAwaitingUserInteraction
-    ? false
-    : displaySnapshot?.isLoading ?? isLoading;
-  const displayStreamingState = {
-    isThinking: displaySnapshot?.isThinking ?? streamingState.isThinking,
-    thinkingCharCount: displaySnapshot?.thinkingCharCount ?? streamingState.thinkingCharCount,
-    thinkingContent: displaySnapshot?.thinkingContent ?? streamingState.thinkingContent,
-    currentResponse: displaySnapshot?.currentResponse ?? streamingState.currentResponse,
-    currentTool: displaySnapshot?.currentTool ?? streamingState.currentTool,
-    activeToolCalls: displaySnapshot?.activeToolCalls ?? activeToolCalls,
-    toolInputCharCount: displaySnapshot?.toolInputCharCount ?? streamingState.toolInputCharCount,
-    toolInputContent: displaySnapshot?.toolInputContent ?? streamingState.toolInputContent,
-    lastLiveActivityLabel: displaySnapshot?.lastLiveActivityLabel ?? lastLiveActivityLabel,
-    iterationHistory: displaySnapshot?.iterationHistory ?? streamingState.iterationHistory,
-    currentIteration: displaySnapshot?.currentIteration ?? streamingState.currentIteration,
-    isCompacting: displaySnapshot?.isCompacting ?? streamingState.isCompacting,
-  };
+  const pendingTranscriptUpdateCount = useMemo(() => countPendingTranscriptUpdates({
+    isTranscriptMode,
+    snapshot: transcriptSnapshot,
+    currentItemsLength: transcriptHistory.length,
+    isLoading,
+    currentResponse: streamingState.currentResponse,
+    thinkingContent: streamingState.thinkingContent,
+    activeToolCallsLength: activeToolCalls.length,
+  }), [
+    activeToolCalls.length,
+    isLoading,
+    isTranscriptMode,
+    transcriptHistory.length,
+    streamingState.currentResponse,
+    streamingState.thinkingContent,
+    transcriptSnapshot,
+  ]);
+
+  const displaySnapshot = isTranscriptMode ? transcriptSnapshot : null;
+  const promptDisplayItems = useMemo(
+    () => buildPromptSurfaceItems(renderHistory),
+    [renderHistory],
+  );
+  const transcriptDisplayItems = resolveTranscriptSurfaceItems({
+    surface: "transcript",
+    snapshot: displaySnapshot,
+    promptItems: renderHistory,
+    transcriptItems: transcriptHistory,
+  });
+  const transcriptDisplayIsLoading = displaySnapshot?.isLoading ?? isLoading;
+  const promptStreamingState = fullscreenPolicy.streamingPreview
+    ? {
+      isThinking: streamingState.isThinking,
+      thinkingCharCount: streamingState.thinkingCharCount,
+      thinkingContent: streamingState.thinkingContent,
+      currentResponse: streamingState.currentResponse,
+      currentTool: streamingState.currentTool,
+      activeToolCalls,
+      toolInputCharCount: 0,
+      toolInputContent: "",
+      lastLiveActivityLabel: undefined,
+      iterationHistory: [] as typeof streamingState.iterationHistory,
+      currentIteration: streamingState.currentIteration,
+      isCompacting: false,
+    }
+    : {
+      isThinking: false,
+      thinkingCharCount: 0,
+      thinkingContent: "",
+      currentResponse: "",
+      currentTool: undefined,
+      activeToolCalls: [] as ToolCall[],
+      toolInputCharCount: 0,
+      toolInputContent: "",
+      lastLiveActivityLabel: undefined,
+      iterationHistory: [] as typeof streamingState.iterationHistory,
+      currentIteration: streamingState.currentIteration,
+      isCompacting: false,
+    };
+  const transcriptStreamingState = fullscreenPolicy.streamingPreview
+    ? {
+      isThinking: displaySnapshot?.isThinking ?? streamingState.isThinking,
+      thinkingCharCount: displaySnapshot?.thinkingCharCount ?? streamingState.thinkingCharCount,
+      thinkingContent: displaySnapshot?.thinkingContent ?? streamingState.thinkingContent,
+      currentResponse: displaySnapshot?.currentResponse ?? streamingState.currentResponse,
+      currentTool: displaySnapshot?.currentTool ?? streamingState.currentTool,
+      activeToolCalls: displaySnapshot?.activeToolCalls ?? activeToolCalls,
+      toolInputCharCount: displaySnapshot?.toolInputCharCount ?? streamingState.toolInputCharCount,
+      toolInputContent: displaySnapshot?.toolInputContent ?? streamingState.toolInputContent,
+      lastLiveActivityLabel: displaySnapshot?.lastLiveActivityLabel ?? lastLiveActivityLabel,
+      iterationHistory: displaySnapshot?.iterationHistory ?? streamingState.iterationHistory,
+      currentIteration: displaySnapshot?.currentIteration ?? streamingState.currentIteration,
+      isCompacting: displaySnapshot?.isCompacting ?? streamingState.isCompacting,
+    }
+    : {
+      isThinking: false,
+      thinkingCharCount: 0,
+      thinkingContent: "",
+      currentResponse: "",
+      currentTool: undefined,
+      activeToolCalls: [] as ToolCall[],
+      toolInputCharCount: 0,
+      toolInputContent: "",
+      lastLiveActivityLabel: undefined,
+      iterationHistory: [] as typeof streamingState.iterationHistory,
+      currentIteration: displaySnapshot?.currentIteration ?? streamingState.currentIteration,
+      isCompacting: false,
+    };
+  const activeTextSelection = isTranscriptMode
+    ? transcriptModeTextSelection
+    : promptTextSelection;
+  const promptSelectionFreezeActive = !!promptTextSelection;
+  const createPromptSurfaceSnapshot = useCallback((): TranscriptSnapshot => captureTranscriptSnapshot({
+    items: promptDisplayItems,
+    isLoading,
+    isThinking: promptStreamingState.isThinking,
+    thinkingCharCount: promptStreamingState.thinkingCharCount,
+    thinkingContent: promptStreamingState.thinkingContent,
+    currentResponse: promptStreamingState.currentResponse,
+    currentTool: promptStreamingState.currentTool,
+    activeToolCalls: promptStreamingState.activeToolCalls,
+    toolInputCharCount: promptStreamingState.toolInputCharCount,
+    toolInputContent: promptStreamingState.toolInputContent,
+    lastLiveActivityLabel: promptStreamingState.lastLiveActivityLabel,
+    iterationHistory: promptStreamingState.iterationHistory,
+    currentIteration: promptStreamingState.currentIteration,
+    isCompacting: promptStreamingState.isCompacting,
+  }), [
+    isLoading,
+    promptDisplayItems,
+    promptStreamingState.activeToolCalls,
+    promptStreamingState.currentIteration,
+    promptStreamingState.currentResponse,
+    promptStreamingState.currentTool,
+    promptStreamingState.isCompacting,
+    promptStreamingState.isThinking,
+    promptStreamingState.iterationHistory,
+    promptStreamingState.lastLiveActivityLabel,
+    promptStreamingState.thinkingCharCount,
+    promptStreamingState.thinkingContent,
+    promptStreamingState.toolInputCharCount,
+    promptStreamingState.toolInputContent,
+  ]);
+
+  useEffect(() => {
+    if (!promptSelectionFreezeActive) {
+      setPromptSurfaceSnapshot(null);
+      return;
+    }
+
+    setPromptSurfaceSnapshot((prev) => prev ?? createPromptSurfaceSnapshot());
+  }, [createPromptSurfaceSnapshot, promptSelectionFreezeActive]);
+
+  const effectivePromptDisplayItems = promptSurfaceSnapshot?.items ?? promptDisplayItems;
+  const effectivePromptIsLoading = promptSurfaceSnapshot?.isLoading ?? isLoading;
+  const effectivePromptStreamingState = promptSurfaceSnapshot
+    ? {
+      isThinking: promptSurfaceSnapshot.isThinking,
+      thinkingCharCount: promptSurfaceSnapshot.thinkingCharCount,
+      thinkingContent: promptSurfaceSnapshot.thinkingContent,
+      currentResponse: promptSurfaceSnapshot.currentResponse,
+      currentTool: promptSurfaceSnapshot.currentTool,
+      activeToolCalls: promptSurfaceSnapshot.activeToolCalls,
+      toolInputCharCount: promptSurfaceSnapshot.toolInputCharCount,
+      toolInputContent: promptSurfaceSnapshot.toolInputContent,
+      lastLiveActivityLabel: promptSurfaceSnapshot.lastLiveActivityLabel,
+      iterationHistory: promptSurfaceSnapshot.iterationHistory,
+      currentIteration: promptSurfaceSnapshot.currentIteration,
+      isCompacting: promptSurfaceSnapshot.isCompacting,
+    }
+    : promptStreamingState;
+  const currentSurfaceItems = isTranscriptMode
+    ? transcriptDisplayItems
+    : effectivePromptDisplayItems;
+  const currentSurfaceIsLoading = isTranscriptMode
+    ? transcriptDisplayIsLoading
+    : effectivePromptIsLoading;
+  const currentSurfaceStreamingState = isTranscriptMode
+    ? transcriptStreamingState
+    : effectivePromptStreamingState;
+  const promptSurfaceRenderModel = useMemo(
+    () => buildPromptSurfaceRenderModel({
+      items: effectivePromptDisplayItems,
+      viewportWidth: terminalWidth,
+      streamingResponse: effectivePromptStreamingState.currentResponse,
+      isThinking: effectivePromptStreamingState.isThinking,
+      thinkingContent: effectivePromptStreamingState.thinkingContent,
+      isLoading: effectivePromptIsLoading,
+    }),
+    [
+      effectivePromptDisplayItems,
+      effectivePromptIsLoading,
+      effectivePromptStreamingState.currentResponse,
+      effectivePromptStreamingState.isThinking,
+      effectivePromptStreamingState.thinkingContent,
+      terminalWidth,
+    ],
+  );
+  const transcriptMainScreenRenderModel = useMemo(
+    () => {
+      if (!isTranscriptMode || useRendererViewportShell) {
+        return undefined;
+      }
+
+      return materializeTranscriptRenderModel(buildTranscriptRenderModel({
+        items: transcriptDisplayItems,
+        viewportWidth: terminalWidth,
+        isLoading: transcriptDisplayIsLoading,
+        maxLines: transcriptMaxLines,
+        isThinking: transcriptStreamingState.isThinking,
+        thinkingCharCount: transcriptStreamingState.thinkingCharCount,
+        thinkingContent: transcriptStreamingState.thinkingContent,
+        streamingResponse: transcriptStreamingState.currentResponse,
+        currentTool: transcriptStreamingState.currentTool,
+        activeToolCalls: transcriptStreamingState.activeToolCalls,
+        toolInputCharCount: transcriptStreamingState.toolInputCharCount,
+        toolInputContent: transcriptStreamingState.toolInputContent,
+        iterationHistory: transcriptStreamingState.iterationHistory,
+        currentIteration: transcriptStreamingState.currentIteration,
+        isCompacting: transcriptStreamingState.isCompacting,
+        managedAgentMode: currentConfig.agentMode,
+        managedPhase: transcriptDisplayIsLoading ? managedTaskStatus?.phase : undefined,
+        managedHarnessProfile: transcriptDisplayIsLoading ? managedTaskStatus?.harnessProfile : undefined,
+        managedWorkerTitle: transcriptDisplayIsLoading ? managedTaskStatus?.activeWorkerTitle : undefined,
+        managedRound: transcriptDisplayIsLoading ? managedTaskStatus?.currentRound : undefined,
+        managedMaxRounds: transcriptDisplayIsLoading ? managedTaskStatus?.maxRounds : undefined,
+        managedGlobalWorkBudget: transcriptDisplayIsLoading ? managedTaskStatus?.globalWorkBudget : undefined,
+        managedBudgetUsage: transcriptDisplayIsLoading ? managedTaskStatus?.budgetUsage : undefined,
+        managedBudgetApprovalRequired: transcriptDisplayIsLoading ? managedTaskStatus?.budgetApprovalRequired : undefined,
+        lastLiveActivityLabel: transcriptStreamingState.lastLiveActivityLabel,
+        windowed: false,
+        showFullThinking: true,
+        showDetailedTools: showAllInTranscript,
+        showLiveProgressRows: true,
+        expandedItemKeys: expandedTranscriptItemIds,
+      }));
+    },
+    [
+      currentConfig.agentMode,
+      expandedTranscriptItemIds,
+      isTranscriptMode,
+      managedTaskStatus?.activeWorkerTitle,
+      managedTaskStatus?.budgetApprovalRequired,
+      managedTaskStatus?.budgetUsage,
+      managedTaskStatus?.currentRound,
+      managedTaskStatus?.globalWorkBudget,
+      managedTaskStatus?.harnessProfile,
+      managedTaskStatus?.maxRounds,
+      managedTaskStatus?.phase,
+      terminalWidth,
+      transcriptDisplayIsLoading,
+      transcriptDisplayItems,
+      transcriptMaxLines,
+      transcriptStreamingState.activeToolCalls,
+      transcriptStreamingState.currentIteration,
+      transcriptStreamingState.currentResponse,
+      transcriptStreamingState.currentTool,
+      transcriptStreamingState.isCompacting,
+      transcriptStreamingState.isThinking,
+      transcriptStreamingState.iterationHistory,
+      transcriptStreamingState.lastLiveActivityLabel,
+      transcriptStreamingState.thinkingCharCount,
+      transcriptStreamingState.thinkingContent,
+      transcriptStreamingState.toolInputCharCount,
+      transcriptStreamingState.toolInputContent,
+      showAllInTranscript,
+      useRendererViewportShell,
+    ],
+  );
+  const ownedTranscriptRenderModel = useMemo(
+    () => {
+      if (!transcriptOwnsViewport) {
+        return undefined;
+      }
+
+      if (!isTranscriptMode) {
+        return promptSurfaceRenderModel;
+      }
+
+      return buildTranscriptRenderModel({
+        items: currentSurfaceItems,
+        viewportWidth: terminalWidth,
+        isLoading: currentSurfaceIsLoading,
+        maxLines: transcriptMaxLines,
+        isThinking: currentSurfaceStreamingState.isThinking,
+        thinkingCharCount: currentSurfaceStreamingState.thinkingCharCount,
+        thinkingContent: currentSurfaceStreamingState.thinkingContent,
+        streamingResponse: currentSurfaceStreamingState.currentResponse,
+        currentTool: currentSurfaceStreamingState.currentTool,
+        activeToolCalls: currentSurfaceStreamingState.activeToolCalls,
+        toolInputCharCount: currentSurfaceStreamingState.toolInputCharCount,
+        toolInputContent: currentSurfaceStreamingState.toolInputContent,
+        iterationHistory: currentSurfaceStreamingState.iterationHistory,
+        currentIteration: currentSurfaceStreamingState.currentIteration,
+        isCompacting: currentSurfaceStreamingState.isCompacting,
+        managedAgentMode: currentConfig.agentMode,
+        managedPhase: currentSurfaceIsLoading ? managedTaskStatus?.phase : undefined,
+        managedHarnessProfile: currentSurfaceIsLoading ? managedTaskStatus?.harnessProfile : undefined,
+        managedWorkerTitle: currentSurfaceIsLoading ? managedTaskStatus?.activeWorkerTitle : undefined,
+        managedRound: currentSurfaceIsLoading ? managedTaskStatus?.currentRound : undefined,
+        managedMaxRounds: currentSurfaceIsLoading ? managedTaskStatus?.maxRounds : undefined,
+        managedGlobalWorkBudget: currentSurfaceIsLoading ? managedTaskStatus?.globalWorkBudget : undefined,
+        managedBudgetUsage: currentSurfaceIsLoading ? managedTaskStatus?.budgetUsage : undefined,
+        managedBudgetApprovalRequired: currentSurfaceIsLoading ? managedTaskStatus?.budgetApprovalRequired : undefined,
+        lastLiveActivityLabel: currentSurfaceStreamingState.lastLiveActivityLabel,
+        windowed: true,
+        showFullThinking: isTranscriptMode,
+        showDetailedTools: showAllInTranscript,
+        showLiveProgressRows: isTranscriptMode,
+        expandedItemKeys: isTranscriptMode ? expandedTranscriptItemIds : undefined,
+      });
+    },
+    [
+      currentConfig.agentMode,
+      currentSurfaceIsLoading,
+      currentSurfaceItems,
+      currentSurfaceStreamingState.activeToolCalls,
+      currentSurfaceStreamingState.currentIteration,
+      currentSurfaceStreamingState.currentResponse,
+      currentSurfaceStreamingState.currentTool,
+      currentSurfaceStreamingState.isCompacting,
+      currentSurfaceStreamingState.isThinking,
+      currentSurfaceStreamingState.iterationHistory,
+      currentSurfaceStreamingState.lastLiveActivityLabel,
+      currentSurfaceStreamingState.thinkingCharCount,
+      currentSurfaceStreamingState.thinkingContent,
+      currentSurfaceStreamingState.toolInputCharCount,
+      currentSurfaceStreamingState.toolInputContent,
+      expandedTranscriptItemIds,
+      isTranscriptMode,
+      managedTaskStatus?.activeWorkerTitle,
+      managedTaskStatus?.budgetApprovalRequired,
+      managedTaskStatus?.budgetUsage,
+      managedTaskStatus?.currentRound,
+      managedTaskStatus?.globalWorkBudget,
+      managedTaskStatus?.harnessProfile,
+      managedTaskStatus?.maxRounds,
+      managedTaskStatus?.phase,
+      promptSurfaceRenderModel,
+      isLoading,
+      isTranscriptMode,
+      terminalWidth,
+      transcriptMaxLines,
+      transcriptOwnsViewport,
+      showAllInTranscript,
+    ],
+  );
+  const activeTranscriptRenderModel = useMemo(
+    () => ownedTranscriptRenderModel ?? transcriptMainScreenRenderModel,
+    [ownedTranscriptRenderModel, transcriptMainScreenRenderModel],
+  );
   const amaSummaryViewModel = useMemo(
     () => buildAmaSummaryViewModel({
       status: managedTaskStatus,
@@ -1148,8 +1646,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const rawWorkStripText = amaSummaryViewModel.workStripText;
   const displayWorkStripText = displaySnapshot?.workStripText ?? visibleWorkStripText;
   const selectableTranscriptItemIds = useMemo(
-    () => getSelectableTranscriptItemIds(displayItems),
-    [displayItems],
+    () => getSelectableTranscriptItemIds(currentSurfaceItems),
+    [currentSurfaceItems],
   );
   const selectedTranscriptItemId = useMemo(
     () => resolveTranscriptSelectedItemId(
@@ -1160,12 +1658,20 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     [selectableTranscriptItemIds, transcriptDisplayState],
   );
   const selectedTranscriptItem = useMemo(
-    () => displayItems.find((item) => item.id === selectedTranscriptItemId),
-    [displayItems, selectedTranscriptItemId],
+    () => currentSurfaceItems.find((item) => item.id === selectedTranscriptItemId),
+    [currentSurfaceItems, selectedTranscriptItemId],
+  );
+  const transcriptSelectionCapabilities = useMemo(
+    () => ({
+      ...transcriptDisplayState,
+      supportsSelection: transcriptDisplayState.supportsSelection && transcriptOwnsViewport,
+      supportsCopyOnSelect: transcriptDisplayState.supportsCopyOnSelect && transcriptOwnsViewport,
+    }),
+    [transcriptDisplayState, transcriptOwnsViewport],
   );
   const transcriptSelectionRuntime = useMemo(
     () => buildTranscriptSelectionRuntimeState({
-      state: transcriptDisplayState,
+      state: transcriptSelectionCapabilities,
       selectableItemIds: selectableTranscriptItemIds,
       selectedItemId: selectedTranscriptItemId,
       selectedItemType: selectedTranscriptItem?.type,
@@ -1178,7 +1684,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       selectableTranscriptItemIds,
       selectedTranscriptItem?.type,
       selectedTranscriptItemId,
-      transcriptDisplayState,
+      transcriptSelectionCapabilities,
     ],
   );
   const supportsTranscriptSelection = transcriptSelectionRuntime.selectionEnabled;
@@ -1189,29 +1695,45 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     [selectedTranscriptItem],
   );
   const transcriptSearchIndex = useMemo(
-    () => createTranscriptSearchIndex(displayItems),
-    [displayItems],
+    () => createTranscriptSearchIndex(currentSurfaceItems),
+    [currentSurfaceItems],
   );
   const historySearchMatches = useMemo(
     () => searchTranscriptIndex(transcriptSearchIndex, historySearchQuery),
     [transcriptSearchIndex, historySearchQuery],
   );
-  const clampedHistorySearchSelectedIndex = useMemo(() => {
-    if (historySearchMatches.length === 0) {
-      return 0;
-    }
-    if (historySearchSelectedIndex < 0) {
-      return -1;
-    }
-    return Math.min(historySearchSelectedIndex, historySearchMatches.length - 1);
-  }, [historySearchMatches.length, historySearchSelectedIndex]);
-  const historySearchStatusText = useMemo(
-    () => buildTranscriptSearchSummary(historySearchMatches, clampedHistorySearchSelectedIndex),
-    [clampedHistorySearchSelectedIndex, historySearchMatches],
+  const transcriptSearchChrome = useMemo(
+    () => buildTranscriptSearchChrome({
+      isHistorySearchActive,
+      historySearchQuery,
+      matches: historySearchMatches,
+      selectedIndex: historySearchSelectedIndex,
+      anchorItemId: transcriptDisplayState.searchAnchorItemId,
+      useOverlaySurface:
+        transcriptDisplayState.supportsOverlaySurface
+        && transcriptDisplayState.supportsSearchViewport
+        && transcriptOwnsViewport,
+    }),
+    [
+      historySearchMatches,
+      historySearchQuery,
+      historySearchSelectedIndex,
+      isHistorySearchActive,
+      transcriptDisplayState.searchAnchorItemId,
+      transcriptDisplayState.supportsOverlaySurface,
+      transcriptDisplayState.supportsSearchViewport,
+      transcriptOwnsViewport,
+    ],
   );
+  const clampedHistorySearchSelectedIndex = transcriptSearchChrome.clampedSelectedIndex;
+  const historySearchStatusText = transcriptSearchChrome.statusText;
+  const effectiveHistorySearchDetailText = transcriptSearchChrome.detailText;
+  const effectiveTranscriptSearchState = transcriptSearchChrome.searchState;
   const isSelectedTranscriptItemExpanded = transcriptSelectionRuntime.detailState === "expanded";
   const canCycleTranscriptSelection =
-    transcriptSelectionRuntime.navigationCapabilities.selection;
+    transcriptSelectionRuntime.selectionEnabled
+    && selectableTranscriptItemIds.length > 0
+    && !activeTextSelection;
   const canCopySelectedTranscriptItem =
     transcriptSelectionRuntime.copyCapabilities.message;
   const canCopySelectedToolInput =
@@ -1277,14 +1799,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       ownsViewport: transcriptOwnsViewport,
       isAwaitingUserInteraction,
       isHistorySearchActive,
-      isReviewingHistory,
+      isTranscriptMode,
       historySearchQuery,
     }),
     [
       historySearchQuery,
       isAwaitingUserInteraction,
       isHistorySearchActive,
-      isReviewingHistory,
+      isTranscriptMode,
       transcriptDisplayState,
       transcriptOwnsViewport,
     ],
@@ -1293,15 +1815,26 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   useEffect(() => {
     setTranscriptDisplayState((prev) => {
       let next = setTranscriptScrollAnchor(prev, historyScrollOffset);
-      next = setTranscriptStickyPromptVisible(next, isReviewingHistory || isAwaitingUserInteraction);
+      next = setTranscriptPendingLiveUpdates(next, pendingTranscriptUpdateCount);
+      next = setTranscriptStickyPromptVisible(
+        next,
+        fullscreenPolicy.enabled && transcriptOwnsViewport
+          ? (!viewportSticky || isHistorySearchActive || isAwaitingUserInteraction)
+          : (isTranscriptMode || isHistorySearchActive || isAwaitingUserInteraction),
+      );
       next = setTranscriptSearchMatchIndex(next, clampedHistorySearchSelectedIndex);
       return next;
     });
   }, [
     clampedHistorySearchSelectedIndex,
+    fullscreenPolicy.enabled,
     historyScrollOffset,
     isAwaitingUserInteraction,
-    isReviewingHistory,
+    isHistorySearchActive,
+    isTranscriptMode,
+    pendingTranscriptUpdateCount,
+    transcriptOwnsViewport,
+    viewportSticky,
   ]);
 
   useEffect(() => {
@@ -1335,71 +1868,112 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     transcriptDisplayState.searchAnchorItemId,
     transcriptSearchIndex,
   ]);
+  const statusBarStreamingState = isTranscriptMode
+    ? transcriptStreamingState
+    : {
+      isThinking: effectivePromptStreamingState.isThinking,
+      thinkingCharCount: effectivePromptStreamingState.thinkingCharCount,
+      currentTool: effectivePromptStreamingState.currentTool,
+      activeToolCalls: effectivePromptStreamingState.activeToolCalls,
+      toolInputCharCount: effectivePromptStreamingState.toolInputCharCount,
+      toolInputContent: effectivePromptStreamingState.toolInputContent,
+      currentIteration: effectivePromptStreamingState.currentIteration,
+      isCompacting: effectivePromptStreamingState.isCompacting,
+    };
+  const statusBarIsLoading = isTranscriptMode ? transcriptDisplayIsLoading : effectivePromptIsLoading;
+  const statusBarProps = useMemo(
+    () =>
+      buildSurfaceStatusBarProps({
+        sessionId: context.sessionId,
+        permissionMode: currentConfig.permissionMode,
+        agentMode: currentConfig.agentMode,
+        parallel: currentConfig.parallel,
+        provider: currentConfig.provider,
+        model: currentConfig.model ?? getProviderModel(currentConfig.provider) ?? currentConfig.provider,
+        thinking: currentConfig.thinking,
+        reasoningMode: currentConfig.reasoningMode,
+        reasoningCapability: formatReasoningCapabilityShort(
+          getProviderReasoningCapability(currentConfig.provider, currentConfig.model),
+        ),
+        isTranscriptMode,
+        streamingState: statusBarStreamingState,
+        maxIter: streamingState.maxIter,
+        contextUsage,
+        isLoading: statusBarIsLoading,
+        managedState: {
+          phase: managedTaskStatus?.phase,
+          harnessProfile: managedTaskStatus?.harnessProfile,
+          workerTitle: managedTaskStatus?.activeWorkerTitle,
+          round: managedTaskStatus?.currentRound,
+          maxRounds: managedTaskStatus?.maxRounds,
+          globalWorkBudget: managedTaskStatus?.globalWorkBudget,
+          budgetUsage: managedTaskStatus?.budgetUsage,
+          budgetApprovalRequired: managedTaskStatus?.budgetApprovalRequired,
+        },
+      }),
+    [
+      context.sessionId,
+      currentConfig.permissionMode,
+      currentConfig.agentMode,
+      currentConfig.parallel,
+      currentConfig.provider,
+      currentConfig.model,
+      currentConfig.thinking,
+      currentConfig.reasoningMode,
+      isTranscriptMode,
+      statusBarStreamingState,
+      streamingState.maxIter,
+      contextUsage,
+      statusBarIsLoading,
+      managedTaskStatus?.phase,
+      managedTaskStatus?.harnessProfile,
+      managedTaskStatus?.activeWorkerTitle,
+      managedTaskStatus?.currentRound,
+      managedTaskStatus?.maxRounds,
+      managedTaskStatus?.globalWorkBudget,
+      managedTaskStatus?.budgetUsage,
+      managedTaskStatus?.budgetApprovalRequired,
+    ],
+  );
 
-  const statusBarProps = useMemo(() => ({
-    sessionId: context.sessionId,
-    permissionMode: currentConfig.permissionMode,
-    agentMode: currentConfig.agentMode,
-    parallel: currentConfig.parallel,
-    provider: currentConfig.provider,
-    model: currentConfig.model ?? getProviderModel(currentConfig.provider) ?? currentConfig.provider,
-    currentTool: displayStreamingState.currentTool,
-    activeToolCount: displayStreamingState.activeToolCalls.filter((tool) => tool.status === ToolCallStatus.Executing).length,
-    thinking: currentConfig.thinking,
-    reasoningMode: currentConfig.reasoningMode,
-            reasoningCapability: formatReasoningCapabilityShort(
-              getProviderReasoningCapability(currentConfig.provider, currentConfig.model),
-            ),
-    isThinkingActive: displayStreamingState.isThinking,
-    thinkingCharCount: displayStreamingState.thinkingCharCount,
-    toolInputCharCount: displayStreamingState.toolInputCharCount,
-    toolInputContent: displayStreamingState.toolInputContent,
-    currentIteration: displayStreamingState.currentIteration,
-    maxIter: streamingState.maxIter,
-    contextUsage,
-    isCompacting: displayStreamingState.isCompacting,
-    showBusyStatus: shouldShowStatusBarBusyStatus({
-      agentMode: currentConfig.agentMode,
-      isLivePaused,
-      isLoading: displayIsLoading,
+  const promptBusyText = useMemo(
+    () => buildPromptActivityText({
+      isTranscriptMode,
+      isLoading: statusBarIsLoading,
+      streamingState: effectivePromptStreamingState,
+      managedState: statusBarIsLoading
+        ? {
+          phase: managedTaskStatus?.phase,
+          harnessProfile: managedTaskStatus?.harnessProfile,
+          workerTitle: managedTaskStatus?.activeWorkerTitle,
+        }
+        : undefined,
     }),
-    managedPhase: displayIsLoading ? managedTaskStatus?.phase : undefined,
-    managedHarnessProfile: displayIsLoading ? managedTaskStatus?.harnessProfile : undefined,
-    managedWorkerTitle: displayIsLoading ? managedTaskStatus?.activeWorkerTitle : undefined,
-    managedRound: displayIsLoading ? managedTaskStatus?.currentRound : undefined,
-    managedMaxRounds: displayIsLoading ? managedTaskStatus?.maxRounds : undefined,
-    managedGlobalWorkBudget: displayIsLoading ? managedTaskStatus?.globalWorkBudget : undefined,
-    managedBudgetUsage: displayIsLoading ? managedTaskStatus?.budgetUsage : undefined,
-    managedBudgetApprovalRequired: displayIsLoading ? managedTaskStatus?.budgetApprovalRequired : undefined,
-  }), [
-    context.sessionId,
-    currentConfig.permissionMode,
-    currentConfig.agentMode,
-    currentConfig.parallel,
-    currentConfig.provider,
-    currentConfig.model,
-    currentConfig.thinking,
-    currentConfig.reasoningMode,
-    displayStreamingState.currentTool,
-    displayStreamingState.activeToolCalls,
-    displayStreamingState.isThinking,
-    displayStreamingState.thinkingCharCount,
-    displayStreamingState.toolInputCharCount,
-    displayStreamingState.toolInputContent,
-    displayStreamingState.currentIteration,
-    streamingState.maxIter,
-    displayStreamingState.isCompacting,
-    contextUsage,
-    isLivePaused,
-    displayIsLoading,
-    managedTaskStatus,
-  ]);
+    [
+      effectivePromptStreamingState.activeToolCalls,
+      effectivePromptStreamingState.currentTool,
+      effectivePromptStreamingState.isCompacting,
+      effectivePromptStreamingState.isThinking,
+      effectivePromptStreamingState.thinkingCharCount,
+      effectivePromptStreamingState.toolInputCharCount,
+      effectivePromptStreamingState.toolInputContent,
+      isTranscriptMode,
+      managedTaskStatus?.activeWorkerTitle,
+      managedTaskStatus?.harnessProfile,
+      managedTaskStatus?.phase,
+      statusBarIsLoading,
+    ],
+  );
 
   const statusBarViewModel = useMemo(
     () => buildStatusBarViewModel(statusBarProps),
     [statusBarProps],
   );
-  const statusBarText = statusBarViewModel.text;
+  const visibleStatusBarViewModel = useMemo(
+    () => statusBarViewModel,
+    [statusBarViewModel],
+  );
+  const statusBarText = visibleStatusBarViewModel.text;
   const pendingInputSummary = useMemo(
     () => formatPendingInputsSummary(streamingState.pendingInputs),
     [streamingState.pendingInputs]
@@ -1407,57 +1981,36 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const footerHeaderViewModel = useMemo(
     () => buildFooterHeaderViewModel({
       isHistorySearchActive,
-      isReviewingHistory,
+      isTranscriptMode,
       pendingInputCount: streamingState.pendingInputs.length,
       buffering: transcriptDisplayState.buffering,
-      verbosity: transcriptDisplayState.verbosity,
+      pendingLiveUpdates: pendingTranscriptUpdateCount,
     }),
     [
       isHistorySearchActive,
-      isReviewingHistory,
+      isTranscriptMode,
+      pendingTranscriptUpdateCount,
       streamingState.pendingInputs.length,
       transcriptDisplayState.buffering,
-      transcriptDisplayState.verbosity,
     ],
   );
   const footerLeftItems = footerHeaderViewModel.leftItems;
   const footerRightItems = footerHeaderViewModel.rightItems;
   const footerHeaderSummary = footerHeaderViewModel.summary;
-  const footerNotices = useMemo(() => {
-    const notices: string[] = [];
-    if (historySearchQuery.trim()) {
-      notices.push(`Search: ${historySearchQuery.trim()}`);
-    }
-    if (streamingState.pendingInputs.length > 0) {
-      notices.push(`Queued follow-ups: ${streamingState.pendingInputs.length}`);
-    }
-    return notices;
+  const baseFooterNotices = useMemo(() => {
+    return buildBaseFooterNotices({
+      historySearchQuery,
+      pendingInputCount: streamingState.pendingInputs.length,
+    });
   }, [historySearchQuery, streamingState.pendingInputs.length]);
   const footerNotifications = useMemo(() => {
-    const notifications: Array<{
-      id: string;
-      text: string;
-      tone?: "info" | "warning" | "accent";
-    }> = [];
-    if (
-      historySearchQuery.trim().length > 0
-      && isHistorySearchActive
-      && historySearchMatches.length === 0
-    ) {
-      notifications.push({
-        id: "search-empty",
-        text: "No transcript matches yet",
-        tone: "info",
-      });
-    }
-    if (streamingState.pendingInputs.length >= MAX_PENDING_INPUTS) {
-      notifications.push({
-        id: "queue-full",
-        text: `Queued follow-up limit reached (${MAX_PENDING_INPUTS})`,
-        tone: "warning",
-      });
-    }
-    return notifications;
+    return buildFooterNotifications({
+      historySearchQuery,
+      isHistorySearchActive,
+      historySearchMatchCount: historySearchMatches.length,
+      pendingInputCount: streamingState.pendingInputs.length,
+      maxPendingInputs: MAX_PENDING_INPUTS,
+    });
   }, [
     historySearchMatches.length,
     historySearchQuery,
@@ -1469,23 +2022,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     [footerNotifications],
   );
   const stashNoticeText = useMemo(() => {
-    if (!inputText.trim()) {
-      return undefined;
-    }
-    if (isReviewingHistory || isHistorySearchActive) {
-      return "Draft preserved while browsing transcript";
-    }
-    return undefined;
-  }, [inputText, isHistorySearchActive, isReviewingHistory]);
-  const backgroundTaskViewModel = useMemo(
-    () => buildAmaSummaryViewModel({
-      status: managedTaskStatus,
-      isLoading: displayIsLoading,
-      agentMode: currentConfig.agentMode,
-      parallelTextOverride: displayWorkStripText,
-    }).backgroundTask,
-    [currentConfig.agentMode, displayIsLoading, displayWorkStripText, managedTaskStatus],
-  );
+    return buildStashNoticeText({
+      inputText,
+      isTranscriptMode,
+      isHistorySearchActive,
+    });
+  }, [inputText, isHistorySearchActive, isTranscriptMode]);
   const useOverlaySurface =
     transcriptDisplayState.supportsOverlaySurface
     && transcriptDisplayState.supportsSearchViewport
@@ -1500,69 +2042,87 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       transcriptSelectionRuntime,
     ],
   );
-  const transcriptSearchState = useMemo(
-    () => buildTranscriptSearchViewModel({
-      query: historySearchQuery,
-      matches: historySearchMatches,
-      currentMatchIndex: clampedHistorySearchSelectedIndex,
-      anchorItemId: transcriptDisplayState.searchAnchorItemId,
-      statusText: historySearchStatusText,
-      useOverlaySurface,
-    }),
+  const promptFooterNotices = useMemo(() => {
+    return buildPromptFooterNotices(baseFooterNotices, selectionCopyNotice);
+  }, [baseFooterNotices, selectionCopyNotice]);
+  const transcriptFooterViewModel = useMemo(
+    () =>
+      buildTranscriptFooterViewModel({
+        textSelection: activeTextSelection,
+        selectionState: transcriptSelectionState,
+        copySelectionNotice: selectionCopyNotice,
+        isHistorySearchActive,
+        historySearchDetailText: effectiveHistorySearchDetailText,
+        historySearchHasMatches: Boolean(historySearchStatusText) && historySearchMatches.length > 0,
+        showAllActive: showAllInTranscript,
+        baseFooterNotices,
+      }),
     [
-      clampedHistorySearchSelectedIndex,
-      historySearchMatches,
-      historySearchQuery,
+      activeTextSelection,
+      baseFooterNotices,
+      effectiveHistorySearchDetailText,
+      historySearchMatches.length,
       historySearchStatusText,
-      transcriptDisplayState.searchAnchorItemId,
-      useOverlaySurface,
+      isHistorySearchActive,
+      selectionCopyNotice,
+      showAllInTranscript,
+      transcriptSelectionState,
     ],
   );
-  const historySearchBudgetState = useMemo(
-    () => (
-      isHistorySearchActive
-        ? {
-            query: historySearchQuery,
-            matches: historySearchMatches.map((match) => ({
-              itemId: match.itemId,
-              excerpt: match.excerpt,
-            })),
-            selectedIndex: clampedHistorySearchSelectedIndex,
-          }
-        : null
-    ),
-    [clampedHistorySearchSelectedIndex, historySearchMatches, historySearchQuery, isHistorySearchActive],
+  const transcriptFooterSecondaryText = transcriptFooterViewModel.secondaryText;
+  const transcriptFooterBudgetNotices = transcriptFooterViewModel.budgetNotices;
+  const activeFooterNotices = isTranscriptMode
+    ? transcriptFooterBudgetNotices
+    : promptFooterNotices;
+  const terminalRows = stdout.rows ?? 24;
+  const bannerProps = useMemo<BannerProps>(() => ({
+    config: currentConfig,
+    sessionId: context.sessionId,
+    workingDir: options.context?.gitRoot || process.cwd(),
+    terminalWidth,
+    compactionInfo: compactionInfo ?? undefined,
+  }), [
+    compactionInfo,
+    context.sessionId,
+    currentConfig,
+    options.context?.gitRoot,
+    terminalWidth,
+  ]);
+  const bannerRows = useMemo(
+    () => (fullscreenPolicy.enabled && showBanner ? estimateBannerRows(bannerProps) : 0),
+    [bannerProps, fullscreenPolicy.enabled, showBanner],
   );
-  const terminalRows = stdout.rows || process.stdout.rows || 24;
+  const fullscreenBannerRows = fullscreenPolicy.enabled && showBanner ? bannerRows : 0;
+  const budgetedTerminalRows = terminalRows;
+  const footerBudgetInputText = isTranscriptMode ? "" : inputText;
+  const footerBudgetPendingInputSummary = isTranscriptMode ? undefined : pendingInputSummary;
+  const footerBudgetWorkStripText = undefined;
+  const footerBudgetShowHelp = isTranscriptMode ? false : showHelp;
   const viewportBudget = useMemo(
     // Budget transcript, footer, overlay, status, and task slots together so
     // the viewport always receives a stable number of visible rows.
     () => calculateViewportBudget({
-      terminalRows,
+      terminalRows: budgetedTerminalRows,
       terminalWidth,
-      inputText,
+      windowedTranscript: useRendererViewportShell,
+      inputText: footerBudgetInputText,
       footerHeaderText: footerHeaderSummary,
-      pendingInputSummary,
+      activitySummary: isTranscriptMode ? undefined : promptBusyText,
+      pendingInputSummary: footerBudgetPendingInputSummary,
       stashNoticeSummary: stashNoticeText,
       notificationSummary: footerNotificationSummary,
-      statusNoticeSummary: footerNotices.join(" | "),
-      workStripText: displayWorkStripText,
+      statusNoticeSummary: activeFooterNotices.join(" | "),
+      workStripText: footerBudgetWorkStripText,
       suggestionsReserved: suggestionsReservedForLayout,
       suggestionsMode: useOverlaySurface ? "overlay" : "inline",
-      showHelp,
+      showHelp: footerBudgetShowHelp,
       statusBarText,
       confirmPrompt: confirmRequest?.prompt,
       confirmInstruction,
       dialogMode: useOverlaySurface ? "overlay" : "inline",
-      historySearch: historySearchBudgetState
-        ? {
-            query: historySearchBudgetState.query,
-            selectedExcerpt:
-              historySearchBudgetState.matches[historySearchBudgetState.selectedIndex]?.excerpt,
-            matchCount: historySearchBudgetState.matches.length,
-          }
-        : null,
-      reviewHint: transcriptChrome.browseHintText,
+      reviewHint: fullscreenPolicy.enabled && transcriptOwnsViewport
+        ? undefined
+        : transcriptChrome.browseHintText,
       uiRequest: uiRequest
         ? uiRequest.kind === "select"
           ? {
@@ -1585,23 +2145,25 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         : null,
     }),
     [
-      terminalRows,
+      budgetedTerminalRows,
       terminalWidth,
-      inputText,
+      footerBudgetInputText,
       footerHeaderSummary,
-      pendingInputSummary,
+      promptBusyText,
+      footerBudgetPendingInputSummary,
       stashNoticeText,
       footerNotificationSummary,
-      footerNotices,
-      displayWorkStripText,
+      activeFooterNotices,
+      footerBudgetWorkStripText,
       suggestionsReservedForLayout,
       useOverlaySurface,
-      showHelp,
+      footerBudgetShowHelp,
       statusBarText,
       confirmRequest,
       confirmInstruction,
-      historySearchBudgetState,
+      fullscreenPolicy.enabled,
       transcriptChrome.browseHintText,
+      transcriptOwnsViewport,
       uiRequest,
     ]
   );
@@ -1610,15 +2172,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       <PromptSuggestionsSurface
         reserveSpace={suggestionsReservedForLayout}
         width={terminalWidth}
-        hidden={isReviewingHistory || isHistorySearchActive}
+        hidden={isTranscriptMode}
         mode={useOverlaySurface ? "overlay" : "inline"}
       />
     ),
     [
       suggestionsReservedForLayout,
       terminalWidth,
-      isReviewingHistory,
-      isHistorySearchActive,
+      isTranscriptMode,
       useOverlaySurface,
     ],
   );
@@ -1630,29 +2191,157 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     () => resolveTranscriptWheelStep(reviewPageSize),
     [reviewPageSize],
   );
-  const transcriptMaxLines = isTranscriptVerbose || isReviewingHistory ? 1000 : 12;
+  const transcriptAnimateSpinners = !isLivePaused && fullscreenPolicy.transcriptSpinnerAnimation;
+  const effectiveTranscriptBaseScrollHeight = activeTranscriptRenderModel?.rows.length ?? transcriptScrollHeight;
+  const effectiveTranscriptScrollHeight = fullscreenPolicy.enabled
+    ? effectiveTranscriptBaseScrollHeight + fullscreenBannerRows
+    : effectiveTranscriptBaseScrollHeight;
+  const transcriptRowIndexByKey = useMemo(
+    () => buildTranscriptRowIndexByKey(activeTranscriptRenderModel?.rows ?? []),
+    [activeTranscriptRenderModel?.rows],
+  );
+  const handleTranscriptMetricsChange = useCallback((metrics: {
+    scrollHeight: number;
+    viewportHeight: number;
+  }) => {
+    if (!activeTranscriptRenderModel) {
+      setTranscriptScrollHeight(metrics.scrollHeight);
+    }
+  }, [activeTranscriptRenderModel]);
+  const rebuildTranscriptScreenBuffer = useCallback((
+    rows = transcriptVisibleRowsRef.current,
+    window = transcriptScrollWindowRef.current,
+  ) => {
+    if (!window || rows.length === 0) {
+      transcriptScreenBufferRef.current = null;
+      return;
+    }
+
+    const stickyHeaderRows = transcriptChrome.stickyHeader?.visible && transcriptChrome.stickyHeader.label
+      ? 1
+      : 0;
+    const bannerVisibleRows = showBanner && window.start < fullscreenBannerRows
+      ? fullscreenBannerRows
+      : 0;
+    transcriptScreenBufferRef.current = buildTranscriptScreenBuffer(rows, {
+      allRows: activeTranscriptRenderModel?.rows ?? rows,
+      rowIndexByKey: transcriptRowIndexByKey,
+      topOffsetRows: stickyHeaderRows + bannerVisibleRows,
+      viewportHeight: window.viewportHeight,
+      animateSpinners: transcriptAnimateSpinners,
+    });
+  }, [
+    fullscreenBannerRows,
+      activeTranscriptRenderModel?.rows,
+    showBanner,
+    transcriptAnimateSpinners,
+    transcriptChrome.stickyHeader,
+    transcriptRowIndexByKey,
+  ]);
+  const handleTranscriptWindowChange = useCallback((window: ScrollBoxWindow) => {
+    transcriptScrollWindowRef.current = window;
+    rebuildTranscriptScreenBuffer(transcriptVisibleRowsRef.current, window);
+  }, [rebuildTranscriptScreenBuffer]);
+  const handleVisibleTranscriptRowsChange = useCallback((rows: TranscriptRow[]) => {
+    transcriptVisibleRowsRef.current = rows;
+    rebuildTranscriptScreenBuffer(rows);
+  }, [rebuildTranscriptScreenBuffer]);
+  const clearTranscriptMouseSelection = useCallback(() => {
+    mouseSelectionRef.current = null;
+    setPromptTextSelection(undefined);
+    setTranscriptModeTextSelection(undefined);
+  }, []);
+
+  const clearTranscriptSelectionFocus = useCallback(() => {
+    clearTranscriptMouseSelection();
+    setTranscriptDisplayState((prev) => setTranscriptSelectedItem(prev, undefined));
+  }, [clearTranscriptMouseSelection]);
+
+  useEffect(() => {
+    rebuildTranscriptScreenBuffer();
+  }, [rebuildTranscriptScreenBuffer]);
+
+  useEffect(() => {
+    setHistoryScrollOffset((prev) => (
+      clampTranscriptScrollOffset(prev, effectiveTranscriptScrollHeight, viewportBudget.messageRows)
+    ));
+  }, [effectiveTranscriptScrollHeight, viewportBudget.messageRows]);
+
+  useEffect(() => {
+    if (!selectionCopyNotice) {
+      return;
+    }
+
+    const timeoutId = setTimeout(() => {
+      setSelectionCopyNotice(undefined);
+    }, 2000);
+
+    return () => {
+      clearTimeout(timeoutId);
+    };
+  }, [selectionCopyNotice]);
+
+  const showClipboardNotice = useCallback((message: string | undefined) => {
+    const trimmedMessage = message?.trim();
+    if (!trimmedMessage) {
+      return;
+    }
+    setSelectionCopyNotice(trimmedMessage);
+  }, []);
+  const buildClipboardFailureNotice = useCallback((prefix: string, error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    return `${prefix}: ${message}`;
+  }, []);
+  const copySelectedTranscriptText = useCallback(async (selectionOverride?: TranscriptTextSelection) => {
+    const selection = selectionOverride ?? activeTextSelection;
+    if (!selection) {
+      return false;
+    }
+
+    const copyText = selection.text.trimEnd();
+    if (!copyText) {
+      return false;
+    }
+
+    try {
+      await copyTextToClipboard(copyText, { terminalWrite: writeTerminal });
+      showClipboardNotice(
+        `Copied ${selection.rowCount} selected line${selection.rowCount === 1 ? "" : "s"} to clipboard.`,
+      );
+      return true;
+    } catch (error) {
+      showClipboardNotice(
+        buildClipboardFailureNotice("Failed to copy transcript selection", error),
+      );
+      return false;
+    }
+  }, [activeTextSelection, buildClipboardFailureNotice, showClipboardNotice, writeTerminal]);
 
   const alignTranscriptSelection = useCallback((itemId: string | undefined) => {
     if (!itemId) {
       return;
     }
+    if (transcriptVisibleRowsRef.current.some((row) => row.itemId === itemId)) {
+      return;
+    }
     const nextOffset = resolveTranscriptSelectionOffset({
-      items: displayItems,
+      items: currentSurfaceItems,
       terminalWidth,
       transcriptMaxLines,
       viewportRows: viewportBudget.messageRows,
       itemId,
       expandedItemKeys: expandedTranscriptItemIds,
-      showDetailedTools: isTranscriptVerbose || isReviewingHistory,
+      showDetailedTools: false,
     });
-    setHistoryScrollOffset(nextOffset);
+    scrollTranscriptTo(nextOffset);
   }, [
-    displayItems,
+    currentSurfaceItems,
     terminalWidth,
     transcriptMaxLines,
-    isTranscriptVerbose,
-    isReviewingHistory,
+    isTranscriptMode,
     expandedTranscriptItemIds,
+    scrollTranscriptTo,
+    transcriptVisibleRowsRef,
     viewportBudget.messageRows,
   ]);
 
@@ -1661,6 +2350,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     if (itemId) {
       alignTranscriptSelection(itemId);
     }
+  }, [alignTranscriptSelection]);
+
+  const revealTranscriptItem = useCallback((itemId: string | undefined) => {
+    if (!itemId) {
+      return;
+    }
+    alignTranscriptSelection(itemId);
   }, [alignTranscriptSelection]);
 
   const cycleTranscriptSelection = useCallback((direction: "prev" | "next") => {
@@ -1690,7 +2386,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
       return next;
     });
-  }, [canToggleSelectedTranscriptDetail, selectedTranscriptItemId]);
+    alignTranscriptSelection(selectedTranscriptItemId);
+  }, [alignTranscriptSelection, canToggleSelectedTranscriptDetail, selectedTranscriptItemId]);
 
   const copySelectedTranscriptItem = useCallback(async () => {
     if (!canCopySelectedTranscriptItem || !selectedTranscriptItem) {
@@ -1701,18 +2398,20 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       return;
     }
     try {
-      await clipboard.write(copyText);
-      addHistoryItem({
-        type: "info",
-        text: "Copied selected transcript entry to clipboard.",
-      });
+      await copyTextToClipboard(copyText, { terminalWrite: writeTerminal });
+      showClipboardNotice("Copied selected transcript entry to clipboard.");
     } catch (error) {
-      addHistoryItem({
-        type: "error",
-        text: `Failed to copy transcript entry: ${error instanceof Error ? error.message : String(error)}`,
-      });
+      showClipboardNotice(
+        buildClipboardFailureNotice("Failed to copy transcript entry", error),
+      );
     }
-  }, [addHistoryItem, canCopySelectedTranscriptItem, selectedTranscriptItem]);
+  }, [
+    buildClipboardFailureNotice,
+    canCopySelectedTranscriptItem,
+    selectedTranscriptItem,
+    showClipboardNotice,
+    writeTerminal,
+  ]);
 
   const copySelectedTranscriptToolInput = useCallback(async () => {
     if (!canCopySelectedToolInput || !selectedTranscriptItem) {
@@ -1725,34 +2424,128 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     }
 
     try {
-      await clipboard.write(copyText);
-      addHistoryItem({
-        type: "info",
-        text: "Copied selected tool input to clipboard.",
-      });
+      await copyTextToClipboard(copyText, { terminalWrite: writeTerminal });
+      showClipboardNotice("Copied selected tool args to clipboard.");
     } catch (error) {
-      addHistoryItem({
-        type: "error",
-        text: `Failed to copy tool input: ${error instanceof Error ? error.message : String(error)}`,
-      });
+      showClipboardNotice(
+        buildClipboardFailureNotice("Failed to copy tool args", error),
+      );
     }
-  }, [addHistoryItem, canCopySelectedToolInput, selectedTranscriptItem]);
+  }, [
+    buildClipboardFailureNotice,
+    canCopySelectedToolInput,
+    selectedTranscriptItem,
+    showClipboardNotice,
+    writeTerminal,
+  ]);
+  const resolveTranscriptSelectionRows = useCallback(() => (
+    activeTranscriptRenderModel?.rows ?? transcriptVisibleRowsRef.current
+  ), [activeTranscriptRenderModel?.rows]);
+  const resolveTranscriptMouseTarget = useCallback((row: number, column: number) => {
+    if (!fullscreenPolicy.enabled || !transcriptOwnsViewport) {
+      return undefined;
+    }
+
+    const buffer = transcriptScreenBufferRef.current;
+    return buffer ? hitTestTranscriptScreen(buffer, row, column) : undefined;
+  }, [fullscreenPolicy.enabled, transcriptOwnsViewport]);
+  const updateTranscriptMouseSelection = useCallback((
+    anchorPoint: TranscriptScreenPoint,
+    focusPoint: TranscriptScreenPoint,
+    options?: {
+      selectFullRowOnCollapsed?: boolean;
+      updateSelectedItem?: boolean;
+    },
+  ) => {
+    const selectionRows = resolveTranscriptSelectionRows();
+    const nextSelection = buildTranscriptScreenSelection(
+      selectionRows,
+      anchorPoint,
+      focusPoint,
+      {
+        animateSpinners: transcriptAnimateSpinners,
+        selectFullRowOnCollapsed: options?.selectFullRowOnCollapsed,
+      },
+    );
+    if (isTranscriptMode) {
+      setTranscriptModeTextSelection(nextSelection);
+    } else {
+      setPromptTextSelection(nextSelection);
+    }
+
+    const focusedRow = selectionRows[
+      Math.max(0, Math.min(focusPoint.modelRowIndex, selectionRows.length - 1))
+    ];
+    if (options?.updateSelectedItem && focusedRow?.itemId) {
+      setTranscriptDisplayState((prev) => setTranscriptSelectedItem(prev, focusedRow.itemId));
+    }
+    return nextSelection;
+  }, [isTranscriptMode, resolveTranscriptSelectionRows, transcriptAnimateSpinners]);
+  const finalizeTranscriptMouseSelection = useCallback((
+    selectionState: TranscriptMouseSelectionState | null,
+    options?: {
+      focusPoint?: TranscriptScreenPoint;
+      copySelection?: boolean;
+    },
+  ) => {
+    if (!selectionState) {
+      return undefined;
+    }
+
+    mouseSelectionRef.current = null;
+    const nextSelectionState = {
+      ...selectionState,
+      focus: options?.focusPoint ?? selectionState.focus,
+    };
+    const shouldKeepSelection = nextSelectionState.mode !== "char"
+      || nextSelectionState.didDrag;
+
+    if (!shouldKeepSelection) {
+      clearTranscriptMouseSelection();
+      return undefined;
+    }
+
+    const nextTextSelection = updateTranscriptMouseSelection(
+      nextSelectionState.anchor,
+      nextSelectionState.focus,
+      {
+        selectFullRowOnCollapsed: false,
+        updateSelectedItem: false,
+      },
+    );
+
+    if (!nextTextSelection) {
+      clearTranscriptMouseSelection();
+      return undefined;
+    }
+
+    if (options?.copySelection !== false) {
+      void copySelectedTranscriptText(nextTextSelection);
+    }
+    return nextTextSelection;
+  }, [
+    clearTranscriptMouseSelection,
+    copySelectedTranscriptText,
+    updateTranscriptMouseSelection,
+  ]);
 
   const openHistorySearchSurface = useCallback(() => {
-    if (!displayItems.length || confirmRequest || uiRequest) {
+    if (!isTranscriptMode || !currentSurfaceItems.length || confirmRequest || uiRequest) {
       return;
     }
+    clearTranscriptMouseSelection();
     const anchorItemId = resolveTranscriptSearchAnchorItemId(
       {
-        items: displayItems,
+        items: currentSurfaceItems,
         selectedItemId: selectedTranscriptItemId,
+        renderModel: activeTranscriptRenderModel,
         terminalWidth,
         transcriptMaxLines,
         viewportRows: viewportBudget.messageRows,
         scrollOffset: historyScrollOffset,
         expandedItemKeys: expandedTranscriptItemIds,
-        showDetailedTools: isTranscriptVerbose || isReviewingHistory,
-        preferViewportAnchor: isReviewingHistory,
+        showDetailedTools: false,
+        preferViewportAnchor: true,
       },
     );
     setTranscriptDisplayState((prev) => openTranscriptSearch(prev, {
@@ -1763,46 +2556,31 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     setHistorySearchSelectedIndex(0);
   }, [
     confirmRequest,
-    displayItems,
+    currentSurfaceItems,
     expandedTranscriptItemIds,
     historyScrollOffset,
-    isReviewingHistory,
-    isTranscriptVerbose,
+    isTranscriptMode,
     selectedTranscriptItemId,
+    activeTranscriptRenderModel,
     terminalWidth,
     transcriptMaxLines,
     uiRequest,
     viewportBudget.messageRows,
+    clearTranscriptMouseSelection,
   ]);
 
-  const closeHistorySearchSurface = useCallback((options?: { restoreFollowMode?: boolean }) => {
-    setTranscriptDisplayState((prev) =>
-      closeTranscriptSearch(prev, { restoreFollowMode: options?.restoreFollowMode ?? true }),
-    );
+  const closeHistorySearchSurface = useCallback(() => {
+    setTranscriptDisplayState((prev) => closeTranscriptSearch(prev));
     setHistorySearchQuery("");
     setHistorySearchSelectedIndex(0);
-  }, []);
+    clearTranscriptMouseSelection();
+  }, [clearTranscriptMouseSelection]);
   const disarmHistorySearchSelection = useCallback(() => {
     if (!isHistorySearchActive || historySearchMatches.length === 0) {
       return;
     }
     setHistorySearchSelectedIndex(-1);
   }, [historySearchMatches.length, isHistorySearchActive]);
-  const historySearchDialogState = useMemo(
-    () => (
-      isHistorySearchActive
-        ? {
-            query: historySearchQuery,
-            matches: historySearchMatches.map((match) => ({
-              itemId: match.itemId,
-              excerpt: match.excerpt,
-            })),
-            selectedIndex: clampedHistorySearchSelectedIndex,
-          }
-        : null
-    ),
-    [clampedHistorySearchSelectedIndex, historySearchMatches, historySearchQuery, isHistorySearchActive],
-  );
 
   const dialogConfirmState = useMemo(
     () => (
@@ -1840,10 +2618,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       <DialogSurface
         confirm={dialogConfirmState}
         request={dialogRequestState}
-        historySearch={historySearchDialogState}
       />
     ),
-    [dialogConfirmState, dialogRequestState, historySearchDialogState],
+    [dialogConfirmState, dialogRequestState],
   );
   const overlaySurface = useMemo(() => {
     if (!useOverlaySurface) {
@@ -1856,17 +2633,35 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       </Box>
     );
   }, [dialogSurface, suggestionsSurface, useOverlaySurface]);
-
-  const enterHistoryReview = useCallback(() => {
-    setTranscriptDisplayState((prev) => enterTranscriptHistory(prev));
-  }, []);
-
-  const exitHistoryReview = useCallback(() => {
-    setTranscriptDisplayState((prev) => jumpTranscriptToLatest(exitTranscriptHistory(prev)));
-    setHistoryScrollOffset(0);
+  const exitTranscriptModeSurface = useCallback(() => {
+    setTranscriptDisplayState((prev) => jumpTranscriptToLatest(exitTranscriptMode(prev)));
+    setShowAllInTranscript(false);
+    scrollTranscriptToBottom();
     setHistorySearchQuery("");
     setHistorySearchSelectedIndex(0);
-  }, []);
+    clearTranscriptMouseSelection();
+  }, [clearTranscriptMouseSelection, scrollTranscriptToBottom]);
+
+  const toggleTranscriptShowAll = useCallback(() => {
+    if (!isTranscriptMode) {
+      return;
+    }
+
+    setShowAllInTranscript((prev) => !prev);
+  }, [isTranscriptMode]);
+
+  const toggleTranscriptMode = useCallback(() => {
+    if (isTranscriptMode) {
+      exitTranscriptModeSurface();
+      return;
+    }
+
+    setShowAllInTranscript(false);
+    setTranscriptDisplayState((prev) => enterTranscriptMode(prev));
+    setHistorySearchQuery("");
+    setHistorySearchSelectedIndex(0);
+    clearTranscriptMouseSelection();
+  }, [clearTranscriptMouseSelection, exitTranscriptModeSurface, isTranscriptMode]);
 
   useEffect(() => {
     if (supportsTranscriptSelection || !transcriptDisplayState.selectedItemId) {
@@ -1877,19 +2672,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }, [supportsTranscriptSelection, transcriptDisplayState.selectedItemId]);
 
   useEffect(() => {
-    if (!isReviewingHistory || !supportsTranscriptSelection) {
-      return;
-    }
-    if (selectedTranscriptItemId && selectableTranscriptItemIds.includes(selectedTranscriptItemId)) {
-      return;
-    }
-    const fallbackItemId = selectableTranscriptItemIds[selectableTranscriptItemIds.length - 1];
-    setTranscriptDisplayState((prev) => setTranscriptSelectedItem(prev, fallbackItemId));
-  }, [isReviewingHistory, selectableTranscriptItemIds, selectedTranscriptItemId, supportsTranscriptSelection]);
-
-  useEffect(() => {
-    if (!isReviewingHistory || !canCopySelectedTranscriptItem || !supportsTranscriptCopyOnSelect) {
+    if (!isTranscriptMode || !canCopySelectedTranscriptItem || !supportsTranscriptCopyOnSelect) {
       lastAutoCopiedTranscriptItemIdRef.current = undefined;
+      return;
+    }
+
+    if (transcriptModeTextSelection) {
       return;
     }
 
@@ -1912,36 +2700,38 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       return;
     }
 
-    void clipboard.write(copyText).catch(() => {
+    void copyTextToClipboard(copyText, { terminalWrite: writeTerminal }).catch(() => {
       // Ignore clipboard failures for passive copy-on-select.
     });
   }, [
-    isReviewingHistory,
+    isTranscriptMode,
     selectedTranscriptItem,
     selectedTranscriptItemId,
     canCopySelectedTranscriptItem,
     supportsTranscriptCopyOnSelect,
+    transcriptModeTextSelection,
+    writeTerminal,
   ]);
 
   useEffect(() => {
-    if (!process.stdout.isTTY) {
+    if (stdout?.isTTY !== true) {
       return;
     }
 
-    if (!supportsTranscriptMouseHistory(transcriptDisplayState)) {
-      return;
+    const rendererInstance = getRendererInstance(stdout);
+    rendererInstance?.setShellMode?.(
+      fullscreenShellMode,
+      useRendererOwnedMouseTracking,
+    );
+    if (!useAlternateScreenShell) {
+      rendererInstance?.setAltScreenActive?.(false);
     }
-
-    process.stdout.write("\x1b[?1000h\x1b[?1006h");
-
-    return () => {
-      try {
-        process.stdout.write("\x1b[?1000l\x1b[?1006l");
-      } catch {
-        // Ignore terminal cleanup failures.
-      }
-    };
-  }, [transcriptDisplayState]);
+  }, [
+    fullscreenShellMode,
+    stdout,
+    useAlternateScreenShell,
+    useRendererOwnedMouseTracking,
+  ]);
 
   // Refs for callbacks
   // Note: permissionMode and alwaysAllowTools are stored separately for permission checks
@@ -1968,9 +2758,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const setSessionPermissionMode = useCallback((mode: PermissionMode) => {
     setCurrentConfig((prev) => ({ ...prev, permissionMode: mode }));
     permissionModeRef.current = mode;
-  }, []);
-  const toggleTranscriptVerbosity = useCallback(() => {
-    setTranscriptDisplayState((prev) => toggleTranscriptVerbosityState(prev));
   }, []);
   const pendingInputsRef = useRef<string[]>(streamingState.pendingInputs);
   const userInterruptedRef = useRef(false);
@@ -2010,6 +2797,31 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     pendingInputsRef.current = streamingState.pendingInputs;
   }, [streamingState.pendingInputs]);
 
+  const resetInterruptedPromptState = useCallback(() => {
+    userInterruptedRef.current = true;
+    abort();
+    stopStreaming();
+    stopThinking();
+    clearThinkingContent();
+    clearToolInputContent();
+    clearResponse();
+    setCurrentTool(undefined);
+    resetLiveToolCalls();
+    setLastLiveActivityLabel(undefined);
+    setIsLoading(false);
+  }, [
+    abort,
+    clearResponse,
+    clearThinkingContent,
+    clearToolInputContent,
+    resetLiveToolCalls,
+    setCurrentTool,
+    setIsLoading,
+    setLastLiveActivityLabel,
+    stopStreaming,
+    stopThinking,
+  ]);
+
   // Double-ESC detection for interrupt handling.
   const lastEscPressRef = useRef<number>(0);
   const DOUBLE_ESC_INTERVAL = 500; // ms
@@ -2024,262 +2836,355 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         return false;
       }
 
-      // Ctrl+C immediately interrupts.
-      if (key.ctrl && key.name === "c") {
-        queueInterruptedPersistence();
-        userInterruptedRef.current = true;
-        abort();
-        stopThinking();
-        clearThinkingContent();
-        setCurrentTool(undefined);
-        setIsLoading(false);
-        console.log(chalk.yellow("\n[Interrupted]"));
-        return true;
-      }
+      const interruptAction = resolveStreamingInterruptAction({
+        keyName: key.name,
+        ctrl: Boolean(key.ctrl),
+        isTranscriptMode,
+        isAwaitingUserInteraction,
+        isInputEmpty,
+        pendingInputCount: streamingState.pendingInputs.length,
+        hasTranscriptTextSelection: Boolean(transcriptModeTextSelection),
+        timeSinceLastEscapeMs: Date.now() - lastEscPressRef.current,
+        doubleEscapeIntervalMs: DOUBLE_ESC_INTERVAL,
+      });
 
-      // ESC requires a double-press to interrupt.
-      if (key.name === "escape") {
-        if (isReviewingHistory || isAwaitingUserInteraction) {
-          return false;
-        }
-
-        if (isInputEmpty && streamingState.pendingInputs.length > 0) {
+      switch (interruptAction.kind) {
+        case "interrupt":
+          lastEscPressRef.current = 0;
+          queueInterruptedPersistence();
+          resetInterruptedPromptState();
+          return true;
+        case "pop-pending-input":
           removeLastPendingInput();
           lastEscPressRef.current = 0;
           return true;
-        }
-
-        if (!isInputEmpty) {
-          return false;
-        }
-
-        const now = Date.now();
-        const timeSinceLastEsc = now - lastEscPressRef.current;
-
-        if (timeSinceLastEsc < DOUBLE_ESC_INTERVAL) {
-          // Double ESC: interrupt streaming.
-          lastEscPressRef.current = 0;
-          queueInterruptedPersistence();
-          userInterruptedRef.current = true;
-          abort();
-          stopThinking();
-          clearThinkingContent();
-          setCurrentTool(undefined);
-          setIsLoading(false);
-          console.log(chalk.yellow("\n[Interrupted]"));
+        case "arm-double-escape":
+          lastEscPressRef.current = Date.now();
           return true;
-        }
-
-        // First ESC: record the time only.
-        lastEscPressRef.current = now;
-        return true; // Consume the event to prevent InputPrompt from handling
+        case "none":
+        default:
+          break;
       }
 
       return false;
     },
     [
       isLoading,
-      isReviewingHistory,
+      isTranscriptMode,
       isAwaitingUserInteraction,
       isInputEmpty,
       streamingState.pendingInputs.length,
       removeLastPendingInput,
       queueInterruptedPersistence,
-      abort,
-      stopThinking,
-      clearThinkingContent,
-      setCurrentTool,
-      setIsLoading,
+      resetInterruptedPromptState,
     ]
   );
 
   useKeypress(
     KeypressHandlerPriority.Critical,
     (key) => {
-      const hasTranscript = displayItems.length > 0
-        || !!displayStreamingState.currentResponse
-        || !!displayStreamingState.thinkingContent
-        || displayStreamingState.activeToolCalls.length > 0;
+      const hasTranscript = hasTranscriptInputActivity({
+        itemsLength: currentSurfaceItems.length,
+        currentResponse: currentSurfaceStreamingState.currentResponse,
+        thinkingContent: currentSurfaceStreamingState.thinkingContent,
+        activeToolCallsLength: currentSurfaceStreamingState.activeToolCalls.length,
+      });
 
-      if ((key.ctrl && key.name === "y") || (key.meta && key.name === "z")) {
-        if (!isReviewingHistory) {
-          if (!hasTranscript) return true;
-          enterHistoryReview();
+      const pointerAction = resolveTranscriptPointerAction({
+        keyName: key.name,
+        hasTranscript,
+        historyScrollOffset,
+        reviewPageSize,
+        reviewWheelStep,
+        hasMouse: Boolean(key.mouse),
+        mouseButton: key.mouse?.button,
+        mouseAction: key.mouse?.action,
+        usesManagedMouseClicks: useManagedMouseClicks,
+        supportsMouseTracking: transcriptDisplayState.supportsMouseTracking,
+        usesRendererMouseTracking: useRendererOwnedMouseTracking,
+        usesManagedMouseWheel: useManagedMouseWheel,
+        supportsWheelHistory: transcriptDisplayState.supportsWheelHistory,
+      });
+
+      if (pointerAction.kind === "mouse-phase") {
+        const mouseEvent = key.mouse;
+        if (!mouseEvent) {
+          return false;
+        }
+
+        if (pointerAction.phase === "press" && mouseSelectionRef.current) {
+          finalizeTranscriptMouseSelection(mouseSelectionRef.current);
+        }
+
+        const target = resolveTranscriptMouseTarget(mouseEvent.row, mouseEvent.column);
+        if (pointerAction.phase === "press") {
+          if (!target || !hasTranscript) {
+            if (activeTextSelection || selectedTranscriptItemId) {
+              clearTranscriptSelectionFocus();
+              return true;
+            }
+            clearTranscriptMouseSelection();
+            return false;
+          }
+
+          const multiClick = resolveTranscriptMultiClickState({
+            previous: transcriptMultiClickRef.current,
+            time: Date.now(),
+            row: mouseEvent.row,
+            column: mouseEvent.column,
+          });
+          transcriptMultiClickRef.current = multiClick;
+          const selectionMode: TranscriptSelectionGestureMode = multiClick.count >= 3
+            ? "line"
+            : multiClick.count === 2
+              ? "word"
+              : "char";
+
+          disarmHistorySearchSelection();
+          setTranscriptDisplayState((prev) => setTranscriptSelectedItem(prev, undefined));
+          if (isTranscriptMode) {
+            setTranscriptModeTextSelection(undefined);
+          } else {
+            setPromptTextSelection(undefined);
+          }
+
+          if (selectionMode !== "char") {
+            const selectionSpan = resolveTranscriptSelectionSpanAt(
+              resolveTranscriptSelectionRows(),
+              target.point,
+              selectionMode,
+            );
+            if (selectionSpan) {
+              mouseSelectionRef.current = {
+                anchor: selectionSpan.start,
+                focus: selectionSpan.end,
+                didDrag: false,
+                mode: selectionMode,
+                anchorSpan: selectionSpan,
+              };
+              updateTranscriptMouseSelection(
+                selectionSpan.start,
+                selectionSpan.end,
+                { updateSelectedItem: false },
+              );
+              return true;
+            }
+          }
+
+          mouseSelectionRef.current = {
+            anchor: target.point,
+            focus: target.point,
+            didDrag: false,
+            mode: "char",
+          };
           return true;
         }
 
-        exitHistoryReview();
-        return true;
+        if (!mouseSelectionRef.current) {
+          return false;
+        }
+
+        if (pointerAction.phase === "drag") {
+          const buffer = transcriptScreenBufferRef.current;
+          const edgeScrollDirection = buffer
+            ? resolveTranscriptDragEdgeScrollDirection(buffer, mouseEvent.row)
+            : 0;
+          if (edgeScrollDirection !== 0) {
+            scrollTranscriptBy(edgeScrollDirection);
+          }
+          const dragTarget = target ?? (buffer
+            ? clampTranscriptScreenHit(buffer, mouseEvent.row, mouseEvent.column)
+            : undefined);
+          if (!dragTarget) {
+            return false;
+          }
+
+          const currentSelection = mouseSelectionRef.current;
+          if (currentSelection.mode !== "char" && currentSelection.anchorSpan) {
+            const targetSpan = resolveTranscriptSelectionSpanAt(
+              resolveTranscriptSelectionRows(),
+              dragTarget.point,
+              currentSelection.mode,
+            );
+            if (!targetSpan) {
+              return false;
+            }
+
+            const nextRange = extendTranscriptSelectionSpan(
+              currentSelection.anchorSpan,
+              targetSpan,
+            );
+            mouseSelectionRef.current = {
+              ...currentSelection,
+              anchor: nextRange.anchor,
+              focus: nextRange.focus,
+              didDrag: true,
+            };
+            updateTranscriptMouseSelection(
+              nextRange.anchor,
+              nextRange.focus,
+              { updateSelectedItem: false },
+            );
+            return true;
+          }
+
+          mouseSelectionRef.current = {
+            ...currentSelection,
+            focus: dragTarget.point,
+            didDrag: true,
+          };
+          updateTranscriptMouseSelection(
+            currentSelection.anchor,
+            dragTarget.point,
+            { updateSelectedItem: false },
+          );
+          return true;
+        }
+
+        if (pointerAction.phase === "release") {
+          const selectionState = mouseSelectionRef.current;
+          const fallbackPoint = selectionState.focus;
+          const releaseTarget = target ?? (transcriptScreenBufferRef.current
+            ? clampTranscriptScreenHit(
+              transcriptScreenBufferRef.current,
+              mouseEvent.row,
+              mouseEvent.column,
+            )
+            : undefined);
+          let focusPoint = releaseTarget?.point ?? fallbackPoint;
+
+          if (selectionState.mode !== "char" && selectionState.anchorSpan) {
+            const releaseSpan = resolveTranscriptSelectionSpanAt(
+              resolveTranscriptSelectionRows(),
+              focusPoint,
+              selectionState.mode,
+            );
+            if (releaseSpan) {
+              const nextRange = extendTranscriptSelectionSpan(
+                selectionState.anchorSpan,
+                releaseSpan,
+              );
+              selectionState.anchor = nextRange.anchor;
+              focusPoint = nextRange.focus;
+            }
+          }
+
+          finalizeTranscriptMouseSelection(selectionState, { focusPoint });
+          return true;
+        }
       }
 
-      if (key.name === "pageup") {
-        if (!hasTranscript) return true;
-
-        enterHistoryReview();
+      if (pointerAction.kind === "scroll-by") {
         disarmHistorySearchSelection();
-        setHistoryScrollOffset((prev) => incrementTranscriptScrollOffset(prev, reviewPageSize));
+        scrollTranscriptBy(pointerAction.delta);
         return true;
       }
 
-      if (!isReviewingHistory) {
-        return false;
+      if (pointerAction.kind === "consume") {
+        return true;
       }
 
-      if (transcriptDisplayState.searchMode === "history") {
-        if (key.name === "escape") {
-          closeHistorySearchSurface({ restoreFollowMode: true });
-          return true;
-        }
-        if (key.name === "backspace") {
+        const keyboardAction = resolveTranscriptKeyboardAction({
+          key,
+          isTranscriptMode,
+          isHistorySearchActive,
+          historySearchMatchCount: historySearchMatches.length,
+          hasTextSelection: Boolean(activeTextSelection),
+          hasFocusedItem: Boolean(selectedTranscriptItemId),
+          canCopySelectedItem: canCopySelectedTranscriptItem,
+          canCopySelectedToolInput,
+          canToggleSelectedDetail: canToggleSelectedTranscriptDetail,
+        canCycleTranscriptSelection,
+      });
+
+      return executeTranscriptKeyboardAction({
+        action: keyboardAction,
+        hasTranscript,
+        isTranscriptMode,
+        pageScrollDelta: reviewPageSize,
+        disarmHistorySearchSelection,
+        scrollTranscriptBy,
+        closeHistorySearchSurface,
+        backspaceHistorySearchQuery: () => {
           setHistorySearchQuery((prev) => prev.slice(0, -1));
           setHistorySearchSelectedIndex(0);
-          return true;
-        }
-        if (key.name === "down") {
+        },
+        stepHistorySearchSelection: (direction) => {
           setHistorySearchSelectedIndex((prev) =>
-            stepTranscriptSearchMatch(historySearchMatches.length, prev, "next"),
+            stepTranscriptSearchMatch(historySearchMatches.length, prev, direction),
           );
-          return true;
-        }
-        if (key.name === "up") {
-          setHistorySearchSelectedIndex((prev) =>
-            stepTranscriptSearchMatch(historySearchMatches.length, prev, "prev"),
-          );
-          return true;
-        }
-        if (key.name === "enter" || key.name === "return") {
+        },
+        submitHistorySearchSelection: () => {
           const match = historySearchMatches[clampedHistorySearchSelectedIndex];
           if (match) {
-            selectTranscriptItem(match.itemId);
-            closeHistorySearchSurface({ restoreFollowMode: false });
+            revealTranscriptItem(match.itemId);
+            closeHistorySearchSurface();
           }
-          return true;
-        }
-        if (key.insertable && key.sequence) {
-          setHistorySearchQuery((prev) => prev + key.sequence);
-          setHistorySearchSelectedIndex(0);
-          return true;
-        }
-      }
-
-      if (key.name === "escape") {
-        exitHistoryReview();
-        return true;
-      }
-
-      if (key.name === "end") {
-        exitHistoryReview();
-        return true;
-      }
-
-      if (key.name === "home") {
-        disarmHistorySearchSelection();
-        setHistoryScrollOffset(1_000_000);
-        return true;
-      }
-
-      if (key.name === "pagedown") {
-        if (historyScrollOffset === 0) {
-          exitHistoryReview();
-          return true;
-        }
-
-        disarmHistorySearchSelection();
-        setHistoryScrollOffset((prev) => incrementTranscriptScrollOffset(prev, -reviewPageSize));
-        return true;
-      }
-
-      if (key.name === "wheelup") {
-        if (!supportsTranscriptMouseHistory(transcriptDisplayState)) {
-          return false;
-        }
-        disarmHistorySearchSelection();
-        setHistoryScrollOffset((prev) => incrementTranscriptScrollOffset(prev, reviewWheelStep));
-        return true;
-      }
-
-      if (key.name === "wheeldown") {
-        if (!supportsTranscriptMouseHistory(transcriptDisplayState)) {
-          return false;
-        }
-        if (historyScrollOffset === 0) {
-          exitHistoryReview();
-          return true;
-        }
-
-        disarmHistorySearchSelection();
-        setHistoryScrollOffset((prev) => incrementTranscriptScrollOffset(prev, -reviewWheelStep));
-        return true;
-      }
-
-      if (key.name === "j" || key.name === "down") {
-        disarmHistorySearchSelection();
-        setHistoryScrollOffset((prev) => incrementTranscriptScrollOffset(prev, -1));
-        return true;
-      }
-
-      if (key.name === "k" || key.name === "up") {
-        disarmHistorySearchSelection();
-        setHistoryScrollOffset((prev) => incrementTranscriptScrollOffset(prev, 1));
-        return true;
-      }
-
-      if (key.name === "left") {
-        if (!canCycleTranscriptSelection) {
-          return false;
-        }
-        cycleTranscriptSelection("prev");
-        return true;
-      }
-
-      if (key.name === "right") {
-        if (!canCycleTranscriptSelection) {
-          return false;
-        }
-        cycleTranscriptSelection("next");
-        return true;
-      }
-
-      if (!key.ctrl && !key.meta && !key.shift && key.name === "c") {
-        if (!canCopySelectedTranscriptItem) {
-          return false;
-        }
-        void copySelectedTranscriptItem();
-        return true;
-      }
-
-      if (!key.ctrl && !key.meta && !key.shift && key.name === "i") {
-        if (!canCopySelectedToolInput) {
-          return false;
-        }
-        void copySelectedTranscriptToolInput();
-        return true;
-      }
-
-      if (!key.ctrl && !key.meta && !key.shift && key.name === "v") {
-        if (!canToggleSelectedTranscriptDetail) {
-          return false;
-        }
-        toggleSelectedTranscriptDetail();
-        return true;
-      }
-
-      return false;
+        },
+          appendHistorySearchQuery: (text) => {
+            setHistorySearchQuery((prev) => prev + text);
+            setHistorySearchSelectedIndex(0);
+          },
+          openHistorySearchSurface,
+          clearTranscriptSelectionFocus,
+          exitTranscriptModeSurface,
+          toggleTranscriptShowAll,
+          scrollTranscriptHome: () => {
+            scrollTranscriptTo(Math.max(0, effectiveTranscriptScrollHeight - viewportBudget.messageRows));
+          },
+        scrollTranscriptToBottom: () => {
+          scrollTranscriptToBottom();
+          clearTranscriptMouseSelection();
+        },
+        cycleTranscriptSelection,
+        copySelectedTranscriptText: () => {
+          void copySelectedTranscriptText();
+        },
+        copySelectedTranscriptItem: () => {
+          void copySelectedTranscriptItem();
+        },
+        copySelectedTranscriptToolInput: () => {
+          void copySelectedTranscriptToolInput();
+        },
+        toggleSelectedTranscriptDetail,
+        navigateSearchMatch: (direction) => {
+          setHistorySearchSelectedIndex((prev) => {
+            const nextIndex = stepTranscriptSearchMatch(
+              historySearchMatches.length,
+              prev,
+              direction,
+            );
+            const match = historySearchMatches[nextIndex];
+            if (match) {
+              revealTranscriptItem(match.itemId);
+            }
+            return nextIndex;
+          });
+        },
+      });
     },
     [
-      isReviewingHistory,
-      displayItems,
-      displayStreamingState.currentResponse,
-      displayStreamingState.thinkingContent,
-      displayStreamingState.activeToolCalls,
+      isTranscriptMode,
+      currentSurfaceItems,
+      currentSurfaceStreamingState.currentResponse,
+      currentSurfaceStreamingState.thinkingContent,
+      currentSurfaceStreamingState.activeToolCalls,
       historyScrollOffset,
+      effectiveTranscriptScrollHeight,
       reviewPageSize,
       reviewWheelStep,
-      enterHistoryReview,
-      exitHistoryReview,
+      selectedTranscriptItemId,
+      clearTranscriptSelectionFocus,
+      exitTranscriptModeSurface,
+      toggleTranscriptShowAll,
       transcriptDisplayState,
+      scrollTranscriptBy,
+      scrollTranscriptTo,
+      scrollTranscriptToBottom,
       canCycleTranscriptSelection,
       clampedHistorySearchSelectedIndex,
+      clearTranscriptMouseSelection,
+      copySelectedTranscriptText,
       historySearchMatches,
       openHistorySearchSurface,
       closeHistorySearchSurface,
@@ -2291,35 +3196,58 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       copySelectedTranscriptToolInput,
       canToggleSelectedTranscriptDetail,
       toggleSelectedTranscriptDetail,
-      selectTranscriptItem,
+      revealTranscriptItem,
+      activeTextSelection,
+      resolveTranscriptMouseTarget,
+      transcriptDisplayState.supportsMouseTracking,
+      transcriptModeTextSelection,
+      useManagedMouseClicks,
+      useManagedMouseWheel,
+      useManagedSelection,
+      useRendererViewportShell,
+      useRendererOwnedMouseTracking,
+      updateTranscriptMouseSelection,
+      viewportBudget.messageRows,
     ]
   );
 
   // Confirmation dialog keyboard handler.
-  useInput(
-    (input, _key) => {
-      if (!confirmRequest) return;
+  useKeypress(
+    (key) => {
+      if (!confirmRequest) return false;
 
-      const answer = input.toLowerCase();
+      const answer = key.sequence.trim().toLowerCase();
       const isProtectedPath = !!confirmRequest.input._alwaysConfirm;
       // "Always" is only available in accept-edits mode.
-      const canAlways = currentConfig.permissionMode === 'accept-edits' && !isProtectedPath;
+      const canAlways = currentConfig.permissionMode === "accept-edits" && !isProtectedPath;
 
-      if (answer === 'y' || answer === 'yes') {
+      if (answer === "y" || answer === "yes") {
         setConfirmRequest(null);
         confirmResolveRef.current?.({ confirmed: true });
         confirmResolveRef.current = null;
-      } else if (canAlways && (answer === 'a' || answer === 'always')) {
+        return true;
+      }
+
+      if (canAlways && (answer === "a" || answer === "always")) {
         setConfirmRequest(null);
         confirmResolveRef.current?.({ confirmed: true, always: true });
         confirmResolveRef.current = null;
-      } else if (answer === 'n' || answer === 'no') {
+        return true;
+      }
+
+      if (answer === "n" || answer === "no" || key.name === "escape") {
         setConfirmRequest(null);
         confirmResolveRef.current?.({ confirmed: false });
         confirmResolveRef.current = null;
+        return true;
       }
+
+      return key.insertable || key.name === "return";
     },
-    { isActive: !!confirmRequest }
+    {
+      isActive: !!confirmRequest,
+      priority: KeypressHandlerPriority.Critical,
+    },
   );
 
   const resolveUIRequest = useCallback((value: string | undefined) => {
@@ -2363,21 +3291,21 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     });
   }, []);
 
-  useInput(
-    (input, key) => {
-      if (!uiRequest) return;
+  useKeypress(
+    (key) => {
+      if (!uiRequest) return false;
 
-      if (key.escape) {
+      if (key.name === "escape") {
         resolveUIRequest(undefined);
-        return;
+        return true;
       }
 
       if (uiRequest.kind === "select") {
-        if (key.return) {
+        if (key.name === "return") {
           const trimmed = uiRequest.buffer.trim();
           if (trimmed === "" || trimmed === "0") {
             resolveUIRequest(undefined);
-            return;
+            return true;
           }
 
           const index = Number.parseInt(trimmed, 10) - 1;
@@ -2388,59 +3316,66 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
                   ...prev,
                   error: `Invalid choice. Enter 1-${prev.options.length}, or 0 to cancel.`,
                 }
-                : prev
+                : prev,
             );
-            return;
+            return true;
           }
 
           resolveUIRequest(uiRequest.options[index]?.value);
-          return;
+          return true;
         }
 
-        if (key.backspace || key.delete) {
+        if (key.name === "backspace" || key.name === "delete") {
           setUiRequest((prev) =>
             prev && prev.kind === "select"
               ? { ...prev, buffer: prev.buffer.slice(0, -1), error: undefined }
-              : prev
+              : prev,
           );
-          return;
+          return true;
         }
 
-        if (/^[0-9]$/.test(input)) {
+        if (/^[0-9]+$/.test(key.sequence)) {
           setUiRequest((prev) =>
             prev && prev.kind === "select"
-              ? { ...prev, buffer: prev.buffer + input, error: undefined }
-              : prev
+              ? { ...prev, buffer: prev.buffer + key.sequence, error: undefined }
+              : prev,
           );
+          return true;
         }
 
-        return;
+        return key.insertable || key.isPasted === true;
       }
 
-      if (key.return) {
+      if (key.name === "return") {
         const trimmed = uiRequest.buffer.trim();
         resolveUIRequest(trimmed === "" ? uiRequest.defaultValue ?? undefined : trimmed);
-        return;
+        return true;
       }
 
-      if (key.backspace || key.delete) {
+      if (key.name === "backspace" || key.name === "delete") {
         setUiRequest((prev) =>
           prev && prev.kind === "input"
             ? { ...prev, buffer: prev.buffer.slice(0, -1), error: undefined }
-            : prev
+            : prev,
         );
-        return;
+        return true;
       }
 
-      if (input && !key.ctrl && !key.meta) {
+      if ((key.insertable || key.isPasted === true) && !key.ctrl && !key.meta) {
         setUiRequest((prev) =>
           prev && prev.kind === "input"
-            ? { ...prev, buffer: prev.buffer + input, error: undefined }
-            : prev
+            ? { ...prev, buffer: prev.buffer + key.sequence, error: undefined }
+            : prev,
         );
+        return true;
       }
+
+      return false;
     },
-    { isActive: !!uiRequest }
+    {
+      isActive: !!uiRequest,
+      priority: KeypressHandlerPriority.Critical,
+    },
   );
 
   // Sync history from context to UI
@@ -2449,7 +3384,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   useEffect(() => {
     if (context.messages.length > 0 && history.length === 0) {
       if (context.uiHistory?.length) {
-        for (const item of context.uiHistory) {
+        const persistedHistory = trimPersistedUiHistorySnapshot(context.uiHistory);
+        if (persistedHistory.length !== context.uiHistory.length) {
+          context.uiHistory = persistedHistory;
+        }
+        for (const item of persistedHistory) {
           addHistoryItem({
             type: item.type,
             text: item.text,
@@ -2478,6 +3417,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   // Create KodaXEvents for streaming updates
   const createStreamingEvents = useCallback((): StreamingEvents => ({
     onThinkingDelta: (text: string) => {
+      if (userInterruptedRef.current) {
+        return;
+      }
       if (streamingState.currentTool) {
         setCurrentTool(undefined);
         clearToolInputContent();
@@ -2495,6 +3437,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       appendThinkingContent(text);
     },
     onThinkingEnd: (thinking: string) => {
+      if (userInterruptedRef.current) {
+        return;
+      }
       const currentThinking = getThinkingContent();
       const mergedThinking = mergeLiveThinkingContent(currentThinking, thinking);
       if (mergedThinking && mergedThinking !== currentThinking) {
@@ -2506,6 +3451,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       stopThinking();
     },
     onTextDelta: (text: string) => {
+      if (userInterruptedRef.current) {
+        return;
+      }
       if (streamingState.currentTool) {
         setCurrentTool(undefined);
         clearToolInputContent();
@@ -2515,6 +3463,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       appendResponse(text);
     },
     onToolUseStart: (tool: { name: string; id: string; input?: Record<string, unknown> }) => {
+      if (userInterruptedRef.current) {
+        return;
+      }
       if (!iterationToolsRef.current.includes(tool.name)) {
         iterationToolsRef.current = [...iterationToolsRef.current, tool.name];
       }
@@ -2538,6 +3489,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       partialJson: string,
       meta?: { toolId?: string },
     ) => {
+      if (userInterruptedRef.current) {
+        return;
+      }
       appendToolInputChars(partialJson.length);
       appendToolInputContent(partialJson); // Issue 068 Phase 4: track tool input content.
       const updatedTool = updateExecutingTool(meta?.toolId, toolName, (tool) => {
@@ -2558,6 +3512,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
     },
     onToolResult: (result) => {
+      if (userInterruptedRef.current) {
+        return;
+      }
       const content = typeof result.content === "string" ? result.content : String(result.content ?? "");
       const trimmedContent = truncateToolOutputPreview(content);
       if (/^\[(?:Tool Error|Error)\]/.test(content)) {
@@ -2679,12 +3636,21 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       console.log(''); // Empty line for readability
     },
     onRetry: (reason: string, attempt: number, maxAttempts: number) => {
+      if (userInterruptedRef.current) {
+        return;
+      }
       emitRetryHistoryItem(addHistoryItem, reason, attempt, maxAttempts);
     },
     onProviderRecovery: (event) => {
+      if (userInterruptedRef.current) {
+        return;
+      }
       emitRecoveryHistoryItem(addHistoryItem, event);
     },
     onManagedTaskStatus: (status) => {
+      if (userInterruptedRef.current) {
+        return;
+      }
       managedTaskStatusRef.current = status;
       setManagedTaskStatus(status);
       const liveStatusLabel = formatManagedTaskLiveStatusLabel(status);
@@ -2707,6 +3673,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
     },
     onProviderRateLimit: (attempt: number, maxAttempts: number, delayMs: number) => {
+      if (userInterruptedRef.current) {
+        return;
+      }
       addHistoryItem({
         type: "info",
         icon: "\u23F3",
@@ -2716,6 +3685,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     // Iteration start - called at the beginning of each agent iteration
     // Iteration start: called at the beginning of each agent iteration.
     onIterationStart: (iter: number, maxIter: number) => {
+      if (userInterruptedRef.current) {
+        return;
+      }
       // Update max iterations if provided
 
       if (maxIter) {
@@ -2868,7 +3840,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         const result = await showConfirmDialog(tool, input);
 
         // === RACE CONDITION FIX: Re-evaluate permission mode ===
-        // The user might have toggled transcript verbosity or permission mode mid-session.
+        // The user might have toggled transcript mode or permission mode mid-session.
         // WHILE the confirmation dialog was open and waiting.
         if (permissionModeRef.current === 'plan' && (FILE_MODIFICATION_TOOLS.has(tool) || tool === 'undo')) {
           return false;
@@ -3056,46 +4028,118 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     );
   };
 
+  const reconcileContextLineage = useCallback((messages: readonly KodaXMessage[]): KodaXSessionLineage => {
+    const nextLineage = createSessionLineage([...messages], context.lineage);
+    context.lineage = nextLineage;
+    return nextLineage;
+  }, [context]);
+
   const persistContextState = useCallback(async (uiHistoryOverride?: KodaXSessionUiHistoryItem[]) => {
     if (context.messages.length === 0) {
       return;
     }
 
     const title = extractTitle(context.messages);
-    const persistedUiHistory = uiHistoryOverride ?? persistedUiHistoryRef.current;
+    const persistedUiHistory = trimPersistedUiHistorySnapshot(
+      uiHistoryOverride ?? persistedUiHistoryRef.current,
+    );
     persistedUiHistoryRef.current = persistedUiHistory;
     context.title = title;
     context.uiHistory = persistedUiHistory;
-    context.lineage = createSessionLineage(context.messages, context.lineage);
+    const lineage = context.lineage ?? reconcileContextLineage(context.messages);
+    context.lineage = lineage;
     await storage.save(context.sessionId, {
       messages: context.messages,
       title,
       gitRoot: context.gitRoot ?? "",
       uiHistory: persistedUiHistory,
-      lineage: context.lineage,
+      lineage,
       artifactLedger: context.artifactLedger,
     });
-  }, [context, storage]);
+  }, [context, reconcileContextLineage, storage]);
+
+  const flushPendingPersistContextState = useCallback(() => {
+    if (persistContextStateRunnerRef.current) {
+      return persistContextStateRunnerRef.current;
+    }
+
+    const run = (async () => {
+      try {
+        while (pendingPersistContextStateRef.current.requested) {
+          pendingPersistContextStateRef.current.requested = false;
+          const nextUiHistory = pendingPersistContextStateRef.current.uiHistoryOverride;
+          pendingPersistContextStateRef.current.uiHistoryOverride = undefined;
+          await persistContextState(nextUiHistory);
+        }
+      } finally {
+        persistContextStateRunnerRef.current = null;
+        if (pendingPersistContextStateRef.current.requested) {
+          void flushPendingPersistContextState();
+        }
+      }
+    })();
+
+    persistContextStateRunnerRef.current = run;
+    persistContextStateQueueRef.current = run;
+    return run;
+  }, [persistContextState]);
 
   const persistContextStateInBackground = useCallback((uiHistoryOverride?: KodaXSessionUiHistoryItem[]) => {
     if (uiHistoryOverride !== undefined) {
-      persistedUiHistoryRef.current = uiHistoryOverride;
+      const trimmedUiHistory = trimPersistedUiHistorySnapshot(uiHistoryOverride);
+      persistedUiHistoryRef.current = trimmedUiHistory;
+      pendingPersistContextStateRef.current.uiHistoryOverride = trimmedUiHistory;
     }
-    const queuedSave = persistContextStateQueueRef.current
-      .catch(() => {})
-      .then(() => persistContextState(uiHistoryOverride));
-    persistContextStateQueueRef.current = queuedSave.catch(() => {});
-    return queuedSave;
-  }, [persistContextState]);
+    pendingPersistContextStateRef.current.requested = true;
+    return flushPendingPersistContextState();
+  }, [flushPendingPersistContextState]);
 
-  const requestGracefulExit = useCallback(() => {
-    void (async () => {
+  const requestGracefulExit = useCallback(async () => {
+    if (gracefulExitRunnerRef.current) {
+      return gracefulExitRunnerRef.current;
+    }
+
+    const run = (async () => {
+      userInterruptedRef.current = true;
+      abort();
+      stopStreaming();
+      stopThinking();
+      clearThinkingContent();
+      clearToolInputContent();
+      clearResponse();
+      setCurrentTool(undefined);
+      setIsLoading(false);
+
       await persistContextStateQueueRef.current.catch(() => {});
       setIsRunning(false);
-      onExit();
+      if (isRawModeSupported && stdin?.isRaw) {
+        setRawMode(false);
+      }
+      stdin?.pause?.();
+      stdin?.unref?.();
       exit();
+      onExit();
     })();
-  }, [exit, onExit]);
+
+    gracefulExitRunnerRef.current = run.finally(() => {
+      gracefulExitRunnerRef.current = null;
+    });
+    return gracefulExitRunnerRef.current;
+  }, [
+    abort,
+    clearResponse,
+    clearThinkingContent,
+    clearToolInputContent,
+    exit,
+    isRawModeSupported,
+    onExit,
+    setCurrentTool,
+    setIsLoading,
+    setRawMode,
+    stdin,
+    stopStreaming,
+    stopThinking,
+  ]);
 
   useEffect(() => {
     persistContextStateRef.current = persistContextStateInBackground;
@@ -3146,10 +4190,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const recordCompletedAgentRound = useCallback(async (result: KodaXResult) => {
     context.messages = result.messages;
     context.contextTokenSnapshot = result.contextTokenSnapshot;
-    context.artifactLedger = mergeArtifactLedger(
-      context.artifactLedger ?? [],
-      extractArtifactLedger(result.messages),
-    );
+    reconcileContextLineage(result.messages);
 
     const finalThinking = getThinkingContent().trim();
     const finalResponse = resolveCompletedAssistantText(
@@ -3222,6 +4263,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     getFullResponse,
     getThinkingContent,
     persistContextStateInBackground,
+    reconcileContextLineage,
     resetLiveToolCalls,
     setCurrentTool,
     setLastLiveActivityLabel,
@@ -3331,6 +4373,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             role: "assistant",
             content: lastAssistant.content,
           });
+          reconcileContextLineage(context.messages);
           for (const item of extractHistorySeedsFromMessage(lastAssistant)) {
             addHistoryItem(item);
             persistedAdditions.push(item);
@@ -3339,6 +4382,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       } else {
         context.messages = result.messages;
         context.contextTokenSnapshot = result.contextTokenSnapshot;
+        reconcileContextLineage(result.messages);
         appendLastAssistantToHistory(result.messages);
         const lastAssistant = result.messages[result.messages.length - 1];
         if (lastAssistant?.role === "assistant") {
@@ -3365,6 +4409,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     currentConfig.thinking,
     planMode,
     persistContextState,
+    reconcileContextLineage,
     runAgentRound,
   ]);
 
@@ -3454,20 +4499,19 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       if (parsed) {
         // Create command callbacks
         const callbacks: CommandCallbacks = {
-          exit: () => {
-            requestGracefulExit();
-          },
+          exit: requestGracefulExit,
           saveSession: async () => {
             if (context.messages.length > 0) {
               const title = extractTitle(context.messages);
               context.title = title;
-              context.lineage = createSessionLineage(context.messages, context.lineage);
+              const lineage = context.lineage ?? reconcileContextLineage(context.messages);
+              context.lineage = lineage;
               await storage.save(context.sessionId, {
                 messages: context.messages,
                 title,
                 gitRoot: context.gitRoot ?? "",
                 uiHistory: persistedUiHistoryRef.current,
-                lineage: context.lineage,
+                lineage,
                 artifactLedger: context.artifactLedger,
               });
             }
@@ -3481,6 +4525,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             context.contextTokenSnapshot = undefined;
             context.lineage = undefined;
             context.artifactLedger = undefined;
+            persistedUiHistoryRef.current = [];
             context.createdAt = now;
             context.lastAccessed = now;
             currentOptionsRef.current.session = {
@@ -3503,12 +4548,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
                 return "blocked";
               }
               context.messages = loaded.messages;
-              context.uiHistory = loaded.uiHistory;
+              context.uiHistory = normalizePersistedUiHistory(loaded.uiHistory);
               context.lineage = loaded.lineage;
               context.artifactLedger = loaded.artifactLedger;
               context.title = loaded.title;
               context.sessionId = id;
               context.contextTokenSnapshot = undefined;
+              persistedUiHistoryRef.current = context.uiHistory ?? [];
               setLiveTokenCount(null);
               clearUIHistory();
               setSessionId(id);
@@ -3678,9 +4724,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             }
 
             context.messages = loaded.messages;
-            context.uiHistory = loaded.uiHistory;
+            context.uiHistory = normalizePersistedUiHistory(loaded.uiHistory);
             context.title = loaded.title;
             context.contextTokenSnapshot = undefined;
+            persistedUiHistoryRef.current = context.uiHistory ?? [];
             setLiveTokenCount(null);
             clearUIHistory();
             console.log(chalk.green(`\n[Switched to tree entry: ${selector}]`));
@@ -3716,9 +4763,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
             context.sessionId = forked.sessionId;
             context.messages = forked.data.messages;
-            context.uiHistory = forked.data.uiHistory;
+            context.uiHistory = normalizePersistedUiHistory(forked.data.uiHistory);
             context.title = forked.data.title;
             context.contextTokenSnapshot = undefined;
+            persistedUiHistoryRef.current = context.uiHistory ?? [];
             const now = new Date().toISOString();
             context.createdAt = now;
             context.lastAccessed = now;
@@ -4120,6 +5168,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       appendHistoryItemsToCurrentSnapshot,
       appendLastAssistantToHistory,
       persistContextState,
+      reconcileContextLineage,
       runQueueableAgentSequence,
       startCompacting,
       stopCompacting,
@@ -4128,8 +5177,221 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     ]
   );
 
-  return (
-    <Box flexDirection="column" width={terminalWidth} flexShrink={0} flexGrow={0}>
+  const promptFooterSurface = (
+    <PromptFooter
+      left={<PromptFooterLeftSide items={footerLeftItems} />}
+      right={<PromptFooterRightSide items={footerRightItems} />}
+      queued={<QueuedCommandsSurface pendingInputs={streamingState.pendingInputs} />}
+      stashNotice={<StashNotice text={stashNoticeText} />}
+      notifications={<NotificationsSurface notifications={footerNotifications} />}
+      inlineNotices={promptFooterNotices.length > 0 ? (
+        <StatusNoticesSurface notices={promptFooterNotices} />
+      ) : undefined}
+      activityBar={promptBusyText ? (
+        <Box paddingX={1}>
+          <Spinner color={getTheme("dark").colors.accent} />
+          <Text color={getTheme("dark").colors.accent}> {promptBusyText}</Text>
+        </Box>
+      ) : undefined}
+      composer={(
+        <PromptComposer
+          onSubmit={handleSubmit}
+          prompt=">"
+          placeholder={isLoading
+            ? canQueueFollowUps
+              ? "Queue a follow-up for the next round..."
+              : "Agent is busy..."
+            : "Type a message..."}
+          focus={!confirmRequest && !uiRequest && !isHistorySearchActive}
+          cwd={process.cwd()}
+          gitRoot={options.context?.gitRoot || context.gitRoot}
+          onInputChange={handleInputChange}
+        />
+      )}
+      inlineSuggestions={useOverlaySurface ? undefined : suggestionsSurface}
+      helpSurface={showHelp ? (
+        <PromptHelpMenu sections={buildHelpMenuSections()} />
+      ) : undefined}
+      statusLine={<Box><StatusBar {...statusBarProps} viewModel={visibleStatusBarViewModel} /></Box>}
+      inlineDialogs={useOverlaySurface ? undefined : dialogSurface}
+    />
+  );
+  const transcriptFooterSurface = (
+    <PromptFooter
+      left={<PromptFooterLeftSide items={footerLeftItems} />}
+      right={<PromptFooterRightSide items={footerRightItems} />}
+      stashNotice={<StashNotice text={stashNoticeText} />}
+      notifications={<NotificationsSurface notifications={footerNotifications} />}
+      composer={(
+        <TranscriptModeFooter
+          searchActive={isHistorySearchActive}
+          selectionActive={Boolean(activeTextSelection || selectedTranscriptItemId)}
+          showAllActive={showAllInTranscript}
+          searchQuery={historySearchQuery}
+          searchCurrent={historySearchMatches.length > 0 ? clampedHistorySearchSelectedIndex + 1 : 0}
+          searchCount={historySearchMatches.length}
+          searchDetailText={effectiveHistorySearchDetailText}
+          pendingLiveUpdates={pendingTranscriptUpdateCount}
+          secondaryText={transcriptFooterSecondaryText}
+          noticeText={selectionCopyNotice}
+        />
+      )}
+      statusLine={<Box><StatusBar {...statusBarProps} viewModel={statusBarViewModel} /></Box>}
+    />
+  );
+  const renderPromptSurfaceTranscript = useCallback((options?: {
+    bannerVisible?: boolean;
+    rendererWindow?: Pick<ScrollBoxWindow, "start" | "end" | "scrollHeight" | "viewportHeight" | "scrollTop" | "viewportTop" | "pendingDelta" | "sticky">;
+    visibleRowsOverride?: TranscriptRow[];
+  }) => (
+    <PromptTranscriptSurface
+      banner={options?.bannerVisible ? <Banner {...bannerProps} /> : undefined}
+      items={effectivePromptDisplayItems}
+      isLoading={effectivePromptIsLoading}
+      viewportRows={viewportBudget.messageRows}
+      viewportWidth={terminalWidth}
+      scrollOffset={historyScrollOffset}
+      windowed={Boolean(options?.rendererWindow)}
+      rendererWindow={options?.rendererWindow}
+      transcriptModel={options?.rendererWindow ? ownedTranscriptRenderModel : promptSurfaceRenderModel}
+      visibleRowsOverride={options?.visibleRowsOverride}
+      maxLines={transcriptMaxLines}
+      selectedTextRanges={useManagedSelection ? promptTextSelection?.rowRanges : undefined}
+      onMetricsChange={handleTranscriptMetricsChange}
+      onVisibleRowsChange={handleVisibleTranscriptRowsChange}
+    />
+  ), [
+    bannerProps,
+    effectivePromptDisplayItems,
+    effectivePromptIsLoading,
+    handleTranscriptMetricsChange,
+    handleVisibleTranscriptRowsChange,
+    historyScrollOffset,
+    promptSurfaceRenderModel,
+    terminalWidth,
+    transcriptMaxLines,
+    promptTextSelection?.rowRanges,
+    viewportBudget.messageRows,
+    useManagedSelection,
+  ]);
+  const renderTranscriptModeSurface = useCallback((options?: {
+    bannerVisible?: boolean;
+    windowed?: boolean;
+    rendererWindow?: Pick<ScrollBoxWindow, "start" | "end" | "scrollHeight" | "viewportHeight" | "scrollTop" | "viewportTop" | "pendingDelta" | "sticky">;
+    visibleRowsOverride?: TranscriptRow[];
+  }) => (
+    <TranscriptModeSurface
+      banner={options?.bannerVisible ? <Banner {...bannerProps} /> : undefined}
+      items={transcriptDisplayItems}
+      browse={{ hintText: transcriptChrome.browseHintText }}
+      selection={transcriptSelectionState}
+      search={effectiveTranscriptSearchState}
+      isLoading={transcriptDisplayIsLoading}
+      isThinking={transcriptStreamingState.isThinking}
+      thinkingCharCount={transcriptStreamingState.thinkingCharCount}
+      thinkingContent={transcriptStreamingState.thinkingContent}
+      streamingResponse={transcriptStreamingState.currentResponse}
+      currentTool={transcriptStreamingState.currentTool}
+      activeToolCalls={transcriptStreamingState.activeToolCalls}
+      toolInputCharCount={transcriptStreamingState.toolInputCharCount}
+      toolInputContent={transcriptStreamingState.toolInputContent}
+      iterationHistory={transcriptStreamingState.iterationHistory}
+      currentIteration={transcriptStreamingState.currentIteration}
+      isCompacting={transcriptStreamingState.isCompacting}
+      agentMode={currentConfig.agentMode}
+      managedPhase={transcriptDisplayIsLoading ? managedTaskStatus?.phase : undefined}
+      managedHarnessProfile={transcriptDisplayIsLoading ? managedTaskStatus?.harnessProfile : undefined}
+      managedWorkerTitle={transcriptDisplayIsLoading ? managedTaskStatus?.activeWorkerTitle : undefined}
+      managedRound={transcriptDisplayIsLoading ? managedTaskStatus?.currentRound : undefined}
+      managedMaxRounds={transcriptDisplayIsLoading ? managedTaskStatus?.maxRounds : undefined}
+      managedGlobalWorkBudget={transcriptDisplayIsLoading ? managedTaskStatus?.globalWorkBudget : undefined}
+      managedBudgetUsage={transcriptDisplayIsLoading ? managedTaskStatus?.budgetUsage : undefined}
+      managedBudgetApprovalRequired={transcriptDisplayIsLoading ? managedTaskStatus?.budgetApprovalRequired : undefined}
+      lastLiveActivityLabel={transcriptStreamingState.lastLiveActivityLabel}
+      viewportRows={viewportBudget.messageRows}
+      viewportWidth={terminalWidth}
+      scrollOffset={historyScrollOffset}
+      windowed={Boolean(options?.windowed)}
+      animateSpinners={Boolean(options?.rendererWindow) && transcriptAnimateSpinners}
+      rendererWindow={options?.rendererWindow}
+      transcriptModel={options?.rendererWindow ? ownedTranscriptRenderModel : transcriptMainScreenRenderModel}
+      visibleRowsOverride={options?.visibleRowsOverride}
+      maxLines={transcriptMaxLines}
+      showDetailedTools={showAllInTranscript}
+      selectedItemId={transcriptSelectionRuntime.selectionEnabled ? selectedTranscriptItemId : undefined}
+      selectedTextRanges={transcriptModeTextSelection?.rowRanges}
+      expandedItemKeys={transcriptSelectionRuntime.selectionEnabled ? expandedTranscriptItemIds : undefined}
+      onMetricsChange={handleTranscriptMetricsChange}
+      onVisibleRowsChange={handleVisibleTranscriptRowsChange}
+    />
+  ), [
+    bannerProps,
+    currentConfig.agentMode,
+    transcriptDisplayIsLoading,
+    expandedTranscriptItemIds,
+    fullscreenPolicy.transcriptSpinnerAnimation,
+    handleTranscriptMetricsChange,
+    handleVisibleTranscriptRowsChange,
+    historyScrollOffset,
+    isLivePaused,
+    managedTaskStatus?.activeWorkerTitle,
+    managedTaskStatus?.budgetApprovalRequired,
+    managedTaskStatus?.budgetUsage,
+    managedTaskStatus?.currentRound,
+    managedTaskStatus?.globalWorkBudget,
+    managedTaskStatus?.harnessProfile,
+    managedTaskStatus?.maxRounds,
+    managedTaskStatus?.phase,
+    ownedTranscriptRenderModel,
+    transcriptMainScreenRenderModel,
+    transcriptChrome.browseHintText,
+    selectedTranscriptItemId,
+    transcriptSelectionState,
+    terminalWidth,
+    transcriptAnimateSpinners,
+    transcriptDisplayItems,
+    transcriptMaxLines,
+    transcriptStreamingState.activeToolCalls,
+    transcriptStreamingState.currentIteration,
+    transcriptStreamingState.currentResponse,
+    transcriptStreamingState.currentTool,
+    transcriptStreamingState.isCompacting,
+    transcriptStreamingState.isThinking,
+    transcriptStreamingState.iterationHistory,
+    transcriptStreamingState.lastLiveActivityLabel,
+    transcriptStreamingState.thinkingCharCount,
+    transcriptStreamingState.thinkingContent,
+    transcriptStreamingState.toolInputCharCount,
+    transcriptStreamingState.toolInputContent,
+    transcriptModeTextSelection?.rowRanges,
+    effectiveTranscriptSearchState,
+    showAllInTranscript,
+    viewportBudget.messageRows,
+  ]);
+  const currentTranscriptSurface = isTranscriptMode
+    ? renderTranscriptModeSurface({
+      bannerVisible: false,
+      windowed: transcriptOwnsViewport,
+    })
+    : renderPromptSurfaceTranscript({
+      bannerVisible: false,
+    });
+  const currentFooterSurface = isTranscriptMode
+    ? transcriptFooterSurface
+    : promptFooterSurface;
+  const showMainScreenPromptBanner =
+    showBanner
+    && fullscreenPolicy.enabled
+    && !useRendererViewportShell
+    && !isTranscriptMode;
+  const shouldFillShellHeight = fullscreenPolicy.enabled && useRendererViewportShell;
+  const shellBody = (
+    <Box
+      flexDirection="column"
+      width={terminalWidth}
+      flexShrink={0}
+      flexGrow={shouldFillShellHeight ? 1 : 0}
+    >
       {/* Global Shortcuts - registers keyboard shortcuts (Issue 083) */}
       <GlobalShortcuts
         currentConfig={currentConfig}
@@ -4149,9 +5411,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           currentOptionsRef.current.reasoningMode = mode;
           currentOptionsRef.current.thinking = mode !== 'off';
         }}
-        onToggleTranscriptVerbosity={toggleTranscriptVerbosity}
+        onToggleTranscriptMode={toggleTranscriptMode}
         onOpenTranscriptSearch={openHistorySearchSurface}
-        canOpenTranscriptSearch={!confirmRequest && !uiRequest}
+        canOpenTranscriptSearch={isTranscriptMode && !confirmRequest && !uiRequest}
         isInteractiveDialogActive={Boolean(confirmRequest || uiRequest)}
         onSetAgentMode={(mode) => {
           currentOptionsRef.current.agentMode = mode;
@@ -4166,114 +5428,103 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         onSavePermissionMode={savePermissionModeUser}
       />
 
-      {/* Banner - shown once at start, using Static to prevent re-rendering */}
-      {showBanner && (
+      {/* Banner - in non-fullscreen mode this remains part of scrollback history */}
+      {showBanner && (!fullscreenPolicy.enabled ? (
         <Static items={[1]}>
           {() => (
             <Banner
               key="banner"
-              config={currentConfig}
-              sessionId={context.sessionId}
-              workingDir={options.context?.gitRoot || process.cwd()}
-              compactionInfo={compactionInfo ?? undefined}
+              {...bannerProps}
             />
           )}
         </Static>
+      ) : null)}
+      {showMainScreenPromptBanner ? (
+        <Banner
+          key="fullscreen-main-screen-banner"
+          {...bannerProps}
+        />
+      ) : null}
+
+      {useRendererViewportShell ? (
+        <FullscreenTranscriptLayout
+          width={terminalWidth}
+          stickyHeader={transcriptChrome.stickyHeader}
+          jumpToLatest={transcriptChrome.jumpToLatest}
+          transcript={!fullscreenPolicy.enabled || !transcriptOwnsViewport ? (
+            (isTranscriptMode
+              ? renderTranscriptModeSurface({ bannerVisible: false })
+              : renderPromptSurfaceTranscript({ bannerVisible: fullscreenPolicy.enabled && showBanner }))
+          ) : undefined}
+          renderTranscriptWindow={fullscreenPolicy.enabled && transcriptOwnsViewport
+            ? (window) => (
+              (() => {
+                const adjustedWindow = {
+                  ...window,
+                  start: Math.max(0, window.start - fullscreenBannerRows),
+                  end: Math.max(0, window.end - fullscreenBannerRows),
+                  viewportTop: Math.max(0, window.viewportTop - fullscreenBannerRows),
+                  viewportHeight: Math.max(
+                    0,
+                    window.viewportHeight - (showBanner && window.start < fullscreenBannerRows
+                      ? fullscreenBannerRows
+                      : 0),
+                  ),
+                };
+                const visibleRows = resolveVisibleTranscriptRows(
+                  ownedTranscriptRenderModel?.rows ?? [],
+                  {
+                    start: adjustedWindow.start,
+                    end: adjustedWindow.end,
+                  },
+                );
+
+                return isTranscriptMode
+                  ? renderTranscriptModeSurface({
+                    bannerVisible: false,
+                    windowed: true,
+                    rendererWindow: adjustedWindow,
+                    visibleRowsOverride: visibleRows,
+                  })
+                  : renderPromptSurfaceTranscript({
+                    bannerVisible: showBanner && window.start < fullscreenBannerRows,
+                    rendererWindow: adjustedWindow,
+                    visibleRowsOverride: visibleRows,
+                  });
+              })()
+            )
+            : undefined}
+          overlay={overlaySurface}
+          scrollTop={historyScrollOffset}
+          scrollHeight={effectiveTranscriptScrollHeight}
+          viewportHeight={viewportBudget.messageRows}
+          stickyScroll={!isTranscriptMode && !isAwaitingUserInteraction && viewportSticky}
+          scrollRef={transcriptScrollRef}
+          onWindowChange={handleTranscriptWindowChange}
+          onScrollTopChange={handleTranscriptScrollTopChange}
+          onStickyChange={handleViewportStickyChange}
+          footer={currentFooterSurface}
+        />
+      ) : (
+        <Box flexDirection="column" flexGrow={1} flexShrink={0}>
+          {currentTranscriptSurface}
+          {currentFooterSurface}
+        </Box>
       )}
-
-
-      <FullscreenTranscriptLayout
-        width={terminalWidth}
-        stickyHeader={transcriptChrome.stickyHeader}
-        jumpToLatest={transcriptChrome.jumpToLatest}
-        transcript={
-          <TranscriptViewport
-            items={displayItems}
-            isLoading={displayIsLoading}
-            isThinking={displayStreamingState.isThinking}
-            thinkingCharCount={displayStreamingState.thinkingCharCount}
-            thinkingContent={displayStreamingState.thinkingContent}
-            streamingResponse={displayStreamingState.currentResponse}
-            currentTool={displayStreamingState.currentTool}
-            activeToolCalls={displayStreamingState.activeToolCalls}
-            toolInputCharCount={displayStreamingState.toolInputCharCount}
-            toolInputContent={displayStreamingState.toolInputContent}
-            iterationHistory={displayStreamingState.iterationHistory}
-            currentIteration={displayStreamingState.currentIteration}
-            isCompacting={displayStreamingState.isCompacting}
-            agentMode={currentConfig.agentMode}
-            managedPhase={displayIsLoading ? managedTaskStatus?.phase : undefined}
-            managedHarnessProfile={displayIsLoading ? managedTaskStatus?.harnessProfile : undefined}
-            managedWorkerTitle={displayIsLoading ? managedTaskStatus?.activeWorkerTitle : undefined}
-            managedRound={displayIsLoading ? managedTaskStatus?.currentRound : undefined}
-            managedMaxRounds={displayIsLoading ? managedTaskStatus?.maxRounds : undefined}
-            managedGlobalWorkBudget={displayIsLoading ? managedTaskStatus?.globalWorkBudget : undefined}
-            managedBudgetUsage={displayIsLoading ? managedTaskStatus?.budgetUsage : undefined}
-            managedBudgetApprovalRequired={displayIsLoading ? managedTaskStatus?.budgetApprovalRequired : undefined}
-            lastLiveActivityLabel={displayStreamingState.lastLiveActivityLabel}
-            viewportRows={viewportBudget.messageRows}
-            viewportWidth={terminalWidth}
-            scrollOffset={historyScrollOffset}
-            animateSpinners={!isLivePaused}
-            windowed={transcriptOwnsViewport}
-            maxLines={transcriptMaxLines}
-            showFullThinking={isTranscriptVerbose || isReviewingHistory}
-            showDetailedTools={isTranscriptVerbose || isReviewingHistory}
-            selectedItemId={selectedTranscriptItemId}
-            expandedItemKeys={expandedTranscriptItemIds}
-            browse={{ hintText: transcriptChrome.browseHintText }}
-            selection={transcriptSelectionState}
-            search={transcriptSearchState}
-          />
-        }
-        overlay={overlaySurface}
-        footer={
-          <PromptFooter
-            left={<PromptFooterLeftSide items={footerLeftItems} />}
-            right={<PromptFooterRightSide items={footerRightItems} />}
-            queued={<QueuedCommandsSurface pendingInputs={streamingState.pendingInputs} />}
-            stashNotice={<StashNotice text={stashNoticeText} />}
-            notifications={<NotificationsSurface notifications={footerNotifications} />}
-            inlineNotices={footerNotices.length > 0 ? (
-              <StatusNoticesSurface notices={footerNotices} />
-            ) : undefined}
-            composer={
-              <PromptComposer
-                onSubmit={handleSubmit}
-                prompt=">"
-                placeholder={isReviewingHistory
-                  ? "Browsing transcript history... Press Esc, End, Ctrl+Y, or Alt+Z to resume."
-                  : isLoading
-                  ? canQueueFollowUps
-                    ? "Queue a follow-up for the next round..."
-                    : "Agent is busy..."
-                  : "Type a message..."}
-                focus={!confirmRequest && !uiRequest && !isReviewingHistory && !isHistorySearchActive}
-                cwd={process.cwd()}
-                gitRoot={options.context?.gitRoot || context.gitRoot}
-                onInputChange={handleInputChange}
-              />
-            }
-            inlineSuggestions={useOverlaySurface ? undefined : suggestionsSurface}
-            helpSurface={showHelp ? (
-              <PromptHelpMenu sections={buildHelpMenuSections()} />
-            ) : undefined}
-            taskBar={transcriptDisplayState.supportsFullscreenLayout ? (
-              <BackgroundTaskBar
-                items={backgroundTaskViewModel.items}
-                overflowLabel={backgroundTaskViewModel.overflowLabel}
-                ctaHint={backgroundTaskViewModel.ctaHint}
-              />
-            ) : (
-              <AmaWorkStrip text={displayWorkStripText} />
-            )}
-            statusLine={<Box><StatusBar {...statusBarProps} viewModel={statusBarViewModel} /></Box>}
-            inlineDialogs={useOverlaySurface ? undefined : dialogSurface}
-          />
-        }
-      />
     </Box>
   );
+
+  if (useAlternateScreenShell) {
+      return (
+        <AlternateScreen
+          mouseTracking={surfaceInteractionPolicy.usesRendererMouseTracking}
+        >
+          {shellBody}
+        </AlternateScreen>
+    );
+  }
+
+  return shellBody;
 };
 
 /**
@@ -4328,6 +5579,9 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
   }
 
   const storage = options.storage ?? new MemorySessionStorage();
+  const terminalHostProfile = detectTerminalHostProfile();
+  const rendererMode = resolveEffectiveTuiRendererMode();
+  const fullscreenPolicy = resolveFullscreenPolicy(terminalHostProfile, rendererMode);
 
   // Load config
   const { prepareRuntimeConfig, getGitRoot } = await import("../common/utils.js");
@@ -4394,7 +5648,7 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
     const loaded = await storage.load(options.session.id);
     if (loaded) {
       existingMessages = loaded.messages;
-      existingUiHistory = loaded.uiHistory;
+      existingUiHistory = normalizePersistedUiHistory(loaded.uiHistory);
       existingLineage = loaded.lineage;
       existingArtifactLedger = loaded.artifactLedger;
       sessionTitle = loaded.title;
@@ -4411,7 +5665,7 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
         const loaded = await storage.load(recentSession.id);
         if (loaded) {
           existingMessages = loaded.messages;
-          existingUiHistory = loaded.uiHistory;
+          existingUiHistory = normalizePersistedUiHistory(loaded.uiHistory);
           existingLineage = loaded.lineage;
           existingArtifactLedger = loaded.artifactLedger;
           sessionTitle = loaded.title;
@@ -4437,32 +5691,64 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
   // This ensures it's visible in the alternate buffer
 
   try {
+    const stdout = process.stdout;
+    const stdin = process.stdin;
     // Render Ink app
     // Issue 058/060: Ink 6.x options to reduce flickering
-    const { waitUntilExit } = render(
+    let exitMessageRequested = false;
+    const { waitUntilExit, cleanup } = render(
       <InkREPL
         options={options}
         config={currentConfig}
         context={context}
         storage={storage}
         compactionInfo={compactionInfo}
+        rendererMode={rendererMode}
+        fullscreenPolicy={fullscreenPolicy}
         onExit={() => {
-          console.log(chalk.dim("\n[Exiting KodaX...]"));
+          exitMessageRequested = true;
         }}
       />,
       {
-        stdout: process.stdout,
-        stdin: process.stdin,
+        stdout,
+        stdin,
         exitOnCtrlC: false,
-        patchConsole: true,  // Route console.log through Ink so command output is visible
+        patchConsole: false,
         // Note: incrementalRendering disabled - causes cursor positioning issues with custom TextInput
         // Ink 6.x still has synchronized updates (auto-enabled) which helps reduce flickering
         maxFps: 30,          // Ink 6.3.0+: Limit frame rate to reduce flickering
+        shellMode: fullscreenPolicy.enabled ? fullscreenPolicy.promptShell : "main-screen",
       }
     );
 
     // Wait for exit
     await waitUntilExit();
+    cleanup();
+    if (stdin.isTTY === true && typeof stdin.setRawMode === "function" && stdin.isRaw) {
+      stdin.setRawMode(false);
+    }
+    stdin.pause?.();
+    stdin.unref?.();
+    if (exitMessageRequested) {
+      console.log(chalk.dim("\n[Exiting KodaX...]"));
+    }
+    const shouldHardExitOnClose = options.hardExitOnClose ?? (process.env.VITEST !== "true");
+    if (exitMessageRequested && shouldHardExitOnClose) {
+      const exitCode = process.exitCode ?? 0;
+      let exitScheduled = false;
+      const requestProcessExit = () => {
+        if (exitScheduled) {
+          return;
+        }
+        exitScheduled = true;
+        process.exit(exitCode);
+      };
+
+      const exitTimer = setTimeout(requestProcessExit, 0);
+      exitTimer.unref?.();
+      stdout.write("", requestProcessExit);
+      return;
+    }
   } catch (error) {
     // If Ink fails due to raw mode, throw terminal error
     if (error instanceof Error && error.message.includes("Raw mode")) {

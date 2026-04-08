@@ -194,7 +194,7 @@ function formatToolStatus(
   return action;
 }
 
-function formatBusyStatus({
+export function buildBusyStatusText({
   activeToolCount,
   currentTool,
   isThinkingActive,
@@ -439,7 +439,7 @@ function buildStatusBarSegments(props: StatusBarProps): StatusBarSegment[] {
   });
 
   const busyStatus = showBusyStatus
-    ? formatBusyStatus({
+    ? buildBusyStatusText({
         activeToolCount,
         currentTool,
         isThinkingActive,

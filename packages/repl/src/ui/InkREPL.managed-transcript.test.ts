@@ -189,23 +189,38 @@ describe("appendPersistedUiHistorySnapshot", () => {
       { type: "user", text: "Round 2 prompt" },
     ]);
   });
+
+  it("keeps only the most recent persisted rounds once the transcript grows too large", () => {
+    let history: ReturnType<typeof appendPersistedUiHistorySnapshot> = [];
+
+    for (let round = 1; round <= 55; round += 1) {
+      history = appendPersistedUiHistorySnapshot(history, [
+        { type: "user", text: `Round ${round} prompt` },
+        { type: "assistant", text: `Round ${round} answer` },
+      ]);
+    }
+
+    expect(history).toHaveLength(100);
+    expect(history[0]).toEqual({ type: "user", text: "Round 6 prompt" });
+    expect(history[history.length - 1]).toEqual({ type: "assistant", text: "Round 55 answer" });
+  });
 });
 
 describe("shouldShowStatusBarBusyStatus", () => {
-  it("hides duplicate busy text while AMA live loading is active", () => {
+  it("keeps busy text visible while the prompt surface is loading", () => {
     expect(shouldShowStatusBarBusyStatus({
-      agentMode: "ama",
       isLivePaused: false,
       isLoading: true,
-    })).toBe(false);
+      hasSpinnerLiveness: true,
+    })).toBe(true);
   });
 
-  it("keeps busy text visible for SA live loading", () => {
+  it("hides busy text when live transcript updates are paused", () => {
     expect(shouldShowStatusBarBusyStatus({
-      agentMode: "sa",
-      isLivePaused: false,
+      isLivePaused: true,
       isLoading: true,
-    })).toBe(true);
+      hasSpinnerLiveness: false,
+    })).toBe(false);
   });
 });
 

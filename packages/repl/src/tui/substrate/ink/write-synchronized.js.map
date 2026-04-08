@@ -1,0 +1,1 @@
+{"version":3,"file":"write-synchronized.js","sourceRoot":"","sources":["../src/write-synchronized.ts"],"names":[],"mappings":"AACA,OAAO,MAAM,MAAM,UAAU,CAAC;AAE9B,MAAM,CAAC,MAAM,GAAG,GAAG,eAAe,CAAC;AACnC,MAAM,CAAC,MAAM,GAAG,GAAG,eAAe,CAAC;AAEnC,MAAM,UAAU,iBAAiB,CAAC,MAAgB;IACjD,OAAO,OAAO,IAAI,MAAM,IAAK,MAAc,CAAC,KAAK,KAAK,IAAI,IAAI,CAAC,MAAM,CAAC;AACvE,CAAC"}

@@ -24,6 +24,7 @@ export type TranscriptColorToken =
 export interface TranscriptRow {
   key: string;
   text: string;
+  itemId?: string;
   color?: TranscriptColorToken;
   indent?: number;
   bold?: boolean;
@@ -64,12 +65,23 @@ export interface TranscriptBuildOptions {
   lastLiveActivityLabel?: string;
   showFullThinking?: boolean;
   showDetailedTools?: boolean;
+  showLiveProgressRows?: boolean;
   expandedItemKeys?: ReadonlySet<string>;
+}
+
+export interface TranscriptRenderModel {
+  staticSections: TranscriptSection[];
+  sections: TranscriptSection[];
+  rows: TranscriptRow[];
+}
+
+export interface TranscriptRenderModelOptions extends TranscriptBuildOptions {
+  windowed?: boolean;
 }
 
 const THINKING_PREVIEW_MAX_CHARS = 400;
 const THINKING_PREVIEW_TRUNCATION_HINT =
-  "... (thinking truncated in compact view; press PgUp to review full reasoning)";
+  "... (thinking truncated; press Ctrl+O to inspect full reasoning)";
 
 function normalizeManagedLiveActivityLabel(label: string | undefined, workerTitle?: string): string | undefined {
   if (!label || !workerTitle) {
@@ -169,6 +181,16 @@ function buildThinkingPreview(
   }
 
   return `${previewBody}\n\n${THINKING_PREVIEW_TRUNCATION_HINT}`;
+}
+
+function findActiveRoundStartIndex(items: HistoryItem[]): number {
+  for (let i = items.length - 1; i >= 0; i--) {
+    if (items[i]?.type === "user") {
+      return i;
+    }
+  }
+
+  return 0;
 }
 
 function pushWrappedRows(
@@ -366,6 +388,7 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
     lastLiveActivityLabel,
     showFullThinking = false,
     showDetailedTools = false,
+    showLiveProgressRows = true,
   } = options;
 
   const rows: TranscriptRow[] = [];
@@ -378,13 +401,14 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
           `${item.id}-header`,
           `You [${formatTimestamp(item.timestamp)}]`,
           viewportWidth,
-          { color: "primary", bold: true }
+          { color: "primary", bold: true, itemId: item.id }
         );
         pushWrappedRows(rows, `${item.id}-body`, item.text, getBodyWidth(viewportWidth, 2), {
           color: "text",
           indent: 2,
+          itemId: item.id,
         });
-        pushBlankRow(rows, `${item.id}-blank`);
+        rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
         break;
       case "assistant": {
         pushWrappedRows(
@@ -392,16 +416,16 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
           `${item.id}-header`,
           `Assistant [${formatTimestamp(item.timestamp)}]`,
           viewportWidth,
-          { color: "secondary", bold: true, spinner: item.isStreaming }
+          { color: "secondary", bold: true, spinner: item.isStreaming, itemId: item.id }
         );
         pushWrappedRows(
           rows,
           `${item.id}-body`,
           item.text,
           getBodyWidth(viewportWidth, 2),
-          { color: "text", indent: 2 }
+          { color: "text", indent: 2, itemId: item.id }
         );
-        pushBlankRow(rows, `${item.id}-blank`);
+        rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
         break;
       }
       case "system":
@@ -410,13 +434,14 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
           `${item.id}-header`,
           `System [${formatTimestamp(item.timestamp)}]`,
           viewportWidth,
-          { color: "dim", bold: true }
+          { color: "dim", bold: true, itemId: item.id }
         );
         pushWrappedRows(rows, `${item.id}-body`, item.text, getBodyWidth(viewportWidth, 2), {
           color: "dim",
           indent: 2,
+          itemId: item.id,
         });
-        pushBlankRow(rows, `${item.id}-blank`);
+        rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
         break;
       case "tool_group":
         pushWrappedRows(
@@ -424,12 +449,12 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
           `${item.id}-header`,
           `Tools [${formatTimestamp(item.timestamp)}]`,
           viewportWidth,
-          { color: "accent", bold: true }
+          { color: "accent", bold: true, itemId: item.id }
         );
         collapseToolCalls(item.tools).forEach((group) => (
           buildToolRows(rows, item.id, group.tool, group.count, viewportWidth, showDetailedTools)
         ));
-        pushBlankRow(rows, `${item.id}-blank`);
+        rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
         break;
       case "thinking":
         {
@@ -437,49 +462,56 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
         pushWrappedRows(rows, `${item.id}-header`, "Thinking", viewportWidth, {
           color: "thinking",
           italic: true,
+          itemId: item.id,
         });
         pushWrappedRows(rows, `${item.id}-body`, preview, getBodyWidth(viewportWidth, 2), {
           color: "thinking",
           indent: 2,
           italic: true,
+          itemId: item.id,
         });
-        pushBlankRow(rows, `${item.id}-blank`);
+        rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
         break;
         }
       case "error":
         pushWrappedRows(rows, `${item.id}-header`, "\u2717 Error", viewportWidth, {
           color: "error",
           bold: true,
+          itemId: item.id,
         });
         pushWrappedRows(rows, `${item.id}-body`, item.text, getBodyWidth(viewportWidth, 2), {
           color: "error",
           indent: 2,
+          itemId: item.id,
         });
-        pushBlankRow(rows, `${item.id}-blank`);
+        rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
         break;
       case "info":
         pushWrappedRows(rows, `${item.id}-body`, `${item.icon ?? "\u2139"} ${item.text}`, viewportWidth, {
           color: "info",
+          itemId: item.id,
         });
-        pushBlankRow(rows, `${item.id}-blank`);
+        rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
         break;
       case "hint":
         pushWrappedRows(rows, `${item.id}-header`, "\u{1F4A1} Hint", viewportWidth, {
           color: "hint",
           bold: true,
+          itemId: item.id,
         });
         pushWrappedRows(rows, `${item.id}-body`, item.text, getBodyWidth(viewportWidth, 2), {
           color: "dim",
           indent: 2,
+          itemId: item.id,
         });
-        pushBlankRow(rows, `${item.id}-blank`);
+        rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
         break;
       default:
         break;
     }
   }
 
-  if (iterationHistory.length > 0) {
+  if (showLiveProgressRows && iterationHistory.length > 0) {
     iterationHistory.forEach((record) => {
       pushWrappedRows(
         rows,
@@ -541,7 +573,7 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
     pushBlankRow(rows, "iteration-current-blank");
   }
 
-  if (isLoading && thinkingContent) {
+  if (showLiveProgressRows && isLoading && thinkingContent) {
     const thinkingPreview = buildThinkingPreview(thinkingContent, maxLines, showFullThinking);
     pushWrappedRows(rows, "thinking-stream-header", "Thinking", viewportWidth, {
       color: "thinking",
@@ -567,7 +599,7 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
     pushBlankRow(rows, "streaming-blank");
   }
 
-  if (isLoading) {
+  if (showLiveProgressRows && isLoading) {
     let loadingText = "Thinking";
     let prefix = "";
     const managedHarnessShort = formatHarnessProfileShort(managedHarnessProfile);
@@ -692,8 +724,93 @@ export function buildDynamicTranscriptSection(
   };
 }
 
+export function buildTranscriptRenderModel(
+  options: TranscriptRenderModelOptions,
+): TranscriptRenderModel {
+  const {
+    items,
+    viewportWidth,
+    maxLines = 1000,
+    windowed = false,
+    showDetailedTools = false,
+    expandedItemKeys,
+    ...dynamicOptions
+  } = options;
+
+  const activeRoundStartIndex = findActiveRoundStartIndex(items);
+  const staticItems = windowed ? [] : items.slice(0, activeRoundStartIndex);
+  const activeItems = windowed ? items : items.slice(activeRoundStartIndex);
+  const staticSections = windowed
+    ? []
+    : buildStaticTranscriptSections(staticItems, viewportWidth, maxLines, showDetailedTools);
+  const sections = buildHistoryItemTranscriptSections(
+    activeItems,
+    viewportWidth,
+    maxLines,
+    showDetailedTools,
+    expandedItemKeys,
+  );
+  const pendingSection = buildDynamicTranscriptSection("active-pending", {
+    ...dynamicOptions,
+    items: [],
+    viewportWidth,
+    maxLines,
+    showDetailedTools,
+    expandedItemKeys,
+  });
+  const nextSections = pendingSection.rows.length > 0
+    ? [...sections, pendingSection]
+    : sections;
+
+  return {
+    staticSections,
+    sections: nextSections,
+    rows: flattenTranscriptSections(nextSections),
+  };
+}
+
 export function flattenTranscriptSections(sections: TranscriptSection[]): TranscriptRow[] {
   return sections.flatMap((section) => section.rows);
+}
+
+export function materializeTranscriptRenderModel(
+  model: TranscriptRenderModel,
+): TranscriptRenderModel {
+  const sections = [...model.staticSections, ...model.sections];
+  return {
+    staticSections: [],
+    sections,
+    rows: flattenTranscriptSections(sections),
+  };
+}
+
+export function resolveVisibleTranscriptRows(
+  rows: TranscriptRow[],
+  options: {
+    start?: number;
+    end?: number;
+    viewportRows?: number;
+    scrollOffset?: number;
+    windowed?: boolean;
+  } = {},
+): TranscriptRow[] {
+  const {
+    start,
+    end,
+    viewportRows,
+    scrollOffset = 0,
+    windowed = false,
+  } = options;
+
+  if (typeof start === "number" && typeof end === "number") {
+    return rows.slice(Math.max(0, start), Math.max(0, end));
+  }
+
+  if (windowed) {
+    return getVisibleTranscriptRows(rows, viewportRows, scrollOffset);
+  }
+
+  return rows;
 }
 
 export function sliceHistoryToRecentRounds(

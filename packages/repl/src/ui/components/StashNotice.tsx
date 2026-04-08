@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, Text } from "ink";
+import { Box, Text } from "../tui.js";
 import { getTheme } from "../themes/index.js";
 
 export interface StashNoticeProps {
@@ -20,3 +20,4 @@ export const StashNotice: React.FC<StashNoticeProps> = ({ text }) => {
     </Box>
   );
 };
+

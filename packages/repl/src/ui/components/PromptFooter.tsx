@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, Text } from "ink";
+import { Box, Text } from "../tui.js";
 import { getTheme } from "../themes/index.js";
 
 const ITEM_SEPARATOR = " \u00B7 ";
@@ -71,6 +71,7 @@ export interface PromptFooterProps {
   stashNotice?: React.ReactNode;
   notifications?: React.ReactNode;
   inlineNotices?: React.ReactNode;
+  activityBar?: React.ReactNode;
   composer: React.ReactNode;
   inlineSuggestions?: React.ReactNode;
   helpSurface?: React.ReactNode;
@@ -86,6 +87,7 @@ export const PromptFooter: React.FC<PromptFooterProps> = ({
   stashNotice,
   notifications,
   inlineNotices,
+  activityBar,
   composer,
   inlineSuggestions,
   helpSurface,
@@ -105,6 +107,7 @@ export const PromptFooter: React.FC<PromptFooterProps> = ({
       {stashNotice}
       {notifications}
       {inlineNotices}
+      {activityBar}
       {composer}
       {inlineSuggestions}
       {inlineDialogs}
@@ -114,3 +117,4 @@ export const PromptFooter: React.FC<PromptFooterProps> = ({
     </Box>
   );
 };
+

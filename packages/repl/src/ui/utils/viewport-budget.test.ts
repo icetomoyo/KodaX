@@ -78,6 +78,30 @@ describe("viewport-budget", () => {
     expect(withSurfaces.messageRows).toBeLessThan(withoutSurfaces.messageRows);
   });
 
+  it("reserves footer space for a prompt activity row so status/footer do not overlap", () => {
+    const withoutActivity = calculateViewportBudget({
+      terminalRows: 24,
+      terminalWidth: 48,
+      inputText: "",
+      suggestionsReserved: false,
+      showHelp: false,
+      statusBarText: "status",
+    });
+    const withActivity = calculateViewportBudget({
+      terminalRows: 24,
+      terminalWidth: 48,
+      inputText: "",
+      activitySummary: "Thinking (128 chars)",
+      suggestionsReserved: false,
+      showHelp: false,
+      statusBarText: "status",
+    });
+
+    expect(withActivity.activityRows).toBeGreaterThan(0);
+    expect(withActivity.footerRows).toBeGreaterThan(withoutActivity.footerRows);
+    expect(withActivity.messageRows).toBeLessThan(withoutActivity.messageRows);
+  });
+
   it("clamps select dialog options and keeps message rows positive", () => {
     const budget = calculateViewportBudget({
       terminalRows: 16,
@@ -102,7 +126,7 @@ describe("viewport-budget", () => {
     expect(budget.messageRows).toBeGreaterThan(0);
   });
 
-  it("can drop reserved suggestion space while still accounting for the review hint", () => {
+  it("can drop reserved suggestion space while still accounting for the transcript hint", () => {
     const budget = calculateViewportBudget({
       terminalRows: 24,
       terminalWidth: 80,
@@ -110,7 +134,7 @@ describe("viewport-budget", () => {
       suggestionsReserved: false,
       showHelp: false,
       statusBarText: "status",
-      reviewHint: "Reviewing history - live updates paused | Esc/End/Ctrl+Y/Alt+Z resume",
+      reviewHint: "Transcript Mode | PgUp/PgDn/j/k scroll | q/Esc/Ctrl+O back to live",
     });
 
     expect(budget.suggestionsRows).toBe(0);
@@ -166,5 +190,30 @@ describe("viewport-budget", () => {
     expect(budget.footerRows).toBe(budget.inputRows);
     expect(budget.historySearchRows).toBeGreaterThan(0);
     expect(budget.slots.find((slot) => slot.name === "overlay")?.rows).toBe(budget.overlayRows);
+    expect(budget.reservedBottomRows).toBe(
+      budget.footerRows + budget.workStripRows + budget.statusRows,
+    );
+  });
+
+  it("keeps transcript and prompt message rows aligned with stable bottom-slot budgeting", () => {
+    const inlineBudget = calculateViewportBudget({
+      terminalRows: 24,
+      terminalWidth: 80,
+      inputText: "",
+      suggestionsReserved: false,
+      showHelp: false,
+      statusBarText: "status",
+    });
+    const windowedBudget = calculateViewportBudget({
+      terminalRows: 24,
+      terminalWidth: 80,
+      windowedTranscript: true,
+      inputText: "",
+      suggestionsReserved: false,
+      showHelp: false,
+      statusBarText: "status",
+    });
+
+    expect(windowedBudget.messageRows).toBe(inlineBudget.messageRows);
   });
 });

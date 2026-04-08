@@ -11,14 +11,26 @@ describe("BackgroundTaskBar", () => {
           { id: "planner", label: "Planner active", accent: true, selected: true },
           { id: "parallel", label: "Parallel evidence pass (2)" },
         ]}
-        ctaHint="PgUp history"
+        ctaHint="Ctrl+O transcript"
       />,
     );
 
     const frame = lastFrame();
     expect(frame).toContain("Planner active");
     expect(frame).toContain("Parallel evidence pass (2)");
-    expect(frame).toContain("PgUp history");
+    expect(frame).toContain("Ctrl+O transcript");
+  });
+
+  it("renders a spinner when live work is active outside the transcript lane", () => {
+    const { lastFrame } = render(
+      <BackgroundTaskBar
+        items={[{ id: "worker", label: "Planner active", accent: true, selected: true }]}
+        showSpinner
+      />,
+    );
+
+    expect(lastFrame()).toContain("⠋");
+    expect(lastFrame()).toContain("Planner active");
   });
 
   it("stays hidden when there is no summary content to show", () => {

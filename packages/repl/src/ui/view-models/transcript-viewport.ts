@@ -61,11 +61,13 @@ export function buildTranscriptSelectionRuntimeState(
   options: BuildTranscriptSelectionRuntimeStateOptions,
 ): TranscriptSelectionRuntimeState {
   const selectionEnabled = ownsTranscriptSelectionPath(options.state);
-  const selectedItemId = resolveTranscriptSelectedItemId(
-    options.state,
-    options.selectableItemIds,
-    options.selectedItemId,
-  );
+  const selectedItemId = selectionEnabled
+    ? resolveTranscriptSelectedItemId(
+      options.state,
+      options.selectableItemIds,
+      options.selectedItemId,
+    )
+    : undefined;
   const selectedItemIndex = selectedItemId
     ? options.selectableItemIds.indexOf(selectedItemId)
     : -1;
@@ -82,13 +84,21 @@ export function buildTranscriptSelectionRuntimeState(
       : undefined,
     detailState: selectedItemId && options.isExpanded ? "expanded" : "compact",
     copyCapabilities: {
-      message: Boolean(selectedItemId),
-      toolInput: Boolean(selectedItemId) && options.selectedItemType === "tool_group",
-      copyOnSelect: supportsPassiveTranscriptCopyOnSelect(options.state),
+      message: selectionEnabled && Boolean(selectedItemId),
+      toolInput:
+        selectionEnabled
+        && Boolean(selectedItemId)
+        && options.selectedItemType === "tool_group",
+      copyOnSelect:
+        selectionEnabled
+        && supportsPassiveTranscriptCopyOnSelect(options.state),
     },
-    toggleDetail: Boolean(selectedItemId),
+    toggleDetail: selectionEnabled && Boolean(selectedItemId),
     navigationCapabilities: {
-      selection: options.selectableItemIds.length > 1,
+      selection:
+        selectionEnabled
+        && Boolean(selectedItemId)
+        && options.selectableItemIds.length > 0,
     },
   };
 }
@@ -96,7 +106,7 @@ export function buildTranscriptSelectionRuntimeState(
 export function buildTranscriptSelectionViewModel(
   options: BuildTranscriptSelectionViewModelOptions,
 ): TranscriptViewportSelectionState | undefined {
-  if (!options.runtime.selectionEnabled) {
+  if (!options.runtime.selectionEnabled || !options.runtime.selectedItemId) {
     return undefined;
   }
 

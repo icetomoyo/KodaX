@@ -1,5 +1,6 @@
 import React from "react";
-import { Box, Text } from "ink";
+import { FullscreenLayout } from "../../tui/components/FullscreenLayout.js";
+import type { ScrollBoxHandle, ScrollBoxWindow } from "../../tui/components/ScrollBox.js";
 
 export interface FullscreenTranscriptChromeSlot {
   visible?: boolean;
@@ -10,46 +11,57 @@ export interface FullscreenTranscriptChromeSlot {
 }
 
 export interface FullscreenTranscriptLayoutProps {
-  transcript: React.ReactNode;
+  transcript?: React.ReactNode;
+  renderTranscriptWindow?: (window: ScrollBoxWindow) => React.ReactNode;
   footer: React.ReactNode;
   overlay?: React.ReactNode;
   stickyHeader?: FullscreenTranscriptChromeSlot;
   jumpToLatest?: FullscreenTranscriptChromeSlot;
   width?: number;
+  scrollTop?: number;
+  scrollHeight?: number;
+  viewportHeight?: number;
+  stickyScroll?: boolean;
+  scrollRef?: React.Ref<ScrollBoxHandle>;
+  onScrollTopChange?: (nextScrollTop: number) => void;
+  onStickyChange?: (sticky: boolean) => void;
+  onWindowChange?: (window: ScrollBoxWindow) => void;
 }
 
 export const FullscreenTranscriptLayout: React.FC<FullscreenTranscriptLayoutProps> = ({
   transcript,
+  renderTranscriptWindow,
   footer,
   overlay,
   stickyHeader,
   jumpToLatest,
   width,
+  scrollTop = 0,
+  scrollHeight = 0,
+  viewportHeight = 0,
+  stickyScroll = true,
+  scrollRef,
+  onScrollTopChange,
+  onStickyChange,
+  onWindowChange,
 }) => {
-  const renderChromeSlot = (slot: FullscreenTranscriptChromeSlot | undefined) => {
-    if (!slot?.visible || !slot.label) {
-      return null;
-    }
-
-    const text = slot.hint ? `${slot.label}: ${slot.hint}` : slot.label;
-    return (
-      <Box paddingX={1}>
-        <Text dimColor={slot.tone !== "accent"}>{text}</Text>
-      </Box>
-    );
-  };
-
   return (
-    <Box flexDirection="column" width={width} flexGrow={1} flexShrink={0}>
-      <Box flexDirection="column" flexGrow={1} overflowY="hidden">
-        {renderChromeSlot(stickyHeader)}
-        {transcript}
-        {renderChromeSlot(jumpToLatest)}
-      </Box>
-      {overlay}
-      <Box flexDirection="column" flexShrink={0}>
-        {footer}
-      </Box>
-    </Box>
+    <FullscreenLayout
+      width={width}
+      stickyHeader={stickyHeader}
+      jumpToLatest={jumpToLatest}
+      scrollable={transcript}
+      renderScrollableWindow={renderTranscriptWindow}
+      overlay={overlay}
+      bottom={footer}
+      scrollTop={scrollTop}
+      scrollHeight={scrollHeight}
+      viewportHeight={viewportHeight}
+      stickyScroll={stickyScroll}
+      scrollRef={scrollRef}
+      onScrollTopChange={onScrollTopChange}
+      onStickyChange={onStickyChange}
+      onWindowChange={onWindowChange}
+    />
   );
 };

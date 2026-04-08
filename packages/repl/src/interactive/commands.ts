@@ -166,8 +166,7 @@ export const BUILTIN_COMMANDS: Command[] = [
     handler: async (_args, context, callbacks) => {
       await callbacks.saveSession();
       console.log(chalk.green('\nSession saved. Goodbye!'));
-      printWorkspaceUnchangedNote(context);
-      callbacks.exit();
+      await callbacks.exit();
     },
     detailedHelp: () => {
       console.log(chalk.cyan('\n/exit - Exit Interactive Mode\n'));

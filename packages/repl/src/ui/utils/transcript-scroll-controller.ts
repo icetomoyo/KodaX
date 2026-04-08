@@ -1,10 +1,20 @@
+import {
+  useCallback,
+  useRef,
+  useState,
+  type Dispatch,
+  type MutableRefObject,
+  type SetStateAction,
+} from "react";
 import type { HistoryItem } from "../types.js";
+import type { ScrollBoxHandle } from "../../tui/components/ScrollBox.js";
 import {
   buildTranscriptBrowseHint,
   type TranscriptDisplayState,
 } from "./transcript-state.js";
 import {
   buildHistoryItemTranscriptSections,
+  type TranscriptRenderModel,
   flattenTranscriptSections,
   getVisibleTranscriptRows,
   resolveScrollOffsetForTranscriptItem,
@@ -29,7 +39,7 @@ export interface TranscriptChromeOptions {
   ownsViewport: boolean;
   isAwaitingUserInteraction: boolean;
   isHistorySearchActive: boolean;
-  isReviewingHistory: boolean;
+  isTranscriptMode: boolean;
   historySearchQuery: string;
 }
 
@@ -41,7 +51,7 @@ export function buildTranscriptChromeModel(
     ownsViewport,
     isAwaitingUserInteraction,
     isHistorySearchActive,
-    isReviewingHistory,
+    isTranscriptMode,
     historySearchQuery,
   } = options;
 
@@ -55,30 +65,41 @@ export function buildTranscriptChromeModel(
         visible: true,
         label: query
           ? `Searching transcript for "${query}"`
-          : "Searching transcript history",
+          : "Searching transcript",
+      };
+    } else if (isTranscriptMode) {
+      stickyHeader = {
+        visible: true,
+        label: "Transcript Mode",
       };
     } else if (isAwaitingUserInteraction) {
       stickyHeader = {
         visible: true,
-        label: "Interaction active - transcript follow is paused",
-      };
-    } else if (isReviewingHistory) {
-      stickyHeader = {
-        visible: true,
-        label: "Browsing transcript history",
+        label: "Interaction active",
       };
     }
   }
 
-  const jumpToLatest =
-    ownsViewport && state.supportsViewportChrome && state.jumpToLatestAvailable
-      ? {
+  let jumpToLatest: TranscriptChromeModel["jumpToLatest"];
+  if (ownsViewport && state.supportsViewportChrome) {
+    if (isTranscriptMode && state.pendingLiveUpdates > 0) {
+      jumpToLatest = {
         visible: true,
-        label: "Jump to latest",
+        label: state.pendingLiveUpdates === 1
+          ? "1 new update"
+          : `${state.pendingLiveUpdates} new updates`,
+        hint: "Ctrl+O",
+        tone: "accent",
+      };
+    } else if (!isTranscriptMode && state.jumpToLatestAvailable) {
+      jumpToLatest = {
+        visible: true,
+        label: "Back to live",
         hint: "End",
-        tone: "accent" as const,
-      }
-      : undefined;
+        tone: "accent",
+      };
+    }
+  }
 
   return {
     browseHintText,
@@ -102,8 +123,89 @@ export function incrementTranscriptScrollOffset(
   return Math.max(0, currentOffset + delta);
 }
 
+export function clampTranscriptScrollOffset(
+  currentOffset: number,
+  scrollHeight: number,
+  viewportHeight: number,
+): number {
+  const maxScrollOffset = Math.max(0, scrollHeight - viewportHeight);
+  return Math.min(Math.max(0, currentOffset), maxScrollOffset);
+}
+
+export interface TranscriptViewportScrollController {
+  scrollRef: MutableRefObject<ScrollBoxHandle | null>;
+  scrollOffset: number;
+  sticky: boolean;
+  setScrollOffset: Dispatch<SetStateAction<number>>;
+  setSticky: Dispatch<SetStateAction<boolean>>;
+  handleScrollTopChange: (nextScrollTop: number) => void;
+  handleStickyChange: (sticky: boolean) => void;
+  scrollTo: (nextScrollOffset: number) => void;
+  scrollBy: (delta: number) => void;
+  scrollToBottom: () => void;
+}
+
+export function useTranscriptViewportScrollController(
+): TranscriptViewportScrollController {
+  const scrollRef = useRef<ScrollBoxHandle | null>(null);
+  const [scrollOffset, setScrollOffset] = useState(0);
+  const [sticky, setSticky] = useState(true);
+
+  const handleScrollTopChange = useCallback((nextScrollTop: number) => {
+    setScrollOffset(Math.max(0, nextScrollTop));
+  }, []);
+
+  const handleStickyChange = useCallback((nextSticky: boolean) => {
+    setSticky(nextSticky);
+  }, []);
+
+  const scrollTo = useCallback((nextScrollOffset: number) => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTo(nextScrollOffset);
+      return;
+    }
+
+    setScrollOffset(Math.max(0, nextScrollOffset));
+    setSticky(nextScrollOffset === 0);
+  }, []);
+
+  const scrollBy = useCallback((delta: number) => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollBy(delta);
+      return;
+    }
+
+    setScrollOffset((prev) => incrementTranscriptScrollOffset(prev, delta));
+    setSticky(false);
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollToBottom();
+      return;
+    }
+
+    setScrollOffset(0);
+    setSticky(true);
+  }, []);
+
+  return {
+    scrollRef,
+    scrollOffset,
+    sticky,
+    setScrollOffset,
+    setSticky,
+    handleScrollTopChange,
+    handleStickyChange,
+    scrollTo,
+    scrollBy,
+    scrollToBottom,
+  };
+}
+
 export interface TranscriptSelectionOffsetOptions {
   items: HistoryItem[];
+  renderModel?: TranscriptRenderModel;
   terminalWidth: number;
   transcriptMaxLines: number;
   viewportRows: number | undefined;
@@ -117,6 +219,7 @@ export function resolveTranscriptSelectionOffset(
 ): number {
   const {
     items,
+    renderModel,
     terminalWidth,
     transcriptMaxLines,
     viewportRows,
@@ -125,7 +228,7 @@ export function resolveTranscriptSelectionOffset(
     showDetailedTools = false,
   } = options;
 
-  const sections = buildHistoryItemTranscriptSections(
+  const sections = renderModel?.sections ?? buildHistoryItemTranscriptSections(
     items,
     terminalWidth,
     transcriptMaxLines,
@@ -142,6 +245,7 @@ export function resolveTranscriptSelectionOffset(
 
 export interface TranscriptSearchAnchorOptions {
   items: HistoryItem[];
+  renderModel?: TranscriptRenderModel;
   selectedItemId?: string;
   terminalWidth?: number;
   transcriptMaxLines?: number;
@@ -157,6 +261,7 @@ export function resolveTranscriptSearchAnchorItemId(
 ): string | undefined {
   const {
     items,
+    renderModel,
     selectedItemId,
     terminalWidth = 80,
     transcriptMaxLines = 1000,
@@ -172,15 +277,16 @@ export function resolveTranscriptSearchAnchorItemId(
   }
 
   if (preferViewportAnchor && scrollOffset > 0 && viewportRows && viewportRows > 0) {
-    const sections = buildHistoryItemTranscriptSections(
+    const sections = renderModel?.sections ?? buildHistoryItemTranscriptSections(
       items,
       terminalWidth,
       transcriptMaxLines,
       showDetailedTools,
       expandedItemKeys,
     );
+    const rows = renderModel?.rows ?? flattenTranscriptSections(sections);
     const visibleRows = getVisibleTranscriptRows(
-      flattenTranscriptSections(sections),
+      rows,
       viewportRows,
       scrollOffset,
     );

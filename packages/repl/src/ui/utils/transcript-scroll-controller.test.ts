@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildTranscriptRenderModel,
+} from "./transcript-layout.js";
+import {
   buildTranscriptChromeModel,
   incrementTranscriptScrollOffset,
   resolveTranscriptPageSize,
@@ -9,47 +12,75 @@ import {
 } from "./transcript-scroll-controller.js";
 import {
   createTranscriptDisplayState,
-  enterTranscriptHistory,
+  enterTranscriptMode,
+  setTranscriptPendingLiveUpdates,
   setTranscriptScrollAnchor,
   setTranscriptStickyPromptVisible,
 } from "./transcript-state.js";
 import type { HistoryItem } from "../types.js";
 
 describe("transcript-scroll-controller", () => {
-  it("builds sticky and jump chrome for owned browsing transcript state", () => {
-    const browsing = setTranscriptStickyPromptVisible(
+  it("builds sticky and jump chrome for prompt-surface detached transcript state", () => {
+    const prompt = setTranscriptStickyPromptVisible(
       setTranscriptScrollAnchor(
-        enterTranscriptHistory(createTranscriptDisplayState("native_vt")),
+        createTranscriptDisplayState("native_vt"),
         8,
       ),
       true,
     );
 
     const model = buildTranscriptChromeModel({
-      state: browsing,
+      state: prompt,
       ownsViewport: true,
       isAwaitingUserInteraction: false,
       isHistorySearchActive: false,
-      isReviewingHistory: true,
+      isTranscriptMode: false,
       historySearchQuery: "",
     });
 
-    expect(model.browseHintText).toContain("Browsing transcript history");
+    expect(model.browseHintText).toBeUndefined();
+    expect(model.jumpToLatest).toEqual({
+      visible: true,
+      label: "Back to live",
+      hint: "End",
+      tone: "accent",
+    });
+  });
+
+  it("builds transcript-mode chrome with pending update CTA", () => {
+    const transcript = setTranscriptPendingLiveUpdates(
+      setTranscriptStickyPromptVisible(
+        enterTranscriptMode(createTranscriptDisplayState("native_vt")),
+        true,
+      ),
+      3,
+    );
+
+    const model = buildTranscriptChromeModel({
+      state: transcript,
+      ownsViewport: true,
+      isAwaitingUserInteraction: false,
+      isHistorySearchActive: false,
+      isTranscriptMode: true,
+      historySearchQuery: "",
+    });
+
+    expect(model.browseHintText).toContain("Transcript");
     expect(model.stickyHeader).toEqual({
       visible: true,
-      label: "Browsing transcript history",
+      label: "Transcript Mode",
     });
     expect(model.jumpToLatest).toEqual({
       visible: true,
-      label: "Jump to latest",
-      hint: "End",
+      label: "3 new updates",
+      hint: "Ctrl+O",
       tone: "accent",
     });
   });
 
   it("prefers transcript search chrome text while search is active", () => {
     const state = setTranscriptStickyPromptVisible(
-      createTranscriptDisplayState("native_vt"),
+      enterTranscriptMode(createTranscriptDisplayState("native_vt")),
       true,
     );
 
@@ -58,7 +89,7 @@ describe("transcript-scroll-controller", () => {
       ownsViewport: true,
       isAwaitingUserInteraction: false,
       isHistorySearchActive: true,
-      isReviewingHistory: true,
+      isTranscriptMode: true,
       historySearchQuery: "router",
     });
 
@@ -88,7 +119,7 @@ describe("transcript-scroll-controller", () => {
     expect(resolveTranscriptSearchAnchorItemId({ items })).toBe("assistant-1");
   });
 
-  it("anchors transcript search to the current viewport when browsing history", () => {
+  it("anchors transcript search to the current viewport when requested", () => {
     const items = [
       { id: "user-1", type: "user", text: "first", timestamp: Date.now() },
       { id: "assistant-1", type: "assistant", text: "second", timestamp: Date.now() },
@@ -103,6 +134,29 @@ describe("transcript-scroll-controller", () => {
       scrollOffset: 3,
       preferViewportAnchor: true,
     })).toBe("assistant-1");
+  });
+
+  it("keeps explicit selection ahead of the viewport anchor in owned mode", () => {
+    const items = [
+      { id: "user-1", type: "user", text: "first", timestamp: Date.now() },
+      { id: "assistant-1", type: "assistant", text: "second", timestamp: Date.now() },
+      { id: "user-2", type: "user", text: "third", timestamp: Date.now() },
+    ] satisfies HistoryItem[];
+
+    const renderModel = buildTranscriptRenderModel({
+      items,
+      viewportWidth: 80,
+      windowed: true,
+    });
+
+    expect(resolveTranscriptSearchAnchorItemId({
+      items,
+      renderModel,
+      selectedItemId: "user-1",
+      viewportRows: 3,
+      scrollOffset: 3,
+      preferViewportAnchor: true,
+    })).toBe("user-1");
   });
 
   it("calculates a stable selection offset for transcript browsing", () => {

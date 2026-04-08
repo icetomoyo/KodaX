@@ -30,7 +30,7 @@ const HELP_BAR_PINNED_SHORTCUTS: Array<{
 }> = [
   { id: "showHelp", label: "toggle help", bold: true },
   { id: "toggleThinking", label: "reasoning" },
-  { id: "toggleTranscriptVerbosity", label: "verbosity" },
+  { id: "toggleTranscriptMode", label: "transcript" },
   { id: "togglePermissionMode", label: "mode" },
   { id: "toggleAgentMode", label: "AMA/SA" },
   { id: "toggleParallelMode", label: "parallel" },
@@ -48,7 +48,7 @@ const HELP_MENU_SHORTCUT_IDS_BY_CATEGORY: Record<ShortcutCategory, ShortcutActio
   global: ["showHelp", "interrupt"],
   mode: [
     "toggleThinking",
-    "toggleTranscriptVerbosity",
+    "toggleTranscriptMode",
     "togglePermissionMode",
     "toggleAgentMode",
     "toggleParallelMode",
@@ -81,12 +81,12 @@ const TRANSCRIPT_HELP_SECTION: HelpMenuSection = {
   id: "transcript",
   title: "Transcript",
   items: [
-    { id: "history", label: "PgUp history browse" },
-    { id: "latest", label: "End jump latest" },
-    { id: "select", label: "Left/Right select item" },
-    { id: "copy", label: "C copy selection" },
-    { id: "copy-input", label: "I copy tool input" },
-    { id: "detail", label: "V toggle detail" },
+    { id: "mode", label: "Ctrl+O transcript mode" },
+    { id: "search", label: "Ctrl+F search transcript" },
+    { id: "browse", label: "PgUp/PgDn/j/k scroll" },
+    { id: "match", label: "n/N next match" },
+    { id: "latest", label: "End back to live" },
+    { id: "exit", label: "q or Esc back to live" },
   ],
 };
 
@@ -151,7 +151,7 @@ export function buildHelpBarSegments(): HelpBarSegment[] {
   return [
     ...shortcutSegments,
     { text: "  " },
-    { text: "PgUp history" },
+    { text: "Ctrl+O transcript" },
     { text: "  " },
     { text: "Ctrl+W/K/U edit" },
     { text: "  " },

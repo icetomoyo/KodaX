@@ -113,7 +113,7 @@ describe('GlobalShortcuts', () => {
     expect(setShowHelp).toHaveBeenCalledWith(false);
   });
 
-  it('lets Ctrl+O toggle transcript verbosity without persisting config', () => {
+  it('lets Ctrl+O toggle transcript mode without persisting config', () => {
     const currentConfig: CurrentConfig = {
       provider: 'openai',
       model: 'gpt-5.4',
@@ -125,7 +125,7 @@ describe('GlobalShortcuts', () => {
     };
 
     const setShowHelp = vi.fn();
-    const onToggleTranscriptVerbosity = vi.fn();
+    const onToggleTranscriptMode = vi.fn();
 
     GlobalShortcuts({
       currentConfig,
@@ -138,14 +138,14 @@ describe('GlobalShortcuts', () => {
       setIsLoading: vi.fn(),
       onToggleHelp: vi.fn(),
       setShowHelp,
-      onToggleTranscriptVerbosity,
+      onToggleTranscriptMode,
       isInputEmpty: true,
     });
 
-    const handler = shortcutHandlers.get('toggleTranscriptVerbosity');
+    const handler = shortcutHandlers.get('toggleTranscriptMode');
     expect(handler).toBeDefined();
     expect(handler?.()).toBe(true);
-    expect(onToggleTranscriptVerbosity).toHaveBeenCalledTimes(1);
+    expect(onToggleTranscriptMode).toHaveBeenCalledTimes(1);
     expect(saveConfigMock).not.toHaveBeenCalled();
     expect(setShowHelp).toHaveBeenCalledWith(false);
   });

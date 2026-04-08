@@ -8,7 +8,7 @@
 
 import type { Command } from './types.js';
 import chalk from 'chalk';
-import clipboard from 'clipboardy';
+import { copyTextToClipboard } from '../common/clipboard.js';
 import { extractLastAssistantText } from '../ui/utils/message-utils.js';
 
 /**
@@ -28,7 +28,7 @@ export const copyCommand: Command = {
     }
 
     try {
-      await clipboard.write(lastMessage);
+      await copyTextToClipboard(lastMessage);
       const preview = lastMessage.length > 50 ? lastMessage.slice(0, 50) + '...' : lastMessage;
       console.log(chalk.green('\nCopied to clipboard!'));
       console.log(chalk.dim(`Preview: ${preview}`));

@@ -1,6 +1,5 @@
 import React from "react";
-import { Box, Text } from "ink";
-import { getTheme } from "../themes/index.js";
+import { Box, Text } from "../tui.js";
 
 export interface DialogSelectOption {
   value: string;
@@ -24,25 +23,15 @@ export interface DialogSurfaceUIRequestState {
   visibleSelectOptions?: number;
 }
 
-export interface DialogSurfaceHistorySearchState {
-  query: string;
-  matches: Array<{ itemId: string; excerpt: string }>;
-  selectedIndex: number;
-}
-
 export interface DialogSurfaceProps {
   confirm?: DialogSurfaceConfirmState | null;
   request?: DialogSurfaceUIRequestState | null;
-  historySearch?: DialogSurfaceHistorySearchState | null;
 }
 
 export const DialogSurface: React.FC<DialogSurfaceProps> = ({
   confirm,
   request,
-  historySearch,
 }) => {
-  const theme = getTheme("dark");
-
   if (confirm) {
     return (
       <Box
@@ -102,39 +91,6 @@ export const DialogSurface: React.FC<DialogSurfaceProps> = ({
     );
   }
 
-  if (historySearch) {
-    return (
-      <Box
-        flexDirection="column"
-        borderStyle="round"
-        borderColor={theme.colors.accent}
-        paddingX={1}
-        marginTop={1}
-      >
-        <Text color={theme.colors.accent} bold>
-          [Search] Transcript history
-        </Text>
-        <Text dimColor>{`Query: ${historySearch.query || "(type to search)"}`}</Text>
-        {historySearch.matches.length === 0 ? (
-          <Text dimColor>No matches yet</Text>
-        ) : (
-          <>
-            <Text dimColor>
-              {historySearch.selectedIndex < 0
-                ? `${historySearch.matches.length} matches`
-                : `${historySearch.selectedIndex + 1}/${historySearch.matches.length} matches`}
-            </Text>
-            <Text dimColor>
-              {historySearch.selectedIndex < 0
-                ? "Scroll to keep browsing, or use Up/Down to jump between matches."
-                : historySearch.matches[historySearch.selectedIndex]?.excerpt ?? ""}
-            </Text>
-          </>
-        )}
-        <Text dimColor>Enter jump | Up/Down cycle | Esc cancel</Text>
-      </Box>
-    );
-  }
-
   return null;
 };
+

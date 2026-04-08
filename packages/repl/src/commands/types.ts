@@ -65,7 +65,7 @@ export type SessionBranchSwitchStatus = 'switched' | 'missing' | 'blocked';
 export type SessionForkStatus = 'forked' | 'failed' | 'blocked';
 
 export interface CommandCallbacks {
-  exit: () => void;
+  exit: () => void | Promise<void>;
   saveSession: () => Promise<void>;
   startNewSession?: () => void;
   loadSession: (id: string) => Promise<SessionLoadStatus>;
