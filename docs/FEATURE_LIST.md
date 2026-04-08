@@ -1,6 +1,6 @@
 # Feature 总表
 
-> Last updated: 2026-04-05
+> Last updated: 2026-04-08
 
 > 中文阅读说明：
 > 这份 `FEATURE_LIST` 是 roadmap 的总索引。
@@ -15,8 +15,8 @@
 |---|---|
 | Tracked feature IDs | `001-058` |
 | Total tracked features | `58` |
-| Completed | `50` |
-| InProgress | `3` |
+| Completed | `51` |
+| InProgress | `2` |
 | Planned | `5` |
 | Current released version | `v0.7.14` |
 
@@ -37,7 +37,6 @@
 
 | ID | Title | Planned | Design |
 |---|---|---|---|
-| `031` | Multimodal Artifact Inputs | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_031-multimodal-artifact-inputs) |
 | `057` | Claude-Aligned TUI Substrate Refactor | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_057-claude-aligned-tui-substrate-refactor) |
 | `056` | Tool Interaction Maturity and Transcript-Native Explanation Layer | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_056-tool-interaction-maturity-and-transcript-native-explanation-layer) |
 
@@ -104,6 +103,7 @@
 | `027` | Adaptive Multi-Agent Mode Toggle and Team-Mode Sunset | `v0.7.10` | [v0.7.10](features/v0.7.10.md#feature_027-adaptive-multi-agent-mode-toggle-and-team-mode-sunset) |
 | `028` | First-Class Retrieval, Context, and Evidence Tooling | `v0.7.10` | [v0.7.10](features/v0.7.10.md#feature_028-first-class-retrieval-context-and-evidence-tooling) |
 | `029` | Provider Capability Transparency and Harness Policy | `v0.7.1` | [v0.7.0](features/v0.7.0.md#feature_029-provider-capability-transparency-and-harness-policy) |
+| `031` | Multimodal Artifact Inputs | `v0.7.30` (unreleased) | [v0.7.30](features/v0.7.30.md#feature_031-multimodal-artifact-inputs) |
 | `032` | JSON Output Mode | `v0.6.20` (unreleased) | [v0.6.20](features/v0.6.20.md) |
 | `033` | REPL Parallel Toggle | `v0.6.15` | [v0.6.15](features/v0.6.15.md) |
 | `034` | Extension and Capability Runtime | `v0.7.0` | [v0.7.0](features/v0.7.0.md#feature_034-extension-and-capability-runtime) |
@@ -133,7 +133,7 @@
 
 > `FEATURE_055` completed the follow-up REPL hardening work: docs-first substrate maturity, summary-only AMA mapping, and no new visible worker/task shell.
 
-> `FEATURE_031` has been reopened for prompt/artifact alignment: inline image refs must become provider-safe structured multimodal inputs rather than leaking raw `@image-path` syntax into model-facing text.
+> `FEATURE_031` now treats inline image refs as true structured multimodal inputs: provider-facing text uses stable image anchors such as `[Image #1]` and clean unavailable-image placeholders instead of leaking raw `@image-path` syntax.
 
 ---
 

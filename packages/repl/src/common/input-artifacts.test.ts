@@ -44,7 +44,32 @@ describe('preparePromptInputArtifacts', () => {
     expect(prepared.messageContent).toEqual([
       {
         type: 'text',
-        text: 'Please review @"design shot.png" and explain the issue.',
+        text: 'Please review [Image #1] and explain the issue.',
+      },
+      {
+        type: 'image',
+        path: imagePath,
+        mediaType: 'image/png',
+      },
+    ]);
+  });
+
+  it('reuses stable image anchors for duplicate image refs', async () => {
+    const cwd = await createTempDir('kodax-input-artifacts-');
+    const imagePath = path.join(cwd, 'statusbar.png');
+    await writeFile(imagePath, 'fake-image');
+
+    const prepared = preparePromptInputArtifacts(
+      'Compare @statusbar.png with @statusbar.png and summarize the difference.',
+      cwd,
+    );
+
+    expect(prepared.warnings).toEqual([]);
+    expect(prepared.inputArtifacts).toHaveLength(1);
+    expect(prepared.messageContent).toEqual([
+      {
+        type: 'text',
+        text: 'Compare [Image #1] with [Image #1] and summarize the difference.',
       },
       {
         type: 'image',
@@ -67,7 +92,7 @@ describe('preparePromptInputArtifacts', () => {
       `[Image input missing] missing.png was not found from ${cwd}.`,
     ]);
     expect(prepared.messageContent).toBe(
-      'Look at @README.md and @missing.png before continuing.',
+      'Look at @README.md and [Image unavailable] before continuing.',
     );
   });
 });
