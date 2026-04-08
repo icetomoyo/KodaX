@@ -4,7 +4,7 @@ import { calculateVisualLayout } from "./textUtils.js";
 import {
   collapseToolCalls,
   formatCollapsedToolInlineText,
-  formatToolFailureExplanation,
+  formatToolResultExplanation,
   formatLiveToolLabel,
 } from "./tool-display.js";
 
@@ -272,8 +272,8 @@ function buildToolRows(
     }
   );
 
-  const failureExplanation = formatToolFailureExplanation(tool);
-  failureExplanation.forEach((line, index) => {
+  const compactExplanation = formatToolResultExplanation(tool);
+  compactExplanation.forEach((line, index) => {
     pushWrappedRows(
       rows,
       `${itemKey}-tool-${tool.id}-explanation-${index}`,
@@ -347,8 +347,8 @@ function buildLiveToolRows(
     }
   );
 
-  const failureExplanation = formatToolFailureExplanation(tool);
-  failureExplanation.forEach((line, index) => {
+  const compactExplanation = formatToolResultExplanation(tool);
+  compactExplanation.forEach((line, index) => {
     pushWrappedRows(
       rows,
       `${itemKey}-tool-${tool.id}-explanation-${index}`,

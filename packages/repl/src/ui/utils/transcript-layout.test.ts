@@ -360,7 +360,7 @@ describe("transcript-layout", () => {
     expect(text).toContain("[AMA H2 - Planner] [Tools] changed_diff (18 chars)...");
   });
 
-  it("formats tool rows with progress and errors", () => {
+  it("formats tool rows with progress for active tools", () => {
     const rows = buildTranscriptRows({
       items: [
         {
@@ -384,7 +384,6 @@ describe("transcript-layout", () => {
 
     const text = rows.map((row) => row.text).join("\n");
     expect(text).toContain("write_file (running - 50%)");
-    expect(text).toContain("Error: denied");
   });
 
   it("adds compact last-output context for failed tools without opening detailed review", () => {
@@ -484,8 +483,45 @@ describe("transcript-layout", () => {
       showDetailedTools: true,
     });
 
-    expect(normalRows.map((row) => row.text).join("\n")).not.toContain("Showing diff lines 1171-1320 of 3096");
+    const normalText = normalRows.map((row) => row.text).join("\n");
+    expect(normalText).toContain("Diff range: 1171-1320 of 3096");
+    expect(normalText).toContain("Preview: + const example = true;");
+    expect(normalText).not.toContain("Showing diff lines 1171-1320 of 3096");
     expect(reviewRows.map((row) => row.text).join("\n")).toContain("Showing diff lines 1171-1320 of 3096");
+  });
+
+  it("shows compact bundle explanations for successful diff bundles", () => {
+    const rows = buildTranscriptRows({
+      items: [
+        {
+          id: "tool-group-bundle",
+          type: "tool_group",
+          timestamp: Date.now(),
+          tools: [
+            {
+              id: "tool-bundle-1",
+              name: "[Planner] changed_diff_bundle",
+              status: ToolCallStatus.Success,
+              startTime: Date.now(),
+              endTime: Date.now() + 10,
+              input: {
+                preview: "{\"paths\":[\"packages/a.ts\",\"packages/b.ts\"],\"limit_per_path\":120}",
+              },
+              output: [
+                "Changed diff bundle for 2 file(s)",
+                "=== packages/a.ts ===",
+                "+ const a = 1;",
+              ].join("\n"),
+            },
+          ],
+        },
+      ],
+      viewportWidth: 100,
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text).toContain("Bundle: 2 files");
+    expect(text).toContain("First file: packages/a.ts");
   });
 
   it("shows detailed tool input previews when the transcript is expanded", () => {

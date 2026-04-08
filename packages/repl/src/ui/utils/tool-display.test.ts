@@ -6,6 +6,7 @@ import {
   formatLiveToolLabel,
   formatToolCallInlineText,
   formatToolFailureExplanation,
+  formatToolResultExplanation,
   formatToolSummary,
 } from "./tool-display.js";
 
@@ -197,6 +198,46 @@ describe("tool-display", () => {
     expect(formatToolFailureExplanation(tool)).toEqual([
       "Error: permission denied",
       "Last output: fatal: permission denied",
+    ]);
+  });
+
+  it("builds compact diff explanations for successful changed_diff tools", () => {
+    const tool: ToolCall = {
+      id: "tool-diff",
+      name: "changed_diff",
+      status: ToolCallStatus.Success,
+      startTime: 100,
+      endTime: 210,
+      output: [
+        "Changed diff for packages/coding/src/task-engine.ts",
+        "Showing diff lines 1171-1320 of 3096",
+        "+ const example = true;",
+      ].join("\n"),
+    };
+
+    expect(formatToolResultExplanation(tool)).toEqual([
+      "Diff range: 1171-1320 of 3096",
+      "Preview: + const example = true;",
+    ]);
+  });
+
+  it("builds compact bundle explanations for successful changed_diff_bundle tools", () => {
+    const tool: ToolCall = {
+      id: "tool-bundle",
+      name: "[Planner] changed_diff_bundle",
+      status: ToolCallStatus.Success,
+      startTime: 100,
+      endTime: 210,
+      output: [
+        "Changed diff bundle for 3 file(s)",
+        "=== packages/a.ts ===",
+        "+ const a = 1;",
+      ].join("\n"),
+    };
+
+    expect(formatToolResultExplanation(tool)).toEqual([
+      "Bundle: 3 files",
+      "First file: packages/a.ts",
     ]);
   });
 });

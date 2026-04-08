@@ -466,6 +466,47 @@ function extractChangedDiffRange(output: string): string | undefined {
   return `${match[1]}-${match[2]}/${match[3]}`;
 }
 
+function extractDiffPreviewLine(output: string): string | undefined {
+  return output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.startsWith("+") || line.startsWith("-") || line.startsWith("@@"));
+}
+
+function formatChangedDiffExplanation(output: string): string[] {
+  const lines: string[] = [];
+  const range = extractChangedDiffRange(output);
+  if (range) {
+    const [window, total] = range.split("/");
+    lines.push(total ? `Diff range: ${window} of ${total}` : `Diff range: ${range}`);
+  }
+
+  const preview = extractDiffPreviewLine(output);
+  if (preview) {
+    lines.push(`Preview: ${truncateValue(preview, 220)}`);
+  }
+
+  return lines;
+}
+
+function formatChangedDiffBundleExplanation(output: string): string[] {
+  const lines: string[] = [];
+  const fileCountMatch = output.match(/^Changed diff bundle for\s+(\d+)\s+file\(s\)/im);
+  if (fileCountMatch?.[1]) {
+    const count = Number(fileCountMatch[1]);
+    if (Number.isFinite(count) && count > 0) {
+      lines.push(`Bundle: ${count === 1 ? "1 file" : `${count} files`}`);
+    }
+  }
+
+  const firstPathMatch = output.match(/^===\s+(.+?)\s+===/m);
+  if (firstPathMatch?.[1]) {
+    lines.push(`First file: ${truncateValue(firstPathMatch[1].trim(), 220)}`);
+  }
+
+  return lines;
+}
+
 function summarizeToolOutputDetails(toolName: string, output: string | undefined): string[] {
   if (!output) {
     return [];
@@ -569,6 +610,31 @@ export function formatToolFailureExplanation(tool: ToolCall): string[] {
   }
 
   return lines;
+}
+
+export function formatToolResultExplanation(tool: ToolCall): string[] {
+  if (typeof tool.output !== "string" || !tool.output.trim()) {
+    return [];
+  }
+
+  const baseToolName = stripRolePrefix(tool.name).toLowerCase();
+  if (tool.status === ToolCallStatus.Error) {
+    return formatToolFailureExplanation(tool);
+  }
+
+  if (tool.status !== ToolCallStatus.Success) {
+    return [];
+  }
+
+  if (baseToolName.includes("changed_diff_bundle")) {
+    return formatChangedDiffBundleExplanation(tool.output);
+  }
+
+  if (baseToolName.includes("changed_diff")) {
+    return formatChangedDiffExplanation(tool.output);
+  }
+
+  return [];
 }
 
 export function formatToolSummary(toolName: string, input?: ToolInputValue): string {
