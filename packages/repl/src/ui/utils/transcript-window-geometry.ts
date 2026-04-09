@@ -18,6 +18,7 @@ export interface ResolveTranscriptOwnedWindowGeometryOptions {
   width?: number | string;
   bannerVisible?: boolean;
   fullscreenBannerRows?: number;
+  contentOffsetRows?: number;
 }
 
 export function resolveTranscriptOwnedWindowGeometry(
@@ -26,14 +27,15 @@ export function resolveTranscriptOwnedWindowGeometry(
   const stickyHeaderText = resolveFullscreenChromeSlotText(options.stickyHeader);
   const stickyHeaderRows = measureFullscreenChromeSlotRows(stickyHeaderText, options.width);
   const fullscreenBannerRows = Math.max(0, options.fullscreenBannerRows ?? 0);
+  const contentOffsetRows = Math.max(0, options.contentOffsetRows ?? 0);
   const bannerVisibleRows = options.bannerVisible ? fullscreenBannerRows : 0;
 
   return {
     contentWindow: {
       ...options.window,
-      start: Math.max(0, options.window.start - bannerVisibleRows),
-      end: Math.max(0, options.window.end - bannerVisibleRows),
-      viewportTop: Math.max(0, options.window.viewportTop - bannerVisibleRows),
+      start: Math.max(0, options.window.start - contentOffsetRows),
+      end: Math.max(0, options.window.end - contentOffsetRows),
+      viewportTop: Math.max(0, options.window.viewportTop - contentOffsetRows),
       viewportHeight: Math.max(0, options.window.viewportHeight - bannerVisibleRows),
     },
     topOffsetRows: stickyHeaderRows + bannerVisibleRows,

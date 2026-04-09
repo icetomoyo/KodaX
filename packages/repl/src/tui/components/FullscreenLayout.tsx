@@ -70,6 +70,8 @@ export const FullscreenLayout: React.FC<FullscreenLayoutProps> = ({
       <Box flexDirection="column" flexGrow={1} overflowY="hidden">
         <ScrollBox
           width={width}
+          flexGrow={1}
+          flexShrink={1}
           paddingTop={stickyHeaderRows}
           scrollTop={scrollTop}
           scrollHeight={scrollHeight}

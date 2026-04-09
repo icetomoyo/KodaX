@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { render } from "ink-testing-library";
-import { Text } from "../../ui/tui.js";
+import { Box, Text } from "../../ui/tui.js";
 import { ScrollBox, type ScrollBoxHandle } from "./ScrollBox.js";
 
 const ScrollBoxHarness = React.forwardRef<ScrollBoxHandle>((_, ref) => {
@@ -121,5 +121,36 @@ describe("ScrollBox", () => {
     await vi.waitFor(() => {
       expect(lastFrame()).toContain("window:95-115");
     });
+  });
+
+  it("keeps a footer sibling tight when the fullscreen host provides explicit growth", () => {
+    const { lastFrame } = render(
+      <Box flexDirection="column">
+        <ScrollBox
+          flexGrow={1}
+          scrollTop={0}
+          scrollHeight={2}
+          viewportHeight={2}
+          renderWindow={() => (
+            <>
+              <Text>Row 1</Text>
+              <Text>Row 2</Text>
+            </>
+          )}
+        >
+          <Text>ignored</Text>
+        </ScrollBox>
+        <Text>FOOTER</Text>
+      </Box>,
+    );
+
+    const frame = lastFrame() ?? "";
+    const lines = frame.split("\n");
+    const rowIndex = lines.findIndex((line) => line.includes("Row 2"));
+    const footerIndex = lines.findIndex((line) => line.includes("FOOTER"));
+
+    expect(rowIndex).toBeGreaterThanOrEqual(0);
+    expect(footerIndex).toBeGreaterThanOrEqual(rowIndex + 1);
+    expect(footerIndex).toBeLessThanOrEqual(rowIndex + 2);
   });
 });

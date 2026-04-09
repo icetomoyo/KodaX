@@ -1,6 +1,6 @@
 # Feature 总表
 
-> Last updated: 2026-04-08
+> Last updated: 2026-04-09
 
 > 中文阅读说明：
 > 这份 `FEATURE_LIST` 是 roadmap 的总索引。
@@ -13,11 +13,11 @@
 
 | Item | Value |
 |---|---|
-| Tracked feature IDs | `001-058` |
-| Total tracked features | `58` |
+| Tracked feature IDs | `001-060` |
+| Total tracked features | `60` |
 | Completed | `53` |
 | InProgress | `1` |
-| Planned | `4` |
+| Planned | `6` |
 | Current released version | `v0.7.14` |
 
 ### 各版本待做分布
@@ -26,8 +26,8 @@
 |---|---|
 | `v0.7.20` | `1` |
 | `v0.7.25` | `0` |
-| `v0.7.30` | `0` |
-| `v0.8.0` | `2` |
+| `v0.7.30` | `1` |
+| `v0.8.0` | `3` |
 | `v0.9.0` | `0` |
 | `v1.0.0` | `1` |
 
@@ -47,6 +47,8 @@
 |---|---|---|---|---|---|
 | `007` | Theme System Consolidation | Enhancement | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_007-theme-system-consolidation) |
 | `058` | Transcript Native Scrollback Dump | Enhancement | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_058-transcript-native-scrollback-dump) |
+| `059` | Managed Task Structured Protocol V2 | Internal | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_059-managed-task-structured-protocol-v2) |
+| `060` | Claude-Aligned Bounded-Memory Runtime and OOM Hardening | Internal | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_060-claude-aligned-bounded-memory-runtime-and-oom-hardening) |
 | `026` | Roadmap Integrity and Planning Hygiene | Internal | High | `v0.7.20` | [v0.7.20](features/v0.7.20.md#feature_026-roadmap-integrity-and-planning-hygiene) |
 | `030` | Multi-Surface Delivery | Enhancement | High | `v1.0.0` | [v1.0.0](features/v1.0.0.md#feature_030-multi-surface-delivery) |
 

@@ -10,6 +10,7 @@ import {
   KodaXExecutionMode,
   KodaXEvents,
   KodaXJsonValue,
+  KodaXManagedProtocolPayload,
   KodaXOptions,
   KodaXRepoIntelligenceCarrier,
   KodaXRepoIntelligenceMode,
@@ -34,6 +35,10 @@ import {
   listToolDefinitions,
   parseEditToolError,
 } from './tools/index.js';
+import {
+  isManagedProtocolToolName,
+  mergeManagedProtocolPayload,
+} from './managed-protocol.js';
 import { buildSystemPrompt } from './prompts/index.js';
 import { generateSessionId, extractTitleFromMessages } from './session.js';
 import { checkIncompleteToolCalls } from './messages.js';
@@ -358,6 +363,7 @@ function createExtensionRuntimeSessionController(
 function getActiveToolDefinitions(
   activeToolNames: string[],
   repoIntelligenceMode?: KodaXRepoIntelligenceMode,
+  allowManagedProtocolTool = false,
 ): ReturnType<typeof listToolDefinitions> {
   const allTools = listToolDefinitions();
   if (activeToolNames.length === 0) {
@@ -367,7 +373,10 @@ function getActiveToolDefinitions(
   const allowed = new Set(
     getRuntimeActiveToolNames(activeToolNames, repoIntelligenceMode),
   );
-  return allTools.filter((tool) => allowed.has(tool.name));
+  return allTools.filter((tool) => (
+    allowed.has(tool.name)
+    && (allowManagedProtocolTool || !isManagedProtocolToolName(tool.name))
+  ));
 }
 
 function getRuntimeActiveToolNames(
@@ -716,6 +725,10 @@ function createToolResultBlock(toolUseId: string, content: string): KodaXToolRes
     content,
     ...(isToolResultErrorContent(content) ? { is_error: true } : {}),
   };
+}
+
+function isVisibleToolName(name: string): boolean {
+  return !isManagedProtocolToolName(name);
 }
 
 function shouldDebugResilience(): boolean {
@@ -1145,16 +1158,19 @@ async function executeToolCall(
   runtimeSessionState: RuntimeSessionState,
   activeToolNames?: string[],
 ): Promise<string> {
-  await emitActiveExtensionEvent('tool:start', {
-    name: toolCall.name,
-    id: toolCall.id,
-    input: toolCall.input,
-  });
-  events.onToolUseStart?.({
-    name: toolCall.name,
-    id: toolCall.id,
-    input: toolCall.input,
-  });
+  const visibleTool = isVisibleToolName(toolCall.name);
+  if (visibleTool) {
+    await emitActiveExtensionEvent('tool:start', {
+      name: toolCall.name,
+      id: toolCall.id,
+      input: toolCall.input,
+    });
+    events.onToolUseStart?.({
+      name: toolCall.name,
+      id: toolCall.id,
+      input: toolCall.input,
+    });
+  }
 
   const override = await getToolExecutionOverride(
     events,
@@ -1259,6 +1275,9 @@ export async function runKodaX(
   if (!title) title = prompt.slice(0, 50) + (prompt.length > 50 ? '...' : '');
 
   const executionCwd = resolveExecutionCwd(options.context);
+  let emittedManagedProtocolPayload = options.context?.managedProtocolEmission?.enabled
+    ? mergeManagedProtocolPayload(undefined, undefined)
+    : undefined;
 
   // Simplified context - no permission fields (handled by REPL layer)
   const ctx: KodaXToolExecutionContext = {
@@ -1267,6 +1286,29 @@ export async function runKodaX(
     executionCwd,
     extensionRuntime: runtime ?? undefined,
     askUser: events.askUser, // Issue 069: Pass askUser callback from events
+    managedProtocolRole: options.context?.managedProtocolEmission?.enabled
+      ? options.context.managedProtocolEmission.role
+      : undefined,
+    emitManagedProtocol: options.context?.managedProtocolEmission?.enabled
+      ? (payload: Partial<KodaXManagedProtocolPayload>) => {
+          emittedManagedProtocolPayload = mergeManagedProtocolPayload(
+            emittedManagedProtocolPayload,
+            payload,
+          );
+        }
+      : undefined,
+  };
+  const finalizeManagedProtocolResult = (result: KodaXResult): KodaXResult => {
+    const payload = mergeManagedProtocolPayload(
+      result.managedProtocolPayload,
+      emittedManagedProtocolPayload,
+    );
+    return payload
+      ? {
+          ...result,
+          managedProtocolPayload: payload,
+        }
+      : result;
   };
   let contextTokenSnapshot = rebaseContextTokenSnapshot(
     messages,
@@ -1593,6 +1635,7 @@ export async function runKodaX(
       const activeToolDefinitions = getActiveToolDefinitions(
         runtimeSessionState.activeTools,
         options.context?.repoIntelligenceMode,
+        options.context?.managedProtocolEmission?.enabled === true,
       );
 
       while (true) {
@@ -1808,6 +1851,7 @@ export async function runKodaX(
 
       lastText = result.textBlocks.map(b => b.text).join(' ');
       const preAssistantTokenSnapshot = createContextTokenSnapshot(compacted, result.usage);
+      const visibleToolBlocks = result.toolBlocks.filter((block) => isVisibleToolName(block.name));
 
       // Promise 信号检测
       const [signal, _reason] = checkPromiseSignal(lastText);
@@ -1840,7 +1884,7 @@ export async function runKodaX(
           });
           events.onComplete?.();
           await emitActiveExtensionEvent('complete', { success: true, signal: 'COMPLETE' });
-          return {
+          return finalizeManagedProtocolResult({
             success: true,
             lastText,
             signal: 'COMPLETE',
@@ -1849,11 +1893,11 @@ export async function runKodaX(
             routingDecision: currentRoutingDecision(),
             contextTokenSnapshot,
             limitReached: false,
-          };
+          });
         }
       }
 
-      const assistantContent = [...result.thinkingBlocks, ...result.textBlocks, ...result.toolBlocks];
+      const assistantContent = [...result.thinkingBlocks, ...result.textBlocks, ...visibleToolBlocks];
       messages.push({ role: 'assistant', content: assistantContent });
       const completedTurnTokenSnapshot = createCompletedTurnTokenSnapshot(messages, result.usage);
       contextTokenSnapshot = completedTurnTokenSnapshot;
@@ -1884,7 +1928,7 @@ export async function runKodaX(
             hadToolCalls: false,
             signal: undefined,
           });
-          return {
+          return finalizeManagedProtocolResult({
             success: true,
             lastText,
             messages,
@@ -1892,7 +1936,7 @@ export async function runKodaX(
             routingDecision: currentRoutingDecision(),
             contextTokenSnapshot,
             limitReached: false,
-          };
+          });
         }
 
         if (
@@ -2060,13 +2104,15 @@ export async function runKodaX(
               editRecoveryMessages.push(recoveryMessage);
             }
           }
-          await emitActiveExtensionEvent('tool:result', {
-            id: tc.id,
-            name: tc.name,
-            content,
-          });
-          events.onToolResult?.({ id: tc.id, name: tc.name, content });
-          toolResults.push(createToolResultBlock(tc.id, content));
+          if (isVisibleToolName(tc.name)) {
+            await emitActiveExtensionEvent('tool:result', {
+              id: tc.id,
+              name: tc.name,
+              content,
+            });
+            events.onToolResult?.({ id: tc.id, name: tc.name, content });
+            toolResults.push(createToolResultBlock(tc.id, content));
+          }
         }
       } else {
         for (const tc of result.toolBlocks) {
@@ -2091,13 +2137,15 @@ export async function runKodaX(
               editRecoveryMessages.push(recoveryMessage);
             }
           }
-          await emitActiveExtensionEvent('tool:result', {
-            id: tc.id,
-            name: tc.name,
-            content,
-          });
-          events.onToolResult?.({ id: tc.id, name: tc.name, content });
-          toolResults.push(createToolResultBlock(tc.id, content));
+          if (isVisibleToolName(tc.name)) {
+            await emitActiveExtensionEvent('tool:result', {
+              id: tc.id,
+              name: tc.name,
+              content,
+            });
+            events.onToolResult?.({ id: tc.id, name: tc.name, content });
+            toolResults.push(createToolResultBlock(tc.id, content));
+          }
         }
       }
 
@@ -2105,6 +2153,55 @@ export async function runKodaX(
       const hasCancellation = toolResults.some(r =>
         typeof r.content === 'string' && isCancelledToolResultContent(r.content)
       );
+
+      if (toolResults.length === 0) {
+        await settleExtensionTurn(sessionId, lastText, runtimeSessionState, {
+          hadToolCalls: false,
+          success: true,
+        });
+        if (appendQueuedRuntimeMessages(messages, runtimeSessionState)) {
+          contextTokenSnapshot = rebaseContextTokenSnapshot(messages, completedTurnTokenSnapshot);
+          await emitActiveExtensionEvent('turn:end', {
+            sessionId,
+            iteration: iter + 1,
+            lastText,
+            hadToolCalls: false,
+            signal: undefined,
+          });
+          continue;
+        }
+        const shouldYieldToQueuedFollowUp = hasQueuedFollowUp(events);
+        if (shouldYieldToQueuedFollowUp) {
+          emitIterationEnd(iter + 1, completedTurnTokenSnapshot);
+          await emitActiveExtensionEvent('turn:end', {
+            sessionId,
+            iteration: iter + 1,
+            lastText,
+            hadToolCalls: false,
+            signal: undefined,
+          });
+          return finalizeManagedProtocolResult({
+            success: true,
+            lastText,
+            messages,
+            sessionId,
+            routingDecision: currentRoutingDecision(),
+            contextTokenSnapshot,
+            limitReached: false,
+          });
+        }
+        emitIterationEnd(iter + 1, completedTurnTokenSnapshot);
+        await emitActiveExtensionEvent('turn:end', {
+          sessionId,
+          iteration: iter + 1,
+          lastText,
+          hadToolCalls: false,
+          signal: undefined,
+        });
+        events.onComplete?.();
+        await emitActiveExtensionEvent('complete', { success: true, signal: undefined });
+        break;
+      }
 
       if (hasCancellation) {
         const shouldYieldToQueuedFollowUp = hasQueuedFollowUp(events);
@@ -2124,7 +2221,7 @@ export async function runKodaX(
         });
         events.onStreamEnd?.();
         await emitActiveExtensionEvent('stream:end', undefined);
-        return {
+        return finalizeManagedProtocolResult({
           success: true,
           lastText: 'Operation cancelled by user',
           messages,
@@ -2132,7 +2229,7 @@ export async function runKodaX(
           routingDecision: currentRoutingDecision(),
           contextTokenSnapshot,
           interrupted: !shouldYieldToQueuedFollowUp,
-        };
+        });
       }
 
       messages.push({ role: 'user', content: toolResults });
@@ -2170,7 +2267,7 @@ export async function runKodaX(
           hadToolCalls: true,
           signal: undefined,
         });
-        return {
+        return finalizeManagedProtocolResult({
           success: true,
           lastText,
           messages,
@@ -2178,7 +2275,7 @@ export async function runKodaX(
           routingDecision: currentRoutingDecision(),
           contextTokenSnapshot,
           limitReached: false,
-        };
+        });
       }
 
       if (
@@ -2275,7 +2372,7 @@ export async function runKodaX(
         // Issue 072 fix: 清理不完整的 tool_use 块
         // 当流式中断时，assistant 消息可能包含 tool_use 但没有对应的 tool_result
         // 这会导致下次请求时 API 报错 "tool_call_id not found"
-        return {
+        return finalizeManagedProtocolResult({
           success: true,  // 中断不算失败
           lastText,
           messages: cleanedMessages,
@@ -2284,12 +2381,12 @@ export async function runKodaX(
           contextTokenSnapshot,
           interrupted: true,
           errorMetadata: updatedErrorMetadata,
-        };
+        });
       }
 
       await emitActiveExtensionEvent('error', { error });
       events.onError?.(error);
-      return {
+      return finalizeManagedProtocolResult({
         success: false,
         lastText,
         messages: cleanedMessages,  // ✅ Use cleaned messages to prevent error loop
@@ -2297,7 +2394,7 @@ export async function runKodaX(
         routingDecision: currentRoutingDecision(),
         contextTokenSnapshot,
         errorMetadata: updatedErrorMetadata,
-      };
+      });
     }
   }
 
@@ -2317,7 +2414,7 @@ export async function runKodaX(
 
   // 达到迭代上限 (循环正常结束但没有 COMPLETE 信号且没有提前退出)
   // 使用 limitReached 变量来准确判断
-  return {
+  return finalizeManagedProtocolResult({
     success: true,
     lastText,
     signal: finalSignal as 'COMPLETE' | 'BLOCKED' | 'DECIDE' | undefined,
@@ -2327,7 +2424,7 @@ export async function runKodaX(
     routingDecision: currentRoutingDecision(),
     contextTokenSnapshot,
     limitReached,
-  };
+  });
   } finally {
     releaseRuntimeBinding?.();
     if (options.extensionRuntime && options.extensionRuntime !== previousActiveRuntime) {

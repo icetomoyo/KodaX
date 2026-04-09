@@ -34,7 +34,7 @@ describe("transcript screen buffer", () => {
 
   it("tracks transcript row display width using rendered cell width, not UTF-16 length", () => {
     const buffer = buildTranscriptScreenBuffer([
-      { key: "row-cjk", text: "你好A" },
+      { key: "row-cjk", text: "浣犲ソA" },
     ]);
 
     expect(buffer.rows[0]).toMatchObject({
@@ -43,5 +43,30 @@ describe("transcript screen buffer", () => {
       textStartColumn: 1,
       textEndColumn: 6,
     });
+  });
+
+  it("keeps absolute indices aligned when visible rows include trailing preview rows", () => {
+    const allRows = [
+      { key: "stable-1", text: "prompt" },
+      { key: "stable-2", text: "previous answer" },
+      { key: "preview-thinking", text: "Thinking" },
+      { key: "preview-assistant", text: "Partial answer" },
+    ];
+
+    const renderedRows = allRows.slice(1);
+    const buffer = buildTranscriptScreenBuffer(renderedRows, {
+      allRows,
+      rowIndexByKey: buildTranscriptRowIndexByKey(allRows),
+      topOffsetRows: 1,
+      animateSpinners: false,
+    });
+
+    expect(buffer.rows.map((row) => row.modelRowIndex)).toEqual([1, 2, 3]);
+    expect(buffer.rows.map((row) => row.key)).toEqual([
+      "stable-2",
+      "preview-thinking",
+      "preview-assistant",
+    ]);
+    expect(buffer.rows.map((row) => row.screenRow)).toEqual([2, 3, 4]);
   });
 });

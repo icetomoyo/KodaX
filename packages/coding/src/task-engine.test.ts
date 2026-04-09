@@ -81,7 +81,7 @@ vi.mock('./repo-intelligence/runtime.js', async () => {
   };
 });
 
-import { runManagedTask } from './task-engine.js';
+import { __managedProtocolTestables, runManagedTask } from './task-engine.js';
 
 const tempDirs: string[] = [];
 
@@ -268,6 +268,33 @@ function buildVerdictResponse(
   ].join('\n');
 }
 
+function buildRawVerdictResponse(
+  visibleText: string,
+  statusText: string,
+  reason: string,
+  options?: {
+    followups?: string[];
+    userAnswer?: string;
+  },
+): string {
+  const followups = options?.followups?.length ? options.followups : ['none'];
+  return [
+    visibleText,
+    '```kodax-task-verdict',
+    `status: ${statusText}`,
+    `reason: ${reason}`,
+    ...(options?.userAnswer === undefined
+      ? []
+      : [
+        'user_answer:',
+        ...options.userAnswer.split('\n'),
+      ]),
+    'followup:',
+    ...followups.map((item) => `- ${item}`),
+    '```',
+  ].join('\n');
+}
+
 function createDeferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   let reject!: (reason?: unknown) => void;
@@ -310,6 +337,91 @@ async function waitForFileContentContaining(
   }
   throw new Error(`Timed out waiting for ${filePath} to contain: ${expectedFragments.join(', ')}\nLast content:\n${lastContent}`);
 }
+
+describe('managed protocol parsers', () => {
+  it('accepts scout json blocks with aliases and trailing chatter', () => {
+    const directive = __managedProtocolTestables.parseManagedTaskScoutDirective([
+      'Scout says the task can stay cheap.',
+      '```kodax-task-scout',
+      JSON.stringify({
+        summary: 'Scout summary',
+        confirmedHarness: 'h1',
+        evidenceAcquisitionMode: 'bundle',
+        skillSummary: 'Use the skill map.',
+        projectionConfidence: 'medium',
+        scope: ['Confirm task intent.'],
+        requiredEvidence: ['Minimal evidence.'],
+        reviewFilesOrAreas: ['packages/coding/src/task-engine.ts'],
+        executionObligations: ['Inspect the target file.'],
+        verificationObligations: ['Verify the parser outcome.'],
+        ambiguities: ['Need one more confirmation.'],
+      }, null, 2),
+      '```',
+      'Trailing note.',
+    ].join('\n'));
+
+    expect(directive).toMatchObject({
+      summary: 'Scout summary',
+      confirmedHarness: 'H1_EXECUTE_EVAL',
+      evidenceAcquisitionMode: 'diff-bundle',
+      scope: ['Confirm task intent.'],
+      requiredEvidence: ['Minimal evidence.'],
+      reviewFilesOrAreas: ['packages/coding/src/task-engine.ts'],
+      userFacingText: 'Scout says the task can stay cheap.',
+      skillMap: {
+        skillSummary: 'Use the skill map.',
+        projectionConfidence: 'medium',
+        executionObligations: ['Inspect the target file.'],
+        verificationObligations: ['Verify the parser outcome.'],
+        ambiguities: ['Need one more confirmation.'],
+      },
+    });
+  });
+
+  it('accepts contract blocks with aliases, inline items, and trailing chatter', () => {
+    const directive = __managedProtocolTestables.parseManagedTaskContractDirective([
+      'Planner contract visible text.',
+      '```kodax-task-contract',
+      'summary = Planner summary',
+      'successCriteria: complete the task',
+      'requiredEvidence:',
+      '- supporting diff',
+      'constraints: stay focused',
+      '```',
+      'Planner trailing note.',
+    ].join('\n'));
+
+    expect(directive).toEqual({
+      summary: 'Planner summary',
+      successCriteria: ['complete the task'],
+      requiredEvidence: ['supporting diff'],
+      constraints: ['stay focused'],
+    });
+  });
+
+  it('accepts handoff json blocks with aliases and trailing chatter', () => {
+    const directive = __managedProtocolTestables.parseManagedTaskHandoffDirective([
+      'Validator visible result.',
+      '```kodax-task-handoff',
+      JSON.stringify({
+        status: 'failed.',
+        summary: 'Validator summary',
+        evidence: ['Observed the bug.'],
+        followups: ['Re-run one narrow check.'],
+      }, null, 2),
+      '```',
+      'Trailing note.',
+    ].join('\n'));
+
+    expect(directive).toEqual({
+      status: 'blocked',
+      summary: 'Validator summary',
+      evidence: ['Observed the bug.'],
+      followup: ['Re-run one narrow check.'],
+      userFacingText: 'Validator visible result.',
+    });
+  });
+});
 
 afterEach(async () => {
   delete process.env.KODAX_DEBUG_REPO_INTELLIGENCE;
@@ -395,6 +507,197 @@ describe('runManagedTask', () => {
     expect(result.managedTask).toBeUndefined();
     expect(statuses.map((status) => status.phase)).toEqual(['routing']);
     expect(mockRunDirectKodaX).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps foreground AMA workers visible while lifecycle status updates stay compact and non-persistent', async () => {
+    const workspaceRoot = await createTempDir('kodax-task-engine-worker-progress-');
+    const statuses: KodaXManagedTaskStatusEvent[] = [];
+
+    mockCreateReasoningPlan.mockResolvedValue(
+      buildPlan({
+        primaryTask: 'review',
+        taskFamily: 'review',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'pr-review',
+        complexity: 'moderate',
+        riskLevel: 'medium',
+        harnessProfile: 'H1_EXECUTE_EVAL',
+        needsIndependentQA: true,
+        mutationSurface: 'read-only',
+        reason: 'Checked-direct review should surface stable worker progress without streaming full internal text.',
+      }),
+    );
+
+    mockRunDirectKodaX.mockImplementation(async (options, workerPrompt: string) => {
+      if (workerPrompt.includes('You are the Scout role')) {
+        options.events?.onThinkingDelta?.(
+          'Tracing the harness boundary and confirming that the review should stay on the checked-direct path.\n',
+        );
+        return buildAssistantResult(
+          buildScoutResponse('Scout confirmed H1 for the checked-direct review.', 'H1_EXECUTE_EVAL'),
+          { sessionId: 'session-scout-worker-progress' },
+        );
+      }
+      if (workerPrompt.includes('You are the Generator role')) {
+        options.events?.onThinkingDelta?.(
+          'Comparing ScrollBox sticky ownership against Claude fullscreen behavior to isolate the most likely gap.\n',
+        );
+        options.events?.onTextDelta?.(
+          'Generator narrowed the issue to sticky viewport budgeting and ScrollBox ownership alignment.\n',
+        );
+        return buildAssistantResult(
+          buildHandoffResponse('Generator completed the checked-direct review pass.'),
+          { sessionId: 'session-generator-worker-progress' },
+        );
+      }
+      if (workerPrompt.includes('You are the Evaluator role')) {
+        return buildAssistantResult(
+          buildVerdictResponse(
+            'Evaluator accepts the checked-direct review.',
+            'accept',
+            'The checked-direct review is complete and well-supported.',
+          ),
+          { sessionId: 'session-evaluator-worker-progress' },
+        );
+      }
+      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 160)}`);
+    });
+
+    const result = await runManagedTask(
+      {
+        provider: 'anthropic',
+        agentMode: 'ama',
+        events: {
+          onManagedTaskStatus: (status) => {
+            statuses.push(status);
+          },
+        },
+        context: {
+          managedTaskWorkspaceDir: workspaceRoot,
+        },
+      },
+      'Review the current fullscreen transcript behavior and keep the progress visible.',
+    );
+
+    expect(result.success).toBe(true);
+    expect(statuses).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          phase: 'preflight',
+          activeWorkerTitle: 'Scout',
+          note: 'Scout analyzing task complexity',
+        }),
+        expect.objectContaining({
+          phase: 'worker',
+          activeWorkerTitle: 'Generator',
+          note: 'Generator starting',
+          persistToHistory: false,
+          events: expect.arrayContaining([
+            expect.objectContaining({
+              presentation: 'status',
+              persistToHistory: false,
+            }),
+          ]),
+        }),
+        expect.objectContaining({
+          phase: 'worker',
+          activeWorkerTitle: 'Generator',
+          note: expect.stringContaining('Generator completed:'),
+          persistToHistory: false,
+        }),
+      ]),
+    );
+    expect(statuses.some((status) => status.detailNote?.includes('Tracing the harness boundary'))).toBe(false);
+    expect(statuses.some((status) => status.detailNote?.includes('sticky viewport budgeting'))).toBe(false);
+  });
+
+  it('streams foreground AMA phase content alongside the terminal evaluator answer on coordinated H2 runs', async () => {
+    const streamedText: string[] = [];
+    const streamedThinking: string[] = [];
+
+    mockCreateReasoningPlan.mockResolvedValue(
+      buildPlan({
+        primaryTask: 'edit',
+        taskFamily: 'implementation',
+        executionPattern: 'coordinated',
+        recommendedMode: 'implementation',
+        complexity: 'complex',
+        riskLevel: 'high',
+        harnessProfile: 'H2_PLAN_EXECUTE_EVAL',
+        needsIndependentQA: true,
+        mutationSurface: 'code',
+        topologyCeiling: 'H2_PLAN_EXECUTE_EVAL',
+        upgradeCeiling: 'H2_PLAN_EXECUTE_EVAL',
+        reason: 'Coordinated H2 runs should surface the terminal evaluator output instead of going silent.',
+      }),
+    );
+
+    mockRunDirectKodaX.mockImplementation(async (options, workerPrompt: string) => {
+      if (workerPrompt.includes('You are the Scout role')) {
+        options.events?.onThinkingDelta?.('SCOUT THINKING SHOULD STAY VISIBLE\n');
+        return buildAssistantResult(
+          buildScoutResponse('Scout confirmed H2 for the coordinated pass.', 'H2_PLAN_EXECUTE_EVAL'),
+          { sessionId: 'session-scout-h2-visible-terminal' },
+        );
+      }
+      if (workerPrompt.includes('You are the Planner role')) {
+        options.events?.onThinkingDelta?.('PLANNER THINKING SHOULD STAY VISIBLE\n');
+        options.events?.onTextDelta?.('PLANNER TEXT SHOULD STAY VISIBLE\n');
+        return buildAssistantResult(
+          buildContractResponse('Planner prepared the coordinated contract.'),
+          { sessionId: 'session-planner-h2-visible-terminal' },
+        );
+      }
+      if (workerPrompt.includes('You are the Generator role')) {
+        options.events?.onThinkingDelta?.('GENERATOR THINKING SHOULD STAY VISIBLE\n');
+        options.events?.onTextDelta?.('GENERATOR TEXT SHOULD STAY VISIBLE\n');
+        return buildAssistantResult(
+          buildHandoffResponse('Generator completed the coordinated execution pass.'),
+          { sessionId: 'session-generator-h2-visible-terminal' },
+        );
+      }
+      if (workerPrompt.includes('You are the Evaluator role')) {
+        options.events?.onThinkingDelta?.(
+          'Evaluator is checking whether the coordinated result is ready to present.\n',
+        );
+        options.events?.onTextDelta?.('Evaluator final answer is ready.\n');
+        return buildAssistantResult(
+          buildVerdictResponse(
+            'Evaluator final answer is ready.',
+            'accept',
+            'The coordinated result is complete and independently verified.',
+          ),
+          { sessionId: 'session-evaluator-h2-visible-terminal' },
+        );
+      }
+      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 160)}`);
+    });
+
+    const result = await runManagedTask(
+      {
+        provider: 'anthropic',
+        agentMode: 'ama',
+        events: {
+          onTextDelta: (text) => {
+            streamedText.push(text);
+          },
+          onThinkingDelta: (text) => {
+            streamedThinking.push(text);
+          },
+        },
+      },
+      'Implement the coordinated change and surface the verified final answer.',
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.lastText).toContain('Evaluator final answer is ready.');
+    expect(streamedText.join('')).toContain('PLANNER TEXT SHOULD STAY VISIBLE');
+    expect(streamedText.join('')).toContain('GENERATOR TEXT SHOULD STAY VISIBLE');
+    expect(streamedText.join('')).toContain('Evaluator final answer is ready.');
+    expect(streamedThinking.join('')).toContain('SCOUT THINKING SHOULD STAY VISIBLE');
+    expect(streamedThinking.join('')).toContain('PLANNER THINKING SHOULD STAY VISIBLE');
+    expect(streamedThinking.join('')).toContain('GENERATOR THINKING SHOULD STAY VISIBLE');
+    expect(streamedThinking.join('')).toContain('Evaluator is checking whether the coordinated result is ready to present.');
   });
 
   it('runs tactical read-only lookup fan-out inside AMA H0 and keeps the parent as final authority', async () => {
@@ -600,6 +903,103 @@ describe('runManagedTask', () => {
     // Verify Scout H0 has no tool restrictions (undefined toolPolicy)
     const scoutAssignment = result.managedTask?.roleAssignments.find((a) => a.role === 'scout');
     expect(scoutAssignment?.toolPolicy).toBeUndefined();
+  });
+
+  it('keeps large current-diff reviews out of scout-direct fallback and forces the managed H2 review stack', async () => {
+    const workspaceRoot = await createTempDir('kodax-task-engine-large-review-floor-root-');
+    const repoRoot = await createTempDir('kodax-task-engine-large-review-floor-repo-');
+
+    mockCreateReasoningPlan.mockResolvedValue(
+      buildPlan({
+        primaryTask: 'review',
+        taskFamily: 'review',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'pr-review',
+        complexity: 'complex',
+        riskLevel: 'medium',
+        mutationSurface: 'read-only',
+        harnessProfile: 'H1_EXECUTE_EVAL',
+        reviewScale: 'large',
+        needsIndependentQA: true,
+        topologyCeiling: 'H2_PLAN_EXECUTE_EVAL',
+        upgradeCeiling: 'H2_PLAN_EXECUTE_EVAL',
+        reason: 'Large current-diff reviews must not collapse into scout-direct fallback.',
+      }),
+    );
+
+    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
+      if (workerPrompt.includes('You are the Scout role')) {
+        return buildAssistantResult(
+          buildScoutResponse('Scout thinks the review might finish directly.', 'H0_DIRECT'),
+          { sessionId: 'session-scout-large-review-floor' },
+        );
+      }
+      if (workerPrompt.includes('You are the Planner role')) {
+        return buildAssistantResult(
+          buildContractResponse('Plan the large review and reduce it through the managed review stack.'),
+          { sessionId: 'session-planner-large-review-floor' },
+        );
+      }
+      if (workerPrompt.includes('You are the Generator role')) {
+        return buildAssistantResult(
+          buildHandoffResponse([
+            '## Findings',
+            '',
+            '- [high] `packages/coding/src/task-engine.ts`: duplicated normalization paths can diverge.',
+            '- [medium] `packages/repl/src/ui/InkREPL.tsx`: managed live events need durable transcript persistence.',
+          ].join('\n')),
+          { sessionId: 'session-generator-large-review-floor' },
+        );
+      }
+      if (workerPrompt.includes('You are the Evaluator role')) {
+        return buildAssistantResult(
+          buildVerdictResponse(
+            [
+              '## Findings',
+              '',
+              '- [high] `packages/coding/src/task-engine.ts`: duplicated normalization paths can diverge.',
+              '- [medium] `packages/repl/src/ui/InkREPL.tsx`: managed live events need durable transcript persistence.',
+            ].join('\n'),
+            'accept',
+            'Managed review completed with concrete findings.',
+          ),
+          { sessionId: 'session-evaluator-large-review-floor' },
+        );
+      }
+      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 120)}`);
+    });
+
+    const result = await runManagedTask(
+      {
+        provider: 'anthropic',
+        agentMode: 'ama',
+        context: {
+          managedTaskWorkspaceDir: workspaceRoot,
+          executionCwd: repoRoot,
+          gitRoot: repoRoot,
+          repoIntelligenceMode: 'oss',
+          repoRoutingSignals: buildRepoRoutingSignals({
+            workspaceRoot: repoRoot,
+            changedFileCount: 23,
+            changedLineCount: 2797,
+            addedLineCount: 2518,
+            deletedLineCount: 279,
+            touchedModuleCount: 3,
+            changedModules: ['packages/coding', 'packages/repl', 'docs'],
+            crossModule: true,
+          }),
+        },
+      },
+      'Please review the current repository changes for merge blockers and give me the final review findings.',
+    );
+
+    expect(mockRunDirectKodaX).toHaveBeenCalledTimes(4);
+    expect(result.routingDecision?.harnessProfile).toBe('H2_PLAN_EXECUTE_EVAL');
+    expect(result.managedTask?.contract.harnessProfile).toBe('H2_PLAN_EXECUTE_EVAL');
+    expect(result.managedTask?.roleAssignments.map((item) => item.role)).toEqual(['planner', 'generator', 'evaluator']);
+    expect(result.managedTask?.runtime?.routingOverrideReason).toContain('large diff-driven review');
+    expect(result.lastText).toContain('## Findings');
+    expect(result.lastText).toContain('duplicated normalization paths can diverge');
   });
 
   it('runs tactical review child fan-out inside AMA H0 and keeps the parent as final authority', async () => {
@@ -2510,6 +2910,7 @@ describe('runManagedTask', () => {
     expect(generatorPrompt).toContain('Consume the Scout handoff before collecting more evidence.');
     expect(generatorPrompt).toContain('Only serialize tool calls when a later call depends on an earlier result.');
     expect(generatorPrompt).toContain('This H1 run is read-only. Do not mutate files, code, or system state.');
+    expect(generatorPrompt).toContain('Never mention internal protocol tools, fenced blocks, MCP, capability runtimes, or extension runtimes in the user-facing answer.');
     expect(generatorPrompt).not.toContain('Consume the Scout handoff and Planner contract before collecting more evidence.');
     expect(evaluatorPrompt).toContain('When status=revise, keep the user-facing text short and specific');
     expect(evaluatorPrompt).toContain('Do not write a full polished final report when status=revise.');
@@ -2517,7 +2918,447 @@ describe('runManagedTask', () => {
     expect(evaluatorPrompt).toContain('Keep parallel batches focused: prefer a few narrow grep/read/diff calls over many tiny sequential probes.');
     expect(evaluatorPrompt).toContain('user_answer: <optional final user-facing answer; multi-line content may continue on following lines>');
     expect(evaluatorPrompt).toContain('Prefer putting the final user-facing answer in user_answer:');
+    expect(evaluatorPrompt).toContain('Never mention internal protocol tools, fenced blocks, MCP, capability runtimes, or extension runtimes in the user-facing answer.');
     expect(evaluatorPrompt).not.toContain('Start from the Planner contract and Generator handoff.');
+  });
+
+  it('accepts common evaluator verdict status variants instead of treating them as missing blocks', async () => {
+    const workspaceRoot = await createTempDir('kodax-task-engine-h1-status-variant-');
+    mockCreateReasoningPlan.mockResolvedValue(
+      buildPlan({
+        primaryTask: 'review',
+        taskFamily: 'review',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'pr-review',
+        complexity: 'moderate',
+        riskLevel: 'medium',
+        harnessProfile: 'H1_EXECUTE_EVAL',
+        needsIndependentQA: true,
+        mutationSurface: 'read-only',
+        topologyCeiling: 'H1_EXECUTE_EVAL',
+        upgradeCeiling: 'H1_EXECUTE_EVAL',
+        reason: 'Use checked-direct review.',
+      }),
+    );
+    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
+      if (workerPrompt.includes('You are the Scout role')) {
+        return buildAssistantResult(
+          buildScoutResponse('Scout kept the task on H1.', 'H1_EXECUTE_EVAL'),
+          { sessionId: 'session-scout-variant' },
+        );
+      }
+      if (workerPrompt.includes('You are the Generator role')) {
+        return buildAssistantResult(
+          buildHandoffResponse('Generator completed the requested review pass.'),
+          { sessionId: 'session-generator-variant' },
+        );
+      }
+      if (workerPrompt.includes('You are the Evaluator role')) {
+        return buildAssistantResult(
+          buildRawVerdictResponse(
+            'Evaluator accepted the checked-direct result.',
+            'accepted.',
+            'The answer is complete and supported.',
+          ),
+          { sessionId: 'session-evaluator-variant' },
+        );
+      }
+      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 120)}`);
+    });
+
+    const result = await runManagedTask(
+      {
+        provider: 'anthropic',
+        agentMode: 'ama',
+        context: {
+          managedTaskWorkspaceDir: workspaceRoot,
+        },
+      },
+      'Review the current change set and call out any important issues.',
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.lastText).toContain('Evaluator accepted the checked-direct result.');
+    expect(result.signalReason ?? '').not.toContain('missing kodax-task-verdict');
+    expect(result.managedProtocolPayload?.verdict?.status).toBe('accept');
+  });
+
+  it('accepts a trailing verdict block even when the model adds extra chatter afterwards', async () => {
+    const workspaceRoot = await createTempDir('kodax-task-engine-trailing-verdict-');
+    mockCreateReasoningPlan.mockResolvedValue(
+      buildPlan({
+        primaryTask: 'review',
+        taskFamily: 'review',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'pr-review',
+        complexity: 'moderate',
+        riskLevel: 'medium',
+        harnessProfile: 'H1_EXECUTE_EVAL',
+        needsIndependentQA: true,
+        mutationSurface: 'read-only',
+        topologyCeiling: 'H1_EXECUTE_EVAL',
+        upgradeCeiling: 'H1_EXECUTE_EVAL',
+        reason: 'Use checked-direct review.',
+      }),
+    );
+    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
+      if (workerPrompt.includes('You are the Scout role')) {
+        return buildAssistantResult(
+          buildScoutResponse('Scout kept the task on H1.', 'H1_EXECUTE_EVAL'),
+          { sessionId: 'session-scout-trailing' },
+        );
+      }
+      if (workerPrompt.includes('You are the Generator role')) {
+        return buildAssistantResult(
+          buildHandoffResponse('Generator completed the requested review pass.'),
+          { sessionId: 'session-generator-trailing' },
+        );
+      }
+      if (workerPrompt.includes('You are the Evaluator role')) {
+        return buildAssistantResult(
+          [
+            'Evaluator accepted the checked-direct result.',
+            '```kodax-task-verdict',
+            'status: accepted',
+            'reason: Looks good.',
+            'followups:',
+            '- none',
+            '```',
+            'Final note: thanks.',
+          ].join('\n'),
+          { sessionId: 'session-evaluator-trailing' },
+        );
+      }
+      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 120)}`);
+    });
+
+    const result = await runManagedTask(
+      {
+        provider: 'anthropic',
+        agentMode: 'ama',
+        context: {
+          managedTaskWorkspaceDir: workspaceRoot,
+        },
+      },
+      'Review the current change set and call out any important issues.',
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.signalReason ?? '').not.toContain('missing kodax-task-verdict');
+  });
+
+  it('accepts json verdict blocks with aliased fields', async () => {
+    const workspaceRoot = await createTempDir('kodax-task-engine-json-verdict-');
+    mockCreateReasoningPlan.mockResolvedValue(
+      buildPlan({
+        primaryTask: 'review',
+        taskFamily: 'review',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'pr-review',
+        complexity: 'moderate',
+        riskLevel: 'medium',
+        harnessProfile: 'H1_EXECUTE_EVAL',
+        needsIndependentQA: true,
+        mutationSurface: 'read-only',
+        topologyCeiling: 'H1_EXECUTE_EVAL',
+        upgradeCeiling: 'H1_EXECUTE_EVAL',
+        reason: 'Use checked-direct review.',
+      }),
+    );
+    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
+      if (workerPrompt.includes('You are the Scout role')) {
+        return buildAssistantResult(
+          buildScoutResponse('Scout kept the task on H1.', 'H1_EXECUTE_EVAL'),
+          { sessionId: 'session-scout-json' },
+        );
+      }
+      if (workerPrompt.includes('You are the Generator role')) {
+        return buildAssistantResult(
+          buildHandoffResponse('Generator completed the requested review pass.'),
+          { sessionId: 'session-generator-json' },
+        );
+      }
+      if (workerPrompt.includes('You are the Evaluator role')) {
+        return buildAssistantResult(
+          [
+            'Evaluator accepts the checked-direct result via JSON.',
+            '```kodax-task-verdict',
+            JSON.stringify({
+              status: 'accepted.',
+              reason: 'JSON verdict parsed successfully.',
+              userAnswer: 'Final answer is ready.',
+              nextHarness: 'h1',
+              followups: ['Address the loose section.'],
+            }, null, 2),
+            '```',
+          ].join('\n'),
+          { sessionId: 'session-evaluator-json' },
+        );
+      }
+      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 120)}`);
+    });
+
+    const result = await runManagedTask(
+      {
+        provider: 'anthropic',
+        agentMode: 'ama',
+        context: {
+          managedTaskWorkspaceDir: workspaceRoot,
+        },
+      },
+      'Review the current change set and call out any important issues.',
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.lastText).toContain('Final answer is ready.');
+    expect(result.signalReason ?? '').not.toContain('missing kodax-task-verdict');
+  });
+
+  it('falls back to the generator answer with a degraded verification note when evaluator verdict output stays malformed', async () => {
+    const workspaceRoot = await createTempDir('kodax-task-engine-malformed-verdict-');
+    const streamedText: string[] = [];
+    const rawStructuredPayload = [
+      'Evaluator visible prose before the malformed block.',
+      '```kodax-investigation-shards',
+      JSON.stringify({
+        summary: 'Large malformed payload',
+        shards: Array.from({ length: 8 }, (_value, index) => ({
+          id: `shard-${index + 1}`,
+          question: `Question ${index + 1}`,
+          scope: `Scope ${index + 1} `.repeat(40),
+          priority: 'high',
+        })),
+      }),
+      '```',
+    ].join('\n');
+
+    mockCreateReasoningPlan.mockResolvedValue(
+      buildPlan({
+        primaryTask: 'review',
+        taskFamily: 'review',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'pr-review',
+        complexity: 'moderate',
+        riskLevel: 'medium',
+        harnessProfile: 'H1_EXECUTE_EVAL',
+        needsIndependentQA: true,
+        mutationSurface: 'read-only',
+        topologyCeiling: 'H1_EXECUTE_EVAL',
+        upgradeCeiling: 'H1_EXECUTE_EVAL',
+        reason: 'Use checked-direct review.',
+      }),
+    );
+    mockRunDirectKodaX.mockImplementation(async (options, workerPrompt: string) => {
+      if (workerPrompt.includes('You are the Scout role')) {
+        options.events?.onTextDelta?.('SCOUT RAW SHOULD STAY VISIBLE');
+        return buildAssistantResult(
+          buildScoutResponse('Scout kept the task on H1.', 'H1_EXECUTE_EVAL'),
+          { sessionId: 'session-scout-malformed' },
+        );
+      }
+      if (workerPrompt.includes('You are the Generator role')) {
+        return buildAssistantResult(
+          buildHandoffResponse('Generator completed the requested review pass.'),
+          { sessionId: 'session-generator-malformed' },
+        );
+      }
+      if (workerPrompt.includes('You are the Evaluator role')) {
+        options.events?.onTextDelta?.(rawStructuredPayload);
+        return buildAssistantResult(rawStructuredPayload, { sessionId: 'session-evaluator-malformed' });
+      }
+      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 120)}`);
+    });
+
+    const result = await runManagedTask(
+      {
+        provider: 'anthropic',
+        agentMode: 'ama',
+        context: {
+          managedTaskWorkspaceDir: workspaceRoot,
+        },
+        events: {
+          onTextDelta: (text) => {
+            streamedText.push(text);
+          },
+        },
+      },
+      'Review the current change set and tell me whether it is ready.',
+    );
+
+      expect(result.success).toBe(false);
+      expect(result.signal).toBe('BLOCKED');
+      expect(result.signalReason).toContain('structured verification data');
+      expect(result.signalReason).not.toContain('kodax-task-verdict');
+      expect(result.signalDebugReason).toContain('kodax-task-verdict');
+      expect(result.lastText).toContain('Generator completed the requested review pass.');
+      expect(result.lastText).toContain('Verification degraded:');
+      expect(result.lastText).not.toContain('kodax-task-verdict');
+      expect(result.lastText).not.toContain('kodax-investigation-shards');
+      expect(result.lastText.length).toBeLessThan(2600);
+      expect(result.protocolRawText).toBeUndefined();
+      expect(result.managedProtocolPayload?.handoff?.status).toBe('ready');
+      expect(result.managedTask?.verdict.continuationSuggested).toBe(true);
+      expect(result.managedTask?.runtime?.degradedVerification?.fallbackWorkerId).toBe('generator');
+      expect(result.managedTask?.runtime?.degradedVerification?.debugReason).toContain('kodax-task-verdict');
+      expect(streamedText.join('')).toContain('SCOUT RAW SHOULD STAY VISIBLE');
+      expect(streamedText.join('')).not.toContain('kodax-investigation-shards');
+
+      const feedbackArtifact = result.managedTask?.evidence.artifacts.find((artifact) => artifact.path.endsWith('feedback.json'));
+      expect(feedbackArtifact?.path).toBeTruthy();
+      const feedbackJson = JSON.parse(await readFile(feedbackArtifact!.path, 'utf8'));
+      expect(feedbackJson.reason).toContain('structured verification data');
+      expect(feedbackJson.debugReason).toContain('kodax-task-verdict');
+      expect(feedbackJson.protocolParseFailed).toBe(true);
+      const rawFeedbackPath = path.join(path.dirname(feedbackArtifact!.path), 'feedback-raw.txt');
+      expect(existsSync(rawFeedbackPath)).toBe(true);
+      await expect(readFile(rawFeedbackPath, 'utf8')).resolves.toContain('kodax-investigation-shards');
+    });
+
+  it('accepts structured managed protocol payloads without fenced protocol blocks', async () => {
+    const workspaceRoot = await createTempDir('kodax-task-engine-structured-protocol-');
+    mockCreateReasoningPlan.mockResolvedValue(
+      buildPlan({
+        primaryTask: 'review',
+        taskFamily: 'review',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'pr-review',
+        complexity: 'moderate',
+        riskLevel: 'medium',
+        harnessProfile: 'H1_EXECUTE_EVAL',
+        needsIndependentQA: true,
+        mutationSurface: 'read-only',
+        topologyCeiling: 'H1_EXECUTE_EVAL',
+        upgradeCeiling: 'H1_EXECUTE_EVAL',
+        reason: 'Managed workers can provide protocol payloads directly.',
+      }),
+    );
+
+    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
+      if (workerPrompt.includes('You are the Scout role')) {
+        return buildAssistantResult(
+          'Scout confirmed the task should stay on H1.',
+          {
+            sessionId: 'session-scout-structured-payload',
+            managedProtocolPayload: {
+              scout: {
+                summary: 'Scout confirmed the task should stay on H1.',
+                confirmedHarness: 'H1_EXECUTE_EVAL',
+                scope: ['Inspect the changed review surface.'],
+                requiredEvidence: ['Generator handoff and evaluator acceptance.'],
+              },
+            },
+          },
+        );
+      }
+      if (workerPrompt.includes('You are the Generator role')) {
+        return buildAssistantResult(
+          'Generator completed the requested review pass.',
+          {
+            sessionId: 'session-generator-structured-payload',
+            managedProtocolPayload: {
+              handoff: {
+                status: 'ready',
+                summary: 'Generator completed the requested review pass.',
+                evidence: ['Validated the changed review surface.'],
+                followup: ['none'],
+                userFacingText: 'Generator completed the requested review pass.',
+              },
+            },
+          },
+        );
+      }
+      if (workerPrompt.includes('You are the Evaluator role')) {
+        return buildAssistantResult(
+          'Evaluator accepts the review result without further changes.',
+          {
+            sessionId: 'session-evaluator-structured-payload',
+            managedProtocolPayload: {
+              verdict: {
+                source: 'evaluator',
+                status: 'accept',
+                reason: 'Structured payload satisfied the evaluator contract.',
+                followups: ['none'],
+                userFacingText: 'Evaluator accepts the review result without further changes.',
+              },
+            },
+          },
+        );
+      }
+      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 120)}`);
+    });
+
+    const result = await runManagedTask(
+      {
+        provider: 'anthropic',
+        agentMode: 'ama',
+        context: {
+          managedTaskWorkspaceDir: workspaceRoot,
+        },
+      },
+      'Review the current changes and conclude only when the evaluator accepts the result.',
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.signalReason ?? '').not.toContain('missing kodax-task');
+    expect(result.managedProtocolPayload?.verdict?.status).toBe('accept');
+    expect(result.managedTask?.contract.harnessProfile).toBe('H1_EXECUTE_EVAL');
+    expect(result.lastText).toContain('Evaluator accepts the review result without further changes.');
+  });
+
+  it('reuses normalized handoff payloads at round reduction time instead of reparsing trailing text', async () => {
+    const workspaceRoot = await createTempDir('kodax-task-engine-handoff-payload-');
+    mockCreateReasoningPlan.mockResolvedValue(
+      buildPlan({
+        primaryTask: 'review',
+        taskFamily: 'review',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'pr-review',
+        complexity: 'moderate',
+        riskLevel: 'medium',
+        harnessProfile: 'H1_EXECUTE_EVAL',
+        needsIndependentQA: true,
+        mutationSurface: 'read-only',
+        topologyCeiling: 'H1_EXECUTE_EVAL',
+        upgradeCeiling: 'H1_EXECUTE_EVAL',
+        reason: 'Use checked-direct review.',
+      }),
+    );
+    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
+      if (workerPrompt.includes('You are the Scout role')) {
+        return buildAssistantResult(
+          buildScoutResponse('Scout kept the task on H1.', 'H1_EXECUTE_EVAL'),
+          { sessionId: 'session-scout-handoff-payload' },
+        );
+      }
+      if (workerPrompt.includes('You are the Generator role')) {
+        return buildAssistantResult(
+          [
+            buildHandoffResponse('Generator reports evidence is still incomplete.', 'incomplete'),
+            'Trailing chatter after the handoff block should not matter.',
+          ].join('\n'),
+          { sessionId: 'session-generator-handoff-payload' },
+        );
+      }
+      if (workerPrompt.includes('You are the Evaluator role')) {
+        throw new Error('Evaluator should not run when generator handoff already requests continuation.');
+      }
+      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 120)}`);
+    });
+
+    const result = await runManagedTask(
+      {
+        provider: 'anthropic',
+        agentMode: 'ama',
+        context: {
+          managedTaskWorkspaceDir: workspaceRoot,
+        },
+      },
+      'Review the current change set and continue only when the generator handoff is structurally ready.',
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.lastText).toContain('Generator reports evidence is still incomplete.');
+    expect(result.signalReason ?? '').not.toContain('did not produce a consumable handoff');
   });
 
   it('keeps H1 mutation work on checked-direct and returns blocked after one short revise instead of escalating to H2', async () => {

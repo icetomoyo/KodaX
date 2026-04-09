@@ -314,6 +314,7 @@ export type HistoryItemType =
   | "tool_group"
   | "thinking"
   | "error"
+  | "event"
   | "info"
   | "hint";
 
@@ -340,6 +341,7 @@ export interface HistoryItemUser extends HistoryItemBase {
 export interface HistoryItemAssistant extends HistoryItemBase {
   type: "assistant";
   text: string;
+  compactText?: string;
   isStreaming?: boolean;
 }
 
@@ -365,6 +367,7 @@ export interface HistoryItemToolGroup extends HistoryItemBase {
 export interface HistoryItemThinking extends HistoryItemBase {
   type: "thinking";
   text: string;
+  compactText?: string;
 }
 
 /**
@@ -375,6 +378,13 @@ export interface HistoryItemError extends HistoryItemBase {
   text: string;
 }
 
+export interface HistoryItemEvent extends HistoryItemBase {
+  type: "event";
+  text: string;
+  icon?: string;
+  compactText?: string;
+}
+
 /**
  * Info message - 信息消息
  */
@@ -382,6 +392,7 @@ export interface HistoryItemInfo extends HistoryItemBase {
   type: "info";
   text: string;
   icon?: string;
+  compactText?: string;
 }
 
 /**
@@ -402,6 +413,7 @@ export type HistoryItem =
   | HistoryItemToolGroup
   | HistoryItemThinking
   | HistoryItemError
+  | HistoryItemEvent
   | HistoryItemInfo
   | HistoryItemHint;
 
@@ -415,6 +427,7 @@ export type CreatableHistoryItem =
   | Omit<HistoryItemSystem, "id" | "timestamp">
   | Omit<HistoryItemThinking, "id" | "timestamp">
   | Omit<HistoryItemError, "id" | "timestamp">
+  | Omit<HistoryItemEvent, "id" | "timestamp">
   | Omit<HistoryItemInfo, "id" | "timestamp">
   | Omit<HistoryItemHint, "id" | "timestamp">
   | Omit<HistoryItemToolGroup, "id" | "timestamp">;

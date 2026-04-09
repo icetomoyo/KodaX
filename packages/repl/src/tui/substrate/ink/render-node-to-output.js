@@ -102,11 +102,18 @@ const renderNodeToOutput = (node, output, options) => {
             return;
         }
         let clipped = false;
+        let scrollOffsetY = 0;
         if (node.nodeName === 'ink-box') {
             renderBackground(x, y, node, output);
             renderBorder(x, y, node, output);
-            const clipHorizontally = node.style.overflowX === 'hidden' || node.style.overflow === 'hidden';
-            const clipVertically = node.style.overflowY === 'hidden' || node.style.overflow === 'hidden';
+            const overflowX = node.style.overflowX ?? node.style.overflow;
+            const overflowY = node.style.overflowY ?? node.style.overflow;
+            const clipHorizontally = overflowX === 'hidden' || overflowX === 'scroll';
+            const clipVertically = overflowY === 'hidden' || overflowY === 'scroll';
+            if (overflowY === 'scroll' && node.attributes?.virtualScrollWindowed !== true) {
+                const rawScrollTop = node.scrollTop ?? node.attributes?.scrollTop;
+                scrollOffsetY = Math.max(0, Math.floor(rawScrollTop ?? 0));
+            }
             if (clipHorizontally || clipVertically) {
                 const x1 = clipHorizontally
                     ? x + yogaNode.getComputedBorder(Yoga.EDGE_LEFT)
@@ -132,7 +139,7 @@ const renderNodeToOutput = (node, output, options) => {
             for (const childNode of node.childNodes) {
                 renderNodeToOutput(childNode, output, {
                     offsetX: x,
-                    offsetY: y,
+                    offsetY: y - scrollOffsetY,
                     transformers: newTransformers,
                     skipStaticElements,
                 });

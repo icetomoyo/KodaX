@@ -11,16 +11,18 @@ export interface TranscriptModeSurfaceProps extends Omit<
   banner?: React.ReactNode;
   windowed?: boolean;
   showDetailedTools?: boolean;
+  showAllContent?: boolean;
 }
 
 export const TranscriptModeSurface: React.FC<TranscriptModeSurfaceProps> = ({
   banner,
   windowed = false,
   showDetailedTools = false,
+  showAllContent = false,
   ...messageListProps
 }) => {
   return (
-    <Box flexDirection="column" flexGrow={windowed ? 1 : 0}>
+    <Box flexDirection="column">
       {banner}
       <TranscriptViewport
         {...messageListProps}
@@ -28,6 +30,7 @@ export const TranscriptModeSurface: React.FC<TranscriptModeSurfaceProps> = ({
         windowed={windowed}
         showFullThinking
         showDetailedTools={showDetailedTools}
+        showAllContent={showAllContent}
         showLiveProgressRows
       />
     </Box>

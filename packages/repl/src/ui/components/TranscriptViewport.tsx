@@ -138,7 +138,7 @@ export const TranscriptViewport: React.FC<TranscriptViewportProps> = ({
     : messageListProps.viewportRows;
 
   return (
-    <Box flexDirection="column" flexGrow={1}>
+    <Box flexDirection="column" flexGrow={messageListProps.windowed ? 0 : 1}>
       {inlineChromeVisible && browse?.hintText ? (
         <Box paddingX={1}>
           <Text dimColor>{browse.hintText}</Text>

@@ -121,11 +121,16 @@ function resolveScrollWindow(snapshot: ScrollSnapshot): ScrollBoxWindow {
   };
 }
 
+function resolveNativeScrollTop(snapshot: ScrollSnapshot): number {
+  const clampedOffset = clampScrollTop(snapshot, snapshot.scrollTop);
+  return Math.max(0, snapshot.scrollHeight - snapshot.viewportHeight - clampedOffset);
+}
+
 export const ScrollBox: React.FC<ScrollBoxProps> = ({
   children,
   width,
-  flexGrow = 1,
-  flexShrink = 0,
+  flexGrow = 0,
+  flexShrink = 1,
   paddingTop = 0,
   scrollTop = 0,
   scrollHeight = 0,
@@ -305,16 +310,40 @@ export const ScrollBox: React.FC<ScrollBoxProps> = ({
     onWindowChange?.(windowState);
   }, [onWindowChange, windowState]);
 
-  return (
+  const content = renderWindow ? renderWindow(windowState) : children;
+
+  const totalViewportHeight = Math.max(0, viewportHeight + paddingTop);
+  const nativeScrollTop = resolveNativeScrollTop(snapshotRef.current);
+  return React.createElement(
+    "ink-box",
+    {
+      style: {
+        flexWrap: "nowrap",
+        flexDirection: "row",
+        flexGrow,
+        flexShrink,
+        width,
+        height: totalViewportHeight,
+        paddingTop,
+        overflowX: "visible",
+        overflowY: "scroll",
+      },
+      scrollTop: nativeScrollTop,
+      scrollHeight: snapshotRef.current.scrollHeight,
+      scrollViewportHeight: snapshotRef.current.viewportHeight,
+      pendingScrollDelta: snapshotRef.current.pendingDelta,
+      virtualScrollWindowed: Boolean(renderWindow),
+      ...(snapshotRef.current.clampMin !== undefined ? { scrollClampMin: snapshotRef.current.clampMin } : {}),
+      ...(snapshotRef.current.clampMax !== undefined ? { scrollClampMax: snapshotRef.current.clampMax } : {}),
+      ...(stickyScroll ? { stickyScroll: true } : {}),
+    },
     <Box
       flexDirection="column"
-      flexGrow={flexGrow}
-      flexShrink={flexShrink}
-      width={width}
-      paddingTop={paddingTop}
-      overflowY="hidden"
+      flexGrow={1}
+      flexShrink={0}
+      width="100%"
     >
-      {renderWindow ? renderWindow(windowState) : children}
-    </Box>
+      {content}
+    </Box>,
   );
 };

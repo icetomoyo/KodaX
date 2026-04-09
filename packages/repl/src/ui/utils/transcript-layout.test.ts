@@ -13,6 +13,10 @@ import {
   sliceHistoryToRecentRounds,
 } from "./transcript-layout.js";
 
+function renderedText(model: ReturnType<typeof buildTranscriptRenderModel>): string {
+  return [...model.rows, ...model.previewRows].map((row) => row.text).join("\n");
+}
+
 function assistant(text: string): HistoryItem {
   return {
     id: "assistant-1",
@@ -100,6 +104,34 @@ describe("transcript-layout", () => {
     expect(text).not.toContain("Info");
   });
 
+  it("keeps compact info text by default but expands full info content in transcript show-all mode", () => {
+    const item: HistoryItem = {
+      id: "info-detail-1",
+      type: "info",
+      text: "AMA H2 - Planner completed: compact summary\n\nFull planner detail line 1\nFull planner detail line 2",
+      compactText: "AMA H2 - Planner completed: compact summary",
+      icon: ">",
+      timestamp: Date.now(),
+    };
+
+    const compactRows = buildTranscriptRows({
+      items: [item],
+      viewportWidth: 80,
+    });
+    const compactText = compactRows.map((row) => row.text).join("\n");
+    expect(compactText).toContain("> AMA H2 - Planner completed: compact summary");
+    expect(compactText).not.toContain("Full planner detail line 2");
+
+    const expandedRows = buildTranscriptRows({
+      items: [item],
+      viewportWidth: 80,
+      showAllContent: true,
+    });
+    const expandedText = expandedRows.map((row) => row.text).join("\n");
+    expect(expandedText).toContain("Full planner detail line 1");
+    expect(expandedText).toContain("Full planner detail line 2");
+  });
+
   it("includes streaming and loading rows in a single transcript", () => {
     const rows = buildTranscriptRows({
       items: [],
@@ -130,6 +162,67 @@ describe("transcript-layout", () => {
     expect(text).toContain("partial response");
     expect(text).toContain("read_file");
     expect(text).toContain("* tools: read_file");
+  });
+
+  it("keeps managed live events out of transcript live render models while preserving actual streaming content", () => {
+    const model = buildTranscriptRenderModel({
+      items: [assistant("Previous review round finished.")],
+      managedLiveEvents: [
+        {
+          id: "managed-event-1",
+          type: "event",
+          timestamp: Date.now(),
+          icon: ">",
+          text: "Generator isolated two suspicious call sites.\nDetailed call-site notes remain available for expansion.",
+          compactText: "Generator isolated two suspicious call sites.",
+        },
+      ],
+      viewportWidth: 80,
+      isLoading: true,
+      isThinking: true,
+      thinkingCharCount: 84,
+      thinkingContent: "Verifying that the live transcript keeps progress events and final review text visible together.",
+      streamingResponse: "Found 2 must-fix issues.",
+      showFullThinking: true,
+      showLiveProgressRows: true,
+    });
+
+    const text = renderedText(model);
+    expect(text).toContain("Previous review round finished.");
+    expect(text).toContain("Verifying that the live transcript keeps progress events");
+    expect(text).toContain("Found 2 must-fix issues.");
+    expect(text).not.toContain("Generator isolated two suspicious call sites.");
+  });
+
+  it("ignores managed live thinking and assistant summaries in compact transcript mode", () => {
+    const model = buildTranscriptRenderModel({
+      items: [assistant("Previous review round finished.")],
+      managedLiveEvents: [
+        {
+          id: "managed-thinking-1",
+          type: "thinking",
+          timestamp: Date.now(),
+          text: "Scout thinking: full hidden reasoning detail that should stay out of compact transcript mode.",
+          compactText: "Scout thinking: tracing the protocol fallback path.",
+        },
+        {
+          id: "managed-assistant-1",
+          type: "assistant",
+          timestamp: Date.now(),
+          text: "Planner: full hidden worker summary detail that should stay out of compact transcript mode.",
+          compactText: "Planner: narrowed the diff review to task-engine.ts and InkREPL.tsx.",
+        },
+      ] as any,
+      viewportWidth: 80,
+      isLoading: false,
+      showLiveProgressRows: true,
+    });
+
+    const text = renderedText(model);
+    expect(text).toContain("Previous review round finished.");
+    expect(text).not.toContain("Scout thinking: tracing the protocol fallback path.");
+    expect(text).not.toContain("Planner: narrowed the diff review to task-engine.ts and InkREPL.tsx.");
+    expect(text).not.toContain("full hidden worker summary detail");
   });
 
   it("can suppress prompt-surface live progress rows while keeping streamed content", () => {
@@ -168,7 +261,8 @@ describe("transcript-layout", () => {
 
     const text = rows.map((row) => row.text).join("\n");
     expect(text).toContain("partial response");
-    expect(text).not.toContain("thinking details");
+    expect(text).toContain("thinking details");
+    expect(text).toContain("read_file - path/to/file");
     expect(text).not.toContain("Round 1");
     expect(text).not.toContain("* tools: read_file");
   });
@@ -219,6 +313,23 @@ describe("transcript-layout", () => {
     expect(text).not.toContain("thinking truncated; press Ctrl+O to inspect full reasoning");
   });
 
+  it("shows full thinking when transcript show-all mode is active", () => {
+    const thinking = "C".repeat(450);
+    const rows = buildTranscriptRows({
+      items: [],
+      viewportWidth: 80,
+      isLoading: true,
+      isThinking: true,
+      thinkingContent: thinking,
+      thinkingCharCount: thinking.length,
+      showAllContent: true,
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text.replace(/\n/g, "")).toContain("C".repeat(430));
+    expect(text).not.toContain("thinking truncated; press Ctrl+O to inspect full reasoning");
+  });
+
   it("truncates persisted thinking blocks in compact mode using transcript maxLines", () => {
     const rows = buildTranscriptRows({
       items: [
@@ -258,6 +369,36 @@ describe("transcript-layout", () => {
     const text = rows.map((row) => row.text).join("\n");
     expect(text).toContain("detail 8");
     expect(text).not.toContain("thinking truncated; press Ctrl+O to inspect full reasoning");
+  });
+
+  it("does not truncate tool output when transcript show-all mode is active", () => {
+    const output = Array.from({ length: 12 }, (_, index) => `output ${index + 1}`).join("\n");
+    const rows = buildTranscriptRows({
+      items: [
+        {
+          id: "tool-group-1",
+          type: "tool_group",
+          timestamp: Date.now(),
+          tools: [
+            {
+              id: "tool-1",
+              name: "bash",
+              status: ToolCallStatus.Success,
+              input: { command: "echo test" },
+              output,
+              startTime: Date.now(),
+            },
+          ],
+        },
+      ],
+      viewportWidth: 80,
+      showDetailedTools: true,
+      showAllContent: true,
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text).toContain("output 12");
+    expect(text).not.toContain("more lines");
   });
 
   it("shows AMA harness level and active worker in the live thinking row", () => {

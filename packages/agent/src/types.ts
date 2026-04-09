@@ -188,12 +188,15 @@ export type KodaXSessionUiHistoryItemType =
   | 'system'
   | 'thinking'
   | 'error'
+  | 'event'
   | 'info'
   | 'hint';
 
 export interface KodaXSessionUiHistoryItem {
   type: KodaXSessionUiHistoryItemType;
   text: string;
+  icon?: string;
+  compactText?: string;
 }
 
 export type KodaXSessionWorkspaceKind = 'detected' | 'managed';

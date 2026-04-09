@@ -55,6 +55,7 @@ export function buildAmaSummaryViewModel(options: {
     workStripText,
     backgroundTask: buildBackgroundTaskViewModel({
       isLoading: options.isLoading,
+      showPrimary: Boolean(options.parallelTextOverride ?? workStripText),
       activeWorkerTitle: options.status?.activeWorkerTitle,
       activePhase:
         options.status?.phase

@@ -3,6 +3,7 @@ import { formatLiveToolLabel } from "../utils/tool-display.js";
 
 export interface BackgroundTaskViewModelInput {
   isLoading: boolean;
+  showPrimary?: boolean;
   activeWorkerTitle?: string;
   activePhase?: string;
   parallelText?: string;
@@ -27,8 +28,9 @@ export function buildBackgroundTaskViewModel(
   input: BackgroundTaskViewModelInput,
 ): BackgroundTaskViewModel {
   const items: BackgroundTaskBarItem[] = [];
+  const showPrimary = input.showPrimary ?? true;
 
-  if (input.isLoading) {
+  if (input.isLoading && showPrimary) {
     const liveToolLabel = input.currentTool
       ? stripLiveActivityPrefix(
         formatLiveToolLabel(

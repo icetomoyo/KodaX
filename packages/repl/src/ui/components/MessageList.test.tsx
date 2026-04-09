@@ -164,6 +164,7 @@ describe("MessageList", () => {
   });
 
   it("renders transcript text selections using grapheme-aware ranges", () => {
+    const row = { key: "assistant-1-body-0", text: "浣犲ソA", itemId: "assistant-1" };
     const { lastFrame } = render(
       <MessageList
         items={[
@@ -171,7 +172,7 @@ describe("MessageList", () => {
             id: "assistant-1",
             type: "assistant",
             timestamp: 1,
-            text: "你好A",
+            text: "浣犲ソA",
           },
         ]}
         transcriptModel={{
@@ -179,14 +180,14 @@ describe("MessageList", () => {
           sections: [
             {
               key: "assistant-1",
-              rows: [{ key: "assistant-1-body-0", text: "你好A", itemId: "assistant-1" }],
+              rows: [row],
             },
           ],
-          rows: [{ key: "assistant-1-body-0", text: "你好A", itemId: "assistant-1" }],
+          rows: [row],
+          previewSections: [],
+          previewRows: [],
         }}
-        visibleRowsOverride={[
-          { key: "assistant-1-body-0", text: "你好A", itemId: "assistant-1" },
-        ]}
+        visibleRowsOverride={[row]}
         selectedTextRanges={new Map([
           ["assistant-1-body-0", { start: 1, end: 2 }],
         ])}
@@ -194,6 +195,32 @@ describe("MessageList", () => {
       />,
     );
 
-    expect(lastFrame()).toContain("你好A");
+    expect(lastFrame()).toContain("浣犲ソA");
+  });
+  it("does not duplicate preview rows when a renderer-owned visible window is supplied", () => {
+    const previewRow = { key: "streaming-body-0", text: "Preview row", itemId: "assistant-live" };
+    const { lastFrame } = render(
+      <MessageList
+        items={[]}
+        isLoading
+        transcriptModel={{
+          staticSections: [],
+          sections: [],
+          rows: [],
+          previewSections: [
+            {
+              key: "preview",
+              rows: [previewRow],
+            },
+          ],
+          previewRows: [previewRow],
+        }}
+        visibleRowsOverride={[previewRow]}
+        windowed
+      />,
+    );
+
+    const frame = lastFrame() ?? "";
+    expect((frame.match(/Preview row/g) ?? [])).toHaveLength(1);
   });
 });

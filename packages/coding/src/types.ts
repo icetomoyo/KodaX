@@ -205,6 +205,7 @@ export interface KodaXEvents {
   ) => Promise<boolean | string>;
   /** Ask user a question interactively - Issue 069 - 交互式向用户提问 */
   askUser?: (options: AskUserQuestionOptions) => Promise<string>;
+  /** Managed-worker role currently allowed to emit structured protocol payload. */
 }
 
 
@@ -533,6 +534,32 @@ export interface KodaXManagedTaskHarnessTransition {
   denialReason?: string;
 }
 
+export type KodaXManagedTaskPhase =
+  | 'starting'
+  | 'routing'
+  | 'preflight'
+  | 'round'
+  | 'worker'
+  | 'upgrade'
+  | 'completed';
+
+export type KodaXManagedLiveEventPresentation =
+  | 'status'
+  | 'assistant'
+  | 'thinking';
+
+export interface KodaXManagedLiveEvent {
+  key: string;
+  kind: 'progress' | 'completed' | 'notification' | 'warning';
+  presentation?: KodaXManagedLiveEventPresentation;
+  phase?: KodaXManagedTaskPhase;
+  workerId?: string;
+  workerTitle?: string;
+  summary: string;
+  detail?: string;
+  persistToHistory?: boolean;
+}
+
 export interface KodaXManagedTaskStatusEvent {
   agentMode: KodaXAgentMode;
   harnessProfile: KodaXHarnessProfile;
@@ -542,8 +569,11 @@ export interface KodaXManagedTaskStatusEvent {
   childFanoutCount?: number;
   currentRound?: number;
   maxRounds?: number;
-  phase?: 'starting' | 'routing' | 'preflight' | 'round' | 'worker' | 'upgrade' | 'completed';
+  phase?: KodaXManagedTaskPhase;
   note?: string;
+  detailNote?: string;
+  events?: KodaXManagedLiveEvent[];
+  persistToHistory?: boolean;
   upgradeCeiling?: KodaXHarnessProfile;
   globalWorkBudget?: number;
   budgetUsage?: number;
@@ -658,6 +688,11 @@ export interface KodaXContextOptions {
   taskSurface?: KodaXTaskSurface;
   /** Optional directory where managed task artifacts should be written. */
   managedTaskWorkspaceDir?: string;
+  /** Internal managed-worker protocol emission configuration. */
+  managedProtocolEmission?: {
+    enabled: boolean;
+    role: Exclude<KodaXTaskRole, 'direct'>;
+  };
   /** Optional structured metadata carried into the managed task contract. */
   taskMetadata?: Record<string, KodaXJsonValue>;
   /** Optional structured verification contract carried into managed tasks. */
@@ -772,6 +807,7 @@ export interface KodaXOrchestrationVerdict {
   summary: string;
   signal?: 'COMPLETE' | 'BLOCKED' | 'DECIDE';
   signalReason?: string;
+  signalDebugReason?: string;
   disposition?: 'complete' | 'blocked' | 'needs_continuation';
   continuationSuggested?: boolean;
 }
@@ -819,10 +855,16 @@ export interface KodaXManagedTaskRuntimeState {
     downgraded?: boolean;
     reasons: string[];
   };
+  degradedVerification?: {
+    fallbackWorkerId?: string;
+    reason: string;
+    debugReason?: string;
+  };
   degradedContinue?: boolean;
   reviewFilesOrAreas?: string[];
   toolOutputTruncated?: boolean;
   toolOutputTruncationNotes?: string[];
+  managedTimeline?: KodaXManagedLiveEvent[];
   evidenceAcquisitionMode?: 'overview' | 'diff-bundle' | 'diff-slice' | 'file-read';
   consecutiveEvidenceOnlyIterations?: number;
   globalWorkBudget?: number;
@@ -839,13 +881,75 @@ export interface KodaXManagedTask {
   runtime?: KodaXManagedTaskRuntimeState;
 }
 
+export interface KodaXManagedVerdictPayload {
+  source: 'evaluator' | 'worker';
+  status: 'accept' | 'revise' | 'blocked';
+  reason?: string;
+  debugReason?: string;
+  followups: string[];
+  userFacingText: string;
+  userAnswer?: string;
+  artifactPath?: string;
+  rawArtifactPath?: string;
+  rawResponseText?: string;
+  nextHarness?: KodaXTaskRoutingDecision['harnessProfile'];
+  protocolParseFailed?: boolean;
+  verificationDegraded?: boolean;
+  continuationSuggested?: boolean;
+  preferredFallbackWorkerId?: string;
+}
+
+export interface KodaXManagedScoutPayload {
+  summary?: string;
+  scope: string[];
+  requiredEvidence: string[];
+  reviewFilesOrAreas?: string[];
+  evidenceAcquisitionMode?: 'overview' | 'diff-bundle' | 'diff-slice' | 'file-read';
+  confirmedHarness?: KodaXTaskRoutingDecision['harnessProfile'];
+  userFacingText?: string;
+  skillMap?: {
+    skillSummary?: string;
+    executionObligations: string[];
+    verificationObligations: string[];
+    ambiguities: string[];
+    projectionConfidence?: KodaXSkillProjectionConfidence;
+  };
+}
+
+export interface KodaXManagedContractPayload {
+  summary?: string;
+  successCriteria: string[];
+  requiredEvidence: string[];
+  constraints: string[];
+}
+
+export interface KodaXManagedHandoffPayload {
+  status: 'ready' | 'incomplete' | 'blocked';
+  summary?: string;
+  evidence: string[];
+  followup: string[];
+  userFacingText: string;
+}
+
+export interface KodaXManagedProtocolPayload {
+  verdict?: KodaXManagedVerdictPayload;
+  scout?: KodaXManagedScoutPayload;
+  contract?: KodaXManagedContractPayload;
+  handoff?: KodaXManagedHandoffPayload;
+}
+
 export interface KodaXResult {
   success: boolean;
   lastText: string;
   signal?: 'COMPLETE' | 'BLOCKED' | 'DECIDE';
   signalReason?: string;
+  signalDebugReason?: string;
   messages: KodaXMessage[];
   sessionId: string;
+  /** Internal raw protocol output retained for artifact persistence after compacting visible failure text. */
+  protocolRawText?: string;
+  /** Structured managed-task protocol payload separated from visible text. */
+  managedProtocolPayload?: KodaXManagedProtocolPayload;
   /** Final visible routing decision for this run, including harness and work intent. */
   routingDecision?: KodaXTaskRoutingDecision;
   /** Managed task summary produced by the task engine for this run. */
@@ -888,4 +992,6 @@ export interface KodaXToolExecutionContext {
   extensionRuntime?: KodaXExtensionRuntime;
   /** Ask user a question interactively - 交互式向用户提问 (Issue 069) */
   askUser?: (options: AskUserQuestionOptions) => Promise<string>;
+  managedProtocolRole?: Exclude<KodaXTaskRole, 'direct'>;
+  emitManagedProtocol?: (payload: Partial<KodaXManagedProtocolPayload>) => void;
 }

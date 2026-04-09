@@ -16,17 +16,65 @@ import {
 
 export interface PromptSurfaceRenderModelOptions {
   items: readonly HistoryItem[];
+  managedLiveEvents?: readonly HistoryItem[];
   viewportWidth: number;
   streamingResponse?: string;
   isThinking?: boolean;
   thinkingContent?: string;
   isLoading?: boolean;
+  lastLiveActivityLabel?: string;
 }
 
 const PROMPT_THINKING_PREVIEW_MAX_LINES = 4;
 const PROMPT_THINKING_PREVIEW_MAX_CHARS = 240;
 const PROMPT_THINKING_TRUNCATION_HINT =
   "... (thinking truncated; press Ctrl+O to inspect full reasoning)";
+
+function buildPromptThinkingSection(
+  viewportWidth: number,
+  thinkingContent: string,
+): TranscriptSection | undefined {
+  const preview = buildPromptThinkingPreview(thinkingContent);
+  if (!preview) {
+    return undefined;
+  }
+
+  const rows: TranscriptRow[] = [];
+  pushWrappedRows(rows, "prompt-thinking-header", "Thinking", viewportWidth, {
+    color: "thinking",
+    italic: true,
+  });
+  pushWrappedRows(rows, "prompt-thinking-body", preview, bodyWidth(viewportWidth, 2), {
+    color: "thinking",
+    indent: 2,
+    italic: true,
+  });
+  pushBlankRow(rows, "prompt-thinking-blank");
+  return {
+    key: "prompt-thinking",
+    rows,
+  };
+}
+
+function buildPromptStreamingSection(
+  viewportWidth: number,
+  streamingResponse: string,
+): TranscriptSection {
+  const rows: TranscriptRow[] = [];
+  pushWrappedRows(rows, "prompt-streaming-header", "Assistant", viewportWidth, {
+    color: "secondary",
+    bold: true,
+  });
+  pushWrappedRows(rows, "prompt-streaming-body", streamingResponse, bodyWidth(viewportWidth, 2), {
+    color: "text",
+    indent: 2,
+  });
+  pushBlankRow(rows, "prompt-streaming-blank");
+  return {
+    key: "prompt-streaming",
+    rows,
+  };
+}
 
 function buildPromptThinkingPreview(text: string): string {
   const logicalLines = text
@@ -187,17 +235,20 @@ function buildPromptSurfaceSection(
       });
       break;
     case "assistant":
+      {
+        const displayText = item.compactText ?? item.text;
       pushWrappedRows(rows, `${item.id}-header`, `Assistant [${formatTimestamp(item.timestamp)}]`, viewportWidth, {
         color: "secondary",
         bold: true,
         itemId: item.id,
       });
-      pushWrappedRows(rows, `${item.id}-body`, item.text, bodyWidth(viewportWidth, 2), {
+      pushWrappedRows(rows, `${item.id}-body`, displayText, bodyWidth(viewportWidth, 2), {
         color: "text",
         indent: 2,
         itemId: item.id,
       });
       break;
+      }
     case "system":
       pushWrappedRows(rows, `${item.id}-header`, `System [${formatTimestamp(item.timestamp)}]`, viewportWidth, {
         color: "dim",
@@ -223,13 +274,19 @@ function buildPromptSurfaceSection(
       });
       break;
     case "info":
-      pushWrappedRows(rows, `${item.id}-body`, `${item.icon ?? "\u2139"} ${item.text}`, viewportWidth, {
+      pushWrappedRows(rows, `${item.id}-body`, `${item.icon ?? "\u2139"} ${item.compactText ?? item.text}`, viewportWidth, {
         color: "info",
         itemId: item.id,
       });
       break;
+    case "event":
+      pushWrappedRows(rows, `${item.id}-body`, `${item.icon ?? ">"} ${item.compactText ?? item.text}`, viewportWidth, {
+        color: "text",
+        itemId: item.id,
+      });
+      break;
     case "thinking": {
-      const preview = buildPromptThinkingPreview(item.text);
+      const preview = item.compactText?.trim() || buildPromptThinkingPreview(item.text);
       if (!preview) {
         return undefined;
       }
@@ -273,42 +330,18 @@ export function buildPromptSurfaceRenderModel(
   const sections = options.items
     .map((item) => buildPromptSurfaceSection(item, options.viewportWidth))
     .filter((section): section is TranscriptSection => Boolean(section));
+  const previewSections: TranscriptSection[] = [];
+  const normalizedStreamingResponse = options.streamingResponse?.trim() ?? "";
+  const normalizedThinkingContent = options.thinkingContent?.trim() ?? "";
 
-  if (options.streamingResponse?.trim()) {
-    const rows: TranscriptRow[] = [];
-    pushWrappedRows(rows, "prompt-streaming-header", "Assistant", options.viewportWidth, {
-      color: "secondary",
-      bold: true,
-    });
-    pushWrappedRows(rows, "prompt-streaming-body", options.streamingResponse, bodyWidth(options.viewportWidth, 2), {
-      color: "text",
-      indent: 2,
-    });
-    pushBlankRow(rows, "prompt-streaming-blank");
-    sections.push({
-      key: "prompt-streaming",
-      rows,
-    });
+  if (normalizedStreamingResponse) {
+    previewSections.push(buildPromptStreamingSection(options.viewportWidth, normalizedStreamingResponse));
   }
 
-  if (!options.streamingResponse?.trim() && options.isLoading && options.isThinking && options.thinkingContent?.trim()) {
-    const preview = buildPromptThinkingPreview(options.thinkingContent);
-    if (preview) {
-      const rows: TranscriptRow[] = [];
-      pushWrappedRows(rows, "prompt-thinking-header", "Thinking", options.viewportWidth, {
-        color: "thinking",
-        italic: true,
-      });
-      pushWrappedRows(rows, "prompt-thinking-body", preview, bodyWidth(options.viewportWidth, 2), {
-        color: "thinking",
-        indent: 2,
-        italic: true,
-      });
-      pushBlankRow(rows, "prompt-thinking-blank");
-      sections.push({
-        key: "prompt-thinking",
-        rows,
-      });
+  if (options.isLoading && normalizedThinkingContent) {
+    const thinkingSection = buildPromptThinkingSection(options.viewportWidth, normalizedThinkingContent);
+    if (thinkingSection) {
+      previewSections.push(thinkingSection);
     }
   }
 
@@ -316,5 +349,7 @@ export function buildPromptSurfaceRenderModel(
     staticSections: [],
     sections,
     rows: flattenTranscriptSections(sections),
+    previewSections,
+    previewRows: flattenTranscriptSections(previewSections),
   };
 }

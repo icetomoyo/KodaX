@@ -32,6 +32,7 @@ import { NotificationsSurface } from "./components/NotificationsSurface.js";
 import { StatusNoticesSurface } from "./components/StatusNoticesSurface.js";
 import { StashNotice } from "./components/StashNotice.js";
 import { Spinner } from "./components/LoadingIndicator.js";
+import { BackgroundTaskBar } from "./components/BackgroundTaskBar.js";
 import { buildFooterHeaderViewModel } from "./view-models/footer-header.js";
 import {
   UIStateProvider,
@@ -194,7 +195,6 @@ import {
   sliceHistoryToRecentRounds,
   type TranscriptRow,
 } from "./utils/transcript-layout.js";
-import { buildPromptSurfaceRenderModel } from "./utils/prompt-surface-layout.js";
 import {
   buildTranscriptCopyText,
   buildTranscriptSelectionSummary,
@@ -322,6 +322,18 @@ interface TranscriptMouseSelectionState {
   anchorSpan?: TranscriptSelectionSpan;
 }
 
+type ManagedForegroundLedgerBlockKind = "thinking" | "assistant" | "tool_group";
+
+interface ManagedForegroundLedgerState {
+  workerId?: string;
+  workerTitle?: string;
+  activeKind?: ManagedForegroundLedgerBlockKind;
+  activeThinkingItemId?: string;
+  activeAssistantItemId?: string;
+  activeToolGroupItemId?: string;
+  activeToolGroupTools: ToolCall[];
+}
+
 const PLAN_MODE_BLOCK_GUIDANCE =
   "Do not try to modify files while planning. Finish the plan first, then use ask_user_question with intent \"plan-handoff\" to ask whether this session should switch to accept-edits and continue.";
 
@@ -419,6 +431,83 @@ export function buildManagedTaskTranscriptItems(result: KodaXResult): string[] {
   ];
 }
 
+function buildManagedTranscriptCompactText(text: string): string | undefined {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length === 0) {
+    return undefined;
+  }
+
+  if (lines.length === 1) {
+    return lines[0];
+  }
+
+  const [first, second] = lines;
+  const combined = first.startsWith("[")
+    ? `${first} ${second}`
+    : `${first} / ${second}`;
+  return combined.length > 220 ? `${combined.slice(0, 217)}...` : combined;
+}
+
+function toManagedTranscriptEventItem(text: string): CreatableHistoryItem {
+  const compactText = buildManagedTranscriptCompactText(text);
+  return {
+    type: "event",
+    icon: ">",
+    text,
+    ...(compactText && compactText !== text ? { compactText } : {}),
+  };
+}
+
+function toCreatableHistoryItem(item: HistoryItem): CreatableHistoryItem {
+  switch (item.type) {
+    case "assistant":
+      return {
+        type: "assistant",
+        text: item.text,
+        ...(item.compactText ? { compactText: item.compactText } : {}),
+      };
+    case "thinking":
+      return {
+        type: "thinking",
+        text: item.text,
+        ...(item.compactText ? { compactText: item.compactText } : {}),
+      };
+    case "event":
+      return {
+        type: "event",
+        text: item.text,
+        ...(item.icon ? { icon: item.icon } : {}),
+        ...(item.compactText ? { compactText: item.compactText } : {}),
+      };
+    case "info":
+      return {
+        type: "info",
+        text: item.text,
+        ...(item.icon ? { icon: item.icon } : {}),
+        ...(item.compactText ? { compactText: item.compactText } : {}),
+      };
+    case "error":
+      return { type: "error", text: item.text };
+    case "system":
+      return { type: "system", text: item.text };
+    case "hint":
+      return { type: "hint", text: item.text };
+    case "tool_group":
+      return { type: "tool_group", tools: item.tools };
+    case "user":
+      return { type: "user", text: item.text };
+    default:
+      {
+        const exhaustiveCheck: never = item;
+        return exhaustiveCheck;
+      }
+  }
+}
+
 function buildManagedTaskRoutingTranscript(task: NonNullable<KodaXResult["managedTask"]>): string | undefined {
   const raw = task.runtime?.rawRoutingDecision;
   const final = task.runtime?.finalRoutingDecision;
@@ -484,6 +573,125 @@ function formatManagedLiveToolLabel(tool: ToolCall, workerTitle?: string): strin
   ) ?? `[Tools] ${formatToolCallInlineText(tool)}`;
 }
 
+type ManagedLiveItemDraft = {
+  item: HistoryItem;
+  persistToHistory: boolean;
+};
+
+function areManagedLiveItemsEquivalent(left: HistoryItem, right: HistoryItem): boolean {
+  if (left.type !== right.type) {
+    return false;
+  }
+
+  switch (left.type) {
+    case "assistant": {
+      const next = right as typeof left;
+      return left.text === next.text && left.compactText === next.compactText;
+    }
+    case "thinking": {
+      const next = right as typeof left;
+      return left.text === next.text && left.compactText === next.compactText;
+    }
+    case "event": {
+      const next = right as typeof left;
+      return left.text === next.text
+        && left.compactText === next.compactText
+        && left.icon === next.icon;
+    }
+    case "info": {
+      const next = right as typeof left;
+      return left.text === next.text
+        && left.compactText === next.compactText
+        && left.icon === next.icon;
+    }
+    case "error":
+    case "hint":
+    case "system":
+    case "user": {
+      const next = right as typeof left;
+      return left.text === next.text;
+    }
+    case "tool_group": {
+      const next = right as typeof left;
+      return JSON.stringify(left.tools) === JSON.stringify(next.tools);
+    }
+    default:
+      return false;
+  }
+}
+
+function buildManagedLiveEventDrafts(
+  status: KodaXManagedTaskStatusEvent,
+): ManagedLiveItemDraft[] {
+  if (status.events && status.events.length > 0) {
+    return status.events.reduce<ManagedLiveItemDraft[]>((acc, event) => {
+        const compactText = event.summary.trim();
+        const text = (event.detail ?? event.summary).trim();
+        if (!compactText || !text) {
+          return acc;
+        }
+        const itemId = `managed-live-${event.key}`;
+        const timestamp = Date.now();
+        const persistToHistory = event.persistToHistory ?? status.persistToHistory ?? false;
+        if (event.presentation === "thinking") {
+          acc.push({
+            item: {
+              id: itemId,
+              type: "thinking",
+              timestamp,
+              text,
+              ...(compactText !== text ? { compactText } : {}),
+            },
+            persistToHistory,
+          });
+          return acc;
+        }
+        if (event.presentation === "assistant") {
+          acc.push({
+            item: {
+              id: itemId,
+              type: "assistant",
+              timestamp,
+              text,
+              ...(compactText !== text ? { compactText } : {}),
+            },
+            persistToHistory,
+          });
+          return acc;
+        }
+        acc.push({
+          item: {
+            id: itemId,
+            type: "event",
+            timestamp,
+            text,
+            icon: event.kind === "warning" ? "!" : ">",
+            ...(compactText !== text ? { compactText } : {}),
+          },
+          persistToHistory,
+        });
+        return acc;
+      }, []);
+  }
+
+  const compactText = formatManagedTaskBreadcrumb(status);
+  const text = formatManagedTaskBreadcrumb(status, { expanded: true }) ?? compactText;
+  if (!compactText || !text) {
+    return [];
+  }
+  return [{
+    item: {
+      id: `managed-live-fallback-${status.phase ?? "worker"}-${compactText.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 48)}`,
+      type: "event",
+      timestamp: Date.now(),
+      text,
+      icon: ">",
+      ...(compactText !== text ? { compactText } : {}),
+    },
+    persistToHistory: status.persistToHistory ?? false,
+  }];
+}
+
 function stripToolRolePrefix(toolName: string): string {
   return toolName
     .replace(/^\[[^\]]+\]\s+/, "")
@@ -500,6 +708,85 @@ function sanitizeInterruptedAssistantText(text: string): string {
     return "";
   }
   return sanitizeUserFacingAssistantText(text).trim();
+}
+
+function isForegroundManagedStreamingStatus(
+  status: KodaXManagedTaskStatusEvent | null | undefined,
+): status is KodaXManagedTaskStatusEvent & { activeWorkerId: string } {
+  return Boolean(
+    status?.activeWorkerId
+      && !status.childFanoutClass
+      && (status.phase === "preflight" || status.phase === "worker"),
+  );
+}
+
+export function buildManagedForegroundTurnHistoryItems(
+  workerTitle: string | undefined,
+  options: {
+    thinking?: string;
+    response?: string;
+    toolCalls?: readonly ToolCall[];
+    toolNames?: readonly string[];
+    createId: (kind: "thinking" | "assistant" | "tool_group" | "info") => string;
+  },
+): HistoryItem[] {
+  const timestamp = Date.now();
+  const prefix = workerTitle?.trim()
+    ? `[${workerTitle.trim()}] `
+    : "";
+  const items: HistoryItem[] = [];
+  const normalizedThinking = options.thinking?.trim() ?? "";
+  const normalizedResponse = options.response?.trim() ?? "";
+
+  if (normalizedThinking) {
+    const text = `${prefix}${normalizedThinking}`.trim();
+    const compactText = buildManagedTranscriptCompactText(text);
+    items.push({
+      id: options.createId("thinking"),
+      type: "thinking",
+      timestamp,
+      text,
+      ...(compactText && compactText !== text ? { compactText } : {}),
+    });
+  }
+
+  const normalizedToolCalls = options.toolCalls && options.toolCalls.length > 0
+    ? [...options.toolCalls]
+    : [];
+  const normalizedToolNames = options.toolNames && options.toolNames.length > 0
+    ? [...options.toolNames]
+    : [];
+
+  if (normalizedToolCalls.length > 0) {
+    items.push({
+      id: options.createId("tool_group"),
+      type: "tool_group",
+      timestamp,
+      tools: normalizedToolCalls,
+    });
+  } else if (!normalizedThinking && !normalizedResponse && normalizedToolNames.length > 0) {
+    items.push({
+      id: options.createId("info"),
+      type: "info",
+      timestamp,
+      icon: "*",
+      text: `${prefix}Tools: ${normalizedToolNames.join(", ")}`.trim(),
+    });
+  }
+
+  if (normalizedResponse) {
+    const text = `${prefix}${normalizedResponse}`.trim();
+    const compactText = buildManagedTranscriptCompactText(text);
+    items.push({
+      id: options.createId("assistant"),
+      type: "assistant",
+      timestamp,
+      text,
+      ...(compactText && compactText !== text ? { compactText } : {}),
+    });
+  }
+
+  return items;
 }
 
 export function buildInterruptedPersistenceItems(
@@ -610,7 +897,7 @@ export function buildAmaWorkStripFromStatus(
 }
 
 function toPersistedUiHistoryItem(
-  item: { type: HistoryItem["type"]; text?: string },
+  item: { type: HistoryItem["type"]; text?: string; icon?: string; compactText?: string },
 ): KodaXSessionUiHistoryItem | undefined {
   if (item.type === "tool_group") {
     return undefined;
@@ -624,6 +911,10 @@ function toPersistedUiHistoryItem(
   return {
     type: item.type,
     text,
+    ...(typeof item.icon === "string" && item.icon.length > 0 ? { icon: item.icon } : {}),
+    ...(typeof item.compactText === "string" && item.compactText.length > 0
+      ? { compactText: item.compactText.trimEnd() }
+      : {}),
   };
 }
 
@@ -889,15 +1180,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   // Get terminal dimensions for fixed layout.
   const terminalWidth = stdout.columns || 80;
 
-  // Issue 079: Limit visible history to last 20 conversation rounds
-  // A "round" = one user input + AI response(s)
-  // Full history remains in state, only rendering is limited
-  const MAX_VISIBLE_ROUNDS = 20;
-  const renderHistory = useMemo(() => {
-    return sliceHistoryToRecentRounds(history, MAX_VISIBLE_ROUNDS);
-  }, [history]);
-  const transcriptHistory = history;
-
   const streamingState = useStreamingState();
   const {
     startStreaming,
@@ -974,6 +1256,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const transcriptRawWindowRef = useRef<ScrollBoxWindow | null>(null);
   const transcriptOwnedWindowGeometryRef = useRef<TranscriptOwnedWindowGeometry | null>(null);
   const transcriptVisibleRowsRef = useRef<TranscriptRow[]>([]);
+  const transcriptAllRowsRef = useRef<TranscriptRow[]>([]);
   const transcriptScreenBufferRef = useRef<TranscriptScreenBuffer | null>(null);
   const mouseSelectionRef = useRef<TranscriptMouseSelectionState | null>(null);
   const transcriptMultiClickRef = useRef<TranscriptMultiClickTrackerState>({
@@ -989,10 +1272,32 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const [transcriptSnapshot, setTranscriptSnapshot] = useState<TranscriptSnapshot | null>(null);
   const [promptSurfaceSnapshot, setPromptSurfaceSnapshot] = useState<TranscriptSnapshot | null>(null);
   const [managedTaskStatus, setManagedTaskStatus] = useState<KodaXManagedTaskStatusEvent | null>(null);
+  const [managedLiveEvents, setManagedLiveEvents] = useState<HistoryItem[]>([]);
+  const [managedForegroundTurnItems, setManagedForegroundTurnItems] = useState<HistoryItem[]>([]);
   const [lastLiveActivityLabel, setLastLiveActivityLabel] = useState<string | undefined>(undefined);
   const [visibleWorkStripText, setVisibleWorkStripText] = useState<string | undefined>(undefined);
   const managedTaskStatusRef = useRef<KodaXManagedTaskStatusEvent | null>(null);
   const managedTaskBreadcrumbRef = useRef<string | null>(null);
+  const managedLiveEventsRef = useRef<HistoryItem[]>([]);
+  const managedRoundEventHistoryRef = useRef<HistoryItem[]>([]);
+  const managedForegroundTurnItemsRef = useRef<HistoryItem[]>([]);
+  const managedForegroundOwnerRef = useRef<{ workerId?: string; workerTitle?: string }>({});
+  const managedForegroundLedgerRef = useRef<ManagedForegroundLedgerState>({
+    activeToolGroupTools: [],
+  });
+  const managedForegroundItemSeqRef = useRef(0);
+  // Issue 079: Limit visible history to last 20 conversation rounds
+  // A "round" = one user input + AI response(s)
+  // Full history remains in state, only rendering is limited
+  const MAX_VISIBLE_ROUNDS = 20;
+  const displayHistory = useMemo(
+    () => [...history, ...managedForegroundTurnItems],
+    [history, managedForegroundTurnItems],
+  );
+  const renderHistory = useMemo(() => {
+    return sliceHistoryToRecentRounds(displayHistory, MAX_VISIBLE_ROUNDS);
+  }, [displayHistory]);
+  const transcriptHistory = displayHistory;
   const showWorkStripTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const hideWorkStripTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const iterationToolsRef = useRef<string[]>([]);
@@ -1004,6 +1309,311 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     activeToolCallsRef.current = nextToolCalls;
     setActiveToolCalls(nextToolCalls);
   }, []);
+
+  const setManagedLiveEventItems = useCallback((nextEvents: HistoryItem[]) => {
+    managedLiveEventsRef.current = nextEvents;
+    setManagedLiveEvents(nextEvents);
+  }, []);
+
+  const setManagedForegroundTurnHistory = useCallback((nextItems: HistoryItem[]) => {
+    managedForegroundTurnItemsRef.current = nextItems;
+    setManagedForegroundTurnItems(nextItems);
+  }, []);
+
+  const mutateManagedForegroundTurnHistory = useCallback((mutator: (items: HistoryItem[]) => HistoryItem[]) => {
+    const nextItems = mutator([...managedForegroundTurnItemsRef.current]);
+    setManagedForegroundTurnHistory(nextItems);
+  }, [setManagedForegroundTurnHistory]);
+
+  const appendManagedForegroundTurnHistory = useCallback((nextItems: readonly HistoryItem[]) => {
+    if (nextItems.length === 0) {
+      return;
+    }
+    setManagedForegroundTurnHistory([
+      ...managedForegroundTurnItemsRef.current,
+      ...nextItems,
+    ]);
+  }, [setManagedForegroundTurnHistory]);
+
+  const resetManagedForegroundLedgerState = useCallback((options?: { clearOwner?: boolean }) => {
+    const current = managedForegroundLedgerRef.current;
+    managedForegroundLedgerRef.current = {
+      ...(options?.clearOwner
+        ? {}
+        : {
+            workerId: current.workerId,
+            workerTitle: current.workerTitle,
+          }),
+      activeToolGroupTools: [],
+    };
+    if (options?.clearOwner) {
+      managedForegroundOwnerRef.current = {};
+    }
+  }, []);
+
+  const clearManagedForegroundTurnHistory = useCallback(() => {
+    resetManagedForegroundLedgerState({ clearOwner: true });
+    setManagedForegroundTurnHistory([]);
+  }, [resetManagedForegroundLedgerState, setManagedForegroundTurnHistory]);
+
+  const nextManagedForegroundItemId = useCallback((kind: "thinking" | "assistant" | "tool_group" | "info") => {
+    managedForegroundItemSeqRef.current += 1;
+    return `managed-foreground-${kind}-${managedForegroundItemSeqRef.current}`;
+  }, []);
+
+  const appendManagedForegroundLedgerItem = useCallback((item: HistoryItem) => {
+    appendManagedForegroundTurnHistory([item]);
+    return item.id;
+  }, [appendManagedForegroundTurnHistory]);
+
+  const updateManagedForegroundLedgerItem = useCallback((
+    itemId: string | undefined,
+    updater: (item: HistoryItem) => HistoryItem,
+  ): HistoryItem | undefined => {
+    if (!itemId) {
+      return undefined;
+    }
+    let updatedItem: HistoryItem | undefined;
+    mutateManagedForegroundTurnHistory((items) => items.map((item) => {
+      if (item.id !== itemId) {
+        return item;
+      }
+      updatedItem = updater(item);
+      return updatedItem;
+    }));
+    return updatedItem;
+  }, [mutateManagedForegroundTurnHistory]);
+
+  const startManagedForegroundLedgerBlock = useCallback((
+    kind: ManagedForegroundLedgerBlockKind,
+    workerTitle: string | undefined,
+  ): string => {
+    const currentLedger = managedForegroundLedgerRef.current;
+    if (currentLedger.activeKind === kind) {
+      if (kind === "thinking" && currentLedger.activeThinkingItemId) {
+        return currentLedger.activeThinkingItemId;
+      }
+      if (kind === "assistant" && currentLedger.activeAssistantItemId) {
+        return currentLedger.activeAssistantItemId;
+      }
+      if (kind === "tool_group" && currentLedger.activeToolGroupItemId) {
+        return currentLedger.activeToolGroupItemId;
+      }
+    }
+
+    const timestamp = Date.now();
+    const prefix = workerTitle?.trim()
+      ? `[${workerTitle.trim()}] `
+      : "";
+
+    if (kind === "thinking") {
+      const itemId = appendManagedForegroundLedgerItem({
+        id: nextManagedForegroundItemId("thinking"),
+        type: "thinking",
+        timestamp,
+        text: prefix,
+      });
+      managedForegroundLedgerRef.current = {
+        ...managedForegroundLedgerRef.current,
+        activeKind: "thinking",
+        activeThinkingItemId: itemId,
+        activeAssistantItemId: undefined,
+        activeToolGroupItemId: undefined,
+        activeToolGroupTools: [],
+      };
+      return itemId;
+    }
+
+    if (kind === "assistant") {
+      const itemId = appendManagedForegroundLedgerItem({
+        id: nextManagedForegroundItemId("assistant"),
+        type: "assistant",
+        timestamp,
+        text: prefix,
+      });
+      managedForegroundLedgerRef.current = {
+        ...managedForegroundLedgerRef.current,
+        activeKind: "assistant",
+        activeThinkingItemId: undefined,
+        activeAssistantItemId: itemId,
+        activeToolGroupItemId: undefined,
+        activeToolGroupTools: [],
+      };
+      return itemId;
+    }
+
+    const itemId = appendManagedForegroundLedgerItem({
+      id: nextManagedForegroundItemId("tool_group"),
+      type: "tool_group",
+      timestamp,
+      tools: [],
+    });
+    managedForegroundLedgerRef.current = {
+      ...managedForegroundLedgerRef.current,
+      activeKind: "tool_group",
+      activeThinkingItemId: undefined,
+      activeAssistantItemId: undefined,
+      activeToolGroupItemId: itemId,
+      activeToolGroupTools: [],
+    };
+    return itemId;
+  }, [appendManagedForegroundLedgerItem, nextManagedForegroundItemId]);
+
+  const appendManagedForegroundTextBlock = useCallback((
+    kind: "thinking" | "assistant",
+    text: string,
+  ) => {
+    if (!text) {
+      return;
+    }
+    const workerTitle = managedForegroundLedgerRef.current.workerTitle;
+    const itemId = startManagedForegroundLedgerBlock(kind, workerTitle);
+    updateManagedForegroundLedgerItem(itemId, (item) => {
+      if (item.type !== kind) {
+        return item;
+      }
+      return {
+        ...item,
+        text: `${item.text}${text}`,
+      };
+    });
+  }, [startManagedForegroundLedgerBlock, updateManagedForegroundLedgerItem]);
+
+  const syncManagedForegroundThinkingBlock = useCallback((thinking: string) => {
+    const normalizedThinking = thinking.trim();
+    if (!normalizedThinking) {
+      return;
+    }
+    const workerTitle = managedForegroundLedgerRef.current.workerTitle?.trim();
+    const nextText = workerTitle
+      ? `[${workerTitle}] ${normalizedThinking}`
+      : normalizedThinking;
+    const itemId = startManagedForegroundLedgerBlock("thinking", managedForegroundLedgerRef.current.workerTitle);
+    updateManagedForegroundLedgerItem(itemId, (item) => (
+      item.type === "thinking"
+        ? {
+            ...item,
+            text: nextText,
+          }
+        : item
+    ));
+  }, [startManagedForegroundLedgerBlock, updateManagedForegroundLedgerItem]);
+
+  const syncManagedForegroundToolGroup = useCallback((toolCall: ToolCall) => {
+    const currentLedger = managedForegroundLedgerRef.current;
+    const itemId = startManagedForegroundLedgerBlock("tool_group", currentLedger.workerTitle);
+    const nextTools = currentLedger.activeToolGroupTools.some((existing) => existing.id === toolCall.id)
+      ? currentLedger.activeToolGroupTools.map((existing) => (
+          existing.id === toolCall.id ? toolCall : existing
+        ))
+      : [...currentLedger.activeToolGroupTools, toolCall];
+    managedForegroundLedgerRef.current = {
+      ...managedForegroundLedgerRef.current,
+      activeKind: "tool_group",
+      activeToolGroupItemId: itemId,
+      activeToolGroupTools: nextTools,
+    };
+    updateManagedForegroundLedgerItem(itemId, (item) => (
+      item.type === "tool_group"
+        ? {
+            ...item,
+            tools: nextTools,
+          }
+        : item
+    ));
+  }, [startManagedForegroundLedgerBlock, updateManagedForegroundLedgerItem]);
+
+  const transitionManagedForegroundPhase = useCallback((nextWorker?: {
+    workerId?: string;
+    workerTitle?: string;
+  }) => {
+    managedForegroundLedgerRef.current = {
+      workerId: nextWorker?.workerId,
+      workerTitle: nextWorker?.workerTitle,
+      activeToolGroupTools: [],
+    };
+    managedForegroundOwnerRef.current = {
+      workerId: nextWorker?.workerId,
+      workerTitle: nextWorker?.workerTitle,
+    };
+    iterationToolsRef.current = [];
+    iterationToolCallsRef.current = [];
+    setLiveToolCalls([]);
+    clearToolInputContent();
+    setCurrentTool(undefined);
+    stopThinking();
+    clearThinkingContent();
+    clearResponse();
+    setLastLiveActivityLabel(undefined);
+  }, [
+    clearToolInputContent,
+    clearResponse,
+    clearThinkingContent,
+    setCurrentTool,
+    setLiveToolCalls,
+    setLastLiveActivityLabel,
+    stopThinking,
+  ]);
+
+  const appendManagedLiveEventDrafts = useCallback((drafts: Array<{
+    item: HistoryItem;
+    persistToHistory: boolean;
+  }>) => {
+    if (drafts.length === 0) {
+      return [] as HistoryItem[];
+    }
+
+    const created: HistoryItem[] = [];
+    let nextEvents = [...managedLiveEventsRef.current];
+    let nextRoundHistory = [...managedRoundEventHistoryRef.current];
+
+    for (const draft of drafts) {
+      const eventItem = draft.item;
+      const existingLiveIndex = nextEvents.findIndex((item) => item.id === eventItem.id);
+      if (existingLiveIndex >= 0) {
+        const previous = nextEvents[existingLiveIndex];
+        if (!areManagedLiveItemsEquivalent(previous, eventItem)) {
+          nextEvents = nextEvents.map((item, index) => (
+            index === existingLiveIndex
+              ? {
+                  ...eventItem,
+                  timestamp: previous.timestamp,
+                }
+              : item
+          ));
+        }
+      } else {
+        nextEvents = [...nextEvents, eventItem].slice(-12);
+        created.push(eventItem);
+      }
+
+      if (draft.persistToHistory) {
+        const existingHistoryIndex = nextRoundHistory.findIndex((item) => item.id === eventItem.id);
+        if (existingHistoryIndex >= 0) {
+          const previous = nextRoundHistory[existingHistoryIndex];
+          if (!areManagedLiveItemsEquivalent(previous, eventItem)) {
+            nextRoundHistory = nextRoundHistory.map((item, index) => (
+              index === existingHistoryIndex
+                ? {
+                    ...eventItem,
+                    timestamp: previous.timestamp,
+                  }
+                : item
+            ));
+          }
+        } else {
+          nextRoundHistory = [...nextRoundHistory, eventItem].slice(-48);
+        }
+      }
+    }
+
+    managedRoundEventHistoryRef.current = nextRoundHistory;
+    if (created.length > 0 || nextEvents.some((item, index) => !areManagedLiveItemsEquivalent(item, managedLiveEventsRef.current[index] ?? item) || item.id !== managedLiveEventsRef.current[index]?.id)) {
+      setManagedLiveEventItems(nextEvents);
+    }
+
+    return created;
+  }, [setManagedLiveEventItems]);
 
   const upsertIterationToolCall = useCallback((nextTool: ToolCall) => {
     const existingIndex = iterationToolCallsRef.current.findIndex((tool) => tool.id === nextTool.id);
@@ -1249,7 +1859,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const isHistorySearchActive = transcriptDisplayState.searchMode === "history";
   const isTranscriptMode = transcriptDisplayState.surface === "transcript";
   const isAwaitingUserInteraction = !!confirmRequest || !!uiRequest || isHistorySearchActive;
-  const transcriptMaxLines = isTranscriptMode ? 1000 : 12;
+  const transcriptMaxLines = isTranscriptMode
+    ? (showAllInTranscript ? Number.POSITIVE_INFINITY : 1000)
+    : 12;
   const surfaceInteractionPolicy = resolveTranscriptInteractionPolicy(
     fullscreenPolicy,
     transcriptDisplayState.surface,
@@ -1271,6 +1883,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
   const createTranscriptSnapshot = useCallback((): TranscriptSnapshot => captureTranscriptSnapshot({
     items: transcriptHistory,
+    managedLiveEvents: [],
     isLoading,
     isThinking: streamingState.isThinking,
     thinkingCharCount: streamingState.thinkingCharCount,
@@ -1316,6 +1929,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     isTranscriptMode,
     snapshot: transcriptSnapshot,
     currentItemsLength: transcriptHistory.length,
+    currentManagedLiveEventsLength: 0,
     isLoading,
     currentResponse: streamingState.currentResponse,
     thinkingContent: streamingState.thinkingContent,
@@ -1335,6 +1949,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     () => buildPromptSurfaceItems(renderHistory),
     [renderHistory],
   );
+  const foregroundManagedLedgerVisible = useMemo(
+    () => Boolean(managedForegroundTurnItems.length > 0 || isForegroundManagedStreamingStatus(managedTaskStatus)),
+    [managedForegroundTurnItems.length, managedTaskStatus],
+  );
+  const foregroundManagedLedgerHasContent = managedForegroundTurnItems.length > 0;
+  const foregroundManagedOwnsLivePreview = fullscreenPolicy.streamingPreview && foregroundManagedLedgerVisible;
   const transcriptDisplayItems = resolveTranscriptSurfaceItems({
     surface: "transcript",
     snapshot: displaySnapshot,
@@ -1344,15 +1964,16 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const transcriptDisplayIsLoading = displaySnapshot?.isLoading ?? isLoading;
   const promptStreamingState = fullscreenPolicy.streamingPreview
     ? {
-      isThinking: streamingState.isThinking,
-      thinkingCharCount: streamingState.thinkingCharCount,
-      thinkingContent: streamingState.thinkingContent,
-      currentResponse: streamingState.currentResponse,
-      currentTool: streamingState.currentTool,
-      activeToolCalls,
+      isThinking: foregroundManagedOwnsLivePreview ? false : streamingState.isThinking,
+      thinkingCharCount: foregroundManagedOwnsLivePreview ? 0 : streamingState.thinkingCharCount,
+      thinkingContent: foregroundManagedOwnsLivePreview ? "" : streamingState.thinkingContent,
+      currentResponse: foregroundManagedOwnsLivePreview ? "" : streamingState.currentResponse,
+      currentTool: foregroundManagedOwnsLivePreview ? undefined : streamingState.currentTool,
+      activeToolCalls: foregroundManagedOwnsLivePreview ? [] as ToolCall[] : activeToolCalls,
       toolInputCharCount: 0,
       toolInputContent: "",
-      lastLiveActivityLabel: undefined,
+      managedLiveEvents: [] as HistoryItem[],
+      lastLiveActivityLabel: foregroundManagedOwnsLivePreview ? lastLiveActivityLabel : undefined,
       iterationHistory: [] as typeof streamingState.iterationHistory,
       currentIteration: streamingState.currentIteration,
       isCompacting: false,
@@ -1366,6 +1987,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       activeToolCalls: [] as ToolCall[],
       toolInputCharCount: 0,
       toolInputContent: "",
+      managedLiveEvents: [] as HistoryItem[],
       lastLiveActivityLabel: undefined,
       iterationHistory: [] as typeof streamingState.iterationHistory,
       currentIteration: streamingState.currentIteration,
@@ -1373,16 +1995,17 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     };
   const transcriptStreamingState = fullscreenPolicy.streamingPreview
     ? {
-      isThinking: displaySnapshot?.isThinking ?? streamingState.isThinking,
-      thinkingCharCount: displaySnapshot?.thinkingCharCount ?? streamingState.thinkingCharCount,
-      thinkingContent: displaySnapshot?.thinkingContent ?? streamingState.thinkingContent,
-      currentResponse: displaySnapshot?.currentResponse ?? streamingState.currentResponse,
-      currentTool: displaySnapshot?.currentTool ?? streamingState.currentTool,
-      activeToolCalls: displaySnapshot?.activeToolCalls ?? activeToolCalls,
-      toolInputCharCount: displaySnapshot?.toolInputCharCount ?? streamingState.toolInputCharCount,
-      toolInputContent: displaySnapshot?.toolInputContent ?? streamingState.toolInputContent,
+      isThinking: foregroundManagedOwnsLivePreview ? false : (displaySnapshot?.isThinking ?? streamingState.isThinking),
+      thinkingCharCount: foregroundManagedOwnsLivePreview ? 0 : (displaySnapshot?.thinkingCharCount ?? streamingState.thinkingCharCount),
+      thinkingContent: foregroundManagedOwnsLivePreview ? "" : (displaySnapshot?.thinkingContent ?? streamingState.thinkingContent),
+      currentResponse: foregroundManagedOwnsLivePreview ? "" : (displaySnapshot?.currentResponse ?? streamingState.currentResponse),
+      currentTool: foregroundManagedOwnsLivePreview ? undefined : (displaySnapshot?.currentTool ?? streamingState.currentTool),
+      activeToolCalls: foregroundManagedOwnsLivePreview ? [] as ToolCall[] : (displaySnapshot?.activeToolCalls ?? activeToolCalls),
+      toolInputCharCount: foregroundManagedOwnsLivePreview ? 0 : (displaySnapshot?.toolInputCharCount ?? streamingState.toolInputCharCount),
+      toolInputContent: foregroundManagedOwnsLivePreview ? "" : (displaySnapshot?.toolInputContent ?? streamingState.toolInputContent),
+      managedLiveEvents: [] as HistoryItem[],
       lastLiveActivityLabel: displaySnapshot?.lastLiveActivityLabel ?? lastLiveActivityLabel,
-      iterationHistory: displaySnapshot?.iterationHistory ?? streamingState.iterationHistory,
+      iterationHistory: foregroundManagedOwnsLivePreview ? [] as typeof streamingState.iterationHistory : (displaySnapshot?.iterationHistory ?? streamingState.iterationHistory),
       currentIteration: displaySnapshot?.currentIteration ?? streamingState.currentIteration,
       isCompacting: displaySnapshot?.isCompacting ?? streamingState.isCompacting,
     }
@@ -1395,6 +2018,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       activeToolCalls: [] as ToolCall[],
       toolInputCharCount: 0,
       toolInputContent: "",
+      managedLiveEvents: [] as HistoryItem[],
       lastLiveActivityLabel: undefined,
       iterationHistory: [] as typeof streamingState.iterationHistory,
       currentIteration: displaySnapshot?.currentIteration ?? streamingState.currentIteration,
@@ -1406,6 +2030,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const promptSelectionFreezeActive = !!promptTextSelection;
   const createPromptSurfaceSnapshot = useCallback((): TranscriptSnapshot => captureTranscriptSnapshot({
     items: promptDisplayItems,
+    managedLiveEvents: [],
     isLoading,
     isThinking: promptStreamingState.isThinking,
     thinkingCharCount: promptStreamingState.thinkingCharCount,
@@ -1457,6 +2082,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       activeToolCalls: promptSurfaceSnapshot.activeToolCalls,
       toolInputCharCount: promptSurfaceSnapshot.toolInputCharCount,
       toolInputContent: promptSurfaceSnapshot.toolInputContent,
+      managedLiveEvents: promptSurfaceSnapshot.managedLiveEvents,
       lastLiveActivityLabel: promptSurfaceSnapshot.lastLiveActivityLabel,
       iterationHistory: promptSurfaceSnapshot.iterationHistory,
       currentIteration: promptSurfaceSnapshot.currentIteration,
@@ -1472,22 +2098,70 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const currentSurfaceStreamingState = isTranscriptMode
     ? transcriptStreamingState
     : effectivePromptStreamingState;
-  const promptSurfaceRenderModel = useMemo(
-    () => buildPromptSurfaceRenderModel({
+  const promptNeedsFallbackLiveStatus = effectivePromptIsLoading
+    && !streamingState.currentResponse
+    && !streamingState.thinkingContent
+    && activeToolCalls.length === 0;
+  const promptMainScreenRenderModel = useMemo(
+    () => materializeTranscriptRenderModel(buildTranscriptRenderModel({
       items: effectivePromptDisplayItems,
       viewportWidth: terminalWidth,
-      streamingResponse: effectivePromptStreamingState.currentResponse,
-      isThinking: effectivePromptStreamingState.isThinking,
-      thinkingContent: effectivePromptStreamingState.thinkingContent,
       isLoading: effectivePromptIsLoading,
-    }),
+      maxLines: transcriptMaxLines,
+      isThinking: effectivePromptStreamingState.isThinking,
+      thinkingCharCount: effectivePromptStreamingState.thinkingCharCount,
+      thinkingContent: effectivePromptStreamingState.thinkingContent,
+      streamingResponse: effectivePromptStreamingState.currentResponse,
+      currentTool: effectivePromptStreamingState.currentTool,
+      activeToolCalls: effectivePromptStreamingState.activeToolCalls,
+      toolInputCharCount: effectivePromptStreamingState.toolInputCharCount,
+      toolInputContent: effectivePromptStreamingState.toolInputContent,
+      iterationHistory: effectivePromptStreamingState.iterationHistory,
+      currentIteration: effectivePromptStreamingState.currentIteration,
+      isCompacting: effectivePromptStreamingState.isCompacting,
+      managedAgentMode: currentConfig.agentMode,
+      managedPhase: effectivePromptIsLoading ? managedTaskStatus?.phase : undefined,
+      managedHarnessProfile: effectivePromptIsLoading ? managedTaskStatus?.harnessProfile : undefined,
+      managedWorkerTitle: effectivePromptIsLoading ? managedTaskStatus?.activeWorkerTitle : undefined,
+      managedRound: effectivePromptIsLoading ? managedTaskStatus?.currentRound : undefined,
+      managedMaxRounds: effectivePromptIsLoading ? managedTaskStatus?.maxRounds : undefined,
+      managedGlobalWorkBudget: effectivePromptIsLoading ? managedTaskStatus?.globalWorkBudget : undefined,
+      managedBudgetUsage: effectivePromptIsLoading ? managedTaskStatus?.budgetUsage : undefined,
+      managedBudgetApprovalRequired: effectivePromptIsLoading ? managedTaskStatus?.budgetApprovalRequired : undefined,
+      lastLiveActivityLabel: effectivePromptStreamingState.lastLiveActivityLabel,
+      windowed: false,
+      showFullThinking: false,
+      showDetailedTools: false,
+      showAllContent: false,
+      showLiveProgressRows: promptNeedsFallbackLiveStatus,
+    })),
     [
+      currentConfig.agentMode,
       effectivePromptDisplayItems,
       effectivePromptIsLoading,
+      effectivePromptStreamingState.activeToolCalls,
+      effectivePromptStreamingState.currentIteration,
+      effectivePromptStreamingState.currentTool,
+      effectivePromptStreamingState.isCompacting,
       effectivePromptStreamingState.currentResponse,
       effectivePromptStreamingState.isThinking,
+      effectivePromptStreamingState.iterationHistory,
+      effectivePromptStreamingState.lastLiveActivityLabel,
+      effectivePromptStreamingState.thinkingCharCount,
       effectivePromptStreamingState.thinkingContent,
+      effectivePromptStreamingState.toolInputCharCount,
+      effectivePromptStreamingState.toolInputContent,
+      managedTaskStatus?.activeWorkerTitle,
+      managedTaskStatus?.budgetApprovalRequired,
+      managedTaskStatus?.budgetUsage,
+      managedTaskStatus?.currentRound,
+      managedTaskStatus?.globalWorkBudget,
+      managedTaskStatus?.harnessProfile,
+      managedTaskStatus?.maxRounds,
+      managedTaskStatus?.phase,
+      promptNeedsFallbackLiveStatus,
       terminalWidth,
+      transcriptMaxLines,
     ],
   );
   const transcriptMainScreenRenderModel = useMemo(
@@ -1525,13 +2199,15 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         windowed: false,
         showFullThinking: true,
         showDetailedTools: showAllInTranscript,
-        showLiveProgressRows: true,
+        showAllContent: showAllInTranscript,
+        showLiveProgressRows: !foregroundManagedLedgerHasContent,
         expandedItemKeys: expandedTranscriptItemIds,
       }));
     },
     [
       currentConfig.agentMode,
       expandedTranscriptItemIds,
+      foregroundManagedLedgerHasContent,
       isTranscriptMode,
       managedTaskStatus?.activeWorkerTitle,
       managedTaskStatus?.budgetApprovalRequired,
@@ -1568,7 +2244,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
 
       if (!isTranscriptMode) {
-        return promptSurfaceRenderModel;
+        return promptMainScreenRenderModel;
       }
 
       return buildTranscriptRenderModel({
@@ -1600,7 +2276,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         windowed: true,
         showFullThinking: isTranscriptMode,
         showDetailedTools: showAllInTranscript,
-        showLiveProgressRows: isTranscriptMode,
+        showAllContent: showAllInTranscript,
+        showLiveProgressRows: isTranscriptMode && !foregroundManagedLedgerHasContent,
         expandedItemKeys: isTranscriptMode ? expandedTranscriptItemIds : undefined,
       });
     },
@@ -1608,6 +2285,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       currentConfig.agentMode,
       currentSurfaceIsLoading,
       currentSurfaceItems,
+      foregroundManagedLedgerHasContent,
       currentSurfaceStreamingState.activeToolCalls,
       currentSurfaceStreamingState.currentIteration,
       currentSurfaceStreamingState.currentResponse,
@@ -1630,7 +2308,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       managedTaskStatus?.harnessProfile,
       managedTaskStatus?.maxRounds,
       managedTaskStatus?.phase,
-      promptSurfaceRenderModel,
+      promptMainScreenRenderModel,
       isLoading,
       isTranscriptMode,
       terminalWidth,
@@ -1643,7 +2321,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     () => ownedTranscriptRenderModel ?? transcriptMainScreenRenderModel,
     [ownedTranscriptRenderModel, transcriptMainScreenRenderModel],
   );
-  const amaSummaryViewModel = useMemo(
+  const rawAmaSummaryViewModel = useMemo(
     () => buildAmaSummaryViewModel({
       status: managedTaskStatus,
       isLoading,
@@ -1651,8 +2329,17 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     }),
     [currentConfig.agentMode, isLoading, managedTaskStatus],
   );
-  const rawWorkStripText = amaSummaryViewModel.workStripText;
+  const rawWorkStripText = rawAmaSummaryViewModel.workStripText;
   const displayWorkStripText = displaySnapshot?.workStripText ?? visibleWorkStripText;
+  const displayedAmaSummaryViewModel = useMemo(
+    () => buildAmaSummaryViewModel({
+      status: managedTaskStatus,
+      isLoading,
+      agentMode: currentConfig.agentMode,
+      parallelTextOverride: displayWorkStripText,
+    }),
+    [currentConfig.agentMode, displayWorkStripText, isLoading, managedTaskStatus],
+  );
   const selectableTranscriptItemIds = useMemo(
     () => getSelectableTranscriptItemIds(currentSurfaceItems),
     [currentSurfaceItems],
@@ -2107,10 +2794,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     [bannerProps, fullscreenPolicy.enabled, showBanner],
   );
   const fullscreenBannerRows = fullscreenPolicy.enabled && showBanner ? bannerRows : 0;
+  const transcriptContentOffsetRows =
+    fullscreenPolicy.enabled && useRendererViewportShell && !isTranscriptMode && showBanner
+      ? fullscreenBannerRows
+      : 0;
   const budgetedTerminalRows = terminalRows;
   const footerBudgetInputText = isTranscriptMode ? "" : inputText;
   const footerBudgetPendingInputSummary = isTranscriptMode ? undefined : pendingInputSummary;
-  const footerBudgetWorkStripText = undefined;
+  const footerBudgetWorkStripText = displayWorkStripText;
   const footerBudgetShowHelp = isTranscriptMode ? false : showHelp;
   const viewportBudget = useMemo(
     // Budget transcript, footer, overlay, status, and task slots together so
@@ -2206,14 +2897,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     [reviewPageSize],
   );
   const transcriptAnimateSpinners = !isLivePaused && fullscreenPolicy.transcriptSpinnerAnimation;
-  const effectiveTranscriptBaseScrollHeight = activeTranscriptRenderModel?.rows.length ?? transcriptScrollHeight;
+  const effectiveTranscriptBaseScrollHeight = activeTranscriptRenderModel
+    ? activeTranscriptRenderModel.rows.length + activeTranscriptRenderModel.previewRows.length
+    : transcriptScrollHeight;
   const effectiveTranscriptScrollHeight = fullscreenPolicy.enabled
-    ? effectiveTranscriptBaseScrollHeight + fullscreenBannerRows
+    ? effectiveTranscriptBaseScrollHeight + transcriptContentOffsetRows
     : effectiveTranscriptBaseScrollHeight;
-  const transcriptRowIndexByKey = useMemo(
-    () => buildTranscriptRowIndexByKey(activeTranscriptRenderModel?.rows ?? []),
-    [activeTranscriptRenderModel?.rows],
-  );
   const handleTranscriptMetricsChange = useCallback((metrics: {
     scrollHeight: number;
     viewportHeight: number;
@@ -2227,17 +2916,21 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       window,
       stickyHeader: transcriptChrome.stickyHeader,
       width: terminalWidth,
-      bannerVisible: showBanner && window.start < fullscreenBannerRows,
+      bannerVisible: !isTranscriptMode && showBanner && window.start < fullscreenBannerRows,
       fullscreenBannerRows,
+      contentOffsetRows: transcriptContentOffsetRows,
     })
   ), [
+    transcriptContentOffsetRows,
     fullscreenBannerRows,
+    isTranscriptMode,
     showBanner,
     terminalWidth,
     transcriptChrome.stickyHeader,
   ]);
   const rebuildTranscriptScreenBuffer = useCallback((
     rows = transcriptVisibleRowsRef.current,
+    allRows = transcriptAllRowsRef.current,
     geometry = transcriptRawWindowRef.current
       ? resolveOwnedTranscriptWindow(transcriptRawWindowRef.current)
       : transcriptOwnedWindowGeometryRef.current,
@@ -2249,27 +2942,33 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
     transcriptOwnedWindowGeometryRef.current = geometry;
     transcriptScreenBufferRef.current = buildTranscriptScreenBuffer(rows, {
-      allRows: activeTranscriptRenderModel?.rows ?? rows,
-      rowIndexByKey: transcriptRowIndexByKey,
+      allRows,
+      rowIndexByKey: buildTranscriptRowIndexByKey(allRows),
       topOffsetRows: geometry.topOffsetRows,
       viewportHeight: geometry.contentWindow.viewportHeight,
       animateSpinners: transcriptAnimateSpinners,
     });
   }, [
-    activeTranscriptRenderModel?.rows,
     resolveOwnedTranscriptWindow,
     transcriptAnimateSpinners,
-    transcriptRowIndexByKey,
   ]);
   const handleTranscriptWindowChange = useCallback((window: ScrollBoxWindow) => {
     transcriptRawWindowRef.current = window;
     const geometry = resolveOwnedTranscriptWindow(window);
     transcriptOwnedWindowGeometryRef.current = geometry;
-    rebuildTranscriptScreenBuffer(transcriptVisibleRowsRef.current, geometry);
+    rebuildTranscriptScreenBuffer(
+      transcriptVisibleRowsRef.current,
+      transcriptAllRowsRef.current,
+      geometry,
+    );
   }, [rebuildTranscriptScreenBuffer, resolveOwnedTranscriptWindow]);
-  const handleVisibleTranscriptRowsChange = useCallback((rows: TranscriptRow[]) => {
-    transcriptVisibleRowsRef.current = rows;
-    rebuildTranscriptScreenBuffer(rows);
+  const handleVisibleTranscriptRowsChange = useCallback((snapshot: {
+    rows: TranscriptRow[];
+    allRows: TranscriptRow[];
+  }) => {
+    transcriptVisibleRowsRef.current = snapshot.rows;
+    transcriptAllRowsRef.current = snapshot.allRows;
+    rebuildTranscriptScreenBuffer(snapshot.rows, snapshot.allRows);
   }, [rebuildTranscriptScreenBuffer]);
   const clearTranscriptMouseSelection = useCallback(() => {
     mouseSelectionRef.current = null;
@@ -2464,8 +3163,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     writeTerminal,
   ]);
   const resolveTranscriptSelectionRows = useCallback(() => (
-    activeTranscriptRenderModel?.rows ?? transcriptVisibleRowsRef.current
-  ), [activeTranscriptRenderModel?.rows]);
+    transcriptVisibleRowsRef.current
+  ), []);
   const resolveTranscriptMouseTarget = useCallback((row: number, column: number) => {
     if (!fullscreenPolicy.enabled || !transcriptOwnsViewport) {
       return undefined;
@@ -2798,17 +3497,28 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     const lastHistoryText = lastHistoryItem && "text" in lastHistoryItem && typeof lastHistoryItem.text === "string"
       ? lastHistoryItem.text.trim()
       : undefined;
-    const interruptedItems = buildInterruptedPersistenceItems(
-      getThinkingContent(),
-      getFullResponse(),
-      {
-        toolCalls: iterationToolCallsRef.current,
-        toolNames: iterationToolsRef.current,
-        infoItems: latestBreadcrumb && latestBreadcrumb !== lastHistoryText
-          ? [latestBreadcrumb]
-          : [],
-      },
-    );
+    const hasManagedForegroundLedger = managedForegroundTurnItemsRef.current.length > 0;
+    const interruptedItems = hasManagedForegroundLedger
+      ? [
+          ...managedForegroundTurnItemsRef.current.map((item) => toCreatableHistoryItem(item)),
+          ...(latestBreadcrumb && latestBreadcrumb !== lastHistoryText
+            ? [{ type: "info" as const, text: latestBreadcrumb }]
+            : []),
+        ]
+      : [
+          ...managedForegroundTurnItemsRef.current.map((item) => toCreatableHistoryItem(item)),
+          ...buildInterruptedPersistenceItems(
+            getThinkingContent(),
+            getFullResponse(),
+            {
+              toolCalls: iterationToolCallsRef.current,
+              toolNames: iterationToolsRef.current,
+              infoItems: latestBreadcrumb && latestBreadcrumb !== lastHistoryText
+                ? [latestBreadcrumb]
+                : [],
+            },
+          ),
+        ];
 
     if (interruptedItems.length === 0) {
       return;
@@ -2833,6 +3543,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     setCurrentTool(undefined);
     resetLiveToolCalls();
     setLastLiveActivityLabel(undefined);
+    clearManagedForegroundTurnHistory();
+    managedLiveEventsRef.current = [];
+    managedRoundEventHistoryRef.current = [];
+    setManagedLiveEvents([]);
     setIsLoading(false);
   }, [
     abort,
@@ -2840,7 +3554,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     clearThinkingContent,
     clearToolInputContent,
     resetLiveToolCalls,
+    clearManagedForegroundTurnHistory,
     setCurrentTool,
+    setManagedLiveEvents,
     setIsLoading,
     setLastLiveActivityLabel,
     stopStreaming,
@@ -3417,6 +4133,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           addHistoryItem({
             type: item.type,
             text: item.text,
+            ...(item.icon ? { icon: item.icon } : {}),
+            ...(item.compactText ? { compactText: item.compactText } : {}),
           });
         }
         return;
@@ -3460,6 +4178,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       // The UI layer stores thinking content for display.
       appendThinkingChars(text.length);
       appendThinkingContent(text);
+      if (managedForegroundOwnerRef.current.workerId) {
+        appendManagedForegroundTextBlock("thinking", text);
+      }
     },
     onThinkingEnd: (thinking: string) => {
       if (userInterruptedRef.current) {
@@ -3472,6 +4193,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         startThinking();
         appendThinkingChars(mergedThinking.length);
         appendThinkingContent(mergedThinking);
+      }
+      if (managedForegroundOwnerRef.current.workerId) {
+        syncManagedForegroundThinkingBlock(mergedThinking);
       }
       stopThinking();
     },
@@ -3486,6 +4210,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       stopThinking();
       setLastLiveActivityLabel(undefined);
       appendResponse(text);
+      if (managedForegroundOwnerRef.current.workerId) {
+        appendManagedForegroundTextBlock("assistant", text);
+      }
     },
     onToolUseStart: (tool: { name: string; id: string; input?: Record<string, unknown> }) => {
       if (userInterruptedRef.current) {
@@ -3505,6 +4232,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         input: tool.input,
       };
       addLiveToolCall(toolCall);
+      if (managedForegroundOwnerRef.current.workerId) {
+        syncManagedForegroundToolGroup(toolCall);
+      }
       setLastLiveActivityLabel(
         formatManagedLiveToolLabel(toolCall, managedTaskStatusRef.current?.activeWorkerTitle),
       );
@@ -3531,6 +4261,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         };
       });
       if (updatedTool) {
+        if (managedForegroundOwnerRef.current.workerId) {
+          syncManagedForegroundToolGroup(updatedTool);
+        }
         setLastLiveActivityLabel(
           formatManagedLiveToolLabel(updatedTool, managedTaskStatusRef.current?.activeWorkerTitle),
         );
@@ -3551,6 +4284,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           result.name,
         );
         if (finalizedTool) {
+          if (managedForegroundOwnerRef.current.workerId) {
+            syncManagedForegroundToolGroup(finalizedTool);
+          }
           setLastLiveActivityLabel(
             formatManagedLiveToolLabel(finalizedTool, managedTaskStatusRef.current?.activeWorkerTitle),
           );
@@ -3566,6 +4302,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           result.name,
         );
         if (finalizedTool) {
+          if (managedForegroundOwnerRef.current.workerId) {
+            syncManagedForegroundToolGroup(finalizedTool);
+          }
           setLastLiveActivityLabel(
             formatManagedLiveToolLabel(finalizedTool, managedTaskStatusRef.current?.activeWorkerTitle),
           );
@@ -3580,6 +4319,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         result.name,
       );
       if (finalizedTool) {
+        if (managedForegroundOwnerRef.current.workerId) {
+          syncManagedForegroundToolGroup(finalizedTool);
+        }
         setLastLiveActivityLabel(
           formatManagedLiveToolLabel(finalizedTool, managedTaskStatusRef.current?.activeWorkerTitle),
         );
@@ -3591,6 +4333,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         () => ({ error: "Stream ended before the tool completed.", output: undefined }),
       );
       const lastFinalizedTool = finalizedTools[finalizedTools.length - 1];
+      if (managedForegroundOwnerRef.current.workerId) {
+        finalizedTools.forEach((tool) => syncManagedForegroundToolGroup(tool));
+      }
       if (lastFinalizedTool) {
         setLastLiveActivityLabel(
           formatManagedLiveToolLabel(lastFinalizedTool, managedTaskStatusRef.current?.activeWorkerTitle),
@@ -3613,6 +4358,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         () => ({ error: error.message, output: undefined }),
       );
       const lastFinalizedTool = finalizedTools[finalizedTools.length - 1];
+      if (managedForegroundOwnerRef.current.workerId) {
+        finalizedTools.forEach((tool) => syncManagedForegroundToolGroup(tool));
+      }
       if (lastFinalizedTool) {
         setLastLiveActivityLabel(
           formatManagedLiveToolLabel(lastFinalizedTool, managedTaskStatusRef.current?.activeWorkerTitle),
@@ -3676,25 +4424,37 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       if (userInterruptedRef.current) {
         return;
       }
+      const previousForegroundWorker = managedForegroundOwnerRef.current;
+      if (isForegroundManagedStreamingStatus(status)) {
+        if (
+          previousForegroundWorker.workerId
+          && previousForegroundWorker.workerId !== status.activeWorkerId
+        ) {
+          transitionManagedForegroundPhase({
+            workerId: status.activeWorkerId,
+            workerTitle: status.activeWorkerTitle,
+          });
+        } else if (previousForegroundWorker.workerId !== status.activeWorkerId) {
+          managedForegroundLedgerRef.current = {
+            workerId: status.activeWorkerId,
+            workerTitle: status.activeWorkerTitle,
+            activeToolGroupTools: [],
+          };
+          managedForegroundOwnerRef.current = {
+            workerId: status.activeWorkerId,
+            workerTitle: status.activeWorkerTitle,
+          };
+        }
+      }
       managedTaskStatusRef.current = status;
       setManagedTaskStatus(status);
-      const liveStatusLabel = formatManagedTaskLiveStatusLabel(status);
-      if (liveStatusLabel) {
-        setLastLiveActivityLabel(liveStatusLabel);
-      }
-      const breadcrumb = formatManagedTaskBreadcrumb(status);
-      if (breadcrumb && breadcrumb !== managedTaskBreadcrumbRef.current) {
-        const breadcrumbItem: CreatableHistoryItem = {
-          type: "info",
-          icon: ">",
-          text: breadcrumb,
-        };
-        if (appendHistoryItemsWithPersistenceRef.current) {
-          appendHistoryItemsWithPersistenceRef.current([breadcrumbItem]);
-        } else {
-          addHistoryItem(breadcrumbItem);
-        }
-        managedTaskBreadcrumbRef.current = breadcrumb;
+      const liveEventDrafts = buildManagedLiveEventDrafts(status);
+      appendManagedLiveEventDrafts(liveEventDrafts);
+      const breadcrumbCompact = formatManagedTaskBreadcrumb(status);
+      const breadcrumbExpanded = formatManagedTaskBreadcrumb(status, { expanded: true });
+      const breadcrumbText = breadcrumbExpanded ?? breadcrumbCompact;
+      if (breadcrumbText) {
+        managedTaskBreadcrumbRef.current = breadcrumbText;
       }
     },
     onProviderRateLimit: (attempt: number, maxAttempts: number, delayMs: number) => {
@@ -3740,11 +4500,15 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       const prevResponse = iter > 1 ? sanitizeInterruptedAssistantText(getFullResponse()) : "";
       const prevTools = iter > 1 ? [...iterationToolsRef.current] : [];
       const prevToolCalls = iter > 1 ? [...iterationToolCallsRef.current] : [];
+      const ownsForegroundLedger = Boolean(managedForegroundOwnerRef.current.workerId);
 
       // Always update iteration counter BEFORE adding to history 
       // This implicitly clears the text buffer so we don't double-render the old streaming 
       // content simultaneously with the new static HistoryItem!
       startNewIteration(iter);
+      if (ownsForegroundLedger) {
+        resetManagedForegroundLedgerState({ clearOwner: false });
+      }
       iterationToolsRef.current = [];
       iterationToolCallsRef.current = [];
       resetLiveToolCalls();
@@ -3761,19 +4525,21 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       startThinking();
 
       if (iter > 1) {
-        // Issue 076 fix: Save previous iteration content to persistent history BEFORE clearing
-        // Issue 076.
-        const previousRoundItems = buildRoundHistoryItems({
-          thinking: prevThinking,
-          response: prevResponse,
-          toolCalls: prevToolCalls,
-          toolNames: prevTools,
-        });
-        if (appendHistoryItemsWithPersistenceRef.current) {
-          appendHistoryItemsWithPersistenceRef.current(previousRoundItems);
-        } else {
-          for (const item of previousRoundItems) {
-            addHistoryItem(item);
+        if (!ownsForegroundLedger) {
+          // Issue 076 fix: Save previous iteration content to persistent history BEFORE clearing
+          // Issue 076.
+          const previousRoundItems = buildRoundHistoryItems({
+            thinking: prevThinking,
+            response: prevResponse,
+            toolCalls: prevToolCalls,
+            toolNames: prevTools,
+          });
+          if (appendHistoryItemsWithPersistenceRef.current) {
+            appendHistoryItemsWithPersistenceRef.current(previousRoundItems);
+          } else {
+            for (const item of previousRoundItems) {
+              addHistoryItem(item);
+            }
           }
         }
       }
@@ -3992,7 +4758,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     clearThinkingContent,
     getThinkingContent,
     getFullResponse,
+    resetManagedForegroundLedgerState,
     setLastLiveActivityLabel,
+    appendManagedForegroundTextBlock,
+    syncManagedForegroundThinkingBlock,
+    syncManagedForegroundToolGroup,
     addLiveToolCall,
     updateExecutingTool,
     finalizeLiveToolCall,
@@ -4224,17 +4994,26 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       result.managedTask?.verdict.summary,
       result.lastText,
     );
-    const managedTranscriptItems = buildManagedTaskTranscriptItems(result);
-    const roundHistoryItems = buildRoundHistoryItems({
-      thinking: finalThinking,
-      response: undefined,
-      toolCalls: iterationToolCallsRef.current,
-      toolNames: iterationToolsRef.current,
-    });
+    const managedForegroundRoundItems = [...managedForegroundTurnItemsRef.current];
+    const hasManagedForegroundLedger = managedForegroundRoundItems.length > 0;
+    const managedRoundEvents = [...managedRoundEventHistoryRef.current];
+    const managedTranscriptItems = managedRoundEvents.length === 0
+      ? buildManagedTaskTranscriptItems(result)
+      : [];
+    const roundHistoryItems = hasManagedForegroundLedger
+      ? []
+      : buildRoundHistoryItems({
+          thinking: finalThinking,
+          response: undefined,
+          toolCalls: iterationToolCallsRef.current,
+          toolNames: iterationToolsRef.current,
+        });
     const persistedAdditions: CreatableHistoryItem[] = [
+      ...managedForegroundRoundItems.map((item) => toCreatableHistoryItem(item)),
       ...roundHistoryItems,
-      ...managedTranscriptItems.map((text) => ({ type: "info" as const, text })),
-      ...(finalResponse
+      ...managedRoundEvents.map((item) => toCreatableHistoryItem(item)),
+      ...managedTranscriptItems.map((text) => toManagedTranscriptEventItem(text)),
+      ...(!hasManagedForegroundLedger && finalResponse
         ? [{
             type: "assistant" as const,
             text: result.interrupted ? `${finalResponse}\n\n[Interrupted]` : finalResponse,
@@ -4249,18 +5028,21 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     clearThinkingContent();
     clearResponse();
 
+    for (const item of managedForegroundRoundItems) {
+      addHistoryItem(toCreatableHistoryItem(item));
+    }
     for (const item of roundHistoryItems) {
       addHistoryItem(item);
     }
 
     for (const transcript of managedTranscriptItems) {
-      addHistoryItem({
-        type: "info",
-        text: transcript,
-      });
+      addHistoryItem(toManagedTranscriptEventItem(transcript));
+    }
+    for (const eventItem of managedRoundEvents) {
+      addHistoryItem(toCreatableHistoryItem(eventItem));
     }
 
-    if (finalResponse) {
+    if (!hasManagedForegroundLedger && finalResponse) {
       addHistoryItem({
         type: "assistant",
         text: result.interrupted ? `${finalResponse}\n\n[Interrupted]` : finalResponse,
@@ -4273,6 +5055,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     clearToolInputContent();
     setCurrentTool(undefined);
     setLastLiveActivityLabel(undefined);
+    clearManagedForegroundTurnHistory();
+    managedLiveEventsRef.current = [];
+    managedRoundEventHistoryRef.current = [];
+    setManagedLiveEvents([]);
     clearIterationHistory();
 
     // Persist session state off the critical UI path so the spinner can stop
@@ -4290,6 +5076,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     persistContextStateInBackground,
     reconcileContextLineage,
     resetLiveToolCalls,
+    clearManagedForegroundTurnHistory,
     setCurrentTool,
     setLastLiveActivityLabel,
     streamingState.currentIteration,
@@ -4475,7 +5262,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       // Use getFullResponse() to include buffered content not yet flushed to currentResponse
       // Issue: When user sends new message during streaming, partial content was lost
       const currentFullResponse = sanitizeInterruptedAssistantText(getFullResponse());
-      if (currentFullResponse) {
+      const currentManagedForegroundItems = managedForegroundTurnItemsRef.current.map((item) => toCreatableHistoryItem(item));
+      const hasManagedForegroundLedger = currentManagedForegroundItems.length > 0;
+      if (currentManagedForegroundItems.length > 0) {
+        appendHistoryItemsToCurrentSnapshot(currentManagedForegroundItems);
+      }
+      if (!hasManagedForegroundLedger && currentFullResponse) {
         appendHistoryItemsToCurrentSnapshot([{
           type: "assistant",
           text: currentFullResponse + "\n\n[Interrupted]",
@@ -4501,6 +5293,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       managedTaskStatusRef.current = null;
       managedTaskBreadcrumbRef.current = null;
       setLastLiveActivityLabel(undefined);
+      clearManagedForegroundTurnHistory();
+      managedLiveEventsRef.current = [];
+      managedRoundEventHistoryRef.current = [];
+      setManagedLiveEvents([]);
       clearWorkStripTimers();
       setVisibleWorkStripText(undefined);
       iterationToolsRef.current = [];
@@ -5248,6 +6044,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       helpSurface={showHelp ? (
         <PromptHelpMenu sections={buildHelpMenuSections()} />
       ) : undefined}
+      taskBar={displayWorkStripText ? (
+        <BackgroundTaskBar
+          items={displayedAmaSummaryViewModel.backgroundTask.items}
+          overflowLabel={displayedAmaSummaryViewModel.backgroundTask.overflowLabel}
+          ctaHint={displayedAmaSummaryViewModel.backgroundTask.ctaHint}
+          showSpinner={isLoading}
+        />
+      ) : undefined}
       statusLine={<Box><StatusBar {...statusBarProps} viewModel={visibleStatusBarViewModel} /></Box>}
       inlineDialogs={useOverlaySurface ? undefined : dialogSurface}
     />
@@ -5272,6 +6076,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           noticeText={selectionCopyNotice}
         />
       )}
+      taskBar={displayWorkStripText ? (
+        <BackgroundTaskBar
+          items={displayedAmaSummaryViewModel.backgroundTask.items}
+          overflowLabel={displayedAmaSummaryViewModel.backgroundTask.overflowLabel}
+          ctaHint={displayedAmaSummaryViewModel.backgroundTask.ctaHint}
+          showSpinner={transcriptDisplayIsLoading}
+        />
+      ) : undefined}
       statusLine={<Box><StatusBar {...statusBarProps} viewModel={statusBarViewModel} /></Box>}
     />
   );
@@ -5289,7 +6101,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       scrollOffset={historyScrollOffset}
       windowed={Boolean(options?.rendererWindow)}
       rendererWindow={options?.rendererWindow}
-      transcriptModel={options?.rendererWindow ? ownedTranscriptRenderModel : promptSurfaceRenderModel}
+      transcriptModel={options?.rendererWindow ? ownedTranscriptRenderModel : promptMainScreenRenderModel}
       visibleRowsOverride={options?.visibleRowsOverride}
       maxLines={transcriptMaxLines}
       selectedTextRanges={useManagedSelection ? promptTextSelection?.rowRanges : undefined}
@@ -5303,7 +6115,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     handleTranscriptMetricsChange,
     handleVisibleTranscriptRowsChange,
     historyScrollOffset,
-    promptSurfaceRenderModel,
+    promptMainScreenRenderModel,
     terminalWidth,
     transcriptMaxLines,
     promptTextSelection?.rowRanges,
@@ -5354,6 +6166,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       visibleRowsOverride={options?.visibleRowsOverride}
       maxLines={transcriptMaxLines}
       showDetailedTools={showAllInTranscript}
+      showAllContent={showAllInTranscript}
       selectedItemId={transcriptSelectionRuntime.selectionEnabled ? selectedTranscriptItemId : undefined}
       selectedTextRanges={transcriptModeTextSelection?.rowRanges}
       expandedItemKeys={transcriptSelectionRuntime.selectionEnabled ? expandedTranscriptItemIds : undefined}
@@ -5497,8 +6310,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               (() => {
                 const geometry = resolveOwnedTranscriptWindow(window);
                 const adjustedWindow = geometry.contentWindow;
+                const allRows = ownedTranscriptRenderModel
+                  ? [...ownedTranscriptRenderModel.rows, ...ownedTranscriptRenderModel.previewRows]
+                  : [];
                 const visibleRows = resolveVisibleTranscriptRows(
-                  ownedTranscriptRenderModel?.rows ?? [],
+                  allRows,
                   {
                     start: adjustedWindow.start,
                     end: adjustedWindow.end,
@@ -5532,14 +6348,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           footer={currentFooterSurface}
         />
       ) : (
-        <Box flexDirection="column" flexGrow={1} flexShrink={0}>
+        <>
           {currentTranscriptSurface}
           {currentFooterSurface}
-        </Box>
+        </>
       )}
     </Box>
   );
-
   if (useAlternateScreenShell) {
       return (
         <AlternateScreen

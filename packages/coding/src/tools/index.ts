@@ -60,6 +60,7 @@ export { toolModuleContext } from './module-context.js';
 export { toolSymbolContext } from './symbol-context.js';
 export { toolProcessContext } from './process-context.js';
 export { toolImpactEstimate } from './impact-estimate.js';
+export { toolEmitManagedProtocol } from './emit-managed-protocol.js';
 export { toolWebSearch } from './web-search.js';
 export { toolWebFetch } from './web-fetch.js';
 export { toolCodeSearch } from './code-search.js';

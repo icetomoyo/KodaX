@@ -5,6 +5,7 @@ import type { FullscreenPolicy } from "./terminal-host-profile.js";
 
 export interface TranscriptSnapshot {
   items: HistoryItem[];
+  managedLiveEvents: HistoryItem[];
   isLoading: boolean;
   isThinking: boolean;
   thinkingCharCount: number;
@@ -21,8 +22,9 @@ export interface TranscriptSnapshot {
   isCompacting: boolean;
 }
 
-export interface CaptureTranscriptSnapshotOptions extends Omit<TranscriptSnapshot, "items"> {
+export interface CaptureTranscriptSnapshotOptions extends Omit<TranscriptSnapshot, "items" | "managedLiveEvents"> {
   items: readonly HistoryItem[];
+  managedLiveEvents?: readonly HistoryItem[];
 }
 
 export function captureTranscriptSnapshot(
@@ -31,6 +33,7 @@ export function captureTranscriptSnapshot(
   return {
     ...options,
     items: [...options.items],
+    managedLiveEvents: [...(options.managedLiveEvents ?? [])],
   };
 }
 
@@ -38,6 +41,7 @@ export interface CountPendingTranscriptUpdatesOptions {
   isTranscriptMode: boolean;
   snapshot: TranscriptSnapshot | null;
   currentItemsLength: number;
+  currentManagedLiveEventsLength?: number;
   isLoading: boolean;
   currentResponse: string;
   thinkingContent: string;
@@ -62,6 +66,9 @@ export function countPendingTranscriptUpdates(
     pending += 1;
   }
   if (options.activeToolCallsLength !== options.snapshot.activeToolCalls.length) {
+    pending += 1;
+  }
+  if ((options.currentManagedLiveEventsLength ?? 0) !== options.snapshot.managedLiveEvents.length) {
     pending += 1;
   }
 
@@ -100,6 +107,7 @@ export function buildPromptSurfaceItems(
       case "error":
       case "tool_group":
       case "thinking":
+      case "event":
       case "info":
         promptItems.push({ ...item });
         break;

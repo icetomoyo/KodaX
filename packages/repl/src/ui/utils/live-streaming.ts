@@ -83,7 +83,9 @@ export function formatManagedTaskLiveStatusLabel(
 
 export function formatManagedTaskBreadcrumb(
   status: KodaXManagedTaskStatusEvent,
+  options?: { expanded?: boolean },
 ): string | undefined {
+  const note = options?.expanded ? (status.detailNote ?? status.note) : status.note;
   const harness = formatHarnessProfileShort(status.harnessProfile) ?? status.harnessProfile;
   const prefix = `${status.agentMode.toUpperCase()} ${harness}`;
   const scoutPrefix = `${status.agentMode.toUpperCase()} Scout`;
@@ -96,17 +98,19 @@ export function formatManagedTaskBreadcrumb(
     case "routing":
       return `${routingPrefix} - Routing ready`;
     case "starting":
-      return status.note ? `${prefix} - ${status.note}` : `${prefix} - Managed task starting`;
+      return note ? `${prefix} - ${note}` : `${prefix} - Managed task starting`;
     case "preflight":
-      return status.note ? `${scoutPrefix} - ${status.note}` : `${scoutPrefix} - Scout preflight starting`;
+      return note ? `${scoutPrefix} - ${note}` : `${scoutPrefix} - Scout preflight starting`;
     case "round":
-      return status.note ? `${prefix} - ${status.note}` : `${prefix} - Managed task round update${roundSuffix}`;
+      return note ? `${prefix} - ${note}` : `${prefix} - Managed task round update${roundSuffix}`;
     case "worker":
-      return `${prefix} - ${status.activeWorkerTitle ?? "Worker"} starting${roundSuffix}`;
+      return note
+        ? `${prefix} - ${note}${roundSuffix}`
+        : `${prefix} - ${status.activeWorkerTitle ?? "Worker"} starting${roundSuffix}`;
     case "upgrade":
-      return status.note ? `${prefix} - ${status.note}` : `${prefix} - Harness transition${roundSuffix}`;
+      return note ? `${prefix} - ${note}` : `${prefix} - Harness transition${roundSuffix}`;
     case "completed":
-      return status.note ? `${prefix} - ${status.note}` : `${prefix} - Managed task completed`;
+      return note ? `${prefix} - ${note}` : `${prefix} - Managed task completed`;
     default:
       return undefined;
   }

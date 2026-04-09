@@ -3,6 +3,7 @@ import { ToolCallStatus } from "./types.js";
 import {
   appendPersistedUiHistorySnapshot,
   buildAmaWorkStripFromStatus,
+  buildManagedForegroundTurnHistoryItems,
   buildManagedTaskTranscriptItems,
   buildRoundHistoryItems,
   shouldShowStatusBarBusyStatus,
@@ -203,6 +204,41 @@ describe("appendPersistedUiHistorySnapshot", () => {
     expect(history).toHaveLength(100);
     expect(history[0]).toEqual({ type: "user", text: "Round 6 prompt" });
     expect(history[history.length - 1]).toEqual({ type: "assistant", text: "Round 55 answer" });
+  });
+});
+
+describe("buildManagedForegroundTurnHistoryItems", () => {
+  it("keeps completed foreground AMA phases as labeled thinking and assistant items", () => {
+    const items = buildManagedForegroundTurnHistoryItems("Planner", {
+      thinking: "Comparing ScrollBox ownership against the renderer viewport path.",
+      response: "Planner narrowed the bug to the fullscreen transcript geometry.",
+      toolCalls: [{
+        id: "tool-1",
+        name: "[Planner] changed_diff_bundle",
+        input: { paths: ["packages/repl/src/ui/InkREPL.tsx"] },
+        status: ToolCallStatus.Success,
+        output: "Bundle: 3 files",
+        startTime: 1,
+        endTime: 2,
+      }],
+      createId: ((index = 0) => () => `fg-${++index}`)(),
+    });
+
+    expect(items).toHaveLength(3);
+    expect(items[0]).toMatchObject({
+      type: "thinking",
+      text: "[Planner] Comparing ScrollBox ownership against the renderer viewport path.",
+    });
+    expect(items[1]).toMatchObject({
+      type: "tool_group",
+      tools: [expect.objectContaining({
+        name: "[Planner] changed_diff_bundle",
+      })],
+    });
+    expect(items[2]).toMatchObject({
+      type: "assistant",
+      text: "[Planner] Planner narrowed the bug to the fullscreen transcript geometry.",
+    });
   });
 });
 

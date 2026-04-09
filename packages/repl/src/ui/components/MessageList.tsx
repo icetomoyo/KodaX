@@ -2,7 +2,7 @@
  * MessageList
  *
  * Reference Gemini CLI's message display architecture implementation.
- * Support HistoryItem types: user, assistant, tool_group, thinking, error, info, and hint.
+ * Support HistoryItem types: user, assistant, tool_group, thinking, error, event, info, and hint.
  */
 
 import React, { useEffect, useMemo, memo } from "react";
@@ -19,6 +19,7 @@ import {
   type HistoryItemToolGroup,
   type HistoryItemThinking,
   type HistoryItemError,
+  type HistoryItemEvent,
   type HistoryItemInfo,
   type HistoryItemHint,
   type HistoryItemSystem,
@@ -105,6 +106,8 @@ export interface MessageListProps {
   showFullThinking?: boolean;
   /** Whether tool details should render in verbose form */
   showDetailedTools?: boolean;
+  /** Whether transcript-only "show all" should disable compact truncation */
+  showAllContent?: boolean;
   /** Whether prompt/live progress helper rows should render inside the transcript */
   showLiveProgressRows?: boolean;
   /** Optional selected transcript item id for browse mode affordances */
@@ -117,7 +120,10 @@ export interface MessageListProps {
     viewportHeight: number;
   }) => void;
   /** Optional callback with the currently visible rows */
-  onVisibleRowsChange?: (rows: TranscriptRow[]) => void;
+  onVisibleRowsChange?: (snapshot: {
+    rows: TranscriptRow[];
+    allRows: TranscriptRow[];
+  }) => void;
   /** Optional renderer-owned transcript window */
   rendererWindow?: Pick<
     ScrollBoxWindow,
@@ -234,7 +240,8 @@ const AssistantItemRenderer: React.FC<{
   theme: Theme;
   maxLines: number;
 }> = memo(({ item, theme, maxLines }) => {
-  const { lines, hasMore } = truncateLines(item.text, maxLines);
+  const displayText = item.compactText ?? item.text;
+  const { lines, hasMore } = truncateLines(displayText, maxLines);
 
   return (
     <Box flexDirection="column" marginBottom={1}>
@@ -257,7 +264,7 @@ const AssistantItemRenderer: React.FC<{
           </Text>
         ))}
         {hasMore && (
-          <Text dimColor>... ({item.text.split("\n").length - maxLines} more lines)</Text>
+          <Text dimColor>... ({displayText.split("\n").length - maxLines} more lines)</Text>
         )}
       </Box>
     </Box>
@@ -341,7 +348,7 @@ const ThinkingItemRenderer: React.FC<{ item: HistoryItemThinking; theme: Theme }
     </Box>
     <Box marginLeft={2}>
       <Text color={theme.colors.thinking} italic>
-        {item.text}
+        {item.compactText ?? item.text}
       </Text>
     </Box>
   </Box>
@@ -364,13 +371,26 @@ const ErrorItemRenderer: React.FC<{ item: HistoryItemError; theme: Theme }> = me
 ));
 
 /**
+ * Managed/task event renderer.
+ */
+const EventItemRenderer: React.FC<{ item: HistoryItemEvent; theme: Theme }> = memo(({ item, theme }) => (
+  <Box flexDirection="column" marginBottom={1}>
+    <Text color={theme.colors.text}>
+      <Text color={theme.colors.accent} bold>{item.icon ?? ">"}</Text>
+      <Text> </Text>
+      {item.compactText ?? item.text}
+    </Text>
+  </Box>
+));
+
+/**
  * Info message renderer.
  */
 const InfoItemRenderer: React.FC<{ item: HistoryItemInfo; theme: Theme }> = memo(({ item, theme }) => (
   <Box flexDirection="column" marginBottom={1}>
     <Text color={theme.colors.info}>
       <Text bold>{item.icon ?? "\u2139"} </Text>
-      {item.text}
+      {item.compactText ?? item.text}
     </Text>
   </Box>
 ));
@@ -418,6 +438,8 @@ export const HistoryItemRenderer: React.FC<HistoryItemRendererProps> = memo(({
       return <ThinkingItemRenderer item={item} theme={theme} />;
     case "error":
       return <ErrorItemRenderer item={item} theme={theme} />;
+    case "event":
+      return <EventItemRenderer item={item} theme={theme} />;
     case "info":
       return <InfoItemRenderer item={item} theme={theme} />;
     case "hint":
@@ -559,6 +581,7 @@ export const MessageList: React.FC<MessageListProps> = ({
   windowed = false,
   showFullThinking = false,
   showDetailedTools = false,
+  showAllContent = false,
   showLiveProgressRows = true,
   selectedItemId,
   expandedItemKeys,
@@ -604,6 +627,7 @@ export const MessageList: React.FC<MessageListProps> = ({
       windowed,
       showFullThinking,
       showDetailedTools,
+      showAllContent,
       showLiveProgressRows,
       expandedItemKeys,
     }),
@@ -637,19 +661,29 @@ export const MessageList: React.FC<MessageListProps> = ({
       windowed,
       showFullThinking,
       showDetailedTools,
+      showAllContent,
       showLiveProgressRows,
       expandedItemKeys,
     ],
   );
   const staticSections = effectiveTranscriptModel.staticSections;
   const transcriptRows = effectiveTranscriptModel.rows;
+  const previewRows = effectiveTranscriptModel.previewRows;
+  const allTranscriptRows = useMemo(
+    () => [...transcriptRows, ...previewRows],
+    [previewRows, transcriptRows],
+  );
+  const windowedRowSource = useMemo(
+    () => (windowed || rendererWindow || visibleRowsOverride ? allTranscriptRows : transcriptRows),
+    [allTranscriptRows, rendererWindow, transcriptRows, visibleRowsOverride, windowed],
+  );
 
   const visibleRows = useMemo(
     () => {
       if (visibleRowsOverride) {
         return visibleRowsOverride;
       }
-      return resolveVisibleTranscriptRows(transcriptRows, {
+      return resolveVisibleTranscriptRows(windowedRowSource, {
         start: rendererWindow?.start,
         end: rendererWindow?.end,
         viewportRows,
@@ -657,7 +691,15 @@ export const MessageList: React.FC<MessageListProps> = ({
         windowed,
       });
     },
-    [rendererWindow?.end, rendererWindow?.start, scrollOffset, transcriptRows, viewportRows, visibleRowsOverride, windowed]
+    [rendererWindow?.end, rendererWindow?.start, scrollOffset, viewportRows, visibleRowsOverride, windowed, windowedRowSource]
+  );
+  const renderedRows = useMemo(
+    () => (visibleRowsOverride || windowed || rendererWindow ? visibleRows : [...visibleRows, ...previewRows]),
+    [previewRows, rendererWindow, visibleRows, visibleRowsOverride, windowed],
+  );
+  const allRenderedRows = useMemo(
+    () => allTranscriptRows,
+    [allTranscriptRows],
   );
   const effectiveViewportRows = rendererWindow
     ? Math.max(0, rendererWindow.viewportHeight)
@@ -665,16 +707,19 @@ export const MessageList: React.FC<MessageListProps> = ({
 
   useEffect(() => {
     onMetricsChange?.({
-      scrollHeight: transcriptRows.length,
+      scrollHeight: allTranscriptRows.length,
       viewportHeight: rendererWindow
         ? Math.max(0, rendererWindow.viewportHeight)
-        : (effectiveViewportRows ?? transcriptRows.length),
+        : (effectiveViewportRows ?? allTranscriptRows.length),
     });
-  }, [effectiveViewportRows, onMetricsChange, rendererWindow, transcriptRows.length]);
+  }, [allTranscriptRows.length, effectiveViewportRows, onMetricsChange, rendererWindow]);
 
   useEffect(() => {
-    onVisibleRowsChange?.(visibleRows);
-  }, [onVisibleRowsChange, visibleRows]);
+    onVisibleRowsChange?.({
+      rows: renderedRows,
+      allRows: allRenderedRows,
+    });
+  }, [allRenderedRows, onVisibleRowsChange, renderedRows]);
 
   if (showEmptyState) {
     return (
@@ -698,7 +743,7 @@ export const MessageList: React.FC<MessageListProps> = ({
           )}
         </Static>
       )}
-      {visibleRows.map((row) => (
+      {renderedRows.map((row) => (
         <TranscriptRowRenderer
           key={row.key}
           row={row}

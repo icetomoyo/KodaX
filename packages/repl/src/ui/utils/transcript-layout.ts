@@ -40,6 +40,7 @@ export interface TranscriptSection {
 
 export interface TranscriptBuildOptions {
   items: HistoryItem[];
+  managedLiveEvents?: readonly HistoryItem[];
   viewportWidth: number;
   isLoading?: boolean;
   maxLines?: number;
@@ -66,6 +67,7 @@ export interface TranscriptBuildOptions {
   lastLiveActivityLabel?: string;
   showFullThinking?: boolean;
   showDetailedTools?: boolean;
+  showAllContent?: boolean;
   showLiveProgressRows?: boolean;
   expandedItemKeys?: ReadonlySet<string>;
 }
@@ -74,6 +76,8 @@ export interface TranscriptRenderModel {
   staticSections: TranscriptSection[];
   sections: TranscriptSection[];
   rows: TranscriptRow[];
+  previewSections: TranscriptSection[];
+  previewRows: TranscriptRow[];
 }
 
 export interface TranscriptRenderModelOptions extends TranscriptBuildOptions {
@@ -162,8 +166,9 @@ function buildThinkingPreview(
   text: string,
   maxLines: number,
   showFullThinking: boolean,
+  showAllContent = false,
 ): string {
-  if (showFullThinking) {
+  if (showFullThinking || showAllContent) {
     return text;
   }
 
@@ -260,6 +265,7 @@ function buildToolRows(
   count: number,
   viewportWidth: number,
   showDetailedTools = false,
+  showAllContent = false,
 ): void {
   pushWrappedRows(
     rows,
@@ -290,7 +296,8 @@ function buildToolRows(
 
   if (showDetailedTools) {
     const inputLines = buildToolInputPreview(tool);
-    inputLines.forEach((line, index) => {
+    const visibleInputLines = showAllContent ? inputLines : inputLines.slice(0, 6);
+    visibleInputLines.forEach((line, index) => {
       pushWrappedRows(
         rows,
         `${itemKey}-tool-${tool.id}-input-${index}`,
@@ -299,13 +306,22 @@ function buildToolRows(
         { color: "dim", indent: 4 }
       );
     });
+    if (!showAllContent && inputLines.length > visibleInputLines.length) {
+      pushWrappedRows(
+        rows,
+        `${itemKey}-tool-${tool.id}-input-more`,
+        `... (${inputLines.length - visibleInputLines.length} more lines)`,
+        getBodyWidth(viewportWidth, 4),
+        { color: "dim", indent: 4 }
+      );
+    }
   }
 
   if (showDetailedTools && typeof tool.output === "string" && tool.output.trim()) {
-    const outputLines = tool.output
-      .trim()
-      .split(/\r?\n/)
-      .slice(0, 8);
+    const allOutputLines = tool.output.trim().split(/\r?\n/);
+    const outputLines = showAllContent
+      ? allOutputLines
+      : allOutputLines.slice(0, 8);
     outputLines.forEach((line, index) => {
       pushWrappedRows(
         rows,
@@ -315,8 +331,8 @@ function buildToolRows(
         { color: "dim", indent: 4 }
       );
     });
-    const totalLineCount = tool.output.trim().split(/\r?\n/).length;
-    if (totalLineCount > outputLines.length) {
+    const totalLineCount = allOutputLines.length;
+    if (!showAllContent && totalLineCount > outputLines.length) {
       pushWrappedRows(
         rows,
         `${itemKey}-tool-${tool.id}-output-more`,
@@ -391,6 +407,7 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
     lastLiveActivityLabel,
     showFullThinking = false,
     showDetailedTools = false,
+    showAllContent = false,
     showLiveProgressRows = true,
   } = options;
 
@@ -414,6 +431,7 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
         rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
         break;
       case "assistant": {
+        const displayText = showAllContent ? item.text : item.compactText ?? item.text;
         pushWrappedRows(
           rows,
           `${item.id}-header`,
@@ -424,7 +442,7 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
         pushWrappedRows(
           rows,
           `${item.id}-body`,
-          item.text,
+          displayText,
           getBodyWidth(viewportWidth, 2),
           { color: "text", indent: 2, itemId: item.id }
         );
@@ -455,13 +473,15 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
           { color: "accent", bold: true, itemId: item.id }
         );
         collapseToolCalls(item.tools).forEach((group) => (
-          buildToolRows(rows, item.id, group.tool, group.count, viewportWidth, showDetailedTools)
+          buildToolRows(rows, item.id, group.tool, group.count, viewportWidth, showDetailedTools, showAllContent)
         ));
         rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
         break;
       case "thinking":
         {
-          const preview = buildThinkingPreview(item.text, maxLines, showFullThinking);
+          const preview = showAllContent
+            ? item.text
+            : item.compactText ?? buildThinkingPreview(item.text, maxLines, showFullThinking, showAllContent);
         pushWrappedRows(rows, `${item.id}-header`, "Thinking", viewportWidth, {
           color: "thinking",
           italic: true,
@@ -490,10 +510,29 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
         rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
         break;
       case "info":
-        pushWrappedRows(rows, `${item.id}-body`, `${item.icon ?? "\u2139"} ${item.text}`, viewportWidth, {
+        pushWrappedRows(
+          rows,
+          `${item.id}-body`,
+          `${item.icon ?? "\u2139"} ${showAllContent ? item.text : item.compactText ?? item.text}`,
+          viewportWidth,
+          {
           color: "info",
           itemId: item.id,
-        });
+          }
+        );
+        rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
+        break;
+      case "event":
+        pushWrappedRows(
+          rows,
+          `${item.id}-body`,
+          `${item.icon ?? ">"} ${showAllContent ? item.text : item.compactText ?? item.text}`,
+          viewportWidth,
+          {
+            color: "text",
+            itemId: item.id,
+          }
+        );
         rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
         break;
       case "hint":
@@ -576,8 +615,8 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
     pushBlankRow(rows, "iteration-current-blank");
   }
 
-  if (showLiveProgressRows && isLoading && thinkingContent) {
-    const thinkingPreview = buildThinkingPreview(thinkingContent, maxLines, showFullThinking);
+  if (isLoading && thinkingContent) {
+    const thinkingPreview = buildThinkingPreview(thinkingContent, maxLines, showFullThinking, showAllContent);
     pushWrappedRows(rows, "thinking-stream-header", "Thinking", viewportWidth, {
       color: "thinking",
       italic: true,
@@ -590,19 +629,7 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
     pushBlankRow(rows, "thinking-stream-blank");
   }
 
-  if (streamingResponse) {
-    pushWrappedRows(rows, "streaming-header", "Assistant", viewportWidth, {
-      color: "secondary",
-      bold: true,
-    });
-    pushWrappedRows(rows, "streaming-body", streamingResponse, getBodyWidth(viewportWidth, 2), {
-      color: "text",
-      indent: 2,
-    });
-    pushBlankRow(rows, "streaming-blank");
-  }
-
-  if (showLiveProgressRows && isLoading) {
+  if (isLoading) {
     let loadingText = "Thinking";
     let prefix = "";
     const managedHarnessShort = formatHarnessProfileShort(managedHarnessProfile);
@@ -619,7 +646,6 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
     const erroredToolCount = activeToolCalls.filter((tool) => tool.status === ToolCallStatus.Error).length;
     const cancelledToolCount = activeToolCalls.filter((tool) => tool.status === ToolCallStatus.Cancelled).length;
     const shouldRenderLiveToolBlock = activeToolCalls.length > 0 && (activeToolCount > 0 || !streamingResponse);
-    let renderedStickyToolBlock = false;
 
     if (isCompacting) {
       loadingText = "Compacting";
@@ -655,9 +681,10 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
         buildLiveToolRows(rows, "loading-tools", tool, viewportWidth);
       });
       pushBlankRow(rows, "loading-tools-blank");
-      renderedStickyToolBlock = true;
       if (activeToolCount > 0) {
-        return rows;
+        if (!streamingResponse && !showLiveProgressRows) {
+          return rows;
+        }
       }
     } else if (currentTool) {
       prefix = managedPrefix || "[Tool] ";
@@ -674,17 +701,31 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
         : normalizedLiveActivityLabel
           ? `${normalizedLiveActivityLabel}${roundSuffix}`
           : `processing${roundSuffix}`;
-    } else if (normalizedLiveActivityLabel && !renderedStickyToolBlock) {
+    } else if (normalizedLiveActivityLabel) {
       loadingText = normalizedLiveActivityLabel;
     }
 
-    pushWrappedRows(
-      rows,
-      "loading-indicator",
-      `${prefix}${loadingText}...`,
-      viewportWidth,
-      { color: "accent", spinner: true }
-    );
+    if (showLiveProgressRows) {
+      pushWrappedRows(
+        rows,
+        "loading-indicator",
+        `${prefix}${loadingText}...`,
+        viewportWidth,
+        { color: "accent", spinner: true }
+      );
+    }
+  }
+
+  if (streamingResponse) {
+    pushWrappedRows(rows, "streaming-header", "Assistant", viewportWidth, {
+      color: "secondary",
+      bold: true,
+    });
+    pushWrappedRows(rows, "streaming-body", streamingResponse, getBodyWidth(viewportWidth, 2), {
+      color: "text",
+      indent: 2,
+    });
+    pushBlankRow(rows, "streaming-blank");
   }
 
   return rows;
@@ -695,8 +736,9 @@ export function buildStaticTranscriptSections(
   viewportWidth: number,
   maxLines = 1000,
   showDetailedTools = false,
+  showAllContent = false,
 ): TranscriptSection[] {
-  return buildHistoryItemTranscriptSections(items, viewportWidth, maxLines, showDetailedTools);
+  return buildHistoryItemTranscriptSections(items, viewportWidth, maxLines, showDetailedTools, undefined, showAllContent);
 }
 
 export function buildHistoryItemTranscriptSections(
@@ -705,6 +747,7 @@ export function buildHistoryItemTranscriptSections(
   maxLines = 1000,
   showDetailedTools = false,
   expandedItemKeys?: ReadonlySet<string>,
+  showAllContent = false,
 ): TranscriptSection[] {
   return items.map((item) => ({
     key: item.id,
@@ -712,6 +755,7 @@ export function buildHistoryItemTranscriptSections(
       items: [item],
       viewportWidth,
       maxLines,
+      showAllContent,
       showDetailedTools: showDetailedTools || Boolean(expandedItemKeys?.has(item.id)),
     }),
   }));
@@ -736,6 +780,7 @@ export function buildTranscriptRenderModel(
     maxLines = 1000,
     windowed = false,
     showDetailedTools = false,
+    showAllContent = false,
     expandedItemKeys,
     ...dynamicOptions
   } = options;
@@ -745,30 +790,36 @@ export function buildTranscriptRenderModel(
   const activeItems = windowed ? items : items.slice(activeRoundStartIndex);
   const staticSections = windowed
     ? []
-    : buildStaticTranscriptSections(staticItems, viewportWidth, maxLines, showDetailedTools);
+    : buildStaticTranscriptSections(staticItems, viewportWidth, maxLines, showDetailedTools, showAllContent);
   const sections = buildHistoryItemTranscriptSections(
     activeItems,
     viewportWidth,
     maxLines,
     showDetailedTools,
     expandedItemKeys,
+    showAllContent,
   );
   const pendingSection = buildDynamicTranscriptSection("active-pending", {
     ...dynamicOptions,
     items: [],
+    managedLiveEvents: [],
+    lastLiveActivityLabel: dynamicOptions.lastLiveActivityLabel,
     viewportWidth,
     maxLines,
+    showAllContent,
     showDetailedTools,
     expandedItemKeys,
   });
-  const nextSections = pendingSection.rows.length > 0
-    ? [...sections, pendingSection]
-    : sections;
+  const previewSections = pendingSection.rows.length > 0
+    ? [pendingSection]
+    : [];
 
   return {
     staticSections,
-    sections: nextSections,
-    rows: flattenTranscriptSections(nextSections),
+    sections,
+    rows: flattenTranscriptSections(sections),
+    previewSections,
+    previewRows: flattenTranscriptSections(previewSections),
   };
 }
 
@@ -784,6 +835,8 @@ export function materializeTranscriptRenderModel(
     staticSections: [],
     sections,
     rows: flattenTranscriptSections(sections),
+    previewSections: [...model.previewSections],
+    previewRows: flattenTranscriptSections(model.previewSections),
   };
 }
 

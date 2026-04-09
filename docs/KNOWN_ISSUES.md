@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-03-28_
+_Last Updated: 2026-04-08_
 
 ---
 
@@ -49,11 +49,44 @@ _Last Updated: 2026-03-28_
 | 104 | Low | Resolved | Repo-intelligence cache JSON is read without runtime shape validation | v0.7.5 | v0.7.5 | 2026-03-28 | 2026-03-28 |
 
 | 105 | Medium | Open | kodax -c 历史记录未注入 LLM 上下文 - resume 路径可能存在 gitRoot 过滤不一致 | v0.7.14 | - | 2026-04-03 | - |
+| 106 | High | Open | Managed-task structured worker blocks remain text-coupled and can fail closed on protocol drift | v0.7.14 | - | 2026-04-08 | - |
 
 ---
 
 ## Issue Details
 <!-- Full details for each issue - REQUIRED for all issues -->
+---
+### 106: Managed-task structured worker blocks remain text-coupled and can fail closed on protocol drift
+- **Priority**: High
+- **Status**: Open
+- **Introduced**: v0.7.14
+- **Fixed**: -
+- **Created**: 2026-04-08
+
+- **Original Problem**:
+  Managed-task workers still depend on long visible prose that ends with fenced protocol blocks such as
+  `kodax-task-scout`, `kodax-task-contract`, `kodax-task-handoff`, and `kodax-task-verdict`.
+
+  In practice, minor protocol drift can still break orchestration:
+
+  1. evaluator verdicts can be rejected when structured output drifts
+  2. planner / scout / handoff blocks can still fail closed on formatting variations
+  3. missing protocol blocks can produce blocked runs even when visible content is otherwise useful
+  4. malformed worker output can push too much raw text into failure paths, artifacts, or session memory
+
+- **Context**:
+  This issue is broader than a single evaluator bug. It is a protocol-layer reliability issue across all managed workers.
+  The recent `missing kodax-task-verdict` crash / OOM chain exposed the highest-severity symptom, but the same text-coupled
+  design exists for planner, scout, and handoff blocks too.
+
+- **Planned Resolution**:
+  Resolve in phases under `FEATURE_059 Managed Task Structured Protocol V2`:
+
+  1. harden all managed parsers to accept the last valid block, JSON variants, and common field aliases
+  2. keep protocol-failure UI compact while persisting raw artifacts separately
+  3. move toward a dual-track model with separate `visibleText` and `protocolPayload`
+  4. eventually let evaluator act as a structured verdict producer instead of relying on a prose-tail block
+
 ---
 
 ### 088: 消息列表视口布局不稳定 - 底部区域跳动/最后一行被裁剪 (RESOLVED)

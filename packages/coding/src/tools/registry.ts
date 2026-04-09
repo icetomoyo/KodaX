@@ -24,6 +24,7 @@ import { toolModuleContext } from './module-context.js';
 import { toolSymbolContext } from './symbol-context.js';
 import { toolProcessContext } from './process-context.js';
 import { toolImpactEstimate } from './impact-estimate.js';
+import { toolEmitManagedProtocol } from './emit-managed-protocol.js';
 import { toolWebSearch } from './web-search.js';
 import { toolWebFetch } from './web-fetch.js';
 import { toolCodeSearch } from './code-search.js';
@@ -223,6 +224,26 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['pattern', 'path'],
     },
     handler: toolGrep,
+  },
+  {
+    name: 'emit_managed_protocol',
+    description: 'Internal-only managed-task protocol side-channel for scout/planner/handoff/verdict payloads.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        role: {
+          type: 'string',
+          enum: ['scout', 'planner', 'generator', 'evaluator'],
+          description: 'Managed worker role emitting a structured protocol payload',
+        },
+        payload: {
+          type: 'object',
+          description: 'Role-specific structured protocol payload',
+        },
+      },
+      required: ['role', 'payload'],
+    },
+    handler: toolEmitManagedProtocol,
   },
   {
     name: 'web_search',

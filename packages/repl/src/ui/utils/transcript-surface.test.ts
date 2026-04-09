@@ -69,7 +69,7 @@ describe("transcript-surface", () => {
     })).toEqual(transcriptItems);
   });
 
-  it("builds a compact prompt surface item list with compact thinking but without hint rows", () => {
+  it("builds a compact prompt surface item list with compact thinking, events, and without hint rows", () => {
     const promptItems = buildPromptSurfaceItems([
       {
         id: "user-1",
@@ -94,15 +94,22 @@ describe("transcript-surface", () => {
         ] as any,
       },
       {
+        id: "event-1",
+        type: "event",
+        timestamp: 4.5,
+        text: "Planner completed: full detail",
+        compactText: "Planner completed: compact detail",
+      },
+      {
         id: "assistant-1",
         type: "assistant",
-        timestamp: 4,
+        timestamp: 5,
         text: "done",
       },
       {
         id: "info-1",
         type: "info",
-        timestamp: 5,
+        timestamp: 6,
         text: "Using Scout",
       },
     ] as any);
@@ -131,15 +138,22 @@ describe("transcript-surface", () => {
         ],
       },
       {
+        id: "event-1",
+        type: "event",
+        timestamp: 4.5,
+        text: "Planner completed: full detail",
+        compactText: "Planner completed: compact detail",
+      },
+      {
         id: "assistant-1",
         type: "assistant",
-        timestamp: 4,
+        timestamp: 5,
         text: "done",
       },
       {
         id: "info-1",
         type: "info",
-        timestamp: 5,
+        timestamp: 6,
         text: "Using Scout",
       },
     ]);

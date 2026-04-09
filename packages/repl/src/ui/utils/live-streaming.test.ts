@@ -40,6 +40,33 @@ describe("live-streaming", () => {
     })).toBe("AMA H2 - Planner starting");
   });
 
+  it("keeps worker completion summaries in managed-task breadcrumbs", () => {
+    expect(formatManagedTaskBreadcrumb({
+      agentMode: "ama",
+      harnessProfile: "H2_PLAN_EXECUTE_EVAL",
+      activeWorkerTitle: "Planner",
+      currentRound: 1,
+      maxRounds: 4,
+      phase: "worker",
+      note: "Planner completed: Compared ScrollBox ownership with Claude's fullscreen host.",
+    })).toBe("AMA H2 - Planner completed: Compared ScrollBox ownership with Claude's fullscreen host.");
+  });
+
+  it("uses the expanded detail note when transcript show-all requests the full breadcrumb", () => {
+    expect(formatManagedTaskBreadcrumb({
+      agentMode: "ama",
+      harnessProfile: "H2_PLAN_EXECUTE_EVAL",
+      activeWorkerTitle: "Planner",
+      currentRound: 1,
+      maxRounds: 4,
+      phase: "worker",
+      note: "Planner completed: compact summary",
+      detailNote: "Planner completed: compact summary\n\nFull multiline planner detail that should stay available in transcript mode.",
+    }, { expanded: true })).toBe(
+      "AMA H2 - Planner completed: compact summary\n\nFull multiline planner detail that should stay available in transcript mode."
+    );
+  });
+
   it("shows round info only after an actual additional pass starts", () => {
     expect(formatManagedTaskBreadcrumb({
       agentMode: "ama",
