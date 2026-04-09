@@ -69,6 +69,26 @@ describe("ScrollBox", () => {
     expect(lastFrame()).toContain("window:90-110");
   });
 
+  it("preserves the full logical scroll height for renderer-owned windows", async () => {
+    const ref = React.createRef<ScrollBoxHandle>();
+    render(
+      <ScrollBox
+        scrollRef={ref}
+        scrollTop={10}
+        scrollHeight={120}
+        viewportHeight={20}
+        renderWindow={() => <Text>Visible row only</Text>}
+      >
+        <Text>ignored</Text>
+      </ScrollBox>,
+    );
+
+    await vi.waitFor(() => {
+      expect(ref.current?.getScrollHeight()).toBe(120);
+      expect(ref.current?.getViewportTop()).toBe(90);
+    });
+  });
+
   it("notifies sticky changes when the controlled sticky flag flips", async () => {
     const onStickyChange = vi.fn();
 

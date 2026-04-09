@@ -43,6 +43,54 @@ describe("MessageList", () => {
     expect(frame).not.toContain("First line");
   });
 
+  it("prefers renderer viewport semantics over stale start/end bounds", () => {
+    const firstRow = { key: "row-1", text: "First line", itemId: "info-1" };
+    const secondRow = { key: "row-2", text: "Second line", itemId: "info-2" };
+    const { lastFrame } = render(
+      <MessageList
+        items={[
+          {
+            id: "info-1",
+            type: "info",
+            timestamp: 1,
+            text: "First line",
+          },
+          {
+            id: "info-2",
+            type: "info",
+            timestamp: 2,
+            text: "Second line",
+          },
+        ]}
+        transcriptModel={{
+          staticSections: [],
+          sections: [
+            { key: "info-1", rows: [firstRow] },
+            { key: "info-2", rows: [secondRow] },
+          ],
+          rows: [firstRow, secondRow],
+          previewSections: [],
+          previewRows: [],
+        }}
+        windowed
+        rendererWindow={{
+          start: 0,
+          end: 1,
+          scrollTop: 0,
+          scrollHeight: 2,
+          viewportHeight: 1,
+          viewportTop: 1,
+          pendingDelta: 0,
+          sticky: false,
+        }}
+      />,
+    );
+
+    const frame = lastFrame();
+    expect(frame).toContain("Second line");
+    expect(frame).not.toContain("First line");
+  });
+
   it("renders a prebuilt transcript model without rebuilding owned rows in the component", () => {
     const transcriptModel = buildTranscriptRenderModel({
       items: [

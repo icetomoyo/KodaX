@@ -845,6 +845,8 @@ export function resolveVisibleTranscriptRows(
   options: {
     start?: number;
     end?: number;
+    viewportTop?: number;
+    viewportHeight?: number;
     viewportRows?: number;
     scrollOffset?: number;
     windowed?: boolean;
@@ -853,10 +855,18 @@ export function resolveVisibleTranscriptRows(
   const {
     start,
     end,
+    viewportTop,
+    viewportHeight,
     viewportRows,
     scrollOffset = 0,
     windowed = false,
   } = options;
+
+  if (typeof viewportTop === "number" && typeof viewportHeight === "number") {
+    const safeStart = Math.max(0, viewportTop);
+    const safeEnd = Math.max(safeStart, viewportTop + Math.max(0, viewportHeight));
+    return rows.slice(safeStart, safeEnd);
+  }
 
   if (typeof start === "number" && typeof end === "number") {
     return rows.slice(Math.max(0, start), Math.max(0, end));

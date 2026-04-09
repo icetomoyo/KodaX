@@ -684,14 +684,27 @@ export const MessageList: React.FC<MessageListProps> = ({
         return visibleRowsOverride;
       }
       return resolveVisibleTranscriptRows(windowedRowSource, {
-        start: rendererWindow?.start,
-        end: rendererWindow?.end,
+        viewportTop: rendererWindow
+          ? Math.max(0, rendererWindow.viewportTop)
+          : undefined,
+        viewportHeight: rendererWindow
+          ? Math.max(0, rendererWindow.viewportHeight)
+          : undefined,
+        start: undefined,
+        end: undefined,
         viewportRows,
         scrollOffset,
         windowed,
       });
     },
-    [rendererWindow?.end, rendererWindow?.start, scrollOffset, viewportRows, visibleRowsOverride, windowed, windowedRowSource]
+    [
+      rendererWindow,
+      scrollOffset,
+      viewportRows,
+      visibleRowsOverride,
+      windowed,
+      windowedRowSource,
+    ]
   );
   const renderedRows = useMemo(
     () => (visibleRowsOverride || windowed || rendererWindow ? visibleRows : allTranscriptRows),

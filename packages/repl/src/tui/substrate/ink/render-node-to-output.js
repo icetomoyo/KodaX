@@ -110,9 +110,38 @@ const renderNodeToOutput = (node, output, options) => {
             const overflowY = node.style.overflowY ?? node.style.overflow;
             const clipHorizontally = overflowX === 'hidden' || overflowX === 'scroll';
             const clipVertically = overflowY === 'hidden' || overflowY === 'scroll';
-            if (overflowY === 'scroll' && node.attributes?.virtualScrollWindowed !== true) {
-                const rawScrollTop = node.scrollTop ?? node.attributes?.scrollTop;
-                scrollOffsetY = Math.max(0, Math.floor(rawScrollTop ?? 0));
+            if (overflowY === 'scroll') {
+                const borderTop = yogaNode.getComputedBorder(Yoga.EDGE_TOP);
+                const borderBottom = yogaNode.getComputedBorder(Yoga.EDGE_BOTTOM);
+                const viewportHeight = Math.max(0, yogaNode.getComputedHeight() - borderTop - borderBottom);
+                const virtualScrollWindowed = node.attributes?.virtualScrollWindowed === true;
+                const contentNode = node.childNodes[0];
+                const contentHeight = Math.max(0, Math.floor(virtualScrollWindowed
+                    ? node.attributes?.scrollHeight ?? 0
+                    : contentNode?.yogaNode?.getComputedHeight() ?? node.attributes?.scrollHeight ?? 0));
+                const previousScrollHeight = typeof node.scrollHeight === 'number'
+                    ? node.scrollHeight
+                    : contentHeight;
+                const rawScrollTop = node.scrollTop ?? node.attributes?.scrollTop ?? 0;
+                const maxScrollTop = Math.max(0, contentHeight - viewportHeight);
+                const stickyScroll = node.stickyScroll ?? Boolean(node.attributes?.stickyScroll);
+                const clampMin = node.attributes?.scrollClampMin;
+                const clampMax = node.attributes?.scrollClampMax;
+                const normalizedScrollTop = Math.max(0, Math.min(Math.floor(rawScrollTop), maxScrollTop));
+                const shouldFollowBottom = stickyScroll && contentHeight >= previousScrollHeight;
+                const logicalScrollTop = shouldFollowBottom
+                    ? maxScrollTop
+                    : normalizedScrollTop;
+                const clampedViewportTop = clampMin !== undefined || clampMax !== undefined
+                    ? Math.max(clampMin ?? 0, Math.min(logicalScrollTop, Math.min(maxScrollTop, clampMax ?? maxScrollTop)))
+                    : logicalScrollTop;
+                node.scrollHeight = contentHeight;
+                node.scrollViewportHeight = viewportHeight;
+                node.scrollViewportTop = clampedViewportTop;
+                node.scrollTop = clampedViewportTop;
+                if (!virtualScrollWindowed) {
+                    scrollOffsetY = clampedViewportTop;
+                }
             }
             if (clipHorizontally || clipVertically) {
                 const x1 = clipHorizontally

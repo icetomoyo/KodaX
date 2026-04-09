@@ -142,6 +142,7 @@ export const ScrollBox: React.FC<ScrollBoxProps> = ({
   onWindowChange,
   renderWindow,
 }) => {
+  const domRef = useRef<any>(null);
   const listenersRef = useRef(new Set<() => void>());
   const snapshotRef = useRef<ScrollSnapshot>(normalizeScrollSnapshot({
     scrollTop,
@@ -193,10 +194,7 @@ export const ScrollBox: React.FC<ScrollBoxProps> = ({
       scrollTop,
       scrollHeight,
       viewportHeight,
-      pendingDelta:
-        previous.scrollTop !== scrollTop
-          ? 0
-          : previous.pendingDelta,
+      pendingDelta: 0,
       clampMin: previous.clampMin,
       clampMax: previous.clampMax,
       sticky: stickyScroll,
@@ -218,6 +216,51 @@ export const ScrollBox: React.FC<ScrollBoxProps> = ({
     stickyScroll,
     viewportHeight,
   ]);
+
+  const syncSnapshotFromDom = useCallback(() => {
+    const host = domRef.current;
+    if (!host) {
+      return;
+    }
+
+    const nextScrollHeight = typeof host.scrollHeight === "number"
+      ? Math.max(0, Math.floor(host.scrollHeight))
+      : undefined;
+    const nextViewportHeight = typeof host.scrollViewportHeight === "number"
+      ? Math.max(0, Math.floor(host.scrollViewportHeight))
+      : undefined;
+    const nextViewportTop = typeof host.scrollViewportTop === "number"
+      ? Math.max(0, Math.floor(host.scrollViewportTop))
+      : undefined;
+
+    if (
+      nextScrollHeight === undefined
+      || nextViewportHeight === undefined
+      || nextViewportTop === undefined
+    ) {
+      return;
+    }
+
+    const derivedScrollTop = Math.max(
+      0,
+      nextScrollHeight - nextViewportHeight - nextViewportTop,
+    );
+
+    const result = commitSnapshot({
+      ...snapshotRef.current,
+      scrollTop: derivedScrollTop,
+      scrollHeight: nextScrollHeight,
+      viewportHeight: nextViewportHeight,
+    });
+
+    if (result.changed && result.window.scrollTop !== result.previous.scrollTop) {
+      onScrollTopChange?.(result.window.scrollTop);
+    }
+  }, [commitSnapshot, onScrollTopChange]);
+
+  useEffect(() => {
+    syncSnapshotFromDom();
+  }, [syncSnapshotFromDom]);
 
   const handle = useMemo<ScrollBoxHandle>(() => ({
     scrollTo(y: number) {
@@ -275,13 +318,13 @@ export const ScrollBox: React.FC<ScrollBoxProps> = ({
       return snapshotRef.current.pendingDelta;
     },
     getScrollHeight() {
-      return snapshotRef.current.scrollHeight;
+      return domRef.current?.scrollHeight ?? snapshotRef.current.scrollHeight;
     },
     getViewportHeight() {
-      return snapshotRef.current.viewportHeight;
+      return domRef.current?.scrollViewportHeight ?? windowState.viewportHeight;
     },
     getViewportTop() {
-      return resolveScrollWindow(snapshotRef.current).viewportTop;
+      return domRef.current?.scrollViewportTop ?? windowState.viewportTop;
     },
     isSticky() {
       return snapshotRef.current.sticky;
@@ -317,6 +360,7 @@ export const ScrollBox: React.FC<ScrollBoxProps> = ({
   return React.createElement(
     "ink-box",
     {
+      ref: domRef,
       style: {
         flexWrap: "nowrap",
         flexDirection: "row",
@@ -331,6 +375,7 @@ export const ScrollBox: React.FC<ScrollBoxProps> = ({
       scrollTop: nativeScrollTop,
       scrollHeight: snapshotRef.current.scrollHeight,
       scrollViewportHeight: snapshotRef.current.viewportHeight,
+      scrollViewportTop: windowState.viewportTop,
       pendingScrollDelta: snapshotRef.current.pendingDelta,
       virtualScrollWindowed: Boolean(renderWindow),
       ...(snapshotRef.current.clampMin !== undefined ? { scrollClampMin: snapshotRef.current.clampMin } : {}),
