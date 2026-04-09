@@ -102,15 +102,19 @@ export function buildPromptSurfaceItems(
   for (const item of items) {
     switch (item.type) {
       case "user":
-      case "assistant":
       case "system":
       case "error":
       case "tool_group":
-      case "thinking":
       case "event":
       case "info":
         promptItems.push({ ...item });
         break;
+      case "assistant":
+      case "thinking": {
+        const { compactText: _compactText, ...fullItem } = item;
+        promptItems.push(fullItem as HistoryItem);
+        break;
+      }
       case "hint":
       default:
         break;

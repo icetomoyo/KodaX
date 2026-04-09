@@ -694,8 +694,8 @@ export const MessageList: React.FC<MessageListProps> = ({
     [rendererWindow?.end, rendererWindow?.start, scrollOffset, viewportRows, visibleRowsOverride, windowed, windowedRowSource]
   );
   const renderedRows = useMemo(
-    () => (visibleRowsOverride || windowed || rendererWindow ? visibleRows : [...visibleRows, ...previewRows]),
-    [previewRows, rendererWindow, visibleRows, visibleRowsOverride, windowed],
+    () => (visibleRowsOverride || windowed || rendererWindow ? visibleRows : allTranscriptRows),
+    [allTranscriptRows, rendererWindow, visibleRows, visibleRowsOverride, windowed],
   );
   const allRenderedRows = useMemo(
     () => allTranscriptRows,

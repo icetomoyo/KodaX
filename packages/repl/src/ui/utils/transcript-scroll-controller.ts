@@ -214,6 +214,58 @@ export interface TranscriptSelectionOffsetOptions {
   showDetailedTools?: boolean;
 }
 
+export interface TranscriptItemVisibilityOptions {
+  items: HistoryItem[];
+  renderModel?: TranscriptRenderModel;
+  terminalWidth: number;
+  transcriptMaxLines: number;
+  viewportRows: number | undefined;
+  itemId: string | undefined;
+  visibleRows: readonly { key: string }[];
+  expandedItemKeys?: ReadonlySet<string>;
+  showDetailedTools?: boolean;
+}
+
+export function isTranscriptItemVisible(
+  options: TranscriptItemVisibilityOptions,
+): boolean {
+  const {
+    items,
+    renderModel,
+    terminalWidth,
+    transcriptMaxLines,
+    viewportRows,
+    itemId,
+    visibleRows,
+    expandedItemKeys,
+    showDetailedTools = false,
+  } = options;
+
+  if (!itemId || visibleRows.length === 0) {
+    return false;
+  }
+
+  const sections = renderModel?.sections ?? buildHistoryItemTranscriptSections(
+    items,
+    terminalWidth,
+    transcriptMaxLines,
+    showDetailedTools,
+    expandedItemKeys,
+  );
+  const targetSection = sections.find((section) => section.key === itemId);
+  if (!targetSection || targetSection.rows.length === 0) {
+    return false;
+  }
+
+  const visibleKeys = new Set(visibleRows.map((row) => row.key));
+  const normalizedViewportRows = Math.max(0, viewportRows ?? 0);
+  if (normalizedViewportRows > 0 && targetSection.rows.length <= normalizedViewportRows) {
+    return targetSection.rows.every((row) => visibleKeys.has(row.key));
+  }
+
+  return visibleKeys.has(targetSection.rows[0]?.key ?? "");
+}
+
 export function resolveTranscriptSelectionOffset(
   options: TranscriptSelectionOffsetOptions,
 ): number {

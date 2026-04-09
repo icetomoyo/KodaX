@@ -191,7 +191,6 @@ import { executeTranscriptKeyboardAction } from "./utils/transcript-interaction-
 import {
   buildTranscriptRenderModel,
   materializeTranscriptRenderModel,
-  resolveVisibleTranscriptRows,
   sliceHistoryToRecentRounds,
   type TranscriptRow,
 } from "./utils/transcript-layout.js";
@@ -209,6 +208,7 @@ import {
 import {
   buildTranscriptChromeModel,
   clampTranscriptScrollOffset,
+  isTranscriptItemVisible,
   resolveTranscriptPageSize,
   resolveTranscriptSearchAnchorItemId,
   resolveTranscriptSelectionOffset,
@@ -2952,6 +2952,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     resolveOwnedTranscriptWindow,
     transcriptAnimateSpinners,
   ]);
+  const resolveTranscriptContentViewportRows = useCallback(() => {
+    const geometry = transcriptOwnedWindowGeometryRef.current;
+    if (geometry?.contentWindow.viewportHeight && geometry.contentWindow.viewportHeight > 0) {
+      return geometry.contentWindow.viewportHeight;
+    }
+    return viewportBudget.messageRows;
+  }, [viewportBudget.messageRows]);
   const handleTranscriptWindowChange = useCallback((window: ScrollBoxWindow) => {
     transcriptRawWindowRef.current = window;
     const geometry = resolveOwnedTranscriptWindow(window);
@@ -3045,14 +3052,25 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     if (!itemId) {
       return;
     }
-    if (transcriptVisibleRowsRef.current.some((row) => row.itemId === itemId)) {
+    if (isTranscriptItemVisible({
+      items: currentSurfaceItems,
+      renderModel: activeTranscriptRenderModel,
+      terminalWidth,
+      transcriptMaxLines,
+      viewportRows: resolveTranscriptContentViewportRows(),
+      itemId,
+      visibleRows: transcriptVisibleRowsRef.current,
+      expandedItemKeys: expandedTranscriptItemIds,
+      showDetailedTools: false,
+    })) {
       return;
     }
     const nextOffset = resolveTranscriptSelectionOffset({
       items: currentSurfaceItems,
+      renderModel: activeTranscriptRenderModel,
       terminalWidth,
       transcriptMaxLines,
-      viewportRows: viewportBudget.messageRows,
+      viewportRows: resolveTranscriptContentViewportRows(),
       itemId,
       expandedItemKeys: expandedTranscriptItemIds,
       showDetailedTools: false,
@@ -3062,11 +3080,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     currentSurfaceItems,
     terminalWidth,
     transcriptMaxLines,
-    isTranscriptMode,
+    activeTranscriptRenderModel,
     expandedTranscriptItemIds,
+    resolveTranscriptContentViewportRows,
     scrollTranscriptTo,
     transcriptVisibleRowsRef,
-    viewportBudget.messageRows,
   ]);
 
   const selectTranscriptItem = useCallback((itemId: string | undefined) => {
@@ -3163,7 +3181,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     writeTerminal,
   ]);
   const resolveTranscriptSelectionRows = useCallback(() => (
-    transcriptVisibleRowsRef.current
+    transcriptAllRowsRef.current
   ), []);
   const resolveTranscriptMouseTarget = useCallback((row: number, column: number) => {
     if (!fullscreenPolicy.enabled || !transcriptOwnsViewport) {
@@ -3265,7 +3283,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         renderModel: activeTranscriptRenderModel,
         terminalWidth,
         transcriptMaxLines,
-        viewportRows: viewportBudget.messageRows,
+        viewportRows: resolveTranscriptContentViewportRows(),
         scrollOffset: historyScrollOffset,
         expandedItemKeys: expandedTranscriptItemIds,
         showDetailedTools: false,
@@ -3289,7 +3307,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     terminalWidth,
     transcriptMaxLines,
     uiRequest,
-    viewportBudget.messageRows,
+    resolveTranscriptContentViewportRows,
     clearTranscriptMouseSelection,
   ]);
 
@@ -6090,7 +6108,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const renderPromptSurfaceTranscript = useCallback((options?: {
     bannerVisible?: boolean;
     rendererWindow?: Pick<ScrollBoxWindow, "start" | "end" | "scrollHeight" | "viewportHeight" | "scrollTop" | "viewportTop" | "pendingDelta" | "sticky">;
-    visibleRowsOverride?: TranscriptRow[];
   }) => (
     <PromptTranscriptSurface
       banner={options?.bannerVisible ? <Banner {...bannerProps} /> : undefined}
@@ -6102,7 +6119,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       windowed={Boolean(options?.rendererWindow)}
       rendererWindow={options?.rendererWindow}
       transcriptModel={options?.rendererWindow ? ownedTranscriptRenderModel : promptMainScreenRenderModel}
-      visibleRowsOverride={options?.visibleRowsOverride}
       maxLines={transcriptMaxLines}
       selectedTextRanges={useManagedSelection ? promptTextSelection?.rowRanges : undefined}
       onMetricsChange={handleTranscriptMetricsChange}
@@ -6126,7 +6142,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     bannerVisible?: boolean;
     windowed?: boolean;
     rendererWindow?: Pick<ScrollBoxWindow, "start" | "end" | "scrollHeight" | "viewportHeight" | "scrollTop" | "viewportTop" | "pendingDelta" | "sticky">;
-    visibleRowsOverride?: TranscriptRow[];
   }) => (
     <TranscriptModeSurface
       banner={options?.bannerVisible ? <Banner {...bannerProps} /> : undefined}
@@ -6163,7 +6178,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       animateSpinners={Boolean(options?.rendererWindow) && transcriptAnimateSpinners}
       rendererWindow={options?.rendererWindow}
       transcriptModel={options?.rendererWindow ? ownedTranscriptRenderModel : transcriptMainScreenRenderModel}
-      visibleRowsOverride={options?.visibleRowsOverride}
       maxLines={transcriptMaxLines}
       showDetailedTools={showAllInTranscript}
       showAllContent={showAllInTranscript}
@@ -6310,28 +6324,16 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               (() => {
                 const geometry = resolveOwnedTranscriptWindow(window);
                 const adjustedWindow = geometry.contentWindow;
-                const allRows = ownedTranscriptRenderModel
-                  ? [...ownedTranscriptRenderModel.rows, ...ownedTranscriptRenderModel.previewRows]
-                  : [];
-                const visibleRows = resolveVisibleTranscriptRows(
-                  allRows,
-                  {
-                    start: adjustedWindow.start,
-                    end: adjustedWindow.end,
-                  },
-                );
 
                 return isTranscriptMode
                   ? renderTranscriptModeSurface({
                     bannerVisible: false,
                     windowed: true,
                     rendererWindow: adjustedWindow,
-                    visibleRowsOverride: visibleRows,
                   })
                   : renderPromptSurfaceTranscript({
                     bannerVisible: showBanner && window.start < fullscreenBannerRows,
                     rendererWindow: adjustedWindow,
-                    visibleRowsOverride: visibleRows,
                   });
               })()
             )

@@ -159,6 +159,40 @@ describe("transcript-surface", () => {
     ]);
   });
 
+  it("keeps full assistant and thinking text on the prompt surface even when compact text exists", () => {
+    const promptItems = buildPromptSurfaceItems([
+      {
+        id: "thinking-compact-1",
+        type: "thinking",
+        timestamp: 1,
+        text: "full thinking detail",
+        compactText: "compact thinking detail",
+      },
+      {
+        id: "assistant-compact-1",
+        type: "assistant",
+        timestamp: 2,
+        text: "full assistant report",
+        compactText: "compact assistant report",
+      },
+    ] as any);
+
+    expect(promptItems).toEqual([
+      {
+        id: "thinking-compact-1",
+        type: "thinking",
+        timestamp: 1,
+        text: "full thinking detail",
+      },
+      {
+        id: "assistant-compact-1",
+        type: "assistant",
+        timestamp: 2,
+        text: "full assistant report",
+      },
+    ]);
+  });
+
   it("counts pending transcript updates against the full transcript snapshot", () => {
     const snapshot = captureTranscriptSnapshot({
       items: [

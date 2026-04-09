@@ -5,6 +5,7 @@ import {
 import {
   buildTranscriptChromeModel,
   incrementTranscriptScrollOffset,
+  isTranscriptItemVisible,
   resolveTranscriptPageSize,
   resolveTranscriptSearchAnchorItemId,
   resolveTranscriptSelectionOffset,
@@ -180,5 +181,46 @@ describe("transcript-scroll-controller", () => {
     });
 
     expect(offset).toBeGreaterThanOrEqual(0);
+  });
+
+  it("treats a short selected item as not fully visible until all of its rows are in view", () => {
+    const items = [
+      { id: "user-1", type: "user", text: "question", timestamp: Date.now() },
+      {
+        id: "assistant-1",
+        type: "assistant",
+        text: "line 1\nline 2\nline 3",
+        timestamp: Date.now(),
+      },
+      { id: "user-2", type: "user", text: "follow up", timestamp: Date.now() },
+    ] satisfies HistoryItem[];
+
+    const renderModel = buildTranscriptRenderModel({
+      items,
+      viewportWidth: 80,
+      windowed: true,
+    });
+    const assistantSection = renderModel.sections.find((section) => section.key === "assistant-1");
+    expect(assistantSection).toBeDefined();
+
+    expect(isTranscriptItemVisible({
+      items,
+      renderModel,
+      terminalWidth: 80,
+      transcriptMaxLines: 1000,
+      viewportRows: 8,
+      itemId: "assistant-1",
+      visibleRows: assistantSection!.rows.slice(0, 2),
+    })).toBe(false);
+
+    expect(isTranscriptItemVisible({
+      items,
+      renderModel,
+      terminalWidth: 80,
+      transcriptMaxLines: 1000,
+      viewportRows: 8,
+      itemId: "assistant-1",
+      visibleRows: assistantSection!.rows,
+    })).toBe(true);
   });
 });

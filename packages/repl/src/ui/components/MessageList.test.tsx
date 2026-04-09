@@ -223,4 +223,45 @@ describe("MessageList", () => {
     const frame = lastFrame() ?? "";
     expect((frame.match(/Preview row/g) ?? [])).toHaveLength(1);
   });
+
+  it("derives renderer-owned visible rows from the shared transcript model", () => {
+    const snapshot: { rows: string[]; allRows: string[] }[] = [];
+    const stableRow = { key: "stable-0", text: "Stable row", itemId: "assistant-1" };
+    const previewRow = { key: "preview-0", text: "Preview row", itemId: "assistant-live" };
+
+    render(
+      <MessageList
+        items={[]}
+        transcriptModel={{
+          staticSections: [],
+          sections: [{ key: "stable", rows: [stableRow] }],
+          rows: [stableRow],
+          previewSections: [{ key: "preview", rows: [previewRow] }],
+          previewRows: [previewRow],
+        }}
+        windowed
+        rendererWindow={{
+          start: 1,
+          end: 2,
+          scrollTop: 0,
+          scrollHeight: 2,
+          viewportHeight: 1,
+          viewportTop: 1,
+          pendingDelta: 0,
+          sticky: false,
+        }}
+        onVisibleRowsChange={(next) => {
+          snapshot.push({
+            rows: next.rows.map((row) => row.key),
+            allRows: next.allRows.map((row) => row.key),
+          });
+        }}
+      />,
+    );
+
+    expect(snapshot.at(-1)).toEqual({
+      rows: ["preview-0"],
+      allRows: ["stable-0", "preview-0"],
+    });
+  });
 });
