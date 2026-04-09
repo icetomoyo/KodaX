@@ -82,5 +82,28 @@ describe("FullscreenTranscriptLayout", () => {
     expect((frame ?? "").replace(/\s+/g, " ")).toContain("Jump to latest: End");
     expect(observedWindow).toBe("90-110");
   });
+
+  it("reserves top chrome rows outside the transcript content window", () => {
+    let observedWindow = "";
+    const { lastFrame } = render(
+      <FullscreenTranscriptLayout
+        top={<Text>Banner</Text>}
+        topRows={3}
+        renderTranscriptWindow={(window) => {
+          observedWindow = `${window.start}-${window.end}`;
+          return <Text>{`Window ${window.start}-${window.end}`}</Text>;
+        }}
+        footer={<Text>Footer</Text>}
+        scrollTop={10}
+        scrollHeight={120}
+        viewportHeight={20}
+      />,
+    );
+
+    const frame = lastFrame();
+    expect(frame).toContain("Banner");
+    expect(frame).toContain("Window 93-110");
+    expect(observedWindow).toBe("93-110");
+  });
 });
 

@@ -163,7 +163,6 @@ export class McpCapabilityProvider implements CapabilityProvider {
         const parts = [
           `- ${entry.serverId}`,
           `connect=${entry.connect}`,
-          `trust=${entry.trust}`,
           `status=${entry.status}`,
         ];
         if (entry.cachedAt) {

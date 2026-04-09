@@ -26,7 +26,7 @@ describe("transcript-window-geometry", () => {
     expect(geometry.contentWindow.viewportHeight).toBe(20);
   });
 
-  it("normalizes banner-owned rows out of the transcript content window", () => {
+  it("tracks top chrome rows separately from transcript content rows", () => {
     const geometry = resolveTranscriptOwnedWindowGeometry({
       window: {
         start: 4,
@@ -39,19 +39,17 @@ describe("transcript-window-geometry", () => {
         sticky: false,
       },
       width: 80,
-      bannerVisible: true,
-      fullscreenBannerRows: 6,
-      contentOffsetRows: 6,
+      topChromeRows: 6,
     });
 
-    expect(geometry.bannerVisibleRows).toBe(6);
-    expect(geometry.contentWindow.start).toBe(0);
-    expect(geometry.contentWindow.end).toBe(18);
-    expect(geometry.contentWindow.viewportHeight).toBe(14);
+    expect(geometry.topChromeRows).toBe(6);
+    expect(geometry.contentWindow.start).toBe(4);
+    expect(geometry.contentWindow.end).toBe(24);
+    expect(geometry.contentWindow.viewportHeight).toBe(20);
     expect(geometry.topOffsetRows).toBe(6);
   });
 
-  it("does not subtract fullscreen banner rows when the banner is hidden", () => {
+  it("preserves transcript coordinates when there is no top chrome", () => {
     const geometry = resolveTranscriptOwnedWindowGeometry({
       window: {
         start: 4,
@@ -64,19 +62,17 @@ describe("transcript-window-geometry", () => {
         sticky: false,
       },
       width: 80,
-      bannerVisible: false,
-      fullscreenBannerRows: 6,
-      contentOffsetRows: 0,
+      topChromeRows: 0,
     });
 
-    expect(geometry.bannerVisibleRows).toBe(0);
+    expect(geometry.topChromeRows).toBe(0);
     expect(geometry.contentWindow.start).toBe(4);
     expect(geometry.contentWindow.end).toBe(24);
     expect(geometry.contentWindow.viewportHeight).toBe(20);
     expect(geometry.topOffsetRows).toBe(0);
   });
 
-  it("keeps banner rows out of transcript coordinates after the banner scrolls offscreen", () => {
+  it("combines sticky-header and top-chrome rows in screen offsets without changing content coordinates", () => {
     const geometry = resolveTranscriptOwnedWindowGeometry({
       window: {
         start: 80,
@@ -88,17 +84,19 @@ describe("transcript-window-geometry", () => {
         pendingDelta: 0,
         sticky: false,
       },
+      stickyHeader: {
+        visible: true,
+        label: "Transcript Mode",
+      },
       width: 80,
-      bannerVisible: false,
-      fullscreenBannerRows: 6,
-      contentOffsetRows: 6,
+      topChromeRows: 6,
     });
 
-    expect(geometry.bannerVisibleRows).toBe(0);
-    expect(geometry.contentWindow.start).toBe(74);
-    expect(geometry.contentWindow.end).toBe(94);
-    expect(geometry.contentWindow.viewportTop).toBe(74);
+    expect(geometry.topChromeRows).toBe(6);
+    expect(geometry.contentWindow.start).toBe(80);
+    expect(geometry.contentWindow.end).toBe(100);
+    expect(geometry.contentWindow.viewportTop).toBe(80);
     expect(geometry.contentWindow.viewportHeight).toBe(20);
-    expect(geometry.topOffsetRows).toBe(0);
+    expect(geometry.topOffsetRows).toBeGreaterThan(6);
   });
 });

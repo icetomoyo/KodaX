@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
-import type { KodaXMcpServerConfig, KodaXMcpTrust } from '../../../types.js';
+import type { KodaXMcpServerConfig } from '../../../types.js';
 import {
   buildCatalogSearchText,
   createMcpCapabilityId,
@@ -27,7 +27,6 @@ interface JsonRpcResponseError {
 export interface McpServerRuntimeDiagnostics {
   serverId: string;
   connect: 'lazy' | 'prewarm' | 'disabled';
-  trust: KodaXMcpTrust;
   status: 'idle' | 'connecting' | 'ready' | 'error' | 'disabled';
   dirty: boolean;
   lastError?: string;
@@ -36,7 +35,6 @@ export interface McpServerRuntimeDiagnostics {
   resources: number;
   prompts: number;
 }
-
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (!value || Array.isArray(value) || typeof value !== 'object') {
     return undefined;
@@ -117,7 +115,6 @@ function createJsonRpcFrame(payload: Record<string, unknown>): string {
 
 function buildToolDescriptor(
   serverId: string,
-  trust: KodaXMcpTrust,
   raw: Record<string, unknown>,
   cachedAt: string,
 ): McpCapabilityDescriptor {
@@ -136,14 +133,11 @@ function buildToolDescriptor(
     annotations,
     inputSchema: raw.inputSchema ?? raw.input_schema,
     outputSchema: raw.outputSchema ?? raw.output_schema,
-    trust,
     cachedAt,
   };
 }
-
 function buildResourceDescriptor(
   serverId: string,
-  trust: KodaXMcpTrust,
   raw: Record<string, unknown>,
   cachedAt: string,
 ): McpCapabilityDescriptor {
@@ -162,14 +156,11 @@ function buildResourceDescriptor(
     annotations,
     uri,
     mimeType: readString(raw.mimeType) ?? readString(raw.mime_type),
-    trust,
     cachedAt,
   };
 }
-
 function buildPromptDescriptor(
   serverId: string,
-  trust: KodaXMcpTrust,
   raw: Record<string, unknown>,
   cachedAt: string,
 ): McpCapabilityDescriptor {
@@ -187,11 +178,9 @@ function buildPromptDescriptor(
     risk: deriveMcpCapabilityRisk('prompt', name, annotations),
     annotations,
     promptArgsSchema: raw.arguments ?? raw.argsSchema ?? raw.args_schema,
-    trust,
     cachedAt,
   };
 }
-
 function toCatalogItem(
   descriptor: McpCapabilityDescriptor,
 ): McpCatalogItem {
@@ -244,7 +233,6 @@ export class McpServerRuntime {
     this.diagnostics = {
       serverId,
       connect: config.connect ?? 'lazy',
-      trust: config.trust ?? 'ask',
       status: (config.connect ?? 'lazy') === 'disabled' ? 'disabled' : 'idle',
       dirty: true,
       tools: 0,
@@ -256,7 +244,6 @@ export class McpServerRuntime {
   getDiagnostics(): McpServerRuntimeDiagnostics {
     return { ...this.diagnostics };
   }
-
   async prewarmIfNeeded(): Promise<void> {
     if ((this.config.connect ?? 'lazy') !== 'prewarm') {
       return;
@@ -497,7 +484,6 @@ export class McpServerRuntime {
           descriptors.push(
             buildToolDescriptor(
               this.serverId,
-              this.diagnostics.trust,
               entry,
               cachedAt,
             ),
@@ -508,7 +494,6 @@ export class McpServerRuntime {
           descriptors.push(
             buildResourceDescriptor(
               this.serverId,
-              this.diagnostics.trust,
               entry,
               cachedAt,
             ),
@@ -518,13 +503,11 @@ export class McpServerRuntime {
         descriptors.push(
           buildPromptDescriptor(
             this.serverId,
-            this.diagnostics.trust,
             entry,
             cachedAt,
           ),
         );
       }
-
       if (!nextCursor) {
         break;
       }

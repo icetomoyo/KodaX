@@ -106,16 +106,14 @@ describe('registerConfiguredMcpCapabilityProvider', () => {
       servers: {
         ...(fixture.config.servers ?? {}),
         broken: {
-          transport: 'stdio',
+          type: 'stdio',
           command: path.join(tempDir, 'missing-mcp-server.exe'),
           connect: 'prewarm',
-          trust: 'ask',
           startupTimeoutMs: 1_000,
           requestTimeoutMs: 1_000,
         },
       },
     });
-
     expect(provider).toBeDefined();
     await expect(runtime.searchCapabilities('mcp', 'echo')).resolves.toEqual(
       expect.arrayContaining([

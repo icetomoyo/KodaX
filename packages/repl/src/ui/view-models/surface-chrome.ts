@@ -94,13 +94,8 @@ export function buildStashNoticeText(
 
 export function buildPromptFooterNotices(
   baseFooterNotices: readonly string[],
-  selectionCopyNotice?: string,
 ): string[] {
-  const notices = [...baseFooterNotices];
-  if (selectionCopyNotice) {
-    notices.unshift(selectionCopyNotice);
-  }
-  return notices;
+  return [...baseFooterNotices];
 }
 
 export interface BuildTranscriptFooterSecondaryTextOptions {
@@ -135,16 +130,11 @@ export function buildTranscriptFooterSecondaryText(
 
 export function buildTranscriptFooterBudgetNotices(
   secondaryText?: string,
-  selectionCopyNotice?: string,
 ): string[] {
   const notices: string[] = [];
 
   if (secondaryText) {
     notices.push(secondaryText);
-  }
-
-  if (selectionCopyNotice) {
-    notices.push(selectionCopyNotice);
   }
 
   return notices;
@@ -153,7 +143,6 @@ export function buildTranscriptFooterBudgetNotices(
 export interface BuildTranscriptFooterViewModelOptions {
   textSelection?: TranscriptTextSelection;
   selectionState?: TranscriptViewportSelectionState;
-  copySelectionNotice?: string;
   isHistorySearchActive: boolean;
   historySearchDetailText?: string;
   historySearchHasMatches: boolean;
@@ -209,9 +198,6 @@ export function buildTranscriptFooterViewModel(
     selectionSummary,
     actionSummary,
     secondaryText,
-    budgetNotices: buildTranscriptFooterBudgetNotices(
-      secondaryText,
-      options.copySelectionNotice,
-    ),
+    budgetNotices: buildTranscriptFooterBudgetNotices(secondaryText),
   };
 }

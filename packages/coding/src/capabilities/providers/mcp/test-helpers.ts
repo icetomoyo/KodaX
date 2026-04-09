@@ -229,11 +229,10 @@ export async function createMcpTestServerFixture(
       cacheDir,
       servers: {
         [TEST_SERVER_ID]: {
-          transport: 'stdio',
+          type: 'stdio',
           command: process.execPath,
           args: [scriptPath],
           connect: 'prewarm',
-          trust: 'workspace',
           startupTimeoutMs: 5_000,
           requestTimeoutMs: 5_000,
         },

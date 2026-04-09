@@ -42,7 +42,6 @@ export async function toolMcpDescribe(
       formatValue('Name', descriptor.name),
       formatValue('Title', descriptor.title),
       formatValue('Summary', descriptor.summary),
-      formatValue('Trust', descriptor.trust),
       formatValue('Risk', descriptor.risk),
       formatValue('URI', descriptor.uri),
       formatValue('MIME', descriptor.mimeType),

@@ -14,6 +14,8 @@ export interface FullscreenChromeSlot {
 }
 
 export interface FullscreenLayoutProps {
+  top?: React.ReactNode;
+  topRows?: number;
   scrollable?: React.ReactNode;
   renderScrollableWindow?: (window: ScrollBoxWindow) => React.ReactNode;
   bottom: React.ReactNode;
@@ -32,6 +34,8 @@ export interface FullscreenLayoutProps {
 }
 
 export const FullscreenLayout: React.FC<FullscreenLayoutProps> = ({
+  top,
+  topRows = 0,
   scrollable,
   renderScrollableWindow,
   bottom,
@@ -63,10 +67,16 @@ export const FullscreenLayout: React.FC<FullscreenLayoutProps> = ({
   const stickyHeaderRows = measureFullscreenChromeSlotRows(stickyHeaderText, width);
   const stickyHeaderNode = renderChromeSlot(stickyHeader, stickyHeaderText);
   const jumpToLatestNode = overlay ? null : renderChromeSlot(jumpToLatest, jumpToLatestText);
-  const effectiveViewportHeight = Math.max(0, viewportHeight - stickyHeaderRows);
+  const effectiveTopRows = Math.max(0, top ? topRows : 0);
+  const effectiveViewportHeight = Math.max(0, viewportHeight - stickyHeaderRows - effectiveTopRows);
 
   return (
     <Box flexDirection="column" width={width} flexGrow={1} flexShrink={0}>
+      {top ? (
+        <Box flexDirection="column" flexShrink={0}>
+          {top}
+        </Box>
+      ) : null}
       <Box flexDirection="column" flexGrow={1} overflowY="hidden">
         <ScrollBox
           width={width}

@@ -15,10 +15,8 @@ export interface McpCatalogItem {
   tags?: string[];
   risk?: McpCapabilityRisk;
   annotations?: Record<string, unknown>;
-  trust: string;
   cachedAt: string;
 }
-
 export interface McpCapabilityDescriptor extends McpCatalogItem {
   inputSchema?: unknown;
   outputSchema?: unknown;

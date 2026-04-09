@@ -30,8 +30,7 @@ describe("surface-chrome", () => {
       { id: "queue-full", text: "Queued follow-up limit reached (8)", tone: "warning" },
     ]);
 
-    expect(buildPromptFooterNotices(["Queued follow-ups: 1"], "Copied selection")).toEqual([
-      "Copied selection",
+    expect(buildPromptFooterNotices(["Queued follow-ups: 1"])).toEqual([
       "Queued follow-ups: 1",
     ]);
   });
@@ -46,9 +45,8 @@ describe("surface-chrome", () => {
       baseFooterNotices: ["Search: abc", "Queued follow-ups: 1"],
     })).toBe("1 line selected | C copy | V details");
 
-    expect(buildTranscriptFooterBudgetNotices("1 line selected | C copy", "Copied selection")).toEqual([
+    expect(buildTranscriptFooterBudgetNotices("1 line selected | C copy")).toEqual([
       "1 line selected | C copy",
-      "Copied selection",
     ]);
 
     expect(buildTranscriptFooterSecondaryText({
@@ -88,7 +86,6 @@ describe("surface-chrome", () => {
           selection: true,
         },
       },
-      copySelectionNotice: "Copied selection",
       isHistorySearchActive: false,
       historySearchDetailText: undefined,
       historySearchHasMatches: true,
@@ -100,7 +97,6 @@ describe("surface-chrome", () => {
       secondaryText: "\u2190/\u2192 browse | C copy | Mouse select copies | V details | Esc clear",
       budgetNotices: [
         "\u2190/\u2192 browse | C copy | Mouse select copies | V details | Esc clear",
-        "Copied selection",
       ],
     });
   });
@@ -109,7 +105,6 @@ describe("surface-chrome", () => {
     expect(buildTranscriptFooterViewModel({
       textSelection: undefined,
       selectionState: undefined,
-      copySelectionNotice: undefined,
       isHistorySearchActive: false,
       historySearchDetailText: undefined,
       historySearchHasMatches: true,
@@ -129,7 +124,6 @@ describe("surface-chrome", () => {
     expect(buildTranscriptFooterViewModel({
       textSelection: undefined,
       selectionState: undefined,
-      copySelectionNotice: undefined,
       isHistorySearchActive: false,
       historySearchDetailText: undefined,
       historySearchHasMatches: true,

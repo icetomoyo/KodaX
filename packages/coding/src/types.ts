@@ -273,20 +273,17 @@ export interface KodaXProviderPolicyHints {
 
 export type KodaXMcpTransport = 'stdio';
 export type KodaXMcpConnectMode = 'lazy' | 'prewarm' | 'disabled';
-export type KodaXMcpTrust = 'ask' | 'workspace' | 'trusted';
 
 export interface KodaXMcpServerConfig {
-  transport: KodaXMcpTransport;
+  type: KodaXMcpTransport;
   command: string;
   args?: string[];
   cwd?: string;
   env?: Record<string, string>;
   connect?: KodaXMcpConnectMode;
-  trust?: KodaXMcpTrust;
   startupTimeoutMs?: number;
   requestTimeoutMs?: number;
 }
-
 export interface KodaXMcpConfig {
   servers?: Record<string, KodaXMcpServerConfig>;
   cacheDir?: string;

@@ -27,6 +27,7 @@ import {
 import { PromptHelpMenu } from "./components/PromptHelpMenu.js";
 import { PromptSuggestionsSurface } from "./components/PromptSuggestionsSurface.js";
 import { DialogSurface } from "./components/DialogSurface.js";
+import { ClipboardToastSurface } from "./components/ClipboardToastSurface.js";
 import { QueuedCommandsSurface } from "./components/QueuedCommandsSurface.js";
 import { NotificationsSurface } from "./components/NotificationsSurface.js";
 import { StatusNoticesSurface } from "./components/StatusNoticesSurface.js";
@@ -320,6 +321,11 @@ interface TranscriptMouseSelectionState {
   didDrag: boolean;
   mode: TranscriptSelectionGestureMode;
   anchorSpan?: TranscriptSelectionSpan;
+}
+
+interface ClipboardNoticeState {
+  text: string;
+  tone: "success" | "warning";
 }
 
 type ManagedForegroundLedgerBlockKind = "thinking" | "assistant" | "tool_group";
@@ -1267,7 +1273,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   });
   const [promptTextSelection, setPromptTextSelection] = useState<TranscriptTextSelection | undefined>(undefined);
   const [transcriptModeTextSelection, setTranscriptModeTextSelection] = useState<TranscriptTextSelection | undefined>(undefined);
-  const [selectionCopyNotice, setSelectionCopyNotice] = useState<string | undefined>(undefined);
+  const [selectionCopyNotice, setSelectionCopyNotice] = useState<ClipboardNoticeState | undefined>(undefined);
   const [expandedTranscriptItemIds, setExpandedTranscriptItemIds] = useState<Set<string>>(() => new Set());
   const [transcriptSnapshot, setTranscriptSnapshot] = useState<TranscriptSnapshot | null>(null);
   const [promptSurfaceSnapshot, setPromptSurfaceSnapshot] = useState<TranscriptSnapshot | null>(null);
@@ -2744,14 +2750,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     ],
   );
   const promptFooterNotices = useMemo(() => {
-    return buildPromptFooterNotices(baseFooterNotices, selectionCopyNotice);
-  }, [baseFooterNotices, selectionCopyNotice]);
+    return buildPromptFooterNotices(baseFooterNotices);
+  }, [baseFooterNotices]);
   const transcriptFooterViewModel = useMemo(
     () =>
       buildTranscriptFooterViewModel({
         textSelection: activeTextSelection,
         selectionState: transcriptSelectionState,
-        copySelectionNotice: selectionCopyNotice,
         isHistorySearchActive,
         historySearchDetailText: effectiveHistorySearchDetailText,
         historySearchHasMatches: Boolean(historySearchStatusText) && historySearchMatches.length > 0,
@@ -2765,7 +2770,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       historySearchMatches.length,
       historySearchStatusText,
       isHistorySearchActive,
-      selectionCopyNotice,
       showAllInTranscript,
       transcriptSelectionState,
     ],
@@ -2794,10 +2798,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     [bannerProps, fullscreenPolicy.enabled, showBanner],
   );
   const fullscreenBannerRows = fullscreenPolicy.enabled && showBanner ? bannerRows : 0;
-  const transcriptContentOffsetRows =
-    fullscreenPolicy.enabled && useRendererViewportShell && !isTranscriptMode && showBanner
-      ? fullscreenBannerRows
-      : 0;
   const budgetedTerminalRows = terminalRows;
   const footerBudgetInputText = isTranscriptMode ? "" : inputText;
   const footerBudgetPendingInputSummary = isTranscriptMode ? undefined : pendingInputSummary;
@@ -2900,9 +2900,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const effectiveTranscriptBaseScrollHeight = activeTranscriptRenderModel
     ? activeTranscriptRenderModel.rows.length + activeTranscriptRenderModel.previewRows.length
     : transcriptScrollHeight;
-  const effectiveTranscriptScrollHeight = fullscreenPolicy.enabled
-    ? effectiveTranscriptBaseScrollHeight + transcriptContentOffsetRows
-    : effectiveTranscriptBaseScrollHeight;
+  const effectiveTranscriptScrollHeight = effectiveTranscriptBaseScrollHeight;
   const handleTranscriptMetricsChange = useCallback((metrics: {
     scrollHeight: number;
     viewportHeight: number;
@@ -2916,12 +2914,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       window,
       stickyHeader: transcriptChrome.stickyHeader,
       width: terminalWidth,
-      bannerVisible: !isTranscriptMode && showBanner && window.start < fullscreenBannerRows,
-      fullscreenBannerRows,
-      contentOffsetRows: transcriptContentOffsetRows,
+      topChromeRows: !isTranscriptMode && showBanner ? fullscreenBannerRows : 0,
     })
   ), [
-    transcriptContentOffsetRows,
     fullscreenBannerRows,
     isTranscriptMode,
     showBanner,
@@ -3012,12 +3007,18 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     };
   }, [selectionCopyNotice]);
 
-  const showClipboardNotice = useCallback((message: string | undefined) => {
+  const showClipboardNotice = useCallback((
+    message: string | undefined,
+    tone: ClipboardNoticeState["tone"] = "success",
+  ) => {
     const trimmedMessage = message?.trim();
     if (!trimmedMessage) {
       return;
     }
-    setSelectionCopyNotice(trimmedMessage);
+    setSelectionCopyNotice({
+      text: trimmedMessage,
+      tone,
+    });
   }, []);
   const buildClipboardFailureNotice = useCallback((prefix: string, error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
@@ -3038,11 +3039,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       await copyTextToClipboard(copyText, { terminalWrite: writeTerminal });
       showClipboardNotice(
         `Copied ${selection.rowCount} selected line${selection.rowCount === 1 ? "" : "s"} to clipboard.`,
+        "success",
       );
       return true;
     } catch (error) {
       showClipboardNotice(
         buildClipboardFailureNotice("Failed to copy transcript selection", error),
+        "warning",
       );
       return false;
     }
@@ -3141,10 +3144,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     }
     try {
       await copyTextToClipboard(copyText, { terminalWrite: writeTerminal });
-      showClipboardNotice("Copied selected transcript entry to clipboard.");
+      showClipboardNotice("Copied selected transcript entry to clipboard.", "success");
     } catch (error) {
       showClipboardNotice(
         buildClipboardFailureNotice("Failed to copy transcript entry", error),
+        "warning",
       );
     }
   }, [
@@ -3167,10 +3171,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
     try {
       await copyTextToClipboard(copyText, { terminalWrite: writeTerminal });
-      showClipboardNotice("Copied selected tool args to clipboard.");
+      showClipboardNotice("Copied selected tool args to clipboard.", "success");
     } catch (error) {
       showClipboardNotice(
         buildClipboardFailureNotice("Failed to copy tool args", error),
+        "warning",
       );
     }
   }, [
@@ -3364,17 +3369,55 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     ),
     [dialogConfirmState, dialogRequestState],
   );
-  const overlaySurface = useMemo(() => {
-    if (!useOverlaySurface) {
+  const selectionCopyNoticeSurface = useMemo(() => {
+    if (!selectionCopyNotice) {
       return undefined;
     }
+
+    return (
+      <ClipboardToastSurface
+        text={selectionCopyNotice.text}
+        tone={selectionCopyNotice.tone}
+      />
+    );
+  }, [selectionCopyNotice]);
+  const contentOverlaySurface = useMemo(() => {
+    const overlayChildren: React.ReactNode[] = [];
+
+    if (selectionCopyNoticeSurface) {
+      overlayChildren.push(
+        <React.Fragment key="selection-copy-notice">
+          {selectionCopyNoticeSurface}
+        </React.Fragment>,
+      );
+    }
+
+    if (useOverlaySurface && suggestionsSurface) {
+      overlayChildren.push(
+        <React.Fragment key="suggestions-overlay">
+          {suggestionsSurface}
+        </React.Fragment>,
+      );
+    }
+
+    if (useOverlaySurface && dialogSurface) {
+      overlayChildren.push(
+        <React.Fragment key="dialog-overlay">
+          {dialogSurface}
+        </React.Fragment>,
+      );
+    }
+
+    if (overlayChildren.length === 0) {
+      return undefined;
+    }
+
     return (
       <Box flexDirection="column">
-        {suggestionsSurface}
-        {dialogSurface}
+        {overlayChildren}
       </Box>
     );
-  }, [dialogSurface, suggestionsSurface, useOverlaySurface]);
+  }, [dialogSurface, selectionCopyNoticeSurface, suggestionsSurface, useOverlaySurface]);
   const exitTranscriptModeSurface = useCallback(() => {
     setTranscriptDisplayState((prev) => jumpTranscriptToLatest(exitTranscriptMode(prev)));
     setShowAllInTranscript(false);
@@ -6091,7 +6134,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           searchDetailText={effectiveHistorySearchDetailText}
           pendingLiveUpdates={pendingTranscriptUpdateCount}
           secondaryText={transcriptFooterSecondaryText}
-          noticeText={selectionCopyNotice}
         />
       )}
       taskBar={displayWorkStripText ? (
@@ -6332,13 +6374,20 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
                     rendererWindow: adjustedWindow,
                   })
                   : renderPromptSurfaceTranscript({
-                    bannerVisible: showBanner && window.start < fullscreenBannerRows,
+                    bannerVisible: false,
                     rendererWindow: adjustedWindow,
                   });
               })()
             )
             : undefined}
-          overlay={overlaySurface}
+          overlay={contentOverlaySurface}
+          top={!isTranscriptMode && showBanner ? (
+            <Banner
+              key="fullscreen-renderer-banner"
+              {...bannerProps}
+            />
+          ) : undefined}
+          topRows={!isTranscriptMode && showBanner ? fullscreenBannerRows : 0}
           scrollTop={historyScrollOffset}
           scrollHeight={effectiveTranscriptScrollHeight}
           viewportHeight={viewportBudget.messageRows}
@@ -6351,7 +6400,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         />
       ) : (
         <>
-          {currentTranscriptSurface}
+          <Box flexDirection="column" flexGrow={1}>
+            {currentTranscriptSurface}
+            {contentOverlaySurface ? (
+              <Box position="absolute" bottom={0} left={0} right={0} flexDirection="column">
+                {contentOverlaySurface}
+              </Box>
+            ) : null}
+          </Box>
           {currentFooterSurface}
         </>
       )}

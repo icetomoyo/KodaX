@@ -57,7 +57,6 @@ export async function toolMcpSearch(
         snippet: readString(record?.summary),
         metadata: {
           serverId: readString(record?.serverId),
-          trust: readString(record?.trust),
           risk: readString(record?.risk),
           kind: kindLabel,
         },

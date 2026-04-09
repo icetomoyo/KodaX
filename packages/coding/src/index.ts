@@ -103,7 +103,7 @@ export type {
   KodaXContextOptions,
   KodaXMcpTransport,
   KodaXMcpConnectMode,
-  KodaXMcpTrust,
+
   KodaXMcpServerConfig,
   KodaXMcpConfig,
   KodaXTaskCapabilityHint,

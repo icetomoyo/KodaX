@@ -11,6 +11,8 @@ export interface FullscreenTranscriptChromeSlot {
 }
 
 export interface FullscreenTranscriptLayoutProps {
+  top?: React.ReactNode;
+  topRows?: number;
   transcript?: React.ReactNode;
   renderTranscriptWindow?: (window: ScrollBoxWindow) => React.ReactNode;
   footer: React.ReactNode;
@@ -29,6 +31,8 @@ export interface FullscreenTranscriptLayoutProps {
 }
 
 export const FullscreenTranscriptLayout: React.FC<FullscreenTranscriptLayoutProps> = ({
+  top,
+  topRows = 0,
   transcript,
   renderTranscriptWindow,
   footer,
@@ -48,6 +52,8 @@ export const FullscreenTranscriptLayout: React.FC<FullscreenTranscriptLayoutProp
   return (
     <FullscreenLayout
       width={width}
+      top={top}
+      topRows={topRows}
       stickyHeader={stickyHeader}
       jumpToLatest={jumpToLatest}
       scrollable={transcript}
