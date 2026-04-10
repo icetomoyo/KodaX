@@ -193,7 +193,9 @@ import {
   buildTranscriptRenderModel,
   materializeTranscriptRenderModel,
   sliceHistoryToRecentRounds,
+  type TranscriptRenderModel,
   type TranscriptRow,
+  type TranscriptSection,
 } from "./utils/transcript-layout.js";
 import {
   buildTranscriptCopyText,
@@ -1109,19 +1111,7 @@ const Banner: React.FC<BannerProps> = ({
   );
 };
 
-function countWrappedBannerRows(text: string, width: number): number {
-  return Math.max(
-    1,
-    calculateVisualLayout(
-      text.length > 0 ? text.split("\n") : [""],
-      Math.max(1, width),
-      0,
-      0,
-    ).visualLines.length,
-  );
-}
-
-function estimateBannerRows(props: BannerProps): number {
+function buildBannerTranscriptSection(props: BannerProps): TranscriptSection {
   const model = props.config.model ?? getProviderModel(props.config.provider) ?? props.config.provider;
   const reasoningCapability = getProviderReasoningCapability(
     props.config.provider,
@@ -1139,19 +1129,61 @@ function estimateBannerRows(props: BannerProps): number {
     : undefined;
   const sessionLine = `  Session: ${props.sessionId} | Working: ${props.workingDir}`;
   const dividerLine = `  ${"-".repeat(dividerWidth)}`;
-  const lines = [
-    ...KODAX_BANNER_LOGO_LINES,
-    versionLine,
-    ...(compactionLine ? [compactionLine] : []),
-    dividerLine,
-    sessionLine,
-    dividerLine,
-  ];
+  const rows: TranscriptRow[] = [];
+  const wrapBannerLine = (text: string): string[] => {
+    const layout = calculateVisualLayout(
+      text.length > 0 ? text.split("\n") : [""],
+      Math.max(1, props.terminalWidth),
+      0,
+      0,
+    );
+    return layout.visualLines.length > 0 ? layout.visualLines : [""];
+  };
+  const pushLineRows = (
+    keyPrefix: string,
+    text: string,
+    style: Pick<TranscriptRow, "color" | "bold" | "italic">,
+  ) => {
+    wrapBannerLine(text).forEach((line, index) => {
+      rows.push({
+        key: `${keyPrefix}-${index}`,
+        text: line,
+        ...style,
+      });
+    });
+  };
 
-  return lines.reduce(
-    (sum, line) => sum + countWrappedBannerRows(line, props.terminalWidth),
-    0,
-  ) + 1;
+  KODAX_BANNER_LOGO_LINES.forEach((line, index) => {
+    pushLineRows(`banner-logo-${index}`, line, { color: "primary" });
+  });
+  pushLineRows("banner-version", versionLine, { color: "text", bold: true });
+  if (compactionLine) {
+    pushLineRows("banner-compaction", compactionLine, { color: "dim" });
+  }
+  pushLineRows("banner-divider-top", dividerLine, { color: "dim" });
+  pushLineRows("banner-session", sessionLine, { color: "dim" });
+  pushLineRows("banner-divider-bottom", dividerLine, { color: "dim" });
+  rows.push({ key: "banner-blank", text: " " });
+
+  return {
+    key: "banner",
+    rows,
+  };
+}
+
+function prependTranscriptSection(
+  model: TranscriptRenderModel,
+  section: TranscriptSection | undefined,
+): TranscriptRenderModel {
+  if (!section) {
+    return model;
+  }
+
+  return {
+    ...model,
+    sections: [section, ...model.sections],
+    rows: [...section.rows, ...model.rows],
+  };
 }
 
 /**
@@ -2108,39 +2140,61 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     && !streamingState.currentResponse
     && !streamingState.thinkingContent
     && activeToolCalls.length === 0;
+  const bannerProps = useMemo<BannerProps>(() => ({
+    config: currentConfig,
+    sessionId: context.sessionId,
+    workingDir: options.context?.gitRoot || process.cwd(),
+    terminalWidth,
+    compactionInfo: compactionInfo ?? undefined,
+  }), [
+    compactionInfo,
+    context.sessionId,
+    currentConfig,
+    options.context?.gitRoot,
+    terminalWidth,
+  ]);
+  const fullscreenBannerSection = useMemo(
+    () => (fullscreenPolicy.enabled && showBanner
+      ? buildBannerTranscriptSection(bannerProps)
+      : undefined),
+    [bannerProps, fullscreenPolicy.enabled, showBanner],
+  );
   const promptMainScreenRenderModel = useMemo(
-    () => materializeTranscriptRenderModel(buildTranscriptRenderModel({
-      items: effectivePromptDisplayItems,
-      viewportWidth: terminalWidth,
-      isLoading: effectivePromptIsLoading,
-      maxLines: transcriptMaxLines,
-      isThinking: effectivePromptStreamingState.isThinking,
-      thinkingCharCount: effectivePromptStreamingState.thinkingCharCount,
-      thinkingContent: effectivePromptStreamingState.thinkingContent,
-      streamingResponse: effectivePromptStreamingState.currentResponse,
-      currentTool: effectivePromptStreamingState.currentTool,
-      activeToolCalls: effectivePromptStreamingState.activeToolCalls,
-      toolInputCharCount: effectivePromptStreamingState.toolInputCharCount,
-      toolInputContent: effectivePromptStreamingState.toolInputContent,
-      iterationHistory: effectivePromptStreamingState.iterationHistory,
-      currentIteration: effectivePromptStreamingState.currentIteration,
-      isCompacting: effectivePromptStreamingState.isCompacting,
-      managedAgentMode: currentConfig.agentMode,
-      managedPhase: effectivePromptIsLoading ? managedTaskStatus?.phase : undefined,
-      managedHarnessProfile: effectivePromptIsLoading ? managedTaskStatus?.harnessProfile : undefined,
-      managedWorkerTitle: effectivePromptIsLoading ? managedTaskStatus?.activeWorkerTitle : undefined,
-      managedRound: effectivePromptIsLoading ? managedTaskStatus?.currentRound : undefined,
-      managedMaxRounds: effectivePromptIsLoading ? managedTaskStatus?.maxRounds : undefined,
-      managedGlobalWorkBudget: effectivePromptIsLoading ? managedTaskStatus?.globalWorkBudget : undefined,
-      managedBudgetUsage: effectivePromptIsLoading ? managedTaskStatus?.budgetUsage : undefined,
-      managedBudgetApprovalRequired: effectivePromptIsLoading ? managedTaskStatus?.budgetApprovalRequired : undefined,
-      lastLiveActivityLabel: effectivePromptStreamingState.lastLiveActivityLabel,
-      windowed: false,
-      showFullThinking: false,
-      showDetailedTools: false,
-      showAllContent: false,
-      showLiveProgressRows: promptNeedsFallbackLiveStatus,
-    })),
+    () => prependTranscriptSection(
+      materializeTranscriptRenderModel(buildTranscriptRenderModel({
+        items: effectivePromptDisplayItems,
+        viewportWidth: terminalWidth,
+        isLoading: effectivePromptIsLoading,
+        maxLines: transcriptMaxLines,
+        isThinking: effectivePromptStreamingState.isThinking,
+        thinkingCharCount: effectivePromptStreamingState.thinkingCharCount,
+        thinkingContent: effectivePromptStreamingState.thinkingContent,
+        streamingResponse: effectivePromptStreamingState.currentResponse,
+        currentTool: effectivePromptStreamingState.currentTool,
+        activeToolCalls: effectivePromptStreamingState.activeToolCalls,
+        toolInputCharCount: effectivePromptStreamingState.toolInputCharCount,
+        toolInputContent: effectivePromptStreamingState.toolInputContent,
+        iterationHistory: effectivePromptStreamingState.iterationHistory,
+        currentIteration: effectivePromptStreamingState.currentIteration,
+        isCompacting: effectivePromptStreamingState.isCompacting,
+        managedAgentMode: currentConfig.agentMode,
+        managedPhase: effectivePromptIsLoading ? managedTaskStatus?.phase : undefined,
+        managedHarnessProfile: effectivePromptIsLoading ? managedTaskStatus?.harnessProfile : undefined,
+        managedWorkerTitle: effectivePromptIsLoading ? managedTaskStatus?.activeWorkerTitle : undefined,
+        managedRound: effectivePromptIsLoading ? managedTaskStatus?.currentRound : undefined,
+        managedMaxRounds: effectivePromptIsLoading ? managedTaskStatus?.maxRounds : undefined,
+        managedGlobalWorkBudget: effectivePromptIsLoading ? managedTaskStatus?.globalWorkBudget : undefined,
+        managedBudgetUsage: effectivePromptIsLoading ? managedTaskStatus?.budgetUsage : undefined,
+        managedBudgetApprovalRequired: effectivePromptIsLoading ? managedTaskStatus?.budgetApprovalRequired : undefined,
+        lastLiveActivityLabel: effectivePromptStreamingState.lastLiveActivityLabel,
+        windowed: false,
+        showFullThinking: false,
+        showDetailedTools: false,
+        showAllContent: false,
+        showLiveProgressRows: promptNeedsFallbackLiveStatus,
+      })),
+      fullscreenBannerSection,
+    ),
     [
       currentConfig.agentMode,
       effectivePromptDisplayItems,
@@ -2166,6 +2220,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       managedTaskStatus?.maxRounds,
       managedTaskStatus?.phase,
       promptNeedsFallbackLiveStatus,
+      fullscreenBannerSection,
       terminalWidth,
       transcriptMaxLines,
     ],
@@ -2176,44 +2231,48 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         return undefined;
       }
 
-      return materializeTranscriptRenderModel(buildTranscriptRenderModel({
-        items: transcriptDisplayItems,
-        viewportWidth: terminalWidth,
-        isLoading: transcriptDisplayIsLoading,
-        maxLines: transcriptMaxLines,
-        isThinking: transcriptStreamingState.isThinking,
-        thinkingCharCount: transcriptStreamingState.thinkingCharCount,
-        thinkingContent: transcriptStreamingState.thinkingContent,
-        streamingResponse: transcriptStreamingState.currentResponse,
-        currentTool: transcriptStreamingState.currentTool,
-        activeToolCalls: transcriptStreamingState.activeToolCalls,
-        toolInputCharCount: transcriptStreamingState.toolInputCharCount,
-        toolInputContent: transcriptStreamingState.toolInputContent,
-        iterationHistory: transcriptStreamingState.iterationHistory,
-        currentIteration: transcriptStreamingState.currentIteration,
-        isCompacting: transcriptStreamingState.isCompacting,
-        managedAgentMode: currentConfig.agentMode,
-        managedPhase: transcriptDisplayIsLoading ? managedTaskStatus?.phase : undefined,
-        managedHarnessProfile: transcriptDisplayIsLoading ? managedTaskStatus?.harnessProfile : undefined,
-        managedWorkerTitle: transcriptDisplayIsLoading ? managedTaskStatus?.activeWorkerTitle : undefined,
-        managedRound: transcriptDisplayIsLoading ? managedTaskStatus?.currentRound : undefined,
-        managedMaxRounds: transcriptDisplayIsLoading ? managedTaskStatus?.maxRounds : undefined,
-        managedGlobalWorkBudget: transcriptDisplayIsLoading ? managedTaskStatus?.globalWorkBudget : undefined,
-        managedBudgetUsage: transcriptDisplayIsLoading ? managedTaskStatus?.budgetUsage : undefined,
-        managedBudgetApprovalRequired: transcriptDisplayIsLoading ? managedTaskStatus?.budgetApprovalRequired : undefined,
-        lastLiveActivityLabel: transcriptStreamingState.lastLiveActivityLabel,
-        windowed: false,
-        showFullThinking: true,
-        showDetailedTools: showAllInTranscript,
-        showAllContent: showAllInTranscript,
-        showLiveProgressRows: !foregroundManagedLedgerHasContent,
-        expandedItemKeys: expandedTranscriptItemIds,
-      }));
+      return prependTranscriptSection(
+        materializeTranscriptRenderModel(buildTranscriptRenderModel({
+          items: transcriptDisplayItems,
+          viewportWidth: terminalWidth,
+          isLoading: transcriptDisplayIsLoading,
+          maxLines: transcriptMaxLines,
+          isThinking: transcriptStreamingState.isThinking,
+          thinkingCharCount: transcriptStreamingState.thinkingCharCount,
+          thinkingContent: transcriptStreamingState.thinkingContent,
+          streamingResponse: transcriptStreamingState.currentResponse,
+          currentTool: transcriptStreamingState.currentTool,
+          activeToolCalls: transcriptStreamingState.activeToolCalls,
+          toolInputCharCount: transcriptStreamingState.toolInputCharCount,
+          toolInputContent: transcriptStreamingState.toolInputContent,
+          iterationHistory: transcriptStreamingState.iterationHistory,
+          currentIteration: transcriptStreamingState.currentIteration,
+          isCompacting: transcriptStreamingState.isCompacting,
+          managedAgentMode: currentConfig.agentMode,
+          managedPhase: transcriptDisplayIsLoading ? managedTaskStatus?.phase : undefined,
+          managedHarnessProfile: transcriptDisplayIsLoading ? managedTaskStatus?.harnessProfile : undefined,
+          managedWorkerTitle: transcriptDisplayIsLoading ? managedTaskStatus?.activeWorkerTitle : undefined,
+          managedRound: transcriptDisplayIsLoading ? managedTaskStatus?.currentRound : undefined,
+          managedMaxRounds: transcriptDisplayIsLoading ? managedTaskStatus?.maxRounds : undefined,
+          managedGlobalWorkBudget: transcriptDisplayIsLoading ? managedTaskStatus?.globalWorkBudget : undefined,
+          managedBudgetUsage: transcriptDisplayIsLoading ? managedTaskStatus?.budgetUsage : undefined,
+          managedBudgetApprovalRequired: transcriptDisplayIsLoading ? managedTaskStatus?.budgetApprovalRequired : undefined,
+          lastLiveActivityLabel: transcriptStreamingState.lastLiveActivityLabel,
+          windowed: false,
+          showFullThinking: true,
+          showDetailedTools: showAllInTranscript,
+          showAllContent: showAllInTranscript,
+          showLiveProgressRows: !foregroundManagedLedgerHasContent,
+          expandedItemKeys: expandedTranscriptItemIds,
+        })),
+        fullscreenBannerSection,
+      );
     },
     [
       currentConfig.agentMode,
       expandedTranscriptItemIds,
       foregroundManagedLedgerHasContent,
+      fullscreenBannerSection,
       isTranscriptMode,
       managedTaskStatus?.activeWorkerTitle,
       managedTaskStatus?.budgetApprovalRequired,
@@ -2253,45 +2312,49 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         return promptMainScreenRenderModel;
       }
 
-      return buildTranscriptRenderModel({
-        items: currentSurfaceItems,
-        viewportWidth: terminalWidth,
-        isLoading: currentSurfaceIsLoading,
-        maxLines: transcriptMaxLines,
-        isThinking: currentSurfaceStreamingState.isThinking,
-        thinkingCharCount: currentSurfaceStreamingState.thinkingCharCount,
-        thinkingContent: currentSurfaceStreamingState.thinkingContent,
-        streamingResponse: currentSurfaceStreamingState.currentResponse,
-        currentTool: currentSurfaceStreamingState.currentTool,
-        activeToolCalls: currentSurfaceStreamingState.activeToolCalls,
-        toolInputCharCount: currentSurfaceStreamingState.toolInputCharCount,
-        toolInputContent: currentSurfaceStreamingState.toolInputContent,
-        iterationHistory: currentSurfaceStreamingState.iterationHistory,
-        currentIteration: currentSurfaceStreamingState.currentIteration,
-        isCompacting: currentSurfaceStreamingState.isCompacting,
-        managedAgentMode: currentConfig.agentMode,
-        managedPhase: currentSurfaceIsLoading ? managedTaskStatus?.phase : undefined,
-        managedHarnessProfile: currentSurfaceIsLoading ? managedTaskStatus?.harnessProfile : undefined,
-        managedWorkerTitle: currentSurfaceIsLoading ? managedTaskStatus?.activeWorkerTitle : undefined,
-        managedRound: currentSurfaceIsLoading ? managedTaskStatus?.currentRound : undefined,
-        managedMaxRounds: currentSurfaceIsLoading ? managedTaskStatus?.maxRounds : undefined,
-        managedGlobalWorkBudget: currentSurfaceIsLoading ? managedTaskStatus?.globalWorkBudget : undefined,
-        managedBudgetUsage: currentSurfaceIsLoading ? managedTaskStatus?.budgetUsage : undefined,
-        managedBudgetApprovalRequired: currentSurfaceIsLoading ? managedTaskStatus?.budgetApprovalRequired : undefined,
-        lastLiveActivityLabel: currentSurfaceStreamingState.lastLiveActivityLabel,
-        windowed: true,
-        showFullThinking: isTranscriptMode,
-        showDetailedTools: showAllInTranscript,
-        showAllContent: showAllInTranscript,
-        showLiveProgressRows: isTranscriptMode && !foregroundManagedLedgerHasContent,
-        expandedItemKeys: isTranscriptMode ? expandedTranscriptItemIds : undefined,
-      });
+      return prependTranscriptSection(
+        buildTranscriptRenderModel({
+          items: currentSurfaceItems,
+          viewportWidth: terminalWidth,
+          isLoading: currentSurfaceIsLoading,
+          maxLines: transcriptMaxLines,
+          isThinking: currentSurfaceStreamingState.isThinking,
+          thinkingCharCount: currentSurfaceStreamingState.thinkingCharCount,
+          thinkingContent: currentSurfaceStreamingState.thinkingContent,
+          streamingResponse: currentSurfaceStreamingState.currentResponse,
+          currentTool: currentSurfaceStreamingState.currentTool,
+          activeToolCalls: currentSurfaceStreamingState.activeToolCalls,
+          toolInputCharCount: currentSurfaceStreamingState.toolInputCharCount,
+          toolInputContent: currentSurfaceStreamingState.toolInputContent,
+          iterationHistory: currentSurfaceStreamingState.iterationHistory,
+          currentIteration: currentSurfaceStreamingState.currentIteration,
+          isCompacting: currentSurfaceStreamingState.isCompacting,
+          managedAgentMode: currentConfig.agentMode,
+          managedPhase: currentSurfaceIsLoading ? managedTaskStatus?.phase : undefined,
+          managedHarnessProfile: currentSurfaceIsLoading ? managedTaskStatus?.harnessProfile : undefined,
+          managedWorkerTitle: currentSurfaceIsLoading ? managedTaskStatus?.activeWorkerTitle : undefined,
+          managedRound: currentSurfaceIsLoading ? managedTaskStatus?.currentRound : undefined,
+          managedMaxRounds: currentSurfaceIsLoading ? managedTaskStatus?.maxRounds : undefined,
+          managedGlobalWorkBudget: currentSurfaceIsLoading ? managedTaskStatus?.globalWorkBudget : undefined,
+          managedBudgetUsage: currentSurfaceIsLoading ? managedTaskStatus?.budgetUsage : undefined,
+          managedBudgetApprovalRequired: currentSurfaceIsLoading ? managedTaskStatus?.budgetApprovalRequired : undefined,
+          lastLiveActivityLabel: currentSurfaceStreamingState.lastLiveActivityLabel,
+          windowed: true,
+          showFullThinking: isTranscriptMode,
+          showDetailedTools: showAllInTranscript,
+          showAllContent: showAllInTranscript,
+          showLiveProgressRows: isTranscriptMode && !foregroundManagedLedgerHasContent,
+          expandedItemKeys: isTranscriptMode ? expandedTranscriptItemIds : undefined,
+        }),
+        fullscreenBannerSection,
+      );
     },
     [
       currentConfig.agentMode,
       currentSurfaceIsLoading,
       currentSurfaceItems,
       foregroundManagedLedgerHasContent,
+      fullscreenBannerSection,
       currentSurfaceStreamingState.activeToolCalls,
       currentSurfaceStreamingState.currentIteration,
       currentSurfaceStreamingState.currentResponse,
@@ -2780,24 +2843,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     ? transcriptFooterBudgetNotices
     : promptFooterNotices;
   const terminalRows = stdout.rows ?? 24;
-  const bannerProps = useMemo<BannerProps>(() => ({
-    config: currentConfig,
-    sessionId: context.sessionId,
-    workingDir: options.context?.gitRoot || process.cwd(),
-    terminalWidth,
-    compactionInfo: compactionInfo ?? undefined,
-  }), [
-    compactionInfo,
-    context.sessionId,
-    currentConfig,
-    options.context?.gitRoot,
-    terminalWidth,
-  ]);
-  const bannerRows = useMemo(
-    () => (fullscreenPolicy.enabled && showBanner ? estimateBannerRows(bannerProps) : 0),
-    [bannerProps, fullscreenPolicy.enabled, showBanner],
-  );
-  const fullscreenBannerRows = fullscreenPolicy.enabled && showBanner ? bannerRows : 0;
   const budgetedTerminalRows = terminalRows;
   const footerBudgetInputText = isTranscriptMode ? "" : inputText;
   const footerBudgetPendingInputSummary = isTranscriptMode ? undefined : pendingInputSummary;
@@ -2914,12 +2959,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       window,
       stickyHeader: transcriptChrome.stickyHeader,
       width: terminalWidth,
-      topChromeRows: !isTranscriptMode && showBanner ? fullscreenBannerRows : 0,
+      topChromeRows: 0,
     })
   ), [
-    fullscreenBannerRows,
-    isTranscriptMode,
-    showBanner,
     terminalWidth,
     transcriptChrome.stickyHeader,
   ]);
@@ -6284,11 +6326,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const currentFooterSurface = isTranscriptMode
     ? transcriptFooterSurface
     : promptFooterSurface;
-  const showMainScreenPromptBanner =
-    showBanner
-    && fullscreenPolicy.enabled
-    && !useRendererViewportShell
-    && !isTranscriptMode;
   const shouldFillShellHeight = fullscreenPolicy.enabled && useRendererViewportShell;
   const shellBody = (
     <Box
@@ -6344,12 +6381,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           )}
         </Static>
       ) : null)}
-      {showMainScreenPromptBanner ? (
-        <Banner
-          key="fullscreen-main-screen-banner"
-          {...bannerProps}
-        />
-      ) : null}
 
       {useRendererViewportShell ? (
         <FullscreenTranscriptLayout
@@ -6359,7 +6390,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           transcript={!fullscreenPolicy.enabled || !transcriptOwnsViewport ? (
             (isTranscriptMode
               ? renderTranscriptModeSurface({ bannerVisible: false })
-              : renderPromptSurfaceTranscript({ bannerVisible: fullscreenPolicy.enabled && showBanner }))
+              : renderPromptSurfaceTranscript({ bannerVisible: false }))
           ) : undefined}
           renderTranscriptWindow={fullscreenPolicy.enabled && transcriptOwnsViewport
             ? (window) => (
@@ -6381,13 +6412,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             )
             : undefined}
           overlay={contentOverlaySurface}
-          top={!isTranscriptMode && showBanner ? (
-            <Banner
-              key="fullscreen-renderer-banner"
-              {...bannerProps}
-            />
-          ) : undefined}
-          topRows={!isTranscriptMode && showBanner ? fullscreenBannerRows : 0}
           scrollTop={historyScrollOffset}
           scrollHeight={effectiveTranscriptScrollHeight}
           viewportHeight={viewportBudget.messageRows}
