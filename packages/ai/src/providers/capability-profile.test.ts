@@ -29,6 +29,11 @@ const EXPECTED_NATIVE_PROFILE = {
   evidenceSupport: 'full',
 } as const;
 
+const EXPECTED_IMAGE_INPUT_NATIVE_PROFILE = {
+  ...EXPECTED_NATIVE_PROFILE,
+  multimodalSupport: 'image-input',
+} as const;
+
 describe('provider capability profiles', () => {
   it('marks CLI bridge providers as lossy bridge transports in snapshot metadata', () => {
     expect(getProviderConfiguredCapabilityProfile('gemini-cli')).toEqual(
@@ -47,12 +52,12 @@ describe('provider capability profiles', () => {
     ).toEqual(EXPECTED_CLI_BRIDGE_PROFILE);
   });
 
-  it('keeps native providers on full-history native MCP profiles', () => {
+  it('keeps multimodal-native providers on image-input capable native profiles', () => {
     expect(getProviderConfiguredCapabilityProfile('anthropic')).toEqual(
-      EXPECTED_NATIVE_PROFILE,
+      EXPECTED_IMAGE_INPUT_NATIVE_PROFILE,
     );
     expect(getProviderConfiguredCapabilityProfile('openai')).toEqual(
-      EXPECTED_NATIVE_PROFILE,
+      EXPECTED_IMAGE_INPUT_NATIVE_PROFILE,
     );
   });
 

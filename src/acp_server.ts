@@ -583,6 +583,22 @@ export class KodaXAcpServer implements Agent {
             }),
           );
         },
+        onRepoIntelligenceTrace: (event) => {
+          this.events.emit({
+            type: 'repo_intelligence_trace',
+            sessionId: session.sessionId,
+            stage: event.stage,
+            summary: event.summary,
+            mode: event.capability?.mode,
+            engine: event.capability?.engine,
+            bridge: event.capability?.bridge,
+            status: event.capability?.status,
+            daemonLatencyMs: event.trace?.daemonLatencyMs,
+            cliLatencyMs: event.trace?.cliLatencyMs,
+            cacheHit: event.trace?.cacheHit,
+            capsuleEstimatedTokens: event.trace?.capsuleEstimatedTokens,
+          });
+        },
         onError: (error) => {
           this.dispatchNotification(
             'error text chunk',

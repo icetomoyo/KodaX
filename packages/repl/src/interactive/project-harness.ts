@@ -1,10 +1,19 @@
 export {
+  buildProjectHarnessProfileSnapshot,
   ProjectHarnessAttempt,
+  formatProjectHarnessPivotSummary,
   createProjectHarnessAttempt,
+  formatProjectHarnessCheckpointSummary,
+  formatProjectHarnessProfileSummary,
   formatProjectHarnessSummary,
   loadOrCreateProjectHarnessConfig,
+  readLatestHarnessCheckpoint,
+  readLatestHarnessPivot,
   readLatestHarnessRun,
+  recordHarnessCalibrationCase,
   recordManualHarnessOverride,
+  recordHarnessPivot,
+  replayHarnessCalibrationCase,
   reverifyProjectHarnessRun,
 } from './project-harness-core.js';
 
@@ -178,6 +187,64 @@ export interface ProjectHarnessEvidenceRecord {
   reportedTests?: string[];
   completionSummary?: string;
   updatedAt: string;
+}
+
+export type ProjectHarnessCalibrationLabel = 'false_pass' | 'false_fail';
+
+export interface ProjectHarnessCalibrationCaseRecord {
+  id?: string;
+  caseId: string;
+  runId: string;
+  featureIndex: number;
+  label: ProjectHarnessCalibrationLabel;
+  observedDecision: ProjectHarnessRunRecord['decision'];
+  expectedDecision: ProjectHarnessRunRecord['decision'];
+  checkpointId: string | null;
+  failureCodes: string[];
+  summary: string;
+  createdAt: string;
+}
+
+export interface ProjectHarnessPivotRecord {
+  id?: string;
+  pivotId: string;
+  featureIndex: number;
+  fromRunId: string;
+  fromCheckpointId: string | null;
+  evidenceFeatureIndex: number;
+  decision: ProjectHarnessRunRecord['decision'];
+  failureCodes: string[];
+  reason: string;
+  summary: string;
+  createdAt: string;
+}
+
+export interface ProjectHarnessProfileCount {
+  name: string;
+  count: number;
+}
+
+export interface ProjectHarnessProfileDimension {
+  name: Exclude<keyof ProjectHarnessScorecard, 'overall'>;
+  score: number;
+}
+
+export interface ProjectHarnessProfileSnapshot {
+  featureIndex?: number;
+  totalRuns: number;
+  decisions: Record<ProjectHarnessRunRecord['decision'], number>;
+  calibrationCases: number;
+  falsePassCases: number;
+  falseFailCases: number;
+  pivotCount: number;
+  checkpointCount: number;
+  latestRunId: string | null;
+  latestCheckpointId: string | null;
+  latestPivotId: string | null;
+  averageScorecard: ProjectHarnessScorecard | null;
+  weakestDimensions: ProjectHarnessProfileDimension[];
+  recurringFailureCodes: ProjectHarnessProfileCount[];
+  recurringRepairPlaybooks: ProjectHarnessProfileCount[];
 }
 
 export interface ProjectHarnessVerificationResult {

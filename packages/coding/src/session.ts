@@ -6,6 +6,7 @@
 
 export {
   appendSessionLineageLabel,
+  applySessionCompaction,
   buildSessionTree,
   countActiveLineageMessages,
   createSessionLineage,

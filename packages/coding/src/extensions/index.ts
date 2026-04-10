@@ -35,3 +35,16 @@ export {
   emitActiveExtensionEvent,
   runActiveExtensionHook,
 } from './runtime.js';
+
+export {
+  registerConfiguredMcpCapabilityProvider,
+} from '../capabilities/providers/mcp/index.js';
+
+export type {
+  OfficialSandboxMode,
+  OfficialSandboxOptions,
+} from './official-sandbox.js';
+
+export {
+  registerOfficialSandboxExtension,
+} from './official-sandbox.js';

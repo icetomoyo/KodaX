@@ -27,11 +27,16 @@ export interface CapabilityResult {
 export interface CapabilityProvider {
   id: string;
   kinds: CapabilityKind[];
-  search?: (query: string, options?: { kind?: CapabilityKind; limit?: number }) => Promise<unknown[]>;
+  search?: (
+    query: string,
+    options?: { kind?: CapabilityKind; limit?: number; server?: string },
+  ) => Promise<unknown[]>;
   describe?: (id: string) => Promise<unknown>;
   execute?: (id: string, input: Record<string, unknown>) => Promise<CapabilityResult>;
   read?: (id: string, options?: Record<string, unknown>) => Promise<CapabilityResult>;
   getPrompt?: (id: string, args?: Record<string, unknown>) => Promise<unknown>;
+  getPromptContext?: () => Promise<string | undefined> | string | undefined;
+  getDiagnostics?: () => Record<string, unknown> | undefined;
   refresh?: () => Promise<void>;
   dispose?: () => Promise<void>;
 }
@@ -65,12 +70,23 @@ export interface ExtensionLogger {
   error: (...args: unknown[]) => void;
 }
 
-export interface ExtensionContributionSource {
+export interface ExtensionFileContributionSource {
   kind: 'extension';
   id: string;
   label: string;
   path: string;
 }
+
+export interface RuntimeContributionSource {
+  kind: 'runtime';
+  id: string;
+  label: string;
+  path?: string;
+}
+
+export type ExtensionContributionSource =
+  | ExtensionFileContributionSource
+  | RuntimeContributionSource;
 
 export type ExtensionLoadSource = 'api' | 'cli' | 'config';
 
@@ -86,6 +102,7 @@ export interface RegisteredCapabilityProviderDiagnostic {
   id: string;
   kinds: CapabilityKind[];
   source: ExtensionContributionSource;
+  metadata?: Record<string, unknown>;
 }
 
 export interface RegisteredCommandDiagnostic {

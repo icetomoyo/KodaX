@@ -7,8 +7,20 @@ export type ToolSummaryGroup = {
   count: number;
 };
 
+export type ToolExplanationTone = "error" | "accent" | "primary" | "dim";
+
 function truncateValue(value: string, maxLength = 120): string {
   return value.length > maxLength ? `${value.slice(0, maxLength - 3)}...` : value;
+}
+
+function extractFirstMeaningfulLine(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  return value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean);
 }
 
 function splitDisplayToolName(toolName: string): { rolePrefix?: string; toolLabel: string } {
@@ -338,6 +350,102 @@ function summarizeToolDetails(toolName: string, input: ToolInputValue): string[]
     return parts;
   }
 
+  if (baseToolName === "web_fetch") {
+    const url = readFirstString(record, "url")
+      ?? extractFieldFromPreview(preview, "url");
+    const providerId = readFirstString(record, "provider_id", "providerId")
+      ?? extractFieldFromPreview(preview, "provider_id")
+      ?? extractFieldFromPreview(preview, "providerId");
+    const capabilityId = readFirstString(record, "capability_id", "capabilityId")
+      ?? extractFieldFromPreview(preview, "capability_id")
+      ?? extractFieldFromPreview(preview, "capabilityId");
+    if (url) {
+      parts.push(truncateValue(url, 120));
+    }
+    if (providerId) {
+      parts.push(`provider=${truncateValue(providerId, 48)}`);
+    }
+    if (capabilityId) {
+      parts.push(`cap=${truncateValue(capabilityId, 48)}`);
+    }
+    return parts;
+  }
+
+  if (baseToolName === "mcp_describe" || baseToolName === "mcp_read_resource") {
+    const id = readFirstString(record, "id")
+      ?? extractFieldFromPreview(preview, "id");
+    if (id) {
+      parts.push(truncateValue(id, 120));
+    }
+    return parts;
+  }
+
+  if (baseToolName === "mcp_call") {
+    const id = readFirstString(record, "id")
+      ?? extractFieldFromPreview(preview, "id");
+    const argsRecord = asRecord(record?.args);
+    const argCount = argsRecord ? Object.keys(argsRecord).length : undefined;
+    if (id) {
+      parts.push(truncateValue(id, 120));
+    }
+    if (argCount !== undefined) {
+      parts.push(`args=${argCount}`);
+    }
+    return parts;
+  }
+
+  if (baseToolName === "mcp_search") {
+    const query = readFirstString(record, "query")
+      ?? extractFieldFromPreview(preview, "query");
+    const server = readFirstString(record, "server")
+      ?? extractFieldFromPreview(preview, "server");
+    const kind = readFirstString(record, "kind")
+      ?? extractFieldFromPreview(preview, "kind");
+    const limit = readNumber(record?.limit)
+      ?? extractNumberFromPreview(preview, "limit");
+    if (query) {
+      parts.push(`query=${truncateValue(query, 96)}`);
+    }
+    if (server) {
+      parts.push(`server=${truncateValue(server, 48)}`);
+    }
+    if (kind) {
+      parts.push(`kind=${kind}`);
+    }
+    if (limit !== undefined) {
+      parts.push(`limit=${limit}`);
+    }
+    return parts;
+  }
+
+  if (baseToolName === "web_search" || baseToolName === "code_search" || baseToolName === "semantic_lookup") {
+    const query = readFirstString(record, "query", "pattern")
+      ?? extractFieldFromPreview(preview, "query")
+      ?? extractFieldFromPreview(preview, "pattern");
+    const scope = readFirstString(record, "path", "target_path", "targetPath")
+      ?? extractFieldFromPreview(preview, "path")
+      ?? extractFieldFromPreview(preview, "target_path")
+      ?? extractFieldFromPreview(preview, "targetPath");
+    const providerId = readFirstString(record, "provider_id", "providerId")
+      ?? extractFieldFromPreview(preview, "provider_id")
+      ?? extractFieldFromPreview(preview, "providerId");
+    const limit = readNumber(record?.limit)
+      ?? extractNumberFromPreview(preview, "limit");
+    if (query) {
+      parts.push(`query=${truncateValue(query, 96)}`);
+    }
+    if (scope) {
+      parts.push(truncateValue(scope, 72));
+    }
+    if (providerId) {
+      parts.push(`provider=${truncateValue(providerId, 48)}`);
+    }
+    if (limit !== undefined) {
+      parts.push(`limit=${limit}`);
+    }
+    return parts;
+  }
+
   pushPathSummary(parts, record, preview, true);
   pushNumericSummary(
     parts,
@@ -358,6 +466,47 @@ function extractChangedDiffRange(output: string): string | undefined {
     return undefined;
   }
   return `${match[1]}-${match[2]}/${match[3]}`;
+}
+
+function extractDiffPreviewLine(output: string): string | undefined {
+  return output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.startsWith("+") || line.startsWith("-") || line.startsWith("@@"));
+}
+
+function formatChangedDiffExplanation(output: string): string[] {
+  const lines: string[] = [];
+  const range = extractChangedDiffRange(output);
+  if (range) {
+    const [window, total] = range.split("/");
+    lines.push(total ? `Diff range: ${window} of ${total}` : `Diff range: ${range}`);
+  }
+
+  const preview = extractDiffPreviewLine(output);
+  if (preview) {
+    lines.push(`Preview: ${truncateValue(preview, 220)}`);
+  }
+
+  return lines;
+}
+
+function formatChangedDiffBundleExplanation(output: string): string[] {
+  const lines: string[] = [];
+  const fileCountMatch = output.match(/^Changed diff bundle for\s+(\d+)\s+file\(s\)/im);
+  if (fileCountMatch?.[1]) {
+    const count = Number(fileCountMatch[1]);
+    if (Number.isFinite(count) && count > 0) {
+      lines.push(`Bundle: ${count === 1 ? "1 file" : `${count} files`}`);
+    }
+  }
+
+  const firstPathMatch = output.match(/^===\s+(.+?)\s+===/m);
+  if (firstPathMatch?.[1]) {
+    lines.push(`First file: ${truncateValue(firstPathMatch[1].trim(), 220)}`);
+  }
+
+  return lines;
 }
 
 function summarizeToolOutputDetails(toolName: string, output: string | undefined): string[] {
@@ -424,6 +573,104 @@ function formatDuration(startTime: number, endTime?: number): string | undefined
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+function formatToolStatusDetail(tool: ToolCall): string | undefined {
+  switch (tool.status) {
+    case ToolCallStatus.Scheduled:
+      return "scheduled";
+    case ToolCallStatus.Validating:
+      return "validating";
+    case ToolCallStatus.AwaitingApproval:
+      return "awaiting approval";
+    case ToolCallStatus.Executing:
+      return "running";
+    case ToolCallStatus.Error:
+      return "failed";
+    case ToolCallStatus.Cancelled:
+      return "cancelled";
+    default:
+      return undefined;
+  }
+}
+
+function formatToolProgressExplanation(tool: ToolCall): string[] {
+  switch (tool.status) {
+    case ToolCallStatus.Scheduled:
+      return ["Queued: waiting to start"];
+    case ToolCallStatus.Validating:
+      return ["Validating: checking inputs and policy"];
+    case ToolCallStatus.AwaitingApproval:
+      return ["Waiting: approval required before execution"];
+    case ToolCallStatus.Executing:
+      return tool.progress !== undefined
+        ? [`Progress: ${tool.progress}% complete`]
+        : ["Running: waiting for tool output"];
+    case ToolCallStatus.Cancelled:
+      return ["Cancelled before completion"];
+    default:
+      return [];
+  }
+}
+
+export function resolveToolExplanationTone(line: string): ToolExplanationTone {
+  if (line.startsWith("Error:")) {
+    return "error";
+  }
+  if (line.startsWith("Waiting:")) {
+    return "accent";
+  }
+  if (line.startsWith("Progress:") || line.startsWith("Running:")) {
+    return "primary";
+  }
+  return "dim";
+}
+
+export function formatToolFailureExplanation(tool: ToolCall): string[] {
+  const errorLine = extractFirstMeaningfulLine(tool.error);
+  const outputLine = typeof tool.output === "string"
+    ? extractFirstMeaningfulLine(tool.output)
+    : undefined;
+  const lines: string[] = [];
+
+  if (errorLine) {
+    lines.push(`Error: ${truncateValue(errorLine, 220)}`);
+  }
+
+  if (
+    tool.status === ToolCallStatus.Error
+    && outputLine
+    && (!errorLine || outputLine.toLowerCase() !== errorLine.toLowerCase())
+  ) {
+    lines.push(`Last output: ${truncateValue(outputLine, 220)}`);
+  }
+
+  return lines;
+}
+
+export function formatToolResultExplanation(tool: ToolCall): string[] {
+  if (typeof tool.output !== "string" || !tool.output.trim()) {
+    return formatToolProgressExplanation(tool);
+  }
+
+  const baseToolName = stripRolePrefix(tool.name).toLowerCase();
+  if (tool.status === ToolCallStatus.Error) {
+    return formatToolFailureExplanation(tool);
+  }
+
+  if (tool.status !== ToolCallStatus.Success) {
+    return formatToolProgressExplanation(tool);
+  }
+
+  if (baseToolName.includes("changed_diff_bundle")) {
+    return formatChangedDiffBundleExplanation(tool.output);
+  }
+
+  if (baseToolName.includes("changed_diff")) {
+    return formatChangedDiffExplanation(tool.output);
+  }
+
+  return [];
+}
+
 export function formatToolSummary(toolName: string, input?: ToolInputValue): string {
   return formatToolDetailSummary(toolName, summarizeToolDetails(toolName, input));
 }
@@ -435,11 +682,12 @@ export function formatToolCallInlineText(tool: ToolCall): string {
   const summary = outputDetails.length > 0
     ? formatToolDetailSummary(tool.name, outputDetails)
     : formatToolSummary(tool.name, tool.input);
+  const statusDetail = formatToolStatusDetail(tool);
   const duration = formatDuration(tool.startTime, tool.endTime);
   const progress = tool.status === ToolCallStatus.Executing && tool.progress !== undefined
     ? `${tool.progress}%`
     : undefined;
-  const suffixParts = [progress, duration].filter(Boolean);
+  const suffixParts = [statusDetail, progress, duration].filter(Boolean);
   return suffixParts.length > 0 ? `${summary} (${suffixParts.join(" - ")})` : summary;
 }
 

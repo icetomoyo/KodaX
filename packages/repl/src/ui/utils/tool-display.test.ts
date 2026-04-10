@@ -5,6 +5,8 @@ import {
   formatCollapsedToolInlineText,
   formatLiveToolLabel,
   formatToolCallInlineText,
+  formatToolFailureExplanation,
+  formatToolResultExplanation,
   formatToolSummary,
 } from "./tool-display.js";
 
@@ -37,6 +39,17 @@ describe("tool-display", () => {
 
     expect(formatToolCallInlineText(tool))
       .toBe("[Planner] changed_diff_bundle - packages/coding/src/task-engine.ts - limit=120 (118ms)");
+  });
+
+  it("formats awaiting-approval tool text with explicit status detail", () => {
+    const tool: ToolCall = {
+      id: "tool-awaiting",
+      name: "write_file",
+      status: ToolCallStatus.AwaitingApproval,
+      startTime: 100,
+    };
+
+    expect(formatToolCallInlineText(tool)).toBe("write_file (awaiting approval)");
   });
 
   it("formats completed diff tools from their output details", () => {
@@ -95,6 +108,55 @@ describe("tool-display", () => {
     )).toBe("grep - pattern=H2_PLAN_EXECUTE_EVAL - packages/coding/src");
   });
 
+  it("formats web_search summaries with query and provider", () => {
+    expect(formatToolSummary(
+      "web_search",
+      { query: "kodax ama tactical fanout", provider_id: "web-cap" },
+    )).toBe("web_search - query=kodax ama tactical fanout - provider=web-cap");
+  });
+
+  it("formats web_fetch summaries with url", () => {
+    expect(formatToolSummary(
+      "web_fetch",
+      { url: "https://example.com/spec" },
+    )).toBe("web_fetch - https://example.com/spec");
+  });
+
+  it("formats semantic_lookup summaries with query and target path", () => {
+    expect(formatToolSummary(
+      "semantic_lookup",
+      { query: "NameService", target_path: "packages/app" },
+    )).toBe("semantic_lookup - query=NameService - packages/app");
+  });
+
+  it("formats code_search summaries with provider", () => {
+    expect(formatToolSummary(
+      "code_search",
+      { query: "NameService", provider_id: "provider-1" },
+    )).toBe("code_search - query=NameService - provider=provider-1");
+  });
+
+  it("formats mcp_search summaries with server and kind", () => {
+    expect(formatToolSummary(
+      "mcp_search",
+      { query: "filesystem", server: "local-fs", kind: "tool", limit: 4 },
+    )).toBe("mcp_search - query=filesystem - server=local-fs - kind=tool - limit=4");
+  });
+
+  it("formats mcp_describe summaries with capability id", () => {
+    expect(formatToolSummary(
+      "mcp_describe",
+      { id: "mcp:local-fs:tool:read_file" },
+    )).toBe("mcp_describe - mcp:local-fs:tool:read_file");
+  });
+
+  it("formats mcp_call summaries with arg count", () => {
+    expect(formatToolSummary(
+      "mcp_call",
+      { id: "mcp:local-fs:tool:read_file", args: { path: "README.md", mode: "text" } },
+    )).toBe("mcp_call - mcp:local-fs:tool:read_file - args=2");
+  });
+
   it("collapses repeated tool calls into a single summary", () => {
     const groups = collapseToolCalls([
       {
@@ -121,5 +183,88 @@ describe("tool-display", () => {
     expect(groups).toHaveLength(1);
     expect(formatCollapsedToolInlineText(groups[0]!))
       .toBe("changed_diff_bundle - packages/coding/src/task-engine.ts - limit=120 (118ms) x2");
+  });
+
+  it("builds compact failure explanations from error and output", () => {
+    const tool: ToolCall = {
+      id: "tool-fail",
+      name: "bash",
+      status: ToolCallStatus.Error,
+      startTime: 100,
+      error: "permission denied",
+      output: "fatal: permission denied\nsee more details in debug log",
+    };
+
+    expect(formatToolFailureExplanation(tool)).toEqual([
+      "Error: permission denied",
+      "Last output: fatal: permission denied",
+    ]);
+  });
+
+  it("builds compact diff explanations for successful changed_diff tools", () => {
+    const tool: ToolCall = {
+      id: "tool-diff",
+      name: "changed_diff",
+      status: ToolCallStatus.Success,
+      startTime: 100,
+      endTime: 210,
+      output: [
+        "Changed diff for packages/coding/src/task-engine.ts",
+        "Showing diff lines 1171-1320 of 3096",
+        "+ const example = true;",
+      ].join("\n"),
+    };
+
+    expect(formatToolResultExplanation(tool)).toEqual([
+      "Diff range: 1171-1320 of 3096",
+      "Preview: + const example = true;",
+    ]);
+  });
+
+  it("builds compact bundle explanations for successful changed_diff_bundle tools", () => {
+    const tool: ToolCall = {
+      id: "tool-bundle",
+      name: "[Planner] changed_diff_bundle",
+      status: ToolCallStatus.Success,
+      startTime: 100,
+      endTime: 210,
+      output: [
+        "Changed diff bundle for 3 file(s)",
+        "=== packages/a.ts ===",
+        "+ const a = 1;",
+      ].join("\n"),
+    };
+
+    expect(formatToolResultExplanation(tool)).toEqual([
+      "Bundle: 3 files",
+      "First file: packages/a.ts",
+    ]);
+  });
+
+  it("builds progress explanations for long-running executing tools", () => {
+    const tool: ToolCall = {
+      id: "tool-progress",
+      name: "bash",
+      status: ToolCallStatus.Executing,
+      startTime: 100,
+      progress: 50,
+    };
+
+    expect(formatToolResultExplanation(tool)).toEqual([
+      "Progress: 50% complete",
+    ]);
+  });
+
+  it("builds waiting explanations for tools blocked on approval", () => {
+    const tool: ToolCall = {
+      id: "tool-awaiting",
+      name: "write_file",
+      status: ToolCallStatus.AwaitingApproval,
+      startTime: 100,
+    };
+
+    expect(formatToolResultExplanation(tool)).toEqual([
+      "Waiting: approval required before execution",
+    ]);
   });
 });

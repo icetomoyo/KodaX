@@ -21,17 +21,28 @@ export interface KeyInfo {
   meta: boolean; // Alt key
   shift: boolean;
   insertable: boolean; // Whether can be inserted into text - 是否可以插入到文本中
+  isPasted?: boolean; // Whether inside bracketed paste (terminal protocol) - 是否在粘贴模式中（终端协议）
+  mouse?: {
+    action: "press" | "release" | "drag" | "move" | "wheel";
+    button: "left" | "middle" | "right" | "wheelup" | "wheeldown" | "unknown";
+    row: number;
+    column: number;
+  };
 }
-
 // === Text Buffer - 文本缓冲区 ===
 
 export type { CursorPosition };
+
+export type PromptEditingMode = "idle" | "typing" | "pasting";
 
 export interface UseTextBufferReturn {
   buffer: import("./utils/text-buffer.js").TextBuffer;
   text: string;
   cursor: CursorPosition;
   lines: string[];
+  isPasting: boolean;
+  editingMode: PromptEditingMode;
+  resetTransientState: () => void;
   setText: (text: string) => void;
   replaceRange: (start: number, end: number, replacement: string) => void;
   insert: (text: string, options?: { paste?: boolean }) => void;
@@ -40,6 +51,9 @@ export interface UseTextBufferReturn {
   delete: () => void;
   move: (direction: "up" | "down" | "left" | "right" | "home" | "end") => void;
   moveToEnd: () => void;
+  killLineRight: () => void;
+  killLineLeft: () => void;
+  deleteWordLeft: () => void;
   clear: () => void;
   undo: () => boolean;
   redo: () => boolean;
@@ -300,6 +314,7 @@ export type HistoryItemType =
   | "tool_group"
   | "thinking"
   | "error"
+  | "event"
   | "info"
   | "hint";
 
@@ -326,6 +341,7 @@ export interface HistoryItemUser extends HistoryItemBase {
 export interface HistoryItemAssistant extends HistoryItemBase {
   type: "assistant";
   text: string;
+  compactText?: string;
   isStreaming?: boolean;
 }
 
@@ -351,6 +367,7 @@ export interface HistoryItemToolGroup extends HistoryItemBase {
 export interface HistoryItemThinking extends HistoryItemBase {
   type: "thinking";
   text: string;
+  compactText?: string;
 }
 
 /**
@@ -361,6 +378,13 @@ export interface HistoryItemError extends HistoryItemBase {
   text: string;
 }
 
+export interface HistoryItemEvent extends HistoryItemBase {
+  type: "event";
+  text: string;
+  icon?: string;
+  compactText?: string;
+}
+
 /**
  * Info message - 信息消息
  */
@@ -368,6 +392,7 @@ export interface HistoryItemInfo extends HistoryItemBase {
   type: "info";
   text: string;
   icon?: string;
+  compactText?: string;
 }
 
 /**
@@ -388,6 +413,7 @@ export type HistoryItem =
   | HistoryItemToolGroup
   | HistoryItemThinking
   | HistoryItemError
+  | HistoryItemEvent
   | HistoryItemInfo
   | HistoryItemHint;
 
@@ -401,6 +427,7 @@ export type CreatableHistoryItem =
   | Omit<HistoryItemSystem, "id" | "timestamp">
   | Omit<HistoryItemThinking, "id" | "timestamp">
   | Omit<HistoryItemError, "id" | "timestamp">
+  | Omit<HistoryItemEvent, "id" | "timestamp">
   | Omit<HistoryItemInfo, "id" | "timestamp">
   | Omit<HistoryItemHint, "id" | "timestamp">
   | Omit<HistoryItemToolGroup, "id" | "timestamp">;

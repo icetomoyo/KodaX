@@ -8,6 +8,7 @@
 import type {
   KodaXContextTokenSnapshot,
   KodaXEvents,
+  KodaXRepoIntelligenceTraceEvent,
   KodaXTokenUsage,
 } from '@kodax/coding';
 
@@ -42,7 +43,25 @@ type JsonEvent =
   | { type: 'compact.stats'; tokensBefore: number; tokensAfter: number }
   | { type: 'compact.end' }
   | { type: 'retry'; reason: string; attempt: number; maxAttempts: number }
+  | {
+      type: 'provider.recovery';
+      stage: string;
+      reasonCode: string;
+      attempt: number;
+      maxAttempts: number;
+      delayMs: number;
+      nextAt: number;
+      recoveryAction: string;
+      fallbackUsed: boolean;
+    }
   | { type: 'provider.rate_limit'; attempt: number; maxRetries: number; delayMs: number }
+  | {
+      type: 'repo_intelligence.trace';
+      stage: KodaXRepoIntelligenceTraceEvent['stage'];
+      summary: string;
+      capability?: KodaXRepoIntelligenceTraceEvent['capability'];
+      trace?: KodaXRepoIntelligenceTraceEvent['trace'];
+    }
   | { type: 'complete' };
 
 type JsonErrorEvent = {
@@ -169,12 +188,36 @@ export function createJsonEvents(options: JsonEventOutputOptions = {}): KodaXEve
       });
     },
 
+    onProviderRecovery: (event) => {
+      writeJsonLine(stdout, {
+        type: 'provider.recovery',
+        stage: event.stage,
+        reasonCode: event.errorClass,
+        attempt: event.attempt,
+        maxAttempts: event.maxAttempts,
+        delayMs: event.delayMs,
+        nextAt: Date.now() + event.delayMs,
+        recoveryAction: event.recoveryAction,
+        fallbackUsed: event.fallbackUsed,
+      });
+    },
+
     onProviderRateLimit: (attempt, maxRetries, delayMs) => {
       writeJsonLine(stdout, {
         type: 'provider.rate_limit',
         attempt,
         maxRetries,
         delayMs,
+      });
+    },
+
+    onRepoIntelligenceTrace: (event) => {
+      writeJsonLine(stdout, {
+        type: 'repo_intelligence.trace',
+        stage: event.stage,
+        summary: event.summary,
+        capability: event.capability,
+        trace: event.trace,
       });
     },
 

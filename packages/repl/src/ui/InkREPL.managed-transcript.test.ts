@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { ToolCallStatus } from "./types.js";
 import {
   appendPersistedUiHistorySnapshot,
+  buildAmaWorkStripFromStatus,
+  buildManagedForegroundTurnHistoryItems,
   buildManagedTaskTranscriptItems,
   buildRoundHistoryItems,
   shouldShowStatusBarBusyStatus,
@@ -158,22 +160,125 @@ describe("appendPersistedUiHistorySnapshot", () => {
       { type: "info", text: "> AMA H1 - Starting refinement round 2" },
     ]);
   });
+
+  it("keeps the latest user prompt when a round later adds only tool output", () => {
+    const afterPrompt = appendPersistedUiHistorySnapshot([
+      { type: "assistant", text: "Round 1 answer" },
+    ], [
+      { type: "user", text: "Round 2 prompt" },
+    ]);
+
+    const afterToolOnlyUpdate = appendPersistedUiHistorySnapshot(afterPrompt, [
+      {
+        type: "tool_group",
+        tools: [
+          {
+            id: "tool-2",
+            name: "changed_diff",
+            status: ToolCallStatus.Success,
+            startTime: 100,
+            input: {
+              preview: "{\"path\":\"packages/repl/src/ui/InkREPL.tsx\"}",
+            },
+          },
+        ],
+      },
+    ]);
+
+    expect(afterToolOnlyUpdate).toEqual([
+      { type: "assistant", text: "Round 1 answer" },
+      { type: "user", text: "Round 2 prompt" },
+    ]);
+  });
+
+  it("keeps only the most recent persisted rounds once the transcript grows too large", () => {
+    let history: ReturnType<typeof appendPersistedUiHistorySnapshot> = [];
+
+    for (let round = 1; round <= 55; round += 1) {
+      history = appendPersistedUiHistorySnapshot(history, [
+        { type: "user", text: `Round ${round} prompt` },
+        { type: "assistant", text: `Round ${round} answer` },
+      ]);
+    }
+
+    expect(history).toHaveLength(100);
+    expect(history[0]).toEqual({ type: "user", text: "Round 6 prompt" });
+    expect(history[history.length - 1]).toEqual({ type: "assistant", text: "Round 55 answer" });
+  });
+});
+
+describe("buildManagedForegroundTurnHistoryItems", () => {
+  it("keeps completed foreground AMA phases as labeled thinking and assistant items", () => {
+    const items = buildManagedForegroundTurnHistoryItems("Planner", {
+      thinking: "Comparing ScrollBox ownership against the renderer viewport path.",
+      response: "Planner narrowed the bug to the fullscreen transcript geometry.",
+      toolCalls: [{
+        id: "tool-1",
+        name: "[Planner] changed_diff_bundle",
+        input: { paths: ["packages/repl/src/ui/InkREPL.tsx"] },
+        status: ToolCallStatus.Success,
+        output: "Bundle: 3 files",
+        startTime: 1,
+        endTime: 2,
+      }],
+      createId: ((index = 0) => () => `fg-${++index}`)(),
+    });
+
+    expect(items).toHaveLength(3);
+    expect(items[0]).toMatchObject({
+      type: "thinking",
+      text: "[Planner] Comparing ScrollBox ownership against the renderer viewport path.",
+    });
+    expect(items[1]).toMatchObject({
+      type: "tool_group",
+      tools: [expect.objectContaining({
+        name: "[Planner] changed_diff_bundle",
+      })],
+    });
+    expect(items[2]).toMatchObject({
+      type: "assistant",
+      text: "[Planner] Planner narrowed the bug to the fullscreen transcript geometry.",
+    });
+  });
 });
 
 describe("shouldShowStatusBarBusyStatus", () => {
-  it("hides duplicate busy text while AMA live loading is active", () => {
+  it("keeps busy text visible while the prompt surface is loading", () => {
     expect(shouldShowStatusBarBusyStatus({
-      agentMode: "ama",
       isLivePaused: false,
       isLoading: true,
-    })).toBe(false);
+      hasSpinnerLiveness: true,
+    })).toBe(true);
   });
 
-  it("keeps busy text visible for SA live loading", () => {
+  it("hides busy text when live transcript updates are paused", () => {
     expect(shouldShowStatusBarBusyStatus({
-      agentMode: "sa",
-      isLivePaused: false,
+      isLivePaused: true,
       isLoading: true,
-    })).toBe(true);
+      hasSpinnerLiveness: false,
+    })).toBe(false);
+  });
+});
+
+describe("buildAmaWorkStripFromStatus", () => {
+  it("hides the strip outside AMA loading", () => {
+    expect(buildAmaWorkStripFromStatus({
+      agentMode: "sa",
+      childFanoutClass: "finding-validation",
+      childFanoutCount: 2,
+    }, true)).toBeUndefined();
+    expect(buildAmaWorkStripFromStatus({
+      agentMode: "ama",
+      childFanoutClass: "finding-validation",
+      childFanoutCount: 2,
+    }, false)).toBeUndefined();
+  });
+
+  it("formats AMA child fan-out as a compact work strip", () => {
+    expect(buildAmaWorkStripFromStatus({
+      agentMode: "ama",
+      childFanoutClass: "finding-validation",
+      childFanoutCount: 3,
+    }, true)).toBe("Validating 3 findings");
   });
 });

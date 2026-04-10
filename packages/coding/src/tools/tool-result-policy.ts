@@ -46,6 +46,30 @@ const TOOL_RESULT_POLICIES: Record<string, ToolResultPolicy> = {
     direction: 'head',
     spillToFile: true,
   },
+  web_search: {
+    maxLines: 240,
+    maxBytes: 20 * 1024,
+    direction: 'head',
+    spillToFile: true,
+  },
+  web_fetch: {
+    maxLines: 320,
+    maxBytes: 24 * 1024,
+    direction: 'head',
+    spillToFile: true,
+  },
+  code_search: {
+    maxLines: 320,
+    maxBytes: 24 * 1024,
+    direction: 'head',
+    spillToFile: true,
+  },
+  semantic_lookup: {
+    maxLines: 260,
+    maxBytes: 20 * 1024,
+    direction: 'head',
+    spillToFile: true,
+  },
   changed_diff: {
     maxLines: 1400,
     maxBytes: 48 * 1024,
@@ -84,6 +108,14 @@ function buildToolResultHint(toolName: string): string {
       return 'Narrow the command, or redirect output to a file before reading it.';
     case 'grep':
       return 'Narrow the pattern or path, or switch to files_with_matches/count first.';
+    case 'web_search':
+      return 'Refine the query or fetch a specific result URL for higher-confidence source capture.';
+    case 'web_fetch':
+      return 'Fetch a narrower page or follow up with read/grep on the saved output file.';
+    case 'code_search':
+      return 'Narrow the search root or query, or follow up with read on the matched file.';
+    case 'semantic_lookup':
+      return 'Narrow the query or use symbol_context/module_context for a deeper semantic follow-up.';
     case 'changed_diff':
       return 'Continue with changed_diff offset/limit, or switch to read for current-file context after identifying the relevant patch slice.';
     case 'changed_diff_bundle':

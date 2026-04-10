@@ -25,6 +25,12 @@ export interface KodaXToolResultBlock {
   is_error?: boolean;
 }
 
+export interface KodaXImageBlock {
+  type: 'image';
+  path: string;
+  mediaType?: string;
+}
+
 export interface KodaXThinkingBlock {
   type: 'thinking';
   thinking: string;
@@ -37,11 +43,12 @@ export interface KodaXRedactedThinkingBlock {
 }
 
 export type KodaXContentBlock =
-  | KodaXTextBlock
-  | KodaXToolUseBlock
-  | KodaXToolResultBlock
-  | KodaXThinkingBlock
-  | KodaXRedactedThinkingBlock;
+    | KodaXTextBlock
+    | KodaXToolUseBlock
+    | KodaXToolResultBlock
+    | KodaXImageBlock
+    | KodaXThinkingBlock
+    | KodaXRedactedThinkingBlock;
 
 // ============== 消息类型 ==============
 
@@ -209,6 +216,37 @@ export type KodaXReviewScale =
   | 'small'
   | 'large'
   | 'massive';
+
+export type KodaXAmaProfile = 'tactical' | 'managed';
+
+export type KodaXAmaTactic =
+  | 'direct'
+  | 'child-fanout'
+  | 'planning-pass'
+  | 'verification-pass'
+  | 'repair-loop';
+
+export type KodaXAmaFanoutClass =
+  | 'finding-validation'
+  | 'evidence-scan'
+  | 'module-triage'
+  | 'hypothesis-check';
+
+export interface KodaXAmaFanoutPolicy {
+  admissible: boolean;
+  class?: KodaXAmaFanoutClass;
+  reason: string;
+  maxChildren?: number;
+  requiresReadOnly?: boolean;
+}
+
+export interface KodaXAmaControllerDecision {
+  profile: KodaXAmaProfile;
+  tactics: KodaXAmaTactic[];
+  fanout: KodaXAmaFanoutPolicy;
+  reason: string;
+  upgradeTriggers: string[];
+}
 
 export interface KodaXTaskRoutingDecision {
   primaryTask: KodaXTaskType;

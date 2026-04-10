@@ -9,6 +9,7 @@ import type {
 } from '@kodax/ai';
 import { KodaXBaseProvider } from '@kodax/ai';
 import {
+  buildAmaControllerDecision,
   buildHeuristicAutoRerouteDecision,
   buildFallbackRoutingDecision,
   buildProviderPolicyHintsForDecision,
@@ -106,6 +107,18 @@ describe('reasoning reroute', () => {
       harnessProfile: 'H1_EXECUTE_EVAL',
       reason: 'Initial routing selected review.',
     },
+    amaControllerDecision: buildAmaControllerDecision({
+      primaryTask: 'review',
+      confidence: 0.9,
+      riskLevel: 'medium',
+      recommendedMode: 'pr-review',
+      recommendedThinkingDepth: 'low',
+      complexity: 'moderate',
+      workIntent: 'new',
+      requiresBrainstorm: false,
+      harnessProfile: 'H1_EXECUTE_EVAL',
+      reason: 'Initial routing selected review.',
+    }),
     promptOverlay: '[Execution Mode: pr-review]',
   };
 
@@ -176,6 +189,9 @@ describe('reasoning reroute', () => {
     expect(plan.decision.recommendedMode).toBe('investigation');
     expect(plan.decision.mutationSurface).toBe('code');
     expect(plan.promptOverlay).toContain('[Execution Mode: investigation]');
+    expect(plan.amaControllerDecision.profile).toBe('tactical');
+    expect(plan.amaControllerDecision.fanout.admissible).toBe(false);
+    expect(plan.amaControllerDecision.tactics).not.toContain('child-fanout');
 
     const routerPrompt = String(provider.lastMessages[0]?.content ?? '');
     expect(routerPrompt).toContain('- git: unavailable');
@@ -464,6 +480,156 @@ describe('reasoning reroute', () => {
 
     expect(decision.complexity).toBe('systemic');
     expect(decision.harnessProfile).toBe('H2_PLAN_EXECUTE_EVAL');
+  });
+
+  it('selects managed AMA profile only when heavier coordination remains load-bearing', () => {
+    const tactical = buildAmaControllerDecision(
+      buildFallbackRoutingDecision('Please review this change set for merge blockers.'),
+    );
+    const managed = buildAmaControllerDecision(
+      buildFallbackRoutingDecision('Refactor the monorepo architecture across packages and coordinate the whole repo migration.'),
+    );
+
+    expect(tactical.profile).toBe('tactical');
+    expect(tactical.fanout.admissible).toBe(true);
+    expect(tactical.fanout.class).toBe('finding-validation');
+    expect(managed.profile).toBe('managed');
+    expect(managed.tactics).toEqual(
+      expect.arrayContaining(['planning-pass', 'verification-pass', 'repair-loop']),
+    );
+  });
+
+  it('does not expose child-fanout when fanout is inadmissible on a direct mutation task', () => {
+    const decision = buildAmaControllerDecision(
+      {
+        primaryTask: 'bugfix',
+        taskFamily: 'investigation',
+        actionability: 'actionable',
+        executionPattern: 'direct',
+        recommendedMode: 'investigation',
+        recommendedThinkingDepth: 'low',
+        complexity: 'moderate',
+        riskLevel: 'medium',
+        harnessProfile: 'H0_DIRECT',
+        mutationSurface: 'code',
+        confidence: 0.92,
+        workIntent: 'new',
+        requiresBrainstorm: false,
+        reason: 'Small mutation investigation should stay direct.',
+      },
+    );
+
+    expect(decision.profile).toBe('tactical');
+    expect(decision.fanout.admissible).toBe(false);
+    expect(decision.tactics).not.toContain('child-fanout');
+  });
+
+  it('exposes read-only investigation evidence-scan fan-out once the tactical runtime lands', () => {
+    const decision = buildAmaControllerDecision(
+      {
+        primaryTask: 'bugfix',
+        taskFamily: 'investigation',
+        actionability: 'actionable',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'investigation',
+        recommendedThinkingDepth: 'medium',
+        complexity: 'moderate',
+        riskLevel: 'medium',
+        harnessProfile: 'H0_DIRECT',
+        mutationSurface: 'read-only',
+        confidence: 0.88,
+        workIntent: 'new',
+        requiresBrainstorm: false,
+        reason: 'Read-only investigation can use bounded evidence fan-out.',
+      },
+    );
+
+    expect(decision.profile).toBe('tactical');
+    expect(decision.fanout.admissible).toBe(true);
+    expect(decision.fanout.class).toBe('evidence-scan');
+    expect(decision.fanout.reason).toContain('Investigation work benefits from bounded evidence shards');
+    expect(decision.tactics).toContain('child-fanout');
+    expect(decision.tactics).not.toContain('planning-pass');
+  });
+
+  it('keeps managed-profile investigation evidence-scan fan-out inactive in this rollout', () => {
+    const decision = buildAmaControllerDecision(
+      {
+        primaryTask: 'bugfix',
+        taskFamily: 'investigation',
+        actionability: 'actionable',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'investigation',
+        recommendedThinkingDepth: 'medium',
+        complexity: 'systemic',
+        riskLevel: 'high',
+        harnessProfile: 'H2_PLAN_EXECUTE_EVAL',
+        mutationSurface: 'read-only',
+        confidence: 0.88,
+        workIntent: 'new',
+        requiresBrainstorm: false,
+        reason: 'Managed investigation should not activate read-only fan-out in this rollout.',
+      },
+    );
+
+    expect(decision.profile).toBe('managed');
+    expect(decision.fanout.admissible).toBe(false);
+    expect(decision.fanout.class).toBeUndefined();
+    expect(decision.tactics).not.toContain('child-fanout');
+  });
+
+  it('exposes read-only lookup module-triage fan-out once the tactical runtime lands', () => {
+    const decision = buildAmaControllerDecision(
+      {
+        primaryTask: 'lookup',
+        taskFamily: 'lookup',
+        actionability: 'actionable',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'lookup',
+        recommendedThinkingDepth: 'medium',
+        complexity: 'moderate',
+        riskLevel: 'low',
+        harnessProfile: 'H0_DIRECT',
+        mutationSurface: 'read-only',
+        confidence: 0.84,
+        workIntent: 'new',
+        requiresBrainstorm: false,
+        reason: 'Read-only lookup can shard module triage once the tactical runtime lands.',
+      },
+    );
+
+    expect(decision.profile).toBe('tactical');
+    expect(decision.fanout.admissible).toBe(true);
+    expect(decision.fanout.class).toBe('module-triage');
+    expect(decision.fanout.reason).toContain('Lookup work can shard module triage');
+    expect(decision.tactics).toContain('child-fanout');
+  });
+
+  it('keeps direct lookup work on the non-fanout path in this rollout', () => {
+    const decision = buildAmaControllerDecision(
+      {
+        primaryTask: 'lookup',
+        taskFamily: 'lookup',
+        actionability: 'actionable',
+        executionPattern: 'direct',
+        recommendedMode: 'lookup',
+        recommendedThinkingDepth: 'medium',
+        complexity: 'moderate',
+        riskLevel: 'low',
+        harnessProfile: 'H0_DIRECT',
+        mutationSurface: 'read-only',
+        confidence: 0.84,
+        workIntent: 'new',
+        requiresBrainstorm: false,
+        reason: 'Direct lookup should stay lightweight and avoid hidden child fan-out.',
+      },
+    );
+
+    expect(decision.profile).toBe('tactical');
+    expect(decision.fanout.admissible).toBe(false);
+    expect(decision.fanout.class).toBeUndefined();
+    expect(decision.fanout.reason).toContain('Module-triage shards only activate for tactical H0 read-only lookup');
+    expect(decision.tactics).not.toContain('child-fanout');
   });
 
   it('lets repo-intelligence signals raise routing complexity and planning bias', () => {
@@ -878,5 +1044,69 @@ describe('reasoning reroute', () => {
     expect(reroutedPlan?.kind).toBe('task-reroute');
     expect(reroutedPlan?.decision.primaryTask).toBe('bugfix');
     expect(reroutedPlan?.decision.recommendedMode).toBe('investigation');
+  });
+
+  it('keeps API documentation-only edits on the docs-only path when code changes are forbidden', () => {
+    const decision = buildFallbackRoutingDecision(
+      'Update API docs and README only. Do not change code.',
+    );
+
+    expect(decision.primaryTask).toBe('edit');
+    expect(decision.mutationSurface).toBe('docs-only');
+    expect(decision.harnessProfile).toBe('H0_DIRECT');
+    expect(decision.topologyCeiling).toBe('H0_DIRECT');
+  });
+
+  it('keeps backend and module documentation rewrites out of H2 when the prompt is docs-scoped', () => {
+    const decision = buildFallbackRoutingDecision(
+      'Rewrite the ADR and module documentation only. Do not change code.',
+    );
+
+    expect(decision.primaryTask).toBe('edit');
+    expect(decision.mutationSurface).toBe('docs-only');
+    expect(decision.harnessProfile).toBe('H0_DIRECT');
+    expect(decision.topologyCeiling).toBe('H0_DIRECT');
+  });
+
+  it('still treats mixed implementation plus docs requests as code work', () => {
+    const decision = buildFallbackRoutingDecision(
+      'Update the backend service implementation and refresh the API docs.',
+    );
+
+    expect(decision.primaryTask).toBe('edit');
+    expect(decision.mutationSurface).toBe('code');
+    expect(decision.topologyCeiling).toBe('H2_PLAN_EXECUTE_EVAL');
+  });
+
+  it('keeps technical documentation edits on docs-only even without an explicit no-code suffix', () => {
+    const decision = buildFallbackRoutingDecision(
+      'Update backend service docs only.',
+    );
+
+    expect(decision.primaryTask).toBe('edit');
+    expect(decision.mutationSurface).toBe('docs-only');
+    expect(decision.harnessProfile).toBe('H0_DIRECT');
+    expect(decision.topologyCeiling).toBe('H0_DIRECT');
+  });
+
+  it('treats migration guides with explicit no-code constraints as docs-only work', () => {
+    const decision = buildFallbackRoutingDecision(
+      'Only update the migration guide; do not run migrations or change code.',
+    );
+
+    expect(decision.primaryTask).toBe('edit');
+    expect(decision.mutationSurface).toBe('docs-only');
+    expect(decision.harnessProfile).toBe('H0_DIRECT');
+    expect(decision.topologyCeiling).toBe('H0_DIRECT');
+  });
+
+  it('does not let code-comment edits hide behind README-only phrasing', () => {
+    const decision = buildFallbackRoutingDecision(
+      'Update code comments and README only.',
+    );
+
+    expect(decision.primaryTask).toBe('edit');
+    expect(decision.mutationSurface).toBe('code');
+    expect(decision.topologyCeiling).toBe('H2_PLAN_EXECUTE_EVAL');
   });
 });

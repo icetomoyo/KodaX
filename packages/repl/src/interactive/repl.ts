@@ -13,12 +13,16 @@ import chalk from 'chalk';
 export { runInkInteractiveMode } from '../ui/index.js';
 export type { InkREPLOptions } from '../ui/index.js';
 import {
+  extractArtifactLedger,
+  KodaXInputArtifact,
   KodaXOptions,
   KodaXMessage,
   KodaXResult,
   KodaXReasoningMode,
   KodaXSessionData,
+  mergeArtifactLedger,
   runManagedTask,
+  resolveRepoIntelligenceRuntimeConfig,
   appendSessionLineageLabel,
   buildSessionTree,
   countActiveLineageMessages,
@@ -56,7 +60,6 @@ import {
 import { runWithPlanMode } from '../common/plan-mode.js';
 import { loadCompactionConfig } from '../common/compaction-config.js';
 import { loadAlwaysAllowTools, saveAlwaysAllowToolPattern } from '../common/permission-config.js';
-import { detectAndShowProjectHint } from './project-commands.js';
 import {
   confirmToolExecution,
   getTerminalWidth,
@@ -81,10 +84,22 @@ import {
   enforceSessionTransitionGuard,
 } from './session-guardrails.js';
 import { formatSessionTree } from './session-tree.js';
+import {
+  formatWorkspaceTruth,
+  inspectWorkspaceRuntime,
+  resolveSessionRuntimeInfo,
+  workspaceExists,
+} from './workspace-runtime.js';
+import { preparePromptInputArtifacts } from '../common/input-artifacts.js';
 
 // Extended session storage interface (adds list method) - 扩展的会话存储接口（增加 list 方法）
 interface SessionStorage extends KodaXSessionStorage {
-  list(gitRoot?: string): Promise<Array<{ id: string; title: string; msgCount: number }>>;
+  list(gitRoot?: string): Promise<Array<{
+    id: string;
+    title: string;
+    msgCount: number;
+    runtimeInfo?: KodaXSessionData['runtimeInfo'];
+  }>>;
 }
 
 // Simple in-memory session storage (replaceable with persistent storage) - 简单的内存会话存储（可替换为持久化存储）
@@ -181,6 +196,9 @@ class MemorySessionStorage implements SessionStorage {
       messages: getSessionMessagesFromLineage(lineage),
       title: options?.title ?? current.data.title,
       gitRoot: current.data.gitRoot,
+      runtimeInfo: current.data.runtimeInfo
+        ? structuredClone(current.data.runtimeInfo)
+        : undefined,
       scope: current.data.scope ?? 'user',
       extensionState: current.data.extensionState
         ? structuredClone(current.data.extensionState)
@@ -200,7 +218,12 @@ class MemorySessionStorage implements SessionStorage {
     };
   }
 
-  async list(_gitRoot?: string): Promise<Array<{ id: string; title: string; msgCount: number }>> {
+  async list(_gitRoot?: string): Promise<Array<{
+    id: string;
+    title: string;
+    msgCount: number;
+    runtimeInfo?: KodaXSessionData['runtimeInfo'];
+  }>> {
     return Array.from(this.sessions.entries())
       .filter(([, session]) => (session.data.scope ?? 'user') === 'user')
       .map(([id, session]) => ({
@@ -209,6 +232,11 @@ class MemorySessionStorage implements SessionStorage {
         msgCount: session.data.lineage
           ? countActiveLineageMessages(session.data.lineage)
           : session.data.messages.length,
+        ...(session.data.runtimeInfo
+          ? {
+            runtimeInfo: structuredClone(session.data.runtimeInfo),
+          }
+          : {}),
       }));
   }
 
@@ -219,6 +247,29 @@ class MemorySessionStorage implements SessionStorage {
   async deleteAll(_gitRoot?: string): Promise<void> {
     this.sessions.clear();
   }
+}
+
+function applyRuntimeContext(
+  context: InteractiveContext,
+  currentOptions: RepLOptions,
+  runtimeInfo: InteractiveContext['runtimeInfo'],
+): void {
+  context.runtimeInfo = runtimeInfo;
+  context.gitRoot = runtimeInfo?.workspaceRoot ?? context.gitRoot;
+  currentOptions.context = {
+    ...currentOptions.context,
+    gitRoot: context.gitRoot,
+    executionCwd: runtimeInfo?.executionCwd ?? process.cwd(),
+  };
+}
+
+function printWorkspaceEntryNotice(runtimeInfo: InteractiveContext['runtimeInfo']): void {
+  if (!runtimeInfo?.workspaceRoot) {
+    return;
+  }
+
+  console.log(chalk.dim(`  Workspace: ${formatWorkspaceTruth(runtimeInfo)}`));
+  console.log(chalk.dim('  Use /status workspace for runtime details.\n'));
 }
 
 // REPL options - REPL 选项
@@ -244,7 +295,8 @@ function resolveInitialReasoningMode(
 
 // Run interactive mode - 运行交互式模式
 export async function runInteractiveMode(options: RepLOptions): Promise<void> {
-  const gitRoot = await getGitRoot() ?? undefined;
+  const startupRuntime = await inspectWorkspaceRuntime({ cwd: process.cwd() });
+  const gitRoot = startupRuntime.workspaceRoot ?? await getGitRoot() ?? undefined;
   const storage = options.storage ?? new MemorySessionStorage();
 
   // Load config (priority: CLI args > config file > defaults) - 加载配置（优先级：CLI参数 > 配置文件 > 默认值）
@@ -259,6 +311,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   const initialParallel = options.parallel ?? (config as { parallel?: boolean }).parallel ?? false;
   const initialPermissionMode: PermissionMode =
     normalizePermissionMode((config as { permissionMode?: string }).permissionMode, 'accept-edits') ?? 'accept-edits';
+  const repoIntelligenceRuntime = resolveRepoIntelligenceRuntimeConfig();
 
   const configuredTheme = (config as { theme?: string }).theme;
   if (configuredTheme) {
@@ -275,6 +328,10 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     agentMode: initialAgentMode,
     parallel: initialParallel,
     permissionMode: initialPermissionMode,
+    repoIntelligenceMode: repoIntelligenceRuntime.mode,
+    repointelEndpoint: repoIntelligenceRuntime.endpoint,
+    repointelBin: repoIntelligenceRuntime.bin,
+    repoIntelligenceTrace: repoIntelligenceRuntime.trace,
   };
 
   // Local permission state - 本地权限状态
@@ -293,6 +350,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   const context = await createInteractiveContext({
     sessionId: options.session?.id,
     gitRoot,
+    runtimeInfo: startupRuntime,
   });
 
   const guardSessionTransition = (action: string): boolean => {
@@ -318,7 +376,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   const reloadAgentsFiles = async (): Promise<AgentsFile[]> => {
     return loadAgentsFiles({
       cwd: process.cwd(),
-      projectRoot: gitRoot ?? undefined,
+      projectRoot: context.gitRoot ?? undefined,
     });
   };
   let agentsFiles = await reloadAgentsFiles();
@@ -329,12 +387,12 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     triggerPercent: compactionConfig.triggerPercent,
     enabled: compactionConfig.enabled,
   }, agentsFiles);
+  printWorkspaceEntryNotice(startupRuntime);
 
   // Detect and show project hint - 检测并显示项目提示
-  await detectAndShowProjectHint();
 
   // Create autocomplete - 创建自动补全器
-  const completer = createCompleter(gitRoot ?? process.cwd());
+  const completer = createCompleter(() => context.gitRoot ?? process.cwd());
 
   const rl = readline.createInterface({
     input: process.stdin,
@@ -372,7 +430,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   // Keyboard shortcut mapping - 键盘快捷键映射
   const KEYBOARD_SHORTCUTS_HELP = `
 Keyboard Shortcuts:
-  Tab       Auto-complete (@files, /commands)
+  Tab       Auto-complete (@paths, /commands)
   Esc+Esc   Edit last message
   Ctrl+T    Cycle reasoning mode
   Ctrl+E    Open external editor
@@ -413,6 +471,13 @@ Keyboard Shortcuts:
     parallel: initialParallel,
     reasoningMode: initialReasoningMode,
     thinking: initialThinking,
+    context: {
+      ...options.context,
+      gitRoot,
+      executionCwd: startupRuntime.executionCwd,
+      repoIntelligenceMode: repoIntelligenceRuntime.mode,
+      repoIntelligenceTrace: repoIntelligenceRuntime.trace,
+    },
     session: {
       ...options.session,
       id: context.sessionId,
@@ -432,7 +497,9 @@ Keyboard Shortcuts:
         await storage.save(context.sessionId, {
           messages: context.messages,
           title,
-          gitRoot: gitRoot ?? '',
+          gitRoot: context.gitRoot ?? '',
+          runtimeInfo: context.runtimeInfo,
+          artifactLedger: context.artifactLedger,
         });
       }
     },
@@ -440,8 +507,10 @@ Keyboard Shortcuts:
       context.sessionId = generateInteractiveSessionId();
       context.title = '';
       context.contextTokenSnapshot = undefined;
+      context.artifactLedger = undefined;
       context.createdAt = new Date().toISOString();
       context.lastAccessed = context.createdAt;
+      applyRuntimeContext(context, currentOptions, startupRuntime);
       currentOptions.session = {
         ...currentOptions.session,
         id: context.sessionId,
@@ -457,11 +526,31 @@ Keyboard Shortcuts:
         if (!guardSessionTransition('Resuming a saved session')) {
           return 'blocked';
         }
+        const currentWorkspaceRuntime = await inspectWorkspaceRuntime({ cwd: process.cwd() });
+        const savedRuntime = resolveSessionRuntimeInfo(loaded);
+        let appliedRuntime = savedRuntime ?? currentWorkspaceRuntime;
+        if (savedRuntime?.workspaceRoot && !workspaceExists(savedRuntime)) {
+          console.log(chalk.yellow('\n[Saved workspace unavailable]'));
+          console.log(chalk.dim(`  Session workspace: ${formatWorkspaceTruth(savedRuntime)}`));
+          console.log(chalk.dim(`  Falling back to current workspace: ${formatWorkspaceTruth(currentWorkspaceRuntime)}`));
+          appliedRuntime = currentWorkspaceRuntime;
+        } else if (
+          savedRuntime?.workspaceRoot
+          && currentWorkspaceRuntime.workspaceRoot
+          && savedRuntime.workspaceRoot !== currentWorkspaceRuntime.workspaceRoot
+        ) {
+          console.log(chalk.cyan('\n[Loading sibling workspace session]'));
+          console.log(chalk.dim(`  Current workspace: ${formatWorkspaceTruth(currentWorkspaceRuntime)}`));
+          console.log(chalk.dim(`  Session workspace: ${formatWorkspaceTruth(savedRuntime)}`));
+        }
+
         context.messages = loaded.messages;
         context.title = loaded.title;
         context.sessionId = id;
         context.contextTokenSnapshot = undefined;
+        context.artifactLedger = loaded.artifactLedger;
         context.lastAccessed = new Date().toISOString();
+        applyRuntimeContext(context, currentOptions, appliedRuntime);
         currentOptions.session = {
           ...currentOptions.session,
           id,
@@ -472,22 +561,34 @@ Keyboard Shortcuts:
         });
         console.log(chalk.green(`\n[Loaded session: ${id}]`));
         console.log(chalk.dim(`  Messages: ${loaded.messages.length}`));
+        if (context.runtimeInfo?.workspaceRoot) {
+          console.log(chalk.dim(`  Workspace: ${formatWorkspaceTruth(context.runtimeInfo)}`));
+        }
         return 'loaded';
       }
       return 'missing';
     },
-    listSessions: async () => {
-      const sessions = await storage.list(gitRoot ?? undefined);
-      if (sessions.length === 0) {
-        console.log(chalk.dim('\n[No saved sessions]'));
-        return;
+      listSessions: async () => {
+        const sessions = await storage.list(context.gitRoot ?? undefined);
+        if (sessions.length === 0) {
+          console.log(chalk.dim('\n[No saved sessions]'));
+          return;
       }
       console.log(chalk.bold('\nRecent Sessions:\n'));
-      for (const s of sessions.slice(0, 10)) {
-        console.log(`  ${chalk.cyan(s.id)} ${chalk.dim(`(${s.msgCount} messages)`)} ${s.title.slice(0, 40)}`);
-      }
-      console.log();
-    },
+        if (context.runtimeInfo?.workspaceRoot) {
+          console.log(chalk.dim(`  Current workspace: ${formatWorkspaceTruth(context.runtimeInfo)}`));
+          console.log();
+        }
+        for (const s of sessions.slice(0, 10)) {
+          console.log(`  ${chalk.cyan(s.id)} ${chalk.dim(`(${s.msgCount} messages)`)} ${s.title.slice(0, 40)}`);
+          if (s.runtimeInfo?.workspaceRoot) {
+            const sameWorkspace = context.runtimeInfo?.workspaceRoot === s.runtimeInfo.workspaceRoot;
+            const suffix = sameWorkspace ? ' (current workspace)' : '';
+            console.log(chalk.dim(`      workspace: ${formatWorkspaceTruth(s.runtimeInfo)}${suffix}`));
+          }
+        }
+        console.log();
+      },
     clearHistory: () => {
       context.messages = [];
       context.contextTokenSnapshot = undefined;
@@ -557,11 +658,49 @@ Keyboard Shortcuts:
       // Note: permissionMode is no longer part of KodaXOptions
       // Permission control is handled locally via beforeToolExecute callback
     },
+    setRepoIntelligenceRuntime: (update) => {
+      if (update.mode !== undefined) {
+        currentConfig.repoIntelligenceMode = update.mode;
+        process.env.KODAX_REPO_INTELLIGENCE_MODE = update.mode;
+        currentOptions.context = {
+          ...currentOptions.context,
+          repoIntelligenceMode: update.mode,
+        };
+      }
+      if (update.trace !== undefined) {
+        currentConfig.repoIntelligenceTrace = update.trace;
+        if (update.trace) {
+          process.env.KODAX_REPO_INTELLIGENCE_TRACE = '1';
+        } else {
+          delete process.env.KODAX_REPO_INTELLIGENCE_TRACE;
+        }
+        currentOptions.context = {
+          ...currentOptions.context,
+          repoIntelligenceTrace: update.trace,
+        };
+      }
+      if (update.endpoint !== undefined) {
+        currentConfig.repointelEndpoint = update.endpoint ?? undefined;
+        if (update.endpoint) {
+          process.env.KODAX_REPOINTEL_ENDPOINT = update.endpoint;
+        } else {
+          delete process.env.KODAX_REPOINTEL_ENDPOINT;
+        }
+      }
+      if (update.bin !== undefined) {
+        currentConfig.repointelBin = update.bin ?? undefined;
+        if (update.bin) {
+          process.env.KODAX_REPOINTEL_BIN = update.bin;
+        } else {
+          delete process.env.KODAX_REPOINTEL_BIN;
+        }
+      }
+    },
     deleteSession: async (id: string) => {
       await storage.delete?.(id);
     },
     deleteAllSessions: async () => {
-      await storage.deleteAll?.(gitRoot ?? undefined);
+      await storage.deleteAll?.(context.gitRoot ?? undefined);
     },
     printSessionTree: async () => {
       const lineage = await storage.getLineage?.(context.sessionId);
@@ -627,6 +766,7 @@ Keyboard Shortcuts:
       context.contextTokenSnapshot = undefined;
       context.createdAt = new Date().toISOString();
       context.lastAccessed = context.createdAt;
+      applyRuntimeContext(context, currentOptions, resolveSessionRuntimeInfo(forked.data) ?? context.runtimeInfo);
       currentOptions.session = {
         ...currentOptions.session,
         id: forked.sessionId,
@@ -784,7 +924,8 @@ Keyboard Shortcuts:
           await storage.save(context.sessionId, {
             messages: context.messages,
             title,
-            gitRoot: gitRoot ?? '',
+            gitRoot: context.gitRoot ?? '',
+            runtimeInfo: context.runtimeInfo,
           });
         }
       }
@@ -852,7 +993,8 @@ Keyboard Shortcuts:
         await storage.save(context.sessionId, {
           messages: context.messages,
           title,
-          gitRoot: gitRoot ?? '',
+          gitRoot: context.gitRoot ?? '',
+          runtimeInfo: context.runtimeInfo,
         });
       }
       await prepared.finalize();
@@ -890,7 +1032,14 @@ Keyboard Shortcuts:
         if (trimmed.startsWith('!') && isShellCommandHandled(processed)) {
           continue;
         }
-        context.messages.push({ role: 'user', content: processed });
+        const preparedArtifacts = preparePromptInputArtifacts(
+          processed,
+          currentOptions.context?.executionCwd ?? process.cwd(),
+        );
+        for (const warning of preparedArtifacts.warnings) {
+          console.log(chalk.yellow(`\n${warning}`));
+        }
+        context.messages.push({ role: 'user', content: preparedArtifacts.messageContent });
         lastUserMessage = trimmed;
         statusBar?.update({ messageCount: context.messages.length });
 
@@ -902,6 +1051,12 @@ Keyboard Shortcuts:
               provider: currentConfig.provider,
               thinking: currentConfig.thinking,
               reasoningMode: currentConfig.reasoningMode,
+              context: {
+                ...currentOptions.context,
+                ...(preparedArtifacts.inputArtifacts.length > 0
+                  ? { inputArtifacts: preparedArtifacts.inputArtifacts }
+                  : {}),
+              },
             });
           } else {
             const result = await runManagedTask(
@@ -914,12 +1069,19 @@ Keyboard Shortcuts:
                 context: {
                   ...currentOptions.context,
                   taskSurface: 'repl',
+                  ...(preparedArtifacts.inputArtifacts.length > 0
+                    ? { inputArtifacts: preparedArtifacts.inputArtifacts }
+                    : {}),
                 },
               },
               processed
             );
             context.messages = result.messages;
             context.contextTokenSnapshot = result.contextTokenSnapshot;
+            context.artifactLedger = mergeArtifactLedger(
+              context.artifactLedger ?? [],
+              extractArtifactLedger(result.messages),
+            );
 
             // Auto save - 自动保存
             if (context.messages.length > 0) {
@@ -929,6 +1091,8 @@ Keyboard Shortcuts:
                 messages: context.messages,
                 title,
                 gitRoot: context.gitRoot ?? '',
+                runtimeInfo: context.runtimeInfo,
+                artifactLedger: context.artifactLedger,
               });
             }
           }
@@ -975,7 +1139,14 @@ Keyboard Shortcuts:
     }
 
     // Add user message to context - 添加用户消息到上下文
-    context.messages.push({ role: 'user', content: processed });
+    const preparedArtifacts = preparePromptInputArtifacts(
+      processed,
+      currentOptions.context?.executionCwd ?? process.cwd(),
+    );
+    for (const warning of preparedArtifacts.warnings) {
+      console.log(chalk.yellow(`\n${warning}`));
+    }
+    context.messages.push({ role: 'user', content: preparedArtifacts.messageContent });
 
     // Save last user message (for Esc+Esc editing) - 保存最后一条用户消息 (用于 Esc+Esc 编辑)
     lastUserMessage = trimmed;
@@ -991,6 +1162,12 @@ Keyboard Shortcuts:
           provider: currentConfig.provider,
           thinking: currentConfig.thinking,
           reasoningMode: currentConfig.reasoningMode,
+          context: {
+            ...currentOptions.context,
+            ...(preparedArtifacts.inputArtifacts.length > 0
+              ? { inputArtifacts: preparedArtifacts.inputArtifacts }
+              : {}),
+          },
         });
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
@@ -1001,11 +1178,21 @@ Keyboard Shortcuts:
 
     // Run Agent - 运行 Agent
     try {
-      const result = await runAgentRound(currentOptions, context, processed);
+      const result = await runAgentRound(
+        currentOptions,
+        context,
+        processed,
+        context.messages,
+        preparedArtifacts.inputArtifacts,
+      );
 
       // Update context messages (runKodaX returns complete message list) - 更新上下文中的消息（runKodaX 返回完整的消息列表）
       context.messages = result.messages;
       context.contextTokenSnapshot = result.contextTokenSnapshot;
+      context.artifactLedger = mergeArtifactLedger(
+        context.artifactLedger ?? [],
+        extractArtifactLedger(result.messages),
+      );
 
       // Update status bar - 更新状态栏
       statusBar?.update({
@@ -1019,7 +1206,9 @@ Keyboard Shortcuts:
         await storage.save(context.sessionId, {
           messages: context.messages,
           title,
-          gitRoot: gitRoot ?? '',
+          gitRoot: context.gitRoot ?? '',
+          runtimeInfo: context.runtimeInfo,
+          artifactLedger: context.artifactLedger,
         });
       }
     } catch (err) {
@@ -1233,7 +1422,7 @@ function needsContinuation(input: string): boolean {
 
 // Process special syntax - 处理特殊语法
 export async function processSpecialSyntax(input: string): Promise<string> {
-  // @file syntax: add file content to context - @file 语法：添加文件内容到上下文
+  // @path syntax: attach image artifacts to context - @path 语法：将图片工件附加到上下文
   const fileRefs = input.match(/@[\w./-]+/g);
   if (fileRefs) {
     for (const ref of fileRefs) {
@@ -1257,7 +1446,8 @@ async function runAgentRound(
   options: KodaXOptions,
   context: InteractiveContext,
   prompt: string,
-  initialMessages: KodaXMessage[] = context.messages
+  initialMessages: KodaXMessage[] = context.messages,
+  inputArtifacts?: readonly KodaXInputArtifact[],
 ): Promise<KodaXResult> {
   // Create event callbacks - 创建事件回调
   const events = options.events ?? {};
@@ -1275,6 +1465,9 @@ async function runAgentRound(
         ...options.context,
         contextTokenSnapshot: context.contextTokenSnapshot,
         taskSurface: 'repl',
+        ...(inputArtifacts && inputArtifacts.length > 0
+          ? { inputArtifacts: [...inputArtifacts] }
+          : {}),
       },
     },
     prompt
@@ -1338,7 +1531,7 @@ function printStartupBanner(config: CurrentConfig, mode: string, compactionInfo?
   console.log(chalk.hex(theme.colors.primary)('    /mode      ') + chalk.hex(theme.colors.dim)('Switch permission mode'));
   console.log(chalk.hex(theme.colors.primary)('    /parallel  ') + chalk.hex(theme.colors.dim)('Toggle parallel tool execution'));
   console.log(chalk.hex(theme.colors.primary)('    /clear     ') + chalk.hex(theme.colors.dim)('Clear conversation'));
-  console.log(chalk.hex(theme.colors.primary)('    @file      ') + chalk.hex(theme.colors.dim)('Add file to context'));
+  console.log(chalk.hex(theme.colors.primary)('    @path      ') + chalk.hex(theme.colors.dim)('Attach image to context'));
   console.log(chalk.hex(theme.colors.primary)('    !cmd       ') + chalk.hex(theme.colors.dim)('Run read-only shell command'));
   console.log(chalk.hex(theme.colors.dim)('\n  Keyboard: Tab (complete) | Esc+Esc (edit last) | Ctrl+T (reasoning) | Ctrl+E (editor) | Ctrl+R (history)\n'));
 }

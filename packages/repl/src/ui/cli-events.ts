@@ -172,6 +172,11 @@ export function createCliEvents(showSessionId = true): KodaXEvents {
       console.log(chalk.green(`[Result] ${result.content.slice(0, 300)}${result.content.length > 300 ? '...' : ''}`));
     },
 
+    onRepoIntelligenceTrace: (event) => {
+      if (spinner) { spinner.stop(); spinner = null; }
+      console.log(chalk.dim(`[RepoIntel] ${event.summary}`));
+    },
+
     onStreamEnd: () => {
       // Stop globalSpinner (may be created in input_json_delta) - 停止 globalSpinner（在 input_json_delta 中可能创建的）
       if (globalSpinner && !globalSpinner.isStopped()) {
@@ -219,6 +224,15 @@ export function createCliEvents(showSessionId = true): KodaXEvents {
 
     onRetry: (reason: string, attempt: number, maxAttempts: number) => {
       console.log(chalk.yellow(`[KodaX] Retry ${attempt}/${maxAttempts}: ${reason}`));
+    },
+
+    onProviderRecovery: (event) => {
+      const action = event.recoveryAction === 'non_streaming_fallback'
+        ? 'switching to non-streaming fallback'
+        : event.recoveryAction === 'manual_continue'
+          ? 'awaiting manual continue'
+          : `recovering ${event.attempt}/${event.maxAttempts}`;
+      console.log(chalk.yellow(`[KodaX] ${action} (${event.errorClass}, ${event.stage})`));
     },
 
     onComplete: () => {

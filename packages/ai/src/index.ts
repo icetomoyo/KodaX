@@ -7,6 +7,7 @@
 
 // ============== Types ==============
 export type {
+  KodaXImageBlock,
   KodaXTextBlock,
   KodaXToolUseBlock,
   KodaXToolResultBlock,
@@ -47,6 +48,11 @@ export type {
   KodaXMutationSurface,
   KodaXAssuranceIntent,
   KodaXHarnessProfile,
+  KodaXAmaProfile,
+  KodaXAmaTactic,
+  KodaXAmaFanoutClass,
+  KodaXAmaFanoutPolicy,
+  KodaXAmaControllerDecision,
   KodaXReviewScale,
   KodaXTaskRoutingDecision,
   KodaXThinkingBudgetMap,

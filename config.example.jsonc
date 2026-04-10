@@ -1,124 +1,52 @@
 {
-    // ═══════════════════════════════════════════════════════════
-    // KodaX 配置文件模板 (Config Template)
-    //
-    // 将此文件复制到 ~/.kodax/config.json 并按需修改
-    // Copy this file to ~/.kodax/config.json and modify as needed
-    // ═══════════════════════════════════════════════════════════
+  // Copy this file to ~/.kodax/config.json and keep only the fields you need.
 
-    // ── Provider 配置 ──────────────────────────────────────────
-    // 默认使用的 AI Provider
-    // 内置可选值: "anthropic" | "openai" | "kimi" | "kimi-code" | "qwen"
-    //           | "zhipu" | "zhipu-coding" | "minimax-coding" | "gemini-cli" | "codex-cli"
-    // 也可以填写 customProviders 中定义的自定义 provider 名称
-    "provider": "kimi-code",
+  // Basic model setup
+  "provider": "zhipu-coding",
+  "reasoningMode": "auto",
+  "permissionMode": "accept-edits",
 
-    // ── 模型选择 ───────────────────────────────────────────────
-    // 在当前 provider 中选择要使用的模型 (可选，默认使用 provider 的默认模型)
-    // 示例: "model": "glm-5-turbo"
-    //
-    // 内置 Provider 默认模型及可选模型:
-    //   anthropic:      [claude-sonnet-4-6, claude-opus-4-6, claude-haiku-4-5]
-    //   openai:         [gpt-5.3-codex, gpt-5.4, gpt-5.3-codex-spark]
-    //   qwen:           [qwen3.5-plus]
-    //   zhipu:          [glm-5, glm-5-turbo, glm-4.7]
-    //   zhipu-coding:   [glm-5, glm-5-turbo, glm-4.7]
-    //   kimi:           [k2.5]
-    //   kimi-code:      [k2.5]
-    //   minimax-coding: [MiniMax-M2.7, MiniMax-M2.7-highspeed, MiniMax-M2.5, MiniMax-M2.5-highspeed, MiniMax-M2.1, MiniMax-M2.1-highspeed, MiniMax-M2]
-    //   gemini-cli:     [auto-gemini-3, gemini-3.1-pro-preview, gemini-3-flash-preview, gemini-2.5-pro, gemini-2.5-flash]
-    //   codex-cli:      [gpt-5.4, gpt-5.3-codex, gpt-5.3-codex-spark]
-    //
-    // "model": "glm-5-turbo",
+  // Optional model override for the selected provider
+  // "model": "glm-5-turbo",
 
-    // ── 内置 Provider 可选模型列表覆盖 (可选) ──────────────────
-    // 用于扩展内置 provider 的可选模型列表
-    // 配置的模型会排在前面（保持用户顺序），内置模型中不在列表里的会追加到后面
-    // 如果某个 provider 没有配置，则使用上方的内置默认模型列表
-    // 注意: 仅适用于内置 Provider，自定义 Provider 使用其自身的 models 字段
-    //
-    // "providerModels": {
-    //     "anthropic": ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"],
-    //     "openai": ["gpt-5.4", "gpt-5.3-codex", "gpt-5.3-codex-spark"]
-    // },
+  // Optional: allow parallel execution when tools are independent
+  // "parallel": true,
 
-    // ── 自定义 Provider (可选) ─────────────────────────────────
-    // 定义自定义 provider，支持 OpenAI 协议和 Anthropic 协议两种协议族
-    // 每个 provider 有独立的 base URL、API Key 环境变量、模型列表等配置
-    // 自定义 provider 的名称可以在 "provider" 字段中引用
-    // 注意: 自定义 provider 名称不能与内置 provider 同名（内置优先）
-    //
-    // "customProviders": [
-    //     // ── OpenAI 协议族示例 ──
-    //     {
-    //         // 必填字段 (Required)
-    //         "name": "my-ollama",              // provider 唯一标识
-    //         "protocol": "openai",              // 协议族: "openai" | "anthropic"
-    //         "baseUrl": "http://localhost:11434/v1",  // API 基础地址
-    //         "apiKeyEnv": "OLLAMA_API_KEY",     // API Key 环境变量名
-    //         "model": "llama3",                 // 默认模型 ID
-    //
-    //         // 可选字段 (Optional)
-    //         "models": ["codellama", "mistral"],  // 可选模型列表 (不含默认模型)
-    //         "userAgentMode": "compat",      // User-Agent mode: "compat" | "sdk" (default: "compat")
-    //                                           compat = send "KodaX" for compatibility gateways that block SDK UAs
-    //                                           sdk = keep the official upstream SDK User-Agent
-    //         "supportsThinking": false,         // 是否支持 thinking (默认: false)
-    //         "reasoningCapability": "none",     // 推理能力: "none"|"native-budget"|"native-effort"|"native-toggle"|"prompt-only" (默认: "none")
-    //         "contextWindow": 128000,           // 上下文窗口大小 (token 数)
-    //         "maxOutputTokens": 4096,           // 最大输出 token 数
-    //         "thinkingBudgetCap": 10000         // thinking budget 上限 (仅 native-budget 模式)
-    //     },
-    //     // ── Anthropic 协议族示例 ──
-    //     {
-    //         "name": "my-claude-proxy",
-    //         "protocol": "anthropic",
-    //         "baseUrl": "https://my-proxy.example.com",
-    //         "apiKeyEnv": "PROXY_API_KEY",
-    //         "model": "claude-sonnet-4-6",
-    //         "models": ["claude-opus-4-6", "claude-haiku-4-5"],
-    //         "userAgentMode": "compat",
-    //         "supportsThinking": true,
-    //         "reasoningCapability": "native-budget",
-    //         "contextWindow": 200000,
-    //         "maxOutputTokens": 32768,
-    //         "thinkingBudgetCap": 16000
-    //     }
-    // ],
+  // Optional compaction tuning
+  "compaction": {
+    "triggerPercent": 75
+  },
 
-    // ── /model 命令用法 ────────────────────────────────────────
-    // /model                    列出所有 Provider 及可选模型
-    // /model <provider>         切换到指定 Provider (使用默认模型)
-    // /model <provider>/<model> 切换到指定 Provider 的指定模型
-    // /model /<model>           在当前 Provider 内切换模型
+  // ------------------------------------------------------------
+  // Repo Intelligence
+  //
+  // Modes:
+  // - "off"            = strict baseline; disable repo-intelligence working tools
+  // - "oss"            = public OSS baseline only
+  // - "premium-shared" = premium engine without the KodaX native auto lane
+  // - "premium-native" = recommended; best KodaX experience
+  // - "auto"           = try premium-native first, then fall back to oss
+  //
+  // Most users only need one of the examples below.
+  // ------------------------------------------------------------
 
-    // ── 统一推理模式 ───────────────────────────────────────────
-    // 可选值: "off" | "auto" | "quick" | "balanced" | "deep"
-    "reasoningMode": "auto",
-    // 兼容旧版的 thinking 开关
-    "thinking": true,
+  // Example 1: premium repointel is already on PATH
+  // "repoIntelligenceMode": "premium-native",
 
-    // ── Provider reasoning override 缓存 ──────────────────────
-    // key 格式: "provider|baseUrl|model"
-    // value 可选: "budget" | "effort" | "toggle" | "none"
-    "providerReasoningOverrides": {},
+  // Example 2: premium repointel is installed but NOT on PATH
+  // "repoIntelligenceMode": "premium-native",
+  // "repointelBin": "C:\\Tools\\repointel\\repointel.exe",
+  // "repoIntelligenceTrace": false,
 
-    // Tool execution mode
-    // false = sequential execution (default)
-    // true  = parallel execution when independent tools can run concurrently
-    "parallel": false,
+  // Example 3: same-parent author local development
+  // public repo:  C:\\Works\\GitWorks\\KodaX-author\\KodaX
+  // private repo: C:\\Works\\GitWorks\\KodaX-author\\KodaX-private
+  //
+  // "repoIntelligenceMode": "premium-native",
+  // "repointelEndpoint": "http://127.0.0.1:47891",
+  // "repointelBin": "C:\\Works\\GitWorks\\KodaX-author\\KodaX-private\\packages\\repointel-cli\\dist\\index.js",
+  // "repoIntelligenceTrace": true
 
-    // ── Compaction 压缩配置 ────────────────────────────────────
-    "compaction": {
-        // "enabled": false,                // Optional: disable auto-compaction only; /compact still works
-        // "contextWindow": 200000,
-        // "protectionPercent": 20,
-        // "rollingSummaryPercent": 10,
-        // "pruningThresholdTokens": 500,
-        "triggerPercent": 75
-    },
-
-    // ── Permission 权限配置 ────────────────────────────────────
-    // 可选值: "plan" | "accept-edits" | "auto-in-project"
-    "permissionMode": "accept-edits"
+  // `repointelEndpoint` is optional in normal usage.
+  // Only set it if you intentionally use a non-default local daemon address.
 }

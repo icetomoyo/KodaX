@@ -1,0 +1,26 @@
+export {
+  detectTerminalRenderHost,
+  detectTerminalHostProfile,
+  getTerminalHostCapabilities,
+  hasCursorUpViewportYankRisk,
+  hasMainScreenRenderScrollRisk,
+  isTmuxControlMode,
+  isVsCodeTerminalHostEnv,
+  resetTmuxControlModeProbeForTesting,
+  resolveConfiguredTuiRendererMode,
+  resolveEffectiveTuiRendererMode,
+  resolveFullscreenPolicy,
+  resolveInteractiveSurfacePreference,
+  isOwnedRendererPreferred,
+  isClassicReplForced,
+} from "../../tui/runtime.js";
+export type {
+  EffectiveTuiRendererMode,
+  FullscreenPolicy,
+  InteractiveSurfacePreference,
+  TerminalHostCapabilities,
+  TerminalHostDetectionOptions,
+  TerminalHostProfile,
+  TerminalRenderHost,
+  TuiRendererMode,
+} from "../../tui/runtime.js";

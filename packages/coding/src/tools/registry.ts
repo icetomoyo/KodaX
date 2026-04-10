@@ -11,6 +11,7 @@ import type {
 import { toolRead } from './read.js';
 import { toolWrite } from './write.js';
 import { toolEdit } from './edit.js';
+import { toolInsertAfterAnchor } from './insert-after-anchor.js';
 import { toolBash } from './bash.js';
 import { toolGlob } from './glob.js';
 import { toolGrep } from './grep.js';
@@ -23,9 +24,33 @@ import { toolModuleContext } from './module-context.js';
 import { toolSymbolContext } from './symbol-context.js';
 import { toolProcessContext } from './process-context.js';
 import { toolImpactEstimate } from './impact-estimate.js';
+import { toolEmitManagedProtocol } from './emit-managed-protocol.js';
+import { toolWebSearch } from './web-search.js';
+import { toolWebFetch } from './web-fetch.js';
+import { toolCodeSearch } from './code-search.js';
+import { toolSemanticLookup } from './semantic-lookup.js';
+import { toolMcpSearch } from './mcp-search.js';
+import { toolMcpDescribe } from './mcp-describe.js';
+import { toolMcpCall } from './mcp-call.js';
+import { toolMcpReadResource } from './mcp-read-resource.js';
 
 const TOOL_REGISTRY: ToolRegistry = new Map();
 let nextToolRegistrationId = 0;
+
+export const REPO_INTELLIGENCE_WORKING_TOOL_NAMES = [
+  'repo_overview',
+  'changed_scope',
+  'changed_diff',
+  'changed_diff_bundle',
+  'module_context',
+  'symbol_context',
+  'process_context',
+  'impact_estimate',
+] as const;
+
+const REPO_INTELLIGENCE_WORKING_TOOL_NAME_SET = new Set<string>(
+  REPO_INTELLIGENCE_WORKING_TOOL_NAMES,
+);
 
 function extractRequiredParams(
   inputSchema: KodaXToolDefinition['input_schema'] | undefined,
@@ -132,7 +157,7 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
   },
   {
     name: 'edit',
-    description: 'Perform exact string replacement in a file. Large diff previews may be summarized.',
+    description: 'Perform safe exact-or-normalized string replacement in a file. If the anchor is unstable, retry with a smaller unique snippet instead of rewriting the whole file.',
     input_schema: {
       type: 'object',
       properties: {
@@ -144,6 +169,20 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['path', 'old_string', 'new_string'],
     },
     handler: toolEdit,
+  },
+  {
+    name: 'insert_after_anchor',
+    description: 'Insert content after a unique anchor without rewriting the whole file. Prefer this for appending new sections to existing docs or configs.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'The file to update' },
+        anchor: { type: 'string', description: 'A unique heading or nearby marker to insert after' },
+        content: { type: 'string', description: 'The content to insert after the anchor' },
+      },
+      required: ['path', 'anchor', 'content'],
+    },
+    handler: toolInsertAfterAnchor,
   },
   {
     name: 'bash',
@@ -185,6 +224,148 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['pattern', 'path'],
     },
     handler: toolGrep,
+  },
+  {
+    name: 'emit_managed_protocol',
+    description: 'Internal-only managed-task protocol side-channel for scout/planner/handoff/verdict payloads.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        role: {
+          type: 'string',
+          enum: ['scout', 'planner', 'generator', 'evaluator'],
+          description: 'Managed worker role emitting a structured protocol payload',
+        },
+        payload: {
+          type: 'object',
+          description: 'Role-specific structured protocol payload',
+        },
+      },
+      required: ['role', 'payload'],
+    },
+    handler: toolEmitManagedProtocol,
+  },
+  {
+    name: 'web_search',
+    description: 'Search the web for discovery-oriented results with explicit trust and freshness signaling.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Search query to run' },
+        limit: { type: 'number', description: 'Maximum number of search results to return' },
+        provider_id: { type: 'string', description: 'Optional extension capability provider id for provider-backed search' },
+      },
+      required: ['query'],
+    },
+    handler: toolWebSearch,
+  },
+  {
+    name: 'web_fetch',
+    description: 'Fetch a specific remote source and return bounded text with provenance and trust hints.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'Remote URL to fetch' },
+        provider_id: { type: 'string', description: 'Optional extension capability provider id for provider-backed fetch' },
+        capability_id: { type: 'string', description: 'Optional provider capability id for provider-backed fetch' },
+      },
+    },
+    handler: toolWebFetch,
+  },
+  {
+    name: 'code_search',
+    description: 'Search local repository code with lower-noise output than ad hoc shell grep.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'String query to search for' },
+        path: { type: 'string', description: 'Optional file or directory scope for the search' },
+        limit: { type: 'number', description: 'Maximum number of matches to return' },
+        case_sensitive: { type: 'boolean', description: 'Whether the query should be matched case-sensitively' },
+        provider_id: { type: 'string', description: 'Optional extension capability provider id for provider-backed code search' },
+      },
+      required: ['query'],
+    },
+    handler: toolCodeSearch,
+  },
+  {
+    name: 'semantic_lookup',
+    description: 'Search repository intelligence for symbol-, module-, or process-aware semantic matches.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Semantic query to resolve inside repository intelligence' },
+        kind: {
+          type: 'string',
+          enum: ['auto', 'symbol', 'module', 'process'],
+          description: 'Optional semantic lookup category',
+        },
+        target_path: { type: 'string', description: 'Optional path hint to scope the semantic lookup' },
+        limit: { type: 'number', description: 'Maximum number of semantic matches to return' },
+        refresh: { type: 'boolean', description: 'When true, refresh repository intelligence before searching' },
+      },
+      required: ['query'],
+    },
+    handler: toolSemanticLookup,
+  },
+  {
+    name: 'mcp_search',
+    description: 'Search active MCP tools, resources, and prompts through the shared capability runtime.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Search query to run against active MCP catalogs' },
+        server: { type: 'string', description: 'Optional MCP server id filter' },
+        kind: {
+          type: 'string',
+          enum: ['tool', 'resource', 'prompt'],
+          description: 'Optional MCP capability family filter',
+        },
+        limit: { type: 'number', description: 'Maximum number of search results to return' },
+      },
+      required: ['query'],
+    },
+    handler: toolMcpSearch,
+  },
+  {
+    name: 'mcp_describe',
+    description: 'Describe a specific MCP capability by id, including schemas, trust, and provenance.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'MCP capability id from mcp_search' },
+      },
+      required: ['id'],
+    },
+    handler: toolMcpDescribe,
+  },
+  {
+    name: 'mcp_call',
+    description: 'Invoke an MCP tool capability by id with structured arguments.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'MCP tool capability id from mcp_search' },
+        args: {
+          type: 'object',
+          description: 'Structured arguments for the MCP tool call',
+        },
+      },
+      required: ['id'],
+    },
+    handler: toolMcpCall,
+  },
+  {
+    name: 'mcp_read_resource',
+    description: 'Read an MCP resource capability by id.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'MCP resource capability id from mcp_search' },
+      },
+      required: ['id'],
+    },
+    handler: toolMcpReadResource,
   },
   {
     name: 'undo',
@@ -476,6 +657,16 @@ export function listToolDefinitions(): KodaXToolDefinition[] {
   return listTools()
     .map((name) => getToolDefinition(name))
     .filter((definition): definition is KodaXToolDefinition => definition !== undefined);
+}
+
+export function isRepoIntelligenceWorkingToolName(name: string): boolean {
+  return REPO_INTELLIGENCE_WORKING_TOOL_NAME_SET.has(name);
+}
+
+export function filterRepoIntelligenceWorkingToolNames<T extends string>(
+  toolNames: readonly T[],
+): T[] {
+  return toolNames.filter((name) => !isRepoIntelligenceWorkingToolName(name));
 }
 
 export async function executeTool(

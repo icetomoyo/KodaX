@@ -9,8 +9,11 @@ import {
   estimateTokens,
   type ExtensionRuntimeDiagnostics,
   type KodaXAgentMode,
+  type KodaXRepoIntelligenceMode,
+  type RepoIntelligenceRuntimeInspection,
   KODAX_REASONING_MODE_SEQUENCE,
   getActiveExtensionRuntime,
+  inspectRepoIntelligenceRuntime,
   isKnownProvider,
   getAvailableProviderNames,
   resolveProvider,
@@ -18,6 +21,7 @@ import {
   type ExtensionCommandResult,
   type KodaXReasoningMode,
   KodaXOptions,
+  warmRepoIntelligenceRuntime,
 } from '@kodax/coding';
 import type { AgentsFile } from '@kodax/coding';
 import {
@@ -44,7 +48,6 @@ import {
 } from '../common/utils.js';
 import { savePermissionModeUser } from '../common/permission-config.js';
 import { runWithPlanMode, listPlans, resumePlan, clearCompletedPlans } from '../common/plan-mode.js';
-import { handleProjectCommand, printProjectHelp } from './project-commands.js';
 import { compact } from '@kodax/agent';
 import type { CompactionConfig } from '@kodax/agent';
 import { loadCompactionConfig } from '../common/compaction-config.js';
@@ -67,6 +70,7 @@ import {
   type CurrentConfig,
 } from '../commands/types.js';
 import { registerAllCommands } from '../commands/index.js';
+import { formatWorkspaceTruth } from './workspace-runtime.js';
 
 // Re-export types needed by downstream modules.
 export type { CommandCallbacks, CurrentConfig } from '../commands/types.js';
@@ -103,6 +107,32 @@ function createManualCompactionConfig(
   };
 }
 
+const LEGACY_PROJECT_COMMAND_NAMES = new Set(['project', 'proj']);
+
+function printProjectMigrationGuidance(): void {
+  console.log(chalk.cyan('\n/project - Legacy Project Surface Retired\n'));
+  console.log(chalk.bold('What changed:'));
+  console.log(chalk.dim('  The old /project product surface has been retired under FEATURE_054.'));
+  console.log(chalk.dim('  Planning and brainstorm now belong to AMA H2 inside the main authority.'));
+  console.log();
+  console.log(chalk.bold('Use instead:'));
+  console.log(chalk.dim('  /agent-mode ama        ') + 'Enable adaptive multi-agent execution');
+  console.log(chalk.dim('  <describe the task>    ') + 'Let AMA route Planner/Generator/Evaluator as needed');
+  console.log(chalk.dim('  /status                ') + 'Inspect current runtime posture');
+  console.log();
+  console.log(chalk.bold('Reference:'));
+  console.log(chalk.dim('  docs/features/v0.7.30.md#feature_054-ama-project-convergence-absorb-project-mode-into-adaptive-h2'));
+  console.log();
+}
+
+function printWorkspaceUnchangedNote(context: InteractiveContext): void {
+  if (context.runtimeInfo?.workspaceRoot) {
+    console.log(chalk.dim(`  Workspace unchanged: ${formatWorkspaceTruth(context.runtimeInfo)}`));
+  } else {
+    console.log(chalk.dim('  Workspace unchanged.'));
+  }
+}
+
 export const BUILTIN_COMMANDS: Command[] = [
   {
     name: 'help',
@@ -126,7 +156,6 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log(chalk.bold('Examples:'));
       console.log(chalk.dim('  /help              ') + '# List all commands');
       console.log(chalk.dim('  /help mode         ') + '# Detailed help for /mode');
-      console.log(chalk.dim('  /help project      ') + '# Detailed help for /project');
       console.log();
     },
   },
@@ -134,10 +163,10 @@ export const BUILTIN_COMMANDS: Command[] = [
     name: 'exit',
     aliases: ['quit', 'q', 'bye'],
     description: 'Exit interactive mode',
-    handler: async (_args, _context, callbacks) => {
+    handler: async (_args, context, callbacks) => {
       await callbacks.saveSession();
       console.log(chalk.green('\nSession saved. Goodbye!'));
-      callbacks.exit();
+      await callbacks.exit();
     },
     detailedHelp: () => {
       console.log(chalk.cyan('\n/exit - Exit Interactive Mode\n'));
@@ -148,6 +177,7 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log(chalk.bold('Description:'));
       console.log(chalk.dim('  Saves the current conversation session and exits interactive mode.'));
       console.log(chalk.dim('  Sessions can be resumed later with /load or CLI -c option.'));
+      console.log(chalk.dim('  Exiting never removes or mutates the current workspace.'));
       console.log();
     },
   },
@@ -417,7 +447,8 @@ export const BUILTIN_COMMANDS: Command[] = [
       if (diagnostics.capabilityProviders.length > 0) {
         console.log(chalk.bold('Capability Providers:'));
         for (const provider of diagnostics.capabilityProviders) {
-          console.log(chalk.dim(`  - ${provider.id} [${provider.kinds.join(', ')}]`));
+          const metadata = formatExtensionDiagnosticMetadata(provider.metadata);
+          console.log(chalk.dim(`  - ${provider.id} [${provider.kinds.join(', ')}]${metadata ? `  ${metadata}` : ''}`));
         }
         console.log();
       }
@@ -454,13 +485,14 @@ export const BUILTIN_COMMANDS: Command[] = [
     name: 'status',
     aliases: ['info', 'ctx'],
     description: 'Show current session status',
-    handler: async (_args, context, _callbacks, currentConfig) => {
-      printStatus(context, currentConfig);
+    handler: async (args, context, _callbacks, currentConfig) => {
+      await printStatus(context, currentConfig, args);
     },
     detailedHelp: () => {
       console.log(chalk.cyan('\n/status - Show Session Status\n'));
       console.log(chalk.bold('Usage:'));
       console.log(chalk.dim('  /status            ') + 'Display current session information');
+      console.log(chalk.dim('  /status workspace  ') + 'Show deeper workspace/runtime details');
       console.log(chalk.dim('  /info, /ctx        ') + 'Aliases for /status');
       console.log();
       console.log(chalk.bold('Displays:'));
@@ -468,8 +500,163 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log(chalk.dim('  - Session ID'));
       console.log(chalk.dim('  - Message count'));
       console.log(chalk.dim('  - Estimated token usage'));
-      console.log(chalk.dim('  - Git root directory'));
+      console.log(chalk.dim('  - Current workspace truth'));
       console.log(chalk.dim('  - Session timestamps'));
+      console.log(chalk.dim('  - Repo-intelligence mode and active runtime summary'));
+      console.log();
+    },
+  },
+  {
+    name: 'repointel',
+    aliases: ['ri'],
+    description: 'Inspect or control the repo-intelligence premium runtime',
+    usage: '/repointel [status|mode|trace|warm|endpoint|bin]',
+    handler: async (args, _context, callbacks, currentConfig) => {
+      const subcommand = args[0]?.toLowerCase() ?? 'status';
+
+      if (subcommand === 'status') {
+        const inspection = await inspectRepoIntelligenceRuntime({
+          mode: currentConfig.repoIntelligenceMode,
+          trace: currentConfig.repoIntelligenceTrace,
+          probePremium: true,
+        });
+        printRepoIntelligenceInspection(inspection);
+        return;
+      }
+
+      if (subcommand === 'warm') {
+        const result = await warmRepoIntelligenceRuntime({
+          mode: currentConfig.repoIntelligenceMode,
+          trace: currentConfig.repoIntelligenceTrace,
+        });
+        printRepoIntelligenceWarmResult(result);
+        return;
+      }
+
+      if (subcommand === 'mode') {
+        if (args.length === 1) {
+          console.log(chalk.dim(`\nCurrent repo-intelligence mode: ${chalk.cyan(currentConfig.repoIntelligenceMode ?? 'auto')}`));
+          console.log(chalk.dim('Usage: /repointel mode [auto|off|oss|premium-shared|premium-native]\n'));
+          return;
+        }
+
+        const mode = normalizeRepoIntelligenceMode(args[1]);
+        if (!mode) {
+          console.log(chalk.red(`\n[Invalid repo-intelligence mode: ${args[1]}]`));
+          console.log(chalk.dim('Usage: /repointel mode [auto|off|oss|premium-shared|premium-native]\n'));
+          return;
+        }
+
+        const persistence = applyRepoIntelligenceRuntimeConfig(
+          { mode },
+          { repoIntelligenceMode: mode },
+          callbacks,
+          currentConfig,
+        );
+        printPersistedCommandStatus(`Repo intelligence mode: ${mode}`, persistence);
+        return;
+      }
+
+      if (subcommand === 'trace') {
+        const raw = args[1]?.toLowerCase();
+        if (!raw) {
+          console.log(chalk.dim(`\nCurrent repo-intelligence trace: ${chalk.cyan(currentConfig.repoIntelligenceTrace ? 'on' : 'off')}`));
+          console.log(chalk.dim('Usage: /repointel trace [on|off|toggle]\n'));
+          return;
+        }
+
+        const nextValue = resolveToggleFlag(raw, currentConfig.repoIntelligenceTrace ?? false);
+        if (nextValue === null) {
+          console.log(chalk.red(`\n[Invalid trace value: ${args[1]}]`));
+          console.log(chalk.dim('Usage: /repointel trace [on|off|toggle]\n'));
+          return;
+        }
+
+        const persistence = applyRepoIntelligenceRuntimeConfig(
+          { trace: nextValue },
+          { repoIntelligenceTrace: nextValue },
+          callbacks,
+          currentConfig,
+        );
+        printPersistedCommandStatus(`Repo intelligence trace: ${nextValue ? 'on' : 'off'}`, persistence);
+        return;
+      }
+
+      if (subcommand === 'endpoint') {
+        if (args.length === 1) {
+          const inspection = await inspectRepoIntelligenceRuntime({
+            mode: currentConfig.repoIntelligenceMode,
+            trace: currentConfig.repoIntelligenceTrace,
+          });
+          console.log(chalk.dim(`\nCurrent repointel endpoint: ${chalk.cyan(inspection.endpoint)}`));
+          console.log(chalk.dim('Usage: /repointel endpoint [http://host:port|default]\n'));
+          return;
+        }
+
+        const nextEndpoint = normalizeRuntimeOverride(args[1]);
+        const persistence = applyRepoIntelligenceRuntimeConfig(
+          { endpoint: nextEndpoint },
+          { repointelEndpoint: nextEndpoint ?? undefined },
+          callbacks,
+          currentConfig,
+        );
+        printPersistedCommandStatus(
+          `Repointel endpoint: ${nextEndpoint ?? 'default'}`,
+          persistence,
+        );
+        return;
+      }
+
+      if (subcommand === 'bin') {
+        if (args.length === 1) {
+          const inspection = await inspectRepoIntelligenceRuntime({
+            mode: currentConfig.repoIntelligenceMode,
+            trace: currentConfig.repoIntelligenceTrace,
+          });
+          console.log(chalk.dim(`\nCurrent repointel bin: ${chalk.cyan(inspection.bin)}`));
+          console.log(chalk.dim('Usage: /repointel bin [<path-or-command>|default]\n'));
+          return;
+        }
+
+        const nextBin = normalizeRuntimeOverride(args.slice(1).join(' '));
+        const persistence = applyRepoIntelligenceRuntimeConfig(
+          { bin: nextBin },
+          { repointelBin: nextBin ?? undefined },
+          callbacks,
+          currentConfig,
+        );
+        printPersistedCommandStatus(
+          `Repointel bin: ${nextBin ?? 'default'}`,
+          persistence,
+        );
+        return;
+      }
+
+      console.log(chalk.red(`\n[Unknown /repointel subcommand: ${args[0]}]`));
+      console.log(chalk.dim('Usage: /repointel [status|mode|trace|warm|endpoint|bin]\n'));
+    },
+    detailedHelp: () => {
+      console.log(chalk.cyan('\n/repointel - Repo-Intelligence Runtime Control\n'));
+      console.log(chalk.bold('Usage:'));
+      console.log(chalk.dim('  /repointel                             ') + 'Show current repo-intelligence and premium runtime status');
+      console.log(chalk.dim('  /repointel status                      ') + 'Probe the local premium frontdoor and print detailed status');
+      console.log(chalk.dim('  /repointel mode auto                   ') + 'Prefer premium-native when available, otherwise fall back to OSS');
+      console.log(chalk.dim('  /repointel mode off                    ') + 'Strictly disable repo-intelligence working tools and auto lane for this session');
+      console.log(chalk.dim('  /repointel mode oss                    ') + 'Force the OSS baseline only');
+      console.log(chalk.dim('  /repointel mode premium-shared         ') + 'Use premium without KodaX native auto lane');
+      console.log(chalk.dim('  /repointel mode premium-native         ') + 'Use the KodaX flagship premium path');
+      console.log(chalk.dim('  /repointel trace on|off|toggle         ') + 'Toggle repo-intelligence trace output');
+      console.log(chalk.dim('  /repointel endpoint http://127.0.0.1:47891') + 'Override the local premium daemon endpoint');
+      console.log(chalk.dim('  /repointel endpoint default            ') + 'Clear the endpoint override and use the default');
+      console.log(chalk.dim('  /repointel bin repointel               ') + 'Use a PATH-visible repointel command');
+      console.log(chalk.dim('  /repointel bin <path>                  ') + 'Use an explicit repointel launcher path');
+      console.log(chalk.dim('  /repointel bin default                 ') + 'Clear the bin override and use the default command');
+      console.log(chalk.dim('  /repointel warm                        ') + 'Try to start or warm the local premium daemon');
+      console.log();
+      console.log(chalk.bold('Notes:'));
+      console.log(chalk.dim('  - /status now includes a compact repo-intelligence summary.'));
+      console.log(chalk.dim('  - /repointel warm is operational: it can warm the premium runtime even when your current mode is oss/off.'));
+      console.log(chalk.dim('  - If the local service cannot be started, KodaX will continue with the OSS baseline and this command will explain why.'));
       console.log();
     },
   },
@@ -516,9 +703,10 @@ export const BUILTIN_COMMANDS: Command[] = [
   {
     name: 'save',
     description: 'Save current session',
-    handler: async (_args, _context, callbacks) => {
+    handler: async (_args, context, callbacks) => {
       await callbacks.saveSession();
       console.log(chalk.green('\n[Session saved]'));
+      printWorkspaceUnchangedNote(context);
     },
     detailedHelp: () => {
       console.log(chalk.cyan('\n/save - Save Current Session\n'));
@@ -529,6 +717,7 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log(chalk.dim('  Manually saves the current conversation session.'));
       console.log(chalk.dim('  Sessions are auto-saved after each message, but you can'));
       console.log(chalk.dim('  use this to ensure the session is persisted.'));
+      console.log(chalk.dim('  Saving updates session storage only; the current workspace stays untouched.'));
       console.log();
       console.log(chalk.dim('  See also: /help load, /help sessions'));
       console.log();
@@ -560,6 +749,10 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log(chalk.bold('Examples:'));
       console.log(chalk.dim('  /load              ') + '# See all sessions');
       console.log(chalk.dim('  /load 20260219_143052') + '# Load session by ID');
+      console.log();
+      console.log(chalk.bold('Workspace behavior:'));
+      console.log(chalk.dim('  /load can resume sessions from sibling workspaces in the same canonical repo.'));
+      console.log(chalk.dim('  If a saved workspace is unavailable, KodaX explains the fallback before loading.'));
       console.log();
       console.log(chalk.dim('  See also: /help sessions, /help save'));
       console.log();
@@ -657,7 +850,8 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log();
       console.log(chalk.bold('Description:'));
       console.log(chalk.dim('  Shows recent conversation sessions with their IDs,'));
-      console.log(chalk.dim('  message counts, and titles. Use /load <id> to resume.'));
+      console.log(chalk.dim('  message counts, titles, and workspace truth. Use /load <id> to resume.'));
+      console.log(chalk.dim('  This keeps sibling worktree sessions inspectable without a persistent cockpit.'));
       console.log();
       console.log(chalk.dim('  See also: /help load, /help delete'));
       console.log();
@@ -687,7 +881,7 @@ export const BUILTIN_COMMANDS: Command[] = [
     aliases: ['rm', 'del'],
     description: 'Delete a session',
     usage: '/delete <session-id> or /delete all',
-    handler: async (args, _context, callbacks) => {
+    handler: async (args, context, callbacks) => {
       if (args.length === 0) {
         console.log(chalk.red('\n[Usage: /delete <session-id> or /delete all]'));
         await callbacks.listSessions?.();
@@ -696,9 +890,11 @@ export const BUILTIN_COMMANDS: Command[] = [
       if (args[0] === 'all') {
         await callbacks.deleteAllSessions?.();
         console.log(chalk.green('\n[All sessions deleted]'));
+        printWorkspaceUnchangedNote(context);
       } else {
         await callbacks.deleteSession?.(args[0]!);
         console.log(chalk.green(`\n[Session deleted: ${args[0]}]`));
+        printWorkspaceUnchangedNote(context);
       }
     },
     detailedHelp: () => {
@@ -712,6 +908,10 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log(chalk.bold('Examples:'));
       console.log(chalk.dim('  /delete 20260219_143052') + '  # Delete specific session');
       console.log(chalk.dim('  /delete all        ') + '# Delete all sessions');
+      console.log();
+      console.log(chalk.bold('Workspace behavior:'));
+      console.log(chalk.dim('  Deletes saved session records only.'));
+      console.log(chalk.dim('  Current workspaces and checkouts remain untouched.'));
       console.log();
       console.log(chalk.yellow('  Warning: /delete all cannot be undone!'));
       console.log();
@@ -1221,16 +1421,6 @@ export const BUILTIN_COMMANDS: Command[] = [
     },
   },
   {
-    name: 'project',
-    aliases: ['proj'],
-    description: 'Project long-running task management',
-    usage: '/project [init|status|plan|quality|brainstorm|next|auto|verify|pause|list|mark|progress]',
-    handler: async (args, context, callbacks, currentConfig) => {
-      return await handleProjectCommand(args, context, callbacks, currentConfig);
-    },
-    detailedHelp: printProjectHelp,
-  },
-  {
     name: 'skills',
     description: '(Deprecated) Use /skill instead',
     usage: '/skill',
@@ -1284,8 +1474,7 @@ const COMMAND_CATEGORIES: Record<string, string[]> = {
   General: ['help', 'copy', 'exit', 'clear', 'compact', 'reload', 'extensions', 'status'],
   Permission: ['mode', 'auto'],
   Session: ['new', 'save', 'load', 'sessions', 'history', 'delete'],
-  Settings: ['model', 'provider', 'thinking', 'reasoning', 'agent-mode', 'parallel', 'plan'],
-  Project: ['project'],
+  Settings: ['model', 'provider', 'thinking', 'reasoning', 'agent-mode', 'parallel', 'plan', 'repointel'],
   Skills: ['skill'],
 };
 
@@ -1305,9 +1494,56 @@ function describeParallelExecution(enabled: boolean): 'parallel' | 'sequential' 
   return enabled ? 'parallel' : 'sequential';
 }
 
+const REPO_INTELLIGENCE_MODES: KodaXRepoIntelligenceMode[] = [
+  'auto',
+  'off',
+  'oss',
+  'premium-shared',
+  'premium-native',
+];
+
 type ConfigPersistenceResult =
   | { saved: true }
   | { saved: false; error: Error };
+
+function normalizeRepoIntelligenceMode(
+  value: string | undefined,
+): KodaXRepoIntelligenceMode | null {
+  if (!value) {
+    return null;
+  }
+
+  return REPO_INTELLIGENCE_MODES.includes(value as KodaXRepoIntelligenceMode)
+    ? value as KodaXRepoIntelligenceMode
+    : null;
+}
+
+function normalizeRuntimeOverride(value: string | undefined): string | null {
+  const normalized = value?.trim();
+  if (!normalized || normalized === 'default' || normalized === 'reset' || normalized === 'clear') {
+    return null;
+  }
+  return normalized;
+}
+
+function resolveToggleFlag(
+  value: string | undefined,
+  currentValue: boolean,
+): boolean | null {
+  if (!value) {
+    return null;
+  }
+  if (value === 'toggle') {
+    return !currentValue;
+  }
+  if (value === 'on' || value === 'true' || value === '1') {
+    return true;
+  }
+  if (value === 'off' || value === 'false' || value === '0') {
+    return false;
+  }
+  return null;
+}
 
 function persistUserConfig(
   config: Parameters<typeof saveConfig>[0],
@@ -1389,6 +1625,105 @@ function applyParallelMode(
   return persistence;
 }
 
+function applyRepoIntelligenceRuntimeConfig(
+  update: {
+    mode?: KodaXRepoIntelligenceMode;
+    endpoint?: string | null;
+    bin?: string | null;
+    trace?: boolean;
+  },
+  persistedConfig: {
+    repoIntelligenceMode?: KodaXRepoIntelligenceMode;
+    repointelEndpoint?: string | undefined;
+    repointelBin?: string | undefined;
+    repoIntelligenceTrace?: boolean;
+  },
+  callbacks: CommandCallbacks,
+  currentConfig: CurrentConfig,
+): ConfigPersistenceResult {
+  const persistence = persistUserConfig(persistedConfig);
+
+  if (callbacks.setRepoIntelligenceRuntime) {
+    callbacks.setRepoIntelligenceRuntime(update);
+  } else {
+    if (update.mode !== undefined) {
+      currentConfig.repoIntelligenceMode = update.mode;
+    }
+    if (update.endpoint !== undefined) {
+      currentConfig.repointelEndpoint = update.endpoint ?? undefined;
+    }
+    if (update.bin !== undefined) {
+      currentConfig.repointelBin = update.bin ?? undefined;
+    }
+    if (update.trace !== undefined) {
+      currentConfig.repoIntelligenceTrace = update.trace;
+    }
+  }
+
+  return persistence;
+}
+
+function formatRepoIntelligenceSummary(
+  inspection: RepoIntelligenceRuntimeInspection,
+): string {
+  const requestedLabel = inspection.configuredMode === inspection.requestedMode
+    ? inspection.configuredMode
+    : `${inspection.configuredMode} -> ${inspection.requestedMode}`;
+  const activeLabel = `${inspection.effectiveEngine}/${inspection.effectiveBridge}`;
+  const transportLabel = inspection.transport ? `, ${inspection.transport}` : '';
+  const fallbackLabel = inspection.fallbackToOss ? ', fallback=oss' : '';
+  return `${requestedLabel} => ${activeLabel} (${inspection.status}${transportLabel}${fallbackLabel})`;
+}
+
+function printRepoIntelligenceInspection(
+  inspection: RepoIntelligenceRuntimeInspection,
+): void {
+  console.log(chalk.bold('\nRepo Intelligence:\n'));
+  console.log(chalk.dim(`  Configured:  ${chalk.cyan(inspection.configuredMode)}`));
+  console.log(chalk.dim(`  Requested:   ${chalk.cyan(inspection.requestedMode)}`));
+  console.log(chalk.dim(`  Active:      ${chalk.cyan(`${inspection.effectiveEngine}/${inspection.effectiveBridge}`)}`));
+  console.log(chalk.dim(`  Status:      ${chalk.cyan(inspection.status)}${inspection.transport ? chalk.dim(` (${inspection.transport})`) : ''}`));
+  console.log(chalk.dim(`  Trace:       ${chalk.cyan(inspection.traceEnabled ? 'on' : 'off')}`));
+  console.log(chalk.dim(`  Endpoint:    ${inspection.endpoint}`));
+  console.log(chalk.dim(`  Bin:         ${inspection.bin}`));
+  if (inspection.clientBuildId) {
+    console.log(chalk.dim(`  Client ID:   ${inspection.clientBuildId}`));
+  }
+  if (inspection.daemonBuildId) {
+    console.log(chalk.dim(`  Daemon ID:   ${inspection.daemonBuildId}`));
+  }
+  if (inspection.daemonPid !== undefined) {
+    console.log(chalk.dim(`  Daemon PID:  ${inspection.daemonPid}`));
+  }
+  if (inspection.daemonStartedAt) {
+    console.log(chalk.dim(`  Daemon Up:   ${inspection.daemonStartedAt}`));
+  }
+  if (inspection.fallbackToOss) {
+    console.log(chalk.yellow('  Fallback:    OSS baseline is currently active'));
+  }
+  if (inspection.error) {
+    console.log(chalk.red(`  Error:       ${inspection.error}`));
+  }
+  for (const warning of inspection.warnings) {
+    console.log(chalk.yellow(`  Warning:     ${warning}`));
+  }
+  console.log();
+}
+
+function printRepoIntelligenceWarmResult(
+  result: Awaited<ReturnType<typeof warmRepoIntelligenceRuntime>>,
+): void {
+  if (result.warmed) {
+    console.log(chalk.green('\n[repointel warmed successfully]'));
+  } else {
+    console.log(chalk.yellow('\n[repointel warm did not reach a ready daemon state]'));
+  }
+  if (result.warmLatencyMs !== undefined) {
+    console.log(chalk.dim(`  Warm latency: ${result.warmLatencyMs} ms`));
+  }
+  printRepoIntelligenceInspection(result);
+}
+
 function printCommandSection(
   title: string,
   commands: Array<{ name: string; aliases?: string[]; description: string }>
@@ -1419,10 +1754,6 @@ function printHelp(): void {
     }
     printCommandSection(category, commands);
 
-    if (category === 'Project') {
-      console.log(chalk.dim('    Subcommands: init, status, plan, quality, brainstorm, next, auto, verify, pause, list, mark, progress'));
-      console.log();
-    }
   }
 
   const dynamicSections = new Map<string, Array<{ name: string; aliases?: string[]; description: string }>>();
@@ -1467,7 +1798,7 @@ function printHelp(): void {
   }
 
   console.log(chalk.dim('Special syntax:'));
-  console.log(`  ${chalk.cyan('@file')}             Add file to context`);
+  console.log(`  ${chalk.cyan('@path')}             Attach image to context`);
   console.log(`  ${chalk.cyan('!command')}         Execute shell command`);
   console.log();
   console.log(chalk.dim('Skills:'));
@@ -1478,6 +1809,11 @@ function printHelp(): void {
 
 // Print detailed help for a specific command.
 function printDetailedHelp(commandName: string): void {
+  if (LEGACY_PROJECT_COMMAND_NAMES.has(commandName.toLowerCase())) {
+    printProjectMigrationGuidance();
+    return;
+  }
+
   // Lazy initialization.
   if (commandRegistry.size === 0) {
     initCommandRegistry();
@@ -1519,7 +1855,12 @@ function printDetailedHelp(commandName: string): void {
 }
 
 // Print status.
-function printStatus(context: InteractiveContext, currentConfig: CurrentConfig): void {
+async function printStatus(
+  context: InteractiveContext,
+  currentConfig: CurrentConfig,
+  args: string[] = [],
+): Promise<void> {
+  const detailMode = args[0]?.toLowerCase();
   const tokens = context.contextTokenSnapshot?.currentTokens ?? estimateTokens(context.messages);
   const tokenSource = context.contextTokenSnapshot?.source ?? 'estimate';
   const capabilityProfile = getProviderCapabilityProfile(currentConfig.provider);
@@ -1549,8 +1890,26 @@ function printStatus(context: InteractiveContext, currentConfig: CurrentConfig):
   console.log(chalk.dim(`  Session ID:  ${context.sessionId}`));
   console.log(chalk.dim(`  Messages:    ${context.messages.length}`));
   console.log(chalk.dim(`  Tokens:      ~${tokens} (${tokenSource})`));
-  if (context.gitRoot) {
-    console.log(chalk.dim(`  Git Root:    ${context.gitRoot}`));
+  const repoInspection = await inspectRepoIntelligenceRuntime({
+    mode: currentConfig.repoIntelligenceMode,
+    trace: currentConfig.repoIntelligenceTrace,
+  });
+  console.log(chalk.dim(`  Repo Intel:  ${chalk.cyan(formatRepoIntelligenceSummary(repoInspection))}`));
+  if (context.runtimeInfo?.workspaceRoot) {
+    console.log(chalk.dim(`  Workspace:   ${chalk.cyan(formatWorkspaceTruth(context.runtimeInfo))}`));
+  } else if (context.gitRoot) {
+    console.log(chalk.dim(`  Workspace:   ${chalk.cyan(context.gitRoot)}`));
+  }
+  if (detailMode === 'workspace' || detailMode === 'worktree' || detailMode === 'runtime') {
+    if (context.runtimeInfo?.canonicalRepoRoot) {
+      console.log(chalk.dim(`  Canonical:   ${context.runtimeInfo.canonicalRepoRoot}`));
+    }
+    if (context.runtimeInfo?.executionCwd) {
+      console.log(chalk.dim(`  Exec CWD:    ${context.runtimeInfo.executionCwd}`));
+    }
+    if (context.runtimeInfo?.workspaceKind) {
+      console.log(chalk.dim(`  Kind:        ${context.runtimeInfo.workspaceKind}`));
+    }
   }
   console.log(chalk.dim(`  Created:     ${context.createdAt}`));
   console.log(chalk.dim(`  Last Active: ${context.lastAccessed}`));
@@ -1650,6 +2009,30 @@ function formatExtensionCommandUsage(command: ExtensionCommandDefinition): strin
   return command.usage ?? `/${command.name}`;
 }
 
+function formatExtensionDiagnosticValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.map((entry) => String(entry)).join(', ');
+  }
+  if (value && typeof value === 'object') {
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+function formatExtensionDiagnosticMetadata(
+  metadata: Record<string, unknown> | undefined,
+): string | undefined {
+  if (!metadata) {
+    return undefined;
+  }
+
+  const entries = Object.entries(metadata)
+    .filter(([, value]) => value !== undefined)
+    .map(([key, value]) => `${key}=${formatExtensionDiagnosticValue(value)}`);
+
+  return entries.length > 0 ? entries.join(' | ') : undefined;
+}
+
 function getExtensionRuntimeDiagnostics(runtime: NonNullable<ReturnType<typeof getActiveExtensionRuntime>>): ExtensionRuntimeDiagnostics {
   const diagnosticsGetter = (runtime as {
     getDiagnostics?: () => ExtensionRuntimeDiagnostics;
@@ -1739,7 +2122,7 @@ async function executeExtensionCommand(
   const result = await command.handler(args, {
     sessionId: context.sessionId,
     gitRoot: context.gitRoot,
-    workingDirectory: context.gitRoot ?? process.cwd(),
+    workingDirectory: context.runtimeInfo?.executionCwd ?? context.gitRoot ?? process.cwd(),
     reloadExtensions: () => runtime.reloadExtensions(),
     getDiagnostics: () => getExtensionRuntimeDiagnostics(runtime),
     logger: {
@@ -1810,6 +2193,11 @@ export async function executeCommand(
   callbacks: CommandCallbacks,
   currentConfig: CurrentConfig
 ): Promise<CommandResult> {
+  if (LEGACY_PROJECT_COMMAND_NAMES.has(parsed.command.toLowerCase())) {
+    printProjectMigrationGuidance();
+    return true;
+  }
+
   // Lazy initialization.
   if (commandRegistry.size === 0) {
     initCommandRegistry(context.gitRoot);

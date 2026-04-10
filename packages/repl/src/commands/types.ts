@@ -5,6 +5,7 @@
 import type {
   AgentsFile,
   KodaXAgentMode,
+  KodaXRepoIntelligenceMode,
   KodaXOptions,
   KodaXReasoningMode,
   KodaXSkillInvocationContext,
@@ -53,6 +54,10 @@ export interface CurrentConfig {
   agentMode: KodaXAgentMode;
   parallel: boolean;
   permissionMode: PermissionMode;
+  repoIntelligenceMode?: KodaXRepoIntelligenceMode;
+  repointelEndpoint?: string;
+  repointelBin?: string;
+  repoIntelligenceTrace?: boolean;
 }
 
 export type SessionLoadStatus = 'loaded' | 'missing' | 'blocked';
@@ -60,7 +65,7 @@ export type SessionBranchSwitchStatus = 'switched' | 'missing' | 'blocked';
 export type SessionForkStatus = 'forked' | 'failed' | 'blocked';
 
 export interface CommandCallbacks {
-  exit: () => void;
+  exit: () => void | Promise<void>;
   saveSession: () => Promise<void>;
   startNewSession?: () => void;
   loadSession: (id: string) => Promise<SessionLoadStatus>;
@@ -73,6 +78,12 @@ export interface CommandCallbacks {
   setAgentMode?: (mode: KodaXAgentMode) => void;
   setParallel?: (enabled: boolean) => void;
   setPermissionMode?: (mode: PermissionMode) => void;
+  setRepoIntelligenceRuntime?: (update: {
+    mode?: KodaXRepoIntelligenceMode;
+    endpoint?: string | null;
+    bin?: string | null;
+    trace?: boolean;
+  }) => void;
   deleteSession?: (id: string) => Promise<void>;
   deleteAllSessions?: () => Promise<void>;
   setPlanMode?: (enabled: boolean) => void;

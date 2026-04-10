@@ -17,8 +17,13 @@ import { isRecord, isStringArray } from './json-guards.js';
 import { ProjectStorage } from './project-storage.js';
 import { buildProjectQualityReport } from './project-quality.js';
 import type {
+  ProjectHarnessCalibrationCaseRecord,
+  ProjectHarnessCalibrationLabel,
   ProjectHarnessCheckConfig,
   ProjectHarnessCheckpointRecord,
+  ProjectHarnessProfileCount,
+  ProjectHarnessProfileDimension,
+  ProjectHarnessProfileSnapshot,
   ProjectHarnessCheckResult,
   ProjectHarnessCompletionReport,
   ProjectHarnessConfig,
@@ -26,6 +31,7 @@ import type {
   ProjectHarnessEvidenceRecord,
   ProjectHarnessExceptionConfig,
   ProjectHarnessInvariantConfig,
+  ProjectHarnessPivotRecord,
   ProjectHarnessRepairPlaybookDefinition,
   ProjectHarnessRepairPolicyConfig,
   ProjectHarnessRuleSources,
@@ -255,6 +261,48 @@ function buildCheckpointId(runId: string): string {
 
 function buildSessionNodeId(runId: string): string {
   return `${runId}-node`;
+}
+
+function buildCalibrationCaseId(runId: string, label: ProjectHarnessCalibrationLabel): string {
+  return `${runId}-${label}`;
+}
+
+function buildPivotId(runId: string): string {
+  return `${runId}-pivot`;
+}
+
+function getCalibrationExpectedDecision(label: ProjectHarnessCalibrationLabel): ProjectHarnessRunRecord['decision'] {
+  return label === 'false_fail' ? 'verified_complete' : 'needs_review';
+}
+
+function formatCalibrationSummary(
+  run: ProjectHarnessRunRecord,
+  label: ProjectHarnessCalibrationLabel,
+  summary?: string,
+): string {
+  if (summary && summary.trim().length > 0) {
+    return summary.trim();
+  }
+
+  return label === 'false_fail'
+    ? `Manual review accepted feature #${run.featureIndex} after harness returned ${run.decision}.`
+    : `Manual review rejected a previously verified completion for feature #${run.featureIndex}.`;
+}
+
+function formatPivotSummary(
+  run: ProjectHarnessRunRecord,
+  reason: string,
+  summary?: string,
+): string {
+  if (summary && summary.trim().length > 0) {
+    return summary.trim();
+  }
+
+  const failureText = (run.failureCodes ?? []).length > 0
+    ? ` Failure codes: ${(run.failureCodes ?? []).join(', ')}.`
+    : '';
+
+  return `Pivot feature #${run.featureIndex} away from ${run.decision}. Reason: ${reason}.${failureText}`;
 }
 
 function extractAssistantText(messages: KodaXMessage[]): string {
@@ -1506,6 +1554,354 @@ export async function readLatestHarnessRun(
   return runs.length > 0 ? runs[runs.length - 1] ?? null : null;
 }
 
+export async function readLatestHarnessCheckpoint(
+  storage: ProjectStorage,
+  featureIndex?: number,
+): Promise<ProjectHarnessCheckpointRecord | null> {
+  const checkpoints = await storage.readLineageCheckpoints<ProjectHarnessCheckpointRecord>();
+  const filtered = featureIndex === undefined
+    ? checkpoints
+    : checkpoints.filter(checkpoint => checkpoint.featureIndex === featureIndex);
+  return filtered.length > 0 ? filtered[filtered.length - 1] ?? null : null;
+}
+
+export function formatProjectHarnessCheckpointSummary(
+  checkpoint: ProjectHarnessCheckpointRecord,
+): string {
+  const lines = [
+    '## Project Harness Safe Checkpoint',
+    `- Checkpoint: ${checkpoint.checkpointId}`,
+    `- Feature: #${checkpoint.featureIndex}`,
+    `- Decision: ${checkpoint.decision}`,
+    `- Git HEAD: ${checkpoint.gitHead ?? 'unknown'}`,
+  ];
+
+  if (checkpoint.changedFiles.length > 0) {
+    lines.push(`- Changed files: ${checkpoint.changedFiles.join(', ')}`);
+  }
+
+  if (checkpoint.gitStatus.length > 0) {
+    lines.push(`- Git status: ${checkpoint.gitStatus.join(' | ')}`);
+  }
+
+  return lines.join('\n');
+}
+
+export async function readLatestHarnessPivot(
+  storage: ProjectStorage,
+  featureIndex?: number,
+): Promise<ProjectHarnessPivotRecord | null> {
+  const pivots = await storage.readHarnessPivots<ProjectHarnessPivotRecord>();
+  const filtered = featureIndex === undefined
+    ? pivots
+    : pivots.filter(pivot => pivot.featureIndex === featureIndex);
+  return filtered.length > 0 ? filtered[filtered.length - 1] ?? null : null;
+}
+
+export function formatProjectHarnessPivotSummary(
+  pivot: ProjectHarnessPivotRecord,
+): string {
+  const lines = [
+    '## Project Harness Pivot',
+    `- Pivot: ${pivot.pivotId}`,
+    `- Feature: #${pivot.featureIndex}`,
+    `- From run: ${pivot.fromRunId}`,
+    `- Reason: ${pivot.reason}`,
+    `- Summary: ${pivot.summary}`,
+  ];
+
+  if (pivot.fromCheckpointId) {
+    lines.push(`- Checkpoint: ${pivot.fromCheckpointId}`);
+  }
+
+  if (pivot.failureCodes.length > 0) {
+    lines.push(`- Failure codes: ${pivot.failureCodes.join(', ')}`);
+  }
+
+  return lines.join('\n');
+}
+
+function buildHistogramSummary(items: string[]): ProjectHarnessProfileCount[] {
+  const counts = new Map<string, number>();
+  for (const item of items) {
+    counts.set(item, (counts.get(item) ?? 0) + 1);
+  }
+
+  return [...counts.entries()]
+    .filter(([, count]) => count > 1)
+    .sort((left, right) => {
+      if (right[1] !== left[1]) {
+        return right[1] - left[1];
+      }
+      return left[0].localeCompare(right[0]);
+    })
+    .slice(0, 3)
+    .map(([name, count]) => ({ name, count }));
+}
+
+function averageScorecards(scorecards: ProjectHarnessScorecard[]): ProjectHarnessScorecard | null {
+  if (scorecards.length === 0) {
+    return null;
+  }
+
+  const totals: ProjectHarnessScorecard = {
+    legality: 0,
+    checks: 0,
+    featureRelevance: 0,
+    evidenceCompleteness: 0,
+    qualityDelta: 0,
+    stallResistance: 0,
+    costEfficiency: 0,
+    overall: 0,
+  };
+
+  for (const scorecard of scorecards) {
+    totals.legality += scorecard.legality;
+    totals.checks += scorecard.checks;
+    totals.featureRelevance += scorecard.featureRelevance;
+    totals.evidenceCompleteness += scorecard.evidenceCompleteness;
+    totals.qualityDelta += scorecard.qualityDelta;
+    totals.stallResistance += scorecard.stallResistance;
+    totals.costEfficiency += scorecard.costEfficiency;
+    totals.overall += scorecard.overall;
+  }
+
+  const count = scorecards.length;
+  return {
+    legality: Math.round(totals.legality / count),
+    checks: Math.round(totals.checks / count),
+    featureRelevance: Math.round(totals.featureRelevance / count),
+    evidenceCompleteness: Math.round(totals.evidenceCompleteness / count),
+    qualityDelta: Math.round(totals.qualityDelta / count),
+    stallResistance: Math.round(totals.stallResistance / count),
+    costEfficiency: Math.round(totals.costEfficiency / count),
+    overall: Math.round(totals.overall / count),
+  };
+}
+
+function weakestScorecardDimensions(scorecard: ProjectHarnessScorecard | null): ProjectHarnessProfileDimension[] {
+  if (!scorecard) {
+    return [];
+  }
+
+  const dimensions: ProjectHarnessProfileDimension[] = [
+    { name: 'legality', score: scorecard.legality },
+    { name: 'checks', score: scorecard.checks },
+    { name: 'featureRelevance', score: scorecard.featureRelevance },
+    { name: 'evidenceCompleteness', score: scorecard.evidenceCompleteness },
+    { name: 'qualityDelta', score: scorecard.qualityDelta },
+    { name: 'stallResistance', score: scorecard.stallResistance },
+    { name: 'costEfficiency', score: scorecard.costEfficiency },
+  ];
+
+  return dimensions
+    .sort((left, right) => {
+      if (left.score !== right.score) {
+        return left.score - right.score;
+      }
+      return left.name.localeCompare(right.name);
+    })
+    .slice(0, 2);
+}
+
+export async function buildProjectHarnessProfileSnapshot(
+  storage: ProjectStorage,
+  featureIndex?: number,
+): Promise<ProjectHarnessProfileSnapshot> {
+  const [runs, calibrationCases, pivots, checkpoints, critics] = await Promise.all([
+    storage.readHarnessRuns<ProjectHarnessRunRecord>(),
+    storage.readHarnessCalibrationCases<ProjectHarnessCalibrationCaseRecord>(),
+    storage.readHarnessPivots<ProjectHarnessPivotRecord>(),
+    storage.readHarnessCheckpoints<ProjectHarnessCheckpointRecord>(),
+    storage.readHarnessCritics<ProjectHarnessCriticRecord>(),
+  ]);
+
+  const filteredRuns = featureIndex === undefined
+    ? runs
+    : runs.filter(run => run.featureIndex === featureIndex);
+  const filteredCalibrationCases = featureIndex === undefined
+    ? calibrationCases
+    : calibrationCases.filter(item => item.featureIndex === featureIndex);
+  const filteredPivots = featureIndex === undefined
+    ? pivots
+    : pivots.filter(item => item.featureIndex === featureIndex);
+  const filteredCheckpoints = featureIndex === undefined
+    ? checkpoints
+    : checkpoints.filter(item => item.featureIndex === featureIndex);
+  const filteredCritics = featureIndex === undefined
+    ? critics
+    : critics.filter(item => item.featureIndex === featureIndex);
+
+  const decisions: ProjectHarnessProfileSnapshot['decisions'] = {
+    verified_complete: 0,
+    retryable_failure: 0,
+    needs_review: 0,
+    blocked: 0,
+  };
+  for (const run of filteredRuns) {
+    decisions[run.decision] += 1;
+  }
+
+  const averageScorecard = averageScorecards(
+    filteredRuns
+      .map(run => run.scorecard)
+      .filter((scorecard): scorecard is ProjectHarnessScorecard => Boolean(scorecard)),
+  );
+
+  const recurringFailureCodes = buildHistogramSummary(
+    filteredRuns.flatMap(run => run.failureCodes ?? []),
+  );
+  const recurringRepairPlaybooks = buildHistogramSummary(
+    filteredCritics.flatMap(critic => critic.repairPlaybooks),
+  );
+
+  return {
+    featureIndex,
+    totalRuns: filteredRuns.length,
+    decisions,
+    calibrationCases: filteredCalibrationCases.length,
+    falsePassCases: filteredCalibrationCases.filter(item => item.label === 'false_pass').length,
+    falseFailCases: filteredCalibrationCases.filter(item => item.label === 'false_fail').length,
+    pivotCount: filteredPivots.length,
+    checkpointCount: filteredCheckpoints.length,
+    latestRunId: filteredRuns.length > 0 ? filteredRuns[filteredRuns.length - 1]?.runId ?? null : null,
+    latestCheckpointId: filteredCheckpoints.length > 0
+      ? filteredCheckpoints[filteredCheckpoints.length - 1]?.checkpointId ?? null
+      : null,
+    latestPivotId: filteredPivots.length > 0 ? filteredPivots[filteredPivots.length - 1]?.pivotId ?? null : null,
+    averageScorecard,
+    weakestDimensions: weakestScorecardDimensions(averageScorecard),
+    recurringFailureCodes,
+    recurringRepairPlaybooks,
+  };
+}
+
+export function formatProjectHarnessProfileSummary(
+  profile: ProjectHarnessProfileSnapshot,
+): string {
+  const scopeLabel = typeof profile.featureIndex === 'number'
+    ? `feature #${profile.featureIndex}`
+    : 'all harnessed features';
+  const lines = [
+    '## Project Harness Profile',
+    `- Scope: ${scopeLabel}`,
+    `- Runs: ${profile.totalRuns} (verified_complete ${profile.decisions.verified_complete}, retryable_failure ${profile.decisions.retryable_failure}, needs_review ${profile.decisions.needs_review}, blocked ${profile.decisions.blocked})`,
+    `- Calibration corpus: ${profile.calibrationCases} (false_fail ${profile.falseFailCases}, false_pass ${profile.falsePassCases})`,
+    `- Pivots: ${profile.pivotCount}`,
+    `- Safe checkpoints: ${profile.checkpointCount}`,
+  ];
+
+  if (profile.averageScorecard) {
+    lines.push(
+      `- Average score: ${profile.averageScorecard.overall} (legality ${profile.averageScorecard.legality}, checks ${profile.averageScorecard.checks}, relevance ${profile.averageScorecard.featureRelevance}, evidence ${profile.averageScorecard.evidenceCompleteness}, quality ${profile.averageScorecard.qualityDelta}, stall ${profile.averageScorecard.stallResistance}, cost ${profile.averageScorecard.costEfficiency})`,
+    );
+  }
+
+  if (profile.weakestDimensions.length > 0) {
+    lines.push(
+      `- Ablation focus: ${profile.weakestDimensions.map(item => `${item.name} ${item.score}`).join(', ')}`,
+    );
+  }
+
+  if (profile.recurringFailureCodes.length > 0) {
+    lines.push(
+      `- Repeated failure codes: ${profile.recurringFailureCodes.map(item => `${item.name} x${item.count}`).join(', ')}`,
+    );
+  }
+
+  if (profile.recurringRepairPlaybooks.length > 0) {
+    lines.push(
+      `- Repeated repair playbooks: ${profile.recurringRepairPlaybooks.map(item => `${item.name} x${item.count}`).join(', ')}`,
+    );
+  }
+
+  if (profile.latestCheckpointId) {
+    lines.push(`- Latest checkpoint: ${profile.latestCheckpointId}`);
+  }
+
+  if (profile.latestPivotId) {
+    lines.push(`- Latest pivot: ${profile.latestPivotId}`);
+  }
+
+  return lines.join('\n');
+}
+
+export async function recordHarnessCalibrationCase(
+  storage: ProjectStorage,
+  run: ProjectHarnessRunRecord,
+  options: {
+    label: ProjectHarnessCalibrationLabel;
+    summary?: string;
+  },
+): Promise<ProjectHarnessCalibrationCaseRecord> {
+  const caseId = buildCalibrationCaseId(run.runId, options.label);
+  const existingCases = await storage.readHarnessCalibrationCases<ProjectHarnessCalibrationCaseRecord>();
+  const existing = existingCases.find(item => item.caseId === caseId);
+  if (existing) {
+    return existing;
+  }
+
+  const checkpoints = await storage.readLineageCheckpoints<ProjectHarnessCheckpointRecord>();
+  const checkpoint = [...checkpoints].reverse().find(item => item.runId === run.runId) ?? null;
+  const createdAt = new Date().toISOString();
+  const record: ProjectHarnessCalibrationCaseRecord = {
+    id: caseId,
+    caseId,
+    runId: run.runId,
+    featureIndex: run.featureIndex,
+    label: options.label,
+    observedDecision: run.decision,
+    expectedDecision: getCalibrationExpectedDecision(options.label),
+    checkpointId: checkpoint?.checkpointId ?? null,
+    failureCodes: [...(run.failureCodes ?? [])],
+    summary: formatCalibrationSummary(run, options.label, options.summary),
+    createdAt,
+  };
+
+  await storage.appendHarnessCalibrationCase(record);
+  return record;
+}
+
+export async function recordHarnessPivot(
+  storage: ProjectStorage,
+  featureIndex: number,
+  options: {
+    reason: string;
+    summary?: string;
+  },
+): Promise<ProjectHarnessPivotRecord> {
+  const runs = await storage.readHarnessRuns<ProjectHarnessRunRecord>();
+  const run = [...runs].reverse().find(item => item.featureIndex === featureIndex);
+  if (!run) {
+    throw new Error(`Cannot pivot feature #${featureIndex} because no harness run exists yet.`);
+  }
+
+  const pivotId = buildPivotId(run.runId);
+  const existingPivots = await storage.readHarnessPivots<ProjectHarnessPivotRecord>();
+  const existing = existingPivots.find(item => item.pivotId === pivotId);
+  if (existing) {
+    return existing;
+  }
+
+  const checkpoint = await readLatestHarnessCheckpoint(storage, featureIndex);
+  const record: ProjectHarnessPivotRecord = {
+    id: pivotId,
+    pivotId,
+    featureIndex,
+    fromRunId: run.runId,
+    fromCheckpointId: checkpoint?.checkpointId ?? null,
+    evidenceFeatureIndex: featureIndex,
+    decision: run.decision,
+    failureCodes: [...(run.failureCodes ?? [])],
+    reason: options.reason,
+    summary: formatPivotSummary(run, options.reason, options.summary),
+    createdAt: new Date().toISOString(),
+  };
+
+  await storage.appendHarnessPivot(record);
+  return record;
+}
+
 export async function reverifyProjectHarnessRun(
   storage: ProjectStorage,
   run: ProjectHarnessRunRecord,
@@ -1526,6 +1922,19 @@ export async function reverifyProjectHarnessRun(
   });
 }
 
+export async function replayHarnessCalibrationCase(
+  storage: ProjectStorage,
+  caseRecord: ProjectHarnessCalibrationCaseRecord,
+): Promise<ProjectHarnessVerificationResult> {
+  const runs = await storage.readHarnessRuns<ProjectHarnessRunRecord>();
+  const run = runs.find(item => item.runId === caseRecord.runId);
+  if (!run) {
+    throw new Error(`Harness calibration case ${caseRecord.caseId} points to missing run ${caseRecord.runId}.`);
+  }
+
+  return reverifyProjectHarnessRun(storage, run);
+}
+
 export async function recordManualHarnessOverride(
   storage: ProjectStorage,
   featureIndex: number,
@@ -1543,6 +1952,26 @@ export async function recordManualHarnessOverride(
     updatedAt: now,
     overrideStatus: status,
   });
+
+  const runs = await storage.readHarnessRuns<ProjectHarnessRunRecord>();
+  const latestRun = [...runs].reverse().find(run => run.featureIndex === featureIndex) ?? null;
+  if (!latestRun) {
+    return;
+  }
+
+  if (status === 'done' && latestRun.decision !== 'verified_complete') {
+    await recordHarnessCalibrationCase(storage, latestRun, {
+      label: 'false_fail',
+      summary: `Manual override marked feature #${featureIndex} as done after harness returned ${latestRun.decision}.`,
+    });
+  }
+
+  if (status === 'skip' && latestRun.decision === 'verified_complete') {
+    await recordHarnessCalibrationCase(storage, latestRun, {
+      label: 'false_pass',
+      summary: `Manual override rejected a previously verified completion for feature #${featureIndex}.`,
+    });
+  }
 }
 
 export function formatProjectHarnessSummary(run: ProjectHarnessRunRecord): string {

@@ -161,6 +161,12 @@ function detectLongRunningProjectContext(context?: KodaXContextOptions): boolean
   );
 }
 
+function detectMultimodalContext(context?: KodaXContextOptions): boolean {
+  return Boolean(
+    context?.inputArtifacts?.some((artifact) => artifact.kind === 'image'),
+  );
+}
+
 function inferPromptPolicyHints(prompt?: string): KodaXProviderPolicyHints {
   if (!prompt) {
     return {};
@@ -215,11 +221,12 @@ function resolveProviderPolicyHints(
       context?.providerPolicyHints?.evidenceHeavy,
       promptHints.evidenceHeavy,
     ),
-    multimodal: pickBoolean(
-      options.hints?.multimodal,
-      context?.providerPolicyHints?.multimodal,
-      promptHints.multimodal,
-    ),
+      multimodal: pickBoolean(
+        options.hints?.multimodal,
+        context?.providerPolicyHints?.multimodal,
+        detectMultimodalContext(context),
+        promptHints.multimodal,
+      ),
     capabilityRuntime: pickBoolean(
       options.hints?.capabilityRuntime,
       context?.providerPolicyHints?.capabilityRuntime,

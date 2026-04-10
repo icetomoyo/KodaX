@@ -32,6 +32,12 @@ describe('CommandCompleter boundaries', () => {
     expect(completions.some((item) => item.display === '/new')).toBe(true);
   });
 
+  it('does not expose the retired /project shell in command completions', async () => {
+    const completions = await completer.getCompletions('/pro', 4);
+    expect(completions.some((item) => item.display === '/project')).toBe(false);
+    expect(completions.some((item) => item.display === '/proj')).toBe(false);
+  });
+
   it('refreshes command completions after runtime registration', async () => {
     const registry = getCommandRegistry();
     registry.unregister('deploy');
@@ -148,6 +154,33 @@ describe('FileCompleter boundaries', () => {
 
       const refreshed = await scopedCompleter.getCompletions('@', 1);
       expect(refreshed.some((item) => item.display === 'beta.txt')).toBe(true);
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('can follow a dynamic workspace root after session/runtime changes', async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-autocomplete-dynamic-'));
+    const firstRoot = path.join(tempDir, 'first');
+    const secondRoot = path.join(tempDir, 'second');
+
+    try {
+      await fs.mkdir(firstRoot, { recursive: true });
+      await fs.mkdir(secondRoot, { recursive: true });
+      await fs.writeFile(path.join(firstRoot, 'alpha.txt'), 'alpha');
+      await fs.writeFile(path.join(secondRoot, 'beta.txt'), 'beta');
+
+      let currentRoot = firstRoot;
+      const scopedCompleter = new FileCompleter(() => currentRoot);
+
+      const firstCompletions = await scopedCompleter.getCompletions('@', 1);
+      expect(firstCompletions.some((item) => item.display === 'alpha.txt')).toBe(true);
+      expect(firstCompletions.some((item) => item.display === 'beta.txt')).toBe(false);
+
+      currentRoot = secondRoot;
+      const secondCompletions = await scopedCompleter.getCompletions('@', 1);
+      expect(secondCompletions.some((item) => item.display === 'alpha.txt')).toBe(false);
+      expect(secondCompletions.some((item) => item.display === 'beta.txt')).toBe(true);
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
     }

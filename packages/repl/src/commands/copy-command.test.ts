@@ -1,104 +1,82 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import clipboard from 'clipboardy';
-import { copyCommand } from './copy-command.js';
-import { extractLastAssistantText } from '../ui/utils/message-utils.js';
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { copyCommand } from "./copy-command.js";
+import { extractLastAssistantText } from "../ui/utils/message-utils.js";
+import { copyTextToClipboard } from "../common/clipboard.js";
 
-vi.mock('clipboardy', () => ({
-  default: {
-    write: vi.fn().mockResolvedValue(undefined),
-  },
+vi.mock("../common/clipboard.js", () => ({
+  copyTextToClipboard: vi.fn().mockResolvedValue({ path: "native" }),
 }));
 
-describe('copyCommand', () => {
+describe("copyCommand", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('copies the last assistant message to the clipboard', async () => {
+  it("copies the last assistant message to the clipboard", async () => {
     const context = {
       messages: [
-        { role: 'user', content: 'hello' },
-        { role: 'assistant', content: 'first answer' },
+        { role: "user", content: "hello" },
+        { role: "assistant", content: "first answer" },
         {
-          role: 'assistant',
+          role: "assistant",
           content: [
-            { type: 'text', text: 'latest answer' },
-            { type: 'tool_result', text: 'ignored' },
+            { type: "text", text: "latest answer" },
+            { type: "tool_result", text: "ignored" },
           ],
         },
       ],
     };
 
-    await copyCommand.handler(
-      [],
-      context as never,
-      {} as never,
-      {} as never
-    );
+    await copyCommand.handler([], context as never, {} as never, {} as never);
 
-    expect(clipboard.write).toHaveBeenCalledWith('latest answer');
+    expect(copyTextToClipboard).toHaveBeenCalledWith("latest answer");
   });
 
-  it('uses the same assistant text normalization as the UI history', async () => {
+  it("uses the same assistant text normalization as the UI history", async () => {
     const context = {
       messages: [
-        { role: 'user', content: 'hello' },
+        { role: "user", content: "hello" },
         {
-          role: 'assistant',
+          role: "assistant",
           content: [
-            { type: 'thinking', thinking: 'hidden' },
-            { type: 'text', text: '## 验证' },
-            { type: 'text', text: '' },
-            { type: 'text', text: '```bash' },
-            { type: 'text', text: 'mysql -h 127.0.0.1 -P 13306' },
-            { type: 'text', text: '```' },
-            { type: 'text', text: '' },
-            { type: 'text', text: '**关键**：最后一行必须能显示' },
+            { type: "thinking", thinking: "hidden" },
+            { type: "text", text: "## Verifying" },
+            { type: "text", text: "" },
+            { type: "text", text: "```bash" },
+            { type: "text", text: "mysql -h 127.0.0.1 -P 13306" },
+            { type: "text", text: "```" },
+            { type: "text", text: "" },
+            { type: "text", text: "**Key**: the last line must still be shown" },
           ],
         },
       ],
     };
     const expected = extractLastAssistantText(context.messages as never);
 
-    await copyCommand.handler(
-      [],
-      context as never,
-      {} as never,
-      {} as never
-    );
+    await copyCommand.handler([], context as never, {} as never, {} as never);
 
-    expect(clipboard.write).toHaveBeenCalledWith(expected);
+    expect(copyTextToClipboard).toHaveBeenCalledWith(expected);
   });
 
-  it('does nothing when there is no assistant message', async () => {
+  it("does nothing when there is no assistant message", async () => {
     const context = {
-      messages: [{ role: 'user', content: 'hello' }],
+      messages: [{ role: "user", content: "hello" }],
     };
 
-    await copyCommand.handler(
-      [],
-      context as never,
-      {} as never,
-      {} as never
-    );
+    await copyCommand.handler([], context as never, {} as never, {} as never);
 
-    expect(clipboard.write).not.toHaveBeenCalled();
+    expect(copyTextToClipboard).not.toHaveBeenCalled();
   });
 
-  it('logs a friendly error when clipboard write fails', async () => {
-    vi.mocked(clipboard.write).mockRejectedValueOnce(new Error('permission denied'));
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  it("logs a friendly error when clipboard write fails", async () => {
+    vi.mocked(copyTextToClipboard).mockRejectedValueOnce(new Error("permission denied"));
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const context = {
-      messages: [{ role: 'assistant', content: 'hello' }],
+      messages: [{ role: "assistant", content: "hello" }],
     };
 
-    await copyCommand.handler(
-      [],
-      context as never,
-      {} as never,
-      {} as never
-    );
+    await copyCommand.handler([], context as never, {} as never, {} as never);
 
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to copy to clipboard: permission denied'));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Failed to copy to clipboard: permission denied"));
   });
 });

@@ -1,8 +1,12 @@
 import { randomUUID } from 'node:crypto';
+import type { CompactionDetails } from './compaction/types.js';
 import type {
+  KodaXCompactMemorySeed,
   KodaXJsonValue,
   KodaXMessage,
+  KodaXSessionArtifactLedgerEntry,
   KodaXSessionBranchSummaryEntry,
+  KodaXSessionCompactionEntry,
   KodaXSessionEntry,
   KodaXSessionLabelEntry,
   KodaXSessionLineage,
@@ -16,13 +20,8 @@ type NavigableSessionEntry = Exclude<KodaXSessionEntry, KodaXSessionLabelEntry>;
 const ENTRY_ID_LENGTH = 12;
 const MAX_BRANCH_SUMMARY_LENGTH = 600;
 const messageFingerprintCache = new WeakMap<KodaXMessage, string>();
-
-const COMPACTION_SUMMARY_PREFIX = `The conversation history before this point was compacted into the following summary:
-
-<summary>
-`;
-const COMPACTION_SUMMARY_SUFFIX = `
-</summary>`;
+const COMPACTION_SUMMARY_PREFIX = '[\u5bf9\u8bdd\u5386\u53f2\u6458\u8981]\n\n';
+const COMPACTION_SUMMARY_SUFFIX = '';
 const BRANCH_SUMMARY_PREFIX = `The following is a summary of a branch that this conversation came back from:
 
 <summary>
@@ -41,6 +40,37 @@ function cloneJsonValue<T extends KodaXJsonValue | undefined>(value: T): T {
   return structuredClone(value);
 }
 
+function cloneMemorySeed(
+  value: KodaXCompactMemorySeed | undefined,
+): KodaXCompactMemorySeed | undefined {
+  if (value === undefined) {
+    return value;
+  }
+  return structuredClone(value);
+}
+
+function normalizeCompactionDetails(
+  value: KodaXJsonValue | CompactionDetails | undefined,
+): KodaXJsonValue | undefined {
+  if (value === undefined) {
+    return value;
+  }
+  if (
+    typeof value === 'object'
+    && value !== null
+    && 'readFiles' in value
+    && Array.isArray(value.readFiles)
+    && 'modifiedFiles' in value
+    && Array.isArray(value.modifiedFiles)
+  ) {
+    return {
+      readFiles: [...value.readFiles],
+      modifiedFiles: [...value.modifiedFiles],
+    };
+  }
+  return structuredClone(value as KodaXJsonValue);
+}
+
 function cloneEntry(entry: KodaXSessionEntry): KodaXSessionEntry {
   switch (entry.type) {
     case 'message':
@@ -49,7 +79,11 @@ function cloneEntry(entry: KodaXSessionEntry): KodaXSessionEntry {
         message: cloneMessage(entry.message),
       };
     case 'compaction':
-      return { ...entry };
+      return {
+        ...entry,
+        details: cloneJsonValue(entry.details),
+        memorySeed: cloneMemorySeed(entry.memorySeed),
+      };
     case 'branch_summary':
       return {
         ...entry,
@@ -115,7 +149,7 @@ function createSummaryContextMessage(
   suffix: string,
 ): KodaXMessage {
   return {
-    role: 'user',
+    role: suffix ? 'user' : 'system',
     content: `${prefix}${summary}${suffix}`,
   };
 }
@@ -522,6 +556,56 @@ export function appendSessionLineageLabel(
   };
 }
 
+export function applySessionCompaction(
+  lineage: KodaXSessionLineage | undefined,
+  compactedMessages: KodaXMessage[],
+  anchor: {
+    summary: string;
+    tokensBefore?: number;
+    tokensAfter?: number;
+    artifactLedgerId?: string;
+    reason?: string;
+    details?: KodaXJsonValue | CompactionDetails;
+    memorySeed?: KodaXCompactMemorySeed;
+  },
+): KodaXSessionLineage {
+  const base = cloneLineage(lineage);
+  const compactionEntryId = generateEntryId();
+  const compactionEntry: KodaXSessionCompactionEntry = {
+    type: 'compaction',
+    id: compactionEntryId,
+    parentId: null,
+    timestamp: new Date().toISOString(),
+    summary: anchor.summary,
+    tokensBefore: anchor.tokensBefore,
+    tokensAfter: anchor.tokensAfter,
+    artifactLedgerId: anchor.artifactLedgerId,
+    reason: anchor.reason,
+    details: normalizeCompactionDetails(anchor.details),
+    memorySeed: cloneMemorySeed(anchor.memorySeed),
+  };
+
+  base.entries.push(compactionEntry);
+  base.activeEntryId = compactionEntryId;
+
+  const next = createSessionLineage(compactedMessages, base);
+  const activePath = getSessionLineagePath(next);
+  const compactionIndex = activePath.findIndex((entry) => entry.id === compactionEntryId);
+  const firstKeptEntryId = compactionIndex >= 0
+    ? activePath[compactionIndex + 1]?.id
+    : undefined;
+
+  return {
+    ...next,
+    entries: next.entries.map((entry) => entry.id === compactionEntryId
+      ? {
+        ...entry,
+        firstKeptEntryId,
+      }
+      : entry),
+  };
+}
+
 function cloneForkableEntry(
   entry: NavigableSessionEntry,
   parentId: string | null,
@@ -545,6 +629,11 @@ function cloneForkableEntry(
         summary: entry.summary,
         firstKeptEntryId: entry.firstKeptEntryId,
         tokensBefore: entry.tokensBefore,
+        tokensAfter: entry.tokensAfter,
+        artifactLedgerId: entry.artifactLedgerId,
+        reason: entry.reason,
+        details: cloneJsonValue(entry.details),
+        memorySeed: cloneMemorySeed(entry.memorySeed),
       };
     case 'branch_summary':
       return {

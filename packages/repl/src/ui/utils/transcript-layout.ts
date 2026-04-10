@@ -4,7 +4,9 @@ import { calculateVisualLayout } from "./textUtils.js";
 import {
   collapseToolCalls,
   formatCollapsedToolInlineText,
+  formatToolResultExplanation,
   formatLiveToolLabel,
+  resolveToolExplanationTone,
 } from "./tool-display.js";
 
 export type TranscriptColorToken =
@@ -23,6 +25,7 @@ export type TranscriptColorToken =
 export interface TranscriptRow {
   key: string;
   text: string;
+  itemId?: string;
   color?: TranscriptColorToken;
   indent?: number;
   bold?: boolean;
@@ -37,6 +40,7 @@ export interface TranscriptSection {
 
 export interface TranscriptBuildOptions {
   items: HistoryItem[];
+  managedLiveEvents?: readonly HistoryItem[];
   viewportWidth: number;
   isLoading?: boolean;
   maxLines?: number;
@@ -63,9 +67,26 @@ export interface TranscriptBuildOptions {
   lastLiveActivityLabel?: string;
   showFullThinking?: boolean;
   showDetailedTools?: boolean;
+  showAllContent?: boolean;
+  showLiveProgressRows?: boolean;
+  expandedItemKeys?: ReadonlySet<string>;
+}
+
+export interface TranscriptRenderModel {
+  staticSections: TranscriptSection[];
+  sections: TranscriptSection[];
+  rows: TranscriptRow[];
+  previewSections: TranscriptSection[];
+  previewRows: TranscriptRow[];
+}
+
+export interface TranscriptRenderModelOptions extends TranscriptBuildOptions {
+  windowed?: boolean;
 }
 
 const THINKING_PREVIEW_MAX_CHARS = 400;
+const THINKING_PREVIEW_TRUNCATION_HINT =
+  "... (thinking truncated; press Ctrl+O to inspect full reasoning)";
 
 function normalizeManagedLiveActivityLabel(label: string | undefined, workerTitle?: string): string | undefined {
   if (!label || !workerTitle) {
@@ -141,9 +162,41 @@ function wrapText(text: string, width: number): string[] {
   return layout.visualLines.length > 0 ? layout.visualLines : [""];
 }
 
-function getLogicalLineSlice(text: string, maxLines: number): string[] {
-  const logicalLines = text.split("\n");
-  return logicalLines.slice(0, maxLines);
+function buildThinkingPreview(
+  text: string,
+  maxLines: number,
+  showFullThinking: boolean,
+  showAllContent = false,
+): string {
+  if (showFullThinking || showAllContent) {
+    return text;
+  }
+
+  const logicalLines = text.split(/\r?\n/);
+  const truncatedByLines = logicalLines.length > maxLines;
+  const lineLimitedText = truncatedByLines
+    ? logicalLines.slice(0, maxLines).join("\n")
+    : text;
+  const truncatedByChars = lineLimitedText.length > THINKING_PREVIEW_MAX_CHARS;
+  const previewBody = truncatedByChars
+    ? lineLimitedText.slice(0, THINKING_PREVIEW_MAX_CHARS)
+    : lineLimitedText;
+
+  if (!truncatedByLines && !truncatedByChars) {
+    return text;
+  }
+
+  return `${previewBody}\n\n${THINKING_PREVIEW_TRUNCATION_HINT}`;
+}
+
+function findActiveRoundStartIndex(items: HistoryItem[]): number {
+  for (let i = items.length - 1; i >= 0; i--) {
+    if (items[i]?.type === "user") {
+      return i;
+    }
+  }
+
+  return 0;
 }
 
 function pushWrappedRows(
@@ -176,6 +229,22 @@ function getBodyWidth(viewportWidth: number, indent = 0): number {
   return Math.max(20, viewportWidth - indent);
 }
 
+function buildToolInputPreview(tool: ToolCall): string[] {
+  if (!tool.input) {
+    return [];
+  }
+
+  const serializedInput = JSON.stringify(tool.input, null, 2)?.trim();
+  if (!serializedInput) {
+    return [];
+  }
+
+  return serializedInput
+    .split(/\r?\n/)
+    .slice(0, 6)
+    .map((line: string, index: number) => (index === 0 ? `input: ${line}` : line));
+}
+
 function formatHarnessProfileShort(harnessProfile?: string): string | undefined {
   switch (harnessProfile) {
     case "H0_DIRECT":
@@ -196,6 +265,7 @@ function buildToolRows(
   count: number,
   viewportWidth: number,
   showDetailedTools = false,
+  showAllContent = false,
 ): void {
   pushWrappedRows(
     rows,
@@ -209,21 +279,49 @@ function buildToolRows(
     }
   );
 
-  if (tool.error) {
+  const compactExplanation = formatToolResultExplanation(tool);
+  compactExplanation.forEach((line, index) => {
+    const tone = resolveToolExplanationTone(line);
     pushWrappedRows(
       rows,
-      `${itemKey}-tool-${tool.id}-error`,
-      tool.error,
+      `${itemKey}-tool-${tool.id}-explanation-${index}`,
+      line,
       getBodyWidth(viewportWidth, 4),
-      { color: "error", indent: 4 }
+      {
+        color: tone,
+        indent: 4,
+      }
     );
+  });
+
+  if (showDetailedTools) {
+    const inputLines = buildToolInputPreview(tool);
+    const visibleInputLines = showAllContent ? inputLines : inputLines.slice(0, 6);
+    visibleInputLines.forEach((line, index) => {
+      pushWrappedRows(
+        rows,
+        `${itemKey}-tool-${tool.id}-input-${index}`,
+        line,
+        getBodyWidth(viewportWidth, 4),
+        { color: "dim", indent: 4 }
+      );
+    });
+    if (!showAllContent && inputLines.length > visibleInputLines.length) {
+      pushWrappedRows(
+        rows,
+        `${itemKey}-tool-${tool.id}-input-more`,
+        `... (${inputLines.length - visibleInputLines.length} more lines)`,
+        getBodyWidth(viewportWidth, 4),
+        { color: "dim", indent: 4 }
+      );
+    }
   }
 
   if (showDetailedTools && typeof tool.output === "string" && tool.output.trim()) {
-    const outputLines = tool.output
-      .trim()
-      .split(/\r?\n/)
-      .slice(0, 8);
+    const allOutputLines = tool.output.trim().split(/\r?\n/);
+    const outputLines = showAllContent
+      ? allOutputLines
+      : allOutputLines.slice(0, 8);
     outputLines.forEach((line, index) => {
       pushWrappedRows(
         rows,
@@ -233,8 +331,8 @@ function buildToolRows(
         { color: "dim", indent: 4 }
       );
     });
-    const totalLineCount = tool.output.trim().split(/\r?\n/).length;
-    if (totalLineCount > outputLines.length) {
+    const totalLineCount = allOutputLines.length;
+    if (!showAllContent && totalLineCount > outputLines.length) {
       pushWrappedRows(
         rows,
         `${itemKey}-tool-${tool.id}-output-more`,
@@ -267,15 +365,20 @@ function buildLiveToolRows(
     }
   );
 
-  if (tool.error) {
+  const compactExplanation = formatToolResultExplanation(tool);
+  compactExplanation.forEach((line, index) => {
+    const tone = resolveToolExplanationTone(line);
     pushWrappedRows(
       rows,
-      `${itemKey}-tool-${tool.id}-error`,
-      tool.error,
+      `${itemKey}-tool-${tool.id}-explanation-${index}`,
+      line,
       getBodyWidth(viewportWidth, 4),
-      { color: "error", indent: 4 }
+      {
+        color: tone,
+        indent: 4,
+      }
     );
-  }
+  });
 }
 
 export function buildTranscriptRows(options: TranscriptBuildOptions): TranscriptRow[] {
@@ -304,6 +407,8 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
     lastLiveActivityLabel,
     showFullThinking = false,
     showDetailedTools = false,
+    showAllContent = false,
+    showLiveProgressRows = true,
   } = options;
 
   const rows: TranscriptRow[] = [];
@@ -316,40 +421,32 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
           `${item.id}-header`,
           `You [${formatTimestamp(item.timestamp)}]`,
           viewportWidth,
-          { color: "primary", bold: true }
+          { color: "primary", bold: true, itemId: item.id }
         );
         pushWrappedRows(rows, `${item.id}-body`, item.text, getBodyWidth(viewportWidth, 2), {
           color: "text",
           indent: 2,
+          itemId: item.id,
         });
-        pushBlankRow(rows, `${item.id}-blank`);
+        rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
         break;
       case "assistant": {
+        const displayText = showAllContent ? item.text : item.compactText ?? item.text;
         pushWrappedRows(
           rows,
           `${item.id}-header`,
           `Assistant [${formatTimestamp(item.timestamp)}]`,
           viewportWidth,
-          { color: "secondary", bold: true, spinner: item.isStreaming }
+          { color: "secondary", bold: true, spinner: item.isStreaming, itemId: item.id }
         );
-        const truncatedLines = getLogicalLineSlice(item.text, maxLines);
         pushWrappedRows(
           rows,
           `${item.id}-body`,
-          truncatedLines.join("\n"),
+          displayText,
           getBodyWidth(viewportWidth, 2),
-          { color: "text", indent: 2 }
+          { color: "text", indent: 2, itemId: item.id }
         );
-        if (item.text.split("\n").length > maxLines) {
-          pushWrappedRows(
-            rows,
-            `${item.id}-more`,
-            `... (${item.text.split("\n").length - maxLines} more lines)`,
-            getBodyWidth(viewportWidth, 2),
-            { color: "dim", indent: 2 }
-          );
-        }
-        pushBlankRow(rows, `${item.id}-blank`);
+        rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
         break;
       }
       case "system":
@@ -358,13 +455,14 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
           `${item.id}-header`,
           `System [${formatTimestamp(item.timestamp)}]`,
           viewportWidth,
-          { color: "dim", bold: true }
+          { color: "dim", bold: true, itemId: item.id }
         );
         pushWrappedRows(rows, `${item.id}-body`, item.text, getBodyWidth(viewportWidth, 2), {
           color: "dim",
           indent: 2,
+          itemId: item.id,
         });
-        pushBlankRow(rows, `${item.id}-blank`);
+        rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
         break;
       case "tool_group":
         pushWrappedRows(
@@ -372,59 +470,90 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
           `${item.id}-header`,
           `Tools [${formatTimestamp(item.timestamp)}]`,
           viewportWidth,
-          { color: "accent", bold: true }
+          { color: "accent", bold: true, itemId: item.id }
         );
         collapseToolCalls(item.tools).forEach((group) => (
-          buildToolRows(rows, item.id, group.tool, group.count, viewportWidth, showDetailedTools)
+          buildToolRows(rows, item.id, group.tool, group.count, viewportWidth, showDetailedTools, showAllContent)
         ));
-        pushBlankRow(rows, `${item.id}-blank`);
+        rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
         break;
       case "thinking":
+        {
+          const preview = showAllContent
+            ? item.text
+            : item.compactText ?? buildThinkingPreview(item.text, maxLines, showFullThinking, showAllContent);
         pushWrappedRows(rows, `${item.id}-header`, "Thinking", viewportWidth, {
           color: "thinking",
           italic: true,
+          itemId: item.id,
         });
-        pushWrappedRows(rows, `${item.id}-body`, item.text, getBodyWidth(viewportWidth, 2), {
+        pushWrappedRows(rows, `${item.id}-body`, preview, getBodyWidth(viewportWidth, 2), {
           color: "thinking",
           indent: 2,
           italic: true,
+          itemId: item.id,
         });
-        pushBlankRow(rows, `${item.id}-blank`);
+        rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
         break;
+        }
       case "error":
         pushWrappedRows(rows, `${item.id}-header`, "\u2717 Error", viewportWidth, {
           color: "error",
           bold: true,
+          itemId: item.id,
         });
         pushWrappedRows(rows, `${item.id}-body`, item.text, getBodyWidth(viewportWidth, 2), {
           color: "error",
           indent: 2,
+          itemId: item.id,
         });
-        pushBlankRow(rows, `${item.id}-blank`);
+        rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
         break;
       case "info":
-        pushWrappedRows(rows, `${item.id}-body`, `${item.icon ?? "\u2139"} ${item.text}`, viewportWidth, {
+        pushWrappedRows(
+          rows,
+          `${item.id}-body`,
+          `${item.icon ?? "\u2139"} ${showAllContent ? item.text : item.compactText ?? item.text}`,
+          viewportWidth,
+          {
           color: "info",
-        });
-        pushBlankRow(rows, `${item.id}-blank`);
+          itemId: item.id,
+          }
+        );
+        rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
+        break;
+      case "event":
+        pushWrappedRows(
+          rows,
+          `${item.id}-body`,
+          `${item.icon ?? ">"} ${showAllContent ? item.text : item.compactText ?? item.text}`,
+          viewportWidth,
+          {
+            color: "text",
+            itemId: item.id,
+          }
+        );
+        rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
         break;
       case "hint":
         pushWrappedRows(rows, `${item.id}-header`, "\u{1F4A1} Hint", viewportWidth, {
           color: "hint",
           bold: true,
+          itemId: item.id,
         });
         pushWrappedRows(rows, `${item.id}-body`, item.text, getBodyWidth(viewportWidth, 2), {
           color: "dim",
           indent: 2,
+          itemId: item.id,
         });
-        pushBlankRow(rows, `${item.id}-blank`);
+        rows.push({ key: `${item.id}-blank`, text: " ", itemId: item.id });
         break;
       default:
         break;
     }
   }
 
-  if (iterationHistory.length > 0) {
+  if (showLiveProgressRows && iterationHistory.length > 0) {
     iterationHistory.forEach((record) => {
       pushWrappedRows(
         rows,
@@ -487,9 +616,7 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
   }
 
   if (isLoading && thinkingContent) {
-    const thinkingPreview = showFullThinking || thinkingContent.length <= THINKING_PREVIEW_MAX_CHARS
-      ? thinkingContent
-      : `${thinkingContent.slice(0, THINKING_PREVIEW_MAX_CHARS)}\n\n... (thinking truncated in live view; press PgUp to review full reasoning)`;
+    const thinkingPreview = buildThinkingPreview(thinkingContent, maxLines, showFullThinking, showAllContent);
     pushWrappedRows(rows, "thinking-stream-header", "Thinking", viewportWidth, {
       color: "thinking",
       italic: true,
@@ -500,18 +627,6 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
       italic: true,
     });
     pushBlankRow(rows, "thinking-stream-blank");
-  }
-
-  if (streamingResponse) {
-    pushWrappedRows(rows, "streaming-header", "Assistant", viewportWidth, {
-      color: "secondary",
-      bold: true,
-    });
-    pushWrappedRows(rows, "streaming-body", streamingResponse, getBodyWidth(viewportWidth, 2), {
-      color: "text",
-      indent: 2,
-    });
-    pushBlankRow(rows, "streaming-blank");
   }
 
   if (isLoading) {
@@ -531,7 +646,6 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
     const erroredToolCount = activeToolCalls.filter((tool) => tool.status === ToolCallStatus.Error).length;
     const cancelledToolCount = activeToolCalls.filter((tool) => tool.status === ToolCallStatus.Cancelled).length;
     const shouldRenderLiveToolBlock = activeToolCalls.length > 0 && (activeToolCount > 0 || !streamingResponse);
-    let renderedStickyToolBlock = false;
 
     if (isCompacting) {
       loadingText = "Compacting";
@@ -567,9 +681,10 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
         buildLiveToolRows(rows, "loading-tools", tool, viewportWidth);
       });
       pushBlankRow(rows, "loading-tools-blank");
-      renderedStickyToolBlock = true;
       if (activeToolCount > 0) {
-        return rows;
+        if (!streamingResponse && !showLiveProgressRows) {
+          return rows;
+        }
       }
     } else if (currentTool) {
       prefix = managedPrefix || "[Tool] ";
@@ -586,17 +701,31 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
         : normalizedLiveActivityLabel
           ? `${normalizedLiveActivityLabel}${roundSuffix}`
           : `processing${roundSuffix}`;
-    } else if (normalizedLiveActivityLabel && !renderedStickyToolBlock) {
+    } else if (normalizedLiveActivityLabel) {
       loadingText = normalizedLiveActivityLabel;
     }
 
-    pushWrappedRows(
-      rows,
-      "loading-indicator",
-      `${prefix}${loadingText}...`,
-      viewportWidth,
-      { color: "accent", spinner: true }
-    );
+    if (showLiveProgressRows) {
+      pushWrappedRows(
+        rows,
+        "loading-indicator",
+        `${prefix}${loadingText}...`,
+        viewportWidth,
+        { color: "accent", spinner: true }
+      );
+    }
+  }
+
+  if (streamingResponse) {
+    pushWrappedRows(rows, "streaming-header", "Assistant", viewportWidth, {
+      color: "secondary",
+      bold: true,
+    });
+    pushWrappedRows(rows, "streaming-body", streamingResponse, getBodyWidth(viewportWidth, 2), {
+      color: "text",
+      indent: 2,
+    });
+    pushBlankRow(rows, "streaming-blank");
   }
 
   return rows;
@@ -607,8 +736,9 @@ export function buildStaticTranscriptSections(
   viewportWidth: number,
   maxLines = 1000,
   showDetailedTools = false,
+  showAllContent = false,
 ): TranscriptSection[] {
-  return buildHistoryItemTranscriptSections(items, viewportWidth, maxLines, showDetailedTools);
+  return buildHistoryItemTranscriptSections(items, viewportWidth, maxLines, showDetailedTools, undefined, showAllContent);
 }
 
 export function buildHistoryItemTranscriptSections(
@@ -616,6 +746,8 @@ export function buildHistoryItemTranscriptSections(
   viewportWidth: number,
   maxLines = 1000,
   showDetailedTools = false,
+  expandedItemKeys?: ReadonlySet<string>,
+  showAllContent = false,
 ): TranscriptSection[] {
   return items.map((item) => ({
     key: item.id,
@@ -623,7 +755,8 @@ export function buildHistoryItemTranscriptSections(
       items: [item],
       viewportWidth,
       maxLines,
-      showDetailedTools,
+      showAllContent,
+      showDetailedTools: showDetailedTools || Boolean(expandedItemKeys?.has(item.id)),
     }),
   }));
 }
@@ -638,8 +771,112 @@ export function buildDynamicTranscriptSection(
   };
 }
 
+export function buildTranscriptRenderModel(
+  options: TranscriptRenderModelOptions,
+): TranscriptRenderModel {
+  const {
+    items,
+    viewportWidth,
+    maxLines = 1000,
+    windowed = false,
+    showDetailedTools = false,
+    showAllContent = false,
+    expandedItemKeys,
+    ...dynamicOptions
+  } = options;
+
+  const activeRoundStartIndex = findActiveRoundStartIndex(items);
+  const staticItems = windowed ? [] : items.slice(0, activeRoundStartIndex);
+  const activeItems = windowed ? items : items.slice(activeRoundStartIndex);
+  const staticSections = windowed
+    ? []
+    : buildStaticTranscriptSections(staticItems, viewportWidth, maxLines, showDetailedTools, showAllContent);
+  const sections = buildHistoryItemTranscriptSections(
+    activeItems,
+    viewportWidth,
+    maxLines,
+    showDetailedTools,
+    expandedItemKeys,
+    showAllContent,
+  );
+  const pendingSection = buildDynamicTranscriptSection("active-pending", {
+    ...dynamicOptions,
+    items: [],
+    managedLiveEvents: [],
+    lastLiveActivityLabel: dynamicOptions.lastLiveActivityLabel,
+    viewportWidth,
+    maxLines,
+    showAllContent,
+    showDetailedTools,
+    expandedItemKeys,
+  });
+  const previewSections = pendingSection.rows.length > 0
+    ? [pendingSection]
+    : [];
+
+  return {
+    staticSections,
+    sections,
+    rows: flattenTranscriptSections(sections),
+    previewSections,
+    previewRows: flattenTranscriptSections(previewSections),
+  };
+}
+
 export function flattenTranscriptSections(sections: TranscriptSection[]): TranscriptRow[] {
   return sections.flatMap((section) => section.rows);
+}
+
+export function materializeTranscriptRenderModel(
+  model: TranscriptRenderModel,
+): TranscriptRenderModel {
+  const sections = [...model.staticSections, ...model.sections];
+  return {
+    staticSections: [],
+    sections,
+    rows: flattenTranscriptSections(sections),
+    previewSections: [...model.previewSections],
+    previewRows: flattenTranscriptSections(model.previewSections),
+  };
+}
+
+export function resolveVisibleTranscriptRows(
+  rows: TranscriptRow[],
+  options: {
+    start?: number;
+    end?: number;
+    viewportTop?: number;
+    viewportHeight?: number;
+    viewportRows?: number;
+    scrollOffset?: number;
+    windowed?: boolean;
+  } = {},
+): TranscriptRow[] {
+  const {
+    start,
+    end,
+    viewportTop,
+    viewportHeight,
+    viewportRows,
+    scrollOffset = 0,
+    windowed = false,
+  } = options;
+
+  if (typeof viewportTop === "number" && typeof viewportHeight === "number") {
+    const safeStart = Math.max(0, viewportTop);
+    const safeEnd = Math.max(safeStart, viewportTop + Math.max(0, viewportHeight));
+    return rows.slice(safeStart, safeEnd);
+  }
+
+  if (typeof start === "number" && typeof end === "number") {
+    return rows.slice(Math.max(0, start), Math.max(0, end));
+  }
+
+  if (windowed) {
+    return getVisibleTranscriptRows(rows, viewportRows, scrollOffset);
+  }
+
+  return rows;
 }
 
 export function sliceHistoryToRecentRounds(
@@ -719,6 +956,32 @@ export function getVisibleTranscriptRows(
   const end = Math.max(0, rows.length - clampedOffset);
   const start = Math.max(0, end - viewportRows);
   return rows.slice(start, end);
+}
+
+export function resolveScrollOffsetForTranscriptItem(
+  sections: TranscriptSection[],
+  targetItemId: string | undefined,
+  viewportRows: number | undefined,
+): number {
+  if (!targetItemId || !viewportRows || viewportRows <= 0) {
+    return 0;
+  }
+
+  const rows = flattenTranscriptSections(sections);
+  const targetSection = sections.find((section) => section.key === targetItemId);
+  if (!targetSection || targetSection.rows.length === 0) {
+    return 0;
+  }
+
+  const targetRowKey = targetSection.rows[0]?.key;
+  const rowIndex = rows.findIndex((row) => row.key === targetRowKey);
+  if (rowIndex === -1) {
+    return 0;
+  }
+
+  const desiredStart = Math.max(0, rowIndex - Math.floor(viewportRows / 3));
+  const desiredEnd = Math.min(rows.length, desiredStart + viewportRows);
+  return Math.max(0, rows.length - desiredEnd);
 }
 
 export function resolveTranscriptColor(

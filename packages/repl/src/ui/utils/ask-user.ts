@@ -42,12 +42,26 @@ export function resolveAskUserDismissChoice(
   options: AskUserQuestionOptions,
 ): string {
   if (isPlanHandoffRequest(options)) {
-    const fallbackOption = options.options.find(
+    // If an option has value === targetMode, the "other" option is dismiss.
+    // Otherwise (LLM used arbitrary values), the LAST option is dismiss
+    // by convention (accept-first, cancel-last).
+    const nonTargetOption = options.options.find(
       (option) => option.value !== options.targetMode,
     );
+    // When nonTargetOption is the only non-target, it's the dismiss option.
+    // When ALL options are non-target (no option matched targetMode),
+    // nonTargetOption is the FIRST option (accept!) — use lastOption instead.
+    const hasExplicitTarget = options.options.some(
+      (option) => option.value === options.targetMode,
+    );
+    const lastOption = options.options[options.options.length - 1];
+    const dismissOption = hasExplicitTarget
+      ? nonTargetOption
+      : lastOption;
+
     return (
       options.default ??
-      fallbackOption?.value ??
+      dismissOption?.value ??
       options.options[0]?.value ??
       ""
     );
@@ -67,9 +81,19 @@ export function shouldSwitchToAcceptEdits(
   options: AskUserQuestionOptions,
   selectedValue: string,
 ): boolean {
-  return (
-    currentMode === "plan" &&
-    isPlanHandoffRequest(options) &&
-    selectedValue === options.targetMode
-  );
+  if (currentMode !== "plan" || !isPlanHandoffRequest(options)) {
+    return false;
+  }
+
+  // Case 1: An option has value === targetMode ("accept-edits").
+  // The LLM correctly set the accept option's value. Strict match.
+  if (options.options.some((o) => o.value === options.targetMode)) {
+    return selectedValue === options.targetMode;
+  }
+
+  // Case 2: LLM used arbitrary values (value falls back to label text).
+  // Plan-handoff is a confirmation: switch unless the user picked the
+  // dismiss (last) option.  Convention: accept = first, cancel = last.
+  const lastOption = options.options[options.options.length - 1];
+  return selectedValue !== (lastOption?.value ?? "");
 }

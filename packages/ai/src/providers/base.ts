@@ -47,6 +47,21 @@ export abstract class KodaXBaseProvider {
     signal?: AbortSignal
   ): Promise<KodaXStreamResult>;
 
+  supportsNonStreamingFallback(): boolean {
+    return false;
+  }
+
+  async complete(
+    _messages: KodaXMessage[],
+    _tools: KodaXToolDefinition[],
+    _system: string,
+    _reasoning?: boolean | KodaXReasoningRequest,
+    _streamOptions?: KodaXProviderStreamOptions,
+    _signal?: AbortSignal,
+  ): Promise<KodaXStreamResult> {
+    throw new KodaXProviderError(`${this.name} does not support non-streaming fallback`);
+  }
+
   isConfigured(): boolean {
     return !!process.env[this.config.apiKeyEnv];
   }

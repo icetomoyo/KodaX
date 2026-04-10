@@ -1,6 +1,10 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import type {
+  KodaXAmaControllerDecision,
+  KodaXAmaFanoutClass,
+  KodaXAmaProfile,
+  KodaXAmaTactic,
   KodaXExecutionMode,
   KodaXHarnessProfile,
   KodaXMessage,
@@ -304,6 +308,7 @@ export interface ReasoningPlan {
   mode: KodaXReasoningMode;
   depth: KodaXThinkingDepth;
   decision: KodaXTaskRoutingDecision;
+  amaControllerDecision: KodaXAmaControllerDecision;
   promptOverlay: string;
   providerPolicy?: KodaXProviderPolicyDecision;
 }
@@ -546,8 +551,14 @@ const INVESTIGATION_PATTERN_ZH = /排查|定位问题|根因|为什么|报错|�
 const IMPLEMENTATION_PATTERN = /\b(implement|add|change|modify|update|create|write|fix|refactor|rewrite|replace)\b/i;
 const IMPLEMENTATION_PATTERN_ZH = /实现|新增|修改|创建|写一个|修复|重构|改一下|替换/;
 
-const DOCS_ONLY_PATTERN = /\b(docs?|documentation|readme|changelog|release notes?|spec|proposal|design doc|requirements?|prd|adr|hld|dd|feature list|known issues?)\b/i;
+const DOCS_ONLY_PATTERN = /\b(docs?|documentation|readme|changelog|release notes?|spec|proposal|design doc|requirements?|prd|adr|hld|dd|guide|runbook|playbook|feature list|known issues?)\b/i;
 const DOCS_ONLY_PATTERN_ZH = /\u6587\u6863|\u8bf4\u660e\u6587\u6863|\u8bbe\u8ba1\u6587\u6863|\u9700\u6c42\u6587\u6863|PRD|ADR|HLD|DD|CHANGELOG|README|\u529f\u80fd\u6e05\u5355|\u5df2\u77e5\u95ee\u9898/u;
+const DOCS_QUALIFIED_TECHNICAL_TARGET_PATTERN = /\b(?:api|backend|frontend|service|module|endpoint|component|architecture|package|migration|schema|database|auth|sdk|cli)\s+(?:docs?|documentation|guide|readme|changelog|spec|proposal|design doc|requirements?|prd|adr|hld|dd|runbook|playbook)\b|\b(?:docs?|documentation|guide|readme|changelog|spec|proposal|design doc|requirements?|prd|adr|hld|dd|runbook|playbook)\s+(?:for|about|on)\s+(?:the\s+)?(?:api|backend|frontend|service|module|endpoint|component|architecture|package|migration|schema|database|auth|sdk|cli)\b/i;
+const DOCS_QUALIFIED_TECHNICAL_TARGET_PATTERN_ZH = /(?:API|\u540e\u7aef|\u524d\u7aef|\u670d\u52a1|\u6a21\u5757|\u63a5\u53e3|\u7ec4\u4ef6|\u67b6\u6784|\u5305|\u8fc1\u79fb|\u6570\u636e\u5e93|\u8ba4\u8bc1)(?:[\u4e00-\u9fffA-Za-z0-9_\-\/\\.\s]{0,8})(?:\u6587\u6863|\u8bf4\u660e\u6587\u6863|README|CHANGELOG|PRD|ADR|HLD|DD|\u6307\u5357)/u;
+const EXPLICIT_CODE_MUTATION_ANCHOR_PATTERN = /\b(?:implementation|source code|code comments?|function|class|component|bug|script|tests?|ui)\b/i;
+const EXPLICIT_CODE_MUTATION_ANCHOR_PATTERN_ZH = /\u4ee3\u7801\u6ce8\u91ca|\u5b9e\u73b0|\u51fd\u6570|\u7c7b|\u7ec4\u4ef6|bug|\u811a\u672c|\u6d4b\u8bd5|\u754c\u9762/u;
+const NO_CODE_CHANGE_PATTERN = /\b(?:do not|don't|dont|without|no)\b[\s\S]{0,12}\b(?:change|modify|edit|touch|rewrite|update|mutate)\b[\s\S]{0,8}\bcode\b|\bno code changes?\b/i;
+const NO_CODE_CHANGE_PATTERN_ZH = /\u4e0d\u6539\u4ee3\u7801|\u4e0d\u8981\u6539\u4ee3\u7801|\u4e0d\u4fee\u6539\u4ee3\u7801|\u4e0d\u8981\u4fee\u6539\u4ee3\u7801|\u53ea\u6539\u6587\u6863|\u53ea\u66f4\u65b0\u6587\u6863|\u4ec5\u6539\u6587\u6863|\u4ec5\u66f4\u65b0\u6587\u6863/u;
 const EXPLICIT_ASSURANCE_PATTERN = /\b(double[- ]check|re-check|recheck|second pass|second opinion|cross-check|cross check|independently verify|independent review|independent audit|strict audit|extra scrutiny|verify twice)\b/i;
 const EXPLICIT_ASSURANCE_PATTERN_ZH = /\u518d\u68c0\u67e5|\u518d\u5ba1\u67e5|\u53cc\u91cd\u68c0\u67e5|\u7b2c\u4e8c\u904d|\u7b2c\u4e8c\u8f6e|\u4e8c\u6b21\u5ba1\u67e5|\u4ea4\u53c9\u68c0\u67e5|\u72ec\u7acb\u9a8c\u8bc1|\u72ec\u7acb\u5ba1\u67e5|\u66f4\u5f3a\u5ba1\u67e5/u;
 const CODE_MUTATION_OBJECT_PATTERN = /\b(code|implementation|function|class|component|module|endpoint|service|repo|repository|file|files|test|bug|feature|script|api|ui|backend|frontend)\b/i;
@@ -737,6 +748,11 @@ function deriveMutationSurface(
   const normalized = ` ${prompt.toLowerCase()} `;
   const hasCjk = /[\u3400-\u9fff]/u.test(prompt);
   const hasDocsSignal = DOCS_ONLY_PATTERN.test(prompt) || (hasCjk && DOCS_ONLY_PATTERN_ZH_CLEAN.test(prompt));
+  const hasDocQualifiedTechnicalTarget = DOCS_QUALIFIED_TECHNICAL_TARGET_PATTERN.test(prompt)
+    || (hasCjk && DOCS_QUALIFIED_TECHNICAL_TARGET_PATTERN_ZH.test(prompt));
+  const hasExplicitCodeMutationAnchor = EXPLICIT_CODE_MUTATION_ANCHOR_PATTERN.test(prompt)
+    || (hasCjk && EXPLICIT_CODE_MUTATION_ANCHOR_PATTERN_ZH.test(prompt));
+  const hasNoCodeGuard = NO_CODE_CHANGE_PATTERN.test(prompt) || (hasCjk && NO_CODE_CHANGE_PATTERN_ZH.test(prompt));
   const hasSystemSignal = SYSTEM_MUTATION_PATTERN.test(prompt) || (hasCjk && SYSTEM_MUTATION_PATTERN_ZH_CLEAN.test(prompt));
   const hasCodeObjectSignal = CODE_MUTATION_OBJECT_PATTERN.test(normalized) || (hasCjk && CODE_MUTATION_OBJECT_PATTERN_ZH_CLEAN.test(prompt));
   const hasStrongCodeTarget = /\b(code|implementation|function|class|component|module|endpoint|service|bug|script|api|ui|backend|frontend)\b/i.test(normalized)
@@ -751,9 +767,13 @@ function deriveMutationSurface(
     || hasStrongCodeTargetByChinese;
   const safeHasMutationVerb = /\b(implement|add|modify|update|create|write|fix|refactor|rewrite|replace|edit|patch|rename)\b/i.test(normalized)
     || hasMutationVerbByChinese;
+  const effectiveStrongCodeTarget = (safeHasStrongCodeTarget && !hasDocQualifiedTechnicalTarget)
+    || hasExplicitCodeMutationAnchor;
+  const effectiveStructuralRepoTarget = hasStructuralRepoTarget && !hasDocQualifiedTechnicalTarget;
+  const explicitDocsOnlyGuard = hasDocsSignal && !hasSystemSignal && hasNoCodeGuard;
 
   if (decision.primaryTask === 'review' && !safeHasMutationVerb && !hasSystemSignal) {
-    return hasDocsSignal && !safeHasStrongCodeTarget
+    return hasDocsSignal && (explicitDocsOnlyGuard || !effectiveStrongCodeTarget)
       ? 'docs-only'
       : 'read-only';
   }
@@ -762,10 +782,14 @@ function deriveMutationSurface(
     || decision.primaryTask === 'refactor'
     || decision.taskFamily === 'implementation'
     || (decision.primaryTask === 'bugfix' && safeHasMutationVerb)
-    || (safeHasMutationVerb && safeHasStrongCodeTarget)
-    || (hasStructuralMutationVerb && hasStructuralRepoTarget);
+    || (safeHasMutationVerb && effectiveStrongCodeTarget)
+    || (hasStructuralMutationVerb && effectiveStructuralRepoTarget);
 
-  if (hasDocsSignal && !hasSystemSignal && !safeHasStrongCodeTarget && decision.primaryTask !== 'refactor') {
+  if (explicitDocsOnlyGuard && decision.primaryTask !== 'refactor') {
+    return 'docs-only';
+  }
+
+  if (hasDocsSignal && !hasSystemSignal && !effectiveStrongCodeTarget && decision.primaryTask !== 'refactor') {
     return 'docs-only';
   }
 
@@ -1018,10 +1042,192 @@ export function buildProviderPolicyHintsForDecision(
   };
 }
 
+function dedupeAmaTactics(
+  tactics: KodaXAmaTactic[],
+): KodaXAmaTactic[] {
+  return Array.from(new Set(tactics));
+}
+
+function resolveAmaFanoutClass(
+  decision: KodaXTaskRoutingDecision,
+): KodaXAmaFanoutClass | undefined {
+  if (decision.primaryTask === 'review') {
+    return 'finding-validation';
+  }
+  if (
+    decision.primaryTask === 'bugfix'
+    || decision.recommendedMode === 'investigation'
+  ) {
+    return decision.mutationSurface === 'read-only'
+      ? 'evidence-scan'
+      : 'hypothesis-check';
+  }
+  if (decision.primaryTask === 'lookup') {
+    return 'module-triage';
+  }
+  return undefined;
+}
+
+function resolveAmaFanoutMaxChildren(
+  decision: KodaXTaskRoutingDecision,
+): number | undefined {
+  if (decision.primaryTask === 'review') {
+    switch (decision.reviewScale) {
+      case 'massive':
+        return 4;
+      case 'large':
+        return 3;
+      default:
+        return 2;
+    }
+  }
+  if (
+    decision.primaryTask === 'bugfix'
+    || decision.recommendedMode === 'investigation'
+  ) {
+    return 2;
+  }
+  return undefined;
+}
+
+function isAmaFanoutClassActive(
+  fanoutClass: KodaXAmaFanoutClass | undefined,
+  decision: KodaXTaskRoutingDecision,
+): boolean {
+  if (!fanoutClass) {
+    return false;
+  }
+
+  if (
+    decision.primaryTask === 'plan'
+    || decision.taskFamily === 'conversation'
+    || decision.taskFamily === 'ambiguous'
+  ) {
+    return false;
+  }
+
+  switch (fanoutClass) {
+    case 'finding-validation':
+      return true;
+    case 'evidence-scan':
+      return decision.mutationSurface === 'read-only'
+        && decision.harnessProfile === 'H0_DIRECT'
+        && (
+          decision.primaryTask === 'bugfix'
+          || decision.recommendedMode === 'investigation'
+        );
+    case 'module-triage':
+      return decision.mutationSurface === 'read-only'
+        && decision.harnessProfile === 'H0_DIRECT'
+        && decision.executionPattern === 'checked-direct'
+        && decision.primaryTask === 'lookup';
+    case 'hypothesis-check':
+      return false;
+    default:
+      return false;
+  }
+}
+
+export function buildAmaControllerDecision(
+  decision: KodaXTaskRoutingDecision,
+): KodaXAmaControllerDecision {
+  const readOnlyLike = decision.mutationSurface === 'read-only'
+    || decision.mutationSurface === 'docs-only';
+  const managed =
+    decision.harnessProfile === 'H2_PLAN_EXECUTE_EVAL'
+    || decision.primaryTask === 'plan'
+    || decision.complexity === 'systemic'
+    || (
+      decision.complexity === 'complex'
+      && decision.mutationSurface === 'code'
+      && Boolean(decision.needsIndependentQA)
+    )
+    || (
+      decision.requiresBrainstorm
+      && decision.mutationSurface === 'code'
+    );
+  const profile: KodaXAmaProfile = managed ? 'managed' : 'tactical';
+  const fanoutClass = resolveAmaFanoutClass(decision);
+  const activeFanoutClass = profile === 'tactical' && isAmaFanoutClassActive(fanoutClass, decision)
+    ? fanoutClass
+    : undefined;
+  const fanoutAdmissible = Boolean(activeFanoutClass);
+
+  const tactics = dedupeAmaTactics([
+    'direct',
+    ...(profile === 'managed' ? ['planning-pass', 'verification-pass', 'repair-loop'] as KodaXAmaTactic[] : []),
+    ...(decision.harnessProfile !== 'H0_DIRECT' || Boolean(decision.needsIndependentQA) ? ['verification-pass'] as KodaXAmaTactic[] : []),
+    ...(fanoutAdmissible ? ['child-fanout'] as KodaXAmaTactic[] : []),
+  ]);
+
+  const fanoutReason = !fanoutClass
+    ? 'No high-value shard class was detected for this task.'
+    : !fanoutAdmissible
+      ? fanoutClass === 'hypothesis-check'
+        ? 'Hypothesis-check shards remain defined for future rollout, but mutation-side child fan-out is intentionally disabled for now.'
+        : fanoutClass === 'evidence-scan'
+          ? 'Evidence-scan shards only activate for tactical H0 read-only investigation in the current rollout.'
+        : fanoutClass === 'module-triage'
+            ? 'Module-triage shards only activate for tactical H0 read-only lookup in the current rollout.'
+        : 'Child fan-out stays disabled because this rollout only activates read-only tactical shard classes that are already backed by runtime support.'
+      : activeFanoutClass === 'finding-validation'
+        ? 'Review work benefits from finding-level validation shards to keep the main context focused on synthesis.'
+        : activeFanoutClass === 'evidence-scan'
+          ? 'Investigation work benefits from bounded evidence shards before the parent commits to a diagnosis.'
+          : activeFanoutClass === 'module-triage'
+            ? 'Lookup work can shard module triage when the task stays read-only.'
+            : 'Investigation work benefits from hypothesis-check shards when multiple explanations can be tested independently.';
+
+  const upgradeTriggers: string[] = [];
+  if (profile === 'tactical') {
+    if (decision.harnessProfile === 'H2_PLAN_EXECUTE_EVAL') {
+      upgradeTriggers.push('Existing routing already requires H2 managed coordination.');
+    }
+    if (decision.complexity === 'complex' || decision.complexity === 'systemic') {
+      upgradeTriggers.push('Complex or systemic work may outgrow tactical reduction and need managed coordination.');
+    }
+    if (decision.requiresBrainstorm) {
+      upgradeTriggers.push('Explicit option framing or plan-first work should upgrade into managed planning.');
+    }
+  } else {
+    upgradeTriggers.push('Managed profile stays active because the task needs explicit planning, QA, or multi-round convergence.');
+  }
+
+  return {
+    profile,
+    tactics,
+    fanout: {
+      admissible: fanoutAdmissible,
+      class: activeFanoutClass,
+      reason: fanoutReason,
+      maxChildren: fanoutAdmissible ? resolveAmaFanoutMaxChildren(decision) : undefined,
+      requiresReadOnly: fanoutAdmissible && readOnlyLike ? true : undefined,
+    },
+    reason: profile === 'managed'
+      ? 'AMA controller selected the managed profile because explicit coordination, planning, or heavier assurance remains load-bearing.'
+      : 'AMA controller selected the tactical profile so one main agent can stay in control while using hidden tactics only when they reduce context pressure.',
+    upgradeTriggers,
+  };
+}
+
+function buildAmaControllerOverlay(
+  controller: KodaXAmaControllerDecision,
+): string {
+  return [
+    `[AMA Controller] profile=${controller.profile}; tactics=${controller.tactics.join(',')}; fanoutAdmissible=${controller.fanout.admissible ? 'yes' : 'no'}; fanoutClass=${controller.fanout.class ?? 'none'}; maxChildren=${controller.fanout.maxChildren ?? 'n/a'}.`,
+    `[AMA Controller Reason] ${controller.reason}`,
+    `[AMA Fan-Out] ${controller.fanout.reason}`,
+    controller.upgradeTriggers.length > 0
+      ? `[AMA Upgrade Triggers] ${controller.upgradeTriggers.join(' ')}`
+      : undefined,
+  ].filter(Boolean).join('\n');
+}
+
 export function buildPromptOverlay(
   decision: KodaXTaskRoutingDecision,
   extraNotes: string[] = [],
   _providerPolicy?: KodaXProviderPolicyDecision,
+  amaControllerDecision: KodaXAmaControllerDecision = buildAmaControllerDecision(decision),
 ): string {
   const routingNotes = decision.routingNotes?.map(
     (note) => `[Task Routing Note] ${note}`,
@@ -1037,6 +1243,7 @@ export function buildPromptOverlay(
   return [
     EXECUTION_MODE_OVERLAYS[decision.recommendedMode],
     HARNESS_PROFILE_OVERLAYS[decision.harnessProfile],
+    buildAmaControllerOverlay(amaControllerDecision),
     `[Task Routing] primary=${decision.primaryTask}; family=${decision.taskFamily ?? 'unknown'}; actionability=${decision.actionability ?? 'unknown'}; mutationSurface=${decision.mutationSurface ?? 'unknown'}; assuranceIntent=${decision.assuranceIntent ?? 'default'}; pattern=${decision.executionPattern ?? 'unknown'}; risk=${decision.riskLevel}; complexity=${decision.complexity}; intent=${decision.workIntent}; brainstorm=${decision.requiresBrainstorm ? 'yes' : 'no'}; harness=${decision.harnessProfile}; topologyCeiling=${decision.topologyCeiling ?? 'none'}; upgradeCeiling=${decision.upgradeCeiling ?? 'none'}; reviewScale=${decision.reviewScale ?? 'unknown'}; confidence=${decision.confidence.toFixed(2)}.`,
     decision.soloBoundaryConfidence !== undefined
       ? `[Task Routing Signals] soloBoundaryConfidence=${decision.soloBoundaryConfidence.toFixed(2)}; needsIndependentQA=${decision.needsIndependentQA ? 'yes' : 'no'}; source=${decision.routingSource ?? 'unknown'}; attempts=${decision.routingAttempts ?? 1}.`
@@ -1087,14 +1294,17 @@ export async function createReasoningPlan(
         intentGate.reason,
       ],
     };
+    const amaControllerDecision = buildAmaControllerDecision(finalDecision);
 
     return {
       mode,
       depth,
+      amaControllerDecision,
       promptOverlay: buildPromptOverlay(
         finalDecision,
         providerPolicy.routingNotes,
         providerPolicy,
+        amaControllerDecision,
       ),
       decision: finalDecision,
       providerPolicy,
@@ -1109,13 +1319,16 @@ export async function createReasoningPlan(
       providerPolicy,
       routingEvidence,
     );
+    const amaControllerDecision = buildAmaControllerDecision(decision);
     return {
       mode,
       depth: decision.recommendedThinkingDepth,
+      amaControllerDecision,
       promptOverlay: buildPromptOverlay(
         decision,
         providerPolicy.routingNotes,
         providerPolicy,
+        amaControllerDecision,
       ),
       decision,
       providerPolicy,
@@ -1132,14 +1345,17 @@ export async function createReasoningPlan(
     ...fallbackDecision,
     recommendedThinkingDepth: depth,
   };
+  const amaControllerDecision = buildAmaControllerDecision(decision);
 
   return {
     mode,
     depth,
+    amaControllerDecision,
     promptOverlay: buildPromptOverlay(
       decision,
       providerPolicy.routingNotes,
       providerPolicy,
+      amaControllerDecision,
     ),
     decision,
     providerPolicy,
@@ -1218,11 +1434,12 @@ export async function maybeCreateAutoReroutePlan(
     mode: currentPlan.mode,
     depth: nextDecision.recommendedThinkingDepth,
     decision: nextDecision,
+    amaControllerDecision: buildAmaControllerDecision(nextDecision),
     providerPolicy: currentPlan.providerPolicy,
     promptOverlay: buildPromptOverlay(nextDecision, [
       followUpGuidance,
       `${followUpLabel} Focus on high-confidence, high-signal output for this follow-up pass.`,
-    ], currentPlan.providerPolicy),
+    ], currentPlan.providerPolicy, buildAmaControllerDecision(nextDecision)),
   };
 }
 

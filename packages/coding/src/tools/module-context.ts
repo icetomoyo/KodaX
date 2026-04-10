@@ -2,7 +2,7 @@ import type { KodaXToolExecutionContext } from '../types.js';
 import {
   getModuleContext,
   renderModuleContext,
-} from '../repo-intelligence/query.js';
+} from '../repo-intelligence/runtime.js';
 import { readOptionalString } from './internal.js';
 
 export async function toolModuleContext(

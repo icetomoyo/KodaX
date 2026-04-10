@@ -26,6 +26,7 @@ import {
   clampThinkingBudget,
   resolveThinkingBudget,
 } from '../reasoning.js';
+import { readImageFileAsBase64, resolveImageMediaType } from './image-serialization.js';
 
 const KODAX_ANTHROPIC_COMPAT_USER_AGENT = 'KodaX';
 
@@ -123,6 +124,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
       const normalizedReasoning = this.normalizeReasoning(reasoning);
       const maxOutputTokens = this.config.maxOutputTokens ?? KODAX_MAX_TOKENS;
       const model = streamOptions?.modelOverride ?? this.config.model;
+      const convertedMessages = await this.convertMessages(messages);
       const initialCapability = normalizedReasoning.enabled
         ? this.getReasoningCapability(model)
         : 'none';
@@ -142,7 +144,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
           model,
           max_tokens: maxOutputTokens,
           system: this.buildSystemPrompt(system, messages),
-          messages: this.convertMessages(messages),
+          messages: convertedMessages,
           tools: tools as Anthropic.Messages.Tool[],
           stream: true,
         };
@@ -396,6 +398,133 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
     }, signal, 3, streamOptions?.onRateLimit);
   }
 
+  override supportsNonStreamingFallback(): boolean {
+    return true;
+  }
+
+  override async complete(
+    messages: KodaXMessage[],
+    tools: KodaXToolDefinition[],
+    system: string,
+    reasoning?: boolean | KodaXReasoningRequest,
+    streamOptions?: KodaXProviderStreamOptions,
+    signal?: AbortSignal,
+  ): Promise<KodaXStreamResult> {
+    return this.withRateLimit(async () => {
+      const normalizedReasoning = this.normalizeReasoning(reasoning);
+      const maxOutputTokens = this.config.maxOutputTokens ?? KODAX_MAX_TOKENS;
+      const model = streamOptions?.modelOverride ?? this.config.model;
+      const convertedMessages = await this.convertMessages(messages);
+      const initialCapability = normalizedReasoning.enabled
+        ? this.getReasoningCapability(model)
+        : 'none';
+      const attempts: Array<'native-budget' | 'native-toggle' | 'none'> = normalizedReasoning.enabled
+        ? this.getReasoningFallbackChain(initialCapability)
+            .filter((capability): capability is 'native-budget' | 'native-toggle' | 'none' =>
+              capability === 'native-budget' ||
+              capability === 'native-toggle' ||
+              capability === 'none',
+            )
+        : ['none'];
+
+      const buildRequest = (
+        capability: 'native-budget' | 'native-toggle' | 'none',
+      ): Anthropic.Messages.MessageCreateParams => {
+        const kwargs: Anthropic.Messages.MessageCreateParams = {
+          model,
+          max_tokens: maxOutputTokens,
+          system: this.buildSystemPrompt(system, messages),
+          messages: convertedMessages,
+          tools: tools as Anthropic.Messages.Tool[],
+        };
+
+        if (capability === 'native-budget') {
+          const requestedBudget = resolveThinkingBudget(
+            this.config,
+            normalizedReasoning.depth,
+            normalizedReasoning.taskType,
+          );
+          kwargs.thinking = {
+            type: 'enabled',
+            budget_tokens: clampThinkingBudget(requestedBudget, maxOutputTokens),
+          };
+        } else if (capability === 'native-toggle') {
+          kwargs.thinking = {
+            type: 'enabled',
+          } as Anthropic.Messages.ThinkingConfigParam;
+        }
+
+        return kwargs;
+      };
+
+      let response: Awaited<ReturnType<typeof this.client.messages.create>> | undefined;
+      let lastError: unknown;
+
+      for (const capability of attempts) {
+        try {
+          response = await this.client.messages.create(
+            buildRequest(capability),
+            signal ? { signal } : {},
+          );
+          if (capability !== initialCapability) {
+            this.persistReasoningCapabilityOverride(capability, model);
+          }
+          break;
+        } catch (error) {
+          lastError = error;
+          const fallbackTerms =
+            capability === 'native-budget'
+              ? ['budget_tokens', 'thinking']
+              : capability === 'native-toggle'
+                ? ['thinking']
+                : [];
+
+          if (!this.shouldFallbackForReasoningError(error, ...fallbackTerms)) {
+            throw error;
+          }
+        }
+      }
+
+      if (!response) {
+        throw lastError ?? new KodaXProviderError(
+          'All reasoning capability attempts failed without a captured error',
+          this.name,
+        );
+      }
+
+      const textBlocks: KodaXTextBlock[] = [];
+      const toolBlocks: KodaXToolUseBlock[] = [];
+      const thinkingBlocks: (KodaXThinkingBlock | KodaXRedactedThinkingBlock)[] = [];
+
+      for (const block of (response as Anthropic.Messages.Message).content as Array<any>) {
+        if (block.type === 'text') {
+          textBlocks.push({ type: 'text', text: block.text });
+          streamOptions?.onTextDelta?.(block.text);
+        } else if (block.type === 'thinking') {
+          thinkingBlocks.push({ type: 'thinking', thinking: block.thinking, signature: block.signature ?? '' });
+          streamOptions?.onThinkingDelta?.(block.thinking);
+          streamOptions?.onThinkingEnd?.(block.thinking);
+        } else if (block.type === 'redacted_thinking') {
+          thinkingBlocks.push({ type: 'redacted_thinking', data: block.data });
+        } else if (block.type === 'tool_use') {
+          toolBlocks.push({
+            type: 'tool_use',
+            id: block.id,
+            name: block.name,
+            input: typeof block.input === 'object' && block.input !== null ? block.input : {},
+          });
+        }
+      }
+
+      return {
+        textBlocks,
+        toolBlocks,
+        thinkingBlocks,
+        usage: normalizeAnthropicUsage((response as Anthropic.Messages.Message).usage),
+      };
+    }, signal, 3, streamOptions?.onRateLimit);
+  }
+
   private serializeSystemMessageContent(content: string | KodaXContentBlock[]): string {
     if (typeof content === 'string') {
       return content.trim();
@@ -419,11 +548,17 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
       .join('\n\n');
   }
 
-  private convertMessages(messages: KodaXMessage[]): Anthropic.Messages.MessageParam[] {
+  private async convertMessages(messages: KodaXMessage[]): Promise<Anthropic.Messages.MessageParam[]> {
     // Filter out 'system' role messages - Anthropic API only supports 'user' and 'assistant' in messages array
     // System messages are handled via the separate 'system' parameter
-    return messages.filter(m => m.role !== 'system').map(m => {
-      if (typeof m.content === 'string') return { role: m.role, content: m.content };
+    const converted: Anthropic.Messages.MessageParam[] = [];
+
+    for (const m of messages.filter((message) => message.role !== 'system')) {
+      const role: 'user' | 'assistant' = m.role === 'user' ? 'user' : 'assistant';
+      if (typeof m.content === 'string') {
+        converted.push({ role, content: m.content });
+        continue;
+      }
       const content: Anthropic.Messages.ContentBlockParam[] = [];
 
       // CRITICAL: Anthropic requires tool_result to be FIRST in user messages
@@ -458,12 +593,25 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
         }
       }
 
-      // 4. text blocks (must come after tool_result in user messages)
+      // 4. text/image blocks (must come after tool_result in user messages)
       for (const b of m.content) {
-        if (b.type === 'text') content.push({ type: 'text', text: b.text });
+        if (b.type === 'text') {
+          content.push({ type: 'text', text: b.text });
+        } else if (b.type === 'image' && m.role === 'user') {
+          content.push({
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: resolveImageMediaType(b.path, b.mediaType),
+              data: await readImageFileAsBase64(b.path),
+            },
+          } as any);
+        }
       }
 
-      return { role: m.role, content };
-    }) as Anthropic.Messages.MessageParam[];
+      converted.push({ role: m.role, content } as Anthropic.Messages.MessageParam);
+    }
+
+    return converted;
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "@kodax/coding",
-  "version": "0.7.14",
+  "version": "0.7.15",
   "description": "KodaX Coding Agent - Coding 工具 + Prompts",
   "type": "module",
   "main": "dist/index.js",
@@ -28,6 +28,10 @@
     "@kodax/skills": "*"
   },
   "devDependencies": {
+    "@lezer/common": "^1.5.1",
+    "@lezer/go": "^1.0.1",
+    "@lezer/python": "^1.1.18",
+    "@lezer/rust": "^1.0.2",
     "@types/node": "^22.13.4",
     "vitest": "^3.2.4"
   },
@@ -42,5 +46,11 @@
     "url": "https://github.com/icetomoyo/KodaX.git",
     "directory": "packages/coding"
   },
-  "license": "Apache-2.0"
+  "license": "Apache-2.0",
+  "optionalDependencies": {
+    "@lezer/common": "^1.5.1",
+    "@lezer/go": "^1.0.1",
+    "@lezer/python": "^1.1.18",
+    "@lezer/rust": "^1.0.2"
+  }
 }

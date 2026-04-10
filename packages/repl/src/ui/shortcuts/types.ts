@@ -18,7 +18,9 @@ export type ShortcutActionId =
   | 'clearScreen' // Ctrl+L - 清屏
   | 'showHelp' // ? - 显示帮助
   | 'toggleThinking' // Ctrl+T - 切换 Extended Thinking
-  | 'togglePermissionMode' // Ctrl+O / Shift+Tab - 切换权限模式
+  | 'toggleTranscriptMode' // Ctrl+O - toggle transcript mode
+  | 'openTranscriptSearch' // Ctrl+F - search transcript
+  | 'togglePermissionMode' // Shift+Tab - 切换权限模式
   | 'toggleAgentMode' // Alt+M - 切换 AMA / SA
   | 'toggleParallelMode' // Ctrl+P - 切换并行/顺序执行
   | 'submitInput' // Enter - 提交输入
@@ -35,7 +37,10 @@ export type ShortcutActionId =
   | 'moveLineUp' // Ctrl+Up - 移动到上一行
   | 'moveLineDown' // Ctrl+Down - 移动到下一行
   | 'moveToStart' // Ctrl+A - 移动到行首
-  | 'moveToEnd'; // Ctrl+E - 移动到行尾
+  | 'moveToEnd' // Ctrl+E - 移动到行尾
+  | 'killLineRight' // Ctrl+K - delete to end of line
+  | 'killLineLeft' // Ctrl+U - delete to start of line
+  | 'deleteWordLeft'; // Ctrl+W / Alt+Backspace - delete previous word
 
 // === Key Binding ===
 

@@ -1,4 +1,10 @@
-export { compactMessages } from '@kodax/agent';
+export {
+  compactMessages,
+  extractArtifactLedger,
+  mergeArtifactLedger,
+  type CompactionAnchor,
+  type CompactionUpdate,
+} from '@kodax/agent';
 
 import type { KodaXToolUseBlock } from '@kodax/ai';
 import { getRequiredToolParams } from './tools/index.js';

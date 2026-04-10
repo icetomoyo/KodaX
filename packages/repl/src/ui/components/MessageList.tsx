@@ -2,14 +2,15 @@
  * MessageList
  *
  * Reference Gemini CLI's message display architecture implementation.
- * Support HistoryItem types: user, assistant, tool_group, thinking, error, info, and hint.
+ * Support HistoryItem types: user, assistant, tool_group, thinking, error, event, info, and hint.
  */
 
-import React, { useMemo, memo } from "react";
-import { Box, Static, Text, useStdout } from "ink";
+import React, { useEffect, useMemo, memo } from "react";
+import { Box, Static, Text, useStdout } from "../tui.js";
 import { getTheme } from "../themes/index.js";
 import { Spinner } from "./LoadingIndicator.js";
 import type { Theme } from "../types.js";
+import type { ScrollBoxWindow } from "../../tui/components/ScrollBox.js";
 import {
   ToolCallStatus,
   type HistoryItem,
@@ -18,6 +19,7 @@ import {
   type HistoryItemToolGroup,
   type HistoryItemThinking,
   type HistoryItemError,
+  type HistoryItemEvent,
   type HistoryItemInfo,
   type HistoryItemHint,
   type HistoryItemSystem,
@@ -25,19 +27,19 @@ import {
 } from "../types.js";
 import type { IterationRecord } from "../contexts/StreamingContext.js";
 import {
-  buildDynamicTranscriptSection,
-  buildHistoryItemTranscriptSections,
-  buildStaticTranscriptSections,
-  flattenTranscriptSections,
-  getVisibleTranscriptRows,
+  buildTranscriptRenderModel,
   resolveTranscriptColor,
+  resolveVisibleTranscriptRows,
+  type TranscriptRenderModel,
   type TranscriptSection,
   type TranscriptRow,
 } from "../utils/transcript-layout.js";
+import { sliceTranscriptText } from "../utils/transcript-text-metrics.js";
 import {
   collapseToolCalls,
   formatCollapsedToolInlineText,
 } from "../utils/tool-display.js";
+import type { TranscriptRowSelectionRange } from "../utils/transcript-text-selection.js";
 
 // === Types ===
 
@@ -100,6 +102,39 @@ export interface MessageListProps {
   animateSpinners?: boolean;
   /** Whether to render the transcript as a windowed viewport owned by the app */
   windowed?: boolean;
+  /** Whether thinking content should render in verbose form */
+  showFullThinking?: boolean;
+  /** Whether tool details should render in verbose form */
+  showDetailedTools?: boolean;
+  /** Whether transcript-only "show all" should disable compact truncation */
+  showAllContent?: boolean;
+  /** Whether prompt/live progress helper rows should render inside the transcript */
+  showLiveProgressRows?: boolean;
+  /** Optional selected transcript item id for browse mode affordances */
+  selectedItemId?: string;
+  /** Optional expanded transcript item ids */
+  expandedItemKeys?: ReadonlySet<string>;
+  /** Optional transcript metrics callback for owned scroll controllers */
+  onMetricsChange?: (metrics: {
+    scrollHeight: number;
+    viewportHeight: number;
+  }) => void;
+  /** Optional callback with the currently visible rows */
+  onVisibleRowsChange?: (snapshot: {
+    rows: TranscriptRow[];
+    allRows: TranscriptRow[];
+  }) => void;
+  /** Optional renderer-owned transcript window */
+  rendererWindow?: Pick<
+    ScrollBoxWindow,
+    "start" | "end" | "scrollHeight" | "viewportHeight" | "scrollTop" | "viewportTop" | "pendingDelta" | "sticky"
+  >;
+  /** Optional text selection ranges for app-owned transcript selection */
+  selectedTextRanges?: ReadonlyMap<string, TranscriptRowSelectionRange>;
+  /** Optional prebuilt transcript render model for owned fullscreen paths */
+  transcriptModel?: TranscriptRenderModel;
+  /** Optional precomputed visible transcript rows */
+  visibleRowsOverride?: TranscriptRow[];
 }
 
 export interface HistoryItemRendererProps {
@@ -205,7 +240,8 @@ const AssistantItemRenderer: React.FC<{
   theme: Theme;
   maxLines: number;
 }> = memo(({ item, theme, maxLines }) => {
-  const { lines, hasMore } = truncateLines(item.text, maxLines);
+  const displayText = item.compactText ?? item.text;
+  const { lines, hasMore } = truncateLines(displayText, maxLines);
 
   return (
     <Box flexDirection="column" marginBottom={1}>
@@ -228,7 +264,7 @@ const AssistantItemRenderer: React.FC<{
           </Text>
         ))}
         {hasMore && (
-          <Text dimColor>... ({item.text.split("\n").length - maxLines} more lines)</Text>
+          <Text dimColor>... ({displayText.split("\n").length - maxLines} more lines)</Text>
         )}
       </Box>
     </Box>
@@ -312,7 +348,7 @@ const ThinkingItemRenderer: React.FC<{ item: HistoryItemThinking; theme: Theme }
     </Box>
     <Box marginLeft={2}>
       <Text color={theme.colors.thinking} italic>
-        {item.text}
+        {item.compactText ?? item.text}
       </Text>
     </Box>
   </Box>
@@ -335,13 +371,26 @@ const ErrorItemRenderer: React.FC<{ item: HistoryItemError; theme: Theme }> = me
 ));
 
 /**
+ * Managed/task event renderer.
+ */
+const EventItemRenderer: React.FC<{ item: HistoryItemEvent; theme: Theme }> = memo(({ item, theme }) => (
+  <Box flexDirection="column" marginBottom={1}>
+    <Text color={theme.colors.text}>
+      <Text color={theme.colors.accent} bold>{item.icon ?? ">"}</Text>
+      <Text> </Text>
+      {item.compactText ?? item.text}
+    </Text>
+  </Box>
+));
+
+/**
  * Info message renderer.
  */
 const InfoItemRenderer: React.FC<{ item: HistoryItemInfo; theme: Theme }> = memo(({ item, theme }) => (
   <Box flexDirection="column" marginBottom={1}>
     <Text color={theme.colors.info}>
       <Text bold>{item.icon ?? "\u2139"} </Text>
-      {item.text}
+      {item.compactText ?? item.text}
     </Text>
   </Box>
 ));
@@ -373,7 +422,8 @@ export const HistoryItemRenderer: React.FC<HistoryItemRendererProps> = memo(({
   theme: themeProp,
   maxLines = 1000, // Increased from 20 to avoid truncation (Issue 046)
 }) => {
-  const theme = themeProp ?? useMemo(() => getTheme("dark"), []);
+  const fallbackTheme = useMemo(() => getTheme("dark"), []);
+  const theme = themeProp ?? fallbackTheme;
 
   switch (item.type) {
     case "user":
@@ -388,6 +438,8 @@ export const HistoryItemRenderer: React.FC<HistoryItemRendererProps> = memo(({
       return <ThinkingItemRenderer item={item} theme={theme} />;
     case "error":
       return <ErrorItemRenderer item={item} theme={theme} />;
+    case "event":
+      return <EventItemRenderer item={item} theme={theme} />;
     case "info":
       return <InfoItemRenderer item={item} theme={theme} />;
     case "hint":
@@ -408,8 +460,28 @@ const TranscriptRowRenderer: React.FC<{
   row: TranscriptRow;
   theme: Theme;
   animateSpinners?: boolean;
-}> = memo(({ row, theme, animateSpinners = true }) => {
+  selectedItem?: boolean;
+  selectionRange?: TranscriptRowSelectionRange;
+}> = memo(({ row, theme, animateSpinners = true, selectedItem = false, selectionRange }) => {
   const color = resolveTranscriptColor(theme, row.color);
+  const normalizedText = row.text === " " ? "" : row.text;
+  const baseText = normalizedText || " ";
+  const selectedText = selectionRange && normalizedText
+    ? sliceTranscriptText(normalizedText, selectionRange.start, selectionRange.end)
+    : "";
+  const beforeSelection = selectionRange && normalizedText
+    ? sliceTranscriptText(normalizedText, 0, selectionRange.start)
+    : normalizedText;
+  const afterSelection = selectionRange && normalizedText
+    ? sliceTranscriptText(normalizedText, selectionRange.end)
+    : "";
+  const accentWholeRow = selectedItem && !selectionRange;
+  const dimColor = !accentWholeRow && row.color === "dim";
+  const commonTextProps = {
+    bold: row.bold || accentWholeRow,
+    italic: row.italic,
+    dimColor,
+  } as const;
 
   return (
     <Box marginLeft={row.indent ?? 0}>
@@ -419,38 +491,44 @@ const TranscriptRowRenderer: React.FC<{
           <Text> </Text>
         </>
       )}
-      <Text color={color} bold={row.bold} italic={row.italic} dimColor={row.color === "dim"}>
-        {row.text || " "}
+      <Text
+        color={accentWholeRow ? theme.colors.accent : color}
+        {...commonTextProps}
+      >
+        {selectionRange && normalizedText ? (
+          <>
+            {beforeSelection ? (
+              <Text
+                color={accentWholeRow ? theme.colors.accent : color}
+                {...commonTextProps}
+              >
+                {beforeSelection}
+              </Text>
+            ) : null}
+            <Text
+              backgroundColor={theme.colors.accent}
+              color={theme.colors.background}
+              bold
+              italic={row.italic}
+            >
+              {selectedText}
+            </Text>
+            {afterSelection ? (
+              <Text
+                color={accentWholeRow ? theme.colors.accent : color}
+                {...commonTextProps}
+              >
+                {afterSelection}
+              </Text>
+            ) : null}
+          </>
+        ) : (
+          baseText
+        )}
       </Text>
     </Box>
   );
 });
-
-function findActiveRoundStartIndex(items: HistoryItem[]): number {
-  for (let i = items.length - 1; i >= 0; i--) {
-    if (items[i]?.type === "user") {
-      return i;
-    }
-  }
-
-  return 0;
-}
-
-export interface MessageHistorySections {
-  activeRoundStartIndex: number;
-  staticItems: HistoryItem[];
-  activeItems: HistoryItem[];
-}
-
-export function splitMessageHistorySections(items: HistoryItem[]): MessageHistorySections {
-  const activeRoundStartIndex = findActiveRoundStartIndex(items);
-
-  return {
-    activeRoundStartIndex,
-    staticItems: items.slice(0, activeRoundStartIndex),
-    activeItems: items.slice(activeRoundStartIndex),
-  };
-}
 
 const StaticTranscriptItemRenderer: React.FC<{
   section: TranscriptSection;
@@ -501,73 +579,61 @@ export const MessageList: React.FC<MessageListProps> = ({
   scrollOffset = 0,
   animateSpinners = true,
   windowed = false,
+  showFullThinking = false,
+  showDetailedTools = false,
+  showAllContent = false,
+  showLiveProgressRows = true,
+  selectedItemId,
+  expandedItemKeys,
+  onMetricsChange,
+  onVisibleRowsChange,
+  rendererWindow,
+  selectedTextRanges,
+  transcriptModel,
+  visibleRowsOverride,
 }) => {
   const theme = useMemo(() => getTheme("dark"), []);
   const { stdout } = useStdout();
   const terminalWidth = viewportWidth ?? stdout?.columns ?? 80;
-  const { staticItems, activeItems } = useMemo(
-    () => splitMessageHistorySections(items),
-    [items]
-  );
-  const staticSections = useMemo(
-    () => buildStaticTranscriptSections(staticItems, terminalWidth, maxLines, windowed),
-    [staticItems, terminalWidth, maxLines, windowed]
-  );
+  const showEmptyState = items.length === 0 && !isLoading;
 
-  if (items.length === 0 && !isLoading) {
-    return (
-      <Box paddingY={1}>
-        <Text dimColor>No messages yet. Start typing to begin.</Text>
-      </Box>
-    );
-  }
-
-  const transcriptSections = useMemo(
-    () => {
-      const historySections = buildHistoryItemTranscriptSections(
-        windowed ? items : activeItems,
-        terminalWidth,
-        maxLines,
-        windowed
-      );
-      const pendingSection = buildDynamicTranscriptSection("active-pending", {
-        items: [],
-        viewportWidth: terminalWidth,
-        isLoading,
-        maxLines,
-        isThinking,
-        thinkingCharCount,
-        thinkingContent,
-        streamingResponse,
-        currentTool,
-        activeToolCalls,
-        toolInputCharCount,
-        toolInputContent,
-        iterationHistory,
-        currentIteration,
-        isCompacting,
-        managedAgentMode: agentMode,
-        managedPhase,
-        managedHarnessProfile,
-        managedWorkerTitle,
-        managedRound,
-        managedMaxRounds,
-        managedGlobalWorkBudget,
-        managedBudgetUsage,
-        managedBudgetApprovalRequired,
-        lastLiveActivityLabel,
-        showFullThinking: windowed,
-        showDetailedTools: windowed,
-      });
-
-      return pendingSection.rows.length > 0
-        ? [...historySections, pendingSection]
-        : historySections;
-    },
-    [
+  const effectiveTranscriptModel = useMemo(
+    () => transcriptModel ?? buildTranscriptRenderModel({
       items,
-      activeItems,
+      viewportWidth: terminalWidth,
+      isLoading,
+      maxLines,
+      isThinking,
+      thinkingCharCount,
+      thinkingContent,
+      streamingResponse,
+      currentTool,
+      activeToolCalls,
+      toolInputCharCount,
+      toolInputContent,
+      iterationHistory,
+      currentIteration,
+      isCompacting,
+      managedAgentMode: agentMode,
+      managedPhase,
+      managedHarnessProfile,
+      managedWorkerTitle,
+      managedRound,
+      managedMaxRounds,
+      managedGlobalWorkBudget,
+      managedBudgetUsage,
+      managedBudgetApprovalRequired,
+      lastLiveActivityLabel,
       windowed,
+      showFullThinking,
+      showDetailedTools,
+      showAllContent,
+      showLiveProgressRows,
+      expandedItemKeys,
+    }),
+    [
+      transcriptModel,
+      items,
       terminalWidth,
       isLoading,
       maxLines,
@@ -592,22 +658,92 @@ export const MessageList: React.FC<MessageListProps> = ({
       managedBudgetUsage,
       managedBudgetApprovalRequired,
       lastLiveActivityLabel,
-    ]
+      windowed,
+      showFullThinking,
+      showDetailedTools,
+      showAllContent,
+      showLiveProgressRows,
+      expandedItemKeys,
+    ],
   );
-  const transcriptRows = useMemo(
-    () => flattenTranscriptSections(transcriptSections),
-    [transcriptSections]
+  const staticSections = effectiveTranscriptModel.staticSections;
+  const transcriptRows = effectiveTranscriptModel.rows;
+  const previewRows = effectiveTranscriptModel.previewRows;
+  const allTranscriptRows = useMemo(
+    () => [...transcriptRows, ...previewRows],
+    [previewRows, transcriptRows],
+  );
+  const windowedRowSource = useMemo(
+    () => (windowed || rendererWindow || visibleRowsOverride ? allTranscriptRows : transcriptRows),
+    [allTranscriptRows, rendererWindow, transcriptRows, visibleRowsOverride, windowed],
   );
 
   const visibleRows = useMemo(
-    () => (windowed
-      ? getVisibleTranscriptRows(transcriptRows, viewportRows, scrollOffset)
-      : transcriptRows),
-    [transcriptRows, viewportRows, scrollOffset, windowed]
+    () => {
+      if (visibleRowsOverride) {
+        return visibleRowsOverride;
+      }
+      return resolveVisibleTranscriptRows(windowedRowSource, {
+        viewportTop: rendererWindow
+          ? Math.max(0, rendererWindow.viewportTop)
+          : undefined,
+        viewportHeight: rendererWindow
+          ? Math.max(0, rendererWindow.viewportHeight)
+          : undefined,
+        start: undefined,
+        end: undefined,
+        viewportRows,
+        scrollOffset,
+        windowed,
+      });
+    },
+    [
+      rendererWindow,
+      scrollOffset,
+      viewportRows,
+      visibleRowsOverride,
+      windowed,
+      windowedRowSource,
+    ]
   );
+  const renderedRows = useMemo(
+    () => (visibleRowsOverride || windowed || rendererWindow ? visibleRows : allTranscriptRows),
+    [allTranscriptRows, rendererWindow, visibleRows, visibleRowsOverride, windowed],
+  );
+  const allRenderedRows = useMemo(
+    () => allTranscriptRows,
+    [allTranscriptRows],
+  );
+  const effectiveViewportRows = rendererWindow
+    ? Math.max(0, rendererWindow.viewportHeight)
+    : viewportRows;
+
+  useEffect(() => {
+    onMetricsChange?.({
+      scrollHeight: allTranscriptRows.length,
+      viewportHeight: rendererWindow
+        ? Math.max(0, rendererWindow.viewportHeight)
+        : (effectiveViewportRows ?? allTranscriptRows.length),
+    });
+  }, [allTranscriptRows.length, effectiveViewportRows, onMetricsChange, rendererWindow]);
+
+  useEffect(() => {
+    onVisibleRowsChange?.({
+      rows: renderedRows,
+      allRows: allRenderedRows,
+    });
+  }, [allRenderedRows, onVisibleRowsChange, renderedRows]);
+
+  if (showEmptyState) {
+    return (
+      <Box paddingY={1}>
+        <Text dimColor>No messages yet. Start typing to begin.</Text>
+      </Box>
+    );
+  }
 
   return (
-    <Box flexDirection="column" paddingY={1}>
+    <Box flexDirection="column">
       {!windowed && staticSections.length > 0 && (
         <Static items={staticSections}>
           {(section) => (
@@ -620,12 +756,14 @@ export const MessageList: React.FC<MessageListProps> = ({
           )}
         </Static>
       )}
-      {visibleRows.map((row) => (
+      {renderedRows.map((row) => (
         <TranscriptRowRenderer
           key={row.key}
           row={row}
           theme={theme}
           animateSpinners={animateSpinners}
+          selectedItem={selectedItemId ? row.key.startsWith(`${selectedItemId}-`) : false}
+          selectionRange={selectedTextRanges?.get(row.key)}
         />
       ))}
     </Box>
@@ -686,3 +824,4 @@ export const SimpleMessageDisplay: React.FC<{
     </Box>
   );
 };
+

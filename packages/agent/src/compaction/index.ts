@@ -6,20 +6,30 @@
 
 // Types
 export type {
+  CompactionAnchor,
   CompactionConfig,
   CompactionDetails,
+  CompactionUpdate,
   CompactionResult,
   FileOperations,
 } from './types.js';
 
 // File Tracking
-export { extractFileOps, mergeFileOps } from './file-tracker.js';
+export { extractArtifactLedger, extractFileOps, mergeArtifactLedger, mergeFileOps } from './file-tracker.js';
 
 // Utils
 export { serializeConversation } from './utils.js';
 
 // Summary Generator
-export { generateSummary } from './summary-generator.js';
+export {
+  generateSummary,
+  buildCompactionPromptSnapshot,
+} from './summary-generator.js';
+export type {
+  KodaXCompactionPromptVariant,
+  KodaXCompactionPromptSection,
+  KodaXCompactionPromptSnapshot,
+} from './summary-generator.js';
 
 // Compaction Core
 export { needsCompaction, compact } from './compaction.js';

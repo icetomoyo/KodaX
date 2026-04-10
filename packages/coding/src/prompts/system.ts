@@ -59,6 +59,7 @@ Tool outputs are also bounded:
 - Large bash output may be truncated to the tail
 - Large grep results and diffs may be summarized
 - When you see a truncation hint, narrow the next tool call instead of repeating the same broad request
+- If edit fails to find a stable anchor, do not rewrite the entire existing file with write; retry with a smaller unique edit anchor or use insert_after_anchor for section appends
 
 If you truly need a script:
 - Do NOT create temporary scripts or scratch files in the project root

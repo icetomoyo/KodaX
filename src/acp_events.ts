@@ -108,6 +108,20 @@ export type AcpRuntimeEvent =
     sessionId: string;
     label: string;
     error: string;
+  }
+  | {
+    type: 'repo_intelligence_trace';
+    sessionId: string;
+    stage: 'routing' | 'preturn' | 'module' | 'impact' | 'task-snapshot';
+    summary: string;
+    mode?: string;
+    engine?: string;
+    bridge?: string;
+    status?: string;
+    daemonLatencyMs?: number;
+    cliLatencyMs?: number;
+    cacheHit?: boolean;
+    capsuleEstimatedTokens?: number;
   };
 
 export interface AcpEventSink {

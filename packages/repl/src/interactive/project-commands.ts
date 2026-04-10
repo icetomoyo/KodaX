@@ -71,8 +71,14 @@ import {
   formatBrainstormTranscript,
 } from './project-brainstorm.js';
 import {
+  buildProjectHarnessProfileSnapshot,
   createProjectHarnessAttempt,
+  formatProjectHarnessCheckpointSummary,
+  formatProjectHarnessPivotSummary,
+  formatProjectHarnessProfileSummary,
   formatProjectHarnessSummary,
+  readLatestHarnessCheckpoint,
+  readLatestHarnessPivot,
   readLatestHarnessRun,
   reverifyProjectHarnessRun,
   recordManualHarnessOverride,
@@ -1977,10 +1983,31 @@ async function projectVerify(args: string[]): Promise<void> {
   }
 
   const verification = await reverifyProjectHarnessRun(storage, selectedRun);
+  const [checkpoint, pivot, profile] = await Promise.all([
+    readLatestHarnessCheckpoint(storage, selectedRun.featureIndex),
+    readLatestHarnessPivot(storage, selectedRun.featureIndex),
+    buildProjectHarnessProfileSnapshot(storage, selectedRun.featureIndex),
+  ]);
 
   console.log(chalk.cyan('\n/project verify - Deterministic Re-check\n'));
   console.log(chalk.dim('This reruns current workspace checks and proof gates. It does not replay the original full action trace.\n'));
   console.log(formatProjectHarnessSummary(verification.runRecord));
+
+  if (checkpoint) {
+    console.log();
+    console.log(formatProjectHarnessCheckpointSummary(checkpoint));
+  }
+
+  if (pivot) {
+    console.log();
+    console.log(formatProjectHarnessPivotSummary(pivot));
+  }
+
+  if (profile.totalRuns > 0) {
+    console.log();
+    console.log(formatProjectHarnessProfileSummary(profile));
+  }
+
   console.log();
 }
 

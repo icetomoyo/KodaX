@@ -95,6 +95,19 @@ const ESCAPE_SEQUENCE_MAP: Record<string, Partial<KeyInfo>> = {
 const MODIFIED_KEY_RE = /^\x1b\[([0-9]+);?([0-9]+)?([~A-Za-z])?/;
 const SGR_MOUSE_RE = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/;
 
+function parseMouseButton(baseCode: number): "left" | "middle" | "right" | "unknown" {
+  switch (baseCode & 0b11) {
+    case 0:
+      return "left";
+    case 1:
+      return "middle";
+    case 2:
+      return "right";
+    default:
+      return "unknown";
+  }
+}
+
 /**
  * Parse modifier key bitmask - 解析修饰键位掩码
  * modifier: 1=shift, 2=alt, 4=ctrl, 8=meta - modifier: 1=shift, 2=alt, 4=ctrl, 8=meta
@@ -123,28 +136,58 @@ export function parseKeypress(sequence: string, inBracketedPaste: boolean = fals
     meta: false,
     shift: false,
     insertable: false,
+    isPasted: false,
   };
-
   if (!sequence || sequence.length === 0) {
     return key;
   }
 
   const sgrMouseMatch = sequence.match(SGR_MOUSE_RE);
   if (sgrMouseMatch) {
-    const [, buttonCode] = sgrMouseMatch;
+    const [, buttonCode, column, row, terminator] = sgrMouseMatch;
     const code = Number(buttonCode);
+    const mouseColumn = Number(column);
+    const mouseRow = Number(row);
+    const modifierBits = code & (4 | 8 | 16);
+
+    key.shift = (modifierBits & 4) !== 0;
+    key.meta = (modifierBits & 8) !== 0;
+    key.ctrl = (modifierBits & 16) !== 0;
 
     if (code === 64) {
       key.name = "wheelup";
+      key.mouse = {
+        action: "wheel",
+        button: "wheelup",
+        row: mouseRow,
+        column: mouseColumn,
+      };
       return key;
     }
 
     if (code === 65) {
       key.name = "wheeldown";
+      key.mouse = {
+        action: "wheel",
+        button: "wheeldown",
+        row: mouseRow,
+        column: mouseColumn,
+      };
       return key;
     }
 
     key.name = "mouse";
+    key.mouse = {
+      action:
+        terminator === "m"
+          ? "release"
+          : (code & 32) !== 0
+            ? "drag"
+            : "press",
+      button: parseMouseButton(code),
+      row: mouseRow,
+      column: mouseColumn,
+    };
     return key;
   }
 
@@ -542,11 +585,14 @@ export class KeypressParser {
    * Emit keypress event to all listeners - 发送按键事件给所有监听器
    */
   private emit(key: KeyInfo): void {
+    // Inject bracketed paste state into key before emitting - 注入粘贴模式状态到 key
+    if (this.inBracketedPaste) {
+      key.isPasted = true;
+    }
     for (const listener of this.listeners) {
       listener(key);
     }
   }
-
   /**
    * Clear buffer - 清空缓冲区
    */

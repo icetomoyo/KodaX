@@ -17,6 +17,10 @@ import {
   registerTool,
 } from '../tools/index.js';
 import type {
+  LocalToolDefinition,
+  ToolRegistrationOptions,
+} from '../tools/types.js';
+import type {
   KodaXExtensionSessionRecord,
   KodaXExtensionStore,
   KodaXJsonValue,
@@ -25,6 +29,7 @@ import { createExtensionStore } from '@kodax/agent';
 import type {
   CapabilityProvider,
   ExtensionContributionSource,
+  ExtensionFileContributionSource,
   ExtensionCommandDefinition,
   ExtensionEventMap,
   ExtensionFailureDiagnostic,
@@ -154,6 +159,7 @@ export class KodaXExtensionRuntime {
   private readonly hookHandlers = new Map<string, RuntimeRecord<(payload: unknown) => Promise<unknown> | unknown>[]>();
   private readonly loadedExtensions = new Map<string, LoadedExtensionRecord>();
   private readonly failures: ExtensionFailureDiagnostic[] = [];
+  private readonly runtimeDisposables: Disposable[] = [];
   private readonly runtimeLogger: ExtensionLogger;
   private readonly config: Readonly<Record<string, unknown>>;
   private readonly runtimeController: BoundExtensionRuntimeController;
@@ -202,6 +208,10 @@ export class KodaXExtensionRuntime {
       await loaded.disposeAll();
     }
     this.loadedExtensions.clear();
+    for (const dispose of this.runtimeDisposables.reverse()) {
+      await dispose();
+    }
+    this.runtimeDisposables.length = 0;
     this.failures.length = 0;
     this.boundController = null;
 
@@ -341,6 +351,55 @@ export class KodaXExtensionRuntime {
       .filter((provider): provider is CapabilityProvider => provider !== undefined);
   }
 
+  registerCapabilityProvider(
+    provider: CapabilityProvider,
+    options: { source?: ExtensionContributionSource } = {},
+  ): () => void {
+    const source = options.source ?? this.createRuntimeSource(
+      `runtime:capability:${provider.id}`,
+      provider.id,
+    );
+    const dispose = this.registerRecord(
+      this.capabilityProviders,
+      provider.id,
+      provider,
+      source,
+      this.runtimeDisposables,
+    );
+    if (provider.dispose) {
+      this.runtimeDisposables.push(() => provider.dispose?.());
+    }
+    return dispose;
+  }
+
+  registerTool(
+    definition: LocalToolDefinition,
+    options: ToolRegistrationOptions = {},
+  ): () => void {
+    const source = options.source ?? {
+      kind: 'extension' as const,
+      id: `runtime:tool:${definition.name}`,
+      label: definition.name,
+    };
+    const dispose = registerTool(definition, { source });
+    this.runtimeDisposables.push(dispose);
+    return dispose;
+  }
+
+  registerHook<THook extends keyof ExtensionHookMap>(
+    hook: THook,
+    handler: ExtensionHookMap[THook],
+    options: { source?: ExtensionContributionSource } = {},
+  ): () => void {
+    const source = options.source ?? this.createRuntimeSource(
+      `runtime:hook:${String(hook)}`,
+      String(hook),
+    );
+    const dispose = this.registerHookHandler(hook, handler, source);
+    this.runtimeDisposables.push(dispose);
+    return dispose;
+  }
+
   listCommands(): ExtensionCommandDefinition[] {
     return Array.from(this.commands.values())
       .map((records) => records[records.length - 1]?.value)
@@ -370,6 +429,7 @@ export class KodaXExtensionRuntime {
           id: providerId,
           kinds: [...active.value.kinds],
           source: { ...active.source },
+          metadata: active.value.getDiagnostics?.(),
         };
       })
       .filter((entry): entry is NonNullable<typeof entry> => entry !== undefined)
@@ -482,7 +542,7 @@ export class KodaXExtensionRuntime {
   async searchCapabilities(
     providerId: string,
     query: string,
-    options: { kind?: CapabilityProvider['kinds'][number]; limit?: number } = {},
+    options: { kind?: CapabilityProvider['kinds'][number]; limit?: number; server?: string } = {},
   ): Promise<unknown[]> {
     const provider = this.getCapabilityProvider(providerId);
     if (!provider) {
@@ -566,6 +626,16 @@ export class KodaXExtensionRuntime {
       kind: 'prompt',
     });
     return provider.getPrompt(capabilityId, args);
+  }
+
+  async getCapabilityPromptContext(
+    providerId: string,
+  ): Promise<string | undefined> {
+    const provider = this.getCapabilityProvider(providerId);
+    if (!provider?.getPromptContext) {
+      return undefined;
+    }
+    return provider.getPromptContext();
   }
 
   async refreshCapabilityProviders(providerId?: string): Promise<void> {
@@ -704,12 +774,23 @@ export class KodaXExtensionRuntime {
   private createExtensionSource(
     extensionPath: string,
     loadSource: ExtensionLoadSource = 'api',
-  ): ExtensionContributionSource {
+  ): ExtensionFileContributionSource {
     return {
       kind: 'extension',
       id: `${loadSource}:extension:${extensionPath}`,
       label: path.basename(extensionPath),
       path: extensionPath,
+    };
+  }
+
+  private createRuntimeSource(
+    id: string,
+    label: string,
+  ): ExtensionContributionSource {
+    return {
+      kind: 'runtime',
+      id,
+      label,
     };
   }
 

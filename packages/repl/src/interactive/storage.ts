@@ -9,10 +9,12 @@ import chalk from 'chalk';
 import type {
   KodaXExtensionSessionRecord,
   KodaXMessage,
+  KodaXSessionArtifactLedgerEntry,
   KodaXSessionData,
   KodaXSessionEntry,
   KodaXSessionLineage,
   KodaXSessionMeta,
+  KodaXSessionRuntimeInfo,
   KodaXSessionScope,
   KodaXSessionStorage,
 } from '@kodax/coding';
@@ -28,6 +30,7 @@ import {
 } from '@kodax/coding';
 import type { SessionData, SessionErrorMetadata } from '../ui/utils/session-storage.js';
 import { getGitRoot, KODAX_SESSIONS_DIR } from '../common/utils.js';
+import { inspectWorkspaceRuntime, isSameCanonicalRepo, resolveSessionRuntimeInfo } from './workspace-runtime.js';
 import {
   isKodaXExtensionSessionRecord,
   isKodaXExtensionSessionState,
@@ -47,10 +50,16 @@ interface PersistedLineageEntryLine {
   entry: KodaXSessionEntry;
 }
 
+interface PersistedArtifactLedgerLine {
+  _type: 'artifact_ledger_entry';
+  entry: KodaXSessionArtifactLedgerEntry;
+}
+
 interface PersistedSessionSnapshot {
   meta?: KodaXSessionMeta;
   legacyMessages: KodaXMessage[];
   lineageEntries: KodaXSessionEntry[];
+  artifactLedger: KodaXSessionArtifactLedgerEntry[];
   extensionRecords: KodaXExtensionSessionRecord[];
   malformedCount: number;
 }
@@ -90,6 +99,13 @@ function toExtensionRecordLine(
 function toLineageEntryLine(entry: KodaXSessionEntry): PersistedLineageEntryLine {
   return {
     _type: 'lineage_entry',
+    entry,
+  };
+}
+
+function toArtifactLedgerLine(entry: KodaXSessionArtifactLedgerEntry): PersistedArtifactLedgerLine {
+  return {
+    _type: 'artifact_ledger_entry',
     entry,
   };
 }
@@ -144,6 +160,43 @@ function isPersistedLineageEntryLine(
     && isKodaXSessionEntry(value.entry);
 }
 
+function isKodaXSessionArtifactLedgerEntry(
+  value: unknown,
+): value is KodaXSessionArtifactLedgerEntry {
+  return isRecord(value)
+    && typeof value.id === 'string'
+    && typeof value.kind === 'string'
+    && typeof value.target === 'string'
+    && typeof value.timestamp === 'string'
+    && (value.sourceTool === undefined || typeof value.sourceTool === 'string')
+    && (value.action === undefined || typeof value.action === 'string')
+    && (value.displayTarget === undefined || typeof value.displayTarget === 'string')
+    && (value.summary === undefined || typeof value.summary === 'string')
+    && (value.sessionEntryId === undefined || typeof value.sessionEntryId === 'string')
+    && (value.metadata === undefined || isKodaXJsonValue(value.metadata));
+}
+
+function isPersistedArtifactLedgerLine(
+  value: unknown,
+): value is PersistedArtifactLedgerLine {
+  return isRecord(value)
+    && value._type === 'artifact_ledger_entry'
+    && isKodaXSessionArtifactLedgerEntry(value.entry);
+}
+
+function isKodaXSessionRuntimeInfo(value: unknown): value is KodaXSessionRuntimeInfo {
+  return isRecord(value)
+    && (value.canonicalRepoRoot === undefined || typeof value.canonicalRepoRoot === 'string')
+    && (value.workspaceRoot === undefined || typeof value.workspaceRoot === 'string')
+    && (value.executionCwd === undefined || typeof value.executionCwd === 'string')
+    && (value.branch === undefined || typeof value.branch === 'string')
+    && (
+      value.workspaceKind === undefined
+      || value.workspaceKind === 'detected'
+      || value.workspaceKind === 'managed'
+    );
+}
+
 function getLastNavigableEntryId(entries: KodaXSessionEntry[]): string | null {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
@@ -182,6 +235,9 @@ function buildSessionData(snapshot: PersistedSessionSnapshot): ResolvedSessionSn
           : snapshot.legacyMessages.map((message) => structuredClone(message)),
         title: snapshot.meta?.title ?? '',
         gitRoot: snapshot.meta?.gitRoot ?? '',
+        runtimeInfo: isKodaXSessionRuntimeInfo(snapshot.meta?.runtimeInfo)
+          ? { ...snapshot.meta.runtimeInfo }
+          : undefined,
         scope: snapshot.meta?.scope ?? 'user',
         uiHistory: isKodaXSessionUiHistory(snapshot.meta?.uiHistory)
           ? snapshot.meta.uiHistory.map((item) => ({ ...item }))
@@ -194,6 +250,10 @@ function buildSessionData(snapshot: PersistedSessionSnapshot): ResolvedSessionSn
         : undefined,
       extensionRecords: snapshot.extensionRecords.map((record) => ({ ...record })),
       lineage,
+      artifactLedger: snapshot.artifactLedger.map((entry) => ({
+        ...entry,
+        metadata: entry.metadata ? structuredClone(entry.metadata) : undefined,
+      })),
     },
   };
 }
@@ -209,12 +269,14 @@ function createSessionMeta(
     title: data.title,
     id,
     gitRoot: data.gitRoot,
+    runtimeInfo: data.runtimeInfo ? { ...data.runtimeInfo } : undefined,
     createdAt: createdAt ?? new Date().toISOString(),
     scope: data.scope ?? 'user',
     uiHistory: data.uiHistory,
     errorMetadata: data.errorMetadata,
     extensionState: data.extensionState,
     extensionRecordCount: data.extensionRecords?.length ?? 0,
+    artifactLedgerCount: data.artifactLedger?.length ?? 0,
     lineageVersion: lineage?.version,
     activeEntryId: lineage?.activeEntryId,
     lineageEntryCount: lineage?.entries.length ?? 0,
@@ -236,6 +298,7 @@ async function readPersistedSessionFile(filePath: string): Promise<PersistedSess
   const snapshot: PersistedSessionSnapshot = {
     legacyMessages: [],
     lineageEntries: [],
+    artifactLedger: [],
     extensionRecords: [],
     malformedCount: 0,
   };
@@ -251,6 +314,14 @@ async function readPersistedSessionFile(filePath: string): Promise<PersistedSess
 
       if (isPersistedLineageEntryLine(parsed)) {
         snapshot.lineageEntries.push(structuredClone(parsed.entry));
+        continue;
+      }
+
+      if (isPersistedArtifactLedgerLine(parsed)) {
+        snapshot.artifactLedger.push({
+          ...parsed.entry,
+          metadata: parsed.entry.metadata ? structuredClone(parsed.entry.metadata) : undefined,
+        });
         continue;
       }
 
@@ -305,14 +376,14 @@ export class FileSessionStorage implements KodaXSessionStorage {
 
     const targetPath = this.getSessionFilePath(id);
     const tempPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
-    const lineage = data.lineage
-      ? createSessionLineage(data.messages, data.lineage)
-      : createSessionLineage(data.messages);
+    const lineage = data.lineage ?? createSessionLineage(data.messages);
     const meta = createSessionMeta(id, data, lineage, createdAt);
     const lineageLines = lineage.entries.map((entry) => JSON.stringify(toLineageEntryLine(entry)));
+    const artifactLedgerLines = (data.artifactLedger ?? [])
+      .map((entry) => JSON.stringify(toArtifactLedgerLine(entry)));
     const extensionRecordLines = (data.extensionRecords ?? [])
       .map((record) => JSON.stringify(toExtensionRecordLine(record)));
-    const lines = [JSON.stringify(meta), ...lineageLines, ...extensionRecordLines];
+    const lines = [JSON.stringify(meta), ...lineageLines, ...artifactLedgerLines, ...extensionRecordLines];
 
     try {
       await fs.writeFile(
@@ -335,10 +406,11 @@ export class FileSessionStorage implements KodaXSessionStorage {
       scope: data.scope ?? existing?.data.scope ?? 'user',
       uiHistory: data.uiHistory ?? existing?.data.uiHistory,
       extensionState: data.extensionState ?? existing?.data.extensionState,
+      artifactLedger: data.artifactLedger ?? existing?.data.artifactLedger,
       extensionRecords: data.extensionRecords ?? existing?.data.extensionRecords,
-      lineage: createSessionLineage(
+      lineage: data.lineage ?? createSessionLineage(
         data.messages,
-        data.lineage ?? existing?.data.lineage,
+        existing?.data.lineage,
       ),
     };
     await this.writeSession(id, merged, existing?.createdAt);
@@ -354,10 +426,32 @@ export class FileSessionStorage implements KodaXSessionStorage {
     const filePath = this.getSessionFilePath(id);
 
     const currentGitRoot = await getGitRoot();
-    if (currentGitRoot && data.gitRoot && currentGitRoot !== data.gitRoot) {
+    const currentRuntime = await inspectWorkspaceRuntime();
+    const sessionRuntime = resolveSessionRuntimeInfo(data);
+    const canonicalMismatch =
+      currentRuntime.canonicalRepoRoot
+      && sessionRuntime?.canonicalRepoRoot
+      && !isSameCanonicalRepo(currentRuntime, sessionRuntime);
+
+    if (canonicalMismatch || (currentGitRoot && data.gitRoot && currentGitRoot !== data.gitRoot && !isSameCanonicalRepo(
+      currentRuntime,
+      { canonicalRepoRoot: data.gitRoot },
+    ))) {
       writeStorageNotice(chalk.yellow('\n[Warning] Session project mismatch:'));
-      writeStorageNotice(`  Current:  ${currentGitRoot}`);
-      writeStorageNotice(`  Session:  ${data.gitRoot}`);
+      if (currentRuntime.workspaceRoot) {
+        writeStorageNotice(`  Current workspace:  ${currentRuntime.workspaceRoot}`);
+      }
+      if (sessionRuntime?.workspaceRoot) {
+        writeStorageNotice(`  Session workspace:  ${sessionRuntime.workspaceRoot}`);
+      }
+      if (currentRuntime.canonicalRepoRoot) {
+        writeStorageNotice(`  Current repo:      ${currentRuntime.canonicalRepoRoot}`);
+      }
+      if (sessionRuntime?.canonicalRepoRoot) {
+        writeStorageNotice(`  Session repo:      ${sessionRuntime.canonicalRepoRoot}`);
+      } else if (data.gitRoot) {
+        writeStorageNotice(`  Session repo:      ${data.gitRoot}`);
+      }
       writeStorageNotice('  Continuing anyway...\n');
     }
 
@@ -461,6 +555,9 @@ export class FileSessionStorage implements KodaXSessionStorage {
       extensionState: resolved.data.extensionState
         ? structuredClone(resolved.data.extensionState)
         : undefined,
+      artifactLedger: resolved.data.artifactLedger
+        ? structuredClone(resolved.data.artifactLedger)
+        : undefined,
       extensionRecords: resolved.data.extensionRecords
         ? structuredClone(resolved.data.extensionRecords)
         : undefined,
@@ -473,15 +570,24 @@ export class FileSessionStorage implements KodaXSessionStorage {
     };
   }
 
-  async list(gitRoot?: string): Promise<Array<{ id: string; title: string; msgCount: number }>> {
+  async list(gitRoot?: string): Promise<Array<{
+    id: string;
+    title: string;
+    msgCount: number;
+    runtimeInfo?: KodaXSessionRuntimeInfo;
+  }>> {
     await fs.mkdir(KODAX_SESSIONS_DIR, { recursive: true });
     const currentGitRoot = gitRoot ?? await getGitRoot();
+    const currentRuntime = await inspectWorkspaceRuntime({
+      cwd: currentGitRoot ?? process.cwd(),
+    });
     const files = (await fs.readdir(KODAX_SESSIONS_DIR)).filter((file) => file.endsWith('.jsonl'));
     const sessions: Array<{
       id: string;
       title: string;
       msgCount: number;
       createdAt?: string;
+      runtimeInfo?: KodaXSessionRuntimeInfo;
     }> = [];
 
     for (const file of files) {
@@ -495,11 +601,18 @@ export class FileSessionStorage implements KodaXSessionStorage {
         const first = JSON.parse(firstLine);
         if (isRecord(first) && first._type === 'meta') {
           const sessionGitRoot = typeof first.gitRoot === 'string' ? first.gitRoot : '';
+          const sessionRuntime = isKodaXSessionRuntimeInfo(first.runtimeInfo)
+            ? first.runtimeInfo
+            : undefined;
           const scope: KodaXSessionScope = first.scope === 'managed-task-worker'
             ? 'managed-task-worker'
             : 'user';
           if (currentGitRoot) {
-            if (!sessionGitRoot || sessionGitRoot !== currentGitRoot) {
+            const sameCanonicalRepo = isSameCanonicalRepo(currentRuntime, sessionRuntime);
+            const sameWorkspace = sessionRuntime?.workspaceRoot
+              ? sessionRuntime.workspaceRoot === currentRuntime.workspaceRoot
+              : sessionGitRoot === currentGitRoot;
+            if (!sameCanonicalRepo && !sameWorkspace) {
               continue;
             }
           }
@@ -521,6 +634,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
             title: typeof first.title === 'string' ? first.title : '',
             msgCount: activeMessageCount,
             createdAt: typeof first.createdAt === 'string' ? first.createdAt : undefined,
+            runtimeInfo: sessionRuntime ? { ...sessionRuntime } : undefined,
           });
         } else {
           const lineCount = content.split('\n').length;
@@ -547,7 +661,11 @@ export class FileSessionStorage implements KodaXSessionStorage {
         return right.id.localeCompare(left.id);
       })
       .slice(0, 10)
-      .map(({ id, title, msgCount }) => ({ id, title, msgCount }));
+      .map(({ id, title, msgCount, runtimeInfo }) => (
+        runtimeInfo
+          ? { id, title, msgCount, runtimeInfo }
+          : { id, title, msgCount }
+      ));
   }
 
   async delete(id: string): Promise<void> {

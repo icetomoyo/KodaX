@@ -12,6 +12,7 @@
 
 // ============== Types ==============
 export type {
+  KodaXImageBlock,
   KodaXTextBlock,
   KodaXToolUseBlock,
   KodaXToolResultBlock,
@@ -38,6 +39,11 @@ export type {
   KodaXMutationSurface,
   KodaXAssuranceIntent,
   KodaXHarnessProfile,
+  KodaXAmaProfile,
+  KodaXAmaTactic,
+  KodaXAmaFanoutClass,
+  KodaXAmaFanoutPolicy,
+  KodaXAmaControllerDecision,
   KodaXTaskRoutingDecision,
   KodaXThinkingBudgetMap,
   KodaXTaskBudgetOverrides,
@@ -47,21 +53,26 @@ export type {
   KodaXExtensionSessionState,
   KodaXExtensionStoreEntry,
   KodaXExtensionStore,
+  KodaXCompactMemoryProgress,
+  KodaXCompactMemorySeed,
   KodaXSessionBranchSummaryEntry,
   KodaXSessionCompactionEntry,
   KodaXSessionData,
   KodaXSessionEntry,
   KodaXSessionEntryBase,
+  KodaXSessionArtifactLedgerEntry,
   KodaXSessionLabelEntry,
   KodaXSessionLineage,
   KodaXSessionMessageEntry,
   KodaXSessionNavigationOptions,
   KodaXSessionMeta,
   KodaXSessionScope,
+  KodaXSessionRuntimeInfo,
   KodaXSessionStorage,
   KodaXSessionTreeNode,
   KodaXSessionUiHistoryItem,
   KodaXSessionUiHistoryItemType,
+  KodaXSessionWorkspaceKind,
   SessionErrorMetadata,
 } from './types.js';
 
@@ -88,6 +99,7 @@ export {
 
 export {
   appendSessionLineageLabel,
+  applySessionCompaction,
   buildSessionTree,
   countActiveLineageMessages,
   createSessionLineage,
@@ -111,14 +123,18 @@ export {
 
 // ============== Compaction ==============
 export type {
+  CompactionAnchor,
   CompactionConfig,
   CompactionDetails,
+  CompactionUpdate,
   CompactionResult,
   FileOperations,
 } from './compaction/types.js';
 
 export {
+  extractArtifactLedger,
   extractFileOps,
+  mergeArtifactLedger,
   mergeFileOps,
 } from './compaction/file-tracker.js';
 
@@ -128,6 +144,12 @@ export {
 
 export {
   generateSummary,
+  buildCompactionPromptSnapshot,
+} from './compaction/summary-generator.js';
+export type {
+  KodaXCompactionPromptVariant,
+  KodaXCompactionPromptSection,
+  KodaXCompactionPromptSnapshot,
 } from './compaction/summary-generator.js';
 
 export {

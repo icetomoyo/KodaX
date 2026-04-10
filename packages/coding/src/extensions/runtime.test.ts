@@ -9,6 +9,7 @@ import {
   createExtensionRuntime,
   emitActiveExtensionEvent,
   getActiveExtensionRuntime,
+  registerOfficialSandboxExtension,
   runActiveExtensionHook,
 } from './index.js';
 
@@ -421,6 +422,130 @@ describe('KodaXExtensionRuntime', () => {
 
     await runtime.dispose();
     expect(runtime.listCapabilityProviders()).toEqual([]);
+  });
+
+  it('supports runtime-owned capability providers with prompt context and diagnostics metadata', async () => {
+    const runtime = createExtensionRuntime();
+    const refreshSpy = vi.fn(async () => undefined);
+
+    runtime.registerCapabilityProvider({
+      id: 'runtime-provider',
+      kinds: ['tool'],
+      getPromptContext: () => '## Runtime Capability\nUse runtime-owned tools.',
+      getDiagnostics: () => ({ serverCount: 1, trust: 'workspace' }),
+      refresh: refreshSpy,
+    });
+
+    await expect(runtime.getCapabilityPromptContext('runtime-provider')).resolves.toBe(
+      '## Runtime Capability\nUse runtime-owned tools.',
+    );
+    await expect(runtime.refreshCapabilityProviders('runtime-provider')).resolves.toBeUndefined();
+    expect(refreshSpy).toHaveBeenCalledTimes(1);
+    expect(runtime.getDiagnostics().capabilityProviders).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'runtime-provider',
+          source: expect.objectContaining({
+            kind: 'runtime',
+            id: 'runtime:capability:runtime-provider',
+            label: 'runtime-provider',
+          }),
+          metadata: {
+            serverCount: 1,
+            trust: 'workspace',
+          },
+        }),
+      ]),
+    );
+
+    await runtime.dispose();
+  });
+
+  it('registers an official sandbox policy provider with guarded tool overrides and honest mode diagnostics', async () => {
+    const workspaceRoot = path.join(tempDir, 'workspace');
+    const outsideRoot = path.join(tempDir, 'outside');
+    await mkdir(workspaceRoot, { recursive: true });
+    await mkdir(outsideRoot, { recursive: true });
+    await writeFile(path.join(workspaceRoot, 'inside.txt'), 'inside', 'utf8');
+    await writeFile(path.join(outsideRoot, 'outside.txt'), 'outside', 'utf8');
+
+    const runtime = createExtensionRuntime();
+    registerOfficialSandboxExtension(runtime, {
+      workspaceRoot,
+      mode: 'enforced',
+    });
+
+    expect(runtime.getDiagnostics().capabilityProviders).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'official-sandbox',
+          metadata: expect.objectContaining({
+            mode: 'enforced',
+            workspaceRoot,
+            guardedTools: ['write', 'edit', 'bash'],
+          }),
+        }),
+      ]),
+    );
+
+    await expect(runtime.readCapability('official-sandbox', 'policy')).resolves.toEqual(
+      expect.objectContaining({
+        kind: 'resource',
+        structuredContent: expect.objectContaining({
+          mode: 'enforced',
+          workspaceRoot,
+          guardedTools: ['write', 'edit', 'bash'],
+        }),
+      }),
+    );
+
+    const ctx: KodaXToolExecutionContext = {
+      backups: new Map(),
+      executionCwd: workspaceRoot,
+      gitRoot: workspaceRoot,
+    };
+
+    await expect(
+      executeTool('write', {
+        path: path.join(workspaceRoot, 'inside.txt'),
+        content: 'updated',
+      }, ctx),
+    ).resolves.toContain('File updated:');
+
+    await expect(
+      executeTool('write', {
+        path: path.join(outsideRoot, 'outside.txt'),
+        content: 'blocked',
+      }, ctx),
+    ).resolves.toContain('Blocked by official sandbox (enforced)');
+
+    await expect(
+      executeTool('edit', {
+        path: path.join(outsideRoot, 'outside.txt'),
+        old_string: 'outside',
+        new_string: 'blocked',
+      }, ctx),
+    ).resolves.toContain('Blocked by official sandbox (enforced)');
+
+    await expect(
+      runtime.runHook('tool:before', {
+        name: 'bash',
+        input: { command: 'git reset --hard HEAD~1' },
+        executionCwd: workspaceRoot,
+        gitRoot: workspaceRoot,
+      }),
+    ).resolves.toContain('Command matches destructive policy: git reset --hard');
+
+    await expect(
+      runtime.runHook('tool:before', {
+        name: 'bash',
+        input: { command: 'git status' },
+        executionCwd: workspaceRoot,
+        gitRoot: workspaceRoot,
+      }),
+    ).resolves.toBeUndefined();
+
+    await runtime.dispose();
   });
 
   it('keeps the previous extension active when a hot reload fails', async () => {

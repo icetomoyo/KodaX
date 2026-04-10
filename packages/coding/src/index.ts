@@ -27,6 +27,7 @@
 // New code should import directly from @kodax/ai
 
 export type {
+  KodaXImageBlock,
   KodaXContentBlock,
   KodaXTextBlock,
   KodaXToolUseBlock,
@@ -53,6 +54,11 @@ export type {
   KodaXTaskType,
   KodaXExecutionMode,
   KodaXRiskLevel,
+  KodaXAmaProfile,
+  KodaXAmaTactic,
+  KodaXAmaFanoutClass,
+  KodaXAmaFanoutPolicy,
+  KodaXAmaControllerDecision,
   KodaXReviewScale,
   KodaXTaskRoutingDecision,
   KodaXThinkingBudgetMap,
@@ -72,23 +78,34 @@ export type {
   KodaXJsonValue,
   KodaXExtensionSessionRecord,
   KodaXExtensionSessionState,
+  KodaXCompactMemoryProgress,
+  KodaXCompactMemorySeed,
   KodaXSessionBranchSummaryEntry,
   KodaXSessionCompactionEntry,
   KodaXSessionData,
   KodaXSessionEntry,
   KodaXSessionEntryBase,
+  KodaXSessionArtifactLedgerEntry,
   KodaXSessionLabelEntry,
   KodaXSessionLineage,
   KodaXSessionMessageEntry,
   KodaXSessionNavigationOptions,
   KodaXSessionMeta,
   KodaXSessionScope,
+  KodaXSessionRuntimeInfo,
   KodaXSessionUiHistoryItem,
   KodaXSessionUiHistoryItemType,
+  KodaXSessionWorkspaceKind,
   KodaXEvents,
+  ProviderRecoveryEvent,
   KodaXSessionOptions,
   KodaXContextTokenSnapshot,
   KodaXContextOptions,
+  KodaXMcpTransport,
+  KodaXMcpConnectMode,
+
+  KodaXMcpServerConfig,
+  KodaXMcpConfig,
   KodaXTaskCapabilityHint,
   KodaXTaskVerificationCriterion,
   KodaXRuntimeVerificationContract,
@@ -113,9 +130,18 @@ export type {
   KodaXTaskRoleAssignment,
   KodaXTaskWorkItem,
   KodaXTaskEvidenceArtifact,
+  KodaXInputArtifact,
   KodaXTaskEvidenceEntry,
   KodaXTaskEvidenceBundle,
   KodaXTaskToolPolicy,
+  KodaXChildContextBundle,
+  KodaXChildAgentResult,
+  KodaXParentReductionContract,
+  KodaXFanoutSchedulerInput,
+  KodaXFanoutBranchLifecycle,
+  KodaXFanoutBranchTransition,
+  KodaXFanoutBranchRecord,
+  KodaXFanoutSchedulerPlan,
   KodaXTaskVerificationContract,
   KodaXOrchestrationVerdict,
   KodaXManagedTask,
@@ -125,6 +151,11 @@ export type {
   KodaXToolExecutionContext,
   AskUserQuestionOptions,
   KodaXProviderPolicyHints,
+  KodaXRepoIntelligenceCapability,
+  KodaXRepoIntelligenceMode,
+  KodaXRepoIntelligenceResolvedMode,
+  KodaXRepoIntelligenceTraceEvent,
+  KodaXRepoIntelligenceTrace,
   SessionErrorMetadata,
 } from './types.js';
 
@@ -215,6 +246,13 @@ export {
   type RegisteredToolDefinition,
   type ToolDefinitionSource,
   type ToolRegistrationOptions,
+  type KodaXRetrievalToolName,
+  type KodaXRetrievalScope,
+  type KodaXRetrievalTrust,
+  type KodaXRetrievalFreshness,
+  type KodaXRetrievalArtifact,
+  type KodaXRetrievalItem,
+  type KodaXRetrievalResult,
   KODAX_TOOLS,
   registerTool,
   getTool,
@@ -232,6 +270,7 @@ export {
   toolRead,
   toolWrite,
   toolEdit,
+  toolInsertAfterAnchor,
   toolBash,
   toolGlob,
   toolGrep,
@@ -244,6 +283,16 @@ export {
   toolSymbolContext,
   toolProcessContext,
   toolImpactEstimate,
+  toolWebSearch,
+  toolWebFetch,
+  toolCodeSearch,
+  toolSemanticLookup,
+  stripHtmlToText,
+  extractHtmlTitle,
+  renderRetrievalResult,
+  finalizeRetrievalResult,
+  convertProviderSearchResults,
+  convertCapabilityReadResult,
   DEFAULT_TOOL_OUTPUT_MAX_BYTES,
   DEFAULT_TOOL_OUTPUT_MAX_LINES,
   READ_DEFAULT_LIMIT,
@@ -256,6 +305,13 @@ export {
   persistToolOutput,
   applyToolResultGuardrail,
   getToolResultPolicy,
+  inspectEditFailure,
+  parseEditToolError,
+} from './tools/index.js';
+
+export type {
+  EditRecoveryDiagnostic,
+  EditToolErrorCode,
 } from './tools/index.js';
 
 // ============== Repo Intelligence ==============
@@ -308,6 +364,25 @@ export {
   getSymbolContext,
   getProcessContext,
   getImpactEstimate,
+} from './repo-intelligence/runtime.js';
+
+export type {
+  RepoIntelligenceRuntimeInspection,
+  RepoIntelligenceRuntimeWarmResult,
+} from './repo-intelligence/premium-client.js';
+
+export {
+  resolveRepoIntelligenceRuntimeConfig,
+  resolveRepoIntelligenceMode,
+  inspectRepoIntelligenceRuntime,
+  warmRepoIntelligenceRuntime,
+} from './repo-intelligence/premium-client.js';
+
+export {
+  REPOINTEL_DEFAULT_ENDPOINT,
+} from './repo-intelligence/premium-contract.js';
+
+export {
   renderModuleContext,
   renderSymbolContext,
   renderProcessContext,
@@ -320,6 +395,20 @@ export {
   SYSTEM_PROMPT,
   LONG_RUNNING_PROMPT,
   buildSystemPrompt,
+  buildSystemPromptSnapshot,
+  PROMPT_SECTION_REGISTRY,
+  buildPromptSnapshot,
+  createPromptSection,
+  orderPromptSections,
+  renderPromptSections,
+} from './prompts/index.js';
+export type {
+  KodaXPromptSectionSlot,
+  KodaXPromptSectionStability,
+  KodaXPromptSectionDefinition,
+  KodaXPromptSection,
+  KodaXPromptSnapshotMetadata,
+  KodaXPromptSnapshot,
 } from './prompts/index.js';
 
 // ============== Session ==============
@@ -328,6 +417,7 @@ export {
   generateSessionId,
   extractTitleFromMessages,
   appendSessionLineageLabel,
+  applySessionCompaction,
   buildSessionTree,
   countActiveLineageMessages,
   createSessionLineage,
@@ -342,8 +432,18 @@ export {
 
 export {
   compactMessages,
+  extractArtifactLedger,
+  mergeArtifactLedger,
+  type CompactionAnchor,
+  type CompactionUpdate,
   checkIncompleteToolCalls,
 } from './messages.js';
+
+export {
+  buildPromptMessageContent,
+  extractComparableUserMessageText,
+  extractPromptComparableText,
+} from './input-artifacts.js';
 
 // ============== Tokenizer ==============
 
@@ -361,6 +461,17 @@ export {
   cleanupIncompleteToolCalls,
   validateAndFixToolHistory,
 } from './agent.js';
+
+export {
+  buildFanoutSchedulerPlan,
+  createFanoutSchedulerInput,
+  applyFanoutBranchTransition,
+  countActiveFanoutBranches,
+  getFanoutBranch,
+  assignFanoutBranchWorker,
+  markFanoutBranchCompleted,
+  markFanoutBranchCancelled,
+} from './fanout-scheduler.js';
 
 export {
   runManagedTask,
@@ -393,6 +504,8 @@ export type {
   KodaXExtensionAPI,
   KodaXExtensionActivationResult,
   KodaXExtensionModule,
+  OfficialSandboxMode,
+  OfficialSandboxOptions,
 } from './extensions/index.js';
 
 export {
@@ -400,6 +513,8 @@ export {
   createExtensionRuntime,
   setActiveExtensionRuntime,
   getActiveExtensionRuntime,
+  registerConfiguredMcpCapabilityProvider,
+  registerOfficialSandboxExtension,
 } from './extensions/index.js';
 
 // ============== Orchestration ==============
@@ -432,6 +547,7 @@ export {
   resolveReasoningMode,
   reasoningModeToDepth,
   inferTaskType,
+  buildAmaControllerDecision,
   buildFallbackRoutingDecision,
   buildProviderPolicyHintsForDecision,
   buildPromptOverlay,
@@ -467,3 +583,39 @@ export type {
   AgentsFile,
   LoadAgentsOptions,
 } from './context/agents-loader.js';
+
+
+// ============== Resilience (Feature 045) ==============
+export type {
+  ResilienceErrorClass,
+  FailureStage,
+  RecoveryAction,
+  RecoveryLadderStep,
+  ResilienceClassification,
+  ProviderExecutionState,
+  RecoveryDecision,
+  RecoveryResult,
+  ProviderResilienceConfig,
+  ProviderResiliencePolicy,
+} from './resilience/types.js';
+
+export {
+  DEFAULT_RESILIENCE_CONFIG,
+  resolveResilienceConfig,
+} from './resilience/config.js';
+
+export {
+  classifyResilienceError,
+} from './resilience/classifier.js';
+
+export {
+  StableBoundaryTracker,
+} from './resilience/stable-boundary.js';
+
+export {
+  ProviderRecoveryCoordinator,
+} from './resilience/recovery-coordinator.js';
+
+export {
+  reconstructMessagesWithToolGuard,
+} from './resilience/tool-guard.js';

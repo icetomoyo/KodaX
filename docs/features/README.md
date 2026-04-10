@@ -1,6 +1,6 @@
 # KodaX Feature Design Index
 
-> Last updated: 2026-04-01
+> Last updated: 2026-04-04
 >
 > Current released version: `v0.7.10`
 >
@@ -34,7 +34,7 @@ The current execution model is:
 - `H2` is `Planner -> Generator <-> Evaluator`
 - Skills are adapted into AMA through `Scout -> skill-map`
 - Non-generator AMA roles reuse compact same-role summaries across rounds instead of full private-history continuity
-- `Project` and `SA / AMA` are orthogonal; `Project + SA` persists a lightweight run record instead of a managed task
+- `FEATURE_054` is the intended convergence path for folding legacy Project semantics into AMA H2; do not read older project-mode docs as authorization to keep a second planning surface alive
 - `Work x/200` is the primary budget UX
 - `Round` is only user-visible when a real extra pass exists
 
@@ -46,10 +46,11 @@ The current execution model is:
 | [v0.7.10.md](./v0.7.10.md) | Repository intelligence, AMA cleanup, skill-aware orchestration |
 | [v0.7.15.md](./v0.7.15.md) | Provider resilience, retry UX, and graceful recovery |
 | [v0.7.20.md](./v0.7.20.md) | Roadmap integrity and planning hygiene, plus historical staging notes for features re-homed to `v0.8.0` |
-| [v0.7.25.md](./v0.7.25.md) | Host-aware TUI substrate, transcript verbosity, and review-fallback demotion |
-| [v0.8.0.md](./v0.8.0.md) | MCP substrate, prompt architecture, retrieval/evidence tooling, invisible parallelism, durable memory, and safe runtime |
-| [v0.9.0.md](./v0.9.0.md) | Multimodal inputs and harness maturation |
-| [v1.0.0.md](./v1.0.0.md) | Delivery surfaces |
+| [v0.7.25.md](./v0.7.25.md) | Host-aware TUI substrate close-out and historical staging for AMA-project convergence |
+| [v0.7.30.md](./v0.7.30.md) | Runtime clarity, harness safety, multimodal/repo substrate, and transcript-native tool interaction maturity |
+| [v0.8.0.md](./v0.8.0.md) | Dual-profile AMA, MCP substrate, prompt architecture, retrieval/evidence tooling, invisible parallelism, and durable memory |
+| [v0.9.0.md](./v0.9.0.md) | REPL substrate hardening close-out and historical staging for features moved earlier |
+| [v1.0.0.md](./v1.0.0.md) | Delivery surfaces outside the frozen shell |
 
 ## Historical release docs
 
@@ -71,3 +72,12 @@ These documents remain useful as implementation history, but they are not the so
 - Historical docs may still mention old role names or layer boundaries as part of migration history.
 - The active architecture should be interpreted through the top-level docs, not by reading an older release doc in isolation.
 - When a historical doc and a current doc disagree, the current doc wins.
+- `FEATURE_051` is now the completed visible-shell close-out for the REPL.
+- `FEATURE_055` closes the remaining REPL substrate hardening without reopening the shell surface.
+- `FEATURE_046 / 047 / 052` describe AMA substrate and fan-out rules; they do not authorize a heavier multi-agent REPL surface by themselves.
+- For REPL/TUI context, read `051 -> 055 -> 046/047/052` in that order.
+- `FEATURE_054 / 038 / 031 / 042 / 053 / 043 / 023 / 056` are now intentionally grouped under `v0.7.30` so runtime clarity, harness safety, and transcript-native interaction maturity can be advanced together.
+- `FEATURE_054` is the architecture-side convergence doc for removing the old Project split; read it before trusting any older `/project` references.
+- `FEATURE_023` is now a future delivery/terminal-ergonomics doc, not a license to reopen REPL shell redesign already closed by `051/055`.
+- `FEATURE_031` and `FEATURE_042` stay transcript-first and summary-first: multimodal intake should not become a media workbench, and repo intelligence should not become a graph product.
+- `FEATURE_056` is the planned follow-up for tool interaction maturity inside the frozen shell: it should improve explanation, diff/progress/error affordances, and transcript-native actions without adding a control-tower UI.

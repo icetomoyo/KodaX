@@ -52,6 +52,7 @@ import {
   KodaXEvents,
   KodaXReasoningMode,
   createExtensionRuntime,
+  registerConfiguredMcpCapabilityProvider,
   KODAX_DEFAULT_PROVIDER,
   KODAX_FEATURES_FILE,
   KODAX_PROGRESS_FILE,
@@ -69,6 +70,8 @@ import {
   buildInitPrompt,
   FileSessionStorage,
   KODAX_CONFIG_FILE,
+  resolveInteractiveSurfacePreference,
+  runInteractiveMode,
   runInkInteractiveMode,
   type PermissionMode,
 } from '@kodax/repl';
@@ -85,6 +88,12 @@ export {
   resolveCliParallel,
 };
 export type { KodaXCommand, KodaXCommandContext };
+
+function hasConfiguredMcpServers(config: { mcp?: { servers?: Record<string, { connect?: string }> } }): boolean {
+  return Object.values(config.mcp?.servers ?? {}).some(
+    (server) => (server.connect ?? 'lazy') !== 'disabled',
+  );
+}
 // ============== CLI Help Topics ==============
 
 const CLI_HELP_TOPICS: Record<string, () => void> = {
@@ -101,6 +110,10 @@ const CLI_HELP_TOPICS: Record<string, () => void> = {
     console.log(chalk.dim('  --model <name>               ') + 'Model override');
     console.log(chalk.dim('  --reasoning <mode>           ') + 'Reasoning mode: off, auto, quick, balanced, deep');
     console.log(chalk.dim('  --agent-mode <mode>          ') + 'Agent mode: ama, sa');
+    console.log(chalk.dim('  --repo-intelligence <mode>   ') + 'Repo intelligence mode: auto, off, oss, premium-shared, premium-native');
+    console.log(chalk.dim('  --repo-intelligence-trace    ') + 'Emit repo intelligence trace metadata/logging');
+    console.log(chalk.dim('  --repointel-endpoint <url>   ') + 'Premium daemon endpoint override');
+    console.log(chalk.dim('  --repointel-bin <path>       ') + 'Premium CLI path used to warm/start daemon');
     console.log(chalk.dim('  -t, --thinking               ') + 'Compatibility alias for --reasoning auto');
     console.log(chalk.dim('  --permission-mode <mode>     ') + 'Initial mode: plan, accept-edits, auto-in-project');
     console.log(chalk.dim('  KODAX_ACP_LOG=<level>        ') + 'stderr log level: off, error, info, debug\n');
@@ -366,6 +379,10 @@ function printAcpSubcommandHelp(name: string): boolean {
     console.log('  --model <name>               Model override');
     console.log('  -t, --thinking               Compatibility alias for --reasoning auto');
     console.log('  --reasoning <mode>           Reasoning mode: off, auto, quick, balanced, deep');
+    console.log('  --repo-intelligence <mode>   Repo intelligence mode: auto, off, oss, premium-shared, premium-native');
+    console.log('  --repo-intelligence-trace    Emit repo intelligence trace metadata/logging');
+    console.log('  --repointel-endpoint <url>   Premium daemon endpoint override');
+    console.log('  --repointel-bin <path>       Premium CLI path used to warm/start daemon');
     console.log('  --permission-mode <mode>     Initial permission mode');
     console.log('  KODAX_ACP_LOG=<level>        stderr log level: off, error, info, debug');
     return true;
@@ -565,6 +582,10 @@ async function main() {
     .option('-t, --thinking', 'Compatibility alias for --reasoning auto')
     .option('--reasoning <mode>', 'Reasoning mode: off, auto, quick, balanced, deep')
     .option('--agent-mode <mode>', 'Agent mode: ama, sa', parseAgentModeOption)
+    .option('--repo-intelligence <mode>', 'Repo intelligence mode: auto, off, oss, premium-shared, premium-native')
+    .option('--repo-intelligence-trace', 'Enable repo intelligence trace metadata/logging')
+    .option('--repointel-endpoint <url>', 'Premium daemon endpoint override')
+    .option('--repointel-bin <path>', 'Premium CLI path used to warm/start daemon')
     .option('-y, --auto', 'Backward-compat alias; no effect in non-REPL CLI')
     .option('-s, --session <op>', 'Legacy session operations: list, resume, delete <id>, delete-all, or raw session ID')
     .option('-j, --parallel', 'Parallel tool execution')
@@ -601,6 +622,10 @@ async function main() {
     .option('--model <name>', 'Model override')
     .option('-t, --thinking', 'Compatibility alias for --reasoning auto')
     .option('--reasoning <mode>', 'Reasoning mode: off, auto, quick, balanced, deep')
+    .option('--repo-intelligence <mode>', 'Repo intelligence mode: auto, off, oss, premium-shared, premium-native')
+    .option('--repo-intelligence-trace', 'Enable repo intelligence trace metadata/logging')
+    .option('--repointel-endpoint <url>', 'Premium daemon endpoint override')
+    .option('--repointel-bin <path>', 'Premium CLI path used to warm/start daemon')
     .option('--permission-mode <mode>', 'Initial permission mode', parsePermissionModeOption, 'accept-edits')
     .action(async (subcommandOptions: {
       cwd?: string;
@@ -608,8 +633,24 @@ async function main() {
       model?: string;
       thinking?: boolean;
       reasoning?: KodaXReasoningMode;
+      repoIntelligence?: string;
+      repoIntelligenceTrace?: boolean;
+      repointelEndpoint?: string;
+      repointelBin?: string;
       permissionMode?: PermissionMode;
     }) => {
+      if (typeof subcommandOptions.repoIntelligence === 'string' && subcommandOptions.repoIntelligence.trim()) {
+        process.env.KODAX_REPO_INTELLIGENCE_MODE = subcommandOptions.repoIntelligence.trim();
+      }
+      if (subcommandOptions.repoIntelligenceTrace === true) {
+        process.env.KODAX_REPO_INTELLIGENCE_TRACE = '1';
+      }
+      if (typeof subcommandOptions.repointelEndpoint === 'string' && subcommandOptions.repointelEndpoint.trim()) {
+        process.env.KODAX_REPOINTEL_ENDPOINT = subcommandOptions.repointelEndpoint.trim();
+      }
+      if (typeof subcommandOptions.repointelBin === 'string' && subcommandOptions.repointelBin.trim()) {
+        process.env.KODAX_REPOINTEL_BIN = subcommandOptions.repointelBin.trim();
+      }
       await runAcpServer({
         cwd: subcommandOptions.cwd,
         provider: subcommandOptions.provider,
@@ -914,6 +955,18 @@ async function main() {
   // Parse CLI options and merge with config defaults.
   const config = prepareRuntimeConfig();
   const configWithExtensions = config as typeof config & { extensions?: string[] };
+  if (typeof opts.repoIntelligence === 'string' && opts.repoIntelligence.trim()) {
+    process.env.KODAX_REPO_INTELLIGENCE_MODE = opts.repoIntelligence.trim();
+  }
+  if (opts.repoIntelligenceTrace === true) {
+    process.env.KODAX_REPO_INTELLIGENCE_TRACE = '1';
+  }
+  if (typeof opts.repointelEndpoint === 'string' && opts.repointelEndpoint.trim()) {
+    process.env.KODAX_REPOINTEL_ENDPOINT = opts.repointelEndpoint.trim();
+  }
+  if (typeof opts.repointelBin === 'string' && opts.repointelBin.trim()) {
+    process.env.KODAX_REPOINTEL_BIN = opts.repointelBin.trim();
+  }
   const reasoningMode = resolveCliReasoningMode(program, opts, config);
   const agentMode = resolveCliAgentMode(program, opts, config);
   const parallel = resolveCliParallel(program, opts, config);
@@ -933,6 +986,7 @@ async function main() {
     (value) => !dedupedCliExtensions.includes(value),
   );
   const activeExtensions = mergeConfiguredExtensions(dedupedCliExtensions, configuredOnlyExtensions);
+  const hasActiveMcp = hasConfiguredMcpServers(configWithExtensions);
   const selectedProvider = opts.provider ?? config.provider ?? KODAX_DEFAULT_PROVIDER;
   const selectedModel = resolveCliModelSelection(
     opts.provider,
@@ -1002,8 +1056,9 @@ async function main() {
 
   validateCliModeSelection(options, { resumeWithoutId: opts.resume === true });
 
-  if ((options.extensions?.length ?? 0) > 0) {
+  if ((options.extensions?.length ?? 0) > 0 || hasActiveMcp) {
     const extensionRuntime = createExtensionRuntime({ config });
+    await registerConfiguredMcpCapabilityProvider(extensionRuntime, configWithExtensions.mcp);
     const extensionLoader = extensionRuntime as typeof extensionRuntime & {
       loadExtensions: (
         paths: string[],
@@ -1251,10 +1306,20 @@ New: {"features": [
   // No prompt and not in print/init mode: enter interactive mode
   if (!userPrompt && !options.init && !options.print) {
     const kodaXOptions = createKodaXOptions(options, false);
+    const interactiveSurface = resolveInteractiveSurfacePreference();
+    const useClassicInteractiveMode = interactiveSurface === 'classic';
     // Pass FileSessionStorage for persisted sessions.
-    // Avoid forwarding CLI events or permission settings because Ink manages its own UI state.
     try {
-      await runInkInteractiveMode({
+      if (useClassicInteractiveMode) {
+        console.error(chalk.dim(
+          '\n[Terminal compatibility] Using classic REPL because this terminal host cannot safely run the fullscreen TUI.',
+        ));
+        console.error(chalk.dim(
+          'Set KODAX_FORCE_INK=1 or KODAX_TUI_RENDERER=owned to override, or KODAX_FORCE_CLASSIC_REPL=1 to keep this mode everywhere.\n',
+        ));
+      }
+
+      const interactiveOptions = {
         provider: kodaXOptions.provider,
         model: kodaXOptions.model,
         thinking: kodaXOptions.thinking,
@@ -1265,8 +1330,13 @@ New: {"features": [
         extensionRuntime: kodaXOptions.extensionRuntime,
         session: kodaXOptions.session,
         storage: new FileSessionStorage(),
-        // Use FileSessionStorage for persisted sessions; Ink manages its own UI state.
-      });
+      };
+
+      if (useClassicInteractiveMode) {
+        await runInteractiveMode(interactiveOptions);
+      } else {
+        await runInkInteractiveMode(interactiveOptions);
+      }
     } catch (error) {
       if (error instanceof KodaXTerminalError) {
         console.error(chalk.red(`\n[Error] ${error.message}`));

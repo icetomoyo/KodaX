@@ -16,8 +16,16 @@ describe('tool registry', () => {
   it('derives required params from the active tool schema', () => {
     expect(getRequiredToolParams('read')).toEqual(['path']);
     expect(getRequiredToolParams('ask_user_question')).toEqual(['question', 'options']);
+    expect(getRequiredToolParams('web_search')).toEqual(['query']);
+    expect(getRequiredToolParams('code_search')).toEqual(['query']);
+    expect(getRequiredToolParams('semantic_lookup')).toEqual(['query']);
+    expect(getRequiredToolParams('mcp_search')).toEqual(['query']);
+    expect(getRequiredToolParams('mcp_describe')).toEqual(['id']);
+    expect(getRequiredToolParams('mcp_call')).toEqual(['id']);
+    expect(getRequiredToolParams('mcp_read_resource')).toEqual(['id']);
     expect(getRequiredToolParams('changed_diff')).toEqual(['path']);
     expect(getRequiredToolParams('changed_diff_bundle')).toEqual(['paths']);
+    expect(getRequiredToolParams('insert_after_anchor')).toEqual(['path', 'anchor', 'content']);
   });
 
   it('supports same-name override and restore via disposer', async () => {

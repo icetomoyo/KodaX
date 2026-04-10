@@ -3,6 +3,10 @@
  */
 
 import type { KodaXMessage } from '@kodax/ai';
+import type {
+  KodaXCompactMemorySeed,
+  KodaXSessionArtifactLedgerEntry,
+} from '../types.js';
 
 export interface CompactionConfig {
   /** Whether automatic compaction is enabled. */
@@ -25,6 +29,12 @@ export interface CompactionConfig {
   rollingSummaryPercent?: number;
   /** Prune oversized tool results when they exceed roughly this many tokens. Defaults to 500. */
   pruningThresholdTokens?: number;
+  /**
+   * Gap ratio for prune fast-return. After pruning, if remaining tokens still exceed
+   * triggerTokens * pruningGapRatio, the system continues to the summarization path
+   * instead of returning early. Defaults to 0.8.
+   */
+  pruningGapRatio?: number;
   /** Optional override for the provider context window. */
   contextWindow?: number;
 }
@@ -32,6 +42,23 @@ export interface CompactionConfig {
 export interface CompactionDetails {
   readFiles: string[];
   modifiedFiles: string[];
+}
+
+export interface CompactionAnchor {
+  summary: string;
+  tokensBefore: number;
+  tokensAfter: number;
+  entriesRemoved: number;
+  reason: string;
+  artifactLedgerId?: string;
+  details?: CompactionDetails;
+  memorySeed?: KodaXCompactMemorySeed;
+}
+
+export interface CompactionUpdate {
+  anchor?: CompactionAnchor;
+  artifactLedger?: KodaXSessionArtifactLedgerEntry[];
+  memorySeed?: KodaXCompactMemorySeed;
 }
 
 export interface CompactionResult {
@@ -42,6 +69,9 @@ export interface CompactionResult {
   tokensAfter: number;
   entriesRemoved: number;
   details?: CompactionDetails;
+  artifactLedger?: KodaXSessionArtifactLedgerEntry[];
+  anchor?: CompactionAnchor;
+  memorySeed?: KodaXCompactMemorySeed;
 }
 
 export interface FileOperations {

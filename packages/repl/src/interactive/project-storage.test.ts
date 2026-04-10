@@ -301,6 +301,7 @@ describe('project-storage brainstorm persistence', () => {
     await storage.writeSessionPlan('# Plan\n');
     await storage.writeHarnessConfig({ version: 1, checks: [] });
     await storage.appendHarnessRun({ featureIndex: 0 });
+    await storage.appendHarnessCalibrationCase({ caseId: 'cal-1', featureIndex: 0 });
     await storage.appendHarnessCheckpoint({ checkpointId: 'cp-1' });
     await storage.appendHarnessSessionNode({ nodeId: 'node-1' });
     await storage.writeHarnessEvidence(0, { ok: true });
@@ -309,5 +310,48 @@ describe('project-storage brainstorm persistence', () => {
 
     expect(result.failed).toBe(0);
     expect(existsSync(storage.getPaths().projectArtifactsRoot)).toBe(false);
+  });
+
+  it('persists calibration corpus records under the harness root', async () => {
+    const storage = new ProjectStorage(tempDir);
+    const record = {
+      caseId: 'feature-0-run-1-false_fail',
+      runId: 'feature-0-run-1',
+      featureIndex: 0,
+      label: 'false_fail',
+      observedDecision: 'retryable_failure',
+      expectedDecision: 'verified_complete',
+      checkpointId: 'feature-0-run-1-checkpoint',
+      failureCodes: ['missing_completion_report'],
+      summary: 'Harness rejected a completion that manual review later accepted.',
+      createdAt: '2026-04-05T12:00:00.000Z',
+    };
+
+    await storage.appendHarnessCalibrationCase(record);
+
+    await expect(storage.readHarnessCalibrationCases()).resolves.toEqual([record]);
+    expect(storage.getPaths().harnessCalibration).toContain('.agent');
+    expect(storage.getPaths().harnessCalibration).toContain('calibration.jsonl');
+  });
+
+  it('persists pivot records under the harness root', async () => {
+    const storage = new ProjectStorage(tempDir);
+    const record = {
+      pivotId: 'feature-0-run-1-pivot',
+      featureIndex: 0,
+      fromRunId: 'feature-0-run-1',
+      fromCheckpointId: 'feature-0-run-1-checkpoint',
+      evidenceFeatureIndex: 0,
+      decision: 'needs_review',
+      failureCodes: ['stall_repeated_failure'],
+      reason: 'Verifier keeps stalling on the same proof gap.',
+      summary: 'Pivot away from the stalled path and keep the latest checkpoint.',
+      createdAt: '2026-04-05T12:15:00.000Z',
+    };
+
+    await storage.appendHarnessPivot(record);
+
+    await expect(storage.readHarnessPivots()).resolves.toEqual([record]);
+    expect(storage.getPaths().harnessPivots).toContain('pivots.jsonl');
   });
 });

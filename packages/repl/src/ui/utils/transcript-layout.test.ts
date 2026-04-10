@@ -3,13 +3,19 @@ import { ToolCallStatus, type HistoryItem } from "../types.js";
 import {
   buildDynamicTranscriptSection,
   buildHistoryItemTranscriptSections,
+  buildTranscriptRenderModel,
   buildTranscriptRows,
   buildStaticTranscriptSections,
   capHistoryByTranscriptRows,
   flattenTranscriptSections,
   getVisibleTranscriptRows,
+  materializeTranscriptRenderModel,
   sliceHistoryToRecentRounds,
 } from "./transcript-layout.js";
+
+function renderedText(model: ReturnType<typeof buildTranscriptRenderModel>): string {
+  return [...model.rows, ...model.previewRows].map((row) => row.text).join("\n");
+}
 
 function assistant(text: string): HistoryItem {
   return {
@@ -49,6 +55,18 @@ describe("transcript-layout", () => {
     expect(rows.some((row) => row.text.includes("Final line must stay visible"))).toBe(true);
   });
 
+  it("keeps persisted assistant output intact even when compact maxLines is small", () => {
+    const rows = buildTranscriptRows({
+      items: [assistant(Array.from({ length: 8 }, (_, index) => `line ${index + 1}`).join("\n"))],
+      viewportWidth: 80,
+      maxLines: 5,
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text).toContain("line 8");
+    expect(text).not.toContain("more lines");
+  });
+
   it("keeps the latest rows when slicing a transcript viewport", () => {
     const rows = buildTranscriptRows({
       items: [assistant(["one", "two", "three", "four", "five", "tail line"].join("\n"))],
@@ -86,6 +104,34 @@ describe("transcript-layout", () => {
     expect(text).not.toContain("Info");
   });
 
+  it("keeps compact info text by default but expands full info content in transcript show-all mode", () => {
+    const item: HistoryItem = {
+      id: "info-detail-1",
+      type: "info",
+      text: "AMA H2 - Planner completed: compact summary\n\nFull planner detail line 1\nFull planner detail line 2",
+      compactText: "AMA H2 - Planner completed: compact summary",
+      icon: ">",
+      timestamp: Date.now(),
+    };
+
+    const compactRows = buildTranscriptRows({
+      items: [item],
+      viewportWidth: 80,
+    });
+    const compactText = compactRows.map((row) => row.text).join("\n");
+    expect(compactText).toContain("> AMA H2 - Planner completed: compact summary");
+    expect(compactText).not.toContain("Full planner detail line 2");
+
+    const expandedRows = buildTranscriptRows({
+      items: [item],
+      viewportWidth: 80,
+      showAllContent: true,
+    });
+    const expandedText = expandedRows.map((row) => row.text).join("\n");
+    expect(expandedText).toContain("Full planner detail line 1");
+    expect(expandedText).toContain("Full planner detail line 2");
+  });
+
   it("includes streaming and loading rows in a single transcript", () => {
     const rows = buildTranscriptRows({
       items: [],
@@ -118,6 +164,109 @@ describe("transcript-layout", () => {
     expect(text).toContain("* tools: read_file");
   });
 
+  it("keeps managed live events out of transcript live render models while preserving actual streaming content", () => {
+    const model = buildTranscriptRenderModel({
+      items: [assistant("Previous review round finished.")],
+      managedLiveEvents: [
+        {
+          id: "managed-event-1",
+          type: "event",
+          timestamp: Date.now(),
+          icon: ">",
+          text: "Generator isolated two suspicious call sites.\nDetailed call-site notes remain available for expansion.",
+          compactText: "Generator isolated two suspicious call sites.",
+        },
+      ],
+      viewportWidth: 80,
+      isLoading: true,
+      isThinking: true,
+      thinkingCharCount: 84,
+      thinkingContent: "Verifying that the live transcript keeps progress events and final review text visible together.",
+      streamingResponse: "Found 2 must-fix issues.",
+      showFullThinking: true,
+      showLiveProgressRows: true,
+    });
+
+    const text = renderedText(model);
+    expect(text).toContain("Previous review round finished.");
+    expect(text).toContain("Verifying that the live transcript keeps progress events");
+    expect(text).toContain("Found 2 must-fix issues.");
+    expect(text).not.toContain("Generator isolated two suspicious call sites.");
+  });
+
+  it("ignores managed live thinking and assistant summaries in compact transcript mode", () => {
+    const model = buildTranscriptRenderModel({
+      items: [assistant("Previous review round finished.")],
+      managedLiveEvents: [
+        {
+          id: "managed-thinking-1",
+          type: "thinking",
+          timestamp: Date.now(),
+          text: "Scout thinking: full hidden reasoning detail that should stay out of compact transcript mode.",
+          compactText: "Scout thinking: tracing the protocol fallback path.",
+        },
+        {
+          id: "managed-assistant-1",
+          type: "assistant",
+          timestamp: Date.now(),
+          text: "Planner: full hidden worker summary detail that should stay out of compact transcript mode.",
+          compactText: "Planner: narrowed the diff review to task-engine.ts and InkREPL.tsx.",
+        },
+      ] as any,
+      viewportWidth: 80,
+      isLoading: false,
+      showLiveProgressRows: true,
+    });
+
+    const text = renderedText(model);
+    expect(text).toContain("Previous review round finished.");
+    expect(text).not.toContain("Scout thinking: tracing the protocol fallback path.");
+    expect(text).not.toContain("Planner: narrowed the diff review to task-engine.ts and InkREPL.tsx.");
+    expect(text).not.toContain("full hidden worker summary detail");
+  });
+
+  it("can suppress prompt-surface live progress rows while keeping streamed content", () => {
+    const rows = buildTranscriptRows({
+      items: [],
+      viewportWidth: 60,
+      isLoading: true,
+      isThinking: true,
+      thinkingCharCount: 42,
+      thinkingContent: "thinking details",
+      streamingResponse: "partial response",
+      currentIteration: 2,
+      iterationHistory: [
+        {
+          iteration: 1,
+          thinkingSummary: "summary",
+          thinkingLength: 120,
+          response: "response snippet",
+          toolsUsed: ["read_file"],
+        },
+      ],
+      currentTool: "read_file",
+      activeToolCalls: [
+        {
+          id: "tool-1",
+          name: "read_file",
+          status: ToolCallStatus.Executing,
+          input: { path: "path/to/file" },
+          startTime: Date.now(),
+        },
+      ],
+      toolInputCharCount: 12,
+      toolInputContent: "path/to/file",
+      showLiveProgressRows: false,
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text).toContain("partial response");
+    expect(text).toContain("thinking details");
+    expect(text).toContain("read_file - path/to/file");
+    expect(text).not.toContain("Round 1");
+    expect(text).not.toContain("* tools: read_file");
+  });
+
   it("shows thinking char counts while the model is still thinking", () => {
     const rows = buildTranscriptRows({
       items: [],
@@ -143,11 +292,11 @@ describe("transcript-layout", () => {
     });
 
     const text = rows.map((row) => row.text).join("\n");
-    expect(text).toContain("thinking truncated in live view");
+    expect(text).toContain("thinking truncated; press Ctrl+O to inspect full reasoning");
     expect(text).not.toContain("A".repeat(430));
   });
 
-  it("shows full thinking in review mode", () => {
+  it("shows full thinking in transcript mode", () => {
     const thinking = "B".repeat(450);
     const rows = buildTranscriptRows({
       items: [],
@@ -161,7 +310,95 @@ describe("transcript-layout", () => {
 
     const text = rows.map((row) => row.text).join("\n");
     expect(text.replace(/\n/g, "")).toContain("B".repeat(430));
-    expect(text).not.toContain("thinking truncated in live view");
+    expect(text).not.toContain("thinking truncated; press Ctrl+O to inspect full reasoning");
+  });
+
+  it("shows full thinking when transcript show-all mode is active", () => {
+    const thinking = "C".repeat(450);
+    const rows = buildTranscriptRows({
+      items: [],
+      viewportWidth: 80,
+      isLoading: true,
+      isThinking: true,
+      thinkingContent: thinking,
+      thinkingCharCount: thinking.length,
+      showAllContent: true,
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text.replace(/\n/g, "")).toContain("C".repeat(430));
+    expect(text).not.toContain("thinking truncated; press Ctrl+O to inspect full reasoning");
+  });
+
+  it("truncates persisted thinking blocks in compact mode using transcript maxLines", () => {
+    const rows = buildTranscriptRows({
+      items: [
+        {
+          id: "thinking-1",
+          type: "thinking",
+          text: Array.from({ length: 20 }, (_, index) => `line ${index + 1}`).join("\n"),
+          timestamp: Date.now(),
+        },
+      ],
+      viewportWidth: 80,
+      maxLines: 5,
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text).toContain("line 1");
+    expect(text).toContain("line 5");
+    expect(text).toContain("thinking truncated; press Ctrl+O to inspect full reasoning");
+    expect(text).not.toContain("line 6");
+  });
+
+  it("does not truncate persisted thinking blocks when full thinking is enabled", () => {
+    const rows = buildTranscriptRows({
+      items: [
+        {
+          id: "thinking-2",
+          type: "thinking",
+          text: Array.from({ length: 8 }, (_, index) => `detail ${index + 1}`).join("\n"),
+          timestamp: Date.now(),
+        },
+      ],
+      viewportWidth: 80,
+      maxLines: 5,
+      showFullThinking: true,
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text).toContain("detail 8");
+    expect(text).not.toContain("thinking truncated; press Ctrl+O to inspect full reasoning");
+  });
+
+  it("does not truncate tool output when transcript show-all mode is active", () => {
+    const output = Array.from({ length: 12 }, (_, index) => `output ${index + 1}`).join("\n");
+    const rows = buildTranscriptRows({
+      items: [
+        {
+          id: "tool-group-1",
+          type: "tool_group",
+          timestamp: Date.now(),
+          tools: [
+            {
+              id: "tool-1",
+              name: "bash",
+              status: ToolCallStatus.Success,
+              input: { command: "echo test" },
+              output,
+              startTime: Date.now(),
+            },
+          ],
+        },
+      ],
+      viewportWidth: 80,
+      showDetailedTools: true,
+      showAllContent: true,
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text).toContain("output 12");
+    expect(text).not.toContain("more lines");
   });
 
   it("shows AMA harness level and active worker in the live thinking row", () => {
@@ -264,7 +501,7 @@ describe("transcript-layout", () => {
     expect(text).toContain("[AMA H2 - Planner] [Tools] changed_diff (18 chars)...");
   });
 
-  it("formats tool rows with progress and errors", () => {
+  it("formats tool rows with progress for active tools", () => {
     const rows = buildTranscriptRows({
       items: [
         {
@@ -287,8 +524,61 @@ describe("transcript-layout", () => {
     });
 
     const text = rows.map((row) => row.text).join("\n");
-    expect(text).toContain("write_file (50%)");
-    expect(text).toContain("denied");
+    expect(text).toContain("write_file (running - 50%)");
+    expect(text).toContain("Progress: 50% complete");
+  });
+
+  it("adds a compact waiting explanation for approval-blocked tools", () => {
+    const rows = buildTranscriptRows({
+      items: [
+        {
+          id: "tool-group-awaiting",
+          type: "tool_group",
+          timestamp: Date.now(),
+          tools: [
+            {
+              id: "tool-awaiting",
+              name: "write_file",
+              status: ToolCallStatus.AwaitingApproval,
+              startTime: Date.now(),
+            },
+          ],
+        },
+      ],
+      viewportWidth: 80,
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text).toContain("write_file (awaiting approval)");
+    expect(text).toContain("Waiting: approval required before execution");
+  });
+
+  it("adds compact last-output context for failed tools without opening detailed review", () => {
+    const rows = buildTranscriptRows({
+      items: [
+        {
+          id: "tool-group-3",
+          type: "tool_group",
+          timestamp: Date.now(),
+          tools: [
+            {
+              id: "tool-3",
+              name: "bash",
+              status: ToolCallStatus.Error,
+              startTime: Date.now(),
+              error: "permission denied",
+              output: "fatal: permission denied\nstack trace line 2",
+            },
+          ],
+        },
+      ],
+      viewportWidth: 80,
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text).toContain("bash (failed)");
+    expect(text).toContain("Error: permission denied");
+    expect(text).toContain("Last output: fatal: permission denied");
   });
 
   it("formats tool summaries from structured preview text in tool groups", () => {
@@ -322,7 +612,7 @@ describe("transcript-layout", () => {
     expect(text).toContain("(10ms)");
   });
 
-  it("shows detailed tool output only when review mode is enabled", () => {
+  it("shows detailed tool output only when transcript mode is enabled", () => {
     const baseTool = {
       id: "tool-3",
       name: "[Lead] changed_diff",
@@ -360,8 +650,77 @@ describe("transcript-layout", () => {
       showDetailedTools: true,
     });
 
-    expect(normalRows.map((row) => row.text).join("\n")).not.toContain("Showing diff lines 1171-1320 of 3096");
+    const normalText = normalRows.map((row) => row.text).join("\n");
+    expect(normalText).toContain("Diff range: 1171-1320 of 3096");
+    expect(normalText).toContain("Preview: + const example = true;");
+    expect(normalText).not.toContain("Showing diff lines 1171-1320 of 3096");
     expect(reviewRows.map((row) => row.text).join("\n")).toContain("Showing diff lines 1171-1320 of 3096");
+  });
+
+  it("shows compact bundle explanations for successful diff bundles", () => {
+    const rows = buildTranscriptRows({
+      items: [
+        {
+          id: "tool-group-bundle",
+          type: "tool_group",
+          timestamp: Date.now(),
+          tools: [
+            {
+              id: "tool-bundle-1",
+              name: "[Planner] changed_diff_bundle",
+              status: ToolCallStatus.Success,
+              startTime: Date.now(),
+              endTime: Date.now() + 10,
+              input: {
+                preview: "{\"paths\":[\"packages/a.ts\",\"packages/b.ts\"],\"limit_per_path\":120}",
+              },
+              output: [
+                "Changed diff bundle for 2 file(s)",
+                "=== packages/a.ts ===",
+                "+ const a = 1;",
+              ].join("\n"),
+            },
+          ],
+        },
+      ],
+      viewportWidth: 100,
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text).toContain("Bundle: 2 files");
+    expect(text).toContain("First file: packages/a.ts");
+  });
+
+  it("shows detailed tool input previews when the transcript is expanded", () => {
+    const rows = buildTranscriptRows({
+      items: [
+        {
+          id: "tool-group-input",
+          type: "tool_group",
+          timestamp: Date.now(),
+          tools: [
+            {
+              id: "tool-input-1",
+              name: "changed_diff",
+              status: ToolCallStatus.Success,
+              startTime: Date.now(),
+              endTime: Date.now() + 10,
+              input: {
+                path: "packages/repl/src/ui/InkREPL.tsx",
+                offset: 42,
+                limit: 80,
+              },
+            },
+          ],
+        },
+      ],
+      viewportWidth: 100,
+      showDetailedTools: true,
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text).toContain("input:");
+    expect(text).toContain("\"path\": \"packages/repl/src/ui/InkREPL.tsx\"");
   });
 
   it("shows compact live tool summaries when tool input preview is available", () => {
@@ -423,6 +782,7 @@ describe("transcript-layout", () => {
     expect(text).toContain("[Scout] changed_scope - packages/coding/src (84ms)");
     expect(text).toContain("[Scout] repo_overview - packages/coding/src");
     expect(text).toContain("[Scout] read - packages/coding/src/task-engine.ts - offset=3160 - limit=80");
+    expect(text).toContain("Running: waiting for tool output");
   });
 
   it("keeps the completed live tool block visible until the response starts", () => {
@@ -579,6 +939,57 @@ describe("transcript-layout", () => {
     expect(sections[1]?.key).toBe("assistant-1");
     expect(sections[0]?.rows.some((row) => row.text.includes("prompt"))).toBe(true);
     expect(sections[1]?.rows.some((row) => row.text.includes("answer"))).toBe(true);
+  });
+
+  it("builds a windowed transcript render model with rows owned outside MessageList", () => {
+    const model = buildTranscriptRenderModel({
+      items: [
+        {
+          id: "user-1",
+          type: "user",
+          text: "prompt",
+          timestamp: Date.now(),
+        },
+        {
+          id: "assistant-1",
+          type: "assistant",
+          text: "answer",
+          timestamp: Date.now(),
+        },
+      ],
+      viewportWidth: 80,
+      windowed: true,
+    });
+
+    const text = model.rows.map((row) => row.text).join("\n");
+    expect(model.staticSections).toHaveLength(0);
+    expect(text).toContain("prompt");
+    expect(text).toContain("answer");
+  });
+
+  it("materializes static transcript sections into inline rows for main-screen transcript surfaces", () => {
+    const model = buildTranscriptRenderModel({
+      items: [
+        user("user-1", "first prompt"),
+        assistant("first answer"),
+        user("user-2", "second prompt"),
+        assistant("second answer"),
+      ],
+      viewportWidth: 80,
+      windowed: false,
+      showDetailedTools: true,
+    });
+
+    expect(model.staticSections.length).toBeGreaterThan(0);
+
+    const materialized = materializeTranscriptRenderModel(model);
+    const text = materialized.rows.map((row) => row.text).join("\n");
+
+    expect(materialized.staticSections).toHaveLength(0);
+    expect(text).toContain("first prompt");
+    expect(text).toContain("first answer");
+    expect(text).toContain("second prompt");
+    expect(text).toContain("second answer");
   });
 
   it("keeps only the most recent user-defined rounds", () => {

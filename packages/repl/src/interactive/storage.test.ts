@@ -2,6 +2,7 @@ import os from 'os';
 import path from 'path';
 import { mkdtemp, readFile, rm, writeFile } from 'fs/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { applySessionCompaction, createSessionLineage } from '@kodax/coding';
 
 describe('FileSessionStorage', () => {
   let tempHome: string;
@@ -35,14 +36,36 @@ describe('FileSessionStorage', () => {
   });
 
   it('round-trips extension state and extension records through JSONL session storage', async () => {
+    const gitRoot = path.resolve('C:/Works/GitWorks/KodaX').replace(/\\/g, '/');
+    vi.doMock('./workspace-runtime.js', async () => {
+      const actual = await vi.importActual<typeof import('./workspace-runtime.js')>('./workspace-runtime.js');
+      return {
+        ...actual,
+        inspectWorkspaceRuntime: vi.fn(async () => ({
+          canonicalRepoRoot: gitRoot,
+          workspaceRoot: gitRoot,
+          executionCwd: `${gitRoot}/packages/repl`,
+          branch: 'feature/runtime-truth',
+          workspaceKind: 'detected',
+        })),
+      };
+    });
+
     const { FileSessionStorage } = await import('./storage.js');
     const storage = new FileSessionStorage();
-    const gitRoot = path.resolve('C:/Works/GitWorks/KodaX').replace(/\\/g, '/');
+    const runtimeInfo = {
+      canonicalRepoRoot: gitRoot,
+      workspaceRoot: gitRoot,
+      executionCwd: `${gitRoot}/packages/repl`,
+      branch: 'feature/runtime-truth',
+      workspaceKind: 'detected' as const,
+    };
 
     await storage.save('session-1', {
       messages: [{ role: 'user', content: 'hello persisted runtime' }],
       title: 'Persisted Runtime',
       gitRoot,
+      runtimeInfo,
       uiHistory: [
         { type: 'user', text: 'hello persisted runtime' },
         { type: 'assistant', text: 'managed transcript survives resume' },
@@ -63,18 +86,45 @@ describe('FileSessionStorage', () => {
           dedupeKey: 'latest',
         },
       ],
+      artifactLedger: [
+        {
+          id: 'artifact-1',
+          kind: 'file_read',
+          sourceTool: 'read',
+          action: 'read',
+          target: 'src/app.ts',
+          displayTarget: 'src/app.ts',
+          summary: 'Read src/app.ts',
+          timestamp: '2026-04-03T00:00:00.000Z',
+          metadata: { reason: 'resume' },
+        },
+      ],
     });
 
     await expect(storage.load('session-1')).resolves.toEqual({
       messages: [{ role: 'user', content: 'hello persisted runtime' }],
       title: 'Persisted Runtime',
       gitRoot,
+      runtimeInfo,
       scope: 'user',
       uiHistory: [
         { type: 'user', text: 'hello persisted runtime' },
         { type: 'assistant', text: 'managed transcript survives resume' },
       ],
       errorMetadata: undefined,
+      artifactLedger: [
+        {
+          id: 'artifact-1',
+          kind: 'file_read',
+          sourceTool: 'read',
+          action: 'read',
+          target: 'src/app.ts',
+          displayTarget: 'src/app.ts',
+          summary: 'Read src/app.ts',
+          timestamp: '2026-04-03T00:00:00.000Z',
+          metadata: { reason: 'resume' },
+        },
+      ],
       extensionState: {
         'api:extension:C:/repo/extensions/sample.mjs': {
           phase: 'collecting',
@@ -108,8 +158,88 @@ describe('FileSessionStorage', () => {
         id: 'session-1',
         title: 'Persisted Runtime',
         msgCount: 1,
+        runtimeInfo,
       },
     ]);
+  });
+
+  it('lists sibling workspace sessions when canonical repo identity matches', async () => {
+    vi.doMock('./workspace-runtime.js', async () => {
+      const actual = await vi.importActual<typeof import('./workspace-runtime.js')>('./workspace-runtime.js');
+      return {
+        ...actual,
+        inspectWorkspaceRuntime: vi.fn(async () => ({
+          canonicalRepoRoot: 'C:/repo',
+          workspaceRoot: 'C:/repo/worktrees/main',
+          executionCwd: 'C:/repo/worktrees/main',
+          branch: 'main',
+          workspaceKind: 'detected',
+        })),
+      };
+    });
+
+    const { FileSessionStorage } = await import('./storage.js');
+    const storage = new FileSessionStorage();
+    const canonicalRepoRoot = 'C:/repo';
+    const mainWorkspace = 'C:/repo/worktrees/main';
+    const siblingWorkspace = 'C:/repo/worktrees/feature-runtime';
+
+    await storage.save('session-main', {
+      messages: [{ role: 'user', content: 'main workspace session' }],
+      title: 'Main Workspace',
+      gitRoot: mainWorkspace,
+      runtimeInfo: {
+        canonicalRepoRoot,
+        workspaceRoot: mainWorkspace,
+        executionCwd: mainWorkspace,
+        branch: 'main',
+        workspaceKind: 'detected',
+      },
+      scope: 'user',
+    });
+
+    await storage.save('session-sibling', {
+      messages: [{ role: 'user', content: 'sibling workspace session' }],
+      title: 'Sibling Workspace',
+      gitRoot: siblingWorkspace,
+      runtimeInfo: {
+        canonicalRepoRoot,
+        workspaceRoot: siblingWorkspace,
+        executionCwd: `${siblingWorkspace}/packages/repl`,
+        branch: 'feature/runtime-truth',
+        workspaceKind: 'managed',
+      },
+      scope: 'user',
+    });
+
+    await storage.save('session-other-repo', {
+      messages: [{ role: 'user', content: 'other repo session' }],
+      title: 'Other Repo',
+      gitRoot: 'C:/other/workspace',
+      runtimeInfo: {
+        canonicalRepoRoot: 'C:/other',
+        workspaceRoot: 'C:/other/workspace',
+        executionCwd: 'C:/other/workspace',
+        branch: 'main',
+        workspaceKind: 'detected',
+      },
+      scope: 'user',
+    });
+
+    const sessions = await storage.list(mainWorkspace);
+    expect(sessions).toHaveLength(2);
+    expect(sessions.map((session) => session.id)).toEqual(
+      expect.arrayContaining(['session-main', 'session-sibling']),
+    );
+    expect(sessions.map((session) => session.id)).not.toContain('session-other-repo');
+    expect(sessions.find((session) => session.id === 'session-sibling')).toMatchObject({
+      runtimeInfo: {
+        canonicalRepoRoot,
+        workspaceRoot: siblingWorkspace,
+        branch: 'feature/runtime-truth',
+        workspaceKind: 'managed',
+      },
+    });
   });
 
   it('supports branch switching, checkpoint labels, and forking without losing prior history', async () => {
@@ -180,6 +310,97 @@ describe('FileSessionStorage', () => {
         { role: 'assistant', content: 'second pass' },
       ],
     });
+  });
+
+  it('persists compaction anchors and artifact ledgers through JSONL round-trips', async () => {
+    const { FileSessionStorage } = await import('./storage.js');
+    const storage = new FileSessionStorage();
+    const gitRoot = path.resolve('C:/Works/GitWorks/KodaX').replace(/\\/g, '/');
+
+    const baseLineage = createSessionLineage([
+      { role: 'user', content: 'root task' },
+      { role: 'assistant', content: 'initial implementation' },
+    ]);
+    const lineage = applySessionCompaction(
+      baseLineage,
+      [
+        { role: 'system', content: '[对话历史摘要]\n\nCompacted summary' },
+        { role: 'assistant', content: 'continue from summary' },
+      ],
+      {
+        summary: 'Compacted summary',
+        tokensBefore: 1000,
+        tokensAfter: 250,
+        artifactLedgerId: 'ledger_abc123',
+        reason: 'automatic_compaction',
+        details: {
+          readFiles: ['src/app.ts'],
+          modifiedFiles: ['src/feature.ts'],
+        },
+        memorySeed: {
+          objective: 'Continue from summary',
+          constraints: ['Keep scope tight'],
+          progress: {
+            completed: ['Compacted old context'],
+            inProgress: ['Resume latest implementation'],
+            blockers: [],
+          },
+          keyDecisions: ['Keep the summary durable'],
+          nextSteps: ['Continue the feature'],
+          keyContext: ['src/app.ts'],
+          importantTargets: ['src/feature.ts'],
+          tombstones: [],
+        },
+      },
+    );
+
+    await storage.save('session-compacted', {
+      messages: [
+        { role: 'system', content: '[对话历史摘要]\n\nCompacted summary' },
+        { role: 'assistant', content: 'continue from summary' },
+      ],
+      title: 'Compacted Session',
+      gitRoot,
+      lineage,
+      artifactLedger: [
+        {
+          id: 'artifact-1',
+          kind: 'file_modified',
+          sourceTool: 'edit',
+          action: 'edit',
+          target: 'src/feature.ts',
+          displayTarget: 'src/feature.ts',
+          summary: 'Edited src/feature.ts',
+          timestamp: '2026-04-03T00:00:00.000Z',
+        },
+      ],
+    });
+
+    await expect(storage.load('session-compacted')).resolves.toEqual(
+      expect.objectContaining({
+        title: 'Compacted Session',
+        artifactLedger: [
+          expect.objectContaining({
+            id: 'artifact-1',
+            kind: 'file_modified',
+            target: 'src/feature.ts',
+          }),
+        ],
+        lineage: expect.objectContaining({
+          entries: expect.arrayContaining([
+            expect.objectContaining({
+              type: 'compaction',
+              summary: 'Compacted summary',
+              artifactLedgerId: 'ledger_abc123',
+              firstKeptEntryId: expect.any(String),
+              memorySeed: expect.objectContaining({
+                objective: 'Continue from summary',
+              }),
+            }),
+          ]),
+        }),
+      }),
+    );
   });
 
   it('hides managed-task worker sessions from default session listing and sorts by createdAt', async () => {

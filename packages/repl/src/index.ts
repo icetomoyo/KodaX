@@ -15,6 +15,31 @@ export { runInteractiveMode, processSpecialSyntax, type RepLOptions } from "./in
 
 // === UI 组件 ===
 export * from "./ui/index.js";
+export {
+  detectTerminalRenderHost,
+  detectTerminalHostProfile,
+  getTerminalHostCapabilities,
+  hasCursorUpViewportYankRisk,
+  hasMainScreenRenderScrollRisk,
+  isTmuxControlMode,
+  isVsCodeTerminalHostEnv,
+  resolveConfiguredTuiRendererMode,
+  resolveEffectiveTuiRendererMode,
+  resolveFullscreenPolicy,
+  resolveInteractiveSurfacePreference,
+  isOwnedRendererPreferred,
+  isClassicReplForced,
+} from "./ui/utils/terminal-host-profile.js";
+export type {
+  EffectiveTuiRendererMode,
+  FullscreenPolicy,
+  InteractiveSurfacePreference,
+  TerminalHostCapabilities,
+  TerminalHostDetectionOptions,
+  TerminalHostProfile,
+  TerminalRenderHost,
+  TuiRendererMode,
+} from "./ui/utils/terminal-host-profile.js";
 
 // === 交互式命令系统 ===
 export {

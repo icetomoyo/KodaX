@@ -119,6 +119,56 @@ class Feature034ParallelProvider extends KodaXBaseProvider {
   }
 }
 
+class Feature034ManagedProtocolProvider extends KodaXBaseProvider {
+  static calls: Array<{
+    messages: KodaXMessage[];
+    tools: KodaXToolDefinition[];
+  }> = [];
+
+  readonly name = TEST_PROVIDER_NAME;
+  readonly supportsThinking = true;
+  protected readonly config: KodaXProviderConfig = {
+    apiKeyEnv: TEST_PROVIDER_API_KEY_ENV,
+    model: 'baseline-model',
+    supportsThinking: true,
+  };
+
+  async stream(
+    messages: KodaXMessage[],
+    tools: KodaXToolDefinition[],
+    _system: string,
+    _reasoning?: boolean | KodaXReasoningRequest,
+    _streamOptions?: KodaXProviderStreamOptions,
+    _signal?: AbortSignal,
+  ): Promise<KodaXStreamResult> {
+    Feature034ManagedProtocolProvider.calls.push({ messages, tools });
+    return {
+      textBlocks: [{ type: 'text', text: 'Structured evaluator answer.' }],
+      toolBlocks: [
+        {
+          type: 'tool_use',
+          id: 'protocol-1',
+          name: 'emit_managed_protocol',
+          input: {
+            role: 'evaluator',
+            payload: {
+              status: 'accept',
+              reason: 'Protocol payload emitted through the hidden tool.',
+              followups: ['none'],
+            },
+          },
+        },
+      ],
+      thinkingBlocks: [],
+      usage: {
+        inputTokens: 10,
+        outputTokens: 5,
+        totalTokens: 15,
+      },
+    };
+  }
+}
+
 describe('runKodaX extension runtime integration', () => {
   let tempDir: string;
 
@@ -126,6 +176,7 @@ describe('runKodaX extension runtime integration', () => {
     tempDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-034-'));
     process.env[TEST_PROVIDER_API_KEY_ENV] = 'test-key';
     Feature034TestProvider.calls = [];
+    Feature034ManagedProtocolProvider.calls = [];
   });
 
   afterEach(async () => {
@@ -134,12 +185,17 @@ describe('runKodaX extension runtime integration', () => {
     delete (globalThis as typeof globalThis & {
       __feature034ProviderClass?: typeof Feature034TestProvider;
       __feature034ParallelProviderClass?: typeof Feature034ParallelProvider;
+      __feature034ManagedProtocolProviderClass?: typeof Feature034ManagedProtocolProvider;
       __feature034ParallelMetrics?: { active: number; max: number };
     }).__feature034ProviderClass;
     delete (globalThis as typeof globalThis & {
       __feature034ParallelProviderClass?: typeof Feature034ParallelProvider;
+      __feature034ManagedProtocolProviderClass?: typeof Feature034ManagedProtocolProvider;
       __feature034ParallelMetrics?: { active: number; max: number };
     }).__feature034ParallelProviderClass;
+    delete (globalThis as typeof globalThis & {
+      __feature034ManagedProtocolProviderClass?: typeof Feature034ManagedProtocolProvider;
+    }).__feature034ManagedProtocolProviderClass;
     delete (globalThis as typeof globalThis & {
       __feature034ParallelMetrics?: { active: number; max: number };
     }).__feature034ParallelMetrics;
@@ -448,6 +504,103 @@ describe('runKodaX extension runtime integration', () => {
     expect(result.success).toBe(true);
     expect(result.lastText).toBe('parallel tools complete');
     expect(metrics?.max).toBe(2);
+
+    await runtime.dispose();
+  });
+
+  it('removes repo-intelligence working tools from the provider-visible tool list in off mode', async () => {
+    const extensionPath = path.join(tempDir, 'feature-034-off-mode-tools.mjs');
+    await writeFile(
+      extensionPath,
+      `export default function(api) {
+        api.registerModelProvider({
+          name: '${TEST_PROVIDER_NAME}',
+          factory: () => new (globalThis.__feature034ProviderClass)(),
+        });
+      }`,
+      'utf8',
+    );
+
+    (globalThis as typeof globalThis & {
+      __feature034ProviderClass?: typeof Feature034TestProvider;
+    }).__feature034ProviderClass = Feature034TestProvider;
+
+    const runtime = createExtensionRuntime();
+    await runtime.loadExtension(extensionPath);
+
+    const result = await runKodaX(
+      {
+        provider: TEST_PROVIDER_NAME,
+        extensionRuntime: runtime,
+        context: {
+          repoIntelligenceMode: 'off',
+        },
+      },
+      'summarize this workspace',
+    );
+
+    expect(result.success).toBe(true);
+    expect(Feature034TestProvider.calls).toHaveLength(1);
+    const toolNames = Feature034TestProvider.calls[0]?.tools.map((tool) => tool.name) ?? [];
+    expect(toolNames).toContain('read');
+    expect(toolNames).toContain('glob');
+    expect(toolNames).not.toContain('repo_overview');
+    expect(toolNames).not.toContain('changed_scope');
+    expect(toolNames).not.toContain('changed_diff');
+    expect(toolNames).not.toContain('changed_diff_bundle');
+    expect(toolNames).not.toContain('module_context');
+    expect(toolNames).not.toContain('impact_estimate');
+
+    await runtime.dispose();
+  });
+
+  it('captures hidden managed protocol tool payloads without surfacing protocol tool blocks in messages', async () => {
+    const extensionPath = path.join(tempDir, 'feature-034-managed-protocol.mjs');
+    await writeFile(
+      extensionPath,
+      `export default function(api) {
+        api.registerModelProvider({
+          name: '${TEST_PROVIDER_NAME}',
+          factory: () => new (globalThis.__feature034ManagedProtocolProviderClass)(),
+        });
+      }`,
+      'utf8',
+    );
+
+    (globalThis as typeof globalThis & {
+      __feature034ManagedProtocolProviderClass?: typeof Feature034ManagedProtocolProvider;
+    }).__feature034ManagedProtocolProviderClass = Feature034ManagedProtocolProvider;
+    Feature034ManagedProtocolProvider.calls = [];
+
+    const runtime = createExtensionRuntime();
+    await runtime.loadExtension(extensionPath);
+
+    const result = await runKodaX(
+      {
+        provider: TEST_PROVIDER_NAME,
+        extensionRuntime: runtime,
+        context: {
+          managedProtocolEmission: {
+            enabled: true,
+            role: 'evaluator',
+          },
+        },
+      },
+      'run managed evaluator with hidden protocol tool',
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.lastText).toBe('Structured evaluator answer.');
+    expect(result.managedProtocolPayload?.verdict?.status).toBe('accept');
+    const toolNames = Feature034ManagedProtocolProvider.calls[0]?.tools.map((tool) => tool.name) ?? [];
+    expect(toolNames).toContain('emit_managed_protocol');
+    const assistantMessages = result.messages.filter((message) => message.role === 'assistant');
+    expect(
+      assistantMessages.some((message) =>
+        Array.isArray(message.content)
+        && message.content.some((block) => block.type === 'tool_use' && block.name === 'emit_managed_protocol'),
+      ),
+    ).toBe(false);
 
     await runtime.dispose();
   });
