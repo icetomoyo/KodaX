@@ -8,6 +8,48 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.7.15] - 2026-04-10
+
+### Added
+- **Fullscreen transcript surface rewrite**: Local renderer replaces Ink substrate for fullscreen REPL — vendored renderer, localized terminal hooks, renderer-native transcript interaction, and explicit transcript mode replacing implicit review mode
+- **REPL cockpit substrate**: New prompt input controller with deep keyboard routing, footer surfaces for help/notices/queued state, transcript-native tool explanations, and owned TUI compatibility layer
+- **Feature 045 provider-resilience**: Stream resilience across all provider layers with expanded transient error detection, Scout H0 tool policy fix, and prompt waiting/busy terminal state clarification
+- **AMA tactical fan-out**: Investigation fan-out slice, lookup triage, and generalized reduction for AMA tactical planning; centralized branch lifecycle in scheduler; child-fanout restricted to runtime-backed review validation
+- **Harness calibration and persistence**: Harness calibration corpus and checkpoint profiling, pivot persistence substrate, and workspace runtime truth (Feature 053)
+- **Durable memory anchors**: First-class retrieval substrate with durable memory anchors, sectionized prompt assembly with prompt snapshot contracts
+- **Multimodal artifact input substrate**: Align multimodal prompt artifact transport for rich content flows
+- **Official sandbox extension substrate**: New sandbox extension package foundation
+- **Incremental repo intelligence refresh**: Incremental update support for repo intelligence artifacts
+- **Feature 055 REPL hardening**: REPL substrate hardening with bracketed paste protocol (replacing timing-based detection), busy prompt shell virtualization, and graceful exit flow serialization
+- **Renderer viewport truth alignment**: Transcript scroll now uses renderer-accurate viewport geometry
+
+### Changed
+- **Fullscreen REPL localized from Ink**: Renderer internals, core engine shell, root primitives, input parsing, and terminal runtime hooks all localized; Ink substrate fully isolated
+- **Transcript surface refactored**: Transcript body/footer separated, search moved into transcript footer, windowing moved into scrollbox, surface lifecycle finalized
+- **Prompt shell split from transcript shell**: Separate prompt shell policy with hardened exit flow and interactive exit lifecycle cleanup
+- **Repointel skill reorganized**: Follows Claude Code Skills spec; host integration refactored
+- **Legacy project shell retired**: Removed from REPL surface
+- **Prompt sectionization**: Prompt assembly sectionized with snapshot contracts for reproducibility
+
+### Fixed
+- Fullscreen banner moved into transcript history for correct ordering
+- MCP typing and transcript chrome behavior stabilized
+- Transcript selection rooted in rendered geometry
+- Prompt streaming feedback simplified
+- Native transcript browser controls, footer separators, and mouse selection restored
+- Native clipboard preferred on local terminals
+- Transcript viewport budget aligned; spinner liveness restored
+- Transcript compact output truncation fixed
+- REPL status colors and banner logo restored after regression
+- Message list hook order regressions fixed
+- Prompt editing shortcuts exposed in help and registry
+- Transcript search anchoring and keyboard routing tightened
+- Docs-only technical docs kept out of H2 reasoning path
+- Pruning gap ratio added to prevent repeated shallow compaction
+- Wheel history and banner unsticking on risky hosts
+
+---
+
 ## [0.7.14] - 2026-04-02
 
 ### Added

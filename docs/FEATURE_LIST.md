@@ -18,7 +18,7 @@
 | Completed | `53` |
 | InProgress | `1` |
 | Planned | `6` |
-| Current released version | `v0.7.14` |
+| Current released version | `v0.7.15` |
 
 ### 各版本待做分布
 
