@@ -377,8 +377,15 @@ export class McpServerRuntime {
     }
   }
 
+  /** Public teardown — clears everything including the connect lock. */
   async dispose(): Promise<void> {
     this.connectPromise = undefined;
+    await this.resetTransport();
+  }
+
+  /** Internal transport teardown — does NOT clear connectPromise so the
+   *  retry loop inside doConnect() can safely call it between attempts. */
+  private async resetTransport(): Promise<void> {
     for (const [id, pending] of this.pending) {
       clearTimeout(pending.timeout);
       pending.reject(new Error(`MCP server "${this.serverId}" disposed during request ${id}.`));
@@ -395,12 +402,12 @@ export class McpServerRuntime {
     }
   }
 
-  private async connect(): Promise<void> {
+  private connect(): Promise<void> {
     if ((this.config.connect ?? 'lazy') === 'disabled') {
-      throw new Error(`MCP server "${this.serverId}" is disabled.`);
+      return Promise.reject(new Error(`MCP server "${this.serverId}" is disabled.`));
     }
     if (this.transport?.connected && this.initialized) {
-      return;
+      return Promise.resolve();
     }
     // Serialize concurrent connect() calls so only one runs the retry loop.
     if (!this.connectPromise) {
@@ -420,7 +427,7 @@ export class McpServerRuntime {
     const framings = isStdio ? ['content-length', 'ndjson'] as const : [undefined] as const;
 
     for (const framing of framings) {
-      await this.dispose();
+      await this.resetTransport();
       const transport = createMcpTransport(
         this.config,
         framing ? { stdioFraming: framing } : {},

@@ -177,9 +177,15 @@ export class McpCapabilityProvider implements CapabilityProvider {
       // and never triggers a lazy connection.
       const runtime = this.runtimes.get(entry.serverId);
       const catalog = runtime ? await runtime.getCachedCatalog() : undefined;
+      const MAX_ITEMS_PER_SERVER = 10;
       if (catalog && catalog.items.length > 0) {
-        for (const item of catalog.items) {
+        const shown = catalog.items.slice(0, MAX_ITEMS_PER_SERVER);
+        for (const item of shown) {
           lines.push(`- \`${item.id}\` (${item.kind}) — ${item.summary}`);
+        }
+        const remaining = catalog.items.length - shown.length;
+        if (remaining > 0) {
+          lines.push(`- +${remaining} more (use \`mcp_search\` to discover)`);
         }
       } else if (entry.cachedAt) {
         lines.push(`- ${entry.tools} tools / ${entry.resources} resources / ${entry.prompts} prompts (use \`mcp_search\` to discover)`);

@@ -1221,11 +1221,27 @@ async function executeToolCall(
   return result;
 }
 
+// Only allow MCP fallback for read-only / network-fetch tools.
+// Write, edit, bash, and other mutating tools must never silently
+// redirect to a remote MCP capability.
+const MCP_FALLBACK_ALLOWED_TOOLS = new Set([
+  'web_search',
+  'web_fetch',
+  'glob',
+  'grep',
+  'read',
+  'code_search',
+  'semantic_lookup',
+]);
+
 async function tryMcpFallback(
   toolName: string,
   input: Record<string, unknown>,
   ctx: KodaXToolExecutionContext,
 ): Promise<string | undefined> {
+  if (!MCP_FALLBACK_ALLOWED_TOOLS.has(toolName)) {
+    return undefined;
+  }
   try {
     const hits = await ctx.extensionRuntime!.searchCapabilities('mcp', toolName, {
       kind: 'tool',

@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-04-08_
+_Last Updated: 2026-04-11_
 
 ---
 
@@ -52,10 +52,83 @@ _Last Updated: 2026-04-08_
 | 106 | High | Open | Managed-task structured worker blocks remain text-coupled and can fail closed on protocol drift | v0.7.14 | - | 2026-04-08 | - |
 | 107 | Medium | Open | harnessProfile 类型命名残留 - H0/H1/H2 应替换为 worker-chain composition | v0.7.16 | - | 2026-04-11 | - |
 
+| 108 | High | Open | ACP server 链路未接入 MCP — 编辑器/ACP 场景下 mcpServers 配置不生效 | v0.7.16 | - | 2026-04-11 | - |
+| 109 | Low | Open | 缺少 mcp_get_prompt 工具 — MCP prompt 能力未暴露给模型 | v0.7.16 | - | 2026-04-11 | - |
+| 110 | Low | Open | 缺少 /mcp status 和 /mcp refresh REPL 命令 | v0.7.16 | - | 2026-04-11 | - |
+| 111 | Low | Open | SSE / Streamable HTTP MCP 传输缺少专项测试 | v0.7.16 | - | 2026-04-11 | - |
+
 ---
 
 ## Issue Details
 <!-- Full details for each issue - REQUIRED for all issues -->
+---
+### 111: SSE / Streamable HTTP MCP 传输缺少专项测试
+
+- **Priority**: Low
+- **Status**: Open
+- **Introduced**: v0.7.16
+- **Fixed**: -
+- **Created**: 2026-04-11
+
+- **Original Problem**:
+  `transport.ts` 中 `createSseTransport()` 和 `createStreamableHttpTransport()` 已实现，但没有对应的测试用例。stdio 路径有完整集成测试覆盖（provider.test.ts + mcp-tools.test.ts），远程传输尚未验证。
+
+- **Context**: 需要搭建 mock SSE/HTTP server 才能测试。工作量中等，不影响 stdio 功能。
+
+- **Planned Resolution**: 在 FEATURE_065 范围内创建 `transport.test.ts`，用 Node.js http server 模拟 SSE 和 Streamable HTTP 端点。
+
+---
+### 110: 缺少 /mcp status 和 /mcp refresh REPL 命令
+
+- **Priority**: Low
+- **Status**: Open
+- **Introduced**: v0.7.16
+- **Fixed**: -
+- **Created**: 2026-04-11
+
+- **Original Problem**:
+  用户无法在 REPL 中查看 MCP 连接状态（哪些 server 连接成功、哪些失败、catalog 有什么工具），也无法手动刷新 catalog。只能从 prompt context 间接看到 status=idle/ready/error。
+
+- **Context**: 涉及 `packages/repl/src/interactive/commands.ts`。调用 `extensionRuntime.getDiagnostics()` 和 `refreshCapabilityProviders()`。
+
+- **Planned Resolution**: 在 FEATURE_065 范围内添加 `/mcp` 命令（status 子命令 + refresh 子命令）。
+
+---
+### 109: 缺少 mcp_get_prompt 工具 — MCP prompt 能力未暴露给模型
+
+- **Priority**: Low
+- **Status**: Open
+- **Introduced**: v0.7.16
+- **Fixed**: -
+- **Created**: 2026-04-11
+
+- **Original Problem**:
+  MCP 协议支持三种能力：tool、resource、prompt。KodaX 暴露了 `mcp_call`（tool）、`mcp_read_resource`（resource），但 prompt 能力只在 runtime API 和测试中可达（`runtime.getPrompt()`），没有对应的模型可调用工具。
+
+- **Context**: 需要在 `packages/coding/src/tools/` 下新建 `mcp-get-prompt.ts`，和现有 4 个 MCP 工具同构。
+
+- **Planned Resolution**: 在 FEATURE_065 范围内添加 `mcp_get_prompt` 工具。
+
+---
+### 108: ACP server 链路未接入 MCP — 编辑器/ACP 场景下 mcpServers 配置不生效
+
+- **Priority**: High
+- **Status**: Open
+- **Introduced**: v0.7.16
+- **Fixed**: -
+- **Created**: 2026-04-11
+
+- **Original Problem**:
+  `acp_server.ts` 的 `buildKodaXOptions()` 没创建 extensionRuntime，编辑器/ACP 场景下 `mcpServers` 配置只记录了服务器数量（用于 diagnostics），不会实际注册 MCP capability provider。因此 VS Code 扩展等 ACP 场景无法使用 MCP 工具。
+
+- **Context**:
+  - `src/acp_server.ts` line 119: McpServer 数组仅计数
+  - `src/acp_server.ts` line 356: buildKodaXOptions 未传 extensionRuntime
+  - `src/acp_server.ts` line 514: session 创建不含 MCP 初始化
+  - CLI 路径（`kodax_cli.ts`）已正确接入：`hasConfiguredMcpServers()` → `createExtensionRuntime()` → `registerConfiguredMcpCapabilityProvider()`
+
+- **Planned Resolution**: 在 FEATURE_065 范围内，将 CLI 的 MCP 初始化逻辑抽为共享函数，ACP server 复用。
+
 ---
 ### 107: harnessProfile 类型命名残留 - H0/H1/H2 应替换为 worker-chain composition
 

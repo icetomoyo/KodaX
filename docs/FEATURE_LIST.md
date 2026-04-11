@@ -1,6 +1,6 @@
 # Feature 总表
 
-> Last updated: 2026-04-09
+> Last updated: 2026-04-11
 
 > 中文阅读说明：
 > 这份 `FEATURE_LIST` 是 roadmap 的总索引。
@@ -16,9 +16,9 @@
 | Tracked feature IDs | `001-069` |
 | Total tracked features | `69` |
 | Completed | `53` |
-| InProgress | `1` |
-| Planned | `15` |
-| Current released version | `v0.7.15` |
+| InProgress | `2` |
+| Planned | `14` |
+| Current released version | `v0.7.16` |
 
 ### 各版本待做分布
 
@@ -56,7 +56,7 @@
 | `026` | Roadmap Integrity and Planning Hygiene | Internal | High | `v0.7.20` | [v0.7.20](features/v0.7.20.md#feature_026-roadmap-integrity-and-planning-hygiene) |
 | `063` | Extensible Hook & Automation Substrate | Enhancement | High | `v0.7.35` | [v0.7.35](features/v0.7.35.md#feature_063-extensible-hook--automation-substrate) |
 | `064` | Multi-Provider Cost Observatory | Enhancement | High | `v0.7.35` | [v0.7.35](features/v0.7.35.md#feature_064-multi-provider-cost-observatory) |
-| `065` | MCP Protocol Maturity | Enhancement | Medium | `v0.7.35` | [v0.7.35](features/v0.7.35.md#feature_065-mcp-protocol-maturity) |
+| `065` | MCP Protocol Maturity | Enhancement | Medium | `v0.7.35` | [v0.7.35](features/v0.7.35.md#feature_065-mcp-protocol-maturity) | **基础已完成 (v0.7.16)**：传输层、工具链路、fallback、配置扁平化。剩余：OAuth、Elicitation、ACP 链路 (#108)、mcp_get_prompt (#109)、/mcp 命令 (#110)、SSE/HTTP 测试 (#111) |
 | `066` | Permission Hardening | Enhancement | Medium | `v0.7.35` | [v0.7.35](features/v0.7.35.md#feature_066-permission-hardening) |
 | `067` | Parallel Task Dispatch | Enhancement | High | `v0.7.35` | [v0.7.35](features/v0.7.35.md#feature_067-parallel-task-dispatch) |
 | `068` | Worktree Isolation Tool | Enhancement | Medium | `v0.7.35` | [v0.7.35](features/v0.7.35.md#feature_068-worktree-isolation-tool) |
