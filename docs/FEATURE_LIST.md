@@ -13,11 +13,11 @@
 
 | Item | Value |
 |---|---|
-| Tracked feature IDs | `001-060` |
-| Total tracked features | `60` |
+| Tracked feature IDs | `001-061` |
+| Total tracked features | `61` |
 | Completed | `53` |
 | InProgress | `1` |
-| Planned | `6` |
+| Planned | `7` |
 | Current released version | `v0.7.15` |
 
 ### 各版本待做分布
@@ -27,7 +27,7 @@
 | `v0.7.20` | `1` |
 | `v0.7.25` | `0` |
 | `v0.7.30` | `1` |
-| `v0.8.0` | `3` |
+| `v0.8.0` | `4` |
 | `v0.9.0` | `0` |
 | `v1.0.0` | `1` |
 
@@ -48,6 +48,7 @@
 | `007` | Theme System Consolidation | Enhancement | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_007-theme-system-consolidation) |
 | `058` | Transcript Native Scrollback Dump | Enhancement | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_058-transcript-native-scrollback-dump) |
 | `059` | Managed Task Structured Protocol V2 | Internal | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_059-managed-task-structured-protocol-v2) |
+| `061` | Scout-First AMA Architecture Simplification | Refactor | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_061-scout-first-ama-architecture-simplification) |
 | `060` | Claude-Aligned Bounded-Memory Runtime and OOM Hardening | Internal | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_060-claude-aligned-bounded-memory-runtime-and-oom-hardening) |
 | `026` | Roadmap Integrity and Planning Hygiene | Internal | High | `v0.7.20` | [v0.7.20](features/v0.7.20.md#feature_026-roadmap-integrity-and-planning-hygiene) |
 | `030` | Multi-Surface Delivery | Enhancement | High | `v1.0.0` | [v1.0.0](features/v1.0.0.md#feature_030-multi-surface-delivery) |
@@ -57,11 +58,11 @@
 ## 阅读说明
 
 - `FEATURE_022` 是当前架构转向的 umbrella feature，`FEATURE_019`、`FEATURE_025`、`FEATURE_027`、`FEATURE_028`、`FEATURE_029`、`FEATURE_034` 是它的关键支撑切片。
+- `FEATURE_061` 是 AMA 架构简化重构：Scout 成为 AMA 唯一入口（既判断又干活），角色升级保留上下文，每个角色可拉 subagent 并行，去掉预路由层和 Tactical Flow。
 - 当前正式执行模型是：`SA` 直达；`AMA` 只保留 `H0 / H1 / H2`；`H3` 已移除。
-- `Scout` 是 pre-harness 牵引层；`H0` 支持 `Scout-complete H0`，但不允许 `Scout` 判 `H0` 后再 handoff 给第二个 direct agent。
-- `read-only / docs-only` 默认停留在 `H0`，只有用户明确要求更强校验时才允许 `H1`，永远不进入 `H2`。
-- `H1` 是 `Generator + 轻量 Evaluator` 的 lightweight checked-direct：无 `Planner`、无 contract negotiation、无默认多轮 refine。
-- `H2` 主骨架固定为 `Planner -> Generator <-> Evaluator`，只留给真正长时的 `code / system` mutation work，且默认单主 pass。
+- `Scout` 是 AMA 的入口和第一执行者：H0 时 Scout 直接完成任务；H1/H2 时 Scout 升级为 Generator 或 Planner 并保留上下文。
+- `H1` 是 `Generator + 轻量 Evaluator`：无 `Planner`、无 contract negotiation。Evaluator 打回最多 1 次，再不合格则升级到 H2。
+- `H2` 主骨架固定为 `Planner -> Generator <-> Evaluator`。Evaluator 区分 `revise`（执行问题）和 `replan`（计划问题），各最多 1 次。
 - `FEATURE_054` 的目标方向是把 `Project` 模式吸收进 AMA H2；后续设计应默认以“单主 authority + Planner 吸收 brainstorm”为目标，不再扩独立 project/planner 表面。
 - `kodax -c` 属于 `user session` 恢复语义，不属于 internal worker-session recovery。
 - `FEATURE_023` 只应继续承担更高层 terminal/delivery ergonomics，不应重新打开 `FEATURE_051 / FEATURE_055` 已冻结的 REPL shell。

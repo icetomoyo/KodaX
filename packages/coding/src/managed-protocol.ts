@@ -213,6 +213,24 @@ export function normalizeManagedProjectionConfidence(
   return undefined;
 }
 
+export function normalizeManagedDirectCompletionReady(
+  candidate: string,
+): KodaXManagedScoutPayload['directCompletionReady'] | undefined {
+  const normalized = candidate
+    .trim()
+    .toLowerCase()
+    .replace(/[`"'()[\]{}<>]+/g, '')
+    .replace(/[.:;!?]+$/g, '')
+    .trim();
+  if (normalized === 'yes' || normalized === 'true' || normalized === 'ready') {
+    return 'yes';
+  }
+  if (normalized === 'no' || normalized === 'false' || normalized === 'not-ready' || normalized === 'not ready') {
+    return 'no';
+  }
+  return undefined;
+}
+
 export function normalizeStringListValue(value: unknown): string[] {
   if (Array.isArray(value)) {
     return value.map((item) => String(item).trim()).filter(Boolean);
@@ -285,6 +303,7 @@ export function coerceManagedProtocolToolPayload(
     const scope = normalizeStringListValue(payload.scope);
     const requiredEvidence = normalizeStringListValue(payload.required_evidence ?? payload.requiredEvidence);
     const reviewFilesOrAreas = normalizeStringListValue(payload.review_files_or_areas ?? payload.reviewFilesOrAreas);
+    const blockingEvidence = normalizeStringListValue(payload.blocking_evidence ?? payload.blockingEvidence);
     const executionObligations = normalizeStringListValue(payload.execution_obligations ?? payload.executionObligations);
     const verificationObligations = normalizeStringListValue(payload.verification_obligations ?? payload.verificationObligations);
     const ambiguities = normalizeStringListValue(payload.ambiguities);
@@ -302,12 +321,23 @@ export function coerceManagedProtocolToolPayload(
     const projectionConfidence = typeof (payload.projection_confidence ?? payload.projectionConfidence) === 'string'
       ? normalizeManagedProjectionConfidence(String(payload.projection_confidence ?? payload.projectionConfidence))
       : undefined;
+    const harnessRationale = typeof (payload.harness_rationale ?? payload.harnessRationale) === 'string'
+      ? String(payload.harness_rationale ?? payload.harnessRationale).trim() || undefined
+      : undefined;
+    const directCompletionReady = typeof (payload.direct_completion_ready ?? payload.directCompletionReady) === 'string'
+      ? normalizeManagedDirectCompletionReady(String(payload.direct_completion_ready ?? payload.directCompletionReady))
+      : typeof (payload.direct_completion_ready ?? payload.directCompletionReady) === 'boolean'
+        ? ((payload.direct_completion_ready ?? payload.directCompletionReady) ? 'yes' : 'no')
+        : undefined;
     if (
       !summary
       && scope.length === 0
       && requiredEvidence.length === 0
       && reviewFilesOrAreas.length === 0
       && !confirmedHarness
+      && !harnessRationale
+      && blockingEvidence.length === 0
+      && !directCompletionReady
       && !evidenceAcquisitionMode
       && !skillSummary
       && executionObligations.length === 0
@@ -326,6 +356,9 @@ export function coerceManagedProtocolToolPayload(
         reviewFilesOrAreas,
         evidenceAcquisitionMode,
         confirmedHarness,
+        harnessRationale,
+        blockingEvidence,
+        directCompletionReady,
         userFacingText: visibleText || undefined,
         skillMap: skillSummary || executionObligations.length > 0 || verificationObligations.length > 0 || ambiguities.length > 0 || projectionConfidence
           ? {

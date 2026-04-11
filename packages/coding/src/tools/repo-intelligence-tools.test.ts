@@ -299,8 +299,8 @@ describe('repo intelligence tool surfaces', () => {
       refresh: false,
     });
 
-    expect(rebuilt.schemaVersion).toBe(10);
-    expect(readJson<{ schemaVersion: number }>(join(storageRoot, 'repo-intelligence-manifest.json')).schemaVersion).toBe(10);
+    expect(rebuilt.schemaVersion).toBe(11);
+    expect(readJson<{ schemaVersion: number }>(join(storageRoot, 'repo-intelligence-manifest.json')).schemaVersion).toBe(11);
   }, 15000);
 
   it('reports polyglot fallback language tiers without requiring premium parsers in the public path', async () => {

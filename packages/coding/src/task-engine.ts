@@ -56,6 +56,7 @@ import {
   MANAGED_TASK_SCOUT_BLOCK,
   MANAGED_TASK_VERDICT_BLOCK,
   mergeManagedProtocolPayload,
+  normalizeManagedDirectCompletionReady,
 } from './managed-protocol.js';
 import { createRepoIntelligenceTraceEvent } from './repo-intelligence/trace-events.js';
 import type {
@@ -2153,32 +2154,40 @@ function inferReviewTarget(prompt: string): ManagedReviewTarget {
   return 'general';
 }
 
-function shouldBlockScoutDirectReviewCompletion(
-  decision: Pick<KodaXTaskRoutingDecision, 'primaryTask' | 'reviewTarget' | 'reviewScale'>,
-): boolean {
-  return decision.primaryTask === 'review'
-    && (decision.reviewTarget === 'current-worktree' || decision.reviewTarget === 'compare-range')
-    && (decision.reviewScale === 'large' || decision.reviewScale === 'massive');
-}
-
-function shouldForceManagedReviewHarness(
+function resolveManagedHarnessGuardrail(
   decision: Pick<
     KodaXTaskRoutingDecision,
-    'primaryTask' | 'reviewTarget' | 'reviewScale' | 'executionPattern' | 'mutationSurface' | 'topologyCeiling'
+    'needsIndependentQA' | 'mutationSurface' | 'workIntent' | 'riskLevel' | 'complexity'
   >,
-): boolean {
-  if (!shouldBlockScoutDirectReviewCompletion(decision)) {
-    return false;
+): {
+  minimumHarness?: KodaXTaskRoutingDecision['harnessProfile'];
+  reason?: string;
+} {
+  if (
+    decision.mutationSurface === 'system'
+    && (
+      decision.workIntent === 'overwrite'
+      || decision.riskLevel === 'high'
+      || decision.complexity === 'systemic'
+    )
+  ) {
+    return {
+      minimumHarness: 'H2_PLAN_EXECUTE_EVAL',
+      reason: 'high-risk system-level mutation requires coordinated execution',
+    };
   }
 
-  const tacticalH0ReviewAdmissible = decision.executionPattern === 'checked-direct'
-    && (decision.mutationSurface === 'read-only' || decision.mutationSurface === 'docs-only')
-    && decision.topologyCeiling === 'H0_DIRECT';
+  if (decision.needsIndependentQA) {
+    return {
+      minimumHarness: 'H1_EXECUTE_EVAL',
+      reason: 'independent verification was explicitly requested',
+    };
+  }
 
-  return !tacticalH0ReviewAdmissible;
+  return {};
 }
 
-function applyManagedReviewHarnessFloorToPlan(
+function applyManagedHarnessGuardrailsToPlan(
   plan: ReasoningPlan,
   reviewTarget: ManagedReviewTarget,
 ): {
@@ -2186,12 +2195,12 @@ function applyManagedReviewHarnessFloorToPlan(
   routingOverrideReason?: string;
 } {
   const decisionWithTarget = cloneRoutingDecisionWithReviewTarget(plan.decision, reviewTarget);
-  const shouldForceManagedHarness = shouldForceManagedReviewHarness(decisionWithTarget);
-  const forcedHarness: KodaXTaskRoutingDecision['harnessProfile'] = 'H2_PLAN_EXECUTE_EVAL';
-  const needsHarnessUpgrade = shouldForceManagedHarness
+  const guardrail = resolveManagedHarnessGuardrail(decisionWithTarget);
+  const forcedHarness = guardrail.minimumHarness;
+  const needsHarnessUpgrade = forcedHarness
     && getHarnessRank(decisionWithTarget.harnessProfile) < getHarnessRank(forcedHarness);
 
-  if (!needsHarnessUpgrade) {
+  if (!needsHarnessUpgrade || !forcedHarness) {
     if (decisionWithTarget === plan.decision) {
       return { plan };
     }
@@ -2219,11 +2228,11 @@ function applyManagedReviewHarnessFloorToPlan(
       : undefined,
     routingNotes: [
       ...(decisionWithTarget.routingNotes ?? []),
-      `Large diff-driven review requires planned managed execution and reducer output; keep it out of scout-direct fallback.`,
+      `Routing guardrail raised the minimum harness to ${forcedHarness} because ${guardrail.reason}.`,
     ],
-    reason: `${decisionWithTarget.reason} Large diff-driven review was elevated to ${forcedHarness} so review findings are reduced through the managed review stack instead of a scout-direct shortcut.`,
+    reason: `${decisionWithTarget.reason} Routing guardrail raised the minimum harness to ${forcedHarness} because ${guardrail.reason}.`,
   };
-  const overrideReason = 'large diff-driven review was elevated to managed H2 execution';
+  const overrideReason = guardrail.reason;
   return {
     plan: {
       ...plan,
@@ -2313,10 +2322,7 @@ function createLiveRoutingNote(
     detailParts.push(scopeParts.join(' / '));
   }
 
-  if (
-    rawDecision.harnessProfile !== finalDecision.harnessProfile
-    || rawDecision.upgradeCeiling !== finalDecision.upgradeCeiling
-  ) {
+  if (reason || rawDecision.harnessProfile !== finalDecision.harnessProfile) {
     detailParts.push('override applied');
   }
 
@@ -2338,18 +2344,6 @@ function createRoutingBreadcrumb(
   const base = `AMA routing: raw=${rawDecision.harnessProfile}(${rawSource}) -> final=${finalDecision.harnessProfile}`;
   if (reason) {
     return `${base} reason=${reason}`;
-  }
-  if (finalDecision.reviewTarget === 'current-worktree' && finalDecision.reviewScale) {
-    return `${base} reason=${finalDecision.reviewScale} current-diff review`;
-  }
-  if (finalDecision.reviewTarget === 'current-worktree') {
-    return `${base} reason=current-diff review (scale unavailable)`;
-  }
-  if (finalDecision.reviewTarget === 'compare-range' && finalDecision.reviewScale) {
-    return `${base} reason=${finalDecision.reviewScale} compare-range review`;
-  }
-  if (finalDecision.reviewTarget === 'compare-range') {
-    return `${base} reason=compare-range review (scale unavailable)`;
   }
   return base;
 }
@@ -2383,7 +2377,7 @@ function applyCurrentDiffReviewRoutingFloor(
         reviewTarget,
       };
     }
-    const adjusted = applyManagedReviewHarnessFloorToPlan({
+    const adjusted = applyManagedHarnessGuardrailsToPlan({
       ...plan,
       decision: finalDecision,
       amaControllerDecision: buildAmaControllerDecision(finalDecision),
@@ -2423,7 +2417,7 @@ function applyCurrentDiffReviewRoutingFloor(
       buildAmaControllerDecision(reviewAdjustedDecision),
     ),
   };
-  const adjusted = applyManagedReviewHarnessFloorToPlan(reviewAdjustedPlan, reviewTarget);
+  const adjusted = applyManagedHarnessGuardrailsToPlan(reviewAdjustedPlan, reviewTarget);
 
   return {
     plan: adjusted.plan,
@@ -3232,16 +3226,24 @@ function createRolePrompt(
           : undefined,
         'Decide whether this task should stay direct or escalate to H1/H2. Prefer a direct answer whenever the task can be completed safely without heavier coordination.',
         'You are a pre-harness guide only. Prefer scope facts first: changed scope, module spread, diff size, verification requirements, and any explicit task constraints already present.',
+        'Treat reviewScale, changed file count, changed line count, and cross-module spread as evidence-planning hints only. They are not, by themselves, valid reasons to escalate the harness.',
+        'H0_DIRECT: choose this only when you already have enough evidence to finish safely now. For reviews, that means you understand scope and major risk areas, have inspected the key diff/files (not just the overview), can write the actual findings-first review or a clear no-findings conclusion, do not need an independent second judgment, and do not have key unverified risks still hanging.',
+        'H1_EXECUTE_EVAL: choose this when you understand the task well enough to avoid a planning pass, but still need an independent second verification or judgment before the answer should be trusted.',
+        'H2_PLAN_EXECUTE_EVAL: choose this only when the task truly needs explicit planning, coordinated multi-role convergence, or evidence paths that a single scout cannot efficiently close alone. Do not choose H2 merely because the diff is large, spans modules, or has many changed files.',
+        'Anti-patterns: changed files many, changed lines many, cross-module scope, or reviewScale=large/massive are each insufficient on their own to justify H1 or H2.',
+        'Signals that usually mean you should not stay on H0: unresolved key claims, need for an independent second judgment, need to plan before execution, or need for coordinated multi-role convergence.',
         'If you confirm H0_DIRECT and already have enough evidence, finish the task yourself and give the final user-facing answer.',
         'If you confirm H1 or H2, stop after the cheap-facts pass. Do not keep exploring just to make the handoff more complete.',
-        decision.mutationSurface === 'read-only' || decision.mutationSurface === 'docs-only'
-          ? 'This task is capped below H2. Do not recommend H2 for read-only or docs-only work.'
-          : undefined,
+        'Respect any stated topology ceiling or upgrade ceiling in the routing metadata, but do not use review size alone as a reason to escalate.',
         scoutReviewEvidenceGuidance,
         [
           `Append a final fenced block named \`\`\`${MANAGED_TASK_SCOUT_BLOCK}\` with this exact shape:`,
           'summary: <one-line scout summary>',
           'confirmed_harness: <required H0_DIRECT|H1_EXECUTE_EVAL|H2_PLAN_EXECUTE_EVAL>',
+          'harness_rationale: <required one-line reason why this harness is appropriate>',
+          'direct_completion_ready: <required yes|no>',
+          'blocking_evidence:',
+          '- <required if not H0; use "none" when H0 is ready to finish directly>',
           'evidence_acquisition_mode: <optional overview|diff-bundle|diff-slice|file-read>',
           'scope:',
           '- <scope item>',
@@ -3277,6 +3279,7 @@ function createRolePrompt(
         previousRoleSummarySection,
         managedProtocolToolInstructions,
         plannerReviewEvidenceGuidance,
+        'The Scout-confirmed harness is the active harness for this run. Do not reinterpret it locally; only request a stronger harness through an explicit later verdict if the evidence truly demands it.',
         'Produce a concise execution plan, the critical risks, and the evidence checklist.',
         `Your output is invalid unless you either call "${MANAGED_PROTOCOL_TOOL_NAME}" with the contract payload or append a final \`\`\`${MANAGED_TASK_CONTRACT_BLOCK}\`\`\` fenced block.`,
         'Even if evidence is still incomplete, produce the best current contract and record the missing proof in required_evidence or constraints rather than omitting the block.',
@@ -3312,6 +3315,7 @@ function createRolePrompt(
         generatorReviewEvidenceGuidance,
         h1GeneratorExecutionGuidance,
         h1MutationGuardance,
+        'The Scout-confirmed harness is the active harness for this run. Do not reinterpret it locally; only request a stronger harness through an explicit later verdict if the evidence truly demands it.',
         'Read the managed task artifacts and dependency handoff artifacts before acting. Treat them as the primary coordination surface.',
         'Execute the task or produce the requested deliverable.',
         isTerminalAuthority
@@ -3337,6 +3341,7 @@ function createRolePrompt(
         managedProtocolToolInstructions,
         reviewPresentationRule,
         evaluatorReviewEvidenceGuidance,
+        'The Scout-confirmed harness is the active harness for this run. Do not reinterpret it locally; only recommend a stronger harness when the evidence clearly shows the current harness cannot safely finish the task.',
         'Read the managed task artifacts and dependency handoff artifacts before acting. Treat them as the primary coordination surface.',
         'Judge whether the dependency handoff satisfies the original task and whether the evidence is strong enough.',
         decision.harnessProfile === 'H1_EXECUTE_EVAL'
@@ -4643,21 +4648,24 @@ async function runTacticalReviewFlow(
   );
   shape.task = {
     ...shape.task,
-    runtime: {
-      ...applyManagedBudgetRuntimeState(shape.task.runtime, budgetController),
-      budget: createBudgetSnapshot(budgetController, shape.task.contract.harnessProfile, 1, 'generator', 'review-scan'),
-      rawRoutingDecision,
-      finalRoutingDecision,
+      runtime: {
+        ...applyManagedBudgetRuntimeState(shape.task.runtime, budgetController),
+        budget: createBudgetSnapshot(budgetController, shape.task.contract.harnessProfile, 1, 'generator', 'review-scan'),
+        rawRoutingDecision,
+        finalRoutingDecision,
       routingOverrideReason,
       qualityAssuranceMode: shape.qualityAssuranceMode,
       scoutDecision: {
         summary: scoutExecution.directive.summary ?? 'Scout completed.',
-        recommendedHarness: finalRoutingDecision.harnessProfile,
+        recommendedHarness: scoutExecution.directive.confirmedHarness ?? finalRoutingDecision.harnessProfile,
         readyForUpgrade: false,
         scope: scoutExecution.directive.scope,
         requiredEvidence: scoutExecution.directive.requiredEvidence,
         reviewFilesOrAreas: scoutExecution.directive.reviewFilesOrAreas,
         evidenceAcquisitionMode: scoutExecution.directive.evidenceAcquisitionMode,
+        harnessRationale: scoutExecution.directive.harnessRationale,
+        blockingEvidence: scoutExecution.directive.blockingEvidence,
+        directCompletionReady: scoutExecution.directive.directCompletionReady,
         skillSummary: scoutExecution.directive.skillMap?.skillSummary,
         executionObligations: scoutExecution.directive.skillMap?.executionObligations,
         verificationObligations: scoutExecution.directive.skillMap?.verificationObligations,
@@ -5222,12 +5230,15 @@ async function runTacticalInvestigationFlow(
       qualityAssuranceMode: shape.qualityAssuranceMode,
       scoutDecision: {
         summary: scoutExecution.directive.summary ?? 'Scout completed.',
-        recommendedHarness: finalRoutingDecision.harnessProfile,
+        recommendedHarness: scoutExecution.directive.confirmedHarness ?? finalRoutingDecision.harnessProfile,
         readyForUpgrade: false,
         scope: scoutExecution.directive.scope,
         requiredEvidence: scoutExecution.directive.requiredEvidence,
         reviewFilesOrAreas: scoutExecution.directive.reviewFilesOrAreas,
         evidenceAcquisitionMode: scoutExecution.directive.evidenceAcquisitionMode,
+        harnessRationale: scoutExecution.directive.harnessRationale,
+        blockingEvidence: scoutExecution.directive.blockingEvidence,
+        directCompletionReady: scoutExecution.directive.directCompletionReady,
         skillSummary: scoutExecution.directive.skillMap?.skillSummary,
         executionObligations: scoutExecution.directive.skillMap?.executionObligations,
         verificationObligations: scoutExecution.directive.skillMap?.verificationObligations,
@@ -5961,12 +5972,15 @@ async function runTacticalLookupFlow(
       qualityAssuranceMode: shape.qualityAssuranceMode,
       scoutDecision: {
         summary: scoutExecution.directive.summary ?? 'Scout completed.',
-        recommendedHarness: finalRoutingDecision.harnessProfile,
+        recommendedHarness: scoutExecution.directive.confirmedHarness ?? finalRoutingDecision.harnessProfile,
         readyForUpgrade: false,
         scope: scoutExecution.directive.scope,
         requiredEvidence: scoutExecution.directive.requiredEvidence,
         reviewFilesOrAreas: scoutExecution.directive.reviewFilesOrAreas,
         evidenceAcquisitionMode: scoutExecution.directive.evidenceAcquisitionMode,
+        harnessRationale: scoutExecution.directive.harnessRationale,
+        blockingEvidence: scoutExecution.directive.blockingEvidence,
+        directCompletionReady: scoutExecution.directive.directCompletionReady,
         skillSummary: scoutExecution.directive.skillMap?.skillSummary,
         executionObligations: scoutExecution.directive.skillMap?.executionObligations,
         verificationObligations: scoutExecution.directive.skillMap?.verificationObligations,
@@ -6513,6 +6527,12 @@ function parseManagedTaskScoutDirective(text: string): ManagedTaskScoutDirective
       evidenceAcquisitionMode?: string;
       confirmed_harness?: string;
       confirmedHarness?: string;
+      harness_rationale?: string;
+      harnessRationale?: string;
+      blocking_evidence?: unknown;
+      blockingEvidence?: unknown;
+      direct_completion_ready?: string | boolean;
+      directCompletionReady?: string | boolean;
       skill_summary?: string;
       skillSummary?: string;
       projection_confidence?: string;
@@ -6526,6 +6546,7 @@ function parseManagedTaskScoutDirective(text: string): ManagedTaskScoutDirective
     const scope = normalizeStringListValue(parsed.scope);
     const requiredEvidence = normalizeStringListValue(parsed.required_evidence ?? parsed.requiredEvidence);
     const reviewFilesOrAreas = normalizeStringListValue(parsed.review_files_or_areas ?? parsed.reviewFilesOrAreas);
+    const blockingEvidence = normalizeStringListValue(parsed.blocking_evidence ?? parsed.blockingEvidence);
     const executionObligations = normalizeStringListValue(parsed.execution_obligations ?? parsed.executionObligations);
     const verificationObligations = normalizeStringListValue(parsed.verification_obligations ?? parsed.verificationObligations);
     const ambiguities = normalizeStringListValue(parsed.ambiguities);
@@ -6543,12 +6564,23 @@ function parseManagedTaskScoutDirective(text: string): ManagedTaskScoutDirective
     const projectionConfidence = parsed.projection_confidence || parsed.projectionConfidence
       ? normalizeManagedProjectionConfidence(String(parsed.projection_confidence ?? parsed.projectionConfidence))
       : undefined;
+    const harnessRationale = typeof (parsed.harness_rationale ?? parsed.harnessRationale) === 'string'
+      ? String(parsed.harness_rationale ?? parsed.harnessRationale).trim() || undefined
+      : undefined;
+    const directCompletionReady = typeof (parsed.direct_completion_ready ?? parsed.directCompletionReady) === 'string'
+      ? normalizeManagedDirectCompletionReady(String(parsed.direct_completion_ready ?? parsed.directCompletionReady))
+      : typeof (parsed.direct_completion_ready ?? parsed.directCompletionReady) === 'boolean'
+        ? ((parsed.direct_completion_ready ?? parsed.directCompletionReady) ? 'yes' : 'no')
+        : undefined;
     if (
       parsed.summary
       || scope.length > 0
       || requiredEvidence.length > 0
       || reviewFilesOrAreas.length > 0
       || confirmedHarness
+      || harnessRationale
+      || blockingEvidence.length > 0
+      || directCompletionReady
       || evidenceAcquisitionMode
       || skillSummary
       || executionObligations.length > 0
@@ -6564,6 +6596,9 @@ function parseManagedTaskScoutDirective(text: string): ManagedTaskScoutDirective
         reviewFilesOrAreas,
         evidenceAcquisitionMode,
         confirmedHarness,
+        harnessRationale,
+        blockingEvidence,
+        directCompletionReady,
         userFacingText: visibleText,
         skillMap: skillSummary || executionObligations.length > 0 || verificationObligations.length > 0 || ambiguities.length > 0 || projectionConfidence
           ? {
@@ -6581,10 +6616,13 @@ function parseManagedTaskScoutDirective(text: string): ManagedTaskScoutDirective
   }
   let summary: string | undefined;
   let confirmedHarness: ManagedTaskScoutDirective['confirmedHarness'];
+  let harnessRationale: string | undefined;
+  let directCompletionReady: ManagedTaskScoutDirective['directCompletionReady'];
   let evidenceAcquisitionMode: ManagedTaskScoutDirective['evidenceAcquisitionMode'];
   const scope: string[] = [];
   const requiredEvidence: string[] = [];
   const reviewFilesOrAreas: string[] = [];
+  const blockingEvidence: string[] = [];
   let skillSummary: string | undefined;
   let projectionConfidence: KodaXSkillMap['projectionConfidence'] | undefined;
   const executionObligations: string[] = [];
@@ -6594,6 +6632,7 @@ function parseManagedTaskScoutDirective(text: string): ManagedTaskScoutDirective
     | 'scope'
     | 'evidence'
     | 'review-files'
+    | 'blocking-evidence'
     | 'execution-obligations'
     | 'verification-obligations'
     | 'ambiguities'
@@ -6612,6 +6651,18 @@ function parseManagedTaskScoutDirective(text: string): ManagedTaskScoutDirective
     }
     if (/^(confirmed_harness|confirmedharness|harness)\s*[:=]/i.test(line)) {
       confirmedHarness = normalizeManagedScoutHarness(line.replace(/^(confirmed_harness|confirmedharness|harness)\s*[:=]\s*/i, ''));
+      currentList = undefined;
+      continue;
+    }
+    if (/^(harness_rationale|harnessrationale)\s*[:=]/i.test(line)) {
+      harnessRationale = line.replace(/^(harness_rationale|harnessrationale)\s*[:=]\s*/i, '').trim();
+      currentList = undefined;
+      continue;
+    }
+    if (/^(direct_completion_ready|directcompletionready)\s*[:=]/i.test(line)) {
+      directCompletionReady = normalizeManagedDirectCompletionReady(
+        line.replace(/^(direct_completion_ready|directcompletionready)\s*[:=]\s*/i, ''),
+      );
       currentList = undefined;
       continue;
     }
@@ -6658,6 +6709,14 @@ function parseManagedTaskScoutDirective(text: string): ManagedTaskScoutDirective
       }
       continue;
     }
+    if (/^(blocking_evidence|blockingevidence)\s*[:=]/i.test(line)) {
+      currentList = 'blocking-evidence';
+      const firstItem = line.replace(/^(blocking_evidence|blockingevidence)\s*[:=]\s*/i, '').trim();
+      if (firstItem) {
+        blockingEvidence.push(firstItem.replace(/^-+\s*/, '').trim());
+      }
+      continue;
+    }
     if (/^(execution_obligations|executionobligations)\s*[:=]/i.test(line)) {
       currentList = 'execution-obligations';
       const firstItem = line.replace(/^(execution_obligations|executionobligations)\s*[:=]\s*/i, '').trim();
@@ -6693,6 +6752,8 @@ function parseManagedTaskScoutDirective(text: string): ManagedTaskScoutDirective
       requiredEvidence.push(item);
     } else if (currentList === 'review-files') {
       reviewFilesOrAreas.push(item);
+    } else if (currentList === 'blocking-evidence') {
+      blockingEvidence.push(item);
     } else if (currentList === 'execution-obligations') {
       executionObligations.push(item);
     } else if (currentList === 'verification-obligations') {
@@ -6708,6 +6769,9 @@ function parseManagedTaskScoutDirective(text: string): ManagedTaskScoutDirective
     && requiredEvidence.length === 0
     && reviewFilesOrAreas.length === 0
     && !confirmedHarness
+    && !harnessRationale
+    && blockingEvidence.length === 0
+    && !directCompletionReady
     && !evidenceAcquisitionMode
     && !skillSummary
     && executionObligations.length === 0
@@ -6726,6 +6790,9 @@ function parseManagedTaskScoutDirective(text: string): ManagedTaskScoutDirective
     reviewFilesOrAreas: reviewFilesOrAreas.filter(Boolean),
     evidenceAcquisitionMode,
     confirmedHarness,
+    harnessRationale,
+    blockingEvidence: blockingEvidence.filter(Boolean),
+    directCompletionReady,
     userFacingText: visibleText,
     skillMap: skillSummary || executionObligations.length > 0 || verificationObligations.length > 0 || ambiguities.length > 0 || projectionConfidence
       ? {
@@ -7957,15 +8024,83 @@ function sanitizeContractResult(
   };
 }
 
+function isManagedBlockingEvidenceEmpty(items: string[] | undefined): boolean {
+  return !items || items.length === 0 || items.every((item) => {
+    const normalized = item.trim().toLowerCase();
+    return !normalized || normalized === 'none' || normalized === 'n/a' || normalized === 'na' || normalized === '-';
+  });
+}
+
+function validateScoutDirectiveConsistency(
+  directive: ManagedTaskScoutDirective,
+  primaryTask?: KodaXTaskRoutingDecision['primaryTask'],
+): string | undefined {
+  const harness = directive.confirmedHarness;
+  if (!harness) {
+    return 'missing confirmed_harness';
+  }
+
+  const hasRationale = Boolean(directive.harnessRationale?.trim());
+  const noBlockingEvidence = isManagedBlockingEvidenceEmpty(directive.blockingEvidence);
+  const hasUserFacingReviewConclusion = Boolean(
+    directive.userFacingText?.trim()
+    || directive.summary?.trim(),
+  );
+
+  if (harness === 'H0_DIRECT') {
+    if (directive.directCompletionReady !== 'yes') {
+      return 'H0_DIRECT requires direct_completion_ready: yes';
+    }
+    if (!noBlockingEvidence) {
+      return 'H0_DIRECT requires blocking_evidence to be empty or "none"';
+    }
+    if (!hasRationale) {
+      return 'H0_DIRECT requires harness_rationale';
+    }
+    if (primaryTask === 'review' && !hasUserFacingReviewConclusion) {
+      return 'H0_DIRECT review decisions require a user-facing review conclusion or summary';
+    }
+    return undefined;
+  }
+
+  if (directive.directCompletionReady === 'yes') {
+    return `${harness} requires direct_completion_ready: no (not yes)`;
+  }
+  if (!hasRationale) {
+    return `${harness} requires harness_rationale`;
+  }
+  if (noBlockingEvidence) {
+    return `${harness} requires at least one non-empty blocking_evidence item`;
+  }
+  return undefined;
+}
+
 function sanitizeScoutResult(
   result: KodaXResult,
-): { result: KodaXResult; directive?: ManagedTaskScoutDirective } {
+  options?: { primaryTask?: KodaXTaskRoutingDecision['primaryTask'] },
+): { result: KodaXResult; directive?: ManagedTaskScoutDirective; failureReason?: string } {
   const text = extractMessageText(result) || result.lastText;
   const directive = result.managedProtocolPayload?.scout ?? parseManagedTaskScoutDirective(text);
   if (!directive) {
     const reason = `Scout response omitted required ${MANAGED_TASK_SCOUT_BLOCK} block.`;
     return {
       directive: undefined,
+      failureReason: `missing ${MANAGED_TASK_SCOUT_BLOCK}`,
+      result: {
+        ...result,
+        success: false,
+        signal: 'BLOCKED',
+        signalReason: reason,
+      },
+    };
+  }
+
+  const consistencyFailure = validateScoutDirectiveConsistency(directive, options?.primaryTask);
+  if (consistencyFailure) {
+    const reason = `Scout response produced an inconsistent ${MANAGED_TASK_SCOUT_BLOCK} payload: ${consistencyFailure}.`;
+    return {
+      directive: undefined,
+      failureReason: consistencyFailure,
       result: {
         ...result,
         success: false,
@@ -9187,11 +9322,12 @@ async function runManagedScoutStage(
   for (let attempt = 1; attempt <= MANAGED_TASK_ROUTER_MAX_RETRIES; attempt += 1) {
     const result = await runDirectKodaX(scoutOptions, currentPrompt);
     lastResult = result;
-    const sanitized = sanitizeScoutResult(result);
+    const sanitized = sanitizeScoutResult(result, { primaryTask: plan.decision.primaryTask });
     if (sanitized.directive) {
       return { result: sanitized.result, directive: sanitized.directive };
     }
     if (attempt < MANAGED_TASK_ROUTER_MAX_RETRIES) {
+      const failureReason = sanitized.failureReason ?? `missing ${MANAGED_TASK_SCOUT_BLOCK}`;
       currentPrompt = buildProtocolRetryPrompt(
         basePrompt,
         {
@@ -9204,12 +9340,12 @@ async function runManagedScoutStage(
           prompt: basePrompt,
           toolPolicy,
         },
-        `missing ${MANAGED_TASK_SCOUT_BLOCK}`,
+        failureReason,
         buildProtocolRetryRoleSummary(
           scoutWorker,
           sanitized.result,
           attempt,
-          `missing ${MANAGED_TASK_SCOUT_BLOCK}`,
+          failureReason,
         ),
       );
     }
@@ -9224,6 +9360,11 @@ async function runManagedScoutStage(
       reviewFilesOrAreas: [],
       evidenceAcquisitionMode: 'overview',
       confirmedHarness: plan.decision.harnessProfile,
+      harnessRationale: 'Fallback scout directive used the current routing decision after structured retries were exhausted.',
+      blockingEvidence: plan.decision.harnessProfile === 'H0_DIRECT'
+        ? []
+        : ['Structured scout output was incomplete, so managed execution must continue.'],
+      directCompletionReady: plan.decision.harnessProfile === 'H0_DIRECT' ? 'yes' : 'no',
       userFacingText: sanitizeManagedUserFacingText(extractMessageText(lastResult) || ''),
     },
   };
@@ -10791,21 +10932,19 @@ export async function runManagedTask(
   const scoutExecution = await runManagedScoutStage(managedOptions, prompt, plan, scoutBudgetController);
   plan = applyScoutDecisionToPlan(plan, scoutExecution.directive);
   const skillMap = buildSkillMap(managedOptions.context?.skillInvocation, scoutExecution.directive);
-  const postScoutReviewFloor = applyManagedReviewHarnessFloorToPlan(plan, managedPlanning.reviewTarget);
-  plan = postScoutReviewFloor.plan;
-  if (postScoutReviewFloor.routingOverrideReason) {
+  const postScoutGuardrails = applyManagedHarnessGuardrailsToPlan(plan, managedPlanning.reviewTarget);
+  plan = postScoutGuardrails.plan;
+  if (postScoutGuardrails.routingOverrideReason) {
     routingOverrideReason = routingOverrideReason
-      ? `${routingOverrideReason}; ${postScoutReviewFloor.routingOverrideReason}`
-      : postScoutReviewFloor.routingOverrideReason;
+      ? `${routingOverrideReason}; ${postScoutGuardrails.routingOverrideReason}`
+      : postScoutGuardrails.routingOverrideReason;
   }
   finalRoutingDecision = cloneRoutingDecisionWithReviewTarget(
     plan.decision,
     managedPlanning.reviewTarget,
   );
-  const reviewHarnessFloorActive = shouldForceManagedReviewHarness(finalRoutingDecision);
-  const blockScoutDirectCompletion = shouldBlockScoutDirectReviewCompletion(finalRoutingDecision);
-  const scoutDowngradedToDirect = !blockScoutDirectCompletion
-    && scoutInitialHarnessProfile !== 'H0_DIRECT'
+  const scoutDowngradedToDirect = scoutInitialHarnessProfile !== 'H0_DIRECT'
+    && finalRoutingDecision.harnessProfile === 'H0_DIRECT'
     && scoutExecution.directive.confirmedHarness === 'H0_DIRECT';
   if (!scoutDowngradedToDirect && shouldRunTacticalReviewFanout(
     agentMode,
@@ -10870,7 +11009,7 @@ export async function runManagedTask(
     );
   }
 
-  if (!blockScoutDirectCompletion && scoutExecution.directive.confirmedHarness === 'H0_DIRECT') {
+  if (finalRoutingDecision.harnessProfile === 'H0_DIRECT' && scoutExecution.directive.confirmedHarness === 'H0_DIRECT') {
     const scoutShape = createScoutCompleteTaskShape(
       managedOptions,
       managedOriginalTask,
@@ -10920,6 +11059,9 @@ export async function runManagedTask(
           requiredEvidence: scoutExecution.directive.requiredEvidence,
           reviewFilesOrAreas: scoutExecution.directive.reviewFilesOrAreas,
           evidenceAcquisitionMode: scoutExecution.directive.evidenceAcquisitionMode,
+          harnessRationale: scoutExecution.directive.harnessRationale,
+          blockingEvidence: scoutExecution.directive.blockingEvidence,
+          directCompletionReady: scoutExecution.directive.directCompletionReady,
           skillSummary: scoutExecution.directive.skillMap?.skillSummary,
           executionObligations: scoutExecution.directive.skillMap?.executionObligations,
           verificationObligations: scoutExecution.directive.skillMap?.verificationObligations,
@@ -11004,12 +11146,17 @@ export async function runManagedTask(
       routingOverrideReason,
       scoutDecision: {
         summary: scoutExecution.directive.summary ?? 'Scout completed.',
-        recommendedHarness: finalRoutingDecision.harnessProfile,
-        readyForUpgrade: finalRoutingDecision.harnessProfile !== 'H0_DIRECT',
+        // recommendedHarness reflects the Scout's own recommendation before guardrails;
+        // it may differ from finalRoutingDecision.harnessProfile if guardrails override it.
+        recommendedHarness: scoutExecution.directive.confirmedHarness ?? finalRoutingDecision.harnessProfile,
+        readyForUpgrade: (scoutExecution.directive.confirmedHarness ?? finalRoutingDecision.harnessProfile) !== 'H0_DIRECT',
         scope: scoutExecution.directive.scope,
         requiredEvidence: scoutExecution.directive.requiredEvidence,
         reviewFilesOrAreas: scoutExecution.directive.reviewFilesOrAreas,
         evidenceAcquisitionMode: scoutExecution.directive.evidenceAcquisitionMode,
+        harnessRationale: scoutExecution.directive.harnessRationale,
+        blockingEvidence: scoutExecution.directive.blockingEvidence,
+        directCompletionReady: scoutExecution.directive.directCompletionReady,
         skillSummary: scoutExecution.directive.skillMap?.skillSummary,
         executionObligations: scoutExecution.directive.skillMap?.executionObligations,
         verificationObligations: scoutExecution.directive.skillMap?.verificationObligations,

@@ -837,6 +837,9 @@ export interface KodaXManagedTaskRuntimeState {
     requiredEvidence?: string[];
     reviewFilesOrAreas?: string[];
     evidenceAcquisitionMode?: 'overview' | 'diff-bundle' | 'diff-slice' | 'file-read';
+    harnessRationale?: string;
+    blockingEvidence?: string[];
+    directCompletionReady?: 'yes' | 'no';
     skillSummary?: string;
     executionObligations?: string[];
     verificationObligations?: string[];
@@ -903,6 +906,9 @@ export interface KodaXManagedScoutPayload {
   reviewFilesOrAreas?: string[];
   evidenceAcquisitionMode?: 'overview' | 'diff-bundle' | 'diff-slice' | 'file-read';
   confirmedHarness?: KodaXTaskRoutingDecision['harnessProfile'];
+  harnessRationale?: string;
+  blockingEvidence?: string[];
+  directCompletionReady?: 'yes' | 'no';
   userFacingText?: string;
   skillMap?: {
     skillSummary?: string;

@@ -176,6 +176,9 @@ function buildScoutResponse(
   visibleText: string,
   confirmedHarness: 'H0_DIRECT' | 'H1_EXECUTE_EVAL' | 'H2_PLAN_EXECUTE_EVAL',
   options?: {
+    harnessRationale?: string;
+    blockingEvidence?: string[];
+    directCompletionReady?: 'yes' | 'no';
     skillSummary?: string;
     projectionConfidence?: 'high' | 'medium' | 'low';
     executionObligations?: string[];
@@ -183,11 +186,23 @@ function buildScoutResponse(
     ambiguities?: string[];
   },
 ): string {
+  const harnessRationale = options?.harnessRationale
+    ?? (confirmedHarness === 'H0_DIRECT'
+      ? 'Evidence is already sufficient to finish safely on the direct path.'
+      : 'Additional verification or coordination is still required before final delivery.');
+  const directCompletionReady = options?.directCompletionReady
+    ?? (confirmedHarness === 'H0_DIRECT' ? 'yes' : 'no');
+  const blockingEvidence = options?.blockingEvidence
+    ?? (confirmedHarness === 'H0_DIRECT' ? ['none'] : ['Need additional evidence before direct completion.']);
   return [
     visibleText,
     '```kodax-task-scout',
     `summary: ${visibleText}`,
     `confirmed_harness: ${confirmedHarness}`,
+    `harness_rationale: ${harnessRationale}`,
+    `direct_completion_ready: ${directCompletionReady}`,
+    'blocking_evidence:',
+    ...blockingEvidence.map((item) => `- ${item}`),
     'scope:',
     '- Confirm task intent and scope.',
     'required_evidence:',
@@ -864,12 +879,12 @@ describe('runManagedTask', () => {
       buildPlan({
         primaryTask: 'review',
         taskFamily: 'review',
-        executionPattern: 'checked-direct',
+        executionPattern: 'direct',
         recommendedMode: 'pr-review',
         complexity: 'moderate',
         riskLevel: 'medium',
         harnessProfile: 'H1_EXECUTE_EVAL',
-        needsIndependentQA: true,
+        needsIndependentQA: false,
         reason: 'Review request starts in checked-direct mode.',
       }),
     );
@@ -905,7 +920,7 @@ describe('runManagedTask', () => {
     expect(scoutAssignment?.toolPolicy).toBeUndefined();
   });
 
-  it('keeps large current-diff reviews out of scout-direct fallback and forces the managed H2 review stack', async () => {
+  it('allows large current-diff reviews to stay on H0 when Scout provides complete direct-review evidence', async () => {
     const workspaceRoot = await createTempDir('kodax-task-engine-large-review-floor-root-');
     const repoRoot = await createTempDir('kodax-task-engine-large-review-floor-repo-');
 
@@ -913,57 +928,38 @@ describe('runManagedTask', () => {
       buildPlan({
         primaryTask: 'review',
         taskFamily: 'review',
-        executionPattern: 'checked-direct',
+        executionPattern: 'direct',
         recommendedMode: 'pr-review',
         complexity: 'complex',
         riskLevel: 'medium',
         mutationSurface: 'read-only',
         harnessProfile: 'H1_EXECUTE_EVAL',
         reviewScale: 'large',
-        needsIndependentQA: true,
+        needsIndependentQA: false,
         topologyCeiling: 'H2_PLAN_EXECUTE_EVAL',
         upgradeCeiling: 'H2_PLAN_EXECUTE_EVAL',
-        reason: 'Large current-diff reviews must not collapse into scout-direct fallback.',
+        reason: 'Large current-diff reviews should stay direct when Scout already has complete review evidence.',
       }),
     );
 
     mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
       if (workerPrompt.includes('You are the Scout role')) {
         return buildAssistantResult(
-          buildScoutResponse('Scout thinks the review might finish directly.', 'H0_DIRECT'),
-          { sessionId: 'session-scout-large-review-floor' },
-        );
-      }
-      if (workerPrompt.includes('You are the Planner role')) {
-        return buildAssistantResult(
-          buildContractResponse('Plan the large review and reduce it through the managed review stack.'),
-          { sessionId: 'session-planner-large-review-floor' },
-        );
-      }
-      if (workerPrompt.includes('You are the Generator role')) {
-        return buildAssistantResult(
-          buildHandoffResponse([
-            '## Findings',
-            '',
-            '- [high] `packages/coding/src/task-engine.ts`: duplicated normalization paths can diverge.',
-            '- [medium] `packages/repl/src/ui/InkREPL.tsx`: managed live events need durable transcript persistence.',
-          ].join('\n')),
-          { sessionId: 'session-generator-large-review-floor' },
-        );
-      }
-      if (workerPrompt.includes('You are the Evaluator role')) {
-        return buildAssistantResult(
-          buildVerdictResponse(
+          buildScoutResponse(
             [
               '## Findings',
               '',
               '- [high] `packages/coding/src/task-engine.ts`: duplicated normalization paths can diverge.',
               '- [medium] `packages/repl/src/ui/InkREPL.tsx`: managed live events need durable transcript persistence.',
             ].join('\n'),
-            'accept',
-            'Managed review completed with concrete findings.',
+            'H0_DIRECT',
+            {
+              harnessRationale: 'The key diff and risk areas are already inspected, so a direct findings-first review is ready now.',
+              directCompletionReady: 'yes',
+              blockingEvidence: ['none'],
+            },
           ),
-          { sessionId: 'session-evaluator-large-review-floor' },
+          { sessionId: 'session-scout-large-review-floor' },
         );
       }
       throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 120)}`);
@@ -977,7 +973,7 @@ describe('runManagedTask', () => {
           managedTaskWorkspaceDir: workspaceRoot,
           executionCwd: repoRoot,
           gitRoot: repoRoot,
-          repoIntelligenceMode: 'oss',
+          repoIntelligenceMode: 'off',
           repoRoutingSignals: buildRepoRoutingSignals({
             workspaceRoot: repoRoot,
             changedFileCount: 23,
@@ -993,13 +989,223 @@ describe('runManagedTask', () => {
       'Please review the current repository changes for merge blockers and give me the final review findings.',
     );
 
-    expect(mockRunDirectKodaX).toHaveBeenCalledTimes(4);
+    expect(mockRunDirectKodaX).toHaveBeenCalledTimes(1);
+    expect(result.routingDecision?.harnessProfile).toBe('H0_DIRECT');
+    expect(result.managedTask?.contract.harnessProfile).toBe('H0_DIRECT');
+    expect(result.managedTask?.roleAssignments.map((item) => item.role)).toEqual(['scout']);
+    expect(result.managedTask?.runtime?.routingOverrideReason).toBeUndefined();
+    expect(result.lastText).toContain('## Findings');
+    expect(result.lastText).toContain('duplicated normalization paths can diverge');
+  });
+
+  it('keeps a minimum of H1 when the task explicitly requires independent verification', async () => {
+    mockCreateReasoningPlan.mockResolvedValue(
+      buildPlan({
+        primaryTask: 'review',
+        taskFamily: 'review',
+        executionPattern: 'direct',
+        recommendedMode: 'pr-review',
+        complexity: 'moderate',
+        riskLevel: 'medium',
+        mutationSurface: 'read-only',
+        harnessProfile: 'H1_EXECUTE_EVAL',
+        needsIndependentQA: true,
+        topologyCeiling: 'H2_PLAN_EXECUTE_EVAL',
+        upgradeCeiling: 'H2_PLAN_EXECUTE_EVAL',
+        reason: 'The task explicitly requires an independent second judgment.',
+      }),
+    );
+
+    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
+      if (workerPrompt.includes('You are the Scout role')) {
+        return buildAssistantResult(
+          buildScoutResponse(
+            'Scout thinks the review could probably finish directly.',
+            'H0_DIRECT',
+            {
+              harnessRationale: 'The key files are understood, but the controller should only allow H0 if no QA guardrail applies.',
+              directCompletionReady: 'yes',
+              blockingEvidence: ['none'],
+            },
+          ),
+          { sessionId: 'session-scout-explicit-qa-floor' },
+        );
+      }
+      if (workerPrompt.includes('You are the Generator role')) {
+        return buildAssistantResult(
+          buildHandoffResponse('Generator prepared the review findings for independent evaluation.'),
+          { sessionId: 'session-generator-explicit-qa-floor' },
+        );
+      }
+      if (workerPrompt.includes('You are the Evaluator role')) {
+        return buildAssistantResult(
+          buildVerdictResponse(
+            '## Findings\n\n- [medium] `packages/coding/src/task-engine.ts`: independent verification confirmed the scoped issue.',
+            'accept',
+            'Independent verification completed successfully.',
+          ),
+          { sessionId: 'session-evaluator-explicit-qa-floor' },
+        );
+      }
+      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 120)}`);
+    });
+
+    const result = await runManagedTask(
+      {
+        provider: 'anthropic',
+        agentMode: 'ama',
+      },
+      'Please review these changes and make sure an independent verifier signs off before we trust the result.',
+    );
+
+    expect(result.routingDecision?.harnessProfile).toBe('H1_EXECUTE_EVAL');
+    expect(result.managedTask?.contract.harnessProfile).toBe('H1_EXECUTE_EVAL');
+    expect(result.managedTask?.roleAssignments.map((item) => item.role)).toEqual(['generator', 'evaluator']);
+    expect(result.managedTask?.runtime?.routingOverrideReason).toContain('independent verification was explicitly requested');
+    expect(result.lastText).toContain('## Findings');
+  });
+
+  it('keeps a minimum of H2 for high-risk system-level overwrite work', async () => {
+    mockCreateReasoningPlan.mockResolvedValue(
+      buildPlan({
+        primaryTask: 'edit',
+        taskFamily: 'implementation',
+        executionPattern: 'direct',
+        recommendedMode: 'implementation',
+        complexity: 'systemic',
+        riskLevel: 'high',
+        mutationSurface: 'system',
+        workIntent: 'overwrite',
+        harnessProfile: 'H1_EXECUTE_EVAL',
+        topologyCeiling: 'H2_PLAN_EXECUTE_EVAL',
+        upgradeCeiling: 'H2_PLAN_EXECUTE_EVAL',
+        reason: 'This is a risky system-level overwrite and must keep a coordinated execution floor.',
+      }),
+    );
+
+    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
+      if (workerPrompt.includes('You are the Scout role')) {
+        return buildAssistantResult(
+          buildScoutResponse(
+            'Scout thinks the edit path looks straightforward.',
+            'H0_DIRECT',
+            {
+              harnessRationale: 'The scout believes the edit is conceptually simple, but hard guardrails may still apply.',
+              directCompletionReady: 'yes',
+              blockingEvidence: ['none'],
+            },
+          ),
+          { sessionId: 'session-scout-system-floor' },
+        );
+      }
+      if (workerPrompt.includes('You are the Planner role')) {
+        return buildAssistantResult(
+          buildContractResponse('Planner decomposed the risky system edit before execution.'),
+          { sessionId: 'session-planner-system-floor' },
+        );
+      }
+      if (workerPrompt.includes('You are the Generator role')) {
+        return buildAssistantResult(
+          buildHandoffResponse('Generator completed the coordinated system edit handoff.'),
+          { sessionId: 'session-generator-system-floor' },
+        );
+      }
+      if (workerPrompt.includes('You are the Evaluator role')) {
+        return buildAssistantResult(
+          buildVerdictResponse(
+            'System edit completed under the coordinated H2 guardrail.',
+            'accept',
+            'The high-risk overwrite guardrail required coordinated execution.',
+          ),
+          { sessionId: 'session-evaluator-system-floor' },
+        );
+      }
+      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 120)}`);
+    });
+
+    const result = await runManagedTask(
+      {
+        provider: 'anthropic',
+        agentMode: 'ama',
+      },
+      'Apply this risky system-wide overwrite across the codebase and make sure the final result is coordinated safely.',
+    );
+
     expect(result.routingDecision?.harnessProfile).toBe('H2_PLAN_EXECUTE_EVAL');
     expect(result.managedTask?.contract.harnessProfile).toBe('H2_PLAN_EXECUTE_EVAL');
     expect(result.managedTask?.roleAssignments.map((item) => item.role)).toEqual(['planner', 'generator', 'evaluator']);
-    expect(result.managedTask?.runtime?.routingOverrideReason).toContain('large diff-driven review');
+    expect(result.managedTask?.runtime?.routingOverrideReason).toContain('high-risk system-level mutation requires coordinated execution');
+    expect(result.lastText).toContain('System edit completed');
+  });
+
+  it('retries Scout when H0_DIRECT declares directCompletionReady as no instead of yes', async () => {
+    mockCreateReasoningPlan.mockResolvedValue(
+      buildPlan({
+        primaryTask: 'review',
+        taskFamily: 'review',
+        executionPattern: 'direct',
+        recommendedMode: 'pr-review',
+        complexity: 'moderate',
+        riskLevel: 'medium',
+        mutationSurface: 'read-only',
+        harnessProfile: 'H0_DIRECT',
+        topologyCeiling: 'H2_PLAN_EXECUTE_EVAL',
+        upgradeCeiling: 'H2_PLAN_EXECUTE_EVAL',
+        reason: 'Scout should be able to complete the review directly once the structured payload is consistent.',
+      }),
+    );
+
+    let scoutAttempts = 0;
+    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
+      if (!workerPrompt.includes('You are the Scout role')) {
+        throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 120)}`);
+      }
+      expect(workerPrompt).toContain('harness_rationale');
+      expect(workerPrompt).toContain('direct_completion_ready');
+      expect(workerPrompt).toContain('blocking_evidence');
+      expect(workerPrompt).toContain('changed file count');
+      scoutAttempts += 1;
+      if (scoutAttempts === 1) {
+        return buildAssistantResult(
+          buildScoutResponse(
+            'Scout has enough evidence, but forgot the readiness field.',
+            'H0_DIRECT',
+            {
+              directCompletionReady: 'no',
+              blockingEvidence: ['none'],
+              harnessRationale: 'This should be retried because H0 requires explicit readiness.',
+            },
+          ),
+          { sessionId: 'session-scout-invalid-h0' },
+        );
+      }
+      return buildAssistantResult(
+        buildScoutResponse(
+          '## Findings\n\n- [low] `packages/coding/src/task-engine.ts`: the retry path now preserves H0 when the scout evidence is complete.',
+          'H0_DIRECT',
+          {
+            harnessRationale: 'The retry produced a complete direct-review payload with all required evidence fields.',
+            directCompletionReady: 'yes',
+            blockingEvidence: ['none'],
+          },
+        ),
+        { sessionId: 'session-scout-valid-h0' },
+      );
+    });
+
+    const result = await runManagedTask(
+      {
+        provider: 'anthropic',
+        agentMode: 'ama',
+      },
+      'Please review the current code changes and tell me if the new routing behavior is safe to merge.',
+    );
+
+    expect(mockRunDirectKodaX).toHaveBeenCalledTimes(2);
+    expect(result.routingDecision?.harnessProfile).toBe('H0_DIRECT');
+    expect(result.managedTask?.contract.harnessProfile).toBe('H0_DIRECT');
     expect(result.lastText).toContain('## Findings');
-    expect(result.lastText).toContain('duplicated normalization paths can diverge');
+    expect(result.lastText).toContain('retry path now preserves H0');
   });
 
   it('runs tactical review child fan-out inside AMA H0 and keeps the parent as final authority', async () => {

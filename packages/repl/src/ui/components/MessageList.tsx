@@ -595,7 +595,6 @@ export const MessageList: React.FC<MessageListProps> = ({
   const theme = useMemo(() => getTheme("dark"), []);
   const { stdout } = useStdout();
   const terminalWidth = viewportWidth ?? stdout?.columns ?? 80;
-  const showEmptyState = items.length === 0 && !isLoading;
 
   const effectiveTranscriptModel = useMemo(
     () => transcriptModel ?? buildTranscriptRenderModel({
@@ -673,6 +672,9 @@ export const MessageList: React.FC<MessageListProps> = ({
     () => [...transcriptRows, ...previewRows],
     [previewRows, transcriptRows],
   );
+  // A prebuilt transcriptModel may supply rows even when items is empty (e.g. banners).
+  const hasRenderableTranscriptContent = allTranscriptRows.length > 0;
+  const showEmptyState = !hasRenderableTranscriptContent && items.length === 0 && !isLoading;
   const windowedRowSource = useMemo(
     () => (windowed || rendererWindow || visibleRowsOverride ? allTranscriptRows : transcriptRows),
     [allTranscriptRows, rendererWindow, transcriptRows, visibleRowsOverride, windowed],
