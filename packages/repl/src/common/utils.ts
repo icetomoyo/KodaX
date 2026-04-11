@@ -9,6 +9,7 @@ import os from 'os';
 import { exec, spawnSync, type SpawnSyncReturns } from 'child_process';
 import { promisify } from 'util';
 import { fileURLToPath } from 'url';
+import { setLocale } from './i18n.js';
 import {
   buildProviderCapabilitySnapshot,
   evaluateProviderPolicy,
@@ -575,6 +576,7 @@ export function loadConfig(): {
   reasoningMode?: KodaXReasoningMode;
   agentMode?: KodaXAgentMode;
   permissionMode?: string;
+  locale?: string;
   providerReasoningOverrides?: Record<string, KodaXReasoningOverride>;
   providerModels?: Record<string, string[]>;
   customProviders?: KodaXCustomProviderConfig[];
@@ -594,6 +596,7 @@ export function loadConfig(): {
         reasoningMode?: KodaXReasoningMode;
         agentMode?: KodaXAgentMode;
         permissionMode?: string;
+        locale?: string;
         providerReasoningOverrides?: Record<string, KodaXReasoningOverride>;
         providerModels?: Record<string, string[]>;
         customProviders?: KodaXCustomProviderConfig[];
@@ -635,6 +638,8 @@ export function prepareRuntimeConfig(): ReturnType<typeof loadConfig> {
   const config = loadConfig();
   applyRepoIntelligenceRuntimeEnv(config);
   registerConfiguredCustomProviders(config);
+  // Initialize i18n locale from config (falls back to system LANG)
+  setLocale(config.locale);
   return config;
 }
 
@@ -646,6 +651,7 @@ export function saveConfig(config: {
   reasoningMode?: KodaXReasoningMode;
   agentMode?: KodaXAgentMode;
   permissionMode?: string;
+  locale?: string;
   providerReasoningOverrides?: Record<string, KodaXReasoningOverride>;
   providerModels?: Record<string, string[]>;
   customProviders?: KodaXCustomProviderConfig[];

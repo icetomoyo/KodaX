@@ -119,6 +119,7 @@ import {
   getProviderReasoningCapability,
 } from "../common/utils.js";
 import { buildToolConfirmationPrompt } from "../common/tool-confirmation.js";
+import { t } from "../common/i18n.js";
 import { KODAX_VERSION } from "../common/utils.js";
 import { runWithPlanMode } from "../common/plan-mode.js";
 import { saveAlwaysAllowToolPattern, loadAlwaysAllowTools, savePermissionModeUser } from "../common/permission-config.js";
@@ -1880,12 +1881,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     const canAlways = currentConfig.permissionMode === "accept-edits" && !isProtectedPath;
 
     if (isProtectedPath) {
-      return "Press (y) to confirm, (n) to cancel (protected path)";
+      return t("confirm.instruction.protected");
     }
     if (canAlways) {
-      return "Press (y) yes, (a) always yes for this tool, (n) no";
+      return t("confirm.instruction.always");
     }
-    return "Press (y) yes, (n) no";
+    return t("confirm.instruction.basic");
   }, [confirmRequest, currentConfig.permissionMode]);
 
   const isHistorySearchActive = transcriptDisplayState.searchMode === "history";
@@ -4057,6 +4058,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       const canAlways = currentConfig.permissionMode === "accept-edits" && !isProtectedPath;
 
       if (answer === "y" || answer === "yes") {
+        addHistoryItem({
+          type: "info",
+          text: `${t("dialog.confirm")} ${confirmRequest.prompt}\n  → ${t("confirm.result.approved")}`,
+        });
         setConfirmRequest(null);
         confirmResolveRef.current?.({ confirmed: true });
         confirmResolveRef.current = null;
@@ -4064,6 +4069,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
 
       if (canAlways && (answer === "a" || answer === "always")) {
+        addHistoryItem({
+          type: "info",
+          text: `${t("dialog.confirm")} ${confirmRequest.prompt}\n  → ${t("confirm.result.approved_always")}`,
+        });
         setConfirmRequest(null);
         confirmResolveRef.current?.({ confirmed: true, always: true });
         confirmResolveRef.current = null;
@@ -4071,6 +4080,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
 
       if (answer === "n" || answer === "no" || key.name === "escape") {
+        addHistoryItem({
+          type: "info",
+          text: `${t("dialog.confirm")} ${confirmRequest.prompt}\n  → ${t("confirm.result.denied")}`,
+        });
         setConfirmRequest(null);
         confirmResolveRef.current?.({ confirmed: false });
         confirmResolveRef.current = null;
@@ -4739,8 +4752,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         }
 
         if (!result.confirmed) {
-          // Issue 051: show cancellation feedback.
-          console.log(chalk.yellow('[Cancelled] Operation cancelled by user'));
+          // Issue 051: show cancellation feedback (now via i18n).
+          console.log(chalk.yellow(t("cancelled")));
           return false;
         }
 

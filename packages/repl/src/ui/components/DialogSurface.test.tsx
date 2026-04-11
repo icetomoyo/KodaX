@@ -1,9 +1,17 @@
 import React from "react";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { render } from "ink-testing-library";
 import { DialogSurface } from "./DialogSurface.js";
+import { setLocale } from "../../common/i18n.js";
 
 describe("DialogSurface", () => {
+  beforeEach(() => {
+    setLocale("en");
+  });
+  afterEach(() => {
+    setLocale("en");
+  });
+
   it("renders confirm dialogs", () => {
     const { lastFrame } = render(
       <DialogSurface confirm={{ prompt: "Apply changes?", instruction: "Press y to confirm" }} />,
@@ -11,6 +19,17 @@ describe("DialogSurface", () => {
 
     const frame = lastFrame();
     expect(frame).toContain("[Confirm]");
+    expect(frame).toContain("Apply changes?");
+  });
+
+  it("renders confirm dialogs in Chinese when locale is zh", () => {
+    setLocale("zh");
+    const { lastFrame } = render(
+      <DialogSurface confirm={{ prompt: "Apply changes?", instruction: "按 (y) 确认" }} />,
+    );
+
+    const frame = lastFrame();
+    expect(frame).toContain("[确认]");
     expect(frame).toContain("Apply changes?");
   });
 

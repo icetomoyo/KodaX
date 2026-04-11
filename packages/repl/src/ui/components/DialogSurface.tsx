@@ -1,5 +1,6 @@
 import React from "react";
 import { Box, Text } from "../tui.js";
+import { t } from "../../common/i18n.js";
 
 export interface DialogSelectOption {
   value: string;
@@ -40,9 +41,10 @@ export const DialogSurface: React.FC<DialogSurfaceProps> = ({
         borderColor="yellow"
         paddingX={1}
         marginTop={1}
+        width="100%"
       >
         <Text color="yellow" bold>
-          [Confirm] {confirm.prompt}
+          {t("dialog.confirm")} {confirm.prompt}
         </Text>
         {confirm.instruction ? <Text dimColor>{confirm.instruction}</Text> : null}
       </Box>
@@ -57,11 +59,12 @@ export const DialogSurface: React.FC<DialogSurfaceProps> = ({
         borderColor="cyan"
         paddingX={1}
         marginTop={1}
+        width="100%"
       >
         {request.kind === "select" ? (
           <>
             <Text color="cyan" bold>
-              [Select] {request.title}
+              {t("dialog.select")} {request.title}
             </Text>
             {(request.options ?? []).slice(0, request.visibleSelectOptions ?? 5).map((option, index) => (
               <Text key={`${option.value}-${index}`} dimColor>
@@ -69,21 +72,21 @@ export const DialogSurface: React.FC<DialogSurfaceProps> = ({
               </Text>
             ))}
             {(request.options?.length ?? 0) > (request.visibleSelectOptions ?? 5) ? (
-              <Text dimColor>{`${(request.options?.length ?? 0) - (request.visibleSelectOptions ?? 5)} more choices...`}</Text>
+              <Text dimColor>{t("select.more", { count: (request.options?.length ?? 0) - (request.visibleSelectOptions ?? 5) })}</Text>
             ) : null}
-            <Text dimColor>{`Choice: ${request.buffer || "(type a number)"}`}</Text>
-            <Text dimColor>Press Enter to confirm, Esc to cancel</Text>
+            <Text dimColor>{`${t("select.choice")} ${request.buffer || t("select.type_number")}`}</Text>
+            <Text dimColor>{t("select.confirm_hint")}</Text>
           </>
         ) : (
           <>
             <Text color="cyan" bold>
-              [Input] {request.prompt}
+              {t("dialog.input")} {request.prompt}
             </Text>
             {request.defaultValue !== undefined ? (
-              <Text dimColor>{`Default: ${request.defaultValue}`}</Text>
+              <Text dimColor>{`${t("input.default")} ${request.defaultValue}`}</Text>
             ) : null}
-            <Text dimColor>{`Value: ${request.buffer || "(type your response)"}`}</Text>
-            <Text dimColor>Press Enter to confirm, Esc to cancel</Text>
+            <Text dimColor>{`${t("input.value")} ${request.buffer || t("input.type_response")}`}</Text>
+            <Text dimColor>{t("select.confirm_hint")}</Text>
           </>
         )}
         {request.error ? <Text color="red">{request.error}</Text> : null}

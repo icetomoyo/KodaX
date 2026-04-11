@@ -1,12 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ToolCallStatus } from "../types.js";
 import {
   buildPromptActivityText,
   buildPromptActivityViewModel,
   buildPromptPlaceholderText,
 } from "./surface-liveness.js";
+import { setLocale } from "../../common/i18n.js";
 
 describe("surface-liveness", () => {
+  beforeEach(() => { setLocale("en"); });
+  afterEach(() => { setLocale("en"); });
   it("only emits prompt activity text for loading prompt surfaces", () => {
     expect(buildPromptActivityText({
       isTranscriptMode: true,

@@ -1,4 +1,5 @@
 import { isBashReadCommand, isBashWriteCommand } from "../permission/permission.js";
+import { t } from "./i18n.js";
 
 const SUMMARY_MAX_LENGTH = 100;
 const NETWORK_COMMAND_PATTERN = /\b(curl|wget|invoke-webrequest|invoke-restmethod|iwr|irm)\b/i;
@@ -82,45 +83,58 @@ function summarizeCommand(command: string): string {
 
 function classifyShellIntent(command: string): string {
   if (isBashReadCommand(command)) {
-    return "Read project files";
+    return t("intent.read");
   }
   if (DELETE_COMMAND_PATTERN.test(command)) {
-    return "Delete files";
+    return t("intent.delete");
   }
   if (ENVIRONMENT_COMMAND_PATTERN.test(command)) {
-    return "Modify dependencies or environment";
+    return t("intent.deps");
   }
   if (isBashWriteCommand(command) || FILE_MODIFY_COMMAND_PATTERN.test(command)) {
-    return "Modify files";
+    return t("intent.modify");
   }
-  return "Execute command";
+  return t("intent.execute");
 }
 
 function classifyShellRisks(command: string): string[] {
   const risks: string[] = [];
 
   if (DELETE_COMMAND_PATTERN.test(command)) {
-    risks.push("Destructive change");
+    risks.push(t("risk.destructive"));
   } else if (ENVIRONMENT_COMMAND_PATTERN.test(command)) {
-    risks.push("May change dependencies or local tools");
+    risks.push(t("risk.deps"));
   } else if (isBashWriteCommand(command) || FILE_MODIFY_COMMAND_PATTERN.test(command)) {
-    risks.push("May modify files");
+    risks.push(t("risk.modify"));
   } else if (!isBashReadCommand(command)) {
-    risks.push("Command effects depend on its arguments");
+    risks.push(t("risk.unknown"));
   }
 
   if (NETWORK_COMMAND_PATTERN.test(command)) {
-    risks.push("May access network");
+    risks.push(t("risk.network"));
   }
 
   return risks;
+}
+
+const FIELD_LABEL_KEYS: Record<ToolConfirmationField["label"], string> = {
+  Reason: "field.reason",
+  Intent: "field.intent",
+  Target: "field.target",
+  Scope: "field.scope",
+  Risk: "field.risk",
+  Summary: "field.summary",
+};
+
+function localizeFieldLabel(label: ToolConfirmationField["label"]): string {
+  return t(FIELD_LABEL_KEYS[label] as Parameters<typeof t>[0]);
 }
 
 function buildDisplayFromFields(title: string, fields: ToolConfirmationField[]): ToolConfirmationDisplay {
   return {
     title,
     fields,
-    details: fields.map((field) => `${field.label}: ${field.value}`),
+    details: fields.map((field) => `${localizeFieldLabel(field.label)}: ${field.value}`),
   };
 }
 
@@ -140,9 +154,9 @@ export function buildToolConfirmationDisplay(
   const command = readString(input.command);
   const reason = readString(input._reason) ?? readString(input.justification);
   const scope = input._outsideProject === true
-    ? "Outside project"
+    ? t("scope.outside")
     : input._alwaysConfirm === true
-      ? "Protected path"
+      ? t("scope.protected")
       : undefined;
 
   pushField(fields, "Reason", reason);
@@ -162,28 +176,28 @@ export function buildToolConfirmationDisplay(
         pushField(fields, "Scope", scope);
       }
       return buildDisplayFromFields(
-        tool === "bash" ? "Execute bash command?" : "Execute shell command?",
+        tool === "bash" ? t("tool.bash.title") : t("tool.shell.title"),
         fields,
       );
     }
     case "write":
-      pushField(fields, "Intent", "Write file");
+      pushField(fields, "Intent", t("intent.write_file"));
       pushField(fields, "Target", path);
       pushField(fields, "Scope", scope);
-      return buildDisplayFromFields("Write to file?", fields);
+      return buildDisplayFromFields(t("tool.write.title"), fields);
     case "edit":
-      pushField(fields, "Intent", "Edit file");
+      pushField(fields, "Intent", t("intent.edit_file"));
       pushField(fields, "Target", path);
       pushField(fields, "Scope", scope);
-      return buildDisplayFromFields("Edit file?", fields);
+      return buildDisplayFromFields(t("tool.edit.title"), fields);
     default:
-      pushField(fields, "Intent", `Use ${tool}`);
+      pushField(fields, "Intent", t("intent.use_tool", { tool }));
       pushField(fields, "Target", path);
       pushField(fields, "Scope", scope);
       if (command) {
         pushField(fields, "Summary", summarizeCommand(command));
       }
-      return buildDisplayFromFields(`Execute ${tool}?`, fields);
+      return buildDisplayFromFields(t("tool.generic.title", { tool }), fields);
   }
 }
 
