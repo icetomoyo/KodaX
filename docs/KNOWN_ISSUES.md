@@ -34,7 +34,7 @@ _Last Updated: 2026-04-08_
 | 090 | High | Resolved | CLI Provider 桥接语义降级：上下文与 MCP 能力丢失 | v0.6.10 | v0.6.10 | 2026-03-18 | 2026-03-19 |
 | 091 | High | Open | 缺少一等公民 MCP / Web Search / Code Search 工具体系 | v0.6.10 | - | 2026-03-18 | - |
 | 092 | High | Open | Team 模式已暴露但原生多 Agent 架构仍未闭环 | v0.6.10 | - | 2026-03-18 | - |
-| 093 | Medium | Open | 缺少 IDE / Desktop / Web 一体化分发表面 | v0.6.10 | - | 2026-03-18 | - |
+| 093 | Low | Open | 缺少 IDE / Desktop / Web 一体化分发表面 (Vibe Coding 时代已降级) | v0.6.10 | - | 2026-03-18 | - |
 | 094 | Medium | Open | 核心工作流文件与函数过大，职责耦合导致重构成本持续上升 | v0.6.13 | - | 2026-03-22 | - |
 | 095 | Medium | Open | Agent / REPL 主流程仍存在重复编排与手写运行时流程 | v0.6.13 | - | 2026-03-22 | - |
 | 096 | Low | Open | 类型边界过宽且共享可变状态较多 | v0.6.13 | - | 2026-03-22 | - |
@@ -1235,7 +1235,7 @@ _Last Updated: 2026-04-08_
 ---
 
 ### 093: 缺少 IDE / Desktop / Web 一体化分发表面 (OPEN)
-- **Priority**: Medium
+- **Priority**: Low (2026-04-11 降级: Vibe Coding 时代 terminal 是主入口，IDE Bridge 非关键)
 - **Status**: Open
 - **Introduced**: v0.6.10
 - **Created**: 2026-03-18
@@ -1252,14 +1252,22 @@ _Last Updated: 2026-04-08_
   - `packages/repl/`
   - 当前仓库中缺少对应 app / sdk surface 目录
 
+- **Priority Downgrade Rationale (2026-04-11)**:
+  基于 KodaX vs Claude Code 全面对比分析，IDE Bridge 的优先级从 Medium 降级为 Low：
+  1. Vibe Coding 范式下对话终端是主入口，不是 IDE 编辑器
+  2. KodaX 已有 terminal host 检测 (FEATURE_051)，在 VSCode 集成终端中可正常工作
+  3. Cursor/Windsurf/Copilot 已占领 IDE 原生 AI 赛道，KodaX 的核心差异化 (AMA/多 Provider/Repo Intelligence) 全部是 CLI-native
+  4. 建 IDE bridge 是高成本低差异化投入 (Claude Code 的 bridge 有 25+ 文件)
+
 - **Root Cause**:
   1. 研发重心长期集中在 CLI 与 project workflow
   2. 缺少统一的 surface protocol 与 session handoff layer
   3. 尚未形成跨表面的产品抽象
 
 - **Proposed Solution**:
-- 实施 `FEATURE_030 Multi-Surface Delivery`
-- 在 terminal UX 和 multi-agent 基础稳定后再逐步展开
+- 长期目标：实施 `FEATURE_030 Multi-Surface Delivery`
+- 短期：依赖 terminal host 检测 + IDE 集成终端作为分发面
+- 在 terminal UX 和 multi-agent 基础稳定后再评估是否需要原生 IDE 集成
 
 ---
 

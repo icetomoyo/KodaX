@@ -39,6 +39,10 @@ import {
 import {
   isManagedProtocolToolName,
   mergeManagedProtocolPayload,
+  getManagedBlockNameForRole,
+  hasManagedProtocolForRole,
+  textContainsManagedBlock,
+  MANAGED_PROTOCOL_TOOL_NAME,
 } from './managed-protocol.js';
 import { buildSystemPrompt } from './prompts/index.js';
 import { generateSessionId, extractTitleFromMessages } from './session.js';
@@ -1465,6 +1469,7 @@ export async function runKodaX(
     events.onSessionStart?.({ provider: initialProvider.name, sessionId });
     await emitActiveExtensionEvent('session:start', { provider: initialProvider.name, sessionId });
 
+    let managedProtocolContinueAttempted = false;
     for (let iter = 0; iter < maxIter; iter++) {
     try {
       currentProviderName = runtimeSessionState.modelSelection.provider ?? options.provider;
@@ -1962,6 +1967,38 @@ export async function runKodaX(
         messages.push({ role: 'user', content: [{ type: 'text', text: 'Continue from where you left off.' }] });
         contextTokenSnapshot = rebaseContextTokenSnapshot(messages, completedTurnTokenSnapshot);
         continue;
+      }
+
+      // Fallback: auto-continue when end_turn fires but required managed protocol block is missing.
+      // This covers the case where the model voluntarily stops (end_turn) before emitting the
+      // required protocol block — the max_tokens fallback above does not catch this scenario.
+      // Limited to a single attempt to avoid infinite loops; the task-engine retry handles further recovery.
+      if (
+        !managedProtocolContinueAttempted
+        && result.stopReason === 'end_turn'
+        && result.toolBlocks.length === 0
+        && lastText
+        && options.context?.managedProtocolEmission?.enabled
+      ) {
+        const role = options.context.managedProtocolEmission.role;
+        const blockName = getManagedBlockNameForRole(role);
+        if (
+          blockName
+          && !hasManagedProtocolForRole(emittedManagedProtocolPayload, role)
+          && !textContainsManagedBlock(lastText, blockName)
+        ) {
+          managedProtocolContinueAttempted = true;
+          events.onTextDelta?.('\n\n[protocol block missing, continuing...]\n\n');
+          messages.push({
+            role: 'user',
+            content: [{
+              type: 'text',
+              text: `Your response ended before the required \`\`\`${blockName}\`\`\` protocol block was emitted. Continue and emit the protocol block now via "${MANAGED_PROTOCOL_TOOL_NAME}" or as a fenced block at the end of your response.`,
+            }],
+          });
+          contextTokenSnapshot = rebaseContextTokenSnapshot(messages, completedTurnTokenSnapshot);
+          continue;
+        }
       }
 
       if (result.toolBlocks.length === 0) {

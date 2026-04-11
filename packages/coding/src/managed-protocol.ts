@@ -389,3 +389,42 @@ export function coerceManagedProtocolToolPayload(
     },
   };
 }
+
+/**
+ * Map a task role to its required managed protocol fenced-block name.
+ */
+export function getManagedBlockNameForRole(role: string): string | undefined {
+  switch (role) {
+    case 'scout': return MANAGED_TASK_SCOUT_BLOCK;
+    case 'planner': return MANAGED_TASK_CONTRACT_BLOCK;
+    case 'evaluator': return MANAGED_TASK_VERDICT_BLOCK;
+    case 'generator': return MANAGED_TASK_HANDOFF_BLOCK;
+    default: return undefined;
+  }
+}
+
+/**
+ * Check whether a managed protocol payload already contains the required field for the given role.
+ */
+export function hasManagedProtocolForRole(
+  payload: KodaXManagedProtocolPayload | undefined,
+  role: string,
+): boolean {
+  if (!payload) return false;
+  switch (role) {
+    case 'scout': return !!payload.scout;
+    case 'planner': return !!payload.contract;
+    case 'evaluator': return !!payload.verdict;
+    case 'generator': return !!payload.handoff;
+    default: return false;
+  }
+}
+
+/**
+ * Lightweight check: does `text` contain a complete fenced block for `blockName`?
+ * Uses the same backtick-fence convention as `findLastFencedBlock` in task-engine.
+ */
+export function textContainsManagedBlock(text: string, blockName: string): boolean {
+  const pattern = new RegExp(String.raw`\`\`\`${blockName}\s*[\s\S]*?\`\`\``, 'i');
+  return pattern.test(text);
+}
