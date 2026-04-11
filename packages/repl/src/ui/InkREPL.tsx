@@ -141,6 +141,7 @@ import { MemorySessionStorage, type SessionStorage } from "./utils/session-stora
 import { processSpecialSyntax, isShellCommandHandled } from "./utils/shell-executor.js";
 import {
   extractHistorySeedsFromMessage,
+  seedToHistoryItem,
   resolveCompletedAssistantText,
   sanitizeUserFacingAssistantText,
   isControlPlaneOnlyAssistantText,
@@ -3448,7 +3449,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     }
 
     return (
-      <Box flexDirection="column">
+      <Box flexDirection="column" width="100%">
         {overlayChildren}
       </Box>
     );
@@ -4250,7 +4251,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       for (const msg of context.messages) {
         const historySeeds = extractHistorySeedsFromMessage(msg);
         for (const item of historySeeds) {
-          addHistoryItem(item);
+          addHistoryItem(seedToHistoryItem(item));
         }
       }
     }
@@ -5018,7 +5019,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       setCurrentTool(undefined);
       setIsLoading(false);
 
+      // Flush any pending persistence, then force a final save with the latest uiHistory.
       await persistContextStateQueueRef.current.catch(() => {});
+      await persistContextStateRef.current?.().catch(() => {});
       setIsRunning(false);
       if (isRawModeSupported && stdin?.isRaw) {
         setRawMode(false);
@@ -5245,7 +5248,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
     const historySeeds = extractHistorySeedsFromMessage(lastAssistant);
     for (const item of historySeeds) {
-      addHistoryItem(item);
+      addHistoryItem(seedToHistoryItem(item));
     }
   }, [addHistoryItem]);
 
@@ -5299,8 +5302,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           });
           reconcileContextLineage(context.messages);
           for (const item of extractHistorySeedsFromMessage(lastAssistant)) {
-            addHistoryItem(item);
-            persistedAdditions.push(item);
+            const mapped = seedToHistoryItem(item);
+            addHistoryItem(mapped);
+            persistedAdditions.push(mapped);
           }
         }
       } else {
@@ -5311,7 +5315,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         const lastAssistant = result.messages[result.messages.length - 1];
         if (lastAssistant?.role === "assistant") {
           for (const item of extractHistorySeedsFromMessage(lastAssistant)) {
-            persistedAdditions.push(item);
+            persistedAdditions.push(seedToHistoryItem(item));
           }
         }
       }

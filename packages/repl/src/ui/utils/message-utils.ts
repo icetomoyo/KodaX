@@ -8,7 +8,18 @@ export type RestoredHistorySeed =
   | { type: "user"; text: string }
   | { type: "assistant"; text: string }
   | { type: "system"; text: string }
-  | { type: "thinking"; text: string };
+  | { type: "thinking"; text: string }
+  | { type: "tool_summary"; text: string };
+
+/** Convert a RestoredHistorySeed to a CreatableHistoryItem. tool_summary → event with icon. */
+export function seedToHistoryItem(
+  seed: RestoredHistorySeed,
+): { type: "user"; text: string } | { type: "assistant"; text: string } | { type: "system"; text: string } | { type: "thinking"; text: string } | { type: "event"; text: string; icon: string } {
+  if (seed.type === "tool_summary") {
+    return { type: "event" as const, text: seed.text, icon: "tool" };
+  }
+  return seed;
+}
 
 const THINKING_OPEN_TAG = "[Thinking]";
 const THINKING_CLOSE_TAG = "[/Thinking]";
@@ -112,6 +123,31 @@ function stripLegacyTagBoundaryNewlines(text: string): string {
   return text.replace(/^\n+/, "").replace(/\n+$/, "");
 }
 
+function formatToolUseSummary(block: { name: string; input?: Record<string, unknown> }): string {
+  const name = block.name;
+  const input = block.input;
+  if (!input) {
+    return `⚡ ${name}`;
+  }
+  const hint = name === 'bash'
+    ? truncateToolHint(String(input.command ?? ''))
+    : name === 'read' || name === 'write' || name === 'edit'
+      ? truncateToolHint(String(input.file_path ?? input.path ?? ''))
+      : name === 'grep'
+        ? truncateToolHint(String(input.pattern ?? ''))
+        : name === 'glob'
+          ? truncateToolHint(String(input.pattern ?? ''))
+          : name === 'web_search' || name === 'web_fetch'
+            ? truncateToolHint(String(input.query ?? input.url ?? ''))
+            : undefined;
+  return hint ? `⚡ ${name}(${hint})` : `⚡ ${name}`;
+}
+
+function truncateToolHint(value: string, max = 60): string {
+  const oneLine = value.replace(/\s+/g, ' ').trim();
+  return oneLine.length > max ? `${oneLine.slice(0, max)}...` : oneLine;
+}
+
 function parseLegacyAssistantContent(content: string): RestoredHistorySeed[] {
   if (!content.includes(THINKING_OPEN_TAG) || !content.includes(THINKING_CLOSE_TAG)) {
     return content.trim().length > 0 ? [{ type: "assistant", text: content }] : [];
@@ -185,6 +221,14 @@ function extractAssistantHistorySeeds(content: string | readonly unknown[]): Res
         }
         break;
       case "tool_use":
+        flushAssistantBuffer();
+        if ("name" in block) {
+          const summary = formatToolUseSummary(block as { name: string; input?: Record<string, unknown> });
+          if (summary) {
+            items.push({ type: "tool_summary", text: summary });
+          }
+        }
+        break;
       case "tool_result":
       case "redacted_thinking":
         break;

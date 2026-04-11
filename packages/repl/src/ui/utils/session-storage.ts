@@ -150,6 +150,9 @@ export class MemorySessionStorage implements SessionStorage {
       messages: getSessionMessagesFromLineage(lineage),
       title: options?.title ?? current.title,
       gitRoot: current.gitRoot,
+      uiHistory: current.uiHistory
+        ? current.uiHistory.map((item) => ({ ...item }))
+        : undefined,
       extensionState: current.extensionState
         ? structuredClone(current.extensionState)
         : undefined,

@@ -13,11 +13,11 @@
 
 | Item | Value |
 |---|---|
-| Tracked feature IDs | `001-066` |
-| Total tracked features | `66` |
+| Tracked feature IDs | `001-069` |
+| Total tracked features | `69` |
 | Completed | `53` |
 | InProgress | `1` |
-| Planned | `12` |
+| Planned | `15` |
 | Current released version | `v0.7.15` |
 
 ### 各版本待做分布
@@ -28,7 +28,7 @@
 | `v0.7.20` | `1` |
 | `v0.7.25` | `0` |
 | `v0.7.30` | `1` |
-| `v0.7.35` | `4` |
+| `v0.7.35` | `7` |
 | `v0.8.0` | `3` |
 | `v0.9.0` | `0` |
 | `v1.0.0` | `1` |
@@ -58,6 +58,9 @@
 | `064` | Multi-Provider Cost Observatory | Enhancement | High | `v0.7.35` | [v0.7.35](features/v0.7.35.md#feature_064-multi-provider-cost-observatory) |
 | `065` | MCP Protocol Maturity | Enhancement | Medium | `v0.7.35` | [v0.7.35](features/v0.7.35.md#feature_065-mcp-protocol-maturity) |
 | `066` | Permission Hardening | Enhancement | Medium | `v0.7.35` | [v0.7.35](features/v0.7.35.md#feature_066-permission-hardening) |
+| `067` | Parallel Task Dispatch | Enhancement | High | `v0.7.35` | [v0.7.35](features/v0.7.35.md#feature_067-parallel-task-dispatch) |
+| `068` | Worktree Isolation Tool | Enhancement | Medium | `v0.7.35` | [v0.7.35](features/v0.7.35.md#feature_068-worktree-isolation-tool) |
+| `069` | Session Rewind, Shell Completion & Microcompaction | Enhancement | Medium | `v0.7.35` | [v0.7.35](features/v0.7.35.md#feature_069-session-rewind-shell-completion--microcompaction) |
 | `030` | Multi-Surface Delivery | Enhancement | High | `v1.0.0` | [v1.0.0](features/v1.0.0.md#feature_030-multi-surface-delivery) |
 
 ---

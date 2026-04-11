@@ -1229,8 +1229,8 @@ _Last Updated: 2026-04-08_
   3. 当前 Team mode 仍未与后续 session / harness 体系完全打通
 
 - **Proposed Solution**:
-  - 继续推进现有 `FEATURE_022 Multi-Agent Orchestration Layer`
-  - 在完成前，明确 CLI 文案和能力边界，避免过度承诺
+  - `FEATURE_067 Parallel Task Dispatch` (v0.7.35) 作为最小可用切片：Scout 识别可并行子任务 → `runOrchestration` 并行派发 → 聚合结果
+  - 完整的 Team Agent 架构 (角色语义/状态聚合/review 边界) 留 v0.8.0 与 FEATURE_059 (Protocol V2) 同版本
 
 ---
 
