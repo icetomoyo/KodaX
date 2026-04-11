@@ -4507,9 +4507,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           console.log(chalk.yellow('      - The error details above'));
         }
       } else if (classification.category === ErrorCategory.TRANSIENT) {
-        if (classification.retryable) {
-          console.log(chalk.yellow(`   \u23F3 Will automatically retry (up to ${classification.maxRetries} times)`));
-        }
+        console.log(chalk.yellow('   \u23F3 Retries exhausted. Press Enter to continue the conversation'));
       } else if (classification.category === ErrorCategory.TOOL_CALL_ID) {
         console.log(chalk.green('   \u2705 Session cleaned, ready to continue'));
       }

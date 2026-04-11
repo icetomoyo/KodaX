@@ -137,6 +137,21 @@ describe('classifyResilienceError', () => {
     expect(result.errorClass).toBe('rate_limit');
     expect(result.retryable).toBe(true);
   });
+
+  it('classifies "Request was aborted" as retryable connection_failure', () => {
+    const error = new KodaXProviderError('zhipu-coding API error: Request was aborted.', 'zhipu-coding');
+    const result = classifyResilienceError(error);
+    expect(result.errorClass).toBe('connection_failure');
+    expect(result.retryable).toBe(true);
+    expect(result.maxRetries).toBe(3);
+  });
+
+  it('classifies generic aborted error as retryable connection_failure', () => {
+    const error = new Error('The request was aborted by the server');
+    const result = classifyResilienceError(error);
+    expect(result.errorClass).toBe('connection_failure');
+    expect(result.retryable).toBe(true);
+  });
 });
 
 // ============== Stable Boundary Tracker Tests ==============

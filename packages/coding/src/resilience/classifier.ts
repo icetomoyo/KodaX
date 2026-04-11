@@ -61,6 +61,7 @@ const CONNECTION_PATTERNS = [
   /\beai_again\b/i,
   /\bother side closed\b/i,
   /\bnetwork\b/i,
+  /\baborted\b/i,
   // Chinese (中文)
   /网络错误/,
   /网络异常/,
