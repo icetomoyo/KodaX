@@ -29,6 +29,7 @@ import { KodaXClient } from './client.js';
 import { resolveProvider } from './providers/index.js';
 import {
   executeTool,
+  filterMcpToolNames,
   filterRepoIntelligenceWorkingToolNames,
   getRequiredToolParams,
   inspectEditFailure,
@@ -364,6 +365,7 @@ function getActiveToolDefinitions(
   activeToolNames: string[],
   repoIntelligenceMode?: KodaXRepoIntelligenceMode,
   allowManagedProtocolTool = false,
+  hasCapabilityRuntime = false,
 ): ReturnType<typeof listToolDefinitions> {
   const allTools = listToolDefinitions();
   if (activeToolNames.length === 0) {
@@ -371,7 +373,7 @@ function getActiveToolDefinitions(
   }
 
   const allowed = new Set(
-    getRuntimeActiveToolNames(activeToolNames, repoIntelligenceMode),
+    getRuntimeActiveToolNames(activeToolNames, repoIntelligenceMode, hasCapabilityRuntime),
   );
   return allTools.filter((tool) => (
     allowed.has(tool.name)
@@ -382,10 +384,15 @@ function getActiveToolDefinitions(
 function getRuntimeActiveToolNames(
   activeToolNames: string[],
   repoIntelligenceMode?: KodaXRepoIntelligenceMode,
+  hasCapabilityRuntime = false,
 ): string[] {
-  return resolveKodaXAutoRepoMode(repoIntelligenceMode) === 'off'
+  let result = resolveKodaXAutoRepoMode(repoIntelligenceMode) === 'off'
     ? filterRepoIntelligenceWorkingToolNames(activeToolNames)
     : activeToolNames;
+  if (!hasCapabilityRuntime) {
+    result = filterMcpToolNames(result);
+  }
+  return result;
 }
 
 function appendQueuedRuntimeMessages(
@@ -1193,7 +1200,53 @@ async function executeToolCall(
     return blockedWrite;
   }
 
-  return executeTool(toolCall.name, toolCall.input ?? {}, ctx);
+  const result = await executeTool(toolCall.name, toolCall.input ?? {}, ctx);
+
+  // MCP fallback: when a built-in tool fails, try to find a same-name MCP tool.
+  if (result.startsWith('[Tool Error]') && ctx.extensionRuntime) {
+    const fallbackResult = await tryMcpFallback(
+      toolCall.name,
+      toolCall.input ?? {},
+      ctx,
+    );
+    if (fallbackResult !== undefined) {
+      return fallbackResult;
+    }
+  }
+
+  return result;
+}
+
+async function tryMcpFallback(
+  toolName: string,
+  input: Record<string, unknown>,
+  ctx: KodaXToolExecutionContext,
+): Promise<string | undefined> {
+  try {
+    const hits = await ctx.extensionRuntime!.searchCapabilities('mcp', toolName, {
+      kind: 'tool',
+      limit: 1,
+    });
+    if (hits.length === 0) {
+      return undefined;
+    }
+    const hit = hits[0] as { id?: string; name?: string };
+    // Only fallback when the MCP tool name exactly matches the built-in name.
+    if (!hit?.id || (hit.name !== toolName && !hit.id.endsWith(`:${toolName}`))) {
+      return undefined;
+    }
+    const mcpResult = await ctx.extensionRuntime!.executeCapability('mcp', hit.id, input);
+    const content = typeof mcpResult.content === 'string'
+      ? mcpResult.content
+      : JSON.stringify(mcpResult.structuredContent ?? mcpResult, null, 2);
+    return `[MCP Fallback via ${hit.id}]\n${content}`;
+  } catch (error) {
+    if (process.env.KODAX_DEBUG_TOOL_HISTORY) {
+      // eslint-disable-next-line no-console
+      console.debug(`[tryMcpFallback] ${toolName} failed:`, error instanceof Error ? error.message : error);
+    }
+    return undefined;
+  }
 }
 
 /**
@@ -1636,6 +1689,7 @@ export async function runKodaX(
         runtimeSessionState.activeTools,
         options.context?.repoIntelligenceMode,
         options.context?.managedProtocolEmission?.enabled === true,
+        !!runtime,
       );
 
       while (true) {
@@ -1902,6 +1956,14 @@ export async function runKodaX(
       const completedTurnTokenSnapshot = createCompletedTurnTokenSnapshot(messages, result.usage);
       contextTokenSnapshot = completedTurnTokenSnapshot;
 
+      // Fallback: auto-continue when response is truncated by max_tokens
+      if (result.stopReason === 'max_tokens' && result.toolBlocks.length === 0 && lastText) {
+        events.onTextDelta?.('\n\n[max_tokens reached, continuing...]\n\n');
+        messages.push({ role: 'user', content: [{ type: 'text', text: 'Continue from where you left off.' }] });
+        contextTokenSnapshot = rebaseContextTokenSnapshot(messages, completedTurnTokenSnapshot);
+        continue;
+      }
+
       if (result.toolBlocks.length === 0) {
         await settleExtensionTurn(sessionId, lastText, runtimeSessionState, {
           hadToolCalls: false,
@@ -2049,8 +2111,8 @@ export async function runKodaX(
       const toolResults: KodaXToolResultBlock[] = [];
       const editRecoveryMessages: string[] = [];
 
-      if (options.parallel && result.toolBlocks.length > 1) {
-        // 分离 bash（顺序）和非 bash（并行）
+      // Non-bash tools run in parallel; bash tools run sequentially (always parallel mode).
+      {
         const bashTools = result.toolBlocks.filter(tc => tc.name === 'bash');
         const nonBashTools = result.toolBlocks.filter(tc => tc.name !== 'bash');
         const resultMap = new Map<string, string>();
@@ -2068,6 +2130,7 @@ export async function runKodaX(
                 }, ctx, runtimeSessionState, getRuntimeActiveToolNames(
                   runtimeSessionState.activeTools,
                   options.context?.repoIntelligenceMode,
+                  !!runtime,
                 )),
                 ctx,
               )
@@ -2088,6 +2151,7 @@ export async function runKodaX(
                 }, ctx, runtimeSessionState, getRuntimeActiveToolNames(
                   runtimeSessionState.activeTools,
                   options.context?.repoIntelligenceMode,
+                  !!runtime,
                 )),
               ctx,
             )
@@ -2097,39 +2161,6 @@ export async function runKodaX(
 
         for (const tc of result.toolBlocks) {
           const content = resultMap.get(tc.id) ?? '[Error] No result';
-          updateToolOutcomeTracking(tc, content, runtimeSessionState, ctx);
-          if (tc.name === 'edit' && isToolResultErrorContent(content)) {
-            const recoveryMessage = await buildEditRecoveryUserMessage(tc, content, runtimeSessionState, ctx);
-            if (recoveryMessage) {
-              editRecoveryMessages.push(recoveryMessage);
-            }
-          }
-          if (isVisibleToolName(tc.name)) {
-            await emitActiveExtensionEvent('tool:result', {
-              id: tc.id,
-              name: tc.name,
-              content,
-            });
-            events.onToolResult?.({ id: tc.id, name: tc.name, content });
-            toolResults.push(createToolResultBlock(tc.id, content));
-          }
-        }
-      } else {
-        for (const tc of result.toolBlocks) {
-          const content = (
-            await applyToolResultGuardrail(
-              tc.name,
-              await executeToolCall(events, {
-                id: tc.id,
-                name: tc.name,
-                input: tc.input as Record<string, unknown> | undefined,
-                }, ctx, runtimeSessionState, getRuntimeActiveToolNames(
-                  runtimeSessionState.activeTools,
-                  options.context?.repoIntelligenceMode,
-                )),
-              ctx,
-            )
-          ).content;
           updateToolOutcomeTracking(tc, content, runtimeSessionState, ctx);
           if (tc.name === 'edit' && isToolResultErrorContent(content)) {
             const recoveryMessage = await buildEditRecoveryUserMessage(tc, content, runtimeSessionState, ctx);

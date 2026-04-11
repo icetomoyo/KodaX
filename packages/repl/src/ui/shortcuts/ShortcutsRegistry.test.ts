@@ -25,12 +25,12 @@ describe('ShortcutsRegistry', () => {
     const handler = vi.fn(() => true);
 
     registry.registerAll(DEFAULT_SHORTCUTS);
-    registry.setHandler('toggleParallelMode', handler);
+    registry.setHandler('toggleThinking', handler);
 
     registry.registerAll(DEFAULT_SHORTCUTS);
 
     const handled = registry.executeShortcut(
-      createKey({ name: 'p', sequence: '\u0010', ctrl: true }),
+      createKey({ name: 't', sequence: '\u0014', ctrl: true }),
       'input',
     );
 

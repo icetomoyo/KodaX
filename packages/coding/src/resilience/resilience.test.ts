@@ -7,6 +7,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { KodaXProviderError } from '@kodax/ai';
 import { resolveResilienceConfig, DEFAULT_RESILIENCE_CONFIG } from './config.js';
 import { classifyResilienceError } from './classifier.js';
 import { StableBoundaryTracker } from './stable-boundary.js';
@@ -106,6 +107,35 @@ describe('classifyResilienceError', () => {
     error.name = 'StreamIncompleteError';
     const result = classifyResilienceError(error, 'mid_stream_tool_input');
     expect(result.failureStage).toBe('mid_stream_tool_input');
+  });
+
+  // Chinese provider error patterns (中文 provider 错误消息)
+  it('classifies Chinese network error as connection_failure', () => {
+    const error = new Error('zhipu-coding API error: 网络错误，错误id：abc123');
+    const result = classifyResilienceError(error);
+    expect(result.errorClass).toBe('connection_failure');
+    expect(result.retryable).toBe(true);
+  });
+
+  it('classifies Chinese timeout error as request_timeout', () => {
+    const error = new Error('zhipu API error: 请求超时');
+    const result = classifyResilienceError(error);
+    expect(result.errorClass).toBe('request_timeout');
+    expect(result.retryable).toBe(true);
+  });
+
+  it('classifies Chinese service busy as provider_overloaded', () => {
+    const error = new KodaXProviderError('deepseek API error: 服务繁忙，请稍后重试', 'deepseek');
+    const result = classifyResilienceError(error);
+    expect(result.errorClass).toBe('provider_overloaded');
+    expect(result.retryable).toBe(true);
+  });
+
+  it('classifies Chinese rate limit as rate_limit', () => {
+    const error = new Error('zhipu API error: 请求过多，请稍后再试');
+    const result = classifyResilienceError(error);
+    expect(result.errorClass).toBe('rate_limit');
+    expect(result.retryable).toBe(true);
   });
 });
 

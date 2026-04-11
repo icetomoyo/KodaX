@@ -38,7 +38,6 @@ export const App: React.FC<AppProps> = ({
   onSubmit,
   permissionMode = "accept-edits",
   agentMode = "ama",
-  parallel = false,
 }) => {
   const { stdout } = useStdout();
   const theme = useMemo(() => getTheme("dark"), []);
@@ -171,7 +170,6 @@ export const App: React.FC<AppProps> = ({
           sessionId={state.sessionId}
           permissionMode={permissionMode}
           agentMode={agentMode}
-          parallel={parallel}
           provider={provider}
           model={model}
           tokenUsage={tokenUsage ?? undefined}

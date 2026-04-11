@@ -47,7 +47,7 @@ import {
   renderImpactEstimate,
   renderModuleContext,
 } from './repo-intelligence/query.js';
-import { filterRepoIntelligenceWorkingToolNames, isRepoIntelligenceWorkingToolName } from './tools/index.js';
+import { filterRepoIntelligenceWorkingToolNames, isRepoIntelligenceWorkingToolName, MCP_TOOL_NAMES } from './tools/index.js';
 import {
   hydrateManagedProtocolPayloadVisibleText,
   MANAGED_PROTOCOL_TOOL_NAME,
@@ -235,13 +235,9 @@ interface ManagedTaskRoundExecution {
 
 type ManagedTaskQualityAssuranceMode = 'required' | 'optional';
 
+// FEATURE_062: Simplified budget controller — 2 core fields (totalBudget/spentBudget) + harness state.
 interface ManagedTaskBudgetController {
   totalBudget: number;
-  reserveBudget: number;
-  reserveRemaining: number;
-  upgradeReserveBudget: number;
-  upgradeReserveRemaining: number;
-  plannedRounds: number;
   spentBudget: number;
   currentHarness: KodaXTaskRoutingDecision['harnessProfile'];
   upgradeCeiling?: KodaXTaskRoutingDecision['harnessProfile'];
@@ -780,16 +776,6 @@ function applyAgentModeToPlan(
   };
 }
 
-function applyDirectPathTaskFamilyShaping(
-  plan: ReasoningPlan,
-  promptOverlayPrefix?: string,
-): string {
-  return buildDirectPathTaskFamilyPromptOverlay(
-    plan.decision.taskFamily,
-    [promptOverlayPrefix, plan.promptOverlay],
-  );
-}
-
 function buildDirectPathTaskFamilyPromptOverlay(
   family: KodaXTaskRoutingDecision['taskFamily'] | undefined,
   sections: Array<string | undefined>,
@@ -864,38 +850,6 @@ function clampHarnessToCeiling(
   return getHarnessRank(harness) > getHarnessRank(topologyCeiling)
     ? topologyCeiling
     : harness;
-}
-
-function shouldBypassScoutForManagedH0(
-  decision: Pick<KodaXTaskRoutingDecision, 'primaryTask' | 'taskFamily' | 'actionability' | 'harnessProfile'>,
-): boolean {
-  if (decision.harnessProfile !== 'H0_DIRECT') {
-    return false;
-  }
-
-  const taskFamily = decision.taskFamily ?? (
-    decision.primaryTask === 'conversation'
-      ? 'conversation'
-      : decision.primaryTask === 'lookup'
-        ? 'lookup'
-        : decision.primaryTask === 'review'
-          ? 'review'
-          : decision.primaryTask === 'plan'
-            ? 'planning'
-            : decision.primaryTask === 'bugfix'
-              ? 'investigation'
-              : decision.primaryTask === 'edit' || decision.primaryTask === 'refactor'
-                ? 'implementation'
-                : 'ambiguous'
-  );
-  const actionability = decision.actionability ?? (
-    taskFamily === 'conversation'
-      ? 'non_actionable'
-      : taskFamily === 'ambiguous'
-        ? 'ambiguous'
-        : 'actionable'
-  );
-  return actionability !== 'actionable' || taskFamily === 'conversation' || taskFamily === 'lookup';
 }
 
 function clampNumber(value: number, min: number, max: number): number {
@@ -1178,101 +1132,22 @@ function getHarnessUpgradeCost(
   return Math.max(8, HARNESS_UPGRADE_COST[to] - HARNESS_UPGRADE_COST[from]);
 }
 
+// FEATURE_062: Simplified — just cap + used + harness state.
 function createManagedBudgetController(
   _options: KodaXOptions,
   plan: ReasoningPlan,
   agentMode: KodaXAgentMode,
 ): ManagedTaskBudgetController {
-  if (agentMode !== 'ama' || plan.decision.harnessProfile === 'H0_DIRECT') {
-    return {
-      totalBudget: MANAGED_TASK_BUDGET_BASE.H0_DIRECT,
-      reserveBudget: 0,
-      reserveRemaining: 0,
-      upgradeReserveBudget: 0,
-      upgradeReserveRemaining: 0,
-      plannedRounds: 1,
-      spentBudget: 0,
-      currentHarness: 'H0_DIRECT',
-      upgradeCeiling: undefined,
-    };
-  }
-
-  const totalBudget = MANAGED_TASK_BUDGET_BASE[plan.decision.harnessProfile];
-  const reserveBudget = clampNumber(Math.round(totalBudget * 0.2), 0, Math.max(0, totalBudget - 25));
-  const hasUpgradePath = isHarnessUpgrade(plan.decision.harnessProfile, plan.decision.upgradeCeiling);
-  const upgradeReserveBudget = hasUpgradePath
-    ? clampNumber(Math.round(reserveBudget * 0.6), 8, reserveBudget)
-    : 0;
-  const plannedRounds = 1;
-
+  const isH0 = agentMode !== 'ama' || plan.decision.harnessProfile === 'H0_DIRECT';
   return {
-    totalBudget,
-    reserveBudget,
-    reserveRemaining: reserveBudget,
-    upgradeReserveBudget,
-    upgradeReserveRemaining: upgradeReserveBudget,
-    plannedRounds,
+    totalBudget: isH0 ? MANAGED_TASK_BUDGET_BASE.H0_DIRECT : MANAGED_TASK_BUDGET_BASE[plan.decision.harnessProfile],
     spentBudget: 0,
-    currentHarness: plan.decision.harnessProfile,
-    upgradeCeiling: plan.decision.upgradeCeiling,
+    currentHarness: isH0 ? 'H0_DIRECT' : plan.decision.harnessProfile,
+    upgradeCeiling: isH0 ? undefined : plan.decision.upgradeCeiling,
   };
 }
 
-function resolveBudgetZone(
-  round: number,
-  plannedRounds: number,
-  role: KodaXTaskRole,
-): KodaXBudgetDisclosureZone {
-  const ratio = plannedRounds <= 0 ? 1 : round / plannedRounds;
-  const earlyConvergeRole = role === 'scout' || role === 'planner' || role === 'evaluator';
-  const yellowThreshold = earlyConvergeRole ? 0.5 : 0.6;
-  const orangeThreshold = earlyConvergeRole ? 0.78 : 0.85;
-  const redThreshold = earlyConvergeRole ? 0.9 : 0.95;
-
-  if (ratio >= redThreshold || round >= plannedRounds) {
-    return 'red';
-  }
-  if (ratio >= orangeThreshold || plannedRounds - round <= 1) {
-    return 'orange';
-  }
-  if (ratio >= yellowThreshold) {
-    return 'yellow';
-  }
-  return 'green';
-}
-
-function resolveWorkerIterLimits(
-  harness: KodaXTaskRoutingDecision['harnessProfile'],
-  role: KodaXTaskRole,
-): { soft: number; hard: number } {
-  const budgets: Record<KodaXTaskRoutingDecision['harnessProfile'], Partial<Record<KodaXTaskRole, { soft: number; hard: number }>>> = {
-    H0_DIRECT: {
-      direct: { soft: 18, hard: 24 },
-    },
-    H1_EXECUTE_EVAL: {
-      scout: { soft: 6, hard: 10 },
-      generator: { soft: 24, hard: 30 },
-      evaluator: { soft: 12, hard: 16 },
-    },
-    H2_PLAN_EXECUTE_EVAL: {
-      scout: { soft: 6, hard: 10 },
-      planner: { soft: 8, hard: 12 },
-      generator: { soft: 28, hard: 36 },
-      evaluator: { soft: 14, hard: 18 },
-    },
-  };
-  const explicit = budgets[harness][role];
-  if (explicit) {
-    return explicit;
-  }
-
-  return harness === 'H2_PLAN_EXECUTE_EVAL'
-    ? { soft: 28, hard: 36 }
-    : harness === 'H1_EXECUTE_EVAL'
-      ? { soft: 24, hard: 30 }
-      : { soft: 18, hard: 24 };
-}
-
+// FEATURE_062: Simplified snapshot — zone derived from used/cap ratio, no per-role iter limits.
 function createBudgetSnapshot(
   controller: ManagedTaskBudgetController,
   harness: KodaXTaskRoutingDecision['harnessProfile'],
@@ -1280,22 +1155,19 @@ function createBudgetSnapshot(
   role: KodaXTaskRole | undefined,
   workerId?: string,
 ): KodaXManagedBudgetSnapshot {
-  const effectiveRole = role ?? 'direct';
-  const zone = resolveBudgetZone(round, controller.plannedRounds, effectiveRole);
-  const iterLimits = resolveWorkerIterLimits(
-    harness,
-    effectiveRole,
-  );
+  const remaining = Math.max(0, controller.totalBudget - controller.spentBudget);
+  const pct = controller.totalBudget > 0 ? controller.spentBudget / controller.totalBudget : 0;
+  const zone: KodaXBudgetDisclosureZone = pct < 0.7 ? 'green' : pct < 0.85 ? 'yellow' : pct < 0.95 ? 'orange' : 'red';
   return {
     totalBudget: controller.totalBudget,
-    reserveBudget: controller.reserveBudget,
-    reserveRemaining: controller.reserveRemaining,
-    upgradeReserveBudget: controller.upgradeReserveBudget,
-    upgradeReserveRemaining: controller.upgradeReserveRemaining,
-    plannedRounds: controller.plannedRounds,
+    reserveBudget: 0,
+    reserveRemaining: 0,
+    upgradeReserveBudget: 0,
+    upgradeReserveRemaining: 0,
+    plannedRounds: 1,
     currentRound: round,
     spentBudget: controller.spentBudget,
-    remainingBudget: Math.max(0, controller.totalBudget - controller.spentBudget),
+    remainingBudget: remaining,
     workerId,
     role,
     currentHarness: controller.currentHarness || harness,
@@ -1304,8 +1176,8 @@ function createBudgetSnapshot(
     showExactRoundCounter: zone === 'orange' || zone === 'red',
     allowExtensionRequest: zone === 'orange' || zone === 'red',
     mustConverge: zone === 'red',
-    softMaxIter: iterLimits.soft,
-    hardMaxIter: iterLimits.hard,
+    softMaxIter: remaining,
+    hardMaxIter: remaining,
   };
 }
 
@@ -1346,20 +1218,12 @@ function resolveRemainingManagedWorkBudget(controller: ManagedTaskBudgetControll
   return Math.max(1, controller.totalBudget - controller.spentBudget);
 }
 
+// FEATURE_062: Simplified — just add iterations to the cap.
 function extendManagedWorkBudget(
   controller: ManagedTaskBudgetController,
   additionalUnits = GLOBAL_WORK_BUDGET_INCREMENT,
 ): void {
-  const reserveAdd = clampNumber(Math.round(additionalUnits * 0.2), 0, additionalUnits);
   controller.totalBudget += additionalUnits;
-  controller.reserveBudget += reserveAdd;
-  controller.reserveRemaining += reserveAdd;
-
-  if (isHarnessUpgrade(controller.currentHarness, controller.upgradeCeiling)) {
-    const upgradeReserveAdd = clampNumber(Math.round(reserveAdd * 0.6), 8, reserveAdd);
-    controller.upgradeReserveBudget += upgradeReserveAdd;
-    controller.upgradeReserveRemaining += upgradeReserveAdd;
-  }
 }
 
 async function maybeRequestAdditionalWorkBudget(
@@ -1369,6 +1233,7 @@ async function maybeRequestAdditionalWorkBudget(
     summary: string;
     currentRound: number;
     maxRounds: number;
+    originalTask?: string;
   },
 ): Promise<'approved' | 'denied' | 'skipped'> {
   if (!events?.askUser) {
@@ -1384,18 +1249,25 @@ async function maybeRequestAdditionalWorkBudget(
   }
 
   const usedPercent = Math.min(100, Math.round((controller.spentBudget / Math.max(1, controller.totalBudget)) * 100));
+  const useChinese = /[\u4e00-\u9fff]/.test(context.originalTask ?? context.summary);
   const choice = await events.askUser({
-    question: `This AMA run has used ${controller.spentBudget}/${controller.totalBudget} work units (${usedPercent}%) and needs more work. Add ${GLOBAL_WORK_BUDGET_INCREMENT} more work units?`,
+    question: useChinese
+      ? `当前 AMA 运行已使用 ${controller.spentBudget}/${controller.totalBudget} 工作单元（${usedPercent}%），需要更多工作量。是否追加 ${GLOBAL_WORK_BUDGET_INCREMENT} 单元？`
+      : `This AMA run has used ${controller.spentBudget}/${controller.totalBudget} work units (${usedPercent}%) and needs more work. Add ${GLOBAL_WORK_BUDGET_INCREMENT} more work units?`,
     options: [
       {
-        label: `Continue (+${GLOBAL_WORK_BUDGET_INCREMENT})`,
+        label: useChinese ? `继续 (+${GLOBAL_WORK_BUDGET_INCREMENT})` : `Continue (+${GLOBAL_WORK_BUDGET_INCREMENT})`,
         value: 'continue',
-        description: `Grant ${GLOBAL_WORK_BUDGET_INCREMENT} more work units and continue from round ${context.currentRound}/${context.maxRounds}.`,
+        description: useChinese
+          ? `追加 ${GLOBAL_WORK_BUDGET_INCREMENT} 工作单元，从第 ${context.currentRound}/${context.maxRounds} 轮继续。`
+          : `Grant ${GLOBAL_WORK_BUDGET_INCREMENT} more work units and continue from round ${context.currentRound}/${context.maxRounds}.`,
       },
       {
-        label: 'Stop here',
+        label: useChinese ? '停止' : 'Stop here',
         value: 'stop',
-        description: `Finish now with the current best result. Latest note: ${truncateText(context.summary, 80)}`,
+        description: useChinese
+          ? `使用当前最佳结果。最新进展：${truncateText(context.summary, 80)}`
+          : `Finish now with the current best result. Latest note: ${truncateText(context.summary, 80)}`,
       },
     ],
     default: 'continue',
@@ -1414,35 +1286,19 @@ async function maybeRequestAdditionalWorkBudget(
   return 'denied';
 }
 
-function formatBudgetAdvisory(snapshot: KodaXManagedBudgetSnapshot | undefined): string | undefined {
-  if (!snapshot) {
+// FEATURE_062: Simplified budget hint based on used/cap ratio.
+function formatBudgetHint(snapshot: KodaXManagedBudgetSnapshot | undefined): string | undefined {
+  if (!snapshot || snapshot.totalBudget <= 0) {
     return undefined;
   }
-
-  if (snapshot.zone === 'green') {
-    return [
-      'Budget advisory:',
-      '- You are in the normal execution window. Stay focused and avoid unbounded exploration.',
-    ].join('\n');
+  const pct = snapshot.spentBudget / snapshot.totalBudget;
+  if (pct >= 0.85) {
+    return `[Budget] ${snapshot.remainingBudget} iterations remaining. Produce a complete result now.`;
   }
-
-  if (snapshot.zone === 'yellow') {
-    return [
-      'Budget advisory:',
-      '- Begin converging. Reduce branch exploration and organize a completion path.',
-    ].join('\n');
+  if (pct >= 0.7) {
+    return '[Budget] Begin converging. Reduce exploration, organize completion path.';
   }
-
-  const lines = [
-    'Budget advisory:',
-    `- Current round: ${snapshot.currentRound}/${snapshot.plannedRounds}`,
-    `- Global work budget: used=${snapshot.spentBudget}/${snapshot.totalBudget}, remaining=${snapshot.remainingBudget}.`,
-    snapshot.zone === 'red'
-      ? '- Final completion window: return a complete result, a blocked verdict, or a clear continuation summary.'
-      : '- You are approaching the execution boundary. Do not open new exploration branches.',
-  ];
-
-  return lines.join('\n');
+  return undefined;
 }
 
 function resolveManagedMemoryStrategy(
@@ -1455,6 +1311,7 @@ function resolveManagedMemoryStrategy(
   if (previousDirective?.status === 'revise' && previousDirective.nextHarness) {
     return 'reset-handoff';
   }
+  // FEATURE_061 Phase 3: Planner replan session resumption deferred to Phase 5.
   if (role === 'planner' || role === 'evaluator' || role === 'scout') {
     return 'reset-handoff';
   }
@@ -1693,12 +1550,13 @@ function buildCompactInitialMessages(
   ];
 }
 
+// FEATURE_062: maxRounds is always 1 initially; extension increases it in the round loop.
 function resolveManagedTaskMaxRounds(
-  options: KodaXOptions,
-  plan: ReasoningPlan,
-  agentMode: KodaXAgentMode,
+  _options: KodaXOptions,
+  _plan: ReasoningPlan,
+  _agentMode: KodaXAgentMode,
 ): number {
-  return createManagedBudgetController(options, plan, agentMode).plannedRounds;
+  return 1;
 }
 
 function resolveManagedTaskQualityAssuranceMode(
@@ -2011,6 +1869,7 @@ const SCOUT_ALLOWED_TOOLS = [
   'glob',
   'grep',
   'read',
+  ...MCP_TOOL_NAMES,
 ] as const;
 
 const PLANNER_ALLOWED_TOOLS = [
@@ -2020,6 +1879,7 @@ const PLANNER_ALLOWED_TOOLS = [
   'glob',
   'grep',
   'read',
+  ...MCP_TOOL_NAMES,
 ] as const;
 
 const H1_EVALUATOR_ALLOWED_TOOLS = [
@@ -2030,6 +1890,7 @@ const H1_EVALUATOR_ALLOWED_TOOLS = [
   'glob',
   'grep',
   'read',
+  ...MCP_TOOL_NAMES,
 ] as const;
 
 const H1_READONLY_GENERATOR_ALLOWED_TOOLS = [
@@ -2040,6 +1901,7 @@ const H1_READONLY_GENERATOR_ALLOWED_TOOLS = [
   'glob',
   'grep',
   'read',
+  ...MCP_TOOL_NAMES,
 ] as const;
 
 const VERIFICATION_SHELL_PATTERNS = [
@@ -2154,39 +2016,7 @@ function inferReviewTarget(prompt: string): ManagedReviewTarget {
   return 'general';
 }
 
-function resolveManagedHarnessGuardrail(
-  decision: Pick<
-    KodaXTaskRoutingDecision,
-    'needsIndependentQA' | 'mutationSurface' | 'workIntent' | 'riskLevel' | 'complexity'
-  >,
-): {
-  minimumHarness?: KodaXTaskRoutingDecision['harnessProfile'];
-  reason?: string;
-} {
-  if (
-    decision.mutationSurface === 'system'
-    && (
-      decision.workIntent === 'overwrite'
-      || decision.riskLevel === 'high'
-      || decision.complexity === 'systemic'
-    )
-  ) {
-    return {
-      minimumHarness: 'H2_PLAN_EXECUTE_EVAL',
-      reason: 'high-risk system-level mutation requires coordinated execution',
-    };
-  }
-
-  if (decision.needsIndependentQA) {
-    return {
-      minimumHarness: 'H1_EXECUTE_EVAL',
-      reason: 'independent verification was explicitly requested',
-    };
-  }
-
-  return {};
-}
-
+// FEATURE_061 Phase 1: Harness guardrails removed — Scout is the harness authority.
 function applyManagedHarnessGuardrailsToPlan(
   plan: ReasoningPlan,
   reviewTarget: ManagedReviewTarget,
@@ -2195,57 +2025,21 @@ function applyManagedHarnessGuardrailsToPlan(
   routingOverrideReason?: string;
 } {
   const decisionWithTarget = cloneRoutingDecisionWithReviewTarget(plan.decision, reviewTarget);
-  const guardrail = resolveManagedHarnessGuardrail(decisionWithTarget);
-  const forcedHarness = guardrail.minimumHarness;
-  const needsHarnessUpgrade = forcedHarness
-    && getHarnessRank(decisionWithTarget.harnessProfile) < getHarnessRank(forcedHarness);
-
-  if (!needsHarnessUpgrade || !forcedHarness) {
-    if (decisionWithTarget === plan.decision) {
-      return { plan };
-    }
-    return {
-      plan: {
-        ...plan,
-        decision: decisionWithTarget,
-        amaControllerDecision: buildAmaControllerDecision(decisionWithTarget),
-        promptOverlay: buildPromptOverlay(
-          decisionWithTarget,
-          plan.providerPolicy?.routingNotes,
-          plan.providerPolicy,
-          buildAmaControllerDecision(decisionWithTarget),
-        ),
-      },
-    };
+  if (decisionWithTarget === plan.decision) {
+    return { plan };
   }
-
-  const nextDecision: KodaXTaskRoutingDecision = {
-    ...decisionWithTarget,
-    harnessProfile: forcedHarness,
-    upgradeCeiling: decisionWithTarget.upgradeCeiling
-      && getHarnessRank(decisionWithTarget.upgradeCeiling) > getHarnessRank(forcedHarness)
-      ? decisionWithTarget.upgradeCeiling
-      : undefined,
-    routingNotes: [
-      ...(decisionWithTarget.routingNotes ?? []),
-      `Routing guardrail raised the minimum harness to ${forcedHarness} because ${guardrail.reason}.`,
-    ],
-    reason: `${decisionWithTarget.reason} Routing guardrail raised the minimum harness to ${forcedHarness} because ${guardrail.reason}.`,
-  };
-  const overrideReason = guardrail.reason;
   return {
     plan: {
       ...plan,
-      decision: nextDecision,
-      amaControllerDecision: buildAmaControllerDecision(nextDecision),
+      decision: decisionWithTarget,
+      amaControllerDecision: buildAmaControllerDecision(decisionWithTarget),
       promptOverlay: buildPromptOverlay(
-        nextDecision,
+        decisionWithTarget,
         plan.providerPolicy?.routingNotes,
         plan.providerPolicy,
-        buildAmaControllerDecision(nextDecision),
+        buildAmaControllerDecision(decisionWithTarget),
       ),
     },
-    routingOverrideReason: overrideReason,
   };
 }
 
@@ -2348,6 +2142,7 @@ function createRoutingBreadcrumb(
   return base;
 }
 
+// FEATURE_061 Phase 1: reviewTarget and reviewScale are informational context for Scout.
 function applyCurrentDiffReviewRoutingFloor(
   plan: ReasoningPlan,
   prompt: string,
@@ -2366,18 +2161,27 @@ function applyCurrentDiffReviewRoutingFloor(
     || isDiffDrivenReviewPrompt(prompt)
   );
 
-  if (!diffDrivenReview || !reviewScale) {
-    const finalDecision = reviewScale
+  const finalDecision: KodaXTaskRoutingDecision = diffDrivenReview && reviewScale
+    ? {
+      ...rawDecision,
+      primaryTask: 'review',
+      reviewScale,
+      routingNotes: [
+        ...(rawDecision.routingNotes ?? []),
+        `Diff-driven review surface was classified as ${reviewScale}; use it to shape evidence acquisition, not to force a heavier harness.`,
+      ],
+      reason: `${rawDecision.reason} Diff-driven review scope was recorded for evidence strategy without forcing a heavier harness.`,
+    }
+    : reviewScale
       ? { ...rawDecision, reviewScale }
       : rawDecision;
-    if (finalDecision === plan.decision) {
-      return {
-        plan,
-        rawDecision,
-        reviewTarget,
-      };
-    }
-    const adjusted = applyManagedHarnessGuardrailsToPlan({
+
+  if (finalDecision === plan.decision) {
+    return { plan, rawDecision, reviewTarget };
+  }
+
+  return {
+    plan: {
       ...plan,
       decision: finalDecision,
       amaControllerDecision: buildAmaControllerDecision(finalDecision),
@@ -2387,43 +2191,9 @@ function applyCurrentDiffReviewRoutingFloor(
         plan.providerPolicy,
         buildAmaControllerDecision(finalDecision),
       ),
-    }, reviewTarget);
-    return {
-      plan: adjusted.plan,
-      rawDecision,
-      reviewTarget,
-      routingOverrideReason: adjusted.routingOverrideReason,
-    };
-  }
-
-  const reviewAdjustedDecision: KodaXTaskRoutingDecision = {
-    ...rawDecision,
-    primaryTask: 'review',
-    reviewScale,
-    routingNotes: [
-      ...(rawDecision.routingNotes ?? []),
-      `Diff-driven review surface was classified as ${reviewScale}; use it to shape evidence acquisition, not to force a heavier harness.`,
-    ],
-    reason: `${rawDecision.reason} Diff-driven review scope was recorded for evidence strategy without forcing a heavier harness.`,
-  };
-  const reviewAdjustedPlan = {
-    ...plan,
-    decision: reviewAdjustedDecision,
-    amaControllerDecision: buildAmaControllerDecision(reviewAdjustedDecision),
-    promptOverlay: buildPromptOverlay(
-      reviewAdjustedDecision,
-      plan.providerPolicy?.routingNotes,
-      plan.providerPolicy,
-      buildAmaControllerDecision(reviewAdjustedDecision),
-    ),
-  };
-  const adjusted = applyManagedHarnessGuardrailsToPlan(reviewAdjustedPlan, reviewTarget);
-
-  return {
-    plan: adjusted.plan,
+    },
     rawDecision,
     reviewTarget,
-    routingOverrideReason: adjusted.routingOverrideReason,
   };
 }
 
@@ -2800,7 +2570,7 @@ function formatManagedPromptOverlay(
       ? formatManagedScoutDecision(task.runtime)
       : undefined,
     formatManagedEvidenceRuntime(task.runtime),
-    formatBudgetAdvisory(worker.budgetSnapshot),
+    formatBudgetHint(worker.budgetSnapshot),
     formatTaskContract(task.contract),
     formatTaskMetadata(task.contract.metadata),
     formatVerificationContract(task.contract.verification),
@@ -2980,10 +2750,16 @@ function createRolePrompt(
     `Mutation surface: ${decision.mutationSurface ?? 'unknown'}`,
     `Assurance intent: ${decision.assuranceIntent ?? 'default'}`,
     `Work intent: ${decision.workIntent}`,
-    `Complexity: ${decision.complexity}`,
+    `Complexity hint: ${decision.complexity}`,
     `Risk: ${decision.riskLevel}`,
-    `Harness: ${decision.harnessProfile}`,
-    `Topology ceiling: ${decision.topologyCeiling ?? decision.upgradeCeiling ?? 'none'}`,
+    // FEATURE_061: Don't show pre-decided harness to Scout. Scout is the routing
+    // authority and decides the harness based on its own evidence analysis.
+    ...(role === 'scout'
+      ? [`Topology ceiling: ${decision.topologyCeiling ?? decision.upgradeCeiling ?? 'none'}`]
+      : [
+        `Harness: ${decision.harnessProfile}`,
+        `Topology ceiling: ${decision.topologyCeiling ?? decision.upgradeCeiling ?? 'none'}`,
+      ]),
     `Brainstorm required: ${decision.requiresBrainstorm ? 'yes' : 'no'}`,
   ].join('\n');
 
@@ -3224,8 +3000,9 @@ function createRolePrompt(
         decision.primaryTask === 'review'
           ? 'If you finish a review directly, write the answer as the review report itself: findings first, with concrete file/path references, not as a meta-summary of your own process.'
           : undefined,
-        'Decide whether this task should stay direct or escalate to H1/H2. Prefer a direct answer whenever the task can be completed safely without heavier coordination.',
-        'You are a pre-harness guide only. Prefer scope facts first: changed scope, module spread, diff size, verification requirements, and any explicit task constraints already present.',
+        'You are both the task analyst and the primary H0 worker. When you can complete the task safely and directly, do so — produce the full user-facing answer yourself.',
+        'Decide whether this task should stay direct (H0) or escalate to H1/H2. Prefer a direct answer whenever the task can be completed safely without heavier coordination.',
+        'Prefer scope facts first: changed scope, module spread, diff size, verification requirements, and any explicit task constraints already present.',
         'Treat reviewScale, changed file count, changed line count, and cross-module spread as evidence-planning hints only. They are not, by themselves, valid reasons to escalate the harness.',
         'H0_DIRECT: choose this only when you already have enough evidence to finish safely now. For reviews, that means you understand scope and major risk areas, have inspected the key diff/files (not just the overview), can write the actual findings-first review or a clear no-findings conclusion, do not need an independent second judgment, and do not have key unverified risks still hanging.',
         'H1_EXECUTE_EVAL: choose this when you understand the task well enough to avoid a planning pass, but still need an independent second verification or judgment before the answer should be trusted.',
@@ -3706,627 +3483,143 @@ function createTaskShape(
   };
 }
 
-function createScoutCompleteTaskShape(
-  options: KodaXOptions,
-  prompt: string,
-  originalTask: string,
-  plan: ReasoningPlan,
-  rolePromptContext?: ManagedRolePromptContext,
-): ManagedTaskShape {
-  const baseShape = createTaskShape(
-    options,
-    prompt,
-    originalTask,
-    {
-      ...plan,
-      decision: {
-        ...plan.decision,
-        harnessProfile: 'H0_DIRECT',
-      },
-    },
-    rolePromptContext,
-  );
-  const scoutToolPolicy = buildManagedWorkerToolPolicy(
-    'scout',
-    baseShape.task.contract.verification,
-    'H0_DIRECT',
-    undefined,
-    options.context?.repoIntelligenceMode,
-  );
+// FEATURE_061 Phase 2: Scout H0 completion — Scout does actual work and returns the result directly.
+async function completeScoutH0Task(ctx: {
+  options: KodaXOptions;
+  originalTask: string;
+  plan: ReasoningPlan;
+  scoutExecution: { result: KodaXResult; directive: ManagedTaskScoutDirective };
+  scoutBudgetController: ManagedTaskBudgetController;
+  rawRoutingDecision: KodaXTaskRoutingDecision;
+  finalRoutingDecision: KodaXTaskRoutingDecision;
+  routingOverrideReason: string | undefined;
+  skillMap: KodaXSkillMap | undefined;
+  agentMode: KodaXAgentMode;
+}): Promise<KodaXResult> {
+  const { options, originalTask, plan, scoutExecution, scoutBudgetController,
+    rawRoutingDecision, finalRoutingDecision, routingOverrideReason, skillMap, agentMode } = ctx;
+
+  const surface = getManagedTaskSurface(options);
+  const taskId = `task-${randomUUID()}`;
+  const workspaceDir = path.join(getManagedTaskWorkspaceRoot(options, surface), taskId);
+  const createdAt = new Date().toISOString();
+  const qualityAssuranceMode = resolveManagedTaskQualityAssuranceMode(options, plan);
+  const amaControllerDecision = plan.amaControllerDecision;
   const scoutAgent = buildManagedWorkerAgent('scout', 'scout');
-
-  return {
-    ...baseShape,
-    terminalWorkerId: 'scout',
-    workers: [
-      {
-        id: 'scout',
-        role: 'scout',
-        title: 'Scout',
-        dependsOn: [],
-        agent: scoutAgent,
-        toolPolicy: scoutToolPolicy,
-        memoryStrategy: 'reset-handoff',
-        terminalAuthority: true,
-        prompt: createRolePrompt(
-          'scout',
-          prompt,
-          plan.decision,
-          baseShape.task.contract.verification,
-          scoutToolPolicy,
-          scoutAgent,
-          {
-            role: 'scout',
-            agent: scoutAgent,
-          },
-          rolePromptContext,
-        ),
-      },
-    ],
-    task: {
-      ...baseShape.task,
-      roleAssignments: [
-        {
-          id: 'scout',
-          role: 'scout',
-          title: 'Scout',
-          dependsOn: [],
-          status: 'running',
-          agent: scoutAgent,
-          toolPolicy: scoutToolPolicy,
-        },
-      ],
-      workItems: [
-        {
-          id: 'scout',
-          assignmentId: 'scout',
-          description: 'Scout completes the task directly after preflight classification.',
-          execution: 'serial',
-        },
-      ],
-      verdict: {
-        ...baseShape.task.verdict,
-        decidedByAssignmentId: 'scout',
-        summary: 'Scout is completing the task directly after preflight.',
-      },
-      runtime: {
-        ...baseShape.task.runtime,
-        currentHarness: 'H0_DIRECT',
-      },
-    },
-  };
-}
-
-function shouldRunTacticalReviewFanout(
-  agentMode: KodaXAgentMode,
-  surface: KodaXTaskSurface,
-  plan: ReasoningPlan,
-  decision: KodaXTaskRoutingDecision,
-  scoutDirective: ManagedTaskScoutDirective,
-): boolean {
-  return agentMode === 'ama'
-    && surface !== 'project'
-    && decision.primaryTask === 'review'
-    && decision.executionPattern === 'checked-direct'
-    && decision.harnessProfile === 'H0_DIRECT'
-    && scoutDirective.confirmedHarness === 'H0_DIRECT'
-    && plan.amaControllerDecision.profile === 'tactical'
-    && plan.amaControllerDecision.fanout.admissible
-    && plan.amaControllerDecision.fanout.class === 'finding-validation';
-}
-
-function shouldRunTacticalInvestigationFanout(
-  agentMode: KodaXAgentMode,
-  surface: KodaXTaskSurface,
-  plan: ReasoningPlan,
-  decision: KodaXTaskRoutingDecision,
-  scoutDirective: ManagedTaskScoutDirective,
-): boolean {
-  return agentMode === 'ama'
-    && surface !== 'project'
-    && (decision.primaryTask === 'bugfix' || decision.recommendedMode === 'investigation')
-    && decision.mutationSurface === 'read-only'
-    && decision.harnessProfile === 'H0_DIRECT'
-    && scoutDirective.confirmedHarness === 'H0_DIRECT'
-    && plan.amaControllerDecision.profile === 'tactical'
-    && plan.amaControllerDecision.fanout.admissible
-    && plan.amaControllerDecision.fanout.class === 'evidence-scan';
-}
-
-function shouldRunTacticalLookupFanout(
-  agentMode: KodaXAgentMode,
-  surface: KodaXTaskSurface,
-  plan: ReasoningPlan,
-  decision: KodaXTaskRoutingDecision,
-  scoutDirective: ManagedTaskScoutDirective,
-): boolean {
-  return agentMode === 'ama'
-    && surface !== 'project'
-    && decision.primaryTask === 'lookup'
-    && decision.mutationSurface === 'read-only'
-    && decision.executionPattern === 'checked-direct'
-    && decision.harnessProfile === 'H0_DIRECT'
-    && scoutDirective.confirmedHarness === 'H0_DIRECT'
-    && plan.amaControllerDecision.profile === 'tactical'
-    && plan.amaControllerDecision.fanout.admissible
-    && plan.amaControllerDecision.fanout.class === 'module-triage';
-}
-
-function createTacticalReviewBaseShape(
-  options: KodaXOptions,
-  originalTask: string,
-  plan: ReasoningPlan,
-  rolePromptContext?: ManagedRolePromptContext,
-): ManagedTaskShape {
-  const baseShape = createTaskShape(
-    options,
-    originalTask,
-    originalTask,
-    {
-      ...plan,
-      decision: {
-        ...plan.decision,
-        harnessProfile: 'H0_DIRECT',
-      },
-    },
-    rolePromptContext,
+  const scoutToolPolicy = buildManagedWorkerToolPolicy(
+    'scout', options.context?.taskVerification, 'H0_DIRECT', undefined, options.context?.repoIntelligenceMode,
   );
-  const scanToolPolicy = buildManagedWorkerToolPolicy(
-    'generator',
-    baseShape.task.contract.verification,
-    'H0_DIRECT',
-    'read-only',
-    options.context?.repoIntelligenceMode,
-  );
-  const scanAgent = buildManagedWorkerAgent('generator', 'review-scan');
-
-  return {
-    ...baseShape,
-    terminalWorkerId: 'review-reducer',
-    workers: [],
-    task: {
-      ...baseShape.task,
-      roleAssignments: [
-        {
-          id: 'review-scan',
-          role: 'generator',
-          title: 'Review Scanner',
-          dependsOn: [],
-          status: 'running',
-          agent: scanAgent,
-          toolPolicy: scanToolPolicy,
-        },
-      ],
-      workItems: [
-        {
-          id: 'review-scan',
-          assignmentId: 'review-scan',
-          description: 'Scan the review surface and emit candidate findings for child validation.',
-          execution: 'serial',
-        },
-      ],
-      verdict: {
-        ...baseShape.task.verdict,
-        decidedByAssignmentId: 'review-reducer',
-        summary: 'AMA Tactical review is preparing hidden finding-validation shards.',
-      },
-    },
-  };
-}
-
-function createTacticalInvestigationBaseShape(
-  options: KodaXOptions,
-  originalTask: string,
-  plan: ReasoningPlan,
-  rolePromptContext?: ManagedRolePromptContext,
-): ManagedTaskShape {
-  const baseShape = createTaskShape(
-    options,
-    originalTask,
-    originalTask,
-    {
-      ...plan,
-      decision: {
-        ...plan.decision,
-        harnessProfile: 'H0_DIRECT',
-      },
-    },
-    rolePromptContext,
-  );
-  const scanToolPolicy = buildManagedWorkerToolPolicy(
-    'generator',
-    baseShape.task.contract.verification,
-    'H0_DIRECT',
-    'read-only',
-    options.context?.repoIntelligenceMode,
-  );
-  const scanAgent = buildManagedWorkerAgent('generator', 'investigation-scan');
-
-  return {
-    ...baseShape,
-    terminalWorkerId: 'investigation-reducer',
-    workers: [],
-    task: {
-      ...baseShape.task,
-      roleAssignments: [
-        {
-          id: 'investigation-scan',
-          role: 'generator',
-          title: 'Investigation Scanner',
-          dependsOn: [],
-          status: 'running',
-          agent: scanAgent,
-          toolPolicy: scanToolPolicy,
-        },
-      ],
-      workItems: [
-        {
-          id: 'investigation-scan',
-          assignmentId: 'investigation-scan',
-          description: 'Scan the investigation surface and emit bounded evidence shards for child validation.',
-          execution: 'serial',
-        },
-      ],
-      verdict: {
-        ...baseShape.task.verdict,
-        decidedByAssignmentId: 'investigation-reducer',
-        summary: 'AMA Tactical investigation is preparing hidden evidence-scan shards.',
-      },
-    },
-  };
-}
-
-function createTacticalLookupBaseShape(
-  options: KodaXOptions,
-  originalTask: string,
-  plan: ReasoningPlan,
-  rolePromptContext?: ManagedRolePromptContext,
-): ManagedTaskShape {
-  const baseShape = createTaskShape(
-    options,
-    originalTask,
-    originalTask,
-    {
-      ...plan,
-      decision: {
-        ...plan.decision,
-        harnessProfile: 'H0_DIRECT',
-      },
-    },
-    rolePromptContext,
-  );
-  const scanToolPolicy = buildManagedWorkerToolPolicy(
-    'generator',
-    baseShape.task.contract.verification,
-    'H0_DIRECT',
-    'read-only',
-    options.context?.repoIntelligenceMode,
-  );
-  const scanAgent = buildManagedWorkerAgent('generator', 'lookup-scan');
-
-  return {
-    ...baseShape,
-    terminalWorkerId: 'lookup-reducer',
-    workers: [],
-    task: {
-      ...baseShape.task,
-      roleAssignments: [
-        {
-          id: 'lookup-scan',
-          role: 'generator',
-          title: 'Lookup Scanner',
-          dependsOn: [],
-          status: 'running',
-          agent: scanAgent,
-          toolPolicy: scanToolPolicy,
-        },
-      ],
-      workItems: [
-        {
-          id: 'lookup-scan',
-          assignmentId: 'lookup-scan',
-          description: 'Scan the lookup surface and emit bounded module-triage shards for child validation.',
-          execution: 'serial',
-        },
-      ],
-      verdict: {
-        ...baseShape.task.verdict,
-        decidedByAssignmentId: 'lookup-reducer',
-        summary: 'AMA Tactical lookup is preparing hidden module-triage shards.',
-      },
-    },
-  };
-}
-
-function buildTacticalReviewScannerPrompt(
-  originalTask: string,
-  plan: ReasoningPlan,
-  scoutDirective: ManagedTaskScoutDirective,
-): string {
-  return [
-    'You are the Tactical Review Scanner for a KodaX AMA task.',
-    `[AMA profile] ${plan.amaControllerDecision.profile}`,
-    `[Task] ${originalTask}`,
-    `[Routing] primary=${plan.decision.primaryTask}; mode=${plan.decision.recommendedMode}; harness=${plan.decision.harnessProfile}; reviewScale=${plan.decision.reviewScale ?? 'unknown'}.`,
-    scoutDirective.summary ? `[Scout summary] ${scoutDirective.summary}` : undefined,
-    scoutDirective.reviewFilesOrAreas?.length
-      ? `Focus areas: ${scoutDirective.reviewFilesOrAreas.join(', ')}`
-      : undefined,
-    'Identify at most the highest-signal candidate findings that are worth independent validation.',
-    'Do not write the final review yet.',
-    [
-      `Append a final JSON fenced block named \`\`\`${TACTICAL_REVIEW_FINDINGS_BLOCK}\`\`\` with this exact shape:`,
-      '{"summary":"<one-line scanner summary>","findings":[{"id":"finding-1","title":"<short title>","claim":"<specific claim to validate>","priority":"high|medium|low","files":["<path>"],"evidence":["<short evidence note>"]}]}',
-    ].join('\n'),
-    'If you do not find any strong candidates, still return the best visible review summary before the fenced block and use an empty findings array.',
-  ].filter((section): section is string => Boolean(section)).join('\n\n');
-}
-
-function buildTacticalInvestigationScannerPrompt(
-  originalTask: string,
-  plan: ReasoningPlan,
-  scoutDirective: ManagedTaskScoutDirective,
-): string {
-  return [
-    'You are the Tactical Investigation Scanner for a KodaX AMA task.',
-    `[AMA profile] ${plan.amaControllerDecision.profile}`,
-    `[Task] ${originalTask}`,
-    `[Routing] primary=${plan.decision.primaryTask}; mode=${plan.decision.recommendedMode}; harness=${plan.decision.harnessProfile}; mutationSurface=${plan.decision.mutationSurface ?? 'unknown'}.`,
-    scoutDirective.summary ? `[Scout summary] ${scoutDirective.summary}` : undefined,
-    scoutDirective.scope.length > 0 ? `Scout scope: ${scoutDirective.scope.join(' | ')}` : undefined,
-    scoutDirective.requiredEvidence.length > 0
-      ? `Required evidence: ${scoutDirective.requiredEvidence.join(' | ')}`
-      : undefined,
-    'Identify at most the highest-signal bounded evidence questions that should be validated independently before the parent commits to a diagnosis.',
-    'Do not write the final diagnosis yet and do not broaden the scope into a full repo sweep.',
-    [
-      `Append a final JSON fenced block named \`\`\`${TACTICAL_INVESTIGATION_SHARDS_BLOCK}\`\`\` with this exact shape:`,
-      '{"summary":"<one-line investigation scanner summary>","shards":[{"id":"shard-1","question":"<single evidence question to validate>","scope":"<focused scope summary>","priority":"high|medium|low","files":["<path>"],"evidence":["<why this shard matters>"]}]}',
-    ].join('\n'),
-    'If you do not find any bounded evidence shards, still return the best visible investigation update before the fenced block and use an empty shards array.',
-  ].filter((section): section is string => Boolean(section)).join('\n\n');
-}
-
-function buildTacticalLookupScannerPrompt(
-  originalTask: string,
-  plan: ReasoningPlan,
-  scoutDirective: ManagedTaskScoutDirective,
-): string {
-  return [
-    'You are the Tactical Lookup Scanner for a KodaX AMA task.',
-    `[AMA profile] ${plan.amaControllerDecision.profile}`,
-    `[Task] ${originalTask}`,
-    `[Routing] primary=${plan.decision.primaryTask}; mode=${plan.decision.recommendedMode}; harness=${plan.decision.harnessProfile}; mutationSurface=${plan.decision.mutationSurface ?? 'unknown'}.`,
-    scoutDirective.summary ? `[Scout summary] ${scoutDirective.summary}` : undefined,
-    scoutDirective.scope.length > 0 ? `Scout scope: ${scoutDirective.scope.join(' | ')}` : undefined,
-    scoutDirective.requiredEvidence.length > 0
-      ? `Required evidence: ${scoutDirective.requiredEvidence.join(' | ')}`
-      : undefined,
-    'Identify at most the highest-signal bounded module or symbol lookup questions that should be validated independently before the parent answers.',
-    'Do not write the final lookup answer yet and do not broaden the scope into a full repo sweep.',
-    [
-      `Append a final JSON fenced block named \`\`\`${TACTICAL_LOOKUP_SHARDS_BLOCK}\`\`\` with this exact shape:`,
-      '{"summary":"<one-line lookup scanner summary>","shards":[{"id":"lookup-1","question":"<single lookup question to validate>","scope":"<focused lookup scope>","priority":"high|medium|low","paths":["<candidate path>"],"rationale":["<why this shard matters>"]}]}',
-    ].join('\n'),
-    'If you do not find any bounded lookup shards, still return the best visible lookup update before the fenced block and use an empty shards array.',
-  ].filter((section): section is string => Boolean(section)).join('\n\n');
-}
-
-function buildTacticalReviewValidatorPrompt(
-  originalTask: string,
-  finding: TacticalReviewFinding,
-  scoutDirective: ManagedTaskScoutDirective,
-): string {
-  return [
-    'You are a Tactical Review Validator child for one candidate finding.',
-    `[Task] ${originalTask}`,
-    `[Finding ID] ${finding.id}`,
-    `[Finding Title] ${finding.title}`,
-    `[Claim] ${finding.claim}`,
-    finding.files.length > 0 ? `Relevant files: ${finding.files.join(', ')}` : undefined,
-    finding.evidence.length > 0 ? `Scanner evidence: ${finding.evidence.join(' | ')}` : undefined,
-    scoutDirective.summary ? `[Scout summary] ${scoutDirective.summary}` : undefined,
-    'Validate only this finding. Do not broad-scan the repo and do not restate the whole review.',
-    'Decide whether the finding is valid, a false positive, or still missing evidence.',
-    [
-      `Append a final fenced block named \`\`\`${MANAGED_TASK_HANDOFF_BLOCK}\`\`\` with this exact shape:`,
-      'status: <ready|incomplete|blocked>',
-      'summary: <one-line validator summary>',
-      'evidence:',
-      '- <evidence item>',
-      'followup:',
-      '- <follow-up or "none">',
-    ].join('\n'),
-    [
-      `Then append a JSON fenced block named \`\`\`${TACTICAL_CHILD_RESULT_BLOCK}\`\`\` with this exact shape:`,
-      `{"childId":"${finding.id}","fanoutClass":"finding-validation","status":"completed","disposition":"valid|false-positive|needs-more-evidence","summary":"<one-line verdict>","evidenceRefs":["<artifact or file reference>"],"contradictions":["<contradiction or empty>"],"artifactPaths":[]}`,
-    ].join('\n'),
-  ].filter((section): section is string => Boolean(section)).join('\n\n');
-}
-
-function buildTacticalInvestigationValidatorPrompt(
-  originalTask: string,
-  shard: TacticalInvestigationShard,
-  scoutDirective: ManagedTaskScoutDirective,
-): string {
-  return [
-    'You are a Tactical Investigation Validator child for one bounded evidence shard.',
-    `[Task] ${originalTask}`,
-    `[Shard ID] ${shard.id}`,
-    `[Question] ${shard.question}`,
-    `[Scope] ${shard.scope}`,
-    `[Priority] ${shard.priority}`,
-    shard.files.length > 0 ? `Relevant files: ${shard.files.join(', ')}` : undefined,
-    shard.evidence.length > 0 ? `Scanner evidence: ${shard.evidence.join(' | ')}` : undefined,
-    scoutDirective.summary ? `[Scout summary] ${scoutDirective.summary}` : undefined,
-    'Validate only this evidence question. Do not broad-scan the repo and do not restate the entire investigation.',
-    'Decide whether the shard supports the current diagnosis, weakens it, or still needs more evidence.',
-    [
-      `Append a final fenced block named \`\`\`${MANAGED_TASK_HANDOFF_BLOCK}\`\`\` with this exact shape:`,
-      'status: <ready|incomplete|blocked>',
-      'summary: <one-line validator summary>',
-      'evidence:',
-      '- <evidence item>',
-      'followup:',
-      '- <follow-up or "none">',
-    ].join('\n'),
-    [
-      `Then append a JSON fenced block named \`\`\`${TACTICAL_CHILD_RESULT_BLOCK}\`\`\` with this exact shape:`,
-      `{"childId":"${shard.id}","fanoutClass":"evidence-scan","status":"completed","disposition":"valid|false-positive|needs-more-evidence","summary":"<one-line verdict>","evidenceRefs":["<artifact or file reference>"],"contradictions":["<contradiction or empty>"],"artifactPaths":[]}`,
-    ].join('\n'),
-  ].filter((section): section is string => Boolean(section)).join('\n\n');
-}
-
-function buildTacticalLookupValidatorPrompt(
-  originalTask: string,
-  shard: TacticalLookupShard,
-  scoutDirective: ManagedTaskScoutDirective,
-): string {
-  return [
-    'You are a Tactical Lookup Validator child for one bounded module-triage shard.',
-    `[Task] ${originalTask}`,
-    `[Shard ID] ${shard.id}`,
-    `[Question] ${shard.question}`,
-    `[Scope] ${shard.scope}`,
-    `[Priority] ${shard.priority}`,
-    shard.paths.length > 0 ? `Candidate paths: ${shard.paths.join(', ')}` : undefined,
-    shard.rationale.length > 0 ? `Scanner rationale: ${shard.rationale.join(' | ')}` : undefined,
-    scoutDirective.summary ? `[Scout summary] ${scoutDirective.summary}` : undefined,
-    'Validate only this lookup shard. Do not broad-scan the repo and do not restate the entire lookup request.',
-    'Decide whether the shard supports the current best path/module answer, weakens it, or still needs more evidence.',
-    [
-      `Append a final fenced block named \`\`\`${MANAGED_TASK_HANDOFF_BLOCK}\`\`\` with this exact shape:`,
-      'status: <ready|incomplete|blocked>',
-      'summary: <one-line validator summary>',
-      'evidence:',
-      '- <evidence item>',
-      'followup:',
-      '- <follow-up or "none">',
-    ].join('\n'),
-    [
-      `Then append a JSON fenced block named \`\`\`${TACTICAL_CHILD_RESULT_BLOCK}\`\`\` with this exact shape:`,
-      `{"childId":"${shard.id}","fanoutClass":"module-triage","status":"completed","disposition":"valid|false-positive|needs-more-evidence","summary":"<one-line verdict>","evidenceRefs":["<artifact or file reference>"],"contradictions":["<contradiction or empty>"],"artifactPaths":[]}`,
-    ].join('\n'),
-  ].filter((section): section is string => Boolean(section)).join('\n\n');
-}
-
-function buildTacticalChildArtifactPaths(taskDir: string): {
-  childResultPath: string;
-  handoffPath: string;
-} {
-  return {
-    childResultPath: path.join(taskDir, TACTICAL_CHILD_RESULT_ARTIFACT_JSON),
-    handoffPath: path.join(taskDir, TACTICAL_CHILD_HANDOFF_JSON),
-  };
-}
-
-async function writeTacticalChildHandoffArtifact(
-  filePath: string,
-  directive: ManagedTaskHandoffDirective,
-): Promise<void> {
-  await writeFile(
-    filePath,
-    `${JSON.stringify({
-      status: directive.status,
-      summary: directive.summary ?? null,
-      evidence: directive.evidence,
-      followup: directive.followup,
-      userFacingText: directive.userFacingText,
-    }, null, 2)}\n`,
-    'utf8',
-  );
-}
-
-function canonicalizeTacticalReviewFindings(
-  findings: TacticalReviewFinding[],
-): {
-  findings: TacticalReviewFinding[];
-  duplicateIds: string[];
-} {
-  const canonicalFindings: TacticalReviewFinding[] = [];
-  const seen = new Set<string>();
-  const duplicateIds = new Set<string>();
-
-  for (const finding of findings) {
-    if (seen.has(finding.id)) {
-      duplicateIds.add(finding.id);
-      continue;
+  const normalizedVerification = options.context?.taskVerification
+    ? {
+      ...options.context.taskVerification,
+      rubricFamily: inferVerificationRubricFamily(options.context.taskVerification, plan.decision.primaryTask),
+      criteria: resolveVerificationCriteria(options.context.taskVerification, plan.decision.primaryTask),
+      runtime: deriveRuntimeVerificationContract(options.context.taskVerification, options),
     }
-    seen.add(finding.id);
-    canonicalFindings.push(finding);
+    : undefined;
+
+  const budgetController = createManagedBudgetController(options, plan, agentMode);
+  budgetController.spentBudget = Math.max(budgetController.spentBudget, scoutBudgetController.spentBudget);
+  await mkdir(workspaceDir, { recursive: true });
+  const skillArtifacts = await writeManagedSkillArtifacts(workspaceDir, options.context?.skillInvocation, skillMap);
+
+  const task: KodaXManagedTask = {
+    contract: {
+      taskId, surface, objective: originalTask, createdAt, updatedAt: createdAt,
+      status: 'running', primaryTask: plan.decision.primaryTask,
+      workIntent: plan.decision.workIntent, complexity: plan.decision.complexity,
+      riskLevel: plan.decision.riskLevel, harnessProfile: 'H0_DIRECT',
+      recommendedMode: plan.decision.recommendedMode,
+      requiresBrainstorm: plan.decision.requiresBrainstorm,
+      reason: plan.decision.reason,
+      contractSummary: undefined, successCriteria: [],
+      requiredEvidence: options.context?.taskVerification?.requiredEvidence ?? [],
+      constraints: [], metadata: options.context?.taskMetadata,
+      verification: normalizedVerification,
+    },
+    roleAssignments: [{
+      id: 'scout', role: 'scout', title: 'Scout', dependsOn: [],
+      status: 'running', agent: scoutAgent, toolPolicy: scoutToolPolicy,
+    }],
+    workItems: [{
+      id: 'scout', assignmentId: 'scout',
+      description: 'Scout completes the task directly.',
+      execution: 'serial',
+    }],
+    evidence: {
+      workspaceDir,
+      artifacts: mergeEvidenceArtifacts(
+        buildContextInputEvidenceArtifacts(options.context),
+        skillArtifacts,
+      ),
+      entries: [],
+      routingNotes: plan.decision.routingNotes ?? [],
+    },
+    verdict: {
+      status: 'running', decidedByAssignmentId: 'scout',
+      summary: 'Scout is completing the task directly.',
+    },
+    runtime: {
+      ...applyAmaRuntimeState(undefined, amaControllerDecision),
+      ...applyManagedBudgetRuntimeState(undefined, budgetController),
+      budget: createBudgetSnapshot(budgetController, 'H0_DIRECT', 1, 'scout'),
+      currentHarness: 'H0_DIRECT',
+      upgradeCeiling: plan.decision.upgradeCeiling,
+      harnessTransitions: [],
+      routingAttempts: plan.decision.routingAttempts,
+      routingSource: plan.decision.routingSource,
+      rawRoutingDecision, finalRoutingDecision, routingOverrideReason,
+      qualityAssuranceMode,
+      scorecard: createVerificationScorecard({ contract: { verification: normalizedVerification } } as KodaXManagedTask, undefined),
+      scoutDecision: {
+        summary: scoutExecution.directive.summary ?? 'Scout completed the task directly.',
+        recommendedHarness: 'H0_DIRECT', readyForUpgrade: false,
+        scope: scoutExecution.directive.scope,
+        requiredEvidence: scoutExecution.directive.requiredEvidence,
+        reviewFilesOrAreas: scoutExecution.directive.reviewFilesOrAreas,
+        evidenceAcquisitionMode: scoutExecution.directive.evidenceAcquisitionMode,
+        harnessRationale: scoutExecution.directive.harnessRationale,
+        blockingEvidence: scoutExecution.directive.blockingEvidence,
+        directCompletionReady: scoutExecution.directive.directCompletionReady,
+        skillSummary: scoutExecution.directive.skillMap?.skillSummary,
+        executionObligations: scoutExecution.directive.skillMap?.executionObligations,
+        verificationObligations: scoutExecution.directive.skillMap?.verificationObligations,
+        ambiguities: scoutExecution.directive.skillMap?.ambiguities,
+        projectionConfidence: scoutExecution.directive.skillMap?.projectionConfidence,
+      },
+      skillMap,
+      evidenceAcquisitionMode: scoutExecution.directive.evidenceAcquisitionMode ?? 'overview',
+      reviewFilesOrAreas: scoutExecution.directive.reviewFilesOrAreas,
+    },
+  };
+
+  const scoutWorkerSpec: ManagedTaskWorkerSpec = {
+    id: 'scout', role: 'scout', title: 'Scout', dependsOn: [],
+    agent: scoutAgent, toolPolicy: scoutToolPolicy,
+    memoryStrategy: 'reset-handoff', terminalAuthority: true,
+    prompt: '',
+  };
+  const roundSummary = buildManagedWorkerRoundSummary(
+    task, scoutWorkerSpec, scoutExecution.result, 1, scoutExecution.directive,
+  );
+  if (roundSummary) {
+    task.runtime = { ...task.runtime, roleRoundSummaries: { scout: roundSummary } };
   }
 
-  return {
-    findings: canonicalFindings,
-    duplicateIds: Array.from(duplicateIds),
-  };
-}
+  const completedTask = applyScoutTerminalResultToTask(task, scoutExecution.result, scoutExecution.directive);
+  await writeManagedTaskSnapshotArtifacts(workspaceDir, completedTask);
+  options.events?.onManagedTaskStatus?.({
+    agentMode, harnessProfile: 'H0_DIRECT',
+    activeWorkerId: 'scout', activeWorkerTitle: 'Scout',
+    phase: 'completed', note: 'Scout completed the task directly',
+    upgradeCeiling: finalRoutingDecision.upgradeCeiling,
+    ...buildManagedStatusBudgetFields(budgetController),
+  });
+  scheduleManagedTaskRepoIntelligenceCapture(
+    resolveManagedTaskRepoIntelligenceContext(options), workspaceDir, options,
+  );
 
-function canonicalizeTacticalInvestigationShards(
-  shards: TacticalInvestigationShard[],
-): {
-  shards: TacticalInvestigationShard[];
-  duplicateIds: string[];
-} {
-  const canonicalShards: TacticalInvestigationShard[] = [];
-  const seen = new Set<string>();
-  const duplicateIds = new Set<string>();
-
-  for (const shard of shards) {
-    if (seen.has(shard.id)) {
-      duplicateIds.add(shard.id);
-      continue;
-    }
-    seen.add(shard.id);
-    canonicalShards.push(shard);
-  }
-
-  return {
-    shards: canonicalShards,
-    duplicateIds: Array.from(duplicateIds),
-  };
-}
-
-function canonicalizeTacticalLookupShards(
-  shards: TacticalLookupShard[],
-): {
-  shards: TacticalLookupShard[];
-  duplicateIds: string[];
-} {
-  const canonicalShards: TacticalLookupShard[] = [];
-  const seen = new Set<string>();
-  const duplicateIds = new Set<string>();
-
-  for (const shard of shards) {
-    if (seen.has(shard.id)) {
-      duplicateIds.add(shard.id);
-      continue;
-    }
-    seen.add(shard.id);
-    canonicalShards.push(shard);
-  }
-
-  return {
-    shards: canonicalShards,
-    duplicateIds: Array.from(duplicateIds),
-  };
-}
-
-function resolveTacticalWorkerBundleId(worker: ManagedTaskWorkerSpec): string {
-  const metadata = worker.metadata ?? {};
-  const candidate = metadata.findingId ?? metadata.bundleId ?? worker.id;
-  return typeof candidate === 'string' && candidate.trim() ? candidate : worker.id;
-}
-
-function resolveTacticalWorkerFanoutClass(
-  worker: ManagedTaskWorkerSpec,
-): KodaXAmaFanoutClass {
-  return worker.metadata?.fanoutClass === 'finding-validation'
-    || worker.metadata?.fanoutClass === 'evidence-scan'
-    || worker.metadata?.fanoutClass === 'module-triage'
-    || worker.metadata?.fanoutClass === 'hypothesis-check'
-      ? worker.metadata.fanoutClass
-      : 'finding-validation';
+  return { ...scoutExecution.result, managedTask: completedTask, routingDecision: finalRoutingDecision };
 }
 
 function isManagedBackgroundFanoutWorker(
@@ -4337,1437 +3630,6 @@ function isManagedBackgroundFanoutWorker(
     || worker.metadata?.fanoutClass === 'evidence-scan'
     || worker.metadata?.fanoutClass === 'module-triage'
     || worker.metadata?.fanoutClass === 'hypothesis-check';
-}
-
-function buildTacticalChildResultLedger(
-  fanoutSchedulerPlan: KodaXFanoutSchedulerPlan,
-  childContextBundles: KodaXChildContextBundle[],
-  childResults: KodaXChildAgentResult[],
-  parentReductionContract: KodaXParentReductionContract,
-): TacticalChildResultLedger {
-  return {
-    generatedAt: new Date().toISOString(),
-    fanoutClass: fanoutSchedulerPlan.fanoutClass,
-    reductionStrategy: parentReductionContract.strategy,
-    branches: fanoutSchedulerPlan.branches,
-    bundles: childContextBundles,
-    childResults,
-  };
-}
-
-function renderTacticalChildResultLedgerMarkdown(
-  ledger: TacticalChildResultLedger,
-): string {
-  return [
-    '# Tactical Child Result Ledger',
-    '',
-    `- Fan-out class: ${ledger.fanoutClass}`,
-    `- Reduction strategy: ${ledger.reductionStrategy}`,
-    '',
-    '## Branches',
-    ...ledger.branches.map((branch) => (
-      [
-        `- ${branch.bundleId}: ${branch.status}`,
-        branch.workerId ? `  - worker: ${branch.workerId}` : undefined,
-        branch.childId ? `  - child: ${branch.childId}` : undefined,
-        branch.reason ? `  - reason: ${branch.reason}` : undefined,
-      ].filter((line): line is string => Boolean(line)).join('\n')
-    )),
-    '',
-    '## Child Results',
-    ...(ledger.childResults.length > 0
-      ? ledger.childResults.map((result) => (
-          [
-            `- ${result.childId}: ${result.disposition}`,
-            `  - status: ${result.status}`,
-            `  - summary: ${result.summary}`,
-            result.evidenceRefs.length > 0 ? `  - evidence: ${result.evidenceRefs.join(', ')}` : undefined,
-            result.contradictions.length > 0 ? `  - contradictions: ${result.contradictions.join(' | ')}` : undefined,
-          ].filter((line): line is string => Boolean(line)).join('\n')
-        ))
-      : ['- No child results recorded yet.']),
-  ].join('\n');
-}
-
-async function writeTacticalChildResultLedger(
-  workspaceDir: string,
-  fanoutSchedulerPlan: KodaXFanoutSchedulerPlan,
-  childContextBundles: KodaXChildContextBundle[],
-  childResults: KodaXChildAgentResult[],
-  parentReductionContract: KodaXParentReductionContract,
-  options?: {
-    includeMarkdown?: boolean;
-  },
-): Promise<KodaXTaskEvidenceArtifact[]> {
-  const ledger = buildTacticalChildResultLedger(
-    fanoutSchedulerPlan,
-    childContextBundles,
-    childResults,
-    parentReductionContract,
-  );
-  const jsonPath = path.join(workspaceDir, TACTICAL_CHILD_LEDGER_JSON);
-  await writeFile(jsonPath, `${JSON.stringify(ledger, null, 2)}\n`, 'utf8');
-  const artifacts: KodaXTaskEvidenceArtifact[] = [
-    {
-      kind: 'json',
-      path: jsonPath,
-      description: 'Authoritative child result ledger for AMA tactical fan-out.',
-    },
-  ];
-  if (options?.includeMarkdown !== false) {
-    const markdownPath = path.join(workspaceDir, TACTICAL_CHILD_LEDGER_MARKDOWN);
-    await writeFile(markdownPath, `${renderTacticalChildResultLedgerMarkdown(ledger).trimEnd()}\n`, 'utf8');
-    artifacts.push({
-      kind: 'markdown',
-      path: markdownPath,
-      description: 'Human-readable child result ledger summary.',
-    });
-  }
-  return artifacts;
-}
-
-function buildTacticalReviewReducerPrompt(
-  originalTask: string,
-  findings: TacticalReviewFinding[],
-  childResultLedgerPath: string,
-): string {
-  return [
-    'You are the Tactical Review Reducer for a KodaX AMA task.',
-    `[Task] ${originalTask}`,
-    `Candidate findings under validation: ${findings.map((finding) => finding.id).join(', ')}`,
-    `Authoritative child-result ledger: ${childResultLedgerPath}`,
-    'Read the child-result ledger first. Use dependency handoff only to locate supporting artifacts.',
-    'Do not treat raw child output excerpts as authoritative. Only keep findings that survived validation in the ledger with concrete evidence.',
-    'Do not describe yourself as verifying or judging other roles. Return the final user-facing review directly.',
-    [
-      `Append a final fenced block named \`\`\`${MANAGED_TASK_VERDICT_BLOCK}\`\`\` with this exact shape:`,
-      'status: <accept|revise|blocked>',
-      'reason: <one-line reason>',
-      'user_answer:',
-      '<full final user-facing review>',
-      'followup:',
-      '- <optional follow-up or "none">',
-    ].join('\n'),
-  ].join('\n\n');
-}
-
-function buildTacticalInvestigationReducerPrompt(
-  originalTask: string,
-  shards: TacticalInvestigationShard[],
-  childResultLedgerPath: string,
-): string {
-  return [
-    'You are the Tactical Investigation Reducer for a KodaX AMA task.',
-    `[Task] ${originalTask}`,
-    `Evidence shards under validation: ${shards.map((shard) => shard.id).join(', ')}`,
-    `Authoritative child-result ledger: ${childResultLedgerPath}`,
-    'Read the child-result ledger first. Use dependency handoff only to locate supporting artifacts.',
-    'Do not trust raw child transcript excerpts as authoritative. Only use ledger-backed child results and concrete evidence references.',
-    'Return a direct user-facing investigation update or diagnosis, not a meta-evaluation of other roles.',
-    [
-      `Append a final fenced block named \`\`\`${MANAGED_TASK_VERDICT_BLOCK}\`\`\` with this exact shape:`,
-      'status: <accept|revise|blocked>',
-      'reason: <one-line reason>',
-      'user_answer:',
-      '<full direct user-facing diagnosis or investigation update>',
-      'followup:',
-      '- <optional follow-up or "none">',
-    ].join('\n'),
-  ].join('\n\n');
-}
-
-function buildTacticalLookupReducerPrompt(
-  originalTask: string,
-  shards: TacticalLookupShard[],
-  childResultLedgerPath: string,
-): string {
-  return [
-    'You are the Tactical Lookup Reducer for a KodaX AMA task.',
-    `[Task] ${originalTask}`,
-    `Lookup shards under validation: ${shards.map((shard) => shard.id).join(', ')}`,
-    `Authoritative child-result ledger: ${childResultLedgerPath}`,
-    'Read the child-result ledger first. Use dependency handoff only to locate supporting artifacts.',
-    'Do not trust raw child transcript excerpts as authoritative. Only use ledger-backed child results and concrete evidence references.',
-    'Return a direct user-facing lookup answer with the best path/module/symbol result, not a meta-evaluation of other roles.',
-    [
-      `Append a final fenced block named \`\`\`${MANAGED_TASK_VERDICT_BLOCK}\`\`\` with this exact shape:`,
-      'status: <accept|revise|blocked>',
-      'reason: <one-line reason>',
-      'user_answer:',
-      '<full direct user-facing lookup answer>',
-      'followup:',
-      '- <optional follow-up or "none">',
-    ].join('\n'),
-  ].join('\n\n');
-}
-
-async function runTacticalReviewScanner(
-  options: KodaXOptions,
-  task: KodaXManagedTask,
-  worker: ManagedTaskWorkerSpec,
-  routingPromptOverlay: string | undefined,
-  qualityAssuranceMode: ManagedTaskQualityAssuranceMode,
-  sessionStorage: KodaXSessionStorage | undefined,
-  controller: ManagedTaskBudgetController,
-): Promise<{ result: KodaXResult; directive?: TacticalReviewFindingsDirective; artifactPath?: string }> {
-  const preparedOptions = buildWorkerRunOptions(
-    options,
-    task,
-    worker,
-    'review-reducer',
-    routingPromptOverlay,
-    qualityAssuranceMode,
-    sessionStorage,
-    'reset-handoff',
-    createBudgetSnapshot(controller, task.contract.harnessProfile, 1, 'generator', worker.id),
-    controller,
-    undefined,
-    1,
-  );
-  const result = await runDirectKodaX(preparedOptions, worker.prompt);
-  const text = extractMessageText(result) || result.lastText;
-  const directive = parseTacticalReviewFindingsDirective(text);
-  let artifactPath: string | undefined;
-  if (directive) {
-    artifactPath = path.join(task.evidence.workspaceDir, 'review-findings.json');
-    await writeFile(
-      artifactPath,
-      `${JSON.stringify(directive, null, 2)}\n`,
-      'utf8',
-    );
-  }
-  return { result, directive, artifactPath };
-}
-
-async function runTacticalInvestigationScanner(
-  options: KodaXOptions,
-  task: KodaXManagedTask,
-  worker: ManagedTaskWorkerSpec,
-  routingPromptOverlay: string | undefined,
-  qualityAssuranceMode: ManagedTaskQualityAssuranceMode,
-  sessionStorage: KodaXSessionStorage | undefined,
-  controller: ManagedTaskBudgetController,
-): Promise<{ result: KodaXResult; directive?: TacticalInvestigationShardsDirective; artifactPath?: string }> {
-  const preparedOptions = buildWorkerRunOptions(
-    options,
-    task,
-    worker,
-    'investigation-reducer',
-    routingPromptOverlay,
-    qualityAssuranceMode,
-    sessionStorage,
-    'reset-handoff',
-    createBudgetSnapshot(controller, task.contract.harnessProfile, 1, 'generator', worker.id),
-    controller,
-    undefined,
-    1,
-  );
-  const result = await runDirectKodaX(preparedOptions, worker.prompt);
-  const text = extractMessageText(result) || result.lastText;
-  const directive = parseTacticalInvestigationShardsDirective(text);
-  let artifactPath: string | undefined;
-  if (directive) {
-    artifactPath = path.join(task.evidence.workspaceDir, 'investigation-shards.json');
-    await writeFile(
-      artifactPath,
-      `${JSON.stringify(directive, null, 2)}\n`,
-      'utf8',
-    );
-  }
-  return { result, directive, artifactPath };
-}
-
-async function runTacticalLookupScanner(
-  options: KodaXOptions,
-  task: KodaXManagedTask,
-  worker: ManagedTaskWorkerSpec,
-  routingPromptOverlay: string | undefined,
-  qualityAssuranceMode: ManagedTaskQualityAssuranceMode,
-  sessionStorage: KodaXSessionStorage | undefined,
-  controller: ManagedTaskBudgetController,
-): Promise<{ result: KodaXResult; directive?: TacticalLookupShardsDirective; artifactPath?: string }> {
-  const preparedOptions = buildWorkerRunOptions(
-    options,
-    task,
-    worker,
-    'lookup-reducer',
-    routingPromptOverlay,
-    qualityAssuranceMode,
-    sessionStorage,
-    'reset-handoff',
-    createBudgetSnapshot(controller, task.contract.harnessProfile, 1, 'generator', worker.id),
-    controller,
-    undefined,
-    1,
-  );
-  const result = await runDirectKodaX(preparedOptions, worker.prompt);
-  const text = extractMessageText(result) || result.lastText;
-  const directive = parseTacticalLookupShardsDirective(text);
-  let artifactPath: string | undefined;
-  if (directive) {
-    artifactPath = path.join(task.evidence.workspaceDir, 'lookup-shards.json');
-    await writeFile(
-      artifactPath,
-      `${JSON.stringify(directive, null, 2)}\n`,
-      'utf8',
-    );
-  }
-  return { result, directive, artifactPath };
-}
-
-async function runTacticalReviewFlow(
-  managedOptions: KodaXOptions,
-  originalTask: string,
-  plan: ReasoningPlan,
-  scoutExecution: { result: KodaXResult; directive: ManagedTaskScoutDirective },
-  rawRoutingDecision: KodaXTaskRoutingDecision,
-  finalRoutingDecision: KodaXTaskRoutingDecision,
-  routingOverrideReason: string | undefined,
-  skillMap: KodaXSkillMap | undefined,
-  agentMode: KodaXAgentMode,
-  scoutBudgetController: ManagedTaskBudgetController,
-): Promise<KodaXResult> {
-  const shape = createTacticalReviewBaseShape(
-    managedOptions,
-    originalTask,
-    plan,
-    {
-      originalTask,
-      skillInvocation: managedOptions.context?.skillInvocation,
-      skillMap: skillMap ?? undefined,
-    },
-  );
-  const budgetController = createManagedBudgetController(managedOptions, plan, agentMode);
-  budgetController.spentBudget = Math.max(budgetController.spentBudget, scoutBudgetController.spentBudget);
-  const sessionStorage = new ManagedWorkerSessionStorage();
-  await mkdir(shape.workspaceDir, { recursive: true });
-  const skillArtifacts = await writeManagedSkillArtifacts(
-    shape.workspaceDir,
-    managedOptions.context?.skillInvocation,
-    skillMap ?? undefined,
-  );
-  shape.task = {
-    ...shape.task,
-      runtime: {
-        ...applyManagedBudgetRuntimeState(shape.task.runtime, budgetController),
-        budget: createBudgetSnapshot(budgetController, shape.task.contract.harnessProfile, 1, 'generator', 'review-scan'),
-        rawRoutingDecision,
-        finalRoutingDecision,
-      routingOverrideReason,
-      qualityAssuranceMode: shape.qualityAssuranceMode,
-      scoutDecision: {
-        summary: scoutExecution.directive.summary ?? 'Scout completed.',
-        recommendedHarness: scoutExecution.directive.confirmedHarness ?? finalRoutingDecision.harnessProfile,
-        readyForUpgrade: false,
-        scope: scoutExecution.directive.scope,
-        requiredEvidence: scoutExecution.directive.requiredEvidence,
-        reviewFilesOrAreas: scoutExecution.directive.reviewFilesOrAreas,
-        evidenceAcquisitionMode: scoutExecution.directive.evidenceAcquisitionMode,
-        harnessRationale: scoutExecution.directive.harnessRationale,
-        blockingEvidence: scoutExecution.directive.blockingEvidence,
-        directCompletionReady: scoutExecution.directive.directCompletionReady,
-        skillSummary: scoutExecution.directive.skillMap?.skillSummary,
-        executionObligations: scoutExecution.directive.skillMap?.executionObligations,
-        verificationObligations: scoutExecution.directive.skillMap?.verificationObligations,
-        ambiguities: scoutExecution.directive.skillMap?.ambiguities,
-        projectionConfidence: scoutExecution.directive.skillMap?.projectionConfidence,
-      },
-      skillMap: skillMap ?? undefined,
-      evidenceAcquisitionMode: scoutExecution.directive.evidenceAcquisitionMode ?? 'overview',
-      reviewFilesOrAreas: scoutExecution.directive.reviewFilesOrAreas,
-    },
-    evidence: {
-      ...shape.task.evidence,
-      artifacts: mergeEvidenceArtifacts(shape.task.evidence.artifacts, skillArtifacts),
-      entries: [
-        ...shape.task.evidence.entries,
-        {
-          assignmentId: 'scout',
-          title: 'Scout',
-          role: 'scout',
-          round: 0,
-          status: scoutExecution.result.success ? 'completed' : 'failed',
-          summary: scoutExecution.directive.summary,
-          output: scoutExecution.directive.userFacingText || extractMessageText(scoutExecution.result),
-          sessionId: scoutExecution.result.sessionId,
-          signal: scoutExecution.result.signal,
-          signalReason: scoutExecution.result.signalReason,
-        },
-      ],
-    },
-  };
-
-  const scannerToolPolicy = buildManagedWorkerToolPolicy(
-    'generator',
-    shape.task.contract.verification,
-    'H0_DIRECT',
-    'read-only',
-    managedOptions.context?.repoIntelligenceMode,
-  );
-  const scannerWorker: ManagedTaskWorkerSpec = {
-    id: 'review-scan',
-    role: 'generator',
-    title: 'Review Scanner',
-    agent: buildManagedWorkerAgent('generator', 'review-scan'),
-    toolPolicy: scannerToolPolicy,
-    terminalAuthority: false,
-    prompt: buildTacticalReviewScannerPrompt(
-      originalTask,
-      plan,
-      scoutExecution.directive,
-    ),
-    metadata: {
-      role: 'generator',
-      agent: buildManagedWorkerAgent('generator', 'review-scan'),
-      tacticalChild: false,
-    },
-  };
-  scannerWorker.beforeToolExecute = createToolPolicyHook(scannerWorker);
-
-  const scannerExecution = await runTacticalReviewScanner(
-    managedOptions,
-    shape.task,
-    scannerWorker,
-    shape.routingPromptOverlay,
-    shape.qualityAssuranceMode,
-    sessionStorage,
-    budgetController,
-  );
-  const scannerDirective = scannerExecution.directive;
-  const scannerOutput = sanitizeManagedUserFacingText(
-    extractMessageText(scannerExecution.result) || scannerExecution.result.lastText,
-  );
-
-  shape.task = {
-    ...shape.task,
-    evidence: {
-      ...shape.task.evidence,
-      artifacts: mergeEvidenceArtifacts(
-        shape.task.evidence.artifacts,
-        scannerExecution.artifactPath
-          ? [{
-              kind: 'json',
-              path: scannerExecution.artifactPath,
-              description: 'Tactical review candidate findings.',
-            }]
-          : [],
-      ),
-      entries: [
-        ...shape.task.evidence.entries,
-        {
-          assignmentId: 'review-scan',
-          title: 'Review Scanner',
-          role: 'generator',
-          round: 1,
-          status: scannerExecution.result.success ? 'completed' : 'failed',
-          summary: scannerDirective?.summary ?? truncateText(scannerOutput || 'Review scanner completed.'),
-          output: scannerOutput,
-          sessionId: scannerExecution.result.sessionId,
-          signal: scannerExecution.result.signal,
-          signalReason: scannerExecution.result.signalReason,
-        },
-      ],
-    },
-  };
-
-  const scannerFindings = scannerDirective?.findings ?? [];
-  if (scannerFindings.length === 0) {
-    const completionStatus: KodaXTaskStatus = scannerExecution.result.success ? 'completed' : 'failed';
-    const completedTask: KodaXManagedTask = {
-      ...shape.task,
-      contract: {
-        ...shape.task.contract,
-        status: completionStatus,
-        updatedAt: new Date().toISOString(),
-      },
-      verdict: {
-        ...shape.task.verdict,
-        status: completionStatus,
-        summary: scannerDirective?.summary ?? (scannerOutput || 'Review scanner finished without promotable findings.'),
-      },
-      runtime: {
-        ...shape.task.runtime,
-        scorecard: createVerificationScorecard(shape.task, undefined),
-      },
-    };
-    await writeManagedTaskArtifacts(
-      shape.workspaceDir,
-      completedTask,
-      {
-        success: scannerExecution.result.success,
-        lastText: scannerOutput || scannerExecution.result.lastText,
-        sessionId: scannerExecution.result.sessionId,
-        signal: scannerExecution.result.signal,
-        signalReason: scannerExecution.result.signalReason,
-      },
-      undefined,
-    );
-    return mergeManagedTaskIntoResult(
-      {
-        ...scannerExecution.result,
-        lastText: scannerOutput || scannerExecution.result.lastText,
-        routingDecision: finalRoutingDecision,
-      },
-      completedTask,
-    );
-  }
-
-  const {
-    findings,
-    duplicateIds: duplicateFindingIds,
-  } = canonicalizeTacticalReviewFindings(scannerFindings);
-  const duplicateFindingNote = duplicateFindingIds.length > 0
-    ? `Canonicalized repeated scanner finding IDs: ${duplicateFindingIds.join(', ')}.`
-    : undefined;
-  if (duplicateFindingNote) {
-    shape.task = {
-      ...shape.task,
-      evidence: {
-        ...shape.task.evidence,
-        entries: shape.task.evidence.entries.map((entry) => (
-          entry.assignmentId === 'review-scan'
-            ? {
-              ...entry,
-              summary: `${entry.summary ?? 'Review scanner completed.'} ${duplicateFindingNote}`.trim(),
-              output: [entry.output, duplicateFindingNote].filter(Boolean).join('\n\n'),
-            }
-            : entry
-        )),
-      },
-    };
-  }
-
-  const childContextBundles: KodaXChildContextBundle[] = findings.map((finding) => ({
-    id: finding.id,
-    fanoutClass: 'finding-validation',
-    objective: finding.claim,
-    scopeSummary: finding.title,
-    evidenceRefs: finding.evidence,
-    constraints: [
-      'Validate only this candidate finding.',
-      'Do not broad-scan the repo.',
-    ],
-    readOnly: true,
-  }));
-  const parentReductionContract = shape.task.runtime?.parentReductionContract
-    ?? createParentReductionContract(plan.amaControllerDecision);
-  const schedulerInput = createFanoutSchedulerInput(
-    plan.amaControllerDecision,
-    childContextBundles,
-    parentReductionContract,
-  );
-  let fanoutSchedulerPlan: KodaXFanoutSchedulerPlan = schedulerInput
-    ? buildFanoutSchedulerPlan(schedulerInput)
-    : {
-      enabled: false,
-      profile: plan.amaControllerDecision.profile,
-      fanoutClass: 'finding-validation',
-      branches: childContextBundles.map((bundle) => ({
-        bundleId: bundle.id,
-        status: 'deferred' as const,
-        reason: 'AMA controller did not admit fan-out for this run.',
-      })),
-      scheduledBundleIds: [],
-      deferredBundleIds: childContextBundles.map((bundle) => bundle.id),
-      maxParallel: 1,
-      mergeStrategy: parentReductionContract.strategy,
-      cancellationPolicy: 'none',
-      reason: 'AMA controller did not admit fan-out for this run.',
-      };
-  let childLedgerArtifacts: KodaXTaskEvidenceArtifact[] = [];
-  const findingsById = new Map(findings.map((finding) => [finding.id, finding] as const));
-  const scheduledFindings = fanoutSchedulerPlan.scheduledBundleIds
-    .map((bundleId) => findingsById.get(bundleId))
-    .filter((finding): finding is TacticalReviewFinding => Boolean(finding));
-  shape.task = {
-    ...shape.task,
-    runtime: {
-      ...shape.task.runtime,
-      childContextBundles,
-      parentReductionContract,
-      fanoutSchedulerPlan,
-    },
-  };
-
-  const validatorToolPolicy = buildManagedWorkerToolPolicy(
-    'generator',
-    shape.task.contract.verification,
-    'H0_DIRECT',
-    'read-only',
-    managedOptions.context?.repoIntelligenceMode,
-  );
-  const reducerToolPolicy = buildManagedWorkerToolPolicy(
-    'evaluator',
-    shape.task.contract.verification,
-    'H0_DIRECT',
-    'read-only',
-    managedOptions.context?.repoIntelligenceMode,
-  );
-  const validators: ManagedTaskWorkerSpec[] = scheduledFindings.map((finding, index) => {
-    const worker: ManagedTaskWorkerSpec = {
-      id: `validator-${String(index + 1).padStart(2, '0')}`,
-      role: 'generator',
-      title: `Finding Validator ${index + 1}: ${truncateText(finding.title, 60)}`,
-      execution: 'parallel',
-      agent: buildManagedWorkerAgent('generator', finding.id),
-      toolPolicy: validatorToolPolicy,
-      terminalAuthority: false,
-      metadata: {
-        role: 'generator',
-        fanoutClass: 'finding-validation',
-        findingId: finding.id,
-      },
-      prompt: buildTacticalReviewValidatorPrompt(
-        originalTask,
-        finding,
-        scoutExecution.directive,
-      ),
-    };
-    worker.beforeToolExecute = createToolPolicyHook(worker);
-    fanoutSchedulerPlan = applyFanoutBranchTransition(fanoutSchedulerPlan, {
-      type: 'assign',
-      bundleId: finding.id,
-      workerId: worker.id,
-    });
-    return worker;
-  });
-  const reducer: ManagedTaskWorkerSpec = {
-    id: 'review-reducer',
-    role: 'evaluator',
-    title: 'Review Reducer',
-    dependsOn: validators.map((worker) => worker.id),
-    agent: buildManagedWorkerAgent('evaluator', 'review-reducer'),
-    toolPolicy: reducerToolPolicy,
-    terminalAuthority: true,
-    metadata: {
-      role: 'evaluator',
-      reductionStrategy: 'evaluator-assisted',
-    },
-    prompt: buildTacticalReviewReducerPrompt(
-      originalTask,
-      scheduledFindings,
-      path.join(shape.workspaceDir, TACTICAL_CHILD_LEDGER_JSON),
-    ),
-  };
-  reducer.beforeToolExecute = createToolPolicyHook(reducer);
-
-  shape.workers = [...validators, reducer];
-  shape.terminalWorkerId = reducer.id;
-  const roleAssignments: KodaXManagedTask['roleAssignments'] = [
-    ...shape.task.roleAssignments.map((assignment) => (
-      assignment.id === 'review-scan'
-        ? {
-          ...assignment,
-          status: 'completed' as const,
-          summary: [
-            scannerDirective?.summary ?? truncateText(scannerOutput || 'Review scanner completed.'),
-            duplicateFindingNote,
-          ].filter(Boolean).join(' '),
-        }
-        : assignment
-    )),
-    ...shape.workers.map((worker) => ({
-      id: worker.id,
-      role: worker.role,
-      title: worker.title,
-      dependsOn: worker.dependsOn ?? [],
-      status: 'planned' as const,
-      agent: worker.agent,
-      toolPolicy: worker.toolPolicy,
-    })),
-  ];
-  shape.task = {
-    ...shape.task,
-    runtime: {
-      ...shape.task.runtime,
-      fanoutSchedulerPlan,
-    },
-    roleAssignments,
-    workItems: [
-      ...shape.task.workItems,
-      ...shape.workers.map((worker) => ({
-        id: worker.id,
-        assignmentId: worker.id,
-        description: worker.title,
-        execution: worker.execution ?? 'serial',
-      })),
-    ],
-    verdict: {
-      ...shape.task.verdict,
-      decidedByAssignmentId: reducer.id,
-      summary: 'AMA Tactical review is validating candidate findings in parallel.',
-    },
-  };
-
-  const workerResults = new Map<string, KodaXResult>();
-  const childResults: KodaXChildAgentResult[] = [];
-  const childArtifacts: KodaXTaskEvidenceArtifact[] = [];
-  let directive: ManagedTaskVerdictDirective | undefined;
-  const tacticalRunner = createKodaXTaskRunner<ManagedTaskWorkerSpec>({
-    baseOptions: managedOptions,
-    runAgent: runDirectKodaX,
-    createOptions: (worker, _context, defaultOptions) => buildWorkerRunOptions(
-      defaultOptions,
-      shape.task,
-      worker,
-      shape.terminalWorkerId,
-      shape.routingPromptOverlay,
-      shape.qualityAssuranceMode,
-      sessionStorage,
-      resolveManagedMemoryStrategy(managedOptions, plan, worker.role, 1),
-      createBudgetSnapshot(budgetController, shape.task.contract.harnessProfile, 1, worker.role, worker.id),
-      budgetController,
-      undefined,
-      1,
-    ),
-    runTask: async (worker, _context, preparedOptions, promptText, executeDefault) => {
-      if (worker.role === 'evaluator') {
-        childLedgerArtifacts = await writeTacticalChildResultLedger(
-          shape.workspaceDir,
-          fanoutSchedulerPlan,
-          childContextBundles,
-          childResults,
-          parentReductionContract,
-          { includeMarkdown: false },
-        );
-      }
-      const execution = await runManagedWorkerTask(
-        worker,
-        preparedOptions,
-        promptText,
-        executeDefault,
-        budgetController,
-      );
-      return execution.result;
-    },
-    onResult: async (worker, context, result) => {
-      const sanitized = worker.role === 'evaluator'
-        ? sanitizeManagedWorkerResult(result, { enforceVerdictBlock: true })
-        : sanitizeHandoffResult(result, worker.title);
-      workerResults.set(worker.id, sanitized.result);
-      if (worker.role === 'evaluator') {
-        directive = sanitized.directive as ManagedTaskVerdictDirective | undefined;
-      } else {
-        const artifactPaths = buildTacticalChildArtifactPaths(context.taskDir);
-        const handoffDirective = sanitized.directive as ManagedTaskHandoffDirective | undefined;
-        if (handoffDirective) {
-          await writeTacticalChildHandoffArtifact(artifactPaths.handoffPath, handoffDirective);
-          childArtifacts.push({
-            kind: 'json',
-            path: artifactPaths.handoffPath,
-            description: `Dependency handoff for ${String(worker.metadata?.findingId ?? worker.id)}`,
-          });
-        }
-        const parsedChildResult = parseChildAgentResult(extractMessageText(result) || result.lastText);
-        const normalizedChildResult = normalizeTacticalChildResult(
-          worker,
-          handoffDirective,
-          sanitized.result,
-          parsedChildResult,
-          artifactPaths,
-        );
-        await writeFile(
-          artifactPaths.childResultPath,
-          `${JSON.stringify(normalizedChildResult, null, 2)}\n`,
-          'utf8',
-        );
-        upsertChildAgentResult(childResults, normalizedChildResult);
-        fanoutSchedulerPlan = applyFanoutBranchTransition(fanoutSchedulerPlan, {
-          type: 'complete',
-          bundleId: String(worker.metadata?.findingId ?? worker.id),
-          childId: normalizedChildResult.childId,
-        });
-        childArtifacts.push({
-          kind: 'json',
-          path: artifactPaths.childResultPath,
-          description: `Child-agent result for ${normalizedChildResult.childId}`,
-        });
-      }
-      return sanitized.result;
-    },
-  });
-
-  const roundWorkspaceDir = path.join(shape.workspaceDir, 'rounds', 'round-01');
-  const orchestrationResult = await runOrchestration<ManagedTaskWorkerSpec, string>({
-    workspaceDir: roundWorkspaceDir,
-    runId: `${shape.task.contract.taskId}-tactical-review`,
-    maxParallel: fanoutSchedulerPlan.maxParallel,
-    tasks: shape.workers,
-    runner: tacticalRunner,
-    events: createTacticalFanoutStatusEvents(
-      managedOptions.events,
-      agentMode,
-      shape.task.contract.harnessProfile,
-      () => fanoutSchedulerPlan,
-    ),
-  });
-
-  let managedTask = applyOrchestrationResultToTask(
-    shape.task,
-    shape.terminalWorkerId,
-    orchestrationResult,
-    workerResults,
-    1,
-    roundWorkspaceDir,
-  );
-  childLedgerArtifacts = await writeTacticalChildResultLedger(
-    shape.workspaceDir,
-    fanoutSchedulerPlan,
-    childContextBundles,
-    childResults,
-    parentReductionContract,
-  );
-  managedTask = {
-    ...managedTask,
-    evidence: {
-      ...managedTask.evidence,
-      artifacts: mergeEvidenceArtifacts(
-        managedTask.evidence.artifacts,
-        childArtifacts,
-        childLedgerArtifacts,
-      ),
-    },
-    runtime: {
-      ...managedTask.runtime,
-      childContextBundles,
-      childAgentResults: childResults,
-      fanoutSchedulerPlan,
-      scorecard: createVerificationScorecard(managedTask, directive),
-    },
-  };
-  directive = applyTacticalParentReduction(
-    directive,
-    fanoutSchedulerPlan,
-    childContextBundles,
-    childResults,
-  );
-  managedTask = applyManagedTaskDirective(managedTask, directive);
-  const terminalResult = workerResults.get(shape.terminalWorkerId);
-  const preferredPublicText = directive?.userAnswer?.trim() || directive?.userFacingText;
-  if (terminalResult && directive && preferredPublicText) {
-    workerResults.set(shape.terminalWorkerId, {
-      ...terminalResult,
-      success: directive.status === 'accept',
-      lastText: preferredPublicText,
-      signal: directive.status === 'accept' ? terminalResult.signal : 'BLOCKED',
-      signalReason: directive.status === 'accept'
-        ? terminalResult.signalReason
-        : directive.reason ?? terminalResult.signalReason,
-      messages: replaceLastAssistantMessage(terminalResult.messages, preferredPublicText),
-    });
-  }
-
-  const result = buildFallbackManagedResult(
-    managedTask,
-    workerResults,
-    shape.terminalWorkerId,
-  );
-  await writeManagedTaskArtifacts(
-    shape.workspaceDir,
-    managedTask,
-    {
-      success: result.success,
-      lastText: result.lastText,
-      sessionId: result.sessionId,
-      signal: result.signal,
-      signalReason: result.signalReason,
-    },
-    directive,
-  );
-  managedOptions.events?.onManagedTaskStatus?.({
-    agentMode,
-    harnessProfile: managedTask.contract.harnessProfile,
-    activeWorkerId: shape.terminalWorkerId,
-    activeWorkerTitle: reducer.title,
-    phase: 'completed',
-    note: managedTask.verdict.summary,
-  });
-  return {
-    ...result,
-    routingDecision: finalRoutingDecision,
-  };
-}
-
-async function runTacticalInvestigationFlow(
-  managedOptions: KodaXOptions,
-  originalTask: string,
-  plan: ReasoningPlan,
-  scoutExecution: { result: KodaXResult; directive: ManagedTaskScoutDirective },
-  rawRoutingDecision: KodaXTaskRoutingDecision,
-  finalRoutingDecision: KodaXTaskRoutingDecision,
-  routingOverrideReason: string | undefined,
-  skillMap: KodaXSkillMap | undefined,
-  agentMode: KodaXAgentMode,
-  scoutBudgetController: ManagedTaskBudgetController,
-): Promise<KodaXResult> {
-  const shape = createTacticalInvestigationBaseShape(
-    managedOptions,
-    originalTask,
-    plan,
-    {
-      originalTask,
-      skillInvocation: managedOptions.context?.skillInvocation,
-      skillMap: skillMap ?? undefined,
-    },
-  );
-  const budgetController = createManagedBudgetController(managedOptions, plan, agentMode);
-  budgetController.spentBudget = Math.max(budgetController.spentBudget, scoutBudgetController.spentBudget);
-  const sessionStorage = new ManagedWorkerSessionStorage();
-  await mkdir(shape.workspaceDir, { recursive: true });
-  const skillArtifacts = await writeManagedSkillArtifacts(
-    shape.workspaceDir,
-    managedOptions.context?.skillInvocation,
-    skillMap ?? undefined,
-  );
-  shape.task = {
-    ...shape.task,
-    runtime: {
-      ...applyManagedBudgetRuntimeState(shape.task.runtime, budgetController),
-      budget: createBudgetSnapshot(budgetController, shape.task.contract.harnessProfile, 1, 'generator', 'investigation-scan'),
-      rawRoutingDecision,
-      finalRoutingDecision,
-      routingOverrideReason,
-      qualityAssuranceMode: shape.qualityAssuranceMode,
-      scoutDecision: {
-        summary: scoutExecution.directive.summary ?? 'Scout completed.',
-        recommendedHarness: scoutExecution.directive.confirmedHarness ?? finalRoutingDecision.harnessProfile,
-        readyForUpgrade: false,
-        scope: scoutExecution.directive.scope,
-        requiredEvidence: scoutExecution.directive.requiredEvidence,
-        reviewFilesOrAreas: scoutExecution.directive.reviewFilesOrAreas,
-        evidenceAcquisitionMode: scoutExecution.directive.evidenceAcquisitionMode,
-        harnessRationale: scoutExecution.directive.harnessRationale,
-        blockingEvidence: scoutExecution.directive.blockingEvidence,
-        directCompletionReady: scoutExecution.directive.directCompletionReady,
-        skillSummary: scoutExecution.directive.skillMap?.skillSummary,
-        executionObligations: scoutExecution.directive.skillMap?.executionObligations,
-        verificationObligations: scoutExecution.directive.skillMap?.verificationObligations,
-        ambiguities: scoutExecution.directive.skillMap?.ambiguities,
-        projectionConfidence: scoutExecution.directive.skillMap?.projectionConfidence,
-      },
-      skillMap: skillMap ?? undefined,
-      evidenceAcquisitionMode: scoutExecution.directive.evidenceAcquisitionMode ?? 'overview',
-      reviewFilesOrAreas: scoutExecution.directive.reviewFilesOrAreas,
-    },
-    evidence: {
-      ...shape.task.evidence,
-      artifacts: mergeEvidenceArtifacts(shape.task.evidence.artifacts, skillArtifacts),
-      entries: [
-        ...shape.task.evidence.entries,
-        {
-          assignmentId: 'scout',
-          title: 'Scout',
-          role: 'scout',
-          round: 0,
-          status: scoutExecution.result.success ? 'completed' : 'failed',
-          summary: scoutExecution.directive.summary,
-          output: scoutExecution.directive.userFacingText || extractMessageText(scoutExecution.result),
-          sessionId: scoutExecution.result.sessionId,
-          signal: scoutExecution.result.signal,
-          signalReason: scoutExecution.result.signalReason,
-        },
-      ],
-    },
-  };
-
-  const scannerToolPolicy = buildManagedWorkerToolPolicy(
-    'generator',
-    shape.task.contract.verification,
-    'H0_DIRECT',
-    'read-only',
-    managedOptions.context?.repoIntelligenceMode,
-  );
-  const scannerWorker: ManagedTaskWorkerSpec = {
-    id: 'investigation-scan',
-    role: 'generator',
-    title: 'Investigation Scanner',
-    agent: buildManagedWorkerAgent('generator', 'investigation-scan'),
-    toolPolicy: scannerToolPolicy,
-    terminalAuthority: false,
-    prompt: buildTacticalInvestigationScannerPrompt(
-      originalTask,
-      plan,
-      scoutExecution.directive,
-    ),
-    metadata: {
-      role: 'generator',
-      agent: buildManagedWorkerAgent('generator', 'investigation-scan'),
-      tacticalChild: false,
-    },
-  };
-  scannerWorker.beforeToolExecute = createToolPolicyHook(scannerWorker);
-
-  const scannerExecution = await runTacticalInvestigationScanner(
-    managedOptions,
-    shape.task,
-    scannerWorker,
-    shape.routingPromptOverlay,
-    shape.qualityAssuranceMode,
-    sessionStorage,
-    budgetController,
-  );
-  const scannerDirective = scannerExecution.directive;
-  const scannerOutput = sanitizeManagedUserFacingText(
-    extractMessageText(scannerExecution.result) || scannerExecution.result.lastText,
-  );
-
-  shape.task = {
-    ...shape.task,
-    evidence: {
-      ...shape.task.evidence,
-      artifacts: mergeEvidenceArtifacts(
-        shape.task.evidence.artifacts,
-        scannerExecution.artifactPath
-          ? [{
-              kind: 'json',
-              path: scannerExecution.artifactPath,
-              description: 'Tactical investigation evidence shards.',
-            }]
-          : [],
-      ),
-      entries: [
-        ...shape.task.evidence.entries,
-        {
-          assignmentId: 'investigation-scan',
-          title: 'Investigation Scanner',
-          role: 'generator',
-          round: 1,
-          status: scannerExecution.result.success ? 'completed' : 'failed',
-          summary: scannerDirective?.summary ?? truncateText(scannerOutput || 'Investigation scanner completed.'),
-          output: scannerOutput,
-          sessionId: scannerExecution.result.sessionId,
-          signal: scannerExecution.result.signal,
-          signalReason: scannerExecution.result.signalReason,
-        },
-      ],
-    },
-  };
-
-  const scannerShards = scannerDirective?.shards ?? [];
-  if (scannerShards.length === 0) {
-    const completionStatus: KodaXTaskStatus = scannerExecution.result.success ? 'completed' : 'failed';
-    const completedTask: KodaXManagedTask = {
-      ...shape.task,
-      contract: {
-        ...shape.task.contract,
-        status: completionStatus,
-        updatedAt: new Date().toISOString(),
-      },
-      verdict: {
-        ...shape.task.verdict,
-        status: completionStatus,
-        summary: scannerDirective?.summary ?? (scannerOutput || 'Investigation scanner finished without promotable evidence shards.'),
-      },
-      runtime: {
-        ...shape.task.runtime,
-        scorecard: createVerificationScorecard(shape.task, undefined),
-      },
-    };
-    await writeManagedTaskArtifacts(
-      shape.workspaceDir,
-      completedTask,
-      {
-        success: scannerExecution.result.success,
-        lastText: scannerOutput || scannerExecution.result.lastText,
-        sessionId: scannerExecution.result.sessionId,
-        signal: scannerExecution.result.signal,
-        signalReason: scannerExecution.result.signalReason,
-      },
-      undefined,
-    );
-    return mergeManagedTaskIntoResult(
-      {
-        ...scannerExecution.result,
-        lastText: scannerOutput || scannerExecution.result.lastText,
-        routingDecision: finalRoutingDecision,
-      },
-      completedTask,
-    );
-  }
-
-  const {
-    shards,
-    duplicateIds: duplicateShardIds,
-  } = canonicalizeTacticalInvestigationShards(scannerShards);
-  const duplicateShardNote = duplicateShardIds.length > 0
-    ? `Canonicalized repeated investigation shard IDs: ${duplicateShardIds.join(', ')}.`
-    : undefined;
-  if (duplicateShardNote) {
-    shape.task = {
-      ...shape.task,
-      evidence: {
-        ...shape.task.evidence,
-        entries: shape.task.evidence.entries.map((entry) => (
-          entry.assignmentId === 'investigation-scan'
-            ? {
-                ...entry,
-                summary: `${entry.summary ?? 'Investigation scanner completed.'} ${duplicateShardNote}`.trim(),
-                output: [entry.output, duplicateShardNote].filter(Boolean).join('\n\n'),
-              }
-            : entry
-        )),
-      },
-    };
-  }
-
-  const childContextBundles: KodaXChildContextBundle[] = shards.map((shard) => ({
-    id: shard.id,
-    fanoutClass: 'evidence-scan',
-    objective: shard.question,
-    scopeSummary: shard.scope,
-    evidenceRefs: shard.evidence,
-    constraints: [
-      'Validate only this evidence question.',
-      'Do not broad-scan the repo.',
-    ],
-    readOnly: true,
-  }));
-  const parentReductionContract = shape.task.runtime?.parentReductionContract
-    ?? createParentReductionContract(plan.amaControllerDecision);
-  const schedulerInput = createFanoutSchedulerInput(
-    plan.amaControllerDecision,
-    childContextBundles,
-    parentReductionContract,
-  );
-  let fanoutSchedulerPlan: KodaXFanoutSchedulerPlan = schedulerInput
-    ? buildFanoutSchedulerPlan(schedulerInput)
-    : {
-        enabled: false,
-        profile: plan.amaControllerDecision.profile,
-        fanoutClass: 'evidence-scan',
-        branches: childContextBundles.map((bundle) => ({
-          bundleId: bundle.id,
-          status: 'deferred' as const,
-          reason: 'AMA controller did not admit fan-out for this run.',
-        })),
-        scheduledBundleIds: [],
-        deferredBundleIds: childContextBundles.map((bundle) => bundle.id),
-        maxParallel: 1,
-        mergeStrategy: parentReductionContract.strategy,
-        cancellationPolicy: 'none',
-        reason: 'AMA controller did not admit fan-out for this run.',
-      };
-  let childLedgerArtifacts: KodaXTaskEvidenceArtifact[] = [];
-  const shardsById = new Map(shards.map((shard) => [shard.id, shard] as const));
-  const scheduledShards = fanoutSchedulerPlan.scheduledBundleIds
-    .map((bundleId) => shardsById.get(bundleId))
-    .filter((shard): shard is TacticalInvestigationShard => Boolean(shard));
-  shape.task = {
-    ...shape.task,
-    runtime: {
-      ...shape.task.runtime,
-      childContextBundles,
-      parentReductionContract,
-      fanoutSchedulerPlan,
-    },
-  };
-
-  const validatorToolPolicy = buildManagedWorkerToolPolicy(
-    'generator',
-    shape.task.contract.verification,
-    'H0_DIRECT',
-    'read-only',
-    managedOptions.context?.repoIntelligenceMode,
-  );
-  const reducerToolPolicy = buildManagedWorkerToolPolicy(
-    'evaluator',
-    shape.task.contract.verification,
-    'H0_DIRECT',
-    'read-only',
-    managedOptions.context?.repoIntelligenceMode,
-  );
-  const validators: ManagedTaskWorkerSpec[] = scheduledShards.map((shard, index) => {
-    const worker: ManagedTaskWorkerSpec = {
-      id: `evidence-validator-${String(index + 1).padStart(2, '0')}`,
-      role: 'generator',
-      title: `Evidence Validator ${index + 1}: ${truncateText(shard.scope, 60)}`,
-      execution: 'parallel',
-      agent: buildManagedWorkerAgent('generator', shard.id),
-      toolPolicy: validatorToolPolicy,
-      terminalAuthority: false,
-      metadata: {
-        role: 'generator',
-        fanoutClass: 'evidence-scan',
-        bundleId: shard.id,
-      },
-      prompt: buildTacticalInvestigationValidatorPrompt(
-        originalTask,
-        shard,
-        scoutExecution.directive,
-      ),
-    };
-    worker.beforeToolExecute = createToolPolicyHook(worker);
-    fanoutSchedulerPlan = applyFanoutBranchTransition(fanoutSchedulerPlan, {
-      type: 'assign',
-      bundleId: shard.id,
-      workerId: worker.id,
-    });
-    return worker;
-  });
-  const reducer: ManagedTaskWorkerSpec = {
-    id: 'investigation-reducer',
-    role: 'evaluator',
-    title: 'Investigation Reducer',
-    dependsOn: validators.map((worker) => worker.id),
-    agent: buildManagedWorkerAgent('evaluator', 'investigation-reducer'),
-    toolPolicy: reducerToolPolicy,
-    terminalAuthority: true,
-    metadata: {
-      role: 'evaluator',
-      reductionStrategy: 'evaluator-assisted',
-    },
-    prompt: buildTacticalInvestigationReducerPrompt(
-      originalTask,
-      scheduledShards,
-      path.join(shape.workspaceDir, TACTICAL_CHILD_LEDGER_JSON),
-    ),
-  };
-  reducer.beforeToolExecute = createToolPolicyHook(reducer);
-
-  shape.workers = [...validators, reducer];
-  shape.terminalWorkerId = reducer.id;
-  const roleAssignments: KodaXManagedTask['roleAssignments'] = [
-    ...shape.task.roleAssignments.map((assignment) => (
-      assignment.id === 'investigation-scan'
-        ? {
-            ...assignment,
-            status: 'completed' as const,
-            summary: [
-              scannerDirective?.summary ?? truncateText(scannerOutput || 'Investigation scanner completed.'),
-              duplicateShardNote,
-            ].filter(Boolean).join(' '),
-          }
-        : assignment
-    )),
-    ...shape.workers.map((worker) => ({
-      id: worker.id,
-      role: worker.role,
-      title: worker.title,
-      dependsOn: worker.dependsOn ?? [],
-      status: 'planned' as const,
-      agent: worker.agent,
-      toolPolicy: worker.toolPolicy,
-    })),
-  ];
-  shape.task = {
-    ...shape.task,
-    runtime: {
-      ...shape.task.runtime,
-      fanoutSchedulerPlan,
-    },
-    roleAssignments,
-    workItems: [
-      ...shape.task.workItems,
-      ...shape.workers.map((worker) => ({
-        id: worker.id,
-        assignmentId: worker.id,
-        description: worker.title,
-        execution: worker.execution ?? 'serial',
-      })),
-    ],
-    verdict: {
-      ...shape.task.verdict,
-      decidedByAssignmentId: reducer.id,
-      summary: 'AMA Tactical investigation is validating evidence shards in parallel.',
-    },
-  };
-
-  const workerResults = new Map<string, KodaXResult>();
-  const childResults: KodaXChildAgentResult[] = [];
-  const childArtifacts: KodaXTaskEvidenceArtifact[] = [];
-  let directive: ManagedTaskVerdictDirective | undefined;
-  const tacticalRunner = createKodaXTaskRunner<ManagedTaskWorkerSpec>({
-    baseOptions: managedOptions,
-    runAgent: runDirectKodaX,
-    createOptions: (worker, _context, defaultOptions) => buildWorkerRunOptions(
-      defaultOptions,
-      shape.task,
-      worker,
-      shape.terminalWorkerId,
-      shape.routingPromptOverlay,
-      shape.qualityAssuranceMode,
-      sessionStorage,
-      resolveManagedMemoryStrategy(managedOptions, plan, worker.role, 1),
-      createBudgetSnapshot(budgetController, shape.task.contract.harnessProfile, 1, worker.role, worker.id),
-      budgetController,
-      undefined,
-      1,
-    ),
-    runTask: async (worker, _context, preparedOptions, promptText, executeDefault) => {
-      if (worker.role === 'evaluator') {
-        childLedgerArtifacts = await writeTacticalChildResultLedger(
-          shape.workspaceDir,
-          fanoutSchedulerPlan,
-          childContextBundles,
-          childResults,
-          parentReductionContract,
-          { includeMarkdown: false },
-        );
-      }
-      const execution = await runManagedWorkerTask(
-        worker,
-        preparedOptions,
-        promptText,
-        executeDefault,
-        budgetController,
-      );
-      return execution.result;
-    },
-    onResult: async (worker, context, result) => {
-      const sanitized = worker.role === 'evaluator'
-        ? sanitizeManagedWorkerResult(result, { enforceVerdictBlock: true })
-        : sanitizeHandoffResult(result, worker.title);
-      workerResults.set(worker.id, sanitized.result);
-      if (worker.role === 'evaluator') {
-        directive = sanitized.directive as ManagedTaskVerdictDirective | undefined;
-      } else {
-        const bundleId = resolveTacticalWorkerBundleId(worker);
-        if (getFanoutBranch(fanoutSchedulerPlan, bundleId).status === 'cancelled') {
-          return sanitized.result;
-        }
-        const artifactPaths = buildTacticalChildArtifactPaths(context.taskDir);
-        const handoffDirective = sanitized.directive as ManagedTaskHandoffDirective | undefined;
-        if (handoffDirective) {
-          await writeTacticalChildHandoffArtifact(artifactPaths.handoffPath, handoffDirective);
-          childArtifacts.push({
-            kind: 'json',
-            path: artifactPaths.handoffPath,
-            description: `Dependency handoff for ${bundleId}`,
-          });
-        }
-        const parsedChildResult = parseChildAgentResult(extractMessageText(result) || result.lastText);
-        const normalizedChildResult = normalizeTacticalChildResult(
-          worker,
-          handoffDirective,
-          sanitized.result,
-          parsedChildResult,
-          artifactPaths,
-        );
-        await writeFile(
-          artifactPaths.childResultPath,
-          `${JSON.stringify(normalizedChildResult, null, 2)}\n`,
-          'utf8',
-        );
-        upsertChildAgentResult(childResults, normalizedChildResult);
-        fanoutSchedulerPlan = applyFanoutBranchTransition(fanoutSchedulerPlan, {
-          type: 'complete',
-          bundleId,
-          childId: normalizedChildResult.childId,
-        });
-        fanoutSchedulerPlan = maybeApplyInvestigationWinnerCancellation(
-          fanoutSchedulerPlan,
-          scheduledShards,
-          childResults,
-        );
-        childArtifacts.push({
-          kind: 'json',
-          path: artifactPaths.childResultPath,
-          description: `Child-agent result for ${normalizedChildResult.childId}`,
-        });
-      }
-      return sanitized.result;
-    },
-  });
-
-  const roundWorkspaceDir = path.join(shape.workspaceDir, 'rounds', 'round-01');
-  const orchestrationResult = await runOrchestration<ManagedTaskWorkerSpec, string>({
-    workspaceDir: roundWorkspaceDir,
-    runId: `${shape.task.contract.taskId}-tactical-investigation`,
-    maxParallel: fanoutSchedulerPlan.maxParallel,
-    tasks: shape.workers,
-    runner: tacticalRunner,
-    events: createTacticalFanoutStatusEvents(
-      managedOptions.events,
-      agentMode,
-      shape.task.contract.harnessProfile,
-      () => fanoutSchedulerPlan,
-    ),
-  });
-
-  let managedTask = applyOrchestrationResultToTask(
-    shape.task,
-    shape.terminalWorkerId,
-    orchestrationResult,
-    workerResults,
-    1,
-    roundWorkspaceDir,
-  );
-  childLedgerArtifacts = await writeTacticalChildResultLedger(
-    shape.workspaceDir,
-    fanoutSchedulerPlan,
-    childContextBundles,
-    childResults,
-    parentReductionContract,
-  );
-  managedTask = {
-    ...managedTask,
-    evidence: {
-      ...managedTask.evidence,
-      artifacts: mergeEvidenceArtifacts(
-        managedTask.evidence.artifacts,
-        childArtifacts,
-        childLedgerArtifacts,
-      ),
-    },
-    runtime: {
-      ...managedTask.runtime,
-      childContextBundles,
-      childAgentResults: childResults,
-      fanoutSchedulerPlan,
-      scorecard: createVerificationScorecard(managedTask, directive),
-    },
-  };
-  directive = applyTacticalInvestigationParentReduction(
-    directive,
-    fanoutSchedulerPlan,
-    shards,
-    childResults,
-  );
-  managedTask = applyManagedTaskDirective(managedTask, directive);
-  const terminalResult = workerResults.get(shape.terminalWorkerId);
-  const preferredPublicText = directive?.userAnswer?.trim() || directive?.userFacingText;
-  if (terminalResult && directive && preferredPublicText) {
-    workerResults.set(shape.terminalWorkerId, {
-      ...terminalResult,
-      success: directive.status === 'accept',
-      lastText: preferredPublicText,
-      signal: directive.status === 'accept' ? terminalResult.signal : 'BLOCKED',
-      signalReason: directive.status === 'accept'
-        ? terminalResult.signalReason
-        : directive.reason ?? terminalResult.signalReason,
-      messages: replaceLastAssistantMessage(terminalResult.messages, preferredPublicText),
-    });
-  }
-
-  const result = buildFallbackManagedResult(
-    managedTask,
-    workerResults,
-    shape.terminalWorkerId,
-  );
-  await writeManagedTaskArtifacts(
-    shape.workspaceDir,
-    managedTask,
-    {
-      success: result.success,
-      lastText: result.lastText,
-      sessionId: result.sessionId,
-      signal: result.signal,
-      signalReason: result.signalReason,
-    },
-    directive,
-  );
-  managedOptions.events?.onManagedTaskStatus?.({
-    agentMode,
-    harnessProfile: managedTask.contract.harnessProfile,
-    activeWorkerId: shape.terminalWorkerId,
-    activeWorkerTitle: reducer.title,
-    phase: 'completed',
-    note: managedTask.verdict.summary,
-  });
-  return {
-    ...result,
-    routingDecision: finalRoutingDecision,
-  };
 }
 
 function extractMessageText(result: Partial<KodaXResult> | undefined): string {
@@ -5930,582 +3792,6 @@ function sanitizeEvaluatorPublicAnswer(text: string): string {
   return cleaned || sanitized;
 }
 
-async function runTacticalLookupFlow(
-  managedOptions: KodaXOptions,
-  originalTask: string,
-  plan: ReasoningPlan,
-  scoutExecution: { result: KodaXResult; directive: ManagedTaskScoutDirective },
-  rawRoutingDecision: KodaXTaskRoutingDecision,
-  finalRoutingDecision: KodaXTaskRoutingDecision,
-  routingOverrideReason: string | undefined,
-  skillMap: KodaXSkillMap | undefined,
-  agentMode: KodaXAgentMode,
-  scoutBudgetController: ManagedTaskBudgetController,
-): Promise<KodaXResult> {
-  const shape = createTacticalLookupBaseShape(
-    managedOptions,
-    originalTask,
-    plan,
-    {
-      originalTask,
-      skillInvocation: managedOptions.context?.skillInvocation,
-      skillMap: skillMap ?? undefined,
-    },
-  );
-  const budgetController = createManagedBudgetController(managedOptions, plan, agentMode);
-  budgetController.spentBudget = Math.max(budgetController.spentBudget, scoutBudgetController.spentBudget);
-  const sessionStorage = new ManagedWorkerSessionStorage();
-  await mkdir(shape.workspaceDir, { recursive: true });
-  const skillArtifacts = await writeManagedSkillArtifacts(
-    shape.workspaceDir,
-    managedOptions.context?.skillInvocation,
-    skillMap ?? undefined,
-  );
-  shape.task = {
-    ...shape.task,
-    runtime: {
-      ...applyManagedBudgetRuntimeState(shape.task.runtime, budgetController),
-      budget: createBudgetSnapshot(budgetController, shape.task.contract.harnessProfile, 1, 'generator', 'lookup-scan'),
-      rawRoutingDecision,
-      finalRoutingDecision,
-      routingOverrideReason,
-      qualityAssuranceMode: shape.qualityAssuranceMode,
-      scoutDecision: {
-        summary: scoutExecution.directive.summary ?? 'Scout completed.',
-        recommendedHarness: scoutExecution.directive.confirmedHarness ?? finalRoutingDecision.harnessProfile,
-        readyForUpgrade: false,
-        scope: scoutExecution.directive.scope,
-        requiredEvidence: scoutExecution.directive.requiredEvidence,
-        reviewFilesOrAreas: scoutExecution.directive.reviewFilesOrAreas,
-        evidenceAcquisitionMode: scoutExecution.directive.evidenceAcquisitionMode,
-        harnessRationale: scoutExecution.directive.harnessRationale,
-        blockingEvidence: scoutExecution.directive.blockingEvidence,
-        directCompletionReady: scoutExecution.directive.directCompletionReady,
-        skillSummary: scoutExecution.directive.skillMap?.skillSummary,
-        executionObligations: scoutExecution.directive.skillMap?.executionObligations,
-        verificationObligations: scoutExecution.directive.skillMap?.verificationObligations,
-        ambiguities: scoutExecution.directive.skillMap?.ambiguities,
-        projectionConfidence: scoutExecution.directive.skillMap?.projectionConfidence,
-      },
-      skillMap: skillMap ?? undefined,
-      evidenceAcquisitionMode: scoutExecution.directive.evidenceAcquisitionMode ?? 'overview',
-      reviewFilesOrAreas: scoutExecution.directive.reviewFilesOrAreas,
-    },
-    evidence: {
-      ...shape.task.evidence,
-      artifacts: mergeEvidenceArtifacts(shape.task.evidence.artifacts, skillArtifacts),
-      entries: [
-        ...shape.task.evidence.entries,
-        {
-          assignmentId: 'scout',
-          title: 'Scout',
-          role: 'scout',
-          round: 0,
-          status: scoutExecution.result.success ? 'completed' : 'failed',
-          summary: scoutExecution.directive.summary,
-          output: scoutExecution.directive.userFacingText || extractMessageText(scoutExecution.result),
-          sessionId: scoutExecution.result.sessionId,
-          signal: scoutExecution.result.signal,
-          signalReason: scoutExecution.result.signalReason,
-        },
-      ],
-    },
-  };
-
-  const scannerToolPolicy = buildManagedWorkerToolPolicy(
-    'generator',
-    shape.task.contract.verification,
-    'H0_DIRECT',
-    'read-only',
-    managedOptions.context?.repoIntelligenceMode,
-  );
-  const scannerWorker: ManagedTaskWorkerSpec = {
-    id: 'lookup-scan',
-    role: 'generator',
-    title: 'Lookup Scanner',
-    agent: buildManagedWorkerAgent('generator', 'lookup-scan'),
-    toolPolicy: scannerToolPolicy,
-    terminalAuthority: false,
-    prompt: buildTacticalLookupScannerPrompt(
-      originalTask,
-      plan,
-      scoutExecution.directive,
-    ),
-    metadata: {
-      role: 'generator',
-      agent: buildManagedWorkerAgent('generator', 'lookup-scan'),
-      tacticalChild: false,
-    },
-  };
-  scannerWorker.beforeToolExecute = createToolPolicyHook(scannerWorker);
-
-  const scannerExecution = await runTacticalLookupScanner(
-    managedOptions,
-    shape.task,
-    scannerWorker,
-    shape.routingPromptOverlay,
-    shape.qualityAssuranceMode,
-    sessionStorage,
-    budgetController,
-  );
-  const scannerDirective = scannerExecution.directive;
-  const scannerOutput = sanitizeManagedUserFacingText(
-    extractMessageText(scannerExecution.result) || scannerExecution.result.lastText,
-  );
-
-  shape.task = {
-    ...shape.task,
-    evidence: {
-      ...shape.task.evidence,
-      artifacts: mergeEvidenceArtifacts(
-        shape.task.evidence.artifacts,
-        scannerExecution.artifactPath
-          ? [{
-              kind: 'json',
-              path: scannerExecution.artifactPath,
-              description: 'Tactical lookup shards.',
-            }]
-          : [],
-      ),
-      entries: [
-        ...shape.task.evidence.entries,
-        {
-          assignmentId: 'lookup-scan',
-          title: 'Lookup Scanner',
-          role: 'generator',
-          round: 1,
-          status: scannerExecution.result.success ? 'completed' : 'failed',
-          summary: scannerDirective?.summary ?? truncateText(scannerOutput || 'Lookup scanner completed.'),
-          output: scannerOutput,
-          sessionId: scannerExecution.result.sessionId,
-          signal: scannerExecution.result.signal,
-          signalReason: scannerExecution.result.signalReason,
-        },
-      ],
-    },
-  };
-
-  const scannerShards = scannerDirective?.shards ?? [];
-  if (scannerShards.length === 0) {
-    const completionStatus: KodaXTaskStatus = scannerExecution.result.success ? 'completed' : 'failed';
-    const completedTask: KodaXManagedTask = {
-      ...shape.task,
-      contract: {
-        ...shape.task.contract,
-        status: completionStatus,
-        updatedAt: new Date().toISOString(),
-      },
-      verdict: {
-        ...shape.task.verdict,
-        status: completionStatus,
-        summary: scannerDirective?.summary ?? (scannerOutput || 'Lookup scanner finished without promotable lookup shards.'),
-      },
-      runtime: {
-        ...shape.task.runtime,
-        scorecard: createVerificationScorecard(shape.task, undefined),
-      },
-    };
-    await writeManagedTaskArtifacts(
-      shape.workspaceDir,
-      completedTask,
-      {
-        success: scannerExecution.result.success,
-        lastText: scannerOutput || scannerExecution.result.lastText,
-        sessionId: scannerExecution.result.sessionId,
-        signal: scannerExecution.result.signal,
-        signalReason: scannerExecution.result.signalReason,
-      },
-      undefined,
-    );
-    return mergeManagedTaskIntoResult(
-      {
-        ...scannerExecution.result,
-        lastText: scannerOutput || scannerExecution.result.lastText,
-        routingDecision: finalRoutingDecision,
-      },
-      completedTask,
-    );
-  }
-
-  const {
-    shards,
-    duplicateIds: duplicateShardIds,
-  } = canonicalizeTacticalLookupShards(scannerShards);
-  const duplicateShardNote = duplicateShardIds.length > 0
-    ? `Canonicalized repeated lookup shard IDs: ${duplicateShardIds.join(', ')}.`
-    : undefined;
-  if (duplicateShardNote) {
-    shape.task = {
-      ...shape.task,
-      evidence: {
-        ...shape.task.evidence,
-        entries: shape.task.evidence.entries.map((entry) => (
-          entry.assignmentId === 'lookup-scan'
-            ? {
-                ...entry,
-                summary: `${entry.summary ?? 'Lookup scanner completed.'} ${duplicateShardNote}`.trim(),
-                output: [entry.output, duplicateShardNote].filter(Boolean).join('\n\n'),
-              }
-            : entry
-        )),
-      },
-    };
-  }
-
-  const childContextBundles: KodaXChildContextBundle[] = shards.map((shard) => ({
-    id: shard.id,
-    fanoutClass: 'module-triage',
-    objective: shard.question,
-    scopeSummary: shard.scope,
-    evidenceRefs: shard.rationale,
-    constraints: [
-      'Validate only this lookup shard.',
-      'Do not broad-scan the repo.',
-    ],
-    readOnly: true,
-  }));
-  const parentReductionContract = shape.task.runtime?.parentReductionContract
-    ?? createParentReductionContract(plan.amaControllerDecision);
-  const schedulerInput = createFanoutSchedulerInput(
-    plan.amaControllerDecision,
-    childContextBundles,
-    parentReductionContract,
-  );
-  let fanoutSchedulerPlan: KodaXFanoutSchedulerPlan = schedulerInput
-    ? buildFanoutSchedulerPlan(schedulerInput)
-    : {
-        enabled: false,
-        profile: plan.amaControllerDecision.profile,
-        fanoutClass: 'module-triage',
-        branches: childContextBundles.map((bundle) => ({
-          bundleId: bundle.id,
-          status: 'deferred' as const,
-          reason: 'AMA controller did not admit fan-out for this run.',
-        })),
-        scheduledBundleIds: [],
-        deferredBundleIds: childContextBundles.map((bundle) => bundle.id),
-        maxParallel: 1,
-        mergeStrategy: parentReductionContract.strategy,
-        cancellationPolicy: 'none',
-        reason: 'AMA controller did not admit fan-out for this run.',
-      };
-  let childLedgerArtifacts: KodaXTaskEvidenceArtifact[] = [];
-  const shardsById = new Map(shards.map((shard) => [shard.id, shard] as const));
-  const scheduledShards = fanoutSchedulerPlan.scheduledBundleIds
-    .map((bundleId) => shardsById.get(bundleId))
-    .filter((shard): shard is TacticalLookupShard => Boolean(shard));
-  shape.task = {
-    ...shape.task,
-    runtime: {
-      ...shape.task.runtime,
-      childContextBundles,
-      parentReductionContract,
-      fanoutSchedulerPlan,
-    },
-  };
-
-  const validatorToolPolicy = buildManagedWorkerToolPolicy(
-    'generator',
-    shape.task.contract.verification,
-    'H0_DIRECT',
-    'read-only',
-    managedOptions.context?.repoIntelligenceMode,
-  );
-  const reducerToolPolicy = buildManagedWorkerToolPolicy(
-    'evaluator',
-    shape.task.contract.verification,
-    'H0_DIRECT',
-    'read-only',
-    managedOptions.context?.repoIntelligenceMode,
-  );
-  const validators: ManagedTaskWorkerSpec[] = scheduledShards.map((shard, index) => {
-    const worker: ManagedTaskWorkerSpec = {
-      id: `lookup-validator-${String(index + 1).padStart(2, '0')}`,
-      role: 'generator',
-      title: `Module Triage ${index + 1}: ${truncateText(shard.scope, 60)}`,
-      execution: 'parallel',
-      agent: buildManagedWorkerAgent('generator', shard.id),
-      toolPolicy: validatorToolPolicy,
-      terminalAuthority: false,
-      metadata: {
-        role: 'generator',
-        fanoutClass: 'module-triage',
-        bundleId: shard.id,
-      },
-      prompt: buildTacticalLookupValidatorPrompt(
-        originalTask,
-        shard,
-        scoutExecution.directive,
-      ),
-    };
-    worker.beforeToolExecute = createToolPolicyHook(worker);
-    fanoutSchedulerPlan = applyFanoutBranchTransition(fanoutSchedulerPlan, {
-      type: 'assign',
-      bundleId: shard.id,
-      workerId: worker.id,
-    });
-    return worker;
-  });
-  const reducer: ManagedTaskWorkerSpec = {
-    id: 'lookup-reducer',
-    role: 'evaluator',
-    title: 'Lookup Reducer',
-    dependsOn: validators.map((worker) => worker.id),
-    agent: buildManagedWorkerAgent('evaluator', 'lookup-reducer'),
-    toolPolicy: reducerToolPolicy,
-    terminalAuthority: true,
-    metadata: {
-      role: 'evaluator',
-      reductionStrategy: 'evaluator-assisted',
-    },
-    prompt: buildTacticalLookupReducerPrompt(
-      originalTask,
-      scheduledShards,
-      path.join(shape.workspaceDir, TACTICAL_CHILD_LEDGER_JSON),
-    ),
-  };
-  reducer.beforeToolExecute = createToolPolicyHook(reducer);
-
-  shape.workers = [...validators, reducer];
-  shape.terminalWorkerId = reducer.id;
-  const roleAssignments: KodaXManagedTask['roleAssignments'] = [
-    ...shape.task.roleAssignments.map((assignment) => (
-      assignment.id === 'lookup-scan'
-        ? {
-            ...assignment,
-            status: 'completed' as const,
-            summary: [
-              scannerDirective?.summary ?? truncateText(scannerOutput || 'Lookup scanner completed.'),
-              duplicateShardNote,
-            ].filter(Boolean).join(' '),
-          }
-        : assignment
-    )),
-    ...shape.workers.map((worker) => ({
-      id: worker.id,
-      role: worker.role,
-      title: worker.title,
-      dependsOn: worker.dependsOn ?? [],
-      status: 'planned' as const,
-      agent: worker.agent,
-      toolPolicy: worker.toolPolicy,
-    })),
-  ];
-  shape.task = {
-    ...shape.task,
-    runtime: {
-      ...shape.task.runtime,
-      fanoutSchedulerPlan,
-    },
-    roleAssignments,
-    workItems: [
-      ...shape.task.workItems,
-      ...shape.workers.map((worker) => ({
-        id: worker.id,
-        assignmentId: worker.id,
-        description: worker.title,
-        execution: worker.execution ?? 'serial',
-      })),
-    ],
-    verdict: {
-      ...shape.task.verdict,
-      decidedByAssignmentId: reducer.id,
-      summary: 'AMA Tactical lookup is validating module-triage shards in parallel.',
-    },
-  };
-
-  const workerResults = new Map<string, KodaXResult>();
-  const childResults: KodaXChildAgentResult[] = [];
-  const childArtifacts: KodaXTaskEvidenceArtifact[] = [];
-  let directive: ManagedTaskVerdictDirective | undefined;
-  const tacticalRunner = createKodaXTaskRunner<ManagedTaskWorkerSpec>({
-    baseOptions: managedOptions,
-    runAgent: runDirectKodaX,
-    createOptions: (worker, _context, defaultOptions) => buildWorkerRunOptions(
-      defaultOptions,
-      shape.task,
-      worker,
-      shape.terminalWorkerId,
-      shape.routingPromptOverlay,
-      shape.qualityAssuranceMode,
-      sessionStorage,
-      resolveManagedMemoryStrategy(managedOptions, plan, worker.role, 1),
-      createBudgetSnapshot(budgetController, shape.task.contract.harnessProfile, 1, worker.role, worker.id),
-      budgetController,
-      undefined,
-      1,
-    ),
-    runTask: async (worker, _context, preparedOptions, promptText, executeDefault) => {
-      if (worker.role === 'evaluator') {
-        childLedgerArtifacts = await writeTacticalChildResultLedger(
-          shape.workspaceDir,
-          fanoutSchedulerPlan,
-          childContextBundles,
-          childResults,
-          parentReductionContract,
-          { includeMarkdown: false },
-        );
-      }
-      const execution = await runManagedWorkerTask(
-        worker,
-        preparedOptions,
-        promptText,
-        executeDefault,
-        budgetController,
-      );
-      return execution.result;
-    },
-    onResult: async (worker, context, result) => {
-      const sanitized = worker.role === 'evaluator'
-        ? sanitizeManagedWorkerResult(result, { enforceVerdictBlock: true })
-        : sanitizeHandoffResult(result, worker.title);
-      workerResults.set(worker.id, sanitized.result);
-      if (worker.role === 'evaluator') {
-        directive = sanitized.directive as ManagedTaskVerdictDirective | undefined;
-      } else {
-        const bundleId = resolveTacticalWorkerBundleId(worker);
-        if (getFanoutBranch(fanoutSchedulerPlan, bundleId).status === 'cancelled') {
-          return sanitized.result;
-        }
-        const artifactPaths = buildTacticalChildArtifactPaths(context.taskDir);
-        const handoffDirective = sanitized.directive as ManagedTaskHandoffDirective | undefined;
-        if (handoffDirective) {
-          await writeTacticalChildHandoffArtifact(artifactPaths.handoffPath, handoffDirective);
-          childArtifacts.push({
-            kind: 'json',
-            path: artifactPaths.handoffPath,
-            description: `Dependency handoff for ${bundleId}`,
-          });
-        }
-        const parsedChildResult = parseChildAgentResult(extractMessageText(result) || result.lastText);
-        const normalizedChildResult = normalizeTacticalChildResult(
-          worker,
-          handoffDirective,
-          sanitized.result,
-          parsedChildResult,
-          artifactPaths,
-        );
-        await writeFile(
-          artifactPaths.childResultPath,
-          `${JSON.stringify(normalizedChildResult, null, 2)}\n`,
-          'utf8',
-        );
-        upsertChildAgentResult(childResults, normalizedChildResult);
-        fanoutSchedulerPlan = applyFanoutBranchTransition(fanoutSchedulerPlan, {
-          type: 'complete',
-          bundleId,
-          childId: normalizedChildResult.childId,
-        });
-        childArtifacts.push({
-          kind: 'json',
-          path: artifactPaths.childResultPath,
-          description: `Child-agent result for ${normalizedChildResult.childId}`,
-        });
-      }
-      return sanitized.result;
-    },
-  });
-
-  const roundWorkspaceDir = path.join(shape.workspaceDir, 'rounds', 'round-01');
-  const orchestrationResult = await runOrchestration<ManagedTaskWorkerSpec, string>({
-    workspaceDir: roundWorkspaceDir,
-    runId: `${shape.task.contract.taskId}-tactical-lookup`,
-    maxParallel: fanoutSchedulerPlan.maxParallel,
-    tasks: shape.workers,
-    runner: tacticalRunner,
-    events: createTacticalFanoutStatusEvents(
-      managedOptions.events,
-      agentMode,
-      shape.task.contract.harnessProfile,
-      () => fanoutSchedulerPlan,
-    ),
-  });
-
-  let managedTask = applyOrchestrationResultToTask(
-    shape.task,
-    shape.terminalWorkerId,
-    orchestrationResult,
-    workerResults,
-    1,
-    roundWorkspaceDir,
-  );
-  childLedgerArtifacts = await writeTacticalChildResultLedger(
-    shape.workspaceDir,
-    fanoutSchedulerPlan,
-    childContextBundles,
-    childResults,
-    parentReductionContract,
-  );
-  managedTask = {
-    ...managedTask,
-    evidence: {
-      ...managedTask.evidence,
-      artifacts: mergeEvidenceArtifacts(
-        managedTask.evidence.artifacts,
-        childArtifacts,
-        childLedgerArtifacts,
-      ),
-    },
-    runtime: {
-      ...managedTask.runtime,
-      childContextBundles,
-      childAgentResults: childResults,
-      fanoutSchedulerPlan,
-      scorecard: createVerificationScorecard(managedTask, directive),
-    },
-  };
-  directive = applyTacticalLookupParentReduction(
-    directive,
-    fanoutSchedulerPlan,
-    shards,
-    childResults,
-  );
-  managedTask = applyManagedTaskDirective(managedTask, directive);
-  const terminalResult = workerResults.get(shape.terminalWorkerId);
-  const preferredPublicText = directive?.userAnswer?.trim() || directive?.userFacingText;
-  if (terminalResult && directive && preferredPublicText) {
-    workerResults.set(shape.terminalWorkerId, {
-      ...terminalResult,
-      success: directive.status === 'accept',
-      lastText: preferredPublicText,
-      signal: directive.status === 'accept' ? terminalResult.signal : 'BLOCKED',
-      signalReason: directive.status === 'accept'
-        ? terminalResult.signalReason
-        : directive.reason ?? terminalResult.signalReason,
-      messages: replaceLastAssistantMessage(terminalResult.messages, preferredPublicText),
-    });
-  }
-
-  const result = buildFallbackManagedResult(
-    managedTask,
-    workerResults,
-    shape.terminalWorkerId,
-  );
-  await writeManagedTaskArtifacts(
-    shape.workspaceDir,
-    managedTask,
-    {
-      success: result.success,
-      lastText: result.lastText,
-      sessionId: result.sessionId,
-      signal: result.signal,
-      signalReason: result.signalReason,
-    },
-    directive,
-  );
-  managedOptions.events?.onManagedTaskStatus?.({
-    agentMode,
-    harnessProfile: managedTask.contract.harnessProfile,
-    activeWorkerId: shape.terminalWorkerId,
-    activeWorkerTitle: reducer.title,
-    phase: 'completed',
-    note: managedTask.verdict.summary,
-  });
-  return {
-    ...result,
-    routingDecision: finalRoutingDecision,
-  };
-}
 
 function parseManagedTaskScoutDirective(text: string): ManagedTaskScoutDirective | undefined {
   const block = findLastFencedBlock(text, MANAGED_TASK_SCOUT_BLOCK);
@@ -7064,666 +4350,6 @@ export const __managedProtocolTestables = {
   parseManagedTaskVerdictDirective,
 };
 
-function parseTacticalReviewFindingsDirective(
-  text: string,
-): TacticalReviewFindingsDirective | undefined {
-  const directive = parseJsonFencedBlock<{
-    summary?: string;
-    findings?: Array<{
-      id?: string;
-      title?: string;
-      claim?: string;
-      priority?: 'high' | 'medium' | 'low';
-      files?: string[];
-      evidence?: string[];
-    }>;
-  }>(text, TACTICAL_REVIEW_FINDINGS_BLOCK);
-  if (!directive) {
-    return undefined;
-  }
-
-  const findings = (directive.findings ?? [])
-    .map((finding, index): TacticalReviewFinding | undefined => {
-      const title = finding.title?.trim();
-      const claim = finding.claim?.trim();
-      if (!title || !claim) {
-        return undefined;
-      }
-      return {
-        id: finding.id?.trim() || `finding-${index + 1}`,
-        title,
-        claim,
-        priority: finding.priority ?? 'medium',
-        files: finding.files?.map((item) => item.trim()).filter(Boolean) ?? [],
-        evidence: finding.evidence?.map((item) => item.trim()).filter(Boolean) ?? [],
-      };
-    })
-    .filter((finding): finding is TacticalReviewFinding => Boolean(finding));
-  if (findings.length === 0) {
-    return undefined;
-  }
-
-  const visibleMatch = text.match(new RegExp(String.raw`([\s\S]*?)\r?\n?\`\`\`${TACTICAL_REVIEW_FINDINGS_BLOCK}\s*[\s\S]*\`\`\`\s*$`, 'i'));
-  const visibleText = sanitizeManagedUserFacingText((visibleMatch?.[1] ?? '').trim());
-
-  return {
-    summary: directive.summary?.trim() || 'Review scanner identified candidate findings for validation.',
-    findings,
-    userFacingText: visibleText,
-  };
-}
-
-function parseTacticalInvestigationShardsDirective(
-  text: string,
-): TacticalInvestigationShardsDirective | undefined {
-  const directive = parseJsonFencedBlock<{
-    summary?: string;
-    shards?: Array<{
-      id?: string;
-      question?: string;
-      scope?: string;
-      priority?: 'high' | 'medium' | 'low';
-      files?: string[];
-      evidence?: string[];
-    }>;
-  }>(text, TACTICAL_INVESTIGATION_SHARDS_BLOCK);
-  if (!directive) {
-    return undefined;
-  }
-
-  const shards = (directive.shards ?? [])
-    .map((shard, index): TacticalInvestigationShard | undefined => {
-      const question = shard.question?.trim();
-      const scope = shard.scope?.trim();
-      if (!question || !scope) {
-        return undefined;
-      }
-      return {
-        id: shard.id?.trim() || `shard-${index + 1}`,
-        question,
-        scope,
-        priority: shard.priority ?? 'medium',
-        files: shard.files?.map((item) => item.trim()).filter(Boolean) ?? [],
-        evidence: shard.evidence?.map((item) => item.trim()).filter(Boolean) ?? [],
-      };
-    })
-    .filter((shard): shard is TacticalInvestigationShard => Boolean(shard));
-
-  const visibleMatch = text.match(new RegExp(String.raw`([\s\S]*?)\r?\n?\`\`\`${TACTICAL_INVESTIGATION_SHARDS_BLOCK}\s*[\s\S]*\`\`\`\s*$`, 'i'));
-  const visibleText = sanitizeManagedUserFacingText((visibleMatch?.[1] ?? '').trim());
-
-  return {
-    summary: directive.summary?.trim() || 'Investigation scanner identified bounded evidence shards for validation.',
-    shards,
-    userFacingText: visibleText,
-  };
-}
-
-function parseTacticalLookupShardsDirective(
-  text: string,
-): TacticalLookupShardsDirective | undefined {
-  const directive = parseJsonFencedBlock<{
-    summary?: string;
-    shards?: Array<{
-      id?: string;
-      question?: string;
-      scope?: string;
-      priority?: 'high' | 'medium' | 'low';
-      paths?: string[];
-      rationale?: string[];
-    }>;
-  }>(text, TACTICAL_LOOKUP_SHARDS_BLOCK);
-  if (!directive) {
-    return undefined;
-  }
-
-  const shards = (directive.shards ?? [])
-    .map((shard, index): TacticalLookupShard | undefined => {
-      const question = shard.question?.trim();
-      const scope = shard.scope?.trim();
-      if (!question || !scope) {
-        return undefined;
-      }
-      return {
-        id: shard.id?.trim() || `lookup-${index + 1}`,
-        question,
-        scope,
-        priority: shard.priority ?? 'medium',
-        paths: shard.paths?.map((item) => item.trim()).filter(Boolean) ?? [],
-        rationale: shard.rationale?.map((item) => item.trim()).filter(Boolean) ?? [],
-      };
-    })
-    .filter((shard): shard is TacticalLookupShard => Boolean(shard));
-
-  const visibleMatch = text.match(new RegExp(String.raw`([\s\S]*?)\r?\n?\`\`\`${TACTICAL_LOOKUP_SHARDS_BLOCK}\s*[\s\S]*\`\`\`\s*$`, 'i'));
-  const visibleText = sanitizeManagedUserFacingText((visibleMatch?.[1] ?? '').trim());
-
-  return {
-    summary: directive.summary?.trim() || 'Lookup scanner identified bounded module-triage shards for validation.',
-    shards,
-    userFacingText: visibleText,
-  };
-}
-
-function parseChildAgentResult(text: string): KodaXChildAgentResult | undefined {
-  const parsed = parseJsonFencedBlock<KodaXChildAgentResult>(text, TACTICAL_CHILD_RESULT_BLOCK);
-  if (!parsed) {
-    return undefined;
-  }
-  if (!parsed.childId || !parsed.fanoutClass || !parsed.status || !parsed.disposition || !parsed.summary) {
-    return undefined;
-  }
-  return {
-    ...parsed,
-    evidenceRefs: parsed.evidenceRefs ?? [],
-    contradictions: parsed.contradictions ?? [],
-    artifactPaths: parsed.artifactPaths ?? [],
-  };
-}
-
-function hasRequiredTacticalChildArtifacts(
-  artifactPaths: string[],
-  requiredArtifacts: string[],
-): boolean {
-  if (requiredArtifacts.length === 0) {
-    return true;
-  }
-  const normalizedNames = artifactPaths.map((artifactPath) => path.basename(artifactPath).toLowerCase());
-  return requiredArtifacts.every((artifactName) => normalizedNames.includes(artifactName.toLowerCase()));
-}
-
-function createFailClosedChildAgentResult(
-  worker: ManagedTaskWorkerSpec,
-  result: KodaXResult,
-  options?: {
-    summary?: string;
-    contradictions?: string[];
-    artifactPaths?: string[];
-    childId?: string;
-    fanoutClass?: KodaXAmaFanoutClass;
-    status?: KodaXChildAgentResult['status'];
-  },
-): KodaXChildAgentResult {
-  const childId = options?.childId ?? resolveTacticalWorkerBundleId(worker);
-  const fanoutClass = options?.fanoutClass ?? resolveTacticalWorkerFanoutClass(worker);
-  const summary = options?.summary ?? (
-    result.success
-      ? `Structured ${TACTICAL_CHILD_RESULT_BLOCK} output was missing or malformed; treat ${childId} as unresolved.`
-      : result.signalReason?.trim()
-        || `Validator did not finish cleanly for ${childId}; treat it as unresolved.`
-  );
-
-  return {
-    childId,
-    fanoutClass,
-    status: options?.status ?? (
-      result.success
-        ? 'failed'
-        : result.signal === 'BLOCKED'
-          ? 'blocked'
-          : 'failed'
-    ),
-    disposition: 'needs-more-evidence',
-    summary,
-    evidenceRefs: [],
-    contradictions: options?.contradictions ?? [
-      'Missing or malformed structured child result.',
-    ],
-    artifactPaths: options?.artifactPaths ?? [],
-    sessionId: result.sessionId,
-  };
-}
-
-function normalizeTacticalChildResult(
-  worker: ManagedTaskWorkerSpec,
-  handoffDirective: ManagedTaskHandoffDirective | undefined,
-  result: KodaXResult,
-  parsedChildResult: KodaXChildAgentResult | undefined,
-  artifactPaths: {
-    childResultPath: string;
-    handoffPath: string;
-  },
-): KodaXChildAgentResult {
-  const fallbackChildId = resolveTacticalWorkerBundleId(worker);
-  const fallbackFanoutClass = resolveTacticalWorkerFanoutClass(worker);
-  const normalizedArtifactPaths = Array.from(new Set([
-    ...(parsedChildResult?.artifactPaths ?? []),
-    artifactPaths.childResultPath,
-    ...(handoffDirective ? [artifactPaths.handoffPath] : []),
-  ]));
-  const childId = parsedChildResult?.childId || fallbackChildId;
-  const fanoutClass = parsedChildResult?.fanoutClass || fallbackFanoutClass;
-  const requiredArtifacts = [
-    TACTICAL_CHILD_RESULT_ARTIFACT_JSON,
-    TACTICAL_CHILD_HANDOFF_JSON,
-  ];
-
-  if (!handoffDirective) {
-    return createFailClosedChildAgentResult(worker, result, {
-      childId,
-      fanoutClass,
-      status: 'blocked',
-      summary: `Validator omitted required ${MANAGED_TASK_HANDOFF_BLOCK}; treat ${childId} as unresolved.`,
-      contradictions: ['Missing validator handoff block.'],
-      artifactPaths: normalizedArtifactPaths,
-    });
-  }
-
-  if (handoffDirective.status !== 'ready') {
-    return createFailClosedChildAgentResult(worker, result, {
-      childId,
-      fanoutClass,
-      status: handoffDirective.status === 'blocked' ? 'blocked' : 'failed',
-      summary: `Validator handoff reported ${handoffDirective.status}; treat ${childId} as unresolved.`,
-      contradictions: [`Validator handoff status was ${handoffDirective.status}.`],
-      artifactPaths: normalizedArtifactPaths,
-    });
-  }
-
-  if (!parsedChildResult) {
-    return createFailClosedChildAgentResult(worker, result, {
-      childId,
-      fanoutClass,
-      status: 'failed',
-      summary: `Structured ${TACTICAL_CHILD_RESULT_BLOCK} output was missing or malformed; treat ${childId} as unresolved.`,
-      contradictions: ['Missing or malformed structured child result.'],
-      artifactPaths: normalizedArtifactPaths,
-    });
-  }
-
-  if (parsedChildResult.status !== 'completed') {
-    return createFailClosedChildAgentResult(worker, result, {
-      childId,
-      fanoutClass,
-      status: parsedChildResult.status === 'blocked' ? 'blocked' : 'failed',
-      summary: `Structured child result for ${childId} reported status=${parsedChildResult.status}; treat it as unresolved.`,
-      contradictions: [`Structured child result status was ${parsedChildResult.status}.`],
-      artifactPaths: normalizedArtifactPaths,
-    });
-  }
-
-  if (!hasRequiredTacticalChildArtifacts(normalizedArtifactPaths, requiredArtifacts)) {
-    return createFailClosedChildAgentResult(worker, result, {
-      childId,
-      fanoutClass,
-      status: 'failed',
-      summary: `Required child artifacts were missing for ${childId}; treat it as unresolved.`,
-      contradictions: ['Required child artifacts were missing.'],
-      artifactPaths: normalizedArtifactPaths,
-    });
-  }
-
-  return {
-    ...parsedChildResult,
-    childId,
-    fanoutClass,
-    artifactPaths: normalizedArtifactPaths,
-    sessionId: parsedChildResult.sessionId ?? result.sessionId,
-  };
-}
-
-function upsertChildAgentResult(
-  childResults: KodaXChildAgentResult[],
-  childResult: KodaXChildAgentResult,
-): void {
-  const existingIndex = childResults.findIndex((candidate) => candidate.childId === childResult.childId);
-  if (existingIndex >= 0) {
-    childResults.splice(existingIndex, 1, childResult);
-    return;
-  }
-  childResults.push(childResult);
-}
-
-function buildTacticalChildResultById(
-  childResults: KodaXChildAgentResult[],
-): Map<string, KodaXChildAgentResult> {
-  return new Map(childResults.map((result) => [result.childId, result] as const));
-}
-
-function collectTacticalUnresolvedBranches(
-  fanoutSchedulerPlan: KodaXFanoutSchedulerPlan,
-  childResults: KodaXChildAgentResult[],
-): KodaXFanoutBranchRecord[] {
-  const childResultById = buildTacticalChildResultById(childResults);
-  return fanoutSchedulerPlan.branches.filter((branch) => {
-    if (branch.status === 'deferred') {
-      return true;
-    }
-    if (branch.status === 'cancelled') {
-      return fanoutSchedulerPlan.cancellationPolicy !== 'winner-cancel';
-    }
-    const childResult = childResultById.get(branch.childId ?? branch.bundleId);
-    if (!childResult) {
-      return branch.status === 'scheduled';
-    }
-    return childResult.status !== 'completed'
-      || childResult.disposition === 'needs-more-evidence';
-  });
-}
-
-function collectHighPriorityBranches<T extends { id: string; priority: 'high' | 'medium' | 'low' }>(
-  unresolvedBranches: KodaXFanoutBranchRecord[],
-  itemsById: Map<string, T>,
-): KodaXFanoutBranchRecord[] {
-  return unresolvedBranches.filter((branch) => itemsById.get(branch.bundleId)?.priority === 'high');
-}
-
-function maybeApplyInvestigationWinnerCancellation(
-  fanoutSchedulerPlan: KodaXFanoutSchedulerPlan,
-  shards: TacticalInvestigationShard[],
-  childResults: KodaXChildAgentResult[],
-): KodaXFanoutSchedulerPlan {
-  if (fanoutSchedulerPlan.cancellationPolicy !== 'winner-cancel') {
-    return fanoutSchedulerPlan;
-  }
-
-  const shardById = new Map(shards.map((shard) => [shard.id, shard] as const));
-  const childResultById = buildTacticalChildResultById(childResults);
-  const unresolvedBranches = collectTacticalUnresolvedBranches(fanoutSchedulerPlan, childResults);
-  const unresolvedHighPriority = collectHighPriorityBranches(unresolvedBranches, shardById);
-  const hasWinningHighPriorityEvidence = childResults.some((result) => (
-    result.disposition === 'valid'
-    && shardById.get(result.childId)?.priority === 'high'
-  ));
-
-  if (!hasWinningHighPriorityEvidence || unresolvedHighPriority.length > 0) {
-    return fanoutSchedulerPlan;
-  }
-
-  let nextPlan = fanoutSchedulerPlan;
-  for (const branch of fanoutSchedulerPlan.branches) {
-    if (branch.status !== 'scheduled') {
-      continue;
-    }
-    if (childResultById.has(branch.childId ?? branch.bundleId)) {
-      continue;
-    }
-    const shard = shardById.get(branch.bundleId);
-    if (shard?.priority === 'high') {
-      continue;
-    }
-    nextPlan = applyFanoutBranchTransition(nextPlan, {
-      type: 'cancel',
-      bundleId: branch.bundleId,
-      reason: 'Cancelled after a high-priority evidence shard produced enough validator-backed support for the parent diagnosis.',
-    });
-  }
-
-  return nextPlan;
-}
-
-function renderFailClosedTacticalReviewAnswer(
-  childContextBundles: KodaXChildContextBundle[],
-  childResults: KodaXChildAgentResult[],
-  unresolvedBranches: KodaXFanoutBranchRecord[],
-): string {
-  const bundleTitleById = new Map(
-    childContextBundles.map((bundle) => [bundle.id, bundle.scopeSummary ?? bundle.objective] as const),
-  );
-  const validResults = childResults.filter((result) => result.disposition === 'valid');
-
-  return [
-    '## Review Status',
-    '',
-    'The review cannot be finalized yet because not every candidate finding has a trustworthy structured child result.',
-    '',
-    '## Unresolved Findings',
-    ...unresolvedBranches.map((branch) => `- ${bundleTitleById.get(branch.bundleId) ?? branch.bundleId}`),
-    '',
-    '## Confirmed Findings',
-    ...(validResults.length > 0
-      ? validResults.map((result) => `- ${result.summary}`)
-      : ['- No validator-backed findings are ready to publish yet.']),
-    '',
-    '## Next Step',
-    '',
-    '- Re-run validation for the unresolved findings before treating the review as complete.',
-  ].join('\n');
-}
-
-function renderFailClosedTacticalInvestigationAnswer(
-  shards: TacticalInvestigationShard[],
-  childResults: KodaXChildAgentResult[],
-  unresolvedBranches: KodaXFanoutBranchRecord[],
-): string {
-  const shardById = new Map(shards.map((shard) => [shard.id, shard] as const));
-  const validResults = childResults.filter((result) => result.disposition === 'valid');
-  const falsePositiveResults = childResults.filter((result) => result.disposition === 'false-positive');
-  const unresolvedLabels = unresolvedBranches.map((branch) => {
-    const shard = shardById.get(branch.bundleId);
-    return shard ? `${shard.scope} (${shard.priority})` : branch.bundleId;
-  });
-
-  if (unresolvedLabels.length === 0 && validResults.length === 0) {
-    return [
-      '## Investigation Status',
-      '',
-      'The investigation is still inconclusive because the validated evidence collected so far does not support the current diagnosis.',
-      '',
-      '## Missing Evidence',
-      '- No unresolved evidence shards remain, but the current lead still lacks validator-backed support.',
-      '',
-      '## Supporting Evidence',
-      '- No shard has yet produced validator-backed evidence that confirms the diagnosis.',
-      '',
-      '## Rejected Or Weakened Leads',
-      ...(falsePositiveResults.length > 0
-        ? falsePositiveResults.map((result) => `- ${result.summary}`)
-        : ['- None yet.']),
-      '',
-      '## Next Step',
-      '',
-      '- Reframe the current diagnosis or gather new evidence before treating this investigation as settled.',
-    ].join('\n');
-  }
-
-  return [
-    '## Investigation Status',
-    '',
-    'The investigation is still inconclusive because one or more evidence shards are unresolved or waiting on trustworthy validation.',
-    '',
-    '## Missing Evidence',
-    ...(unresolvedLabels.length > 0
-      ? unresolvedLabels.map((label) => `- ${label}`)
-      : ['- Additional corroborating evidence is still needed before accepting the diagnosis.']),
-    '',
-    '## Supporting Evidence',
-    ...(validResults.length > 0
-      ? validResults.map((result) => `- ${result.summary}`)
-      : ['- No shard has yet produced validator-backed evidence that confirms the diagnosis.']),
-    '',
-    '## Rejected Or Weakened Leads',
-    ...(falsePositiveResults.length > 0
-      ? falsePositiveResults.map((result) => `- ${result.summary}`)
-      : ['- None yet.']),
-    '',
-    '## Next Step',
-    '',
-    '- Gather or re-run the unresolved high-priority evidence shards before treating this investigation as settled.',
-  ].join('\n');
-}
-
-function renderFailClosedTacticalLookupAnswer(
-  shards: TacticalLookupShard[],
-  childResults: KodaXChildAgentResult[],
-  unresolvedBranches: KodaXFanoutBranchRecord[],
-): string {
-  const shardById = new Map(shards.map((shard) => [shard.id, shard] as const));
-  const validResults = childResults.filter((result) => result.disposition === 'valid');
-  const falsePositiveResults = childResults.filter((result) => result.disposition === 'false-positive');
-  const unresolvedLabels = unresolvedBranches.map((branch) => {
-    const shard = shardById.get(branch.bundleId);
-    return shard ? `${shard.scope} (${shard.priority})` : branch.bundleId;
-  });
-
-  if (unresolvedLabels.length === 0 && validResults.length === 0) {
-    return [
-      '## Lookup Status',
-      '',
-      'The lookup is still inconclusive because the validated module-triage evidence does not support a confident best answer yet.',
-      '',
-      '## Missing Evidence',
-      '- No unresolved lookup shards remain, but the current best answer still lacks validator-backed support.',
-      '',
-      '## Supporting Evidence',
-      '- No shard has yet produced validator-backed evidence that confirms the best path or module answer.',
-      '',
-      '## Rejected Or Weakened Leads',
-      ...(falsePositiveResults.length > 0
-        ? falsePositiveResults.map((result) => `- ${result.summary}`)
-        : ['- None yet.']),
-      '',
-      '## Next Step',
-      '',
-      '- Reframe the lookup target or gather new module-triage evidence before treating this answer as settled.',
-    ].join('\n');
-  }
-
-  return [
-    '## Lookup Status',
-    '',
-    'The lookup is still inconclusive because one or more module-triage shards are unresolved or waiting on trustworthy validation.',
-    '',
-    '## Missing Evidence',
-    ...(unresolvedLabels.length > 0
-      ? unresolvedLabels.map((label) => `- ${label}`)
-      : ['- Additional corroborating module evidence is still needed before accepting the lookup answer.']),
-    '',
-    '## Supporting Evidence',
-    ...(validResults.length > 0
-      ? validResults.map((result) => `- ${result.summary}`)
-      : ['- No shard has yet produced validator-backed evidence that confirms the best path or module answer.']),
-    '',
-    '## Rejected Or Weakened Leads',
-    ...(falsePositiveResults.length > 0
-      ? falsePositiveResults.map((result) => `- ${result.summary}`)
-      : ['- None yet.']),
-    '',
-    '## Next Step',
-    '',
-    '- Gather or re-run the unresolved high-priority lookup shards before treating this answer as settled.',
-  ].join('\n');
-}
-
-function applyTacticalParentReduction(
-  directive: ManagedTaskVerdictDirective | undefined,
-  fanoutSchedulerPlan: KodaXFanoutSchedulerPlan,
-  childContextBundles: KodaXChildContextBundle[],
-  childResults: KodaXChildAgentResult[],
-): ManagedTaskVerdictDirective | undefined {
-  const unresolvedBranches = collectTacticalUnresolvedBranches(
-    fanoutSchedulerPlan,
-    childResults,
-  );
-  if (unresolvedBranches.length === 0) {
-    return directive;
-  }
-
-  const reason = `Structured child validation remains incomplete for ${unresolvedBranches.map((branch) => branch.bundleId).join(', ')}.`;
-  const userAnswer = renderFailClosedTacticalReviewAnswer(
-    childContextBundles,
-    childResults,
-    unresolvedBranches,
-  );
-
-  return {
-    source: 'evaluator',
-    status: 'revise',
-    reason,
-    followups: [
-      'Re-run validation for every unresolved or deferred child finding before finalizing the review.',
-    ],
-    userFacingText: userAnswer,
-    userAnswer,
-    artifactPath: directive?.artifactPath,
-  };
-}
-
-function applyTacticalInvestigationParentReduction(
-  directive: ManagedTaskVerdictDirective | undefined,
-  fanoutSchedulerPlan: KodaXFanoutSchedulerPlan,
-  shards: TacticalInvestigationShard[],
-  childResults: KodaXChildAgentResult[],
-): ManagedTaskVerdictDirective | undefined {
-  const shardById = new Map(shards.map((shard) => [shard.id, shard] as const));
-  const unresolvedBranches = collectTacticalUnresolvedBranches(
-    fanoutSchedulerPlan,
-    childResults,
-  );
-  const unresolvedHighPriority = collectHighPriorityBranches(unresolvedBranches, shardById);
-  const hasValidEvidence = childResults.some((result) => result.disposition === 'valid');
-
-  if (unresolvedHighPriority.length === 0 && hasValidEvidence) {
-    return directive;
-  }
-
-  const unresolvedIds = unresolvedBranches.map((branch) => branch.bundleId);
-  const reason = unresolvedHighPriority.length > 0
-    ? `High-priority evidence shards remain unresolved: ${unresolvedHighPriority.map((branch) => branch.bundleId).join(', ')}.`
-    : hasValidEvidence
-      ? `Investigation evidence remains incomplete for ${unresolvedIds.join(', ')}.`
-      : 'Validated evidence does not support accepting the current diagnosis yet.';
-  const userAnswer = renderFailClosedTacticalInvestigationAnswer(
-    shards,
-    childResults,
-    unresolvedBranches,
-  );
-
-  return {
-    source: 'evaluator',
-    status: 'revise',
-    reason,
-    followups: [
-      'Re-run or expand the unresolved evidence shards before treating the investigation as complete.',
-    ],
-    userFacingText: userAnswer,
-    userAnswer,
-    artifactPath: directive?.artifactPath,
-  };
-}
-
-function applyTacticalLookupParentReduction(
-  directive: ManagedTaskVerdictDirective | undefined,
-  fanoutSchedulerPlan: KodaXFanoutSchedulerPlan,
-  shards: TacticalLookupShard[],
-  childResults: KodaXChildAgentResult[],
-): ManagedTaskVerdictDirective | undefined {
-  const shardById = new Map(shards.map((shard) => [shard.id, shard] as const));
-  const unresolvedBranches = collectTacticalUnresolvedBranches(
-    fanoutSchedulerPlan,
-    childResults,
-  );
-  const unresolvedHighPriority = collectHighPriorityBranches(unresolvedBranches, shardById);
-  const hasValidEvidence = childResults.some((result) => result.disposition === 'valid');
-
-  if (unresolvedHighPriority.length === 0 && hasValidEvidence) {
-    return directive;
-  }
-
-  const unresolvedIds = unresolvedBranches.map((branch) => branch.bundleId);
-  const reason = unresolvedHighPriority.length > 0
-    ? `High-priority lookup shards remain unresolved: ${unresolvedHighPriority.map((branch) => branch.bundleId).join(', ')}.`
-    : hasValidEvidence
-      ? `Lookup evidence remains incomplete for ${unresolvedIds.join(', ')}.`
-      : 'Validated lookup evidence does not support accepting the current best answer yet.';
-  const userAnswer = renderFailClosedTacticalLookupAnswer(
-    shards,
-    childResults,
-    unresolvedBranches,
-  );
-
-  return {
-    source: 'evaluator',
-    status: 'revise',
-    reason,
-    followups: [
-      'Re-run or expand the unresolved lookup shards before treating this answer as complete.',
-    ],
-    userFacingText: userAnswer,
-    userAnswer,
-    artifactPath: directive?.artifactPath,
-  };
-}
 
 function parseManagedTaskContractDirective(text: string): ManagedTaskContractDirective | undefined {
   const block = findLastFencedBlock(text, MANAGED_TASK_CONTRACT_BLOCK);
@@ -8719,6 +5345,7 @@ function buildManagedWorkerSessionId(
   return `managed-task-worker-${task.contract.taskId}-${worker.id}`;
 }
 
+// FEATURE_061 Phase 3: Added continueFromSessionId for Scout→Worker context continuation.
 function createWorkerSession(
   session: KodaXOptions['session'],
   task: KodaXManagedTask,
@@ -8726,7 +5353,18 @@ function createWorkerSession(
   storage: KodaXSessionStorage | undefined,
   memoryStrategy: KodaXMemoryStrategy,
   compactInitialMessages?: KodaXSessionData['messages'],
+  continueFromSessionId?: string,
 ): KodaXOptions['session'] {
+  if (continueFromSessionId && storage) {
+    return {
+      ...session,
+      id: continueFromSessionId,
+      scope: 'managed-task-worker',
+      resume: true,
+      autoResume: true,
+      storage,
+    };
+  }
   const shouldResume = memoryStrategy === 'continuous';
   const initialMessages = memoryStrategy === 'compact'
     ? compactInitialMessages
@@ -9163,6 +5801,7 @@ function buildWorkerRunOptions(
   controller: ManagedTaskBudgetController,
   recordLiveEvent: ((event: KodaXManagedLiveEvent) => void) | undefined,
   maxRounds: number,
+  continueFromSessionId?: string,
 ): KodaXOptions {
   worker.memoryStrategy = memoryStrategy;
   worker.budgetSnapshot = budgetSnapshot;
@@ -9199,7 +5838,7 @@ function buildWorkerRunOptions(
   return {
     ...defaultOptions,
     maxIter: resolveRemainingManagedWorkBudget(controller),
-    session: createWorkerSession(defaultOptions.session, task, worker, sessionStorage, memoryStrategy, compactInitialMessages),
+    session: createWorkerSession(defaultOptions.session, task, worker, sessionStorage, memoryStrategy, compactInitialMessages, continueFromSessionId),
     context: {
       ...defaultOptions.context,
       taskSurface: task.contract.surface,
@@ -9241,12 +5880,14 @@ function buildWorkerRunOptions(
   };
 }
 
+// FEATURE_061 Phase 3: Scout session is persisted to sessionStorage so H1/H2 workers can continue it.
 async function runManagedScoutStage(
   options: KodaXOptions,
   prompt: string,
   plan: ReasoningPlan,
   controller: ManagedTaskBudgetController,
-): Promise<{ result: KodaXResult; directive: ManagedTaskScoutDirective }> {
+  sessionStorage?: ManagedWorkerSessionStorage,
+): Promise<{ result: KodaXResult; directive: ManagedTaskScoutDirective; scoutSessionId?: string }> {
   const toolPolicy = buildManagedWorkerToolPolicy(
     'scout',
     options.context?.taskVerification,
@@ -9294,9 +5935,21 @@ async function runManagedScoutStage(
       upgradeCeiling: plan.decision.topologyCeiling,
     },
   });
+  // FEATURE_061 Phase 3: Persist Scout session so H1/H2 workers can continue it.
+  const scoutSessionId = sessionStorage ? `managed-scout-${randomUUID()}` : undefined;
   const scoutOptions: KodaXOptions = {
     ...options,
     maxIter: resolveRemainingManagedWorkBudget(controller),
+    session: scoutSessionId && sessionStorage
+      ? {
+          ...options.session,
+          id: scoutSessionId,
+          scope: 'managed-task-worker',
+          resume: false,
+          autoResume: false,
+          storage: sessionStorage,
+        }
+      : options.session,
     events: scoutEvents
       ? {
           ...options.events,
@@ -9324,7 +5977,7 @@ async function runManagedScoutStage(
     lastResult = result;
     const sanitized = sanitizeScoutResult(result, { primaryTask: plan.decision.primaryTask });
     if (sanitized.directive) {
-      return { result: sanitized.result, directive: sanitized.directive };
+      return { result: sanitized.result, directive: sanitized.directive, scoutSessionId };
     }
     if (attempt < MANAGED_TASK_ROUTER_MAX_RETRIES) {
       const failureReason = sanitized.failureReason ?? `missing ${MANAGED_TASK_SCOUT_BLOCK}`;
@@ -9367,6 +6020,7 @@ async function runManagedScoutStage(
       directCompletionReady: plan.decision.harnessProfile === 'H0_DIRECT' ? 'yes' : 'no',
       userFacingText: sanitizeManagedUserFacingText(extractMessageText(lastResult) || ''),
     },
+    scoutSessionId,
   };
 }
 
@@ -9878,6 +6532,7 @@ function canProviderSatisfyHarness(
   return true;
 }
 
+// FEATURE_062: Simplified — no reserve budget, just update harness.
 function consumeHarnessUpgradeBudget(
   controller: ManagedTaskBudgetController,
   fromHarness: KodaXTaskRoutingDecision['harnessProfile'],
@@ -9887,21 +6542,6 @@ function consumeHarnessUpgradeBudget(
   if (cost <= 0) {
     return { granted: false, cost: 0, reason: 'Requested harness is not stronger than the current harness.' };
   }
-  const availableReserve = controller.upgradeReserveRemaining > 0
-    ? controller.upgradeReserveRemaining
-    : controller.reserveRemaining;
-  if (availableReserve < cost) {
-    return {
-      granted: false,
-      cost,
-      reason: `Upgrade to ${toHarness} needs ${cost} reserve units, but only ${availableReserve} remain.`,
-    };
-  }
-
-  if (controller.upgradeReserveRemaining > 0) {
-    controller.upgradeReserveRemaining = Math.max(0, controller.upgradeReserveRemaining - cost);
-  }
-  controller.reserveRemaining = Math.max(0, controller.reserveRemaining - cost);
   controller.currentHarness = toHarness;
   return { granted: true, cost };
 }
@@ -9954,33 +6594,6 @@ function markMissingManagedBlockResult(
       ? compacted.rawText
       : undefined,
   };
-}
-
-function shouldGrantBudgetExtension(
-  controller: ManagedTaskBudgetController,
-  worker: ManagedTaskWorkerSpec,
-  request: KodaXBudgetExtensionRequest | undefined,
-): { granted: number; reason?: string } {
-  if (!request) {
-    return { granted: 0 };
-  }
-  if (!worker.budgetSnapshot?.allowExtensionRequest) {
-    return { granted: 0, reason: 'Budget extension requests are only allowed near the execution boundary.' };
-  }
-  const usableReserve = controller.upgradeReserveRemaining > 0
-    ? Math.max(0, controller.reserveRemaining - controller.upgradeReserveRemaining)
-    : controller.reserveRemaining;
-  if (usableReserve <= 0) {
-    return { granted: 0, reason: 'No reserve budget remains for extension.' };
-  }
-  if (request.confidenceToFinish < 0.55) {
-    return { granted: 0, reason: 'Extension request confidence was too low to auto-approve.' };
-  }
-  const granted = Math.min(request.requestedIters, 3, usableReserve);
-  if (granted <= 0) {
-    return { granted: 0, reason: 'Requested extension exceeds remaining reserve.' };
-  }
-  return { granted };
 }
 
 function resolveHarnessUpgrade(
@@ -10361,79 +6974,6 @@ function createManagedOrchestrationEvents(
   };
 }
 
-function createTacticalFanoutStatusEvents(
-  baseEvents: KodaXEvents | undefined,
-  agentMode: KodaXAgentMode,
-  harnessProfile: KodaXTaskRoutingDecision['harnessProfile'],
-  getPlan: () => KodaXFanoutSchedulerPlan,
-  recordLiveEvent?: (event: KodaXManagedLiveEvent) => void,
-): OrchestrationRunEvents<ManagedTaskWorkerSpec, string> | undefined {
-  if (!baseEvents?.onManagedTaskStatus) {
-    return undefined;
-  }
-
-  const buildStatus = (
-    task: ManagedTaskWorkerSpec,
-    note?: string,
-  ): KodaXManagedTaskStatusEvent => {
-    const childFanoutClass = task.metadata?.fanoutClass === 'finding-validation'
-      || task.metadata?.fanoutClass === 'evidence-scan'
-      || task.metadata?.fanoutClass === 'module-triage'
-      || task.metadata?.fanoutClass === 'hypothesis-check'
-      ? task.metadata.fanoutClass
-      : undefined;
-    const event = note
-      ? createManagedLiveEvent(
-          `fanout-${task.id}-status`,
-          /completed|finished|blocked|failed|ready/i.test(note) ? 'completed' : 'progress',
-          note,
-          {
-            detail: note,
-            presentation: 'status',
-            phase: 'worker',
-            worker: task,
-            persistToHistory: false,
-          },
-        )
-      : createManagedLiveEvent(
-          `fanout-${task.id}-status`,
-          'progress',
-          `${task.title} starting`,
-          {
-            detail: `${task.title} starting`,
-            presentation: 'status',
-            phase: 'worker',
-            worker: task,
-            persistToHistory: false,
-          },
-        );
-    recordLiveEvent?.(event);
-    return {
-      agentMode,
-      harnessProfile,
-      activeWorkerId: task.id,
-      activeWorkerTitle: task.title,
-      phase: 'worker',
-      note,
-      events: [event],
-      persistToHistory: false,
-      childFanoutClass,
-      childFanoutCount: childFanoutClass ? countActiveFanoutBranches(getPlan()) : undefined,
-    };
-  };
-
-  return {
-    onTaskStart: async (task) => {
-      baseEvents.onManagedTaskStatus?.(buildStatus(task));
-    },
-    onTaskComplete: async (task, completed) => {
-      baseEvents.onManagedTaskStatus?.(
-        buildStatus(task, `${task.title} ${completed.status}`),
-      );
-    },
-  };
-}
-
 async function executeManagedTaskRound(
   options: KodaXOptions,
   task: KodaXManagedTask,
@@ -10449,6 +6989,7 @@ async function executeManagedTaskRound(
   plan: ReasoningPlan,
   sessionStorage: KodaXSessionStorage | undefined,
   previousDirective?: ManagedTaskVerdictDirective,
+  scoutSessionId?: string,
 ): Promise<ManagedTaskRoundExecution> {
   let directive: ManagedTaskVerdictDirective | undefined;
   let budgetRequest: KodaXBudgetExtensionRequest | undefined;
@@ -10464,6 +7005,10 @@ async function executeManagedTaskRound(
   const recordRoundLiveEvent = (event: KodaXManagedLiveEvent): void => {
     roundLiveEvents = appendManagedTimelineEvent(roundLiveEvents, event);
   };
+  // FEATURE_061 Phase 3: First non-evaluator worker in round 1 continues the Scout session.
+  const scoutContinuationWorkerId = round === 1 && scoutSessionId
+    ? workerSet.workers.find((w) => w.role !== 'evaluator')?.id
+    : undefined;
   const managedWorkerRunner = createKodaXTaskRunner<ManagedTaskWorkerSpec>({
     baseOptions: options,
     runAgent: runDirectKodaX,
@@ -10474,12 +7019,13 @@ async function executeManagedTaskRound(
       workerSet.terminalWorkerId,
       routingPromptOverlay,
       qualityAssuranceMode,
-    sessionStorage,
+      sessionStorage,
       resolveManagedMemoryStrategy(options, plan, worker.role, round, previousDirective),
       createBudgetSnapshot(controller, task.contract.harnessProfile, round, worker.role, worker.id),
       controller,
       recordRoundLiveEvent,
       maxRounds,
+      worker.id === scoutContinuationWorkerId ? scoutSessionId : undefined,
     ),
     runTask: async (worker, _context, preparedOptions, prompt, executeDefault) => {
       const execution = await runManagedWorkerTask(
@@ -10889,35 +7435,7 @@ export async function runManagedTask(
     ...buildManagedStatusBudgetFields(initialBudgetController),
   });
 
-  const shouldKeepLookupDirect = !(
-    agentMode === 'ama'
-    && plan.amaControllerDecision.profile === 'tactical'
-    && plan.amaControllerDecision.fanout.admissible
-    && plan.amaControllerDecision.fanout.class === 'module-triage'
-  );
-
-  if (
-    shouldBypassScoutForManagedH0(finalRoutingDecision)
-    && (finalRoutingDecision.primaryTask !== 'lookup' || shouldKeepLookupDirect)
-  ) {
-    return runDirectKodaX(
-      {
-        ...managedOptions,
-        context: {
-          ...managedOptions.context,
-          promptOverlay: applyDirectPathTaskFamilyShaping(
-            plan,
-            [
-              managedOptions.context?.promptOverlay,
-              `[Managed Task Routing] ${createRoutingBreadcrumb(rawRoutingDecision, finalRoutingDecision, routingOverrideReason)}`,
-            ].filter(Boolean).join('\n\n'),
-          ),
-        },
-      },
-      prompt,
-    );
-  }
-
+  // FEATURE_061 Phase 1: All AMA tasks go through Scout — no bypass.
   managedOptions.events?.onManagedTaskStatus?.({
     agentMode,
     harnessProfile: finalRoutingDecision.harnessProfile,
@@ -10929,7 +7447,9 @@ export async function runManagedTask(
     ...buildManagedStatusBudgetFields(initialBudgetController),
   });
   const scoutBudgetController = initialBudgetController;
-  const scoutExecution = await runManagedScoutStage(managedOptions, prompt, plan, scoutBudgetController);
+  // FEATURE_061 Phase 3: Create session storage before Scout so its session can be continued by H1/H2 workers.
+  const sharedSessionStorage = new ManagedWorkerSessionStorage();
+  const scoutExecution = await runManagedScoutStage(managedOptions, prompt, plan, scoutBudgetController, sharedSessionStorage);
   plan = applyScoutDecisionToPlan(plan, scoutExecution.directive);
   const skillMap = buildSkillMap(managedOptions.context?.skillInvocation, scoutExecution.directive);
   const postScoutGuardrails = applyManagedHarnessGuardrailsToPlan(plan, managedPlanning.reviewTarget);
@@ -10943,172 +7463,15 @@ export async function runManagedTask(
     plan.decision,
     managedPlanning.reviewTarget,
   );
-  const scoutDowngradedToDirect = scoutInitialHarnessProfile !== 'H0_DIRECT'
-    && finalRoutingDecision.harnessProfile === 'H0_DIRECT'
-    && scoutExecution.directive.confirmedHarness === 'H0_DIRECT';
-  if (!scoutDowngradedToDirect && shouldRunTacticalReviewFanout(
-    agentMode,
-    getManagedTaskSurface(managedOptions),
-    plan,
-    finalRoutingDecision,
-    scoutExecution.directive,
-  )) {
-    return runTacticalReviewFlow(
-      managedOptions,
-      managedOriginalTask,
-      plan,
-      scoutExecution,
-      rawRoutingDecision,
-      finalRoutingDecision,
-      routingOverrideReason,
-      skillMap,
-      agentMode,
-      scoutBudgetController,
-    );
-  }
-
-  if (!scoutDowngradedToDirect && shouldRunTacticalInvestigationFanout(
-    agentMode,
-    getManagedTaskSurface(managedOptions),
-    plan,
-    finalRoutingDecision,
-    scoutExecution.directive,
-  )) {
-    return runTacticalInvestigationFlow(
-      managedOptions,
-      managedOriginalTask,
-      plan,
-      scoutExecution,
-      rawRoutingDecision,
-      finalRoutingDecision,
-      routingOverrideReason,
-      skillMap,
-      agentMode,
-      scoutBudgetController,
-    );
-  }
-
-  if (!scoutDowngradedToDirect && shouldRunTacticalLookupFanout(
-    agentMode,
-    getManagedTaskSurface(managedOptions),
-    plan,
-    finalRoutingDecision,
-    scoutExecution.directive,
-  )) {
-    return runTacticalLookupFlow(
-      managedOptions,
-      managedOriginalTask,
-      plan,
-      scoutExecution,
-      rawRoutingDecision,
-      finalRoutingDecision,
-      routingOverrideReason,
-      skillMap,
-      agentMode,
-      scoutBudgetController,
-    );
-  }
-
+  // FEATURE_061 Phase 4: Tactical Flows removed — role-level subagents replace hardcoded fan-out.
+  // FEATURE_061 Phase 2: Scout completes H0 tasks directly.
   if (finalRoutingDecision.harnessProfile === 'H0_DIRECT' && scoutExecution.directive.confirmedHarness === 'H0_DIRECT') {
-    const scoutShape = createScoutCompleteTaskShape(
-      managedOptions,
-      managedOriginalTask,
-      managedOriginalTask,
-      plan,
-      {
-        originalTask: managedOriginalTask,
-        skillInvocation: managedOptions.context?.skillInvocation,
-        skillMap,
-      },
-    );
-    const scoutCompleteBudgetController = createManagedBudgetController(managedOptions, plan, agentMode);
-    scoutCompleteBudgetController.spentBudget = Math.max(
-      scoutCompleteBudgetController.spentBudget,
-      scoutBudgetController.spentBudget,
-    );
-    await mkdir(scoutShape.workspaceDir, { recursive: true });
-    const scoutSkillArtifacts = await writeManagedSkillArtifacts(
-      scoutShape.workspaceDir,
-      managedOptions.context?.skillInvocation,
-      skillMap,
-    );
-    const scoutRoleRoundSummary = buildManagedWorkerRoundSummary(
-      scoutShape.task,
-      scoutShape.workers[0]!,
-      scoutExecution.result,
-      1,
-      scoutExecution.directive,
-    );
-    scoutShape.task = {
-      ...scoutShape.task,
-      runtime: {
-        ...applyManagedBudgetRuntimeState(scoutShape.task.runtime, scoutCompleteBudgetController),
-        budget: createBudgetSnapshot(scoutCompleteBudgetController, 'H0_DIRECT', 1, 'scout'),
-        routingAttempts: plan.decision.routingAttempts,
-        routingSource: plan.decision.routingSource,
-        rawRoutingDecision,
-        finalRoutingDecision,
-        routingOverrideReason,
-        qualityAssuranceMode: scoutShape.qualityAssuranceMode,
-        scorecard: createVerificationScorecard(scoutShape.task, undefined),
-        scoutDecision: {
-          summary: scoutExecution.directive.summary ?? 'Scout completed the task directly.',
-          recommendedHarness: 'H0_DIRECT',
-          readyForUpgrade: false,
-          scope: scoutExecution.directive.scope,
-          requiredEvidence: scoutExecution.directive.requiredEvidence,
-          reviewFilesOrAreas: scoutExecution.directive.reviewFilesOrAreas,
-          evidenceAcquisitionMode: scoutExecution.directive.evidenceAcquisitionMode,
-          harnessRationale: scoutExecution.directive.harnessRationale,
-          blockingEvidence: scoutExecution.directive.blockingEvidence,
-          directCompletionReady: scoutExecution.directive.directCompletionReady,
-          skillSummary: scoutExecution.directive.skillMap?.skillSummary,
-          executionObligations: scoutExecution.directive.skillMap?.executionObligations,
-          verificationObligations: scoutExecution.directive.skillMap?.verificationObligations,
-          ambiguities: scoutExecution.directive.skillMap?.ambiguities,
-          projectionConfidence: scoutExecution.directive.skillMap?.projectionConfidence,
-        },
-        skillMap,
-        evidenceAcquisitionMode: scoutExecution.directive.evidenceAcquisitionMode ?? 'overview',
-        reviewFilesOrAreas: scoutExecution.directive.reviewFilesOrAreas,
-        roleRoundSummaries: scoutRoleRoundSummary
-          ? { scout: scoutRoleRoundSummary }
-          : undefined,
-      },
-      evidence: {
-        ...scoutShape.task.evidence,
-        artifacts: mergeEvidenceArtifacts(
-          scoutShape.task.evidence.artifacts,
-          scoutSkillArtifacts,
-        ),
-      },
-    };
-    const scoutManagedTask = applyScoutTerminalResultToTask(
-      scoutShape.task,
-      scoutExecution.result,
-      scoutExecution.directive,
-    );
-    await writeManagedTaskSnapshotArtifacts(scoutShape.workspaceDir, scoutManagedTask);
-    managedOptions.events?.onManagedTaskStatus?.({
-      agentMode,
-      harnessProfile: 'H0_DIRECT',
-      activeWorkerId: 'scout',
-      activeWorkerTitle: 'Scout',
-      phase: 'completed',
-      note: 'Scout completed the task directly',
-      upgradeCeiling: finalRoutingDecision.upgradeCeiling,
-      ...buildManagedStatusBudgetFields(scoutCompleteBudgetController),
+    return completeScoutH0Task({
+      options: managedOptions, originalTask: managedOriginalTask, plan,
+      scoutExecution, scoutBudgetController,
+      rawRoutingDecision, finalRoutingDecision, routingOverrideReason,
+      skillMap, agentMode,
     });
-    scheduleManagedTaskRepoIntelligenceCapture(
-      resolveManagedTaskRepoIntelligenceContext(managedOptions),
-      scoutShape.workspaceDir,
-      managedOptions,
-    );
-    return {
-      ...scoutExecution.result,
-      managedTask: scoutManagedTask,
-      routingDecision: finalRoutingDecision,
-    };
   }
 
   const shape = createTaskShape(
@@ -11124,7 +7487,8 @@ export async function runManagedTask(
   );
   const budgetController = createManagedBudgetController(managedOptions, plan, agentMode);
   budgetController.spentBudget = Math.max(budgetController.spentBudget, scoutBudgetController.spentBudget);
-  const sessionStorage = new ManagedWorkerSessionStorage();
+  // FEATURE_061 Phase 3: Reuse shared session storage that already has Scout's session.
+  const sessionStorage = sharedSessionStorage;
   await mkdir(shape.workspaceDir, { recursive: true });
   const skillArtifacts = await writeManagedSkillArtifacts(
     shape.workspaceDir,
@@ -11280,6 +7644,7 @@ export async function runManagedTask(
       plan,
       sessionStorage,
       roundDirective,
+      scoutExecution.scoutSessionId,
     );
     managedTask = applyOrchestrationResultToTask(
       roundExecution.taskSnapshot,
@@ -11325,7 +7690,6 @@ export async function runManagedTask(
         if (h1CheckedDirectRevisesUsed === 0) {
           h1CheckedDirectRevisesUsed += 1;
           maxRounds = Math.max(maxRounds, round + 1);
-          budgetController.plannedRounds = Math.max(budgetController.plannedRounds, maxRounds);
           activeDirective = {
             ...activeDirective,
             nextHarness: undefined,
@@ -11403,8 +7767,7 @@ export async function runManagedTask(
       if (upgradeResolution.transition?.approved && roundDirective?.nextHarness) {
         const targetHarness = roundDirective.nextHarness;
         if (targetHarness === 'H2_PLAN_EXECUTE_EVAL') {
-          budgetController.plannedRounds = Math.max(budgetController.plannedRounds, round + 1);
-          maxRounds = Math.max(maxRounds, budgetController.plannedRounds, round + 1);
+          maxRounds = Math.max(maxRounds, round + 1);
         }
         const upgradedDecision: KodaXTaskRoutingDecision = {
           ...plan.decision,
@@ -11547,13 +7910,13 @@ export async function runManagedTask(
             ?? 'Additional work required.',
           currentRound: round,
           maxRounds,
+          originalTask: managedOriginalTask,
         },
       );
       if (budgetDecision === 'approved') {
         if (round >= maxRounds) {
           maxRounds += 1;
         }
-        budgetController.plannedRounds = Math.max(budgetController.plannedRounds, maxRounds);
         managedTask = {
           ...managedTask,
           runtime: {
@@ -11628,7 +7991,6 @@ export async function runManagedTask(
       && maxRounds < MANAGED_TASK_MAX_REFINEMENT_ROUND_CAP
     ) {
       maxRounds = Math.max(maxRounds, round + 1, MANAGED_TASK_MIN_REFINEMENT_ROUNDS + 1);
-      budgetController.plannedRounds = Math.max(budgetController.plannedRounds, maxRounds);
     }
     if (roundDirective?.status === 'revise' && round < maxRounds) {
       const requesterLabel = roundDirective.source === 'worker'

@@ -20,7 +20,6 @@ function createCliOptions(overrides: Partial<CliOptions> = {}): CliOptions {
     reasoningMode: 'auto',
     agentMode: 'ama',
     outputMode: 'text',
-    parallel: false,
     append: false,
     overwrite: false,
     autoContinue: false,

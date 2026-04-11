@@ -31,40 +31,17 @@ export function isPlanHandoffRequest(
 export function getAskUserDialogTitle(
   options: AskUserQuestionOptions,
 ): string {
-  if (isPlanHandoffRequest(options)) {
-    return "Plan complete. Switch this session to accept-edits and continue?";
-  }
-
+  // Use the LLM-provided question text directly — it matches the user's language.
   return options.question;
 }
 
-export function resolveAskUserDismissChoice(
+export function resolveAskUserDefaultChoice(
   options: AskUserQuestionOptions,
 ): string {
+  // Plan-handoff: empty Enter defaults to the FIRST option (accept/switch),
+  // not the last (cancel). This matches user expectation: press Enter to confirm.
   if (isPlanHandoffRequest(options)) {
-    // If an option has value === targetMode, the "other" option is dismiss.
-    // Otherwise (LLM used arbitrary values), the LAST option is dismiss
-    // by convention (accept-first, cancel-last).
-    const nonTargetOption = options.options.find(
-      (option) => option.value !== options.targetMode,
-    );
-    // When nonTargetOption is the only non-target, it's the dismiss option.
-    // When ALL options are non-target (no option matched targetMode),
-    // nonTargetOption is the FIRST option (accept!) — use lastOption instead.
-    const hasExplicitTarget = options.options.some(
-      (option) => option.value === options.targetMode,
-    );
-    const lastOption = options.options[options.options.length - 1];
-    const dismissOption = hasExplicitTarget
-      ? nonTargetOption
-      : lastOption;
-
-    return (
-      options.default ??
-      dismissOption?.value ??
-      options.options[0]?.value ??
-      ""
-    );
+    return options.options[0]?.value ?? "";
   }
 
   const cancelOption = options.options.find((option) => {

@@ -90,7 +90,7 @@ describe("copyTextToClipboard", () => {
     );
   });
 
-  it("falls back to clip when PowerShell clipboard commands are unavailable", async () => {
+  it("falls back to clip via chcp 65001 when PowerShell clipboard commands are unavailable", async () => {
     spawnMock
       .mockImplementationOnce(() => {
         const child = new MockChildProcess();
@@ -104,20 +104,26 @@ describe("copyTextToClipboard", () => {
       })
       .mockImplementationOnce(() => new MockChildProcess());
 
-    await expect(copyTextToClipboard("你好，KodaX", {
+    const text = "你好，KodaX";
+    await expect(copyTextToClipboard(text, {
       terminalWrite: () => false,
       env: {},
       platform: "win32",
     })).resolves.toEqual({ path: "native" });
 
+    // clip.exe fallback uses cmd with chcp 65001 to set UTF-8 codepage,
+    // and passes a UTF-8 Buffer instead of a JS string.
     expect(spawnMock).toHaveBeenNthCalledWith(
       3,
-      "clip",
-      [],
+      "cmd",
+      ["/c", "chcp 65001 >nul & clip"],
       expect.objectContaining({
         stdio: ["pipe", "ignore", "pipe"],
         windowsHide: true,
       }),
     );
+
+    const stdinWrite = spawnMock.mock.results[2]?.value?.stdin?.write;
+    expect(stdinWrite).toHaveBeenCalledWith(Buffer.from(text, "utf8"));
   });
 });

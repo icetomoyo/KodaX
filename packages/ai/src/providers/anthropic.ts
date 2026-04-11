@@ -188,6 +188,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
 
       // Issue 084 fix: Track message completion to detect silent disconnections
       let messageStopReceived = false;
+      let stopReason: string | undefined;
       let lastEventTime = Date.now();
       const streamStartTime = Date.now();
 
@@ -333,10 +334,11 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
             (event as Anthropic.Messages.RawMessageDeltaEvent).usage,
             usage,
           );
-          if (process.env.KODAX_DEBUG_STREAM) {
-            const delta = (event as any).delta;
-            if (delta?.stop_reason) {
-              this.logStreamDiagnostic(`[Stream] message_delta with stop_reason: ${delta.stop_reason}`);
+          const delta = (event as any).delta;
+          if (delta?.stop_reason) {
+            stopReason = delta.stop_reason;
+            if (process.env.KODAX_DEBUG_STREAM) {
+              this.logStreamDiagnostic(`[Stream] message_delta with stop_reason: ${stopReason}`);
             }
           }
         } else if (event.type === 'message_start') {
@@ -394,7 +396,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
         throw error;
       }
 
-      return { textBlocks, toolBlocks, thinkingBlocks, usage };
+      return { textBlocks, toolBlocks, thinkingBlocks, usage, stopReason };
     }, signal, 3, streamOptions?.onRateLimit);
   }
 
@@ -521,6 +523,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
         toolBlocks,
         thinkingBlocks,
         usage: normalizeAnthropicUsage((response as Anthropic.Messages.Message).usage),
+        stopReason: (response as Anthropic.Messages.Message).stop_reason ?? undefined,
       };
     }, signal, 3, streamOptions?.onRateLimit);
   }

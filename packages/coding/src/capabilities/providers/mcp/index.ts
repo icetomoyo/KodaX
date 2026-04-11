@@ -25,3 +25,12 @@ export {
   McpCapabilityProvider,
   registerConfiguredMcpCapabilityProvider,
 } from './provider.js';
+
+export type {
+  McpTransport,
+  McpTransportEvents,
+} from './transport.js';
+
+export {
+  createMcpTransport,
+} from './transport.js';

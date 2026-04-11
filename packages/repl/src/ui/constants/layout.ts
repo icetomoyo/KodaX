@@ -33,7 +33,6 @@ const HELP_BAR_PINNED_SHORTCUTS: Array<{
   { id: "toggleTranscriptMode", label: "transcript" },
   { id: "togglePermissionMode", label: "mode" },
   { id: "toggleAgentMode", label: "AMA/SA" },
-  { id: "toggleParallelMode", label: "parallel" },
   { id: "interrupt", label: "interrupt" },
 ];
 
@@ -51,7 +50,6 @@ const HELP_MENU_SHORTCUT_IDS_BY_CATEGORY: Record<ShortcutCategory, ShortcutActio
     "toggleTranscriptMode",
     "togglePermissionMode",
     "toggleAgentMode",
-    "toggleParallelMode",
   ],
   navigation: [
     "openTranscriptSearch",

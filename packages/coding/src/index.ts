@@ -105,7 +105,7 @@ export type {
   KodaXMcpConnectMode,
 
   KodaXMcpServerConfig,
-  KodaXMcpConfig,
+  KodaXMcpServersConfig,
   KodaXTaskCapabilityHint,
   KodaXTaskVerificationCriterion,
   KodaXRuntimeVerificationContract,

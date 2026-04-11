@@ -52,7 +52,6 @@ export interface CurrentConfig {
   thinking: boolean;
   reasoningMode: KodaXReasoningMode;
   agentMode: KodaXAgentMode;
-  parallel: boolean;
   permissionMode: PermissionMode;
   repoIntelligenceMode?: KodaXRepoIntelligenceMode;
   repointelEndpoint?: string;
@@ -76,7 +75,6 @@ export interface CommandCallbacks {
   setThinking?: (enabled: boolean) => void;
   setReasoningMode?: (mode: KodaXReasoningMode) => void;
   setAgentMode?: (mode: KodaXAgentMode) => void;
-  setParallel?: (enabled: boolean) => void;
   setPermissionMode?: (mode: PermissionMode) => void;
   setRepoIntelligenceRuntime?: (update: {
     mode?: KodaXRepoIntelligenceMode;

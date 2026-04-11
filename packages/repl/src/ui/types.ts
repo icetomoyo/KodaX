@@ -159,7 +159,6 @@ export interface StatusBarProps {
   sessionId: string;
   permissionMode: PermissionMode;
   agentMode: KodaXAgentMode;
-  parallel?: boolean;
   provider: string;
   model: string;
   tokenUsage?: {
@@ -237,7 +236,6 @@ export interface AppProps {
   onSubmit: (input: string) => Promise<void>;
   permissionMode?: PermissionMode;
   agentMode?: KodaXAgentMode;
-  parallel?: boolean;
 }
 
 // ============================================================================

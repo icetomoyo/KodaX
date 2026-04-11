@@ -52,6 +52,15 @@ const REPO_INTELLIGENCE_WORKING_TOOL_NAME_SET = new Set<string>(
   REPO_INTELLIGENCE_WORKING_TOOL_NAMES,
 );
 
+export const MCP_TOOL_NAMES = [
+  'mcp_search',
+  'mcp_describe',
+  'mcp_call',
+  'mcp_read_resource',
+] as const;
+
+const MCP_TOOL_NAME_SET = new Set<string>(MCP_TOOL_NAMES);
+
 function extractRequiredParams(
   inputSchema: KodaXToolDefinition['input_schema'] | undefined,
 ): string[] {
@@ -667,6 +676,16 @@ export function filterRepoIntelligenceWorkingToolNames<T extends string>(
   toolNames: readonly T[],
 ): T[] {
   return toolNames.filter((name) => !isRepoIntelligenceWorkingToolName(name));
+}
+
+export function isMcpToolName(name: string): boolean {
+  return MCP_TOOL_NAME_SET.has(name);
+}
+
+export function filterMcpToolNames<T extends string>(
+  toolNames: readonly T[],
+): T[] {
+  return toolNames.filter((name) => !isMcpToolName(name));
 }
 
 export async function executeTool(

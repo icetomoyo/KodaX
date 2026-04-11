@@ -55,7 +55,6 @@ describe('/compact command', () => {
       thinking: true,
       reasoningMode: 'auto',
       agentMode: 'ama',
-      parallel: false,
       permissionMode: 'accept-edits',
     };
 

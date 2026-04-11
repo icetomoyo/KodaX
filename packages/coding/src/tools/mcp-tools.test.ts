@@ -25,7 +25,7 @@ describe('MCP retrieval tools', () => {
     tempDirs.push(tempDir);
     const fixture = await createMcpTestServerFixture(tempDir);
     const runtime = createExtensionRuntime().activate();
-    await registerConfiguredMcpCapabilityProvider(runtime, fixture.config);
+    await registerConfiguredMcpCapabilityProvider(runtime, fixture.servers, { cacheDir: fixture.cacheDir });
     const ctx: KodaXToolExecutionContext = {
       backups: new Map(),
       executionCwd: tempDir,

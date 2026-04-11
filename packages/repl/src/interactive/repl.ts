@@ -308,7 +308,6 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   const initialReasoningMode = resolveInitialReasoningMode(options, config);
   const initialAgentMode = options.agentMode ?? (config as { agentMode?: 'ama' | 'sa' }).agentMode ?? 'ama';
   const initialThinking = initialReasoningMode !== 'off';
-  const initialParallel = options.parallel ?? (config as { parallel?: boolean }).parallel ?? false;
   const initialPermissionMode: PermissionMode =
     normalizePermissionMode((config as { permissionMode?: string }).permissionMode, 'accept-edits') ?? 'accept-edits';
   const repoIntelligenceRuntime = resolveRepoIntelligenceRuntimeConfig();
@@ -326,7 +325,6 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     thinking: initialThinking,
     reasoningMode: initialReasoningMode,
     agentMode: initialAgentMode,
-    parallel: initialParallel,
     permissionMode: initialPermissionMode,
     repoIntelligenceMode: repoIntelligenceRuntime.mode,
     repointelEndpoint: repoIntelligenceRuntime.endpoint,
@@ -419,7 +417,6 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
       currentConfig.provider,
       effectiveModel,
       currentConfig.reasoningMode,
-      currentConfig.parallel,
     ));
   }
 
@@ -468,7 +465,6 @@ Keyboard Shortcuts:
   // Fix: Ensure session.id is set to reuse same session - 修复：确保 session.id 被设置以复用同一 session
   let currentOptions: RepLOptions = {
     ...options,
-    parallel: initialParallel,
     reasoningMode: initialReasoningMode,
     thinking: initialThinking,
     context: {
@@ -644,12 +640,6 @@ Keyboard Shortcuts:
       currentOptions.reasoningMode = mode;
       currentOptions.thinking = thinking;
       statusBar?.update({ reasoningMode: mode });
-    },
-    setParallel: (enabled: boolean) => {
-      // Persistence is handled by the command layer; this callback only syncs runtime state and UI.
-      currentConfig.parallel = enabled;
-      currentOptions.parallel = enabled;
-      statusBar?.update({ parallel: enabled });
     },
     setPermissionMode: (mode: PermissionMode) => {
       currentConfig.permissionMode = mode;
@@ -1502,11 +1492,7 @@ function printStartupBanner(config: CurrentConfig, mode: string, compactionInfo?
     chalk.hex(theme.colors.dim)('  |  Reasoning: ') +
     (config.reasoningMode === 'off'
       ? chalk.hex(theme.colors.dim)('off')
-      : chalk.hex(theme.colors.success)(config.reasoningMode)) +
-    chalk.hex(theme.colors.dim)('  |  Execution: ') +
-    (config.parallel
-      ? chalk.hex(theme.colors.success)('parallel')
-      : chalk.hex(theme.colors.dim)('sequential'))
+      : chalk.hex(theme.colors.success)(config.reasoningMode))
   );
 
   // Compaction info
@@ -1529,7 +1515,6 @@ function printStartupBanner(config: CurrentConfig, mode: string, compactionInfo?
   console.log(chalk.hex(theme.colors.dim)('  Quick tips:'));
   console.log(chalk.hex(theme.colors.primary)('    /help      ') + chalk.hex(theme.colors.dim)('Show all commands'));
   console.log(chalk.hex(theme.colors.primary)('    /mode      ') + chalk.hex(theme.colors.dim)('Switch permission mode'));
-  console.log(chalk.hex(theme.colors.primary)('    /parallel  ') + chalk.hex(theme.colors.dim)('Toggle parallel tool execution'));
   console.log(chalk.hex(theme.colors.primary)('    /clear     ') + chalk.hex(theme.colors.dim)('Clear conversation'));
   console.log(chalk.hex(theme.colors.primary)('    @path      ') + chalk.hex(theme.colors.dim)('Attach image to context'));
   console.log(chalk.hex(theme.colors.primary)('    !cmd       ') + chalk.hex(theme.colors.dim)('Run read-only shell command'));

@@ -36,6 +36,8 @@ export {
   listToolDefinitions,
   isRepoIntelligenceWorkingToolName,
   filterRepoIntelligenceWorkingToolNames,
+  filterMcpToolNames,
+  MCP_TOOL_NAMES,
   executeTool,
 } from './registry.js';
 export { toolRead } from './read.js';

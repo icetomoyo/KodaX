@@ -351,7 +351,6 @@ function buildStatusBarSegments(props: StatusBarProps): StatusBarSegment[] {
     sessionId,
     permissionMode,
     agentMode,
-    parallel = false,
     provider,
     model,
     tokenUsage,
@@ -389,11 +388,6 @@ function buildStatusBarSegments(props: StatusBarProps): StatusBarSegment[] {
       id: "permission-mode",
       text: permissionMode.toUpperCase(),
       color: getPermissionModeColor(permissionMode),
-    },
-    {
-      id: "execution-mode",
-      text: parallel ? "parallel" : "sequential",
-      color: parallel ? "green" : "gray",
     },
   ];
 

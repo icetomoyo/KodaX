@@ -30,7 +30,7 @@ import {
   type KodaXAgentMode,
   type KodaXReasoningMode,
   type KodaXReasoningOverride,
-  type KodaXMcpConfig,
+  type KodaXMcpServersConfig,
   type KodaXCustomProviderConfig,
 } from '@kodax/coding';
 
@@ -574,13 +574,12 @@ export function loadConfig(): {
   thinking?: boolean;
   reasoningMode?: KodaXReasoningMode;
   agentMode?: KodaXAgentMode;
-  parallel?: boolean;
   permissionMode?: string;
   providerReasoningOverrides?: Record<string, KodaXReasoningOverride>;
   providerModels?: Record<string, string[]>;
   customProviders?: KodaXCustomProviderConfig[];
   extensions?: string[];
-  mcp?: KodaXMcpConfig;
+  mcpServers?: KodaXMcpServersConfig;
   repoIntelligenceMode?: 'auto' | 'off' | 'oss' | 'premium-shared' | 'premium-native';
   repointelEndpoint?: string;
   repointelBin?: string;
@@ -594,13 +593,12 @@ export function loadConfig(): {
         thinking?: boolean;
         reasoningMode?: KodaXReasoningMode;
         agentMode?: KodaXAgentMode;
-        parallel?: boolean;
         permissionMode?: string;
         providerReasoningOverrides?: Record<string, KodaXReasoningOverride>;
         providerModels?: Record<string, string[]>;
         customProviders?: KodaXCustomProviderConfig[];
         extensions?: unknown;
-        mcp?: KodaXMcpConfig;
+        mcpServers?: KodaXMcpServersConfig;
         repoIntelligenceMode?: 'auto' | 'off' | 'oss' | 'premium-shared' | 'premium-native';
         repointelEndpoint?: string;
         repointelBin?: string;
@@ -647,13 +645,12 @@ export function saveConfig(config: {
   thinking?: boolean;
   reasoningMode?: KodaXReasoningMode;
   agentMode?: KodaXAgentMode;
-  parallel?: boolean;
   permissionMode?: string;
   providerReasoningOverrides?: Record<string, KodaXReasoningOverride>;
   providerModels?: Record<string, string[]>;
   customProviders?: KodaXCustomProviderConfig[];
   extensions?: string[];
-  mcp?: KodaXMcpConfig;
+  mcpServers?: KodaXMcpServersConfig;
   repoIntelligenceMode?: 'auto' | 'off' | 'oss' | 'premium-shared' | 'premium-native';
   repointelEndpoint?: string;
   repointelBin?: string;

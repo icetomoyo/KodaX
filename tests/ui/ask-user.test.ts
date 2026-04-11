@@ -3,7 +3,7 @@ import type { AskUserQuestionOptions } from "../../packages/coding/src/types.js"
 import {
   getAskUserDialogTitle,
   isPlanHandoffRequest,
-  resolveAskUserDismissChoice,
+  resolveAskUserDefaultChoice,
   shouldSwitchToAcceptEdits,
   toSelectOptions,
 } from "../../packages/repl/src/ui/utils/ask-user.js";
@@ -45,13 +45,13 @@ describe("ask-user plan handoff helpers", () => {
     ).toBe(false);
   });
 
-  it("uses a safe dismissal value for plan handoff dialogs", () => {
-    expect(resolveAskUserDismissChoice(createPlanHandoffOptions())).toBe("stay-plan");
+  it("defaults to the first option (accept) for plan handoff on empty Enter", () => {
+    expect(resolveAskUserDefaultChoice(createPlanHandoffOptions())).toBe("accept-edits");
   });
 
   it("prefers an explicit cancel option when dismissing generic questions", () => {
     expect(
-      resolveAskUserDismissChoice({
+      resolveAskUserDefaultChoice({
         question: "Proceed?",
         options: [
           { label: "Apply", value: "apply" },
@@ -63,7 +63,7 @@ describe("ask-user plan handoff helpers", () => {
 
   it("returns an empty choice when dismissing generic questions without cancel", () => {
     expect(
-      resolveAskUserDismissChoice({
+      resolveAskUserDefaultChoice({
         question: "Proceed?",
         options: [
           { label: "Apply", value: "apply" },
@@ -82,6 +82,10 @@ describe("ask-user plan handoff helpers", () => {
     expect(shouldSwitchToAcceptEdits("plan", options, "stay-plan")).toBe(false);
   });
 
+  it("uses the LLM-provided question text directly for dialog title", () => {
+    expect(getAskUserDialogTitle(createPlanHandoffOptions())).toBe("Plan is complete. Start editing?");
+  });
+
   it("preserves labels and descriptions for Ink select dialogs", () => {
     expect(toSelectOptions(createPlanHandoffOptions().options)).toEqual([
       {
@@ -95,6 +99,5 @@ describe("ask-user plan handoff helpers", () => {
         value: "stay-plan",
       },
     ]);
-    expect(getAskUserDialogTitle(createPlanHandoffOptions())).toContain("accept-edits");
   });
 });

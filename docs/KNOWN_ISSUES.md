@@ -50,11 +50,48 @@ _Last Updated: 2026-04-08_
 
 | 105 | Medium | Open | kodax -c 历史记录未注入 LLM 上下文 - resume 路径可能存在 gitRoot 过滤不一致 | v0.7.14 | - | 2026-04-03 | - |
 | 106 | High | Open | Managed-task structured worker blocks remain text-coupled and can fail closed on protocol drift | v0.7.14 | - | 2026-04-08 | - |
+| 107 | Medium | Open | harnessProfile 类型命名残留 - H0/H1/H2 应替换为 worker-chain composition | v0.7.16 | - | 2026-04-11 | - |
 
 ---
 
 ## Issue Details
 <!-- Full details for each issue - REQUIRED for all issues -->
+---
+### 107: harnessProfile 类型命名残留 - H0/H1/H2 应替换为 worker-chain composition
+
+- **Priority**: Medium
+- **Status**: Open
+- **Introduced**: v0.7.16
+- **Fixed**: -
+- **Created**: 2026-04-11
+
+- **Original Problem**:
+  FEATURE_061 移除了预 Scout 状态机和 Tactical Flow，但 `harnessProfile: 'H0_DIRECT' | 'H1_EXECUTE_EVAL' | 'H2_PLAN_EXECUTE_EVAL'` 类型命名残留在 237 处引用、10 个文件中。这些名字编码的是"哪个预设配置"的思维，而 FEATURE_061 后系统实际运作方式是"Scout 决定需要哪些角色"。
+
+- **Context**:
+  `harnessProfile` 字段在以下位置被广泛使用：
+  - `types.ts`（5 处）：类型定义
+  - `reasoning.ts`（29 处）：路由决策
+  - `task-engine.ts`（106 处）：核心引擎
+  - `provider-policy.ts`（4 处）：provider 策略
+  - `agent.ts`（1 处）：agent 层
+  - 各测试文件（~90 处）
+
+  当前 `harnessProfile` 实际上只是一个 worker chain 的标签：
+  - `H0_DIRECT` → `[scout]`
+  - `H1_EXECUTE_EVAL` → `[generator, evaluator]`
+  - `H2_PLAN_EXECUTE_EVAL` → `[planner, generator, evaluator]`
+
+  `buildManagedTaskWorkers` 已经在做 worker chain 映射，harnessProfile 只是触发条件。
+
+- **Planned Resolution**:
+  1. 在 `KodaXTaskRoutingDecision` 中用 `workerChain: KodaXTaskRole[]` 替代 `harnessProfile`
+  2. 保留 `harnessProfile` 作为 derived label（向后兼容导出类型）
+  3. 内部路由逻辑改为基于 `workerChain` 而非 `harnessProfile`
+  4. 逐步更新 237 处引用
+
+- **Workaround**: 无需 workaround，当前命名不影响功能正确性。
+
 ---
 ### 106: Managed-task structured worker blocks remain text-coupled and can fail closed on protocol drift
 - **Priority**: High
@@ -1826,6 +1863,10 @@ _Last Updated: 2026-04-08_
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-04-11: Issue 107 added
+- Added 107: harnessProfile 类型命名残留 - H0/H1/H2 应替换为 worker-chain composition (Medium Priority)
+- 由 FEATURE_061 Phase 5 识别，237 处引用跨 10 文件，需 v0.7.16 提交后独立处理
 
 ### 2026-04-03: Issue 105 added
 - Added 105: kodax -c 历史记录未注入 LLM 上下文 - resume 路径可能存在 gitRoot 过滤不一致 (Medium Priority)

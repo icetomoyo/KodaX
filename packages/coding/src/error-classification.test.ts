@@ -55,4 +55,46 @@ describe('classifyError', () => {
       shouldCleanup: true,
     });
   });
+
+  it('treats Chinese network error from provider as transient', () => {
+    const error = new KodaXProviderError(
+      'zhipu-coding API error: {"type":"error","error":{"message":"网络错误，错误id：202604111352273367dc705f3c4786，请联系客服。","code":"1234"}}',
+      'zhipu-coding',
+    );
+
+    expect(classifyError(error)).toMatchObject({
+      category: ErrorCategory.TRANSIENT,
+      retryable: true,
+      maxRetries: 3,
+      shouldCleanup: true,
+    });
+  });
+
+  it('treats Chinese timeout error from provider as transient', () => {
+    const error = new KodaXProviderError(
+      'zhipu API error: 请求超时',
+      'zhipu',
+    );
+
+    expect(classifyError(error)).toMatchObject({
+      category: ErrorCategory.TRANSIENT,
+      retryable: true,
+      maxRetries: 3,
+      shouldCleanup: true,
+    });
+  });
+
+  it('treats Chinese service busy error from provider as transient', () => {
+    const error = new KodaXProviderError(
+      'deepseek API error: 服务繁忙，请稍后重试',
+      'deepseek',
+    );
+
+    expect(classifyError(error)).toMatchObject({
+      category: ErrorCategory.TRANSIENT,
+      retryable: true,
+      maxRetries: 3,
+      shouldCleanup: true,
+    });
+  });
 });

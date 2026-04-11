@@ -271,23 +271,30 @@ export interface KodaXProviderPolicyHints {
   workIntent?: KodaXTaskWorkIntent;
 }
 
-export type KodaXMcpTransport = 'stdio';
+export type KodaXMcpTransport = 'stdio' | 'sse' | 'streamable-http';
 export type KodaXMcpConnectMode = 'lazy' | 'prewarm' | 'disabled';
 
 export interface KodaXMcpServerConfig {
-  type: KodaXMcpTransport;
-  command: string;
+  /** Transport type. Defaults to 'stdio' when omitted. */
+  type?: KodaXMcpTransport;
+  /** stdio: executable command. */
+  command?: string;
+  /** stdio: command arguments. */
   args?: string[];
+  /** stdio: working directory for the spawned process. */
   cwd?: string;
+  /** stdio: extra environment variables for the spawned process. */
   env?: Record<string, string>;
+  /** sse / streamable-http: server endpoint URL. */
+  url?: string;
+  /** sse / streamable-http: extra HTTP headers (e.g. Authorization). */
+  headers?: Record<string, string>;
   connect?: KodaXMcpConnectMode;
   startupTimeoutMs?: number;
   requestTimeoutMs?: number;
 }
-export interface KodaXMcpConfig {
-  servers?: Record<string, KodaXMcpServerConfig>;
-  cacheDir?: string;
-}
+/** Flat map of MCP server configs, keyed under `mcpServers` in config.json. */
+export type KodaXMcpServersConfig = Record<string, KodaXMcpServerConfig>;
 
 export type KodaXRepoIntelligenceMode =
   | 'auto'
@@ -704,7 +711,6 @@ export interface KodaXOptions {
   reasoningMode?: KodaXReasoningMode;
   agentMode?: KodaXAgentMode;
   maxIter?: number;
-  parallel?: boolean;
   session?: KodaXSessionOptions;
   context?: KodaXContextOptions;
   events?: KodaXEvents;

@@ -8,6 +8,35 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.7.16] - 2026-04-11
+
+### Added
+- **FEATURE_061 Phase 2 — Scout direct completion**: Scout now completes H0 tasks end-to-end as both judge and executor, eliminating the scout-then-hand-off round-trip
+- **FEATURE_061 Phase 3 — Context continuation across role upgrades**: Scout→Generator (H1) and Scout→Planner (H2) preserve session context, eliminating cold-start context breaks
+- **FEATURE_061 Phase 4 — Role-level subagent capability**: Every core role (Scout/Planner/Generator/Evaluator) can spawn subagents for parallel work via `runOrchestration`
+- **FEATURE_062 — Managed task budget simplification**: Immutable budget model with 2 fields + 4 functions replaces 10 fields + 14 functions; convergence signal inline in `buildWorkerRunOptions`
+- **MCP transport module**: New `transport.ts` for improved MCP provider capability
+
+### Changed
+- **FEATURE_061 Phase 1 — Pre-Scout routing layers removed**: No more LLM routing call, harness guardrails, or Scout bypass before Scout entry; Intent Gate goes straight to Scout
+- **Reasoning pipeline trimmed**: `createReasoningPlan` uses heuristic-only routing; `routeTaskWithLLM` dead-coded (FEATURE_061 Phase 1)
+- **Harness guardrail system simplified**: `applyManagedHarnessGuardrailsToPlan` passes review context without forcing harness floors (FEATURE_061 Phase 1)
+- **Task engine simplified**: ~3200 net lines removed from `task-engine.ts` — tactical flows, budget zones, and pre-Scout bypass paths consolidated
+- **REPL commands updated**: Command types and interactive commands adapted for simplified AMA flow
+- **Status bar and UI surfaces updated**: Status bar, shortcuts, surface status adapted for Scout-first architecture
+- **Clipboard utility hardened**: Improved clipboard handling with expanded test coverage
+- **Provider resilience expanded**: Error classification and resilience tests updated for broader transient pattern coverage
+- **ACP server updated**: ACP server and CLI option helpers updated for Scout-first routing
+
+### Removed
+- `shouldBypassScoutForManagedH0` and Scout bypass path — all AMA tasks now go through Scout (FEATURE_061 Phase 1)
+- `resolveManagedHarnessGuardrail` and pre-Scout harness floor enforcement (FEATURE_061 Phase 1)
+- 3 Tactical Flow variants (`runTacticalReviewFlow`, `runTacticalInvestigationFlow`, `runTacticalLookupFlow`) — replaced by role-level subagent capability (FEATURE_061 Phase 4)
+- Budget zone functions (`resolveBudgetZone`, `resolveWorkerIterLimits`, `formatBudgetAdvisory`, reserve logic) — replaced by simple cap/used model (FEATURE_062)
+- ~3200 net lines removed across task-engine, reasoning, and related modules
+
+---
+
 ## [0.7.15] - 2026-04-10
 
 ### Added

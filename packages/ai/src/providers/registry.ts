@@ -74,7 +74,10 @@ class AnthropicProvider extends KodaXAnthropicCompatProvider {
     supportsThinking: true,
     reasoningCapability: 'native-budget',
     contextWindow: 200000,  // 200K tokens
-    maxOutputTokens: 32768,
+    // Anthropic API: max_tokens = thinking + output combined budget.
+    // With thinkingBudgetCap=28000, 32768 left only ~4768 for actual output.
+    // 64000 ensures ~36000+ tokens for output even at maximum thinking.
+    maxOutputTokens: 64000,
     thinkingBudgetCap: 28000,
   };
   constructor() { super(); this.client = new Anthropic({ apiKey: this.getApiKey() }); }
@@ -93,7 +96,8 @@ class ZhipuCodingProvider extends KodaXAnthropicCompatProvider {
     supportsThinking: true,
     reasoningCapability: 'native-budget',
     contextWindow: 200000,
-    maxOutputTokens: 32768,
+    // GLM-5/5.1/4.7/4.6 all support 128K max output per Zhipu docs
+    maxOutputTokens: 128000,
     thinkingBudgetCap: 16000,
   };
   constructor() { super(); this.initClient(); }
@@ -108,7 +112,7 @@ class KimiCodeProvider extends KodaXAnthropicCompatProvider {
     supportsThinking: true,
     reasoningCapability: 'native-budget',
     contextWindow: 256000,
-    maxOutputTokens: 32768,
+    maxOutputTokens: 64000,
   };
   constructor() { super(); this.initClient(); }
 }
@@ -130,7 +134,8 @@ class MiniMaxCodingProvider extends KodaXAnthropicCompatProvider {
     supportsThinking: true,
     reasoningCapability: 'native-budget',
     contextWindow: 204800,
-    maxOutputTokens: 32768,
+    // MiniMax M2.7 supports 128K max output
+    maxOutputTokens: 128000,
   };
   constructor() { super(); this.initClient(); }
 }
@@ -168,7 +173,8 @@ class DeepSeekProvider extends KodaXOpenAICompatProvider {
     supportsThinking: true,
     reasoningCapability: 'native-toggle',
     contextWindow: 128000,
-    maxOutputTokens: 64000,
+    // DeepSeek V3.2: 32k max output
+    maxOutputTokens: 32768,
   };
   constructor() { super(); this.initClient(); }
 }

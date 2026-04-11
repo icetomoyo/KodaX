@@ -73,6 +73,8 @@ export interface KodaXStreamResult {
   toolBlocks: KodaXToolUseBlock[];
   thinkingBlocks: (KodaXThinkingBlock | KodaXRedactedThinkingBlock)[];
   usage?: KodaXTokenUsage;
+  /** Provider stop reason: 'end_turn' (normal), 'max_tokens' (truncated), 'stop_sequence', 'tool_use', etc. */
+  stopReason?: string;
 }
 
 // ============== 工具定义 ==============

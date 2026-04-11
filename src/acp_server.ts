@@ -517,7 +517,6 @@ export class KodaXAcpServer implements Agent {
       model: this.model,
       thinking: this.thinking,
       reasoningMode: this.reasoningMode,
-      parallel: false,
       abortSignal,
       session: {
         id: session.sessionId,

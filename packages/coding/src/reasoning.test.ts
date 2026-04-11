@@ -155,7 +155,7 @@ describe('reasoning reroute', () => {
     expect(decision.nextThinkingDepth).toBe('medium');
   });
 
-  it('uses structured router output and includes runtime evidence in the routing prompt', async () => {
+  it('uses heuristic routing in auto mode without calling the LLM router (FEATURE_061)', async () => {
     const provider = new CapturingProvider(JSON.stringify({
       primaryTask: 'bugfix',
       confidence: 0.91,
@@ -185,21 +185,14 @@ describe('reasoning reroute', () => {
     );
 
     expect(plan.decision.primaryTask).toBe('bugfix');
-    expect(['medium', 'high']).toContain(plan.decision.riskLevel);
     expect(plan.decision.recommendedMode).toBe('investigation');
-    expect(plan.decision.mutationSurface).toBe('code');
     expect(plan.promptOverlay).toContain('[Execution Mode: investigation]');
-    expect(plan.amaControllerDecision.profile).toBe('tactical');
-    expect(plan.amaControllerDecision.fanout.admissible).toBe(false);
-    expect(plan.amaControllerDecision.tactics).not.toContain('child-fanout');
+    expect(plan.decision.routingNotes).toContain(
+      'Pre-Scout LLM routing disabled (FEATURE_061 Phase 1); Scout is the routing authority.',
+    );
 
-    const routerPrompt = String(provider.lastMessages[0]?.content ?? '');
-    expect(routerPrompt).toContain('- git: unavailable');
-    expect(routerPrompt).toContain('recent session error');
-    expect(routerPrompt).toContain('recent message evidence');
-    expect(routerPrompt).toContain('runtime evidence');
-    expect(routerPrompt).toContain('- provider semantics: capturing-provider');
-    expect(routerPrompt).toContain('transport=native-api');
+    // LLM router should NOT have been called
+    expect(provider.lastMessages).toHaveLength(0);
   });
 
   it('keeps timeout-only routing evidence out of the router prompt', async () => {
@@ -254,34 +247,23 @@ describe('reasoning reroute', () => {
     expect(plan.decision.recommendedMode).toBe('implementation');
   });
 
-  it('logs router fallback failures when routing debug is enabled', async () => {
+  it('succeeds with a throwing provider since LLM router is bypassed (FEATURE_061)', async () => {
     const provider = new ThrowingProvider();
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const previous = process.env.KODAX_DEBUG_ROUTING;
-    process.env.KODAX_DEBUG_ROUTING = '1';
 
-    try {
-      await createReasoningPlan(
-        {
-          provider: 'openai',
-          reasoningMode: 'auto',
-        },
-        'Investigate why npm test is failing and fix it.',
-        provider,
-      );
+    const plan = await createReasoningPlan(
+      {
+        provider: 'openai',
+        reasoningMode: 'auto',
+      },
+      'Investigate why npm test is failing and fix it.',
+      provider,
+    );
 
-      expect(errorSpy).toHaveBeenCalledWith(
-        '[Routing] task router failed:',
-        expect.any(Error),
-      );
-    } finally {
-      if (previous === undefined) {
-        delete process.env.KODAX_DEBUG_ROUTING;
-      } else {
-        process.env.KODAX_DEBUG_ROUTING = previous;
-      }
-      errorSpy.mockRestore();
-    }
+    // Heuristic routing succeeds without calling the provider
+    expect(plan.decision.primaryTask).toBe('bugfix');
+    expect(plan.decision.routingNotes).toContain(
+      'Pre-Scout LLM routing disabled (FEATURE_061 Phase 1); Scout is the routing authority.',
+    );
   });
 
   it('falls back to heuristic reroute when the judge call fails', async () => {
@@ -473,13 +455,19 @@ describe('reasoning reroute', () => {
     expect(decision.complexity).toBe('simple');
   });
 
-  it('routes systemic cross-repo refactors into H2 coordinated execution', () => {
+  it('routes systemic cross-repo refactors to H0 with complexity hints for Scout', () => {
     const decision = buildFallbackRoutingDecision(
       'Refactor the monorepo architecture across packages and coordinate the whole repo migration.',
     );
 
     expect(decision.complexity).toBe('systemic');
-    expect(decision.harnessProfile).toBe('H2_PLAN_EXECUTE_EVAL');
+    // FEATURE_061: Pre-Scout harness is always H0; Scout decides actual harness.
+    expect(decision.harnessProfile).toBe('H0_DIRECT');
+    expect(decision.routingNotes).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('Scout is the routing authority'),
+      ]),
+    );
   });
 
   it('selects managed AMA profile only when heavier coordination remains load-bearing', () => {
@@ -661,17 +649,19 @@ describe('reasoning reroute', () => {
     );
 
     expect(decision.complexity).toBe('complex');
-    expect(decision.harnessProfile).toBe('H2_PLAN_EXECUTE_EVAL');
+    // FEATURE_061: Pre-Scout harness is always H0; Scout decides actual harness.
+    expect(decision.harnessProfile).toBe('H0_DIRECT');
     expect(decision.recommendedMode).toBe('planning');
     expect(decision.routingNotes).toEqual(
       expect.arrayContaining([
         expect.stringContaining('Repository intelligence elevated task complexity'),
         expect.stringContaining('cross-module impact'),
+        expect.stringContaining('Scout is the routing authority'),
       ]),
     );
   });
 
-  it('downgrades H2 routing to H1 on lossy bridge providers and records the reason', () => {
+  it('starts at H0 even on lossy bridge providers because Scout decides harness post-analysis', () => {
     const providerPolicy = evaluateProviderPolicy({
       providerName: 'gemini-cli',
       capabilityProfile: CLI_BRIDGE_PROFILE,
@@ -685,10 +675,11 @@ describe('reasoning reroute', () => {
       providerPolicy,
     );
 
-    expect(decision.harnessProfile).toBe('H1_EXECUTE_EVAL');
+    // FEATURE_061: Pre-Scout harness is always H0; Scout decides actual harness.
+    expect(decision.harnessProfile).toBe('H0_DIRECT');
     expect(decision.routingNotes).toEqual(
       expect.arrayContaining([
-        expect.stringContaining('Downgraded from H2 to H1'),
+        expect.stringContaining('Scout is the routing authority'),
       ]),
     );
   });
@@ -731,7 +722,7 @@ describe('reasoning reroute', () => {
     });
   });
 
-  it('includes repo-intelligence signals in the router prompt', async () => {
+  it('incorporates repo-intelligence signals into heuristic routing without LLM call (FEATURE_061)', async () => {
     const provider = new CapturingProvider(JSON.stringify({
       primaryTask: 'edit',
       confidence: 0.86,
@@ -741,7 +732,7 @@ describe('reasoning reroute', () => {
       reason: 'Implementation request in a cross-module area.',
     }));
 
-    await createReasoningPlan(
+    const plan = await createReasoningPlan(
       {
         provider: 'openai',
         reasoningMode: 'auto',
@@ -772,11 +763,14 @@ describe('reasoning reroute', () => {
       },
     );
 
-    const routerPrompt = String(provider.lastMessages[0]?.content ?? '');
-    expect(routerPrompt).toContain('repo intelligence: changedFiles=6');
-    expect(routerPrompt).toContain('crossModule=yes');
-    expect(routerPrompt).toContain('active module: packages/app');
-    expect(routerPrompt).toContain('repo risk hint: Changed scope crosses package boundaries.');
+    // Repo signals should influence the heuristic routing decision
+    expect(plan.decision.complexity).toBe('complex');
+    expect(plan.decision.routingNotes).toContain(
+      'Pre-Scout LLM routing disabled (FEATURE_061 Phase 1); Scout is the routing authority.',
+    );
+
+    // LLM router should NOT have been called
+    expect(provider.lastMessages).toHaveLength(0);
   });
 
   it('keeps massive reviews on the direct path and records their scale for evidence strategy', () => {
@@ -828,7 +822,7 @@ describe('reasoning reroute', () => {
     expect(decision.reviewScale).toBe('massive');
   });
 
-  it('allows read-only review to opt into H1 only when the user explicitly asks for a second pass', () => {
+  it('allows read-only review to signal explicit-check assurance while keeping H0 for Scout to decide', () => {
     const decision = buildFallbackRoutingDecision(
       'Please review this change set and do a second pass to double-check the important findings.',
     );
@@ -836,8 +830,9 @@ describe('reasoning reroute', () => {
     expect(decision.primaryTask).toBe('review');
     expect(decision.mutationSurface).toBe('read-only');
     expect(decision.assuranceIntent).toBe('explicit-check');
-    expect(decision.needsIndependentQA).toBe(true);
-    expect(decision.harnessProfile).toBe('H1_EXECUTE_EVAL');
+    // FEATURE_061: Pre-Scout harness is always H0; Scout sees the explicit-check
+    // signal and decides whether to upgrade to H1.
+    expect(decision.harnessProfile).toBe('H0_DIRECT');
     expect(decision.topologyCeiling).toBe('H1_EXECUTE_EVAL');
   });
 
@@ -851,14 +846,16 @@ describe('reasoning reroute', () => {
     expect(decision.topologyCeiling).toBe('H0_DIRECT');
   });
 
-  it('lets docs-only work opt into H1 when the user explicitly asks for a second pass', () => {
+  it('lets docs-only work signal explicit-check assurance while keeping H0 for Scout to decide', () => {
     const decision = buildFallbackRoutingDecision(
       'Write the PRD and ADR for this feature, then do a second pass to double-check the docs for gaps.',
     );
 
     expect(decision.mutationSurface).toBe('docs-only');
     expect(decision.assuranceIntent).toBe('explicit-check');
-    expect(decision.harnessProfile).toBe('H1_EXECUTE_EVAL');
+    // FEATURE_061: Pre-Scout harness is always H0; Scout sees the explicit-check
+    // signal and decides whether to upgrade to H1.
+    expect(decision.harnessProfile).toBe('H0_DIRECT');
     expect(decision.topologyCeiling).toBe('H1_EXECUTE_EVAL');
   });
 
@@ -879,13 +876,15 @@ describe('reasoning reroute', () => {
     expect(decision.topologyCeiling).toBe('H0_DIRECT');
   });
 
-  it('lets pure Chinese review prompts opt into H1 only with explicit stronger-check language', () => {
+  it('lets pure Chinese review prompts signal explicit-check while keeping H0 for Scout to decide', () => {
     const decision = buildFallbackRoutingDecision('请评审当前代码改动，并再检查一遍关键结论。');
 
     expect(decision.primaryTask).toBe('review');
     expect(decision.mutationSurface).toBe('read-only');
     expect(decision.assuranceIntent).toBe('explicit-check');
-    expect(decision.harnessProfile).toBe('H1_EXECUTE_EVAL');
+    // FEATURE_061: Pre-Scout harness is always H0; Scout sees the explicit-check
+    // signal and decides whether to upgrade to H1.
+    expect(decision.harnessProfile).toBe('H0_DIRECT');
     expect(decision.topologyCeiling).toBe('H1_EXECUTE_EVAL');
   });
 

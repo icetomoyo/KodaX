@@ -13,11 +13,11 @@
 
 | Item | Value |
 |---|---|
-| Tracked feature IDs | `001-061` |
-| Total tracked features | `61` |
+| Tracked feature IDs | `001-062` |
+| Total tracked features | `62` |
 | Completed | `53` |
 | InProgress | `1` |
-| Planned | `7` |
+| Planned | `8` |
 | Current released version | `v0.7.15` |
 
 ### 各版本待做分布
@@ -27,7 +27,7 @@
 | `v0.7.20` | `1` |
 | `v0.7.25` | `0` |
 | `v0.7.30` | `1` |
-| `v0.7.16` | `1` |
+| `v0.7.16` | `2` |
 | `v0.8.0` | `3` |
 | `v0.9.0` | `0` |
 | `v1.0.0` | `1` |
@@ -50,6 +50,7 @@
 | `058` | Transcript Native Scrollback Dump | Enhancement | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_058-transcript-native-scrollback-dump) |
 | `059` | Managed Task Structured Protocol V2 | Internal | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_059-managed-task-structured-protocol-v2) |
 | `061` | Scout-First AMA Architecture Simplification | Refactor | High | `v0.7.16` | [v0.7.16](features/v0.7.16.md#feature_061-scout-first-ama-architecture-simplification) |
+| `062` | Managed Task Budget Simplification | Refactor | Medium | `v0.7.16` | [v0.7.16](features/v0.7.16.md#feature_062-managed-task-budget-simplification) |
 | `060` | Claude-Aligned Bounded-Memory Runtime and OOM Hardening | Internal | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_060-claude-aligned-bounded-memory-runtime-and-oom-hardening) |
 | `026` | Roadmap Integrity and Planning Hygiene | Internal | High | `v0.7.20` | [v0.7.20](features/v0.7.20.md#feature_026-roadmap-integrity-and-planning-hygiene) |
 | `030` | Multi-Surface Delivery | Enhancement | High | `v1.0.0` | [v1.0.0](features/v1.0.0.md#feature_030-multi-surface-delivery) |

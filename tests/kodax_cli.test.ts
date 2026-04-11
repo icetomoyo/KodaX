@@ -19,7 +19,6 @@ import {
   processCommandCall,
   KODAX_COMMANDS_DIR,
   KodaXCommand,
-  resolveCliParallel,
 } from '../src/kodax_cli.js';
 
 // 默认 provider
@@ -637,29 +636,14 @@ describe('CLI Behavior', () => {
 
   it('should handle combined short options', () => {
     const program = createTestCommand();
-    // Note: commander doesn't support combined short options like -tyj
+    // Note: commander doesn't support combined short options like -ty
     // Each option must be separate or have its own value
-    program.parse(['node', 'test', '-t', '-y', '-j']);
+    program.parse(['node', 'test', '-t', '-y']);
     const opts = program.opts();
     expect(opts.thinking).toBe(true);
     expect(opts.auto).toBe(true);
-    expect(opts.parallel).toBe(true);
   });
 
-  it('should fall back to config parallel mode when CLI flag is omitted', () => {
-    const program = createTestCommand();
-    program.parse(['node', 'test']);
-
-    expect(resolveCliParallel(program, program.opts(), { parallel: true })).toBe(true);
-    expect(resolveCliParallel(program, program.opts(), { parallel: false })).toBe(false);
-  });
-
-  it('should let the CLI parallel flag override persisted config', () => {
-    const program = createTestCommand();
-    program.parse(['node', 'test', '-j']);
-
-    expect(resolveCliParallel(program, program.opts(), { parallel: false })).toBe(true);
-  });
 });
 
 describe('parsePermissionModeOption', () => {

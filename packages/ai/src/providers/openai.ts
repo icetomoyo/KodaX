@@ -460,7 +460,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
           catch { toolBlocks.push({ type: 'tool_use', id: tc.id, name: tc.name, input: {} }); }
         }
       }
-      return { textBlocks, toolBlocks, thinkingBlocks, usage };
+      return { textBlocks, toolBlocks, thinkingBlocks, usage, stopReason: finishReason ?? undefined };
     }, signal, 3, streamOptions?.onRateLimit);
   }
 
@@ -596,6 +596,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         toolBlocks,
         thinkingBlocks,
         usage: normalizeOpenAIUsage(response.usage as OpenAIUsageLike),
+        stopReason: choice?.finish_reason ?? undefined,
       };
     }, signal, 3, streamOptions?.onRateLimit);
   }

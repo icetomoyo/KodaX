@@ -210,13 +210,41 @@ export interface HistorySeedSourceMessage {
  * Assistant messages preserve thinking blocks as dedicated history items so
  * restored sessions render with the same styling as live thinking output.
  */
+// Markers that identify internal managed task worker prompts (never user-visible).
+const MANAGED_WORKER_PROMPT_MARKERS = [
+  'You are the Scout role',
+  'You are the Generator role',
+  'You are the Planner role',
+  'You are the Evaluator role',
+];
+
+// Protocol fenced blocks that should be stripped from assistant text during session restore.
+const MANAGED_PROTOCOL_BLOCK_PATTERN = /\r?\n?\`\`\`kodax-task-[\w-]+[\s\S]*?\`\`\`\s*/g;
+
+function isManagedWorkerPrompt(text: string): boolean {
+  return MANAGED_WORKER_PROMPT_MARKERS.some((marker) => text.includes(marker));
+}
+
+function stripManagedProtocolBlocks(text: string): string {
+  return text.replace(MANAGED_PROTOCOL_BLOCK_PATTERN, '').trim();
+}
+
 export function extractHistorySeedsFromMessage(message: HistorySeedSourceMessage): RestoredHistorySeed[] {
   switch (message.role) {
-    case "assistant":
-      return extractAssistantHistorySeeds(message.content);
+    case "assistant": {
+      const seeds = extractAssistantHistorySeeds(message.content);
+      // Strip protocol blocks from assistant text; drop seeds that become empty.
+      return seeds
+        .map((seed) => ({ ...seed, text: stripManagedProtocolBlocks(seed.text) }))
+        .filter((seed) => seed.text.length > 0);
+    }
     case "user": {
       const content = extractTextContent(message.content);
-      return content.trim().length > 0 ? [{ type: "user", text: content }] : [];
+      // Skip internal worker prompts (Scout/Generator/Planner/Evaluator role instructions).
+      if (content.trim().length === 0 || isManagedWorkerPrompt(content)) {
+        return [];
+      }
+      return [{ type: "user", text: content }];
     }
     case "system": {
       const content = extractTextContent(message.content);

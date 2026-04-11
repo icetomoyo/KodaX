@@ -8,7 +8,6 @@ describe("surface-status", () => {
       sessionId: "s1",
       permissionMode: "plan",
       agentMode: "ama",
-      parallel: true,
       provider: "openai",
       model: "gpt-5.4",
       thinking: true,

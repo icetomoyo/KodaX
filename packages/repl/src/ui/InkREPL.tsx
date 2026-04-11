@@ -240,7 +240,7 @@ import { resolveTranscriptDragEdgeScrollDirection } from "../tui/core/scroll.js"
 import { getRendererInstance } from "../tui/core/root.js";
 import {
   getAskUserDialogTitle,
-  resolveAskUserDismissChoice,
+  resolveAskUserDefaultChoice,
   shouldSwitchToAcceptEdits,
   toSelectOptions,
   type SelectOption,
@@ -1062,12 +1062,6 @@ const Banner: React.FC<BannerProps> = ({
         <Text color={theme.colors.accent}>
           {config.permissionMode}
         </Text>
-        <Text dimColor>
-          {" | "}
-        </Text>
-        <Text color={config.parallel ? theme.colors.success : theme.colors.dim}>
-          {config.parallel ? "parallel" : "sequential"}
-        </Text>
         {config.reasoningMode !== 'off' && (
           <Text color={theme.colors.warning}>
             {` +reason:${config.reasoningMode}`}
@@ -1123,7 +1117,7 @@ function buildBannerTranscriptSection(props: BannerProps): TranscriptSection {
   const triggerK = props.compactionInfo
     ? Math.round(props.compactionInfo.contextWindow * props.compactionInfo.triggerPercent / 100 / 1000)
     : 0;
-  const versionLine = `  v${KODAX_VERSION} | ${props.config.provider}/${model} [${reasoningCapabilityShort}] | ${props.config.agentMode.toUpperCase()} | ${props.config.permissionMode} | ${props.config.parallel ? "parallel" : "sequential"}${props.config.reasoningMode !== "off" ? ` +reason:${props.config.reasoningMode}` : ""}`;
+  const versionLine = `  v${KODAX_VERSION} | ${props.config.provider}/${model} [${reasoningCapabilityShort}] | ${props.config.agentMode.toUpperCase()} | ${props.config.permissionMode}${props.config.reasoningMode !== "off" ? ` +reason:${props.config.reasoningMode}` : ""}`;
   const compactionLine = props.compactionInfo
     ? `  Context: ${ctxK}k | Compaction: ${props.compactionInfo.enabled ? "on" : "off"} @ ${props.compactionInfo.triggerPercent}% (${triggerK}k)`
     : undefined;
@@ -2651,7 +2645,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         sessionId: context.sessionId,
         permissionMode: currentConfig.permissionMode,
         agentMode: currentConfig.agentMode,
-        parallel: currentConfig.parallel,
         provider: currentConfig.provider,
         model: currentConfig.model ?? getProviderModel(currentConfig.provider) ?? currentConfig.provider,
         thinking: currentConfig.thinking,
@@ -2679,7 +2672,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       context.sessionId,
       currentConfig.permissionMode,
       currentConfig.agentMode,
-      currentConfig.parallel,
       currentConfig.provider,
       currentConfig.model,
       currentConfig.thinking,
@@ -3564,7 +3556,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   // Note: permissionMode and alwaysAllowTools are stored separately for permission checks
   const currentOptionsRef = useRef<InkREPLOptions>({
     ...options,
-    parallel: currentConfig.parallel,
     thinking: currentConfig.thinking,
     reasoningMode: currentConfig.reasoningMode,
     agentMode: currentConfig.agentMode,
@@ -4772,10 +4763,16 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         getAskUserDialogTitle(options),
         toSelectOptions(options.options),
       );
-      const resolvedValue = selectedValue ?? resolveAskUserDismissChoice(options);
+      const resolvedValue = selectedValue ?? resolveAskUserDefaultChoice(options);
 
       if (shouldSwitchToAcceptEdits(permissionModeRef.current, options, resolvedValue)) {
         setSessionPermissionMode("accept-edits");
+        return JSON.stringify({
+          choice: resolvedValue,
+          mode_switched: true,
+          new_mode: "accept-edits",
+          note: "Permission mode switched to accept-edits. You can now write files, run bash commands, and make edits. Proceed with the implementation.",
+        });
       }
 
       return resolvedValue;
@@ -5247,7 +5244,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       {
         ...currentOptionsRef.current,
         provider: currentConfig.provider,
-        parallel: currentConfig.parallel,
         thinking: currentConfig.thinking,
         reasoningMode: currentConfig.reasoningMode,
       },
@@ -5558,14 +5554,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             }));
             currentOptionsRef.current.agentMode = mode;
           },
-          setParallel: (enabled: boolean) => {
-            // Persistence is handled by the command layer; this callback only syncs runtime state and UI.
-            setCurrentConfig((prev) => ({
-              ...prev,
-              parallel: enabled,
-            }));
-            currentOptionsRef.current.parallel = enabled;
-          },
           setPermissionMode: (mode: PermissionMode) => {
             setSessionPermissionMode(mode);
           },
@@ -5712,7 +5700,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             ...currentOptionsRef.current,
             provider: currentConfig.provider,
             model: currentConfig.model,
-            parallel: currentConfig.parallel,
             thinking: currentConfig.thinking,
             reasoningMode: currentConfig.reasoningMode,
             agentMode: currentConfig.agentMode,
@@ -5927,7 +5914,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           await runWithPlanMode(preparedArtifacts.promptText, {
             ...currentOptionsRef.current,
             provider: currentConfig.provider,
-            parallel: currentConfig.parallel,
             thinking: currentConfig.thinking,
             reasoningMode: currentConfig.reasoningMode,
             agentMode: currentConfig.agentMode,
@@ -6363,9 +6349,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         onSetPermissionMode={(mode) => {
           setSessionPermissionMode(mode);
         }}
-        onSetParallel={(enabled) => {
-          currentOptionsRef.current.parallel = enabled;
-        }}
         isInputEmpty={isInputEmpty}
         onSavePermissionMode={savePermissionModeUser}
       />
@@ -6518,7 +6501,6 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
   const initialReasoningMode = resolveInitialReasoningMode(options, config);
   const initialAgentMode = options.agentMode ?? config.agentMode ?? 'ama';
   const initialThinking = initialReasoningMode !== 'off';
-  const initialParallel = options.parallel ?? config.parallel ?? false;
   // Load permission mode from config file (not from CLI options)
   // CLI is always YOLO mode; REPL uses config file for permission mode
   const initialPermissionMode: PermissionMode =
@@ -6531,7 +6513,6 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
     thinking: initialThinking,
     reasoningMode: initialReasoningMode,
     agentMode: initialAgentMode,
-    parallel: initialParallel,
     permissionMode: initialPermissionMode,
     repoIntelligenceMode: repoIntelligenceRuntime.mode,
     repointelEndpoint: repoIntelligenceRuntime.endpoint,

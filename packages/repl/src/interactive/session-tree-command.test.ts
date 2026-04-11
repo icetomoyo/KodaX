@@ -16,7 +16,6 @@ describe('session tree commands', () => {
       thinking: true,
       reasoningMode: 'auto',
       agentMode: 'ama',
-      parallel: true,
       permissionMode: 'accept-edits',
     };
     callbacks = {

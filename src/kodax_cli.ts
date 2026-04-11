@@ -31,7 +31,6 @@ import {
   parsePositiveNumberWithFallback,
   resolveCliAgentMode,
   resolveCliModelSelection,
-  resolveCliParallel,
   resolveCliReasoningMode,
   type CliOutputMode,
   type CliOptions,
@@ -85,12 +84,11 @@ export {
   parsePermissionModeOption,
   processCommandCall,
   resolveCliAgentMode,
-  resolveCliParallel,
 };
 export type { KodaXCommand, KodaXCommandContext };
 
-function hasConfiguredMcpServers(config: { mcp?: { servers?: Record<string, { connect?: string }> } }): boolean {
-  return Object.values(config.mcp?.servers ?? {}).some(
+function hasConfiguredMcpServers(config: { mcpServers?: Record<string, { connect?: string }> }): boolean {
+  return Object.values(config.mcpServers ?? {}).some(
     (server) => (server.connect ?? 'lazy') !== 'disabled',
   );
 }
@@ -281,8 +279,7 @@ const CLI_HELP_TOPICS: Record<string, () => void> = {
     console.log(chalk.dim('  Legacy orchestration-based parallel execution for loosely coupled tasks.'));
     console.log(chalk.dim('  Prefer --agent-mode ama|sa for the product path. --team is being sunset.\n'));
     console.log(chalk.bold('Options:'));
-    console.log(chalk.dim('  --team <tasks>      ') + 'Deprecated legacy option');
-    console.log(chalk.dim('  -j, --parallel      ') + 'Enable parallel tool execution\n');
+    console.log(chalk.dim('  --team <tasks>      ') + 'Deprecated legacy option\n');
     console.log(chalk.bold('Examples:'));
     console.log(chalk.dim('  kodax --team "fix auth tests,update docs,clean logs"'));
     console.log(chalk.dim('  kodax --team "task1,task2" -m anthropic --reasoning balanced\n'));
@@ -527,7 +524,6 @@ function showBasicHelp(): void {
   console.log('  -y, --auto              Backward-compat alias; no effect in non-REPL CLI');
   console.log('  -s, --session OP        Legacy session operations: list, resume, delete <id>, delete-all, or raw session ID');
   console.log('  --no-session            Disable session persistence (print mode only)');
-  console.log('  -j, --parallel          Parallel tool execution');
   console.log('  --team TASKS            Deprecated legacy parallel team mode');
   console.log('  --init TASK             Initialize a long-running task');
   console.log('  --append                Deprecated compatibility alias for the old append flow');
@@ -588,7 +584,6 @@ async function main() {
     .option('--repointel-bin <path>', 'Premium CLI path used to warm/start daemon')
     .option('-y, --auto', 'Backward-compat alias; no effect in non-REPL CLI')
     .option('-s, --session <op>', 'Legacy session operations: list, resume, delete <id>, delete-all, or raw session ID')
-    .option('-j, --parallel', 'Parallel tool execution')
     .option('--extension <path>', 'Load local extension module (.js/.mjs/.cjs/.ts/.mts/.cts)', collectRepeatedOption, [])
     .option('--no-session', 'Disable session persistence (print mode only)')
     // Long options.
@@ -969,7 +964,6 @@ async function main() {
   }
   const reasoningMode = resolveCliReasoningMode(program, opts, config);
   const agentMode = resolveCliAgentMode(program, opts, config);
-  const parallel = resolveCliParallel(program, opts, config);
   const configuredExtensions = Array.isArray(configWithExtensions.extensions)
     ? configWithExtensions.extensions
       .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
@@ -1005,7 +999,6 @@ async function main() {
     outputMode: (opts.mode as CliOutputMode | undefined) ?? 'text',
     extensions: activeExtensions,
     session: opts.session,
-    parallel,
     team: opts.team,
     init: opts.init,
     append: opts.append ?? false,
@@ -1058,7 +1051,7 @@ async function main() {
 
   if ((options.extensions?.length ?? 0) > 0 || hasActiveMcp) {
     const extensionRuntime = createExtensionRuntime({ config });
-    await registerConfiguredMcpCapabilityProvider(extensionRuntime, configWithExtensions.mcp);
+    await registerConfiguredMcpCapabilityProvider(extensionRuntime, configWithExtensions.mcpServers);
     const extensionLoader = extensionRuntime as typeof extensionRuntime & {
       loadExtensions: (
         paths: string[],
@@ -1326,7 +1319,6 @@ New: {"features": [
         reasoningMode: kodaXOptions.reasoningMode,
         agentMode: kodaXOptions.agentMode,
         maxIter: kodaXOptions.maxIter,
-        parallel: kodaXOptions.parallel,
         extensionRuntime: kodaXOptions.extensionRuntime,
         session: kodaXOptions.session,
         storage: new FileSessionStorage(),

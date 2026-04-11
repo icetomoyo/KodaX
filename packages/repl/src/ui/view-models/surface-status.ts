@@ -33,7 +33,6 @@ export interface BuildSurfaceStatusBarPropsOptions {
   sessionId: string;
   permissionMode: StatusBarProps["permissionMode"];
   agentMode: StatusBarProps["agentMode"];
-  parallel?: boolean;
   provider: string;
   model: string;
   thinking?: boolean;
@@ -54,7 +53,6 @@ export function buildSurfaceStatusBarProps(
     sessionId: options.sessionId,
     permissionMode: options.permissionMode,
     agentMode: options.agentMode,
-    parallel: options.parallel,
     provider: options.provider,
     model: options.model,
     currentTool: options.streamingState.currentTool,

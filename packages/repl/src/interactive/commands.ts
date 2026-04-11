@@ -1251,56 +1251,6 @@ export const BUILTIN_COMMANDS: Command[] = [
     },
   },
   {
-    name: 'parallel',
-    aliases: ['pm'],
-    description: 'Show or toggle parallel tool execution',
-    usage: '/parallel [on|off|toggle]',
-    handler: async (args, _context, callbacks, currentConfig) => {
-      if (args.length === 0) {
-        const executionMode = currentConfig.parallel
-          ? chalk.green(describeParallelExecution(currentConfig.parallel))
-          : chalk.dim(describeParallelExecution(currentConfig.parallel));
-        console.log(chalk.dim(`\nTool execution: ${executionMode}`));
-        console.log(chalk.dim('Parallel mode lets the agent run independent tool calls concurrently.'));
-        console.log(chalk.dim('Usage: /parallel on|off|toggle\n'));
-        return;
-      }
-
-      const value = args[0].toLowerCase();
-      if (!['on', 'off', 'toggle'].includes(value)) {
-        console.log(chalk.red(`\n[Invalid value: ${args[0]}]`));
-        console.log(chalk.dim('Usage: /parallel on|off|toggle\n'));
-        return;
-      }
-
-      const nextValue =
-        value === 'toggle'
-          ? !currentConfig.parallel
-          : value === 'on';
-
-      const persistence = applyParallelMode(nextValue, callbacks, currentConfig);
-      printPersistedCommandStatus(
-        `Tool execution: ${describeParallelExecution(nextValue)}`,
-        persistence,
-      );
-    },
-    detailedHelp: () => {
-      console.log(chalk.cyan('\n/parallel - Toggle Parallel Tool Execution\n'));
-      console.log(chalk.bold('Usage:'));
-      console.log(chalk.dim('  /parallel          ') + 'Show the current execution mode');
-      console.log(chalk.dim('  /parallel on       ') + 'Enable parallel tool execution');
-      console.log(chalk.dim('  /parallel off      ') + 'Disable parallel tool execution');
-      console.log(chalk.dim('  /parallel toggle   ') + 'Switch between parallel and sequential execution');
-      console.log(chalk.dim('  /pm                ') + 'Alias for /parallel');
-      console.log();
-      console.log(chalk.bold('Description:'));
-      console.log(chalk.dim('  When enabled, independent tool calls from a single agent turn can run concurrently.'));
-      console.log(chalk.dim('  When disabled, tool calls run sequentially.'));
-      console.log(chalk.dim('  The current value is saved to your KodaX config and shown in the status bar.'));
-      console.log();
-    },
-  },
-  {
     name: 'auto',
     aliases: ['a'],
     description: 'Quick switch to auto-in-project mode',
@@ -1474,7 +1424,7 @@ const COMMAND_CATEGORIES: Record<string, string[]> = {
   General: ['help', 'copy', 'exit', 'clear', 'compact', 'reload', 'extensions', 'status'],
   Permission: ['mode', 'auto'],
   Session: ['new', 'save', 'load', 'sessions', 'history', 'delete'],
-  Settings: ['model', 'provider', 'thinking', 'reasoning', 'agent-mode', 'parallel', 'plan', 'repointel'],
+  Settings: ['model', 'provider', 'thinking', 'reasoning', 'agent-mode', 'plan', 'repointel'],
   Skills: ['skill'],
 };
 
@@ -1488,10 +1438,6 @@ function getCommandsForCategory(names: string[]) {
 
 function reasoningModeToLegacyThinking(mode: KodaXReasoningMode): boolean {
   return mode !== 'off';
-}
-
-function describeParallelExecution(enabled: boolean): 'parallel' | 'sequential' {
-  return enabled ? 'parallel' : 'sequential';
 }
 
 const REPO_INTELLIGENCE_MODES: KodaXRepoIntelligenceMode[] = [
@@ -1604,22 +1550,6 @@ function applyAgentMode(
     callbacks.setAgentMode(mode);
   } else {
     currentConfig.agentMode = mode;
-  }
-
-  return persistence;
-}
-
-function applyParallelMode(
-  enabled: boolean,
-  callbacks: CommandCallbacks,
-  currentConfig: CurrentConfig,
-): ConfigPersistenceResult {
-  const persistence = persistUserConfig({ parallel: enabled });
-
-  if (callbacks.setParallel) {
-    callbacks.setParallel(enabled);
-  } else {
-    currentConfig.parallel = enabled;
   }
 
   return persistence;
@@ -1874,7 +1804,6 @@ async function printStatus(
   console.log(chalk.dim(`  Permission:  ${chalk.cyan(currentConfig.permissionMode)}`));
   console.log(chalk.dim(`  Reasoning:   ${chalk.cyan(currentConfig.reasoningMode)}`));
   console.log(chalk.dim(`  Agent Mode:  ${chalk.cyan(currentConfig.agentMode.toUpperCase())}`));
-  console.log(chalk.dim(`  Execution:   ${chalk.cyan(describeParallelExecution(currentConfig.parallel))}`));
   if (capabilityProfile) {
     const capabilitySummary = describeProviderCapabilitySummary(capabilityProfile);
     const capabilityColor = capabilityProfile.transport === 'cli-bridge'

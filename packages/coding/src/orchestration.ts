@@ -122,7 +122,6 @@ export interface KodaXAgentWorkerSpec extends OrchestrationWorkerSpec<string> {
   prompt: string;
   provider?: string;
   model?: string;
-  parallelTools?: boolean;
 }
 
 export interface CreateKodaXTaskRunnerOptions<TTask extends KodaXAgentWorkerSpec = KodaXAgentWorkerSpec> {
@@ -972,7 +971,6 @@ export function createKodaXTaskRunner<TTask extends KodaXAgentWorkerSpec = KodaX
       provider: task.provider ?? options.baseOptions.provider,
       model: task.model ?? options.baseOptions.model,
       maxIter: task.budget?.maxIter ?? options.baseOptions.maxIter,
-      parallel: task.parallelTools ?? options.baseOptions.parallel,
       thinking: task.budget?.thinking ?? options.baseOptions.thinking,
       reasoningMode: task.budget?.reasoningMode ?? options.baseOptions.reasoningMode,
       abortSignal: effectiveAbortSignal,
