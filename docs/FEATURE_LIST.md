@@ -56,7 +56,7 @@
 | `064` | Multi-Provider Cost Observatory | Enhancement | High | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_064-multi-provider-cost-observatory) |
 | `065` | MCP Protocol Maturity | Enhancement | Medium | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_065-mcp-protocol-maturity) | **基础已完成 (v0.7.16)**：传输层、工具链路、fallback、配置扁平化。剩余：OAuth、Elicitation、ACP 链路 (#108)、mcp_get_prompt (#109)、/mcp 命令 (#110)、SSE/HTTP 测试 (#111) |
 | `066` | Permission Hardening | Enhancement | Medium | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_066-permission-hardening) |
-| `067` | Parallel Task Dispatch | Enhancement | High | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_067-parallel-task-dispatch) |
+| `067` | Child Agent Execution — AMA-Native Parallel Task Dispatch | Enhancement | High | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_067-child-agent-execution--ama-native-parallel-task-dispatch) | read-only fan-out; Scout 声明 childBundles + child-executor + 结构化简报 + 锚定合并; write fan-out 留 v0.8.0 |
 | `068` | Worktree Isolation Tool | Enhancement | Medium | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_068-worktree-isolation-tool) |
 | `069` | Session Rewind & Shell Completion | Enhancement | Medium | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_069-session-rewind--shell-completion) |
 | `070` | Context Engine V2 — Multi-Layer Compaction & Post-Compact Reconstruction | Enhancement | High | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_070-context-engine-v2--multi-layer-compaction--post-compact-reconstruction) | 吸收 069-C; 基于 Factory.ai + Claude Code 对标分析 |
