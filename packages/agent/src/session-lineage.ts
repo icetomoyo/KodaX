@@ -651,9 +651,6 @@ function cloneForkableEntry(
 }
 
 /**
- * Export the active lineage path, or a selected target path, into a new tree.
- */
-/**
  * Rewind the current session lineage to a target entry, truncating all entries after it.
  * Records a rewind event in the lineage for auditability.
  * Returns null if targetEntryId is not found.

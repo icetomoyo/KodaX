@@ -5,6 +5,9 @@
  * Provides denial context for injection into agent messages.
  */
 
+/** Default TTL for denial records: 30 minutes. */
+const DEFAULT_DENIAL_TTL_MS = 30 * 60 * 1000;
+
 export interface DenialRecord {
   readonly toolName: string;
   readonly inputSignature: string;
@@ -51,6 +54,13 @@ export function computeInputSignature(
   return `${toolName}:${(hash >>> 0).toString(16).slice(0, 8)}`;
 }
 
+/** Evict expired records from the tracker. */
+function evictExpired(records: readonly DenialRecord[], ttl: number = DEFAULT_DENIAL_TTL_MS): readonly DenialRecord[] {
+  const cutoff = Date.now() - ttl;
+  const alive = records.filter((r) => r.timestamp >= cutoff);
+  return alive.length === records.length ? records : alive;
+}
+
 export function recordDenial(
   tracker: DenialTracker,
   toolName: string,
@@ -64,16 +74,19 @@ export function recordDenial(
     timestamp: Date.now(),
     reason,
   };
-  return { records: [...tracker.records, record] };
+  // Evict expired records on each write to bound growth in long sessions.
+  return { records: [...evictExpired(tracker.records), record] };
 }
 
 export function isDeniedRecently(
   tracker: DenialTracker,
   toolName: string,
   input: Record<string, unknown>,
+  ttl: number = DEFAULT_DENIAL_TTL_MS,
 ): boolean {
   const signature = computeInputSignature(toolName, input);
-  return tracker.records.some((r) => r.inputSignature === signature);
+  const cutoff = Date.now() - ttl;
+  return tracker.records.some((r) => r.inputSignature === signature && r.timestamp >= cutoff);
 }
 
 /**

@@ -19,7 +19,7 @@
 # ---------------------------------------------------------
 
 # ── Stage 1: Build ──────────────────────────────────────
-FROM node:20-alpine AS builder
+FROM node:20.18.1-alpine3.20 AS builder
 
 WORKDIR /app
 
@@ -46,7 +46,7 @@ RUN npm run build
 RUN npm prune --omit=dev
 
 # ── Stage 2: Runtime ────────────────────────────────────
-FROM node:20-alpine AS runtime
+FROM node:20.18.1-alpine3.20 AS runtime
 
 # Labels
 LABEL maintainer="KodaX Authors"

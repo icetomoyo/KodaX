@@ -55,6 +55,10 @@ function isSafeRegexPattern(pattern: string): boolean {
   if (groupCount > 5) return false;
   // Reject nested quantifiers like (a+)+ or (a*)*
   if (/(\+|\*|\{)\)(\+|\*|\{)/.test(pattern)) return false;
+  // Reject alternation inside quantified groups: (a|b)+ can cause exponential backtracking
+  if (/\([^)]*\|[^)]*\)[*+{]/.test(pattern)) return false;
+  // Reject repeated groups: (.*)(.*)  or adjacent quantified groups
+  if (/[*+}]\).*\([^)]*[*+{]/.test(pattern)) return false;
   try {
     new RegExp(pattern);
     return true;

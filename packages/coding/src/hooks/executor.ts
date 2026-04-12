@@ -40,20 +40,35 @@ async function executeCommandHook(hook: CommandHook, context: HookEventContext):
   const shell = hook.shell ?? (process.platform === 'win32' ? 'powershell' : 'bash');
   const shellArgs = shell === 'powershell' ? ['-Command', command] : ['-c', command];
 
+  // SECURITY: Only pass a whitelist of safe environment variables to the hook
+  // subprocess.  Spreading the full process.env would leak API keys, tokens,
+  // and other secrets that happen to be in the parent environment.
+  const safeEnv: Record<string, string> = {
+    PATH: process.env.PATH ?? '',
+    HOME: process.env.HOME ?? process.env.USERPROFILE ?? '',
+    LANG: process.env.LANG ?? '',
+    TERM: process.env.TERM ?? '',
+    ...(process.platform === 'win32'
+      ? {
+          SYSTEMROOT: process.env.SYSTEMROOT ?? '',
+          COMSPEC: process.env.COMSPEC ?? '',
+          PATHEXT: process.env.PATHEXT ?? '',
+        }
+      : {}),
+    KODAX_TOOL_NAME: context.toolName ?? '',
+    KODAX_TOOL_INPUT: context.toolInput ? JSON.stringify(context.toolInput) : '',
+    KODAX_TOOL_OUTPUT: context.toolOutput ?? '',
+    KODAX_SESSION_ID: context.sessionId ?? '',
+    KODAX_EVENT_TYPE: context.eventType,
+    KODAX_WORKING_DIR: context.workingDir ?? '',
+    KODAX_FILE_PATH: extractFilePathFromInput(context.toolInput) ?? '',
+  };
+
   try {
     const { stdout } = await execFileAsync(shell, shellArgs, {
       timeout,
       cwd: context.workingDir,
-      env: {
-        ...process.env,
-        KODAX_TOOL_NAME: context.toolName ?? '',
-        KODAX_TOOL_INPUT: context.toolInput ? JSON.stringify(context.toolInput) : '',
-        KODAX_TOOL_OUTPUT: context.toolOutput ?? '',
-        KODAX_SESSION_ID: context.sessionId ?? '',
-        KODAX_EVENT_TYPE: context.eventType,
-        KODAX_WORKING_DIR: context.workingDir ?? '',
-        KODAX_FILE_PATH: extractFilePathFromInput(context.toolInput) ?? '',
-      },
+      env: safeEnv,
     });
     // Exit code 0 = allow
     return { action: 'allow', reason: stdout.trim() || undefined };

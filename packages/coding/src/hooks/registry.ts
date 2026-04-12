@@ -6,6 +6,18 @@
 import type { HookConfig, HookDefinition, HookEventType, HookEventContext, HookResult } from './types.js';
 import { executeHook } from './executor.js';
 
+const MAX_MATCHER_LENGTH = 200;
+
+/** Compile a regex pattern string with basic safety checks. Returns undefined if unsafe or invalid. */
+function safeCompileRegex(pattern: string): RegExp | undefined {
+  if (pattern.length > MAX_MATCHER_LENGTH) return undefined;
+  try {
+    return new RegExp(pattern);
+  } catch {
+    return undefined;
+  }
+}
+
 const VALID_EVENT_TYPES: readonly HookEventType[] = [
   'PreToolUse', 'PostToolUse', 'PostToolUseFailure',
   'SessionStart', 'SessionEnd', 'Compact', 'PromptSubmit', 'Stop',
@@ -33,9 +45,12 @@ export function createHookRegistry(config: HookConfig): HookRegistry {
     for (const hook of hooks) {
       if (!isValidHookDefinition(hook)) continue;
 
-      const matcher = 'matcher' in hook && typeof hook.matcher === 'string'
-        ? new RegExp(hook.matcher)
-        : undefined;
+      const hasMatcher = 'matcher' in hook && typeof hook.matcher === 'string';
+      const matcher = hasMatcher ? safeCompileRegex(hook.matcher as string) : undefined;
+
+      // If a matcher string was provided but failed validation, skip this hook
+      // entirely — do not silently promote it to a universal matcher.
+      if (hasMatcher && !matcher) continue;
 
       entries.push({
         eventType: eventType as HookEventType,

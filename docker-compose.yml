@@ -23,12 +23,13 @@ services:
       # Mount a project directory to work on:
       # - /path/to/your/project:/workspace
     working_dir: /workspace
+    env_file:
+      - path: .env.local
+        required: false
     environment:
-      # Provide your LLM API key(s) via environment variables:
-      # - ANTHROPIC_API_KEY=sk-ant-xxx
-      # - OPENAI_API_KEY=sk-xxx
-      # - ZHIPU_API_KEY=xxx
       - NODE_ENV=production
+      # API keys are loaded from .env.local (not committed to git).
+      # Create .env.local with: ANTHROPIC_API_KEY=sk-ant-xxx
 
   # ACP server mode (headless, for integrations)
   kodax-server:
@@ -38,9 +39,12 @@ services:
     image: kodax:latest
     command: ["--acp", "--port", "7860"]
     ports:
-      - "7860:7860"
+      - "127.0.0.1:7860:7860"
     volumes:
       - kodax-config:/home/kodax/.kodax
+    env_file:
+      - path: .env.local
+        required: false
     environment:
       - NODE_ENV=production
     restart: unless-stopped

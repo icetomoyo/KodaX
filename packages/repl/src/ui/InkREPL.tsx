@@ -3456,7 +3456,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         {overlayChildren}
       </Box>
     );
-  }, [dialogSurface, selectionCopyNoticeSurface, suggestionsSurface, useOverlaySurface]);
+  }, [selectionCopyNoticeSurface, suggestionsSurface, useOverlaySurface]);
   const exitTranscriptModeSurface = useCallback(() => {
     setTranscriptDisplayState((prev) => jumpTranscriptToLatest(exitTranscriptMode(prev)));
     setShowAllInTranscript(false);
@@ -4219,12 +4219,15 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           return true;
         }
 
-        // Number keys: jump focus to that index (no direct confirm — user must press Enter)
+        // Number keys: jump focus to that index (no direct confirm — user must press Enter).
+        // In multiSelect mode, pressing a number key ALSO toggles the selection state for
+        // that index — this mirrors checkbox UX where clicking both focuses and toggles.
+        // Pressing the same number twice will toggle on → off → on.
         if (/^[1-9]$/.test(key.sequence)) {
           const idx = Number.parseInt(key.sequence, 10) - 1;
           if (idx >= 0 && idx < optionCount) {
             if (uiRequest.multiSelect) {
-              // In multiSelect: jump focus + toggle selection
+              // multiSelect: jump focus + toggle selection (intentional dual action)
               setUiRequest((prev) => {
                 if (!prev || prev.kind !== "select") return prev;
                 const selected = prev.selectedIndices.includes(idx)

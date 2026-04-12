@@ -59,8 +59,14 @@ export async function loadToken(serverId: string): Promise<OAuthToken | null> {
  * Save token to disk.
  */
 export async function saveToken(serverId: string, token: OAuthToken): Promise<void> {
-  await fs.mkdir(TOKEN_DIR, { recursive: true });
-  await fs.writeFile(getTokenPath(serverId), JSON.stringify(token, null, 2), 'utf-8');
+  await fs.mkdir(TOKEN_DIR, { recursive: true, mode: 0o700 });
+  const tokenPath = getTokenPath(serverId);
+  await fs.writeFile(tokenPath, JSON.stringify(token, null, 2), 'utf-8');
+  // SECURITY: Restrict file permissions to owner-only so other users on a
+  // shared system cannot read access/refresh tokens.
+  if (process.platform !== 'win32') {
+    await fs.chmod(tokenPath, 0o600);
+  }
 }
 
 /**
@@ -131,7 +137,7 @@ export async function exchangeCodeForToken(
     throw new Error(`OAuth token exchange failed (${response.status}): ${text}`);
   }
 
-  const data = await response.json() as Record<string, unknown>;
+  const data = await safeParseJsonResponse(response, 'OAuth token exchange');
   return parseTokenResponse(data);
 }
 
@@ -163,8 +169,25 @@ export async function refreshToken(
     throw new Error(`OAuth token refresh failed (${response.status}): ${text}`);
   }
 
-  const data = await response.json() as Record<string, unknown>;
+  const data = await safeParseJsonResponse(response, 'OAuth token refresh');
   return parseTokenResponse(data);
+}
+
+/** Safely parse a JSON response, validating it is a non-null object. */
+async function safeParseJsonResponse(
+  response: Response,
+  label: string,
+): Promise<Record<string, unknown>> {
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch (err) {
+    throw new Error(`Failed to parse ${label} response as JSON: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+    throw new Error(`${label} response is not a JSON object`);
+  }
+  return data as Record<string, unknown>;
 }
 
 function parseTokenResponse(data: Record<string, unknown>): OAuthToken {
