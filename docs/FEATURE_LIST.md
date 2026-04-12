@@ -58,7 +58,8 @@
 | `066` | Permission Hardening | Enhancement | Medium | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_066-permission-hardening) |
 | `067` | Parallel Task Dispatch | Enhancement | High | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_067-parallel-task-dispatch) |
 | `068` | Worktree Isolation Tool | Enhancement | Medium | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_068-worktree-isolation-tool) |
-| `069` | Session Rewind, Shell Completion & Microcompaction | Enhancement | Medium | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_069-session-rewind-shell-completion--microcompaction) |
+| `069` | Session Rewind & Shell Completion | Enhancement | Medium | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_069-session-rewind--shell-completion) |
+| `070` | Context Engine V2 — Multi-Layer Compaction & Post-Compact Reconstruction | Enhancement | High | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_070-context-engine-v2--multi-layer-compaction--post-compact-reconstruction) | 吸收 069-C; 基于 Factory.ai + Claude Code 对标分析 |
 | `030` | Multi-Surface Delivery | Enhancement | High | `v1.0.0` | [v1.0.0](features/v1.0.0.md#feature_030-multi-surface-delivery) |
 
 ---
@@ -148,7 +149,7 @@
 
 > `FEATURE_031` now treats inline image refs as true structured multimodal inputs: provider-facing text uses stable image anchors such as `[Image #1]` and clean unavailable-image placeholders instead of leaking raw `@image-path` syntax.
 
-> `v0.7.18` 主题：Engineering Shell Maturity（工程外壳成熟度）。基于 KodaX vs Claude Code 全面对比分析，补齐工程外壳层面的真实差距：Hook 自动化管道 (063)、多 Provider 成本追踪 (064)、MCP 协议成熟 (065)、权限细化 (066)。四个 Feature 无相互依赖，可并行开发。IDE Bridge (#093) 在 Vibe Coding 时代已降级为长期可选目标。
+> `v0.7.18` 主题：Engineering Shell Maturity（工程外壳成熟度）。基于 KodaX vs Claude Code 全面对比分析，补齐工程外壳层面的真实差距：Hook 自动化管道 (063)、多 Provider 成本追踪 (064)、MCP 协议成熟 (065)、权限细化 (066)、上下文压缩引擎 V2 (070, 基于 Factory.ai + Claude Code 对标)。八个 Feature 基本无相互依赖，可并行开发。IDE Bridge (#093) 在 Vibe Coding 时代已降级为长期可选目标。
 
 ---
 

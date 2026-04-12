@@ -2861,7 +2861,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       statusNoticeSummary: activeFooterNotices.join(" | "),
       workStripText: footerBudgetWorkStripText,
       suggestionsReserved: suggestionsReservedForLayout,
-      suggestionsMode: useOverlaySurface ? "overlay" : "inline",
+      suggestionsMode: "inline",
       showHelp: footerBudgetShowHelp,
       statusBarText,
       confirmPrompt: confirmRequest?.prompt,
@@ -2920,7 +2920,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         reserveSpace={suggestionsReservedForLayout}
         width={terminalWidth}
         hidden={isTranscriptMode}
-        mode={useOverlaySurface ? "overlay" : "inline"}
+        mode="inline"
       />
     ),
     [
@@ -3423,40 +3423,19 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       />
     );
   }, [selectionCopyNotice]);
+  // Overlay surface: only used for transient toasts (ClipboardToast) that have
+  // their own backgroundColor fill. Dialogs and suggestions are ALWAYS inline
+  // to avoid terminal transparency bleed-through (Issue 112).
   const contentOverlaySurface = useMemo(() => {
-    const overlayChildren: React.ReactNode[] = [];
-
-    if (selectionCopyNoticeSurface) {
-      overlayChildren.push(
-        <React.Fragment key="selection-copy-notice">
-          {selectionCopyNoticeSurface}
-        </React.Fragment>,
-      );
-    }
-
-    if (useOverlaySurface && suggestionsSurface) {
-      overlayChildren.push(
-        <React.Fragment key="suggestions-overlay">
-          {suggestionsSurface}
-        </React.Fragment>,
-      );
-    }
-
-    // Dialog surface is ALWAYS rendered inline (never overlay) to prevent
-    // background transparency — terminal absolute positioning cannot fill
-    // empty cells, causing underlying transcript text to bleed through.
-    // See Issue 112.
-
-    if (overlayChildren.length === 0) {
+    if (!selectionCopyNoticeSurface) {
       return undefined;
     }
-
     return (
       <Box flexDirection="column" width="100%">
-        {overlayChildren}
+        {selectionCopyNoticeSurface}
       </Box>
     );
-  }, [selectionCopyNoticeSurface, suggestionsSurface, useOverlaySurface]);
+  }, [selectionCopyNoticeSurface]);
   const exitTranscriptModeSurface = useCallback(() => {
     setTranscriptDisplayState((prev) => jumpTranscriptToLatest(exitTranscriptMode(prev)));
     setShowAllInTranscript(false);
@@ -6228,7 +6207,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           onInputChange={handleInputChange}
         />
       )}
-      inlineSuggestions={useOverlaySurface ? undefined : suggestionsSurface}
+      inlineSuggestions={suggestionsSurface}
       helpSurface={showHelp ? (
         <PromptHelpMenu sections={buildHelpMenuSections()} />
       ) : undefined}
