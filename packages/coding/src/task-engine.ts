@@ -5824,7 +5824,7 @@ function buildWorkerRunOptions(
       emitContent: emitManagedWorkerContent,
       emitToolEvents: emitManagedWorkerContent,
       emitProgressEventsWhenHidden: !emitManagedWorkerContent,
-      emitIterationEvents: false,
+      emitIterationEvents: true,
       statusContext: {
         agentMode: defaultOptions.agentMode ?? 'ama',
         harnessProfile: task.contract.harnessProfile,
@@ -5926,7 +5926,7 @@ async function runManagedScoutStage(
     emitContent: true,
     emitToolEvents: true,
     emitProgressEventsWhenHidden: false,
-    emitIterationEvents: false,
+    emitIterationEvents: true,
     statusContext: {
       agentMode: options.agentMode ?? 'ama',
       harnessProfile: plan.decision.harnessProfile,

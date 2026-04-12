@@ -112,6 +112,9 @@ const translations = {
     "select.type_number": "(type a number)",
     "select.more": "{count} more choices...",
     "select.confirm_hint": "Press Enter to confirm, Esc to cancel",
+    "select.navigate_hint": "Use \u2191\u2193 to navigate, Enter to confirm, Esc to cancel",
+    "select.multiselect_hint": "Use \u2191\u2193 to navigate, Space to toggle, Enter to confirm, Esc to cancel",
+    "select.multiselect_empty": "Select at least one option with Space before confirming.",
 
     // Input dialog
     "input.default": "Default:",
@@ -181,6 +184,9 @@ const translations = {
     "select.type_number": "(输入编号)",
     "select.more": "还有 {count} 个选项...",
     "select.confirm_hint": "按 Enter 确认，Esc 取消",
+    "select.navigate_hint": "使用 \u2191\u2193 导航，Enter 确认，Esc 取消",
+    "select.multiselect_hint": "使用 \u2191\u2193 导航，空格 切换选中，Enter 确认，Esc 取消",
+    "select.multiselect_empty": "请先使用空格选择至少一个选项。",
 
     "input.default": "默认值：",
     "input.value": "值：",

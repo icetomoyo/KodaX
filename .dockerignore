@@ -1,0 +1,50 @@
+# Dependencies (reinstalled in container)
+node_modules/
+
+# Build output (rebuilt in container)
+dist/
+*.tsbuildinfo
+
+# Git
+.git/
+.gitattributes
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project-specific local state
+.kodax/
+.agent/
+.repointel/
+.claude/
+.tmp/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment / secrets
+.env
+.env.*
+
+# Test artifacts
+coverage/
+
+# Documentation (not needed at runtime)
+docs/
+CHANGELOG.md
+CONTRIBUTING.md
+README.md
+README_CN.md
+
+# CI / scripts not needed in image
+scripts/
+clients/
+tests/

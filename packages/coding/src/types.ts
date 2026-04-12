@@ -205,6 +205,8 @@ export interface KodaXEvents {
   ) => Promise<boolean | string>;
   /** Ask user a question interactively - Issue 069 - 交互式向用户提问 */
   askUser?: (options: AskUserQuestionOptions) => Promise<string>;
+  /** Ask user for free-text input - 自由文本输入 (Issue 112) */
+  askUserInput?: (options: { question: string; default?: string }) => Promise<string | undefined>;
   /** Managed-worker role currently allowed to emit structured protocol payload. */
 }
 
@@ -978,11 +980,14 @@ export interface KodaXResult {
 
 export interface AskUserQuestionOptions {
   question: string;
-  options: Array<{
+  kind?: "select" | "input";
+  /** Required for kind="select", ignored for kind="input". */
+  options?: Array<{
     label: string;
     description?: string;
     value: string;
   }>;
+  multiSelect?: boolean;
   default?: string;
   intent?: "generic" | "plan-handoff";
   targetMode?: "accept-edits";
@@ -999,8 +1004,10 @@ export interface KodaXToolExecutionContext {
   executionCwd?: string;
   /** Shared extension capability runtime used by retrieval-family tools. */
   extensionRuntime?: KodaXExtensionRuntime;
-  /** Ask user a question interactively - 交互式向用户提问 (Issue 069) */
+  /** Ask user a question interactively (select mode) - 交互式向用户提问 (Issue 069) */
   askUser?: (options: AskUserQuestionOptions) => Promise<string>;
+  /** Ask user for free-text input - 自由文本输入 (Issue 112) */
+  askUserInput?: (options: { question: string; default?: string }) => Promise<string | undefined>;
   managedProtocolRole?: Exclude<KodaXTaskRole, 'direct'>;
   emitManagedProtocol?: (payload: Partial<KodaXManagedProtocolPayload>) => void;
 }

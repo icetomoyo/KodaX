@@ -10,6 +10,7 @@ export interface SelectOption {
 export function toSelectOptions(
   options: AskUserQuestionOptions["options"],
 ): SelectOption[] {
+  if (!options) return [];
   return options.map((option) => ({
     label: option.label,
     value: option.value,
@@ -38,6 +39,8 @@ export function getAskUserDialogTitle(
 export function resolveAskUserDefaultChoice(
   options: AskUserQuestionOptions,
 ): string {
+  if (!options.options || options.options.length === 0) return "";
+
   // Plan-handoff: empty Enter defaults to the FIRST option (accept/switch),
   // not the last (cancel). This matches user expectation: press Enter to confirm.
   if (isPlanHandoffRequest(options)) {
@@ -61,6 +64,8 @@ export function shouldSwitchToAcceptEdits(
   if (currentMode !== "plan" || !isPlanHandoffRequest(options)) {
     return false;
   }
+
+  if (!options.options || options.options.length === 0) return false;
 
   // Case 1: An option has value === targetMode ("accept-edits").
   // The LLM correctly set the accept option's value. Strict match.

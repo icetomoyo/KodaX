@@ -33,6 +33,7 @@ import { toolMcpSearch } from './mcp-search.js';
 import { toolMcpDescribe } from './mcp-describe.js';
 import { toolMcpCall } from './mcp-call.js';
 import { toolMcpReadResource } from './mcp-read-resource.js';
+import { toolWorktreeCreate, toolWorktreeRemove } from './worktree.js';
 
 const TOOL_REGISTRY: ToolRegistry = new Map();
 let nextToolRegistrationId = 0;
@@ -377,6 +378,39 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
     handler: toolMcpReadResource,
   },
   {
+    name: 'worktree_create',
+    description: 'Create a new git worktree with an isolated branch for safe agent work.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        branch_name: { type: 'string', description: 'Optional explicit branch name' },
+        description: { type: 'string', description: 'Optional description to auto-generate branch name from' },
+      },
+    },
+    handler: toolWorktreeCreate,
+  },
+  {
+    name: 'worktree_remove',
+    description: 'Remove a git worktree and optionally its branch.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['keep', 'remove'],
+          description: 'Whether to keep or remove the worktree directory and branch',
+        },
+        worktree_path: { type: 'string', description: 'Absolute path to the worktree directory' },
+        discard_changes: {
+          type: 'boolean',
+          description: 'If true, bypass safety checks for uncommitted changes or local commits',
+        },
+      },
+      required: ['action', 'worktree_path'],
+    },
+    handler: toolWorktreeRemove,
+  },
+  {
     name: 'undo',
     description: 'Revert the last file modification.',
     input_schema: { type: 'object', properties: {} },
@@ -384,14 +418,19 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
   },
   {
     name: 'ask_user_question',
-    description: 'Ask the user a question with multiple choice options. Use this when you need the user to make a decision.',
+    description: 'Ask the user a question. Supports single-select (default), multi-select, or free-text input. Use this when you need the user to make a decision or provide input.',
     input_schema: {
       type: 'object',
       properties: {
         question: { type: 'string', description: 'The question to ask the user' },
+        kind: {
+          type: 'string',
+          enum: ['select', 'input'],
+          description: 'Interaction kind. "select" (default) shows options for the user to pick from. "input" shows a free-text prompt for the user to type anything. Use "input" when the user needs to provide an open-ended answer (e.g. step combinations like "1,3,5", version numbers, custom text).',
+        },
         options: {
           type: 'array',
-          description: 'Available options for the user to choose from',
+          description: 'Available options for the user to choose from. Required for kind="select", ignored for kind="input".',
           items: {
             type: 'object',
             properties: {
@@ -402,7 +441,11 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
             required: ['label'],
           },
         },
-        default: { type: 'string', description: 'Optional default choice' },
+        multi_select: {
+          type: 'boolean',
+          description: 'Allow the user to select multiple options (space to toggle, enter to confirm). Only applies to kind="select". Returns comma-separated values.',
+        },
+        default: { type: 'string', description: 'Optional default choice (for select) or default text (for input)' },
         intent: {
           type: 'string',
           enum: ['generic', 'plan-handoff'],
@@ -424,7 +467,7 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
           description: 'Whether execution should continue immediately after approval.',
         },
       },
-      required: ['question', 'options'],
+      required: ['question'],
     },
     handler: toolAskUserQuestion,
   },

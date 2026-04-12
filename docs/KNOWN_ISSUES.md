@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-04-11_
+_Last Updated: 2026-04-12_
 
 ---
 
@@ -56,11 +56,126 @@ _Last Updated: 2026-04-11_
 | 109 | Low | Open | 缺少 mcp_get_prompt 工具 — MCP prompt 能力未暴露给模型 | v0.7.16 | - | 2026-04-11 | - |
 | 110 | Low | Open | 缺少 /mcp status 和 /mcp refresh REPL 命令 | v0.7.16 | - | 2026-04-11 | - |
 | 111 | Low | Open | SSE / Streamable HTTP MCP 传输缺少专项测试 | v0.7.16 | - | 2026-04-11 | - |
+| 112 | High | Open | ask_user_question 交互机制不完备 — 数字编号歧义 + 缺少 input/multiSelect 模式 | v0.7.18 | - | 2026-04-12 | - |
 
 ---
 
 ## Issue Details
 <!-- Full details for each issue - REQUIRED for all issues -->
+---
+### 112: ask_user_question 交互机制不完备 — 数字编号歧义 + 缺少 input/multiSelect 模式
+
+- **Priority**: High
+- **Status**: Open
+- **Introduced**: v0.7.18
+- **Fixed**: -
+- **Created**: 2026-04-12
+
+- **Original Problem**:
+
+  `ask_user_question` 的 Select 对话框存在两个根本性缺陷：
+
+  **缺陷 1 — 数字编号歧义（当前最严重的体验问题）**
+
+  KodaX Select 使用"输入数字编号 + 按 Enter"选择方式（`InkREPL.tsx` L4152-4196）。当 LLM 的文字输出中也包含编号列表时（如 smart-changelog 列出的步骤 1-6），用户会混淆"步骤编号"和"选项编号"：
+
+  ```
+  [LLM 的文字输出]
+  步骤 1: Update CHANGELOG.md
+  步骤 2: Sync version
+  步骤 3: Create Git Tag
+  ...
+
+  [Select 对话框]
+  1. 步骤 1,2,3      ← 用户以为按 1 = 选步骤 1
+  2. 步骤 1,2,3,4    ← 用户按 2 以为 = 选步骤 2，实际选了这个组合
+  3. 全部执行
+  ```
+
+  Claude Code 使用**上下箭头导航 + Enter 确认**模式（`CustomSelect/use-select-navigation.ts`），聚焦项显示 `❯` 指针，完全避免了数字编号歧义。
+
+  **缺陷 2 — 缺少 input 和 multiSelect 模式**
+
+  KodaX `ask_user_question` 只有单选列表一种交互模式。Claude Code 提供三种：
+  - **单选**（默认）：上下导航 + Enter
+  - **multiSelect**：空格键切换选中/取消，✓ 标记已选项，Enter 提交全部选择
+  - **input 类型选项**：Tab 键展开自由文本输入，用户可输入任意内容
+
+  缺少后两种模式导致：组合选择场景（如 "选择步骤 1,3,5"）LLM 被迫将组合打包为预设选项；用户无法自行输入任意组合。
+
+- **Context**:
+
+  **KodaX 现有实现**：
+  - 工具定义：`packages/coding/src/tools/registry.ts` L420-462 — `required: ['question', 'options']`
+  - 工具实现：`packages/coding/src/tools/ask-user-question.ts` — 始终走 `ctx.askUser()` → Select 路径
+  - REPL Select 交互：`packages/repl/src/ui/InkREPL.tsx` L4152-4196 — 数字输入 + Enter
+  - UI 已有 Input 对话框：`showInputDialog()` 支持自由文本 + 默认值，但 `ask_user_question` 无法触发
+
+  **Claude Code 参考实现**（`C:\Works\claudecode`）：
+  - `CustomSelect/use-select-navigation.ts` — 基于 reducer 的焦点管理，支持 up/down/pageUp/pageDown
+  - `CustomSelect/use-select-input.ts` L241-282 — 数字键快捷选择（可通过 `disableSelection: 'numeric'` 禁用）
+  - `CustomSelect/select-option.tsx` — `ListItem` 渲染：`❯` 聚焦指针 + `✓` 选中标记
+  - `AskUserQuestionTool.tsx` L19-23 — schema 包含 `multiSelect?: boolean`
+  - `use-multiple-choice-state.ts` — 完整的多问题 + 多选状态管理
+  - `keybindings/defaultBindings.ts` L319-330 — Select 上下文绑定：up/down/j/k/enter/escape/space
+
+  **影响范围**：所有需要自由文本/组合输入的 skill（smart-changelog, monorepo version-strategy 等）
+
+- **Planned Resolution**:
+
+  **分两阶段实施，第一阶段解决最紧迫的数字歧义问题：**
+
+  **Phase 1：Select 从数字输入改为上下导航（高优先级）**
+
+  将 Select 对话框从"输入数字编号"改为 Claude Code 风格的"上下箭头导航 + Enter 确认"：
+
+  1. **DialogSurface 渲染层**：
+     - 选项不再显示 `1. xxx`，改为 `❯ xxx`（聚焦项）/ `  xxx`（非聚焦项）
+     - 追踪 `focusedIndex` 状态，随箭头键更新
+     - 选中项右侧显示 `✓`
+
+  2. **Keypress handler 改造**（`InkREPL.tsx` L4152-4196）：
+     - `↑` / `k` → 上移焦点
+     - `↓` / `j` → 下移焦点
+     - `Enter` → 确认当前聚焦项（替代数字 + Enter）
+     - `Escape` → 取消
+     - 数字键保留为**快捷键**直接选中（按 `2` 直接确认第 2 项，不需再按 Enter），但不是主交互方式
+
+  3. **Select 状态提升**：将 `focusedIndex` 加入 `uiRequest` state，让 DialogSurface 能渲染焦点指针
+
+  这一步完全消除数字编号歧义——用户通过视觉焦点指针明确知道选的是哪一项。
+
+  **Phase 2：新增 multiSelect + input 模式（中优先级）**
+
+  1. **multiSelect 模式**：
+     - `ask_user_question` schema 新增 `multiSelect?: boolean`
+     - 空格键切换当前聚焦项的选中/取消，`✓` 标记已选项
+     - Enter 提交所有已选项，返回逗号分隔的 value 列表
+     - 解决"选择步骤组合"场景，用户按空格自由勾选任意步骤
+
+  2. **input 模式**：
+     - `ask_user_question` schema 新增 `kind?: "select" | "input"`
+     - `kind: "input"` 时走 `showInputDialog(question, default)`
+     - 用户可自由输入任意文本（如 "1,3,5" 或 "all"）
+     - `options` 在 input 模式下变为可选
+
+  3. **返回格式**：
+     - 单选：`{"success": true, "choice": "selected_value"}`
+     - 多选：`{"success": true, "choice": "value1, value2, value3"}`
+     - 输入：`{"success": true, "choice": "<用户自由输入>"}`
+
+  具体改动文件：
+  - `packages/repl/src/ui/components/DialogSurface.tsx` — 渲染焦点指针 + 选中标记
+  - `packages/repl/src/ui/InkREPL.tsx` — keypress handler 改造 + multiSelect/input 路由
+  - `packages/coding/src/tools/registry.ts` — schema 增加 `multiSelect`, `kind`
+  - `packages/coding/src/tools/ask-user-question.ts` — 按 kind/multiSelect 分流
+  - `packages/coding/src/types.ts` — `AskUserQuestionOptions` 增加新字段
+
+  **为什么不选其他方案**：
+  - ❌ 只加 input 模式不改 Select：不解决数字歧义根因，单选场景仍有问题
+  - ❌ 只改 skill prompt：无法解决工具能力缺失，LLM 仍被迫打包组合
+  - ❌ 全量复刻 Claude Code CustomSelect 组件：过度工程化，KodaX 的 Ink 版本和组件体系不同
+
 ---
 ### 111: SSE / Streamable HTTP MCP 传输缺少专项测试
 
@@ -1302,7 +1417,7 @@ _Last Updated: 2026-04-11_
   3. 当前 Team mode 仍未与后续 session / harness 体系完全打通
 
 - **Proposed Solution**:
-  - `FEATURE_067 Parallel Task Dispatch` (v0.7.35) 作为最小可用切片：Scout 识别可并行子任务 → `runOrchestration` 并行派发 → 聚合结果
+  - `FEATURE_067 Parallel Task Dispatch` (v0.7.18) 作为最小可用切片：Scout 识别可并行子任务 → `runOrchestration` 并行派发 → 聚合结果
   - 完整的 Team Agent 架构 (角色语义/状态聚合/review 边界) 留 v0.8.0 与 FEATURE_059 (Protocol V2) 同版本
 
 ---

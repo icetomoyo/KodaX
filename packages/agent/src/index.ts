@@ -107,6 +107,7 @@ export {
   getSessionLineagePath,
   getSessionMessagesFromLineage,
   resolveSessionLineageTarget,
+  rewindSessionLineage,
   setSessionLineageActiveEntry,
 } from './session-lineage.js';
 
@@ -156,6 +157,14 @@ export {
   needsCompaction,
   compact,
 } from './compaction/compaction.js';
+
+export {
+  microcompact,
+  DEFAULT_MICROCOMPACTION_CONFIG,
+} from './compaction/microcompaction.js';
+export type {
+  MicrocompactionConfig,
+} from './compaction/microcompaction.js';
 
 // ============== Extension Persistence (FEATURE_034) ==============
 export {

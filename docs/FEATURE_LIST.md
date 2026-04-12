@@ -1,6 +1,6 @@
 # Feature 总表
 
-> Last updated: 2026-04-11
+> Last updated: 2026-04-12
 
 > 中文阅读说明：
 > 这份 `FEATURE_LIST` 是 roadmap 的总索引。
@@ -25,10 +25,10 @@
 | Version | Planned features |
 |---|---|
 | `v0.7.16` | `2` |
+| `v0.7.18` | `7` |
 | `v0.7.20` | `1` |
 | `v0.7.25` | `0` |
 | `v0.7.30` | `1` |
-| `v0.7.35` | `7` |
 | `v0.8.0` | `3` |
 | `v0.9.0` | `0` |
 | `v1.0.0` | `1` |
@@ -54,13 +54,13 @@
 | `062` | Managed Task Budget Simplification | Refactor | Medium | `v0.7.16` | [v0.7.16](features/v0.7.16.md#feature_062-managed-task-budget-simplification) |
 | `060` | Claude-Aligned Bounded-Memory Runtime and OOM Hardening | Internal | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_060-claude-aligned-bounded-memory-runtime-and-oom-hardening) |
 | `026` | Roadmap Integrity and Planning Hygiene | Internal | High | `v0.7.20` | [v0.7.20](features/v0.7.20.md#feature_026-roadmap-integrity-and-planning-hygiene) |
-| `063` | Extensible Hook & Automation Substrate | Enhancement | High | `v0.7.35` | [v0.7.35](features/v0.7.35.md#feature_063-extensible-hook--automation-substrate) |
-| `064` | Multi-Provider Cost Observatory | Enhancement | High | `v0.7.35` | [v0.7.35](features/v0.7.35.md#feature_064-multi-provider-cost-observatory) |
-| `065` | MCP Protocol Maturity | Enhancement | Medium | `v0.7.35` | [v0.7.35](features/v0.7.35.md#feature_065-mcp-protocol-maturity) | **基础已完成 (v0.7.16)**：传输层、工具链路、fallback、配置扁平化。剩余：OAuth、Elicitation、ACP 链路 (#108)、mcp_get_prompt (#109)、/mcp 命令 (#110)、SSE/HTTP 测试 (#111) |
-| `066` | Permission Hardening | Enhancement | Medium | `v0.7.35` | [v0.7.35](features/v0.7.35.md#feature_066-permission-hardening) |
-| `067` | Parallel Task Dispatch | Enhancement | High | `v0.7.35` | [v0.7.35](features/v0.7.35.md#feature_067-parallel-task-dispatch) |
-| `068` | Worktree Isolation Tool | Enhancement | Medium | `v0.7.35` | [v0.7.35](features/v0.7.35.md#feature_068-worktree-isolation-tool) |
-| `069` | Session Rewind, Shell Completion & Microcompaction | Enhancement | Medium | `v0.7.35` | [v0.7.35](features/v0.7.35.md#feature_069-session-rewind-shell-completion--microcompaction) |
+| `063` | Extensible Hook & Automation Substrate | Enhancement | High | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_063-extensible-hook--automation-substrate) |
+| `064` | Multi-Provider Cost Observatory | Enhancement | High | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_064-multi-provider-cost-observatory) |
+| `065` | MCP Protocol Maturity | Enhancement | Medium | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_065-mcp-protocol-maturity) | **基础已完成 (v0.7.16)**：传输层、工具链路、fallback、配置扁平化。剩余：OAuth、Elicitation、ACP 链路 (#108)、mcp_get_prompt (#109)、/mcp 命令 (#110)、SSE/HTTP 测试 (#111) |
+| `066` | Permission Hardening | Enhancement | Medium | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_066-permission-hardening) |
+| `067` | Parallel Task Dispatch | Enhancement | High | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_067-parallel-task-dispatch) |
+| `068` | Worktree Isolation Tool | Enhancement | Medium | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_068-worktree-isolation-tool) |
+| `069` | Session Rewind, Shell Completion & Microcompaction | Enhancement | Medium | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_069-session-rewind-shell-completion--microcompaction) |
 | `030` | Multi-Surface Delivery | Enhancement | High | `v1.0.0` | [v1.0.0](features/v1.0.0.md#feature_030-multi-surface-delivery) |
 
 ---
@@ -148,7 +148,7 @@
 
 > `FEATURE_031` now treats inline image refs as true structured multimodal inputs: provider-facing text uses stable image anchors such as `[Image #1]` and clean unavailable-image placeholders instead of leaking raw `@image-path` syntax.
 
-> `v0.7.35` 主题：Engineering Shell Maturity（工程外壳成熟度）。基于 KodaX vs Claude Code 全面对比分析，补齐工程外壳层面的真实差距：Hook 自动化管道 (063)、多 Provider 成本追踪 (064)、MCP 协议成熟 (065)、权限细化 (066)。四个 Feature 无相互依赖，可并行开发。IDE Bridge (#093) 在 Vibe Coding 时代已降级为长期可选目标。
+> `v0.7.18` 主题：Engineering Shell Maturity（工程外壳成熟度）。基于 KodaX vs Claude Code 全面对比分析，补齐工程外壳层面的真实差距：Hook 自动化管道 (063)、多 Provider 成本追踪 (064)、MCP 协议成熟 (065)、权限细化 (066)。四个 Feature 无相互依赖，可并行开发。IDE Bridge (#093) 在 Vibe Coding 时代已降级为长期可选目标。
 
 ---
 

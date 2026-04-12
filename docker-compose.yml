@@ -1,0 +1,49 @@
+# docker-compose.yml — KodaX deployment profiles
+#
+# Interactive REPL:
+#   docker compose run --rm kodax
+#
+# ACP server (background):
+#   docker compose up -d kodax-server
+#
+# Build for specific platform:
+#   TARGETPLATFORM=linux/arm64 docker compose build
+
+services:
+  # Interactive REPL mode (default)
+  kodax:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: kodax:latest
+    stdin_open: true      # -i
+    tty: true             # -t
+    volumes:
+      - kodax-config:/home/kodax/.kodax
+      # Mount a project directory to work on:
+      # - /path/to/your/project:/workspace
+    working_dir: /workspace
+    environment:
+      # Provide your LLM API key(s) via environment variables:
+      # - ANTHROPIC_API_KEY=sk-ant-xxx
+      # - OPENAI_API_KEY=sk-xxx
+      # - ZHIPU_API_KEY=xxx
+      - NODE_ENV=production
+
+  # ACP server mode (headless, for integrations)
+  kodax-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: kodax:latest
+    command: ["--acp", "--port", "7860"]
+    ports:
+      - "7860:7860"
+    volumes:
+      - kodax-config:/home/kodax/.kodax
+    environment:
+      - NODE_ENV=production
+    restart: unless-stopped
+
+volumes:
+  kodax-config:

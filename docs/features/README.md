@@ -45,10 +45,10 @@ The current execution model is:
 | [v0.7.0.md](./v0.7.0.md) | Engine foundation and AMA simplification |
 | [v0.7.10.md](./v0.7.10.md) | Repository intelligence, AMA cleanup, skill-aware orchestration |
 | [v0.7.15.md](./v0.7.15.md) | Provider resilience, retry UX, and graceful recovery |
+| [v0.7.18.md](./v0.7.18.md) | Engineering shell maturity: hook automation, cost observatory, MCP protocol, permission hardening |
 | [v0.7.20.md](./v0.7.20.md) | Roadmap integrity and planning hygiene, plus historical staging notes for features re-homed to `v0.8.0` |
 | [v0.7.25.md](./v0.7.25.md) | Host-aware TUI substrate close-out and historical staging for AMA-project convergence |
 | [v0.7.30.md](./v0.7.30.md) | Runtime clarity, harness safety, multimodal/repo substrate, and transcript-native tool interaction maturity |
-| [v0.7.35.md](./v0.7.35.md) | Engineering shell maturity: hook automation, cost observatory, MCP protocol, permission hardening |
 | [v0.8.0.md](./v0.8.0.md) | Dual-profile AMA, MCP substrate, prompt architecture, retrieval/evidence tooling, invisible parallelism, and durable memory |
 | [v0.9.0.md](./v0.9.0.md) | REPL substrate hardening close-out and historical staging for features moved earlier |
 | [v1.0.0.md](./v1.0.0.md) | Delivery surfaces outside the frozen shell |
@@ -82,4 +82,4 @@ These documents remain useful as implementation history, but they are not the so
 - `FEATURE_023` is now a future delivery/terminal-ergonomics doc, not a license to reopen REPL shell redesign already closed by `051/055`.
 - `FEATURE_031` and `FEATURE_042` stay transcript-first and summary-first: multimodal intake should not become a media workbench, and repo intelligence should not become a graph product.
 - `FEATURE_056` is the planned follow-up for tool interaction maturity inside the frozen shell: it should improve explanation, diff/progress/error affordances, and transcript-native actions without adding a control-tower UI.
-- `v0.7.35` (Engineering Shell Maturity) derives from a systematic KodaX vs Claude Code comparison analysis (2026-04-11). It addresses real engineering-shell gaps without violating the minimalist philosophy: hook automation substrate (063), multi-provider cost tracking (064), MCP OAuth/elicitation (065), bash risk classification and denial tracking (066). IDE Bridge (#093) was deliberately downgraded to Low priority given the Vibe Coding paradigm shift.
+- `v0.7.18` (Engineering Shell Maturity) derives from a systematic KodaX vs Claude Code comparison analysis (2026-04-11). It addresses real engineering-shell gaps without violating the minimalist philosophy: hook automation substrate (063), multi-provider cost tracking (064), MCP OAuth/elicitation (065), bash risk classification and denial tracking (066). IDE Bridge (#093) was deliberately downgraded to Low priority given the Vibe Coding paradigm shift.

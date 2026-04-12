@@ -20,7 +20,7 @@ const MAX_SUMMARIZATION_TOKENS_PER_CHUNK = 50000;
 const SUMMARIZATION_RETRY_DELAY_MS = 2000;
 const COMPACTION_SUMMARY_PREFIX = '[\u5bf9\u8bdd\u5386\u53f2\u6458\u8981]\n\n';
 
-interface ToolContextInfo {
+export interface ToolContextInfo {
   name: string;
   preview: string;
 }
@@ -426,7 +426,7 @@ function shortestUniqueSuffix(target: string, allTargets: string[]): string {
   return parts.join('/');
 }
 
-function buildToolContextMap(messages: KodaXMessage[]): Map<string, ToolContextInfo> {
+export function buildToolContextMap(messages: KodaXMessage[]): Map<string, ToolContextInfo> {
   const toolContextMap = new Map<string, ToolContextInfo>();
   const seeds: ToolContextSeed[] = [];
 

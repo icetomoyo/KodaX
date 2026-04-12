@@ -1359,6 +1359,7 @@ export async function runKodaX(
     executionCwd,
     extensionRuntime: runtime ?? undefined,
     askUser: events.askUser, // Issue 069: Pass askUser callback from events
+    askUserInput: events.askUserInput, // Issue 112: Pass askUserInput callback from events
     managedProtocolRole: options.context?.managedProtocolEmission?.enabled
       ? options.context.managedProtocolEmission.role
       : undefined,

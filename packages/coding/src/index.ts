@@ -541,6 +541,19 @@ export type {
   CreateKodaXTaskRunnerOptions,
 } from './orchestration.js';
 
+// ============== Parallel Dispatch ==============
+export {
+  isParallelDispatchDirective,
+  formatParallelDispatchResult,
+  validateSubtaskIndependence,
+} from './parallel-dispatch.js';
+
+export type {
+  ParallelSubtask,
+  ParallelDispatchDirective,
+  ParallelDispatchResult,
+} from './parallel-dispatch.js';
+
 // ============== Reasoning ==============
 export {
   KODAX_REASONING_MODE_SEQUENCE,
@@ -570,6 +583,28 @@ export {
 
 // Client alias
 export { KodaXClient as Client } from './client.js';
+
+// ============== Permissions ==============
+export {
+  classifyBashCommand,
+  createBashClassifierConfig,
+  DEFAULT_SAFE_PATTERNS,
+  DEFAULT_DANGEROUS_PATTERNS,
+} from './permissions/bash-classifier.js';
+export type {
+  BashRiskLevel,
+  BashClassificationResult,
+  BashClassifierConfig,
+} from './permissions/bash-classifier.js';
+
+export {
+  createDenialTracker,
+  recordDenial,
+  isDeniedRecently,
+  getDenialContext,
+  computeInputSignature,
+} from './permissions/denial-tracker.js';
+export type { DenialRecord, DenialTracker } from './permissions/denial-tracker.js';
 
 // ============== Context Loaders ==============
 
@@ -619,3 +654,18 @@ export {
 export {
   reconstructMessagesWithToolGuard,
 } from './resilience/tool-guard.js';
+
+// ============== Hooks ==============
+export type {
+  HookEventType, HookAction, HookResult,
+  CommandHook, HttpHook, PromptHook, HookDefinition,
+  HookConfig, HookEventContext,
+} from './hooks/types.js';
+export { interpolateVariables } from './hooks/variable-interpolation.js';
+export { executeHook } from './hooks/executor.js';
+export {
+  createHookRegistry,
+  getMatchingHooks,
+  runHooks,
+} from './hooks/registry.js';
+export type { HookRegistryEntry, HookRegistry } from './hooks/registry.js';

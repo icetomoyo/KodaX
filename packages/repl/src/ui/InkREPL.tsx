@@ -1841,6 +1841,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       options: SelectOption[];
       buffer: string;
       error?: string;
+      focusedIndex: number;
+      selectedIndices: number[];
+      multiSelect?: boolean;
     }
     | {
       kind: "input";
@@ -2863,7 +2866,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       statusBarText,
       confirmPrompt: confirmRequest?.prompt,
       confirmInstruction,
-      dialogMode: useOverlaySurface ? "overlay" : "inline",
+      dialogMode: "inline",
       reviewHint: fullscreenPolicy.enabled && transcriptOwnsViewport
         ? undefined
         : transcriptChrome.browseHintText,
@@ -3386,6 +3389,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         buffer: uiRequest.buffer,
         error: uiRequest.error,
         visibleSelectOptions: viewportBudget.visibleSelectOptions,
+        focusedIndex: uiRequest.focusedIndex,
+        selectedIndices: uiRequest.selectedIndices,
+        multiSelect: uiRequest.multiSelect,
       };
     }
     return {
@@ -3436,13 +3442,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       );
     }
 
-    if (useOverlaySurface && dialogSurface) {
-      overlayChildren.push(
-        <React.Fragment key="dialog-overlay">
-          {dialogSurface}
-        </React.Fragment>,
-      );
-    }
+    // Dialog surface is ALWAYS rendered inline (never overlay) to prevent
+    // background transparency — terminal absolute positioning cannot fill
+    // empty cells, causing underlying transcript text to bleed through.
+    // See Issue 112.
 
     if (overlayChildren.length === 0) {
       return undefined;
@@ -4105,7 +4108,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     uiResolveRef.current = null;
   }, []);
 
-  const showSelectDialogWithOptions = useCallback((title: string, options: SelectOption[]): Promise<string | undefined> => {
+  const showSelectDialogWithOptions = useCallback((
+    title: string,
+    options: SelectOption[],
+    multiSelect?: boolean,
+  ): Promise<string | undefined> => {
     if (options.length === 0) {
       return Promise.resolve(undefined);
     }
@@ -4117,6 +4124,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         title,
         options,
         buffer: "",
+        focusedIndex: 0,
+        selectedIndices: [],
+        multiSelect,
       });
     });
   }, []);
@@ -4150,51 +4160,95 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
 
       if (uiRequest.kind === "select") {
+        const optionCount = uiRequest.options.length;
+
+        // Arrow-key / vim-style navigation
+        if (key.name === "up" || key.sequence === "k") {
+          setUiRequest((prev) =>
+            prev && prev.kind === "select"
+              ? { ...prev, focusedIndex: (prev.focusedIndex - 1 + optionCount) % optionCount, error: undefined }
+              : prev,
+          );
+          return true;
+        }
+
+        if (key.name === "down" || key.sequence === "j") {
+          setUiRequest((prev) =>
+            prev && prev.kind === "select"
+              ? { ...prev, focusedIndex: (prev.focusedIndex + 1) % optionCount, error: undefined }
+              : prev,
+          );
+          return true;
+        }
+
+        // Space: toggle selection in multiSelect mode
+        if (key.sequence === " " && uiRequest.multiSelect) {
+          setUiRequest((prev) => {
+            if (!prev || prev.kind !== "select") return prev;
+            const idx = prev.focusedIndex;
+            const selected = prev.selectedIndices.includes(idx)
+              ? prev.selectedIndices.filter((i) => i !== idx)
+              : [...prev.selectedIndices, idx];
+            return { ...prev, selectedIndices: selected, error: undefined };
+          });
+          return true;
+        }
+
+        // Enter: confirm selection
         if (key.name === "return") {
-          const trimmed = uiRequest.buffer.trim();
-          if (trimmed === "" || trimmed === "0") {
-            resolveUIRequest(undefined);
+          if (uiRequest.multiSelect) {
+            // MultiSelect: return comma-separated values of selected items
+            if (uiRequest.selectedIndices.length === 0) {
+              setUiRequest((prev) =>
+                prev && prev.kind === "select"
+                  ? { ...prev, error: t("select.multiselect_empty") }
+                  : prev,
+              );
+              return true;
+            }
+            const values = uiRequest.selectedIndices
+              .sort((a, b) => a - b)
+              .map((i) => uiRequest.options[i]?.value)
+              .filter(Boolean)
+              .join(", ");
+            resolveUIRequest(values);
+          } else {
+            // Single select: return focused item's value
+            resolveUIRequest(uiRequest.options[uiRequest.focusedIndex]?.value);
+          }
+          return true;
+        }
+
+        // Number keys: jump focus to that index (no direct confirm — user must press Enter)
+        if (/^[1-9]$/.test(key.sequence)) {
+          const idx = Number.parseInt(key.sequence, 10) - 1;
+          if (idx >= 0 && idx < optionCount) {
+            if (uiRequest.multiSelect) {
+              // In multiSelect: jump focus + toggle selection
+              setUiRequest((prev) => {
+                if (!prev || prev.kind !== "select") return prev;
+                const selected = prev.selectedIndices.includes(idx)
+                  ? prev.selectedIndices.filter((i) => i !== idx)
+                  : [...prev.selectedIndices, idx];
+                return { ...prev, focusedIndex: idx, selectedIndices: selected, error: undefined };
+              });
+            } else {
+              // In single-select: only jump focus, require Enter to confirm
+              setUiRequest((prev) =>
+                prev && prev.kind === "select"
+                  ? { ...prev, focusedIndex: idx, error: undefined }
+                  : prev,
+              );
+            }
             return true;
           }
-
-          const index = Number.parseInt(trimmed, 10) - 1;
-          if (Number.isNaN(index) || index < 0 || index >= uiRequest.options.length) {
-            setUiRequest((prev) =>
-              prev && prev.kind === "select"
-                ? {
-                  ...prev,
-                  error: `Invalid choice. Enter 1-${prev.options.length}, or 0 to cancel.`,
-                }
-                : prev,
-            );
-            return true;
-          }
-
-          resolveUIRequest(uiRequest.options[index]?.value);
-          return true;
         }
 
-        if (key.name === "backspace" || key.name === "delete") {
-          setUiRequest((prev) =>
-            prev && prev.kind === "select"
-              ? { ...prev, buffer: prev.buffer.slice(0, -1), error: undefined }
-              : prev,
-          );
-          return true;
-        }
-
-        if (/^[0-9]+$/.test(key.sequence)) {
-          setUiRequest((prev) =>
-            prev && prev.kind === "select"
-              ? { ...prev, buffer: prev.buffer + key.sequence, error: undefined }
-              : prev,
-          );
-          return true;
-        }
-
-        return key.insertable || key.isPasted === true;
+        // Consume unhandled keys in select mode (no text buffer)
+        return false;
       }
 
+      // Input mode handling
       if (key.name === "return") {
         const trimmed = uiRequest.buffer.trim();
         resolveUIRequest(trimmed === "" ? uiRequest.defaultValue ?? undefined : trimmed);
@@ -4771,9 +4825,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     },
     // Issue 069: Ask user a question interactively.
     askUser: async (options: import("@kodax/coding").AskUserQuestionOptions): Promise<string> => {
+      const selectOptions = options.options ? toSelectOptions(options.options) : [];
       const selectedValue = await showSelectDialogWithOptions(
         getAskUserDialogTitle(options),
-        toSelectOptions(options.options),
+        selectOptions,
+        options.multiSelect,
       );
       const resolvedValue = selectedValue ?? resolveAskUserDefaultChoice(options);
 
@@ -4788,6 +4844,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
 
       return resolvedValue;
+    },
+    askUserInput: async (options: { question: string; default?: string }): Promise<string | undefined> => {
+      return showInputDialog(options.question, options.default);
     },
     onCompactStart: () => {
       // Trigger the compacting UI indicator before actual compaction begins
@@ -5110,6 +5169,16 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     );
     const managedForegroundRoundItems = [...managedForegroundTurnItemsRef.current];
     const hasManagedForegroundLedger = managedForegroundRoundItems.length > 0;
+    // The foreground ledger may contain only tool_group/thinking items without a
+    // substantive assistant text block.  When that happens we must still append
+    // the resolved finalResponse so the user sees the answer.
+    const foregroundCoversAssistantText = hasManagedForegroundLedger
+      && managedForegroundRoundItems.some(
+        (item) => item.type === "assistant"
+          && "text" in item
+          && sanitizeUserFacingAssistantText(String(item.text ?? "")).length > 0,
+      );
+    const needsFinalResponseItem = finalResponse && !foregroundCoversAssistantText;
     const managedRoundEvents = [...managedRoundEventHistoryRef.current];
     const managedTranscriptItems = managedRoundEvents.length === 0
       ? buildManagedTaskTranscriptItems(result)
@@ -5127,12 +5196,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       ...roundHistoryItems,
       ...managedRoundEvents.map((item) => toCreatableHistoryItem(item)),
       ...managedTranscriptItems.map((text) => toManagedTranscriptEventItem(text)),
-      ...(!hasManagedForegroundLedger && finalResponse
+      ...(needsFinalResponseItem
         ? [{
             type: "assistant" as const,
             text: result.interrupted ? `${finalResponse}\n\n[Interrupted]` : finalResponse,
           }]
-        : []),
+        : !finalResponse && !foregroundCoversAssistantText && !result.interrupted
+          ? [{ type: "info" as const, text: "[No response text was produced for this round]" }]
+          : []),
     ];
     const nextUiHistory = appendPersistedUiHistorySnapshot(
       persistedUiHistoryRef.current,
@@ -5156,11 +5227,16 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       addHistoryItem(toCreatableHistoryItem(eventItem));
     }
 
-    if (!hasManagedForegroundLedger && finalResponse) {
+    if (needsFinalResponseItem) {
       addHistoryItem({
         type: "assistant",
         text: result.interrupted ? `${finalResponse}\n\n[Interrupted]` : finalResponse,
-        });
+      });
+    } else if (!finalResponse && !foregroundCoversAssistantText && !result.interrupted) {
+      // No assistant text was produced — neither from the foreground ledger nor
+      // from the resolved result.  Surface a visible notice so the user is aware
+      // the response was empty rather than silently showing nothing.
+      addHistoryItem({ type: "info", text: "[No response text was produced for this round]" });
     }
 
     iterationToolsRef.current = [];
@@ -6065,7 +6141,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         stopStreaming();
         clearResponse(); // Fix: clear stale buffer to prevent ghost [Interrupted] on next submit
         clearThinkingContent();
-        setLiveTokenCount(null); // Reset live token count, use context.messages for final calculation
+        // Update live token count with final estimate so the status bar stays current.
+        // (Setting null would rely on context.messages — a mutable ref that React can't detect.)
+        setLiveTokenCount(
+          context.contextTokenSnapshot?.currentTokens
+            ?? estimateTokens(context.messages),
+        );
       }
     },
     [
@@ -6157,7 +6238,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         />
       ) : undefined}
       statusLine={<Box><StatusBar {...statusBarProps} viewModel={visibleStatusBarViewModel} /></Box>}
-      inlineDialogs={useOverlaySurface ? undefined : dialogSurface}
+      inlineDialogs={dialogSurface}
     />
   );
   const transcriptFooterSurface = (

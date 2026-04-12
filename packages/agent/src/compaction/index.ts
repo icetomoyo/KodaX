@@ -33,3 +33,7 @@ export type {
 
 // Compaction Core
 export { needsCompaction, compact } from './compaction.js';
+
+// Microcompaction
+export { microcompact, DEFAULT_MICROCOMPACTION_CONFIG } from './microcompaction.js';
+export type { MicrocompactionConfig } from './microcompaction.js';

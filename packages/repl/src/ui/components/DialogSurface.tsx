@@ -22,6 +22,12 @@ export interface DialogSurfaceUIRequestState {
   buffer: string;
   error?: string;
   visibleSelectOptions?: number;
+  /** Index of the currently focused option (arrow-key navigation). */
+  focusedIndex?: number;
+  /** Indices of selected options (multiSelect mode). */
+  selectedIndices?: number[];
+  /** Whether this is a multi-select dialog. */
+  multiSelect?: boolean;
 }
 
 export interface DialogSurfaceProps {
@@ -66,16 +72,26 @@ export const DialogSurface: React.FC<DialogSurfaceProps> = ({
             <Text color="cyan" bold>
               {t("dialog.select")} {request.title}
             </Text>
-            {(request.options ?? []).slice(0, request.visibleSelectOptions ?? 5).map((option, index) => (
-              <Text key={`${option.value}-${index}`} dimColor>
-                {`${index + 1}. ${option.label}${option.description ? ` - ${option.description}` : ""}`}
-              </Text>
-            ))}
+            {(request.options ?? []).slice(0, request.visibleSelectOptions ?? 5).map((option, index) => {
+              const isFocused = index === (request.focusedIndex ?? 0);
+              const isSelected = request.selectedIndices?.includes(index) ?? false;
+              const pointer = isFocused ? "\u276F " : "  ";
+              const check = isSelected ? " \u2713" : "";
+              const descSuffix = option.description ? ` - ${option.description}` : "";
+              return (
+                <Text key={`${option.value}-${index}`} color={isFocused ? "cyan" : undefined} dimColor={!isFocused}>
+                  {`${pointer}${option.label}${descSuffix}${check}`}
+                </Text>
+              );
+            })}
             {(request.options?.length ?? 0) > (request.visibleSelectOptions ?? 5) ? (
               <Text dimColor>{t("select.more", { count: (request.options?.length ?? 0) - (request.visibleSelectOptions ?? 5) })}</Text>
             ) : null}
-            <Text dimColor>{`${t("select.choice")} ${request.buffer || t("select.type_number")}`}</Text>
-            <Text dimColor>{t("select.confirm_hint")}</Text>
+            <Text dimColor>
+              {request.multiSelect
+                ? t("select.multiselect_hint")
+                : t("select.navigate_hint")}
+            </Text>
           </>
         ) : (
           <>
@@ -96,4 +112,3 @@ export const DialogSurface: React.FC<DialogSurfaceProps> = ({
 
   return null;
 };
-

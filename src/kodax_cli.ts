@@ -599,6 +599,89 @@ async function main() {
     // Keep the root command executable even when subcommands like `skill` exist.
     .action(() => {});
 
+  // ============== completion subcommand ==============
+  program
+    .command('completion')
+    .description('Generate shell completion script')
+    .argument('<shell>', 'Shell type: bash, zsh, or fish')
+    .action((shell: string) => {
+      const providerNames = getAvailableProviderNames().join(' ');
+      const reasoningModes = 'off auto quick balanced deep';
+      const agentModes = 'ama sa';
+
+      if (shell === 'bash') {
+        console.log(`# KodaX bash completion — add to ~/.bashrc:
+#   eval "$(kodax completion bash)"
+_kodax_complete() {
+  local cur prev opts subcmds
+  COMPREPLY=()
+  cur="\${COMP_WORDS[COMP_CWORD]}"
+  prev="\${COMP_WORDS[COMP_CWORD-1]}"
+  subcmds="acp skill completion"
+  opts="-p -c -r -n -m -t -s -y -h --print --continue --resume --new --provider --model --thinking --reasoning --agent-mode --repo-intelligence --repo-intelligence-trace --repointel-endpoint --repointel-bin --auto --session --extension --no-session --team --init --append --overwrite --max-iter --auto-continue --max-sessions --max-hours --version"
+
+  case "\${prev}" in
+    --provider|-m) COMPREPLY=( $(compgen -W "${providerNames}" -- "\${cur}") ); return 0 ;;
+    --reasoning) COMPREPLY=( $(compgen -W "${reasoningModes}" -- "\${cur}") ); return 0 ;;
+    --agent-mode) COMPREPLY=( $(compgen -W "${agentModes}" -- "\${cur}") ); return 0 ;;
+    --repo-intelligence) COMPREPLY=( $(compgen -W "auto off oss premium-shared premium-native" -- "\${cur}") ); return 0 ;;
+  esac
+
+  if [[ "\${cur}" == -* ]]; then
+    COMPREPLY=( $(compgen -W "\${opts}" -- "\${cur}") )
+  elif [[ \${COMP_CWORD} -eq 1 ]]; then
+    COMPREPLY=( $(compgen -W "\${subcmds}" -- "\${cur}") )
+  fi
+}
+complete -F _kodax_complete kodax`);
+      } else if (shell === 'zsh') {
+        console.log(`# KodaX zsh completion — add to ~/.zshrc:
+#   eval "$(kodax completion zsh)"
+_kodax() {
+  local -a subcmds opts providers reasoning_modes agent_modes repo_modes
+  subcmds=(acp skill completion)
+  providers=(${providerNames.replace(/ /g, ' ')})
+  reasoning_modes=(off auto quick balanced deep)
+  agent_modes=(ama sa)
+  repo_modes=(auto off oss premium-shared premium-native)
+
+  _arguments -C \\
+    '-p[Print mode]+:text:' \\
+    '-c[Continue most recent conversation]' \\
+    '-r[Resume session by ID]::id:' \\
+    '-m[LLM provider]+:provider:($providers)' \\
+    '--provider+[LLM provider]:provider:($providers)' \\
+    '--model+[Model override]:model:' \\
+    '-t[Enable thinking]' \\
+    '--reasoning+[Reasoning mode]:mode:($reasoning_modes)' \\
+    '--agent-mode+[Agent mode]:mode:($agent_modes)' \\
+    '--repo-intelligence+[Repo intelligence mode]:mode:($repo_modes)' \\
+    '--version[Show version]' \\
+    '-h[Show help]' \\
+    '1:subcommand:($subcmds)' \\
+    '*::arg:->args'
+}
+compdef _kodax kodax`);
+      } else if (shell === 'fish') {
+        console.log(`# KodaX fish completion — add to ~/.config/fish/completions/kodax.fish:
+#   kodax completion fish > ~/.config/fish/completions/kodax.fish
+complete -c kodax -n '__fish_use_subcommand' -a 'acp skill completion' -d 'Subcommands'
+complete -c kodax -s p -l print -d 'Print mode'
+complete -c kodax -s c -l continue -d 'Continue most recent conversation'
+complete -c kodax -s r -l resume -d 'Resume session by ID'
+complete -c kodax -s m -l provider -d 'LLM provider' -xa '${providerNames}'
+complete -c kodax -l model -d 'Model override'
+complete -c kodax -s t -l thinking -d 'Enable thinking'
+complete -c kodax -l reasoning -d 'Reasoning mode' -xa '${reasoningModes}'
+complete -c kodax -l agent-mode -d 'Agent mode' -xa '${agentModes}'
+complete -c kodax -l repo-intelligence -d 'Repo intelligence mode' -xa 'auto off oss premium-shared premium-native'
+complete -c kodax -l version -d 'Show version'`);
+      } else {
+        console.error(`Unknown shell: ${shell}. Supported: bash, zsh, fish`);
+        process.exit(1);
+      }
+    });
+
   const skillCommand = program
     .command('skill')
     .description('Built-in skill packaging and installation helpers')
