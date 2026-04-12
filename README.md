@@ -4,7 +4,7 @@ Extreme Lightweight Coding Agent - TypeScript Implementation
 
 ## Overview
 
-KodaX is a **modular, lightweight AI coding agent** built with TypeScript. It supports **10 LLM providers**, works as both a CLI tool and a library, and includes a distinctive **Project Mode / harness engineering** workflow for long-running coding tasks.
+KodaX is a **modular, lightweight AI coding agent** built with TypeScript. It supports **11 LLM providers**, works as both a CLI tool and a library, and includes a Scout-first adaptive multi-agent workflow for long-running coding tasks.
 
 **Core Philosophy**: Transparent, Flexible, Minimalist
 
@@ -387,7 +387,7 @@ KodaX uses a **monorepo architecture** with npm workspaces, consisting of 5 pack
 KodaX/
 ├── packages/
 │   ├── ai/                  # @kodax/ai - Independent LLM abstraction layer
-│   │   └── providers/       # 10 LLM providers (Anthropic, OpenAI, etc.)
+│   │   └── providers/       # 11 LLM providers (Anthropic, OpenAI, DeepSeek, etc.)
 │   │
 │   ├── agent/               # @kodax/agent - Generic Agent framework
 │   │   └── session/         # Session management, message handling
@@ -396,7 +396,7 @@ KodaX/
 │   │   └── builtin/         # Built-in skills (code-review, tdd, git-workflow)
 │   │
 │   ├── coding/              # @kodax/coding - Coding Agent (tools + prompts)
-│   │   └── tools/           # 8 tools: read, write, edit, bash, glob, grep, undo, ask_user_question
+│   │   └── tools/           # Tools: read, write, edit, bash, glob, grep, undo, ask_user_question, repo-intelligence
 │   │
 │   └── repl/                # @kodax/repl - Interactive terminal UI
 │       ├── ui/              # Ink/React components, themes
@@ -448,13 +448,12 @@ KodaX/
 ## Features
 
 - **Modular Architecture** - Use as CLI or as a library
-- **10 LLM Providers** - Anthropic, OpenAI, Kimi, Kimi Code, Qwen, Zhipu, Zhipu Coding, MiniMax Coding, Gemini CLI, Codex CLI
+- **11 LLM Providers** - Anthropic, OpenAI, DeepSeek, Kimi, Kimi Code, Qwen, Zhipu, Zhipu Coding, MiniMax Coding, Gemini CLI, Codex CLI
+- **Scout-First AMA** - Adaptive multi-agent with H0/H1/H2 harness levels, Scout-complete direct execution, and context-preserving role upgrades
 - **Reasoning Modes** - Unified `off/auto/quick/balanced/deep` interface across providers
 - **Streaming Output** - Real-time response display
-- **8 Tools** - read, write, edit, bash, glob, grep, undo, ask_user_question
-- **Session Management** - JSONL format persistent storage
-- **Project Mode / Harness Engineering** - Verifier-gated long-running workflow with project truth files and `/project` commands
-- **Skills System** - Natural language triggering, extensible
+- **Session Management** - JSONL format with branchable session lineage tree
+- **Skills System** - Natural language triggering, extensible, role-projected in AMA
 - **Permission Control** - 3 permission modes with pattern-based control
 - **Cross-Platform** - Windows/macOS/Linux
 - **TypeScript Native** - Full type safety and IDE support
@@ -794,7 +793,7 @@ for await (const result of stream) {
 ```
 
 **Key Features**:
-- 10 LLM providers with unified interface
+- 11 LLM providers with unified interface
 - Streaming output support
 - Thinking mode support
 - Error handling and retry logic
@@ -960,6 +959,7 @@ import { InkREPL } from '@kodax/repl';
 | zhipu | `ZHIPU_API_KEY` | Native | glm-5 |
 | zhipu-coding | `ZHIPU_API_KEY` | Native | glm-5 |
 | minimax-coding | `MINIMAX_API_KEY` | Native | MiniMax-M2.5 |
+| deepseek | `DEEPSEEK_API_KEY` | Native | deepseek-chat |
 | gemini-cli | `GEMINI_API_KEY` | Prompt-only / CLI bridge | (via gemini CLI) |
 | codex-cli | `OPENAI_API_KEY` | Prompt-only / CLI bridge | (via codex CLI) |
 
@@ -1132,11 +1132,14 @@ KodaX uses an **English-first** comment style with selective Chinese brief notes
 ## Documentation
 
 - [README_CN.md](README_CN.md) - Chinese Documentation
-- [DESIGN.md](docs/DESIGN.md) - Architecture and Implementation Details
-- [TESTING.md](docs/TESTING.md) - Testing Guide
+- [README_CN.md](README_CN.md) - Chinese Documentation
+- [PRD.md](docs/PRD.md) - Product Requirements
+- [ADR.md](docs/ADR.md) - Architecture Decisions
+- [HLD.md](docs/HLD.md) - High-Level Design
+- [DD.md](docs/DD.md) - Detailed Design
+- [FEATURE_LIST.md](docs/FEATURE_LIST.md) - Feature Tracking
 - [test-guides/](docs/test-guides/) - Feature-specific test guides
-- [LONG_RUNNING_GUIDE.md](docs/LONG_RUNNING_GUIDE.md) - Long-Running Mode Guide
-- [CHANGELOG.md](CHANGELOG.md) - Version History
+- [CHANGELOG.md](CHANGELOG.md) - Version History (v0.7.0+; [archive](docs/CHANGELOG_ARCHIVE.md) for older)
 
 ---
 

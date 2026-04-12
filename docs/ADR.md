@@ -1,9 +1,9 @@
 # KodaX Architecture Decision Records
 
-> Last updated: 2026-03-30
+> Last updated: 2026-04-12
 >
-> 这组 ADR 反映当前 `FEATURE_022` 之后的执行模型：
-> single-agent first、按证据升级 harness、skill-aware AMA。
+> 这组 ADR 反映当前 `FEATURE_061/062` 之后的执行模型：
+> Scout-first、按证据升级 harness、skill-aware AMA。
 
 ---
 
@@ -77,16 +77,24 @@ Consequence:
 
 ---
 
-## ADR-005: `Scout` Is Pre-Harness, Not a Long-Lived H2 Role
+## ADR-005: `Scout` Is Pre-Harness Entry, Not a Long-Lived H2 Role
 
-**Status**: Accepted
+**Status**: Accepted (updated after FEATURE_061)
 
-`Scout` 只负责 pre-harness 判断和牵引，不进入 H2 主 graph。
+`Scout` 是 AMA 的唯一入口，承担 pre-harness 判断和 H0 直接执行。不进入 H2 主 graph。
+
+FEATURE_061 扩展了 Scout 的能力：
+
+- Scout 是所有 AMA 请求的第一站（无预路由层）
+- H0 时 Scout 可直接完成任务（Scout-complete H0）
+- Scout 升级到 H1/H2 时保留已有上下文（context continuation）
+- 每个角色（含 Scout）可通过 `runOrchestration` 拉 subagent 并行
 
 Reasoning:
 
 - 避免 H2 角色图再次膨胀
 - 保持 `Planner -> Generator <-> Evaluator` 作为唯一完整 harness 骨架
+- Scout-complete H0 消除 scout-then-handoff 往返
 
 ---
 
@@ -273,3 +281,43 @@ Consequence:
 `--team` 不再是主产品故事的一部分。
 
 如果保留兼容入口，也只应视为 deprecated plumbing。
+
+---
+
+## ADR-018: Scout-First AMA Entry (FEATURE_061)
+
+**Status**: Accepted
+
+所有 AMA 请求由 Scout 作为唯一入口，不再有预路由 LLM 调用或 harness guardrail 层。
+
+Consequence:
+
+- Intent Gate 直接进 Scout，无 `routeTaskWithLLM` 预判
+- `shouldBypassScoutForManagedH0` 已删除
+- 预路由 harness floor 已删除（`resolveManagedHarnessGuardrail`）
+- 3 个 Tactical Flow 被角色级 subagent 替代
+
+Reasoning:
+
+- 预路由消耗额外 LLM 调用但准确率不高
+- Scout 已有足够信息在内部判断 H0/H1/H2
+- 减少 ~3200 行代码
+
+---
+
+## ADR-019: Immutable Budget Model (FEATURE_062)
+
+**Status**: Accepted
+
+AMA budget 从 10 字段 + 14 函数简化为 `{ cap, used }` + 4 个纯函数。
+
+Consequence:
+
+- Budget zone、reserve logic、iter limits 全部移除
+- convergence signal 内联到 `buildWorkerRunOptions`
+- Budget 判断变为 `used/cap` 纯比较
+
+Reasoning:
+
+- 旧模型复杂度远超实际需要
+- 新模型更 immutable、更可测试、更 LLM-friendly

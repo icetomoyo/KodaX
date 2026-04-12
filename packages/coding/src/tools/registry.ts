@@ -33,6 +33,7 @@ import { toolMcpSearch } from './mcp-search.js';
 import { toolMcpDescribe } from './mcp-describe.js';
 import { toolMcpCall } from './mcp-call.js';
 import { toolMcpReadResource } from './mcp-read-resource.js';
+import { toolMcpGetPrompt } from './mcp-get-prompt.js';
 import { toolWorktreeCreate, toolWorktreeRemove } from './worktree.js';
 
 const TOOL_REGISTRY: ToolRegistry = new Map();
@@ -58,6 +59,7 @@ export const MCP_TOOL_NAMES = [
   'mcp_describe',
   'mcp_call',
   'mcp_read_resource',
+  'mcp_get_prompt',
 ] as const;
 
 const MCP_TOOL_NAME_SET = new Set<string>(MCP_TOOL_NAMES);
@@ -376,6 +378,22 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['id'],
     },
     handler: toolMcpReadResource,
+  },
+  {
+    name: 'mcp_get_prompt',
+    description: 'Retrieve an MCP prompt capability by id with optional arguments.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'MCP prompt capability id from mcp_search' },
+        args: {
+          type: 'object',
+          description: 'Optional arguments for the MCP prompt',
+        },
+      },
+      required: ['id'],
+    },
+    handler: toolMcpGetPrompt,
   },
   {
     name: 'worktree_create',

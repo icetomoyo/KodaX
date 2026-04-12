@@ -40,7 +40,8 @@ export type KodaXRetrievalToolName =
   | 'mcp_search'
   | 'mcp_describe'
   | 'mcp_call'
-  | 'mcp_read_resource';
+  | 'mcp_read_resource'
+  | 'mcp_get_prompt';
 
 export type KodaXRetrievalScope = 'workspace' | 'remote';
 export type KodaXRetrievalTrust = 'workspace' | 'provider' | 'open-world';

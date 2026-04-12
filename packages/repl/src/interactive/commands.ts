@@ -507,6 +507,72 @@ export const BUILTIN_COMMANDS: Command[] = [
     },
   },
   {
+    name: 'mcp',
+    description: 'Show MCP server status or refresh catalogs',
+    usage: '/mcp [status|refresh]',
+    handler: async (args) => {
+      const extensionRuntime = getActiveExtensionRuntime();
+      if (!extensionRuntime) {
+        console.log(chalk.yellow('\n[No extension runtime active — MCP is not available]'));
+        return;
+      }
+      const diagnostics = getExtensionRuntimeDiagnostics(extensionRuntime);
+      const mcpProvider = diagnostics.capabilityProviders.find((p) => p.id === 'mcp');
+
+      const subcommand = args[0]?.toLowerCase() ?? 'status';
+
+      if (subcommand === 'refresh') {
+        console.log(chalk.dim('\nRefreshing MCP catalogs...'));
+        try {
+          await extensionRuntime.refreshCapabilityProviders('mcp');
+          console.log(chalk.green('MCP catalogs refreshed.'));
+        } catch (error) {
+          console.log(chalk.red(`Refresh failed: ${error instanceof Error ? error.message : String(error)}`));
+        }
+        return;
+      }
+
+      // Default: status
+      console.log(chalk.cyan('\nMCP Status\n'));
+      if (!mcpProvider) {
+        console.log(chalk.yellow('  No MCP provider registered.'));
+        console.log(chalk.dim('  Add mcpServers to ~/.kodax/config.json to enable MCP.\n'));
+        return;
+      }
+
+      const meta = mcpProvider.metadata as Record<string, unknown> | undefined;
+      const servers = (meta?.servers ?? []) as Array<{
+        serverId: string; connect: string; status: string;
+        tools: number; resources: number; prompts: number;
+        lastError?: string; cachedAt?: string;
+      }>;
+
+      console.log(chalk.dim(`  Servers: ${servers.length}`));
+      console.log();
+      for (const s of servers) {
+        const statusColor = s.status === 'ready' ? chalk.green
+          : s.status === 'error' ? chalk.red
+          : chalk.yellow;
+        console.log(`  ${chalk.bold(s.serverId)}  ${statusColor(s.status)}  connect=${chalk.dim(s.connect)}`);
+        if (s.cachedAt) {
+          console.log(chalk.dim(`    tools=${s.tools}  resources=${s.resources}  prompts=${s.prompts}`));
+        }
+        if (s.lastError) {
+          console.log(chalk.red(`    error: ${s.lastError}`));
+        }
+      }
+      console.log();
+    },
+    detailedHelp: () => {
+      console.log(chalk.cyan('\n/mcp - MCP Server Management\n'));
+      console.log(chalk.bold('Usage:'));
+      console.log(chalk.dim('  /mcp            ') + 'Show MCP server status');
+      console.log(chalk.dim('  /mcp status     ') + 'Same as /mcp');
+      console.log(chalk.dim('  /mcp refresh    ') + 'Force-refresh all MCP server catalogs');
+      console.log();
+    },
+  },
+  {
     name: 'repointel',
     aliases: ['ri'],
     description: 'Inspect or control the repo-intelligence premium runtime',

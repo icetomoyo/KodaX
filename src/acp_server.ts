@@ -32,6 +32,9 @@ import {
   type KodaXOptions,
   type KodaXReasoningMode,
   runKodaX,
+  createExtensionRuntime,
+  registerConfiguredMcpCapabilityProvider,
+  type KodaXExtensionRuntime,
 } from '@kodax/coding';
 import {
   computeConfirmTools,
@@ -120,6 +123,51 @@ interface KodaXAcpSessionState {
   alwaysAllowTools: string[];
   activeController: AbortController | null;
   contextTokenSnapshot?: KodaXContextTokenSnapshot;
+  /** Per-session extension runtime when client provides MCP servers. */
+  extensionRuntime?: KodaXExtensionRuntime;
+}
+
+/** Convert ACP McpServer[] to KodaX flat server config. */
+function convertAcpMcpServers(
+  servers: McpServer[],
+): import('@kodax/coding').KodaXMcpServersConfig {
+  const result: import('@kodax/coding').KodaXMcpServersConfig = {};
+  for (const server of servers) {
+    if ('command' in server) {
+      // Stdio
+      const envMap: Record<string, string> = {};
+      for (const entry of server.env ?? []) {
+        envMap[entry.name] = entry.value;
+      }
+      result[server.name] = {
+        type: 'stdio',
+        command: server.command,
+        args: server.args ?? [],
+        env: Object.keys(envMap).length > 0 ? envMap : undefined,
+      };
+    } else if ('type' in server && server.type === 'sse') {
+      const headerMap: Record<string, string> = {};
+      for (const h of (server as { headers?: Array<{ name: string; value: string }> }).headers ?? []) {
+        headerMap[h.name] = h.value;
+      }
+      result[server.name] = {
+        type: 'sse',
+        url: server.url,
+        headers: Object.keys(headerMap).length > 0 ? headerMap : undefined,
+      };
+    } else if ('type' in server && server.type === 'http') {
+      const headerMap: Record<string, string> = {};
+      for (const h of (server as { headers?: Array<{ name: string; value: string }> }).headers ?? []) {
+        headerMap[h.name] = h.value;
+      }
+      result[server.name] = {
+        type: 'streamable-http',
+        url: server.url,
+        headers: Object.keys(headerMap).length > 0 ? headerMap : undefined,
+      };
+    }
+  }
+  return result;
 }
 
 interface ToolPermissionDecision {
@@ -257,6 +305,8 @@ export class KodaXAcpServer implements Agent {
   private connection: AgentSideConnection | null = null;
   private readonly sessions = new Map<string, KodaXAcpSessionState>();
   private promptQueue: Promise<unknown> = Promise.resolve();
+  private extensionRuntime?: KodaXExtensionRuntime;
+  private extensionRuntimeReady?: Promise<void>;
 
   constructor(options: KodaXAcpServerOptions = {}) {
     const config = prepareRuntimeConfig();
@@ -281,6 +331,26 @@ export class KodaXAcpServer implements Agent {
         }),
       ],
     });
+
+    // Initialize MCP extension runtime (non-blocking).
+    const mcpServers = config.mcpServers;
+    const hasMcp = mcpServers && Object.values(mcpServers).some(
+      (s) => (s.connect ?? 'lazy') !== 'disabled',
+    );
+    if (hasMcp) {
+      const rt = createExtensionRuntime({ config });
+      this.extensionRuntimeReady = registerConfiguredMcpCapabilityProvider(rt, mcpServers)
+        .then(() => {
+          rt.activate();
+          this.extensionRuntime = rt;
+        })
+        .catch((error) => {
+          // MCP setup failure should not block the ACP server, but log it.
+          const message = error instanceof Error ? error.message : String(error);
+          // eslint-disable-next-line no-console
+          console.warn(`[kodax:acp] MCP initialization failed: ${message}`);
+        });
+    }
   }
 
   attach(
@@ -303,13 +373,19 @@ export class KodaXAcpServer implements Agent {
       fixedCwd: this.hasFixedCwd,
     });
     connection.signal.addEventListener('abort', () => {
-      this.sessions.forEach((session) => session.activeController?.abort());
+      this.sessions.forEach((session) => {
+        session.activeController?.abort();
+        session.extensionRuntime?.dispose();
+      });
       this.events.emit({
         type: 'connection_closed',
         activeSessions: this.sessions.size,
       });
       this.sessions.clear();
       this.connection = null;
+      // Dispose global MCP runtime so child processes / sockets are cleaned up.
+      this.extensionRuntime?.dispose();
+      this.extensionRuntime = undefined;
     });
     return connection;
   }
@@ -349,14 +425,30 @@ export class KodaXAcpServer implements Agent {
     }
 
     const sessionId = randomUUID();
+    const clientMcpServers = params.mcpServers ?? [];
     const session: KodaXAcpSessionState = {
       sessionId,
       cwd: path.resolve(requestedCwd),
       permissionMode: this.defaultPermissionMode,
-      mcpServers: params.mcpServers ?? [],
+      mcpServers: clientMcpServers,
       alwaysAllowTools: [],
       activeController: null,
     };
+
+    // If the client provides per-session MCP servers, create a dedicated
+    // extension runtime that merges them with the global config.
+    if (clientMcpServers.length > 0) {
+      const converted = convertAcpMcpServers(clientMcpServers);
+      const rt = createExtensionRuntime({});
+      await registerConfiguredMcpCapabilityProvider(rt, converted).catch((error) => {
+        const msg = error instanceof Error ? error.message : String(error);
+        // eslint-disable-next-line no-console
+        console.warn(`[kodax:acp] Per-session MCP init failed for ${sessionId}: ${msg}`);
+      });
+      rt.activate();
+      session.extensionRuntime = rt;
+    }
+
     this.sessions.set(sessionId, session);
     this.events.emit({
       type: 'session_created',
@@ -438,6 +530,10 @@ export class KodaXAcpServer implements Agent {
       });
 
       try {
+        // Ensure MCP is initialized before the first prompt.
+        if (this.extensionRuntimeReady) {
+          await this.extensionRuntimeReady;
+        }
         const result = await runKodaX(
           this.buildKodaXOptions(session, abortController.signal),
           promptText,
@@ -518,6 +614,8 @@ export class KodaXAcpServer implements Agent {
       thinking: this.thinking,
       reasoningMode: this.reasoningMode,
       abortSignal,
+      // Per-session runtime (from client MCP servers) takes precedence over global.
+      extensionRuntime: session.extensionRuntime ?? this.extensionRuntime,
       session: {
         id: session.sessionId,
         storage: this.storage,
