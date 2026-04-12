@@ -41,7 +41,10 @@ export const DEFAULT_DANGEROUS_PATTERNS: readonly RegExp[] = [
   /\b(drop\s+|truncate\s+|delete\s+from)\b/i,
   /\brm\s+-rf\s+[\/~]/,
   /\b(shutdown|reboot|halt|poweroff)\b/,
-  /\bgit\s+push\s+.*--force-with-lease\b/,
+  // NOTE: --force-with-lease is intentionally NOT listed here.
+  // It is a safer alternative to --force (only succeeds if the remote ref
+  // hasn't changed), and classifying it as dangerous would cause false
+  // positives in normal team workflows.
 ];
 
 /**

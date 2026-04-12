@@ -64,10 +64,23 @@ export async function toolWorktreeCreate(
     );
   }
 
+  // SECURITY: Reject path traversal sequences in branch names.
+  // The regex allows `/` and `.` for hierarchical branch names (e.g. "feat/xyz"),
+  // but `..` components could escape the target directory.
+  if (/(?:^|[\\/])\.\.(?:[\\/]|$)/.test(branch)) {
+    throw new Error(`Invalid branch name: ${branch}. Path traversal sequences (..) are not allowed.`);
+  }
+
   const cwd = ctx.executionCwd ?? ctx.gitRoot ?? process.cwd();
 
   // Resolve worktree path: .kodax-worktree-<branch> relative to git root
-  const worktreePath = path.join(cwd, '..', `.kodax-worktree-${branch}`);
+  const parentDir = path.resolve(cwd, '..');
+  const worktreePath = path.resolve(parentDir, `.kodax-worktree-${branch}`);
+
+  // Verify the resolved path stays within the expected parent directory
+  if (!worktreePath.startsWith(parentDir)) {
+    throw new Error(`Worktree path escaped expected directory. Resolved to: ${worktreePath}`);
+  }
 
   // Create worktree with new branch
   try {
