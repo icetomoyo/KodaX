@@ -8,6 +8,19 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.7.17] - 2026-04-12
+
+### Added
+- **MCP fallback whitelist**: Fallback whitelist, dispose/resetTransport split, documentation for #108-#111
+- **Session history seed conversion**: Tool summary display improvements and v0.7.35 feature docs
+- **Lightweight i18n framework**: Internationalization framework for UI strings with English and Chinese support (en/zh)
+- **End-turn fallback auto-continuation**: Managed protocol end_turn fallback auto-continuation and v0.7.35 Engineering Shell Maturity planning
+
+### Fixed
+- Classify 'aborted' errors as retryable `connection_failure`, simplify transient error hint
+
+---
+
 ## [0.7.16] - 2026-04-11
 
 ### Added
