@@ -9,7 +9,7 @@ import type {
   KodaXToolResultBlock,
 } from '@kodax/ai';
 import { KodaXBaseProvider } from '@kodax/ai';
-import { compact, needsCompaction } from './compaction.js';
+import { compact, needsCompaction, truncateUserText } from './compaction.js';
 import { generateSummary } from './summary-generator.js';
 
 class FakeSummaryProvider extends KodaXBaseProvider {
@@ -262,6 +262,37 @@ describe('compaction', () => {
       importantTargets: [],
       tombstones: [],
     });
+  });
+});
+
+describe('user message protection', () => {
+  it('preserves short user messages as-is', () => {
+    const shortText = 'Fix the 401 error on /api/auth/login by switching to JWT';
+    expect(truncateUserText(shortText)).toBe(shortText);
+  });
+
+  it('truncates long user messages preserving head and tail', () => {
+    // Build a message that's > 800 tokens (~3200 chars at 4 chars/token)
+    const longText = 'Please analyze this error log and fix the issue:\n'
+      + 'ERROR '.repeat(1000) + '\n'
+      + 'The fix should preserve backwards compatibility.';
+
+    const result = truncateUserText(longText);
+
+    // Should contain the head (user intent)
+    expect(result).toContain('Please analyze this error log');
+    // Should contain the truncation marker
+    expect(result).toContain('[…user message truncated');
+    expect(result).toContain('tokens…]');
+    // Should contain the tail
+    expect(result).toContain('backwards compatibility.');
+    // Should be shorter than original
+    expect(result.length).toBeLessThan(longText.length);
+  });
+
+  it('returns short messages below threshold unchanged', () => {
+    const text = 'a '.repeat(100); // ~50 tokens, well below 800
+    expect(truncateUserText(text)).toBe(text);
   });
 });
 

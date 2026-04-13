@@ -1008,6 +1008,8 @@ export interface KodaXToolExecutionContext {
   askUser?: (options: AskUserQuestionOptions) => Promise<string>;
   /** Ask user for free-text input - 自由文本输入 (Issue 112) */
   askUserInput?: (options: { question: string; default?: string }) => Promise<string | undefined>;
+  /** Abort signal for cancelling in-flight tool operations (Issue 113) */
+  abortSignal?: AbortSignal;
   managedProtocolRole?: Exclude<KodaXTaskRole, 'direct'>;
   emitManagedProtocol?: (payload: Partial<KodaXManagedProtocolPayload>) => void;
 }

@@ -166,6 +166,16 @@ export type {
   MicrocompactionConfig,
 } from './compaction/microcompaction.js';
 
+export {
+  buildPostCompactAttachments,
+  injectPostCompactAttachments,
+  DEFAULT_POST_COMPACT_CONFIG,
+} from './compaction/post-compact.js';
+export type {
+  PostCompactConfig,
+  PostCompactAttachments,
+} from './compaction/post-compact.js';
+
 // ============== Extension Persistence (FEATURE_034) ==============
 export {
   FileExtensionStore,

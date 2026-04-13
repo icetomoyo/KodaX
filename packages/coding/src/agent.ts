@@ -47,7 +47,7 @@ import {
 import { buildSystemPrompt } from './prompts/index.js';
 import { generateSessionId, extractTitleFromMessages } from './session.js';
 import { checkIncompleteToolCalls } from './messages.js';
-import { compact as intelligentCompact, needsCompaction, type CompactionConfig, type CompactionUpdate } from '@kodax/agent';
+import { compact as intelligentCompact, needsCompaction, microcompact, DEFAULT_MICROCOMPACTION_CONFIG, buildPostCompactAttachments, injectPostCompactAttachments, type CompactionConfig, type CompactionUpdate } from '@kodax/agent';
 import { loadCompactionConfig } from './compaction-config.js';
 import { estimateTokens } from './tokenizer.js';
 import { KODAX_MAX_INCOMPLETE_RETRIES, PROMISE_PATTERN } from './constants.js';
@@ -179,6 +179,55 @@ function isToolResultContentBlock(
   block: unknown,
 ): block is Extract<MessageContentBlock, { type: 'tool_result' }> {
   return isTypedContentBlock(block) && block.type === 'tool_result';
+}
+
+/**
+ * Graceful compact degradation: drop oldest atomic blocks (tool_use + tool_result pairs)
+ * one at a time from the front until tokens are below the target threshold.
+ * Preserves summary messages, message structure integrity, and recent context.
+ */
+function gracefulCompactDegradation(
+  messages: KodaXMessage[],
+  contextWindow: number,
+  config: CompactionConfig,
+): KodaXMessage[] {
+  const targetTokens = Math.floor(contextWindow * (config.triggerPercent / 100) * 0.8);
+
+  // Find the first non-summary message index
+  let startIdx = 0;
+  const firstMsg = messages[0];
+  if (firstMsg && (firstMsg.role === 'system' || (
+    firstMsg.role === 'user' && typeof firstMsg.content === 'string'
+    && firstMsg.content.includes('[对话历史摘要]')
+  ))) {
+    startIdx = 1;
+  }
+
+  let dropIdx = startIdx;
+  while (dropIdx < messages.length && estimateTokens(messages) > targetTokens) {
+    const msg = messages[dropIdx];
+    if (!msg) break;
+
+    // Skip if this is a tool_result message that pairs with the previous tool_use
+    // (we always drop in pairs to maintain API invariants)
+    const isToolResult = msg.role === 'user' && Array.isArray(msg.content)
+      && msg.content.some(isToolResultContentBlock);
+    const prevMsg = messages[dropIdx - 1];
+    const isToolUse = prevMsg?.role === 'assistant' && Array.isArray(prevMsg.content)
+      && prevMsg.content.some((b: unknown) => isTypedContentBlock(b) && b.type === 'tool_use');
+
+    if (isToolResult && isToolUse) {
+      // Drop both: tool_use + tool_result
+      messages = [...messages.slice(0, dropIdx - 1), ...messages.slice(dropIdx + 1)];
+      // Don't advance dropIdx since array shifted
+      continue;
+    }
+
+    // Drop single message
+    messages = [...messages.slice(0, dropIdx), ...messages.slice(dropIdx + 1)];
+  }
+
+  return messages;
 }
 
 function normalizeQueuedRuntimeMessage(message: string | KodaXMessage): KodaXMessage {
@@ -1168,7 +1217,13 @@ async function executeToolCall(
   ctx: KodaXToolExecutionContext,
   runtimeSessionState: RuntimeSessionState,
   activeToolNames?: string[],
+  abortSignal?: AbortSignal,
 ): Promise<string> {
+  // Issue 088: Check abort signal before executing each tool
+  if (abortSignal?.aborted) {
+    return CANCELLED_TOOL_RESULT_MESSAGE;
+  }
+
   const visibleTool = isVisibleToolName(toolCall.name);
   if (visibleTool) {
     await emitActiveExtensionEvent('tool:start', {
@@ -1360,6 +1415,7 @@ export async function runKodaX(
     extensionRuntime: runtime ?? undefined,
     askUser: events.askUser, // Issue 069: Pass askUser callback from events
     askUserInput: events.askUserInput, // Issue 112: Pass askUserInput callback from events
+    abortSignal: options.abortSignal, // Issue 113: Pass abort signal to tool handlers
     managedProtocolRole: options.context?.managedProtocolEmission?.enabled
       ? options.context.managedProtocolEmission.role
       : undefined,
@@ -1487,6 +1543,8 @@ export async function runKodaX(
     await emitActiveExtensionEvent('session:start', { provider: initialProvider.name, sessionId });
 
     let managedProtocolContinueAttempted = false;
+    let compactConsecutiveFailures = 0;
+    const COMPACT_CIRCUIT_BREAKER_LIMIT = 3;
     for (let iter = 0; iter < maxIter; iter++) {
     try {
       currentProviderName = runtimeSessionState.modelSelection.provider ?? options.provider;
@@ -1526,6 +1584,10 @@ export async function runKodaX(
       });
       events.onIterationStart?.(iter + 1, maxIter);
 
+      // Microcompaction: lightweight cleanup each turn (no LLM calls)
+      // Clears old tool results, thinking blocks, and image blocks
+      messages = microcompact(messages, DEFAULT_MICROCOMPACTION_CONFIG) as KodaXMessage[];
+
       // Compaction: 统一使用智能压缩，废除遗留的粗暴截断
       let compacted: KodaXMessage[];
       let didCompactMessages = false;
@@ -1533,14 +1595,16 @@ export async function runKodaX(
 
       // 判断是否需要压缩：只依据智能压缩阈值 (默认 75%)
       const currentTokens = resolveContextTokenCount(messages, contextTokenSnapshot);
-      const needsIntelligentCompact =
+      const needsCompact =
         compactionConfig.enabled
         && needsCompaction(messages, compactionConfig, contextWindow, currentTokens);
 
-      if (needsIntelligentCompact) {
-        // Only trigger UI indicator right before the heavy lifting
+      // Circuit breaker: only disables LLM-based summarization, NOT the fallback
+      const circuitBreakerTripped = compactConsecutiveFailures >= COMPACT_CIRCUIT_BREAKER_LIMIT;
+
+      if (needsCompact && !circuitBreakerTripped) {
+        // LLM-based intelligent compaction path
         events.onCompactStart?.();
-        // 统一走智能压缩（分块 LLM 摘要 + 保留最近 10% 上下文）
         try {
           const result = await intelligentCompact(
             messages,
@@ -1548,13 +1612,27 @@ export async function runKodaX(
             provider,
             contextWindow,
             undefined, // customInstructions
-            currentExecution.systemPrompt, // 传入 systemPrompt 以生成更好的摘要
+            currentExecution.systemPrompt,
             currentTokens,
           );
 
           if (result.compacted) {
             compacted = result.messages;
+
+            // Post-compact reconstruction: inject artifact ledger summary
+            if (result.artifactLedger && result.artifactLedger.length > 0) {
+              const freedTokens = result.tokensBefore - result.tokensAfter;
+              const attachments = buildPostCompactAttachments(
+                result.artifactLedger,
+                freedTokens,
+              );
+              if (attachments.totalTokens > 0) {
+                compacted = injectPostCompactAttachments(compacted, attachments);
+              }
+            }
+
             didCompactMessages = true;
+            compactConsecutiveFailures = 0; // Reset on success
             compactionUpdate = {
               anchor: result.anchor,
               artifactLedger: result.artifactLedger,
@@ -1569,60 +1647,30 @@ export async function runKodaX(
             compacted = result.messages;
           }
         } catch (error) {
-          // 改进的错误回退逻辑：告知用户并删除最老的10%消息
-          console.error('[Compaction Error] LLM摘要失败，回退到简单截断:', error);
+          compactConsecutiveFailures++;
+          console.error(`[Compaction Error] LLM summary failed (attempt ${compactConsecutiveFailures}/${COMPACT_CIRCUIT_BREAKER_LIMIT}):`, error);
 
-          // 确保至少删除1条，避免无限循环
-          const removeCount = Math.max(1, Math.ceil(messages.length * 0.1));
-
-          if (messages.length > removeCount + 1) {
-            let startIndex = removeCount;
-            let newCompacted: KodaXMessage[] = [];
-
-            // 如果有总结消息（系统消息或包含特定文本的用户消息），始终保留
-            const firstMsg = messages[0];
-            const isSummary = firstMsg && (firstMsg.role === 'system' || firstMsg.role === 'user')
-              && typeof firstMsg.content === 'string' && firstMsg.content.includes('[对话历史摘要]');
-
-            if (isSummary) {
-              newCompacted.push(firstMsg);
-              // 我们不想删掉摘要，而是想要删掉摘要后面的 removeCount 条消息，所以从 1 + removeCount 开始切
-              startIndex = 1 + removeCount;
-            }
-
-            // 避免截断包含 tool_result 的成对消息，如果切在了 tool_result 上就后移
-            while (startIndex < messages.length) {
-              const msgAtCut = messages[startIndex];
-              if (!msgAtCut) break;
-              if (msgAtCut.role === 'user' && Array.isArray(msgAtCut.content) &&
-                msgAtCut.content.some(isToolResultContentBlock)) {
-                startIndex++;
-                continue;
-              }
-              break;
-            }
-
-            newCompacted.push(...messages.slice(startIndex));
-            compacted = newCompacted;
-            didCompactMessages = true;
-            events.onCompactStats?.({
-              tokensBefore: currentTokens,
-              tokensAfter: estimateTokens(compacted),
-            });
-            console.warn(`[Compaction Fallback] 回退截断：删除了最旧的 ${startIndex - (isSummary ? 1 : 0)} 条消息，保留了 ${compacted.length} 条`);
-            events.onCompact?.(estimateTokens(compacted)); // 使用新的 compacted 估算
-          } else {
-            // 消息太少，不删除
-            compacted = messages;
-            console.warn('[Compaction Fallback] 消息数量太少，跳过删除');
-          }
+          // Fall through to graceful degradation below
+          compacted = messages;
         } finally {
-          // 总是确保停止 UI 的转圈状态
           events.onCompactEnd?.();
         }
       } else {
-        // 不需要压缩，直接使用原始消息
         compacted = messages;
+      }
+
+      // Graceful degradation: runs when LLM compact failed OR circuit breaker tripped
+      // This is separate from the LLM path so it remains available even after 3 failures
+      if (needsCompact && compacted === messages) {
+        compacted = gracefulCompactDegradation(messages, contextWindow, compactionConfig);
+        if (compacted !== messages) {
+          didCompactMessages = true;
+          events.onCompactStats?.({
+            tokensBefore: currentTokens,
+            tokensAfter: estimateTokens(compacted),
+          });
+          events.onCompact?.(estimateTokens(compacted));
+        }
       }
 
       // CRITICAL FIX: Always validate and fix tool history before sending to API
@@ -2165,8 +2213,26 @@ export async function runKodaX(
       const toolResults: KodaXToolResultBlock[] = [];
       const editRecoveryMessages: string[] = [];
 
+      // Issue 088: Check abort signal before entering tool execution phase.
+      // Without this guard, tools spawned after Ctrl+C would still run to completion.
+      // Use graceful cancellation (mark all tools as cancelled) instead of throwing,
+      // so the downstream `hasCancellation` check handles exit uniformly.
+      const abortedBeforeTools = options.abortSignal?.aborted === true;
+
       // Non-bash tools run in parallel; bash tools run sequentially (always parallel mode).
-      {
+      if (abortedBeforeTools) {
+        for (const tc of result.toolBlocks) {
+          if (isVisibleToolName(tc.name)) {
+            await emitActiveExtensionEvent('tool:result', {
+              id: tc.id,
+              name: tc.name,
+              content: CANCELLED_TOOL_RESULT_MESSAGE,
+            });
+            events.onToolResult?.({ id: tc.id, name: tc.name, content: CANCELLED_TOOL_RESULT_MESSAGE });
+            toolResults.push(createToolResultBlock(tc.id, CANCELLED_TOOL_RESULT_MESSAGE));
+          }
+        }
+      } else {
         const bashTools = result.toolBlocks.filter(tc => tc.name === 'bash');
         const nonBashTools = result.toolBlocks.filter(tc => tc.name !== 'bash');
         const resultMap = new Map<string, string>();
@@ -2185,7 +2251,7 @@ export async function runKodaX(
                   runtimeSessionState.activeTools,
                   options.context?.repoIntelligenceMode,
                   !!runtime,
-                )),
+                ), options.abortSignal),
                 ctx,
               )
             ).content,
@@ -2195,6 +2261,11 @@ export async function runKodaX(
         }
 
         for (const tc of bashTools) {
+          // Issue 088: Check abort signal before each sequential bash tool
+          if (options.abortSignal?.aborted) {
+            resultMap.set(tc.id, CANCELLED_TOOL_RESULT_MESSAGE);
+            continue;
+          }
           const content = (
             await applyToolResultGuardrail(
               tc.name,
@@ -2206,7 +2277,7 @@ export async function runKodaX(
                   runtimeSessionState.activeTools,
                   options.context?.repoIntelligenceMode,
                   !!runtime,
-                )),
+                ), options.abortSignal),
               ctx,
             )
           ).content;

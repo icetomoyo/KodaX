@@ -127,13 +127,13 @@
 | `044` | Durable Compression Anchors and Artifact Recall | `v0.8.0` (unreleased) | [v0.8.0](features/v0.8.0.md#feature_044-durable-compression-anchors-and-artifact-recall) |
 | `045` | Provider Stream Resilience and Graceful Recovery | `v0.7.15` (unreleased) | [v0.7.15](features/v0.7.15.md#feature_045-provider-stream-resilience-and-graceful-recovery) |
 | `046` | AMA Handoff Integrity and Final-Answer Convergence | `v0.8.0` (unreleased) | [v0.8.0](features/v0.8.0.md#feature_046-ama-handoff-integrity-and-final-answer-convergence) |
-| `047` | Invisible Adaptive Parallelism and Evidence-Driven Fan-Out | `v0.8.0` (unreleased) | [v0.8.0](features/v0.8.0.md#feature_047-invisible-adaptive-parallelism-and-evidence-driven-fan-out) |
+| `047` | Invisible Adaptive Parallelism and Evidence-Driven Fan-Out | `v0.7.19` | [v0.7.19](features/v0.7.19.md#feature_047-invisible-adaptive-parallelism--fan-out-optimization) | 架构完成 (v0.7.16); 执行层完成 (v0.7.18 FEATURE_067); v0.7.19 补齐: winner-cancel, 调度策略, 质量度量 |
 | `048` | Sectionized Prompt Assembly and Dynamic Capability Truth | `v0.8.0` (unreleased) | [v0.8.0](features/v0.8.0.md#feature_048-sectionized-prompt-assembly-and-dynamic-capability-truth) |
 | `049` | First-Class Search, Fetch, Code Search, and Semantic Retrieval | `v0.8.0` (unreleased) | [v0.8.0](features/v0.8.0.md#feature_049-first-class-search-fetch-code-search-and-semantic-retrieval) |
 | `050` | Prompt Contracts, Snapshots, and Regression Evaluation | `v0.8.0` (unreleased) | [v0.8.0](features/v0.8.0.md#feature_050-prompt-contracts-snapshots-and-regression-evaluation) |
 | `042` | Incremental Repository Intelligence Refresh and Java/C++ Structural Semantics | `v0.7.30` (unreleased) | [v0.7.30](features/v0.7.30.md#feature_042-incremental-repository-intelligence-refresh-and-javac-structural-semantics) |
 | `051` | Host-Aware Fullscreen TUI Substrate and Transcript UX | `v0.7.25` (unreleased) | [v0.7.25](features/v0.7.25.md#feature_051-host-aware-fullscreen-tui-substrate-and-transcript-ux) |
-| `052` | Dual-Profile AMA Harness and Child Fan-Out Boundaries | `v0.8.0` (unreleased) | [v0.8.0](features/v0.8.0.md#feature_052-dual-profile-ama-harness-and-child-fan-out-boundaries) |
+| `052` | Dual-Profile AMA Harness and Child Fan-Out Boundaries | `v0.7.19` | [v0.7.19](features/v0.7.19.md#feature_052-child-fan-out-boundary-hardening) | 架构完成 (v0.7.16); v0.7.19 补齐: SA 严格模式, 递归防护, controller 精化 |
 | `053` | Canonical Repo Identity and Managed Worktree Runtime | `v0.7.30` (unreleased) | [v0.7.30](features/v0.7.30.md#feature_053-canonical-repo-identity-and-managed-worktree-runtime) |
 | `055` | REPL Substrate Hardening and Summary-Only AMA UX | `v0.9.0` (unreleased) | [v0.9.0](features/v0.9.0.md#feature_055-repl-substrate-hardening-and-summary-only-ama-ux) |
 | `056` | Tool Interaction Maturity and Transcript-Native Explanation Layer | `v0.7.30` (unreleased) | [v0.7.30](features/v0.7.30.md#feature_056-tool-interaction-maturity-and-transcript-native-explanation-layer) |

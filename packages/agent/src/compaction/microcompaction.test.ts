@@ -334,4 +334,103 @@ describe('microcompaction', () => {
     const block = (result[2]?.content as { content: string }[])[0];
     expect(block?.content).toContain('custom_tool_name');
   });
+
+  it('clears thinking block text from old assistant messages', () => {
+    const messages: KodaXMessage[] = [
+      createTextMessage('user', 'task'),
+      {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'This is a long reasoning chain about the problem...', signature: 'sig123' },
+          { type: 'text', text: 'Here is my answer.' },
+        ],
+      },
+      ...filler(30),
+    ];
+
+    const result = microcompact(messages, { enabled: true, maxAge: 1, protectedTools: [] });
+    const blocks = result[1]?.content as { type: string; thinking?: string; signature?: string; text?: string }[];
+    // Thinking block: text cleared, structure + signature preserved
+    expect(blocks[0]?.type).toBe('thinking');
+    expect(blocks[0]?.thinking).toBe('');
+    expect(blocks[0]?.signature).toBe('sig123');
+    // Text block: untouched
+    expect(blocks[1]?.type).toBe('text');
+    expect(blocks[1]?.text).toBe('Here is my answer.');
+  });
+
+  it('does not clear thinking blocks from recent messages', () => {
+    const messages: KodaXMessage[] = [
+      createTextMessage('user', 'task'),
+      {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'Recent thinking text', signature: 'sig456' },
+          { type: 'text', text: 'response' },
+        ],
+      },
+    ];
+
+    const result = microcompact(messages, { enabled: true, maxAge: 20, protectedTools: [] });
+    // Should be unchanged (same reference) since messages are recent
+    expect(result).toBe(messages);
+  });
+
+  it('replaces image blocks with descriptive text marker', () => {
+    const messages: KodaXMessage[] = [
+      {
+        role: 'user',
+        content: [
+          { type: 'image', path: '/tmp/screenshots/error-dialog.png', mediaType: 'image/png' },
+          { type: 'text', text: 'What is this error?' },
+        ],
+      },
+      createTextMessage('assistant', 'The error shows...'),
+      ...filler(30),
+    ];
+
+    const result = microcompact(messages, { enabled: true, maxAge: 1, protectedTools: [] });
+    const blocks = result[0]?.content as { type: string; text?: string }[];
+    // Image replaced with text marker
+    expect(blocks[0]?.type).toBe('text');
+    expect(blocks[0]?.text).toBe('[Image: error-dialog.png]');
+    // Original text block untouched
+    expect(blocks[1]?.type).toBe('text');
+    expect(blocks[1]?.text).toBe('What is this error?');
+  });
+
+  it('handles mixed thinking + tool_result + image in single pass', () => {
+    const messages: KodaXMessage[] = [
+      {
+        role: 'user',
+        content: [
+          { type: 'image', path: '/tmp/screenshot.png' },
+          { type: 'text', text: 'Fix this' },
+        ],
+      },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'Analyzing the screenshot...', signature: 'abc' },
+          { type: 'text', text: 'I see the issue.' },
+          { type: 'tool_use', id: 'tool_mc', name: 'read', input: { path: 'src/bug.ts' } },
+        ],
+      },
+      createToolResultMessage('tool_mc', 'const x = 1;'),
+      ...filler(30),
+    ];
+
+    const result = microcompact(messages, { enabled: true, maxAge: 1, protectedTools: [] });
+    // Image → text marker
+    const userBlocks = result[0]?.content as { type: string; text?: string }[];
+    expect(userBlocks[0]?.type).toBe('text');
+    expect(userBlocks[0]?.text).toBe('[Image: screenshot.png]');
+    // Thinking → cleared
+    const assistBlocks = result[1]?.content as { type: string; thinking?: string }[];
+    expect(assistBlocks[0]?.type).toBe('thinking');
+    expect(assistBlocks[0]?.thinking).toBe('');
+    // Tool result → cleared
+    const toolBlock = (result[2]?.content as { content: string }[])[0];
+    expect(toolBlock?.content).toContain('[Cleared:');
+  });
 });

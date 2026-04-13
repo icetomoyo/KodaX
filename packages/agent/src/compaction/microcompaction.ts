@@ -1,12 +1,15 @@
 /**
- * KodaX Microcompaction - Time-driven tool output cleanup
+ * KodaX Microcompaction - Time-driven context cleanup
  *
- * Clears old tool result content from messages to slow context growth.
+ * Clears old tool result content, thinking blocks, and image blocks
+ * from messages to slow context growth.
  * Pure function, no LLM calls, runs after each agent turn.
  *
  * Design:
  * - Tracks "turns" (role switches from assistant to user)
  * - Clears tool_result blocks older than maxAge turns
+ * - Clears thinking block text (preserves signature for API continuity)
+ * - Replaces image blocks with descriptive text markers
  * - Preserves protected tools (e.g., ask_user_question)
  * - Placeholder format matches compaction pruning: `[Cleared: grep src/auth.ts "pattern"]`
  * - Immutable: returns new array, never mutates input
@@ -92,6 +95,19 @@ export function microcompact(
 
     let blockChanged = false;
     const newContent = msg.content.map((block): KodaXContentBlock => {
+      // Clear old thinking blocks: preserve structure + signature, drop text
+      if (block.type === 'thinking' && block.thinking.length > 0) {
+        blockChanged = true;
+        return { ...block, thinking: '' };
+      }
+
+      // Replace old image blocks with descriptive text marker
+      if (block.type === 'image' && typeof block.path === 'string') {
+        blockChanged = true;
+        const fileName = block.path.split(/[\\/]/).pop() ?? block.path;
+        return { type: 'text', text: `[Image: ${fileName}]` } as KodaXContentBlock;
+      }
+
       if (block.type !== 'tool_result') {
         return block;
       }

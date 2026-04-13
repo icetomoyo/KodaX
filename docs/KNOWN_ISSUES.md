@@ -57,6 +57,7 @@ _Last Updated: 2026-04-12_
 | 110 | Low | Open | 缺少 /mcp status 和 /mcp refresh REPL 命令 | v0.7.16 | - | 2026-04-11 | - |
 | 111 | Low | Open | SSE / Streamable HTTP MCP 传输缺少专项测试 | v0.7.16 | - | 2026-04-11 | - |
 | 112 | High | Open | ask_user_question 交互机制不完备 — 数字编号歧义 + 缺少 input/multiSelect 模式 | v0.7.18 | - | 2026-04-12 | - |
+| 113 | High | Resolved | Ctrl+C 中断后工具调用仍继续执行 — abort signal 未传播到工具执行阶段 | v0.7.17 | v0.7.18 | 2026-04-12 | 2026-04-12 |
 
 ---
 
@@ -175,6 +176,53 @@ _Last Updated: 2026-04-12_
   - ❌ 只加 input 模式不改 Select：不解决数字歧义根因，单选场景仍有问题
   - ❌ 只改 skill prompt：无法解决工具能力缺失，LLM 仍被迫打包组合
   - ❌ 全量复刻 Claude Code CustomSelect 组件：过度工程化，KodaX 的 Ink 版本和组件体系不同
+
+---
+### 113: Ctrl+C 中断后工具调用仍继续执行 — abort signal 未传播到工具执行阶段 (RESOLVED)
+
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: v0.7.17
+- **Fixed**: v0.7.18
+- **Created**: 2026-04-12
+- **Resolved**: 2026-04-12
+
+- **Original Problem**:
+
+  按下 Ctrl+C 后，API 流式输出能正确中断（AbortController.abort() 传播到 anthropic.ts 的 for-await 循环），但已进入工具执行阶段的工具调用不会被取消，导致用户在中断后仍偶尔看到工具输出或流式内容。
+
+  **现象**：
+  - Ctrl+C 后过几秒仍有工具结果输出
+  - 并行的非 bash 工具全部运行到完成
+  - 顺序 bash 工具队列中的后续工具仍逐一执行
+
+  **根因分析**：
+  1. `executeToolCall()` 函数不接受 `abortSignal` 参数，工具执行器无法感知中断
+  2. 工具执行入口（agent.ts L2205）没有 abort 门卫，stream 结束到工具执行之间存在无保护窗口
+  3. bash 工具 `for...of` 循环中没有在每次迭代前检查 abort 状态
+  4. 非 bash 工具通过 `Promise.all()` 并发，已启动的 promise 会运行到完成
+
+- **Context**:
+
+  **信号链路**：
+  ```
+  Ctrl+C → GlobalShortcuts.tsx:69 abort()
+         → StreamingContext.tsx:406 abortController.abort()
+         → agent.ts:1787 retrySignal (AbortSignal.any)
+         → anthropic.ts:234 for-await loop 检查 signal.aborted ✅
+         → agent.ts:2205 工具执行阶段 ❌ (无检查)
+  ```
+
+  **影响文件**：`packages/coding/src/agent.ts`、`packages/coding/src/types.ts`、`packages/coding/src/tools/bash.ts`
+
+- **Resolution**:
+
+  四层防御策略（graceful cancellation 模式）：
+
+  1. **工具执行前门卫**（agent.ts L2215-2233）：检查 `options.abortSignal?.aborted`，若已中断则将所有工具标记为 `CANCELLED_TOOL_RESULT_MESSAGE`，走统一的 `hasCancellation` 退出路径
+  2. **`executeToolCall` 入口检查**（agent.ts L1220-1225）：新增 `abortSignal?: AbortSignal` 参数，函数入口检查 signal，短路返回取消结果
+  3. **bash 工具循环检查**（agent.ts L2251-2255）：每次迭代前检查 abort，跳过未执行的 bash 工具
+  4. **bash 子进程 kill**（bash.ts L147-178）：`abortSignal` 通过 `KodaXToolExecutionContext` 透传到 bash 工具，注册 `abort` 事件监听器，信号触发时立即 `proc.kill()` 杀掉正在运行的子进程。使用 `settled` 守卫防止 abort/timeout/close 竞态导致 Promise 多次 resolve；用 `.once()` 注册 cleanup listener 避免内存泄漏。
 
 ---
 ### 111: SSE / Streamable HTTP MCP 传输缺少专项测试

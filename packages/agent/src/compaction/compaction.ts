@@ -11,6 +11,7 @@ import type { CompactionAnchor, CompactionConfig, CompactionResult } from './typ
 import { countTokens, estimateTokens } from '../tokenizer.js';
 import { extractArtifactLedger, extractFileOps } from './file-tracker.js';
 import { extractCompactMemorySeed, generateSummary } from './summary-generator.js';
+import { extractBashIntent } from './bash-intent.js';
 
 const DEFAULT_CONTEXT_WINDOW = 200000;
 const STRUCTURED_PRUNE_MINIMUM_TOKENS = 20000;
@@ -19,6 +20,13 @@ const PRUNE_PROTECTED_TOOLS = new Set(['skill']);
 const MAX_SUMMARIZATION_TOKENS_PER_CHUNK = 50000;
 const SUMMARIZATION_RETRY_DELAY_MS = 2000;
 const COMPACTION_SUMMARY_PREFIX = '[\u5bf9\u8bdd\u5386\u53f2\u6458\u8981]\n\n';
+
+/** User messages below this token threshold are never truncated */
+const USER_MESSAGE_PROTECTION_TOKENS = 800;
+/** Tokens to keep from the head of a long user message */
+const USER_MESSAGE_HEAD_TOKENS = 400;
+/** Tokens to keep from the tail of a long user message */
+const USER_MESSAGE_TAIL_TOKENS = 200;
 
 export interface ToolContextInfo {
   name: string;
@@ -31,6 +39,7 @@ interface ToolContextSeed {
   action: string;
   target?: string;
   query?: string;
+  previewOverride?: string;
 }
 
 interface PruneDecision {
@@ -441,13 +450,14 @@ export function buildToolContextMap(messages: KodaXMessage[]): Map<string, ToolC
       const command = input.command ?? input.CommandLine ?? input.command_line;
 
       if (typeof command === 'string' && command.trim()) {
-        const normalizedCommand = command.trim().replace(/\s+/g, ' ');
-        const parts = normalizedCommand.split(/\s+/);
+        const intent = extractBashIntent(command);
+        const parts = intent.split(/\s+/);
         seeds.push({
           id: block.id,
           name,
           action: parts[0] ?? name,
           target: parts.slice(1).find((token) => token && !token.startsWith('-')) ?? parts[0] ?? name,
+          previewOverride: intent,
         });
         continue;
       }
@@ -500,19 +510,25 @@ export function buildToolContextMap(messages: KodaXMessage[]): Map<string, ToolC
     .filter((target): target is string => isPathLikeTarget(target));
 
   for (const seed of seeds) {
-    const displayTarget = seed.target
-      ? (isPathLikeTarget(seed.target)
-        ? shortestUniqueSuffix(seed.target, pathTargets)
-        : seed.target)
-      : undefined;
+    let preview: string;
 
-    const preview = seed.query && displayTarget
-      ? `${seed.action} ${displayTarget} "${seed.query}"`
-      : displayTarget
-        ? `${seed.action} ${displayTarget}`
-        : seed.query
-          ? `${seed.action} "${seed.query}"`
-          : seed.name;
+    if (seed.previewOverride) {
+      preview = seed.previewOverride;
+    } else {
+      const displayTarget = seed.target
+        ? (isPathLikeTarget(seed.target)
+          ? shortestUniqueSuffix(seed.target, pathTargets)
+          : seed.target)
+        : undefined;
+
+      preview = seed.query && displayTarget
+        ? `${seed.action} ${displayTarget} "${seed.query}"`
+        : displayTarget
+          ? `${seed.action} ${displayTarget}`
+          : seed.query
+            ? `${seed.action} "${seed.query}"`
+            : seed.name;
+    }
 
     toolContextMap.set(seed.id, {
       name: seed.name,
@@ -577,11 +593,26 @@ function pruneToolResults(
   let hasPruned = false;
   const prunedMessages = messages.map((msg) => {
     if (msg.role !== 'user' || !Array.isArray(msg.content)) {
+      // Truncate long string-content user messages (non-array)
+      if (msg.role === 'user' && typeof msg.content === 'string') {
+        return truncateUserMessage(msg);
+      }
       return msg;
     }
 
     let changed = false;
     const newContent = msg.content.map((block) => {
+      // Truncate long user text blocks
+      if (block.type === 'text' && 'text' in block) {
+        const truncated = truncateUserText(block.text);
+        if (truncated !== block.text) {
+          changed = true;
+          hasPruned = true;
+          return { ...block, text: truncated };
+        }
+        return block;
+      }
+
       if (block.type !== 'tool_result' || typeof block.content !== 'string') {
         return block;
       }
@@ -605,6 +636,29 @@ function pruneToolResults(
   });
 
   return { messages: prunedMessages, hasPruned };
+}
+
+/**
+ * Truncate a long user text string, preserving head and tail.
+ * Short texts (≤ USER_MESSAGE_PROTECTION_TOKENS) are returned as-is.
+ */
+export function truncateUserText(text: string): string {
+  const tokens = countTokens(text);
+  if (tokens <= USER_MESSAGE_PROTECTION_TOKENS) return text;
+
+  const headChars = Math.floor(text.length * (USER_MESSAGE_HEAD_TOKENS / tokens));
+  const tailChars = Math.floor(text.length * (USER_MESSAGE_TAIL_TOKENS / tokens));
+  const head = text.slice(0, headChars);
+  const tail = text.slice(-tailChars);
+
+  return `${head}\n[…user message truncated, original ~${tokens} tokens…]\n${tail}`;
+}
+
+/** Truncate a string-content user message */
+function truncateUserMessage(msg: KodaXMessage): KodaXMessage {
+  if (typeof msg.content !== 'string') return msg;
+  const truncated = truncateUserText(msg.content);
+  return truncated !== msg.content ? { ...msg, content: truncated } : msg;
 }
 
 function countToolResultTokens(content: string): number {
