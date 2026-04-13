@@ -142,6 +142,16 @@ interface ProviderPrepareState {
   blockedReason?: string;
 }
 
+/** FEATURE_067 v3: Filter tools excluded for child agents at API level. */
+function filterExcludedTools(
+  tools: string[],
+  excludeTools: readonly string[] | undefined,
+): string[] {
+  if (!excludeTools || excludeTools.length === 0) return tools;
+  const excluded = new Set(excludeTools);
+  return tools.filter((name) => !excluded.has(name));
+}
+
 function shouldEmitRepoIntelligenceTrace(options: KodaXOptions): boolean {
   return options.context?.repoIntelligenceTrace === true
     || process.env.KODAX_REPO_INTELLIGENCE_TRACE === '1';
@@ -1257,7 +1267,17 @@ async function executeToolCall(
     return blockedWrite;
   }
 
-  const result = await executeTool(toolCall.name, toolCall.input ?? {}, ctx);
+  // FEATURE_067 v2: Inject reportToolProgress for long-running tools (dispatch_child_tasks)
+  const ctxWithProgress: KodaXToolExecutionContext = events.onToolProgress
+    ? {
+        ...ctx,
+        reportToolProgress: (message: string) => {
+          events.onToolProgress?.({ id: toolCall.id, message });
+        },
+      }
+    : ctx;
+
+  const result = await executeTool(toolCall.name, toolCall.input ?? {}, ctxWithProgress);
 
   // MCP fallback: when a built-in tool fails, try to find a same-name MCP tool.
   if (result.startsWith('[Tool Error]') && ctx.extensionRuntime) {
@@ -1425,6 +1445,17 @@ export async function runKodaX(
           );
         }
       : undefined,
+    registerChildWriteWorktrees: options.context?.registerChildWriteWorktrees,
+    parentAgentConfig: {
+      provider: options.provider,
+      model: options.model,
+      reasoningMode: options.reasoningMode,
+    },
+    // FEATURE_067: onChildProgress removed — it fired onManagedTaskStatus with
+    // activeWorkerId='child', which triggered a foreground worker transition in the
+    // REPL and cleared all live tool calls. Progress is now handled entirely via
+    // reportToolProgress → onToolProgress, which updates both the tool block and spinner.
+    onChildProgress: undefined,
   };
   const finalizeManagedProtocolResult = (result: KodaXResult): KodaXResult => {
     const payload = mergeManagedProtocolPayload(
@@ -1446,7 +1477,10 @@ export async function runKodaX(
     queuedMessages: [],
     extensionState: createRuntimeExtensionState(loadedExtensionState),
     extensionRecords: loadedExtensionRecords?.map((record) => ({ ...record })) ?? [],
-    activeTools: runtimeDefaults?.activeTools ?? listToolDefinitions().map((tool) => tool.name),
+    activeTools: filterExcludedTools(
+      runtimeDefaults?.activeTools ?? listToolDefinitions().map((tool) => tool.name),
+      options.context?.excludeTools,
+    ),
     editRecoveryAttempts: new Map(),
     blockedEditWrites: new Set(),
     modelSelection: {
@@ -2763,7 +2797,8 @@ async function buildReasoningExecutionState(
 
   return {
     effectiveOptions,
-    systemPrompt: await buildSystemPrompt(effectiveOptions, isNewSession),
+    systemPrompt: options.context?.systemPromptOverride
+      ?? await buildSystemPrompt(effectiveOptions, isNewSession),
     providerReasoning: {
       enabled: reasoningPlan.depth !== 'off',
       mode: reasoningPlan.mode,

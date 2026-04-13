@@ -38,5 +38,6 @@ export async function toolEmitManagedProtocol(
   }
 
   ctx.emitManagedProtocol(normalized);
+
   return `managed protocol recorded for ${role}`;
 }

@@ -157,6 +157,8 @@ export interface KodaXEvents {
   onThinkingEnd?: (thinking: string) => void;
   onToolUseStart?: (tool: { name: string; id: string; input?: Record<string, unknown> }) => void;
   onToolResult?: (result: { id: string; name: string; content: string }) => void;
+  /** FEATURE_067 v2: Real-time tool execution progress update. Updates the tool's display in the REPL transcript. */
+  onToolProgress?: (update: { id: string; message: string }) => void;
   onToolInputDelta?: (
     toolName: string,
     partialJson: string,
@@ -468,6 +470,8 @@ export interface KodaXChildAgentResult {
   contradictions: string[];
   artifactPaths?: string[];
   sessionId?: string;
+  /** Actual iterations consumed by this child agent. */
+  actualIterations?: number;
 }
 
 export interface KodaXParentReductionContract {
@@ -476,6 +480,23 @@ export interface KodaXParentReductionContract {
   collapseChildTranscripts: boolean;
   summary: string;
   requiredArtifacts: string[];
+}
+
+export interface KodaXChildExecutionResult {
+  readonly results: readonly KodaXChildAgentResult[];
+  readonly mergedFindings: readonly KodaXChildFinding[];
+  readonly mergedArtifacts: readonly string[];
+  readonly totalTokensUsed: number;
+  readonly cancelledChildren: readonly string[];
+  /** Worktree paths for write children, keyed by childId. Available for evaluator review. */
+  readonly worktreePaths?: ReadonlyMap<string, string>;
+}
+
+export interface KodaXChildFinding {
+  readonly childId: string;
+  readonly objective: string;
+  readonly evidence: readonly string[];
+  readonly artifacts: readonly string[];
 }
 
 export interface KodaXFanoutSchedulerInput {
@@ -699,6 +720,16 @@ export interface KodaXContextOptions {
     enabled: boolean;
     role: Exclude<KodaXTaskRole, 'direct'>;
   };
+  /** FEATURE_067 v2: Callback for dispatch_child_tasks to register write worktree paths. */
+  registerChildWriteWorktrees?: (worktreePaths: ReadonlyMap<string, string>) => void;
+  /** FEATURE_067 v3: Tool names to exclude from API-level tool list (child agents). */
+  excludeTools?: readonly string[];
+  /**
+   * FEATURE_067 v3: Override the entire system prompt for this run.
+   * When set, buildSystemPromptSnapshot is skipped — only this string is used.
+   * Used for child agents that need a focused, lightweight prompt instead of the full system.
+   */
+  systemPromptOverride?: string;
   /** Optional structured metadata carried into the managed task contract. */
   taskMetadata?: Record<string, KodaXJsonValue>;
   /** Optional structured verification contract carried into managed tasks. */
@@ -878,6 +909,12 @@ export interface KodaXManagedTaskRuntimeState {
   globalWorkBudget?: number;
   budgetUsage?: number;
   budgetApprovalRequired?: boolean;
+  /** FEATURE_067: Evaluator review prompt for write fan-out diffs. */
+  childWriteReviewPrompt?: string;
+  /** FEATURE_067: Number of write child diffs pending evaluator review. */
+  childWriteDiffCount?: number;
+  /** FEATURE_067 v2: Worktree paths from dispatch_child_tasks write fan-out, keyed by childId. */
+  childWriteWorktreePaths?: ReadonlyMap<string, string>;
 }
 
 export interface KodaXManagedTask {
@@ -1012,4 +1049,21 @@ export interface KodaXToolExecutionContext {
   abortSignal?: AbortSignal;
   managedProtocolRole?: Exclude<KodaXTaskRole, 'direct'>;
   emitManagedProtocol?: (payload: Partial<KodaXManagedProtocolPayload>) => void;
+  /** FEATURE_067 v2: Parent agent's provider/model for child agent inheritance. */
+  parentAgentConfig?: {
+    readonly provider: string;
+    readonly model?: string;
+    readonly reasoningMode?: KodaXReasoningMode;
+  };
+  /**
+   * @deprecated FEATURE_067: Removed — use reportToolProgress instead.
+   * Previously fired onManagedTaskStatus with activeWorkerId='child',
+   * triggering a foreground worker transition that cleared all live tool calls.
+   */
+  onChildProgress?: (note: string) => void;
+  /** FEATURE_067 v2: Callback for long-running tools to report execution progress to the REPL transcript.
+   *  The string will be displayed as the tool's "Running:" line in the transcript. */
+  reportToolProgress?: (message: string) => void;
+  /** FEATURE_067 v2: Callback to store write child worktree paths for Evaluator diff injection. */
+  registerChildWriteWorktrees?: (worktreePaths: ReadonlyMap<string, string>) => void;
 }

@@ -524,6 +524,10 @@ function buildManagedTaskRoutingTranscript(task: NonNullable<KodaXResult["manage
   if (!raw || !final) {
     return undefined;
   }
+  // Skip routing diagnostics for simple direct responses — no useful signal.
+  if (raw.harnessProfile === "H0_DIRECT" && final.harnessProfile === "H0_DIRECT") {
+    return undefined;
+  }
 
   const lines = [
     "[Routing]",
@@ -4516,6 +4520,24 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         );
       }
     },
+    onToolProgress: (update: { id: string; message: string }) => {
+      if (userInterruptedRef.current) return;
+      const truncated = update.message.length > 100
+        ? update.message.slice(0, 97) + '...'
+        : update.message;
+      // 1. Update live tool state (progressLines rendered inside tool block)
+      const updatedTool = updateLiveToolCallById(update.id, (tool) => ({
+        ...tool,
+        preview: truncated,
+        progressLines: [...(tool.progressLines ?? []).slice(-4), truncated],
+      }));
+      // 2. Sync to foreground turn → displayHistory → transcript re-renders
+      if (updatedTool && managedForegroundOwnerRef.current.workerId) {
+        syncManagedForegroundToolGroup(updatedTool);
+      }
+      // 3. Update spinner label
+      setLastLiveActivityLabel(truncated);
+    },
     onStreamEnd: () => {
       const finalizedTools = finalizeAllExecutingToolCalls(
         ToolCallStatus.Cancelled,
@@ -5192,6 +5214,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     context.contextTokenSnapshot = result.contextTokenSnapshot;
     reconcileContextLineage(result.messages);
 
+    // Issue 117: When the round failed (API error, etc.), skip the full
+    // finalization that emits routing diagnostics and treats partial text as
+    // the final answer.  Only persist foreground items the user already saw
+    // and add a visible incomplete indicator.
+    const roundFailed = result.success === false && !result.interrupted;
+
     const finalThinking = getThinkingContent().trim();
     const finalResponse = resolveCompletedAssistantText(
       result.messages,
@@ -5210,11 +5238,15 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           && "text" in item
           && sanitizeUserFacingAssistantText(String(item.text ?? "")).length > 0,
       );
-    const needsFinalResponseItem = finalResponse && !foregroundCoversAssistantText;
+    const needsFinalResponseItem = !roundFailed && finalResponse && !foregroundCoversAssistantText;
     const managedRoundEvents = [...managedRoundEventHistoryRef.current];
-    const managedTranscriptItems = managedRoundEvents.length === 0
-      ? buildManagedTaskTranscriptItems(result)
-      : [];
+    // Skip routing diagnostics for failed rounds — they mislead users into
+    // thinking the task completed successfully.
+    const managedTranscriptItems = roundFailed
+      ? []
+      : managedRoundEvents.length === 0
+        ? buildManagedTaskTranscriptItems(result)
+        : [];
     const roundHistoryItems = hasManagedForegroundLedger
       ? []
       : buildRoundHistoryItems({
@@ -5226,14 +5258,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     const persistedAdditions: CreatableHistoryItem[] = [
       ...managedForegroundRoundItems.map((item) => toCreatableHistoryItem(item)),
       ...roundHistoryItems,
-      ...managedRoundEvents.map((item) => toCreatableHistoryItem(item)),
+      ...(roundFailed ? [] : managedRoundEvents.map((item) => toCreatableHistoryItem(item))),
       ...managedTranscriptItems.map((text) => toManagedTranscriptEventItem(text)),
       ...(needsFinalResponseItem
         ? [{
             type: "assistant" as const,
             text: result.interrupted ? `${finalResponse}\n\n[Interrupted]` : finalResponse,
           }]
-        : !finalResponse && !foregroundCoversAssistantText && !result.interrupted
+        : !finalResponse && !foregroundCoversAssistantText && !result.interrupted && !roundFailed
           ? [{ type: "info" as const, text: "[No response text was produced for this round]" }]
           : []),
     ];
@@ -5252,11 +5284,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       addHistoryItem(item);
     }
 
-    for (const transcript of managedTranscriptItems) {
-      addHistoryItem(toManagedTranscriptEventItem(transcript));
-    }
-    for (const eventItem of managedRoundEvents) {
-      addHistoryItem(toCreatableHistoryItem(eventItem));
+    if (!roundFailed) {
+      for (const transcript of managedTranscriptItems) {
+        addHistoryItem(toManagedTranscriptEventItem(transcript));
+      }
+      for (const eventItem of managedRoundEvents) {
+        addHistoryItem(toCreatableHistoryItem(eventItem));
+      }
     }
 
     if (needsFinalResponseItem) {
@@ -5264,7 +5298,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         type: "assistant",
         text: result.interrupted ? `${finalResponse}\n\n[Interrupted]` : finalResponse,
       });
-    } else if (!finalResponse && !foregroundCoversAssistantText && !result.interrupted) {
+    } else if (!finalResponse && !foregroundCoversAssistantText && !result.interrupted && !roundFailed) {
       // No assistant text was produced — neither from the foreground ledger nor
       // from the resolved result.  Surface a visible notice so the user is aware
       // the response was empty rather than silently showing nothing.

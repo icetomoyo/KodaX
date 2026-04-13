@@ -13,11 +13,11 @@
 
 | Item | Value |
 |---|---|
-| Tracked feature IDs | `001-069` |
-| Total tracked features | `69` |
+| Tracked feature IDs | `001-070` |
+| Total tracked features | `70` |
 | Completed | `55` |
-| InProgress | `2` |
-| Planned | `12` |
+| InProgress | `1` |
+| Planned | `14` |
 | Current released version | `v0.7.17` |
 
 ### 各版本待做分布

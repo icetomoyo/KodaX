@@ -15,7 +15,7 @@ const TEST_CONTEXT: KodaXToolExecutionContext = {
 describe('tool registry', () => {
   it('derives required params from the active tool schema', () => {
     expect(getRequiredToolParams('read')).toEqual(['path']);
-    expect(getRequiredToolParams('ask_user_question')).toEqual(['question', 'options']);
+    expect(getRequiredToolParams('ask_user_question')).toEqual(['question']);
     expect(getRequiredToolParams('web_search')).toEqual(['query']);
     expect(getRequiredToolParams('code_search')).toEqual(['query']);
     expect(getRequiredToolParams('semantic_lookup')).toEqual(['query']);

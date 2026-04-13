@@ -35,6 +35,7 @@ import { toolMcpCall } from './mcp-call.js';
 import { toolMcpReadResource } from './mcp-read-resource.js';
 import { toolMcpGetPrompt } from './mcp-get-prompt.js';
 import { toolWorktreeCreate, toolWorktreeRemove } from './worktree.js';
+import { toolDispatchChildTask } from './dispatch-child-tasks.js';
 
 const TOOL_REGISTRY: ToolRegistry = new Map();
 let nextToolRegistrationId = 0;
@@ -275,6 +276,23 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['role', 'payload'],
     },
     handler: toolEmitManagedProtocol,
+  },
+  {
+    name: 'dispatch_child_task',
+    description: 'Execute a single child agent for an independent sub-task. The child runs its own multi-turn investigation loop and returns findings. Call multiple times in parallel for concurrent sub-tasks — each call appears as a separate tool with its own status in the transcript.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Unique child task identifier' },
+        objective: { type: 'string', description: 'Detailed multi-step goal for this child agent' },
+        readOnly: { type: 'boolean', description: 'true=investigation only (default), false=code changes (Generator only)' },
+        scope_summary: { type: 'string', description: 'Optional scope hint (e.g. "packages/ai/src/")' },
+        evidence_refs: { type: 'array', items: { type: 'string' }, description: 'Optional known evidence: "file:path", "diff:path", or "finding:text"' },
+        constraints: { type: 'array', items: { type: 'string' }, description: 'Optional constraints' },
+      },
+      required: ['objective'],
+    },
+    handler: toolDispatchChildTask,
   },
   {
     name: 'web_search',
@@ -768,6 +786,42 @@ export function filterMcpToolNames<T extends string>(
   return toolNames.filter((name) => !isMcpToolName(name));
 }
 
+/**
+ * Detect whether a handler's return value is an AsyncGenerator (streaming tool).
+ * Async generators have Symbol.asyncIterator; Promises do not.
+ */
+function isAsyncGenerator(value: unknown): value is AsyncGenerator<unknown, unknown, unknown> {
+  return (
+    value !== null
+    && value !== undefined
+    && typeof value === 'object'
+    && Symbol.asyncIterator in (value as object)
+  );
+}
+
+/**
+ * Consume an async generator: forward each yield as a progress update,
+ * then return the generator's final return value.
+ *
+ * NOTE: `for await...of` does NOT capture the return value of a generator.
+ * We must use manual .next() iteration to capture `{ done: true, value }`.
+ */
+async function consumeToolGenerator(
+  gen: AsyncGenerator<import('./types.js').ToolProgress, string, void>,
+  onProgress?: (message: string) => void,
+): Promise<string> {
+  let step = await gen.next();
+  while (!step.done) {
+    const progress = step.value;
+    if (progress && typeof progress.message === 'string') {
+      onProgress?.(progress.message);
+    }
+    step = await gen.next();
+  }
+  // step.done === true → step.value is the return value (string)
+  return step.value;
+}
+
 export async function executeTool(
   name: string,
   input: Record<string, unknown>,
@@ -786,7 +840,18 @@ export async function executeTool(
   }
 
   try {
-    return await definition.handler(input, ctx);
+    const result = definition.handler(input, ctx);
+
+    // Streaming tool (async generator): consume yields as progress, return final value
+    if (isAsyncGenerator(result)) {
+      return await consumeToolGenerator(
+        result as AsyncGenerator<import('./types.js').ToolProgress, string, void>,
+        ctx.reportToolProgress,
+      );
+    }
+
+    // Standard tool (Promise<string>): await as before
+    return await (result as Promise<string>);
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     if (errorMsg.includes('ENOENT')) {

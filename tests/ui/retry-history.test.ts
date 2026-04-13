@@ -13,7 +13,7 @@ describe("retry-history utils", () => {
     expect(createRetryHistoryItem("API error, retrying in 3s (1/3)", 1, 3)).toEqual({
       type: "info",
       icon: "⏳",
-      text: "API error, retrying in 3s (1/3)\n   Retry attempt 1/3",
+      text: "API error, retrying in 3s (1/3)",
     });
   });
 
@@ -29,7 +29,7 @@ describe("retry-history utils", () => {
     expect(addHistoryItem).toHaveBeenCalledWith({
       type: "info",
       icon: "⏳",
-      text: "API error, retrying in 3s (1/3)\n   Retry attempt 1/3",
+      text: "API error, retrying in 3s (1/3)",
     });
   });
 });

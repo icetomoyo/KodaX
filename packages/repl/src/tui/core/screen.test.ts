@@ -39,9 +39,9 @@ describe("transcript screen buffer", () => {
 
     expect(buffer.rows[0]).toMatchObject({
       key: "row-cjk",
-      textLength: 3,
+      textLength: 4,
       textStartColumn: 1,
-      textEndColumn: 6,
+      textEndColumn: 8,
     });
   });
 

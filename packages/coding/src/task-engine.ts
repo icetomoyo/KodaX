@@ -36,6 +36,8 @@ import {
   renderRepoOverview,
 } from './repo-intelligence/index.js';
 import { debugLogRepoIntelligence } from './repo-intelligence/internal.js';
+// FEATURE_067 v2: Child agents are now dispatched via dispatch_child_task tool.
+// Only collectWriteChildDiffs and buildEvaluatorMergePrompt are used (dynamically imported).
 import {
   getImpactEstimate,
   getModuleContext,
@@ -231,6 +233,8 @@ interface ManagedTaskRoundExecution {
   budgetRequest?: KodaXBudgetExtensionRequest;
   budgetExtensionGranted?: number;
   budgetExtensionReason?: string;
+  /** FEATURE_067 v2: Worktree paths from write fan-out, for post-round cleanup. */
+  childWriteWorktreePaths?: ReadonlyMap<string, string>;
 }
 
 type ManagedTaskQualityAssuranceMode = 'required' | 'optional';
@@ -714,6 +718,8 @@ interface ManagedRolePromptContext {
   skillExecutionArtifactPath?: string;
   skillMapArtifactPath?: string;
   previousRoleSummaries?: Partial<Record<KodaXTaskRole, KodaXRoleRoundSummary>>;
+  /** FEATURE_067: Evaluator review prompt for write fan-out diffs from Generator's child agents. */
+  childWriteReviewPrompt?: string;
 }
 
 const TACTICAL_REVIEW_FINDINGS_BLOCK = 'kodax-review-findings';
@@ -1869,6 +1875,7 @@ const SCOUT_ALLOWED_TOOLS = [
   'glob',
   'grep',
   'read',
+  'dispatch_child_task',
   ...MCP_TOOL_NAMES,
 ] as const;
 
@@ -1901,6 +1908,7 @@ const H1_READONLY_GENERATOR_ALLOWED_TOOLS = [
   'glob',
   'grep',
   'read',
+  'dispatch_child_task',
   ...MCP_TOOL_NAMES,
 ] as const;
 
@@ -3013,6 +3021,21 @@ function createRolePrompt(
         'If you confirm H1 or H2, stop after the cheap-facts pass. Do not keep exploring just to make the handoff more complete.',
         'Respect any stated topology ceiling or upgrade ceiling in the routing metadata, but do not use review size alone as a reason to escalate.',
         scoutReviewEvidenceGuidance,
+        // FEATURE_067: dispatch_child_task tool guidance for parallel fan-out
+        [
+          'PARALLEL CHILD AGENTS: You have access to the dispatch_child_task tool.',
+          'Each call runs ONE independent child agent. To parallelize, call it MULTIPLE TIMES in the SAME response (multiple tool_use blocks). Each child appears as a separate tool with its own status.',
+          'After your initial scope analysis (1-2 turns), ask: does this task contain 2+ independent sub-tasks where each needs multi-file reading, pattern analysis, and multi-step reasoning?',
+          'If YES: call dispatch_child_task once PER sub-task in the same turn. Example for 3-package security audit:',
+          '  tool_use: dispatch_child_task({id:"sec-ai",objective:"Analyze packages/ai security...",readOnly:true})',
+          '  tool_use: dispatch_child_task({id:"sec-agent",objective:"Analyze packages/agent security...",readOnly:true})',
+          '  tool_use: dispatch_child_task({id:"sec-coding",objective:"Analyze packages/coding security...",readOnly:true})',
+          'All 3 calls execute in parallel. You receive each child\'s findings as separate tool results.',
+          'If NO (each sub-task is 1-2 tool calls): handle with parallel tool calls yourself (glob, grep, read).',
+          'TIMING: Decide EARLY (after initial scope, before deep investigation). Once you start deep-diving, child delegation becomes wasted work.',
+          'You may call dispatch_child_task BEFORE deciding your confirmed_harness. Use the findings to make a better-informed harness decision.',
+          'Scout can only dispatch readOnly tasks. Write fan-out is available to Generator only.',
+        ].join('\n'),
         [
           `Append a final fenced block named \`\`\`${MANAGED_TASK_SCOUT_BLOCK}\` with this exact shape:`,
           'summary: <one-line scout summary>',
@@ -3098,6 +3121,16 @@ function createRolePrompt(
         isTerminalAuthority
           ? 'You are the terminal delivery role for this run. Return the final user-facing answer and summarize concrete evidence inline.'
           : 'Leave final judgment to the evaluator and include a crisp evidence handoff.',
+        // FEATURE_067: Generator parallel task guidance via dispatch_child_task tool
+        [
+          'PARALLEL CHILD AGENTS: You have access to the dispatch_child_task tool.',
+          'Each call runs ONE child agent. Call it MULTIPLE TIMES in the same response for parallel execution.',
+          'For read-only investigation: call with readOnly=true to gather evidence in parallel.',
+          decision.harnessProfile === 'H2_PLAN_EXECUTE_EVAL' && !isTerminalAuthority
+            ? 'For write fan-out: call with readOnly=false when modifying independent modules. Each write child runs in an isolated git worktree. The Evaluator will review all diffs before merging.'
+            : 'Write fan-out (readOnly=false) is only available in H2_PLAN_EXECUTE_EVAL harness.',
+          'Only use dispatch_child_task for genuinely independent sub-tasks that benefit from parallel execution.',
+        ].join('\n'),
         isTerminalAuthority ? undefined : handoffBlockInstructions,
         sharedClosingRule,
       ].filter(Boolean).join('\n\n');
@@ -3121,6 +3154,19 @@ function createRolePrompt(
         'The Scout-confirmed harness is the active harness for this run. Do not reinterpret it locally; only recommend a stronger harness when the evidence clearly shows the current harness cannot safely finish the task.',
         'Read the managed task artifacts and dependency handoff artifacts before acting. Treat them as the primary coordination surface.',
         'Judge whether the dependency handoff satisfies the original task and whether the evidence is strong enough.',
+        // FEATURE_067: Inject write fan-out review prompt for Evaluator
+        rolePromptContext?.childWriteReviewPrompt
+          ? [
+            '## Child Agent Write Diffs — Pending Your Review',
+            '',
+            'The Generator spawned parallel child agents that modified code in isolated worktrees.',
+            'Review each child\'s diff below. For each child, decide ACCEPT or REVISE.',
+            'ACCEPT: changes are correct and consistent — they will be merged to the main branch.',
+            'REVISE: changes need fixes — explain what\'s wrong so Generator can retry.',
+            '',
+            rolePromptContext.childWriteReviewPrompt,
+          ].join('\n')
+          : undefined,
         decision.harnessProfile === 'H1_EXECUTE_EVAL'
           ? [
             'You are the lightweight H1 evaluator, not a second full executor.',
@@ -3606,7 +3652,12 @@ async function completeScoutH0Task(ctx: {
     task.runtime = { ...task.runtime, roleRoundSummaries: { scout: roundSummary } };
   }
 
-  const completedTask = applyScoutTerminalResultToTask(task, scoutExecution.result, scoutExecution.directive);
+  // FEATURE_067 v2: Child agents are now dispatched via dispatch_child_task tool during Scout's turn.
+  // Findings are already in scoutExecution.result.lastText (returned as tool results).
+  // No system-side child execution needed here.
+  const scoutResult = scoutExecution.result;
+
+  const completedTask = applyScoutTerminalResultToTask(task, scoutResult, scoutExecution.directive);
   await writeManagedTaskSnapshotArtifacts(workspaceDir, completedTask);
   options.events?.onManagedTaskStatus?.({
     agentMode, harnessProfile: 'H0_DIRECT',
@@ -3619,7 +3670,7 @@ async function completeScoutH0Task(ctx: {
     resolveManagedTaskRepoIntelligenceContext(options), workspaceDir, options,
   );
 
-  return { ...scoutExecution.result, managedTask: completedTask, routingDecision: finalRoutingDecision };
+  return { ...scoutResult, managedTask: completedTask, routingDecision: finalRoutingDecision };
 }
 
 function isManagedBackgroundFanoutWorker(
@@ -5335,6 +5386,8 @@ function createWorkerEvents(
       textPrefixed = false;
       thinkingPrefixed = false;
     },
+    // FEATURE_067 v2: Pass through tool progress events for dispatch_child_task transcript updates.
+    onToolProgress: baseEvents?.onToolProgress,
   };
 }
 
@@ -6017,7 +6070,8 @@ async function runManagedScoutStage(
       blockingEvidence: plan.decision.harnessProfile === 'H0_DIRECT'
         ? []
         : ['Structured scout output was incomplete, so managed execution must continue.'],
-      directCompletionReady: plan.decision.harnessProfile === 'H0_DIRECT' ? 'yes' : 'no',
+      // Never mark as ready when the scout result itself failed (e.g. API timeout).
+      directCompletionReady: plan.decision.harnessProfile === 'H0_DIRECT' && lastResult!.success !== false ? 'yes' : 'no',
       userFacingText: sanitizeManagedUserFacingText(extractMessageText(lastResult) || ''),
     },
     scoutSessionId,
@@ -7002,6 +7056,22 @@ async function executeManagedTaskRound(
   const contractDirectives = new Map<string, ManagedTaskContractDirective>();
   const handoffDirectives = new Map<string, ManagedTaskHandoffDirective>();
   let taskSnapshot = task;
+  // FEATURE_067 v2: Mutable holder for write worktree paths from dispatch_child_task tool.
+  // The callback is passed to each worker's context so the tool can register paths.
+  const childWriteWorktreeHolder: { paths: Map<string, string> } = { paths: new Map() };
+  const registerChildWriteWorktrees = (worktreePaths: ReadonlyMap<string, string>): void => {
+    for (const [childId, path] of worktreePaths) {
+      childWriteWorktreeHolder.paths.set(childId, path);
+    }
+    // Also store into taskSnapshot for orchestration bridge
+    taskSnapshot = {
+      ...taskSnapshot,
+      runtime: {
+        ...taskSnapshot.runtime,
+        childWriteWorktreePaths: new Map(childWriteWorktreeHolder.paths),
+      },
+    };
+  };
   const recordRoundLiveEvent = (event: KodaXManagedLiveEvent): void => {
     roundLiveEvents = appendManagedTimelineEvent(roundLiveEvents, event);
   };
@@ -7012,21 +7082,31 @@ async function executeManagedTaskRound(
   const managedWorkerRunner = createKodaXTaskRunner<ManagedTaskWorkerSpec>({
     baseOptions: options,
     runAgent: runDirectKodaX,
-    createOptions: (worker, _context, defaultOptions) => buildWorkerRunOptions(
-      defaultOptions,
-      task,
-      worker,
-      workerSet.terminalWorkerId,
-      routingPromptOverlay,
-      qualityAssuranceMode,
-      sessionStorage,
-      resolveManagedMemoryStrategy(options, plan, worker.role, round, previousDirective),
-      createBudgetSnapshot(controller, task.contract.harnessProfile, round, worker.role, worker.id),
-      controller,
-      recordRoundLiveEvent,
-      maxRounds,
-      worker.id === scoutContinuationWorkerId ? scoutSessionId : undefined,
-    ),
+    createOptions: (worker, _context, defaultOptions) => {
+      const workerOpts = buildWorkerRunOptions(
+        defaultOptions,
+        task,
+        worker,
+        workerSet.terminalWorkerId,
+        routingPromptOverlay,
+        qualityAssuranceMode,
+        sessionStorage,
+        resolveManagedMemoryStrategy(options, plan, worker.role, round, previousDirective),
+        createBudgetSnapshot(controller, task.contract.harnessProfile, round, worker.role, worker.id),
+        controller,
+        recordRoundLiveEvent,
+        maxRounds,
+        worker.id === scoutContinuationWorkerId ? scoutSessionId : undefined,
+      );
+      // FEATURE_067 v2: Inject registerChildWriteWorktrees for Generator (write fan-out via dispatch_child_task)
+      if (worker.role === 'generator') {
+        workerOpts.context = {
+          ...workerOpts.context,
+          registerChildWriteWorktrees,
+        };
+      }
+      return workerOpts;
+    },
     runTask: async (worker, _context, preparedOptions, prompt, executeDefault) => {
       const execution = await runManagedWorkerTask(
         worker,
@@ -7052,7 +7132,55 @@ async function executeManagedTaskRound(
             : worker.role === 'generator' && !worker.terminalAuthority
               ? sanitizeHandoffResult(result, worker.title)
               : { result };
-      workerResults.set(worker.id, sanitized.result);
+      // FEATURE_067 v2: Child agents are now dispatched via dispatch_child_task tool during Generator's turn.
+      // Read-only findings are already in the Generator's result.lastText (tool results).
+      // Write fan-out: detect worktree paths from task runtime and inject diffs into Evaluator.
+      let finalResult = sanitized.result;
+      if (
+        worker.role === 'generator'
+        && task.contract.harnessProfile === 'H2_PLAN_EXECUTE_EVAL'
+        && taskSnapshot.runtime?.childWriteWorktreePaths
+      ) {
+        const worktreeMap = taskSnapshot.runtime.childWriteWorktreePaths;
+        if (worktreeMap.size > 0) {
+          const { collectWriteChildDiffs, buildEvaluatorMergePrompt } = await import('./child-executor.js');
+          // Build synthetic results from worktree paths stored during dispatch_child_task execution
+          const syntheticResults = Array.from(worktreeMap.keys()).map((childId) => ({
+            childId,
+            fanoutClass: 'evidence-scan' as const,
+            status: 'completed' as const,
+            disposition: 'valid' as const,
+            summary: '',
+            evidenceRefs: [] as string[],
+            contradictions: [] as string[],
+          }));
+          const syntheticBundles = Array.from(worktreeMap.keys()).map((childId) => ({
+            id: childId,
+            fanoutClass: 'evidence-scan' as const,
+            objective: childId,
+            readOnly: false,
+            evidenceRefs: [] as string[],
+            constraints: [] as string[],
+          }));
+          const writeDiffs = collectWriteChildDiffs(syntheticResults, syntheticBundles, worktreeMap);
+          if (writeDiffs.length > 0) {
+            const evalPrompt = buildEvaluatorMergePrompt(writeDiffs);
+            taskSnapshot = {
+              ...taskSnapshot,
+              runtime: {
+                ...taskSnapshot.runtime,
+                childWriteReviewPrompt: evalPrompt,
+                childWriteDiffCount: writeDiffs.length,
+              },
+            };
+            const evaluatorWorker = workerSet.workers.find((w) => w.role === 'evaluator');
+            if (evaluatorWorker) {
+              evaluatorWorker.prompt = `${evaluatorWorker.prompt}\n\n${evalPrompt}`;
+            }
+          }
+        }
+      }
+      workerResults.set(worker.id, finalResult);
       let completionStatus: 'ready' | 'incomplete' | 'blocked' | 'missing' = 'missing';
       if (worker.role === 'scout') {
         completionStatus = (sanitized.directive as ManagedTaskScoutDirective | undefined) ? 'ready' : 'missing';
@@ -7227,6 +7355,10 @@ async function executeManagedTaskRound(
     budgetRequest,
     budgetExtensionGranted,
     budgetExtensionReason,
+    // FEATURE_067 v2: Worktree paths for post-round cleanup
+    childWriteWorktreePaths: childWriteWorktreeHolder.paths.size > 0
+      ? new Map(childWriteWorktreeHolder.paths)
+      : undefined,
   };
 }
 
@@ -7465,7 +7597,12 @@ export async function runManagedTask(
   );
   // FEATURE_061 Phase 4: Tactical Flows removed — role-level subagents replace hardcoded fan-out.
   // FEATURE_061 Phase 2: Scout completes H0 tasks directly.
-  if (finalRoutingDecision.harnessProfile === 'H0_DIRECT' && scoutExecution.directive.confirmedHarness === 'H0_DIRECT') {
+  if (
+    finalRoutingDecision.harnessProfile === 'H0_DIRECT'
+    && scoutExecution.directive.confirmedHarness === 'H0_DIRECT'
+    && scoutExecution.result.success !== false
+    && normalizeManagedDirectCompletionReady(scoutExecution.directive.directCompletionReady ?? 'no')
+  ) {
     return completeScoutH0Task({
       options: managedOptions, originalTask: managedOriginalTask, plan,
       scoutExecution, scoutBudgetController,
@@ -7675,6 +7812,19 @@ export async function runManagedTask(
       },
     };
     await writeManagedTaskSnapshotArtifacts(shape.workspaceDir, managedTask);
+
+    // FEATURE_067 v2: Clean up write worktrees after each round (Evaluator has already reviewed diffs).
+    if (roundExecution.childWriteWorktreePaths && roundExecution.childWriteWorktreePaths.size > 0) {
+      const { cleanupWorktrees } = await import('./child-executor.js');
+      await cleanupWorktrees(
+        roundExecution.childWriteWorktreePaths,
+        {
+          backups: new Map(),
+          gitRoot: managedOptions.context?.gitRoot ?? undefined,
+          executionCwd: managedOptions.context?.gitRoot ?? undefined,
+        },
+      );
+    }
 
     roundDirective = roundExecution.directive;
     if (roundDirective) {

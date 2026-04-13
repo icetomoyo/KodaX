@@ -295,6 +295,8 @@ export interface ToolCall {
   output?: unknown;
   error?: string;
   progress?: number; // 0-100
+  /** Real-time progress lines displayed inside the tool block during execution. */
+  progressLines?: string[];
   startTime: number;
   endTime?: number;
 }

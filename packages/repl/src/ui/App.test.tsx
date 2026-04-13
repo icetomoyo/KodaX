@@ -12,4 +12,7 @@ vi.mock("./components/MessageList.js", () => ({
 }));
 
 describe("App", () => {
+  it("module loads without errors", () => {
+    expect(App).toBeDefined();
+  });
 });

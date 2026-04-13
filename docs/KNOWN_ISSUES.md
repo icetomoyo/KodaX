@@ -60,6 +60,8 @@ _Last Updated: 2026-04-13_
 | 113 | High | Resolved | Ctrl+C 中断后工具调用仍继续执行 — abort signal 未传播到工具执行阶段 | v0.7.17 | v0.7.18 | 2026-04-12 | 2026-04-12 |
 | 114 | High | Resolved | ask_user_question ESC 取消被静默吞掉 — 用户取消后模型继续执行 | v0.7.17 | v0.7.18 | 2026-04-12 | 2026-04-12 |
 | 115 | Medium | Resolved | Managed foreground ledger 切换 kind 时丢失 tool_group 引用 — 工具历史条目重复 | v0.7.17 | v0.7.18 | 2026-04-13 | 2026-04-13 |
+| 116 | Medium | Resolved | 协议代码块泄漏到用户可见文本 + H0_DIRECT routing 诊断噪音 | v0.7.17 | v0.7.18 | 2026-04-13 | 2026-04-13 |
+| 117 | High | Resolved | Managed task error recovery 断裂 — transient error 后任务未恢复 | v0.7.17 | v0.7.18 | 2026-04-13 | 2026-04-13 |
 
 ---
 
@@ -321,6 +323,140 @@ _Last Updated: 2026-04-13_
   - Bug 场景（tool 执行中 thinking 插入）：保留引用 → 原地更新 → 不产生重复
   - 多工具并行 + thinking 插入：逐个更新，最后一个终态时清理
   - Phase 转换 / Worker 切换：`transitionManagedForegroundPhase` 做完整重置，不受影响
+
+---
+### 116: 协议代码块泄漏到用户可见文本 + H0_DIRECT routing 诊断噪音 (RESOLVED)
+
+- **Priority**: Medium
+- **Status**: Resolved
+- **Introduced**: v0.7.17
+- **Fixed**: v0.7.18
+- **Created**: 2026-04-13
+- **Resolved**: 2026-04-13
+
+- **Original Problem**:
+
+  两个相关的显示问题：
+
+  **问题 1 — 协议代码块泄漏**
+
+  Managed task 协议使用 ` ```kodax-task-XXX` fenced code block 作为结构化通信通道。同时 `emit_managed_protocol` 工具提供了第二个 JSON 侧通道。模型有时先开始输出文本通道（` ```kodax`），中途切换到工具通道，导致一个未闭合的 ` ```kodax` 片段泄漏到用户可见文本中。
+
+  流式清洗函数 `sanitizeManagedStreamingText`（task-engine.ts）和 `sanitizeManagedUserFacingText` 的正则 `/```kodax-[\w-]+/` 要求 `kodax-` 后至少跟一段后缀（如 `-task-scout`），但模型输出可能在 ` ```kodax` 处就被切换了，正则不匹配，fragment 通过 delta 转发到 REPL。
+
+  **问题 2 — H0_DIRECT routing 诊断噪音**
+
+  `buildManagedTaskRoutingTranscript` 在每次 managed task 完成后生成 routing 诊断事件（`> [Routing] AMA routing: raw=... -> final=...`）。对 H0_DIRECT（简单直接回答）这个诊断只显示 `H0_DIRECT → H0_DIRECT`，无信息量。
+
+- **Context**:
+
+  **正则覆盖 gap**：
+  - `sanitizeManagedStreamingText` task-engine.ts:3734 — 不完整 block 检测
+  - `sanitizeManagedUserFacingText` task-engine.ts:3711 — 完整 block 清洗
+  - `MANAGED_PROTOCOL_BLOCK_PATTERN` message-utils.ts:266 — session restore 清洗
+
+  **routing 诊断**：
+  - `buildManagedTaskRoutingTranscript` InkREPL.tsx:521 — 在 finalization 时生成 event 条目
+
+- **Resolution**:
+
+  **正则修复**：三处正则从 `kodax-[\w-]+` 放宽为 `kodax[\w-]*`，匹配所有 partial form（` ```kodax`、` ```kodax-`、` ```kodax-task-scout` 等）：
+  1. task-engine.ts `sanitizeManagedUserFacingText` — 完整 block 正则
+  2. task-engine.ts `sanitizeManagedStreamingText` — 不完整 block 正则
+  3. message-utils.ts `MANAGED_PROTOCOL_BLOCK_PATTERN` — session restore 正则
+
+  **routing 诊断**：`buildManagedTaskRoutingTranscript` 新增 early return — 当 `raw.harnessProfile === "H0_DIRECT" && final.harnessProfile === "H0_DIRECT"` 时跳过，H1/H2 和 routing 升级场景不受影响。
+
+---
+### 117: Managed task error recovery 断裂 — transient error 后任务未恢复 (RESOLVED)
+
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: v0.7.17
+- **Fixed**: v0.7.18
+- **Created**: 2026-04-13
+- **Resolved**: 2026-04-13
+
+- **Original Problem**:
+
+  当 API stream 在 Scout 工具执行阶段中断（如 "Stream stalled or delayed response (60s idle)"）时，Scout 已输出的可见文本（如"我来写 PRD"）和已发起的工具调用（如 `write` 创建文件）均未完成，但 managed task 系统将响应当作"已完成"处理，用户看到的是一个貌似完成但实际没有执行任何操作的回答。
+
+  **用户看到的现象**：
+  ```
+  Assistant: [Scout] 好的，我来为 SpaceRisk 项目设计一份完整的 PRD...
+  > [Routing] AMA routing: raw=H0_DIRECT(fallback) -> final=H0_DIRECT
+  ❌ API Error (Transient): Stream stalled or delayed response (60s idle)
+  🧹 Cleaned incomplete tool calls
+  ⏳ Retries exhausted. Press Enter to continue the conversation
+  ```
+
+  Scout 说了要创建文件但文件从未被创建。用户按 Enter 后进入新一轮对话，上下文中没有"上次任务未完成"的信号。
+
+- **Context**:
+
+  **根因：`recordCompletedAgentRound` 对失败 round 无条件执行 finalization**
+
+  `runQueuedPromptSequence`（queued-prompt-sequence.ts:23-29）的执行顺序：
+  ```typescript
+  let result = await runRound(prompt);    // ① runKodaX（可能 success=false）
+  while (true) {
+      await onRoundComplete?.(result);     // ② recordCompletedAgentRound — 无条件执行！
+      if (!shouldContinue(result)) {       // ③ 这里才检查 success
+          return result;                    // ④ 停止
+      }
+  }
+  ```
+
+  `onRoundComplete` 在 `shouldContinue` **之前**执行，且不检查 `result.success`。这意味着即使 `runKodaX` 返回 `{ success: false }`（API 超时），`recordCompletedAgentRound` 仍然：
+  - 将 managed foreground items 持久化到历史
+  - 调用 `buildManagedTaskTranscriptItems` 生成 routing 诊断事件
+  - 将 Scout 的未完成文本当作最终响应处理
+
+  用户看到的效果：`> [Routing]`（暗示完成）出现在 `❌ Error`（实际失败）之前——一个失败的 round 呈现为已完成。
+
+  **这不是纯网络问题——是架构问题。** `runQueuedPromptSequence` 不区分成功和失败的 round，对所有结果一视同仁地执行完整 finalization。即使没有网络错误，任何导致 `success: false` 的情况（rate limit、模型拒绝等）都会触发相同的行为。
+
+  **附带的重试断裂**：
+
+  | 层级 | 机制 | 断裂 |
+  |------|------|------|
+  | Provider 层 | 自动重试 API 请求 3 次 | 全部超时后错误上报 |
+  | Agent loop (`shouldContinue`) | `result.success !== false` → 停止 | Managed task escalation **被截断** |
+  | Managed task | H0 失败 → escalate 到 H1/H2（task-engine.ts:7615+） | **从未被触发** |
+
+  **涉及文件**：
+  - `packages/repl/src/ui/utils/queued-prompt-sequence.ts:23-29` — onRoundComplete 无条件执行
+  - `packages/repl/src/ui/InkREPL.tsx:5194` — `recordCompletedAgentRound` 不检查 success
+  - `packages/repl/src/ui/InkREPL.tsx:5346` — `shouldContinue` 检查在 onRoundComplete 之后
+  - `packages/coding/src/agent.ts` — `runKodaX()` 错误返回路径
+  - `packages/coding/src/task-engine.ts:7615` — `completeScoutH0Task()` 条件检查
+
+  **触发条件**：任何导致 `result.success === false` 的 API 错误（stream stall、rate limit、server overload、模型拒绝等）。
+
+- **Planned Resolution**:
+
+  **Phase 1（高优先级）：`recordCompletedAgentRound` 区分成功/失败 round**
+
+  当 `result.success === false` 时：
+  - 不生成 routing 诊断事件（不调用 `buildManagedTaskTranscriptItems` 或跳过 routing transcript）
+  - 不将 Scout 的未完成文本当作最终答案持久化
+  - 生成明确的 incomplete 指示，如 `⚠️ [Incomplete] 响应未完成（API 错误）`
+
+  改动点：`recordCompletedAgentRound` 开头检查 `result.success`，走不同的 finalization 路径。
+
+  **Phase 2（中优先级）：Agent loop 对 transient error 允许 managed task 重试**
+
+  当前 `shouldContinue` 把所有 `success === false` 一视同仁地停止。应区分：
+  - **API transient error**：managed task 应有机会用备选策略重试（escalate H0→H1）
+  - **Task logic failure**（模型拒绝、协议错误）：可以停止
+
+  改动点：`runKodaX` 返回值增加 `errorCategory`，`shouldContinue` 对 TRANSIENT 允许继续。
+
+  **Phase 3（低优先级）：Managed task 层的 Scout failure recovery**
+
+  当 Scout 因 transient error 失败时：
+  1. 检测 "Scout 发起了工具调用但未完成" 作为 incomplete 信号
+  2. 自动重试 Scout 执行，或 escalate 到 H1
 
 ---
 ### 111: SSE / Streamable HTTP MCP 传输缺少专项测试
@@ -2200,7 +2336,7 @@ _Last Updated: 2026-04-13_
 ---
 
 ## Summary
-- Total: 32 (11 Open, 21 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 44 (18 Open, 26 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 

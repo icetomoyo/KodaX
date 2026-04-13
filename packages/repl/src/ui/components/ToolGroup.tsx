@@ -207,6 +207,15 @@ export const ToolCallDisplay: React.FC<ToolCallDisplayProps> = ({
         </Box>
       )}
 
+      {/* Child agent progress lines - 子代理实时进度行 */}
+      {tool.progressLines && tool.progressLines.length > 0 && tool.status === ToolCallStatus.Executing && (
+        <Box flexDirection="column" marginLeft={2}>
+          {tool.progressLines.slice(-5).map((line, i) => (
+            <Text key={i} dimColor>{line}</Text>
+          ))}
+        </Box>
+      )}
+
       {/* Error message - 错误信息 */}
       {tool.error && (
         <Box marginLeft={2}>

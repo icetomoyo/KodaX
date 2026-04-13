@@ -1,4 +1,5 @@
 import path from 'path';
+import type { KodaXToolExecutionContext } from '../types.js';
 import type { KodaXExtensionRuntime } from './runtime.js';
 import type { CapabilityProvider, CapabilityResult } from './types.js';
 import { resolveExecutionPath } from '../runtime-paths.js';
@@ -88,15 +89,17 @@ function createPathGuardedTool(
     throw new Error(`Missing builtin tool definition for "${name}".`);
   }
 
+  // builtin write/edit are always sync handlers (ToolHandlerSync), cast to ensure type safety
+  const syncHandler = builtin.handler as (input: Record<string, unknown>, ctx: KodaXToolExecutionContext) => Promise<string>;
   return {
     ...builtin,
-    handler: async (input: Record<string, unknown>, ctx: Parameters<typeof builtin.handler>[1]) => {
+    handler: async (input: Record<string, unknown>, ctx: KodaXToolExecutionContext): Promise<string> => {
       const rawPath = typeof input.path === 'string' ? input.path : '';
       const resolvedPath = resolveExecutionPath(rawPath, ctx);
       if (!isPathInsideWorkspace(resolvedPath, policy.workspaceRoot)) {
         return `[Tool Error] ${name}: Blocked by official sandbox (${policy.mode}). ${resolvedPath} is outside workspace root ${policy.workspaceRoot}.`;
       }
-      return builtin.handler(input, ctx);
+      return syncHandler(input, ctx);
     },
   };
 }
