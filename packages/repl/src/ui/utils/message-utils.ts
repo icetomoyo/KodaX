@@ -263,7 +263,7 @@ const MANAGED_WORKER_PROMPT_MARKERS = [
 ];
 
 // Protocol fenced blocks that should be stripped from assistant text during session restore.
-const MANAGED_PROTOCOL_BLOCK_PATTERN = /\r?\n?\`\`\`kodax-task-[\w-]+[\s\S]*?\`\`\`\s*/g;
+const MANAGED_PROTOCOL_BLOCK_PATTERN = /\r?\n?\`\`\`kodax[\w-]*[\s\S]*?\`\`\`\s*/g;
 
 function isManagedWorkerPrompt(text: string): boolean {
   return MANAGED_WORKER_PROMPT_MARKERS.some((marker) => text.includes(marker));

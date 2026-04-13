@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-04-12_
+_Last Updated: 2026-04-13_
 
 ---
 
@@ -59,6 +59,7 @@ _Last Updated: 2026-04-12_
 | 112 | High | Open | ask_user_question 交互机制不完备 — 数字编号歧义 + 缺少 input/multiSelect 模式 | v0.7.18 | - | 2026-04-12 | - |
 | 113 | High | Resolved | Ctrl+C 中断后工具调用仍继续执行 — abort signal 未传播到工具执行阶段 | v0.7.17 | v0.7.18 | 2026-04-12 | 2026-04-12 |
 | 114 | High | Resolved | ask_user_question ESC 取消被静默吞掉 — 用户取消后模型继续执行 | v0.7.17 | v0.7.18 | 2026-04-12 | 2026-04-12 |
+| 115 | Medium | Resolved | Managed foreground ledger 切换 kind 时丢失 tool_group 引用 — 工具历史条目重复 | v0.7.17 | v0.7.18 | 2026-04-13 | 2026-04-13 |
 
 ---
 
@@ -266,6 +267,60 @@ _Last Updated: 2026-04-12_
   2. **工具层 select**（ask-user-question.ts）：检测 `askUser` 返回值是否以 `CANCELLED_TOOL_RESULT_PREFIX` 开头，若是则直接透传而非包装为 `{ success: true }`
   3. **工具层 input**（ask-user-question.ts）：检测 `askUserInput` 返回 `undefined`，返回 `CANCELLED_TOOL_RESULT_MESSAGE`
   4. **常量提取**（constants.ts）：将 `CANCELLED_TOOL_RESULT_PREFIX` 和 `CANCELLED_TOOL_RESULT_MESSAGE` 从 `agent.ts` 私有常量提升为包级导出，消除硬编码字符串
+
+---
+### 115: Managed foreground ledger 切换 kind 时丢失 tool_group 引用 — 工具历史条目重复 (RESOLVED)
+
+- **Priority**: Medium
+- **Status**: Resolved
+- **Introduced**: v0.7.17
+- **Fixed**: v0.7.18
+- **Created**: 2026-04-13
+- **Resolved**: 2026-04-13
+
+- **Original Problem**:
+
+  在 AMA managed foreground 模式下，同一个工具调用偶发地在历史记录中出现两次：一次显示 `● (running)`，一次显示 `✓ (completed)`，中间夹一个 `Thinking` block。
+
+  ```
+  Tools [11:02 AM]
+  ● [Scout] bash - cmd=git commit -m "..." (running)
+  Running: waiting for tool output
+
+  Thinking
+  [Scout] Commit on `KodaX` branch...
+
+  Tools [11:02 AM]
+  ✓ [Scout] bash - cmd=git commit -m "..." (700ms)
+  ```
+
+  **根因**：`ManagedForegroundLedgerState` 将"当前写入目标类型"（`activeKind`）和"工具组生命周期跟踪"（`activeToolGroupItemId` / `activeToolGroupTools`）耦合在一起。当 `startManagedForegroundLedgerBlock` 从 `tool_group` 切换到 `thinking` 时，无条件清空了 `activeToolGroupItemId` 和 `activeToolGroupTools`（InkREPL.tsx 原 L1455-1456），即使工具仍在 Executing 状态。
+
+  后续 `onToolResult` 触发 `syncManagedForegroundToolGroup(finalizedTool)` 时，`activeKind` 已是 `"thinking"`，`activeToolGroupTools` 已空——函数找不到原始条目，创建了一个新的 `tool_group` 历史项。原始条目永久停留在 `● (running)` 状态。
+
+- **Context**:
+
+  **影响文件**：`packages/repl/src/ui/InkREPL.tsx`
+
+  **涉及函数**：
+  - `startManagedForegroundLedgerBlock` — ledger kind 切换时的状态管理
+  - `syncManagedForegroundToolGroup` — 工具状态同步到 managed foreground 历史
+
+  **触发条件**：工具执行期间，Scout 的 thinking 内容到达 UI（事件交错），导致 ledger 在 tool_group 和 thinking 之间切换。标准 API 流程中 thinking 在 tool_use 之前完成，但 Ctrl+C 中断/事件处理延迟可增加触发概率。
+
+- **Resolution**:
+
+  解耦 ledger 的"写入目标"和"工具组跟踪"两个关注点：
+
+  1. **`startManagedForegroundLedgerBlock`**：切换到 `thinking` / `assistant` 时，检查 `activeToolGroupTools` 中是否有 `Executing` 状态的工具。如有则保留 `activeToolGroupItemId` 和 `activeToolGroupTools`，仅切换 `activeKind`。
+
+  2. **`syncManagedForegroundToolGroup`**：新增前置路径——当 `activeKind !== "tool_group"` 但 `activeToolGroupItemId` 仍在且 tool ID 匹配时，原地更新原始 `tool_group` 历史条目。所有工具进入终态（Success / Error / Cancelled）后清理保留的引用。
+
+  **场景验证**：
+  - 正常流程（thinking → tool → result）：`hasExecutingTools` 为 false，走原逻辑，无变化
+  - Bug 场景（tool 执行中 thinking 插入）：保留引用 → 原地更新 → 不产生重复
+  - 多工具并行 + thinking 插入：逐个更新，最后一个终态时清理
+  - Phase 转换 / Worker 切换：`transitionManagedForegroundPhase` 做完整重置，不受影响
 
 ---
 ### 111: SSE / Streamable HTTP MCP 传输缺少专项测试

@@ -1440,6 +1440,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       ? `[${workerTitle.trim()}] `
       : "";
 
+    // Issue: When switching away from tool_group to thinking/assistant,
+    // preserve the tool_group references if tools are still executing.
+    // Otherwise the tool_group item becomes orphaned and a duplicate is
+    // created when the tool result arrives.
+    const hasExecutingTools = currentLedger.activeToolGroupTools.some(
+      (t) => t.status === ToolCallStatus.Executing,
+    );
+
     if (kind === "thinking") {
       const itemId = appendManagedForegroundLedgerItem({
         id: nextManagedForegroundItemId("thinking"),
@@ -1452,8 +1460,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         activeKind: "thinking",
         activeThinkingItemId: itemId,
         activeAssistantItemId: undefined,
-        activeToolGroupItemId: undefined,
-        activeToolGroupTools: [],
+        ...(hasExecutingTools ? {} : {
+          activeToolGroupItemId: undefined,
+          activeToolGroupTools: [],
+        }),
       };
       return itemId;
     }
@@ -1470,8 +1480,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         activeKind: "assistant",
         activeThinkingItemId: undefined,
         activeAssistantItemId: itemId,
-        activeToolGroupItemId: undefined,
-        activeToolGroupTools: [],
+        ...(hasExecutingTools ? {} : {
+          activeToolGroupItemId: undefined,
+          activeToolGroupTools: [],
+        }),
       };
       return itemId;
     }
@@ -1535,6 +1547,39 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
   const syncManagedForegroundToolGroup = useCallback((toolCall: ToolCall) => {
     const currentLedger = managedForegroundLedgerRef.current;
+
+    // If the ledger has switched away from tool_group (e.g. to thinking)
+    // but still holds a reference to a prior tool_group with this tool,
+    // update that original item in place instead of creating a duplicate.
+    if (
+      currentLedger.activeKind !== "tool_group"
+      && currentLedger.activeToolGroupItemId
+      && currentLedger.activeToolGroupTools.some((t) => t.id === toolCall.id)
+    ) {
+      const nextTools = currentLedger.activeToolGroupTools.map((t) => (
+        t.id === toolCall.id ? toolCall : t
+      ));
+      // Clean up preserved refs once all tools have reached a terminal state.
+      const allResolved = nextTools.every((t) => (
+        t.status === ToolCallStatus.Success
+        || t.status === ToolCallStatus.Error
+        || t.status === ToolCallStatus.Cancelled
+      ));
+      managedForegroundLedgerRef.current = {
+        ...managedForegroundLedgerRef.current,
+        ...(allResolved
+          ? { activeToolGroupItemId: undefined, activeToolGroupTools: [] }
+          : { activeToolGroupTools: nextTools }
+        ),
+      };
+      updateManagedForegroundLedgerItem(currentLedger.activeToolGroupItemId, (item) => (
+        item.type === "tool_group"
+          ? { ...item, tools: nextTools }
+          : item
+      ));
+      return;
+    }
+
     const itemId = startManagedForegroundLedgerBlock("tool_group", currentLedger.workerTitle);
     const nextTools = currentLedger.activeToolGroupTools.some((existing) => existing.id === toolCall.id)
       ? currentLedger.activeToolGroupTools.map((existing) => (

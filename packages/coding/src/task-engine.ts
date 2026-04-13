@@ -3708,7 +3708,7 @@ function sanitizeManagedUserFacingText(text: string): string {
   }
   let visibleText = (cutIndex > 0 ? trimmed.slice(0, cutIndex) : trimmed).trim();
   for (;;) {
-    const stripped = visibleText.replace(/\r?\n?\`\`\`kodax-[\w-]+\s*[\s\S]*?\`\`\`\s*$/i, '').trim();
+    const stripped = visibleText.replace(/\r?\n?\`\`\`kodax[\w-]*\s*[\s\S]*?\`\`\`\s*$/i, '').trim();
     if (stripped === visibleText) {
       break;
     }
@@ -3731,7 +3731,7 @@ function sanitizeManagedStreamingText(text: string): string {
     }
   }
 
-  const incompleteManagedFenceIndex = trimmed.search(/\r?\n?\`\`\`kodax-[\w-]+\s*[\s\S]*$/i);
+  const incompleteManagedFenceIndex = trimmed.search(/\r?\n?\`\`\`kodax[\w-]*\s*[\s\S]*$/i);
   if (incompleteManagedFenceIndex >= 0 && (cutIndex === -1 || incompleteManagedFenceIndex < cutIndex)) {
     cutIndex = incompleteManagedFenceIndex;
   }
