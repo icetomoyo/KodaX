@@ -50,7 +50,7 @@ import { checkIncompleteToolCalls } from './messages.js';
 import { compact as intelligentCompact, needsCompaction, microcompact, DEFAULT_MICROCOMPACTION_CONFIG, buildPostCompactAttachments, injectPostCompactAttachments, type CompactionConfig, type CompactionUpdate } from '@kodax/agent';
 import { loadCompactionConfig } from './compaction-config.js';
 import { estimateTokens } from './tokenizer.js';
-import { KODAX_MAX_INCOMPLETE_RETRIES, PROMISE_PATTERN } from './constants.js';
+import { KODAX_MAX_INCOMPLETE_RETRIES, PROMISE_PATTERN, CANCELLED_TOOL_RESULT_PREFIX, CANCELLED_TOOL_RESULT_MESSAGE } from './constants.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { waitForRetryDelay } from './retry-handler.js';
@@ -110,8 +110,6 @@ import {
 } from './extensions/runtime.js';
 
 const execAsync = promisify(exec);
-const CANCELLED_TOOL_RESULT_PREFIX = '[Cancelled]';
-const CANCELLED_TOOL_RESULT_MESSAGE = `${CANCELLED_TOOL_RESULT_PREFIX} Operation cancelled by user`;
 type AutoReroutePlan = Awaited<ReturnType<typeof maybeCreateAutoReroutePlan>>;
 type RunnableToolCall = {
   id: string;

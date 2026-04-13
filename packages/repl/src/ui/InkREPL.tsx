@@ -74,6 +74,7 @@ import {
   ErrorCategory,
   loadAgentsFiles,
   resolveRepoIntelligenceRuntimeConfig,
+  CANCELLED_TOOL_RESULT_MESSAGE,
 } from "@kodax/coding";
 import type {
   AgentsFile,
@@ -242,7 +243,6 @@ import { resolveTranscriptDragEdgeScrollDirection } from "../tui/core/scroll.js"
 import { getRendererInstance } from "../tui/core/root.js";
 import {
   getAskUserDialogTitle,
-  resolveAskUserDefaultChoice,
   shouldSwitchToAcceptEdits,
   toSelectOptions,
   type SelectOption,
@@ -4806,6 +4806,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       return true;
     },
     // Issue 069: Ask user a question interactively.
+    // Issue 114: ESC returns undefined → must signal cancellation, not silently fallback.
     askUser: async (options: import("@kodax/coding").AskUserQuestionOptions): Promise<string> => {
       const selectOptions = options.options ? toSelectOptions(options.options) : [];
       const selectedValue = await showSelectDialogWithOptions(
@@ -4813,19 +4814,23 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         selectOptions,
         options.multiSelect,
       );
-      const resolvedValue = selectedValue ?? resolveAskUserDefaultChoice(options);
 
-      if (shouldSwitchToAcceptEdits(permissionModeRef.current, options, resolvedValue)) {
+      // Issue 114: User pressed ESC → signal cancellation so the agent loop stops.
+      if (selectedValue === undefined) {
+        return CANCELLED_TOOL_RESULT_MESSAGE;
+      }
+
+      if (shouldSwitchToAcceptEdits(permissionModeRef.current, options, selectedValue)) {
         setSessionPermissionMode("accept-edits");
         return JSON.stringify({
-          choice: resolvedValue,
+          choice: selectedValue,
           mode_switched: true,
           new_mode: "accept-edits",
           note: "Permission mode switched to accept-edits. You can now write files, run bash commands, and make edits. Proceed with the implementation.",
         });
       }
 
-      return resolvedValue;
+      return selectedValue;
     },
     askUserInput: async (options: { question: string; default?: string }): Promise<string | undefined> => {
       return showInputDialog(options.question, options.default);

@@ -194,6 +194,8 @@ export {
   PROMISE_PATTERN,
   KODAX_FEATURES_FILE,
   KODAX_PROGRESS_FILE,
+  CANCELLED_TOOL_RESULT_PREFIX,
+  CANCELLED_TOOL_RESULT_MESSAGE,
 } from './constants.js';
 
 // ============== Provider (re-export from @kodax/ai) ==============

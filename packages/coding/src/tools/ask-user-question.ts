@@ -6,6 +6,7 @@
  */
 
 import type { KodaXToolExecutionContext } from '../types.js';
+import { CANCELLED_TOOL_RESULT_PREFIX, CANCELLED_TOOL_RESULT_MESSAGE } from '../constants.js';
 
 export interface AskUserQuestionOption {
   label: string;
@@ -54,9 +55,14 @@ export async function toolAskUserQuestion(
         default: input.default as string | undefined,
       });
 
+      // Issue 114: User pressed ESC (undefined) → signal cancellation.
+      if (userText === undefined) {
+        return CANCELLED_TOOL_RESULT_MESSAGE;
+      }
+
       return JSON.stringify({
         success: true,
-        choice: userText ?? '',
+        choice: userText,
       });
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -91,6 +97,12 @@ export async function toolAskUserQuestion(
       scope: input.scope as "session" | undefined,
       resumeBehavior: input.resume_behavior as "continue" | undefined,
     });
+
+    // Issue 114: askUser returns '[Cancelled]' prefix when user presses ESC.
+    // Pass through directly so the agent loop detects cancellation.
+    if (userChoice.startsWith(CANCELLED_TOOL_RESULT_PREFIX)) {
+      return userChoice;
+    }
 
     return JSON.stringify({
       success: true,

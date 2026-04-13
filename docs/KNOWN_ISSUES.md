@@ -58,6 +58,7 @@ _Last Updated: 2026-04-12_
 | 111 | Low | Open | SSE / Streamable HTTP MCP 传输缺少专项测试 | v0.7.16 | - | 2026-04-11 | - |
 | 112 | High | Open | ask_user_question 交互机制不完备 — 数字编号歧义 + 缺少 input/multiSelect 模式 | v0.7.18 | - | 2026-04-12 | - |
 | 113 | High | Resolved | Ctrl+C 中断后工具调用仍继续执行 — abort signal 未传播到工具执行阶段 | v0.7.17 | v0.7.18 | 2026-04-12 | 2026-04-12 |
+| 114 | High | Resolved | ask_user_question ESC 取消被静默吞掉 — 用户取消后模型继续执行 | v0.7.17 | v0.7.18 | 2026-04-12 | 2026-04-12 |
 
 ---
 
@@ -223,6 +224,48 @@ _Last Updated: 2026-04-12_
   2. **`executeToolCall` 入口检查**（agent.ts L1220-1225）：新增 `abortSignal?: AbortSignal` 参数，函数入口检查 signal，短路返回取消结果
   3. **bash 工具循环检查**（agent.ts L2251-2255）：每次迭代前检查 abort，跳过未执行的 bash 工具
   4. **bash 子进程 kill**（bash.ts L147-178）：`abortSignal` 通过 `KodaXToolExecutionContext` 透传到 bash 工具，注册 `abort` 事件监听器，信号触发时立即 `proc.kill()` 杀掉正在运行的子进程。使用 `settled` 守卫防止 abort/timeout/close 竞态导致 Promise 多次 resolve；用 `.once()` 注册 cleanup listener 避免内存泄漏。
+
+---
+### 114: ask_user_question ESC 取消被静默吞掉 — 用户取消后模型继续执行 (RESOLVED)
+
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: v0.7.17
+- **Fixed**: v0.7.18
+- **Created**: 2026-04-12
+- **Resolved**: 2026-04-12
+
+- **Original Problem**:
+
+  用户在 `ask_user_question` 对话框中按 ESC 取消时，取消意图被静默吞掉，模型仍然继续执行。
+
+  **Select 模式**：
+  - ESC → `showSelectDialogWithOptions` 返回 `undefined`
+  - `resolveAskUserDefaultChoice(options)` 寻找 label/value 为 "cancel" 的选项
+  - 如果 LLM 提供的选项中没有 "cancel" 关键字 → fallback 返回空字符串 `""`
+  - 工具返回 `{ success: true, choice: "" }` → 模型认为用户做了有效选择
+
+  **Input 模式**：
+  - ESC → `askUserInput` 返回 `undefined`
+  - `userText ?? ''` 将 undefined 转为空字符串
+  - 工具返回 `{ success: true, choice: "" }` → 同上
+
+  两种模式都没有产生 `[Cancelled]` 前缀的结果，agent 循环的 `hasCancellation` 检测不到取消。
+
+- **Context**:
+
+  **影响文件**：
+  - `packages/repl/src/ui/InkREPL.tsx` — `askUser` 回调
+  - `packages/coding/src/tools/ask-user-question.ts` — 工具层
+  - `packages/coding/src/constants.ts` — 取消常量提取
+  - `packages/coding/src/index.ts` — 导出新常量
+
+- **Resolution**:
+
+  1. **REPL 层**（InkREPL.tsx）：`askUser` 回调检测 `selectedValue === undefined`（ESC），直接返回 `CANCELLED_TOOL_RESULT_MESSAGE` 而非调用 `resolveAskUserDefaultChoice`
+  2. **工具层 select**（ask-user-question.ts）：检测 `askUser` 返回值是否以 `CANCELLED_TOOL_RESULT_PREFIX` 开头，若是则直接透传而非包装为 `{ success: true }`
+  3. **工具层 input**（ask-user-question.ts）：检测 `askUserInput` 返回 `undefined`，返回 `CANCELLED_TOOL_RESULT_MESSAGE`
+  4. **常量提取**（constants.ts）：将 `CANCELLED_TOOL_RESULT_PREFIX` 和 `CANCELLED_TOOL_RESULT_MESSAGE` 从 `agent.ts` 私有常量提升为包级导出，消除硬编码字符串
 
 ---
 ### 111: SSE / Streamable HTTP MCP 传输缺少专项测试
