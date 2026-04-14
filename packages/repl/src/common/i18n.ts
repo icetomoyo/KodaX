@@ -124,6 +124,11 @@ const translations = {
     "input.value": "Value:",
     "input.type_response": "(type your response)",
 
+    // Managed task completion
+    "managed.completed": "Task completed",
+    "managed.completed.blocked": "Task blocked",
+    "managed.completed.continuation": "Task needs continuation",
+
     // Cancellation
     "cancelled": "[Cancelled] Operation cancelled by user",
   },
@@ -197,6 +202,11 @@ const translations = {
     "input.default": "默认值：",
     "input.value": "值：",
     "input.type_response": "(输入你的回答)",
+
+    // 管理任务完成
+    "managed.completed": "任务完成",
+    "managed.completed.blocked": "任务受阻",
+    "managed.completed.continuation": "任务需要继续",
 
     "cancelled": "[已取消] 操作已被用户取消",
   },

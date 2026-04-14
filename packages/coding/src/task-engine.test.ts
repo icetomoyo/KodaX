@@ -772,9 +772,9 @@ describe('runManagedTask', () => {
     expect(result.routingDecision?.harnessProfile).toBe('H0_DIRECT');
     expect(result.lastText).toContain('Scout determined this is small enough to answer directly.');
 
-    // Verify Scout H0 has no tool restrictions (undefined toolPolicy)
+    // FEATURE_067: Scout always starts read-only; toolPolicy is set (not undefined).
     const scoutAssignment = result.managedTask?.roleAssignments.find((a) => a.role === 'scout');
-    expect(scoutAssignment?.toolPolicy).toBeUndefined();
+    expect(scoutAssignment?.toolPolicy).toBeDefined();
   });
 
   it('allows large current-diff reviews to stay on H0 when Scout provides complete direct-review evidence', async () => {
@@ -991,58 +991,47 @@ describe('runManagedTask', () => {
     expect(result.lastText).toContain('System edit completed');
   });
 
-  it('retries Scout when H0_DIRECT declares directCompletionReady as no instead of yes', async () => {
+  // FEATURE_067: directCompletionReady=no with H0 now triggers H0 continuation (write tools),
+  // not a retry. This is the correct behavior for tasks that need file modifications.
+  it('enters H0 continuation when Scout confirms H0_DIRECT with directCompletionReady no', async () => {
     mockCreateReasoningPlan.mockResolvedValue(
       buildPlan({
-        primaryTask: 'review',
-        taskFamily: 'review',
+        primaryTask: 'edit',
+        taskFamily: 'implementation',
         executionPattern: 'direct',
-        recommendedMode: 'pr-review',
-        complexity: 'moderate',
-        riskLevel: 'medium',
-        mutationSurface: 'read-only',
+        recommendedMode: 'implementation',
+        complexity: 'simple',
+        riskLevel: 'low',
+        mutationSurface: 'code',
         harnessProfile: 'H0_DIRECT',
         topologyCeiling: 'H2_PLAN_EXECUTE_EVAL',
         upgradeCeiling: 'H2_PLAN_EXECUTE_EVAL',
-        reason: 'Scout should be able to complete the review directly once the structured payload is consistent.',
+        reason: 'Simple file edit — Scout investigates then gets write tools via H0 continuation.',
       }),
     );
 
-    let scoutAttempts = 0;
+    let callCount = 0;
     mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
-      if (!workerPrompt.includes('You are the Scout role')) {
-        throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 120)}`);
-      }
-      expect(workerPrompt).toContain('harness_rationale');
-      expect(workerPrompt).toContain('direct_completion_ready');
-      expect(workerPrompt).toContain('blocking_evidence');
-      expect(workerPrompt).toContain('changed file count');
-      scoutAttempts += 1;
-      if (scoutAttempts === 1) {
+      callCount += 1;
+      if (callCount === 1) {
+        // Scout investigation phase (read-only) → confirms H0 but can't write
         return buildAssistantResult(
           buildScoutResponse(
-            'Scout has enough evidence, but forgot the readiness field.',
+            'I need to update .gitignore with a few entries.',
             'H0_DIRECT',
             {
               directCompletionReady: 'no',
               blockingEvidence: ['none'],
-              harnessRationale: 'This should be retried because H0 requires explicit readiness.',
+              harnessRationale: 'Simple single-file edit, no review needed.',
             },
           ),
-          { sessionId: 'session-scout-invalid-h0' },
+          { sessionId: 'session-scout-readonly' },
         );
       }
+      // H0 continuation phase (with write tools)
       return buildAssistantResult(
-        buildScoutResponse(
-          '## Findings\n\n- [low] `packages/coding/src/task-engine.ts`: the retry path now preserves H0 when the scout evidence is complete.',
-          'H0_DIRECT',
-          {
-            harnessRationale: 'The retry produced a complete direct-review payload with all required evidence fields.',
-            directCompletionReady: 'yes',
-            blockingEvidence: ['none'],
-          },
-        ),
-        { sessionId: 'session-scout-valid-h0' },
+        'Done — updated .gitignore with the requested entries.',
+        { sessionId: 'session-scout-readonly' },
       );
     });
 
@@ -1051,14 +1040,14 @@ describe('runManagedTask', () => {
         provider: 'anthropic',
         agentMode: 'ama',
       },
-      'Please review the current code changes and tell me if the new routing behavior is safe to merge.',
+      'Add output/ and .agent/ to .gitignore',
     );
 
+    // Scout investigation + H0 continuation = 2 calls
     expect(mockRunDirectKodaX).toHaveBeenCalledTimes(2);
     expect(result.routingDecision?.harnessProfile).toBe('H0_DIRECT');
     expect(result.managedTask?.contract.harnessProfile).toBe('H0_DIRECT');
-    expect(result.lastText).toContain('## Findings');
-    expect(result.lastText).toContain('retry path now preserves H0');
+    expect(result.lastText).toContain('updated .gitignore');
   });
 
 
@@ -1212,7 +1201,7 @@ describe('runManagedTask', () => {
     const scoutPrompt = prompts.find((item) => item.includes('You are the Scout role'));
     const generatorPrompt = prompts.find((item) => item.includes('You are the Generator role'));
     const evaluatorPrompt = prompts.find((item) => item.includes('You are the Evaluator role'));
-    expect(scoutPrompt).toContain('If you confirm H1 or H2, stop after the cheap-facts pass.');
+    expect(scoutPrompt).toContain('If you confirm H1 or H2, your investigation findings will be passed to the Generator as handoff context.');
     expect(scoutPrompt).toContain('When multiple read-only tool calls are independent, emit them in the same response so parallel mode can run them together.');
     expect(generatorPrompt).toContain('This is lightweight H1 checked-direct execution, not mini-H2.');
     expect(generatorPrompt).toContain('Reuse its cheap-facts summary, scope notes, and evidence-acquisition hints instead of rebuilding them from scratch.');

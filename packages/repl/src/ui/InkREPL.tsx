@@ -435,9 +435,18 @@ export function buildManagedTaskTranscriptItems(result: KodaXResult): string[] {
           : "";
       return `[${entry.title ?? entry.assignmentId}${labelSuffix}]\n${text}`;
     });
+  const completionLabel = task.verdict.disposition === 'complete'
+    ? t("managed.completed")
+    : task.verdict.disposition === 'needs_continuation'
+      ? t("managed.completed.continuation")
+      : task.verdict.disposition === 'blocked'
+        ? t("managed.completed.blocked")
+        : undefined;
+
   return [
     ...(routingTranscript ? [routingTranscript] : []),
     ...evidenceTranscripts,
+    ...(completionLabel ? [`[${completionLabel}]`] : []),
   ];
 }
 
@@ -462,11 +471,17 @@ function buildManagedTranscriptCompactText(text: string): string | undefined {
   return combined.length > 220 ? `${combined.slice(0, 217)}...` : combined;
 }
 
+function isCompletionTranscriptItem(text: string): boolean {
+  return text === `[${t("managed.completed")}]`
+    || text === `[${t("managed.completed.blocked")}]`
+    || text === `[${t("managed.completed.continuation")}]`;
+}
+
 function toManagedTranscriptEventItem(text: string): CreatableHistoryItem {
   const compactText = buildManagedTranscriptCompactText(text);
   return {
     type: "event",
-    icon: ">",
+    icon: isCompletionTranscriptItem(text) ? "\u2713" : ">",
     text,
     ...(compactText && compactText !== text ? { compactText } : {}),
   };
@@ -634,6 +649,25 @@ function areManagedLiveItemsEquivalent(left: HistoryItem, right: HistoryItem): b
   }
 }
 
+function localizeManagedCompletionSummary(summary: string): string {
+  if (summary === "Task completed") {
+    return t("managed.completed");
+  }
+  if (summary === "Task needs continuation") {
+    return t("managed.completed.continuation");
+  }
+  if (summary === "Task ended: blocked") {
+    return t("managed.completed.blocked");
+  }
+  if (summary === "Task ended: needs_continuation") {
+    return t("managed.completed.continuation");
+  }
+  if (summary.startsWith("Task ended:")) {
+    return t("managed.completed.blocked");
+  }
+  return summary;
+}
+
 function buildManagedLiveEventDrafts(
   status: KodaXManagedTaskStatusEvent,
 ): ManagedLiveItemDraft[] {
@@ -673,14 +707,20 @@ function buildManagedLiveEventDrafts(
           });
           return acc;
         }
+        const isCompleted = event.kind === "completed";
+        const localizedLabel = isCompleted
+          ? `[${localizeManagedCompletionSummary(compactText)}]`
+          : undefined;
+        const localizedCompact = localizedLabel ?? compactText;
+        const localizedText = localizedLabel ?? text;
         acc.push({
           item: {
             id: itemId,
             type: "event",
             timestamp,
-            text,
-            icon: event.kind === "warning" ? "!" : ">",
-            ...(compactText !== text ? { compactText } : {}),
+            text: localizedText,
+            icon: event.kind === "warning" ? "!" : isCompleted ? "\u2713" : ">",
+            ...(localizedCompact !== localizedText ? { compactText: localizedCompact } : {}),
           },
           persistToHistory,
         });

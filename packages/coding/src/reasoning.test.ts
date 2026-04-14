@@ -933,12 +933,13 @@ describe('reasoning reroute', () => {
     });
   });
 
-  it('routes pure review prompts to checked-direct without model routing', () => {
+  // FEATURE_067: All actionable tasks now go through model router for accurate harness assessment.
+  it('routes pure review prompts to checked-direct with model routing', () => {
     expect(inferIntentGate('Please review the current changes for merge blockers.')).toMatchObject({
       taskFamily: 'review',
       executionPattern: 'checked-direct',
       shouldUseRepoSignals: true,
-      shouldUseModelRouter: false,
+      shouldUseModelRouter: true,
     });
   });
 
@@ -947,7 +948,7 @@ describe('reasoning reroute', () => {
       taskFamily: 'review',
       executionPattern: 'checked-direct',
       shouldUseRepoSignals: true,
-      shouldUseModelRouter: false,
+      shouldUseModelRouter: true,
     });
   });
 
@@ -978,13 +979,14 @@ describe('reasoning reroute', () => {
     });
   });
 
-  it('keeps ambiguous prompts on the direct path', () => {
+  // FEATURE_067: Ambiguous tasks now go through model router instead of defaulting to H0.
+  it('routes ambiguous prompts through model router', () => {
     expect(inferIntentGate('Thoughts on this?')).toMatchObject({
       taskFamily: 'ambiguous',
       actionability: 'ambiguous',
       executionPattern: 'direct',
       shouldUseRepoSignals: false,
-      shouldUseModelRouter: false,
+      shouldUseModelRouter: true,
     });
   });
 

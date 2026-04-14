@@ -46,4 +46,16 @@ describe("i18n", () => {
   it("returns key as fallback for unknown keys", () => {
     expect(t("nonexistent.key" as Parameters<typeof t>[0])).toBe("nonexistent.key");
   });
+
+  it("translates managed task completion keys", () => {
+    setLocale("en");
+    expect(t("managed.completed")).toBe("Task completed");
+    expect(t("managed.completed.blocked")).toBe("Task blocked");
+    expect(t("managed.completed.continuation")).toBe("Task needs continuation");
+
+    setLocale("zh");
+    expect(t("managed.completed")).toBe("任务完成");
+    expect(t("managed.completed.blocked")).toBe("任务受阻");
+    expect(t("managed.completed.continuation")).toBe("任务需要继续");
+  });
 });

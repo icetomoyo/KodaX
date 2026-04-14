@@ -1,6 +1,10 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
+
+const execFileAsync = promisify(execFile);
 import { runKodaX as runDirectKodaX } from './agent.js';
 import {
   createKodaXTaskRunner,
@@ -744,6 +748,28 @@ const MANAGED_TASK_BUDGET_BASE: Record<KodaXTaskRoutingDecision['harnessProfile'
   H2_PLAN_EXECUTE_EVAL: DEFAULT_MANAGED_WORK_BUDGET,
 };
 
+// FEATURE_071: Worker Checkpoint & Mid-Execution Recovery
+const CHECKPOINT_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
+const CHECKPOINT_FILE = 'checkpoint.json';
+
+interface ManagedTaskCheckpoint {
+  version: 1;
+  taskId: string;
+  createdAt: string;
+  gitCommit: string;
+  objective: string;
+  harnessProfile: KodaXHarnessProfile;
+  currentRound: number;
+  completedWorkerIds: string[];
+  scoutCompleted: boolean;
+}
+
+interface ValidatedCheckpoint {
+  checkpoint: ManagedTaskCheckpoint;
+  workspaceDir: string;
+  managedTask: KodaXManagedTask;
+}
+
 function getManagedTaskSurface(options: KodaXOptions): KodaXTaskSurface {
   return options.context?.taskSurface
     ?? (options.context?.providerPolicyHints?.harness === 'project' ? 'project' : 'cli');
@@ -759,6 +785,125 @@ function getManagedTaskWorkspaceRoot(options: KodaXOptions, surface: KodaXTaskSu
     return path.resolve(cwd, '.agent', 'project', 'managed-tasks');
   }
   return path.resolve(cwd, '.agent', 'managed-tasks');
+}
+
+// FEATURE_071: Checkpoint utility functions
+
+async function getGitHeadCommit(gitRoot: string | undefined | null): Promise<string | undefined> {
+  const cwd = path.resolve(gitRoot?.trim() || process.cwd());
+  try {
+    const { stdout } = await execFileAsync('git', ['rev-parse', '--short', 'HEAD'], { cwd });
+    return stdout.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeCheckpoint(
+  workspaceDir: string,
+  checkpoint: ManagedTaskCheckpoint,
+): Promise<void> {
+  await mkdir(workspaceDir, { recursive: true });
+  await writeFile(
+    path.join(workspaceDir, CHECKPOINT_FILE),
+    `${JSON.stringify(checkpoint, null, 2)}\n`,
+    'utf8',
+  );
+}
+
+async function deleteCheckpoint(workspaceDir: string): Promise<void> {
+  try {
+    await unlink(path.join(workspaceDir, CHECKPOINT_FILE));
+  } catch {
+    // Checkpoint may already be gone — safe to ignore.
+  }
+}
+
+async function findValidCheckpoint(
+  options: KodaXOptions,
+): Promise<ValidatedCheckpoint | undefined> {
+  const gitRoot = options.context?.gitRoot;
+  const surface = getManagedTaskSurface(options);
+  const root = getManagedTaskWorkspaceRoot(options, surface);
+  let entries: string[];
+  try {
+    entries = await readdir(root);
+  } catch {
+    return undefined;
+  }
+
+  const currentCommit = await getGitHeadCommit(gitRoot);
+  const now = Date.now();
+
+  for (const entry of entries) {
+    const workspaceDir = path.join(root, entry);
+    const checkpointPath = path.join(workspaceDir, CHECKPOINT_FILE);
+    try {
+      const fileStat = await stat(checkpointPath);
+      if (!fileStat.isFile()) {
+        continue;
+      }
+      const raw = await readFile(checkpointPath, 'utf8');
+      const parsed: unknown = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') {
+        continue;
+      }
+      const candidate = parsed as Record<string, unknown>;
+      if (
+        candidate.version !== 1
+        || typeof candidate.taskId !== 'string'
+        || typeof candidate.createdAt !== 'string'
+        || typeof candidate.gitCommit !== 'string'
+        || typeof candidate.harnessProfile !== 'string'
+      ) {
+        continue;
+      }
+      const checkpoint: ManagedTaskCheckpoint = {
+        version: 1,
+        taskId: candidate.taskId,
+        createdAt: candidate.createdAt,
+        gitCommit: candidate.gitCommit,
+        objective: typeof candidate.objective === 'string' ? candidate.objective : '',
+        harnessProfile: candidate.harnessProfile as KodaXHarnessProfile,
+        currentRound: typeof candidate.currentRound === 'number' ? candidate.currentRound : 1,
+        completedWorkerIds: Array.isArray(candidate.completedWorkerIds)
+          ? (candidate.completedWorkerIds as unknown[]).filter((v): v is string => typeof v === 'string')
+          : [],
+        scoutCompleted: candidate.scoutCompleted === true,
+      };
+      // Validate age
+      const createdTime = new Date(checkpoint.createdAt).getTime();
+      if (Number.isNaN(createdTime)) {
+        continue;
+      }
+      const age = now - createdTime;
+      if (age > CHECKPOINT_MAX_AGE_MS || age < 0) {
+        // Auto-clean expired checkpoints to prevent accumulation.
+        await deleteCheckpoint(workspaceDir);
+        continue;
+      }
+      // Validate git commit — code has changed since checkpoint, context is stale.
+      if (currentCommit && checkpoint.gitCommit && checkpoint.gitCommit !== currentCommit) {
+        await deleteCheckpoint(workspaceDir);
+        continue;
+      }
+      // Load the managed task snapshot
+      const managedTaskPath = path.join(workspaceDir, 'managed-task.json');
+      const taskRaw = await readFile(managedTaskPath, 'utf8');
+      const taskParsed: unknown = JSON.parse(taskRaw);
+      if (!taskParsed || typeof taskParsed !== 'object') {
+        continue;
+      }
+      const managedTask = taskParsed as KodaXManagedTask;
+      if (!managedTask.contract?.taskId || !managedTask.evidence?.workspaceDir) {
+        continue;
+      }
+      return { checkpoint, workspaceDir, managedTask };
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
 }
 
 function resolveManagedAgentMode(options: KodaXOptions): KodaXAgentMode {
@@ -2706,6 +2851,10 @@ function createToolPolicyHook(
       return true;
     }
     if (toolPolicy.blockedTools?.some((blocked) => blocked.toLowerCase() === normalizedTool)) {
+      // FEATURE_067: When Scout tries a write tool, give clear guidance to emit confirmed_harness instead.
+      if (worker.role === 'scout' && WRITE_ONLY_TOOLS.has(normalizedTool)) {
+        return `[Managed Task ${worker.title}] Tool "${tool}" is not available in the Scout investigation phase. To get write access, output your confirmed_harness decision via the managed protocol tool first. For tasks needing file modifications, set confirmed_harness: H0_DIRECT and direct_completion_ready: no.`;
+      }
       return `[Managed Task ${worker.title}] Tool "${tool}" is blocked for this role. ${toolPolicy.summary}`;
     }
 
@@ -3691,6 +3840,18 @@ async function completeScoutH0Task(ctx: {
     agentMode, harnessProfile: 'H0_DIRECT',
     activeWorkerId: 'scout', activeWorkerTitle: 'Scout',
     phase: 'completed', note: 'Scout completed the task directly',
+    persistToHistory: true,
+    events: [{
+      key: 'managed-task-completed',
+      kind: 'completed',
+      summary: completedTask.verdict.disposition === 'complete'
+        ? 'Task completed'
+        : completedTask.verdict.disposition === 'needs_continuation'
+          ? 'Task needs continuation'
+          : `Task ended: ${completedTask.verdict.disposition ?? 'unknown'}`,
+      detail: completedTask.verdict.summary,
+      persistToHistory: true,
+    }],
     upgradeCeiling: finalRoutingDecision.upgradeCeiling,
     ...buildManagedStatusBudgetFields(budgetController),
   });
@@ -4445,6 +4606,15 @@ export const __managedProtocolTestables = {
   parseManagedTaskVerdictDirective,
 };
 
+export const __checkpointTestables = {
+  writeCheckpoint,
+  deleteCheckpoint,
+  findValidCheckpoint,
+  getGitHeadCommit,
+  CHECKPOINT_MAX_AGE_MS,
+  CHECKPOINT_FILE,
+};
+
 
 function parseManagedTaskContractDirective(text: string): ManagedTaskContractDirective | undefined {
   const block = findLastFencedBlock(text, MANAGED_TASK_CONTRACT_BLOCK);
@@ -4769,8 +4939,11 @@ function validateScoutDirectiveConsistency(
   );
 
   if (harness === 'H0_DIRECT') {
-    if (directive.directCompletionReady !== 'yes') {
-      return 'H0_DIRECT requires direct_completion_ready: yes';
+    // FEATURE_067: H0 allows both direct_completion_ready values:
+    //   'yes' → text-only completion (greeting, lookup, review)
+    //   'no'  → needs write tools → triggers H0 continuation path
+    if (directive.directCompletionReady !== 'yes' && directive.directCompletionReady !== 'no') {
+      return 'H0_DIRECT requires direct_completion_ready: yes or no';
     }
     if (!noBlockingEvidence) {
       return 'H0_DIRECT requires blocking_evidence to be empty or "none"';
@@ -4778,7 +4951,7 @@ function validateScoutDirectiveConsistency(
     if (!hasRationale) {
       return 'H0_DIRECT requires harness_rationale';
     }
-    if (primaryTask === 'review' && !hasUserFacingReviewConclusion) {
+    if (primaryTask === 'review' && directive.directCompletionReady === 'yes' && !hasUserFacingReviewConclusion) {
       return 'H0_DIRECT review decisions require a user-facing review conclusion or summary';
     }
     return undefined;
@@ -6114,8 +6287,10 @@ async function runManagedScoutStage(
       blockingEvidence: plan.decision.harnessProfile === 'H0_DIRECT'
         ? []
         : ['Structured scout output was incomplete, so managed execution must continue.'],
-      // Never mark as ready when the scout result itself failed (e.g. API timeout).
-      directCompletionReady: plan.decision.harnessProfile === 'H0_DIRECT' && lastResult!.success !== false ? 'yes' : 'no',
+      // FEATURE_067: Fallback always sets 'no' — if Scout couldn't emit the managed protocol
+      // block properly, we cannot assume the task is complete. For H0 tasks needing writes,
+      // this triggers the H0 continuation path (re-run with write tools).
+      directCompletionReady: 'no',
       userFacingText: sanitizeManagedUserFacingText(extractMessageText(lastResult) || ''),
     },
     scoutSessionId,
@@ -7088,6 +7263,7 @@ async function executeManagedTaskRound(
   sessionStorage: KodaXSessionStorage | undefined,
   previousDirective?: ManagedTaskVerdictDirective,
   scoutSessionId?: string,
+  onWorkerCheckpoint?: (workerId: string) => Promise<void>,
 ): Promise<ManagedTaskRoundExecution> {
   let directive: ManagedTaskVerdictDirective | undefined;
   let budgetRequest: KodaXBudgetExtensionRequest | undefined;
@@ -7225,6 +7401,10 @@ async function executeManagedTaskRound(
         }
       }
       workerResults.set(worker.id, finalResult);
+      // FEATURE_071: Notify checkpoint callback after each worker completes.
+      if (onWorkerCheckpoint) {
+        await onWorkerCheckpoint(worker.id);
+      }
       let completionStatus: 'ready' | 'incomplete' | 'blocked' | 'missing' = 'missing';
       if (worker.role === 'scout') {
         completionStatus = (sanitized.directive as ManagedTaskScoutDirective | undefined) ? 'ready' : 'missing';
@@ -7553,6 +7733,293 @@ function synchronizeManagedTaskGraph(
   };
 }
 
+// FEATURE_071: Resume a managed task from a validated checkpoint.
+async function resumeManagedTask(
+  options: KodaXOptions,
+  prompt: string,
+  validated: ValidatedCheckpoint,
+): Promise<KodaXResult> {
+  const { checkpoint, workspaceDir, managedTask: savedTask } = validated;
+  const agentMode = resolveManagedAgentMode(options);
+
+  // Re-run routing to get the plan object (fast, deterministic).
+  const managedPlanning = await createManagedReasoningPlan(options, prompt);
+  const managedOptions: KodaXOptions = managedPlanning.repoRoutingSignals
+    ? {
+      ...options,
+      context: {
+        ...options.context,
+        repoRoutingSignals: managedPlanning.repoRoutingSignals,
+      },
+    }
+    : options;
+  const managedOriginalTask = savedTask.contract.objective;
+  let plan = applyAgentModeToPlan(managedPlanning.plan, agentMode);
+
+  // Reconstruct Scout directive from saved runtime state.
+  const savedScoutDecision = savedTask.runtime?.scoutDecision;
+  if (savedScoutDecision) {
+    const syntheticScoutDirective: ManagedTaskScoutDirective = {
+      summary: savedScoutDecision.summary,
+      scope: savedScoutDecision.scope ?? [],
+      requiredEvidence: savedScoutDecision.requiredEvidence ?? [],
+      reviewFilesOrAreas: savedScoutDecision.reviewFilesOrAreas,
+      evidenceAcquisitionMode: savedScoutDecision.evidenceAcquisitionMode,
+      confirmedHarness: savedScoutDecision.recommendedHarness,
+      harnessRationale: savedScoutDecision.harnessRationale,
+      blockingEvidence: savedScoutDecision.blockingEvidence,
+      directCompletionReady: savedScoutDecision.directCompletionReady,
+      skillMap: savedScoutDecision.skillSummary
+        ? {
+            skillSummary: savedScoutDecision.skillSummary,
+            executionObligations: savedScoutDecision.executionObligations ?? [],
+            verificationObligations: savedScoutDecision.verificationObligations ?? [],
+            ambiguities: savedScoutDecision.ambiguities ?? [],
+            projectionConfidence: savedScoutDecision.projectionConfidence,
+          }
+        : undefined,
+    };
+    plan = applyScoutDecisionToPlan(plan, syntheticScoutDirective);
+  }
+
+  const finalRoutingDecision: KodaXTaskRoutingDecision = savedTask.runtime?.finalRoutingDecision
+    ?? plan.decision;
+  const skillMap = savedTask.runtime?.skillMap;
+  const budgetController = createManagedBudgetController(managedOptions, plan, agentMode);
+  const sessionStorage = new ManagedWorkerSessionStorage();
+  const qualityAssuranceMode = resolveManagedTaskQualityAssuranceMode(managedOptions, plan);
+
+  // Emit resume status to REPL.
+  managedOptions.events?.onManagedTaskStatus?.({
+    agentMode,
+    harnessProfile: savedTask.contract.harnessProfile,
+    phase: 'round',
+    note: `Resuming task from checkpoint (round ${checkpoint.currentRound})`,
+    upgradeCeiling: savedTask.runtime?.upgradeCeiling ?? budgetController.upgradeCeiling,
+    ...buildManagedStatusBudgetFields(budgetController),
+  });
+
+  // Resume the managed task, reusing the saved state.
+  let managedTask = savedTask;
+  let roundDirective: ManagedTaskVerdictDirective | undefined;
+  let roundExecution: ManagedTaskRoundExecution | undefined;
+  let maxRounds = resolveManagedTaskMaxRounds(managedOptions, plan, agentMode);
+  const startRound = checkpoint.currentRound;
+
+  // FEATURE_071: Checkpoint state for the resumed run.
+  const checkpointGitCommit = checkpoint.gitCommit;
+  let checkpointCompletedWorkerIds: string[] = [];
+  let isFirstResumedRound = true;
+
+  for (let round = startRound; round <= maxRounds; round += 1) {
+    const roundPrompt = [
+      buildManagedRoundPrompt(managedOriginalTask, round, roundDirective),
+    ].filter(Boolean).join('\n\n');
+    const roundDecision: KodaXTaskRoutingDecision = {
+      ...finalRoutingDecision,
+      harnessProfile: managedTask.contract.harnessProfile,
+      upgradeCeiling: managedTask.runtime?.upgradeCeiling ?? budgetController.upgradeCeiling,
+    };
+    const workerSet = buildManagedTaskWorkers(
+      roundPrompt,
+      roundDecision,
+      managedOptions.context?.taskMetadata,
+      managedOptions.context?.taskVerification,
+      qualityAssuranceMode,
+      withManagedSkillArtifactPromptPaths({
+        originalTask: managedOriginalTask,
+        skillInvocation: managedOptions.context?.skillInvocation,
+        skillMap: managedTask.runtime?.skillMap,
+        previousRoleSummaries: managedTask.runtime?.roleRoundSummaries,
+      }, workspaceDir),
+      managedOptions.context?.repoIntelligenceMode,
+      round === startRound ? 'initial' : 'refinement',
+    );
+
+    // FEATURE_071: On the first resumed round, filter out workers that already completed.
+    let effectiveWorkerSet = workerSet;
+    if (isFirstResumedRound && checkpoint.completedWorkerIds.length > 0) {
+      const remainingWorkers = workerSet.workers.filter(
+        (w) => !checkpoint.completedWorkerIds.includes(w.id),
+      );
+      // If terminal worker was filtered, pick the last remaining worker as terminal.
+      const effectiveTerminal = checkpoint.completedWorkerIds.includes(workerSet.terminalWorkerId)
+        ? (remainingWorkers.at(-1)?.id ?? workerSet.terminalWorkerId)
+        : workerSet.terminalWorkerId;
+      effectiveWorkerSet = { terminalWorkerId: effectiveTerminal, workers: remainingWorkers };
+    }
+    isFirstResumedRound = false;
+
+    if (effectiveWorkerSet.workers.length === 0) {
+      // All workers were completed — move to next round.
+      continue;
+    }
+
+    const roundWorkspaceDir = path.join(workspaceDir, 'rounds', `round-${String(round).padStart(2, '0')}`);
+    if (round > startRound) {
+      managedOptions.events?.onTextDelta?.(`\n[Managed Task] starting refinement round ${round}\n`);
+    }
+    managedOptions.events?.onManagedTaskStatus?.({
+      agentMode,
+      harnessProfile: managedTask.contract.harnessProfile,
+      currentRound: round,
+      maxRounds,
+      phase: 'round',
+      note: round === startRound
+        ? `Resuming round ${round} — skipped ${checkpoint.completedWorkerIds.length} completed worker(s)`
+        : `Starting refinement round ${round}`,
+      upgradeCeiling: managedTask.runtime?.upgradeCeiling ?? budgetController.upgradeCeiling,
+      ...buildManagedStatusBudgetFields(budgetController),
+    });
+    budgetController.currentHarness = managedTask.contract.harnessProfile;
+    managedTask = {
+      ...managedTask,
+      runtime: {
+        ...applyManagedBudgetRuntimeState(managedTask.runtime, budgetController),
+        budget: createBudgetSnapshot(budgetController, managedTask.contract.harnessProfile, round, undefined),
+      },
+    };
+    await writeManagedTaskSnapshotArtifacts(workspaceDir, managedTask);
+    roundExecution = await executeManagedTaskRound(
+      managedOptions,
+      managedTask,
+      effectiveWorkerSet,
+      roundWorkspaceDir,
+      `${managedTask.contract.taskId}-round-${round}`,
+      plan.promptOverlay,
+      qualityAssuranceMode,
+      budgetController,
+      agentMode,
+      round,
+      maxRounds,
+      plan,
+      sessionStorage,
+      roundDirective,
+      undefined, // No scoutSessionId on resume — session storage is fresh.
+      // FEATURE_071: Checkpoint callback for resumed round.
+      async (workerId: string) => {
+        checkpointCompletedWorkerIds = [...checkpointCompletedWorkerIds, workerId];
+        try {
+          await writeCheckpoint(workspaceDir, {
+            version: 1,
+            taskId: managedTask.contract.taskId,
+            createdAt: new Date().toISOString(),
+            gitCommit: checkpointGitCommit,
+            objective: truncateText(managedOriginalTask, 200),
+            harnessProfile: managedTask.contract.harnessProfile,
+            currentRound: round,
+            completedWorkerIds: checkpointCompletedWorkerIds,
+            scoutCompleted: true,
+          });
+        } catch {
+          // Checkpoint write failure is non-fatal — task execution continues.
+        }
+      },
+    );
+    checkpointCompletedWorkerIds = [];
+    managedTask = applyOrchestrationResultToTask(
+      roundExecution.taskSnapshot,
+      effectiveWorkerSet.terminalWorkerId,
+      roundExecution.orchestrationResult,
+      roundExecution.workerResults,
+      round,
+      roundWorkspaceDir,
+    );
+    managedTask = applyManagedTaskContractDirectives(
+      managedTask,
+      roundExecution.contractDirectives,
+    );
+    managedTask = {
+      ...managedTask,
+      runtime: {
+        ...applyManagedBudgetRuntimeState(managedTask.runtime, budgetController),
+        budget: createBudgetSnapshot(budgetController, managedTask.contract.harnessProfile, round, undefined),
+        memoryStrategies: {
+          ...(managedTask.runtime?.memoryStrategies ?? {}),
+          ...Object.fromEntries(
+            effectiveWorkerSet.workers
+              .filter((worker) => worker.memoryStrategy)
+              .map((worker) => [worker.id, worker.memoryStrategy as KodaXMemoryStrategy]),
+          ),
+        },
+        memoryNotes: sessionStorage.snapshotMemoryNotes(),
+      },
+    };
+    await writeManagedTaskSnapshotArtifacts(workspaceDir, managedTask);
+
+    roundDirective = roundExecution.directive;
+    if (roundDirective?.status === 'accept' || roundDirective?.status === 'blocked') {
+      break;
+    }
+    if (roundDirective?.status === 'revise' && round < maxRounds) {
+      managedOptions.events?.onTextDelta?.(
+        `\n[Managed Task] evaluator requested another pass: ${roundDirective.reason ?? 'additional evidence required.'}\n`,
+      );
+      continue;
+    }
+    break;
+  }
+
+  // Finalize — same as normal path.
+  managedTask = applyManagedTaskDirective(managedTask, roundDirective);
+  managedTask = {
+    ...managedTask,
+    runtime: {
+      ...applyManagedBudgetRuntimeState(managedTask.runtime, budgetController),
+      budget: createBudgetSnapshot(budgetController, managedTask.contract.harnessProfile, maxRounds, undefined),
+      scorecard: createVerificationScorecard(managedTask, roundDirective),
+      memoryNotes: sessionStorage.snapshotMemoryNotes(),
+    },
+  };
+  const result = buildFallbackManagedResult(
+    managedTask,
+    roundExecution?.workerResults ?? new Map<string, KodaXResult>(),
+    roundExecution?.workerSet.terminalWorkerId ?? managedTask.verdict.decidedByAssignmentId,
+  );
+
+  await writeManagedTaskArtifacts(workspaceDir, managedTask, {
+    success: result.success,
+    lastText: result.lastText,
+    sessionId: result.sessionId,
+    signal: result.signal,
+    signalReason: result.signalReason,
+  }, roundDirective);
+
+  // FEATURE_071: Delete checkpoint on successful completion.
+  await deleteCheckpoint(workspaceDir);
+
+  managedOptions.events?.onManagedTaskStatus?.({
+    agentMode,
+    harnessProfile: managedTask.contract.harnessProfile,
+    currentRound: Math.min(maxRounds, buildManagedTaskRoundHistory(managedTask).at(-1)?.round ?? maxRounds),
+    maxRounds,
+    phase: 'completed',
+    note: managedTask.verdict.summary,
+    persistToHistory: true,
+    events: [{
+      key: 'managed-task-completed',
+      kind: 'completed',
+      summary: managedTask.verdict.disposition === 'complete'
+        ? 'Task completed'
+        : managedTask.verdict.disposition === 'needs_continuation'
+          ? 'Task needs continuation'
+          : `Task ended: ${managedTask.verdict.disposition ?? 'unknown'}`,
+      detail: managedTask.verdict.summary,
+      persistToHistory: true,
+    }],
+    upgradeCeiling: managedTask.runtime?.upgradeCeiling ?? budgetController.upgradeCeiling,
+    ...buildManagedStatusBudgetFields(budgetController),
+  });
+
+  return mergeManagedTaskIntoResult(
+    {
+      ...result,
+      routingDecision: result.routingDecision ?? finalRoutingDecision,
+    },
+    managedTask,
+  );
+}
+
 export async function runManagedTask(
   options: KodaXOptions,
   prompt: string,
@@ -7573,6 +8040,43 @@ export async function runManagedTask(
       },
       prompt,
     );
+  }
+
+  // FEATURE_071: Check for recoverable checkpoint before starting.
+  if (options.events?.askUser) {
+    const validCheckpoint = await findValidCheckpoint(options);
+    if (validCheckpoint) {
+      const useChinese = /[\u4e00-\u9fff]/.test(prompt);
+      const { checkpoint } = validCheckpoint;
+      const completedLabel = checkpoint.completedWorkerIds.length > 0
+        ? checkpoint.completedWorkerIds.join(', ')
+        : 'Scout';
+      const answer = await options.events.askUser({
+        question: useChinese
+          ? `发现未完成的任务 (${formatHarnessProfileShort(checkpoint.harnessProfile)}, ${completedLabel} 已完成)`
+          : `Found incomplete task (${formatHarnessProfileShort(checkpoint.harnessProfile)}, ${completedLabel} completed)`,
+        options: [
+          {
+            label: useChinese ? '继续上次任务' : 'Continue',
+            value: 'continue',
+            description: useChinese ? '从中断处恢复执行' : 'Resume from where it stopped',
+          },
+          {
+            label: useChinese ? '重新开始' : 'Restart',
+            value: 'restart',
+            description: useChinese ? '丢弃之前的进度，重新开始' : 'Discard previous progress and start fresh',
+          },
+        ],
+        default: 'continue',
+        intent: 'generic',
+        scope: 'session',
+        resumeBehavior: 'continue',
+      });
+      if (answer === 'continue') {
+        return resumeManagedTask(options, prompt, validCheckpoint);
+      }
+      await deleteCheckpoint(validCheckpoint.workspaceDir);
+    }
   }
 
   const managedPlanning = await createManagedReasoningPlan(options, prompt);
@@ -7645,7 +8149,7 @@ export async function runManagedTask(
     finalRoutingDecision.harnessProfile === 'H0_DIRECT'
     && scoutExecution.directive.confirmedHarness === 'H0_DIRECT'
     && scoutExecution.result.success !== false
-    && normalizeManagedDirectCompletionReady(scoutExecution.directive.directCompletionReady ?? 'no')
+    && normalizeManagedDirectCompletionReady(scoutExecution.directive.directCompletionReady ?? 'no') === 'yes'
   ) {
     return completeScoutH0Task({
       options: managedOptions, originalTask: managedOriginalTask, plan,
@@ -7661,9 +8165,36 @@ export async function runManagedTask(
   if (
     scoutExecution.directive.confirmedHarness === 'H0_DIRECT'
     && scoutExecution.result.success !== false
-    && !normalizeManagedDirectCompletionReady(scoutExecution.directive.directCompletionReady ?? 'no')
+    && normalizeManagedDirectCompletionReady(scoutExecution.directive.directCompletionReady ?? 'no') !== 'yes'
   ) {
-    // Grant full tool access for H0 continuation
+    // Grant full tool access for H0 continuation.
+    // Wrap events through createWorkerEvents so text/tool output renders correctly
+    // in the managed foreground transcript (with [Scout] prefix and tool group sync).
+    const h0ContinuationWorker: ManagedTaskWorkerSpec = {
+      id: 'scout',
+      title: 'Scout',
+      role: 'scout',
+      terminalAuthority: true,
+      execution: 'serial',
+      agent: buildManagedWorkerAgent('scout', 'scout'),
+      prompt: '',
+      // No toolPolicy → full tool access for H0 continuation
+    };
+    const h0ContinuationEvents = createWorkerEvents(
+      managedOptions.events, h0ContinuationWorker, true, scoutBudgetController, {
+        emitContent: true,
+        emitToolEvents: true,
+        emitProgressEventsWhenHidden: false,
+        emitIterationEvents: true,
+        statusContext: {
+          agentMode: managedOptions.agentMode ?? 'ama',
+          harnessProfile: 'H0_DIRECT',
+          currentRound: 1,
+          maxRounds: 1,
+          upgradeCeiling: finalRoutingDecision.upgradeCeiling,
+        },
+      },
+    );
     const h0ContinuationOptions: KodaXOptions = {
       ...managedOptions,
       maxIter: resolveRemainingManagedWorkBudget(scoutBudgetController),
@@ -7677,10 +8208,15 @@ export async function runManagedTask(
             storage: sharedSessionStorage,
           }
         : managedOptions.session,
-      events: managedOptions.events,
+      events: h0ContinuationEvents
+        ? { ...managedOptions.events, ...h0ContinuationEvents }
+        : managedOptions.events,
       context: {
         ...managedOptions.context,
-        // No tool policy restrictions — Scout gets full write access in H0 continuation
+        // Disable managed protocol — continuation should just do the work, not emit Scout blocks.
+        managedProtocolEmission: undefined,
+        // No prompt overlay — avoid "Scout Phase" instructions confusing the continuation.
+        promptOverlay: undefined,
       },
     };
     managedOptions.events?.onManagedTaskStatus?.({
@@ -7694,17 +8230,16 @@ export async function runManagedTask(
       ...buildManagedStatusBudgetFields(scoutBudgetController),
     });
     const continuationPrompt = [
-      'You previously investigated this task and confirmed H0_DIRECT.',
-      scoutExecution.directive.harnessRationale
-        ? `Your rationale: ${scoutExecution.directive.harnessRationale}`
-        : undefined,
+      'You previously investigated the following task and confirmed it is simple enough to complete directly.',
+      '',
+      `Original task: ${prompt}`,
+      '',
       scoutExecution.directive.summary
-        ? `Your assessment: ${scoutExecution.directive.summary}`
+        ? `Your investigation summary: ${scoutExecution.directive.summary}`
         : undefined,
-      'Write tools are now available. Proceed to complete the task based on your prior investigation.',
-      'Do not re-investigate — use the findings from your previous turns.',
-      'When done, provide the final user-facing answer.',
-    ].filter(Boolean).join(' ');
+      'Write tools (edit, write, bash) are now available. Complete the task now.',
+      'Do not re-investigate or re-read files you already read. Use your prior findings directly.',
+    ].filter(Boolean).join('\n');
     const continuationResult = await runDirectKodaX(h0ContinuationOptions, continuationPrompt);
     // Merge Scout investigation + continuation into a single result
     const mergedExecution = {
@@ -7809,6 +8344,23 @@ export async function runManagedTask(
   let h1CheckedDirectRevisesUsed = 0;
   await writeManagedTaskSnapshotArtifacts(shape.workspaceDir, managedTask);
 
+  // FEATURE_071: Write initial checkpoint after Scout completes, before round loop.
+  const checkpointGitCommit = await getGitHeadCommit(managedOptions.context?.gitRoot);
+  let checkpointCompletedWorkerIds: string[] = [];
+  if (checkpointGitCommit) {
+    await writeCheckpoint(shape.workspaceDir, {
+      version: 1,
+      taskId: managedTask.contract.taskId,
+      createdAt: new Date().toISOString(),
+      gitCommit: checkpointGitCommit,
+      objective: truncateText(managedOriginalTask, 200),
+      harnessProfile: managedTask.contract.harnessProfile,
+      currentRound: 1,
+      completedWorkerIds: [],
+      scoutCompleted: true,
+    });
+  }
+
   for (let round = 1; round <= maxRounds; round += 1) {
     const evidenceRecoveryNote = (
       (managedTask.runtime?.consecutiveEvidenceOnlyIterations ?? 0) >= EVIDENCE_ONLY_ITERATION_THRESHOLD
@@ -7890,7 +8442,30 @@ export async function runManagedTask(
       sessionStorage,
       roundDirective,
       scoutExecution.scoutSessionId,
+      // FEATURE_071: Checkpoint callback — update checkpoint after each worker completes.
+      checkpointGitCommit
+        ? async (workerId: string) => {
+            checkpointCompletedWorkerIds = [...checkpointCompletedWorkerIds, workerId];
+            try {
+              await writeCheckpoint(shape.workspaceDir, {
+                version: 1,
+                taskId: managedTask.contract.taskId,
+                createdAt: new Date().toISOString(),
+                gitCommit: checkpointGitCommit,
+                objective: truncateText(managedOriginalTask, 200),
+                harnessProfile: managedTask.contract.harnessProfile,
+                currentRound: round,
+                completedWorkerIds: checkpointCompletedWorkerIds,
+                scoutCompleted: true,
+              });
+            } catch {
+              // Checkpoint write failure is non-fatal — task execution continues.
+            }
+          }
+        : undefined,
     );
+    // FEATURE_071: Reset per-round completed workers for next round.
+    checkpointCompletedWorkerIds = [];
     managedTask = applyOrchestrationResultToTask(
       roundExecution.taskSnapshot,
       workerSet.terminalWorkerId,
@@ -8236,6 +8811,14 @@ export async function runManagedTask(
           maxRounds,
           phase: 'completed',
           note: denialReason,
+          persistToHistory: true,
+          events: [{
+            key: 'managed-task-completed',
+            kind: 'completed',
+            summary: 'Task ended: blocked',
+            detail: denialReason,
+            persistToHistory: true,
+          }],
           upgradeCeiling: managedTask.runtime?.upgradeCeiling ?? budgetController.upgradeCeiling,
           ...buildManagedStatusBudgetFields(budgetController),
         });
@@ -8286,6 +8869,9 @@ export async function runManagedTask(
     signalReason: result.signalReason,
   }, roundDirective);
 
+  // FEATURE_071: Delete checkpoint on task completion — no longer needed.
+  await deleteCheckpoint(shape.workspaceDir);
+
   managedOptions.events?.onManagedTaskStatus?.({
     agentMode,
     harnessProfile: managedTask.contract.harnessProfile,
@@ -8293,6 +8879,18 @@ export async function runManagedTask(
     maxRounds,
     phase: 'completed',
     note: managedTask.verdict.summary,
+    persistToHistory: true,
+    events: [{
+      key: 'managed-task-completed',
+      kind: 'completed',
+      summary: managedTask.verdict.disposition === 'complete'
+        ? 'Task completed'
+        : managedTask.verdict.disposition === 'needs_continuation'
+          ? 'Task needs continuation'
+          : `Task ended: ${managedTask.verdict.disposition ?? 'unknown'}`,
+      detail: managedTask.verdict.summary,
+      persistToHistory: true,
+    }],
     upgradeCeiling: managedTask.runtime?.upgradeCeiling ?? budgetController.upgradeCeiling,
     ...buildManagedStatusBudgetFields(budgetController),
   });

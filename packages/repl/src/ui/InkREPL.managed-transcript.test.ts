@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { setLocale } from "../common/i18n.js";
 import { ToolCallStatus } from "./types.js";
 import {
   appendPersistedUiHistorySnapshot,
@@ -67,6 +68,176 @@ describe("buildManagedTaskTranscriptItems", () => {
     expect(transcript).toContain("Generator summarized the deep review findings.");
     expect(transcript).not.toContain("## Huge Generator Report");
     expect(transcript).not.toContain("## Final Findings");
+  });
+
+  it("appends a completion label when verdict disposition is complete (en)", () => {
+    setLocale("en");
+    const items = buildManagedTaskTranscriptItems({
+      success: true,
+      messages: [],
+      lastText: "All checks passed.",
+      managedTask: {
+        runtime: {},
+        roleAssignments: [
+          { id: "generator", role: "generator", title: "Generator" },
+          { id: "evaluator", role: "evaluator", title: "Evaluator" },
+        ],
+        evidence: {
+          entries: [
+            {
+              assignmentId: "generator",
+              title: "Generator",
+              role: "generator",
+              round: 1,
+              status: "completed",
+              summary: "Generator applied all fixes.",
+            },
+          ],
+        },
+        verdict: {
+          decidedByAssignmentId: "evaluator",
+          disposition: "complete",
+        },
+      },
+    } as any);
+
+    expect(items.at(-1)).toBe("[Task completed]");
+  });
+
+  it("appends a localized completion label for zh locale", () => {
+    setLocale("zh");
+    const items = buildManagedTaskTranscriptItems({
+      success: true,
+      messages: [],
+      lastText: "All checks passed.",
+      managedTask: {
+        runtime: {},
+        roleAssignments: [
+          { id: "generator", role: "generator", title: "Generator" },
+        ],
+        evidence: {
+          entries: [
+            {
+              assignmentId: "generator",
+              title: "Generator",
+              role: "generator",
+              round: 1,
+              status: "completed",
+              summary: "Generator finished.",
+            },
+          ],
+        },
+        verdict: {
+          decidedByAssignmentId: "generator",
+          disposition: "complete",
+        },
+      },
+    } as any);
+
+    expect(items.at(-1)).toBe("[任务完成]");
+    setLocale("en");
+  });
+
+  it("appends blocked label when verdict disposition is blocked", () => {
+    setLocale("en");
+    const items = buildManagedTaskTranscriptItems({
+      success: false,
+      messages: [],
+      lastText: "",
+      managedTask: {
+        runtime: {},
+        roleAssignments: [
+          { id: "generator", role: "generator", title: "Generator" },
+        ],
+        evidence: {
+          entries: [
+            {
+              assignmentId: "generator",
+              title: "Generator",
+              role: "generator",
+              round: 1,
+              status: "failed",
+              summary: "Generator could not proceed.",
+            },
+          ],
+        },
+        verdict: {
+          decidedByAssignmentId: "generator",
+          disposition: "blocked",
+          signalReason: "Budget denied.",
+        },
+      },
+    } as any);
+
+    expect(items.at(-1)).toBe("[Task blocked]");
+  });
+
+  it("appends continuation label when verdict disposition is needs_continuation", () => {
+    setLocale("en");
+    const items = buildManagedTaskTranscriptItems({
+      success: false,
+      messages: [],
+      lastText: "",
+      managedTask: {
+        runtime: {},
+        roleAssignments: [
+          { id: "generator", role: "generator", title: "Generator" },
+        ],
+        evidence: {
+          entries: [
+            {
+              assignmentId: "generator",
+              title: "Generator",
+              role: "generator",
+              round: 1,
+              status: "completed",
+              summary: "Partial progress made.",
+            },
+          ],
+        },
+        verdict: {
+          decidedByAssignmentId: "generator",
+          disposition: "needs_continuation",
+          continuationSuggested: true,
+        },
+      },
+    } as any);
+
+    expect(items.at(-1)).toBe("[Task needs continuation]");
+  });
+
+  it("omits completion label when verdict has no known disposition", () => {
+    setLocale("en");
+    const items = buildManagedTaskTranscriptItems({
+      success: true,
+      messages: [],
+      lastText: "done",
+      managedTask: {
+        runtime: {},
+        roleAssignments: [
+          { id: "generator", role: "generator", title: "Generator" },
+        ],
+        evidence: {
+          entries: [
+            {
+              assignmentId: "generator",
+              title: "Generator",
+              role: "generator",
+              round: 1,
+              status: "completed",
+              summary: "Done.",
+            },
+          ],
+        },
+        verdict: {
+          decidedByAssignmentId: "generator",
+        },
+      },
+    } as any);
+
+    // No completion label appended when disposition is undefined
+    const last = items.at(-1) ?? "";
+    expect(last).not.toMatch(/^\[Task/);
   });
 
   it("keeps the final round transcript visible when the managed run is interrupted", () => {

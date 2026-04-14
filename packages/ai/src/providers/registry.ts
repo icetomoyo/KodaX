@@ -109,6 +109,9 @@ class KimiCodeProvider extends KodaXAnthropicCompatProvider {
     apiKeyEnv: 'KIMI_API_KEY',
     baseUrl: 'https://api.kimi.com/coding/',
     model: 'k2.5',
+    models: [
+      { id: 'K2.6-code-preview', displayName: 'K2.6 Code Preview' },
+    ],
     supportsThinking: true,
     reasoningCapability: 'native-budget',
     contextWindow: 256000,
@@ -276,6 +279,7 @@ export const KODAX_PROVIDER_SNAPSHOTS: Record<ProviderName, ProviderSnapshot> = 
   'kimi-code': {
     apiKeyEnv: 'KIMI_API_KEY',
     model: 'k2.5',
+    models: ['K2.6-code-preview'],
     reasoningCapability: 'native-budget',
     capabilityProfile: NATIVE_PROVIDER_CAPABILITY_PROFILE,
   },

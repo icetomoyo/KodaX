@@ -32,6 +32,7 @@ export const DEFAULT_COST_RATES: Readonly<Record<string, Readonly<Record<string,
   },
   'kimi-code': {
     'k2.5': { inputPer1M: 0.005, outputPer1M: 0.015 },
+    'K2.6-code-preview': { inputPer1M: 0.005, outputPer1M: 0.015 },
   },
   qwen: {
     'qwen3.5-plus': { inputPer1M: 0.003, outputPer1M: 0.006 },
