@@ -13,18 +13,18 @@
 
 | Item | Value |
 |---|---|
-| Tracked feature IDs | `001-070` |
-| Total tracked features | `70` |
+| Tracked feature IDs | `001-071` |
+| Total tracked features | `71` |
 | Completed | `55` |
 | InProgress | `1` |
-| Planned | `14` |
+| Planned | `15` |
 | Current released version | `v0.7.17` |
 
 ### 各版本待做分布
 
 | Version | Planned features |
 |---|---|
-| `v0.7.18` | `8` |
+| `v0.7.18` | `9` |
 | `v0.7.20` | `1` |
 | `v0.7.30` | `1` |
 | `v0.8.0` | `3` |
@@ -57,6 +57,7 @@
 | `068` | Worktree Isolation Tool | Enhancement | Medium | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_068-worktree-isolation-tool) |
 | `069` | Session Rewind & Shell Completion | Enhancement | Medium | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_069-session-rewind--shell-completion) |
 | `070` | Context Engine V2 — Multi-Layer Compaction & Post-Compact Reconstruction | Enhancement | High | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_070-context-engine-v2--multi-layer-compaction--post-compact-reconstruction) | 吸收 069-C; 基于 Factory.ai + Claude Code 对标分析 |
+| `071` | AMA Managed Task Resilience — Worker Checkpoint & Mid-Execution Recovery | Enhancement | High | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_071-ama-managed-task-resilience--worker-checkpoint--mid-execution-recovery) | AMA H1/H2 流程中断后从 checkpoint 恢复；含 recovery 消息渲染修正 |
 | `030` | Multi-Surface Delivery | Enhancement | High | `v1.0.0` | [v1.0.0](features/v1.0.0.md#feature_030-multi-surface-delivery) |
 
 ---
