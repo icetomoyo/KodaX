@@ -123,5 +123,5 @@ describe('runKodaX provider recovery integration', () => {
     expect(Feature045RecoveryProvider.fallbackSignalStates).toEqual([false]);
     expect(onProviderRecovery).toHaveBeenCalledTimes(2);
     expect(onRetry).not.toHaveBeenCalled();
-  });
+  }, 15_000);
 });

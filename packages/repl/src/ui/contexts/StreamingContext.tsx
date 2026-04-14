@@ -303,6 +303,10 @@ export function createStreamingManager(): StreamingManager {
   let pendingThinkingText = "";
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // Issue 116: Guard flag to reject buffer writes after abort.
+  // Prevents residual stream callbacks from leaking text into the next round.
+  let bufferSealed = false;
+
   /**
    * Flush interval (ms) - 鍒锋柊闂撮殧
    * - 80ms syncs with Spinner animation frame - 80ms 涓?Spinner 鍔ㄧ敾甯у悓姝?
@@ -358,10 +362,18 @@ export function createStreamingManager(): StreamingManager {
     },
 
     startStreaming: () => {
-      flushPendingUpdates(); // Flush before starting - 寮€濮嬪墠鍒锋柊
+      bufferSealed = false; // Issue 116: unseal buffer for the new round
+      // Issue 116: discard any residual buffer from previous aborted round
+      pendingResponseText = "";
+      pendingThinkingText = "";
+      if (flushTimer) {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+      }
       state = {
         ...state,
         state: StreamingState.Responding,
+        currentResponse: "", // Issue 116: ensure clean slate
         abortController: new AbortController(),
         error: undefined,
       };
@@ -379,6 +391,7 @@ export function createStreamingManager(): StreamingManager {
     },
 
     appendResponse: (text: string) => {
+      if (bufferSealed) return; // Issue 116: reject writes after abort
       pendingResponseText += text;
       scheduleFlush();
     },
@@ -403,7 +416,16 @@ export function createStreamingManager(): StreamingManager {
     },
 
     abort: () => {
-      flushPendingUpdates(); // Flush before aborting to ensure received content displays - 涓柇鍓嶅埛鏂帮紝纭繚宸叉帴鏀跺唴瀹规樉绀?      state.abortController?.abort();
+      bufferSealed = true; // Issue 116: seal buffer before flush to block racing callbacks
+      flushPendingUpdates();
+      state.abortController?.abort();
+      // Issue 116: explicitly drain residual buffer that may have slipped through
+      pendingResponseText = "";
+      pendingThinkingText = "";
+      if (flushTimer) {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+      }
       state = {
         ...state,
         state: StreamingState.Idle,
@@ -414,9 +436,17 @@ export function createStreamingManager(): StreamingManager {
     },
 
     reset: () => {
-      flushPendingUpdates(); // Flush before resetting - 閲嶇疆鍓嶅埛鏂?
+      bufferSealed = true; // Issue 116: seal during reset
+      flushPendingUpdates();
       state.abortController?.abort();
+      pendingResponseText = "";
+      pendingThinkingText = "";
+      if (flushTimer) {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+      }
       state = { ...DEFAULT_STREAMING_STATE };
+      bufferSealed = false;
       notify();
     },
 
@@ -456,6 +486,7 @@ export function createStreamingManager(): StreamingManager {
     },
 
     appendThinkingContent: (text: string) => {
+      if (bufferSealed) return; // Issue 116: reject writes after abort
       pendingThinkingText += text;
       scheduleFlush();
     },

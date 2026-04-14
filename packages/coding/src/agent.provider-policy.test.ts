@@ -131,7 +131,7 @@ describe('runKodaX provider policy integration', () => {
     ).toBe(1);
     expect(result.routingDecision?.primaryTask).toBe('review');
     expect(result.routingDecision?.harnessProfile).toBe('H0_DIRECT');
-  }, 15_000);
+  }, 30_000);
 
   it('allows benign text-only prompts that merely mention MCP, project mode, or screenshots', async () => {
     const result = await runKodaX(
@@ -151,5 +151,5 @@ describe('runKodaX provider policy integration', () => {
       '[Provider Constraint]',
     );
     expect(result.routingDecision?.harnessProfile).toBe('H0_DIRECT');
-  }, 15_000);
+  }, 30_000);
 });

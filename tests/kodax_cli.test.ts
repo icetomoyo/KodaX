@@ -345,7 +345,7 @@ describe('CLI Entry Point', () => {
     const source = await fs.readFile(path.join(process.cwd(), 'src', 'kodax_cli.ts'), 'utf-8');
     expect(source).toContain('CLI bridge provider (latest-user-message only, MCP unavailable)');
     expect(source).toContain('Legacy orchestration-based parallel execution for loosely coupled tasks.');
-    expect(source).toContain('not yet a fully shared-context multi-agent runtime');
+    expect(source).toContain('Prefer --agent-mode ama|sa for the product path. --team is being sunset.');
     expect(source).toContain('Project mode spans two surfaces: non-REPL bootstrap commands and REPL /project commands.');
     expect(source).toContain('/project verify [#index|--last]');
   });

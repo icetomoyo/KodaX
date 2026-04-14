@@ -18,7 +18,15 @@ import type {
  */
 export const DEFAULT_RESILIENCE_CONFIG: Required<ProviderResilienceConfig> = {
   requestTimeoutMs: 600_000,       // 10 minutes hard timeout
-  streamIdleTimeoutMs: 60_000,     // 60 seconds idle timeout
+  // Stream idle timeout: DISABLED by default (0 = off), aligned with Claude Code
+  // which also keeps its watchdog off by default.  The 10-minute hard timeout is
+  // sufficient to catch genuinely stuck connections.  Enabling an aggressive idle
+  // timer causes false positives with slow providers (e.g. Zhipu) that go silent
+  // between content blocks while generating large tool_use payloads.
+  //
+  // To enable: set KODAX_STREAM_IDLE_TIMEOUT_MS env var or streamIdleTimeoutMs
+  // in ~/.kodax/config.json (value in milliseconds, e.g. 90000 for 90s).
+  streamIdleTimeoutMs: Number(process.env.KODAX_STREAM_IDLE_TIMEOUT_MS) || 0,
   chunkTimeoutMs: 30_000,          // 30 seconds per-chunk timeout
   maxRetries: 3,                   // Up to 3 automatic retries
   maxRetryDelayMs: 60_000,         // Cap retry delay at 60s

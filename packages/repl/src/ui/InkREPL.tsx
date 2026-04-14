@@ -150,7 +150,7 @@ import {
   extractTitle,
 } from "./utils/message-utils.js";
 import { withCapture, ConsoleCapturer } from "./utils/console-capturer.js";
-import { emitRecoveryHistoryItem, emitRetryHistoryItem } from "./utils/retry-history.js";
+import { createRecoveryHistoryItem, emitRetryHistoryItem } from "./utils/retry-history.js";
 import {
   formatManagedTaskBreadcrumb,
   formatManagedTaskLiveStatusLabel,
@@ -3604,6 +3604,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   });
   // Permission-related refs (not part of KodaXOptions anymore)
   const permissionModeRef = useRef<PermissionMode>(currentConfig.permissionMode);
+  useEffect(() => {
+    permissionModeRef.current = currentConfig.permissionMode;
+  }, [currentConfig.permissionMode]);
   const alwaysAllowToolsRef = useRef<string[]>(loadAlwaysAllowTools());
 
   const setSessionPermissionMode = useCallback((mode: PermissionMode) => {
@@ -3612,6 +3615,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }, []);
   const pendingInputsRef = useRef<string[]>(streamingState.pendingInputs);
   const userInterruptedRef = useRef(false);
+  // Issue 116: generation counter to discard results from stale (interrupted) rounds.
+  // Incremented on each prompt submission; checked after await to detect supersession.
+  const promptGenerationRef = useRef(0);
 
   const queueInterruptedPersistence = useCallback(() => {
     if (interruptPersistenceQueuedRef.current) {
@@ -4539,6 +4545,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       setLastLiveActivityLabel(truncated);
     },
     onStreamEnd: () => {
+      // Issue 116: guard against stale onStreamEnd from aborted round.
+      // The agent AbortError path calls events.onStreamEnd() after the UI has
+      // already reset via resetInterruptedPromptState(). Without this guard,
+      // it would corrupt tool-call state of the new round.
+      if (userInterruptedRef.current) {
+        return;
+      }
       const finalizedTools = finalizeAllExecutingToolCalls(
         ToolCallStatus.Cancelled,
         () => ({ error: "Stream ended before the tool completed.", output: undefined }),
@@ -4627,7 +4640,33 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       if (userInterruptedRef.current) {
         return;
       }
-      emitRecoveryHistoryItem(addHistoryItem, event);
+      // Show recovery info INSIDE the assistant's streaming area, not as
+      // a separate history item.  This avoids the persistent positioning
+      // bug where addHistoryItem placed info between the user prompt and
+      // the assistant response (because the assistant message hadn't been
+      // committed to history yet during the inner retry loop).
+      //
+      // Approach: clear partial output from the failed attempt, then write
+      // recovery info directly into the streaming buffer.  When the retry
+      // starts, its text deltas append AFTER the info.  The user sees:
+      //
+      //   ⏳ Stream interrupted · recovering 1/3 in 4s
+      //
+      //   [Scout] (retry text...)
+      //
+      // If the retry also fails, the buffer is cleared again and replaced
+      // with the latest recovery info.  Only the most recent info + the
+      // current attempt's text are visible at any time.
+      clearResponse();
+      clearThinkingContent();
+      stopThinking();
+      clearToolInputContent();
+      setCurrentTool(undefined);
+      resetLiveToolCalls();
+      setLastLiveActivityLabel(undefined);
+
+      const item = createRecoveryHistoryItem(event) as { type: 'info'; text: string; icon?: string };
+      appendResponse(`${item.icon ?? '\u23F3'} ${item.text}\n\n`);
     },
     onManagedTaskStatus: (status) => {
       if (userInterruptedRef.current) {
@@ -5357,6 +5396,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     initialPrompt: string,
     runRound: (prompt: string) => Promise<KodaXResult>,
   ) => {
+    // Issue 116: capture generation at sequence start so we can detect
+    // if the user submitted a new prompt (Ctrl+C then new input) while
+    // this sequence was still completing.
+    const sequenceGeneration = promptGenerationRef.current;
     userInterruptedRef.current = false;
     interruptPersistenceQueuedRef.current = false;
     setCanQueueFollowUps(true);
@@ -5366,6 +5409,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         runRound,
         shiftPendingPrompt: shiftPendingInput,
         onRoundComplete: async (result) => {
+          // Issue 116: discard results if a newer prompt has superseded this sequence
+          if (promptGenerationRef.current !== sequenceGeneration) return;
           await recordCompletedAgentRound(result);
         },
         onBeforeQueuedRound: async (prompt) => {
@@ -5429,7 +5474,20 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
 
       const initialMessages = prepared.mode === "fork" ? [] : context.messages;
+      // Issue 116: capture generation at call time to detect supersession after await
+      const roundGeneration = promptGenerationRef.current;
       const result = await runAgentRound(prepared.options, prepared.prompt, initialMessages);
+
+      // Issue 116: discard results from a superseded round.
+      // If the user Ctrl+C'd and submitted a new prompt while this round was
+      // still completing (processing AbortError), promptGenerationRef will
+      // have been incremented. Applying stale results would overwrite the
+      // new round's context and inject incomplete tool calls into history.
+      if (promptGenerationRef.current !== roundGeneration) {
+        await prepared.finalize();
+        return;
+      }
+
       const persistedHistoryBase = persistedUiHistoryRef.current;
       const persistedAdditions: CreatableHistoryItem[] = [];
 
@@ -5545,6 +5603,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       setIsLoading(true);
       userInterruptedRef.current = false;
       interruptPersistenceQueuedRef.current = false;
+      // Issue 116: bump generation so stale round completions are discarded
+      ++promptGenerationRef.current;
       setManagedTaskStatus(null);
       managedTaskStatusRef.current = null;
       managedTaskBreadcrumbRef.current = null;

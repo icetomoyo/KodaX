@@ -229,10 +229,44 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
         );
       }
 
+      let prevEventTime = Date.now();
+      let stallCount = 0;
+      let totalStallMs = 0;
+      const STALL_THRESHOLD_MS = 30_000;
+
       for await (const event of response as AsyncIterable<Anthropic.Messages.RawMessageStreamEvent>) {
         // 检查是否被中断 (双重保险)
         if (signal?.aborted) {
           throw new DOMException('Request aborted', 'AbortError');
+        }
+
+        // Stall detection: passive diagnostic logging when gap > 30s.
+        // Does NOT abort — only records for debugging slow providers.
+        const now = Date.now();
+        const gapMs = now - prevEventTime;
+        if (gapMs > STALL_THRESHOLD_MS) {
+          stallCount++;
+          totalStallMs += gapMs;
+          this.logStreamDiagnostic(`[Stream] stall detected: ${Math.round(gapMs / 1000)}s gap before ${event.type}`, {
+            stallCount, totalStallMs, eventType: event.type,
+          });
+        }
+        prevEventTime = now;
+
+        // Idle timer management — state machine:
+        //
+        //   content_block_delta / message_delta → RESET (active data flowing)
+        //   content_block_start / content_block_stop → PAUSE (block boundary;
+        //       server may go silent while generating the next block or the
+        //       first delta of the current block, e.g. large tool_use JSON)
+        //   message_start / message_stop → RESET (stream lifecycle)
+        //
+        // The hard request timeout (10 min) still guards against genuinely
+        // stuck connections when the idle timer is paused.
+        if (event.type === 'content_block_start' || event.type === 'content_block_stop') {
+          streamOptions?.onHeartbeat?.(true);   // pause at block boundaries
+        } else {
+          streamOptions?.onHeartbeat?.();        // reset on data / lifecycle events
         }
 
         if (event.type === 'content_block_start') {

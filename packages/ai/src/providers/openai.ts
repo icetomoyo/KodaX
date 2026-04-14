@@ -366,11 +366,31 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         );
       }
 
+      let prevChunkTime = Date.now();
+      let stallCount = 0;
+      let totalStallMs = 0;
+      const STALL_THRESHOLD_MS = 30_000;
+
       for await (const chunk of stream) {
         // 检查是否被中断 (双重保险)
         if (signal?.aborted) {
           throw new DOMException('Request aborted', 'AbortError');
         }
+
+        // Stall detection: passive diagnostic logging when gap > 30s.
+        const now = Date.now();
+        const gapMs = now - prevChunkTime;
+        if (gapMs > STALL_THRESHOLD_MS) {
+          stallCount++;
+          totalStallMs += gapMs;
+          this.logStreamDiagnostic(`[Stream] stall detected: ${Math.round(gapMs / 1000)}s gap`, {
+            stallCount, totalStallMs,
+          });
+        }
+        prevChunkTime = now;
+
+        // Keep idle timers alive on every SSE chunk.
+        streamOptions?.onHeartbeat?.();
 
         usage = normalizeOpenAIUsage(chunk.usage as OpenAIUsageLike) ?? usage;
 

@@ -363,6 +363,20 @@ export interface KodaXProviderStreamOptions {
     partialJson: string,
     meta?: { toolId?: string },
   ) => void;
+  /**
+   * Fired on provider-side SSE events to manage idle timers.
+   *
+   * - Called with no argument (or `false`): reset the idle timer.
+   *   Fired on every event that indicates active data flow
+   *   (content_block_start, content_block_delta, message_delta, etc.).
+   *
+   * - Called with `true`: **pause** the idle timer (clear without restart).
+   *   Fired on `content_block_stop` when the stream has NOT yet ended,
+   *   because the server may go silent while generating the next block
+   *   (e.g. between text output and tool_use JSON generation).
+   *   The hard request timeout still guards against genuinely stuck connections.
+   */
+  onHeartbeat?: (pause?: boolean) => void;
   /** 当底层 API 遇到 Rate Limit 进行重试时触发 */
   onRateLimit?: (attempt: number, maxRetries: number, delayMs: number) => void;
   /** 会话标识，用于多轮对话上下文恢复 */

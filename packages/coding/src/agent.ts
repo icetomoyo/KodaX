@@ -50,7 +50,7 @@ import { checkIncompleteToolCalls } from './messages.js';
 import { compact as intelligentCompact, needsCompaction, microcompact, DEFAULT_MICROCOMPACTION_CONFIG, buildPostCompactAttachments, injectPostCompactAttachments, type CompactionConfig, type CompactionUpdate } from '@kodax/agent';
 import { loadCompactionConfig } from './compaction-config.js';
 import { estimateTokens } from './tokenizer.js';
-import { KODAX_MAX_INCOMPLETE_RETRIES, PROMISE_PATTERN, CANCELLED_TOOL_RESULT_PREFIX, CANCELLED_TOOL_RESULT_MESSAGE } from './constants.js';
+import { KODAX_MAX_INCOMPLETE_RETRIES, KODAX_MAX_MAXTOKENS_RETRIES, PROMISE_PATTERN, CANCELLED_TOOL_RESULT_PREFIX, CANCELLED_TOOL_RESULT_MESSAGE } from './constants.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { waitForRetryDelay } from './retry-handler.js';
@@ -1551,6 +1551,7 @@ export async function runKodaX(
 
   let lastText = '';
   let incompleteRetryCount = 0;
+  let maxTokensRetryCount = 0;
   let limitReached = false; // Track if we exited due to iteration limit - 追踪是否因达到迭代上限而退出
   const emitIterationEnd = (
     iterNumber: number,
@@ -1810,15 +1811,23 @@ export async function runKodaX(
           retryTimeoutController.abort(new Error("API Hard Timeout (10 minutes)"));
         }, API_HARD_TIMEOUT_MS);
 
-        let idleTimer = setTimeout(() => {
-          retryTimeoutController.abort(new Error("Stream stalled or delayed response (60s idle)"));
-        }, API_IDLE_TIMEOUT_MS);
+        // Stream idle timer: disabled by default (API_IDLE_TIMEOUT_MS === 0).
+        // When enabled, aborts the stream if no content events arrive within
+        // the timeout window.  The hard timeout above is always active.
+        const idleEnabled = API_IDLE_TIMEOUT_MS > 0;
+        let idleTimer: ReturnType<typeof setTimeout> | undefined;
+        if (idleEnabled) {
+          idleTimer = setTimeout(() => {
+            retryTimeoutController.abort(new Error(`Stream stalled or delayed response (${API_IDLE_TIMEOUT_MS}ms idle)`));
+          }, API_IDLE_TIMEOUT_MS);
+        }
 
         const resetIdleTimer = () => {
+          if (!idleEnabled) return;
           clearTimeout(idleTimer);
           if (!retryTimeoutController.signal.aborted) {
             idleTimer = setTimeout(() => {
-              retryTimeoutController.abort(new Error("Stream stalled or delayed response (60s idle)"));
+              retryTimeoutController.abort(new Error(`Stream stalled or delayed response (${API_IDLE_TIMEOUT_MS}ms idle)`));
             }, API_IDLE_TIMEOUT_MS);
           }
         };
@@ -1876,6 +1885,16 @@ export async function runKodaX(
                   delayMs: delay,
                 });
                 events.onProviderRateLimit?.(rateAttempt, max, delay);
+              },
+              onHeartbeat: (pause) => {
+                if (pause) {
+                  // Between content blocks: server may be silent while generating
+                  // the next block.  Clear idle timer but do NOT restart it — the
+                  // hard request timeout (10 min) still guards against stuck connections.
+                  clearTimeout(idleTimer);
+                } else {
+                  resetIdleTimer();
+                }
               },
               modelOverride: currentModelOverride,
               signal: retrySignal,
@@ -2058,12 +2077,21 @@ export async function runKodaX(
       const completedTurnTokenSnapshot = createCompletedTurnTokenSnapshot(messages, result.usage);
       contextTokenSnapshot = completedTurnTokenSnapshot;
 
-      // Fallback: auto-continue when response is truncated by max_tokens
+      // Fallback: auto-continue when response is truncated by max_tokens.
+      // Capped at KODAX_MAX_MAXTOKENS_RETRIES to prevent infinite loops when
+      // extended thinking consumes most of the output budget, leaving no room
+      // for tool calls (e.g. large Write operations).  When retries are exhausted
+      // the code falls through to the normal text-only response handler below.
       if (result.stopReason === 'max_tokens' && result.toolBlocks.length === 0 && lastText) {
-        events.onTextDelta?.('\n\n[max_tokens reached, continuing...]\n\n');
-        messages.push({ role: 'user', content: [{ type: 'text', text: 'Continue from where you left off.' }] });
-        contextTokenSnapshot = rebaseContextTokenSnapshot(messages, completedTurnTokenSnapshot);
-        continue;
+        maxTokensRetryCount++;
+        if (maxTokensRetryCount <= KODAX_MAX_MAXTOKENS_RETRIES) {
+          events.onTextDelta?.('\n\n[max_tokens reached, continuing...]\n\n');
+          messages.push({ role: 'user', content: [{ type: 'text', text: 'Continue from where you left off.' }] });
+          contextTokenSnapshot = rebaseContextTokenSnapshot(messages, completedTurnTokenSnapshot);
+          continue;
+        }
+        // Retries exhausted — fall through to text-only response handling
+        events.onRetry?.(`max_tokens truncation limit reached (${maxTokensRetryCount - 1}/${KODAX_MAX_MAXTOKENS_RETRIES})`, maxTokensRetryCount - 1, KODAX_MAX_MAXTOKENS_RETRIES);
       }
 
       // Fallback: auto-continue when end_turn fires but required managed protocol block is missing.
