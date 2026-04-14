@@ -150,7 +150,7 @@ import {
   extractTitle,
 } from "./utils/message-utils.js";
 import { withCapture, ConsoleCapturer } from "./utils/console-capturer.js";
-import { emitRecoveryHistoryItem, emitRetryHistoryItem } from "./utils/retry-history.js";
+import { createRecoveryHistoryItem, emitRecoveryHistoryItem, emitRetryHistoryItem } from "./utils/retry-history.js";
 import {
   formatManagedTaskBreadcrumb,
   formatManagedTaskLiveStatusLabel,
@@ -4640,10 +4640,16 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       if (userInterruptedRef.current) {
         return;
       }
-      // 1. Commit partial text from the failed attempt to history
+      const inManagedForeground = !!managedForegroundOwnerRef.current.workerId;
+
+      // 1. Commit partial text from the failed attempt to the correct layer
       const partialText = getFullResponse().trim();
       if (partialText) {
-        addHistoryItem({ type: "assistant", text: partialText });
+        if (inManagedForeground) {
+          appendManagedForegroundTextBlock("assistant", partialText);
+        } else {
+          addHistoryItem({ type: "assistant", text: partialText });
+        }
       }
 
       // 2. Clear live streaming state for the retry
@@ -4655,8 +4661,17 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       resetLiveToolCalls();
       setLastLiveActivityLabel(undefined);
 
-      // 3. Commit recovery info to history (after partial text)
-      emitRecoveryHistoryItem(addHistoryItem, event);
+      // 3. Commit recovery info to the correct layer (same as partial text)
+      if (inManagedForeground) {
+        const recoveryItem = createRecoveryHistoryItem(event);
+        appendManagedForegroundLedgerItem({
+          ...recoveryItem,
+          id: `recovery-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          timestamp: Date.now(),
+        } as HistoryItem);
+      } else {
+        emitRecoveryHistoryItem(addHistoryItem, event);
+      }
     },
     onManagedTaskStatus: (status) => {
       if (userInterruptedRef.current) {
