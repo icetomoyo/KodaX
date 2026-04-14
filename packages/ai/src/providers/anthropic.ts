@@ -112,6 +112,11 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
     });
   }
 
+  protected override onStaleConnection(): void {
+    // Rebuild the Anthropic client to discard the stale keep-alive socket pool.
+    this.initClient();
+  }
+
   async stream(
     messages: KodaXMessage[],
     tools: KodaXToolDefinition[],
@@ -122,7 +127,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
   ): Promise<KodaXStreamResult> {
     return this.withRateLimit(async () => {
       const normalizedReasoning = this.normalizeReasoning(reasoning);
-      const maxOutputTokens = this.config.maxOutputTokens ?? KODAX_MAX_TOKENS;
+      const maxOutputTokens = this.maxOutputTokensOverride ?? this.config.maxOutputTokens ?? KODAX_MAX_TOKENS;
       const model = streamOptions?.modelOverride ?? this.config.model;
       const convertedMessages = await this.convertMessages(messages);
       const initialCapability = normalizedReasoning.enabled
@@ -448,7 +453,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
   ): Promise<KodaXStreamResult> {
     return this.withRateLimit(async () => {
       const normalizedReasoning = this.normalizeReasoning(reasoning);
-      const maxOutputTokens = this.config.maxOutputTokens ?? KODAX_MAX_TOKENS;
+      const maxOutputTokens = this.maxOutputTokensOverride ?? this.config.maxOutputTokens ?? KODAX_MAX_TOKENS;
       const model = streamOptions?.modelOverride ?? this.config.model;
       const convertedMessages = await this.convertMessages(messages);
       const initialCapability = normalizedReasoning.enabled

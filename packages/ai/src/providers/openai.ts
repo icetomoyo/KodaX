@@ -130,6 +130,10 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
     });
   }
 
+  protected override onStaleConnection(): void {
+    this.initClient();
+  }
+
   private appendExtraBody(
     params: Record<string, unknown>,
     extraBody: Record<string, unknown>,
@@ -181,7 +185,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
     // those fields on the raw request object here.
     const params = createParams as unknown as Record<string, unknown>;
     const maxOutputTokens =
-      this.config.maxOutputTokens ?? KODAX_MAX_TOKENS;
+      this.maxOutputTokensOverride ?? this.config.maxOutputTokens ?? KODAX_MAX_TOKENS;
     const requestedBudget = clampThinkingBudget(
       resolveThinkingBudget(
         this.config,
@@ -303,7 +307,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         messages: fullMessages,
         tools: openaiTools,
         max_completion_tokens:
-          this.config.maxOutputTokens ?? KODAX_MAX_TOKENS,
+          this.maxOutputTokensOverride ?? this.config.maxOutputTokens ?? KODAX_MAX_TOKENS,
         stream: true,
       };
 
@@ -530,7 +534,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         messages: fullMessages,
         tools: openaiTools,
         max_completion_tokens:
-          this.config.maxOutputTokens ?? KODAX_MAX_TOKENS,
+          this.maxOutputTokensOverride ?? this.config.maxOutputTokens ?? KODAX_MAX_TOKENS,
       };
 
       let response: OpenAI.Chat.Completions.ChatCompletion | undefined;

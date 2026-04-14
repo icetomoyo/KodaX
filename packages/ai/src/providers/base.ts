@@ -38,6 +38,13 @@ export abstract class KodaXBaseProvider {
   abstract readonly supportsThinking: boolean;
   protected abstract readonly config: KodaXProviderConfig;
 
+  /**
+   * When a "prompt too long / context window exceeded" error is detected,
+   * this field is set to the reduced max output tokens for the next retry.
+   * It is consumed once and cleared after use.
+   */
+  protected maxOutputTokensOverride?: number;
+
   abstract stream(
     messages: KodaXMessage[],
     tools: KodaXToolDefinition[],
@@ -215,10 +222,79 @@ export abstract class KodaXBaseProvider {
     return normalizeReasoningRequest(reasoning);
   }
 
+  /**
+   * Called when ECONNRESET/EPIPE is detected, indicating a stale keep-alive
+   * socket.  Subclasses should override to rebuild their HTTP client with a
+   * fresh connection pool so the next retry uses a new TCP connection.
+   */
+  protected onStaleConnection(): void {
+    // Base implementation is a no-op; subclasses override when they hold
+    // a pooled HTTP client (e.g. Anthropic SDK, OpenAI SDK).
+  }
+
   protected isRateLimitError(error: unknown): boolean {
     if (!(error instanceof Error)) return false;
     const s = error.message.toLowerCase();
     return ['rate', 'limit', '速率', '频率', '1302', '429', 'too many'].some(k => s.includes(k));
+  }
+
+  /**
+   * Extract Retry-After delay from error headers (429/529 responses).
+   * Returns milliseconds, or undefined if not available.
+   */
+  protected extractRetryAfterMs(error: unknown): number | undefined {
+    // Anthropic SDK: error.headers?.['retry-after']
+    const headers = (error as any)?.headers ?? (error as any)?.response?.headers;
+    const raw = typeof headers?.get === 'function'
+      ? headers.get('retry-after')
+      : headers?.['retry-after'];
+    if (!raw) return undefined;
+    const seconds = Number(raw);
+    if (!isNaN(seconds) && seconds > 0) {
+      // Cap at 120s — beyond that, just fail and let the user know
+      return Math.min(seconds * 1000, 120_000);
+    }
+    return undefined;
+  }
+
+  /**
+   * Detect "prompt too long / context window exceeded" errors and compute
+   * a reduced max_tokens for retry.  Returns undefined if not a context
+   * overflow error.
+   */
+  protected parseContextOverflow(error: unknown): number | undefined {
+    const msg = String((error as any)?.message ?? '');
+    // Anthropic: "prompt is too long: 180000 tokens > 200000 maximum"
+    // OpenAI:    "maximum context length is 128000 tokens. However, you requested 150000 tokens"
+    // Zhipu/Kimi variants with Chinese messages
+    const patterns = [
+      /(\d[\d,]*)\s*tokens?.*?(\d[\d,]*)\s*(?:maximum|limit|context)/i,
+      /maximum.*?(\d[\d,]*)\s*tokens?.*?requested.*?(\d[\d,]*)/i,
+      /exceeds?\s+.*?(\d[\d,]*)\s*.*?(?:limit|max|上限).*?(\d[\d,]*)/i,
+    ];
+    for (const pat of patterns) {
+      const m = msg.match(pat);
+      if (m) {
+        const a = Number(m[1]!.replace(/,/g, ''));
+        const b = Number(m[2]!.replace(/,/g, ''));
+        const inputTokens = Math.min(a, b);
+        const contextLimit = Math.max(a, b);
+        const safetyBuffer = 1000;
+        const available = Math.max(3000, contextLimit - inputTokens - safetyBuffer);
+        return available;
+      }
+    }
+    return undefined;
+  }
+
+  protected isContextOverflowError(error: unknown): boolean {
+    const msg = String((error as any)?.message ?? '').toLowerCase();
+    return msg.includes('prompt is too long')
+      || msg.includes('prompt too long')
+      || msg.includes('context length')
+      || msg.includes('context_length_exceeded')
+      || msg.includes('context window')
+      || msg.includes('上下文长度');
   }
 
   protected async withRateLimit<T>(
@@ -229,12 +305,22 @@ export abstract class KodaXBaseProvider {
   ): Promise<T> {
     for (let i = 0; i < retries; i++) {
       try {
-        return await fn();
+        const result = await fn();
+        this.maxOutputTokensOverride = undefined; // Clear on success
+        return result;
       } catch (e) {
-        if (this.isRateLimitError(e)) {
-          const delay = (i + 1) * 2000;
+        // Context window overflow: compute reduced max_tokens and retry once
+        if (this.isContextOverflowError(e) && !this.maxOutputTokensOverride) {
+          const reduced = this.parseContextOverflow(e);
+          if (reduced) {
+            this.maxOutputTokensOverride = reduced;
+            onRateLimit?.(i + 1, retries, 0);
+            continue; // Retry immediately with reduced max_tokens
+          }
+        }
 
-          // 最后一次重试失败，抛出错误
+        if (this.isRateLimitError(e)) {
+          // Last retry exhausted — throw
           if (i === retries - 1) {
             throw new KodaXRateLimitError(
               `API rate limit exceeded after ${retries} retries. Please wait and try again later.`,
@@ -242,40 +328,47 @@ export abstract class KodaXBaseProvider {
             );
           }
 
-          // 显示重试信息
+          // Exponential backoff with jitter, respecting Retry-After header
+          const retryAfterMs = this.extractRetryAfterMs(e);
+          const baseDelay = Math.min(500 * Math.pow(2, i), 32_000);
+          const jitter = Math.random() * 0.25 * baseDelay;
+          const delay = retryAfterMs ?? Math.round(baseDelay + jitter);
+
           if (onRateLimit) {
             onRateLimit(i + 1, retries, delay);
           } else {
             console.log(`[Rate Limit] Retrying in ${delay / 1000}s (${i + 1}/${retries})...`);
           }
 
-          // 检查是否已被取消
           if (signal?.aborted) {
             throw new DOMException('Request aborted', 'AbortError');
           }
 
-          // 等待后再重试
           await new Promise(resolve => setTimeout(resolve, delay));
 
-          // 等待后再次检查（防止等待期间被取消）
           if (signal?.aborted) {
             throw new DOMException('Request aborted', 'AbortError');
           }
 
-          // 继续循环，执行下一次 fn()
           continue;
         }
-        // 对于其他错误，包装成 Provider 错误
+        // Non-rate-limit errors
         if (e instanceof Error) {
-          // 区分用户主动取消和网络层面的 Abort 
-          // (包含标准的 AbortError 以及部分 SDK 特有的 APIUserAbortError)
           if ((e.name === 'AbortError' || e.name === 'APIUserAbortError') && signal?.aborted) {
-            // 将其规范化为 AbortError 抛出，让分类器将其统一识别为 USER_ABORT
             if (e.name === 'AbortError') {
               throw e;
             }
             throw new DOMException(e.message || 'Request aborted', 'AbortError');
           }
+
+          // ECONNRESET / EPIPE: stale keep-alive socket.
+          // Flag the provider so subclasses can rebuild the client with
+          // a fresh connection pool on the next request.
+          const errorCode = (e as any)?.cause?.code ?? (e as any)?.code ?? '';
+          if (errorCode === 'ECONNRESET' || errorCode === 'EPIPE') {
+            this.onStaleConnection();
+          }
+
           throw new KodaXProviderError(
             `${this.name} API error: ${e.message}`,
             this.name
@@ -284,7 +377,6 @@ export abstract class KodaXBaseProvider {
         throw e;
       }
     }
-    // TypeScript 需要返回值，但这个代码理论上不会被执行
     throw new KodaXError('Unexpected end of withRateLimit');
   }
 }
