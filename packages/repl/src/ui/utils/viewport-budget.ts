@@ -229,7 +229,7 @@ export function calculateViewportBudget(options: ViewportBudgetOptions): Viewpor
               ),
             0
           ) +
-        (uiRequest.options.length > visibleSelectOptions ? 1 : 0) +
+        (uiRequest.options.length > visibleSelectOptions ? 2 : 0) +
         wrapLineCount(`Choice: ${uiRequest.buffer || "(type a number)"}`, innerWidth) +
         1 +
         (uiRequest.error ? wrapLineCount(uiRequest.error, innerWidth) : 0);

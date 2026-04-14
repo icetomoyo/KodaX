@@ -72,21 +72,46 @@ export const DialogSurface: React.FC<DialogSurfaceProps> = ({
             <Text color="cyan" bold>
               {t("dialog.select")} {request.title}
             </Text>
-            {(request.options ?? []).slice(0, request.visibleSelectOptions ?? 5).map((option, index) => {
-              const isFocused = index === (request.focusedIndex ?? 0);
-              const isSelected = request.selectedIndices?.includes(index) ?? false;
-              const pointer = isFocused ? "\u276F " : "  ";
-              const check = isSelected ? " \u2713" : "";
-              const descSuffix = option.description ? ` - ${option.description}` : "";
+            {(() => {
+              const allOptions = request.options ?? [];
+              const maxVisible = request.visibleSelectOptions ?? 5;
+              const focused = request.focusedIndex ?? 0;
+              const total = allOptions.length;
+
+              // Compute scroll offset: keep focused item centred in the visible window.
+              let scrollOffset = 0;
+              if (total > maxVisible) {
+                const half = Math.floor(maxVisible / 2);
+                scrollOffset = Math.max(0, Math.min(focused - half, total - maxVisible));
+              }
+
+              const hiddenAbove = scrollOffset;
+              const hiddenBelow = Math.max(0, total - scrollOffset - maxVisible);
+
               return (
-                <Text key={`${option.value}-${index}`} color={isFocused ? "cyan" : undefined} dimColor={!isFocused}>
-                  {`${pointer}${option.label}${descSuffix}${check}`}
-                </Text>
+                <>
+                  {hiddenAbove > 0 ? (
+                    <Text dimColor>{t("select.more_above", { count: hiddenAbove })}</Text>
+                  ) : null}
+                  {allOptions.slice(scrollOffset, scrollOffset + maxVisible).map((option, localIndex) => {
+                    const globalIndex = scrollOffset + localIndex;
+                    const isFocused = globalIndex === focused;
+                    const isSelected = request.selectedIndices?.includes(globalIndex) ?? false;
+                    const pointer = isFocused ? "\u276F " : "  ";
+                    const check = isSelected ? " \u2713" : "";
+                    const descSuffix = option.description ? ` - ${option.description}` : "";
+                    return (
+                      <Text key={`${option.value}-${globalIndex}`} color={isFocused ? "cyan" : undefined} dimColor={!isFocused}>
+                        {`${pointer}${option.label}${descSuffix}${check}`}
+                      </Text>
+                    );
+                  })}
+                  {hiddenBelow > 0 ? (
+                    <Text dimColor>{t("select.more_below", { count: hiddenBelow })}</Text>
+                  ) : null}
+                </>
               );
-            })}
-            {(request.options?.length ?? 0) > (request.visibleSelectOptions ?? 5) ? (
-              <Text dimColor>{t("select.more", { count: (request.options?.length ?? 0) - (request.visibleSelectOptions ?? 5) })}</Text>
-            ) : null}
+            })()}
             <Text dimColor>
               {request.multiSelect
                 ? t("select.multiselect_hint")

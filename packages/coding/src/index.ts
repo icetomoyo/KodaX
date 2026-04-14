@@ -150,6 +150,8 @@ export type {
   KodaXSessionTreeNode,
   KodaXToolExecutionContext,
   AskUserQuestionOptions,
+  AskUserQuestionItem,
+  AskUserMultiOptions,
   KodaXProviderPolicyHints,
   KodaXRepoIntelligenceCapability,
   KodaXRepoIntelligenceMode,

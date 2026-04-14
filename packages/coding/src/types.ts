@@ -207,6 +207,8 @@ export interface KodaXEvents {
   ) => Promise<boolean | string>;
   /** Ask user a question interactively - Issue 069 - 交互式向用户提问 */
   askUser?: (options: AskUserQuestionOptions) => Promise<string>;
+  /** Ask user multiple independent questions sequentially - 多问题顺序提问 */
+  askUserMulti?: (options: AskUserMultiOptions) => Promise<Record<string, string> | undefined>;
   /** Ask user for free-text input - 自由文本输入 (Issue 112) */
   askUserInput?: (options: { question: string; default?: string }) => Promise<string | undefined>;
   /** Managed-worker role currently allowed to emit structured protocol payload. */
@@ -1015,6 +1017,23 @@ export interface KodaXResult {
 // ============== 工具执行上下文 ==============
 // Simplified - no permission checks in core
 
+/** A single question item used in multi-question mode. */
+export interface AskUserQuestionItem {
+  question: string;
+  header?: string;
+  options: Array<{
+    label: string;
+    description?: string;
+    value: string;
+  }>;
+  multiSelect?: boolean;
+}
+
+/** Options for multi-question mode — multiple independent questions in one tool call. */
+export interface AskUserMultiOptions {
+  questions: AskUserQuestionItem[];
+}
+
 export interface AskUserQuestionOptions {
   question: string;
   kind?: "select" | "input";
@@ -1043,6 +1062,8 @@ export interface KodaXToolExecutionContext {
   extensionRuntime?: KodaXExtensionRuntime;
   /** Ask user a question interactively (select mode) - 交互式向用户提问 (Issue 069) */
   askUser?: (options: AskUserQuestionOptions) => Promise<string>;
+  /** Ask user multiple independent questions sequentially - 多问题顺序提问 */
+  askUserMulti?: (options: AskUserMultiOptions) => Promise<Record<string, string> | undefined>;
   /** Ask user for free-text input - 自由文本输入 (Issue 112) */
   askUserInput?: (options: { question: string; default?: string }) => Promise<string | undefined>;
   /** Abort signal for cancelling in-flight tool operations (Issue 113) */

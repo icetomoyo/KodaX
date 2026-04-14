@@ -4640,23 +4640,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       if (userInterruptedRef.current) {
         return;
       }
-      // Show recovery info INSIDE the assistant's streaming area, not as
-      // a separate history item.  This avoids the persistent positioning
-      // bug where addHistoryItem placed info between the user prompt and
-      // the assistant response (because the assistant message hadn't been
-      // committed to history yet during the inner retry loop).
-      //
-      // Approach: clear partial output from the failed attempt, then write
-      // recovery info directly into the streaming buffer.  When the retry
-      // starts, its text deltas append AFTER the info.  The user sees:
-      //
-      //   ⏳ Stream interrupted · recovering 1/3 in 4s
-      //
-      //   [Scout] (retry text...)
-      //
-      // If the retry also fails, the buffer is cleared again and replaced
-      // with the latest recovery info.  Only the most recent info + the
-      // current attempt's text are visible at any time.
+      // 1. Commit partial text from the failed attempt to history
+      const partialText = getFullResponse().trim();
+      if (partialText) {
+        addHistoryItem({ type: "assistant", text: partialText });
+      }
+
+      // 2. Clear live streaming state for the retry
       clearResponse();
       clearThinkingContent();
       stopThinking();
@@ -4665,8 +4655,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       resetLiveToolCalls();
       setLastLiveActivityLabel(undefined);
 
-      const item = createRecoveryHistoryItem(event) as { type: 'info'; text: string; icon?: string };
-      appendResponse(`${item.icon ?? '\u23F3'} ${item.text}\n\n`);
+      // 3. Commit recovery info to history (after partial text)
+      emitRecoveryHistoryItem(addHistoryItem, event);
     },
     onManagedTaskStatus: (status) => {
       if (userInterruptedRef.current) {
@@ -4937,6 +4927,43 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
 
       return selectedValue;
+    },
+    // Multi-question mode: present each question sequentially with back navigation.
+    askUserMulti: async (options: import("@kodax/coding").AskUserMultiOptions): Promise<Record<string, string> | undefined> => {
+      const questions = options.questions;
+      const answers: Record<string, string> = {};
+      const BACK_VALUE = "__back__";
+      let i = 0;
+
+      while (i < questions.length) {
+        const q = questions[i]!;
+        const selectOptions = toSelectOptions(q.options);
+
+        // Non-first question: append "← Back" option
+        if (i > 0) {
+          selectOptions.push({
+            label: t("select.back_prev"),
+            value: BACK_VALUE,
+          });
+        }
+
+        const title = `[${i + 1}/${questions.length}] ${q.question}`;
+        const selected = await showSelectDialogWithOptions(title, selectOptions, q.multiSelect);
+
+        if (selected === undefined) {
+          return undefined; // ESC → cancel all
+        }
+
+        if (selected === BACK_VALUE) {
+          i--;
+          continue;
+        }
+
+        answers[q.question] = selected;
+        i++;
+      }
+
+      return answers;
     },
     askUserInput: async (options: { question: string; default?: string }): Promise<string | undefined> => {
       return showInputDialog(options.question, options.default);

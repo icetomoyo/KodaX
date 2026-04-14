@@ -473,11 +473,42 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
   },
   {
     name: 'ask_user_question',
-    description: 'Ask the user a question. Supports single-select (default), multi-select, or free-text input. Use this when you need the user to make a decision or provide input.',
+    description: 'Ask the user a question. Supports single-select (default), multi-select, or free-text input. When you have multiple independent questions, use the "questions" array — each question is presented separately with its own options. Do NOT combine multiple questions into a single question string.',
     input_schema: {
       type: 'object',
       properties: {
-        question: { type: 'string', description: 'The question to ask the user' },
+        question: { type: 'string', description: 'The question to ask the user. Use this for a single question. For multiple independent questions, use the "questions" array instead.' },
+        questions: {
+          type: 'array',
+          description: 'Multiple independent questions (1-4). Each question is presented separately with its own options. Use this instead of combining multiple questions into a single "question" string. Takes precedence over "question"+"options" when provided.',
+          items: {
+            type: 'object',
+            properties: {
+              question: { type: 'string', description: 'The question text' },
+              header: { type: 'string', description: 'Short label (max 12 chars) shown in progress indicator, e.g. "环境" or "Deploy"' },
+              options: {
+                type: 'array',
+                description: 'Available options for this question.',
+                items: {
+                  type: 'object',
+                  properties: {
+                    label: { type: 'string', description: 'Display label for this option' },
+                    description: { type: 'string', description: 'Optional description of this option' },
+                    value: { type: 'string', description: 'Optional value to return (defaults to label)' },
+                  },
+                  required: ['label'],
+                },
+              },
+              multi_select: {
+                type: 'boolean',
+                description: 'Allow multiple selections for this question.',
+              },
+            },
+            required: ['question', 'options'],
+          },
+          minItems: 1,
+          maxItems: 4,
+        },
         kind: {
           type: 'string',
           enum: ['select', 'input'],

@@ -2,16 +2,27 @@
  * KodaX AskUserQuestion Tool
  *
  * 交互式提问工具 - 允许 LLM 在需要时主动向用户提问
- * Supports: single-select, multi-select, and free-text input modes.
+ * Supports: single-select, multi-select, free-text input, and multi-question modes.
  */
 
 import type { KodaXToolExecutionContext } from '../types.js';
 import { CANCELLED_TOOL_RESULT_PREFIX, CANCELLED_TOOL_RESULT_MESSAGE } from '../constants.js';
 
+/** Reserved sentinel value used by the REPL for back-navigation in multi-question mode. */
+const BACK_SENTINEL = '__back__';
+
 export interface AskUserQuestionOption {
   label: string;
   description?: string;
   value?: string;
+}
+
+/** A single question within a multi-question batch. */
+export interface AskUserQuestionItemInput {
+  question: string;
+  header?: string;
+  options: AskUserQuestionOption[];
+  multi_select?: boolean;
 }
 
 export interface AskUserQuestionInput {
@@ -24,6 +35,8 @@ export interface AskUserQuestionInput {
   target_mode?: "accept-edits";
   scope?: "session";
   resume_behavior?: "continue";
+  /** Multiple independent questions — takes precedence over question+options when provided. */
+  questions?: AskUserQuestionItemInput[];
 }
 
 /**
@@ -36,7 +49,58 @@ export async function toolAskUserQuestion(
   input: Record<string, unknown>,
   ctx: KodaXToolExecutionContext
 ): Promise<string> {
-  // Validate input
+  // === Multi-question mode: takes precedence when questions array is provided ===
+  if (Array.isArray(input.questions) && input.questions.length > 0) {
+    if (!ctx.askUserMulti) {
+      return '[Tool Error] ask_user_question: Multi-question mode not available (askUserMulti callback not provided)';
+    }
+
+    // Validate each question item
+    for (const item of input.questions as AskUserQuestionItemInput[]) {
+      if (!item.question || typeof item.question !== 'string') {
+        return '[Tool Error] ask_user_question: Each item in "questions" must have a "question" string';
+      }
+      if (!Array.isArray(item.options) || item.options.length === 0) {
+        return `[Tool Error] ask_user_question: Question "${item.question}" must have a non-empty "options" array`;
+      }
+      // Reject reserved sentinel values to prevent back-navigation collision
+      for (const opt of item.options) {
+        const resolvedValue = opt.value || opt.label || String(opt);
+        if (resolvedValue === BACK_SENTINEL) {
+          return `[Tool Error] ask_user_question: Option value "${BACK_SENTINEL}" is reserved and cannot be used`;
+        }
+      }
+    }
+
+    try {
+      const answers = await ctx.askUserMulti({
+        questions: (input.questions as AskUserQuestionItemInput[]).map((q) => ({
+          question: q.question,
+          header: q.header,
+          options: q.options.map((opt) => ({
+            label: opt.label || String(opt),
+            description: opt.description,
+            value: opt.value || opt.label || String(opt),
+          })),
+          multiSelect: q.multi_select === true,
+        })),
+      });
+
+      if (answers === undefined) {
+        return CANCELLED_TOOL_RESULT_MESSAGE;
+      }
+
+      return JSON.stringify({
+        success: true,
+        answers,
+      });
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      return `[Tool Error] ask_user_question: ${errorMsg}`;
+    }
+  }
+
+  // Validate input for single-question mode
   if (!input.question || typeof input.question !== 'string') {
     return '[Tool Error] ask_user_question: Missing or invalid required parameter: question';
   }
@@ -85,7 +149,7 @@ export async function toolAskUserQuestion(
     const userChoice = await ctx.askUser({
       question: input.question,
       kind: 'select',
-      options: input.options.map((opt: any) => ({
+      options: (input.options as AskUserQuestionOption[]).map((opt) => ({
         label: opt.label || String(opt),
         description: opt.description,
         value: opt.value || opt.label || String(opt),
