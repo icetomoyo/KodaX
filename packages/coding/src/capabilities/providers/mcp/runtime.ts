@@ -215,6 +215,22 @@ function extractListEntries(
   };
 }
 
+// Default timeouts aligned with Claude Code's MCP client.
+// Override per-server via startupTimeoutMs / requestTimeoutMs in config,
+// or globally via MCP_TIMEOUT / MCP_REQUEST_TIMEOUT env vars.
+const DEFAULT_STARTUP_TIMEOUT_MS = 30_000;   // Claude Code: 30s
+const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;   // Claude Code: 60s
+
+function getStartupTimeoutMs(config: KodaXMcpServerConfig): number {
+  return config.startupTimeoutMs
+    ?? (parseInt(process.env.MCP_TIMEOUT ?? '', 10) || DEFAULT_STARTUP_TIMEOUT_MS);
+}
+
+function getRequestTimeoutMs(config: KodaXMcpServerConfig): number {
+  return config.requestTimeoutMs
+    ?? (parseInt(process.env.MCP_REQUEST_TIMEOUT ?? '', 10) || DEFAULT_REQUEST_TIMEOUT_MS);
+}
+
 export class McpServerRuntime {
   private transport?: McpTransport;
   private readonly pending = new Map<number, JsonRpcRequestRecord>();
@@ -452,9 +468,10 @@ export class McpServerRuntime {
       try {
         // Empty capabilities: KodaX does not support optional client features
         // (roots, sampling) — server requests for these get a -32601 error reply.
+        const baseStartup = getStartupTimeoutMs(this.config);
         const timeoutMs = framing === 'content-length'
-          ? Math.min(this.config.startupTimeoutMs ?? 8_000, 5_000) // shorter for first attempt
-          : (this.config.startupTimeoutMs ?? 8_000);
+          ? Math.min(baseStartup, 10_000) // shorter for first framing attempt
+          : baseStartup;
         const initializeResult = await this.request('initialize', {
           protocolVersion: '2024-11-05',
           capabilities: {},
@@ -527,7 +544,7 @@ export class McpServerRuntime {
   private async request(
     method: string,
     params: Record<string, unknown>,
-    timeoutMs = this.config.requestTimeoutMs ?? 12_000,
+    timeoutMs = getRequestTimeoutMs(this.config),
   ): Promise<unknown> {
     if (!this.transport?.connected) {
       throw new Error(`MCP server "${this.serverId}" is not connected.`);

@@ -2259,8 +2259,14 @@ async function createManagedReasoningPlan(
   );
   try {
     const provider = resolveProvider(options.provider);
+    // FEATURE_067 AMA redesign (Phase 4): Pass conversation history to the model router
+    // so it can assess task complexity with full context (e.g., "你先实现吧" after discussing a 10-file project).
+    const recentMessages = Array.isArray(options.session?.initialMessages) && options.session.initialMessages.length > 0
+      ? options.session.initialMessages.slice(-10) // Last 10 messages for context
+      : undefined;
     const plan = await createReasoningPlan(options, prompt, provider, {
       repoSignals: repoRoutingSignals ?? undefined,
+      recentMessages,
     });
     const floored = applyCurrentDiffReviewRoutingFloor(
       plan,
@@ -2387,14 +2393,14 @@ function buildManagedWorkerToolPolicy(
 
   switch (role) {
     case 'scout':
-      // DD §5.3: "Scout can complete H0_DIRECT itself when it already has enough evidence."
-      // When Scout is the terminal H0 worker, it needs full tool access (undefined = no restrictions).
-      // For H1/H2 pre-harness Scout, keep the traditional read-only policy.
-      if (harnessProfile === 'H0_DIRECT') {
-        return undefined;
-      }
+      // FEATURE_067 AMA redesign: Scout ALWAYS starts read-only, regardless of harness.
+      // Scout investigates first, outputs confirmed_harness, then:
+      //  - H0 text-only: completed directly (no writes needed)
+      //  - H0 with writes: system continues Scout session with write tools (H0 continuation path)
+      //  - H1/H2: escalates to Generator/Evaluator as before
+      // This eliminates the circular incentive where H0 gave Scout full power → Scout confirmed H0.
       return finalizeToolPolicy({
-        summary: 'Scout is a pre-harness guide. It may inspect scope facts and a small amount of overview evidence, but must not deep-page raw diffs, verify claims file-by-file, mutate files, or execute implementation steps.',
+        summary: 'Scout is the harness decision-maker. It investigates scope using read-only tools, then declares confirmed_harness. Write tools are not available until the harness decision is made.',
         blockedTools: [...WRITE_ONLY_TOOLS],
         allowedTools: [...SCOUT_ALLOWED_TOOLS],
         allowedShellPatterns: INSPECTION_SHELL_PATTERNS,
@@ -3008,18 +3014,28 @@ function createRolePrompt(
         decision.primaryTask === 'review'
           ? 'If you finish a review directly, write the answer as the review report itself: findings first, with concrete file/path references, not as a meta-summary of your own process.'
           : undefined,
-        'You are both the task analyst and the primary H0 worker. When you can complete the task safely and directly, do so — produce the full user-facing answer yourself.',
-        'Decide whether this task should stay direct (H0) or escalate to H1/H2. Prefer a direct answer whenever the task can be completed safely without heavier coordination.',
-        'Prefer scope facts first: changed scope, module spread, diff size, verification requirements, and any explicit task constraints already present.',
-        'Treat reviewScale, changed file count, changed line count, and cross-module spread as evidence-planning hints only. They are not, by themselves, valid reasons to escalate the harness.',
-        'H0_DIRECT: choose this only when you already have enough evidence to finish safely now. For reviews, that means you understand scope and major risk areas, have inspected the key diff/files (not just the overview), can write the actual findings-first review or a clear no-findings conclusion, do not need an independent second judgment, and do not have key unverified risks still hanging.',
-        'H1_EXECUTE_EVAL: choose this when you understand the task well enough to avoid a planning pass, but still need an independent second verification or judgment before the answer should be trusted.',
-        'H2_PLAN_EXECUTE_EVAL: choose this only when the task truly needs explicit planning, coordinated multi-role convergence, or evidence paths that a single scout cannot efficiently close alone. Do not choose H2 merely because the diff is large, spans modules, or has many changed files.',
-        'Anti-patterns: changed files many, changed lines many, cross-module scope, or reviewScale=large/massive are each insufficient on their own to justify H1 or H2.',
-        'Signals that usually mean you should not stay on H0: unresolved key claims, need for an independent second judgment, need to plan before execution, or need for coordinated multi-role convergence.',
-        'If you confirm H0_DIRECT and already have enough evidence, finish the task yourself and give the final user-facing answer.',
-        'If you confirm H1 or H2, stop after the cheap-facts pass. Do not keep exploring just to make the handoff more complete.',
-        'Respect any stated topology ceiling or upgrade ceiling in the routing metadata, but do not use review size alone as a reason to escalate.',
+        // FEATURE_067 AMA redesign: Three-level quality framework (eval-verified 92%+ accuracy)
+        // Replaces the old capability-based harness guidance with a quality-assurance mental model.
+        [
+          'HARNESS DECISION — Think of yourself as a senior engineer who just received this task.',
+          'Before writing any code, ask yourself: "What would I do before starting?"',
+          '',
+          'H0_DIRECT — "I\'d just do this myself. It\'s simple enough that no one needs to check my work."',
+          '  Examples: fixing a typo, answering a question, looking up a config value, writing a one-line change.',
+          '  For text-only tasks (questions, lookups, explanations): complete directly and set direct_completion_ready: yes.',
+          '  For tasks needing file modifications: set direct_completion_ready: no. You will get write access to continue.',
+          '',
+          'H1_EXECUTE_EVAL — "I know how to do this, but I\'d want someone to review my work before shipping."',
+          '  Examples: fixing a specific bug, making a focused code change across a few files, doing a code review where conclusions matter.',
+          '',
+          'H2_PLAN_EXECUTE_EVAL — "I need to think about the approach first, maybe sketch it out, before I start coding."',
+          '  Examples: building a new feature from scratch, refactoring across modules, designing a new system, implementing something with multiple architectural decisions.',
+        ].join('\n'),
+        'You are the task analyst and harness decision-maker. Investigate scope using read-only tools, then declare your harness decision.',
+        'Prefer scope facts first: changed scope, module spread, diff size, verification requirements, and any explicit task constraints.',
+        'If you confirm H0_DIRECT for a text-only task, finish it yourself and give the final user-facing answer.',
+        'If you confirm H1 or H2, your investigation findings will be passed to the Generator as handoff context. Focus on scope assessment and key findings, not exhaustive analysis.',
+        'Respect any stated topology ceiling or upgrade ceiling in the routing metadata.',
         scoutReviewEvidenceGuidance,
         // FEATURE_067: dispatch_child_task tool guidance for parallel fan-out
         [
@@ -3031,9 +3047,10 @@ function createRolePrompt(
           '  → YES (2+ sub-tasks): call dispatch_child_task once PER sub-task in the SAME turn.',
           '  → NO (only 1 sub-task, or sub-tasks are simple): do the work YOURSELF with parallel tool calls (glob, grep, read).',
           '',
+          'RULE: If you identify 2+ independent sub-tasks, dispatch them ALL as parallel children. Do NOT talk yourself out of parallelism by deciding "I can handle one of them myself" — the whole point is PARALLEL execution.',
+          '',
           'ANTI-PATTERN — NEVER dispatch exactly 1 child agent. A single child is ALWAYS worse than doing it yourself:',
           '  - Extra overhead (child startup, briefing, result relay) with ZERO parallelism benefit.',
-          '  - Child has a simplified prompt and no conversation context — it produces lower quality than you would.',
           '  - If you can only identify 1 sub-task, that means the task is not a fan-out task. Handle it directly.',
           '',
           'Example — 3-package security audit (3 independent sub-tasks → 3 parallel children):',
@@ -3769,6 +3786,8 @@ function sanitizeManagedUserFacingText(text: string): string {
     return '';
   }
   let visibleText = (cutIndex > 0 ? trimmed.slice(0, cutIndex) : trimmed).trim();
+  // Strip complete managed fences (with closing ```).
+  // Full "kodax" prefix required — the name is never truncated in a closed fence.
   for (;;) {
     const stripped = visibleText.replace(/\r?\n?\`\`\`kodax[\w-]*\s*[\s\S]*?\`\`\`\s*$/i, '').trim();
     if (stripped === visibleText) {
@@ -3776,6 +3795,14 @@ function sanitizeManagedUserFacingText(text: string): string {
     }
     visibleText = stripped;
   }
+  // Strip trailing incomplete managed fence (no closing ``` — max_tokens truncation).
+  // Tier 1: full "kodax" prefix → definitively ours, strip regardless of body content.
+  // Tier 2: partial "kod"/"koda" → only strip bare fence name (body-less), to avoid
+  //         misidentifying a legitimate ```kod code block that has actual content.
+  visibleText = visibleText
+    .replace(/\r?\n?\`\`\`kodax[\w-]*[\s\S]*$/i, '')
+    .replace(/\r?\n?\`\`\`koda?\s*$/i, '')
+    .trim();
   return visibleText;
 }
 
@@ -3793,7 +3820,13 @@ function sanitizeManagedStreamingText(text: string): string {
     }
   }
 
-  const incompleteManagedFenceIndex = trimmed.search(/\r?\n?\`\`\`kodax[\w-]*\s*[\s\S]*$/i);
+  // Tier 1: full "kodax" prefix → always strip (definitively our namespace).
+  // Tier 2: partial "kod"/"koda" → only strip bare fence name (no body content),
+  //         to avoid misidentifying a legitimate ```kod code block.
+  let incompleteManagedFenceIndex = trimmed.search(/\r?\n?\`\`\`kodax[\w-]*\s*[\s\S]*$/i);
+  if (incompleteManagedFenceIndex < 0) {
+    incompleteManagedFenceIndex = trimmed.search(/\r?\n?\`\`\`koda?\s*$/i);
+  }
   if (incompleteManagedFenceIndex >= 0 && (cutIndex === -1 || incompleteManagedFenceIndex < cutIndex)) {
     cutIndex = incompleteManagedFenceIndex;
   }
@@ -6029,7 +6062,7 @@ async function runManagedScoutStage(
       promptOverlay: [
         options.context?.promptOverlay,
         plan.promptOverlay,
-        '[Scout Phase] Prefer direct completion when the task can be safely answered without a heavier harness.',
+        '[Scout Phase] Investigate scope with read-only tools, then declare confirmed_harness. Write tools are only available after you commit to a harness level.',
       ].filter(Boolean).join('\n\n'),
     },
   };
@@ -7606,8 +7639,8 @@ export async function runManagedTask(
     plan.decision,
     managedPlanning.reviewTarget,
   );
-  // FEATURE_061 Phase 4: Tactical Flows removed — role-level subagents replace hardcoded fan-out.
-  // FEATURE_061 Phase 2: Scout completes H0 tasks directly.
+  // FEATURE_067 AMA redesign: Scout always starts read-only.
+  // H0 text-only completion: Scout completed without writes (e.g., greeting, lookup, review).
   if (
     finalRoutingDecision.harnessProfile === 'H0_DIRECT'
     && scoutExecution.directive.confirmedHarness === 'H0_DIRECT'
@@ -7617,6 +7650,70 @@ export async function runManagedTask(
     return completeScoutH0Task({
       options: managedOptions, originalTask: managedOriginalTask, plan,
       scoutExecution, scoutBudgetController,
+      rawRoutingDecision, finalRoutingDecision, routingOverrideReason,
+      skillMap, agentMode,
+    });
+  }
+
+  // FEATURE_067 AMA redesign: H0 continuation path.
+  // Scout confirmed H0 but couldn't complete (needs write tools).
+  // Re-run Scout with full tool access, continuing the same session.
+  if (
+    scoutExecution.directive.confirmedHarness === 'H0_DIRECT'
+    && scoutExecution.result.success !== false
+    && !normalizeManagedDirectCompletionReady(scoutExecution.directive.directCompletionReady ?? 'no')
+  ) {
+    // Grant full tool access for H0 continuation
+    const h0ContinuationOptions: KodaXOptions = {
+      ...managedOptions,
+      maxIter: resolveRemainingManagedWorkBudget(scoutBudgetController),
+      session: scoutExecution.scoutSessionId && sharedSessionStorage
+        ? {
+            ...managedOptions.session,
+            id: scoutExecution.scoutSessionId,
+            scope: 'managed-task-worker',
+            resume: true,
+            autoResume: false,
+            storage: sharedSessionStorage,
+          }
+        : managedOptions.session,
+      events: managedOptions.events,
+      context: {
+        ...managedOptions.context,
+        // No tool policy restrictions — Scout gets full write access in H0 continuation
+      },
+    };
+    managedOptions.events?.onManagedTaskStatus?.({
+      agentMode,
+      harnessProfile: 'H0_DIRECT',
+      activeWorkerId: 'scout',
+      activeWorkerTitle: 'Scout',
+      phase: 'worker',
+      note: 'Scout confirmed H0 — continuing with write tools',
+      upgradeCeiling: finalRoutingDecision.upgradeCeiling,
+      ...buildManagedStatusBudgetFields(scoutBudgetController),
+    });
+    const continuationPrompt = [
+      'You previously investigated this task and confirmed H0_DIRECT.',
+      scoutExecution.directive.harnessRationale
+        ? `Your rationale: ${scoutExecution.directive.harnessRationale}`
+        : undefined,
+      scoutExecution.directive.summary
+        ? `Your assessment: ${scoutExecution.directive.summary}`
+        : undefined,
+      'Write tools are now available. Proceed to complete the task based on your prior investigation.',
+      'Do not re-investigate — use the findings from your previous turns.',
+      'When done, provide the final user-facing answer.',
+    ].filter(Boolean).join(' ');
+    const continuationResult = await runDirectKodaX(h0ContinuationOptions, continuationPrompt);
+    // Merge Scout investigation + continuation into a single result
+    const mergedExecution = {
+      ...scoutExecution,
+      result: continuationResult,
+    };
+    return completeScoutH0Task({
+      options: managedOptions, originalTask: managedOriginalTask, plan,
+      scoutExecution: mergedExecution, scoutBudgetController,
       rawRoutingDecision, finalRoutingDecision, routingOverrideReason,
       skillMap, agentMode,
     });

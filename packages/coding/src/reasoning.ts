@@ -615,6 +615,11 @@ export function inferIntentGate(prompt: string): KodaXIntentGateDecision {
   const hasInvestigationSignal = INVESTIGATION_PATTERN.test(trimmed) || INVESTIGATION_PATTERN_ZH_CLEAN.test(trimmed);
   const hasImplementationSignal = IMPLEMENTATION_PATTERN.test(trimmed) || IMPLEMENTATION_PATTERN_ZH_CLEAN.test(trimmed);
 
+  // FEATURE_067 AMA redesign: All actionable tasks go through the model router.
+  // Scout (always read-only) is the final harness decision-maker, but the model router
+  // provides a better initial signal than keyword-based heuristics.
+  // Only empty input and greetings bypass the model router (they're non-actionable).
+
   if (hasReviewSignal) {
     return {
       primaryTask: 'review',
@@ -622,8 +627,8 @@ export function inferIntentGate(prompt: string): KodaXIntentGateDecision {
       actionability: 'actionable',
       executionPattern: 'checked-direct',
       shouldUseRepoSignals: true,
-      shouldUseModelRouter: false,
-      reason: 'Explicit review language should stay on the lightweight review path unless later evidence explicitly justifies stronger assurance.',
+      shouldUseModelRouter: true,
+      reason: 'Review tasks go through the model router for accurate harness assessment. Scout will finalize.',
     };
   }
 
@@ -670,8 +675,8 @@ export function inferIntentGate(prompt: string): KodaXIntentGateDecision {
       actionability: 'actionable',
       executionPattern: 'direct',
       shouldUseRepoSignals: false,
-      shouldUseModelRouter: false,
-      reason: 'Pure codebase lookup/navigation queries should stay on the direct path.',
+      shouldUseModelRouter: true,
+      reason: 'Lookup queries go through the model router. Scout will decide if H0 is appropriate.',
     };
   }
 
@@ -681,8 +686,8 @@ export function inferIntentGate(prompt: string): KodaXIntentGateDecision {
     actionability: 'ambiguous',
     executionPattern: 'direct',
     shouldUseRepoSignals: false,
-    shouldUseModelRouter: false,
-    reason: 'Ambiguous requests stay lightweight until there is stronger task evidence.',
+    shouldUseModelRouter: true,
+    reason: 'Ambiguous requests go through the model router for accurate classification. Scout will finalize.',
   };
 }
 
