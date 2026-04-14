@@ -55,6 +55,8 @@ export type KodaXContentBlock =
 export interface KodaXMessage {
   role: 'user' | 'assistant' | 'system';
   content: string | KodaXContentBlock[];
+  /** Marks messages injected by the system (auto-continue, retry prompts). Hidden in REPL display. */
+  _synthetic?: boolean;
 }
 
 // ============== 流式结果类型 ==============

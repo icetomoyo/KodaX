@@ -88,11 +88,13 @@ function filterIncompleteToolCalls(
       return true;
     });
 
-    // If filtering removed all content, keep at least an empty text block
-    if (filteredContent.length === 0 && msg.role === 'assistant') {
+    // If filtering removed all content, inject a minimal placeholder.
+    // CRITICAL: text must be non-empty — providers like Kimi reject messages
+    // with empty content (400 "must not be empty").
+    if (filteredContent.length === 0) {
       return {
         ...msg,
-        content: [{ type: 'text', text: '' }],
+        content: [{ type: 'text', text: '...' }],
       };
     }
 

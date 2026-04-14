@@ -8,6 +8,9 @@ import type {
 } from './types.js';
 
 export const MANAGED_PROTOCOL_TOOL_NAME = 'emit_managed_protocol';
+// NOTE: When adding a new kodax-* fence block name, also add it to
+// MANAGED_FENCE_NAMES in task-engine.ts (near sanitizeManagedUserFacingText)
+// so that truncated versions are correctly stripped from user-facing output.
 export const MANAGED_TASK_CONTRACT_BLOCK = 'kodax-task-contract';
 export const MANAGED_TASK_VERDICT_BLOCK = 'kodax-task-verdict';
 export const MANAGED_TASK_SCOUT_BLOCK = 'kodax-task-scout';

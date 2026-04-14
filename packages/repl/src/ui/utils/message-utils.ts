@@ -247,6 +247,7 @@ function extractAssistantHistorySeeds(content: string | readonly unknown[]): Res
 export interface HistorySeedSourceMessage {
   role: KodaXMessage["role"];
   content: string | KodaXContentBlock[];
+  _synthetic?: boolean;
 }
 
 /**
@@ -283,6 +284,10 @@ export function extractHistorySeedsFromMessage(message: HistorySeedSourceMessage
         .filter((seed) => seed.text.length > 0);
     }
     case "user": {
+      // Skip synthetic messages (auto-continue, retry prompts injected by the system).
+      if (message._synthetic) {
+        return [];
+      }
       const content = extractTextContent(message.content);
       // Skip internal worker prompts (Scout/Generator/Planner/Evaluator role instructions).
       if (content.trim().length === 0 || isManagedWorkerPrompt(content)) {

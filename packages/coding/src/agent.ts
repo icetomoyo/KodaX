@@ -216,22 +216,40 @@ function gracefulCompactDegradation(
     const msg = messages[dropIdx];
     if (!msg) break;
 
-    // Skip if this is a tool_result message that pairs with the previous tool_use
-    // (we always drop in pairs to maintain API invariants)
-    const isToolResult = msg.role === 'user' && Array.isArray(msg.content)
+    const hasToolUse = msg.role === 'assistant' && Array.isArray(msg.content)
+      && msg.content.some((b: unknown) => isTypedContentBlock(b) && b.type === 'tool_use');
+    const hasToolResult = msg.role === 'user' && Array.isArray(msg.content)
       && msg.content.some(isToolResultContentBlock);
-    const prevMsg = messages[dropIdx - 1];
-    const isToolUse = prevMsg?.role === 'assistant' && Array.isArray(prevMsg.content)
-      && prevMsg.content.some((b: unknown) => isTypedContentBlock(b) && b.type === 'tool_use');
 
-    if (isToolResult && isToolUse) {
-      // Drop both: tool_use + tool_result
-      messages = [...messages.slice(0, dropIdx - 1), ...messages.slice(dropIdx + 1)];
-      // Don't advance dropIdx since array shifted
+    // Forward pair: assistant(tool_use) followed by user(tool_result) → drop both
+    if (hasToolUse) {
+      const nextMsg = messages[dropIdx + 1];
+      const nextHasResult = nextMsg?.role === 'user' && Array.isArray(nextMsg.content)
+        && nextMsg.content.some(isToolResultContentBlock);
+      if (nextHasResult) {
+        messages = [...messages.slice(0, dropIdx), ...messages.slice(dropIdx + 2)];
+        continue;
+      }
+      // No paired tool_result follows — skip to preserve tool pairing invariant
+      dropIdx++;
       continue;
     }
 
-    // Drop single message
+    // Backward pair: user(tool_result) preceded by assistant(tool_use) → drop both
+    if (hasToolResult) {
+      const prevMsg = messages[dropIdx - 1];
+      const prevHasUse = prevMsg?.role === 'assistant' && Array.isArray(prevMsg.content)
+        && prevMsg.content.some((b: unknown) => isTypedContentBlock(b) && b.type === 'tool_use');
+      if (prevHasUse) {
+        messages = [...messages.slice(0, dropIdx - 1), ...messages.slice(dropIdx + 1)];
+        continue;
+      }
+      // No paired assistant precedes — skip to preserve tool pairing invariant
+      dropIdx++;
+      continue;
+    }
+
+    // Non-tool message — safe to drop individually
     messages = [...messages.slice(0, dropIdx), ...messages.slice(dropIdx + 1)];
   }
 
@@ -596,6 +614,25 @@ function validateAndFixToolHistory(messages: KodaXMessage[]): KodaXMessage[] {
 
     // 只有当 fixedContent 不为空时才添加消息
     if (fixedContent.length > 0) {
+      // Guard: after tool_use removal + microcompaction clearing thinking text,
+      // an assistant message might only contain cleared thinking blocks (thinking: '')
+      // and/or empty text blocks (text: ''). Providers like Kimi reject these as
+      // "empty" (400 error). Inject minimal placeholder to preserve message alternation
+      // — dropping the message would orphan adjacent tool_result blocks.
+      if (msg.role === 'assistant') {
+        const hasSubstantiveContent = fixedContent.some((block) => {
+          if (!block || typeof block !== 'object' || !('type' in block)) return false;
+          const b = block as { type: string; text?: string; thinking?: string };
+          if (b.type === 'tool_use') return true;
+          if (b.type === 'text') return !!b.text;
+          if (b.type === 'thinking') return !!b.thinking;
+          return true; // preserve unknown block types
+        });
+        if (!hasSubstantiveContent) {
+          fixedMessages.push({ ...msg, content: [{ type: 'text', text: '...' }] });
+          continue;
+        }
+      }
       fixedMessages.push({ ...msg, content: fixedContent });
     }
   }
@@ -2072,7 +2109,13 @@ export async function runKodaX(
         }
       }
 
-      const assistantContent = [...result.thinkingBlocks, ...result.textBlocks, ...visibleToolBlocks];
+      let assistantContent = [...result.thinkingBlocks, ...result.textBlocks, ...visibleToolBlocks];
+      // Guard: never push an assistant message with empty content.
+      // This can happen when the model only emits invisible tool calls (e.g. emit_managed_protocol)
+      // with no text or thinking. Providers like Kimi reject empty content (400 error).
+      if (assistantContent.length === 0) {
+        assistantContent = [{ type: 'text' as const, text: '...' }];
+      }
       messages.push({ role: 'assistant', content: assistantContent });
       const completedTurnTokenSnapshot = createCompletedTurnTokenSnapshot(messages, result.usage);
       contextTokenSnapshot = completedTurnTokenSnapshot;
@@ -2086,7 +2129,7 @@ export async function runKodaX(
         maxTokensRetryCount++;
         if (maxTokensRetryCount <= KODAX_MAX_MAXTOKENS_RETRIES) {
           events.onTextDelta?.('\n\n[max_tokens reached, continuing...]\n\n');
-          messages.push({ role: 'user', content: [{ type: 'text', text: 'Continue from where you left off.' }] });
+          messages.push({ role: 'user', content: [{ type: 'text', text: 'Continue from where you left off.' }], _synthetic: true });
           contextTokenSnapshot = rebaseContextTokenSnapshot(messages, completedTurnTokenSnapshot);
           continue;
         }
@@ -2113,13 +2156,13 @@ export async function runKodaX(
           && !textContainsManagedBlock(lastText, blockName)
         ) {
           managedProtocolContinueAttempted = true;
-          events.onTextDelta?.('\n\n[protocol block missing, continuing...]\n\n');
           messages.push({
             role: 'user',
             content: [{
               type: 'text',
               text: `Your response ended before the required \`\`\`${blockName}\`\`\` protocol block was emitted. Continue and emit the protocol block now via "${MANAGED_PROTOCOL_TOOL_NAME}" or as a fenced block at the end of your response.`,
             }],
+            _synthetic: true,
           });
           contextTokenSnapshot = rebaseContextTokenSnapshot(messages, completedTurnTokenSnapshot);
           continue;
@@ -2228,7 +2271,7 @@ export async function runKodaX(
           } else {
             retryPrompt = `⚠️ CRITICAL: Your response was TRUNCATED again. This is retry ${incompleteRetryCount}/${KODAX_MAX_INCOMPLETE_RETRIES}.\n\nMISSING PARAMETERS:\n${incomplete.map(i => `- ${i}`).join('\n')}\n\nYOU MUST:\n1. For 'write' tool: Keep content under 50 lines - write structure first, fill in later with 'edit'\n2. For 'edit' tool: Keep new_string under 30 lines - make smaller, focused changes\n3. Provide ALL required parameters in your tool call\n\nIf your response is truncated again, the task will FAIL.\nPROVIDE SHORT, COMPLETE PARAMETERS NOW.`;
           }
-          messages.push({ role: 'user', content: retryPrompt });
+          messages.push({ role: 'user', content: retryPrompt, _synthetic: true });
           contextTokenSnapshot = rebaseContextTokenSnapshot(messages, preAssistantTokenSnapshot);
           continue;
         } else {
@@ -2453,6 +2496,7 @@ export async function runKodaX(
         messages.push({
           role: 'user',
           content: editRecoveryMessages.join('\n\n'),
+          _synthetic: true,
         });
       }
       // Keep UI/context accounting aligned with the tool-result message we just appended.

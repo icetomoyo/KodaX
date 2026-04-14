@@ -651,7 +651,23 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
         }
       }
 
-      converted.push({ role: m.role, content } as Anthropic.Messages.MessageParam);
+      // Guard: providers like Kimi reject messages with empty/substance-free content
+      // (400 "must not be empty"). Inject minimal placeholder rather than dropping,
+      // because dropping breaks the alternating user/assistant pattern.
+      const isEffectivelyEmpty = content.length === 0 || (
+        role === 'assistant' && content.every((b) => {
+          const t = b as unknown as { type: string; thinking?: string; text?: string };
+          return (t.type === 'thinking' && !t.thinking)
+            || (t.type === 'text' && !t.text);
+        })
+      );
+
+      converted.push({
+        role: m.role,
+        content: isEffectivelyEmpty
+          ? [{ type: 'text', text: '...' } as Anthropic.Messages.ContentBlockParam]
+          : content,
+      } as Anthropic.Messages.MessageParam);
     }
 
     return converted;
