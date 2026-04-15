@@ -95,11 +95,12 @@ export function microcompact(
 
     let blockChanged = false;
     const newContent = msg.content.map((block): KodaXContentBlock => {
-      // Clear old thinking blocks: preserve structure + signature, drop text
-      if (block.type === 'thinking' && block.thinking.length > 0) {
-        blockChanged = true;
-        return { ...block, thinking: '' };
-      }
+      // NOTE: thinking blocks are intentionally NOT cleared here.
+      // Providers like Kimi require non-empty reasoning_content on every assistant
+      // tool-call message — clearing thinking text causes 400 errors. The token
+      // savings from clearing thinking (~200-500 tokens per block) are marginal
+      // compared to tool_result clearing, and old messages are typically summarized
+      // by LLM compaction before microcompact's maxAge threshold matters.
 
       // Replace old image blocks with descriptive text marker
       if (block.type === 'image' && typeof block.path === 'string') {

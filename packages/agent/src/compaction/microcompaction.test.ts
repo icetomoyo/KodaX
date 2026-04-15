@@ -335,7 +335,7 @@ describe('microcompaction', () => {
     expect(block?.content).toContain('custom_tool_name');
   });
 
-  it('clears thinking block text from old assistant messages', () => {
+  it('preserves thinking blocks in old assistant messages (not cleared)', () => {
     const messages: KodaXMessage[] = [
       createTextMessage('user', 'task'),
       {
@@ -350,9 +350,10 @@ describe('microcompaction', () => {
 
     const result = microcompact(messages, { enabled: true, maxAge: 1, protectedTools: [] });
     const blocks = result[1]?.content as { type: string; thinking?: string; signature?: string; text?: string }[];
-    // Thinking block: text cleared, structure + signature preserved
+    // Thinking block: fully preserved — clearing breaks providers like Kimi
+    // that require non-empty reasoning_content on assistant tool-call messages
     expect(blocks[0]?.type).toBe('thinking');
-    expect(blocks[0]?.thinking).toBe('');
+    expect(blocks[0]?.thinking).toBe('This is a long reasoning chain about the problem...');
     expect(blocks[0]?.signature).toBe('sig123');
     // Text block: untouched
     expect(blocks[1]?.type).toBe('text');
@@ -425,10 +426,10 @@ describe('microcompaction', () => {
     const userBlocks = result[0]?.content as { type: string; text?: string }[];
     expect(userBlocks[0]?.type).toBe('text');
     expect(userBlocks[0]?.text).toBe('[Image: screenshot.png]');
-    // Thinking → cleared
+    // Thinking → preserved (not cleared)
     const assistBlocks = result[1]?.content as { type: string; thinking?: string }[];
     expect(assistBlocks[0]?.type).toBe('thinking');
-    expect(assistBlocks[0]?.thinking).toBe('');
+    expect(assistBlocks[0]?.thinking).toBe('Analyzing the screenshot...');
     // Tool result → cleared
     const toolBlock = (result[2]?.content as { content: string }[])[0];
     expect(toolBlock?.content).toContain('[Cleared:');

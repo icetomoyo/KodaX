@@ -651,6 +651,20 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
         }
       }
 
+      // Guard: when thinking is enabled, providers like Kimi require every assistant
+      // tool-call message to include non-empty reasoning content. For messages that
+      // never had thinking blocks (e.g. session restore, pre-thinking history),
+      // inject a minimal thinking block to satisfy this requirement.
+      if (role === 'assistant' && this.config.supportsThinking) {
+        const hasToolUse = content.some(b => (b as any).type === 'tool_use');
+        const hasThinking = content.some(b =>
+          (b as any).type === 'thinking' || (b as any).type === 'redacted_thinking',
+        );
+        if (hasToolUse && !hasThinking) {
+          content.unshift({ type: 'thinking', thinking: '...', signature: '' } as any);
+        }
+      }
+
       // Guard: providers like Kimi reject messages with empty/substance-free content
       // (400 "must not be empty"). Inject minimal placeholder rather than dropping,
       // because dropping breaks the alternating user/assistant pattern.
