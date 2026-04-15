@@ -772,9 +772,9 @@ describe('runManagedTask', () => {
     expect(result.routingDecision?.harnessProfile).toBe('H0_DIRECT');
     expect(result.lastText).toContain('Scout determined this is small enough to answer directly.');
 
-    // FEATURE_067: Scout always starts read-only; toolPolicy is set (not undefined).
+    // Scout has full tool access (no tool policy restriction).
     const scoutAssignment = result.managedTask?.roleAssignments.find((a) => a.role === 'scout');
-    expect(scoutAssignment?.toolPolicy).toBeDefined();
+    expect(scoutAssignment?.toolPolicy).toBeUndefined();
   });
 
   it('allows large current-diff reviews to stay on H0 when Scout provides complete direct-review evidence', async () => {
@@ -1014,7 +1014,7 @@ describe('runManagedTask', () => {
     mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
       callCount += 1;
       if (callCount === 1) {
-        // Scout investigation phase (read-only) → confirms H0 but can't write
+        // Scout confirms H0 but directCompletionReady=no → triggers H0 continuation
         return buildAssistantResult(
           buildScoutResponse(
             'I need to update .gitignore with a few entries.',
@@ -1201,7 +1201,7 @@ describe('runManagedTask', () => {
     const scoutPrompt = prompts.find((item) => item.includes('You are the Scout role'));
     const generatorPrompt = prompts.find((item) => item.includes('You are the Generator role'));
     const evaluatorPrompt = prompts.find((item) => item.includes('You are the Evaluator role'));
-    expect(scoutPrompt).toContain('If you confirm H1 or H2, your investigation findings will be passed to the Generator as handoff context.');
+    expect(scoutPrompt).toContain('If you confirm H1 or H2: stop after investigation. Your findings will be passed to the Generator as handoff context.');
     expect(scoutPrompt).toContain('When multiple read-only tool calls are independent, emit them in the same response so parallel mode can run them together.');
     expect(generatorPrompt).toContain('This is lightweight H1 checked-direct execution, not mini-H2.');
     expect(generatorPrompt).toContain('Reuse its cheap-facts summary, scope notes, and evidence-acquisition hints instead of rebuilding them from scratch.');

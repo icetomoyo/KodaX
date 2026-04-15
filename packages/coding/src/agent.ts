@@ -1483,6 +1483,7 @@ export async function runKodaX(
         }
       : undefined,
     registerChildWriteWorktrees: options.context?.registerChildWriteWorktrees,
+    mutationTracker: options.context?.mutationTracker,
     parentAgentConfig: {
       provider: options.provider,
       model: options.model,
@@ -2160,7 +2161,7 @@ export async function runKodaX(
             role: 'user',
             content: [{
               type: 'text',
-              text: `Your response ended before the required \`\`\`${blockName}\`\`\` protocol block was emitted. Continue and emit the protocol block now via "${MANAGED_PROTOCOL_TOOL_NAME}" or as a fenced block at the end of your response.`,
+              text: `Your response is complete but the required protocol was not emitted. Do NOT output any text — ONLY call the "${MANAGED_PROTOCOL_TOOL_NAME}" tool now, or append a \`\`\`${blockName}\`\`\` fenced block. No other output.`,
             }],
             _synthetic: true,
           });

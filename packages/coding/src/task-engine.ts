@@ -113,6 +113,7 @@ import type {
   KodaXTaskVerificationCriterion,
   KodaXTaskVerificationContract,
   KodaXVerificationScorecard,
+  ManagedMutationTracker,
 } from './types.js';
 
 interface ManagedTaskWorkerSpec extends KodaXAgentWorkerSpec {
@@ -2541,18 +2542,11 @@ function buildManagedWorkerToolPolicy(
 
   switch (role) {
     case 'scout':
-      // FEATURE_067 AMA redesign: Scout ALWAYS starts read-only, regardless of harness.
-      // Scout investigates first, outputs confirmed_harness, then:
-      //  - H0 text-only: completed directly (no writes needed)
-      //  - H0 with writes: system continues Scout session with write tools (H0 continuation path)
-      //  - H1/H2: escalates to Generator/Evaluator as before
-      // This eliminates the circular incentive where H0 gave Scout full power → Scout confirmed H0.
-      return finalizeToolPolicy({
-        summary: 'Scout is the harness decision-maker. It investigates scope using read-only tools, then declares confirmed_harness. Write tools are not available until the harness decision is made.',
-        blockedTools: [...WRITE_ONLY_TOOLS],
-        allowedTools: [...SCOUT_ALLOWED_TOOLS],
-        allowedShellPatterns: INSPECTION_SHELL_PATTERNS,
-      });
+      // Scout has full tool access. The three-level quality framework (eval-verified 100%
+      // accuracy on strong models) guides harness decisions via prompt, not tool restrictions.
+      // Scout investigates, declares confirmed_harness, and for H0 tasks completes directly.
+      // For H1/H2 tasks, Scout escalates to the multi-agent pipeline.
+      return undefined;
     case 'planner':
       return finalizeToolPolicy({
         summary: 'Planner may inspect scope facts and overview evidence to produce a sprint contract, but must not linearly page raw diffs, perform deep claim verification, mutate files, or execute implementation steps.',
@@ -2854,10 +2848,6 @@ function createToolPolicyHook(
       return true;
     }
     if (toolPolicy.blockedTools?.some((blocked) => blocked.toLowerCase() === normalizedTool)) {
-      // FEATURE_067: When Scout tries a write tool, give clear guidance to emit confirmed_harness instead.
-      if (worker.role === 'scout' && WRITE_ONLY_TOOLS.has(normalizedTool)) {
-        return `[Managed Task ${worker.title}] Tool "${tool}" is not available in the Scout investigation phase. To get write access, output your confirmed_harness decision via the managed protocol tool first. For tasks needing file modifications, set confirmed_harness: H0_DIRECT and direct_completion_ready: no.`;
-      }
       return `[Managed Task ${worker.title}] Tool "${tool}" is blocked for this role. ${toolPolicy.summary}`;
     }
 
@@ -3139,11 +3129,13 @@ function createRolePrompt(
   ].join('\n');
   const managedProtocolToolInstructions = role !== 'direct' && (!isTerminalAuthority || role !== 'generator')
     ? [
-      `Primary structured protocol channel: call the internal tool "${MANAGED_PROTOCOL_TOOL_NAME}" exactly once after you finish the user-visible answer.`,
+      `PROTOCOL EMISSION — MUST be in the SAME response as your answer:`,
+      `Write your user-facing answer, then call "${MANAGED_PROTOCOL_TOOL_NAME}" exactly once — all in the SAME response.`,
       `Pass role="${role}" and a minimal protocol payload matching your role contract.`,
+      'Do NOT stop between writing your answer and calling the protocol tool. Emit both in one turn.',
       'Keep the user-facing answer in normal text. Do not bury it inside the protocol payload.',
       'Never mention internal protocol tools, fenced blocks, MCP, capability runtimes, or extension runtimes in the user-facing answer.',
-      'If tool calling is unavailable, fall back to the required fenced block exactly once at the end.',
+      'If tool calling is unavailable, append the required fenced block at the end of this same response.',
     ].join('\n')
     : undefined;
 
@@ -3173,9 +3165,8 @@ function createRolePrompt(
           'Before writing any code, ask yourself: "What would I do before starting?"',
           '',
           'H0_DIRECT — "I\'d just do this myself. It\'s simple enough that no one needs to check my work."',
-          '  Examples: fixing a typo, answering a question, looking up a config value, writing a one-line change.',
-          '  For text-only tasks (questions, lookups, explanations): complete directly and set direct_completion_ready: yes.',
-          '  For tasks needing file modifications: set direct_completion_ready: no. You will get write access to continue.',
+          '  Examples: fixing a typo, answering a question, looking up a config value, writing a one-line change, git commit/push.',
+          '  Complete the task directly (including edits, bash commands, etc.) and set direct_completion_ready: yes when done.',
           '',
           'H1_EXECUTE_EVAL — "I know how to do this, but I\'d want someone to review my work before shipping."',
           '  Examples: fixing a specific bug, making a focused code change across a few files, doing a code review where conclusions matter.',
@@ -3183,10 +3174,10 @@ function createRolePrompt(
           'H2_PLAN_EXECUTE_EVAL — "I need to think about the approach first, maybe sketch it out, before I start coding."',
           '  Examples: building a new feature from scratch, refactoring across modules, designing a new system, implementing something with multiple architectural decisions.',
         ].join('\n'),
-        'You are the task analyst and harness decision-maker. Investigate scope using read-only tools, then declare your harness decision.',
+        'You are the task analyst and harness decision-maker. Assess the task scope, declare your harness decision, and for H0 tasks complete the work directly.',
         'Prefer scope facts first: changed scope, module spread, diff size, verification requirements, and any explicit task constraints.',
-        'If you confirm H0_DIRECT for a text-only task, finish it yourself and give the final user-facing answer.',
-        'If you confirm H1 or H2, your investigation findings will be passed to the Generator as handoff context. Focus on scope assessment and key findings, not exhaustive analysis.',
+        'If you confirm H0_DIRECT: complete the task yourself (including file edits, git operations, etc.) and give the final user-facing answer. Set direct_completion_ready: yes when done.',
+        'If you confirm H1 or H2: stop after investigation. Your findings will be passed to the Generator as handoff context. Focus on scope assessment and key findings, not exhaustive analysis.',
         'Respect any stated topology ceiling or upgrade ceiling in the routing metadata.',
         scoutReviewEvidenceGuidance,
         // FEATURE_067: dispatch_child_task tool guidance for parallel fan-out
@@ -5385,6 +5376,7 @@ function createWorkerEvents(
       upgradeCeiling?: KodaXTaskRoutingDecision['harnessProfile'];
       recordLiveEvent?: (event: KodaXManagedLiveEvent) => void;
     };
+    mutationTracker?: ManagedMutationTracker;
   },
 ): KodaXEvents | undefined {
   if (!baseEvents && !worker.beforeToolExecute && !controller) {
@@ -5595,6 +5587,29 @@ function createWorkerEvents(
       const workerDecision = await worker.beforeToolExecute?.(tool, input);
       if (workerDecision !== undefined && workerDecision !== true) {
         return workerDecision;
+      }
+      // Track mutations for scope-aware protocol responses.
+      const tracker = options?.mutationTracker;
+      if (tracker) {
+        const normalizedTool = tool.toLowerCase();
+        if (WRITE_ONLY_TOOLS.has(normalizedTool) || normalizedTool === 'bash') {
+          const filePath = typeof input?.file_path === 'string' ? input.file_path
+            : typeof input?.path === 'string' ? input.path
+            : undefined;
+          if (filePath) {
+            const oldLen = typeof input?.old_string === 'string' ? input.old_string.split('\n').length : 0;
+            const newLen = typeof input?.new_string === 'string' ? input.new_string.split('\n').length : 0;
+            const contentLen = typeof input?.content === 'string' ? input.content.split('\n').length : 0;
+            const linesDelta = contentLen || Math.abs(newLen - oldLen) || 1;
+            tracker.files.set(filePath, (tracker.files.get(filePath) || 0) + linesDelta);
+            tracker.totalOps += 1;
+          } else if (normalizedTool === 'bash') {
+            const cmd = typeof input?.command === 'string' ? input.command : '';
+            if (/\b(git\s+(add|commit|push|merge|rebase|reset)|npm\s+(publish|install)|rm\s|mv\s|cp\s)/i.test(cmd)) {
+              tracker.totalOps += 1;
+            }
+          }
+        }
       }
       const baseDecision = await baseEvents?.beforeToolExecute?.(tool, input);
       return baseDecision ?? true;
@@ -6288,6 +6303,8 @@ async function runManagedScoutStage(
     toolPolicy,
   };
   scoutWorker.beforeToolExecute = createToolPolicyHook(scoutWorker);
+  // Mutation tracker: shared between createWorkerEvents (counts) and toolEmitManagedProtocol (reads).
+  const scoutMutationTracker: ManagedMutationTracker = { files: new Map(), totalOps: 0 };
   const scoutEvents = createWorkerEvents(options.events, scoutWorker, true, controller, {
     emitContent: true,
     emitToolEvents: true,
@@ -6300,7 +6317,9 @@ async function runManagedScoutStage(
       maxRounds: 1,
       upgradeCeiling: plan.decision.topologyCeiling,
     },
+    mutationTracker: scoutMutationTracker,
   });
+
   // FEATURE_061 Phase 3: Persist Scout session so H1/H2 workers can continue it.
   const scoutSessionId = sessionStorage ? `managed-scout-${randomUUID()}` : undefined;
   const scoutOptions: KodaXOptions = {
@@ -6328,10 +6347,11 @@ async function runManagedScoutStage(
         enabled: true,
         role: 'scout',
       },
+      mutationTracker: scoutMutationTracker,
       promptOverlay: [
         options.context?.promptOverlay,
         plan.promptOverlay,
-        '[Scout Phase] Investigate scope with read-only tools, then declare confirmed_harness. Write tools are only available after you commit to a harness level.',
+        '[Scout Phase] Assess scope, declare confirmed_harness, and for H0 tasks complete the work directly. For H1/H2 tasks, stop after investigation.',
       ].filter(Boolean).join('\n\n'),
     },
   };
@@ -8239,8 +8259,7 @@ export async function runManagedTask(
     plan.decision,
     managedPlanning.reviewTarget,
   );
-  // FEATURE_067 AMA redesign: Scout always starts read-only.
-  // H0 text-only completion: Scout completed without writes (e.g., greeting, lookup, review).
+  // H0 text-only completion: Scout completed the task directly (e.g., greeting, lookup, review, simple edit).
   if (
     finalRoutingDecision.harnessProfile === 'H0_DIRECT'
     && scoutExecution.directive.confirmedHarness === 'H0_DIRECT'
@@ -8255,9 +8274,8 @@ export async function runManagedTask(
     });
   }
 
-  // FEATURE_067 AMA redesign: H0 continuation path.
-  // Scout confirmed H0 but couldn't complete (needs write tools).
-  // Re-run Scout with full tool access, continuing the same session.
+  // H0 continuation path: Scout confirmed H0 but directCompletionReady=no.
+  // Re-run Scout with completion-focused prompt, continuing the same session.
   if (
     scoutExecution.directive.confirmedHarness === 'H0_DIRECT'
     && scoutExecution.result.success !== false
@@ -8348,6 +8366,30 @@ export async function runManagedTask(
       rawRoutingDecision, finalRoutingDecision, routingOverrideReason,
       skillMap, agentMode,
     });
+  }
+
+  // Hard invariant (defensive): H0+directCompletionReady=no should be handled by the paths above.
+  // This guard is intentionally unreachable — it catches regressions if future changes break the branching.
+  if (
+    scoutExecution.directive.confirmedHarness === 'H0_DIRECT'
+    && normalizeManagedDirectCompletionReady(scoutExecution.directive.directCompletionReady ?? 'no') !== 'yes'
+    && scoutExecution.result.success !== false
+  ) {
+    // H0 + directCompletionReady=no should have been caught by H0 continuation above.
+    // Reaching here means the state machine has a gap. Treat as blocked rather than false-complete.
+    managedOptions.events?.onManagedTaskStatus?.({
+      agentMode,
+      harnessProfile: 'H0_DIRECT',
+      phase: 'completed',
+      note: 'H0 task with directCompletionReady=no reached H1/H2 pipeline — state machine gap detected.',
+    });
+    return {
+      ...scoutExecution.result,
+      success: false,
+      signal: 'BLOCKED',
+      signalReason: 'H0 task with directCompletionReady=no was not handled by the H0 continuation path.',
+      routingDecision: finalRoutingDecision,
+    };
   }
 
   const shape = createTaskShape(

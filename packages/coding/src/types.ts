@@ -675,6 +675,12 @@ export interface KodaXManagedBudgetSnapshot {
   extensionReason?: string;
 }
 
+/** Mutable tracker for Scout mutation scope — shared between worker events and protocol tool. */
+export interface ManagedMutationTracker {
+  readonly files: Map<string, number>;
+  totalOps: number;
+}
+
 export interface KodaXContextOptions {
   /** Project root used for project-scoped prompts, permissions, and path policy. */
   gitRoot?: string | null;
@@ -722,6 +728,8 @@ export interface KodaXContextOptions {
     enabled: boolean;
     role: Exclude<KodaXTaskRole, 'direct'>;
   };
+  /** Mutable mutation tracker shared between worker events and the protocol tool handler. */
+  mutationTracker?: ManagedMutationTracker;
   /** FEATURE_067 v2: Callback for dispatch_child_tasks to register write worktree paths. */
   registerChildWriteWorktrees?: (worktreePaths: ReadonlyMap<string, string>) => void;
   /** FEATURE_067 v3: Tool names to exclude from API-level tool list (child agents). */
@@ -1087,4 +1095,6 @@ export interface KodaXToolExecutionContext {
   reportToolProgress?: (message: string) => void;
   /** FEATURE_067 v2: Callback to store write child worktree paths for Evaluator diff injection. */
   registerChildWriteWorktrees?: (worktreePaths: ReadonlyMap<string, string>) => void;
+  /** Mutation tracker for scope-aware protocol responses. Populated by createWorkerEvents. */
+  mutationTracker?: ManagedMutationTracker;
 }
