@@ -8,6 +8,10 @@ All notable changes to this project will be documented in this file.
 
 <!-- last-sync: HEAD -->
 
+---
+
+## [0.7.18] - 2026-04-16
+
 ### Added
 - **FEATURE_064 — Multi-Provider Cost Observatory**: Session cost tracking with `recordUsage()` after each LLM call; `/cost` command shows per-provider and per-role cost breakdown; built-in rate table for 11 providers
 - **FEATURE_065 — MCP OAuth wiring**: OAuth 2.0 + PKCE token acquisition wired into MCP runtime `doConnect()`; cached token reuse and refresh; Authorization header injection for authenticated MCP servers
@@ -35,7 +39,6 @@ All notable changes to this project will be documented in this file.
 ---
 
 ## [0.7.17] - 2026-04-12
-
 ### Added
 - **MCP fallback whitelist**: Fallback whitelist, dispose/resetTransport split, documentation for #108-#111
 - **Session history seed conversion**: Tool summary display improvements and v0.7.35 feature docs
