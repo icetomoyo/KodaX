@@ -3151,30 +3151,34 @@ function createRolePrompt(
         parallelBatchGuidance,
         scoutSkillSection,
         previousRoleSummarySection,
-        managedProtocolToolInstructions,
         decision.primaryTask === 'review'
           ? 'If you finish a review directly, write the answer as the review report itself: findings first, with concrete file/path references, not as a meta-summary of your own process.'
           : undefined,
-        // FEATURE_067 AMA redesign: Three-level quality framework (eval-verified 92%+ accuracy)
-        // Replaces the old capability-based harness guidance with a quality-assurance mental model.
+        // Three-level quality framework (eval-verified 100% accuracy on strong models).
+        // Scout completes H0 tasks directly; escalates H1/H2 via emit_managed_protocol.
         [
-          'HARNESS DECISION — Think of yourself as a senior engineer who just received this task.',
-          'Before writing any code, ask yourself: "What would I do before starting?"',
+          'QUALITY FRAMEWORK — Think of yourself as a senior engineer who just received this task.',
           '',
-          'H0_DIRECT — "I\'d just do this myself. It\'s simple enough that no one needs to check my work."',
-          '  Examples: fixing a typo, answering a question, looking up a config value, writing a one-line change, git commit/push.',
-          '  Complete the task directly (including edits, bash commands, etc.) and set direct_completion_ready: yes when done.',
+          'H0 (default) — "I\'d just do this myself. No one needs to check my work."',
+          '  Examples: fixing a typo, answering a question, git commit/push, config change, single-file edit.',
+          '  → Complete the task directly. No special protocol needed.',
           '',
-          'H1_EXECUTE_EVAL — "I know how to do this, but I\'d want someone to review my work before shipping."',
-          '  Examples: fixing a specific bug, making a focused code change across a few files, doing a code review where conclusions matter.',
+          'H1 — "I can do this, but someone should review my work before shipping."',
+          '  Examples: fixing a bug across files, code review, performance optimization, security fix.',
+          '  → Call emit_managed_protocol to escalate. A Generator+Evaluator pipeline will handle it.',
           '',
-          'H2_PLAN_EXECUTE_EVAL — "I need to think about the approach first, maybe sketch it out, before I start coding."',
-          '  Examples: building a new feature from scratch, refactoring across modules, designing a new system, implementing something with multiple architectural decisions.',
+          'H2 — "I need to plan the approach first before coding."',
+          '  Examples: new feature from scratch, cross-module refactoring, system design, database migration.',
+          '  → Call emit_managed_protocol to escalate. A Planner+Generator+Evaluator pipeline will handle it.',
+          '',
+          'ESCALATION: To request H1 or H2, call:',
+          `  ${MANAGED_PROTOCOL_TOOL_NAME}({role:"scout", payload:{confirmed_harness:"H1_EXECUTE_EVAL", summary:"...", blocking_evidence:["..."]}})`,
+          '',
+          'SCOPE SELF-CHECK: If you find yourself modifying 3+ files or making changes across multiple modules,',
+          'pause and ask: "Would I ship this without review?" If not, escalate.',
         ].join('\n'),
-        'You are the task analyst and harness decision-maker. Assess the task scope, declare your harness decision, and for H0 tasks complete the work directly.',
-        'Prefer scope facts first: changed scope, module spread, diff size, verification requirements, and any explicit task constraints.',
-        'If you confirm H0_DIRECT: complete the task yourself (including file edits, git operations, etc.) and give the final user-facing answer. Set direct_completion_ready: yes when done.',
-        'If you confirm H1 or H2: stop after investigation. Your findings will be passed to the Generator as handoff context. Focus on scope assessment and key findings, not exhaustive analysis.',
+        'You are the Scout. For simple tasks (H0): complete the work directly and give the final answer.',
+        'For complex tasks (H1/H2): investigate scope, then call emit_managed_protocol to escalate. Do NOT do the implementation yourself for H1/H2 tasks.',
         'Respect any stated topology ceiling or upgrade ceiling in the routing metadata.',
         scoutReviewEvidenceGuidance,
         // FEATURE_067: dispatch_child_task tool guidance for parallel fan-out
@@ -3202,31 +3206,6 @@ function createRolePrompt(
           'TIMING: Decide EARLY (after initial scope, before deep investigation). Once you start deep-diving, child delegation becomes wasted work.',
           'You may call dispatch_child_task BEFORE deciding your confirmed_harness. Use the findings to make a better-informed harness decision.',
           'Scout can only dispatch readOnly tasks. Write fan-out is available to Generator only.',
-        ].join('\n'),
-        [
-          `Append a final fenced block named \`\`\`${MANAGED_TASK_SCOUT_BLOCK}\` with this exact shape:`,
-          'summary: <one-line scout summary>',
-          'confirmed_harness: <required H0_DIRECT|H1_EXECUTE_EVAL|H2_PLAN_EXECUTE_EVAL>',
-          'harness_rationale: <required one-line reason why this harness is appropriate>',
-          'direct_completion_ready: <required yes|no>',
-          'blocking_evidence:',
-          '- <required if not H0; use "none" when H0 is ready to finish directly>',
-          'evidence_acquisition_mode: <optional overview|diff-bundle|diff-slice|file-read>',
-          'scope:',
-          '- <scope item>',
-          'required_evidence:',
-          '- <evidence item>',
-          'review_files_or_areas:',
-          '- <path or area to inspect first>',
-          'skill_summary: <optional one-line meaning of the skill in this request>',
-          'projection_confidence: <optional high|medium|low>',
-          'execution_obligations:',
-          '- <optional execution obligation>',
-          'verification_obligations:',
-          '- <optional verification obligation>',
-          'ambiguities:',
-          '- <optional ambiguity or missing skill detail>',
-          'Keep any user-facing answer or scout analysis above the block.',
         ].join('\n'),
         sharedClosingRule,
       ].filter((section): section is string => Boolean(section)).join('\n\n');
@@ -5023,9 +5002,8 @@ function validateScoutDirectiveConsistency(
   );
 
   if (harness === 'H0_DIRECT') {
-    // FEATURE_067: H0 allows both direct_completion_ready values:
-    //   'yes' → text-only completion (greeting, lookup, review)
-    //   'no'  → needs write tools → triggers H0 continuation path
+    // Scout completes H0 tasks directly with full tools in a single run.
+    // directCompletionReady is validated but no longer determines routing.
     if (directive.directCompletionReady !== 'yes' && directive.directCompletionReady !== 'no') {
       return 'H0_DIRECT requires direct_completion_ready: yes or no';
     }
@@ -6343,68 +6321,76 @@ async function runManagedScoutStage(
       managedProtocolEmission: {
         enabled: true,
         role: 'scout',
+        optional: true,
       },
       mutationTracker: scoutMutationTracker,
       promptOverlay: [
         options.context?.promptOverlay,
         plan.promptOverlay,
-        '[Scout Phase] Assess scope, declare confirmed_harness, and for H0 tasks complete the work directly. For H1/H2 tasks, stop after investigation.',
+        '[Scout Phase] Complete H0 tasks directly. For complex tasks needing review or planning, call emit_managed_protocol to escalate.',
       ].filter(Boolean).join('\n\n'),
     },
   };
 
-  let currentPrompt = basePrompt;
-  let lastResult: KodaXResult | undefined;
-  for (let attempt = 1; attempt <= MANAGED_TASK_ROUTER_MAX_RETRIES; attempt += 1) {
-    const result = await runDirectKodaX(scoutOptions, currentPrompt);
-    lastResult = result;
-    const sanitized = sanitizeScoutResult(result, { primaryTask: plan.decision.primaryTask });
-    if (sanitized.directive) {
-      return { result: sanitized.result, directive: sanitized.directive, scoutSessionId };
-    }
-    if (attempt < MANAGED_TASK_ROUTER_MAX_RETRIES) {
-      const failureReason = sanitized.failureReason ?? `missing ${MANAGED_TASK_SCOUT_BLOCK}`;
-      currentPrompt = buildProtocolRetryPrompt(
-        basePrompt,
-        {
-          id: 'scout',
-          title: 'Scout',
-          role: 'scout',
-          terminalAuthority: false,
-          execution: 'serial',
-          agent,
-          prompt: basePrompt,
-          toolPolicy,
-        },
-        failureReason,
-        buildProtocolRetryRoleSummary(
-          scoutWorker,
-          sanitized.result,
-          attempt,
-          failureReason,
-        ),
-      );
-    }
+  // Single agent run — no retry loop. Protocol is optional for Scout:
+  // - If Scout calls emit_managed_protocol(H1/H2) → escalate
+  // - If Scout completes without calling it → infer H0
+  const result = await runDirectKodaX(scoutOptions, basePrompt);
+
+  // Check if Scout voluntarily emitted a protocol (via tool or fenced block in text).
+  // sanitizeScoutResult validates and parses the protocol. If validation fails (e.g., missing
+  // blockingEvidence for H1), we still check the raw payload for escalation INTENT — an imperfect
+  // H1/H2 declaration is still an escalation signal.
+  const sanitized = sanitizeScoutResult(result, { primaryTask: plan.decision.primaryTask });
+  if (sanitized.directive?.confirmedHarness && sanitized.directive.confirmedHarness !== 'H0_DIRECT') {
+    // Scout explicitly escalated with a well-formed directive
+    return { result: sanitized.result, directive: sanitized.directive, scoutSessionId };
   }
 
+  // Check raw payload for escalation intent even if validation failed.
+  // This handles the case where Scout tried to escalate but the format was imperfect.
+  const scoutText = extractMessageText(result);
+  const rawPayload = result.managedProtocolPayload?.scout;
+  const rawTextDirective = parseManagedTaskScoutDirective(scoutText);
+  const rawHarness = rawPayload?.confirmedHarness ?? rawTextDirective?.confirmedHarness;
+  if (rawHarness && rawHarness !== 'H0_DIRECT') {
+    // Scout intended to escalate — build a minimal directive preserving the escalation intent.
+    const rawDirective = rawTextDirective ?? sanitized.directive;
+    return {
+      result,
+      directive: {
+        summary: truncateText(rawDirective?.summary || rawPayload?.summary || scoutText || 'Scout requested escalation.'),
+        scope: rawDirective?.scope ?? [],
+        requiredEvidence: rawDirective?.requiredEvidence ?? [],
+        reviewFilesOrAreas: rawDirective?.reviewFilesOrAreas ?? [],
+        evidenceAcquisitionMode: rawDirective?.evidenceAcquisitionMode ?? 'overview',
+        confirmedHarness: normalizeManagedScoutHarness(String(rawHarness)) ?? 'H1_EXECUTE_EVAL',
+        harnessRationale: rawDirective?.harnessRationale ?? 'Scout requested escalation.',
+        blockingEvidence: rawDirective?.blockingEvidence ?? ['Scout requested escalation but protocol was incomplete.'],
+        directCompletionReady: 'no',
+        userFacingText: sanitizeManagedUserFacingText(rawDirective?.userFacingText || scoutText || ''),
+        skillMap: rawDirective?.skillMap,
+      },
+      scoutSessionId,
+    };
+  }
+
+  // Default: H0 completion. Scout either declared H0 explicitly or didn't emit protocol.
+  const explicitDirective = sanitized.directive;
   return {
-    result: lastResult!,
+    result: explicitDirective ? sanitized.result : result,
     directive: {
-      summary: truncateText(extractMessageText(lastResult) || plan.decision.reason || 'Scout completed without a structured summary.'),
-      scope: [],
-      requiredEvidence: [],
-      reviewFilesOrAreas: [],
-      evidenceAcquisitionMode: 'overview',
-      confirmedHarness: plan.decision.harnessProfile,
-      harnessRationale: 'Fallback scout directive used the current routing decision after structured retries were exhausted.',
-      blockingEvidence: plan.decision.harnessProfile === 'H0_DIRECT'
-        ? []
-        : ['Structured scout output was incomplete, so managed execution must continue.'],
-      // FEATURE_067: Fallback always sets 'no' — if Scout couldn't emit the managed protocol
-      // block properly, we cannot assume the task is complete. For H0 tasks needing writes,
-      // this triggers the H0 continuation path (re-run with write tools).
-      directCompletionReady: 'no',
-      userFacingText: sanitizeManagedUserFacingText(extractMessageText(lastResult) || ''),
+      summary: truncateText(explicitDirective?.summary || scoutText || plan.decision.reason || 'Scout completed the task directly.'),
+      scope: explicitDirective?.scope ?? [],
+      requiredEvidence: explicitDirective?.requiredEvidence ?? [],
+      reviewFilesOrAreas: explicitDirective?.reviewFilesOrAreas ?? [],
+      evidenceAcquisitionMode: explicitDirective?.evidenceAcquisitionMode ?? 'overview',
+      confirmedHarness: 'H0_DIRECT',
+      harnessRationale: explicitDirective?.harnessRationale ?? 'Scout completed without requesting escalation.',
+      blockingEvidence: [],
+      directCompletionReady: result.success !== false ? 'yes' : 'no',
+      userFacingText: sanitizeManagedUserFacingText(explicitDirective?.userFacingText || scoutText || ''),
+      skillMap: explicitDirective?.skillMap,
     },
     scoutSessionId,
   };
@@ -8253,12 +8239,10 @@ export async function runManagedTask(
     plan.decision,
     managedPlanning.reviewTarget,
   );
-  // H0 text-only completion: Scout completed the task directly (e.g., greeting, lookup, review, simple edit).
+  // H0 completion: Scout completed the task directly (default path — no escalation requested).
   if (
-    finalRoutingDecision.harnessProfile === 'H0_DIRECT'
-    && scoutExecution.directive.confirmedHarness === 'H0_DIRECT'
+    scoutExecution.directive.confirmedHarness === 'H0_DIRECT'
     && scoutExecution.result.success !== false
-    && normalizeManagedDirectCompletionReady(scoutExecution.directive.directCompletionReady ?? 'no') === 'yes'
   ) {
     return completeScoutH0Task({
       options: managedOptions, originalTask: managedOriginalTask, plan,
@@ -8268,124 +8252,15 @@ export async function runManagedTask(
     });
   }
 
-  // H0 continuation path: Scout confirmed H0 but directCompletionReady=no.
-  // Re-run Scout with completion-focused prompt, continuing the same session.
-  if (
-    scoutExecution.directive.confirmedHarness === 'H0_DIRECT'
-    && scoutExecution.result.success !== false
-    && normalizeManagedDirectCompletionReady(scoutExecution.directive.directCompletionReady ?? 'no') !== 'yes'
-  ) {
-    // Grant full tool access for H0 continuation.
-    // Wrap events through createWorkerEvents so text/tool output renders correctly
-    // in the managed foreground transcript (with [Scout] prefix and tool group sync).
-    const h0ContinuationWorker: ManagedTaskWorkerSpec = {
-      id: 'scout',
-      title: 'Scout',
-      role: 'scout',
-      terminalAuthority: true,
-      execution: 'serial',
-      agent: buildManagedWorkerAgent('scout', 'scout'),
-      prompt: '',
-      // No toolPolicy → full tool access for H0 continuation
-    };
-    const h0ContinuationEvents = createWorkerEvents(
-      managedOptions.events, h0ContinuationWorker, true, scoutBudgetController, {
-        emitContent: true,
-        emitToolEvents: true,
-        emitProgressEventsWhenHidden: false,
-        emitIterationEvents: true,
-        statusContext: {
-          agentMode: managedOptions.agentMode ?? 'ama',
-          harnessProfile: 'H0_DIRECT',
-          currentRound: 1,
-          maxRounds: 1,
-          upgradeCeiling: finalRoutingDecision.upgradeCeiling,
-        },
-      },
-    );
-    const h0ContinuationOptions: KodaXOptions = {
-      ...managedOptions,
-      maxIter: resolveRemainingManagedWorkBudget(scoutBudgetController),
-      session: scoutExecution.scoutSessionId && sharedSessionStorage
-        ? {
-            ...managedOptions.session,
-            id: scoutExecution.scoutSessionId,
-            scope: 'managed-task-worker',
-            resume: true,
-            autoResume: false,
-            storage: sharedSessionStorage,
-          }
-        : managedOptions.session,
-      events: h0ContinuationEvents
-        ? { ...managedOptions.events, ...h0ContinuationEvents }
-        : managedOptions.events,
-      context: {
-        ...managedOptions.context,
-        // Disable managed protocol — continuation should just do the work, not emit Scout blocks.
-        managedProtocolEmission: undefined,
-        // No prompt overlay — avoid "Scout Phase" instructions confusing the continuation.
-        promptOverlay: undefined,
-      },
-    };
-    managedOptions.events?.onManagedTaskStatus?.({
-      agentMode,
-      harnessProfile: 'H0_DIRECT',
-      activeWorkerId: 'scout',
-      activeWorkerTitle: 'Scout',
-      phase: 'worker',
-      note: 'Scout confirmed H0 — continuing with write tools',
-      upgradeCeiling: finalRoutingDecision.upgradeCeiling,
-      ...buildManagedStatusBudgetFields(scoutBudgetController),
-    });
-    const continuationPrompt = [
-      'You previously investigated the following task and confirmed it is simple enough to complete directly.',
-      '',
-      `Original task: ${prompt}`,
-      '',
-      scoutExecution.directive.summary
-        ? `Your investigation summary: ${scoutExecution.directive.summary}`
-        : undefined,
-      'Write tools (edit, write, bash) are now available. Complete the task now.',
-      'Do not re-investigate or re-read files you already read. Use your prior findings directly.',
-    ].filter(Boolean).join('\n');
-    const continuationResult = await runDirectKodaX(h0ContinuationOptions, continuationPrompt);
-    // Merge Scout investigation + continuation into a single result
-    const mergedExecution = {
-      ...scoutExecution,
-      result: continuationResult,
-    };
-    return completeScoutH0Task({
-      options: managedOptions, originalTask: managedOriginalTask, plan,
-      scoutExecution: mergedExecution, scoutBudgetController,
-      rawRoutingDecision, finalRoutingDecision, routingOverrideReason,
-      skillMap, agentMode,
-    });
-  }
-
-  // Hard invariant (defensive): H0+directCompletionReady=no should be handled by the paths above.
-  // This guard is intentionally unreachable — it catches regressions if future changes break the branching.
-  if (
-    scoutExecution.directive.confirmedHarness === 'H0_DIRECT'
-    && normalizeManagedDirectCompletionReady(scoutExecution.directive.directCompletionReady ?? 'no') !== 'yes'
-    && scoutExecution.result.success !== false
-  ) {
-    // H0 + directCompletionReady=no should have been caught by H0 continuation above.
-    // Reaching here means the state machine has a gap. Treat as blocked rather than false-complete.
-    managedOptions.events?.onManagedTaskStatus?.({
-      agentMode,
-      harnessProfile: 'H0_DIRECT',
-      phase: 'completed',
-      note: 'H0 task with directCompletionReady=no reached H1/H2 pipeline — state machine gap detected.',
-    });
+  // Scout failed (API error, abort, etc.) but was H0 — don't enter multi-agent pipeline.
+  if (scoutExecution.directive.confirmedHarness === 'H0_DIRECT') {
     return {
       ...scoutExecution.result,
-      success: false,
-      signal: 'BLOCKED',
-      signalReason: 'H0 task with directCompletionReady=no was not handled by the H0 continuation path.',
       routingDecision: finalRoutingDecision,
     };
   }
 
+  // H1/H2: Scout explicitly escalated via emit_managed_protocol. Enter multi-agent pipeline.
   const shape = createTaskShape(
     managedOptions,
     managedOriginalTask,

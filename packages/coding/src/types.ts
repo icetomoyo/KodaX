@@ -692,6 +692,8 @@ export interface KodaXManagedBudgetSnapshot {
 export interface ManagedMutationTracker {
   readonly files: Map<string, number>;
   totalOps: number;
+  /** Set to true after scope reflection has been injected once. Prevents repeated injection. */
+  reflectionInjected?: boolean;
 }
 
 export interface KodaXContextOptions {
@@ -740,6 +742,8 @@ export interface KodaXContextOptions {
   managedProtocolEmission?: {
     enabled: boolean;
     role: Exclude<KodaXTaskRole, 'direct'>;
+    /** When true, protocol emission is available but not required. Auto-continue won't fire for missing protocol. */
+    optional?: boolean;
   };
   /** Mutable mutation tracker shared between worker events and the protocol tool handler. */
   mutationTracker?: ManagedMutationTracker;

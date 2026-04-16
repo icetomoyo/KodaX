@@ -991,9 +991,8 @@ describe('runManagedTask', () => {
     expect(result.lastText).toContain('System edit completed');
   });
 
-  // FEATURE_067: directCompletionReady=no with H0 now triggers H0 continuation (write tools),
-  // not a retry. This is the correct behavior for tasks that need file modifications.
-  it('enters H0 continuation when Scout confirms H0_DIRECT with directCompletionReady no', async () => {
+  // Scout completes H0 tasks directly without protocol — single agent run.
+  it('completes H0 directly when Scout does not emit protocol (inferred H0)', async () => {
     mockCreateReasoningPlan.mockResolvedValue(
       buildPlan({
         primaryTask: 'edit',
@@ -1006,34 +1005,17 @@ describe('runManagedTask', () => {
         harnessProfile: 'H0_DIRECT',
         topologyCeiling: 'H2_PLAN_EXECUTE_EVAL',
         upgradeCeiling: 'H2_PLAN_EXECUTE_EVAL',
-        reason: 'Simple file edit — Scout investigates then gets write tools via H0 continuation.',
+        reason: 'Simple file edit completed directly by Scout.',
       }),
     );
 
-    let callCount = 0;
-    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
-      callCount += 1;
-      if (callCount === 1) {
-        // Scout confirms H0 but directCompletionReady=no → triggers H0 continuation
-        return buildAssistantResult(
-          buildScoutResponse(
-            'I need to update .gitignore with a few entries.',
-            'H0_DIRECT',
-            {
-              directCompletionReady: 'no',
-              blockingEvidence: ['none'],
-              harnessRationale: 'Simple single-file edit, no review needed.',
-            },
-          ),
-          { sessionId: 'session-scout-readonly' },
-        );
-      }
-      // H0 continuation phase (with write tools)
-      return buildAssistantResult(
-        'Done — updated .gitignore with the requested entries.',
-        { sessionId: 'session-scout-readonly' },
-      );
-    });
+    // Scout completes the task without calling emit_managed_protocol
+    mockRunDirectKodaX.mockResolvedValue(
+      buildAssistantResult(
+        'Done — updated .gitignore with output/ and .agent/ entries.',
+        { sessionId: 'session-scout-direct' },
+      ),
+    );
 
     const result = await runManagedTask(
       {
@@ -1043,8 +1025,8 @@ describe('runManagedTask', () => {
       'Add output/ and .agent/ to .gitignore',
     );
 
-    // Scout investigation + H0 continuation = 2 calls
-    expect(mockRunDirectKodaX).toHaveBeenCalledTimes(2);
+    // Single agent run — no retry, no continuation
+    expect(mockRunDirectKodaX).toHaveBeenCalledTimes(1);
     expect(result.routingDecision?.harnessProfile).toBe('H0_DIRECT');
     expect(result.managedTask?.contract.harnessProfile).toBe('H0_DIRECT');
     expect(result.lastText).toContain('updated .gitignore');
@@ -1201,7 +1183,7 @@ describe('runManagedTask', () => {
     const scoutPrompt = prompts.find((item) => item.includes('You are the Scout role'));
     const generatorPrompt = prompts.find((item) => item.includes('You are the Generator role'));
     const evaluatorPrompt = prompts.find((item) => item.includes('You are the Evaluator role'));
-    expect(scoutPrompt).toContain('If you confirm H1 or H2: stop after investigation. Your findings will be passed to the Generator as handoff context.');
+    expect(scoutPrompt).toContain('For complex tasks (H1/H2): investigate scope, then call emit_managed_protocol to escalate.');
     expect(scoutPrompt).toContain('When multiple read-only tool calls are independent, emit them in the same response so parallel mode can run them together.');
     expect(generatorPrompt).toContain('This is lightweight H1 checked-direct execution, not mini-H2.');
     expect(generatorPrompt).toContain('Reuse its cheap-facts summary, scope notes, and evidence-acquisition hints instead of rebuilding them from scratch.');
@@ -2435,10 +2417,9 @@ describe('runManagedTask', () => {
     expect(result.managedTask?.runtime?.roleRoundSummaries?.evaluator?.summary).toContain('The coordinated review is complete.');
   });
 
-  it('injects a previous scout summary when the scout must retry its protocol block for mutation work', async () => {
-    const workspaceRoot = await createTempDir('kodax-task-engine-scout-summary-retry-');
+  it('escalates to H2 when Scout emits protocol requesting H2 for complex mutation work', async () => {
+    const workspaceRoot = await createTempDir('kodax-task-engine-scout-escalation-');
     const prompts: string[] = [];
-    let scoutAttempts = 0;
 
     mockCreateReasoningPlan.mockResolvedValue(
       buildPlan({
@@ -2458,16 +2439,10 @@ describe('runManagedTask', () => {
     mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
       prompts.push(workerPrompt);
       if (workerPrompt.includes('You are the Scout role')) {
-        scoutAttempts += 1;
-        if (scoutAttempts === 1) {
-          return buildAssistantResult(
-            'Scout thinks H2 is warranted because the mutation task is broad and high-risk.',
-            { sessionId: 'session-scout-retry-1' },
-          );
-        }
+        // Scout escalates to H2 in its first (and only) run
         return buildAssistantResult(
-          buildScoutResponse('Scout confirmed H2 after retry.', 'H2_PLAN_EXECUTE_EVAL'),
-          { sessionId: 'session-scout-retry-2' },
+          buildScoutResponse('Scout confirmed H2 — broad mutation task is high-risk.', 'H2_PLAN_EXECUTE_EVAL'),
+          { sessionId: 'session-scout-escalation' },
         );
       }
       if (workerPrompt.includes('You are the Planner role')) {
@@ -2503,10 +2478,10 @@ describe('runManagedTask', () => {
     );
 
     expect(result.success).toBe(true);
+    // Single Scout run (no retry) — Scout escalates in one attempt
     const scoutPrompts = prompts.filter((prompt) => prompt.includes('You are the Scout role'));
-    expect(scoutPrompts).toHaveLength(2);
-    expect(scoutPrompts[1]).toContain('Previous same-role summary:');
-    expect(scoutPrompts[1]).toContain('Scout thinks H2 is warranted because the mutation task is broad and high-risk.');
+    expect(scoutPrompts).toHaveLength(1);
+    expect(result.managedTask?.contract.harnessProfile).toBe('H2_PLAN_EXECUTE_EVAL');
   });
 
   it('projects skill content through Scout into H2 mutation roles without sharing the raw skill everywhere', async () => {

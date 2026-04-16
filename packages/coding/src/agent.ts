@@ -762,6 +762,36 @@ function isCancelledToolResultContent(content: string): boolean {
   return content.startsWith(CANCELLED_TOOL_RESULT_PREFIX);
 }
 
+const MUTATION_TOOL_NAMES = new Set(['edit', 'write', 'multi_edit', 'apply_patch', 'delete', 'remove', 'rename']);
+const SCOPE_REFLECTION_FILE_THRESHOLD = 3;
+const SCOPE_REFLECTION_LINES_THRESHOLD = 100;
+
+function isMutationTool(name: string): boolean {
+  return MUTATION_TOOL_NAMES.has(name.toLowerCase());
+}
+
+function isMutationScopeSignificant(tracker: NonNullable<KodaXToolExecutionContext['mutationTracker']>): boolean {
+  if (tracker.files.size >= SCOPE_REFLECTION_FILE_THRESHOLD) return true;
+  const totalLines = [...tracker.files.values()].reduce((a, b) => a + b, 0);
+  return totalLines >= SCOPE_REFLECTION_LINES_THRESHOLD;
+}
+
+function buildMutationScopeReflection(tracker: NonNullable<KodaXToolExecutionContext['mutationTracker']>): string {
+  const totalLines = [...tracker.files.values()].reduce((a, b) => a + b, 0);
+  const fileList = [...tracker.files.entries()]
+    .map(([file, lines]) => `  - ${file} (~${lines} lines)`)
+    .join('\n');
+  return [
+    '',
+    `[Scope: ${tracker.files.size} files modified, ~${totalLines} lines]`,
+    fileList,
+    'A senior engineer would ask: does this change need review before shipping?',
+    '→ Need review: call emit_managed_protocol({role:"scout", payload:{confirmed_harness:"H1_EXECUTE_EVAL", summary:"...", blocking_evidence:["..."]}})',
+    '→ Need planning: call emit_managed_protocol with H2_PLAN_EXECUTE_EVAL',
+    '→ Confident this is fine: continue working.',
+  ].join('\n');
+}
+
 async function getToolExecutionOverride(
   events: KodaXEvents,
   name: string,
@@ -2173,15 +2203,14 @@ export async function runKodaX(
       }
 
       // Fallback: auto-continue when end_turn fires but required managed protocol block is missing.
-      // This covers the case where the model voluntarily stops (end_turn) before emitting the
-      // required protocol block — the max_tokens fallback above does not catch this scenario.
-      // Limited to a single attempt to avoid infinite loops; the task-engine retry handles further recovery.
+      // Skipped when protocol is optional (e.g. Scout with full tools — protocol only needed for escalation).
       if (
         !managedProtocolContinueAttempted
         && result.stopReason === 'end_turn'
         && result.toolBlocks.length === 0
         && lastText
         && options.context?.managedProtocolEmission?.enabled
+        && !options.context.managedProtocolEmission.optional
       ) {
         const role = options.context.managedProtocolEmission.role;
         const blockName = getManagedBlockNameForRole(role);
@@ -2423,7 +2452,18 @@ export async function runKodaX(
         }
 
         for (const tc of result.toolBlocks) {
-          const content = resultMap.get(tc.id) ?? '[Error] No result';
+          let content = resultMap.get(tc.id) ?? '[Error] No result';
+          // Scope reflection: when mutation tracker crosses threshold, append once to a write tool result.
+          if (
+            ctx.mutationTracker
+            && !ctx.mutationTracker.reflectionInjected
+            && !isToolResultErrorContent(content)
+            && isMutationTool(tc.name)
+            && isMutationScopeSignificant(ctx.mutationTracker)
+          ) {
+            content += buildMutationScopeReflection(ctx.mutationTracker);
+            ctx.mutationTracker.reflectionInjected = true;
+          }
           updateToolOutcomeTracking(tc, content, runtimeSessionState, ctx);
           if (tc.name === 'edit' && isToolResultErrorContent(content)) {
             const recoveryMessage = await buildEditRecoveryUserMessage(tc, content, runtimeSessionState, ctx);
