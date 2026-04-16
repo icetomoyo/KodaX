@@ -429,6 +429,8 @@ export {
   getSessionLineagePath,
   getSessionMessagesFromLineage,
   resolveSessionLineageTarget,
+  findPreviousUserEntryId,
+  rewindSessionLineage,
   setSessionLineageActiveEntry,
 } from './session.js';
 
@@ -659,17 +661,6 @@ export {
   reconstructMessagesWithToolGuard,
 } from './resilience/tool-guard.js';
 
-// ============== Hooks ==============
-export type {
-  HookEventType, HookAction, HookResult,
-  CommandHook, HttpHook, PromptHook, HookDefinition,
-  HookConfig, HookEventContext,
-} from './hooks/types.js';
-export { interpolateVariables } from './hooks/variable-interpolation.js';
-export { executeHook } from './hooks/executor.js';
-export {
-  createHookRegistry,
-  getMatchingHooks,
-  runHooks,
-} from './hooks/registry.js';
-export type { HookRegistryEntry, HookRegistry } from './hooks/registry.js';
+// ============== Extension Helpers ==============
+export { exec, webhook } from './extensions/helpers.js';
+export type { ExecOptions, ExecResult, WebhookOptions, WebhookResult } from './extensions/helpers.js';

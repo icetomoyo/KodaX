@@ -10,6 +10,7 @@
  * (per-file cap = 20% of total budget, max 5 files).
  */
 
+import fs from 'fs/promises';
 import type { KodaXMessage } from '@kodax/ai';
 import type { KodaXSessionArtifactLedgerEntry } from '../types.js';
 import { estimateTokens } from '../tokenizer.js';
@@ -166,4 +167,87 @@ function renderLedgerSummary(
   }
 
   return summary;
+}
+
+/**
+ * Read recently modified files from disk and build system messages for
+ * post-compact context restoration.
+ *
+ * @param ledger - Artifact ledger from compaction
+ * @param budgetTokens - Remaining token budget after ledger injection
+ * @param config - Budget configuration
+ * @returns File content messages to merge into PostCompactAttachments.fileMessages
+ */
+export async function buildFileContentMessages(
+  ledger: readonly KodaXSessionArtifactLedgerEntry[],
+  budgetTokens: number,
+  config: PostCompactConfig = DEFAULT_POST_COMPACT_CONFIG,
+): Promise<readonly KodaXMessage[]> {
+  if (budgetTokens <= 0) return [];
+
+  // Pick recently modified/created files, sorted newest-first by timestamp
+  const fileEntries = ledger
+    .filter((e) => e.kind === 'file_modified' || e.kind === 'file_created')
+    .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+
+  // Deduplicate by target path (keep most recent)
+  const seen = new Set<string>();
+  const unique: KodaXSessionArtifactLedgerEntry[] = [];
+  for (const entry of fileEntries) {
+    if (!seen.has(entry.target)) {
+      seen.add(entry.target);
+      unique.push(entry);
+    }
+  }
+
+  const candidates = unique.slice(0, config.maxFiles);
+  if (candidates.length === 0) return [];
+
+  const perFileBudget = Math.floor(budgetTokens * config.perFileShare);
+  const messages: KodaXMessage[] = [];
+  let usedTokens = 0;
+
+  for (const entry of candidates) {
+    if (usedTokens >= budgetTokens) break;
+
+    const content = await readFileHead(entry.target, perFileBudget);
+    if (!content) continue;
+
+    const msg: KodaXMessage = {
+      role: 'system',
+      content: `[Post-compact: file content] ${entry.target}\n${content}`,
+    };
+    const msgTokens = estimateTokens([msg]);
+    if (usedTokens + msgTokens > budgetTokens) break;
+
+    messages.push(msg);
+    usedTokens += msgTokens;
+  }
+
+  return messages;
+}
+
+/** Read the head of a file, truncated to fit within a token budget. */
+async function readFileHead(filePath: string, maxTokens: number): Promise<string | null> {
+  try {
+    const raw = await fs.readFile(filePath, 'utf-8');
+    // Split into lines and take enough to fit the budget
+    const lines = raw.split('\n');
+    const chunks: string[] = [];
+    let tokens = 0;
+    for (const line of lines) {
+      // Rough estimate: 1 token ≈ 4 chars
+      const lineTokens = Math.ceil(line.length / 4) + 1;
+      if (tokens + lineTokens > maxTokens) {
+        chunks.push('[... truncated for post-compact budget]');
+        break;
+      }
+      chunks.push(line);
+      tokens += lineTokens;
+    }
+    return chunks.length > 0 ? chunks.join('\n') : null;
+  } catch {
+    // File may have been deleted or moved since the ledger was recorded
+    return null;
+  }
 }

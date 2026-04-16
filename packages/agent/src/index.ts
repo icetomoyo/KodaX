@@ -108,6 +108,7 @@ export {
   getSessionLineagePath,
   getSessionMessagesFromLineage,
   resolveSessionLineageTarget,
+  findPreviousUserEntryId,
   rewindSessionLineage,
   setSessionLineageActiveEntry,
 } from './session-lineage.js';
@@ -168,6 +169,7 @@ export type {
 } from './compaction/microcompaction.js';
 
 export {
+  buildFileContentMessages,
   buildPostCompactAttachments,
   injectPostCompactAttachments,
   DEFAULT_POST_COMPACT_CONFIG,

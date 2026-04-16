@@ -204,6 +204,26 @@ export const BUILTIN_COMMANDS: Command[] = [
     },
   },
   {
+    name: 'cost',
+    description: 'Show session cost report',
+    usage: '/cost',
+    handler: async (_args, _context, callbacks) => {
+      const report = callbacks.getCostReport?.();
+      if (!report) {
+        console.log(chalk.dim('\n[No cost data available yet]'));
+        return;
+      }
+      console.log(chalk.cyan('\n' + report));
+    },
+    detailedHelp: () => {
+      console.log(chalk.cyan('\n/cost - Session Cost Report\n'));
+      console.log(chalk.bold('Description:'));
+      console.log(chalk.dim('  Shows token usage and estimated cost for the current session,'));
+      console.log(chalk.dim('  broken down by provider and AMA role.'));
+      console.log();
+    },
+  },
+  {
     name: 'compact',
     description: 'Manually trigger context compaction',
     usage: '/compact [instructions]',
@@ -898,6 +918,31 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log(chalk.bold('Description:'));
       console.log(chalk.dim('  Creates a new session file from the selected branch so you can'));
       console.log(chalk.dim('  continue there without mutating the current session lineage.'));
+      console.log();
+    },
+  },
+  {
+    name: 'rewind',
+    description: 'Rewind the current session to a previous point',
+    usage: '/rewind [entry-id|label]',
+    handler: async (args, _context, callbacks) => {
+      const status = await callbacks.rewindSession?.(args[0]);
+      if (status === 'failed') {
+        console.log(chalk.red(`\n[Unable to rewind${args[0] ? ` to ${args[0]}` : ' — no previous turn found'}]`));
+      }
+    },
+    detailedHelp: () => {
+      console.log(chalk.cyan('\n/rewind - Rewind Session to a Previous Point\n'));
+      console.log(chalk.bold('Usage:'));
+      console.log(chalk.dim('  /rewind                 ') + 'Rewind to the previous user input');
+      console.log(chalk.dim('  /rewind <entry-id|label>') + 'Rewind to a specific tree node');
+      console.log();
+      console.log(chalk.bold('Description:'));
+      console.log(chalk.dim('  Truncates the session after the target entry. Unlike /fork,'));
+      console.log(chalk.dim('  this modifies the current session in place. The rewind event'));
+      console.log(chalk.dim('  is recorded in the lineage for auditability.'));
+      console.log();
+      console.log(chalk.yellow('  ⚠ This is irreversible. Use /fork first to preserve a copy.'));
       console.log();
     },
   },

@@ -43,6 +43,7 @@ export { extractBashIntent } from './bash-intent.js';
 
 // Post-Compact Reconstruction
 export {
+  buildFileContentMessages,
   buildPostCompactAttachments,
   injectPostCompactAttachments,
   DEFAULT_POST_COMPACT_CONFIG,

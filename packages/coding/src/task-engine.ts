@@ -1426,9 +1426,6 @@ async function maybeRequestAdditionalWorkBudget(
       },
     ],
     default: 'continue',
-    intent: 'generic',
-    scope: 'session',
-    resumeBehavior: 'continue',
   });
 
   const promptedBudgetTotal = controller.totalBudget;
@@ -8184,9 +8181,6 @@ export async function runManagedTask(
           },
         ],
         default: 'continue',
-        intent: 'generic',
-        scope: 'session',
-        resumeBehavior: 'continue',
       });
       if (answer === 'continue') {
         return resumeManagedTask(options, prompt, validCheckpoint);

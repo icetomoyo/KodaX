@@ -12,6 +12,7 @@ import {
   writeMcpServerCatalog,
 } from './catalog.js';
 import { createMcpTransport, type McpTransport } from './transport.js';
+import { getValidToken } from './oauth.js';
 
 interface JsonRpcRequestRecord {
   resolve: (value: unknown) => void;
@@ -437,6 +438,24 @@ export class McpServerRuntime {
   private async doConnect(): Promise<void> {
     this.diagnostics.status = 'connecting';
 
+    // FEATURE_065: OAuth token acquisition for authenticated MCP servers
+    let authHeaders: Record<string, string> | undefined;
+    if (this.config.auth?.type === 'oauth2') {
+      const token = await getValidToken(this.serverId, this.config.auth);
+      if (token) {
+        if (this.config.headers?.Authorization) {
+          process.stderr.write(
+            `[kodax:mcp] OAuth token will override user-provided Authorization header for "${this.serverId}"\n`,
+          );
+        }
+        authHeaders = { Authorization: `${token.tokenType ?? 'Bearer'} ${token.accessToken}` };
+      } else {
+        process.stderr.write(
+          `[kodax:mcp] OAuth token required for "${this.serverId}" but not available. Connecting without auth.\n`,
+        );
+      }
+    }
+
     // For stdio, try Content-Length framing first (MCP spec). If it fails,
     // retry with NDJSON (Python MCP SDK default).
     const isStdio = (this.config.type ?? 'stdio') === 'stdio';
@@ -444,8 +463,12 @@ export class McpServerRuntime {
 
     for (const framing of framings) {
       await this.resetTransport();
+      // Merge OAuth headers with any user-configured headers
+      const effectiveConfig = authHeaders
+        ? { ...this.config, headers: { ...this.config.headers, ...authHeaders } }
+        : this.config;
       const transport = createMcpTransport(
-        this.config,
+        effectiveConfig,
         framing ? { stdioFraming: framing } : {},
       );
       this.transport = transport;

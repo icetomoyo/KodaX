@@ -6,6 +6,7 @@ import {
   buildSessionTree,
   countActiveLineageMessages,
   createSessionLineage,
+  findPreviousUserEntryId,
   forkSessionLineage,
   getSessionLineagePath,
   getSessionMessagesFromLineage,
@@ -368,5 +369,58 @@ describe('session lineage helpers', () => {
 
     // Active is set to the target, not the rewind event
     expect(rewound!.activeEntryId).toBe(targetId);
+  });
+});
+
+describe('findPreviousUserEntryId', () => {
+  it('returns null for empty lineage', () => {
+    const lineage = createSessionLineage([]);
+    expect(findPreviousUserEntryId(lineage)).toBeNull();
+  });
+
+  it('returns null when only one user message exists', () => {
+    const lineage = createSessionLineage([
+      createTextMessage('user', 'hello'),
+      createTextMessage('assistant', 'hi'),
+    ]);
+    expect(findPreviousUserEntryId(lineage)).toBeNull();
+  });
+
+  it('returns the second-to-last user message id', () => {
+    const lineage = createSessionLineage([
+      createTextMessage('user', 'first'),
+      createTextMessage('assistant', 'reply 1'),
+      createTextMessage('user', 'second'),
+      createTextMessage('assistant', 'reply 2'),
+    ]);
+    const result = findPreviousUserEntryId(lineage);
+    // The first user message entry should be returned
+    const userEntries = lineage.entries.filter(
+      (e) => e.type === 'message' && e.message.role === 'user',
+    );
+    expect(result).toBe(userEntries[0]!.id);
+  });
+
+  it('works with three user messages — returns second-to-last', () => {
+    const lineage = createSessionLineage([
+      createTextMessage('user', 'first'),
+      createTextMessage('assistant', 'reply 1'),
+      createTextMessage('user', 'second'),
+      createTextMessage('assistant', 'reply 2'),
+      createTextMessage('user', 'third'),
+    ]);
+    const result = findPreviousUserEntryId(lineage);
+    const userEntries = lineage.entries.filter(
+      (e) => e.type === 'message' && e.message.role === 'user',
+    );
+    // Should return the second user entry (index 1), not the first (index 0)
+    expect(result).toBe(userEntries[1]!.id);
+  });
+
+  it('returns null when only system and assistant messages exist', () => {
+    const lineage = createSessionLineage([
+      createTextMessage('assistant', 'hello'),
+    ]);
+    expect(findPreviousUserEntryId(lineage)).toBeNull();
   });
 });

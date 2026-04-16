@@ -31,10 +31,6 @@ export interface AskUserQuestionInput {
   options?: AskUserQuestionOption[];
   multi_select?: boolean;
   default?: string;
-  intent?: "generic" | "plan-handoff";
-  target_mode?: "accept-edits";
-  scope?: "session";
-  resume_behavior?: "continue";
   /** Multiple independent questions — takes precedence over question+options when provided. */
   questions?: AskUserQuestionItemInput[];
 }
@@ -156,10 +152,6 @@ export async function toolAskUserQuestion(
       })),
       multiSelect: input.multi_select === true,
       default: input.default as string | undefined,
-      intent: input.intent as "generic" | "plan-handoff" | undefined,
-      targetMode: input.target_mode as "accept-edits" | undefined,
-      scope: input.scope as "session" | undefined,
-      resumeBehavior: input.resume_behavior as "continue" | undefined,
     });
 
     // Issue 114: askUser returns '[Cancelled]' prefix when user presses ESC.

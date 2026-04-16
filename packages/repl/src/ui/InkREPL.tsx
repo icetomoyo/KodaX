@@ -75,6 +75,11 @@ import {
   loadAgentsFiles,
   resolveRepoIntelligenceRuntimeConfig,
   CANCELLED_TOOL_RESULT_MESSAGE,
+  classifyBashCommand,
+  createDenialTracker,
+  recordDenial,
+  isDeniedRecently,
+  getDenialContext,
 } from "@kodax/coding";
 import type {
   AgentsFile,
@@ -243,7 +248,6 @@ import { resolveTranscriptDragEdgeScrollDirection } from "../tui/core/scroll.js"
 import { getRendererInstance } from "../tui/core/root.js";
 import {
   getAskUserDialogTitle,
-  shouldSwitchToAcceptEdits,
   toSelectOptions,
   type SelectOption,
 } from "./utils/ask-user.js";
@@ -345,7 +349,7 @@ interface ManagedForegroundLedgerState {
 }
 
 const PLAN_MODE_BLOCK_GUIDANCE =
-  "Do not try to modify files while planning. Finish the plan first, then use ask_user_question with intent \"plan-handoff\" to ask whether this session should switch to accept-edits and continue.";
+  "Do not try to modify files while planning. Finish the plan first, then use ask_user_question to ask the user whether to proceed. If the user confirms, call set_permission_mode with mode \"accept-edits\" to switch to implementation mode.";
 
 function resolveInitialReasoningMode(
   options: Pick<KodaXOptions, 'reasoningMode' | 'thinking'>,
@@ -1244,6 +1248,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const { stdin, setRawMode, isRawModeSupported } = useStdin();
   const writeTerminal = useTerminalWrite();
   const { history } = useUIState();
+
+  // Cost tracking — agent sets .current via events.getCostReport, /cost command reads it
+  const inkCostReportRef: { current: (() => string) | null } = React.useRef<(() => string) | null>(null);
+
+  // FEATURE_066: Session-scoped denial tracker for permission hardening
+  const denialTrackerRef = React.useRef(createDenialTracker());
   const { addHistoryItem, clearHistory: clearUIHistory, setSessionId } = useUIActions();
   const historyRef = useRef(history);
   const persistedUiHistoryRef = useRef<KodaXSessionUiHistoryItem[]>(
@@ -1944,6 +1954,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     | null
   >(null);
   const uiResolveRef = useRef<((value: string | undefined) => void) | null>(null);
+  // Fix: keep a synchronously-updated ref so the useKeypress handler always
+  // reads the latest uiRequest (the registered handler captures a stale closure).
+  const uiRequestRef = useRef(uiRequest);
+  uiRequestRef.current = uiRequest;
   const [historySearchQuery, setHistorySearchQuery] = useState("");
   const [historySearchSelectedIndex, setHistorySearchSelectedIndex] = useState(0);
   const lastHistorySearchQueryRef = useRef("");
@@ -4226,15 +4240,18 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
   useKeypress(
     (key) => {
-      if (!uiRequest) return false;
+      // Read from ref to avoid stale closure — the registered handler is NOT
+      // re-created when uiRequest state changes (useKeypress deps don't include it).
+      const req = uiRequestRef.current;
+      if (!req) return false;
 
       if (key.name === "escape") {
         resolveUIRequest(undefined);
         return true;
       }
 
-      if (uiRequest.kind === "select") {
-        const optionCount = uiRequest.options.length;
+      if (req.kind === "select") {
+        const optionCount = req.options.length;
 
         // Arrow-key / vim-style navigation
         if (key.name === "up" || key.sequence === "k") {
@@ -4256,7 +4273,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         }
 
         // Space: toggle selection in multiSelect mode
-        if (key.sequence === " " && uiRequest.multiSelect) {
+        if (key.sequence === " " && req.multiSelect) {
           setUiRequest((prev) => {
             if (!prev || prev.kind !== "select") return prev;
             const idx = prev.focusedIndex;
@@ -4268,11 +4285,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           return true;
         }
 
-        // Enter: confirm selection
+        // Enter: confirm selection — read latest state from ref, not stale closure.
         if (key.name === "return") {
-          if (uiRequest.multiSelect) {
+          const latest = uiRequestRef.current;
+          if (!latest || latest.kind !== "select") return false;
+
+          if (latest.multiSelect) {
             // MultiSelect: return comma-separated values of selected items
-            if (uiRequest.selectedIndices.length === 0) {
+            if (latest.selectedIndices.length === 0) {
               setUiRequest((prev) =>
                 prev && prev.kind === "select"
                   ? { ...prev, error: t("select.multiselect_empty") }
@@ -4280,15 +4300,15 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               );
               return true;
             }
-            const values = uiRequest.selectedIndices
+            const values = latest.selectedIndices
               .sort((a, b) => a - b)
-              .map((i) => uiRequest.options[i]?.value)
+              .map((i) => latest.options[i]?.value)
               .filter(Boolean)
               .join(", ");
             resolveUIRequest(values);
           } else {
             // Single select: return focused item's value
-            resolveUIRequest(uiRequest.options[uiRequest.focusedIndex]?.value);
+            resolveUIRequest(latest.options[latest.focusedIndex]?.value);
           }
           return true;
         }
@@ -4300,7 +4320,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         if (/^[1-9]$/.test(key.sequence)) {
           const idx = Number.parseInt(key.sequence, 10) - 1;
           if (idx >= 0 && idx < optionCount) {
-            if (uiRequest.multiSelect) {
+            if (req.multiSelect) {
               // multiSelect: jump focus + toggle selection (intentional dual action)
               setUiRequest((prev) => {
                 if (!prev || prev.kind !== "select") return prev;
@@ -4325,10 +4345,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         return false;
       }
 
-      // Input mode handling
+      // Input mode handling — read latest state from ref for buffer/defaultValue.
       if (key.name === "return") {
-        const trimmed = uiRequest.buffer.trim();
-        resolveUIRequest(trimmed === "" ? uiRequest.defaultValue ?? undefined : trimmed);
+        const latest = uiRequestRef.current;
+        if (!latest || latest.kind !== "input") return false;
+        const trimmed = latest.buffer.trim();
+        resolveUIRequest(trimmed === "" ? latest.defaultValue ?? undefined : trimmed);
         return true;
       }
 
@@ -4846,6 +4868,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       // Issue 052 fix: Read gitRoot from context prop, not options.context.
       const gitRoot = context.gitRoot;
 
+      // === 0. Denial tracker: skip recently denied operations ===
+      // FEATURE_066: If the user already denied this exact operation, don't ask again
+      if (isDeniedRecently(denialTrackerRef.current, tool, input)) {
+        const ctx = getDenialContext(denialTrackerRef.current);
+        return `[Skipped] Previously denied operation. ${ctx}`;
+      }
+
       // === 1. Plan mode: block modification tools ===
       // Block file modification tools and undo
       if (mode === 'plan' && (FILE_MODIFICATION_TOOLS.has(tool) || tool === 'undo')) {
@@ -4867,6 +4896,23 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         const command = (input.command as string) ?? '';
         if (isBashReadCommand(command)) {
           return true; // Auto-allowed for safe read-only commands in all modes
+        }
+      }
+
+      // === 2.5. Dangerous bash commands: always require confirmation ===
+      // FEATURE_066: Regardless of permission mode, dangerous commands always need confirmation
+      if (tool === 'bash') {
+        const command = (input.command as string) ?? '';
+        const classification = classifyBashCommand(command);
+        if (classification.level === 'dangerous') {
+          const result = await showConfirmDialog(tool, { ...input, _dangerousCommand: true });
+          if (!result.confirmed) {
+            denialTrackerRef.current = recordDenial(
+              denialTrackerRef.current, tool, input, classification.reason,
+            );
+            return `[Blocked] Dangerous command requires confirmation: ${classification.reason}`;
+          }
+          return result.confirmed;
         }
       }
 
@@ -4940,6 +4986,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         if (!result.confirmed) {
           // Issue 051: show cancellation feedback (now via i18n).
           console.log(chalk.yellow(t("cancelled")));
+          // FEATURE_066: Record denial to avoid re-prompting
+          denialTrackerRef.current = recordDenial(
+            denialTrackerRef.current, tool, input,
+          );
           return false;
         }
 
@@ -4971,17 +5021,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         return CANCELLED_TOOL_RESULT_MESSAGE;
       }
 
-      if (shouldSwitchToAcceptEdits(permissionModeRef.current, options, selectedValue)) {
-        setSessionPermissionMode("accept-edits");
-        return JSON.stringify({
-          choice: selectedValue,
-          mode_switched: true,
-          new_mode: "accept-edits",
-          note: "Permission mode switched to accept-edits. You can now write files, run bash commands, and make edits. Proceed with the implementation.",
-        });
-      }
-
       return selectedValue;
+    },
+    // set_permission_mode tool callback — LLM explicitly switches mode after
+    // confirming with user via ask_user_question (no heuristic guessing).
+    setPermissionMode: (mode: string) => {
+      setSessionPermissionMode(mode as PermissionMode);
     },
     // Multi-question mode: present each question sequentially with back navigation.
     askUserMulti: async (options: import("@kodax/coding").AskUserMultiOptions): Promise<Record<string, string> | undefined> => {
@@ -5137,7 +5182,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     initialMessages: KodaXMessage[] = context.messages,
     inputArtifacts?: readonly KodaXInputArtifact[],
   ): Promise<KodaXResult> => {
-    const events = createStreamingEvents();
+    const events = {
+      ...createStreamingEvents(),
+      getCostReport: inkCostReportRef,
+    };
 
     // Get skills system prompt snippet for progressive disclosure (Issue 056)
 
@@ -5992,6 +6040,33 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             console.log(chalk.dim(`  Messages: ${forked.data.messages.length}`));
             return "forked";
           },
+          rewindSession: async (selector?: string) => {
+            const allowed = enforceSessionTransitionGuard(
+              currentConfig,
+              "Rewinding session",
+              logSessionTransitionGuard,
+            );
+            if (!allowed) {
+              return "blocked";
+            }
+
+            const rewound = await storage.rewind?.(context.sessionId, selector);
+            if (!rewound) {
+              return "failed";
+            }
+
+            context.messages = rewound.messages;
+            context.uiHistory = normalizePersistedUiHistory(rewound.uiHistory);
+            context.title = rewound.title;
+            context.contextTokenSnapshot = undefined;
+            persistedUiHistoryRef.current = context.uiHistory ?? [];
+            setLiveTokenCount(null);
+            clearUIHistory();
+            console.log(chalk.green(`\n[Rewound session${selector ? ` to ${selector}` : " to previous turn"}]`));
+            console.log(chalk.dim(`  Messages: ${rewound.messages.length}`));
+            return "rewound";
+          },
+          getCostReport: () => inkCostReportRef.current?.() ?? null,
           setPlanMode: (enabled: boolean) => {
             setPlanMode(enabled);
           },

@@ -1,11 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import type { KodaXMessage } from '@kodax/ai';
 import type { KodaXSessionArtifactLedgerEntry } from '../types.js';
 import {
+  buildFileContentMessages,
   buildPostCompactAttachments,
   injectPostCompactAttachments,
   DEFAULT_POST_COMPACT_CONFIG,
 } from './post-compact.js';
+import fs from 'fs/promises';
+import path from 'path';
+import os from 'os';
 
 function createLedgerEntry(
   kind: KodaXSessionArtifactLedgerEntry['kind'],
@@ -138,5 +142,77 @@ describe('injectPostCompactAttachments', () => {
 
     expect(result).toHaveLength(2);
     expect(result[0]?.content).toContain('Post-compact');
+  });
+});
+
+describe('buildFileContentMessages', () => {
+  let tmpDir: string;
+
+  async function createTmpFile(name: string, content: string): Promise<string> {
+    const filePath = path.join(tmpDir, name);
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, content, 'utf-8');
+    return filePath;
+  }
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-postcompact-'));
+  });
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  });
+
+  it('returns empty array when budget is 0', async () => {
+    const ledger = [createLedgerEntry('file_modified', '/some/file.ts')];
+    const result = await buildFileContentMessages(ledger, 0);
+    expect(result).toEqual([]);
+  });
+
+  it('returns empty array when ledger has no modified/created files', async () => {
+    const ledger = [
+      createLedgerEntry('file_read', '/some/file.ts'),
+      createLedgerEntry('search_scope', 'query'),
+    ];
+    const result = await buildFileContentMessages(ledger, 10000);
+    expect(result).toEqual([]);
+  });
+
+  it('reads a modified file and creates a system message', async () => {
+    const filePath = await createTmpFile('test.ts', 'const x = 1;\nconst y = 2;\n');
+    const ledger = [createLedgerEntry('file_modified', filePath)];
+    const result = await buildFileContentMessages(ledger, 10000);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.role).toBe('system');
+    expect(typeof result[0]?.content === 'string' && result[0].content).toContain('const x = 1');
+    expect(typeof result[0]?.content === 'string' && result[0].content).toContain(filePath);
+  });
+
+  it('skips files that do not exist', async () => {
+    const ledger = [createLedgerEntry('file_modified', '/nonexistent/file.ts')];
+    const result = await buildFileContentMessages(ledger, 10000);
+    expect(result).toEqual([]);
+  });
+
+  it('deduplicates files by path (keeps most recent)', async () => {
+    const filePath = await createTmpFile('dup.ts', 'content');
+    const ledger = [
+      createLedgerEntry('file_modified', filePath, { timestamp: '2026-01-01T00:00:00Z' } as Partial<KodaXSessionArtifactLedgerEntry>),
+      createLedgerEntry('file_modified', filePath, { timestamp: '2026-01-02T00:00:00Z' } as Partial<KodaXSessionArtifactLedgerEntry>),
+    ];
+    const result = await buildFileContentMessages(ledger, 10000);
+    expect(result).toHaveLength(1);
+  });
+
+  it('respects maxFiles from config', async () => {
+    const files = await Promise.all(
+      Array.from({ length: 8 }, (_, i) => createTmpFile(`f${i}.ts`, `file ${i}`)),
+    );
+    const ledger = files.map((f) => createLedgerEntry('file_modified', f));
+    const result = await buildFileContentMessages(ledger, 100000, {
+      ...DEFAULT_POST_COMPACT_CONFIG,
+      maxFiles: 3,
+    });
+    expect(result.length).toBeLessThanOrEqual(3);
   });
 });

@@ -17,6 +17,7 @@ import { toolGlob } from './glob.js';
 import { toolGrep } from './grep.js';
 import { toolUndo } from './undo.js';
 import { toolAskUserQuestion } from './ask-user-question.js';
+import { toolSetPermissionMode } from './set-permission-mode.js';
 import { toolRepoOverview } from './repo-overview.js';
 import { toolChangedScope } from './changed-scope.js';
 import { toolChangedDiff, toolChangedDiffBundle } from './changed-diff.js';
@@ -532,30 +533,26 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
           description: 'Allow the user to select multiple options (space to toggle, enter to confirm). Only applies to kind="select". Returns comma-separated values.',
         },
         default: { type: 'string', description: 'Optional default choice (for select) or default text (for input)' },
-        intent: {
-          type: 'string',
-          enum: ['generic', 'plan-handoff'],
-          description: 'Optional ask intent. Use "plan-handoff" only after the plan is complete and you need permission to continue in accept-edits mode.',
-        },
-        target_mode: {
-          type: 'string',
-          enum: ['accept-edits'],
-          description: 'Target permission mode for a plan handoff request.',
-        },
-        scope: {
-          type: 'string',
-          enum: ['session'],
-          description: 'Scope of the permission change. Only session scope is supported.',
-        },
-        resume_behavior: {
-          type: 'string',
-          enum: ['continue'],
-          description: 'Whether execution should continue immediately after approval.',
-        },
       },
       required: ['question'],
     },
     handler: toolAskUserQuestion,
+  },
+  {
+    name: 'set_permission_mode',
+    description: 'Switch the session permission mode. Use this after the user explicitly confirms a mode change (e.g. after plan completion, call ask_user_question first, then call this tool only if the user confirmed).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        mode: {
+          type: 'string',
+          enum: ['accept-edits'],
+          description: 'Target permission mode. "accept-edits" enables file writes, edits, and bash commands.',
+        },
+      },
+      required: ['mode'],
+    },
+    handler: toolSetPermissionMode,
   },
   {
     name: 'repo_overview',

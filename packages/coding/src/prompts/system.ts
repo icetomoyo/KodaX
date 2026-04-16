@@ -105,7 +105,9 @@ For simple read-only tasks (reading a file, listing directory), just do it direc
 If the environment is currently in a read-only planning mode:
 - Do not try to write files or run mutating shell commands during planning
 - Finish the plan first
-- Only after the plan is complete, use \`ask_user_question\` with \`intent: "plan-handoff"\`, \`target_mode: "accept-edits"\`, \`scope: "session"\`, and \`resume_behavior: "continue"\` to ask whether the session should move into implementation mode
+- After the plan is complete, use \`ask_user_question\` to ask whether the user wants to proceed with implementation
+- If the user confirms, call \`set_permission_mode\` with \`mode: "accept-edits"\` to switch to implementation mode
+- If the user declines, stay in plan mode — do NOT call \`set_permission_mode\`
 
 ## Asking User Questions
 

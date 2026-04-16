@@ -197,6 +197,8 @@ export interface KodaXEvents {
   onComplete?: () => void;
   onError?: (error: Error) => void;
   onManagedTaskStatus?: (status: KodaXManagedTaskStatusEvent) => void;
+  /** Returns a formatted cost report for the current session. Set by agent at session start. */
+  getCostReport?: { current: (() => string) | null };
 
   // 用户交互（可选，由 REPL 层实现）
   /** Tool execution hook - called before tool execution, return false to block - 工具执行前回调 */
@@ -211,6 +213,8 @@ export interface KodaXEvents {
   askUserMulti?: (options: AskUserMultiOptions) => Promise<Record<string, string> | undefined>;
   /** Ask user for free-text input - 自由文本输入 (Issue 112) */
   askUserInput?: (options: { question: string; default?: string }) => Promise<string | undefined>;
+  /** Switch session permission mode — called by set_permission_mode tool. */
+  setPermissionMode?: (mode: string) => void;
   /** Managed-worker role currently allowed to emit structured protocol payload. */
 }
 
@@ -298,6 +302,15 @@ export interface KodaXMcpServerConfig {
   connect?: KodaXMcpConnectMode;
   startupTimeoutMs?: number;
   requestTimeoutMs?: number;
+  /** OAuth 2.0 configuration for authenticated MCP servers. */
+  auth?: {
+    readonly type: 'oauth2';
+    readonly clientId: string;
+    readonly authorizationUrl: string;
+    readonly tokenUrl: string;
+    readonly scopes?: readonly string[];
+    readonly redirectPort?: number;
+  };
 }
 /** Flat map of MCP server configs, keyed under `mcpServers` in config.json. */
 export type KodaXMcpServersConfig = Record<string, KodaXMcpServerConfig>;
@@ -1053,10 +1066,6 @@ export interface AskUserQuestionOptions {
   }>;
   multiSelect?: boolean;
   default?: string;
-  intent?: "generic" | "plan-handoff";
-  targetMode?: "accept-edits";
-  scope?: "session";
-  resumeBehavior?: "continue";
 }
 
 export interface KodaXToolExecutionContext {
@@ -1074,6 +1083,8 @@ export interface KodaXToolExecutionContext {
   askUserMulti?: (options: AskUserMultiOptions) => Promise<Record<string, string> | undefined>;
   /** Ask user for free-text input - 自由文本输入 (Issue 112) */
   askUserInput?: (options: { question: string; default?: string }) => Promise<string | undefined>;
+  /** Switch session permission mode — called by set_permission_mode tool. */
+  setPermissionMode?: (mode: string) => void;
   /** Abort signal for cancelling in-flight tool operations (Issue 113) */
   abortSignal?: AbortSignal;
   managedProtocolRole?: Exclude<KodaXTaskRole, 'direct'>;

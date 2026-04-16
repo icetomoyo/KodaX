@@ -23,6 +23,7 @@ import {
   SessionErrorMetadata,
 } from './types.js';
 import type { KodaXMessage, KodaXStreamResult } from '@kodax/ai';
+import { createCostTracker, recordUsage, getSummary, formatCostReport, type CostTracker } from '@kodax/ai';
 import path from 'path';
 import fsSync from 'fs';
 import { KodaXClient } from './client.js';
@@ -47,7 +48,7 @@ import {
 import { buildSystemPrompt } from './prompts/index.js';
 import { generateSessionId, extractTitleFromMessages } from './session.js';
 import { checkIncompleteToolCalls } from './messages.js';
-import { compact as intelligentCompact, needsCompaction, microcompact, DEFAULT_MICROCOMPACTION_CONFIG, buildPostCompactAttachments, injectPostCompactAttachments, type CompactionConfig, type CompactionUpdate } from '@kodax/agent';
+import { compact as intelligentCompact, needsCompaction, microcompact, DEFAULT_MICROCOMPACTION_CONFIG, buildPostCompactAttachments, buildFileContentMessages, injectPostCompactAttachments, DEFAULT_POST_COMPACT_CONFIG, type CompactionConfig, type CompactionUpdate } from '@kodax/agent';
 import { loadCompactionConfig } from './compaction-config.js';
 import { estimateTokens } from './tokenizer.js';
 import { KODAX_MAX_INCOMPLETE_RETRIES, KODAX_MAX_MAXTOKENS_RETRIES, PROMISE_PATTERN, CANCELLED_TOOL_RESULT_PREFIX, CANCELLED_TOOL_RESULT_MESSAGE } from './constants.js';
@@ -1613,6 +1614,12 @@ export async function runKodaX(
     events.onSessionStart?.({ provider: initialProvider.name, sessionId });
     await emitActiveExtensionEvent('session:start', { provider: initialProvider.name, sessionId });
 
+    // Cost tracking — lightweight session-scoped tracker
+    let costTracker: CostTracker = createCostTracker();
+    if (events.getCostReport) {
+      events.getCostReport.current = () => formatCostReport(getSummary(costTracker));
+    }
+
     let managedProtocolContinueAttempted = false;
     let compactConsecutiveFailures = 0;
     const COMPACT_CIRCUIT_BREAKER_LIMIT = 3;
@@ -1690,15 +1697,30 @@ export async function runKodaX(
           if (result.compacted) {
             compacted = result.messages;
 
-            // Post-compact reconstruction: inject artifact ledger summary
+            // Post-compact reconstruction: inject artifact ledger summary + file content
             if (result.artifactLedger && result.artifactLedger.length > 0) {
               const freedTokens = result.tokensBefore - result.tokensAfter;
               const attachments = buildPostCompactAttachments(
                 result.artifactLedger,
                 freedTokens,
               );
-              if (attachments.totalTokens > 0) {
-                compacted = injectPostCompactAttachments(compacted, attachments);
+
+              // Read recently modified files and inject content (async I/O)
+              // Budget = total post-compact budget minus ledger tokens
+              const totalPostCompactBudget = Math.floor(freedTokens * DEFAULT_POST_COMPACT_CONFIG.budgetRatio);
+              const fileBudget = Math.max(0, totalPostCompactBudget - attachments.totalTokens);
+              const fileMessages = fileBudget > 0
+                ? await buildFileContentMessages(result.artifactLedger, fileBudget)
+                : [];
+
+              const fullAttachments = {
+                ...attachments,
+                fileMessages,
+                totalTokens: attachments.totalTokens + estimateTokens(fileMessages as KodaXMessage[]),
+              };
+
+              if (fullAttachments.totalTokens > 0) {
+                compacted = injectPostCompactAttachments(compacted, fullAttachments);
               }
             }
 
@@ -2061,6 +2083,18 @@ export async function runKodaX(
       // 流式输出结束，通知 CLI 层
       events.onStreamEnd?.();
       await emitActiveExtensionEvent('stream:end', undefined);
+
+      // Record cost for this LLM call
+      if (result.usage) {
+        costTracker = recordUsage(costTracker, {
+          provider: currentProviderName,
+          model: currentModelOverride ?? 'unknown',
+          inputTokens: result.usage.inputTokens,
+          outputTokens: result.usage.outputTokens,
+          cacheReadTokens: result.usage.cachedReadTokens,
+          cacheWriteTokens: result.usage.cachedWriteTokens,
+        });
+      }
 
       lastText = result.textBlocks.map(b => b.text).join(' ');
       const preAssistantTokenSnapshot = createContextTokenSnapshot(compacted, result.usage);

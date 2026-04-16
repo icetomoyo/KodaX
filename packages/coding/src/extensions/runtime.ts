@@ -2,6 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { pathToFileURL } from 'url';
 import type { KodaXMessage, KodaXReasoningMode } from '@kodax/ai';
+import { exec as extensionExec, webhook as extensionWebhook } from './helpers.js';
 import {
   registerModelProvider,
 } from '@kodax/ai';
@@ -880,6 +881,8 @@ export class KodaXExtensionRuntime {
       config: this.config,
       runtime: this.createExtensionApiRuntimeController(source, logger, disposables),
       persistence: createExtensionStore(source.id),
+      exec: extensionExec,
+      webhook: extensionWebhook,
     };
   }
 

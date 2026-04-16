@@ -62,6 +62,7 @@ export interface CurrentConfig {
 export type SessionLoadStatus = 'loaded' | 'missing' | 'blocked';
 export type SessionBranchSwitchStatus = 'switched' | 'missing' | 'blocked';
 export type SessionForkStatus = 'forked' | 'failed' | 'blocked';
+export type SessionRewindStatus = 'rewound' | 'failed' | 'blocked';
 
 export interface CommandCallbacks {
   exit: () => void | Promise<void>;
@@ -95,6 +96,8 @@ export interface CommandCallbacks {
   switchSessionBranch?: (selector: string) => Promise<SessionBranchSwitchStatus>;
   labelSessionBranch?: (selector: string, label?: string) => Promise<boolean>;
   forkSession?: (selector?: string) => Promise<SessionForkStatus>;
+  rewindSession?: (selector?: string) => Promise<SessionRewindStatus>;
+  getCostReport?: () => string | null;
   ui: UIContext;
 }
 

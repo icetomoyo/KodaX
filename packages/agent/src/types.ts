@@ -316,6 +316,7 @@ export interface KodaXSessionStorage {
     options?: KodaXSessionNavigationOptions,
   ): Promise<KodaXSessionData | null>;
   setLabel?(id: string, selector: string, label?: string): Promise<KodaXSessionData | null>;
+  rewind?(id: string, selector?: string): Promise<KodaXSessionData | null>;
   fork?(
     id: string,
     selector?: string,

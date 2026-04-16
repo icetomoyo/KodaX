@@ -659,6 +659,26 @@ function cloneForkableEntry(
  * @param targetEntryId - The entry ID to rewind to (inclusive)
  * @returns A new lineage with entries truncated after the target, or null if target not found
  */
+/**
+ * Find the entry ID of the second-to-last user message in the lineage.
+ * Used by `/rewind` (no argument) to go back one conversational turn.
+ * Returns null if fewer than 2 user messages exist.
+ */
+export function findPreviousUserEntryId(lineage: KodaXSessionLineage): string | null {
+  const entries = lineage.entries;
+  let found = 0;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i];
+    if (entry && entry.type === 'message' && entry.message.role === 'user') {
+      found++;
+      if (found === 2) {
+        return entry.id;
+      }
+    }
+  }
+  return null;
+}
+
 export function rewindSessionLineage(
   lineage: KodaXSessionLineage,
   targetEntryId: string,

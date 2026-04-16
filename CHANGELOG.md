@@ -8,6 +8,30 @@ All notable changes to this project will be documented in this file.
 
 <!-- last-sync: HEAD -->
 
+### Added
+- **FEATURE_064 — Multi-Provider Cost Observatory**: Session cost tracking with `recordUsage()` after each LLM call; `/cost` command shows per-provider and per-role cost breakdown; built-in rate table for 11 providers
+- **FEATURE_065 — MCP OAuth wiring**: OAuth 2.0 + PKCE token acquisition wired into MCP runtime `doConnect()`; cached token reuse and refresh; Authorization header injection for authenticated MCP servers
+- **FEATURE_066 — Permission Hardening**: Bash command risk classifier (safe/normal/dangerous) wired into InkREPL `beforeToolExecute`; dangerous commands always require confirmation; session-scoped denial tracker prevents repeated prompts
+- **FEATURE_067 — Child Agent Execution**: `dispatch-child-tasks` tool with read-only and write fan-out; child-executor with structured briefing, semaphore-based parallelism, abort propagation, and evaluator-assisted merge
+- **FEATURE_068 — Worktree Isolation Tool**: `worktree_create` / `worktree_remove` tools with path traversal guard and safety checks
+- **FEATURE_069 — Session Rewind & Shell Completion**: `/rewind [entry-id|label]` command for in-place session truncation; `kodax completion bash/zsh/fish` CLI subcommand
+- **FEATURE_070 — Context Engine V2**: Microcompaction integration in agent loop; bash-intent extraction for smarter placeholders; user message protection in compression; analysis scratchpad in summary generator; post-compact artifact ledger injection + file content re-injection (top-N modified files); circuit breaker + graceful degradation for compaction failures
+- **FEATURE_071 — AMA Managed Task Resilience**: Worker checkpoint persistence after each AMA phase; `findValidCheckpoint()` with 1h TTL + git commit validation; `resumeManagedTask()` for mid-execution recovery
+- **Extension API helpers**: `api.exec()` for sandboxed shell command execution (env whitelist, timeout); `api.webhook()` for HTTP webhook with timeout support
+
+### Changed
+- **FEATURE_063 — Hook system cancelled**: Standalone hook system (`packages/coding/src/hooks/`) removed (~600 lines); executor capabilities extracted to Extension API helpers (`api.exec()` / `api.webhook()`); Extension system is the single extensibility mechanism
+- **FEATURE_064 — Status bar cost display descoped**: Cost information available only via `/cost` command, not in status bar
+
+### Fixed
+- **Provider resilience**: Backoff improvements, Retry-After header support, ECONNRESET handling, context overflow recovery
+- **Ask-user**: Scroll window, index mapping, multi-question support; ESC cancellation propagation (issue #114)
+- **Tool group refs**: Preserved on ledger kind switch (issue #115)
+- **AMA H0**: Continuation path truthy bug + validation conflict fix
+- **Thinking blocks**: Preserved for Kimi compatibility
+- **Stream resilience**: Stale-round guard (issue #116)
+- **Security**: Worktree path traversal guard; hooks/OAuth/Docker hardening; denial-tracker TTL
+
 ---
 
 ## [0.7.17] - 2026-04-12

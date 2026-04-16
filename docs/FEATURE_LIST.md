@@ -1,6 +1,6 @@
 # Feature 总表
 
-> Last updated: 2026-04-12
+> Last updated: 2026-04-16
 
 > 中文阅读说明：
 > 这份 `FEATURE_LIST` 是 roadmap 的总索引。
@@ -15,16 +15,17 @@
 |---|---|
 | Tracked feature IDs | `001-071` |
 | Total tracked features | `71` |
-| Completed | `55` |
+| Completed | `62` |
+| Cancelled | `1` |
 | InProgress | `1` |
-| Planned | `15` |
+| Planned | `7` |
 | Current released version | `v0.7.17` |
 
 ### 各版本待做分布
 
 | Version | Planned features |
 |---|---|
-| `v0.7.18` | `9` |
+| `v0.7.18` | `0` (all complete or cancelled) |
 | `v0.7.20` | `1` |
 | `v0.7.30` | `1` |
 | `v0.8.0` | `3` |
@@ -49,15 +50,7 @@
 | `059` | Managed Task Structured Protocol V2 | Internal | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_059-managed-task-structured-protocol-v2) |
 | `060` | Claude-Aligned Bounded-Memory Runtime and OOM Hardening | Internal | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_060-claude-aligned-bounded-memory-runtime-and-oom-hardening) |
 | `026` | Roadmap Integrity and Planning Hygiene | Internal | High | `v0.7.20` | [v0.7.20](features/v0.7.20.md#feature_026-roadmap-integrity-and-planning-hygiene) |
-| `063` | Extensible Hook & Automation Substrate | Enhancement | High | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_063-extensible-hook--automation-substrate) |
-| `064` | Multi-Provider Cost Observatory | Enhancement | High | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_064-multi-provider-cost-observatory) |
-| `065` | MCP Protocol Maturity | Enhancement | Medium | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_065-mcp-protocol-maturity) | **基础已完成 (v0.7.16)**：传输层、工具链路、fallback、配置扁平化。剩余：OAuth、Elicitation、ACP 链路 (#108)、mcp_get_prompt (#109)、/mcp 命令 (#110)、SSE/HTTP 测试 (#111) |
-| `066` | Permission Hardening | Enhancement | Medium | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_066-permission-hardening) |
-| `067` | Child Agent Execution — AMA-Native Parallel Task Dispatch | Enhancement | High | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_067-child-agent-execution--ama-native-parallel-task-dispatch) | read-only fan-out; Scout 声明 childBundles + child-executor + 结构化简报 + 锚定合并; write fan-out 留 v0.8.0 |
-| `068` | Worktree Isolation Tool | Enhancement | Medium | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_068-worktree-isolation-tool) |
-| `069` | Session Rewind & Shell Completion | Enhancement | Medium | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_069-session-rewind--shell-completion) |
-| `070` | Context Engine V2 — Multi-Layer Compaction & Post-Compact Reconstruction | Enhancement | High | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_070-context-engine-v2--multi-layer-compaction--post-compact-reconstruction) | 吸收 069-C; 基于 Factory.ai + Claude Code 对标分析 |
-| `071` | AMA Managed Task Resilience — Worker Checkpoint & Mid-Execution Recovery | Enhancement | High | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_071-ama-managed-task-resilience--worker-checkpoint--mid-execution-recovery) | AMA H1/H2 流程中断后从 checkpoint 恢复；含 recovery 消息渲染修正 |
+| `063` | ~~Extensible Hook & Automation Substrate~~ | Enhancement | ~~High~~ | ~~`v0.7.18`~~ | [v0.7.18](features/v0.7.18.md#feature_063-extensible-hook--automation-substrate) | **Cancelled**: Extension 系统已覆盖，executor 能力提取为 `api.exec()`/`api.webhook()` |
 | `030` | Multi-Surface Delivery | Enhancement | High | `v1.0.0` | [v1.0.0](features/v1.0.0.md#feature_030-multi-surface-delivery) |
 
 ---
@@ -140,6 +133,14 @@
 | `038` | Official Sandbox Extension | `v0.7.30` (unreleased) | [v0.7.30](features/v0.7.30.md#feature_038-official-sandbox-extension) |
 | `061` | Scout-First AMA Architecture Simplification | `v0.7.16` | [v0.7.16](features/v0.7.16.md#feature_061-scout-first-ama-architecture-simplification) |
 | `062` | Managed Task Budget Simplification | `v0.7.16` | [v0.7.16](features/v0.7.16.md#feature_062-managed-task-budget-simplification) |
+| `064` | Multi-Provider Cost Observatory | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_064-multi-provider-cost-observatory) |
+| `065` | MCP Protocol Maturity | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_065-mcp-protocol-maturity) |
+| `066` | Permission Hardening | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_066-permission-hardening) |
+| `067` | Child Agent Execution — AMA-Native Parallel Task Dispatch | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_067-child-agent-execution--ama-native-parallel-task-dispatch) |
+| `068` | Worktree Isolation Tool | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_068-worktree-isolation-tool) |
+| `069` | Session Rewind & Shell Completion | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_069-session-rewind--shell-completion) |
+| `070` | Context Engine V2 — Multi-Layer Compaction & Post-Compact Reconstruction | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_070-context-engine-v2--multi-layer-compaction--post-compact-reconstruction) |
+| `071` | AMA Managed Task Resilience — Worker Checkpoint & Mid-Execution Recovery | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_071-ama-managed-task-resilience--worker-checkpoint--mid-execution-recovery) |
 
 > `FEATURE_051` close-out posture: keep the current REPL status/footer/task/message surfaces frozen, limit follow-up work to invisible substrate maturity for transcript, scroll/selection, and input behavior, and treat the design doc as a completed close-out record rather than an open rollout plan.
 
@@ -147,7 +148,7 @@
 
 > `FEATURE_031` now treats inline image refs as true structured multimodal inputs: provider-facing text uses stable image anchors such as `[Image #1]` and clean unavailable-image placeholders instead of leaking raw `@image-path` syntax.
 
-> `v0.7.18` 主题：Engineering Shell Maturity（工程外壳成熟度）。基于 KodaX vs Claude Code 全面对比分析，补齐工程外壳层面的真实差距：Hook 自动化管道 (063)、多 Provider 成本追踪 (064)、MCP 协议成熟 (065)、权限细化 (066)、上下文压缩引擎 V2 (070, 基于 Factory.ai + Claude Code 对标)。八个 Feature 基本无相互依赖，可并行开发。IDE Bridge (#093) 在 Vibe Coding 时代已降级为长期可选目标。
+> `v0.7.18` 主题：Engineering Shell Maturity（工程外壳成熟度）。基于 KodaX vs Claude Code 全面对比分析，补齐工程外壳层面的真实差距。8 个 Feature 全部完成，1 个取消 (063 Hook — 被 Extension 系统吸收，executor 能力提取为 `api.exec()`/`api.webhook()`)。status bar 成本显示 descoped (064)。
 
 ---
 

@@ -1,5 +1,4 @@
 import type { AskUserQuestionOptions } from "@kodax/coding";
-import type { PermissionMode } from "../../permission/types.js";
 
 export interface SelectOption {
   label: string;
@@ -18,17 +17,6 @@ export function toSelectOptions(
   }));
 }
 
-export function isPlanHandoffRequest(
-  options: AskUserQuestionOptions,
-): boolean {
-  return (
-    options.intent === "plan-handoff" &&
-    options.targetMode === "accept-edits" &&
-    options.scope === "session" &&
-    options.resumeBehavior === "continue"
-  );
-}
-
 export function getAskUserDialogTitle(
   options: AskUserQuestionOptions,
 ): string {
@@ -41,12 +29,6 @@ export function resolveAskUserDefaultChoice(
 ): string {
   if (!options.options || options.options.length === 0) return "";
 
-  // Plan-handoff: empty Enter defaults to the FIRST option (accept/switch),
-  // not the last (cancel). This matches user expectation: press Enter to confirm.
-  if (isPlanHandoffRequest(options)) {
-    return options.options[0]?.value ?? "";
-  }
-
   const cancelOption = options.options.find((option) => {
     const label = option.label.trim().toLowerCase();
     const value = option.value.trim().toLowerCase();
@@ -54,28 +36,4 @@ export function resolveAskUserDefaultChoice(
   });
 
   return cancelOption?.value ?? "";
-}
-
-export function shouldSwitchToAcceptEdits(
-  currentMode: PermissionMode,
-  options: AskUserQuestionOptions,
-  selectedValue: string,
-): boolean {
-  if (currentMode !== "plan" || !isPlanHandoffRequest(options)) {
-    return false;
-  }
-
-  if (!options.options || options.options.length === 0) return false;
-
-  // Case 1: An option has value === targetMode ("accept-edits").
-  // The LLM correctly set the accept option's value. Strict match.
-  if (options.options.some((o) => o.value === options.targetMode)) {
-    return selectedValue === options.targetMode;
-  }
-
-  // Case 2: LLM used arbitrary values (value falls back to label text).
-  // Plan-handoff is a confirmation: switch unless the user picked the
-  // dismiss (last) option.  Convention: accept = first, cancel = last.
-  const lastOption = options.options[options.options.length - 1];
-  return selectedValue !== (lastOption?.value ?? "");
 }
