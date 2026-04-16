@@ -157,6 +157,8 @@ export interface KodaXEvents {
   onThinkingEnd?: (thinking: string) => void;
   onToolUseStart?: (tool: { name: string; id: string; input?: Record<string, unknown> }) => void;
   onToolResult?: (result: { id: string; name: string; content: string }) => void;
+  /** FEATURE_067 v2: Real-time tool execution progress update. Updates the tool's display in the REPL transcript. */
+  onToolProgress?: (update: { id: string; message: string }) => void;
   onToolInputDelta?: (
     toolName: string,
     partialJson: string,
@@ -195,6 +197,8 @@ export interface KodaXEvents {
   onComplete?: () => void;
   onError?: (error: Error) => void;
   onManagedTaskStatus?: (status: KodaXManagedTaskStatusEvent) => void;
+  /** Returns a formatted cost report for the current session. Set by agent at session start. */
+  getCostReport?: { current: (() => string) | null };
 
   // 用户交互（可选，由 REPL 层实现）
   /** Tool execution hook - called before tool execution, return false to block - 工具执行前回调 */
@@ -205,6 +209,12 @@ export interface KodaXEvents {
   ) => Promise<boolean | string>;
   /** Ask user a question interactively - Issue 069 - 交互式向用户提问 */
   askUser?: (options: AskUserQuestionOptions) => Promise<string>;
+  /** Ask user multiple independent questions sequentially - 多问题顺序提问 */
+  askUserMulti?: (options: AskUserMultiOptions) => Promise<Record<string, string> | undefined>;
+  /** Ask user for free-text input - 自由文本输入 (Issue 112) */
+  askUserInput?: (options: { question: string; default?: string }) => Promise<string | undefined>;
+  /** Switch session permission mode — called by set_permission_mode tool. */
+  setPermissionMode?: (mode: string) => void;
   /** Managed-worker role currently allowed to emit structured protocol payload. */
 }
 
@@ -271,23 +281,39 @@ export interface KodaXProviderPolicyHints {
   workIntent?: KodaXTaskWorkIntent;
 }
 
-export type KodaXMcpTransport = 'stdio';
+export type KodaXMcpTransport = 'stdio' | 'sse' | 'streamable-http';
 export type KodaXMcpConnectMode = 'lazy' | 'prewarm' | 'disabled';
 
 export interface KodaXMcpServerConfig {
-  type: KodaXMcpTransport;
-  command: string;
+  /** Transport type. Defaults to 'stdio' when omitted. */
+  type?: KodaXMcpTransport;
+  /** stdio: executable command. */
+  command?: string;
+  /** stdio: command arguments. */
   args?: string[];
+  /** stdio: working directory for the spawned process. */
   cwd?: string;
+  /** stdio: extra environment variables for the spawned process. */
   env?: Record<string, string>;
+  /** sse / streamable-http: server endpoint URL. */
+  url?: string;
+  /** sse / streamable-http: extra HTTP headers (e.g. Authorization). */
+  headers?: Record<string, string>;
   connect?: KodaXMcpConnectMode;
   startupTimeoutMs?: number;
   requestTimeoutMs?: number;
+  /** OAuth 2.0 configuration for authenticated MCP servers. */
+  auth?: {
+    readonly type: 'oauth2';
+    readonly clientId: string;
+    readonly authorizationUrl: string;
+    readonly tokenUrl: string;
+    readonly scopes?: readonly string[];
+    readonly redirectPort?: number;
+  };
 }
-export interface KodaXMcpConfig {
-  servers?: Record<string, KodaXMcpServerConfig>;
-  cacheDir?: string;
-}
+/** Flat map of MCP server configs, keyed under `mcpServers` in config.json. */
+export type KodaXMcpServersConfig = Record<string, KodaXMcpServerConfig>;
 
 export type KodaXRepoIntelligenceMode =
   | 'auto'
@@ -459,6 +485,8 @@ export interface KodaXChildAgentResult {
   contradictions: string[];
   artifactPaths?: string[];
   sessionId?: string;
+  /** Actual iterations consumed by this child agent. */
+  actualIterations?: number;
 }
 
 export interface KodaXParentReductionContract {
@@ -467,6 +495,23 @@ export interface KodaXParentReductionContract {
   collapseChildTranscripts: boolean;
   summary: string;
   requiredArtifacts: string[];
+}
+
+export interface KodaXChildExecutionResult {
+  readonly results: readonly KodaXChildAgentResult[];
+  readonly mergedFindings: readonly KodaXChildFinding[];
+  readonly mergedArtifacts: readonly string[];
+  readonly totalTokensUsed: number;
+  readonly cancelledChildren: readonly string[];
+  /** Worktree paths for write children, keyed by childId. Available for evaluator review. */
+  readonly worktreePaths?: ReadonlyMap<string, string>;
+}
+
+export interface KodaXChildFinding {
+  readonly childId: string;
+  readonly objective: string;
+  readonly evidence: readonly string[];
+  readonly artifacts: readonly string[];
 }
 
 export interface KodaXFanoutSchedulerInput {
@@ -643,6 +688,12 @@ export interface KodaXManagedBudgetSnapshot {
   extensionReason?: string;
 }
 
+/** Mutable tracker for Scout mutation scope — shared between worker events and protocol tool. */
+export interface ManagedMutationTracker {
+  readonly files: Map<string, number>;
+  totalOps: number;
+}
+
 export interface KodaXContextOptions {
   /** Project root used for project-scoped prompts, permissions, and path policy. */
   gitRoot?: string | null;
@@ -690,6 +741,18 @@ export interface KodaXContextOptions {
     enabled: boolean;
     role: Exclude<KodaXTaskRole, 'direct'>;
   };
+  /** Mutable mutation tracker shared between worker events and the protocol tool handler. */
+  mutationTracker?: ManagedMutationTracker;
+  /** FEATURE_067 v2: Callback for dispatch_child_tasks to register write worktree paths. */
+  registerChildWriteWorktrees?: (worktreePaths: ReadonlyMap<string, string>) => void;
+  /** FEATURE_067 v3: Tool names to exclude from API-level tool list (child agents). */
+  excludeTools?: readonly string[];
+  /**
+   * FEATURE_067 v3: Override the entire system prompt for this run.
+   * When set, buildSystemPromptSnapshot is skipped — only this string is used.
+   * Used for child agents that need a focused, lightweight prompt instead of the full system.
+   */
+  systemPromptOverride?: string;
   /** Optional structured metadata carried into the managed task contract. */
   taskMetadata?: Record<string, KodaXJsonValue>;
   /** Optional structured verification contract carried into managed tasks. */
@@ -704,7 +767,6 @@ export interface KodaXOptions {
   reasoningMode?: KodaXReasoningMode;
   agentMode?: KodaXAgentMode;
   maxIter?: number;
-  parallel?: boolean;
   session?: KodaXSessionOptions;
   context?: KodaXContextOptions;
   events?: KodaXEvents;
@@ -837,6 +899,9 @@ export interface KodaXManagedTaskRuntimeState {
     requiredEvidence?: string[];
     reviewFilesOrAreas?: string[];
     evidenceAcquisitionMode?: 'overview' | 'diff-bundle' | 'diff-slice' | 'file-read';
+    harnessRationale?: string;
+    blockingEvidence?: string[];
+    directCompletionReady?: 'yes' | 'no';
     skillSummary?: string;
     executionObligations?: string[];
     verificationObligations?: string[];
@@ -867,6 +932,12 @@ export interface KodaXManagedTaskRuntimeState {
   globalWorkBudget?: number;
   budgetUsage?: number;
   budgetApprovalRequired?: boolean;
+  /** FEATURE_067: Evaluator review prompt for write fan-out diffs. */
+  childWriteReviewPrompt?: string;
+  /** FEATURE_067: Number of write child diffs pending evaluator review. */
+  childWriteDiffCount?: number;
+  /** FEATURE_067 v2: Worktree paths from dispatch_child_tasks write fan-out, keyed by childId. */
+  childWriteWorktreePaths?: ReadonlyMap<string, string>;
 }
 
 export interface KodaXManagedTask {
@@ -903,6 +974,9 @@ export interface KodaXManagedScoutPayload {
   reviewFilesOrAreas?: string[];
   evidenceAcquisitionMode?: 'overview' | 'diff-bundle' | 'diff-slice' | 'file-read';
   confirmedHarness?: KodaXTaskRoutingDecision['harnessProfile'];
+  harnessRationale?: string;
+  blockingEvidence?: string[];
+  directCompletionReady?: 'yes' | 'no';
   userFacingText?: string;
   skillMap?: {
     skillSummary?: string;
@@ -964,18 +1038,34 @@ export interface KodaXResult {
 // ============== 工具执行上下文 ==============
 // Simplified - no permission checks in core
 
-export interface AskUserQuestionOptions {
+/** A single question item used in multi-question mode. */
+export interface AskUserQuestionItem {
   question: string;
+  header?: string;
   options: Array<{
     label: string;
     description?: string;
     value: string;
   }>;
+  multiSelect?: boolean;
+}
+
+/** Options for multi-question mode — multiple independent questions in one tool call. */
+export interface AskUserMultiOptions {
+  questions: AskUserQuestionItem[];
+}
+
+export interface AskUserQuestionOptions {
+  question: string;
+  kind?: "select" | "input";
+  /** Required for kind="select", ignored for kind="input". */
+  options?: Array<{
+    label: string;
+    description?: string;
+    value: string;
+  }>;
+  multiSelect?: boolean;
   default?: string;
-  intent?: "generic" | "plan-handoff";
-  targetMode?: "accept-edits";
-  scope?: "session";
-  resumeBehavior?: "continue";
 }
 
 export interface KodaXToolExecutionContext {
@@ -987,8 +1077,35 @@ export interface KodaXToolExecutionContext {
   executionCwd?: string;
   /** Shared extension capability runtime used by retrieval-family tools. */
   extensionRuntime?: KodaXExtensionRuntime;
-  /** Ask user a question interactively - 交互式向用户提问 (Issue 069) */
+  /** Ask user a question interactively (select mode) - 交互式向用户提问 (Issue 069) */
   askUser?: (options: AskUserQuestionOptions) => Promise<string>;
+  /** Ask user multiple independent questions sequentially - 多问题顺序提问 */
+  askUserMulti?: (options: AskUserMultiOptions) => Promise<Record<string, string> | undefined>;
+  /** Ask user for free-text input - 自由文本输入 (Issue 112) */
+  askUserInput?: (options: { question: string; default?: string }) => Promise<string | undefined>;
+  /** Switch session permission mode — called by set_permission_mode tool. */
+  setPermissionMode?: (mode: string) => void;
+  /** Abort signal for cancelling in-flight tool operations (Issue 113) */
+  abortSignal?: AbortSignal;
   managedProtocolRole?: Exclude<KodaXTaskRole, 'direct'>;
   emitManagedProtocol?: (payload: Partial<KodaXManagedProtocolPayload>) => void;
+  /** FEATURE_067 v2: Parent agent's provider/model for child agent inheritance. */
+  parentAgentConfig?: {
+    readonly provider: string;
+    readonly model?: string;
+    readonly reasoningMode?: KodaXReasoningMode;
+  };
+  /**
+   * @deprecated FEATURE_067: Removed — use reportToolProgress instead.
+   * Previously fired onManagedTaskStatus with activeWorkerId='child',
+   * triggering a foreground worker transition that cleared all live tool calls.
+   */
+  onChildProgress?: (note: string) => void;
+  /** FEATURE_067 v2: Callback for long-running tools to report execution progress to the REPL transcript.
+   *  The string will be displayed as the tool's "Running:" line in the transcript. */
+  reportToolProgress?: (message: string) => void;
+  /** FEATURE_067 v2: Callback to store write child worktree paths for Evaluator diff injection. */
+  registerChildWriteWorktrees?: (worktreePaths: ReadonlyMap<string, string>) => void;
+  /** Mutation tracker for scope-aware protocol responses. Populated by createWorkerEvents. */
+  mutationTracker?: ManagedMutationTracker;
 }

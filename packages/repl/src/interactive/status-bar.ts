@@ -10,7 +10,6 @@ export interface StatusBarState {
   sessionId: string;
   permissionMode: string;
   reasoningMode?: string;
-  parallel?: boolean;
   provider: string;
   model: string;
   tokenUsage?: {
@@ -70,10 +69,6 @@ function stripAnsi(str: string): string {
   return str.replace(ANSI_REGEX, '');
 }
 
-function formatExecutionMode(parallel = false): 'parallel' | 'sequential' {
-  return parallel ? 'parallel' : 'sequential';
-}
-
 export function buildStatusBarContent(state: StatusBarState, width = getTerminalWidth()): string {
   const parts: string[] = [];
   const shortId = state.sessionId.slice(0, 6);
@@ -94,12 +89,6 @@ export function buildStatusBarContent(state: StatusBarState, width = getTerminal
   if (state.reasoningMode) {
     parts.push(chalk.yellow(`reason:${state.reasoningMode}`));
   }
-
-  parts.push(
-    state.parallel
-      ? chalk.green(`exec:${formatExecutionMode(state.parallel)}`)
-      : chalk.dim(`exec:${formatExecutionMode(state.parallel)}`),
-  );
 
   parts.push(chalk.cyan(state.provider));
 
@@ -208,13 +197,11 @@ export function createStatusBarState(
   provider: string,
   model: string,
   reasoningMode = 'off',
-  parallel = false,
 ): StatusBarState {
   return {
     sessionId,
     permissionMode,
     reasoningMode,
-    parallel,
     provider,
     model,
   };

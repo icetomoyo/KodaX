@@ -20,7 +20,7 @@ describe('registerConfiguredMcpCapabilityProvider', () => {
     const fixture = await createMcpTestServerFixture(tempDir);
     const runtime = createExtensionRuntime().activate();
 
-    const provider = await registerConfiguredMcpCapabilityProvider(runtime, fixture.config);
+    const provider = await registerConfiguredMcpCapabilityProvider(runtime, fixture.servers, { cacheDir: fixture.cacheDir });
     expect(provider).toBeDefined();
     expect(runtime.getDiagnostics().capabilityProviders).toEqual(
       expect.arrayContaining([
@@ -102,18 +102,15 @@ describe('registerConfiguredMcpCapabilityProvider', () => {
     const runtime = createExtensionRuntime().activate();
 
     const provider = await registerConfiguredMcpCapabilityProvider(runtime, {
-      ...fixture.config,
-      servers: {
-        ...(fixture.config.servers ?? {}),
-        broken: {
-          type: 'stdio',
-          command: path.join(tempDir, 'missing-mcp-server.exe'),
-          connect: 'prewarm',
-          startupTimeoutMs: 1_000,
-          requestTimeoutMs: 1_000,
-        },
+      ...fixture.servers,
+      broken: {
+        type: 'stdio',
+        command: path.join(tempDir, 'missing-mcp-server.exe'),
+        connect: 'prewarm',
+        startupTimeoutMs: 1_000,
+        requestTimeoutMs: 1_000,
       },
-    });
+    }, { cacheDir: fixture.cacheDir });
     expect(provider).toBeDefined();
     await expect(runtime.searchCapabilities('mcp', 'echo')).resolves.toEqual(
       expect.arrayContaining([

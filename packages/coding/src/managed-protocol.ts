@@ -8,6 +8,9 @@ import type {
 } from './types.js';
 
 export const MANAGED_PROTOCOL_TOOL_NAME = 'emit_managed_protocol';
+// NOTE: When adding a new kodax-* fence block name, also add it to
+// MANAGED_FENCE_NAMES in task-engine.ts (near sanitizeManagedUserFacingText)
+// so that truncated versions are correctly stripped from user-facing output.
 export const MANAGED_TASK_CONTRACT_BLOCK = 'kodax-task-contract';
 export const MANAGED_TASK_VERDICT_BLOCK = 'kodax-task-verdict';
 export const MANAGED_TASK_SCOUT_BLOCK = 'kodax-task-scout';
@@ -213,6 +216,24 @@ export function normalizeManagedProjectionConfidence(
   return undefined;
 }
 
+export function normalizeManagedDirectCompletionReady(
+  candidate: string,
+): KodaXManagedScoutPayload['directCompletionReady'] | undefined {
+  const normalized = candidate
+    .trim()
+    .toLowerCase()
+    .replace(/[`"'()[\]{}<>]+/g, '')
+    .replace(/[.:;!?]+$/g, '')
+    .trim();
+  if (normalized === 'yes' || normalized === 'true' || normalized === 'ready') {
+    return 'yes';
+  }
+  if (normalized === 'no' || normalized === 'false' || normalized === 'not-ready' || normalized === 'not ready') {
+    return 'no';
+  }
+  return undefined;
+}
+
 export function normalizeStringListValue(value: unknown): string[] {
   if (Array.isArray(value)) {
     return value.map((item) => String(item).trim()).filter(Boolean);
@@ -285,6 +306,7 @@ export function coerceManagedProtocolToolPayload(
     const scope = normalizeStringListValue(payload.scope);
     const requiredEvidence = normalizeStringListValue(payload.required_evidence ?? payload.requiredEvidence);
     const reviewFilesOrAreas = normalizeStringListValue(payload.review_files_or_areas ?? payload.reviewFilesOrAreas);
+    const blockingEvidence = normalizeStringListValue(payload.blocking_evidence ?? payload.blockingEvidence);
     const executionObligations = normalizeStringListValue(payload.execution_obligations ?? payload.executionObligations);
     const verificationObligations = normalizeStringListValue(payload.verification_obligations ?? payload.verificationObligations);
     const ambiguities = normalizeStringListValue(payload.ambiguities);
@@ -302,12 +324,23 @@ export function coerceManagedProtocolToolPayload(
     const projectionConfidence = typeof (payload.projection_confidence ?? payload.projectionConfidence) === 'string'
       ? normalizeManagedProjectionConfidence(String(payload.projection_confidence ?? payload.projectionConfidence))
       : undefined;
+    const harnessRationale = typeof (payload.harness_rationale ?? payload.harnessRationale) === 'string'
+      ? String(payload.harness_rationale ?? payload.harnessRationale).trim() || undefined
+      : undefined;
+    const directCompletionReady = typeof (payload.direct_completion_ready ?? payload.directCompletionReady) === 'string'
+      ? normalizeManagedDirectCompletionReady(String(payload.direct_completion_ready ?? payload.directCompletionReady))
+      : typeof (payload.direct_completion_ready ?? payload.directCompletionReady) === 'boolean'
+        ? ((payload.direct_completion_ready ?? payload.directCompletionReady) ? 'yes' : 'no')
+        : undefined;
     if (
       !summary
       && scope.length === 0
       && requiredEvidence.length === 0
       && reviewFilesOrAreas.length === 0
       && !confirmedHarness
+      && !harnessRationale
+      && blockingEvidence.length === 0
+      && !directCompletionReady
       && !evidenceAcquisitionMode
       && !skillSummary
       && executionObligations.length === 0
@@ -326,6 +359,9 @@ export function coerceManagedProtocolToolPayload(
         reviewFilesOrAreas,
         evidenceAcquisitionMode,
         confirmedHarness,
+        harnessRationale,
+        blockingEvidence,
+        directCompletionReady,
         userFacingText: visibleText || undefined,
         skillMap: skillSummary || executionObligations.length > 0 || verificationObligations.length > 0 || ambiguities.length > 0 || projectionConfidence
           ? {
@@ -355,4 +391,43 @@ export function coerceManagedProtocolToolPayload(
       userFacingText: visibleText,
     },
   };
+}
+
+/**
+ * Map a task role to its required managed protocol fenced-block name.
+ */
+export function getManagedBlockNameForRole(role: string): string | undefined {
+  switch (role) {
+    case 'scout': return MANAGED_TASK_SCOUT_BLOCK;
+    case 'planner': return MANAGED_TASK_CONTRACT_BLOCK;
+    case 'evaluator': return MANAGED_TASK_VERDICT_BLOCK;
+    case 'generator': return MANAGED_TASK_HANDOFF_BLOCK;
+    default: return undefined;
+  }
+}
+
+/**
+ * Check whether a managed protocol payload already contains the required field for the given role.
+ */
+export function hasManagedProtocolForRole(
+  payload: KodaXManagedProtocolPayload | undefined,
+  role: string,
+): boolean {
+  if (!payload) return false;
+  switch (role) {
+    case 'scout': return !!payload.scout;
+    case 'planner': return !!payload.contract;
+    case 'evaluator': return !!payload.verdict;
+    case 'generator': return !!payload.handoff;
+    default: return false;
+  }
+}
+
+/**
+ * Lightweight check: does `text` contain a complete fenced block for `blockName`?
+ * Uses the same backtick-fence convention as `findLastFencedBlock` in task-engine.
+ */
+export function textContainsManagedBlock(text: string, blockName: string): boolean {
+  const pattern = new RegExp(String.raw`\`\`\`${blockName}\s*[\s\S]*?\`\`\``, 'i');
+  return pattern.test(text);
 }

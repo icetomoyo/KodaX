@@ -176,6 +176,9 @@ function buildScoutResponse(
   visibleText: string,
   confirmedHarness: 'H0_DIRECT' | 'H1_EXECUTE_EVAL' | 'H2_PLAN_EXECUTE_EVAL',
   options?: {
+    harnessRationale?: string;
+    blockingEvidence?: string[];
+    directCompletionReady?: 'yes' | 'no';
     skillSummary?: string;
     projectionConfidence?: 'high' | 'medium' | 'low';
     executionObligations?: string[];
@@ -183,11 +186,23 @@ function buildScoutResponse(
     ambiguities?: string[];
   },
 ): string {
+  const harnessRationale = options?.harnessRationale
+    ?? (confirmedHarness === 'H0_DIRECT'
+      ? 'Evidence is already sufficient to finish safely on the direct path.'
+      : 'Additional verification or coordination is still required before final delivery.');
+  const directCompletionReady = options?.directCompletionReady
+    ?? (confirmedHarness === 'H0_DIRECT' ? 'yes' : 'no');
+  const blockingEvidence = options?.blockingEvidence
+    ?? (confirmedHarness === 'H0_DIRECT' ? ['none'] : ['Need additional evidence before direct completion.']);
   return [
     visibleText,
     '```kodax-task-scout',
     `summary: ${visibleText}`,
     `confirmed_harness: ${confirmedHarness}`,
+    `harness_rationale: ${harnessRationale}`,
+    `direct_completion_ready: ${directCompletionReady}`,
+    'blocking_evidence:',
+    ...blockingEvidence.map((item) => `- ${item}`),
     'scope:',
     '- Confirm task intent and scope.',
     'required_evidence:',
@@ -474,7 +489,7 @@ describe('runManagedTask', () => {
     );
   });
 
-  it('keeps obvious AMA H0 tasks on the direct path without scout', async () => {
+  it('routes AMA H0 lookup tasks through Scout instead of bypassing', async () => {
     const statuses: KodaXManagedTaskStatusEvent[] = [];
     mockCreateReasoningPlan.mockResolvedValue(
       buildPlan({
@@ -486,9 +501,23 @@ describe('runManagedTask', () => {
         reason: 'Lookup query should stay direct.',
       }),
     );
-    mockRunDirectKodaX.mockResolvedValue(
-      buildAssistantResult('状态栏由两个文件管理。'),
-    );
+    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
+      if (workerPrompt.includes('You are the Scout role')) {
+        return buildAssistantResult(
+          buildScoutResponse(
+            '状态栏由两个文件管理。',
+            'H0_DIRECT',
+            {
+              harnessRationale: 'Simple lookup — answering directly.',
+              directCompletionReady: 'yes',
+              blockingEvidence: ['none'],
+            },
+          ),
+          { sessionId: 'session-scout-lookup-h0' },
+        );
+      }
+      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 120)}`);
+    });
 
     const result = await runManagedTask(
       {
@@ -504,9 +533,10 @@ describe('runManagedTask', () => {
     );
 
     expect(result.success).toBe(true);
-    expect(result.managedTask).toBeUndefined();
-    expect(statuses.map((status) => status.phase)).toEqual(['routing']);
+    expect(result.managedTask).toBeDefined();
+    expect(statuses.some((status) => status.phase === 'preflight')).toBe(true);
     expect(mockRunDirectKodaX).toHaveBeenCalledTimes(1);
+    expect(result.lastText).toContain('状态栏由两个文件管理。');
   });
 
   it('keeps foreground AMA workers visible while lifecycle status updates stay compact and non-persistent', async () => {
@@ -700,176 +730,18 @@ describe('runManagedTask', () => {
     expect(streamedThinking.join('')).toContain('Evaluator is checking whether the coordinated result is ready to present.');
   });
 
-  it('runs tactical read-only lookup fan-out inside AMA H0 and keeps the parent as final authority', async () => {
-    const workspaceRoot = await createTempDir('kodax-task-engine-tactical-lookup-');
-    const evidenceImagePath = path.join(workspaceRoot, 'statusbar.png');
-    const statuses: KodaXManagedTaskStatusEvent[] = [];
-    mockCreateReasoningPlan.mockResolvedValue(
-      buildPlan({
-        primaryTask: 'lookup',
-        taskFamily: 'lookup',
-        actionability: 'actionable',
-        executionPattern: 'checked-direct',
-        recommendedMode: 'lookup',
-        complexity: 'moderate',
-        riskLevel: 'low',
-        harnessProfile: 'H0_DIRECT',
-        mutationSurface: 'read-only',
-        topologyCeiling: 'H0_DIRECT',
-        reason: 'Read-only lookup should stay tactical and validate module triage in parallel.',
-      }),
-    );
-    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
-      if (workerPrompt.includes('You are the Scout role')) {
-        return buildAssistantResult(
-          buildScoutResponse(
-            'Scout kept the lookup on H0 and recommended bounded module triage.',
-            'H0_DIRECT',
-          ),
-          { sessionId: 'session-scout-tactical-lookup' },
-        );
-      }
-      if (workerPrompt.includes('You are the Tactical Lookup Scanner')) {
-        return buildAssistantResult(
-          [
-            'Scanner found two module-triage shards worth validating.',
-            '```kodax-lookup-shards',
-            JSON.stringify({
-              summary: 'Scanner identified two lookup shards.',
-              shards: [
-                {
-                  id: 'lookup-1',
-                  question: 'Does StatusBar.tsx own the live status rendering?',
-                  scope: 'Status bar live rendering',
-                  priority: 'high',
-                  paths: ['packages/repl/src/ui/components/StatusBar.tsx'],
-                  rationale: ['The component name matches the user-visible surface directly.'],
-                },
-                {
-                  id: 'lookup-2',
-                  question: 'Is InkREPL.tsx only a wrapper around the status bar?',
-                  scope: 'InkREPL wrapper role',
-                  priority: 'medium',
-                  paths: ['packages/repl/src/ui/InkREPL.tsx'],
-                  rationale: ['This path could still own orchestration rather than rendering.'],
-                },
-              ],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-scan-tactical-lookup' },
-        );
-      }
-      if (workerPrompt.includes('[Shard ID] lookup-1')) {
-        return buildAssistantResult(
-          [
-            buildHandoffResponse('Validator confirmed StatusBar.tsx owns the live status rendering.'),
-            '```kodax-child-result',
-            JSON.stringify({
-              childId: 'lookup-1',
-              fanoutClass: 'module-triage',
-              status: 'completed',
-              disposition: 'valid',
-              summary: 'Lookup shard 1 confirms StatusBar.tsx owns the live status rendering.',
-              evidenceRefs: ['packages/repl/src/ui/components/StatusBar.tsx'],
-              contradictions: [],
-              artifactPaths: [],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-lookup-validator-1' },
-        );
-      }
-      if (workerPrompt.includes('[Shard ID] lookup-2')) {
-        return buildAssistantResult(
-          [
-            buildHandoffResponse('Validator found InkREPL.tsx orchestrates layout but does not own live status rendering.'),
-            '```kodax-child-result',
-            JSON.stringify({
-              childId: 'lookup-2',
-              fanoutClass: 'module-triage',
-              status: 'completed',
-              disposition: 'false-positive',
-              summary: 'Lookup shard 2 weakens the idea that InkREPL.tsx owns the live status rendering.',
-              evidenceRefs: ['packages/repl/src/ui/InkREPL.tsx'],
-              contradictions: ['InkREPL composes the footer but does not render the status component itself.'],
-              artifactPaths: [],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-lookup-validator-2' },
-        );
-      }
-      if (workerPrompt.includes('You are the Tactical Lookup Reducer')) {
-        return buildAssistantResult(
-          buildVerdictResponse(
-            'Reducer completed the tactical lookup.',
-            'accept',
-            'Validator evidence is sufficient for the parent lookup answer.',
-            {
-              userAnswer: [
-                'The live status rendering is owned by `packages/repl/src/ui/components/StatusBar.tsx`.',
-                '',
-                '`InkREPL.tsx` still orchestrates the surrounding layout, but it is not the component that renders the live status line itself.',
-              ].join('\n'),
-            },
-          ),
-          { sessionId: 'session-lookup-reducer' },
-        );
-      }
-      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 160)}`);
-    });
-
-    const result = await runManagedTask(
-      {
-        provider: 'anthropic',
-        agentMode: 'ama',
-        events: {
-          onManagedTaskStatus: (status) => {
-            statuses.push(status);
-          },
-        },
-        context: {
-          managedTaskWorkspaceDir: workspaceRoot,
-          inputArtifacts: [
-            {
-              kind: 'image',
-              path: evidenceImagePath,
-              mediaType: 'image/png',
-              source: 'user-inline',
-              description: 'Attached image statusbar.png',
-            },
-          ],
-        },
-      },
-      'Where is the live status rendering logic defined right now?',
-    );
-
-    expect(result.success).toBe(true);
-    expect(result.lastText).toContain('packages/repl/src/ui/components/StatusBar.tsx');
-    expect(result.managedTask?.runtime?.amaProfile).toBe('tactical');
-    expect(result.managedTask?.runtime?.amaFanout?.class).toBe('module-triage');
-    expect(result.managedTask?.runtime?.childContextBundles).toHaveLength(2);
-    expect(result.managedTask?.runtime?.fanoutSchedulerPlan?.fanoutClass).toBe('module-triage');
-    expect(
-      result.managedTask?.evidence.artifacts.some(
-        (artifact) => artifact.kind === 'image' && artifact.path === evidenceImagePath,
-      ),
-    ).toBe(true);
-    expect(statuses.some((status) => status.childFanoutClass === 'module-triage')).toBe(true);
-  });
 
   it('lets Scout downshift a managed run back to H0 and return early', async () => {
     mockCreateReasoningPlan.mockResolvedValue(
       buildPlan({
         primaryTask: 'review',
         taskFamily: 'review',
-        executionPattern: 'checked-direct',
+        executionPattern: 'direct',
         recommendedMode: 'pr-review',
         complexity: 'moderate',
         riskLevel: 'medium',
         harnessProfile: 'H1_EXECUTE_EVAL',
-        needsIndependentQA: true,
+        needsIndependentQA: false,
         reason: 'Review request starts in checked-direct mode.',
       }),
     );
@@ -900,12 +772,12 @@ describe('runManagedTask', () => {
     expect(result.routingDecision?.harnessProfile).toBe('H0_DIRECT');
     expect(result.lastText).toContain('Scout determined this is small enough to answer directly.');
 
-    // Verify Scout H0 has no tool restrictions (undefined toolPolicy)
+    // Scout has full tool access (no tool policy restriction).
     const scoutAssignment = result.managedTask?.roleAssignments.find((a) => a.role === 'scout');
     expect(scoutAssignment?.toolPolicy).toBeUndefined();
   });
 
-  it('keeps large current-diff reviews out of scout-direct fallback and forces the managed H2 review stack', async () => {
+  it('allows large current-diff reviews to stay on H0 when Scout provides complete direct-review evidence', async () => {
     const workspaceRoot = await createTempDir('kodax-task-engine-large-review-floor-root-');
     const repoRoot = await createTempDir('kodax-task-engine-large-review-floor-repo-');
 
@@ -913,57 +785,38 @@ describe('runManagedTask', () => {
       buildPlan({
         primaryTask: 'review',
         taskFamily: 'review',
-        executionPattern: 'checked-direct',
+        executionPattern: 'direct',
         recommendedMode: 'pr-review',
         complexity: 'complex',
         riskLevel: 'medium',
         mutationSurface: 'read-only',
         harnessProfile: 'H1_EXECUTE_EVAL',
         reviewScale: 'large',
-        needsIndependentQA: true,
+        needsIndependentQA: false,
         topologyCeiling: 'H2_PLAN_EXECUTE_EVAL',
         upgradeCeiling: 'H2_PLAN_EXECUTE_EVAL',
-        reason: 'Large current-diff reviews must not collapse into scout-direct fallback.',
+        reason: 'Large current-diff reviews should stay direct when Scout already has complete review evidence.',
       }),
     );
 
     mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
       if (workerPrompt.includes('You are the Scout role')) {
         return buildAssistantResult(
-          buildScoutResponse('Scout thinks the review might finish directly.', 'H0_DIRECT'),
-          { sessionId: 'session-scout-large-review-floor' },
-        );
-      }
-      if (workerPrompt.includes('You are the Planner role')) {
-        return buildAssistantResult(
-          buildContractResponse('Plan the large review and reduce it through the managed review stack.'),
-          { sessionId: 'session-planner-large-review-floor' },
-        );
-      }
-      if (workerPrompt.includes('You are the Generator role')) {
-        return buildAssistantResult(
-          buildHandoffResponse([
-            '## Findings',
-            '',
-            '- [high] `packages/coding/src/task-engine.ts`: duplicated normalization paths can diverge.',
-            '- [medium] `packages/repl/src/ui/InkREPL.tsx`: managed live events need durable transcript persistence.',
-          ].join('\n')),
-          { sessionId: 'session-generator-large-review-floor' },
-        );
-      }
-      if (workerPrompt.includes('You are the Evaluator role')) {
-        return buildAssistantResult(
-          buildVerdictResponse(
+          buildScoutResponse(
             [
               '## Findings',
               '',
               '- [high] `packages/coding/src/task-engine.ts`: duplicated normalization paths can diverge.',
               '- [medium] `packages/repl/src/ui/InkREPL.tsx`: managed live events need durable transcript persistence.',
             ].join('\n'),
-            'accept',
-            'Managed review completed with concrete findings.',
+            'H0_DIRECT',
+            {
+              harnessRationale: 'The key diff and risk areas are already inspected, so a direct findings-first review is ready now.',
+              directCompletionReady: 'yes',
+              blockingEvidence: ['none'],
+            },
           ),
-          { sessionId: 'session-evaluator-large-review-floor' },
+          { sessionId: 'session-scout-large-review-floor' },
         );
       }
       throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 120)}`);
@@ -977,7 +830,7 @@ describe('runManagedTask', () => {
           managedTaskWorkspaceDir: workspaceRoot,
           executionCwd: repoRoot,
           gitRoot: repoRoot,
-          repoIntelligenceMode: 'oss',
+          repoIntelligenceMode: 'off',
           repoRoutingSignals: buildRepoRoutingSignals({
             workspaceRoot: repoRoot,
             changedFileCount: 23,
@@ -993,1766 +846,211 @@ describe('runManagedTask', () => {
       'Please review the current repository changes for merge blockers and give me the final review findings.',
     );
 
-    expect(mockRunDirectKodaX).toHaveBeenCalledTimes(4);
-    expect(result.routingDecision?.harnessProfile).toBe('H2_PLAN_EXECUTE_EVAL');
-    expect(result.managedTask?.contract.harnessProfile).toBe('H2_PLAN_EXECUTE_EVAL');
-    expect(result.managedTask?.roleAssignments.map((item) => item.role)).toEqual(['planner', 'generator', 'evaluator']);
-    expect(result.managedTask?.runtime?.routingOverrideReason).toContain('large diff-driven review');
+    expect(mockRunDirectKodaX).toHaveBeenCalledTimes(1);
+    expect(result.routingDecision?.harnessProfile).toBe('H0_DIRECT');
+    expect(result.managedTask?.contract.harnessProfile).toBe('H0_DIRECT');
+    expect(result.managedTask?.roleAssignments.map((item) => item.role)).toEqual(['scout']);
+    expect(result.managedTask?.runtime?.routingOverrideReason).toBeUndefined();
     expect(result.lastText).toContain('## Findings');
     expect(result.lastText).toContain('duplicated normalization paths can diverge');
   });
 
-  it('runs tactical review child fan-out inside AMA H0 and keeps the parent as final authority', async () => {
-    const workspaceRoot = await createTempDir('kodax-task-engine-tactical-review-');
+  it('Scout keeps H1 when the task explicitly requires independent verification', async () => {
     mockCreateReasoningPlan.mockResolvedValue(
       buildPlan({
         primaryTask: 'review',
         taskFamily: 'review',
-        actionability: 'actionable',
-        executionPattern: 'checked-direct',
+        executionPattern: 'direct',
         recommendedMode: 'pr-review',
         complexity: 'moderate',
         riskLevel: 'medium',
-        harnessProfile: 'H0_DIRECT',
         mutationSurface: 'read-only',
-        topologyCeiling: 'H0_DIRECT',
-        reason: 'Read-only review should stay tactical and use hidden child validators.',
+        harnessProfile: 'H1_EXECUTE_EVAL',
+        needsIndependentQA: true,
+        topologyCeiling: 'H2_PLAN_EXECUTE_EVAL',
+        upgradeCeiling: 'H2_PLAN_EXECUTE_EVAL',
+        reason: 'The task explicitly requires an independent second judgment.',
       }),
     );
+
     mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
       if (workerPrompt.includes('You are the Scout role')) {
         return buildAssistantResult(
           buildScoutResponse(
-            'Scout kept the task on H0 and recommended tactical validation.',
-            'H0_DIRECT',
-          ),
-          { sessionId: 'session-scout-tactical-review' },
-        );
-      }
-      if (workerPrompt.includes('You are the Tactical Review Scanner')) {
-        return buildAssistantResult(
-          [
-            'Scanner found two candidate findings worth validation.',
-            '```kodax-review-findings',
-            JSON.stringify({
-              summary: 'Scanner identified two candidate findings.',
-              findings: [
-                {
-                  id: 'finding-1',
-                  title: 'Null guard removed',
-                  claim: 'The retry path dropped a defensive null guard.',
-                  priority: 'high',
-                  files: ['packages/coding/src/reasoning.ts'],
-                  evidence: ['Null guard disappeared from the retry path.'],
-                },
-                {
-                  id: 'finding-2',
-                  title: 'Timeout reset regression',
-                  claim: 'Timeout still resets the counter unexpectedly.',
-                  priority: 'medium',
-                  files: ['packages/coding/src/task-engine.ts'],
-                  evidence: ['Timeout branch still mutates the counter.'],
-                },
-              ],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-scan-tactical-review' },
-        );
-      }
-      if (workerPrompt.includes('[Finding ID] finding-1')) {
-        return buildAssistantResult(
-          [
-            buildHandoffResponse('Validator confirmed the null guard issue is real.'),
-            '```kodax-child-result',
-            JSON.stringify({
-              childId: 'finding-1',
-              fanoutClass: 'finding-validation',
-              status: 'completed',
-              disposition: 'valid',
-              summary: 'Finding 1 is valid.',
-              evidenceRefs: ['packages/coding/src/reasoning.ts'],
-              contradictions: [],
-              artifactPaths: [],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-validator-1' },
-        );
-      }
-      if (workerPrompt.includes('[Finding ID] finding-2')) {
-        return buildAssistantResult(
-          [
-            buildHandoffResponse('Validator ruled the timeout reset report a false positive.', 'ready'),
-            '```kodax-child-result',
-            JSON.stringify({
-              childId: 'finding-2',
-              fanoutClass: 'finding-validation',
-              status: 'completed',
-              disposition: 'false-positive',
-              summary: 'Finding 2 is a false positive.',
-              evidenceRefs: ['packages/coding/src/task-engine.ts'],
-              contradictions: ['The timeout branch preserves the counter in the current code.'],
-              artifactPaths: [],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-validator-2' },
-        );
-      }
-      if (workerPrompt.includes('You are the Tactical Review Reducer')) {
-        return buildAssistantResult(
-          buildVerdictResponse(
-            'Reducer completed the tactical review.',
-            'accept',
-            'Validator evidence is sufficient for the final review.',
+            'Scout confirmed independent verification is needed for this review.',
+            'H1_EXECUTE_EVAL',
             {
-              userAnswer: [
-                '## Findings',
-                '',
-                '- The retry path dropped a defensive null guard and can now dereference a missing value.',
-                '',
-                'No other validator-backed findings remain.',
-              ].join('\n'),
+              harnessRationale: 'Independent verification is explicitly required — keeping H1.',
             },
           ),
-          { sessionId: 'session-review-reducer' },
+          { sessionId: 'session-scout-explicit-qa-floor' },
         );
       }
-      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 160)}`);
+      if (workerPrompt.includes('You are the Generator role')) {
+        return buildAssistantResult(
+          buildHandoffResponse('Generator prepared the review findings for independent evaluation.'),
+          { sessionId: 'session-generator-explicit-qa-floor' },
+        );
+      }
+      if (workerPrompt.includes('You are the Evaluator role')) {
+        return buildAssistantResult(
+          buildVerdictResponse(
+            '## Findings\n\n- [medium] `packages/coding/src/task-engine.ts`: independent verification confirmed the scoped issue.',
+            'accept',
+            'Independent verification completed successfully.',
+          ),
+          { sessionId: 'session-evaluator-explicit-qa-floor' },
+        );
+      }
+      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 120)}`);
     });
 
     const result = await runManagedTask(
       {
         provider: 'anthropic',
         agentMode: 'ama',
-        context: {
-          managedTaskWorkspaceDir: workspaceRoot,
-        },
       },
-      'Please review the current changes for merge blockers.',
+      'Please review these changes and make sure an independent verifier signs off before we trust the result.',
     );
 
-    expect(result.success).toBe(true);
+    expect(result.routingDecision?.harnessProfile).toBe('H1_EXECUTE_EVAL');
+    expect(result.managedTask?.contract.harnessProfile).toBe('H1_EXECUTE_EVAL');
+    expect(result.managedTask?.roleAssignments.map((item) => item.role)).toEqual(['generator', 'evaluator']);
+    expect(result.managedTask?.runtime?.routingOverrideReason).toBeUndefined();
     expect(result.lastText).toContain('## Findings');
-    expect(result.lastText).toContain('dropped a defensive null guard');
-    expect(result.lastText).not.toContain('Timeout reset regression');
-    expect(result.managedTask?.runtime?.amaProfile).toBe('tactical');
-    expect(result.managedTask?.runtime?.amaFanout?.class).toBe('finding-validation');
-    expect(result.managedTask?.runtime?.childContextBundles).toHaveLength(2);
-    expect(result.managedTask?.runtime?.childAgentResults).toHaveLength(2);
-    expect(result.managedTask?.runtime?.parentReductionContract).toEqual(
-      expect.objectContaining({
-        owner: 'parent',
-        strategy: 'evaluator-assisted',
-        collapseChildTranscripts: true,
-      }),
-    );
-    expect(result.managedTask?.roleAssignments.map((assignment) => assignment.id)).toEqual(
-      expect.arrayContaining(['review-scan', 'validator-01', 'validator-02', 'review-reducer']),
-    );
-    expect(result.managedTask?.evidence.artifacts.map((artifact) => artifact.path)).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining('review-findings.json'),
-        expect.stringContaining('child-result.json'),
-        expect.stringContaining('child-result-ledger.json'),
-      ]),
-    );
   });
 
-  it('keeps overflow tactical review findings in the ledger and defers the unscheduled bundles', async () => {
-    const workspaceRoot = await createTempDir('kodax-task-engine-tactical-review-overflow-');
+  it('Scout escalates to H2 for high-risk system-level overwrite work', async () => {
     mockCreateReasoningPlan.mockResolvedValue(
       buildPlan({
-        primaryTask: 'review',
-        taskFamily: 'review',
-        actionability: 'actionable',
-        executionPattern: 'checked-direct',
-        recommendedMode: 'pr-review',
-        complexity: 'moderate',
-        riskLevel: 'medium',
-        harnessProfile: 'H0_DIRECT',
-        mutationSurface: 'read-only',
-        reviewScale: 'large',
-        topologyCeiling: 'H0_DIRECT',
-        reason: 'Read-only review should stay tactical and defer overflow findings through the scheduler.',
+        primaryTask: 'edit',
+        taskFamily: 'implementation',
+        executionPattern: 'direct',
+        recommendedMode: 'implementation',
+        complexity: 'systemic',
+        riskLevel: 'high',
+        mutationSurface: 'system',
+        workIntent: 'overwrite',
+        harnessProfile: 'H1_EXECUTE_EVAL',
+        topologyCeiling: 'H2_PLAN_EXECUTE_EVAL',
+        upgradeCeiling: 'H2_PLAN_EXECUTE_EVAL',
+        reason: 'This is a risky system-level overwrite and must keep a coordinated execution floor.',
       }),
     );
+
     mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
       if (workerPrompt.includes('You are the Scout role')) {
         return buildAssistantResult(
           buildScoutResponse(
-            'Scout kept the task on H0 and recommended tactical validation.',
-            'H0_DIRECT',
-          ),
-          { sessionId: 'session-scout-tactical-review-overflow' },
-        );
-      }
-      if (workerPrompt.includes('You are the Tactical Review Scanner')) {
-        return buildAssistantResult(
-          [
-            'Scanner found four candidate findings worth validation.',
-            '```kodax-review-findings',
-            JSON.stringify({
-              summary: 'Scanner identified four candidate findings.',
-              findings: [
-                {
-                  id: 'finding-1',
-                  title: 'Null guard removed',
-                  claim: 'The retry path dropped a defensive null guard.',
-                  priority: 'high',
-                  files: ['packages/coding/src/reasoning.ts'],
-                  evidence: ['Null guard disappeared from the retry path.'],
-                },
-                {
-                  id: 'finding-2',
-                  title: 'Timeout reset regression',
-                  claim: 'Timeout still resets the counter unexpectedly.',
-                  priority: 'medium',
-                  files: ['packages/coding/src/task-engine.ts'],
-                  evidence: ['Timeout branch still mutates the counter.'],
-                },
-                {
-                  id: 'finding-3',
-                  title: 'Budget note missing',
-                  claim: 'The degraded continue note is not emitted on blocked runs.',
-                  priority: 'medium',
-                  files: ['packages/coding/src/task-engine.ts'],
-                  evidence: ['Blocked runs no longer append the degraded note.'],
-                },
-                {
-                  id: 'finding-4',
-                  title: 'Deferred review candidate',
-                  claim: 'One more finding should remain deferred when the child budget is exhausted.',
-                  priority: 'low',
-                  files: ['packages/coding/src/task-engine.ts'],
-                  evidence: ['Fourth finding exists only to exercise scheduler deferral.'],
-                },
-              ],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-scan-tactical-review-overflow' },
-        );
-      }
-      if (workerPrompt.includes('[Finding ID] finding-1')) {
-        return buildAssistantResult(
-          [
-            buildHandoffResponse('Validator confirmed the null guard issue is real.'),
-            '```kodax-child-result',
-            JSON.stringify({
-              childId: 'finding-1',
-              fanoutClass: 'finding-validation',
-              status: 'completed',
-              disposition: 'valid',
-              summary: 'Finding 1 is valid.',
-              evidenceRefs: ['packages/coding/src/reasoning.ts'],
-              contradictions: [],
-              artifactPaths: [],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-validator-overflow-1' },
-        );
-      }
-      if (workerPrompt.includes('[Finding ID] finding-2')) {
-        return buildAssistantResult(
-          [
-            buildHandoffResponse('Validator ruled the timeout reset report a false positive.'),
-            '```kodax-child-result',
-            JSON.stringify({
-              childId: 'finding-2',
-              fanoutClass: 'finding-validation',
-              status: 'completed',
-              disposition: 'false-positive',
-              summary: 'Finding 2 is a false positive.',
-              evidenceRefs: ['packages/coding/src/task-engine.ts'],
-              contradictions: ['The timeout branch preserves the counter in the current code.'],
-              artifactPaths: [],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-validator-overflow-2' },
-        );
-      }
-      if (workerPrompt.includes('[Finding ID] finding-3')) {
-        return buildAssistantResult(
-          [
-            buildHandoffResponse('Validator confirmed the degraded-note issue is real.'),
-            '```kodax-child-result',
-            JSON.stringify({
-              childId: 'finding-3',
-              fanoutClass: 'finding-validation',
-              status: 'completed',
-              disposition: 'valid',
-              summary: 'Finding 3 is valid.',
-              evidenceRefs: ['packages/coding/src/task-engine.ts'],
-              contradictions: [],
-              artifactPaths: [],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-validator-overflow-3' },
-        );
-      }
-      if (workerPrompt.includes('You are the Tactical Review Reducer')) {
-        return buildAssistantResult(
-          buildVerdictResponse(
-            'Reducer tried to finalize the tactical review.',
-            'accept',
-            'Validator evidence is sufficient for the final review.',
+            'Scout determined this high-risk system overwrite needs coordinated execution.',
+            'H2_PLAN_EXECUTE_EVAL',
             {
-              userAnswer: [
-                '## Findings',
-                '',
-                '- Finding 1 is valid.',
-                '- Finding 3 is valid.',
-              ].join('\n'),
+              harnessRationale: 'High-risk system-level overwrite requires coordinated planning and execution.',
             },
           ),
-          { sessionId: 'session-review-reducer-overflow' },
+          { sessionId: 'session-scout-system-floor' },
         );
       }
-      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 160)}`);
-    });
-
-    const result = await runManagedTask(
-      {
-        provider: 'anthropic',
-        agentMode: 'ama',
-        context: {
-          managedTaskWorkspaceDir: workspaceRoot,
-        },
-      },
-      'Please review the current changes for merge blockers.',
-    );
-
-    expect(result.success).toBe(false);
-    expect(result.lastText).toContain('The review cannot be finalized yet');
-    expect(result.lastText).toContain('Deferred review candidate');
-    expect(result.lastText).toContain('Finding 1 is valid.');
-    expect(result.managedTask?.runtime?.childContextBundles).toHaveLength(4);
-    expect(result.managedTask?.runtime?.childAgentResults).toHaveLength(3);
-    expect(result.managedTask?.runtime?.fanoutSchedulerPlan?.scheduledBundleIds).toEqual([
-      'finding-1',
-      'finding-2',
-      'finding-3',
-    ]);
-    expect(result.managedTask?.runtime?.fanoutSchedulerPlan?.deferredBundleIds).toEqual(['finding-4']);
-    expect(result.managedTask?.runtime?.fanoutSchedulerPlan?.branches).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ bundleId: 'finding-1', status: 'completed' }),
-        expect.objectContaining({ bundleId: 'finding-2', status: 'completed' }),
-        expect.objectContaining({ bundleId: 'finding-3', status: 'completed' }),
-        expect.objectContaining({ bundleId: 'finding-4', status: 'deferred' }),
-      ]),
-    );
-  });
-
-  it('fails closed when a validator omits kodax-child-result and ignores reducer optimism without ledger proof', async () => {
-    const workspaceRoot = await createTempDir('kodax-task-engine-tactical-review-fail-closed-');
-    mockCreateReasoningPlan.mockResolvedValue(
-      buildPlan({
-        primaryTask: 'review',
-        taskFamily: 'review',
-        actionability: 'actionable',
-        executionPattern: 'checked-direct',
-        recommendedMode: 'pr-review',
-        complexity: 'moderate',
-        riskLevel: 'medium',
-        harnessProfile: 'H0_DIRECT',
-        mutationSurface: 'read-only',
-        topologyCeiling: 'H0_DIRECT',
-        reason: 'Read-only review should stay tactical and fail closed on malformed child results.',
-      }),
-    );
-    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
-      if (workerPrompt.includes('You are the Scout role')) {
+      if (workerPrompt.includes('You are the Planner role')) {
         return buildAssistantResult(
-          buildScoutResponse(
-            'Scout kept the task on H0 and recommended tactical validation.',
-            'H0_DIRECT',
-          ),
-          { sessionId: 'session-scout-tactical-review-fail-closed' },
+          buildContractResponse('Planner decomposed the risky system edit before execution.'),
+          { sessionId: 'session-planner-system-floor' },
         );
       }
-      if (workerPrompt.includes('You are the Tactical Review Scanner')) {
+      if (workerPrompt.includes('You are the Generator role')) {
         return buildAssistantResult(
-          [
-            'Scanner found two candidate findings worth validation.',
-            '```kodax-review-findings',
-            JSON.stringify({
-              summary: 'Scanner identified two candidate findings.',
-              findings: [
-                {
-                  id: 'finding-1',
-                  title: 'Missing structured validator output',
-                  claim: 'The child validator never returns a structured result.',
-                  priority: 'high',
-                  files: ['packages/coding/src/task-engine.ts'],
-                  evidence: ['This finding exists to exercise fail-closed reduction.'],
-                },
-                {
-                  id: 'finding-2',
-                  title: 'False-positive sibling',
-                  claim: 'The sibling finding should still be evaluated normally.',
-                  priority: 'medium',
-                  files: ['packages/coding/src/task-engine.ts'],
-                  evidence: ['This sibling finding provides a structured comparison point.'],
-                },
-              ],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-scan-tactical-review-fail-closed' },
+          buildHandoffResponse('Generator completed the coordinated system edit handoff.'),
+          { sessionId: 'session-generator-system-floor' },
         );
       }
-      if (workerPrompt.includes('[Finding ID] finding-1')) {
-        return buildAssistantResult(
-          buildHandoffResponse('Validator insists the finding is real but forgets the structured block.'),
-          { sessionId: 'session-validator-fail-closed-1' },
-        );
-      }
-      if (workerPrompt.includes('[Finding ID] finding-2')) {
-        return buildAssistantResult(
-          [
-            buildHandoffResponse('Validator ruled the sibling report a false positive.'),
-            '```kodax-child-result',
-            JSON.stringify({
-              childId: 'finding-2',
-              fanoutClass: 'finding-validation',
-              status: 'completed',
-              disposition: 'false-positive',
-              summary: 'Finding 2 is a false positive.',
-              evidenceRefs: ['packages/coding/src/task-engine.ts'],
-              contradictions: ['The sibling issue does not reproduce in the current code.'],
-              artifactPaths: [],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-validator-fail-closed-2' },
-        );
-      }
-      if (workerPrompt.includes('You are the Tactical Review Reducer')) {
+      if (workerPrompt.includes('You are the Evaluator role')) {
         return buildAssistantResult(
           buildVerdictResponse(
-            'Reducer believes the review is complete.',
+            'System edit completed under coordinated H2 execution.',
             'accept',
-            'The reducer thinks the review is done.',
-            {
-              userAnswer: [
-                '## Findings',
-                '',
-                '- Reducer says the first finding is valid and ready to publish.',
-              ].join('\n'),
-            },
+            'The high-risk overwrite was handled through coordinated planning and execution.',
           ),
-          { sessionId: 'session-review-reducer-fail-closed' },
+          { sessionId: 'session-evaluator-system-floor' },
         );
       }
-      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 160)}`);
+      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 120)}`);
     });
 
     const result = await runManagedTask(
       {
         provider: 'anthropic',
         agentMode: 'ama',
-        context: {
-          managedTaskWorkspaceDir: workspaceRoot,
-        },
       },
-      'Please review the current changes for merge blockers.',
+      'Apply this risky system-wide overwrite across the codebase and make sure the final result is coordinated safely.',
     );
 
-    expect(result.success).toBe(false);
-    expect(result.lastText).toContain('The review cannot be finalized yet');
-    expect(result.lastText).toContain('Missing structured validator output');
-    expect(result.lastText).not.toContain('Reducer says the first finding is valid and ready to publish.');
-    expect(result.managedTask?.runtime?.childAgentResults).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          childId: 'finding-1',
-          disposition: 'needs-more-evidence',
-          contradictions: ['Missing or malformed structured child result.'],
-        }),
-      ]),
-    );
-    expect(result.managedTask?.evidence.artifacts.map((artifact) => artifact.path)).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining('child-result-ledger.json'),
-        expect.stringContaining('child-result-ledger.md'),
-      ]),
-    );
+    expect(result.routingDecision?.harnessProfile).toBe('H2_PLAN_EXECUTE_EVAL');
+    expect(result.managedTask?.contract.harnessProfile).toBe('H2_PLAN_EXECUTE_EVAL');
+    expect(result.managedTask?.roleAssignments.map((item) => item.role)).toEqual(['planner', 'generator', 'evaluator']);
+    expect(result.managedTask?.runtime?.routingOverrideReason).toBeUndefined();
+    expect(result.lastText).toContain('System edit completed');
   });
 
-  it('fails closed when structured child results are missing a ready handoff or completion status', async () => {
-    const workspaceRoot = await createTempDir('kodax-task-engine-tactical-review-handoff-contract-');
+  // FEATURE_067: directCompletionReady=no with H0 now triggers H0 continuation (write tools),
+  // not a retry. This is the correct behavior for tasks that need file modifications.
+  it('enters H0 continuation when Scout confirms H0_DIRECT with directCompletionReady no', async () => {
     mockCreateReasoningPlan.mockResolvedValue(
       buildPlan({
-        primaryTask: 'review',
-        taskFamily: 'review',
-        actionability: 'actionable',
-        executionPattern: 'checked-direct',
-        recommendedMode: 'pr-review',
-        complexity: 'moderate',
-        riskLevel: 'medium',
+        primaryTask: 'edit',
+        taskFamily: 'implementation',
+        executionPattern: 'direct',
+        recommendedMode: 'implementation',
+        complexity: 'simple',
+        riskLevel: 'low',
+        mutationSurface: 'code',
         harnessProfile: 'H0_DIRECT',
-        mutationSurface: 'read-only',
-        topologyCeiling: 'H0_DIRECT',
-        reason: 'Read-only review should fail closed on incomplete child contracts.',
+        topologyCeiling: 'H2_PLAN_EXECUTE_EVAL',
+        upgradeCeiling: 'H2_PLAN_EXECUTE_EVAL',
+        reason: 'Simple file edit — Scout investigates then gets write tools via H0 continuation.',
       }),
     );
+
+    let callCount = 0;
     mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
-      if (workerPrompt.includes('You are the Scout role')) {
+      callCount += 1;
+      if (callCount === 1) {
+        // Scout confirms H0 but directCompletionReady=no → triggers H0 continuation
         return buildAssistantResult(
           buildScoutResponse(
-            'Scout kept the task on H0 and recommended tactical validation.',
+            'I need to update .gitignore with a few entries.',
             'H0_DIRECT',
-          ),
-          { sessionId: 'session-scout-tactical-review-handoff-contract' },
-        );
-      }
-      if (workerPrompt.includes('You are the Tactical Review Scanner')) {
-        return buildAssistantResult(
-          [
-            'Scanner found two candidate findings worth validation.',
-            '```kodax-review-findings',
-            JSON.stringify({
-              summary: 'Scanner identified two candidate findings.',
-              findings: [
-                {
-                  id: 'finding-1',
-                  title: 'Missing handoff',
-                  claim: 'The validator returns a structured result without a ready handoff.',
-                  priority: 'high',
-                  files: ['packages/coding/src/task-engine.ts'],
-                  evidence: ['This finding exists to exercise handoff fail-closed behavior.'],
-                },
-                {
-                  id: 'finding-2',
-                  title: 'Blocked structured result',
-                  claim: 'The validator returns a structured result that is not completed.',
-                  priority: 'medium',
-                  files: ['packages/coding/src/task-engine.ts'],
-                  evidence: ['This finding exists to exercise child status fail-closed behavior.'],
-                },
-              ],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-scan-tactical-review-handoff-contract' },
-        );
-      }
-      if (workerPrompt.includes('[Finding ID] finding-1')) {
-        return buildAssistantResult(
-          [
-            '```kodax-child-result',
-            JSON.stringify({
-              childId: 'finding-1',
-              fanoutClass: 'finding-validation',
-              status: 'completed',
-              disposition: 'valid',
-              summary: 'Finding 1 would be valid if the handoff existed.',
-              evidenceRefs: ['packages/coding/src/task-engine.ts'],
-              contradictions: [],
-              artifactPaths: [],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-validator-handoff-contract-1' },
-        );
-      }
-      if (workerPrompt.includes('[Finding ID] finding-2')) {
-        return buildAssistantResult(
-          [
-            buildHandoffResponse('Validator could not complete the check but still emitted a result.', 'ready'),
-            '```kodax-child-result',
-            JSON.stringify({
-              childId: 'finding-2',
-              fanoutClass: 'finding-validation',
-              status: 'blocked',
-              disposition: 'valid',
-              summary: 'Finding 2 is not actually complete.',
-              evidenceRefs: ['packages/coding/src/task-engine.ts'],
-              contradictions: ['The validator stopped before producing a complete result.'],
-              artifactPaths: [],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-validator-handoff-contract-2' },
-        );
-      }
-      if (workerPrompt.includes('You are the Tactical Review Reducer')) {
-        return buildAssistantResult(
-          buildVerdictResponse(
-            'Reducer tried to finalize the tactical review.',
-            'accept',
-            'The reducer thinks the review is done.',
             {
-              userAnswer: [
-                '## Findings',
-                '',
-                '- Reducer says both findings are ready to publish.',
-              ].join('\n'),
+              directCompletionReady: 'no',
+              blockingEvidence: ['none'],
+              harnessRationale: 'Simple single-file edit, no review needed.',
             },
           ),
-          { sessionId: 'session-review-reducer-handoff-contract' },
+          { sessionId: 'session-scout-readonly' },
         );
       }
-      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 160)}`);
+      // H0 continuation phase (with write tools)
+      return buildAssistantResult(
+        'Done — updated .gitignore with the requested entries.',
+        { sessionId: 'session-scout-readonly' },
+      );
     });
 
     const result = await runManagedTask(
       {
         provider: 'anthropic',
         agentMode: 'ama',
-        context: {
-          managedTaskWorkspaceDir: workspaceRoot,
-        },
       },
-      'Please review the current changes for merge blockers.',
+      'Add output/ and .agent/ to .gitignore',
     );
 
-    expect(result.success).toBe(false);
-    expect(result.lastText).toContain('The review cannot be finalized yet');
-    expect(result.lastText).toContain('Missing handoff');
-    expect(result.lastText).toContain('Blocked structured result');
-    expect(result.lastText).not.toContain('Reducer says both findings are ready to publish.');
-    expect(result.managedTask?.runtime?.childAgentResults).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          childId: 'finding-1',
-          disposition: 'needs-more-evidence',
-          contradictions: ['Missing validator handoff block.'],
-        }),
-        expect.objectContaining({
-          childId: 'finding-2',
-          disposition: 'needs-more-evidence',
-          contradictions: ['Structured child result status was blocked.'],
-        }),
-      ]),
-    );
+    // Scout investigation + H0 continuation = 2 calls
+    expect(mockRunDirectKodaX).toHaveBeenCalledTimes(2);
+    expect(result.routingDecision?.harnessProfile).toBe('H0_DIRECT');
+    expect(result.managedTask?.contract.harnessProfile).toBe('H0_DIRECT');
+    expect(result.lastText).toContain('updated .gitignore');
   });
 
-  it('canonicalizes duplicate scanner finding ids before scheduling validator branches', async () => {
-    const workspaceRoot = await createTempDir('kodax-task-engine-tactical-review-duplicates-');
-    let findingOneValidatorRuns = 0;
-    const statuses: KodaXManagedTaskStatusEvent[] = [];
-    mockCreateReasoningPlan.mockResolvedValue(
-      buildPlan({
-        primaryTask: 'review',
-        taskFamily: 'review',
-        actionability: 'actionable',
-        executionPattern: 'checked-direct',
-        recommendedMode: 'pr-review',
-        complexity: 'moderate',
-        riskLevel: 'medium',
-        harnessProfile: 'H0_DIRECT',
-        mutationSurface: 'read-only',
-        topologyCeiling: 'H0_DIRECT',
-        reason: 'Read-only review should canonicalize duplicate findings before validation.',
-      }),
-    );
-    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
-      if (workerPrompt.includes('You are the Scout role')) {
-        return buildAssistantResult(
-          buildScoutResponse(
-            'Scout kept the task on H0 and recommended tactical validation.',
-            'H0_DIRECT',
-          ),
-          { sessionId: 'session-scout-tactical-review-duplicates' },
-        );
-      }
-      if (workerPrompt.includes('You are the Tactical Review Scanner')) {
-        return buildAssistantResult(
-          [
-            'Scanner found three candidate findings, including one duplicate id.',
-            '```kodax-review-findings',
-            JSON.stringify({
-              summary: 'Scanner identified three candidate findings with one duplicate id.',
-              findings: [
-                {
-                  id: 'finding-1',
-                  title: 'Canonical finding',
-                  claim: 'The canonical finding should only validate once.',
-                  priority: 'high',
-                  files: ['packages/coding/src/task-engine.ts'],
-                  evidence: ['First occurrence.'],
-                },
-                {
-                  id: 'finding-1',
-                  title: 'Duplicate finding',
-                  claim: 'The duplicate should not create a second validator.',
-                  priority: 'medium',
-                  files: ['packages/coding/src/task-engine.ts'],
-                  evidence: ['Duplicate occurrence.'],
-                },
-                {
-                  id: 'finding-2',
-                  title: 'Sibling finding',
-                  claim: 'The sibling finding should validate normally.',
-                  priority: 'medium',
-                  files: ['packages/coding/src/reasoning.ts'],
-                  evidence: ['Independent sibling finding.'],
-                },
-              ],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-scan-tactical-review-duplicates' },
-        );
-      }
-      if (workerPrompt.includes('[Finding ID] finding-1')) {
-        findingOneValidatorRuns += 1;
-        return buildAssistantResult(
-          [
-            buildHandoffResponse('Validator confirmed the canonical finding.'),
-            '```kodax-child-result',
-            JSON.stringify({
-              childId: 'finding-1',
-              fanoutClass: 'finding-validation',
-              status: 'completed',
-              disposition: 'valid',
-              summary: 'Finding 1 is valid.',
-              evidenceRefs: ['packages/coding/src/task-engine.ts'],
-              contradictions: [],
-              artifactPaths: [],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-validator-duplicates-1' },
-        );
-      }
-      if (workerPrompt.includes('[Finding ID] finding-2')) {
-        await new Promise((resolve) => setTimeout(resolve, 25));
-        return buildAssistantResult(
-          [
-            buildHandoffResponse('Validator ruled the sibling finding a false positive.'),
-            '```kodax-child-result',
-            JSON.stringify({
-              childId: 'finding-2',
-              fanoutClass: 'finding-validation',
-              status: 'completed',
-              disposition: 'false-positive',
-              summary: 'Finding 2 is a false positive.',
-              evidenceRefs: ['packages/coding/src/reasoning.ts'],
-              contradictions: ['The sibling issue does not reproduce.'],
-              artifactPaths: [],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-validator-duplicates-2' },
-        );
-      }
-      if (workerPrompt.includes('You are the Tactical Review Reducer')) {
-        return buildAssistantResult(
-          buildVerdictResponse(
-            'Reducer completed the tactical review.',
-            'accept',
-            'Validator evidence is sufficient for the final review.',
-            {
-              userAnswer: [
-                '## Findings',
-                '',
-                '- The canonical finding is valid.',
-              ].join('\n'),
-            },
-          ),
-          { sessionId: 'session-review-reducer-duplicates' },
-        );
-      }
-      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 160)}`);
-    });
 
-    const result = await runManagedTask(
-      {
-        provider: 'anthropic',
-        agentMode: 'ama',
-        events: {
-          onManagedTaskStatus: (status) => {
-            statuses.push(status);
-          },
-        },
-        context: {
-          managedTaskWorkspaceDir: workspaceRoot,
-        },
-      },
-      'Please review the current changes for merge blockers.',
-    );
-
-    expect(result.success).toBe(true);
-    expect(findingOneValidatorRuns).toBe(1);
-    expect(result.managedTask?.runtime?.childContextBundles).toHaveLength(2);
-    expect(result.managedTask?.runtime?.fanoutSchedulerPlan?.branches.map((branch) => branch.bundleId)).toEqual([
-      'finding-1',
-      'finding-2',
-    ]);
-    expect(result.managedTask?.runtime?.childAgentResults).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ childId: 'finding-1' }),
-        expect.objectContaining({ childId: 'finding-2' }),
-      ]),
-    );
-    const fanoutWorkerCounts = statuses
-      .filter((status) => status.phase === 'worker' && status.childFanoutClass === 'finding-validation')
-      .map((status) => status.childFanoutCount);
-    expect(fanoutWorkerCounts).toContain(2);
-    expect(fanoutWorkerCounts).toContain(1);
-    expect(fanoutWorkerCounts).toContain(0);
-  });
-
-  it('runs tactical read-only investigation fan-out inside AMA H0 and keeps the parent as final authority', async () => {
-    const workspaceRoot = await createTempDir('kodax-task-engine-tactical-investigation-');
-    const statuses: KodaXManagedTaskStatusEvent[] = [];
-    mockCreateReasoningPlan.mockResolvedValue(
-      buildPlan({
-        primaryTask: 'bugfix',
-        taskFamily: 'investigation',
-        actionability: 'actionable',
-        executionPattern: 'checked-direct',
-        recommendedMode: 'investigation',
-        complexity: 'moderate',
-        riskLevel: 'medium',
-        harnessProfile: 'H0_DIRECT',
-        mutationSurface: 'read-only',
-        topologyCeiling: 'H0_DIRECT',
-        reason: 'Read-only investigation should stay tactical and validate evidence in parallel.',
-      }),
-    );
-    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
-      if (workerPrompt.includes('You are the Scout role')) {
-        return buildAssistantResult(
-          buildScoutResponse(
-            'Scout kept the investigation on H0 and recommended bounded evidence validation.',
-            'H0_DIRECT',
-          ),
-          { sessionId: 'session-scout-tactical-investigation' },
-        );
-      }
-      if (workerPrompt.includes('You are the Tactical Investigation Scanner')) {
-        return buildAssistantResult(
-          [
-            'Scanner found two evidence shards worth validating.',
-            '```kodax-investigation-shards',
-            JSON.stringify({
-              summary: 'Scanner identified two investigation shards.',
-              shards: [
-                {
-                  id: 'shard-1',
-                  question: 'Does the retry path swallow the root cause error?',
-                  scope: 'Retry root-cause propagation',
-                  priority: 'high',
-                  files: ['packages/coding/src/task-engine.ts'],
-                  evidence: ['Retry branch wraps errors before surfacing them.'],
-                },
-                {
-                  id: 'shard-2',
-                  question: 'Is the timeout counter reset still a real contributor?',
-                  scope: 'Timeout counter branch',
-                  priority: 'medium',
-                  files: ['packages/coding/src/reasoning.ts'],
-                  evidence: ['Timeout branch was previously blamed in the report.'],
-                },
-              ],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-scan-tactical-investigation' },
-        );
-      }
-      if (workerPrompt.includes('[Shard ID] shard-1')) {
-        return buildAssistantResult(
-          [
-            buildHandoffResponse('Validator confirmed the retry path hides the root cause.'),
-            '```kodax-child-result',
-            JSON.stringify({
-              childId: 'shard-1',
-              fanoutClass: 'evidence-scan',
-              status: 'completed',
-              disposition: 'valid',
-              summary: 'Shard 1 confirmed the retry path hides the root cause error.',
-              evidenceRefs: ['packages/coding/src/task-engine.ts'],
-              contradictions: [],
-              artifactPaths: [],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-investigation-validator-1' },
-        );
-      }
-      if (workerPrompt.includes('[Shard ID] shard-2')) {
-        await new Promise((resolve) => setTimeout(resolve, 25));
-        return buildAssistantResult(
-          [
-            buildHandoffResponse('Validator ruled the timeout counter reset out as a primary cause.'),
-            '```kodax-child-result',
-            JSON.stringify({
-              childId: 'shard-2',
-              fanoutClass: 'evidence-scan',
-              status: 'completed',
-              disposition: 'false-positive',
-              summary: 'Shard 2 weakens the timeout-counter theory.',
-              evidenceRefs: ['packages/coding/src/reasoning.ts'],
-              contradictions: ['Timeout counter state remains intact in the current code path.'],
-              artifactPaths: [],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-investigation-validator-2' },
-        );
-      }
-      if (workerPrompt.includes('You are the Tactical Investigation Reducer')) {
-        return buildAssistantResult(
-          buildVerdictResponse(
-            'Reducer completed the tactical investigation.',
-            'accept',
-            'Validator evidence is sufficient for the parent diagnosis.',
-            {
-              userAnswer: [
-                '## Investigation Update',
-                '',
-                'The retry path is still the most likely root cause because it hides the original error before surfacing it.',
-                '',
-                'The timeout-counter hypothesis did not hold up under validator-backed evidence.',
-              ].join('\n'),
-            },
-          ),
-          { sessionId: 'session-investigation-reducer' },
-        );
-      }
-      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 160)}`);
-    });
-
-    const result = await runManagedTask(
-      {
-        provider: 'anthropic',
-        agentMode: 'ama',
-        events: {
-          onManagedTaskStatus: (status) => {
-            statuses.push(status);
-          },
-        },
-        context: {
-          managedTaskWorkspaceDir: workspaceRoot,
-        },
-      },
-      'Investigate why the retry path still reports the wrong failure to users.',
-    );
-
-    expect(result.success).toBe(true);
-    expect(result.lastText).toContain('## Investigation Update');
-    expect(result.lastText).toContain('retry path is still the most likely root cause');
-    expect(result.managedTask?.runtime?.amaProfile).toBe('tactical');
-    expect(result.managedTask?.runtime?.amaFanout?.class).toBe('evidence-scan');
-    expect(result.managedTask?.runtime?.childContextBundles).toHaveLength(2);
-    expect(result.managedTask?.runtime?.childAgentResults).toHaveLength(1);
-    expect(result.managedTask?.runtime?.fanoutSchedulerPlan?.fanoutClass).toBe('evidence-scan');
-    expect(result.managedTask?.runtime?.fanoutSchedulerPlan?.cancellationPolicy).toBe('winner-cancel');
-    expect(result.managedTask?.runtime?.fanoutSchedulerPlan?.branches).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          bundleId: 'shard-2',
-          status: 'cancelled',
-        }),
-      ]),
-    );
-    const fanoutWorkerCounts = statuses
-      .filter((status) => status.phase === 'worker' && status.childFanoutClass === 'evidence-scan')
-      .map((status) => status.childFanoutCount);
-    expect(fanoutWorkerCounts).toContain(2);
-    expect(fanoutWorkerCounts).toContain(0);
-  });
-
-  it('applies deterministic winner-cancel for investigation once a high-priority shard is sufficient', async () => {
-    const workspaceRoot = await createTempDir('kodax-task-engine-tactical-investigation-cancel-');
-    mockCreateReasoningPlan.mockResolvedValue(
-      buildPlan({
-        primaryTask: 'bugfix',
-        taskFamily: 'investigation',
-        actionability: 'actionable',
-        executionPattern: 'checked-direct',
-        recommendedMode: 'investigation',
-        complexity: 'moderate',
-        riskLevel: 'medium',
-        harnessProfile: 'H0_DIRECT',
-        mutationSurface: 'read-only',
-        topologyCeiling: 'H0_DIRECT',
-        reason: 'Read-only investigation should cancel lower-priority shards once a high-priority winner is clear.',
-      }),
-    );
-    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
-      if (workerPrompt.includes('You are the Scout role')) {
-        return buildAssistantResult(
-          buildScoutResponse(
-            'Scout kept the investigation on H0 and recommended bounded evidence validation.',
-            'H0_DIRECT',
-          ),
-          { sessionId: 'session-scout-tactical-investigation-cancel' },
-        );
-      }
-      if (workerPrompt.includes('You are the Tactical Investigation Scanner')) {
-        return buildAssistantResult(
-          [
-            'Scanner found two evidence shards worth validating.',
-            '```kodax-investigation-shards',
-            JSON.stringify({
-              summary: 'Scanner identified two investigation shards.',
-              shards: [
-                {
-                  id: 'shard-1',
-                  question: 'Does the retry path hide the root cause?',
-                  scope: 'Retry root-cause propagation',
-                  priority: 'high',
-                  files: ['packages/coding/src/task-engine.ts'],
-                  evidence: ['This is the decisive shard for the current diagnosis.'],
-                },
-                {
-                  id: 'shard-2',
-                  question: 'Does the metrics side-path contribute anything material?',
-                  scope: 'Metrics side-path',
-                  priority: 'low',
-                  files: ['packages/coding/src/task-engine.ts'],
-                  evidence: ['This shard should be cancellable once the primary cause is confirmed.'],
-                },
-              ],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-scan-tactical-investigation-cancel' },
-        );
-      }
-      if (workerPrompt.includes('[Shard ID] shard-1')) {
-        return buildAssistantResult(
-          [
-            buildHandoffResponse('Validator confirmed the retry path hides the root cause.'),
-            '```kodax-child-result',
-            JSON.stringify({
-              childId: 'shard-1',
-              fanoutClass: 'evidence-scan',
-              status: 'completed',
-              disposition: 'valid',
-              summary: 'Shard 1 confirmed the retry path hides the root cause.',
-              evidenceRefs: ['packages/coding/src/task-engine.ts'],
-              contradictions: [],
-              artifactPaths: [],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-investigation-cancel-1' },
-        );
-      }
-      if (workerPrompt.includes('[Shard ID] shard-2')) {
-        await new Promise((resolve) => setTimeout(resolve, 40));
-        return buildAssistantResult(
-          [
-            buildHandoffResponse('Late validator result should be ignored after cancellation.'),
-            '```kodax-child-result',
-            JSON.stringify({
-              childId: 'shard-2',
-              fanoutClass: 'evidence-scan',
-              status: 'completed',
-              disposition: 'false-positive',
-              summary: 'Shard 2 eventually completed, but the parent had already cancelled it.',
-              evidenceRefs: ['packages/coding/src/task-engine.ts'],
-              contradictions: ['Late result should not affect the finalized diagnosis.'],
-              artifactPaths: [],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-investigation-cancel-2' },
-        );
-      }
-      if (workerPrompt.includes('You are the Tactical Investigation Reducer')) {
-        return buildAssistantResult(
-          buildVerdictResponse(
-            'Reducer completed the tactical investigation.',
-            'accept',
-            'High-priority validator evidence is sufficient for the diagnosis.',
-            {
-              userAnswer: [
-                '## Investigation Update',
-                '',
-                'The retry path remains the confirmed root cause.',
-              ].join('\n'),
-            },
-          ),
-          { sessionId: 'session-investigation-reducer-cancel' },
-        );
-      }
-      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 160)}`);
-    });
-
-    const result = await runManagedTask(
-      {
-        provider: 'anthropic',
-        agentMode: 'ama',
-        context: {
-          managedTaskWorkspaceDir: workspaceRoot,
-        },
-      },
-      'Investigate why the retry path still reports the wrong failure to users.',
-    );
-
-    expect(result.success).toBe(true);
-    expect(result.lastText).toContain('retry path remains the confirmed root cause');
-    expect(result.managedTask?.runtime?.fanoutSchedulerPlan?.cancellationPolicy).toBe('winner-cancel');
-    expect(result.managedTask?.runtime?.fanoutSchedulerPlan?.branches).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          bundleId: 'shard-2',
-          status: 'cancelled',
-        }),
-      ]),
-    );
-    expect(result.managedTask?.runtime?.childAgentResults).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          childId: 'shard-1',
-          disposition: 'valid',
-        }),
-      ]),
-    );
-    expect(result.managedTask?.runtime?.childAgentResults).not.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          childId: 'shard-2',
-        }),
-      ]),
-    );
-  });
-
-  it('keeps overflow tactical investigation shards in the ledger and forces revise when a high-priority shard is deferred', async () => {
-    const workspaceRoot = await createTempDir('kodax-task-engine-tactical-investigation-overflow-');
-    mockCreateReasoningPlan.mockResolvedValue(
-      buildPlan({
-        primaryTask: 'bugfix',
-        taskFamily: 'investigation',
-        actionability: 'actionable',
-        executionPattern: 'checked-direct',
-        recommendedMode: 'investigation',
-        complexity: 'moderate',
-        riskLevel: 'medium',
-        harnessProfile: 'H0_DIRECT',
-        mutationSurface: 'read-only',
-        topologyCeiling: 'H0_DIRECT',
-        reason: 'Read-only investigation should defer overflow evidence shards through the scheduler.',
-      }),
-    );
-    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
-      if (workerPrompt.includes('You are the Scout role')) {
-        return buildAssistantResult(
-          buildScoutResponse(
-            'Scout kept the investigation on H0 and recommended bounded evidence validation.',
-            'H0_DIRECT',
-          ),
-          { sessionId: 'session-scout-tactical-investigation-overflow' },
-        );
-      }
-      if (workerPrompt.includes('You are the Tactical Investigation Scanner')) {
-        return buildAssistantResult(
-          [
-            'Scanner found four evidence shards worth validating.',
-            '```kodax-investigation-shards',
-            JSON.stringify({
-              summary: 'Scanner identified four investigation shards.',
-              shards: [
-                {
-                  id: 'shard-1',
-                  question: 'Does the retry path hide the root cause?',
-                  scope: 'Retry root-cause propagation',
-                  priority: 'high',
-                  files: ['packages/coding/src/task-engine.ts'],
-                  evidence: ['Retry wrapper still suppresses the underlying error.'],
-                },
-                {
-                  id: 'shard-2',
-                  question: 'Does the timeout counter remain intact?',
-                  scope: 'Timeout counter branch',
-                  priority: 'medium',
-                  files: ['packages/coding/src/reasoning.ts'],
-                  evidence: ['Timeout counter branch is implicated in the report.'],
-                },
-                {
-                  id: 'shard-3',
-                  question: 'Does the logger preserve the hidden root cause text?',
-                  scope: 'Logger root-cause handoff',
-                  priority: 'high',
-                  files: ['packages/coding/src/task-engine.ts'],
-                  evidence: ['Logger handoff may still hide the message.'],
-                },
-                {
-                  id: 'shard-4',
-                  question: 'Is a tertiary metrics path involved?',
-                  scope: 'Metrics side-path',
-                  priority: 'low',
-                  files: ['packages/coding/src/task-engine.ts'],
-                  evidence: ['Low-priority branch used to exercise deferral.'],
-                },
-              ],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-scan-tactical-investigation-overflow' },
-        );
-      }
-      if (workerPrompt.includes('[Shard ID] shard-1')) {
-        return buildAssistantResult(
-          [
-            buildHandoffResponse('Validator confirmed the retry path issue.'),
-            '```kodax-child-result',
-            JSON.stringify({
-              childId: 'shard-1',
-              fanoutClass: 'evidence-scan',
-              status: 'completed',
-              disposition: 'valid',
-              summary: 'Shard 1 confirmed the retry path hides the root cause.',
-              evidenceRefs: ['packages/coding/src/task-engine.ts'],
-              contradictions: [],
-              artifactPaths: [],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-investigation-overflow-1' },
-        );
-      }
-      if (workerPrompt.includes('[Shard ID] shard-2')) {
-        return buildAssistantResult(
-          [
-            buildHandoffResponse('Validator weakened the timeout branch theory.'),
-            '```kodax-child-result',
-            JSON.stringify({
-              childId: 'shard-2',
-              fanoutClass: 'evidence-scan',
-              status: 'completed',
-              disposition: 'false-positive',
-              summary: 'Shard 2 weakens the timeout branch theory.',
-              evidenceRefs: ['packages/coding/src/reasoning.ts'],
-              contradictions: ['Timeout state remains intact.'],
-              artifactPaths: [],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-investigation-overflow-2' },
-        );
-      }
-      if (workerPrompt.includes('You are the Tactical Investigation Reducer')) {
-        return buildAssistantResult(
-          buildVerdictResponse(
-            'Reducer tried to finalize the investigation.',
-            'accept',
-            'Reducer thinks the evidence is enough.',
-            {
-              userAnswer: [
-                '## Investigation Update',
-                '',
-                'Reducer says the retry path diagnosis is complete.',
-              ].join('\n'),
-            },
-          ),
-          { sessionId: 'session-investigation-reducer-overflow' },
-        );
-      }
-      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 160)}`);
-    });
-
-    const result = await runManagedTask(
-      {
-        provider: 'anthropic',
-        agentMode: 'ama',
-        context: {
-          managedTaskWorkspaceDir: workspaceRoot,
-        },
-      },
-      'Investigate why the retry path still reports the wrong failure to users.',
-    );
-
-    expect(result.success).toBe(false);
-    expect(result.lastText).toContain('The investigation is still inconclusive');
-    expect(result.lastText).toContain('Logger root-cause handoff (high)');
-    expect(result.managedTask?.runtime?.childContextBundles).toHaveLength(4);
-    expect(result.managedTask?.runtime?.childAgentResults).toHaveLength(2);
-    expect(result.managedTask?.runtime?.fanoutSchedulerPlan?.scheduledBundleIds).toEqual(['shard-1', 'shard-2']);
-    expect(result.managedTask?.runtime?.fanoutSchedulerPlan?.deferredBundleIds).toEqual(['shard-3', 'shard-4']);
-  });
-
-  it('canonicalizes duplicate investigation shard ids before scheduling validator branches', async () => {
-    const workspaceRoot = await createTempDir('kodax-task-engine-tactical-investigation-duplicates-');
-    let shardOneValidatorRuns = 0;
-    mockCreateReasoningPlan.mockResolvedValue(
-      buildPlan({
-        primaryTask: 'bugfix',
-        taskFamily: 'investigation',
-        actionability: 'actionable',
-        executionPattern: 'checked-direct',
-        recommendedMode: 'investigation',
-        complexity: 'moderate',
-        riskLevel: 'medium',
-        harnessProfile: 'H0_DIRECT',
-        mutationSurface: 'read-only',
-        topologyCeiling: 'H0_DIRECT',
-        reason: 'Read-only investigation should canonicalize duplicate shards before validation.',
-      }),
-    );
-    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
-      if (workerPrompt.includes('You are the Scout role')) {
-        return buildAssistantResult(
-          buildScoutResponse(
-            'Scout kept the investigation on H0 and recommended bounded evidence validation.',
-            'H0_DIRECT',
-          ),
-          { sessionId: 'session-scout-tactical-investigation-duplicates' },
-        );
-      }
-      if (workerPrompt.includes('You are the Tactical Investigation Scanner')) {
-        return buildAssistantResult(
-          [
-            'Scanner found three shards, including one duplicate id.',
-            '```kodax-investigation-shards',
-            JSON.stringify({
-              summary: 'Scanner identified three investigation shards with one duplicate id.',
-              shards: [
-                {
-                  id: 'shard-1',
-                  question: 'Does the retry path hide the root cause?',
-                  scope: 'Retry root-cause propagation',
-                  priority: 'high',
-                  files: ['packages/coding/src/task-engine.ts'],
-                  evidence: ['First occurrence.'],
-                },
-                {
-                  id: 'shard-1',
-                  question: 'Duplicate shard should not run twice.',
-                  scope: 'Duplicate retry shard',
-                  priority: 'medium',
-                  files: ['packages/coding/src/task-engine.ts'],
-                  evidence: ['Duplicate occurrence.'],
-                },
-                {
-                  id: 'shard-2',
-                  question: 'Does the logger preserve the root cause?',
-                  scope: 'Logger handoff',
-                  priority: 'medium',
-                  files: ['packages/coding/src/task-engine.ts'],
-                  evidence: ['Independent sibling shard.'],
-                },
-              ],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-scan-tactical-investigation-duplicates' },
-        );
-      }
-      if (workerPrompt.includes('[Shard ID] shard-1')) {
-        shardOneValidatorRuns += 1;
-        return buildAssistantResult(
-          [
-            buildHandoffResponse('Validator confirmed the canonical shard.'),
-            '```kodax-child-result',
-            JSON.stringify({
-              childId: 'shard-1',
-              fanoutClass: 'evidence-scan',
-              status: 'completed',
-              disposition: 'valid',
-              summary: 'Shard 1 is valid.',
-              evidenceRefs: ['packages/coding/src/task-engine.ts'],
-              contradictions: [],
-              artifactPaths: [],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-investigation-duplicates-1' },
-        );
-      }
-      if (workerPrompt.includes('[Shard ID] shard-2')) {
-        return buildAssistantResult(
-          [
-            buildHandoffResponse('Validator weakened the sibling shard.'),
-            '```kodax-child-result',
-            JSON.stringify({
-              childId: 'shard-2',
-              fanoutClass: 'evidence-scan',
-              status: 'completed',
-              disposition: 'false-positive',
-              summary: 'Shard 2 is a false positive.',
-              evidenceRefs: ['packages/coding/src/task-engine.ts'],
-              contradictions: ['Sibling shard does not reproduce.'],
-              artifactPaths: [],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-investigation-duplicates-2' },
-        );
-      }
-      if (workerPrompt.includes('You are the Tactical Investigation Reducer')) {
-        return buildAssistantResult(
-          buildVerdictResponse(
-            'Reducer completed the tactical investigation.',
-            'accept',
-            'Validator evidence is sufficient for the parent diagnosis.',
-            {
-              userAnswer: [
-                '## Investigation Update',
-                '',
-                'The canonical shard is valid.',
-              ].join('\n'),
-            },
-          ),
-          { sessionId: 'session-investigation-reducer-duplicates' },
-        );
-      }
-      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 160)}`);
-    });
-
-    const result = await runManagedTask(
-      {
-        provider: 'anthropic',
-        agentMode: 'ama',
-        context: {
-          managedTaskWorkspaceDir: workspaceRoot,
-        },
-      },
-      'Investigate why the retry path still reports the wrong failure to users.',
-    );
-
-    expect(result.success).toBe(true);
-    expect(shardOneValidatorRuns).toBe(1);
-    expect(result.managedTask?.runtime?.childContextBundles).toHaveLength(2);
-    expect(result.managedTask?.runtime?.fanoutSchedulerPlan?.branches.map((branch) => branch.bundleId)).toEqual([
-      'shard-1',
-      'shard-2',
-    ]);
-  });
-
-  it('fails closed when a tactical investigation shard omits a structured child result', async () => {
-    const workspaceRoot = await createTempDir('kodax-task-engine-tactical-investigation-fail-closed-');
-    mockCreateReasoningPlan.mockResolvedValue(
-      buildPlan({
-        primaryTask: 'bugfix',
-        taskFamily: 'investigation',
-        actionability: 'actionable',
-        executionPattern: 'checked-direct',
-        recommendedMode: 'investigation',
-        complexity: 'moderate',
-        riskLevel: 'medium',
-        harnessProfile: 'H0_DIRECT',
-        mutationSurface: 'read-only',
-        topologyCeiling: 'H0_DIRECT',
-        reason: 'Read-only investigation should fail closed on malformed child results.',
-      }),
-    );
-    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
-      if (workerPrompt.includes('You are the Scout role')) {
-        return buildAssistantResult(
-          buildScoutResponse(
-            'Scout kept the investigation on H0 and recommended bounded evidence validation.',
-            'H0_DIRECT',
-          ),
-          { sessionId: 'session-scout-tactical-investigation-fail-closed' },
-        );
-      }
-      if (workerPrompt.includes('You are the Tactical Investigation Scanner')) {
-        return buildAssistantResult(
-          [
-            'Scanner found two investigation shards worth validation.',
-            '```kodax-investigation-shards',
-            JSON.stringify({
-              summary: 'Scanner identified two investigation shards.',
-              shards: [
-                {
-                  id: 'shard-1',
-                  question: 'Does the retry path hide the root cause?',
-                  scope: 'Retry root-cause propagation',
-                  priority: 'high',
-                  files: ['packages/coding/src/task-engine.ts'],
-                  evidence: ['This shard exercises fail-closed reduction.'],
-                },
-                {
-                  id: 'shard-2',
-                  question: 'Is the timeout branch involved?',
-                  scope: 'Timeout branch',
-                  priority: 'medium',
-                  files: ['packages/coding/src/reasoning.ts'],
-                  evidence: ['Sibling shard provides a structured comparison point.'],
-                },
-              ],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-scan-tactical-investigation-fail-closed' },
-        );
-      }
-      if (workerPrompt.includes('[Shard ID] shard-1')) {
-        return buildAssistantResult(
-          buildHandoffResponse('Validator insists the retry shard is valid but forgets the structured block.'),
-          { sessionId: 'session-investigation-fail-closed-1' },
-        );
-      }
-      if (workerPrompt.includes('[Shard ID] shard-2')) {
-        return buildAssistantResult(
-          [
-            buildHandoffResponse('Validator weakened the sibling shard.'),
-            '```kodax-child-result',
-            JSON.stringify({
-              childId: 'shard-2',
-              fanoutClass: 'evidence-scan',
-              status: 'completed',
-              disposition: 'false-positive',
-              summary: 'Shard 2 weakens the timeout branch theory.',
-              evidenceRefs: ['packages/coding/src/reasoning.ts'],
-              contradictions: ['Timeout branch is not implicated by current evidence.'],
-              artifactPaths: [],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-investigation-fail-closed-2' },
-        );
-      }
-      if (workerPrompt.includes('You are the Tactical Investigation Reducer')) {
-        return buildAssistantResult(
-          buildVerdictResponse(
-            'Reducer believes the investigation is complete.',
-            'accept',
-            'Reducer thinks the investigation is done.',
-            {
-              userAnswer: [
-                '## Investigation Update',
-                '',
-                'Reducer says the retry shard is confirmed.',
-              ].join('\n'),
-            },
-          ),
-          { sessionId: 'session-investigation-reducer-fail-closed' },
-        );
-      }
-      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 160)}`);
-    });
-
-    const result = await runManagedTask(
-      {
-        provider: 'anthropic',
-        agentMode: 'ama',
-        context: {
-          managedTaskWorkspaceDir: workspaceRoot,
-        },
-      },
-      'Investigate why the retry path still reports the wrong failure to users.',
-    );
-
-    expect(result.success).toBe(false);
-    expect(result.lastText).toContain('The investigation is still inconclusive');
-    expect(result.lastText).toContain('Retry root-cause propagation (high)');
-    expect(result.lastText).not.toContain('Reducer says the retry shard is confirmed.');
-    expect(result.managedTask?.runtime?.childAgentResults).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          childId: 'shard-1',
-          disposition: 'needs-more-evidence',
-          contradictions: ['Missing or malformed structured child result.'],
-        }),
-      ]),
-    );
-  });
-
-  it('treats fully-completed but unsupported investigation evidence as an unsupported diagnosis, not as missing evidence', async () => {
-    const workspaceRoot = await createTempDir('kodax-task-engine-tactical-investigation-unsupported-');
-    mockCreateReasoningPlan.mockResolvedValue(
-      buildPlan({
-        primaryTask: 'bugfix',
-        taskFamily: 'investigation',
-        actionability: 'actionable',
-        executionPattern: 'checked-direct',
-        recommendedMode: 'investigation',
-        complexity: 'moderate',
-        riskLevel: 'medium',
-        harnessProfile: 'H0_DIRECT',
-        mutationSurface: 'read-only',
-        topologyCeiling: 'H0_DIRECT',
-        reason: 'Read-only investigation should distinguish unsupported diagnoses from missing evidence.',
-      }),
-    );
-    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
-      if (workerPrompt.includes('You are the Scout role')) {
-        return buildAssistantResult(
-          buildScoutResponse(
-            'Scout kept the investigation on H0 and recommended bounded evidence validation.',
-            'H0_DIRECT',
-          ),
-          { sessionId: 'session-scout-tactical-investigation-unsupported' },
-        );
-      }
-      if (workerPrompt.includes('You are the Tactical Investigation Scanner')) {
-        return buildAssistantResult(
-          [
-            'Scanner found two evidence shards worth validating.',
-            '```kodax-investigation-shards',
-            JSON.stringify({
-              summary: 'Scanner identified two investigation shards.',
-              shards: [
-                {
-                  id: 'shard-1',
-                  question: 'Does the retry wrapper hide the original error?',
-                  scope: 'Retry wrapper',
-                  priority: 'high',
-                  files: ['packages/coding/src/task-engine.ts'],
-                  evidence: ['Current lead depends on this shard.'],
-                },
-                {
-                  id: 'shard-2',
-                  question: 'Does the logger drop the root cause text?',
-                  scope: 'Logger handoff',
-                  priority: 'medium',
-                  files: ['packages/coding/src/task-engine.ts'],
-                  evidence: ['Secondary supporting shard.'],
-                },
-              ],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-scan-tactical-investigation-unsupported' },
-        );
-      }
-      if (workerPrompt.includes('[Shard ID] shard-1')) {
-        return buildAssistantResult(
-          [
-            buildHandoffResponse('Validator found no support for the retry-wrapper diagnosis.'),
-            '```kodax-child-result',
-            JSON.stringify({
-              childId: 'shard-1',
-              fanoutClass: 'evidence-scan',
-              status: 'completed',
-              disposition: 'false-positive',
-              summary: 'Shard 1 does not support the retry-wrapper diagnosis.',
-              evidenceRefs: ['packages/coding/src/task-engine.ts'],
-              contradictions: ['Retry wrapper preserves the original error in the current code path.'],
-              artifactPaths: [],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-investigation-unsupported-1' },
-        );
-      }
-      if (workerPrompt.includes('[Shard ID] shard-2')) {
-        return buildAssistantResult(
-          [
-            buildHandoffResponse('Validator found no support for the logger-handoff diagnosis.'),
-            '```kodax-child-result',
-            JSON.stringify({
-              childId: 'shard-2',
-              fanoutClass: 'evidence-scan',
-              status: 'completed',
-              disposition: 'false-positive',
-              summary: 'Shard 2 does not support the logger-handoff diagnosis.',
-              evidenceRefs: ['packages/coding/src/task-engine.ts'],
-              contradictions: ['Logger handoff preserves the root cause text.'],
-              artifactPaths: [],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-investigation-unsupported-2' },
-        );
-      }
-      if (workerPrompt.includes('You are the Tactical Investigation Reducer')) {
-        return buildAssistantResult(
-          buildVerdictResponse(
-            'Reducer thinks the investigation can be accepted.',
-            'accept',
-            'Reducer optimism should be ignored when no validator-backed support exists.',
-            {
-              userAnswer: [
-                '## Investigation Update',
-                '',
-                'Reducer says the current diagnosis is confirmed.',
-              ].join('\n'),
-            },
-          ),
-          { sessionId: 'session-investigation-reducer-unsupported' },
-        );
-      }
-      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 160)}`);
-    });
-
-    const result = await runManagedTask(
-      {
-        provider: 'anthropic',
-        agentMode: 'ama',
-        context: {
-          managedTaskWorkspaceDir: workspaceRoot,
-        },
-      },
-      'Investigate why the retry path still reports the wrong failure to users.',
-    );
-
-    expect(result.success).toBe(false);
-    expect(result.lastText).toContain('validated evidence collected so far does not support the current diagnosis');
-    expect(result.lastText).toContain('No unresolved evidence shards remain');
-    expect(result.lastText).toContain('does not support the retry-wrapper diagnosis');
-    expect(result.lastText).not.toContain('Reducer says the current diagnosis is confirmed.');
-  });
-
-  it('accepts an empty investigation shard block as structured scanner output and records the scanner artifact', async () => {
-    const workspaceRoot = await createTempDir('kodax-task-engine-tactical-investigation-empty-shards-');
-    mockCreateReasoningPlan.mockResolvedValue(
-      buildPlan({
-        primaryTask: 'bugfix',
-        taskFamily: 'investigation',
-        actionability: 'actionable',
-        executionPattern: 'checked-direct',
-        recommendedMode: 'investigation',
-        complexity: 'moderate',
-        riskLevel: 'medium',
-        harnessProfile: 'H0_DIRECT',
-        mutationSurface: 'read-only',
-        topologyCeiling: 'H0_DIRECT',
-        reason: 'Read-only investigation should preserve an explicit empty shard contract from the scanner.',
-      }),
-    );
-    mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
-      if (workerPrompt.includes('You are the Scout role')) {
-        return buildAssistantResult(
-          buildScoutResponse(
-            'Scout kept the investigation on H0 and recommended bounded evidence validation.',
-            'H0_DIRECT',
-          ),
-          { sessionId: 'session-scout-tactical-investigation-empty-shards' },
-        );
-      }
-      if (workerPrompt.includes('You are the Tactical Investigation Scanner')) {
-        return buildAssistantResult(
-          [
-            'Scanner found no bounded evidence shards worth splitting out.',
-            '```kodax-investigation-shards',
-            JSON.stringify({
-              summary: 'Scanner found no bounded investigation shards.',
-              shards: [],
-            }),
-            '```',
-          ].join('\n'),
-          { sessionId: 'session-scan-tactical-investigation-empty-shards' },
-        );
-      }
-      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 160)}`);
-    });
-
-    const result = await runManagedTask(
-      {
-        provider: 'anthropic',
-        agentMode: 'ama',
-        context: {
-          managedTaskWorkspaceDir: workspaceRoot,
-        },
-      },
-      'Investigate why the retry path still reports the wrong failure to users.',
-    );
-
-    expect(result.success).toBe(true);
-    expect(result.lastText).toContain('Scanner found no bounded evidence shards worth splitting out.');
-    expect(result.managedTask?.runtime?.childContextBundles ?? []).toHaveLength(0);
-    expect(result.managedTask?.evidence.artifacts.map((artifact) => artifact.path)).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining('investigation-shards.json'),
-      ]),
-    );
-  });
 
   it('keeps mutation-focused AMA tactical investigation on the direct path when child fan-out is inadmissible', async () => {
     mockCreateReasoningPlan.mockResolvedValue(
@@ -2903,7 +1201,7 @@ describe('runManagedTask', () => {
     const scoutPrompt = prompts.find((item) => item.includes('You are the Scout role'));
     const generatorPrompt = prompts.find((item) => item.includes('You are the Generator role'));
     const evaluatorPrompt = prompts.find((item) => item.includes('You are the Evaluator role'));
-    expect(scoutPrompt).toContain('If you confirm H1 or H2, stop after the cheap-facts pass.');
+    expect(scoutPrompt).toContain('If you confirm H1 or H2: stop after investigation. Your findings will be passed to the Generator as handoff context.');
     expect(scoutPrompt).toContain('When multiple read-only tool calls are independent, emit them in the same response so parallel mode can run them together.');
     expect(generatorPrompt).toContain('This is lightweight H1 checked-direct execution, not mini-H2.');
     expect(generatorPrompt).toContain('Reuse its cheap-facts summary, scope notes, and evidence-acquisition hints instead of rebuilding them from scratch.');

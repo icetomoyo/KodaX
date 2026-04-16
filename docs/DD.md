@@ -1,9 +1,9 @@
 # KodaX 详细设计（DD）
 
-> Last updated: 2026-03-29
+> Last updated: 2026-04-12
 >
-> 这份 DD 描述当前 task engine 的内部模型：
-> single-agent first、intent-first、skill-aware、evidence-driven。
+> 这份 DD 描述当前 task engine 的内部模型（`FEATURE_061/062` 后）：
+> Scout-first、intent-first、skill-aware、evidence-driven。
 
 ## 中文导读
 
@@ -529,6 +529,8 @@ non-terminal worker transcript 仍然保留，以支持可观测性与调试。
 - `FEATURE_028`: retrieval / evidence tooling
 - `FEATURE_029`: provider policy
 - `FEATURE_034`: capability runtime
+- `FEATURE_061`: Scout-first AMA — Scout 唯一入口，H0 直接完成，context continuation，subagent 并行
+- `FEATURE_062`: Budget simplification — `{ cap, used }` + 4 纯函数
 
 ---
 

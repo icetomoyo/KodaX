@@ -9,6 +9,7 @@ import { createMcpTestServerFixture } from '../capabilities/providers/mcp/test-h
 import {
   toolMcpCall,
   toolMcpDescribe,
+  toolMcpGetPrompt,
   toolMcpReadResource,
   toolMcpSearch,
 } from './index.js';
@@ -25,7 +26,7 @@ describe('MCP retrieval tools', () => {
     tempDirs.push(tempDir);
     const fixture = await createMcpTestServerFixture(tempDir);
     const runtime = createExtensionRuntime().activate();
-    await registerConfiguredMcpCapabilityProvider(runtime, fixture.config);
+    await registerConfiguredMcpCapabilityProvider(runtime, fixture.servers, { cacheDir: fixture.cacheDir });
     const ctx: KodaXToolExecutionContext = {
       backups: new Map(),
       executionCwd: tempDir,
@@ -50,6 +51,10 @@ describe('MCP retrieval tools', () => {
     const readOutput = await toolMcpReadResource({ id: fixture.resourceId }, ctx);
     expect(readOutput).toContain('Retrieval result for mcp_read_resource');
     expect(readOutput).toContain('resource:memory://guide');
+
+    const promptOutput = await toolMcpGetPrompt({ id: fixture.promptId, args: { topic: 'test' } }, ctx);
+    expect(promptOutput).toContain('Retrieval result for mcp_get_prompt');
+    expect(promptOutput).toContain('prompt:draft_prompt:test');
 
     await runtime.dispose();
   });

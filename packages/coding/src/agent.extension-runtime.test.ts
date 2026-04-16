@@ -493,7 +493,6 @@ describe('runKodaX extension runtime integration', () => {
       {
         provider: TEST_PROVIDER_NAME,
         extensionRuntime: runtime,
-        parallel: true,
       },
       'start feature 034 parallel tools',
     );

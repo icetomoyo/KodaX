@@ -1,6 +1,6 @@
 {
   "name": "@kodax/ai",
-  "version": "0.7.15",
+  "version": "0.7.18",
   "description": "KodaX AI - 独立的 LLM 抽象层，可被其他项目复用",
   "type": "module",
   "main": "dist/index.js",

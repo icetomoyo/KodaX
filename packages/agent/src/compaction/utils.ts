@@ -58,7 +58,9 @@ export function serializeConversation(messages: KodaXMessage[]): string {
           (b): b is KodaXThinkingBlock => b.type === 'thinking'
         );
         for (const thinking of thinkingBlocks) {
-          lines.push(`[Assistant thinking]: ${thinking.thinking}`);
+          if (thinking.thinking.length > 0) {
+            lines.push(`[Assistant thinking]: ${thinking.thinking}`);
+          }
         }
 
         // Text blocks

@@ -10,12 +10,16 @@ import type { CompactionDetails } from './types.js';
 import type { KodaXCompactMemorySeed } from '../types.js';
 import { serializeConversation } from './utils.js';
 
-const SUMMARIZATION_SYSTEM_PROMPT = `You are a context summarization assistant.
-Read the conversation history and produce a compact continuation summary.
+const SUMMARIZATION_SYSTEM_PROMPT = `You are a context summarization specialist.
 
-Do not continue the conversation.
-Do not answer any user requests.
-Only output the requested structured summary.`;
+CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.
+Tool calls will be REJECTED and waste your only turn.
+
+Your response must contain two parts:
+1. <analysis> — your scratchpad for walking through messages (will be stripped)
+2. <summary> — the structured continuation summary
+
+Do not continue the conversation. Do not answer any user requests.`;
 
 const SUMMARY_PROMPT = `Create a structured summary for the conversation below.
 
@@ -34,11 +38,26 @@ You must keep:
 - current progress and unfinished work
 - blockers or unresolved questions
 - the most important next steps
-- key files, code locations, and decisions
+- EXACT file paths, function names, and line numbers referenced
+- EXACT error messages, HTTP status codes, and exception types
+- API endpoints, database tables, env vars, and config values mentioned
+- key decisions WITH reasoning (not just the choice)
+
+CRITICAL: Every user REQUEST and DECISION must be preserved verbatim or near-verbatim.
+Never reduce "user asked to fix the 401 error on /api/auth/login by switching to JWT"
+to "user asked to fix an error".
 
 Keep the summary concise and high-signal. Do not mechanically preserve every historical detail.
 
-Output format (strict markdown):
+First, wrap your analysis in <analysis> tags:
+- Walk through messages chronologically
+- Note exact file paths, function names, error codes, config values
+- Identify user's explicit requests vs inferred intent
+- Flag technical details that MUST survive compression
+
+Then output the structured summary in <summary> tags.
+
+Output format (strict markdown, inside <summary> tags):
 
 ## Goal
 [1-2 sentences describing the active goal]
@@ -65,6 +84,9 @@ Output format (strict markdown):
 
 ## Key Context
 - [Critical context needed to continue]
+
+## Files & Changes
+- **[exact path]**: [what was done and why]
 
 ---
 
@@ -96,11 +118,18 @@ You must preserve or update:
 - current progress and unfinished work
 - blockers that still matter
 - next steps based on the latest state
-- exact file paths, function names, and key decisions when they remain relevant
+- EXACT file paths, function names, and line numbers
+- EXACT error messages, HTTP status codes, and exception types
+- API endpoints, database tables, env vars, and config values
+- key decisions WITH reasoning
+
+CRITICAL: Every user REQUEST and DECISION must be preserved verbatim or near-verbatim.
 
 Do not accumulate every past detail. Compress aggressively while keeping continuation-critical context.
 
-Output format (strict markdown):
+First, wrap your analysis in <analysis> tags, then output the summary in <summary> tags.
+
+Output format (strict markdown, inside <summary> tags):
 
 ## Goal
 [Updated goal]
@@ -126,6 +155,9 @@ Output format (strict markdown):
 
 ## Key Context
 - [Critical context needed to continue]
+
+## Files & Changes
+- **[exact path]**: [what was done and why]
 
 ---
 
@@ -340,7 +372,18 @@ export async function generateSummary(
     undefined
   );
 
-  return result.textBlocks.map(block => block.text).join('\n');
+  const rawText = result.textBlocks.map(block => block.text).join('\n');
+  return stripAnalysisBlock(rawText);
+}
+
+/**
+ * Strip <analysis>...</analysis> scratchpad from LLM output.
+ * Also strips <summary> wrapper tags, keeping only the content.
+ */
+function stripAnalysisBlock(text: string): string {
+  let cleaned = text.replace(/<analysis>[\s\S]*?<\/analysis>/gi, '').trim();
+  cleaned = cleaned.replace(/<\/?summary>/gi, '').trim();
+  return cleaned;
 }
 
 function parseListSection(section: string): string[] {

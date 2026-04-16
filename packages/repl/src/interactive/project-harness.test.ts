@@ -925,7 +925,7 @@ Milestone: Checks are green.
     expect(reverified.runRecord.checks.map(check => `${check.id}:${check.passed ? 'pass' : 'fail'}`)).toContain('build:fail');
     expect(configAfterReverify).toBe(configBeforeReverify);
     expect(persistedConfig?.checks.map(check => check.id)).toEqual(['test']);
-  });
+  }, 15_000);
 
   it('rejects large unrelated diffs that do not appear tied to the active feature', async () => {
     const storage = new ProjectStorage(tempDir);

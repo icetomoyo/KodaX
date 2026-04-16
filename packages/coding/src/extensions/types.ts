@@ -13,6 +13,9 @@ import type {
   RegisteredToolDefinition,
 } from '../tools/types.js';
 
+import type { ExecOptions, ExecResult, WebhookOptions, WebhookResult } from './helpers.js';
+export type { ExecOptions, ExecResult, WebhookOptions, WebhookResult } from './helpers.js';
+
 export type CapabilityKind = 'tool' | 'resource' | 'prompt';
 
 export interface CapabilityResult {
@@ -302,6 +305,10 @@ export interface KodaXExtensionAPI {
   runtime: ExtensionRuntimeController;
   /** Extension-scoped key-value store that persists across sessions. */
   persistence: KodaXExtensionStore;
+  /** Run a shell command with sandboxed environment (no API key leakage). */
+  exec: (command: string, options?: ExecOptions) => Promise<ExecResult>;
+  /** Send an HTTP webhook with timeout support. */
+  webhook: (url: string, payload: unknown, options?: WebhookOptions) => Promise<WebhookResult>;
 }
 
 export type KodaXExtensionActivationResult =

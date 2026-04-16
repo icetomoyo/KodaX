@@ -17,7 +17,6 @@ describe('provider capability disclosure', () => {
       thinking: true,
       reasoningMode: 'balanced',
       agentMode: 'ama',
-      parallel: false,
       permissionMode: 'accept-edits',
     };
   });

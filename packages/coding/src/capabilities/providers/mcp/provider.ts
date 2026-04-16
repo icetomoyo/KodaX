@@ -5,8 +5,8 @@ import type {
 } from '../../../extensions/types.js';
 import type { KodaXExtensionRuntime } from '../../../extensions/runtime.js';
 import type {
-  KodaXMcpConfig,
   KodaXMcpServerConfig,
+  KodaXMcpServersConfig,
 } from '../../../types.js';
 import {
   defaultMcpCacheDir,
@@ -24,9 +24,9 @@ interface McpProviderOptions {
 }
 
 function enabledServerEntries(
-  config: KodaXMcpConfig | undefined,
+  servers: KodaXMcpServersConfig | undefined,
 ): Array<[string, KodaXMcpServerConfig]> {
-  return Object.entries(config?.servers ?? {})
+  return Object.entries(servers ?? {})
     .filter(([, serverConfig]) => (serverConfig.connect ?? 'lazy') !== 'disabled');
 }
 
@@ -37,11 +37,11 @@ export class McpCapabilityProvider implements CapabilityProvider {
   private readonly cacheDir: string;
 
   constructor(
-    private readonly config: KodaXMcpConfig,
+    servers: KodaXMcpServersConfig | undefined,
     options: McpProviderOptions = {},
   ) {
-    this.cacheDir = options.cacheDir ?? config.cacheDir ?? defaultMcpCacheDir();
-    for (const [serverId, serverConfig] of enabledServerEntries(config)) {
+    this.cacheDir = options.cacheDir ?? defaultMcpCacheDir();
+    for (const [serverId, serverConfig] of enabledServerEntries(servers)) {
       this.runtimes.set(
         serverId,
         new McpServerRuntime(serverId, serverConfig, this.cacheDir),
@@ -54,14 +54,13 @@ export class McpCapabilityProvider implements CapabilityProvider {
   }
 
   async prewarm(): Promise<void> {
-    for (const runtime of this.runtimes.values()) {
-      try {
-        await runtime.prewarmIfNeeded();
-      } catch {
-        // Prewarming should not block the entire runtime from starting; the
-        // server diagnostics retain the failure details for prompts and tools.
-      }
-    }
+    // Prewarm all servers in parallel so startup latency is bounded by the
+    // slowest server rather than their sum.
+    await Promise.allSettled(
+      Array.from(this.runtimes.values()).map((runtime) => runtime.prewarmIfNeeded()),
+    );
+    // Individual failures are retained in each server's diagnostics and do
+    // not block the provider from starting.
   }
 
   async search(
@@ -149,7 +148,7 @@ export class McpCapabilityProvider implements CapabilityProvider {
     return runtime.getPrompt(name, args);
   }
 
-  getPromptContext(): string | undefined {
+  async getPromptContext(): Promise<string | undefined> {
     if (!this.hasActiveServers()) {
       return undefined;
     }
@@ -157,23 +156,42 @@ export class McpCapabilityProvider implements CapabilityProvider {
     const diagnostics = this.listServerDiagnostics();
     const lines = [
       '## MCP Capability Provider',
-      'Active MCP capability provider is available through `mcp_search`, `mcp_describe`, `mcp_call`, and `mcp_read_resource`.',
-      'Configured servers:',
-      ...diagnostics.map((entry) => {
-        const parts = [
-          `- ${entry.serverId}`,
-          `connect=${entry.connect}`,
-          `status=${entry.status}`,
-        ];
-        if (entry.cachedAt) {
-          parts.push(`catalog=${entry.tools} tools/${entry.resources} resources/${entry.prompts} prompts`);
-        }
-        if (entry.lastError) {
-          parts.push(`warning=${entry.lastError}`);
-        }
-        return parts.join(' | ');
-      }),
+      'Use `mcp_describe` to inspect input schemas, then `mcp_call` to invoke. Use `mcp_read_resource` for resources.',
+      'When a built-in tool fails or is unavailable, check whether an MCP tool below can accomplish the same goal.',
+      '',
     ];
+
+    for (const entry of diagnostics) {
+      const header = [
+        `### ${entry.serverId}`,
+        `status=${entry.status}`,
+      ];
+      if (entry.lastError) {
+        header.push(`warning=${entry.lastError}`);
+      }
+      lines.push(header.join(' | '));
+
+      // List tool names and summaries from cached catalog so the model
+      // knows WHAT capabilities each server provides without an extra
+      // mcp_search round-trip.  This only reads from memory / disk cache
+      // and never triggers a lazy connection.
+      const runtime = this.runtimes.get(entry.serverId);
+      const catalog = runtime ? await runtime.getCachedCatalog() : undefined;
+      const MAX_ITEMS_PER_SERVER = 10;
+      if (catalog && catalog.items.length > 0) {
+        const shown = catalog.items.slice(0, MAX_ITEMS_PER_SERVER);
+        for (const item of shown) {
+          lines.push(`- \`${item.id}\` (${item.kind}) — ${item.summary}`);
+        }
+        const remaining = catalog.items.length - shown.length;
+        if (remaining > 0) {
+          lines.push(`- +${remaining} more (use \`mcp_search\` to discover)`);
+        }
+      } else if (entry.cachedAt) {
+        lines.push(`- ${entry.tools} tools / ${entry.resources} resources / ${entry.prompts} prompts (use \`mcp_search\` to discover)`);
+      }
+      lines.push('');
+    }
 
     return lines.join('\n');
   }
@@ -249,10 +267,10 @@ export class McpCapabilityProvider implements CapabilityProvider {
 
 export async function registerConfiguredMcpCapabilityProvider(
   runtime: KodaXExtensionRuntime,
-  config: KodaXMcpConfig | undefined,
+  servers: KodaXMcpServersConfig | undefined,
   options: McpProviderOptions = {},
 ): Promise<McpCapabilityProvider | undefined> {
-  const provider = new McpCapabilityProvider(config ?? {}, options);
+  const provider = new McpCapabilityProvider(servers, options);
   if (!provider.hasActiveServers()) {
     return undefined;
   }

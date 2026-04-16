@@ -22,14 +22,14 @@ describe('status bar', () => {
     const state = createStatusBarState('20260321_123456', 'accept-edits', 'openai', 'gpt-5.4', 'auto');
     const content = buildStatusBarContent(state, 160);
 
-    expect(content).toContain('exec:sequential');
+    expect(content).toContain('reason:auto');
   });
 
-  it('shows parallel execution mode when enabled', () => {
-    const state = createStatusBarState('20260321_123456', 'accept-edits', 'openai', 'gpt-5.4', 'auto', true);
+  it('shows reasoning mode when enabled', () => {
+    const state = createStatusBarState('20260321_123456', 'accept-edits', 'openai', 'gpt-5.4', 'balanced');
     const content = buildStatusBarContent(state, 160);
 
-    expect(content).toContain('exec:parallel');
+    expect(content).toContain('reason:balanced');
   });
 
   it('disables the classic status bar in VS Code terminals to preserve scrollback', () => {

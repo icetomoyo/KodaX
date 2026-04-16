@@ -1,5 +1,6 @@
 import { ToolCallStatus } from "../types.js";
 import { buildBusyStatusText } from "./status-bar.js";
+import { t } from "../../common/i18n.js";
 
 export interface SurfaceLivenessStreamingState {
   isThinking: boolean;
@@ -36,11 +37,11 @@ export interface BuildPromptActivityTextOptions {
 function formatPromptWaitingText(reason: PromptWaitingReason): string {
   switch (reason) {
     case "confirm":
-      return "Waiting: approval required";
+      return t("waiting.confirm");
     case "select":
-      return "Waiting: choose an option";
+      return t("waiting.select");
     case "input":
-      return "Waiting: answer the prompt";
+      return t("waiting.input");
   }
 }
 
@@ -54,20 +55,20 @@ export function buildPromptPlaceholderText(
   options: BuildPromptPlaceholderTextOptions,
 ): string {
   if (options.waitingReason === "confirm") {
-    return "Respond to the approval prompt above...";
+    return t("placeholder.confirm");
   }
   if (options.waitingReason === "select") {
-    return "Choose an option above...";
+    return t("placeholder.select");
   }
   if (options.waitingReason === "input") {
-    return "Answer the prompt above...";
+    return t("placeholder.input");
   }
   if (options.isLoading) {
     return options.canQueueFollowUps
-      ? "Queue a follow-up for the next round..."
-      : "Agent is busy...";
+      ? t("placeholder.queue")
+      : t("placeholder.busy");
   }
-  return "Type a message...";
+  return t("placeholder.idle");
 }
 
 export function buildPromptActivityViewModel(

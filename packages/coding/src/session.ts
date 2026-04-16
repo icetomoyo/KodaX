@@ -16,5 +16,7 @@ export {
   getSessionLineagePath,
   getSessionMessagesFromLineage,
   resolveSessionLineageTarget,
+  findPreviousUserEntryId,
+  rewindSessionLineage,
   setSessionLineageActiveEntry,
 } from '@kodax/agent';

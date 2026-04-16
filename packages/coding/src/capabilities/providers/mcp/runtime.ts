@@ -1,4 +1,3 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import type { KodaXMcpServerConfig } from '../../../types.js';
 import {
   buildCatalogSearchText,
@@ -12,6 +11,8 @@ import {
   type McpServerCatalogSnapshot,
   writeMcpServerCatalog,
 } from './catalog.js';
+import { createMcpTransport, type McpTransport } from './transport.js';
+import { getValidToken } from './oauth.js';
 
 interface JsonRpcRequestRecord {
   resolve: (value: unknown) => void;
@@ -108,9 +109,8 @@ function flattenMcpContent(value: unknown): string | undefined {
     ?? stringifyStructuredValue(record);
 }
 
-function createJsonRpcFrame(payload: Record<string, unknown>): string {
-  const body = JSON.stringify(payload);
-  return `Content-Length: ${Buffer.byteLength(body, 'utf8')}\r\n\r\n${body}`;
+function jsonRpcString(payload: Record<string, unknown>): string {
+  return JSON.stringify(payload);
 }
 
 function buildToolDescriptor(
@@ -216,12 +216,28 @@ function extractListEntries(
   };
 }
 
+// Default timeouts aligned with Claude Code's MCP client.
+// Override per-server via startupTimeoutMs / requestTimeoutMs in config,
+// or globally via MCP_TIMEOUT / MCP_REQUEST_TIMEOUT env vars.
+const DEFAULT_STARTUP_TIMEOUT_MS = 30_000;   // Claude Code: 30s
+const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;   // Claude Code: 60s
+
+function getStartupTimeoutMs(config: KodaXMcpServerConfig): number {
+  return config.startupTimeoutMs
+    ?? (parseInt(process.env.MCP_TIMEOUT ?? '', 10) || DEFAULT_STARTUP_TIMEOUT_MS);
+}
+
+function getRequestTimeoutMs(config: KodaXMcpServerConfig): number {
+  return config.requestTimeoutMs
+    ?? (parseInt(process.env.MCP_REQUEST_TIMEOUT ?? '', 10) || DEFAULT_REQUEST_TIMEOUT_MS);
+}
+
 export class McpServerRuntime {
-  private process?: ChildProcessWithoutNullStreams;
+  private transport?: McpTransport;
   private readonly pending = new Map<number, JsonRpcRequestRecord>();
-  private buffer = Buffer.alloc(0);
   private nextRequestId = 0;
   private initialized = false;
+  private connectPromise?: Promise<void>;
   private catalog?: McpServerCatalogSnapshot;
   private diagnostics: McpServerRuntimeDiagnostics;
 
@@ -249,6 +265,17 @@ export class McpServerRuntime {
       return;
     }
     await this.refreshCatalog(true);
+  }
+
+  /** Load catalog from memory or disk only — never triggers a lazy connection. */
+  async getCachedCatalog(): Promise<McpServerCatalogSnapshot | undefined> {
+    if (!this.catalog) {
+      this.catalog = await readMcpServerCatalog(this.cacheDir, this.serverId);
+      if (this.catalog) {
+        this.applyCatalogSnapshot(this.catalog);
+      }
+    }
+    return this.catalog;
   }
 
   async getCatalog(forceRefresh = false): Promise<McpServerCatalogSnapshot> {
@@ -288,7 +315,7 @@ export class McpServerRuntime {
     metadata?: Record<string, unknown>;
   }> {
     await this.connect();
-    const response = await this.request('tools/call', { name, arguments: args, args });
+    const response = await this.request('tools/call', { name, arguments: args });
     const record = asRecord(response);
     return {
       content: flattenMcpContent(record?.content),
@@ -309,7 +336,6 @@ export class McpServerRuntime {
     await this.connect();
     const response = await this.request('resources/read', {
       uri: name,
-      name,
       ...options,
     });
     const record = asRecord(response);
@@ -329,7 +355,6 @@ export class McpServerRuntime {
     return this.request('prompts/get', {
       name,
       arguments: args,
-      args,
     });
   }
 
@@ -369,20 +394,24 @@ export class McpServerRuntime {
     }
   }
 
+  /** Public teardown — clears everything including the connect lock. */
   async dispose(): Promise<void> {
+    this.connectPromise = undefined;
+    await this.resetTransport();
+  }
+
+  /** Internal transport teardown — does NOT clear connectPromise so the
+   *  retry loop inside doConnect() can safely call it between attempts. */
+  private async resetTransport(): Promise<void> {
     for (const [id, pending] of this.pending) {
       clearTimeout(pending.timeout);
       pending.reject(new Error(`MCP server "${this.serverId}" disposed during request ${id}.`));
       this.pending.delete(id);
     }
     this.initialized = false;
-    this.buffer = Buffer.alloc(0);
-    if (this.process) {
-      this.process.removeAllListeners();
-      this.process.stdout.removeAllListeners();
-      this.process.stderr.removeAllListeners();
-      this.process.kill();
-      this.process = undefined;
+    if (this.transport) {
+      await this.transport.close();
+      this.transport = undefined;
     }
     if ((this.config.connect ?? 'lazy') !== 'disabled') {
       this.diagnostics.status = 'idle';
@@ -390,69 +419,105 @@ export class McpServerRuntime {
     }
   }
 
-  private async connect(): Promise<void> {
+  private connect(): Promise<void> {
     if ((this.config.connect ?? 'lazy') === 'disabled') {
-      throw new Error(`MCP server "${this.serverId}" is disabled.`);
+      return Promise.reject(new Error(`MCP server "${this.serverId}" is disabled.`));
     }
-    if (this.process && this.initialized) {
-      return;
+    if (this.transport?.connected && this.initialized) {
+      return Promise.resolve();
     }
+    // Serialize concurrent connect() calls so only one runs the retry loop.
+    if (!this.connectPromise) {
+      this.connectPromise = this.doConnect().finally(() => {
+        this.connectPromise = undefined;
+      });
+    }
+    return this.connectPromise;
+  }
 
+  private async doConnect(): Promise<void> {
     this.diagnostics.status = 'connecting';
-    const child = spawn(this.config.command, this.config.args ?? [], {
-      cwd: this.config.cwd,
-      env: {
-        ...process.env,
-        ...(this.config.env ?? {}),
-      },
-      stdio: 'pipe',
-      windowsHide: true,
-    });
 
-    this.process = child;
-    child.stdout.on('data', (chunk: Buffer) => {
-      this.handleStdoutChunk(chunk);
-    });
-    child.stderr.on('data', (chunk: Buffer) => {
-      const text = chunk.toString('utf8').trim();
-      if (!text) {
-        return;
+    // FEATURE_065: OAuth token acquisition for authenticated MCP servers
+    let authHeaders: Record<string, string> | undefined;
+    if (this.config.auth?.type === 'oauth2') {
+      const token = await getValidToken(this.serverId, this.config.auth);
+      if (token) {
+        if (this.config.headers?.Authorization) {
+          process.stderr.write(
+            `[kodax:mcp] OAuth token will override user-provided Authorization header for "${this.serverId}"\n`,
+          );
+        }
+        authHeaders = { Authorization: `${token.tokenType ?? 'Bearer'} ${token.accessToken}` };
+      } else {
+        process.stderr.write(
+          `[kodax:mcp] OAuth token required for "${this.serverId}" but not available. Connecting without auth.\n`,
+        );
       }
-      this.diagnostics.lastError = text;
-    });
-    child.on('error', (error) => {
-      const reason = `MCP server "${this.serverId}" failed to start: ${error.message}`;
-      this.failPending(reason);
-      this.process = undefined;
-      this.initialized = false;
-      this.diagnostics.status = 'error';
-      this.diagnostics.lastError = reason;
-      this.diagnostics.dirty = true;
-    });
-    child.on('exit', (code, signal) => {
-      const reason = `MCP server "${this.serverId}" exited (${code ?? 'signal'}${signal ? `:${signal}` : ''}).`;
-      this.failPending(reason);
-      this.process = undefined;
-      this.initialized = false;
-      this.diagnostics.status = 'error';
-      this.diagnostics.lastError = reason;
-      this.diagnostics.dirty = true;
-    });
+    }
 
-    const initializeResult = await this.request('initialize', {
-      protocolVersion: '2024-11-05',
-      capabilities: {},
-      clientInfo: {
-        name: 'KodaX',
-        version: '0.7',
-      },
-    }, this.config.startupTimeoutMs ?? 8_000);
-    await this.notify('notifications/initialized', {});
-    const initialized = asRecord(initializeResult);
-    this.initialized = true;
-    this.diagnostics.status = 'ready';
-    this.diagnostics.lastError = undefined;
-    this.diagnostics.dirty = this.diagnostics.dirty || initialized?.capabilities !== undefined;
+    // For stdio, try Content-Length framing first (MCP spec). If it fails,
+    // retry with NDJSON (Python MCP SDK default).
+    const isStdio = (this.config.type ?? 'stdio') === 'stdio';
+    const framings = isStdio ? ['content-length', 'ndjson'] as const : [undefined] as const;
+
+    for (const framing of framings) {
+      await this.resetTransport();
+      // Merge OAuth headers with any user-configured headers
+      const effectiveConfig = authHeaders
+        ? { ...this.config, headers: { ...this.config.headers, ...authHeaders } }
+        : this.config;
+      const transport = createMcpTransport(
+        effectiveConfig,
+        framing ? { stdioFraming: framing } : {},
+      );
+      this.transport = transport;
+
+      await transport.open({
+        onMessage: (raw) => this.handleMessage(raw),
+        onError: (error) => {
+          this.diagnostics.lastError = error.message;
+        },
+        onClose: (reason) => {
+          this.failPending(`MCP server "${this.serverId}" closed: ${reason}`);
+          this.transport = undefined;
+          this.initialized = false;
+          this.diagnostics.status = 'error';
+          this.diagnostics.lastError = reason;
+          this.diagnostics.dirty = true;
+        },
+      });
+
+      try {
+        // Empty capabilities: KodaX does not support optional client features
+        // (roots, sampling) — server requests for these get a -32601 error reply.
+        const baseStartup = getStartupTimeoutMs(this.config);
+        const timeoutMs = framing === 'content-length'
+          ? Math.min(baseStartup, 10_000) // shorter for first framing attempt
+          : baseStartup;
+        const initializeResult = await this.request('initialize', {
+          protocolVersion: '2024-11-05',
+          capabilities: {},
+          clientInfo: {
+            name: 'KodaX',
+            version: '0.7',
+          },
+        }, timeoutMs);
+        await this.notify('notifications/initialized', {});
+        const initialized = asRecord(initializeResult);
+        this.initialized = true;
+        this.diagnostics.status = 'ready';
+        this.diagnostics.lastError = undefined;
+        this.diagnostics.dirty = this.diagnostics.dirty || initialized?.capabilities !== undefined;
+        return; // Success — stop trying other framings.
+      } catch (error) {
+        // If this is the last framing option, propagate the error.
+        if (framing === framings[framings.length - 1]) {
+          throw error;
+        }
+        // Otherwise, try next framing mode.
+      }
+    }
   }
 
   private async listDescriptors(
@@ -481,32 +546,14 @@ export class McpServerRuntime {
       const { entries, nextCursor } = extractListEntries(result, kind);
       for (const entry of entries) {
         if (kind === 'tools') {
-          descriptors.push(
-            buildToolDescriptor(
-              this.serverId,
-              entry,
-              cachedAt,
-            ),
-          );
+          descriptors.push(buildToolDescriptor(this.serverId, entry, cachedAt));
           continue;
         }
         if (kind === 'resources') {
-          descriptors.push(
-            buildResourceDescriptor(
-              this.serverId,
-              entry,
-              cachedAt,
-            ),
-          );
+          descriptors.push(buildResourceDescriptor(this.serverId, entry, cachedAt));
           continue;
         }
-        descriptors.push(
-          buildPromptDescriptor(
-            this.serverId,
-            entry,
-            cachedAt,
-          ),
-        );
+        descriptors.push(buildPromptDescriptor(this.serverId, entry, cachedAt));
       }
       if (!nextCursor) {
         break;
@@ -520,19 +567,19 @@ export class McpServerRuntime {
   private async request(
     method: string,
     params: Record<string, unknown>,
-    timeoutMs = this.config.requestTimeoutMs ?? 12_000,
+    timeoutMs = getRequestTimeoutMs(this.config),
   ): Promise<unknown> {
-    if (!this.process?.stdin.writable) {
-      throw new Error(`MCP server "${this.serverId}" is not writable.`);
+    if (!this.transport?.connected) {
+      throw new Error(`MCP server "${this.serverId}" is not connected.`);
     }
 
     const requestId = ++this.nextRequestId;
-    const payload = {
+    const json = jsonRpcString({
       jsonrpc: '2.0',
       id: requestId,
       method,
       params,
-    };
+    });
 
     return new Promise<unknown>((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -541,61 +588,25 @@ export class McpServerRuntime {
       }, timeoutMs);
       timeout.unref?.();
 
-      this.pending.set(requestId, {
-        resolve,
-        reject,
-        timeout,
-      });
+      this.pending.set(requestId, { resolve, reject, timeout });
 
-      try {
-        this.process?.stdin.write(createJsonRpcFrame(payload), 'utf8');
-      } catch (error) {
+      this.transport!.send(json).catch((error) => {
         clearTimeout(timeout);
         this.pending.delete(requestId);
         reject(error instanceof Error ? error : new Error(String(error)));
-      }
+      });
     });
   }
 
   private async notify(method: string, params: Record<string, unknown>): Promise<void> {
-    if (!this.process?.stdin.writable) {
+    if (!this.transport?.connected) {
       return;
     }
-    this.process.stdin.write(createJsonRpcFrame({
+    await this.transport.send(jsonRpcString({
       jsonrpc: '2.0',
       method,
       params,
-    }), 'utf8');
-  }
-
-  private handleStdoutChunk(chunk: Buffer): void {
-    this.buffer = Buffer.concat([this.buffer, chunk]);
-
-    while (true) {
-      const headerEnd = this.buffer.indexOf('\r\n\r\n');
-      if (headerEnd < 0) {
-        return;
-      }
-
-      const header = this.buffer.subarray(0, headerEnd).toString('utf8');
-      const lengthMatch = header.match(/Content-Length:\s*(\d+)/i);
-      if (!lengthMatch?.[1]) {
-        this.buffer = Buffer.alloc(0);
-        this.diagnostics.status = 'error';
-        this.diagnostics.lastError = `Malformed MCP response header from "${this.serverId}".`;
-        return;
-      }
-
-      const contentLength = Number(lengthMatch[1]);
-      const frameEnd = headerEnd + 4 + contentLength;
-      if (this.buffer.length < frameEnd) {
-        return;
-      }
-
-      const body = this.buffer.subarray(headerEnd + 4, frameEnd).toString('utf8');
-      this.buffer = this.buffer.subarray(frameEnd);
-      this.handleMessage(body);
-    }
+    })).catch(() => {});
   }
 
   private handleMessage(raw: string): void {
@@ -608,14 +619,17 @@ export class McpServerRuntime {
       return;
     }
 
-    const id = typeof payload.id === 'number' ? payload.id : undefined;
-    if (id !== undefined) {
-      const pending = this.pending.get(id);
+    const method = readString(payload.method);
+
+    // Response to a pending client→server request.
+    const numericId = typeof payload.id === 'number' ? payload.id : undefined;
+    if (numericId !== undefined && !method) {
+      const pending = this.pending.get(numericId);
       if (!pending) {
         return;
       }
       clearTimeout(pending.timeout);
-      this.pending.delete(id);
+      this.pending.delete(numericId);
       const error = asRecord(payload.error) as JsonRpcResponseError | undefined;
       if (error?.message) {
         pending.reject(new Error(error.message));
@@ -625,12 +639,26 @@ export class McpServerRuntime {
       return;
     }
 
-    const method = readString(payload.method);
     if (!method) {
       return;
     }
+
+    // Server notification (no id).
     if (method.endsWith('/list_changed')) {
       this.diagnostics.dirty = true;
+    }
+
+    // Server→client request (has both method and id): respond with
+    // "method not found" so the server does not hang.
+    const requestId = payload.id;
+    if (requestId !== undefined && requestId !== null) {
+      this.transport?.send(jsonRpcString({
+        jsonrpc: '2.0',
+        id: requestId as string | number,
+        error: { code: -32601, message: `Method not supported by client: ${method}` },
+      })).catch(() => {
+        // Best-effort; if the transport is closed the server will time out on its own.
+      });
     }
   }
 
@@ -649,7 +677,7 @@ export class McpServerRuntime {
     this.diagnostics.prompts = snapshot.items.filter((item) => item.kind === 'prompt').length;
     this.diagnostics.dirty = false;
     if (this.diagnostics.status !== 'disabled') {
-      this.diagnostics.status = this.process ? 'ready' : 'idle';
+      this.diagnostics.status = this.transport?.connected ? 'ready' : 'idle';
     }
   }
 }

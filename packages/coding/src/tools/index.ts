@@ -36,6 +36,8 @@ export {
   listToolDefinitions,
   isRepoIntelligenceWorkingToolName,
   filterRepoIntelligenceWorkingToolNames,
+  filterMcpToolNames,
+  MCP_TOOL_NAMES,
   executeTool,
 } from './registry.js';
 export { toolRead } from './read.js';
@@ -53,6 +55,7 @@ export { toolGlob } from './glob.js';
 export { toolGrep } from './grep.js';
 export { toolUndo } from './undo.js';
 export { toolAskUserQuestion } from './ask-user-question.js';
+export { toolSetPermissionMode } from './set-permission-mode.js';
 export { toolRepoOverview } from './repo-overview.js';
 export { toolChangedScope } from './changed-scope.js';
 export { toolChangedDiff, toolChangedDiffBundle } from './changed-diff.js';
@@ -69,6 +72,8 @@ export { toolMcpSearch } from './mcp-search.js';
 export { toolMcpDescribe } from './mcp-describe.js';
 export { toolMcpCall } from './mcp-call.js';
 export { toolMcpReadResource } from './mcp-read-resource.js';
+export { toolMcpGetPrompt } from './mcp-get-prompt.js';
+export { toolWorktreeCreate, toolWorktreeRemove } from './worktree.js';
 export {
   stripHtmlToText,
   extractHtmlTitle,

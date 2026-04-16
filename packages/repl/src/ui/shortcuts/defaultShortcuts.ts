@@ -76,16 +76,6 @@ export const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
     configurable: true,
   },
   {
-    id: 'toggleParallelMode',
-    name: 'Toggle Parallel',
-    description: 'Toggle between parallel and sequential tool execution',
-    defaultBindings: [{ key: 'p', ctrl: true }],
-    context: 'global',
-    priority: 150,
-    category: 'mode',
-    configurable: true,
-  },
-  {
     id: 'submitInput',
     name: 'Submit Input',
     description: 'Submit the current input',

@@ -23,9 +23,11 @@ import {
   cleanupIncompleteToolCalls,
   countActiveLineageMessages,
   createSessionLineage,
+  findPreviousUserEntryId,
   forkSessionLineage,
   generateSessionId,
   getSessionMessagesFromLineage,
+  rewindSessionLineage,
   setSessionLineageActiveEntry,
 } from '@kodax/coding';
 import type { SessionData, SessionErrorMetadata } from '../ui/utils/session-storage.js';
@@ -497,6 +499,32 @@ export class FileSessionStorage implements KodaXSessionStorage {
       selector,
       options,
     );
+    if (!lineage) {
+      return null;
+    }
+
+    const nextData: SessionData = {
+      ...resolved.data,
+      messages: getSessionMessagesFromLineage(lineage),
+      lineage,
+    };
+    await this.writeSession(id, nextData, resolved.createdAt);
+    return nextData;
+  }
+
+  async rewind(id: string, selector?: string): Promise<SessionData | null> {
+    const resolved = await this.readSession(id);
+    if (!resolved?.data.lineage) {
+      return null;
+    }
+
+    // If no selector, find the previous user-message entry (one step back)
+    const targetId = selector ?? findPreviousUserEntryId(resolved.data.lineage);
+    if (!targetId) {
+      return null;
+    }
+
+    const lineage = rewindSessionLineage(resolved.data.lineage, targetId);
     if (!lineage) {
       return null;
     }

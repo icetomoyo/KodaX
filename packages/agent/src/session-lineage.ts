@@ -651,8 +651,70 @@ function cloneForkableEntry(
 }
 
 /**
- * Export the active lineage path, or a selected target path, into a new tree.
+ * Rewind the current session lineage to a target entry, truncating all entries after it.
+ * Records a rewind event in the lineage for auditability.
+ * Returns null if targetEntryId is not found.
+ *
+ * @param lineage - The session lineage to rewind
+ * @param targetEntryId - The entry ID to rewind to (inclusive)
+ * @returns A new lineage with entries truncated after the target, or null if target not found
  */
+/**
+ * Find the entry ID of the second-to-last user message in the lineage.
+ * Used by `/rewind` (no argument) to go back one conversational turn.
+ * Returns null if fewer than 2 user messages exist.
+ */
+export function findPreviousUserEntryId(lineage: KodaXSessionLineage): string | null {
+  const entries = lineage.entries;
+  let found = 0;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i];
+    if (entry && entry.type === 'message' && entry.message.role === 'user') {
+      found++;
+      if (found === 2) {
+        return entry.id;
+      }
+    }
+  }
+  return null;
+}
+
+export function rewindSessionLineage(
+  lineage: KodaXSessionLineage,
+  targetEntryId: string,
+): KodaXSessionLineage | null {
+  // Find the target entry index in the lineage
+  const entries = lineage.entries;
+  const targetIndex = entries.findIndex(e => e.id === targetEntryId);
+  if (targetIndex < 0) {
+    return null;
+  }
+
+  // Truncate entries after target (keep up to and including target)
+  const keptEntries = entries.slice(0, targetIndex + 1);
+  const truncatedCount = entries.length - targetIndex - 1;
+
+  // Create a rewind event entry to record this action
+  const rewindEntry: KodaXSessionCompactionEntry = {
+    type: 'compaction',
+    id: generateEntryId(),
+    parentId: targetEntryId,
+    timestamp: new Date().toISOString(),
+    summary: `[Rewind] Rewound to entry ${targetEntryId} (truncated ${truncatedCount} entries)`,
+    reason: 'rewind',
+    details: {
+      rewindTargetId: targetEntryId,
+      truncatedCount,
+    },
+  };
+
+  return {
+    version: 2,
+    activeEntryId: targetEntryId,
+    entries: [...keptEntries, rewindEntry],
+  };
+}
+
 export function forkSessionLineage(
   lineage: KodaXSessionLineage,
   selector?: string,

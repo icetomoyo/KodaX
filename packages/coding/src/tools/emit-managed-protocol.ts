@@ -6,6 +6,34 @@ import {
 
 type ManagedProtocolRole = 'scout' | 'planner' | 'generator' | 'evaluator';
 
+const SCOPE_AWARENESS_FILE_THRESHOLD = 3;
+const SCOPE_AWARENESS_LINES_THRESHOLD = 80;
+
+function buildScopeAwarenessNote(
+  tracker: NonNullable<KodaXToolExecutionContext['mutationTracker']>,
+  declaredHarness: string | undefined,
+): string | undefined {
+  if (!declaredHarness || !declaredHarness.startsWith('H0')) return undefined;
+  if (tracker.files.size < SCOPE_AWARENESS_FILE_THRESHOLD) {
+    const totalLines = [...tracker.files.values()].reduce((a, b) => a + b, 0);
+    if (totalLines < SCOPE_AWARENESS_LINES_THRESHOLD) return undefined;
+  }
+
+  const fileList = [...tracker.files.entries()]
+    .map(([file, lines]) => `  - ${file} (~${lines} lines)`)
+    .join('\n');
+  const totalLines = [...tracker.files.values()].reduce((a, b) => a + b, 0);
+
+  return [
+    `[Scope Observation] You declared H0_DIRECT. Your session has modified ${tracker.files.size} file(s), ~${totalLines} lines:`,
+    fileList,
+    '',
+    'As a senior engineer — would you ship these changes without review?',
+    'To keep H0: no action needed, task will complete.',
+    'To escalate: call emit_managed_protocol again with H1_EXECUTE_EVAL or H2_PLAN_EXECUTE_EVAL.',
+  ].join('\n');
+}
+
 export async function toolEmitManagedProtocol(
   input: Record<string, unknown>,
   ctx: KodaXToolExecutionContext,
@@ -38,5 +66,20 @@ export async function toolEmitManagedProtocol(
   }
 
   ctx.emitManagedProtocol(normalized);
+
+  // Scope-aware response for Scout: if H0 is declared with significant mutations,
+  // include concrete scope data to help the model reconsider if needed.
+  if (role === 'scout' && ctx.mutationTracker) {
+    const harness = (normalized.scout as Record<string, unknown> | undefined)?.confirmed_harness
+      ?? (normalized.scout as Record<string, unknown> | undefined)?.confirmedHarness;
+    const scopeNote = buildScopeAwarenessNote(
+      ctx.mutationTracker,
+      typeof harness === 'string' ? harness : undefined,
+    );
+    if (scopeNote) {
+      return `managed protocol recorded for ${role}\n\n${scopeNote}`;
+    }
+  }
+
   return `managed protocol recorded for ${role}`;
 }

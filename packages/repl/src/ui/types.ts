@@ -159,7 +159,6 @@ export interface StatusBarProps {
   sessionId: string;
   permissionMode: PermissionMode;
   agentMode: KodaXAgentMode;
-  parallel?: boolean;
   provider: string;
   model: string;
   tokenUsage?: {
@@ -237,7 +236,6 @@ export interface AppProps {
   onSubmit: (input: string) => Promise<void>;
   permissionMode?: PermissionMode;
   agentMode?: KodaXAgentMode;
-  parallel?: boolean;
 }
 
 // ============================================================================
@@ -297,6 +295,8 @@ export interface ToolCall {
   output?: unknown;
   error?: string;
   progress?: number; // 0-100
+  /** Real-time progress lines displayed inside the tool block during execution. */
+  progressLines?: string[];
   startTime: number;
   endTime?: number;
 }

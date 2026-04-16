@@ -118,7 +118,7 @@ describe('Core Module Exports', () => {
 
   it('should export KODAX_TOOLS array', () => {
     expect(Array.isArray(KODAX_TOOLS)).toBe(true);
-    expect(KODAX_TOOLS.length).toBe(16);
+    expect(KODAX_TOOLS.length).toBe(30);
   });
 
   it('should export getRequiredToolParams', () => {
@@ -572,7 +572,7 @@ describe('Tool Execution', () => {
       new_string: 'KodaX'
     }, ctx);
     expect(result).toContain('[Tool Error]');
-    expect(result).toContain('old_string not found');
+    expect(result).toContain('EDIT_NOT_FOUND');
   });
 
   it('should require replace_all for multiple occurrences', async () => {

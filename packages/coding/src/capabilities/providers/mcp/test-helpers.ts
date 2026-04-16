@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import type { KodaXMcpConfig } from '../../../types.js';
+import type { KodaXMcpServersConfig } from '../../../types.js';
 import { createMcpCapabilityId } from './catalog.js';
 
 const TEST_SERVER_ID = 'demo';
@@ -203,7 +203,7 @@ process.on('SIGINT', () => process.exit(0));
 
 export interface McpTestServerFixture {
   cacheDir: string;
-  config: KodaXMcpConfig;
+  servers: KodaXMcpServersConfig;
   promptId: string;
   resourceId: string;
   scriptPath: string;
@@ -225,17 +225,14 @@ export async function createMcpTestServerFixture(
     toolId: createMcpCapabilityId(TEST_SERVER_ID, 'tool', TEST_TOOL_NAME),
     resourceId: createMcpCapabilityId(TEST_SERVER_ID, 'resource', TEST_RESOURCE_URI),
     promptId: createMcpCapabilityId(TEST_SERVER_ID, 'prompt', TEST_PROMPT_NAME),
-    config: {
-      cacheDir,
-      servers: {
-        [TEST_SERVER_ID]: {
-          type: 'stdio',
-          command: process.execPath,
-          args: [scriptPath],
-          connect: 'prewarm',
-          startupTimeoutMs: 5_000,
-          requestTimeoutMs: 5_000,
-        },
+    servers: {
+      [TEST_SERVER_ID]: {
+        type: 'stdio',
+        command: process.execPath,
+        args: [scriptPath],
+        connect: 'prewarm',
+        startupTimeoutMs: 5_000,
+        requestTimeoutMs: 5_000,
       },
     },
   };

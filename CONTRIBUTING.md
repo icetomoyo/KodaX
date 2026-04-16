@@ -8,7 +8,7 @@ Thank you for your interest in contributing to KodaX / InfCodeX.
 
 ### Prerequisites
 
-- **Node.js** >= 18.0.0
+- **Node.js** >= 20.0.0
 - **npm** or **yarn**
 - **TypeScript** >= 5.3.0
 
@@ -89,7 +89,7 @@ KodaX / InfCodeX uses a **monorepo architecture** with npm workspaces:
 KodaX/
 ├── packages/
 │   ├── ai/                  # @kodax/ai - Independent LLM abstraction layer
-│   │   └── providers/       # 10 LLM providers (Anthropic, OpenAI, etc.)
+│   │   └── providers/       # 11 LLM providers (Anthropic, OpenAI, DeepSeek, etc.)
 │   │
 │   ├── agent/               # @kodax/agent - Generic Agent framework
 │   │   └── session/         # Session management, message handling

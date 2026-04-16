@@ -19,7 +19,6 @@ import {
   processCommandCall,
   KODAX_COMMANDS_DIR,
   KodaXCommand,
-  resolveCliParallel,
 } from '../src/kodax_cli.js';
 
 // 默认 provider
@@ -345,8 +344,8 @@ describe('CLI Entry Point', () => {
   it('should document provider and team caveats in help topics', async () => {
     const source = await fs.readFile(path.join(process.cwd(), 'src', 'kodax_cli.ts'), 'utf-8');
     expect(source).toContain('CLI bridge provider (latest-user-message only, MCP unavailable)');
-    expect(source).toContain('Experimental orchestration-based parallel execution for loosely coupled tasks.');
-    expect(source).toContain('not yet a fully shared-context multi-agent runtime');
+    expect(source).toContain('Legacy orchestration-based parallel execution for loosely coupled tasks.');
+    expect(source).toContain('Prefer --agent-mode ama|sa for the product path. --team is being sunset.');
     expect(source).toContain('Project mode spans two surfaces: non-REPL bootstrap commands and REPL /project commands.');
     expect(source).toContain('/project verify [#index|--last]');
   });
@@ -637,29 +636,14 @@ describe('CLI Behavior', () => {
 
   it('should handle combined short options', () => {
     const program = createTestCommand();
-    // Note: commander doesn't support combined short options like -tyj
+    // Note: commander doesn't support combined short options like -ty
     // Each option must be separate or have its own value
-    program.parse(['node', 'test', '-t', '-y', '-j']);
+    program.parse(['node', 'test', '-t', '-y']);
     const opts = program.opts();
     expect(opts.thinking).toBe(true);
     expect(opts.auto).toBe(true);
-    expect(opts.parallel).toBe(true);
   });
 
-  it('should fall back to config parallel mode when CLI flag is omitted', () => {
-    const program = createTestCommand();
-    program.parse(['node', 'test']);
-
-    expect(resolveCliParallel(program, program.opts(), { parallel: true })).toBe(true);
-    expect(resolveCliParallel(program, program.opts(), { parallel: false })).toBe(false);
-  });
-
-  it('should let the CLI parallel flag override persisted config', () => {
-    const program = createTestCommand();
-    program.parse(['node', 'test', '-j']);
-
-    expect(resolveCliParallel(program, program.opts(), { parallel: false })).toBe(true);
-  });
 });
 
 describe('parsePermissionModeOption', () => {

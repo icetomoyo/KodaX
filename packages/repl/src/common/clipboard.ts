@@ -91,7 +91,9 @@ function buildWindowsClipboardCandidates(
   return [
     ["powershell", ["-NoProfile", "-NonInteractive", "-Command", script], utf8Input],
     ["pwsh", ["-NoProfile", "-NonInteractive", "-Command", script], utf8Input],
-    ["clip", [], text],
+    // clip.exe reads stdin using the system codepage (CP936/GBK on Chinese Windows).
+    // Without chcp 65001, UTF-8 bytes are misinterpreted as GBK, producing garbled CJK text.
+    ["cmd", ["/c", "chcp 65001 >nul & clip"], utf8Input],
   ];
 }
 

@@ -28,7 +28,6 @@ export interface CliOptions {
   extensions?: string[];
   extensionRuntime?: KodaXExtensionRuntime;
   session?: string;
-  parallel: boolean;
   team?: string;
   init?: string;
   append: boolean;
@@ -166,19 +165,6 @@ export function resolveCliReasoningMode(
   return 'auto';
 }
 
-export function resolveCliParallel(
-  program: Command,
-  opts: Record<string, unknown>,
-  config: { parallel?: boolean },
-): boolean {
-  const parallelSource = program.getOptionValueSource('parallel');
-  if (parallelSource === 'cli') {
-    return opts.parallel === true;
-  }
-
-  return config.parallel ?? false;
-}
-
 export function resolveCliAgentMode(
   program: Command,
   opts: Record<string, unknown>,
@@ -296,7 +282,6 @@ export function createKodaXOptions(cliOptions: CliOptions, isPrintMode = false):
     reasoningMode: cliOptions.reasoningMode,
     agentMode: cliOptions.agentMode,
     maxIter: cliOptions.maxIter,
-    parallel: cliOptions.parallel,
     extensionRuntime: cliOptions.extensionRuntime,
     session: buildSessionOptions(cliOptions),
     context: {

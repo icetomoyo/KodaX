@@ -29,7 +29,6 @@ describe('status workspace output', () => {
       thinking: true,
       reasoningMode: 'balanced',
       agentMode: 'ama',
-      parallel: false,
       permissionMode: 'accept-edits',
       repoIntelligenceMode: 'off',
       repoIntelligenceTrace: false,

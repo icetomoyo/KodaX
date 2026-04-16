@@ -48,3 +48,6 @@ export type {
 export {
   registerOfficialSandboxExtension,
 } from './official-sandbox.js';
+
+export { exec, webhook } from './helpers.js';
+export type { ExecOptions, ExecResult, WebhookOptions, WebhookResult } from './helpers.js';

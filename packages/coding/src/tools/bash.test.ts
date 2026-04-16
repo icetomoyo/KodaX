@@ -39,4 +39,27 @@ describe('toolBash', () => {
     expect(result).toContain('[Timeout]');
     expect(result).toContain('timeout-error');
   });
+
+  it('runs command in background and returns output file path', async () => {
+    const command = 'node -e "console.log(\'bg-output\')"';
+    const result = await toolBash({ command, run_in_background: true }, {
+      backups: new Map(),
+      executionCwd: tempDir,
+    });
+
+    expect(result).toContain('Command started in background');
+    expect(result).toContain('PID:');
+    expect(result).toContain('Output:');
+    expect(result).toContain('kodax-bg-');
+
+    // Wait briefly for the background process to complete and write output
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    const outputMatch = result.match(/Output:\s*(.+)/);
+    expect(outputMatch).toBeTruthy();
+    const outputPath = outputMatch![1]!.trim();
+    const content = await fs.readFile(outputPath, 'utf-8');
+    expect(content).toContain('bg-output');
+    expect(content).toContain('[Exit:');
+  });
 });

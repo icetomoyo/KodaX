@@ -162,10 +162,9 @@ describe('BUILTIN_COMMANDS', () => {
     expect(sessions).toBeDefined();
   });
 
-  it('should have parallel command', () => {
-    const parallel = BUILTIN_COMMANDS.find(c => c.name === 'parallel');
-    expect(parallel).toBeDefined();
-    expect(parallel?.aliases).toContain('pm');
+  it('should have skills command', () => {
+    const skills = BUILTIN_COMMANDS.find(c => c.name === 'skills');
+    expect(skills).toBeDefined();
   });
 });
 
@@ -181,6 +180,7 @@ describe('executeCommand', () => {
     reasoningMode: 'off' | 'auto' | 'quick' | 'balanced' | 'deep';
     parallel: boolean;
     permissionMode?: string;
+    agentMode: string;
   };
   let exitCalled: boolean;
   let savedSession: { id: string; messages: unknown[]; title: string } | null;
@@ -195,6 +195,7 @@ describe('executeCommand', () => {
       reasoningMode: 'off',
       parallel: false,
       permissionMode: 'accept-edits',
+      agentMode: 'sa',
     };
     exitCalled = false;
     savedSession = null;
@@ -289,50 +290,6 @@ describe('executeCommand', () => {
     consoleSpy.mockRestore();
   });
 
-  it('should show current parallel execution mode', async () => {
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await executeCommand({ command: 'parallel', args: [] }, context, callbacks, currentConfig);
-    const output = consoleSpy.mock.calls.map(c => c.join(' ')).join('\n');
-    expect(output).toContain('Tool execution');
-    expect(output).toMatch(/sequential|serial/);
-    consoleSpy.mockRestore();
-  });
-
-  it('should enable parallel execution', async () => {
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await executeCommand({ command: 'parallel', args: ['on'] }, context, callbacks, currentConfig);
-    expect(currentConfig.parallel).toBe(true);
-    consoleSpy.mockRestore();
-  });
-
-  it('should disable parallel execution', async () => {
-    currentConfig.parallel = true;
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await executeCommand({ command: 'parallel', args: ['off'] }, context, callbacks, currentConfig);
-    expect(currentConfig.parallel).toBe(false);
-    consoleSpy.mockRestore();
-  });
-
-  it('should toggle parallel execution', async () => {
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await executeCommand({ command: 'parallel', args: ['toggle'] }, context, callbacks, currentConfig);
-    expect(currentConfig.parallel).toBe(true);
-
-    await executeCommand({ command: 'parallel', args: ['toggle'] }, context, callbacks, currentConfig);
-    expect(currentConfig.parallel).toBe(false);
-    consoleSpy.mockRestore();
-  });
-
-  it('should reject invalid parallel values', async () => {
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await executeCommand({ command: 'parallel', args: ['foo'] }, context, callbacks, currentConfig);
-    const output = consoleSpy.mock.calls.map(c => c.join(' ')).join('\n');
-    expect(currentConfig.parallel).toBe(false);
-    expect(output).toContain('Invalid value');
-    expect(output).toContain('Usage: /parallel on|off|toggle');
-    consoleSpy.mockRestore();
-  });
-
   it('should execute mode command with plan arg', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     await executeCommand({ command: 'mode', args: ['plan'] }, context, callbacks, currentConfig);
@@ -367,7 +324,6 @@ describe('executeCommand', () => {
     const output = consoleSpy.mock.calls.map(c => c.join(' ')).join('\n');
     expect(output).toContain('Session Status');
     expect(output).toContain('Permission');
-    expect(output).toContain('Execution');
     expect(output).toContain('Session ID');
     consoleSpy.mockRestore();
   });
@@ -403,6 +359,7 @@ describe('Command Aliases', () => {
       reasoningMode: 'off',
       parallel: false,
       permissionMode: 'accept-edits',
+      agentMode: 'sa',
     };
     callbacks = {
       exit: () => {},
@@ -507,6 +464,7 @@ describe('Mode Switching Detailed', () => {
       reasoningMode: 'off',
       parallel: false,
       permissionMode: 'accept-edits',
+      agentMode: 'sa',
     };
     callbacks = {
       exit: () => {},
@@ -1367,22 +1325,7 @@ describe('ProjectStorage', () => {
   });
 });
 
-// ============== Project 命令测试 ==============
-
-describe('Project Command', () => {
-  it('should have project command', () => {
-    const projectCmd = BUILTIN_COMMANDS.find(c => c.name === 'project');
-    expect(projectCmd).toBeDefined();
-    expect(projectCmd?.aliases).toContain('proj');
-  });
-
-  it('should have project command with correct usage', () => {
-    const projectCmd = BUILTIN_COMMANDS.find(c => c.name === 'project');
-    expect(projectCmd?.usage).toContain('init');
-    expect(projectCmd?.usage).toContain('status');
-    expect(projectCmd?.usage).toContain('next');
-  });
-});
+// Project command was retired in favor of AMA mode (FEATURE_054).
 
 // ============== parseAutoOptions 测试 ==============
 

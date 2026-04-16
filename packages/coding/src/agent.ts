@@ -23,12 +23,14 @@ import {
   SessionErrorMetadata,
 } from './types.js';
 import type { KodaXMessage, KodaXStreamResult } from '@kodax/ai';
+import { createCostTracker, recordUsage, getSummary, formatCostReport, type CostTracker } from '@kodax/ai';
 import path from 'path';
 import fsSync from 'fs';
 import { KodaXClient } from './client.js';
 import { resolveProvider } from './providers/index.js';
 import {
   executeTool,
+  filterMcpToolNames,
   filterRepoIntelligenceWorkingToolNames,
   getRequiredToolParams,
   inspectEditFailure,
@@ -38,14 +40,18 @@ import {
 import {
   isManagedProtocolToolName,
   mergeManagedProtocolPayload,
+  getManagedBlockNameForRole,
+  hasManagedProtocolForRole,
+  textContainsManagedBlock,
+  MANAGED_PROTOCOL_TOOL_NAME,
 } from './managed-protocol.js';
 import { buildSystemPrompt } from './prompts/index.js';
 import { generateSessionId, extractTitleFromMessages } from './session.js';
 import { checkIncompleteToolCalls } from './messages.js';
-import { compact as intelligentCompact, needsCompaction, type CompactionConfig, type CompactionUpdate } from '@kodax/agent';
+import { compact as intelligentCompact, needsCompaction, microcompact, DEFAULT_MICROCOMPACTION_CONFIG, buildPostCompactAttachments, buildFileContentMessages, injectPostCompactAttachments, DEFAULT_POST_COMPACT_CONFIG, type CompactionConfig, type CompactionUpdate } from '@kodax/agent';
 import { loadCompactionConfig } from './compaction-config.js';
 import { estimateTokens } from './tokenizer.js';
-import { KODAX_MAX_INCOMPLETE_RETRIES, PROMISE_PATTERN } from './constants.js';
+import { KODAX_MAX_INCOMPLETE_RETRIES, KODAX_MAX_MAXTOKENS_RETRIES, PROMISE_PATTERN, CANCELLED_TOOL_RESULT_PREFIX, CANCELLED_TOOL_RESULT_MESSAGE } from './constants.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { waitForRetryDelay } from './retry-handler.js';
@@ -105,8 +111,6 @@ import {
 } from './extensions/runtime.js';
 
 const execAsync = promisify(exec);
-const CANCELLED_TOOL_RESULT_PREFIX = '[Cancelled]';
-const CANCELLED_TOOL_RESULT_MESSAGE = `${CANCELLED_TOOL_RESULT_PREFIX} Operation cancelled by user`;
 type AutoReroutePlan = Awaited<ReturnType<typeof maybeCreateAutoReroutePlan>>;
 type RunnableToolCall = {
   id: string;
@@ -137,6 +141,16 @@ interface ProviderPrepareState {
   reasoningMode?: KodaXReasoningMode;
   systemPrompt: string;
   blockedReason?: string;
+}
+
+/** FEATURE_067 v3: Filter tools excluded for child agents at API level. */
+function filterExcludedTools(
+  tools: string[],
+  excludeTools: readonly string[] | undefined,
+): string[] {
+  if (!excludeTools || excludeTools.length === 0) return tools;
+  const excluded = new Set(excludeTools);
+  return tools.filter((name) => !excluded.has(name));
 }
 
 function shouldEmitRepoIntelligenceTrace(options: KodaXOptions): boolean {
@@ -174,6 +188,73 @@ function isToolResultContentBlock(
   block: unknown,
 ): block is Extract<MessageContentBlock, { type: 'tool_result' }> {
   return isTypedContentBlock(block) && block.type === 'tool_result';
+}
+
+/**
+ * Graceful compact degradation: drop oldest atomic blocks (tool_use + tool_result pairs)
+ * one at a time from the front until tokens are below the target threshold.
+ * Preserves summary messages, message structure integrity, and recent context.
+ */
+function gracefulCompactDegradation(
+  messages: KodaXMessage[],
+  contextWindow: number,
+  config: CompactionConfig,
+): KodaXMessage[] {
+  const targetTokens = Math.floor(contextWindow * (config.triggerPercent / 100) * 0.8);
+
+  // Find the first non-summary message index
+  let startIdx = 0;
+  const firstMsg = messages[0];
+  if (firstMsg && (firstMsg.role === 'system' || (
+    firstMsg.role === 'user' && typeof firstMsg.content === 'string'
+    && firstMsg.content.includes('[对话历史摘要]')
+  ))) {
+    startIdx = 1;
+  }
+
+  let dropIdx = startIdx;
+  while (dropIdx < messages.length && estimateTokens(messages) > targetTokens) {
+    const msg = messages[dropIdx];
+    if (!msg) break;
+
+    const hasToolUse = msg.role === 'assistant' && Array.isArray(msg.content)
+      && msg.content.some((b: unknown) => isTypedContentBlock(b) && b.type === 'tool_use');
+    const hasToolResult = msg.role === 'user' && Array.isArray(msg.content)
+      && msg.content.some(isToolResultContentBlock);
+
+    // Forward pair: assistant(tool_use) followed by user(tool_result) → drop both
+    if (hasToolUse) {
+      const nextMsg = messages[dropIdx + 1];
+      const nextHasResult = nextMsg?.role === 'user' && Array.isArray(nextMsg.content)
+        && nextMsg.content.some(isToolResultContentBlock);
+      if (nextHasResult) {
+        messages = [...messages.slice(0, dropIdx), ...messages.slice(dropIdx + 2)];
+        continue;
+      }
+      // No paired tool_result follows — skip to preserve tool pairing invariant
+      dropIdx++;
+      continue;
+    }
+
+    // Backward pair: user(tool_result) preceded by assistant(tool_use) → drop both
+    if (hasToolResult) {
+      const prevMsg = messages[dropIdx - 1];
+      const prevHasUse = prevMsg?.role === 'assistant' && Array.isArray(prevMsg.content)
+        && prevMsg.content.some((b: unknown) => isTypedContentBlock(b) && b.type === 'tool_use');
+      if (prevHasUse) {
+        messages = [...messages.slice(0, dropIdx - 1), ...messages.slice(dropIdx + 1)];
+        continue;
+      }
+      // No paired assistant precedes — skip to preserve tool pairing invariant
+      dropIdx++;
+      continue;
+    }
+
+    // Non-tool message — safe to drop individually
+    messages = [...messages.slice(0, dropIdx), ...messages.slice(dropIdx + 1)];
+  }
+
+  return messages;
 }
 
 function normalizeQueuedRuntimeMessage(message: string | KodaXMessage): KodaXMessage {
@@ -364,6 +445,7 @@ function getActiveToolDefinitions(
   activeToolNames: string[],
   repoIntelligenceMode?: KodaXRepoIntelligenceMode,
   allowManagedProtocolTool = false,
+  hasCapabilityRuntime = false,
 ): ReturnType<typeof listToolDefinitions> {
   const allTools = listToolDefinitions();
   if (activeToolNames.length === 0) {
@@ -371,7 +453,7 @@ function getActiveToolDefinitions(
   }
 
   const allowed = new Set(
-    getRuntimeActiveToolNames(activeToolNames, repoIntelligenceMode),
+    getRuntimeActiveToolNames(activeToolNames, repoIntelligenceMode, hasCapabilityRuntime),
   );
   return allTools.filter((tool) => (
     allowed.has(tool.name)
@@ -382,10 +464,15 @@ function getActiveToolDefinitions(
 function getRuntimeActiveToolNames(
   activeToolNames: string[],
   repoIntelligenceMode?: KodaXRepoIntelligenceMode,
+  hasCapabilityRuntime = false,
 ): string[] {
-  return resolveKodaXAutoRepoMode(repoIntelligenceMode) === 'off'
+  let result = resolveKodaXAutoRepoMode(repoIntelligenceMode) === 'off'
     ? filterRepoIntelligenceWorkingToolNames(activeToolNames)
     : activeToolNames;
+  if (!hasCapabilityRuntime) {
+    result = filterMcpToolNames(result);
+  }
+  return result;
 }
 
 function appendQueuedRuntimeMessages(
@@ -528,6 +615,25 @@ function validateAndFixToolHistory(messages: KodaXMessage[]): KodaXMessage[] {
 
     // 只有当 fixedContent 不为空时才添加消息
     if (fixedContent.length > 0) {
+      // Guard: after tool_use removal + microcompaction clearing thinking text,
+      // an assistant message might only contain cleared thinking blocks (thinking: '')
+      // and/or empty text blocks (text: ''). Providers like Kimi reject these as
+      // "empty" (400 error). Inject minimal placeholder to preserve message alternation
+      // — dropping the message would orphan adjacent tool_result blocks.
+      if (msg.role === 'assistant') {
+        const hasSubstantiveContent = fixedContent.some((block) => {
+          if (!block || typeof block !== 'object' || !('type' in block)) return false;
+          const b = block as { type: string; text?: string; thinking?: string };
+          if (b.type === 'tool_use') return true;
+          if (b.type === 'text') return !!b.text;
+          if (b.type === 'thinking') return !!b.thinking;
+          return true; // preserve unknown block types
+        });
+        if (!hasSubstantiveContent) {
+          fixedMessages.push({ ...msg, content: [{ type: 'text', text: '...' }] });
+          continue;
+        }
+      }
       fixedMessages.push({ ...msg, content: fixedContent });
     }
   }
@@ -1157,7 +1263,13 @@ async function executeToolCall(
   ctx: KodaXToolExecutionContext,
   runtimeSessionState: RuntimeSessionState,
   activeToolNames?: string[],
+  abortSignal?: AbortSignal,
 ): Promise<string> {
+  // Issue 088: Check abort signal before executing each tool
+  if (abortSignal?.aborted) {
+    return CANCELLED_TOOL_RESULT_MESSAGE;
+  }
+
   const visibleTool = isVisibleToolName(toolCall.name);
   if (visibleTool) {
     await emitActiveExtensionEvent('tool:start', {
@@ -1193,7 +1305,79 @@ async function executeToolCall(
     return blockedWrite;
   }
 
-  return executeTool(toolCall.name, toolCall.input ?? {}, ctx);
+  // FEATURE_067 v2: Inject reportToolProgress for long-running tools (dispatch_child_tasks)
+  const ctxWithProgress: KodaXToolExecutionContext = events.onToolProgress
+    ? {
+        ...ctx,
+        reportToolProgress: (message: string) => {
+          events.onToolProgress?.({ id: toolCall.id, message });
+        },
+      }
+    : ctx;
+
+  const result = await executeTool(toolCall.name, toolCall.input ?? {}, ctxWithProgress);
+
+  // MCP fallback: when a built-in tool fails, try to find a same-name MCP tool.
+  if (result.startsWith('[Tool Error]') && ctx.extensionRuntime) {
+    const fallbackResult = await tryMcpFallback(
+      toolCall.name,
+      toolCall.input ?? {},
+      ctx,
+    );
+    if (fallbackResult !== undefined) {
+      return fallbackResult;
+    }
+  }
+
+  return result;
+}
+
+// Only allow MCP fallback for read-only / network-fetch tools.
+// Write, edit, bash, and other mutating tools must never silently
+// redirect to a remote MCP capability.
+const MCP_FALLBACK_ALLOWED_TOOLS = new Set([
+  'web_search',
+  'web_fetch',
+  'glob',
+  'grep',
+  'read',
+  'code_search',
+  'semantic_lookup',
+]);
+
+async function tryMcpFallback(
+  toolName: string,
+  input: Record<string, unknown>,
+  ctx: KodaXToolExecutionContext,
+): Promise<string | undefined> {
+  if (!MCP_FALLBACK_ALLOWED_TOOLS.has(toolName)) {
+    return undefined;
+  }
+  try {
+    const hits = await ctx.extensionRuntime!.searchCapabilities('mcp', toolName, {
+      kind: 'tool',
+      limit: 1,
+    });
+    if (hits.length === 0) {
+      return undefined;
+    }
+    const hit = hits[0] as { id?: string; name?: string };
+    // Only fallback when the MCP tool name exactly matches the built-in name.
+    if (!hit?.id || (hit.name !== toolName && !hit.id.endsWith(`:${toolName}`))) {
+      return undefined;
+    }
+    const mcpResult = await ctx.extensionRuntime!.executeCapability('mcp', hit.id, input);
+    const content = typeof mcpResult.content === 'string'
+      ? mcpResult.content
+      : JSON.stringify(mcpResult.structuredContent ?? mcpResult, null, 2);
+    return `[MCP Fallback via ${hit.id}]\n${content}`;
+  } catch (error) {
+    if (process.env.KODAX_DEBUG_TOOL_HISTORY) {
+      // eslint-disable-next-line no-console
+      console.debug(`[tryMcpFallback] ${toolName} failed:`, error instanceof Error ? error.message : error);
+    }
+    return undefined;
+  }
 }
 
 /**
@@ -1286,6 +1470,8 @@ export async function runKodaX(
     executionCwd,
     extensionRuntime: runtime ?? undefined,
     askUser: events.askUser, // Issue 069: Pass askUser callback from events
+    askUserInput: events.askUserInput, // Issue 112: Pass askUserInput callback from events
+    abortSignal: options.abortSignal, // Issue 113: Pass abort signal to tool handlers
     managedProtocolRole: options.context?.managedProtocolEmission?.enabled
       ? options.context.managedProtocolEmission.role
       : undefined,
@@ -1297,6 +1483,18 @@ export async function runKodaX(
           );
         }
       : undefined,
+    registerChildWriteWorktrees: options.context?.registerChildWriteWorktrees,
+    mutationTracker: options.context?.mutationTracker,
+    parentAgentConfig: {
+      provider: options.provider,
+      model: options.model,
+      reasoningMode: options.reasoningMode,
+    },
+    // FEATURE_067: onChildProgress removed — it fired onManagedTaskStatus with
+    // activeWorkerId='child', which triggered a foreground worker transition in the
+    // REPL and cleared all live tool calls. Progress is now handled entirely via
+    // reportToolProgress → onToolProgress, which updates both the tool block and spinner.
+    onChildProgress: undefined,
   };
   const finalizeManagedProtocolResult = (result: KodaXResult): KodaXResult => {
     const payload = mergeManagedProtocolPayload(
@@ -1318,7 +1516,10 @@ export async function runKodaX(
     queuedMessages: [],
     extensionState: createRuntimeExtensionState(loadedExtensionState),
     extensionRecords: loadedExtensionRecords?.map((record) => ({ ...record })) ?? [],
-    activeTools: runtimeDefaults?.activeTools ?? listToolDefinitions().map((tool) => tool.name),
+    activeTools: filterExcludedTools(
+      runtimeDefaults?.activeTools ?? listToolDefinitions().map((tool) => tool.name),
+      options.context?.excludeTools,
+    ),
     editRecoveryAttempts: new Map(),
     blockedEditWrites: new Set(),
     modelSelection: {
@@ -1389,6 +1590,7 @@ export async function runKodaX(
 
   let lastText = '';
   let incompleteRetryCount = 0;
+  let maxTokensRetryCount = 0;
   let limitReached = false; // Track if we exited due to iteration limit - 追踪是否因达到迭代上限而退出
   const emitIterationEnd = (
     iterNumber: number,
@@ -1412,6 +1614,15 @@ export async function runKodaX(
     events.onSessionStart?.({ provider: initialProvider.name, sessionId });
     await emitActiveExtensionEvent('session:start', { provider: initialProvider.name, sessionId });
 
+    // Cost tracking — lightweight session-scoped tracker
+    let costTracker: CostTracker = createCostTracker();
+    if (events.getCostReport) {
+      events.getCostReport.current = () => formatCostReport(getSummary(costTracker));
+    }
+
+    let managedProtocolContinueAttempted = false;
+    let compactConsecutiveFailures = 0;
+    const COMPACT_CIRCUIT_BREAKER_LIMIT = 3;
     for (let iter = 0; iter < maxIter; iter++) {
     try {
       currentProviderName = runtimeSessionState.modelSelection.provider ?? options.provider;
@@ -1451,6 +1662,10 @@ export async function runKodaX(
       });
       events.onIterationStart?.(iter + 1, maxIter);
 
+      // Microcompaction: lightweight cleanup each turn (no LLM calls)
+      // Clears old tool results, thinking blocks, and image blocks
+      messages = microcompact(messages, DEFAULT_MICROCOMPACTION_CONFIG) as KodaXMessage[];
+
       // Compaction: 统一使用智能压缩，废除遗留的粗暴截断
       let compacted: KodaXMessage[];
       let didCompactMessages = false;
@@ -1458,14 +1673,16 @@ export async function runKodaX(
 
       // 判断是否需要压缩：只依据智能压缩阈值 (默认 75%)
       const currentTokens = resolveContextTokenCount(messages, contextTokenSnapshot);
-      const needsIntelligentCompact =
+      const needsCompact =
         compactionConfig.enabled
         && needsCompaction(messages, compactionConfig, contextWindow, currentTokens);
 
-      if (needsIntelligentCompact) {
-        // Only trigger UI indicator right before the heavy lifting
+      // Circuit breaker: only disables LLM-based summarization, NOT the fallback
+      const circuitBreakerTripped = compactConsecutiveFailures >= COMPACT_CIRCUIT_BREAKER_LIMIT;
+
+      if (needsCompact && !circuitBreakerTripped) {
+        // LLM-based intelligent compaction path
         events.onCompactStart?.();
-        // 统一走智能压缩（分块 LLM 摘要 + 保留最近 10% 上下文）
         try {
           const result = await intelligentCompact(
             messages,
@@ -1473,13 +1690,42 @@ export async function runKodaX(
             provider,
             contextWindow,
             undefined, // customInstructions
-            currentExecution.systemPrompt, // 传入 systemPrompt 以生成更好的摘要
+            currentExecution.systemPrompt,
             currentTokens,
           );
 
           if (result.compacted) {
             compacted = result.messages;
+
+            // Post-compact reconstruction: inject artifact ledger summary + file content
+            if (result.artifactLedger && result.artifactLedger.length > 0) {
+              const freedTokens = result.tokensBefore - result.tokensAfter;
+              const attachments = buildPostCompactAttachments(
+                result.artifactLedger,
+                freedTokens,
+              );
+
+              // Read recently modified files and inject content (async I/O)
+              // Budget = total post-compact budget minus ledger tokens
+              const totalPostCompactBudget = Math.floor(freedTokens * DEFAULT_POST_COMPACT_CONFIG.budgetRatio);
+              const fileBudget = Math.max(0, totalPostCompactBudget - attachments.totalTokens);
+              const fileMessages = fileBudget > 0
+                ? await buildFileContentMessages(result.artifactLedger, fileBudget)
+                : [];
+
+              const fullAttachments = {
+                ...attachments,
+                fileMessages,
+                totalTokens: attachments.totalTokens + estimateTokens(fileMessages as KodaXMessage[]),
+              };
+
+              if (fullAttachments.totalTokens > 0) {
+                compacted = injectPostCompactAttachments(compacted, fullAttachments);
+              }
+            }
+
             didCompactMessages = true;
+            compactConsecutiveFailures = 0; // Reset on success
             compactionUpdate = {
               anchor: result.anchor,
               artifactLedger: result.artifactLedger,
@@ -1494,60 +1740,30 @@ export async function runKodaX(
             compacted = result.messages;
           }
         } catch (error) {
-          // 改进的错误回退逻辑：告知用户并删除最老的10%消息
-          console.error('[Compaction Error] LLM摘要失败，回退到简单截断:', error);
+          compactConsecutiveFailures++;
+          console.error(`[Compaction Error] LLM summary failed (attempt ${compactConsecutiveFailures}/${COMPACT_CIRCUIT_BREAKER_LIMIT}):`, error);
 
-          // 确保至少删除1条，避免无限循环
-          const removeCount = Math.max(1, Math.ceil(messages.length * 0.1));
-
-          if (messages.length > removeCount + 1) {
-            let startIndex = removeCount;
-            let newCompacted: KodaXMessage[] = [];
-
-            // 如果有总结消息（系统消息或包含特定文本的用户消息），始终保留
-            const firstMsg = messages[0];
-            const isSummary = firstMsg && (firstMsg.role === 'system' || firstMsg.role === 'user')
-              && typeof firstMsg.content === 'string' && firstMsg.content.includes('[对话历史摘要]');
-
-            if (isSummary) {
-              newCompacted.push(firstMsg);
-              // 我们不想删掉摘要，而是想要删掉摘要后面的 removeCount 条消息，所以从 1 + removeCount 开始切
-              startIndex = 1 + removeCount;
-            }
-
-            // 避免截断包含 tool_result 的成对消息，如果切在了 tool_result 上就后移
-            while (startIndex < messages.length) {
-              const msgAtCut = messages[startIndex];
-              if (!msgAtCut) break;
-              if (msgAtCut.role === 'user' && Array.isArray(msgAtCut.content) &&
-                msgAtCut.content.some(isToolResultContentBlock)) {
-                startIndex++;
-                continue;
-              }
-              break;
-            }
-
-            newCompacted.push(...messages.slice(startIndex));
-            compacted = newCompacted;
-            didCompactMessages = true;
-            events.onCompactStats?.({
-              tokensBefore: currentTokens,
-              tokensAfter: estimateTokens(compacted),
-            });
-            console.warn(`[Compaction Fallback] 回退截断：删除了最旧的 ${startIndex - (isSummary ? 1 : 0)} 条消息，保留了 ${compacted.length} 条`);
-            events.onCompact?.(estimateTokens(compacted)); // 使用新的 compacted 估算
-          } else {
-            // 消息太少，不删除
-            compacted = messages;
-            console.warn('[Compaction Fallback] 消息数量太少，跳过删除');
-          }
+          // Fall through to graceful degradation below
+          compacted = messages;
         } finally {
-          // 总是确保停止 UI 的转圈状态
           events.onCompactEnd?.();
         }
       } else {
-        // 不需要压缩，直接使用原始消息
         compacted = messages;
+      }
+
+      // Graceful degradation: runs when LLM compact failed OR circuit breaker tripped
+      // This is separate from the LLM path so it remains available even after 3 failures
+      if (needsCompact && compacted === messages) {
+        compacted = gracefulCompactDegradation(messages, contextWindow, compactionConfig);
+        if (compacted !== messages) {
+          didCompactMessages = true;
+          events.onCompactStats?.({
+            tokensBefore: currentTokens,
+            tokensAfter: estimateTokens(compacted),
+          });
+          events.onCompact?.(estimateTokens(compacted));
+        }
       }
 
       // CRITICAL FIX: Always validate and fix tool history before sending to API
@@ -1636,6 +1852,7 @@ export async function runKodaX(
         runtimeSessionState.activeTools,
         options.context?.repoIntelligenceMode,
         options.context?.managedProtocolEmission?.enabled === true,
+        !!runtime,
       );
 
       while (true) {
@@ -1654,15 +1871,23 @@ export async function runKodaX(
           retryTimeoutController.abort(new Error("API Hard Timeout (10 minutes)"));
         }, API_HARD_TIMEOUT_MS);
 
-        let idleTimer = setTimeout(() => {
-          retryTimeoutController.abort(new Error("Stream stalled or delayed response (60s idle)"));
-        }, API_IDLE_TIMEOUT_MS);
+        // Stream idle timer: disabled by default (API_IDLE_TIMEOUT_MS === 0).
+        // When enabled, aborts the stream if no content events arrive within
+        // the timeout window.  The hard timeout above is always active.
+        const idleEnabled = API_IDLE_TIMEOUT_MS > 0;
+        let idleTimer: ReturnType<typeof setTimeout> | undefined;
+        if (idleEnabled) {
+          idleTimer = setTimeout(() => {
+            retryTimeoutController.abort(new Error(`Stream stalled or delayed response (${API_IDLE_TIMEOUT_MS}ms idle)`));
+          }, API_IDLE_TIMEOUT_MS);
+        }
 
         const resetIdleTimer = () => {
+          if (!idleEnabled) return;
           clearTimeout(idleTimer);
           if (!retryTimeoutController.signal.aborted) {
             idleTimer = setTimeout(() => {
-              retryTimeoutController.abort(new Error("Stream stalled or delayed response (60s idle)"));
+              retryTimeoutController.abort(new Error(`Stream stalled or delayed response (${API_IDLE_TIMEOUT_MS}ms idle)`));
             }, API_IDLE_TIMEOUT_MS);
           }
         };
@@ -1720,6 +1945,16 @@ export async function runKodaX(
                   delayMs: delay,
                 });
                 events.onProviderRateLimit?.(rateAttempt, max, delay);
+              },
+              onHeartbeat: (pause) => {
+                if (pause) {
+                  // Between content blocks: server may be silent while generating
+                  // the next block.  Clear idle timer but do NOT restart it — the
+                  // hard request timeout (10 min) still guards against stuck connections.
+                  clearTimeout(idleTimer);
+                } else {
+                  resetIdleTimer();
+                }
               },
               modelOverride: currentModelOverride,
               signal: retrySignal,
@@ -1849,6 +2084,18 @@ export async function runKodaX(
       events.onStreamEnd?.();
       await emitActiveExtensionEvent('stream:end', undefined);
 
+      // Record cost for this LLM call
+      if (result.usage) {
+        costTracker = recordUsage(costTracker, {
+          provider: currentProviderName,
+          model: currentModelOverride ?? 'unknown',
+          inputTokens: result.usage.inputTokens,
+          outputTokens: result.usage.outputTokens,
+          cacheReadTokens: result.usage.cachedReadTokens,
+          cacheWriteTokens: result.usage.cachedWriteTokens,
+        });
+      }
+
       lastText = result.textBlocks.map(b => b.text).join(' ');
       const preAssistantTokenSnapshot = createContextTokenSnapshot(compacted, result.usage);
       const visibleToolBlocks = result.toolBlocks.filter((block) => isVisibleToolName(block.name));
@@ -1897,10 +2144,65 @@ export async function runKodaX(
         }
       }
 
-      const assistantContent = [...result.thinkingBlocks, ...result.textBlocks, ...visibleToolBlocks];
+      let assistantContent = [...result.thinkingBlocks, ...result.textBlocks, ...visibleToolBlocks];
+      // Guard: never push an assistant message with empty content.
+      // This can happen when the model only emits invisible tool calls (e.g. emit_managed_protocol)
+      // with no text or thinking. Providers like Kimi reject empty content (400 error).
+      if (assistantContent.length === 0) {
+        assistantContent = [{ type: 'text' as const, text: '...' }];
+      }
       messages.push({ role: 'assistant', content: assistantContent });
       const completedTurnTokenSnapshot = createCompletedTurnTokenSnapshot(messages, result.usage);
       contextTokenSnapshot = completedTurnTokenSnapshot;
+
+      // Fallback: auto-continue when response is truncated by max_tokens.
+      // Capped at KODAX_MAX_MAXTOKENS_RETRIES to prevent infinite loops when
+      // extended thinking consumes most of the output budget, leaving no room
+      // for tool calls (e.g. large Write operations).  When retries are exhausted
+      // the code falls through to the normal text-only response handler below.
+      if (result.stopReason === 'max_tokens' && result.toolBlocks.length === 0 && lastText) {
+        maxTokensRetryCount++;
+        if (maxTokensRetryCount <= KODAX_MAX_MAXTOKENS_RETRIES) {
+          events.onTextDelta?.('\n\n[max_tokens reached, continuing...]\n\n');
+          messages.push({ role: 'user', content: [{ type: 'text', text: 'Continue from where you left off.' }], _synthetic: true });
+          contextTokenSnapshot = rebaseContextTokenSnapshot(messages, completedTurnTokenSnapshot);
+          continue;
+        }
+        // Retries exhausted — fall through to text-only response handling
+        events.onRetry?.(`max_tokens truncation limit reached (${maxTokensRetryCount - 1}/${KODAX_MAX_MAXTOKENS_RETRIES})`, maxTokensRetryCount - 1, KODAX_MAX_MAXTOKENS_RETRIES);
+      }
+
+      // Fallback: auto-continue when end_turn fires but required managed protocol block is missing.
+      // This covers the case where the model voluntarily stops (end_turn) before emitting the
+      // required protocol block — the max_tokens fallback above does not catch this scenario.
+      // Limited to a single attempt to avoid infinite loops; the task-engine retry handles further recovery.
+      if (
+        !managedProtocolContinueAttempted
+        && result.stopReason === 'end_turn'
+        && result.toolBlocks.length === 0
+        && lastText
+        && options.context?.managedProtocolEmission?.enabled
+      ) {
+        const role = options.context.managedProtocolEmission.role;
+        const blockName = getManagedBlockNameForRole(role);
+        if (
+          blockName
+          && !hasManagedProtocolForRole(emittedManagedProtocolPayload, role)
+          && !textContainsManagedBlock(lastText, blockName)
+        ) {
+          managedProtocolContinueAttempted = true;
+          messages.push({
+            role: 'user',
+            content: [{
+              type: 'text',
+              text: `Your response is complete but the required protocol was not emitted. Do NOT output any text — ONLY call the "${MANAGED_PROTOCOL_TOOL_NAME}" tool now, or append a \`\`\`${blockName}\`\`\` fenced block. No other output.`,
+            }],
+            _synthetic: true,
+          });
+          contextTokenSnapshot = rebaseContextTokenSnapshot(messages, completedTurnTokenSnapshot);
+          continue;
+        }
+      }
 
       if (result.toolBlocks.length === 0) {
         await settleExtensionTurn(sessionId, lastText, runtimeSessionState, {
@@ -2004,7 +2306,7 @@ export async function runKodaX(
           } else {
             retryPrompt = `⚠️ CRITICAL: Your response was TRUNCATED again. This is retry ${incompleteRetryCount}/${KODAX_MAX_INCOMPLETE_RETRIES}.\n\nMISSING PARAMETERS:\n${incomplete.map(i => `- ${i}`).join('\n')}\n\nYOU MUST:\n1. For 'write' tool: Keep content under 50 lines - write structure first, fill in later with 'edit'\n2. For 'edit' tool: Keep new_string under 30 lines - make smaller, focused changes\n3. Provide ALL required parameters in your tool call\n\nIf your response is truncated again, the task will FAIL.\nPROVIDE SHORT, COMPLETE PARAMETERS NOW.`;
           }
-          messages.push({ role: 'user', content: retryPrompt });
+          messages.push({ role: 'user', content: retryPrompt, _synthetic: true });
           contextTokenSnapshot = rebaseContextTokenSnapshot(messages, preAssistantTokenSnapshot);
           continue;
         } else {
@@ -2049,8 +2351,26 @@ export async function runKodaX(
       const toolResults: KodaXToolResultBlock[] = [];
       const editRecoveryMessages: string[] = [];
 
-      if (options.parallel && result.toolBlocks.length > 1) {
-        // 分离 bash（顺序）和非 bash（并行）
+      // Issue 088: Check abort signal before entering tool execution phase.
+      // Without this guard, tools spawned after Ctrl+C would still run to completion.
+      // Use graceful cancellation (mark all tools as cancelled) instead of throwing,
+      // so the downstream `hasCancellation` check handles exit uniformly.
+      const abortedBeforeTools = options.abortSignal?.aborted === true;
+
+      // Non-bash tools run in parallel; bash tools run sequentially (always parallel mode).
+      if (abortedBeforeTools) {
+        for (const tc of result.toolBlocks) {
+          if (isVisibleToolName(tc.name)) {
+            await emitActiveExtensionEvent('tool:result', {
+              id: tc.id,
+              name: tc.name,
+              content: CANCELLED_TOOL_RESULT_MESSAGE,
+            });
+            events.onToolResult?.({ id: tc.id, name: tc.name, content: CANCELLED_TOOL_RESULT_MESSAGE });
+            toolResults.push(createToolResultBlock(tc.id, CANCELLED_TOOL_RESULT_MESSAGE));
+          }
+        }
+      } else {
         const bashTools = result.toolBlocks.filter(tc => tc.name === 'bash');
         const nonBashTools = result.toolBlocks.filter(tc => tc.name !== 'bash');
         const resultMap = new Map<string, string>();
@@ -2068,7 +2388,8 @@ export async function runKodaX(
                 }, ctx, runtimeSessionState, getRuntimeActiveToolNames(
                   runtimeSessionState.activeTools,
                   options.context?.repoIntelligenceMode,
-                )),
+                  !!runtime,
+                ), options.abortSignal),
                 ctx,
               )
             ).content,
@@ -2078,6 +2399,11 @@ export async function runKodaX(
         }
 
         for (const tc of bashTools) {
+          // Issue 088: Check abort signal before each sequential bash tool
+          if (options.abortSignal?.aborted) {
+            resultMap.set(tc.id, CANCELLED_TOOL_RESULT_MESSAGE);
+            continue;
+          }
           const content = (
             await applyToolResultGuardrail(
               tc.name,
@@ -2088,7 +2414,8 @@ export async function runKodaX(
                 }, ctx, runtimeSessionState, getRuntimeActiveToolNames(
                   runtimeSessionState.activeTools,
                   options.context?.repoIntelligenceMode,
-                )),
+                  !!runtime,
+                ), options.abortSignal),
               ctx,
             )
           ).content;
@@ -2097,39 +2424,6 @@ export async function runKodaX(
 
         for (const tc of result.toolBlocks) {
           const content = resultMap.get(tc.id) ?? '[Error] No result';
-          updateToolOutcomeTracking(tc, content, runtimeSessionState, ctx);
-          if (tc.name === 'edit' && isToolResultErrorContent(content)) {
-            const recoveryMessage = await buildEditRecoveryUserMessage(tc, content, runtimeSessionState, ctx);
-            if (recoveryMessage) {
-              editRecoveryMessages.push(recoveryMessage);
-            }
-          }
-          if (isVisibleToolName(tc.name)) {
-            await emitActiveExtensionEvent('tool:result', {
-              id: tc.id,
-              name: tc.name,
-              content,
-            });
-            events.onToolResult?.({ id: tc.id, name: tc.name, content });
-            toolResults.push(createToolResultBlock(tc.id, content));
-          }
-        }
-      } else {
-        for (const tc of result.toolBlocks) {
-          const content = (
-            await applyToolResultGuardrail(
-              tc.name,
-              await executeToolCall(events, {
-                id: tc.id,
-                name: tc.name,
-                input: tc.input as Record<string, unknown> | undefined,
-                }, ctx, runtimeSessionState, getRuntimeActiveToolNames(
-                  runtimeSessionState.activeTools,
-                  options.context?.repoIntelligenceMode,
-                )),
-              ctx,
-            )
-          ).content;
           updateToolOutcomeTracking(tc, content, runtimeSessionState, ctx);
           if (tc.name === 'edit' && isToolResultErrorContent(content)) {
             const recoveryMessage = await buildEditRecoveryUserMessage(tc, content, runtimeSessionState, ctx);
@@ -2237,6 +2531,7 @@ export async function runKodaX(
         messages.push({
           role: 'user',
           content: editRecoveryMessages.join('\n\n'),
+          _synthetic: true,
         });
       }
       // Keep UI/context accounting aligned with the tool-result message we just appended.
@@ -2609,7 +2904,8 @@ async function buildReasoningExecutionState(
 
   return {
     effectiveOptions,
-    systemPrompt: await buildSystemPrompt(effectiveOptions, isNewSession),
+    systemPrompt: options.context?.systemPromptOverride
+      ?? await buildSystemPrompt(effectiveOptions, isNewSession),
     providerReasoning: {
       enabled: reasoningPlan.depth !== 'off',
       mode: reasoningPlan.mode,

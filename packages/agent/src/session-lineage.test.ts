@@ -6,10 +6,12 @@ import {
   buildSessionTree,
   countActiveLineageMessages,
   createSessionLineage,
+  findPreviousUserEntryId,
   forkSessionLineage,
   getSessionLineagePath,
   getSessionMessagesFromLineage,
   resolveSessionLineageTarget,
+  rewindSessionLineage,
   setSessionLineageActiveEntry,
 } from './session-lineage.js';
 
@@ -239,5 +241,186 @@ describe('session lineage helpers', () => {
       createTextMessage('assistant', 'latest pass'),
     ]);
     expect(compacted.activeEntryId).toBe(compacted.entries[compacted.entries.length - 1]?.id ?? null);
+  });
+
+  it('rewinds to a target entry and truncates all entries after it', () => {
+    const lineage = createSessionLineage([
+      createTextMessage('user', 'message 1'),
+      createTextMessage('assistant', 'message 2'),
+      createTextMessage('user', 'message 3'),
+      createTextMessage('assistant', 'message 4'),
+    ]);
+
+    const targetId = lineage.entries[1]!.id;
+    const rewound = rewindSessionLineage(lineage, targetId);
+
+    expect(rewound).not.toBeNull();
+    expect(rewound!.activeEntryId).toBe(targetId);
+    // Entries: [0], [1], [rewind event]
+    expect(rewound!.entries).toHaveLength(3);
+    expect(rewound!.entries[0]?.id).toBe(lineage.entries[0]!.id);
+    expect(rewound!.entries[1]?.id).toBe(lineage.entries[1]!.id);
+    expect(rewound!.entries[2]?.type).toBe('compaction');
+    expect(rewound!.entries[2]).toMatchObject({
+      reason: 'rewind',
+      summary: expect.stringContaining('Rewound to entry'),
+    });
+  });
+
+  it('rewind event records details about the truncation', () => {
+    const lineage = createSessionLineage([
+      createTextMessage('user', 'message 1'),
+      createTextMessage('assistant', 'message 2'),
+      createTextMessage('user', 'message 3'),
+      createTextMessage('assistant', 'message 4'),
+      createTextMessage('user', 'message 5'),
+    ]);
+
+    const targetId = lineage.entries[1]!.id;
+    const rewound = rewindSessionLineage(lineage, targetId);
+
+    const rewindEvent = rewound!.entries[2];
+    expect(rewindEvent?.type).toBe('compaction');
+    if (rewindEvent?.type === 'compaction') {
+      expect(rewindEvent.details).toEqual({
+        rewindTargetId: targetId,
+        truncatedCount: 3,
+      });
+    }
+  });
+
+  it('returns null when target entry is not found', () => {
+    const lineage = createSessionLineage([
+      createTextMessage('user', 'message 1'),
+      createTextMessage('assistant', 'message 2'),
+    ]);
+
+    const rewound = rewindSessionLineage(lineage, 'entry_nonexistent');
+    expect(rewound).toBeNull();
+  });
+
+  it('does not mutate the original lineage', () => {
+    const lineage = createSessionLineage([
+      createTextMessage('user', 'message 1'),
+      createTextMessage('assistant', 'message 2'),
+      createTextMessage('user', 'message 3'),
+    ]);
+
+    const originalEntryCount = lineage.entries.length;
+    const originalActiveId = lineage.activeEntryId;
+
+    const targetId = lineage.entries[0]!.id;
+    const rewound = rewindSessionLineage(lineage, targetId);
+
+    // Original lineage unchanged
+    expect(lineage.entries.length).toBe(originalEntryCount);
+    expect(lineage.activeEntryId).toBe(originalActiveId);
+    // New lineage is different
+    expect(rewound!.entries.length).not.toBe(originalEntryCount);
+    expect(rewound!.activeEntryId).not.toBe(originalActiveId);
+  });
+
+  it('can rewind to the first entry', () => {
+    const lineage = createSessionLineage([
+      createTextMessage('user', 'message 1'),
+      createTextMessage('assistant', 'message 2'),
+      createTextMessage('user', 'message 3'),
+    ]);
+
+    const targetId = lineage.entries[0]!.id;
+    const rewound = rewindSessionLineage(lineage, targetId);
+
+    expect(rewound).not.toBeNull();
+    expect(rewound!.activeEntryId).toBe(targetId);
+    expect(rewound!.entries).toHaveLength(2); // [0] + rewind event
+    expect(rewound!.entries[0]?.id).toBe(targetId);
+  });
+
+  it('can rewind to the last entry (no-op truncation)', () => {
+    const lineage = createSessionLineage([
+      createTextMessage('user', 'message 1'),
+      createTextMessage('assistant', 'message 2'),
+    ]);
+
+    const targetId = lineage.entries[1]!.id;
+    const rewound = rewindSessionLineage(lineage, targetId);
+
+    expect(rewound).not.toBeNull();
+    expect(rewound!.activeEntryId).toBe(targetId);
+    expect(rewound!.entries).toHaveLength(3); // [0], [1] + rewind event
+    expect(rewound!.entries[2]?.type).toBe('compaction');
+    if (rewound!.entries[2]?.type === 'compaction') {
+      expect(rewound!.entries[2].details).toEqual({
+        rewindTargetId: targetId,
+        truncatedCount: 0,
+      });
+    }
+  });
+
+  it('rewind event is set as new activeEntryId', () => {
+    const lineage = createSessionLineage([
+      createTextMessage('user', 'message 1'),
+      createTextMessage('assistant', 'message 2'),
+      createTextMessage('user', 'message 3'),
+    ]);
+
+    const targetId = lineage.entries[0]!.id;
+    const rewound = rewindSessionLineage(lineage, targetId);
+
+    // Active is set to the target, not the rewind event
+    expect(rewound!.activeEntryId).toBe(targetId);
+  });
+});
+
+describe('findPreviousUserEntryId', () => {
+  it('returns null for empty lineage', () => {
+    const lineage = createSessionLineage([]);
+    expect(findPreviousUserEntryId(lineage)).toBeNull();
+  });
+
+  it('returns null when only one user message exists', () => {
+    const lineage = createSessionLineage([
+      createTextMessage('user', 'hello'),
+      createTextMessage('assistant', 'hi'),
+    ]);
+    expect(findPreviousUserEntryId(lineage)).toBeNull();
+  });
+
+  it('returns the second-to-last user message id', () => {
+    const lineage = createSessionLineage([
+      createTextMessage('user', 'first'),
+      createTextMessage('assistant', 'reply 1'),
+      createTextMessage('user', 'second'),
+      createTextMessage('assistant', 'reply 2'),
+    ]);
+    const result = findPreviousUserEntryId(lineage);
+    // The first user message entry should be returned
+    const userEntries = lineage.entries.filter(
+      (e) => e.type === 'message' && e.message.role === 'user',
+    );
+    expect(result).toBe(userEntries[0]!.id);
+  });
+
+  it('works with three user messages — returns second-to-last', () => {
+    const lineage = createSessionLineage([
+      createTextMessage('user', 'first'),
+      createTextMessage('assistant', 'reply 1'),
+      createTextMessage('user', 'second'),
+      createTextMessage('assistant', 'reply 2'),
+      createTextMessage('user', 'third'),
+    ]);
+    const result = findPreviousUserEntryId(lineage);
+    const userEntries = lineage.entries.filter(
+      (e) => e.type === 'message' && e.message.role === 'user',
+    );
+    // Should return the second user entry (index 1), not the first (index 0)
+    expect(result).toBe(userEntries[1]!.id);
+  });
+
+  it('returns null when only system and assistant messages exist', () => {
+    const lineage = createSessionLineage([
+      createTextMessage('assistant', 'hello'),
+    ]);
+    expect(findPreviousUserEntryId(lineage)).toBeNull();
   });
 });

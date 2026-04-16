@@ -37,7 +37,6 @@ export interface GlobalShortcutsProps {
   isInteractiveDialogActive?: boolean;
   onSetAgentMode?: (mode: KodaXAgentMode) => void;
   onSetPermissionMode?: (mode: PermissionMode) => void;
-  onSetParallel?: (enabled: boolean) => void;
   isInputEmpty: boolean;
   onSavePermissionMode?: (mode: PermissionMode) => void;
 }
@@ -61,7 +60,6 @@ export function GlobalShortcuts({
   isInteractiveDialogActive = false,
   onSetAgentMode,
   onSetPermissionMode,
-  onSetParallel,
   isInputEmpty,
   onSavePermissionMode,
 }: GlobalShortcutsProps): null {
@@ -168,19 +166,6 @@ export function GlobalShortcuts({
     setCurrentConfig((prev) => ({ ...prev, agentMode: nextMode }));
     saveConfig({ agentMode: nextMode });
     onSetAgentMode?.(nextMode);
-    setShowHelp(false);
-    return true;
-  });
-
-  useShortcut('toggleParallelMode', () => {
-    if (isInteractiveDialogActive) {
-      return false;
-    }
-    const nextValue = !currentConfig.parallel;
-
-    setCurrentConfig((prev) => ({ ...prev, parallel: nextValue }));
-    saveConfig({ parallel: nextValue });
-    onSetParallel?.(nextValue);
     setShowHelp(false);
     return true;
   });

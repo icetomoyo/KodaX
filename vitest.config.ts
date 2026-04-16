@@ -1,10 +1,22 @@
 import path from 'path';
-import { defineConfig } from 'vitest/config';
+import { defineConfig, type Plugin } from 'vitest/config';
 
 const resolveFromRoot = (...segments: string[]): string =>
   path.resolve(__dirname, ...segments);
 
+function stripShebang(): Plugin {
+  return {
+    name: 'strip-shebang',
+    transform(code, id) {
+      if (id.endsWith('.js') && code.startsWith('#!')) {
+        return { code: code.replace(/^#![^\n]*\n/, ''), map: null };
+      }
+    },
+  };
+}
+
 export default defineConfig({
+  plugins: [stripShebang()],
   resolve: {
     alias: {
       '@kodax/ai': resolveFromRoot('packages', 'ai', 'src', 'index.ts'),

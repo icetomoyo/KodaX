@@ -74,6 +74,12 @@ import {
   ErrorCategory,
   loadAgentsFiles,
   resolveRepoIntelligenceRuntimeConfig,
+  CANCELLED_TOOL_RESULT_MESSAGE,
+  classifyBashCommand,
+  createDenialTracker,
+  recordDenial,
+  isDeniedRecently,
+  getDenialContext,
 } from "@kodax/coding";
 import type {
   AgentsFile,
@@ -119,6 +125,7 @@ import {
   getProviderReasoningCapability,
 } from "../common/utils.js";
 import { buildToolConfirmationPrompt } from "../common/tool-confirmation.js";
+import { t } from "../common/i18n.js";
 import { KODAX_VERSION } from "../common/utils.js";
 import { runWithPlanMode } from "../common/plan-mode.js";
 import { saveAlwaysAllowToolPattern, loadAlwaysAllowTools, savePermissionModeUser } from "../common/permission-config.js";
@@ -140,6 +147,7 @@ import { MemorySessionStorage, type SessionStorage } from "./utils/session-stora
 import { processSpecialSyntax, isShellCommandHandled } from "./utils/shell-executor.js";
 import {
   extractHistorySeedsFromMessage,
+  seedToHistoryItem,
   resolveCompletedAssistantText,
   sanitizeUserFacingAssistantText,
   isControlPlaneOnlyAssistantText,
@@ -147,7 +155,7 @@ import {
   extractTitle,
 } from "./utils/message-utils.js";
 import { withCapture, ConsoleCapturer } from "./utils/console-capturer.js";
-import { emitRecoveryHistoryItem, emitRetryHistoryItem } from "./utils/retry-history.js";
+import { createRecoveryHistoryItem, emitRecoveryHistoryItem, emitRetryHistoryItem } from "./utils/retry-history.js";
 import {
   formatManagedTaskBreadcrumb,
   formatManagedTaskLiveStatusLabel,
@@ -240,8 +248,6 @@ import { resolveTranscriptDragEdgeScrollDirection } from "../tui/core/scroll.js"
 import { getRendererInstance } from "../tui/core/root.js";
 import {
   getAskUserDialogTitle,
-  resolveAskUserDismissChoice,
-  shouldSwitchToAcceptEdits,
   toSelectOptions,
   type SelectOption,
 } from "./utils/ask-user.js";
@@ -343,7 +349,7 @@ interface ManagedForegroundLedgerState {
 }
 
 const PLAN_MODE_BLOCK_GUIDANCE =
-  "Do not try to modify files while planning. Finish the plan first, then use ask_user_question with intent \"plan-handoff\" to ask whether this session should switch to accept-edits and continue.";
+  "Do not try to modify files while planning. Finish the plan first, then use ask_user_question to ask the user whether to proceed. If the user confirms, call set_permission_mode with mode \"accept-edits\" to switch to implementation mode.";
 
 function resolveInitialReasoningMode(
   options: Pick<KodaXOptions, 'reasoningMode' | 'thinking'>,
@@ -433,9 +439,18 @@ export function buildManagedTaskTranscriptItems(result: KodaXResult): string[] {
           : "";
       return `[${entry.title ?? entry.assignmentId}${labelSuffix}]\n${text}`;
     });
+  const completionLabel = task.verdict.disposition === 'complete'
+    ? t("managed.completed")
+    : task.verdict.disposition === 'needs_continuation'
+      ? t("managed.completed.continuation")
+      : task.verdict.disposition === 'blocked'
+        ? t("managed.completed.blocked")
+        : undefined;
+
   return [
     ...(routingTranscript ? [routingTranscript] : []),
     ...evidenceTranscripts,
+    ...(completionLabel ? [`[${completionLabel}]`] : []),
   ];
 }
 
@@ -460,11 +475,17 @@ function buildManagedTranscriptCompactText(text: string): string | undefined {
   return combined.length > 220 ? `${combined.slice(0, 217)}...` : combined;
 }
 
+function isCompletionTranscriptItem(text: string): boolean {
+  return text === `[${t("managed.completed")}]`
+    || text === `[${t("managed.completed.blocked")}]`
+    || text === `[${t("managed.completed.continuation")}]`;
+}
+
 function toManagedTranscriptEventItem(text: string): CreatableHistoryItem {
   const compactText = buildManagedTranscriptCompactText(text);
   return {
     type: "event",
-    icon: ">",
+    icon: isCompletionTranscriptItem(text) ? "\u2713" : ">",
     text,
     ...(compactText && compactText !== text ? { compactText } : {}),
   };
@@ -520,6 +541,10 @@ function buildManagedTaskRoutingTranscript(task: NonNullable<KodaXResult["manage
   const raw = task.runtime?.rawRoutingDecision;
   const final = task.runtime?.finalRoutingDecision;
   if (!raw || !final) {
+    return undefined;
+  }
+  // Skip routing diagnostics for simple direct responses — no useful signal.
+  if (raw.harnessProfile === "H0_DIRECT" && final.harnessProfile === "H0_DIRECT") {
     return undefined;
   }
 
@@ -628,6 +653,25 @@ function areManagedLiveItemsEquivalent(left: HistoryItem, right: HistoryItem): b
   }
 }
 
+function localizeManagedCompletionSummary(summary: string): string {
+  if (summary === "Task completed") {
+    return t("managed.completed");
+  }
+  if (summary === "Task needs continuation") {
+    return t("managed.completed.continuation");
+  }
+  if (summary === "Task ended: blocked") {
+    return t("managed.completed.blocked");
+  }
+  if (summary === "Task ended: needs_continuation") {
+    return t("managed.completed.continuation");
+  }
+  if (summary.startsWith("Task ended:")) {
+    return t("managed.completed.blocked");
+  }
+  return summary;
+}
+
 function buildManagedLiveEventDrafts(
   status: KodaXManagedTaskStatusEvent,
 ): ManagedLiveItemDraft[] {
@@ -667,14 +711,20 @@ function buildManagedLiveEventDrafts(
           });
           return acc;
         }
+        const isCompleted = event.kind === "completed";
+        const localizedLabel = isCompleted
+          ? `[${localizeManagedCompletionSummary(compactText)}]`
+          : undefined;
+        const localizedCompact = localizedLabel ?? compactText;
+        const localizedText = localizedLabel ?? text;
         acc.push({
           item: {
             id: itemId,
             type: "event",
             timestamp,
-            text,
-            icon: event.kind === "warning" ? "!" : ">",
-            ...(compactText !== text ? { compactText } : {}),
+            text: localizedText,
+            icon: event.kind === "warning" ? "!" : isCompleted ? "\u2713" : ">",
+            ...(localizedCompact !== localizedText ? { compactText: localizedCompact } : {}),
           },
           persistToHistory,
         });
@@ -1062,12 +1112,6 @@ const Banner: React.FC<BannerProps> = ({
         <Text color={theme.colors.accent}>
           {config.permissionMode}
         </Text>
-        <Text dimColor>
-          {" | "}
-        </Text>
-        <Text color={config.parallel ? theme.colors.success : theme.colors.dim}>
-          {config.parallel ? "parallel" : "sequential"}
-        </Text>
         {config.reasoningMode !== 'off' && (
           <Text color={theme.colors.warning}>
             {` +reason:${config.reasoningMode}`}
@@ -1123,7 +1167,7 @@ function buildBannerTranscriptSection(props: BannerProps): TranscriptSection {
   const triggerK = props.compactionInfo
     ? Math.round(props.compactionInfo.contextWindow * props.compactionInfo.triggerPercent / 100 / 1000)
     : 0;
-  const versionLine = `  v${KODAX_VERSION} | ${props.config.provider}/${model} [${reasoningCapabilityShort}] | ${props.config.agentMode.toUpperCase()} | ${props.config.permissionMode} | ${props.config.parallel ? "parallel" : "sequential"}${props.config.reasoningMode !== "off" ? ` +reason:${props.config.reasoningMode}` : ""}`;
+  const versionLine = `  v${KODAX_VERSION} | ${props.config.provider}/${model} [${reasoningCapabilityShort}] | ${props.config.agentMode.toUpperCase()} | ${props.config.permissionMode}${props.config.reasoningMode !== "off" ? ` +reason:${props.config.reasoningMode}` : ""}`;
   const compactionLine = props.compactionInfo
     ? `  Context: ${ctxK}k | Compaction: ${props.compactionInfo.enabled ? "on" : "off"} @ ${props.compactionInfo.triggerPercent}% (${triggerK}k)`
     : undefined;
@@ -1204,6 +1248,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const { stdin, setRawMode, isRawModeSupported } = useStdin();
   const writeTerminal = useTerminalWrite();
   const { history } = useUIState();
+
+  // Cost tracking — agent sets .current via events.getCostReport, /cost command reads it
+  const inkCostReportRef: { current: (() => string) | null } = React.useRef<(() => string) | null>(null);
+
+  // FEATURE_066: Session-scoped denial tracker for permission hardening
+  const denialTrackerRef = React.useRef(createDenialTracker());
   const { addHistoryItem, clearHistory: clearUIHistory, setSessionId } = useUIActions();
   const historyRef = useRef(history);
   const persistedUiHistoryRef = useRef<KodaXSessionUiHistoryItem[]>(
@@ -1444,6 +1494,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       ? `[${workerTitle.trim()}] `
       : "";
 
+    // Issue: When switching away from tool_group to thinking/assistant,
+    // preserve the tool_group references if tools are still executing.
+    // Otherwise the tool_group item becomes orphaned and a duplicate is
+    // created when the tool result arrives.
+    const hasExecutingTools = currentLedger.activeToolGroupTools.some(
+      (t) => t.status === ToolCallStatus.Executing,
+    );
+
     if (kind === "thinking") {
       const itemId = appendManagedForegroundLedgerItem({
         id: nextManagedForegroundItemId("thinking"),
@@ -1456,8 +1514,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         activeKind: "thinking",
         activeThinkingItemId: itemId,
         activeAssistantItemId: undefined,
-        activeToolGroupItemId: undefined,
-        activeToolGroupTools: [],
+        ...(hasExecutingTools ? {} : {
+          activeToolGroupItemId: undefined,
+          activeToolGroupTools: [],
+        }),
       };
       return itemId;
     }
@@ -1474,8 +1534,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         activeKind: "assistant",
         activeThinkingItemId: undefined,
         activeAssistantItemId: itemId,
-        activeToolGroupItemId: undefined,
-        activeToolGroupTools: [],
+        ...(hasExecutingTools ? {} : {
+          activeToolGroupItemId: undefined,
+          activeToolGroupTools: [],
+        }),
       };
       return itemId;
     }
@@ -1539,6 +1601,39 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
   const syncManagedForegroundToolGroup = useCallback((toolCall: ToolCall) => {
     const currentLedger = managedForegroundLedgerRef.current;
+
+    // If the ledger has switched away from tool_group (e.g. to thinking)
+    // but still holds a reference to a prior tool_group with this tool,
+    // update that original item in place instead of creating a duplicate.
+    if (
+      currentLedger.activeKind !== "tool_group"
+      && currentLedger.activeToolGroupItemId
+      && currentLedger.activeToolGroupTools.some((t) => t.id === toolCall.id)
+    ) {
+      const nextTools = currentLedger.activeToolGroupTools.map((t) => (
+        t.id === toolCall.id ? toolCall : t
+      ));
+      // Clean up preserved refs once all tools have reached a terminal state.
+      const allResolved = nextTools.every((t) => (
+        t.status === ToolCallStatus.Success
+        || t.status === ToolCallStatus.Error
+        || t.status === ToolCallStatus.Cancelled
+      ));
+      managedForegroundLedgerRef.current = {
+        ...managedForegroundLedgerRef.current,
+        ...(allResolved
+          ? { activeToolGroupItemId: undefined, activeToolGroupTools: [] }
+          : { activeToolGroupTools: nextTools }
+        ),
+      };
+      updateManagedForegroundLedgerItem(currentLedger.activeToolGroupItemId, (item) => (
+        item.type === "tool_group"
+          ? { ...item, tools: nextTools }
+          : item
+      ));
+      return;
+    }
+
     const itemId = startManagedForegroundLedgerBlock("tool_group", currentLedger.workerTitle);
     const nextTools = currentLedger.activeToolGroupTools.some((existing) => existing.id === toolCall.id)
       ? currentLedger.activeToolGroupTools.map((existing) => (
@@ -1845,6 +1940,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       options: SelectOption[];
       buffer: string;
       error?: string;
+      focusedIndex: number;
+      selectedIndices: number[];
+      multiSelect?: boolean;
     }
     | {
       kind: "input";
@@ -1856,6 +1954,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     | null
   >(null);
   const uiResolveRef = useRef<((value: string | undefined) => void) | null>(null);
+  // Fix: keep a synchronously-updated ref so the useKeypress handler always
+  // reads the latest uiRequest (the registered handler captures a stale closure).
+  const uiRequestRef = useRef(uiRequest);
+  uiRequestRef.current = uiRequest;
   const [historySearchQuery, setHistorySearchQuery] = useState("");
   const [historySearchSelectedIndex, setHistorySearchSelectedIndex] = useState(0);
   const lastHistorySearchQueryRef = useRef("");
@@ -1886,12 +1988,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     const canAlways = currentConfig.permissionMode === "accept-edits" && !isProtectedPath;
 
     if (isProtectedPath) {
-      return "Press (y) to confirm, (n) to cancel (protected path)";
+      return t("confirm.instruction.protected");
     }
     if (canAlways) {
-      return "Press (y) yes, (a) always yes for this tool, (n) no";
+      return t("confirm.instruction.always");
     }
-    return "Press (y) yes, (n) no";
+    return t("confirm.instruction.basic");
   }, [confirmRequest, currentConfig.permissionMode]);
 
   const isHistorySearchActive = transcriptDisplayState.searchMode === "history";
@@ -2651,7 +2753,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         sessionId: context.sessionId,
         permissionMode: currentConfig.permissionMode,
         agentMode: currentConfig.agentMode,
-        parallel: currentConfig.parallel,
         provider: currentConfig.provider,
         model: currentConfig.model ?? getProviderModel(currentConfig.provider) ?? currentConfig.provider,
         thinking: currentConfig.thinking,
@@ -2679,7 +2780,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       context.sessionId,
       currentConfig.permissionMode,
       currentConfig.agentMode,
-      currentConfig.parallel,
       currentConfig.provider,
       currentConfig.model,
       currentConfig.thinking,
@@ -2864,12 +2964,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       statusNoticeSummary: activeFooterNotices.join(" | "),
       workStripText: footerBudgetWorkStripText,
       suggestionsReserved: suggestionsReservedForLayout,
-      suggestionsMode: useOverlaySurface ? "overlay" : "inline",
+      suggestionsMode: "inline",
       showHelp: footerBudgetShowHelp,
       statusBarText,
       confirmPrompt: confirmRequest?.prompt,
       confirmInstruction,
-      dialogMode: useOverlaySurface ? "overlay" : "inline",
+      dialogMode: "inline",
       reviewHint: fullscreenPolicy.enabled && transcriptOwnsViewport
         ? undefined
         : transcriptChrome.browseHintText,
@@ -2923,7 +3023,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         reserveSpace={suggestionsReservedForLayout}
         width={terminalWidth}
         hidden={isTranscriptMode}
-        mode={useOverlaySurface ? "overlay" : "inline"}
+        mode="inline"
       />
     ),
     [
@@ -3392,6 +3492,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         buffer: uiRequest.buffer,
         error: uiRequest.error,
         visibleSelectOptions: viewportBudget.visibleSelectOptions,
+        focusedIndex: uiRequest.focusedIndex,
+        selectedIndices: uiRequest.selectedIndices,
+        multiSelect: uiRequest.multiSelect,
       };
     }
     return {
@@ -3423,43 +3526,19 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       />
     );
   }, [selectionCopyNotice]);
+  // Overlay surface: only used for transient toasts (ClipboardToast) that have
+  // their own backgroundColor fill. Dialogs and suggestions are ALWAYS inline
+  // to avoid terminal transparency bleed-through (Issue 112).
   const contentOverlaySurface = useMemo(() => {
-    const overlayChildren: React.ReactNode[] = [];
-
-    if (selectionCopyNoticeSurface) {
-      overlayChildren.push(
-        <React.Fragment key="selection-copy-notice">
-          {selectionCopyNoticeSurface}
-        </React.Fragment>,
-      );
-    }
-
-    if (useOverlaySurface && suggestionsSurface) {
-      overlayChildren.push(
-        <React.Fragment key="suggestions-overlay">
-          {suggestionsSurface}
-        </React.Fragment>,
-      );
-    }
-
-    if (useOverlaySurface && dialogSurface) {
-      overlayChildren.push(
-        <React.Fragment key="dialog-overlay">
-          {dialogSurface}
-        </React.Fragment>,
-      );
-    }
-
-    if (overlayChildren.length === 0) {
+    if (!selectionCopyNoticeSurface) {
       return undefined;
     }
-
     return (
-      <Box flexDirection="column">
-        {overlayChildren}
+      <Box flexDirection="column" width="100%">
+        {selectionCopyNoticeSurface}
       </Box>
     );
-  }, [dialogSurface, selectionCopyNoticeSurface, suggestionsSurface, useOverlaySurface]);
+  }, [selectionCopyNoticeSurface]);
   const exitTranscriptModeSurface = useCallback(() => {
     setTranscriptDisplayState((prev) => jumpTranscriptToLatest(exitTranscriptMode(prev)));
     setShowAllInTranscript(false);
@@ -3564,7 +3643,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   // Note: permissionMode and alwaysAllowTools are stored separately for permission checks
   const currentOptionsRef = useRef<InkREPLOptions>({
     ...options,
-    parallel: currentConfig.parallel,
     thinking: currentConfig.thinking,
     reasoningMode: currentConfig.reasoningMode,
     agentMode: currentConfig.agentMode,
@@ -3580,6 +3658,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   });
   // Permission-related refs (not part of KodaXOptions anymore)
   const permissionModeRef = useRef<PermissionMode>(currentConfig.permissionMode);
+  useEffect(() => {
+    permissionModeRef.current = currentConfig.permissionMode;
+  }, [currentConfig.permissionMode]);
   const alwaysAllowToolsRef = useRef<string[]>(loadAlwaysAllowTools());
 
   const setSessionPermissionMode = useCallback((mode: PermissionMode) => {
@@ -3588,6 +3669,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }, []);
   const pendingInputsRef = useRef<string[]>(streamingState.pendingInputs);
   const userInterruptedRef = useRef(false);
+  // Issue 116: generation counter to discard results from stale (interrupted) rounds.
+  // Incremented on each prompt submission; checked after await to detect supersession.
+  const promptGenerationRef = useRef(0);
 
   const queueInterruptedPersistence = useCallback(() => {
     if (interruptPersistenceQueuedRef.current) {
@@ -4066,6 +4150,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       const canAlways = currentConfig.permissionMode === "accept-edits" && !isProtectedPath;
 
       if (answer === "y" || answer === "yes") {
+        addHistoryItem({
+          type: "info",
+          text: `${t("dialog.confirm")} ${confirmRequest.prompt}\n  → ${t("confirm.result.approved")}`,
+        });
         setConfirmRequest(null);
         confirmResolveRef.current?.({ confirmed: true });
         confirmResolveRef.current = null;
@@ -4073,6 +4161,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
 
       if (canAlways && (answer === "a" || answer === "always")) {
+        addHistoryItem({
+          type: "info",
+          text: `${t("dialog.confirm")} ${confirmRequest.prompt}\n  → ${t("confirm.result.approved_always")}`,
+        });
         setConfirmRequest(null);
         confirmResolveRef.current?.({ confirmed: true, always: true });
         confirmResolveRef.current = null;
@@ -4080,6 +4172,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
 
       if (answer === "n" || answer === "no" || key.name === "escape") {
+        addHistoryItem({
+          type: "info",
+          text: `${t("dialog.confirm")} ${confirmRequest.prompt}\n  → ${t("confirm.result.denied")}`,
+        });
         setConfirmRequest(null);
         confirmResolveRef.current?.({ confirmed: false });
         confirmResolveRef.current = null;
@@ -4100,7 +4196,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     uiResolveRef.current = null;
   }, []);
 
-  const showSelectDialogWithOptions = useCallback((title: string, options: SelectOption[]): Promise<string | undefined> => {
+  const showSelectDialogWithOptions = useCallback((
+    title: string,
+    options: SelectOption[],
+    multiSelect?: boolean,
+  ): Promise<string | undefined> => {
     if (options.length === 0) {
       return Promise.resolve(undefined);
     }
@@ -4112,6 +4212,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         title,
         options,
         buffer: "",
+        focusedIndex: 0,
+        selectedIndices: [],
+        multiSelect,
       });
     });
   }, []);
@@ -4137,62 +4240,117 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
   useKeypress(
     (key) => {
-      if (!uiRequest) return false;
+      // Read from ref to avoid stale closure — the registered handler is NOT
+      // re-created when uiRequest state changes (useKeypress deps don't include it).
+      const req = uiRequestRef.current;
+      if (!req) return false;
 
       if (key.name === "escape") {
         resolveUIRequest(undefined);
         return true;
       }
 
-      if (uiRequest.kind === "select") {
+      if (req.kind === "select") {
+        const optionCount = req.options.length;
+
+        // Arrow-key / vim-style navigation
+        if (key.name === "up" || key.sequence === "k") {
+          setUiRequest((prev) =>
+            prev && prev.kind === "select"
+              ? { ...prev, focusedIndex: (prev.focusedIndex - 1 + optionCount) % optionCount, error: undefined }
+              : prev,
+          );
+          return true;
+        }
+
+        if (key.name === "down" || key.sequence === "j") {
+          setUiRequest((prev) =>
+            prev && prev.kind === "select"
+              ? { ...prev, focusedIndex: (prev.focusedIndex + 1) % optionCount, error: undefined }
+              : prev,
+          );
+          return true;
+        }
+
+        // Space: toggle selection in multiSelect mode
+        if (key.sequence === " " && req.multiSelect) {
+          setUiRequest((prev) => {
+            if (!prev || prev.kind !== "select") return prev;
+            const idx = prev.focusedIndex;
+            const selected = prev.selectedIndices.includes(idx)
+              ? prev.selectedIndices.filter((i) => i !== idx)
+              : [...prev.selectedIndices, idx];
+            return { ...prev, selectedIndices: selected, error: undefined };
+          });
+          return true;
+        }
+
+        // Enter: confirm selection — read latest state from ref, not stale closure.
         if (key.name === "return") {
-          const trimmed = uiRequest.buffer.trim();
-          if (trimmed === "" || trimmed === "0") {
-            resolveUIRequest(undefined);
+          const latest = uiRequestRef.current;
+          if (!latest || latest.kind !== "select") return false;
+
+          if (latest.multiSelect) {
+            // MultiSelect: return comma-separated values of selected items
+            if (latest.selectedIndices.length === 0) {
+              setUiRequest((prev) =>
+                prev && prev.kind === "select"
+                  ? { ...prev, error: t("select.multiselect_empty") }
+                  : prev,
+              );
+              return true;
+            }
+            const values = latest.selectedIndices
+              .sort((a, b) => a - b)
+              .map((i) => latest.options[i]?.value)
+              .filter(Boolean)
+              .join(", ");
+            resolveUIRequest(values);
+          } else {
+            // Single select: return focused item's value
+            resolveUIRequest(latest.options[latest.focusedIndex]?.value);
+          }
+          return true;
+        }
+
+        // Number keys: jump focus to that index (no direct confirm — user must press Enter).
+        // In multiSelect mode, pressing a number key ALSO toggles the selection state for
+        // that index — this mirrors checkbox UX where clicking both focuses and toggles.
+        // Pressing the same number twice will toggle on → off → on.
+        if (/^[1-9]$/.test(key.sequence)) {
+          const idx = Number.parseInt(key.sequence, 10) - 1;
+          if (idx >= 0 && idx < optionCount) {
+            if (req.multiSelect) {
+              // multiSelect: jump focus + toggle selection (intentional dual action)
+              setUiRequest((prev) => {
+                if (!prev || prev.kind !== "select") return prev;
+                const selected = prev.selectedIndices.includes(idx)
+                  ? prev.selectedIndices.filter((i) => i !== idx)
+                  : [...prev.selectedIndices, idx];
+                return { ...prev, focusedIndex: idx, selectedIndices: selected, error: undefined };
+              });
+            } else {
+              // In single-select: only jump focus, require Enter to confirm
+              setUiRequest((prev) =>
+                prev && prev.kind === "select"
+                  ? { ...prev, focusedIndex: idx, error: undefined }
+                  : prev,
+              );
+            }
             return true;
           }
-
-          const index = Number.parseInt(trimmed, 10) - 1;
-          if (Number.isNaN(index) || index < 0 || index >= uiRequest.options.length) {
-            setUiRequest((prev) =>
-              prev && prev.kind === "select"
-                ? {
-                  ...prev,
-                  error: `Invalid choice. Enter 1-${prev.options.length}, or 0 to cancel.`,
-                }
-                : prev,
-            );
-            return true;
-          }
-
-          resolveUIRequest(uiRequest.options[index]?.value);
-          return true;
         }
 
-        if (key.name === "backspace" || key.name === "delete") {
-          setUiRequest((prev) =>
-            prev && prev.kind === "select"
-              ? { ...prev, buffer: prev.buffer.slice(0, -1), error: undefined }
-              : prev,
-          );
-          return true;
-        }
-
-        if (/^[0-9]+$/.test(key.sequence)) {
-          setUiRequest((prev) =>
-            prev && prev.kind === "select"
-              ? { ...prev, buffer: prev.buffer + key.sequence, error: undefined }
-              : prev,
-          );
-          return true;
-        }
-
-        return key.insertable || key.isPasted === true;
+        // Consume unhandled keys in select mode (no text buffer)
+        return false;
       }
 
+      // Input mode handling — read latest state from ref for buffer/defaultValue.
       if (key.name === "return") {
-        const trimmed = uiRequest.buffer.trim();
-        resolveUIRequest(trimmed === "" ? uiRequest.defaultValue ?? undefined : trimmed);
+        const latest = uiRequestRef.current;
+        if (!latest || latest.kind !== "input") return false;
+        const trimmed = latest.buffer.trim();
+        resolveUIRequest(trimmed === "" ? latest.defaultValue ?? undefined : trimmed);
         return true;
       }
 
@@ -4246,7 +4404,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       for (const msg of context.messages) {
         const historySeeds = extractHistorySeedsFromMessage(msg);
         for (const item of historySeeds) {
-          addHistoryItem(item);
+          addHistoryItem(seedToHistoryItem(item));
         }
       }
     }
@@ -4430,7 +4588,32 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         );
       }
     },
+    onToolProgress: (update: { id: string; message: string }) => {
+      if (userInterruptedRef.current) return;
+      const truncated = update.message.length > 100
+        ? update.message.slice(0, 97) + '...'
+        : update.message;
+      // 1. Update live tool state (progressLines rendered inside tool block)
+      const updatedTool = updateLiveToolCallById(update.id, (tool) => ({
+        ...tool,
+        preview: truncated,
+        progressLines: [...(tool.progressLines ?? []).slice(-4), truncated],
+      }));
+      // 2. Sync to foreground turn → displayHistory → transcript re-renders
+      if (updatedTool && managedForegroundOwnerRef.current.workerId) {
+        syncManagedForegroundToolGroup(updatedTool);
+      }
+      // 3. Update spinner label
+      setLastLiveActivityLabel(truncated);
+    },
     onStreamEnd: () => {
+      // Issue 116: guard against stale onStreamEnd from aborted round.
+      // The agent AbortError path calls events.onStreamEnd() after the UI has
+      // already reset via resetInterruptedPromptState(). Without this guard,
+      // it would corrupt tool-call state of the new round.
+      if (userInterruptedRef.current) {
+        return;
+      }
       const finalizedTools = finalizeAllExecutingToolCalls(
         ToolCallStatus.Cancelled,
         () => ({ error: "Stream ended before the tool completed.", output: undefined }),
@@ -4502,9 +4685,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           console.log(chalk.yellow('      - The error details above'));
         }
       } else if (classification.category === ErrorCategory.TRANSIENT) {
-        if (classification.retryable) {
-          console.log(chalk.yellow(`   \u23F3 Will automatically retry (up to ${classification.maxRetries} times)`));
-        }
+        console.log(chalk.yellow('   \u23F3 Retries exhausted. Press Enter to continue the conversation'));
       } else if (classification.category === ErrorCategory.TOOL_CALL_ID) {
         console.log(chalk.green('   \u2705 Session cleaned, ready to continue'));
       }
@@ -4521,7 +4702,38 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       if (userInterruptedRef.current) {
         return;
       }
-      emitRecoveryHistoryItem(addHistoryItem, event);
+      const inManagedForeground = !!managedForegroundOwnerRef.current.workerId;
+
+      // 1. Commit partial text from the failed attempt to the correct layer
+      const partialText = getFullResponse().trim();
+      if (partialText) {
+        if (inManagedForeground) {
+          appendManagedForegroundTextBlock("assistant", partialText);
+        } else {
+          addHistoryItem({ type: "assistant", text: partialText });
+        }
+      }
+
+      // 2. Clear live streaming state for the retry
+      clearResponse();
+      clearThinkingContent();
+      stopThinking();
+      clearToolInputContent();
+      setCurrentTool(undefined);
+      resetLiveToolCalls();
+      setLastLiveActivityLabel(undefined);
+
+      // 3. Commit recovery info to the correct layer (same as partial text)
+      if (inManagedForeground) {
+        const recoveryItem = createRecoveryHistoryItem(event);
+        appendManagedForegroundLedgerItem({
+          ...recoveryItem,
+          id: `recovery-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          timestamp: Date.now(),
+        } as HistoryItem);
+      } else {
+        emitRecoveryHistoryItem(addHistoryItem, event);
+      }
     },
     onManagedTaskStatus: (status) => {
       if (userInterruptedRef.current) {
@@ -4656,6 +4868,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       // Issue 052 fix: Read gitRoot from context prop, not options.context.
       const gitRoot = context.gitRoot;
 
+      // === 0. Denial tracker: skip recently denied operations ===
+      // FEATURE_066: If the user already denied this exact operation, don't ask again
+      if (isDeniedRecently(denialTrackerRef.current, tool, input)) {
+        const ctx = getDenialContext(denialTrackerRef.current);
+        return `[Skipped] Previously denied operation. ${ctx}`;
+      }
+
       // === 1. Plan mode: block modification tools ===
       // Block file modification tools and undo
       if (mode === 'plan' && (FILE_MODIFICATION_TOOLS.has(tool) || tool === 'undo')) {
@@ -4677,6 +4896,23 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         const command = (input.command as string) ?? '';
         if (isBashReadCommand(command)) {
           return true; // Auto-allowed for safe read-only commands in all modes
+        }
+      }
+
+      // === 2.5. Dangerous bash commands: always require confirmation ===
+      // FEATURE_066: Regardless of permission mode, dangerous commands always need confirmation
+      if (tool === 'bash') {
+        const command = (input.command as string) ?? '';
+        const classification = classifyBashCommand(command);
+        if (classification.level === 'dangerous') {
+          const result = await showConfirmDialog(tool, { ...input, _dangerousCommand: true });
+          if (!result.confirmed) {
+            denialTrackerRef.current = recordDenial(
+              denialTrackerRef.current, tool, input, classification.reason,
+            );
+            return `[Blocked] Dangerous command requires confirmation: ${classification.reason}`;
+          }
+          return result.confirmed;
         }
       }
 
@@ -4748,8 +4984,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         }
 
         if (!result.confirmed) {
-          // Issue 051: show cancellation feedback.
-          console.log(chalk.yellow('[Cancelled] Operation cancelled by user'));
+          // Issue 051: show cancellation feedback (now via i18n).
+          console.log(chalk.yellow(t("cancelled")));
+          // FEATURE_066: Record denial to avoid re-prompting
+          denialTrackerRef.current = recordDenial(
+            denialTrackerRef.current, tool, input,
+          );
           return false;
         }
 
@@ -4767,18 +5007,66 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       return true;
     },
     // Issue 069: Ask user a question interactively.
+    // Issue 114: ESC returns undefined → must signal cancellation, not silently fallback.
     askUser: async (options: import("@kodax/coding").AskUserQuestionOptions): Promise<string> => {
+      const selectOptions = options.options ? toSelectOptions(options.options) : [];
       const selectedValue = await showSelectDialogWithOptions(
         getAskUserDialogTitle(options),
-        toSelectOptions(options.options),
+        selectOptions,
+        options.multiSelect,
       );
-      const resolvedValue = selectedValue ?? resolveAskUserDismissChoice(options);
 
-      if (shouldSwitchToAcceptEdits(permissionModeRef.current, options, resolvedValue)) {
-        setSessionPermissionMode("accept-edits");
+      // Issue 114: User pressed ESC → signal cancellation so the agent loop stops.
+      if (selectedValue === undefined) {
+        return CANCELLED_TOOL_RESULT_MESSAGE;
       }
 
-      return resolvedValue;
+      return selectedValue;
+    },
+    // set_permission_mode tool callback — LLM explicitly switches mode after
+    // confirming with user via ask_user_question (no heuristic guessing).
+    setPermissionMode: (mode: string) => {
+      setSessionPermissionMode(mode as PermissionMode);
+    },
+    // Multi-question mode: present each question sequentially with back navigation.
+    askUserMulti: async (options: import("@kodax/coding").AskUserMultiOptions): Promise<Record<string, string> | undefined> => {
+      const questions = options.questions;
+      const answers: Record<string, string> = {};
+      const BACK_VALUE = "__back__";
+      let i = 0;
+
+      while (i < questions.length) {
+        const q = questions[i]!;
+        const selectOptions = toSelectOptions(q.options);
+
+        // Non-first question: append "← Back" option
+        if (i > 0) {
+          selectOptions.push({
+            label: t("select.back_prev"),
+            value: BACK_VALUE,
+          });
+        }
+
+        const title = `[${i + 1}/${questions.length}] ${q.question}`;
+        const selected = await showSelectDialogWithOptions(title, selectOptions, q.multiSelect);
+
+        if (selected === undefined) {
+          return undefined; // ESC → cancel all
+        }
+
+        if (selected === BACK_VALUE) {
+          i--;
+          continue;
+        }
+
+        answers[q.question] = selected;
+        i++;
+      }
+
+      return answers;
+    },
+    askUserInput: async (options: { question: string; default?: string }): Promise<string | undefined> => {
+      return showInputDialog(options.question, options.default);
     },
     onCompactStart: () => {
       // Trigger the compacting UI indicator before actual compaction begins
@@ -4894,7 +5182,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     initialMessages: KodaXMessage[] = context.messages,
     inputArtifacts?: readonly KodaXInputArtifact[],
   ): Promise<KodaXResult> => {
-    const events = createStreamingEvents();
+    const events = {
+      ...createStreamingEvents(),
+      getCostReport: inkCostReportRef,
+    };
 
     // Get skills system prompt snippet for progressive disclosure (Issue 056)
 
@@ -5008,7 +5299,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       setCurrentTool(undefined);
       setIsLoading(false);
 
+      // Flush any pending persistence, then force a final save with the latest uiHistory.
       await persistContextStateQueueRef.current.catch(() => {});
+      await persistContextStateRef.current?.().catch(() => {});
       setIsRunning(false);
       if (isRawModeSupported && stdin?.isRaw) {
         setRawMode(false);
@@ -5090,6 +5383,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     context.contextTokenSnapshot = result.contextTokenSnapshot;
     reconcileContextLineage(result.messages);
 
+    // Issue 117: When the round failed (API error, etc.), skip the full
+    // finalization that emits routing diagnostics and treats partial text as
+    // the final answer.  Only persist foreground items the user already saw
+    // and add a visible incomplete indicator.
+    const roundFailed = result.success === false && !result.interrupted;
+
     const finalThinking = getThinkingContent().trim();
     const finalResponse = resolveCompletedAssistantText(
       result.messages,
@@ -5099,10 +5398,24 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     );
     const managedForegroundRoundItems = [...managedForegroundTurnItemsRef.current];
     const hasManagedForegroundLedger = managedForegroundRoundItems.length > 0;
+    // The foreground ledger may contain only tool_group/thinking items without a
+    // substantive assistant text block.  When that happens we must still append
+    // the resolved finalResponse so the user sees the answer.
+    const foregroundCoversAssistantText = hasManagedForegroundLedger
+      && managedForegroundRoundItems.some(
+        (item) => item.type === "assistant"
+          && "text" in item
+          && sanitizeUserFacingAssistantText(String(item.text ?? "")).length > 0,
+      );
+    const needsFinalResponseItem = !roundFailed && finalResponse && !foregroundCoversAssistantText;
     const managedRoundEvents = [...managedRoundEventHistoryRef.current];
-    const managedTranscriptItems = managedRoundEvents.length === 0
-      ? buildManagedTaskTranscriptItems(result)
-      : [];
+    // Skip routing diagnostics for failed rounds — they mislead users into
+    // thinking the task completed successfully.
+    const managedTranscriptItems = roundFailed
+      ? []
+      : managedRoundEvents.length === 0
+        ? buildManagedTaskTranscriptItems(result)
+        : [];
     const roundHistoryItems = hasManagedForegroundLedger
       ? []
       : buildRoundHistoryItems({
@@ -5114,14 +5427,16 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     const persistedAdditions: CreatableHistoryItem[] = [
       ...managedForegroundRoundItems.map((item) => toCreatableHistoryItem(item)),
       ...roundHistoryItems,
-      ...managedRoundEvents.map((item) => toCreatableHistoryItem(item)),
+      ...(roundFailed ? [] : managedRoundEvents.map((item) => toCreatableHistoryItem(item))),
       ...managedTranscriptItems.map((text) => toManagedTranscriptEventItem(text)),
-      ...(!hasManagedForegroundLedger && finalResponse
+      ...(needsFinalResponseItem
         ? [{
             type: "assistant" as const,
             text: result.interrupted ? `${finalResponse}\n\n[Interrupted]` : finalResponse,
           }]
-        : []),
+        : !finalResponse && !foregroundCoversAssistantText && !result.interrupted && !roundFailed
+          ? [{ type: "info" as const, text: "[No response text was produced for this round]" }]
+          : []),
     ];
     const nextUiHistory = appendPersistedUiHistorySnapshot(
       persistedUiHistoryRef.current,
@@ -5138,18 +5453,25 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       addHistoryItem(item);
     }
 
-    for (const transcript of managedTranscriptItems) {
-      addHistoryItem(toManagedTranscriptEventItem(transcript));
-    }
-    for (const eventItem of managedRoundEvents) {
-      addHistoryItem(toCreatableHistoryItem(eventItem));
+    if (!roundFailed) {
+      for (const transcript of managedTranscriptItems) {
+        addHistoryItem(toManagedTranscriptEventItem(transcript));
+      }
+      for (const eventItem of managedRoundEvents) {
+        addHistoryItem(toCreatableHistoryItem(eventItem));
+      }
     }
 
-    if (!hasManagedForegroundLedger && finalResponse) {
+    if (needsFinalResponseItem) {
       addHistoryItem({
         type: "assistant",
         text: result.interrupted ? `${finalResponse}\n\n[Interrupted]` : finalResponse,
-        });
+      });
+    } else if (!finalResponse && !foregroundCoversAssistantText && !result.interrupted && !roundFailed) {
+      // No assistant text was produced — neither from the foreground ledger nor
+      // from the resolved result.  Surface a visible notice so the user is aware
+      // the response was empty rather than silently showing nothing.
+      addHistoryItem({ type: "info", text: "[No response text was produced for this round]" });
     }
 
     iterationToolsRef.current = [];
@@ -5204,6 +5526,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     initialPrompt: string,
     runRound: (prompt: string) => Promise<KodaXResult>,
   ) => {
+    // Issue 116: capture generation at sequence start so we can detect
+    // if the user submitted a new prompt (Ctrl+C then new input) while
+    // this sequence was still completing.
+    const sequenceGeneration = promptGenerationRef.current;
     userInterruptedRef.current = false;
     interruptPersistenceQueuedRef.current = false;
     setCanQueueFollowUps(true);
@@ -5213,6 +5539,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         runRound,
         shiftPendingPrompt: shiftPendingInput,
         onRoundComplete: async (result) => {
+          // Issue 116: discard results if a newer prompt has superseded this sequence
+          if (promptGenerationRef.current !== sequenceGeneration) return;
           await recordCompletedAgentRound(result);
         },
         onBeforeQueuedRound: async (prompt) => {
@@ -5235,7 +5563,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
     const historySeeds = extractHistorySeedsFromMessage(lastAssistant);
     for (const item of historySeeds) {
-      addHistoryItem(item);
+      addHistoryItem(seedToHistoryItem(item));
     }
   }, [addHistoryItem]);
 
@@ -5247,7 +5575,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       {
         ...currentOptionsRef.current,
         provider: currentConfig.provider,
-        parallel: currentConfig.parallel,
         thinking: currentConfig.thinking,
         reasoningMode: currentConfig.reasoningMode,
       },
@@ -5277,7 +5604,20 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
 
       const initialMessages = prepared.mode === "fork" ? [] : context.messages;
+      // Issue 116: capture generation at call time to detect supersession after await
+      const roundGeneration = promptGenerationRef.current;
       const result = await runAgentRound(prepared.options, prepared.prompt, initialMessages);
+
+      // Issue 116: discard results from a superseded round.
+      // If the user Ctrl+C'd and submitted a new prompt while this round was
+      // still completing (processing AbortError), promptGenerationRef will
+      // have been incremented. Applying stale results would overwrite the
+      // new round's context and inject incomplete tool calls into history.
+      if (promptGenerationRef.current !== roundGeneration) {
+        await prepared.finalize();
+        return;
+      }
+
       const persistedHistoryBase = persistedUiHistoryRef.current;
       const persistedAdditions: CreatableHistoryItem[] = [];
 
@@ -5290,8 +5630,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           });
           reconcileContextLineage(context.messages);
           for (const item of extractHistorySeedsFromMessage(lastAssistant)) {
-            addHistoryItem(item);
-            persistedAdditions.push(item);
+            const mapped = seedToHistoryItem(item);
+            addHistoryItem(mapped);
+            persistedAdditions.push(mapped);
           }
         }
       } else {
@@ -5302,7 +5643,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         const lastAssistant = result.messages[result.messages.length - 1];
         if (lastAssistant?.role === "assistant") {
           for (const item of extractHistorySeedsFromMessage(lastAssistant)) {
-            persistedAdditions.push(item);
+            persistedAdditions.push(seedToHistoryItem(item));
           }
         }
       }
@@ -5392,6 +5733,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       setIsLoading(true);
       userInterruptedRef.current = false;
       interruptPersistenceQueuedRef.current = false;
+      // Issue 116: bump generation so stale round completions are discarded
+      ++promptGenerationRef.current;
       setManagedTaskStatus(null);
       managedTaskStatusRef.current = null;
       managedTaskBreadcrumbRef.current = null;
@@ -5558,14 +5901,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             }));
             currentOptionsRef.current.agentMode = mode;
           },
-          setParallel: (enabled: boolean) => {
-            // Persistence is handled by the command layer; this callback only syncs runtime state and UI.
-            setCurrentConfig((prev) => ({
-              ...prev,
-              parallel: enabled,
-            }));
-            currentOptionsRef.current.parallel = enabled;
-          },
           setPermissionMode: (mode: PermissionMode) => {
             setSessionPermissionMode(mode);
           },
@@ -5705,6 +6040,33 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             console.log(chalk.dim(`  Messages: ${forked.data.messages.length}`));
             return "forked";
           },
+          rewindSession: async (selector?: string) => {
+            const allowed = enforceSessionTransitionGuard(
+              currentConfig,
+              "Rewinding session",
+              logSessionTransitionGuard,
+            );
+            if (!allowed) {
+              return "blocked";
+            }
+
+            const rewound = await storage.rewind?.(context.sessionId, selector);
+            if (!rewound) {
+              return "failed";
+            }
+
+            context.messages = rewound.messages;
+            context.uiHistory = normalizePersistedUiHistory(rewound.uiHistory);
+            context.title = rewound.title;
+            context.contextTokenSnapshot = undefined;
+            persistedUiHistoryRef.current = context.uiHistory ?? [];
+            setLiveTokenCount(null);
+            clearUIHistory();
+            console.log(chalk.green(`\n[Rewound session${selector ? ` to ${selector}` : " to previous turn"}]`));
+            console.log(chalk.dim(`  Messages: ${rewound.messages.length}`));
+            return "rewound";
+          },
+          getCostReport: () => inkCostReportRef.current?.() ?? null,
           setPlanMode: (enabled: boolean) => {
             setPlanMode(enabled);
           },
@@ -5712,7 +6074,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             ...currentOptionsRef.current,
             provider: currentConfig.provider,
             model: currentConfig.model,
-            parallel: currentConfig.parallel,
             thinking: currentConfig.thinking,
             reasoningMode: currentConfig.reasoningMode,
             agentMode: currentConfig.agentMode,
@@ -5927,7 +6288,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           await runWithPlanMode(preparedArtifacts.promptText, {
             ...currentOptionsRef.current,
             provider: currentConfig.provider,
-            parallel: currentConfig.parallel,
             thinking: currentConfig.thinking,
             reasoningMode: currentConfig.reasoningMode,
             agentMode: currentConfig.agentMode,
@@ -6064,7 +6424,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         stopStreaming();
         clearResponse(); // Fix: clear stale buffer to prevent ghost [Interrupted] on next submit
         clearThinkingContent();
-        setLiveTokenCount(null); // Reset live token count, use context.messages for final calculation
+        // Update live token count with final estimate so the status bar stays current.
+        // (Setting null would rely on context.messages — a mutable ref that React can't detect.)
+        setLiveTokenCount(
+          context.contextTokenSnapshot?.currentTokens
+            ?? estimateTokens(context.messages),
+        );
       }
     },
     [
@@ -6143,7 +6508,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           onInputChange={handleInputChange}
         />
       )}
-      inlineSuggestions={useOverlaySurface ? undefined : suggestionsSurface}
+      inlineSuggestions={suggestionsSurface}
       helpSurface={showHelp ? (
         <PromptHelpMenu sections={buildHelpMenuSections()} />
       ) : undefined}
@@ -6156,7 +6521,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         />
       ) : undefined}
       statusLine={<Box><StatusBar {...statusBarProps} viewModel={visibleStatusBarViewModel} /></Box>}
-      inlineDialogs={useOverlaySurface ? undefined : dialogSurface}
+      inlineDialogs={dialogSurface}
     />
   );
   const transcriptFooterSurface = (
@@ -6363,9 +6728,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         onSetPermissionMode={(mode) => {
           setSessionPermissionMode(mode);
         }}
-        onSetParallel={(enabled) => {
-          currentOptionsRef.current.parallel = enabled;
-        }}
         isInputEmpty={isInputEmpty}
         onSavePermissionMode={savePermissionModeUser}
       />
@@ -6518,7 +6880,6 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
   const initialReasoningMode = resolveInitialReasoningMode(options, config);
   const initialAgentMode = options.agentMode ?? config.agentMode ?? 'ama';
   const initialThinking = initialReasoningMode !== 'off';
-  const initialParallel = options.parallel ?? config.parallel ?? false;
   // Load permission mode from config file (not from CLI options)
   // CLI is always YOLO mode; REPL uses config file for permission mode
   const initialPermissionMode: PermissionMode =
@@ -6531,7 +6892,6 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
     thinking: initialThinking,
     reasoningMode: initialReasoningMode,
     agentMode: initialAgentMode,
-    parallel: initialParallel,
     permissionMode: initialPermissionMode,
     repoIntelligenceMode: repoIntelligenceRuntime.mode,
     repointelEndpoint: repoIntelligenceRuntime.endpoint,

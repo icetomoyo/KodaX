@@ -112,6 +112,11 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
     });
   }
 
+  protected override onStaleConnection(): void {
+    // Rebuild the Anthropic client to discard the stale keep-alive socket pool.
+    this.initClient();
+  }
+
   async stream(
     messages: KodaXMessage[],
     tools: KodaXToolDefinition[],
@@ -122,7 +127,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
   ): Promise<KodaXStreamResult> {
     return this.withRateLimit(async () => {
       const normalizedReasoning = this.normalizeReasoning(reasoning);
-      const maxOutputTokens = this.config.maxOutputTokens ?? KODAX_MAX_TOKENS;
+      const maxOutputTokens = this.maxOutputTokensOverride ?? this.config.maxOutputTokens ?? KODAX_MAX_TOKENS;
       const model = streamOptions?.modelOverride ?? this.config.model;
       const convertedMessages = await this.convertMessages(messages);
       const initialCapability = normalizedReasoning.enabled
@@ -188,6 +193,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
 
       // Issue 084 fix: Track message completion to detect silent disconnections
       let messageStopReceived = false;
+      let stopReason: string | undefined;
       let lastEventTime = Date.now();
       const streamStartTime = Date.now();
 
@@ -228,10 +234,44 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
         );
       }
 
+      let prevEventTime = Date.now();
+      let stallCount = 0;
+      let totalStallMs = 0;
+      const STALL_THRESHOLD_MS = 30_000;
+
       for await (const event of response as AsyncIterable<Anthropic.Messages.RawMessageStreamEvent>) {
         // 检查是否被中断 (双重保险)
         if (signal?.aborted) {
           throw new DOMException('Request aborted', 'AbortError');
+        }
+
+        // Stall detection: passive diagnostic logging when gap > 30s.
+        // Does NOT abort — only records for debugging slow providers.
+        const now = Date.now();
+        const gapMs = now - prevEventTime;
+        if (gapMs > STALL_THRESHOLD_MS) {
+          stallCount++;
+          totalStallMs += gapMs;
+          this.logStreamDiagnostic(`[Stream] stall detected: ${Math.round(gapMs / 1000)}s gap before ${event.type}`, {
+            stallCount, totalStallMs, eventType: event.type,
+          });
+        }
+        prevEventTime = now;
+
+        // Idle timer management — state machine:
+        //
+        //   content_block_delta / message_delta → RESET (active data flowing)
+        //   content_block_start / content_block_stop → PAUSE (block boundary;
+        //       server may go silent while generating the next block or the
+        //       first delta of the current block, e.g. large tool_use JSON)
+        //   message_start / message_stop → RESET (stream lifecycle)
+        //
+        // The hard request timeout (10 min) still guards against genuinely
+        // stuck connections when the idle timer is paused.
+        if (event.type === 'content_block_start' || event.type === 'content_block_stop') {
+          streamOptions?.onHeartbeat?.(true);   // pause at block boundaries
+        } else {
+          streamOptions?.onHeartbeat?.();        // reset on data / lifecycle events
         }
 
         if (event.type === 'content_block_start') {
@@ -333,10 +373,11 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
             (event as Anthropic.Messages.RawMessageDeltaEvent).usage,
             usage,
           );
-          if (process.env.KODAX_DEBUG_STREAM) {
-            const delta = (event as any).delta;
-            if (delta?.stop_reason) {
-              this.logStreamDiagnostic(`[Stream] message_delta with stop_reason: ${delta.stop_reason}`);
+          const delta = (event as any).delta;
+          if (delta?.stop_reason) {
+            stopReason = delta.stop_reason;
+            if (process.env.KODAX_DEBUG_STREAM) {
+              this.logStreamDiagnostic(`[Stream] message_delta with stop_reason: ${stopReason}`);
             }
           }
         } else if (event.type === 'message_start') {
@@ -394,7 +435,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
         throw error;
       }
 
-      return { textBlocks, toolBlocks, thinkingBlocks, usage };
+      return { textBlocks, toolBlocks, thinkingBlocks, usage, stopReason };
     }, signal, 3, streamOptions?.onRateLimit);
   }
 
@@ -412,7 +453,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
   ): Promise<KodaXStreamResult> {
     return this.withRateLimit(async () => {
       const normalizedReasoning = this.normalizeReasoning(reasoning);
-      const maxOutputTokens = this.config.maxOutputTokens ?? KODAX_MAX_TOKENS;
+      const maxOutputTokens = this.maxOutputTokensOverride ?? this.config.maxOutputTokens ?? KODAX_MAX_TOKENS;
       const model = streamOptions?.modelOverride ?? this.config.model;
       const convertedMessages = await this.convertMessages(messages);
       const initialCapability = normalizedReasoning.enabled
@@ -521,6 +562,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
         toolBlocks,
         thinkingBlocks,
         usage: normalizeAnthropicUsage((response as Anthropic.Messages.Message).usage),
+        stopReason: (response as Anthropic.Messages.Message).stop_reason ?? undefined,
       };
     }, signal, 3, streamOptions?.onRateLimit);
   }
@@ -609,7 +651,37 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
         }
       }
 
-      converted.push({ role: m.role, content } as Anthropic.Messages.MessageParam);
+      // Guard: when thinking is enabled, providers like Kimi require every assistant
+      // tool-call message to include non-empty reasoning content. For messages that
+      // never had thinking blocks (e.g. session restore, pre-thinking history),
+      // inject a minimal thinking block to satisfy this requirement.
+      if (role === 'assistant' && this.config.supportsThinking) {
+        const hasToolUse = content.some(b => (b as any).type === 'tool_use');
+        const hasThinking = content.some(b =>
+          (b as any).type === 'thinking' || (b as any).type === 'redacted_thinking',
+        );
+        if (hasToolUse && !hasThinking) {
+          content.unshift({ type: 'thinking', thinking: '...', signature: '' } as any);
+        }
+      }
+
+      // Guard: providers like Kimi reject messages with empty/substance-free content
+      // (400 "must not be empty"). Inject minimal placeholder rather than dropping,
+      // because dropping breaks the alternating user/assistant pattern.
+      const isEffectivelyEmpty = content.length === 0 || (
+        role === 'assistant' && content.every((b) => {
+          const t = b as unknown as { type: string; thinking?: string; text?: string };
+          return (t.type === 'thinking' && !t.thinking)
+            || (t.type === 'text' && !t.text);
+        })
+      );
+
+      converted.push({
+        role: m.role,
+        content: isEffectivelyEmpty
+          ? [{ type: 'text', text: '...' } as Anthropic.Messages.ContentBlockParam]
+          : content,
+      } as Anthropic.Messages.MessageParam);
     }
 
     return converted;

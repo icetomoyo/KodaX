@@ -33,3 +33,19 @@ export type {
 
 // Compaction Core
 export { needsCompaction, compact } from './compaction.js';
+
+// Microcompaction
+export { microcompact, DEFAULT_MICROCOMPACTION_CONFIG } from './microcompaction.js';
+export type { MicrocompactionConfig } from './microcompaction.js';
+
+// Bash Intent
+export { extractBashIntent } from './bash-intent.js';
+
+// Post-Compact Reconstruction
+export {
+  buildFileContentMessages,
+  buildPostCompactAttachments,
+  injectPostCompactAttachments,
+  DEFAULT_POST_COMPACT_CONFIG,
+} from './post-compact.js';
+export type { PostCompactConfig, PostCompactAttachments } from './post-compact.js';

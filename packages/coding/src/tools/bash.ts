@@ -1,4 +1,7 @@
 import { spawn } from 'child_process';
+import { createWriteStream } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join as pathJoin } from 'node:path';
 import iconv from 'iconv-lite';
 import { KODAX_DEFAULT_TIMEOUT, KODAX_HARD_TIMEOUT } from '../constants.js';
 import type { KodaXToolExecutionContext } from '../types.js';
@@ -88,12 +91,50 @@ export async function toolBash(input: Record<string, unknown>, ctx: KodaXToolExe
   const userTimeout = input.timeout as number | undefined;
   const timeout = userTimeout ? Math.min(KODAX_HARD_TIMEOUT, userTimeout) : KODAX_DEFAULT_TIMEOUT;
   const capped = userTimeout && userTimeout > KODAX_HARD_TIMEOUT;
+  const runInBackground = (input.run_in_background as boolean) ?? false;
   const cwd = resolveExecutionCwd(ctx);
+
+  if (runInBackground) {
+    const jobId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const outputFile = pathJoin(tmpdir(), `kodax-bg-${jobId}.log`);
+    const logStream = createWriteStream(outputFile);
+    logStream.on('error', () => {
+      // Silently handle write stream errors (disk full, permissions, etc.)
+      // The background job output is best-effort; the user can re-run if needed.
+    });
+
+    const proc = spawn(command, [], { shell: true, windowsHide: true, cwd });
+
+    proc.stdout?.pipe(logStream, { end: false });
+    proc.stderr?.pipe(logStream, { end: false });
+    proc.on('close', (code) => {
+      if (!logStream.destroyed) {
+        logStream.write(`\n[Exit: ${code}]\n`);
+        logStream.end();
+      }
+    });
+    proc.on('error', (err) => {
+      if (!logStream.destroyed) {
+        logStream.write(`\n[Error: ${err.message}]\n`);
+        logStream.end();
+      }
+    });
+
+    return `Command started in background.\nPID: ${proc.pid}\nOutput: ${outputFile}\n\nUse the read tool to check output when done.`;
+  }
 
   return new Promise(resolve => {
     const proc = spawn(command, [], { shell: true, windowsHide: true, cwd });
     const stdout = createCollector();
     const stderr = createCollector();
+    let settled = false;
+
+    const settle = (result: string) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+
     const timer = setTimeout(() => {
       proc.kill();
       const partialStdout = decodeCollector(stdout);
@@ -115,8 +156,29 @@ export async function toolBash(input: Record<string, unknown>, ctx: KodaXToolExe
       const captureNote = captureNotes.length > 0
         ? `\n[Output capture capped; ${captureNotes.join('; ')}.]`
         : '';
-      resolve(`Command: ${command}\n[Timeout] Command interrupted after ${timeout}s${captureNote}\n\nPartial output (tail):\n${timeoutPreview}\n\n[Suggestion] The command took too long. Consider:\n- Is this a watch/dev server? Run in a separate terminal.\n- Can the task be broken into smaller steps?\n- Is there an error causing it to hang?`);
+      settle(`Command: ${command}\n[Timeout] Command interrupted after ${timeout}s${captureNote}\n\nPartial output (tail):\n${timeoutPreview}\n\n[Suggestion] The command took too long. Consider:\n- Is this a watch/dev server? Run in a separate terminal.\n- Can the task be broken into smaller steps?\n- Is there an error causing it to hang?`);
     }, timeout * 1000);
+
+    // Issue 113: Kill child process when abort signal fires (Ctrl+C).
+    const abortSignal = ctx.abortSignal;
+    if (abortSignal) {
+      if (abortSignal.aborted) {
+        proc.kill();
+        clearTimeout(timer);
+        settle(`[Cancelled] Operation cancelled by user`);
+      } else {
+        const onAbort = () => {
+          proc.kill();
+          clearTimeout(timer);
+          settle(`[Cancelled] Operation cancelled by user`);
+        };
+        abortSignal.addEventListener('abort', onAbort, { once: true });
+        // Clean up listener when process exits naturally to avoid leak.
+        const cleanupAbortListener = () => abortSignal.removeEventListener('abort', onAbort);
+        proc.once('close', cleanupAbortListener);
+        proc.once('error', cleanupAbortListener);
+      }
+    }
 
     proc.stdout?.on('data', (chunk: Buffer) => {
       appendTailChunk(stdout, chunk, BASH_CAPTURE_LIMIT_BYTES);
@@ -145,7 +207,7 @@ export async function toolBash(input: Record<string, unknown>, ctx: KodaXToolExe
 
       const preview = truncateTail(out, { maxLines: 600, maxBytes: 32 * 1024 });
       if (!preview.truncated) {
-        resolve(out);
+        settle(out);
         return;
       }
 
@@ -160,11 +222,11 @@ export async function toolBash(input: Record<string, unknown>, ctx: KodaXToolExe
       const note = captureNotes.length > 0
         ? `\n\n${hint.replace(/\]$/, ` ${captureNotes.join('; ')}.]`)}`
         : `\n\n${hint}`;
-      resolve(`${preview.content}${note}`);
+      settle(`${preview.content}${note}`);
     });
     proc.on('error', error => {
       clearTimeout(timer);
-      resolve(`Command: ${command}\n[Error] ${error.message}`);
+      settle(`Command: ${command}\n[Error] ${error.message}`);
     });
   });
 }

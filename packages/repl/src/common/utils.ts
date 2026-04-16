@@ -9,6 +9,7 @@ import os from 'os';
 import { exec, spawnSync, type SpawnSyncReturns } from 'child_process';
 import { promisify } from 'util';
 import { fileURLToPath } from 'url';
+import { setLocale } from './i18n.js';
 import {
   buildProviderCapabilitySnapshot,
   evaluateProviderPolicy,
@@ -30,7 +31,7 @@ import {
   type KodaXAgentMode,
   type KodaXReasoningMode,
   type KodaXReasoningOverride,
-  type KodaXMcpConfig,
+  type KodaXMcpServersConfig,
   type KodaXCustomProviderConfig,
 } from '@kodax/coding';
 
@@ -574,17 +575,18 @@ export function loadConfig(): {
   thinking?: boolean;
   reasoningMode?: KodaXReasoningMode;
   agentMode?: KodaXAgentMode;
-  parallel?: boolean;
   permissionMode?: string;
+  locale?: string;
   providerReasoningOverrides?: Record<string, KodaXReasoningOverride>;
   providerModels?: Record<string, string[]>;
   customProviders?: KodaXCustomProviderConfig[];
   extensions?: string[];
-  mcp?: KodaXMcpConfig;
+  mcpServers?: KodaXMcpServersConfig;
   repoIntelligenceMode?: 'auto' | 'off' | 'oss' | 'premium-shared' | 'premium-native';
   repointelEndpoint?: string;
   repointelBin?: string;
   repoIntelligenceTrace?: boolean;
+  streamIdleTimeoutMs?: number;
 } {
   try {
     if (fsSync.existsSync(KODAX_CONFIG_FILE)) {
@@ -594,17 +596,18 @@ export function loadConfig(): {
         thinking?: boolean;
         reasoningMode?: KodaXReasoningMode;
         agentMode?: KodaXAgentMode;
-        parallel?: boolean;
         permissionMode?: string;
+        locale?: string;
         providerReasoningOverrides?: Record<string, KodaXReasoningOverride>;
         providerModels?: Record<string, string[]>;
         customProviders?: KodaXCustomProviderConfig[];
         extensions?: unknown;
-        mcp?: KodaXMcpConfig;
+        mcpServers?: KodaXMcpServersConfig;
         repoIntelligenceMode?: 'auto' | 'off' | 'oss' | 'premium-shared' | 'premium-native';
         repointelEndpoint?: string;
         repointelBin?: string;
         repoIntelligenceTrace?: boolean;
+        streamIdleTimeoutMs?: number;
       };
       return migrateLegacyPermissionModeInConfig({
         ...parsed,
@@ -615,6 +618,14 @@ export function loadConfig(): {
     // Unreadable user config should fall back to defaults instead of breaking startup.
   }
   return {};
+}
+
+function applyResilienceRuntimeEnv(config: ReturnType<typeof loadConfig>): void {
+  // streamIdleTimeoutMs: config.json → env var → read by resilience/config.ts
+  // Env var takes precedence over config.json (set first, check before overwrite).
+  if (config.streamIdleTimeoutMs && !process.env.KODAX_STREAM_IDLE_TIMEOUT_MS) {
+    process.env.KODAX_STREAM_IDLE_TIMEOUT_MS = String(config.streamIdleTimeoutMs);
+  }
 }
 
 function applyRepoIntelligenceRuntimeEnv(config: ReturnType<typeof loadConfig>): void {
@@ -635,8 +646,11 @@ function applyRepoIntelligenceRuntimeEnv(config: ReturnType<typeof loadConfig>):
 export function prepareRuntimeConfig(): ReturnType<typeof loadConfig> {
   ensureShellEnvironmentHydrated();
   const config = loadConfig();
+  applyResilienceRuntimeEnv(config);
   applyRepoIntelligenceRuntimeEnv(config);
   registerConfiguredCustomProviders(config);
+  // Initialize i18n locale from config (falls back to system LANG)
+  setLocale(config.locale);
   return config;
 }
 
@@ -647,13 +661,13 @@ export function saveConfig(config: {
   thinking?: boolean;
   reasoningMode?: KodaXReasoningMode;
   agentMode?: KodaXAgentMode;
-  parallel?: boolean;
   permissionMode?: string;
+  locale?: string;
   providerReasoningOverrides?: Record<string, KodaXReasoningOverride>;
   providerModels?: Record<string, string[]>;
   customProviders?: KodaXCustomProviderConfig[];
   extensions?: string[];
-  mcp?: KodaXMcpConfig;
+  mcpServers?: KodaXMcpServersConfig;
   repoIntelligenceMode?: 'auto' | 'off' | 'oss' | 'premium-shared' | 'premium-native';
   repointelEndpoint?: string;
   repointelBin?: string;

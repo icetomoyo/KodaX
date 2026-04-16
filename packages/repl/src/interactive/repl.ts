@@ -30,7 +30,9 @@ import {
   estimateTokens,
   forkSessionLineage,
   generateSessionId as generateCoreSessionId,
+  findPreviousUserEntryId,
   getSessionMessagesFromLineage,
+  rewindSessionLineage,
   KodaXSessionStorage,
   KodaXError,
   KodaXRateLimitError,
@@ -218,6 +220,29 @@ class MemorySessionStorage implements SessionStorage {
     };
   }
 
+  async rewind(id: string, selector?: string): Promise<KodaXSessionData | null> {
+    const current = this.sessions.get(id);
+    if (!current?.data.lineage) {
+      return null;
+    }
+
+    const targetId = selector ?? findPreviousUserEntryId(current.data.lineage);
+    if (!targetId) return null;
+
+    const lineage = rewindSessionLineage(current.data.lineage, targetId);
+    if (!lineage) {
+      return null;
+    }
+
+    const data: KodaXSessionData = {
+      ...current.data,
+      messages: getSessionMessagesFromLineage(lineage),
+      lineage,
+    };
+    this.sessions.set(id, { ...current, data });
+    return structuredClone(data);
+  }
+
   async list(_gitRoot?: string): Promise<Array<{
     id: string;
     title: string;
@@ -293,6 +318,9 @@ function resolveInitialReasoningMode(
   return 'auto';
 }
 
+// Module-level cost report ref — agent populates via events.getCostReport, /cost reads it
+const costReportRef: { current: (() => string) | null } = { current: null };
+
 // Run interactive mode - 运行交互式模式
 export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   const startupRuntime = await inspectWorkspaceRuntime({ cwd: process.cwd() });
@@ -308,7 +336,6 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   const initialReasoningMode = resolveInitialReasoningMode(options, config);
   const initialAgentMode = options.agentMode ?? (config as { agentMode?: 'ama' | 'sa' }).agentMode ?? 'ama';
   const initialThinking = initialReasoningMode !== 'off';
-  const initialParallel = options.parallel ?? (config as { parallel?: boolean }).parallel ?? false;
   const initialPermissionMode: PermissionMode =
     normalizePermissionMode((config as { permissionMode?: string }).permissionMode, 'accept-edits') ?? 'accept-edits';
   const repoIntelligenceRuntime = resolveRepoIntelligenceRuntimeConfig();
@@ -326,7 +353,6 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     thinking: initialThinking,
     reasoningMode: initialReasoningMode,
     agentMode: initialAgentMode,
-    parallel: initialParallel,
     permissionMode: initialPermissionMode,
     repoIntelligenceMode: repoIntelligenceRuntime.mode,
     repointelEndpoint: repoIntelligenceRuntime.endpoint,
@@ -419,7 +445,6 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
       currentConfig.provider,
       effectiveModel,
       currentConfig.reasoningMode,
-      currentConfig.parallel,
     ));
   }
 
@@ -468,7 +493,6 @@ Keyboard Shortcuts:
   // Fix: Ensure session.id is set to reuse same session - 修复：确保 session.id 被设置以复用同一 session
   let currentOptions: RepLOptions = {
     ...options,
-    parallel: initialParallel,
     reasoningMode: initialReasoningMode,
     thinking: initialThinking,
     context: {
@@ -483,6 +507,9 @@ Keyboard Shortcuts:
       id: context.sessionId,
     },
   };
+
+  // Cost tracking ref — agent populates this via events.getCostReport, /cost command reads it
+  costReportRef.current = null;
 
   // Command callbacks - 命令回调
   const callbacks: CommandCallbacks = {
@@ -645,12 +672,6 @@ Keyboard Shortcuts:
       currentOptions.thinking = thinking;
       statusBar?.update({ reasoningMode: mode });
     },
-    setParallel: (enabled: boolean) => {
-      // Persistence is handled by the command layer; this callback only syncs runtime state and UI.
-      currentConfig.parallel = enabled;
-      currentOptions.parallel = enabled;
-      statusBar?.update({ parallel: enabled });
-    },
     setPermissionMode: (mode: PermissionMode) => {
       currentConfig.permissionMode = mode;
       currentPermissionMode = mode; // Sync with local permission state
@@ -779,9 +800,29 @@ Keyboard Shortcuts:
       console.log(chalk.dim(`  Messages: ${forked.data.messages.length}`));
       return 'forked';
     },
+    rewindSession: async (selector?: string) => {
+      if (!guardSessionTransition('Rewinding session')) {
+        return 'blocked';
+      }
+
+      const rewound = await storage.rewind?.(context.sessionId, selector);
+      if (!rewound) {
+        return 'failed';
+      }
+
+      context.messages = rewound.messages;
+      context.title = rewound.title;
+      context.contextTokenSnapshot = undefined;
+      context.lastAccessed = new Date().toISOString();
+      statusBar?.update({ messageCount: context.messages.length });
+      console.log(chalk.green(`\n[Rewound session${selector ? ` to ${selector}` : ' to previous turn'}]`));
+      console.log(chalk.dim(`  Messages: ${rewound.messages.length}`));
+      return 'rewound';
+    },
     setPlanMode: (enabled: boolean) => {
       planMode = enabled;
     },
+    getCostReport: () => costReportRef.current?.() ?? null,
     createKodaXOptions: () => {
       return {
         ...currentOptions,
@@ -800,7 +841,7 @@ Keyboard Shortcuts:
               const planModeBlockReason = getPlanModeBlockReason(tool, input, gitRoot ?? process.cwd());
               if (planModeBlockReason) {
                 console.log(chalk.yellow(planModeBlockReason));
-                return `${planModeBlockReason} Do not try to modify files while planning. Finish the plan first, then use ask_user_question with intent "plan-handoff" to ask whether this session should switch to accept-edits and continue.`;
+                return `${planModeBlockReason} Do not try to modify files while planning. Finish the plan first, then use ask_user_question to ask the user whether to proceed. If the user confirms, call set_permission_mode with mode "accept-edits" to switch to implementation mode.`;
               }
             }
 
@@ -1450,7 +1491,10 @@ async function runAgentRound(
   inputArtifacts?: readonly KodaXInputArtifact[],
 ): Promise<KodaXResult> {
   // Create event callbacks - 创建事件回调
-  const events = options.events ?? {};
+  const events = {
+    ...(options.events ?? {}),
+    getCostReport: costReportRef,
+  };
 
   // Pass existing conversation history for multi-turn dialogue - 传递已有的对话历史，实现多轮对话
   return runManagedTask(
@@ -1502,11 +1546,7 @@ function printStartupBanner(config: CurrentConfig, mode: string, compactionInfo?
     chalk.hex(theme.colors.dim)('  |  Reasoning: ') +
     (config.reasoningMode === 'off'
       ? chalk.hex(theme.colors.dim)('off')
-      : chalk.hex(theme.colors.success)(config.reasoningMode)) +
-    chalk.hex(theme.colors.dim)('  |  Execution: ') +
-    (config.parallel
-      ? chalk.hex(theme.colors.success)('parallel')
-      : chalk.hex(theme.colors.dim)('sequential'))
+      : chalk.hex(theme.colors.success)(config.reasoningMode))
   );
 
   // Compaction info
@@ -1529,7 +1569,6 @@ function printStartupBanner(config: CurrentConfig, mode: string, compactionInfo?
   console.log(chalk.hex(theme.colors.dim)('  Quick tips:'));
   console.log(chalk.hex(theme.colors.primary)('    /help      ') + chalk.hex(theme.colors.dim)('Show all commands'));
   console.log(chalk.hex(theme.colors.primary)('    /mode      ') + chalk.hex(theme.colors.dim)('Switch permission mode'));
-  console.log(chalk.hex(theme.colors.primary)('    /parallel  ') + chalk.hex(theme.colors.dim)('Toggle parallel tool execution'));
   console.log(chalk.hex(theme.colors.primary)('    /clear     ') + chalk.hex(theme.colors.dim)('Clear conversation'));
   console.log(chalk.hex(theme.colors.primary)('    @path      ') + chalk.hex(theme.colors.dim)('Attach image to context'));
   console.log(chalk.hex(theme.colors.primary)('    !cmd       ') + chalk.hex(theme.colors.dim)('Run read-only shell command'));

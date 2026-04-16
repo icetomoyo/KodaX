@@ -2,7 +2,7 @@
 
 轻量、透明、可定制的 TypeScript AI Coding Agent。
 
-KodaX 既可以作为命令行工具使用，也可以作为库集成到你的项目里。它支持多种模型提供商，包含完整的 REPL、会话、工具、Skills，以及一套很有辨识度的 Project 模式 / harness engineering 工作流。
+KodaX 既可以作为命令行工具使用，也可以作为库集成到你的项目里。它支持 11 个模型提供商，包含完整的 REPL、会话、工具、Skills，以及 Scout-first 自适应多 Agent 工作流。
 
 ## 为什么用 KodaX
 

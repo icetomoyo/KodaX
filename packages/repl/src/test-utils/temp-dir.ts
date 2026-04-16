@@ -28,5 +28,10 @@ export function removeTempDirSync(dir: string | undefined): void {
     return;
   }
 
-  rmSync(dir, { recursive: true, force: true });
+  try {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  } catch {
+    // On Windows, temp dir cleanup can fail with EPERM when handles are still open.
+    // Swallow cleanup errors in test teardown — the OS will reclaim temp files later.
+  }
 }

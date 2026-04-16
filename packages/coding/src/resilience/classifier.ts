@@ -27,6 +27,11 @@ const RATE_LIMIT_PATTERNS = [
   /\b429\b/,
   /\bquota exceeded\b/i,
   /\bapi credits?\b/i,
+  // Chinese (中文)
+  /请求过多/,
+  /频率限制/,
+  /限流/,
+  /配额/,
 ];
 
 const OVERLOADED_PATTERNS = [
@@ -37,6 +42,13 @@ const OVERLOADED_PATTERNS = [
   /\b502\b/,
   /\binternal server error\b/i,
   /\bservice unavailable\b/i,
+  // Chinese (中文)
+  /服务繁忙/,
+  /服务不可用/,
+  /服务器错误/,
+  /服务器内部错误/,
+  /过载/,
+  /容量不足/,
 ];
 
 const CONNECTION_PATTERNS = [
@@ -49,11 +61,23 @@ const CONNECTION_PATTERNS = [
   /\beai_again\b/i,
   /\bother side closed\b/i,
   /\bnetwork\b/i,
+  /\baborted\b/i,
+  // Chinese (中文)
+  /网络错误/,
+  /网络异常/,
+  /连接错误/,
+  /连接失败/,
+  /连接被拒绝/,
+  /连接被重置/,
 ];
 
 const TIMEOUT_PATTERNS = [
   /\btimed? ?out\b/i,
   /\betimedout\b/i,
+  // Chinese (中文)
+  /连接超时/,
+  /请求超时/,
+  /响应超时/,
 ];
 
 const STREAM_INCOMPLETE_PATTERNS = [

@@ -601,9 +601,17 @@ function formatToolProgressExplanation(tool: ToolCall): string[] {
     case ToolCallStatus.AwaitingApproval:
       return ["Waiting: approval required before execution"];
     case ToolCallStatus.Executing:
-      return tool.progress !== undefined
-        ? [`Progress: ${tool.progress}% complete`]
-        : ["Running: waiting for tool output"];
+      if (tool.progress !== undefined) {
+        return [`Progress: ${tool.progress}% complete`];
+      }
+      // FEATURE_067: Show child agent progress lines inside the tool block
+      if (tool.progressLines && tool.progressLines.length > 0) {
+        return tool.progressLines.slice(-5);
+      }
+      if (tool.preview) {
+        return [`Running: ${tool.preview}`];
+      }
+      return ["Running: waiting for tool output"];
     case ToolCallStatus.Cancelled:
       return ["Cancelled before completion"];
     default:
@@ -686,7 +694,9 @@ export function formatToolCallInlineText(tool: ToolCall): string {
   const duration = formatDuration(tool.startTime, tool.endTime);
   const progress = tool.status === ToolCallStatus.Executing && tool.progress !== undefined
     ? `${tool.progress}%`
-    : undefined;
+    : tool.status === ToolCallStatus.Executing && tool.preview
+      ? tool.preview
+      : undefined;
   const suffixParts = [statusDetail, progress, duration].filter(Boolean);
   return suffixParts.length > 0 ? `${summary} (${suffixParts.join(" - ")})` : summary;
 }
@@ -701,7 +711,12 @@ export function collapseToolCalls(tools: readonly ToolCall[]): ToolSummaryGroup[
     const summary = outputDetails.length > 0
       ? formatToolDetailSummary(tool.name, outputDetails)
       : formatToolSummary(tool.name, tool.input);
-    const key = `${summary}|${tool.error ?? ""}`;
+    // FEATURE_067: Tools with progressLines get individual display (not collapsed)
+    // so each child agent's progress is visible independently.
+    const hasProgress = tool.progressLines && tool.progressLines.length > 0;
+    const key = hasProgress
+      ? `${summary}|${tool.id}` // unique key per tool → no collapse
+      : `${summary}|${tool.error ?? ""}`;
     const existing = groups.get(key);
     if (existing) {
       existing.tool = tool;

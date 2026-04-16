@@ -272,6 +272,26 @@ describe("MessageList", () => {
     expect((frame.match(/Preview row/g) ?? [])).toHaveLength(1);
   });
 
+  it("renders transcript rows instead of the empty state when a prebuilt model provides content", () => {
+    const bannerRow = { key: "banner-0", text: "KODAX", itemId: "banner" };
+    const { lastFrame } = render(
+      <MessageList
+        items={[]}
+        transcriptModel={{
+          staticSections: [],
+          sections: [{ key: "banner", rows: [bannerRow] }],
+          rows: [bannerRow],
+          previewSections: [],
+          previewRows: [],
+        }}
+      />,
+    );
+
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("KODAX");
+    expect(frame).not.toContain("No messages yet. Start typing to begin.");
+  });
+
   it("derives renderer-owned visible rows from the shared transcript model", () => {
     const snapshot: { rows: string[]; allRows: string[] }[] = [];
     const stableRow = { key: "stable-0", text: "Stable row", itemId: "assistant-1" };

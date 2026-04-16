@@ -1,6 +1,6 @@
 # Feature 总表
 
-> Last updated: 2026-04-09
+> Last updated: 2026-04-16
 
 > 中文阅读说明：
 > 这份 `FEATURE_LIST` 是 roadmap 的总索引。
@@ -13,22 +13,22 @@
 
 | Item | Value |
 |---|---|
-| Tracked feature IDs | `001-060` |
-| Total tracked features | `60` |
-| Completed | `53` |
+| Tracked feature IDs | `001-071` |
+| Total tracked features | `71` |
+| Completed | `62` |
+| Cancelled | `1` |
 | InProgress | `1` |
-| Planned | `6` |
-| Current released version | `v0.7.15` |
+| Planned | `7` |
+| Current released version | `v0.7.18` |
 
 ### 各版本待做分布
 
 | Version | Planned features |
 |---|---|
+| `v0.7.18` | `0` (all complete or cancelled) |
 | `v0.7.20` | `1` |
-| `v0.7.25` | `0` |
 | `v0.7.30` | `1` |
 | `v0.8.0` | `3` |
-| `v0.9.0` | `0` |
 | `v1.0.0` | `1` |
 
 ---
@@ -50,6 +50,7 @@
 | `059` | Managed Task Structured Protocol V2 | Internal | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_059-managed-task-structured-protocol-v2) |
 | `060` | Claude-Aligned Bounded-Memory Runtime and OOM Hardening | Internal | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_060-claude-aligned-bounded-memory-runtime-and-oom-hardening) |
 | `026` | Roadmap Integrity and Planning Hygiene | Internal | High | `v0.7.20` | [v0.7.20](features/v0.7.20.md#feature_026-roadmap-integrity-and-planning-hygiene) |
+| `063` | ~~Extensible Hook & Automation Substrate~~ | Enhancement | ~~High~~ | ~~`v0.7.18`~~ | [v0.7.18](features/v0.7.18.md#feature_063-extensible-hook--automation-substrate) | **Cancelled**: Extension 系统已覆盖，executor 能力提取为 `api.exec()`/`api.webhook()` |
 | `030` | Multi-Surface Delivery | Enhancement | High | `v1.0.0` | [v1.0.0](features/v1.0.0.md#feature_030-multi-surface-delivery) |
 
 ---
@@ -57,11 +58,11 @@
 ## 阅读说明
 
 - `FEATURE_022` 是当前架构转向的 umbrella feature，`FEATURE_019`、`FEATURE_025`、`FEATURE_027`、`FEATURE_028`、`FEATURE_029`、`FEATURE_034` 是它的关键支撑切片。
+- `FEATURE_061` 是 AMA 架构简化重构：Scout 成为 AMA 唯一入口（既判断又干活），角色升级保留上下文，每个角色可拉 subagent 并行，去掉预路由层和 Tactical Flow。
 - 当前正式执行模型是：`SA` 直达；`AMA` 只保留 `H0 / H1 / H2`；`H3` 已移除。
-- `Scout` 是 pre-harness 牵引层；`H0` 支持 `Scout-complete H0`，但不允许 `Scout` 判 `H0` 后再 handoff 给第二个 direct agent。
-- `read-only / docs-only` 默认停留在 `H0`，只有用户明确要求更强校验时才允许 `H1`，永远不进入 `H2`。
-- `H1` 是 `Generator + 轻量 Evaluator` 的 lightweight checked-direct：无 `Planner`、无 contract negotiation、无默认多轮 refine。
-- `H2` 主骨架固定为 `Planner -> Generator <-> Evaluator`，只留给真正长时的 `code / system` mutation work，且默认单主 pass。
+- `Scout` 是 AMA 的入口和第一执行者：H0 时 Scout 直接完成任务；H1/H2 时 Scout 升级为 Generator 或 Planner 并保留上下文。
+- `H1` 是 `Generator + 轻量 Evaluator`：无 `Planner`、无 contract negotiation。Evaluator 打回最多 1 次，再不合格则升级到 H2。
+- `H2` 主骨架固定为 `Planner -> Generator <-> Evaluator`。Evaluator 区分 `revise`（执行问题）和 `replan`（计划问题），各最多 1 次。
 - `FEATURE_054` 的目标方向是把 `Project` 模式吸收进 AMA H2；后续设计应默认以“单主 authority + Planner 吸收 brainstorm”为目标，不再扩独立 project/planner 表面。
 - `kodax -c` 属于 `user session` 恢复语义，不属于 internal worker-session recovery。
 - `FEATURE_023` 只应继续承担更高层 terminal/delivery ergonomics，不应重新打开 `FEATURE_051 / FEATURE_055` 已冻结的 REPL shell。
@@ -117,25 +118,37 @@
 | `044` | Durable Compression Anchors and Artifact Recall | `v0.8.0` (unreleased) | [v0.8.0](features/v0.8.0.md#feature_044-durable-compression-anchors-and-artifact-recall) |
 | `045` | Provider Stream Resilience and Graceful Recovery | `v0.7.15` (unreleased) | [v0.7.15](features/v0.7.15.md#feature_045-provider-stream-resilience-and-graceful-recovery) |
 | `046` | AMA Handoff Integrity and Final-Answer Convergence | `v0.8.0` (unreleased) | [v0.8.0](features/v0.8.0.md#feature_046-ama-handoff-integrity-and-final-answer-convergence) |
-| `047` | Invisible Adaptive Parallelism and Evidence-Driven Fan-Out | `v0.8.0` (unreleased) | [v0.8.0](features/v0.8.0.md#feature_047-invisible-adaptive-parallelism-and-evidence-driven-fan-out) |
+| `047` | Invisible Adaptive Parallelism and Evidence-Driven Fan-Out | `v0.7.19` | [v0.7.19](features/v0.7.19.md#feature_047-invisible-adaptive-parallelism--fan-out-optimization) | 架构完成 (v0.7.16); 执行层完成 (v0.7.18 FEATURE_067); v0.7.19 补齐: winner-cancel, 调度策略, 质量度量 |
 | `048` | Sectionized Prompt Assembly and Dynamic Capability Truth | `v0.8.0` (unreleased) | [v0.8.0](features/v0.8.0.md#feature_048-sectionized-prompt-assembly-and-dynamic-capability-truth) |
 | `049` | First-Class Search, Fetch, Code Search, and Semantic Retrieval | `v0.8.0` (unreleased) | [v0.8.0](features/v0.8.0.md#feature_049-first-class-search-fetch-code-search-and-semantic-retrieval) |
 | `050` | Prompt Contracts, Snapshots, and Regression Evaluation | `v0.8.0` (unreleased) | [v0.8.0](features/v0.8.0.md#feature_050-prompt-contracts-snapshots-and-regression-evaluation) |
 | `042` | Incremental Repository Intelligence Refresh and Java/C++ Structural Semantics | `v0.7.30` (unreleased) | [v0.7.30](features/v0.7.30.md#feature_042-incremental-repository-intelligence-refresh-and-javac-structural-semantics) |
 | `051` | Host-Aware Fullscreen TUI Substrate and Transcript UX | `v0.7.25` (unreleased) | [v0.7.25](features/v0.7.25.md#feature_051-host-aware-fullscreen-tui-substrate-and-transcript-ux) |
-| `052` | Dual-Profile AMA Harness and Child Fan-Out Boundaries | `v0.8.0` (unreleased) | [v0.8.0](features/v0.8.0.md#feature_052-dual-profile-ama-harness-and-child-fan-out-boundaries) |
+| `052` | Dual-Profile AMA Harness and Child Fan-Out Boundaries | `v0.7.19` | [v0.7.19](features/v0.7.19.md#feature_052-child-fan-out-boundary-hardening) | 架构完成 (v0.7.16); v0.7.19 补齐: SA 严格模式, 递归防护, controller 精化 |
 | `053` | Canonical Repo Identity and Managed Worktree Runtime | `v0.7.30` (unreleased) | [v0.7.30](features/v0.7.30.md#feature_053-canonical-repo-identity-and-managed-worktree-runtime) |
 | `055` | REPL Substrate Hardening and Summary-Only AMA UX | `v0.9.0` (unreleased) | [v0.9.0](features/v0.9.0.md#feature_055-repl-substrate-hardening-and-summary-only-ama-ux) |
 | `056` | Tool Interaction Maturity and Transcript-Native Explanation Layer | `v0.7.30` (unreleased) | [v0.7.30](features/v0.7.30.md#feature_056-tool-interaction-maturity-and-transcript-native-explanation-layer) |
 | `054` | AMA-Project Convergence: Absorb Project Mode into Adaptive H2 | `v0.7.30` (unreleased) | [v0.7.30](features/v0.7.30.md#feature_054-ama-project-convergence-absorb-project-mode-into-adaptive-h2) |
 | `043` | Harness Calibration, Pivoting, Profiling, and Safe Checkpoints | `v0.7.30` (unreleased) | [v0.7.30](features/v0.7.30.md#feature_043-harness-calibration-pivoting-profiling-and-safe-checkpoints) |
 | `038` | Official Sandbox Extension | `v0.7.30` (unreleased) | [v0.7.30](features/v0.7.30.md#feature_038-official-sandbox-extension) |
+| `061` | Scout-First AMA Architecture Simplification | `v0.7.16` | [v0.7.16](features/v0.7.16.md#feature_061-scout-first-ama-architecture-simplification) |
+| `062` | Managed Task Budget Simplification | `v0.7.16` | [v0.7.16](features/v0.7.16.md#feature_062-managed-task-budget-simplification) |
+| `064` | Multi-Provider Cost Observatory | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_064-multi-provider-cost-observatory) |
+| `065` | MCP Protocol Maturity | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_065-mcp-protocol-maturity) |
+| `066` | Permission Hardening | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_066-permission-hardening) |
+| `067` | Child Agent Execution — AMA-Native Parallel Task Dispatch | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_067-child-agent-execution--ama-native-parallel-task-dispatch) |
+| `068` | Worktree Isolation Tool | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_068-worktree-isolation-tool) |
+| `069` | Session Rewind & Shell Completion | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_069-session-rewind--shell-completion) |
+| `070` | Context Engine V2 — Multi-Layer Compaction & Post-Compact Reconstruction | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_070-context-engine-v2--multi-layer-compaction--post-compact-reconstruction) |
+| `071` | AMA Managed Task Resilience — Worker Checkpoint & Mid-Execution Recovery | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_071-ama-managed-task-resilience--worker-checkpoint--mid-execution-recovery) |
 
 > `FEATURE_051` close-out posture: keep the current REPL status/footer/task/message surfaces frozen, limit follow-up work to invisible substrate maturity for transcript, scroll/selection, and input behavior, and treat the design doc as a completed close-out record rather than an open rollout plan.
 
 > `FEATURE_055` completed the follow-up REPL hardening work: docs-first substrate maturity, summary-only AMA mapping, and no new visible worker/task shell.
 
 > `FEATURE_031` now treats inline image refs as true structured multimodal inputs: provider-facing text uses stable image anchors such as `[Image #1]` and clean unavailable-image placeholders instead of leaking raw `@image-path` syntax.
+
+> `v0.7.18` 主题：Engineering Shell Maturity（工程外壳成熟度）。基于 KodaX vs Claude Code 全面对比分析，补齐工程外壳层面的真实差距。8 个 Feature 全部完成，1 个取消 (063 Hook — 被 Extension 系统吸收，executor 能力提取为 `api.exec()`/`api.webhook()`)。status bar 成本显示 descoped (064)。
 
 ---
 

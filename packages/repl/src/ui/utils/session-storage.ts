@@ -16,8 +16,10 @@ import {
   countActiveLineageMessages,
   createSessionLineage,
   forkSessionLineage,
+  findPreviousUserEntryId,
   generateSessionId as generateCoreSessionId,
   getSessionMessagesFromLineage,
+  rewindSessionLineage,
   setSessionLineageActiveEntry,
 } from "@kodax/coding";
 
@@ -42,6 +44,7 @@ export interface SessionStorage {
     options?: KodaXSessionNavigationOptions,
   ): Promise<SessionData | null>;
   setLabel?(id: string, selector: string, label?: string): Promise<SessionData | null>;
+  rewind?(id: string, selector?: string): Promise<SessionData | null>;
   fork?(
     id: string,
     selector?: string,
@@ -150,6 +153,9 @@ export class MemorySessionStorage implements SessionStorage {
       messages: getSessionMessagesFromLineage(lineage),
       title: options?.title ?? current.title,
       gitRoot: current.gitRoot,
+      uiHistory: current.uiHistory
+        ? current.uiHistory.map((item) => ({ ...item }))
+        : undefined,
       extensionState: current.extensionState
         ? structuredClone(current.extensionState)
         : undefined,
@@ -166,6 +172,29 @@ export class MemorySessionStorage implements SessionStorage {
       sessionId,
       data: structuredClone(data),
     };
+  }
+
+  async rewind(id: string, selector?: string): Promise<SessionData | null> {
+    const current = this.sessions.get(id);
+    if (!current?.lineage) {
+      return null;
+    }
+
+    const targetId = selector ?? findPreviousUserEntryId(current.lineage);
+    if (!targetId) return null;
+
+    const lineage = rewindSessionLineage(current.lineage, targetId);
+    if (!lineage) {
+      return null;
+    }
+
+    const data: SessionData = {
+      ...current,
+      messages: getSessionMessagesFromLineage(lineage),
+      lineage,
+    };
+    this.sessions.set(id, data);
+    return structuredClone(data);
   }
 
   async list(_gitRoot?: string): Promise<Array<{ id: string; title: string; msgCount: number }>> {

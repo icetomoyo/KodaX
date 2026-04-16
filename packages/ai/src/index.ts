@@ -135,3 +135,21 @@ export {
   getGeminiCliDefaultModel,
   getGeminiCliKnownModels,
 } from './providers/cli-bridge-models.js';
+
+// ============== Cost Tracking ==============
+export { DEFAULT_COST_RATES, getCostRate, calculateCost } from './cost-rates.js';
+export type { CostRate } from './cost-rates.js';
+
+export {
+  createCostTracker,
+  recordUsage,
+  getSummary,
+  formatCost,
+  formatCostReport,
+} from './cost-tracker.js';
+export type {
+  TokenUsageRecord,
+  ProviderCostSummary,
+  SessionCostSummary,
+  CostTracker,
+} from './cost-tracker.js';

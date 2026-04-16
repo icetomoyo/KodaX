@@ -1,9 +1,9 @@
 # KodaX 产品需求文档（PRD）
 
-> Last updated: 2026-03-30
+> Last updated: 2026-04-12
 >
-> 本 PRD 描述当前 `FEATURE_022` 之后的产品语义：
-> KodaX 是一个“极简且智能”的 task engine。
+> 本 PRD 描述当前 `FEATURE_061/062` 之后的产品语义：
+> KodaX 是一个 Scout-first、极简且智能的 task engine。
 
 ## 中文导读
 
@@ -93,7 +93,9 @@ skill 是 invocation/playbook，不是新的产品 mode。
 
 ### 4.2 AMA-H0
 
-direct path，但 `H0` 的核心不是“完全没有判断阶段”，而是“最终单 agent 收口”。
+direct path。`H0` 的核心是”最终单 agent 收口”。
+
+`Scout` 是 AMA 的唯一入口。所有 AMA 请求先经过 Scout。
 
 适合：
 
@@ -105,8 +107,8 @@ direct path，但 `H0` 的核心不是“完全没有判断阶段”，而是“
 
 约束：
 
-- 若 `Scout` 确认 `H0_DIRECT` 且证据足够，则由 `Scout` 直接完成
-- 不允许 `Scout` 判定 `H0` 后再 handoff 给第二个 direct agent
+- Scout 判定 `H0_DIRECT` 且证据足够时，由 Scout 直接完成任务，不 handoff
+- Scout 升级到 H1/H2 时保留已有上下文（context continuation），不再冷启动
 
 ### 4.3 AMA-H1
 
@@ -278,10 +280,12 @@ Planner -> Generator <-> Evaluator
 
 ## 11. 相关 Feature
 
-- `FEATURE_019`
-- `FEATURE_022`
-- `FEATURE_025`
-- `FEATURE_027`
-- `FEATURE_028`
-- `FEATURE_029`
-- `FEATURE_034`
+- `FEATURE_019` — Session tree, checkpoints
+- `FEATURE_022` — Adaptive task engine + AMA/SA
+- `FEATURE_025` — Intent-first routing
+- `FEATURE_027` — SA/AMA mode toggle
+- `FEATURE_028` — Retrieval/evidence tooling
+- `FEATURE_029` — Provider capability policy
+- `FEATURE_034` — Extension runtime
+- `FEATURE_061` — Scout-first AMA: Scout 成为唯一入口，H0 直接完成，角色升级保留上下文，每角色可拉 subagent
+- `FEATURE_062` — Budget simplification: 2 fields + 4 functions 替代 10 fields + 14 functions

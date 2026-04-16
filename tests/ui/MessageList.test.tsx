@@ -25,9 +25,9 @@ import {
 import {
   MessageList,
   HistoryItemRenderer,
-  splitMessageHistorySections,
 } from "../../packages/repl/src/ui/components/MessageList.js";
 import { getTheme } from "../../packages/repl/src/ui/themes/index.js";
+import { buildTranscriptRenderModel } from "../../packages/repl/src/ui/utils/transcript-layout.js";
 
 // === Test Helpers ===
 
@@ -123,6 +123,22 @@ class MockStdin extends EventEmitter {
 function getVisibleViewport(frame: string, rows: number): string {
   const lines = frame.split(/\r?\n/);
   return lines.slice(-rows).join("\n");
+}
+
+function splitMessageHistorySectionsForCurrentModel(items: HistoryItem[]) {
+  const renderModel = buildTranscriptRenderModel({
+    items,
+    viewportWidth: 80,
+    windowed: false,
+  });
+  const activeItemCount = renderModel.sections.length;
+  const activeRoundStartIndex = Math.max(0, items.length - activeItemCount);
+
+  return {
+    activeRoundStartIndex,
+    staticItems: items.slice(0, activeRoundStartIndex),
+    activeItems: items.slice(activeRoundStartIndex),
+  };
 }
 
 // === Tests ===
@@ -297,7 +313,8 @@ describe("MessageList", () => {
       const { lastFrame } = render(<MessageList items={items} viewportRows={DEFAULT_VIEWPORT_ROWS} viewportWidth={80} />);
 
       expect(lastFrame()).toContain("delete_file");
-      expect(lastFrame()).toContain("Permission denied");
+      // Tool errors render with a generic "failed" indicator rather than the raw error message.
+      expect(lastFrame()).toContain("failed");
     });
 
     it("should render multiple tools in group", () => {
@@ -420,7 +437,7 @@ describe("MessageList", () => {
       const secondThinking = createThinkingItem("Round 2 thinking");
       const secondAssistant = createAssistantItem("Round 2 answer");
 
-      const sections = splitMessageHistorySections([
+      const sections = splitMessageHistorySectionsForCurrentModel([
         firstUser,
         firstAssistant,
         secondUser,
@@ -437,7 +454,7 @@ describe("MessageList", () => {
       const thinking = createThinkingItem("Standalone thinking");
       const assistant = createAssistantItem("Standalone answer");
 
-      const sections = splitMessageHistorySections([thinking, assistant]);
+      const sections = splitMessageHistorySectionsForCurrentModel([thinking, assistant]);
 
       expect(sections.activeRoundStartIndex).toBe(0);
       expect(sections.staticItems).toEqual([]);

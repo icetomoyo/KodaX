@@ -115,8 +115,22 @@ function extractLinkPath(markdownLink: string): string {
 }
 
 function parseFeatureRows(markdown: string): FeatureIndexRow[] {
+  const inProgressSection = getSection(markdown, '进行中的 Feature');
   const plannedSection = getSection(markdown, '计划中的 Feature');
   const completedSection = getSection(markdown, '已完成 Feature');
+
+  const inProgressRows = getMarkdownTableRows(inProgressSection).map((cells) => {
+    const [id, title, planned, design] = cells;
+
+    return {
+      id: stripMarkdown(id),
+      status: 'InProgress' as const,
+      title,
+      planned: stripMarkdown(planned),
+      released: '-',
+      designPath: extractLinkPath(design),
+    };
+  });
 
   const plannedRows = getMarkdownTableRows(plannedSection).map((cells) => {
     const [id, title, _category, priority, planned, design] = cells;
@@ -147,7 +161,7 @@ function parseFeatureRows(markdown: string): FeatureIndexRow[] {
     };
   });
 
-  return [...plannedRows, ...completedRows].sort((left, right) => Number(left.id) - Number(right.id));
+  return [...inProgressRows, ...plannedRows, ...completedRows].sort((left, right) => Number(left.id) - Number(right.id));
 }
 
 function parseFeatureOverview(markdown: string): FeatureOverview {

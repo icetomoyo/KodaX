@@ -615,6 +615,11 @@ export function inferIntentGate(prompt: string): KodaXIntentGateDecision {
   const hasInvestigationSignal = INVESTIGATION_PATTERN.test(trimmed) || INVESTIGATION_PATTERN_ZH_CLEAN.test(trimmed);
   const hasImplementationSignal = IMPLEMENTATION_PATTERN.test(trimmed) || IMPLEMENTATION_PATTERN_ZH_CLEAN.test(trimmed);
 
+  // FEATURE_067 AMA redesign: All actionable tasks go through the model router.
+  // Scout is the final harness decision-maker. The model router provides a better
+  // initial signal than keyword-based heuristics.
+  // Only empty input and greetings bypass the model router (they're non-actionable).
+
   if (hasReviewSignal) {
     return {
       primaryTask: 'review',
@@ -622,8 +627,8 @@ export function inferIntentGate(prompt: string): KodaXIntentGateDecision {
       actionability: 'actionable',
       executionPattern: 'checked-direct',
       shouldUseRepoSignals: true,
-      shouldUseModelRouter: false,
-      reason: 'Explicit review language should stay on the lightweight review path unless later evidence explicitly justifies stronger assurance.',
+      shouldUseModelRouter: true,
+      reason: 'Review tasks go through the model router for accurate harness assessment. Scout will finalize.',
     };
   }
 
@@ -670,8 +675,8 @@ export function inferIntentGate(prompt: string): KodaXIntentGateDecision {
       actionability: 'actionable',
       executionPattern: 'direct',
       shouldUseRepoSignals: false,
-      shouldUseModelRouter: false,
-      reason: 'Pure codebase lookup/navigation queries should stay on the direct path.',
+      shouldUseModelRouter: true,
+      reason: 'Lookup queries go through the model router. Scout will decide if H0 is appropriate.',
     };
   }
 
@@ -681,8 +686,8 @@ export function inferIntentGate(prompt: string): KodaXIntentGateDecision {
     actionability: 'ambiguous',
     executionPattern: 'direct',
     shouldUseRepoSignals: false,
-    shouldUseModelRouter: false,
-    reason: 'Ambiguous requests stay lightweight until there is stronger task evidence.',
+    shouldUseModelRouter: true,
+    reason: 'Ambiguous requests go through the model router for accurate classification. Scout will finalize.',
   };
 }
 
@@ -1133,9 +1138,11 @@ export function buildAmaControllerDecision(
 ): KodaXAmaControllerDecision {
   const readOnlyLike = decision.mutationSurface === 'read-only'
     || decision.mutationSurface === 'docs-only';
+  // FEATURE_061: Pre-Scout profile is always tactical. Scout decides whether to
+  // upgrade. The managed profile is only selected post-Scout when Scout confirms
+  // H1 or H2, which is handled by applyScoutDecisionToPlan in task-engine.ts.
   const managed =
-    decision.harnessProfile === 'H2_PLAN_EXECUTE_EVAL'
-    || decision.primaryTask === 'plan'
+    decision.primaryTask === 'plan'
     || decision.complexity === 'systemic'
     || (
       decision.complexity === 'complex'
@@ -1156,7 +1163,7 @@ export function buildAmaControllerDecision(
   const tactics = dedupeAmaTactics([
     'direct',
     ...(profile === 'managed' ? ['planning-pass', 'verification-pass', 'repair-loop'] as KodaXAmaTactic[] : []),
-    ...(decision.harnessProfile !== 'H0_DIRECT' || Boolean(decision.needsIndependentQA) ? ['verification-pass'] as KodaXAmaTactic[] : []),
+    ...(Boolean(decision.needsIndependentQA) ? ['verification-pass'] as KodaXAmaTactic[] : []),
     ...(fanoutAdmissible ? ['child-fanout'] as KodaXAmaTactic[] : []),
   ]);
 
@@ -1180,9 +1187,6 @@ export function buildAmaControllerDecision(
 
   const upgradeTriggers: string[] = [];
   if (profile === 'tactical') {
-    if (decision.harnessProfile === 'H2_PLAN_EXECUTE_EVAL') {
-      upgradeTriggers.push('Existing routing already requires H2 managed coordination.');
-    }
     if (decision.complexity === 'complex' || decision.complexity === 'systemic') {
       upgradeTriggers.push('Complex or systemic work may outgrow tactical reduction and need managed coordination.');
     }
@@ -1275,89 +1279,39 @@ export async function createReasoningPlan(
     reasoningMode: mode,
   });
 
-  if (!intentGate.shouldUseModelRouter) {
-    const decision = buildFallbackRoutingDecision(
-      prompt,
-      providerPolicy,
-      routingEvidence,
-    );
-    const depth = mode === 'off'
-      ? 'off'
-      : mode === 'auto'
-        ? decision.recommendedThinkingDepth
-        : reasoningModeToDepth(mode);
-    const finalDecision = {
-      ...decision,
-      recommendedThinkingDepth: depth,
-      routingNotes: [
-        ...(decision.routingNotes ?? []),
-        intentGate.reason,
-      ],
-    };
-    const amaControllerDecision = buildAmaControllerDecision(finalDecision);
-
-    return {
-      mode,
-      depth,
-      amaControllerDecision,
-      promptOverlay: buildPromptOverlay(
-        finalDecision,
-        providerPolicy.routingNotes,
-        providerPolicy,
-        amaControllerDecision,
-      ),
-      decision: finalDecision,
-      providerPolicy,
-    };
-  }
-
-  if (mode === 'auto') {
-    const decision = await routeTaskWithLLM(
-      provider,
-      prompt,
-      options,
-      providerPolicy,
-      routingEvidence,
-    );
-    const amaControllerDecision = buildAmaControllerDecision(decision);
-    return {
-      mode,
-      depth: decision.recommendedThinkingDepth,
-      amaControllerDecision,
-      promptOverlay: buildPromptOverlay(
-        decision,
-        providerPolicy.routingNotes,
-        providerPolicy,
-        amaControllerDecision,
-      ),
-      decision,
-      providerPolicy,
-    };
-  }
-
-  const fallbackDecision = buildFallbackRoutingDecision(
+  // FEATURE_061 Phase 1: All paths use heuristic routing; Scout is the routing authority.
+  const decision = buildFallbackRoutingDecision(
     prompt,
     providerPolicy,
     routingEvidence,
   );
-  const depth = mode === 'off' ? 'off' : reasoningModeToDepth(mode);
-  const decision: KodaXTaskRoutingDecision = {
-    ...fallbackDecision,
+  const depth = mode === 'off'
+    ? 'off'
+    : mode === 'auto'
+      ? decision.recommendedThinkingDepth
+      : reasoningModeToDepth(mode);
+  const finalDecision = {
+    ...decision,
     recommendedThinkingDepth: depth,
+    routingNotes: [
+      ...(decision.routingNotes ?? []),
+      intentGate.reason,
+      'Pre-Scout LLM routing disabled (FEATURE_061 Phase 1); Scout is the routing authority.',
+    ],
   };
-  const amaControllerDecision = buildAmaControllerDecision(decision);
+  const amaControllerDecision = buildAmaControllerDecision(finalDecision);
 
   return {
     mode,
     depth,
     amaControllerDecision,
     promptOverlay: buildPromptOverlay(
-      decision,
+      finalDecision,
       providerPolicy.routingNotes,
       providerPolicy,
       amaControllerDecision,
     ),
-    decision,
+    decision: finalDecision,
     providerPolicy,
   };
 }
@@ -2305,19 +2259,19 @@ function getHarnessRank(harness: KodaXHarnessProfile): number {
   return HARNESS_ORDER.indexOf(harness);
 }
 
+// FEATURE_061: Scout is the routing authority. Pre-Scout harnessProfile is always
+// H0_DIRECT — Scout decides whether to stay H0 or upgrade to H1/H2 based on its
+// own analysis. The old hardcoded logic is replaced by factual routing hints that
+// Scout can use as evidence, not as binding decisions.
 function selectHarnessProfile(
   prompt: string,
   decision: KodaXTaskRoutingDecision,
-  providerPolicy?: KodaXProviderPolicyDecision,
 ): {
   harnessProfile: KodaXHarnessProfile;
   upgradeCeiling?: KodaXHarnessProfile;
   notes: string[];
 } {
-  let harnessProfile: KodaXHarnessProfile;
-  let upgradeCeiling = decision.upgradeCeiling;
   const taskFamily = decision.taskFamily ?? inferTaskFamilyFromPrimaryTask(decision.primaryTask);
-  const actionability = decision.actionability ?? (taskFamily === 'conversation' ? 'non_actionable' : taskFamily === 'ambiguous' ? 'ambiguous' : 'actionable');
   const mutationSurface = deriveMutationSurface(prompt, {
     primaryTask: decision.primaryTask,
     taskFamily,
@@ -2325,90 +2279,25 @@ function selectHarnessProfile(
   const assuranceIntent = deriveAssuranceIntent(prompt, decision);
   const topologyCeiling = deriveTopologyCeiling(mutationSurface, assuranceIntent);
 
-  if (actionability !== 'actionable' || taskFamily === 'conversation' || taskFamily === 'lookup') {
-    return {
-      harnessProfile: 'H0_DIRECT',
-      upgradeCeiling: undefined,
-      notes: actionability === 'non_actionable'
-        ? ['Intent gate kept a non-actionable request on the direct path.']
-        : ['Intent gate kept this lightweight lookup/ambiguous request on the direct path.'],
-    };
+  const hints: string[] = [];
+  if (decision.complexity === 'complex' || decision.complexity === 'systemic') {
+    hints.push(`Complexity hint: ${decision.complexity}. Scout should assess whether this truly needs multi-role coordination.`);
   }
-
-  if (mutationSurface === 'read-only' || mutationSurface === 'docs-only') {
-    harnessProfile = assuranceIntent === 'explicit-check'
-      ? 'H1_EXECUTE_EVAL'
-      : 'H0_DIRECT';
-    upgradeCeiling = topologyCeiling;
-  } else {
-    const needsCoordinatedHarness = mutationSurface === 'system'
-      ? (
-        decision.requiresBrainstorm
-        || decision.needsIndependentQA
-        || decision.riskLevel === 'high'
-        || decision.complexity === 'complex'
-        || decision.complexity === 'systemic'
-        || decision.workIntent === 'overwrite'
-      )
-      : (
-        decision.requiresBrainstorm
-        || decision.complexity === 'systemic'
-        || (
-          decision.complexity === 'complex'
-          && (
-            taskFamily === 'implementation'
-            || decision.primaryTask === 'edit'
-            || decision.primaryTask === 'refactor'
-            || decision.workIntent === 'overwrite'
-            || decision.needsIndependentQA
-          )
-        )
-      );
-
-    if (needsCoordinatedHarness) {
-      harnessProfile = 'H2_PLAN_EXECUTE_EVAL';
-    } else if (
-      decision.needsIndependentQA
-      || decision.soloBoundaryConfidence === undefined
-      || decision.soloBoundaryConfidence < SOLO_BOUNDARY_DIRECT_THRESHOLD
-      || decision.riskLevel !== 'low'
-      || decision.complexity === 'moderate'
-      || decision.workIntent === 'overwrite'
-    ) {
-      harnessProfile = 'H1_EXECUTE_EVAL';
-    } else {
-      harnessProfile = 'H0_DIRECT';
-    }
-    upgradeCeiling = topologyCeiling;
+  if (decision.needsIndependentQA) {
+    hints.push('Independent QA was inferred from prompt signals. Scout should verify whether a separate evaluator is genuinely needed.');
   }
-
-  const notes: string[] = [];
-  if (getHarnessRank(harnessProfile) > getHarnessRank(topologyCeiling)) {
-    notes.push(`Topology ceiling kept the task at or below ${topologyCeiling} because ${mutationSurface} work should stay lightweight by default.`);
-    harnessProfile = topologyCeiling;
-    upgradeCeiling = topologyCeiling;
+  if (decision.requiresBrainstorm) {
+    hints.push('Brainstorm/planning signal detected. Scout should judge whether explicit planning adds value.');
   }
-
-  const snapshot = providerPolicy?.snapshot;
-  if (
-    snapshot
-    && harnessProfile === 'H2_PLAN_EXECUTE_EVAL'
-    && (
-      snapshot.contextFidelity === 'lossy'
-      || snapshot.sessionSupport === 'stateless'
-      || snapshot.toolCallingFidelity === 'none'
-      || snapshot.evidenceSupport === 'none'
-    )
-  ) {
-    harnessProfile = 'H1_EXECUTE_EVAL';
-    upgradeCeiling = undefined;
-    notes.push('Downgraded from H2 to H1 because provider semantics are too lossy for coordinated execution.');
+  if (mutationSurface === 'system' && (decision.riskLevel === 'high' || decision.workIntent === 'overwrite')) {
+    hints.push('High-risk system mutation detected. Scout should consider whether coordinated execution is warranted.');
   }
+  hints.push('Scout is the routing authority and will determine the final harness profile.');
 
   return {
-    harnessProfile,
-    upgradeCeiling: harnessProfile === 'H0_DIRECT' ? undefined : upgradeCeiling,
-    notes,
+    harnessProfile: 'H0_DIRECT',
+    upgradeCeiling: topologyCeiling,
+    notes: hints,
   };
 }
 
@@ -2948,7 +2837,6 @@ function stabilizeRoutingDecision(
       assuranceIntent,
       topologyCeiling,
     },
-    providerPolicy,
   );
   const {
     recommendedMode,
@@ -2968,11 +2856,9 @@ function stabilizeRoutingDecision(
 
   let nextRecommendedMode = recommendedMode;
   let nextThinkingDepth = recommendedThinkingDepth;
-  const finalExecutionPattern: KodaXExecutionPattern = harnessDecision.harnessProfile === 'H2_PLAN_EXECUTE_EVAL'
-      ? 'coordinated'
-      : harnessDecision.harnessProfile === 'H1_EXECUTE_EVAL'
-        ? 'checked-direct'
-        : 'direct';
+  // FEATURE_061: Pre-Scout harness is always H0_DIRECT; execution pattern starts
+  // as 'direct' and may be upgraded by Scout post-analysis.
+  const finalExecutionPattern: KodaXExecutionPattern = 'direct';
 
   if (intentFields.taskFamily === 'conversation') {
     nextRecommendedMode = 'conversation';

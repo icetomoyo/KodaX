@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-04-08_
+_Last Updated: 2026-04-13_
 
 ---
 
@@ -34,7 +34,7 @@ _Last Updated: 2026-04-08_
 | 090 | High | Resolved | CLI Provider 桥接语义降级：上下文与 MCP 能力丢失 | v0.6.10 | v0.6.10 | 2026-03-18 | 2026-03-19 |
 | 091 | High | Open | 缺少一等公民 MCP / Web Search / Code Search 工具体系 | v0.6.10 | - | 2026-03-18 | - |
 | 092 | High | Open | Team 模式已暴露但原生多 Agent 架构仍未闭环 | v0.6.10 | - | 2026-03-18 | - |
-| 093 | Medium | Open | 缺少 IDE / Desktop / Web 一体化分发表面 | v0.6.10 | - | 2026-03-18 | - |
+| 093 | Low | Open | 缺少 IDE / Desktop / Web 一体化分发表面 (Vibe Coding 时代已降级) | v0.6.10 | - | 2026-03-18 | - |
 | 094 | Medium | Open | 核心工作流文件与函数过大，职责耦合导致重构成本持续上升 | v0.6.13 | - | 2026-03-22 | - |
 | 095 | Medium | Open | Agent / REPL 主流程仍存在重复编排与手写运行时流程 | v0.6.13 | - | 2026-03-22 | - |
 | 096 | Low | Open | 类型边界过宽且共享可变状态较多 | v0.6.13 | - | 2026-03-22 | - |
@@ -50,11 +50,518 @@ _Last Updated: 2026-04-08_
 
 | 105 | Medium | Open | kodax -c 历史记录未注入 LLM 上下文 - resume 路径可能存在 gitRoot 过滤不一致 | v0.7.14 | - | 2026-04-03 | - |
 | 106 | High | Open | Managed-task structured worker blocks remain text-coupled and can fail closed on protocol drift | v0.7.14 | - | 2026-04-08 | - |
+| 107 | Medium | Open | harnessProfile 类型命名残留 - H0/H1/H2 应替换为 worker-chain composition | v0.7.16 | - | 2026-04-11 | - |
+
+| 108 | High | Open | ACP server 链路未接入 MCP — 编辑器/ACP 场景下 mcpServers 配置不生效 | v0.7.16 | - | 2026-04-11 | - |
+| 109 | Low | Open | 缺少 mcp_get_prompt 工具 — MCP prompt 能力未暴露给模型 | v0.7.16 | - | 2026-04-11 | - |
+| 110 | Low | Open | 缺少 /mcp status 和 /mcp refresh REPL 命令 | v0.7.16 | - | 2026-04-11 | - |
+| 111 | Low | Open | SSE / Streamable HTTP MCP 传输缺少专项测试 | v0.7.16 | - | 2026-04-11 | - |
+| 112 | High | Open | ask_user_question 交互机制不完备 — 数字编号歧义 + 缺少 input/multiSelect 模式 | v0.7.18 | - | 2026-04-12 | - |
+| 113 | High | Resolved | Ctrl+C 中断后工具调用仍继续执行 — abort signal 未传播到工具执行阶段 | v0.7.17 | v0.7.18 | 2026-04-12 | 2026-04-12 |
+| 114 | High | Resolved | ask_user_question ESC 取消被静默吞掉 — 用户取消后模型继续执行 | v0.7.17 | v0.7.18 | 2026-04-12 | 2026-04-12 |
+| 115 | Medium | Resolved | Managed foreground ledger 切换 kind 时丢失 tool_group 引用 — 工具历史条目重复 | v0.7.17 | v0.7.18 | 2026-04-13 | 2026-04-13 |
+| 116 | Medium | Resolved | 协议代码块泄漏到用户可见文本 + H0_DIRECT routing 诊断噪音 | v0.7.17 | v0.7.18 | 2026-04-13 | 2026-04-13 |
+| 117 | High | Resolved | Managed task error recovery 断裂 — transient error 后任务未恢复 | v0.7.17 | v0.7.18 | 2026-04-13 | 2026-04-13 |
 
 ---
 
 ## Issue Details
 <!-- Full details for each issue - REQUIRED for all issues -->
+---
+### 112: ask_user_question 交互机制不完备 — 数字编号歧义 + 缺少 input/multiSelect 模式
+
+- **Priority**: High
+- **Status**: Open
+- **Introduced**: v0.7.18
+- **Fixed**: -
+- **Created**: 2026-04-12
+
+- **Original Problem**:
+
+  `ask_user_question` 的 Select 对话框存在两个根本性缺陷：
+
+  **缺陷 1 — 数字编号歧义（当前最严重的体验问题）**
+
+  KodaX Select 使用"输入数字编号 + 按 Enter"选择方式（`InkREPL.tsx` L4152-4196）。当 LLM 的文字输出中也包含编号列表时（如 smart-changelog 列出的步骤 1-6），用户会混淆"步骤编号"和"选项编号"：
+
+  ```
+  [LLM 的文字输出]
+  步骤 1: Update CHANGELOG.md
+  步骤 2: Sync version
+  步骤 3: Create Git Tag
+  ...
+
+  [Select 对话框]
+  1. 步骤 1,2,3      ← 用户以为按 1 = 选步骤 1
+  2. 步骤 1,2,3,4    ← 用户按 2 以为 = 选步骤 2，实际选了这个组合
+  3. 全部执行
+  ```
+
+  Claude Code 使用**上下箭头导航 + Enter 确认**模式（`CustomSelect/use-select-navigation.ts`），聚焦项显示 `❯` 指针，完全避免了数字编号歧义。
+
+  **缺陷 2 — 缺少 input 和 multiSelect 模式**
+
+  KodaX `ask_user_question` 只有单选列表一种交互模式。Claude Code 提供三种：
+  - **单选**（默认）：上下导航 + Enter
+  - **multiSelect**：空格键切换选中/取消，✓ 标记已选项，Enter 提交全部选择
+  - **input 类型选项**：Tab 键展开自由文本输入，用户可输入任意内容
+
+  缺少后两种模式导致：组合选择场景（如 "选择步骤 1,3,5"）LLM 被迫将组合打包为预设选项；用户无法自行输入任意组合。
+
+- **Context**:
+
+  **KodaX 现有实现**：
+  - 工具定义：`packages/coding/src/tools/registry.ts` L420-462 — `required: ['question', 'options']`
+  - 工具实现：`packages/coding/src/tools/ask-user-question.ts` — 始终走 `ctx.askUser()` → Select 路径
+  - REPL Select 交互：`packages/repl/src/ui/InkREPL.tsx` L4152-4196 — 数字输入 + Enter
+  - UI 已有 Input 对话框：`showInputDialog()` 支持自由文本 + 默认值，但 `ask_user_question` 无法触发
+
+  **Claude Code 参考实现**（`C:\Works\claudecode`）：
+  - `CustomSelect/use-select-navigation.ts` — 基于 reducer 的焦点管理，支持 up/down/pageUp/pageDown
+  - `CustomSelect/use-select-input.ts` L241-282 — 数字键快捷选择（可通过 `disableSelection: 'numeric'` 禁用）
+  - `CustomSelect/select-option.tsx` — `ListItem` 渲染：`❯` 聚焦指针 + `✓` 选中标记
+  - `AskUserQuestionTool.tsx` L19-23 — schema 包含 `multiSelect?: boolean`
+  - `use-multiple-choice-state.ts` — 完整的多问题 + 多选状态管理
+  - `keybindings/defaultBindings.ts` L319-330 — Select 上下文绑定：up/down/j/k/enter/escape/space
+
+  **影响范围**：所有需要自由文本/组合输入的 skill（smart-changelog, monorepo version-strategy 等）
+
+- **Planned Resolution**:
+
+  **分两阶段实施，第一阶段解决最紧迫的数字歧义问题：**
+
+  **Phase 1：Select 从数字输入改为上下导航（高优先级）**
+
+  将 Select 对话框从"输入数字编号"改为 Claude Code 风格的"上下箭头导航 + Enter 确认"：
+
+  1. **DialogSurface 渲染层**：
+     - 选项不再显示 `1. xxx`，改为 `❯ xxx`（聚焦项）/ `  xxx`（非聚焦项）
+     - 追踪 `focusedIndex` 状态，随箭头键更新
+     - 选中项右侧显示 `✓`
+
+  2. **Keypress handler 改造**（`InkREPL.tsx` L4152-4196）：
+     - `↑` / `k` → 上移焦点
+     - `↓` / `j` → 下移焦点
+     - `Enter` → 确认当前聚焦项（替代数字 + Enter）
+     - `Escape` → 取消
+     - 数字键保留为**快捷键**直接选中（按 `2` 直接确认第 2 项，不需再按 Enter），但不是主交互方式
+
+  3. **Select 状态提升**：将 `focusedIndex` 加入 `uiRequest` state，让 DialogSurface 能渲染焦点指针
+
+  这一步完全消除数字编号歧义——用户通过视觉焦点指针明确知道选的是哪一项。
+
+  **Phase 2：新增 multiSelect + input 模式（中优先级）**
+
+  1. **multiSelect 模式**：
+     - `ask_user_question` schema 新增 `multiSelect?: boolean`
+     - 空格键切换当前聚焦项的选中/取消，`✓` 标记已选项
+     - Enter 提交所有已选项，返回逗号分隔的 value 列表
+     - 解决"选择步骤组合"场景，用户按空格自由勾选任意步骤
+
+  2. **input 模式**：
+     - `ask_user_question` schema 新增 `kind?: "select" | "input"`
+     - `kind: "input"` 时走 `showInputDialog(question, default)`
+     - 用户可自由输入任意文本（如 "1,3,5" 或 "all"）
+     - `options` 在 input 模式下变为可选
+
+  3. **返回格式**：
+     - 单选：`{"success": true, "choice": "selected_value"}`
+     - 多选：`{"success": true, "choice": "value1, value2, value3"}`
+     - 输入：`{"success": true, "choice": "<用户自由输入>"}`
+
+  具体改动文件：
+  - `packages/repl/src/ui/components/DialogSurface.tsx` — 渲染焦点指针 + 选中标记
+  - `packages/repl/src/ui/InkREPL.tsx` — keypress handler 改造 + multiSelect/input 路由
+  - `packages/coding/src/tools/registry.ts` — schema 增加 `multiSelect`, `kind`
+  - `packages/coding/src/tools/ask-user-question.ts` — 按 kind/multiSelect 分流
+  - `packages/coding/src/types.ts` — `AskUserQuestionOptions` 增加新字段
+
+  **为什么不选其他方案**：
+  - ❌ 只加 input 模式不改 Select：不解决数字歧义根因，单选场景仍有问题
+  - ❌ 只改 skill prompt：无法解决工具能力缺失，LLM 仍被迫打包组合
+  - ❌ 全量复刻 Claude Code CustomSelect 组件：过度工程化，KodaX 的 Ink 版本和组件体系不同
+
+---
+### 113: Ctrl+C 中断后工具调用仍继续执行 — abort signal 未传播到工具执行阶段 (RESOLVED)
+
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: v0.7.17
+- **Fixed**: v0.7.18
+- **Created**: 2026-04-12
+- **Resolved**: 2026-04-12
+
+- **Original Problem**:
+
+  按下 Ctrl+C 后，API 流式输出能正确中断（AbortController.abort() 传播到 anthropic.ts 的 for-await 循环），但已进入工具执行阶段的工具调用不会被取消，导致用户在中断后仍偶尔看到工具输出或流式内容。
+
+  **现象**：
+  - Ctrl+C 后过几秒仍有工具结果输出
+  - 并行的非 bash 工具全部运行到完成
+  - 顺序 bash 工具队列中的后续工具仍逐一执行
+
+  **根因分析**：
+  1. `executeToolCall()` 函数不接受 `abortSignal` 参数，工具执行器无法感知中断
+  2. 工具执行入口（agent.ts L2205）没有 abort 门卫，stream 结束到工具执行之间存在无保护窗口
+  3. bash 工具 `for...of` 循环中没有在每次迭代前检查 abort 状态
+  4. 非 bash 工具通过 `Promise.all()` 并发，已启动的 promise 会运行到完成
+
+- **Context**:
+
+  **信号链路**：
+  ```
+  Ctrl+C → GlobalShortcuts.tsx:69 abort()
+         → StreamingContext.tsx:406 abortController.abort()
+         → agent.ts:1787 retrySignal (AbortSignal.any)
+         → anthropic.ts:234 for-await loop 检查 signal.aborted ✅
+         → agent.ts:2205 工具执行阶段 ❌ (无检查)
+  ```
+
+  **影响文件**：`packages/coding/src/agent.ts`、`packages/coding/src/types.ts`、`packages/coding/src/tools/bash.ts`
+
+- **Resolution**:
+
+  四层防御策略（graceful cancellation 模式）：
+
+  1. **工具执行前门卫**（agent.ts L2215-2233）：检查 `options.abortSignal?.aborted`，若已中断则将所有工具标记为 `CANCELLED_TOOL_RESULT_MESSAGE`，走统一的 `hasCancellation` 退出路径
+  2. **`executeToolCall` 入口检查**（agent.ts L1220-1225）：新增 `abortSignal?: AbortSignal` 参数，函数入口检查 signal，短路返回取消结果
+  3. **bash 工具循环检查**（agent.ts L2251-2255）：每次迭代前检查 abort，跳过未执行的 bash 工具
+  4. **bash 子进程 kill**（bash.ts L147-178）：`abortSignal` 通过 `KodaXToolExecutionContext` 透传到 bash 工具，注册 `abort` 事件监听器，信号触发时立即 `proc.kill()` 杀掉正在运行的子进程。使用 `settled` 守卫防止 abort/timeout/close 竞态导致 Promise 多次 resolve；用 `.once()` 注册 cleanup listener 避免内存泄漏。
+
+---
+### 114: ask_user_question ESC 取消被静默吞掉 — 用户取消后模型继续执行 (RESOLVED)
+
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: v0.7.17
+- **Fixed**: v0.7.18
+- **Created**: 2026-04-12
+- **Resolved**: 2026-04-12
+
+- **Original Problem**:
+
+  用户在 `ask_user_question` 对话框中按 ESC 取消时，取消意图被静默吞掉，模型仍然继续执行。
+
+  **Select 模式**：
+  - ESC → `showSelectDialogWithOptions` 返回 `undefined`
+  - `resolveAskUserDefaultChoice(options)` 寻找 label/value 为 "cancel" 的选项
+  - 如果 LLM 提供的选项中没有 "cancel" 关键字 → fallback 返回空字符串 `""`
+  - 工具返回 `{ success: true, choice: "" }` → 模型认为用户做了有效选择
+
+  **Input 模式**：
+  - ESC → `askUserInput` 返回 `undefined`
+  - `userText ?? ''` 将 undefined 转为空字符串
+  - 工具返回 `{ success: true, choice: "" }` → 同上
+
+  两种模式都没有产生 `[Cancelled]` 前缀的结果，agent 循环的 `hasCancellation` 检测不到取消。
+
+- **Context**:
+
+  **影响文件**：
+  - `packages/repl/src/ui/InkREPL.tsx` — `askUser` 回调
+  - `packages/coding/src/tools/ask-user-question.ts` — 工具层
+  - `packages/coding/src/constants.ts` — 取消常量提取
+  - `packages/coding/src/index.ts` — 导出新常量
+
+- **Resolution**:
+
+  1. **REPL 层**（InkREPL.tsx）：`askUser` 回调检测 `selectedValue === undefined`（ESC），直接返回 `CANCELLED_TOOL_RESULT_MESSAGE` 而非调用 `resolveAskUserDefaultChoice`
+  2. **工具层 select**（ask-user-question.ts）：检测 `askUser` 返回值是否以 `CANCELLED_TOOL_RESULT_PREFIX` 开头，若是则直接透传而非包装为 `{ success: true }`
+  3. **工具层 input**（ask-user-question.ts）：检测 `askUserInput` 返回 `undefined`，返回 `CANCELLED_TOOL_RESULT_MESSAGE`
+  4. **常量提取**（constants.ts）：将 `CANCELLED_TOOL_RESULT_PREFIX` 和 `CANCELLED_TOOL_RESULT_MESSAGE` 从 `agent.ts` 私有常量提升为包级导出，消除硬编码字符串
+
+---
+### 115: Managed foreground ledger 切换 kind 时丢失 tool_group 引用 — 工具历史条目重复 (RESOLVED)
+
+- **Priority**: Medium
+- **Status**: Resolved
+- **Introduced**: v0.7.17
+- **Fixed**: v0.7.18
+- **Created**: 2026-04-13
+- **Resolved**: 2026-04-13
+
+- **Original Problem**:
+
+  在 AMA managed foreground 模式下，同一个工具调用偶发地在历史记录中出现两次：一次显示 `● (running)`，一次显示 `✓ (completed)`，中间夹一个 `Thinking` block。
+
+  ```
+  Tools [11:02 AM]
+  ● [Scout] bash - cmd=git commit -m "..." (running)
+  Running: waiting for tool output
+
+  Thinking
+  [Scout] Commit on `KodaX` branch...
+
+  Tools [11:02 AM]
+  ✓ [Scout] bash - cmd=git commit -m "..." (700ms)
+  ```
+
+  **根因**：`ManagedForegroundLedgerState` 将"当前写入目标类型"（`activeKind`）和"工具组生命周期跟踪"（`activeToolGroupItemId` / `activeToolGroupTools`）耦合在一起。当 `startManagedForegroundLedgerBlock` 从 `tool_group` 切换到 `thinking` 时，无条件清空了 `activeToolGroupItemId` 和 `activeToolGroupTools`（InkREPL.tsx 原 L1455-1456），即使工具仍在 Executing 状态。
+
+  后续 `onToolResult` 触发 `syncManagedForegroundToolGroup(finalizedTool)` 时，`activeKind` 已是 `"thinking"`，`activeToolGroupTools` 已空——函数找不到原始条目，创建了一个新的 `tool_group` 历史项。原始条目永久停留在 `● (running)` 状态。
+
+- **Context**:
+
+  **影响文件**：`packages/repl/src/ui/InkREPL.tsx`
+
+  **涉及函数**：
+  - `startManagedForegroundLedgerBlock` — ledger kind 切换时的状态管理
+  - `syncManagedForegroundToolGroup` — 工具状态同步到 managed foreground 历史
+
+  **触发条件**：工具执行期间，Scout 的 thinking 内容到达 UI（事件交错），导致 ledger 在 tool_group 和 thinking 之间切换。标准 API 流程中 thinking 在 tool_use 之前完成，但 Ctrl+C 中断/事件处理延迟可增加触发概率。
+
+- **Resolution**:
+
+  解耦 ledger 的"写入目标"和"工具组跟踪"两个关注点：
+
+  1. **`startManagedForegroundLedgerBlock`**：切换到 `thinking` / `assistant` 时，检查 `activeToolGroupTools` 中是否有 `Executing` 状态的工具。如有则保留 `activeToolGroupItemId` 和 `activeToolGroupTools`，仅切换 `activeKind`。
+
+  2. **`syncManagedForegroundToolGroup`**：新增前置路径——当 `activeKind !== "tool_group"` 但 `activeToolGroupItemId` 仍在且 tool ID 匹配时，原地更新原始 `tool_group` 历史条目。所有工具进入终态（Success / Error / Cancelled）后清理保留的引用。
+
+  **场景验证**：
+  - 正常流程（thinking → tool → result）：`hasExecutingTools` 为 false，走原逻辑，无变化
+  - Bug 场景（tool 执行中 thinking 插入）：保留引用 → 原地更新 → 不产生重复
+  - 多工具并行 + thinking 插入：逐个更新，最后一个终态时清理
+  - Phase 转换 / Worker 切换：`transitionManagedForegroundPhase` 做完整重置，不受影响
+
+---
+### 116: 协议代码块泄漏到用户可见文本 + H0_DIRECT routing 诊断噪音 (RESOLVED)
+
+- **Priority**: Medium
+- **Status**: Resolved
+- **Introduced**: v0.7.17
+- **Fixed**: v0.7.18
+- **Created**: 2026-04-13
+- **Resolved**: 2026-04-13
+
+- **Original Problem**:
+
+  两个相关的显示问题：
+
+  **问题 1 — 协议代码块泄漏**
+
+  Managed task 协议使用 ` ```kodax-task-XXX` fenced code block 作为结构化通信通道。同时 `emit_managed_protocol` 工具提供了第二个 JSON 侧通道。模型有时先开始输出文本通道（` ```kodax`），中途切换到工具通道，导致一个未闭合的 ` ```kodax` 片段泄漏到用户可见文本中。
+
+  流式清洗函数 `sanitizeManagedStreamingText`（task-engine.ts）和 `sanitizeManagedUserFacingText` 的正则 `/```kodax-[\w-]+/` 要求 `kodax-` 后至少跟一段后缀（如 `-task-scout`），但模型输出可能在 ` ```kodax` 处就被切换了，正则不匹配，fragment 通过 delta 转发到 REPL。
+
+  **问题 2 — H0_DIRECT routing 诊断噪音**
+
+  `buildManagedTaskRoutingTranscript` 在每次 managed task 完成后生成 routing 诊断事件（`> [Routing] AMA routing: raw=... -> final=...`）。对 H0_DIRECT（简单直接回答）这个诊断只显示 `H0_DIRECT → H0_DIRECT`，无信息量。
+
+- **Context**:
+
+  **正则覆盖 gap**：
+  - `sanitizeManagedStreamingText` task-engine.ts:3734 — 不完整 block 检测
+  - `sanitizeManagedUserFacingText` task-engine.ts:3711 — 完整 block 清洗
+  - `MANAGED_PROTOCOL_BLOCK_PATTERN` message-utils.ts:266 — session restore 清洗
+
+  **routing 诊断**：
+  - `buildManagedTaskRoutingTranscript` InkREPL.tsx:521 — 在 finalization 时生成 event 条目
+
+- **Resolution**:
+
+  **正则修复**：三处正则从 `kodax-[\w-]+` 放宽为 `kodax[\w-]*`，匹配所有 partial form（` ```kodax`、` ```kodax-`、` ```kodax-task-scout` 等）：
+  1. task-engine.ts `sanitizeManagedUserFacingText` — 完整 block 正则
+  2. task-engine.ts `sanitizeManagedStreamingText` — 不完整 block 正则
+  3. message-utils.ts `MANAGED_PROTOCOL_BLOCK_PATTERN` — session restore 正则
+
+  **routing 诊断**：`buildManagedTaskRoutingTranscript` 新增 early return — 当 `raw.harnessProfile === "H0_DIRECT" && final.harnessProfile === "H0_DIRECT"` 时跳过，H1/H2 和 routing 升级场景不受影响。
+
+---
+### 117: Managed task error recovery 断裂 — transient error 后任务未恢复 (RESOLVED)
+
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: v0.7.17
+- **Fixed**: v0.7.18
+- **Created**: 2026-04-13
+- **Resolved**: 2026-04-13
+
+- **Original Problem**:
+
+  当 API stream 在 Scout 工具执行阶段中断（如 "Stream stalled or delayed response (60s idle)"）时，Scout 已输出的可见文本（如"我来写 PRD"）和已发起的工具调用（如 `write` 创建文件）均未完成，但 managed task 系统将响应当作"已完成"处理，用户看到的是一个貌似完成但实际没有执行任何操作的回答。
+
+  **用户看到的现象**：
+  ```
+  Assistant: [Scout] 好的，我来为 SpaceRisk 项目设计一份完整的 PRD...
+  > [Routing] AMA routing: raw=H0_DIRECT(fallback) -> final=H0_DIRECT
+  ❌ API Error (Transient): Stream stalled or delayed response (60s idle)
+  🧹 Cleaned incomplete tool calls
+  ⏳ Retries exhausted. Press Enter to continue the conversation
+  ```
+
+  Scout 说了要创建文件但文件从未被创建。用户按 Enter 后进入新一轮对话，上下文中没有"上次任务未完成"的信号。
+
+- **Context**:
+
+  **根因：`recordCompletedAgentRound` 对失败 round 无条件执行 finalization**
+
+  `runQueuedPromptSequence`（queued-prompt-sequence.ts:23-29）的执行顺序：
+  ```typescript
+  let result = await runRound(prompt);    // ① runKodaX（可能 success=false）
+  while (true) {
+      await onRoundComplete?.(result);     // ② recordCompletedAgentRound — 无条件执行！
+      if (!shouldContinue(result)) {       // ③ 这里才检查 success
+          return result;                    // ④ 停止
+      }
+  }
+  ```
+
+  `onRoundComplete` 在 `shouldContinue` **之前**执行，且不检查 `result.success`。这意味着即使 `runKodaX` 返回 `{ success: false }`（API 超时），`recordCompletedAgentRound` 仍然：
+  - 将 managed foreground items 持久化到历史
+  - 调用 `buildManagedTaskTranscriptItems` 生成 routing 诊断事件
+  - 将 Scout 的未完成文本当作最终响应处理
+
+  用户看到的效果：`> [Routing]`（暗示完成）出现在 `❌ Error`（实际失败）之前——一个失败的 round 呈现为已完成。
+
+  **这不是纯网络问题——是架构问题。** `runQueuedPromptSequence` 不区分成功和失败的 round，对所有结果一视同仁地执行完整 finalization。即使没有网络错误，任何导致 `success: false` 的情况（rate limit、模型拒绝等）都会触发相同的行为。
+
+  **附带的重试断裂**：
+
+  | 层级 | 机制 | 断裂 |
+  |------|------|------|
+  | Provider 层 | 自动重试 API 请求 3 次 | 全部超时后错误上报 |
+  | Agent loop (`shouldContinue`) | `result.success !== false` → 停止 | Managed task escalation **被截断** |
+  | Managed task | H0 失败 → escalate 到 H1/H2（task-engine.ts:7615+） | **从未被触发** |
+
+  **涉及文件**：
+  - `packages/repl/src/ui/utils/queued-prompt-sequence.ts:23-29` — onRoundComplete 无条件执行
+  - `packages/repl/src/ui/InkREPL.tsx:5194` — `recordCompletedAgentRound` 不检查 success
+  - `packages/repl/src/ui/InkREPL.tsx:5346` — `shouldContinue` 检查在 onRoundComplete 之后
+  - `packages/coding/src/agent.ts` — `runKodaX()` 错误返回路径
+  - `packages/coding/src/task-engine.ts:7615` — `completeScoutH0Task()` 条件检查
+
+  **触发条件**：任何导致 `result.success === false` 的 API 错误（stream stall、rate limit、server overload、模型拒绝等）。
+
+- **Planned Resolution**:
+
+  **Phase 1（高优先级）：`recordCompletedAgentRound` 区分成功/失败 round**
+
+  当 `result.success === false` 时：
+  - 不生成 routing 诊断事件（不调用 `buildManagedTaskTranscriptItems` 或跳过 routing transcript）
+  - 不将 Scout 的未完成文本当作最终答案持久化
+  - 生成明确的 incomplete 指示，如 `⚠️ [Incomplete] 响应未完成（API 错误）`
+
+  改动点：`recordCompletedAgentRound` 开头检查 `result.success`，走不同的 finalization 路径。
+
+  **Phase 2（中优先级）：Agent loop 对 transient error 允许 managed task 重试**
+
+  当前 `shouldContinue` 把所有 `success === false` 一视同仁地停止。应区分：
+  - **API transient error**：managed task 应有机会用备选策略重试（escalate H0→H1）
+  - **Task logic failure**（模型拒绝、协议错误）：可以停止
+
+  改动点：`runKodaX` 返回值增加 `errorCategory`，`shouldContinue` 对 TRANSIENT 允许继续。
+
+  **Phase 3（低优先级）：Managed task 层的 Scout failure recovery**
+
+  当 Scout 因 transient error 失败时：
+  1. 检测 "Scout 发起了工具调用但未完成" 作为 incomplete 信号
+  2. 自动重试 Scout 执行，或 escalate 到 H1
+
+---
+### 111: SSE / Streamable HTTP MCP 传输缺少专项测试
+
+- **Priority**: Low
+- **Status**: Open
+- **Introduced**: v0.7.16
+- **Fixed**: -
+- **Created**: 2026-04-11
+
+- **Original Problem**:
+  `transport.ts` 中 `createSseTransport()` 和 `createStreamableHttpTransport()` 已实现，但没有对应的测试用例。stdio 路径有完整集成测试覆盖（provider.test.ts + mcp-tools.test.ts），远程传输尚未验证。
+
+- **Context**: 需要搭建 mock SSE/HTTP server 才能测试。工作量中等，不影响 stdio 功能。
+
+- **Planned Resolution**: 在 FEATURE_065 范围内创建 `transport.test.ts`，用 Node.js http server 模拟 SSE 和 Streamable HTTP 端点。
+
+---
+### 110: 缺少 /mcp status 和 /mcp refresh REPL 命令
+
+- **Priority**: Low
+- **Status**: Open
+- **Introduced**: v0.7.16
+- **Fixed**: -
+- **Created**: 2026-04-11
+
+- **Original Problem**:
+  用户无法在 REPL 中查看 MCP 连接状态（哪些 server 连接成功、哪些失败、catalog 有什么工具），也无法手动刷新 catalog。只能从 prompt context 间接看到 status=idle/ready/error。
+
+- **Context**: 涉及 `packages/repl/src/interactive/commands.ts`。调用 `extensionRuntime.getDiagnostics()` 和 `refreshCapabilityProviders()`。
+
+- **Planned Resolution**: 在 FEATURE_065 范围内添加 `/mcp` 命令（status 子命令 + refresh 子命令）。
+
+---
+### 109: 缺少 mcp_get_prompt 工具 — MCP prompt 能力未暴露给模型
+
+- **Priority**: Low
+- **Status**: Open
+- **Introduced**: v0.7.16
+- **Fixed**: -
+- **Created**: 2026-04-11
+
+- **Original Problem**:
+  MCP 协议支持三种能力：tool、resource、prompt。KodaX 暴露了 `mcp_call`（tool）、`mcp_read_resource`（resource），但 prompt 能力只在 runtime API 和测试中可达（`runtime.getPrompt()`），没有对应的模型可调用工具。
+
+- **Context**: 需要在 `packages/coding/src/tools/` 下新建 `mcp-get-prompt.ts`，和现有 4 个 MCP 工具同构。
+
+- **Planned Resolution**: 在 FEATURE_065 范围内添加 `mcp_get_prompt` 工具。
+
+---
+### 108: ACP server 链路未接入 MCP — 编辑器/ACP 场景下 mcpServers 配置不生效
+
+- **Priority**: High
+- **Status**: Open
+- **Introduced**: v0.7.16
+- **Fixed**: -
+- **Created**: 2026-04-11
+
+- **Original Problem**:
+  `acp_server.ts` 的 `buildKodaXOptions()` 没创建 extensionRuntime，编辑器/ACP 场景下 `mcpServers` 配置只记录了服务器数量（用于 diagnostics），不会实际注册 MCP capability provider。因此 VS Code 扩展等 ACP 场景无法使用 MCP 工具。
+
+- **Context**:
+  - `src/acp_server.ts` line 119: McpServer 数组仅计数
+  - `src/acp_server.ts` line 356: buildKodaXOptions 未传 extensionRuntime
+  - `src/acp_server.ts` line 514: session 创建不含 MCP 初始化
+  - CLI 路径（`kodax_cli.ts`）已正确接入：`hasConfiguredMcpServers()` → `createExtensionRuntime()` → `registerConfiguredMcpCapabilityProvider()`
+
+- **Planned Resolution**: 在 FEATURE_065 范围内，将 CLI 的 MCP 初始化逻辑抽为共享函数，ACP server 复用。
+
+---
+### 107: harnessProfile 类型命名残留 - H0/H1/H2 应替换为 worker-chain composition
+
+- **Priority**: Medium
+- **Status**: Open
+- **Introduced**: v0.7.16
+- **Fixed**: -
+- **Created**: 2026-04-11
+
+- **Original Problem**:
+  FEATURE_061 移除了预 Scout 状态机和 Tactical Flow，但 `harnessProfile: 'H0_DIRECT' | 'H1_EXECUTE_EVAL' | 'H2_PLAN_EXECUTE_EVAL'` 类型命名残留在 237 处引用、10 个文件中。这些名字编码的是"哪个预设配置"的思维，而 FEATURE_061 后系统实际运作方式是"Scout 决定需要哪些角色"。
+
+- **Context**:
+  `harnessProfile` 字段在以下位置被广泛使用：
+  - `types.ts`（5 处）：类型定义
+  - `reasoning.ts`（29 处）：路由决策
+  - `task-engine.ts`（106 处）：核心引擎
+  - `provider-policy.ts`（4 处）：provider 策略
+  - `agent.ts`（1 处）：agent 层
+  - 各测试文件（~90 处）
+
+  当前 `harnessProfile` 实际上只是一个 worker chain 的标签：
+  - `H0_DIRECT` → `[scout]`
+  - `H1_EXECUTE_EVAL` → `[generator, evaluator]`
+  - `H2_PLAN_EXECUTE_EVAL` → `[planner, generator, evaluator]`
+
+  `buildManagedTaskWorkers` 已经在做 worker chain 映射，harnessProfile 只是触发条件。
+
+- **Planned Resolution**:
+  1. 在 `KodaXTaskRoutingDecision` 中用 `workerChain: KodaXTaskRole[]` 替代 `harnessProfile`
+  2. 保留 `harnessProfile` 作为 derived label（向后兼容导出类型）
+  3. 内部路由逻辑改为基于 `workerChain` 而非 `harnessProfile`
+  4. 逐步更新 237 处引用
+
+- **Workaround**: 无需 workaround，当前命名不影响功能正确性。
+
 ---
 ### 106: Managed-task structured worker blocks remain text-coupled and can fail closed on protocol drift
 - **Priority**: High
@@ -1192,13 +1699,13 @@ _Last Updated: 2026-04-08_
   3. 当前 Team mode 仍未与后续 session / harness 体系完全打通
 
 - **Proposed Solution**:
-  - 继续推进现有 `FEATURE_022 Multi-Agent Orchestration Layer`
-  - 在完成前，明确 CLI 文案和能力边界，避免过度承诺
+  - `FEATURE_067 Parallel Task Dispatch` (v0.7.18) 作为最小可用切片：Scout 识别可并行子任务 → `runOrchestration` 并行派发 → 聚合结果
+  - 完整的 Team Agent 架构 (角色语义/状态聚合/review 边界) 留 v0.8.0 与 FEATURE_059 (Protocol V2) 同版本
 
 ---
 
 ### 093: 缺少 IDE / Desktop / Web 一体化分发表面 (OPEN)
-- **Priority**: Medium
+- **Priority**: Low (2026-04-11 降级: Vibe Coding 时代 terminal 是主入口，IDE Bridge 非关键)
 - **Status**: Open
 - **Introduced**: v0.6.10
 - **Created**: 2026-03-18
@@ -1215,14 +1722,22 @@ _Last Updated: 2026-04-08_
   - `packages/repl/`
   - 当前仓库中缺少对应 app / sdk surface 目录
 
+- **Priority Downgrade Rationale (2026-04-11)**:
+  基于 KodaX vs Claude Code 全面对比分析，IDE Bridge 的优先级从 Medium 降级为 Low：
+  1. Vibe Coding 范式下对话终端是主入口，不是 IDE 编辑器
+  2. KodaX 已有 terminal host 检测 (FEATURE_051)，在 VSCode 集成终端中可正常工作
+  3. Cursor/Windsurf/Copilot 已占领 IDE 原生 AI 赛道，KodaX 的核心差异化 (AMA/多 Provider/Repo Intelligence) 全部是 CLI-native
+  4. 建 IDE bridge 是高成本低差异化投入 (Claude Code 的 bridge 有 25+ 文件)
+
 - **Root Cause**:
   1. 研发重心长期集中在 CLI 与 project workflow
   2. 缺少统一的 surface protocol 与 session handoff layer
   3. 尚未形成跨表面的产品抽象
 
 - **Proposed Solution**:
-- 实施 `FEATURE_030 Multi-Surface Delivery`
-- 在 terminal UX 和 multi-agent 基础稳定后再逐步展开
+- 长期目标：实施 `FEATURE_030 Multi-Surface Delivery`
+- 短期：依赖 terminal host 检测 + IDE 集成终端作为分发面
+- 在 terminal UX 和 multi-agent 基础稳定后再评估是否需要原生 IDE 集成
 
 ---
 
@@ -1821,11 +2336,15 @@ _Last Updated: 2026-04-08_
 ---
 
 ## Summary
-- Total: 32 (11 Open, 21 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 44 (18 Open, 26 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-04-11: Issue 107 added
+- Added 107: harnessProfile 类型命名残留 - H0/H1/H2 应替换为 worker-chain composition (Medium Priority)
+- 由 FEATURE_061 Phase 5 识别，237 处引用跨 10 文件，需 v0.7.16 提交后独立处理
 
 ### 2026-04-03: Issue 105 added
 - Added 105: kodax -c 历史记录未注入 LLM 上下文 - resume 路径可能存在 gitRoot 过滤不一致 (Medium Priority)

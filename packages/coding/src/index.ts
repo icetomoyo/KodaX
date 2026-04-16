@@ -105,7 +105,7 @@ export type {
   KodaXMcpConnectMode,
 
   KodaXMcpServerConfig,
-  KodaXMcpConfig,
+  KodaXMcpServersConfig,
   KodaXTaskCapabilityHint,
   KodaXTaskVerificationCriterion,
   KodaXRuntimeVerificationContract,
@@ -150,6 +150,8 @@ export type {
   KodaXSessionTreeNode,
   KodaXToolExecutionContext,
   AskUserQuestionOptions,
+  AskUserQuestionItem,
+  AskUserMultiOptions,
   KodaXProviderPolicyHints,
   KodaXRepoIntelligenceCapability,
   KodaXRepoIntelligenceMode,
@@ -194,6 +196,8 @@ export {
   PROMISE_PATTERN,
   KODAX_FEATURES_FILE,
   KODAX_PROGRESS_FILE,
+  CANCELLED_TOOL_RESULT_PREFIX,
+  CANCELLED_TOOL_RESULT_MESSAGE,
 } from './constants.js';
 
 // ============== Provider (re-export from @kodax/ai) ==============
@@ -425,6 +429,8 @@ export {
   getSessionLineagePath,
   getSessionMessagesFromLineage,
   resolveSessionLineageTarget,
+  findPreviousUserEntryId,
+  rewindSessionLineage,
   setSessionLineageActiveEntry,
 } from './session.js';
 
@@ -541,6 +547,19 @@ export type {
   CreateKodaXTaskRunnerOptions,
 } from './orchestration.js';
 
+// ============== Parallel Dispatch ==============
+export {
+  isParallelDispatchDirective,
+  formatParallelDispatchResult,
+  validateSubtaskIndependence,
+} from './parallel-dispatch.js';
+
+export type {
+  ParallelSubtask,
+  ParallelDispatchDirective,
+  ParallelDispatchResult,
+} from './parallel-dispatch.js';
+
 // ============== Reasoning ==============
 export {
   KODAX_REASONING_MODE_SEQUENCE,
@@ -570,6 +589,28 @@ export {
 
 // Client alias
 export { KodaXClient as Client } from './client.js';
+
+// ============== Permissions ==============
+export {
+  classifyBashCommand,
+  createBashClassifierConfig,
+  DEFAULT_SAFE_PATTERNS,
+  DEFAULT_DANGEROUS_PATTERNS,
+} from './permissions/bash-classifier.js';
+export type {
+  BashRiskLevel,
+  BashClassificationResult,
+  BashClassifierConfig,
+} from './permissions/bash-classifier.js';
+
+export {
+  createDenialTracker,
+  recordDenial,
+  isDeniedRecently,
+  getDenialContext,
+  computeInputSignature,
+} from './permissions/denial-tracker.js';
+export type { DenialRecord, DenialTracker } from './permissions/denial-tracker.js';
 
 // ============== Context Loaders ==============
 
@@ -619,3 +660,7 @@ export {
 export {
   reconstructMessagesWithToolGuard,
 } from './resilience/tool-guard.js';
+
+// ============== Extension Helpers ==============
+export { exec, webhook } from './extensions/helpers.js';
+export type { ExecOptions, ExecResult, WebhookOptions, WebhookResult } from './extensions/helpers.js';

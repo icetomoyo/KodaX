@@ -86,6 +86,7 @@ export {
   KODAX_MAX_RETRIES,
   KODAX_RETRY_BASE_DELAY,
   KODAX_MAX_INCOMPLETE_RETRIES,
+  KODAX_MAX_MAXTOKENS_RETRIES,
   KODAX_STAGGER_DELAY,
   KODAX_API_MIN_INTERVAL,
   PROMISE_PATTERN,
@@ -107,6 +108,8 @@ export {
   getSessionLineagePath,
   getSessionMessagesFromLineage,
   resolveSessionLineageTarget,
+  findPreviousUserEntryId,
+  rewindSessionLineage,
   setSessionLineageActiveEntry,
 } from './session-lineage.js';
 
@@ -156,6 +159,25 @@ export {
   needsCompaction,
   compact,
 } from './compaction/compaction.js';
+
+export {
+  microcompact,
+  DEFAULT_MICROCOMPACTION_CONFIG,
+} from './compaction/microcompaction.js';
+export type {
+  MicrocompactionConfig,
+} from './compaction/microcompaction.js';
+
+export {
+  buildFileContentMessages,
+  buildPostCompactAttachments,
+  injectPostCompactAttachments,
+  DEFAULT_POST_COMPACT_CONFIG,
+} from './compaction/post-compact.js';
+export type {
+  PostCompactConfig,
+  PostCompactAttachments,
+} from './compaction/post-compact.js';
 
 // ============== Extension Persistence (FEATURE_034) ==============
 export {

@@ -17,6 +17,7 @@ import { toolGlob } from './glob.js';
 import { toolGrep } from './grep.js';
 import { toolUndo } from './undo.js';
 import { toolAskUserQuestion } from './ask-user-question.js';
+import { toolSetPermissionMode } from './set-permission-mode.js';
 import { toolRepoOverview } from './repo-overview.js';
 import { toolChangedScope } from './changed-scope.js';
 import { toolChangedDiff, toolChangedDiffBundle } from './changed-diff.js';
@@ -33,6 +34,9 @@ import { toolMcpSearch } from './mcp-search.js';
 import { toolMcpDescribe } from './mcp-describe.js';
 import { toolMcpCall } from './mcp-call.js';
 import { toolMcpReadResource } from './mcp-read-resource.js';
+import { toolMcpGetPrompt } from './mcp-get-prompt.js';
+import { toolWorktreeCreate, toolWorktreeRemove } from './worktree.js';
+import { toolDispatchChildTask } from './dispatch-child-tasks.js';
 
 const TOOL_REGISTRY: ToolRegistry = new Map();
 let nextToolRegistrationId = 0;
@@ -51,6 +55,16 @@ export const REPO_INTELLIGENCE_WORKING_TOOL_NAMES = [
 const REPO_INTELLIGENCE_WORKING_TOOL_NAME_SET = new Set<string>(
   REPO_INTELLIGENCE_WORKING_TOOL_NAMES,
 );
+
+export const MCP_TOOL_NAMES = [
+  'mcp_search',
+  'mcp_describe',
+  'mcp_call',
+  'mcp_read_resource',
+  'mcp_get_prompt',
+] as const;
+
+const MCP_TOOL_NAME_SET = new Set<string>(MCP_TOOL_NAMES);
 
 function extractRequiredParams(
   inputSchema: KodaXToolDefinition['input_schema'] | undefined,
@@ -186,12 +200,17 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
   },
   {
     name: 'bash',
-    description: 'Execute a shell command. Large output may be truncated to the most relevant tail.',
+    description: 'Execute a shell command. Use run_in_background for long-running commands. Large output may be truncated to the most relevant tail.',
     input_schema: {
       type: 'object',
       properties: {
         command: { type: 'string', description: 'The command to execute' },
+        description: { type: 'string', description: 'Clear, concise description of what this command does' },
         timeout: { type: 'number', description: 'Timeout in seconds' },
+        run_in_background: {
+          type: 'boolean',
+          description: 'Run command in background. Returns immediately with output file path. Use read tool to check output later.',
+        },
       },
       required: ['command'],
     },
@@ -212,16 +231,30 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
   },
   {
     name: 'grep',
-    description: 'Search for a pattern in files. Large result sets may be truncated; narrow the pattern or path when needed.',
+    description: 'Search for a regex pattern in file contents. Supports context lines, multiline matching, file type filtering, and pagination.',
     input_schema: {
       type: 'object',
       properties: {
-        pattern: { type: 'string', description: 'The regex pattern' },
-        path: { type: 'string', description: 'File or directory to search' },
-        ignore_case: { type: 'boolean', description: 'Case insensitive search' },
-        output_mode: { type: 'string', enum: ['content', 'files_with_matches', 'count'] },
+        pattern: { type: 'string', description: 'The regex pattern to search for in file contents' },
+        path: { type: 'string', description: 'File or directory to search in. Defaults to current working directory.' },
+        glob: { type: 'string', description: 'Glob pattern to filter files (e.g. "*.js", "*.{ts,tsx}")' },
+        type: { type: 'string', description: 'File type to search (e.g. js, ts, py, go, rust, java). More efficient than glob for standard types.' },
+        output_mode: {
+          type: 'string',
+          enum: ['content', 'files_with_matches', 'count'],
+          description: 'Output mode. "content" shows matching lines (default), "files_with_matches" shows file paths only, "count" shows match counts.',
+        },
+        ignore_case: { type: 'boolean', description: 'Case insensitive search (default false)' },
+        '-i': { type: 'boolean', description: 'Alias for ignore_case' },
+        '-A': { type: 'number', description: 'Number of lines to show after each match. Requires output_mode "content".' },
+        '-B': { type: 'number', description: 'Number of lines to show before each match. Requires output_mode "content".' },
+        '-C': { type: 'number', description: 'Alias for context' },
+        context: { type: 'number', description: 'Number of lines to show before and after each match. Requires output_mode "content".' },
+        multiline: { type: 'boolean', description: 'Enable multiline mode where . matches newlines and patterns can span lines. Default: false.' },
+        head_limit: { type: 'number', description: 'Limit output to first N entries. Defaults to 250. Pass 0 for unlimited.' },
+        offset: { type: 'number', description: 'Skip first N entries before applying head_limit. Defaults to 0.' },
       },
-      required: ['pattern', 'path'],
+      required: ['pattern'],
     },
     handler: toolGrep,
   },
@@ -244,6 +277,23 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['role', 'payload'],
     },
     handler: toolEmitManagedProtocol,
+  },
+  {
+    name: 'dispatch_child_task',
+    description: 'Execute a single child agent for an independent sub-task. The child runs its own multi-turn investigation loop and returns findings. Call multiple times in parallel for concurrent sub-tasks — each call appears as a separate tool with its own status in the transcript.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Unique child task identifier' },
+        objective: { type: 'string', description: 'Detailed multi-step goal for this child agent' },
+        readOnly: { type: 'boolean', description: 'true=investigation only (default), false=code changes (Generator only)' },
+        scope_summary: { type: 'string', description: 'Optional scope hint (e.g. "packages/ai/src/")' },
+        evidence_refs: { type: 'array', items: { type: 'string' }, description: 'Optional known evidence: "file:path", "diff:path", or "finding:text"' },
+        constraints: { type: 'array', items: { type: 'string' }, description: 'Optional constraints' },
+      },
+      required: ['objective'],
+    },
+    handler: toolDispatchChildTask,
   },
   {
     name: 'web_search',
@@ -368,6 +418,55 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
     handler: toolMcpReadResource,
   },
   {
+    name: 'mcp_get_prompt',
+    description: 'Retrieve an MCP prompt capability by id with optional arguments.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'MCP prompt capability id from mcp_search' },
+        args: {
+          type: 'object',
+          description: 'Optional arguments for the MCP prompt',
+        },
+      },
+      required: ['id'],
+    },
+    handler: toolMcpGetPrompt,
+  },
+  {
+    name: 'worktree_create',
+    description: 'Create a new git worktree with an isolated branch for safe agent work.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        branch_name: { type: 'string', description: 'Optional explicit branch name' },
+        description: { type: 'string', description: 'Optional description to auto-generate branch name from' },
+      },
+    },
+    handler: toolWorktreeCreate,
+  },
+  {
+    name: 'worktree_remove',
+    description: 'Remove a git worktree and optionally its branch.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['keep', 'remove'],
+          description: 'Whether to keep or remove the worktree directory and branch',
+        },
+        worktree_path: { type: 'string', description: 'Absolute path to the worktree directory' },
+        discard_changes: {
+          type: 'boolean',
+          description: 'If true, bypass safety checks for uncommitted changes or local commits',
+        },
+      },
+      required: ['action', 'worktree_path'],
+    },
+    handler: toolWorktreeRemove,
+  },
+  {
     name: 'undo',
     description: 'Revert the last file modification.',
     input_schema: { type: 'object', properties: {} },
@@ -375,14 +474,50 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
   },
   {
     name: 'ask_user_question',
-    description: 'Ask the user a question with multiple choice options. Use this when you need the user to make a decision.',
+    description: 'Ask the user a question. Supports single-select (default), multi-select, or free-text input. When you have multiple independent questions, use the "questions" array — each question is presented separately with its own options. Do NOT combine multiple questions into a single question string.',
     input_schema: {
       type: 'object',
       properties: {
-        question: { type: 'string', description: 'The question to ask the user' },
+        question: { type: 'string', description: 'The question to ask the user. Use this for a single question. For multiple independent questions, use the "questions" array instead.' },
+        questions: {
+          type: 'array',
+          description: 'Multiple independent questions (1-4). Each question is presented separately with its own options. Use this instead of combining multiple questions into a single "question" string. Takes precedence over "question"+"options" when provided.',
+          items: {
+            type: 'object',
+            properties: {
+              question: { type: 'string', description: 'The question text' },
+              header: { type: 'string', description: 'Short label (max 12 chars) shown in progress indicator, e.g. "环境" or "Deploy"' },
+              options: {
+                type: 'array',
+                description: 'Available options for this question.',
+                items: {
+                  type: 'object',
+                  properties: {
+                    label: { type: 'string', description: 'Display label for this option' },
+                    description: { type: 'string', description: 'Optional description of this option' },
+                    value: { type: 'string', description: 'Optional value to return (defaults to label)' },
+                  },
+                  required: ['label'],
+                },
+              },
+              multi_select: {
+                type: 'boolean',
+                description: 'Allow multiple selections for this question.',
+              },
+            },
+            required: ['question', 'options'],
+          },
+          minItems: 1,
+          maxItems: 4,
+        },
+        kind: {
+          type: 'string',
+          enum: ['select', 'input'],
+          description: 'Interaction kind. "select" (default) shows options for the user to pick from. "input" shows a free-text prompt for the user to type anything. Use "input" when the user needs to provide an open-ended answer (e.g. step combinations like "1,3,5", version numbers, custom text).',
+        },
         options: {
           type: 'array',
-          description: 'Available options for the user to choose from',
+          description: 'Available options for the user to choose from. Required for kind="select", ignored for kind="input".',
           items: {
             type: 'object',
             properties: {
@@ -393,31 +528,31 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
             required: ['label'],
           },
         },
-        default: { type: 'string', description: 'Optional default choice' },
-        intent: {
-          type: 'string',
-          enum: ['generic', 'plan-handoff'],
-          description: 'Optional ask intent. Use "plan-handoff" only after the plan is complete and you need permission to continue in accept-edits mode.',
+        multi_select: {
+          type: 'boolean',
+          description: 'Allow the user to select multiple options (space to toggle, enter to confirm). Only applies to kind="select". Returns comma-separated values.',
         },
-        target_mode: {
-          type: 'string',
-          enum: ['accept-edits'],
-          description: 'Target permission mode for a plan handoff request.',
-        },
-        scope: {
-          type: 'string',
-          enum: ['session'],
-          description: 'Scope of the permission change. Only session scope is supported.',
-        },
-        resume_behavior: {
-          type: 'string',
-          enum: ['continue'],
-          description: 'Whether execution should continue immediately after approval.',
-        },
+        default: { type: 'string', description: 'Optional default choice (for select) or default text (for input)' },
       },
-      required: ['question', 'options'],
+      required: ['question'],
     },
     handler: toolAskUserQuestion,
+  },
+  {
+    name: 'set_permission_mode',
+    description: 'Switch the session permission mode. Use this after the user explicitly confirms a mode change (e.g. after plan completion, call ask_user_question first, then call this tool only if the user confirmed).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        mode: {
+          type: 'string',
+          enum: ['accept-edits'],
+          description: 'Target permission mode. "accept-edits" enables file writes, edits, and bash commands.',
+        },
+      },
+      required: ['mode'],
+    },
+    handler: toolSetPermissionMode,
   },
   {
     name: 'repo_overview',
@@ -669,6 +804,52 @@ export function filterRepoIntelligenceWorkingToolNames<T extends string>(
   return toolNames.filter((name) => !isRepoIntelligenceWorkingToolName(name));
 }
 
+export function isMcpToolName(name: string): boolean {
+  return MCP_TOOL_NAME_SET.has(name);
+}
+
+export function filterMcpToolNames<T extends string>(
+  toolNames: readonly T[],
+): T[] {
+  return toolNames.filter((name) => !isMcpToolName(name));
+}
+
+/**
+ * Detect whether a handler's return value is an AsyncGenerator (streaming tool).
+ * Async generators have Symbol.asyncIterator; Promises do not.
+ */
+function isAsyncGenerator(value: unknown): value is AsyncGenerator<unknown, unknown, unknown> {
+  return (
+    value !== null
+    && value !== undefined
+    && typeof value === 'object'
+    && Symbol.asyncIterator in (value as object)
+  );
+}
+
+/**
+ * Consume an async generator: forward each yield as a progress update,
+ * then return the generator's final return value.
+ *
+ * NOTE: `for await...of` does NOT capture the return value of a generator.
+ * We must use manual .next() iteration to capture `{ done: true, value }`.
+ */
+async function consumeToolGenerator(
+  gen: AsyncGenerator<import('./types.js').ToolProgress, string, void>,
+  onProgress?: (message: string) => void,
+): Promise<string> {
+  let step = await gen.next();
+  while (!step.done) {
+    const progress = step.value;
+    if (progress && typeof progress.message === 'string') {
+      onProgress?.(progress.message);
+    }
+    step = await gen.next();
+  }
+  // step.done === true → step.value is the return value (string)
+  return step.value;
+}
+
 export async function executeTool(
   name: string,
   input: Record<string, unknown>,
@@ -687,7 +868,18 @@ export async function executeTool(
   }
 
   try {
-    return await definition.handler(input, ctx);
+    const result = definition.handler(input, ctx);
+
+    // Streaming tool (async generator): consume yields as progress, return final value
+    if (isAsyncGenerator(result)) {
+      return await consumeToolGenerator(
+        result as AsyncGenerator<import('./types.js').ToolProgress, string, void>,
+        ctx.reportToolProgress,
+      );
+    }
+
+    // Standard tool (Promise<string>): await as before
+    return await (result as Promise<string>);
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     if (errorMsg.includes('ENOENT')) {

@@ -8,7 +8,18 @@ export type RestoredHistorySeed =
   | { type: "user"; text: string }
   | { type: "assistant"; text: string }
   | { type: "system"; text: string }
-  | { type: "thinking"; text: string };
+  | { type: "thinking"; text: string }
+  | { type: "tool_summary"; text: string };
+
+/** Convert a RestoredHistorySeed to a CreatableHistoryItem. tool_summary → event with icon. */
+export function seedToHistoryItem(
+  seed: RestoredHistorySeed,
+): { type: "user"; text: string } | { type: "assistant"; text: string } | { type: "system"; text: string } | { type: "thinking"; text: string } | { type: "event"; text: string; icon: string } {
+  if (seed.type === "tool_summary") {
+    return { type: "event" as const, text: seed.text, icon: "tool" };
+  }
+  return seed;
+}
 
 const THINKING_OPEN_TAG = "[Thinking]";
 const THINKING_CLOSE_TAG = "[/Thinking]";
@@ -112,6 +123,31 @@ function stripLegacyTagBoundaryNewlines(text: string): string {
   return text.replace(/^\n+/, "").replace(/\n+$/, "");
 }
 
+function formatToolUseSummary(block: { name: string; input?: Record<string, unknown> }): string {
+  const name = block.name;
+  const input = block.input;
+  if (!input) {
+    return `⚡ ${name}`;
+  }
+  const hint = name === 'bash'
+    ? truncateToolHint(String(input.command ?? ''))
+    : name === 'read' || name === 'write' || name === 'edit'
+      ? truncateToolHint(String(input.file_path ?? input.path ?? ''))
+      : name === 'grep'
+        ? truncateToolHint(String(input.pattern ?? ''))
+        : name === 'glob'
+          ? truncateToolHint(String(input.pattern ?? ''))
+          : name === 'web_search' || name === 'web_fetch'
+            ? truncateToolHint(String(input.query ?? input.url ?? ''))
+            : undefined;
+  return hint ? `⚡ ${name}(${hint})` : `⚡ ${name}`;
+}
+
+function truncateToolHint(value: string, max = 60): string {
+  const oneLine = value.replace(/\s+/g, ' ').trim();
+  return oneLine.length > max ? `${oneLine.slice(0, max)}...` : oneLine;
+}
+
 function parseLegacyAssistantContent(content: string): RestoredHistorySeed[] {
   if (!content.includes(THINKING_OPEN_TAG) || !content.includes(THINKING_CLOSE_TAG)) {
     return content.trim().length > 0 ? [{ type: "assistant", text: content }] : [];
@@ -185,6 +221,14 @@ function extractAssistantHistorySeeds(content: string | readonly unknown[]): Res
         }
         break;
       case "tool_use":
+        flushAssistantBuffer();
+        if ("name" in block) {
+          const summary = formatToolUseSummary(block as { name: string; input?: Record<string, unknown> });
+          if (summary) {
+            items.push({ type: "tool_summary", text: summary });
+          }
+        }
+        break;
       case "tool_result":
       case "redacted_thinking":
         break;
@@ -203,6 +247,7 @@ function extractAssistantHistorySeeds(content: string | readonly unknown[]): Res
 export interface HistorySeedSourceMessage {
   role: KodaXMessage["role"];
   content: string | KodaXContentBlock[];
+  _synthetic?: boolean;
 }
 
 /**
@@ -210,13 +255,45 @@ export interface HistorySeedSourceMessage {
  * Assistant messages preserve thinking blocks as dedicated history items so
  * restored sessions render with the same styling as live thinking output.
  */
+// Markers that identify internal managed task worker prompts (never user-visible).
+const MANAGED_WORKER_PROMPT_MARKERS = [
+  'You are the Scout role',
+  'You are the Generator role',
+  'You are the Planner role',
+  'You are the Evaluator role',
+];
+
+// Protocol fenced blocks that should be stripped from assistant text during session restore.
+const MANAGED_PROTOCOL_BLOCK_PATTERN = /\r?\n?\`\`\`kodax[\w-]*[\s\S]*?\`\`\`\s*/g;
+
+function isManagedWorkerPrompt(text: string): boolean {
+  return MANAGED_WORKER_PROMPT_MARKERS.some((marker) => text.includes(marker));
+}
+
+function stripManagedProtocolBlocks(text: string): string {
+  return text.replace(MANAGED_PROTOCOL_BLOCK_PATTERN, '').trim();
+}
+
 export function extractHistorySeedsFromMessage(message: HistorySeedSourceMessage): RestoredHistorySeed[] {
   switch (message.role) {
-    case "assistant":
-      return extractAssistantHistorySeeds(message.content);
+    case "assistant": {
+      const seeds = extractAssistantHistorySeeds(message.content);
+      // Strip protocol blocks from assistant text; drop seeds that become empty.
+      return seeds
+        .map((seed) => ({ ...seed, text: stripManagedProtocolBlocks(seed.text) }))
+        .filter((seed) => seed.text.length > 0);
+    }
     case "user": {
+      // Skip synthetic messages (auto-continue, retry prompts injected by the system).
+      if (message._synthetic) {
+        return [];
+      }
       const content = extractTextContent(message.content);
-      return content.trim().length > 0 ? [{ type: "user", text: content }] : [];
+      // Skip internal worker prompts (Scout/Generator/Planner/Evaluator role instructions).
+      if (content.trim().length === 0 || isManagedWorkerPrompt(content)) {
+        return [];
+      }
+      return [{ type: "user", text: content }];
     }
     case "system": {
       const content = extractTextContent(message.content);

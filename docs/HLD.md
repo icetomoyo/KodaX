@@ -1,9 +1,9 @@
 # KodaX 高层设计（HLD）
 
-> Last updated: 2026-03-29
+> Last updated: 2026-04-12
 >
-> 这份文档描述 `FEATURE_022` 当前已经落地的高层架构：
-> KodaX 现在是一个以 `task` 为中心、强调“极简且智能”的执行引擎。
+> 这份文档描述 `FEATURE_061/062` 之后的高层架构：
+> KodaX 现在是一个 Scout-first、以 `task` 为中心、强调”极简且智能”的执行引擎。
 
 ## 中文导读
 
@@ -12,10 +12,11 @@
 1. `SA` 与 `AMA` 是用户可见的执行模式，但不是两套完全独立的产品。
 2. `SA` 完全不走 AMA；它是单 agent 直接执行路径。
 3. `AMA` 只保留 `H0 / H1 / H2` 三层；`H3` 已移除。
-4. `Scout` 是 pre-harness 角色，只负责判断/牵引，不属于 H2 主 graph。
+4. `Scout` 是 AMA 的唯一入口（FEATURE_061）：H0 时直接完成，H1/H2 时升级并保留上下文。Scout 不属于 H2 主 graph。
 5. `H2` 的核心骨架固定为 `Planner -> Generator <-> Evaluator`。
-6. `Work` 是用户可见的主预算语义；`Round` 只在真实额外 pass 存在时出现。
+6. `Work` 是用户可见的主预算语义；budget 模型已简化为 `{ cap, used }` + 4 纯函数（FEATURE_062）。
 7. `Project` 与 `SA / AMA` 是正交维度；`Project + SA` 是一等路径，但只写 lightweight run record，不写 managed task。
+8. 每个 AMA 角色（Scout/Planner/Generator/Evaluator）可通过 `runOrchestration` 拉 subagent 并行执行。
 
 ---
 
@@ -94,17 +95,19 @@ Surfaces
 
 命中的请求直接走 `H0_DIRECT` 或 `SA` direct path，不读 dirty repo，不起 managed ceremony。
 
-### 3.3 Scout
+### 3.3 Scout（FEATURE_061 更新）
 
-`Scout` 是 pre-harness 单 agent 牵引层。
+`Scout` 是 AMA 的唯一入口和 pre-harness 执行者。
 
 它的职责是：
 
-- 判断任务是否 actionable
-- 判断是否值得进入 `H1 / H2`
-- 收集 `scope facts`
-- 最多少量补 `overview evidence`
+- 作为所有 AMA 请求的第一站（无预路由 LLM 调用）
+- 判断任务是否 actionable 和是否值得进入 `H1 / H2`
+- H0 时直接完成任务（Scout-complete H0）
+- 升级到 H1/H2 时保留已有上下文（context continuation，不再冷启动）
+- 收集 `scope facts`，最多少量补 `overview evidence`
 - 如果 skill 被激活，则读取完整 expanded skill 并生成 `skill-map`
+- 可通过 `runOrchestration` 拉 subagent 做并行子任务
 
 它**不是** H2 内的长期角色。
 
@@ -444,6 +447,8 @@ Evaluator 的内部职责保留在 verdict / artifact 中。
 - `FEATURE_028`: retrieval / evidence tooling
 - `FEATURE_029`: provider-aware harness policy
 - `FEATURE_034`: extension / capability runtime
+- `FEATURE_061`: Scout-first AMA — Scout 成为唯一入口，H0 直接完成，context continuation，subagent 并行
+- `FEATURE_062`: Budget simplification — `{ cap, used }` + 4 纯函数替代 10 字段 + 14 函数
 
 ---
 

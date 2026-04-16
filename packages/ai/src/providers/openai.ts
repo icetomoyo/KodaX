@@ -130,6 +130,10 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
     });
   }
 
+  protected override onStaleConnection(): void {
+    this.initClient();
+  }
+
   private appendExtraBody(
     params: Record<string, unknown>,
     extraBody: Record<string, unknown>,
@@ -181,7 +185,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
     // those fields on the raw request object here.
     const params = createParams as unknown as Record<string, unknown>;
     const maxOutputTokens =
-      this.config.maxOutputTokens ?? KODAX_MAX_TOKENS;
+      this.maxOutputTokensOverride ?? this.config.maxOutputTokens ?? KODAX_MAX_TOKENS;
     const requestedBudget = clampThinkingBudget(
       resolveThinkingBudget(
         this.config,
@@ -303,7 +307,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         messages: fullMessages,
         tools: openaiTools,
         max_completion_tokens:
-          this.config.maxOutputTokens ?? KODAX_MAX_TOKENS,
+          this.maxOutputTokensOverride ?? this.config.maxOutputTokens ?? KODAX_MAX_TOKENS,
         stream: true,
       };
 
@@ -366,11 +370,31 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         );
       }
 
+      let prevChunkTime = Date.now();
+      let stallCount = 0;
+      let totalStallMs = 0;
+      const STALL_THRESHOLD_MS = 30_000;
+
       for await (const chunk of stream) {
         // 检查是否被中断 (双重保险)
         if (signal?.aborted) {
           throw new DOMException('Request aborted', 'AbortError');
         }
+
+        // Stall detection: passive diagnostic logging when gap > 30s.
+        const now = Date.now();
+        const gapMs = now - prevChunkTime;
+        if (gapMs > STALL_THRESHOLD_MS) {
+          stallCount++;
+          totalStallMs += gapMs;
+          this.logStreamDiagnostic(`[Stream] stall detected: ${Math.round(gapMs / 1000)}s gap`, {
+            stallCount, totalStallMs,
+          });
+        }
+        prevChunkTime = now;
+
+        // Keep idle timers alive on every SSE chunk.
+        streamOptions?.onHeartbeat?.();
 
         usage = normalizeOpenAIUsage(chunk.usage as OpenAIUsageLike) ?? usage;
 
@@ -460,7 +484,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
           catch { toolBlocks.push({ type: 'tool_use', id: tc.id, name: tc.name, input: {} }); }
         }
       }
-      return { textBlocks, toolBlocks, thinkingBlocks, usage };
+      return { textBlocks, toolBlocks, thinkingBlocks, usage, stopReason: finishReason ?? undefined };
     }, signal, 3, streamOptions?.onRateLimit);
   }
 
@@ -510,7 +534,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         messages: fullMessages,
         tools: openaiTools,
         max_completion_tokens:
-          this.config.maxOutputTokens ?? KODAX_MAX_TOKENS,
+          this.maxOutputTokensOverride ?? this.config.maxOutputTokens ?? KODAX_MAX_TOKENS,
       };
 
       let response: OpenAI.Chat.Completions.ChatCompletion | undefined;
@@ -596,6 +620,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         toolBlocks,
         thinkingBlocks,
         usage: normalizeOpenAIUsage(response.usage as OpenAIUsageLike),
+        stopReason: choice?.finish_reason ?? undefined,
       };
     }, signal, 3, streamOptions?.onRateLimit);
   }

@@ -31,7 +31,6 @@ import {
   parsePositiveNumberWithFallback,
   resolveCliAgentMode,
   resolveCliModelSelection,
-  resolveCliParallel,
   resolveCliReasoningMode,
   type CliOutputMode,
   type CliOptions,
@@ -85,12 +84,11 @@ export {
   parsePermissionModeOption,
   processCommandCall,
   resolveCliAgentMode,
-  resolveCliParallel,
 };
 export type { KodaXCommand, KodaXCommandContext };
 
-function hasConfiguredMcpServers(config: { mcp?: { servers?: Record<string, { connect?: string }> } }): boolean {
-  return Object.values(config.mcp?.servers ?? {}).some(
+function hasConfiguredMcpServers(config: { mcpServers?: Record<string, { connect?: string }> }): boolean {
+  return Object.values(config.mcpServers ?? {}).some(
     (server) => (server.connect ?? 'lazy') !== 'disabled',
   );
 }
@@ -281,8 +279,7 @@ const CLI_HELP_TOPICS: Record<string, () => void> = {
     console.log(chalk.dim('  Legacy orchestration-based parallel execution for loosely coupled tasks.'));
     console.log(chalk.dim('  Prefer --agent-mode ama|sa for the product path. --team is being sunset.\n'));
     console.log(chalk.bold('Options:'));
-    console.log(chalk.dim('  --team <tasks>      ') + 'Deprecated legacy option');
-    console.log(chalk.dim('  -j, --parallel      ') + 'Enable parallel tool execution\n');
+    console.log(chalk.dim('  --team <tasks>      ') + 'Deprecated legacy option\n');
     console.log(chalk.bold('Examples:'));
     console.log(chalk.dim('  kodax --team "fix auth tests,update docs,clean logs"'));
     console.log(chalk.dim('  kodax --team "task1,task2" -m anthropic --reasoning balanced\n'));
@@ -527,7 +524,6 @@ function showBasicHelp(): void {
   console.log('  -y, --auto              Backward-compat alias; no effect in non-REPL CLI');
   console.log('  -s, --session OP        Legacy session operations: list, resume, delete <id>, delete-all, or raw session ID');
   console.log('  --no-session            Disable session persistence (print mode only)');
-  console.log('  -j, --parallel          Parallel tool execution');
   console.log('  --team TASKS            Deprecated legacy parallel team mode');
   console.log('  --init TASK             Initialize a long-running task');
   console.log('  --append                Deprecated compatibility alias for the old append flow');
@@ -588,7 +584,6 @@ async function main() {
     .option('--repointel-bin <path>', 'Premium CLI path used to warm/start daemon')
     .option('-y, --auto', 'Backward-compat alias; no effect in non-REPL CLI')
     .option('-s, --session <op>', 'Legacy session operations: list, resume, delete <id>, delete-all, or raw session ID')
-    .option('-j, --parallel', 'Parallel tool execution')
     .option('--extension <path>', 'Load local extension module (.js/.mjs/.cjs/.ts/.mts/.cts)', collectRepeatedOption, [])
     .option('--no-session', 'Disable session persistence (print mode only)')
     // Long options.
@@ -603,6 +598,89 @@ async function main() {
     .allowUnknownOption(false)
     // Keep the root command executable even when subcommands like `skill` exist.
     .action(() => {});
+
+  // ============== completion subcommand ==============
+  program
+    .command('completion')
+    .description('Generate shell completion script')
+    .argument('<shell>', 'Shell type: bash, zsh, or fish')
+    .action((shell: string) => {
+      const providerNames = getAvailableProviderNames().join(' ');
+      const reasoningModes = 'off auto quick balanced deep';
+      const agentModes = 'ama sa';
+
+      if (shell === 'bash') {
+        console.log(`# KodaX bash completion — add to ~/.bashrc:
+#   eval "$(kodax completion bash)"
+_kodax_complete() {
+  local cur prev opts subcmds
+  COMPREPLY=()
+  cur="\${COMP_WORDS[COMP_CWORD]}"
+  prev="\${COMP_WORDS[COMP_CWORD-1]}"
+  subcmds="acp skill completion"
+  opts="-p -c -r -n -m -t -s -y -h --print --continue --resume --new --provider --model --thinking --reasoning --agent-mode --repo-intelligence --repo-intelligence-trace --repointel-endpoint --repointel-bin --auto --session --extension --no-session --team --init --append --overwrite --max-iter --auto-continue --max-sessions --max-hours --version"
+
+  case "\${prev}" in
+    --provider|-m) COMPREPLY=( $(compgen -W "${providerNames}" -- "\${cur}") ); return 0 ;;
+    --reasoning) COMPREPLY=( $(compgen -W "${reasoningModes}" -- "\${cur}") ); return 0 ;;
+    --agent-mode) COMPREPLY=( $(compgen -W "${agentModes}" -- "\${cur}") ); return 0 ;;
+    --repo-intelligence) COMPREPLY=( $(compgen -W "auto off oss premium-shared premium-native" -- "\${cur}") ); return 0 ;;
+  esac
+
+  if [[ "\${cur}" == -* ]]; then
+    COMPREPLY=( $(compgen -W "\${opts}" -- "\${cur}") )
+  elif [[ \${COMP_CWORD} -eq 1 ]]; then
+    COMPREPLY=( $(compgen -W "\${subcmds}" -- "\${cur}") )
+  fi
+}
+complete -F _kodax_complete kodax`);
+      } else if (shell === 'zsh') {
+        console.log(`# KodaX zsh completion — add to ~/.zshrc:
+#   eval "$(kodax completion zsh)"
+_kodax() {
+  local -a subcmds opts providers reasoning_modes agent_modes repo_modes
+  subcmds=(acp skill completion)
+  providers=(${providerNames.replace(/ /g, ' ')})
+  reasoning_modes=(off auto quick balanced deep)
+  agent_modes=(ama sa)
+  repo_modes=(auto off oss premium-shared premium-native)
+
+  _arguments -C \\
+    '-p[Print mode]+:text:' \\
+    '-c[Continue most recent conversation]' \\
+    '-r[Resume session by ID]::id:' \\
+    '-m[LLM provider]+:provider:($providers)' \\
+    '--provider+[LLM provider]:provider:($providers)' \\
+    '--model+[Model override]:model:' \\
+    '-t[Enable thinking]' \\
+    '--reasoning+[Reasoning mode]:mode:($reasoning_modes)' \\
+    '--agent-mode+[Agent mode]:mode:($agent_modes)' \\
+    '--repo-intelligence+[Repo intelligence mode]:mode:($repo_modes)' \\
+    '--version[Show version]' \\
+    '-h[Show help]' \\
+    '1:subcommand:($subcmds)' \\
+    '*::arg:->args'
+}
+compdef _kodax kodax`);
+      } else if (shell === 'fish') {
+        console.log(`# KodaX fish completion — add to ~/.config/fish/completions/kodax.fish:
+#   kodax completion fish > ~/.config/fish/completions/kodax.fish
+complete -c kodax -n '__fish_use_subcommand' -a 'acp skill completion' -d 'Subcommands'
+complete -c kodax -s p -l print -d 'Print mode'
+complete -c kodax -s c -l continue -d 'Continue most recent conversation'
+complete -c kodax -s r -l resume -d 'Resume session by ID'
+complete -c kodax -s m -l provider -d 'LLM provider' -xa '${providerNames}'
+complete -c kodax -l model -d 'Model override'
+complete -c kodax -s t -l thinking -d 'Enable thinking'
+complete -c kodax -l reasoning -d 'Reasoning mode' -xa '${reasoningModes}'
+complete -c kodax -l agent-mode -d 'Agent mode' -xa '${agentModes}'
+complete -c kodax -l repo-intelligence -d 'Repo intelligence mode' -xa 'auto off oss premium-shared premium-native'
+complete -c kodax -l version -d 'Show version'`);
+      } else {
+        console.error(`Unknown shell: ${shell}. Supported: bash, zsh, fish`);
+        process.exit(1);
+      }
+    });
 
   const skillCommand = program
     .command('skill')
@@ -969,7 +1047,6 @@ async function main() {
   }
   const reasoningMode = resolveCliReasoningMode(program, opts, config);
   const agentMode = resolveCliAgentMode(program, opts, config);
-  const parallel = resolveCliParallel(program, opts, config);
   const configuredExtensions = Array.isArray(configWithExtensions.extensions)
     ? configWithExtensions.extensions
       .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
@@ -1005,7 +1082,6 @@ async function main() {
     outputMode: (opts.mode as CliOutputMode | undefined) ?? 'text',
     extensions: activeExtensions,
     session: opts.session,
-    parallel,
     team: opts.team,
     init: opts.init,
     append: opts.append ?? false,
@@ -1058,7 +1134,7 @@ async function main() {
 
   if ((options.extensions?.length ?? 0) > 0 || hasActiveMcp) {
     const extensionRuntime = createExtensionRuntime({ config });
-    await registerConfiguredMcpCapabilityProvider(extensionRuntime, configWithExtensions.mcp);
+    await registerConfiguredMcpCapabilityProvider(extensionRuntime, configWithExtensions.mcpServers);
     const extensionLoader = extensionRuntime as typeof extensionRuntime & {
       loadExtensions: (
         paths: string[],
@@ -1326,7 +1402,6 @@ New: {"features": [
         reasoningMode: kodaXOptions.reasoningMode,
         agentMode: kodaXOptions.agentMode,
         maxIter: kodaXOptions.maxIter,
-        parallel: kodaXOptions.parallel,
         extensionRuntime: kodaXOptions.extensionRuntime,
         session: kodaXOptions.session,
         storage: new FileSessionStorage(),
