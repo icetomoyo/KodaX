@@ -6388,7 +6388,7 @@ async function runManagedScoutStage(
       confirmedHarness: 'H0_DIRECT',
       harnessRationale: explicitDirective?.harnessRationale ?? 'Scout completed without requesting escalation.',
       blockingEvidence: [],
-      directCompletionReady: result.success !== false ? 'yes' : 'no',
+      directCompletionReady: explicitDirective?.directCompletionReady ?? (result.success !== false ? 'yes' : 'no'),
       userFacingText: sanitizeManagedUserFacingText(explicitDirective?.userFacingText || scoutText || ''),
       skillMap: explicitDirective?.skillMap,
     },
@@ -8253,11 +8253,14 @@ export async function runManagedTask(
   }
 
   // Scout failed (API error, abort, etc.) but was H0 — don't enter multi-agent pipeline.
+  // Still create a full managedTask so the UI can show what files were touched and why it failed.
   if (scoutExecution.directive.confirmedHarness === 'H0_DIRECT') {
-    return {
-      ...scoutExecution.result,
-      routingDecision: finalRoutingDecision,
-    };
+    return completeScoutH0Task({
+      options: managedOptions, originalTask: managedOriginalTask, plan,
+      scoutExecution, scoutBudgetController,
+      rawRoutingDecision, finalRoutingDecision, routingOverrideReason,
+      skillMap, agentMode,
+    });
   }
 
   // H1/H2: Scout explicitly escalated via emit_managed_protocol. Enter multi-agent pipeline.
