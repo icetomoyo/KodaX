@@ -20,6 +20,7 @@ import type {
 } from '@kodax/coding';
 import {
   appendSessionLineageLabel,
+  archiveOldIslands,
   cleanupIncompleteToolCalls,
   countActiveLineageMessages,
   createSessionLineage,
@@ -55,6 +56,26 @@ interface PersistedLineageEntryLine {
 interface PersistedArtifactLedgerLine {
   _type: 'artifact_ledger_entry';
   entry: KodaXSessionArtifactLedgerEntry;
+}
+
+interface PersistedMetaUpdateLine {
+  _type: 'meta_update';
+  title?: string;
+  activeEntryId?: string | null;
+  activeMessageCount?: number;
+  uiHistory?: KodaXSessionMeta['uiHistory'];
+  scope?: string;
+}
+
+function isPersistedMetaUpdateLine(value: unknown): value is PersistedMetaUpdateLine {
+  if (!isRecord(value) || value._type !== 'meta_update') {
+    return false;
+  }
+  return (value.title === undefined || typeof value.title === 'string')
+    && (value.activeEntryId === undefined || typeof value.activeEntryId === 'string' || value.activeEntryId === null)
+    && (value.activeMessageCount === undefined || typeof value.activeMessageCount === 'number')
+    && (value.uiHistory === undefined || isKodaXSessionUiHistory(value.uiHistory))
+    && (value.scope === undefined || typeof value.scope === 'string');
 }
 
 interface PersistedSessionSnapshot {
@@ -149,6 +170,10 @@ function isKodaXSessionEntry(value: unknown): value is KodaXSessionEntry {
     case 'label':
       return typeof entry.targetId === 'string'
         && (entry.label === undefined || typeof entry.label === 'string');
+    case 'archive_marker':
+      return typeof entry.archiveBatchId === 'string'
+        && typeof entry.archivedEntryCount === 'number'
+        && typeof entry.summary === 'string';
     default:
       return false;
   }
@@ -216,7 +241,7 @@ function buildLineage(
     return {
       version: 2,
       activeEntryId: snapshot.meta?.activeEntryId ?? getLastNavigableEntryId(snapshot.lineageEntries),
-      entries: snapshot.lineageEntries.map((entry) => structuredClone(entry)),
+      entries: snapshot.lineageEntries,
     };
   }
 
@@ -234,7 +259,7 @@ function buildSessionData(snapshot: PersistedSessionSnapshot): ResolvedSessionSn
       data: {
         messages: lineage
           ? getSessionMessagesFromLineage(lineage)
-          : snapshot.legacyMessages.map((message) => structuredClone(message)),
+          : [...snapshot.legacyMessages],
         title: snapshot.meta?.title ?? '',
         gitRoot: snapshot.meta?.gitRoot ?? '',
         runtimeInfo: isKodaXSessionRuntimeInfo(snapshot.meta?.runtimeInfo)
@@ -245,7 +270,7 @@ function buildSessionData(snapshot: PersistedSessionSnapshot): ResolvedSessionSn
           ? snapshot.meta.uiHistory.map((item) => ({ ...item }))
           : undefined,
         errorMetadata: isSessionErrorMetadata(snapshot.meta?.errorMetadata)
-          ? snapshot.meta?.errorMetadata
+          ? { ...snapshot.meta!.errorMetadata }
           : undefined,
       extensionState: isKodaXExtensionSessionState(snapshot.meta?.extensionState)
         ? snapshot.meta?.extensionState
@@ -314,16 +339,25 @@ async function readPersistedSessionFile(filePath: string): Promise<PersistedSess
         continue;
       }
 
+      // meta_update: white-list merge into existing meta (append-only hot path support)
+      if (isPersistedMetaUpdateLine(parsed)) {
+        if (snapshot.meta) {
+          if (parsed.title !== undefined) snapshot.meta.title = parsed.title;
+          if (parsed.activeEntryId !== undefined) snapshot.meta.activeEntryId = parsed.activeEntryId;
+          if (parsed.activeMessageCount !== undefined) snapshot.meta.activeMessageCount = parsed.activeMessageCount;
+          if (parsed.uiHistory !== undefined) snapshot.meta.uiHistory = parsed.uiHistory;
+          if (parsed.scope !== undefined) snapshot.meta.scope = parsed.scope as KodaXSessionScope;
+        }
+        continue;
+      }
+
       if (isPersistedLineageEntryLine(parsed)) {
-        snapshot.lineageEntries.push(structuredClone(parsed.entry));
+        snapshot.lineageEntries.push(parsed.entry);
         continue;
       }
 
       if (isPersistedArtifactLedgerLine(parsed)) {
-        snapshot.artifactLedger.push({
-          ...parsed.entry,
-          metadata: parsed.entry.metadata ? structuredClone(parsed.entry.metadata) : undefined,
-        });
+        snapshot.artifactLedger.push(parsed.entry);
         continue;
       }
 
@@ -340,7 +374,7 @@ async function readPersistedSessionFile(filePath: string): Promise<PersistedSess
       }
 
       if (isKodaXMessage(parsed)) {
-        snapshot.legacyMessages.push(structuredClone(parsed));
+        snapshot.legacyMessages.push(parsed);
         continue;
       }
 
@@ -354,8 +388,48 @@ async function readPersistedSessionFile(filePath: string): Promise<PersistedSess
 }
 
 export class FileSessionStorage implements KodaXSessionStorage {
+  // ── Session-level write serialization ──
+  // All writes (append / cold save / maintenance) for the same session are
+  // serialized through a per-session promise chain.  State reads, delta
+  // computation, and writes all happen inside the queued callback.
+  private writeQueues = new Map<string, Promise<void>>();
+
+  private serializedWrite(id: string, fn: () => Promise<void>): Promise<void> {
+    const prev = this.writeQueues.get(id) ?? Promise.resolve();
+    const next = prev.then(fn, () => fn());
+    this.writeQueues.set(id, next);
+    return next;
+  }
+
+  // ── Append watermarks ──
+  // Tracks how many entries have been written to disk per session.
+  // When the count matches the in-memory lineage, only new entries are appended.
+  // On process restart the cache is empty → first save falls back to full write.
+  // load() initializes the watermark so subsequent appends don't need fallback.
+  private appendState = new Map<string, {
+    lineageCount: number;
+    artifactCount: number;
+    extensionCount: number;
+    metaUpdateCount: number;
+  }>();
+
+  /** Update watermarks. Only overwrites fields the caller actually provided. */
+  private syncAppendState(id: string, data: SessionData, metaUpdateCount?: number): void {
+    const prev = this.appendState.get(id);
+    this.appendState.set(id, {
+      lineageCount: data.lineage?.entries.length ?? prev?.lineageCount ?? 0,
+      artifactCount: data.artifactLedger?.length ?? prev?.artifactCount ?? 0,
+      extensionCount: data.extensionRecords?.length ?? prev?.extensionCount ?? 0,
+      metaUpdateCount: metaUpdateCount ?? prev?.metaUpdateCount ?? 0,
+    });
+  }
+
   private getSessionFilePath(id: string): string {
     return path.join(KODAX_SESSIONS_DIR, `${id}.jsonl`);
+  }
+
+  private getArchiveFilePath(id: string): string {
+    return path.join(KODAX_SESSIONS_DIR, `${id}.archive.jsonl`);
   }
 
   private async readSession(id: string): Promise<ResolvedSessionSnapshot | null> {
@@ -369,7 +443,10 @@ export class FileSessionStorage implements KodaXSessionStorage {
     return buildSessionData(snapshot);
   }
 
-  private async writeSession(
+  // ── Phase 2: Streaming write (no join) ──
+  // Writes one JSONL line at a time via file handle, eliminating the giant
+  // concatenated string that the old join('\n') approach produced.
+  private async writeSessionInternal(
     id: string,
     data: SessionData,
     createdAt?: string,
@@ -380,19 +457,23 @@ export class FileSessionStorage implements KodaXSessionStorage {
     const tempPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
     const lineage = data.lineage ?? createSessionLineage(data.messages);
     const meta = createSessionMeta(id, data, lineage, createdAt);
-    const lineageLines = lineage.entries.map((entry) => JSON.stringify(toLineageEntryLine(entry)));
-    const artifactLedgerLines = (data.artifactLedger ?? [])
-      .map((entry) => JSON.stringify(toArtifactLedgerLine(entry)));
-    const extensionRecordLines = (data.extensionRecords ?? [])
-      .map((record) => JSON.stringify(toExtensionRecordLine(record)));
-    const lines = [JSON.stringify(meta), ...lineageLines, ...artifactLedgerLines, ...extensionRecordLines];
 
     try {
-      await fs.writeFile(
-        tempPath,
-        lines.join('\n'),
-        'utf-8',
-      );
+      const handle = await fs.open(tempPath, 'w');
+      try {
+        await handle.write(JSON.stringify(meta) + '\n');
+        for (const entry of lineage.entries) {
+          await handle.write(JSON.stringify(toLineageEntryLine(entry)) + '\n');
+        }
+        for (const entry of (data.artifactLedger ?? [])) {
+          await handle.write(JSON.stringify(toArtifactLedgerLine(entry)) + '\n');
+        }
+        for (const record of (data.extensionRecords ?? [])) {
+          await handle.write(JSON.stringify(toExtensionRecordLine(record)) + '\n');
+        }
+      } finally {
+        await handle.close();
+      }
       await fs.rename(tempPath, targetPath);
     } finally {
       if (fsSync.existsSync(tempPath)) {
@@ -401,7 +482,12 @@ export class FileSessionStorage implements KodaXSessionStorage {
     }
   }
 
-  async save(id: string, data: SessionData): Promise<void> {
+  // ── Merge helper ──
+  // Reads existing session, merges omitted fields (extensionState, runtimeInfo,
+  // etc.), then does a full streamed write. Used by both save() and
+  // appendSessionDelta fallback so that partially-populated data from
+  // InkREPL.persistContextState never overwrites already-persisted fields.
+  private async mergeAndWriteInternal(id: string, data: SessionData): Promise<void> {
     const existing = await this.readSession(id);
     const merged: SessionData = {
       ...data,
@@ -410,12 +496,154 @@ export class FileSessionStorage implements KodaXSessionStorage {
       extensionState: data.extensionState ?? existing?.data.extensionState,
       artifactLedger: data.artifactLedger ?? existing?.data.artifactLedger,
       extensionRecords: data.extensionRecords ?? existing?.data.extensionRecords,
+      runtimeInfo: data.runtimeInfo ?? existing?.data.runtimeInfo,
+      errorMetadata: data.errorMetadata ?? existing?.data.errorMetadata,
       lineage: data.lineage ?? createSessionLineage(
         data.messages,
         existing?.data.lineage,
       ),
     };
-    await this.writeSession(id, merged, existing?.createdAt);
+    await this.writeSessionInternal(id, merged, existing?.createdAt);
+    this.syncAppendState(id, merged);
+  }
+
+  // ── Phase 1: Append-only hot path ──
+  // Only appends new entries + a meta_update line.  O(1) cost regardless of
+  // total session size.  Falls back to full mergeAndWriteInternal when:
+  //   - No cached watermark (process restart before load())
+  //   - No file on disk (new session)
+  //   - No lineage provided by caller
+  //   - Watermark inconsistency (rewind/fork occurred)
+  async appendSessionDelta(id: string, data: SessionData): Promise<void> {
+    const filePath = this.getSessionFilePath(id);
+
+    // Pre-checks that don't need serialization
+    if (!fsSync.existsSync(filePath) || !data.lineage) {
+      await this.save(id, data);
+      return;
+    }
+
+    await this.serializedWrite(id, async () => {
+      // Read latest watermark INSIDE the queue (not before entry)
+      const cached = this.appendState.get(id);
+
+      // No watermark → fallback
+      if (!cached) {
+        await this.mergeAndWriteInternal(id, data);
+        return;
+      }
+
+      // Consistency: snapshot shrunk since last write → rewind/fork → fallback
+      if (
+        data.lineage!.entries.length < cached.lineageCount
+        || (data.artifactLedger?.length ?? 0) < cached.artifactCount
+      ) {
+        await this.mergeAndWriteInternal(id, data);
+        return;
+      }
+
+      // Compute delta
+      const newLineage = data.lineage!.entries.slice(cached.lineageCount);
+      const newArtifacts = (data.artifactLedger ?? []).slice(cached.artifactCount);
+      const newExtensions = (data.extensionRecords ?? []).slice(cached.extensionCount);
+
+      const parts: string[] = [];
+      for (const entry of newLineage) {
+        parts.push(JSON.stringify(toLineageEntryLine(entry)));
+      }
+      for (const entry of newArtifacts) {
+        parts.push(JSON.stringify(toArtifactLedgerLine(entry)));
+      }
+      for (const record of newExtensions) {
+        parts.push(JSON.stringify(toExtensionRecordLine(record)));
+      }
+
+      // meta_update: only include fields the caller actually provided
+      const metaUpdate: PersistedMetaUpdateLine = {
+        _type: 'meta_update',
+        title: data.title,
+        activeEntryId: data.lineage!.activeEntryId,
+        activeMessageCount: countActiveLineageMessages(data.lineage!),
+        ...(data.uiHistory !== undefined ? { uiHistory: data.uiHistory } : {}),
+        ...(data.scope !== undefined ? { scope: data.scope } : {}),
+      };
+      parts.push(JSON.stringify(metaUpdate));
+
+      if (parts.length > 0) {
+        await fs.appendFile(filePath, '\n' + parts.join('\n'), 'utf-8');
+      }
+
+      // Update watermark inside the queue
+      this.syncAppendState(id, data, cached.metaUpdateCount + 1);
+    });
+
+    // Async maintenance (also goes through serializedWrite, won't race with append)
+    const state = this.appendState.get(id);
+    if (state && this.shouldRunMaintenance(state)) {
+      this.runMaintenance(id).catch((err) => {
+        if (process.env.NODE_ENV !== 'test') {
+          process.stderr.write(`[KodaX] Archive maintenance failed: ${String(err)}\n`);
+        }
+      });
+    }
+  }
+
+  // ── Phase 3: Maintenance ──
+  private shouldRunMaintenance(state: { metaUpdateCount: number; lineageCount: number }): boolean {
+    if (state.metaUpdateCount >= 50) return true;
+    if (state.lineageCount > 500) return true;
+    return false;
+  }
+
+  private async runMaintenance(id: string): Promise<void> {
+    await this.serializedWrite(id, async () => {
+      // Re-read current session inside the queue (not a stale snapshot)
+      const resolved = await this.readSession(id);
+      if (!resolved?.data.lineage) return;
+
+      const { slimmedLineage, archivedEntries, archiveBatchId } = archiveOldIslands(resolved.data.lineage);
+      if (archivedEntries.length === 0) {
+        // Nothing to archive, but still rewrite to merge meta_updates
+        await this.writeSessionInternal(id, resolved.data, resolved.createdAt);
+        this.syncAppendState(id, resolved.data, 0);
+        return;
+      }
+
+      // Write sidecar (streaming append — no join)
+      const archivePath = this.getArchiveFilePath(id);
+      const archiveHandle = await fs.open(archivePath, 'a');
+      try {
+        await archiveHandle.write(JSON.stringify({
+          _type: 'archive_batch',
+          archiveBatchId,
+          sessionId: id,
+          archivedAt: new Date().toISOString(),
+          entryCount: archivedEntries.length,
+        }) + '\n');
+        for (const entry of archivedEntries) {
+          await archiveHandle.write(JSON.stringify({
+            _type: 'archived_entry',
+            archiveBatchId,
+            entry,
+          }) + '\n');
+        }
+      } finally {
+        await archiveHandle.close();
+      }
+
+      // Full streamed rewrite of main session with slimmed lineage
+      const cleanedData: SessionData = { ...resolved.data, lineage: slimmedLineage };
+      await this.writeSessionInternal(id, cleanedData, resolved.createdAt);
+      this.syncAppendState(id, cleanedData, 0);
+    });
+  }
+
+  // ── Public API ──
+
+  async save(id: string, data: SessionData): Promise<void> {
+    await this.serializedWrite(id, async () => {
+      await this.mergeAndWriteInternal(id, data);
+    });
   }
 
   async load(id: string): Promise<SessionData | null> {
@@ -423,6 +651,10 @@ export class FileSessionStorage implements KodaXSessionStorage {
     if (!resolved) {
       return null;
     }
+
+    // Initialize append watermark so subsequent appendSessionDelta calls
+    // don't need to fallback to full rewrite.
+    this.syncAppendState(id, resolved.data);
 
     const { data, createdAt } = resolved;
     const filePath = this.getSessionFilePath(id);
@@ -470,7 +702,10 @@ export class FileSessionStorage implements KodaXSessionStorage {
           },
           lineage: createSessionLineage(cleaned, data.lineage),
         };
-        await this.writeSession(id, recovered, createdAt);
+        await this.serializedWrite(id, async () => {
+          await this.writeSessionInternal(id, recovered, createdAt);
+          this.syncAppendState(id, recovered);
+        });
         return recovered;
       }
     }
@@ -489,72 +724,72 @@ export class FileSessionStorage implements KodaXSessionStorage {
     selector: string,
     options?: { summarizeCurrentBranch?: boolean },
   ): Promise<SessionData | null> {
-    const resolved = await this.readSession(id);
-    if (!resolved?.data.lineage) {
-      return null;
-    }
+    let result: SessionData | null = null;
+    await this.serializedWrite(id, async () => {
+      const resolved = await this.readSession(id);
+      if (!resolved?.data.lineage) return;
 
-    const lineage = setSessionLineageActiveEntry(
-      resolved.data.lineage,
-      selector,
-      options,
-    );
-    if (!lineage) {
-      return null;
-    }
+      const lineage = setSessionLineageActiveEntry(
+        resolved.data.lineage,
+        selector,
+        options,
+      );
+      if (!lineage) return;
 
-    const nextData: SessionData = {
-      ...resolved.data,
-      messages: getSessionMessagesFromLineage(lineage),
-      lineage,
-    };
-    await this.writeSession(id, nextData, resolved.createdAt);
-    return nextData;
+      const nextData: SessionData = {
+        ...resolved.data,
+        messages: getSessionMessagesFromLineage(lineage),
+        lineage,
+      };
+      await this.writeSessionInternal(id, nextData, resolved.createdAt);
+      this.syncAppendState(id, nextData);
+      result = nextData;
+    });
+    return result;
   }
 
   async rewind(id: string, selector?: string): Promise<SessionData | null> {
-    const resolved = await this.readSession(id);
-    if (!resolved?.data.lineage) {
-      return null;
-    }
+    let result: SessionData | null = null;
+    await this.serializedWrite(id, async () => {
+      const resolved = await this.readSession(id);
+      if (!resolved?.data.lineage) return;
 
-    // If no selector, find the previous user-message entry (one step back)
-    const targetId = selector ?? findPreviousUserEntryId(resolved.data.lineage);
-    if (!targetId) {
-      return null;
-    }
+      const targetId = selector ?? findPreviousUserEntryId(resolved.data.lineage);
+      if (!targetId) return;
 
-    const lineage = rewindSessionLineage(resolved.data.lineage, targetId);
-    if (!lineage) {
-      return null;
-    }
+      const lineage = rewindSessionLineage(resolved.data.lineage, targetId);
+      if (!lineage) return;
 
-    const nextData: SessionData = {
-      ...resolved.data,
-      messages: getSessionMessagesFromLineage(lineage),
-      lineage,
-    };
-    await this.writeSession(id, nextData, resolved.createdAt);
-    return nextData;
+      const nextData: SessionData = {
+        ...resolved.data,
+        messages: getSessionMessagesFromLineage(lineage),
+        lineage,
+      };
+      await this.writeSessionInternal(id, nextData, resolved.createdAt);
+      this.syncAppendState(id, nextData);
+      result = nextData;
+    });
+    return result;
   }
 
   async setLabel(id: string, selector: string, label?: string): Promise<SessionData | null> {
-    const resolved = await this.readSession(id);
-    if (!resolved?.data.lineage) {
-      return null;
-    }
+    let result: SessionData | null = null;
+    await this.serializedWrite(id, async () => {
+      const resolved = await this.readSession(id);
+      if (!resolved?.data.lineage) return;
 
-    const lineage = appendSessionLineageLabel(resolved.data.lineage, selector, label);
-    if (!lineage) {
-      return null;
-    }
+      const lineage = appendSessionLineageLabel(resolved.data.lineage, selector, label);
+      if (!lineage) return;
 
-    const nextData: SessionData = {
-      ...resolved.data,
-      lineage,
-    };
-    await this.writeSession(id, nextData, resolved.createdAt);
-    return nextData;
+      const nextData: SessionData = {
+        ...resolved.data,
+        lineage,
+      };
+      await this.writeSessionInternal(id, nextData, resolved.createdAt);
+      this.syncAppendState(id, nextData);
+      result = nextData;
+    });
+    return result;
   }
 
   async fork(
@@ -562,40 +797,39 @@ export class FileSessionStorage implements KodaXSessionStorage {
     selector?: string,
     options?: { sessionId?: string; title?: string },
   ): Promise<{ sessionId: string; data: SessionData } | null> {
-    const resolved = await this.readSession(id);
-    if (!resolved?.data.lineage) {
-      return null;
-    }
+    let result: { sessionId: string; data: SessionData } | null = null;
+    // Serialize on the SOURCE session (the one being read)
+    await this.serializedWrite(id, async () => {
+      const resolved = await this.readSession(id);
+      if (!resolved?.data.lineage) return;
 
-    const lineage = forkSessionLineage(resolved.data.lineage, selector);
-    if (!lineage) {
-      return null;
-    }
+      const lineage = forkSessionLineage(resolved.data.lineage, selector);
+      if (!lineage) return;
 
-    const sessionId = options?.sessionId ?? await generateSessionId();
-    const forked: SessionData = {
-      messages: getSessionMessagesFromLineage(lineage),
-      title: options?.title ?? resolved.data.title,
-      gitRoot: resolved.data.gitRoot,
-      uiHistory: resolved.data.uiHistory
-        ? resolved.data.uiHistory.map((item) => ({ ...item }))
-        : undefined,
-      extensionState: resolved.data.extensionState
-        ? structuredClone(resolved.data.extensionState)
-        : undefined,
-      artifactLedger: resolved.data.artifactLedger
-        ? structuredClone(resolved.data.artifactLedger)
-        : undefined,
-      extensionRecords: resolved.data.extensionRecords
-        ? structuredClone(resolved.data.extensionRecords)
-        : undefined,
-      lineage,
-    };
-    await this.writeSession(sessionId, forked);
-    return {
-      sessionId,
-      data: forked,
-    };
+      const sessionId = options?.sessionId ?? await generateSessionId();
+      const forked: SessionData = {
+        messages: getSessionMessagesFromLineage(lineage),
+        title: options?.title ?? resolved.data.title,
+        gitRoot: resolved.data.gitRoot,
+        uiHistory: resolved.data.uiHistory
+          ? resolved.data.uiHistory.map((item) => ({ ...item }))
+          : undefined,
+        extensionState: resolved.data.extensionState
+          ? structuredClone(resolved.data.extensionState)
+          : undefined,
+        artifactLedger: resolved.data.artifactLedger
+          ? structuredClone(resolved.data.artifactLedger)
+          : undefined,
+        extensionRecords: resolved.data.extensionRecords
+          ? structuredClone(resolved.data.extensionRecords)
+          : undefined,
+        lineage,
+      };
+      // Fork writes to a NEW session id — serialize on that id too
+      await this.writeSessionInternal(sessionId, forked);
+      result = { sessionId, data: forked };
+    });
+    return result;
   }
 
   async list(gitRoot?: string): Promise<Array<{

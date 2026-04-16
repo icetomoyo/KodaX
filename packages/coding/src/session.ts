@@ -7,6 +7,7 @@
 export {
   appendSessionLineageLabel,
   applySessionCompaction,
+  archiveOldIslands,
   buildSessionTree,
   countActiveLineageMessages,
   createSessionLineage,

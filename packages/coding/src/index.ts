@@ -422,6 +422,7 @@ export {
   extractTitleFromMessages,
   appendSessionLineageLabel,
   applySessionCompaction,
+  archiveOldIslands,
   buildSessionTree,
   countActiveLineageMessages,
   createSessionLineage,

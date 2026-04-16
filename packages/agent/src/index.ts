@@ -55,6 +55,7 @@ export type {
   KodaXExtensionStore,
   KodaXCompactMemoryProgress,
   KodaXCompactMemorySeed,
+  KodaXSessionArchiveMarkerEntry,
   KodaXSessionBranchSummaryEntry,
   KodaXSessionCompactionEntry,
   KodaXSessionData,
@@ -101,6 +102,7 @@ export {
 export {
   appendSessionLineageLabel,
   applySessionCompaction,
+  archiveOldIslands,
   buildSessionTree,
   countActiveLineageMessages,
   createSessionLineage,

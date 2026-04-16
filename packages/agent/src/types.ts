@@ -116,11 +116,22 @@ export interface KodaXSessionLabelEntry extends KodaXSessionEntryBase {
   label?: string;
 }
 
+export interface KodaXSessionArchiveMarkerEntry extends KodaXSessionEntryBase {
+  type: 'archive_marker';
+  /** Links to the corresponding batch in the .archive.jsonl sidecar file */
+  archiveBatchId: string;
+  /** Number of entries that were archived in this batch */
+  archivedEntryCount: number;
+  /** Brief summary of the archived content */
+  summary: string;
+}
+
 export type KodaXSessionEntry =
   | KodaXSessionMessageEntry
   | KodaXSessionCompactionEntry
   | KodaXSessionBranchSummaryEntry
-  | KodaXSessionLabelEntry;
+  | KodaXSessionLabelEntry
+  | KodaXSessionArchiveMarkerEntry;
 
 export interface KodaXSessionArtifactLedgerEntry {
   id: string;

@@ -3,6 +3,7 @@ import type { KodaXMessage } from '@kodax/ai';
 import {
   appendSessionLineageLabel,
   applySessionCompaction,
+  archiveOldIslands,
   buildSessionTree,
   countActiveLineageMessages,
   createSessionLineage,
@@ -422,5 +423,189 @@ describe('findPreviousUserEntryId', () => {
       createTextMessage('assistant', 'hello'),
     ]);
     expect(findPreviousUserEntryId(lineage)).toBeNull();
+  });
+});
+
+describe('archiveOldIslands', () => {
+  it('archives old island message entries after compaction, preserves current island', () => {
+    // Create initial lineage (island 1: 4 entries)
+    const initial = createSessionLineage([
+      createTextMessage('user', 'old task'),
+      createTextMessage('assistant', 'old reply'),
+      createTextMessage('user', 'old follow-up'),
+      createTextMessage('assistant', 'old conclusion'),
+    ]);
+    expect(initial.entries).toHaveLength(4);
+
+    // Compact → creates island 2 with compaction entry + new entries
+    const compacted = applySessionCompaction(
+      initial,
+      [
+        { role: 'system', content: '[对话历史摘要]\n\nSummary' },
+        createTextMessage('assistant', 'continue'),
+      ],
+      { summary: 'Summary', tokensBefore: 500, tokensAfter: 100 },
+    );
+    const totalBefore = compacted.entries.length;
+    const msgBefore = compacted.entries.filter((e) => e.type === 'message').length;
+
+    // Archive
+    const result = archiveOldIslands(compacted);
+
+    // Old island's 4 message entries should be archived
+    expect(result.archivedCount).toBe(4);
+    expect(result.archivedEntries).toHaveLength(4);
+    expect(result.archiveBatchId).toBeTruthy();
+
+    // Slimmed lineage should have fewer entries
+    const msgAfter = result.slimmedLineage.entries.filter((e) => e.type === 'message').length;
+    expect(msgAfter).toBe(msgBefore - 4);
+
+    // Archive marker should be present
+    const markers = result.slimmedLineage.entries.filter((e) => e.type === 'archive_marker');
+    expect(markers.length).toBeGreaterThanOrEqual(1);
+    expect(markers[0]).toMatchObject({
+      type: 'archive_marker',
+      archiveBatchId: result.archiveBatchId,
+      archivedEntryCount: 4,
+    });
+
+    // Messages from active path should be unchanged
+    expect(getSessionMessagesFromLineage(result.slimmedLineage)).toEqual(
+      getSessionMessagesFromLineage(compacted),
+    );
+  });
+
+  it('does not archive when there is only one island (no compaction)', () => {
+    const lineage = createSessionLineage([
+      createTextMessage('user', 'hello'),
+      createTextMessage('assistant', 'world'),
+    ]);
+
+    const result = archiveOldIslands(lineage);
+    expect(result.archivedCount).toBe(0);
+    expect(result.slimmedLineage).toBe(lineage); // same reference, untouched
+  });
+
+  it('preserves label target entries and their ancestor chains', () => {
+    const initial = createSessionLineage([
+      createTextMessage('user', 'root'),
+      createTextMessage('assistant', 'reply'),
+      createTextMessage('user', 'follow-up'),
+      createTextMessage('assistant', 'conclusion'),
+    ]);
+
+    // Label the second entry
+    const labeled = appendSessionLineageLabel(initial, initial.entries[1]!.id, 'my-checkpoint');
+    expect(labeled).toBeTruthy();
+
+    // Compact — old entries become a separate island
+    const compacted = applySessionCompaction(
+      labeled!,
+      [
+        { role: 'system', content: '[对话历史摘要]\n\nSummary' },
+        createTextMessage('assistant', 'after compaction'),
+      ],
+      { summary: 'Summary' },
+    );
+
+    const result = archiveOldIslands(compacted);
+
+    // The labeled entry (entries[1]) and its ancestor (entries[0]) must be preserved
+    const preservedIds = new Set(result.slimmedLineage.entries.map((e) => e.id));
+    expect(preservedIds.has(initial.entries[0]!.id)).toBe(true); // ancestor of label target
+    expect(preservedIds.has(initial.entries[1]!.id)).toBe(true); // label target itself
+
+    // Some entries may still be archived (entries[2], entries[3] — not on label chain)
+    expect(result.archivedCount).toBeGreaterThanOrEqual(0);
+  });
+
+  it('preserves non-message entries and their ancestor chains (prevents tree drift)', () => {
+    const initial = createSessionLineage([
+      createTextMessage('user', 'root'),
+      createTextMessage('assistant', 'reply'),
+    ]);
+
+    // Compact → old entries become separate island, compaction entry has parentId: null
+    const compacted = applySessionCompaction(
+      initial,
+      [{ role: 'system', content: '[对话历史摘要]\n\nSummary' }],
+      { summary: 'Summary' },
+    );
+
+    // The compaction entry is a non-message entry in the old island
+    const compactionEntry = compacted.entries.find((e) => e.type === 'compaction');
+    expect(compactionEntry).toBeTruthy();
+
+    const result = archiveOldIslands(compacted);
+
+    // Compaction entry itself must be preserved (non-message)
+    const preservedIds = new Set(result.slimmedLineage.entries.map((e) => e.id));
+    expect(preservedIds.has(compactionEntry!.id)).toBe(true);
+  });
+
+  it('archive_marker is context-silent', () => {
+    const initial = createSessionLineage([
+      createTextMessage('user', 'old task'),
+      createTextMessage('assistant', 'old reply'),
+    ]);
+    const compacted = applySessionCompaction(
+      initial,
+      [{ role: 'system', content: '[对话历史摘要]\n\nSummary' }],
+      { summary: 'Summary' },
+    );
+    const result = archiveOldIslands(compacted);
+
+    // Active path messages should be identical before and after archival
+    const messagesBefore = getSessionMessagesFromLineage(compacted);
+    const messagesAfter = getSessionMessagesFromLineage(result.slimmedLineage);
+    expect(messagesAfter).toEqual(messagesBefore);
+  });
+
+  it('archive_marker is non-targetable in resolveSessionLineageTarget', () => {
+    const initial = createSessionLineage([
+      createTextMessage('user', 'old'),
+      createTextMessage('assistant', 'reply'),
+    ]);
+    const compacted = applySessionCompaction(
+      initial,
+      [{ role: 'system', content: '[对话历史摘要]\n\nSummary' }],
+      { summary: 'Summary' },
+    );
+    const result = archiveOldIslands(compacted);
+
+    const marker = result.slimmedLineage.entries.find((e) => e.type === 'archive_marker');
+    expect(marker).toBeTruthy();
+
+    // Cannot navigate to archive_marker
+    expect(resolveSessionLineageTarget(result.slimmedLineage, marker!.id)).toBeUndefined();
+
+    // setSessionLineageActiveEntry also fails for archive_marker
+    expect(setSessionLineageActiveEntry(result.slimmedLineage, marker!.id)).toBeNull();
+  });
+
+  it('archive_marker is visible in buildSessionTree', () => {
+    const initial = createSessionLineage([
+      createTextMessage('user', 'old'),
+      createTextMessage('assistant', 'reply'),
+    ]);
+    const compacted = applySessionCompaction(
+      initial,
+      [{ role: 'system', content: '[对话历史摘要]\n\nSummary' }],
+      { summary: 'Summary' },
+    );
+    const result = archiveOldIslands(compacted);
+
+    const tree = buildSessionTree(result.slimmedLineage);
+    const allNodeTypes = new Set<string>();
+    function collectTypes(nodes: any[]) {
+      for (const node of nodes) {
+        allNodeTypes.add(node.entry.type);
+        if (node.children) collectTypes(node.children);
+      }
+    }
+    collectTypes(tree);
+
+    expect(allNodeTypes.has('archive_marker')).toBe(true);
   });
 });

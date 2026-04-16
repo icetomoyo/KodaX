@@ -461,4 +461,192 @@ describe('FileSessionStorage', () => {
       },
     ]);
   });
+
+  it('appendSessionDelta round-trips correctly: append → load → data consistent', async () => {
+    const { FileSessionStorage } = await import('./storage.js');
+    const storage = new FileSessionStorage();
+    const gitRoot = tempHome.replace(/\\/g, '/');
+
+    // First save to seed the file
+    const lineage1 = createSessionLineage([
+      { role: 'user', content: 'hello' },
+      { role: 'assistant', content: 'world' },
+    ]);
+    await storage.save('session-append', {
+      messages: [{ role: 'user', content: 'hello' }, { role: 'assistant', content: 'world' }],
+      title: 'Append Test',
+      gitRoot,
+      lineage: lineage1,
+    });
+
+    // Load to initialize watermark
+    const loaded1 = await storage.load('session-append');
+    expect(loaded1).toBeTruthy();
+
+    // Append new messages
+    const lineage2 = createSessionLineage([
+      { role: 'user', content: 'hello' },
+      { role: 'assistant', content: 'world' },
+      { role: 'user', content: 'follow-up' },
+      { role: 'assistant', content: 'follow-up reply' },
+    ], loaded1!.lineage);
+    await storage.appendSessionDelta('session-append', {
+      messages: [
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: 'world' },
+        { role: 'user', content: 'follow-up' },
+        { role: 'assistant', content: 'follow-up reply' },
+      ],
+      title: 'Append Test Updated',
+      gitRoot,
+      lineage: lineage2,
+    });
+
+    // Reload and verify
+    const loaded2 = await storage.load('session-append');
+    expect(loaded2?.title).toBe('Append Test Updated');
+    expect(loaded2?.messages).toHaveLength(4);
+    expect(loaded2?.messages[2]).toEqual({ role: 'user', content: 'follow-up' });
+    expect(loaded2?.lineage?.entries.length).toBe(lineage2.entries.length);
+  });
+
+  it('appendSessionDelta meta_update overwrites title but preserves extensionState from disk', async () => {
+    const { FileSessionStorage } = await import('./storage.js');
+    const storage = new FileSessionStorage();
+    const gitRoot = tempHome.replace(/\\/g, '/');
+
+    // Save with extensionState
+    await storage.save('session-meta-update', {
+      messages: [{ role: 'user', content: 'test' }],
+      title: 'Original Title',
+      gitRoot,
+      extensionState: { 'ext:sample': { phase: 'active', visits: 5 } },
+    });
+
+    // Load to init watermark
+    const loaded1 = await storage.load('session-meta-update');
+    expect(loaded1?.extensionState).toEqual({ 'ext:sample': { phase: 'active', visits: 5 } });
+
+    // Append — caller doesn't provide extensionState (like InkREPL.persistContextState)
+    await storage.appendSessionDelta('session-meta-update', {
+      messages: [{ role: 'user', content: 'test' }, { role: 'assistant', content: 'reply' }],
+      title: 'Updated Title',
+      gitRoot,
+      lineage: createSessionLineage([
+        { role: 'user', content: 'test' },
+        { role: 'assistant', content: 'reply' },
+      ], loaded1!.lineage),
+    });
+
+    // Load — title should be updated, extensionState preserved from disk
+    const loaded2 = await storage.load('session-meta-update');
+    expect(loaded2?.title).toBe('Updated Title');
+    // extensionState is in the meta line (first save), meta_update doesn't overwrite it
+    expect(loaded2?.extensionState).toEqual({ 'ext:sample': { phase: 'active', visits: 5 } });
+  });
+
+  it('appendSessionDelta fallback preserves runtimeInfo and errorMetadata', async () => {
+    const { FileSessionStorage } = await import('./storage.js');
+    const storage = new FileSessionStorage();
+    const gitRoot = tempHome.replace(/\\/g, '/');
+
+    // Save with runtimeInfo and errorMetadata
+    await storage.save('session-fallback', {
+      messages: [{ role: 'user', content: 'test' }],
+      title: 'Fallback Test',
+      gitRoot,
+      runtimeInfo: {
+        canonicalRepoRoot: gitRoot,
+        workspaceRoot: gitRoot,
+        executionCwd: gitRoot,
+        branch: 'main',
+        workspaceKind: 'detected' as const,
+      },
+      errorMetadata: { lastError: 'test error', lastErrorTime: 12345, consecutiveErrors: 0 },
+    });
+
+    // appendSessionDelta WITHOUT lineage → triggers fallback mergeAndWriteInternal
+    await storage.appendSessionDelta('session-fallback', {
+      messages: [{ role: 'user', content: 'test' }, { role: 'assistant', content: 'reply' }],
+      title: 'Fallback Updated',
+      gitRoot,
+      // No lineage → fallback
+    });
+
+    // Verify runtimeInfo and errorMetadata are preserved
+    const loaded = await storage.load('session-fallback');
+    expect(loaded?.runtimeInfo).toEqual(expect.objectContaining({
+      canonicalRepoRoot: gitRoot,
+      branch: 'main',
+    }));
+    expect(loaded?.errorMetadata).toEqual(expect.objectContaining({
+      lastError: 'test error',
+    }));
+    expect(loaded?.title).toBe('Fallback Updated');
+  });
+
+  it('mixed path: append → rewind (cold save) → append → load consistent', async () => {
+    const { FileSessionStorage } = await import('./storage.js');
+    const storage = new FileSessionStorage();
+    const gitRoot = tempHome.replace(/\\/g, '/');
+
+    // Seed
+    await storage.save('session-mixed', {
+      messages: [
+        { role: 'user', content: 'step 1' },
+        { role: 'assistant', content: 'reply 1' },
+      ],
+      title: 'Mixed Path',
+      gitRoot,
+    });
+    const loaded1 = await storage.load('session-mixed');
+
+    // Append
+    const lineage2 = createSessionLineage([
+      { role: 'user', content: 'step 1' },
+      { role: 'assistant', content: 'reply 1' },
+      { role: 'user', content: 'step 2' },
+      { role: 'assistant', content: 'reply 2' },
+    ], loaded1!.lineage);
+    await storage.appendSessionDelta('session-mixed', {
+      messages: [
+        { role: 'user', content: 'step 1' },
+        { role: 'assistant', content: 'reply 1' },
+        { role: 'user', content: 'step 2' },
+        { role: 'assistant', content: 'reply 2' },
+      ],
+      title: 'Mixed Path',
+      gitRoot,
+      lineage: lineage2,
+    });
+
+    // Rewind (cold path — triggers full save via writeSessionInternal)
+    // rewind goes back one user entry: from step2 back to step1 (the previous user entry)
+    const rewound = await storage.rewind?.('session-mixed');
+    expect(rewound).toBeTruthy();
+    expect(rewound!.messages[0]).toEqual({ role: 'user', content: 'step 1' });
+
+    // Append again after rewind
+    const loaded3 = await storage.load('session-mixed');
+    const lineage4 = createSessionLineage([
+      ...loaded3!.messages,
+      { role: 'user', content: 'step 3' },
+      { role: 'assistant', content: 'reply 3' },
+    ], loaded3!.lineage);
+    await storage.appendSessionDelta('session-mixed', {
+      messages: [
+        ...loaded3!.messages,
+        { role: 'user', content: 'step 3' },
+        { role: 'assistant', content: 'reply 3' },
+      ],
+      title: 'Mixed Path Final',
+      gitRoot,
+      lineage: lineage4,
+    });
+
+    // Final load — everything consistent
+    const final = await storage.load('session-mixed');
+    expect(final?.title).toBe('Mixed Path Final');
+    expect(final?.messages[final.messages.length - 1]).toEqual({ role: 'assistant', content: 'reply 3' });
+  });
 });

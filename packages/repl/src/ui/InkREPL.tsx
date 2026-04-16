@@ -5237,14 +5237,21 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     context.uiHistory = persistedUiHistory;
     const lineage = context.lineage ?? reconcileContextLineage(context.messages);
     context.lineage = lineage;
-    await storage.save(context.sessionId, {
+    const sessionPayload = {
       messages: context.messages,
       title,
       gitRoot: context.gitRoot ?? "",
       uiHistory: persistedUiHistory,
       lineage,
       artifactLedger: context.artifactLedger,
-    });
+    };
+    // Prefer append-only hot path when available (FileSessionStorage).
+    // Falls back to full save() for other storage implementations.
+    if ('appendSessionDelta' in storage && typeof (storage as any).appendSessionDelta === 'function') {
+      await (storage as any).appendSessionDelta(context.sessionId, sessionPayload);
+    } else {
+      await storage.save(context.sessionId, sessionPayload);
+    }
   }, [context, reconcileContextLineage, storage]);
 
   const flushPendingPersistContextState = useCallback(() => {

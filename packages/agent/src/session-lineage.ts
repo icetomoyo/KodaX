@@ -4,6 +4,7 @@ import type {
   KodaXCompactMemorySeed,
   KodaXJsonValue,
   KodaXMessage,
+  KodaXSessionArchiveMarkerEntry,
   KodaXSessionArtifactLedgerEntry,
   KodaXSessionBranchSummaryEntry,
   KodaXSessionCompactionEntry,
@@ -91,6 +92,8 @@ function cloneEntry(entry: KodaXSessionEntry): KodaXSessionEntry {
       };
     case 'label':
       return { ...entry };
+    case 'archive_marker':
+      return { ...entry };
     default: {
       const exhaustiveCheck: never = entry;
       return exhaustiveCheck;
@@ -174,6 +177,8 @@ function getContextMessagesForEntry(entry: NavigableSessionEntry): KodaXMessage[
           BRANCH_SUMMARY_SUFFIX,
         ),
       ];
+    case 'archive_marker':
+      return [];  // context-silent: archived content is not part of LLM context
     default: {
       const exhaustiveCheck: never = entry;
       return exhaustiveCheck;
@@ -456,14 +461,16 @@ export function resolveSessionLineageTarget(
 
   const byId = getNavigableEntryMap(lineage);
   const direct = byId.get(normalizedSelector);
-  if (direct) {
+  if (direct && direct.type !== 'archive_marker') {
     return direct;
   }
 
   const labels = getResolvedLabels(lineage);
   const labeledTargetId = [...labels.entries()]
     .find(([, label]) => label === normalizedSelector)?.[0];
-  return labeledTargetId ? byId.get(labeledTargetId) : undefined;
+  if (!labeledTargetId) return undefined;
+  const labeledTarget = byId.get(labeledTargetId);
+  return (labeledTarget && labeledTarget.type !== 'archive_marker') ? labeledTarget : undefined;
 }
 
 /**
@@ -643,6 +650,14 @@ function cloneForkableEntry(
         fromId: entry.fromId,
         details: cloneJsonValue(entry.details),
       };
+    case 'archive_marker':
+      return {
+        ...base,
+        type: 'archive_marker',
+        archiveBatchId: entry.archiveBatchId,
+        archivedEntryCount: entry.archivedEntryCount,
+        summary: entry.summary,
+      };
     default: {
       const exhaustiveCheck: never = entry;
       return exhaustiveCheck;
@@ -810,4 +825,174 @@ export function buildSessionTree(lineage: KodaXSessionLineage): KodaXSessionTree
  */
 export function countActiveLineageMessages(lineage: KodaXSessionLineage): number {
   return getSessionMessagesFromLineage(lineage).length;
+}
+
+/**
+ * Archive message entries from old "islands" (disconnected subtrees).
+ *
+ * Each compaction entry has parentId: null, creating an independent island.
+ * The active leaf lives in one island (the "current" island). All other
+ * islands are considered "old" and eligible for archival.
+ *
+ * A "preserve closure" is computed first:
+ *  - All entries in the current island (active path + recent branches)
+ *  - Label targets and their ancestor chains
+ *  - Non-message entries and their ancestor chains (prevents tree drift)
+ *
+ * Only entries outside the preserve closure are archived.
+ */
+export function archiveOldIslands(lineage: KodaXSessionLineage): {
+  slimmedLineage: KodaXSessionLineage;
+  archivedEntries: KodaXSessionEntry[];
+  archivedCount: number;
+  archiveBatchId: string;
+} {
+  if (!lineage.activeEntryId || lineage.entries.length === 0) {
+    return { slimmedLineage: lineage, archivedEntries: [], archivedCount: 0, archiveBatchId: '' };
+  }
+
+  const byId = new Map(lineage.entries.map((e) => [e.id, e]));
+  const preserved = new Set<string>();
+
+  // Helper: walk parentId chain upward, marking everything as preserved
+  function preserveAncestorChain(entryId: string): void {
+    let cur = byId.get(entryId);
+    while (cur && !preserved.has(cur.id)) {
+      preserved.add(cur.id);
+      cur = cur.parentId ? byId.get(cur.parentId) : undefined;
+    }
+  }
+
+  // 1. Find the current island root (the root that active leaf traces back to)
+  let activeRootId: string | null = null;
+  let cur: KodaXSessionEntry | undefined = byId.get(lineage.activeEntryId);
+  while (cur) {
+    activeRootId = cur.id;
+    cur = cur.parentId ? byId.get(cur.parentId) : undefined;
+  }
+
+  // 2. Build parent→children index for BFS
+  const childrenOf = new Map<string, string[]>();
+  for (const entry of lineage.entries) {
+    if (entry.parentId) {
+      const bucket = childrenOf.get(entry.parentId) ?? [];
+      bucket.push(entry.id);
+      childrenOf.set(entry.parentId, bucket);
+    }
+  }
+
+  // 3. Preserve the entire current island (BFS from activeRoot)
+  if (activeRootId) {
+    const queue = [activeRootId];
+    while (queue.length > 0) {
+      const id = queue.pop()!;
+      if (preserved.has(id)) continue;
+      preserved.add(id);
+      for (const childId of (childrenOf.get(id) ?? [])) {
+        queue.push(childId);
+      }
+    }
+  }
+
+  // 4. Preserve label targets and their ancestor chains
+  for (const entry of lineage.entries) {
+    if (entry.type === 'label') {
+      preserveAncestorChain((entry as KodaXSessionLabelEntry).targetId);
+    }
+  }
+
+  // 5. Preserve all non-message entries (they're small) + their ancestor chains
+  for (const entry of lineage.entries) {
+    if (entry.type !== 'message') {
+      preserved.add(entry.id);
+    }
+  }
+  for (const entry of lineage.entries) {
+    if (entry.type !== 'message' && entry.parentId) {
+      preserveAncestorChain(entry.parentId);
+    }
+  }
+
+  // 6. Collect entries to archive (everything NOT in preserve closure)
+  const toArchive: KodaXSessionEntry[] = [];
+  const toArchiveIds = new Set<string>();
+  for (const entry of lineage.entries) {
+    if (!preserved.has(entry.id)) {
+      toArchive.push(entry);
+      toArchiveIds.add(entry.id);
+    }
+  }
+
+  if (toArchive.length === 0) {
+    return { slimmedLineage: lineage, archivedEntries: [], archivedCount: 0, archiveBatchId: '' };
+  }
+
+  // 7. Generate archive batch ID and markers (one per old island group)
+  const archiveBatchId = `batch_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+
+  // Group archived entries by their connected subtree root
+  const islandGroups = new Map<string, KodaXSessionEntry[]>();
+  for (const entry of toArchive) {
+    // Walk up through archived entries to find the topmost archived entry
+    let root = entry;
+    let walk = entry.parentId ? byId.get(entry.parentId) : undefined;
+    while (walk && toArchiveIds.has(walk.id)) {
+      root = walk;
+      walk = walk.parentId ? byId.get(walk.parentId) : undefined;
+    }
+    const bucket = islandGroups.get(root.id) ?? [];
+    bucket.push(entry);
+    islandGroups.set(root.id, bucket);
+  }
+
+  const markers: KodaXSessionArchiveMarkerEntry[] = [];
+  for (const [rootId, entries] of islandGroups) {
+    const firstEntry = entries[0]!;
+    const msgEntries = entries.filter((e): e is KodaXSessionMessageEntry => e.type === 'message');
+    const preview = extractArchivePreview(msgEntries);
+
+    // Attach marker to the nearest preserved parent so tree topology
+    // doesn't drift.  If the archived group's root had a parent that's
+    // still in the preserved set, the marker becomes a child of that
+    // parent instead of a new root.
+    const groupRoot = byId.get(rootId);
+    const nearestPreservedParent = groupRoot?.parentId && preserved.has(groupRoot.parentId)
+      ? groupRoot.parentId
+      : null;
+
+    markers.push({
+      type: 'archive_marker',
+      id: generateEntryId(),
+      parentId: nearestPreservedParent,
+      timestamp: firstEntry.timestamp,
+      archiveBatchId,
+      archivedEntryCount: entries.length,
+      summary: `Archived: ${entries.length} entries. ${preview}`.slice(0, 600),
+    });
+  }
+
+  // 8. Build slimmed lineage
+  const slimmedEntries = [
+    ...lineage.entries.filter((e) => !toArchiveIds.has(e.id)),
+    ...markers,
+  ];
+
+  return {
+    slimmedLineage: { ...lineage, entries: slimmedEntries },
+    archivedEntries: toArchive,
+    archivedCount: toArchive.length,
+    archiveBatchId,
+  };
+}
+
+function extractArchivePreview(entries: KodaXSessionMessageEntry[]): string {
+  const first = entries.find((e) => e.message?.role === 'user');
+  if (!first?.message) return '';
+  const msg = first.message;
+  if (typeof msg.content === 'string') return msg.content.slice(0, 200);
+  if (Array.isArray(msg.content)) {
+    const textBlock = msg.content.find((b: any) => b.type === 'text' && b.text);
+    if (textBlock && 'text' in textBlock) return (textBlock as any).text.slice(0, 200);
+  }
+  return '';
 }

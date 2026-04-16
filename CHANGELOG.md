@@ -10,8 +10,20 @@ All notable changes to this project will be documented in this file.
 
 ---
 
-## [0.7.18] - 2026-04-16
+## [0.7.19] - 2026-04-16
 
+### Added
+- **AMA Scout simplification**: Optional managed protocol and scope reflection for Scout role
+- **Session lineage enhancements**: Extended session lineage types and tree visualization support
+- **Storage improvements**: Expanded interactive storage test coverage and session tree integration
+
+### Fixed
+- **H0 completion signal**: Preserve explicit H0 completion signal and ensure failed H0 has task state
+- **REPL session handling**: InkREPL session state and storage edge case fixes
+
+---
+
+## [0.7.18] - 2026-04-16
 ### Added
 - **FEATURE_064 — Multi-Provider Cost Observatory**: Session cost tracking with `recordUsage()` after each LLM call; `/cost` command shows per-provider and per-role cost breakdown; built-in rate table for 11 providers
 - **FEATURE_065 — MCP OAuth wiring**: OAuth 2.0 + PKCE token acquisition wired into MCP runtime `doConnect()`; cached token reuse and refresh; Authorization header injection for authenticated MCP servers
