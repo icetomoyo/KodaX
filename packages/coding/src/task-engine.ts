@@ -3339,9 +3339,16 @@ function createRolePrompt(
           : 'You own the final verification pass and must personally execute any required checks or browser validation before accepting the task.',
         'Evaluate the task against the verification criteria and thresholds. If any hard threshold is not met, do not accept the task.',
         evaluatorPublicAnswerRule,
-        decision.topologyCeiling && decision.topologyCeiling !== 'H2_PLAN_EXECUTE_EVAL'
-          ? `Do not request a stronger harness than ${decision.topologyCeiling}. If the task is still incomplete at that ceiling, return the best supported user-facing answer with explicit limits instead of escalating further.`
-          : undefined,
+        (() => {
+          // Use the effective ceiling (upgradeCeiling reflects the system's actual
+          // decision after Scout override; topologyCeiling is the original heuristic).
+          // This avoids telling the evaluator "don't exceed H0" when the task is
+          // legitimately running at H1 because Scout escalated.
+          const effectiveCeiling = decision.upgradeCeiling ?? decision.topologyCeiling;
+          return effectiveCeiling && effectiveCeiling !== 'H2_PLAN_EXECUTE_EVAL'
+            ? `Do not request a stronger harness than ${effectiveCeiling}. If the task is still incomplete at that ceiling, return the best supported user-facing answer with explicit limits instead of escalating further.`
+            : undefined;
+        })(),
         'Return the final user-facing answer. If the task is not ready, explain the blocker or missing evidence clearly.',
         'If the original task requires an exact closing block, include it in your final answer when you conclude.',
         [
