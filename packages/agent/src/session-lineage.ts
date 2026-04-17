@@ -30,8 +30,23 @@ const BRANCH_SUMMARY_PREFIX = `The following is a summary of a branch that this 
 const BRANCH_SUMMARY_SUFFIX = `
 </summary>`;
 
+/**
+ * Return the message reference directly instead of deep-cloning.
+ *
+ * KodaX originally cloned every message into lineage entries via
+ * structuredClone, doubling memory for each message and quadrupling it
+ * when combined with fingerprint caching (original + clone each get
+ * a separate JSON.stringify fingerprint in the WeakMap).
+ *
+ * pi-mono stores direct references (session-manager.ts:829) and avoids
+ * this overhead entirely.  KodaX messages are API responses that are
+ * never mutated after creation, so sharing references is safe.
+ *
+ * For operations that genuinely need independent copies (e.g. fork),
+ * use structuredClone explicitly at the call site.
+ */
 function cloneMessage(message: KodaXMessage): KodaXMessage {
-  return structuredClone(message);
+  return message;
 }
 
 function cloneJsonValue<T extends KodaXJsonValue | undefined>(value: T): T {
@@ -73,12 +88,12 @@ function normalizeCompactionDetails(
 }
 
 function cloneEntry(entry: KodaXSessionEntry): KodaXSessionEntry {
+  // Shallow-copy the entry wrapper. Message references are shared (not
+  // deep-cloned) to prevent 2-4× memory multiplication per message.
+  // Only fork operations need true deep copies.
   switch (entry.type) {
     case 'message':
-      return {
-        ...entry,
-        message: cloneMessage(entry.message),
-      };
+      return { ...entry };
     case 'compaction':
       return {
         ...entry,
@@ -131,6 +146,10 @@ function getMessageFingerprint(message: KodaXMessage): string {
 }
 
 function messagesEqual(left: KodaXMessage, right: KodaXMessage): boolean {
+  // Fast path: since lineage entries now share message references with
+  // context.messages, most matches are resolved by reference equality
+  // without ever computing (and caching) a JSON.stringify fingerprint.
+  if (left === right) return true;
   return getMessageFingerprint(left) === getMessageFingerprint(right);
 }
 
@@ -139,10 +158,13 @@ function generateEntryId(prefix: 'entry' | 'label' = 'entry'): string {
 }
 
 function cloneLineage(lineage?: KodaXSessionLineage): KodaXSessionLineage {
+  // Shallow-copy the entries array so mutations (push) don't affect
+  // the original, but share entry objects by reference. This avoids
+  // the O(n × message_size) cost of deep-cloning every entry.
   return {
     version: 2,
     activeEntryId: lineage?.activeEntryId ?? null,
-    entries: lineage?.entries.map(cloneEntry) ?? [],
+    entries: lineage?.entries ? [...lineage.entries] : [],
   };
 }
 
@@ -602,7 +624,7 @@ export function applySessionCompaction(
     ? activePath[compactionIndex + 1]?.id
     : undefined;
 
-  return {
+  const result: KodaXSessionLineage = {
     ...next,
     entries: next.entries.map((entry) => entry.id === compactionEntryId
       ? {
@@ -611,6 +633,81 @@ export function applySessionCompaction(
       }
       : entry),
   };
+
+  // Release heavy message content from old islands to prevent in-memory
+  // accumulation across compaction cycles.  Entry structure (id, parentId,
+  // timestamp) is preserved so tree navigation and archive still work;
+  // only the message body is replaced with a lightweight placeholder.
+  return evictOldIslandMessageContent(result);
+}
+
+/**
+ * Replace message content of entries in old islands (not the active island)
+ * with a lightweight placeholder.  This releases large tool_result payloads
+ * from memory while preserving the entry skeleton for tree structure.
+ *
+ * Called automatically after compaction so that `context.lineage` does not
+ * accumulate unbounded message clones across compaction cycles.
+ */
+export function evictOldIslandMessageContent(lineage: KodaXSessionLineage): KodaXSessionLineage {
+  if (!lineage.activeEntryId || lineage.entries.length === 0) {
+    return lineage;
+  }
+
+  const byId = new Map(lineage.entries.map((e) => [e.id, e]));
+
+  // Find current island root
+  let activeRootId: string | null = null;
+  let cur: KodaXSessionEntry | undefined = byId.get(lineage.activeEntryId);
+  while (cur) {
+    activeRootId = cur.id;
+    cur = cur.parentId ? byId.get(cur.parentId) : undefined;
+  }
+
+  // Mark all entries reachable from the active island root (DFS via
+  // queue.pop(); traversal order doesn't matter, only reachability does).
+  const currentIsland = new Set<string>();
+  if (activeRootId) {
+    const childrenOf = new Map<string, string[]>();
+    for (const entry of lineage.entries) {
+      if (entry.parentId) {
+        const bucket = childrenOf.get(entry.parentId) ?? [];
+        bucket.push(entry.id);
+        childrenOf.set(entry.parentId, bucket);
+      }
+    }
+    const queue = [activeRootId];
+    while (queue.length > 0) {
+      const id = queue.pop()!;
+      if (currentIsland.has(id)) continue;
+      currentIsland.add(id);
+      for (const childId of (childrenOf.get(id) ?? [])) {
+        queue.push(childId);
+      }
+    }
+  }
+
+  // Evict message content from old island entries
+  let changed = false;
+  const evicted = lineage.entries.map((entry) => {
+    if (entry.type !== 'message') return entry;
+    if (currentIsland.has(entry.id)) return entry;
+
+    // Old island message: replace content with a block-array placeholder.
+    // Using the canonical block shape (not a bare string) keeps downstream
+    // serialization/tokenization code paths — which iterate content blocks
+    // via `msg.content as KodaXContentBlock[]` — working without special-cases.
+    changed = true;
+    return {
+      ...entry,
+      message: {
+        role: entry.message.role,
+        content: [{ type: 'text', text: '[compacted]' }],
+      } as KodaXMessage,
+    };
+  });
+
+  return changed ? { ...lineage, entries: evicted } : lineage;
 }
 
 function cloneForkableEntry(
@@ -627,7 +724,9 @@ function cloneForkableEntry(
       return {
         ...base,
         type: 'message',
-        message: cloneMessage(entry.message),
+        // Fork creates a genuinely independent branch — deep-clone the
+        // message so modifications in one branch don't affect the other.
+        message: structuredClone(entry.message),
       };
     case 'compaction':
       return {

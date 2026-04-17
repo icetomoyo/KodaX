@@ -62,6 +62,7 @@ _Last Updated: 2026-04-13_
 | 115 | Medium | Resolved | Managed foreground ledger 切换 kind 时丢失 tool_group 引用 — 工具历史条目重复 | v0.7.17 | v0.7.18 | 2026-04-13 | 2026-04-13 |
 | 116 | Medium | Resolved | 协议代码块泄漏到用户可见文本 + H0_DIRECT routing 诊断噪音 | v0.7.17 | v0.7.18 | 2026-04-13 | 2026-04-13 |
 | 117 | High | Resolved | Managed task error recovery 断裂 — transient error 后任务未恢复 | v0.7.17 | v0.7.18 | 2026-04-13 | 2026-04-13 |
+| 118 | Medium | Open | esbuild 打包替代 tsc 直接运行 — 消除运行时模块开销与 React dev 模式 | v0.7.19 | - | 2026-04-17 | - |
 
 ---
 
@@ -368,6 +369,32 @@ _Last Updated: 2026-04-13_
   **routing 诊断**：`buildManagedTaskRoutingTranscript` 新增 early return — 当 `raw.harnessProfile === "H0_DIRECT" && final.harnessProfile === "H0_DIRECT"` 时跳过，H1/H2 和 routing 升级场景不受影响。
 
 ---
+### 118: esbuild 打包替代 tsc 直接运行 — 消除运行时模块开销与 React dev 模式
+
+- **Priority**: Medium
+- **Status**: Open
+- **Introduced**: v0.7.19
+- **Created**: 2026-04-17
+
+- **Original Problem**:
+
+  KodaX 使用 `tsc` 编译 + `tsx`/`node` 直接运行，没有 bundling。这导致：
+
+  1. **React development 模式默认加载**：`process.env.NODE_ENV` 在运行时检查，React 加载 `react-reconciler.development.js`。开发模式每次 render 创建 PerformanceMeasure 和 prop diff 追踪对象（heap snapshot 确认每轮 +20万个 string、+54万个 Array、+6万个 PerformanceMeasure），永不释放。当前通过 `--require ./scripts/production-env.cjs` 设 NODE_ENV 绕过，但不如编译期替换干净。
+  2. **Source map 字符串占 ~10MB**：tsx 将 source map 以 `data:application/json;base64,...` 内联到内存。
+  3. **模块加载 baseline ~85MB**：每个 `.js` 文件是独立模块，V8 维护模块元数据。
+  4. **Tiktoken BPE 数据 4 份副本**、**React reconciler 2 份**：模块被多次解析。
+
+  Claude Code 通过 esbuild/Bun bundler 在编译期 `define: { 'process.env.NODE_ENV': '"production"' }` 彻底消除 development 分支，单文件部署，baseline 显著降低。
+
+- **Proposed Fix**:
+
+  使用 esbuild 打包，编译期替换 NODE_ENV，tree-shake 无用代码，合并模块，外置 source map。预期 baseline 从 85MB 降至 40-50MB，同时消除对 `--require` preload 的依赖。
+
+  注意事项：需处理 Node.js 原生模块 external、动态 import（skill 加载、MCP provider）、打包后回归测试。
+
+---
+
 ### 117: Managed task error recovery 断裂 — transient error 后任务未恢复 (RESOLVED)
 
 - **Priority**: High

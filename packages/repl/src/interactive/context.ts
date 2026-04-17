@@ -43,7 +43,7 @@ export async function createInteractiveContext(options: {
   return {
     messages: options.existingMessages ?? [],
     uiHistory: options.existingUiHistory?.map((item) => ({ ...item })),
-    lineage: options.existingLineage ? structuredClone(options.existingLineage) : undefined,
+    lineage: options.existingLineage ?? undefined,
     artifactLedger: options.existingArtifactLedger?.map((entry) => ({ ...entry, metadata: entry.metadata ? { ...entry.metadata } : undefined })),
     sessionId: options.sessionId ?? generateSessionId(),
     title: '',

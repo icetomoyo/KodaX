@@ -301,6 +301,7 @@ export function createStreamingManager(): StreamingManager {
   // === Batch update buffer (Issue 048) - 鎵归噺鏇存柊缂撳啿鍖?(Issue 048) ===
   let pendingResponseText = "";
   let pendingThinkingText = "";
+  let pendingThinkingChars = 0;
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Issue 116: Guard flag to reject buffer writes after abort.
@@ -329,16 +330,29 @@ export function createStreamingManager(): StreamingManager {
       flushTimer = null;
     }
 
-    const hasUpdates = pendingResponseText || pendingThinkingText;
+    const hasUpdates = pendingResponseText || pendingThinkingText
+      || pendingThinkingChars > 0;
     if (hasUpdates) {
+      const nextThinkingContent = state.thinkingContent + pendingThinkingText;
+      // Char count: when content arrives it is authoritative (length of the
+      // string we now hold); when only char signals arrive (no content body,
+      // e.g. tests or summary-only deltas), accumulate them onto the prior
+      // count so the indicator still advances.
+      const nextThinkingCharCount = pendingThinkingText
+        ? nextThinkingContent.length
+        : state.thinkingCharCount + pendingThinkingChars;
       state = {
         ...state,
         currentResponse: state.currentResponse + pendingResponseText,
-        thinkingContent: state.thinkingContent + pendingThinkingText,
-        thinkingCharCount: state.thinkingContent.length + pendingThinkingText.length,
+        thinkingContent: nextThinkingContent,
+        thinkingCharCount: nextThinkingCharCount,
+        ...((pendingThinkingText || pendingThinkingChars > 0)
+          ? { isThinking: true }
+          : {}),
       };
       pendingResponseText = "";
       pendingThinkingText = "";
+      pendingThinkingChars = 0;
       notify();
     }
   };
@@ -366,6 +380,7 @@ export function createStreamingManager(): StreamingManager {
       // Issue 116: discard any residual buffer from previous aborted round
       pendingResponseText = "";
       pendingThinkingText = "";
+      pendingThinkingChars = 0;
       if (flushTimer) {
         clearTimeout(flushTimer);
         flushTimer = null;
@@ -422,6 +437,7 @@ export function createStreamingManager(): StreamingManager {
       // Issue 116: explicitly drain residual buffer that may have slipped through
       pendingResponseText = "";
       pendingThinkingText = "";
+      pendingThinkingChars = 0;
       if (flushTimer) {
         clearTimeout(flushTimer);
         flushTimer = null;
@@ -441,6 +457,7 @@ export function createStreamingManager(): StreamingManager {
       state.abortController?.abort();
       pendingResponseText = "";
       pendingThinkingText = "";
+      pendingThinkingChars = 0;
       if (flushTimer) {
         clearTimeout(flushTimer);
         flushTimer = null;
@@ -476,13 +493,9 @@ export function createStreamingManager(): StreamingManager {
     },
 
     appendThinkingChars: (count: number) => {
-      // Character count doesn't need batch update, update directly - 瀛楃璁℃暟涓嶉渶瑕佹壒閲忔洿鏂帮紝鐩存帴鏇存柊
-      state = {
-        ...state,
-        isThinking: true,
-        thinkingCharCount: state.thinkingCharCount + count,
-      };
-      notify();
+      if (bufferSealed) return;
+      pendingThinkingChars += count;
+      scheduleFlush();
     },
 
     appendThinkingContent: (text: string) => {
@@ -528,7 +541,8 @@ export function createStreamingManager(): StreamingManager {
     },
 
     appendToolInputChars: (count: number) => {
-      // Character count doesn't need batch update, update directly - 瀛楃璁℃暟涓嶉渶瑕佹壒閲忔洿鏂帮紝鐩存帴鏇存柊
+      // Tool input deltas are infrequent — keep immediate to stay in sync
+      // with appendToolInputContent (which is also immediate with 240-char cap).
       state = {
         ...state,
         toolInputCharCount: state.toolInputCharCount + count,

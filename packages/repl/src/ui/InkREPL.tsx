@@ -140,6 +140,7 @@ import {
   GlobalShortcuts,
 } from "./shortcuts/index.js";
 import { prepareInvocationExecution } from "../interactive/invocation-runtime.js";
+import { memDiagEnabled, memDiagSnapshot, memDiagReset, buildMemDiagBreakdown } from "../interactive/memory-diagnostics.js";
 import { preparePromptInputArtifacts } from "../common/input-artifacts.js";
 
 // Extracted modules
@@ -1265,10 +1266,24 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     persistedUiHistoryRef.current = serializeUiHistorySnapshot(history);
   }, [history]);
 
+  // Reset the memory-diagnostics log once per session so each run starts
+  // with a clean file; no-op when KODAX_MEMORY_DIAG is not set.
+  useEffect(() => {
+    memDiagReset();
+  }, []);
+
   // Get terminal dimensions for fixed layout.
   const terminalWidth = stdout.columns || 80;
 
   const streamingState = useStreamingState();
+
+  // Mirror live streaming state into a ref so memDiagSnapshot can read it
+  // without pulling `streamingState` into callback deps (that would rebuild
+  // `persistContextState` / submit handlers on every streaming delta).
+  const streamingStateRef = useRef(streamingState);
+  useEffect(() => {
+    streamingStateRef.current = streamingState;
+  }, [streamingState]);
   const {
     startStreaming,
     stopStreaming,
@@ -1374,6 +1389,20 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     activeToolGroupTools: [],
   });
   const managedForegroundItemSeqRef = useRef(0);
+
+  // === Foreground text buffer (O(n²) → O(n) fix) ===
+  // Instead of calling updateManagedForegroundLedgerItem on every streaming delta
+  // (which copies the full items array each time), accumulate text in a mutable ref
+  // and flush to React state at 80ms intervals — matching StreamingContext's flush cycle.
+  // Reference: Claude Code uses ref-based accumulation + lazy serialization;
+  // pi-mono uses rAF batching; opencode uses 16ms frame + 100ms render throttle.
+  const foregroundTextBufferRef = useRef<{
+    itemId: string | undefined;
+    kind: "thinking" | "assistant";
+    pendingText: string;
+  }>({ itemId: undefined, kind: "thinking", pendingText: "" });
+  const foregroundFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const FOREGROUND_FLUSH_INTERVAL = 80;
   // Issue 079: Limit visible history to last 20 conversation rounds
   // A "round" = one user input + AI response(s)
   // Full history remains in state, only rendering is limited
@@ -1440,6 +1469,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }, []);
 
   const clearManagedForegroundTurnHistory = useCallback(() => {
+    // Clear text buffer to prevent stale flushes after clear
+    foregroundTextBufferRef.current = { itemId: undefined, kind: "thinking", pendingText: "" };
+    if (foregroundFlushTimerRef.current) {
+      clearTimeout(foregroundFlushTimerRef.current);
+      foregroundFlushTimerRef.current = null;
+    }
     resetManagedForegroundLedgerState({ clearOwner: true });
     setManagedForegroundTurnHistory([]);
   }, [resetManagedForegroundLedgerState, setManagedForegroundTurnHistory]);
@@ -1559,6 +1594,33 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     return itemId;
   }, [appendManagedForegroundLedgerItem, nextManagedForegroundItemId]);
 
+  // Flush buffered text to a single foreground item update.
+  // Collapses N delta appends into 1 array copy + setState.
+  const flushForegroundTextBuffer = useCallback(() => {
+    if (foregroundFlushTimerRef.current) {
+      clearTimeout(foregroundFlushTimerRef.current);
+      foregroundFlushTimerRef.current = null;
+    }
+    const buf = foregroundTextBufferRef.current;
+    if (!buf.pendingText || !buf.itemId) {
+      return;
+    }
+    const text = buf.pendingText;
+    const itemId = buf.itemId;
+    const kind = buf.kind;
+    buf.pendingText = "";
+    updateManagedForegroundLedgerItem(itemId, (item) => {
+      if (item.type !== kind) return item;
+      return { ...item, text: `${item.text}${text}` };
+    });
+  }, [updateManagedForegroundLedgerItem]);
+
+  const scheduleForegroundFlush = useCallback(() => {
+    if (!foregroundFlushTimerRef.current) {
+      foregroundFlushTimerRef.current = setTimeout(flushForegroundTextBuffer, FOREGROUND_FLUSH_INTERVAL);
+    }
+  }, [flushForegroundTextBuffer]);
+
   const appendManagedForegroundTextBlock = useCallback((
     kind: "thinking" | "assistant",
     text: string,
@@ -1568,21 +1630,35 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     }
     const workerTitle = managedForegroundLedgerRef.current.workerTitle;
     const itemId = startManagedForegroundLedgerBlock(kind, workerTitle);
-    updateManagedForegroundLedgerItem(itemId, (item) => {
-      if (item.type !== kind) {
-        return item;
-      }
-      return {
-        ...item,
-        text: `${item.text}${text}`,
-      };
-    });
-  }, [startManagedForegroundLedgerBlock, updateManagedForegroundLedgerItem]);
+
+    const buf = foregroundTextBufferRef.current;
+    if (buf.itemId === itemId && buf.kind === kind) {
+      // Same item — accumulate in buffer (O(1), no array copy)
+      buf.pendingText += text;
+    } else {
+      // Different item — flush old buffer, start new accumulation
+      flushForegroundTextBuffer();
+      buf.itemId = itemId;
+      buf.kind = kind;
+      buf.pendingText = text;
+    }
+    scheduleForegroundFlush();
+  }, [startManagedForegroundLedgerBlock, flushForegroundTextBuffer, scheduleForegroundFlush]);
 
   const syncManagedForegroundThinkingBlock = useCallback((thinking: string) => {
     const normalizedThinking = thinking.trim();
     if (!normalizedThinking) {
       return;
+    }
+    // This is a full replacement (onThinkingEnd) — discard any pending buffer
+    // for thinking blocks to prevent stale text from being flushed after replacement.
+    const buf = foregroundTextBufferRef.current;
+    if (buf.kind === "thinking" && buf.pendingText) {
+      buf.pendingText = "";
+      if (foregroundFlushTimerRef.current) {
+        clearTimeout(foregroundFlushTimerRef.current);
+        foregroundFlushTimerRef.current = null;
+      }
     }
     const workerTitle = managedForegroundLedgerRef.current.workerTitle?.trim();
     const nextText = workerTitle
@@ -1600,6 +1676,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }, [startManagedForegroundLedgerBlock, updateManagedForegroundLedgerItem]);
 
   const syncManagedForegroundToolGroup = useCallback((toolCall: ToolCall) => {
+    // Flush any pending text buffer before tool group updates, so the array
+    // copy includes the latest accumulated thinking/assistant text.
+    flushForegroundTextBuffer();
+
     const currentLedger = managedForegroundLedgerRef.current;
 
     // If the ledger has switched away from tool_group (e.g. to thinking)
@@ -1654,12 +1734,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           }
         : item
     ));
-  }, [startManagedForegroundLedgerBlock, updateManagedForegroundLedgerItem]);
+  }, [startManagedForegroundLedgerBlock, updateManagedForegroundLedgerItem, flushForegroundTextBuffer]);
 
   const transitionManagedForegroundPhase = useCallback((nextWorker?: {
     workerId?: string;
     workerTitle?: string;
   }) => {
+    // Flush any pending text before phase transition to avoid losing content
+    flushForegroundTextBuffer();
     managedForegroundLedgerRef.current = {
       workerId: nextWorker?.workerId,
       workerTitle: nextWorker?.workerTitle,
@@ -1679,6 +1761,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     clearResponse();
     setLastLiveActivityLabel(undefined);
   }, [
+    flushForegroundTextBuffer,
     clearToolInputContent,
     clearResponse,
     clearThinkingContent,
@@ -5252,6 +5335,18 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     } else {
       await storage.save(context.sessionId, sessionPayload);
     }
+    if (memDiagEnabled()) {
+      memDiagSnapshot('persist', buildMemDiagBreakdown(
+        context.messages, lineage,
+        {
+          historyItems: historyRef.current,
+          foregroundItems: managedForegroundTurnItemsRef.current,
+          streamingResponse: streamingStateRef.current.currentResponse,
+          streamingThinking: streamingStateRef.current.thinkingContent,
+          persistedUiHistory: persistedUiHistoryRef.current,
+        },
+      ));
+    }
   }, [context, reconcileContextLineage, storage]);
 
   const flushPendingPersistContextState = useCallback(() => {
@@ -5658,6 +5753,18 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       await persistContextState(
         appendPersistedUiHistorySnapshot(persistedHistoryBase, persistedAdditions),
       );
+      if (memDiagEnabled()) {
+        memDiagSnapshot('round-end', buildMemDiagBreakdown(
+          context.messages, context.lineage,
+          {
+            historyItems: historyRef.current,
+            foregroundItems: managedForegroundTurnItemsRef.current,
+            streamingResponse: streamingStateRef.current.currentResponse,
+            streamingThinking: streamingStateRef.current.thinkingContent,
+            persistedUiHistory: persistedUiHistoryRef.current,
+          },
+        ));
+      }
       await prepared.finalize();
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
@@ -5737,6 +5844,18 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       // Clear reserved autocomplete space once a message is sent.
       setSubmitCounter(prev => prev + 1);
 
+      if (memDiagEnabled()) {
+        memDiagSnapshot('turn-start', buildMemDiagBreakdown(
+          context.messages, context.lineage,
+          {
+            historyItems: historyRef.current,
+            foregroundItems: managedForegroundTurnItemsRef.current,
+            streamingResponse: streamingStateRef.current.currentResponse,
+            streamingThinking: streamingStateRef.current.thinkingContent,
+            persistedUiHistory: persistedUiHistoryRef.current,
+          },
+        ));
+      }
       setIsLoading(true);
       userInterruptedRef.current = false;
       interruptPersistenceQueuedRef.current = false;

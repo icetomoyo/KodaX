@@ -1,4 +1,28 @@
 #!/usr/bin/env node
+
+// ── Runtime environment defaults ──
+// NODE_ENV: Primary mechanism is --require ./scripts/production-env.cjs which
+// runs BEFORE ESM import hoisting. The inline check below is a fallback for
+// direct invocation without --require (e.g. `node dist/kodax_cli.js`).
+// In ESM, static imports are hoisted and evaluated before module body, so
+// this inline code runs AFTER React is already loaded. The --require preload
+// is the only reliable way to set NODE_ENV before React's module evaluation.
+if (!process.env.NODE_ENV) {
+  process.env.NODE_ENV = process.env.KODAX_DEV === '1' ? 'development' : 'production';
+}
+
+// Propagate a sensible V8 heap limit to child processes (sub-agents, forks).
+// The main process heap limit is set via --max-old-space-size in the
+// package.json scripts or shell wrapper. NODE_OPTIONS set here at runtime
+// only affects children. Default 4 GB; override via KODAX_HEAP_LIMIT.
+if (
+  !process.execArgv.some(a => a.includes('max-old-space-size'))
+  && !process.env.NODE_OPTIONS?.includes('max-old-space-size')
+) {
+  const limit = process.env.KODAX_HEAP_LIMIT ?? '4096';
+  process.env.NODE_OPTIONS = `${process.env.NODE_OPTIONS ?? ''} --max-old-space-size=${limit}`.trim();
+}
+
 /**
  * KodaX CLI — Command-line entry point.
  * UI module: Ink-based interactive REPL with managed task lifecycle.
