@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 
 // ── Runtime environment defaults ──
-// NODE_ENV: Primary mechanism is --require ./scripts/production-env.cjs which
-// runs BEFORE ESM import hoisting. The inline check below is a fallback for
-// direct invocation without --require (e.g. `node dist/kodax_cli.js`).
-// In ESM, static imports are hoisted and evaluated before module body, so
-// this inline code runs AFTER React is already loaded. The --require preload
-// is the only reliable way to set NODE_ENV before React's module evaluation.
+// NODE_ENV must be set BEFORE any ESM static import is evaluated, otherwise
+// React loads its development reconciler (~100 MB/turn profiling leak).
+// This is handled by the CJS shim/preload upstream of this file:
+//   - bin entry:        scripts/kodax-bin.cjs requires production-env.cjs
+//                       then dynamic-imports this module (ESM)
+//   - npm run dev/start: --require ./scripts/production-env.cjs flag
+// The inline fallback below only covers `node dist/kodax_cli.js` invoked
+// directly; in that path we cannot guarantee React is still in production
+// mode, but setting NODE_ENV here keeps downstream NODE_ENV checks sane.
 if (!process.env.NODE_ENV) {
   process.env.NODE_ENV = process.env.KODAX_DEV === '1' ? 'development' : 'production';
 }

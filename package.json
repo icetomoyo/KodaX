@@ -10,7 +10,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "kodax": "./dist/kodax_cli.js"
+    "kodax": "./scripts/kodax-bin.cjs"
   },
   "exports": {
     ".": {
