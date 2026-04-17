@@ -956,13 +956,20 @@ function applyScoutDecisionToPlan(
     return plan;
   }
 
+  // Scout is the routing authority (FEATURE_061). The topology ceiling is advisory
+  // context derived from regex heuristics — Scout has strictly more information
+  // from actual task analysis. Honour Scout's decision without hard clamping.
+  const confirmedHarness = scout.confirmedHarness;
+
+  // Log when Scout overrides the heuristic ceiling (diagnostic only).
   const topologyCeiling = plan.decision.topologyCeiling ?? plan.decision.upgradeCeiling;
-  const confirmedHarness = topologyCeiling
-    ? clampHarnessToCeiling(scout.confirmedHarness, topologyCeiling)
-    : scout.confirmedHarness;
-  const ceilingNote = confirmedHarness !== scout.confirmedHarness
-    ? `Scout requested ${scout.confirmedHarness} but runtime ceiling kept the task at ${confirmedHarness}.`
+  const scoutOverrodeCeiling = topologyCeiling
+    ? getHarnessRank(confirmedHarness) > getHarnessRank(topologyCeiling)
+    : false;
+  const ceilingNote = scoutOverrodeCeiling
+    ? `Scout overrode topology ceiling ${topologyCeiling} → ${confirmedHarness}: ${scout.harnessRationale ?? 'task complexity requires escalation'}.`
     : undefined;
+
   if (
     confirmedHarness === plan.decision.harnessProfile
     && !scout.summary
@@ -974,6 +981,11 @@ function applyScoutDecisionToPlan(
   const decision: KodaXTaskRoutingDecision = {
     ...plan.decision,
     harnessProfile: confirmedHarness,
+    // When Scout overrides the ceiling, lift upgradeCeiling so the budget
+    // controller and mid-run escalation checks see a consistent state.
+    upgradeCeiling: scoutOverrodeCeiling
+      ? confirmedHarness
+      : plan.decision.upgradeCeiling,
     reason: scout.summary
       ? `${plan.decision.reason} Scout confirmed ${confirmedHarness}: ${scout.summary}`
       : plan.decision.reason,
@@ -8239,9 +8251,11 @@ export async function runManagedTask(
     plan.decision,
     managedPlanning.reviewTarget,
   );
-  // H0 completion: Scout completed the task directly (default path — no escalation requested).
+  // H0 completion: effective harness is H0 — use the plan's final harnessProfile
+  // (the system's actual decision after all adjustments) rather than Scout's
+  // original request, to stay consistent with createTaskShape downstream.
   if (
-    scoutExecution.directive.confirmedHarness === 'H0_DIRECT'
+    plan.decision.harnessProfile === 'H0_DIRECT'
     && scoutExecution.result.success !== false
   ) {
     return completeScoutH0Task({
@@ -8252,9 +8266,9 @@ export async function runManagedTask(
     });
   }
 
-  // Scout failed (API error, abort, etc.) but was H0 — don't enter multi-agent pipeline.
-  // Still create a full managedTask so the UI can show what files were touched and why it failed.
-  if (scoutExecution.directive.confirmedHarness === 'H0_DIRECT') {
+  // Scout failed (API error, abort, etc.) but effective harness is H0 — don't
+  // enter multi-agent pipeline. Create a full managedTask for the UI.
+  if (plan.decision.harnessProfile === 'H0_DIRECT') {
     return completeScoutH0Task({
       options: managedOptions, originalTask: managedOriginalTask, plan,
       scoutExecution, scoutBudgetController,
