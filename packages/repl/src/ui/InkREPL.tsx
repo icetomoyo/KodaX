@@ -6550,12 +6550,20 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         stopStreaming();
         clearResponse(); // Fix: clear stale buffer to prevent ghost [Interrupted] on next submit
         clearThinkingContent();
-        // Update live token count with final estimate so the status bar stays current.
-        // (Setting null would rely on context.messages — a mutable ref that React can't detect.)
-        setLiveTokenCount(
-          context.contextTokenSnapshot?.currentTokens
-            ?? estimateTokens(context.messages),
-        );
+        // After a run ends (success or abort), worker-scoped onIterationEnd events
+        // may have left context.contextTokenSnapshot pointing at a sub-agent's
+        // token count rather than the parent context. In AMA mode the parent
+        // REPL never gets a final iteration event of its own, so the snapshot
+        // stays stale and the status bar shows an inflated value that never
+        // drops. Re-derive the snapshot from the authoritative local messages
+        // before refreshing the live count.
+        const authoritativeTokens = estimateTokens(context.messages);
+        context.contextTokenSnapshot = {
+          currentTokens: authoritativeTokens,
+          baselineEstimatedTokens: authoritativeTokens,
+          source: 'estimate',
+        };
+        setLiveTokenCount(authoritativeTokens);
       }
     },
     [

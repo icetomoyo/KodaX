@@ -47,5 +47,7 @@ export {
   buildPostCompactAttachments,
   injectPostCompactAttachments,
   DEFAULT_POST_COMPACT_CONFIG,
+  POST_COMPACT_TOKEN_BUDGET,
+  POST_COMPACT_MAX_TOKENS_PER_FILE,
 } from './post-compact.js';
 export type { PostCompactConfig, PostCompactAttachments } from './post-compact.js';

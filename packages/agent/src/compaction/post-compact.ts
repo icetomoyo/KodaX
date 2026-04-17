@@ -5,15 +5,36 @@
  * file content back into the context so the agent remembers what it
  * operated on without re-reading files.
  *
- * Budget rule: total post-compact attachments ≤ 50% of freed space.
+ * Budget rule: total post-compact attachments are capped by the smaller of
+ * (freed tokens × budgetRatio) and POST_COMPACT_TOKEN_BUDGET (absolute cap).
+ * The absolute cap mirrors Claude Code's `POST_COMPACT_TOKEN_BUDGET = 50_000`
+ * and prevents re-inflation when a single compaction frees a huge chunk.
  * Within the budget: ledger gets ≤15%, rest goes to file content
- * (per-file cap = 20% of total budget, max 5 files).
+ * (per-file cap = min(perFileShare × total, POST_COMPACT_MAX_TOKENS_PER_FILE),
+ * max 5 files).
+ *
+ * Idempotence: `injectPostCompactAttachments` strips any prior
+ * `[Post-compact: ...]` system messages before inserting new ones, so a flat
+ * messages array that survives across compaction rounds does not accumulate
+ * multiple generations of post-compact attachments.
  */
 
 import fs from 'fs/promises';
 import type { KodaXMessage } from '@kodax/ai';
 import type { KodaXSessionArtifactLedgerEntry } from '../types.js';
 import { estimateTokens } from '../tokenizer.js';
+
+/**
+ * Absolute cap on total post-compact attachment tokens.
+ * Mirrors Claude Code's POST_COMPACT_TOKEN_BUDGET (services/compact/compact.ts).
+ */
+export const POST_COMPACT_TOKEN_BUDGET = 50_000;
+
+/**
+ * Per-file hard cap on content tokens.
+ * Mirrors Claude Code's POST_COMPACT_MAX_TOKENS_PER_FILE.
+ */
+export const POST_COMPACT_MAX_TOKENS_PER_FILE = 5_000;
 
 export interface PostCompactConfig {
   /** Ratio of freed tokens to use for post-compact attachments. Default 0.5. */
@@ -32,6 +53,9 @@ export const DEFAULT_POST_COMPACT_CONFIG: PostCompactConfig = {
   ledgerShare: 0.15,
   perFileShare: 0.20,
 };
+
+/** Prefix used for all post-compact injected system messages. Used for dedup. */
+const POST_COMPACT_MESSAGE_PREFIX = '[Post-compact:';
 
 export interface PostCompactAttachments {
   readonly ledgerMessage: KodaXMessage | null;
@@ -54,7 +78,12 @@ export function buildPostCompactAttachments(
   config: PostCompactConfig = DEFAULT_POST_COMPACT_CONFIG,
 ): PostCompactAttachments {
   const MIN_USEFUL_BUDGET = 20; // Below this, any injection is noise
-  const totalBudget = Math.floor(freedTokens * config.budgetRatio);
+  // Cap by BOTH the proportional budget and an absolute ceiling so a single
+  // big compaction can't re-inflate the context with a huge injection.
+  const totalBudget = Math.min(
+    Math.floor(freedTokens * config.budgetRatio),
+    POST_COMPACT_TOKEN_BUDGET,
+  );
   if (totalBudget < MIN_USEFUL_BUDGET || ledger.length === 0) {
     return { ledgerMessage: null, fileMessages: [], totalTokens: 0 };
   }
@@ -75,16 +104,40 @@ export function buildPostCompactAttachments(
 }
 
 /**
+ * Check whether a message is a previously-injected post-compact attachment
+ * (ledger summary or file content). These must be stripped before a new
+ * injection so attachments don't accumulate across compaction rounds.
+ *
+ * Mirrors Claude Code's `readFileState.clear()` discipline: each compaction
+ * replaces the post-compact attachments wholesale, rather than stacking them.
+ */
+function isPostCompactAttachment(msg: KodaXMessage): boolean {
+  return msg.role === 'system'
+    && typeof msg.content === 'string'
+    && msg.content.startsWith(POST_COMPACT_MESSAGE_PREFIX);
+}
+
+/**
  * Inject post-compact attachments into the compacted message array.
- * Inserts after the summary message (first system message) and before
- * the protected tail.
+ *
+ * Inserts after the compaction summary (first system message with the
+ * summary prefix) and before the protected tail. Any existing post-compact
+ * attachment messages in the input are stripped first to keep the injection
+ * idempotent — without this, compaction repeated across iterations would
+ * stack N generations of attachments, causing monotonic context growth.
  */
 export function injectPostCompactAttachments(
   messages: KodaXMessage[],
   attachments: PostCompactAttachments,
 ): KodaXMessage[] {
+  // Always strip prior attachments, even when the new injection is empty,
+  // so a caller that explicitly wants to "reset" attachments gets a clean slate.
+  const stripped = messages.some(isPostCompactAttachment)
+    ? messages.filter((msg) => !isPostCompactAttachment(msg))
+    : messages;
+
   if (!attachments.ledgerMessage && attachments.fileMessages.length === 0) {
-    return messages;
+    return stripped;
   }
 
   const toInject: KodaXMessage[] = [];
@@ -92,7 +145,7 @@ export function injectPostCompactAttachments(
   toInject.push(...attachments.fileMessages);
 
   // Insert after the compaction summary (identified by its unique prefix)
-  const summaryIdx = messages.findIndex(
+  const summaryIdx = stripped.findIndex(
     (msg) => msg.role === 'system'
       && typeof msg.content === 'string'
       && msg.content.startsWith('[对话历史摘要]'),
@@ -100,14 +153,14 @@ export function injectPostCompactAttachments(
 
   if (summaryIdx >= 0) {
     return [
-      ...messages.slice(0, summaryIdx + 1),
+      ...stripped.slice(0, summaryIdx + 1),
       ...toInject,
-      ...messages.slice(summaryIdx + 1),
+      ...stripped.slice(summaryIdx + 1),
     ];
   }
 
   // No summary message found — prepend
-  return [...toInject, ...messages];
+  return [...toInject, ...stripped];
 }
 
 /**
@@ -203,7 +256,13 @@ export async function buildFileContentMessages(
   const candidates = unique.slice(0, config.maxFiles);
   if (candidates.length === 0) return [];
 
-  const perFileBudget = Math.floor(budgetTokens * config.perFileShare);
+  // Per-file cap is the smaller of the configured share and the absolute
+  // ceiling (POST_COMPACT_MAX_TOKENS_PER_FILE). Prevents a large budget from
+  // letting a single file consume the whole attachment slot.
+  const perFileBudget = Math.min(
+    Math.floor(budgetTokens * config.perFileShare),
+    POST_COMPACT_MAX_TOKENS_PER_FILE,
+  );
   const messages: KodaXMessage[] = [];
   let usedTokens = 0;
 

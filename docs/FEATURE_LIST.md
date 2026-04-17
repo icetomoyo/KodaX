@@ -1,6 +1,6 @@
 # Feature 总表
 
-> Last updated: 2026-04-16
+> Last updated: 2026-04-17
 
 > 中文阅读说明：
 > 这份 `FEATURE_LIST` 是 roadmap 的总索引。
@@ -13,12 +13,12 @@
 
 | Item | Value |
 |---|---|
-| Tracked feature IDs | `001-071` |
-| Total tracked features | `71` |
+| Tracked feature IDs | `001-072` |
+| Total tracked features | `72` |
 | Completed | `62` |
 | Cancelled | `1` |
 | InProgress | `1` |
-| Planned | `7` |
+| Planned | `8` |
 | Current released version | `v0.7.19` |
 
 ### 各版本待做分布
@@ -26,7 +26,7 @@
 | Version | Planned features |
 |---|---|
 | `v0.7.18` | `0` (all complete or cancelled) |
-| `v0.7.20` | `1` |
+| `v0.7.20` | `2` |
 | `v0.7.30` | `1` |
 | `v0.8.0` | `3` |
 | `v1.0.0` | `1` |
@@ -50,6 +50,7 @@
 | `059` | Managed Task Structured Protocol V2 | Internal | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_059-managed-task-structured-protocol-v2) |
 | `060` | Claude-Aligned Bounded-Memory Runtime and OOM Hardening | Internal | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_060-claude-aligned-bounded-memory-runtime-and-oom-hardening) |
 | `026` | Roadmap Integrity and Planning Hygiene | Internal | High | `v0.7.20` | [v0.7.20](features/v0.7.20.md#feature_026-roadmap-integrity-and-planning-hygiene) |
+| `072` | Lineage-Native Compaction Migration | Internal | High | `v0.7.20` | [v0.7.20](features/v0.7.20.md#feature_072-lineage-native-compaction-migration) |
 | `063` | ~~Extensible Hook & Automation Substrate~~ | Enhancement | ~~High~~ | ~~`v0.7.18`~~ | [v0.7.18](features/v0.7.18.md#feature_063-extensible-hook--automation-substrate) | **Cancelled**: Extension 系统已覆盖，executor 能力提取为 `api.exec()`/`api.webhook()` |
 | `030` | Multi-Surface Delivery | Enhancement | High | `v1.0.0` | [v1.0.0](features/v1.0.0.md#feature_030-multi-surface-delivery) |
 
@@ -71,6 +72,7 @@
 - `FEATURE_042` 只应继续加强 repo-intelligence substrate，不应扩成 repo graph / workbench UI。
 - `FEATURE_038 / 043 / 053 / 054 / 056` 与 `023 / 031 / 042` 现统一收编到 `v0.7.30`，便于在同一版本内同步推进 runtime clarity、harness safety 与 transcript-native interaction maturity。
 - `FEATURE_056` 的目标是补 tool interaction 的解释层与 transcript-native 交互成熟度，不是把 KodaX 做成更重的 coordinator/task cockpit。
+- `FEATURE_072` 是 v0.7.18 post-compact 回归（v0.7.19 已用 6 处 surgical fix 止血）之后的结构性收口：把压缩热路径从 flat `context.messages` 迁移到 lineage-native（`getSessionMessagesFromLineage`-driven），让 post-compact attachments 作为 `KodaXSessionCompactionEntry` 的一等字段而不是散在 flat 数组里的 `[Post-compact: ...]` 系统消息。目标是单 source-of-truth，参考 Claude Code `getMessagesAfterCompactBoundary` 和 pi-mono `buildSessionContext`。v0.7.19 的 P4（字符串前缀 dedup）和 P6（REPL finally 复位）在 migration 完成后会被退休。
 
 ---
 

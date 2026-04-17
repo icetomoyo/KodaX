@@ -373,7 +373,18 @@ export async function generateSummary(
   );
 
   const rawText = result.textBlocks.map(block => block.text).join('\n');
-  return stripAnalysisBlock(rawText);
+  const cleaned = stripAnalysisBlock(rawText);
+
+  // Mirror Claude Code's behavior (compact.ts:499-515): a summary response
+  // with no usable text is a failure, not an empty success. Throwing here
+  // lets the compaction caller trip its circuit breaker and fall back to
+  // graceful degradation, instead of silently producing a blank summary
+  // that the partial-success path would treat as "compacted".
+  if (!cleaned.trim()) {
+    throw new Error('Compaction summary response did not contain valid text content');
+  }
+
+  return cleaned;
 }
 
 /**

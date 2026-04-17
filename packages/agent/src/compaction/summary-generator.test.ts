@@ -138,4 +138,40 @@ describe('buildCompactionPromptSnapshot', () => {
     expect(provider.systems[0]).toBe(snapshot.systemPrompt);
     expect(provider.prompts[0]).toBe(snapshot.userPrompt);
   });
+
+  it('generateSummary throws when the provider returns no usable text', async () => {
+    class EmptyTextProvider extends KodaXBaseProvider {
+      readonly name = 'empty-summary';
+      readonly supportsThinking = false;
+      protected readonly config: KodaXProviderConfig = {
+        apiKeyEnv: 'FAKE_SUMMARY_API_KEY',
+        model: 'empty-summary-model',
+        supportsThinking: false,
+        contextWindow: 200000,
+      };
+
+      async stream(): Promise<KodaXStreamResult> {
+        // Simulate provider returning only whitespace / analysis block — the
+        // case where a tool-calling-heavy model emits no real summary text.
+        return {
+          textBlocks: [{ type: 'text', text: '<analysis>thinking only</analysis>' }],
+          toolBlocks: [],
+          thinkingBlocks: [],
+        };
+      }
+    }
+
+    const provider = new EmptyTextProvider();
+
+    await expect(
+      generateSummary(
+        [{ role: 'user', content: 'continue' }],
+        provider,
+        { readFiles: [], modifiedFiles: [] },
+        undefined,
+        undefined,
+        undefined,
+      ),
+    ).rejects.toThrow(/did not contain valid text/i);
+  });
 });

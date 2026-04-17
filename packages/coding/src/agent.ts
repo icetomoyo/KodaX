@@ -48,7 +48,7 @@ import {
 import { buildSystemPrompt } from './prompts/index.js';
 import { generateSessionId, extractTitleFromMessages } from './session.js';
 import { checkIncompleteToolCalls } from './messages.js';
-import { compact as intelligentCompact, needsCompaction, microcompact, DEFAULT_MICROCOMPACTION_CONFIG, buildPostCompactAttachments, buildFileContentMessages, injectPostCompactAttachments, DEFAULT_POST_COMPACT_CONFIG, type CompactionConfig, type CompactionUpdate } from '@kodax/agent';
+import { compact as intelligentCompact, needsCompaction, microcompact, DEFAULT_MICROCOMPACTION_CONFIG, buildPostCompactAttachments, buildFileContentMessages, injectPostCompactAttachments, DEFAULT_POST_COMPACT_CONFIG, POST_COMPACT_TOKEN_BUDGET, type CompactionConfig, type CompactionUpdate } from '@kodax/agent';
 import { loadCompactionConfig } from './compaction-config.js';
 import { estimateTokens } from './tokenizer.js';
 import { KODAX_MAX_INCOMPLETE_RETRIES, KODAX_MAX_MAXTOKENS_RETRIES, PROMISE_PATTERN, CANCELLED_TOOL_RESULT_PREFIX, CANCELLED_TOOL_RESULT_MESSAGE } from './constants.js';
@@ -1736,8 +1736,12 @@ export async function runKodaX(
               );
 
               // Read recently modified files and inject content (async I/O)
-              // Budget = total post-compact budget minus ledger tokens
-              const totalPostCompactBudget = Math.floor(freedTokens * DEFAULT_POST_COMPACT_CONFIG.budgetRatio);
+              // Budget = total post-compact budget minus ledger tokens, capped by absolute budget.
+              // Aligns with Claude Code's POST_COMPACT_TOKEN_BUDGET (fixed cap, not proportional).
+              const totalPostCompactBudget = Math.min(
+                Math.floor(freedTokens * DEFAULT_POST_COMPACT_CONFIG.budgetRatio),
+                POST_COMPACT_TOKEN_BUDGET,
+              );
               const fileBudget = Math.max(0, totalPostCompactBudget - attachments.totalTokens);
               const fileMessages = fileBudget > 0
                 ? await buildFileContentMessages(result.artifactLedger, fileBudget)
@@ -1755,7 +1759,18 @@ export async function runKodaX(
             }
 
             didCompactMessages = true;
-            compactConsecutiveFailures = 0; // Reset on success
+            // Only reset the circuit-breaker counter when compaction actually
+            // reduced context below trigger. "Partial success" (pruning only,
+            // with silent summary failure) would otherwise keep the counter
+            // at zero forever and prevent graceful degradation from ever running.
+            const triggerTokens = contextWindow * (compactionConfig.triggerPercent / 100);
+            const postCompactTokens = estimateTokens(compacted);
+            if (postCompactTokens < triggerTokens) {
+              compactConsecutiveFailures = 0;
+            } else {
+              compactConsecutiveFailures++;
+              console.warn(`[Compaction] Partial success: still above trigger (${postCompactTokens} > ${Math.floor(triggerTokens)}) — attempt ${compactConsecutiveFailures}/${COMPACT_CIRCUIT_BREAKER_LIMIT}`);
+            }
             compactionUpdate = {
               anchor: result.anchor,
               artifactLedger: result.artifactLedger,
@@ -1763,7 +1778,7 @@ export async function runKodaX(
             };
             events.onCompactStats?.({
               tokensBefore: result.tokensBefore,
-              tokensAfter: result.tokensAfter,
+              tokensAfter: postCompactTokens,
             });
             events.onCompact?.(result.tokensBefore);
           } else {
@@ -1782,17 +1797,31 @@ export async function runKodaX(
         compacted = messages;
       }
 
-      // Graceful degradation: runs when LLM compact failed OR circuit breaker tripped
-      // This is separate from the LLM path so it remains available even after 3 failures
-      if (needsCompact && compacted === messages) {
-        compacted = gracefulCompactDegradation(messages, contextWindow, compactionConfig);
-        if (compacted !== messages) {
-          didCompactMessages = true;
-          events.onCompactStats?.({
-            tokensBefore: currentTokens,
-            tokensAfter: estimateTokens(compacted),
-          });
-          events.onCompact?.(estimateTokens(compacted));
+      // Graceful degradation: runs when:
+      //   - LLM compact threw (compacted === messages because catch set it)
+      //   - Circuit breaker tripped (needsCompact && circuitBreakerTripped → else branch)
+      //   - LLM compact "partial success" left context still above trigger (new ref, tokens still high)
+      // Gating by remaining tokens instead of reference equality catches the third case,
+      // which is the root cause of monotonic context growth observed in 0.7.18+.
+      //
+      // Pass `compacted` (not `messages`) so we keep any pruning work done by
+      // intelligentCompact and let graceful do additional atomic-block removal
+      // on top, rather than discarding the pruning and starting over.
+      if (needsCompact) {
+        const triggerTokens = contextWindow * (compactionConfig.triggerPercent / 100);
+        const gapRatio = compactionConfig.pruningGapRatio ?? 0.8;
+        const stillOverTrigger = estimateTokens(compacted) > triggerTokens * gapRatio;
+        if (stillOverTrigger) {
+          const degraded = gracefulCompactDegradation(compacted, contextWindow, compactionConfig);
+          if (degraded !== compacted) {
+            compacted = degraded;
+            didCompactMessages = true;
+            events.onCompactStats?.({
+              tokensBefore: currentTokens,
+              tokensAfter: estimateTokens(compacted),
+            });
+            events.onCompact?.(estimateTokens(compacted));
+          }
         }
       }
 

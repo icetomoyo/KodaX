@@ -6,6 +6,8 @@ import {
   buildPostCompactAttachments,
   injectPostCompactAttachments,
   DEFAULT_POST_COMPACT_CONFIG,
+  POST_COMPACT_TOKEN_BUDGET,
+  POST_COMPACT_MAX_TOKENS_PER_FILE,
 } from './post-compact.js';
 import fs from 'fs/promises';
 import path from 'path';
@@ -214,5 +216,106 @@ describe('buildFileContentMessages', () => {
       maxFiles: 3,
     });
     expect(result.length).toBeLessThanOrEqual(3);
+  });
+
+  it('caps per-file tokens at POST_COMPACT_MAX_TOKENS_PER_FILE even with huge budget', async () => {
+    // 400 KB of content ≈ 100k tokens — far above the 5k per-file cap.
+    const bigContent = 'a '.repeat(200_000);
+    const filePath = await createTmpFile('big.ts', bigContent);
+    const ledger = [createLedgerEntry('file_modified', filePath)];
+    // Pass a huge budget to prove the absolute per-file cap wins.
+    const result = await buildFileContentMessages(ledger, 1_000_000);
+    expect(result).toHaveLength(1);
+    // Rough token estimate: body should be bounded by the absolute cap
+    // (plus a small frame for path prefix / truncation marker).
+    const content = result[0]!.content as string;
+    const estimated = Math.ceil(content.length / 4);
+    expect(estimated).toBeLessThanOrEqual(POST_COMPACT_MAX_TOKENS_PER_FILE + 100);
+  });
+});
+
+describe('buildPostCompactAttachments absolute budget cap', () => {
+  it('respects POST_COMPACT_TOKEN_BUDGET even when freedTokens is enormous', () => {
+    const ledger = [
+      createLedgerEntry('file_modified', 'src/a.ts'),
+      createLedgerEntry('file_modified', 'src/b.ts'),
+      createLedgerEntry('search_scope', 'pattern1'),
+    ];
+    // freedTokens=500k would normally yield a 250k budget (freedTokens*0.5).
+    // The absolute cap must clamp to POST_COMPACT_TOKEN_BUDGET (50k).
+    const freedTokens = 500_000;
+    const result = buildPostCompactAttachments(ledger, freedTokens);
+    // Ledger share is 15% of clamped total (50k*0.15 = 7.5k cap on ledger).
+    // The returned ledger message must fit under the ceiling regardless of
+    // freedTokens.
+    expect(result.totalTokens).toBeLessThanOrEqual(POST_COMPACT_TOKEN_BUDGET);
+  });
+});
+
+describe('injectPostCompactAttachments idempotence', () => {
+  it('strips existing [Post-compact: ...] messages before injecting new ones', () => {
+    const oldLedger: KodaXMessage = {
+      role: 'system',
+      content: '[Post-compact: recent operations]\nOLD ledger content',
+    };
+    const oldFile: KodaXMessage = {
+      role: 'system',
+      content: '[Post-compact: file content] /path/old.ts\nold body',
+    };
+    const summary: KodaXMessage = {
+      role: 'system',
+      content: '[对话历史摘要]\n\nolder summary body',
+    };
+    const tail: KodaXMessage = {
+      role: 'user',
+      content: 'recent turn',
+    };
+    const messages: KodaXMessage[] = [summary, oldLedger, oldFile, tail];
+
+    const newLedger: KodaXMessage = {
+      role: 'system',
+      content: '[Post-compact: recent operations]\nNEW ledger content',
+    };
+    const newFile: KodaXMessage = {
+      role: 'system',
+      content: '[Post-compact: file content] /path/new.ts\nnew body',
+    };
+
+    const result = injectPostCompactAttachments(messages, {
+      ledgerMessage: newLedger,
+      fileMessages: [newFile],
+      totalTokens: 100,
+    });
+
+    const postCompactMessages = result.filter(
+      (m) => typeof m.content === 'string' && m.content.startsWith('[Post-compact:'),
+    );
+    expect(postCompactMessages).toHaveLength(2);
+    expect(postCompactMessages[0]).toBe(newLedger);
+    expect(postCompactMessages[1]).toBe(newFile);
+    // Old post-compact messages must be gone — otherwise monotonic growth
+    // would accumulate across iterations.
+    expect(result.some((m) => m === oldLedger)).toBe(false);
+    expect(result.some((m) => m === oldFile)).toBe(false);
+    // Summary and tail must be preserved.
+    expect(result[0]).toBe(summary);
+    expect(result).toContain(tail);
+  });
+
+  it('strips prior attachments even when the new injection is empty', () => {
+    const oldLedger: KodaXMessage = {
+      role: 'system',
+      content: '[Post-compact: recent operations]\nstale ledger',
+    };
+    const tail: KodaXMessage = { role: 'user', content: 'later turn' };
+    const messages: KodaXMessage[] = [oldLedger, tail];
+
+    const result = injectPostCompactAttachments(messages, {
+      ledgerMessage: null,
+      fileMessages: [],
+      totalTokens: 0,
+    });
+
+    expect(result).toEqual([tail]);
   });
 });
