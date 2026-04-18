@@ -5352,7 +5352,7 @@ function appendManagedTimelineEvent(
   return [...timeline, event].slice(-MAX_MANAGED_TIMELINE_EVENTS);
 }
 
-function createWorkerEvents(
+export function createWorkerEvents(
   baseEvents: KodaXEvents | undefined,
   worker: ManagedTaskWorkerSpec,
   forwardStream: boolean,
@@ -5618,7 +5618,11 @@ function createWorkerEvents(
     },
     onIterationEnd: (info) => {
       if (emitIterationEvents) {
-        baseEvents?.onIterationEnd?.(info);
+        // FEATURE_072: workers tag their iteration events with scope: 'worker'
+        // so the REPL handler knows to update the live token display without
+        // overwriting the parent's contextTokenSnapshot. createWorkerEvents is
+        // only ever called for workers by construction (Scout / role / evaluator).
+        baseEvents?.onIterationEnd?.({ ...info, scope: 'worker' });
       }
     },
     onTextDelta: (text) => {

@@ -435,3 +435,52 @@ describe('microcompaction', () => {
     expect(toolBlock?.content).toContain('[Cleared:');
   });
 });
+
+describe('FEATURE_072 regression guard: microcompact must never mutate in place', () => {
+  // Rationale: `/fork` deep-clones via structuredClone from lineage entries
+  // that share references with context.messages (cloneMessage is identity).
+  // If microcompact ever regresses to in-place mutation, the fork would
+  // silently capture the post-microcompact state. These tests guard against
+  // that regression by asserting reference-inequality on trimmed messages.
+  it('returns a new array when at least one message is trimmed', () => {
+    const input: KodaXMessage[] = [
+      createToolUseMessage('bash', 'tool_1', { command: 'ls' }),
+      createToolResultMessage('tool_1', 'large output'),
+      ...filler(DEFAULT_MICROCOMPACTION_CONFIG.maxAge + 1),
+    ];
+    const output = microcompact(input);
+    expect(output).not.toBe(input);
+  });
+
+  it('trimmed messages are new object references (no in-place mutation)', () => {
+    const input: KodaXMessage[] = [
+      createToolUseMessage('bash', 'tool_1', { command: 'ls' }),
+      createToolResultMessage('tool_1', 'large output'),
+      ...filler(DEFAULT_MICROCOMPACTION_CONFIG.maxAge + 1),
+    ];
+    const output = microcompact(input);
+
+    // The tool_result message (input[1]) should have been trimmed; the output
+    // at that index must NOT be the same reference.
+    expect(output[1]).not.toBe(input[1]);
+
+    // The input's original tool_result content must still be intact — proving
+    // microcompact did not mutate the input message's content.
+    const inputToolBlock = (input[1]!.content as { content: string }[])[0];
+    expect(inputToolBlock?.content).toBe('large output');
+  });
+
+  it('untrimmed messages may share references (memory optimization is permitted)', () => {
+    // Fresh messages within maxAge are not trimmed; microcompact is allowed
+    // to keep the same reference for these (it currently does via early-return
+    // of the original array when nothing changes, and via per-message early
+    // return in the map when no block changed).
+    const input: KodaXMessage[] = [
+      createTextMessage('user', 'fresh'),
+      createTextMessage('assistant', 'fresh response'),
+    ];
+    const output = microcompact(input);
+    // Since nothing was trimmed, microcompact returns the original array as-is.
+    expect(output).toBe(input);
+  });
+});

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { KodaXMessage } from '@kodax/ai';
+import type { KodaXSessionLineage } from './types.js';
 import {
   appendSessionLineageLabel,
+  applyLineageTruncation,
   applySessionCompaction,
   archiveOldIslands,
   buildSessionTree,
@@ -607,5 +609,311 @@ describe('archiveOldIslands', () => {
     collectTypes(tree);
 
     expect(allNodeTypes.has('archive_marker')).toBe(true);
+  });
+});
+
+describe('FEATURE_072: postCompactAttachments and slicer-layer emission', () => {
+  const userMsg = createTextMessage('user', 'task start');
+  const asstMsg = createTextMessage('assistant', 'done');
+  const keptUser = createTextMessage('user', 'follow up');
+  const keptAsst = createTextMessage('assistant', 'latest');
+
+  function att(role: 'system' | 'user', text: string): KodaXMessage {
+    return { role, content: text };
+  }
+
+  it('getContextMessagesForEntry contract: every entry in the active path produces ≤1 message (073 prerequisite)', () => {
+    // The contract: the derivation count equals the count of "message-producing"
+    // entries on the active path. archive_marker produces 0; compaction,
+    // message, branch_summary each produce exactly 1. Attachments come
+    // EXCLUSIVELY through the slicer-layer augmentation — not from
+    // getContextMessagesForEntry.
+    const lineageNoAttach = applySessionCompaction(
+      createSessionLineage([userMsg, asstMsg]),
+      [att('system', '[对话历史摘要]\n\nS'), keptUser, keptAsst],
+      { summary: 'S' },
+    );
+    const activePath = getSessionLineagePath(lineageNoAttach);
+    const derivedNoAttach = getSessionMessagesFromLineage(lineageNoAttach);
+    const messageProducingEntries = activePath.filter(
+      (e) => e.type === 'compaction' || e.type === 'message' || e.type === 'branch_summary',
+    ).length;
+    expect(derivedNoAttach.length).toBe(messageProducingEntries);
+  });
+
+  it('slicer inlines attachments for non-rewind compaction entries', () => {
+    const attachments: readonly KodaXMessage[] = [
+      att('system', '[Post-compact: ledger summary]'),
+      att('system', '[Post-compact: file contents]'),
+    ];
+    const lineage = applySessionCompaction(
+      createSessionLineage([userMsg, asstMsg]),
+      [att('system', '[对话历史摘要]\n\nS'), keptUser, keptAsst],
+      { summary: 'S' },
+      attachments,
+    );
+
+    const derived = getSessionMessagesFromLineage(lineage);
+
+    // Find the summary message index; attachments should follow immediately.
+    const summaryIdx = derived.findIndex((m) =>
+      typeof m.content === 'string' && m.content.includes('[对话历史摘要]'),
+    );
+    expect(summaryIdx).toBeGreaterThanOrEqual(0);
+    expect(derived[summaryIdx + 1]?.content).toBe('[Post-compact: ledger summary]');
+    expect(derived[summaryIdx + 2]?.content).toBe('[Post-compact: file contents]');
+  });
+
+  it('slicer skips attachments for rewind-marker compaction entries', () => {
+    // rewindSessionLineage creates a compaction entry with reason='rewind';
+    // even if someone stuffs attachments on such an entry, the slicer must skip them.
+    const base = createSessionLineage([userMsg, asstMsg]);
+    const rewoundLineage = rewindSessionLineage(base, base.entries[0]!.id);
+    expect(rewoundLineage).not.toBeNull();
+
+    // Manually stuff attachments onto the rewind marker to test the skip.
+    const mutated: KodaXSessionLineage = {
+      ...rewoundLineage!,
+      entries: rewoundLineage!.entries.map((e) =>
+        e.type === 'compaction' && e.reason === 'rewind'
+          ? { ...e, postCompactAttachments: [att('system', 'should-be-skipped')] }
+          : e,
+      ),
+    };
+
+    const derived = getSessionMessagesFromLineage(mutated);
+    const bad = derived.find((m) => m.content === 'should-be-skipped');
+    expect(bad).toBeUndefined();
+  });
+
+  it('applySessionCompaction with no attachments leaves field undefined (zero overhead for existing callers)', () => {
+    const lineage = applySessionCompaction(
+      createSessionLineage([userMsg, asstMsg]),
+      [att('system', '[对话历史摘要]\n\nS'), keptAsst],
+      { summary: 'S' },
+      // no attachments
+    );
+    const ce = lineage.entries.find((e) => e.type === 'compaction');
+    expect(ce).toBeDefined();
+    if (ce && ce.type === 'compaction') {
+      expect(ce.postCompactAttachments).toBeUndefined();
+    }
+  });
+
+  it('applySessionCompaction stores attachments on the CompactionEntry, not as inline messages', () => {
+    // Structural strip invariant: compactedMessages (kept tail) should NOT
+    // include [Post-compact: ...] entries; callers pass them separately.
+    const attachments: readonly KodaXMessage[] = [
+      att('system', '[Post-compact: ledger]'),
+      att('user', '[Post-compact: file.ts contents]'),
+    ];
+    const lineage = applySessionCompaction(
+      createSessionLineage([userMsg]),
+      [att('system', '[对话历史摘要]\n\nS'), keptUser],
+      { summary: 'S' },
+      attachments,
+    );
+
+    // Attachments live on the CompactionEntry.
+    const ce = lineage.entries.find((e) => e.type === 'compaction');
+    expect(ce?.type).toBe('compaction');
+    if (ce && ce.type === 'compaction') {
+      expect(ce.postCompactAttachments?.length).toBe(2);
+    }
+
+    // Attachments do NOT appear as standalone `message` entries.
+    const postCompactMessageEntries = lineage.entries.filter(
+      (e) =>
+        e.type === 'message'
+        && typeof e.message.content === 'string'
+        && e.message.content.startsWith('[Post-compact:'),
+    );
+    expect(postCompactMessageEntries).toHaveLength(0);
+  });
+
+  it('evictOldIslandMessageContent strips postCompactAttachments on old-island compaction entries, preserves memorySeed and summary', () => {
+    // Build island 1 with attachments
+    const base1 = createSessionLineage([userMsg, asstMsg]);
+    const island1 = applySessionCompaction(
+      base1,
+      [att('system', '[对话历史摘要]\n\nIsland1'), keptUser],
+      {
+        summary: 'Island1',
+        memorySeed: {
+          objective: 'obj1',
+          constraints: [],
+          progress: { completed: [], inProgress: [], blockers: [] },
+          keyDecisions: [],
+          nextSteps: [],
+          keyContext: [],
+          importantTargets: [],
+          tombstones: [],
+        },
+      },
+      [att('system', '[Post-compact: island1 att]')],
+    );
+
+    // Build island 2 on top — this evicts island 1
+    const island2 = applySessionCompaction(
+      island1,
+      [att('system', '[对话历史摘要]\n\nIsland2'), keptAsst],
+      { summary: 'Island2' },
+      [att('system', '[Post-compact: island2 att]')],
+    );
+
+    // Find all compaction entries
+    const compactionEntries = island2.entries.filter((e) => e.type === 'compaction');
+    expect(compactionEntries.length).toBeGreaterThanOrEqual(2);
+
+    // Island 1's compaction entry (the older one) must have:
+    //   - summary preserved
+    //   - memorySeed preserved
+    //   - postCompactAttachments stripped (undefined)
+    const island1CE = compactionEntries.find((e) => e.type === 'compaction' && e.summary === 'Island1');
+    expect(island1CE).toBeDefined();
+    if (island1CE && island1CE.type === 'compaction') {
+      expect(island1CE.summary).toBe('Island1');
+      expect(island1CE.memorySeed?.objective).toBe('obj1');
+      expect(island1CE.postCompactAttachments).toBeUndefined();
+    }
+
+    // Island 2's compaction entry (active) must RETAIN attachments
+    const island2CE = compactionEntries.find((e) => e.type === 'compaction' && e.summary === 'Island2');
+    expect(island2CE).toBeDefined();
+    if (island2CE && island2CE.type === 'compaction') {
+      expect(island2CE.postCompactAttachments?.length).toBe(1);
+    }
+  });
+
+  it('forkSessionLineage carries postCompactAttachments to the new branch via cloneForkableEntry', () => {
+    const attachments: readonly KodaXMessage[] = [att('system', '[Post-compact: file-A]')];
+    const lineage = applySessionCompaction(
+      createSessionLineage([userMsg]),
+      [att('system', '[对话历史摘要]\n\nS'), keptUser],
+      { summary: 'S' },
+      attachments,
+    );
+
+    const ce = lineage.entries.find((e) => e.type === 'compaction');
+    expect(ce).toBeDefined();
+    const forked = forkSessionLineage(lineage, ce!.id);
+    expect(forked).not.toBeNull();
+
+    const forkedCE = forked!.entries.find(
+      (e) => e.type === 'compaction' && e.summary === 'S',
+    );
+    expect(forkedCE).toBeDefined();
+    if (forkedCE && forkedCE.type === 'compaction') {
+      // Attachments survived the fork (not dropped by manual field enumeration)
+      expect(forkedCE.postCompactAttachments?.length).toBe(1);
+      expect(forkedCE.postCompactAttachments?.[0]?.content).toBe('[Post-compact: file-A]');
+      // And they are a DEEP clone — mutating the clone doesn't affect the original
+      expect(forkedCE.postCompactAttachments).not.toBe(attachments);
+    }
+  });
+});
+
+describe('FEATURE_072 Phase B: attachments routing + strip invariant + benchmark', () => {
+  function msg(role: 'user' | 'assistant' | 'system', content: string): KodaXMessage {
+    return { role, content };
+  }
+
+  it('applySessionCompaction defensively strips inline [Post-compact:] messages from compactedMessages', () => {
+    // Simulates agent.ts calling injectPostCompactAttachments first (P4), then
+    // emitting the inlined array to REPL. applySessionCompaction must NOT
+    // double-store attachments as inline message entries.
+    //
+    // Real post-compact attachments use role: 'system' (see
+    // buildPostCompactAttachments / buildFileContentMessages); the strip
+    // contract targets this shape.
+    const inlinedCompacted: KodaXMessage[] = [
+      msg('system', '[对话历史摘要]\n\nS'),
+      msg('system', '[Post-compact: recent operations]\nledger text'),
+      msg('system', '[Post-compact: file-a.ts contents]\n...'),
+      msg('user', 'kept user follow-up'),
+    ];
+    const attachments: readonly KodaXMessage[] = [
+      msg('system', '[Post-compact: recent operations]\nledger text'),
+      msg('system', '[Post-compact: file-a.ts contents]\n...'),
+    ];
+    const lineage = applySessionCompaction(
+      createSessionLineage([msg('user', 'start')]),
+      inlinedCompacted,
+      { summary: 'S' },
+      attachments,
+    );
+
+    // No message entry in lineage should start with [Post-compact:
+    const badEntries = lineage.entries.filter(
+      (e) =>
+        e.type === 'message'
+        && typeof e.message.content === 'string'
+        && e.message.content.startsWith('[Post-compact:'),
+    );
+    expect(badEntries).toHaveLength(0);
+
+    // Attachments live on the compaction entry only
+    const ce = lineage.entries.find((e) => e.type === 'compaction');
+    expect(ce?.type).toBe('compaction');
+    if (ce && ce.type === 'compaction') {
+      expect(ce.postCompactAttachments?.length).toBe(2);
+    }
+  });
+
+  it('applyLineageTruncation reconciles lineage against trimmed messages without appending a CompactionEntry', () => {
+    const initial = createSessionLineage([
+      msg('user', 'u1'),
+      msg('assistant', 'a1'),
+      msg('user', 'u2'),
+      msg('assistant', 'a2'),
+    ]);
+    const preCECount = initial.entries.filter((e) => e.type === 'compaction').length;
+    expect(preCECount).toBe(0);
+
+    // Simulate graceful trimming: drop u1 + a1
+    const trimmed = [msg('user', 'u2'), msg('assistant', 'a2')];
+    const result = applyLineageTruncation(initial, trimmed);
+
+    // No new CompactionEntry was appended (graceful is NOT a summary)
+    const postCECount = result.entries.filter((e) => e.type === 'compaction').length;
+    expect(postCECount).toBe(0);
+
+    // Derived view matches trimmed messages
+    const derived = getSessionMessagesFromLineage(result);
+    expect(derived.map((m) => m.content)).toEqual(['u2', 'a2']);
+  });
+
+  it('benchmark guard: getSessionMessagesFromLineage on 500-entry lineage completes quickly', () => {
+    // Build a lineage with 500 message entries via iterative createSessionLineage
+    // calls (not a single one — createSessionLineage's fingerprint matching
+    // works across calls using an existing base).
+    let lineage = createSessionLineage([]);
+    for (let i = 0; i < 500; i++) {
+      const role = i % 2 === 0 ? 'user' : 'assistant';
+      const m: KodaXMessage = { role, content: `message-${i}` };
+      const allMessages: KodaXMessage[] = [];
+      for (let j = 0; j <= i; j++) {
+        allMessages.push({ role: j % 2 === 0 ? 'user' : 'assistant', content: `message-${j}` });
+      }
+      lineage = createSessionLineage(allMessages, lineage);
+    }
+    expect(lineage.entries.length).toBeGreaterThanOrEqual(500);
+
+    // Warm-up call (populates fingerprint cache)
+    getSessionMessagesFromLineage(lineage);
+
+    const iterations = 10;
+    const durations: number[] = [];
+    for (let i = 0; i < iterations; i++) {
+      const start = performance.now();
+      getSessionMessagesFromLineage(lineage);
+      durations.push(performance.now() - start);
+    }
+    durations.sort((a, b) => a - b);
+    // p95 index for 10 samples = index 9 (0-indexed, ceil(10 * 0.95) = 10 → clamp to 9)
+    const p95 = durations[9]!;
+    // Ship-criterion: < 1ms p95 on warm cache. Allow headroom for CI jitter.
+    // If this fails consistently, add memoization per Open Question #1.
+    expect(p95).toBeLessThan(5); // 5ms safety margin over the 1ms target
   });
 });

@@ -1137,7 +1137,18 @@ Keyboard Shortcuts:
                 provider: currentConfig.provider,
                 thinking: currentConfig.thinking,
                 reasoningMode: currentConfig.reasoningMode,
-                session: { ...currentOptions.session, initialMessages: context.messages },
+                session: {
+                  ...currentOptions.session,
+                  // FEATURE_072: Scout / managed-task workers inherit the
+                  // derived view (summary + attachments + kept tail) when a
+                  // lineage is available, instead of the flat `context.messages`
+                  // snapshot. Behaviour is identical post-072-Phase-B because
+                  // lineage is reconciled on every compaction; the derived
+                  // view is preferred as the authoritative source.
+                  initialMessages: context.lineage
+                    ? getSessionMessagesFromLineage(context.lineage, context.lineage.activeEntryId)
+                    : context.messages,
+                },
                 context: {
                   ...currentOptions.context,
                   taskSurface: 'repl',

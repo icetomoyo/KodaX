@@ -1738,6 +1738,12 @@ export async function runKodaX(
             compacted = result.messages;
 
             // Post-compact reconstruction: inject artifact ledger summary + file content
+            // FEATURE_072: `postCompactAttachmentsForLineage` captures the flat
+            // attachment messages so they can also be routed via
+            // `compactionUpdate.postCompactAttachments` for REPL-side native
+            // storage on the CompactionEntry. Agent.ts still inlines them into
+            // local `messages` for consumers that continue to read flat messages.
+            let postCompactAttachmentsForLineage: readonly KodaXMessage[] = [];
             if (result.artifactLedger && result.artifactLedger.length > 0) {
               const freedTokens = result.tokensBefore - result.tokensAfter;
               const attachments = buildPostCompactAttachments(
@@ -1765,6 +1771,11 @@ export async function runKodaX(
 
               if (fullAttachments.totalTokens > 0) {
                 compacted = injectPostCompactAttachments(compacted, fullAttachments);
+                // Flat list for compactionUpdate: preserves [ledgerMessage, ...fileMessages] order
+                postCompactAttachmentsForLineage = [
+                  ...(fullAttachments.ledgerMessage ? [fullAttachments.ledgerMessage] : []),
+                  ...fullAttachments.fileMessages,
+                ];
               }
             }
 
@@ -1785,6 +1796,9 @@ export async function runKodaX(
               anchor: result.anchor,
               artifactLedger: result.artifactLedger,
               memorySeed: result.memorySeed,
+              postCompactAttachments: postCompactAttachmentsForLineage.length > 0
+                ? postCompactAttachmentsForLineage
+                : undefined,
             };
             events.onCompactStats?.({
               tokensBefore: result.tokensBefore,

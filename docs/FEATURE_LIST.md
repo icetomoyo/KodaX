@@ -1,6 +1,6 @@
 # Feature 总表
 
-> Last updated: 2026-04-17
+> Last updated: 2026-04-18
 
 > 中文阅读说明：
 > 这份 `FEATURE_LIST` 是 roadmap 的总索引。
@@ -13,12 +13,12 @@
 
 | Item | Value |
 |---|---|
-| Tracked feature IDs | `001-075` (026 removed) |
-| Total tracked features | `74` |
-| Completed | `63` |
+| Tracked feature IDs | `001-076` (026 removed) |
+| Total tracked features | `75` |
+| Completed | `65` |
 | Cancelled | `1` |
 | InProgress | `1` |
-| Planned | `10` |
+| Planned | `9` |
 | Current released version | `v0.7.19` |
 
 ### 各版本待做分布
@@ -26,8 +26,7 @@
 | Version | Planned features |
 |---|---|
 | `v0.7.18` | `1` |
-| `v0.7.20` | `2` |
-| `v0.7.25` | `2` |
+| `v0.7.25` | `3` |
 | `v0.7.30` | `1` |
 | `v0.8.0` | `3` |
 | `v1.0.0` | `1` |
@@ -50,10 +49,9 @@
 | `058` | Transcript Native Scrollback Dump | Enhancement | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_058-transcript-native-scrollback-dump) |
 | `059` | Managed Task Structured Protocol V2 | Internal | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_059-managed-task-structured-protocol-v2) |
 | `060` | Claude-Aligned Bounded-Memory Runtime and OOM Hardening | Internal | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_060-claude-aligned-bounded-memory-runtime-and-oom-hardening) |
-| `072` | Lineage-Native Compaction Migration | Internal | High | `v0.7.20` | [v0.7.20](features/v0.7.20.md#feature_072-lineage-native-compaction-migration) |
-| `074` | Subagent Permission Boundary Hardening | Internal | High | `v0.7.20` | [v0.7.20](features/v0.7.20.md#feature_074-subagent-permission-boundary-hardening) |
 | `073` | Reference-Style Lineage and Island Model Removal | Internal | Medium | `v0.7.25` | [v0.7.25](features/v0.7.25.md#feature_073-reference-style-lineage-and-island-model-removal) |
 | `075` | Plan Approval Dialog Scroll and Editor Integration | Enhancement | Medium | `v0.7.25` | [v0.7.25](features/v0.7.25.md#feature_075-plan-approval-dialog-scroll-and-editor-integration) |
+| `076` | Managed Task Round Boundary — User Conversation Preservation | Internal | High | `v0.7.25` | [v0.7.25](features/v0.7.25.md#feature_076-managed-task-round-boundary--user-conversation-preservation) |
 | `063` | ~~Extensible Hook & Automation Substrate~~ | Enhancement | High | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_063-extensible-hook--automation-substrate) | **Cancelled**: Extension 系统已覆盖，executor 能力提取为 `api.exec()`/`api.webhook()` |
 | `030` | Multi-Surface Delivery | Enhancement | High | `v1.0.0` | [v1.0.0](features/v1.0.0.md#feature_030-multi-surface-delivery) |
 
@@ -76,6 +74,7 @@
 - `FEATURE_038 / 043 / 053 / 054 / 056` 与 `023 / 031 / 042` 现统一收编到 `v0.7.30`，便于在同一版本内同步推进 runtime clarity、harness safety 与 transcript-native interaction maturity。
 - `FEATURE_056` 的目标是补 tool interaction 的解释层与 transcript-native 交互成熟度，不是把 KodaX 做成更重的 coordinator/task cockpit。
 - `FEATURE_072` 是 v0.7.18 post-compact 回归（v0.7.19 已用 6 处 surgical fix 止血）之后的结构性收口：把压缩热路径从 flat `context.messages` 迁移到 lineage-native（`getSessionMessagesFromLineage`-driven），让 post-compact attachments 作为 `KodaXSessionCompactionEntry` 的一等字段而不是散在 flat 数组里的 `[Post-compact: ...]` 系统消息。目标是单 source-of-truth，参考 Claude Code `getMessagesAfterCompactBoundary` 和 pi-mono `buildSessionContext`。v0.7.19 的 P4（字符串前缀 dedup）和 P6（REPL finally 复位）在 migration 完成后会被退休。
+- `FEATURE_076` 是 v0.7.19 Scout ceiling clamp fix（commit `3efdb7b`）之后的结构性收口：把 `runManagedTask` 出口的 `context.messages` 从"代理执行轨迹"（Evaluator 的独立会话、Scout role prompt 包装）收正为"用户对话"（干净的 `{user, assistant}` 对），让 multi-turn conversation、token 统计、session 持久化在 SA/H0/H1/H2/resume 所有路径上语义一致。与 `FEATURE_046`（轮内 worker handoff）关注点不同；`046` 负责轮内 final-answer convergence，`076` 负责轮间 message shape。
 
 ---
 
@@ -146,6 +145,8 @@
 | `069` | Session Rewind & Shell Completion | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_069-session-rewind--shell-completion) |
 | `070` | Context Engine V2 — Multi-Layer Compaction & Post-Compact Reconstruction | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_070-context-engine-v2--multi-layer-compaction--post-compact-reconstruction) |
 | `071` | AMA Managed Task Resilience — Worker Checkpoint & Mid-Execution Recovery | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_071-ama-managed-task-resilience--worker-checkpoint--mid-execution-recovery) |
+| `074` | Subagent Permission Boundary Hardening | `v0.7.20` (unreleased) | [v0.7.20](features/v0.7.20.md#feature_074-subagent-permission-boundary-hardening) |
+| `072` | Lineage-Native Compaction Migration | `v0.7.20` (unreleased) | [v0.7.20](features/v0.7.20.md#feature_072-lineage-native-compaction-migration) |
 
 > `FEATURE_051` close-out posture: keep the current REPL status/footer/task/message surfaces frozen, limit follow-up work to invisible substrate maturity for transcript, scroll/selection, and input behavior, and treat the design doc as a completed close-out record rather than an open rollout plan.
 

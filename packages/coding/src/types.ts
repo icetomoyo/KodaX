@@ -177,6 +177,16 @@ export interface KodaXEvents {
     tokenSource: 'api' | 'estimate';
     usage?: KodaXTokenUsage;
     contextTokenSnapshot?: KodaXContextTokenSnapshot;
+    /**
+     * FEATURE_072: identifies whether this event originates from the parent
+     * REPL's agent loop or from a worker (Scout / role worker / evaluator)
+     * spawned by the task engine. The REPL uses this to avoid mutating the
+     * parent's `contextTokenSnapshot` with worker-derived values — workers
+     * still fire `onIterationEnd` for live-token-count UX, but they must not
+     * overwrite the parent's context state. Absence is treated as 'parent'
+     * for backward compatibility.
+     */
+    scope?: 'parent' | 'worker';
   }) => void;
   onCompactStart?: () => void;
   /** Emitted when compaction finishes and actually changed the context */

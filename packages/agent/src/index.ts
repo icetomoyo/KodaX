@@ -101,6 +101,7 @@ export {
 
 export {
   appendSessionLineageLabel,
+  applyLineageTruncation,
   applySessionCompaction,
   archiveOldIslands,
   buildSessionTree,

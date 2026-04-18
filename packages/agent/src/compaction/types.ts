@@ -59,6 +59,17 @@ export interface CompactionUpdate {
   anchor?: CompactionAnchor;
   artifactLedger?: KodaXSessionArtifactLedgerEntry[];
   memorySeed?: KodaXCompactMemorySeed;
+  /**
+   * FEATURE_072: ledger-summary + file-content messages produced by
+   * `buildPostCompactAttachments` + `buildFileContentMessages`. Agent.ts
+   * passes these separately from the kept-tail messages so REPL-side
+   * `applySessionCompaction` can store them natively on the CompactionEntry
+   * rather than inlining them as loose `[Post-compact: ...]` system messages
+   * in lineage. Agent.ts keeps inlining them into its local flat `messages`
+   * via `injectPostCompactAttachments` (P4 belt-and-suspenders); the lineage
+   * is the persistence source of truth.
+   */
+  postCompactAttachments?: readonly KodaXMessage[];
 }
 
 export interface CompactionResult {

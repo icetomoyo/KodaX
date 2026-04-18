@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { CompactionDetails } from './compaction/types.js';
+import { isPostCompactAttachment } from './compaction/post-compact.js';
 import type {
   KodaXCompactMemorySeed,
   KodaXJsonValue,
@@ -459,13 +460,31 @@ export function getSessionLineagePath(
 
 /**
  * Build the effective LLM-visible message context for the active lineage path.
+ *
+ * FEATURE_072: for non-rewind compaction entries that carry
+ * `postCompactAttachments`, the slicer inlines attachments immediately after
+ * the summary. `getContextMessagesForEntry` stays 1-to-1 — attachments are a
+ * slicer-layer concern, which preserves the contract
+ * `entryMatchesContextMessage` and FEATURE_073's future firstKeptEntryId-based
+ * slicing both depend on.
  */
 export function getSessionMessagesFromLineage(
   lineage: KodaXSessionLineage,
   targetId: string | null = lineage.activeEntryId,
 ): KodaXMessage[] {
   return getSessionLineagePath(lineage, targetId)
-    .flatMap((entry) => getContextMessagesForEntry(entry))
+    .flatMap((entry) => {
+      const base = getContextMessagesForEntry(entry);
+      if (
+        entry.type === 'compaction'
+        && entry.reason !== 'rewind'
+        && entry.postCompactAttachments
+        && entry.postCompactAttachments.length > 0
+      ) {
+        return [...base, ...entry.postCompactAttachments.map(cloneMessage)];
+      }
+      return base;
+    })
     .map(cloneMessage);
 }
 
@@ -585,6 +604,18 @@ export function appendSessionLineageLabel(
   };
 }
 
+/**
+ * Apply a compaction event to the lineage.
+ *
+ * FEATURE_072 signature change: `keptMessages` (the post-summary tail that
+ * will become lineage entries) and `postCompactAttachments` (ledger +
+ * file-content messages that live on the CompactionEntry itself) are now
+ * separate parameters. The kept tail MUST NOT include attachments — otherwise
+ * they would be double-stored (once as message entries in lineage, once on
+ * the compaction entry). Phase A keeps `postCompactAttachments` optional so
+ * current callers that pass `[]` (or omit it) behave identically to today.
+ * Phase B migrates callers to supply real attachments.
+ */
 export function applySessionCompaction(
   lineage: KodaXSessionLineage | undefined,
   compactedMessages: KodaXMessage[],
@@ -597,6 +628,7 @@ export function applySessionCompaction(
     details?: KodaXJsonValue | CompactionDetails;
     memorySeed?: KodaXCompactMemorySeed;
   },
+  postCompactAttachments: readonly KodaXMessage[] = [],
 ): KodaXSessionLineage {
   const base = cloneLineage(lineage);
   const compactionEntryId = generateEntryId();
@@ -612,12 +644,24 @@ export function applySessionCompaction(
     reason: anchor.reason,
     details: normalizeCompactionDetails(anchor.details),
     memorySeed: cloneMemorySeed(anchor.memorySeed),
+    postCompactAttachments: postCompactAttachments.length > 0
+      ? postCompactAttachments
+      : undefined,
   };
 
   base.entries.push(compactionEntry);
   base.activeEntryId = compactionEntryId;
 
-  const next = createSessionLineage(compactedMessages, base);
+  // FEATURE_072 defensive strip: if the caller passed an array that still has
+  // `[Post-compact: ...]` messages inlined (legacy path where agent.ts called
+  // `injectPostCompactAttachments` before emitting onCompactedMessages), drop
+  // them here — attachments live on the CompactionEntry, never as inline
+  // message entries. Idempotent: if the caller already stripped, this is a no-op.
+  const keptMessages = compactedMessages.some(isPostCompactAttachment)
+    ? compactedMessages.filter((m) => !isPostCompactAttachment(m))
+    : compactedMessages;
+
+  const next = createSessionLineage(keptMessages, base);
   const activePath = getSessionLineagePath(next);
   const compactionIndex = activePath.findIndex((entry) => entry.id === compactionEntryId);
   const firstKeptEntryId = compactionIndex >= 0
@@ -639,6 +683,36 @@ export function applySessionCompaction(
   // timestamp) is preserved so tree navigation and archive still work;
   // only the message body is replaced with a lightweight placeholder.
   return evictOldIslandMessageContent(result);
+}
+
+/**
+ * FEATURE_072 §7a: reconcile lineage after graceful-degradation trimming.
+ *
+ * Unlike `applySessionCompaction` (which creates a new island with a summary
+ * CompactionEntry), graceful degradation is atomic-block trimming — no LLM
+ * summary, no ledger re-injection. Routing it through `applySessionCompaction`
+ * would produce a degenerate CompactionEntry with `summary: ''` that pollutes
+ * the lineage view and session-tree UI.
+ *
+ * Instead, `applyLineageTruncation` reconciles the lineage against the trimmed
+ * flat messages via `createSessionLineage`, which will:
+ *   - Match surviving messages to existing entries (reference or fingerprint)
+ *   - Drop unmatched entries from the active path
+ * Fingerprint lookup handles the "trimmed tool_result content changed" case:
+ * the trimmed message gets a new entry id under the same parent chain.
+ *
+ * This is distinct from `applySessionCompaction`: no new CompactionEntry is
+ * appended, no summary is written, no island root is created. The lineage
+ * stays on the same island; only the tail shape changes.
+ *
+ * Reserved for a future caller (v0.7.20 Phase C / v0.7.25 FEATURE_073). Phase B
+ * defines the helper; no production caller yet.
+ */
+export function applyLineageTruncation(
+  lineage: KodaXSessionLineage | undefined,
+  trimmedMessages: KodaXMessage[],
+): KodaXSessionLineage {
+  return createSessionLineage(trimmedMessages, lineage);
 }
 
 /**
@@ -687,24 +761,49 @@ export function evictOldIslandMessageContent(lineage: KodaXSessionLineage): Koda
     }
   }
 
-  // Evict message content from old island entries
+  // Evict heavy content from old island entries.
+  //
+  // Two entry types carry heavy payload that grows unboundedly across
+  // compactions if not evicted:
+  //   - `message`: full tool_result / thinking content
+  //   - `compaction.postCompactAttachments` (FEATURE_072): ledger summary +
+  //     file-content messages (≤50k tokens). Without eviction, each
+  //     compaction adds a new island-root CompactionEntry whose attachments
+  //     live forever in the serialized entries array, reproducing the
+  //     monotonic-growth pathology FEATURE_072 exists to fix in a new shape.
+  //
+  // `summary`, `firstKeptEntryId`, and `memorySeed` stay on old CompactionEntries:
+  // - `summary` is small and used by session-tree UI preview
+  // - `memorySeed` is small and may still be read by a cross-session resume
+  // - `firstKeptEntryId` is structural; removing it would break navigation
   let changed = false;
   const evicted = lineage.entries.map((entry) => {
-    if (entry.type !== 'message') return entry;
     if (currentIsland.has(entry.id)) return entry;
 
-    // Old island message: replace content with a block-array placeholder.
-    // Using the canonical block shape (not a bare string) keeps downstream
-    // serialization/tokenization code paths — which iterate content blocks
-    // via `msg.content as KodaXContentBlock[]` — working without special-cases.
-    changed = true;
-    return {
-      ...entry,
-      message: {
-        role: entry.message.role,
-        content: [{ type: 'text', text: '[compacted]' }],
-      } as KodaXMessage,
-    };
+    if (entry.type === 'message') {
+      // Old island message: replace content with a block-array placeholder.
+      // Using the canonical block shape (not a bare string) keeps downstream
+      // serialization/tokenization code paths — which iterate content blocks
+      // via `msg.content as KodaXContentBlock[]` — working without special-cases.
+      changed = true;
+      return {
+        ...entry,
+        message: {
+          role: entry.message.role,
+          content: [{ type: 'text', text: '[compacted]' }],
+        } as KodaXMessage,
+      };
+    }
+
+    if (entry.type === 'compaction' && entry.postCompactAttachments?.length) {
+      changed = true;
+      return {
+        ...entry,
+        postCompactAttachments: undefined,
+      };
+    }
+
+    return entry;
   });
 
   return changed ? { ...lineage, entries: evicted } : lineage;
@@ -740,6 +839,12 @@ function cloneForkableEntry(
         reason: entry.reason,
         details: cloneJsonValue(entry.details),
         memorySeed: cloneMemorySeed(entry.memorySeed),
+        // FEATURE_072: fork carries attachments to the new branch so the
+        // forked leaf's derived view includes the ledger + file context
+        // that existed at the fork point.
+        postCompactAttachments: entry.postCompactAttachments
+          ? entry.postCompactAttachments.map((m) => structuredClone(m))
+          : undefined,
       };
     case 'branch_summary':
       return {

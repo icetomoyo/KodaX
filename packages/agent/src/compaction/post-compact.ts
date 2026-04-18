@@ -111,10 +111,25 @@ export function buildPostCompactAttachments(
  * Mirrors Claude Code's `readFileState.clear()` discipline: each compaction
  * replaces the post-compact attachments wholesale, rather than stacking them.
  */
-function isPostCompactAttachment(msg: KodaXMessage): boolean {
+export function isPostCompactAttachment(msg: KodaXMessage): boolean {
   return msg.role === 'system'
     && typeof msg.content === 'string'
     && msg.content.startsWith(POST_COMPACT_MESSAGE_PREFIX);
+}
+
+/**
+ * FEATURE_072: strip post-compact attachment messages from a flat message
+ * array. Used by `applySessionCompaction` to keep attachments out of lineage
+ * message entries when a caller passes an already-inlined compacted array —
+ * attachments belong on the CompactionEntry's `postCompactAttachments` field,
+ * not duplicated as `message` entries.
+ */
+export function stripPostCompactAttachments(
+  messages: KodaXMessage[],
+): KodaXMessage[] {
+  return messages.some(isPostCompactAttachment)
+    ? messages.filter((msg) => !isPostCompactAttachment(msg))
+    : messages;
 }
 
 /**

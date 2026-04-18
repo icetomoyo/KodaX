@@ -46,6 +46,8 @@ export {
   buildFileContentMessages,
   buildPostCompactAttachments,
   injectPostCompactAttachments,
+  isPostCompactAttachment,
+  stripPostCompactAttachments,
   DEFAULT_POST_COMPACT_CONFIG,
   POST_COMPACT_TOKEN_BUDGET,
   POST_COMPACT_MAX_TOKENS_PER_FILE,

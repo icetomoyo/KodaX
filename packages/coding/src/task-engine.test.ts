@@ -81,7 +81,8 @@ vi.mock('./repo-intelligence/runtime.js', async () => {
   };
 });
 
-import { __managedProtocolTestables, runManagedTask } from './task-engine.js';
+import { __managedProtocolTestables, runManagedTask, createWorkerEvents } from './task-engine.js';
+import type { KodaXEvents } from './types.js';
 
 const tempDirs: string[] = [];
 
@@ -352,6 +353,56 @@ async function waitForFileContentContaining(
   }
   throw new Error(`Timed out waiting for ${filePath} to contain: ${expectedFragments.join(', ')}\nLast content:\n${lastContent}`);
 }
+
+describe('FEATURE_072: createWorkerEvents scope tagging', () => {
+  it('tags forwarded onIterationEnd with scope: worker when emitIterationEvents is enabled', () => {
+    const receivedInfos: unknown[] = [];
+    const baseEvents: KodaXEvents = {
+      onIterationEnd: (info) => {
+        receivedInfos.push(info);
+      },
+    };
+    // Minimal worker spec — createWorkerEvents only reads `title`, `prefix`, and
+    // callback fields for its text/thinking streams; iteration path uses nothing
+    // worker-specific.
+    const worker = { title: 'test-worker', id: 'w1' } as unknown as Parameters<typeof createWorkerEvents>[1];
+    const wrapped = createWorkerEvents(baseEvents, worker, false, undefined, {
+      emitIterationEvents: true,
+    });
+    expect(wrapped).toBeDefined();
+
+    const payload = {
+      iter: 1,
+      maxIter: 10,
+      tokenCount: 42,
+      tokenSource: 'estimate' as const,
+    };
+    wrapped?.onIterationEnd?.(payload);
+
+    expect(receivedInfos).toHaveLength(1);
+    expect((receivedInfos[0] as { scope?: string }).scope).toBe('worker');
+  });
+
+  it('does NOT forward onIterationEnd when emitIterationEvents is false', () => {
+    const receivedInfos: unknown[] = [];
+    const baseEvents: KodaXEvents = {
+      onIterationEnd: (info) => {
+        receivedInfos.push(info);
+      },
+    };
+    const worker = { title: 'silent-worker', id: 'w2' } as unknown as Parameters<typeof createWorkerEvents>[1];
+    const wrapped = createWorkerEvents(baseEvents, worker, false);
+
+    wrapped?.onIterationEnd?.({
+      iter: 1,
+      maxIter: 10,
+      tokenCount: 42,
+      tokenSource: 'estimate',
+    });
+
+    expect(receivedInfos).toHaveLength(0);
+  });
+});
 
 describe('managed protocol parsers', () => {
   it('accepts scout json blocks with aliases and trailing chatter', () => {

@@ -8,6 +8,7 @@ import * as readline from 'readline';
 import chalk from 'chalk';
 import {
   runManagedTask,
+  getSessionMessagesFromLineage,
   KodaXOptions,
   KodaXMessage,
   type KodaXResult,
@@ -333,7 +334,10 @@ function buildProjectTaskOptions(
     ...options,
     session: {
       ...options.session,
-      initialMessages: context.messages,
+      // FEATURE_072: prefer the lineage-derived view when available.
+      initialMessages: context.lineage
+        ? getSessionMessagesFromLineage(context.lineage, context.lineage.activeEntryId)
+        : context.messages,
     },
     context: {
       ...options.context,

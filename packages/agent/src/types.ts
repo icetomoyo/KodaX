@@ -101,6 +101,17 @@ export interface KodaXSessionCompactionEntry extends KodaXSessionEntryBase {
   reason?: string;
   details?: KodaXJsonValue;
   memorySeed?: KodaXCompactMemorySeed;
+  /**
+   * FEATURE_072: post-compact ledger summary + file-content messages that
+   * are inlined after the compaction summary at slicer time
+   * (`getSessionMessagesFromLineage`). Stored here so they leave the active
+   * path automatically when a new compaction entry is appended.
+   *
+   * NOTE: attachments are emitted by the slicer, NOT by `getContextMessagesForEntry`
+   * — preserving the latter's 1-to-1 contract that `entryMatchesContextMessage`
+   * and FEATURE_073's future slicing both depend on.
+   */
+  postCompactAttachments?: readonly KodaXMessage[];
 }
 
 export interface KodaXSessionBranchSummaryEntry extends KodaXSessionEntryBase {

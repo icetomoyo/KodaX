@@ -59,6 +59,7 @@ import {
   buildSessionTree,
   createSessionLineage,
   extractArtifactLedger,
+  getSessionMessagesFromLineage,
   KodaXInputArtifact,
   KodaXOptions,
   KodaXMessage,
@@ -5178,8 +5179,19 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           update.artifactLedger,
         );
       }
+      // FEATURE_072: route post-compact attachments natively onto the
+      // CompactionEntry instead of letting them be re-serialized as regular
+      // `message` entries. `messages` may still contain inline `[Post-compact:`
+      // entries from agent.ts's `injectPostCompactAttachments` call
+      // (P4 belt-and-suspenders); `applySessionCompaction` defensively strips
+      // them before building lineage entries.
       context.lineage = update?.anchor
-        ? applySessionCompaction(context.lineage, messages, update.anchor)
+        ? applySessionCompaction(
+            context.lineage,
+            messages,
+            update.anchor,
+            update.postCompactAttachments ?? [],
+          )
         : createSessionLineage(messages, context.lineage);
       const currentTokens = estimateTokens(messages);
       context.contextTokenSnapshot = {
@@ -5220,8 +5232,20 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       maxIter: number;
       tokenCount: number;
       contextTokenSnapshot?: import("@kodax/coding").KodaXContextTokenSnapshot;
+      scope?: 'parent' | 'worker';
     }) => {
-      context.contextTokenSnapshot = info.contextTokenSnapshot;
+      // FEATURE_072: only parent-scoped iteration events may mutate
+      // context.contextTokenSnapshot. Worker events still update the live
+      // token display so the AMA status bar reflects in-flight progress,
+      // but they must not overwrite the parent's snapshot — doing so was the
+      // root cause of the v0.7.18 regression where a worker's short context
+      // masquerading as the parent's context showed a deflated number that
+      // then refused to update back. The v0.7.19 P6 finally-block cleanup
+      // papers over this; Phase D of FEATURE_072 retires P6 once this scope
+      // gate is validated.
+      if (info.scope !== 'worker') {
+        context.contextTokenSnapshot = info.contextTokenSnapshot;
+      }
       setLiveTokenCount(info.tokenCount);
     },
   }), [
@@ -5273,7 +5297,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const runAgentRound = async (
     opts: KodaXOptions,
     prompt: string,
-    initialMessages: KodaXMessage[] = context.messages,
+    // FEATURE_072: default falls back to the lineage-derived view when a
+    // lineage exists (authoritative source). Callers that explicitly pass an
+    // initialMessages argument (fork path, resume path) keep their behaviour.
+    initialMessages: KodaXMessage[] = context.lineage
+      ? getSessionMessagesFromLineage(context.lineage, context.lineage.activeEntryId)
+      : context.messages,
     inputArtifacts?: readonly KodaXInputArtifact[],
   ): Promise<KodaXResult> => {
     const events = {
@@ -5723,7 +5752,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         return;
       }
 
-      const initialMessages = prepared.mode === "fork" ? [] : context.messages;
+      // FEATURE_072: prefer lineage-derived view for non-fork dispatches.
+      const initialMessages = prepared.mode === "fork"
+        ? []
+        : context.lineage
+          ? getSessionMessagesFromLineage(context.lineage, context.lineage.activeEntryId)
+          : context.messages;
       // Issue 116: capture generation at call time to detect supersession after await
       const roundGeneration = promptGenerationRef.current;
       const result = await runAgentRound(prepared.options, prepared.prompt, initialMessages);
