@@ -55,7 +55,7 @@ export { toolGlob } from './glob.js';
 export { toolGrep } from './grep.js';
 export { toolUndo } from './undo.js';
 export { toolAskUserQuestion } from './ask-user-question.js';
-export { toolSetPermissionMode } from './set-permission-mode.js';
+export { toolExitPlanMode } from './exit-plan-mode.js';
 export { toolRepoOverview } from './repo-overview.js';
 export { toolChangedScope } from './changed-scope.js';
 export { toolChangedDiff, toolChangedDiffBundle } from './changed-diff.js';

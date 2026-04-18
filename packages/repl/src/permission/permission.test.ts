@@ -5,6 +5,8 @@ import { createTempDirSync, removeTempDirSync } from '../test-utils/temp-dir.js'
 import {
   getDirectShellBypassBlockReason,
   getPlanModeBlockReason,
+  isAlwaysConfirmPath,
+  isCommandOnProtectedPath,
   isPlanModeAllowedPath,
 } from './permission.js';
 
@@ -78,6 +80,51 @@ describe('plan mode writable path whitelist', () => {
     expect(
       getPlanModeBlockReason('bash', { command: 'mkdir scratch-output' }, projectRoot)
     ).toContain('Could not determine a safe target');
+  });
+});
+
+describe('isAlwaysConfirmPath — system temp as safe scratchpad', () => {
+  it('does NOT require confirmation for paths inside the system temp directory', () => {
+    const projectRoot = createProjectRoot();
+    const tempFile = path.join(os.tmpdir(), `kodax-test-${Date.now()}.txt`);
+    expect(isAlwaysConfirmPath(tempFile, projectRoot)).toBe(false);
+  });
+
+  it('does NOT require confirmation for paths inside the project root', () => {
+    const projectRoot = createProjectRoot();
+    const projectFile = path.join(projectRoot, 'src', 'example.ts');
+    expect(isAlwaysConfirmPath(projectFile, projectRoot)).toBe(false);
+  });
+
+  it('DOES require confirmation for paths outside both project and system temp', () => {
+    const projectRoot = createProjectRoot();
+    const homeFile = path.join(os.homedir(), 'Documents', 'other-project-file.ts');
+    expect(isAlwaysConfirmPath(homeFile, projectRoot)).toBe(true);
+  });
+
+  it('DOES require confirmation for .kodax/ project config even inside project root', () => {
+    const projectRoot = createProjectRoot();
+    const kodaxFile = path.join(projectRoot, '.kodax', 'config.json');
+    expect(isAlwaysConfirmPath(kodaxFile, projectRoot)).toBe(true);
+  });
+
+  it('DOES require confirmation for ~/.kodax user config', () => {
+    const projectRoot = createProjectRoot();
+    const userKodaxFile = path.join(os.homedir(), '.kodax', 'auth.json');
+    expect(isAlwaysConfirmPath(userKodaxFile, projectRoot)).toBe(true);
+  });
+
+  it('bash commands writing to system temp are not flagged as protected', () => {
+    const projectRoot = createProjectRoot();
+    const tempFile = path.join(os.tmpdir(), `kodax-bash-${Date.now()}.txt`);
+    // extractPathsFromCommand needs patterns it recognizes — use absolute path in arg
+    expect(isCommandOnProtectedPath(`echo hi > "${tempFile}"`, projectRoot)).toBe(false);
+  });
+
+  it('bash commands writing outside project+temp are still flagged as protected', () => {
+    const projectRoot = createProjectRoot();
+    const outsideFile = path.join(os.homedir(), 'Documents', 'unrelated.txt');
+    expect(isCommandOnProtectedPath(`echo hi > "${outsideFile}"`, projectRoot)).toBe(true);
   });
 });
 

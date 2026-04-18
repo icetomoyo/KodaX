@@ -824,14 +824,45 @@ Keyboard Shortcuts:
     },
     getCostReport: () => costReportRef.current?.() ?? null,
     createKodaXOptions: () => {
+      // FEATURE_074: live plan-mode check for child agents. The closure reads
+      // currentPermissionMode lazily, so mid-run parent-mode toggles propagate
+      // into in-flight children (user flipping plan ↔ accept-edits mid-stream
+      // is a common case and was the original request).
+      const planModeBlockCheck = (tool: string, input: Record<string, unknown>): string | null => {
+        if (currentPermissionMode !== 'plan') return null;
+        return getPlanModeBlockReason(tool, input, gitRoot ?? process.cwd());
+      };
       return {
         ...currentOptions,
         provider: currentConfig.provider,
         model: currentConfig.model,
         thinking: currentConfig.thinking,
         reasoningMode: currentConfig.reasoningMode,
+        context: {
+          ...currentOptions.context,
+          planModeBlockCheck,
+        },
         events: {
           ...currentOptions.events,
+          // FEATURE_074: exit_plan_mode tool callback. Three-state return:
+          //   'not-in-plan-mode' when called outside plan mode (tool turns this
+          //   into an explicit error); true on approval; false on rejection.
+          // buildToolConfirmationDisplay renders the full plan from input.plan,
+          // so the user actually sees what they're approving.
+          exitPlanMode: async (plan: string): Promise<boolean | 'not-in-plan-mode'> => {
+            if (currentPermissionMode !== 'plan') return 'not-in-plan-mode';
+            const result = await confirmToolExecution(rl, 'exit_plan_mode', { plan }, {
+              isProtectedPath: false,
+              permissionMode: currentPermissionMode,
+            });
+            if (result.confirmed) {
+              currentConfig.permissionMode = 'accept-edits';
+              currentPermissionMode = 'accept-edits';
+              statusBar?.update({ permissionMode: 'accept-edits' });
+              return true;
+            }
+            return false;
+          },
           // Permission control via beforeToolExecute hook - 通过 beforeToolExecute 钩子控制权限
           beforeToolExecute: async (tool: string, input: Record<string, unknown>): Promise<boolean | string> => {
             const mode = currentPermissionMode;
@@ -841,7 +872,7 @@ Keyboard Shortcuts:
               const planModeBlockReason = getPlanModeBlockReason(tool, input, gitRoot ?? process.cwd());
               if (planModeBlockReason) {
                 console.log(chalk.yellow(planModeBlockReason));
-                return `${planModeBlockReason} Do not try to modify files while planning. Finish the plan first, then use ask_user_question to ask the user whether to proceed. If the user confirms, call set_permission_mode with mode "accept-edits" to switch to implementation mode.`;
+                return `${planModeBlockReason} Do not modify files while planning. Finish the plan first, then call exit_plan_mode with the finalized plan — the user will review and approve or reject.`;
               }
             }
 
@@ -1110,6 +1141,12 @@ Keyboard Shortcuts:
                 context: {
                   ...currentOptions.context,
                   taskSurface: 'repl',
+                  // FEATURE_074: live plan-mode check for child-agent inheritance.
+                  // Separate code path from createKodaXOptions — must propagate too.
+                  planModeBlockCheck: (tool: string, input: Record<string, unknown>): string | null => {
+                    if (currentPermissionMode !== 'plan') return null;
+                    return getPlanModeBlockReason(tool, input, gitRoot ?? process.cwd());
+                  },
                   ...(preparedArtifacts.inputArtifacts.length > 0
                     ? { inputArtifacts: preparedArtifacts.inputArtifacts }
                     : {}),

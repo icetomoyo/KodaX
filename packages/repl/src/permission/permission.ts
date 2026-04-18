@@ -309,10 +309,16 @@ export function generateSavePattern(
 /**
  * Check if target path requires always-confirm (permanent protection zones)
  *
- * Protected zones (always require confirmation):
+ * Protected zones (always require confirmation, regardless of mode):
  * - .kodax/ project config directory
  * - ~/.kodax/ user config directory
- * - Paths outside the project root
+ * - Paths outside the project root AND outside the system temp directory
+ *
+ * System temp directories (`os.tmpdir()` and `$TEMP` / `$TMP` / `$TMPDIR`) are
+ * treated as a safe scratchpad in all modes — writing there is auto-allowed.
+ * This aligns with plan mode's `isPlanModeAllowedPath` semantics: both modes
+ * already explicitly permit system-temp writes, so accept-edits and
+ * auto-in-project should not be stricter than plan mode on this dimension.
  */
 export function isAlwaysConfirmPath(targetPath: string, projectRoot: string): boolean {
   try {
@@ -321,24 +327,29 @@ export function isAlwaysConfirmPath(targetPath: string, projectRoot: string): bo
     const userKodaxDir = path.join(os.homedir(), '.kodax');
     const projectKodaxDir = path.join(normalizedRoot, '.kodax');
 
-    // .kodax/ project config directory
-    if (normalizedPath.startsWith(projectKodaxDir + path.sep) || normalizedPath === projectKodaxDir) {
+    // .kodax/ project config directory — always protected
+    if (isPathInsideDirectory(normalizedPath, projectKodaxDir)) {
       return true;
     }
 
-    // ~/.kodax/ user config directory
-    if (normalizedPath.startsWith(userKodaxDir + path.sep) || normalizedPath === userKodaxDir) {
+    // ~/.kodax/ user config directory — always protected
+    if (isPathInsideDirectory(normalizedPath, userKodaxDir)) {
       return true;
     }
 
-    // Paths outside project root
-    const lowerPath = normalizedPath.toLowerCase();
-    const lowerRoot = normalizedRoot.toLowerCase();
-    if (lowerPath !== lowerRoot && !lowerPath.startsWith(lowerRoot + path.sep.toLowerCase())) {
-      return true;
+    // Inside project — not "always confirm"
+    if (isPathInsideDirectory(normalizedPath, normalizedRoot)) {
+      return false;
     }
 
-    return false;
+    // Outside project but inside system temp — safe scratchpad, not "always confirm"
+    const systemTempDirs = getSystemTempDirectories();
+    if (systemTempDirs.some(tempDir => isPathInsideDirectory(normalizedPath, tempDir))) {
+      return false;
+    }
+
+    // Outside project AND outside system temp — require confirmation
+    return true;
   } catch {
     // Path parsing errors should degrade to "not protected" instead of crashing permission checks.
     return false;

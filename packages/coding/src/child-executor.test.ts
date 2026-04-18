@@ -14,7 +14,13 @@ import type {
   KodaXChildContextBundle,
   KodaXAmaFanoutClass,
 } from './types.js';
-import { executeChildAgents, buildEvaluatorMergePrompt, collectWriteChildDiffs } from './child-executor.js';
+import {
+  executeChildAgents,
+  buildEvaluatorMergePrompt,
+  collectWriteChildDiffs,
+  buildChildEvents,
+  CHILD_EXCLUDE_TOOLS_BASE,
+} from './child-executor.js';
 import type { ChildExecutorOptions, WriteChildDiff } from './child-executor.js';
 import { runKodaX } from './agent.js';
 import { toolWorktreeCreate, toolWorktreeRemove } from './tools/worktree.js';
@@ -324,6 +330,98 @@ describe('buildEvaluatorMergePrompt', () => {
     expect(prompt).toContain('+new code');
     expect(prompt).toContain('ACCEPT');
     expect(prompt).toContain('REVISE');
+  });
+});
+
+/* ---------- FEATURE_074: Permission boundary tool exclusion ---------- */
+
+describe('CHILD_EXCLUDE_TOOLS_BASE (FEATURE_074)', () => {
+  it('excludes exit_plan_mode from child agent tool list', () => {
+    expect(CHILD_EXCLUDE_TOOLS_BASE).toContain('exit_plan_mode');
+  });
+
+  it('still excludes the legacy parent-only tools (regression guard)', () => {
+    expect(CHILD_EXCLUDE_TOOLS_BASE).toContain('emit_managed_protocol');
+    expect(CHILD_EXCLUDE_TOOLS_BASE).toContain('dispatch_child_task');
+    expect(CHILD_EXCLUDE_TOOLS_BASE).toContain('ask_user_question');
+    expect(CHILD_EXCLUDE_TOOLS_BASE).toContain('worktree_create');
+    expect(CHILD_EXCLUDE_TOOLS_BASE).toContain('worktree_remove');
+  });
+
+  it('passes the exclude list into runKodaX so the LLM never sees exit_plan_mode', async () => {
+    const bundles = [createBundle({ id: 'cb-1', objective: 'Read-only check' })];
+
+    mockRunKodaX.mockResolvedValueOnce({
+      success: true,
+      lastText: 'Done',
+      messages: [{ role: 'assistant', content: '' }],
+      sessionId: 's1',
+    });
+
+    await executeChildAgents(bundles, createCtx(), createOptions());
+
+    const callArgs = mockRunKodaX.mock.calls[0]!;
+    const opts = callArgs[0] as { context: { excludeTools: readonly string[] } };
+    expect(opts.context.excludeTools).toContain('exit_plan_mode');
+  });
+});
+
+/* ---------- FEATURE_074: Plan-mode propagation into child events ---------- */
+
+describe('buildChildEvents plan-mode propagation (FEATURE_074)', () => {
+  it('blocks tools when planModeBlockCheck returns a reason', async () => {
+    const events = buildChildEvents(
+      'cb-test',
+      undefined,
+      (tool) => (tool === 'edit' ? `[Blocked] ${tool} not allowed in plan mode.` : null),
+    );
+    const decision = await events!.beforeToolExecute!('edit', { path: '/x.ts' });
+    expect(typeof decision).toBe('string');
+    expect(decision).toContain('[Blocked]');
+    expect(decision).toContain('child agent inheriting plan-mode constraints');
+  });
+
+  it('allows read-only tools when planModeBlockCheck returns null for them', async () => {
+    const events = buildChildEvents(
+      'cb-test',
+      undefined,
+      (tool) => (tool === 'edit' ? `[Blocked] ${tool} not allowed in plan mode.` : null),
+    );
+    const decision = await events!.beforeToolExecute!('read', { path: '/x.ts' });
+    expect(decision).toBe(true);
+  });
+
+  it('skips the check entirely when planModeBlockCheck is undefined', async () => {
+    const events = buildChildEvents('cb-test', undefined, undefined);
+    const decision = await events!.beforeToolExecute!('edit', { path: '/x.ts' });
+    expect(decision).toBe(true);
+  });
+
+  it('propagates live parent mode via closure — toggle reflected on next call', async () => {
+    // Simulates the user flipping plan ↔ accept-edits mid-run.
+    let parentMode: 'plan' | 'accept-edits' = 'plan';
+    const liveCheck = vi.fn((tool: string) => {
+      if (parentMode !== 'plan') return null;
+      return tool === 'edit' ? '[Blocked] plan mode' : null;
+    });
+    const events = buildChildEvents('cb-test', undefined, liveCheck);
+    // First call in plan mode — blocked.
+    expect(typeof await events!.beforeToolExecute!('edit', { path: '/x.ts' })).toBe('string');
+    // User toggles to accept-edits mid-run. No respawn.
+    parentMode = 'accept-edits';
+    // Next call — allowed, with zero re-configuration.
+    expect(await events!.beforeToolExecute!('edit', { path: '/x.ts' })).toBe(true);
+    expect(liveCheck).toHaveBeenCalledTimes(2);
+  });
+
+  it('CHILD_BLOCKED_TOOLS guard still fires before plan-mode check', async () => {
+    const check = vi.fn(() => '[Blocked] should not be called');
+    const events = buildChildEvents('cb-test', undefined, check);
+    // dispatch_child_task is in CHILD_EXCLUDE_TOOLS_BASE / CHILD_BLOCKED_TOOLS
+    const decision = await events!.beforeToolExecute!('dispatch_child_task', {});
+    expect(typeof decision).toBe('string');
+    expect(decision).toContain('Not available in child agent context');
+    expect(check).not.toHaveBeenCalled();
   });
 });
 

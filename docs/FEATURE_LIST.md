@@ -13,20 +13,21 @@
 
 | Item | Value |
 |---|---|
-| Tracked feature IDs | `001-072` |
-| Total tracked features | `72` |
-| Completed | `62` |
+| Tracked feature IDs | `001-075` (026 removed) |
+| Total tracked features | `74` |
+| Completed | `63` |
 | Cancelled | `1` |
 | InProgress | `1` |
-| Planned | `8` |
+| Planned | `10` |
 | Current released version | `v0.7.19` |
 
 ### 各版本待做分布
 
 | Version | Planned features |
 |---|---|
-| `v0.7.18` | `0` (all complete or cancelled) |
+| `v0.7.18` | `1` |
 | `v0.7.20` | `2` |
+| `v0.7.25` | `2` |
 | `v0.7.30` | `1` |
 | `v0.8.0` | `3` |
 | `v1.0.0` | `1` |
@@ -49,9 +50,11 @@
 | `058` | Transcript Native Scrollback Dump | Enhancement | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_058-transcript-native-scrollback-dump) |
 | `059` | Managed Task Structured Protocol V2 | Internal | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_059-managed-task-structured-protocol-v2) |
 | `060` | Claude-Aligned Bounded-Memory Runtime and OOM Hardening | Internal | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_060-claude-aligned-bounded-memory-runtime-and-oom-hardening) |
-| `026` | Roadmap Integrity and Planning Hygiene | Internal | High | `v0.7.20` | [v0.7.20](features/v0.7.20.md#feature_026-roadmap-integrity-and-planning-hygiene) |
 | `072` | Lineage-Native Compaction Migration | Internal | High | `v0.7.20` | [v0.7.20](features/v0.7.20.md#feature_072-lineage-native-compaction-migration) |
-| `063` | ~~Extensible Hook & Automation Substrate~~ | Enhancement | ~~High~~ | ~~`v0.7.18`~~ | [v0.7.18](features/v0.7.18.md#feature_063-extensible-hook--automation-substrate) | **Cancelled**: Extension 系统已覆盖，executor 能力提取为 `api.exec()`/`api.webhook()` |
+| `074` | Subagent Permission Boundary Hardening | Internal | High | `v0.7.20` | [v0.7.20](features/v0.7.20.md#feature_074-subagent-permission-boundary-hardening) |
+| `073` | Reference-Style Lineage and Island Model Removal | Internal | Medium | `v0.7.25` | [v0.7.25](features/v0.7.25.md#feature_073-reference-style-lineage-and-island-model-removal) |
+| `075` | Plan Approval Dialog Scroll and Editor Integration | Enhancement | Medium | `v0.7.25` | [v0.7.25](features/v0.7.25.md#feature_075-plan-approval-dialog-scroll-and-editor-integration) |
+| `063` | ~~Extensible Hook & Automation Substrate~~ | Enhancement | High | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_063-extensible-hook--automation-substrate) | **Cancelled**: Extension 系统已覆盖，executor 能力提取为 `api.exec()`/`api.webhook()` |
 | `030` | Multi-Surface Delivery | Enhancement | High | `v1.0.0` | [v1.0.0](features/v1.0.0.md#feature_030-multi-surface-delivery) |
 
 ---

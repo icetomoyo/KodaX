@@ -81,6 +81,10 @@ export async function* toolDispatchChildTask(
     onProgress: (note: string) => {
       ctx.reportToolProgress?.(note);
     },
+    // FEATURE_074: forward the parent-injected plan-mode predicate into the child
+    // executor. The predicate is a live closure — it reads parent state at each
+    // child tool call, so mid-run mode toggles propagate without respawn.
+    planModeBlockCheck: ctx.planModeBlockCheck,
   };
 
   // --- Execute single child ---

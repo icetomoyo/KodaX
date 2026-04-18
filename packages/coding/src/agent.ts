@@ -1501,6 +1501,13 @@ export async function runKodaX(
     extensionRuntime: runtime ?? undefined,
     askUser: events.askUser, // Issue 069: Pass askUser callback from events
     askUserInput: events.askUserInput, // Issue 112: Pass askUserInput callback from events
+    // FEATURE_074: only forward the new exit_plan_mode callback.
+    // set_permission_mode is NOT forwarded — it was broken before this feature
+    // (callback never wired), and a corpus of sessions shows LLMs occasionally
+    // call it in auto-in-project too, not just plan mode. Activating it now would
+    // silently widen permissions (auto-in-project's path scope → accept-edits's
+    // no-scope) on any misfire. Keep it failing until removal in v0.7.21+.
+    exitPlanMode: events.exitPlanMode,
     abortSignal: options.abortSignal, // Issue 113: Pass abort signal to tool handlers
     managedProtocolRole: options.context?.managedProtocolEmission?.enabled
       ? options.context.managedProtocolEmission.role
@@ -1515,6 +1522,9 @@ export async function runKodaX(
       : undefined,
     registerChildWriteWorktrees: options.context?.registerChildWriteWorktrees,
     mutationTracker: options.context?.mutationTracker,
+    // FEATURE_074: forward parent's plan-mode predicate so dispatch_child_task
+    // can enforce plan mode on child tool calls using live parent state.
+    planModeBlockCheck: options.context?.planModeBlockCheck,
     parentAgentConfig: {
       provider: options.provider,
       model: options.model,

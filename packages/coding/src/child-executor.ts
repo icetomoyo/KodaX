@@ -22,6 +22,20 @@ import { toolWorktreeCreate, toolWorktreeRemove } from './tools/worktree.js';
 
 /* ---------- Public API ---------- */
 
+/**
+ * Predicate the parent REPL injects so the child executor can enforce plan-mode
+ * constraints without `packages/coding` reverse-depending on `packages/repl`.
+ *
+ * The predicate MUST read the parent's permission mode lazily (e.g., through a
+ * closure over a ref), so mid-run mode toggles propagate to in-flight child tool
+ * calls. Returns the block reason (string) for tools/inputs that are currently
+ * plan-mode-violating, or `null` when the call is allowed right now.
+ */
+export type PlanModeBlockCheck = (
+  tool: string,
+  input: Record<string, unknown>,
+) => string | null;
+
 export interface ChildExecutorOptions {
   readonly maxParallel: number;
   readonly maxIterationsPerChild: number;
@@ -31,6 +45,13 @@ export interface ChildExecutorOptions {
   readonly parentHarness: string;
   /** Progress callback for REPL status display. Called when children start, progress, and complete. */
   readonly onProgress?: (status: string) => void;
+  /**
+   * FEATURE_074: Predicate provided by the parent REPL to evaluate plan-mode block
+   * reasons at each child tool call. The predicate closes over parent state so
+   * mid-run mode toggles propagate to in-flight children. When absent, children
+   * run without plan-mode enforcement.
+   */
+  readonly planModeBlockCheck?: PlanModeBlockCheck;
 }
 
 export async function executeChildAgents(
@@ -131,7 +152,11 @@ async function executeReadChild(
   options: ChildExecutorOptions,
 ): Promise<KodaXChildAgentResult> {
   const briefing = await buildChildBriefing(bundle, parentCtx, options.maxIterationsPerChild);
-  const childEvents = buildChildEvents(bundle.id, options.onProgress);
+  const childEvents = buildChildEvents(
+    bundle.id,
+    options.onProgress,
+    options.planModeBlockCheck,
+  );
 
   const provider = options.parentOptions.provider ?? 'anthropic';
 
@@ -199,7 +224,11 @@ async function executeWriteChild(
   };
 
   const briefing = await buildChildBriefing(bundle, childCtx, options.maxIterationsPerChild);
-  const childEvents = buildChildEvents(bundle.id, options.onProgress);
+  const childEvents = buildChildEvents(
+    bundle.id,
+    options.onProgress,
+    options.planModeBlockCheck,
+  );
   const provider = options.parentOptions.provider ?? 'anthropic';
 
   try {
@@ -367,14 +396,18 @@ const CHILD_AGENT_SYSTEM_PROMPT = [
 
 /**
  * Tools excluded from child agents at API level (LLM never sees these definitions).
- * Mirrors Claude Code's filterToolsForAgent: no AMA, no recursion, no user interaction.
+ * Mirrors Claude Code's filterToolsForAgent: no AMA, no recursion, no user interaction,
+ * no parent-only permission controls.
+ *
+ * Exported for unit-testing the security contract. Treat as read-only at runtime.
  */
-const CHILD_EXCLUDE_TOOLS_BASE: readonly string[] = [
+export const CHILD_EXCLUDE_TOOLS_BASE: readonly string[] = [
   'emit_managed_protocol',  // AMA protocol; children are SA mode
   'dispatch_child_task',    // Prevent recursive child spawning
   'ask_user_question',      // Children cannot prompt the user
   'worktree_create',        // Worktree lifecycle managed by parent
   'worktree_remove',        // Worktree lifecycle managed by parent
+  'exit_plan_mode',         // Plan-mode exit requires user UI; only the parent REPL wires the callback
 ];
 
 /** Additional tools excluded for read-only children (no file mutations). */
@@ -389,19 +422,19 @@ const CHILD_EXCLUDE_TOOLS_READONLY: readonly string[] = [
 
 /**
  * Tools blocked at execution time (defense-in-depth, in case tool list filtering is bypassed).
- * Subset of exclude list — only the most critical ones need runtime blocking.
+ * Unified with CHILD_EXCLUDE_TOOLS_BASE to prevent the two lists from drifting again.
  */
-const CHILD_BLOCKED_TOOLS = new Set([
-  'emit_managed_protocol',
-  'dispatch_child_task',
-  'ask_user_question',
-  'worktree_create',
-  'worktree_remove',
-]);
+const CHILD_BLOCKED_TOOLS = new Set<string>(CHILD_EXCLUDE_TOOLS_BASE);
 
-function buildChildEvents(
+/**
+ * @param planModeBlockCheck FEATURE_074: parent-injected predicate that returns the
+ *   block reason for currently-plan-mode-violating tool calls, or `null` when allowed.
+ *   The predicate closes over live parent state, so mid-run mode toggles propagate.
+ */
+export function buildChildEvents(
   childId: string,
   onProgress?: (status: string) => void,
+  planModeBlockCheck?: PlanModeBlockCheck,
 ): KodaXEvents | undefined {
   let iterationCount = 0;
   let maxIterations = 200;
@@ -417,10 +450,18 @@ function buildChildEvents(
   };
 
   return {
-    // Block AMA-specific and recursive tools
-    beforeToolExecute: async (tool: string) => {
+    // Block AMA-specific and recursive tools, then enforce live plan mode.
+    // planModeBlockCheck reads parent state at call time, so mid-run mode toggles
+    // (common: user flips plan ↔ accept-edits mid-stream) propagate immediately.
+    beforeToolExecute: async (tool: string, input: Record<string, unknown>) => {
       if (CHILD_BLOCKED_TOOLS.has(tool)) {
         return `[Tool Error] ${tool}: Not available in child agent context.`;
+      }
+      if (planModeBlockCheck) {
+        const reason = planModeBlockCheck(tool, input);
+        if (reason) {
+          return `${reason} You are a child agent inheriting plan-mode constraints. Complete investigation and return findings as text — the parent agent will request user approval for any implementation.`;
+        }
       }
       return true;
     },

@@ -213,8 +213,16 @@ export interface KodaXEvents {
   askUserMulti?: (options: AskUserMultiOptions) => Promise<Record<string, string> | undefined>;
   /** Ask user for free-text input - 自由文本输入 (Issue 112) */
   askUserInput?: (options: { question: string; default?: string }) => Promise<string | undefined>;
-  /** Switch session permission mode — called by set_permission_mode tool. */
-  setPermissionMode?: (mode: string) => void;
+  /**
+   * FEATURE_074: Exit plan mode with user approval. Called by the `exit_plan_mode` tool.
+   * Returns:
+   *   - `true` when the user approved the plan (mode flipped to accept-edits).
+   *   - `false` when the user rejected the plan (mode stays plan).
+   *   - `'not-in-plan-mode'` when the session is not currently in plan mode, so
+   *     the tool is being called out-of-context. The tool turns this into an
+   *     explicit error instead of a silent no-op.
+   */
+  exitPlanMode?: (plan: string) => Promise<boolean | 'not-in-plan-mode'>;
   /** Managed-worker role currently allowed to emit structured protocol payload. */
 }
 
@@ -761,6 +769,14 @@ export interface KodaXContextOptions {
   taskMetadata?: Record<string, KodaXJsonValue>;
   /** Optional structured verification contract carried into managed tasks. */
   taskVerification?: KodaXTaskVerificationContract;
+  /**
+   * FEATURE_074: Plan-mode block predicate provided by the parent REPL. The predicate
+   * closes over live parent state so mid-run mode toggles propagate to in-flight
+   * children. Returns the block reason for currently-plan-mode-violating calls, or
+   * `null` when the call is allowed right now. When absent, children run without
+   * plan-mode enforcement.
+   */
+  planModeBlockCheck?: (tool: string, input: Record<string, unknown>) => string | null;
 }
 
 export interface KodaXOptions {
@@ -1087,8 +1103,11 @@ export interface KodaXToolExecutionContext {
   askUserMulti?: (options: AskUserMultiOptions) => Promise<Record<string, string> | undefined>;
   /** Ask user for free-text input - 自由文本输入 (Issue 112) */
   askUserInput?: (options: { question: string; default?: string }) => Promise<string | undefined>;
-  /** Switch session permission mode — called by set_permission_mode tool. */
-  setPermissionMode?: (mode: string) => void;
+  /**
+   * FEATURE_074: Exit plan mode with user approval. Called by the `exit_plan_mode` tool.
+   * See KodaXEvents.exitPlanMode for the tri-state return contract.
+   */
+  exitPlanMode?: (plan: string) => Promise<boolean | 'not-in-plan-mode'>;
   /** Abort signal for cancelling in-flight tool operations (Issue 113) */
   abortSignal?: AbortSignal;
   managedProtocolRole?: Exclude<KodaXTaskRole, 'direct'>;
@@ -1112,4 +1131,10 @@ export interface KodaXToolExecutionContext {
   registerChildWriteWorktrees?: (worktreePaths: ReadonlyMap<string, string>) => void;
   /** Mutation tracker for scope-aware protocol responses. Populated by createWorkerEvents. */
   mutationTracker?: ManagedMutationTracker;
+  /**
+   * FEATURE_074: Predicate provided by the parent REPL that evaluates plan-mode
+   * block reasons for child tool calls. Read lazily at each call — closes over
+   * live parent state so mid-run mode toggles propagate into in-flight children.
+   */
+  planModeBlockCheck?: (tool: string, input: Record<string, unknown>) => string | null;
 }

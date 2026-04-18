@@ -17,7 +17,7 @@ import { toolGlob } from './glob.js';
 import { toolGrep } from './grep.js';
 import { toolUndo } from './undo.js';
 import { toolAskUserQuestion } from './ask-user-question.js';
-import { toolSetPermissionMode } from './set-permission-mode.js';
+import { toolExitPlanMode } from './exit-plan-mode.js';
 import { toolRepoOverview } from './repo-overview.js';
 import { toolChangedScope } from './changed-scope.js';
 import { toolChangedDiff, toolChangedDiffBundle } from './changed-diff.js';
@@ -539,20 +539,19 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
     handler: toolAskUserQuestion,
   },
   {
-    name: 'set_permission_mode',
-    description: 'Switch the session permission mode. Use this after the user explicitly confirms a mode change (e.g. after plan completion, call ask_user_question first, then call this tool only if the user confirmed).',
+    name: 'exit_plan_mode',
+    description: 'Exit plan mode by presenting the finalized plan to the user for approval. On approval, the session flips to accept-edits and implementation can proceed. On rejection, the session remains in plan mode so the plan can be revised. Use this tool once the plan is ready for user review — do NOT combine with set_permission_mode. Parent-only: requires an interactive approval UI (wired only in REPL sessions).',
     input_schema: {
       type: 'object',
       properties: {
-        mode: {
+        plan: {
           type: 'string',
-          enum: ['accept-edits'],
-          description: 'Target permission mode. "accept-edits" enables file writes, edits, and bash commands.',
+          description: 'The finalized plan to present to the user. Include the full plan content, not a summary, so the user can make an informed approval decision.',
         },
       },
-      required: ['mode'],
+      required: ['plan'],
     },
-    handler: toolSetPermissionMode,
+    handler: toolExitPlanMode,
   },
   {
     name: 'repo_overview',

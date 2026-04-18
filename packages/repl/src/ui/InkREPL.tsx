@@ -100,6 +100,7 @@ import {
   FILE_MODIFICATION_TOOLS,
   isBashWriteCommand,
   isBashReadCommand,
+  getPlanModeBlockReason,
 } from "../permission/index.js";
 import type { PermissionContext } from "../permission/types.js";
 import {
@@ -350,7 +351,7 @@ interface ManagedForegroundLedgerState {
 }
 
 const PLAN_MODE_BLOCK_GUIDANCE =
-  "Do not try to modify files while planning. Finish the plan first, then use ask_user_question to ask the user whether to proceed. If the user confirms, call set_permission_mode with mode \"accept-edits\" to switch to implementation mode.";
+  "Do not try to modify files while planning. Finish the plan first, then call exit_plan_mode with the finalized plan — the user will review and approve or reject.";
 
 function resolveInitialReasoningMode(
   options: Pick<KodaXOptions, 'reasoningMode' | 'thinking'>,
@@ -5106,10 +5107,20 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
       return selectedValue;
     },
-    // set_permission_mode tool callback — LLM explicitly switches mode after
-    // confirming with user via ask_user_question (no heuristic guessing).
-    setPermissionMode: (mode: string) => {
-      setSessionPermissionMode(mode as PermissionMode);
+    // FEATURE_074: exit_plan_mode tool callback. Tri-state return:
+    //   'not-in-plan-mode' if session isn't in plan mode (tool errors);
+    //   true on user approval (mode flips to accept-edits);
+    //   false on user rejection (mode stays plan).
+    // buildToolConfirmationDisplay has a dedicated case for 'exit_plan_mode'
+    // that renders input.plan line-by-line so the user actually sees the plan.
+    exitPlanMode: async (plan: string): Promise<boolean | 'not-in-plan-mode'> => {
+      if (permissionModeRef.current !== 'plan') return 'not-in-plan-mode';
+      const result = await showConfirmDialog('exit_plan_mode', { plan });
+      if (result.confirmed) {
+        setSessionPermissionMode('accept-edits' as PermissionMode);
+        return true;
+      }
+      return false;
     },
     // Multi-question mode: present each question sequentially with back navigation.
     askUserMulti: async (options: import("@kodax/coding").AskUserMultiOptions): Promise<Record<string, string> | undefined> => {
@@ -5284,6 +5295,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     if (inputArtifacts && inputArtifacts.length > 0) {
       managedRunContext.inputArtifacts = [...inputArtifacts];
     }
+    // FEATURE_074: live plan-mode check for child-agent inheritance. The closure
+    // reads permissionModeRef.current lazily, so mid-run parent-mode toggles
+    // (plan ↔ accept-edits) propagate into in-flight children.
+    managedRunContext.planModeBlockCheck = (tool, input) => {
+      if (permissionModeRef.current !== 'plan') return null;
+      return getPlanModeBlockReason(tool, input, context.gitRoot ?? process.cwd());
+    };
 
     return runManagedTask(
       {
