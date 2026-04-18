@@ -13,12 +13,12 @@
 
 | Item | Value |
 |---|---|
-| Tracked feature IDs | `001-076` (026 removed) |
-| Total tracked features | `75` |
+| Tracked feature IDs | `001-077` (026 removed) |
+| Total tracked features | `76` |
 | Completed | `65` |
 | Cancelled | `1` |
 | InProgress | `1` |
-| Planned | `9` |
+| Planned | `10` |
 | Current released version | `v0.7.19` |
 
 ### 各版本待做分布
@@ -26,6 +26,7 @@
 | Version | Planned features |
 |---|---|
 | `v0.7.18` | `1` |
+| `v0.7.21` | `1` |
 | `v0.7.25` | `3` |
 | `v0.7.30` | `1` |
 | `v0.8.0` | `3` |
@@ -45,6 +46,7 @@
 
 | ID | Title | Category | Priority | Planned | Design |
 |---|---|---|---|---|---|
+| `077` | Session-Scoped Prompt Input History | Internal | Medium | `v0.7.21` | [v0.7.21](features/v0.7.21.md#feature_077-session-scoped-prompt-input-history) |
 | `007` | Theme System Consolidation | Enhancement | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_007-theme-system-consolidation) |
 | `058` | Transcript Native Scrollback Dump | Enhancement | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_058-transcript-native-scrollback-dump) |
 | `059` | Managed Task Structured Protocol V2 | Internal | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_059-managed-task-structured-protocol-v2) |
