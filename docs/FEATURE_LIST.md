@@ -19,7 +19,7 @@
 | Cancelled | `1` |
 | InProgress | `1` |
 | Planned | `10` |
-| Current released version | `v0.7.19` |
+| Current released version | `v0.7.20` |
 
 ### 各版本待做分布
 

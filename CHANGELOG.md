@@ -6,7 +6,28 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-<!-- last-sync: HEAD -->
+<!-- last-sync: d50c6bb -->
+
+---
+
+## [0.7.20] - 2026-04-18
+
+### Added
+- **FEATURE_072 — Lineage-Native Compaction Migration**: post-compact attachments stored as a first-class `KodaXSessionCompactionEntry.postCompactAttachments` field instead of inline `[Post-compact: ...]` system messages; `getSessionMessagesFromLineage` slicer inlines attachments at the derivation layer, preserving `getContextMessagesForEntry`'s 1-to-1 contract (FEATURE_073 prerequisite); `evictOldIslandMessageContent` strips attachments on old-island compaction entries (prevents N-round × ~50k token accumulation); `cloneForkableEntry` deep-clones attachments on `/fork`; `applySessionCompaction` signature gains a typed `postCompactAttachments` parameter with defensive strip of inline messages; `CompactionUpdate.postCompactAttachments` routes attachments from agent.ts to REPL natively; `onIterationEnd.info.scope: 'parent' | 'worker'` field prevents worker token counts from overwriting the parent REPL's context snapshot; Scout `initialMessages` derived from lineage across three REPL call-sites (`repl.ts`, `InkREPL.tsx`, `project-commands.ts`); `applyLineageTruncation` pure helper reserved for graceful-degradation writeback
+- **FEATURE_074 — Subagent Permission Boundary Hardening**: plan-mode propagation to child agents via live predicate closure over parent state (mid-run `plan ↔ accept-edits` toggles reach in-flight children immediately); independent `exit_plan_mode` tool with tri-state callback (`boolean | 'not-in-plan-mode'`) so misuse outside plan mode surfaces as an explicit tool error; `set_permission_mode` callback no longer forwarded into `KodaXToolExecutionContext` (fails closed on child invocations); system-temp paths exempted from `isAlwaysConfirmPath` so `accept-edits` and `auto-in-project` no longer force confirmation for writes to `$TMP` / `os.tmpdir()`
+
+### Fixed
+- **Post-compact context monotonic growth (v0.7.18 regression)**: six surgical fixes — graceful degradation gate rekeyed from reference equality to token-count comparison (P1), circuit breaker tripping after partial-success attempts (P2), `generateSummary` throws on empty LLM text (P3), `injectPostCompactAttachments` strips prior `[Post-compact: ...]` messages before injection (P4), absolute caps `POST_COMPACT_TOKEN_BUDGET = 50_000` and `POST_COMPACT_MAX_TOKENS_PER_FILE = 5_000` (P5), REPL finally-block rebuilds `context.contextTokenSnapshot` from local messages to clear worker-leaked snapshots (P6)
+- **Memory pressure**: eliminate React dev-mode leak, lineage clone bloat (`cloneMessage` returns identity), and streaming churn
+- **Task engine routing**: trust Scout routing authority, fix ceiling clamp context-loss bug; evaluator prompt uses effective ceiling, not stale heuristic
+- **Global kodax bin**: route through CJS preload shim for Node resolution on Windows
+
+### Changed
+- **Scratch scripts**: directed to `.agent/tmp/` instead of `.agent/` root for a cleaner workspace layout
+
+### Documentation
+- **FEATURE_072 manual test guide**: `docs/test-guides/FEATURE_072_v0.7.20_TEST_GUIDE.md` covering `/fork` + `/rewind` across compaction boundary, long-AMA bounded growth, worker scope non-propagation
+- **Roadmap hygiene**: FEATURE_026 (Roadmap Integrity) removed as unnecessary (tracker-consistency vitest already enforces the intent); FEATURE_077 (Session-Scoped Prompt Input History) staged for v0.7.21; FEATURE_073 / 075 / 076 designs staged into v0.7.25
 
 ---
 
