@@ -860,6 +860,80 @@ describe('FEATURE_072 Phase B: attachments routing + strip invariant + benchmark
     }
   });
 
+  it('acceptance #5: derived view structurally equals the flat `compacted` array after a compaction (post-072 wire-level parity)', () => {
+    // Simulates the agent.ts → REPL flow: agent fires onCompactedMessages with
+    // `[summary, ...attachments, ...kept]` inlined; REPL calls
+    // applySessionCompaction with attachments passed separately. The derived
+    // view must produce the SAME message shape (role + content) as the flat
+    // array the agent sent — if this ever drifts, the REPL's context.messages
+    // (which is set = flat array) would diverge from what future lineage
+    // derivations produce, reintroducing dual-source-of-truth.
+    const summary = msg('system', '[对话历史摘要]\n\nAcceptance5-summary');
+    const att1 = msg('system', '[Post-compact: ledger summary]');
+    const att2 = msg('system', '[Post-compact: file-a contents]');
+    const kept1 = msg('user', 'kept-user-1');
+    const kept2 = msg('assistant', 'kept-assistant-1');
+
+    // The array agent.ts would emit (post-inject, P4 belt-and-suspenders):
+    const flatCompactedFromAgent: KodaXMessage[] = [summary, att1, att2, kept1, kept2];
+
+    // REPL's handler effectively does:
+    const lineage = applySessionCompaction(
+      createSessionLineage([msg('user', 'pre-ctx')]),
+      flatCompactedFromAgent,    // defensively stripped of [Post-compact:…] inside
+      { summary: 'Acceptance5-summary' },
+      [att1, att2],              // attachments passed separately
+    );
+
+    // Derived view drawn from lineage:
+    const derived = getSessionMessagesFromLineage(lineage);
+
+    // Acceptance invariant: structural equality on role + content across the
+    // full active-path tail. The active path starts from the compaction entry
+    // (copy-style, new island), so derived = [summary, att1, att2, kept1, kept2].
+    expect(derived).toHaveLength(flatCompactedFromAgent.length);
+    for (let i = 0; i < derived.length; i++) {
+      expect(derived[i]!.role).toBe(flatCompactedFromAgent[i]!.role);
+      expect(derived[i]!.content).toEqual(flatCompactedFromAgent[i]!.content);
+    }
+  });
+
+  it('acceptance #12: rewind landing on a compaction with attachments emits them in the derived view', () => {
+    // The rewind helper appends a compaction entry with reason: 'rewind' that
+    // the slicer deliberately skips attachments for. But if a user rewinds TO
+    // (not past) an existing compaction entry that carries real attachments,
+    // the derived view from the new leaf must still include those attachments
+    // so the LLM retains the compressed state.
+    const pre = createSessionLineage([
+      msg('user', 'u0'),
+      msg('assistant', 'a0'),
+    ]);
+    const ledger = msg('system', '[Post-compact: ledger for file-X]');
+    const fileAtt = msg('system', '[Post-compact: file-X contents]');
+    const withCompaction = applySessionCompaction(
+      pre,
+      [msg('system', '[对话历史摘要]\n\nS'), msg('user', 'u1'), msg('assistant', 'a1')],
+      { summary: 'S' },
+      [ledger, fileAtt],
+    );
+
+    // Locate the compaction entry carrying attachments and rewind to it.
+    const ceWithAtt = withCompaction.entries.find(
+      (e) => e.type === 'compaction' && e.postCompactAttachments && e.postCompactAttachments.length > 0,
+    );
+    expect(ceWithAtt).toBeDefined();
+    const rewound = rewindSessionLineage(withCompaction, ceWithAtt!.id);
+    expect(rewound).not.toBeNull();
+
+    // After rewind, the new active leaf is the synthetic rewind marker; its
+    // parent chain still includes the original compaction entry with
+    // attachments, so the derived view must emit them.
+    const derived = getSessionMessagesFromLineage(rewound!);
+    const derivedContents = derived.map((m) => typeof m.content === 'string' ? m.content : '[complex]');
+    expect(derivedContents.some((c) => c.includes('[Post-compact: ledger for file-X]'))).toBe(true);
+    expect(derivedContents.some((c) => c.includes('[Post-compact: file-X contents]'))).toBe(true);
+  });
+
   it('applyLineageTruncation reconciles lineage against trimmed messages without appending a CompactionEntry', () => {
     const initial = createSessionLineage([
       msg('user', 'u1'),
