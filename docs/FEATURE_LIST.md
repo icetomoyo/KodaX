@@ -1,6 +1,6 @@
 # Feature 总表
 
-> Last updated: 2026-04-19
+> Last updated: 2026-04-19 (Plan B compression: 079-091 scheduled v0.7.22-v0.7.32 with 5 merged-pair versions, 078 moved v0.7.35→v0.7.29, 059 absorbed, 030→v0.8.0)
 
 > 中文阅读说明：
 > 这份 `FEATURE_LIST` 是 roadmap 的总索引。
@@ -13,24 +13,32 @@
 
 | Item | Value |
 |---|---|
-| Tracked feature IDs | `001-077` (026 removed) |
-| Total tracked features | `76` |
+| Tracked feature IDs | `001-091` (026 removed) |
+| Total tracked features | `90` |
 | Completed | `65` |
 | Cancelled | `2` |
+| Absorbed | `1` |
 | InProgress | `1` |
-| Planned | `9` |
+| Planned | `21` |
 | Current released version | `v0.7.20` |
 
 ### 各版本待做分布
 
 | Version | Planned features |
 |---|---|
-| `v0.7.18` | `1` |
 | `v0.7.21` | `1` |
+| `v0.7.22` | `1` |
+| `v0.7.23` | `2` |
+| `v0.7.24` | `2` |
 | `v0.7.25` | `2` |
+| `v0.7.26` | `2` |
+| `v0.7.27` | `2` |
+| `v0.7.28` | `2` |
+| `v0.7.29` | `1` |
 | `v0.7.30` | `1` |
+| `v0.7.31` | `1` |
+| `v0.7.32` | `1` |
 | `v0.8.0` | `3` |
-| `v1.0.0` | `1` |
 
 ---
 
@@ -47,15 +55,29 @@
 | ID | Title | Category | Priority | Planned | Design |
 |---|---|---|---|---|---|
 | `077` | Session-Scoped Prompt Input History | Internal | Medium | `v0.7.21` | [v0.7.21](features/v0.7.21.md#feature_077-session-scoped-prompt-input-history) |
-| `007` | Theme System Consolidation | Enhancement | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_007-theme-system-consolidation) |
-| `058` | Transcript Native Scrollback Dump | Enhancement | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_058-transcript-native-scrollback-dump) |
-| `059` | Managed Task Structured Protocol V2 | Internal | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_059-managed-task-structured-protocol-v2) |
-| `060` | Claude-Aligned Bounded-Memory Runtime and OOM Hardening | Internal | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_060-claude-aligned-bounded-memory-runtime-and-oom-hardening) |
+| `079` | Task Engine Phase 1 — Pure Extraction | Internal | High | `v0.7.22` | [v0.7.22](features/v0.7.22.md#feature_079-task-engine-phase-1--pure-extraction) |
+| `080` | Layer A Primitives — Agent / Handoff / Runner / Guardrail | Core | High | `v0.7.23` | [v0.7.23](features/v0.7.23.md#feature_080-layer-a-primitives--agent--handoff--runner--guardrail) |
+| `081` | Compaction Layering and Session Base/Lineage Split | Core | High | `v0.7.23` | [v0.7.23](features/v0.7.23.md#feature_081-compaction-layering-and-session-baselineage-split) |
+| `082` | Package Restructure — @kodax/core, @kodax/mcp, @kodax/capabilities, @kodax/tracing, @kodax/session-lineage | Core | High | `v0.7.24` | [v0.7.24](features/v0.7.24.md#feature_082-package-restructure) |
+| `083` | Unified Tracer, Span, and TracingProcessor | Core | High | `v0.7.24` | [v0.7.24](features/v0.7.24.md#feature_083-unified-tracer-span-and-tracingprocessor) |
 | `075` | Plan Approval Dialog Scroll and Editor Integration | Enhancement | Medium | `v0.7.25` | [v0.7.25](features/v0.7.25.md#feature_075-plan-approval-dialog-scroll-and-editor-integration) |
 | `076` | Managed Task Round Boundary — User Conversation Preservation | Internal | High | `v0.7.25` | [v0.7.25](features/v0.7.25.md#feature_076-managed-task-round-boundary--user-conversation-preservation) |
+| `084` | Task Engine Phase 2 — Rewrite Scout/Generator/Evaluator on Layer A Primitives (absorbs FEATURE_059) | Core | High | `v0.7.26` | [v0.7.26](features/v0.7.26.md#feature_084-task-engine-phase-2--rewrite-scoutgeneratorevaluator-on-layer-a-primitives) |
+| `085` | Guardrail Tri-Layer — Input / Output / Tool | Core | High | `v0.7.26` | [v0.7.26](features/v0.7.26.md#feature_085-guardrail-tri-layer--input--output--tool) |
+| `086` | KodaX Prefix Cleanup and Legacy Purge | Core | High | `v0.7.27` | [v0.7.27](features/v0.7.27.md#feature_086-kodax-prefix-cleanup-and-legacy-purge) |
+| `091` | Repo-Intelligence Protocol Package Extraction | Internal | High | `v0.7.27` | [v0.7.27](features/v0.7.27.md#feature_091-repo-intelligence-protocol-package-extraction) |
+| `087` | ConstructionRuntime and Constructed-World Substrate | Core | High | `v0.7.28` | [v0.7.28](features/v0.7.28.md#feature_087-constructionruntime-and-constructed-world-substrate) |
+| `088` | Self-Construction Tier 2 — Tool Generation | Core | High | `v0.7.28` | [v0.7.28](features/v0.7.28.md#feature_088-self-construction-tier-2--tool-generation) |
+| `078` | Role-Aware Reasoning Profiles | Internal | High | `v0.7.29` | [v0.7.29](features/v0.7.29.md#feature_078-role-aware-reasoning-profiles) |
+| `060` | Claude-Aligned Bounded-Memory Runtime and OOM Hardening | Internal | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_060-claude-aligned-bounded-memory-runtime-and-oom-hardening) |
+| `089` | Self-Construction Tier 3 — Agent Generation | Core | High | `v0.7.31` | [v0.7.31](features/v0.7.31.md#feature_089-self-construction-tier-3--agent-generation) |
+| `090` | Self-Construction Tier 4 — Agent Self-Modifying Role Spec | Core | High | `v0.7.32` | [v0.7.32](features/v0.7.32.md#feature_090-self-construction-tier-4--agent-self-modifying-role-spec) |
+| `007` | Theme System Consolidation | Enhancement | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_007-theme-system-consolidation) |
+| `058` | Transcript Native Scrollback Dump | Enhancement | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_058-transcript-native-scrollback-dump) |
+| `030` | Multi-Surface Delivery | Enhancement | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_030-multi-surface-delivery) |
+| `059` | ~~Managed Task Structured Protocol V2~~ | ~~Internal~~ | ~~High~~ | ~~`v0.8.0`~~ | [v0.8.0](features/v0.8.0.md#feature_059-managed-task-structured-protocol-v2) | **Absorbed into FEATURE_084**: 新的 Layer A 原语重写 Scout/Generator/Evaluator 时，会同步把 fenced-block 文本协议替换为 tool-call 驱动的结构化协议。059 的 dual-track visibleText+protocolPayload 目标并入 084 的 Runner/Span 协议层实现，不再作为独立 feature 调度 |
 | `063` | ~~Extensible Hook & Automation Substrate~~ | Enhancement | High | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_063-extensible-hook--automation-substrate) | **Cancelled**: Extension 系统已覆盖，executor 能力提取为 `api.exec()`/`api.webhook()` |
 | `073` | ~~Reference-Style Lineage and Island Model Removal~~ | ~~Internal~~ | ~~Medium~~ | ~~`v0.7.25`~~ | [v0.7.25](features/v0.7.25.md#feature_073-reference-style-lineage-and-island-model-removal) | **Cancelled**: 哲学审查未通过——没有用户痛点、没有性能改善、主要卖点（`/fork` 改进）已自撤；072 已消除 dual source-of-truth 的结构债；YAGNI（为 partial/multi-boundary compaction 等未规划特性铺抽象）。设计稿保留作为未来真有 use case 时的起点 |
-| `030` | Multi-Surface Delivery | Enhancement | High | `v1.0.0` | [v1.0.0](features/v1.0.0.md#feature_030-multi-surface-delivery) |
 
 ---
 
@@ -78,6 +100,16 @@
 - `FEATURE_072` 是 v0.7.18 post-compact 回归（v0.7.19 已用 6 处 surgical fix 止血）之后的结构性收口：把压缩热路径从 flat `context.messages` 迁移到 lineage-native（`getSessionMessagesFromLineage`-driven），让 post-compact attachments 作为 `KodaXSessionCompactionEntry` 的一等字段而不是散在 flat 数组里的 `[Post-compact: ...]` 系统消息。目标是单 source-of-truth，参考 Claude Code `getMessagesAfterCompactBoundary` 和 pi-mono `buildSessionContext`。v0.7.19 的 P4（字符串前缀 dedup）和 P6（REPL finally 复位）在 migration 完成后会被退休。
 - `FEATURE_073`（Reference-Style Lineage）已 **Cancelled**。原意是把压缩数据模型从 copy-style 换到 reference-style，对齐 pi-mono / Claude Code 的心智模型。但站在 KodaX "Minimalist & Intelligent" 哲学回看：该 feature 解决零用户痛点（072 已修好 post-compact 回归）、无性能改善（和 copy-style + eviction memory parity）、主要卖点（`/fork` 到压缩前 entry 的语义改进）在挑战过程中被自己撤回；剩余动机"便于未来 partial compaction / multi-boundary 落地"属于 YAGNI。设计稿保留在 `docs/features/v0.7.25.md` 作为未来若出现具体 use case 时的参考起点。
 - `FEATURE_076` 是 v0.7.19 Scout ceiling clamp fix（commit `3efdb7b`）之后的结构性收口：把 `runManagedTask` 出口的 `context.messages` 从"代理执行轨迹"（Evaluator 的独立会话、Scout role prompt 包装）收正为"用户对话"（干净的 `{user, assistant}` 对），让 multi-turn conversation、token 统计、session 持久化在 SA/H0/H1/H2/resume 所有路径上语义一致。与 `FEATURE_046`（轮内 worker handoff）关注点不同；`046` 负责轮内 final-answer convergence，`076` 负责轮间 message shape。
+- `FEATURE_078` 是 reasoning 子系统的**分层化**：把当前"单一全局 `--reasoning auto|quick|balanced|deep|off` 档位 + 兼容 `--thinking` 别名 + provider `reasoning-overrides`"的平面模型，拆成四级决策链（L1 用户意图上限 / L2 角色默认 / L3 Scout 下游建议 / L4 Evaluator 动态升档）。动机：Scout 自己需要 reasoning 才能跑，因此不能由 Scout 决定所有角色的 reasoning 档位；而一个全局档位又无法区分"Scout 要快、Generator 要深"这类合理诉求。**依赖**：需要先完成 `KodaXAgent` 原语引入（FEATURE_080），这样角色级 reasoning profile 可以声明在 Agent 定义里，而不是散在 task-engine 的路由代码里。Plan B 将本 feature 从原 v0.7.35 前移到 v0.7.29，紧随 FEATURE_084 AMA 重写完成之后。
+- **`FEATURE_079 - FEATURE_091` 是 KodaX 从"coding CLI product"升级为"可被复杂 Agent 系统嵌入的基础设施"的主路线**（Plan B 压缩版）。该路线分三段：**SDK 基底段**（v0.7.22-v0.7.27，FEATURE_079 到 086）把 task-engine 拆成可维护的核心 + 引入 Agent/Handoff/Runner/Guardrail/Tracer/Span 等 Layer A 原语 + 按新原语重写 Scout/Generator/Evaluator + 清理 `KodaX*` 前缀死码 + 抽出 repointel 协议包；**自构建段**（v0.7.28-v0.7.32，FEATURE_087 到 090，中间插入 v0.7.29 的 FEATURE_078 reasoning 分层）引入 ConstructionRuntime + Constructed-World + 档 2-4 的 Tool/Agent 生成与自改 role spec。全部完工于 v0.7.32 之前，0.8.0 不做任何底座改动。本方案在 11 个版本内消化 13 个 feature，通过 5 处合并（080+081 / 082+083 / 084+085 / 086+091 / 087+088）控制版本数。
+- `FEATURE_079` 是 task-engine.ts 的**阶段 1 拆分**：纯提取（pure extraction），零行为变化。把当前 9000+ 行的 task-engine 中与 Scout/H1/H2 状态机解耦的部分（prompt builder、pure reducer、managed-task util 等）迁到同目录下的子模块，task-engine.ts 作为 re-export 门面继续提供原有 symbol，测试全部保持绿。这是所有后续 Layer A/B 切分的前提，单独成版本以控制风险。
+- `FEATURE_080 + FEATURE_081` 合并在 **v0.7.23** 落地：两者共同完成"**Layer A data shape 定型**"。080 引入 `Agent`（declarative dataclass）、`Handoff`（continuation / as-tool 两种语义）、`Runner`（最小执行入口）、`Guardrail`（占位类型），并 dog-food SA 直达路径。081 把 Compaction 分成 `CompactionPolicy` 接口 + `DefaultSummaryCompaction` + `LineageCompaction`（保留 FEATURE_072 能力），Session 切成基础接口 + `LineageExtension`。合并理由：两者都是"数据形状"层的契约定型，`Agent.tools` / `Agent.handoffs` / `Session` 在内部需要同一批引用点一起定型，分开做反而要 touch 相同文件两次。FEATURE_076 的 round-boundary 语义、FEATURE_060 的 bounded-memory 目标作为设计前置约束保留。
+- `FEATURE_082 + FEATURE_083` 合并在 **v0.7.24** 落地：两者共同完成"**primitive 基础设施层**"。082 按 Layer A/B/C 分层切出 `@kodax/core`、`@kodax/mcp`（整体搬迁保留渐进式披露的 lazy connect / 两级描述符 / search-describe / elicitation / cache 五个模式，**暂不泛化** `ProgressiveCapabilitySource` 接口，遵守 CLAUDE.md "3+ real cases 才抽象"规则）、`@kodax/capabilities`、`@kodax/tracing`、`@kodax/session-lineage`。083 引入 `Trace` / `Span` / `SpanData` 子类 / `TracingProcessor` 接口，收编现有碎片化 trace 到同一 span 模型。合并理由：082 已经为 tracing 准备了 `@kodax/tracing` 包位，同版本填充 tracing 内容是自然的连带。同步清掉 `@kodax/ai/cli-events/` 包职责外溢（GLM F-8）。
+- `FEATURE_084 + FEATURE_085` 合并在 **v0.7.26** 落地：两者共同完成"**runtime 行为层重写**"。084 用 `Agent` 声明式重写 Scout/Generator/Evaluator 为标准 Agent 实例，用 `Handoff` 表达角色转移，**同步替换** fenced-block 文本协议为 tool-call 驱动的结构化协议（吸收 FEATURE_059 的 dual-track visibleText+protocolPayload 目标）。085 在 Agent 的 input/output/tool 三个挂点补齐 Guardrail runtime，开放注册走 extension runtime。合并理由：084 重写 Scout 时必然 touch Agent 的 input/output/tool 各位点，同时挂 guardrail 钩子比分开两版每版挂一遍经济。
+- `FEATURE_086 + FEATURE_091` 合并在 **v0.7.27** 落地：两者共同完成"**清理与协议抽取**"。086 借用户量少的窗口**一次性**移除 `KodaX*` 前缀（不走长期 deprecated 路径），核心 primitive 去前缀，brand 类型（`KodaXError`、`KodaXClient`、`KodaXCodingOptions`）保留；同步清除 `compactMessages()` legacy、`--team` CLI 参数、README 残存 `/project` 流程、GLM F-4/F-5/F-6 归一化函数重复。091 把 `premium-contract.ts` 抽成独立 npm 包 `@kodax-author/repointel-protocol`，三方消费者（公仓 KodaX、私仓 KodaX-private、`clients/repointel/` 第三方 host 接入）统一依赖协议包，替代当前 vendor 方式。合并理由：两者都是"清洁与抽取"类的结构性 hygiene 工作，风险域互不相交（前缀在 coding/core，协议在 repo-intelligence），可以同版本完成。
+- `FEATURE_087 + FEATURE_088` 合并在 **v0.7.28** 落地：两者共同完成"**自构建基础设施 + 档 2 首个消费者**"。087 引入 `ConstructionRuntime` 四段生命周期（stage/test/activate/revoke）+ Constructed-World 存储（`.kodax/constructed/`）+ Resolver 合并 + policy gate。088 让 Agent 生成 Tool 定义并通过 sandbox 测试后注册（档 2）。合并理由：087 提供基础设施，088 是它的首个真实消费者；一起做能验证基础设施的 API shape，避免 087 独立落地后 088 才发现接口需要调整。档 1（Skill 生成）作为既有能力的自然兑现，在本版自动可用。
+- `FEATURE_089`（v0.7.31）和 `FEATURE_090`（v0.7.32）**保持独立**：两者都是自构建的高危档次。089 让 Agent 生成新的 Agent 定义（带版本号 + 审批），复杂度高；090 让 Agent 修改自己的 role spec（reasoning profile、instructions、handoff 图），带反身稳定保障（版本化 + rollback + divergence 检测），是整条路线图最危险的一 feature。单独成版本便于出问题时 rollback。
+- **整体时序锁定（Plan B）**：v0.7.22 (079) → v0.7.23 (080+081) → v0.7.24 (082+083) → v0.7.25 (existing 075+076) → v0.7.26 (084+085) → v0.7.27 (086+091) → v0.7.28 (087+088) → v0.7.29 (078) → v0.7.30 (existing 057+060) → v0.7.31 (089) → v0.7.32 (090)。依赖关系硬性：079→080+081→082+083→084+085→086 不可打乱；091 可与 082-086 并行（契约包不影响内部重构）；087 需 080+081 到位；088 需 087；089 需 087；090 需 089；078 需 080 到位。0.8.0 之后不规划。
 
 ---
 

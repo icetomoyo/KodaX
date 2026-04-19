@@ -1670,8 +1670,6 @@ _Last Updated: 2026-04-19_
   - `docs/FEATURE_LIST.md`
   - `docs/features/v0.7.0.md`
   - `docs/features/v0.8.0.md`
-  - `docs/features/v1.0.0.md`
-
 - **Root Cause**:
   1. 多个 Markdown 文件同时承载重叠的真相字段
   2. 缺少 consistency validator 或 summary regeneration

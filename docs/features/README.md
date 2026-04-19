@@ -51,8 +51,6 @@ The current execution model is:
 | [v0.7.30.md](./v0.7.30.md) | Runtime clarity, harness safety, multimodal/repo substrate, and transcript-native tool interaction maturity |
 | [v0.8.0.md](./v0.8.0.md) | Dual-profile AMA, MCP substrate, prompt architecture, retrieval/evidence tooling, invisible parallelism, and durable memory |
 | [v0.9.0.md](./v0.9.0.md) | REPL substrate hardening close-out and historical staging for features moved earlier |
-| [v1.0.0.md](./v1.0.0.md) | Delivery surfaces outside the frozen shell |
-
 ## Historical release docs
 
 These documents remain useful as implementation history, but they are not the source of truth for the current AMA architecture:
