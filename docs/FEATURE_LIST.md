@@ -15,18 +15,17 @@
 |---|---|
 | Tracked feature IDs | `001-091` (026 removed) |
 | Total tracked features | `90` |
-| Completed | `65` |
+| Completed | `66` |
 | Cancelled | `2` |
 | Absorbed | `1` |
 | InProgress | `1` |
-| Planned | `21` |
-| Current released version | `v0.7.20` |
+| Planned | `20` |
+| Current released version | `v0.7.21` |
 
 ### 各版本待做分布
 
 | Version | Planned features |
 |---|---|
-| `v0.7.21` | `1` |
 | `v0.7.22` | `1` |
 | `v0.7.23` | `2` |
 | `v0.7.24` | `2` |
@@ -54,7 +53,6 @@
 
 | ID | Title | Category | Priority | Planned | Design |
 |---|---|---|---|---|---|
-| `077` | Session-Scoped Prompt Input History | Internal | Medium | `v0.7.21` | [v0.7.21](features/v0.7.21.md#feature_077-session-scoped-prompt-input-history) |
 | `079` | Task Engine Phase 1 — Pure Extraction | Internal | High | `v0.7.22` | [v0.7.22](features/v0.7.22.md#feature_079-task-engine-phase-1--pure-extraction) |
 | `080` | Layer A Primitives — Agent / Handoff / Runner / Guardrail | Core | High | `v0.7.23` | [v0.7.23](features/v0.7.23.md#feature_080-layer-a-primitives--agent--handoff--runner--guardrail) |
 | `081` | Compaction Layering and Session Base/Lineage Split | Core | High | `v0.7.23` | [v0.7.23](features/v0.7.23.md#feature_081-compaction-layering-and-session-baselineage-split) |
@@ -182,6 +180,7 @@
 | `071` | AMA Managed Task Resilience — Worker Checkpoint & Mid-Execution Recovery | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_071-ama-managed-task-resilience--worker-checkpoint--mid-execution-recovery) |
 | `074` | Subagent Permission Boundary Hardening | `v0.7.20` (unreleased) | [v0.7.20](features/v0.7.20.md#feature_074-subagent-permission-boundary-hardening) |
 | `072` | Lineage-Native Compaction Migration | `v0.7.20` (unreleased) | [v0.7.20](features/v0.7.20.md#feature_072-lineage-native-compaction-migration) |
+| `077` | Session-Scoped Prompt Input History | `v0.7.21` | [v0.7.21](features/v0.7.21.md#feature_077-session-scoped-prompt-input-history) |
 
 > `FEATURE_051` close-out posture: keep the current REPL status/footer/task/message surfaces frozen, limit follow-up work to invisible substrate maturity for transcript, scroll/selection, and input behavior, and treat the design doc as a completed close-out record rather than an open rollout plan.
 

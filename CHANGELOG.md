@@ -13,7 +13,7 @@ All notable changes to this project will be documented in this file.
 ## [0.7.21] - 2026-04-19
 
 ### Fixed
-- **FEATURE_077 — Session-Scoped Prompt Input History**: REPL prompt input history now scoped to the current session instead of global, preventing cross-session history leakage
+- **FEATURE_077 — Session-Scoped Prompt Input History**: REPL prompt input history now survives the `Ctrl+O` transcript-mode toggle. Previously a single `Ctrl+O` caused `<PromptComposer>` to unmount and silently wiped the Up-arrow history; the entries array has been lifted above the composer lifecycle so history persists for the whole REPL session. Navigation cursor and draft placeholder still reset on remount to preserve pre-existing behavior.
 
 ### Documentation
 - Remove `docs/features/v1.0.0.md` (all features migrated to earlier versions)
