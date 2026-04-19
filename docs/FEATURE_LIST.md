@@ -16,9 +16,9 @@
 | Tracked feature IDs | `001-077` (026 removed) |
 | Total tracked features | `76` |
 | Completed | `65` |
-| Cancelled | `1` |
+| Cancelled | `2` |
 | InProgress | `1` |
-| Planned | `10` |
+| Planned | `9` |
 | Current released version | `v0.7.20` |
 
 ### 各版本待做分布
@@ -27,7 +27,7 @@
 |---|---|
 | `v0.7.18` | `1` |
 | `v0.7.21` | `1` |
-| `v0.7.25` | `3` |
+| `v0.7.25` | `2` |
 | `v0.7.30` | `1` |
 | `v0.8.0` | `3` |
 | `v1.0.0` | `1` |
@@ -51,10 +51,10 @@
 | `058` | Transcript Native Scrollback Dump | Enhancement | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_058-transcript-native-scrollback-dump) |
 | `059` | Managed Task Structured Protocol V2 | Internal | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_059-managed-task-structured-protocol-v2) |
 | `060` | Claude-Aligned Bounded-Memory Runtime and OOM Hardening | Internal | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_060-claude-aligned-bounded-memory-runtime-and-oom-hardening) |
-| `073` | Reference-Style Lineage and Island Model Removal | Internal | Medium | `v0.7.25` | [v0.7.25](features/v0.7.25.md#feature_073-reference-style-lineage-and-island-model-removal) |
 | `075` | Plan Approval Dialog Scroll and Editor Integration | Enhancement | Medium | `v0.7.25` | [v0.7.25](features/v0.7.25.md#feature_075-plan-approval-dialog-scroll-and-editor-integration) |
 | `076` | Managed Task Round Boundary — User Conversation Preservation | Internal | High | `v0.7.25` | [v0.7.25](features/v0.7.25.md#feature_076-managed-task-round-boundary--user-conversation-preservation) |
 | `063` | ~~Extensible Hook & Automation Substrate~~ | Enhancement | High | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_063-extensible-hook--automation-substrate) | **Cancelled**: Extension 系统已覆盖，executor 能力提取为 `api.exec()`/`api.webhook()` |
+| `073` | ~~Reference-Style Lineage and Island Model Removal~~ | ~~Internal~~ | ~~Medium~~ | ~~`v0.7.25`~~ | [v0.7.25](features/v0.7.25.md#feature_073-reference-style-lineage-and-island-model-removal) | **Cancelled**: 哲学审查未通过——没有用户痛点、没有性能改善、主要卖点（`/fork` 改进）已自撤；072 已消除 dual source-of-truth 的结构债；YAGNI（为 partial/multi-boundary compaction 等未规划特性铺抽象）。设计稿保留作为未来真有 use case 时的起点 |
 | `030` | Multi-Surface Delivery | Enhancement | High | `v1.0.0` | [v1.0.0](features/v1.0.0.md#feature_030-multi-surface-delivery) |
 
 ---
@@ -76,6 +76,7 @@
 - `FEATURE_038 / 043 / 053 / 054 / 056` 与 `023 / 031 / 042` 现统一收编到 `v0.7.30`，便于在同一版本内同步推进 runtime clarity、harness safety 与 transcript-native interaction maturity。
 - `FEATURE_056` 的目标是补 tool interaction 的解释层与 transcript-native 交互成熟度，不是把 KodaX 做成更重的 coordinator/task cockpit。
 - `FEATURE_072` 是 v0.7.18 post-compact 回归（v0.7.19 已用 6 处 surgical fix 止血）之后的结构性收口：把压缩热路径从 flat `context.messages` 迁移到 lineage-native（`getSessionMessagesFromLineage`-driven），让 post-compact attachments 作为 `KodaXSessionCompactionEntry` 的一等字段而不是散在 flat 数组里的 `[Post-compact: ...]` 系统消息。目标是单 source-of-truth，参考 Claude Code `getMessagesAfterCompactBoundary` 和 pi-mono `buildSessionContext`。v0.7.19 的 P4（字符串前缀 dedup）和 P6（REPL finally 复位）在 migration 完成后会被退休。
+- `FEATURE_073`（Reference-Style Lineage）已 **Cancelled**。原意是把压缩数据模型从 copy-style 换到 reference-style，对齐 pi-mono / Claude Code 的心智模型。但站在 KodaX "Minimalist & Intelligent" 哲学回看：该 feature 解决零用户痛点（072 已修好 post-compact 回归）、无性能改善（和 copy-style + eviction memory parity）、主要卖点（`/fork` 到压缩前 entry 的语义改进）在挑战过程中被自己撤回；剩余动机"便于未来 partial compaction / multi-boundary 落地"属于 YAGNI。设计稿保留在 `docs/features/v0.7.25.md` 作为未来若出现具体 use case 时的参考起点。
 - `FEATURE_076` 是 v0.7.19 Scout ceiling clamp fix（commit `3efdb7b`）之后的结构性收口：把 `runManagedTask` 出口的 `context.messages` 从"代理执行轨迹"（Evaluator 的独立会话、Scout role prompt 包装）收正为"用户对话"（干净的 `{user, assistant}` 对），让 multi-turn conversation、token 统计、session 持久化在 SA/H0/H1/H2/resume 所有路径上语义一致。与 `FEATURE_046`（轮内 worker handoff）关注点不同；`046` 负责轮内 final-answer convergence，`076` 负责轮间 message shape。
 
 ---
