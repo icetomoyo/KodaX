@@ -10,8 +10,20 @@ All notable changes to this project will be documented in this file.
 
 ---
 
-## [0.7.21] - 2026-04-19
+## [0.7.22] - 2026-04-19
 
+### Added
+- **FEATURE_079 — Task Engine Phase 1 Pure Extraction**: Split task-engine.ts (9034 → ~7271 lines) into 14 internal modules under `task-engine/_internal/` — constants, text-utils, formatting, protocol (parse-helpers + sanitize), managed-task (budget, checkpoint, workspace), and prompts (role-prompt, role-agent, role-prompt-types, tool-policy, runtime-execution-guide). Zero behavior changes; all extracted functions are pure moves with deferred items documented in code comments.
+
+### Fixed
+- **Pre-existing test regressions (5 tests)**: `resilience.test.ts` — align `streamIdleTimeoutMs` assertion with intentional default change (60000 → 0); `agent.extension-runtime.test.ts` — add `reasoningMode:'off'` to 2 tests to prevent auto-follow-up interference; `agent.provider-policy.test.ts` — add `repoIntelligenceMode:'off'` to skip expensive repo-intelligence build in policy-block tests. Full suite now 584/584 green.
+
+### Documentation
+- Update `docs/FEATURE_LIST.md` and `docs/features/v0.7.22.md` with FEATURE_079 progress
+
+---
+
+## [0.7.21] - 2026-04-19
 ### Fixed
 - **FEATURE_077 — Session-Scoped Prompt Input History**: REPL prompt input history now survives the `Ctrl+O` transcript-mode toggle. Previously a single `Ctrl+O` caused `<PromptComposer>` to unmount and silently wiped the Up-arrow history; the entries array has been lifted above the composer lifecycle so history persists for the whole REPL session. Navigation cursor and draft placeholder still reset on remount to preserve pre-existing behavior.
 
