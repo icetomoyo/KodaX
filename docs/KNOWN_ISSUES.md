@@ -2449,7 +2449,7 @@ _Last Updated: 2026-04-19_
 ---
 
 ## Summary
-- Total: 45 (19 Open, 26 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 46 (20 Open, 26 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 

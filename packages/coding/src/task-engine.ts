@@ -725,6 +725,58 @@ interface ManagedRolePromptContext {
   previousRoleSummaries?: Partial<Record<KodaXTaskRole, KodaXRoleRoundSummary>>;
   /** FEATURE_067: Evaluator review prompt for write fan-out diffs from Generator's child agents. */
   childWriteReviewPrompt?: string;
+  /**
+   * Issue 119: Scout's own scope hints. Downstream H1+ prompt/tool-policy logic
+   * infers mutation intent from these instead of the stale pre-Scout
+   * `plan.decision.mutationSurface` heuristic value.
+   */
+  scoutScope?: ScoutScopeHint;
+}
+
+interface ScoutScopeHint {
+  scope?: string[];
+  reviewFilesOrAreas?: string[];
+}
+
+type ScoutMutationIntent = 'review-only' | 'docs-scoped' | 'open';
+
+function isDocsLikePath(value: string): boolean {
+  const p = value.trim().toLowerCase();
+  if (!p) return false;
+  if (/\.(md|mdx|markdown|txt|rst|adoc)$/.test(p)) return true;
+  if (/(^|\/)docs?\//.test(p)) return true;
+  if (/(^|\/)(changelog|readme|contributing|license|authors|notice)(\.|$|\/)/i.test(p)) return true;
+  return false;
+}
+
+/**
+ * Issue 119: Infer what kind of mutation the Scout-authorized run expects,
+ * based on Scout's own structured outputs (scope + reviewFilesOrAreas +
+ * primaryTask), not the pre-Scout regex heuristic on the original prompt.
+ *
+ * Returns three coarse buckets:
+ * - 'review-only': review task with empty scope → Scout expects pure analysis
+ * - 'docs-scoped': every path Scout flagged points at documentation
+ * - 'open': default — trust Scout's scope + Evaluator tail-gate instead of
+ *   hardcoding extra mutation constraints
+ */
+function inferScoutMutationIntent(
+  scoutScope: ScoutScopeHint | undefined,
+  primaryTask: KodaXTaskRoutingDecision['primaryTask'] | undefined,
+): ScoutMutationIntent {
+  const scope = (scoutScope?.scope ?? []).filter((s) => s.trim().length > 0);
+  const reviewFiles = (scoutScope?.reviewFilesOrAreas ?? []).filter((s) => s.trim().length > 0);
+  const allPaths = [...scope, ...reviewFiles];
+
+  if (primaryTask === 'review' && scope.length === 0) {
+    return 'review-only';
+  }
+
+  if (allPaths.length > 0 && allPaths.every(isDocsLikePath)) {
+    return 'docs-scoped';
+  }
+
+  return 'open';
 }
 
 // NOTE: When adding a new kodax-* fence block name, also add it to
@@ -2517,7 +2569,7 @@ function buildManagedWorkerToolPolicy(
   role: KodaXTaskRole,
   verification: KodaXTaskVerificationContract | undefined,
   harnessProfile?: KodaXTaskRoutingDecision['harnessProfile'],
-  mutationSurface?: KodaXTaskRoutingDecision['mutationSurface'],
+  scoutMutationIntent?: ScoutMutationIntent,
   repoIntelligenceMode?: KodaXRepoIntelligenceMode,
 ): KodaXTaskToolPolicy | undefined {
   const strictRepoIntelligenceOff = resolveKodaXAutoRepoMode(repoIntelligenceMode) === 'off';
@@ -2564,9 +2616,12 @@ function buildManagedWorkerToolPolicy(
         allowedShellPatterns: INSPECTION_SHELL_PATTERNS,
       });
     case 'generator':
-      if (harnessProfile === 'H1_EXECUTE_EVAL' && mutationSurface === 'read-only') {
+      // Issue 119: Constraints are keyed to Scout's own scope analysis, not the
+      // pre-Scout regex heuristic. If Scout leaves scope 'open', trust Scout's
+      // scope + Evaluator tail-gate rather than hard-restricting writes here.
+      if (harnessProfile === 'H1_EXECUTE_EVAL' && scoutMutationIntent === 'review-only') {
         return finalizeToolPolicy({
-          summary: 'H1 read-only Generator must stay non-mutating. It may inspect scoped evidence and run only limited inspection or explicitly required verification commands, but it must not edit files, rewrite artifacts, or perform mutating shell actions.',
+          summary: 'H1 review-only Generator should stay non-mutating per Scout\'s scope. It may inspect scoped evidence and run only limited inspection or explicitly required verification commands; mutate files only if the handoff explicitly requires fixes.',
           blockedTools: [...WRITE_ONLY_TOOLS],
           allowedTools: [...H1_READONLY_GENERATOR_ALLOWED_TOOLS],
           allowedShellPatterns: Array.from(new Set([
@@ -2575,9 +2630,9 @@ function buildManagedWorkerToolPolicy(
           ])),
         });
       }
-      if (harnessProfile === 'H1_EXECUTE_EVAL' && mutationSurface === 'docs-only') {
+      if (harnessProfile === 'H1_EXECUTE_EVAL' && scoutMutationIntent === 'docs-scoped') {
         return finalizeToolPolicy({
-          summary: 'H1 docs-only Generator may edit documentation artifacts, but only when the target paths are clearly documentation files. It must not modify source code, configuration, build outputs, or system state.',
+          summary: 'H1 docs-scoped Generator: Scout\'s scope points entirely at documentation paths. Keep edits within those paths; do not expand into source, configuration, build outputs, or system state unless new evidence demands it.',
           allowedWritePathPatterns: [...DOCS_ONLY_WRITE_PATH_PATTERNS],
           allowedShellPatterns: Array.from(new Set([
             ...INSPECTION_SHELL_PATTERNS,
@@ -2910,9 +2965,12 @@ function createRolePrompt(
   isTerminalAuthority = false,
 ): string {
   const originalTask = rolePromptContext?.originalTask || prompt;
+  // Issue 119: For post-Scout roles (generator/planner/evaluator), `decision.mutationSurface`
+  // is a stale pre-Scout regex heuristic. Show it only to Scout — downstream workers get
+  // scope cues from Scout's own scope/reviewFilesOrAreas via the handoff.
   const decisionSummary = [
     `Primary task: ${decision.primaryTask}`,
-    `Mutation surface: ${decision.mutationSurface ?? 'unknown'}`,
+    ...(role === 'scout' ? [`Mutation surface (heuristic): ${decision.mutationSurface ?? 'unknown'}`] : []),
     `Assurance intent: ${decision.assuranceIntent ?? 'default'}`,
     `Work intent: ${decision.workIntent}`,
     `Complexity hint: ${decision.complexity}`,
@@ -3093,12 +3151,19 @@ function createRolePrompt(
       'Converge quickly on the user-facing answer and a crisp evidence handoff for the lightweight evaluator.',
     ].join('\n')
     : undefined;
+  // Issue 119: Read Scout's own scope analysis instead of the stale pre-Scout
+  // heuristic. When Scout's scope is 'open' (the default when Scout didn't
+  // flag it as review-only or docs-only), emit no hard mutation guard — trust
+  // Scout's scope handoff + Evaluator instead of layering extra constraints.
+  const h1MutationIntent = decision.harnessProfile === 'H1_EXECUTE_EVAL'
+    ? inferScoutMutationIntent(rolePromptContext?.scoutScope, decision.primaryTask)
+    : 'open';
   const h1MutationGuardance = decision.harnessProfile === 'H1_EXECUTE_EVAL'
     ? (
-        decision.mutationSurface === 'read-only'
-          ? 'This H1 run is read-only. Do not mutate files, code, or system state. If a tool or shell command would write or cause side effects, switch to a read-only inspection or verification alternative.'
-          : decision.mutationSurface === 'docs-only'
-            ? 'This H1 run is docs-only. Restrict any edits to documentation artifacts. Do not mutate code or system state.'
+        h1MutationIntent === 'review-only'
+          ? 'Scout scoped this as a review-focused run (primary task: review, no files in scope). Treat it as non-mutating unless Scout\'s handoff explicitly asks for fixes — then act within that narrow scope only.'
+          : h1MutationIntent === 'docs-scoped'
+            ? 'Scout\'s scope points entirely at documentation paths. Keep edits within those paths unless new evidence during execution demands changes outside them — call that out explicitly in the handoff if so.'
             : undefined
       )
     : undefined;
@@ -3385,6 +3450,12 @@ function buildManagedTaskWorkers(
   const runPlanner = decision.harnessProfile === 'H2_PLAN_EXECUTE_EVAL'
     ? phase === 'initial'
     : false;
+  // Issue 119: derive mutation intent once per worker-set build from Scout's
+  // own scope (in rolePromptContext), not the stale pre-Scout heuristic.
+  const scoutMutationIntent = inferScoutMutationIntent(
+    rolePromptContext?.scoutScope,
+    decision.primaryTask,
+  );
   const createWorker = (
     id: string,
     title: string,
@@ -3398,7 +3469,7 @@ function buildManagedTaskWorkers(
       role,
       verification,
       decision.harnessProfile,
-      decision.mutationSurface,
+      scoutMutationIntent,
       repoIntelligenceMode,
     );
     const worker: ManagedTaskWorkerSpec = {
@@ -4690,6 +4761,8 @@ export const __managedProtocolTestables = {
   buildManagedWorkerMemoryNote,
   buildManagedWorkerRoundSummary,
   mergeEvidenceArtifacts,
+  inferScoutMutationIntent,
+  isDocsLikePath,
 };
 export const __checkpointTestables = {
   writeCheckpoint,
@@ -7956,6 +8029,10 @@ async function resumeManagedTask(
         skillInvocation: managedOptions.context?.skillInvocation,
         skillMap: managedTask.runtime?.skillMap,
         previousRoleSummaries: managedTask.runtime?.roleRoundSummaries,
+        scoutScope: {
+          scope: managedTask.runtime?.scoutDecision?.scope,
+          reviewFilesOrAreas: managedTask.runtime?.scoutDecision?.reviewFilesOrAreas,
+        },
       }, workspaceDir),
       managedOptions.context?.repoIntelligenceMode,
       round === startRound ? 'initial' : 'refinement',
@@ -8301,6 +8378,12 @@ export async function runManagedTask(
       originalTask: managedOriginalTask,
       skillInvocation: managedOptions.context?.skillInvocation,
       skillMap,
+      // Issue 119: pass Scout's own scope so downstream workers derive
+      // mutation intent from Scout rather than the pre-Scout heuristic.
+      scoutScope: {
+        scope: scoutExecution.directive.scope,
+        reviewFilesOrAreas: scoutExecution.directive.reviewFilesOrAreas,
+      },
     },
   );
   const budgetController = createManagedBudgetController(managedOptions, plan, agentMode);
@@ -8436,6 +8519,10 @@ export async function runManagedTask(
             skillInvocation: managedOptions.context?.skillInvocation,
             skillMap: managedTask.runtime?.skillMap,
             previousRoleSummaries: managedTask.runtime?.roleRoundSummaries,
+            scoutScope: {
+              scope: managedTask.runtime?.scoutDecision?.scope,
+              reviewFilesOrAreas: managedTask.runtime?.scoutDecision?.reviewFilesOrAreas,
+            },
           }, shape.workspaceDir),
           managedOptions.context?.repoIntelligenceMode,
           nextPhase,
@@ -8656,6 +8743,10 @@ export async function runManagedTask(
             skillInvocation: managedOptions.context?.skillInvocation,
             skillMap: managedTask.runtime?.skillMap,
             previousRoleSummaries: managedTask.runtime?.roleRoundSummaries,
+            scoutScope: {
+              scope: managedTask.runtime?.scoutDecision?.scope,
+              reviewFilesOrAreas: managedTask.runtime?.scoutDecision?.reviewFilesOrAreas,
+            },
           }, shape.workspaceDir),
           managedOptions.context?.repoIntelligenceMode,
           'initial',

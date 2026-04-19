@@ -185,6 +185,8 @@ function buildScoutResponse(
     executionObligations?: string[];
     verificationObligations?: string[];
     ambiguities?: string[];
+    scope?: string[];
+    reviewFilesOrAreas?: string[];
   },
 ): string {
   const harnessRationale = options?.harnessRationale
@@ -195,6 +197,8 @@ function buildScoutResponse(
     ?? (confirmedHarness === 'H0_DIRECT' ? 'yes' : 'no');
   const blockingEvidence = options?.blockingEvidence
     ?? (confirmedHarness === 'H0_DIRECT' ? ['none'] : ['Need additional evidence before direct completion.']);
+  const scope = options?.scope ?? ['Confirm task intent and scope.'];
+  const reviewFilesOrAreas = options?.reviewFilesOrAreas;
   return [
     visibleText,
     '```kodax-task-scout',
@@ -204,8 +208,12 @@ function buildScoutResponse(
     `direct_completion_ready: ${directCompletionReady}`,
     'blocking_evidence:',
     ...blockingEvidence.map((item) => `- ${item}`),
-    'scope:',
-    '- Confirm task intent and scope.',
+    scope.length > 0
+      ? ['scope:', ...scope.map((item) => `- ${item}`)].join('\n')
+      : 'scope:',
+    reviewFilesOrAreas?.length
+      ? ['review_files_or_areas:', ...reviewFilesOrAreas.map((item) => `- ${item}`)].join('\n')
+      : undefined,
     'required_evidence:',
     '- Minimal evidence required for the next stage.',
     options?.skillSummary ? `skill_summary: ${options.skillSummary}` : undefined,
@@ -485,6 +493,70 @@ describe('managed protocol parsers', () => {
       evidence: ['Observed the bug.'],
       followup: ['Re-run one narrow check.'],
       userFacingText: 'Validator visible result.',
+    });
+  });
+});
+
+describe('Issue 119: Scout-driven mutation intent inference', () => {
+  const infer = __managedProtocolTestables.inferScoutMutationIntent;
+  const isDoc = __managedProtocolTestables.isDocsLikePath;
+
+  describe('isDocsLikePath', () => {
+    it('recognizes common documentation file extensions and roots', () => {
+      expect(isDoc('docs/architecture/ama.md')).toBe(true);
+      expect(isDoc('README.md')).toBe(true);
+      expect(isDoc('CHANGELOG.md')).toBe(true);
+      expect(isDoc('doc/overview.mdx')).toBe(true);
+      expect(isDoc('notes.rst')).toBe(true);
+    });
+
+    it('rejects code, test, and config paths', () => {
+      expect(isDoc('packages/coding/src/task-engine.ts')).toBe(false);
+      expect(isDoc('src/App.tsx')).toBe(false);
+      expect(isDoc('package.json')).toBe(false);
+      expect(isDoc('vite.config.ts')).toBe(false);
+      expect(isDoc('')).toBe(false);
+    });
+  });
+
+  describe('inferScoutMutationIntent', () => {
+    it('returns review-only when the task is a review with no scope entries', () => {
+      expect(infer({ scope: [], reviewFilesOrAreas: ['packages/ai/'] }, 'review')).toBe('review-only');
+      expect(infer({ scope: [] }, 'review')).toBe('review-only');
+      expect(infer(undefined, 'review')).toBe('review-only');
+    });
+
+    it('returns docs-scoped only when every scope path is documentation', () => {
+      expect(
+        infer({ scope: ['docs/feature.md', 'CHANGELOG.md'] }, 'edit'),
+      ).toBe('docs-scoped');
+      expect(
+        infer({ scope: ['docs/a.md'], reviewFilesOrAreas: ['README.md'] }, 'edit'),
+      ).toBe('docs-scoped');
+    });
+
+    it('returns open when any scope path points at code or config', () => {
+      expect(
+        infer({ scope: ['docs/a.md', 'packages/coding/src/task-engine.ts'] }, 'edit'),
+      ).toBe('open');
+      expect(
+        infer({ scope: ['packages/ai/src/types.ts'] }, 'bugfix'),
+      ).toBe('open');
+    });
+
+    it('returns open when a review task has a non-empty concrete scope (Scout escalated with real work)', () => {
+      // Issue 119 core scenario: Scout upgraded a pre-heuristic "review/docs-only"
+      // task to H1 *and* put actual code paths in scope. Intent must fall open
+      // so Generator can modify those code paths.
+      expect(
+        infer({ scope: ['packages/coding/src/task-engine.ts', 'docs/features/v0.8.0.md'] }, 'review'),
+      ).toBe('open');
+    });
+
+    it('returns open when inputs are undefined or empty for non-review tasks', () => {
+      expect(infer(undefined, 'edit')).toBe('open');
+      expect(infer({ scope: [] }, 'edit')).toBe('open');
+      expect(infer({}, 'bugfix')).toBe('open');
     });
   });
 });
@@ -1192,7 +1264,10 @@ describe('runManagedTask', () => {
       prompts.push(workerPrompt);
       if (workerPrompt.includes('You are the Scout role')) {
         return buildAssistantResult(
-          buildScoutResponse('Scout kept the task on H1.', 'H1_EXECUTE_EVAL'),
+          // Scout declares an empty scope for this review task, matching a
+          // genuine review-only intent. Issue 119: downstream Generator guard
+          // reads Scout's scope, not the pre-Scout heuristic.
+          buildScoutResponse('Scout kept the task on H1.', 'H1_EXECUTE_EVAL', { scope: [] }),
           { sessionId: 'session-scout' },
         );
       }
@@ -1240,7 +1315,9 @@ describe('runManagedTask', () => {
     expect(generatorPrompt).toContain('Reuse its cheap-facts summary, scope notes, and evidence-acquisition hints instead of rebuilding them from scratch.');
     expect(generatorPrompt).toContain('Consume the Scout handoff before collecting more evidence.');
     expect(generatorPrompt).toContain('Only serialize tool calls when a later call depends on an earlier result.');
-    expect(generatorPrompt).toContain('This H1 run is read-only. Do not mutate files, code, or system state.');
+    // Issue 119: new Scout-scope-derived guidance replaces the old heuristic-driven text.
+    expect(generatorPrompt).toContain('Scout scoped this as a review-focused run');
+    expect(generatorPrompt).not.toContain('This H1 run is read-only. Do not mutate files, code, or system state.');
     expect(generatorPrompt).toContain('Never mention internal protocol tools, fenced blocks, MCP, capability runtimes, or extension runtimes in the user-facing answer.');
     expect(generatorPrompt).not.toContain('Consume the Scout handoff and Planner contract before collecting more evidence.');
     expect(evaluatorPrompt).toContain('When status=revise, keep the user-facing text short and specific');
@@ -1801,7 +1878,12 @@ describe('runManagedTask', () => {
     mockRunDirectKodaX.mockImplementation(async (_options, workerPrompt: string) => {
       if (workerPrompt.includes('You are the Scout role')) {
         return buildAssistantResult(
-          buildScoutResponse('Scout confirmed H1 for the explicit double-check review.', 'H1_EXECUTE_EVAL'),
+          // Issue 119: a genuine review-only run emits an empty scope — Scout
+          // is not pointing Generator at any mutation target. This drives the
+          // 'review-only' intent and applies the read-only tool policy.
+          buildScoutResponse('Scout confirmed H1 for the explicit double-check review.', 'H1_EXECUTE_EVAL', {
+            scope: [],
+          }),
           { sessionId: 'session-scout-h1-readonly' },
         );
       }
@@ -1882,7 +1964,11 @@ describe('runManagedTask', () => {
       prompts.push(workerPrompt);
       if (workerPrompt.includes('You are the Scout role')) {
         return buildAssistantResult(
-          buildScoutResponse('Scout kept the docs task on H1.', 'H1_EXECUTE_EVAL'),
+          // Issue 119: Scout's scope drives tool policy now. Emit doc paths so
+          // the Generator lands in the 'docs-scoped' intent bucket.
+          buildScoutResponse('Scout kept the docs task on H1.', 'H1_EXECUTE_EVAL', {
+            scope: ['docs/architecture/ama.md', 'docs/overview.md'],
+          }),
           { sessionId: 'session-scout-h1-docs' },
         );
       }
@@ -1933,7 +2019,101 @@ describe('runManagedTask', () => {
       expect.arrayContaining(['\\.(?:md|mdx|txt|rst|adoc)$']),
     );
     const generatorPrompt = prompts.find((item) => item.includes('You are the Generator role'));
-    expect(generatorPrompt).toContain('This H1 run is docs-only. Restrict any edits to documentation artifacts. Do not mutate code or system state.');
+    // Issue 119: new intent-driven guidance text; old heuristic-driven text removed.
+    expect(generatorPrompt).toContain('Scout\'s scope points entirely at documentation paths');
+    expect(generatorPrompt).not.toContain('This H1 run is docs-only. Restrict any edits to documentation artifacts.');
+  });
+
+  it('Issue 119: Scout escalating H0→H1 with code in scope clears stale pre-Scout docs-only guard', async () => {
+    const workspaceRoot = await createTempDir('kodax-task-engine-issue-119-');
+    const prompts: string[] = [];
+
+    // Simulate the bug scenario: the pre-Scout regex heuristic flagged the
+    // prompt as docs-only (e.g. "update the feature doc and tests"), but Scout
+    // upgrades to H1 with a mixed scope including test/code files.
+    mockCreateReasoningPlan.mockResolvedValue(
+      buildPlan({
+        primaryTask: 'edit',
+        taskFamily: 'implementation',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'planning',
+        complexity: 'moderate',
+        riskLevel: 'medium',
+        harnessProfile: 'H0_DIRECT',
+        needsIndependentQA: false,
+        mutationSurface: 'docs-only',
+        assuranceIntent: 'default',
+        topologyCeiling: 'H0_DIRECT',
+        upgradeCeiling: 'H0_DIRECT',
+        reason: 'Heuristic saw doc filenames and dropped the ceiling to H0_DIRECT.',
+      }),
+    );
+
+    mockRunDirectKodaX.mockImplementation(async (options, workerPrompt: string) => {
+      prompts.push(workerPrompt);
+      if (workerPrompt.includes('You are the Scout role')) {
+        // Scout upgrades to H1 and declares a mixed scope.
+        return buildAssistantResult(
+          buildScoutResponse('Scout upgraded to H1 because tests must be added.', 'H1_EXECUTE_EVAL', {
+            scope: [
+              'docs/features/v0.8.0.md',
+              'packages/coding/src/managed-protocol-handoff.test.ts',
+            ],
+            harnessRationale: 'Touching tests alongside docs requires a second review pass.',
+            blockingEvidence: ['Need to add missing handoff test cases.'],
+          }),
+          { sessionId: 'session-scout-issue-119' },
+        );
+      }
+      if (workerPrompt.includes('You are the Generator role')) {
+        // Generator must be able to edit the test file. With the old bug, the
+        // tool policy would have blocked this because mutationSurface stayed
+        // 'docs-only'. With Issue 119 fixed, Scout's mixed scope maps to
+        // 'open' intent, so neither the prompt guard nor the tool-policy
+        // allowedWritePathPatterns fires.
+        const testEditAllowed = await options.events?.beforeToolExecute?.('edit', {
+          path: 'packages/coding/src/managed-protocol-handoff.test.ts',
+          old_str: 'old',
+          new_str: 'new',
+        } as any);
+        expect(testEditAllowed).toBe(true);
+        return buildAssistantResult(
+          buildHandoffResponse('Generator updated docs and added handoff tests.'),
+          { sessionId: 'session-generator-issue-119' },
+        );
+      }
+      if (workerPrompt.includes('You are the Evaluator role')) {
+        return buildAssistantResult(
+          buildVerdictResponse('Evaluator accepted the mixed docs+tests pass.', 'accept', 'Both docs and tests were updated as expected.'),
+          { sessionId: 'session-evaluator-issue-119' },
+        );
+      }
+      throw new Error(`Unexpected prompt: ${workerPrompt.slice(0, 120)}`);
+    });
+
+    const result = await runManagedTask(
+      {
+        provider: 'anthropic',
+        agentMode: 'ama',
+        context: {
+          managedTaskWorkspaceDir: workspaceRoot,
+        },
+      },
+      '请补齐 v0.8.0 feature 文档并同步添加 handoff 测试',
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.managedTask?.contract.harnessProfile).toBe('H1_EXECUTE_EVAL');
+
+    const generatorPrompt = prompts.find((item) => item.includes('You are the Generator role'));
+    expect(generatorPrompt).toBeDefined();
+    // Old leaked text must be absent — the pre-Scout heuristic no longer reaches Generator.
+    expect(generatorPrompt).not.toContain('This H1 run is docs-only');
+    expect(generatorPrompt).not.toContain('Scout\'s scope points entirely at documentation paths');
+
+    // Tool policy must not pin Generator to docs-only write patterns.
+    const generatorAssignment = result.managedTask?.roleAssignments.find((item) => item.role === 'generator');
+    expect(generatorAssignment?.toolPolicy?.allowedWritePathPatterns).toBeUndefined();
   });
 
   it('re-runs Planner when mutation-focused H2 is missing a consumable contract before Generator executes', async () => {
