@@ -1,6 +1,6 @@
 # Feature 总表
 
-> Last updated: 2026-04-19 (Plan B compression: 079-091 scheduled v0.7.22-v0.7.32 with 5 merged-pair versions, 078 moved v0.7.35→v0.7.29, 059 absorbed, 030→v0.8.0)
+> Last updated: 2026-04-19 (FEATURE_079 completed — task-engine.ts phase 1 pure extraction done; v0.7.22 ready for release)
 
 > 中文阅读说明：
 > 这份 `FEATURE_LIST` 是 roadmap 的总索引。
@@ -15,18 +15,17 @@
 |---|---|
 | Tracked feature IDs | `001-091` (026 removed) |
 | Total tracked features | `90` |
-| Completed | `66` |
+| Completed | `67` |
 | Cancelled | `2` |
 | Absorbed | `1` |
 | InProgress | `1` |
-| Planned | `20` |
+| Planned | `19` |
 | Current released version | `v0.7.21` |
 
 ### 各版本待做分布
 
 | Version | Planned features |
 |---|---|
-| `v0.7.22` | `1` |
 | `v0.7.23` | `2` |
 | `v0.7.24` | `2` |
 | `v0.7.25` | `2` |
@@ -53,7 +52,6 @@
 
 | ID | Title | Category | Priority | Planned | Design |
 |---|---|---|---|---|---|
-| `079` | Task Engine Phase 1 — Pure Extraction | Internal | High | `v0.7.22` | [v0.7.22](features/v0.7.22.md#feature_079-task-engine-phase-1--pure-extraction) |
 | `080` | Layer A Primitives — Agent / Handoff / Runner / Guardrail | Core | High | `v0.7.23` | [v0.7.23](features/v0.7.23.md#feature_080-layer-a-primitives--agent--handoff--runner--guardrail) |
 | `081` | Compaction Layering and Session Base/Lineage Split | Core | High | `v0.7.23` | [v0.7.23](features/v0.7.23.md#feature_081-compaction-layering-and-session-baselineage-split) |
 | `082` | Package Restructure — @kodax/core, @kodax/mcp, @kodax/capabilities, @kodax/tracing, @kodax/session-lineage | Core | High | `v0.7.24` | [v0.7.24](features/v0.7.24.md#feature_082-package-restructure) |
@@ -181,6 +179,7 @@
 | `074` | Subagent Permission Boundary Hardening | `v0.7.20` (unreleased) | [v0.7.20](features/v0.7.20.md#feature_074-subagent-permission-boundary-hardening) |
 | `072` | Lineage-Native Compaction Migration | `v0.7.20` (unreleased) | [v0.7.20](features/v0.7.20.md#feature_072-lineage-native-compaction-migration) |
 | `077` | Session-Scoped Prompt Input History | `v0.7.21` | [v0.7.21](features/v0.7.21.md#feature_077-session-scoped-prompt-input-history) |
+| `079` | Task Engine Phase 1 — Pure Extraction | `v0.7.22` (unreleased) | [v0.7.22](features/v0.7.22.md#feature_079-task-engine-phase-1--pure-extraction) |
 
 > `FEATURE_051` close-out posture: keep the current REPL status/footer/task/message surfaces frozen, limit follow-up work to invisible substrate maturity for transcript, scroll/selection, and input behavior, and treat the design doc as a completed close-out record rather than an open rollout plan.
 

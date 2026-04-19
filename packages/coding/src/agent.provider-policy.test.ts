@@ -90,11 +90,11 @@ describe('runKodaX provider policy integration', () => {
             longRunning: true,
             harness: 'project',
           },
+          repoIntelligenceMode: 'off',
         },
       },
       'Finish the managed task and keep project mode active.',
     );
-
     expect(result.success).toBe(false);
     expect(result.errorMetadata?.lastError).toMatch(/\[Provider Policy\]/);
     expect(result.routingDecision?.harnessProfile).toBe('H0_DIRECT');

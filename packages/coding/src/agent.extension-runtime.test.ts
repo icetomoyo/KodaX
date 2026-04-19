@@ -242,10 +242,10 @@ describe('runKodaX extension runtime integration', () => {
       {
         provider: TEST_PROVIDER_NAME,
         extensionRuntime: runtime,
+        reasoningMode: 'off',
       },
       'start feature 034',
     );
-
     expect(result.success).toBe(true);
     expect(result.lastText).toBe('second pass complete');
     expect(Feature034TestProvider.calls).toHaveLength(2);
@@ -291,10 +291,10 @@ describe('runKodaX extension runtime integration', () => {
       {
         provider: TEST_PROVIDER_NAME,
         extensionRuntime: runtime,
+        reasoningMode: 'off',
       },
       'start feature 034 with no tools',
     );
-
     expect(result.success).toBe(true);
     expect(Feature034TestProvider.calls).toHaveLength(1);
     expect(Feature034TestProvider.calls[0]?.tools).toEqual([]);

@@ -20,7 +20,7 @@ describe('resolveResilienceConfig', () => {
   it('returns defaults when no config provided', () => {
     const config = resolveResilienceConfig('anthropic');
     expect(config.requestTimeoutMs).toBe(600_000);
-    expect(config.streamIdleTimeoutMs).toBe(60_000);
+    expect(config.streamIdleTimeoutMs).toBe(0);
     expect(config.maxRetries).toBe(3);
     expect(config.maxRetryDelayMs).toBe(60_000);
     expect(config.enableNonStreamingFallback).toBe(true);
@@ -31,7 +31,7 @@ describe('resolveResilienceConfig', () => {
       requestTimeoutMs: 120_000,
     });
     expect(config.requestTimeoutMs).toBe(120_000);
-    expect(config.streamIdleTimeoutMs).toBe(60_000);
+    expect(config.streamIdleTimeoutMs).toBe(0);
   });
 
   it('applies per-provider policy override', () => {
