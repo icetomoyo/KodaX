@@ -6,12 +6,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-<!-- last-sync: 5a7cea9 -->
+<!-- last-sync: HEAD -->
+
+---
+
+## [0.7.21] - 2026-04-19
+
+### Fixed
+- **FEATURE_077 — Session-Scoped Prompt Input History**: REPL prompt input history now scoped to the current session instead of global, preventing cross-session history leakage
+
+### Documentation
+- Remove `docs/features/v1.0.0.md` (all features migrated to earlier versions)
+- Add feature docs for v0.7.22, v0.7.23, v0.7.24, v0.7.26–v0.7.29, v0.7.31, v0.7.32
+- Update `KNOWN_ISSUES.md`, `v0.8.0.md`, and `features/README.md` references
 
 ---
 
 ## [0.7.20] - 2026-04-18
-
 ### Added
 - **FEATURE_072 — Lineage-Native Compaction Migration**: post-compact attachments stored as a first-class `KodaXSessionCompactionEntry.postCompactAttachments` field instead of inline `[Post-compact: ...]` system messages; `getSessionMessagesFromLineage` slicer inlines attachments at the derivation layer, preserving `getContextMessagesForEntry`'s 1-to-1 contract (FEATURE_073 prerequisite); `evictOldIslandMessageContent` strips attachments on old-island compaction entries (prevents N-round × ~50k token accumulation); `cloneForkableEntry` deep-clones attachments on `/fork`; `applySessionCompaction` signature gains a typed `postCompactAttachments` parameter with defensive strip of inline messages; `CompactionUpdate.postCompactAttachments` routes attachments from agent.ts to REPL natively; `onIterationEnd.info.scope: 'parent' | 'worker'` field prevents worker token counts from overwriting the parent REPL's context snapshot; Scout `initialMessages` derived from lineage across three REPL call-sites (`repl.ts`, `InkREPL.tsx`, `project-commands.ts`); `applyLineageTruncation` pure helper reserved for graceful-degradation writeback
 - **FEATURE_074 — Subagent Permission Boundary Hardening**: plan-mode propagation to child agents via live predicate closure over parent state (mid-run `plan ↔ accept-edits` toggles reach in-flight children immediately); independent `exit_plan_mode` tool with tri-state callback (`boolean | 'not-in-plan-mode'`) so misuse outside plan mode surfaces as an explicit tool error; `set_permission_mode` callback no longer forwarded into `KodaXToolExecutionContext` (fails closed on child invocations); system-temp paths exempted from `isAlwaysConfirmPath` so `accept-edits` and `auto-in-project` no longer force confirmation for writes to `$TMP` / `os.tmpdir()`
