@@ -4686,8 +4686,11 @@ export const __managedProtocolTestables = {
   parseManagedTaskContractDirective,
   parseManagedTaskHandoffDirective,
   parseManagedTaskVerdictDirective,
+  sanitizeManagedWorkerResult,
+  buildManagedWorkerMemoryNote,
+  buildManagedWorkerRoundSummary,
+  mergeEvidenceArtifacts,
 };
-
 export const __checkpointTestables = {
   writeCheckpoint,
   deleteCheckpoint,

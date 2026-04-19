@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-04-13_
+_Last Updated: 2026-04-19_
 
 ---
 
@@ -63,11 +63,97 @@ _Last Updated: 2026-04-13_
 | 116 | Medium | Resolved | 协议代码块泄漏到用户可见文本 + H0_DIRECT routing 诊断噪音 | v0.7.17 | v0.7.18 | 2026-04-13 | 2026-04-13 |
 | 117 | High | Resolved | Managed task error recovery 断裂 — transient error 后任务未恢复 | v0.7.17 | v0.7.18 | 2026-04-13 | 2026-04-13 |
 | 118 | Medium | Open | esbuild 打包替代 tsc 直接运行 — 消除运行时模块开销与 React dev 模式 | v0.7.19 | - | 2026-04-17 | - |
+| 119 | High | Open | Scout 升级 H0→H1 后残留 pre-Scout mutationSurface — Generator 被错误锁为 docs-only | v0.7.20 | - | 2026-04-19 | - |
 
 ---
 
 ## Issue Details
 <!-- Full details for each issue - REQUIRED for all issues -->
+---
+### 119: Scout 升级 H0→H1 后残留 pre-Scout mutationSurface — Generator 被错误锁为 docs-only
+
+- **Priority**: High
+- **Status**: Open
+- **Introduced**: v0.7.20（结构性遗留，v0.7.20 修复了 harness/ceiling 两条残留通道后暴露）
+- **Fixed**: -
+- **Created**: 2026-04-19
+
+- **Original Problem**:
+
+  Scout 把任务从 H0 升级到 H1 后，Generator 的系统提示仍带着 `This H1 run is docs-only. Restrict any edits to documentation artifacts.` 这种约束，导致 Generator 看到用户明确要求（例如"补测试"、"把完成状态挪到对应版本"）也不敢修改测试文件或代码，只能改文档。真实会话中出现过：用户要求补测试 + 同步 FEATURE_LIST.md + 调整版本归属，Scout 已升级到 H1，Generator 仍只做了文档侧编辑、跳过测试。
+
+  本质是 `plan.decision.mutationSurface` 这个字段**同时承担了两个语义**：
+  1. Scout **前**：正则启发（`deriveMutationSurface` on original prompt）推出的粗糙上界，给 Scout 当参考
+  2. Scout **后**：下游 Generator / fan-out scheduler 读来判断"允许改动面"
+
+  Scout 可以覆盖 `confirmedHarness`（commit `3efdb7b` 已修 clamp bug）和 `upgradeCeiling`（commit `fa4708f` 已修 evaluator 读旧 ceiling），但 `mutationSurface` 从没被 Scout 覆盖过的渠道——升级后仍然是 pre-Scout 的正则残留值。这是"升级后残留"这条主线 bug 的第三条通道。
+
+- **Context**:
+
+  **触发路径**：
+  - [packages/coding/src/reasoning.ts:2275](packages/coding/src/reasoning.ts#L2275) — `deriveMutationSurface` 基于原始 prompt 文本做正则匹配，把 `plan.decision.mutationSurface` 初始化为 `docs-only` 等值
+  - [packages/coding/src/task-engine.ts:951-1011](packages/coding/src/task-engine.ts#L951-L1011) — `applyScoutDecisionToPlan` 只同步 `harnessProfile` 和 `upgradeCeiling`，**从不触碰** `mutationSurface`
+  - [packages/coding/src/task-engine.ts:3096-3104](packages/coding/src/task-engine.ts#L3096-L3104) — Generator 的 `h1MutationGuardance` 读 `decision.mutationSurface`，看到旧的 `docs-only` 就把 Generator 锁死
+
+  **相关下游读点**（同样读 pre-Scout 残留值）：
+  - [task-engine.ts:1743-1744](packages/coding/src/task-engine.ts#L1743-L1744) — fan-out scheduler 判 read-only/docs-only
+  - [task-engine.ts:2567, 2578](packages/coding/src/task-engine.ts#L2567-L2578) — `createRolePrompt` 的 H1 分支
+  - [task-engine.ts:2915](packages/coding/src/task-engine.ts#L2915) — 元数据打印
+  - [task-engine.ts:3401](packages/coding/src/task-engine.ts#L3401) — 传给 `createRolePrompt`
+
+  **相关已修复 commits**（同类 bug 的另外两条通道）：
+  - `3efdb7b fix(task-engine): trust Scout routing authority, fix ceiling clamp context-loss bug`
+  - `fa4708f fix(task-engine): evaluator prompt uses effective ceiling, not stale heuristic`
+
+  这两个 commit 修了 harness/ceiling 的残留，但漏了 `mutationSurface`。本 issue 闭合最后一条通道。
+
+- **Planned Resolution**:
+
+  **方向**：单一真理源 + 轻推断。不加新字段、不加 validator、不加 retry、不改 Scout prompt。让下游停止信任 Scout 前的启发式字段，改读 Scout 自己的结构化输出。
+
+  **为什么不走"让 Scout 多声明一个字段 + 升级时强制要求"路线**：
+  - 违背 KodaX 极简 + 智能哲学，把"LLM 该自己判断"的事变成"schema 枷锁 + retry 循环"
+  - 反而把 bug 换方向：未声明时如果 auto-relax 到 `code`，纯 review 任务又会被错误放开
+  - Scout 的 `scope` / `reviewFilesOrAreas` / `primaryTask` 已经携带了比"一个 enum 值"更精确的意图信息，不需要再加一个冗余字段
+
+  **具体改动**（半天量）：
+
+  1. **新增纯函数 `inferScoutMutationIntent(scout, primaryTask)`**（约 20 行）
+     返回三档：`'review-only'` / `'docs-scoped'` / `'open'`
+     - `primaryTask === 'review'` 且 `scope` 为空 → `review-only`
+     - `scope ∪ reviewFilesOrAreas` 全部匹配 `*.md`/`docs/`/`CHANGELOG` 等文档路径 → `docs-scoped`
+     - 其它 → `open`（默认开放，信任 Scout scope + Evaluator 兜底）
+
+  2. **替换 [task-engine.ts:3096-3104](packages/coding/src/task-engine.ts#L3096-L3104) 的 `h1MutationGuardance`**
+     改读 Scout 的 directive 而非 `decision.mutationSurface`；语气从"restrict/do not mutate"改成"unless ... asks for fixes"的软引导；`open` 档不加任何约束
+
+  3. **迁移或删除另外 4 处下游读点**
+     [task-engine.ts:1743-1744, 2567, 2578, 3401](packages/coding/src/task-engine.ts) — 或迁移到同一推断，或直接删除该分支（依赖 Scout scope + Evaluator 作为自然约束）
+     [task-engine.ts:2915](packages/coding/src/task-engine.ts#L2915) 元数据打印保留，但改为打印 Scout 推断结果
+
+  4. **保留不动的东西**
+     - `KodaXManagedScoutPayload` 结构、Scout prompt、validator、parser、persistence schema 全部不动
+     - `plan.decision.mutationSurface` 字段本身保留（`reasoning.ts` 内部仍用它推 `topologyCeiling`），只是**下游 H1+ 路径不再读它**
+     - `applyScoutDecisionToPlan` 不动（或仅加一条 routing note 声明"下游已走推断"）
+
+  5. **测试**
+     - `inferScoutMutationIntent` 纯函数单测（3 档各 1-2 例）
+     - 3 个核心回归（task-engine.test.ts）：
+       * Scout H0→H1 升级 + 原启发式为 `docs-only` → Generator prompt 不再含"docs-only"字样
+       * Scout H1 review 任务（scope 空）→ Generator prompt 含 review-only 软引导
+       * Scout H1 纯文档任务（scope 全 .md）→ Generator prompt 含 docs-scoped 软引导
+     - 手工 e2e：重跑触发此 bug 的那类 docs + tests 组合任务，确认 Generator 能改 test 文件
+
+  **风险与代价**：
+  - Scout `scope` 描述粒度粗时（如 `packages/coding/src`），`isDocsLikePath` 会判失败，推断落 `'open'` → 这是正确行为，不算退化。极简原则下信任 Scout scope 本身 + Evaluator 兜底，不要硬收紧
+  - 现有依赖 `decision.mutationSurface === 'docs-only'` 的测试会需要更新（因为下游不再读它）——这反映的是语义修复，不是回归
+
+  **为什么不选其他方案**：
+  - ❌ Scout payload 新增 `confirmedMutationSurface` + fail-loud retry：违背极简哲学，加枷锁；retry 烧 token 且体验不自然；弱模型缺省会频繁失败
+  - ❌ Scout 升级未声明时 auto-relax 到 `code`：方向错了，会把纯 review 任务错误放开，比现状还危险
+  - ❌ 拆 `heuristicMutationSurface` / `mutationSurface` 双字段：结构上更干净，但 7+ 处读点要迁移 + 持久化 schema 扩字段 + 旧快照迁移，scope 太大，收益被推断方案覆盖
+  - ❌ 只做最小补丁（Scout 覆盖时同步清 `mutationSurface`）：治标不治本，下次再有"Scout 前 vs Scout 后"冲突字段还会复发
+
 ---
 ### 112: ask_user_question 交互机制不完备 — 数字编号歧义 + 缺少 input/multiSelect 模式
 
