@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-04-19_
+_Last Updated: 2026-04-20_
 
 ---
 
@@ -64,11 +64,219 @@ _Last Updated: 2026-04-19_
 | 117 | High | Resolved | Managed task error recovery 断裂 — transient error 后任务未恢复 | v0.7.17 | v0.7.18 | 2026-04-13 | 2026-04-13 |
 | 118 | Medium | Open | esbuild 打包替代 tsc 直接运行 — 消除运行时模块开销与 React dev 模式 | v0.7.19 | - | 2026-04-17 | - |
 | 119 | High | Open | Scout 升级 H0→H1 后残留 pre-Scout mutationSurface — Generator 被错误锁为 docs-only | v0.7.20 | - | 2026-04-19 | - |
+| 120 | High | Open | Skill / Plan-mode 调用路径下流式注入 prompt 失效 — `canQueueFollowUps` 未开启 | 一直存在 | - | 2026-04-20 | - |
+| 121 | High | Open | 超长粘贴（>500 字符）导致用户 prompt 在历史中视觉假消失 + 粘贴后 500ms+ 键击延迟 | v0.7.0+ | - | 2026-04-20 | - |
 
 ---
 
 ## Issue Details
 <!-- Full details for each issue - REQUIRED for all issues -->
+---
+### 121: 超长粘贴（>500 字符）导致用户 prompt 在历史中视觉假消失 + 粘贴后 500ms+ 键击延迟
+
+- **Priority**: High
+- **Status**: Open
+- **Introduced**: v0.7.0+（自粘贴功能引入以来一直存在）
+- **Fixed**: -
+- **Created**: 2026-04-20
+- **Resolved**: -
+- **Target Version**: v0.7.24（作为 v0.7.24 首个 commit，在 FEATURE_082 / FEATURE_083 结构性改动之前落地；通过 commit 边界隔离回归信号）
+
+#### Current Behavior
+用户粘贴超过 5k 字符（实际任何超过 ~500 字符都触发）的内容到 REPL 输入栏后提交，历史记录里看不到用户这一条 prompt 的 `You [HH:MM]` 标签 —— 视觉上像是 prompt 丢失了。同时粘贴后键入字符出现 500ms+ 延迟。
+
+#### Expected Behavior
+1. 无论粘贴多大，输入栏保持单行友好显示（占位符形态 `[Pasted text #N +K lines]`）
+2. 提交后历史记录稳定显示 `You [HH:MM]` header + 占位符，不挤屏
+3. LLM 上游 `context.messages` 收到完整原文，不损失任何语义
+4. 粘贴后键击延迟保持 <50ms
+
+#### Reproduction
+1. 启动 KodaX REPL
+2. 粘贴一段 5k+ 字符的文本（如一份中等长度文档、一段代码片段）到输入栏
+3. 按 Enter 提交
+4. 观察历史：用户的 `You [HH:MM]` 标签看不到，只能看到粘贴内容的尾部 wrap；继续键入字符出现明显延迟
+
+#### Root Cause（已完整定位）
+
+1. **无输入时阈值拦截**：[`text-buffer.ts:164 insert({paste:true})`](packages/repl/src/ui/utils/text-buffer.ts#L164) 对大段粘贴无阈值检查，整块塞进 buffer
+2. **输入栏视口被撑爆**：[`viewport-budget.ts:109 calculateInputPromptRows`](packages/repl/src/ui/utils/viewport-budget.ts#L109) 按字符数撑高输入栏，5k 字符在 80 列终端下 wrap 到 60+ 可视行，挤掉 `messageRows`
+3. **user 消息无渲染截断**：[`transcript-layout.ts:418-431`](packages/repl/src/ui/utils/transcript-layout.ts#L418-L431) 和 [`MessageList.tsx:221-233 UserItemRenderer`](packages/repl/src/ui/components/MessageList.tsx#L221-L233) 对 user 消息无 maxLines 截断（只有 assistant 做），巨大 `<Text>` 导致 Ink 每帧 wrap/output 500ms+ 延迟 + live-region 覆盖
+4. **视口溢出**：提交后 `You [HH:MM]` header 被挤出视口顶部，用户看不到标签 → 误以为 prompt 丢失
+
+持久化实际没丢：[`InkREPL.tsx:5888-5891 handleSubmit`](packages/repl/src/ui/InkREPL.tsx#L5888-L5891) 全文写入 history；reducer 只按轮数/条数裁剪（[`UIStateContext.tsx:106-132`](packages/repl/src/ui/contexts/UIStateContext.tsx#L106-L132)）。`/resume` 加载 persistedUiHistory 可验证数据完整。
+
+#### Proposed Solution
+
+采纳 Claude Code 三层防御 + KodaX 本地约束，一次性在 v0.7.24 落地 bundled（含原 v1 + v1.1 + v2 范围，不拆分多次处理）。
+
+**参考实现**（`C:\Works\claudecode\src`）：
+- [`components/PromptInput/inputPaste.ts`](C:\Works\claudecode\src\components\PromptInput\inputPaste.ts)
+- [`components/PromptInput/useMaybeTruncateInput.ts`](C:\Works\claudecode\src\components\PromptInput\useMaybeTruncateInput.ts)
+- [`components/messages/UserPromptMessage.tsx`](C:\Works\claudecode\src\components\messages\UserPromptMessage.tsx)（`MAX_DISPLAY_CHARS=10_000`）
+- [`history.ts`](C:\Works\claudecode\src\history.ts)（`parseReferences` / `expandPastedTextRefs` / `addToHistory`）
+- [`utils/pasteStore.ts`](C:\Works\claudecode\src\utils\pasteStore.ts)（content-addressable hash store）
+- [`hooks/useInputBuffer.ts`](C:\Works\claudecode\src\hooks\useInputBuffer.ts)（undo buffer with pastedContents）
+- [`utils/Cursor.ts:937-969 deleteTokenBefore`](C:\Works\claudecode\src\utils\Cursor.ts#L937)（atomic backspace at word boundary）
+
+##### Layer 1 — 粘贴拦截（输入时，阈值 800 字符或 >2 逻辑行）
+
+- 新建 `packages/repl/src/ui/utils/paste-store.ts`：`PastedContent` 类型 / `formatPastedTextRef(id, numLines)` / `getPastedTextRefNumLines(text)` / `parseReferences(input)` / `expandPastedTextRefs(input, pastedContents)` —— 全部纯函数
+- `parseReferences` 用统一正则 `/\[(Pasted text|Image|\.\.\.Truncated text) #(\d+)(?: \+\d+ lines)?(\.)*\]/g`，与 FEATURE_031 `[Image #N]` anchor 对齐
+- 改 [`text-buffer.ts insert({paste})`](packages/repl/src/ui/utils/text-buffer.ts#L164)：超阈值时 `registerPastedContent` → 插入 `[Pasted text #N +K lines]` 占位符
+
+##### Layer 2 — 非粘贴超长输入兜底（阈值 10_000 字符）
+
+- effect hook 监听 buffer 长度，>10k 时自动抽中间为 `[...Truncated text #N +K lines...]`，保留首尾各 500
+- 覆盖场景：stdin 管道注入（`cat big.txt | kodax`）、非 bracketed-paste 的老终端逐字符到达、任何绕过 Layer 1 的路径
+
+##### Layer 3 — 渲染硬上限（`MAX_DISPLAY_CHARS=10_000`，HEAD 2500 + TAIL 2500）
+
+- 新建 `packages/repl/src/ui/utils/user-message-display.ts`：`truncateUserMessageForDisplay(text, opts): string` —— 独立纯函数，便于 FEATURE_057（v0.7.30 InProgress）搬迁时一并带走
+- 三个 call-site：[`MessageList.tsx UserItemRenderer`](packages/repl/src/ui/components/MessageList.tsx#L221) / [`transcript-layout.ts user case`](packages/repl/src/ui/utils/transcript-layout.ts#L418) / [`prompt-surface-layout.ts user case`](packages/repl/src/ui/utils/prompt-surface-layout.ts#L225)
+
+##### 原子编辑
+
+- `backspace()` / `deleteChar()` 在 word boundary（光标后紧跟空白或 EOL）处匹配占位符正则 → 整块一次删；**不**删 Map entry（留给 undo 恢复）
+- 方向键（left/right/home/end）原子跳跃 pasted placeholder（Claude Code 没做这个，KodaX 做完整）
+- Undo buffer 携带 `{text, cursorOffset, pastedContents}` 三元组 → undo 原子恢复占位符 + map entry
+
+##### 提交流水线
+
+- [`prompt-input-controller.ts submitCurrentText`](packages/repl/src/ui/utils/prompt-input-controller.ts#L244)：state 增 `pastedContents: Record<id, PastedContent>`；提交时 `fullText = expandPastedTextRefs(text, pastedContents)`；`onSubmit(displayText, fullText)` 双参数
+- [`InkREPL.tsx handleSubmit`](packages/repl/src/ui/InkREPL.tsx#L5839) 签名改 `(displayText, fullText)`：history 写 displayText（占位符形态）、`parseCommand` / agent 调用链走 fullText（展开原文）
+- 天然兼容 FEATURE_076（v0.7.25 Planned）context.messages 整形：fullText 正好是它要的 "plainUserPrompt"
+
+##### 会话级 + 跨会话持久化
+
+- 输入历史（↑↓）：FEATURE_077（v0.7.21 Delivered, session-scoped prompt input history）基础上扩 `{display, pastedContents}` 一体保存
+- 磁盘 paste-cache：`~/.kodax/paste-cache/{sha256}.txt` 内容寻址；小文本（<1024 chars）inline 到 history JSONL，大文本 hash 引用 + fire-and-forget 异步写盘
+- 跨重启：↑ 键拉回老 prompt 仍可展开原文
+- `cleanupOldPastes` 启动钩子按时间戳清理过期 paste 文件
+
+##### 新命令
+
+- `/paste show <id>`：在 transcript 显示指定 id 的原始粘贴内容
+
+#### 范围外（明确 defer，不在本 issue 内处理）
+
+- `preExpansionValue` 数据管道 —— 今天没有 ultraplan 关键词检测那类消费者，speculative plumbing，等未来真有消费需求再补 ~40 LoC
+- 外编辑器 `expandPastedTextRefs` / `recollapsePastedContent` hook —— 依赖 FEATURE_075（v0.7.25 Plan Approval Dialog Editor Integration），等 75 落地时顺带接 ~50 LoC
+
+#### 实现清单
+
+| 文件 | 改动 | 预估 |
+|------|------|------|
+| `packages/repl/src/ui/utils/paste-store.ts` | 新建 | ~100 LoC |
+| `packages/repl/src/ui/utils/paste-cache.ts` | 新建（磁盘 sha256 store） | ~100 LoC |
+| `packages/repl/src/ui/utils/user-message-display.ts` | 新建（Layer 3 helper） | ~40 LoC |
+| `packages/repl/src/ui/utils/text-buffer.ts` | 改 insert/backspace/deleteChar | +60 |
+| `packages/repl/src/ui/utils/prompt-input-controller.ts` | 改：pastedContents state、submit expansion、undo snapshot、方向键原子跳跃 | +100 |
+| `packages/repl/src/ui/InkREPL.tsx` | 改 handleSubmit 签名、startNewSession 清理 | +30 |
+| 输入历史 hook（或等价） | 扩展成带 pastedContents 的 entry | +60 |
+| `packages/repl/src/ui/components/MessageList.tsx` | 调用 truncateUserMessageForDisplay | +5 |
+| `packages/repl/src/ui/utils/transcript-layout.ts` | 同上 | +5 |
+| `packages/repl/src/ui/utils/prompt-surface-layout.ts` | 同上 | +5 |
+| slash command 注册 `/paste show` | 加一个 case | +40 |
+| 启动时 `cleanupOldPastes` 钩子 | InkREPL mount effect | +30 |
+| 测试 | 全覆盖 | ~500 |
+
+**总计：~1100 LoC 代码 + ~500 LoC 测试 ≈ 2 个工作日**
+
+#### 验收标准
+
+- [ ] 粘贴 5k 字符：输入栏单行显示 `[Pasted text #1 +K lines]`
+- [ ] 提交后 history 显示 `You [HH:MM]` + 占位符单行，不挤屏
+- [ ] LLM 上游 `context.messages` 收到完整原文（debug trace 或 mem-diag 快照验证）
+- [ ] Backspace 一次删整个占位符
+- [ ] Delete 一次删整个占位符
+- [ ] 方向键（left/right/home/end）跳过占位符整体，不进入中间
+- [ ] Ctrl+Z 撤销恢复占位符 + pasted map entry
+- [ ] ↑ 键拉回上条带占位符的 prompt 仍可正确 expand
+- [ ] 重启 KodaX 后 ↑ 键跨 session 拉回的 prompt 仍可正确 expand（磁盘 paste-cache 命中）
+- [ ] `/paste show 1` 显示原文
+- [ ] stdin 管道 `cat 50k.txt | kodax` 不爆屏（Layer 2 触发 + Layer 3 兜底）
+- [ ] 键击延迟回归：粘贴大段后键入 50 字符，每击 <50ms（修复前 500ms+）
+- [ ] FEATURE_031 `[Image #N]` 引用路径不受影响（parseReferences 统一正则向后兼容）
+- [ ] FEATURE_051-D "paste 中 Enter 不误提交" 行为保留
+
+#### Context
+
+- **受影响场景**：任何通过粘贴提交长文本的工作流 —— 粘贴代码片段请 KodaX 审查、粘贴日志分析问题、粘贴文档内容问答等
+- **副作用严重度**：粘贴后键击延迟 500ms+，这是 Claude Code 源码注释里直接点名的锅（[`UserPromptMessage.tsx:22-28`](C:\Works\claudecode\src\components\messages\UserPromptMessage.tsx#L22)）
+- **workaround（用户侧）**：不要粘贴超过 500 字符的内容；或粘贴前先写入临时文件让 KodaX 读取
+- **依赖关系**：无硬依赖；但需在 FEATURE_082（v0.7.24 包拆分）、FEATURE_083（v0.7.24 tracer）之前落地以隔离回归信号
+
+---
+### 120: Skill / Plan-mode 调用路径下流式注入 prompt 失效 — `canQueueFollowUps` 未开启
+
+- **Priority**: High
+- **Status**: Open
+- **Introduced**: 一直存在（自 v0.6.0 引入队列功能起，非主对话路径就未接入）
+- **Fixed**: -
+- **Created**: 2026-04-20
+
+- **Original Problem**:
+
+  用户通过 `/skill:...`（例如 `/skill:smart-changelog`）或 plan-mode 触发 agent 执行期间，在流式过程中按 Enter 想排队追加下一条 prompt，会出现：
+
+  - 输入栏字符被吞（由 [prompt-input-controller.ts:251-252](packages/repl/src/ui/utils/prompt-input-controller.ts#L251-L252) 无条件 `clear()` 导致）
+  - 底部 `QueuedCommandsSurface` 无排队提示
+  - 输入栏占位符显示 `Agent is busy...`（不是 `Queue a follow-up...`）
+
+  按占位符映射 [surface-liveness.ts:66-71](packages/repl/src/ui/view-models/surface-liveness.ts#L66-L71)：`busy` = `isLoading=true` + `canQueueFollowUps=false`。证实 `handleSubmit` 在 [InkREPL.tsx:5849](packages/repl/src/ui/InkREPL.tsx#L5849) 的 `if (!canQueueFollowUps) return;` 命中，输入被静默丢弃。
+
+- **Context**:
+
+  **三条"agent 执行"路径，只有一条开启队列**：
+
+  | 入口 | 调用 | `canQueueFollowUps` |
+  |---|---|---|
+  | 普通对话（[InkREPL.tsx:6518](packages/repl/src/ui/InkREPL.tsx#L6518)） | `runQueueableAgentSequence` → 内部 `setCanQueueFollowUps(true)` | ✅ true |
+  | Skill / prompt 调用（[InkREPL.tsx:6349](packages/repl/src/ui/InkREPL.tsx#L6349) → `executeInvocation` 内 [:5763](packages/repl/src/ui/InkREPL.tsx#L5763)） | 直接 `runAgentRound` | ❌ false |
+  | Plan mode（[InkREPL.tsx:6466](packages/repl/src/ui/InkREPL.tsx#L6466)） | 直接 `runWithPlanMode` | ❌ false |
+
+  另有 `executeInvocation` 内的 plan-mode 子分支（[InkREPL.tsx:5749-5753](packages/repl/src/ui/InkREPL.tsx#L5749-L5753)）同样未接入。
+
+  **为什么 v0.7.22/v0.7.23 才被察觉**：代码路径一直是这样。用户升级后开始频繁使用 `/skill:` 命令（如 `smart-changelog`），才撞上这个一直存在的盲区。queue 代码本身自 v0.7.20 未变。
+
+  **另有一条独立路径**（同 issue 另一病灶，当 `isLoading=false` 但屏幕仍在流式时）尚未完全复现，需后续追查——本 issue 先闭合可确诊的这一条。
+
+- **Planned Resolution**: **B-全（修"不丢 + 自动续"）**
+
+  **方向**：不做 v0.7.30/v0.8.0 预告的"REPL substrate 重写"（那是大工），只在 skill / plan-mode 两条旁路上**对齐普通对话路径的队列语义**：
+
+  1. 流式期间允许入队（`canQueueFollowUps=true`）
+  2. 本轮结束后自动 drain 队列，每条作为后续对话轮执行
+
+  **改动点**（约 30 行集中在 [InkREPL.tsx](packages/repl/src/ui/InkREPL.tsx)）：
+
+  1. **新增 helper `drainPendingInputsAsFollowUps`**（紧邻 `runQueueableAgentSequence` 之后）
+     - 从 `streamingState.pendingInputs` 取第一条
+     - 通过 `stageQueuedPrompt` 补 UI 前置
+     - 调 `runQueueableAgentSequence` 用这条作 initialPrompt，它内部会 drain 后续所有
+
+  2. **包一层 `setCanQueueFollowUps(true)` / `finally` `setCanQueueFollowUps(false)` 到 `executeInvocation`**
+     - 现有 try/catch 结构保留
+     - 外层 finally 关闸
+     - 正常返回路径后调 `drainPendingInputsAsFollowUps`；抛错路径不 drain（队列保留到用户下一次提交时 drain，与主路径失败行为一致）
+
+  3. **同样模式应用到 handleSubmit 的 plan-mode 分支**（[InkREPL.tsx:6459-6500](packages/repl/src/ui/InkREPL.tsx#L6459-L6500)）
+     - 在 `setIsLoading(false)` 之前 drain，保证 drain 期间仍有 loading 状态
+
+  **不做的事**（刻意保持边界窄）：
+  - 不碰 `runQueueableAgentSequence` 本身
+  - 不改 `handleSubmit` 的主结构
+  - 不碰 `runAgentRound` / task-engine / 任何 coding 层代码
+  - 不做 plan-mode-aware drain（drained follow-ups 走普通 agent round，与主路径一致）
+
+  **与 v0.7.30/v0.8.0 roadmap 的关系**：FEATURE_055 "REPL Substrate Hardening" 会重写整个 submit / queue / surface 层。本补丁是"**撑到 v0.7.30**"的战术修复——集中在两处 wrapper，届时随 InkREPL 被抽薄自然被 prune。
+
+  **测试**：
+  - 人工 e2e：`/skill:smart-changelog` 流式中按 Enter → 底部排队提示出现 → 命令结束后自动跑该 prompt
+  - plan-mode 同路径验证
+  - 回归：`packages/repl/src/ui/utils/queued-prompt-sequence.test.ts` 仍绿（不动 sequence 核心）
+
 ---
 ### 119: Scout 升级 H0→H1 后残留 pre-Scout mutationSurface — Generator 被错误锁为 docs-only
 

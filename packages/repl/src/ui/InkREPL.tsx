@@ -5704,6 +5704,23 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     }
   }, [recordCompletedAgentRound, shiftPendingInput, stageQueuedPrompt]);
 
+  // Issue 120: drain pending inputs left over from skill / plan-mode rounds.
+  // Hands the first queued prompt to `runQueueableAgentSequence`, which then
+  // drains the remainder via its internal loop. Keeps behaviour identical to
+  // the main conversation path once the skill / plan wrapper has returned.
+  const drainPendingInputsAsFollowUps = useCallback(async () => {
+    const first = shiftPendingInput();
+    if (!first || !first.trim()) {
+      return;
+    }
+    const normalized = first.trim();
+    await stageQueuedPrompt(normalized);
+    await runQueueableAgentSequence(
+      normalized,
+      async (prompt) => runAgentRound(currentOptionsRef.current, prompt),
+    );
+  }, [runAgentRound, runQueueableAgentSequence, shiftPendingInput, stageQueuedPrompt]);
+
   const appendLastAssistantToHistory = useCallback((messages: KodaXMessage[]) => {
     const lastAssistant = messages[messages.length - 1];
     if (lastAssistant?.role !== "assistant") {
@@ -5745,90 +5762,101 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       return;
     }
 
+    // Issue 120: open the follow-up queue gate while the skill / prompt
+    // invocation is running so inputs pressed during streaming are queued
+    // instead of silently dropped.
+    setCanQueueFollowUps(true);
     try {
       if (planMode) {
         await runWithPlanMode(prepared.prompt, prepared.options);
         await prepared.finalize();
-        return;
-      }
-
-      // FEATURE_072: prefer lineage-derived view for non-fork dispatches.
-      const initialMessages = prepared.mode === "fork"
-        ? []
-        : context.lineage
-          ? getSessionMessagesFromLineage(context.lineage, context.lineage.activeEntryId)
-          : context.messages;
-      // Issue 116: capture generation at call time to detect supersession after await
-      const roundGeneration = promptGenerationRef.current;
-      const result = await runAgentRound(prepared.options, prepared.prompt, initialMessages);
-
-      // Issue 116: discard results from a superseded round.
-      // If the user Ctrl+C'd and submitted a new prompt while this round was
-      // still completing (processing AbortError), promptGenerationRef will
-      // have been incremented. Applying stale results would overwrite the
-      // new round's context and inject incomplete tool calls into history.
-      if (promptGenerationRef.current !== roundGeneration) {
-        await prepared.finalize();
-        return;
-      }
-
-      const persistedHistoryBase = persistedUiHistoryRef.current;
-      const persistedAdditions: CreatableHistoryItem[] = [];
-
-      if (prepared.mode === "fork") {
-        const lastAssistant = result.messages.slice().reverse().find((msg) => msg.role === "assistant");
-        if (lastAssistant) {
-          context.messages.push({
-            role: "assistant",
-            content: lastAssistant.content,
-          });
-          reconcileContextLineage(context.messages);
-          for (const item of extractHistorySeedsFromMessage(lastAssistant)) {
-            const mapped = seedToHistoryItem(item);
-            addHistoryItem(mapped);
-            persistedAdditions.push(mapped);
-          }
-        }
       } else {
-        context.messages = result.messages;
-        context.contextTokenSnapshot = result.contextTokenSnapshot;
-        reconcileContextLineage(result.messages);
-        appendLastAssistantToHistory(result.messages);
-        const lastAssistant = result.messages[result.messages.length - 1];
-        if (lastAssistant?.role === "assistant") {
-          for (const item of extractHistorySeedsFromMessage(lastAssistant)) {
-            persistedAdditions.push(seedToHistoryItem(item));
+        // FEATURE_072: prefer lineage-derived view for non-fork dispatches.
+        const initialMessages = prepared.mode === "fork"
+          ? []
+          : context.lineage
+            ? getSessionMessagesFromLineage(context.lineage, context.lineage.activeEntryId)
+            : context.messages;
+        // Issue 116: capture generation at call time to detect supersession after await
+        const roundGeneration = promptGenerationRef.current;
+        const result = await runAgentRound(prepared.options, prepared.prompt, initialMessages);
+
+        // Issue 116: discard results from a superseded round.
+        // If the user Ctrl+C'd and submitted a new prompt while this round was
+        // still completing (processing AbortError), promptGenerationRef will
+        // have been incremented. Applying stale results would overwrite the
+        // new round's context and inject incomplete tool calls into history.
+        if (promptGenerationRef.current !== roundGeneration) {
+          await prepared.finalize();
+        } else {
+          const persistedHistoryBase = persistedUiHistoryRef.current;
+          const persistedAdditions: CreatableHistoryItem[] = [];
+
+          if (prepared.mode === "fork") {
+            const lastAssistant = result.messages.slice().reverse().find((msg) => msg.role === "assistant");
+            if (lastAssistant) {
+              context.messages.push({
+                role: "assistant",
+                content: lastAssistant.content,
+              });
+              reconcileContextLineage(context.messages);
+              for (const item of extractHistorySeedsFromMessage(lastAssistant)) {
+                const mapped = seedToHistoryItem(item);
+                addHistoryItem(mapped);
+                persistedAdditions.push(mapped);
+              }
+            }
+          } else {
+            context.messages = result.messages;
+            context.contextTokenSnapshot = result.contextTokenSnapshot;
+            reconcileContextLineage(result.messages);
+            appendLastAssistantToHistory(result.messages);
+            const lastAssistant = result.messages[result.messages.length - 1];
+            if (lastAssistant?.role === "assistant") {
+              for (const item of extractHistorySeedsFromMessage(lastAssistant)) {
+                persistedAdditions.push(seedToHistoryItem(item));
+              }
+            }
           }
+
+          await persistContextState(
+            appendPersistedUiHistorySnapshot(persistedHistoryBase, persistedAdditions),
+          );
+          if (memDiagEnabled()) {
+            memDiagSnapshot('round-end', buildMemDiagBreakdown(
+              context.messages, context.lineage,
+              {
+                historyItems: historyRef.current,
+                foregroundItems: managedForegroundTurnItemsRef.current,
+                streamingResponse: streamingStateRef.current.currentResponse,
+                streamingThinking: streamingStateRef.current.thinkingContent,
+                persistedUiHistory: persistedUiHistoryRef.current,
+              },
+            ));
+          }
+          await prepared.finalize();
         }
       }
-
-      await persistContextState(
-        appendPersistedUiHistorySnapshot(persistedHistoryBase, persistedAdditions),
-      );
-      if (memDiagEnabled()) {
-        memDiagSnapshot('round-end', buildMemDiagBreakdown(
-          context.messages, context.lineage,
-          {
-            historyItems: historyRef.current,
-            foregroundItems: managedForegroundTurnItemsRef.current,
-            streamingResponse: streamingStateRef.current.currentResponse,
-            streamingThinking: streamingStateRef.current.thinkingContent,
-            persistedUiHistory: persistedUiHistoryRef.current,
-          },
-        ));
-      }
-      await prepared.finalize();
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       await prepared.finalize(error);
+      setCanQueueFollowUps(false);
       throw error;
     }
+    // Issue 120: normal completion — close gate, then drain any prompts the
+    // user queued during streaming as regular follow-up rounds. On error the
+    // catch above rethrows before reaching this point, so pending inputs stay
+    // queued and will be drained by the next successful submission (matches
+    // runQueueableAgentSequence's own shouldContinue=false behaviour).
+    setCanQueueFollowUps(false);
+    await drainPendingInputsAsFollowUps();
   }, [
     addHistoryItem,
     appendLastAssistantToHistory,
     context,
     currentConfig.provider,
     currentConfig.thinking,
+    drainPendingInputsAsFollowUps,
     planMode,
     persistContextState,
     reconcileContextLineage,
@@ -6462,6 +6490,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           inputArtifactCwd,
         );
         emitArtifactWarnings(preparedArtifacts.warnings);
+        // Issue 120: open the follow-up queue gate while plan mode is running
+        // so inputs pressed during streaming are queued instead of dropped.
+        setCanQueueFollowUps(true);
+        let planModeFailed = false;
         try {
           await runWithPlanMode(preparedArtifacts.promptText, {
             ...currentOptionsRef.current,
@@ -6477,6 +6509,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             },
           });
         } catch (err) {
+          planModeFailed = true;
           const error = err instanceof Error ? err : new Error(String(err));
 
           // Check if this is an abort error (user pressed Ctrl+C)
@@ -6494,8 +6527,21 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             });
           }
         }
-        setIsLoading(false);
-        stopStreaming();
+        setCanQueueFollowUps(false);
+        // Issue 120: on success, drain queued prompts before tearing down the
+        // loading indicator so drained rounds run under the same streaming
+        // context. On failure, leave items queued — next successful submit
+        // will drain them (matches runQueueableAgentSequence semantics).
+        // The drain itself can throw (propagated from runAgentRound); the
+        // try/finally guarantees UI loading state is cleared even then.
+        try {
+          if (!planModeFailed) {
+            await drainPendingInputsAsFollowUps();
+          }
+        } finally {
+          setIsLoading(false);
+          stopStreaming();
+        }
         return;
       }
 
@@ -6645,6 +6691,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       persistContextState,
       reconcileContextLineage,
       runQueueableAgentSequence,
+      drainPendingInputsAsFollowUps,
       startCompacting,
       stopCompacting,
       resetLiveToolCalls,
