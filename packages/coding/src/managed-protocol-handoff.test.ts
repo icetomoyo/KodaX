@@ -51,7 +51,7 @@ function buildContract(overrides: Partial<KodaXTaskContract> = {}): KodaXTaskCon
     objective: 'Test objective',
     createdAt: '2025-01-01T00:00:00.000Z',
     updatedAt: '2025-01-01T00:00:00.000Z',
-    status: 'in-progress',
+    status: 'running',
     primaryTask: 'edit',
     workIntent: 'new',
     complexity: 'simple',
@@ -79,7 +79,7 @@ function buildEvidenceBundle(overrides: Partial<KodaXTaskEvidenceBundle> = {}): 
 
 function buildVerdict(overrides: Partial<KodaXOrchestrationVerdict> = {}): KodaXOrchestrationVerdict {
   return {
-    status: 'in-progress',
+    status: 'running',
     decidedByAssignmentId: 'eval-001',
     summary: 'Test verdict',
     ...overrides,
