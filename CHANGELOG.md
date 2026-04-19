@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-<!-- last-sync: d50c6bb -->
+<!-- last-sync: 5a7cea9 -->
 
 ---
 
@@ -17,6 +17,7 @@ All notable changes to this project will be documented in this file.
 - **FEATURE_074 — Subagent Permission Boundary Hardening**: plan-mode propagation to child agents via live predicate closure over parent state (mid-run `plan ↔ accept-edits` toggles reach in-flight children immediately); independent `exit_plan_mode` tool with tri-state callback (`boolean | 'not-in-plan-mode'`) so misuse outside plan mode surfaces as an explicit tool error; `set_permission_mode` callback no longer forwarded into `KodaXToolExecutionContext` (fails closed on child invocations); system-temp paths exempted from `isAlwaysConfirmPath` so `accept-edits` and `auto-in-project` no longer force confirmation for writes to `$TMP` / `os.tmpdir()`
 
 ### Fixed
+- **Issue 119 — Scout-scope-driven mutation intent**: replace pre-Scout `mutationSurface` heuristic with `inferScoutMutationIntent()` that derives mutation guard from Scout's actual scope output (`review-only` / `docs-scoped` / `open`); prevents stale pre-Scout heuristic from blocking legitimate code edits when Scout upgrades a docs-flagged task to H1
 - **Post-compact context monotonic growth (v0.7.18 regression)**: six surgical fixes — graceful degradation gate rekeyed from reference equality to token-count comparison (P1), circuit breaker tripping after partial-success attempts (P2), `generateSummary` throws on empty LLM text (P3), `injectPostCompactAttachments` strips prior `[Post-compact: ...]` messages before injection (P4), absolute caps `POST_COMPACT_TOKEN_BUDGET = 50_000` and `POST_COMPACT_MAX_TOKENS_PER_FILE = 5_000` (P5), REPL finally-block rebuilds `context.contextTokenSnapshot` from local messages to clear worker-leaked snapshots (P6)
 - **Memory pressure**: eliminate React dev-mode leak, lineage clone bloat (`cloneMessage` returns identity), and streaming churn
 - **Task engine routing**: trust Scout routing authority, fix ceiling clamp context-loss bug; evaluator prompt uses effective ceiling, not stale heuristic
@@ -26,13 +27,15 @@ All notable changes to this project will be documented in this file.
 - **Scratch scripts**: directed to `.agent/tmp/` instead of `.agent/` root for a cleaner workspace layout
 
 ### Documentation
+- **FEATURE_072 acceptance close-out**: verified and checked off all 12 completed acceptance criteria with file:line code evidence; 3 items explicitly deferred (6-consumer migration, bounded-growth integration test, snapshot coherence) with status notes; P4/P6 retirement plan updated — now retained indefinitely after FEATURE_073 cancellation
+- **FEATURE_074 acceptance verification**: all 8 acceptance criteria verified against code (`set_permission_mode` removal, child exclusion, live plan-mode predicate, `exit_plan_mode` tool, long-plan fallback, system-temp exemption)
+- **FEATURE_073 cancelled after philosophy review**: no user pain point, no performance improvement, main selling point (`/fork` improvement) self-retracted; design doc retained as future reference
 - **FEATURE_072 manual test guide**: `docs/test-guides/FEATURE_072_v0.7.20_TEST_GUIDE.md` covering `/fork` + `/rewind` across compaction boundary, long-AMA bounded growth, worker scope non-propagation
-- **Roadmap hygiene**: FEATURE_026 (Roadmap Integrity) removed as unnecessary (tracker-consistency vitest already enforces the intent); FEATURE_077 (Session-Scoped Prompt Input History) staged for v0.7.21; FEATURE_073 / 075 / 076 designs staged into v0.7.25
+- **Roadmap hygiene**: FEATURE_026 (Roadmap Integrity) removed as unnecessary; FEATURE_077 (Session-Scoped Prompt Input History) staged for v0.7.21; FEATURE_073 / 075 / 076 designs staged into v0.7.25
 
 ---
 
 ## [0.7.19] - 2026-04-16
-
 ### Added
 - **AMA Scout simplification**: Optional managed protocol and scope reflection for Scout role
 - **Session lineage enhancements**: Extended session lineage types and tree visualization support
