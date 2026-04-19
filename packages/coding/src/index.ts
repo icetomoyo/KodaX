@@ -664,4 +664,83 @@ export {
 
 // ============== Extension Helpers ==============
 export { exec, webhook } from './extensions/helpers.js';
+
+// ============== Layer A Primitives (FEATURE_080 + FEATURE_081, v0.7.23, @experimental) ==============
+// These types & classes are migrating to @kodax/core in v0.7.24 (FEATURE_082).
+// The Option-Y dog-food registers the default coding dispatcher as a side
+// effect of importing `./primitives/coding-preset.js`.
+
+export type {
+  Agent,
+  AgentMessage,
+  AgentReasoningProfile,
+  AgentTool,
+  Guardrail,
+  Handoff,
+  ReasoningDepth,
+} from './primitives/agent.js';
+
+export { createAgent, createHandoff } from './primitives/agent.js';
+
+export type {
+  InMemorySessionOptions,
+  MessageEntry,
+  Session,
+  SessionEntry,
+  SessionExtension,
+  SessionForkOptions,
+} from './primitives/session.js';
+
+export { createInMemorySession } from './primitives/session.js';
+
+export type {
+  CompactionContext,
+  CompactionEntry,
+  CompactionEntryPayload,
+  CompactionPolicy,
+  CompactionResult,
+  DefaultSummaryCompactionOptions,
+} from './primitives/compaction.js';
+
+export { DefaultSummaryCompaction } from './primitives/compaction.js';
+
+export type {
+  PresetDispatcher,
+  RunEvent,
+  RunOptions,
+  RunResult,
+} from './primitives/runner.js';
+
+export { Runner, registerPresetDispatcher } from './primitives/runner.js';
+
+export {
+  DEFAULT_CODING_AGENT_NAME,
+  createDefaultCodingAgent,
+} from './primitives/coding-preset.js';
+
+export {
+  EVALUATOR_AGENT_NAME,
+  GENERATOR_AGENT_NAME,
+  PLANNER_AGENT_NAME,
+  SCOUT_AGENT_NAME,
+  TASK_ENGINE_ROLE_AGENTS,
+  evaluatorAgent,
+  generatorAgent,
+  plannerAgent,
+  scoutAgent,
+} from './primitives/task-engine-agents.js';
+
+export type {
+  LineageArtifactLedgerPayload,
+  LineageEntryType,
+  LineageLabelPayload,
+  LineageTreeNode,
+} from './extensions/lineage.js';
+
+export { LINEAGE_ENTRY_TYPES, LineageExtension } from './extensions/lineage.js';
+
+// NOTE: `KodaXSessionLineage` is exported above (line ~90) alongside the
+// legacy session types. As of FEATURE_081 (v0.7.23) it is superseded by
+// `Session` + `LineageExtension`; scheduled for removal in FEATURE_086
+// (v0.7.27) alongside the `KodaX*` prefix cleanup.
 export type { ExecOptions, ExecResult, WebhookOptions, WebhookResult } from './extensions/helpers.js';

@@ -12,6 +12,13 @@ import { estimateTokens } from './tokenizer.js';
  * 压缩消息历史
  * 当消息超过阈值时，保留最近的消息，压缩旧消息
  * CRITICAL: 确保 assistant(tool_use) 和 user(tool_result) 不被拆开
+ *
+ * @deprecated Superseded by the pluggable `CompactionPolicy` interface in
+ *   `@kodax/coding/primitives/compaction.ts` (FEATURE_081, v0.7.23). For
+ *   coding-preset use, `LineageCompaction` (v0.7.24) preserves the full
+ *   FEATURE_072 post-compact reconstruction behavior; for external agents,
+ *   use `DefaultSummaryCompaction`. This helper will be removed in
+ *   FEATURE_086 (v0.7.27).
  */
 export function compactMessages(messages: KodaXMessage[]): KodaXMessage[] {
   if (estimateTokens(messages) <= KODAX_COMPACT_THRESHOLD) {
