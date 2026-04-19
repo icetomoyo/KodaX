@@ -20,7 +20,7 @@
 | Absorbed | `1` |
 | InProgress | `1` |
 | Planned | `18` |
-| Current released version | `v0.7.21` |
+| Current released version | `v0.7.23` |
 
 ### 各版本待做分布
 
@@ -180,8 +180,8 @@
 | `072` | Lineage-Native Compaction Migration | `v0.7.20` (unreleased) | [v0.7.20](features/v0.7.20.md#feature_072-lineage-native-compaction-migration) |
 | `077` | Session-Scoped Prompt Input History | `v0.7.21` | [v0.7.21](features/v0.7.21.md#feature_077-session-scoped-prompt-input-history) |
 | `079` | Task Engine Phase 1 — Pure Extraction | `v0.7.22` (unreleased) | [v0.7.22](features/v0.7.22.md#feature_079-task-engine-phase-1--pure-extraction) |
-| `080` | Layer A Primitives — Agent / Handoff / Runner / Guardrail | `v0.7.23` (unreleased) | [v0.7.23](features/v0.7.23.md#feature_080-layer-a-primitives--agent--handoff--runner--guardrail) |
-| `081` | Compaction Layering and Session Base/Lineage Split | `v0.7.23` (unreleased) | [v0.7.23](features/v0.7.23.md#feature_081-compaction-layering-and-session-baselineage-split) |
+| `080` | Layer A Primitives — Agent / Handoff / Runner / Guardrail | `v0.7.23` | [v0.7.23](features/v0.7.23.md#feature_080-layer-a-primitives--agent--handoff--runner--guardrail) |
+| `081` | Compaction Layering and Session Base/Lineage Split | `v0.7.23` | [v0.7.23](features/v0.7.23.md#feature_081-compaction-layering-and-session-baselineage-split) |
 
 > `FEATURE_051` close-out posture: keep the current REPL status/footer/task/message surfaces frozen, limit follow-up work to invisible substrate maturity for transcript, scroll/selection, and input behavior, and treat the design doc as a completed close-out record rather than an open rollout plan.
 

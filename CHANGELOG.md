@@ -10,6 +10,34 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.7.23] - 2026-04-20
+
+### Added
+- **FEATURE_080 + FEATURE_081 — Layer A Primitives + Session/Compaction Split**: introduce the KodaX Agent-as-data surface (`@experimental`) under `@kodax/coding`:
+  - `Agent` / `Handoff` / `Guardrail` / `AgentReasoningProfile` declarative types + `createAgent` / `createHandoff` factories (`packages/coding/src/primitives/agent.ts`)
+  - `Session` / `SessionEntry` / `MessageEntry` / `SessionExtension` base types + `createInMemorySession` (`packages/coding/src/primitives/session.ts`)
+  - `CompactionPolicy` interface + `DefaultSummaryCompaction` (token-threshold + LLM-summary, standalone, zero KodaX-runtime dependency) (`packages/coding/src/primitives/compaction.ts`)
+  - `Runner` class with generic LLM-callback path and preset dispatcher registry (`packages/coding/src/primitives/runner.ts`)
+  - `createDefaultCodingAgent()` + Option-Y preset dispatcher: `Runner.run(defaultCodingAgent, prompt, { presetOptions })` routes to `runKodaX(presetOptions, prompt)` — API surface goes through `Runner`, body stays on the existing SA path unchanged until FEATURE_084 rewrites it (`packages/coding/src/primitives/coding-preset.ts`)
+  - Scout / Planner / Generator / Evaluator declared as `Agent` placeholders ready for the FEATURE_084 runtime rewrite (`packages/coding/src/primitives/task-engine-agents.ts`)
+  - `LineageExtension` SessionExtension with `label` / `attachArtifact` operators and `buildLineageTree` reducer (`packages/coding/src/extensions/lineage.ts`)
+  - SDK-consumer example (`examples/embedded-agent.ts`)
+- 40 new unit tests across compaction / lineage / runner / coding-preset / role agents; all passing.
+
+### Changed
+- `compactMessages()` in `@kodax/agent` marked `@deprecated`; superseded by the `CompactionPolicy` interface + `DefaultSummaryCompaction`. Scheduled for removal in FEATURE_086 (v0.7.27).
+
+### Documentation
+- `docs/FEATURE_LIST.md`: FEATURE_080 and FEATURE_081 marked Completed; v0.7.23 progress recorded.
+- `docs/features/v0.7.23.md`: Implementation Notes section with slice breakdown, Option-Y rationale, placement deviation (LineageExtension lives in `@kodax/coding` until the v0.7.24 package restructure), code-review resolutions, and acceptance-criteria checklist.
+
+### Zero-Behavior Change Guarantee
+- `runKodaX` / `runManagedTask` / `KodaXClient` bodies untouched.
+- `packages/coding/src/task-engine.test.ts` 50/50 pass (behavior snapshot unchanged).
+- Full monorepo suite: 2484 pass / 4 fail — all 4 pre-existing baseline failures (`tests/kodax_cli`, `tests/kodax_core`, `tests/tracker-consistency` count drift on strikethrough rows, `packages/ai/.../base.test.ts` rate-limit timing flake); confirmed unaffected by this release via `git stash` baseline comparison.
+
+---
+
 ## [0.7.22] - 2026-04-19
 
 ### Added
