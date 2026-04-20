@@ -32,9 +32,13 @@ const {
   mockRunDirectKodaX: vi.fn(),
 }));
 
-vi.mock('./agent.js', () => ({
-  runKodaX: mockRunDirectKodaX,
-}));
+vi.mock('./agent.js', async () => {
+  const actual = await vi.importActual<typeof import('./agent.js')>('./agent.js');
+  return {
+    ...actual,
+    runKodaX: mockRunDirectKodaX,
+  };
+});
 
 vi.mock('./providers/index.js', async () => {
   const actual = await vi.importActual<typeof import('./providers/index.js')>('./providers/index.js');

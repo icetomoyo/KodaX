@@ -207,6 +207,20 @@ export interface KodaXEvents {
   onComplete?: () => void;
   onError?: (error: Error) => void;
   onManagedTaskStatus?: (status: KodaXManagedTaskStatusEvent) => void;
+  /**
+   * Fired when Scout's managed-task completion is inferred but the harness
+   * detected suspicious signals (mutation expected but none happened, budget
+   * exhausted, tool calls followed by text-only exit without explicit
+   * completion, etc.). The task still completes — this is an observability
+   * signal, not a retry trigger. UI layers can surface a warning so users
+   * know to verify the result.
+   */
+  onScoutSuspiciousCompletion?: (payload: {
+    confidence: 'uncertain';
+    signals: KodaXScoutSuspiciousSignal[];
+    sessionId?: string;
+    lastTextPreview: string;
+  }) => void;
   /** Returns a formatted cost report for the current session. Set by agent at session start. */
   getCostReport?: { current: (() => string) | null };
 
@@ -997,6 +1011,15 @@ export interface KodaXManagedVerdictPayload {
   preferredFallbackWorkerId?: string;
 }
 
+/**
+ * Signals surfaced by the harness (not the LLM) when Scout's completion looks
+ * suspicious. See runManagedScoutStage for the detection logic.
+ */
+export type KodaXScoutSuspiciousSignal =
+  | 'mutation-expected-but-none'
+  | 'budget-exhausted'
+  | 'no-formal-completion';
+
 export interface KodaXManagedScoutPayload {
   summary?: string;
   scope: string[];
@@ -1015,6 +1038,19 @@ export interface KodaXManagedScoutPayload {
     ambiguities: string[];
     projectionConfidence?: KodaXSkillProjectionConfidence;
   };
+  /**
+   * Harness-observed confidence in Scout's completion. 'confident' is the default
+   * (omitted). 'uncertain' means the harness detected signals that Scout may not
+   * have actually finished (e.g. mutation task with zero mutations, budget
+   * exhausted without explicit completion, tool calls followed by text-only exit
+   * without a completion statement).
+   *
+   * This field is set by the harness, not by the LLM — emit_managed_protocol
+   * payloads from models are ignored here and overwritten.
+   */
+  completionConfidence?: 'confident' | 'uncertain';
+  /** Which signals contributed to an 'uncertain' confidence verdict. */
+  suspiciousSignals?: KodaXScoutSuspiciousSignal[];
 }
 
 export interface KodaXManagedContractPayload {

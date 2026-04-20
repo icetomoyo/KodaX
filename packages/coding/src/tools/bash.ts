@@ -57,25 +57,66 @@ function appendTailChunk(collector: TailCollector, chunk: Buffer, maxBytes: numb
   }
 }
 
-function decodeCollector(collector: TailCollector): string {
+type DecodeResult = {
+  text: string;
+  /** True when Windows UTF-8 decode produced replacement chars and GBK fallback was used. */
+  encodingFallback: boolean;
+};
+
+function decodeCollector(collector: TailCollector): DecodeResult {
   const buffer = Buffer.concat(collector.chunks);
   if (buffer.length === 0) {
-    return '';
+    return { text: '', encodingFallback: false };
   }
 
   if (process.platform === 'win32') {
     try {
       const text = buffer.toString('utf-8');
       if (!/[\uFFFD]/.test(text)) {
-        return text;
+        return { text, encodingFallback: false };
       }
     } catch {
       // Fall through to GBK decoding on Windows.
     }
-    return iconv.decode(buffer, 'gbk');
+    return { text: iconv.decode(buffer, 'gbk'), encodingFallback: true };
   }
 
-  return buffer.toString('utf-8');
+  return { text: buffer.toString('utf-8'), encodingFallback: false };
+}
+
+/**
+ * Y-1/Y-2: Pre-flight detection of Windows cmd gotchas that commonly cause silent
+ * failures (exit 0 + no output) because cmd's argument parsing mangles the command
+ * before the real interpreter sees it. These hints are appended to tool output so
+ * the LLM can recognize the pattern instead of retrying the same broken approach.
+ */
+function detectWindowsCmdGotchas(command: string): string[] {
+  if (process.platform !== 'win32') return [];
+  const hints: string[] = [];
+
+  // Y-1: python/node/ruby/perl -c/-e with an embedded newline in the quoted string.
+  // Windows cmd splits arguments on newlines before the interpreter runs, so
+  // multi-line inline scripts fail silently (script body is lost or truncated).
+  // Allow other flags between the interpreter and -c/-e (e.g. `python -u -c`,
+  // `python -OO -c`) — the user's exact failure used `python -u -c`.
+  if (/\b(python3?|node|ruby|perl)\s+(?:-\w+\s+)*-[ce]\s+"[^"]*\n/.test(command)) {
+    hints.push(
+      '[hint] Windows cmd mangles multi-line inline scripts passed via -c/-e; the script body may not reach the interpreter. Write a .py/.js/.rb/.pl file and run it instead.',
+    );
+  }
+
+  // Y-2: POSIX heredoc (<<EOF, <<-EOF, <<'EOF') is not supported by cmd.
+  // cmd reads <<EOF as redirection-with-no-source and the "heredoc body" becomes
+  // separate commands that silently fail. Require end-of-line after the delimiter
+  // to avoid false positives on non-heredoc uses like `echo <<word>>` where the
+  // `<<word>` appears mid-line without heredoc semantics.
+  if (/<<-?\s*(['"])?[A-Za-z_][A-Za-z0-9_]*\1?[ \t]*(?:\r?\n|$)/.test(command)) {
+    hints.push(
+      '[hint] Windows cmd does not support heredoc (<<EOF). Write a script file or use PowerShell with a here-string.',
+    );
+  }
+
+  return hints;
 }
 
 function buildBashTruncationHint(command: string): string {
@@ -137,8 +178,8 @@ export async function toolBash(input: Record<string, unknown>, ctx: KodaXToolExe
 
     const timer = setTimeout(() => {
       proc.kill();
-      const partialStdout = decodeCollector(stdout);
-      const partialStderr = decodeCollector(stderr);
+      const partialStdout = decodeCollector(stdout).text;
+      const partialStderr = decodeCollector(stderr).text;
       let partial = partialStdout;
       if (partialStderr) {
         partial += `${partial ? '\n' : ''}[stderr]\n${partialStderr}`;
@@ -188,8 +229,10 @@ export async function toolBash(input: Record<string, unknown>, ctx: KodaXToolExe
     });
     proc.on('close', code => {
       clearTimeout(timer);
-      const stdoutText = decodeCollector(stdout);
-      const stderrText = decodeCollector(stderr);
+      const stdoutDecoded = decodeCollector(stdout);
+      const stderrDecoded = decodeCollector(stderr);
+      const stdoutText = stdoutDecoded.text;
+      const stderrText = stderrDecoded.text;
 
       let out = `Command: ${command}\nExit: ${code}\n${stdoutText}`;
       if (stdout.droppedBytes > 0) {
@@ -203,6 +246,23 @@ export async function toolBash(input: Record<string, unknown>, ctx: KodaXToolExe
       }
       if (capped) {
         out += `\n[Note] Timeout capped at ${KODAX_HARD_TIMEOUT}s`;
+      }
+
+      // Y-3: Surface the existing UTF-8 → GBK fallback so the LLM knows output
+      // may have been reinterpreted. This doesn't mean the text is garbled —
+      // GBK decode is usually correct for Chinese Windows — but mixed encodings
+      // (e.g. a Python script that prints UTF-8 while the shell is GBK) can
+      // produce confusing results that the LLM should double-check.
+      if (stdoutDecoded.encodingFallback || stderrDecoded.encodingFallback) {
+        out += `\n[warn] Output encoding fallback fired (UTF-8 → GBK). If text looks garbled, the command may mix encodings; re-run with an explicit encoding (e.g. PYTHONIOENCODING=utf-8).`;
+      }
+
+      // Y-1/Y-2: Append Windows cmd gotcha hints if the command pattern suggests
+      // the shell may have silently mangled it. Added last so they're preserved
+      // even if the output is truncated (truncateTail keeps the tail).
+      const gotchaHints = detectWindowsCmdGotchas(command);
+      if (gotchaHints.length > 0) {
+        out += `\n${gotchaHints.join('\n')}`;
       }
 
       const preview = truncateTail(out, { maxLines: 600, maxBytes: 32 * 1024 });

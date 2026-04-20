@@ -8,7 +8,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { runKodaX as runDirectKodaX } from './agent.js';
+import { runKodaX as runDirectKodaX, checkPromiseSignal } from './agent.js';
 import {
   createKodaXTaskRunner,
   runOrchestration,
@@ -221,6 +221,8 @@ import type {
   KodaXManagedHandoffPayload,
   KodaXManagedProtocolPayload,
   KodaXManagedScoutPayload,
+  KodaXMessage,
+  KodaXScoutSuspiciousSignal,
   KodaXManagedTaskStatusEvent,
   KodaXManagedVerdictPayload,
   KodaXMemoryStrategy,
@@ -4572,6 +4574,120 @@ function buildWorkerRunOptions(
   };
 }
 
+// ----------------------------------------------------------------------------
+// Scout "suspicious completion" detection (X layer)
+//
+// c4f4514 deliberately made Scout's completion protocol optional: if Scout
+// doesn't emit_managed_protocol, the harness infers H0_DIRECT success. That
+// simplification was correct, but it can't distinguish "Scout genuinely
+// finished a simple task" from "Scout got stuck, ran out of budget, or was
+// misled by a silently-failing tool and exited without declaring anything."
+//
+// These helpers give the harness a passive observation layer: when Scout's
+// exit shape looks like it might not be a real completion, we annotate the
+// directive with completionConfidence='uncertain' and fire an event. We do
+// NOT retry, re-prompt, or change the success verdict — that would re-
+// introduce the retry loops c4f4514 removed. The task still completes; the
+// user/UI just gets a warning they can act on.
+// ----------------------------------------------------------------------------
+
+const MUTATION_PRIMARY_TASKS: ReadonlySet<string> = new Set(['edit', 'bugfix', 'refactor', 'feature']);
+
+// Strong completion markers (case-insensitive). Kept conservative — false
+// positives here (treating not-done as done) cause us to miss suspicious
+// exits; false negatives (flagging done as not-done) only add a warning
+// users can ignore.
+const COMPLETION_WORDS_EN = /\b(done|completed|finished|fixed|merged|created|updated|added|removed|resolved|implemented|wrote|saved|no issues|all good|looks? fine)\b/i;
+const COMPLETION_WORDS_ZH = /(完成|搞定|做好|修好|完毕|写好|改好|处理完|更新完|已完成|合并完成|没有问题|没发现|未发现)/;
+const SUBSTANTIVE_ANSWER_MIN_LENGTH = 150;
+const SUBSTANTIVE_ANSWER_STRUCTURE = /```|\n\s*[\-*]\s|\n\s*\d+\.\s|\n#{1,4}\s/;
+const SUSPICIOUS_LAST_TEXT_PREVIEW_LIMIT = 200;
+
+function messageHasToolUse(msg: KodaXMessage): boolean {
+  if (msg.role !== 'assistant' || !Array.isArray(msg.content)) return false;
+  return msg.content.some((block) => {
+    return typeof block === 'object' && block !== null && (block as { type?: unknown }).type === 'tool_use';
+  });
+}
+
+function hadPriorAssistantToolCall(messages: readonly KodaXMessage[]): boolean {
+  const assistantMsgs = messages.filter((m) => m.role === 'assistant');
+  if (assistantMsgs.length <= 1) return false;
+  return assistantMsgs.slice(0, -1).some(messageHasToolUse);
+}
+
+function lastAssistantHadNoTool(messages: readonly KodaXMessage[]): boolean {
+  const last = [...messages].reverse().find((m) => m.role === 'assistant');
+  if (!last) return false;
+  return !messageHasToolUse(last);
+}
+
+function looksLikeCompletionText(text: string, primaryTask: string | undefined): boolean {
+  if (!text) return false;
+  if (COMPLETION_WORDS_EN.test(text) || COMPLETION_WORDS_ZH.test(text)) return true;
+  // Structure fallback: a long, structured final answer (code blocks, bullet/
+  // numbered lists, section headers) reads as a completion even without explicit
+  // completion words. This is the typical shape of review/lookup/qa answers.
+  //
+  // We deliberately skip this fallback for mutation-style tasks (edit/bugfix/
+  // refactor/feature): those tasks can emit structured *mid-progress* text
+  // ("Plan:\n1. ...\n2. ...") that looks identical to a completion summary.
+  // Mutation tasks should either show explicit completion vocabulary, have
+  // actual file mutations (caught by S1), or be flagged as suspicious.
+  const isMutationTask = typeof primaryTask === 'string' && MUTATION_PRIMARY_TASKS.has(primaryTask);
+  if (!isMutationTask && text.length >= SUBSTANTIVE_ANSWER_MIN_LENGTH && SUBSTANTIVE_ANSWER_STRUCTURE.test(text)) {
+    return true;
+  }
+  return false;
+}
+
+function detectScoutSuspiciousSignals(
+  result: KodaXResult,
+  plan: ReasoningPlan,
+  mutationTracker: ManagedMutationTracker,
+): KodaXScoutSuspiciousSignal[] {
+  const signals: KodaXScoutSuspiciousSignal[] = [];
+
+  // S1: mutation-expected-but-none
+  // Task was routed as a mutation-style work item, yet Scout finished with
+  // zero tracked mutations AND no escalation. Writes performed via bash
+  // (e.g. `python -c "open(...).write(...)"`) bypass the tracker, so an empty
+  // tracker on an "edit/bugfix/refactor/feature" task is a strong smell.
+  const primaryTask = result.routingDecision?.primaryTask ?? plan.decision.primaryTask;
+  const isMutationTask = typeof primaryTask === 'string' && MUTATION_PRIMARY_TASKS.has(primaryTask);
+  const mutationCount = mutationTracker.files.size;
+  const hasScoutPayload = result.managedProtocolPayload?.scout !== undefined;
+  if (isMutationTask && mutationCount === 0 && !hasScoutPayload) {
+    signals.push('mutation-expected-but-none');
+  }
+
+  // S2: budget-exhausted
+  // agent.ts loop exited because maxIter was reached, not because the model
+  // signaled completion. Today Scout gets H0_DIRECT budget (50 units), so
+  // this usually means the model was thrashing.
+  if (result.limitReached === true) {
+    signals.push('budget-exhausted');
+  }
+
+  // S5: no-formal-completion
+  // Session had tool_use earlier, last assistant turn had NO tool_use, and
+  // lastText doesn't read as a completion statement (no explicit signal, no
+  // completion keywords, not a long structured answer). This catches the
+  // classic "LLM trailed off mid-troubleshoot without noticing" failure.
+  const [promiseSignal] = checkPromiseSignal(result.lastText);
+  const hasExplicitSignal = hasScoutPayload || promiseSignal === 'COMPLETE';
+  if (
+    !hasExplicitSignal
+    && hadPriorAssistantToolCall(result.messages)
+    && lastAssistantHadNoTool(result.messages)
+    && !looksLikeCompletionText(result.lastText, primaryTask)
+  ) {
+    signals.push('no-formal-completion');
+  }
+
+  return signals;
+}
+
 // FEATURE_061 Phase 3: Scout session is persisted to sessionStorage so H1/H2 workers can continue it.
 async function runManagedScoutStage(
   options: KodaXOptions,
@@ -4713,6 +4829,25 @@ async function runManagedScoutStage(
 
   // Default: H0 completion. Scout either declared H0 explicitly or didn't emit protocol.
   const explicitDirective = sanitized.directive;
+
+  // X-layer: passive detection. We don't retry or change the success verdict —
+  // Scout's run is over. We only annotate the directive and fire an event so
+  // downstream consumers (UI, future evaluators, session history) can see that
+  // this completion verdict was inferred from silence, not from positive proof.
+  const suspiciousSignals = detectScoutSuspiciousSignals(result, plan, scoutMutationTracker);
+  if (suspiciousSignals.length > 0) {
+    const preview = (scoutText ?? '').slice(0, SUSPICIOUS_LAST_TEXT_PREVIEW_LIMIT);
+    console.warn(
+      `[Scout] Suspicious completion — signals: ${suspiciousSignals.join(', ')}, session: ${scoutSessionId ?? 'n/a'}`,
+    );
+    options.events?.onScoutSuspiciousCompletion?.({
+      confidence: 'uncertain',
+      signals: suspiciousSignals,
+      sessionId: scoutSessionId,
+      lastTextPreview: preview,
+    });
+  }
+
   return {
     result: explicitDirective ? sanitized.result : result,
     directive: {
@@ -4727,6 +4862,9 @@ async function runManagedScoutStage(
       directCompletionReady: explicitDirective?.directCompletionReady ?? (result.success !== false ? 'yes' : 'no'),
       userFacingText: sanitizeManagedUserFacingText(explicitDirective?.userFacingText || scoutText || ''),
       skillMap: explicitDirective?.skillMap,
+      ...(suspiciousSignals.length > 0
+        ? { completionConfidence: 'uncertain' as const, suspiciousSignals }
+        : {}),
     },
     scoutSessionId,
   };
