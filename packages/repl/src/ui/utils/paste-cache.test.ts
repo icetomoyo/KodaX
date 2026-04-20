@@ -126,8 +126,16 @@ describe("paste-cache disk I/O", () => {
     const hash = hashPastedText("window-test");
     await storePastedText(hash, "window-test");
 
-    // With a 0 ms retention everything existing is already "expired"
-    const result = await cleanupOldPastes(0);
+    // Backdate mtime by 10s so a 5s retention treats the file as expired.
+    // Avoids clock-resolution flakiness: using `retentionMs = 0` relies on
+    // `mtimeMs < Date.now()` being strictly true, but on Windows mtime can
+    // share the same millisecond as `Date.now()` when the test runs fast.
+    const cacheDir = path.join(tempHome, ".kodax", "paste-cache");
+    const file = path.join(cacheDir, `${hash}.txt`);
+    const past = new Date(Date.now() - 10_000);
+    await fs.utimes(file, past, past);
+
+    const result = await cleanupOldPastes(5_000);
     expect(result.scanned).toBe(1);
     expect(result.removed).toBe(1);
     expect(await retrievePastedText(hash)).toBeNull();
