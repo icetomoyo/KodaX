@@ -10,6 +10,53 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.7.24] - 2026-04-20
+
+### Added
+- **FEATURE_082 — Package Restructure**: extract Layer A primitives and observability surfaces into 4 new workspace packages, leaving `@kodax/coding` as the coding-preset shell:
+  - `@kodax/core` (new): `Agent` / `Handoff` / `Runner` / `Guardrail` / `AgentReasoningProfile` / `Session` / `SessionEntry` / `MessageEntry` / `SessionExtension` / `CompactionPolicy` / `DefaultSummaryCompaction` / `Capability*` types relocated from `packages/coding/src/primitives/` (1478 LoC, 29 tests)
+  - `@kodax/tracing` (new): `Trace` / `Span` / `SpanData` discriminated union (8 variants — Agent / Generation / ToolCall / Handoff / Compaction / Guardrail / Evidence / Fanout) + `TracingProcessor` interface + `defaultTracer` (1112 LoC, 15 tests)
+  - `@kodax/session-lineage` (new): `LineageExtension` + `LineageCompaction` relocated from `packages/coding/src/extensions/lineage.ts` (514 LoC, 13 tests)
+  - `@kodax/mcp` (new): full MCP capability provider relocated from `packages/coding/src/capabilities/providers/mcp/*` — preserves all 5 progressive-disclosure modes (lazy connect / two-tier descriptors / search-describe / elicitation / cache); `@kodax/coding` retains a thin adapter (`capabilities/providers/mcp-adapter.ts`) bridging the new package to its `CapabilityProvider` registry (3125 LoC, 28 tests)
+  - `@kodax/capabilities` **dropped** (FM-2): the planned shell would have shipped empty; per CLAUDE.md "3+ real cases 才抽象" rule, will be recreated when `FEATURE_084` (v0.7.26) lands Scout/Planner/Generator/Evaluator. Final package count: 9 (planned 10).
+  - cli-events cleanup **deferred** to `FEATURE_086` (v0.7.27): isolated relocation would create `ai`→`coding` circular dep; clean fix needs full Provider+registry rewrite, out of 082 scope. v0.7.27 design doc updated with item #9 capturing this work.
+- **FEATURE_083 — Unified Tracer / Span / TracingProcessor**: introduce a single observability model across all primitives:
+  - `TracingProcessor` lifecycle: `onSpanStart` / `onSpanEnd` / `onTraceEnd` / `shutdown`
+  - `ConsoleTracingProcessor` (OTLP-ish stdout) + `FileTracingProcessor` (`.kodax/.traces/{traceId}.jsonl`, serialised `writeChain` so `shutdown()` awaits all in-flight flushes — fixes race vs fire-and-forget)
+  - `Runner` accepts `tracer` in `RunOptions`; `PresetDispatcher` gains 4th arg `PresetTracingContext`; SA path emits `AgentSpan` + `GenerationSpan` around `runKodaX` as **dual emission** (old trace events kept `@deprecated` for v0.7.27 removal) — zero behavior change for existing consumers
+  - `examples/otel-export.ts`: `PseudoOtelProcessor` showing how external consumers wire OpenTelemetry / Langfuse on top of the new model
+- **FEATURE_093 (partial) — Coding + REPL Internal Circular Dependency Cleanup**: opportunistic cleanup while the restructure already touched all import paths. Reduced madge cycles from ~50 to 1 (98% elimination, 0 inter-package, 1 intra-package remaining):
+  - `coding`: `extensions/runtime-contract.ts` narrow 6-method interface replaces full `KodaXExtensionRuntime` reference in `types.ts` hub (~40 cycles broken); `agent.ts` does a single `as KodaXExtensionRuntime` cast at the entry point; `child-executor.ts` uses computed-spec dynamic import to break `tools→agent` edge; `agent.ts` removes vestigial `KodaXClient` re-export in favor of the barrel
+  - `repl`: split `tui/components`, `ui/shortcuts`, `completers`, and `project-harness` imports to reach concrete files (`renderer-runtime.ts`, `useShortcut.ts`, `completers/types.ts`, `project-harness-types.ts`) instead of barrel re-exports; test mocks updated to match
+  - Remaining: 1 intra-package cycle in `repl/commands` (builtin↔interactive↔index triangle, blocked by ~1900-line `BUILTIN_COMMANDS` array) — kept for the dedicated `FEATURE_093` pass at v0.8.0
+
+### Changed
+- `@kodax/coding/src/extensions/types.ts`: `CapabilityKind` / `CapabilityProvider` / `CapabilityResult` re-exported from `@kodax/core` (lifted to Layer A so third-party RAG / custom-index providers can implement against a stable contract)
+- `Runner` `RunOptions.tracer` field added (optional; if omitted, the 3-arg dispatcher fast path remains unchanged)
+
+### Documentation
+- `docs/features/v0.7.24.md`: Implementation Notes section with slice breakdown (LoC + file count per slice), design deviations (FM-2 capabilities drop, P3 cli-events deferral, Capability type extraction), FEATURE_093 opportunistic completion, test summary, final dependency graph
+- `docs/features/v0.7.27.md` (FEATURE_086): added item #9 capturing the deferred cli-events relocation work
+- `docs/features/v0.8.0.md`: added FEATURE_093 section documenting the remaining 1-cycle scope (`repl/commands` triangle blocker)
+- `docs/FEATURE_LIST.md`: FEATURE_082 and FEATURE_083 marked Completed; FEATURE_093 added to Planned; v0.7.24 progress recorded; "Current released version" bumped to v0.7.24
+
+### Test Status
+- Full monorepo suite: **2561 pass / 5 baseline failures** — all 5 pre-existing since v0.7.23 (`tests/kodax_cli`, `tests/kodax_core`, `tests/tracker-consistency` × 2 strikethrough-row drift, `packages/ai/.../base.test.ts` rate-limit timing flake); confirmed unaffected by this release.
+- **0 new regressions** across 4 new packages (`@kodax/core`, `@kodax/tracing`, `@kodax/session-lineage`, `@kodax/mcp`) and adapter (`mcp-adapter`).
+
+### Final Dependency Graph (pure DAG, madge-verified)
+```
+ai (leaf)              tracing (leaf)         skills (leaf)
+agent           → ai
+core            → ai, tracing
+session-lineage → ai, core
+mcp             → ai, core
+coding          → agent, ai, core, mcp, session-lineage, skills
+repl            → coding, skills
+```
+
+---
+
 ## [0.7.23] - 2026-04-20
 
 ### Added

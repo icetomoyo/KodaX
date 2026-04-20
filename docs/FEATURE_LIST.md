@@ -1,6 +1,6 @@
 # Feature 总表
 
-> Last updated: 2026-04-19 (FEATURE_080 + FEATURE_081 completed — Layer A primitives landed, SA path dog-food via Option Y wrapper, v0.7.23 ready for release; FEATURE_092 Auto Mode Classifier 立项于 v0.7.33)
+> Last updated: 2026-04-20 (v0.7.24 released — FEATURE_082 + FEATURE_083 completed; @kodax/core / @kodax/mcp / @kodax/session-lineage / @kodax/tracing packages extracted, Tracer/Span/Processor runtime landed, dual-emission AgentSpan/GenerationSpan wired through SA path; @kodax/capabilities **dropped** per FM-2 (empty shell; will be recreated in FEATURE_084 v0.7.26). FEATURE_093 立项 (partial cleanup landed opportunistically; remaining repl/commands triangle scoped to v0.8.0).)
 
 > 中文阅读说明：
 > 这份 `FEATURE_LIST` 是 roadmap 的总索引。
@@ -13,20 +13,19 @@
 
 | Item | Value |
 |---|---|
-| Tracked feature IDs | `001-092` (026 removed) |
-| Total tracked features | `91` |
-| Completed | `69` |
+| Tracked feature IDs | `001-093` (026 removed) |
+| Total tracked features | `92` |
+| Completed | `71` |
 | Cancelled | `2` |
 | Absorbed | `1` |
 | InProgress | `1` |
-| Planned | `18` |
-| Current released version | `v0.7.23` |
+| Planned | `17` |
+| Current released version | `v0.7.24` |
 
 ### 各版本待做分布
 
 | Version | Planned features |
 |---|---|
-| `v0.7.24` | `2` |
 | `v0.7.25` | `2` |
 | `v0.7.26` | `2` |
 | `v0.7.27` | `2` |
@@ -36,7 +35,7 @@
 | `v0.7.31` | `1` |
 | `v0.7.32` | `1` |
 | `v0.7.33` | `1` |
-| `v0.8.0` | `3` |
+| `v0.8.0` | `4` |
 
 ---
 
@@ -52,8 +51,6 @@
 
 | ID | Title | Category | Priority | Planned | Design |
 |---|---|---|---|---|---|
-| `082` | Package Restructure — @kodax/core, @kodax/mcp, @kodax/capabilities, @kodax/tracing, @kodax/session-lineage | Core | High | `v0.7.24` | [v0.7.24](features/v0.7.24.md#feature_082-package-restructure) |
-| `083` | Unified Tracer, Span, and TracingProcessor | Core | High | `v0.7.24` | [v0.7.24](features/v0.7.24.md#feature_083-unified-tracer-span-and-tracingprocessor) |
 | `075` | Plan Approval Dialog Scroll and Editor Integration | Enhancement | Medium | `v0.7.25` | [v0.7.25](features/v0.7.25.md#feature_075-plan-approval-dialog-scroll-and-editor-integration) |
 | `076` | Managed Task Round Boundary — User Conversation Preservation | Internal | High | `v0.7.25` | [v0.7.25](features/v0.7.25.md#feature_076-managed-task-round-boundary--user-conversation-preservation) |
 | `084` | Task Engine Phase 2 — Rewrite Scout/Generator/Evaluator on Layer A Primitives (absorbs FEATURE_059) | Core | High | `v0.7.26` | [v0.7.26](features/v0.7.26.md#feature_084-task-engine-phase-2--rewrite-scoutgeneratorevaluator-on-layer-a-primitives) |
@@ -67,6 +64,7 @@
 | `089` | Self-Construction Tier 3 — Agent Generation | Core | High | `v0.7.31` | [v0.7.31](features/v0.7.31.md#feature_089-self-construction-tier-3--agent-generation) |
 | `090` | Self-Construction Tier 4 — Agent Self-Modifying Role Spec | Core | High | `v0.7.32` | [v0.7.32](features/v0.7.32.md#feature_090-self-construction-tier-4--agent-self-modifying-role-spec) |
 | `092` | Auto Mode Classifier — LLM-Reviewed Permission Tier | Core | High | `v0.7.33` | [v0.7.33](features/v0.7.33.md#feature_092-auto-mode-classifier--llm-reviewed-permission-tier-for-high-risk-tool-calls) |
+| `093` | Coding and REPL Internal Circular Dependency Decoupling | Internal | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_093-coding-and-repl-internal-circular-dependency-decoupling) |
 | `007` | Theme System Consolidation | Enhancement | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_007-theme-system-consolidation) |
 | `058` | Transcript Native Scrollback Dump | Enhancement | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_058-transcript-native-scrollback-dump) |
 | `030` | Multi-Surface Delivery | Enhancement | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_030-multi-surface-delivery) |
@@ -182,6 +180,8 @@
 | `079` | Task Engine Phase 1 — Pure Extraction | `v0.7.22` (unreleased) | [v0.7.22](features/v0.7.22.md#feature_079-task-engine-phase-1--pure-extraction) |
 | `080` | Layer A Primitives — Agent / Handoff / Runner / Guardrail | `v0.7.23` | [v0.7.23](features/v0.7.23.md#feature_080-layer-a-primitives--agent--handoff--runner--guardrail) |
 | `081` | Compaction Layering and Session Base/Lineage Split | `v0.7.23` | [v0.7.23](features/v0.7.23.md#feature_081-compaction-layering-and-session-baselineage-split) |
+| `082` | Package Restructure — @kodax/core, @kodax/mcp, @kodax/tracing, @kodax/session-lineage | `v0.7.24` | [v0.7.24](features/v0.7.24.md#feature_082-package-restructure) |
+| `083` | Unified Tracer, Span, and TracingProcessor | `v0.7.24` | [v0.7.24](features/v0.7.24.md#feature_083-unified-tracer-span-and-tracingprocessor) |
 
 > `FEATURE_051` close-out posture: keep the current REPL status/footer/task/message surfaces frozen, limit follow-up work to invisible substrate maturity for transcript, scroll/selection, and input behavior, and treat the design doc as a completed close-out record rather than an open rollout plan.
 
