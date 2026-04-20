@@ -61,6 +61,8 @@ import {
 import { CommandRegistry } from '../commands/registry.js';
 import { copyCommand } from '../commands/copy-command.js';
 import { newCommand } from '../commands/new-command.js';
+import { getActivePasteStore } from '../ui/utils/paste-store.js';
+import { retrievePastedText } from '../ui/utils/paste-cache.js';
 import {
   toCommandDefinition,
   type Command as RegisteredCommand,
@@ -220,6 +222,90 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log(chalk.bold('Description:'));
       console.log(chalk.dim('  Shows token usage and estimated cost for the current session,'));
       console.log(chalk.dim('  broken down by provider and AMA role.'));
+      console.log();
+    },
+  },
+  {
+    // Issue 121: inspect a `[Pasted text #N]` placeholder's original content.
+    name: 'paste',
+    description: 'Inspect pasted text stored in the input buffer',
+    usage: '/paste show <id> | /paste list',
+    argumentHint: 'show <id> | list',
+    handler: async (args) => {
+      const sub = args[0]?.toLowerCase();
+
+      if (!sub || sub === 'help') {
+        console.log(chalk.cyan('\n/paste - Inspect stored paste contents'));
+        console.log(chalk.dim('  /paste list           - Show all pasted text ids in this session'));
+        console.log(chalk.dim('  /paste show <id>      - Print the full content of paste #<id>'));
+        console.log();
+        return;
+      }
+
+      const store = getActivePasteStore();
+      if (!store) {
+        console.log(chalk.yellow('\n[No paste registry active]'));
+        console.log(chalk.dim('  The REPL composer is not mounted, or no paste has been captured yet.'));
+        return;
+      }
+
+      if (sub === 'list') {
+        const entries = store.export();
+        if (entries.length === 0) {
+          console.log(chalk.dim('\n[No pasted content in this session yet]'));
+          return;
+        }
+        console.log(chalk.bold('\nPasted content in this session:\n'));
+        for (const entry of entries) {
+          const len = entry.content?.length ?? 0;
+          const hashTag = entry.contentHash ? ` (hash ${entry.contentHash.slice(0, 8)})` : '';
+          console.log(`  ${chalk.cyan(`#${entry.id}`)} ${entry.type} ${len} chars${hashTag}`);
+        }
+        console.log();
+        return;
+      }
+
+      if (sub === 'show') {
+        const rawId = args[1];
+        const id = rawId ? Number.parseInt(rawId, 10) : NaN;
+        if (!Number.isFinite(id) || id <= 0) {
+          console.log(chalk.yellow('\nUsage: /paste show <id>'));
+          return;
+        }
+        const entry = store.get(id);
+        if (!entry) {
+          console.log(chalk.dim(`\n[No paste registered with id #${id}]`));
+          return;
+        }
+        let body = entry.content ?? '';
+        if (!body && entry.contentHash) {
+          const cached = await retrievePastedText(entry.contentHash);
+          if (cached) body = cached;
+        }
+        if (!body) {
+          console.log(chalk.yellow(`\n[Paste #${id} has no stored content (hash ${entry.contentHash ?? 'n/a'})]`));
+          return;
+        }
+        console.log(chalk.bold(`\nPasted text #${id} (${body.length} chars):\n`));
+        console.log(body);
+        console.log();
+        return;
+      }
+
+      console.log(chalk.yellow(`\n[Unknown /paste subcommand: ${sub}]`));
+      console.log(chalk.dim('  Try /paste show <id> or /paste list'));
+    },
+    detailedHelp: () => {
+      console.log(chalk.cyan('\n/paste - Inspect stored paste contents\n'));
+      console.log(chalk.bold('Usage:'));
+      console.log(chalk.dim('  /paste list           - Show all pasted text ids in this session'));
+      console.log(chalk.dim('  /paste show <id>      - Print the full content of paste #<id>'));
+      console.log();
+      console.log(chalk.bold('Description:'));
+      console.log(chalk.dim('  When you paste more than ~800 chars into the input bar, KodaX'));
+      console.log(chalk.dim('  replaces the pasted text with a `[Pasted text #N +K lines]` anchor'));
+      console.log(chalk.dim('  to keep the UI responsive. The full content is preserved and sent'));
+      console.log(chalk.dim('  to the LLM on submit. Use this command to see what was captured.'));
       console.log();
     },
   },

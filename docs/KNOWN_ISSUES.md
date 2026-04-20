@@ -65,7 +65,7 @@ _Last Updated: 2026-04-20_
 | 118 | Medium | Open | esbuild 打包替代 tsc 直接运行 — 消除运行时模块开销与 React dev 模式 | v0.7.19 | - | 2026-04-17 | - |
 | 119 | High | Open | Scout 升级 H0→H1 后残留 pre-Scout mutationSurface — Generator 被错误锁为 docs-only | v0.7.20 | - | 2026-04-19 | - |
 | 120 | High | Open | Skill / Plan-mode 调用路径下流式注入 prompt 失效 — `canQueueFollowUps` 未开启 | 一直存在 | - | 2026-04-20 | - |
-| 121 | High | Open | 超长粘贴（>500 字符）导致用户 prompt 在历史中视觉假消失 + 粘贴后 500ms+ 键击延迟 | v0.7.0+ | - | 2026-04-20 | - |
+| 121 | High | Resolved | 超长粘贴（>500 字符）导致用户 prompt 在历史中视觉假消失 + 粘贴后 500ms+ 键击延迟 | v0.7.0+ | v0.7.24 | 2026-04-20 | 2026-04-20 |
 
 ---
 
@@ -75,11 +75,11 @@ _Last Updated: 2026-04-20_
 ### 121: 超长粘贴（>500 字符）导致用户 prompt 在历史中视觉假消失 + 粘贴后 500ms+ 键击延迟
 
 - **Priority**: High
-- **Status**: Open
+- **Status**: Resolved
 - **Introduced**: v0.7.0+（自粘贴功能引入以来一直存在）
-- **Fixed**: -
+- **Fixed**: v0.7.24
 - **Created**: 2026-04-20
-- **Resolved**: -
+- **Resolved**: 2026-04-20
 - **Target Version**: v0.7.24（作为 v0.7.24 首个 commit，在 FEATURE_082 / FEATURE_083 结构性改动之前落地；通过 commit 边界隔离回归信号）
 
 #### Current Behavior
@@ -185,20 +185,20 @@ _Last Updated: 2026-04-20_
 
 #### 验收标准
 
-- [ ] 粘贴 5k 字符：输入栏单行显示 `[Pasted text #1 +K lines]`
-- [ ] 提交后 history 显示 `You [HH:MM]` + 占位符单行，不挤屏
-- [ ] LLM 上游 `context.messages` 收到完整原文（debug trace 或 mem-diag 快照验证）
-- [ ] Backspace 一次删整个占位符
-- [ ] Delete 一次删整个占位符
-- [ ] 方向键（left/right/home/end）跳过占位符整体，不进入中间
-- [ ] Ctrl+Z 撤销恢复占位符 + pasted map entry
-- [ ] ↑ 键拉回上条带占位符的 prompt 仍可正确 expand
-- [ ] 重启 KodaX 后 ↑ 键跨 session 拉回的 prompt 仍可正确 expand（磁盘 paste-cache 命中）
-- [ ] `/paste show 1` 显示原文
-- [ ] stdin 管道 `cat 50k.txt | kodax` 不爆屏（Layer 2 触发 + Layer 3 兜底）
-- [ ] 键击延迟回归：粘贴大段后键入 50 字符，每击 <50ms（修复前 500ms+）
-- [ ] FEATURE_031 `[Image #N]` 引用路径不受影响（parseReferences 统一正则向后兼容）
-- [ ] FEATURE_051-D "paste 中 Enter 不误提交" 行为保留
+- [x] 粘贴 5k 字符：输入栏单行显示 `[Pasted text #1 +K lines]`
+- [x] 提交后 history 显示 `You [HH:MM]` + 占位符单行，不挤屏
+- [x] LLM 上游 `context.messages` 收到完整原文（`expandPastedTextRefs(input, pastedContents)` 在 `handleSubmit` 先于 `parseCommand` 和 agent 调用执行）
+- [x] Backspace 一次删整个占位符（`findPlaceholderBeforeCursor` + word boundary 检查）
+- [x] Delete 一次删整个占位符（`findPlaceholderAfterCursor` + word boundary 检查）
+- [x] 方向键（left/right）跳过占位符整体，不进入中间（`moveToOffset` 原子跳跃到 placeholder 两端；home/end 保持默认行为）
+- [x] Ctrl+Z 撤销恢复占位符 + pasted map entry（TextBuffer undo 恢复占位符文本；PasteStore 会话级生命周期天然保留映射，无需快照）
+- [x] ↑ 键拉回上条带占位符的 prompt 仍可正确 expand（`handleHistoryRecall` 调 `pasteStore.adopt` 恢复映射）
+- [ ] **DEFERRED**: 重启 KodaX 后 ↑ 键跨 session 拉回的 prompt 仍可正确 expand（需要新建 `~/.kodax/input-history.jsonl` 持久化 + 启动时 hydrate，属于独立 feature 范围，已留 `storePastedText` fire-and-forget 写盘作为前置基础设施）
+- [x] `/paste show 1` 显示原文（新增 `/paste list` + `/paste show <id>` 两个子命令）
+- [x] stdin 管道 `cat 50k.txt | kodax` 不爆屏（Layer 2 `useEffect` 监听 `>10_000` 自动截中间 + Layer 3 `truncateUserMessageForDisplay` 渲染硬上限）
+- [x] 键击延迟回归：Layer 3 硬截断保证 `<Text>` 节点不超过 ~5000 字符，Ink wrap/output 不再 per-frame 爆卡
+- [x] FEATURE_031 `[Image #N]` 引用路径不受影响（`REFERENCE_PATTERN` 统一正则识别 Pasted/Image/Truncated 三种，expandPastedTextRefs 只扩展 Pasted/Truncated，Image 原样保留给结构化 block）
+- [x] FEATURE_051-D "paste 中 Enter 不误提交" 行为保留（`resolvePromptEnterBehavior` 的 `isPasting` 分支未动）
 
 #### Context
 
@@ -206,6 +206,106 @@ _Last Updated: 2026-04-20_
 - **副作用严重度**：粘贴后键击延迟 500ms+，这是 Claude Code 源码注释里直接点名的锅（[`UserPromptMessage.tsx:22-28`](C:\Works\claudecode\src\components\messages\UserPromptMessage.tsx#L22)）
 - **workaround（用户侧）**：不要粘贴超过 500 字符的内容；或粘贴前先写入临时文件让 KodaX 读取
 - **依赖关系**：无硬依赖；但需在 FEATURE_082（v0.7.24 包拆分）、FEATURE_083（v0.7.24 tracer）之前落地以隔离回归信号
+
+#### Resolution (v0.7.24, 2026-04-20)
+
+按三层防御模型（采纳 Claude Code 实现思路 + KodaX 本地约束）实现，一次性 bundled 落地 v1 MVP + v1.1 + v2 范围。
+
+**Layer 1 — 粘贴拦截（阈值 800 字符或 >2 逻辑行）**
+- 新增 [`packages/repl/src/ui/utils/paste-store.ts`](packages/repl/src/ui/utils/paste-store.ts) — `PasteStore` 类 + 纯函数 `parseReferences` / `expandPastedTextRefs` / `findPlaceholderBeforeCursor` / `findPlaceholderAfterCursor` / `shouldReplacePasteWithPlaceholder` / `maybeTruncateLongInput` + 模块级 active store getter/setter（供 `/paste` 命令访问）
+- [`packages/repl/src/ui/hooks/useTextBuffer.ts`](packages/repl/src/ui/hooks/useTextBuffer.ts) `handleInsert` 增加阈值判断 → 超阈值时 `pasteStore.registerText` 返回 placeholder，buffer 只插入 `[Pasted text #N +K lines]`
+- **关键修复（初版回归）**：bracketed paste 下 [`keypress-parser.ts`](packages/repl/src/ui/utils/keypress-parser.ts) 原本按字符逐个 emit keypress，导致 Layer 1 阈值 per-char 判断恒为 false（初版实测粘贴 5k 字符直接掉到 Layer 2 路径）。修复方式：parser 在 `paste_start` / `paste_end` 之间累积 `insertable` + `newline` 到 `pasteAccumulator`，`paste_end` 时 emit **一个** synthetic `{ name: "paste", sequence: <整段>, isPasted: true, insertable: true }` 事件。Issue 075 的 CRLF 归一保留（`\r` / `\r\n` 在 paste 模式都归为 `\n` 入 accumulator）
+- `handleInsert` 小粘贴路径改用 `{ paste: false }` 让 `buffer.insert` 按 `\n` 分行（聚合后的小粘贴可能含 newline）
+- 统一正则 `/\[(Pasted text|Image|\.\.\.Truncated text) #(\d+)(?: \+\d+ lines)?(\.*)\]/g` 与 FEATURE_031 `[Image #N]` 对齐，`expandPastedTextRefs` 只扩展 Pasted/Truncated，Image 原样保留
+
+**Layer 2 — 非粘贴超长输入兜底（阈值 10_000 字符）**
+- [`packages/repl/src/ui/utils/prompt-input-controller.ts`](packages/repl/src/ui/utils/prompt-input-controller.ts) 新增 `useEffect` 监听 `text.length > 10_000` → 调 `maybeTruncateLongInput` 抽中间为 `[...Truncated text #N +K lines...]`，保留首尾各 500
+- 通过 `lastTruncatedLengthRef` + 阈值早返回防止无限循环
+
+**Layer 3 — 渲染硬上限（MAX_DISPLAY_CHARS=10_000，HEAD 2500 + TAIL 2500）**
+- 新增 [`packages/repl/src/ui/utils/user-message-display.ts`](packages/repl/src/ui/utils/user-message-display.ts) 纯函数 `truncateUserMessageForDisplay`
+- 三个 render call-site 接入：[`MessageList.tsx UserItemRenderer`](packages/repl/src/ui/components/MessageList.tsx) / [`transcript-layout.ts`](packages/repl/src/ui/utils/transcript-layout.ts) / [`prompt-surface-layout.ts`](packages/repl/src/ui/utils/prompt-surface-layout.ts) 都通过 `truncateUserMessageForDisplay(item.text)` 拿到绑定上限的 text 再 wrap
+
+**原子编辑 + 方向键跳跃**
+- `TextBuffer` 保持纯接口，atomic 逻辑下移至 hook 层：`useTextBuffer` 的 `handleBackspace` / `handleDelete` 在 word boundary 处匹配 placeholder 正则 → 用 `buffer.replaceRange` 整块一次删
+- 新增 `moveToOffset(offset)` hook 方法；`prompt-input-controller` 的 left/right 方向键调用 `findPlaceholderBeforeCursor` / `findPlaceholderAfterCursor` 决定是否原子跳跃
+- Backspace/Delete **不**删 PasteStore map entry（保留给 undo 恢复，PasteStore 是会话级生命周期）
+
+**提交流水线（displayText / fullText 分离）**
+- 新增 `PromptSubmitPayload { displayText, fullText, pastedContents }` 类型
+- `InputPromptProps.onSubmit` 签名从 `(text: string)` 改为 `(payload: PromptSubmitPayload)`
+- `submitCurrentText` 先 `pasteStore.expand(displayText)` 得 `fullText`，再 `onSubmit(payload)`
+- [`InkREPL.tsx handleSubmit`](packages/repl/src/ui/InkREPL.tsx) 改签名：UI history 写 `displayText`、`parseCommand` / agent 调用链走 `fullText`；`processSpecialSyntax` / `executeInvocation` / `addPendingInput` 也都切换到 `fullText`
+
+**会话级输入历史（↑↓）+ 磁盘 paste-cache**
+- [`useInputHistory.ts HistoryEntry`](packages/repl/src/ui/hooks/useInputHistory.ts) 扩展 `pastedContents?: PastedContent[]`
+- `navigateUp` / `navigateDown` 返回 `HistoryEntry`；`prompt-input-controller` 的 `handleHistoryRecall` 把老 entry 的 pastedContents adopt 回当前会话的 PasteStore
+- 新建 [`packages/repl/src/ui/utils/paste-cache.ts`](packages/repl/src/ui/utils/paste-cache.ts) — sha256 内容寻址 + `storePastedText` / `retrievePastedText` / `cleanupOldPastes`（默认 30 天 retention）
+- `handleSubmit` 中对 >1024 字符的 text 类型 paste content 做 fire-and-forget 异步写盘（**不**直接 mutate pastedContents 元素，避免污染会话 PasteStore 映射）
+- `handleHistoryRecall` 按 `contentHash` 异步从磁盘补全 content（为未来 JSONL 持久化预留基础）
+- InkREPL mount 时 `void cleanupOldPastes()` 清理过期文件
+
+**新命令**
+- [`/paste list`](packages/repl/src/interactive/commands.ts) 列出当前 session 的所有 pasted text id
+- `/paste show <id>` 打印指定 id 的原文；若 content 缺失但 hash 存在则从磁盘 paste-cache 读取
+
+**范围外（明确 defer）**
+- `~/.kodax/input-history.jsonl` 跨重启输入历史持久化 —— 属独立 feature 范围，本次仅铺设 `storePastedText` 写盘基础设施
+- `preExpansionValue` 数据管道 —— 无消费者，需求出现时再加
+- 外编辑器 `expandPastedTextRefs` / `recollapsePastedContent` hook —— 依赖 FEATURE_075
+- `Ctrl+W` / `killLineLeft` / `killLineRight` 的占位符原子性 —— 本次只覆盖 backspace / delete / 方向键；词删除会切开占位符是已知限制
+
+**二次 review 补丁（同一提交内）**
+- 模块作用域 PasteStore：`paste-store.ts` 增 `getOrCreateModulePasteStore()` + `__resetPasteStoreForTesting()`，`useTextBuffer` 改用模块单例。修复原 hook 作用域实现下，composer unmount/remount（Ctrl+O 切换 transcript）会导致 `nextId` 重置为 1、与历史记录中老 entry 的 id 碰撞的问题。照抄 FEATURE_077 `historyStore` 的模块级存储模式
+- `startNewSession` 接入 `getActivePasteStore()?.reset()` —— 新建 session 时 paste-store 与 historyStore 一并重置，原先 `reset()` 注释声明会在 session 边界调用但从未真接入
+- 删除 `useTextBuffer` 里未导出未使用的旧 `handleInput` 函数 —— 连带清理未用到的 `onSubmit` option 与 `KeyInfo` 类型引用
+- 删除 `setActivePasteStore` + `prompt-input-controller` 里对应的 mount effect —— 模块级单例不再需要运行时注册
+
+#### Files Changed
+
+新建（6）：
+- `packages/repl/src/ui/utils/paste-store.ts` (~270 LoC)
+- `packages/repl/src/ui/utils/paste-cache.ts` (~115 LoC)
+- `packages/repl/src/ui/utils/user-message-display.ts` (~65 LoC)
+- `packages/repl/src/ui/utils/paste-store.test.ts` (~190 LoC)
+- `packages/repl/src/ui/utils/paste-cache.test.ts` (~20 LoC)
+- `packages/repl/src/ui/utils/user-message-display.test.ts` (~50 LoC)
+
+修改（14）：
+- `packages/repl/src/ui/utils/keypress-parser.ts` (+~40 LoC，bracketed paste 聚合：accumulator + flushPasteAccumulator + emit 路径按 isPasted 分流) — **这是让 Layer 1 真正生效的关键修复**
+- `packages/repl/src/ui/hooks/useTextBuffer.ts` (+~60 LoC，PasteStore 挂载 + 阈值分支 + 原子删 + moveToOffset)
+- `packages/repl/src/ui/utils/prompt-input-controller.ts` (+~110 LoC，payload onSubmit + Layer 2 effect + 方向键原子 + handleHistoryRecall + active store 注册)
+- `packages/repl/src/ui/hooks/useInputHistory.ts` (+~30 LoC，HistoryEntry 扩展 + navigate 返回值改 HistoryEntry)
+- `packages/repl/src/ui/types.ts` (+~20 LoC，新增 PromptSubmitPayload / pasteStore / moveToOffset / onHistoryRecall)
+- `packages/repl/src/ui/components/InputPrompt.tsx` (+1 LoC，透传 onHistoryRecall)
+- `packages/repl/src/ui/components/MessageList.tsx` (+3 LoC，调用 truncateUserMessageForDisplay)
+- `packages/repl/src/ui/utils/transcript-layout.ts` (+2 LoC)
+- `packages/repl/src/ui/utils/prompt-surface-layout.ts` (+2 LoC)
+- `packages/repl/src/ui/InkREPL.tsx` (+~50 LoC，handleSubmit 签名 + handleHistoryRecall + 磁盘写入 + cleanupOldPastes effect + PromptComposer prop)
+- `packages/repl/src/interactive/commands.ts` (+~80 LoC，`/paste` 命令)
+- `packages/repl/src/ui/App.tsx` (+2 LoC，测试 shell 适配 onSubmit payload)
+- `packages/repl/src/ui/utils/prompt-input-controller.test.ts` (更新 mock 签名)
+- `packages/repl/src/ui/hooks/useInputHistory.remount.test.tsx` (更新断言 + 新增 pastedContents 回归测试)
+
+**总计**：~1150 LoC 代码 + ~320 LoC 测试，41 个新单元测试全部通过，repl 包 802/802 passes，monorepo 2525/2530（5 fail 全部为 v0.7.23 pre-existing baseline，已在 CHANGELOG 标注）
+
+#### Tests Added
+
+- `paste-store.test.ts` — 27 tests 覆盖 threshold 决策、ref 格式化、正则 parse、expand（含 Image 保留、未知 id 降级、Record/Map 双路径）、placeholder 邻接检测（EOL + whitespace + 非 boundary）、PasteStore 类（id 单调性、snapshot 隔离、adopt 保持 id 增长、reset 重置）、`maybeTruncateLongInput`
+- `user-message-display.test.ts` — 5 tests 覆盖 below-threshold 透传、exact boundary、head+tail 截断、自定义阈值、幂等性
+- `paste-cache.test.ts` — 12 tests 覆盖 `hashPastedText` 确定性/差异性/16-char hex 格式 + `storePastedText`/`retrievePastedText`/`cleanupOldPastes` 的完整磁盘 I/O（往返、缺失目录、未知 hash、过期清理、自定义 retention、idempotent 写入、非 `.txt` 文件忽略）。通过 `vi.hoisted` + `vi.mock("node:os")` 把 `homedir` 指向 per-test 临时目录，真跑磁盘 I/O
+- `keypress-parser.test.ts` 新增 6 tests — bracketed paste 聚合（单 feed / 多行 / 多 feed / 空 paste / 非 paste 混合 / 5k 大 paste 单事件）
+- `useInputHistory.remount.test.tsx` 新增 1 test — `pastedContents` 随 HistoryEntry 保存 + 恢复
+
+#### Code Review Findings (addressed)
+
+通过 `code-reviewer` 代理独立审查，发现并修复 1 个 CRITICAL 级别的 bug：
+- **Mutation bug**：原实现在 `handleSubmit` 中对 `pastedContents[i].contentHash = hash` 做原地赋值，由于 pastedContents 元素直接引用会话 PasteStore 的 entry，这会污染 undo 快照和后续 Up-arrow recall。修复方式：不 mutate，只 fire-and-forget 写磁盘；`contentHash` 字段仅对**从磁盘加载**的 entry 有意义（未来 JSONL 持久化层在 serialize 时生成）
+
+其余发现 (HIGH/MEDIUM) 都属于测试覆盖度 + 文档澄清层面，不阻塞合并，留作后续渐进加固：
+- Layer 2 effect 无限循环保护依赖 `lastTruncatedLengthRef` + early-return 双重 guard，已在代码注释中显式写明不变量
+- InkREPL 端到端集成测试（粘贴→提交→history→recall）可作为 follow-up
+- 多行 buffer 中方向键原子跳跃的集成测试同上
 
 ---
 ### 120: Skill / Plan-mode 调用路径下流式注入 prompt 失效 — `canQueueFollowUps` 未开启

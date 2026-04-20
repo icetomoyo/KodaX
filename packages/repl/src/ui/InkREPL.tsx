@@ -52,8 +52,11 @@ import {
   type CreatableHistoryItem,
   type HistoryItem,
   type ToolCall,
+  type PromptSubmitPayload,
   KeypressHandlerPriority,
 } from "./types.js";
+import { getActivePasteStore, type PastedContent } from "./utils/paste-store.js";
+import { hashPastedText, storePastedText, retrievePastedText, cleanupOldPastes } from "./utils/paste-cache.js";
 import {
   applySessionCompaction,
   buildSessionTree,
@@ -1272,6 +1275,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   // with a clean file; no-op when KODAX_MEMORY_DIAG is not set.
   useEffect(() => {
     memDiagReset();
+  }, []);
+
+  // Issue 121: opportunistically GC the on-disk paste-cache on startup so
+  // old `[Pasted text #N]` blobs don't accumulate across restarts. Best-
+  // effort — failures log internally and do not block REPL start.
+  useEffect(() => {
+    void cleanupOldPastes();
   }, []);
 
   // Get terminal dimensions for fixed layout.
@@ -5863,12 +5873,58 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     runAgentRound,
   ]);
 
+  // Issue 121: when ↑ arrow recalls a history entry whose pasted contents
+  // were only kept by hash (e.g. synthesized from session.uiHistory or a
+  // future disk-backed input history), hydrate the missing content from
+  // the on-disk paste-cache. Best-effort: missing cache hits leave the
+  // placeholder literal, which submit will then send as-is.
+  const handleHistoryRecall = useCallback(
+    async (entry: { text: string; pastedContents: PastedContent[] }) => {
+      for (const content of entry.pastedContents) {
+        if (content.type !== "text") continue;
+        if (content.content) continue; // already hydrated
+        if (!content.contentHash) continue;
+        try {
+          const body = await retrievePastedText(content.contentHash);
+          if (body) {
+            content.content = body;
+          }
+        } catch {
+          // best-effort — missing cache entry is recoverable on submit
+        }
+      }
+    },
+    [],
+  );
+
   // Handle user input submission
+  //
+  // Issue 121: receives PromptSubmitPayload split into displayText (what
+  // went into UI history — may contain `[Pasted text #N]` placeholders) and
+  // fullText (what goes to parseCommand / the agent — all placeholders
+  // expanded). Keeping them separate is what prevents long pastes from
+  // ballooning the transcript while still feeding the LLM the real content.
   const handleSubmit = useCallback(
-    async (input: string) => {
+    async (payload: PromptSubmitPayload) => {
+      const { displayText, fullText, pastedContents } = payload;
       // Prevent concurrent execution: ignore input if agent is busy or waiting for tool confirmation
       // Prevent concurrent execution while the agent is busy or awaiting confirmation.
-      if (!input.trim() || !isRunning || confirmRequest || uiRequest) return;
+      if (!fullText.trim() || !isRunning || confirmRequest || uiRequest) return;
+
+      // Issue 121: fire-and-forget write of large pasted text to the disk
+      // paste-cache. Runs async — never blocks submit.
+      //
+      // CRITICAL: do NOT mutate `content` in place. These objects reference
+      // the session PasteStore map, and stamping `contentHash` there would
+      // leak into future Up-arrow recalls + undo snapshots. The hash is
+      // only meaningful for entries LOADED from disk (the recall path
+      // populates `contentHash` from the persisted JSONL when available).
+      for (const content of pastedContents) {
+        if (content.type !== "text") continue;
+        if (content.content.length < 1024) continue;
+        const hash = hashPastedText(content.content);
+        void storePastedText(hash, content.content);
+      }
 
       // Hide help panel when submitting.
       setShowHelp(false);
@@ -5885,7 +5941,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           });
           return;
         }
-        addPendingInput(input);
+        // Queue the EXPANDED text — downstream drain path feeds the agent.
+        addPendingInput(fullText);
         setInputText("");
         setIsInputEmpty(true);
         setSubmitCounter(prev => prev + 1);
@@ -5912,10 +5969,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         }]);
       }
 
-      // Add user message to UI history
+      // Add user message to UI history — store the DISPLAY form so the
+      // transcript stays bounded. fullText already went to the agent below.
       appendHistoryItemsToCurrentSnapshot([{
         type: "user",
-        text: input,
+        text: displayText,
       }]);
       setInputText("");
       setIsInputEmpty(true);
@@ -5967,8 +6025,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       // 50ms is enough for React to batch and render state updates in Ink
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // Process commands
-      const parsed = parseCommand(input.trim());
+      // Process commands — use the EXPANDED text so `/command ...` args that
+      // contain paste placeholders resolve to the real content (Issue 121).
+      const parsed = parseCommand(fullText.trim());
       if (parsed) {
         // Create command callbacks
         const callbacks: CommandCallbacks = {
@@ -6007,6 +6066,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             };
             setLiveTokenCount(null);
             clearUIHistory();
+            // Issue 121: drop paste-store entries at session boundary so
+            // ids restart from 1 and stale refs don't linger into the
+            // fresh session. Input history (↑↓) is handled separately.
+            getActivePasteStore()?.reset();
             setSessionId(nextSessionId);
           },
           loadSession: async (id: string) => {
@@ -6374,7 +6437,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           startThinking();
 
           try {
-            await executeInvocation(invocationToExecute, input.trim());
+            await executeInvocation(invocationToExecute, fullText.trim());
           } catch (err) {
             const error = err instanceof Error ? err : new Error(String(err));
 
@@ -6452,12 +6515,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         return;
       }
 
-      // Process special syntax
-      const processed = await processSpecialSyntax(input.trim());
+      // Process special syntax (shell `!...`, @image-path expansion, etc.)
+      // against the EXPANDED input so paste placeholders don't get misparsed
+      // as literal text (Issue 121).
+      const processed = await processSpecialSyntax(fullText.trim());
 
       // Skip if shell command was executed successfully
       if (
-        input.trim().startsWith("!") &&
+        fullText.trim().startsWith("!") &&
         isShellCommandHandled(processed)
       ) {
         setIsLoading(false);
@@ -6729,6 +6794,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       composer={(
         <PromptComposer
           onSubmit={handleSubmit}
+          onHistoryRecall={handleHistoryRecall}
           prompt=">"
           placeholder={buildPromptPlaceholderText({
             isLoading,

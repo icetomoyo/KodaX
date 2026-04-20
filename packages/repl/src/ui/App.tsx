@@ -158,7 +158,9 @@ export const App: React.FC<AppProps> = ({
       {/* Input area */}
       <Box flexShrink={0}>
         <InputPrompt
-          onSubmit={handleSubmit}
+          // Issue 121: InputPrompt now emits PromptSubmitPayload; the App test
+          // shell consumes the fully-expanded form.
+          onSubmit={(payload) => handleSubmit(payload.fullText)}
           prompt=">"
           focus={!state.isLoading}
         />
@@ -203,7 +205,7 @@ export const SimpleApp: React.FC<{
       </Box>
 
       <InputPrompt
-        onSubmit={onInput}
+        onSubmit={(payload) => onInput(payload.fullText)}
         placeholder="Type a message..."
         prompt=">"
       />

@@ -41,8 +41,8 @@ describe("useInputHistory — session-scoped history across remount", () => {
     const secondRef: { current: UseInputHistoryReturn | null } = { current: null };
     const second = render(<HookHost apiRef={secondRef} />);
 
-    expect(secondRef.current?.navigateUp()).toBe("B");
-    expect(secondRef.current?.navigateUp()).toBe("A");
+    expect(secondRef.current?.navigateUp()?.text).toBe("B");
+    expect(secondRef.current?.navigateUp()?.text).toBe("A");
     second.unmount();
   });
 
@@ -52,14 +52,14 @@ describe("useInputHistory — session-scoped history across remount", () => {
     firstRef.current?.add("A");
     firstRef.current?.add("B");
     // Move nav cursor away from -1 before unmount.
-    expect(firstRef.current?.navigateUp()).toBe("B");
+    expect(firstRef.current?.navigateUp()?.text).toBe("B");
     first.unmount();
 
     // On remount, the fresh useRef starts at -1, so the next Up should
     // return the most recent entry again (not skip to "A").
     const secondRef: { current: UseInputHistoryReturn | null } = { current: null };
     const second = render(<HookHost apiRef={secondRef} />);
-    expect(secondRef.current?.navigateUp()).toBe("B");
+    expect(secondRef.current?.navigateUp()?.text).toBe("B");
     second.unmount();
   });
 
@@ -69,6 +69,20 @@ describe("useInputHistory — session-scoped history across remount", () => {
     apiRef.current?.add("A");
     __resetInputHistoryForTesting();
     expect(apiRef.current?.navigateUp()).toBeNull();
+    harness.unmount();
+  });
+
+  it("carries pastedContents snapshot on history entries (Issue 121)", () => {
+    const apiRef: { current: UseInputHistoryReturn | null } = { current: null };
+    const harness = render(<HookHost apiRef={apiRef} />);
+    apiRef.current?.add("prompt with placeholder", {
+      pastedContents: [{ id: 1, type: "text", content: "hidden content" }],
+    });
+    const entry = apiRef.current?.navigateUp();
+    expect(entry?.text).toBe("prompt with placeholder");
+    expect(entry?.pastedContents).toEqual([
+      { id: 1, type: "text", content: "hidden content" },
+    ]);
     harness.unmount();
   });
 });

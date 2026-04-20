@@ -13,6 +13,9 @@ const mocks = vi.hoisted(() => {
     suggestions: [] as Array<{ id: string; text: string }>,
     tabCompletion: null as SelectedCompletion | null,
     enterCompletion: null as SelectedCompletion | null,
+    // Issue 121: navigate* mocks now return HistoryEntry. Tests keep the
+    // original string-return shape on the state object and wrap into an
+    // entry inside the mock.
     navigateUpReturn: null as string | null,
     navigateDownReturn: null as string | null,
   };
@@ -20,14 +23,23 @@ const mocks = vi.hoisted(() => {
   return {
     state,
     addHistoryMock: vi.fn(),
-    navigateUpMock: vi.fn(() => state.navigateUpReturn),
-    navigateDownMock: vi.fn(() => state.navigateDownReturn),
+    navigateUpMock: vi.fn(() =>
+      state.navigateUpReturn === null
+        ? null
+        : { text: state.navigateUpReturn, timestamp: 0 },
+    ),
+    navigateDownMock: vi.fn(() =>
+      state.navigateDownReturn === null
+        ? null
+        : { text: state.navigateDownReturn, timestamp: 0 },
+    ),
     resetHistoryMock: vi.fn(),
     saveTempInputMock: vi.fn(),
     setTextMock: vi.fn(),
     replaceRangeMock: vi.fn(),
     clearMock: vi.fn(),
     moveMock: vi.fn(),
+    moveToOffsetMock: vi.fn(),
     insertMock: vi.fn(),
     backspaceMock: vi.fn(),
     newlineMock: vi.fn(),
@@ -49,6 +61,9 @@ const mocks = vi.hoisted(() => {
       end: state.text.length,
       replacement: "completed result",
     })),
+    // Issue 121: minimal stub paste-store; tests assert on its expand()
+    pasteStoreExpandMock: vi.fn((text: string) => text),
+    pasteStoreGetMock: vi.fn(() => undefined),
   };
 });
 
@@ -64,16 +79,27 @@ vi.mock("../hooks/useInputHistory.js", () => ({
 
 vi.mock("../hooks/useTextBuffer.js", () => ({
   useTextBuffer: () => ({
-    buffer: { getAbsoluteOffset: () => 0 },
+    buffer: { getAbsoluteOffset: () => 0, text: mocks.state.text },
     text: mocks.state.text,
     cursor: mocks.state.cursor,
     lines: mocks.state.lines,
     isPasting: false,
     editingMode: "idle",
+    // Issue 121: pasteStore stub with expand() + get() so the controller's
+    // submit path can request an expanded fullText.
+    pasteStore: {
+      expand: mocks.pasteStoreExpandMock,
+      get: mocks.pasteStoreGetMock,
+      peekNextId: () => 1,
+      registerText: vi.fn(),
+      registerTruncatedText: vi.fn(),
+      adopt: vi.fn(),
+    },
     setText: mocks.setTextMock,
     replaceRange: mocks.replaceRangeMock,
     clear: mocks.clearMock,
     move: mocks.moveMock,
+    moveToOffset: mocks.moveToOffsetMock,
     insert: mocks.insertMock,
     backspace: mocks.backspaceMock,
     newline: mocks.newlineMock,
@@ -208,8 +234,18 @@ describe("prompt-input-controller", () => {
     expect(handled).toBe(true);
     expect(mocks.handleEnterMock).toHaveBeenCalled();
     expect(mocks.replaceRangeMock).toHaveBeenCalled();
-    expect(mocks.addHistoryMock).toHaveBeenCalledWith("completed result");
-    expect(submitMock).toHaveBeenCalledWith("completed result");
+    // Issue 121: addHistory now takes (text, options); submit receives payload.
+    expect(mocks.addHistoryMock).toHaveBeenCalledWith(
+      "completed result",
+      expect.objectContaining({ pastedContents: [] }),
+    );
+    expect(submitMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        displayText: "completed result",
+        fullText: "completed result",
+        pastedContents: [],
+      }),
+    );
     expect(mocks.clearMock).toHaveBeenCalled();
   });
 

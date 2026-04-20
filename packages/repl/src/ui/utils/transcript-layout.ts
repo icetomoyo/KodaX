@@ -8,6 +8,7 @@ import {
   formatLiveToolLabel,
   resolveToolExplanationTone,
 } from "./tool-display.js";
+import { truncateUserMessageForDisplay } from "./user-message-display.js";
 
 export type TranscriptColorToken =
   | "primary"
@@ -423,7 +424,9 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
           viewportWidth,
           { color: "primary", bold: true, itemId: item.id }
         );
-        pushWrappedRows(rows, `${item.id}-body`, item.text, getBodyWidth(viewportWidth, 2), {
+        // Issue 121 Layer 3: cap extremely long user messages so giant text
+        // nodes don't force Ink to wrap/output on every frame.
+        pushWrappedRows(rows, `${item.id}-body`, truncateUserMessageForDisplay(item.text), getBodyWidth(viewportWidth, 2), {
           color: "text",
           indent: 2,
           itemId: item.id,

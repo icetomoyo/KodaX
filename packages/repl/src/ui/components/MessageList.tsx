@@ -40,6 +40,7 @@ import {
   formatCollapsedToolInlineText,
 } from "../utils/tool-display.js";
 import type { TranscriptRowSelectionRange } from "../utils/transcript-text-selection.js";
+import { truncateUserMessageForDisplay } from "../utils/user-message-display.js";
 
 // === Types ===
 
@@ -217,20 +218,27 @@ function getToolStatusColor(status: ToolCallStatus, theme: Theme): string {
 
 /**
  * User message renderer.
+ *
+ * Issue 121 Layer 3: hard cap the rendered text so an oversized expansion
+ * (stdin pipe, legacy terminal pastes that bypass bracketed-paste) never
+ * forces Ink to wrap a giant `<Text>` node on every frame.
  */
-const UserItemRenderer: React.FC<{ item: HistoryItemUser; theme: Theme }> = memo(({ item, theme }) => (
-  <Box flexDirection="column" marginBottom={1}>
-    <Box>
-      <Text color={theme.colors.primary} bold>
-        You
-      </Text>
-      <Text dimColor> [{formatTimestamp(item.timestamp)}]</Text>
+const UserItemRenderer: React.FC<{ item: HistoryItemUser; theme: Theme }> = memo(({ item, theme }) => {
+  const displayText = useMemo(() => truncateUserMessageForDisplay(item.text), [item.text]);
+  return (
+    <Box flexDirection="column" marginBottom={1}>
+      <Box>
+        <Text color={theme.colors.primary} bold>
+          You
+        </Text>
+        <Text dimColor> [{formatTimestamp(item.timestamp)}]</Text>
+      </Box>
+      <Box marginLeft={2}>
+        <Text color={theme.colors.text}>{displayText}</Text>
+      </Box>
     </Box>
-    <Box marginLeft={2}>
-      <Text color={theme.colors.text}>{item.text}</Text>
-    </Box>
-  </Box>
-));
+  );
+});
 
 /**
  * Assistant message renderer.

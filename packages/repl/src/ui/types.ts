@@ -5,6 +5,7 @@
  */
 
 import type { CursorPosition } from "./utils/text-buffer.js";
+import type { PastedContent, PasteStore } from "./utils/paste-store.js";
 import type { PermissionMode } from "../permission/types.js";
 import type { KodaXAgentMode, KodaXReasoningMode } from "@kodax/coding";
 
@@ -42,6 +43,11 @@ export interface UseTextBufferReturn {
   lines: string[];
   isPasting: boolean;
   editingMode: PromptEditingMode;
+  /**
+   * Issue 121: session-scoped paste registry. Registered paste ids survive
+   * submit so Up-arrow input-history recall can still expand them.
+   */
+  pasteStore: PasteStore;
   resetTransientState: () => void;
   setText: (text: string) => void;
   replaceRange: (start: number, end: number, replacement: string) => void;
@@ -51,6 +57,7 @@ export interface UseTextBufferReturn {
   delete: () => void;
   move: (direction: "up" | "down" | "left" | "right" | "home" | "end") => void;
   moveToEnd: () => void;
+  moveToOffset: (offset: number) => void;
   killLineRight: () => void;
   killLineLeft: () => void;
   deleteWordLeft: () => void;
@@ -77,9 +84,19 @@ export type VisualCursor = [number, number];
 
 // === Input History - 输入历史 ===
 
+/**
+ * An input-history entry. `text` is the display form (may contain
+ * `[Pasted text #N]` placeholders). `pastedContents`, when present, carries
+ * the stored contents needed to expand those placeholders after recall.
+ *
+ * Issue 121: pastedContents preserves paste fidelity across Up-arrow and
+ * undo. For entries loaded from disk-backed history, contents may carry only
+ * `contentHash` until `retrievePastedText` resolves them.
+ */
 export interface HistoryEntry {
   text: string;
   timestamp: number;
+  pastedContents?: PastedContent[];
 }
 
 // === Autocomplete - 自动补全 ===
@@ -145,14 +162,35 @@ export interface Theme {
 
 // === Component Props - 组件 Props ===
 
+export interface PromptSubmitPayload {
+  /**
+   * Display form — what the user saw in the input bar. May contain
+   * `[Pasted text #N +K lines]` placeholders or `[...Truncated text #N ...]`
+   * refs (Issue 121).
+   */
+  displayText: string;
+  /**
+   * Fully expanded form — all paste placeholders substituted for their raw
+   * stored contents. This is what parseCommand / the agent pipeline consume.
+   */
+  fullText: string;
+  /** Paste contents referenced by displayText — for persistence / recall. */
+  pastedContents: PastedContent[];
+}
+
 export interface InputPromptProps {
-  onSubmit: (text: string) => void;
+  onSubmit: (payload: PromptSubmitPayload) => void;
   placeholder?: string;
   prompt?: string;
   focus?: boolean;
   initialValue?: string;
   /** Callback when input text changes - 输入文本变化时的回调 */
   onInputChange?: (text: string) => void;
+  /**
+   * Called when the ↑ arrow history recall brings back an entry with stored
+   * paste contents. Consumer can hydrate a disk-backed paste cache here.
+   */
+  onHistoryRecall?: (entry: { text: string; pastedContents: PastedContent[] }) => void;
 }
 
 export interface StatusBarProps {

@@ -28,6 +28,7 @@ export interface InputPromptAutocompleteProps extends InputPromptProps {
 
 export const InputPrompt: React.FC<InputPromptAutocompleteProps> = ({
   onSubmit,
+  onHistoryRecall,
   placeholder = "Type a message...",
   prompt = ">",
   focus = true,
@@ -54,6 +55,7 @@ export const InputPrompt: React.FC<InputPromptAutocompleteProps> = ({
     gitRoot,
     autocompleteEnabled,
     onInputChange,
+    onHistoryRecall,
   });
 
   useKeypress(

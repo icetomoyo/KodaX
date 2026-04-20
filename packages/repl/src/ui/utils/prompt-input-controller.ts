@@ -2,11 +2,26 @@ import { useCallback, useEffect, useRef } from "react";
 import { useAutocomplete, useAutocompleteContext, type SelectedCompletion } from "../hooks/useAutocomplete.js";
 import { useInputHistory } from "../hooks/useInputHistory.js";
 import { useTextBuffer } from "../hooks/useTextBuffer.js";
-import type { KeyInfo, PromptEditingMode } from "../types.js";
+import type { KeyInfo, PromptEditingMode, PromptSubmitPayload } from "../types.js";
+import type { PastedContent } from "./paste-store.js";
+
+export type { PromptSubmitPayload };
+import {
+  LARGE_INPUT_TRUNCATE_THRESHOLD,
+  findPlaceholderAfterCursor,
+  findPlaceholderBeforeCursor,
+  maybeTruncateLongInput,
+} from "./paste-store.js";
 import { buildAutocompleteReplacement } from "./autocomplete-replacement.js";
 
 export interface PromptInputControllerOptions {
-  onSubmit: (text: string) => void;
+  /**
+   * Receives the finalized prompt. Consumers that care about the expanded
+   * text (parseCommand, agent pipeline) should read `payload.fullText`;
+   * consumers that render the user prompt (history UI) should read
+   * `payload.displayText`.
+   */
+  onSubmit: (payload: PromptSubmitPayload) => void;
   onExit?: () => void;
   placeholder?: string;
   prompt?: string;
@@ -16,6 +31,12 @@ export interface PromptInputControllerOptions {
   gitRoot?: string;
   autocompleteEnabled?: boolean;
   onInputChange?: (text: string) => void;
+  /**
+   * Called when the input history ↑ recalls an entry that carries stored
+   * paste contents. Consumers may hydrate a disk-backed paste cache here
+   * before expansion is attempted on the next submit.
+   */
+  onHistoryRecall?: (entry: { text: string; pastedContents: PastedContent[] }) => void;
 }
 
 export interface PromptInputControllerResult {
@@ -149,6 +170,7 @@ export function usePromptInputController({
   gitRoot,
   autocompleteEnabled = true,
   onInputChange,
+  onHistoryRecall,
 }: PromptInputControllerOptions): PromptInputControllerResult {
   const lastEscPressRef = useRef<number>(0);
 
@@ -160,11 +182,13 @@ export function usePromptInputController({
     lines,
     isPasting,
     editingMode,
+    pasteStore,
     resetTransientState,
     setText,
     replaceRange,
     clear,
     move,
+    moveToOffset,
     insert,
     backspace,
     newline,
@@ -178,6 +202,31 @@ export function usePromptInputController({
     initialValue,
     onTextChange: onInputChange,
   });
+
+  // Issue 121 Layer 2: auto-truncate long non-paste input. Triggers when the
+  // buffer exceeds LARGE_INPUT_TRUNCATE_THRESHOLD from a path that bypassed
+  // Layer 1 (stdin pipe, non-bracketed-paste terminals, programmatic setText).
+  // Guard: only fire while the user is NOT actively mid-paste (isPasting)
+  // so we don't race the paste-end sync.
+  const lastTruncatedLengthRef = useRef<number>(0);
+  useEffect(() => {
+    if (isPasting) return;
+    if (text.length <= LARGE_INPUT_TRUNCATE_THRESHOLD) {
+      lastTruncatedLengthRef.current = 0;
+      return;
+    }
+    if (text.length === lastTruncatedLengthRef.current) return;
+
+    const nextId = pasteStore.peekNextId();
+    const { truncatedText, placeholderContent } = maybeTruncateLongInput(
+      text,
+      nextId,
+    );
+    if (!placeholderContent) return;
+    pasteStore.registerTruncatedText(placeholderContent);
+    lastTruncatedLengthRef.current = truncatedText.length;
+    setText(truncatedText);
+  }, [text, isPasting, pasteStore, setText]);
 
   const contextAutocomplete = useAutocompleteContext();
   const localAutocomplete = useAutocomplete({
@@ -242,15 +291,48 @@ export function usePromptInputController({
   }, [buffer, replaceRange, text]);
 
   const submitCurrentText = useCallback((submittedText?: string) => {
-    const nextText = submittedText ?? text;
-    if (!nextText.trim()) {
+    const displayText = submittedText ?? text;
+    if (!displayText.trim()) {
       return;
     }
 
-    addHistory(nextText);
-    onSubmit(nextText);
+    // Issue 121: expand paste placeholders into the full form destined for
+    // parseCommand / agent. Collect a snapshot of only the contents actually
+    // referenced by displayText (orphaned ids are dropped from persistence).
+    const fullText = pasteStore.expand(displayText);
+    const referencedIds = new Set<number>();
+    const placeholderPattern = /\[(Pasted text|\.\.\.Truncated text) #(\d+)(?: \+\d+ lines)?(\.*)\]/g;
+    for (const m of displayText.matchAll(placeholderPattern)) {
+      const id = Number.parseInt(m[2] ?? "0", 10);
+      if (Number.isFinite(id) && id > 0) referencedIds.add(id);
+    }
+    const pastedContents: PastedContent[] = [];
+    for (const id of referencedIds) {
+      const entry = pasteStore.get(id);
+      if (entry) pastedContents.push(entry);
+    }
+
+    addHistory(displayText, { pastedContents });
+    onSubmit({ displayText, fullText, pastedContents });
     clear();
-  }, [addHistory, clear, onSubmit, text]);
+  }, [addHistory, clear, onSubmit, pasteStore, text]);
+
+  const handleHistoryRecall = useCallback(
+    (entry: { text: string; pastedContents?: readonly PastedContent[] } | null) => {
+      if (!entry) return;
+      if (entry.pastedContents && entry.pastedContents.length > 0) {
+        for (const content of entry.pastedContents) {
+          pasteStore.adopt(content);
+        }
+        onHistoryRecall?.({
+          text: entry.text,
+          pastedContents: [...entry.pastedContents],
+        });
+      }
+      setText(entry.text);
+    },
+    [onHistoryRecall, pasteStore, setText],
+  );
 
   const handleKey = useCallback((key: KeyInfo): boolean => {
     if (!focus) {
@@ -316,10 +398,8 @@ export function usePromptInputController({
 
       if (shouldUseHistoryNavigation(cursor.row, lines.length, "up")) {
         saveTempInput(text);
-        const historyText = navigateUp();
-        if (historyText !== null) {
-          setText(historyText);
-        }
+        const entry = navigateUp();
+        handleHistoryRecall(entry);
       } else {
         move("up");
       }
@@ -338,22 +418,36 @@ export function usePromptInputController({
       }
 
       if (shouldUseHistoryNavigation(cursor.row, lines.length, "down")) {
-        const historyText = navigateDown();
-        if (historyText !== null) {
-          setText(historyText);
-        }
+        const entry = navigateDown();
+        handleHistoryRecall(entry);
       } else {
         move("down");
       }
       return true;
     }
 
+    // Issue 121: arrow keys jump atomically over paste placeholders so the
+    // cursor never lands inside a `[Pasted text #N ...]` block. Without this
+    // the cursor can split a placeholder visually, and subsequent edits (or
+    // submit) would leak partial placeholder text to the LLM.
     if (key.name === "left") {
-      move("left");
+      const offset = buffer.getAbsoluteOffset();
+      const adj = findPlaceholderBeforeCursor(buffer.text, offset);
+      if (adj) {
+        moveToOffset(adj.start);
+      } else {
+        move("left");
+      }
       return true;
     }
     if (key.name === "right") {
-      move("right");
+      const offset = buffer.getAbsoluteOffset();
+      const adj = findPlaceholderAfterCursor(buffer.text, offset);
+      if (adj) {
+        moveToOffset(adj.end);
+      } else {
+        move("right");
+      }
       return true;
     }
     if (key.name === "home") {
@@ -448,6 +542,7 @@ export function usePromptInputController({
     addHistory,
     autocompleteState.visible,
     backspace,
+    buffer,
     clear,
     cursor.row,
     deleteChar,
@@ -456,11 +551,13 @@ export function usePromptInputController({
     handleAutocompleteEscape,
     handleAutocompleteUp,
     handleEnter,
+    handleHistoryRecall,
     handleTab,
     lines,
     killLineLeft,
     killLineRight,
     move,
+    moveToOffset,
     navigateDown,
     navigateUp,
     newline,

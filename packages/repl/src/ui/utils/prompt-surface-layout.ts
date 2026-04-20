@@ -13,6 +13,7 @@ import {
   formatToolResultExplanation,
   resolveToolExplanationTone,
 } from "./tool-display.js";
+import { truncateUserMessageForDisplay } from "./user-message-display.js";
 
 export interface PromptSurfaceRenderModelOptions {
   items: readonly HistoryItem[];
@@ -228,7 +229,8 @@ function buildPromptSurfaceSection(
         bold: true,
         itemId: item.id,
       });
-      pushWrappedRows(rows, `${item.id}-body`, item.text, bodyWidth(viewportWidth, 2), {
+      // Issue 121 Layer 3: hard cap renders of huge user text.
+      pushWrappedRows(rows, `${item.id}-body`, truncateUserMessageForDisplay(item.text), bodyWidth(viewportWidth, 2), {
         color: "text",
         indent: 2,
         itemId: item.id,

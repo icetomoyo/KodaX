@@ -379,6 +379,15 @@ export class KeypressParser {
   private flushing = false;
   /** Whether we're inside a bracketed paste (Issue 075) - 是否在粘贴模式中 (Issue 075) */
   private inBracketedPaste = false;
+  /**
+   * Issue 121: accumulator for content arriving between `paste_start` and
+   * `paste_end`. Bracketed paste from the terminal normally arrives byte-by-
+   * byte, so if we emitted per-char events downstream consumers (PasteStore
+   * threshold, Layer 1 placeholder insert) would never see the full paste
+   * in one call. We buffer insertable content here and emit ONE synthetic
+   * aggregated event at `paste_end`.
+   */
+  private pasteAccumulator: string = "";
 
   /**
    * Add keypress listener - 添加按键监听器
@@ -431,14 +440,42 @@ export class KeypressParser {
       // Handle bracketed paste mode state transitions (Issue 075) - 处理粘贴模式状态转换 (Issue 075)
       if (key.name === "paste_start") {
         this.inBracketedPaste = true;
+        this.pasteAccumulator = ""; // Issue 121: start fresh accumulator
         continue; // Don't emit paste_start to listeners - 不要将 paste_start 发送给监听器
       }
       if (key.name === "paste_end") {
         this.inBracketedPaste = false;
-        continue; // Don't emit paste_end to listeners - 不要将 paste_end 发送给监听器
+        // Issue 121: emit one aggregated event carrying the whole paste body
+        // so downstream Layer 1 threshold (PasteStore) sees the full content
+        // in a single call. Without this, bracketed paste's per-char emission
+        // would prevent the placeholder logic from ever triggering.
+        this.flushPasteAccumulator();
+        continue;
       }
 
       this.emit(key);
+    }
+  }
+
+  /**
+   * Flush the accumulated paste content as one synthetic keypress event.
+   * Called when `paste_end` arrives. Newlines inside the paste are preserved
+   * in the aggregated `sequence` so the buffer layer can split them normally.
+   */
+  private flushPasteAccumulator(): void {
+    if (this.pasteAccumulator.length === 0) return;
+    const aggregated: KeyInfo = {
+      name: "paste",
+      sequence: this.pasteAccumulator,
+      ctrl: false,
+      meta: false,
+      shift: false,
+      insertable: true,
+      isPasted: true,
+    };
+    this.pasteAccumulator = "";
+    for (const listener of this.listeners) {
+      listener(aggregated);
     }
   }
 
@@ -583,11 +620,33 @@ export class KeypressParser {
 
   /**
    * Emit keypress event to all listeners - 发送按键事件给所有监听器
+   *
+   * Issue 121: while `inBracketedPaste` is true, the parser buffers printable
+   * content + newlines into `pasteAccumulator` instead of emitting each char.
+   * `flushPasteAccumulator` then emits the whole paste as one synthetic
+   * keypress event when `paste_end` arrives. This preserves Issue 075's CRLF
+   * normalization (CR/LF both become `\n` inside the accumulator) while
+   * letting Layer 1 threshold logic see the full paste size.
    */
   private emit(key: KeyInfo): void {
     // Inject bracketed paste state into key before emitting - 注入粘贴模式状态到 key
     if (this.inBracketedPaste) {
       key.isPasted = true;
+
+      // Accumulate insertable text and paste-mode newlines instead of emitting.
+      // Other special keys (escape, arrows, etc.) while pasting are dropped
+      // — they are terminal control sequences that don't belong in text.
+      if (key.insertable) {
+        this.pasteAccumulator += key.sequence;
+        return;
+      }
+      if (key.name === "newline") {
+        this.pasteAccumulator += "\n";
+        return;
+      }
+      // Drop any other events during bracketed paste (return/backspace/etc.
+      // should not appear inside a paste body).
+      return;
     }
     for (const listener of this.listeners) {
       listener(key);
