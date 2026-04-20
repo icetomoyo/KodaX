@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import type { KodaXMcpServersConfig } from '../../../types.js';
+import type { McpServersConfig as KodaXMcpServersConfig } from './config.js';
 import { createMcpCapabilityId } from './catalog.js';
 
 const TEST_SERVER_ID = 'demo';

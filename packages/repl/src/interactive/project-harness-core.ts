@@ -40,7 +40,7 @@ import type {
   ProjectHarnessSessionNodeRecord,
   ProjectHarnessVerificationResult,
   ProjectHarnessViolation,
-} from './project-harness.js';
+} from './project-harness-types.js';
 
 function isProjectHarnessCompletionReport(value: unknown): value is ProjectHarnessCompletionReport {
   if (!isRecord(value)) {

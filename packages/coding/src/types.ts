@@ -73,7 +73,12 @@ import type {
 } from '@kodax/agent';
 import type { KodaXReviewScale } from '@kodax/ai';
 import type { CompactionUpdate } from '@kodax/agent';
-import type { KodaXExtensionRuntime } from './extensions/runtime.js';
+// FEATURE_093 (v0.7.24): use the narrow runtime contract from
+// `./extensions/runtime-contract.ts` to avoid `types.ts ↔ extensions/runtime.ts`
+// circular imports. The concrete `KodaXExtensionRuntime` class implements
+// this contract plus ~40 internal methods that consumers do not reach
+// through Options / ToolExecutionContext fields.
+import type { ExtensionRuntimeContract } from './extensions/runtime-contract.js';
 import type {
   FailureStage,
   ResilienceErrorClass,
@@ -313,39 +318,20 @@ export interface KodaXProviderPolicyHints {
   workIntent?: KodaXTaskWorkIntent;
 }
 
-export type KodaXMcpTransport = 'stdio' | 'sse' | 'streamable-http';
-export type KodaXMcpConnectMode = 'lazy' | 'prewarm' | 'disabled';
+// FEATURE_082 (v0.7.24): MCP server configuration moved to `@kodax/mcp`.
+// `KodaX*` aliases re-exported for backward compatibility.
+import type {
+  McpServerConfig,
+  McpServersConfig,
+  McpTransportKind,
+  McpConnectMode,
+} from '@kodax/mcp';
 
-export interface KodaXMcpServerConfig {
-  /** Transport type. Defaults to 'stdio' when omitted. */
-  type?: KodaXMcpTransport;
-  /** stdio: executable command. */
-  command?: string;
-  /** stdio: command arguments. */
-  args?: string[];
-  /** stdio: working directory for the spawned process. */
-  cwd?: string;
-  /** stdio: extra environment variables for the spawned process. */
-  env?: Record<string, string>;
-  /** sse / streamable-http: server endpoint URL. */
-  url?: string;
-  /** sse / streamable-http: extra HTTP headers (e.g. Authorization). */
-  headers?: Record<string, string>;
-  connect?: KodaXMcpConnectMode;
-  startupTimeoutMs?: number;
-  requestTimeoutMs?: number;
-  /** OAuth 2.0 configuration for authenticated MCP servers. */
-  auth?: {
-    readonly type: 'oauth2';
-    readonly clientId: string;
-    readonly authorizationUrl: string;
-    readonly tokenUrl: string;
-    readonly scopes?: readonly string[];
-    readonly redirectPort?: number;
-  };
-}
+export type KodaXMcpTransport = McpTransportKind;
+export type KodaXMcpConnectMode = McpConnectMode;
+export type KodaXMcpServerConfig = McpServerConfig;
 /** Flat map of MCP server configs, keyed under `mcpServers` in config.json. */
-export type KodaXMcpServersConfig = Record<string, KodaXMcpServerConfig>;
+export type KodaXMcpServersConfig = McpServersConfig;
 
 export type KodaXRepoIntelligenceMode =
   | 'auto'
@@ -383,6 +369,12 @@ export interface KodaXRepoIntelligenceTrace {
   capsuleEstimatedTokens?: number;
 }
 
+/**
+ * @deprecated FEATURE_083 (v0.7.24): superseded by `EvidenceSpan` in
+ * `@kodax/tracing`. Scheduled for removal in FEATURE_086 (v0.7.27) as part
+ * of the KodaX prefix cleanup and legacy purge. New code should emit
+ * evidence spans via the `Runner`'s tracer instead.
+ */
 export interface KodaXRepoIntelligenceTraceEvent {
   stage: 'routing' | 'preturn' | 'module' | 'impact' | 'task-snapshot';
   summary: string;
@@ -814,7 +806,7 @@ export interface KodaXOptions {
   session?: KodaXSessionOptions;
   context?: KodaXContextOptions;
   events?: KodaXEvents;
-  extensionRuntime?: KodaXExtensionRuntime;
+  extensionRuntime?: ExtensionRuntimeContract;
   /** AbortSignal for cancelling the API request */
   abortSignal?: AbortSignal;
 }
@@ -1142,7 +1134,7 @@ export interface KodaXToolExecutionContext {
   /** Working directory used to resolve relative paths and execute shell commands. */
   executionCwd?: string;
   /** Shared extension capability runtime used by retrieval-family tools. */
-  extensionRuntime?: KodaXExtensionRuntime;
+  extensionRuntime?: ExtensionRuntimeContract;
   /** Ask user a question interactively (select mode) - 交互式向用户提问 (Issue 069) */
   askUser?: (options: AskUserQuestionOptions) => Promise<string>;
   /** Ask user multiple independent questions sequentially - 多问题顺序提问 */

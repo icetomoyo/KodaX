@@ -1,4 +1,4 @@
-import type { KodaXMcpServerConfig } from '../../../types.js';
+import type { McpServerConfig as KodaXMcpServerConfig } from './config.js';
 import {
   buildCatalogSearchText,
   createMcpCapabilityId,

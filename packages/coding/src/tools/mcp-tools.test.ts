@@ -4,8 +4,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createExtensionRuntime } from '../extensions/runtime.js';
 import type { KodaXToolExecutionContext } from '../types.js';
-import { registerConfiguredMcpCapabilityProvider } from '../capabilities/providers/mcp/provider.js';
-import { createMcpTestServerFixture } from '../capabilities/providers/mcp/test-helpers.js';
+import { registerConfiguredMcpCapabilityProvider } from '../capabilities/providers/mcp-adapter.js';
+import { createMcpTestServerFixture } from '@kodax/mcp';
 import {
   toolMcpCall,
   toolMcpDescribe,

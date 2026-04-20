@@ -3,10 +3,12 @@
  *
  * FEATURE_081 (v0.7.23): Base Session shape. The thick
  * `KodaXSessionLineage` in `@kodax/agent` is re-expressed as a
- * `LineageExtension` over this base — see `packages/agent/src/extensions/lineage.ts`.
+ * `LineageExtension` over this base — see `@kodax/session-lineage`.
  *
- * Status: @experimental — API shape may be refined during v0.7.x. Will be
- * migrated to `@kodax/core` in FEATURE_082 (v0.7.24).
+ * Moved to `@kodax/core` in FEATURE_082 (v0.7.24). `@kodax/coding` retains a
+ * barrel re-export for batteries-included consumers.
+ *
+ * Status: @experimental — API shape may be refined during v0.7.x.
  *
  * Design intent:
  *   - Base Session is a minimal, linearly-appendable log of typed entries.
@@ -47,7 +49,7 @@ export interface MessageEntry extends SessionEntry {
  * Options for forking a session.
  *
  * v0.7.23 exposes only `name` (label for the new fork); structural options
- * (branch-at-entry, shallow copy, etc.) are reserved for FEATURE_082.
+ * (branch-at-entry, shallow copy, etc.) are reserved for later versions.
  */
 export interface SessionForkOptions {
   readonly name?: string;
@@ -117,7 +119,7 @@ const _nextSessionId = (): string => {
 /**
  * In-memory Session suitable for tests, examples, and embedded SDK use. Not
  * durable across process restarts — persistence is provided by coding-specific
- * adapters in `@kodax/session-lineage` (v0.7.24).
+ * adapters in `@kodax/session-lineage` and `@kodax/agent`.
  */
 export function createInMemorySession(opts: InMemorySessionOptions = {}): Session {
   const id = opts.id ?? _nextSessionId();

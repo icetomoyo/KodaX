@@ -14,26 +14,11 @@ import type { Completer, Completion } from '../autocomplete.js';
 import { findCommandSlashIndex } from '../autocomplete.js';
 import { getCommandArguments } from './command-arguments.js';
 
-/**
- * Argument definition for autocomplete
- * 用于自动补全的参数定义
- */
-export interface ArgumentDefinition {
-  /** Argument name/value - 参数名称/值 */
-  name: string;
-  /** Description for display - 显示描述 */
-  description: string;
-  /** Argument type - 参数类型 */
-  type?: 'string' | 'number' | 'boolean' | 'enum';
-  /** Whether this argument is required - 是否必需 */
-  required?: boolean;
-}
-
-/**
- * Command arguments registry type
- * 命令参数注册表类型
- */
-export type CommandArgumentsRegistry = Map<string, ArgumentDefinition[]>;
+// FEATURE_093 (v0.7.24): type declarations moved to `./types.ts` so
+// `command-arguments.ts` can consume them without a back-edge to this file.
+// Re-exported here for backward compatibility with existing consumers.
+export type { ArgumentDefinition, CommandArgumentsRegistry } from './types.js';
+import type { ArgumentDefinition, CommandArgumentsRegistry } from './types.js';
 
 /**
  * Argument Completer implementation

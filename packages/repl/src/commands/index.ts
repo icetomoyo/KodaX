@@ -61,3 +61,4 @@ export function registerAllCommands(registry: CommandRegistry, projectRoot?: str
     console.error('Failed to discover commands:', error);
   }
 }
+

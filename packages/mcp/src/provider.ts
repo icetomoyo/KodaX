@@ -1,13 +1,20 @@
+/**
+ * `McpCapabilityProvider` — implements the Layer A `CapabilityProvider`
+ * contract for an MCP server fleet.
+ *
+ * FEATURE_082 (v0.7.24): moved from
+ * `@kodax/coding/src/capabilities/providers/mcp/provider.ts` to this package.
+ * The coding-specific `registerConfiguredMcpCapabilityProvider` adapter (which
+ * pulls in `KodaXExtensionRuntime`) lives in
+ * `@kodax/coding/src/capabilities/providers/mcp-adapter.ts`.
+ */
+
 import type {
   CapabilityKind,
   CapabilityProvider,
   CapabilityResult,
-} from '../../../extensions/types.js';
-import type { KodaXExtensionRuntime } from '../../../extensions/runtime.js';
-import type {
-  KodaXMcpServerConfig,
-  KodaXMcpServersConfig,
-} from '../../../types.js';
+} from '@kodax/core';
+import type { McpServerConfig, McpServersConfig } from './config.js';
 import {
   defaultMcpCacheDir,
   parseMcpCapabilityId,
@@ -19,13 +26,13 @@ import {
   type McpServerRuntimeDiagnostics,
 } from './runtime.js';
 
-interface McpProviderOptions {
+export interface McpProviderOptions {
   cacheDir?: string;
 }
 
 function enabledServerEntries(
-  servers: KodaXMcpServersConfig | undefined,
-): Array<[string, KodaXMcpServerConfig]> {
+  servers: McpServersConfig | undefined,
+): Array<[string, McpServerConfig]> {
   return Object.entries(servers ?? {})
     .filter(([, serverConfig]) => (serverConfig.connect ?? 'lazy') !== 'disabled');
 }
@@ -37,7 +44,7 @@ export class McpCapabilityProvider implements CapabilityProvider {
   private readonly cacheDir: string;
 
   constructor(
-    servers: KodaXMcpServersConfig | undefined,
+    servers: McpServersConfig | undefined,
     options: McpProviderOptions = {},
   ) {
     this.cacheDir = options.cacheDir ?? defaultMcpCacheDir();
@@ -263,25 +270,4 @@ export class McpCapabilityProvider implements CapabilityProvider {
     }
     return runtime;
   }
-}
-
-export async function registerConfiguredMcpCapabilityProvider(
-  runtime: KodaXExtensionRuntime,
-  servers: KodaXMcpServersConfig | undefined,
-  options: McpProviderOptions = {},
-): Promise<McpCapabilityProvider | undefined> {
-  const provider = new McpCapabilityProvider(servers, options);
-  if (!provider.hasActiveServers()) {
-    return undefined;
-  }
-
-  runtime.registerCapabilityProvider(provider, {
-    source: {
-      kind: 'runtime',
-      id: 'runtime:capability:mcp',
-      label: 'MCP Capability Provider',
-    },
-  });
-  await provider.prewarm();
-  return provider;
 }

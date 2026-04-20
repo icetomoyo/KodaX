@@ -4,9 +4,11 @@
  * FEATURE_080 (v0.7.23): Agent-as-data types. Declarative dataclass shape.
  * The runtime counterpart is `Runner` in `./runner.ts`.
  *
- * Status: @experimental — API shape may be refined during v0.7.x. Will be
- * migrated to `@kodax/core` in FEATURE_082 (v0.7.24) and reused by the
- * task-engine rewrite in FEATURE_084 (v0.7.26).
+ * Moved to `@kodax/core` in FEATURE_082 (v0.7.24). `@kodax/coding` retains a
+ * barrel re-export for batteries-included consumers.
+ *
+ * Status: @experimental — API shape may be refined during v0.7.x. Used by
+ * the task-engine rewrite in FEATURE_084 (v0.7.26).
  *
  * Guardrail and AgentReasoningProfile are declared here but their runtime
  * behavior is deferred:

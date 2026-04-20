@@ -20,6 +20,9 @@
   "references": [
     { "path": "../ai" },
     { "path": "../agent" },
+    { "path": "../core" },
+    { "path": "../mcp" },
+    { "path": "../session-lineage" },
     { "path": "../skills" }
   ],
   "include": ["src/**/*.ts"],

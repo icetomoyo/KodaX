@@ -16,33 +16,15 @@ import type {
 import type { ExecOptions, ExecResult, WebhookOptions, WebhookResult } from './helpers.js';
 export type { ExecOptions, ExecResult, WebhookOptions, WebhookResult } from './helpers.js';
 
-export type CapabilityKind = 'tool' | 'resource' | 'prompt';
-
-export interface CapabilityResult {
-  kind: CapabilityKind;
-  content?: string;
-  structuredContent?: unknown;
-  evidence?: unknown[];
-  artifacts?: unknown[];
-  metadata?: Record<string, unknown>;
-}
-
-export interface CapabilityProvider {
-  id: string;
-  kinds: CapabilityKind[];
-  search?: (
-    query: string,
-    options?: { kind?: CapabilityKind; limit?: number; server?: string },
-  ) => Promise<unknown[]>;
-  describe?: (id: string) => Promise<unknown>;
-  execute?: (id: string, input: Record<string, unknown>) => Promise<CapabilityResult>;
-  read?: (id: string, options?: Record<string, unknown>) => Promise<CapabilityResult>;
-  getPrompt?: (id: string, args?: Record<string, unknown>) => Promise<unknown>;
-  getPromptContext?: () => Promise<string | undefined> | string | undefined;
-  getDiagnostics?: () => Record<string, unknown> | undefined;
-  refresh?: () => Promise<void>;
-  dispose?: () => Promise<void>;
-}
+// FEATURE_082 (v0.7.24): capability contract lives in `@kodax/core` so
+// third-party providers (MCP, RAG, custom indexes, …) can implement it
+// without a coding dependency. Re-exported here for backward compatibility.
+import type {
+  CapabilityKind,
+  CapabilityProvider,
+  CapabilityResult,
+} from '@kodax/core';
+export type { CapabilityKind, CapabilityProvider, CapabilityResult };
 
 export interface ModelProviderRegistration {
   name: string;

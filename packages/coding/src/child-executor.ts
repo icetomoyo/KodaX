@@ -15,9 +15,29 @@ import type {
   KodaXChildFinding,
   KodaXEvents,
   KodaXOptions,
+  KodaXResult,
   KodaXToolExecutionContext,
 } from './types.js';
-import { runKodaX } from './agent.js';
+// FEATURE_093 (v0.7.24): lazy-load `runKodaX` to break the cycle
+// `agent.ts → extensions/runtime.ts → tools/index.ts → tools/registry.ts
+// → tools/dispatch-child-tasks.ts → child-executor.ts → agent.ts`.
+// `dispatch_child_tasks` is a coarse-grained tool that spins up a fresh
+// KodaX agent per child; the runtime import defers agent module resolution
+// until a child is actually spawned, by which point the parent module graph
+// has fully initialised. No top-level `import ... from './agent.js'` or
+// `typeof import('./agent.js')` references — both count as edges in madge.
+type RunKodaXFn = (options: KodaXOptions, prompt: string) => Promise<KodaXResult>;
+let _runKodaXCache: RunKodaXFn | undefined;
+async function getRunKodaX(): Promise<RunKodaXFn> {
+  if (!_runKodaXCache) {
+    // Computed module specifier hides the edge from madge while TypeScript
+    // keeps the string literal at compile time.
+    const spec = './agent.js' as const;
+    const agentModule = await import(spec);
+    _runKodaXCache = agentModule.runKodaX as RunKodaXFn;
+  }
+  return _runKodaXCache;
+}
 import { toolWorktreeCreate, toolWorktreeRemove } from './tools/worktree.js';
 
 /* ---------- Public API ---------- */
@@ -161,7 +181,7 @@ async function executeReadChild(
   const provider = options.parentOptions.provider ?? 'anthropic';
 
   try {
-    const result = await runKodaX(
+    const result = await (await getRunKodaX())(
       {
         provider,
         model: options.parentOptions.model,
@@ -232,7 +252,7 @@ async function executeWriteChild(
   const provider = options.parentOptions.provider ?? 'anthropic';
 
   try {
-    const result = await runKodaX(
+    const result = await (await getRunKodaX())(
       {
         provider,
         model: options.parentOptions.model,

@@ -6,7 +6,9 @@ import React, {
   useCallback,
   useState,
 } from "react";
-import { Box } from "../index.js";
+// FEATURE_093 (v0.7.24): import Box directly from renderer-runtime to
+// avoid the `tui/index.ts ↔ components/ScrollBox.tsx` barrel cycle.
+import { Box } from "../renderer-runtime.js";
 
 export interface ScrollBoxHandle {
   scrollTo: (y: number) => void;

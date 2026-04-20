@@ -6,26 +6,28 @@
  * agent, so `Runner.run(createDefaultCodingAgent(), prompt, { presetOptions })`
  * routes through the existing task engine with zero behavior change.
  *
- * Importing from `./runner.js` + `./agent.js` alone does NOT load `runKodaX`.
- * Consumers who only need the generic Agent/Runner types should import from
- * those files (or from the `primitives/` barrel) directly and avoid this
- * module.
+ * FEATURE_082 (v0.7.24): Layer A primitives moved to `@kodax/core`. This
+ * file stays in `@kodax/coding` because it binds the Runner to the
+ * coding-specific `runKodaX` runtime — moving it up would pull coding into
+ * core and create a circular dependency.
+ *
+ * Importing `@kodax/core` alone does NOT load `runKodaX`. Consumers who only
+ * need the generic Agent/Runner types should import from `@kodax/core` and
+ * avoid this module.
  */
-
-import { runKodaX } from '../agent.js';
-import type { KodaXOptions, KodaXResult } from '../types.js';
 
 import {
   createAgent,
-  type Agent,
-  type AgentMessage,
-} from './agent.js';
-import {
   extractAssistantTextFromMessage,
   registerPresetDispatcher,
+  type Agent,
+  type AgentMessage,
   type PresetDispatcher,
   type RunResult,
-} from './runner.js';
+} from '@kodax/core';
+
+import { runKodaX } from './agent.js';
+import type { KodaXOptions, KodaXResult } from './types.js';
 
 /** Stable name used as the Runner dispatch key for the built-in coding preset. */
 export const DEFAULT_CODING_AGENT_NAME = 'kodax/coding/default';
@@ -61,13 +63,40 @@ function extractFinalAssistantText(result: KodaXResult): string {
   return '';
 }
 
-const codingDispatcher: PresetDispatcher = async (_agent, input, opts) => {
+const codingDispatcher: PresetDispatcher = async (_agent, input, opts, tracingContext) => {
   const presetOptions = (opts?.presetOptions ?? {}) as KodaXOptions;
   const merged: KodaXOptions = opts?.abortSignal
     ? { ...presetOptions, abortSignal: opts.abortSignal }
     : presetOptions;
   const prompt = extractPrompt(input);
-  const result = await runKodaX(merged, prompt);
+
+  // FEATURE_083 (v0.7.24): record a GenerationSpan around the `runKodaX`
+  // call when a tracing context is supplied. The SA path executes a full
+  // reasoning+tool loop internally; this span represents the boundary call
+  // and carries the provider/model declared on the preset options.
+  const genSpan = tracingContext
+    ? tracingContext.agentSpan.addChild('coding:runKodaX', {
+        kind: 'generation',
+        agentName: DEFAULT_CODING_AGENT_NAME,
+        provider: merged.provider ?? 'unknown',
+        model: merged.model ?? 'unknown',
+      })
+    : null;
+
+  let result: Awaited<ReturnType<typeof runKodaX>>;
+  try {
+    result = await runKodaX(merged, prompt);
+  } catch (err) {
+    if (genSpan) {
+      genSpan.setError(err instanceof Error ? err : new Error(String(err)));
+      genSpan.end();
+    }
+    throw err;
+  }
+  if (genSpan) {
+    genSpan.end();
+  }
+
   const output = extractFinalAssistantText(result);
   // Intentionally omit `data`: the full `KodaXResult` shape is a coding
   // preset implementation detail and should not leak through the Layer A

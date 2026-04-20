@@ -464,10 +464,13 @@ export {
 export {
   runKodaX,
   checkPromiseSignal,
-  KodaXClient,
   cleanupIncompleteToolCalls,
   validateAndFixToolHistory,
 } from './agent.js';
+
+// FEATURE_093 (v0.7.24): KodaXClient imported directly from client.ts to
+// avoid re-creating the agent ↔ client cycle at the barrel.
+export { KodaXClient } from './client.js';
 
 export {
   buildFanoutSchedulerPlan,
@@ -667,8 +670,12 @@ export { exec, webhook } from './extensions/helpers.js';
 
 // ============== Layer A Primitives (FEATURE_080 + FEATURE_081, v0.7.23, @experimental) ==============
 // These types & classes are migrating to @kodax/core in v0.7.24 (FEATURE_082).
+// FEATURE_082 (v0.7.24): Layer A primitives moved to `@kodax/core`. These
+// barrel re-exports preserve the batteries-included shape of @kodax/coding
+// — not a deprecation shim, they stay permanently.
+//
 // The Option-Y dog-food registers the default coding dispatcher as a side
-// effect of importing `./primitives/coding-preset.js`.
+// effect of importing `./coding-preset.js`.
 
 export type {
   Agent,
@@ -678,69 +685,90 @@ export type {
   Guardrail,
   Handoff,
   ReasoningDepth,
-} from './primitives/agent.js';
-
-export { createAgent, createHandoff } from './primitives/agent.js';
-
-export type {
   InMemorySessionOptions,
   MessageEntry,
   Session,
   SessionEntry,
   SessionExtension,
   SessionForkOptions,
-} from './primitives/session.js';
-
-export { createInMemorySession } from './primitives/session.js';
-
-export type {
   CompactionContext,
   CompactionEntry,
   CompactionEntryPayload,
   CompactionPolicy,
   CompactionResult,
   DefaultSummaryCompactionOptions,
-} from './primitives/compaction.js';
-
-export { DefaultSummaryCompaction } from './primitives/compaction.js';
-
-export type {
   PresetDispatcher,
   RunEvent,
   RunOptions,
   RunResult,
-} from './primitives/runner.js';
+} from '@kodax/core';
 
-export { Runner, registerPresetDispatcher } from './primitives/runner.js';
+export {
+  createAgent,
+  createHandoff,
+  createInMemorySession,
+  DefaultSummaryCompaction,
+  Runner,
+  registerPresetDispatcher,
+  SCOUT_AGENT_NAME,
+  PLANNER_AGENT_NAME,
+  GENERATOR_AGENT_NAME,
+  EVALUATOR_AGENT_NAME,
+  TASK_ENGINE_ROLE_AGENTS,
+  scoutAgent,
+  plannerAgent,
+  generatorAgent,
+  evaluatorAgent,
+} from '@kodax/core';
 
 export {
   DEFAULT_CODING_AGENT_NAME,
   createDefaultCodingAgent,
-} from './primitives/coding-preset.js';
+} from './coding-preset.js';
 
-export {
-  EVALUATOR_AGENT_NAME,
-  GENERATOR_AGENT_NAME,
-  PLANNER_AGENT_NAME,
-  SCOUT_AGENT_NAME,
-  TASK_ENGINE_ROLE_AGENTS,
-  evaluatorAgent,
-  generatorAgent,
-  plannerAgent,
-  scoutAgent,
-} from './primitives/task-engine-agents.js';
-
+// FEATURE_082 (v0.7.24): LineageExtension and LineageCompaction moved to
+// `@kodax/session-lineage`. Barrel re-export kept for
+// batteries-included consumers; not a deprecation shim.
 export type {
   LineageArtifactLedgerPayload,
   LineageEntryType,
   LineageLabelPayload,
   LineageTreeNode,
-} from './extensions/lineage.js';
+  LineageCompactionDelegates,
+} from '@kodax/session-lineage';
 
-export { LINEAGE_ENTRY_TYPES, LineageExtension } from './extensions/lineage.js';
+export { LINEAGE_ENTRY_TYPES, LineageExtension, LineageCompaction } from '@kodax/session-lineage';
 
 // NOTE: `KodaXSessionLineage` is exported above (line ~90) alongside the
 // legacy session types. As of FEATURE_081 (v0.7.23) it is superseded by
 // `Session` + `LineageExtension`; scheduled for removal in FEATURE_086
 // (v0.7.27) alongside the `KodaX*` prefix cleanup.
 export type { ExecOptions, ExecResult, WebhookOptions, WebhookResult } from './extensions/helpers.js';
+
+// FEATURE_082 (v0.7.24): MCP provider moved to `@kodax/mcp`. Barrel
+// re-export kept for batteries-included consumers; not a deprecation shim.
+export type {
+  McpServerConfig,
+  McpServersConfig,
+  McpTransportKind,
+  McpConnectMode,
+  McpCapabilityKind,
+  McpCapabilityRisk,
+  McpCatalogItem,
+  McpCapabilityDescriptor,
+  McpServerCatalogSnapshot,
+  McpServerRuntimeDiagnostics,
+  McpProviderOptions,
+  McpTransport,
+  McpTransportEvents,
+} from '@kodax/mcp';
+export {
+  McpCapabilityProvider,
+  McpServerRuntime,
+  createMcpTransport,
+  defaultMcpCacheDir,
+  createMcpCapabilityId,
+  parseMcpCapabilityId,
+  searchMcpCatalog,
+  getMcpCachePaths,
+} from '@kodax/mcp';

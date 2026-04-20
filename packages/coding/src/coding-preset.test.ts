@@ -10,7 +10,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { Runner, registerPresetDispatcher, type PresetDispatcher } from './runner.js';
+import { Runner, registerPresetDispatcher, type PresetDispatcher } from '@kodax/core';
 import { DEFAULT_CODING_AGENT_NAME, createDefaultCodingAgent } from './coding-preset.js';
 
 describe('coding-preset', () => {
@@ -29,8 +29,11 @@ describe('coding-preset', () => {
     const unregister = registerPresetDispatcher(DEFAULT_CODING_AGENT_NAME, mock);
     try {
       const agent = createDefaultCodingAgent();
+      // Skip tracing so the dispatcher sees the 3-arg backward-compatible
+      // shape; tracing wiring is exercised in packages/tracing tests.
       const result = await Runner.run(agent, 'implement thing', {
         presetOptions: { provider: 'test-provider' },
+        tracer: null,
       });
       expect(result.output).toBe('mocked coding output');
       expect(result.sessionId).toBe('mock-session');
@@ -38,7 +41,7 @@ describe('coding-preset', () => {
       expect(mock).toHaveBeenCalledWith(
         agent,
         'implement thing',
-        { presetOptions: { provider: 'test-provider' } },
+        { presetOptions: { provider: 'test-provider' }, tracer: null },
       );
     } finally {
       unregister();

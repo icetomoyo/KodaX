@@ -13,9 +13,12 @@
  *      loop, no extensions, no managed-task harness — those arrive with
  *      FEATURE_084 (v0.7.26).
  *
- * Status: @experimental. API shape may be refined during v0.7.x and will be
- * migrated to `@kodax/core` in FEATURE_082 (v0.7.24).
+ * Status: @experimental. Moved to `@kodax/core` in FEATURE_082 (v0.7.24).
+ * `@kodax/coding` retains a barrel re-export for batteries-included consumers.
  */
+
+import type { Span, Tracer, Trace } from '@kodax/tracing';
+import { defaultTracer } from '@kodax/tracing';
 
 import type { Agent, AgentMessage } from './agent.js';
 import type { Session } from './session.js';
@@ -47,6 +50,18 @@ export interface RunOptions {
    * Abort signal forwarded to preset dispatchers that honor it.
    */
   readonly abortSignal?: AbortSignal;
+  /**
+   * FEATURE_083 (v0.7.24): tracer used to record AgentSpan / GenerationSpan /
+   * ToolCallSpan / HandoffSpan for this run. Defaults to `defaultTracer` when
+   * omitted. Pass `null` to disable tracing for this call.
+   */
+  readonly tracer?: Tracer | null;
+  /**
+   * When supplied, the run attaches its AgentSpan as a child of this trace's
+   * root span instead of starting a new trace. Useful when an outer Agent
+   * is orchestrating sub-runs and wants one trace per user request.
+   */
+  readonly trace?: Trace;
 }
 
 /**
@@ -70,13 +85,29 @@ export type RunEvent<TData = unknown> =
   | { readonly kind: 'error'; readonly error: Error };
 
 /**
+ * Tracing context handed to preset dispatchers so they can attach richer
+ * spans (e.g. GenerationSpan, ToolCallSpan) under the Runner's AgentSpan.
+ *
+ * FEATURE_083 (v0.7.24): added in Slice 8 to let the coding preset emit
+ * the AgentSpan lifecycle under the same trace as the Runner entry point.
+ */
+export interface PresetTracingContext {
+  readonly tracer: Tracer;
+  readonly trace: Trace;
+  readonly agentSpan: Span;
+}
+
+/**
  * Preset dispatcher signature. Registered via `registerPresetDispatcher` and
- * keyed on `Agent.name`.
+ * keyed on `Agent.name`. The optional fourth argument carries tracing
+ * context created by the Runner; dispatchers may emit child spans under
+ * `tracingContext.agentSpan`.
  */
 export type PresetDispatcher = (
   agent: Agent,
   input: string | readonly AgentMessage[],
   opts: RunOptions | undefined,
+  tracingContext?: PresetTracingContext,
 ) => Promise<RunResult>;
 
 const presetDispatchers = new Map<string, PresetDispatcher>();
@@ -153,6 +184,7 @@ async function genericRun<TData>(
   agent: Agent,
   input: string | readonly AgentMessage[],
   opts: RunOptions | undefined,
+  agentSpan: Span | null,
 ): Promise<RunResult<TData>> {
   if (!opts?.llm) {
     const toolHint = agent.tools && agent.tools.length > 0
@@ -176,7 +208,32 @@ async function genericRun<TData>(
     }
   }
 
-  const reply = await opts.llm([...transcript], agent);
+  // Emit a GenerationSpan around the LLM callback. The callback itself is
+  // opaque to the Runner (it could hit Anthropic, OpenAI, a local model, ...)
+  // so we only record the agent/provider/model shape declared on the Agent.
+  const genSpan = agentSpan
+    ? agentSpan.addChild(`generation:${agent.name}`, {
+        kind: 'generation',
+        agentName: agent.name,
+        provider: agent.provider ?? 'unknown',
+        model: agent.model ?? 'unknown',
+        inputMessages: transcript.length,
+      })
+    : null;
+  let reply: string;
+  try {
+    reply = await opts.llm([...transcript], agent);
+  } catch (err) {
+    if (genSpan) {
+      genSpan.setError(err instanceof Error ? err : new Error(String(err)));
+      genSpan.end();
+    }
+    throw err;
+  }
+  if (genSpan) {
+    genSpan.end();
+  }
+
   const assistantMessage: AgentMessage = { role: 'assistant', content: reply };
   transcript.push(assistantMessage);
 
@@ -198,17 +255,69 @@ export class Runner {
   /**
    * Run an agent to completion. Resolves with the final output plus the
    * full transcript.
+   *
+   * FEATURE_083 (v0.7.24): emits an AgentSpan around every run and a
+   * GenerationSpan around the underlying LLM call in the generic path.
+   * Preset dispatchers receive a `PresetTracingContext` so they can attach
+   * richer spans under the AgentSpan. Pass `opts.tracer = null` to skip
+   * tracing entirely for performance-sensitive calls.
    */
   static async run<TData = unknown>(
     agent: Agent,
     input: string | readonly AgentMessage[],
     opts?: RunOptions,
   ): Promise<RunResult<TData>> {
-    const preset = presetDispatchers.get(agent.name);
-    if (preset) {
-      return preset(agent, input, opts) as Promise<RunResult<TData>>;
+    const tracer = opts?.tracer === null ? null : opts?.tracer ?? defaultTracer;
+
+    if (!tracer) {
+      // Tracing disabled — fall through to the no-span fast path.
+      const preset = presetDispatchers.get(agent.name);
+      if (preset) {
+        return preset(agent, input, opts) as Promise<RunResult<TData>>;
+      }
+      return genericRun<TData>(agent, input, opts, null);
     }
-    return genericRun<TData>(agent, input, opts);
+
+    const ownsTrace = !opts?.trace;
+    const trace = opts?.trace ?? tracer.startTrace({
+      name: `run:${agent.name}`,
+      rootSpanData: {
+        kind: 'agent',
+        agentName: agent.name,
+        model: agent.model,
+        provider: agent.provider,
+        tools: agent.tools?.map((t) => (t as { name?: string }).name ?? 'anonymous'),
+      },
+    });
+    const agentSpan = ownsTrace
+      ? trace.rootSpan
+      : trace.rootSpan.addChild(`agent:${agent.name}`, {
+          kind: 'agent',
+          agentName: agent.name,
+          model: agent.model,
+          provider: agent.provider,
+          tools: agent.tools?.map((t) => (t as { name?: string }).name ?? 'anonymous'),
+        });
+
+    try {
+      const preset = presetDispatchers.get(agent.name);
+      let result: RunResult;
+      if (preset) {
+        result = await preset(agent, input, opts, { tracer, trace, agentSpan });
+      } else {
+        result = await genericRun<TData>(agent, input, opts, agentSpan);
+      }
+      return result as RunResult<TData>;
+    } catch (err) {
+      agentSpan.setError(err instanceof Error ? err : new Error(String(err)));
+      throw err;
+    } finally {
+      if (!ownsTrace) {
+        agentSpan.end();
+      } else {
+        trace.end();
+      }
+    }
   }
 
   /**

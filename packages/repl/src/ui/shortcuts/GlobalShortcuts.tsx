@@ -13,7 +13,9 @@ import {
   KODAX_REASONING_MODE_SEQUENCE,
   type KodaXReasoningMode,
 } from '@kodax/coding';
-import { useShortcut } from './index.js';
+// FEATURE_093 (v0.7.24): import from concrete module, not the barrel,
+// to break the `ui/shortcuts/index.ts ↔ ui/shortcuts/GlobalShortcuts.tsx` cycle.
+import { useShortcut } from './useShortcut.js';
 import type { CurrentConfig } from '../../interactive/commands.js';
 import type { PermissionMode } from '../../permission/types.js';
 import { saveConfig } from '../../common/utils.js';

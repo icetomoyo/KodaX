@@ -1,5 +1,7 @@
 import React from "react";
-import { Box, Text } from "../index.js";
+// FEATURE_093 (v0.7.24): import Box/Text directly from renderer-runtime to
+// avoid the `tui/index.ts ↔ components/FullscreenLayout.tsx` barrel cycle.
+import { Box, Text } from "../renderer-runtime.js";
 import { ScrollBox, type ScrollBoxHandle, type ScrollBoxWindow } from "./ScrollBox.js";
 import {
   measureFullscreenChromeSlotRows,

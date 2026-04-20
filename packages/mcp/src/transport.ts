@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
-import type { KodaXMcpServerConfig } from '../../../types.js';
+import type { McpServerConfig as KodaXMcpServerConfig } from './config.js';
 
 // ---------------------------------------------------------------------------
 // Transport interface

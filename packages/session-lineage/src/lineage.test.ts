@@ -18,7 +18,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { createInMemorySession } from '../primitives/session.js';
+import { createInMemorySession } from '@kodax/core';
 import {
   LINEAGE_ENTRY_TYPES,
   LineageExtension,

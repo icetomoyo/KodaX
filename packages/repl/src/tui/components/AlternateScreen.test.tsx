@@ -29,7 +29,10 @@ const mocks = vi.hoisted(() => {
   };
 });
 
-vi.mock("../index.js", () => ({
+// FEATURE_093 (v0.7.24): AlternateScreen now imports from
+// ../renderer-runtime.js directly (not the barrel) to break the tui cycle.
+// Mock the concrete path so the stubs are picked up.
+vi.mock("../renderer-runtime.js", () => ({
   Box: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   useTerminalOutput: () => mocks.output,
   useTerminalSize: () => ({ rows: 40, columns: 120 }),

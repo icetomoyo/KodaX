@@ -105,11 +105,21 @@ describe('Runner', () => {
         instructions: 'ignored',
       });
 
-      const result = await Runner.run(agent, 'hi', { presetOptions: { flag: true } });
+      // Pass `tracer: null` so the Runner skips the tracing context and
+      // invokes the dispatcher with the 3-arg backward-compatible shape.
+      // Tracing-aware dispatch behavior is covered in the tracing tests.
+      const result = await Runner.run(agent, 'hi', {
+        presetOptions: { flag: true },
+        tracer: null,
+      });
       expect(result.output).toBe('preset output');
       expect(result.sessionId).toBe('preset-session-1');
       expect(dispatcher).toHaveBeenCalledTimes(1);
-      expect(dispatcher).toHaveBeenCalledWith(agent, 'hi', { presetOptions: { flag: true } });
+      expect(dispatcher).toHaveBeenCalledWith(
+        agent,
+        'hi',
+        { presetOptions: { flag: true }, tracer: null },
+      );
     });
 
     it('unregister function stops the dispatcher from matching', async () => {
@@ -123,6 +133,60 @@ describe('Runner', () => {
       await expect(Runner.run(agent, 'hi'))
         .rejects.toThrow(/no registered preset dispatcher/);
       expect(dispatcher).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('tracing integration (FEATURE_083)', () => {
+    it('emits an AgentSpan + GenerationSpan around the generic path', async () => {
+      const { Tracer, addTracingProcessor, setTracingProcessors } = await import('@kodax/tracing');
+      setTracingProcessors([]);
+      const startedSpans: string[] = [];
+      const endedSpans: string[] = [];
+      addTracingProcessor({
+        onSpanStart: (span) => startedSpans.push(`${span.name}:${span.data.kind}`),
+        onSpanEnd: (span) => endedSpans.push(`${span.name}:${span.data.kind}`),
+        onTraceEnd: () => { /* noop */ },
+      });
+
+      const agent = createAgent({
+        name: 'traced-agent',
+        instructions: 'sys',
+        provider: 'mock-provider',
+        model: 'mock-model',
+      });
+      const tracer = new Tracer();
+
+      await Runner.run(agent, 'hi', {
+        llm: async () => 'reply',
+        tracer,
+      });
+
+      setTracingProcessors([]);
+
+      // Root AgentSpan, nested GenerationSpan under it.
+      expect(startedSpans).toContain('run:traced-agent:agent');
+      expect(startedSpans).toContain('generation:traced-agent:generation');
+      expect(endedSpans).toContain('generation:traced-agent:generation');
+      expect(endedSpans).toContain('run:traced-agent:agent');
+    });
+
+    it('passes a PresetTracingContext to preset dispatchers when tracer is active', async () => {
+      const { Tracer } = await import('@kodax/tracing');
+      let receivedTracingContext: unknown;
+      const dispatcher: PresetDispatcher = vi.fn(async (_a, _i, _opts, ctx) => {
+        receivedTracingContext = ctx;
+        return {
+          output: 'preset',
+          messages: [{ role: 'assistant' as const, content: 'preset' }],
+        };
+      });
+      registerPresetDispatcher('traced-preset', dispatcher);
+      const agent = createAgent({ name: 'traced-preset', instructions: 'sys' });
+
+      await Runner.run(agent, 'hi', { tracer: new Tracer() });
+
+      expect(receivedTracingContext).toBeDefined();
+      expect((receivedTracingContext as { agentSpan: unknown }).agentSpan).toBeDefined();
     });
   });
 

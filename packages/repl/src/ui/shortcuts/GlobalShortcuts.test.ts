@@ -9,7 +9,10 @@ const {
   saveConfigMock: vi.fn(),
 }));
 
-vi.mock('./index.js', () => ({
+// FEATURE_093 (v0.7.24): GlobalShortcuts now imports `useShortcut` directly
+// from `./useShortcut.js` rather than the barrel `./index.js` to avoid the
+// cycle — mock the concrete path so the hook is intercepted at the source.
+vi.mock('./useShortcut.js', () => ({
   useShortcut: (actionId: string, handler: () => boolean) => {
     shortcutHandlers.set(actionId, handler);
   },

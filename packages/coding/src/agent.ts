@@ -26,7 +26,11 @@ import type { KodaXMessage, KodaXStreamResult } from '@kodax/ai';
 import { createCostTracker, recordUsage, getSummary, formatCostReport, type CostTracker } from '@kodax/ai';
 import path from 'path';
 import fsSync from 'fs';
-import { KodaXClient } from './client.js';
+// FEATURE_093 (v0.7.24): `KodaXClient` is only re-exported from this module
+// for backward compatibility. Importing it here creates a cycle
+// (agent ↔ client, since client imports `runKodaX` from this file). The
+// public barrel `index.ts` re-exports `KodaXClient` directly from
+// `./client.js` instead — see line ~592.
 import { resolveProvider } from './providers/index.js';
 import {
   executeTool,
@@ -108,6 +112,7 @@ import {
   getActiveExtensionRuntime,
   runActiveExtensionHook,
   setActiveExtensionRuntime,
+  KodaXExtensionRuntime,
 } from './extensions/runtime.js';
 
 const execAsync = promisify(exec);
@@ -1419,9 +1424,13 @@ export async function runKodaX(
   prompt: string
 ): Promise<KodaXResult> {
   const previousActiveRuntime = getActiveExtensionRuntime();
-  const runtime = options.extensionRuntime ?? previousActiveRuntime;
-  if (options.extensionRuntime && options.extensionRuntime !== previousActiveRuntime) {
-    setActiveExtensionRuntime(options.extensionRuntime);
+  // FEATURE_093 (v0.7.24): `options.extensionRuntime` is typed as the narrow
+  // `ExtensionRuntimeContract` in `types.ts` to break the types↔runtime
+  // cycle, but agent internals consume the full class surface. Cast here at
+  // the single entry point rather than at every call site.
+  const runtime = (options.extensionRuntime as KodaXExtensionRuntime | undefined) ?? previousActiveRuntime;
+  if (runtime && runtime !== previousActiveRuntime) {
+    setActiveExtensionRuntime(runtime);
   }
   let releaseRuntimeBinding: (() => void) | undefined;
   try {
@@ -2815,7 +2824,7 @@ export async function runKodaX(
   });
   } finally {
     releaseRuntimeBinding?.();
-    if (options.extensionRuntime && options.extensionRuntime !== previousActiveRuntime) {
+    if (options.extensionRuntime && (options.extensionRuntime as KodaXExtensionRuntime) !== previousActiveRuntime) {
       setActiveExtensionRuntime(previousActiveRuntime);
     }
   }
@@ -3046,7 +3055,9 @@ async function getGitRoot(): Promise<string | null> {
 }
 
 // 导出 Client 类
-export { KodaXClient } from './client.js';
+// FEATURE_093 (v0.7.24): KodaXClient re-export removed from agent.ts to
+// break the agent ↔ client cycle. Barrel `index.ts` imports KodaXClient
+// directly from './client.js'.
 
 // 导出工具函数
 export { cleanupIncompleteToolCalls, validateAndFixToolHistory };

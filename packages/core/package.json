@@ -1,0 +1,39 @@
+{
+  "name": "@kodax/core",
+  "version": "0.7.24",
+  "description": "KodaX Core - Layer A primitives (Agent / Handoff / Runner / Guardrail / Session / CompactionPolicy)",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsc --watch",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@kodax/ai": "*",
+    "@kodax/tracing": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "typescript": "^5.7.3",
+    "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/icetomoyo/KodaX.git",
+    "directory": "packages/core"
+  },
+  "license": "Apache-2.0"
+}

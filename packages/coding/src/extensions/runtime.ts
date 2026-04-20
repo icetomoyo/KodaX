@@ -153,7 +153,9 @@ function isJsonValue(value: unknown): value is KodaXJsonValue {
   return Object.values(value).every(isJsonValue);
 }
 
-export class KodaXExtensionRuntime {
+import type { ExtensionRuntimeContract } from './runtime-contract.js';
+
+export class KodaXExtensionRuntime implements ExtensionRuntimeContract {
   private readonly capabilityProviders = new Map<string, RuntimeRecord<CapabilityProvider>[]>();
   private readonly commands = new Map<string, RuntimeRecord<ExtensionCommandDefinition>[]>();
   private readonly eventHandlers = new Map<string, RuntimeRecord<(payload: unknown) => Promise<void> | void>[]>();

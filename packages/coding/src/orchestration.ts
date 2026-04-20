@@ -70,6 +70,12 @@ export interface OrchestrationTaskContext<TTask extends OrchestrationWorkerSpec 
 export type OrchestrationWorkerRunner<TTask extends OrchestrationWorkerSpec = OrchestrationWorkerSpec, TOutput = unknown> =
   (task: TTask, context: OrchestrationTaskContext<TTask, TOutput>) => Promise<OrchestrationWorkerResult<TOutput>>;
 
+/**
+ * @deprecated FEATURE_083 (v0.7.24): superseded by `AgentSpan` / `HandoffSpan`
+ * in `@kodax/tracing`. Scheduled for removal in FEATURE_086 (v0.7.27) as part
+ * of the KodaX prefix cleanup and legacy purge. New code should emit spans
+ * via the `Runner`'s tracer instead of constructing these events directly.
+ */
 export interface OrchestrationTraceEvent {
   type:
     | 'run_started'

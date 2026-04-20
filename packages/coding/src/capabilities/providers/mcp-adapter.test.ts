@@ -2,10 +2,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createExtensionRuntime } from '../../../extensions/runtime.js';
-import { getMcpCachePaths } from './catalog.js';
-import { registerConfiguredMcpCapabilityProvider } from './provider.js';
-import { createMcpTestServerFixture } from './test-helpers.js';
+import { createMcpTestServerFixture, getMcpCachePaths } from '@kodax/mcp';
+import { createExtensionRuntime } from '../../extensions/runtime.js';
+import { registerConfiguredMcpCapabilityProvider } from './mcp-adapter.js';
 
 describe('registerConfiguredMcpCapabilityProvider', () => {
   const tempDirs: string[] = [];

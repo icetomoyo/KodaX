@@ -5,27 +5,23 @@
  * (label, rewind, compaction ledger, branch summary) as a
  * `SessionExtension` over the base `Session` primitive.
  *
- * Placement note: the design doc initially targeted
- * `packages/agent/src/extensions/lineage.ts`. That target would require the
- * `@kodax/agent` package to depend on `SessionExtension` defined in
- * `@kodax/coding`, which is a circular dependency (coding already depends on
- * agent). The v0.7.23 placement is therefore `packages/coding/src/extensions/`.
- * FEATURE_082 (v0.7.24) moves both the base primitive and this extension into
- * `@kodax/session-lineage`, which depends on `@kodax/core` — at that point the
- * layering matches the design doc.
+ * FEATURE_082 (v0.7.24): moved from `@kodax/coding/src/extensions/lineage.ts`
+ * to this package. Depends on `@kodax/core` for `Session` / `SessionEntry` /
+ * `SessionExtension`. `@kodax/coding` keeps a barrel re-export.
  *
- * Scope for v0.7.23:
+ * Scope:
  *   - Declare the extension object.
  *   - Implement `label` and `attachArtifact` operators that append standard
  *     entries to a Session.
  *   - Implement a `buildLineageTree` reducer that projects an entry stream
  *     back to a navigable tree.
  *   - NOT re-implemented here: `branch`, `rewind`, full compaction. Those
- *     remain in `@kodax/agent/session-lineage.ts` for coding-preset use and
- *     are migrated in FEATURE_082 (v0.7.24).
+ *     stay in `@kodax/agent/session-lineage.ts` for coding-preset use; the
+ *     `LineageCompaction` policy in this package is the thin wrapper that
+ *     adapts them to the Layer A `CompactionPolicy` contract.
  */
 
-import type { Session, SessionEntry, SessionExtension } from '../primitives/session.js';
+import type { Session, SessionEntry, SessionExtension } from '@kodax/core';
 
 /**
  * Entry types claimed by `LineageExtension`. Mirrors the legacy

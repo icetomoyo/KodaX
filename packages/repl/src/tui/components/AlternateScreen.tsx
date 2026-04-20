@@ -1,10 +1,13 @@
 import React, { useInsertionEffect, useMemo } from "react";
+// FEATURE_093 (v0.7.24): import Box + terminal hooks directly from
+// renderer-runtime to avoid the `tui/index.ts ↔
+// components/AlternateScreen.tsx` barrel cycle.
 import {
   Box,
   useTerminalOutput,
   useTerminalSize,
   useTerminalWrite,
-} from "../index.js";
+} from "../renderer-runtime.js";
 import { getRendererInstance } from "../core/root.js";
 import {
   buildAlternateScreenEnterSequence,

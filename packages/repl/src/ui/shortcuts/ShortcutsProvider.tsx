@@ -15,10 +15,10 @@ import React, {
   useCallback,
   type ReactNode,
 } from 'react';
-import {
-  getShortcutsRegistry,
-  DEFAULT_SHORTCUTS,
-} from './index.js';
+// FEATURE_093 (v0.7.24): import from concrete modules, not the barrel,
+// to break the `ui/shortcuts/index.ts ↔ ui/shortcuts/ShortcutsProvider.tsx` cycle.
+import { getShortcutsRegistry } from './ShortcutsRegistry.js';
+import { DEFAULT_SHORTCUTS } from './defaultShortcuts.js';
 import type { RegisteredShortcut, ShortcutContext } from './types.js';
 
 // === Types ===
