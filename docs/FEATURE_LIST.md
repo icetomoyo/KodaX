@@ -1,6 +1,6 @@
 # Feature 总表
 
-> Last updated: 2026-04-20 (v0.7.24 released — FEATURE_082 + FEATURE_083 completed; @kodax/core / @kodax/mcp / @kodax/session-lineage / @kodax/tracing packages extracted, Tracer/Span/Processor runtime landed, dual-emission AgentSpan/GenerationSpan wired through SA path; @kodax/capabilities **dropped** per FM-2 (empty shell; will be recreated in FEATURE_084 v0.7.26). FEATURE_093 立项 (partial cleanup landed opportunistically; remaining repl/commands triangle scoped to v0.8.0).)
+> Last updated: 2026-04-21 (v0.7.25 released — FEATURE_075 + FEATURE_076 + FEATURE_058 completed; FEATURE_051 "unreleased → released" flip also folded in. Transcript UX maturity (058 scrollback dump + 075 plan dialog scroll) + managed-task round-boundary cleanup (076 reshape + token recompute + fork mode + load-time session normalization) all landed. LLM-first plan structural constraint wired into exit_plan_mode tool schema.)
 
 > 中文阅读说明：
 > 这份 `FEATURE_LIST` 是 roadmap 的总索引。
@@ -15,18 +15,17 @@
 |---|---|
 | Tracked feature IDs | `001-093` (026 removed) |
 | Total tracked features | `92` |
-| Completed | `71` |
+| Completed | `74` |
 | Cancelled | `2` |
 | Absorbed | `1` |
 | InProgress | `1` |
-| Planned | `17` |
-| Current released version | `v0.7.24` |
+| Planned | `14` |
+| Current released version | `v0.7.25` |
 
 ### 各版本待做分布
 
 | Version | Planned features |
 |---|---|
-| `v0.7.25` | `2` |
 | `v0.7.26` | `2` |
 | `v0.7.27` | `2` |
 | `v0.7.28` | `2` |
@@ -35,7 +34,7 @@
 | `v0.7.31` | `1` |
 | `v0.7.32` | `1` |
 | `v0.7.33` | `1` |
-| `v0.8.0` | `4` |
+| `v0.8.0` | `3` |
 
 ---
 
@@ -51,8 +50,6 @@
 
 | ID | Title | Category | Priority | Planned | Design |
 |---|---|---|---|---|---|
-| `075` | Plan Approval Dialog Scroll and Editor Integration | Enhancement | Medium | `v0.7.25` | [v0.7.25](features/v0.7.25.md#feature_075-plan-approval-dialog-scroll-and-editor-integration) |
-| `076` | Managed Task Round Boundary — User Conversation Preservation | Internal | High | `v0.7.25` | [v0.7.25](features/v0.7.25.md#feature_076-managed-task-round-boundary--user-conversation-preservation) |
 | `084` | Task Engine Phase 2 — Rewrite Scout/Generator/Evaluator on Layer A Primitives (absorbs FEATURE_059) | Core | High | `v0.7.26` | [v0.7.26](features/v0.7.26.md#feature_084-task-engine-phase-2--rewrite-scoutgeneratorevaluator-on-layer-a-primitives) |
 | `085` | Guardrail Tri-Layer — Input / Output / Tool | Core | High | `v0.7.26` | [v0.7.26](features/v0.7.26.md#feature_085-guardrail-tri-layer--input--output--tool) |
 | `086` | KodaX Prefix Cleanup and Legacy Purge | Core | High | `v0.7.27` | [v0.7.27](features/v0.7.27.md#feature_086-kodax-prefix-cleanup-and-legacy-purge) |
@@ -66,7 +63,6 @@
 | `092` | Auto Mode Classifier — LLM-Reviewed Permission Tier | Core | High | `v0.7.33` | [v0.7.33](features/v0.7.33.md#feature_092-auto-mode-classifier--llm-reviewed-permission-tier-for-high-risk-tool-calls) |
 | `093` | Coding and REPL Internal Circular Dependency Decoupling | Internal | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_093-coding-and-repl-internal-circular-dependency-decoupling) |
 | `007` | Theme System Consolidation | Enhancement | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_007-theme-system-consolidation) |
-| `058` | Transcript Native Scrollback Dump | Enhancement | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_058-transcript-native-scrollback-dump) |
 | `030` | Multi-Surface Delivery | Enhancement | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_030-multi-surface-delivery) |
 | `059` | ~~Managed Task Structured Protocol V2~~ | ~~Internal~~ | ~~High~~ | ~~`v0.8.0`~~ | [v0.8.0](features/v0.8.0.md#feature_059-managed-task-structured-protocol-v2) | **Absorbed into FEATURE_084**: 新的 Layer A 原语重写 Scout/Generator/Evaluator 时，会同步把 fenced-block 文本协议替换为 tool-call 驱动的结构化协议。059 的 dual-track visibleText+protocolPayload 目标并入 084 的 Runner/Span 协议层实现，不再作为独立 feature 调度 |
 | `063` | ~~Extensible Hook & Automation Substrate~~ | Enhancement | High | `v0.7.18` | [v0.7.18](features/v0.7.18.md#feature_063-extensible-hook--automation-substrate) | **Cancelled**: Extension 系统已覆盖，executor 能力提取为 `api.exec()`/`api.webhook()` |
@@ -156,7 +152,7 @@
 | `049` | First-Class Search, Fetch, Code Search, and Semantic Retrieval | `v0.8.0` (unreleased) | [v0.8.0](features/v0.8.0.md#feature_049-first-class-search-fetch-code-search-and-semantic-retrieval) |
 | `050` | Prompt Contracts, Snapshots, and Regression Evaluation | `v0.8.0` (unreleased) | [v0.8.0](features/v0.8.0.md#feature_050-prompt-contracts-snapshots-and-regression-evaluation) |
 | `042` | Incremental Repository Intelligence Refresh and Java/C++ Structural Semantics | `v0.7.30` (unreleased) | [v0.7.30](features/v0.7.30.md#feature_042-incremental-repository-intelligence-refresh-and-javac-structural-semantics) |
-| `051` | Host-Aware Fullscreen TUI Substrate and Transcript UX | `v0.7.25` (unreleased) | [v0.7.25](features/v0.7.25.md#feature_051-host-aware-fullscreen-tui-substrate-and-transcript-ux) |
+| `051` | Host-Aware Fullscreen TUI Substrate and Transcript UX | `v0.7.25` | [v0.7.25](features/v0.7.25.md#feature_051-host-aware-fullscreen-tui-substrate-and-transcript-ux) |
 | `052` | Dual-Profile AMA Harness and Child Fan-Out Boundaries | `v0.7.19` | [v0.7.19](features/v0.7.19.md#feature_052-child-fan-out-boundary-hardening) | 架构完成 (v0.7.16); v0.7.19 补齐: SA 严格模式, 递归防护, controller 精化 |
 | `053` | Canonical Repo Identity and Managed Worktree Runtime | `v0.7.30` (unreleased) | [v0.7.30](features/v0.7.30.md#feature_053-canonical-repo-identity-and-managed-worktree-runtime) |
 | `055` | REPL Substrate Hardening and Summary-Only AMA UX | `v0.8.0` (unreleased) | [v0.8.0](features/v0.8.0.md#feature_055-repl-substrate-hardening-and-summary-only-ama-ux) |
@@ -182,6 +178,9 @@
 | `081` | Compaction Layering and Session Base/Lineage Split | `v0.7.23` | [v0.7.23](features/v0.7.23.md#feature_081-compaction-layering-and-session-baselineage-split) |
 | `082` | Package Restructure — @kodax/core, @kodax/mcp, @kodax/tracing, @kodax/session-lineage | `v0.7.24` | [v0.7.24](features/v0.7.24.md#feature_082-package-restructure) |
 | `083` | Unified Tracer, Span, and TracingProcessor | `v0.7.24` | [v0.7.24](features/v0.7.24.md#feature_083-unified-tracer-span-and-tracingprocessor) |
+| `058` | Transcript Native Scrollback Dump | `v0.7.25` | [v0.7.25](features/v0.7.25.md#feature_058-transcript-native-scrollback-dump) |
+| `075` | Plan Approval Dialog Scroll | `v0.7.25` | [v0.7.25](features/v0.7.25.md#feature_075-plan-approval-dialog-scroll) |
+| `076` | Managed Task Round Boundary — User Conversation Preservation | `v0.7.25` | [v0.7.25](features/v0.7.25.md#feature_076-managed-task-round-boundary--user-conversation-preservation) |
 
 > `FEATURE_051` close-out posture: keep the current REPL status/footer/task/message surfaces frozen, limit follow-up work to invisible substrate maturity for transcript, scroll/selection, and input behavior, and treat the design doc as a completed close-out record rather than an open rollout plan.
 

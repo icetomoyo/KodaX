@@ -10,6 +10,40 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.7.25] - 2026-04-21
+
+### Added
+- **FEATURE_076 — Managed Task Round Boundary (User Conversation Preservation)**: `runManagedTask` now normalizes its exit across all 6 paths (SA / H0 / H1 / H2 / resume / fork) via a single `reshapeToUserConversation` seam, so `context.messages` always comes back as a clean `{user, assistant}` dialog instead of worker execution trace (Scout role-prompt-wrapped user, Evaluator isolated session, etc.). Fixes multi-turn conversation incoherence, token-meter snap-downs after H1/H2 completion, Scout role-prompt boilerplate leaking into next round, and session-persistence pollution.
+  - Q1 **unconverged detection**: reuses the existing `KodaXTaskStatus` enum (`isUnconvergedVerdict`). `running` / `planned` fall back to the raw trace; `completed` / `blocked` / `failed` reshape (blocked reason / error message IS a valid user-facing answer). Zero new field on `KodaXResult`; no string matching on placeholder summaries.
+  - Q2 **token snapshot**: full `recomputeContextTokenSnapshot` (drops stale usage; preserves only the source tag) replaces the partial-rebase approach, eliminating the drift class behind token-meter bugs.
+  - Q3 **fork mode integration**: InkREPL fork path now pushes the user fork prompt into `context.messages` before the assistant turn, matching the other 5 paths.
+  - Q4 **load-time normalization**: `normalizeLoadedSessionMessages` drops trailing role-prompt-shaped worker pairs when loading pre-v0.7.25 sessions, so `/load-session` + follow-up no longer inherits Evaluator/Scout role-prompt pollution. Regex anchored at message start to avoid false positives on casual "You are..." text.
+  - CLI REPL consumer update: both artifact-ledger call sites prefer `result.artifactLedger` with a messages-walk fallback; `KodaXResult` gains an optional `artifactLedger` field populated by the reshape.
+- **FEATURE_058 — Transcript Native Scrollback Dump** (moved up from v0.8.0): transcript-mode `s` keybinding exits the alternate-screen, writes a plain-text serialization of the current transcript view into the terminal's native scrollback, then re-enters the fullscreen surface (renderer repaints from React state on re-entry; no content restoration needed). Serializer strips ANSI escape sequences (CSI / OSC / 2-byte ESC), skips internal `thinking` items, summarizes tool groups one line per call. Footer hint shows `s dump` in the default transcript variant only. Reuses FEATURE_051 substrate — no new primitives.
+- **FEATURE_075 — Plan Approval Dialog Scroll**: two-layer defense against oversized plans.
+  - LLM-first constraint: `exit_plan_mode` tool schema now requires "at most 40 lines total, 3 bullet-depth levels, one sentence per bullet; otherwise split into phases".
+  - Mechanical fallback: `DialogSurface.PlanScrollPanel` renders the full plan in a 15-line viewport with local scroll state + `useInput` for arrow keys / PgUp / PgDn. Approval buttons stay pinned. Scope-trimmed per review: dropped the originally planned `$EDITOR` integration and markdown rendering (no evidence of demand / YAGNI).
+- Confirmed `FEATURE_051 — Host-Aware Fullscreen TUI Substrate and Transcript UX` release: code-complete since v0.7.25 planning cycle, ships as part of this release.
+
+### Changed
+- `buildToolConfirmationDisplay("exit_plan_mode", …)` no longer head+tail truncates the plan. Readline consumers get the full plan as `details` (native terminal scroll handles it); InkREPL reads `input.plan` as `planContent` and renders via `PlanScrollPanel`, stripping the plan lines out of the single-line confirm prompt to avoid double-rendering.
+- `KodaXResult.artifactLedger?: readonly KodaXSessionArtifactLedgerEntry[]` — new optional field pre-populated by the FEATURE_076 reshape so downstream consumers do not have to walk the post-reshape `messages` for tool_result blocks.
+
+### Removed
+- `truncatePlanForDisplay` helper and the head+tail truncation path: superseded by LLM-side length budget (FEATURE_075 prompt constraint) + InkREPL scroll + readline native scroll.
+
+### Documentation
+- `docs/features/v0.7.25.md`: 075 scope narrowed (dropped editor + markdown, added LLM prompt structural constraint), 076 Q1-Q4 decisions captured, 058 section added with FEATURE_057 dependency-free rationale.
+- `docs/features/v0.8.0.md`: FEATURE_058 moved out to v0.7.25 with migration note.
+- `docs/FEATURE_LIST.md`: FEATURE_051 / FEATURE_058 / FEATURE_075 / FEATURE_076 marked Completed; v0.7.25 progress recorded; "Current released version" bumped to v0.7.25.
+
+### Test Status
+- **coding**: 600/600 pass (+36 round-boundary, +4 token-accounting, +1 registry tests).
+- **repl**: 830/830 pass (+11 scrollback-dump, +4 key-actions, +1 DialogSurface scroll; tool-confirmation truncation tests replaced with full-preservation test).
+- **Full monorepo**: 2621 passing / 5 pre-existing baseline failures (`tests/kodax_cli`, `tests/kodax_core`, `tests/tracker-consistency` × 2 strikethrough-row drift, `packages/ai/.../base.test.ts` rate-limit timing flake) — identical to v0.7.24 baseline. **0 new regressions.**
+
+---
+
 ## [0.7.24] - 2026-04-20
 
 ### Added
