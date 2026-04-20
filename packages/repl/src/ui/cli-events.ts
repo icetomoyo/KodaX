@@ -245,6 +245,16 @@ export function createCliEvents(showSessionId = true): KodaXEvents {
       console.log(chalk.red(`\n[Error] ${error.message}`));
     },
 
+    onScoutSuspiciousCompletion: (payload) => {
+      // X-layer: surface Scout's "inferred but uncertain" H0 completions so
+      // the user knows to verify instead of trusting a silent success.
+      console.log(
+        chalk.yellow(
+          `\n[Scout] Completion marked uncertain — signals: ${payload.signals.join(', ')}. Verify the result before continuing.`,
+        ),
+      );
+    },
+
     // CLI mode: beforeToolExecute always returns true (YOLO mode)
     // CLI 模式: beforeToolExecute 始终返回 true (YOLO 模式)
     beforeToolExecute: async (_tool: string, _input: Record<string, unknown>) => {

@@ -197,7 +197,12 @@ export async function toolBash(input: Record<string, unknown>, ctx: KodaXToolExe
       const captureNote = captureNotes.length > 0
         ? `\n[Output capture capped; ${captureNotes.join('; ')}.]`
         : '';
-      settle(`Command: ${command}\n[Timeout] Command interrupted after ${timeout}s${captureNote}\n\nPartial output (tail):\n${timeoutPreview}\n\n[Suggestion] The command took too long. Consider:\n- Is this a watch/dev server? Run in a separate terminal.\n- Can the task be broken into smaller steps?\n- Is there an error causing it to hang?`);
+      // Y-1/Y-2: Surface Windows cmd gotchas on timeout too — a mangled
+      // multi-line `python -c "..."` can hang waiting on stdin instead of
+      // exiting cleanly, and the user should see the same actionable hint.
+      const gotchaHints = detectWindowsCmdGotchas(command);
+      const gotchaNote = gotchaHints.length > 0 ? `\n${gotchaHints.join('\n')}` : '';
+      settle(`Command: ${command}\n[Timeout] Command interrupted after ${timeout}s${captureNote}\n\nPartial output (tail):\n${timeoutPreview}${gotchaNote}\n\n[Suggestion] The command took too long. Consider:\n- Is this a watch/dev server? Run in a separate terminal.\n- Can the task be broken into smaller steps?\n- Is there an error causing it to hang?`);
     }, timeout * 1000);
 
     // Issue 113: Kill child process when abort signal fires (Ctrl+C).
@@ -286,7 +291,12 @@ export async function toolBash(input: Record<string, unknown>, ctx: KodaXToolExe
     });
     proc.on('error', error => {
       clearTimeout(timer);
-      settle(`Command: ${command}\n[Error] ${error.message}`);
+      // Y-1/Y-2: Same hints on spawn-level errors — a malformed command
+      // string (newlines in `-c`, heredoc not understood by cmd) can surface
+      // as a spawn error on some platforms.
+      const gotchaHints = detectWindowsCmdGotchas(command);
+      const gotchaNote = gotchaHints.length > 0 ? `\n${gotchaHints.join('\n')}` : '';
+      settle(`Command: ${command}\n[Error] ${error.message}${gotchaNote}`);
     });
   });
 }

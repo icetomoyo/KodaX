@@ -4877,6 +4877,20 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         text: `[Rate Limit] Retrying in ${delayMs / 1000}s (${attempt}/${maxAttempts})...`
       });
     },
+    onScoutSuspiciousCompletion: (payload) => {
+      // X-layer: Scout's H0 completion was inferred (no explicit escalation)
+      // but the harness saw signals that suggest Scout may not actually be
+      // done. Surface as an info item with a warning icon so the user knows
+      // to double-check the result instead of trusting a silent success.
+      if (userInterruptedRef.current) {
+        return;
+      }
+      addHistoryItem({
+        type: "info",
+        icon: "\u26A0",
+        text: `[Scout] Completion marked uncertain — signals: ${payload.signals.join(", ")}. Verify the result before continuing.`,
+      });
+    },
     // Iteration start - called at the beginning of each agent iteration
     // Iteration start: called at the beginning of each agent iteration.
     onIterationStart: (iter: number, maxIter: number) => {
