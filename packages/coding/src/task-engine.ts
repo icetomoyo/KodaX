@@ -116,6 +116,9 @@ import {
   extractMessageText,
   replaceLastAssistantMessage,
 } from './task-engine/_internal/text-utils.js';
+// FEATURE_076: round-boundary reshape of runManagedTask's exit into a clean
+// user-facing {user, assistant} dialog.
+import { reshapeToUserConversation } from './task-engine/_internal/round-boundary.js';
 // FEATURE_079 Slice 4a: managed-output sanitize + fence-detection helpers
 import {
   MANAGED_CONTROL_PLANE_MARKERS,
@@ -6597,7 +6600,26 @@ async function resumeManagedTask(
   );
 }
 
+/**
+ * FEATURE_076 outer wrapper — the public entry point.
+ *
+ * Delegates to `executeRunManagedTask` (the existing control flow —
+ * SA fast-path / resume / managed planning / H0 / H1 / H2) and then
+ * applies `reshapeToUserConversation` to normalize the returned
+ * `result.messages` into a clean user-facing dialog.
+ *
+ * The reshape is idempotent: debug-preserve cases (undefined messages,
+ * unconverged verdict, interrupted-without-text) pass through unchanged.
+ */
 export async function runManagedTask(
+  options: KodaXOptions,
+  prompt: string,
+): Promise<KodaXResult> {
+  const result = await executeRunManagedTask(options, prompt);
+  return reshapeToUserConversation(result, options, prompt);
+}
+
+async function executeRunManagedTask(
   options: KodaXOptions,
   prompt: string,
 ): Promise<KodaXResult> {

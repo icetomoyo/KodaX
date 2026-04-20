@@ -546,7 +546,7 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       properties: {
         plan: {
           type: 'string',
-          description: 'The finalized plan to present to the user. Include the full plan content, not a summary, so the user can make an informed approval decision.',
+          description: 'The finalized plan to present to the user. Include the full plan content, not a summary, so the user can make an informed approval decision. Keep the plan tight: at most 40 lines total, 3 bullet-depth levels, one sentence per bullet. If the plan exceeds this budget, split it into phases and present only the current phase — the user can approve phase-by-phase.',
         },
       },
       required: ['plan'],

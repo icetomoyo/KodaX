@@ -7,6 +7,7 @@ import {
   createEstimatedContextTokenSnapshot,
   hasValidTokenUsage,
   rebaseContextTokenSnapshot,
+  recomputeContextTokenSnapshot,
   resolveContextTokenCount,
 } from './token-accounting.js';
 import * as tokenizer from './tokenizer.js';
@@ -172,5 +173,64 @@ describe('token accounting', () => {
     })).toBe(77);
 
     estimateSpy.mockRestore();
+  });
+
+  describe('recomputeContextTokenSnapshot (FEATURE_076 Q2)', () => {
+    it('fully recomputes both current and baseline from messages (ignores old snapshot token counts)', () => {
+      const estimateSpy = vi.spyOn(tokenizer, 'estimateTokens').mockReturnValue(55);
+
+      const oldSnapshot = {
+        currentTokens: 9999,           // worker-session leftover; should NOT leak
+        baselineEstimatedTokens: 8888, // also stale; should NOT leak
+        source: 'api' as const,
+      };
+
+      const fresh = recomputeContextTokenSnapshot(messages, oldSnapshot);
+
+      expect(fresh.currentTokens).toBe(55);
+      expect(fresh.baselineEstimatedTokens).toBe(55);
+
+      estimateSpy.mockRestore();
+    });
+
+    it('preserves source from old snapshot when available', () => {
+      const estimateSpy = vi.spyOn(tokenizer, 'estimateTokens').mockReturnValue(42);
+
+      const fresh = recomputeContextTokenSnapshot(messages, {
+        currentTokens: 100,
+        baselineEstimatedTokens: 100,
+        source: 'api',
+      });
+
+      expect(fresh.source).toBe('api');
+      estimateSpy.mockRestore();
+    });
+
+    it('drops stale usage (old snapshot measured worker session, not user dialog)', () => {
+      const estimateSpy = vi.spyOn(tokenizer, 'estimateTokens').mockReturnValue(42);
+
+      const fresh = recomputeContextTokenSnapshot(messages, {
+        currentTokens: 100,
+        baselineEstimatedTokens: 100,
+        source: 'api',
+        usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+      });
+
+      expect(fresh.usage).toBeUndefined();
+      estimateSpy.mockRestore();
+    });
+
+    it('works without any old snapshot (source defaults to estimate)', () => {
+      const estimateSpy = vi.spyOn(tokenizer, 'estimateTokens').mockReturnValue(30);
+
+      const fresh = recomputeContextTokenSnapshot(messages, undefined);
+
+      expect(fresh).toEqual({
+        currentTokens: 30,
+        baselineEstimatedTokens: 30,
+        source: 'estimate',
+      });
+      estimateSpy.mockRestore();
+    });
   });
 });

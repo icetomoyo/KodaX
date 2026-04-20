@@ -1085,6 +1085,15 @@ export interface KodaXResult {
   managedTask?: KodaXManagedTask;
   /** Best-known token snapshot after the round completes. */
   contextTokenSnapshot?: KodaXContextTokenSnapshot;
+  /**
+   * FEATURE_076: artifact ledger pre-extracted before round-boundary reshape.
+   * Populated when the reshape replaces `messages` with a clean {user, assistant}
+   * dialog — tool_result blocks (the source of artifact ledger entries) no
+   * longer live in `messages` after reshape. REPL consumers should read this
+   * field first, falling back to `extractArtifactLedger(messages)` for
+   * backward compatibility on code paths that have not yet been updated.
+   */
+  artifactLedger?: readonly KodaXSessionArtifactLedgerEntry[];
   /** 是否被用户中断 (Ctrl+C) */
   interrupted?: boolean;
   /** 是否达到迭代上限 */

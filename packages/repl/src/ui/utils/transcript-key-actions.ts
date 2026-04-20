@@ -24,7 +24,8 @@ export type TranscriptKeyboardAction =
   | { kind: "copy-item" }
   | { kind: "copy-tool-input" }
   | { kind: "toggle-detail" }
-  | { kind: "search-match-nav"; direction: "next" | "prev" };
+  | { kind: "search-match-nav"; direction: "next" | "prev" }
+  | { kind: "dump-to-scrollback" };
 
 export interface ResolveTranscriptKeyboardActionOptions {
   key: KeyInfo;
@@ -170,6 +171,13 @@ export function resolveTranscriptKeyboardAction(
     return canToggleSelectedDetail
       ? { kind: "toggle-detail" }
       : { kind: "none" };
+  }
+
+  // FEATURE_058: transcript dump to native scrollback.
+  // Plain `s` in transcript mode (no modifiers). Avoids Ctrl+S which many
+  // terminals intercept for software flow control.
+  if (!key.ctrl && !key.meta && !key.shift && key.name === "s") {
+    return { kind: "dump-to-scrollback" };
   }
 
   if (!key.ctrl && !key.meta && key.name === "n") {

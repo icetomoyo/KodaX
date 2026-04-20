@@ -75,53 +75,18 @@ describe("tool-confirmation", () => {
     ]);
   });
 
-  it("shows short exit_plan_mode plans in full (<=15 lines) (FEATURE_074)", () => {
-    const lines = Array.from({ length: 15 }, (_, i) => `Step ${i + 1}`);
-    const plan = lines.join("\n");
-    const display = buildToolConfirmationDisplay("exit_plan_mode", { plan });
-    expect(display.details).toHaveLength(15);
-    expect(display.details[0]).toBe("Step 1");
-    expect(display.details[14]).toBe("Step 15");
-  });
-
-  it("truncates long exit_plan_mode plans with head + tail + notice (FEATURE_074)", () => {
-    const lines = Array.from({ length: 30 }, (_, i) => `Step ${i + 1}: action ${i + 1}`);
+  it("FEATURE_075: exit_plan_mode preserves full plan lines (no head+tail truncation)", () => {
+    const lines = Array.from({ length: 60 }, (_, i) => `Step ${i + 1}: action ${i + 1}`);
     const plan = lines.join("\n");
     const display = buildToolConfirmationDisplay("exit_plan_mode", { plan });
 
-    // 12 head + 1 notice + 2 tail = 15 lines total
-    expect(display.details).toHaveLength(15);
-
-    // Head: first 12 lines preserved verbatim
-    expect(display.details.slice(0, 12)).toEqual(
-      lines.slice(0, 12),
-    );
-
-    // Notice: explains truncation count + recovery path
-    const notice = display.details[12]!;
-    expect(notice).toContain("16 more lines hidden"); // 30 - 12 - 2 = 16
-    expect(notice).toContain("Cancel"); // recovery hint
-    expect(notice).toContain("readline mode"); // alternative view
-
-    // Tail: last 2 lines preserved verbatim — user must see the final verdict
-    expect(display.details.slice(13)).toEqual([
-      "Step 29: action 29",
-      "Step 30: action 30",
-    ]);
-  });
-
-  it("uses singular 'line' for one hidden line in truncation notice (FEATURE_074)", () => {
-    // 16 lines: 12 head + 1 hidden + 2 tail + notice = needs 16 input lines
-    // 12 head + x hidden + 2 tail = 16 → x = 2, so notice says "2 more lines"
-    // To get exactly 1 hidden: head(12) + hidden(1) + tail(2) = 15, but 15 is the
-    // MAX_LINES threshold → shown in full. So 16 lines gives us 2 hidden.
-    // To actually test singular, we need 12 + 1 + 2 = 15? No, 15 is below threshold.
-    // Smallest case that triggers truncation: 16 lines → 2 hidden. We can't hit 1.
-    // Skip the singular test — the plural branch is the meaningful path.
-    const lines = Array.from({ length: 16 }, (_, i) => `Step ${i + 1}`);
-    const plan = lines.join("\n");
-    const display = buildToolConfirmationDisplay("exit_plan_mode", { plan });
-    expect(display.details[12]).toContain("2 more lines hidden");
+    // All 60 lines preserved verbatim for readline native scroll;
+    // InkREPL renders them in a scrollable DialogSurface panel.
+    expect(display.details).toHaveLength(60);
+    expect(display.details[0]).toBe("Step 1: action 1");
+    expect(display.details[59]).toBe("Step 60: action 60");
+    // No truncation notice should be injected.
+    expect(display.details.some((line) => line.includes("more lines hidden"))).toBe(false);
   });
 
   it("falls back to title-only when exit_plan_mode plan is empty (FEATURE_074)", () => {

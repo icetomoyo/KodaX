@@ -195,4 +195,79 @@ describe("transcript-key-actions", () => {
       canCycleTranscriptSelection: false,
     })).toEqual({ kind: "exit-transcript" });
   });
+
+  describe("dump-to-scrollback (FEATURE_058)", () => {
+    it("maps plain 's' in transcript mode to dump-to-scrollback", () => {
+      expect(resolveTranscriptKeyboardAction({
+        key: createKey({ name: "s" }),
+        isTranscriptMode: true,
+        isHistorySearchActive: false,
+        historySearchMatchCount: 0,
+        hasTextSelection: false,
+        hasFocusedItem: false,
+        canCopySelectedItem: false,
+        canCopySelectedToolInput: false,
+        canToggleSelectedDetail: false,
+        canCycleTranscriptSelection: false,
+      })).toEqual({ kind: "dump-to-scrollback" });
+    });
+
+    it("does not trigger dump-to-scrollback outside transcript mode", () => {
+      expect(resolveTranscriptKeyboardAction({
+        key: createKey({ name: "s" }),
+        isTranscriptMode: false,
+        isHistorySearchActive: false,
+        historySearchMatchCount: 0,
+        hasTextSelection: false,
+        hasFocusedItem: false,
+        canCopySelectedItem: false,
+        canCopySelectedToolInput: false,
+        canToggleSelectedDetail: false,
+        canCycleTranscriptSelection: false,
+      })).toEqual({ kind: "none" });
+    });
+
+    it("does not match Ctrl+S or Shift+S (avoid flow-control conflict)", () => {
+      expect(resolveTranscriptKeyboardAction({
+        key: createKey({ name: "s", ctrl: true }),
+        isTranscriptMode: true,
+        isHistorySearchActive: false,
+        historySearchMatchCount: 0,
+        hasTextSelection: false,
+        hasFocusedItem: false,
+        canCopySelectedItem: false,
+        canCopySelectedToolInput: false,
+        canToggleSelectedDetail: false,
+        canCycleTranscriptSelection: false,
+      })).toEqual({ kind: "none" });
+
+      expect(resolveTranscriptKeyboardAction({
+        key: createKey({ name: "s", shift: true }),
+        isTranscriptMode: true,
+        isHistorySearchActive: false,
+        historySearchMatchCount: 0,
+        hasTextSelection: false,
+        hasFocusedItem: false,
+        canCopySelectedItem: false,
+        canCopySelectedToolInput: false,
+        canToggleSelectedDetail: false,
+        canCycleTranscriptSelection: false,
+      })).toEqual({ kind: "none" });
+    });
+
+    it("does not trigger when history search is active", () => {
+      expect(resolveTranscriptKeyboardAction({
+        key: createKey({ name: "s", sequence: "s", insertable: true }),
+        isTranscriptMode: true,
+        isHistorySearchActive: true,
+        historySearchMatchCount: 0,
+        hasTextSelection: false,
+        hasFocusedItem: false,
+        canCopySelectedItem: false,
+        canCopySelectedToolInput: false,
+        canToggleSelectedDetail: false,
+        canCycleTranscriptSelection: false,
+      })).toEqual({ kind: "history-search-append", text: "s" });
+    });
+  });
 });

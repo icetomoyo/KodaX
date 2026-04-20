@@ -203,6 +203,12 @@ import {
 } from "./utils/transcript-input-policy.js";
 import { resolveTranscriptKeyboardAction } from "./utils/transcript-key-actions.js";
 import { executeTranscriptKeyboardAction } from "./utils/transcript-interaction-controller.js";
+// FEATURE_058: transcript native scrollback dump.
+import { dumpTranscriptToNativeScrollback } from "./utils/transcript-scrollback-dump.js";
+import {
+  buildAlternateScreenEnterSequence,
+  buildAlternateScreenExitSequence,
+} from "../tui/core/termio.js";
 import {
   buildTranscriptRenderModel,
   materializeTranscriptRenderModel,
@@ -3567,11 +3573,30 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }, [historySearchMatches.length, isHistorySearchActive]);
 
   const dialogConfirmState = useMemo(
-    () => (
-      confirmRequest
-        ? { prompt: confirmRequest.prompt, instruction: confirmInstruction }
-        : null
-    ),
+    () => {
+      if (!confirmRequest) return null;
+      // FEATURE_075: for exit_plan_mode, route the plan content into the
+      // scrollable DialogSurface panel and strip the plan lines out of the
+      // single-line prompt to avoid double-rendering. For other tools the
+      // full prompt (title + details) stays inline as before.
+      if (confirmRequest.tool === "exit_plan_mode") {
+        const planContent = typeof confirmRequest.input.plan === "string"
+          ? (confirmRequest.input.plan as string)
+          : undefined;
+        // confirmRequest.prompt = title + "\n" + details; keep only the title
+        // for exit_plan_mode so planContent owns the plan rendering.
+        const titleOnlyPrompt = confirmRequest.prompt.split("\n", 1)[0] ?? confirmRequest.prompt;
+        return {
+          prompt: titleOnlyPrompt,
+          instruction: confirmInstruction,
+          planContent,
+        };
+      }
+      return {
+        prompt: confirmRequest.prompt,
+        instruction: confirmInstruction,
+      };
+    },
     [confirmInstruction, confirmRequest],
   );
 
@@ -4182,6 +4207,28 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               revealTranscriptItem(match.itemId);
             }
             return nextIndex;
+          });
+        },
+        // FEATURE_058: transcript native scrollback dump.
+        // Exit the alt-screen, write plain-text transcript content to the
+        // terminal's native scrollback buffer, then re-enter the fullscreen
+        // surface. The renderer repaints from current React state on
+        // re-entry so no content restoration is needed.
+        dumpTranscriptToScrollback: () => {
+          dumpTranscriptToNativeScrollback({
+            items: currentSurfaceItems,
+            exitAltScreen: () => {
+              writeTerminal(buildAlternateScreenExitSequence({ mouseTracking: true }));
+            },
+            writeToScrollback: (text) => {
+              writeTerminal(text);
+            },
+            enterAltScreen: () => {
+              writeTerminal(buildAlternateScreenEnterSequence({
+                mouseTracking: true,
+                clearOnEnter: false,
+              }));
+            },
           });
         },
       });
@@ -5817,6 +5864,16 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           const persistedAdditions: CreatableHistoryItem[] = [];
 
           if (prepared.mode === "fork") {
+            // FEATURE_076 Q3: after the round-boundary reshape,
+            // result.messages is a clean {user, assistant} dialog. Push
+            // the user fork prompt first so context.messages retains
+            // conversation continuity (previously only the assistant
+            // message landed, leaving the fork prompt missing from
+            // saved history).
+            const forkUserMsg = result.messages.find((msg) => msg.role === "user");
+            if (forkUserMsg) {
+              context.messages.push(forkUserMsg);
+            }
             const lastAssistant = result.messages.slice().reverse().find((msg) => msg.role === "assistant");
             if (lastAssistant) {
               context.messages.push({

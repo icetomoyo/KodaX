@@ -24,6 +24,13 @@ export interface ExecuteTranscriptKeyboardActionOptions {
   copySelectedTranscriptToolInput: () => void;
   toggleSelectedTranscriptDetail: () => void;
   navigateSearchMatch: (direction: "next" | "prev") => void;
+  /**
+   * FEATURE_058: invoked when the user presses the transcript-mode
+   * scrollback-dump shortcut. Implementations exit alternate-screen,
+   * write the serialized transcript to the terminal's native scrollback,
+   * and re-enter the fullscreen surface.
+   */
+  dumpTranscriptToScrollback: () => void;
 }
 
 export function executeTranscriptKeyboardAction(
@@ -110,6 +117,9 @@ export function executeTranscriptKeyboardAction(
       return true;
     case "search-match-nav":
       options.navigateSearchMatch(options.action.direction);
+      return true;
+    case "dump-to-scrollback":
+      options.dumpTranscriptToScrollback();
       return true;
     default:
       return false;

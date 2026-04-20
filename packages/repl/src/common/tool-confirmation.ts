@@ -138,26 +138,11 @@ function localizeFieldLabel(label: ToolConfirmationField["label"]): string {
  * last step typically lives) is not, because the user can't tell if the plan
  * actually reaches a terminal state.
  *
- * Thresholds are conservative: aim to fit the whole truncated block in ~20 rows
- * even on a 24-row terminal, leaving headroom for the dialog chrome + prompt.
+ * FEATURE_075 removed the head+tail truncation: InkREPL renders the full plan
+ * in a scrollable DialogSurface panel, and readline relies on native terminal
+ * scroll. LLM-first prompt constraint in the exit_plan_mode tool description
+ * keeps plans within ~40 lines as the primary defense.
  */
-const PLAN_DISPLAY_MAX_LINES = 15;
-const PLAN_DISPLAY_HEAD_LINES = 12;
-const PLAN_DISPLAY_TAIL_LINES = 2;
-
-export function truncatePlanForDisplay(lines: readonly string[]): string[] {
-  if (lines.length <= PLAN_DISPLAY_MAX_LINES) {
-    return [...lines];
-  }
-  const hidden = lines.length - PLAN_DISPLAY_HEAD_LINES - PLAN_DISPLAY_TAIL_LINES;
-  const head = lines.slice(0, PLAN_DISPLAY_HEAD_LINES);
-  const tail = lines.slice(lines.length - PLAN_DISPLAY_TAIL_LINES);
-  const notice =
-    `… ${hidden} more line${hidden === 1 ? '' : 's'} hidden. ` +
-    `Plan too long for InkREPL dialog. Cancel and ask the model for a more concise plan, ` +
-    `or view the full plan in readline mode.`;
-  return [...head, notice, ...tail];
-}
 
 function buildDisplayFromFields(title: string, fields: ToolConfirmationField[]): ToolConfirmationDisplay {
   return {
@@ -178,14 +163,13 @@ export function buildToolConfirmationDisplay(
     }
   }
 
-  // FEATURE_074: render the finalized plan so the user can read it before approving.
-  // The generic default case would only show "Use tool: exit_plan_mode" and drop the
-  // plan entirely, which defeats the purpose of the approval dialog.
+  // FEATURE_074/075: render the finalized plan so the user can read it before approving.
   //
-  // Very long plans exceed terminal height in InkREPL (Ink doesn't scroll). Truncate
-  // to head + tail so the user sees both the initial steps and the final conclusion —
-  // missing the middle is recoverable, missing the end (verdict) is not.
-  // A future feature (FEATURE_075) will add proper scroll + external editor.
+  // Readline: receives the full plan as details (native terminal scroll handles
+  // arbitrary length).
+  //
+  // InkREPL: ignores details for this tool; DialogSurface.planContent renders
+  // the plan in a scrollable panel with approval buttons pinned (FEATURE_075).
   if (tool === "exit_plan_mode") {
     const plan = readString(input.plan);
     const title = "Approve plan? (exits plan mode → accept-edits)";
@@ -193,7 +177,7 @@ export function buildToolConfirmationDisplay(
       return {
         title,
         fields: [],
-        details: truncatePlanForDisplay(plan.split("\n")),
+        details: plan.split("\n"),
       };
     }
     return buildDisplayFromFields(title, []);

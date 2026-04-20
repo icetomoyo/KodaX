@@ -130,3 +130,26 @@ export function rebaseContextTokenSnapshot(
     usage: snapshot?.usage,
   };
 }
+
+/**
+ * FEATURE_076 Q2: full recompute of a context token snapshot from the new
+ * message set. Unlike `rebaseContextTokenSnapshot` this does NOT preserve
+ * the old snapshot's `currentTokens` / `baselineEstimatedTokens` /
+ * `usage` — those are stale (they measured the worker session, not the
+ * user dialog that the round-boundary reshape produced).
+ *
+ * Only `source` is preserved from the old snapshot (informational tag;
+ * does not encode token counts). When no old snapshot is supplied the
+ * source defaults to `'estimate'`.
+ */
+export function recomputeContextTokenSnapshot(
+  messages: KodaXMessage[],
+  snapshot?: KodaXContextTokenSnapshot | null,
+): KodaXContextTokenSnapshot {
+  const estimated = estimateTokens(messages);
+  return {
+    currentTokens: estimated,
+    baselineEstimatedTokens: estimated,
+    source: snapshot?.source ?? 'estimate',
+  };
+}

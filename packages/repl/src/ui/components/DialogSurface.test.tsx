@@ -22,6 +22,25 @@ describe("DialogSurface", () => {
     expect(frame).toContain("Apply changes?");
   });
 
+  it("FEATURE_075: renders scrollable plan content when confirm.planContent is provided", () => {
+    const longPlan = Array.from({ length: 60 }, (_, i) => `step ${i + 1}`).join("\n");
+    const { lastFrame } = render(
+      <DialogSurface confirm={{
+        prompt: "Approve plan?",
+        instruction: "Press y to confirm",
+        planContent: longPlan,
+      }} />,
+    );
+
+    const frame = lastFrame() ?? "";
+    // Plan surface must be rendered
+    expect(frame).toContain("Approve plan?");
+    // The plan should be scrollable — individual lines appear in the dialog
+    expect(frame).toContain("step 1");
+    // Scroll affordance hint should be present
+    expect(frame.toLowerCase()).toMatch(/scroll|pgup|pgdn|\u2191\u2193/);
+  });
+
   it("renders confirm dialogs in Chinese when locale is zh", () => {
     setLocale("zh");
     const { lastFrame } = render(

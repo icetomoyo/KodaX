@@ -43,7 +43,10 @@ export const TranscriptModeFooter: React.FC<TranscriptModeFooterProps> = ({
     ? `Enter jump | n/N next/prev | Ctrl+E ${showAllActive ? "collapse" : "show all"} | Esc close | Ctrl+O/q back`
     : selectionActive
       ? `PgUp/PgDn page | j/k scroll | / search | n/N matches | Ctrl+E ${showAllActive ? "collapse" : "show all"} | Esc clear focus | Ctrl+O/q back`
-      : `PgUp/PgDn page | j/k scroll | \u2190/\u2192 select | / search | n/N matches | Ctrl+E ${showAllActive ? "collapse" : "show all"} | Ctrl+O/q/Esc back`;
+      // FEATURE_058: `s` dumps the transcript to native scrollback. Shown
+      // only in the default (non-search, non-selection) variant to keep
+      // the other variants compact.
+      : `PgUp/PgDn page | j/k scroll | \u2190/\u2192 select | / search | n/N matches | Ctrl+E ${showAllActive ? "collapse" : "show all"} | s dump | Ctrl+O/q/Esc back`;
   const updateText = pendingLiveUpdates > 0
     ? pendingLiveUpdates === 1
       ? "1 new update"

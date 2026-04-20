@@ -1167,9 +1167,13 @@ Keyboard Shortcuts:
             );
             context.messages = result.messages;
             context.contextTokenSnapshot = result.contextTokenSnapshot;
+            // FEATURE_076: prefer pre-extracted result.artifactLedger; fall
+            // back to walking result.messages for backward compatibility
+            // with paths that have not yet been reshape-updated.
             context.artifactLedger = mergeArtifactLedger(
               context.artifactLedger ?? [],
-              extractArtifactLedger(result.messages),
+              (result.artifactLedger as typeof context.artifactLedger | undefined)
+                ?? extractArtifactLedger(result.messages),
             );
 
             // Auto save - 自动保存
@@ -1278,9 +1282,13 @@ Keyboard Shortcuts:
       // Update context messages (runKodaX returns complete message list) - 更新上下文中的消息（runKodaX 返回完整的消息列表）
       context.messages = result.messages;
       context.contextTokenSnapshot = result.contextTokenSnapshot;
+      // FEATURE_076: prefer pre-extracted result.artifactLedger; fall back
+      // to walking result.messages for backward compatibility with paths
+      // that have not yet been reshape-updated.
       context.artifactLedger = mergeArtifactLedger(
         context.artifactLedger ?? [],
-        extractArtifactLedger(result.messages),
+        (result.artifactLedger as typeof context.artifactLedger | undefined)
+          ?? extractArtifactLedger(result.messages),
       );
 
       // Update status bar - 更新状态栏

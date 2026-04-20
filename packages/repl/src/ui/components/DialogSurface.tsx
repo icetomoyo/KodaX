@@ -1,5 +1,5 @@
-import React from "react";
-import { Box, Text } from "../tui.js";
+import React, { useEffect, useState } from "react";
+import { Box, Text, useInput } from "../tui.js";
 import { t } from "../../common/i18n.js";
 
 export interface DialogSelectOption {
@@ -11,7 +11,16 @@ export interface DialogSelectOption {
 export interface DialogSurfaceConfirmState {
   prompt: string;
   instruction?: string;
+  /**
+   * FEATURE_075: full plan content rendered in a scrollable panel for
+   * `exit_plan_mode` approval. Arrow keys and PgUp/PgDn scroll the plan
+   * inside the dialog while the approval buttons stay pinned.
+   */
+  planContent?: string;
 }
+
+const PLAN_VIEWPORT_LINES = 15;
+const PLAN_PAGE_STEP = Math.max(1, PLAN_VIEWPORT_LINES - 2);
 
 export interface DialogSurfaceUIRequestState {
   kind: "select" | "input";
@@ -52,6 +61,9 @@ export const DialogSurface: React.FC<DialogSurfaceProps> = ({
         <Text color="yellow" bold>
           {t("dialog.confirm")} {confirm.prompt}
         </Text>
+        {confirm.planContent ? (
+          <PlanScrollPanel content={confirm.planContent} />
+        ) : null}
         {confirm.instruction ? <Text dimColor>{confirm.instruction}</Text> : null}
       </Box>
     );
@@ -136,4 +148,66 @@ export const DialogSurface: React.FC<DialogSurfaceProps> = ({
   }
 
   return null;
+};
+
+/**
+ * FEATURE_075: scrollable plan panel rendered inside the exit_plan_mode
+ * approval dialog. Uses local scroll state + useInput so the approval
+ * buttons stay pinned below the panel.
+ */
+const PlanScrollPanel: React.FC<{ content: string }> = ({ content }) => {
+  const lines = React.useMemo(() => content.split("\n"), [content]);
+  const total = lines.length;
+  const overflows = total > PLAN_VIEWPORT_LINES;
+  const [scrollOffset, setScrollOffset] = useState(0);
+
+  useEffect(() => {
+    // Clamp offset when the plan shrinks (e.g., receiving a fresh shorter plan).
+    setScrollOffset((prev) => {
+      const maxOffset = Math.max(0, total - PLAN_VIEWPORT_LINES);
+      if (prev > maxOffset) return maxOffset;
+      return prev;
+    });
+  }, [total]);
+
+  useInput(
+    (_input, key) => {
+      if (!overflows) return;
+      const maxOffset = Math.max(0, total - PLAN_VIEWPORT_LINES);
+      if (key.upArrow) {
+        setScrollOffset((prev) => Math.max(0, prev - 1));
+      } else if (key.downArrow) {
+        setScrollOffset((prev) => Math.min(maxOffset, prev + 1));
+      } else if (key.pageUp) {
+        setScrollOffset((prev) => Math.max(0, prev - PLAN_PAGE_STEP));
+      } else if (key.pageDown) {
+        setScrollOffset((prev) => Math.min(maxOffset, prev + PLAN_PAGE_STEP));
+      }
+    },
+    // Always register listener so scroll is responsive whenever this panel mounts.
+    { isActive: true },
+  );
+
+  const visible = lines.slice(scrollOffset, scrollOffset + PLAN_VIEWPORT_LINES);
+  const hiddenAbove = scrollOffset;
+  const hiddenBelow = Math.max(0, total - scrollOffset - PLAN_VIEWPORT_LINES);
+
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      {overflows && hiddenAbove > 0 ? (
+        <Text dimColor>… {hiddenAbove} more line{hiddenAbove === 1 ? "" : "s"} above</Text>
+      ) : null}
+      {visible.map((line, idx) => (
+        <Text key={`plan-line-${scrollOffset + idx}`}>{line}</Text>
+      ))}
+      {overflows && hiddenBelow > 0 ? (
+        <Text dimColor>… {hiddenBelow} more line{hiddenBelow === 1 ? "" : "s"} below</Text>
+      ) : null}
+      {overflows ? (
+        <Text dimColor>
+          PgUp/PgDn/↑↓ to scroll
+        </Text>
+      ) : null}
+    </Box>
+  );
 };

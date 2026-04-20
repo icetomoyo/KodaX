@@ -3,6 +3,7 @@ import {
   executeTool,
   getTool,
   getRequiredToolParams,
+  getToolDefinition,
   registerTool,
 } from './index.js';
 import type { KodaXToolExecutionContext } from '../types.js';
@@ -13,6 +14,21 @@ const TEST_CONTEXT: KodaXToolExecutionContext = {
 };
 
 describe('tool registry', () => {
+  it('FEATURE_075: exit_plan_mode plan description enforces structural length budget', () => {
+    // LLM-first defense against oversized plans that blow past terminal
+    // height. Scroll in the approval dialog is the mechanical fallback.
+    const def = getToolDefinition('exit_plan_mode');
+    const planSchema = (def?.input_schema as {
+      properties?: { plan?: { description?: string } };
+    } | undefined)?.properties?.plan;
+    const desc = planSchema?.description ?? '';
+
+    expect(desc).toMatch(/40 lines/);
+    expect(desc).toMatch(/3 bullet-depth|3 levels|3 depth/i);
+    expect(desc).toMatch(/one sentence|1 sentence|single sentence/i);
+    expect(desc).toMatch(/phases|split/i);
+  });
+
   it('derives required params from the active tool schema', () => {
     expect(getRequiredToolParams('read')).toEqual(['path']);
     expect(getRequiredToolParams('ask_user_question')).toEqual(['question']);

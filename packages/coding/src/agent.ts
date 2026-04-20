@@ -52,6 +52,8 @@ import {
 import { buildSystemPrompt } from './prompts/index.js';
 import { generateSessionId, extractTitleFromMessages } from './session.js';
 import { checkIncompleteToolCalls } from './messages.js';
+// FEATURE_076 Q4: load-time normalization for pre-v0.7.25 session messages.
+import { normalizeLoadedSessionMessages } from './task-engine/_internal/round-boundary.js';
 import { compact as intelligentCompact, needsCompaction, microcompact, DEFAULT_MICROCOMPACTION_CONFIG, buildPostCompactAttachments, buildFileContentMessages, injectPostCompactAttachments, DEFAULT_POST_COMPACT_CONFIG, POST_COMPACT_TOKEN_BUDGET, type CompactionConfig, type CompactionUpdate } from '@kodax/agent';
 import { loadCompactionConfig } from './compaction-config.js';
 import { estimateTokens } from './tokenizer.js';
@@ -1478,7 +1480,10 @@ export async function runKodaX(
   } else if (options.session?.storage && sessionId) {
     const loaded = await options.session.storage.load(sessionId);
     if (loaded) {
-      messages = loaded.messages;
+      // FEATURE_076 Q4: sessions saved before v0.7.25 persisted messages
+      // in worker-execution-trace shape. Normalize on load: drop trailing
+      // role-prompt-shaped worker pairs, keep preceding clean user dialog.
+      messages = normalizeLoadedSessionMessages(loaded.messages);
       title = loaded.title;
       errorMetadata = loaded.errorMetadata;
       loadedExtensionState = loaded.extensionState;
