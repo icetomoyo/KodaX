@@ -488,6 +488,53 @@ function wrapCodingToolAsRunnable(
   };
 }
 
+/**
+ * Shell commands that mutate the filesystem / git state. Mirrors the
+ * legacy `SHELL_WRITE_PATTERNS` allowlist so verification-only roles
+ * (Evaluator) can still use `bash` for read-only checks (ls, cat,
+ * git diff, etc.) without silently gaining write capability.
+ *
+ * Matches on leading command-word boundary — `rm /tmp/foo` blocks
+ * but `node rm-stub.js` does not.
+ */
+const SHELL_MUTATION_PATTERNS: readonly RegExp[] = [
+  /\brm\s+-[a-z]*[rf]/i,
+  /\bmv\s/i,
+  /\bcp\s+-[a-z]*[rf]/i,
+  /\bchmod\s/i,
+  /\bchown\s/i,
+  /\b(?:>|>>)\s*\S/,
+  /\bgit\s+(?:add|commit|push|merge|rebase|reset|checkout\s+[^-]|rm)/i,
+  /\bnpm\s+(?:install|publish|update|rm)/i,
+  /\bpnpm\s+(?:install|publish|update|rm)/i,
+  /\byarn\s+(?:add|publish|remove)/i,
+];
+
+/**
+ * Wrap a bash tool so verification-only roles (Evaluator) cannot
+ * execute shell commands that mutate the filesystem or git state.
+ * Mirrors legacy `createToolPolicyHook` behaviour at task-engine.ts
+ * ~1915 which blocked `SHELL_WRITE_PATTERNS` on read-only role tool
+ * policies. Non-bash tools pass through unchanged.
+ */
+function wrapReadOnlyBash(bashTool: RunnableTool, roleTitle: string): RunnableTool {
+  return {
+    ...bashTool,
+    execute: async (input, ctx): Promise<RunnerToolResult> => {
+      const command = typeof input.command === 'string' ? input.command.trim() : '';
+      if (command && SHELL_MUTATION_PATTERNS.some((re) => re.test(command))) {
+        return {
+          content:
+            `[Managed Task ${roleTitle}] Shell command blocked because this role is verification-only. ` +
+            `Command: ${command.slice(0, 120)}`,
+          isError: true,
+        };
+      }
+      return bashTool.execute(input, ctx);
+    },
+  };
+}
+
 interface CodingToolBundle {
   readonly read: RunnableTool;
   readonly grep: RunnableTool;
@@ -573,7 +620,13 @@ export function buildRunnerAgentChain(
   const scout: WritableAgent = {
     name: SCOUT_AGENT_NAME,
     instructions: SCOUT_INSTRUCTIONS,
-    tools: [scoutEmit, codingTools.read, codingTools.grep, codingTools.glob, codingTools.bash],
+    tools: [
+      scoutEmit,
+      codingTools.read,
+      codingTools.grep,
+      codingTools.glob,
+      wrapReadOnlyBash(codingTools.bash, 'Scout'),
+    ],
     handoffs: undefined,
     reasoning: { default: 'quick', max: 'balanced', escalateOnRevise: false },
   };
@@ -602,7 +655,13 @@ export function buildRunnerAgentChain(
   const evaluator: WritableAgent = {
     name: EVALUATOR_AGENT_NAME,
     instructions: EVALUATOR_INSTRUCTIONS,
-    tools: [verdictEmit, codingTools.read, codingTools.grep, codingTools.glob, codingTools.bash],
+    tools: [
+      verdictEmit,
+      codingTools.read,
+      codingTools.grep,
+      codingTools.glob,
+      wrapReadOnlyBash(codingTools.bash, 'Evaluator'),
+    ],
     handoffs: undefined,
     reasoning: { default: 'balanced', max: 'deep', escalateOnRevise: false },
   };

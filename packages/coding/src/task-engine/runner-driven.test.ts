@@ -16,11 +16,13 @@ import {
   EMIT_SCOUT_VERDICT_TOOL_NAME,
 } from '../agents/protocol-emitters.js';
 import {
+  buildRunnerAgentChain,
   buildRunnerLlmAdapter,
   buildRunnerScoutAgent,
   isRunnerDrivenRuntimeEnabled,
   runManagedTaskViaRunner,
 } from './runner-driven.js';
+import type { RunnableTool } from '@kodax/core';
 import type { KodaXMessage, KodaXToolDefinition, KodaXToolUseBlock } from '@kodax/ai';
 import type { KodaXEvents, KodaXOptions, KodaXToolExecutionContext } from '../types.js';
 
@@ -1285,6 +1287,119 @@ describe('Shard 6d-c2 — stream event passthrough', () => {
     // via buildRunnerLlmAdapter's passthrough of streamOptions.
     expect(textDeltas).toEqual([]);
     expect(thinkingDeltas).toEqual([]);
+  });
+});
+
+describe('Shard 6d-f — role-scoped tool boundaries (legacy toolPolicy parity)', () => {
+  function findTool(agent: { tools?: readonly KodaXToolDefinition[] }, name: string): RunnableTool {
+    const tool = agent.tools?.find((t) => t.name === name);
+    if (!tool) throw new Error(`Tool '${name}' not found on agent`);
+    return tool as RunnableTool;
+  }
+
+  // Minimal RunnerToolContext for tests — `agent` is unused by the
+  // bash / mutation-guard path but required by the interface.
+  function makeToolCtx(agentName: string): import('@kodax/core').RunnerToolContext {
+    return { agent: { name: agentName } as unknown as import('@kodax/core').Agent };
+  }
+
+  it('Planner agent exposes only read + grep + glob + emit_contract (no bash/write/edit)', () => {
+    const chain = buildRunnerAgentChain(makeCtx(), {});
+    const plannerTools = chain.planner.tools?.map((t) => t.name) ?? [];
+    expect(plannerTools).toContain('emit_contract');
+    expect(plannerTools).toContain('read');
+    expect(plannerTools).toContain('grep');
+    expect(plannerTools).toContain('glob');
+    expect(plannerTools).not.toContain('bash');
+    expect(plannerTools).not.toContain('write');
+    expect(plannerTools).not.toContain('edit');
+  });
+
+  it('Evaluator agent exposes read + grep + glob + bash + emit_verdict (no write/edit)', () => {
+    const chain = buildRunnerAgentChain(makeCtx(), {});
+    const evaluatorTools = chain.evaluator.tools?.map((t) => t.name) ?? [];
+    expect(evaluatorTools).toContain('emit_verdict');
+    expect(evaluatorTools).toContain('bash');
+    expect(evaluatorTools).not.toContain('write');
+    expect(evaluatorTools).not.toContain('edit');
+  });
+
+  it('Generator agent exposes full coding toolbox including write + edit', () => {
+    const chain = buildRunnerAgentChain(makeCtx(), {});
+    const genTools = chain.generator.tools?.map((t) => t.name) ?? [];
+    expect(genTools).toContain('emit_handoff');
+    expect(genTools).toContain('bash');
+    expect(genTools).toContain('write');
+    expect(genTools).toContain('edit');
+  });
+
+  it('Evaluator bash blocks shell mutation commands (legacy SHELL_WRITE_PATTERNS parity)', async () => {
+    const chain = buildRunnerAgentChain(makeCtx(), {});
+    const evalBash = findTool(chain.evaluator, 'bash');
+    const result = await evalBash.execute({ command: 'rm -rf /tmp/x' }, makeToolCtx('evaluator'));
+    expect(result.isError).toBe(true);
+    expect(String(result.content)).toContain('verification-only');
+  });
+
+  it('Evaluator bash allows read-only commands (ls, cat, git diff)', async () => {
+    const chain = buildRunnerAgentChain(makeCtx(), {});
+    const evalBash = findTool(chain.evaluator, 'bash');
+    // Mutation guard does NOT fire for read-only commands.
+    const result = await evalBash.execute({ command: 'git diff HEAD' }, makeToolCtx('evaluator'));
+    if (result.isError) {
+      expect(String(result.content)).not.toContain('verification-only');
+    }
+  });
+
+  it('Evaluator bash blocks git write commands (commit, push, reset)', async () => {
+    const chain = buildRunnerAgentChain(makeCtx(), {});
+    const evalBash = findTool(chain.evaluator, 'bash');
+    const commit = await evalBash.execute({ command: 'git commit -m "x"' }, makeToolCtx('evaluator'));
+    expect(commit.isError).toBe(true);
+    expect(String(commit.content)).toContain('verification-only');
+    const push = await evalBash.execute({ command: 'git push origin main' }, makeToolCtx('evaluator'));
+    expect(push.isError).toBe(true);
+    const reset = await evalBash.execute({ command: 'git reset --hard HEAD' }, makeToolCtx('evaluator'));
+    expect(reset.isError).toBe(true);
+  });
+
+  it('Scout bash applies the same mutation guard (Scout is also read-only)', async () => {
+    const chain = buildRunnerAgentChain(makeCtx(), {});
+    const scoutBash = findTool(chain.scout, 'bash');
+    const result = await scoutBash.execute({ command: 'rm -rf /tmp/y' }, makeToolCtx('scout'));
+    expect(result.isError).toBe(true);
+    expect(String(result.content)).toContain('verification-only');
+  });
+});
+
+describe('Shard 6d-f — evaluator graceful fallback when verdict is not emitted', () => {
+  it('returns COMPLETE with last assistant text when Evaluator produces no verdict', async () => {
+    const mock = makeChainMockLlm({
+      scout: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 's1', name: 'emit_scout_verdict',
+              input: { confirmed_harness: 'H1_EXECUTE_EVAL' },
+            }],
+          };
+        }
+        return { textBlocks: [{ text: 'ok' }] };
+      },
+      generator: () => ({
+        toolBlocks: [{ type: 'tool_use', id: 'g1', name: 'emit_handoff', input: { status: 'ready' } }],
+      }),
+      // Evaluator emits NO verdict — just returns final text directly.
+      evaluator: () => ({
+        textBlocks: [{ text: 'Evaluator could not structure a verdict but here is the result.' }],
+      }),
+    });
+    const result = await runManagedTaskViaRunner(makeOptions(), 'task', mock);
+    // Without a verdict, runner defaults to signal='COMPLETE' and uses
+    // the last assistant text as the answer (matching legacy's
+    // degraded-verification fallback semantics, minus the explicit note).
+    expect(result.signal).toBe('COMPLETE');
+    expect(result.lastText).toContain('could not structure a verdict');
   });
 });
 
