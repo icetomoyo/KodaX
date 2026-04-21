@@ -17,7 +17,7 @@ export const KODAX_COMPACT_KEEP_RECENT = 10;
 export const KODAX_MAX_RETRIES = 3;
 export const KODAX_RETRY_BASE_DELAY = 2;
 export const KODAX_MAX_INCOMPLETE_RETRIES = 2;
-export const KODAX_MAX_MAXTOKENS_RETRIES = 2;
+export const KODAX_MAX_MAXTOKENS_RETRIES = 3;
 
 // ============== 并行 Agent 配置 ==============
 

@@ -17,6 +17,7 @@ import {
   KodaXStreamResult,
 } from '../types.js';
 import { KodaXError, KodaXRateLimitError, KodaXProviderError } from '../errors.js';
+import { KODAX_MAX_TOKENS } from '../constants.js';
 import {
   cloneCapabilityProfile,
   NATIVE_PROVIDER_CAPABILITY_PROFILE,
@@ -33,17 +34,59 @@ import {
   saveReasoningOverride,
 } from '../reasoning-overrides.js';
 
+function parseEnvInt(raw: string | undefined): number | undefined {
+  if (!raw) return undefined;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
 export abstract class KodaXBaseProvider {
   abstract readonly name: string;
   abstract readonly supportsThinking: boolean;
   protected abstract readonly config: KodaXProviderConfig;
 
   /**
-   * When a "prompt too long / context window exceeded" error is detected,
-   * this field is set to the reduced max output tokens for the next retry.
-   * It is consumed once and cleared after use.
+   * Per-request override for `max_tokens` in the next provider call. Consumed
+   * once and cleared in `withRateLimit` after the next successful response.
+   * Two callers set this:
+   *   1. Context-overflow recovery inside `withRateLimit` (reduces budget
+   *      when the model reports "prompt too long").
+   *   2. The agent loop's max_tokens escalation path, which flips this to
+   *      `KODAX_ESCALATED_MAX_OUTPUT_TOKENS` when a capped-budget turn
+   *      returns `stop_reason: max_tokens`. See `coding/src/agent.ts`.
    */
   protected maxOutputTokensOverride?: number;
+
+  /**
+   * Public setter for the one-shot override above. Callers outside the
+   * provider package (notably the agent loop's escalation branch) use this
+   * to stage a larger budget for the next stream call in the same logical
+   * turn. Pass `undefined` to clear a stale override explicitly.
+   */
+  public setMaxOutputTokensOverride(value: number | undefined): void {
+    this.maxOutputTokensOverride = value;
+  }
+
+  /**
+   * Returns the max_tokens value the provider will currently use on its
+   * next request. Precedence (highest to lowest):
+   *   1. One-shot override (agent escalation, context-overflow recovery)
+   *   2. User env var `KODAX_MAX_OUTPUT_TOKENS` (explicit user intent)
+   *   3. Provider config default
+   *   4. Global `KODAX_MAX_TOKENS` fallback
+   * Used by provider stream() paths and by the agent loop to decide
+   * whether escalation is applicable (see `coding/src/agent.ts`).
+   */
+  public getEffectiveMaxOutputTokens(): number {
+    if (this.maxOutputTokensOverride !== undefined) {
+      return this.maxOutputTokensOverride;
+    }
+    const envOverride = parseEnvInt(process.env.KODAX_MAX_OUTPUT_TOKENS);
+    if (envOverride !== undefined) {
+      return envOverride;
+    }
+    return this.config.maxOutputTokens ?? KODAX_MAX_TOKENS;
+  }
 
   abstract stream(
     messages: KodaXMessage[],

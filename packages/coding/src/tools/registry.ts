@@ -158,7 +158,12 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
   },
   {
     name: 'write',
-    description: 'Write content to a file. Large diffs may be summarized in the tool result.',
+    description:
+      'Write content to a file. Large diffs may be summarized in the tool result. '
+      + 'Prefer the `edit` tool over `write` when modifying an existing file — `edit` sends only the diff '
+      + 'and avoids output-token pressure. For new files larger than ~400 lines, write in multiple passes: '
+      + 'create a partial file first, then use `edit` to append remaining sections. This keeps each tool call '
+      + 'under the per-turn output budget and avoids mid-stream truncation.',
     input_schema: {
       type: 'object',
       properties: {

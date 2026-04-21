@@ -22,7 +22,6 @@ import {
   KodaXTokenUsage,
   KodaXToolUseBlock,
 } from '../types.js';
-import { KODAX_MAX_TOKENS } from '../constants.js';
 import {
   clampThinkingBudget,
   isReasoningEnabled,
@@ -184,8 +183,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
     // Qwen's extra_body or Zhipu's thinking block, so we intentionally attach
     // those fields on the raw request object here.
     const params = createParams as unknown as Record<string, unknown>;
-    const maxOutputTokens =
-      this.maxOutputTokensOverride ?? this.config.maxOutputTokens ?? KODAX_MAX_TOKENS;
+    const maxOutputTokens = this.getEffectiveMaxOutputTokens();
     const requestedBudget = clampThinkingBudget(
       resolveThinkingBudget(
         this.config,
@@ -306,8 +304,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         model,
         messages: fullMessages,
         tools: openaiTools,
-        max_completion_tokens:
-          this.maxOutputTokensOverride ?? this.config.maxOutputTokens ?? KODAX_MAX_TOKENS,
+        max_completion_tokens: this.getEffectiveMaxOutputTokens(),
         stream: true,
       };
 
@@ -533,8 +530,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         model,
         messages: fullMessages,
         tools: openaiTools,
-        max_completion_tokens:
-          this.maxOutputTokensOverride ?? this.config.maxOutputTokens ?? KODAX_MAX_TOKENS,
+        max_completion_tokens: this.getEffectiveMaxOutputTokens(),
       };
 
       let response: OpenAI.Chat.Completions.ChatCompletion | undefined;

@@ -15,6 +15,7 @@ import {
   KodaXReasoningCapability,
 } from '../types.js';
 import { KodaXProviderError } from '../errors.js';
+import { KODAX_CAPPED_MAX_OUTPUT_TOKENS } from '../constants.js';
 import {
   CLI_BRIDGE_PROVIDER_CAPABILITY_PROFILE,
   cloneCapabilityProfile,
@@ -96,8 +97,14 @@ class ZhipuCodingProvider extends KodaXAnthropicCompatProvider {
     supportsThinking: true,
     reasoningCapability: 'native-budget',
     contextWindow: 200000,
-    // GLM-5/5.1/4.7/4.6 all support 128K max output per Zhipu docs
-    maxOutputTokens: 128000,
+    // Provider advertises 128K max output, but real-world long streams
+    // hit Zhipu's ~8 minute server-side kill window well before reaching
+    // that ceiling. We default to the capped value (32K) so typical turns
+    // finish fast; the agent loop escalates to 64K on `stop_reason:
+    // max_tokens` and continues via meta message if even 64K is not enough.
+    // Override with env `KODAX_MAX_OUTPUT_TOKENS` to bypass the escalation
+    // ladder entirely.
+    maxOutputTokens: KODAX_CAPPED_MAX_OUTPUT_TOKENS,
     thinkingBudgetCap: 16000,
   };
   constructor() { super(); this.initClient(); }
@@ -137,8 +144,13 @@ class MiniMaxCodingProvider extends KodaXAnthropicCompatProvider {
     supportsThinking: true,
     reasoningCapability: 'native-budget',
     contextWindow: 204800,
-    // MiniMax M2.7 supports 128K max output
-    maxOutputTokens: 128000,
+    // MiniMax M2.7 advertises 128K max output, but long streams share the
+    // same failure mode as zhipu-coding (server-side termination on
+    // minutes-long generations). Capped at 32K by default with agent-loop
+    // escalation to 64K on `stop_reason: max_tokens`; continuation meta
+    // message handles tasks that exceed 64K output. Override with env
+    // `KODAX_MAX_OUTPUT_TOKENS` to bypass the escalation ladder.
+    maxOutputTokens: KODAX_CAPPED_MAX_OUTPUT_TOKENS,
   };
   constructor() { super(); this.initClient(); }
 }

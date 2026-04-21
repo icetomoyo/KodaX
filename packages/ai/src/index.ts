@@ -70,7 +70,12 @@ export {
 } from './errors.js';
 
 // ============== Constants ==============
-export { KODAX_MAX_TOKENS, KODAX_API_MIN_INTERVAL } from './constants.js';
+export {
+  KODAX_MAX_TOKENS,
+  KODAX_API_MIN_INTERVAL,
+  KODAX_CAPPED_MAX_OUTPUT_TOKENS,
+  KODAX_ESCALATED_MAX_OUTPUT_TOKENS,
+} from './constants.js';
 
 // ============== Reasoning ==============
 export {

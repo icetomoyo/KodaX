@@ -23,7 +23,7 @@ import {
   SessionErrorMetadata,
 } from './types.js';
 import type { KodaXMessage, KodaXStreamResult } from '@kodax/ai';
-import { createCostTracker, recordUsage, getSummary, formatCostReport, type CostTracker } from '@kodax/ai';
+import { createCostTracker, recordUsage, getSummary, formatCostReport, KODAX_ESCALATED_MAX_OUTPUT_TOKENS, type CostTracker } from '@kodax/ai';
 import path from 'path';
 import fsSync from 'fs';
 // FEATURE_093 (v0.7.24): `KodaXClient` is only re-exported from this module
@@ -1646,6 +1646,15 @@ export async function runKodaX(
   let incompleteRetryCount = 0;
   let maxTokensRetryCount = 0;
   let limitReached = false; // Track if we exited due to iteration limit - 追踪是否因达到迭代上限而退出
+  // Max-tokens escalation state. When a capped-budget turn returns
+  // stop_reason:max_tokens we set `pendingMaxOutputOverride` to
+  // KODAX_ESCALATED_MAX_OUTPUT_TOKENS and `continue` the iter loop — the
+  // next iter re-enters the same logical turn with the larger budget.
+  // `hasEscalatedForCurrentLogicalTurn` prevents a second escalation in
+  // the same turn; it resets when the turn commits (assistant pushed)
+  // so subsequent turns (including L5 continuations) can escalate again.
+  let pendingMaxOutputOverride: number | undefined = undefined;
+  let hasEscalatedForCurrentLogicalTurn = false;
   const emitIterationEnd = (
     iterNumber: number,
     snapshotOverride?: typeof contextTokenSnapshot,
@@ -1899,6 +1908,17 @@ export async function runKodaX(
       };
 
       const streamProvider = resolveProvider(currentProviderName);
+      // Apply a pending max_tokens escalation staged by the previous iter's
+      // stop_reason:max_tokens branch. `resolveProvider` always returns a
+      // fresh instance, so we can't carry state on the provider across
+      // iters — we bridge the value through a closure-local variable and
+      // re-apply it here on the new instance. Consumed once; the
+      // provider's `withRateLimit` clears it after the next successful
+      // response, so normal turns (no escalation) start fresh.
+      if (pendingMaxOutputOverride !== undefined) {
+        streamProvider.setMaxOutputTokensOverride(pendingMaxOutputOverride);
+        pendingMaxOutputOverride = undefined;
+      }
       const providerPolicy = evaluateProviderPolicy({
         providerName: currentProviderName,
         model: currentModelOverride,
@@ -2241,6 +2261,32 @@ export async function runKodaX(
         }
       }
 
+      // L1 escalation: when a capped-budget turn returns stop_reason:max_tokens
+      // we retry the SAME logical turn with KODAX_ESCALATED_MAX_OUTPUT_TOKENS
+      // instead of committing the (often truncated) assistant message to
+      // history. This must run BEFORE `messages.push(assistant)` so a partial
+      // tool_use JSON — already dropped by the Anthropic provider when
+      // `content_block_stop` never arrived — does not pollute the turn.
+      // Mirrors Claude Code's `max_output_tokens_escalate` path (query.ts).
+      // Skipped when the user set KODAX_MAX_OUTPUT_TOKENS (explicit intent
+      // beats auto-ladder) or when the effective budget already meets the
+      // escalated threshold.
+      if (
+        result.stopReason === 'max_tokens'
+        && !hasEscalatedForCurrentLogicalTurn
+        && !process.env.KODAX_MAX_OUTPUT_TOKENS
+        && streamProvider.getEffectiveMaxOutputTokens() < KODAX_ESCALATED_MAX_OUTPUT_TOKENS
+      ) {
+        hasEscalatedForCurrentLogicalTurn = true;
+        pendingMaxOutputOverride = KODAX_ESCALATED_MAX_OUTPUT_TOKENS;
+        events.onRetry?.(
+          `Output budget reached, escalating to ${KODAX_ESCALATED_MAX_OUTPUT_TOKENS} tokens and retrying the same turn`,
+          1,
+          1,
+        );
+        continue;
+      }
+
       let assistantContent = [...result.thinkingBlocks, ...result.textBlocks, ...visibleToolBlocks];
       // Guard: never push an assistant message with empty content.
       // This can happen when the model only emits invisible tool calls (e.g. emit_managed_protocol)
@@ -2251,17 +2297,35 @@ export async function runKodaX(
       messages.push({ role: 'assistant', content: assistantContent });
       const completedTurnTokenSnapshot = createCompletedTurnTokenSnapshot(messages, result.usage);
       contextTokenSnapshot = completedTurnTokenSnapshot;
+      // Turn committed to history. Clear per-turn escalation flag so the
+      // next logical turn (normal continuation after tools, or L5 meta
+      // recovery below) starts fresh and can escalate again if needed.
+      hasEscalatedForCurrentLogicalTurn = false;
 
-      // Fallback: auto-continue when response is truncated by max_tokens.
-      // Capped at KODAX_MAX_MAXTOKENS_RETRIES to prevent infinite loops when
-      // extended thinking consumes most of the output budget, leaving no room
-      // for tool calls (e.g. large Write operations).  When retries are exhausted
-      // the code falls through to the normal text-only response handler below.
-      if (result.stopReason === 'max_tokens' && result.toolBlocks.length === 0 && lastText) {
+      // L5 continuation: escalated budget was still not enough, or no tools
+      // were emitted and output was cut mid-text. Inject Claude Code's
+      // recovery meta message instructing the model to resume mid-thought
+      // and break remaining work into smaller pieces (so a too-large Write
+      // becomes Write+Edit across turns). Capped at
+      // KODAX_MAX_MAXTOKENS_RETRIES (3) to prevent infinite loops.
+      // Skipped when there are completed tool_use blocks — those will
+      // execute and the model will naturally continue next turn with the
+      // tool_result, no explicit meta nudge needed.
+      if (result.stopReason === 'max_tokens' && result.toolBlocks.length === 0) {
         maxTokensRetryCount++;
         if (maxTokensRetryCount <= KODAX_MAX_MAXTOKENS_RETRIES) {
-          events.onTextDelta?.('\n\n[max_tokens reached, continuing...]\n\n');
-          messages.push({ role: 'user', content: [{ type: 'text', text: 'Continue from where you left off.' }], _synthetic: true });
+          events.onTextDelta?.('\n\n[output token limit hit, continuing…]\n\n');
+          messages.push({
+            role: 'user',
+            content: [{
+              type: 'text',
+              text:
+                'Output token limit hit. Resume directly — no apology, no recap of what you were doing. ' +
+                'Pick up mid-thought if that is where the cut happened. ' +
+                'Break remaining work into smaller pieces.',
+            }],
+            _synthetic: true,
+          });
           contextTokenSnapshot = rebaseContextTokenSnapshot(messages, completedTurnTokenSnapshot);
           continue;
         }

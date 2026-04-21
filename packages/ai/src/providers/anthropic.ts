@@ -21,7 +21,6 @@ import {
   KodaXThinkingBlock,
   KodaXRedactedThinkingBlock,
 } from '../types.js';
-import { KODAX_MAX_TOKENS } from '../constants.js';
 import {
   clampThinkingBudget,
   resolveThinkingBudget,
@@ -127,7 +126,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
   ): Promise<KodaXStreamResult> {
     return this.withRateLimit(async () => {
       const normalizedReasoning = this.normalizeReasoning(reasoning);
-      const maxOutputTokens = this.maxOutputTokensOverride ?? this.config.maxOutputTokens ?? KODAX_MAX_TOKENS;
+      const maxOutputTokens = this.getEffectiveMaxOutputTokens();
       const model = streamOptions?.modelOverride ?? this.config.model;
       const convertedMessages = await this.convertMessages(messages);
       const initialCapability = normalizedReasoning.enabled
@@ -453,7 +452,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
   ): Promise<KodaXStreamResult> {
     return this.withRateLimit(async () => {
       const normalizedReasoning = this.normalizeReasoning(reasoning);
-      const maxOutputTokens = this.maxOutputTokensOverride ?? this.config.maxOutputTokens ?? KODAX_MAX_TOKENS;
+      const maxOutputTokens = this.getEffectiveMaxOutputTokens();
       const model = streamOptions?.modelOverride ?? this.config.model;
       const convertedMessages = await this.convertMessages(messages);
       const initialCapability = normalizedReasoning.enabled
