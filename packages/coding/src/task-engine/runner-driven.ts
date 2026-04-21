@@ -75,7 +75,11 @@ import type {
   ManagedMutationTracker,
 } from '../types.js';
 import type { ManagedTaskBudgetController } from './_internal/managed-task/budget.js';
-import { incrementManagedBudgetUsage } from './_internal/managed-task/budget.js';
+import {
+  buildManagedStatusBudgetFields,
+  incrementManagedBudgetUsage,
+  maybeRequestAdditionalWorkBudget,
+} from './_internal/managed-task/budget.js';
 import type {
   ManagedTaskCheckpoint,
   ValidatedCheckpoint,
@@ -189,10 +193,30 @@ const SLOT_TO_ROLE: Record<'scout' | 'contract' | 'handoff' | 'verdict', KodaXTa
 };
 
 /**
+ * Context needed to fire the 90%-threshold budget-extension dialog on
+ * Evaluator revise. Mirrors the legacy payload shape at task-engine.ts:
+ * ~6000 (inside the revise branch of executeManagedTaskRound).
+ */
+interface BudgetExtensionContext {
+  readonly events: KodaXEvents | undefined;
+  readonly originalTask: string;
+  readonly roundRef: { current: number };
+  readonly maxRoundsRef: { current: number };
+  readonly budgetApprovalRef: { current: boolean };
+}
+
+/**
  * Wrap a protocol emitter so every successful execution records its
  * `ProtocolEmitterMetadata` into the per-run recorder AND fires a
  * managed-task status observer event. The wrapped tool otherwise behaves
  * identically to the base tool.
+ *
+ * On Evaluator `revise`, if the cumulative budget usage crosses 90% of the
+ * current cap, fire `maybeRequestAdditionalWorkBudget` to ask the user
+ * whether to extend. `approved` bumps the budget by
+ * `GLOBAL_WORK_BUDGET_INCREMENT`; `denied` / `skipped` leave it unchanged
+ * (the Runner keeps running since budget is advisory; the user has been
+ * informed). Mirrors legacy task-engine.ts behaviour at ~line 6000.
  */
 function wrapEmitterWithRecorder(
   base: RunnableTool,
@@ -200,6 +224,7 @@ function wrapEmitterWithRecorder(
   recorder: VerdictRecorder,
   observer: ObserverBridge,
   budget?: ManagedTaskBudgetController,
+  budgetExtension?: BudgetExtensionContext,
 ): RunnableTool {
   return {
     ...base,
@@ -220,6 +245,26 @@ function wrapEmitterWithRecorder(
           }
         }
         observer.onRoleEmit(SLOT_TO_ROLE[slot], recorder);
+        if (slot === 'verdict' && budget && budgetExtension) {
+          const verdictPayload = recorder.verdict?.payload.verdict;
+          if (verdictPayload?.status === 'revise') {
+            observer.notifyBudgetApprovalRequest();
+            const decision = await maybeRequestAdditionalWorkBudget(
+              budgetExtension.events,
+              budget,
+              {
+                summary: verdictPayload.reason ?? 'Evaluator requested another pass',
+                currentRound: budgetExtension.roundRef.current,
+                maxRounds: budgetExtension.maxRoundsRef.current,
+                originalTask: budgetExtension.originalTask,
+              },
+            );
+            budgetExtension.budgetApprovalRef.current = false;
+            if (decision === 'approved') {
+              budgetExtension.maxRoundsRef.current += 1;
+            }
+          }
+        }
       }
       return result;
     },
@@ -237,56 +282,143 @@ const BUDGET_CAP_BY_HARNESS: Record<KodaXHarnessProfile, number> = {
 // =============================================================================
 
 /**
- * Minimal observer helper that emits `KodaXManagedTaskStatusEvent` on each
- * role transition. Tests (and the REPL status line) subscribe via
- * `options.events.onManagedTaskStatus`. The current implementation mirrors
- * the *shape* of the legacy emission — same event type, same required
- * fields — without reproducing legacy's richer per-round detailNote / event
- * payloads. The additional nuance can be filled in later without breaking
- * the observer contract.
+ * Display-name mapping for each role. The REPL UI renders this as the
+ * status-line label (e.g. "[Scout] Thinking..."). Keys are lowercase role
+ * ids; values are the capitalised titles the legacy path used.
  */
+const ROLE_TO_TITLE: Record<KodaXTaskRole, string> = {
+  scout: 'Scout',
+  planner: 'Planner',
+  generator: 'Generator',
+  evaluator: 'Evaluator',
+  direct: 'Direct',
+};
+
+/**
+ * Max-rounds hint for progress reporting. The Runner.run inner loop caps
+ * per-agent tool iterations at `MAX_TOOL_LOOP_ITERATIONS` (20); `maxRounds`
+ * here reflects the *role-chain* length upper bound per harness tier.
+ * Consumers use it purely for "round i of N" display — the actual cap is
+ * enforced by the LLM loop + budget controller, not by this number.
+ */
+const MAX_ROUNDS_BY_HARNESS: Record<KodaXHarnessProfile, number> = {
+  H0_DIRECT: 1, // Scout direct answer
+  H1_EXECUTE_EVAL: 6, // Scout + Gen + Eval (+ up to 3 revise cycles)
+  H2_PLAN_EXECUTE_EVAL: 8, // Scout + Planner + Gen + Eval (+ up to 4 revise cycles)
+};
+
 export interface ObserverBridge {
   readonly preflight: () => void;
   readonly onRoleEmit: (role: KodaXTaskRole, recorder: VerdictRecorder) => void;
-  readonly completed: (signal: KodaXResult['signal']) => void;
+  readonly completed: (signal: KodaXResult['signal'], reason?: string) => void;
+  readonly notifyBudgetApprovalRequest: () => void;
 }
 
+/**
+ * Emit `KodaXManagedTaskStatusEvent` with the full field set legacy
+ * consumers (REPL UI, CLI JSON events, observability) depend on.
+ *
+ * Fields populated:
+ *   - agentMode / harnessProfile — static for the run (harness updated on
+ *     Scout emit)
+ *   - phase / activeWorkerId / activeWorkerTitle — the canonical trio
+ *   - currentRound / maxRounds — progress indicator
+ *   - upgradeCeiling — same as harness (Runner path does not observe
+ *     mid-run ceiling changes beyond Scout commitment)
+ *   - globalWorkBudget / budgetUsage / budgetApprovalRequired — via
+ *     `buildManagedStatusBudgetFields`
+ *   - note / detailNote — short status label + optional long-form detail
+ *     (detailNote comes from the recorder's most-recent payload summary
+ *     when available)
+ *   - persistToHistory — `true` for terminal events (completed / blocked)
+ *     and `false` for transient progress ticks, matching legacy contract
+ *   - events[] — inline live-event list, currently one entry per observer
+ *     tick so the REPL ticker has something to render
+ */
 function buildObserverBridge(
   events: KodaXEvents | undefined,
   harnessRef: { current: KodaXHarnessProfile },
   rolesRef: { emitted: KodaXTaskRole[] },
+  budget: ManagedTaskBudgetController,
+  roundRef: { current: number },
+  maxRoundsRef: { current: number },
+  budgetApprovalRef: { current: boolean },
   checkpointWriter?: (role: KodaXTaskRole) => void,
 ): ObserverBridge {
   const emit = (partial: {
     phase: KodaXManagedTaskPhase;
     activeWorkerId?: string;
+    activeWorkerTitle?: string;
     note?: string;
+    detailNote?: string;
+    persistToHistory?: boolean;
   }): void => {
-    events?.onManagedTaskStatus?.({
+    if (!events?.onManagedTaskStatus) return;
+    const harness = harnessRef.current;
+    events.onManagedTaskStatus({
       agentMode: 'ama',
-      harnessProfile: harnessRef.current,
+      harnessProfile: harness,
+      currentRound: roundRef.current,
+      maxRounds: maxRoundsRef.current,
+      upgradeCeiling: harness,
+      ...buildManagedStatusBudgetFields(budget, budgetApprovalRef.current),
       ...partial,
     });
   };
   return {
-    preflight: () => emit({ phase: 'preflight' }),
+    preflight: () =>
+      emit({
+        phase: 'preflight',
+        activeWorkerId: 'scout',
+        activeWorkerTitle: ROLE_TO_TITLE.scout,
+        note: 'Scout analyzing task complexity',
+        persistToHistory: false,
+      }),
     onRoleEmit: (role, recorder) => {
       // Once Scout has confirmed a harness tier, keep it as the reference.
       const scoutHarness = recorder.scout?.payload.scout?.confirmedHarness;
       if (scoutHarness) {
         harnessRef.current = scoutHarness;
+        maxRoundsRef.current = Math.max(
+          maxRoundsRef.current,
+          MAX_ROUNDS_BY_HARNESS[scoutHarness],
+        );
       }
       rolesRef.emitted.push(role);
-      emit({ phase: 'round', activeWorkerId: role, note: `${role} completed a turn` });
-      // Shard 6c: fire-and-forget checkpoint write. Errors are swallowed
-      // inside writeCurrentCheckpoint so they can't abort the run.
+      roundRef.current += 1;
+      const detail =
+        role === 'scout'
+          ? recorder.scout?.payload.scout?.summary
+          : role === 'planner'
+            ? recorder.contract?.payload.contract?.summary
+            : role === 'generator'
+              ? recorder.handoff?.payload.handoff?.summary
+              : recorder.verdict?.payload.verdict?.reason;
+      emit({
+        phase: 'round',
+        activeWorkerId: role,
+        activeWorkerTitle: ROLE_TO_TITLE[role],
+        note: `${ROLE_TO_TITLE[role]} completed a turn`,
+        detailNote: detail,
+        persistToHistory: false,
+      });
       if (checkpointWriter) checkpointWriter(role);
     },
-    completed: (signal) =>
+    completed: (signal, reason) =>
       emit({
         phase: 'completed',
-        note: signal === 'BLOCKED' ? 'task blocked' : 'task completed',
+        note: signal === 'BLOCKED' ? 'Task blocked' : 'Task completed',
+        detailNote: reason,
+        persistToHistory: true,
       }),
+    notifyBudgetApprovalRequest: () => {
+      budgetApprovalRef.current = true;
+      emit({
+        phase: 'round',
+        note: 'Awaiting budget extension approval',
+        persistToHistory: false,
+      });
+    },
   };
 }
 
@@ -405,6 +537,7 @@ const NULL_OBSERVER: ObserverBridge = {
   preflight: () => undefined,
   onRoleEmit: () => undefined,
   completed: () => undefined,
+  notifyBudgetApprovalRequest: () => undefined,
 };
 
 /**
@@ -426,13 +559,14 @@ export function buildRunnerAgentChain(
   recorder: VerdictRecorder,
   observer: ObserverBridge = NULL_OBSERVER,
   budget?: ManagedTaskBudgetController,
+  budgetExtension?: BudgetExtensionContext,
 ): RunnerAgentChain {
   const codingTools = buildCodingToolBundle(ctx, budget);
 
   const scoutEmit = wrapEmitterWithRecorder(emitScoutVerdict, 'scout', recorder, observer, budget);
   const contractEmit = wrapEmitterWithRecorder(emitContract, 'contract', recorder, observer, budget);
   const handoffEmit = wrapEmitterWithRecorder(emitHandoff, 'handoff', recorder, observer, budget);
-  const verdictEmit = wrapEmitterWithRecorder(emitVerdict, 'verdict', recorder, observer, budget);
+  const verdictEmit = wrapEmitterWithRecorder(emitVerdict, 'verdict', recorder, observer, budget, budgetExtension);
 
   type WritableAgent = { -readonly [K in keyof Agent]: Agent[K] };
 
@@ -543,7 +677,26 @@ export function buildRunnerLlmAdapter(
       streamResult = await overrideStream(transcript, wireTools, system);
     } else {
       const provider = resolveProvider(options.provider ?? 'anthropic');
-      const raw = await provider.stream([...transcript], [...wireTools], system);
+      // Forward the caller's event callbacks through to the provider stream
+      // so `onTextDelta` / `onThinkingDelta` / `onToolInputDelta` / etc.
+      // fire for every role's LLM turn, matching the legacy `runKodaX`
+      // behaviour that REPL streaming UIs rely on.
+      const streamOptions = options.events
+        ? {
+            onTextDelta: options.events.onTextDelta,
+            onThinkingDelta: options.events.onThinkingDelta,
+            onThinkingEnd: options.events.onThinkingEnd,
+            onToolInputDelta: options.events.onToolInputDelta,
+          }
+        : undefined;
+      const raw = await provider.stream(
+        [...transcript],
+        [...wireTools],
+        system,
+        undefined,
+        streamOptions,
+        options.abortSignal,
+      );
       streamResult = { textBlocks: raw.textBlocks, toolBlocks: raw.toolBlocks };
     }
 
@@ -921,6 +1074,9 @@ export async function runManagedTaskViaRunner(
   const recorder: VerdictRecorder = {};
   const harnessRef = { current: 'H0_DIRECT' as KodaXHarnessProfile };
   const rolesRef: { emitted: KodaXTaskRole[] } = { emitted: [] };
+  const roundRef = { current: 0 };
+  const maxRoundsRef = { current: MAX_ROUNDS_BY_HARNESS.H0_DIRECT };
+  const budgetApprovalRef = { current: false };
 
   // Shard 6c: checkpoint writer, invoked after each role emit. Gated on
   // the presence of an interactive `askUser` callback — without it the
@@ -958,12 +1114,23 @@ export async function runManagedTaskViaRunner(
     options.events,
     harnessRef,
     rolesRef,
+    budget,
+    roundRef,
+    maxRoundsRef,
+    budgetApprovalRef,
     checkpointWriter,
   );
 
   observer.preflight();
 
-  const chain = buildRunnerAgentChain(baseCtx, recorder, observer, budget);
+  const budgetExtension: BudgetExtensionContext = {
+    events: options.events,
+    originalTask: prompt,
+    roundRef,
+    maxRoundsRef,
+    budgetApprovalRef,
+  };
+  const chain = buildRunnerAgentChain(baseCtx, recorder, observer, budget, budgetExtension);
   const llm = buildRunnerLlmAdapter(options, adapterOverride);
 
   const runResult = await Runner.run(chain.scout, prompt, {
@@ -992,7 +1159,7 @@ export async function runManagedTaskViaRunner(
     budget,
   });
 
-  observer.completed(signal);
+  observer.completed(signal, reason ?? userAnswer);
 
   // Shard 6c: delete checkpoint on successful or blocked terminal exit.
   // (Blocked is still "the task concluded" from the checkpoint perspective
