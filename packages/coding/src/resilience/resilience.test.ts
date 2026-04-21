@@ -152,6 +152,91 @@ describe('classifyResilienceError', () => {
     expect(result.errorClass).toBe('connection_failure');
     expect(result.retryable).toBe(true);
   });
+
+  // Regression: undici "terminated" surfaced via provider wrapping.
+  // Previously fell through to non_retryable_provider_error, which caused
+  // the recovery ladder to skip retries and emit manual_continue immediately.
+  it('classifies undici "terminated" wrapped by provider as retryable connection_failure', () => {
+    const error = new KodaXProviderError('zhipu-coding API error: terminated', 'zhipu-coding');
+    const result = classifyResilienceError(error);
+    expect(result.errorClass).toBe('connection_failure');
+    expect(result.retryable).toBe(true);
+    expect(result.maxRetries).toBe(3);
+  });
+
+  it('classifies bare undici "terminated" Error as retryable connection_failure', () => {
+    const error = new TypeError('terminated');
+    const result = classifyResilienceError(error);
+    expect(result.errorClass).toBe('connection_failure');
+    expect(result.retryable).toBe(true);
+  });
+
+  it('classifies "premature close" stream error as retryable connection_failure', () => {
+    const error = new Error('Premature close');
+    const result = classifyResilienceError(error);
+    expect(result.errorClass).toBe('connection_failure');
+    expect(result.retryable).toBe(true);
+  });
+
+  it('classifies EPIPE as retryable connection_failure', () => {
+    const error = new Error('write EPIPE');
+    const result = classifyResilienceError(error);
+    expect(result.errorClass).toBe('connection_failure');
+    expect(result.retryable).toBe(true);
+  });
+
+  it('classifies undici body timeout as request_timeout', () => {
+    const error = new Error('Body Timeout Error');
+    const result = classifyResilienceError(error);
+    expect(result.errorClass).toBe('request_timeout');
+    expect(result.retryable).toBe(true);
+  });
+
+  it('classifies undici headers timeout as request_timeout', () => {
+    const error = new Error('Headers Timeout Error');
+    const result = classifyResilienceError(error);
+    expect(result.errorClass).toBe('request_timeout');
+    expect(result.retryable).toBe(true);
+  });
+
+  // Regression: error.cause chain must be walked so wrapped undici errors
+  // whose outer `.message` gives no hint (e.g. generic "fetch failed") still
+  // match via the inner SocketError message or code.
+  it('walks error.cause to classify wrapped socket error as connection_failure', () => {
+    const inner: Error & { code?: string } = new Error('other side closed');
+    inner.code = 'UND_ERR_SOCKET';
+    const outer = new TypeError('fetch failed', { cause: inner });
+    const result = classifyResilienceError(outer);
+    expect(result.errorClass).toBe('connection_failure');
+    expect(result.retryable).toBe(true);
+  });
+
+  it('walks error.cause to classify provider-wrapped terminated as connection_failure', () => {
+    const inner: Error & { code?: string } = new Error('terminated');
+    inner.code = 'UND_ERR_SOCKET';
+    const wrapped = new KodaXProviderError('zhipu-coding API error: Stream closed', 'zhipu-coding');
+    (wrapped as Error & { cause?: unknown }).cause = inner;
+    const result = classifyResilienceError(wrapped);
+    expect(result.errorClass).toBe('connection_failure');
+    expect(result.retryable).toBe(true);
+  });
+
+  it('classifies ECONNRESET via error.code (not message) as connection_failure', () => {
+    const inner: Error & { code?: string } = new Error('');
+    inner.code = 'ECONNRESET';
+    const outer: Error & { cause?: unknown } = new Error('request failed');
+    outer.cause = inner;
+    const result = classifyResilienceError(outer);
+    expect(result.errorClass).toBe('connection_failure');
+    expect(result.retryable).toBe(true);
+  });
+
+  it('classifies Chinese "连接被终止" as retryable connection_failure', () => {
+    const error = new KodaXProviderError('zhipu-coding API error: 连接被终止', 'zhipu-coding');
+    const result = classifyResilienceError(error);
+    expect(result.errorClass).toBe('connection_failure');
+    expect(result.retryable).toBe(true);
+  });
 });
 
 // ============== Stable Boundary Tracker Tests ==============

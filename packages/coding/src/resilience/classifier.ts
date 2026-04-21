@@ -52,16 +52,27 @@ const OVERLOADED_PATTERNS = [
 ];
 
 const CONNECTION_PATTERNS = [
-  /\bconnection (error|reset|closed|refused)\b/i,
+  /\bconnection (error|reset|closed|refused|terminated)\b/i,
   /\bsocket hang up\b/i,
+  /\bsocket closed\b/i,
   /\bfetch failed\b/i,
   /\beconnrefused\b/i,
   /\beconnreset\b/i,
+  /\bepipe\b/i,
   /\benotfound\b/i,
   /\beai_again\b/i,
   /\bother side closed\b/i,
   /\bnetwork\b/i,
   /\baborted\b/i,
+  // undici fetch: `TypeError: terminated` when remote closes mid-stream
+  /\bterminated\b/i,
+  // Node stream: emitted when a readable closes before `end`
+  /\bpremature close\b/i,
+  // undici error codes (surfaced via `err.code` / `err.cause.code`)
+  /\bund_err_socket\b/i,
+  /\bund_err_closed\b/i,
+  /\bund_err_aborted\b/i,
+  /\bund_err_destroyed\b/i,
   // Chinese (中文)
   /网络错误/,
   /网络异常/,
@@ -69,11 +80,20 @@ const CONNECTION_PATTERNS = [
   /连接失败/,
   /连接被拒绝/,
   /连接被重置/,
+  /连接被终止/,
+  /连接已终止/,
+  /连接中断/,
 ];
 
 const TIMEOUT_PATTERNS = [
   /\btimed? ?out\b/i,
   /\betimedout\b/i,
+  // undici headers/body/connect timeouts
+  /\bheaders timeout\b/i,
+  /\bbody timeout\b/i,
+  /\bund_err_headers_timeout\b/i,
+  /\bund_err_body_timeout\b/i,
+  /\bund_err_connect_timeout\b/i,
   // Chinese (中文)
   /连接超时/,
   /请求超时/,
@@ -116,7 +136,13 @@ export function classifyResilienceError(
   error: Error,
   currentStage?: FailureStage,
 ): ResilienceClassification {
-  const message = error.message.toLowerCase();
+  // Flatten error.message + cause chain + any `code` fields into a single
+  // lowercase haystack. Node/undici often surface the transient hint only
+  // in `err.cause.message` or `err.cause.code` (e.g. undici raises
+  // `TypeError: terminated` whose cause is `SocketError: other side closed`
+  // with code `UND_ERR_SOCKET`). Matching only `error.message` would miss
+  // those and mis-classify transient failures as permanent.
+  const message = collectErrorText(error);
 
   // 1. User abort — never retry
   if (error.name === 'AbortError') {
@@ -272,6 +298,44 @@ export function classifyResilienceError(
 
 function matchesAny(message: string, patterns: RegExp[]): boolean {
   return patterns.some(pattern => pattern.test(message));
+}
+
+/**
+ * Collects the full searchable text for an error, walking `error.cause`
+ * up to a bounded depth and including `error.code` / `error.cause.code`
+ * (used by Node/undici to carry `ECONNRESET`, `UND_ERR_SOCKET`, etc.).
+ * Returns the joined haystack lowercased.
+ */
+function collectErrorText(error: unknown): string {
+  const parts: string[] = [];
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  let depth = 0;
+  const MAX_DEPTH = 5;
+
+  while (current != null && depth < MAX_DEPTH && !seen.has(current)) {
+    seen.add(current);
+    if (current instanceof Error) {
+      if (current.message) parts.push(current.message);
+      const code = (current as { code?: unknown }).code;
+      if (typeof code === 'string' && code.length > 0) parts.push(code);
+      current = (current as { cause?: unknown }).cause;
+    } else if (typeof current === 'string') {
+      parts.push(current);
+      current = undefined;
+    } else if (typeof current === 'object') {
+      const maybeMessage = (current as { message?: unknown }).message;
+      if (typeof maybeMessage === 'string') parts.push(maybeMessage);
+      const maybeCode = (current as { code?: unknown }).code;
+      if (typeof maybeCode === 'string') parts.push(maybeCode);
+      current = (current as { cause?: unknown }).cause;
+    } else {
+      break;
+    }
+    depth += 1;
+  }
+
+  return parts.join(' | ').toLowerCase();
 }
 
 /**
