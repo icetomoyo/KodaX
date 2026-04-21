@@ -168,7 +168,7 @@ describe('round-boundary/buildUserFacingMessages', () => {
       [],
       'describe this',
       'it shows X',
-      [{ kind: 'image', path: '/tmp/pic.png', mediaType: 'image/png' }],
+      [{ kind: 'image', path: '/tmp/pic.png', mediaType: 'image/png', source: 'user-inline' }],
     );
     const userMsg = out[0];
     expect(userMsg.role).toBe('user');

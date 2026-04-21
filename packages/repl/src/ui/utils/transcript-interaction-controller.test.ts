@@ -22,6 +22,8 @@ function createHandlers() {
     copySelectedTranscriptToolInput: vi.fn(),
     toggleSelectedTranscriptDetail: vi.fn(),
     navigateSearchMatch: vi.fn(),
+    // FEATURE_058: dump-to-scrollback callback added in v0.7.25.
+    dumpTranscriptToScrollback: vi.fn(),
   };
 }
 
