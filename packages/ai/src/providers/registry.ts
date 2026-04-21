@@ -122,7 +122,13 @@ class KimiCodeProvider extends KodaXAnthropicCompatProvider {
     supportsThinking: true,
     reasoningCapability: 'native-budget',
     contextWindow: 256000,
-    maxOutputTokens: 64000,
+    // Kimi Code (K2.x) historically ran at 64K, but long tool_use writes
+    // share the same server-side-termination failure mode as the other
+    // Anthropic-compat coding endpoints. Aligned to the capped default
+    // (32K); the agent loop auto-escalates to 64K on `stop_reason:
+    // max_tokens`, matching prior single-shot capacity, and continues via
+    // meta message beyond that. Set `KODAX_MAX_OUTPUT_TOKENS` to bypass.
+    maxOutputTokens: KODAX_CAPPED_MAX_OUTPUT_TOKENS,
   };
   constructor() { super(); this.initClient(); }
 }
