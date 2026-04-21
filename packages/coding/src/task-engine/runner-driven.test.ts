@@ -193,9 +193,8 @@ describe('runManagedTaskViaRunner — Scout H0_DIRECT end-to-end', () => {
     expect(result.success).toBe(true);
     expect(result.lastText).toBe('2 + 2 = 4.');
     expect(result.signal).toBe('COMPLETE');
-    // Shard 5a deliberately omits managedTask (treated as converged by
-    // round-boundary.isUnconvergedVerdict — same as SA fast-path).
-    expect(result.managedTask).toBeUndefined();
+    // Shard 6a populates managedTask with a minimal but well-shaped payload.
+    expect(result.managedTask?.contract.harnessProfile).toBe('H0_DIRECT');
 
     // Transcript shape: system, user, assistant(tool_use), user(tool_result), assistant(final)
     expect(result.messages).toHaveLength(5);
@@ -209,7 +208,7 @@ describe('runManagedTaskViaRunner — Scout H0_DIRECT end-to-end', () => {
   it('handles a zero-tool direct answer (Scout answers without emit)', async () => {
     // Edge case: a minimalist Scout that just returns the answer as text,
     // without ever calling emit_scout_verdict. The run still completes;
-    // managedTask stays undefined (same as above).
+    // managedTask is populated with defaults (harness=H0_DIRECT).
     const result = await runManagedTaskViaRunner(
       makeOptions(),
       'Say hello',
@@ -218,7 +217,7 @@ describe('runManagedTaskViaRunner — Scout H0_DIRECT end-to-end', () => {
 
     expect(result.success).toBe(true);
     expect(result.lastText).toBe('Hello, world.');
-    expect(result.managedTask).toBeUndefined();
+    expect(result.managedTask?.contract.harnessProfile).toBe('H0_DIRECT');
   });
 
   it('surfaces tool errors back to the LLM without failing the run', async () => {
@@ -278,8 +277,8 @@ describe('parity — Runner path and legacy SA path produce compatible KodaXResu
     expect(typeof result.lastText).toBe('string');
     expect(Array.isArray(result.messages)).toBe(true);
     expect(typeof result.sessionId).toBe('string');
-    // verdict undefined → reshape treats as converged
-    expect(result.managedTask?.verdict?.status).toBeUndefined();
+    // Shard 6a populates managedTask even on zero-tool runs.
+    expect(result.managedTask?.verdict?.status).toBe('running');
   });
 });
 
@@ -538,6 +537,301 @@ describe('Shard 5b parity — blocked path', () => {
     expect(result.signal).toBe('BLOCKED');
     expect(result.signalReason).toMatch(/OAUTH_CLIENT_ID/);
     expect(result.managedProtocolPayload?.verdict?.status).toBe('blocked');
+  });
+});
+
+// =============================================================================
+// Shard 6a — Observer events + managedTask payload
+// =============================================================================
+
+describe('Shard 6a — onManagedTaskStatus observer events', () => {
+  it('fires preflight at start and completed at end', async () => {
+    const statuses: Array<{ phase?: string; activeWorkerId?: string }> = [];
+    const opts = {
+      ...makeOptions(),
+      events: {
+        onManagedTaskStatus: (s: { phase?: string; activeWorkerId?: string }) => statuses.push(s),
+      },
+    } as unknown as Parameters<typeof runManagedTaskViaRunner>[0];
+    await runManagedTaskViaRunner(opts, 'Say hi', async () => ({
+      textBlocks: [{ text: 'Hi.' }], toolBlocks: [],
+    }));
+    expect(statuses.some((s) => s.phase === 'preflight')).toBe(true);
+    expect(statuses.some((s) => s.phase === 'completed')).toBe(true);
+  });
+
+  it('fires round events per role emit (Scout → Gen → Eval → accept)', async () => {
+    const statuses: Array<{ phase?: string; activeWorkerId?: string }> = [];
+    const opts = {
+      ...makeOptions(),
+      events: {
+        onManagedTaskStatus: (s: { phase?: string; activeWorkerId?: string }) => statuses.push(s),
+      },
+    } as unknown as Parameters<typeof runManagedTaskViaRunner>[0];
+    const mock = makeChainMockLlm({
+      scout: () => ({
+        toolBlocks: [{
+          type: 'tool_use', id: 's1', name: 'emit_scout_verdict',
+          input: { confirmed_harness: 'H1_EXECUTE_EVAL' },
+        }],
+      }),
+      generator: () => ({
+        toolBlocks: [{ type: 'tool_use', id: 'g1', name: 'emit_handoff', input: { status: 'ready' } }],
+      }),
+      evaluator: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 'e1', name: 'emit_verdict',
+              input: { status: 'accept', user_answer: 'Done' },
+            }],
+          };
+        }
+        return { textBlocks: [{ text: 'Done' }] };
+      },
+    });
+    await runManagedTaskViaRunner(opts, 'task', mock);
+    const roleEvents = statuses.filter((s) => s.phase === 'round').map((s) => s.activeWorkerId);
+    expect(roleEvents).toContain('scout');
+    expect(roleEvents).toContain('generator');
+    expect(roleEvents).toContain('evaluator');
+  });
+
+  it('fires completed with BLOCKED signal note on blocked verdict', async () => {
+    const statuses: Array<{ phase?: string; note?: string }> = [];
+    const opts = {
+      ...makeOptions(),
+      events: {
+        onManagedTaskStatus: (s: { phase?: string; note?: string }) => statuses.push(s),
+      },
+    } as unknown as Parameters<typeof runManagedTaskViaRunner>[0];
+    const mock = makeChainMockLlm({
+      scout: () => ({
+        toolBlocks: [{
+          type: 'tool_use', id: 's1', name: 'emit_scout_verdict',
+          input: { confirmed_harness: 'H1_EXECUTE_EVAL' },
+        }],
+      }),
+      generator: () => ({
+        toolBlocks: [{ type: 'tool_use', id: 'g1', name: 'emit_handoff', input: { status: 'blocked' } }],
+      }),
+      evaluator: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 'e1', name: 'emit_verdict',
+              input: { status: 'blocked', reason: 'missing dependency' },
+            }],
+          };
+        }
+        return { textBlocks: [{ text: 'blocked' }] };
+      },
+    });
+    await runManagedTaskViaRunner(opts, 'task', mock);
+    const completed = statuses.find((s) => s.phase === 'completed');
+    expect(completed?.note).toMatch(/blocked/);
+  });
+});
+
+describe('Shard 6a — managedTask payload shape', () => {
+  it('populates contract.harnessProfile from Scout verdict (H1 case)', async () => {
+    const mock = makeChainMockLlm({
+      scout: () => ({
+        toolBlocks: [{
+          type: 'tool_use', id: 's1', name: 'emit_scout_verdict',
+          input: { confirmed_harness: 'H1_EXECUTE_EVAL' },
+        }],
+      }),
+      generator: () => ({
+        toolBlocks: [{ type: 'tool_use', id: 'g1', name: 'emit_handoff', input: { status: 'ready' } }],
+      }),
+      evaluator: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 'e1', name: 'emit_verdict',
+              input: { status: 'accept', user_answer: 'ok' },
+            }],
+          };
+        }
+        return { textBlocks: [{ text: 'ok' }] };
+      },
+    });
+    const result = await runManagedTaskViaRunner(makeOptions(), 'task', mock);
+    expect(result.managedTask?.contract.harnessProfile).toBe('H1_EXECUTE_EVAL');
+    expect(result.managedTask?.contract.surface).toBe('cli');
+    expect(result.managedTask?.contract.objective).toBe('task');
+  });
+
+  it('populates roleAssignments in handoff order (H2 chain)', async () => {
+    const mock = makeChainMockLlm({
+      scout: () => ({
+        toolBlocks: [{
+          type: 'tool_use', id: 's1', name: 'emit_scout_verdict',
+          input: { confirmed_harness: 'H2_PLAN_EXECUTE_EVAL' },
+        }],
+      }),
+      planner: () => ({
+        toolBlocks: [{
+          type: 'tool_use', id: 'p1', name: 'emit_contract',
+          input: { success_criteria: ['c1'] },
+        }],
+      }),
+      generator: () => ({
+        toolBlocks: [{ type: 'tool_use', id: 'g1', name: 'emit_handoff', input: { status: 'ready' } }],
+      }),
+      evaluator: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 'e1', name: 'emit_verdict',
+              input: { status: 'accept', user_answer: 'done' },
+            }],
+          };
+        }
+        return { textBlocks: [{ text: 'done' }] };
+      },
+    });
+    const result = await runManagedTaskViaRunner(makeOptions(), 'task', mock);
+    const roles = result.managedTask?.roleAssignments.map((a) => a.role);
+    expect(roles).toEqual(['scout', 'planner', 'generator', 'evaluator']);
+  });
+
+  it('populates single "direct" assignment for H0_DIRECT', async () => {
+    const mock = makeChainMockLlm({
+      scout: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 's1', name: 'emit_scout_verdict',
+              input: { confirmed_harness: 'H0_DIRECT', direct_completion_ready: 'yes' },
+            }],
+          };
+        }
+        return { textBlocks: [{ text: 'direct answer' }] };
+      },
+    });
+    const result = await runManagedTaskViaRunner(makeOptions(), 'trivial', mock);
+    const roles = result.managedTask?.roleAssignments.map((a) => a.role);
+    expect(roles).toEqual(['direct']);
+    expect(result.managedTask?.verdict.decidedByAssignmentId).toBe('direct');
+  });
+
+  it('populates runtime.globalWorkBudget + budgetUsage (Shard 6a minimum)', async () => {
+    const mock = makeChainMockLlm({
+      scout: () => ({
+        toolBlocks: [{
+          type: 'tool_use', id: 's1', name: 'emit_scout_verdict',
+          input: { confirmed_harness: 'H1_EXECUTE_EVAL' },
+        }],
+      }),
+      generator: () => ({
+        toolBlocks: [{ type: 'tool_use', id: 'g1', name: 'emit_handoff', input: { status: 'ready' } }],
+      }),
+      evaluator: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 'e1', name: 'emit_verdict',
+              input: { status: 'accept', user_answer: 'ok' },
+            }],
+          };
+        }
+        return { textBlocks: [{ text: 'ok' }] };
+      },
+    });
+    const result = await runManagedTaskViaRunner(makeOptions(), 'task', mock);
+    expect(result.managedTask?.runtime?.globalWorkBudget).toBe(400); // H1
+    expect(result.managedTask?.runtime?.budgetUsage).toBeGreaterThan(0);
+  });
+
+  it('records harnessTransitions when Scout chooses non-H0 tier', async () => {
+    const mock = makeChainMockLlm({
+      scout: () => ({
+        toolBlocks: [{
+          type: 'tool_use', id: 's1', name: 'emit_scout_verdict',
+          input: { confirmed_harness: 'H2_PLAN_EXECUTE_EVAL' },
+        }],
+      }),
+      planner: () => ({
+        toolBlocks: [{
+          type: 'tool_use', id: 'p1', name: 'emit_contract',
+          input: { success_criteria: ['x'] },
+        }],
+      }),
+      generator: () => ({
+        toolBlocks: [{ type: 'tool_use', id: 'g1', name: 'emit_handoff', input: { status: 'ready' } }],
+      }),
+      evaluator: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 'e1', name: 'emit_verdict',
+              input: { status: 'accept', user_answer: 'done' },
+            }],
+          };
+        }
+        return { textBlocks: [{ text: 'done' }] };
+      },
+    });
+    const result = await runManagedTaskViaRunner(makeOptions(), 'task', mock);
+    const transitions = result.managedTask?.runtime?.harnessTransitions ?? [];
+    expect(transitions).toHaveLength(1);
+    expect(transitions[0]!.from).toBe('H0_DIRECT');
+    expect(transitions[0]!.to).toBe('H2_PLAN_EXECUTE_EVAL');
+    expect(transitions[0]!.source).toBe('scout');
+  });
+
+  it('verdict.status=completed on accept, blocked on blocked', async () => {
+    const acceptMock = makeChainMockLlm({
+      scout: () => ({
+        toolBlocks: [{
+          type: 'tool_use', id: 's1', name: 'emit_scout_verdict',
+          input: { confirmed_harness: 'H1_EXECUTE_EVAL' },
+        }],
+      }),
+      generator: () => ({
+        toolBlocks: [{ type: 'tool_use', id: 'g1', name: 'emit_handoff', input: { status: 'ready' } }],
+      }),
+      evaluator: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 'e1', name: 'emit_verdict',
+              input: { status: 'accept', user_answer: 'ok' },
+            }],
+          };
+        }
+        return { textBlocks: [{ text: 'ok' }] };
+      },
+    });
+    const accept = await runManagedTaskViaRunner(makeOptions(), 'task', acceptMock);
+    expect(accept.managedTask?.verdict.status).toBe('completed');
+
+    const blockedMock = makeChainMockLlm({
+      scout: () => ({
+        toolBlocks: [{
+          type: 'tool_use', id: 's1', name: 'emit_scout_verdict',
+          input: { confirmed_harness: 'H1_EXECUTE_EVAL' },
+        }],
+      }),
+      generator: () => ({
+        toolBlocks: [{ type: 'tool_use', id: 'g1', name: 'emit_handoff', input: { status: 'blocked' } }],
+      }),
+      evaluator: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 'e1', name: 'emit_verdict',
+              input: { status: 'blocked', reason: 'need env var' },
+            }],
+          };
+        }
+        return { textBlocks: [{ text: 'blocked' }] };
+      },
+    });
+    const blocked = await runManagedTaskViaRunner(makeOptions(), 'task', blockedMock);
+    expect(blocked.managedTask?.verdict.status).toBe('blocked');
   });
 });
 
