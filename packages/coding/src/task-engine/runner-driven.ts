@@ -1187,7 +1187,17 @@ export async function runManagedTaskViaRunner(
   const chain = buildRunnerAgentChain(baseCtx, recorder, observer, budget, budgetExtension);
   const llm = buildRunnerLlmAdapter(options, adapterOverride, tokenStateRef);
 
-  const runResult = await Runner.run(chain.scout, prompt, {
+  // Session continuity: when the caller passes `options.session.initialMessages`
+  // (REPL multi-turn, session resume, plan-mode replay), prepend them as the
+  // Runner transcript so the Scout/Planner/Generator/Evaluator see full
+  // prior context — matching legacy `runKodaX` behaviour via the session
+  // loader.
+  const initialMessages = options.session?.initialMessages ?? [];
+  const runnerInput = initialMessages.length > 0
+    ? [...initialMessages, { role: 'user' as const, content: prompt }]
+    : prompt;
+
+  const runResult = await Runner.run(chain.scout, runnerInput, {
     llm,
     abortSignal: options.abortSignal,
   });

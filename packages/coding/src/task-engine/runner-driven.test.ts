@@ -1288,6 +1288,45 @@ describe('Shard 6d-c2 — stream event passthrough', () => {
   });
 });
 
+describe('Shard 6d-d — session continuity', () => {
+  it('prepends options.session.initialMessages before the new prompt', async () => {
+    const capturedTranscripts: KodaXMessage[][] = [];
+    const opts = {
+      ...makeOptions(),
+      session: {
+        initialMessages: [
+          { role: 'user' as const, content: 'prior question' },
+          { role: 'assistant' as const, content: 'prior answer' },
+        ],
+      },
+    } as unknown as Parameters<typeof runManagedTaskViaRunner>[0];
+    await runManagedTaskViaRunner(opts, 'follow-up question', async (transcript) => {
+      capturedTranscripts.push([...transcript]);
+      return { textBlocks: [{ text: 'got it' }], toolBlocks: [] };
+    });
+    // The first LLM turn's transcript (post-system-strip) should contain
+    // the prior user/assistant pair + the new user prompt.
+    const firstTurn = capturedTranscripts[0]!;
+    expect(firstTurn.length).toBe(3);
+    expect(firstTurn[0]!.role).toBe('user');
+    expect(firstTurn[0]!.content).toBe('prior question');
+    expect(firstTurn[1]!.role).toBe('assistant');
+    expect(firstTurn[2]!.role).toBe('user');
+    expect(firstTurn[2]!.content).toBe('follow-up question');
+  });
+
+  it('falls back to raw string prompt when session.initialMessages is empty', async () => {
+    const capturedTranscripts: KodaXMessage[][] = [];
+    await runManagedTaskViaRunner(makeOptions(), 'fresh task', async (transcript) => {
+      capturedTranscripts.push([...transcript]);
+      return { textBlocks: [{ text: 'ok' }], toolBlocks: [] };
+    });
+    const firstTurn = capturedTranscripts[0]!;
+    expect(firstTurn.length).toBe(1);
+    expect(firstTurn[0]!.content).toBe('fresh task');
+  });
+});
+
 describe('Shard 6d-c4 — onIterationEnd + contextTokenSnapshot', () => {
   it('fires onIterationEnd after every LLM turn with scope=worker', async () => {
     const iterations: Array<{ iter: number; scope?: string }> = [];
