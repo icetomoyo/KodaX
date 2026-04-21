@@ -835,6 +835,176 @@ describe('Shard 6a — managedTask payload shape', () => {
   });
 });
 
+// =============================================================================
+// Shard 6b — Real budget tracking + mutation tracker
+// =============================================================================
+
+describe('Shard 6b — budget controller', () => {
+  it('increments spentBudget per tool invocation (emit tools count)', async () => {
+    const mock = makeChainMockLlm({
+      scout: () => ({
+        toolBlocks: [{
+          type: 'tool_use', id: 's1', name: 'emit_scout_verdict',
+          input: { confirmed_harness: 'H1_EXECUTE_EVAL' },
+        }],
+      }),
+      generator: () => ({
+        toolBlocks: [{ type: 'tool_use', id: 'g1', name: 'emit_handoff', input: { status: 'ready' } }],
+      }),
+      evaluator: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 'e1', name: 'emit_verdict',
+              input: { status: 'accept', user_answer: 'ok' },
+            }],
+          };
+        }
+        return { textBlocks: [{ text: 'ok' }] };
+      },
+    });
+    const result = await runManagedTaskViaRunner(makeOptions(), 'task', mock);
+    // 3 emit tool calls (scout + handoff + verdict) → at least 3 budget units
+    expect(result.managedTask?.runtime?.budgetUsage).toBeGreaterThanOrEqual(3);
+  });
+
+  it('upgrades totalBudget when Scout picks H1 (from 50 → 400)', async () => {
+    const mock = makeChainMockLlm({
+      scout: () => ({
+        toolBlocks: [{
+          type: 'tool_use', id: 's1', name: 'emit_scout_verdict',
+          input: { confirmed_harness: 'H1_EXECUTE_EVAL' },
+        }],
+      }),
+      generator: () => ({
+        toolBlocks: [{ type: 'tool_use', id: 'g1', name: 'emit_handoff', input: { status: 'ready' } }],
+      }),
+      evaluator: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 'e1', name: 'emit_verdict',
+              input: { status: 'accept', user_answer: 'ok' },
+            }],
+          };
+        }
+        return { textBlocks: [{ text: 'ok' }] };
+      },
+    });
+    const result = await runManagedTaskViaRunner(makeOptions(), 'task', mock);
+    expect(result.managedTask?.runtime?.globalWorkBudget).toBe(400);
+  });
+
+  it('keeps H0 budget (50) when Scout chooses H0_DIRECT', async () => {
+    const mock = makeChainMockLlm({
+      scout: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 's1', name: 'emit_scout_verdict',
+              input: { confirmed_harness: 'H0_DIRECT', direct_completion_ready: 'yes' },
+            }],
+          };
+        }
+        return { textBlocks: [{ text: 'direct answer' }] };
+      },
+    });
+    const result = await runManagedTaskViaRunner(makeOptions(), 'trivial', mock);
+    expect(result.managedTask?.runtime?.globalWorkBudget).toBe(50);
+  });
+
+  it('upgrades to 600 when Scout picks H2', async () => {
+    const mock = makeChainMockLlm({
+      scout: () => ({
+        toolBlocks: [{
+          type: 'tool_use', id: 's1', name: 'emit_scout_verdict',
+          input: { confirmed_harness: 'H2_PLAN_EXECUTE_EVAL' },
+        }],
+      }),
+      planner: () => ({
+        toolBlocks: [{
+          type: 'tool_use', id: 'p1', name: 'emit_contract',
+          input: { success_criteria: ['x'] },
+        }],
+      }),
+      generator: () => ({
+        toolBlocks: [{ type: 'tool_use', id: 'g1', name: 'emit_handoff', input: { status: 'ready' } }],
+      }),
+      evaluator: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 'e1', name: 'emit_verdict',
+              input: { status: 'accept', user_answer: 'done' },
+            }],
+          };
+        }
+        return { textBlocks: [{ text: 'done' }] };
+      },
+    });
+    const result = await runManagedTaskViaRunner(makeOptions(), 'task', mock);
+    expect(result.managedTask?.runtime?.globalWorkBudget).toBe(600);
+  });
+});
+
+describe('Shard 6b — mutation tracker', () => {
+  // Mutation tracking hooks run when Generator invokes write/edit/bash.
+  // We test by having the mock Generator call the `write` tool, then
+  // verify the tracker accumulated the file entry.
+  //
+  // Note: the tracker is internal to the run. It's observable via the
+  // scope-awareness note that `emit_scout_verdict` appends when H0 is
+  // declared with >3 mutations (legacy behavior). For Shard 6b we only
+  // assert the plumbing works end-to-end by checking that the write
+  // tool call returns successfully — this exercises the
+  // recordMutationForTool codepath without adding new assertions.
+  it('write tool execution does not crash under the Runner-driven path', async () => {
+    const mock = makeChainMockLlm({
+      scout: () => ({
+        toolBlocks: [{
+          type: 'tool_use', id: 's1', name: 'emit_scout_verdict',
+          input: { confirmed_harness: 'H1_EXECUTE_EVAL' },
+        }],
+      }),
+      generator: (turn) => {
+        if (turn === 1) {
+          // Call write with a path that won't actually exist; we only care
+          // that the mutation hook runs (records via recordMutationForTool).
+          // The tool will error, which is fine — we're testing plumbing,
+          // not end-to-end write success.
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 'w1', name: 'write',
+              input: {
+                file_path: '/tmp/kodax-runner-driven-test-nowrite.txt',
+                content: 'line1\nline2\nline3\n',
+              },
+            }],
+          };
+        }
+        return {
+          toolBlocks: [{ type: 'tool_use', id: 'g1', name: 'emit_handoff', input: { status: 'ready' } }],
+        };
+      },
+      evaluator: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 'e1', name: 'emit_verdict',
+              input: { status: 'accept', user_answer: 'done' },
+            }],
+          };
+        }
+        return { textBlocks: [{ text: 'done' }] };
+      },
+    });
+    const result = await runManagedTaskViaRunner(makeOptions(), 'task', mock);
+    expect(result.success).toBe(true);
+    // Budget usage reflects scout emit + write tool + handoff emit + verdict emit ≥ 4
+    expect(result.managedTask?.runtime?.budgetUsage).toBeGreaterThanOrEqual(4);
+  });
+});
+
 describe('Shard 5b — H2 replan via nextHarness', () => {
   it('Evaluator revise with next_harness=H2 routes back to Planner', async () => {
     let plannerTurns = 0;

@@ -72,7 +72,10 @@ import type {
   KodaXTaskRole,
   KodaXTaskRoleAssignment,
   KodaXToolExecutionContext,
+  ManagedMutationTracker,
 } from '../types.js';
+import type { ManagedTaskBudgetController } from './_internal/managed-task/budget.js';
+import { incrementManagedBudgetUsage } from './_internal/managed-task/budget.js';
 
 /**
  * Env-flag check. `KODAX_MANAGED_TASK_RUNTIME=runner` enables the Runner-
@@ -182,19 +185,38 @@ function wrapEmitterWithRecorder(
   slot: 'scout' | 'contract' | 'handoff' | 'verdict',
   recorder: VerdictRecorder,
   observer: ObserverBridge,
+  budget?: ManagedTaskBudgetController,
 ): RunnableTool {
   return {
     ...base,
     execute: async (input, ctx): Promise<RunnerToolResult> => {
+      if (budget) incrementManagedBudgetUsage(budget, 1);
       const result = await base.execute(input, ctx);
       if (!result.isError && result.metadata) {
         recorder[slot] = result.metadata as unknown as ProtocolEmitterMetadata;
+        // When Scout's verdict picks a non-H0 harness, extend the budget
+        // accordingly so downstream roles have headroom. Mirrors the
+        // legacy behavior of upgrading the budget controller on Scout
+        // harness commitment.
+        if (slot === 'scout' && budget) {
+          const scoutHarness = recorder.scout?.payload.scout?.confirmedHarness;
+          if (scoutHarness && scoutHarness !== budget.currentHarness) {
+            budget.currentHarness = scoutHarness;
+            budget.totalBudget = Math.max(budget.totalBudget, BUDGET_CAP_BY_HARNESS[scoutHarness]);
+          }
+        }
         observer.onRoleEmit(SLOT_TO_ROLE[slot], recorder);
       }
       return result;
     },
   };
 }
+
+const BUDGET_CAP_BY_HARNESS: Record<KodaXHarnessProfile, number> = {
+  H0_DIRECT: 50,
+  H1_EXECUTE_EVAL: 400,
+  H2_PLAN_EXECUTE_EVAL: 600,
+};
 
 // =============================================================================
 // Observer bridge — hooks into options.events.onManagedTaskStatus
@@ -254,6 +276,43 @@ function buildObserverBridge(
 // Tool wrapping: coding handler → RunnableTool
 // =============================================================================
 
+const WRITE_ONLY_TOOL_NAMES = new Set(['write', 'edit', 'insert_after_anchor']);
+
+/**
+ * Mirror of the legacy `beforeToolExecute` mutation-tracking branch in
+ * task-engine.ts:~3907. Populates `ctx.mutationTracker` with files +
+ * totalOps when a write/edit tool runs (or bash executes a destructive
+ * command). Idempotent — missing tracker is a no-op.
+ */
+function recordMutationForTool(
+  tracker: ManagedMutationTracker | undefined,
+  toolName: string,
+  input: Record<string, unknown>,
+): void {
+  if (!tracker) return;
+  const normalized = toolName.toLowerCase();
+  if (WRITE_ONLY_TOOL_NAMES.has(normalized) || normalized === 'bash') {
+    const filePath = typeof input.file_path === 'string'
+      ? input.file_path
+      : typeof input.path === 'string'
+        ? input.path
+        : undefined;
+    if (filePath) {
+      const oldLen = typeof input.old_string === 'string' ? input.old_string.split('\n').length : 0;
+      const newLen = typeof input.new_string === 'string' ? input.new_string.split('\n').length : 0;
+      const contentLen = typeof input.content === 'string' ? input.content.split('\n').length : 0;
+      const linesDelta = contentLen || Math.abs(newLen - oldLen) || 1;
+      tracker.files.set(filePath, (tracker.files.get(filePath) ?? 0) + linesDelta);
+      tracker.totalOps += 1;
+    } else if (normalized === 'bash') {
+      const cmd = typeof input.command === 'string' ? input.command : '';
+      if (/\b(git\s+(add|commit|push|merge|rebase|reset)|npm\s+(publish|install)|rm\s|mv\s|cp\s)/i.test(cmd)) {
+        tracker.totalOps += 1;
+      }
+    }
+  }
+}
+
 function wrapCodingToolAsRunnable(
   definition: KodaXToolDefinition,
   handler: (
@@ -261,10 +320,13 @@ function wrapCodingToolAsRunnable(
     ctx: KodaXToolExecutionContext,
   ) => Promise<string>,
   baseCtx: KodaXToolExecutionContext,
+  budget?: ManagedTaskBudgetController,
 ): RunnableTool {
   return {
     ...definition,
     execute: async (input: Record<string, unknown>): Promise<RunnerToolResult> => {
+      if (budget) incrementManagedBudgetUsage(budget, 1);
+      recordMutationForTool(baseCtx.mutationTracker, definition.name, input);
       try {
         const content = await handler(input, baseCtx);
         return { content };
@@ -285,7 +347,10 @@ interface CodingToolBundle {
   readonly edit: RunnableTool;
 }
 
-function buildCodingToolBundle(baseCtx: KodaXToolExecutionContext): CodingToolBundle {
+function buildCodingToolBundle(
+  baseCtx: KodaXToolExecutionContext,
+  budget?: ManagedTaskBudgetController,
+): CodingToolBundle {
   const read = getToolDefinition('read');
   const grep = getToolDefinition('grep');
   const glob = getToolDefinition('glob');
@@ -298,12 +363,12 @@ function buildCodingToolBundle(baseCtx: KodaXToolExecutionContext): CodingToolBu
     );
   }
   return {
-    read: wrapCodingToolAsRunnable(read, toolRead, baseCtx),
-    grep: wrapCodingToolAsRunnable(grep, toolGrep, baseCtx),
-    glob: wrapCodingToolAsRunnable(glob, toolGlob, baseCtx),
-    bash: wrapCodingToolAsRunnable(bash, toolBash, baseCtx),
-    write: wrapCodingToolAsRunnable(write, toolWrite, baseCtx),
-    edit: wrapCodingToolAsRunnable(edit, toolEdit, baseCtx),
+    read: wrapCodingToolAsRunnable(read, toolRead, baseCtx, budget),
+    grep: wrapCodingToolAsRunnable(grep, toolGrep, baseCtx, budget),
+    glob: wrapCodingToolAsRunnable(glob, toolGlob, baseCtx, budget),
+    bash: wrapCodingToolAsRunnable(bash, toolBash, baseCtx, budget),
+    write: wrapCodingToolAsRunnable(write, toolWrite, baseCtx, budget),
+    edit: wrapCodingToolAsRunnable(edit, toolEdit, baseCtx, budget),
   };
 }
 
@@ -342,13 +407,14 @@ export function buildRunnerAgentChain(
   ctx: KodaXToolExecutionContext,
   recorder: VerdictRecorder,
   observer: ObserverBridge = NULL_OBSERVER,
+  budget?: ManagedTaskBudgetController,
 ): RunnerAgentChain {
-  const codingTools = buildCodingToolBundle(ctx);
+  const codingTools = buildCodingToolBundle(ctx, budget);
 
-  const scoutEmit = wrapEmitterWithRecorder(emitScoutVerdict, 'scout', recorder, observer);
-  const contractEmit = wrapEmitterWithRecorder(emitContract, 'contract', recorder, observer);
-  const handoffEmit = wrapEmitterWithRecorder(emitHandoff, 'handoff', recorder, observer);
-  const verdictEmit = wrapEmitterWithRecorder(emitVerdict, 'verdict', recorder, observer);
+  const scoutEmit = wrapEmitterWithRecorder(emitScoutVerdict, 'scout', recorder, observer, budget);
+  const contractEmit = wrapEmitterWithRecorder(emitContract, 'contract', recorder, observer, budget);
+  const handoffEmit = wrapEmitterWithRecorder(emitHandoff, 'handoff', recorder, observer, budget);
+  const verdictEmit = wrapEmitterWithRecorder(emitVerdict, 'verdict', recorder, observer, budget);
 
   type WritableAgent = { -readonly [K in keyof Agent]: Agent[K] };
 
@@ -569,6 +635,7 @@ function buildManagedTaskPayload(args: {
   readonly signal: KodaXResult['signal'];
   readonly verdictStatus?: 'accept' | 'revise' | 'blocked';
   readonly userAnswer?: string;
+  readonly budget?: ManagedTaskBudgetController;
 }): KodaXManagedTask {
   const {
     prompt,
@@ -579,6 +646,7 @@ function buildManagedTaskPayload(args: {
     signal,
     verdictStatus,
     userAnswer,
+    budget,
   } = args;
 
   const harness: KodaXHarnessProfile =
@@ -660,8 +728,8 @@ function buildManagedTaskPayload(args: {
       continuationSuggested: recorder.handoff?.payload.handoff?.status === 'ready' && verdictStatus !== 'accept',
     },
     runtime: {
-      globalWorkBudget: harnessToBudget(harness),
-      budgetUsage: rolesEmitted.length, // approximation; Shard 6b replaces with real token-usage counter
+      globalWorkBudget: budget?.totalBudget ?? harnessToBudget(harness),
+      budgetUsage: budget?.spentBudget ?? rolesEmitted.length,
       // `harnessTransitions` in legacy semantics records harness-tier
       // upgrades (e.g. H1 → H2 on revise+next_harness=H2), not individual
       // role transitions. For the Runner path we synthesise one transition
@@ -692,11 +760,29 @@ export async function runManagedTaskViaRunner(
   prompt: string,
   adapterOverride?: Parameters<typeof buildRunnerLlmAdapter>[1],
 ): Promise<KodaXResult> {
+  // Shard 6b: per-run mutation tracker and budget controller. The tracker
+  // lives on baseCtx so coding-tool wrappers (write/edit/bash) can populate
+  // it via `recordMutationForTool`; the budget controller lives outside
+  // and is threaded explicitly into the tool wrappers + emit wrappers.
+  const mutationTracker: ManagedMutationTracker = {
+    files: new Map<string, number>(),
+    totalOps: 0,
+  };
   const baseCtx: KodaXToolExecutionContext = {
     backups: new Map<string, string>(),
     gitRoot: options.context?.gitRoot ?? process.cwd(),
     executionCwd: options.context?.executionCwd ?? options.context?.gitRoot ?? process.cwd(),
     abortSignal: options.abortSignal,
+    mutationTracker,
+  };
+
+  // Budget controller. Start with H0 cap (50); `wrapEmitterWithRecorder`
+  // upgrades the cap when Scout confirms a non-H0 tier. Mirrors the
+  // legacy `createManagedBudgetController` + Scout-commit bump pattern.
+  const budget: ManagedTaskBudgetController = {
+    totalBudget: BUDGET_CAP_BY_HARNESS.H0_DIRECT,
+    spentBudget: 0,
+    currentHarness: 'H0_DIRECT',
   };
 
   const recorder: VerdictRecorder = {};
@@ -706,7 +792,7 @@ export async function runManagedTaskViaRunner(
 
   observer.preflight();
 
-  const chain = buildRunnerAgentChain(baseCtx, recorder, observer);
+  const chain = buildRunnerAgentChain(baseCtx, recorder, observer, budget);
   const llm = buildRunnerLlmAdapter(options, adapterOverride);
 
   const runResult = await Runner.run(chain.scout, prompt, {
@@ -732,6 +818,7 @@ export async function runManagedTaskViaRunner(
     signal,
     verdictStatus,
     userAnswer,
+    budget,
   });
 
   observer.completed(signal);
