@@ -1288,6 +1288,51 @@ describe('Shard 6d-c2 — stream event passthrough', () => {
   });
 });
 
+describe('Shard 6d-c4 — onIterationEnd + contextTokenSnapshot', () => {
+  it('fires onIterationEnd after every LLM turn with scope=worker', async () => {
+    const iterations: Array<{ iter: number; scope?: string }> = [];
+    const opts = {
+      ...makeOptions(),
+      events: {
+        onIterationEnd: (info: { iter: number; scope?: string }) =>
+          iterations.push({ iter: info.iter, scope: info.scope }),
+      },
+    } as unknown as Parameters<typeof runManagedTaskViaRunner>[0];
+    const mock = makeChainMockLlm({
+      scout: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 's1', name: 'emit_scout_verdict',
+              input: { confirmed_harness: 'H0_DIRECT' },
+            }],
+          };
+        }
+        return { textBlocks: [{ text: 'done' }] };
+      },
+      generator: () => ({ textBlocks: [{ text: 'x' }] }),
+      evaluator: () => ({ textBlocks: [{ text: 'x' }] }),
+    });
+    await runManagedTaskViaRunner(opts, 'T', mock);
+    expect(iterations.length).toBeGreaterThanOrEqual(2); // scout turn 1 + scout turn 2
+    expect(iterations.every((i) => i.scope === 'worker')).toBe(true);
+    // Iteration counter is monotonically increasing
+    expect(iterations[0]!.iter).toBeLessThan(iterations[iterations.length - 1]!.iter);
+  });
+
+  it('returns undefined contextTokenSnapshot when no provider usage is reported', async () => {
+    // Using adapterOverride (no real provider.stream) means no usage data,
+    // so the snapshot stays undefined — matching legacy behaviour for
+    // estimated-only runs.
+    const result = await runManagedTaskViaRunner(
+      makeOptions(),
+      'Hi',
+      async () => ({ textBlocks: [{ text: 'Hi' }], toolBlocks: [] }),
+    );
+    expect(result.contextTokenSnapshot).toBeUndefined();
+  });
+});
+
 describe('Shard 6d-c3 — budget extension at 90% threshold', () => {
   it('fires askUser when Evaluator revises and budget exceeds 90%', async () => {
     const askUserCalls: Array<{ question: string }> = [];

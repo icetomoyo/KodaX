@@ -650,6 +650,18 @@ export function buildRunnerScoutAgent(ctx: KodaXToolExecutionContext): Agent {
 // LLM adapter: KodaX provider stream → RunnerLlmResult
 // =============================================================================
 
+/**
+ * Cumulative token state captured by the LLM adapter across a full
+ * runner chain, exposed back to `runManagedTaskViaRunner` so it can
+ * populate `result.contextTokenSnapshot`. The REPL UI uses the snapshot
+ * to refresh its token counter after every run.
+ */
+export interface RunnerAdapterTokenState {
+  totalTokens: number;
+  lastUsage?: import('@kodax/ai').KodaXTokenUsage;
+  source: 'api' | 'estimate';
+}
+
 export function buildRunnerLlmAdapter(
   options: KodaXOptions,
   overrideStream?: (
@@ -657,7 +669,15 @@ export function buildRunnerLlmAdapter(
     tools: readonly KodaXToolDefinition[],
     system: string,
   ) => Promise<{ textBlocks?: readonly { text: string }[]; toolBlocks?: readonly KodaXToolUseBlock[] }>,
+  tokenStateRef?: { current: RunnerAdapterTokenState },
 ): (messages: readonly KodaXMessage[], agent: Agent) => Promise<RunnerLlmResult> {
+  // FEATURE_072 parity: the REPL's token-count indicator reads
+  // `onIterationEnd` to refresh after each worker LLM turn. Track a
+  // monotonically-increasing iteration counter across the entire runner
+  // chain so the REPL sees progress for every role's turn.
+  let iteration = 0;
+  const MAX_ITER_HINT = 20; // matches core/src/runner-tool-loop.ts MAX_TOOL_LOOP_ITERATIONS
+
   return async (messages, agent) => {
     const leadingSystem = messages[0]?.role === 'system' ? messages[0] : undefined;
     const system = typeof leadingSystem?.content === 'string' ? leadingSystem.content : '';
@@ -669,9 +689,13 @@ export function buildRunnerLlmAdapter(
       input_schema: t.input_schema,
     }));
 
+    iteration += 1;
+    options.events?.onIterationStart?.(iteration, MAX_ITER_HINT);
+
     let streamResult: {
       textBlocks?: readonly { text: string }[];
       toolBlocks?: readonly KodaXToolUseBlock[];
+      usage?: import('@kodax/ai').KodaXTokenUsage;
     };
     if (overrideStream) {
       streamResult = await overrideStream(transcript, wireTools, system);
@@ -697,7 +721,34 @@ export function buildRunnerLlmAdapter(
         streamOptions,
         options.abortSignal,
       );
-      streamResult = { textBlocks: raw.textBlocks, toolBlocks: raw.toolBlocks };
+      streamResult = { textBlocks: raw.textBlocks, toolBlocks: raw.toolBlocks, usage: raw.usage };
+    }
+
+    // Update cumulative token state for the final contextTokenSnapshot.
+    if (tokenStateRef && streamResult.usage) {
+      const current = tokenStateRef.current;
+      tokenStateRef.current = {
+        totalTokens: streamResult.usage.totalTokens ?? current.totalTokens,
+        lastUsage: streamResult.usage,
+        source: 'api',
+      };
+    }
+
+    // Fire onIterationEnd so the REPL token-count indicator can refresh
+    // after each worker turn. `scope: 'worker'` mirrors the FEATURE_072
+    // tagging — every Runner-driven iteration runs inside a worker role,
+    // never the top-level REPL agent.
+    if (options.events?.onIterationEnd) {
+      const usage = streamResult.usage;
+      const tokenCount = usage?.totalTokens ?? usage?.outputTokens ?? 0;
+      options.events.onIterationEnd({
+        iter: iteration,
+        maxIter: MAX_ITER_HINT,
+        tokenCount,
+        tokenSource: usage ? 'api' : 'estimate',
+        usage,
+        scope: 'worker',
+      });
     }
 
     const text = (streamResult.textBlocks ?? []).map((b) => b.text).join('');
@@ -1130,8 +1181,11 @@ export async function runManagedTaskViaRunner(
     maxRoundsRef,
     budgetApprovalRef,
   };
+  const tokenStateRef: { current: RunnerAdapterTokenState } = {
+    current: { totalTokens: 0, source: 'estimate' },
+  };
   const chain = buildRunnerAgentChain(baseCtx, recorder, observer, budget, budgetExtension);
-  const llm = buildRunnerLlmAdapter(options, adapterOverride);
+  const llm = buildRunnerLlmAdapter(options, adapterOverride, tokenStateRef);
 
   const runResult = await Runner.run(chain.scout, prompt, {
     llm,
@@ -1173,6 +1227,21 @@ export async function runManagedTaskViaRunner(
     }
   }
 
+  // Populate contextTokenSnapshot so the REPL token-counter UI can
+  // refresh when the run completes. `baselineEstimatedTokens` stays
+  // equal to currentTokens when the provider returned usage — the REPL
+  // uses the delta only to adjust subsequent local estimates.
+  const tokenState = tokenStateRef.current;
+  const contextTokenSnapshot =
+    tokenState.source === 'api'
+      ? {
+          currentTokens: tokenState.totalTokens,
+          baselineEstimatedTokens: tokenState.totalTokens,
+          source: 'api' as const,
+          usage: tokenState.lastUsage,
+        }
+      : undefined;
+
   const result: KodaXResult = {
     success: verdictStatus !== 'blocked',
     lastText: resolvedText,
@@ -1182,6 +1251,7 @@ export async function runManagedTaskViaRunner(
     sessionId: runResult.sessionId ?? `runner-${Date.now()}`,
     managedProtocolPayload,
     managedTask,
+    contextTokenSnapshot,
   };
   return result;
 }
