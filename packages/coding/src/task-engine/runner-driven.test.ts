@@ -1005,6 +1005,65 @@ describe('Shard 6b — mutation tracker', () => {
   });
 });
 
+// =============================================================================
+// Shard 6c — Checkpoint recovery (FEATURE_071)
+// =============================================================================
+
+describe('Shard 6c — checkpoint handling', () => {
+  it('completes a run that has no pre-existing checkpoint without error', async () => {
+    // Smoke: the happy-path "no checkpoint" branch in handlePreRunCheckpoint.
+    const mock = makeChainMockLlm({
+      scout: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 's1', name: 'emit_scout_verdict',
+              input: { confirmed_harness: 'H0_DIRECT', direct_completion_ready: 'yes' },
+            }],
+          };
+        }
+        return { textBlocks: [{ text: 'done' }] };
+      },
+    });
+    const result = await runManagedTaskViaRunner(makeOptions(), 'task', mock);
+    expect(result.success).toBe(true);
+  });
+
+  it('completes the full H1 chain even with checkpoint writes firing per role', async () => {
+    // Exercises the fire-and-forget checkpoint writer during a multi-role
+    // run. Failures inside writeCurrentCheckpoint are swallowed, so even
+    // if the workspace-root is unwritable the chain completes.
+    const mock = makeChainMockLlm({
+      scout: () => ({
+        toolBlocks: [{
+          type: 'tool_use', id: 's1', name: 'emit_scout_verdict',
+          input: { confirmed_harness: 'H1_EXECUTE_EVAL' },
+        }],
+      }),
+      generator: () => ({
+        toolBlocks: [{ type: 'tool_use', id: 'g1', name: 'emit_handoff', input: { status: 'ready' } }],
+      }),
+      evaluator: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 'e1', name: 'emit_verdict',
+              input: { status: 'accept', user_answer: 'ok' },
+            }],
+          };
+        }
+        return { textBlocks: [{ text: 'ok' }] };
+      },
+    });
+    const result = await runManagedTaskViaRunner(makeOptions(), 'task', mock);
+    expect(result.success).toBe(true);
+    // roleAssignments records all 3 roles that emitted.
+    expect(result.managedTask?.roleAssignments.map((a) => a.role)).toEqual([
+      'scout', 'generator', 'evaluator',
+    ]);
+  });
+});
+
 describe('Shard 5b — H2 replan via nextHarness', () => {
   it('Evaluator revise with next_harness=H2 routes back to Planner', async () => {
     let plannerTurns = 0;

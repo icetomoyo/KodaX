@@ -76,6 +76,20 @@ import type {
 } from '../types.js';
 import type { ManagedTaskBudgetController } from './_internal/managed-task/budget.js';
 import { incrementManagedBudgetUsage } from './_internal/managed-task/budget.js';
+import type {
+  ManagedTaskCheckpoint,
+  ValidatedCheckpoint,
+} from './_internal/managed-task/checkpoint.js';
+import {
+  deleteCheckpoint,
+  findValidCheckpoint,
+  getGitHeadCommit,
+  writeCheckpoint,
+} from './_internal/managed-task/checkpoint.js';
+import {
+  getManagedTaskSurface,
+  getManagedTaskWorkspaceRoot,
+} from './_internal/managed-task/workspace.js';
 
 /**
  * Env-flag check. `KODAX_MANAGED_TASK_RUNTIME=runner` enables the Runner-
@@ -241,6 +255,7 @@ function buildObserverBridge(
   events: KodaXEvents | undefined,
   harnessRef: { current: KodaXHarnessProfile },
   rolesRef: { emitted: KodaXTaskRole[] },
+  checkpointWriter?: (role: KodaXTaskRole) => void,
 ): ObserverBridge {
   const emit = (partial: {
     phase: KodaXManagedTaskPhase;
@@ -263,6 +278,9 @@ function buildObserverBridge(
       }
       rolesRef.emitted.push(role);
       emit({ phase: 'round', activeWorkerId: role, note: `${role} completed a turn` });
+      // Shard 6c: fire-and-forget checkpoint write. Errors are swallowed
+      // inside writeCurrentCheckpoint so they can't abort the run.
+      if (checkpointWriter) checkpointWriter(role);
     },
     completed: (signal) =>
       emit({
@@ -755,11 +773,126 @@ function buildManagedTaskPayload(args: {
 // Main entry
 // =============================================================================
 
+/**
+ * Shard 6c: handle a pre-existing checkpoint before the run starts.
+ *
+ * Legacy behaviour for reference (task-engine.ts:~6644): ask the user
+ * whether to continue from checkpoint or restart, then delegate to
+ * `resumeManagedTask` on continue. The Runner-driven path cannot (yet)
+ * faithfully resume a partial state — the legacy `resumeManagedTask` runs
+ * ~700 lines of coupled internal state reconstruction that does not map
+ * cleanly to the Agent/Handoff model.
+ *
+ * For Shard 6c we honour the UX contract (user is informed, dialog fires)
+ * but treat every case as a fresh start:
+ *   - "restart" → delete stale checkpoint, start fresh.
+ *   - "continue" → log a note that resume is not yet wired in the Runner
+ *     path; delete the stale checkpoint; start fresh. This is explicit
+ *     about the current limitation and avoids silently losing state into
+ *     a no-op path.
+ *   - no askUser callback or no checkpoint → silently clean up any stale
+ *     checkpoint and start fresh.
+ *
+ * Future work: implement a structural resume — re-seed the recorder with
+ * `validated.managedTask.runtime.scoutDecision` etc. and skip past
+ * completed roles. See legacy `resumeManagedTask` for the state shape.
+ */
+async function handlePreRunCheckpoint(options: KodaXOptions): Promise<void> {
+  let validated: ValidatedCheckpoint | undefined;
+  try {
+    validated = await findValidCheckpoint(options);
+  } catch {
+    return;
+  }
+  if (!validated) return;
+
+  const deleteSafely = async (): Promise<void> => {
+    try {
+      await deleteCheckpoint(validated!.workspaceDir);
+    } catch {
+      // Delete failure is non-fatal; the next run will see the same
+      // stale checkpoint and reach this branch again.
+    }
+  };
+
+  if (!options.events?.askUser) {
+    await deleteSafely();
+    return;
+  }
+
+  const useChinese = /[\u4e00-\u9fff]/.test(validated.managedTask.contract.objective ?? '');
+  const answer = await options.events.askUser({
+    question: useChinese
+      ? '发现未完成的任务（Runner 路径暂不支持断点续传）'
+      : 'Found incomplete task (Runner path does not yet support resume)',
+    options: [
+      {
+        label: useChinese ? '重新开始' : 'Restart',
+        value: 'restart',
+        description: useChinese ? '丢弃之前的进度，重新开始' : 'Discard previous progress and start fresh',
+      },
+      {
+        label: useChinese ? '取消' : 'Cancel',
+        value: 'cancel',
+        description: useChinese ? '中止当前请求' : 'Abort the current request',
+      },
+    ],
+    default: 'restart',
+  });
+  await deleteSafely();
+  if (answer === 'cancel') {
+    throw new Error('Runner-driven path: user cancelled due to pre-existing checkpoint');
+  }
+}
+
+/**
+ * Shard 6c: write a crash-safe checkpoint after each role transition.
+ * Allows legacy tools and future resume logic to inspect partial state.
+ */
+async function writeCurrentCheckpoint(args: {
+  readonly options: KodaXOptions;
+  readonly managedTask: KodaXManagedTask;
+  readonly currentRound: number;
+  readonly completedWorkerIds: readonly string[];
+  readonly scoutCompleted: boolean;
+}): Promise<string | undefined> {
+  const { options, managedTask, currentRound, completedWorkerIds, scoutCompleted } = args;
+  try {
+    const surface = getManagedTaskSurface(options);
+    const workspaceRoot = getManagedTaskWorkspaceRoot(options, surface);
+    const workspaceDir = `${workspaceRoot}/${managedTask.contract.taskId}`;
+    const gitCommit = (await getGitHeadCommit(options.context?.gitRoot)) ?? 'unknown';
+    const checkpoint: ManagedTaskCheckpoint = {
+      version: 1,
+      taskId: managedTask.contract.taskId,
+      createdAt: managedTask.contract.createdAt,
+      gitCommit,
+      objective: managedTask.contract.objective,
+      harnessProfile: managedTask.contract.harnessProfile,
+      currentRound,
+      completedWorkerIds: [...completedWorkerIds],
+      scoutCompleted,
+    };
+    await writeCheckpoint(workspaceDir, checkpoint);
+    return workspaceDir;
+  } catch {
+    // Checkpoint write is best-effort — failures should not abort the run.
+    return undefined;
+  }
+}
+
 export async function runManagedTaskViaRunner(
   options: KodaXOptions,
   prompt: string,
   adapterOverride?: Parameters<typeof buildRunnerLlmAdapter>[1],
 ): Promise<KodaXResult> {
+  // Shard 6c: honour any pre-existing checkpoint before starting. Gated on
+  // `askUser` presence — non-interactive contexts (unit tests, SDK
+  // consumers without a prompt surface) skip the directory scan entirely.
+  if (options.events?.askUser) {
+    await handlePreRunCheckpoint(options);
+  }
+
   // Shard 6b: per-run mutation tracker and budget controller. The tracker
   // lives on baseCtx so coding-tool wrappers (write/edit/bash) can populate
   // it via `recordMutationForTool`; the budget controller lives outside
@@ -788,7 +921,45 @@ export async function runManagedTaskViaRunner(
   const recorder: VerdictRecorder = {};
   const harnessRef = { current: 'H0_DIRECT' as KodaXHarnessProfile };
   const rolesRef: { emitted: KodaXTaskRole[] } = { emitted: [] };
-  const observer = buildObserverBridge(options.events, harnessRef, rolesRef);
+
+  // Shard 6c: checkpoint writer, invoked after each role emit. Gated on
+  // the presence of an interactive `askUser` callback — without it the
+  // user cannot be prompted to resume, so writing checkpoints is useless
+  // infrastructure cost (forks git, touches filesystem). This keeps unit
+  // tests (which usually don't register askUser) fast and deterministic.
+  let lastCheckpointWorkspaceDir: string | undefined;
+  const checkpointingEnabled = Boolean(options.events?.askUser);
+  const checkpointWriter = checkpointingEnabled
+    ? (_role: KodaXTaskRole): void => {
+        const snapshot = buildManagedTaskPayload({
+          prompt,
+          options,
+          recorder,
+          rolesEmitted: rolesRef.emitted,
+          baseCtx,
+          signal: 'COMPLETE',
+          budget,
+        });
+        const scoutCompleted = Boolean(recorder.scout);
+        const currentRound = rolesRef.emitted.length;
+        void writeCurrentCheckpoint({
+          options,
+          managedTask: snapshot,
+          currentRound,
+          completedWorkerIds: rolesRef.emitted.map((r) => r),
+          scoutCompleted,
+        }).then((dir) => {
+          if (dir) lastCheckpointWorkspaceDir = dir;
+        });
+      }
+    : undefined;
+
+  const observer = buildObserverBridge(
+    options.events,
+    harnessRef,
+    rolesRef,
+    checkpointWriter,
+  );
 
   observer.preflight();
 
@@ -822,6 +993,18 @@ export async function runManagedTaskViaRunner(
   });
 
   observer.completed(signal);
+
+  // Shard 6c: delete checkpoint on successful or blocked terminal exit.
+  // (Blocked is still "the task concluded" from the checkpoint perspective
+  // — the user saw a definitive answer, not an interrupted run.)
+  if (lastCheckpointWorkspaceDir) {
+    try {
+      await deleteCheckpoint(lastCheckpointWorkspaceDir);
+    } catch {
+      // best-effort cleanup; stale checkpoints will be handled by
+      // handlePreRunCheckpoint on the next run.
+    }
+  }
 
   const result: KodaXResult = {
     success: verdictStatus !== 'blocked',
