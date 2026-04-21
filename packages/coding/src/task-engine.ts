@@ -119,6 +119,10 @@ import {
 // FEATURE_076: round-boundary reshape of runManagedTask's exit into a clean
 // user-facing {user, assistant} dialog.
 import { reshapeToUserConversation } from './task-engine/_internal/round-boundary.js';
+import {
+  isRunnerDrivenRuntimeEnabled,
+  runManagedTaskViaRunner,
+} from './task-engine/runner-driven.js';
 // FEATURE_079 Slice 4a: managed-output sanitize + fence-detection helpers
 import {
   MANAGED_CONTROL_PLANE_MARKERS,
@@ -6623,6 +6627,13 @@ async function executeRunManagedTask(
   options: KodaXOptions,
   prompt: string,
 ): Promise<KodaXResult> {
+  // FEATURE_084 Shard 5a (v0.7.26): env-flag dispatch to the Runner-driven
+  // AMA path. Opt-in via `KODAX_MANAGED_TASK_RUNTIME=runner`. Default
+  // remains the legacy state machine below until Shard 6 flips it.
+  if (isRunnerDrivenRuntimeEnabled()) {
+    return runManagedTaskViaRunner(options, prompt);
+  }
+
   const agentMode = resolveManagedAgentMode(options);
   if (agentMode === 'sa') {
     const intentGate = inferIntentGate(prompt);

@@ -1,0 +1,607 @@
+/**
+ * Runner-driven path tests — FEATURE_084 Shard 5a (v0.7.26).
+ *
+ * Covers:
+ *   - Env flag detection (`KODAX_MANAGED_TASK_RUNTIME=runner`)
+ *   - Agent construction (Scout with emit + core tools, no handoffs for H0)
+ *   - LLM adapter: system split, tool serialization, RunnerLlmResult shape
+ *   - End-to-end Scout H0_DIRECT flow via mocked provider stream
+ *   - KodaXResult shape: success + lastText + messages, no managedTask
+ *     (matches SA fast-path semantics for Shard 5a; Shard 5b populates
+ *     managedTask when Generator/Evaluator enter the chain)
+ */
+
+import { afterEach, describe, expect, it } from 'vitest';
+import {
+  EMIT_SCOUT_VERDICT_TOOL_NAME,
+} from '../agents/protocol-emitters.js';
+import {
+  buildRunnerLlmAdapter,
+  buildRunnerScoutAgent,
+  isRunnerDrivenRuntimeEnabled,
+  runManagedTaskViaRunner,
+} from './runner-driven.js';
+import type { KodaXMessage, KodaXToolDefinition, KodaXToolUseBlock } from '@kodax/ai';
+import type { KodaXOptions, KodaXToolExecutionContext } from '../types.js';
+
+function makeCtx(): KodaXToolExecutionContext {
+  return {
+    backups: new Map<string, string>(),
+    gitRoot: process.cwd(),
+    executionCwd: process.cwd(),
+  };
+}
+
+function makeOptions(): KodaXOptions {
+  return {
+    provider: 'anthropic',
+    context: { gitRoot: process.cwd(), executionCwd: process.cwd() },
+    events: {},
+  } as KodaXOptions;
+}
+
+describe('isRunnerDrivenRuntimeEnabled', () => {
+  const envKey = 'KODAX_MANAGED_TASK_RUNTIME';
+  afterEach(() => {
+    delete process.env[envKey];
+  });
+
+  it('returns false when env var is unset', () => {
+    delete process.env[envKey];
+    expect(isRunnerDrivenRuntimeEnabled()).toBe(false);
+  });
+
+  it('returns true for "runner"', () => {
+    process.env[envKey] = 'runner';
+    expect(isRunnerDrivenRuntimeEnabled()).toBe(true);
+  });
+
+  it('returns true for "RUNNER" (case insensitive)', () => {
+    process.env[envKey] = 'RUNNER';
+    expect(isRunnerDrivenRuntimeEnabled()).toBe(true);
+  });
+
+  it('returns false for "legacy" or any other value', () => {
+    process.env[envKey] = 'legacy';
+    expect(isRunnerDrivenRuntimeEnabled()).toBe(false);
+    process.env[envKey] = '1';
+    expect(isRunnerDrivenRuntimeEnabled()).toBe(false);
+  });
+});
+
+describe('buildRunnerScoutAgent', () => {
+  it('carries emit_scout_verdict + 4 core coding tools', () => {
+    const scout = buildRunnerScoutAgent(makeCtx());
+    const names = scout.tools?.map((t) => t.name) ?? [];
+    expect(names).toContain(EMIT_SCOUT_VERDICT_TOOL_NAME);
+    expect(names).toContain('read');
+    expect(names).toContain('grep');
+    expect(names).toContain('glob');
+    expect(names).toContain('bash');
+  });
+
+  it('declares handoffs to generator (H1) and planner (H2) — Shard 5b topology', () => {
+    const scout = buildRunnerScoutAgent(makeCtx());
+    const targets = (scout.handoffs ?? []).map((h) => h.target.name);
+    expect(targets).toContain('kodax/role/generator');
+    expect(targets).toContain('kodax/role/planner');
+  });
+
+  it('uses kodax/role/scout as the canonical agent name', () => {
+    const scout = buildRunnerScoutAgent(makeCtx());
+    expect(scout.name).toBe('kodax/role/scout');
+  });
+
+  it('carries a self-contained H0 instruction string (no ManagedRolePromptContext dependency)', () => {
+    const scout = buildRunnerScoutAgent(makeCtx());
+    expect(typeof scout.instructions).toBe('string');
+    expect(scout.instructions).toMatch(/H0_DIRECT/);
+    expect(scout.instructions).toMatch(/emit_scout_verdict/);
+  });
+});
+
+describe('buildRunnerLlmAdapter (via overrideStream)', () => {
+  it('splits leading system message and sends rest to the stream', async () => {
+    let capturedSystem = '';
+    let capturedTranscript: readonly KodaXMessage[] = [];
+    const adapter = buildRunnerLlmAdapter(makeOptions(), async (transcript, _tools, system) => {
+      capturedSystem = system;
+      capturedTranscript = transcript;
+      return { textBlocks: [{ text: 'ok' }], toolBlocks: [] };
+    });
+    await adapter(
+      [
+        { role: 'system', content: 'sys-text' },
+        { role: 'user', content: 'user-q' },
+      ],
+      { name: 'x', instructions: 'ignored' },
+    );
+    expect(capturedSystem).toBe('sys-text');
+    expect(capturedTranscript).toHaveLength(1);
+    expect(capturedTranscript[0]!.content).toBe('user-q');
+  });
+
+  it('strips execute function from agent tools when serializing for the wire', async () => {
+    let capturedTools: readonly { name: string; execute?: unknown }[] = [];
+    const adapter = buildRunnerLlmAdapter(makeOptions(), async (_t, tools) => {
+      capturedTools = tools as readonly { name: string; execute?: unknown }[];
+      return { textBlocks: [], toolBlocks: [] };
+    });
+    const scout = buildRunnerScoutAgent(makeCtx());
+    await adapter([{ role: 'system', content: 's' }], scout);
+    for (const t of capturedTools) {
+      expect(t.execute).toBeUndefined();
+    }
+    expect(capturedTools.some((t) => t.name === EMIT_SCOUT_VERDICT_TOOL_NAME)).toBe(true);
+  });
+
+  it('converts textBlocks+toolBlocks to RunnerLlmResult shape', async () => {
+    const toolBlock: KodaXToolUseBlock = {
+      type: 'tool_use',
+      id: 'call_1',
+      name: 'emit_scout_verdict',
+      input: { confirmed_harness: 'H0_DIRECT' },
+    };
+    const adapter = buildRunnerLlmAdapter(makeOptions(), async () => ({
+      textBlocks: [{ text: 'Calling verdict' }],
+      toolBlocks: [toolBlock],
+    }));
+    const result = await adapter(
+      [{ role: 'system', content: 's' }],
+      { name: 'x', instructions: '' },
+    );
+    expect(result.text).toBe('Calling verdict');
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls![0]!.name).toBe('emit_scout_verdict');
+    expect(result.toolCalls![0]!.input).toEqual({ confirmed_harness: 'H0_DIRECT' });
+  });
+});
+
+describe('runManagedTaskViaRunner — Scout H0_DIRECT end-to-end', () => {
+  it('runs a Scout H0_DIRECT flow: emit_scout_verdict then final text', async () => {
+    let turn = 0;
+    const result = await runManagedTaskViaRunner(
+      makeOptions(),
+      'What is 2 + 2?',
+      async (_transcript, _tools, _system) => {
+        turn += 1;
+        if (turn === 1) {
+          return {
+            textBlocks: [{ text: 'Simple arithmetic, answering directly.' }],
+            toolBlocks: [
+              {
+                type: 'tool_use',
+                id: 'scout-1',
+                name: 'emit_scout_verdict',
+                input: {
+                  confirmed_harness: 'H0_DIRECT',
+                  direct_completion_ready: 'yes',
+                  summary: 'Arithmetic question',
+                  scope: [],
+                  required_evidence: [],
+                  harness_rationale: 'Trivial math, no code inspection needed.',
+                },
+              },
+            ],
+          };
+        }
+        // Second turn: Scout sees tool_result, emits final text
+        return { textBlocks: [{ text: '2 + 2 = 4.' }], toolBlocks: [] };
+      },
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.lastText).toBe('2 + 2 = 4.');
+    expect(result.signal).toBe('COMPLETE');
+    // Shard 5a deliberately omits managedTask (treated as converged by
+    // round-boundary.isUnconvergedVerdict — same as SA fast-path).
+    expect(result.managedTask).toBeUndefined();
+
+    // Transcript shape: system, user, assistant(tool_use), user(tool_result), assistant(final)
+    expect(result.messages).toHaveLength(5);
+    expect(result.messages[0]!.role).toBe('system');
+    expect(result.messages[1]!.role).toBe('user');
+    expect(result.messages[2]!.role).toBe('assistant');
+    expect(result.messages[3]!.role).toBe('user');
+    expect(result.messages[4]!.role).toBe('assistant');
+  });
+
+  it('handles a zero-tool direct answer (Scout answers without emit)', async () => {
+    // Edge case: a minimalist Scout that just returns the answer as text,
+    // without ever calling emit_scout_verdict. The run still completes;
+    // managedTask stays undefined (same as above).
+    const result = await runManagedTaskViaRunner(
+      makeOptions(),
+      'Say hello',
+      async () => ({ textBlocks: [{ text: 'Hello, world.' }], toolBlocks: [] }),
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.lastText).toBe('Hello, world.');
+    expect(result.managedTask).toBeUndefined();
+  });
+
+  it('surfaces tool errors back to the LLM without failing the run', async () => {
+    let turn = 0;
+    const result = await runManagedTaskViaRunner(
+      makeOptions(),
+      'Read /nonexistent/path',
+      async (transcript) => {
+        turn += 1;
+        if (turn === 1) {
+          return {
+            textBlocks: [],
+            toolBlocks: [
+              {
+                type: 'tool_use',
+                id: 'read-1',
+                name: 'read',
+                input: { file_path: '/definitely/does/not/exist/xyz.txt' },
+              },
+            ],
+          };
+        }
+        // Second turn: LLM sees the tool error and adapts.
+        const last = transcript[transcript.length - 1]!;
+        const blocks = last.content as Array<{ type: string; content: string; is_error?: boolean }>;
+        expect(blocks[0]!.type).toBe('tool_result');
+        // The read tool might fail with a specific error; either is_error
+        // is true or content carries a "[Tool Error]" prefix.
+        const errored = blocks[0]!.is_error === true
+          || blocks[0]!.content.toLowerCase().includes('error')
+          || blocks[0]!.content.toLowerCase().includes('enoent');
+        expect(errored).toBe(true);
+        return { textBlocks: [{ text: 'File does not exist; try a different path.' }], toolBlocks: [] };
+      },
+    );
+    expect(result.success).toBe(true);
+    expect(result.lastText).toMatch(/does not exist/);
+  });
+});
+
+describe('parity — Runner path and legacy SA path produce compatible KodaXResult shape', () => {
+  // The goal of Shard 5a parity is NOT byte-level equivalence (the legacy
+  // AMA state machine emits dozens of observer events and populates a
+  // full managedTask payload that the Shard 5a skeleton doesn't produce).
+  // The goal IS user-facing shape parity: both paths return a KodaXResult
+  // with success + lastText + messages + sessionId, and FEATURE_076's
+  // round-boundary reshape can consume either one without special casing.
+  it('runner-path KodaXResult is compatible with FEATURE_076 round-boundary reshape', async () => {
+    const result = await runManagedTaskViaRunner(
+      makeOptions(),
+      'Trivial task',
+      async () => ({ textBlocks: [{ text: 'done' }], toolBlocks: [] }),
+    );
+
+    // Required fields for reshape (see round-boundary.ts):
+    expect(typeof result.success).toBe('boolean');
+    expect(typeof result.lastText).toBe('string');
+    expect(Array.isArray(result.messages)).toBe(true);
+    expect(typeof result.sessionId).toBe('string');
+    // verdict undefined → reshape treats as converged
+    expect(result.managedTask?.verdict?.status).toBeUndefined();
+  });
+});
+
+// =============================================================================
+// Shard 5b parity matrix — 4 multi-agent canonical paths
+// =============================================================================
+
+/**
+ * Helper: build a mock LLM that dispatches per agent name. Each agent's
+ * turn handler receives the turn number (1-indexed per agent) and may
+ * return a text-only response, a tool-calling response, or throw.
+ */
+type AgentTurn = (
+  turnOfThisAgent: number,
+  transcript: readonly KodaXMessage[],
+) => {
+  textBlocks?: readonly { text: string }[];
+  toolBlocks?: readonly KodaXToolUseBlock[];
+};
+
+function makeChainMockLlm(handlers: Record<string, AgentTurn>) {
+  const turnCount: Record<string, number> = {};
+  // We can't see the agent name from the stream signature, but the system
+  // message content tells us: it's the agent's instructions. We grep each
+  // role's distinct marker.
+  const detectRole = (system: string): string => {
+    if (system.includes('You are Scout')) return 'scout';
+    if (system.includes('You are Planner')) return 'planner';
+    if (system.includes('You are Generator')) return 'generator';
+    if (system.includes('You are Evaluator')) return 'evaluator';
+    return 'unknown';
+  };
+  return async (
+    transcript: readonly KodaXMessage[],
+    _tools: readonly KodaXToolDefinition[],
+    system: string,
+  ) => {
+    const role = detectRole(system);
+    turnCount[role] = (turnCount[role] ?? 0) + 1;
+    const handler = handlers[role];
+    if (!handler) throw new Error(`No mock handler for role ${role}`);
+    return handler(turnCount[role]!, transcript);
+  };
+}
+
+describe('Shard 5b parity — H1 accept path', () => {
+  it('Scout → Generator → Evaluator accept produces converged KodaXResult', async () => {
+    const mock = makeChainMockLlm({
+      scout: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use',
+              id: 'scout-1',
+              name: 'emit_scout_verdict',
+              input: { confirmed_harness: 'H1_EXECUTE_EVAL', harness_rationale: 'small scope' },
+            }],
+          };
+        }
+        throw new Error('scout should have handed off already');
+      },
+      generator: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use',
+              id: 'gen-1',
+              name: 'emit_handoff',
+              input: { status: 'ready', summary: 'Done', evidence: ['test passes'] },
+            }],
+          };
+        }
+        throw new Error('generator should have handed off already');
+      },
+      evaluator: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use',
+              id: 'eval-1',
+              name: 'emit_verdict',
+              input: { status: 'accept', user_answer: 'Feature implemented and tests pass.' },
+            }],
+          };
+        }
+        return { textBlocks: [{ text: 'Feature implemented and tests pass.' }] };
+      },
+    });
+
+    const result = await runManagedTaskViaRunner(makeOptions(), 'Add login endpoint', mock);
+    expect(result.success).toBe(true);
+    expect(result.signal).toBe('COMPLETE');
+    expect(result.lastText).toBe('Feature implemented and tests pass.');
+    expect(result.managedProtocolPayload?.verdict?.status).toBe('accept');
+    expect(result.managedProtocolPayload?.scout?.confirmedHarness).toBe('H1_EXECUTE_EVAL');
+    expect(result.managedProtocolPayload?.handoff?.status).toBe('ready');
+  });
+});
+
+describe('Shard 5b parity — H1 revise → accept path', () => {
+  it('Evaluator revise cycles back to Generator, then accept on second pass', async () => {
+    const mock = makeChainMockLlm({
+      scout: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 's1', name: 'emit_scout_verdict',
+              input: { confirmed_harness: 'H1_EXECUTE_EVAL' },
+            }],
+          };
+        }
+        throw new Error('scout overrun');
+      },
+      generator: (turn) => {
+        if (turn === 1 || turn === 2) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: `g${turn}`, name: 'emit_handoff',
+              input: { status: 'ready' },
+            }],
+          };
+        }
+        throw new Error('generator overrun');
+      },
+      evaluator: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 'e1', name: 'emit_verdict',
+              input: { status: 'revise', reason: 'missed edge case' },
+            }],
+          };
+        }
+        if (turn === 2) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 'e2', name: 'emit_verdict',
+              input: { status: 'accept', user_answer: 'Fixed on second pass.' },
+            }],
+          };
+        }
+        return { textBlocks: [{ text: 'Fixed on second pass.' }] };
+      },
+    });
+
+    const result = await runManagedTaskViaRunner(makeOptions(), 'Fix edge case', mock);
+    expect(result.success).toBe(true);
+    expect(result.lastText).toBe('Fixed on second pass.');
+    expect(result.managedProtocolPayload?.verdict?.status).toBe('accept');
+  });
+});
+
+describe('Shard 5b parity — H2 plan → execute → accept path', () => {
+  it('Scout → Planner → Generator → Evaluator accept with contract', async () => {
+    const mock = makeChainMockLlm({
+      scout: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 's1', name: 'emit_scout_verdict',
+              input: { confirmed_harness: 'H2_PLAN_EXECUTE_EVAL', harness_rationale: 'larger scope' },
+            }],
+          };
+        }
+        throw new Error('scout overrun');
+      },
+      planner: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 'p1', name: 'emit_contract',
+              input: {
+                summary: 'Add JWT auth',
+                success_criteria: ['POST /auth/login works', 'tests pass'],
+                required_evidence: ['auth.test.ts passing'],
+                constraints: ['use existing token utils'],
+              },
+            }],
+          };
+        }
+        throw new Error('planner overrun');
+      },
+      generator: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 'g1', name: 'emit_handoff',
+              input: { status: 'ready', evidence: ['tests passing'] },
+            }],
+          };
+        }
+        throw new Error('generator overrun');
+      },
+      evaluator: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 'e1', name: 'emit_verdict',
+              input: { status: 'accept', user_answer: 'JWT auth ready per contract.' },
+            }],
+          };
+        }
+        return { textBlocks: [{ text: 'JWT auth ready per contract.' }] };
+      },
+    });
+
+    const result = await runManagedTaskViaRunner(makeOptions(), 'Add JWT auth', mock);
+    expect(result.success).toBe(true);
+    expect(result.lastText).toBe('JWT auth ready per contract.');
+    expect(result.managedProtocolPayload?.scout?.confirmedHarness).toBe('H2_PLAN_EXECUTE_EVAL');
+    expect(result.managedProtocolPayload?.contract?.successCriteria).toHaveLength(2);
+    expect(result.managedProtocolPayload?.verdict?.status).toBe('accept');
+  });
+});
+
+describe('Shard 5b parity — blocked path', () => {
+  it('Evaluator blocked surfaces BLOCKED signal + reason; success=false', async () => {
+    const mock = makeChainMockLlm({
+      scout: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 's1', name: 'emit_scout_verdict',
+              input: { confirmed_harness: 'H1_EXECUTE_EVAL' },
+            }],
+          };
+        }
+        throw new Error('scout overrun');
+      },
+      generator: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 'g1', name: 'emit_handoff',
+              input: { status: 'blocked', summary: 'needs OAuth config' },
+            }],
+          };
+        }
+        throw new Error('generator overrun');
+      },
+      evaluator: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 'e1', name: 'emit_verdict',
+              input: { status: 'blocked', reason: 'Missing OAUTH_CLIENT_ID env var' },
+            }],
+          };
+        }
+        return { textBlocks: [{ text: 'Blocked: needs OAUTH_CLIENT_ID to be set.' }] };
+      },
+    });
+
+    const result = await runManagedTaskViaRunner(makeOptions(), 'Enable OAuth', mock);
+    expect(result.success).toBe(false);
+    expect(result.signal).toBe('BLOCKED');
+    expect(result.signalReason).toMatch(/OAUTH_CLIENT_ID/);
+    expect(result.managedProtocolPayload?.verdict?.status).toBe('blocked');
+  });
+});
+
+describe('Shard 5b — H2 replan via nextHarness', () => {
+  it('Evaluator revise with next_harness=H2 routes back to Planner', async () => {
+    let plannerTurns = 0;
+    const mock = makeChainMockLlm({
+      scout: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 's1', name: 'emit_scout_verdict',
+              input: { confirmed_harness: 'H2_PLAN_EXECUTE_EVAL' },
+            }],
+          };
+        }
+        throw new Error('scout overrun');
+      },
+      planner: (turn) => {
+        plannerTurns += 1;
+        return {
+          toolBlocks: [{
+            type: 'tool_use', id: `p${turn}`, name: 'emit_contract',
+            input: {
+              summary: `Plan v${turn}`,
+              success_criteria: ['criteria1'],
+              required_evidence: [],
+              constraints: [],
+            },
+          }],
+        };
+      },
+      generator: (turn) => {
+        return {
+          toolBlocks: [{
+            type: 'tool_use', id: `g${turn}`, name: 'emit_handoff',
+            input: { status: 'ready' },
+          }],
+        };
+      },
+      evaluator: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 'e1', name: 'emit_verdict',
+              input: { status: 'revise', next_harness: 'H2_PLAN_EXECUTE_EVAL' },
+            }],
+          };
+        }
+        if (turn === 2) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 'e2', name: 'emit_verdict',
+              input: { status: 'accept', user_answer: 'Replanned and succeeded.' },
+            }],
+          };
+        }
+        return { textBlocks: [{ text: 'Replanned and succeeded.' }] };
+      },
+    });
+
+    const result = await runManagedTaskViaRunner(makeOptions(), 'Complex task', mock);
+    expect(plannerTurns).toBeGreaterThanOrEqual(2);
+    expect(result.success).toBe(true);
+    expect(result.lastText).toBe('Replanned and succeeded.');
+  });
+});
