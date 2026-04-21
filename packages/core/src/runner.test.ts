@@ -21,6 +21,11 @@ import {
   registerPresetDispatcher,
   type PresetDispatcher,
 } from './runner.js';
+import {
+  MAX_TOOL_LOOP_ITERATIONS,
+  type RunnableTool,
+  type RunnerLlmResult,
+} from './runner-tool-loop.js';
 
 describe('Runner', () => {
   afterEach(() => {
@@ -187,6 +192,280 @@ describe('Runner', () => {
 
       expect(receivedTracingContext).toBeDefined();
       expect((receivedTracingContext as { agentSpan: unknown }).agentSpan).toBeDefined();
+    });
+  });
+
+  describe('tool loop (FEATURE_084 Shard 1)', () => {
+    function makeEchoTool(): RunnableTool {
+      return {
+        name: 'echo',
+        description: 'Echo the provided text back to the caller',
+        input_schema: {
+          type: 'object',
+          properties: { text: { type: 'string' } },
+          required: ['text'],
+        },
+        execute: async (input) => ({
+          content: `echoed:${(input as { text?: string }).text ?? ''}`,
+        }),
+      };
+    }
+
+    it('backward-compat: llm returning a plain string yields one assistant turn', async () => {
+      const agent = createAgent({ name: 'str-reply', instructions: 'sys' });
+      const llm = vi.fn(async () => 'hello, world');
+      const result = await Runner.run(agent, 'hi', { llm });
+      expect(result.output).toBe('hello, world');
+      expect(result.messages).toHaveLength(3);
+      expect(llm).toHaveBeenCalledTimes(1);
+    });
+
+    it('llm returning RunnerLlmResult without toolCalls behaves like single-turn', async () => {
+      const agent = createAgent({ name: 'result-reply', instructions: 'sys' });
+      const llm = vi.fn(async (): Promise<RunnerLlmResult> => ({ text: 'done', toolCalls: [] }));
+      const result = await Runner.run(agent, 'hi', { llm });
+      expect(result.output).toBe('done');
+      expect(result.messages).toHaveLength(3);
+      expect(llm).toHaveBeenCalledTimes(1);
+    });
+
+    it('executes RunnableTool and loops until LLM stops emitting toolCalls', async () => {
+      const echoTool = makeEchoTool();
+      const agent = createAgent({
+        name: 'loop-agent',
+        instructions: 'sys',
+        tools: [echoTool],
+      });
+      let turn = 0;
+      const llm = vi.fn(async (messages): Promise<RunnerLlmResult> => {
+        turn += 1;
+        if (turn === 1) {
+          return {
+            text: 'Calling echo...',
+            toolCalls: [{ id: 'call-1', name: 'echo', input: { text: 'ping' } }],
+          };
+        }
+        // second turn — LLM has seen the tool_result block
+        const last = messages[messages.length - 1]!;
+        expect(Array.isArray(last.content)).toBe(true);
+        expect((last.content as Array<{ type: string }>)[0]!.type).toBe('tool_result');
+        return { text: 'final answer', toolCalls: [] };
+      });
+      const result = await Runner.run(agent, 'hi', { llm });
+      expect(result.output).toBe('final answer');
+      expect(llm).toHaveBeenCalledTimes(2);
+      // Transcript: system, user, assistant(tool_use), user(tool_result), assistant(final)
+      expect(result.messages).toHaveLength(5);
+      expect(result.messages[2]!.role).toBe('assistant');
+      const assistantBlocks = result.messages[2]!.content as Array<{ type: string }>;
+      expect(assistantBlocks.some((b) => b.type === 'tool_use')).toBe(true);
+      expect(result.messages[3]!.role).toBe('user');
+      const toolResultBlocks = result.messages[3]!.content as Array<{ type: string }>;
+      expect(toolResultBlocks[0]!.type).toBe('tool_result');
+    });
+
+    it('returns tool error content to the LLM when tool is unknown', async () => {
+      const agent = createAgent({ name: 'missing-tool', instructions: 'sys' });
+      let turn = 0;
+      const llm = vi.fn(async (messages): Promise<RunnerLlmResult> => {
+        turn += 1;
+        if (turn === 1) {
+          return {
+            text: '',
+            toolCalls: [{ id: 'c1', name: 'nonexistent', input: {} }],
+          };
+        }
+        const last = messages[messages.length - 1]!;
+        const blocks = last.content as Array<{ type: string; content: string; is_error?: boolean }>;
+        expect(blocks[0]!.is_error).toBe(true);
+        expect(blocks[0]!.content).toMatch(/not declared/);
+        return { text: 'recovered', toolCalls: [] };
+      });
+      const result = await Runner.run(agent, 'hi', { llm });
+      expect(result.output).toBe('recovered');
+    });
+
+    it('surfaces is_error when a RunnableTool throws', async () => {
+      const brokenTool: RunnableTool = {
+        name: 'broken',
+        description: 'Always throws',
+        input_schema: { type: 'object', properties: {} },
+        execute: async () => {
+          throw new Error('kaboom');
+        },
+      };
+      const agent = createAgent({
+        name: 'broken-agent',
+        instructions: 'sys',
+        tools: [brokenTool],
+      });
+      let turn = 0;
+      const llm = vi.fn(async (messages): Promise<RunnerLlmResult> => {
+        turn += 1;
+        if (turn === 1) {
+          return { text: '', toolCalls: [{ id: 'c1', name: 'broken', input: {} }] };
+        }
+        const last = messages[messages.length - 1]!;
+        const blocks = last.content as Array<{ type: string; content: string; is_error?: boolean }>;
+        expect(blocks[0]!.is_error).toBe(true);
+        expect(blocks[0]!.content).toMatch(/kaboom/);
+        return { text: 'recovered', toolCalls: [] };
+      });
+      const result = await Runner.run(agent, 'hi', { llm });
+      expect(result.output).toBe('recovered');
+    });
+
+    it('surfaces is_error when a declared tool has no executor', async () => {
+      const defOnly = {
+        name: 'def-only',
+        description: 'definition without executor',
+        input_schema: { type: 'object' as const, properties: {} },
+      };
+      const agent = createAgent({
+        name: 'no-exec',
+        instructions: 'sys',
+        tools: [defOnly],
+      });
+      let turn = 0;
+      const llm = vi.fn(async (messages): Promise<RunnerLlmResult> => {
+        turn += 1;
+        if (turn === 1) {
+          return { text: '', toolCalls: [{ id: 'c1', name: 'def-only', input: {} }] };
+        }
+        const last = messages[messages.length - 1]!;
+        const blocks = last.content as Array<{ type: string; content: string; is_error?: boolean }>;
+        expect(blocks[0]!.is_error).toBe(true);
+        expect(blocks[0]!.content).toMatch(/no executor/);
+        return { text: 'recovered', toolCalls: [] };
+      });
+      const result = await Runner.run(agent, 'hi', { llm });
+      expect(result.output).toBe('recovered');
+    });
+
+    it('aborts with a clear error after MAX_TOOL_LOOP_ITERATIONS', async () => {
+      const echoTool = makeEchoTool();
+      const agent = createAgent({
+        name: 'runaway',
+        instructions: 'sys',
+        tools: [echoTool],
+      });
+      // Always return a tool call — should hit the ceiling and throw.
+      const llm = vi.fn(async (): Promise<RunnerLlmResult> => ({
+        text: '',
+        toolCalls: [{ id: `c-${Math.random()}`, name: 'echo', input: { text: 'x' } }],
+      }));
+      await expect(Runner.run(agent, 'hi', { llm }))
+        .rejects.toThrow(/MAX_TOOL_LOOP_ITERATIONS/);
+      expect(llm).toHaveBeenCalledTimes(MAX_TOOL_LOOP_ITERATIONS);
+    });
+
+    it('emits a ToolCallSpan under the AgentSpan for each tool execution', async () => {
+      const { Tracer, addTracingProcessor, setTracingProcessors } = await import('@kodax/tracing');
+      setTracingProcessors([]);
+      const endedSpans: Array<{ name: string; kind: string; error: boolean }> = [];
+      addTracingProcessor({
+        onSpanStart: () => { /* noop */ },
+        onSpanEnd: (span) => {
+          endedSpans.push({
+            name: span.name,
+            kind: span.data.kind,
+            error: Boolean(span.error),
+          });
+        },
+        onTraceEnd: () => { /* noop */ },
+      });
+
+      const echoTool = makeEchoTool();
+      const agent = createAgent({
+        name: 'traced-tool',
+        instructions: 'sys',
+        tools: [echoTool],
+        provider: 'mock',
+        model: 'mock',
+      });
+      let turn = 0;
+      const llm = async (): Promise<RunnerLlmResult> => {
+        turn += 1;
+        if (turn === 1) {
+          return { text: '', toolCalls: [{ id: 'c1', name: 'echo', input: { text: 'hi' } }] };
+        }
+        return { text: 'done', toolCalls: [] };
+      };
+
+      await Runner.run(agent, 'hi', { llm, tracer: new Tracer() });
+      setTracingProcessors([]);
+
+      const toolCallSpan = endedSpans.find((s) => s.kind === 'tool_call');
+      expect(toolCallSpan).toBeDefined();
+      expect(toolCallSpan!.name).toBe('tool_call:echo');
+      expect(toolCallSpan!.error).toBe(false);
+      // Also ensure the two generation turns emitted spans.
+      const genSpans = endedSpans.filter((s) => s.kind === 'generation');
+      expect(genSpans).toHaveLength(2);
+    });
+
+    it('marks ToolCallSpan with error=true when the tool throws', async () => {
+      const { Tracer, addTracingProcessor, setTracingProcessors } = await import('@kodax/tracing');
+      setTracingProcessors([]);
+      const endedSpans: Array<{ kind: string; error: boolean }> = [];
+      addTracingProcessor({
+        onSpanStart: () => { /* noop */ },
+        onSpanEnd: (span) => {
+          endedSpans.push({ kind: span.data.kind, error: Boolean(span.error) });
+        },
+        onTraceEnd: () => { /* noop */ },
+      });
+
+      const brokenTool: RunnableTool = {
+        name: 'broken',
+        description: 'Always throws',
+        input_schema: { type: 'object', properties: {} },
+        execute: async () => { throw new Error('boom'); },
+      };
+      const agent = createAgent({
+        name: 'broken-traced',
+        instructions: 'sys',
+        tools: [brokenTool],
+      });
+      let turn = 0;
+      const llm = async (): Promise<RunnerLlmResult> => {
+        turn += 1;
+        if (turn === 1) return { text: '', toolCalls: [{ id: 'c1', name: 'broken', input: {} }] };
+        return { text: 'done', toolCalls: [] };
+      };
+
+      await Runner.run(agent, 'hi', { llm, tracer: new Tracer() });
+      setTracingProcessors([]);
+
+      const toolCallSpan = endedSpans.find((s) => s.kind === 'tool_call');
+      expect(toolCallSpan).toBeDefined();
+      expect(toolCallSpan!.error).toBe(true);
+    });
+
+    it('persists tool_use and tool_result messages to the Session', async () => {
+      const echoTool = makeEchoTool();
+      const agent = createAgent({
+        name: 'session-loop',
+        instructions: 'sys',
+        tools: [echoTool],
+      });
+      const session = createInMemorySession();
+      let turn = 0;
+      const llm = async (): Promise<RunnerLlmResult> => {
+        turn += 1;
+        if (turn === 1) return { text: '', toolCalls: [{ id: 'c1', name: 'echo', input: { text: 'x' } }] };
+        return { text: 'done', toolCalls: [] };
+      };
+      await Runner.run(agent, 'q', { llm, session });
+
+      const roles: string[] = [];
+      for await (const entry of session.entries()) {
+        if (entry.type === 'message') {
+          roles.push((entry.payload as { role: string }).role);
+        }
+      }
+      // Expected order: user(q), assistant(tool_use), user(tool_result), assistant(final)
+      expect(roles).toEqual(['user', 'assistant', 'user', 'assistant']);
     });
   });
 

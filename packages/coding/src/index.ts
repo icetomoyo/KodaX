@@ -726,6 +726,36 @@ export {
   createDefaultCodingAgent,
 } from './coding-preset.js';
 
+// FEATURE_084 Shard 2 (v0.7.26): protocol emitter tools + coding Agent
+// instances with handoff topology. Data-only at this shard; consumed by the
+// Runner-driven task engine in Shard 5.
+export {
+  CODING_AGENT_MARKER,
+  CODING_AGENTS,
+  EMIT_CONTRACT_TOOL_NAME,
+  EMIT_HANDOFF_TOOL_NAME,
+  EMIT_SCOUT_VERDICT_TOOL_NAME,
+  EMIT_VERDICT_TOOL_NAME,
+  PROTOCOL_EMITTER_TOOLS,
+  emitContract,
+  emitHandoff,
+  emitScoutVerdict,
+  emitVerdict,
+  evaluatorCodingAgent,
+  generatorCodingAgent,
+  plannerCodingAgent,
+  scoutCodingAgent,
+} from './agents/index.js';
+export type { ProtocolEmitterMetadata } from './agents/index.js';
+
+// FEATURE_085 (v0.7.26): adapter wrapping the legacy per-tool truncation
+// policy as a Layer A ToolGuardrail.afterTool. Opt-in — the SA preset path
+// continues to call applyToolResultGuardrail directly.
+export {
+  TOOL_RESULT_TRUNCATION_GUARDRAIL_NAME,
+  createToolResultTruncationGuardrail,
+} from './tools/tool-result-truncation-guardrail.js';
+
 // FEATURE_082 (v0.7.24): LineageExtension and LineageCompaction moved to
 // `@kodax/session-lineage`. Barrel re-export kept for
 // batteries-included consumers; not a deprecation shim.

@@ -20,8 +20,31 @@
 import type { Span, Tracer, Trace } from '@kodax/tracing';
 import { defaultTracer } from '@kodax/tracing';
 
-import type { Agent, AgentMessage } from './agent.js';
+import type { Agent, AgentMessage, Guardrail } from './agent.js';
 import type { Session } from './session.js';
+import {
+  MAX_TOOL_LOOP_ITERATIONS,
+  buildAssistantMessageFromLlmResult,
+  buildToolResultMessage,
+  executeRunnerToolCall,
+  isRunnerLlmResult,
+  type RunnerLlmResult,
+  type RunnerLlmReturn,
+  type RunnerToolCall,
+  type RunnerToolResult,
+} from './runner-tool-loop.js';
+import {
+  collectGuardrails,
+  runInputGuardrails,
+  runOutputGuardrails,
+  runToolAfterGuardrails,
+  runToolBeforeGuardrails,
+} from './guardrail.js';
+import {
+  detectHandoffSignal,
+  emitHandoffSpan,
+  replaceSystemMessage,
+} from './runner-handoff.js';
 
 /**
  * Options accepted by `Runner.run` and `Runner.runStream`.
@@ -34,13 +57,19 @@ export interface RunOptions {
   readonly presetOptions?: unknown;
   /**
    * LLM callback used by the generic dispatch path. Receives the assembled
-   * message transcript and the current Agent; returns the assistant reply
-   * as a single string.
+   * message transcript and the current Agent.
+   *
+   * Return a plain `string` to preserve the v0.7.23 single-turn behaviour
+   * (no tool loop). Return a `RunnerLlmResult` with `toolCalls` to opt into
+   * the FEATURE_084 tool loop — the Runner will execute each call against
+   * the agent's `RunnableTool`s, append tool_use + tool_result blocks to
+   * the transcript, and invoke this callback again until no tool calls are
+   * returned (or `MAX_TOOL_LOOP_ITERATIONS` is reached).
    */
   readonly llm?: (
     messages: readonly AgentMessage[],
     agent: Agent,
-  ) => Promise<string>;
+  ) => Promise<RunnerLlmReturn>;
   /**
    * Optional Session to persist the generic-path transcript into. When
    * supplied, each generated message is appended as a `message` entry.
@@ -62,6 +91,13 @@ export interface RunOptions {
    * is orchestrating sub-runs and wants one trace per user request.
    */
   readonly trace?: Trace;
+  /**
+   * FEATURE_085 (v0.7.26): run-scoped guardrails. Merged with
+   * `agent.guardrails` — declaration order is agent-first, then opts.
+   * Input / output / tool-before / tool-after hooks all dispatch from
+   * this union. See `@kodax/core/guardrail.ts` for shape.
+   */
+  readonly guardrails?: readonly Guardrail[];
 }
 
 /**
@@ -180,37 +216,18 @@ async function appendMessageEntry(session: Session, message: AgentMessage): Prom
   });
 }
 
-async function genericRun<TData>(
+interface GenerationTurnOutcome {
+  readonly result: RunnerLlmResult;
+  /** True when the llm callback returned a plain string (v0.7.23 shape). */
+  readonly wasPlainString: boolean;
+}
+
+async function runGenerationTurn(
   agent: Agent,
-  input: string | readonly AgentMessage[],
-  opts: RunOptions | undefined,
+  transcript: readonly AgentMessage[],
+  llm: NonNullable<RunOptions['llm']>,
   agentSpan: Span | null,
-): Promise<RunResult<TData>> {
-  if (!opts?.llm) {
-    const toolHint = agent.tools && agent.tools.length > 0
-      ? ' NOTE: this agent declares tools; the generic path does not yet execute tools. '
-        + 'For tool execution use a registered preset (e.g. createDefaultCodingAgent()) or wait for FEATURE_084.'
-      : '';
-    throw new Error(
-      `Runner.run: agent "${agent.name}" has no registered preset dispatcher and no \`llm\` callback was provided. `
-      + 'Either use a registered preset (e.g. createDefaultCodingAgent()) or pass opts.llm.'
-      + toolHint,
-    );
-  }
-  const instructions = resolveInstructions(agent);
-  const userMessages = normalizeInput(input);
-  const systemMessage: AgentMessage = { role: 'system', content: instructions };
-  const transcript: AgentMessage[] = [systemMessage, ...userMessages];
-
-  if (opts.session) {
-    for (const message of userMessages) {
-      await appendMessageEntry(opts.session, message);
-    }
-  }
-
-  // Emit a GenerationSpan around the LLM callback. The callback itself is
-  // opaque to the Runner (it could hit Anthropic, OpenAI, a local model, ...)
-  // so we only record the agent/provider/model shape declared on the Agent.
+): Promise<GenerationTurnOutcome> {
   const genSpan = agentSpan
     ? agentSpan.addChild(`generation:${agent.name}`, {
         kind: 'generation',
@@ -220,9 +237,9 @@ async function genericRun<TData>(
         inputMessages: transcript.length,
       })
     : null;
-  let reply: string;
+  let reply: RunnerLlmReturn;
   try {
-    reply = await opts.llm([...transcript], agent);
+    reply = await llm([...transcript], agent);
   } catch (err) {
     if (genSpan) {
       genSpan.setError(err instanceof Error ? err : new Error(String(err)));
@@ -233,19 +250,170 @@ async function genericRun<TData>(
   if (genSpan) {
     genSpan.end();
   }
+  if (isRunnerLlmResult(reply)) {
+    return { result: reply, wasPlainString: false };
+  }
+  // v0.7.23 backward-compat path: plain string → single-turn result.
+  return { result: { text: reply, toolCalls: [] }, wasPlainString: true };
+}
 
-  const assistantMessage: AgentMessage = { role: 'assistant', content: reply };
-  transcript.push(assistantMessage);
+async function genericRun<TData>(
+  startAgent: Agent,
+  input: string | readonly AgentMessage[],
+  opts: RunOptions | undefined,
+  agentSpan: Span | null,
+): Promise<RunResult<TData>> {
+  if (!opts?.llm) {
+    throw new Error(
+      `Runner.run: agent "${startAgent.name}" has no registered preset dispatcher and no \`llm\` callback was provided. `
+      + 'Either use a registered preset (e.g. createDefaultCodingAgent()) or pass opts.llm.',
+    );
+  }
+  const instructions = resolveInstructions(startAgent);
+  const userMessages = normalizeInput(input);
+  const systemMessage: AgentMessage = { role: 'system', content: instructions };
+  let transcript: AgentMessage[] = [systemMessage, ...userMessages];
 
-  if (opts.session) {
-    await appendMessageEntry(opts.session, assistantMessage);
+  // FEATURE_085: collect guardrails from the START agent + opts. For Shard 4
+  // guardrails are run-scoped — handoffs do NOT re-run input/output hooks
+  // with the target agent's guardrails. Tool hooks run on every invocation
+  // regardless of which agent is currently active.
+  const mergedGuardrails: Guardrail[] = [];
+  if (startAgent.guardrails) mergedGuardrails.push(...startAgent.guardrails);
+  if (opts.guardrails) mergedGuardrails.push(...opts.guardrails);
+  const guardrailSlots = collectGuardrails(mergedGuardrails);
+
+  // FEATURE_084 Shard 4: the active agent may change mid-run when an emit
+  // tool's result signals a handoff. `currentAgent` tracks this.
+  let currentAgent: Agent = startAgent;
+  const guardrailCtx = { agent: startAgent, abortSignal: opts.abortSignal };
+
+  // Input guardrails: runs once on the assembled transcript before the first
+  // LLM turn. A rewrite replaces the transcript; block/escalate throws.
+  if (guardrailSlots.input.length > 0) {
+    const inspected = await runInputGuardrails(transcript, guardrailSlots.input, guardrailCtx, agentSpan);
+    transcript = [...inspected];
   }
 
-  return {
-    output: reply,
-    messages: transcript,
-    sessionId: opts.session?.id,
-  };
+  if (opts.session) {
+    for (const message of userMessages) {
+      await appendMessageEntry(opts.session, message);
+    }
+  }
+
+  for (let iteration = 0; iteration < MAX_TOOL_LOOP_ITERATIONS; iteration += 1) {
+    const { result: turn, wasPlainString } = await runGenerationTurn(
+      currentAgent,
+      transcript,
+      opts.llm,
+      agentSpan,
+    );
+    const toolCalls = turn.toolCalls ?? [];
+
+    // Preserve the v0.7.23 wire shape: when the llm returned a plain string
+    // AND no tool calls happened, the assistant message carries plain-string
+    // content. Consumers that snapshotted transcripts from v0.7.23 must keep
+    // reading the same shape. Tool-loop turns always emit block content.
+    let assistantMessage: AgentMessage =
+      wasPlainString && toolCalls.length === 0
+        ? { role: 'assistant', content: turn.text }
+        : buildAssistantMessageFromLlmResult(turn);
+
+    if (toolCalls.length === 0) {
+      // Final turn — apply output guardrails before returning.
+      if (guardrailSlots.output.length > 0) {
+        assistantMessage = await runOutputGuardrails(
+          assistantMessage,
+          guardrailSlots.output,
+          guardrailCtx,
+          agentSpan,
+        );
+      }
+      transcript.push(assistantMessage);
+      if (opts.session) {
+        await appendMessageEntry(opts.session, assistantMessage);
+      }
+      const finalText =
+        typeof assistantMessage.content === 'string'
+          ? assistantMessage.content
+          : extractLastText(assistantMessage);
+      return {
+        output: finalText,
+        messages: transcript,
+        sessionId: opts.session?.id,
+      };
+    }
+
+    // Tool-using turn — append assistant message (tool_use blocks), then
+    // execute each call (before/after guardrail hooks around each), append
+    // the tool_result user message, loop.
+    transcript.push(assistantMessage);
+    if (opts.session) {
+      await appendMessageEntry(opts.session, assistantMessage);
+    }
+
+    const results: RunnerToolResult[] = new Array(toolCalls.length);
+    const finalCalls: typeof toolCalls = [...toolCalls];
+    for (let i = 0; i < toolCalls.length; i += 1) {
+      let call = toolCalls[i]!;
+      if (guardrailSlots.tool.length > 0) {
+        const beforeOutcome = await runToolBeforeGuardrails(
+          call,
+          guardrailSlots.tool,
+          guardrailCtx,
+          agentSpan,
+        );
+        if (beforeOutcome.kind === 'block') {
+          results[i] = beforeOutcome.result;
+          continue;
+        }
+        call = beforeOutcome.call;
+        (finalCalls as RunnerToolCall[])[i] = call;
+      }
+      let result = await executeRunnerToolCall(call, currentAgent, {
+        agent: currentAgent,
+        abortSignal: opts.abortSignal,
+        agentSpan,
+      });
+      if (guardrailSlots.tool.length > 0) {
+        result = await runToolAfterGuardrails(
+          call,
+          result,
+          guardrailSlots.tool,
+          guardrailCtx,
+          agentSpan,
+        );
+      }
+      results[i] = result;
+    }
+    const toolResultMessage = buildToolResultMessage(finalCalls, results);
+    transcript.push(toolResultMessage);
+    if (opts.session) {
+      await appendMessageEntry(opts.session, toolResultMessage);
+    }
+
+    // FEATURE_084 Shard 4: handoff detection. If any tool result carries a
+    // handoffTarget metadata field that resolves to a declared handoff on
+    // the current agent, transfer ownership. Only the first matching
+    // handoff is executed per iteration; any subsequent emit in the same
+    // batch is ignored (prevents non-determinism from multiple signals).
+    const handoffSignal = detectHandoffSignal(currentAgent, finalCalls, results);
+    if (handoffSignal) {
+      emitHandoffSpan(
+        agentSpan,
+        handoffSignal.from,
+        handoffSignal.to,
+        handoffSignal.handoff.kind,
+        handoffSignal.handoff.description,
+      );
+      currentAgent = handoffSignal.to;
+      transcript = replaceSystemMessage(transcript, currentAgent);
+    }
+  }
+
+  throw new Error(
+    `Runner.run: agent "${currentAgent.name}" exceeded MAX_TOOL_LOOP_ITERATIONS (${MAX_TOOL_LOOP_ITERATIONS}) — the LLM kept requesting tool calls without terminating. This likely indicates a prompt or tool design bug.`,
+  );
 }
 
 /**

@@ -54,6 +54,50 @@ export {
   extractAssistantTextFromMessage,
 } from './runner.js';
 
+export type {
+  RunnableTool,
+  RunnerLlmResult,
+  RunnerLlmReturn,
+  RunnerToolCall,
+  RunnerToolContext,
+  RunnerToolResult,
+} from './runner-tool-loop.js';
+export {
+  MAX_TOOL_LOOP_ITERATIONS,
+  buildAssistantMessageFromLlmResult,
+  buildToolResultMessage,
+  executeRunnerToolCall,
+  isRunnableTool,
+  isRunnerLlmResult,
+} from './runner-tool-loop.js';
+
+export type {
+  HandoffSignal,
+} from './runner-handoff.js';
+export {
+  detectHandoffSignal,
+  emitHandoffSpan,
+  replaceSystemMessage,
+} from './runner-handoff.js';
+
+export type {
+  GuardrailContext,
+  GuardrailVerdict,
+  InputGuardrail,
+  OutputGuardrail,
+  ToolBeforeOutcome,
+  ToolGuardrail,
+} from './guardrail.js';
+export {
+  GuardrailBlockedError,
+  GuardrailEscalateError,
+  collectGuardrails,
+  runInputGuardrails,
+  runOutputGuardrails,
+  runToolAfterGuardrails,
+  runToolBeforeGuardrails,
+} from './guardrail.js';
+
 export {
   SCOUT_AGENT_NAME,
   PLANNER_AGENT_NAME,
