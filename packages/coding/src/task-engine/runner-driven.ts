@@ -82,6 +82,7 @@ import { getToolDefinition } from '../tools/registry.js';
 import type {
   KodaXEvents,
   KodaXHarnessProfile,
+  KodaXJsonValue,
   KodaXManagedProtocolPayload,
   KodaXManagedTask,
   KodaXManagedTaskPhase,
@@ -91,7 +92,9 @@ import type {
   KodaXTaskEvidenceEntry,
   KodaXTaskRole,
   KodaXTaskRoleAssignment,
+  KodaXTaskRoutingDecision,
   KodaXTaskStatus,
+  KodaXTaskToolPolicy,
   KodaXTaskVerificationContract,
   KodaXToolExecutionContext,
   ManagedMutationTracker,
@@ -134,6 +137,8 @@ import {
   SUSPICIOUS_LAST_TEXT_PREVIEW_LIMIT,
   detectScoutSuspiciousSignals,
 } from './_internal/managed-task/scout-signals.js';
+import { createRolePrompt } from './_internal/managed-task/role-prompt.js';
+import type { ManagedRolePromptContext } from './_internal/managed-task/role-prompt-types.js';
 import path from 'node:path';
 
 /**
@@ -151,70 +156,73 @@ export function isRunnerDrivenRuntimeEnabled(): boolean {
 // without reproducing the full legacy `createRolePrompt` surface.
 // =============================================================================
 
-const SCOUT_INSTRUCTIONS = [
+/**
+ * Fallback role instructions — used when `buildRunnerAgentChain` is invoked
+ * without a full prompt context (e.g. unit tests asserting the agent
+ * topology). The real runtime path (`runManagedTaskViaRunner`) always
+ * provides a `RolePromptContextFactory`, which routes through
+ * `createRolePrompt` for the full v0.7.22-parity role prompt (decision
+ * summary, contract, metadata, verification, tool-policy, evidence
+ * strategies, dispatch_child_task guidance, H0/H1/H2 framework,
+ * handoff/verdict/contract block specs, shared closing rules).
+ */
+const SCOUT_INSTRUCTIONS_FALLBACK = [
   'You are Scout, the AMA entry role. Analyse the user task, then choose a harness tier:',
   '  - H0_DIRECT: trivial lookup / factual / review — Scout answers directly, no handoff',
   '  - H1_EXECUTE_EVAL: execution task, small scope — hand off to Generator, Evaluator verifies',
   '  - H2_PLAN_EXECUTE_EVAL: larger task, needs structured plan — hand off to Planner first',
   '',
-  'You may call these tools to gather context: read, grep, glob, bash.',
+  'You may call these tools to gather context: read, grep, glob, bash, dispatch_child_task.',
   '',
   'When ready, call `emit_scout_verdict` exactly once with `confirmed_harness` set.',
-  'For H0, also set `direct_completion_ready: "yes"` and produce ONE final assistant text turn ',
-  'with the user-facing answer. For H1/H2, do NOT produce a final answer — control transfers ',
-  'to the next role on emit.',
-  '',
-  'Always fill `scope` (files / areas the downstream role will touch) and ',
-  '`review_files_or_areas` (high-priority files to consider). The harness infers ',
-  'mutation boundaries from these paths — if every path is docs-like, Generator is ',
-  'restricted to docs-style writes; if the task is a pure review (primaryTask=review) ',
-  'and `scope` is empty, Generator writes are blocked entirely.',
 ].join('\n');
 
-const PLANNER_INSTRUCTIONS = [
-  'You are Planner (H2 role). The Scout has chosen H2_PLAN_EXECUTE_EVAL, which means the task ',
-  'needs a structured execution contract before Generator touches code.',
-  '',
-  'You may call these tools to inspect the repo: read, grep, glob.',
-  '',
-  'Call `emit_contract` exactly once with:',
-  '  - summary: one-line contract summary',
-  '  - success_criteria: what success looks like (concrete and testable)',
-  '  - required_evidence: what evidence Generator must produce (tests, file diffs, output)',
-  '  - constraints: gotchas Generator must respect',
-  '',
-  'After emit_contract the Runner transfers ownership to Generator — do not produce a final text.',
+const PLANNER_INSTRUCTIONS_FALLBACK = [
+  'You are Planner (H2 role). Call `emit_contract` exactly once with summary, success_criteria, ',
+  'required_evidence, constraints. You may call: read, grep, glob.',
 ].join('\n');
 
-const GENERATOR_INSTRUCTIONS = [
-  'You are Generator (H1/H2 execution role). Execute the task: read context, modify files, ',
-  'run commands, gather evidence.',
-  '',
-  'You may call: read, grep, glob, bash, write, edit.',
-  '',
-  'When execution is complete or blocked, call `emit_handoff` exactly once with:',
-  '  - status: "ready" | "incomplete" | "blocked"',
-  '  - summary: one-line handoff summary',
-  '  - evidence: what you produced (files modified, test runs, commands)',
-  '  - followup: required next steps for Evaluator',
-  '',
-  'After emit_handoff the Runner transfers to Evaluator — do not produce a final text.',
+const GENERATOR_INSTRUCTIONS_FALLBACK = [
+  'You are Generator (H1/H2 execution role). Execute the task and call `emit_handoff` exactly ',
+  'once with status/summary/evidence/followup. You may call: read, grep, glob, bash, write, ',
+  'edit, dispatch_child_task.',
 ].join('\n');
 
-const EVALUATOR_INSTRUCTIONS = [
-  'You are Evaluator (H1/H2 verifier). Check Generator\'s output against the task requirements ',
-  '(and the contract if H2).',
-  '',
-  'You may call: read, grep, glob, bash (read-only verification preferred).',
-  '',
-  'Call `emit_verdict` exactly once with `status`:',
-  '  - accept: task complete. Provide `user_answer` (multi-line, user-facing)',
-  '  - revise: Generator needs another pass. Optional `next_harness: H2_PLAN_EXECUTE_EVAL` to escalate',
-  '  - blocked: verification cannot complete. Provide `reason`',
-  '',
-  'After emit_verdict on accept/blocked, produce ONE final assistant text turn with the user answer.',
-  'On revise, control transfers back to Generator (or Planner for replan) — do not produce a final text.',
+const EVALUATOR_INSTRUCTIONS_FALLBACK = [
+  'You are Evaluator (H1/H2 verifier). Call `emit_verdict` exactly once with status ',
+  '(accept|revise|blocked). You may call: read, grep, glob, bash (read-only verification ',
+  'preferred).',
 ].join('\n');
+
+/**
+ * Factory that resolves the `ManagedRolePromptContext` for a given role
+ * from the current recorder state. Called by the dynamic `instructions`
+ * closure on every agent invocation, so Scout's post-emit skillMap /
+ * scope reach downstream role prompts in real time.
+ */
+export type RolePromptContextFactory = (
+  role: KodaXTaskRole,
+  recorder: VerdictRecorder,
+) => ManagedRolePromptContext | undefined;
+
+/**
+ * Optional prompt context plumbed into `buildRunnerAgentChain`. When
+ * present, the chain builder uses `createRolePrompt` to produce a full
+ * v0.7.22-parity role prompt for every turn. When absent (test paths),
+ * the fallback constants above are used instead.
+ */
+export interface RunnerChainPromptContext {
+  /** Original user task. Becomes `rolePromptContext.originalTask`. */
+  readonly prompt: string;
+  /** Routing decision from `createReasoningPlan`. */
+  readonly decision: KodaXTaskRoutingDecision;
+  /** Optional structured task metadata. */
+  readonly metadata?: Record<string, KodaXJsonValue>;
+  /** Optional tool policy (derived elsewhere; Runner-driven path defaults to undefined). */
+  readonly toolPolicy?: KodaXTaskToolPolicy;
+  /** Optional role-context factory for skillMap / scoutScope / childWriteReviewPrompt injection. */
+  readonly contextFactory?: RolePromptContextFactory;
+}
 
 /**
  * Shard 6d-T: render Scout's skill map as an appended "Execution
@@ -267,21 +275,57 @@ function renderScoutSkillMapBlock(
   return lines.join('\n');
 }
 
-function buildGeneratorInstructions(recorder: VerdictRecorder): string {
-  const skillBlock = renderScoutSkillMapBlock(recorder, { includeVerification: false });
-  return skillBlock ? `${GENERATOR_INSTRUCTIONS}\n${skillBlock}` : GENERATOR_INSTRUCTIONS;
-}
-
-function buildEvaluatorInstructions(
+/**
+ * Resolve the system prompt for a role. When the full `promptContext`
+ * (prompt + decision) is present, delegate to `createRolePrompt` for the
+ * v0.7.22-parity prompt (decision summary, contract, metadata,
+ * verification, tool-policy, evidence strategies, dispatch_child_task
+ * guidance, H0/H1/H2 framework, handoff/verdict/contract block specs).
+ * Otherwise fall back to the minimal static constants — keeps test
+ * fixtures that call `buildRunnerAgentChain(ctx, {})` working.
+ */
+function resolveRoleInstructions(
+  role: KodaXTaskRole,
+  agentName: string,
+  fallback: string,
   recorder: VerdictRecorder,
+  promptContext: RunnerChainPromptContext | undefined,
   verification: KodaXTaskVerificationContract | undefined,
 ): string {
-  const skillBlock = renderScoutSkillMapBlock(recorder, { includeVerification: true });
-  const runtimeBlock = renderRuntimeVerificationBlock(verification);
-  let out = EVALUATOR_INSTRUCTIONS;
-  if (skillBlock) out += `\n${skillBlock}`;
-  if (runtimeBlock) out += `\n${runtimeBlock}`;
-  return out;
+  if (!promptContext) {
+    // Legacy minimal-instructions path for tests / topology-only calls.
+    // Still append the skillMap block if Scout has emitted one, so
+    // downstream roles get Scout's execution obligations even in the
+    // fallback path.
+    if (role === 'generator') {
+      const block = renderScoutSkillMapBlock(recorder, { includeVerification: false });
+      return block ? `${fallback}\n${block}` : fallback;
+    }
+    if (role === 'evaluator') {
+      const skillBlock = renderScoutSkillMapBlock(recorder, { includeVerification: true });
+      const runtimeBlock = renderRuntimeVerificationBlock(verification);
+      let out = fallback;
+      if (skillBlock) out += `\n${skillBlock}`;
+      if (runtimeBlock) out += `\n${runtimeBlock}`;
+      return out;
+    }
+    return fallback;
+  }
+  const ctx = promptContext.contextFactory
+    ? promptContext.contextFactory(role, recorder)
+    : { originalTask: promptContext.prompt };
+  return createRolePrompt(
+    role,
+    promptContext.prompt,
+    promptContext.decision,
+    verification,
+    promptContext.toolPolicy,
+    agentName,
+    promptContext.metadata,
+    ctx,
+    undefined, // workerId — unused by createRolePrompt body
+    false, // isTerminalAuthority — Runner-driven path always runs with Evaluator
+  );
 }
 
 /**
@@ -1229,6 +1273,15 @@ export function buildRunnerAgentChain(
   // (FEATURE_067 v2 parity). The caller owns the map; the Runner-internal
   // wrappers only append.
   childWriteWorktreePathsRef: { current: Map<string, string> } = { current: new Map() },
+  // v0.7.26 parity: full role-prompt context (original task, decision,
+  // metadata, tool policy, skill / scope factory). When provided, every
+  // role's `instructions` resolves through `createRolePrompt` — the
+  // v0.7.22 prompt surface (decision summary, contract, metadata,
+  // verification contract, tool policy, evidence strategies,
+  // dispatch_child_task guidance, H0/H1/H2 quality framework,
+  // handoff/verdict/contract block specs, shared closing rules). When
+  // absent (test paths), the fallback minimal instructions are used.
+  promptContext?: RunnerChainPromptContext,
 ): RunnerAgentChain {
   const codingTools = buildCodingToolBundle(ctx, budget);
   const dispatchDefinition = getToolDefinition('dispatch_child_task');
@@ -1259,9 +1312,25 @@ export function buildRunnerAgentChain(
 
   type WritableAgent = { -readonly [K in keyof Agent]: Agent[K] };
 
+  // v0.7.26 parity: dynamic role instructions. Every agent's `instructions`
+  // closure resolves on each Runner invocation so Scout's post-emit
+  // skillMap / scoutScope reach downstream prompts. When `promptContext`
+  // is provided, each role gets the full v0.7.22 prompt surface via
+  // `createRolePrompt` (decision summary + contract + metadata +
+  // verification + tool policy + evidence strategies + dispatch_child_task
+  // guidance + H0/H1/H2 quality framework + handoff/verdict/contract
+  // block specs + shared closing rules). Tests that don't pass a
+  // `promptContext` continue to see the minimal static fallback.
   const scout: WritableAgent = {
     name: SCOUT_AGENT_NAME,
-    instructions: SCOUT_INSTRUCTIONS,
+    instructions: () => resolveRoleInstructions(
+      'scout',
+      SCOUT_AGENT_NAME,
+      SCOUT_INSTRUCTIONS_FALLBACK,
+      recorder,
+      promptContext,
+      verification,
+    ),
     tools: [
       scoutEmit,
       codingTools.read,
@@ -1279,18 +1348,28 @@ export function buildRunnerAgentChain(
   };
   const planner: WritableAgent = {
     name: PLANNER_AGENT_NAME,
-    instructions: PLANNER_INSTRUCTIONS,
+    instructions: () => resolveRoleInstructions(
+      'planner',
+      PLANNER_AGENT_NAME,
+      PLANNER_INSTRUCTIONS_FALLBACK,
+      recorder,
+      promptContext,
+      verification,
+    ),
     tools: [contractEmit, codingTools.read, codingTools.grep, codingTools.glob],
     handoffs: undefined,
     reasoning: { default: 'balanced', max: 'deep', escalateOnRevise: true },
   };
   const generator: WritableAgent = {
     name: GENERATOR_AGENT_NAME,
-    // Shard 6d-T: dynamic instructions so Scout's `skillMap` (resolved at
-    // emit time, after this chain is frozen) can be surfaced to Generator
-    // as an execution-obligations block. Runner evaluates this closure on
-    // each agent invocation.
-    instructions: () => buildGeneratorInstructions(recorder),
+    instructions: () => resolveRoleInstructions(
+      'generator',
+      GENERATOR_AGENT_NAME,
+      GENERATOR_INSTRUCTIONS_FALLBACK,
+      recorder,
+      promptContext,
+      verification,
+    ),
     tools: [
       handoffEmit,
       codingTools.read,
@@ -1310,13 +1389,14 @@ export function buildRunnerAgentChain(
   };
   const evaluator: WritableAgent = {
     name: EVALUATOR_AGENT_NAME,
-    // Shard 6d-T: dynamic instructions so Scout's verification obligations
-    // reach Evaluator's QA checks, mirroring legacy's skillMap-into-QA-plan
-    // branching.
-    // Shard 6d-S: also surfaces `verification.runtime` (startup command,
-    // ready signal, UI/API/DB checks) so Evaluator probes the runtime
-    // under test before emitting a verdict.
-    instructions: () => buildEvaluatorInstructions(recorder, verification),
+    instructions: () => resolveRoleInstructions(
+      'evaluator',
+      EVALUATOR_AGENT_NAME,
+      EVALUATOR_INSTRUCTIONS_FALLBACK,
+      recorder,
+      promptContext,
+      verification,
+    ),
     tools: [
       verdictEmit,
       codingTools.read,
@@ -2327,6 +2407,56 @@ export async function runManagedTaskViaRunner(
   const tokenStateRef: { current: RunnerAdapterTokenState } = {
     current: { totalTokens: 0, source: 'estimate' },
   };
+  // v0.7.26 parity: build the full role-prompt context so every role's
+  // system prompt carries the v0.7.22 surface (decision summary + contract
+  // + metadata + verification + tool policy + evidence strategies +
+  // dispatch_child_task guidance + H0/H1/H2 quality framework +
+  // handoff/verdict/contract block specs). The context factory closes over
+  // the recorder so Scout's post-emit `skillMap` / `scope` reach
+  // downstream Generator / Evaluator prompts at invocation time.
+  const rolePromptContextFactory: RolePromptContextFactory = (role, currentRecorder) => {
+    const scoutPayload = currentRecorder.scout?.payload.scout;
+    const ctx: ManagedRolePromptContext = {
+      originalTask: prompt,
+    };
+    if (scoutPayload?.skillMap) {
+      // The scout emit payload carries a subset of KodaXSkillMap fields
+      // (skill_summary, execution_obligations, verification_obligations,
+      // ambiguities, projection_confidence). Fill the remaining fields
+      // with safe defaults so `formatSkillMapSection` renders correctly.
+      ctx.skillMap = {
+        skillSummary: scoutPayload.skillMap.skillSummary ?? '',
+        executionObligations: scoutPayload.skillMap.executionObligations ?? [],
+        verificationObligations: scoutPayload.skillMap.verificationObligations ?? [],
+        requiredEvidence: [],
+        ambiguities: scoutPayload.skillMap.ambiguities ?? [],
+        projectionConfidence: scoutPayload.skillMap.projectionConfidence ?? 'medium',
+        rawSkillFallbackAllowed: true,
+      };
+    }
+    // Scout's scope hints are only relevant to post-Scout roles (Issue 119).
+    if (role !== 'scout') {
+      const scope = scoutPayload?.scope ?? [];
+      const reviewFilesOrAreas = scoutPayload?.reviewFilesOrAreas ?? [];
+      if (scope.length > 0 || reviewFilesOrAreas.length > 0) {
+        ctx.scoutScope = { scope: [...scope], reviewFilesOrAreas: [...reviewFilesOrAreas] };
+      }
+    }
+    return ctx;
+  };
+  const chainPromptContext: RunnerChainPromptContext | undefined = plan
+    ? {
+      prompt,
+      decision: plan.decision,
+      metadata: options.context?.taskMetadata,
+      // toolPolicy not surfaced on KodaXContextOptions at the top level
+      // (it's per-role on KodaXTaskRoleAssignment). The Runner-driven path
+      // runs a single chain, so the formatTaskPolicy section stays absent
+      // unless later wiring injects a synthesized union policy.
+      toolPolicy: undefined,
+      contextFactory: rolePromptContextFactory,
+    }
+    : undefined;
   const chain = buildRunnerAgentChain(
     baseCtx,
     recorder,
@@ -2336,6 +2466,7 @@ export async function runManagedTaskViaRunner(
     planRef,
     options.context?.taskVerification,
     childWriteWorktreePathsRef,
+    chainPromptContext,
   );
   const llm = buildRunnerLlmAdapter(options, adapterOverride, tokenStateRef);
 

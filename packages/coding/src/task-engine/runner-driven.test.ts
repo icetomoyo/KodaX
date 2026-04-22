@@ -131,9 +131,15 @@ describe('buildRunnerScoutAgent', () => {
 
   it('carries a self-contained H0 instruction string (no ManagedRolePromptContext dependency)', () => {
     const scout = buildRunnerScoutAgent(makeCtx());
-    expect(typeof scout.instructions).toBe('string');
-    expect(scout.instructions).toMatch(/H0_DIRECT/);
-    expect(scout.instructions).toMatch(/emit_scout_verdict/);
+    // v0.7.26 parity: instructions is a closure that resolves on every
+    // Runner invocation so Scout's post-emit skillMap / scope reach
+    // downstream prompts at runtime. Resolve it once here for assertion.
+    const instructions = typeof scout.instructions === 'function'
+      ? scout.instructions(undefined)
+      : scout.instructions;
+    expect(typeof instructions).toBe('string');
+    expect(instructions).toMatch(/H0_DIRECT/);
+    expect(instructions).toMatch(/emit_scout_verdict/);
   });
 });
 
