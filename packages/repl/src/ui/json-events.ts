@@ -8,6 +8,7 @@
 import type {
   KodaXContextTokenSnapshot,
   KodaXEvents,
+  KodaXManagedTaskStatusEvent,
   KodaXRepoIntelligenceTraceEvent,
   KodaXTokenUsage,
 } from '@kodax/coding';
@@ -61,6 +62,31 @@ type JsonEvent =
       summary: string;
       capability?: KodaXRepoIntelligenceTraceEvent['capability'];
       trace?: KodaXRepoIntelligenceTraceEvent['trace'];
+    }
+  | { type: 'tool.progress'; id: string; message: string }
+  | {
+      type: 'managed_task.status';
+      agentMode: KodaXManagedTaskStatusEvent['agentMode'];
+      harnessProfile: KodaXManagedTaskStatusEvent['harnessProfile'];
+      phase?: KodaXManagedTaskStatusEvent['phase'];
+      activeWorkerId?: string;
+      activeWorkerTitle?: string;
+      childFanoutClass?: KodaXManagedTaskStatusEvent['childFanoutClass'];
+      childFanoutCount?: number;
+      currentRound?: number;
+      maxRounds?: number;
+      note?: string;
+      detailNote?: string;
+      globalWorkBudget?: number;
+      budgetUsage?: number;
+      budgetApprovalRequired?: boolean;
+    }
+  | {
+      type: 'scout.suspicious_completion';
+      confidence: 'uncertain';
+      signals: readonly string[];
+      sessionId?: string;
+      lastTextPreview?: string;
     }
   | { type: 'complete' };
 
@@ -218,6 +244,44 @@ export function createJsonEvents(options: JsonEventOutputOptions = {}): KodaXEve
         summary: event.summary,
         capability: event.capability,
         trace: event.trace,
+      });
+    },
+
+    onToolProgress: (update) => {
+      writeJsonLine(stdout, {
+        type: 'tool.progress',
+        id: update.id,
+        message: update.message,
+      });
+    },
+
+    onManagedTaskStatus: (status) => {
+      writeJsonLine(stdout, {
+        type: 'managed_task.status',
+        agentMode: status.agentMode,
+        harnessProfile: status.harnessProfile,
+        phase: status.phase,
+        activeWorkerId: status.activeWorkerId,
+        activeWorkerTitle: status.activeWorkerTitle,
+        childFanoutClass: status.childFanoutClass,
+        childFanoutCount: status.childFanoutCount,
+        currentRound: status.currentRound,
+        maxRounds: status.maxRounds,
+        note: status.note,
+        detailNote: status.detailNote,
+        globalWorkBudget: status.globalWorkBudget,
+        budgetUsage: status.budgetUsage,
+        budgetApprovalRequired: status.budgetApprovalRequired,
+      });
+    },
+
+    onScoutSuspiciousCompletion: (payload) => {
+      writeJsonLine(stdout, {
+        type: 'scout.suspicious_completion',
+        confidence: payload.confidence,
+        signals: payload.signals,
+        sessionId: payload.sessionId,
+        lastTextPreview: payload.lastTextPreview,
       });
     },
 

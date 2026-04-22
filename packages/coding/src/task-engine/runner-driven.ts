@@ -1030,21 +1030,38 @@ function wrapCodingToolAsRunnable(
 }
 
 /**
- * Shell commands that mutate the filesystem / git state. Mirrors the
- * legacy `SHELL_WRITE_PATTERNS` allowlist so verification-only roles
- * (Evaluator) can still use `bash` for read-only checks (ls, cat,
- * git diff, etc.) without silently gaining write capability.
+ * Shell commands that mutate the filesystem / git state. Super-set of the
+ * legacy `SHELL_WRITE_PATTERNS` allow-list (tool-policy.ts:110) so
+ * verification-only roles (Evaluator) can still use `bash` for read-only
+ * checks (ls, cat, git diff, etc.) without silently gaining write
+ * capability.
+ *
+ * v0.7.26 H4 parity — the first group mirrors legacy exactly:
+ *   - PowerShell verbs (Set-Content / Add-Content / Out-File / Tee-Object /
+ *     Copy-Item / Move-Item / Rename-Item / Remove-Item / New-Item /
+ *     Clear-Content)
+ *   - Unix basic (rm / mv / cp / del / erase / touch / mkdir / rmdir /
+ *     rename / ren)
+ *   - Script exec (sed -i / perl -pi / python -c / node -e)
+ *   - Redirect (> / >> outside of 2>&1 / &1 forms)
+ * The second group extends legacy with v0.7.26 safety patterns:
+ *   - chmod / chown
+ *   - git write verbs (add / commit / push / merge / rebase / reset /
+ *     checkout <ref> / rm)
+ *   - package-manager install/publish/update verbs (npm / pnpm / yarn)
  *
  * Matches on leading command-word boundary — `rm /tmp/foo` blocks
  * but `node rm-stub.js` does not.
  */
 const SHELL_MUTATION_PATTERNS: readonly RegExp[] = [
-  /\brm\s+-[a-z]*[rf]/i,
-  /\bmv\s/i,
-  /\bcp\s+-[a-z]*[rf]/i,
+  // Legacy SHELL_WRITE_PATTERNS (v0.7.22 parity).
+  /\b(?:Set-Content|Add-Content|Out-File|Tee-Object|Copy-Item|Move-Item|Rename-Item|Remove-Item|New-Item|Clear-Content)\b/,
+  /\b(?:rm|mv|cp|del|erase|touch|mkdir|rmdir|rename|ren)\b/,
+  /\b(?:sed\s+-i|perl\s+-pi|python\s+-c|node\s+-e)\b/,
+  /(?:^|\s)(?:>|>>)(?!(?:\s*&1|\s*2>&1))/,
+  // v0.7.26 safety extensions.
   /\bchmod\s/i,
   /\bchown\s/i,
-  /\b(?:>|>>)\s*\S/,
   /\bgit\s+(?:add|commit|push|merge|rebase|reset|checkout\s+[^-]|rm)/i,
   /\bnpm\s+(?:install|publish|update|rm)/i,
   /\bpnpm\s+(?:install|publish|update|rm)/i,

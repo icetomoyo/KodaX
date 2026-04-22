@@ -8,6 +8,52 @@ All notable changes to this project will be documented in this file.
 
 <!-- last-sync: HEAD -->
 
+### Added
+- **FEATURE_084 — Task Engine Phase 2: Scout/Generator/Evaluator rewritten on Layer A Runner primitives**
+  - New `packages/coding/src/task-engine/runner-driven.ts` (2545 LoC) replaces the legacy `runManagedTask` state machine; dispatch gated via `KODAX_MANAGED_TASK_RUNTIME=runner` env flag (Shard 5a/5b), then flipped to default and legacy AMA orchestration deleted (Shard 6d-a/6d-b).
+  - Scout / Planner / Generator / Evaluator re-expressed as `Agent` instances with `Handoff` topology (`buildRunnerAgentChain`). H0/H1/H2 state machine now encoded as declarative continuation handoffs.
+  - fenced-block text protocol replaced by tool-call structured protocol (absorbs FEATURE_059 dual-track `visibleText + protocolPayload` goal): `emit_scout_verdict` / `emit_contract` / `emit_handoff` / `emit_verdict` runnable tools in `packages/coding/src/agents/protocol-emitters.ts`, Zod-validated payloads.
+  - Shard 6a: observer events + full `managedTask` payload parity (`ObserverBridge`).
+  - Shard 6b: real budget tracking (`ManagedTaskBudgetController`, per-harness caps + 90% approval dialog) + mutation tracker wiring (`wrapGenerator{Bash,Write}WithMutationGuard`).
+  - Shard 6c: checkpoint detection + per-role crash-safe write (FEATURE_071 parity); `--continue` path reads checkpoint and prompts user.
+  - Shard 6d-c: observer / stream / budget-extension parity fixes vs legacy.
+  - Shard 6d-d: `onIterationEnd` + `contextTokenSnapshot` parity.
+  - Shard 6d-e: `session.initialMessages` pass-through so REPL multi-turn / resume / plan-mode replay see full prior context.
+  - Shard 6d-f: role-scoped tool boundaries + evaluator shell mutation guard (`wrapReadOnlyBash`).
+  - Shard 6d-g..Q: Runner-driven v0.7.22 parity — `promptOverlay` stitching, Scout suspicious-completion detection, `dispatch_child_task` role wrappers with write-worktree path registration for Evaluator diff injection (FEATURE_067 v2 parity).
+  - Shard 6d-S: `taskVerification.runtime` surfaced into Evaluator instructions (startup command, ready signal, UI/API/DB checks) so Evaluator actively probes runtime rather than writing verdict from static reads.
+  - Shard 6d-T: dynamic Generator / Evaluator instructions so Scout's skillMap obligations reach the executing/verifying model.
+- **FEATURE_085 — Guardrail tri-layer runtime (Input / Output / Tool)**
+  - `@kodax/core/src/guardrail.ts`: `InputGuardrail` / `OutputGuardrail` / `ToolGuardrail` with 4 verdict actions (allow / rewrite / block / escalate); `GuardrailBlockedError` / `GuardrailEscalateError`; `GuardrailSpan` emission.
+  - `Runner` wires 3 hook points — input (before first turn), output (before return), tool before+after (around every invocation); `agent.guardrails` + `opts.guardrails` merged.
+  - `packages/coding/src/tools/tool-result-truncation-guardrail.ts`: adapter wrapping existing `applyToolResultGuardrail` as `ToolGuardrail.afterTool` with byte-equivalent parity.
+  - **max_tokens escalation + continuation ladder** (implementation-time absorption, no separate feature id): `@kodax/ai` exports `KODAX_ESCALATED_MAX_OUTPUT_TOKENS`; Runner adapter auto-continues on `stop_reason === 'max_tokens'` and escalates the ceiling after N continuations; Scout parity so Scout's recon isn't silently truncated; `kimi-code` provider aligned to coding-provider capped-budget ladder.
+
+### Fixed
+- **Issue 119** — Scout H0→H1 upgrade no longer leaves stale pre-Scout `mutationSurface` locking Generator to docs-only writes. Post-Scout roles read Scout's own scope / reviewFilesOrAreas instead of the pre-Scout regex heuristic.
+- **Issue 120** — Skill / plan-mode execution paths now route queued user inputs into the streaming prompt queue (`canQueueFollowUps` + `drainPendingInputsAsFollowUps`); previously follow-up inputs were silently dropped during skill / plan-mode execution.
+- Managed-task error recovery: iteration cap raised to 500 for full multi-role chains (Core's default 20 was too low for Scout → Planner → Generator → Evaluator), budget extension dialog at 90% threshold as real throttle; `error.position` propagated through the Runner → task-engine surface.
+- Classify undici `"terminated"` + cause-chain errors as retryable in `resilience/classifier.ts`.
+- Scout false-completion observability layer + Windows bash `cmd` trap hint.
+- Write / edit prompts aligned with Claude Code multi-layer defense.
+
+### Changed
+- Legacy `runManagedTask` orchestration (~7343 LoC in `task-engine.ts`) removed; `task-engine.ts` reduced to a thin facade re-exporting the Runner-driven path.
+- AMA prompt builder restored into the Runner-driven path: `_internal/managed-task/role-prompt.ts` ports v0.7.22 `createRolePrompt` 1:1, closing the earlier prompt-surface gap. Full decision / contract / metadata / verification / tool-policy / evidence-strategy / dispatch / H0/H1/H2 quality framework / handoff-verdict-contract specs reach every role turn via `RolePromptContextFactory`.
+- v0.7.26 parity restoration (5-commit sweep before release): sanitize pipeline re-added with 22 unit tests; `onToolCall` / `onToolResult` / `onToolProgress` events fire from core `Runner`; Anthropic extended thinking contract honoured (thinking blocks preserved in assistant history); 6 more gaps closed (iteration cap, cost tracker, budget extension, guardrail wrapper, dead code, stale comments); tool-result-truncation guardrail wired; multimodal input artifacts reach Scout turn (C1); dispatch-child-task parallel fan-out + progress events restored (C2); session snapshot persisted at success + error terminals (C3); **skill artifacts written + role prompts quote stable filesystem paths (C4)**; verification-only roles (Scout / Evaluator) shell boundary now a superset of legacy `SHELL_WRITE_PATTERNS` (PowerShell verbs, del / touch / mkdir / rmdir, sed -i / perl -pi / python -c / node -e, plus v0.7.26 safety extensions for chmod / chown / git / package-manager installs). JSON output mode surfaces `onToolProgress` / `onManagedTaskStatus` / `onScoutSuspiciousCompletion`.
+
+### Removed
+- `packages/coding/src/task-engine/_internal/prompts/{role-prompt,role-prompt-types,role-agent,runtime-execution-guide,tool-policy}.ts` — inlined or migrated to `_internal/managed-task/{tool-policy,scout-signals,repo-intelligence,artifacts}.ts` + `runner-driven.ts`.
+- `packages/coding/src/task-engine/_internal/protocol/{parse-helpers,sanitize}.ts` — obsoleted by Zod-validated emit tools; fenced-block parsing + control-plane marker stripping no longer needed.
+- `packages/coding/src/task-engine/_internal/formatting.ts` — pure string builders inlined into instruction / block renderers.
+- `packages/coding/src/managed-protocol-handoff.test.ts` (786 LoC) — coverage replaced by `runner-driven.test.ts` (2285 LoC) + `agents/protocol-emitters.test.ts` (278 LoC).
+
+### Test Status
+- `packages/coding`: 600+ pass
+- `packages/core`: new — 29 tests (Runner / Runner tool loop / Runner handoff / Guardrail / Agent / Session / Compaction)
+- `packages/repl`: 830+ pass (no regressions)
+- Full monorepo build green (`tsc -b` passes)
+
 ---
 
 ## [0.7.25] - 2026-04-21
