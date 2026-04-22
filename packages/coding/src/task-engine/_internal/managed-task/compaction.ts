@@ -28,9 +28,15 @@
  */
 
 import {
+  buildFileContentMessages,
+  buildPostCompactAttachments,
   compact as intelligentCompact,
+  DEFAULT_POST_COMPACT_CONFIG,
+  injectPostCompactAttachments,
   needsCompaction,
+  POST_COMPACT_TOKEN_BUDGET,
   type CompactionConfig,
+  type CompactionUpdate,
 } from '@kodax/agent';
 
 import type { AgentMessage } from '@kodax/core';
@@ -112,14 +118,62 @@ export async function buildManagedTaskCompactionHook(
       });
       events?.onCompact?.(result.tokensBefore);
 
+      // M3 parity (v0.7.26) — post-compact file + artifact ledger
+      // reinjection. Mirrors legacy `agent.ts:1740-1780`. When the
+      // compaction result carries an `artifactLedger` (files the
+      // assistant mutated or read), build the ledger summary + recent
+      // file-content attachments and re-inject them into the compacted
+      // transcript. Without this, long AMA sessions that hit compaction
+      // lose critical file context (the summary keeps the task intent
+      // but the post-mutation contents disappear).
+      let compactedMessages = result.messages as readonly KodaXMessage[];
+      let postCompactAttachments: readonly KodaXMessage[] | undefined;
+      if (result.artifactLedger && result.artifactLedger.length > 0) {
+        const freedTokens = Math.max(0, result.tokensBefore - result.tokensAfter);
+        const attachments = buildPostCompactAttachments(
+          result.artifactLedger,
+          freedTokens,
+        );
+        const totalPostCompactBudget = Math.min(
+          Math.floor(freedTokens * DEFAULT_POST_COMPACT_CONFIG.budgetRatio),
+          POST_COMPACT_TOKEN_BUDGET,
+        );
+        const fileBudget = Math.max(0, totalPostCompactBudget - attachments.totalTokens);
+        const fileMessages = fileBudget > 0
+          ? await buildFileContentMessages(result.artifactLedger, fileBudget)
+          : [];
+        const fullAttachments = {
+          ...attachments,
+          fileMessages,
+          totalTokens: attachments.totalTokens + estimateTokens(fileMessages as KodaXMessage[]),
+        };
+        if (fullAttachments.totalTokens > 0) {
+          compactedMessages = injectPostCompactAttachments(
+            compactedMessages as KodaXMessage[],
+            fullAttachments,
+          );
+          postCompactAttachments = [
+            ...(fullAttachments.ledgerMessage ? [fullAttachments.ledgerMessage] : []),
+            ...fullAttachments.fileMessages,
+          ];
+        }
+      }
+
+      const compactionUpdate: CompactionUpdate | undefined = result.artifactLedger
+        ? {
+          anchor: result.anchor,
+          artifactLedger: result.artifactLedger,
+          memorySeed: result.memorySeed,
+          postCompactAttachments,
+        }
+        : undefined;
+
       // F2 parity (v0.7.26) — fire `onCompactedMessages` after a
       // successful compaction so the REPL can refresh its local
       // transcript mirror (otherwise its cached `messages[]` still
       // points at the pre-compact array). Mirrors legacy
-      // `agent.ts:1861`. Safe to call even when no `CompactionUpdate`
-      // attachments ledger is available — the REPL only needs the new
-      // `messages` array to re-render.
-      events?.onCompactedMessages?.(result.messages as KodaXMessage[], undefined);
+      // `agent.ts:1861`.
+      events?.onCompactedMessages?.(compactedMessages as KodaXMessage[], compactionUpdate);
 
       // Reset the counter only when compaction produced a transcript
       // actually below the trigger. "Partial success" (same pruning
@@ -132,7 +186,7 @@ export async function buildManagedTaskCompactionHook(
         consecutiveFailures += 1;
       }
 
-      return result.messages as readonly AgentMessage[];
+      return compactedMessages as readonly AgentMessage[];
     } catch {
       consecutiveFailures += 1;
       return undefined;

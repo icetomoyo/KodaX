@@ -2749,14 +2749,16 @@ function buildSkillMapRuntime(
  * `validated.managedTask.runtime.scoutDecision` etc. and skip past
  * completed roles. See legacy `resumeManagedTask` for the state shape.
  */
-async function handlePreRunCheckpoint(options: KodaXOptions): Promise<void> {
+async function handlePreRunCheckpoint(
+  options: KodaXOptions,
+): Promise<{ resumeFrom: ValidatedCheckpoint } | undefined> {
   let validated: ValidatedCheckpoint | undefined;
   try {
     validated = await findValidCheckpoint(options);
   } catch {
-    return;
+    return undefined;
   }
-  if (!validated) return;
+  if (!validated) return undefined;
 
   const deleteSafely = async (): Promise<void> => {
     try {
@@ -2769,15 +2771,25 @@ async function handlePreRunCheckpoint(options: KodaXOptions): Promise<void> {
 
   if (!options.events?.askUser) {
     await deleteSafely();
-    return;
+    return undefined;
   }
 
   const useChinese = /[\u4e00-\u9fff]/.test(validated.managedTask.contract.objective ?? '');
   const answer = await options.events.askUser({
-    question: useChinese
-      ? '发现未完成的任务（Runner 路径暂不支持断点续传）'
-      : 'Found incomplete task (Runner path does not yet support resume)',
+    question: useChinese ? '发现未完成的任务' : 'Found incomplete task',
     options: [
+      {
+        // H1 parity (v0.7.26) — text-level resume. The next run's prompt
+        // receives a reconstructed preamble (Scout findings, contract,
+        // last verdict) so the LLM can pick up where it left off
+        // without re-investigating. Full structural replay of the
+        // recorder state is deliberately out of scope for this MVP.
+        label: useChinese ? '继续未完成的工作' : 'Resume',
+        value: 'resume',
+        description: useChinese
+          ? '在先前 Scout/执行结果的基础上继续（上下文保留）'
+          : 'Continue with preserved prior Scout / execution context',
+      },
       {
         label: useChinese ? '重新开始' : 'Restart',
         value: 'restart',
@@ -2789,12 +2801,77 @@ async function handlePreRunCheckpoint(options: KodaXOptions): Promise<void> {
         description: useChinese ? '中止当前请求' : 'Abort the current request',
       },
     ],
-    default: 'restart',
+    default: 'resume',
   });
-  await deleteSafely();
   if (answer === 'cancel') {
+    await deleteSafely();
     throw new Error('Runner-driven path: user cancelled due to pre-existing checkpoint');
   }
+  if (answer === 'resume') {
+    // Keep the checkpoint in place — it gets rewritten fresh on the
+    // next role emit. The caller builds a preamble from the validated
+    // state and feeds it into the prompt.
+    return { resumeFrom: validated };
+  }
+  await deleteSafely();
+  return undefined;
+}
+
+/**
+ * H1 parity (v0.7.26) — reconstruct a human-readable preamble from the
+ * checkpoint's managedTask state. The next run pre-pends this onto the
+ * user prompt so Scout / Generator / Evaluator see the prior
+ * investigation + findings and can pick up the work instead of
+ * rediscovering it. Text-level resume — not a full structural replay
+ * of the recorder — but a meaningful quality-of-life improvement over
+ * the prior "restart from scratch" behaviour.
+ */
+function buildResumePreamble(checkpoint: ValidatedCheckpoint): string {
+  const task = checkpoint.managedTask;
+  const lines: string[] = [
+    '=== RESUMING INCOMPLETE TASK ===',
+    `Checkpoint from: ${checkpoint.checkpoint.createdAt}`,
+    `Original objective: ${task.contract.objective}`,
+    `Harness: ${task.contract.harnessProfile}`,
+    `Roles already executed: ${checkpoint.checkpoint.completedWorkerIds.join(', ') || 'none'}`,
+  ];
+  const scout = task.runtime?.scoutDecision;
+  if (scout) {
+    lines.push('', '--- Scout findings (already complete) ---');
+    if (scout.summary) lines.push(`Summary: ${scout.summary}`);
+    if (scout.harnessRationale) lines.push(`Harness rationale: ${scout.harnessRationale}`);
+    if (scout.scope && scout.scope.length > 0) {
+      lines.push(`Scope: ${scout.scope.join(', ')}`);
+    }
+    if (scout.reviewFilesOrAreas && scout.reviewFilesOrAreas.length > 0) {
+      lines.push(`Review files/areas: ${scout.reviewFilesOrAreas.join(', ')}`);
+    }
+    if (scout.executionObligations && scout.executionObligations.length > 0) {
+      lines.push('Execution obligations:');
+      for (const ob of scout.executionObligations) lines.push(`  - ${ob}`);
+    }
+  }
+  const contract = task.contract.contractSummary;
+  if (contract) {
+    lines.push('', '--- Contract (already produced) ---');
+    lines.push(contract);
+    if (task.contract.successCriteria.length > 0) {
+      lines.push('Success criteria:');
+      for (const c of task.contract.successCriteria) lines.push(`  - ${c}`);
+    }
+  }
+  if (task.verdict?.summary) {
+    lines.push('', '--- Last verdict ---');
+    lines.push(`Status: ${task.verdict.status}`);
+    lines.push(`Summary: ${task.verdict.summary}`);
+  }
+  lines.push(
+    '',
+    'Use this preserved context to avoid redundant investigation. Continue the work from where it was interrupted.',
+    '=== END RESUME CONTEXT ===',
+    '',
+  );
+  return lines.join('\n');
 }
 
 /**
@@ -2927,8 +3004,18 @@ async function runManagedTaskViaRunnerInner(
   // Shard 6c: honour any pre-existing checkpoint before starting. Gated on
   // `askUser` presence — non-interactive contexts (unit tests, SDK
   // consumers without a prompt surface) skip the directory scan entirely.
+  //
+  // H1 parity (v0.7.26) — when the user picks "Resume", prepend a
+  // reconstructed preamble onto the prompt so downstream Scout /
+  // Generator / Evaluator see the prior findings and can pick up the
+  // work. The preamble is injected BEFORE the promptOverlay + prompt so
+  // the LLM reads it as the first context after the system prompt.
   if (options.events?.askUser) {
-    await handlePreRunCheckpoint(options);
+    const checkpoint = await handlePreRunCheckpoint(options);
+    if (checkpoint) {
+      const preamble = buildResumePreamble(checkpoint.resumeFrom);
+      prompt = `${preamble}\n${prompt}`;
+    }
   }
 
   // v0.7.26 C4 parity — resolve the stable taskId + workspaceDir once and
