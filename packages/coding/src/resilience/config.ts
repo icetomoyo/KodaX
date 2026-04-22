@@ -28,7 +28,9 @@ export const DEFAULT_RESILIENCE_CONFIG: Required<ProviderResilienceConfig> = {
   // in ~/.kodax/config.json (value in milliseconds, e.g. 90000 for 90s).
   streamIdleTimeoutMs: Number(process.env.KODAX_STREAM_IDLE_TIMEOUT_MS) || 0,
   chunkTimeoutMs: 30_000,          // 30 seconds per-chunk timeout
-  maxRetries: 3,                   // Up to 3 automatic retries
+  maxRetries: 4,                   // Up to 4 automatic retries (attempt 2 reserved for
+                                   // non-streaming fallback; keeps one more tier for
+                                   // stable_boundary_retry after fallback also fails)
   maxRetryDelayMs: 60_000,         // Cap retry delay at 60s
   enableNonStreamingFallback: true, // Allow non-streaming fallback by default
 };

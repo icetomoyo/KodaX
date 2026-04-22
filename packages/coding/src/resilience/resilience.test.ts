@@ -21,7 +21,7 @@ describe('resolveResilienceConfig', () => {
     const config = resolveResilienceConfig('anthropic');
     expect(config.requestTimeoutMs).toBe(600_000);
     expect(config.streamIdleTimeoutMs).toBe(0);
-    expect(config.maxRetries).toBe(3);
+    expect(config.maxRetries).toBe(4);
     expect(config.maxRetryDelayMs).toBe(60_000);
     expect(config.enableNonStreamingFallback).toBe(true);
   });
@@ -45,7 +45,7 @@ describe('resolveResilienceConfig', () => {
     const config = resolveResilienceConfig('openai', undefined, [
       { provider: 'anthropic', maxRetries: 5 },
     ]);
-    expect(config.maxRetries).toBe(3);
+    expect(config.maxRetries).toBe(4);
   });
 });
 
@@ -391,6 +391,55 @@ describe('ProviderRecoveryCoordinator', () => {
     });
     expect(result.messages.length).toBe(1);
     expect(result.fallbackUsed).toBe(false);
+  });
+
+  // Layer A: terminated / connection_failure must qualify for non_streaming_fallback
+  // on attempt >= 2. Before this fix, terminated was locked into stable_boundary_retry
+  // forever — every retry replayed the same request against the same streaming endpoint
+  // and was killed the same way (observed repeatedly against zhipu-coding mid-stream).
+  it('connection_failure on attempt >= 2 triggers non_streaming_fallback', () => {
+    const tracker = new StableBoundaryTracker();
+    const coordinator = new ProviderRecoveryCoordinator(tracker, {});
+    const error = new Error('zhipu-coding API error: terminated');
+    const classified = classifyResilienceError(error, 'mid_stream_text');
+    expect(classified.errorClass).toBe('connection_failure');
+    const decision = coordinator.decideRecoveryAction(error, classified, 2);
+    expect(decision.action).toBe('non_streaming_fallback');
+    expect(decision.ladderStep).toBe(3);
+    expect(decision.shouldUseNonStreaming).toBe(true);
+  });
+
+  it('connection_failure on attempt 1 still uses stable_boundary_retry (fallback reserved for attempt >= 2)', () => {
+    const tracker = new StableBoundaryTracker();
+    const coordinator = new ProviderRecoveryCoordinator(tracker, {});
+    const error = new Error('zhipu-coding API error: terminated');
+    const classified = classifyResilienceError(error, 'mid_stream_text');
+    const decision = coordinator.decideRecoveryAction(error, classified, 1);
+    expect(decision.action).toBe('stable_boundary_retry');
+    expect(decision.shouldUseNonStreaming).toBe(false);
+  });
+
+  it('non_streaming_fallback fires at most once per coordinator instance', () => {
+    const tracker = new StableBoundaryTracker();
+    const coordinator = new ProviderRecoveryCoordinator(tracker, {});
+    const error = new Error('zhipu-coding API error: terminated');
+    const classified = classifyResilienceError(error, 'mid_stream_text');
+    // First attempt 2 claim: fallback granted.
+    const first = coordinator.decideRecoveryAction(error, classified, 2);
+    expect(first.action).toBe('non_streaming_fallback');
+    // Second attempt 2 (or 3, etc) after fallback used: falls back to stable_boundary_retry.
+    const second = coordinator.decideRecoveryAction(error, classified, 3);
+    expect(second.action).toBe('stable_boundary_retry');
+    expect(second.shouldUseNonStreaming).toBe(false);
+  });
+
+  it('raising maxRetries default to 4 lets connection_failure reach manual_continue only at attempt 4', () => {
+    const tracker = new StableBoundaryTracker();
+    const coordinator = new ProviderRecoveryCoordinator(tracker, {});
+    const error = new Error('zhipu-coding API error: terminated');
+    const classified = classifyResilienceError(error, 'mid_stream_text');
+    expect(coordinator.decideRecoveryAction(error, classified, 3).action).not.toBe('manual_continue');
+    expect(coordinator.decideRecoveryAction(error, classified, 4).action).toBe('manual_continue');
   });
 });
 

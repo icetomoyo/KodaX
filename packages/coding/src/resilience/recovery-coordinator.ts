@@ -29,11 +29,21 @@ const PRE_DELTA_STAGES: FailureStage[] = [
   'before_first_delta',
 ];
 
-/** Error classes that can benefit from non-streaming fallback. */
+/** Error classes that can benefit from non-streaming fallback.
+ *
+ * `connection_failure` (undici `TypeError: terminated`) is included because
+ * mid-stream RST from weak providers (notably zhipu-coding) reproducibly
+ * happens at the text → tool_use transition: the server buffers a large
+ * tool_use input before streaming it, and some link in the chain kills the
+ * idle TCP connection during that buffering window. The non-streaming
+ * `/v1/messages` path has no such intermediate window — the server computes
+ * the full response internally and returns it as a single HTTP body, so
+ * switching to it on repeated terminations frequently salvages the turn. */
 const STREAMING_ERROR_CLASSES: ResilienceClassification['errorClass'][] = [
   'stream_idle_timeout',
   'chunk_timeout',
   'incomplete_stream',
+  'connection_failure',
 ];
 
 // ============== Coordinator ==============
@@ -51,7 +61,7 @@ export class ProviderRecoveryCoordinator {
       requestTimeoutMs: config.requestTimeoutMs ?? 600_000,
       streamIdleTimeoutMs: config.streamIdleTimeoutMs ?? 60_000,
       chunkTimeoutMs: config.chunkTimeoutMs ?? 30_000,
-      maxRetries: config.maxRetries ?? 3,
+      maxRetries: config.maxRetries ?? 4,
       maxRetryDelayMs: config.maxRetryDelayMs ?? 60_000,
       enableNonStreamingFallback: config.enableNonStreamingFallback ?? true,
     };

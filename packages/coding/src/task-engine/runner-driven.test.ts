@@ -353,6 +353,160 @@ describe('buildRunnerLlmAdapter — max_tokens escalation (FEATURE_085 Scout par
     expect(observedBudgets.every((b) => b !== KODAX_ESCALATED)).toBe(true);
     expect(result.text).toContain('stuck at user budget');
   }, 15_000);
+
+  // L5 continuation meta message must match the Claude Code wording used by
+  // agent.ts (cd213e4). Legacy "Continue from where you left off." was weaker;
+  // the richer phrasing nudges the model to break remaining work into smaller
+  // pieces so the continuation doesn't hit the same wall as the cut-off turn.
+  it('L5 continuation injects the Claude Code style meta message', async () => {
+    const observedBudgets: number[] = [];
+    const capturedMessagesPerCall: Array<readonly import('@kodax/ai').KodaXMessage[]> = [];
+    const responses: Array<{ textBlocks: { type: 'text'; text: string }[]; stopReason?: string }> = [
+      { textBlocks: [{ type: 'text', text: 'partial' }], stopReason: 'max_tokens' },
+      { textBlocks: [{ type: 'text', text: 'half' }], stopReason: 'max_tokens' },
+      { textBlocks: [{ type: 'text', text: ' done' }], stopReason: 'end_turn' },
+    ];
+    let callIdx = 0;
+    class Scripted extends KodaXBaseProviderRef {
+      readonly name = ESCALATION_PROVIDER_NAME;
+      readonly supportsThinking = false;
+      protected readonly config = {
+        apiKeyEnv: ESCALATION_PROVIDER_API_KEY_ENV,
+        model: 'scripted',
+        supportsThinking: false,
+        reasoningCapability: 'prompt-only' as const,
+        maxOutputTokens: KODAX_CAPPED,
+        capabilityProfile: {
+          transport: 'native-api' as const,
+          conversationSemantics: 'full-history' as const,
+          mcpSupport: 'none' as const,
+          contextFidelity: 'full' as const,
+          toolCallingFidelity: 'full' as const,
+          sessionSupport: 'stateless' as const,
+          longRunningSupport: 'limited' as const,
+          multimodalSupport: 'none' as const,
+          evidenceSupport: 'limited' as const,
+        },
+      };
+      async stream(messages: import('@kodax/ai').KodaXMessage[]): Promise<any> {
+        observedBudgets.push(this.getEffectiveMaxOutputTokens());
+        capturedMessagesPerCall.push([...messages]);
+        const resp = responses[callIdx++];
+        if (!resp) throw new Error(`No scripted response for stream call #${callIdx}`);
+        this.setMaxOutputTokensOverride(undefined);
+        return {
+          textBlocks: resp.textBlocks,
+          toolBlocks: [],
+          thinkingBlocks: [],
+          stopReason: resp.stopReason,
+        };
+      }
+    }
+    process.env[ESCALATION_PROVIDER_API_KEY_ENV] = 'test-key';
+    registerModelProviderFn(ESCALATION_PROVIDER_NAME, () => new Scripted());
+
+    const adapter = buildRunnerLlmAdapter(makeAdapterOptions());
+    await adapter(
+      [{ role: 'system', content: 'sys' }, { role: 'user', content: 'Big task.' }],
+      { name: 'scout', instructions: '' },
+    );
+
+    const allInjectedTexts = capturedMessagesPerCall
+      .slice(1)
+      .flatMap((msgs) => msgs)
+      .filter((m) => m.role === 'user')
+      .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
+      .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
+      .map((b) => b.text);
+    const hasClaudeCodeWording = allInjectedTexts.some((t) =>
+      t.includes('Resume directly')
+      && t.includes('no apology, no recap')
+      && t.includes('Break remaining work into smaller pieces'),
+    );
+    expect(hasClaudeCodeWording).toBe(true);
+    // Legacy phrasing must NOT appear — guards against silent regression.
+    expect(allInjectedTexts.some((t) => t === 'Continue from where you left off.')).toBe(false);
+  }, 15_000);
+
+  // Regression: escalation is a same-turn re-issue, not an error recovery.
+  // Before the `attempt -= 1` fix, the L1 escalation silently consumed one
+  // slot of `resilienceCfg.maxRetries`, so a subsequent real error passed
+  // the wrong attempt number into the coordinator (leaking 1 retry worth
+  // of budget). A retryable error immediately after escalation should be
+  // seen by `onProviderRecovery` with `attempt === 1`, because the
+  // escalation did not consume any retry slot.
+  it('L1 escalation does not consume recovery retry budget (onProviderRecovery sees attempt=1 after escalate+throw)', async () => {
+    const observedBudgets: number[] = [];
+    const recoveryAttempts: number[] = [];
+    let callIdx = 0;
+    class Scripted extends KodaXBaseProviderRef {
+      readonly name = ESCALATION_PROVIDER_NAME;
+      readonly supportsThinking = false;
+      protected readonly config = {
+        apiKeyEnv: ESCALATION_PROVIDER_API_KEY_ENV,
+        model: 'scripted',
+        supportsThinking: false,
+        reasoningCapability: 'prompt-only' as const,
+        maxOutputTokens: KODAX_CAPPED,
+        capabilityProfile: {
+          transport: 'native-api' as const,
+          conversationSemantics: 'full-history' as const,
+          mcpSupport: 'none' as const,
+          contextFidelity: 'full' as const,
+          toolCallingFidelity: 'full' as const,
+          sessionSupport: 'stateless' as const,
+          longRunningSupport: 'limited' as const,
+          multimodalSupport: 'none' as const,
+          evidenceSupport: 'limited' as const,
+        },
+      };
+      async stream(): Promise<any> {
+        observedBudgets.push(this.getEffectiveMaxOutputTokens());
+        callIdx += 1;
+        this.setMaxOutputTokensOverride(undefined);
+        if (callIdx === 1) {
+          return {
+            textBlocks: [],
+            toolBlocks: [],
+            thinkingBlocks: [],
+            stopReason: 'max_tokens',
+          };
+        }
+        if (callIdx === 2) {
+          throw new Error('zhipu-coding API error: terminated');
+        }
+        return {
+          textBlocks: [{ type: 'text', text: 'recovered ok' }],
+          toolBlocks: [],
+          thinkingBlocks: [],
+          stopReason: 'end_turn',
+        };
+      }
+    }
+    process.env[ESCALATION_PROVIDER_API_KEY_ENV] = 'test-key';
+    registerModelProviderFn(ESCALATION_PROVIDER_NAME, () => new Scripted());
+
+    const adapter = buildRunnerLlmAdapter({
+      ...makeAdapterOptions(),
+      events: {
+        onProviderRecovery: (evt) => {
+          recoveryAttempts.push(evt.attempt);
+        },
+      },
+    });
+    const result = await adapter(
+      [{ role: 'system', content: 'sys' }, { role: 'user', content: 'work' }],
+      { name: 'scout', instructions: '' },
+    );
+
+    expect(observedBudgets[0]).toBe(KODAX_CAPPED);
+    expect(observedBudgets[1]).toBe(KODAX_ESCALATED);
+    // The coordinator recovery event must have seen attempt=1 — proving
+    // that the escalation did NOT consume a retry slot. Without the fix
+    // this would be 2.
+    expect(recoveryAttempts).toEqual([1]);
+    expect(result.text).toContain('recovered ok');
+  }, 15_000);
 });
 
 describe('runManagedTaskViaRunner — Scout H0_DIRECT end-to-end', () => {

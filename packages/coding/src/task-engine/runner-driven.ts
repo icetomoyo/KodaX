@@ -2000,6 +2000,12 @@ export function buildRunnerLlmAdapter(
             if (idleTimer) clearTimeout(idleTimer);
             hardTimer = undefined;
             idleTimer = undefined;
+            // Escalation is a same-turn re-issue (change max_tokens, replay same messages),
+            // not an error recovery. Reverse the `attempt += 1` at the top of the loop so
+            // this iteration does not consume a slot from `resilienceCfg.maxRetries`. The
+            // next iteration's attempt will be the same as this one, and subsequent real
+            // errors still get the full retry budget.
+            attempt -= 1;
             continue;
           }
           break;
@@ -2154,7 +2160,13 @@ export function buildRunnerLlmAdapter(
           { role: 'assistant', content: assistantContent } as KodaXMessage,
           {
             role: 'user',
-            content: [{ type: 'text', text: 'Continue from where you left off.' }],
+            content: [{
+              type: 'text',
+              text:
+                'Output token limit hit. Resume directly — no apology, no recap of what you were doing. '
+                + 'Pick up mid-thought if that is where the cut happened. '
+                + 'Break remaining work into smaller pieces.',
+            }],
           } as KodaXMessage,
         ];
         options.events?.onRetry?.(
