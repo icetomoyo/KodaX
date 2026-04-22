@@ -42,6 +42,7 @@ import {
   recordUsage as recordCostUsage,
   type CostTracker,
 } from '@kodax/ai';
+import { KODAX_MAX_MAXTOKENS_RETRIES } from '../constants.js';
 import type {
   Agent,
   Handoff,
@@ -102,6 +103,7 @@ import type {
   KodaXManagedTaskPhase,
   KodaXOptions,
   KodaXResult,
+  KodaXRoleRoundSummary,
   KodaXTaskContract,
   KodaXTaskEvidenceArtifact,
   KodaXTaskEvidenceEntry,
@@ -163,6 +165,7 @@ import {
   createVerificationScorecard,
   type ScorecardVerdictDirective,
 } from './_internal/managed-task/scorecard.js';
+import { applyCurrentDiffReviewRoutingFloor } from './_internal/managed-task/review-routing.js';
 import {
   SUSPICIOUS_LAST_TEXT_PREVIEW_LIMIT,
   detectScoutSuspiciousSignals,
@@ -1816,6 +1819,22 @@ export function buildRunnerLlmAdapter(
     iteration += 1;
     options.events?.onIterationStart?.(iteration, MAX_ITER_HINT);
 
+    // F1 parity (v0.7.26) — yield to queued user input at iteration
+    // boundary. Mirrors legacy `agent.ts:2305` `hasQueuedFollowUp(events)`
+    // check. Without this, the user hits Enter mid-run but their new
+    // prompt sits in the queue until the current Scout/Generator/
+    // Evaluator chain fully completes. Returning an empty reply with no
+    // tool calls makes Runner exit the loop naturally — the Runner sees
+    // "no more work" rather than an error, and the outer REPL can pick
+    // up the queued prompt immediately.
+    if (options.events?.hasPendingInputs?.() === true) {
+      return {
+        text: '',
+        toolCalls: [],
+        thinkingBlocks: undefined,
+      };
+    }
+
     let streamResult: {
       textBlocks?: readonly { text: string }[];
       toolBlocks?: readonly KodaXToolUseBlock[];
@@ -2101,10 +2120,93 @@ export function buildRunnerLlmAdapter(
           if (idleTimer) clearTimeout(idleTimer);
         }
       }
+
+      // M6 parity (v0.7.26) — L5 continuation ladder. When L1 escalation
+      // is exhausted and the model still hit max_tokens mid-text (no
+      // tool blocks, has text), inject a synthetic user "Continue from
+      // where you left off" message and re-stream up to
+      // KODAX_MAX_MAXTOKENS_RETRIES times, accumulating text +
+      // thinkingBlocks across turns. Mirrors legacy agent.ts:2316-2334.
+      // Without this, long Generator replies that blow through the
+      // escalated 64K cap get truncated silently — the assistant stops
+      // mid-sentence and the Runner exits with a partial answer.
+      let l5Retries = 0;
+      let accumulatedText = (raw.textBlocks ?? []).map((b) => b.text).join('');
+      const accumulatedThinking: typeof raw.thinkingBlocks = raw.thinkingBlocks
+        ? [...raw.thinkingBlocks]
+        : undefined;
+      while (
+        raw.stopReason === 'max_tokens'
+        && (raw.toolBlocks?.length ?? 0) === 0
+        && accumulatedText.trim().length > 0
+        && l5Retries < KODAX_MAX_MAXTOKENS_RETRIES
+      ) {
+        l5Retries += 1;
+        options.events?.onTextDelta?.('\n\n[max_tokens reached, continuing...]\n\n');
+        // Push the partial assistant turn + synthetic user continuation
+        // onto the outgoing transcript. The provider will see the full
+        // mid-thought state and pick up seamlessly.
+        const assistantContent: Array<{ type: 'text'; text: string }> = [
+          { type: 'text', text: accumulatedText },
+        ];
+        providerMessages = [
+          ...providerMessages,
+          { role: 'assistant', content: assistantContent } as KodaXMessage,
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'Continue from where you left off.' }],
+          } as KodaXMessage,
+        ];
+        options.events?.onRetry?.(
+          `max_tokens mid-text, appending continuation ${l5Retries}/${KODAX_MAX_MAXTOKENS_RETRIES}`,
+          l5Retries,
+          KODAX_MAX_MAXTOKENS_RETRIES,
+        );
+        const l5Signal = options.abortSignal ?? undefined;
+        try {
+          raw = await provider.stream(
+            providerMessages,
+            [...wireTools],
+            system,
+            providerReasoning,
+            {
+              onTextDelta: (text: string) => {
+                const hasMarker = text.includes('```')
+                  || MANAGED_CONTROL_PLANE_MARKERS.some((marker) => text.includes(marker));
+                const outText = hasMarker ? sanitizeManagedStreamingText(text) : text;
+                if (outText.length === 0) return;
+                options.events?.onTextDelta?.(outText);
+              },
+              onThinkingDelta: (text: string) => {
+                options.events?.onThinkingDelta?.(text);
+              },
+              onThinkingEnd: (thinking: string) => {
+                options.events?.onThinkingEnd?.(thinking);
+              },
+              onToolInputDelta: options.events?.onToolInputDelta,
+            },
+            l5Signal,
+          );
+        } catch {
+          // L5 retries are best-effort — any failure here falls back to
+          // the partial result we already have.
+          break;
+        }
+        const nextText = (raw.textBlocks ?? []).map((b) => b.text).join('');
+        if (nextText) accumulatedText += nextText;
+        if (raw.thinkingBlocks && accumulatedThinking) {
+          accumulatedThinking.push(...raw.thinkingBlocks);
+        }
+        // Exit early on tool calls or natural stop.
+        if ((raw.toolBlocks?.length ?? 0) > 0 || raw.stopReason !== 'max_tokens') {
+          break;
+        }
+      }
+
       streamResult = {
-        textBlocks: raw.textBlocks,
+        textBlocks: accumulatedText ? [{ text: accumulatedText }] : raw.textBlocks,
         toolBlocks: raw.toolBlocks,
-        thinkingBlocks: raw.thinkingBlocks,
+        thinkingBlocks: accumulatedThinking ?? raw.thinkingBlocks,
         usage: raw.usage,
       };
     }
@@ -2296,6 +2398,25 @@ function buildManagedTaskPayload(args: {
    * merged into `evidence.artifacts` alongside the built-in snapshot set.
    */
   readonly extraArtifacts?: readonly KodaXTaskEvidenceArtifact[];
+  /**
+   * F4 parity (v0.7.26) — pre-floor routing decision (before
+   * `applyCurrentDiffReviewRoutingFloor` runs). Populates
+   * `runtime.rawRoutingDecision`.
+   */
+  readonly rawRoutingDecision?: KodaXTaskRoutingDecision;
+  /**
+   * F4 parity — human-readable explanation when the routing floor or
+   * Scout overrides the initial decision. Populates
+   * `runtime.routingOverrideReason`.
+   */
+  readonly routingOverrideReason?: string;
+  /**
+   * F4 parity — tool-output truncation ledger captured from the
+   * tool-result-truncation guardrail's `afterTool` hook. Populates
+   * `runtime.toolOutputTruncated` + `runtime.toolOutputTruncationNotes`.
+   */
+  readonly toolOutputTruncated?: boolean;
+  readonly toolOutputTruncationNotes?: readonly string[];
 }): KodaXManagedTask {
   const {
     prompt,
@@ -2313,6 +2434,10 @@ function buildManagedTaskPayload(args: {
     childWriteWorktreePaths,
     taskId: providedTaskId,
     extraArtifacts,
+    rawRoutingDecision,
+    routingOverrideReason,
+    toolOutputTruncated,
+    toolOutputTruncationNotes,
   } = args;
 
   // Shard 6d-L: Scout's emitted harness still wins over the plan's
@@ -2498,6 +2623,21 @@ function buildManagedTaskPayload(args: {
       childWriteWorktreePaths:
         childWriteWorktreePaths && childWriteWorktreePaths.size > 0
           ? childWriteWorktreePaths
+          : undefined,
+      // F4 parity (v0.7.26) — surface routing provenance + tool
+      // truncation state. `rawRoutingDecision` is the pre-floor snapshot
+      // (before `applyCurrentDiffReviewRoutingFloor`); `finalRoutingDecision`
+      // mirrors the active plan.decision; `routingOverrideReason` carries
+      // any human-readable override explanation. Truncation tracking
+      // lets downstream review UIs highlight when tool output was
+      // clipped.
+      rawRoutingDecision,
+      finalRoutingDecision: plan?.decision,
+      routingOverrideReason,
+      toolOutputTruncated: toolOutputTruncated || undefined,
+      toolOutputTruncationNotes:
+        toolOutputTruncationNotes && toolOutputTruncationNotes.length > 0
+          ? [...toolOutputTruncationNotes]
           : undefined,
     },
   };
@@ -2752,6 +2892,38 @@ async function runManagedTaskViaRunnerInner(
   adapterOverride: Parameters<typeof buildRunnerLlmAdapter>[1] | undefined,
   plan: ReasoningPlan | undefined,
 ): Promise<KodaXResult> {
+  // F3 parity (v0.7.26) — apply the diff-driven review routing floor so
+  // `decision.reviewTarget` / `reviewScale` / diff-driven `primaryTask`
+  // reflect the prompt's review surface. Runs before the Agent chain is
+  // built so per-role tool policy + prompt overlay + routing-note strip
+  // all see the floored decision. This is informational ONLY — never
+  // forces a heavier harness (Scout remains the harness authority).
+  // Mirrors legacy `task-engine.ts:6536` position.
+  //
+  // F4 parity — also snapshot the pre-floor decision so
+  // `runtime.rawRoutingDecision` / `finalRoutingDecision` /
+  // `routingOverrideReason` can be populated on the managed task shape.
+  let rawRoutingDecision: KodaXTaskRoutingDecision | undefined;
+  let routingOverrideReason: string | undefined;
+  // F4 parity — track tool-output truncation so the managed task can
+  // surface `runtime.toolOutputTruncated` + `toolOutputTruncationNotes`.
+  // The guardrail's `afterTool.rewrite` sets `result.metadata.truncated`
+  // which the `toolObserver.onToolResult` hook below harvests.
+  const toolTruncationRef: { truncated: boolean; notes: string[] } = {
+    truncated: false,
+    notes: [],
+  };
+  if (plan) {
+    const floored = applyCurrentDiffReviewRoutingFloor(
+      plan,
+      prompt,
+      options.context?.repoRoutingSignals,
+    );
+    rawRoutingDecision = floored.rawDecision;
+    routingOverrideReason = floored.routingOverrideReason;
+    plan = floored.plan;
+  }
+
   // Shard 6c: honour any pre-existing checkpoint before starting. Gated on
   // `askUser` presence — non-interactive contexts (unit tests, SDK
   // consumers without a prompt surface) skip the directory scan entirely.
@@ -2922,6 +3094,10 @@ async function runManagedTaskViaRunnerInner(
       childWriteWorktreePaths: childWriteWorktreePathsRef.current,
       taskId,
       extraArtifacts: skillArtifactsRef.current,
+      rawRoutingDecision,
+      routingOverrideReason,
+      toolOutputTruncated: toolTruncationRef.truncated,
+      toolOutputTruncationNotes: toolTruncationRef.notes,
     });
     // Snapshot write — best-effort, must not throw out of the observer
     // callback or we'd abort the Runner mid-emit.
@@ -3045,6 +3221,63 @@ async function runManagedTaskViaRunnerInner(
       const reviewFilesOrAreas = scoutPayload?.reviewFilesOrAreas ?? [];
       if (scope.length > 0 || reviewFilesOrAreas.length > 0) {
         ctx.scoutScope = { scope: [...scope], reviewFilesOrAreas: [...reviewFilesOrAreas] };
+      }
+    }
+    // M1 parity (v0.7.26) — populate `previousRoleSummaries` from the
+    // recorder so each downstream role sees a distilled summary of what
+    // the prior roles produced. Legacy carried this via
+    // `ManagedWorkerSessionStorage`, where per-worker state accumulated
+    // across rounds. Runner-driven doesn't have that storage; as a
+    // minimum faithful port, synthesise each `KodaXRoleRoundSummary`
+    // directly from the recorder's captured emit payloads so
+    // role-prompt's `previousRoleSummarySection` stops being empty.
+    if (role !== 'scout') {
+      const summaries: Partial<Record<KodaXTaskRole, KodaXRoleRoundSummary>> = {};
+      const nowIso = new Date().toISOString();
+      if (currentRecorder.scout?.payload.scout) {
+        const s = currentRecorder.scout.payload.scout;
+        summaries.scout = {
+          role: 'scout',
+          round: 1,
+          objective: 'Investigate task scope and confirm harness tier',
+          confirmedConclusions: [
+            s.summary ? `Summary: ${s.summary}` : undefined,
+            s.confirmedHarness ? `Confirmed harness: ${s.confirmedHarness}` : undefined,
+          ].filter((v): v is string => Boolean(v)),
+          unresolvedQuestions: [],
+          nextFocus: Array.isArray(s.scope) ? [...s.scope] : [],
+          summary: s.summary ?? '',
+          updatedAt: nowIso,
+        };
+      }
+      if (currentRecorder.contract?.payload.contract && role !== 'planner') {
+        const c = currentRecorder.contract.payload.contract;
+        summaries.planner = {
+          role: 'planner',
+          round: 1,
+          objective: 'Produce the H2 execution contract',
+          confirmedConclusions: c.summary ? [c.summary] : [],
+          unresolvedQuestions: [],
+          nextFocus: Array.isArray(c.successCriteria) ? [...c.successCriteria] : [],
+          summary: c.summary ?? '',
+          updatedAt: nowIso,
+        };
+      }
+      if (currentRecorder.handoff?.payload.handoff && role === 'evaluator') {
+        const h = currentRecorder.handoff.payload.handoff;
+        summaries.generator = {
+          role: 'generator',
+          round: 1,
+          objective: 'Execute the task per the handoff',
+          confirmedConclusions: h.summary ? [h.summary] : [],
+          unresolvedQuestions: Array.isArray(h.followup) ? [...h.followup] : [],
+          nextFocus: [],
+          summary: h.summary ?? '',
+          updatedAt: nowIso,
+        };
+      }
+      if (Object.keys(summaries).length > 0) {
+        ctx.previousRoleSummaries = summaries;
       }
     }
     return ctx;
@@ -3194,6 +3427,17 @@ async function runManagedTaskViaRunnerInner(
         });
       },
       onToolResult: (call, result) => {
+        // F4 parity — track whether any tool result was truncated by the
+        // tool-result-truncation guardrail. `result.metadata.truncated`
+        // is set by the guardrail's rewrite step. Observed values feed
+        // into `runtime.toolOutputTruncated` / `toolOutputTruncationNotes`.
+        const meta = result.metadata as { truncated?: boolean; policy?: unknown } | undefined;
+        if (meta?.truncated) {
+          toolTruncationRef.truncated = true;
+          toolTruncationRef.notes.push(
+            `${call.name}: result was truncated to guardrail policy`,
+          );
+        }
         options.events?.onToolResult?.({
           id: call.id,
           name: call.name,
@@ -3253,6 +3497,10 @@ async function runManagedTaskViaRunnerInner(
     childWriteWorktreePaths: childWriteWorktreePathsRef.current,
     taskId,
     extraArtifacts: skillArtifactsRef.current,
+    rawRoutingDecision,
+    routingOverrideReason,
+    toolOutputTruncated: toolTruncationRef.truncated,
+    toolOutputTruncationNotes: toolTruncationRef.notes,
   });
 
   observer.completed(signal, reason ?? userAnswer);

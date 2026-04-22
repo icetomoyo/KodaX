@@ -112,6 +112,15 @@ export async function buildManagedTaskCompactionHook(
       });
       events?.onCompact?.(result.tokensBefore);
 
+      // F2 parity (v0.7.26) — fire `onCompactedMessages` after a
+      // successful compaction so the REPL can refresh its local
+      // transcript mirror (otherwise its cached `messages[]` still
+      // points at the pre-compact array). Mirrors legacy
+      // `agent.ts:1861`. Safe to call even when no `CompactionUpdate`
+      // attachments ledger is available — the REPL only needs the new
+      // `messages` array to re-render.
+      events?.onCompactedMessages?.(result.messages as KodaXMessage[], undefined);
+
       // Reset the counter only when compaction produced a transcript
       // actually below the trigger. "Partial success" (same pruning
       // that left context above threshold) would otherwise never

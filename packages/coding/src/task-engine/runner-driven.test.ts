@@ -297,12 +297,18 @@ describe('buildRunnerLlmAdapter — max_tokens escalation (FEATURE_085 Scout par
 
   it('does not escalate a second time within the same adapter call', async () => {
     const observedBudgets: number[] = [];
+    // v0.7.26 M6 parity — after L1 escalation, if stopReason remains
+    // max_tokens with text, the L5 continuation ladder re-streams up to
+    // KODAX_MAX_MAXTOKENS_RETRIES times with a synthetic "Continue" user
+    // message appended. Script enough responses to satisfy the whole
+    // ladder so the adapter settles naturally.
     registerScriptedProvider(
       [
         { textBlocks: [], stopReason: 'max_tokens' },
-        // Escalated turn ALSO returns max_tokens — the adapter must surface
-        // the partial result rather than escalating again.
+        // Escalated turn: max_tokens + has text → triggers L5 continuation.
         { textBlocks: [{ type: 'text', text: 'half' }], stopReason: 'max_tokens' },
+        // L5 retries surface more text and eventually end_turn.
+        { textBlocks: [{ type: 'text', text: ' second' }], stopReason: 'end_turn' },
       ],
       observedBudgets,
     );
@@ -313,20 +319,26 @@ describe('buildRunnerLlmAdapter — max_tokens escalation (FEATURE_085 Scout par
       { name: 'scout', instructions: '' },
     );
 
-    // Exactly one escalation — second stream call sees escalated budget,
-    // then the adapter breaks out even though stopReason is still max_tokens.
-    expect(observedBudgets).toEqual([KODAX_CAPPED, KODAX_ESCALATED]);
-    expect(result.text).toBe('half');
+    // Budgets: L1 capped → L1 escalated → L5 continuation (cleared override).
+    // L1 escalation is idempotent (the 64K escalation fires exactly once in
+    // positions [1]); subsequent L5 calls reuse whatever effective budget
+    // is active at invocation time.
+    expect(observedBudgets[0]).toBe(KODAX_CAPPED);
+    expect(observedBudgets[1]).toBe(KODAX_ESCALATED);
+    // L5 continuation accumulates text across retries.
+    expect(result.text).toContain('half');
   }, 15_000);
 
   it('honors KODAX_MAX_OUTPUT_TOKENS env override and skips escalation', async () => {
     process.env.KODAX_MAX_OUTPUT_TOKENS = '32000';
     const observedBudgets: number[] = [];
+    // With the env override pinned, L1 escalation is skipped (explicit
+    // user intent). L5 continuation still fires on max_tokens + text,
+    // so script enough responses for the ladder.
     registerScriptedProvider(
       [
-        // User pinned 32K and model hits it — escalation is skipped because
-        // the env override signals explicit intent.
         { textBlocks: [{ type: 'text', text: 'stuck at user budget' }], stopReason: 'max_tokens' },
+        { textBlocks: [{ type: 'text', text: ' resumed' }], stopReason: 'end_turn' },
       ],
       observedBudgets,
     );
@@ -337,8 +349,9 @@ describe('buildRunnerLlmAdapter — max_tokens escalation (FEATURE_085 Scout par
       { name: 'scout', instructions: '' },
     );
 
-    expect(observedBudgets).toEqual([32000]);
-    expect(result.text).toBe('stuck at user budget');
+    // L1 never fires (KODAX_ESCALATED is absent from observedBudgets).
+    expect(observedBudgets.every((b) => b !== KODAX_ESCALATED)).toBe(true);
+    expect(result.text).toContain('stuck at user budget');
   }, 15_000);
 });
 

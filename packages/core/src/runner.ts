@@ -520,6 +520,23 @@ async function genericRun<TData>(
         handoffSignal.handoff.description,
       );
       currentAgent = handoffSignal.to;
+      // M5 parity (v0.7.26) — apply the handoff's `inputFilter` to the
+      // visible transcript (excluding the leading system message) before
+      // swapping in the target's system prompt. The API contract declares
+      // `inputFilter` on `Handoff`; without this call the filter was
+      // silently ignored. Callers that leave inputFilter undefined get
+      // the prior identity behaviour.
+      const filter = handoffSignal.handoff.inputFilter;
+      if (filter) {
+        const leadingSystem = transcript.length > 0 && transcript[0]!.role === 'system'
+          ? transcript[0]!
+          : undefined;
+        const body = leadingSystem ? transcript.slice(1) : transcript;
+        const filtered = filter(body);
+        transcript = leadingSystem
+          ? [leadingSystem, ...filtered]
+          : [...filtered];
+      }
       transcript = replaceSystemMessage(transcript, currentAgent);
     }
   }
