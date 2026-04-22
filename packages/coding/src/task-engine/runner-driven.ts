@@ -30,6 +30,7 @@ import type {
   KodaXToolDefinition,
   KodaXToolUseBlock,
 } from '@kodax/ai';
+import { KODAX_ESCALATED_MAX_OUTPUT_TOKENS } from '@kodax/ai';
 import type {
   Agent,
   Handoff,
@@ -1447,6 +1448,17 @@ export function buildRunnerLlmAdapter(
       let providerMessages: KodaXMessage[] = [...transcript];
       let attempt = 0;
       let raw!: Awaited<ReturnType<typeof provider.stream>>;
+      // FEATURE_085 parity for the Scout/Runner path: mirror the main
+      // agent loop's max_tokens escalation (cd213e4). When a capped-budget
+      // turn returns stop_reason:max_tokens we retry the SAME stream call
+      // once with KODAX_ESCALATED_MAX_OUTPUT_TOKENS (64K). At most one
+      // escalation per adapter invocation — if 64K still hits the cap,
+      // we surface the partial result so the Runner's outer loop can see
+      // it and decide next steps. Full L5 continuation (meta "break into
+      // smaller pieces") is handled by prompt-level guidance in system.ts
+      // + write/edit tool descriptions rather than framework plumbing
+      // through the Runner turn boundary.
+      let hasEscalatedForCurrentAdapterCall = false;
       while (true) {
         attempt += 1;
         boundaryTracker.beginRequest(
@@ -1524,6 +1536,31 @@ export function buildRunnerLlmAdapter(
             streamOptions,
             retrySignal,
           );
+          // max_tokens escalation: if the capped budget hit the cap and
+          // we haven't yet escalated this adapter call, stage
+          // KODAX_ESCALATED_MAX_OUTPUT_TOKENS for the next iteration and
+          // re-enter the loop. Skipped when the user explicitly set
+          // KODAX_MAX_OUTPUT_TOKENS or the effective budget already meets
+          // the escalated threshold. Mirrors agent.ts:2264-2284.
+          if (
+            raw.stopReason === 'max_tokens'
+            && !hasEscalatedForCurrentAdapterCall
+            && !process.env.KODAX_MAX_OUTPUT_TOKENS
+            && provider.getEffectiveMaxOutputTokens() < KODAX_ESCALATED_MAX_OUTPUT_TOKENS
+          ) {
+            hasEscalatedForCurrentAdapterCall = true;
+            provider.setMaxOutputTokensOverride(KODAX_ESCALATED_MAX_OUTPUT_TOKENS);
+            options.events?.onRetry?.(
+              `Output budget reached, escalating to ${KODAX_ESCALATED_MAX_OUTPUT_TOKENS} tokens and retrying the same turn`,
+              1,
+              1,
+            );
+            if (hardTimer) clearTimeout(hardTimer);
+            if (idleTimer) clearTimeout(idleTimer);
+            hardTimer = undefined;
+            idleTimer = undefined;
+            continue;
+          }
           break;
         } catch (rawError) {
           let error = rawError instanceof Error ? rawError : new Error(String(rawError));

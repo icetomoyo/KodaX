@@ -194,6 +194,148 @@ describe('buildRunnerLlmAdapter (via overrideStream)', () => {
   });
 });
 
+describe('buildRunnerLlmAdapter — max_tokens escalation (FEATURE_085 Scout parity)', () => {
+  const ESCALATION_PROVIDER_NAME = 'runner-driven-max-tokens-test';
+  const ESCALATION_PROVIDER_API_KEY_ENV = 'RUNNER_DRIVEN_MAX_TOKENS_TEST_API_KEY';
+
+  let KodaXBaseProviderRef: typeof import('@kodax/ai').KodaXBaseProvider;
+  let registerModelProviderFn: typeof import('@kodax/ai').registerModelProvider;
+  let clearRuntimeModelProvidersFn: typeof import('@kodax/ai').clearRuntimeModelProviders;
+  let KODAX_CAPPED: number;
+  let KODAX_ESCALATED: number;
+
+  beforeAll(async () => {
+    const aiModule = await import('@kodax/ai');
+    KodaXBaseProviderRef = aiModule.KodaXBaseProvider;
+    registerModelProviderFn = aiModule.registerModelProvider;
+    clearRuntimeModelProvidersFn = aiModule.clearRuntimeModelProviders;
+    KODAX_CAPPED = aiModule.KODAX_CAPPED_MAX_OUTPUT_TOKENS;
+    KODAX_ESCALATED = aiModule.KODAX_ESCALATED_MAX_OUTPUT_TOKENS;
+  });
+
+  afterEach(() => {
+    clearRuntimeModelProvidersFn();
+    delete process.env[ESCALATION_PROVIDER_API_KEY_ENV];
+    delete process.env.KODAX_MAX_OUTPUT_TOKENS;
+  });
+
+  function registerScriptedProvider(
+    responses: Array<{ textBlocks: { type: 'text'; text: string }[]; stopReason?: string }>,
+    observedBudgets: number[],
+  ): void {
+    let callIdx = 0;
+    class Scripted extends KodaXBaseProviderRef {
+      readonly name = ESCALATION_PROVIDER_NAME;
+      readonly supportsThinking = false;
+      protected readonly config = {
+        apiKeyEnv: ESCALATION_PROVIDER_API_KEY_ENV,
+        model: 'scripted',
+        supportsThinking: false,
+        reasoningCapability: 'prompt-only' as const,
+        maxOutputTokens: KODAX_CAPPED,
+        capabilityProfile: {
+          transport: 'native-api' as const,
+          conversationSemantics: 'full-history' as const,
+          mcpSupport: 'none' as const,
+          contextFidelity: 'full' as const,
+          toolCallingFidelity: 'full' as const,
+          sessionSupport: 'stateless' as const,
+          longRunningSupport: 'limited' as const,
+          multimodalSupport: 'none' as const,
+          evidenceSupport: 'limited' as const,
+        },
+      };
+      async stream(): Promise<any> {
+        observedBudgets.push(this.getEffectiveMaxOutputTokens());
+        const resp = responses[callIdx++];
+        if (!resp) throw new Error(`No scripted response for stream call #${callIdx}`);
+        this.setMaxOutputTokensOverride(undefined); // mirror withRateLimit auto-clear
+        return {
+          textBlocks: resp.textBlocks,
+          toolBlocks: [],
+          thinkingBlocks: [],
+          stopReason: resp.stopReason,
+        };
+      }
+    }
+    process.env[ESCALATION_PROVIDER_API_KEY_ENV] = 'test-key';
+    registerModelProviderFn(ESCALATION_PROVIDER_NAME, () => new Scripted());
+  }
+
+  function makeAdapterOptions(): KodaXOptions {
+    return {
+      ...makeOptions(),
+      provider: ESCALATION_PROVIDER_NAME,
+    };
+  }
+
+  it('escalates capped budget to 64K on first max_tokens, reissues same turn', async () => {
+    const observedBudgets: number[] = [];
+    registerScriptedProvider(
+      [
+        { textBlocks: [], stopReason: 'max_tokens' },
+        { textBlocks: [{ type: 'text', text: 'done at 64K' }], stopReason: 'end_turn' },
+      ],
+      observedBudgets,
+    );
+
+    const adapter = buildRunnerLlmAdapter(makeAdapterOptions());
+    const result = await adapter(
+      [{ role: 'system', content: 'sys' }, { role: 'user', content: 'Generate a long file.' }],
+      { name: 'scout', instructions: '' },
+    );
+
+    expect(result.text).toBe('done at 64K');
+    expect(observedBudgets).toEqual([KODAX_CAPPED, KODAX_ESCALATED]);
+  }, 15_000);
+
+  it('does not escalate a second time within the same adapter call', async () => {
+    const observedBudgets: number[] = [];
+    registerScriptedProvider(
+      [
+        { textBlocks: [], stopReason: 'max_tokens' },
+        // Escalated turn ALSO returns max_tokens — the adapter must surface
+        // the partial result rather than escalating again.
+        { textBlocks: [{ type: 'text', text: 'half' }], stopReason: 'max_tokens' },
+      ],
+      observedBudgets,
+    );
+
+    const adapter = buildRunnerLlmAdapter(makeAdapterOptions());
+    const result = await adapter(
+      [{ role: 'system', content: 'sys' }, { role: 'user', content: 'Big task.' }],
+      { name: 'scout', instructions: '' },
+    );
+
+    // Exactly one escalation — second stream call sees escalated budget,
+    // then the adapter breaks out even though stopReason is still max_tokens.
+    expect(observedBudgets).toEqual([KODAX_CAPPED, KODAX_ESCALATED]);
+    expect(result.text).toBe('half');
+  }, 15_000);
+
+  it('honors KODAX_MAX_OUTPUT_TOKENS env override and skips escalation', async () => {
+    process.env.KODAX_MAX_OUTPUT_TOKENS = '32000';
+    const observedBudgets: number[] = [];
+    registerScriptedProvider(
+      [
+        // User pinned 32K and model hits it — escalation is skipped because
+        // the env override signals explicit intent.
+        { textBlocks: [{ type: 'text', text: 'stuck at user budget' }], stopReason: 'max_tokens' },
+      ],
+      observedBudgets,
+    );
+
+    const adapter = buildRunnerLlmAdapter(makeAdapterOptions());
+    const result = await adapter(
+      [{ role: 'system', content: 'sys' }, { role: 'user', content: 'anything' }],
+      { name: 'scout', instructions: '' },
+    );
+
+    expect(observedBudgets).toEqual([32000]);
+    expect(result.text).toBe('stuck at user budget');
+  }, 15_000);
+});
+
 describe('runManagedTaskViaRunner — Scout H0_DIRECT end-to-end', () => {
   it('runs a Scout H0_DIRECT flow: emit_scout_verdict then final text', async () => {
     let turn = 0;
