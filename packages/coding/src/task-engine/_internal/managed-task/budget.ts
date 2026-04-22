@@ -163,15 +163,25 @@ export async function maybeRequestAdditionalWorkBudget(
      * values (H0 -> +100, H1/H2 -> +200) matching the tiered cap model.
      */
     additionalUnits?: number;
+    /**
+     * v0.7.26 Risk-3 fix — bypass the 90% threshold short-circuit. Set
+     * to `true` when a role explicitly requests more budget (e.g.
+     * Evaluator's `budget_request` field). Still honours the
+     * `lastApprovalBudgetTotal` dedup so a single explicit request does
+     * not loop the dialog.
+     */
+    force?: boolean;
   },
 ): Promise<'approved' | 'denied' | 'skipped'> {
   if (!events?.askUser) {
     return 'skipped';
   }
 
-  const threshold = Math.ceil(controller.totalBudget * GLOBAL_WORK_BUDGET_APPROVAL_THRESHOLD);
-  if (controller.spentBudget < threshold) {
-    return 'skipped';
+  if (!context.force) {
+    const threshold = Math.ceil(controller.totalBudget * GLOBAL_WORK_BUDGET_APPROVAL_THRESHOLD);
+    if (controller.spentBudget < threshold) {
+      return 'skipped';
+    }
   }
   if (controller.lastApprovalBudgetTotal === controller.totalBudget) {
     return 'skipped';

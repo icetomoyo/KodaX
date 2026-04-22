@@ -35,8 +35,33 @@ async function getRunKodaX(): Promise<RunKodaXFn> {
     // Computed module specifier hides the edge from madge while TypeScript
     // keeps the string literal at compile time.
     const spec = './agent.js' as const;
-    const agentModule = await import(spec);
-    _runKodaXCache = agentModule.runKodaX as RunKodaXFn;
+    // v0.7.26 Risk-6 fix — wrap the dynamic import in an explicit
+    // error envelope. The cycle-break via dynamic-import is a deliberate
+    // design choice (FEATURE_093), but if `./agent.js` ever fails to
+    // resolve at runtime (broken build, moved export, circular-import
+    // still tripping), the vanilla native error surfaces as a cryptic
+    // "Cannot find module './agent.js'" deep inside a dispatch call.
+    // Restate what went wrong + what the caller should check.
+    let agentModule: { runKodaX?: RunKodaXFn };
+    try {
+      agentModule = (await import(spec)) as { runKodaX?: RunKodaXFn };
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `[child-executor] Failed to lazy-load agent module (\`${spec}\`) for dispatch_child_task. ` +
+        `This usually means the @kodax/coding build is broken or out of date. ` +
+        `Underlying cause: ${detail}`,
+      );
+    }
+    const runKodaX = agentModule.runKodaX;
+    if (typeof runKodaX !== 'function') {
+      throw new Error(
+        `[child-executor] Agent module loaded but \`runKodaX\` export is missing or not a function. ` +
+        `This indicates an API break in packages/coding/src/agent.ts. ` +
+        `Check that \`export { runKodaX }\` is still present.`,
+      );
+    }
+    _runKodaXCache = runKodaX;
   }
   return _runKodaXCache;
 }

@@ -1001,6 +1001,15 @@ export interface KodaXManagedVerdictPayload {
   verificationDegraded?: boolean;
   continuationSuggested?: boolean;
   preferredFallbackWorkerId?: string;
+  /**
+   * v0.7.26 Risk-3 fix — Evaluator explicit budget-extension request.
+   * When present, the Runner-driven `wrapEmitterWithRecorder` fires the
+   * budget-extension dialog regardless of the 90% threshold, using this
+   * string as the user-visible summary. Mirrors legacy Evaluator's
+   * `budgetRequest` field which was parsed from the fenced-block
+   * `kodax-budget-request` payload in v0.7.22.
+   */
+  budgetRequest?: string;
 }
 
 /**

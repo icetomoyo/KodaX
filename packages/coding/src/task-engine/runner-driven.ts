@@ -87,13 +87,25 @@ import {
 } from '../agents/protocol-emitters.js';
 import { toolBash } from '../tools/bash.js';
 import { toolEdit } from '../tools/edit.js';
+import { toolMultiEdit } from '../tools/multi-edit.js';
 import { toolExitPlanMode } from '../tools/exit-plan-mode.js';
 import { toolGlob } from '../tools/glob.js';
 import { toolGrep } from '../tools/grep.js';
 import { toolRead } from '../tools/read.js';
 import { toolWrite } from '../tools/write.js';
 import { toolDispatchChildTask } from '../tools/dispatch-child-tasks.js';
-import { getToolDefinition } from '../tools/registry.js';
+// M1 parity (v0.7.26) — repo-intel + MCP handlers required to give Planner
+// the same inspection surface it had under v0.7.22's
+// `buildManagedWorkerToolPolicy('planner')` allow-list.
+import { toolRepoOverview } from '../tools/repo-overview.js';
+import { toolChangedScope } from '../tools/changed-scope.js';
+import { toolChangedDiff, toolChangedDiffBundle } from '../tools/changed-diff.js';
+import { toolMcpSearch } from '../tools/mcp-search.js';
+import { toolMcpDescribe } from '../tools/mcp-describe.js';
+import { toolMcpCall } from '../tools/mcp-call.js';
+import { toolMcpReadResource } from '../tools/mcp-read-resource.js';
+import { toolMcpGetPrompt } from '../tools/mcp-get-prompt.js';
+import { getToolDefinition, MCP_TOOL_NAMES } from '../tools/registry.js';
 import type {
   KodaXEvents,
   KodaXHarnessProfile,
@@ -172,6 +184,11 @@ import {
 } from './_internal/managed-task/scout-signals.js';
 import { createRolePrompt } from './_internal/managed-task/role-prompt.js';
 import type { ManagedRolePromptContext } from './_internal/managed-task/role-prompt-types.js';
+import {
+  attemptProtocolTextFallback,
+  getEmitToolNameForRole,
+} from './_internal/managed-task/parse-helpers.js';
+import { getManagedBlockNameForRole } from '../managed-protocol.js';
 import {
   MANAGED_CONTROL_PLANE_MARKERS,
   sanitizeEvaluatorPublicAnswer,
@@ -560,7 +577,28 @@ interface BudgetExtensionContext {
   readonly planRef: { current: ReasoningPlan | undefined };
   readonly degradedContinueRef: { current: boolean };
   readonly harnessRef: { current: KodaXHarnessProfile };
+  /**
+   * v0.7.26 Risk-2 fix — per-harness Evaluator revise counter. Mirrors
+   * legacy `h1CheckedDirectRevisesUsed`: H1 allows at most 1 same-harness
+   * revise before the wrapper auto-converts a second revise into either
+   * an H2 escalation (if `upgradeCeiling >= H2`) or an accept-with-
+   * followup (if upgradeCeiling blocks further escalation). Without this
+   * cap, the Runner-driven handoff topology allows Evaluator → Generator
+   * → Evaluator → ... up to `MAX_ROUNDS_BY_HARNESS[H1] = 6` rounds,
+   * which in the Scout-confusion loop the user reported keeps spinning
+   * for 3-4 revise cycles before budget exhaustion.
+   */
+  readonly reviseCountByHarnessRef: {
+    current: Map<KodaXHarnessProfile, number>;
+  };
 }
+
+/**
+ * Risk-2 policy constants. H1 allows 1 same-harness revise before the
+ * wrapper escalates or converts — matches legacy
+ * `h1CheckedDirectRevisesUsed` semantics.
+ */
+const H1_MAX_SAME_HARNESS_REVISES = 1;
 
 /**
  * Shard 6d-U: harness ordering from low to high. Used to compare a
@@ -638,6 +676,91 @@ function wrapEmitterWithRecorder(
             };
             result = { ...result, metadata: redirectedMetadata as unknown as Record<string, unknown> };
           }
+
+          // v0.7.26 Risk-2 fix — H1 same-harness revise cap. Without
+          // this, Evaluator can emit `revise` repeatedly up to
+          // `MAX_ROUNDS_BY_HARNESS[H1] = 6`, which manifested in user
+          // reports as the Scout → Generator → Evaluator death loop.
+          // Legacy capped H1 at 1 same-harness revise via
+          // `h1CheckedDirectRevisesUsed`; we do the same here.
+          //
+          // Policy when cap is exceeded:
+          //   - upgradeCeiling permits H2 → auto-rewrite the verdict
+          //     into an H2 escalation (nextHarness=H2, handoffTarget
+          //     restored to Planner). User sees a planner turn added
+          //     rather than another revise cycle.
+          //   - upgradeCeiling blocks upgrade → auto-convert to accept:
+          //     status=accept, followups prepended with Evaluator's
+          //     reason so the remaining concern is visible to the user.
+          //     Flip degradedContinue so the runtime surfaces the
+          //     "accepted under cap" state. The accept is NOT silent —
+          //     the reason line is the first followup.
+          const currentHarness = budgetExtension.harnessRef.current;
+          const updatedEmitterMeta = result.metadata as unknown as ProtocolEmitterMetadata;
+          const updatedVerdict = updatedEmitterMeta.payload?.verdict;
+          if (
+            updatedVerdict?.status === 'revise'
+            && currentHarness === 'H1_EXECUTE_EVAL'
+          ) {
+            const revisesSoFar = budgetExtension.reviseCountByHarnessRef.current.get(currentHarness) ?? 0;
+            if (revisesSoFar >= H1_MAX_SAME_HARNESS_REVISES) {
+              const ceilingForUpgrade = budgetExtension.planRef.current?.decision.upgradeCeiling;
+              const canEscalateToH2 =
+                ceilingForUpgrade
+                && !isUpgradeBeyondCeiling('H2_PLAN_EXECUTE_EVAL', ceilingForUpgrade);
+              if (canEscalateToH2) {
+                // Auto-escalate: rewrite the verdict to an H2 revise so
+                // the Planner picks up the flow. The existing handoff
+                // routing (verdict → Planner for replan) kicks in.
+                const escalationReason = `Auto-escalated to H2 after H1 revise cap reached. Original reason: ${updatedVerdict.reason ?? '(none)'}`;
+                const escalatedMetadata: ProtocolEmitterMetadata = {
+                  ...updatedEmitterMeta,
+                  payload: {
+                    ...updatedEmitterMeta.payload,
+                    verdict: {
+                      ...updatedVerdict,
+                      nextHarness: 'H2_PLAN_EXECUTE_EVAL',
+                      reason: escalationReason,
+                    },
+                  },
+                  handoffTarget: PLANNER_AGENT_NAME,
+                };
+                result = { ...result, metadata: escalatedMetadata as unknown as Record<string, unknown> };
+              } else {
+                // Convert to accept-with-followup. Preserve Evaluator's
+                // reason as the leading followup line so the user sees
+                // what the Evaluator still wanted fixed.
+                const pendingConcern = updatedVerdict.reason
+                  ? `Pending concern from Evaluator (accepted under H1 revise cap): ${updatedVerdict.reason}`
+                  : 'Pending concern from Evaluator (accepted under H1 revise cap): revise reason not provided.';
+                const followupsList = [pendingConcern, ...(updatedVerdict.followups ?? [])];
+                const convertedMetadata: ProtocolEmitterMetadata = {
+                  ...updatedEmitterMeta,
+                  payload: {
+                    ...updatedEmitterMeta.payload,
+                    verdict: {
+                      ...updatedVerdict,
+                      status: 'accept',
+                      followups: followupsList,
+                      nextHarness: undefined,
+                    },
+                  },
+                  isTerminal: true,
+                  handoffTarget: undefined,
+                };
+                budgetExtension.degradedContinueRef.current = true;
+                result = { ...result, metadata: convertedMetadata as unknown as Record<string, unknown> };
+              }
+            } else {
+              // First same-harness revise — increment counter, pass
+              // through unchanged. The increment happens AFTER the
+              // comparison so the first revise is allowed.
+              budgetExtension.reviseCountByHarnessRef.current.set(
+                currentHarness,
+                revisesSoFar + 1,
+              );
+            }
+          }
         }
         recorder[slot] = result.metadata as unknown as ProtocolEmitterMetadata;
         // When Scout's verdict picks a non-H0 harness, extend the budget
@@ -689,13 +812,23 @@ function wrapEmitterWithRecorder(
         // (H0 → +100 small top-up, H1/H2 → +200 legacy-parity top-up).
         if (budget && budgetExtension) {
           observer.notifyBudgetApprovalRequest();
-          const extensionSummary = slot === 'verdict'
-            ? (recorder.verdict?.payload.verdict?.reason ?? 'Evaluator requested another pass')
-            : slot === 'handoff'
-              ? (recorder.handoff?.payload.handoff?.summary ?? 'Generator handoff in progress')
-              : slot === 'contract'
-                ? (recorder.contract?.payload.contract?.summary ?? 'Planner contract in progress')
-                : (recorder.scout?.payload.scout?.summary ?? 'Scout investigation in progress');
+          // Risk-3: when Evaluator explicitly flags a budget request via
+          // its verdict payload, bypass the 90% auto-threshold so the
+          // user sees the dialog immediately (with Evaluator's reason
+          // as the summary) rather than waiting for cumulative usage
+          // to cross the default gate.
+          const evaluatorBudgetRequest = slot === 'verdict'
+            ? recorder.verdict?.payload.verdict?.budgetRequest
+            : undefined;
+          const extensionSummary = evaluatorBudgetRequest
+            ? `Evaluator requested more budget: ${evaluatorBudgetRequest}`
+            : slot === 'verdict'
+              ? (recorder.verdict?.payload.verdict?.reason ?? 'Evaluator requested another pass')
+              : slot === 'handoff'
+                ? (recorder.handoff?.payload.handoff?.summary ?? 'Generator handoff in progress')
+                : slot === 'contract'
+                  ? (recorder.contract?.payload.contract?.summary ?? 'Planner contract in progress')
+                  : (recorder.scout?.payload.scout?.summary ?? 'Scout investigation in progress');
           const decision = await maybeRequestAdditionalWorkBudget(
             budgetExtension.events,
             budget,
@@ -705,6 +838,7 @@ function wrapEmitterWithRecorder(
               maxRounds: budgetExtension.maxRoundsRef.current,
               originalTask: budgetExtension.originalTask,
               additionalUnits: BUDGET_EXTENSION_BY_HARNESS[budget.currentHarness],
+              force: Boolean(evaluatorBudgetRequest),
             },
           );
           budgetExtension.budgetApprovalRef.current = false;
@@ -1488,8 +1622,25 @@ interface CodingToolBundle {
   readonly bash: RunnableTool;
   readonly write: RunnableTool;
   readonly edit: RunnableTool;
+  /** P2a (v0.7.26) — batched-edit tool for single-file skeleton-fill flows. */
+  readonly multiEdit: RunnableTool;
   /** FEATURE_074 parity — exit_plan_mode approval tool (Generator only). */
   readonly exitPlanMode: RunnableTool;
+  /** M1 parity (v0.7.26) — repo-intel + MCP surface restored to Planner.
+   * v0.7.22's `buildManagedWorkerToolPolicy('planner')` exposed
+   * `changed_scope`, `repo_overview`, `changed_diff_bundle`, `read`,
+   * `grep`, `glob`, and all MCP_TOOL_NAMES as an allow-list. The initial
+   * Runner-driven Planner only carried `read/grep/glob`, so H2 Planner
+   * couldn't read repo-overview or scoped diffs and was forced to draft
+   * contracts from Scout memory alone. These fields re-wire the same
+   * inventory. Each field is undefined when the corresponding tool
+   * isn't registered (optional capability / missing MCP runtime) so the
+   * bundle stays usable in test fixtures that don't register them. */
+  readonly repoOverview?: RunnableTool;
+  readonly changedScope?: RunnableTool;
+  readonly changedDiff?: RunnableTool;
+  readonly changedDiffBundle?: RunnableTool;
+  readonly mcp: readonly RunnableTool[];
 }
 
 function buildCodingToolBundle(
@@ -1503,12 +1654,38 @@ function buildCodingToolBundle(
   const bash = getToolDefinition('bash');
   const write = getToolDefinition('write');
   const edit = getToolDefinition('edit');
+  const multiEdit = getToolDefinition('multi_edit');
   const exitPlanMode = getToolDefinition('exit_plan_mode');
-  if (!read || !grep || !glob || !bash || !write || !edit || !exitPlanMode) {
+  if (!read || !grep || !glob || !bash || !write || !edit || !multiEdit || !exitPlanMode) {
     throw new Error(
-      'Runner-driven path: expected core tools (read/grep/glob/bash/write/edit/exit_plan_mode) to be registered',
+      'Runner-driven path: expected core tools (read/grep/glob/bash/write/edit/multi_edit/exit_plan_mode) to be registered',
     );
   }
+  // M1 parity (v0.7.26) — optionally wrap repo-intel + MCP tools so
+  // Planner can be given the same inspection allow-list it had under
+  // v0.7.22's `buildManagedWorkerToolPolicy('planner')`. Each tool is
+  // only wrapped when its definition is registered — test fixtures that
+  // bootstrap a minimal registry should still work.
+  const repoOverviewDef = getToolDefinition('repo_overview');
+  const changedScopeDef = getToolDefinition('changed_scope');
+  const changedDiffDef = getToolDefinition('changed_diff');
+  const changedDiffBundleDef = getToolDefinition('changed_diff_bundle');
+  const mcpHandlers: Record<string, (input: Record<string, unknown>, ctx: KodaXToolExecutionContext) => Promise<string>> = {
+    mcp_search: toolMcpSearch,
+    mcp_describe: toolMcpDescribe,
+    mcp_call: toolMcpCall,
+    mcp_read_resource: toolMcpReadResource,
+    mcp_get_prompt: toolMcpGetPrompt,
+  };
+  const mcp: RunnableTool[] = MCP_TOOL_NAMES.reduce<RunnableTool[]>((acc, name) => {
+    const def = getToolDefinition(name);
+    const handler = mcpHandlers[name];
+    if (def && handler) {
+      acc.push(wrapCodingToolAsRunnable(def, handler, baseCtx, budget, events));
+    }
+    return acc;
+  }, []);
+
   return {
     read: wrapCodingToolAsRunnable(read, toolRead, baseCtx, budget, events),
     grep: wrapCodingToolAsRunnable(grep, toolGrep, baseCtx, budget, events),
@@ -1516,7 +1693,21 @@ function buildCodingToolBundle(
     bash: wrapCodingToolAsRunnable(bash, toolBash, baseCtx, budget, events),
     write: wrapCodingToolAsRunnable(write, toolWrite, baseCtx, budget, events),
     edit: wrapCodingToolAsRunnable(edit, toolEdit, baseCtx, budget, events),
+    multiEdit: wrapCodingToolAsRunnable(multiEdit, toolMultiEdit, baseCtx, budget, events),
     exitPlanMode: wrapCodingToolAsRunnable(exitPlanMode, toolExitPlanMode, baseCtx, budget, events),
+    repoOverview: repoOverviewDef
+      ? wrapCodingToolAsRunnable(repoOverviewDef, toolRepoOverview, baseCtx, budget, events)
+      : undefined,
+    changedScope: changedScopeDef
+      ? wrapCodingToolAsRunnable(changedScopeDef, toolChangedScope, baseCtx, budget, events)
+      : undefined,
+    changedDiff: changedDiffDef
+      ? wrapCodingToolAsRunnable(changedDiffDef, toolChangedDiff, baseCtx, budget, events)
+      : undefined,
+    changedDiffBundle: changedDiffBundleDef
+      ? wrapCodingToolAsRunnable(changedDiffBundleDef, toolChangedDiffBundle, baseCtx, budget, events)
+      : undefined,
+    mcp,
   };
 }
 
@@ -1659,6 +1850,10 @@ export function buildRunnerAgentChain(
       codingTools.bash,
       codingTools.write,
       codingTools.edit,
+      // P2a (v0.7.26) — Scout H0_DIRECT execution benefits from
+      // skeleton+multi_edit just as much as Generator does. Unwrapped
+      // for parity with v0.7.22's Scout default tool set.
+      codingTools.multiEdit,
       codingTools.exitPlanMode,
       // Shard 6d-Q: Scout may dispatch read-only child investigations
       // (evidence scans, repo reconnaissance) in parallel before
@@ -1669,6 +1864,25 @@ export function buildRunnerAgentChain(
     handoffs: undefined,
     reasoning: { default: 'quick', max: 'balanced', escalateOnRevise: false },
   };
+  // M1 parity (v0.7.26) — restore Planner's v0.7.22 inspection surface.
+  // Legacy `buildManagedWorkerToolPolicy('planner')` exposed read / grep
+  // / glob + repo_overview + changed_scope + changed_diff_bundle +
+  // MCP_TOOL_NAMES (tool-policy.ts:237-243). The earlier Runner-driven
+  // Planner was limited to read/grep/glob, so H2 planning had no
+  // repo-overview / scoped-diff signal and had to draft contracts from
+  // Scout memory alone. Each optional tool is only attached when its
+  // registry definition exists, so minimal test fixtures still work.
+  const plannerTools: RunnableTool[] = [
+    contractEmit,
+    codingTools.read,
+    codingTools.grep,
+    codingTools.glob,
+  ];
+  if (codingTools.repoOverview) plannerTools.push(codingTools.repoOverview);
+  if (codingTools.changedScope) plannerTools.push(codingTools.changedScope);
+  if (codingTools.changedDiffBundle) plannerTools.push(codingTools.changedDiffBundle);
+  if (codingTools.changedDiff) plannerTools.push(codingTools.changedDiff);
+  plannerTools.push(...codingTools.mcp);
   const planner: WritableAgent = {
     name: PLANNER_AGENT_NAME,
     instructions: () => resolveRoleInstructions(
@@ -1679,7 +1893,7 @@ export function buildRunnerAgentChain(
       promptContext,
       verification,
     ),
-    tools: [contractEmit, codingTools.read, codingTools.grep, codingTools.glob],
+    tools: plannerTools,
     handoffs: undefined,
     reasoning: { default: 'balanced', max: 'deep', escalateOnRevise: true },
   };
@@ -1701,6 +1915,10 @@ export function buildRunnerAgentChain(
       wrapGeneratorBashWithMutationGuard(codingTools.bash, recorder, planRef),
       wrapGeneratorWriteWithMutationGuard(codingTools.write, recorder, planRef),
       wrapGeneratorWriteWithMutationGuard(codingTools.edit, recorder, planRef),
+      // P2a (v0.7.26) — multi_edit follows the same mutation-guard rules
+      // as edit/write. review-only intent blocks all three; docs-scoped
+      // intent enforces the DOCS_ONLY path allow-list.
+      wrapGeneratorWriteWithMutationGuard(codingTools.multiEdit, recorder, planRef),
       // FEATURE_074 parity — Generator is the only role that mutates files,
       // so it is the only role that needs to ask the user to exit plan mode
       // before making edits. Without this tool the LLM sees no way to
@@ -1790,6 +2008,164 @@ export interface RunnerAdapterTokenState {
   totalTokens: number;
   lastUsage?: import('@kodax/ai').KodaXTokenUsage;
   source: 'api' | 'estimate';
+}
+
+/**
+ * P2b (v0.7.26) — default list of providers that have shown
+ * reproducible mid-stream TCP RST during large tool_use buffering.
+ * Users can override via the `KODAX_RST_PRONE_PROVIDERS` env var
+ * (comma-separated provider names).
+ */
+const DEFAULT_RST_PRONE_PROVIDERS: ReadonlySet<string> = new Set([
+  'zhipu-coding',
+  'kimi-code',
+  'minimax-coding',
+]);
+
+/** P2b — default per-turn ceiling applied when a write/edit tool is
+ * in scope for an RST-prone provider. 8 KiB is comfortably below the
+ * observed RST window while still large enough to fit a skeleton or a
+ * single-section edit. Override via `KODAX_WRITE_TURN_MAX_TOKENS`. */
+const DEFAULT_WRITE_TURN_MAX_OUTPUT_TOKENS = 8192;
+
+/**
+ * P2b — tool names whose presence in a turn's inventory indicates the
+ * model MAY emit a large tool_use payload whose streaming buffering
+ * could trip an RST on a weak provider.
+ */
+const P2B_CAPPED_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'write',
+  'edit',
+  'multi_edit',
+]);
+
+function resolveRstProneProviderSet(): ReadonlySet<string> {
+  const override = process.env.KODAX_RST_PRONE_PROVIDERS;
+  if (override === undefined) return DEFAULT_RST_PRONE_PROVIDERS;
+  // Empty string is an explicit "disable the cap" signal, distinct
+  // from unset (which keeps defaults).
+  const trimmed = override.trim();
+  if (trimmed.length === 0) return new Set();
+  return new Set(trimmed.split(',').map((s) => s.trim()).filter(Boolean));
+}
+
+function resolveWriteTurnMaxTokens(): number {
+  const raw = process.env.KODAX_WRITE_TURN_MAX_TOKENS;
+  if (!raw) return DEFAULT_WRITE_TURN_MAX_OUTPUT_TOKENS;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : DEFAULT_WRITE_TURN_MAX_OUTPUT_TOKENS;
+}
+
+/**
+ * P2b — decide whether this turn's tool inventory + provider warrant
+ * the write-turn max_output_tokens cap, and apply it via the provider's
+ * one-shot override. Returns `true` iff the cap was applied (the caller
+ * clears the override in a finally block to prevent leakage). The cap
+ * is NOT applied when the user has explicitly set KODAX_MAX_OUTPUT_TOKENS
+ * — that signals "I want the higher budget even on risky providers."
+ */
+export function maybeApplyP2bWriteTurnCap(
+  provider: { setMaxOutputTokensOverride: (v: number | undefined) => void; getEffectiveMaxOutputTokens: () => number },
+  providerName: string,
+  wireTools: readonly { name: string }[],
+): boolean {
+  // Explicit user override wins — never silently narrow their budget.
+  if (process.env.KODAX_MAX_OUTPUT_TOKENS) return false;
+
+  const proneProviders = resolveRstProneProviderSet();
+  if (!proneProviders.has(providerName)) return false;
+
+  const hasWriteTool = wireTools.some((t) => P2B_CAPPED_TOOL_NAMES.has(t.name));
+  if (!hasWriteTool) return false;
+
+  const cap = resolveWriteTurnMaxTokens();
+  const effective = provider.getEffectiveMaxOutputTokens();
+  if (effective <= cap) {
+    // Already at or below the cap (another override is in force, e.g.
+    // L4 escalation from a prior turn). Don't expand it.
+    return false;
+  }
+  provider.setMaxOutputTokensOverride(cap);
+  return true;
+}
+
+/**
+ * C1 parity helper — map a registered Runner Agent name to its managed
+ * task role. Used by the fenced-block fallback path in the LLM adapter
+ * to decide which emit tool to synthesize when the LLM wrote the
+ * fence but skipped the tool call.
+ */
+function agentNameToManagedRole(
+  name: string,
+): Exclude<KodaXTaskRole, 'direct'> | undefined {
+  switch (name) {
+    case SCOUT_AGENT_NAME: return 'scout';
+    case PLANNER_AGENT_NAME: return 'planner';
+    case GENERATOR_AGENT_NAME: return 'generator';
+    case EVALUATOR_AGENT_NAME: return 'evaluator';
+    default: return undefined;
+  }
+}
+
+/**
+ * C1 parity helper — unwrap the per-role slice from a normalized
+ * managed-protocol payload so it matches the emit tool's snake_case
+ * input schema. The real emitter re-runs `coerceManagedProtocolToolPayload`
+ * on this input, so the shape just needs to round-trip cleanly; we
+ * intentionally emit snake_case keys matching the tool schema.
+ */
+function flattenNormalizedForEmitterInput(
+  payload: Partial<KodaXManagedProtocolPayload>,
+): Record<string, unknown> {
+  if (payload.scout) {
+    const s = payload.scout;
+    return {
+      summary: s.summary,
+      scope: s.scope,
+      required_evidence: s.requiredEvidence,
+      review_files_or_areas: s.reviewFilesOrAreas,
+      evidence_acquisition_mode: s.evidenceAcquisitionMode,
+      confirmed_harness: s.confirmedHarness,
+      harness_rationale: s.harnessRationale,
+      blocking_evidence: s.blockingEvidence,
+      direct_completion_ready: s.directCompletionReady,
+      skill_map: s.skillMap
+        ? {
+          skill_summary: s.skillMap.skillSummary,
+          execution_obligations: s.skillMap.executionObligations,
+          verification_obligations: s.skillMap.verificationObligations,
+          ambiguities: s.skillMap.ambiguities,
+          projection_confidence: s.skillMap.projectionConfidence,
+        }
+        : undefined,
+    };
+  }
+  if (payload.contract) {
+    return {
+      summary: payload.contract.summary,
+      success_criteria: payload.contract.successCriteria,
+      required_evidence: payload.contract.requiredEvidence,
+      constraints: payload.contract.constraints,
+    };
+  }
+  if (payload.handoff) {
+    return {
+      status: payload.handoff.status,
+      summary: payload.handoff.summary,
+      evidence: payload.handoff.evidence,
+      followup: payload.handoff.followup,
+    };
+  }
+  if (payload.verdict) {
+    return {
+      status: payload.verdict.status,
+      reason: payload.verdict.reason,
+      followup: payload.verdict.followups,
+      user_answer: payload.verdict.userAnswer,
+      next_harness: payload.verdict.nextHarness,
+    };
+  }
+  return {};
 }
 
 export function buildRunnerLlmAdapter(
@@ -1899,6 +2275,30 @@ export function buildRunnerLlmAdapter(
         ...resilienceCfg,
         enableNonStreamingFallback: resilienceCfg.enableNonStreamingFallback && supportsFallback,
       });
+      // P2b (v0.7.26) — cap max_output_tokens on turns where the tool
+      // inventory exposes `write` / `edit` / `multi_edit` for providers
+      // that reproducibly RST the streaming connection during large
+      // tool_use buffering (zhipu-coding / kimi-code / minimax-coding
+      // observed). Rationale: an 8K ceiling physically prevents the
+      // model from emitting a tool_use payload large enough to hit the
+      // RST window, closing the "Scout jumps to Python to avoid write
+      // streaming issues" escape path at the provider layer instead of
+      // relying on prompt compliance. Works together with P2a
+      // (multi_edit makes skeleton + batched edits cheap, so the cap
+      // doesn't force awkward workflows).
+      //
+      // Override list: `KODAX_RST_PRONE_PROVIDERS` (comma-separated).
+      // Override cap:  `KODAX_WRITE_TURN_MAX_TOKENS` (integer).
+      // L4 escalation (64K) still fires on stop_reason=max_tokens and
+      // takes precedence if the LLM genuinely needs more headroom.
+      // `hasAppliedP2bWriteCap` tracks per-turn application so we can
+      // clear the override on cleanup (prevents the cap from leaking to
+      // the NEXT adapter invocation on the same provider instance).
+      const hasAppliedP2bWriteCap = maybeApplyP2bWriteTurnCap(
+        provider,
+        providerName,
+        wireTools,
+      );
       let providerMessages: KodaXMessage[] = [...transcript];
       let attempt = 0;
       let raw!: Awaited<ReturnType<typeof provider.stream>>;
@@ -2251,6 +2651,17 @@ export function buildRunnerLlmAdapter(
         thinkingBlocks: accumulatedThinking ?? raw.thinkingBlocks,
         usage: raw.usage,
       };
+
+      // P2b cleanup — if we applied the write-turn cap, ensure the
+      // override doesn't leak to the next adapter invocation on this
+      // same provider instance. Base provider clears on success inside
+      // withRateLimit, but failure paths keep the override. Clearing
+      // unconditionally here is safe: L4 escalation sets and clears
+      // its own override within the retry loop, and any fresh
+      // invocation will re-apply its own policy.
+      if (hasAppliedP2bWriteCap) {
+        provider.setMaxOutputTokensOverride(undefined);
+      }
     }
 
     // Update cumulative token state for the final contextTokenSnapshot.
@@ -2306,6 +2717,52 @@ export function buildRunnerLlmAdapter(
       name: b.name,
       input: b.input ?? {},
     }));
+
+    // C1 parity (v0.7.26) — fenced-block fallback. v0.7.22 ran
+    // `managedProtocolPayload?.scout ?? parseManagedTaskScoutDirective(text)`
+    // at 4 call sites so an LLM that writes a well-formed `kodax-task-*`
+    // block but forgets to call the emit tool still advances the
+    // pipeline. The Runner-driven path lost this until now — a missed
+    // emit stalls the entire run (task never records Scout/Handoff/
+    // Verdict, Runner loops until the 500-iteration safety cap trips).
+    //
+    // Strategy: detect "LLM didn't call the expected emit_* tool this
+    // turn, but assistant text contains the role's kodax-task-* fence"
+    // → parse the fence via `attemptProtocolTextFallback`, synthesize a
+    // matching tool_call entry. The Runner will dispatch it through
+    // the agent's already-registered emit tool + `wrapEmitterWithRecorder`,
+    // so recorder / budget / handoff bookkeeping flows through the
+    // exact same code path as a real tool call. Zero new state
+    // machinery. Mirrors v0.7.22's `?? parseManagedTask*Directive`
+    // fallback at task-engine.ts:3242 / 3297 / 3371 / 3416.
+    const fallbackRole = agentNameToManagedRole(agent.name);
+    if (fallbackRole && text.length > 0) {
+      const expectedEmit = getEmitToolNameForRole(fallbackRole);
+      const alreadyEmitted = expectedEmit
+        ? toolCalls.some((tc) => tc.name === expectedEmit)
+        : false;
+      if (expectedEmit && !alreadyEmitted) {
+        const synthesized = attemptProtocolTextFallback(fallbackRole, text);
+        if (synthesized) {
+          toolCalls.push({
+            id: `fallback-${fallbackRole}-${Date.now()}`,
+            name: expectedEmit,
+            // Re-serialize the normalized payload as the synthetic tool
+            // input. The real emitter will re-run `coerceManagedProtocolToolPayload`,
+            // which is idempotent on already-normalized input (keys
+            // already snake_case via the block body; camelCase fields
+            // the normalizer produced round-trip cleanly via the
+            // tool's schema).
+            input: flattenNormalizedForEmitterInput(synthesized.payload) as Record<string, unknown>,
+          });
+          options.events?.onRetry?.(
+            `[fallback] ${fallbackRole} emitted ${getManagedBlockNameForRole(fallbackRole) ?? 'fenced block'} without calling ${expectedEmit}; synthesizing tool call from block body`,
+            0,
+            0,
+          );
+        }
+      }
+    }
     // v0.7.26 parity: forward thinking blocks so
     // `buildAssistantMessageFromLlmResult` can prepend them to the
     // assistant content. Required for Anthropic extended thinking —
@@ -2952,6 +3409,24 @@ async function writeCurrentCheckpoint(args: {
   }
 }
 
+/**
+ * Internal test surface — exports otherwise-private helpers so the
+ * runner-driven test file can exercise them directly without booting a
+ * full Runner chain. Only the functions / constants listed here are
+ * callable from `*.test.ts`; the rest of the module surface stays
+ * encapsulated.
+ *
+ * Added v0.7.26 Risk-5 to cover:
+ *   - H1 revise cap auto-conversion (Risk 2)
+ *   - Evaluator explicit `budgetRequest` triggering dialog below 90%
+ *     threshold (Risk 3)
+ *   - Malformed verdict payload passthrough (existing recorder behaviour)
+ */
+export const __runnerDrivenTestables = {
+  wrapEmitterWithRecorder,
+  H1_MAX_SAME_HARNESS_REVISES,
+} as const;
+
 export async function runManagedTaskViaRunner(
   options: KodaXOptions,
   prompt: string,
@@ -3295,6 +3770,13 @@ async function runManagedTaskViaRunnerInner(
   const childWriteWorktreePathsRef: { current: Map<string, string> } = {
     current: new Map(),
   };
+  // Risk-2 fix — per-harness revise counter. The wrapper mutates this
+  // map in place so consecutive Evaluator emits across the same run
+  // share state. Initialised empty; first revise of any harness passes
+  // through and bumps to 1, second triggers the cap logic.
+  const reviseCountByHarnessRef: { current: Map<KodaXHarnessProfile, number> } = {
+    current: new Map(),
+  };
   const budgetExtension: BudgetExtensionContext = {
     events: options.events,
     originalTask: prompt,
@@ -3304,6 +3786,7 @@ async function runManagedTaskViaRunnerInner(
     planRef,
     degradedContinueRef,
     harnessRef,
+    reviseCountByHarnessRef,
   };
   const tokenStateRef: { current: RunnerAdapterTokenState } = {
     current: { totalTokens: 0, source: 'estimate' },

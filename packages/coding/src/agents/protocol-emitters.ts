@@ -63,8 +63,14 @@ export interface ProtocolEmitterMetadata {
 /**
  * Map a normalized payload → handoff target agent name. Pure function so
  * both the emitter and unit tests can verify the mapping rules.
+ *
+ * Exported for the v0.7.26 fenced-block fallback path: when the LLM
+ * forgets to call an emit tool but writes a well-formed `kodax-task-*`
+ * block, `attemptProtocolTextFallback` (parse-helpers.ts) reuses this
+ * same mapping so the synthesized recorder entry carries identical
+ * handoff / terminal flags to what the real tool call would produce.
  */
-function resolveHandoffTarget(
+export function resolveHandoffTarget(
   role: ProtocolEmitterMetadata['role'],
   normalized: Partial<KodaXManagedProtocolPayload>,
 ): { handoffTarget?: string; isTerminal: boolean } {
@@ -323,6 +329,13 @@ export const emitVerdict: RunnableTool = buildEmitter({
         type: 'array',
         items: { type: 'string' },
         description: 'Required next steps (may be empty).',
+      },
+      budget_request: {
+        type: 'string',
+        description:
+          'Optional one-line reason when the Evaluator needs more budget to complete verification ' +
+          '(e.g. "need another e2e pass"). Surfaces a budget-extension dialog to the user regardless ' +
+          'of the 90% auto-threshold. Leave unset when no extra budget is needed.',
       },
     },
     required: ['status'],

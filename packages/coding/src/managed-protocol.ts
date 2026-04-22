@@ -279,6 +279,12 @@ export function coerceManagedProtocolToolPayload(
         nextHarness: typeof (payload.next_harness ?? payload.nextHarness) === 'string'
           ? normalizeManagedNextHarness(String(payload.next_harness ?? payload.nextHarness))
           : undefined,
+        // Risk-3: Evaluator may flag an explicit budget-extension request
+        // via a free-form string (one-line reason). `wrapEmitterWithRecorder`
+        // surfaces this to the user regardless of the 90% auto-threshold.
+        budgetRequest: typeof (payload.budget_request ?? payload.budgetRequest) === 'string'
+          ? String(payload.budget_request ?? payload.budgetRequest).trim() || undefined
+          : undefined,
       },
     };
   }

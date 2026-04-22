@@ -2499,4 +2499,323 @@ describe('Shard 6d-c3 — budget extension at 90% threshold', () => {
     expect(askUserCalls.length).toBe(0);
     expect(controller.totalBudget).toBe(400);
   });
+
+  it('Risk-3: force=true bypasses the 90% threshold short-circuit', async () => {
+    // Evaluator explicit budgetRequest funnels through this path: the
+    // caller sets `force: true` so the dialog fires even when spent
+    // budget is well below the 90% gate.
+    const { maybeRequestAdditionalWorkBudget } = await import(
+      './_internal/managed-task/budget.js'
+    );
+    const askUserCalls: Array<{ question: string }> = [];
+    const events: KodaXEvents = {
+      askUser: async (q: { question: string }) => {
+        askUserCalls.push({ question: q.question });
+        return 'continue';
+      },
+    } as KodaXEvents;
+    const controller = {
+      totalBudget: 400,
+      spentBudget: 50, // 12.5% — deeply under the auto threshold
+      currentHarness: 'H1_EXECUTE_EVAL' as const,
+    };
+    const decision = await maybeRequestAdditionalWorkBudget(events, controller, {
+      summary: 'Evaluator requested more budget: need e2e',
+      currentRound: 2,
+      maxRounds: 6,
+      originalTask: 'Task',
+      force: true,
+    });
+    expect(decision).toBe('approved');
+    expect(askUserCalls.length).toBe(1);
+    expect(controller.totalBudget).toBeGreaterThan(400);
+  });
+});
+
+// =============================================================================
+// Risk-2 + Risk-3 + Risk-5 — wrapEmitterWithRecorder behavioural guards
+//
+// Direct exercises of the emit-wrapper's verdict processing via the
+// `__runnerDrivenTestables` export. These tests stub the underlying
+// emitter (no real LLM, no Runner boot) and assert the wrapper's
+// rewrite / auto-conversion / budget-dialog behaviour.
+// =============================================================================
+
+describe('wrapEmitterWithRecorder — Risk 2/3/5 behavioural guards', () => {
+  type VerdictFixture = {
+    status: 'accept' | 'revise' | 'blocked';
+    reason?: string;
+    followups?: string[];
+    nextHarness?: 'H1_EXECUTE_EVAL' | 'H2_PLAN_EXECUTE_EVAL';
+    budgetRequest?: string;
+  };
+
+  async function harnessTestables() {
+    const mod = await import('./runner-driven.js');
+    const budgetMod = await import('./_internal/managed-task/budget.js');
+    return { ...mod.__runnerDrivenTestables, ...budgetMod };
+  }
+
+  function makeFakeVerdictEmitter(verdict: VerdictFixture): RunnableTool {
+    return {
+      name: 'emit_verdict',
+      description: 'stub',
+      input_schema: { type: 'object' },
+      execute: async () => ({
+        content: 'emitted',
+        metadata: {
+          role: 'evaluator',
+          payload: {
+            verdict: {
+              source: 'evaluator',
+              status: verdict.status,
+              reason: verdict.reason,
+              followups: verdict.followups ?? [],
+              userFacingText: '',
+              nextHarness: verdict.nextHarness,
+              budgetRequest: verdict.budgetRequest,
+            },
+          },
+          handoffTarget: verdict.status === 'revise' ? 'kodax/role/generator' : undefined,
+          isTerminal: verdict.status !== 'revise',
+        },
+      }),
+    } as unknown as RunnableTool;
+  }
+
+  function makeBudgetExtensionFixture(opts: {
+    events?: KodaXEvents;
+    upgradeCeiling?: 'H0_DIRECT' | 'H1_EXECUTE_EVAL' | 'H2_PLAN_EXECUTE_EVAL';
+    harness?: 'H0_DIRECT' | 'H1_EXECUTE_EVAL' | 'H2_PLAN_EXECUTE_EVAL';
+  }) {
+    // Plan fixture is intentionally minimal — the wrapper only reads
+    // `decision.harnessProfile` and `decision.upgradeCeiling`, so the
+    // rest of ReasoningPlan's surface is not required for these tests.
+    // Cast through `unknown` to satisfy the full interface.
+    const planRef = {
+      current: {
+        decision: {
+          primaryTask: 'edit',
+          workIntent: 'implement',
+          complexity: 'medium',
+          riskLevel: 'low',
+          harnessProfile: opts.harness ?? 'H1_EXECUTE_EVAL',
+          upgradeCeiling: opts.upgradeCeiling ?? 'H2_PLAN_EXECUTE_EVAL',
+          topologyCeiling: 'solo',
+          assuranceIntent: 'default',
+          recommendedMode: 'default',
+          requiresBrainstorm: false,
+          reason: 'test',
+        },
+        mode: 'balanced',
+        depth: 'default',
+        amaControllerDecision: undefined,
+        promptOverlay: undefined,
+      },
+    };
+    return {
+      planRef,
+      degradedContinueRef: { current: false },
+      reviseCountByHarnessRef: { current: new Map() },
+      harnessRef: { current: opts.harness ?? 'H1_EXECUTE_EVAL' },
+      events: opts.events,
+      originalTask: 'test task',
+      roundRef: { current: 1 },
+      maxRoundsRef: { current: 6 },
+      budgetApprovalRef: { current: false },
+    } as any;
+  }
+
+  function makeBudgetController(init: { total: number; spent: number; harness?: string }) {
+    return {
+      totalBudget: init.total,
+      spentBudget: init.spent,
+      currentHarness: init.harness ?? 'H1_EXECUTE_EVAL',
+      lastApprovalBudgetTotal: 0,
+    } as any;
+  }
+
+  const makeRecorder = (): any => ({
+    scout: undefined,
+    contract: undefined,
+    handoff: undefined,
+    verdict: undefined,
+  });
+
+  const noopObserver: any = {
+    onRoleEmit: () => undefined,
+    notifyBudgetApprovalRequest: () => undefined,
+  };
+
+  const toolCtx: any = { gitRoot: process.cwd(), executionCwd: process.cwd(), agent: 'test' };
+
+  it('Risk-2: first H1 revise passes through unchanged; counter increments', async () => {
+    const { wrapEmitterWithRecorder, H1_MAX_SAME_HARNESS_REVISES } = await harnessTestables();
+    const base = makeFakeVerdictEmitter({ status: 'revise', reason: 'retry' });
+    const recorder = makeRecorder();
+    const budget = makeBudgetController({ total: 200, spent: 10 });
+    const budgetExtension = makeBudgetExtensionFixture({ harness: 'H1_EXECUTE_EVAL' });
+
+    const wrapped = wrapEmitterWithRecorder(base, 'verdict', recorder, noopObserver, budget, budgetExtension);
+    const result = await wrapped.execute({}, toolCtx);
+
+    const meta = result.metadata as { payload: { verdict: { status: string } } };
+    expect(meta.payload.verdict.status).toBe('revise');
+    expect(budgetExtension.reviseCountByHarnessRef.current.get('H1_EXECUTE_EVAL')).toBe(
+      H1_MAX_SAME_HARNESS_REVISES,
+    );
+  });
+
+  it('Risk-2: second H1 revise auto-escalates to H2 when ceiling permits', async () => {
+    const { wrapEmitterWithRecorder } = await harnessTestables();
+    const base = makeFakeVerdictEmitter({ status: 'revise', reason: 'still incomplete' });
+    const recorder = makeRecorder();
+    const budget = makeBudgetController({ total: 200, spent: 50 });
+    const budgetExtension = makeBudgetExtensionFixture({
+      harness: 'H1_EXECUTE_EVAL',
+      upgradeCeiling: 'H2_PLAN_EXECUTE_EVAL',
+    });
+    // Pre-seed the counter to simulate "one same-harness revise already used"
+    budgetExtension.reviseCountByHarnessRef.current.set('H1_EXECUTE_EVAL', 1);
+
+    const wrapped = wrapEmitterWithRecorder(base, 'verdict', recorder, noopObserver, budget, budgetExtension);
+    const result = await wrapped.execute({}, toolCtx);
+
+    const meta = result.metadata as {
+      payload: { verdict: { status: string; nextHarness?: string; reason?: string } };
+      handoffTarget?: string;
+    };
+    expect(meta.payload.verdict.nextHarness).toBe('H2_PLAN_EXECUTE_EVAL');
+    expect(meta.handoffTarget).toBe('kodax/role/planner');
+    expect(meta.payload.verdict.reason).toMatch(/Auto-escalated to H2/);
+  });
+
+  it('Risk-2: second H1 revise converts to accept-with-followup when ceiling blocks H2', async () => {
+    const { wrapEmitterWithRecorder } = await harnessTestables();
+    const base = makeFakeVerdictEmitter({
+      status: 'revise',
+      reason: 'tests still failing',
+      followups: ['fix the lint'],
+    });
+    const recorder = makeRecorder();
+    const budget = makeBudgetController({ total: 200, spent: 50 });
+    const budgetExtension = makeBudgetExtensionFixture({
+      harness: 'H1_EXECUTE_EVAL',
+      upgradeCeiling: 'H1_EXECUTE_EVAL', // ceiling blocks H2 escalation
+    });
+    budgetExtension.reviseCountByHarnessRef.current.set('H1_EXECUTE_EVAL', 1);
+
+    const wrapped = wrapEmitterWithRecorder(base, 'verdict', recorder, noopObserver, budget, budgetExtension);
+    const result = await wrapped.execute({}, toolCtx);
+
+    const meta = result.metadata as {
+      payload: { verdict: { status: string; followups: string[]; nextHarness?: string } };
+      isTerminal?: boolean;
+    };
+    expect(meta.payload.verdict.status).toBe('accept');
+    expect(meta.payload.verdict.followups[0]).toMatch(/Pending concern from Evaluator.*tests still failing/);
+    expect(meta.payload.verdict.followups).toContain('fix the lint');
+    expect(meta.payload.verdict.nextHarness).toBeUndefined();
+    expect(meta.isTerminal).toBe(true);
+    expect(budgetExtension.degradedContinueRef.current).toBe(true);
+  });
+
+  it('Risk-3: explicit budgetRequest triggers askUser below 90% threshold', async () => {
+    const { wrapEmitterWithRecorder } = await harnessTestables();
+    const askUserCalls: Array<{ question: string }> = [];
+    const events: KodaXEvents = {
+      askUser: async (q: { question: string }) => {
+        askUserCalls.push({ question: q.question });
+        return 'continue';
+      },
+    } as KodaXEvents;
+    const base = makeFakeVerdictEmitter({
+      status: 'accept',
+      reason: 'done',
+      budgetRequest: 'need another e2e pass',
+    });
+    const recorder = makeRecorder();
+    const budget = makeBudgetController({ total: 200, spent: 40 }); // 20% — well below 90%
+    const budgetExtension = makeBudgetExtensionFixture({
+      harness: 'H1_EXECUTE_EVAL',
+      events,
+    });
+
+    const wrapped = wrapEmitterWithRecorder(base, 'verdict', recorder, noopObserver, budget, budgetExtension);
+    await wrapped.execute({}, toolCtx);
+
+    expect(askUserCalls.length).toBe(1);
+    // The dialog summary surfaces the Evaluator's explicit reason.
+    expect(askUserCalls[0]!.question).toMatch(/work units|budget/i);
+  });
+
+  it('Risk-3: missing budgetRequest + below 90% → no dialog fires', async () => {
+    const { wrapEmitterWithRecorder } = await harnessTestables();
+    const askUserCalls: Array<unknown> = [];
+    const events: KodaXEvents = {
+      askUser: async () => {
+        askUserCalls.push({});
+        return 'continue';
+      },
+    } as KodaXEvents;
+    const base = makeFakeVerdictEmitter({ status: 'accept', reason: 'done' });
+    const recorder = makeRecorder();
+    const budget = makeBudgetController({ total: 200, spent: 40 });
+    const budgetExtension = makeBudgetExtensionFixture({
+      harness: 'H1_EXECUTE_EVAL',
+      events,
+    });
+
+    const wrapped = wrapEmitterWithRecorder(base, 'verdict', recorder, noopObserver, budget, budgetExtension);
+    await wrapped.execute({}, toolCtx);
+
+    expect(askUserCalls.length).toBe(0);
+  });
+
+  it('Risk-5: H2 harness is not subject to the H1 same-harness revise cap', async () => {
+    const { wrapEmitterWithRecorder } = await harnessTestables();
+    const base = makeFakeVerdictEmitter({ status: 'revise', reason: 'retry' });
+    const recorder = makeRecorder();
+    const budget = makeBudgetController({ total: 200, spent: 50, harness: 'H2_PLAN_EXECUTE_EVAL' });
+    const budgetExtension = makeBudgetExtensionFixture({
+      harness: 'H2_PLAN_EXECUTE_EVAL',
+    });
+    // Even if we pre-seed a high revise count for H2, the wrapper must
+    // NOT apply the H1-only conversion — H2 runs to the global round cap.
+    budgetExtension.reviseCountByHarnessRef.current.set('H2_PLAN_EXECUTE_EVAL', 5);
+
+    const wrapped = wrapEmitterWithRecorder(base, 'verdict', recorder, noopObserver, budget, budgetExtension);
+    const result = await wrapped.execute({}, toolCtx);
+
+    const meta = result.metadata as { payload: { verdict: { status: string } } };
+    expect(meta.payload.verdict.status).toBe('revise');
+  });
+
+  it('Risk-5: malformed verdict (missing payload fields) passes through without mutation', async () => {
+    // When the emitter's base.execute returns a metadata-less error
+    // (e.g. schema validation failed, emit tool rejected the input),
+    // wrapEmitterWithRecorder must NOT try to rewrite — the recorder
+    // stays empty and downstream handoff falls through to whatever the
+    // fallback path decides. This guards the silent-fatal regression
+    // the old managed-protocol-handoff.test.ts covered.
+    const { wrapEmitterWithRecorder } = await harnessTestables();
+    const errorBase = {
+      name: 'emit_verdict',
+      description: 'stub',
+      input_schema: { type: 'object' },
+      execute: async () => ({ content: '[emit error]', isError: true }),
+    } as unknown as RunnableTool;
+    const recorder = makeRecorder();
+    const budget = makeBudgetController({ total: 200, spent: 50 });
+    const budgetExtension = makeBudgetExtensionFixture({ harness: 'H1_EXECUTE_EVAL' });
+
+    const wrapped = wrapEmitterWithRecorder(errorBase, 'verdict', recorder, noopObserver, budget, budgetExtension);
+    const result = await wrapped.execute({}, toolCtx);
+
+    expect(result.isError).toBe(true);
+    // Revise counter untouched
+    expect(budgetExtension.reviseCountByHarnessRef.current.size).toBe(0);
+    // Degraded-continue flag untouched
+    expect(budgetExtension.degradedContinueRef.current).toBe(false);
+  });
 });
