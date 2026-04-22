@@ -1,28 +1,32 @@
 /**
- * Coding Agent declarations — FEATURE_084 Shard 2 (v0.7.26).
+ * Coding Agent declarations — FEATURE_084 (v0.7.26).
  *
- * Concrete Agent instances for Scout / Planner / Generator / Evaluator with
- * their protocol emitter tools + handoff topology wired in. These extend
- * the placeholder Agent identities exported from `@kodax/core`
- * (FEATURE_080 v0.7.23) by adding:
+ * **These are declarative references exposing the canonical Scout /
+ * Planner / Generator / Evaluator topology to SDK consumers.** Each
+ * exported Agent carries the role's emit tool + the H0/H1/H2 handoff
+ * graph, but carries ONLY a short identifier `instructions` string and
+ * NO coding tools (read / grep / bash / write / edit / etc.).
  *
- *   - `tools`: the role-specific protocol emitter (Shard 2). Additional
- *     coding tools (read / grep / bash / write / edit / ...) bind at Shard 5
- *     when the Runner-driven task engine lands.
- *   - `handoffs`: the continuation topology that encodes the H0/H1/H2 state
- *     machine as Agent-as-data. Runner (FEATURE_084 Shard 4) reads these to
- *     execute the role transitions.
- *   - `reasoning`: placeholder depth hints; full escalation behaviour lands
- *     with FEATURE_078 (v0.7.29).
+ * **The runtime agents are built fresh by
+ * `task-engine/runner-driven.ts::buildRunnerAgentChain` on every run**,
+ * with:
+ *   - full v0.7.22-parity `instructions` via
+ *     `_internal/managed-task/role-prompt.ts::createRolePrompt` (dynamic
+ *     closure resolving decision / contract / metadata / verification /
+ *     tool-policy / evidence-strategy / dispatch guidance per turn)
+ *   - per-run coding tools (read / grep / glob / bash / write / edit /
+ *     dispatch_child_task) wrapped with budget + mutation tracking +
+ *     progress reporting
+ *   - recorder-wrapped emit tools that drive the budget-extension
+ *     dialog + degraded-continue logic
  *
- * **Data-only at this shard.** Nothing runs these agents yet — the legacy
- * `runManagedTask` path is still the sole runtime. Shard 5 wires a new
- * runner-driven path behind `KODAX_MANAGED_TASK_RUNTIME=runner`.
- *
- * Note on `instructions`: the field carries the short identifier summary
- * from the core placeholder. The full role prompt (via `createRolePrompt`)
- * is bound at Shard 5 where runtime context (prompt / decision / verification
- * contract / tool policy) is available.
+ * So these exports are **useful as topology documentation and as a
+ * starting point for custom Runner invocations** (e.g. Runner.run with
+ * your own llm adapter), but they are NOT the agents that run under
+ * normal AMA dispatch. Do not expect wrapping `scoutCodingAgent` to
+ * give you the behaviour of an in-SDK AMA run — for that, use
+ * `runManagedTaskViaRunner` or the preset dispatcher on
+ * `createDefaultCodingAgent`.
  */
 
 import {

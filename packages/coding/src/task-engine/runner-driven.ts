@@ -156,6 +156,7 @@ import {
   sanitizeManagedUserFacingText,
 } from './_internal/managed-task/sanitize.js';
 import { buildManagedTaskCompactionHook } from './_internal/managed-task/compaction.js';
+import { createToolResultTruncationGuardrail } from '../tools/tool-result-truncation-guardrail.js';
 import path from 'node:path';
 
 /**
@@ -2669,6 +2670,16 @@ async function runManagedTaskViaRunnerInner(
     llm,
     abortSignal: options.abortSignal,
     compactionHook,
+    // v0.7.26 parity: register the tool-result truncation guardrail so
+    // every tool invocation flows through the same post-execute size
+    // policy the legacy path applies (agent.ts via
+    // `applyToolResultGuardrail`). Without it the LLM sees raw
+    // unbounded tool output, blowing the context window on read/grep
+    // of large files. The guardrail is authored in
+    // `tools/tool-result-truncation-guardrail.ts` and participates in
+    // the core Guardrail lifecycle (Span emission + declaration-order
+    // composition).
+    guardrails: [createToolResultTruncationGuardrail(baseCtx)],
     // v0.7.26 parity: surface Runner tool-loop invocations through the
     // same KodaXEvents channels legacy runManagedTask used. Without this
     // wiring the REPL worker ledger stays empty mid-run — only the final
