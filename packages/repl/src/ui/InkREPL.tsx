@@ -6091,11 +6091,15 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           return;
         }
         if (streamingState.pendingInputs.length >= MAX_PENDING_INPUTS) {
-          addHistoryItem({
+          // Queue-limit notice fires while the user is typing a
+          // follow-up during an active managed task; route to the
+          // correct layer so it does not anchor near the user prompt
+          // above the managed foreground ledger.
+          emitInfoItemToCorrectLayer({
             type: "info",
             icon: "\u23F3",
             text: `Queued follow-up limit reached (${MAX_PENDING_INPUTS}). Wait for the next round or press Esc to remove the latest item.`,
-          });
+          }, 'queue-limit');
           return;
         }
         // Queue the EXPANDED text — downstream drain path feeds the agent.
