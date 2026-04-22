@@ -1507,6 +1507,39 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     return item.id;
   }, [appendManagedForegroundTurnHistory]);
 
+  /**
+   * Route an info history item to the correct layer. When a managed
+   * worker is active the main history renders ABOVE the managed
+   * foreground turn, so any `addHistoryItem` during that window pins
+   * the info near the user prompt instead of appearing inline with
+   * the current worker output. This helper mirrors the fix applied to
+   * `recordConfirmResult` (63330bc), `onProviderRecovery` (09cd7ae),
+   * and `onRetry` — and extends it to the remaining info callbacks
+   * (`onCompact`, `onProviderRateLimit`, `onScoutSuspiciousCompletion`).
+   *
+   * Callers: anything that can fire while a managed worker owns the
+   * foreground turn AND produces an info-line history entry. Items
+   * that land at round boundaries (e.g. "No response text produced")
+   * are NOT candidates — by that point the managed foreground is
+   * already cleared.
+   */
+  const emitInfoItemToCorrectLayer = useCallback((
+    item: { type: "info"; text: string; icon?: string },
+    tag: string,
+  ): void => {
+    if (managedForegroundOwnerRef.current.workerId) {
+      appendManagedForegroundLedgerItem({
+        id: `${tag}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        type: item.type,
+        text: item.text,
+        ...(item.icon ? { icon: item.icon } : {}),
+        timestamp: Date.now(),
+      } as HistoryItem);
+    } else {
+      addHistoryItem(item);
+    }
+  }, [addHistoryItem, appendManagedForegroundLedgerItem]);
+
   const updateManagedForegroundLedgerItem = useCallback((
     itemId: string | undefined,
     updater: (item: HistoryItem) => HistoryItem,
@@ -4959,11 +4992,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       if (userInterruptedRef.current) {
         return;
       }
-      addHistoryItem({
+      // Route through the layer-aware emitter so rate-limit notices
+      // render inline with the managed worker output instead of
+      // clustering above the user prompt when a managed task is active.
+      emitInfoItemToCorrectLayer({
         type: "info",
         icon: "\u23F3",
-        text: `[Rate Limit] Retrying in ${delayMs / 1000}s (${attempt}/${maxAttempts})...`
-      });
+        text: `[Rate Limit] Retrying in ${delayMs / 1000}s (${attempt}/${maxAttempts})...`,
+      }, 'ratelimit');
     },
     onScoutSuspiciousCompletion: (payload) => {
       // X-layer: Scout's H0 completion was inferred (no explicit escalation)
@@ -4973,11 +5009,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       if (userInterruptedRef.current) {
         return;
       }
-      addHistoryItem({
+      // Scout-suspicious fires while Scout still owns the managed
+      // foreground turn — route to that layer so it renders inline
+      // with the Scout output, not stacked under the user prompt.
+      emitInfoItemToCorrectLayer({
         type: "info",
         icon: "\u26A0",
         text: `[Scout] Completion marked uncertain — signals: ${payload.signals.join(", ")}. Verify the result before continuing.`,
-      });
+      }, 'scout-uncertain');
     },
     // Iteration start - called at the beginning of each agent iteration
     // Iteration start: called at the beginning of each agent iteration.
@@ -5326,11 +5365,17 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       const tokensBefore = lastCompactionTokensBeforeRef.current ?? estimatedTokens;
       lastCompactionTokensBeforeRef.current = null;
       const prevK = Math.round(tokensBefore / 1000);
-      addHistoryItem({
+      // Route through the layer-aware emitter so the compact notice
+      // renders inline with the managed worker output instead of
+      // stacking right below the user prompt when a managed task is
+      // active (compaction fires at the top of an agent turn, before
+      // any foreground output, so without routing it anchors to the
+      // main history above the managed foreground ledger).
+      emitInfoItemToCorrectLayer({
         type: "info",
         icon: "\u2728",
         text: `Context auto-compacted (was ~${prevK}k tokens)`,
-      });
+      }, 'compact');
     },
     onCompactEnd: () => {
       // Just stop the indicator if compaction was skipped/aborted without changing the context
