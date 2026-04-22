@@ -114,6 +114,7 @@ import type {
   ManagedMutationTracker,
 } from '../types.js';
 import type { ReasoningPlan } from '../reasoning.js';
+import { buildAmaControllerDecision, buildPromptOverlay } from '../reasoning.js';
 import type { ManagedTaskBudgetController } from './_internal/managed-task/budget.js';
 import {
   buildManagedStatusBudgetFields,
@@ -144,12 +145,19 @@ import {
 } from './_internal/managed-task/artifacts.js';
 import { attachManagedTaskRepoIntelligence } from './_internal/managed-task/repo-intelligence.js';
 import {
+  buildManagedWorkerToolPolicy,
   DOCS_ONLY_WRITE_PATH_PATTERNS,
   enforceShellWriteBoundary,
   enforceWritePathBoundary,
   inferScoutMutationIntent,
+  matchesShellPattern,
+  SHELL_WRITE_PATTERNS,
   type ScoutMutationIntent,
 } from './_internal/managed-task/tool-policy.js';
+import {
+  createVerificationScorecard,
+  type ScorecardVerdictDirective,
+} from './_internal/managed-task/scorecard.js';
 import {
   SUSPICIOUS_LAST_TEXT_PREVIEW_LIMIT,
   detectScoutSuspiciousSignals,
@@ -157,7 +165,9 @@ import {
 import { createRolePrompt } from './_internal/managed-task/role-prompt.js';
 import type { ManagedRolePromptContext } from './_internal/managed-task/role-prompt-types.js';
 import {
+  MANAGED_CONTROL_PLANE_MARKERS,
   sanitizeEvaluatorPublicAnswer,
+  sanitizeManagedStreamingText,
   sanitizeManagedUserFacingText,
 } from './_internal/managed-task/sanitize.js';
 import { buildManagedTaskCompactionHook } from './_internal/managed-task/compaction.js';
@@ -239,12 +249,37 @@ export type RolePromptContextFactory = (
 export interface RunnerChainPromptContext {
   /** Original user task. Becomes `rolePromptContext.originalTask`. */
   readonly prompt: string;
-  /** Routing decision from `createReasoningPlan`. */
-  readonly decision: KodaXTaskRoutingDecision;
+  /**
+   * Routing decision. Legacy callers / tests pass a static
+   * `KodaXTaskRoutingDecision` captured at chain construction. The
+   * runtime path passes a `() => KodaXTaskRoutingDecision` thunk so the
+   * Generator / Evaluator see the post-Scout plan (M4 parity) instead of
+   * the stale pre-Scout decision captured when the agent graph was
+   * frozen. Without the thunk, a plan=H2 + Scout=H1 run leaks H2-only
+   * prompt guidance into H1 workers.
+   */
+  readonly decision: KodaXTaskRoutingDecision | (() => KodaXTaskRoutingDecision);
   /** Optional structured task metadata. */
   readonly metadata?: Record<string, KodaXJsonValue>;
-  /** Optional tool policy (derived elsewhere; Runner-driven path defaults to undefined). */
+  /**
+   * Optional static tool policy. Kept for tests / topology-only call sites
+   * that don't need per-role policy. When both `toolPolicy` and
+   * `toolPolicyFactory` are absent, the prompt's "## Tool Policy" section
+   * is omitted (matches legacy behavior when a role falls through to
+   * `undefined` in `buildManagedWorkerToolPolicy`).
+   */
   readonly toolPolicy?: KodaXTaskToolPolicy;
+  /**
+   * P1 parity — per-role tool policy factory. Called lazily at each
+   * Runner invocation so the Generator branch can see Scout's mutation
+   * intent (which is only known after Scout emits). Without this, every
+   * managed worker's prompt drops the "## Tool Policy" section. See
+   * `buildManagedWorkerToolPolicy` for the switch body.
+   */
+  readonly toolPolicyFactory?: (
+    role: KodaXTaskRole,
+    recorder: VerdictRecorder,
+  ) => KodaXTaskToolPolicy | undefined;
   /** Optional role-context factory for skillMap / scoutScope / childWriteReviewPrompt injection. */
   readonly contextFactory?: RolePromptContextFactory;
 }
@@ -339,12 +374,25 @@ function resolveRoleInstructions(
   const ctx = promptContext.contextFactory
     ? promptContext.contextFactory(role, recorder)
     : { originalTask: promptContext.prompt };
+  // P1 parity — resolve per-role tool policy at invocation time so the
+  // Generator branch can see Scout's mutation intent. Falls back to the
+  // static `toolPolicy` for tests / topology-only paths.
+  const toolPolicy = promptContext.toolPolicyFactory
+    ? promptContext.toolPolicyFactory(role, recorder)
+    : promptContext.toolPolicy;
+  // M4 parity — resolve routing decision lazily. When the caller supplies
+  // a thunk, the Generator / Evaluator see the post-Scout decision
+  // (`applyScoutDecisionToPlan` output) rather than the pre-Scout
+  // snapshot. Tests pass a static decision for topology checks.
+  const decision = typeof promptContext.decision === 'function'
+    ? promptContext.decision()
+    : promptContext.decision;
   return createRolePrompt(
     role,
     promptContext.prompt,
-    promptContext.decision,
+    decision,
     verification,
-    promptContext.toolPolicy,
+    toolPolicy,
     agentName,
     promptContext.metadata,
     ctx,
@@ -593,6 +641,26 @@ function wrapEmitterWithRecorder(
             budget.totalBudget = Math.max(budget.totalBudget, BUDGET_CAP_BY_HARNESS[scoutHarness]);
           }
         }
+        // M4 parity (v0.7.26) — propagate Scout's decision back into the
+        // plan so downstream Generator / Evaluator prompts see the
+        // post-Scout harness / routing notes / prompt overlay. Without
+        // this, a plan=H2 but Scout=H1 run leaves H2-only prompt
+        // guidance leaking into the H1 workers. Mirrors legacy's
+        // `applyScoutDecisionToPlan` (task-engine.ts:6569) which runs
+        // right after `runManagedScoutStage`.
+        if (slot === 'scout' && budgetExtension?.planRef.current) {
+          const scoutPayload = recorder.scout?.payload.scout;
+          if (scoutPayload?.confirmedHarness) {
+            budgetExtension.planRef.current = applyScoutDecisionToPlanRunner(
+              budgetExtension.planRef.current,
+              {
+                confirmedHarness: scoutPayload.confirmedHarness,
+                harnessRationale: scoutPayload.harnessRationale,
+                summary: scoutPayload.summary,
+              },
+            );
+          }
+        }
         observer.onRoleEmit(SLOT_TO_ROLE[slot], recorder);
         // 90%-threshold budget-extension dialog. Legacy only triggered this
         // on Evaluator revise; the Runner-driven path now fires it after
@@ -814,6 +882,113 @@ function buildEvidenceEntryForRoleEmit(args: {
  *   - events[] — inline live-event list, currently one entry per observer
  *     tick so the REPL ticker has something to render
  */
+/**
+ * M4 parity (v0.7.26) — 1:1 port of legacy
+ * `task-engine.ts::applyScoutDecisionToPlan` (line 564). Updates the plan
+ * in place once Scout emits its `confirmedHarness` so downstream role
+ * prompts / tool-policy / budget controller see the post-Scout decision
+ * instead of the stale pre-Scout snapshot. Without this, a plan=H2 but
+ * Scout=H1 run leaks H2-only prompt guidance into the H1 workers.
+ *
+ * Critical nuance: Scout overriding the topology ceiling (its own
+ * confirmed harness > `topologyCeiling`) is honoured without clamping —
+ * Scout has strictly more information than the pre-Scout regex heuristic
+ * (FEATURE_061). `upgradeCeiling` is lifted to match so the budget
+ * controller + mid-run escalation see a consistent state.
+ */
+const RUNNER_HARNESS_ORDER: readonly KodaXHarnessProfile[] = [
+  'H0_DIRECT',
+  'H1_EXECUTE_EVAL',
+  'H2_PLAN_EXECUTE_EVAL',
+];
+function getRunnerHarnessRank(harness: KodaXHarnessProfile): number {
+  return RUNNER_HARNESS_ORDER.indexOf(harness);
+}
+
+function applyScoutDecisionToPlanRunner(
+  plan: ReasoningPlan,
+  scoutPayload:
+    | {
+        confirmedHarness?: KodaXHarnessProfile;
+        harnessRationale?: string;
+        summary?: string;
+      }
+    | undefined,
+): ReasoningPlan {
+  const confirmedHarness = scoutPayload?.confirmedHarness;
+  if (!confirmedHarness) {
+    return plan;
+  }
+  const topologyCeiling = plan.decision.topologyCeiling ?? plan.decision.upgradeCeiling;
+  const scoutOverrodeCeiling = topologyCeiling
+    ? getRunnerHarnessRank(confirmedHarness) > getRunnerHarnessRank(topologyCeiling)
+    : false;
+  const ceilingNote = scoutOverrodeCeiling
+    ? `Scout overrode topology ceiling ${topologyCeiling} → ${confirmedHarness}: ${scoutPayload.harnessRationale ?? 'task complexity requires escalation'}.`
+    : undefined;
+  if (
+    confirmedHarness === plan.decision.harnessProfile
+    && !scoutPayload.summary
+    && !ceilingNote
+  ) {
+    return plan;
+  }
+  const decision: KodaXTaskRoutingDecision = {
+    ...plan.decision,
+    harnessProfile: confirmedHarness,
+    upgradeCeiling: scoutOverrodeCeiling
+      ? confirmedHarness
+      : plan.decision.upgradeCeiling,
+    reason: scoutPayload.summary
+      ? `${plan.decision.reason} Scout confirmed ${confirmedHarness}: ${scoutPayload.summary}`
+      : plan.decision.reason,
+    routingNotes: [
+      ...(plan.decision.routingNotes ?? []),
+      ...(scoutPayload.summary ? [`Scout decision: ${scoutPayload.summary}`] : []),
+      ...(ceilingNote ? [ceilingNote] : []),
+    ],
+  };
+  const amaControllerDecision = buildAmaControllerDecision(decision);
+  return {
+    ...plan,
+    decision,
+    amaControllerDecision,
+    promptOverlay: buildPromptOverlay(
+      decision,
+      plan.providerPolicy?.routingNotes,
+      plan.providerPolicy,
+      amaControllerDecision,
+    ),
+  };
+}
+
+/**
+ * H3 parity (v0.7.26) — compact routing-note builder matching legacy
+ * `createLiveRoutingNote` (task-engine.ts:1529). Emitted once before
+ * Scout's preflight so the REPL work-strip can label the task's routing
+ * context (review target, review scale, routing override reason). The
+ * Runner-driven path doesn't have `repoRoutingSignals` in plan (those
+ * were computed by the legacy planner earlier); we fall back to the
+ * decision fields plan surfaces directly.
+ */
+function buildRunnerRoutingNote(plan: ReasoningPlan): string {
+  const detailParts: string[] = [];
+  const decision = plan.decision;
+  const reviewScale = decision.reviewScale ? ` (${decision.reviewScale})` : '';
+  if (decision.reviewTarget) {
+    detailParts.push(`${decision.reviewTarget}${reviewScale}`);
+  }
+  if (decision.routingSource && decision.routingSource !== 'model') {
+    detailParts.push(`routing=${decision.routingSource}`);
+  }
+  if (decision.routingAttempts && decision.routingAttempts > 1) {
+    detailParts.push(`attempts=${decision.routingAttempts}`);
+  }
+  return detailParts.length > 0
+    ? `AMA routing · ${detailParts.join(' · ')}`
+    : 'AMA routing';
+}
+
 function buildObserverBridge(
   events: KodaXEvents | undefined,
   harnessRef: { current: KodaXHarnessProfile },
@@ -1053,24 +1228,31 @@ function wrapCodingToolAsRunnable(
  * Matches on leading command-word boundary — `rm /tmp/foo` blocks
  * but `node rm-stub.js` does not.
  */
-const SHELL_MUTATION_PATTERNS: readonly RegExp[] = [
-  // Legacy SHELL_WRITE_PATTERNS (v0.7.22 parity).
-  /\b(?:Set-Content|Add-Content|Out-File|Tee-Object|Copy-Item|Move-Item|Rename-Item|Remove-Item|New-Item|Clear-Content)\b/,
-  /\b(?:rm|mv|cp|del|erase|touch|mkdir|rmdir|rename|ren)\b/,
-  /\b(?:sed\s+-i|perl\s+-pi|python\s+-c|node\s+-e)\b/,
-  /(?:^|\s)(?:>|>>)(?!(?:\s*&1|\s*2>&1))/,
-  // v0.7.26 safety extensions.
-  /\bchmod\s/i,
-  /\bchown\s/i,
-  /\bgit\s+(?:add|commit|push|merge|rebase|reset|checkout\s+[^-]|rm)/i,
-  /\bnpm\s+(?:install|publish|update|rm)/i,
-  /\bpnpm\s+(?:install|publish|update|rm)/i,
-  /\byarn\s+(?:add|publish|remove)/i,
+/**
+ * v0.7.26 extensions to legacy `SHELL_WRITE_PATTERNS`. Legacy only guarded
+ * classic filesystem-mutating shells; these cover state-changing shells
+ * that surfaced as risks after FEATURE_084 landed. `SHELL_WRITE_PATTERNS`
+ * (imported from `tool-policy.ts`) is applied first; these extensions
+ * apply second so the combined set is a strict super-set.
+ */
+const SHELL_MUTATION_EXTENSIONS: readonly string[] = [
+  '\\bchmod\\s',
+  '\\bchown\\s',
+  '\\bgit\\s+(?:add|commit|push|merge|rebase|reset|checkout\\s+[^-]|rm)',
+  '\\bnpm\\s+(?:install|publish|update|rm)',
+  '\\bpnpm\\s+(?:install|publish|update|rm)',
+  '\\byarn\\s+(?:add|publish|remove)',
 ];
 
 /**
- * Wrap a bash tool so verification-only roles (Evaluator) cannot
+ * Wrap a bash tool so verification-only roles (Scout / Evaluator) cannot
  * execute shell commands that mutate the filesystem or git state.
+ *
+ * P2 parity — reuses the same `SHELL_WRITE_PATTERNS` set the Generator
+ * docs-scoped / review-only guard uses, so all three roles share a
+ * single source of truth. The v0.7.26 safety extensions sit on top of
+ * the legacy set — never narrower.
+ *
  * Mirrors legacy `createToolPolicyHook` behaviour at task-engine.ts
  * ~1915 which blocked `SHELL_WRITE_PATTERNS` on read-only role tool
  * policies. Non-bash tools pass through unchanged.
@@ -1080,13 +1262,24 @@ function wrapReadOnlyBash(bashTool: RunnableTool, roleTitle: string): RunnableTo
     ...bashTool,
     execute: async (input, ctx): Promise<RunnerToolResult> => {
       const command = typeof input.command === 'string' ? input.command.trim() : '';
-      if (command && SHELL_MUTATION_PATTERNS.some((re) => re.test(command))) {
-        return {
-          content:
-            `[Managed Task ${roleTitle}] Shell command blocked because this role is verification-only. ` +
-            `Command: ${command.slice(0, 120)}`,
-          isError: true,
-        };
+      if (command) {
+        // Shared super-set: legacy SHELL_WRITE_PATTERNS + v0.7.26 safety
+        // extensions. Using the shared set here (instead of calling
+        // enforceShellWriteBoundary, which carries the Generator-flavored
+        // "docs-only" message) lets Scout / Evaluator keep their own
+        // "verification-only" blocking message — matches legacy
+        // createToolPolicyHook branching.
+        if (
+          matchesShellPattern(command, SHELL_WRITE_PATTERNS)
+          || matchesShellPattern(command, SHELL_MUTATION_EXTENSIONS)
+        ) {
+          return {
+            content:
+              `[Managed Task ${roleTitle}] Shell command blocked because this role is verification-only. ` +
+              `Command: ${command.slice(0, 120)}`,
+            isError: true,
+          };
+        }
       }
       return bashTool.execute(input, ctx);
     },
@@ -1697,7 +1890,22 @@ export function buildRunnerLlmAdapter(
           onTextDelta: (text: string) => {
             boundaryTracker.markTextDelta(text);
             resetIdleTimer();
-            options.events?.onTextDelta?.(text);
+            // M2 parity (v0.7.26) — scrub managed control-plane markers
+            // and incomplete managed fences from the streamed delta
+            // before surfacing to `events.onTextDelta`. Without this,
+            // mid-turn `[managed-task] ...` / `<scout_verdict>` tags
+            // briefly appear in REPL live output even though they're
+            // stripped from the final turn text. Matches legacy
+            // behaviour where managed-worker streams routed through
+            // `sanitizeManagedStreamingText` before the REPL saw them.
+            // The sanitize call trims — only apply it when we actually
+            // detect a marker in this delta to preserve mid-token
+            // whitespace in the common clean-delta case.
+            const hasMarker = text.includes('```')
+              || MANAGED_CONTROL_PLANE_MARKERS.some((marker) => text.includes(marker));
+            const outText = hasMarker ? sanitizeManagedStreamingText(text) : text;
+            if (outText.length === 0) return;
+            options.events?.onTextDelta?.(outText);
           },
           onThinkingDelta: (text: string) => {
             boundaryTracker.markThinkingDelta(text);
@@ -2161,7 +2369,7 @@ function buildManagedTaskPayload(args: {
   const verdictSummary =
     userAnswer ?? recorder.verdict?.payload.verdict?.reason ?? prompt;
 
-  return {
+  const task: KodaXManagedTask = {
     contract,
     roleAssignments,
     workItems: [],
@@ -2262,6 +2470,20 @@ function buildManagedTaskPayload(args: {
           : undefined,
     },
   };
+
+  // H2 parity (v0.7.26) — populate the verification scorecard after the
+  // task shape is built, mirroring legacy `createVerificationScorecard`.
+  // Without this, `task.runtime.scorecard` stayed undefined and
+  // `scorecard.json` persisted as `null`, starving downstream consumers
+  // (review-scale UI, session-storage replay, rubric-family branches).
+  const verdictPayload = recorder.verdict?.payload.verdict;
+  const scorecardDirective: ScorecardVerdictDirective | undefined = verdictPayload
+    ? { status: verdictPayload.status, reason: verdictPayload.reason }
+    : undefined;
+  const scorecard = createVerificationScorecard(task, scorecardDirective);
+  return scorecard && task.runtime
+    ? { ...task, runtime: { ...task.runtime, scorecard } }
+    : task;
 }
 
 /**
@@ -2703,6 +2925,24 @@ async function runManagedTaskViaRunnerInner(
     checkpointWriter,
   );
 
+  // H3 parity (v0.7.26) — emit the `routing` phase before Scout's
+  // preflight. Legacy `task-engine.ts:6545` fired this event right after
+  // the routing decision was finalised so the REPL's AMA work-strip could
+  // render "AMA routing · <scope>" before Scout starts thinking. Without
+  // it, the UI jumped straight to `preflight` and the routing context
+  // (review target, repo signals, override reason) was invisible.
+  if (plan && options.events?.onManagedTaskStatus) {
+    const routingNote = buildRunnerRoutingNote(plan);
+    options.events.onManagedTaskStatus({
+      agentMode: 'ama',
+      harnessProfile: plan.decision.harnessProfile,
+      phase: 'routing',
+      note: routingNote,
+      upgradeCeiling: plan.decision.upgradeCeiling ?? plan.decision.harnessProfile,
+      ...buildManagedStatusBudgetFields(budget, budgetApprovalRef.current),
+    });
+  }
+
   observer.preflight();
 
   const planRef = { current: plan };
@@ -2781,13 +3021,40 @@ async function runManagedTaskViaRunnerInner(
   const chainPromptContext: RunnerChainPromptContext | undefined = plan
     ? {
       prompt,
-      decision: plan.decision,
+      // M4 parity — resolve decision from planRef at invocation time so
+      // post-Scout plan updates (applyScoutDecisionToPlanRunner) reach
+      // downstream Generator / Evaluator prompts. Without the thunk, the
+      // captured `plan.decision` would keep pre-Scout harness / routing
+      // notes and leak H2-only prompt guidance into H1 workers.
+      decision: () => planRef.current?.decision ?? plan.decision,
       metadata: options.context?.taskMetadata,
-      // toolPolicy not surfaced on KodaXContextOptions at the top level
-      // (it's per-role on KodaXTaskRoleAssignment). The Runner-driven path
-      // runs a single chain, so the formatTaskPolicy section stays absent
-      // unless later wiring injects a synthesized union policy.
-      toolPolicy: undefined,
+      // P1 parity — per-role tool policy computed lazily so Generator
+      // can see Scout's mutation intent after emit. Legacy routed this
+      // through `buildManagedWorkerToolPolicy` per role; the Runner-driven
+      // path needs the same branching to keep the "## Tool Policy"
+      // section in each worker's system prompt (allow-lists, shell
+      // patterns, docs-only write boundary).
+      //
+      // M4 parity extension — also read the current plan via `planRef`
+      // so the Generator's H1 review-only / docs-scoped branch triggers
+      // off Scout's post-decision harness + primaryTask, not the stale
+      // pre-Scout snapshot.
+      toolPolicyFactory: (role, currentRecorder) => {
+        const currentDecision = planRef.current?.decision ?? plan.decision;
+        return buildManagedWorkerToolPolicy(
+          role,
+          options.context?.taskVerification,
+          currentDecision.harnessProfile,
+          inferScoutMutationIntent(
+            {
+              scope: currentRecorder.scout?.payload.scout?.scope,
+              reviewFilesOrAreas: currentRecorder.scout?.payload.scout?.reviewFilesOrAreas,
+            },
+            currentDecision.primaryTask,
+          ),
+          options.context?.repoIntelligenceMode,
+        );
+      },
       contextFactory: rolePromptContextFactory,
     }
     : undefined;

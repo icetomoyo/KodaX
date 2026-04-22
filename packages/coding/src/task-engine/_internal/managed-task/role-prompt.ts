@@ -338,6 +338,12 @@ export function createRolePrompt(
       'Do NOT stop between writing your answer and calling the protocol tool. Emit both in one turn.',
       'Keep the user-facing answer in normal text. Do not bury it inside the protocol payload.',
       'Never mention internal protocol tools, fenced blocks, MCP, capability runtimes, or extension runtimes in the user-facing answer.',
+      // D2 parity (v0.7.22 line restored) — tell the LLM how to fall back
+      // when tool calling isn't available on the provider. The fenced-block
+      // parser in `sanitize.ts` + `parse-helpers.ts` still accepts this
+      // payload form; without the prompt line, LLMs on CLI-bridge and
+      // self-hosted OpenAI-compat providers never discover it.
+      'If tool calling is unavailable, append the required fenced block at the end of this same response.',
     ].join('\n')
     : undefined;
 
@@ -366,7 +372,9 @@ export function createRolePrompt(
           '',
           'H0 (default) — "I\'d just do this myself. No one needs to check my work."',
           '  Examples: fixing a typo, answering a question, git commit/push, config change, single-file edit.',
-          '  → Complete the task directly. Call emit_scout_verdict with confirmed_harness="H0_DIRECT" and direct_completion_ready="yes".',
+          '  → Complete the task directly. No special protocol needed.',
+          '    (You MAY optionally call emit_scout_verdict with confirmed_harness="H0_DIRECT"',
+          '     for observability, but it is not required — a direct text answer is sufficient.)',
           '',
           'H1 — "I can do this, but someone should review my work before shipping."',
           '  Examples: fixing a bug across files, code review, performance optimization, security fix.',

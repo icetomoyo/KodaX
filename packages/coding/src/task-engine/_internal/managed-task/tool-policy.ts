@@ -1,39 +1,44 @@
 /**
- * Managed-task tool policy — path- and shell-pattern guards.
+ * Managed-task tool policy — path- and shell-pattern guards + per-role
+ * policy assembler.
  *
  * Ported 1:1 from the legacy `task-engine.ts` helpers + the deleted
  * `_internal/prompts/tool-policy.ts` + `role-prompt-types.ts` modules
- * (removed in FEATURE_084 Shard 6d-b).
+ * (removed in FEATURE_084 Shard 6d-b), then restored in v0.7.26 to close
+ * the prompt-surface parity gap — without `buildManagedWorkerToolPolicy`
+ * the "## Tool Policy" section vanished from every managed worker's
+ * system prompt.
  *
- * Shard 6d-j + 6d-M scope — restore the **runtime** half of the legacy
- * tool policy:
+ * Runtime guards (always ported):
  *   - `DOCS_ONLY_WRITE_PATH_PATTERNS` / `SHELL_WRITE_PATTERNS` constants.
- *   - `matchesWritePathPattern` / `matchesShellPattern` / `collectToolInputPaths`
- *     regex + recursive-object traversal primitives.
- *   - `enforceWritePathBoundary` — `'write' | 'edit' | 'multi_edit' | ...`
- *     guard that reads `input.file_path` (+ nested keys) and blocks writes
- *     outside the caller-supplied path allow-list.
- *   - `enforceShellWriteBoundary` — `'bash'` guard that blocks destructive
- *     shell commands when the caller role is verification-only or its
- *     mutation-intent is docs-scoped.
- *   - `ScoutMutationIntent` / `inferScoutMutationIntent` — pure function
- *     that classifies Scout's intent from its emitted `scope` +
- *     `reviewFilesOrAreas` + the routing `primaryTask`. Callers do NOT
- *     read LLM-self-declared intent; Scout's scope list IS the evidence.
+ *   - `matchesWritePathPattern` / `matchesShellPattern` / `collectToolInputPaths`.
+ *   - `enforceWritePathBoundary` / `enforceShellWriteBoundary`.
+ *   - `ScoutMutationIntent` / `inferScoutMutationIntent`.
  *
- * The prompt-assembly half of the legacy `buildManagedWorkerToolPolicy` is
- * **intentionally not ported** — the Runner-driven path does not assemble
- * per-role prompts with an injected policy summary; each `Agent` already
- * carries its own instructions + tool allow-list. This module supplies
- * only the runtime enforcement callers need.
- *
- * Callers:
- *   - `runner-driven.ts` → `wrapGeneratorWriteWithMutationGuard`,
- *     `wrapGeneratorBashWithMutationGuard` (Generator worker path).
+ * Policy assembly (restored for P1 parity):
+ *   - `INSPECTION_SHELL_PATTERNS` / `VERIFICATION_SHELL_PATTERNS`.
+ *   - `PLANNER_ALLOWED_TOOLS` / `H1_EVALUATOR_ALLOWED_TOOLS` /
+ *     `H1_READONLY_GENERATOR_ALLOWED_TOOLS`.
+ *   - `extractRuntimeCommandCandidate` / `buildRuntimeVerificationShellPatterns`.
+ *   - `buildManagedWorkerToolPolicy` — the per-role switch that produces
+ *     the `KodaXTaskToolPolicy` consumed by `formatToolPolicy` when
+ *     rendering each worker's system prompt.
  */
 
-import { isDocsLikePath } from '../text-utils.js';
-import type { KodaXTaskRoutingDecision } from '../../../types.js';
+import { isDocsLikePath, escapeRegexLiteral } from '../text-utils.js';
+import type {
+  KodaXRepoIntelligenceMode,
+  KodaXTaskRole,
+  KodaXTaskRoutingDecision,
+  KodaXTaskToolPolicy,
+  KodaXTaskVerificationContract,
+} from '../../../types.js';
+import { MANAGED_PROTOCOL_TOOL_NAME } from '../../../managed-protocol.js';
+import {
+  filterRepoIntelligenceWorkingToolNames,
+  MCP_TOOL_NAMES,
+} from '../../../tools/index.js';
+import { resolveKodaXAutoRepoMode } from '../../../repo-intelligence/runtime.js';
 
 /**
  * Scope hints the Scout emits on `emit_scout_verdict` — `scope` + the
@@ -113,6 +118,223 @@ export const SHELL_WRITE_PATTERNS: readonly string[] = [
   '\\b(?:sed\\s+-i|perl\\s+-pi|python\\s+-c|node\\s+-e)\\b',
   '(?:^|\\s)(?:>|>>)(?!(?:\\s*&1|\\s*2>&1))',
 ];
+
+/**
+ * Read-only inspection shell allow-list. Shared by Scout / Planner /
+ * Evaluator so they can run status/diff/log/list commands but nothing
+ * mutating. 1:1 port from legacy `_internal/prompts/tool-policy.ts`.
+ */
+export const INSPECTION_SHELL_PATTERNS: readonly string[] = [
+  '^(?:git\\s+(?:status|diff|show|log|branch|rev-parse|ls-files))\\b',
+  '^(?:Get-ChildItem|Get-Content|Select-String|type|dir|ls|cat)\\b',
+  '^(?:findstr|where|pwd|cd)\\b',
+  '^(?:node|npm|pnpm|yarn|bun)\\s+(?:run\\s+)?(?:lint|typecheck|check|list|why)\\b',
+];
+
+/**
+ * Evaluator / verification-capable role allow-list — inspection +
+ * test-runner / build / lint / e2e drivers. 1:1 port from legacy.
+ */
+export const VERIFICATION_SHELL_PATTERNS: readonly string[] = [
+  ...INSPECTION_SHELL_PATTERNS,
+  '^(?:agent-browser)\\b',
+  '^(?:npx\\s+)?playwright\\b',
+  '^(?:npx\\s+)?vitest\\b',
+  '^(?:npx\\s+)?jest\\b',
+  '^(?:npx\\s+)?cypress\\b',
+  '^(?:npm|pnpm|yarn|bun)\\s+(?:run\\s+)?(?:test|test:[^\\s]+|e2e|e2e:[^\\s]+|verify|verify:[^\\s]+|build|build:[^\\s]+|lint|lint:[^\\s]+|typecheck|typecheck:[^\\s]+)\\b',
+  '^(?:pytest|go\\s+test|cargo\\s+test|dotnet\\s+test|mvn\\s+test|gradle\\s+test)\\b',
+];
+
+/** Planner tool allow-list — read/overview/scope + MCP. 1:1 port. */
+export const PLANNER_ALLOWED_TOOLS: readonly string[] = [
+  'changed_scope',
+  'repo_overview',
+  'changed_diff_bundle',
+  'glob',
+  'grep',
+  'read',
+  ...MCP_TOOL_NAMES,
+];
+
+/** H1 Evaluator tool allow-list — inspection + diff + MCP. 1:1 port. */
+export const H1_EVALUATOR_ALLOWED_TOOLS: readonly string[] = [
+  'changed_scope',
+  'repo_overview',
+  'changed_diff_bundle',
+  'changed_diff',
+  'glob',
+  'grep',
+  'read',
+  ...MCP_TOOL_NAMES,
+];
+
+/** H1 read-only Generator tool allow-list — inspection + dispatch + MCP. 1:1 port. */
+export const H1_READONLY_GENERATOR_ALLOWED_TOOLS: readonly string[] = [
+  'changed_scope',
+  'repo_overview',
+  'changed_diff_bundle',
+  'changed_diff',
+  'glob',
+  'grep',
+  'read',
+  'dispatch_child_task',
+  ...MCP_TOOL_NAMES,
+];
+
+/**
+ * Extract a plausible shell command candidate from a free-form
+ * verification hint (e.g. `"startup: npm run dev"`). Returns the
+ * suffix only when it begins with a recognized runtime driver —
+ * prevents arbitrary user prose from polluting the shell allow-list.
+ * 1:1 port from legacy.
+ */
+export function extractRuntimeCommandCandidate(
+  value: string | undefined,
+): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  const suffixMatch = trimmed.match(/^[^:]+:\s*(.+)$/);
+  const candidate = suffixMatch?.[1]?.trim() || trimmed;
+  return /^(?:npm|pnpm|yarn|bun|npx|node|python|pytest|go\s+test|cargo\s+test|dotnet\s+test|mvn\s+test|gradle\s+test|curl|Invoke-WebRequest|Invoke-RestMethod|agent-browser|sqlite3|psql|mysql)\b/i.test(candidate)
+    ? candidate
+    : undefined;
+}
+
+/**
+ * Extend the verification shell allow-list with the exact startup /
+ * API / DB commands declared by the task's verification contract,
+ * plus a generic curl/Invoke-* pattern when a live HTTP target is
+ * implied. 1:1 port from legacy.
+ */
+export function buildRuntimeVerificationShellPatterns(
+  verification: KodaXTaskVerificationContract | undefined,
+): string[] {
+  const runtime = verification?.runtime;
+  if (!runtime) return [];
+  const exactCommands = [
+    runtime.startupCommand,
+    ...(runtime.apiChecks ?? []),
+    ...(runtime.dbChecks ?? []),
+  ]
+    .map(extractRuntimeCommandCandidate)
+    .filter((value): value is string => Boolean(value));
+  const patterns = exactCommands.map(
+    (command) => `^${escapeRegexLiteral(command)}(?:\\s+.*)?$`,
+  );
+  if (runtime.baseUrl || (runtime.apiChecks?.length ?? 0) > 0) {
+    patterns.push('^(?:curl|Invoke-WebRequest|Invoke-RestMethod)\\b');
+  }
+  return Array.from(new Set(patterns));
+}
+
+/**
+ * Produce the per-role `KodaXTaskToolPolicy` for a managed worker,
+ * or `undefined` when the role should run with the default unrestricted
+ * policy (currently Scout, and the open-scope H1/H2 Generator).
+ *
+ * 1:1 port from legacy `_internal/prompts/tool-policy.ts::buildManagedWorkerToolPolicy`.
+ *
+ * Behavior:
+ *   - In `repo-intelligence: 'off'`, any allow-list is filtered to drop
+ *     repo-intel working tools and the policy summary gets an explanatory
+ *     sentence appended.
+ *   - `MANAGED_PROTOCOL_TOOL_NAME` is always added back to any non-empty
+ *     allow-list so the control-plane escape hatch can never be blocked.
+ *   - H1 Generator branches off Scout's scope intent (review-only /
+ *     docs-scoped) to add write-path or blocked-tool constraints; H2
+ *     Generator stays open and relies on the Evaluator tail-gate.
+ */
+export function buildManagedWorkerToolPolicy(
+  role: KodaXTaskRole,
+  verification: KodaXTaskVerificationContract | undefined,
+  harnessProfile?: KodaXTaskRoutingDecision['harnessProfile'],
+  scoutMutationIntent?: ScoutMutationIntent,
+  repoIntelligenceMode?: KodaXRepoIntelligenceMode,
+): KodaXTaskToolPolicy | undefined {
+  const strictRepoIntelligenceOff = resolveKodaXAutoRepoMode(repoIntelligenceMode) === 'off';
+  const finalizeToolPolicy = (
+    policy: KodaXTaskToolPolicy | undefined,
+  ): KodaXTaskToolPolicy | undefined => {
+    if (!policy) return policy;
+    const allowedTools = policy.allowedTools?.length
+      ? Array.from(new Set([
+          ...(strictRepoIntelligenceOff
+            ? filterRepoIntelligenceWorkingToolNames(policy.allowedTools)
+            : policy.allowedTools),
+          MANAGED_PROTOCOL_TOOL_NAME,
+        ]))
+      : policy.allowedTools;
+    return {
+      ...policy,
+      allowedTools,
+      summary:
+        strictRepoIntelligenceOff && policy.allowedTools
+          ? [
+              policy.summary,
+              'Repo-intelligence working tools are disabled in off mode; rely on general-purpose read/glob/grep evidence instead.',
+            ].join(' ')
+          : policy.summary,
+    };
+  };
+
+  switch (role) {
+    case 'scout':
+      return undefined;
+    case 'planner':
+      return finalizeToolPolicy({
+        summary: 'Planner may inspect scope facts and overview evidence to produce a sprint contract, but must not linearly page raw diffs, perform deep claim verification, mutate files, or execute implementation steps.',
+        blockedTools: [...WRITE_ONLY_TOOLS],
+        allowedTools: [...PLANNER_ALLOWED_TOOLS],
+        allowedShellPatterns: [...INSPECTION_SHELL_PATTERNS],
+      });
+    case 'generator':
+      if (harnessProfile === 'H1_EXECUTE_EVAL' && scoutMutationIntent === 'review-only') {
+        return finalizeToolPolicy({
+          summary: 'H1 review-only Generator should stay non-mutating per Scout\'s scope. It may inspect scoped evidence and run only limited inspection or explicitly required verification commands; mutate files only if the handoff explicitly requires fixes.',
+          blockedTools: [...WRITE_ONLY_TOOLS],
+          allowedTools: [...H1_READONLY_GENERATOR_ALLOWED_TOOLS],
+          allowedShellPatterns: Array.from(new Set([
+            ...INSPECTION_SHELL_PATTERNS,
+            ...buildRuntimeVerificationShellPatterns(verification),
+          ])),
+        });
+      }
+      if (harnessProfile === 'H1_EXECUTE_EVAL' && scoutMutationIntent === 'docs-scoped') {
+        return finalizeToolPolicy({
+          summary: 'H1 docs-scoped Generator: Scout\'s scope points entirely at documentation paths. Keep edits within those paths; do not expand into source, configuration, build outputs, or system state unless new evidence demands it.',
+          allowedWritePathPatterns: [...DOCS_ONLY_WRITE_PATH_PATTERNS],
+          allowedShellPatterns: Array.from(new Set([
+            ...INSPECTION_SHELL_PATTERNS,
+            ...buildRuntimeVerificationShellPatterns(verification),
+          ])),
+        });
+      }
+      return undefined;
+    case 'evaluator':
+      if (harnessProfile === 'H1_EXECUTE_EVAL') {
+        return finalizeToolPolicy({
+          summary: 'H1 Evaluator is a lightweight checker. It may only do targeted spot-checks against the Generator handoff and must not broad-scan the repo, deep-page large diffs, or run broad test sweeps unless the verification contract explicitly requires them.',
+          blockedTools: [...WRITE_ONLY_TOOLS],
+          allowedTools: [...H1_EVALUATOR_ALLOWED_TOOLS],
+          allowedShellPatterns: Array.from(new Set([
+            ...INSPECTION_SHELL_PATTERNS,
+            ...buildRuntimeVerificationShellPatterns(verification),
+          ])),
+        });
+      }
+      return finalizeToolPolicy({
+        summary: 'Verification agents may inspect the repo and run verification commands, including browser, startup, API, and runtime checks declared by the verification contract, but must not edit project files or mutate control-plane artifacts.',
+        blockedTools: [...WRITE_ONLY_TOOLS],
+        allowedShellPatterns: [
+          ...VERIFICATION_SHELL_PATTERNS,
+          ...buildRuntimeVerificationShellPatterns(verification),
+        ],
+      });
+    default:
+      return undefined;
+  }
+}
 
 const WRITE_PATH_PATTERN_CACHE = new Map<string, RegExp>();
 const SHELL_PATTERN_CACHE = new Map<string, RegExp>();
