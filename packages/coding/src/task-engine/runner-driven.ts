@@ -139,6 +139,10 @@ import {
 } from './_internal/managed-task/scout-signals.js';
 import { createRolePrompt } from './_internal/managed-task/role-prompt.js';
 import type { ManagedRolePromptContext } from './_internal/managed-task/role-prompt-types.js';
+import {
+  sanitizeEvaluatorPublicAnswer,
+  sanitizeManagedUserFacingText,
+} from './_internal/managed-task/sanitize.js';
 import path from 'node:path';
 
 /**
@@ -1794,6 +1798,16 @@ export function buildRunnerLlmAdapter(
 // =============================================================================
 
 function extractUserFacingText(result: { messages: readonly KodaXMessage[]; output: string }): string {
+  const raw = extractUserFacingRaw(result);
+  // v0.7.26 parity: strip internal managed control-plane markers and any
+  // stray ```kodax-task-*``` fences (complete or truncated) that the LLM
+  // might emit in assistant text despite using structured emit tools.
+  // Legacy task-engine.ts applied this at 14 call sites; re-added at the
+  // single Runner-driven extraction point.
+  return sanitizeManagedUserFacingText(raw);
+}
+
+function extractUserFacingRaw(result: { messages: readonly KodaXMessage[]; output: string }): string {
   if (result.output.trim().length > 0) return result.output;
   const last = result.messages[result.messages.length - 1];
   if (!last || last.role !== 'assistant') return '';
@@ -2496,6 +2510,30 @@ export async function runManagedTaskViaRunner(
   const runResult = await Runner.run(chain.scout, runnerInput, {
     llm,
     abortSignal: options.abortSignal,
+    // v0.7.26 parity: surface Runner tool-loop invocations through the
+    // same KodaXEvents channels legacy runManagedTask used. Without this
+    // wiring the REPL worker ledger stays empty mid-run — only the final
+    // formal output reaches the user (observed regression report:
+    // "除了正式输出之外的任何别的信息都看不到"). Legacy agent.ts fired
+    // events.onToolResult at three sites per invocation (success / error
+    // / cancelled); the Runner observer maps 1:1 onto
+    // `onToolUseStart` + `onToolResult` here.
+    toolObserver: {
+      onToolCall: (call) => {
+        options.events?.onToolUseStart?.({
+          name: call.name,
+          id: call.id,
+          input: call.input,
+        });
+      },
+      onToolResult: (call, result) => {
+        options.events?.onToolResult?.({
+          id: call.id,
+          name: call.name,
+          content: result.content,
+        });
+      },
+    },
     // Iteration cap for the entire Scout → (Planner) → Generator → Evaluator
     // chain. Core's default (20) is meant for stand-alone single-agent runs
     // and is far too low for a multi-role investigation + execution + verify
@@ -2512,10 +2550,24 @@ export async function runManagedTaskViaRunner(
   const lastText = extractUserFacingText(runResult);
   const { signal, verdictStatus, reason, userAnswer } = deriveFinalStatus(recorder);
 
+  // v0.7.26 parity: Evaluator's user_answer may carry internal role
+  // framing ("I verified the Generator…", "Let me double-check…") even
+  // after the fence sanitizer runs. Strip that framing specifically for
+  // review-like tasks where the evaluator was told to speak as the
+  // reviewer, not about the review process. For non-review tasks, still
+  // run the lighter sanitizer to drop control-plane markers + fences.
+  const sanitizedUserAnswer = userAnswer
+    ? (plan?.decision.primaryTask === 'review'
+      ? sanitizeEvaluatorPublicAnswer(userAnswer)
+      : sanitizeManagedUserFacingText(userAnswer))
+    : undefined;
+
   // Prefer the verdict's explicit user_answer over the final transcript
   // text when the Evaluator provided one — it's the intentional final
   // answer, while transcript text may be any last assistant turn.
-  const resolvedText = userAnswer && userAnswer.trim().length > 0 ? userAnswer : lastText;
+  const resolvedText = sanitizedUserAnswer && sanitizedUserAnswer.trim().length > 0
+    ? sanitizedUserAnswer
+    : lastText;
 
   const managedProtocolPayload = buildManagedProtocolPayload(recorder);
   const managedTask = buildManagedTaskPayload({

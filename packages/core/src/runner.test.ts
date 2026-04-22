@@ -469,6 +469,92 @@ describe('Runner', () => {
     });
   });
 
+  describe('toolObserver (v0.7.26 parity)', () => {
+    function makeLocalEchoTool(): RunnableTool {
+      return {
+        name: 'echo',
+        description: 'echo',
+        input_schema: { type: 'object', properties: { text: { type: 'string' } } },
+        execute: async (input) => ({
+          content: `echo:${(input as { text?: string }).text ?? ''}`,
+        }),
+      };
+    }
+
+    it('fires onToolCall + onToolResult around each invocation', async () => {
+      const echoTool = makeLocalEchoTool();
+      const agent = createAgent({ name: 'obs-agent', instructions: 'sys', tools: [echoTool] });
+      let turn = 0;
+      const llm = vi.fn(async (): Promise<RunnerLlmResult> => {
+        turn += 1;
+        if (turn === 1) {
+          return {
+            text: '',
+            toolCalls: [{ id: 'c1', name: 'echo', input: { text: 'ping' } }],
+          };
+        }
+        return { text: 'done', toolCalls: [] };
+      });
+      const calls: Array<{ kind: 'call' | 'result'; id: string; name: string; content?: string }> = [];
+      await Runner.run(agent, 'hi', {
+        llm,
+        toolObserver: {
+          onToolCall: (call) => {
+            calls.push({ kind: 'call', id: call.id, name: call.name });
+          },
+          onToolResult: (call, result) => {
+            calls.push({ kind: 'result', id: call.id, name: call.name, content: result.content });
+          },
+        },
+      });
+      expect(calls).toEqual([
+        { kind: 'call', id: 'c1', name: 'echo' },
+        { kind: 'result', id: 'c1', name: 'echo', content: 'echo:ping' },
+      ]);
+    });
+
+    it('fires observer even when guardrail blocks a call', async () => {
+      const echoTool = makeLocalEchoTool();
+      const agent = createAgent({
+        name: 'obs-block-agent',
+        instructions: 'sys',
+        tools: [echoTool],
+        guardrails: [
+          {
+            kind: 'tool',
+            name: 'block-echo',
+            beforeTool: async () => ({
+              action: 'block',
+              reason: 'blocked by policy',
+            }),
+          },
+        ],
+      });
+      let turn = 0;
+      const llm = vi.fn(async (): Promise<RunnerLlmResult> => {
+        turn += 1;
+        if (turn === 1) {
+          return {
+            text: '',
+            toolCalls: [{ id: 'c1', name: 'echo', input: { text: 'x' } }],
+          };
+        }
+        return { text: 'done', toolCalls: [] };
+      });
+      const events: Array<{ kind: string; content?: string }> = [];
+      await Runner.run(agent, 'hi', {
+        llm,
+        toolObserver: {
+          onToolCall: () => events.push({ kind: 'call' }),
+          onToolResult: (_call, result) => events.push({ kind: 'result', content: result.content }),
+        },
+      });
+      // Both fire even on block so the UI can render the rejection.
+      expect(events.map((e) => e.kind)).toEqual(['call', 'result']);
+      expect(events[1]!.content).toMatch(/blocked by policy/i);
+    });
+  });
+
   describe('runStream', () => {
     it('yields one message event per assistant message then complete', async () => {
       const agent = createAgent({ name: 'stream-hello', instructions: 'sys' });

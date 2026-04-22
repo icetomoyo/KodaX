@@ -59,6 +59,19 @@ export interface RunnerLlmResult {
 export type RunnerLlmReturn = string | RunnerLlmResult;
 
 /**
+ * Observer callbacks fired around every tool invocation. Preset
+ * dispatchers (e.g. the coding Runner-driven path) pass these through
+ * `RunOptions.toolObserver` so REPL / CLI consumers see live
+ * `onToolCall` / `onToolResult` events, matching the legacy task-engine
+ * event surface (v0.7.22 agent.ts fired `events.onToolResult` at three
+ * sites per invocation).
+ */
+export interface RunnerToolObserver {
+  readonly onToolCall?: (call: RunnerToolCall) => void;
+  readonly onToolResult?: (call: RunnerToolCall, result: RunnerToolResult) => void;
+}
+
+/**
  * Context passed to a RunnableTool's `execute` function.
  */
 export interface RunnerToolContext {

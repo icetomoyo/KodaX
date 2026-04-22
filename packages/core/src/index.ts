@@ -60,6 +60,7 @@ export type {
   RunnerLlmReturn,
   RunnerToolCall,
   RunnerToolContext,
+  RunnerToolObserver,
   RunnerToolResult,
 } from './runner-tool-loop.js';
 export {

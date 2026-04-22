@@ -31,6 +31,7 @@ import {
   type RunnerLlmResult,
   type RunnerLlmReturn,
   type RunnerToolCall,
+  type RunnerToolObserver,
   type RunnerToolResult,
 } from './runner-tool-loop.js';
 import {
@@ -110,6 +111,16 @@ export interface RunOptions {
    * after ~20 tool calls.
    */
   readonly maxToolLoopIterations?: number;
+  /**
+   * v0.7.26 parity: observer callbacks fired around every tool
+   * invocation. Legacy `runManagedTask` emitted `events.onToolResult`
+   * at three sites per invocation so the REPL worker ledger could
+   * render live tool-call progress — without this plumbing, the
+   * Runner-driven path's UI shows only the final output. Preset
+   * dispatchers can attach this observer to surface `onToolCall` /
+   * `onToolResult` through the usual `KodaXEvents` bus.
+   */
+  readonly toolObserver?: RunnerToolObserver;
 }
 
 /**
@@ -378,11 +389,23 @@ async function genericRun<TData>(
         );
         if (beforeOutcome.kind === 'block') {
           results[i] = beforeOutcome.result;
+          // Still fire the observer so the REPL sees the blocked call +
+          // the guardrail-supplied result. Legacy task-engine treated a
+          // guardrail-blocked tool as a real invocation from the user's
+          // point of view (they see it happened and was rejected).
+          opts.toolObserver?.onToolCall?.(call);
+          opts.toolObserver?.onToolResult?.(call, beforeOutcome.result);
           continue;
         }
         call = beforeOutcome.call;
         (finalCalls as RunnerToolCall[])[i] = call;
       }
+      // v0.7.26 parity: fire `onToolCall` BEFORE the execute so the REPL
+      // worker ledger can render the pending tool immediately (matches
+      // legacy timing where events.onToolResult arrived at completion
+      // but the tool name was surfaced live via the tool_use block
+      // streaming).
+      opts.toolObserver?.onToolCall?.(call);
       let result = await executeRunnerToolCall(call, currentAgent, {
         agent: currentAgent,
         abortSignal: opts.abortSignal,
@@ -397,6 +420,9 @@ async function genericRun<TData>(
           agentSpan,
         );
       }
+      // Fire `onToolResult` AFTER guardrails so consumers see the final
+      // result shape the LLM will receive on the next turn.
+      opts.toolObserver?.onToolResult?.(call, result);
       results[i] = result;
     }
     const toolResultMessage = buildToolResultMessage(finalCalls, results);
