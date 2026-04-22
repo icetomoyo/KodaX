@@ -86,6 +86,7 @@ import {
 } from '../agents/protocol-emitters.js';
 import { toolBash } from '../tools/bash.js';
 import { toolEdit } from '../tools/edit.js';
+import { toolExitPlanMode } from '../tools/exit-plan-mode.js';
 import { toolGlob } from '../tools/glob.js';
 import { toolGrep } from '../tools/grep.js';
 import { toolRead } from '../tools/read.js';
@@ -114,7 +115,11 @@ import type {
   ManagedMutationTracker,
 } from '../types.js';
 import type { ReasoningPlan } from '../reasoning.js';
-import { buildAmaControllerDecision, buildPromptOverlay } from '../reasoning.js';
+import {
+  buildAmaControllerDecision,
+  buildPromptOverlay,
+  reasoningModeToDepth,
+} from '../reasoning.js';
 import type { ManagedTaskBudgetController } from './_internal/managed-task/budget.js';
 import {
   buildManagedStatusBudgetFields,
@@ -1467,6 +1472,8 @@ interface CodingToolBundle {
   readonly bash: RunnableTool;
   readonly write: RunnableTool;
   readonly edit: RunnableTool;
+  /** FEATURE_074 parity — exit_plan_mode approval tool (Generator only). */
+  readonly exitPlanMode: RunnableTool;
 }
 
 function buildCodingToolBundle(
@@ -1480,9 +1487,10 @@ function buildCodingToolBundle(
   const bash = getToolDefinition('bash');
   const write = getToolDefinition('write');
   const edit = getToolDefinition('edit');
-  if (!read || !grep || !glob || !bash || !write || !edit) {
+  const exitPlanMode = getToolDefinition('exit_plan_mode');
+  if (!read || !grep || !glob || !bash || !write || !edit || !exitPlanMode) {
     throw new Error(
-      'Runner-driven path: expected core tools (read/grep/glob/bash/write/edit) to be registered',
+      'Runner-driven path: expected core tools (read/grep/glob/bash/write/edit/exit_plan_mode) to be registered',
     );
   }
   return {
@@ -1492,6 +1500,7 @@ function buildCodingToolBundle(
     bash: wrapCodingToolAsRunnable(bash, toolBash, baseCtx, budget, events),
     write: wrapCodingToolAsRunnable(write, toolWrite, baseCtx, budget, events),
     edit: wrapCodingToolAsRunnable(edit, toolEdit, baseCtx, budget, events),
+    exitPlanMode: wrapCodingToolAsRunnable(exitPlanMode, toolExitPlanMode, baseCtx, budget, events),
   };
 }
 
@@ -1661,6 +1670,12 @@ export function buildRunnerAgentChain(
       wrapGeneratorBashWithMutationGuard(codingTools.bash, recorder, planRef),
       wrapGeneratorWriteWithMutationGuard(codingTools.write, recorder, planRef),
       wrapGeneratorWriteWithMutationGuard(codingTools.edit, recorder, planRef),
+      // FEATURE_074 parity — Generator is the only role that mutates files,
+      // so it is the only role that needs to ask the user to exit plan mode
+      // before making edits. Without this tool the LLM sees no way to
+      // request approval and either (a) writes without approval or
+      // (b) stalls asking "how do I exit plan mode?".
+      codingTools.exitPlanMode,
       // Shard 6d-Q: Generator may dispatch write-capable child tasks for
       // parallel fan-out. Worktree paths flow through
       // `childWriteWorktreePathsRef` so the Evaluator can inject the
@@ -1781,6 +1796,22 @@ export function buildRunnerLlmAdapter(
       description: t.description,
       input_schema: t.input_schema,
     }));
+
+    // v0.7.26 fix — build the provider reasoning request from the
+    // Agent's declared reasoning profile. Without this, provider.stream
+    // was always called with `reasoning: undefined`, so thinking mode
+    // was off for every managed worker — REPL's thinking indicator
+    // never lit up and `onThinkingDelta` never fired. Matches legacy
+    // agent.ts:1880 `effectiveProviderReasoning` shape.
+    const reasoningMode = agent.reasoning?.default ?? 'auto';
+    const providerReasoning: import('@kodax/ai').KodaXReasoningRequest | undefined =
+      reasoningMode === 'off'
+        ? { enabled: false, mode: 'off' }
+        : {
+            enabled: true,
+            mode: reasoningMode,
+            depth: reasoningModeToDepth(reasoningMode),
+          };
 
     iteration += 1;
     options.events?.onIterationStart?.(iteration, MAX_ITER_HINT);
@@ -1923,7 +1954,7 @@ export function buildRunnerLlmAdapter(
             providerMessages,
             [...wireTools],
             system,
-            undefined,
+            providerReasoning,
             streamOptions,
             retrySignal,
           );
@@ -2026,7 +2057,7 @@ export function buildRunnerLlmAdapter(
                 providerMessages,
                 [...wireTools],
                 system,
-                undefined,
+                providerReasoning,
                 {
                   onTextDelta: (text: string) => {
                     boundaryTracker.markTextDelta(text);

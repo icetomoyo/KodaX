@@ -114,6 +114,27 @@ export function createRolePrompt(
     'Do not claim completion authority unless your role explicitly owns final judgment.',
     'When proposing shell commands or command examples, match the current host OS and shell. Do not assume Unix-only tools such as head on Windows.',
   ].join('\n');
+
+  // v0.7.26 fix — managed workers bypass `buildSystemPrompt` (legacy SA
+  // path), so the base `SYSTEM_PROMPT` discipline sections (tmp-directory
+  // rule, mkdir warning, cross-platform notes) never reached the LLM. The
+  // result: workers wrote scratch files to project root / system tmp
+  // instead of `.agent/tmp/`. Re-inject the essential discipline as a
+  // shared block prepended to every role's prompt.
+  const sharedWorkerDiscipline = [
+    'Workspace discipline:',
+    '- Helper scripts / scratch files are a last resort, not a default recovery path.',
+    "- If you must write a temporary file, write it under `.agent/tmp/` (relative to the git root). That is the designated ephemeral workspace.",
+    "- NEVER write scratch files to the project root, to `.agent/` top level (reserved for managed-tasks/, project/, repo-intelligence/), or to the system temp directory. Files in system tmp are invisible to the project and block code review.",
+    '- Directories are created automatically by the `write` tool. NEVER use `mkdir` before writing files.',
+    '- If you truly need an empty directory: `mkdir dir` (Windows) or `mkdir -p dir` (Unix).',
+    '',
+    'Cross-platform shell:',
+    '- Move: `move` (Windows) vs `mv` (Unix/Mac).',
+    '- List: `dir` (Windows) vs `ls` (Unix/Mac).',
+    '- Delete: `del` (Windows) vs `rm` (Unix/Mac).',
+    '- If you see "not recognized", "不是内部或外部命令", or a similar lookup error, the command does not exist on this platform. Try the platform equivalent.',
+  ].join('\n');
   const originalTaskSection = `Original user request:\n${originalTask}`;
   const roundInstructionSection = prompt !== originalTask
     ? `Current round instructions:\n${prompt}`
@@ -422,6 +443,7 @@ export function createRolePrompt(
           'Scout can only dispatch readOnly tasks. Write fan-out is available to Generator only.',
         ].join('\n'),
         managedProtocolToolInstructions,
+        sharedWorkerDiscipline,
         sharedClosingRule,
       ].filter((section): section is string => Boolean(section)).join('\n\n');
     case 'planner':
@@ -457,6 +479,7 @@ export function createRolePrompt(
           '- <constraint or leave empty>',
           `(The fenced-block form \`\`\`${MANAGED_TASK_CONTRACT_BLOCK}\`\`\` is accepted as a fallback; prefer the tool call.)`,
         ].join('\n'),
+        sharedWorkerDiscipline,
         sharedClosingRule,
       ].filter((section): section is string => Boolean(section)).join('\n\n');
     case 'generator':
@@ -495,6 +518,7 @@ export function createRolePrompt(
             : 'Write fan-out (readOnly=false) is only available in H2_PLAN_EXECUTE_EVAL harness.',
         ].join('\n'),
         isTerminalAuthority ? undefined : handoffBlockInstructions,
+        sharedWorkerDiscipline,
         sharedClosingRule,
       ].filter(Boolean).join('\n\n');
     case 'evaluator':
@@ -569,6 +593,8 @@ export function createRolePrompt(
           'Prefer putting the final user-facing answer in user_answer. If omitted, keep the user-facing answer above the call. Use status=revise when more execution should happen before acceptance.',
           `(The fenced-block form \`\`\`${MANAGED_TASK_VERDICT_BLOCK}\`\`\` is accepted as a fallback; prefer the tool call.)`,
         ].filter((line): line is string => Boolean(line)).join('\n'),
+        sharedWorkerDiscipline,
+        sharedClosingRule,
       ].filter((section): section is string => Boolean(section)).join('\n\n');
     case 'direct':
     default:
