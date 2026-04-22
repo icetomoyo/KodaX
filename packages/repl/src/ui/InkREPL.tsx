@@ -4291,11 +4291,30 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       // "Always" is only available in accept-edits mode.
       const canAlways = currentConfig.permissionMode === "accept-edits" && !isProtectedPath;
 
+      // v0.7.26 parity: confirm-result history items must route through
+      // the managed-foreground ledger when an AMA worker is active —
+      // otherwise the "[Confirm] … → Approved" line renders below the
+      // user prompt instead of inline with the worker output. Mirrors
+      // the fix for onError (63330bc) and onRetry / onProviderRecovery
+      // (09cd7ae). Without this gating, bash tool confirmations appear
+      // "somewhere wrong on screen" while a managed task is running.
+      const recordConfirmResult = (suffixKey: 'approved' | 'approved_always' | 'denied') => {
+        const text = `${t("dialog.confirm")} ${confirmRequest.prompt}\n  → ${t(`confirm.result.${suffixKey}`)}`;
+        const inManagedForeground = !!managedForegroundOwnerRef.current.workerId;
+        if (inManagedForeground) {
+          appendManagedForegroundLedgerItem({
+            id: `confirm-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            type: "info",
+            text,
+            timestamp: Date.now(),
+          } as HistoryItem);
+        } else {
+          addHistoryItem({ type: "info", text });
+        }
+      };
+
       if (answer === "y" || answer === "yes") {
-        addHistoryItem({
-          type: "info",
-          text: `${t("dialog.confirm")} ${confirmRequest.prompt}\n  → ${t("confirm.result.approved")}`,
-        });
+        recordConfirmResult('approved');
         setConfirmRequest(null);
         confirmResolveRef.current?.({ confirmed: true });
         confirmResolveRef.current = null;
@@ -4303,10 +4322,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
 
       if (canAlways && (answer === "a" || answer === "always")) {
-        addHistoryItem({
-          type: "info",
-          text: `${t("dialog.confirm")} ${confirmRequest.prompt}\n  → ${t("confirm.result.approved_always")}`,
-        });
+        recordConfirmResult('approved_always');
         setConfirmRequest(null);
         confirmResolveRef.current?.({ confirmed: true, always: true });
         confirmResolveRef.current = null;
@@ -4314,10 +4330,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
 
       if (answer === "n" || answer === "no" || key.name === "escape") {
-        addHistoryItem({
-          type: "info",
-          text: `${t("dialog.confirm")} ${confirmRequest.prompt}\n  → ${t("confirm.result.denied")}`,
-        });
+        recordConfirmResult('denied');
         setConfirmRequest(null);
         confirmResolveRef.current?.({ confirmed: false });
         confirmResolveRef.current = null;

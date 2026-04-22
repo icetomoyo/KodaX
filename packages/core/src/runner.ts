@@ -391,8 +391,16 @@ async function genericRun<TData>(
 
     const results: RunnerToolResult[] = new Array(toolCalls.length);
     const finalCalls: typeof toolCalls = [...toolCalls];
-    for (let i = 0; i < toolCalls.length; i += 1) {
-      let call = toolCalls[i]!;
+
+    // v0.7.26 parity (C2): execute tool calls with the legacy concurrency
+    // model — non-bash tools run in parallel (Promise.all), bash tools
+    // run serially. Legacy coding path: agent.ts:2533-2589. Parallelism
+    // matters for scout-emitted fan-outs (3 dispatch_child_task in a
+    // single turn should run concurrently, not 3x serial latency).
+    // Bash stays serial because shell side-effects can interfere
+    // (git checkout followed by git diff, etc.).
+    const executeOneCall = async (index: number): Promise<void> => {
+      let call = toolCalls[index]!;
       if (guardrailSlots.tool.length > 0) {
         const beforeOutcome = await runToolBeforeGuardrails(
           call,
@@ -401,17 +409,17 @@ async function genericRun<TData>(
           agentSpan,
         );
         if (beforeOutcome.kind === 'block') {
-          results[i] = beforeOutcome.result;
+          results[index] = beforeOutcome.result;
           // Still fire the observer so the REPL sees the blocked call +
           // the guardrail-supplied result. Legacy task-engine treated a
           // guardrail-blocked tool as a real invocation from the user's
           // point of view (they see it happened and was rejected).
           opts.toolObserver?.onToolCall?.(call);
           opts.toolObserver?.onToolResult?.(call, beforeOutcome.result);
-          continue;
+          return;
         }
         call = beforeOutcome.call;
-        (finalCalls as RunnerToolCall[])[i] = call;
+        (finalCalls as RunnerToolCall[])[index] = call;
       }
       // v0.7.26 parity: fire `onToolCall` BEFORE the execute so the REPL
       // worker ledger can render the pending tool immediately (matches
@@ -434,8 +442,8 @@ async function genericRun<TData>(
             isError: true,
           };
           opts.toolObserver.onToolResult?.(call, blockedResult);
-          results[i] = blockedResult;
-          continue;
+          results[index] = blockedResult;
+          return;
         }
       }
       let result = await executeRunnerToolCall(call, currentAgent, {
@@ -455,7 +463,23 @@ async function genericRun<TData>(
       // Fire `onToolResult` AFTER guardrails so consumers see the final
       // result shape the LLM will receive on the next turn.
       opts.toolObserver?.onToolResult?.(call, result);
-      results[i] = result;
+      results[index] = result;
+    };
+
+    const parallelIndices: number[] = [];
+    const serialIndices: number[] = [];
+    for (let i = 0; i < toolCalls.length; i += 1) {
+      if (toolCalls[i]!.name === 'bash') {
+        serialIndices.push(i);
+      } else {
+        parallelIndices.push(i);
+      }
+    }
+    if (parallelIndices.length > 0) {
+      await Promise.all(parallelIndices.map((i) => executeOneCall(i)));
+    }
+    for (const i of serialIndices) {
+      await executeOneCall(i);
     }
     const toolResultMessage = buildToolResultMessage(finalCalls, results);
     transcript.push(toolResultMessage);

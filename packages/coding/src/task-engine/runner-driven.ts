@@ -64,6 +64,7 @@ import {
   describeTransientProviderRetry,
   emitResilienceDebug,
   estimateProviderPayloadBytes,
+  saveSessionSnapshot,
 } from '../agent.js';
 import {
   ProviderRecoveryCoordinator,
@@ -157,6 +158,7 @@ import {
 } from './_internal/managed-task/sanitize.js';
 import { buildManagedTaskCompactionHook } from './_internal/managed-task/compaction.js';
 import { createToolResultTruncationGuardrail } from '../tools/tool-result-truncation-guardrail.js';
+import { buildPromptMessageContent } from '../input-artifacts.js';
 import path from 'node:path';
 
 /**
@@ -712,7 +714,10 @@ export interface ObserverBridge {
   // Shard 6d-Q (v0.7.22 parity): fire a status event when a child task
   // dispatch starts so the REPL's AmaWorkStrip can render
   // "Scout/Generator fanning out ${class} × ${count}" badge.
-  readonly notifyChildFanout: (fanoutClass: 'finding-validation' | 'evidence-scan' | 'module-triage') => void;
+  readonly notifyChildFanout: (
+    fanoutClass: 'finding-validation' | 'evidence-scan' | 'module-triage',
+    count?: number,
+  ) => void;
 }
 
 /**
@@ -911,8 +916,14 @@ function buildObserverBridge(
         persistToHistory: false,
       });
     },
-    notifyChildFanout: (fanoutClass) => {
+    notifyChildFanout: (fanoutClass, count) => {
       if (!events?.onManagedTaskStatus) return;
+      // v0.7.26 parity (C2): do NOT set activeWorkerId:'child' here.
+      // FEATURE_067 already learned (types.ts:1170) that an activeWorkerId
+      // transition to 'child' triggers a foreground worker switch in the
+      // REPL, which clears all live tool calls for the actual worker that
+      // dispatched the children. Keep the active worker unchanged; use
+      // `childFanoutClass` + `childFanoutCount` purely as decoration.
       events.onManagedTaskStatus({
         agentMode: 'ama',
         harnessProfile: harnessRef.current,
@@ -920,10 +931,8 @@ function buildObserverBridge(
         maxRounds: maxRoundsRef.current,
         upgradeCeiling: harnessRef.current,
         phase: 'worker',
-        activeWorkerId: 'child',
-        activeWorkerTitle: 'Child agent',
         childFanoutClass: fanoutClass,
-        childFanoutCount: 1,
+        childFanoutCount: count ?? 1,
         note: `Dispatching ${fanoutClass} child task`,
         persistToHistory: false,
         ...buildManagedStatusBudgetFields(budget, budgetApprovalRef.current),
@@ -1178,23 +1187,39 @@ function wrapDispatchChildTaskForRole(
   budget: ManagedTaskBudgetController | undefined,
   childWriteWorktreePathsRef: { current: Map<string, string> },
   observer: ObserverBridge,
+  events?: KodaXEvents,
 ): RunnableTool {
   return {
     ...definition,
-    execute: async (input: Record<string, unknown>): Promise<RunnerToolResult> => {
+    execute: async (
+      input: Record<string, unknown>,
+      runnerCtx?: RunnerToolContext,
+    ): Promise<RunnerToolResult> => {
       if (budget) incrementManagedBudgetUsage(budget, 1);
       // v0.7.22 parity: fire a fanout status event so the REPL's
       // AmaWorkStrip can render a "Scout/Generator fanning out" badge.
-      // Best-effort — the legacy path batched these on LLM emit (count=N),
-      // while the Runner path fires per tool call (count=1). Downstream
-      // UIs overwrite with the latest.
+      // Best-effort — Runner tool loop runs each tool_use serially, so
+      // per-call count=1 reflects the current invocation; the downstream
+      // UI aggregates by `childFanoutClass`.
       observer.notifyChildFanout('evidence-scan');
+      // v0.7.26 parity (C2): inject per-call reportToolProgress so the
+      // child-task yield stages (ctx.reportToolProgress?.(note) inside
+      // toolDispatchChildTask) surface through KodaXEvents.onToolProgress
+      // keyed on the current tool_use id. Without this, async-generator
+      // progress updates vanish — the REPL's "Running: ..." line never
+      // updates. Mirrors the same injection wrapCodingToolAsRunnable
+      // already does.
+      const toolCallId = runnerCtx?.toolCallId;
+      const progressHook = events?.onToolProgress && toolCallId
+        ? (message: string) => events.onToolProgress?.({ id: toolCallId, message })
+        : undefined;
       // Shallow clone so the managedProtocolRole + registerChildWriteWorktrees
       // callback are local to this invocation. The base ctx stays pristine
       // for parallel dispatches.
       const perCallCtx: KodaXToolExecutionContext = {
         ...baseCtx,
         managedProtocolRole: role,
+        reportToolProgress: progressHook,
         registerChildWriteWorktrees: (worktreePaths) => {
           for (const [id, p] of worktreePaths) {
             childWriteWorktreePathsRef.current.set(id, p);
@@ -1203,10 +1228,9 @@ function wrapDispatchChildTaskForRole(
       };
       try {
         const gen = toolDispatchChildTask(input, perCallCtx);
-        // Drain the generator. We don't render progress through the
-        // Runner's transcript today — legacy surfaced it via
-        // `onToolProgress`, which the Runner path exposes on ctx already
-        // (inside toolDispatchChildTask → ctx.reportToolProgress?.()).
+        // Drain the generator. Intermediate yields are surfaced via
+        // `ctx.reportToolProgress` (bound above to onToolProgress), so
+        // the REPL transcript updates live.
         let next = await gen.next();
         while (!next.done) {
           next = await gen.next();
@@ -1337,6 +1361,7 @@ export function buildRunnerAgentChain(
     budget,
     childWriteWorktreePathsRef,
     observer,
+    events,
   );
   const generatorDispatch = wrapDispatchChildTaskForRole(
     dispatchDefinition,
@@ -1345,6 +1370,7 @@ export function buildRunnerAgentChain(
     budget,
     childWriteWorktreePathsRef,
     observer,
+    events,
   );
 
   const scoutEmit = wrapEmitterWithRecorder(emitScoutVerdict, 'scout', recorder, observer, budget);
@@ -2388,6 +2414,25 @@ export async function runManagedTaskViaRunner(
     // rethrowing; we keep the same contract.
     const error = err instanceof Error ? err : new Error(String(err));
     options.events?.onError?.(error);
+    // v0.7.26 parity (C3): persist an error snapshot so /resume can
+    // pick up the last turn even after a crash. Legacy does the same at
+    // agent.ts:2824. Best-effort.
+    if (options.session?.storage) {
+      try {
+        await saveSessionSnapshot(options, initialSessionId, {
+          messages: [],
+          title: prompt.slice(0, 80),
+          gitRoot: options.context?.gitRoot ?? undefined,
+          errorMetadata: {
+            lastError: error.message,
+            lastErrorTime: Date.now(),
+            consecutiveErrors: 1,
+          },
+        });
+      } catch {
+        // best-effort.
+      }
+    }
     throw err;
   } finally {
     // v0.7.22 parity: onComplete fires on every terminal — success, block,
@@ -2654,10 +2699,23 @@ async function runManagedTaskViaRunnerInner(
   // Runner transcript so the Scout/Planner/Generator/Evaluator see full
   // prior context — matching legacy `runKodaX` behaviour via the session
   // loader.
+  //
+  // v0.7.26 parity (C1): the user message content is built through
+  // `buildPromptMessageContent(prompt, inputArtifacts)` so images pasted
+  // /dragged into the REPL (carried on `options.context.inputArtifacts`)
+  // reach the Scout turn as multimodal content blocks. Without this the
+  // LLM sees a plain-text prompt and never perceives the image —
+  // round-boundary reshape only rewrites outgoing `result.messages` for
+  // display, not the inbound prompt. Legacy agent.ts:1500 applies this
+  // at the single SA entry message; we mirror it here.
   const initialMessages = options.session?.initialMessages ?? [];
+  const userMessageContent = buildPromptMessageContent(
+    promptWithOverlay,
+    options.context?.inputArtifacts,
+  );
   const runnerInput = initialMessages.length > 0
-    ? [...initialMessages, { role: 'user' as const, content: promptWithOverlay }]
-    : promptWithOverlay;
+    ? [...initialMessages, { role: 'user' as const, content: userMessageContent }]
+    : [{ role: 'user' as const, content: userMessageContent }];
 
   // v0.7.26 parity: load the compaction hook once per run. Legacy
   // agent.ts ran `intelligentCompact` before every provider.stream call;
@@ -2909,6 +2967,23 @@ async function runManagedTaskViaRunnerInner(
     );
   } catch {
     // best-effort; failures should not abort the task run.
+  }
+
+  // v0.7.26 parity (C3): persist session snapshot to disk so `/resume <id>`
+  // and `--continue` can reload the AMA conversation. Legacy agent.ts:851
+  // calls saveSessionSnapshot at three terminal sites (success, block,
+  // error); in the Runner-driven path the single non-error terminal lives
+  // here. Best-effort — a storage failure must not fail the task run.
+  if (options.session?.storage) {
+    try {
+      await saveSessionSnapshot(options, result.sessionId, {
+        messages: [...result.messages],
+        title: prompt.slice(0, 80),
+        gitRoot: options.context?.gitRoot ?? undefined,
+      });
+    } catch {
+      // best-effort; storage IO failures never abort the task.
+    }
   }
 
   return result;

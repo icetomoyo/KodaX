@@ -832,7 +832,7 @@ async function getToolExecutionOverride(
   return typeof extensionOverride === 'string' ? extensionOverride : undefined;
 }
 
-async function saveSessionSnapshot(
+export async function saveSessionSnapshot(
   options: KodaXOptions,
   sessionId: string,
   data: {
