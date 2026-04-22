@@ -11,6 +11,7 @@ import type {
 import { toolRead } from './read.js';
 import { toolWrite } from './write.js';
 import { toolEdit } from './edit.js';
+import { toolMultiEdit } from './multi-edit.js';
 import { toolInsertAfterAnchor } from './insert-after-anchor.js';
 import { toolBash } from './bash.js';
 import { toolGlob } from './glob.js';
@@ -162,9 +163,19 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       'Write a file to the local filesystem. Large diffs may be summarized in the tool result. '
       + 'ALWAYS prefer the `edit` tool over `write` when modifying an existing file — `edit` sends only the '
       + 'diff and avoids output-token pressure. Only use `write` to create new files or for a complete rewrite '
-      + 'that the user explicitly asked for. For new files larger than ~300 lines, write in multiple passes: '
-      + 'create a skeleton first, then `edit` to fill in sections. This keeps each tool call under the '
-      + 'per-turn output budget and avoids mid-stream truncation.',
+      + 'that the user explicitly asked for. '
+      + 'For new files up to ~500 lines, call `write` directly. For files larger than that, use this two-step pattern: '
+      + '(1) `write(path, skeleton)` — a structural skeleton with placeholder markers like `<!-- SECTION_A -->` or '
+      + '`// === SECTION_A ===`, kept under ~300 lines; (2) one `edit(path, "<!-- SECTION_A -->", <real content>)` '
+      + 'per section. Each edit streams reliably. '
+      + 'NEVER fall back to `bash` (python/node heredoc, `echo >`, `cat > file <<EOF`) to generate a source file — '
+      + 'it bypasses mutation tracking, loses diff visibility, and recurses the same streaming limit onto the generator '
+      + 'script itself. If a `write` failed mid-stream, retry with a smaller skeleton, then `edit` each section. '
+      + 'Encoding note: `write` calls Node `fs.writeFile(path, content, "utf-8")` — the content goes directly from your '
+      + 'tool_use input to disk WITHOUT passing through any shell. There are NO "Windows shell encoding issues" for `write`. '
+      + 'Do NOT switch to `python`/`bash` scripts to "avoid encoding problems" — UTF-8 (including Chinese / emoji / etc.) '
+      + 'works correctly through `write` by default, and routing through a shell script adds encoding surface area '
+      + 'rather than removing it.',
     input_schema: {
       type: 'object',
       properties: {
@@ -181,7 +192,11 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       'Perform safe exact-or-normalized string replacement in a file. '
       + 'ALWAYS prefer editing an existing file with `edit` over rewriting the whole file with `write` — '
       + '`edit` only sends the diff, avoiding output-token pressure and mid-stream truncation on large files. '
-      + 'You must have read the file (via `read`) at least once in the conversation before editing. '
+      + 'REQUIREMENT: call `read` on this file at least once in the conversation BEFORE calling `edit`. '
+      + 'If you skip the read, your `old_string` is almost certainly wrong and the edit will fail with an '
+      + '"old_string not found" error — forcing a retry that costs more than the initial read. '
+      + 'When making multiple independent edits to the same file, use `multi_edit` instead — one tool call '
+      + 'batches N edits atomically. '
       + 'If the anchor is unstable, retry with a smaller unique snippet or use `insert_after_anchor`; '
       + 'do NOT fall back to `write` for the whole file as a recovery.',
     input_schema: {
@@ -195,6 +210,45 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['path', 'old_string', 'new_string'],
     },
     handler: toolEdit,
+  },
+  {
+    name: 'multi_edit',
+    description:
+      'Apply multiple exact-text replacements to a single file in ONE tool call. '
+      + 'Prefer this over N separate `edit` calls when you have several independent edits '
+      + 'to the same file — especially when filling in a skeleton you just created with `write`. '
+      + 'REQUIREMENT: call `read` on this file at least once in the conversation BEFORE calling `multi_edit`. '
+      + 'Skipping the read means your first failing `old_string` aborts the ENTIRE batch — '
+      + 'you pay for all the edits in tokens but land none of them. '
+      + 'Edits apply sequentially (each edit sees the result of the previous one), and the '
+      + 'whole batch is ATOMIC: if any single old_string fails to match, NO edits are written '
+      + 'to disk and you get back an index pointing at the failing edit. '
+      + 'Each `edits[i]` has the same semantics as one `edit` call — exact-match first, then '
+      + 'safe-normalized anchor fallback; `replace_all: true` per edit for bulk renames. '
+      + 'Typical skeleton-then-fill flow: '
+      + '(1) `write(path, skeleton_with_<!-- SECTION_A -->_placeholders)`; '
+      + '(2) `multi_edit(path, [{SECTION_A, realA}, {SECTION_B, realB}, ...])` — one batched call.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'The absolute path to the file' },
+        edits: {
+          type: 'array',
+          description: 'Sequence of edit operations to apply in order',
+          items: {
+            type: 'object',
+            properties: {
+              old_string: { type: 'string', description: 'The text to replace (matched exactly, then via normalized fallback)' },
+              new_string: { type: 'string', description: 'The replacement text' },
+              replace_all: { type: 'boolean', description: 'When true, replace every occurrence of old_string (defaults to false)' },
+            },
+            required: ['old_string', 'new_string'],
+          },
+        },
+      },
+      required: ['path', 'edits'],
+    },
+    handler: toolMultiEdit,
   },
   {
     name: 'insert_after_anchor',
@@ -212,7 +266,18 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
   },
   {
     name: 'bash',
-    description: 'Execute a shell command. Use run_in_background for long-running commands. Large output may be truncated to the most relevant tail.',
+    description:
+      'Execute a shell command. Use run_in_background for long-running commands. '
+      + 'Large output may be truncated to the most relevant tail. '
+      + 'When producing a SINGLE file whose content you already have, use the `write` / `edit` tools — '
+      + 'do NOT route it through shell (no `cat > file <<EOF`, no `echo ... >`, no PowerShell `Set-Content` / '
+      + '`Out-File`, no python/node heredoc). Shell redirection for a known-content file bypasses the mutation tracker, '
+      + 'loses diff visibility to downstream verification, and re-encounters the same streaming limit on the generator '
+      + 'script itself. Use a shell script ONLY when the output is computed (loops, templating over many files, data '
+      + 'transformation of an input you are reading) — e.g. generating 50 similar test fixtures from a template is a '
+      + 'legitimate script use; reproducing one hand-written HTML file you already have in memory is not. '
+      + 'Appropriate uses of `bash`: tests, builds, lint, git, package managers, grep/ls/cat for inspection, '
+      + 'process management, computed/templated multi-file generation.',
     input_schema: {
       type: 'object',
       properties: {
