@@ -17,14 +17,19 @@ import {
   MANAGED_TASK_HANDOFF_BLOCK,
   MANAGED_TASK_SCOUT_BLOCK,
   MANAGED_TASK_VERDICT_BLOCK,
+  coerceManagedProtocolToolPayload,
+  getManagedBlockNameForRole,
   mergeManagedProtocolPayload,
   normalizeManagedNextHarness,
   normalizeManagedVerdictStatus,
 } from '../../../managed-protocol.js';
+import { resolveHandoffTarget, type ProtocolEmitterMetadata } from '../../../agents/protocol-emitters.js';
+import { sanitizeManagedUserFacingText } from './sanitize.js';
 import type {
   KodaXManagedProtocolPayload,
   KodaXManagedVerdictPayload,
   KodaXResult,
+  KodaXTaskRole,
 } from '../../../types.js';
 
 /**
@@ -171,6 +176,85 @@ export function buildVerificationDegradedVisibleText(
     return note;
   }
   return normalizedBase.includes(note) ? normalizedBase : `${normalizedBase}\n\n${note}`;
+}
+
+/**
+ * C1 parity (v0.7.26) — attempt to reconstruct a missed emit_* payload
+ * from the assistant's fenced-block fallback.
+ *
+ * v0.7.22 ran `managedProtocolPayload?.scout ?? parseManagedTaskScoutDirective(text)`
+ * at 4 call sites (scout / planner / generator / evaluator) so an LLM
+ * that forgot to call the emit tool but emitted a well-formed
+ * `kodax-task-*` fenced block could still advance the state machine.
+ * The Runner-driven path lost this fallback — a missed emit call now
+ * stalls the entire run until the 500-iteration safety cap trips.
+ *
+ * This helper re-wires the same fallback. The adapter layer
+ * (`buildRunnerLlmAdapter`) detects "role X finished a turn without
+ * calling emit_X tool" and calls this function with the assistant's
+ * text + role. On success, the caller synthesizes a tool_call entry
+ * so the existing `wrapEmitterWithRecorder` path populates the
+ * recorder naturally — no new state machinery.
+ *
+ * JSON-only for the MVP port. v0.7.22 had additional line-oriented
+ * parsers for handoff / verdict / contract bodies (status: X, summary:
+ * Y, ...), but every KodaX-supported provider emits JSON in the block;
+ * the line-oriented variants are deferred until they're actually
+ * needed. Returning `undefined` on JSON failure simply falls back to
+ * the existing "missing block" signal downstream.
+ */
+export function attemptProtocolTextFallback(
+  role: Exclude<KodaXTaskRole, 'direct'>,
+  assistantText: string,
+): ProtocolEmitterMetadata | undefined {
+  const blockName = getManagedBlockNameForRole(role);
+  if (!blockName) return undefined;
+
+  const block = findLastFencedBlock(assistantText, blockName);
+  if (!block) return undefined;
+
+  const visibleText = sanitizeManagedUserFacingText(assistantText.slice(0, block.index).trim());
+
+  let candidate: unknown;
+  try {
+    candidate = JSON.parse(block.body);
+  } catch {
+    return undefined;
+  }
+
+  const normalized = coerceManagedProtocolToolPayload(role, candidate, visibleText);
+  if (!normalized) return undefined;
+
+  // Reuse the exact same handoff / isTerminal mapping the real emitter
+  // applies, so the synthesized metadata is indistinguishable from a
+  // successful tool call on that same payload.
+  const { handoffTarget, isTerminal } = resolveHandoffTarget(
+    role as ProtocolEmitterMetadata['role'],
+    normalized,
+  );
+  return {
+    role: role as ProtocolEmitterMetadata['role'],
+    payload: normalized,
+    handoffTarget,
+    isTerminal,
+  };
+}
+
+/**
+ * Map a managed-task role to its canonical emit tool name. Used by the
+ * fallback path to synthesize a tool call that flows through the same
+ * `wrapEmitterWithRecorder` wrapper as a real emit call.
+ */
+export function getEmitToolNameForRole(
+  role: Exclude<KodaXTaskRole, 'direct'>,
+): string | undefined {
+  switch (role) {
+    case 'scout': return 'emit_scout_verdict';
+    case 'planner': return 'emit_contract';
+    case 'generator': return 'emit_handoff';
+    case 'evaluator': return 'emit_verdict';
+    default: return undefined;
+  }
 }
 
 /**
