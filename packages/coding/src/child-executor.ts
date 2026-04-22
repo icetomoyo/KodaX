@@ -8,6 +8,7 @@
 
 import { execSync } from 'child_process';
 import fsPromises from 'fs/promises';
+import os from 'os';
 import type {
   KodaXChildContextBundle,
   KodaXChildAgentResult,
@@ -18,6 +19,7 @@ import type {
   KodaXResult,
   KodaXToolExecutionContext,
 } from './types.js';
+import { resolveExecutionCwd } from './runtime-paths.js';
 // FEATURE_093 (v0.7.24): lazy-load `runKodaX` to break the cycle
 // `agent.ts → extensions/runtime.ts → tools/index.ts → tools/registry.ts
 // → tools/dispatch-child-tasks.ts → child-executor.ts → agent.ts`.
@@ -296,11 +298,33 @@ async function buildChildBriefing(
   ctx: KodaXToolExecutionContext,
   maxIter: number,
 ): Promise<string> {
+  // v0.7.26 NEW-2 — give the child agent explicit cwd / git root /
+  // platform context. Without this block, the child's LLM has to guess
+  // its working directory (it doesn't inherit the parent's system
+  // prompt) and routinely `cd`s into invented paths, causing 200
+  // iterations of ENOENT bash failures before timeout and an empty
+  // result that surfaces to the parent as a mysterious "child failed".
+  const childCwd = resolveExecutionCwd(ctx);
+  const childGitRoot = ctx.gitRoot;
+  const platform = os.platform();
+  const platformLabel =
+    platform === 'win32' ? 'Windows' : platform === 'darwin' ? 'macOS' : platform;
+  const shellHint = platform === 'win32'
+    ? 'Shell defaults: Windows. Use: dir, move, copy, del, type. Avoid Unix-only tools like `head`, `tail`, `rm`, `cp`, `mv`.'
+    : 'Shell defaults: Unix. Use: ls, mv, cp, rm, cat, head, tail.';
+
   const parts: string[] = [
     `# Child Agent Task`,
     ``,
     `You are a focused sub-agent executing a specific task in parallel with siblings.`,
     `Complete this task QUICKLY — aim for 3-7 iterations. You have a hard limit of ${maxIter} iterations.`,
+    ``,
+    `## Environment`,
+    `Working Directory: ${childCwd}`,
+    ...(childGitRoot && childGitRoot !== childCwd ? [`Git Root: ${childGitRoot}`] : []),
+    `Platform: ${platformLabel} (${os.release()})`,
+    shellHint,
+    `All relative paths in your tool calls (read/write/edit/bash) resolve against the Working Directory above. Do NOT \`cd\` into invented paths.`,
     ``,
     `## Objective`,
     bundle.objective,

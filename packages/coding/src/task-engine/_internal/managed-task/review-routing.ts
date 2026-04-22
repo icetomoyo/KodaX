@@ -21,8 +21,7 @@
  * clearly diff-driven.
  */
 
-import type { KodaXTaskRoutingDecision } from '../../../types.js';
-import type { KodaXRepoRoutingSignals } from '@kodax/ai';
+import type { KodaXRepoRoutingSignals, KodaXTaskRoutingDecision } from '../../../types.js';
 import type { ReasoningPlan } from '../../../reasoning.js';
 import {
   buildAmaControllerDecision,

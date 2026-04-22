@@ -182,6 +182,8 @@ import { buildManagedTaskCompactionHook } from './_internal/managed-task/compact
 import { createToolResultTruncationGuardrail } from '../tools/tool-result-truncation-guardrail.js';
 import { buildPromptMessageContent } from '../input-artifacts.js';
 import path from 'node:path';
+import os from 'node:os';
+import { resolveExecutionCwd } from '../runtime-paths.js';
 import { mkdir } from 'node:fs/promises';
 
 /**
@@ -1281,10 +1283,20 @@ function wrapReadOnlyBash(bashTool: RunnableTool, roleTitle: string): RunnableTo
           matchesShellPattern(command, SHELL_WRITE_PATTERNS)
           || matchesShellPattern(command, SHELL_MUTATION_EXTENSIONS)
         ) {
+          // v0.7.26: Scout no longer uses this wrapper (Scout has full
+          // tools per v22 parity); only Evaluator reaches here. Evaluator
+          // IS verification-only by architectural design — its job is to
+          // spot-check the Generator handoff, not mutate state. The
+          // block message names that role semantic + the read-intent
+          // hint for `python -c` / `node -e` so the LLM reaches for
+          // `read` / `grep` instead of re-trying shell.
+          const isReadIntent = /^python\s+-c|^node\s+-e/.test(command);
+          const hint = isReadIntent
+            ? 'If you only need to inspect a file, use the `read` or `grep` tool instead — both go around the shell.'
+            : 'If mutation is genuinely required by the verification contract, flag it in the verdict reason instead of performing it here.';
           return {
             content:
-              `[Managed Task ${roleTitle}] Shell command blocked because this role is verification-only. ` +
-              `Command: ${command.slice(0, 120)}`,
+              `[Managed Task ${roleTitle}] Shell command blocked because this role is verification-only. ${hint} Blocked command: ${command.slice(0, 120)}`,
             isError: true,
           };
         }
@@ -1328,6 +1340,7 @@ function resolveGeneratorMutationIntent(
   return inferScoutMutationIntent(
     { scope: scoutPayload.scope, reviewFilesOrAreas: scoutPayload.reviewFilesOrAreas },
     planRef.current?.decision.primaryTask,
+    scoutPayload.confirmedHarness,
   );
 }
 
@@ -1631,7 +1644,22 @@ export function buildRunnerAgentChain(
       codingTools.read,
       codingTools.grep,
       codingTools.glob,
-      wrapReadOnlyBash(codingTools.bash, 'Scout'),
+      // v0.7.26 Scout-tool-restoration: legacy v0.7.22 gave Scout the
+      // full default tool set (`_internal/prompts/tool-policy.ts:232`
+      // returned `undefined` for Scout so `buildManagedWorkerToolPolicy`
+      // emitted no restrictions; Scout ran via `runDirectKodaX` with
+      // unwrapped bash/write/edit). The three-level H0/H1/H2 quality
+      // framework was enforced by prompt ONLY — tools layer deliberately
+      // didn't police it. FEATURE_084 regressed this: Scout's bash got
+      // wrapped with `wrapReadOnlyBash` and write/edit were dropped,
+      // which broke H0_DIRECT execution for any task involving writes
+      // (LLM sees "verification-only" block, concludes it is read-only,
+      // loops or escalates to dispatch_child_task which is also
+      // read-only). Restore the v22 surface.
+      codingTools.bash,
+      codingTools.write,
+      codingTools.edit,
+      codingTools.exitPlanMode,
       // Shard 6d-Q: Scout may dispatch read-only child investigations
       // (evidence scans, repo reconnaissance) in parallel before
       // emitting its verdict. The dispatch tool itself enforces
@@ -2138,7 +2166,9 @@ export function buildRunnerLlmAdapter(
       // mid-sentence and the Runner exits with a partial answer.
       let l5Retries = 0;
       let accumulatedText = (raw.textBlocks ?? []).map((b) => b.text).join('');
-      const accumulatedThinking: typeof raw.thinkingBlocks = raw.thinkingBlocks
+      type ThinkingBlock = import('@kodax/ai').KodaXThinkingBlock
+        | import('@kodax/ai').KodaXRedactedThinkingBlock;
+      const accumulatedThinking: ThinkingBlock[] | undefined = raw.thinkingBlocks
         ? [...raw.thinkingBlocks]
         : undefined;
       while (
@@ -3285,10 +3315,24 @@ async function runManagedTaskViaRunnerInner(
   // handoff/verdict/contract block specs). The context factory closes over
   // the recorder so Scout's post-emit `skillMap` / `scope` reach
   // downstream Generator / Evaluator prompts at invocation time.
+  // v0.7.26 NEW-1 — resolve workspace environment once so every role
+  // prompt can tell the LLM where it is running. The SA path injects
+  // `Working Directory: ${executionCwd}` via `buildSystemPrompt`, but
+  // the Runner-driven path bypasses that builder. Without this block,
+  // Scout/Planner/Generator/Evaluator all guess paths (e.g. the
+  // reported `cd /d/user/kodax/workspace` against a real cwd of
+  // `C:\Works\GitWorks\...`).
+  const managedWorkspace = {
+    executionCwd: resolveExecutionCwd(options.context),
+    gitRoot: options.context?.gitRoot ?? undefined,
+    platform: process.platform,
+    osRelease: os.release(),
+  };
   const rolePromptContextFactory: RolePromptContextFactory = (role, currentRecorder) => {
     const scoutPayload = currentRecorder.scout?.payload.scout;
     const ctx: ManagedRolePromptContext = {
       originalTask: prompt,
+      workspace: managedWorkspace,
     };
     // v0.7.26 C4 parity — surface the caller's skill invocation + the
     // on-disk artefact paths so role prompts can quote a stable filesystem
@@ -3315,11 +3359,21 @@ async function runManagedTaskViaRunnerInner(
       };
     }
     // Scout's scope hints are only relevant to post-Scout roles (Issue 119).
+    // v0.7.26 loop-fix: also carry `confirmedHarness` so downstream
+    // `inferScoutMutationIntent` calls can recognise execute harnesses
+    // and stop misclassifying "review primaryTask + empty scope" as
+    // review-only when Scout actually picked H1_EXECUTE_EVAL or
+    // H2_PLAN_EXECUTE_EVAL.
     if (role !== 'scout') {
       const scope = scoutPayload?.scope ?? [];
       const reviewFilesOrAreas = scoutPayload?.reviewFilesOrAreas ?? [];
-      if (scope.length > 0 || reviewFilesOrAreas.length > 0) {
-        ctx.scoutScope = { scope: [...scope], reviewFilesOrAreas: [...reviewFilesOrAreas] };
+      const confirmedHarness = scoutPayload?.confirmedHarness;
+      if (scope.length > 0 || reviewFilesOrAreas.length > 0 || confirmedHarness) {
+        ctx.scoutScope = {
+          scope: [...scope],
+          reviewFilesOrAreas: [...reviewFilesOrAreas],
+          confirmedHarness,
+        };
       }
     }
     // M1 parity (v0.7.26) — populate `previousRoleSummaries` from the
@@ -3414,6 +3468,7 @@ async function runManagedTaskViaRunnerInner(
               reviewFilesOrAreas: currentRecorder.scout?.payload.scout?.reviewFilesOrAreas,
             },
             currentDecision.primaryTask,
+            currentRecorder.scout?.payload.scout?.confirmedHarness,
           ),
           options.context?.repoIntelligenceMode,
         );
@@ -3623,6 +3678,7 @@ async function runManagedTaskViaRunnerInner(
             reviewFilesOrAreas: recorder.scout.payload.scout?.reviewFilesOrAreas,
           },
           plan?.decision.primaryTask,
+          recorder.scout.payload.scout?.confirmedHarness,
         )
       : undefined;
     const budgetExhausted = budget.totalBudget > 0 && budget.spentBudget >= budget.totalBudget;

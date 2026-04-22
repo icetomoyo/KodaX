@@ -362,8 +362,13 @@ describe('buildRunnerLlmAdapter — max_tokens escalation (FEATURE_085 Scout par
     const observedBudgets: number[] = [];
     const capturedMessagesPerCall: Array<readonly import('@kodax/ai').KodaXMessage[]> = [];
     const responses: Array<{ textBlocks: { type: 'text'; text: string }[]; stopReason?: string }> = [
+      // Turn 1 returns max_tokens with text — after L1 escalation (which
+      // doesn't fire here because first turn already at capped budget
+      // returns max_tokens; escalation kicks in for turn 2).
       { textBlocks: [{ type: 'text', text: 'partial' }], stopReason: 'max_tokens' },
+      // L1 escalation turn — still max_tokens with text → L5 continuation fires.
       { textBlocks: [{ type: 'text', text: 'half' }], stopReason: 'max_tokens' },
+      // L5 continuation call finishes.
       { textBlocks: [{ type: 'text', text: ' done' }], stopReason: 'end_turn' },
     ];
     let callIdx = 0;
@@ -411,6 +416,9 @@ describe('buildRunnerLlmAdapter — max_tokens escalation (FEATURE_085 Scout par
       { name: 'scout', instructions: '' },
     );
 
+    // By the third stream call the adapter must have injected the meta
+    // message on the provider messages. Scan all subsequent calls after
+    // the first one — the L5-style user message must appear.
     const allInjectedTexts = capturedMessagesPerCall
       .slice(1)
       .flatMap((msgs) => msgs)
@@ -424,7 +432,8 @@ describe('buildRunnerLlmAdapter — max_tokens escalation (FEATURE_085 Scout par
       && t.includes('Break remaining work into smaller pieces'),
     );
     expect(hasClaudeCodeWording).toBe(true);
-    // Legacy phrasing must NOT appear — guards against silent regression.
+    // And the legacy phrasing must NOT appear — otherwise the upgrade
+    // silently regressed.
     expect(allInjectedTexts.some((t) => t === 'Continue from where you left off.')).toBe(false);
   }, 15_000);
 
@@ -432,9 +441,9 @@ describe('buildRunnerLlmAdapter — max_tokens escalation (FEATURE_085 Scout par
   // Before the `attempt -= 1` fix, the L1 escalation silently consumed one
   // slot of `resilienceCfg.maxRetries`, so a subsequent real error passed
   // the wrong attempt number into the coordinator (leaking 1 retry worth
-  // of budget). A retryable error immediately after escalation should be
-  // seen by `onProviderRecovery` with `attempt === 1`, because the
-  // escalation did not consume any retry slot.
+  // of budget). Concretely: a retryable error immediately after escalation
+  // should be seen by `onProviderRecovery` with `attempt === 1`, because
+  // the escalation did not consume any retry slot.
   it('L1 escalation does not consume recovery retry budget (onProviderRecovery sees attempt=1 after escalate+throw)', async () => {
     const observedBudgets: number[] = [];
     const recoveryAttempts: number[] = [];
@@ -464,6 +473,7 @@ describe('buildRunnerLlmAdapter — max_tokens escalation (FEATURE_085 Scout par
         observedBudgets.push(this.getEffectiveMaxOutputTokens());
         callIdx += 1;
         this.setMaxOutputTokensOverride(undefined);
+        // Call 1: capped budget hit, forces L1 escalation.
         if (callIdx === 1) {
           return {
             textBlocks: [],
@@ -472,9 +482,17 @@ describe('buildRunnerLlmAdapter — max_tokens escalation (FEATURE_085 Scout par
             stopReason: 'max_tokens',
           };
         }
+        // Call 2: now at escalated budget — throw a retryable
+        // connection_failure mid-stream to force the recovery
+        // coordinator path. The coordinator receives `attempt` as an
+        // argument; with the fix in place it must be 1 (fresh budget
+        // after a successful L1 escalation). Without the fix it would
+        // be 2 (leaked slot) and the ladder would pick a different
+        // action (non_streaming_fallback instead of stable_boundary_retry).
         if (callIdx === 2) {
           throw new Error('zhipu-coding API error: terminated');
         }
+        // Call 3 onward: recovery retry succeeds.
         return {
           textBlocks: [{ type: 'text', text: 'recovered ok' }],
           toolBlocks: [],
@@ -499,11 +517,12 @@ describe('buildRunnerLlmAdapter — max_tokens escalation (FEATURE_085 Scout par
       { name: 'scout', instructions: '' },
     );
 
+    // Budgets observed: call 1 at capped, call 2 at escalated, call 3 at escalated (after recovery).
     expect(observedBudgets[0]).toBe(KODAX_CAPPED);
     expect(observedBudgets[1]).toBe(KODAX_ESCALATED);
-    // The coordinator recovery event must have seen attempt=1 — proving
-    // that the escalation did NOT consume a retry slot. Without the fix
-    // this would be 2.
+    // The coordinator recovery event must have seen attempt=1 — proving that
+    // the escalation did NOT consume a retry slot. Without the fix this
+    // would be 2.
     expect(recoveryAttempts).toEqual([1]);
     expect(result.text).toContain('recovered ok');
   }, 15_000);
@@ -1715,12 +1734,37 @@ describe('Shard 6d-f — role-scoped tool boundaries (legacy toolPolicy parity)'
     expect(reset.isError).toBe(true);
   });
 
-  it('Scout bash applies the same mutation guard (Scout is also read-only)', async () => {
+  it('Scout bash is NOT wrapped — Scout has full tool access per v0.7.22 parity', async () => {
+    // v0.7.26 Scout-tool-restoration: Scout runs H0_DIRECT tasks to
+    // completion (including file writes), so its bash must not be
+    // wrapped with the verification-only guard. Harness routing is
+    // enforced by prompt, not tool restrictions. This test guards
+    // against future regressions that re-wrap Scout bash.
+    //
+    // Probe with `python -c "print(1)"` — a pure-read command that
+    // WOULD have been blocked by the old `wrapReadOnlyBash` wrapper
+    // (SHELL_WRITE_PATTERNS treats `python -c` as mutation). If Scout
+    // bash is unwrapped, the block message never fires; the downstream
+    // handler gets the command (and may or may not succeed depending on
+    // test env, which we don't care about — we only assert on the
+    // absence of the wrapper's block message).
     const chain = buildRunnerAgentChain(makeCtx(), {});
     const scoutBash = findTool(chain.scout, 'bash');
-    const result = await scoutBash.execute({ command: 'rm -rf /tmp/y' }, makeToolCtx('scout'));
-    expect(result.isError).toBe(true);
-    expect(String(result.content)).toContain('verification-only');
+    const result = await scoutBash.execute(
+      { command: 'python -c "print(1)"' },
+      makeToolCtx('scout'),
+    );
+    const text = typeof result.content === 'string' ? result.content : '';
+    expect(text).not.toContain('verification-only');
+  });
+
+  it('Scout exposes write/edit/exit_plan_mode tools (v0.7.22 parity)', () => {
+    const chain = buildRunnerAgentChain(makeCtx(), {});
+    const scoutTools = chain.scout.tools?.map((t) => t.name) ?? [];
+    expect(scoutTools).toContain('write');
+    expect(scoutTools).toContain('edit');
+    expect(scoutTools).toContain('bash');
+    expect(scoutTools).toContain('exit_plan_mode');
   });
 });
 

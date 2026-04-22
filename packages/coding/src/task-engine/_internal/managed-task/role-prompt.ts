@@ -115,6 +115,36 @@ export function createRolePrompt(
     'When proposing shell commands or command examples, match the current host OS and shell. Do not assume Unix-only tools such as head on Windows.',
   ].join('\n');
 
+  // v0.7.26 NEW-1 — inject the workspace environment at prompt head.
+  // Legacy SA path gets this via `buildSystemPrompt` (Working Directory
+  // + environment-context); the Runner-driven path bypasses that
+  // builder entirely. Without this block, Scout/Planner/Generator/
+  // Evaluator all guess paths (e.g. `cd /d/user/kodax/workspace` when
+  // the real cwd is `C:\Works\GitWorks\...`). Name the block after the
+  // SA surface so the LLM can correlate with anything it already
+  // learned from `buildSystemPrompt`.
+  const workspace = rolePromptContext?.workspace;
+  const workspaceSection = workspace
+    ? [
+      '## Environment',
+      `Working Directory: ${workspace.executionCwd}`,
+      workspace.gitRoot && workspace.gitRoot !== workspace.executionCwd
+        ? `Git Root: ${workspace.gitRoot}`
+        : undefined,
+      `Platform: ${
+        workspace.platform === 'win32'
+          ? 'Windows'
+          : workspace.platform === 'darwin'
+            ? 'macOS'
+            : workspace.platform
+      }${workspace.osRelease ? ` (${workspace.osRelease})` : ''}`,
+      workspace.platform === 'win32'
+        ? 'Shell defaults: Windows shell. Use: dir, move, copy, del, type. Avoid Unix-only tools like `head`, `tail`, `rm`, `cp`, `mv`.'
+        : 'Shell defaults: Unix shell. Use: ls, mv, cp, rm, cat, head, tail.',
+      'All relative paths you emit in tool calls (read/write/edit/bash) resolve against the Working Directory above. Do NOT `cd` into invented paths or assume a different cwd.',
+    ].filter((line): line is string => Boolean(line)).join('\n')
+    : undefined;
+
   // v0.7.26 fix — managed workers bypass `buildSystemPrompt` (legacy SA
   // path), so the base `SYSTEM_PROMPT` discipline sections (tmp-directory
   // rule, mkdir warning, cross-platform notes) never reached the LLM. The
@@ -305,7 +335,11 @@ export function createRolePrompt(
   // flag it as review-only or docs-only), emit no hard mutation guard — trust
   // Scout's scope handoff + Evaluator instead of layering extra constraints.
   const h1MutationIntent = decision.harnessProfile === 'H1_EXECUTE_EVAL'
-    ? inferScoutMutationIntent(rolePromptContext?.scoutScope, decision.primaryTask)
+    ? inferScoutMutationIntent(
+        rolePromptContext?.scoutScope,
+        decision.primaryTask,
+        rolePromptContext?.scoutScope?.confirmedHarness,
+      )
     : 'open';
   const h1MutationGuardance = decision.harnessProfile === 'H1_EXECUTE_EVAL'
     ? (
@@ -372,6 +406,7 @@ export function createRolePrompt(
     case 'scout':
       return [
         'You are Scout — the AMA entry role for a managed KodaX task.',
+        workspaceSection,
         decisionSummary,
         originalTaskSection,
         roundInstructionSection,
@@ -391,14 +426,21 @@ export function createRolePrompt(
         [
           'QUALITY FRAMEWORK — Think of yourself as a senior engineer who just received this task.',
           '',
+          'You have the full default tool set: read / grep / glob / bash / write / edit /',
+          'dispatch_child_task(read-only) / exit_plan_mode. The harness decision below is about WHETHER',
+          'your work needs an independent reviewer — NOT about whether you are allowed to use those tools.',
+          '',
           'H0 (default) — "I\'d just do this myself. No one needs to check my work."',
-          '  Examples: fixing a typo, answering a question, git commit/push, config change, single-file edit.',
-          '  → Complete the task directly. No special protocol needed.',
-          '    (You MAY optionally call emit_scout_verdict with confirmed_harness="H0_DIRECT"',
-          '     for observability, but it is not required — a direct text answer is sufficient.)',
+          '  Examples: fixing a typo, answering a question, git commit/push, config change, single-file edit,',
+          '  one-off scratch file, straightforward bug fix the user explicitly asked you to just apply.',
+          '  → Complete the task directly — read, edit, write, and run bash as the user authorised. No',
+          '    special protocol needed. You MAY optionally call emit_scout_verdict with',
+          '    confirmed_harness="H0_DIRECT" for observability, but it is not required — a direct text',
+          '    answer plus whatever file writes you performed is sufficient.',
           '',
           'H1 — "I can do this, but someone should review my work before shipping."',
-          '  Examples: fixing a bug across files, code review, performance optimization, security fix.',
+          '  Examples: fixing a bug across files, code review, performance optimization, security fix,',
+          '  non-trivial refactor of an unfamiliar module.',
           '  → Call emit_scout_verdict with confirmed_harness="H1_EXECUTE_EVAL" to escalate. A Generator+Evaluator pipeline will handle it.',
           '',
           'H2 — "I need to plan the approach first before coding."',
@@ -449,6 +491,7 @@ export function createRolePrompt(
     case 'planner':
       return [
         'You are Planner — the H2 planning role for a managed KodaX task.',
+        workspaceSection,
         decisionSummary,
         originalTaskSection,
         roundInstructionSection,
@@ -485,6 +528,7 @@ export function createRolePrompt(
     case 'generator':
       return [
         'You are Generator — the H1/H2 execution role for a managed KodaX task.',
+        workspaceSection,
         decisionSummary,
         originalTaskSection,
         roundInstructionSection,
@@ -524,6 +568,7 @@ export function createRolePrompt(
     case 'evaluator':
       return [
         'You are Evaluator — the H1/H2 verifier role for a managed KodaX task.',
+        workspaceSection,
         decisionSummary,
         originalTaskSection,
         roundInstructionSection,

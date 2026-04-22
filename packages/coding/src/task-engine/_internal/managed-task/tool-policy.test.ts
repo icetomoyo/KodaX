@@ -169,4 +169,53 @@ describe('inferScoutMutationIntent', () => {
     expect(inferScoutMutationIntent(undefined, 'edit')).toBe('open');
     expect(inferScoutMutationIntent({}, 'edit')).toBe('open');
   });
+
+  describe('confirmedHarness override (v0.7.26 loop-fix)', () => {
+    it('returns open when Scout confirmed H1_EXECUTE_EVAL, even for review primaryTask + empty scope', () => {
+      expect(
+        inferScoutMutationIntent({ scope: [] }, 'review', 'H1_EXECUTE_EVAL'),
+      ).toBe('open');
+    });
+
+    it('returns open when Scout confirmed H2_PLAN_EXECUTE_EVAL, even for review primaryTask + empty scope', () => {
+      expect(
+        inferScoutMutationIntent({ scope: [] }, 'review', 'H2_PLAN_EXECUTE_EVAL'),
+      ).toBe('open');
+    });
+
+    it('still returns docs-scoped when execute harness is confirmed but all paths are docs-like', () => {
+      expect(
+        inferScoutMutationIntent(
+          { scope: ['docs/a.md', 'README.md'] },
+          'edit',
+          'H1_EXECUTE_EVAL',
+        ),
+      ).toBe('docs-scoped');
+    });
+
+    it('honors H0_DIRECT by falling through to legacy inference (review-only when primaryTask=review, empty scope)', () => {
+      expect(
+        inferScoutMutationIntent({ scope: [] }, 'review', 'H0_DIRECT'),
+      ).toBe('review-only');
+    });
+
+    it('also reads confirmedHarness from the hint when no explicit override is supplied', () => {
+      expect(
+        inferScoutMutationIntent(
+          { scope: [], confirmedHarness: 'H1_EXECUTE_EVAL' },
+          'review',
+        ),
+      ).toBe('open');
+    });
+
+    it('explicit confirmedHarness arg wins over the hint field', () => {
+      expect(
+        inferScoutMutationIntent(
+          { scope: [], confirmedHarness: 'H0_DIRECT' },
+          'review',
+          'H1_EXECUTE_EVAL',
+        ),
+      ).toBe('open');
+    });
+  });
 });

@@ -36,6 +36,20 @@ export interface ManagedRolePromptContext {
    * `plan.decision.mutationSurface` heuristic value.
    */
   scoutScope?: import('./tool-policy.js').ScoutScopeHint;
+  /**
+   * v0.7.26 NEW-1 — workspace environment the role should assume.
+   * Without this the managed-worker system prompt never tells the LLM
+   * where it is running; the SA path injects `Working Directory: ...`
+   * via `buildSystemPrompt`, but the Runner-driven path bypassed that
+   * builder entirely, causing Scout/Planner/Generator/Evaluator to
+   * guess paths (e.g. bash-cd into invented directories).
+   */
+  workspace?: {
+    executionCwd: string;
+    gitRoot?: string;
+    platform: NodeJS.Platform;
+    osRelease?: string;
+  };
 }
 
 /**

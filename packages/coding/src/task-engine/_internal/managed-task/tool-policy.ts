@@ -42,12 +42,15 @@ import { resolveKodaXAutoRepoMode } from '../../../repo-intelligence/runtime.js'
 
 /**
  * Scope hints the Scout emits on `emit_scout_verdict` — `scope` + the
- * reviewer's short-list `reviewFilesOrAreas`. The intent classifier below
- * infers the mutation surface from these paths + the routing primaryTask.
+ * reviewer's short-list `reviewFilesOrAreas` + the harness Scout actually
+ * picked. The intent classifier below infers the mutation surface from
+ * these paths + the routing primaryTask + Scout's confirmed harness
+ * (authoritative for execute vs review-only — v0.7.26 loop-fix).
  */
 export interface ScoutScopeHint {
   scope?: readonly string[];
   reviewFilesOrAreas?: readonly string[];
+  confirmedHarness?: KodaXTaskRoutingDecision['harnessProfile'];
 }
 
 /**
@@ -72,14 +75,40 @@ export type ScoutMutationIntent = 'review-only' | 'docs-scoped' | 'open';
  * list: if every path is docs-like, the run is docs-scoped; if the
  * routing primaryTask is `'review'` and Scout emitted no scope, the run
  * is review-only; otherwise open.
+ *
+ * v0.7.26 loop-fix — added `confirmedHarness` override: when Scout has
+ * explicitly picked an execute harness (H1_EXECUTE_EVAL /
+ * H2_PLAN_EXECUTE_EVAL) the task IS execution; do not degrade to
+ * 'review-only' just because `primaryTask === 'review'` and Scout
+ * omitted its scope list. Without this override, prompts like
+ * "这版PPT内容没有突出X，帮我调一下" get classified as review + empty
+ * scope, Generator's write tools are blocked, and the Scout→Generator→
+ * Evaluator loop cannot make progress.
  */
 export function inferScoutMutationIntent(
   scoutScope: ScoutScopeHint | undefined,
   primaryTask: KodaXTaskRoutingDecision['primaryTask'] | undefined,
+  confirmedHarness?: KodaXTaskRoutingDecision['harnessProfile'],
 ): ScoutMutationIntent {
   const scope = (scoutScope?.scope ?? []).filter((s) => s.trim().length > 0);
   const reviewFiles = (scoutScope?.reviewFilesOrAreas ?? []).filter((s) => s.trim().length > 0);
   const allPaths = [...scope, ...reviewFiles];
+
+  // Scout's confirmed harness is authoritative. When Scout picked an
+  // execute harness, the task IS execution — never degrade to
+  // review-only. docs-scoped still applies when every scoped path is
+  // documentation-like. The hint carries `confirmedHarness` as a
+  // convenience; the explicit 3rd arg still wins when both are set.
+  const effectiveHarness = confirmedHarness ?? scoutScope?.confirmedHarness;
+  const scoutChoseExecute =
+    effectiveHarness === 'H1_EXECUTE_EVAL'
+    || effectiveHarness === 'H2_PLAN_EXECUTE_EVAL';
+  if (scoutChoseExecute) {
+    if (allPaths.length > 0 && allPaths.every(isDocsLikePath)) {
+      return 'docs-scoped';
+    }
+    return 'open';
+  }
 
   if (primaryTask === 'review' && scope.length === 0) {
     return 'review-only';
