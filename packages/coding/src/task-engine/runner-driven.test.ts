@@ -2791,6 +2791,34 @@ describe('wrapEmitterWithRecorder — Risk 2/3/5 behavioural guards', () => {
     expect(meta.payload.verdict.status).toBe('revise');
   });
 
+  it('Risk-5: multi-emit on same slot — recorder holds the LAST payload (last-wins)', async () => {
+    // When the LLM calls emit_verdict twice in one turn (either by
+    // accident or as a self-correction), the recorder must hold the
+    // SECOND payload so handoff routing reflects the corrected intent.
+    // Legacy managed-protocol-handoff.test.ts explicitly covered this
+    // for the text-fence path ("uses the last verdict block when
+    // multiple exist"); the same semantic must hold for the tool-call
+    // path.
+    const { wrapEmitterWithRecorder } = await harnessTestables();
+    const recorder = makeRecorder();
+    const budget = makeBudgetController({ total: 200, spent: 10 });
+    const budgetExtension = makeBudgetExtensionFixture({ harness: 'H1_EXECUTE_EVAL' });
+
+    // First emit: revise with one reason
+    const firstBase = makeFakeVerdictEmitter({ status: 'revise', reason: 'first pass incomplete' });
+    const firstWrapped = wrapEmitterWithRecorder(firstBase, 'verdict', recorder, noopObserver, budget, budgetExtension);
+    await firstWrapped.execute({}, toolCtx);
+    expect((recorder as any).verdict?.payload.verdict?.reason).toBe('first pass incomplete');
+
+    // Second emit on same slot: self-correct to accept
+    const secondBase = makeFakeVerdictEmitter({ status: 'accept', reason: 'actually done' });
+    const secondWrapped = wrapEmitterWithRecorder(secondBase, 'verdict', recorder, noopObserver, budget, budgetExtension);
+    await secondWrapped.execute({}, toolCtx);
+    // Last-wins semantic — recorder now holds the second payload
+    expect((recorder as any).verdict?.payload.verdict?.status).toBe('accept');
+    expect((recorder as any).verdict?.payload.verdict?.reason).toBe('actually done');
+  });
+
   it('Risk-5: malformed verdict (missing payload fields) passes through without mutation', async () => {
     // When the emitter's base.execute returns a metadata-less error
     // (e.g. schema validation failed, emit tool rejected the input),

@@ -133,6 +133,23 @@ export const WRITE_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'create',
   'create_file',
   'create_resource',
+  // v0.7.22-parity defense-in-depth — scene/script tool names from the
+  // Godot-editor MCP integration. None of these are currently registered
+  // in the KodaX core bundle, but they appeared in legacy
+  // WRITE_ONLY_TOOLS and are kept here so that if an MCP server or
+  // third-party extension registers a tool under any of these names,
+  // Planner / Evaluator's `blockedTools: [...WRITE_ONLY_TOOLS]` already
+  // covers it. Restoring the list closes the v22→v26 gap identified in
+  // the deep-diff audit.
+  'scene_create',
+  'scene_node_add',
+  'scene_node_delete',
+  'scene_node_set',
+  'scene_save',
+  'script_create',
+  'script_modify',
+  'project_setting_set',
+  'signal_connect',
 ]);
 
 export const DOCS_ONLY_WRITE_PATH_PATTERNS: readonly string[] = [
