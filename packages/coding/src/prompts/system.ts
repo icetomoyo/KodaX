@@ -38,6 +38,8 @@ When a shell command fails, prefer this recovery order:
 - Always read the file first to understand its current content
 - Make precise, targeted edits rather than rewriting entire files
 - Preserve the existing code style and formatting
+- Do not create new files unless the user asks for one or the task genuinely needs one. Prefer editing an existing file to creating a new one, as this prevents file bloat and keeps each tool call small
+- When a modification is scoped to an existing file, ALWAYS prefer \`edit\` over \`write\`. Only fall back to \`write\` when no file exists yet or the user explicitly requested a complete rewrite
 
 ## Tool Usage
 

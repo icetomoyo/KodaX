@@ -159,11 +159,12 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
   {
     name: 'write',
     description:
-      'Write content to a file. Large diffs may be summarized in the tool result. '
-      + 'Prefer the `edit` tool over `write` when modifying an existing file — `edit` sends only the diff '
-      + 'and avoids output-token pressure. For new files larger than ~400 lines, write in multiple passes: '
-      + 'create a partial file first, then use `edit` to append remaining sections. This keeps each tool call '
-      + 'under the per-turn output budget and avoids mid-stream truncation.',
+      'Write a file to the local filesystem. Large diffs may be summarized in the tool result. '
+      + 'ALWAYS prefer the `edit` tool over `write` when modifying an existing file — `edit` sends only the '
+      + 'diff and avoids output-token pressure. Only use `write` to create new files or for a complete rewrite '
+      + 'that the user explicitly asked for. For new files larger than ~300 lines, write in multiple passes: '
+      + 'create a skeleton first, then `edit` to fill in sections. This keeps each tool call under the '
+      + 'per-turn output budget and avoids mid-stream truncation.',
     input_schema: {
       type: 'object',
       properties: {
@@ -176,7 +177,13 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
   },
   {
     name: 'edit',
-    description: 'Perform safe exact-or-normalized string replacement in a file. If the anchor is unstable, retry with a smaller unique snippet instead of rewriting the whole file.',
+    description:
+      'Perform safe exact-or-normalized string replacement in a file. '
+      + 'ALWAYS prefer editing an existing file with `edit` over rewriting the whole file with `write` — '
+      + '`edit` only sends the diff, avoiding output-token pressure and mid-stream truncation on large files. '
+      + 'You must have read the file (via `read`) at least once in the conversation before editing. '
+      + 'If the anchor is unstable, retry with a smaller unique snippet or use `insert_after_anchor`; '
+      + 'do NOT fall back to `write` for the whole file as a recovery.',
     input_schema: {
       type: 'object',
       properties: {
