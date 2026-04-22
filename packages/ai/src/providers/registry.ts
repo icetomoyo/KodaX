@@ -115,9 +115,13 @@ class KimiCodeProvider extends KodaXAnthropicCompatProvider {
   protected readonly config: KodaXProviderConfig = {
     apiKeyEnv: 'KIMI_API_KEY',
     baseUrl: 'https://api.kimi.com/coding/',
-    model: 'k2.5',
+    // api.kimi.com/coding/ is a unified coding endpoint: the server ignores
+    // the model field (probe confirmed it always returns `kimi-for-coding`,
+    // now routing to K2.6 GA). Model IDs here are labels for cost tracking
+    // and UI selection only.
+    model: 'K2.6',
     models: [
-      { id: 'K2.6-code-preview', displayName: 'K2.6 Code Preview' },
+      { id: 'k2.5', displayName: 'K2.5' },
     ],
     supportsThinking: true,
     reasoningCapability: 'native-budget',
@@ -205,7 +209,10 @@ class KimiProvider extends KodaXOpenAICompatProvider {
   protected readonly config: KodaXProviderConfig = {
     apiKeyEnv: 'KIMI_API_KEY',
     baseUrl: 'https://api.moonshot.cn/v1',
-    model: 'k2.5',
+    model: 'kimi-k2.6',
+    models: [
+      { id: 'k2.5', displayName: 'K2.5' },
+    ],
     supportsThinking: true,
     reasoningCapability: 'native-effort',
     contextWindow: 256000,
@@ -290,14 +297,15 @@ export const KODAX_PROVIDER_SNAPSHOTS: Record<ProviderName, ProviderSnapshot> = 
   },
   kimi: {
     apiKeyEnv: 'KIMI_API_KEY',
-    model: 'k2.5',
+    model: 'kimi-k2.6',
+    models: ['k2.5'],
     reasoningCapability: 'native-effort',
     capabilityProfile: NATIVE_PROVIDER_CAPABILITY_PROFILE,
   },
   'kimi-code': {
     apiKeyEnv: 'KIMI_API_KEY',
-    model: 'k2.5',
-    models: ['K2.6-code-preview'],
+    model: 'K2.6',
+    models: ['k2.5'],
     reasoningCapability: 'native-budget',
     capabilityProfile: NATIVE_PROVIDER_CAPABILITY_PROFILE,
   },

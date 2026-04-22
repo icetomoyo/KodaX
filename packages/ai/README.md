@@ -18,8 +18,8 @@ npm install @kodax/ai
 |----------|---------------------|----------|---------------|
 | anthropic | `ANTHROPIC_API_KEY` | Yes | claude-sonnet-4-20250514 |
 | openai | `OPENAI_API_KEY` | No | gpt-4o |
-| kimi | `KIMI_API_KEY` | Yes | k2.5 |
-| kimi-code | `KIMI_API_KEY` | Yes | k2p5 |
+| kimi | `KIMI_API_KEY` | Yes | kimi-k2.6 |
+| kimi-code | `KIMI_API_KEY` | Yes | K2.6 |
 | qwen | `QWEN_API_KEY` | No | qwen-max |
 | zhipu | `ZHIPU_API_KEY` | No | glm-4-plus |
 | zhipu-coding | `ZHIPU_API_KEY` | Yes | glm-5 |
