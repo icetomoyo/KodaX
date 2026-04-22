@@ -102,6 +102,7 @@ import type {
   KodaXOptions,
   KodaXResult,
   KodaXTaskContract,
+  KodaXTaskEvidenceArtifact,
   KodaXTaskEvidenceEntry,
   KodaXTaskRole,
   KodaXTaskRoleAssignment,
@@ -135,6 +136,9 @@ import {
 } from './_internal/managed-task/workspace.js';
 import {
   buildManagedTaskArtifactRecords,
+  getManagedSkillArtifactPaths,
+  mergeEvidenceArtifacts,
+  writeManagedSkillArtifacts,
   writeManagedTaskArtifacts,
   writeManagedTaskSnapshotArtifacts,
 } from './_internal/managed-task/artifacts.js';
@@ -160,6 +164,7 @@ import { buildManagedTaskCompactionHook } from './_internal/managed-task/compact
 import { createToolResultTruncationGuardrail } from '../tools/tool-result-truncation-guardrail.js';
 import { buildPromptMessageContent } from '../input-artifacts.js';
 import path from 'node:path';
+import { mkdir } from 'node:fs/promises';
 
 /**
  * Env-flag check. `KODAX_MANAGED_TASK_RUNTIME=runner` enables the Runner-
@@ -2022,6 +2027,19 @@ function buildManagedTaskPayload(args: {
   readonly entries?: readonly KodaXTaskEvidenceEntry[];
   readonly degradedContinue?: boolean;
   readonly childWriteWorktreePaths?: ReadonlyMap<string, string>;
+  /**
+   * Stable taskId for the run. Callers that need deterministic snapshot
+   * paths (runManagedTaskViaRunnerInner, checkpoint writer, skill-artifact
+   * persistence) must pass the same id for every invocation in a run; if
+   * omitted a fresh id is generated (back-compat for legacy callers).
+   */
+  readonly taskId?: string;
+  /**
+   * v0.7.26 C4 parity — extra evidence artefact records (e.g. skill
+   * artifacts) that the caller has already persisted to disk and wants
+   * merged into `evidence.artifacts` alongside the built-in snapshot set.
+   */
+  readonly extraArtifacts?: readonly KodaXTaskEvidenceArtifact[];
 }): KodaXManagedTask {
   const {
     prompt,
@@ -2037,6 +2055,8 @@ function buildManagedTaskPayload(args: {
     entries,
     degradedContinue,
     childWriteWorktreePaths,
+    taskId: providedTaskId,
+    extraArtifacts,
   } = args;
 
   // Shard 6d-L: Scout's emitted harness still wins over the plan's
@@ -2050,7 +2070,12 @@ function buildManagedTaskPayload(args: {
   const contractPayload = recorder.contract?.payload.contract;
 
   const nowIso = new Date().toISOString();
-  const taskId = `runner-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  // v0.7.26 C4 parity — honour the caller-supplied taskId so every
+  // `buildManagedTaskPayload` call within a single run reuses the same
+  // workspaceDir. Prior behaviour generated a fresh id on every invocation,
+  // so every observer snapshot wrote to a different folder and skill
+  // artifacts could not be referenced by a stable path.
+  const taskId = providedTaskId ?? `runner-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const surface = getManagedTaskSurface(options);
   // Resolve the per-task workspace directory (e.g. `<cwd>/.agent/
   // managed-tasks/<taskId>/`) so downstream snapshot files and
@@ -2131,7 +2156,15 @@ function buildManagedTaskPayload(args: {
       // harness observers, the REPL transcript dump) index evidence by
       // artifact path, so we surface the records here even when the actual
       // files are written asynchronously at terminal exit.
-      artifacts: buildManagedTaskArtifactRecords(workspaceDir),
+      //
+      // v0.7.26 C4 parity — merge any caller-supplied artefact records
+      // (e.g. skill-execution.md / skill-map.md persisted by
+      // `writeManagedSkillArtifacts`) alongside the built-in snapshot set
+      // so the REPL + resume flow can resolve them by path.
+      artifacts: mergeEvidenceArtifacts(
+        buildManagedTaskArtifactRecords(workspaceDir),
+        extraArtifacts,
+      ),
       // Shard 6d-R: surface the per-role turn ledger and routing notes.
       // Legacy `task-engine.ts` fed these fields from each role completion
       // + `plan.decision.routingNotes`. Without them, snapshot consumers
@@ -2456,6 +2489,41 @@ async function runManagedTaskViaRunnerInner(
     await handlePreRunCheckpoint(options);
   }
 
+  // v0.7.26 C4 parity — resolve the stable taskId + workspaceDir once and
+  // reuse them across every `buildManagedTaskPayload` call in this run.
+  // Without this each observer snapshot would generate a fresh id and
+  // write to a different folder; skill artifacts could not be referenced
+  // by a predictable path either. Mirrors legacy `task-engine.ts:2100`.
+  const surface = getManagedTaskSurface(options);
+  const taskId = `runner-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const workspaceDir = path.join(getManagedTaskWorkspaceRoot(options, surface), taskId);
+  const skillArtifactPaths = getManagedSkillArtifactPaths(workspaceDir);
+
+  // v0.7.26 C4 parity — best-effort pre-run persistence of the expanded
+  // skill content (+ skillMap, which Scout refines after its first emit;
+  // see the observer hook below). Matches legacy `task-engine.ts:2311`.
+  // Role prompts quote the on-disk paths as a stable source of truth so
+  // Generator / Evaluator can reopen the skill without relying on prompt-
+  // resident copies.
+  const skillArtifactsRef: { current: KodaXTaskEvidenceArtifact[] } = { current: [] };
+  const skillInvocationCtx = options.context?.skillInvocation;
+  if (skillInvocationCtx) {
+    try {
+      await mkdir(workspaceDir, { recursive: true });
+      const initialSkillArtifacts = await writeManagedSkillArtifacts(
+        workspaceDir,
+        skillInvocationCtx,
+        undefined,
+      );
+      skillArtifactsRef.current = initialSkillArtifacts;
+    } catch {
+      // Artifact persistence is best-effort — a filesystem error must not
+      // abort the AMA run. The prompt sections still reference the paths
+      // (Generator / Evaluator will see "artifact not found" if they
+      // actually reopen it).
+    }
+  }
+
   // Shard 6b: per-run mutation tracker and budget controller. The tracker
   // lives on baseCtx so coding-tool wrappers (write/edit/bash) can populate
   // it via `recordMutationForTool`; the budget controller lives outside
@@ -2541,7 +2609,35 @@ async function runManagedTaskViaRunnerInner(
   //      non-interactive callers (unit tests, SDK consumers).
   let lastCheckpointWorkspaceDir: string | undefined;
   const checkpointingEnabled = Boolean(options.events?.askUser);
-  const checkpointWriter = (_role: KodaXTaskRole): void => {
+  const checkpointWriter = (role: KodaXTaskRole): void => {
+    // v0.7.26 C4 parity — when Scout emits with a freshly derived
+    // skillMap, re-persist the skill artefacts so downstream roles and
+    // resume consumers can reach the structured map on disk. Best-effort;
+    // the artefact paths in the role prompt stay valid even when the
+    // re-write fails (the raw skill was written pre-run).
+    if (role === 'scout' && skillInvocationCtx) {
+      const scoutSkillMap = recorder.scout?.payload.scout?.skillMap;
+      // Reconstruct the full KodaXSkillMap shape from Scout's emit payload
+      // (which only carries a subset of fields). Missing fields fall back
+      // to safe defaults so `writeManagedSkillArtifacts` + downstream
+      // consumers render correctly.
+      const fullSkillMap = scoutSkillMap
+        ? {
+            skillSummary: scoutSkillMap.skillSummary ?? '',
+            executionObligations: scoutSkillMap.executionObligations ?? [],
+            verificationObligations: scoutSkillMap.verificationObligations ?? [],
+            requiredEvidence: [],
+            ambiguities: scoutSkillMap.ambiguities ?? [],
+            projectionConfidence: scoutSkillMap.projectionConfidence ?? 'medium',
+            rawSkillFallbackAllowed: true,
+          }
+        : undefined;
+      void writeManagedSkillArtifacts(workspaceDir, skillInvocationCtx, fullSkillMap)
+        .then((records) => {
+          skillArtifactsRef.current = records;
+        })
+        .catch(() => undefined);
+    }
     const snapshot = buildManagedTaskPayload({
       prompt,
       options,
@@ -2554,6 +2650,8 @@ async function runManagedTaskViaRunnerInner(
       entries: entriesRef.items,
       degradedContinue: degradedContinueRef.current,
       childWriteWorktreePaths: childWriteWorktreePathsRef.current,
+      taskId,
+      extraArtifacts: skillArtifactsRef.current,
     });
     // Snapshot write — best-effort, must not throw out of the observer
     // callback or we'd abort the Runner mid-emit.
@@ -2629,6 +2727,15 @@ async function runManagedTaskViaRunnerInner(
     const ctx: ManagedRolePromptContext = {
       originalTask: prompt,
     };
+    // v0.7.26 C4 parity — surface the caller's skill invocation + the
+    // on-disk artefact paths so role prompts can quote a stable filesystem
+    // location (skill-execution.md / skill-map.md). Matches legacy
+    // `task-engine.ts:withManagedSkillArtifactPromptPaths`.
+    if (skillInvocationCtx) {
+      ctx.skillInvocation = skillInvocationCtx;
+      ctx.skillExecutionArtifactPath = skillArtifactPaths.rawSkillPath;
+      ctx.skillMapArtifactPath = skillArtifactPaths.skillMapMarkdownPath;
+    }
     if (scoutPayload?.skillMap) {
       // The scout emit payload carries a subset of KodaXSkillMap fields
       // (skill_summary, execution_obligations, verification_obligations,
@@ -2829,6 +2936,8 @@ async function runManagedTaskViaRunnerInner(
     entries: entriesRef.items,
     degradedContinue: degradedContinueRef.current,
     childWriteWorktreePaths: childWriteWorktreePathsRef.current,
+    taskId,
+    extraArtifacts: skillArtifactsRef.current,
   });
 
   observer.completed(signal, reason ?? userAnswer);

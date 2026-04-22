@@ -29,12 +29,15 @@ import path from 'node:path';
 import type {
   KodaXManagedTask,
   KodaXResult,
+  KodaXSkillInvocationContext,
+  KodaXSkillMap,
   KodaXTaskEvidenceArtifact,
   KodaXTaskEvidenceEntry,
   KodaXTaskRole,
   KodaXTaskStatus,
   KodaXTaskVerificationContract,
 } from '../../../types.js';
+import { formatOptionalListSection } from './formatting.js';
 
 export function mergeEvidenceArtifacts(
   ...artifactSets: Array<readonly KodaXTaskEvidenceArtifact[] | undefined>
@@ -143,6 +146,107 @@ export function buildRuntimeExecutionGuide(
   ].filter((line): line is string => Boolean(line));
 
   return `${lines.join('\n')}\n`;
+}
+
+/**
+ * Skill-artifact file paths under a per-task workspace directory.
+ * Ported from legacy `task-engine.ts:463` (`getManagedSkillArtifactPaths`).
+ * These paths are stable across a single run so the role prompts can quote
+ * the filesystem locations to the LLM and the artifact-records list can
+ * surface them through `evidence.artifacts`.
+ */
+export function getManagedSkillArtifactPaths(workspaceDir: string): {
+  readonly rawSkillPath: string;
+  readonly skillMapJsonPath: string;
+  readonly skillMapMarkdownPath: string;
+} {
+  return {
+    rawSkillPath: path.join(workspaceDir, 'skill-execution.md'),
+    skillMapJsonPath: path.join(workspaceDir, 'skill-map.json'),
+    skillMapMarkdownPath: path.join(workspaceDir, 'skill-map.md'),
+  };
+}
+
+/**
+ * Persist the expanded skill content + skill-map summary under the task
+ * workspace. Ported 1:1 from legacy `task-engine.ts:4376`
+ * (`writeManagedSkillArtifacts`). Returns the `KodaXTaskEvidenceArtifact`
+ * records the caller should merge into `managedTask.evidence.artifacts`.
+ *
+ * - `skill-execution.md` (always when a `skillInvocation` is present) —
+ *   the full expanded skill body, used as the authoritative execution
+ *   reference when the skill map is incomplete.
+ * - `skill-map.json` + `skill-map.md` (only when Scout emitted a skill map)
+ *   — structured + human-readable projections of the skill map so
+ *   Generator/Evaluator prompts can point at on-disk artefacts rather than
+ *   re-quoting large blobs in the system prompt.
+ *
+ * The caller must ensure `workspaceDir` exists (e.g. via
+ * `mkdir(workspaceDir, { recursive: true })`).
+ */
+export async function writeManagedSkillArtifacts(
+  workspaceDir: string,
+  skillInvocation: KodaXSkillInvocationContext | undefined,
+  skillMap: KodaXSkillMap | undefined,
+): Promise<KodaXTaskEvidenceArtifact[]> {
+  if (!skillInvocation) {
+    return [];
+  }
+
+  const { rawSkillPath, skillMapJsonPath, skillMapMarkdownPath } = getManagedSkillArtifactPaths(workspaceDir);
+  const artifacts: KodaXTaskEvidenceArtifact[] = [];
+
+  await writeFile(
+    rawSkillPath,
+    `${skillInvocation.expandedContent.trim()}\n`,
+    'utf8',
+  );
+  artifacts.push({
+    kind: 'markdown',
+    path: rawSkillPath,
+    description: 'Expanded skill content used as the authoritative execution reference',
+  });
+
+  if (skillMap) {
+    await writeFile(
+      skillMapJsonPath,
+      `${JSON.stringify(skillMap, null, 2)}\n`,
+      'utf8',
+    );
+    await writeFile(
+      skillMapMarkdownPath,
+      `${[
+        `# Skill Map: ${skillInvocation.name}`,
+        '',
+        `- Summary: ${skillMap.skillSummary}`,
+        `- Projection confidence: ${skillMap.projectionConfidence}`,
+        skillMap.allowedTools ? `- Allowed tools: ${skillMap.allowedTools}` : undefined,
+        skillMap.preferredAgent ? `- Preferred agent: ${skillMap.preferredAgent}` : undefined,
+        skillMap.preferredModel ? `- Preferred model: ${skillMap.preferredModel}` : undefined,
+        skillMap.invocationContext ? `- Invocation context: ${skillMap.invocationContext}` : undefined,
+        skillMap.hookEvents?.length ? `- Hook events: ${skillMap.hookEvents.join(', ')}` : undefined,
+        formatOptionalListSection('## Execution obligations', skillMap.executionObligations),
+        formatOptionalListSection('## Verification obligations', skillMap.verificationObligations),
+        formatOptionalListSection('## Required evidence', skillMap.requiredEvidence),
+        formatOptionalListSection('## Ambiguities', skillMap.ambiguities),
+      ].filter((line): line is string => Boolean(line)).join('\n')}\n`,
+      'utf8',
+    );
+    artifacts.push(
+      {
+        kind: 'json',
+        path: skillMapJsonPath,
+        description: 'Scout-generated skill map used by managed-task roles',
+      },
+      {
+        kind: 'markdown',
+        path: skillMapMarkdownPath,
+        description: 'Readable skill map summary for managed-task roles',
+      },
+    );
+  }
+
+  return artifacts;
 }
 
 export function buildManagedTaskArtifactRecords(
