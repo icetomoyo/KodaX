@@ -98,6 +98,18 @@ export interface RunOptions {
    * this union. See `@kodax/core/guardrail.ts` for shape.
    */
   readonly guardrails?: readonly Guardrail[];
+  /**
+   * Per-run override for the tool-loop iteration cap. When omitted, the
+   * loop uses `MAX_TOOL_LOOP_ITERATIONS` (20) — a safe ceiling for
+   * stand-alone agent runs. Managed-task orchestration (multi-role
+   * handoff chain: Scout → Planner → Generator → Evaluator) needs a much
+   * higher cap because the iteration counter is shared across every
+   * role in the chain. Legacy `runManagedTask` gave each role its own
+   * `DEFAULT_MANAGED_WORK_BUDGET` (200) — the Runner-driven path passes
+   * that value here so long investigations don't trip the safety valve
+   * after ~20 tool calls.
+   */
+  readonly maxToolLoopIterations?: number;
 }
 
 /**
@@ -301,7 +313,8 @@ async function genericRun<TData>(
     }
   }
 
-  for (let iteration = 0; iteration < MAX_TOOL_LOOP_ITERATIONS; iteration += 1) {
+  const iterationCap = opts.maxToolLoopIterations ?? MAX_TOOL_LOOP_ITERATIONS;
+  for (let iteration = 0; iteration < iterationCap; iteration += 1) {
     const { result: turn, wasPlainString } = await runGenerationTurn(
       currentAgent,
       transcript,
@@ -412,7 +425,7 @@ async function genericRun<TData>(
   }
 
   throw new Error(
-    `Runner.run: agent "${currentAgent.name}" exceeded MAX_TOOL_LOOP_ITERATIONS (${MAX_TOOL_LOOP_ITERATIONS}) — the LLM kept requesting tool calls without terminating. This likely indicates a prompt or tool design bug.`,
+    `Runner.run: agent "${currentAgent.name}" exceeded MAX_TOOL_LOOP_ITERATIONS (${iterationCap}) — the LLM kept requesting tool calls without terminating. This likely indicates a prompt or tool design bug.`,
   );
 }
 

@@ -156,6 +156,13 @@ export async function maybeRequestAdditionalWorkBudget(
     currentRound: number;
     maxRounds: number;
     originalTask?: string;
+    /**
+     * Per-harness extension amount. Defaults to the legacy
+     * `GLOBAL_WORK_BUDGET_INCREMENT` (200) so behaviour is unchanged for
+     * callers that don't care. Runner-driven path passes harness-specific
+     * values (H0 -> +100, H1/H2 -> +200) matching the tiered cap model.
+     */
+    additionalUnits?: number;
   },
 ): Promise<'approved' | 'denied' | 'skipped'> {
   if (!events?.askUser) {
@@ -170,19 +177,20 @@ export async function maybeRequestAdditionalWorkBudget(
     return 'skipped';
   }
 
+  const increment = context.additionalUnits ?? GLOBAL_WORK_BUDGET_INCREMENT;
   const usedPercent = Math.min(100, Math.round((controller.spentBudget / Math.max(1, controller.totalBudget)) * 100));
   const useChinese = /[\u4e00-\u9fff]/.test(context.originalTask ?? context.summary);
   const choice = await events.askUser({
     question: useChinese
-      ? `当前 AMA 运行已使用 ${controller.spentBudget}/${controller.totalBudget} 工作单元（${usedPercent}%），需要更多工作量。是否追加 ${GLOBAL_WORK_BUDGET_INCREMENT} 单元？`
-      : `This AMA run has used ${controller.spentBudget}/${controller.totalBudget} work units (${usedPercent}%) and needs more work. Add ${GLOBAL_WORK_BUDGET_INCREMENT} more work units?`,
+      ? `当前 AMA 运行已使用 ${controller.spentBudget}/${controller.totalBudget} 工作单元（${usedPercent}%），需要更多工作量。是否追加 ${increment} 单元？`
+      : `This AMA run has used ${controller.spentBudget}/${controller.totalBudget} work units (${usedPercent}%) and needs more work. Add ${increment} more work units?`,
     options: [
       {
-        label: useChinese ? `继续 (+${GLOBAL_WORK_BUDGET_INCREMENT})` : `Continue (+${GLOBAL_WORK_BUDGET_INCREMENT})`,
+        label: useChinese ? `继续 (+${increment})` : `Continue (+${increment})`,
         value: 'continue',
         description: useChinese
-          ? `追加 ${GLOBAL_WORK_BUDGET_INCREMENT} 工作单元，从第 ${context.currentRound}/${context.maxRounds} 轮继续。`
-          : `Grant ${GLOBAL_WORK_BUDGET_INCREMENT} more work units and continue from round ${context.currentRound}/${context.maxRounds}.`,
+          ? `追加 ${increment} 工作单元，从第 ${context.currentRound}/${context.maxRounds} 轮继续。`
+          : `Grant ${increment} more work units and continue from round ${context.currentRound}/${context.maxRounds}.`,
       },
       {
         label: useChinese ? '停止' : 'Stop here',
@@ -198,7 +206,7 @@ export async function maybeRequestAdditionalWorkBudget(
   const promptedBudgetTotal = controller.totalBudget;
   if (choice === 'continue') {
     controller.lastApprovalBudgetTotal = promptedBudgetTotal;
-    extendManagedWorkBudget(controller, GLOBAL_WORK_BUDGET_INCREMENT);
+    extendManagedWorkBudget(controller, increment);
     return 'approved';
   }
   controller.lastApprovalBudgetTotal = promptedBudgetTotal;

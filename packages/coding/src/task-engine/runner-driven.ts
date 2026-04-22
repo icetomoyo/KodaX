@@ -524,24 +524,47 @@ function wrapEmitterWithRecorder(
           }
         }
         observer.onRoleEmit(SLOT_TO_ROLE[slot], recorder);
-        if (slot === 'verdict' && budget && budgetExtension) {
-          const verdictPayload = recorder.verdict?.payload.verdict;
-          if (verdictPayload?.status === 'revise') {
-            observer.notifyBudgetApprovalRequest();
-            const decision = await maybeRequestAdditionalWorkBudget(
-              budgetExtension.events,
-              budget,
-              {
-                summary: verdictPayload.reason ?? 'Evaluator requested another pass',
-                currentRound: budgetExtension.roundRef.current,
-                maxRounds: budgetExtension.maxRoundsRef.current,
-                originalTask: budgetExtension.originalTask,
-              },
-            );
-            budgetExtension.budgetApprovalRef.current = false;
-            if (decision === 'approved') {
-              budgetExtension.maxRoundsRef.current += 1;
-            } else if (decision === 'denied') {
+        // 90%-threshold budget-extension dialog. Legacy only triggered this
+        // on Evaluator revise; the Runner-driven path now fires it after
+        // every role emit (scout/contract/handoff/verdict). Reason: in a
+        // single Runner.run chain the whole Scout → Planner → Generator →
+        // Evaluator flow shares one budget counter, so by the time the
+        // Evaluator emits a verdict the cap may already be exhausted —
+        // never giving the user a chance to approve more headroom. Firing
+        // after each role emit catches the 90% crossing at the earliest
+        // boundary.
+        //
+        // `maybeRequestAdditionalWorkBudget` is itself idempotent when
+        // already above threshold or under it (returns 'skipped'), so
+        // calling it per emit is cheap in the common case. The per-harness
+        // `additionalUnits` parameter matches the user's tiered mechanism
+        // (H0 → +100 small top-up, H1/H2 → +200 legacy-parity top-up).
+        if (budget && budgetExtension) {
+          observer.notifyBudgetApprovalRequest();
+          const extensionSummary = slot === 'verdict'
+            ? (recorder.verdict?.payload.verdict?.reason ?? 'Evaluator requested another pass')
+            : slot === 'handoff'
+              ? (recorder.handoff?.payload.handoff?.summary ?? 'Generator handoff in progress')
+              : slot === 'contract'
+                ? (recorder.contract?.payload.contract?.summary ?? 'Planner contract in progress')
+                : (recorder.scout?.payload.scout?.summary ?? 'Scout investigation in progress');
+          const decision = await maybeRequestAdditionalWorkBudget(
+            budgetExtension.events,
+            budget,
+            {
+              summary: extensionSummary,
+              currentRound: budgetExtension.roundRef.current,
+              maxRounds: budgetExtension.maxRoundsRef.current,
+              originalTask: budgetExtension.originalTask,
+              additionalUnits: BUDGET_EXTENSION_BY_HARNESS[budget.currentHarness],
+            },
+          );
+          budgetExtension.budgetApprovalRef.current = false;
+          if (decision === 'approved') {
+            budgetExtension.maxRoundsRef.current += 1;
+          } else if (decision === 'denied' && slot === 'verdict') {
+            const verdictPayload = recorder.verdict?.payload.verdict;
+            if (verdictPayload?.status === 'revise') {
               // Shard 6d-U: user explicitly denied a budget extension on
               // revise — continue at current budget cap but flag
               // `degradedContinue` so the caller can render the warning.
@@ -558,10 +581,34 @@ function wrapEmitterWithRecorder(
   };
 }
 
+/**
+ * Base budget cap per harness tier, in LLM-turn units. Scout/Planner/
+ * Generator/Evaluator each consume one unit per emit; coding tools consume
+ * one unit per invocation (via `incrementManagedBudgetUsage`).
+ *
+ * H0 default bumped from the legacy 50 → 100 because even a modest review
+ * task easily burns 30 file reads + 15 grep scans + a few bash inspections
+ * before Scout can commit a verdict. H1/H2 stay at 200 (matching legacy
+ * `DEFAULT_MANAGED_WORK_BUDGET`) — those tiers get the budget-extension
+ * dialog at 90% utilization so a long task can top up as needed rather
+ * than front-load a huge base cap.
+ */
 const BUDGET_CAP_BY_HARNESS: Record<KodaXHarnessProfile, number> = {
-  H0_DIRECT: 50,
-  H1_EXECUTE_EVAL: 400,
-  H2_PLAN_EXECUTE_EVAL: 600,
+  H0_DIRECT: 100,
+  H1_EXECUTE_EVAL: 200,
+  H2_PLAN_EXECUTE_EVAL: 200,
+};
+
+/**
+ * Extension size per harness tier. When the budget-extension dialog fires
+ * at the 90% threshold and the user approves, the budget grows by this
+ * many units. H0 gets a smaller +100 bump (short exploration tasks) while
+ * H1/H2 get +200 (long multi-role runs).
+ */
+const BUDGET_EXTENSION_BY_HARNESS: Record<KodaXHarnessProfile, number> = {
+  H0_DIRECT: 100,
+  H1_EXECUTE_EVAL: 200,
+  H2_PLAN_EXECUTE_EVAL: 200,
 };
 
 // =============================================================================
@@ -2281,6 +2328,17 @@ export async function runManagedTaskViaRunner(
   const runResult = await Runner.run(chain.scout, runnerInput, {
     llm,
     abortSignal: options.abortSignal,
+    // Iteration cap for the entire Scout → (Planner) → Generator → Evaluator
+    // chain. Core's default (20) is meant for stand-alone single-agent runs
+    // and is far too low for a multi-role investigation + execution + verify
+    // chain. This is a hard SAFETY ceiling — the real throttle is the
+    // budget controller (H0=100 / H1=H2=200 base, +100/+200 on 90%-threshold
+    // user approval). A 500-turn ceiling allows 2-3 extensions plus ample
+    // room for tool-heavy iterations (each LLM turn can carry multiple
+    // parallel tool calls). The budget-extension dialog (Shard 6b) catches
+    // the user at the 90% threshold long before this cap, so reaching 500
+    // genuinely indicates a prompt / tool-design bug worth flagging.
+    maxToolLoopIterations: 500,
   });
 
   const lastText = extractUserFacingText(runResult);

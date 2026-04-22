@@ -778,7 +778,9 @@ describe('Shard 6a — managedTask payload shape', () => {
       },
     });
     const result = await runManagedTaskViaRunner(makeOptions(), 'task', mock);
-    expect(result.managedTask?.runtime?.globalWorkBudget).toBe(400); // H1
+    // v0.7.26 budget caps: H0=100, H1=H2=200 (legacy parity). Extension
+    // dialog at 90% crossing tops up by +100 (H0) or +200 (H1/H2).
+    expect(result.managedTask?.runtime?.globalWorkBudget).toBe(200); // H1
     expect(result.managedTask?.runtime?.budgetUsage).toBeGreaterThan(0);
   });
 
@@ -929,10 +931,10 @@ describe('Shard 6b — budget controller', () => {
       },
     });
     const result = await runManagedTaskViaRunner(makeOptions(), 'task', mock);
-    expect(result.managedTask?.runtime?.globalWorkBudget).toBe(400);
+    expect(result.managedTask?.runtime?.globalWorkBudget).toBe(200);
   });
 
-  it('keeps H0 budget (50) when Scout chooses H0_DIRECT', async () => {
+  it('keeps H0 budget (100) when Scout chooses H0_DIRECT', async () => {
     const mock = makeChainMockLlm({
       scout: (turn) => {
         if (turn === 1) {
@@ -947,10 +949,10 @@ describe('Shard 6b — budget controller', () => {
       },
     });
     const result = await runManagedTaskViaRunner(makeOptions(), 'trivial', mock);
-    expect(result.managedTask?.runtime?.globalWorkBudget).toBe(50);
+    expect(result.managedTask?.runtime?.globalWorkBudget).toBe(100);
   });
 
-  it('upgrades to 600 when Scout picks H2', async () => {
+  it('upgrades to 200 when Scout picks H2', async () => {
     const mock = makeChainMockLlm({
       scout: () => ({
         toolBlocks: [{
@@ -980,7 +982,7 @@ describe('Shard 6b — budget controller', () => {
       },
     });
     const result = await runManagedTaskViaRunner(makeOptions(), 'task', mock);
-    expect(result.managedTask?.runtime?.globalWorkBudget).toBe(600);
+    expect(result.managedTask?.runtime?.globalWorkBudget).toBe(200);
   });
 });
 

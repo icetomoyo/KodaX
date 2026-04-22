@@ -4798,41 +4798,55 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       const classification = classifyError(error);
       const categoryNames = ['Transient', 'Permanent', 'Tool Call ID', 'User Abort'];
 
-      console.log(''); // Empty line for readability
-
-
       if (classification.category === ErrorCategory.USER_ABORT) {
         return;
       }
 
-      // Show error type and message
+      // Build a multi-line error payload and route it to the correct
+      // rendering layer. Previously each line was emitted via
+      // `console.log(chalk.*)` which Ink's `patchConsole` captures into
+      // the static area BELOW the user prompt — defeating the chronological
+      // position the 052c23b fix established. When a managed worker is
+      // still owning the turn, append the error into the foreground ledger
+      // so it renders inside the worker's group, right where the failure
+      // happened. Otherwise fall back to a normal history item.
       const categoryName = categoryNames[classification.category] || 'Unknown';
-      console.log(chalk.red(`\u274C API Error (${categoryName}): ${error.message}`));
-
-      // Show what's being done to recover
+      const errorLines: string[] = [`\u274C API Error (${categoryName}): ${error.message}`];
       if (classification.shouldCleanup) {
-        console.log(chalk.cyan('   \u{1F9F9} Cleaned incomplete tool calls'));
+        errorLines.push('   \u{1F9F9} Cleaned incomplete tool calls');
       }
-
-      // Show next steps for user
       if (classification.category === ErrorCategory.PERMANENT) {
-        console.log(chalk.yellow('   \u{1F4A1} This error requires manual intervention. Please check:'));
+        errorLines.push('   \u{1F4A1} This error requires manual intervention. Please check:');
         if (error.message.includes('auth') || error.message.includes('401')) {
-          console.log(chalk.yellow('      - Your API key is valid'));
-          console.log(chalk.yellow('      - Run /config to check provider settings'));
+          errorLines.push('      - Your API key is valid');
+          errorLines.push('      - Run /config to check provider settings');
         } else if (error.message.includes('400')) {
-          console.log(chalk.yellow('      - The request parameters are correct'));
-          console.log(chalk.yellow('      - Try restarting the conversation'));
+          errorLines.push('      - The request parameters are correct');
+          errorLines.push('      - Try restarting the conversation');
         } else {
-          console.log(chalk.yellow('      - The error details above'));
+          errorLines.push('      - The error details above');
         }
       } else if (classification.category === ErrorCategory.TRANSIENT) {
-        console.log(chalk.yellow('   \u23F3 Retries exhausted. Press Enter to continue the conversation'));
+        errorLines.push('   \u23F3 Retries exhausted. Press Enter to continue the conversation');
       } else if (classification.category === ErrorCategory.TOOL_CALL_ID) {
-        console.log(chalk.green('   \u2705 Session cleaned, ready to continue'));
+        errorLines.push('   \u2705 Session cleaned, ready to continue');
       }
+      const errorText = errorLines.join('\n');
 
-      console.log(''); // Empty line for readability
+      const inManagedForegroundErr = !!managedForegroundOwnerRef.current.workerId;
+      if (inManagedForegroundErr) {
+        appendManagedForegroundLedgerItem({
+          id: `error-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          type: "error",
+          text: errorText,
+          timestamp: Date.now(),
+        } as HistoryItem);
+      } else {
+        addHistoryItem({
+          type: "error",
+          text: errorText,
+        });
+      }
     },
     onRetry: (reason: string, attempt: number, maxAttempts: number) => {
       if (userInterruptedRef.current) {
@@ -6769,13 +6783,35 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           }
 
           console.log = originalLog;
-          console.log(chalk.red(errorContent));
 
-          // Add error to UI history
-          appendHistoryItemsWithPersistence([{
-            type: "error",
-            text: errorContent,
-          }]);
+          // Route the error to the correct rendering layer:
+          //   - When a managed-foreground worker is still owning the turn
+          //     (Scout/Planner/Generator/Evaluator was mid-flight), append
+          //     the error into the foreground ledger so it renders *inside*
+          //     the worker's group, right where the failure happened. This
+          //     mirrors the 052c23b recovery-position fix and the onRetry /
+          //     onProviderRecovery routing elsewhere in this file.
+          //   - Otherwise, add a normal error history item (previous
+          //     behaviour for non-AMA flows).
+          //
+          // Critical: do NOT `console.log(chalk.red(...))` here. Ink's
+          // `patchConsole` captures console output into the static area
+          // below the user prompt — exactly the wrong position when a
+          // managed-foreground worker just crashed. The history-item path
+          // below renders in the correct chronological slot.
+          if (managedForegroundOwnerRef.current.workerId) {
+            appendManagedForegroundLedgerItem({
+              id: `error-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              type: "error",
+              text: errorContent,
+              timestamp: Date.now(),
+            } as HistoryItem);
+          } else {
+            appendHistoryItemsWithPersistence([{
+              type: "error",
+              text: errorContent,
+            }]);
+          }
         }
       } finally {
         // Restore console.log
