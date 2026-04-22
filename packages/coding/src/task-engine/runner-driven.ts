@@ -47,6 +47,23 @@ import {
 
 import { resolveProvider } from '../providers/index.js';
 import {
+  bucketProviderPayloadSize,
+  describeTransientProviderRetry,
+  emitResilienceDebug,
+  estimateProviderPayloadBytes,
+} from '../agent.js';
+import {
+  ProviderRecoveryCoordinator,
+  StableBoundaryTracker,
+  classifyResilienceError,
+  resolveResilienceConfig,
+  telemetryBoundary,
+  telemetryClassify,
+  telemetryDecision,
+  telemetryRecovery,
+} from '../resilience/index.js';
+import { waitForRetryDelay } from '../retry-handler.js';
+import {
   emitContract,
   emitHandoff,
   emitScoutVerdict,
@@ -59,6 +76,7 @@ import { toolGlob } from '../tools/glob.js';
 import { toolGrep } from '../tools/grep.js';
 import { toolRead } from '../tools/read.js';
 import { toolWrite } from '../tools/write.js';
+import { toolDispatchChildTask } from '../tools/dispatch-child-tasks.js';
 import { getToolDefinition } from '../tools/registry.js';
 import type {
   KodaXEvents,
@@ -69,11 +87,15 @@ import type {
   KodaXOptions,
   KodaXResult,
   KodaXTaskContract,
+  KodaXTaskEvidenceEntry,
   KodaXTaskRole,
   KodaXTaskRoleAssignment,
+  KodaXTaskStatus,
+  KodaXTaskVerificationContract,
   KodaXToolExecutionContext,
   ManagedMutationTracker,
 } from '../types.js';
+import type { ReasoningPlan } from '../reasoning.js';
 import type { ManagedTaskBudgetController } from './_internal/managed-task/budget.js';
 import {
   buildManagedStatusBudgetFields,
@@ -94,6 +116,24 @@ import {
   getManagedTaskSurface,
   getManagedTaskWorkspaceRoot,
 } from './_internal/managed-task/workspace.js';
+import {
+  buildManagedTaskArtifactRecords,
+  writeManagedTaskArtifacts,
+  writeManagedTaskSnapshotArtifacts,
+} from './_internal/managed-task/artifacts.js';
+import { attachManagedTaskRepoIntelligence } from './_internal/managed-task/repo-intelligence.js';
+import {
+  DOCS_ONLY_WRITE_PATH_PATTERNS,
+  enforceShellWriteBoundary,
+  enforceWritePathBoundary,
+  inferScoutMutationIntent,
+  type ScoutMutationIntent,
+} from './_internal/managed-task/tool-policy.js';
+import {
+  SUSPICIOUS_LAST_TEXT_PREVIEW_LIMIT,
+  detectScoutSuspiciousSignals,
+} from './_internal/managed-task/scout-signals.js';
+import path from 'node:path';
 
 /**
  * Env-flag check. `KODAX_MANAGED_TASK_RUNTIME=runner` enables the Runner-
@@ -122,6 +162,12 @@ const SCOUT_INSTRUCTIONS = [
   'For H0, also set `direct_completion_ready: "yes"` and produce ONE final assistant text turn ',
   'with the user-facing answer. For H1/H2, do NOT produce a final answer — control transfers ',
   'to the next role on emit.',
+  '',
+  'Always fill `scope` (files / areas the downstream role will touch) and ',
+  '`review_files_or_areas` (high-priority files to consider). The harness infers ',
+  'mutation boundaries from these paths — if every path is docs-like, Generator is ',
+  'restricted to docs-style writes; if the task is a pure review (primaryTask=review) ',
+  'and `scope` is empty, Generator writes are blocked entirely.',
 ].join('\n');
 
 const PLANNER_INSTRUCTIONS = [
@@ -169,6 +215,180 @@ const EVALUATOR_INSTRUCTIONS = [
   'On revise, control transfers back to Generator (or Planner for replan) — do not produce a final text.',
 ].join('\n');
 
+/**
+ * Shard 6d-T: render Scout's skill map as an appended "Execution
+ * Obligations" block. Mirrors legacy `task-engine.ts` behaviour where
+ * Scout's skillMap.{skillSummary, executionObligations, ambiguities}
+ * was surfaced to Generator as a concrete obligation list before
+ * execution. Without this block, `skillMap.executionObligations` is
+ * parsed into `scoutDecision.skillMap` but never reaches the model
+ * doing the work.
+ *
+ * Passing `includeVerification: true` additionally surfaces
+ * `verificationObligations` — used by Evaluator, whose QA plan
+ * legacy also branched on Scout's verification guidance.
+ */
+function renderScoutSkillMapBlock(
+  recorder: VerdictRecorder,
+  { includeVerification }: { includeVerification: boolean },
+): string | undefined {
+  const skillMap = recorder.scout?.payload.scout?.skillMap;
+  if (!skillMap) return undefined;
+  const exec = skillMap.executionObligations ?? [];
+  const verify = skillMap.verificationObligations ?? [];
+  const ambig = skillMap.ambiguities ?? [];
+  const hasExec = exec.length > 0;
+  const hasVerify = includeVerification && verify.length > 0;
+  const hasAmbig = ambig.length > 0;
+  if (!skillMap.skillSummary && !hasExec && !hasVerify && !hasAmbig) {
+    return undefined;
+  }
+  const lines = ['', '=== Scout Skill Map (required obligations) ==='];
+  if (skillMap.skillSummary) {
+    lines.push(`skill_summary: ${skillMap.skillSummary}`);
+  }
+  if (hasExec) {
+    lines.push('execution_obligations:');
+    for (const item of exec) lines.push(`- ${item}`);
+  }
+  if (hasVerify) {
+    lines.push('verification_obligations:');
+    for (const item of verify) lines.push(`- ${item}`);
+  }
+  if (hasAmbig) {
+    lines.push('ambiguities_to_resolve:');
+    for (const item of ambig) lines.push(`- ${item}`);
+  }
+  lines.push(
+    'You must address every obligation above. If any obligation cannot be met, ',
+    'surface it in your emit payload (`followup` for Generator, `reason` for Evaluator).',
+  );
+  return lines.join('\n');
+}
+
+function buildGeneratorInstructions(recorder: VerdictRecorder): string {
+  const skillBlock = renderScoutSkillMapBlock(recorder, { includeVerification: false });
+  return skillBlock ? `${GENERATOR_INSTRUCTIONS}\n${skillBlock}` : GENERATOR_INSTRUCTIONS;
+}
+
+function buildEvaluatorInstructions(
+  recorder: VerdictRecorder,
+  verification: KodaXTaskVerificationContract | undefined,
+): string {
+  const skillBlock = renderScoutSkillMapBlock(recorder, { includeVerification: true });
+  const runtimeBlock = renderRuntimeVerificationBlock(verification);
+  let out = EVALUATOR_INSTRUCTIONS;
+  if (skillBlock) out += `\n${skillBlock}`;
+  if (runtimeBlock) out += `\n${runtimeBlock}`;
+  return out;
+}
+
+/**
+ * Shard 6d-S: render `verification.runtime` into an Evaluator-facing
+ * block listing the startup command, ready signal, base URL, declared
+ * UI flows, API checks, DB checks, and fixtures. Legacy
+ * `buildRuntimeExecutionGuide` wrote an equivalent markdown file to
+ * `runtime-execution.md`; the Runner path also needs to surface the
+ * same obligations inline so the Evaluator actively probes the runtime
+ * instead of writing a verdict from static file reads. Without this
+ * block, `taskVerification.runtime` is persisted to
+ * `runtime-contract.json` but never reaches the model making the
+ * accept/revise/blocked call.
+ */
+function renderRuntimeVerificationBlock(
+  verification: KodaXTaskVerificationContract | undefined,
+): string | undefined {
+  const runtime = verification?.runtime;
+  if (!runtime) return undefined;
+  const hasAny = Boolean(
+    runtime.startupCommand
+      || runtime.readySignal
+      || runtime.baseUrl
+      || (runtime.uiFlows?.length ?? 0) > 0
+      || (runtime.apiChecks?.length ?? 0) > 0
+      || (runtime.dbChecks?.length ?? 0) > 0
+      || (runtime.fixtures?.length ?? 0) > 0,
+  );
+  if (!hasAny) return undefined;
+  const lines = ['', '=== Runtime Verification Contract ==='];
+  if (runtime.cwd) lines.push(`- cwd: ${runtime.cwd}`);
+  if (runtime.startupCommand) lines.push(`- startup_command: ${runtime.startupCommand}`);
+  if (runtime.readySignal) lines.push(`- ready_signal: ${runtime.readySignal}`);
+  if (runtime.baseUrl) lines.push(`- base_url: ${runtime.baseUrl}`);
+  if (runtime.env && Object.keys(runtime.env).length > 0) {
+    lines.push(`- env_keys: ${Object.keys(runtime.env).join(', ')}`);
+  }
+  if (runtime.uiFlows?.length) {
+    lines.push('ui_flows (execute with bash via the app\'s own test harness; capture evidence):');
+    runtime.uiFlows.forEach((flow, idx) => lines.push(`  ${idx + 1}. ${flow}`));
+  }
+  if (runtime.apiChecks?.length) {
+    lines.push('api_checks (curl / wget / app-specific CLI):');
+    runtime.apiChecks.forEach((check, idx) => lines.push(`  ${idx + 1}. ${check}`));
+  }
+  if (runtime.dbChecks?.length) {
+    lines.push('db_checks (psql / sqlite / equivalent):');
+    runtime.dbChecks.forEach((check, idx) => lines.push(`  ${idx + 1}. ${check}`));
+  }
+  if (runtime.fixtures?.length) {
+    lines.push('fixtures:');
+    runtime.fixtures.forEach((fixture, idx) => lines.push(`  ${idx + 1}. ${fixture}`));
+  }
+  lines.push(
+    'Before accepting, start the runtime (if declared), wait for the ready signal, and ',
+    'exercise every declared flow/check. Reject (status=revise or blocked) if any check ',
+    'cannot be executed or fails.',
+  );
+  return lines.join('\n');
+}
+
+/**
+ * Shard 6d-S: derive `completionContractStatus` from the final verdict.
+ * Keys are criterion ids (from `verification.criteria`) plus synthetic
+ * `ui_flow:<n>` / `api_check:<n>` / `db_check:<n>` keys for the runtime
+ * contract entries. Status maps 1:1 from verdict status:
+ *   - 'accept'   → 'ready'
+ *   - 'revise'   → 'incomplete'
+ *   - 'blocked'  → 'blocked'
+ *   - no verdict → 'missing' (every declared check is unverified)
+ * Returns undefined when no verification contract is declared — matches
+ * legacy's absent-field semantics so downstream consumers stay opt-in.
+ */
+function buildCompletionContractStatus(
+  verification: KodaXTaskVerificationContract | undefined,
+  verdictStatus: 'accept' | 'revise' | 'blocked' | undefined,
+): Record<string, 'ready' | 'incomplete' | 'blocked' | 'missing'> | undefined {
+  if (!verification) return undefined;
+  const criteria = verification.criteria ?? [];
+  const runtime = verification.runtime;
+  const uiFlows = runtime?.uiFlows ?? [];
+  const apiChecks = runtime?.apiChecks ?? [];
+  const dbChecks = runtime?.dbChecks ?? [];
+  if (criteria.length === 0 && uiFlows.length === 0 && apiChecks.length === 0 && dbChecks.length === 0) {
+    return undefined;
+  }
+  const status: 'ready' | 'incomplete' | 'blocked' | 'missing' =
+    verdictStatus === 'accept'
+      ? 'ready'
+      : verdictStatus === 'blocked'
+        ? 'blocked'
+        : verdictStatus === 'revise'
+          ? 'incomplete'
+          : 'missing';
+  const out: Record<string, 'ready' | 'incomplete' | 'blocked' | 'missing'> = {};
+  for (const criterion of criteria) out[criterion.id] = status;
+  uiFlows.forEach((_flow, idx) => {
+    out[`ui_flow:${idx + 1}`] = status;
+  });
+  apiChecks.forEach((_check, idx) => {
+    out[`api_check:${idx + 1}`] = status;
+  });
+  dbChecks.forEach((_check, idx) => {
+    out[`db_check:${idx + 1}`] = status;
+  });
+  return out;
+}
+
 // =============================================================================
 // Verdict recorder — observes emit tool calls to reconstruct the final
 // KodaXResult.managedTask payload from the Runner chain.
@@ -203,6 +423,34 @@ interface BudgetExtensionContext {
   readonly roundRef: { current: number };
   readonly maxRoundsRef: { current: number };
   readonly budgetApprovalRef: { current: boolean };
+  // Shard 6d-U: plan + degraded-continue + harness refs so the verdict
+  // emitter wrapper can guard against H1→H2 upgrade attempts that exceed
+  // `plan.decision.upgradeCeiling`. When denied, we redirect handoff
+  // back to Generator (continue at current harness) and flip
+  // `degradedContinueRef.current = true` so the runtime payload surfaces
+  // the degraded continue state to REPL / CLI consumers.
+  readonly planRef: { current: ReasoningPlan | undefined };
+  readonly degradedContinueRef: { current: boolean };
+  readonly harnessRef: { current: KodaXHarnessProfile };
+}
+
+/**
+ * Shard 6d-U: harness ordering from low to high. Used to compare a
+ * requested next_harness against `upgradeCeiling`. Mirrors legacy
+ * `HARNESS_TIER_ORDER` (task-engine.ts constant used by the routing
+ * coordinator).
+ */
+const HARNESS_TIER_ORDER: Record<KodaXHarnessProfile, number> = {
+  H0_DIRECT: 0,
+  H1_EXECUTE_EVAL: 1,
+  H2_PLAN_EXECUTE_EVAL: 2,
+};
+
+function isUpgradeBeyondCeiling(
+  requested: KodaXHarnessProfile,
+  ceiling: KodaXHarnessProfile,
+): boolean {
+  return HARNESS_TIER_ORDER[requested] > HARNESS_TIER_ORDER[ceiling];
 }
 
 /**
@@ -230,8 +478,39 @@ function wrapEmitterWithRecorder(
     ...base,
     execute: async (input, ctx): Promise<RunnerToolResult> => {
       if (budget) incrementManagedBudgetUsage(budget, 1);
-      const result = await base.execute(input, ctx);
+      let result = await base.execute(input, ctx);
       if (!result.isError && result.metadata) {
+        // Shard 6d-U: guard against H1→H2 upgrade attempts that exceed
+        // `plan.decision.upgradeCeiling`. When the Evaluator issues
+        // `revise + next_harness=H2` but the plan only permits H1, we
+        // rewrite the emitter's `handoffTarget` from Planner back to
+        // Generator (continue at the current harness) and flip the
+        // degraded-continue ref so the final managed-task runtime carries
+        // `degradedContinue: true`. Mirrors legacy's
+        // `denyHarnessUpgrade → degradedContinue` branch.
+        if (slot === 'verdict' && budgetExtension) {
+          const emitterMeta = result.metadata as unknown as ProtocolEmitterMetadata;
+          const verdictPayload = emitterMeta.payload?.verdict;
+          const requested = verdictPayload?.nextHarness;
+          const ceiling = budgetExtension.planRef.current?.decision.upgradeCeiling;
+          if (
+            verdictPayload?.status === 'revise'
+            && requested
+            && ceiling
+            && isUpgradeBeyondCeiling(requested, ceiling)
+          ) {
+            budgetExtension.degradedContinueRef.current = true;
+            // Rewrite handoff target back to Generator so the next turn
+            // continues execution under the current harness rather than
+            // pivoting to Planner. Both the recorder copy and the result
+            // returned to the Runner must carry the redirected target.
+            const redirectedMetadata: ProtocolEmitterMetadata = {
+              ...emitterMeta,
+              handoffTarget: GENERATOR_AGENT_NAME,
+            };
+            result = { ...result, metadata: redirectedMetadata as unknown as Record<string, unknown> };
+          }
+        }
         recorder[slot] = result.metadata as unknown as ProtocolEmitterMetadata;
         // When Scout's verdict picks a non-H0 harness, extend the budget
         // accordingly so downstream roles have headroom. Mirrors the
@@ -262,6 +541,14 @@ function wrapEmitterWithRecorder(
             budgetExtension.budgetApprovalRef.current = false;
             if (decision === 'approved') {
               budgetExtension.maxRoundsRef.current += 1;
+            } else if (decision === 'denied') {
+              // Shard 6d-U: user explicitly denied a budget extension on
+              // revise — continue at current budget cap but flag
+              // `degradedContinue` so the caller can render the warning.
+              // Legacy parity: `skipped` means "didn't need to ask" (no
+              // callback / under 90% / already bumped at this tier) and
+              // does NOT constitute degradation.
+              budgetExtension.degradedContinueRef.current = true;
             }
           }
         }
@@ -312,6 +599,78 @@ export interface ObserverBridge {
   readonly onRoleEmit: (role: KodaXTaskRole, recorder: VerdictRecorder) => void;
   readonly completed: (signal: KodaXResult['signal'], reason?: string) => void;
   readonly notifyBudgetApprovalRequest: () => void;
+  // Shard 6d-Q (v0.7.22 parity): fire a status event when a child task
+  // dispatch starts so the REPL's AmaWorkStrip can render
+  // "Scout/Generator fanning out ${class} × ${count}" badge.
+  readonly notifyChildFanout: (fanoutClass: 'finding-validation' | 'evidence-scan' | 'module-triage') => void;
+}
+
+/**
+ * Shard 6d-R: derive a per-role evidence entry at emit time. Legacy
+ * `task-engine.ts` kept an append-only `evidence.entries[]` list so
+ * downstream consumers (`buildManagedTaskRoundHistory`, resume flow,
+ * REPL transcript dump) could reconstruct per-round role history.
+ *
+ * Status mapping:
+ *   - scout / planner / direct → 'completed' (always terminal for their turn)
+ *   - generator → derived from handoff.status (ready→completed,
+ *                 incomplete→running, blocked→blocked)
+ *   - evaluator → derived from verdict.status (accept→completed,
+ *                 revise→running, blocked→blocked)
+ *
+ * Signal + reason are only populated on the final-emitter roles
+ * (evaluator/direct) because those are the only turns that carry a
+ * user-observable `COMPLETE | BLOCKED | DECIDE` signal.
+ */
+function buildEvidenceEntryForRoleEmit(args: {
+  readonly role: KodaXTaskRole;
+  readonly round: number;
+  readonly recorder: VerdictRecorder;
+  readonly sessionId: string | undefined;
+}): KodaXTaskEvidenceEntry {
+  const { role, round, recorder, sessionId } = args;
+  let status: KodaXTaskStatus = 'completed';
+  let summary: string | undefined;
+  let signal: KodaXTaskEvidenceEntry['signal'];
+  let signalReason: string | undefined;
+  if (role === 'scout') {
+    summary = recorder.scout?.payload.scout?.summary;
+  } else if (role === 'planner') {
+    summary = recorder.contract?.payload.contract?.summary;
+  } else if (role === 'generator') {
+    const handoff = recorder.handoff?.payload.handoff;
+    summary = handoff?.summary;
+    if (handoff?.status === 'blocked') status = 'blocked';
+    else if (handoff?.status === 'incomplete') status = 'running';
+  } else if (role === 'evaluator') {
+    const verdict = recorder.verdict?.payload.verdict;
+    summary = verdict?.reason;
+    if (verdict?.status === 'blocked') {
+      status = 'blocked';
+      signal = 'BLOCKED';
+      signalReason = verdict.reason;
+    } else if (verdict?.status === 'revise') {
+      status = 'running';
+    } else if (verdict?.status === 'accept') {
+      signal = 'COMPLETE';
+      signalReason = verdict.reason;
+    }
+  } else if (role === 'direct') {
+    // H0_DIRECT: Scout answered directly — treat as a completed direct turn.
+    summary = recorder.scout?.payload.scout?.summary;
+    signal = 'COMPLETE';
+  }
+  return {
+    assignmentId: role,
+    role,
+    status,
+    title: ROLE_TO_TITLE[role],
+    round,
+    summary,
+    sessionId,
+    signal,
+    signalReason,
+  };
 }
 
 /**
@@ -343,6 +702,8 @@ function buildObserverBridge(
   roundRef: { current: number },
   maxRoundsRef: { current: number },
   budgetApprovalRef: { current: boolean },
+  entriesRef: { items: KodaXTaskEvidenceEntry[] },
+  sessionIdRef: { current: string | undefined },
   checkpointWriter?: (role: KodaXTaskRole) => void,
 ): ObserverBridge {
   const emit = (partial: {
@@ -394,8 +755,29 @@ function buildObserverBridge(
             : role === 'generator'
               ? recorder.handoff?.payload.handoff?.summary
               : recorder.verdict?.payload.verdict?.reason;
+      // Shard 6d-R: accumulate `evidence.entries[]` per-turn. Mirrors legacy
+      // `task-engine.ts` behaviour where each role completion appended a
+      // `KodaXTaskEvidenceEntry` to the managed task's evidence bundle so
+      // downstream consumers (`buildManagedTaskRoundHistory`, the REPL's
+      // transcript dump, resume flow) could reconstruct per-round history.
+      entriesRef.items.push(
+        buildEvidenceEntryForRoleEmit({
+          role,
+          round: roundRef.current,
+          recorder,
+          sessionId: sessionIdRef.current,
+        }),
+      );
       emit({
-        phase: 'round',
+        // Emit `worker` (not `round`) so the REPL's
+        // `isForegroundManagedStreamingStatus` recognizes this as an
+        // active worker turn and routes onProviderRecovery / onRetry into
+        // the managed foreground layer (legacy task-engine.ts:~3752 also
+        // emits `phase: 'worker'` per role activation). Without this,
+        // `managedForegroundOwnerRef.current.workerId` is never set and
+        // recovery / retry messages render below the user prompt instead
+        // of inline with the worker output.
+        phase: 'worker',
         activeWorkerId: role,
         activeWorkerTitle: ROLE_TO_TITLE[role],
         note: `${ROLE_TO_TITLE[role]} completed a turn`,
@@ -417,6 +799,24 @@ function buildObserverBridge(
         phase: 'round',
         note: 'Awaiting budget extension approval',
         persistToHistory: false,
+      });
+    },
+    notifyChildFanout: (fanoutClass) => {
+      if (!events?.onManagedTaskStatus) return;
+      events.onManagedTaskStatus({
+        agentMode: 'ama',
+        harnessProfile: harnessRef.current,
+        currentRound: roundRef.current,
+        maxRounds: maxRoundsRef.current,
+        upgradeCeiling: harnessRef.current,
+        phase: 'worker',
+        activeWorkerId: 'child',
+        activeWorkerTitle: 'Child agent',
+        childFanoutClass: fanoutClass,
+        childFanoutCount: 1,
+        note: `Dispatching ${fanoutClass} child task`,
+        persistToHistory: false,
+        ...buildManagedStatusBudgetFields(budget, budgetApprovalRef.current),
       });
     },
   };
@@ -535,6 +935,165 @@ function wrapReadOnlyBash(bashTool: RunnableTool, roleTitle: string): RunnableTo
   };
 }
 
+/**
+ * Shard 6d-j + 6d-M — Generator write / shell mutation boundary.
+ *
+ * Mirrors the legacy `createToolPolicyHook` behaviour (task-engine.ts
+ * ~1891) for the runner-driven Generator:
+ *   - `'review-only'` → Generator write/edit blocked; destructive shell
+ *     commands blocked (review tasks must not mutate state).
+ *   - `'docs-scoped'` → Generator write/edit gated against
+ *     `DOCS_ONLY_WRITE_PATH_PATTERNS` (docs/*.md / CHANGELOG /
+ *     FEATURE_LIST / etc.); destructive shell commands blocked.
+ *   - `'open'` (default) → tools pass through unchanged.
+ *
+ * Shard 6d-M replaces the earlier "Scout self-declares `mutation_intent`"
+ * pattern with `inferScoutMutationIntent` — we classify intent from
+ * Scout's emitted `scope` + `reviewFilesOrAreas` + the routing
+ * `primaryTask`, matching legacy Issue 119 inference. Scout's LLM
+ * payload is no longer consulted for this boundary; its scope list is
+ * the evidence.
+ *
+ * The wrappers close over the shared `VerdictRecorder` + plan ref and
+ * read intent lazily at invocation time — `buildRunnerAgentChain`
+ * constructs Generator before Scout has run, so the intent is not yet
+ * available when the Agent graph is frozen. `planRef.current` holds the
+ * reasoning plan (if any) so the guard can read `primaryTask`.
+ */
+function resolveGeneratorMutationIntent(
+  recorder: VerdictRecorder,
+  planRef: { current: ReasoningPlan | undefined },
+): ScoutMutationIntent {
+  const scoutPayload = recorder.scout?.payload.scout;
+  if (!scoutPayload) return 'open';
+  return inferScoutMutationIntent(
+    { scope: scoutPayload.scope, reviewFilesOrAreas: scoutPayload.reviewFilesOrAreas },
+    planRef.current?.decision.primaryTask,
+  );
+}
+
+function wrapGeneratorWriteWithMutationGuard(
+  writeOrEdit: RunnableTool,
+  recorder: VerdictRecorder,
+  planRef: { current: ReasoningPlan | undefined },
+): RunnableTool {
+  return {
+    ...writeOrEdit,
+    execute: async (input, ctx): Promise<RunnerToolResult> => {
+      const intent = resolveGeneratorMutationIntent(recorder, planRef);
+      if (intent === 'review-only') {
+        return {
+          content:
+            `[Managed Task Generator] Tool "${writeOrEdit.name}" blocked — `
+            + 'Scout-scoped review task: Generator must not write.',
+          isError: true,
+        };
+      }
+      if (intent === 'docs-scoped') {
+        const blocked = enforceWritePathBoundary(
+          writeOrEdit.name,
+          input,
+          DOCS_ONLY_WRITE_PATH_PATTERNS,
+          'Generator',
+        );
+        if (blocked) {
+          return { content: blocked, isError: true };
+        }
+      }
+      return writeOrEdit.execute(input, ctx);
+    },
+  };
+}
+
+function wrapGeneratorBashWithMutationGuard(
+  bashTool: RunnableTool,
+  recorder: VerdictRecorder,
+  planRef: { current: ReasoningPlan | undefined },
+): RunnableTool {
+  return {
+    ...bashTool,
+    execute: async (input, ctx): Promise<RunnerToolResult> => {
+      const intent = resolveGeneratorMutationIntent(recorder, planRef);
+      if (intent === 'docs-scoped' || intent === 'review-only') {
+        const command = typeof input.command === 'string' ? input.command : '';
+        const blocked = enforceShellWriteBoundary(command, 'Generator');
+        if (blocked) {
+          return { content: blocked, isError: true };
+        }
+      }
+      return bashTool.execute(input, ctx);
+    },
+  };
+}
+
+/**
+ * Shard 6d-Q: wrap the dispatch_child_task async-generator tool as a
+ * Runner-compatible tool.
+ *
+ * Differences from coding tools handled by `wrapCodingToolAsRunnable`:
+ *   - The handler is `AsyncGenerator<ToolProgress, string, void>`. The
+ *     Runner loop does not consume progress events directly; we drive
+ *     the generator here, forward progress notes through
+ *     `ctx.reportToolProgress` on the parent exec context (best-effort),
+ *     and return only the final string.
+ *   - `dispatch_child_task` enforces `ctx.managedProtocolRole` for role
+ *     gating (Scout: read-only only; Planner/Evaluator: blocked;
+ *     Generator: full). The Runner path does not set
+ *     `managedProtocolRole` on the base ctx, so each role-specific
+ *     wrapper injects the right role on the per-call ctx. Also captures
+ *     any write worktrees into `childWriteWorktreePathsRef` so the
+ *     Evaluator diff injection parity (FEATURE_067 v2) is preserved.
+ */
+function wrapDispatchChildTaskForRole(
+  definition: KodaXToolDefinition,
+  baseCtx: KodaXToolExecutionContext,
+  role: 'scout' | 'generator',
+  budget: ManagedTaskBudgetController | undefined,
+  childWriteWorktreePathsRef: { current: Map<string, string> },
+  observer: ObserverBridge,
+): RunnableTool {
+  return {
+    ...definition,
+    execute: async (input: Record<string, unknown>): Promise<RunnerToolResult> => {
+      if (budget) incrementManagedBudgetUsage(budget, 1);
+      // v0.7.22 parity: fire a fanout status event so the REPL's
+      // AmaWorkStrip can render a "Scout/Generator fanning out" badge.
+      // Best-effort — the legacy path batched these on LLM emit (count=N),
+      // while the Runner path fires per tool call (count=1). Downstream
+      // UIs overwrite with the latest.
+      observer.notifyChildFanout('evidence-scan');
+      // Shallow clone so the managedProtocolRole + registerChildWriteWorktrees
+      // callback are local to this invocation. The base ctx stays pristine
+      // for parallel dispatches.
+      const perCallCtx: KodaXToolExecutionContext = {
+        ...baseCtx,
+        managedProtocolRole: role,
+        registerChildWriteWorktrees: (worktreePaths) => {
+          for (const [id, p] of worktreePaths) {
+            childWriteWorktreePathsRef.current.set(id, p);
+          }
+        },
+      };
+      try {
+        const gen = toolDispatchChildTask(input, perCallCtx);
+        // Drain the generator. We don't render progress through the
+        // Runner's transcript today — legacy surfaced it via
+        // `onToolProgress`, which the Runner path exposes on ctx already
+        // (inside toolDispatchChildTask → ctx.reportToolProgress?.()).
+        let next = await gen.next();
+        while (!next.done) {
+          next = await gen.next();
+        }
+        const finalValue = typeof next.value === 'string' ? next.value : '';
+        return { content: finalValue };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { content: `[Tool Error] ${definition.name}: ${message}`, isError: true };
+      }
+    },
+  };
+}
+
 interface CodingToolBundle {
   readonly read: RunnableTool;
   readonly grep: RunnableTool;
@@ -585,6 +1144,7 @@ const NULL_OBSERVER: ObserverBridge = {
   onRoleEmit: () => undefined,
   completed: () => undefined,
   notifyBudgetApprovalRequest: () => undefined,
+  notifyChildFanout: () => undefined,
 };
 
 /**
@@ -607,8 +1167,42 @@ export function buildRunnerAgentChain(
   observer: ObserverBridge = NULL_OBSERVER,
   budget?: ManagedTaskBudgetController,
   budgetExtension?: BudgetExtensionContext,
+  // Shard 6d-M: plan ref lets the Generator mutation-intent guards read
+  // `plan.decision.primaryTask` at tool-invocation time (the plan is
+  // resolved before Runner.run, but the agent chain is frozen earlier).
+  planRef: { current: ReasoningPlan | undefined } = { current: undefined },
+  // Shard 6d-S: task verification contract surfaces runtime obligations
+  // (startup command, ready signal, UI flows, API/DB checks) into the
+  // Evaluator prompt so the model actually probes the runtime instead
+  // of writing a verdict from static file reads.
+  verification?: KodaXTaskVerificationContract,
+  // Shard 6d-Q: shared ref so Scout/Generator dispatch_child_task invocations
+  // can register write worktree paths for Evaluator diff injection
+  // (FEATURE_067 v2 parity). The caller owns the map; the Runner-internal
+  // wrappers only append.
+  childWriteWorktreePathsRef: { current: Map<string, string> } = { current: new Map() },
 ): RunnerAgentChain {
   const codingTools = buildCodingToolBundle(ctx, budget);
+  const dispatchDefinition = getToolDefinition('dispatch_child_task');
+  if (!dispatchDefinition) {
+    throw new Error('dispatch_child_task tool not registered — tools/registry.ts bootstrap failure');
+  }
+  const scoutDispatch = wrapDispatchChildTaskForRole(
+    dispatchDefinition,
+    ctx,
+    'scout',
+    budget,
+    childWriteWorktreePathsRef,
+    observer,
+  );
+  const generatorDispatch = wrapDispatchChildTaskForRole(
+    dispatchDefinition,
+    ctx,
+    'generator',
+    budget,
+    childWriteWorktreePathsRef,
+    observer,
+  );
 
   const scoutEmit = wrapEmitterWithRecorder(emitScoutVerdict, 'scout', recorder, observer, budget);
   const contractEmit = wrapEmitterWithRecorder(emitContract, 'contract', recorder, observer, budget);
@@ -626,6 +1220,11 @@ export function buildRunnerAgentChain(
       codingTools.grep,
       codingTools.glob,
       wrapReadOnlyBash(codingTools.bash, 'Scout'),
+      // Shard 6d-Q: Scout may dispatch read-only child investigations
+      // (evidence scans, repo reconnaissance) in parallel before
+      // emitting its verdict. The dispatch tool itself enforces
+      // `read_only` in Scout context.
+      scoutDispatch,
     ],
     handoffs: undefined,
     reasoning: { default: 'quick', max: 'balanced', escalateOnRevise: false },
@@ -639,22 +1238,37 @@ export function buildRunnerAgentChain(
   };
   const generator: WritableAgent = {
     name: GENERATOR_AGENT_NAME,
-    instructions: GENERATOR_INSTRUCTIONS,
+    // Shard 6d-T: dynamic instructions so Scout's `skillMap` (resolved at
+    // emit time, after this chain is frozen) can be surfaced to Generator
+    // as an execution-obligations block. Runner evaluates this closure on
+    // each agent invocation.
+    instructions: () => buildGeneratorInstructions(recorder),
     tools: [
       handoffEmit,
       codingTools.read,
       codingTools.grep,
       codingTools.glob,
-      codingTools.bash,
-      codingTools.write,
-      codingTools.edit,
+      wrapGeneratorBashWithMutationGuard(codingTools.bash, recorder, planRef),
+      wrapGeneratorWriteWithMutationGuard(codingTools.write, recorder, planRef),
+      wrapGeneratorWriteWithMutationGuard(codingTools.edit, recorder, planRef),
+      // Shard 6d-Q: Generator may dispatch write-capable child tasks for
+      // parallel fan-out. Worktree paths flow through
+      // `childWriteWorktreePathsRef` so the Evaluator can inject the
+      // write diffs at verdict time (FEATURE_067 v2 parity).
+      generatorDispatch,
     ],
     handoffs: undefined,
     reasoning: { default: 'balanced', max: 'deep', escalateOnRevise: true },
   };
   const evaluator: WritableAgent = {
     name: EVALUATOR_AGENT_NAME,
-    instructions: EVALUATOR_INSTRUCTIONS,
+    // Shard 6d-T: dynamic instructions so Scout's verification obligations
+    // reach Evaluator's QA checks, mirroring legacy's skillMap-into-QA-plan
+    // branching.
+    // Shard 6d-S: also surfaces `verification.runtime` (startup command,
+    // ready signal, UI/API/DB checks) so Evaluator probes the runtime
+    // under test before emitting a verdict.
+    instructions: () => buildEvaluatorInstructions(recorder, verification),
     tools: [
       verdictEmit,
       codingTools.read,
@@ -760,26 +1374,217 @@ export function buildRunnerLlmAdapter(
       streamResult = await overrideStream(transcript, wireTools, system);
     } else {
       const provider = resolveProvider(options.provider ?? 'anthropic');
-      // Forward the caller's event callbacks through to the provider stream
-      // so `onTextDelta` / `onThinkingDelta` / `onToolInputDelta` / etc.
-      // fire for every role's LLM turn, matching the legacy `runKodaX`
-      // behaviour that REPL streaming UIs rely on.
-      const streamOptions = options.events
-        ? {
-            onTextDelta: options.events.onTextDelta,
-            onThinkingDelta: options.events.onThinkingDelta,
-            onThinkingEnd: options.events.onThinkingEnd,
-            onToolInputDelta: options.events.onToolInputDelta,
+      const providerName = options.provider ?? provider.name ?? 'anthropic';
+      // Shard 6d-P: restore the legacy second-tier retry/recovery loop
+      // (agent.ts:1955-2198). Without this, any transient stream error
+      // (network/terminated/stream-incomplete/idle-timeout) aborts the
+      // whole managed run on the first failure — no retry, no
+      // `onProviderRecovery` event, and the REPL's onError handler ends
+      // up printing the raw error via console.log which Ink places below
+      // the user prompt instead of inline with the worker output.
+      //
+      // Mirrors the legacy loop: classify → decide → onProviderRecovery →
+      // optional non-streaming fallback → executeRecovery (prune
+      // incomplete tool_use turns) → waitForRetryDelay → retry.
+      const resilienceCfg = resolveResilienceConfig(providerName);
+      const API_HARD_TIMEOUT_MS = resilienceCfg.requestTimeoutMs;
+      const API_IDLE_TIMEOUT_MS = resilienceCfg.streamIdleTimeoutMs;
+      const boundaryTracker = new StableBoundaryTracker();
+      const supportsFallback = typeof provider.supportsNonStreamingFallback === 'function'
+        ? provider.supportsNonStreamingFallback()
+        : false;
+      const recoveryCoordinator = new ProviderRecoveryCoordinator(boundaryTracker, {
+        ...resilienceCfg,
+        enableNonStreamingFallback: resilienceCfg.enableNonStreamingFallback && supportsFallback,
+      });
+      let providerMessages: KodaXMessage[] = [...transcript];
+      let attempt = 0;
+      let raw!: Awaited<ReturnType<typeof provider.stream>>;
+      while (true) {
+        attempt += 1;
+        boundaryTracker.beginRequest(
+          providerName,
+          provider.getModel?.() ?? options.modelOverride ?? 'unknown',
+          providerMessages,
+          attempt,
+          false,
+        );
+        telemetryBoundary(boundaryTracker.snapshot());
+
+        const retryTimeoutController = new AbortController();
+        let hardTimer: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
+          retryTimeoutController.abort(new Error('API Hard Timeout (10 minutes)'));
+        }, API_HARD_TIMEOUT_MS);
+        const idleEnabled = API_IDLE_TIMEOUT_MS > 0;
+        let idleTimer: ReturnType<typeof setTimeout> | undefined;
+        if (idleEnabled) {
+          idleTimer = setTimeout(() => {
+            retryTimeoutController.abort(
+              new Error(`Stream stalled or delayed response (${API_IDLE_TIMEOUT_MS}ms idle)`),
+            );
+          }, API_IDLE_TIMEOUT_MS);
+        }
+        const resetIdleTimer = () => {
+          if (!idleEnabled) return;
+          if (idleTimer) clearTimeout(idleTimer);
+          if (!retryTimeoutController.signal.aborted) {
+            idleTimer = setTimeout(() => {
+              retryTimeoutController.abort(
+                new Error(`Stream stalled or delayed response (${API_IDLE_TIMEOUT_MS}ms idle)`),
+              );
+            }, API_IDLE_TIMEOUT_MS);
           }
-        : undefined;
-      const raw = await provider.stream(
-        [...transcript],
-        [...wireTools],
-        system,
-        undefined,
-        streamOptions,
-        options.abortSignal,
-      );
+        };
+        const retrySignal = options.abortSignal
+          ? AbortSignal.any([options.abortSignal, retryTimeoutController.signal])
+          : retryTimeoutController.signal;
+
+        const payloadBytes = estimateProviderPayloadBytes(providerMessages, system);
+        emitResilienceDebug('[resilience:request]', {
+          provider: providerName,
+          attempt,
+          fallbackActive: false,
+          payloadBytes,
+          payloadBucket: bucketProviderPayloadSize(payloadBytes),
+        });
+
+        // Wire the boundary tracker into the stream callbacks — the
+        // coordinator inspects these markers to decide whether a failure
+        // happened before the first delta, mid-stream, post-tool, etc.
+        const streamOptions = {
+          onTextDelta: (text: string) => {
+            boundaryTracker.markTextDelta(text);
+            resetIdleTimer();
+            options.events?.onTextDelta?.(text);
+          },
+          onThinkingDelta: (text: string) => {
+            boundaryTracker.markThinkingDelta(text);
+            resetIdleTimer();
+            options.events?.onThinkingDelta?.(text);
+          },
+          onThinkingEnd: (thinking: string) => {
+            options.events?.onThinkingEnd?.(thinking);
+          },
+          onToolInputDelta: options.events?.onToolInputDelta,
+        };
+
+        try {
+          raw = await provider.stream(
+            providerMessages,
+            [...wireTools],
+            system,
+            undefined,
+            streamOptions,
+            retrySignal,
+          );
+          break;
+        } catch (rawError) {
+          let error = rawError instanceof Error ? rawError : new Error(String(rawError));
+          if (
+            error.name === 'AbortError'
+              && retryTimeoutController.signal.aborted
+              && !options.abortSignal?.aborted
+          ) {
+            const reason = (retryTimeoutController.signal as { reason?: { message?: string } })
+              .reason?.message ?? 'Stream stalled';
+            const { KodaXNetworkError } = await import('@kodax/ai');
+            error = new KodaXNetworkError(reason, true);
+          }
+
+          const failureStage = boundaryTracker.inferFailureStage();
+          const classified = classifyResilienceError(error, failureStage);
+          telemetryClassify(error, classified);
+          const decision = recoveryCoordinator.decideRecoveryAction(error, classified, attempt);
+          telemetryDecision(decision, attempt);
+
+          options.events?.onProviderRecovery?.({
+            stage: decision.failureStage,
+            errorClass: decision.reasonCode,
+            attempt,
+            maxAttempts: resilienceCfg.maxRetries,
+            delayMs: decision.delayMs,
+            recoveryAction: decision.action,
+            ladderStep: decision.ladderStep,
+            fallbackUsed: decision.shouldUseNonStreaming,
+            serverRetryAfterMs: decision.serverRetryAfterMs,
+          });
+          if (!options.events?.onProviderRecovery && decision.action !== 'manual_continue') {
+            options.events?.onRetry?.(
+              `${describeTransientProviderRetry(error)} · retry ${attempt}/${resilienceCfg.maxRetries} in ${Math.round(decision.delayMs / 1000)}s`,
+              attempt,
+              resilienceCfg.maxRetries,
+            );
+          }
+
+          if (decision.shouldUseNonStreaming && typeof provider.complete === 'function') {
+            const fallbackTimeoutController = new AbortController();
+            const fallbackSignal = options.abortSignal
+              ? AbortSignal.any([options.abortSignal, fallbackTimeoutController.signal])
+              : fallbackTimeoutController.signal;
+            const fallbackHardTimer = setTimeout(() => {
+              fallbackTimeoutController.abort(new Error('API Hard Timeout (10 minutes)'));
+            }, API_HARD_TIMEOUT_MS);
+            try {
+              if (idleTimer) clearTimeout(idleTimer);
+              if (hardTimer) clearTimeout(hardTimer);
+              hardTimer = undefined;
+              idleTimer = undefined;
+              boundaryTracker.beginRequest(
+                providerName,
+                provider.getModel?.() ?? options.modelOverride ?? 'unknown',
+                providerMessages,
+                attempt,
+                true,
+              );
+              telemetryBoundary(boundaryTracker.snapshot());
+              raw = await provider.complete(
+                providerMessages,
+                [...wireTools],
+                system,
+                undefined,
+                {
+                  onTextDelta: (text: string) => {
+                    boundaryTracker.markTextDelta(text);
+                    options.events?.onTextDelta?.(text);
+                  },
+                  onThinkingDelta: (text: string) => {
+                    boundaryTracker.markThinkingDelta(text);
+                    options.events?.onThinkingDelta?.(text);
+                  },
+                  onThinkingEnd: (thinking: string) => {
+                    options.events?.onThinkingEnd?.(thinking);
+                  },
+                  signal: fallbackSignal,
+                },
+                fallbackSignal,
+              );
+              break;
+            } catch (fallbackError) {
+              error = fallbackError instanceof Error ? fallbackError : new Error(String(fallbackError));
+            } finally {
+              clearTimeout(fallbackHardTimer);
+            }
+          }
+
+          if (decision.action === 'manual_continue' || attempt >= resilienceCfg.maxRetries) {
+            throw error;
+          }
+
+          const recovery = recoveryCoordinator.executeRecovery(providerMessages, decision);
+          telemetryRecovery(decision.action, recovery);
+          providerMessages = recovery.messages;
+
+          if (hardTimer) clearTimeout(hardTimer);
+          if (idleTimer) clearTimeout(idleTimer);
+          hardTimer = undefined;
+          idleTimer = undefined;
+          await waitForRetryDelay(decision.delayMs, options.abortSignal);
+          continue;
+        } finally {
+          if (hardTimer) clearTimeout(hardTimer);
+          if (idleTimer) clearTimeout(idleTimer);
+        }
+      }
       streamResult = { textBlocks: raw.textBlocks, toolBlocks: raw.toolBlocks, usage: raw.usage };
     }
 
@@ -917,6 +1722,10 @@ function buildManagedTaskPayload(args: {
   readonly verdictStatus?: 'accept' | 'revise' | 'blocked';
   readonly userAnswer?: string;
   readonly budget?: ManagedTaskBudgetController;
+  readonly plan?: ReasoningPlan;
+  readonly entries?: readonly KodaXTaskEvidenceEntry[];
+  readonly degradedContinue?: boolean;
+  readonly childWriteWorktreePaths?: ReadonlyMap<string, string>;
 }): KodaXManagedTask {
   const {
     prompt,
@@ -928,20 +1737,45 @@ function buildManagedTaskPayload(args: {
     verdictStatus,
     userAnswer,
     budget,
+    plan,
+    entries,
+    degradedContinue,
+    childWriteWorktreePaths,
   } = args;
 
+  // Shard 6d-L: Scout's emitted harness still wins over the plan's
+  // recommendation (FEATURE_061 — Scout is the routing authority). Fall
+  // back to plan.decision.harnessProfile when Scout has not emitted yet,
+  // then to H0_DIRECT.
   const harness: KodaXHarnessProfile =
-    recorder.scout?.payload.scout?.confirmedHarness ?? 'H0_DIRECT';
+    recorder.scout?.payload.scout?.confirmedHarness
+      ?? plan?.decision.harnessProfile
+      ?? 'H0_DIRECT';
   const contractPayload = recorder.contract?.payload.contract;
 
   const nowIso = new Date().toISOString();
   const taskId = `runner-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const surface = (options.context as { surface?: 'cli' | 'repl' | 'project' | 'plan' })
-    ?.surface ?? 'cli';
+  const surface = getManagedTaskSurface(options);
+  // Resolve the per-task workspace directory (e.g. `<cwd>/.agent/
+  // managed-tasks/<taskId>/`) so downstream snapshot files and
+  // `evidence.artifacts` point at a stable, writable location — matches
+  // legacy `task-engine.ts:2106` and is required for checkpoint/resume
+  // parity.
+  const workspaceDir = path.join(getManagedTaskWorkspaceRoot(options, surface), taskId);
 
   const contractStatus =
     signal === 'BLOCKED' ? 'blocked' : verdictStatus === 'accept' ? 'completed' : 'running';
 
+  // Shard 6d-L: honour the reasoning plan's routing decision when filling
+  // `contract.*`. Legacy (`task-engine.ts:2160-2180`) populated every
+  // contract field from `plan.decision`; the earlier Runner-driven payload
+  // hard-coded `primaryTask:'conversation'` / `complexity:simple` /
+  // `riskLevel:'low'` and broke every downstream branch that read these
+  // values (agent.ts has ~10 `decision.primaryTask === 'review' | 'bugfix'
+  // | ...` branches). When the plan is absent we still fall back to the
+  // placeholders — keeps callers without a plan (test harness, direct
+  // API use) working.
+  const decision = plan?.decision;
   const contract: KodaXTaskContract = {
     taskId,
     surface,
@@ -949,18 +1783,21 @@ function buildManagedTaskPayload(args: {
     createdAt: nowIso,
     updatedAt: nowIso,
     status: contractStatus,
-    primaryTask: 'conversation',
-    workIntent: 'new',
-    complexity: harness === 'H0_DIRECT' ? 'simple' : harness === 'H1_EXECUTE_EVAL' ? 'moderate' : 'complex',
-    riskLevel: 'low',
+    primaryTask: decision?.primaryTask ?? 'conversation',
+    workIntent: decision?.workIntent ?? 'new',
+    complexity:
+      decision?.complexity
+        ?? (harness === 'H0_DIRECT' ? 'simple' : harness === 'H1_EXECUTE_EVAL' ? 'moderate' : 'complex'),
+    riskLevel: decision?.riskLevel ?? 'low',
     harnessProfile: harness,
-    recommendedMode: 'conversation',
-    requiresBrainstorm: false,
-    reason: 'Runner-driven AMA path',
+    recommendedMode: decision?.recommendedMode ?? 'conversation',
+    requiresBrainstorm: decision?.requiresBrainstorm ?? false,
+    reason: decision?.reason ?? 'Runner-driven AMA path',
     contractSummary: contractPayload?.summary,
     successCriteria: contractPayload?.successCriteria ?? [],
     requiredEvidence: contractPayload?.requiredEvidence ?? [],
     constraints: contractPayload?.constraints ?? [],
+    verification: options.context?.taskVerification,
   };
 
   // De-dup roles while preserving first-occurrence order. The assignment
@@ -991,10 +1828,21 @@ function buildManagedTaskPayload(args: {
     roleAssignments,
     workItems: [],
     evidence: {
-      workspaceDir: baseCtx.gitRoot ?? process.cwd(),
-      artifacts: [],
-      entries: [],
-      routingNotes: [],
+      workspaceDir,
+      // Legacy parity (task-engine.ts:4324 + 5084): every managed task
+      // advertises a fixed set of 10 snapshot files the writeManagedTaskArtifacts
+      // pass is expected to produce. Downstream consumers (`resumeManagedTask`,
+      // harness observers, the REPL transcript dump) index evidence by
+      // artifact path, so we surface the records here even when the actual
+      // files are written asynchronously at terminal exit.
+      artifacts: buildManagedTaskArtifactRecords(workspaceDir),
+      // Shard 6d-R: surface the per-role turn ledger and routing notes.
+      // Legacy `task-engine.ts` fed these fields from each role completion
+      // + `plan.decision.routingNotes`. Without them, snapshot consumers
+      // (`buildManagedTaskRoundHistory`, REPL transcript dump, resume)
+      // see empty history + no routing context.
+      entries: entries ? [...entries] : [],
+      routingNotes: plan?.decision.routingNotes ? [...plan.decision.routingNotes] : [],
     },
     verdict: {
       status:
@@ -1028,8 +1876,110 @@ function buildManagedTaskPayload(args: {
               },
             ]
           : [],
+      // Shard 6d-O: fill runtime fields the legacy path populated so
+      // downstream consumers (REPL harness UI, evaluator guardrails,
+      // resume flow, session storage) see the same shape they did on
+      // the legacy path. Empty-ish runtime defaulted to placeholder
+      // values before this shard; the harness UI silently fell back to
+      // defaults and lost context for `amaProfile` / `upgradeCeiling` /
+      // `scoutDecision` etc.
+      amaProfile: plan?.amaControllerDecision?.profile,
+      amaTactics: plan?.amaControllerDecision?.tactics,
+      amaControllerReason: plan?.amaControllerDecision?.reason,
+      routingAttempts: plan?.decision.routingAttempts,
+      routingSource: plan?.decision.routingSource,
+      currentHarness: harness,
+      upgradeCeiling: plan?.decision.upgradeCeiling ?? harness,
+      qualityAssuranceMode: deriveQualityAssuranceMode(plan, harness),
+      scoutDecision: recorder.scout?.payload.scout
+        ? buildScoutDecisionRuntime(recorder.scout.payload.scout)
+        : undefined,
+      skillMap: buildSkillMapRuntime(recorder.scout?.payload.scout?.skillMap),
+      // Shard 6d-U: propagate the degraded-continue signal. `true` when the
+      // Evaluator requested an upgrade beyond `plan.decision.upgradeCeiling`
+      // (rewritten back to Generator) or when budget-extension approval was
+      // denied / skipped during revise. `undefined` when no degradation.
+      degradedContinue: degradedContinue || undefined,
+      // Shard 6d-S: derive per-criterion / per-runtime-check completion
+      // status from the final verdict. Absent when no verification
+      // contract was declared.
+      completionContractStatus: buildCompletionContractStatus(
+        options.context?.taskVerification,
+        verdictStatus,
+      ),
+      // Shard 6d-Q: surface the dispatch_child_task write-fan-out ledger
+      // so Evaluator diff injection (FEATURE_067 v2 parity) can find
+      // per-child worktree paths. Undefined when no children dispatched.
+      childWriteWorktreePaths:
+        childWriteWorktreePaths && childWriteWorktreePaths.size > 0
+          ? childWriteWorktreePaths
+          : undefined,
     },
   };
+}
+
+/**
+ * Shard 6d-O: quality-assurance mode mirrors legacy
+ * `resolveManagedTaskQualityAssuranceMode` (task-engine.ts:1108).
+ * Runner simplification — legacy's branch depended on
+ * `plan.decision.mutationSurface` / `assuranceIntent` /
+ * `needsIndependentQA` / `riskLevel` / etc.; we reproduce the key
+ * decisions:
+ *   - H1 / H2 → 'required' (evaluator-mandatory).
+ *   - H0 with explicit verification obligations or plan flags → 'required'.
+ *   - Otherwise → 'optional'.
+ */
+function deriveQualityAssuranceMode(
+  plan: ReasoningPlan | undefined,
+  harness: KodaXHarnessProfile,
+): 'required' | 'optional' {
+  if (harness !== 'H0_DIRECT') return 'required';
+  const decision = plan?.decision;
+  if (!decision) return 'optional';
+  if (decision.assuranceIntent === 'explicit-check') return 'required';
+  if (decision.needsIndependentQA === true) return 'required';
+  if (decision.riskLevel === 'high') return 'required';
+  if (decision.primaryTask === 'qa' || decision.primaryTask === 'plan') return 'required';
+  if (decision.recommendedMode === 'pr-review' || decision.recommendedMode === 'strict-audit') return 'required';
+  return 'optional';
+}
+
+function buildScoutDecisionRuntime(
+  scout: NonNullable<KodaXManagedProtocolPayload['scout']>,
+): NonNullable<KodaXManagedTask['runtime']>['scoutDecision'] | undefined {
+  if (!scout.summary && !scout.confirmedHarness) return undefined;
+  return {
+    summary: scout.summary ?? '',
+    recommendedHarness: scout.confirmedHarness ?? 'H0_DIRECT',
+    readyForUpgrade: scout.directCompletionReady !== 'yes',
+    scope: scout.scope,
+    requiredEvidence: scout.requiredEvidence,
+    reviewFilesOrAreas: scout.reviewFilesOrAreas,
+    evidenceAcquisitionMode: scout.evidenceAcquisitionMode,
+    harnessRationale: scout.harnessRationale,
+    blockingEvidence: scout.blockingEvidence,
+    directCompletionReady: scout.directCompletionReady,
+    skillSummary: scout.skillMap?.skillSummary,
+    executionObligations: scout.skillMap?.executionObligations,
+    verificationObligations: scout.skillMap?.verificationObligations,
+    ambiguities: scout.skillMap?.ambiguities,
+    projectionConfidence: scout.skillMap?.projectionConfidence,
+  };
+}
+
+function buildSkillMapRuntime(
+  scoutSkillMap: NonNullable<KodaXManagedProtocolPayload['scout']>['skillMap'],
+): KodaXManagedTask['runtime'] extends infer R
+  ? R extends { skillMap?: infer M } ? M : never
+  : never {
+  if (!scoutSkillMap) return undefined as never;
+  return {
+    summary: scoutSkillMap.skillSummary,
+    executionObligations: scoutSkillMap.executionObligations ?? [],
+    verificationObligations: scoutSkillMap.verificationObligations ?? [],
+    ambiguities: scoutSkillMap.ambiguities ?? [],
+    projectionConfidence: scoutSkillMap.projectionConfidence,
+  } as never;
 }
 
 // =============================================================================
@@ -1123,7 +2073,7 @@ async function writeCurrentCheckpoint(args: {
   try {
     const surface = getManagedTaskSurface(options);
     const workspaceRoot = getManagedTaskWorkspaceRoot(options, surface);
-    const workspaceDir = `${workspaceRoot}/${managedTask.contract.taskId}`;
+    const workspaceDir = path.join(workspaceRoot, managedTask.contract.taskId);
     const gitCommit = (await getGitHeadCommit(options.context?.gitRoot)) ?? 'unknown';
     const checkpoint: ManagedTaskCheckpoint = {
       version: 1,
@@ -1148,6 +2098,10 @@ export async function runManagedTaskViaRunner(
   options: KodaXOptions,
   prompt: string,
   adapterOverride?: Parameters<typeof buildRunnerLlmAdapter>[1],
+  // Shard 6d-L: accept the reasoning plan produced by `createManagedReasoningPlan`
+  // in `task-engine.ts`. Optional so direct Runner invocations from tests
+  // (or future SDK consumers) still work without constructing a plan.
+  plan?: ReasoningPlan,
 ): Promise<KodaXResult> {
   // Shard 6c: honour any pre-existing checkpoint before starting. Gated on
   // `askUser` presence — non-interactive contexts (unit tests, SDK
@@ -1187,38 +2141,65 @@ export async function runManagedTaskViaRunner(
   const roundRef = { current: 0 };
   const maxRoundsRef = { current: MAX_ROUNDS_BY_HARNESS.H0_DIRECT };
   const budgetApprovalRef = { current: false };
+  // Shard 6d-R: append-only evidence entries accumulator. Populated from
+  // `onRoleEmit` so each role turn contributes exactly one entry to
+  // `managedTask.evidence.entries[]`.
+  const entriesRef: { items: KodaXTaskEvidenceEntry[] } = { items: [] };
+  // Session id reference — propagated from `options.session` so each
+  // entry's `sessionId` mirrors legacy (useful for REPL transcript dump
+  // + resume flow when reconstructing per-role session lineage).
+  const sessionIdRef: { current: string | undefined } = {
+    current: options.session?.id,
+  };
 
-  // Shard 6c: checkpoint writer, invoked after each role emit. Gated on
-  // the presence of an interactive `askUser` callback — without it the
-  // user cannot be prompted to resume, so writing checkpoints is useless
-  // infrastructure cost (forks git, touches filesystem). This keeps unit
-  // tests (which usually don't register askUser) fast and deterministic.
+  // Shard 6c + 6d-N: per-role-emit hook. Two responsibilities:
+  //   1. Snapshot write (always on) — mirrors legacy
+  //      `writeManagedTaskSnapshotArtifacts` calls after each terminal
+  //      worker (task-engine.ts:2405, 6036, 6466, 6532). Persists
+  //      `contract.json` / `managed-task.json` / `round-history.json` /
+  //      `budget.json` / `memory-strategy.json` / `runtime-contract.json`
+  //      / `runtime-execution.md` / `scorecard.json` under
+  //      `<workspaceDir>`. Without this the files only exist at terminal
+  //      exit; any crash mid-run loses them.
+  //   2. Checkpoint write (gated on askUser) — mirrors Shard 6c. Without
+  //      an interactive `askUser` callback the user cannot be prompted
+  //      to resume, so the checkpoint ledger is dead weight for
+  //      non-interactive callers (unit tests, SDK consumers).
   let lastCheckpointWorkspaceDir: string | undefined;
   const checkpointingEnabled = Boolean(options.events?.askUser);
-  const checkpointWriter = checkpointingEnabled
-    ? (_role: KodaXTaskRole): void => {
-        const snapshot = buildManagedTaskPayload({
-          prompt,
-          options,
-          recorder,
-          rolesEmitted: rolesRef.emitted,
-          baseCtx,
-          signal: 'COMPLETE',
-          budget,
-        });
-        const scoutCompleted = Boolean(recorder.scout);
-        const currentRound = rolesRef.emitted.length;
-        void writeCurrentCheckpoint({
-          options,
-          managedTask: snapshot,
-          currentRound,
-          completedWorkerIds: rolesRef.emitted.map((r) => r),
-          scoutCompleted,
-        }).then((dir) => {
-          if (dir) lastCheckpointWorkspaceDir = dir;
-        });
-      }
-    : undefined;
+  const checkpointWriter = (_role: KodaXTaskRole): void => {
+    const snapshot = buildManagedTaskPayload({
+      prompt,
+      options,
+      recorder,
+      rolesEmitted: rolesRef.emitted,
+      baseCtx,
+      signal: 'COMPLETE',
+      budget,
+      plan,
+      entries: entriesRef.items,
+      degradedContinue: degradedContinueRef.current,
+      childWriteWorktreePaths: childWriteWorktreePathsRef.current,
+    });
+    // Snapshot write — best-effort, must not throw out of the observer
+    // callback or we'd abort the Runner mid-emit.
+    void writeManagedTaskSnapshotArtifacts(snapshot.evidence.workspaceDir, snapshot)
+      .catch(() => undefined);
+    if (!checkpointingEnabled) {
+      return;
+    }
+    const scoutCompleted = Boolean(recorder.scout);
+    const currentRound = rolesRef.emitted.length;
+    void writeCurrentCheckpoint({
+      options,
+      managedTask: snapshot,
+      currentRound,
+      completedWorkerIds: rolesRef.emitted.map((r) => r),
+      scoutCompleted,
+    }).then((dir) => {
+      if (dir) lastCheckpointWorkspaceDir = dir;
+    });
+  };
 
   const observer = buildObserverBridge(
     options.events,
@@ -1228,23 +2209,64 @@ export async function runManagedTaskViaRunner(
     roundRef,
     maxRoundsRef,
     budgetApprovalRef,
+    entriesRef,
+    sessionIdRef,
     checkpointWriter,
   );
 
   observer.preflight();
 
+  const planRef = { current: plan };
+  // Shard 6d-U: degraded-continue ref. Flipped by the verdict emitter
+  // wrapper when the Evaluator requests an H2 upgrade beyond the plan's
+  // `upgradeCeiling`, or when budget-extension approval is denied during
+  // revise. Surfaced on `managedTask.runtime.degradedContinue` so the
+  // REPL / CLI can warn the user.
+  const degradedContinueRef: { current: boolean } = { current: false };
+  // Shard 6d-Q: dispatch_child_task write-fan-out ledger. Generator's
+  // dispatch invocations populate this map (childId → worktreePath);
+  // the Evaluator reads it at verdict time to inject per-child diffs.
+  // FEATURE_067 v2 parity.
+  const childWriteWorktreePathsRef: { current: Map<string, string> } = {
+    current: new Map(),
+  };
   const budgetExtension: BudgetExtensionContext = {
     events: options.events,
     originalTask: prompt,
     roundRef,
     maxRoundsRef,
     budgetApprovalRef,
+    planRef,
+    degradedContinueRef,
+    harnessRef,
   };
   const tokenStateRef: { current: RunnerAdapterTokenState } = {
     current: { totalTokens: 0, source: 'estimate' },
   };
-  const chain = buildRunnerAgentChain(baseCtx, recorder, observer, budget, budgetExtension);
+  const chain = buildRunnerAgentChain(
+    baseCtx,
+    recorder,
+    observer,
+    budget,
+    budgetExtension,
+    planRef,
+    options.context?.taskVerification,
+    childWriteWorktreePathsRef,
+  );
   const llm = buildRunnerLlmAdapter(options, adapterOverride, tokenStateRef);
+
+  // Shard 6d-L: stitch `plan.promptOverlay` (the routing-notes block
+  // `createReasoningPlan` produces — task-family guidance, work intent,
+  // brainstorm directives, provider-policy notes, explicit-reason trail)
+  // onto the user prompt so Scout/Planner/Generator/Evaluator receive the
+  // same contextual overlay legacy workers did. Keeping the overlay as a
+  // prompt prefix rather than a system-prompt injection matches the
+  // legacy `buildPromptOverlay` output shape, which Scout expects as
+  // free-text routing notes at the top of the task prompt.
+  const promptOverlay = plan?.promptOverlay?.trim();
+  const promptWithOverlay = promptOverlay
+    ? `${promptOverlay}\n\n---\n\n${prompt}`
+    : prompt;
 
   // Session continuity: when the caller passes `options.session.initialMessages`
   // (REPL multi-turn, session resume, plan-mode replay), prepend them as the
@@ -1253,8 +2275,8 @@ export async function runManagedTaskViaRunner(
   // loader.
   const initialMessages = options.session?.initialMessages ?? [];
   const runnerInput = initialMessages.length > 0
-    ? [...initialMessages, { role: 'user' as const, content: prompt }]
-    : prompt;
+    ? [...initialMessages, { role: 'user' as const, content: promptWithOverlay }]
+    : promptWithOverlay;
 
   const runResult = await Runner.run(chain.scout, runnerInput, {
     llm,
@@ -1280,9 +2302,53 @@ export async function runManagedTaskViaRunner(
     verdictStatus,
     userAnswer,
     budget,
+    plan,
+    entries: entriesRef.items,
+    degradedContinue: degradedContinueRef.current,
+    childWriteWorktreePaths: childWriteWorktreePathsRef.current,
   });
 
   observer.completed(signal, reason ?? userAnswer);
+
+  // Shard 6d-k: Scout suspicious-completion detection (legacy
+  // task-engine.ts:4844). When harness is H0_DIRECT and Scout did not
+  // declare an explicit completion signal, the harness inspects the
+  // final transcript + mutation tracker + budget and surfaces
+  // `onScoutSuspiciousCompletion` for the REPL to render an "uncertain"
+  // warning. This is a passive signal — we do not change the verdict,
+  // only annotate it.
+  if (harnessRef.current === 'H0_DIRECT') {
+    // Shard 6d-M: infer the mutation intent from Scout's emitted scope
+    // list instead of reading a self-declared field. This matches legacy
+    // `inferScoutMutationIntent` (Issue 119) — Scout's scope IS the
+    // evidence.
+    const scoutMutationIntent = recorder.scout
+      ? inferScoutMutationIntent(
+          {
+            scope: recorder.scout.payload.scout?.scope,
+            reviewFilesOrAreas: recorder.scout.payload.scout?.reviewFilesOrAreas,
+          },
+          plan?.decision.primaryTask,
+        )
+      : undefined;
+    const budgetExhausted = budget.totalBudget > 0 && budget.spentBudget >= budget.totalBudget;
+    const suspiciousSignals = detectScoutSuspiciousSignals({
+      messages: runResult.messages,
+      lastText: resolvedText,
+      hasScoutPayload: Boolean(recorder.scout),
+      scoutMutationIntent,
+      mutationTracker,
+      budgetExhausted,
+    });
+    if (suspiciousSignals.length > 0) {
+      options.events?.onScoutSuspiciousCompletion?.({
+        confidence: 'uncertain',
+        signals: suspiciousSignals,
+        sessionId: runResult.sessionId,
+        lastTextPreview: (resolvedText ?? '').slice(0, SUSPICIOUS_LAST_TEXT_PREVIEW_LIMIT),
+      });
+    }
+  }
 
   // Shard 6c: delete checkpoint on successful or blocked terminal exit.
   // (Blocked is still "the task concluded" from the checkpoint perspective
@@ -1321,6 +2387,64 @@ export async function runManagedTaskViaRunner(
     managedProtocolPayload,
     managedTask,
     contextTokenSnapshot,
+    // Shard 6d-L: surface the reasoning plan's routing decision so
+    // downstream consumers (REPL breadcrumb, session storage, evaluator
+    // guardrails) can read `routingDecision.primaryTask` /
+    // `.mutationSurface` / `.taskFamily` the same way they did on the
+    // legacy path.
+    routingDecision: plan?.decision,
   };
+
+  // Shard 6d-i: capture task-scoped repo-intelligence snapshots
+  // (repo-overview / changed-scope / active-module / impact-estimate /
+  // summary.md) into `<workspaceDir>/repo-intelligence/` and merge the
+  // resulting `KodaXTaskEvidenceArtifact` records into the task's
+  // `evidence.artifacts`. Mirrors legacy `attachManagedTaskRepoIntelligence`
+  // (task-engine.ts:4302). Also emits the four-stage
+  // `onRepoIntelligenceTrace` events during capture.
+  //
+  // Best-effort: failure to capture must not fail the task run.
+  let managedTaskWithRepoIntel = managedTask;
+  try {
+    managedTaskWithRepoIntel = await attachManagedTaskRepoIntelligence(options, managedTask);
+  } catch {
+    // fall through with the unaugmented task.
+  }
+  // Keep the KodaXResult.managedTask aligned with the augmented copy so
+  // downstream consumers read the same artifact set whether they use the
+  // REPL managedTask event or the final result payload.
+  result.managedTask = managedTaskWithRepoIntel;
+
+  // Shard 6d-h: persist the managed-task snapshot set under the task
+  // workspace directory and leave the artifact records already attached
+  // to `managedTask.evidence.artifacts` pointing at files that actually
+  // exist on disk. Legacy behaviour (`writeManagedTaskArtifacts` at
+  // task-engine.ts:5204) — without this, `contract.json` / `managed-
+  // task.json` / `result.json` / `round-history.json` / `budget.json` /
+  // `memory-strategy.json` / `runtime-contract.json` / `runtime-
+  // execution.md` / `scorecard.json` / `continuation.json` are all
+  // missing and any downstream consumer that reads artifact paths
+  // (resume, harness UI, evaluator reshape) sees a broken ledger.
+  //
+  // Best-effort: an artifact-write failure (permission denied, disk
+  // full) must not fail the task run itself — the in-memory result is
+  // still valid.
+  try {
+    await writeManagedTaskArtifacts(
+      managedTaskWithRepoIntel.evidence.workspaceDir,
+      managedTaskWithRepoIntel,
+      {
+        success: result.success,
+        lastText: result.lastText,
+        sessionId: result.sessionId,
+        signal: result.signal,
+        signalReason: result.signalReason,
+        signalDebugReason: result.signalDebugReason,
+      },
+    );
+  } catch {
+    // best-effort; failures should not abort the task run.
+  }
+
   return result;
 }

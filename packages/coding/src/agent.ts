@@ -283,7 +283,7 @@ function normalizeRuntimeModelSelection(
   return normalized;
 }
 
-function describeTransientProviderRetry(error: Error): string {
+export function describeTransientProviderRetry(error: Error): string {
   const message = error.message.toLowerCase();
   if (error.name === 'StreamIncompleteError' || message.includes('stream incomplete')) {
     return 'Stream interrupted before completion';
@@ -878,7 +878,7 @@ function shouldDebugResilience(): boolean {
   return process.env.KODAX_DEBUG_STREAM === '1' || process.env.KODAX_DEBUG_RESILIENCE === '1';
 }
 
-function emitResilienceDebug(label: string, payload: Record<string, unknown>): void {
+export function emitResilienceDebug(label: string, payload: Record<string, unknown>): void {
   if (!shouldDebugResilience()) {
     return;
   }
@@ -1044,14 +1044,14 @@ function updateToolOutcomeTracking(
   }
 }
 
-function estimateProviderPayloadBytes(messages: KodaXMessage[], systemPrompt: string): number {
+export function estimateProviderPayloadBytes(messages: KodaXMessage[], systemPrompt: string): number {
   return Buffer.byteLength(JSON.stringify({
     systemPrompt,
     messages,
   }), 'utf8');
 }
 
-function bucketProviderPayloadSize(bytes: number): string {
+export function bucketProviderPayloadSize(bytes: number): string {
   if (bytes < 16 * 1024) {
     return 'small';
   }

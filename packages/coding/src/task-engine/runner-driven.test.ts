@@ -11,7 +11,10 @@
  *     managedTask when Generator/Evaluator enter the chain)
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import {
   EMIT_SCOUT_VERDICT_TOOL_NAME,
 } from '../agents/protocol-emitters.js';
@@ -26,6 +29,29 @@ import type { RunnableTool } from '@kodax/core';
 import type { KodaXMessage, KodaXToolDefinition, KodaXToolUseBlock } from '@kodax/ai';
 import type { KodaXEvents, KodaXOptions, KodaXToolExecutionContext } from '../types.js';
 
+// Shared scratch directory for `managedTaskWorkspaceDir` so the
+// Shard 6d-h artifact writes (contract.json / managed-task.json /
+// result.json / ... ) land inside a temp folder instead of polluting
+// the repo's cwd with `.agent/managed-tasks/` entries.
+let testWorkspaceRoot: string;
+
+beforeAll(async () => {
+  testWorkspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'kodax-runner-driven-'));
+});
+
+afterAll(async () => {
+  if (testWorkspaceRoot) {
+    // Windows can hold transient handles immediately after tests;
+    // retry a few times before giving up so CI stays clean.
+    await rm(testWorkspaceRoot, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 100,
+    }).catch(() => undefined);
+  }
+});
+
 function makeCtx(): KodaXToolExecutionContext {
   return {
     backups: new Map<string, string>(),
@@ -37,7 +63,16 @@ function makeCtx(): KodaXToolExecutionContext {
 function makeOptions(): KodaXOptions {
   return {
     provider: 'anthropic',
-    context: { gitRoot: process.cwd(), executionCwd: process.cwd() },
+    context: {
+      gitRoot: process.cwd(),
+      executionCwd: process.cwd(),
+      managedTaskWorkspaceDir: testWorkspaceRoot,
+      // Shard 6d-i: disable task-scoped repo-intelligence capture in
+      // unit tests — the capture walks the real repo (cwd is the kodax
+      // monorepo during test runs), which would otherwise add tens of
+      // seconds per test. Production callers keep the default auto mode.
+      repoIntelligenceMode: 'off',
+    },
     events: {},
   } as KodaXOptions;
 }
@@ -593,7 +628,7 @@ describe('Shard 6a — onManagedTaskStatus observer events', () => {
       },
     });
     await runManagedTaskViaRunner(opts, 'task', mock);
-    const roleEvents = statuses.filter((s) => s.phase === 'round').map((s) => s.activeWorkerId);
+    const roleEvents = statuses.filter((s) => s.phase === 'worker').map((s) => s.activeWorkerId);
     expect(roleEvents).toContain('scout');
     expect(roleEvents).toContain('generator');
     expect(roleEvents).toContain('evaluator');
@@ -1163,14 +1198,14 @@ describe('Shard 6d-c1 — observer event enrichment', () => {
       },
     });
     await runManagedTaskViaRunner(opts, 'do X', mock);
-    const scoutEvent = statuses.find((s) => s.phase === 'round' && s.activeWorkerId === 'scout');
+    const scoutEvent = statuses.find((s) => s.phase === 'worker' && s.activeWorkerId === 'scout');
     expect(scoutEvent?.activeWorkerTitle).toBe('Scout');
     expect(scoutEvent?.currentRound).toBe(1);
     expect(scoutEvent?.maxRounds).toBeGreaterThanOrEqual(6);
-    const genEvent = statuses.find((s) => s.phase === 'round' && s.activeWorkerId === 'generator');
+    const genEvent = statuses.find((s) => s.phase === 'worker' && s.activeWorkerId === 'generator');
     expect(genEvent?.activeWorkerTitle).toBe('Generator');
     expect(genEvent?.currentRound).toBe(2);
-    const evalEvent = statuses.find((s) => s.phase === 'round' && s.activeWorkerId === 'evaluator');
+    const evalEvent = statuses.find((s) => s.phase === 'worker' && s.activeWorkerId === 'evaluator');
     expect(evalEvent?.activeWorkerTitle).toBe('Evaluator');
     expect(evalEvent?.currentRound).toBe(3);
   });
@@ -1252,7 +1287,7 @@ describe('Shard 6d-c1 — observer event enrichment', () => {
       evaluator: () => ({ textBlocks: [{ text: 'ok' }] }),
     });
     await runManagedTaskViaRunner(opts, 'Task', mock);
-    const round = statuses.find((s) => s.phase === 'round');
+    const round = statuses.find((s) => s.phase === 'worker');
     expect(round?.persistToHistory).toBe(false);
   });
 });
@@ -1369,6 +1404,492 @@ describe('Shard 6d-f — role-scoped tool boundaries (legacy toolPolicy parity)'
     const result = await scoutBash.execute({ command: 'rm -rf /tmp/y' }, makeToolCtx('scout'));
     expect(result.isError).toBe(true);
     expect(String(result.content)).toContain('verification-only');
+  });
+});
+
+describe('Shard 6d-T — Scout skillMap injected into Generator + Evaluator instructions', () => {
+  function resolveInstructions(
+    agent: { readonly instructions: string | ((ctx: unknown) => string) },
+  ): string {
+    return typeof agent.instructions === 'function'
+      ? agent.instructions(undefined)
+      : agent.instructions;
+  }
+
+  it('falls back to base text when Scout has not emitted', () => {
+    const recorder = {};
+    const chain = buildRunnerAgentChain(makeCtx(), recorder);
+    const gen = resolveInstructions(chain.generator);
+    expect(gen).not.toContain('Scout Skill Map');
+    expect(gen).toContain('emit_handoff');
+  });
+
+  it('renders execution_obligations + ambiguities for Generator (not verification)', () => {
+    const recorder: Record<string, unknown> = {
+      scout: {
+        payload: {
+          scout: {
+            summary: 's',
+            scope: [],
+            requiredEvidence: [],
+            skillMap: {
+              skillSummary: 'add a login form',
+              executionObligations: ['write LoginForm.tsx', 'wire up POST /login'],
+              verificationObligations: ['e2e test covers login'],
+              ambiguities: ['should we support OAuth?'],
+            },
+          },
+        },
+      },
+    };
+    const chain = buildRunnerAgentChain(makeCtx(), recorder as unknown as Parameters<typeof buildRunnerAgentChain>[1]);
+    const gen = resolveInstructions(chain.generator);
+    expect(gen).toContain('Scout Skill Map');
+    expect(gen).toContain('skill_summary: add a login form');
+    expect(gen).toContain('execution_obligations:');
+    expect(gen).toContain('- write LoginForm.tsx');
+    expect(gen).toContain('- wire up POST /login');
+    expect(gen).toContain('ambiguities_to_resolve:');
+    expect(gen).toContain('- should we support OAuth?');
+    // Generator does NOT see verification obligations.
+    expect(gen).not.toContain('verification_obligations:');
+  });
+
+  it('renders verification_obligations for Evaluator', () => {
+    const recorder: Record<string, unknown> = {
+      scout: {
+        payload: {
+          scout: {
+            summary: 's',
+            scope: [],
+            requiredEvidence: [],
+            skillMap: {
+              skillSummary: 'fix parser bug',
+              executionObligations: ['patch parser.ts'],
+              verificationObligations: ['parser.test.ts passes', 'no regression in ast-walker'],
+              ambiguities: [],
+            },
+          },
+        },
+      },
+    };
+    const chain = buildRunnerAgentChain(makeCtx(), recorder as unknown as Parameters<typeof buildRunnerAgentChain>[1]);
+    const evaluator = resolveInstructions(chain.evaluator);
+    expect(evaluator).toContain('Scout Skill Map');
+    expect(evaluator).toContain('verification_obligations:');
+    expect(evaluator).toContain('- parser.test.ts passes');
+    expect(evaluator).toContain('- no regression in ast-walker');
+  });
+
+  it('omits empty obligation lists', () => {
+    const recorder: Record<string, unknown> = {
+      scout: {
+        payload: {
+          scout: {
+            summary: 's',
+            scope: [],
+            requiredEvidence: [],
+            skillMap: {
+              skillSummary: undefined,
+              executionObligations: [],
+              verificationObligations: [],
+              ambiguities: [],
+            },
+          },
+        },
+      },
+    };
+    const chain = buildRunnerAgentChain(makeCtx(), recorder as unknown as Parameters<typeof buildRunnerAgentChain>[1]);
+    const gen = resolveInstructions(chain.generator);
+    // No fields populated → skill block omitted entirely.
+    expect(gen).not.toContain('Scout Skill Map');
+  });
+});
+
+describe('Shard 6d-Q — dispatch_child_task exposed to Scout + Generator only', () => {
+  it('Scout agent exposes dispatch_child_task', () => {
+    const chain = buildRunnerAgentChain(makeCtx(), {});
+    const scoutTools = chain.scout.tools?.map((t) => t.name) ?? [];
+    expect(scoutTools).toContain('dispatch_child_task');
+  });
+
+  it('Generator agent exposes dispatch_child_task', () => {
+    const chain = buildRunnerAgentChain(makeCtx(), {});
+    const genTools = chain.generator.tools?.map((t) => t.name) ?? [];
+    expect(genTools).toContain('dispatch_child_task');
+  });
+
+  it('Planner + Evaluator agents do NOT expose dispatch_child_task', () => {
+    const chain = buildRunnerAgentChain(makeCtx(), {});
+    const plannerTools = chain.planner.tools?.map((t) => t.name) ?? [];
+    const evaluatorTools = chain.evaluator.tools?.map((t) => t.name) ?? [];
+    expect(plannerTools).not.toContain('dispatch_child_task');
+    expect(evaluatorTools).not.toContain('dispatch_child_task');
+  });
+
+  it('Scout-bound dispatch tool errors out if Scout asks for a write child', async () => {
+    const chain = buildRunnerAgentChain(makeCtx(), {});
+    const scoutDispatch = chain.scout.tools?.find(
+      (t) => t.name === 'dispatch_child_task',
+    ) as RunnableTool;
+    expect(scoutDispatch).toBeDefined();
+    // Scout with `read_only: false` → error (role gating inside
+    // toolDispatchChildTask rejects write fan-out from Scout).
+    const result = await scoutDispatch.execute(
+      {
+        id: 'x',
+        objective: 'test',
+        read_only: false,
+      },
+      { agent: { name: 'scout' } as unknown as import('@kodax/core').Agent },
+    );
+    expect(String(result.content)).toContain('Scout can only dispatch read-only');
+  });
+});
+
+describe('Shard 6d-S — task verification contract surfaced to Evaluator + completionContractStatus', () => {
+  function resolveInstructions(
+    agent: { readonly instructions: string | ((ctx: unknown) => string) },
+  ): string {
+    return typeof agent.instructions === 'function'
+      ? agent.instructions(undefined)
+      : agent.instructions;
+  }
+
+  it('falls back to base Evaluator text when no verification contract', () => {
+    const chain = buildRunnerAgentChain(makeCtx(), {});
+    const evaluator = resolveInstructions(chain.evaluator);
+    expect(evaluator).not.toContain('Runtime Verification Contract');
+  });
+
+  it('renders startup command + UI flows + API checks for the Evaluator', () => {
+    const chain = buildRunnerAgentChain(
+      makeCtx(),
+      {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        runtime: {
+          startupCommand: 'pnpm dev',
+          readySignal: 'Ready in',
+          baseUrl: 'http://localhost:3000',
+          uiFlows: ['Navigate to /login and submit form', 'Verify dashboard renders'],
+          apiChecks: ['GET /api/health returns 200'],
+          dbChecks: [],
+        },
+      },
+    );
+    const evaluator = resolveInstructions(chain.evaluator);
+    expect(evaluator).toContain('Runtime Verification Contract');
+    expect(evaluator).toContain('startup_command: pnpm dev');
+    expect(evaluator).toContain('ready_signal: Ready in');
+    expect(evaluator).toContain('base_url: http://localhost:3000');
+    expect(evaluator).toContain('ui_flows');
+    expect(evaluator).toContain('1. Navigate to /login and submit form');
+    expect(evaluator).toContain('api_checks');
+    expect(evaluator).toContain('1. GET /api/health returns 200');
+  });
+
+  it('populates completionContractStatus=ready for all checks on accept', async () => {
+    const mock = makeChainMockLlm({
+      scout: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 's1', name: 'emit_scout_verdict',
+              input: { confirmed_harness: 'H1_EXECUTE_EVAL' },
+            }],
+          };
+        }
+        throw new Error('scout overrun');
+      },
+      generator: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 'g1', name: 'emit_handoff',
+              input: { status: 'ready', evidence: ['fixed'] },
+            }],
+          };
+        }
+        throw new Error('generator overrun');
+      },
+      evaluator: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 'e1', name: 'emit_verdict',
+              input: { status: 'accept', user_answer: 'all checks pass' },
+            }],
+          };
+        }
+        return { textBlocks: [{ text: 'all checks pass' }] };
+      },
+    });
+
+    const result = await runManagedTaskViaRunner(
+      {
+        ...makeOptions(),
+        context: {
+          ...makeOptions().context!,
+          taskVerification: {
+            criteria: [
+              { id: 'crit.login', label: 'Login works', description: 'Login form submits successfully', threshold: 0.8, weight: 1 },
+            ],
+            runtime: {
+              uiFlows: ['Login flow'],
+              apiChecks: ['GET /api/health returns 200'],
+              dbChecks: ['user row exists after signup'],
+            },
+          },
+        },
+      },
+      'Verify the app',
+      mock,
+    );
+    expect(result.success).toBe(true);
+    const status = result.managedTask?.runtime?.completionContractStatus;
+    expect(status).toBeDefined();
+    expect(status!['crit.login']).toBe('ready');
+    expect(status!['ui_flow:1']).toBe('ready');
+    expect(status!['api_check:1']).toBe('ready');
+    expect(status!['db_check:1']).toBe('ready');
+  });
+
+  it('populates completionContractStatus=blocked on blocked verdict', async () => {
+    const mock = makeChainMockLlm({
+      scout: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 's1', name: 'emit_scout_verdict',
+              input: { confirmed_harness: 'H1_EXECUTE_EVAL' },
+            }],
+          };
+        }
+        throw new Error('scout overrun');
+      },
+      generator: () => ({
+        toolBlocks: [{ type: 'tool_use', id: 'g1', name: 'emit_handoff', input: { status: 'ready' } }],
+      }),
+      evaluator: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 'e1', name: 'emit_verdict',
+              input: { status: 'blocked', reason: 'db unreachable' },
+            }],
+          };
+        }
+        return { textBlocks: [{ text: 'db unreachable' }] };
+      },
+    });
+
+    const result = await runManagedTaskViaRunner(
+      {
+        ...makeOptions(),
+        context: {
+          ...makeOptions().context!,
+          taskVerification: {
+            runtime: { dbChecks: ['users table query'] },
+          },
+        },
+      },
+      'Verify',
+      mock,
+    );
+    const status = result.managedTask?.runtime?.completionContractStatus;
+    expect(status).toBeDefined();
+    expect(status!['db_check:1']).toBe('blocked');
+  });
+
+  it('returns undefined when no verification contract is declared', async () => {
+    const mock = makeChainMockLlm({
+      scout: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 's1', name: 'emit_scout_verdict',
+              input: { confirmed_harness: 'H0_DIRECT', direct_completion_ready: 'yes' },
+            }],
+          };
+        }
+        return { textBlocks: [{ text: 'hi' }] };
+      },
+    });
+
+    const result = await runManagedTaskViaRunner(makeOptions(), 'hi', mock);
+    expect(result.managedTask?.runtime?.completionContractStatus).toBeUndefined();
+  });
+});
+
+describe('Shard 6d-U — degraded-continue when upgrade beyond ceiling', () => {
+  function makePlanWithCeiling(
+    upgradeCeiling: 'H0_DIRECT' | 'H1_EXECUTE_EVAL' | 'H2_PLAN_EXECUTE_EVAL',
+  ): import('../reasoning.js').ReasoningPlan {
+    return {
+      mode: 'balanced',
+      depth: 'medium',
+      decision: {
+        primaryTask: 'bugfix',
+        confidence: 0.8,
+        riskLevel: 'medium',
+        recommendedMode: 'conversation',
+        recommendedThinkingDepth: 'medium',
+        complexity: 'moderate',
+        workIntent: 'append',
+        requiresBrainstorm: false,
+        harnessProfile: 'H1_EXECUTE_EVAL',
+        upgradeCeiling,
+        reason: 'test',
+      },
+      amaControllerDecision: {
+        profile: 'tactical',
+        tactics: [],
+        fanout: { mode: 'off' as const } as unknown as import('@kodax/agent').KodaXAmaFanoutPolicy,
+        reason: 'test',
+        upgradeTriggers: [],
+      },
+      promptOverlay: '',
+    };
+  }
+
+  it('rewrites H2 revise → Generator when ceiling is H1 and sets degradedContinue=true', async () => {
+    const mock = makeChainMockLlm({
+      scout: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 's1', name: 'emit_scout_verdict',
+              input: { confirmed_harness: 'H1_EXECUTE_EVAL' },
+            }],
+          };
+        }
+        throw new Error('scout overrun');
+      },
+      generator: (turn) => {
+        if (turn === 1 || turn === 2) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: `g${turn}`, name: 'emit_handoff',
+              input: { status: 'ready' },
+            }],
+          };
+        }
+        throw new Error('generator overrun');
+      },
+      evaluator: (turn) => {
+        if (turn === 1) {
+          // Request H2 upgrade — should be denied because ceiling is H1.
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 'e1', name: 'emit_verdict',
+              input: { status: 'revise', reason: 'need a plan', next_harness: 'H2_PLAN_EXECUTE_EVAL' },
+            }],
+          };
+        }
+        if (turn === 2) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 'e2', name: 'emit_verdict',
+              input: { status: 'accept', user_answer: 'Degraded fix applied.' },
+            }],
+          };
+        }
+        return { textBlocks: [{ text: 'Degraded fix applied.' }] };
+      },
+      // Ensure Planner never runs — the degraded path must keep ownership
+      // inside Generator rather than pivoting to Planner.
+      planner: () => {
+        throw new Error('planner should not run when upgrade is denied');
+      },
+    });
+
+    const result = await runManagedTaskViaRunner(
+      makeOptions(),
+      'Fix it',
+      mock,
+      makePlanWithCeiling('H1_EXECUTE_EVAL'),
+    );
+    expect(result.success).toBe(true);
+    expect(result.managedTask?.runtime?.degradedContinue).toBe(true);
+    // Accept still reached on second pass — degradation does not abort.
+    expect(result.managedProtocolPayload?.verdict?.status).toBe('accept');
+  });
+
+  it('allows H2 upgrade (no degradation) when ceiling permits it', async () => {
+    const mock = makeChainMockLlm({
+      scout: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 's1', name: 'emit_scout_verdict',
+              input: { confirmed_harness: 'H1_EXECUTE_EVAL' },
+            }],
+          };
+        }
+        throw new Error('scout overrun');
+      },
+      generator: (turn) => {
+        if (turn === 1 || turn === 2) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: `g${turn}`, name: 'emit_handoff',
+              input: { status: 'ready' },
+            }],
+          };
+        }
+        throw new Error('generator overrun');
+      },
+      planner: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 'p1', name: 'emit_contract',
+              input: {
+                summary: 'Escalated plan',
+                success_criteria: ['fixed'],
+                required_evidence: [],
+                constraints: [],
+              },
+            }],
+          };
+        }
+        throw new Error('planner overrun');
+      },
+      evaluator: (turn) => {
+        if (turn === 1) {
+          // Same H2 upgrade request — permitted this time.
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 'e1', name: 'emit_verdict',
+              input: { status: 'revise', reason: 'need a plan', next_harness: 'H2_PLAN_EXECUTE_EVAL' },
+            }],
+          };
+        }
+        if (turn === 2) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 'e2', name: 'emit_verdict',
+              input: { status: 'accept', user_answer: 'Upgraded fix applied.' },
+            }],
+          };
+        }
+        return { textBlocks: [{ text: 'Upgraded fix applied.' }] };
+      },
+    });
+
+    const result = await runManagedTaskViaRunner(
+      makeOptions(),
+      'Fix it',
+      mock,
+      makePlanWithCeiling('H2_PLAN_EXECUTE_EVAL'),
+    );
+    expect(result.success).toBe(true);
+    expect(result.managedTask?.runtime?.degradedContinue).toBeUndefined();
+    expect(result.managedProtocolPayload?.verdict?.status).toBe('accept');
   });
 });
 

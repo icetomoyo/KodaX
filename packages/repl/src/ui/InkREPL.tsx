@@ -161,7 +161,7 @@ import {
   extractTitle,
 } from "./utils/message-utils.js";
 import { withCapture, ConsoleCapturer } from "./utils/console-capturer.js";
-import { createRecoveryHistoryItem, emitRecoveryHistoryItem, emitRetryHistoryItem } from "./utils/retry-history.js";
+import { createRecoveryHistoryItem, createRetryHistoryItem, emitRecoveryHistoryItem, emitRetryHistoryItem } from "./utils/retry-history.js";
 import {
   formatManagedTaskBreadcrumb,
   formatManagedTaskLiveStatusLabel,
@@ -4838,7 +4838,21 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       if (userInterruptedRef.current) {
         return;
       }
-      emitRetryHistoryItem(addHistoryItem, reason, attempt, maxAttempts);
+      // In AMA managed-foreground mode the active rendering anchor is the
+      // managed foreground turn layer; addHistoryItem would land in the
+      // wrong position. Mirrors the 09cd7ae fix for onProviderRecovery —
+      // onRetry was the missed sibling of that fix.
+      const inManagedForeground = !!managedForegroundOwnerRef.current.workerId;
+      if (inManagedForeground) {
+        const item = createRetryHistoryItem(reason, attempt, maxAttempts);
+        appendManagedForegroundLedgerItem({
+          ...item,
+          id: `retry-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          timestamp: Date.now(),
+        } as HistoryItem);
+      } else {
+        emitRetryHistoryItem(addHistoryItem, reason, attempt, maxAttempts);
+      }
     },
     onProviderRecovery: (event) => {
       if (userInterruptedRef.current) {
