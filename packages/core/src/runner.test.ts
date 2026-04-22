@@ -13,7 +13,8 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createAgent, type Agent } from './agent.js';
+import { createAgent, type Agent, type Guardrail } from './agent.js';
+import type { ToolGuardrail } from './guardrail.js';
 import { createInMemorySession } from './session.js';
 import {
   Runner,
@@ -515,20 +516,19 @@ describe('Runner', () => {
 
     it('fires observer even when guardrail blocks a call', async () => {
       const echoTool = makeLocalEchoTool();
+      const blockingGuardrail: ToolGuardrail = {
+        kind: 'tool',
+        name: 'block-echo',
+        beforeTool: async () => ({
+          action: 'block',
+          reason: 'blocked by policy',
+        }),
+      };
       const agent = createAgent({
         name: 'obs-block-agent',
         instructions: 'sys',
         tools: [echoTool],
-        guardrails: [
-          {
-            kind: 'tool',
-            name: 'block-echo',
-            beforeTool: async () => ({
-              action: 'block',
-              reason: 'blocked by policy',
-            }),
-          },
-        ],
+        guardrails: [blockingGuardrail as Guardrail],
       });
       let turn = 0;
       const llm = vi.fn(async (): Promise<RunnerLlmResult> => {

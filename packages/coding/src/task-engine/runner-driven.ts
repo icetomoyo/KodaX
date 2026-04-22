@@ -1,26 +1,30 @@
 /**
- * Runner-driven AMA path — FEATURE_084 Shards 5a + 5b (v0.7.26).
+ * Runner-driven AMA path — FEATURE_084 (v0.7.26).
  *
- * A Runner-based replacement for the legacy `runManagedTask` state machine.
+ * Runner-based replacement for the legacy `runManagedTask` state machine.
  *
- *   - Shard 5a: Scout H0_DIRECT only (Scout answers directly, no handoff).
- *   - Shard 5b: Full chain — Scout → {Generator (H1) | Planner (H2)} →
- *     Evaluator → {accept | revise → Generator | replan → Planner | blocked}.
+ *   - Scout → {Generator (H1) | Planner (H2)} → Evaluator →
+ *     {accept | revise → Generator | replan → Planner | blocked}.
+ *   - Env flag `KODAX_MANAGED_TASK_RUNTIME=legacy` restores the legacy
+ *     path (deleted after Shard 6d-b but preserved as a code search
+ *     reference through git history).
  *
- * **Dispatch**: selected by the env flag `KODAX_MANAGED_TASK_RUNTIME=runner`
- * at the top of `executeRunManagedTask` in `task-engine.ts`. Default
- * remains the legacy path — this is opt-in until Shard 6 flips the
- * default + cleans legacy.
- *
- * **Intentionally not implemented yet**:
- *   - Checkpoint recovery (FEATURE_071)
- *   - Budget tracking (per-round / per-role ceilings)
- *   - Full observer events (managedTaskPhase / roleRoundStarted / ...)
- *   - Mutation tracker integration (scope-awareness note when H0 with >3 mutations)
- *   - Persistent session storage & lineage ledger recording
- * These land as follow-up polish or in later versions — the goal of
- * Shard 5b is proving the chain runs and produces a FEATURE_076-compatible
- * KodaXResult for all five canonical paths.
+ * **Parity coverage (as of v0.7.26 release):**
+ *   - Checkpoint detection + per-role write (FEATURE_071) — `_internal/managed-task/checkpoint.ts`
+ *   - Budget tracking (per-harness caps + 90%-threshold extension dialog) — `_internal/managed-task/budget.ts`
+ *   - Observer events: managed-task status / phase / child fan-out / iteration end / context-token snapshot
+ *   - Mutation tracker integration — populated by tool wrappers, surfaced via `recordMutationForTool`
+ *   - Session continuity — `options.session.initialMessages` threaded into `Runner.run`'s `runnerInput`
+ *   - Role prompts — `_internal/managed-task/role-prompt.ts` restores the full v0.7.22 prompt surface
+ *     (decision summary, contract, metadata, verification, tool-policy, evidence strategies,
+ *     dispatch_child_task guidance, H0/H1/H2 framework, handoff/verdict/contract block specs)
+ *   - Tool observability — Runner `toolObserver` forwards `onToolCall` / `onToolResult`
+ *     / `beforeToolExecute` / `onToolProgress`, and per-call `reportToolProgress` injection
+ *   - Compaction — `_internal/managed-task/compaction.ts` wraps `intelligentCompact` behind
+ *     Runner's `compactionHook`; fires `onCompactStart` / `onCompactStats` / `onCompact` / `onCompactEnd`
+ *   - Cost tracking — `CostTracker` per run, `events.getCostReport` populated
+ *   - Thinking blocks — preserved on assistant messages (Anthropic extended-thinking contract)
+ *   - Sanitize pipeline — `_internal/managed-task/sanitize.ts` strips leaked fences / control markers
  */
 
 import type {
@@ -30,12 +34,20 @@ import type {
   KodaXToolDefinition,
   KodaXToolUseBlock,
 } from '@kodax/ai';
-import { KODAX_ESCALATED_MAX_OUTPUT_TOKENS } from '@kodax/ai';
+import {
+  KODAX_ESCALATED_MAX_OUTPUT_TOKENS,
+  createCostTracker,
+  formatCostReport,
+  getSummary as getCostSummary,
+  recordUsage as recordCostUsage,
+  type CostTracker,
+} from '@kodax/ai';
 import type {
   Agent,
   Handoff,
   RunnableTool,
   RunnerLlmResult,
+  RunnerToolContext,
   RunnerToolResult,
 } from '@kodax/core';
 import {
@@ -143,6 +155,7 @@ import {
   sanitizeEvaluatorPublicAnswer,
   sanitizeManagedUserFacingText,
 } from './_internal/managed-task/sanitize.js';
+import { buildManagedTaskCompactionHook } from './_internal/managed-task/compaction.js';
 import path from 'node:path';
 
 /**
@@ -967,14 +980,31 @@ function wrapCodingToolAsRunnable(
   ) => Promise<string>,
   baseCtx: KodaXToolExecutionContext,
   budget?: ManagedTaskBudgetController,
+  events?: KodaXEvents,
 ): RunnableTool {
   return {
     ...definition,
-    execute: async (input: Record<string, unknown>): Promise<RunnerToolResult> => {
+    execute: async (
+      input: Record<string, unknown>,
+      runnerCtx?: RunnerToolContext,
+    ): Promise<RunnerToolResult> => {
       if (budget) incrementManagedBudgetUsage(budget, 1);
       recordMutationForTool(baseCtx.mutationTracker, definition.name, input);
+      // v0.7.26 parity: attach reportToolProgress per-call so async-generator
+      // tools (dispatch_child_task) can surface their internal progress via
+      // KodaXEvents.onToolProgress → REPL transcript. Mirrors
+      // `agent.ts:1345-1353` (ctxWithProgress wrapping).
+      const toolCallId = runnerCtx?.toolCallId;
+      const ctxForCall: KodaXToolExecutionContext = events?.onToolProgress && toolCallId
+        ? {
+          ...baseCtx,
+          reportToolProgress: (message: string) => {
+            events.onToolProgress?.({ id: toolCallId, message });
+          },
+        }
+        : baseCtx;
       try {
-        const content = await handler(input, baseCtx);
+        const content = await handler(input, ctxForCall);
         return { content };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -1202,6 +1232,7 @@ interface CodingToolBundle {
 function buildCodingToolBundle(
   baseCtx: KodaXToolExecutionContext,
   budget?: ManagedTaskBudgetController,
+  events?: KodaXEvents,
 ): CodingToolBundle {
   const read = getToolDefinition('read');
   const grep = getToolDefinition('grep');
@@ -1215,12 +1246,12 @@ function buildCodingToolBundle(
     );
   }
   return {
-    read: wrapCodingToolAsRunnable(read, toolRead, baseCtx, budget),
-    grep: wrapCodingToolAsRunnable(grep, toolGrep, baseCtx, budget),
-    glob: wrapCodingToolAsRunnable(glob, toolGlob, baseCtx, budget),
-    bash: wrapCodingToolAsRunnable(bash, toolBash, baseCtx, budget),
-    write: wrapCodingToolAsRunnable(write, toolWrite, baseCtx, budget),
-    edit: wrapCodingToolAsRunnable(edit, toolEdit, baseCtx, budget),
+    read: wrapCodingToolAsRunnable(read, toolRead, baseCtx, budget, events),
+    grep: wrapCodingToolAsRunnable(grep, toolGrep, baseCtx, budget, events),
+    glob: wrapCodingToolAsRunnable(glob, toolGlob, baseCtx, budget, events),
+    bash: wrapCodingToolAsRunnable(bash, toolBash, baseCtx, budget, events),
+    write: wrapCodingToolAsRunnable(write, toolWrite, baseCtx, budget, events),
+    edit: wrapCodingToolAsRunnable(edit, toolEdit, baseCtx, budget, events),
   };
 }
 
@@ -1286,8 +1317,14 @@ export function buildRunnerAgentChain(
   // handoff/verdict/contract block specs, shared closing rules). When
   // absent (test paths), the fallback minimal instructions are used.
   promptContext?: RunnerChainPromptContext,
+  // v0.7.26 parity: events bus so coding-tool wrappers can attach
+  // `reportToolProgress` per tool_use call. Without this wiring,
+  // async-generator tools (dispatch_child_task) fire progress events
+  // that vanish silently — the REPL transcript's "Running: ..." line
+  // never updates mid-run.
+  events?: KodaXEvents,
 ): RunnerAgentChain {
-  const codingTools = buildCodingToolBundle(ctx, budget);
+  const codingTools = buildCodingToolBundle(ctx, budget, events);
   const dispatchDefinition = getToolDefinition('dispatch_child_task');
   if (!dispatchDefinition) {
     throw new Error('dispatch_child_task tool not registered — tools/registry.ts bootstrap failure');
@@ -1483,6 +1520,15 @@ export function buildRunnerLlmAdapter(
   let iteration = 0;
   const MAX_ITER_HINT = 20; // matches core/src/runner-tool-loop.ts MAX_TOOL_LOOP_ITERATIONS
 
+  // v0.7.22 parity: cost tracker. Legacy agent.ts:1681 creates one per
+  // session and recordUsage after every provider.stream usage payload.
+  // REPL /cost reads through `events.getCostReport.current`.
+  let costTracker: CostTracker = createCostTracker();
+  if (options.events?.getCostReport) {
+    options.events.getCostReport.current = () =>
+      formatCostReport(getCostSummary(costTracker));
+  }
+
   return async (messages, agent) => {
     const leadingSystem = messages[0]?.role === 'system' ? messages[0] : undefined;
     const system = typeof leadingSystem?.content === 'string' ? leadingSystem.content : '';
@@ -1500,6 +1546,10 @@ export function buildRunnerLlmAdapter(
     let streamResult: {
       textBlocks?: readonly { text: string }[];
       toolBlocks?: readonly KodaXToolUseBlock[];
+      thinkingBlocks?: readonly (
+        | import('@kodax/ai').KodaXThinkingBlock
+        | import('@kodax/ai').KodaXRedactedThinkingBlock
+      )[];
       usage?: import('@kodax/ai').KodaXTokenUsage;
     };
     if (overrideStream) {
@@ -1676,6 +1726,16 @@ export function buildRunnerLlmAdapter(
             fallbackUsed: decision.shouldUseNonStreaming,
             serverRetryAfterMs: decision.serverRetryAfterMs,
           });
+          // v0.7.22 parity: dedicated rate-limit event so REPL can render
+          // a distinct 429 banner (separate from the generic retry UI).
+          // Legacy agent.ts:2064 fires this on the same branch.
+          if (decision.reasonCode === 'rate_limit') {
+            options.events?.onProviderRateLimit?.(
+              attempt,
+              resilienceCfg.maxRetries,
+              decision.delayMs,
+            );
+          }
           if (!options.events?.onProviderRecovery && decision.action !== 'manual_continue') {
             options.events?.onRetry?.(
               `${describeTransientProviderRetry(error)} · retry ${attempt}/${resilienceCfg.maxRetries} in ${Math.round(decision.delayMs / 1000)}s`,
@@ -1753,7 +1813,12 @@ export function buildRunnerLlmAdapter(
           if (idleTimer) clearTimeout(idleTimer);
         }
       }
-      streamResult = { textBlocks: raw.textBlocks, toolBlocks: raw.toolBlocks, usage: raw.usage };
+      streamResult = {
+        textBlocks: raw.textBlocks,
+        toolBlocks: raw.toolBlocks,
+        thinkingBlocks: raw.thinkingBlocks,
+        usage: raw.usage,
+      };
     }
 
     // Update cumulative token state for the final contextTokenSnapshot.
@@ -1765,6 +1830,26 @@ export function buildRunnerLlmAdapter(
         source: 'api',
       };
     }
+
+    // v0.7.22 parity: record turn usage into the cost tracker so `/cost`
+    // reflects AMA spend. Mirrors agent.ts:2205-2213.
+    if (streamResult.usage) {
+      const providerName = options.provider ?? 'anthropic';
+      costTracker = recordCostUsage(costTracker, {
+        provider: providerName,
+        model: options.modelOverride ?? options.model ?? 'unknown',
+        inputTokens: streamResult.usage.inputTokens,
+        outputTokens: streamResult.usage.outputTokens,
+        cacheReadTokens: streamResult.usage.cachedReadTokens,
+        cacheWriteTokens: streamResult.usage.cachedWriteTokens,
+      });
+    }
+
+    // v0.7.22 parity: onStreamEnd fires after the provider finishes the
+    // current turn's stream. Legacy agent.ts:2201 / :2687 / :2835 fires
+    // this at three terminal points; the Runner-driven adapter funnels
+    // every turn through this single return-path.
+    options.events?.onStreamEnd?.();
 
     // Fire onIterationEnd so the REPL token-count indicator can refresh
     // after each worker turn. `scope: 'worker'` mirrors the FEATURE_072
@@ -1789,7 +1874,13 @@ export function buildRunnerLlmAdapter(
       name: b.name,
       input: b.input ?? {},
     }));
-    return { text, toolCalls };
+    // v0.7.26 parity: forward thinking blocks so
+    // `buildAssistantMessageFromLlmResult` can prepend them to the
+    // assistant content. Required for Anthropic extended thinking —
+    // provider returns 400 if prior assistant turns with tool_use are
+    // missing the thinking block in history.
+    const thinkingBlocks = streamResult.thinkingBlocks;
+    return { text, toolCalls, thinkingBlocks };
   };
 }
 
@@ -2281,6 +2372,37 @@ export async function runManagedTaskViaRunner(
   // (or future SDK consumers) still work without constructing a plan.
   plan?: ReasoningPlan,
 ): Promise<KodaXResult> {
+  // v0.7.26 parity: fire onSessionStart early so REPL / CLI listeners
+  // bound to session init trigger for AMA runs the same way they trigger
+  // for SA runs. Legacy agent.ts:1677 fires this once per runKodaX entry.
+  const providerName = options.provider ?? 'anthropic';
+  const initialSessionId = options.session?.id
+    ?? `runner-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  options.events?.onSessionStart?.({ provider: providerName, sessionId: initialSessionId });
+  try {
+    return await runManagedTaskViaRunnerInner(options, prompt, adapterOverride, plan);
+  } catch (err) {
+    // v0.7.22 parity: surface onError so top-level consumers can flush
+    // telemetry / show UI toast. Legacy agent.ts:2854 fires this before
+    // rethrowing; we keep the same contract.
+    const error = err instanceof Error ? err : new Error(String(err));
+    options.events?.onError?.(error);
+    throw err;
+  } finally {
+    // v0.7.22 parity: onComplete fires on every terminal — success, block,
+    // or error — so REPL can re-render its status bar. Legacy agent.ts
+    // fires this at 3 sites (:2249 / :2450 / :2666); we mirror by putting
+    // it in finally (fires after onError too — matches legacy order).
+    options.events?.onComplete?.();
+  }
+}
+
+async function runManagedTaskViaRunnerInner(
+  options: KodaXOptions,
+  prompt: string,
+  adapterOverride: Parameters<typeof buildRunnerLlmAdapter>[1] | undefined,
+  plan: ReasoningPlan | undefined,
+): Promise<KodaXResult> {
   // Shard 6c: honour any pre-existing checkpoint before starting. Gated on
   // `askUser` presence — non-interactive contexts (unit tests, SDK
   // consumers without a prompt surface) skip the directory scan entirely.
@@ -2296,11 +2418,39 @@ export async function runManagedTaskViaRunner(
     files: new Map<string, number>(),
     totalOps: 0,
   };
+  // v0.7.26 parity: baseCtx must carry the full KodaXToolExecutionContext
+  // surface that tools expect — without these fields several tool families
+  // early-return "... not available" in AMA mode:
+  //   - askUser / askUserInput / askUserMulti: ask_user_question,
+  //     exit_plan_mode (FEATURE_074) fail silently
+  //   - extensionRuntime: all MCP tools (mcp-call / describe / get-prompt /
+  //     read-resource / search), web_fetch, web_search, code_search fail
+  //   - parentAgentConfig: dispatch_child_task's child-executor falls back
+  //     to hardcoded 'anthropic' provider, breaking non-anthropic runs
+  //   - reportToolProgress: async-generator tools (dispatch_child_task)
+  //     lose their internal progress events
+  //   - planModeBlockCheck: child tool calls bypass FEATURE_074 plan-mode
+  //     safety boundary
+  //   - exitPlanMode: FEATURE_074 exit_plan_mode tool fails
+  // Mirrors `agent.ts:1510-1552` (v0.7.22 ctx construction).
+  const extensionRuntime = options.extensionRuntime;
   const baseCtx: KodaXToolExecutionContext = {
     backups: new Map<string, string>(),
     gitRoot: options.context?.gitRoot ?? process.cwd(),
     executionCwd: options.context?.executionCwd ?? options.context?.gitRoot ?? process.cwd(),
+    extensionRuntime,
+    askUser: options.events?.askUser,
+    askUserMulti: options.events?.askUserMulti,
+    askUserInput: options.events?.askUserInput,
+    exitPlanMode: options.events?.exitPlanMode,
     abortSignal: options.abortSignal,
+    planModeBlockCheck: options.context?.planModeBlockCheck,
+    parentAgentConfig: {
+      provider: options.provider,
+      model: options.model,
+      reasoningMode: options.reasoningMode,
+    },
+    registerChildWriteWorktrees: options.context?.registerChildWriteWorktrees,
     mutationTracker,
   };
 
@@ -2481,6 +2631,7 @@ export async function runManagedTaskViaRunner(
     options.context?.taskVerification,
     childWriteWorktreePathsRef,
     chainPromptContext,
+    options.events,
   );
   const llm = buildRunnerLlmAdapter(options, adapterOverride, tokenStateRef);
 
@@ -2507,9 +2658,17 @@ export async function runManagedTaskViaRunner(
     ? [...initialMessages, { role: 'user' as const, content: promptWithOverlay }]
     : promptWithOverlay;
 
+  // v0.7.26 parity: load the compaction hook once per run. Legacy
+  // agent.ts ran `intelligentCompact` before every provider.stream call;
+  // the Runner-driven path routes the same logic through Runner's
+  // `compactionHook` (fired after each tool-result append). Without this
+  // wiring, long AMA sessions hit context window overflow and 400.
+  const compactionHook = await buildManagedTaskCompactionHook(options);
+
   const runResult = await Runner.run(chain.scout, runnerInput, {
     llm,
     abortSignal: options.abortSignal,
+    compactionHook,
     // v0.7.26 parity: surface Runner tool-loop invocations through the
     // same KodaXEvents channels legacy runManagedTask used. Without this
     // wiring the REPL worker ledger stays empty mid-run — only the final
@@ -2519,6 +2678,23 @@ export async function runManagedTaskViaRunner(
     // / cancelled); the Runner observer maps 1:1 onto
     // `onToolUseStart` + `onToolResult` here.
     toolObserver: {
+      // v0.7.22 parity: permission gate. plan-mode / accept-edits /
+      // extension "tool:before" hooks run here. Legacy agent.ts:810 ran
+      // this pre-execute; we preserve the tri-state contract
+      // (true/undefined allow, false block generic, string block with
+      // custom message).
+      beforeTool: options.events?.beforeToolExecute
+        ? async (call) => {
+          const verdict = await options.events!.beforeToolExecute!(
+            call.name,
+            call.input,
+            { toolId: call.id },
+          );
+          // KodaXEvents.beforeToolExecute contract: boolean | string.
+          // RunnerToolObserver.beforeTool contract: boolean | string | undefined.
+          return verdict;
+        }
+        : undefined,
       onToolCall: (call) => {
         options.events?.onToolUseStart?.({
           name: call.name,

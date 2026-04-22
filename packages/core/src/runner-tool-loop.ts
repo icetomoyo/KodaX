@@ -17,7 +17,9 @@
 
 import type {
   KodaXContentBlock,
+  KodaXRedactedThinkingBlock,
   KodaXTextBlock,
+  KodaXThinkingBlock,
   KodaXToolResultBlock,
   KodaXToolUseBlock,
 } from '@kodax/ai';
@@ -50,6 +52,14 @@ export interface RunnerLlmResult {
   readonly text: string;
   readonly toolCalls?: readonly RunnerToolCall[];
   readonly stopReason?: string;
+  /**
+   * v0.7.26 parity: extended-thinking blocks from the provider stream.
+   * Must be preserved on the assistant message so (a) session resume can
+   * re-render them and (b) Anthropic's extended-thinking API contract is
+   * honoured — provider rejects the next turn with a 400 when a tool_use
+   * turn's `thinking` block is missing from prior assistant history.
+   */
+  readonly thinkingBlocks?: readonly (KodaXThinkingBlock | KodaXRedactedThinkingBlock)[];
 }
 
 /**
@@ -67,6 +77,15 @@ export type RunnerLlmReturn = string | RunnerLlmResult;
  * sites per invocation).
  */
 export interface RunnerToolObserver {
+  /**
+   * Permission / policy gate fired BEFORE each tool invocation. Return
+   * `true` (or `undefined`) to allow, `false` to block with a generic
+   * message, or a `string` to block with that message as the tool result.
+   * Used to hook plan-mode / accept-edits / extension `tool:before`
+   * policies onto the Runner-driven path (v0.7.22 parity — legacy
+   * `events.beforeToolExecute` surface).
+   */
+  readonly beforeTool?: (call: RunnerToolCall) => Promise<boolean | string | undefined>;
   readonly onToolCall?: (call: RunnerToolCall) => void;
   readonly onToolResult?: (call: RunnerToolCall, result: RunnerToolResult) => void;
 }
@@ -79,6 +98,12 @@ export interface RunnerToolContext {
   readonly abortSignal?: AbortSignal;
   /** The agent's Span, so tool implementations can nest custom spans if needed. */
   readonly agentSpan?: Span | null;
+  /**
+   * Current tool_use call id. Passed through so tool wrappers can correlate
+   * progress events (`onToolProgress`) and other per-call side-effects with
+   * the REPL's tool-block in the transcript. Populated by `executeRunnerToolCall`.
+   */
+  readonly toolCallId?: string;
 }
 
 /**
@@ -168,7 +193,11 @@ export async function executeRunnerToolCall(
   }
 
   try {
-    const result = await tool.execute(call.input, ctx);
+    // Propagate the tool_use call id into the execute context so tool
+    // wrappers can attach per-call side-effects (progress events,
+    // telemetry, etc.) without threading the id through every layer.
+    const executeCtx: RunnerToolContext = { ...ctx, toolCallId: call.id };
+    const result = await tool.execute(call.input, executeCtx);
     if (toolSpan) {
       if (result.isError) {
         toolSpan.setError(new Error(result.content));
@@ -187,14 +216,24 @@ export async function executeRunnerToolCall(
 }
 
 /**
- * Build the assistant message that captures one LLM turn. Preserves both the
- * text response and any tool_use blocks so the transcript replays correctly
- * on the next iteration (provider serializers rely on this).
+ * Build the assistant message that captures one LLM turn. Preserves
+ * thinking blocks (extended-thinking contract), text blocks, and tool_use
+ * blocks in the order Anthropic's wire format expects: thinking → text →
+ * tool_use. This mirrors v0.7.22 `agent.ts:2230`
+ * (`[...thinkingBlocks, ...textBlocks, ...visibleToolBlocks]`) which the
+ * Runner-driven path must preserve — without it Anthropic returns 400 on
+ * the next turn when extended thinking is active, and session resume
+ * loses the reasoning trace.
  */
 export function buildAssistantMessageFromLlmResult(
   result: RunnerLlmResult,
 ): AgentMessage {
   const blocks: KodaXContentBlock[] = [];
+  if (result.thinkingBlocks && result.thinkingBlocks.length > 0) {
+    for (const tb of result.thinkingBlocks) {
+      blocks.push(tb);
+    }
+  }
   if (result.text.length > 0) {
     const textBlock: KodaXTextBlock = { type: 'text', text: result.text };
     blocks.push(textBlock);
@@ -210,8 +249,8 @@ export function buildAssistantMessageFromLlmResult(
       blocks.push(useBlock);
     }
   }
-  // If the LLM returned neither text nor tool calls we still emit an empty
-  // text block so the message is well-formed.
+  // If the LLM returned nothing we still emit an empty text block so the
+  // message is well-formed.
   if (blocks.length === 0) {
     blocks.push({ type: 'text', text: '' } satisfies KodaXTextBlock);
   }

@@ -121,6 +121,19 @@ export interface RunOptions {
    * `onToolResult` through the usual `KodaXEvents` bus.
    */
   readonly toolObserver?: RunnerToolObserver;
+  /**
+   * v0.7.26 parity: compaction hook. Called AFTER each iteration's
+   * tool_result has been appended to the transcript (or after the
+   * assistant message when there are no tool calls), before the next
+   * LLM turn. Return the replacement transcript to trigger compaction;
+   * return the same array (or undefined) to skip. Legacy agent.ts ran
+   * `intelligentCompact` on the same boundary, so Runner-driven parity
+   * requires this hook point. The Runner owns the transcript mutably,
+   * so this is the only point consumers can insert a compacted view.
+   */
+  readonly compactionHook?: (
+    transcript: readonly AgentMessage[],
+  ) => Promise<readonly AgentMessage[] | undefined>;
 }
 
 /**
@@ -406,6 +419,25 @@ async function genericRun<TData>(
       // but the tool name was surfaced live via the tool_use block
       // streaming).
       opts.toolObserver?.onToolCall?.(call);
+      // v0.7.22 parity: plan-mode / accept-edits / extension "tool:before"
+      // policies hook in here. beforeTool returns true (allow), false
+      // (block with default message), or a string (block with that
+      // message as the tool result seen by the LLM).
+      if (opts.toolObserver?.beforeTool) {
+        const verdict = await opts.toolObserver.beforeTool(call);
+        if (verdict === false || typeof verdict === 'string') {
+          const blockedMessage = typeof verdict === 'string'
+            ? verdict
+            : `Tool "${call.name}" was blocked by policy.`;
+          const blockedResult: RunnerToolResult = {
+            content: blockedMessage,
+            isError: true,
+          };
+          opts.toolObserver.onToolResult?.(call, blockedResult);
+          results[i] = blockedResult;
+          continue;
+        }
+      }
       let result = await executeRunnerToolCall(call, currentAgent, {
         agent: currentAgent,
         abortSignal: opts.abortSignal,
@@ -429,6 +461,24 @@ async function genericRun<TData>(
     transcript.push(toolResultMessage);
     if (opts.session) {
       await appendMessageEntry(opts.session, toolResultMessage);
+    }
+
+    // v0.7.26 parity: compaction hook fires AFTER the tool_result message
+    // is appended (so the hook sees the complete turn), before the next
+    // LLM call. Legacy agent.ts:1737-1845 ran `intelligentCompact` on the
+    // same boundary. When the hook returns a new transcript we replace
+    // the live variable — subsequent iterations run on the compacted
+    // history. Errors are swallowed (treated as "skip compaction") so a
+    // hook bug can never abort the run.
+    if (opts.compactionHook) {
+      try {
+        const compacted = await opts.compactionHook(transcript);
+        if (compacted && compacted !== transcript) {
+          transcript = [...compacted];
+        }
+      } catch {
+        // Ignore — compaction failure must never abort the run.
+      }
     }
 
     // FEATURE_084 Shard 4: handoff detection. If any tool result carries a
