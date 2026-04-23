@@ -1,6 +1,6 @@
 {
   "name": "@kodax/mcp",
-  "version": "0.7.25",
+  "version": "0.7.26",
   "description": "KodaX MCP - Model Context Protocol capability provider with progressive disclosure (lazy connect / 2-level descriptors / search-describe / elicitation / cache)",
   "type": "module",
   "main": "dist/index.js",

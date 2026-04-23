@@ -8,6 +8,10 @@ All notable changes to this project will be documented in this file.
 
 <!-- last-sync: HEAD -->
 
+---
+
+## [0.7.26] - 2026-04-23
+
 ### Added
 - **FEATURE_084 — Task Engine Phase 2: Scout/Generator/Evaluator rewritten on Layer A Runner primitives**
   - New `packages/coding/src/task-engine/runner-driven.ts` (2545 LoC) replaces the legacy `runManagedTask` state machine; dispatch gated via `KODAX_MANAGED_TASK_RUNTIME=runner` env flag (Shard 5a/5b), then flipped to default and legacy AMA orchestration deleted (Shard 6d-a/6d-b).
@@ -28,19 +32,43 @@ All notable changes to this project will be documented in this file.
   - `Runner` wires 3 hook points — input (before first turn), output (before return), tool before+after (around every invocation); `agent.guardrails` + `opts.guardrails` merged.
   - `packages/coding/src/tools/tool-result-truncation-guardrail.ts`: adapter wrapping existing `applyToolResultGuardrail` as `ToolGuardrail.afterTool` with byte-equivalent parity.
   - **max_tokens escalation + continuation ladder** (implementation-time absorption, no separate feature id): `@kodax/ai` exports `KODAX_ESCALATED_MAX_OUTPUT_TOKENS`; Runner adapter auto-continues on `stop_reason === 'max_tokens'` and escalates the ceiling after N continuations; Scout parity so Scout's recon isn't silently truncated; `kimi-code` provider aligned to coding-provider capped-budget ladder.
+- **`multi_edit` tool** — apply N exact-or-normalized-text replacements to a single file in one tool call. Edits apply sequentially (each edit sees the result of the previous one) and the whole batch is ATOMIC — any single failing `old_string` aborts the batch with no partial disk writes. Makes the "write skeleton + N edits" workflow cheap enough to be the default rather than a grudging fallback, removing the incentive for LLMs to fall back to "run Python to generate files". Description carries an explicit ANCHOR WARNING so models avoid anchor-consumed mistakes upfront, and a dedicated diagnostic fires when `edits[k]`'s anchor was swallowed by an earlier edit in the batch.
+- **C1 fenced-block fallback parser restored on Runner-driven path** — v0.7.22's `parseManagedTaskScoutDirective` / handoff / verdict / contract fallback had been lost in the rewrite; now `attemptProtocolTextFallback` re-wires it so an LLM that forgot to call the `emit_*` tool but emitted a well-formed `kodax-task-*` fenced block still advances the state machine instead of stalling until the iteration cap.
+- **H1 structural resume + post-compact reinjection (M3)** — checkpoint reload seeds the Runner-driven recorder with Scout / Contract payloads reconstructed from the saved managed-task runtime (`buildStructuralResumeSeed`), so `--continue` doesn't restart from scratch when the prior session had already committed a harness tier. Post-compaction reinjection (M3) threads recorded scout-decision / contract payloads back into the running transcript so multi-role chains survive compaction.
 
 ### Fixed
 - **Issue 119** — Scout H0→H1 upgrade no longer leaves stale pre-Scout `mutationSurface` locking Generator to docs-only writes. Post-Scout roles read Scout's own scope / reviewFilesOrAreas instead of the pre-Scout regex heuristic.
 - **Issue 120** — Skill / plan-mode execution paths now route queued user inputs into the streaming prompt queue (`canQueueFollowUps` + `drainPendingInputsAsFollowUps`); previously follow-up inputs were silently dropped during skill / plan-mode execution.
 - Managed-task error recovery: iteration cap raised to 500 for full multi-role chains (Core's default 20 was too low for Scout → Planner → Generator → Evaluator), budget extension dialog at 90% threshold as real throttle; `error.position` propagated through the Runner → task-engine surface.
-- Classify undici `"terminated"` + cause-chain errors as retryable in `resilience/classifier.ts`.
+- Classify undici `"terminated"` + cause-chain errors as retryable in `resilience/classifier.ts`; non-streaming fallback also handles `terminated`, hard-limit guard added for large `write` turns, and provider retry budget bumped for long Generator runs.
 - Scout false-completion observability layer + Windows bash `cmd` trap hint.
 - Write / edit prompts aligned with Claude Code multi-layer defense.
+- **Scout v0.7.22 tool-set regression** — Runner-driven Scout had been stripped to a read-only subset during the rewrite; restored the full legacy tool surface (write / edit / multi_edit / exit_plan_mode + unwrapped bash so Scout can run grep/find without the docs-only wrapper firing). Scout instructions now also ship the Working-Directory / git-root / platform context so it stops `cd`-ing to invented paths.
+- **H1 Scout→Generator→Evaluator infinite loop** — Scout's `confirmedHarness` is now checked in `inferScoutMutationIntent` so a mutation-intent Scout verdict correctly advances to Generator instead of bouncing between Evaluator-review and Generator-rewrite.
+- **H1 same-harness unbounded revise** — `reviseCountByHarnessRef` + `H1_MAX_SAME_HARNESS_REVISES = 1` caps revises per harness tier and auto-escalates / converts when the cap is hit, preventing the "Evaluator keeps sending back, Generator keeps retrying same harness" spiral.
+- **Evaluator explicit `budgetRequest` discarded** — the Runner-driven `emit_verdict` input schema now surfaces `budgetRequest` through to `maybeRequestAdditionalWorkBudget({ force: true })`, so an Evaluator's justified extension request bypasses the 90%-threshold heuristic.
+- **`dispatch_child_task` child-executor lazy-load diagnostics** — lazy-loader now returns a descriptive envelope + performs export checks so cryptic "X is not a function" stalls surface the real reason (module not built / export missing) to the Evaluator instead of tripping the outer iteration cap.
+- **`WRITE_ONLY_TOOLS` parity** — restored 9 Godot-specific tool names (`open_project`, `new_scene`, `set_property`, ...) that had been dropped during the Runner-driven migration, so the Evaluator read-only boundary matches v0.7.22.
+- **Managed protocol multi-emit deduplication** — regression test added for the "Scout emits `emit_scout_verdict` twice in one turn" case; the recorder dedupes on `role` so the second emit is a no-op instead of triggering a handoff loop.
+- **P2b write-turn `max_output_tokens` cap on RST-prone providers** — Zhipu/Kimi/MiniMax coding providers now have a 8K cap applied when the turn's tool inventory includes `write` / `edit` / `multi_edit`; prevents RST resets mid-stream. Overridable via `KODAX_RST_PRONE_PROVIDERS` and `KODAX_WRITE_TURN_MAX_TOKENS` env vars. Explicit `KODAX_MAX_OUTPUT_TOKENS` always wins.
+- **`multi_edit` anchor-consumed-by-prior-edit diagnostic** — when `edits[k]`'s `old_string` is present in the original file but was covered by an earlier edit's replacement range, surface a targeted hint ("edits[0..k-1] replaced a region containing it — shrink the earlier edit or pick a post-edit anchor") instead of the generic "not found", so the LLM retry doesn't have to guess. Observed in Scout + multi_edit slide-deck deletion flows.
+- **REPL info items rendered in the wrong layer during managed foreground** — `onCompact`, `onProviderRateLimit`, `onScoutSuspiciousCompletion`, and queue-limit info items now route through `emitInfoItemToCorrectLayer` so they appear inline with the active managed worker's output instead of squeezed under the user prompt. Mirrors the earlier retry / provider-recovery / confirm-result fixes.
+- **Pre-release review findings (HIGH-1 + MED-1..7)**:
+  - HIGH-1 — session transcript now records the post-input-guardrail user message (symmetric with the already-post-guardrail output side), so `--resume` / audit consumers see what the LLM actually processed on both ends.
+  - MED-1 — tool-before / tool-after guardrails now receive `{ ...guardrailCtx, agent: currentAgent }`; input / output guardrails keep run-scoped `startAgent` as designed.
+  - MED-2 — regression guards for `toolObserver.beforeTool` returning `false` / string (blocked result with default / custom message).
+  - MED-3 — guardrail `check` / `beforeTool` / `afterTool` exceptions now emit a `GuardrailSpan` with `decision: 'error'` + message, then re-throw (fail-loud preserved).
+  - MED-4 — `compactionHook` error caught and surfaced as `compaction:hook-error` child span; the run still continues (the safety contract — compaction failure must never abort — is preserved).
+  - MED-5 — regression guard for the L5 `max_tokens` continuation break at `KODAX_MAX_MAXTOKENS_RETRIES`.
+  - MED-6 — `emitInfoItemToCorrectLayer` JSDoc + mirror comment at `addHistoryItem` import lock in the "info items during managed foreground MUST route through the layer-aware emitter" rule.
+  - MED-7 — 4 regression guards pin the `maybeApplyP2bWriteTurnCap` multi-turn / idempotence / L4-escalation-leak contract.
 
 ### Changed
 - Legacy `runManagedTask` orchestration (~7343 LoC in `task-engine.ts`) removed; `task-engine.ts` reduced to a thin facade re-exporting the Runner-driven path.
 - AMA prompt builder restored into the Runner-driven path: `_internal/managed-task/role-prompt.ts` ports v0.7.22 `createRolePrompt` 1:1, closing the earlier prompt-surface gap. Full decision / contract / metadata / verification / tool-policy / evidence-strategy / dispatch / H0/H1/H2 quality framework / handoff-verdict-contract specs reach every role turn via `RolePromptContextFactory`.
 - v0.7.26 parity restoration (5-commit sweep before release): sanitize pipeline re-added with 22 unit tests; `onToolCall` / `onToolResult` / `onToolProgress` events fire from core `Runner`; Anthropic extended thinking contract honoured (thinking blocks preserved in assistant history); 6 more gaps closed (iteration cap, cost tracker, budget extension, guardrail wrapper, dead code, stale comments); tool-result-truncation guardrail wired; multimodal input artifacts reach Scout turn (C1); dispatch-child-task parallel fan-out + progress events restored (C2); session snapshot persisted at success + error terminals (C3); **skill artifacts written + role prompts quote stable filesystem paths (C4)**; verification-only roles (Scout / Evaluator) shell boundary now a superset of legacy `SHELL_WRITE_PATTERNS` (PowerShell verbs, del / touch / mkdir / rmdir, sed -i / perl -pi / python -c / node -e, plus v0.7.26 safety extensions for chmod / chown / git / package-manager installs). JSON output mode surfaces `onToolProgress` / `onManagedTaskStatus` / `onScoutSuspiciousCompletion`.
+- **Kimi K2.6 promoted to default** on `kimi-code` and `kimi` providers (replaces the earlier K2 default); aligns the coding capped-budget ladder with the richer model's token ceilings.
+- **REPL info rendering** now uniformly routes through `emitInfoItemToCorrectLayer` whenever a managed worker owns the foreground turn (compact notices, provider rate-limit banners, Scout suspicious-completion hints, queue-limit notices). Eliminates the "info item squeezed under user prompt instead of inline with active worker output" bug.
 
 ### Removed
 - `packages/coding/src/task-engine/_internal/prompts/{role-prompt,role-prompt-types,role-agent,runtime-execution-guide,tool-policy}.ts` — inlined or migrated to `_internal/managed-task/{tool-policy,scout-signals,repo-intelligence,artifacts}.ts` + `runner-driven.ts`.
@@ -48,9 +76,14 @@ All notable changes to this project will be documented in this file.
 - `packages/coding/src/task-engine/_internal/formatting.ts` — pure string builders inlined into instruction / block renderers.
 - `packages/coding/src/managed-protocol-handoff.test.ts` (786 LoC) — coverage replaced by `runner-driven.test.ts` (2285 LoC) + `agents/protocol-emitters.test.ts` (278 LoC).
 
+### Documentation
+- `config.example.jsonc` template rebuilt — restored missing fields (`customProviders`, `providerModels`, `providerReasoningOverrides`, `mcpServers`, `extensions`, `agentMode`, `locale`, `thinking`, `streamIdleTimeoutMs`, `alwaysAllowTools`, full `compaction` block); removed stale `parallel` block and the misleading `permissionMode: "auto"` hint.
+- **FEATURE_094 (P2d anti-escape guardrail) staged** for v0.7.36 — design captured in `docs/features/v0.7.36.md`; implementation deferred past v0.7.26.
+
 ### Test Status
-- `packages/coding`: 600+ pass
-- `packages/core`: new — 29 tests (Runner / Runner tool loop / Runner handoff / Guardrail / Agent / Session / Compaction)
+- `packages/coding`: 759/760 pass (1 Windows-only bash-background test flakes on tmp-dir EBUSY under parallel execution; passes in isolation)
+- `packages/core`: 86/86 pass (Runner / tool loop / handoff / Guardrail including MED-3 error-span regression + MED-1 handoff agent-ctx + HIGH-1 session symmetry, Agent / Session / Compaction)
+- `packages/tracing`: 15/15 pass
 - `packages/repl`: 830+ pass (no regressions)
 - Full monorepo build green (`tsc -b` passes)
 

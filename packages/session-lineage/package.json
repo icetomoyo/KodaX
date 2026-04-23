@@ -1,6 +1,6 @@
 {
   "name": "@kodax/session-lineage",
-  "version": "0.7.25",
+  "version": "0.7.26",
   "description": "KodaX Session Lineage - LineageExtension + LineageCompaction (extracted from @kodax/coding and @kodax/agent)",
   "type": "module",
   "main": "dist/index.js",
