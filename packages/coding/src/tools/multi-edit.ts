@@ -133,8 +133,10 @@ function applyOneEdit(
         error:
           `[Tool Error] multi_edit: edits[${index}] matched ${exactMatches.length} places `
           + `(lines ${formatLineList(exactMatches)}). `
-          + 'Widen old_string with nearby unique context, or set replace_all=true. '
-          + '(Shorter anchors match more, not fewer.)',
+          + 'Widen old_string to include nearby unique context '
+          + '(a heading, function name, or distinctive comment), '
+          + 'or set replace_all=true if all matches should change. '
+          + 'Do not just shorten the anchor — shorter anchors match more, not fewer.',
       };
     }
     return {
@@ -151,7 +153,8 @@ function applyOneEdit(
       error:
         `[Tool Error] multi_edit: edits[${index}] matched ${normalized.ranges.length} normalized blocks `
         + `(lines ${formatLineList(blockLocations)}). `
-        + 'Widen to a unique region, or set replace_all=true.',
+        + 'Include more surrounding lines so the old_string spans a unique region, '
+        + 'or set replace_all=true if all matches should change.',
     };
   }
   if (normalized.status === 'missing') {
@@ -171,15 +174,19 @@ function applyOneEdit(
         const prior = index === 1 ? 'edits[0]' : `edits[0..${index - 1}]`;
         return {
           error:
-            `[Tool Error] multi_edit: edits[${index}] anchor was consumed by ${prior} in this batch. `
-            + 'Shrink that earlier edit, or pick an anchor still present after it.',
+            `[Tool Error] multi_edit: edits[${index}] old_string is present in the original file but `
+            + `was consumed by ${prior}'s replacement region in this batch. `
+            + 'Shrink that earlier edit to preserve this anchor, '
+            + 'or pick a different anchor still present after it.',
         };
       }
     }
     return {
       error:
         `[Tool Error] multi_edit: edits[${index}] old_string not found. `
-        + 'Likely whitespace drift or a typo from a narrow read — re-read a wider window and copy an exact slice.',
+        + 'Common cause: the anchor was copied from a narrow `read` window and has typos or '
+        + 'whitespace drift vs the actual file, OR it was never in the file to begin with. '
+        + 'Re-read a wider window where you expect the anchor and copy an exact slice.',
     };
   }
   const replacement = normalizeReplacementLineEndings(newStr, detectPreferredLineEnding(content));

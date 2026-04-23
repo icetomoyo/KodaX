@@ -59,8 +59,10 @@ export async function toolEdit(input: Record<string, unknown>, ctx: KodaXToolExe
       return formatEditToolError(
         'EDIT_AMBIGUOUS',
         `matched ${exactMatches.length} places (lines ${formatLineList(exactMatches)}). `
-        + 'Widen old_string with nearby unique context, or set replace_all=true. '
-        + '(Shorter anchors match more, not fewer.)',
+        + 'Widen old_string to include nearby unique context '
+        + '(a heading, function name, or distinctive comment), '
+        + 'or set replace_all=true if all matches should change. '
+        + 'Do not just shorten the anchor — shorter anchors match more, not fewer.',
       );
     }
 
@@ -76,15 +78,18 @@ export async function toolEdit(input: Record<string, unknown>, ctx: KodaXToolExe
       return formatEditToolError(
         'EDIT_AMBIGUOUS',
         `matched ${normalized.ranges.length} normalized blocks (lines ${formatLineList(blockLocations)}). `
-        + 'Widen to a unique region, or set replace_all=true.',
+        + 'Include more surrounding lines so the old_string spans a unique region, '
+        + 'or use insert_after_anchor for section appends.',
       );
     }
     if (normalized.status === 'missing') {
       return formatEditToolError(
         'EDIT_NOT_FOUND',
         'old_string not found. '
-        + 'Likely whitespace drift or a typo from a narrow read — re-read a wider window and copy an exact slice. '
-        + 'Do not rewrite the whole file.',
+        + 'Common cause: the anchor was copied from a narrow `read` window and has typos or '
+        + 'whitespace drift vs the actual file, OR it was never in the file to begin with. '
+        + 'Re-read a wider window where you expect the anchor and copy an exact slice — '
+        + 'do not rewrite the whole file.',
       );
     }
 

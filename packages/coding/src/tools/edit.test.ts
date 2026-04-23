@@ -146,7 +146,10 @@ describe('edit tool', () => {
     }, ctx);
 
     expect(parseEditToolError(result)).toBe('EDIT_NOT_FOUND');
-    expect(result).toMatch(/narrow\s+read/i);
+    // V3 narrow-read hint: mentions "narrow `read`" (backticked) + the
+    // alternative-diagnosis "never in the file" + suggests a wider re-read.
+    expect(result).toMatch(/narrow\s*`?read`?/i);
+    expect(result).toMatch(/never in the file/i);
     expect(result).toMatch(/wider/i);
   });
 

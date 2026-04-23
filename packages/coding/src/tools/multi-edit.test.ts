@@ -242,7 +242,10 @@ describe('multi_edit — atomic failure', () => {
 
     expect(result).toContain('[Tool Error]');
     expect(result).toContain('old_string not found');
-    expect(result).toMatch(/narrow\s+read/i);
+    // V3 narrow-read hint: mentions "narrow `read`" (backticked) + the
+    // alternative-diagnosis "never in the file" + suggests a wider re-read.
+    expect(result).toMatch(/narrow\s*`?read`?/i);
+    expect(result).toMatch(/never in the file/i);
     expect(result).toMatch(/wider/i);
   });
 });
@@ -350,11 +353,15 @@ describe('multi_edit — anchor-consumed-by-prior-edit diagnostic', () => {
       ctx,
     );
 
-    // Targeted diagnostic
+    // Targeted diagnostic: tells the LLM the anchor was right in the
+    // original but was covered by a prior edit in this batch.
     expect(result).toContain('edits[1]');
-    expect(result).toMatch(/anchor was consumed/);
+    expect(result).toMatch(/present in the original file but\s+was consumed/);
     // For index=1 the prior range collapses to just 'edits[0]'
-    expect(result).toContain('consumed by edits[0]');
+    expect(result).toContain("consumed by edits[0]");
+    // Actionable recovery options are both mentioned.
+    expect(result).toMatch(/[Ss]hrink that earlier edit/);
+    expect(result).toMatch(/[Pp]ick a different anchor/);
     // Atomicity: file unchanged on disk
     const after = await fs.readFile(p, 'utf-8');
     expect(after).toBe(original);
@@ -376,7 +383,8 @@ describe('multi_edit — anchor-consumed-by-prior-edit diagnostic', () => {
     );
     expect(result).toContain('edits[1]');
     expect(result).toContain('not found');
-    expect(result).not.toMatch(/anchor was consumed/);
+    // The targeted "anchor was consumed" diagnostic must NOT fire here.
+    expect(result).not.toMatch(/present in the original file but\s+was consumed/);
   });
 
   it('does not mistake an ambiguous-in-original anchor as consumed', async () => {
