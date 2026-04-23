@@ -1,5 +1,5 @@
 /**
- * Compaction hook for the Runner-driven path — v0.7.26 parity restore.
+ * Compaction hook for the Runner-driven path — v0.7.26 parity.
  *
  * Legacy `agent.ts` (v0.7.22) ran `intelligentCompact` before every
  * provider.stream call: check `needsCompaction` → fire
@@ -9,22 +9,28 @@
  * this entire pipeline; AMA sessions that exceed the compaction
  * threshold hit context window overflow and provider 400s.
  *
- * This module provides a minimal faithful port:
+ * This module provides a full parity port:
  *   - loads compaction config from the repo root
  *   - tracks a per-run circuit breaker (same threshold as legacy)
  *   - delegates to `@kodax/agent/compact` for the actual summarisation
  *   - fires the legacy event surface (`onCompactStart` / `onCompactStats`
- *     / `onCompact` / `onCompactEnd`) so REPL can render its
- *     "compacting…" UI
+ *     / `onCompact` / `onCompactEnd` / `onCompactedMessages`) so the
+ *     REPL can render its "compacting…" UI and refresh its local
+ *     transcript mirror
+ *   - re-injects the post-compact artifact ledger summary AND the
+ *     recent-file contents (legacy `buildPostCompactAttachments` +
+ *     `buildFileContentMessages` + `injectPostCompactAttachments`) —
+ *     landed in commit 16e4093 (M3 parity). Without this step, long
+ *     sessions crossing the compaction threshold lose post-mutation
+ *     file context and the LLM hallucinates stale file state. The
+ *     token budget is the smaller of (freedTokens × budgetRatio) and
+ *     POST_COMPACT_TOKEN_BUDGET, matching Claude Code's fixed-cap
+ *     policy.
  *
- * Post-compact artifact ledger + file content injection (legacy
- * `buildPostCompactAttachments` / `buildFileContentMessages` /
- * `injectPostCompactAttachments`) are intentionally deferred to a
- * follow-up: they require resolving artifact paths from mutation
- * tracker output and reading files with a token budget, which couples
- * tightly to the task-engine state that the Runner-driven path hasn't
- * surfaced yet. The base compaction prevents context-window overflow
- * immediately; the attachment enrichment is a later quality pass.
+ * Behaviour delta vs legacy (documented):
+ *   - custom-instructions arg to `intelligentCompact` is `undefined`
+ *     (the Runner path doesn't expose per-compaction overrides);
+ *   - systemPrompt arg is `undefined` (the provider carries it).
  */
 
 import {

@@ -749,6 +749,121 @@ describe('Shard 5b parity — H1 accept path', () => {
   });
 });
 
+describe('M5 parity — Scout pre-handoff write warning (v0.7.26)', () => {
+  it('fires onManagedTaskStatus note when Scout writes a file then hands off to Generator (H1)', async () => {
+    const statusEvents: Array<{ note?: string; detailNote?: string }> = [];
+    const opts = makeOptions();
+    opts.events = {
+      ...opts.events,
+      onManagedTaskStatus: (e) => {
+        if (typeof e.note === 'string') {
+          statusEvents.push({ note: e.note, detailNote: e.detailNote });
+        }
+      },
+    };
+    // Make Scout mutate a file before emitting H1 verdict by invoking
+    // the `write` tool in the first turn, then emit_scout_verdict in
+    // the second turn. The test fs path doesn't need to persist — the
+    // wrapCodingToolAsRunnable path increments the mutation tracker
+    // regardless of actual disk success.
+    const tempFile = path.join(testWorkspaceRoot, 'scout-pre-handoff-artifact.txt');
+    const mock = makeChainMockLlm({
+      scout: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 's-write', name: 'write',
+              input: { path: tempFile, content: 'scout draft\n' },
+            }],
+          };
+        }
+        if (turn === 2) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 's-emit', name: 'emit_scout_verdict',
+              input: { confirmed_harness: 'H1_EXECUTE_EVAL', harness_rationale: 'small scope' },
+            }],
+          };
+        }
+        throw new Error('scout overrun');
+      },
+      generator: () => ({
+        toolBlocks: [{
+          type: 'tool_use', id: 'g-1', name: 'emit_handoff',
+          input: { status: 'ready', summary: 'Done' },
+        }],
+      }),
+      evaluator: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 'e-1', name: 'emit_verdict',
+              input: { status: 'accept', user_answer: 'Shipped.' },
+            }],
+          };
+        }
+        return { textBlocks: [{ text: 'Shipped.' }] };
+      },
+    });
+
+    await runManagedTaskViaRunner(opts, 'Rewrite summary', mock);
+
+    const preHandoffNote = statusEvents.find(
+      (e) => e.note && e.note.includes('before handing off'),
+    );
+    expect(preHandoffNote).toBeDefined();
+    expect(preHandoffNote!.note).toMatch(/Scout wrote \d+ file/);
+    expect(preHandoffNote!.note).toContain('Generator');
+    expect(preHandoffNote!.detailNote ?? '').toContain('scout-pre-handoff-artifact.txt');
+  });
+
+  it('does NOT fire the warning on H0_DIRECT (Scout is the author in that case)', async () => {
+    const statusEvents: Array<{ note?: string }> = [];
+    const opts = makeOptions();
+    opts.events = {
+      ...opts.events,
+      onManagedTaskStatus: (e) => {
+        if (typeof e.note === 'string') statusEvents.push({ note: e.note });
+      },
+    };
+    const tempFile = path.join(testWorkspaceRoot, 'scout-h0-artifact.txt');
+    const mock = makeChainMockLlm({
+      scout: (turn) => {
+        if (turn === 1) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 's-write', name: 'write',
+              input: { path: tempFile, content: 'scout direct output\n' },
+            }],
+          };
+        }
+        if (turn === 2) {
+          return {
+            toolBlocks: [{
+              type: 'tool_use', id: 's-emit', name: 'emit_scout_verdict',
+              input: {
+                confirmed_harness: 'H0_DIRECT',
+                direct_completion_ready: 'yes',
+                summary: 'Direct answer provided via write.',
+              },
+            }],
+          };
+        }
+        // Scout may get a final text-only turn after H0_DIRECT emit so
+        // the Runner can collect the assistant's user-facing answer.
+        return { textBlocks: [{ text: 'Note written.' }] };
+      },
+    });
+
+    await runManagedTaskViaRunner(opts, 'Write a note', mock);
+
+    const preHandoffNote = statusEvents.find(
+      (e) => e.note && e.note.includes('before handing off'),
+    );
+    expect(preHandoffNote).toBeUndefined();
+  });
+});
+
 describe('Shard 5b parity — H1 revise → accept path', () => {
   it('Evaluator revise cycles back to Generator, then accept on second pass', async () => {
     const mock = makeChainMockLlm({
@@ -2845,5 +2960,202 @@ describe('wrapEmitterWithRecorder — Risk 2/3/5 behavioural guards', () => {
     expect(budgetExtension.reviseCountByHarnessRef.current.size).toBe(0);
     // Degraded-continue flag untouched
     expect(budgetExtension.degradedContinueRef.current).toBe(false);
+  });
+});
+
+// =============================================================================
+// H1 structural resume (v0.7.26) — buildStructuralResumeSeed
+// =============================================================================
+
+describe('H1 structural resume — buildStructuralResumeSeed (v0.7.26)', () => {
+  async function getBuilder() {
+    const mod = await import('./runner-driven.js');
+    return mod.__runnerDrivenTestables.buildStructuralResumeSeed;
+  }
+
+  type ValidatedCheckpointInput = Parameters<
+    Awaited<ReturnType<typeof getBuilder>>
+  >[0];
+
+  function makeCheckpoint(params: {
+    harness: 'H0_DIRECT' | 'H1_EXECUTE_EVAL' | 'H2_PLAN_EXECUTE_EVAL';
+    scoutCompleted: boolean;
+    scoutDecision?: {
+      summary?: string;
+      recommendedHarness?: 'H0_DIRECT' | 'H1_EXECUTE_EVAL' | 'H2_PLAN_EXECUTE_EVAL';
+      scope?: string[];
+      reviewFilesOrAreas?: string[];
+      harnessRationale?: string;
+      directCompletionReady?: 'yes' | 'no';
+      skillSummary?: string;
+      executionObligations?: string[];
+    };
+    contractSummary?: string;
+  }): ValidatedCheckpointInput {
+    return {
+      checkpoint: {
+        version: 1,
+        taskId: 'task-test',
+        createdAt: new Date().toISOString(),
+        gitCommit: 'abcd1234',
+        objective: 'resume fixture',
+        harnessProfile: params.harness,
+        currentRound: 2,
+        completedWorkerIds: params.scoutCompleted ? ['scout-1'] : [],
+        scoutCompleted: params.scoutCompleted,
+      },
+      workspaceDir: '/tmp/ws',
+      managedTask: {
+        contract: {
+          taskId: 'task-test',
+          surface: 'repl',
+          objective: 'resume fixture',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          status: 'in_progress',
+          primaryTask: 'edit',
+          workIntent: 'implement',
+          complexity: 'medium',
+          riskLevel: 'low',
+          harnessProfile: params.harness,
+          recommendedMode: 'ama',
+          requiresBrainstorm: false,
+          reason: 'fixture',
+          contractSummary: params.contractSummary,
+          successCriteria: params.contractSummary ? ['criterion-1'] : [],
+          requiredEvidence: [],
+          constraints: [],
+        },
+        roleAssignments: [],
+        workItems: [],
+        evidence: { workspaceDir: '/tmp/ws', artifacts: [], entries: [], routingNotes: [] },
+        verdict: {
+          status: 'in_progress',
+          decidedByAssignmentId: '',
+          summary: '',
+        },
+        runtime: params.scoutDecision
+          ? {
+            scoutDecision: {
+              summary: params.scoutDecision.summary ?? 'scout summary',
+              recommendedHarness: params.scoutDecision.recommendedHarness ?? params.harness,
+              readyForUpgrade: false,
+              scope: params.scoutDecision.scope,
+              reviewFilesOrAreas: params.scoutDecision.reviewFilesOrAreas,
+              harnessRationale: params.scoutDecision.harnessRationale,
+              directCompletionReady: params.scoutDecision.directCompletionReady,
+              skillSummary: params.scoutDecision.skillSummary,
+              executionObligations: params.scoutDecision.executionObligations,
+            },
+          }
+          : undefined,
+      },
+    } as unknown as ValidatedCheckpointInput;
+  }
+
+  it('H1 scout completed → starts at generator, scout slot seeded, rolesEmitted=[scout]', async () => {
+    const build = await getBuilder();
+    const seed = build(makeCheckpoint({
+      harness: 'H1_EXECUTE_EVAL',
+      scoutCompleted: true,
+      scoutDecision: {
+        summary: 'Investigated modules A + B',
+        recommendedHarness: 'H1_EXECUTE_EVAL',
+        scope: ['src/a.ts', 'src/b.ts'],
+        harnessRationale: 'single-file write sufficient',
+      },
+    }));
+    expect(seed.startingRole).toBe('generator');
+    expect(seed.harness).toBe('H1_EXECUTE_EVAL');
+    expect(seed.rolesEmitted).toEqual(['scout']);
+    expect(seed.recorderSlots.scout).toBeDefined();
+    expect(seed.recorderSlots.scout?.role).toBe('scout');
+    expect(seed.recorderSlots.scout?.payload.scout?.summary).toBe('Investigated modules A + B');
+    expect(seed.recorderSlots.scout?.payload.scout?.confirmedHarness).toBe('H1_EXECUTE_EVAL');
+    expect(seed.recorderSlots.scout?.handoffTarget).toBe('kodax/role/generator');
+    expect(seed.recorderSlots.contract).toBeUndefined();
+  });
+
+  it('H2 scout completed, no contract → starts at planner', async () => {
+    const build = await getBuilder();
+    const seed = build(makeCheckpoint({
+      harness: 'H2_PLAN_EXECUTE_EVAL',
+      scoutCompleted: true,
+      scoutDecision: {
+        summary: 'Large refactor across 4 modules',
+        recommendedHarness: 'H2_PLAN_EXECUTE_EVAL',
+      },
+    }));
+    expect(seed.startingRole).toBe('planner');
+    expect(seed.harness).toBe('H2_PLAN_EXECUTE_EVAL');
+    expect(seed.rolesEmitted).toEqual(['scout']);
+    expect(seed.recorderSlots.contract).toBeUndefined();
+  });
+
+  it('H2 scout + contract completed → starts at generator, both slots seeded', async () => {
+    const build = await getBuilder();
+    const seed = build(makeCheckpoint({
+      harness: 'H2_PLAN_EXECUTE_EVAL',
+      scoutCompleted: true,
+      scoutDecision: {
+        summary: 'Multi-phase migration',
+        recommendedHarness: 'H2_PLAN_EXECUTE_EVAL',
+      },
+      contractSummary: 'Phase 1: add schema; Phase 2: backfill; Phase 3: cutover',
+    }));
+    expect(seed.startingRole).toBe('generator');
+    expect(seed.rolesEmitted).toEqual(['scout', 'planner']);
+    expect(seed.recorderSlots.scout).toBeDefined();
+    expect(seed.recorderSlots.contract).toBeDefined();
+    expect(seed.recorderSlots.contract?.payload.contract?.summary)
+      .toContain('Phase 1: add schema');
+    expect(seed.recorderSlots.contract?.payload.contract?.successCriteria).toEqual(['criterion-1']);
+  });
+
+  it('no scout completion → starts at scout with empty seeds (plain restart)', async () => {
+    const build = await getBuilder();
+    const seed = build(makeCheckpoint({
+      harness: 'H1_EXECUTE_EVAL',
+      scoutCompleted: false,
+    }));
+    expect(seed.startingRole).toBe('scout');
+    expect(seed.rolesEmitted).toEqual([]);
+    expect(seed.recorderSlots.scout).toBeUndefined();
+    expect(seed.recorderSlots.contract).toBeUndefined();
+  });
+
+  it('H0 scout completed → stays at scout (re-emit direct answer with context)', async () => {
+    const build = await getBuilder();
+    const seed = build(makeCheckpoint({
+      harness: 'H0_DIRECT',
+      scoutCompleted: true,
+      scoutDecision: {
+        summary: 'Trivial explain-only',
+        recommendedHarness: 'H0_DIRECT',
+        directCompletionReady: 'yes',
+      },
+    }));
+    expect(seed.startingRole).toBe('scout');
+    expect(seed.harness).toBe('H0_DIRECT');
+    expect(seed.rolesEmitted).toEqual(['scout']);
+    expect(seed.recorderSlots.scout?.isTerminal).toBe(true);
+  });
+
+  it('seeded scout skillMap round-trips the skillSummary + obligations', async () => {
+    const build = await getBuilder();
+    const seed = build(makeCheckpoint({
+      harness: 'H1_EXECUTE_EVAL',
+      scoutCompleted: true,
+      scoutDecision: {
+        summary: 'write-heavy edit',
+        recommendedHarness: 'H1_EXECUTE_EVAL',
+        skillSummary: 'use edit for single-file change',
+        executionObligations: ['preserve CRLF', 'keep header comment'],
+      },
+    }));
+    const skillMap = seed.recorderSlots.scout?.payload.scout?.skillMap;
+    expect(skillMap).toBeDefined();
+    expect(skillMap?.skillSummary).toBe('use edit for single-file change');
+    expect(skillMap?.executionObligations).toEqual(['preserve CRLF', 'keep header comment']);
   });
 });

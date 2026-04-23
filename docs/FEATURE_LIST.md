@@ -1,6 +1,6 @@
 # Feature 总表
 
-> Last updated: 2026-04-21 (v0.7.25 released — FEATURE_075 + FEATURE_076 + FEATURE_058 completed; FEATURE_051 "unreleased → released" flip also folded in. Transcript UX maturity (058 scrollback dump + 075 plan dialog scroll) + managed-task round-boundary cleanup (076 reshape + token recompute + fork mode + load-time session normalization) all landed. LLM-first plan structural constraint wired into exit_plan_mode tool schema.)
+> Last updated: 2026-04-22 (FEATURE_094 P2d Deep Anti-Escape Hardening staged to v0.7.36 — runtime ToolGuardrail detector + retry-contract hint for bash heredoc large-file-write escape pattern, layered on top of v0.7.26 P0/P2a/P2b浅层防御.)
 
 > 中文阅读说明：
 > 这份 `FEATURE_LIST` 是 roadmap 的总索引。
@@ -13,13 +13,13 @@
 
 | Item | Value |
 |---|---|
-| Tracked feature IDs | `001-093` (026 removed) |
-| Total tracked features | `92` |
+| Tracked feature IDs | `001-094` (026 removed) |
+| Total tracked features | `93` |
 | Completed | `74` |
 | Cancelled | `2` |
 | Absorbed | `1` |
 | InProgress | `1` |
-| Planned | `14` |
+| Planned | `15` |
 | Current released version | `v0.7.25` |
 
 ### 各版本待做分布
@@ -34,6 +34,7 @@
 | `v0.7.31` | `1` |
 | `v0.7.32` | `1` |
 | `v0.7.33` | `1` |
+| `v0.7.36` | `1` |
 | `v0.8.0` | `3` |
 
 ---
@@ -61,6 +62,7 @@
 | `089` | Self-Construction Tier 3 — Agent Generation | Core | High | `v0.7.31` | [v0.7.31](features/v0.7.31.md#feature_089-self-construction-tier-3--agent-generation) |
 | `090` | Self-Construction Tier 4 — Agent Self-Modifying Role Spec | Core | High | `v0.7.32` | [v0.7.32](features/v0.7.32.md#feature_090-self-construction-tier-4--agent-self-modifying-role-spec) |
 | `092` | Auto Mode Classifier — LLM-Reviewed Permission Tier | Core | High | `v0.7.33` | [v0.7.33](features/v0.7.33.md#feature_092-auto-mode-classifier--llm-reviewed-permission-tier-for-high-risk-tool-calls) |
+| `094` | Deep Anti-Escape Hardening — Runtime Detection and Retry Contract for Generative Large-File Writes | Core | Medium | `v0.7.36` | [v0.7.36](features/v0.7.36.md#feature_094-deep-anti-escape-hardening--runtime-detection-and-retry-contract-for-generative-large-file-writes) |
 | `093` | Coding and REPL Internal Circular Dependency Decoupling | Internal | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_093-coding-and-repl-internal-circular-dependency-decoupling) |
 | `007` | Theme System Consolidation | Enhancement | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_007-theme-system-consolidation) |
 | `030` | Multi-Surface Delivery | Enhancement | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_030-multi-surface-delivery) |

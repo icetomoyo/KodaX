@@ -83,6 +83,7 @@ import {
   emitHandoff,
   emitScoutVerdict,
   emitVerdict,
+  resolveHandoffTarget,
   type ProtocolEmitterMetadata,
 } from '../agents/protocol-emitters.js';
 import { toolBash } from '../tools/bash.js';
@@ -639,6 +640,17 @@ function wrapEmitterWithRecorder(
   observer: ObserverBridge,
   budget?: ManagedTaskBudgetController,
   budgetExtension?: BudgetExtensionContext,
+  // M5 (v0.7.26) — Scout regained full write/edit/multi_edit tools
+  // for v0.7.22 parity. The H0 path is fine (Scout is the final
+  // author), but on H1/H2 Scout SHOULD keep its hands off the
+  // filesystem and hand off a clean slate to Generator. If Scout
+  // wrote anyway, the Evaluator's diff later on will mix Scout's
+  // changes with Generator's, confusing verification. These two
+  // closures give the scout-slot wrapper observable access to the
+  // mutation tracker + event sink so it can flag the situation at
+  // emit time with a user-visible status event + server-side log.
+  mutationTracker?: ManagedMutationTracker,
+  events?: KodaXEvents,
 ): RunnableTool {
   return {
     ...base,
@@ -763,6 +775,36 @@ function wrapEmitterWithRecorder(
           }
         }
         recorder[slot] = result.metadata as unknown as ProtocolEmitterMetadata;
+        // M5 (v0.7.26) — Scout pre-handoff write warning. Scout's tool
+        // set includes write/edit/multi_edit for H0_DIRECT parity with
+        // v0.7.22. But on H1/H2 handoffs, any Scout-era write bleeds
+        // into the Evaluator's diff view and muddles the verification
+        // contract ("did Generator do X? unclear, because X was half-
+        // done before Generator started"). Fire a status event +
+        // debug log so the user / REPL can see this happened, and
+        // downstream telemetry can count it.
+        if (slot === 'scout' && mutationTracker && mutationTracker.files.size > 0) {
+          const scoutHarness = recorder.scout?.payload.scout?.confirmedHarness;
+          if (scoutHarness && scoutHarness !== 'H0_DIRECT') {
+            const paths = [...mutationTracker.files.keys()];
+            const preview = paths.slice(0, 5).join(', ') + (paths.length > 5 ? `, +${paths.length - 5} more` : '');
+            const handoffTo = scoutHarness === 'H1_EXECUTE_EVAL' ? 'Generator' : 'Planner';
+            events?.onManagedTaskStatus?.({
+              agentMode: 'ama',
+              harnessProfile: scoutHarness,
+              currentRound: 1,
+              maxRounds: 1,
+              upgradeCeiling: scoutHarness,
+              note: `Scout wrote ${paths.length} file${paths.length === 1 ? '' : 's'} before handing off to ${handoffTo}`,
+              detailNote: `Scout pre-handoff mutations (may show up in Evaluator diff alongside ${handoffTo} output): ${preview}`,
+            });
+            emitResilienceDebug('[m5:scout-pre-handoff-writes]', {
+              harness: scoutHarness,
+              count: paths.length,
+              paths: paths.slice(0, 20),
+            });
+          }
+        }
         // When Scout's verdict picks a non-H0 harness, extend the budget
         // accordingly so downstream roles have headroom. Mirrors the
         // legacy behavior of upgrading the budget controller on Scout
@@ -1804,7 +1846,19 @@ export function buildRunnerAgentChain(
     events,
   );
 
-  const scoutEmit = wrapEmitterWithRecorder(emitScoutVerdict, 'scout', recorder, observer, budget);
+  // M5 (v0.7.26) — only the scout slot needs the mutation-tracker /
+  // events channel to surface "Scout wrote files before handing off"
+  // warnings. The other slots don't need that wiring.
+  const scoutEmit = wrapEmitterWithRecorder(
+    emitScoutVerdict,
+    'scout',
+    recorder,
+    observer,
+    budget,
+    undefined,
+    ctx.mutationTracker,
+    events,
+  );
   const contractEmit = wrapEmitterWithRecorder(emitContract, 'contract', recorder, observer, budget);
   const handoffEmit = wrapEmitterWithRecorder(emitHandoff, 'handoff', recorder, observer, budget);
   const verdictEmit = wrapEmitterWithRecorder(emitVerdict, 'verdict', recorder, observer, budget, budgetExtension);
@@ -3225,28 +3279,23 @@ function buildSkillMapRuntime(
 // =============================================================================
 
 /**
- * Shard 6c: handle a pre-existing checkpoint before the run starts.
+ * Shard 6c + H1 structural resume (v0.7.26).
  *
- * Legacy behaviour for reference (task-engine.ts:~6644): ask the user
- * whether to continue from checkpoint or restart, then delegate to
- * `resumeManagedTask` on continue. The Runner-driven path cannot (yet)
- * faithfully resume a partial state — the legacy `resumeManagedTask` runs
- * ~700 lines of coupled internal state reconstruction that does not map
- * cleanly to the Agent/Handoff model.
+ * Legacy behaviour (task-engine.ts:~6644 + `resumeManagedTask`): ask the
+ * user whether to continue or restart, then either replay the partial
+ * state (seeded plan, scoutDecision, budget) or drop the checkpoint.
  *
- * For Shard 6c we honour the UX contract (user is informed, dialog fires)
- * but treat every case as a fresh start:
  *   - "restart" → delete stale checkpoint, start fresh.
- *   - "continue" → log a note that resume is not yet wired in the Runner
- *     path; delete the stale checkpoint; start fresh. This is explicit
- *     about the current limitation and avoids silently losing state into
- *     a no-op path.
- *   - no askUser callback or no checkpoint → silently clean up any stale
- *     checkpoint and start fresh.
- *
- * Future work: implement a structural resume — re-seed the recorder with
- * `validated.managedTask.runtime.scoutDecision` etc. and skip past
- * completed roles. See legacy `resumeManagedTask` for the state shape.
+ *   - "resume" → keep the checkpoint, return `{ resumeFrom }` so the
+ *     caller can seed the recorder via `buildStructuralResumeSeed` and
+ *     (depending on what roles already completed) start Runner.run at
+ *     planner / generator / evaluator instead of scout. The textual
+ *     preamble (`buildResumePreamble`) is still prepended for readability
+ *     and to give any resumed-scout retries the prior findings in plain
+ *     text.
+ *   - "cancel" → delete the checkpoint + throw — the user asked to abort.
+ *   - no askUser callback → silently clean up; non-interactive contexts
+ *     can't prompt for a decision.
  */
 async function handlePreRunCheckpoint(
   options: KodaXOptions,
@@ -3374,6 +3423,127 @@ function buildResumePreamble(checkpoint: ValidatedCheckpoint): string {
 }
 
 /**
+ * H1 structural resume seed (v0.7.26) — reconstruct recorder slots, harness
+ * tier, budget, and the agent entry-point from a validated checkpoint.
+ *
+ * Legacy `resumeManagedTask` synthesised a `ManagedTaskScoutDirective`
+ * from `managedTask.runtime.scoutDecision`, applied it to the plan, then
+ * filtered out `completedWorkerIds` so the resumed round skipped
+ * already-completed workers. The Runner-driven path equivalent:
+ *
+ *   1. If Scout completed, re-emit the captured Scout directive into the
+ *      recorder so `rolePromptContextFactory` → `previousRoleSummaries`
+ *      + `scoutScope` still reach downstream roles.
+ *   2. If the saved harness is H2 and `contract.contractSummary` is set,
+ *      also seed the contract slot so the Planner turn can be skipped.
+ *   3. Pick the entry agent based on which slots are seeded:
+ *        - no scout      → scout (plain restart with preamble context)
+ *        - scout + H0    → scout (re-emit H0 with saved findings)
+ *        - scout + H1    → generator
+ *        - scout + H2, no contract → planner
+ *        - scout + H2 + contract  → generator
+ *   4. Carry forward the harness tier + budget so budget caps + role-
+ *      specific tool allow-lists are correct from turn 1. Budget spent is
+ *      reset — the LLM is starting a fresh turn even if logically
+ *      resuming, so old spend shouldn't eat into the new run's envelope.
+ *
+ * Handoff and verdict slots are deliberately NOT seeded: the legacy
+ * resume also didn't replay them (it re-ran the terminal round). This
+ * keeps the semantics simple — resume picks up at the last *role* that
+ * needs to run, not at a specific revise-cycle iteration inside the
+ * Evaluator loop.
+ */
+interface StructuralResumeSeed {
+  readonly recorderSlots: {
+    readonly scout?: ProtocolEmitterMetadata;
+    readonly contract?: ProtocolEmitterMetadata;
+  };
+  readonly harness: KodaXHarnessProfile;
+  readonly rolesEmitted: readonly KodaXTaskRole[];
+  readonly startingRole: 'scout' | 'planner' | 'generator';
+}
+
+function buildStructuralResumeSeed(validated: ValidatedCheckpoint): StructuralResumeSeed {
+  const task = validated.managedTask;
+  const checkpoint = validated.checkpoint;
+  const scoutDecision = task.runtime?.scoutDecision;
+  const harness: KodaXHarnessProfile = task.contract.harnessProfile ?? 'H0_DIRECT';
+
+  const recorderSlots: { scout?: ProtocolEmitterMetadata; contract?: ProtocolEmitterMetadata } = {};
+  const rolesEmitted: KodaXTaskRole[] = [];
+
+  if (checkpoint.scoutCompleted && scoutDecision) {
+    const scoutPayload: Partial<KodaXManagedProtocolPayload> = {
+      scout: {
+        summary: scoutDecision.summary,
+        scope: scoutDecision.scope ?? [],
+        requiredEvidence: scoutDecision.requiredEvidence ?? [],
+        reviewFilesOrAreas: scoutDecision.reviewFilesOrAreas,
+        evidenceAcquisitionMode: scoutDecision.evidenceAcquisitionMode,
+        confirmedHarness: scoutDecision.recommendedHarness,
+        harnessRationale: scoutDecision.harnessRationale,
+        blockingEvidence: scoutDecision.blockingEvidence,
+        directCompletionReady: scoutDecision.directCompletionReady,
+        skillMap: scoutDecision.skillSummary
+          ? {
+            skillSummary: scoutDecision.skillSummary,
+            executionObligations: scoutDecision.executionObligations ?? [],
+            verificationObligations: scoutDecision.verificationObligations ?? [],
+            ambiguities: scoutDecision.ambiguities ?? [],
+            projectionConfidence: scoutDecision.projectionConfidence,
+          }
+          : undefined,
+      },
+    };
+    const { handoffTarget, isTerminal } = resolveHandoffTarget('scout', scoutPayload);
+    recorderSlots.scout = {
+      role: 'scout',
+      payload: scoutPayload,
+      handoffTarget,
+      isTerminal,
+    };
+    rolesEmitted.push('scout');
+  }
+
+  const contractSummary = task.contract.contractSummary;
+  if (
+    harness === 'H2_PLAN_EXECUTE_EVAL'
+    && contractSummary
+    && contractSummary.trim().length > 0
+  ) {
+    const contractPayload: Partial<KodaXManagedProtocolPayload> = {
+      contract: {
+        summary: contractSummary,
+        successCriteria: task.contract.successCriteria ?? [],
+        requiredEvidence: task.contract.requiredEvidence ?? [],
+        constraints: task.contract.constraints ?? [],
+      },
+    };
+    const { handoffTarget, isTerminal } = resolveHandoffTarget('planner', contractPayload);
+    recorderSlots.contract = {
+      role: 'planner',
+      payload: contractPayload,
+      handoffTarget,
+      isTerminal,
+    };
+    rolesEmitted.push('planner');
+  }
+
+  let startingRole: 'scout' | 'planner' | 'generator' = 'scout';
+  if (recorderSlots.scout) {
+    if (harness === 'H0_DIRECT') {
+      startingRole = 'scout';
+    } else if (harness === 'H1_EXECUTE_EVAL') {
+      startingRole = 'generator';
+    } else {
+      startingRole = recorderSlots.contract ? 'generator' : 'planner';
+    }
+  }
+
+  return { recorderSlots, harness, rolesEmitted, startingRole };
+}
+
+/**
  * Shard 6c: write a crash-safe checkpoint after each role transition.
  * Allows legacy tools and future resume logic to inspect partial state.
  */
@@ -3425,6 +3595,7 @@ async function writeCurrentCheckpoint(args: {
 export const __runnerDrivenTestables = {
   wrapEmitterWithRecorder,
   H1_MAX_SAME_HARNESS_REVISES,
+  buildStructuralResumeSeed,
 } as const;
 
 export async function runManagedTaskViaRunner(
@@ -3522,16 +3693,20 @@ async function runManagedTaskViaRunnerInner(
   // `askUser` presence — non-interactive contexts (unit tests, SDK
   // consumers without a prompt surface) skip the directory scan entirely.
   //
-  // H1 parity (v0.7.26) — when the user picks "Resume", prepend a
-  // reconstructed preamble onto the prompt so downstream Scout /
-  // Generator / Evaluator see the prior findings and can pick up the
-  // work. The preamble is injected BEFORE the promptOverlay + prompt so
-  // the LLM reads it as the first context after the system prompt.
+  // H1 structural resume (v0.7.26) — when the user picks "Resume":
+  //   - Prepend a reconstructed preamble onto the prompt so the LLM has
+  //     the prior findings in plain text (even structural skips still
+  //     include scout's narrative + last verdict for clarity).
+  //   - Build a `StructuralResumeSeed` so the recorder can be preseeded
+  //     with scout/contract payloads and Runner.run can enter at
+  //     planner/generator instead of scout when prior roles are complete.
+  let structuralResumeSeed: StructuralResumeSeed | undefined;
   if (options.events?.askUser) {
     const checkpoint = await handlePreRunCheckpoint(options);
     if (checkpoint) {
       const preamble = buildResumePreamble(checkpoint.resumeFrom);
       prompt = `${preamble}\n${prompt}`;
+      structuralResumeSeed = buildStructuralResumeSeed(checkpoint.resumeFrom);
     }
   }
 
@@ -3617,17 +3792,32 @@ async function runManagedTaskViaRunnerInner(
   // Budget controller. Start with H0 cap (50); `wrapEmitterWithRecorder`
   // upgrades the cap when Scout confirms a non-H0 tier. Mirrors the
   // legacy `createManagedBudgetController` + Scout-commit bump pattern.
+  //
+  // H1 structural resume: when a checkpoint seeded a non-H0 harness,
+  // start the budget at the saved tier's cap. Spent is reset — the LLM
+  // enters a fresh turn on resume, so prior spend shouldn't eat into the
+  // new run's envelope (same contract as legacy resumeManagedTask:
+  // `createManagedBudgetController` always started at 0).
+  const initialHarness: KodaXHarnessProfile = structuralResumeSeed?.harness ?? 'H0_DIRECT';
   const budget: ManagedTaskBudgetController = {
-    totalBudget: BUDGET_CAP_BY_HARNESS.H0_DIRECT,
+    totalBudget: BUDGET_CAP_BY_HARNESS[initialHarness],
     spentBudget: 0,
-    currentHarness: 'H0_DIRECT',
+    currentHarness: initialHarness,
   };
 
   const recorder: VerdictRecorder = {};
-  const harnessRef = { current: 'H0_DIRECT' as KodaXHarnessProfile };
-  const rolesRef: { emitted: KodaXTaskRole[] } = { emitted: [] };
+  if (structuralResumeSeed?.recorderSlots.scout) {
+    recorder.scout = structuralResumeSeed.recorderSlots.scout;
+  }
+  if (structuralResumeSeed?.recorderSlots.contract) {
+    recorder.contract = structuralResumeSeed.recorderSlots.contract;
+  }
+  const harnessRef = { current: initialHarness };
+  const rolesRef: { emitted: KodaXTaskRole[] } = {
+    emitted: structuralResumeSeed ? [...structuralResumeSeed.rolesEmitted] : [],
+  };
   const roundRef = { current: 0 };
-  const maxRoundsRef = { current: MAX_ROUNDS_BY_HARNESS.H0_DIRECT };
+  const maxRoundsRef = { current: MAX_ROUNDS_BY_HARNESS[initialHarness] };
   const budgetApprovalRef = { current: false };
   // Shard 6d-R: append-only evidence entries accumulator. Populated from
   // `onRoleEmit` so each role turn contributes exactly one entry to
@@ -3757,6 +3947,22 @@ async function runManagedTaskViaRunnerInner(
   observer.preflight();
 
   const planRef = { current: plan };
+  // H1 structural resume (v0.7.26) — when scout is pre-seeded from a
+  // checkpoint, the observer's `onRoleEmit` path never runs for scout on
+  // this turn, so downstream role prompts would otherwise see the pre-
+  // scout plan decision (wrong harness, wrong routing notes). Apply the
+  // seeded scout payload to the plan immediately so planner/generator/
+  // evaluator see the post-scout plan on their first turn. Mirrors the
+  // legacy `applyScoutDecisionToPlan` invocation inside
+  // `resumeManagedTask`.
+  if (structuralResumeSeed?.recorderSlots.scout?.payload.scout && planRef.current) {
+    const seededScout = structuralResumeSeed.recorderSlots.scout.payload.scout;
+    planRef.current = applyScoutDecisionToPlanRunner(planRef.current, {
+      confirmedHarness: seededScout.confirmedHarness,
+      harnessRationale: seededScout.harnessRationale,
+      summary: seededScout.summary,
+    });
+  }
   // Shard 6d-U: degraded-continue ref. Flipped by the verdict emitter
   // wrapper when the Evaluator requests an H2 upgrade beyond the plan's
   // `upgradeCeiling`, or when budget-extension approval is denied during
@@ -4016,7 +4222,19 @@ async function runManagedTaskViaRunnerInner(
   // wiring, long AMA sessions hit context window overflow and 400.
   const compactionHook = await buildManagedTaskCompactionHook(options);
 
-  const runResult = await Runner.run(chain.scout, runnerInput, {
+  // H1 structural resume: when a checkpoint seeded the recorder with a
+  // completed scout (and optionally contract), skip straight to the
+  // first unfinished role. The role-prompt factory reads the seeded
+  // recorder slots so planner/generator/evaluator see `scoutScope` +
+  // `previousRoleSummaries` on turn 1, matching what they'd see mid-run.
+  const entryAgent: Agent = structuralResumeSeed
+    ? (structuralResumeSeed.startingRole === 'generator'
+      ? chain.generator
+      : structuralResumeSeed.startingRole === 'planner'
+        ? chain.planner
+        : chain.scout)
+    : chain.scout;
+  const runResult = await Runner.run(entryAgent, runnerInput, {
     llm,
     abortSignal: options.abortSignal,
     compactionHook,
