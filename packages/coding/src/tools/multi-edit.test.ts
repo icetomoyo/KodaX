@@ -157,7 +157,8 @@ describe('multi_edit — atomic failure', () => {
     expect(result).toContain('[Tool Error]');
     expect(result).toContain('edits[1]');
     expect(result).toContain('old_string not found');
-    expect(result).toContain('no edits have been applied');
+    // Atomicity verified functionally: file on disk is unchanged even
+    // though edits[0] would have succeeded in isolation.
     const onDisk = await fs.readFile(p, 'utf-8');
     expect(onDisk).toBe(original);
   });
@@ -179,6 +180,70 @@ describe('multi_edit — atomic failure', () => {
     expect(result).toContain('[Tool Error]');
     expect(result).toContain('matched 3 places');
     expect(await fs.readFile(p, 'utf-8')).toBe(original);
+  });
+
+  it('ambiguous exact match error reports the line numbers of each duplicate', async () => {
+    // Reproduces the Scout-narrow-read workflow: the LLM picks a short
+    // snippet that unknowingly appears on 2 lines. The error must tell
+    // it WHICH lines so the retry can widen the anchor around the one
+    // it actually meant.
+    const p = await writeFile(
+      'dup.html',
+      [
+        '<section id="intro">',          // line 1
+        '  <h2>Shared heading</h2>',     // line 2 — first match
+        '  <p>intro body</p>',           // line 3
+        '</section>',                    // line 4
+        '<section id="summary">',        // line 5
+        '  <h2>Shared heading</h2>',     // line 6 — second match
+        '  <p>summary body</p>',         // line 7
+        '</section>',                    // line 8
+      ].join('\n'),
+    );
+
+    const result = await toolMultiEdit(
+      {
+        path: p,
+        edits: [
+          { old_string: '<h2>Shared heading</h2>', new_string: '<h2>Updated</h2>' },
+        ],
+      },
+      ctx,
+    );
+
+    expect(result).toContain('[Tool Error]');
+    expect(result).toContain('matched 2 places');
+    // Enriched: includes both line numbers so the LLM can see where the
+    // duplicates are and pick a unique surrounding landmark.
+    expect(result).toMatch(/lines\s+2\s+and\s+6/);
+    // Still suggests both recovery tactics.
+    expect(result).toMatch(/replace_all=true/);
+    expect(result).toMatch(/[Ww]iden/);
+    // Anti-shortening hint is retained so the LLM doesn't respond to
+    // ambiguity by picking a shorter snippet.
+    expect(result).toMatch(/[Ss]horter anchors match more/);
+  });
+
+  it('missing-anchor error points at the narrow-read pitfall', async () => {
+    // When the LLM picks an anchor from a narrow read window that doesn't
+    // actually match the file (typo / whitespace drift / hallucination),
+    // the error must suggest widening the read — not just "re-read".
+    const p = await writeFile('f.txt', 'actual content');
+
+    const result = await toolMultiEdit(
+      {
+        path: p,
+        edits: [
+          { old_string: 'NEVER_IN_FILE', new_string: 'X' },
+        ],
+      },
+      ctx,
+    );
+
+    expect(result).toContain('[Tool Error]');
+    expect(result).toContain('old_string not found');
+    expect(result).toMatch(/narrow\s+read/i);
+    expect(result).toMatch(/wider/i);
   });
 });
 
@@ -287,9 +352,9 @@ describe('multi_edit — anchor-consumed-by-prior-edit diagnostic', () => {
 
     // Targeted diagnostic
     expect(result).toContain('edits[1]');
-    expect(result).toContain('consumed by an earlier edit');
-    // Cosmetic: for index=1 the prior range collapses to just 'edits[0]'
-    expect(result).toContain('(edits[0] replaced a region');
+    expect(result).toMatch(/anchor was consumed/);
+    // For index=1 the prior range collapses to just 'edits[0]'
+    expect(result).toContain('consumed by edits[0]');
     // Atomicity: file unchanged on disk
     const after = await fs.readFile(p, 'utf-8');
     expect(after).toBe(original);
@@ -311,7 +376,7 @@ describe('multi_edit — anchor-consumed-by-prior-edit diagnostic', () => {
     );
     expect(result).toContain('edits[1]');
     expect(result).toContain('not found');
-    expect(result).not.toContain('consumed by an earlier edit');
+    expect(result).not.toMatch(/anchor was consumed/);
   });
 
   it('does not mistake an ambiguous-in-original anchor as consumed', async () => {

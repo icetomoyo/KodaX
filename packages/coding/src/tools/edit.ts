@@ -11,6 +11,7 @@ import {
   findUniqueNormalizedBlockMatch,
   readResolvedTextFile,
 } from './text-anchor.js';
+import { findExactMatchPositions, formatLineList } from './multi-edit.js';
 
 export type EditToolErrorCode =
   | 'EDIT_NOT_FOUND'
@@ -46,38 +47,44 @@ export async function toolEdit(input: Record<string, unknown>, ctx: KodaXToolExe
   }
 
   const content = await fs.readFile(filePath, 'utf-8');
-  const exactOccurrences = countOccurrences(content, oldStr);
+  const exactMatches = findExactMatchPositions(content, oldStr);
   let replacementPlan: {
     newContent: string;
     diffPreviewMode: 'inline' | 'diff';
     replacementCount: number;
   } | undefined;
 
-  if (exactOccurrences > 0) {
-    if (exactOccurrences > 1 && !replaceAll) {
+  if (exactMatches.length > 0) {
+    if (exactMatches.length > 1 && !replaceAll) {
       return formatEditToolError(
         'EDIT_AMBIGUOUS',
-        `Found ${exactOccurrences} exact matches. Retry with a unique anchor or set replace_all=true.`,
+        `matched ${exactMatches.length} places (lines ${formatLineList(exactMatches)}). `
+        + 'Widen old_string with nearby unique context, or set replace_all=true. '
+        + '(Shorter anchors match more, not fewer.)',
       );
     }
 
     replacementPlan = {
       newContent: replaceAll ? content.split(oldStr).join(newStr) : content.replace(oldStr, newStr),
       diffPreviewMode: 'inline',
-      replacementCount: replaceAll ? exactOccurrences : 1,
+      replacementCount: replaceAll ? exactMatches.length : 1,
     };
   } else {
     const normalized = findUniqueNormalizedBlockMatch(content, oldStr);
     if (normalized.status === 'ambiguous') {
+      const blockLocations = normalized.ranges.map((r) => r.startLine);
       return formatEditToolError(
         'EDIT_AMBIGUOUS',
-        `Matched ${normalized.ranges.length} normalized blocks. Retry with a more specific old_string or use insert_after_anchor.`,
+        `matched ${normalized.ranges.length} normalized blocks (lines ${formatLineList(blockLocations)}). `
+        + 'Widen to a unique region, or set replace_all=true.',
       );
     }
     if (normalized.status === 'missing') {
       return formatEditToolError(
         'EDIT_NOT_FOUND',
-        'Exact or safe-normalized old_string match not found. Retry with a nearby unique anchor instead of rewriting the whole file.',
+        'old_string not found. '
+        + 'Likely whitespace drift or a typo from a narrow read — re-read a wider window and copy an exact slice. '
+        + 'Do not rewrite the whole file.',
       );
     }
 
@@ -173,20 +180,6 @@ function getEditSizeFailure(filePath: string, oldString: string, newString: stri
     );
   }
   return undefined;
-}
-
-function countOccurrences(content: string, needle: string): number {
-  if (!needle) {
-    return 0;
-  }
-
-  let count = 0;
-  let index = content.indexOf(needle);
-  while (index !== -1) {
-    count += 1;
-    index = content.indexOf(needle, index + needle.length);
-  }
-  return count;
 }
 
 function normalizeReplacementLineEndings(content: string, eol: string): string {

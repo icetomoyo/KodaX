@@ -125,29 +125,33 @@ function applyOneEdit(
   originalContent: string,
 ): { content: string; replacements: number } | { error: string } {
   const { old_string: oldStr, new_string: newStr, replace_all: replaceAll } = edit;
-  const exact = countOccurrences(content, oldStr);
+  const exactMatches = findExactMatchPositions(content, oldStr);
 
-  if (exact > 0) {
-    if (exact > 1 && !replaceAll) {
+  if (exactMatches.length > 0) {
+    if (exactMatches.length > 1 && !replaceAll) {
       return {
         error:
-          `[Tool Error] multi_edit: edits[${index}] matched ${exact} places. `
-          + 'Retry with a unique anchor or set replace_all=true on that edit.',
+          `[Tool Error] multi_edit: edits[${index}] matched ${exactMatches.length} places `
+          + `(lines ${formatLineList(exactMatches)}). `
+          + 'Widen old_string with nearby unique context, or set replace_all=true. '
+          + '(Shorter anchors match more, not fewer.)',
       };
     }
     return {
       content: replaceAll ? content.split(oldStr).join(newStr) : content.replace(oldStr, newStr),
-      replacements: replaceAll ? exact : 1,
+      replacements: replaceAll ? exactMatches.length : 1,
     };
   }
 
   // Exact match missed — try normalized fallback (same rule as `edit`)
   const normalized = findUniqueNormalizedBlockMatch(content, oldStr);
   if (normalized.status === 'ambiguous') {
+    const blockLocations = normalized.ranges.map((r) => r.startLine);
     return {
       error:
-        `[Tool Error] multi_edit: edits[${index}] matched ${normalized.ranges.length} normalized blocks. `
-        + 'Retry with a more specific old_string or use a unique anchor.',
+        `[Tool Error] multi_edit: edits[${index}] matched ${normalized.ranges.length} normalized blocks `
+        + `(lines ${formatLineList(blockLocations)}). `
+        + 'Widen to a unique region, or set replace_all=true.',
     };
   }
   if (normalized.status === 'missing') {
@@ -161,25 +165,21 @@ function applyOneEdit(
     // multi_edit slide-deck deletion flows).
     if (index > 0) {
       const presentInOriginal =
-        countOccurrences(originalContent, oldStr) > 0
+        findExactMatchPositions(originalContent, oldStr).length > 0
         || findUniqueNormalizedBlockMatch(originalContent, oldStr).status !== 'missing';
       if (presentInOriginal) {
         const prior = index === 1 ? 'edits[0]' : `edits[0..${index - 1}]`;
         return {
           error:
-            `[Tool Error] multi_edit: edits[${index}] old_string is present in the original file but `
-            + `was consumed by an earlier edit in this batch (${prior} replaced a region containing it). `
-            + 'This aborts the whole batch — no edits have been applied. Either '
-            + '(a) shrink the earlier edit so it preserves this anchor, or '
-            + '(b) rewrite this edit to use a different anchor still present after the earlier edits.',
+            `[Tool Error] multi_edit: edits[${index}] anchor was consumed by ${prior} in this batch. `
+            + 'Shrink that earlier edit, or pick an anchor still present after it.',
         };
       }
     }
     return {
       error:
         `[Tool Error] multi_edit: edits[${index}] old_string not found. `
-        + 'This aborts the whole batch — no edits have been applied. '
-        + 'Re-read the file and retry with a stable anchor.',
+        + 'Likely whitespace drift or a typo from a narrow read — re-read a wider window and copy an exact slice.',
     };
   }
   const replacement = normalizeReplacementLineEndings(newStr, detectPreferredLineEnding(content));
@@ -214,15 +214,47 @@ function getSizeFailure(
   return undefined;
 }
 
-function countOccurrences(content: string, needle: string): number {
-  if (!needle) return 0;
-  let count = 0;
+/**
+ * Find every exact occurrence of `needle` in `content` and return the 1-based
+ * line number of each. Empty needle returns []. Used both for the replace
+ * arithmetic and for enriching "matched N places" errors with locations so
+ * the LLM can see WHY its anchor is ambiguous.
+ */
+export function findExactMatchPositions(content: string, needle: string): number[] {
+  if (!needle) return [];
+  const positions: number[] = [];
   let index = content.indexOf(needle);
   while (index !== -1) {
-    count += 1;
+    positions.push(charIndexToLineNumber(content, index));
     index = content.indexOf(needle, index + needle.length);
   }
-  return count;
+  return positions;
+}
+
+function charIndexToLineNumber(content: string, charIndex: number): number {
+  let line = 1;
+  for (let i = 0; i < charIndex && i < content.length; i += 1) {
+    if (content.charCodeAt(i) === 10 /* \n */) line += 1;
+  }
+  return line;
+}
+
+/**
+ * Format a list of line numbers like `"45 and 234"` or `"3, 8, and 15"`.
+ * Caps at 3 listed locations with a `"and N more"` tail so very-high-match
+ * errors don't balloon the error string.
+ */
+export function formatLineList(lineNumbers: readonly number[]): string {
+  const MAX_LISTED = 3;
+  if (lineNumbers.length === 0) return '';
+  if (lineNumbers.length === 1) return String(lineNumbers[0]);
+  if (lineNumbers.length === 2) return `${lineNumbers[0]} and ${lineNumbers[1]}`;
+  if (lineNumbers.length <= MAX_LISTED) {
+    const head = lineNumbers.slice(0, -1).join(', ');
+    return `${head}, and ${lineNumbers[lineNumbers.length - 1]}`;
+  }
+  const head = lineNumbers.slice(0, MAX_LISTED).join(', ');
+  return `${head}, and ${lineNumbers.length - MAX_LISTED} more`;
 }
 
 function normalizeReplacementLineEndings(content: string, eol: string): string {
