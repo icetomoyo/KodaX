@@ -341,13 +341,13 @@ describe('CLI Entry Point', () => {
     expect(source).not.toContain('Enter interactive mode (auto-resume)');
   });
 
-  it('should document provider and team caveats in help topics', async () => {
+  it('should document provider and project caveats in help topics', async () => {
     const source = await fs.readFile(path.join(process.cwd(), 'src', 'kodax_cli.ts'), 'utf-8');
     expect(source).toContain('CLI bridge provider (latest-user-message only, MCP unavailable)');
-    expect(source).toContain('Legacy orchestration-based parallel execution for loosely coupled tasks.');
-    expect(source).toContain('Prefer --agent-mode ama|sa for the product path. --team is being sunset.');
     expect(source).toContain('Project mode spans two surfaces: non-REPL bootstrap commands and REPL /project commands.');
     expect(source).toContain('/project verify [#index|--last]');
+    expect(source).not.toContain('--team');
+    expect(source).not.toContain('Legacy orchestration-based parallel execution');
   });
 
   it('should keep custom skill subcommand help aligned with current options', async () => {

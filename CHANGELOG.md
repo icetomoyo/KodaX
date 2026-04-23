@@ -9,6 +9,14 @@ All notable changes to this project will be documented in this file.
 <!-- last-sync: HEAD -->
 
 ### Removed
+- **FEATURE_086 子任务 B 第 2 条 — `--team` CLI flag 彻底移除**（ADR-017 定废；FEATURE_027 自 v0.7.10 起已用 `--agent-mode ama|sa` 替代；此前只是 sunset handler 软下架）
+  - `src/kodax_cli.ts`：删除 commander `.option('--team <tasks>', ...)` 注册、`team` help topic 对象、help 索引行、全局 help 行、help topics 字符串、bash completion 字符串里的 `--team`、`opts.team` 传递、sunset handler block
+  - `src/cli_option_helpers.ts`：删除 `CliOptions.team?: string` 字段 + `validateCliModeSelection` 的 json-mode guard 里的 `|| cliOptions.team` 条件
+  - `tests/kodax_cli.test.ts`：`should document provider and team caveats` 改名为 `provider and project caveats`，移除 team 文案断言，加 `not.toContain('--team')` 作为负向守卫
+  - 用户可观察行为变化：`kodax --team xxx` 从 "[Deprecated] --team has been sunset" 错误 → commander 原生 `error: unknown option '--team'`（两者都 exit 1，后者带 "Did you mean ...?" 建议，对用户更友好）
+  - `README.md`：删除 `--team <tasks>` 的 CLI options 行；`--team "..."` 示例改为 `--agent-mode ama "..."` 等价示例，保留多 agent 并行的展示意图
+  - `docs/test-guides/GENERAL_v0.5.20_TEST_GUIDE.md`：顶端加归档提示，说明 `--team` / Agent Team 相关 TC 随 v0.7.27 失效，替代入口为 `--agent-mode ama`
+  - 勘误同步：`docs/features/v0.7.27.md` 里 FEATURE_086 子任务 B 第 2 条的文字更正 —— v1 设计稿误以为"CLI flag 已从 `src/**/*.ts` 移除，本版只清 config.json 残留"，实际 CLI flag 完整在 src 里，config.json 从来没有 `team` 字段
 - **FEATURE_086 子任务 B 第 1 条 — `compactMessages()` 及相关常量移除**（v0.7.23 已标 `@deprecated`，计划于 v0.7.27 移除）
   - 删除 `packages/agent/src/messages.ts`（函数定义）
   - 从 `@kodax/agent` / `@kodax/coding` 的 public export 移除 `compactMessages`

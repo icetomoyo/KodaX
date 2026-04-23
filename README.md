@@ -625,7 +625,6 @@ kodax                    Start the interactive REPL
 -t, --thinking       Compatibility alias for --reasoning auto
 -s, --session <op>   Session ID or legacy session operation
 -j, --parallel       Enable parallel tool execution
---team <tasks>       Run multiple sub-agents in parallel
 --init <task>        Initialize a long-running task
 --auto-continue      Continue long-running tasks until complete
 --max-iter <n>       Max iterations
@@ -981,8 +980,8 @@ kodax --session list
 # Parallel tool execution
 kodax --parallel "Read package.json and tsconfig.json"
 
-# Agent Team
-kodax --team "Analyze code structure,Check test coverage,Find bugs"
+# Adaptive multi-agent (AMA) mode — Scout-first fan-out for multi-file work
+kodax --agent-mode ama "Analyze code structure, check test coverage, find bugs"
 
 # Long-running project
 kodax --init "Build a Todo application"

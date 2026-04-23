@@ -28,7 +28,6 @@ export interface CliOptions {
   extensions?: string[];
   extensionRuntime?: KodaXExtensionRuntime;
   session?: string;
-  team?: string;
   init?: string;
   append: boolean;
   overwrite: boolean;
@@ -92,7 +91,7 @@ export function validateCliModeSelection(
     throw new Error('`--mode json` cannot be combined with `-p/--print`. Pass the prompt as a positional argument instead.');
   }
 
-  if (cliOptions.init || cliOptions.autoContinue || cliOptions.team) {
+  if (cliOptions.init || cliOptions.autoContinue) {
     throw new Error('`--mode json` currently supports single non-interactive agent runs only.');
   }
 

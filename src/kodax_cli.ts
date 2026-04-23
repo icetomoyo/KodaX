@@ -300,17 +300,6 @@ const CLI_HELP_TOPICS: Record<string, () => void> = {
     console.log(chalk.dim('  kodax -t "review this PR"                           ') + '# Alias for auto');
     console.log(chalk.dim('  /reasoning balanced                                 ') + '# Set in REPL\n');
   },
-  team: () => {
-    console.log(chalk.cyan('\nTeam Mode (Deprecated)\n'));
-    console.log(chalk.bold('Overview:'));
-    console.log(chalk.dim('  Legacy orchestration-based parallel execution for loosely coupled tasks.'));
-    console.log(chalk.dim('  Prefer --agent-mode ama|sa for the product path. --team is being sunset.\n'));
-    console.log(chalk.bold('Options:'));
-    console.log(chalk.dim('  --team <tasks>      ') + 'Deprecated legacy option\n');
-    console.log(chalk.bold('Examples:'));
-    console.log(chalk.dim('  kodax --team "fix auth tests,update docs,clean logs"'));
-    console.log(chalk.dim('  kodax --team "task1,task2" -m anthropic --reasoning balanced\n'));
-  },
   print: () => {
     console.log(chalk.cyan('\nPrint Mode\n'));
     console.log(chalk.bold('Overview:'));
@@ -354,7 +343,6 @@ function showCliHelpTopics(): void {
   console.log(chalk.dim('  kodax -h auto       ') + 'Auto mode and auto-continue');
   console.log(chalk.dim('  kodax -h provider   ') + 'LLM provider options');
   console.log(chalk.dim('  kodax -h thinking   ') + 'Reasoning modes and depth control');
-  console.log(chalk.dim('  kodax -h team       ') + 'Parallel agent execution');
   console.log(chalk.dim('  kodax -h print      ') + 'Print mode for scripting\n');
 }
 
@@ -551,7 +539,6 @@ function showBasicHelp(): void {
   console.log('  -y, --auto              Backward-compat alias; no effect in non-REPL CLI');
   console.log('  -s, --session OP        Legacy session operations: list, resume, delete <id>, delete-all, or raw session ID');
   console.log('  --no-session            Disable session persistence (print mode only)');
-  console.log('  --team TASKS            Deprecated legacy parallel team mode');
   console.log('  --init TASK             Initialize a long-running task');
   console.log('  --append                Deprecated compatibility alias for the old append flow');
   console.log('  --overwrite             With --init: overwrite existing feature_list.json');
@@ -560,7 +547,7 @@ function showBasicHelp(): void {
   console.log('  --max-sessions N        Max sessions for --auto-continue (default: 50)');
   console.log('  --max-hours H           Max hours for --auto-continue (default: 2.0)\n');
   console.log('Help Topics (use -h <topic>):');
-  console.log('  acp, skill, sessions, init, project, auto, provider, thinking, team, print\n');
+  console.log('  acp, skill, sessions, init, project, auto, provider, thinking, print\n');
   console.log('Interactive Commands (in REPL mode):');
   console.log('  /help, /h               Show all commands');
   console.log('  /exit, /quit            Exit interactive mode');
@@ -614,7 +601,6 @@ async function main() {
     .option('--extension <path>', 'Load local extension module (.js/.mjs/.cjs/.ts/.mts/.cts)', collectRepeatedOption, [])
     .option('--no-session', 'Disable session persistence (print mode only)')
     // Long options.
-    .option('--team <tasks>', 'Deprecated: legacy parallel team mode')
     .option('--init <task>', 'Initialize a long-running task')
     .option('--append', 'Deprecated compatibility alias for the old append flow')
     .option('--overwrite', 'With --init: overwrite existing feature_list.json')
@@ -645,7 +631,7 @@ _kodax_complete() {
   cur="\${COMP_WORDS[COMP_CWORD]}"
   prev="\${COMP_WORDS[COMP_CWORD-1]}"
   subcmds="acp skill completion"
-  opts="-p -c -r -n -m -t -s -y -h --print --continue --resume --new --provider --model --thinking --reasoning --agent-mode --repo-intelligence --repo-intelligence-trace --repointel-endpoint --repointel-bin --auto --session --extension --no-session --team --init --append --overwrite --max-iter --auto-continue --max-sessions --max-hours --version"
+  opts="-p -c -r -n -m -t -s -y -h --print --continue --resume --new --provider --model --thinking --reasoning --agent-mode --repo-intelligence --repo-intelligence-trace --repointel-endpoint --repointel-bin --auto --session --extension --no-session --init --append --overwrite --max-iter --auto-continue --max-sessions --max-hours --version"
 
   case "\${prev}" in
     --provider|-m) COMPREPLY=( $(compgen -W "${providerNames}" -- "\${cur}") ); return 0 ;;
@@ -1109,7 +1095,6 @@ complete -c kodax -l version -d 'Show version'`);
     outputMode: (opts.mode as CliOutputMode | undefined) ?? 'text',
     extensions: activeExtensions,
     session: opts.session,
-    team: opts.team,
     init: opts.init,
     append: opts.append ?? false,
     overwrite: opts.overwrite ?? false,
@@ -1123,13 +1108,6 @@ complete -c kodax -l version -d 'Show version'`);
     noSession: opts.noSession ?? false,
     print: opts.print ? true : false,
   };
-
-  if (options.team) {
-    console.error(chalk.red('\n[Deprecated] --team has been sunset.'));
-    console.error(chalk.dim('Use --agent-mode ama for adaptive multi-agent execution, or --agent-mode sa for single-agent execution.\n'));
-    process.exitCode = 1;
-    return;
-  }
 
   // Session list: show all saved sessions.
   if (options.session === 'list') {

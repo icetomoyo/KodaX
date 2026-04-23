@@ -1,5 +1,7 @@
 # 通用人工测试指导 - KodaX 功能验证
 
+> **归档说明（v0.7.27）**：本指南为 v0.5.20 验收指南。其中所有涉及 `--team` 与 "Agent Team" 的测试用例（P2 Agent Team 段、含 `kodax --team "..."` 的命令行示例等）已随 FEATURE_086 在 v0.7.27 彻底移除 `--team` CLI flag 而失效。多 agent 并行能力的当前入口是 `--agent-mode ama`（Scout-first AMA，FEATURE_027 / FEATURE_061）；本文档其余部分作为历史记录保留。
+
 ## 功能概述
 
 **功能名称**: KodaX 通用功能测试
