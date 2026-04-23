@@ -162,12 +162,13 @@ function applyOneEdit(
     if (index > 0) {
       const presentInOriginal =
         countOccurrences(originalContent, oldStr) > 0
-        || findUniqueNormalizedBlockMatch(originalContent, oldStr).status === 'unique';
+        || findUniqueNormalizedBlockMatch(originalContent, oldStr).status !== 'missing';
       if (presentInOriginal) {
+        const prior = index === 1 ? 'edits[0]' : `edits[0..${index - 1}]`;
         return {
           error:
             `[Tool Error] multi_edit: edits[${index}] old_string is present in the original file but `
-            + `was consumed by an earlier edit in this batch (edits[0..${index - 1}] replaced a region containing it). `
+            + `was consumed by an earlier edit in this batch (${prior} replaced a region containing it). `
             + 'This aborts the whole batch — no edits have been applied. Either '
             + '(a) shrink the earlier edit so it preserves this anchor, or '
             + '(b) rewrite this edit to use a different anchor still present after the earlier edits.',

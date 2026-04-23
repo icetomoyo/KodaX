@@ -288,7 +288,8 @@ describe('multi_edit — anchor-consumed-by-prior-edit diagnostic', () => {
     // Targeted diagnostic
     expect(result).toContain('edits[1]');
     expect(result).toContain('consumed by an earlier edit');
-    expect(result).toContain('edits[0..0]');
+    // Cosmetic: for index=1 the prior range collapses to just 'edits[0]'
+    expect(result).toContain('(edits[0] replaced a region');
     // Atomicity: file unchanged on disk
     const after = await fs.readFile(p, 'utf-8');
     expect(after).toBe(original);
