@@ -47,4 +47,4 @@ node .\clients\repointel\scripts\demo.mjs --skip-build
 - This folder is bootstrap-only and open.
 - It is not the premium engine.
 - It only teaches hosts when to call local `repointel` and how to handle `ok`, `limited`, `warming`, and `unavailable`.
-- Premium task policy, context packing, routing, and impact logic remain closed inside [`KodaX-private`](/C:/Works/GitWorks/KodaX-author/KodaX-private).
+- Premium task policy, context packing, routing, and impact logic remain closed inside the companion `KodaX-private` repository (not publicly published).

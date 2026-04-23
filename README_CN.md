@@ -180,14 +180,14 @@ KodaX 支持这些模式：
 {
   "repoIntelligenceMode": "premium-native",
   "repointelEndpoint": "http://127.0.0.1:47891",
-  "repointelBin": "C:\\Works\\GitWorks\\KodaX-author\\KodaX-private\\packages\\repointel-cli\\dist\\index.js",
+  "repointelBin": "C:\\path\\to\\KodaX-private\\packages\\repointel-cli\\dist\\index.js",
   "repoIntelligenceTrace": true
 }
 ```
 
 配置模板可参考：
 
-- [config.example.jsonc](/C:/Works/GitWorks/KodaX-author/KodaX/config.example.jsonc)
+- [config.example.jsonc](./config.example.jsonc)
 
 ## `repointelEndpoint` 是什么
 
@@ -480,5 +480,7 @@ KodaX 现在会把 Repo Intelligence 的本地缓存分成两条路径：
 
 ## 相关仓库
 
-- public repo: `C:\Works\GitWorks\KodaX-author\KodaX`
-- private repo: `C:\Works\GitWorks\KodaX-author\KodaX-private`
+建议把公仓和私仓 clone 到同一个父目录下，例如：
+
+- public repo: `<parent>/KodaX`
+- private repo: `<parent>/KodaX-private`（未公开发布）

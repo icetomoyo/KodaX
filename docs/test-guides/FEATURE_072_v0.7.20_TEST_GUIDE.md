@@ -30,7 +30,7 @@
 ### 建议工作目录
 
 ```bash
-cd c:/Works/GitWorks/KodaX-author/KodaX
+cd <path-to-your-KodaX-clone>
 ```
 
 ---
