@@ -438,4 +438,42 @@ describe('Runner integration — GuardrailSpan emission', () => {
     expect(inputSpan?.decision).toBe('pass');
     expect(outputSpan?.decision).toBe('rewrite');
   });
+
+  it('MED-3: a thrown guardrail emits a decision:"error" span and re-throws (fail-loud)', async () => {
+    const { Tracer, addTracingProcessor, setTracingProcessors } = await import('@kodax/tracing');
+    setTracingProcessors([]);
+    const ended: Array<{ name: string; kind: string; decision?: string; error?: string; hook?: string }> = [];
+    addTracingProcessor({
+      onSpanStart: () => { /* noop */ },
+      onSpanEnd: (span) => {
+        ended.push({
+          name: span.name,
+          kind: span.data.kind,
+          decision: (span.data as { decision?: string }).decision,
+          error: (span.data as { error?: string }).error,
+          hook: (span.data as { hookPoint?: string }).hookPoint,
+        });
+      },
+      onTraceEnd: () => { /* noop */ },
+    });
+
+    const buggy: InputGuardrail = {
+      kind: 'input',
+      name: 'buggy',
+      check: async () => { throw new Error('kaboom'); },
+    };
+    const agent = createAgent({
+      name: 'buggy-agent',
+      instructions: 'sys',
+      guardrails: [buggy],
+    });
+    await expect(
+      Runner.run(agent, 'q', { llm: async () => 'ok', tracer: new Tracer() }),
+    ).rejects.toThrow(/kaboom/);
+    setTracingProcessors([]);
+
+    const errSpan = ended.find((s) => s.hook === 'input' && s.decision === 'error');
+    expect(errSpan).toBeDefined();
+    expect(errSpan?.error).toMatch(/kaboom/);
+  });
 });

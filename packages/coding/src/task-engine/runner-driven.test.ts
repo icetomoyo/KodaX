@@ -354,6 +354,55 @@ describe('buildRunnerLlmAdapter — max_tokens escalation (FEATURE_085 Scout par
     expect(result.text).toContain('stuck at user budget');
   }, 15_000);
 
+  // MED-5: when the provider keeps returning max_tokens + text for every L5
+  // retry, the adapter MUST bail out after KODAX_MAX_MAXTOKENS_RETRIES
+  // iterations instead of looping forever. Regression guard for the
+  // `l5Retries < KODAX_MAX_MAXTOKENS_RETRIES` break in runner-driven.ts.
+  it('MED-5: L5 continuation breaks out after KODAX_MAX_MAXTOKENS_RETRIES and returns partial text', async () => {
+    const { KODAX_MAX_MAXTOKENS_RETRIES } = await import('../constants.js');
+    const observedBudgets: number[] = [];
+    const responses: Array<{ textBlocks: { type: 'text'; text: string }[]; stopReason?: string }> = [
+      // Call 1: capped budget → max_tokens empty triggers L1 escalation.
+      { textBlocks: [], stopReason: 'max_tokens' },
+      // Call 2: escalated budget, max_tokens + text → enters L5 loop.
+      { textBlocks: [{ type: 'text', text: 'half' }], stopReason: 'max_tokens' },
+    ];
+    // Calls 3..(2 + KODAX_MAX_MAXTOKENS_RETRIES): every L5 retry ALSO
+    // returns max_tokens + text so the break must fire, not end_turn.
+    for (let i = 0; i < KODAX_MAX_MAXTOKENS_RETRIES; i += 1) {
+      responses.push({
+        textBlocks: [{ type: 'text', text: ` chunk${i + 1}` }],
+        stopReason: 'max_tokens',
+      });
+    }
+    // Guard: one extra response beyond the cap — if the loop keeps going
+    // it will consume this, and `responses` will run out → throw. We
+    // assert later that this extra entry is NEVER consumed.
+    const sentinelMarker = 'SHOULD_NEVER_APPEAR';
+    responses.push({
+      textBlocks: [{ type: 'text', text: sentinelMarker }],
+      stopReason: 'max_tokens',
+    });
+
+    registerScriptedProvider(responses, observedBudgets);
+
+    const adapter = buildRunnerLlmAdapter(makeAdapterOptions());
+    const result = await adapter(
+      [{ role: 'system', content: 'sys' }, { role: 'user', content: 'very large' }],
+      { name: 'scout', instructions: '' },
+    );
+
+    // Exactly (1 capped + 1 escalated + KODAX_MAX_MAXTOKENS_RETRIES) calls.
+    expect(observedBudgets.length).toBe(2 + KODAX_MAX_MAXTOKENS_RETRIES);
+    // Sentinel never consumed — the break did its job.
+    expect(result.text).not.toContain(sentinelMarker);
+    // Partial accumulated text is returned instead of crashing.
+    expect(result.text).toContain('half');
+    for (let i = 1; i <= KODAX_MAX_MAXTOKENS_RETRIES; i += 1) {
+      expect(result.text).toContain(`chunk${i}`);
+    }
+  }, 15_000);
+
   // L5 continuation meta message must match the Claude Code wording used by
   // agent.ts (cd213e4). Legacy "Continue from where you left off." was weaker;
   // the richer phrasing nudges the model to break remaining work into smaller

@@ -179,6 +179,30 @@ function emitGuardrailSpan(
 }
 
 /**
+ * MED-3 observability: a guardrail callback throwing is a bug in the
+ * guardrail author's code. We preserve the fail-loud semantic (re-throw
+ * so the run aborts with the original error instead of silently
+ * passing), but surface a `decision: 'error'` span so operators can
+ * see which guardrail misbehaved without scraping stack traces.
+ */
+function emitGuardrailErrorSpan(
+  agentSpan: Span | null,
+  guardrailName: string,
+  hookPoint: 'input' | 'output' | 'tool',
+  error: unknown,
+): void {
+  if (!agentSpan) return;
+  const span = agentSpan.addChild(`guardrail:${guardrailName}`, {
+    kind: 'guardrail',
+    guardrailName,
+    hookPoint,
+    decision: 'error',
+    error: error instanceof Error ? error.message : String(error),
+  });
+  span.end();
+}
+
+/**
  * Run all input guardrails in declaration order. Returns the (possibly
  * rewritten) transcript. Throws on block / escalate.
  */
@@ -190,7 +214,13 @@ export async function runInputGuardrails(
 ): Promise<readonly AgentMessage[]> {
   let current = transcript;
   for (const guardrail of guardrails) {
-    const verdict = await guardrail.check(current, ctx);
+    let verdict: GuardrailVerdict;
+    try {
+      verdict = await guardrail.check(current, ctx);
+    } catch (err) {
+      emitGuardrailErrorSpan(agentSpan, guardrail.name, 'input', err);
+      throw err;
+    }
     emitGuardrailSpan(agentSpan, guardrail.name, 'input', verdict);
     if (verdict.action === 'allow') {
       continue;
@@ -226,7 +256,13 @@ export async function runOutputGuardrails(
 ): Promise<AgentMessage> {
   let current = output;
   for (const guardrail of guardrails) {
-    const verdict = await guardrail.check(current, ctx);
+    let verdict: GuardrailVerdict;
+    try {
+      verdict = await guardrail.check(current, ctx);
+    } catch (err) {
+      emitGuardrailErrorSpan(agentSpan, guardrail.name, 'output', err);
+      throw err;
+    }
     emitGuardrailSpan(agentSpan, guardrail.name, 'output', verdict);
     if (verdict.action === 'allow') {
       continue;
@@ -275,7 +311,13 @@ export async function runToolBeforeGuardrails(
   let currentCall = call;
   for (const guardrail of guardrails) {
     if (!guardrail.beforeTool) continue;
-    const verdict = await guardrail.beforeTool(currentCall, ctx);
+    let verdict: GuardrailVerdict;
+    try {
+      verdict = await guardrail.beforeTool(currentCall, ctx);
+    } catch (err) {
+      emitGuardrailErrorSpan(agentSpan, guardrail.name, 'tool', err);
+      throw err;
+    }
     emitGuardrailSpan(agentSpan, guardrail.name, 'tool', verdict);
     if (verdict.action === 'allow') continue;
     if (verdict.action === 'rewrite') {
@@ -318,7 +360,13 @@ export async function runToolAfterGuardrails(
   let current = result;
   for (const guardrail of guardrails) {
     if (!guardrail.afterTool) continue;
-    const verdict = await guardrail.afterTool(call, current, ctx);
+    let verdict: GuardrailVerdict;
+    try {
+      verdict = await guardrail.afterTool(call, current, ctx);
+    } catch (err) {
+      emitGuardrailErrorSpan(agentSpan, guardrail.name, 'tool', err);
+      throw err;
+    }
     emitGuardrailSpan(agentSpan, guardrail.name, 'tool', verdict);
     if (verdict.action === 'allow') continue;
     if (verdict.action === 'rewrite') {

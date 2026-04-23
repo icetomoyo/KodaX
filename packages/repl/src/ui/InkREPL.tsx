@@ -1266,6 +1266,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
   // FEATURE_066: Session-scoped denial tracker for permission hardening
   const denialTrackerRef = React.useRef(createDenialTracker());
+  // MED-6: `addHistoryItem` bypasses the managed-foreground layering
+  // logic. For info-style items (type: 'info') that can fire while a
+  // managed worker owns the foreground turn, route through
+  // `emitInfoItemToCorrectLayer` instead — see its JSDoc (~L1510) for
+  // the hard rule. Plain assistant / tool_group / thinking items are
+  // fine to `addHistoryItem` directly.
   const { addHistoryItem, clearHistory: clearUIHistory, setSessionId } = useUIActions();
   const historyRef = useRef(history);
   const persistedUiHistoryRef = useRef<KodaXSessionUiHistoryItem[]>(
@@ -1522,6 +1528,28 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
    * that land at round boundaries (e.g. "No response text produced")
    * are NOT candidates — by that point the managed foreground is
    * already cleared.
+   *
+   * --------------------------------------------------------------
+   * HARD RULE (MED-6):
+   *
+   * Any info-style history item emitted while
+   * `managedForegroundOwnerRef.current.workerId != null` MUST go
+   * through this helper. Do NOT add new
+   * `addHistoryItem({ type: 'info', ... })` call sites that can
+   * fire during managed foreground without first reading this rule.
+   *
+   * Confirmed routed sources (keep in sync when adding new ones):
+   *   - onCompact / onProviderRateLimit /
+   *     onScoutSuspiciousCompletion (107bcb2)
+   *   - queue-limit info (a829d0b)
+   *   - retry / provider-recovery / confirm-result
+   *     (63330bc / 09cd7ae / pre-existing)
+   *
+   * Violating this rule resurfaces the "info squeezed under user
+   * prompt instead of inline with worker output" bug; grep reviewers
+   * should flag any new `addHistoryItem({ type: 'info' })` sites
+   * that could fire mid-worker-turn.
+   * --------------------------------------------------------------
    */
   const emitInfoItemToCorrectLayer = useCallback((
     item: { type: "info"; text: string; icon?: string },

@@ -147,4 +147,81 @@ describe('P2b write-turn max_output_tokens cap', () => {
     const provider = makeStubProvider(65_536);
     expect(fn(provider, 'zhipu-coding', [{ name: 'write' }])).toBe(false);
   });
+
+  // MED-7: multi-turn persistence contract. The helper is stateless; it
+  // makes decisions purely from the provider's current effective-tokens
+  // state. These tests pin down what that implies across turns.
+
+  it('MED-7: is idempotent when called twice in a row without caller cleanup', async () => {
+    // Simulates a buggy caller that forgets to clear the override: the
+    // second call must NOT further narrow the already-capped budget.
+    const fn = loadHelper();
+    const provider = makeStubProvider(65_536);
+
+    const firstApplied = fn(provider, 'zhipu-coding', [{ name: 'write' }]);
+    expect(firstApplied).toBe(true);
+    expect(provider.override).toBe(8192);
+
+    // No reset between calls — effective is now 8192 (== cap).
+    const secondApplied = fn(provider, 'zhipu-coding', [{ name: 'write' }]);
+    expect(secondApplied).toBe(false);
+    expect(provider.override).toBe(8192); // unchanged
+  });
+
+  it('MED-7: re-applies on the next write-turn after caller clears the override', async () => {
+    // Simulates the real adapter loop: finally-block clears override at
+    // end of each adapter invocation, so the next write-turn sees the
+    // baseline again and should re-apply the cap.
+    const fn = loadHelper();
+    const provider = makeStubProvider(65_536);
+
+    expect(fn(provider, 'zhipu-coding', [{ name: 'write' }])).toBe(true);
+    expect(provider.override).toBe(8192);
+
+    // Mirror the real caller's finally-block cleanup.
+    provider.setMaxOutputTokensOverride(undefined);
+    expect(provider.override).toBeUndefined();
+
+    expect(fn(provider, 'zhipu-coding', [{ name: 'write' }])).toBe(true);
+    expect(provider.override).toBe(8192);
+  });
+
+  it('MED-7: a non-write turn between two write turns leaves the override untouched', async () => {
+    // Real caller-level contract: non-write turns don't touch the
+    // override at all. If a prior write turn left override=8192 (via a
+    // bug in the caller's finally block) the non-write turn is a pure
+    // no-op — it neither clears nor narrows.
+    const fn = loadHelper();
+    const provider = makeStubProvider(65_536);
+
+    // Write turn 1: cap applied.
+    expect(fn(provider, 'zhipu-coding', [{ name: 'write' }])).toBe(true);
+    expect(provider.override).toBe(8192);
+
+    // Intervening non-write turn (helper returns false, override stays).
+    expect(fn(provider, 'zhipu-coding', [{ name: 'read' }, { name: 'bash' }])).toBe(false);
+    expect(provider.override).toBe(8192);
+
+    // Caller cleans up between adapter invocations.
+    provider.setMaxOutputTokensOverride(undefined);
+
+    // Write turn 2: cap applied again.
+    expect(fn(provider, 'zhipu-coding', [{ name: 'edit' }])).toBe(true);
+    expect(provider.override).toBe(8192);
+  });
+
+  it('MED-7: with a simulated active L4-escalation override (64K), a write turn still narrows to 8K', async () => {
+    // Documents the intentional behavior: if a stale override from L4
+    // escalation somehow survived into a new write-turn (it shouldn't,
+    // but this pins the contract), the helper WILL narrow back to the
+    // write-turn cap because `effective > cap`. Prevents accidental
+    // regressions where someone changes the comparison direction.
+    const fn = loadHelper();
+    const provider = makeStubProvider(65_536);
+    provider.setMaxOutputTokensOverride(64_000); // mimic L4 escalation leak
+
+    const applied = fn(provider, 'zhipu-coding', [{ name: 'write' }]);
+    expect(applied).toBe(true);
+    expect(provider.override).toBe(8192);
+  });
 });

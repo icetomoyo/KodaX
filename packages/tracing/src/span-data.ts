@@ -85,8 +85,9 @@ export interface GuardrailSpanData {
   readonly kind: 'guardrail';
   readonly guardrailName: string;
   readonly hookPoint: 'input' | 'output' | 'tool';
-  readonly decision: 'pass' | 'veto' | 'rewrite';
+  readonly decision: 'pass' | 'veto' | 'rewrite' | 'error';
   readonly reason?: string;
+  readonly error?: string;
 }
 
 export interface EvidenceSpanData {
