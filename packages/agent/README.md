@@ -60,20 +60,17 @@ console.log(`Estimated tokens: ${tokenCount}`);
 
 ### 消息压缩
 
+> v0.7.27 起，原 `compactMessages()` 工具函数已移除。请使用 `@kodax/core` 的可插拔 `CompactionPolicy`：`DefaultSummaryCompaction`（通用）或 `LineageCompaction`（coding preset，来自 `@kodax/session-lineage`）。
+
 ```typescript
-import { compactMessages, KodaXMessage } from '@kodax/agent';
+import { DefaultSummaryCompaction } from '@kodax/core';
 
-const messages: KodaXMessage[] = [
-  // ... 大量消息
-];
-
-// 当消息过多时，压缩旧消息
-const compacted = compactMessages(messages, {
-  maxTokens: 100000,
-  preserveRecent: 10,
+// 定义可插拔的 compaction policy。Agent loop 在 round 边界调用
+// policy.shouldCompact(...)，需要时再调用 policy.compact(...)。
+const policy = new DefaultSummaryCompaction({
+  thresholdRatio: 0.8,  // 到达 budget 的 80% 时触发
+  keepRecent: 10,       // 保留最近 10 条 message entry
 });
-
-console.log(`Compacted from ${messages.length} to ${compacted.length} messages`);
 ```
 
 ## API 导出
@@ -83,7 +80,7 @@ console.log(`Compacted from ${messages.length} to ${compacted.length} messages`)
 export { SessionManager, KodaXSessionStorage };
 
 // 消息处理
-export { compactMessages, extractTextContent };
+export { extractTextContent };
 
 // Token 估算
 export { estimateTokens };

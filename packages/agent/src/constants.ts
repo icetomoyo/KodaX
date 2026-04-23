@@ -9,8 +9,6 @@
 export const KODAX_MAX_TOKENS = 32768;
 export const KODAX_DEFAULT_TIMEOUT = 60;
 export const KODAX_HARD_TIMEOUT = 300;
-export const KODAX_COMPACT_THRESHOLD = 100000;
-export const KODAX_COMPACT_KEEP_RECENT = 10;
 
 // ============== 重试配置 ==============
 

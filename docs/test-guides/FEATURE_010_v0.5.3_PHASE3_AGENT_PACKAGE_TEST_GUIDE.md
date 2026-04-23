@@ -1,5 +1,7 @@
 # Feature 010 Phase 3: @kodax/agent 包 - 人工测试指导
 
+> **归档说明（v0.7.27）**：本指南对应 v0.5.3 验收。其中验证 `compactMessages()` 与常量 `KODAX_COMPACT_THRESHOLD` / `KODAX_COMPACT_KEEP_RECENT` 的用例（TC 中涉及压缩与常量导出的部分）已随 FEATURE_086 在 v0.7.27 移除。等价能力请测 `@kodax/core` 的 `DefaultSummaryCompaction` 和 `@kodax/session-lineage` 的 `LineageCompaction`（见 [packages/core/src/compaction.test.ts](../../packages/core/src/compaction.test.ts)、[packages/session-lineage/src/compaction.test.ts](../../packages/session-lineage/src/compaction.test.ts)）。本文档其余部分作为历史记录保留。
+
 ## 功能概述
 
 **功能名称**: Agent 包提取

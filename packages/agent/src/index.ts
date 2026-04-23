@@ -82,8 +82,6 @@ export {
   KODAX_MAX_TOKENS,
   KODAX_DEFAULT_TIMEOUT,
   KODAX_HARD_TIMEOUT,
-  KODAX_COMPACT_THRESHOLD,
-  KODAX_COMPACT_KEEP_RECENT,
   KODAX_MAX_RETRIES,
   KODAX_RETRY_BASE_DELAY,
   KODAX_MAX_INCOMPLETE_RETRIES,
@@ -121,11 +119,6 @@ export {
   estimateTokens,
   countTokens,
 } from './tokenizer.js';
-
-// ============== Messages ==============
-export {
-  compactMessages,
-} from './messages.js';
 
 // ============== Compaction ==============
 export type {

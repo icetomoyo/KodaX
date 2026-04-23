@@ -8,6 +8,15 @@ All notable changes to this project will be documented in this file.
 
 <!-- last-sync: HEAD -->
 
+### Removed
+- **FEATURE_086 子任务 B 第 1 条 — `compactMessages()` 及相关常量移除**（v0.7.23 已标 `@deprecated`，计划于 v0.7.27 移除）
+  - 删除 `packages/agent/src/messages.ts`（函数定义）
+  - 从 `@kodax/agent` / `@kodax/coding` 的 public export 移除 `compactMessages`
+  - 同步移除孤儿常量 `KODAX_COMPACT_THRESHOLD` / `KODAX_COMPACT_KEEP_RECENT`（仅被原函数使用，新机制的等价配置在 `DefaultSummaryCompactionOptions` 的 `thresholdRatio` / `keepRecent` 字段）
+  - 迁移指南：coding preset 使用 `@kodax/session-lineage` 的 `LineageCompaction`（保留 FEATURE_072 post-compact reconstruction）；通用 agent 使用 `@kodax/core` 的 `DefaultSummaryCompaction`。两者共享 `CompactionPolicy` 接口（FEATURE_081, v0.7.23）
+  - 安全保障：`packages/core/src/compaction.test.ts` (16 tests) + `packages/session-lineage/src/compaction.test.ts` (5 tests) 覆盖新路径；生产 compaction 自 v0.7.26 已走 Runner-driven `compactionHook`
+- 文档同步：`README.md` / `packages/agent/README.md` 的代码示例从 `compactMessages` 改为 `DefaultSummaryCompaction`；`docs/test-guides/FEATURE_010_v0.5.3_PHASE3_AGENT_PACKAGE_TEST_GUIDE.md` 加顶端归档提示
+
 ---
 
 ## [0.7.26] - 2026-04-23

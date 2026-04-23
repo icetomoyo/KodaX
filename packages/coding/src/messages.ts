@@ -1,5 +1,4 @@
 export {
-  compactMessages,
   extractArtifactLedger,
   mergeArtifactLedger,
   type CompactionAnchor,

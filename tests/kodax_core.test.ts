@@ -21,7 +21,6 @@ import {
   getProvider,
   runKodaX,
   KodaXClient,
-  compactMessages,
   executeTool,
   KodaXToolExecutionContext,
   KodaXMessage,
@@ -138,10 +137,6 @@ describe('Core Module Exports', () => {
 
   it('should export getProvider function', () => {
     expect(typeof getProvider).toBe('function');
-  });
-
-  it('should export compactMessages function', () => {
-    expect(typeof compactMessages).toBe('function');
   });
 });
 
@@ -407,19 +402,6 @@ describe('Provider System', () => {
     const provider = getProvider('zhipu-coding');
     expect(provider).toBeDefined();
     expect(provider.name).toBe('zhipu-coding');
-  });
-});
-
-// ============== Compact Messages 测试 ==============
-
-describe('Compact Messages', () => {
-  it('should return same messages if under threshold', () => {
-    const messages = [
-      { role: 'user' as const, content: 'Hello' },
-      { role: 'assistant' as const, content: 'Hi!' },
-    ];
-    const compacted = compactMessages(messages);
-    expect(compacted).toEqual(messages);
   });
 });
 

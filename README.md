@@ -188,7 +188,7 @@ It is not CLI-only. REPL mode supports the same repo-intelligence runtime modes.
 The most direct premium-native REPL flow is:
 
 ```powershell
-Set-Location C:\Works\GitWorks\KodaX-author\KodaX
+Set-Location <path-to-your-KodaX-clone>
 kodax --repo-intelligence premium-native --repo-intelligence-trace
 ```
 
@@ -266,7 +266,7 @@ For author same-parent local development, it is still valid to point `repointelB
 {
   "repoIntelligenceMode": "premium-native",
   "repointelEndpoint": "http://127.0.0.1:47891",
-  "repointelBin": "C:\\Works\\GitWorks\\KodaX-author\\KodaX-private\\packages\\repointel-cli\\dist\\index.js",
+  "repointelBin": "C:\\path\\to\\KodaX-private\\packages\\repointel-cli\\dist\\index.js",
   "repoIntelligenceTrace": true
 }
 ```
@@ -287,21 +287,21 @@ Copy it to `~/.kodax/config.json`, then adjust provider and repo-intelligence se
 
 ### Local same-parent development
 
-The intended phase-1 development layout is:
+The intended phase-1 development layout is to clone both repos under the same parent directory, for example:
 
-- Public repo: `C:\Works\GitWorks\KodaX-author\KodaX`
-- Private repo: `C:\Works\GitWorks\KodaX-author\KodaX-private`
+- Public repo: `<parent>/KodaX`
+- Private repo: `<parent>/KodaX-private`
 
 Typical local workflow:
 
 ```powershell
 # 1. Build the public repo
-Set-Location C:\Works\GitWorks\KodaX-author\KodaX
+Set-Location <parent>\KodaX
 npm install
 npm run build
 
 # 2. Build the private premium repo
-Set-Location C:\Works\GitWorks\KodaX-author\KodaX-private
+Set-Location <parent>\KodaX-private
 npm install
 npm run build
 
@@ -309,7 +309,7 @@ npm run build
 node .\packages\repointel-cli\dist\index.js warm "{}"
 
 # 4. Run KodaX in premium-native mode
-Set-Location C:\Works\GitWorks\KodaX-author\KodaX
+Set-Location <parent>\KodaX
 npm run dev -- --repo-intelligence premium-native --repo-intelligence-trace
 ```
 
@@ -807,9 +807,9 @@ Generic agent framework with session management:
 import {
   generateSessionId,
   estimateTokens,
-  compactMessages,
   type KodaXMessage
 } from '@kodax/agent';
+import { DefaultSummaryCompaction } from '@kodax/core';
 
 // Generate session ID
 const sessionId = generateSessionId();
@@ -817,19 +817,18 @@ const sessionId = generateSessionId();
 // Estimate tokens
 const tokens = estimateTokens(messages);
 
-// Compact messages when context is too long
-if (tokens > 100000) {
-  const compacted = await compactMessages(messages, {
-    threshold: 75000,
-    keepRecent: 20
-  });
-}
+// Pluggable compaction policy (FEATURE_081, v0.7.23).
+// Call `policy.shouldCompact(...)` at round boundaries, then `policy.compact(...)`.
+const policy = new DefaultSummaryCompaction({
+  thresholdRatio: 0.8,
+  keepRecent: 10,
+});
 ```
 
 **Key Features**:
 - Session ID generation and title extraction
 - Token estimation (tiktoken-based)
-- Message compaction with AI summarization
+- Pluggable `CompactionPolicy` + `DefaultSummaryCompaction` (generic) / `LineageCompaction` (coding preset)
 - Generic types for messages and tools
 
 ### @kodax/skills - Skills System
