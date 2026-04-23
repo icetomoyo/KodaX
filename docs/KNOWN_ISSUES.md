@@ -66,11 +66,90 @@ _Last Updated: 2026-04-20_
 | 119 | High | Open | Scout 升级 H0→H1 后残留 pre-Scout mutationSurface — Generator 被错误锁为 docs-only | v0.7.20 | - | 2026-04-19 | - |
 | 120 | High | Open | Skill / Plan-mode 调用路径下流式注入 prompt 失效 — `canQueueFollowUps` 未开启 | 一直存在 | - | 2026-04-20 | - |
 | 121 | High | Resolved | 超长粘贴（>500 字符）导致用户 prompt 在历史中视觉假消失 + 粘贴后 500ms+ 键击延迟 | v0.7.0+ | v0.7.24 | 2026-04-20 | 2026-04-20 |
+| 122 | Medium | Open | edit / multi_edit 错误消息在 v0.7.26 过度精简 — 丢失关键信息载体导致 LLM 恢复失败 | v0.7.26 | - | 2026-04-23 | - |
 
 ---
 
 ## Issue Details
 <!-- Full details for each issue - REQUIRED for all issues -->
+---
+### 122: edit / multi_edit 错误消息在 v0.7.26 过度精简 — 丢失关键信息载体导致 LLM 恢复失败
+
+- **Priority**: Medium
+- **Status**: Open
+- **Introduced**: v0.7.26
+- **Fixed**: -
+- **Created**: 2026-04-23
+- **Resolved**: -
+- **Target Version**: v0.7.27（修复已 commit `4423e0d` 于 KodaX 分支，等待随 v0.7.27 发布）
+
+#### Current Behavior
+
+v0.7.26 在 commit `ef085fc` 里为降低 token 开销对 `edit` / `multi_edit` 的错误消息和工具描述做了精简，但与此同时也把若干**信息载体**（不是脚手架）砍掉了。对**强模型**（Claude Opus / Sonnet / GPT-4 级）影响小，但对**中档模型做 Scout**（Kimi / MiniMax / Zhipu 的 capped-budget 档，正是 AMA 里 Scout 的常见模型）会观察到错误消息不足以帮它自恢复：
+
+- **ambiguous-match 缺具体示例**：原消息 `"(a heading, function name, or distinctive comment)"` 被砍 → LLM 不知道什么算"nearby unique context"，可能选随意文本作为 widen 的依据
+- **`"Do NOT just shorten"` 的 scope limiter `"just"` 被砍**：变成 `"(Shorter anchors match more, not fewer.)"` 这类范畴判断 → 可能被 LLM 误应用为"任何场景都不要缩短"
+- **not-found 错误丢了第二个备选诊断**：原文里 `"...whitespace drift vs the actual file, OR it was never in the file to begin with"` 的 `OR` 分支被砍 → 当 LLM 实际**幻觉**了 anchor 时，它会无限尝试"再读更宽窗口找精确文本"而永远找不到
+- **anchor-consumed 诊断语气削弱**：原文 `"is present in the original file but was consumed by..."` 告诉 LLM "你的 anchor 本来对了，问题在另一个 edit"；精简版 `"anchor was consumed by ..."` 读起来像普通失败
+- **ANCHOR WARNING 丢了触发语**：原文 `"If later edits need to reference text an earlier edit overlaps..."` 的前置条件被砍 → 规则从"if-then 识别"变成"plain fact"，触发概率下降
+- **UNIQUENESS RULE 丢了具体尺寸和示例**：`"#1 cause"` 框架、`"a 6-line window"` 具体尺寸、`"multi-line block"` 示例都被砍
+
+#### Expected Behavior
+
+错误消息在保持 token 经济的前提下**不丢信息载体**。具体来说，具体示例 / scope limiter / 幻觉备选诊断 / diagnostic framing / 触发条件应该全部保留——纯脚手架（`Either (a) ... or (b) ...` 外壳 / `"on that edit if all matches should change"` 等冗余从句）是可砍的。
+
+一次恢复失败造成的额外 retry 成本（几百至几千 tokens）远大于保留这些信息载体的 per-error 成本（每条错误 <25 tokens）。
+
+#### Reproduction
+
+观察到的触发场景（2026-04-23 实际会话）：
+
+```
+✗ [Scout] multi_edit (failed)
+  edits[1] old_string not found. ...Re-read the file and retry with a stable anchor.
+
+Scout → read - offset=226 - limit=6   # 窄 6 行重读
+
+✗ [Scout] multi_edit (failed)
+  edits[1] matched 2 places. Retry with a unique anchor or set replace_all=true on that edit.
+```
+
+Scout 的 6 行窄重读在整文件里产生歧义 anchor；v0.7.26 的错误消息**既没提示窄读陷阱，也没提示 anchor 可能根本不在文件里**，Scout 只能盲猜继续。
+
+#### Root Cause
+
+Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，整体砍。具体对照：
+
+| 被砍内容 | 作用类别 | 是否该保留 |
+|---|---|---|
+| `Either (a) ... or (b) ...` 枚举外壳 | 脚手架 | 可砍 |
+| `"on that edit if all matches should change"` 从句 | 脚手架 | 可砍 |
+| `"at lines"` → `"lines"` | 脚手架 | 可砍 |
+| `"This aborts the whole batch — no edits have been applied"` | 冗余（tool description 已有） | 可砍 |
+| **`"(a heading, function name, or distinctive comment)"`** | **信息载体** | **必保留** |
+| **`"Do NOT just shorten"` 里的 `just`** | **scope limiter** | **必保留** |
+| **`"OR it was never in the file to begin with"`** | **幻觉备选诊断** | **必保留** |
+| **`"is present in the original file but was consumed"`** | **diagnostic framing** | **必保留** |
+| **ANCHOR WARNING 的 `"If later edits need to reference..."`** | **触发语** | **必保留** |
+| **UNIQUENESS RULE 的 `"#1 cause"` / 具体尺寸 / `"multi-line block"`** | **具体示例** | **必保留** |
+
+#### Proposed Solution
+
+已在 commit `4423e0d`（KodaX 分支本地，未发布）里**选择性回填**所有信息载体，保留所有脚手架的精简。应用对象：`edit.ts` + `multi_edit.ts` + `registry.ts`，并同步更新 `edit.test.ts` / `multi-edit.test.ts` 断言。
+
+- 净开销：4 个错误消息 +~280 chars（平均 +70/条），工具描述 +~130 chars（session 级缓存）
+- 等价 token：每次错误 <25 tokens
+- 验证：29/29 edit+multi_edit 测试绿，`tsc --noEmit` 干净
+
+**关闭条件**：v0.7.27 tag 推出时由 `4423e0d` 随版本发布 → 将本 issue 标为 Resolved，Fixed 字段填 v0.7.27。
+
+#### References
+
+- v0.7.26 原精简 commit: `ef085fc fix(coding): enrich edit / multi_edit errors with locations + narrow-read hints`
+- 回填 commit（本地未发布）: `4423e0d fix(coding): restore information-carrying detail in edit/multi_edit error messages (bundled for v0.7.27)`
+- 相关文件: `packages/coding/src/tools/{edit,multi-edit,registry}.ts` + 对应 `*.test.ts`
+- 原 review 建议（要求"少 token"）：v0.7.26 发布前对话上下文
+
 ---
 ### 121: 超长粘贴（>500 字符）导致用户 prompt 在历史中视觉假消失 + 粘贴后 500ms+ 键击延迟
 
