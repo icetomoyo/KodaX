@@ -248,6 +248,97 @@ describe('multi_edit — input validation', () => {
   });
 });
 
+describe('multi_edit — anchor-consumed-by-prior-edit diagnostic', () => {
+  it('detects when a later edit\'s anchor was swallowed by an earlier edit and gives a targeted hint', async () => {
+    // Mirrors the Scout slide-deck case: edits[0] replaces a region that
+    // includes the SLIDE_22 marker; edits[1] tries to use SLIDE_22 as an
+    // anchor and fails because edits[0] already removed it in memory.
+    const p = await writeFile(
+      'deck.html',
+      [
+        '<!-- SLIDE_20 -->',
+        '<section>slide 20</section>',
+        '<!-- SLIDE_21 -->',
+        '<section>slide 21</section>',
+        '<!-- SLIDE_22 -->',
+        '<section>slide 22</section>',
+      ].join('\n'),
+    );
+    const original = await fs.readFile(p, 'utf-8');
+
+    const result = await toolMultiEdit(
+      {
+        path: p,
+        edits: [
+          {
+            old_string:
+              '<!-- SLIDE_20 -->\n<section>slide 20</section>\n<!-- SLIDE_21 -->\n<section>slide 21</section>\n<!-- SLIDE_22 -->',
+            new_string: '',
+          },
+          {
+            // This anchor was just consumed by edits[0] above.
+            old_string: '<!-- SLIDE_22 -->',
+            new_string: '<!-- SLIDE_22 KEEP -->',
+          },
+        ],
+      },
+      ctx,
+    );
+
+    // Targeted diagnostic
+    expect(result).toContain('edits[1]');
+    expect(result).toContain('consumed by an earlier edit');
+    expect(result).toContain('edits[0..0]');
+    // Atomicity: file unchanged on disk
+    const after = await fs.readFile(p, 'utf-8');
+    expect(after).toBe(original);
+  });
+
+  it('keeps the generic "not found" message when the anchor was never in the file at all', async () => {
+    // The LLM-error case: anchor is simply wrong, no prior-edit involvement.
+    const p = await writeFile('x.txt', 'alpha beta gamma');
+    const result = await toolMultiEdit(
+      {
+        path: p,
+        edits: [
+          { old_string: 'alpha', new_string: 'ALPHA' },
+          // Truly missing — not consumed by the earlier edit.
+          { old_string: 'DEFINITELY_ABSENT', new_string: 'X' },
+        ],
+      },
+      ctx,
+    );
+    expect(result).toContain('edits[1]');
+    expect(result).toContain('not found');
+    expect(result).not.toContain('consumed by an earlier edit');
+  });
+
+  it('does not mistake an ambiguous-in-original anchor as consumed', async () => {
+    // Anchor appears twice in the file; edits[1] without replace_all
+    // would legitimately fail with the "matched N places" message even
+    // before any prior edit was applied. Make sure we still return the
+    // ambiguous-match diagnostic, not the consumed-anchor one.
+    const p = await writeFile(
+      'x.txt',
+      ['TARGET', 'middle', 'TARGET'].join('\n'),
+    );
+    const result = await toolMultiEdit(
+      {
+        path: p,
+        edits: [
+          { old_string: 'middle', new_string: 'MIDDLE' },
+          { old_string: 'TARGET', new_string: 'X' }, // ambiguous
+        ],
+      },
+      ctx,
+    );
+    expect(result).toContain('edits[1]');
+    // Current content still has both TARGETs → ambiguous, not missing
+    expect(result).toContain('matched 2 places');
+    expect(result).not.toContain('consumed by an earlier edit');
+  });
+});
+
 describe('multi_edit — backups', () => {
   it('records the original content in ctx.backups before writing', async () => {
     const p = await writeFile('x.txt', 'ORIGINAL');

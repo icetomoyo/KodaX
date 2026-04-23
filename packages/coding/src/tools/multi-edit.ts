@@ -86,7 +86,7 @@ export async function toolMultiEdit(
   const replacementCounts: number[] = [];
   for (let i = 0; i < edits.length; i += 1) {
     const edit = edits[i]!;
-    const applied = applyOneEdit(runningContent, edit, i);
+    const applied = applyOneEdit(runningContent, edit, i, originalContent);
     if ('error' in applied) {
       return applied.error;
     }
@@ -122,6 +122,7 @@ function applyOneEdit(
   content: string,
   edit: MultiEditOperation,
   index: number,
+  originalContent: string,
 ): { content: string; replacements: number } | { error: string } {
   const { old_string: oldStr, new_string: newStr, replace_all: replaceAll } = edit;
   const exact = countOccurrences(content, oldStr);
@@ -150,6 +151,29 @@ function applyOneEdit(
     };
   }
   if (normalized.status === 'missing') {
+    // Anchor-consumed-by-prior-edit diagnostic. When `index > 0` and the
+    // anchor is present in the original file but gone from the current
+    // running content, the failure is certainly caused by an earlier
+    // edit's replacement range covering this anchor. Give the LLM a
+    // targeted hint instead of the generic "not found" so the retry
+    // doesn't have to guess. This is the "Scout deletes a region that
+    // includes a downstream anchor" mistake (observed in Scout +
+    // multi_edit slide-deck deletion flows).
+    if (index > 0) {
+      const presentInOriginal =
+        countOccurrences(originalContent, oldStr) > 0
+        || findUniqueNormalizedBlockMatch(originalContent, oldStr).status === 'unique';
+      if (presentInOriginal) {
+        return {
+          error:
+            `[Tool Error] multi_edit: edits[${index}] old_string is present in the original file but `
+            + `was consumed by an earlier edit in this batch (edits[0..${index - 1}] replaced a region containing it). `
+            + 'This aborts the whole batch — no edits have been applied. Either '
+            + '(a) shrink the earlier edit so it preserves this anchor, or '
+            + '(b) rewrite this edit to use a different anchor still present after the earlier edits.',
+        };
+      }
+    }
     return {
       error:
         `[Tool Error] multi_edit: edits[${index}] old_string not found. `
