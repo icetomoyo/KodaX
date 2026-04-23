@@ -12,7 +12,8 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createAgent, createHandoff, type Agent } from './agent.js';
+import { createAgent, createHandoff, type Agent, type Guardrail } from './agent.js';
+import type { ToolGuardrail } from './guardrail.js';
 import {
   detectHandoffSignal,
   replaceSystemMessage,
@@ -289,6 +290,54 @@ describe('Runner integration — handoff chain', () => {
     expect(handoffs).toHaveLength(1);
     expect(handoffs[0]!.from).toBe('span-root');
     expect(handoffs[0]!.to).toBe('span-leaf');
+  });
+
+  it('tool guardrail receives the CURRENT agent after handoff (MED-1)', async () => {
+    // Regression guard: before the MED-1 fix, tool-before/after guardrails
+    // received the run's start agent in ctx.agent even after a handoff.
+    // Per comment in runner.ts L313-316, tool hooks must fire per-
+    // invocation against whichever agent is currently active.
+    const agentsSeenByGuardrail: string[] = [];
+    const recordingToolGuardrail: ToolGuardrail = {
+      kind: 'tool',
+      name: 'agent-recorder',
+      beforeTool: async (_call, ctx) => {
+        agentsSeenByGuardrail.push(ctx.agent.name);
+        return { action: 'allow' };
+      },
+    };
+
+    const leafTool = makeEmitTool('emit_done', undefined);
+    const leaf: Agent = createAgent({
+      name: 'med1-leaf',
+      instructions: 'leaf',
+      tools: [leafTool],
+    });
+    const rootTool = makeEmitTool('emit_go', 'med1-leaf');
+    const root: Agent = createAgent({
+      name: 'med1-root',
+      instructions: 'root',
+      tools: [rootTool],
+      handoffs: [createHandoff({ target: leaf, kind: 'continuation' })],
+      guardrails: [recordingToolGuardrail as Guardrail],
+    });
+
+    let turn = 0;
+    const llm = async (_m: unknown, agent: Agent): Promise<RunnerLlmResult> => {
+      turn += 1;
+      if (agent.name === 'med1-root') {
+        return { text: '', toolCalls: [{ id: 'c1', name: 'emit_go', input: {} }] };
+      }
+      if (turn === 2) {
+        return { text: '', toolCalls: [{ id: 'c2', name: 'emit_done', input: {} }] };
+      }
+      return { text: 'done', toolCalls: [] };
+    };
+    await Runner.run(root, 'q', { llm });
+
+    // Guardrail fired twice: once under root (emit_go), once under leaf
+    // (emit_done). The leaf-side call must reflect the handoff target.
+    expect(agentsSeenByGuardrail).toEqual(['med1-root', 'med1-leaf']);
   });
 
   it('final assistant message is from the terminal agent (FEATURE_076 seam)', async () => {

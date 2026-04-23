@@ -14,7 +14,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAgent, type Agent, type Guardrail } from './agent.js';
-import type { ToolGuardrail } from './guardrail.js';
+import type { InputGuardrail, ToolGuardrail } from './guardrail.js';
 import { createInMemorySession } from './session.js';
 import {
   Runner,
@@ -552,6 +552,101 @@ describe('Runner', () => {
       // Both fire even on block so the UI can render the rejection.
       expect(events.map((e) => e.kind)).toEqual(['call', 'result']);
       expect(events[1]!.content).toMatch(/blocked by policy/i);
+    });
+
+    it('skips tool execution when observer.beforeTool returns false (default-blocked message)', async () => {
+      const echoTool = makeLocalEchoTool();
+      let executeCalled = 0;
+      const countingTool: RunnableTool = {
+        ...echoTool,
+        execute: async (input) => {
+          executeCalled += 1;
+          return { content: `echo:${(input as { text?: string }).text ?? ''}` };
+        },
+      };
+      const agent = createAgent({ name: 'obs-false-agent', instructions: 'sys', tools: [countingTool] });
+      let turn = 0;
+      const llm = vi.fn(async (): Promise<RunnerLlmResult> => {
+        turn += 1;
+        if (turn === 1) {
+          return { text: '', toolCalls: [{ id: 'c1', name: 'echo', input: { text: 'x' } }] };
+        }
+        return { text: 'done', toolCalls: [] };
+      });
+      let observedResultContent: string | undefined;
+      await Runner.run(agent, 'hi', {
+        llm,
+        toolObserver: {
+          beforeTool: async () => false,
+          onToolResult: (_call, result) => { observedResultContent = result.content; },
+        },
+      });
+      expect(executeCalled).toBe(0);
+      expect(observedResultContent).toMatch(/blocked by policy/i);
+    });
+
+    it('uses observer.beforeTool string return as the blocked tool result', async () => {
+      const echoTool = makeLocalEchoTool();
+      let executeCalled = 0;
+      const countingTool: RunnableTool = {
+        ...echoTool,
+        execute: async () => { executeCalled += 1; return { content: 'never' }; },
+      };
+      const agent = createAgent({ name: 'obs-str-agent', instructions: 'sys', tools: [countingTool] });
+      let turn = 0;
+      const llm = vi.fn(async (): Promise<RunnerLlmResult> => {
+        turn += 1;
+        if (turn === 1) {
+          return { text: '', toolCalls: [{ id: 'c1', name: 'echo', input: { text: 'x' } }] };
+        }
+        return { text: 'done', toolCalls: [] };
+      });
+      let observedResultContent: string | undefined;
+      await Runner.run(agent, 'hi', {
+        llm,
+        toolObserver: {
+          beforeTool: async () => 'custom blocker reason',
+          onToolResult: (_call, result) => { observedResultContent = result.content; },
+        },
+      });
+      expect(executeCalled).toBe(0);
+      expect(observedResultContent).toBe('custom blocker reason');
+    });
+  });
+
+  describe('input guardrail / session parity (HIGH-1)', () => {
+    it('records the post-guardrail user message in the session, not the raw input', async () => {
+      // Input guardrail rewrites "raw" → "REWRITTEN". Parity with the
+      // output side: session must capture what the LLM actually saw, not
+      // the original user input.
+      const rewritingGuardrail: InputGuardrail = {
+        kind: 'input',
+        name: 'rewriter',
+        check: async (transcript) => ({
+          action: 'rewrite',
+          payload: transcript.map((m) =>
+            m.role === 'user' ? { ...m, content: 'REWRITTEN' } : m,
+          ),
+        }),
+      };
+      const agent = createAgent({
+        name: 'hi-guard',
+        instructions: 'sys',
+        guardrails: [rewritingGuardrail as Guardrail],
+      });
+      const session = createInMemorySession();
+      await Runner.run(agent, 'raw', { llm: async () => 'ok', session });
+      const captured: Array<{ role: string; content: unknown }> = [];
+      for await (const entry of session.entries()) {
+        if (entry.type === 'message') {
+          const p = entry.payload as { role: string; content: unknown };
+          captured.push({ role: p.role, content: p.content });
+        }
+      }
+      expect(captured).toEqual([
+        { role: 'user', content: 'REWRITTEN' },
+        { role: 'assistant', content: 'ok' },
+      ]);
     });
   });
 

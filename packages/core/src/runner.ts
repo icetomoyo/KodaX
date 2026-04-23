@@ -331,9 +331,16 @@ async function genericRun<TData>(
     transcript = [...inspected];
   }
 
+  // Parity with the output-guardrail side: session records what the LLM
+  // actually saw (post-guardrail), not the raw input. If an input
+  // guardrail rewrote the transcript, the rewrite is what subsequent
+  // iterations operate on; --resume / Scout replay / audit consumers
+  // must see the same shape on both ends.
   if (opts.session) {
-    for (const message of userMessages) {
-      await appendMessageEntry(opts.session, message);
+    for (const message of transcript) {
+      if (message.role === 'user') {
+        await appendMessageEntry(opts.session, message);
+      }
     }
   }
 
@@ -402,10 +409,14 @@ async function genericRun<TData>(
     const executeOneCall = async (index: number): Promise<void> => {
       let call = toolCalls[index]!;
       if (guardrailSlots.tool.length > 0) {
+        // Tool guardrails are per-invocation (comment L313-316): the
+        // active agent may have changed via handoff, so the hook must
+        // see the CURRENT agent, not the run's start agent. Input /
+        // output guardrails keep run-scoped `guardrailCtx` as designed.
         const beforeOutcome = await runToolBeforeGuardrails(
           call,
           guardrailSlots.tool,
-          guardrailCtx,
+          { ...guardrailCtx, agent: currentAgent },
           agentSpan,
         );
         if (beforeOutcome.kind === 'block') {
@@ -452,11 +463,14 @@ async function genericRun<TData>(
         agentSpan,
       });
       if (guardrailSlots.tool.length > 0) {
+        // Per-invocation: pass the CURRENT agent (may differ from
+        // startAgent after handoff). Same reasoning as the beforeTool
+        // side above.
         result = await runToolAfterGuardrails(
           call,
           result,
           guardrailSlots.tool,
-          guardrailCtx,
+          { ...guardrailCtx, agent: currentAgent },
           agentSpan,
         );
       }
@@ -500,8 +514,20 @@ async function genericRun<TData>(
         if (compacted && compacted !== transcript) {
           transcript = [...compacted];
         }
-      } catch {
-        // Ignore — compaction failure must never abort the run.
+      } catch (error) {
+        // Compaction failure must never abort the run, but silent catch
+        // loses too much signal — compaction is a known bug-surface area
+        // (see CHANGELOG M3 post-compact reinjection). Surface the error
+        // as a compaction span so operators notice the hook misbehaving.
+        agentSpan?.addChild('compaction:hook-error', {
+          kind: 'compaction',
+          policyName: 'hook',
+          tokensUsed: 0,
+          budget: 0,
+          replacedMessageCount: 0,
+          summaryLength: 0,
+          error: error instanceof Error ? error.message : String(error),
+        }).end();
       }
     }
 
