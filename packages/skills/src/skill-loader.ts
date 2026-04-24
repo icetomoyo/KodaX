@@ -7,125 +7,19 @@
 
 import { readFile, readdir } from 'fs/promises';
 import { join, relative } from 'path';
-import YAML from 'yaml';
 import type {
   Skill,
-  SkillHook,
   SkillHooks,
   SkillMetadata,
   SkillFile,
   SkillFrontmatter,
   SkillSource,
 } from './types.js';
-
-// === YAML Frontmatter Parsing ===
-
-/**
- * Sanitize YAML content that may contain non-standard formats
- * E.g., unquoted strings with colons
- */
-function sanitizeYaml(content: string): string {
-  // Handle description fields that may contain colons
-  // Convert inline colons to block scalar format
-  const lines = content.split('\n');
-  const result: string[] = [];
-
-  for (const line of lines) {
-    const colonIndex = line.indexOf(':');
-    if (colonIndex > 0) {
-      const key = line.slice(0, colonIndex).trim();
-      const value = line.slice(colonIndex + 1).trim();
-
-      // Check if value contains unquoted colons
-      if (
-        value.includes(':') &&
-        !value.startsWith('"') &&
-        !value.startsWith("'") &&
-        !value.startsWith('[') &&
-        !value.startsWith('|') &&
-        !value.startsWith('>')
-      ) {
-        // Convert to block scalar format
-        result.push(`${key}: |-`);
-        result.push(`  ${value}`);
-        continue;
-      }
-    }
-    result.push(line);
-  }
-
-  return result.join('\n');
-}
-
-function normalizeAllowedTools(value: unknown): string | undefined {
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : undefined;
-  }
-
-  if (Array.isArray(value)) {
-    const normalized = value
-      .map((item) => String(item).trim())
-      .filter((item) => item.length > 0);
-    return normalized.length > 0 ? normalized.join(', ') : undefined;
-  }
-
-  return undefined;
-}
-
-function normalizeHook(value: unknown): SkillHook | undefined {
-  if (typeof value === 'string') {
-    const command = value.trim();
-    return command ? { command } : undefined;
-  }
-
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    const record = value as Record<string, unknown>;
-    const command = typeof record.command === 'string' ? record.command.trim() : '';
-    if (!command) {
-      return undefined;
-    }
-
-    const matcher = typeof record.matcher === 'string' && record.matcher.trim()
-      ? record.matcher.trim()
-      : undefined;
-
-    return { command, matcher };
-  }
-
-  return undefined;
-}
-
-function normalizeHookList(value: unknown): SkillHook[] | undefined {
-  if (value == null) {
-    return undefined;
-  }
-
-  const items = Array.isArray(value) ? value : [value];
-  const normalized = items
-    .map((item) => normalizeHook(item))
-    .filter((item): item is SkillHook => item !== undefined);
-
-  return normalized.length > 0 ? normalized : undefined;
-}
-
-function normalizeHooks(value: unknown): SkillHooks | undefined {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return undefined;
-  }
-
-  const record = value as Record<string, unknown>;
-  const hooks: SkillHooks = {};
-
-  for (const eventName of ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop', 'SubagentStop', 'Notification'] as const) {
-    const normalized = normalizeHookList(record[eventName]);
-    if (normalized) {
-      hooks[eventName] = normalized;
-    }
-  }
-
-  return Object.keys(hooks).length > 0 ? hooks : undefined;
-}
+import {
+  normalizeAllowedToolsString,
+  normalizeYamlHookMap,
+  parseYamlFrontmatter,
+} from './shared/yaml.js';
 
 /**
  * Parse SKILL.md file with YAML frontmatter
@@ -134,48 +28,10 @@ export function parseSkillMarkdown(content: string): {
   frontmatter: SkillFrontmatter;
   body: string;
 } {
-  // Remove BOM and normalize line endings to LF - 移除 BOM 并统一换行符为 LF
-  const normalizedContent = content
-    .replace(/^\uFEFF/, '')
-    .replace(/\r\n/g, '\n')  // CRLF → LF (Windows)
-    .replace(/\r/g, '\n')    // CR → LF (old Mac)
-    .trimStart();
-
-  // Check for frontmatter markers
-  if (!normalizedContent.startsWith('---\n')) {
-    throw new Error('Invalid SKILL.md: missing YAML frontmatter');
-  }
-
-  // Find closing marker (handle both \n---\n and \n---$ at end of file)
-  let closeIndex = normalizedContent.indexOf('\n---\n', 4);
-  if (closeIndex === -1) {
-    // Try end of file marker
-    const endMarkerIndex = normalizedContent.indexOf('\n---', 4);
-    if (endMarkerIndex !== -1 && endMarkerIndex === normalizedContent.length - 4) {
-      closeIndex = endMarkerIndex;
-    }
-  }
-  if (closeIndex === -1) {
-    throw new Error('Invalid SKILL.md: unclosed YAML frontmatter');
-  }
-
-  const yamlContent = normalizedContent.slice(4, closeIndex);
-  const body = normalizedContent.slice(closeIndex + 5).trim();
-
-  // Try parsing with original content first
-  let parsed: unknown;
-  try {
-    parsed = YAML.parse(yamlContent) ?? {};
-  } catch {
-    // Try with sanitized content
-    parsed = YAML.parse(sanitizeYaml(yamlContent)) ?? {};
-  }
-
-  if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+  const [parsedRecord, body] = parseYamlFrontmatter(content, { throwOnMissing: true });
+  if (!parsedRecord) {
     throw new Error('Invalid SKILL.md: YAML frontmatter must be an object');
   }
-
-  const parsedRecord = parsed as Record<string, unknown>;
 
   // Validate required fields
   if (!parsedRecord.name || typeof parsedRecord.name !== 'string') {
@@ -191,12 +47,12 @@ export function parseSkillMarkdown(content: string): {
     description: parsedRecord.description,
     disableModelInvocation: parsedRecord['disable-model-invocation'] === true,
     userInvocable: parsedRecord['user-invocable'] !== false, // Default true
-    allowedTools: normalizeAllowedTools(parsedRecord['allowed-tools']),
+    allowedTools: normalizeAllowedToolsString(parsedRecord['allowed-tools']),
     context: parsedRecord.context === 'fork' ? 'fork' : undefined,
     agent: typeof parsedRecord.agent === 'string' ? parsedRecord.agent : undefined,
     argumentHint: typeof parsedRecord['argument-hint'] === 'string' ? parsedRecord['argument-hint'] : undefined,
     model: typeof parsedRecord.model === 'string' ? parsedRecord.model : undefined,
-    hooks: normalizeHooks(parsedRecord.hooks),
+    hooks: normalizeYamlHookMap(parsedRecord.hooks) as SkillHooks | undefined,
     license: typeof parsedRecord.license === 'string' ? parsedRecord.license : undefined,
     compatibility: typeof parsedRecord.compatibility === 'string' ? parsedRecord.compatibility : undefined,
     metadata: parsedRecord.metadata && typeof parsedRecord.metadata === 'object' && !Array.isArray(parsedRecord.metadata)

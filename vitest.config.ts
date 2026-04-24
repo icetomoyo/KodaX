@@ -19,6 +19,7 @@ export default defineConfig({
   plugins: [stripShebang()],
   resolve: {
     alias: {
+      '@kodax/skills/shared/yaml': resolveFromRoot('packages', 'skills', 'src', 'shared', 'yaml.ts'),
       '@kodax/ai': resolveFromRoot('packages', 'ai', 'src', 'index.ts'),
       '@kodax/agent': resolveFromRoot('packages', 'agent', 'src', 'index.ts'),
       '@kodax/coding': resolveFromRoot('packages', 'coding', 'src', 'index.ts'),

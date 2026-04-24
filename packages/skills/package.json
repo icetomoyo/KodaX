@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./shared/yaml": {
+      "types": "./dist/shared/yaml.d.ts",
+      "import": "./dist/shared/yaml.js"
     }
   },
   "scripts": {
