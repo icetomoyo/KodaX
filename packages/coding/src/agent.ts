@@ -2899,7 +2899,7 @@ export async function runKodaX(
   }
 }
 
-async function buildAutoRepoIntelligenceContext(
+export async function buildAutoRepoIntelligenceContext(
   options: KodaXOptions,
   reasoningPlan: ReasoningPlan,
   isNewSession: boolean,

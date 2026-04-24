@@ -61,6 +61,7 @@ import {
 
 import { resolveProvider } from '../providers/index.js';
 import {
+  buildAutoRepoIntelligenceContext,
   bucketProviderPayloadSize,
   describeTransientProviderRetry,
   emitResilienceDebug,
@@ -310,6 +311,17 @@ export interface RunnerChainPromptContext {
   ) => KodaXTaskToolPolicy | undefined;
   /** Optional role-context factory for skillMap / scoutScope / childWriteReviewPrompt injection. */
   readonly contextFactory?: RolePromptContextFactory;
+  /**
+   * v0.7.27 FEATURE_086 parity restore — pre-computed repo-intelligence
+   * context block (Repository Overview / Changed Scope / Active Module /
+   * Impact / Fallback Guidance / Premium Context sections). Built once
+   * per `runManagedTaskViaRunner` entry via `buildAutoRepoIntelligenceContext`
+   * and prepended to every role's system prompt so Scout/Planner/
+   * Generator/Evaluator see repo context from turn 1, matching the
+   * legacy `runKodaX` behaviour that the Runner-driven path (FEATURE_084)
+   * inadvertently dropped.
+   */
+  readonly repoIntelligenceContext?: string;
 }
 
 /**
@@ -415,7 +427,7 @@ function resolveRoleInstructions(
   const decision = typeof promptContext.decision === 'function'
     ? promptContext.decision()
     : promptContext.decision;
-  return createRolePrompt(
+  const basePrompt = createRolePrompt(
     role,
     promptContext.prompt,
     decision,
@@ -427,6 +439,16 @@ function resolveRoleInstructions(
     undefined, // workerId — unused by createRolePrompt body
     false, // isTerminalAuthority — Runner-driven path always runs with Evaluator
   );
+  // v0.7.27 FEATURE_086 parity restore — prepend the pre-computed
+  // repo-intelligence context block so every role sees repo overview /
+  // changed scope / active module / impact metadata from turn 1. Legacy
+  // `runKodaX` injected this via `buildAutoRepoIntelligenceContext` inside
+  // `buildReasoningExecutionState`; the Runner-driven path (FEATURE_084
+  // Shard 6d-L) routed around `runKodaX` and lost the injection.
+  const repoBlock = promptContext.repoIntelligenceContext?.trim();
+  return repoBlock
+    ? `${repoBlock}\n\n${basePrompt}`
+    : basePrompt;
 }
 
 /**
@@ -4124,6 +4146,35 @@ async function runManagedTaskViaRunnerInner(
     }
     return ctx;
   };
+  // v0.7.27 FEATURE_086 parity restore — pre-compute the repo-intelligence
+  // context block once per Runner-driven entry so every role's system
+  // prompt carries repo overview + changed scope + active module + impact
+  // metadata from turn 1. Legacy `runKodaX` built this inline in
+  // `buildReasoningExecutionState`; the Runner-driven path (FEATURE_084
+  // Shard 6d-L) routed around `runKodaX`, so the injection was dropped
+  // and AMA agents lost prompt-level repo awareness. Best-effort: failure
+  // to build must not fail the run.
+  //
+  // `isNewSession` mirrors the `messages.length === 1` heuristic used by
+  // `runKodaX` at agent.ts:2423 — when the session has no prior messages,
+  // we're on the user's first turn and want the full repo overview.
+  let prebuiltRepoIntelligenceContext: string | undefined;
+  if (plan) {
+    const isNewSessionRunner = !options.session?.initialMessages
+      || options.session.initialMessages.length === 0;
+    try {
+      prebuiltRepoIntelligenceContext = await buildAutoRepoIntelligenceContext(
+        options,
+        plan,
+        isNewSessionRunner,
+        options.events,
+      );
+    } catch {
+      // Swallow — repo-intel injection is best-effort; the run must
+      // continue even if repo-intel capture fails.
+    }
+  }
+
   const chainPromptContext: RunnerChainPromptContext | undefined = plan
     ? {
       prompt,
@@ -4134,6 +4185,7 @@ async function runManagedTaskViaRunnerInner(
       // notes and leak H2-only prompt guidance into H1 workers.
       decision: () => planRef.current?.decision ?? plan.decision,
       metadata: options.context?.taskMetadata,
+      repoIntelligenceContext: prebuiltRepoIntelligenceContext,
       // P1 parity — per-role tool policy computed lazily so Generator
       // can see Scout's mutation intent after emit. Legacy routed this
       // through `buildManagedWorkerToolPolicy` per role; the Runner-driven
