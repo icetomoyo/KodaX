@@ -374,8 +374,11 @@ const Ink = class Ink {
             }
             const fullFrameOutput = this.fullStaticOutput + outputToRender;
             if (this.altScreenActive) {
-                this.log.clear();
-                this.log(fullFrameOutput);
+                // Use clearAndRender (single stream.write) instead of
+                // clear() + log() (two stream.writes). The two-write variant
+                // exposes a blank intermediate frame over SSH/ConPTY — the
+                // primary kodax SSH flicker root cause.
+                this.log.clearAndRender(fullFrameOutput);
             }
             else {
                 this.options.stdout.write(ansiEscapes.clearTerminal + this.fullStaticOutput + output);

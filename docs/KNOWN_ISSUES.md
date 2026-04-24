@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-04-20_
+_Last Updated: 2026-04-24_
 
 ---
 
@@ -67,11 +67,202 @@ _Last Updated: 2026-04-20_
 | 120 | High | Open | Skill / Plan-mode 调用路径下流式注入 prompt 失效 — `canQueueFollowUps` 未开启 | 一直存在 | - | 2026-04-20 | - |
 | 121 | High | Resolved | 超长粘贴（>500 字符）导致用户 prompt 在历史中视觉假消失 + 粘贴后 500ms+ 键击延迟 | v0.7.0+ | v0.7.24 | 2026-04-20 | 2026-04-20 |
 | 122 | Medium | Open | edit / multi_edit 错误消息在 v0.7.26 过度精简 — 丢失关键信息载体导致 LLM 恢复失败 | v0.7.26 | - | 2026-04-23 | - |
+| 123 | High | Resolved | Win10 远端 OpenSSH/ConPTY 下 kodax 全屏闪烁 — altScreen 分支 log.clear()+log() 拆成两次独立 stdout.write | 一直存在 | v0.7.27 | 2026-04-24 | 2026-04-24 |
 
 ---
 
 ## Issue Details
 <!-- Full details for each issue - REQUIRED for all issues -->
+---
+### 123: Win10 远端 OpenSSH/ConPTY 下 kodax 全屏闪烁 — altScreen 分支 `log.clear() + log()` 拆成两次独立 stdout.write
+
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: 一直存在（自 `engine.js` 的 managed-fullscreen altScreen 分支引入以来）
+- **Fixed**: v0.7.27
+- **Created**: 2026-04-24
+- **Resolved**: 2026-04-24
+- **Target Version**: v0.7.27（修复已 commit，等待随 v0.7.27 发布）
+
+#### Current Behavior
+
+从任意客户端 SSH 到 Win10 远端（Win10 自带 Win32-OpenSSH 服务端）跑 `kodax`，**只要屏幕内容变动就看得见全屏闪烁**：
+
+- idle 状态 spinner 每秒转几圈 → 每次帧刷新都闪
+- 输入字符 → 每次按键都闪
+- 流式响应（模型吐字） → 高密度闪
+- 工具调用结果展开 → 闪
+
+本机 Windows Terminal / iTerm / gnome-terminal 跑 kodax 不闪。Linux 远端 SSH + Linux 本机客户端跑 kodax 不闪。只有 **Win10 远端** + SSH 链路触发。
+
+#### Expected Behavior
+
+Win10 远端 OpenSSH 跑 kodax 的渲染应当平滑无可见闪烁，与本机 / Linux 远端行为一致。
+
+#### Reproduction
+
+1. 在 Win10 机器上启用 OpenSSH Server（`Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0`）
+2. 从任意 SSH 客户端 `ssh user@win10host` 进入远端 PowerShell
+3. 远端跑 `kodax`
+4. idle 状态观察 spinner，或键入字符，或发一个简单的 "你好" 触发模型响应
+5. 全屏可见"清空 → 重绘"的闪烁，几乎每次内容变动都能感知到
+
+#### Root Cause（实地诊断后确认）
+
+##### 表层现象不是 ConPTY 本身坏
+
+排查过程中先后排除的嫌疑：
+
+| 嫌疑 | 测试 | 结论 |
+|---|---|---|
+| ConPTY 对 `CSI 2J` 清屏敏感 | 10 fps 定时器清屏+写时间戳 | 不闪 |
+| 30 fps 频率过高 | 30 fps 同样 pattern | 不闪 |
+| 30 行内容体量大 | 30 行内容 + 30 fps | 不闪 |
+| `eraseLines(N)` 的 N 次 `CSI 2K + CSI 1A` 循环 | N 次循环 + 30 行 + 30 fps | 不闪 |
+| 光标 hide/show 循环 | + 每帧 hide → redraw → show | 不闪 |
+| BSU/ESU 包裹 + 3 次独立 write | + `CSI ?2026h` / `CSI ?2026l` | 不闪 |
+| UI 超过终端视口 | 内容行数 > 终端行数 | 偶发闪 |
+
+上述六轮 pure Node 定时器测试验证了输出 pattern 层面清白。
+
+##### 真实根因：`log.clear()` + `log()` 两次独立 stdout.write
+
+通过临时在 `engine.js` 构造函数注入 tee 包装 `options.stdout.write`（env-guarded `KODAX_TEE_STDOUT=1`，诊断完已移除），把 kodax 启动后 5 秒的每次 stdout write 带时间戳 + 内容预览写到文件，拿到铁证：
+
+```
+[+   153ms len=    8] \e[?2026h                    <- bsu
+[+   153ms len=  343] \e[2K\e[1A\e[2K\e[1A...\e[G  <- eraseLines(42) 独立一次
+[+   154ms len= 2052] \e[38;2;1;164;255m  ██...    <- UI 内容独立一次
+[+   155ms len=    8] \e[?2026l                    <- esu
+```
+
+**每帧是 4 次独立 `stdout.write`**，其中 eraseLines 和 content 之间相差 1~2ms。对应代码在 `packages/repl/src/tui/core/engine.js:408-431` 的 managed-fullscreen altScreen 分支：
+
+```js
+if (this.lastOutputHeight >= this.options.stdout.rows && usesManagedVirtualFullscreenShell) {
+    ...
+    if (this.altScreenActive) {
+        this.log.clear();           // write A: eraseLines(42) = 343 字节
+        this.log(fullFrameOutput);  // write B: 2KB 新内容
+    }
+    ...
+}
+```
+
+`this.log.clear()` 在 `log-update.js` 里直接 `stream.write(prefix + ansiEscapes.eraseLines(previousLineCount))` 是独立一次 write。紧跟 `this.log(...)` 又是独立一次 write 写新内容。两次之间 ConPTY 把"N 行全空"的中间态重新序列化 flush 给 SSH 客户端 → 客户端先看到空白屏，再看到内容 → 视觉上就是闪。
+
+##### 为什么只有 Win10 + SSH 触发
+
+- **Linux sshd**：直接原样转发 pty 字节流，不介入也不重新序列化 → 两次 write 之间的间隙客户端看不到
+- **本机 Windows Terminal（非 SSH）**：`process.stdout` 是 ConHost 直连，不走 ConPTY 的"解析+重序列化"路径
+- **Win10 Win32-OpenSSH 服务端**：走 ConPTY，把 kodax 发的 VT 序列在**本机**控制台缓冲区先渲染再重新序列化回 SSH，两次 write 之间一定会出现"屏幕清空"的完整中间态被 flush
+
+ConPTY 不支持 DEC 2026 同步更新（`CSI ?2026h/l`），engine.js 外层包裹的 bsu/esu 在 Win10 链路等于无效，不能用来保护两次 write 的原子性。
+
+##### 触发条件
+
+同时满足：
+
+- `this.lastOutputHeight >= this.options.stdout.rows` — UI 高度 ≥ 终端行数（kodax UI 约 42 行，绝大多数 SSH 窗口都命中）
+- `usesManagedVirtualFullscreenShell = this.altScreenActive` — alt-screen 已启用
+
+所以窗口无论多大都会触发（42 行 >= 大多数 SSH 默认 30~60 行），"最大化窗口"无法避免。
+
+#### Resolution
+
+**位置**：`packages/repl/src/tui/core/internals/log-update.js` + `packages/repl/src/tui/core/engine.js`
+
+##### 改动 1：新增 `render.clearAndRender(str)` 方法
+
+在 `log-update.js` 的 `createStandard` 和 `createIncremental` 各新增：
+
+```js
+render.clearAndRender = (str) => {
+    if (!showCursor && !hasHiddenCursor) {
+        cliCursor.hide(stream);
+        hasHiddenCursor = true;
+    }
+    const activeCursor = cursorDirty ? cursorPosition : undefined;
+    cursorDirty = false;
+    const lines = str.split('\n');
+    const visibleCount = visibleLineCount(lines, str);
+    const cursorSuffix = buildCursorSuffix(visibleCount, activeCursor);
+    const returnPrefix = buildReturnToBottomPrefix(cursorWasShown, previousLineCount, previousCursorPosition);
+    stream.write(returnPrefix +
+        ansiEscapes.eraseLines(previousLineCount) +
+        str +
+        cursorSuffix);
+    previousOutput = str;
+    previousLineCount = lines.length;
+    previousCursorPosition = activeCursor ? { ...activeCursor } : undefined;
+    cursorWasShown = activeCursor !== undefined;
+    return true;
+};
+```
+
+语义等价于 `clear() + render(str)` 的**连续**调用，区别是**单次** `stream.write` 原子化发出 `returnPrefix + eraseLines(previousLineCount) + str + cursorSuffix`。
+
+##### 改动 2：engine.js altScreen 分支改用新方法
+
+```diff
+  if (this.altScreenActive) {
+-     this.log.clear();
+-     this.log(fullFrameOutput);
++     // Use clearAndRender (single stream.write) instead of
++     // clear() + log() (two stream.writes). The two-write variant
++     // exposes a blank intermediate frame over SSH/ConPTY — the
++     // primary kodax SSH flicker root cause.
++     this.log.clearAndRender(fullFrameOutput);
+  }
+```
+
+##### 效果验证
+
+改后 trace 每帧变成 3 次独立 write（bsu / 合并后的 eraseLines+content / esu），eraseLines 与 content 的拆分消失。Win10 远端 SSH 上 kodax 渲染平滑，用户确认"不闪了"。
+
+##### 为什么这是最小修复
+
+- 不动 React 组件树、不动 Ink reconciler、不动 TextInput 自绘光标
+- 不引入 env var / 配置开关 / 平台检测逻辑
+- 不改 public API（`render.clearAndRender` 是新增方法，旧 `clear` / `render` 保留）
+- 只改 "clear + log" **一处**热路径调用（其他 `this.log.clear()` 的 4 处偶发路径不动，不扩大改动面）
+- 本机 / Linux SSH 零语义变化（发出字节流等价，只是从 2 次 write 合成 1 次，本机终端对两种形态都无感知）
+
+#### Files Changed
+
+- `packages/repl/src/tui/core/internals/log-update.js` — 新增 `render.clearAndRender` 到 `createStandard` 和 `createIncremental`（+53 行）
+- `packages/repl/src/tui/core/engine.js` — altScreen 分支 `clear()+log()` → `clearAndRender()`（+5/-2 行）
+- `docs/FEATURE_LIST.md` — 同步更新 FEATURE_095 吸收说明中的 SSH 闪烁根因（+9/-1 行）
+- `docs/features/v0.7.30.md` — FEATURE_057 Track F 章节补全，移除"full-redraw 是 SSH 闪烁根因"的错误论证，补 ConPTY 实地诊断结论（+57 行）
+
+#### Tests Added
+
+无新增测试。`packages/repl` 既有 118 test files / 830 tests **全绿**，无回归。
+
+**为什么不新增测试**：根因在两次 `stdout.write` 之间的 OS 层 ConPTY 中间态 flush，**纯单元测试无法复现**（需要真实 ConPTY 链路 + 客户端终端仿真）。手动验证路径：
+
+1. Win10 远端 SSH 上 `npm run build:packages` 后跑 kodax → 人眼观察 idle/spinner/流式/输入全场景应平滑
+2. 可选：临时打开 `KODAX_TEE_STDOUT=1` 采一段 trace，验证每帧从 4 次 write 降到 3 次
+
+#### Diagnostic Process（保留作为工具链参考）
+
+1. **猜错方向的假设**：初始假设根因是 "full-redraw 模式 + ConPTY 不支持 DEC 2026"，对应的 Track F 设计稿（FEATURE_057）声称 SSH 闪烁需要 cell-level diff 才能治
+2. **测试 A-F 证伪**：6 轮 pure Node 定时器测试（`CSI 2J + short content` / 30 fps + 30 行 / `eraseLines(N)` 循环 / + 光标 hide/show / + BSU/ESU 包裹 / + UI 超视口），**全部不闪**，证明输出 pattern 层面清白
+3. **数据驱动转向**：在 engine.js 临时注入 `KODAX_TEE_STDOUT` 的 stdout tee 采集 5 秒真实运行数据
+4. **Trace 分析**：每帧 4 次 write 的时序数据立刻暴露了 eraseLines 和 content 是两次独立 write，直接定位到 `clear()+log()` 这一处代码
+5. **最小修复 + 验证**：合并为 `clearAndRender`，用户 SSH 现场验证不闪，build + 830 tests 绿
+6. **清理诊断代码**：tee 包装器（`KODAX_TEE_STDOUT` env-guarded）从 engine.js 移除、相关 `import nodeFs` 移除、B 方案 workaround（SSH 检测 + env 开关）从 InkREPL.tsx 回滚
+
+这个流程的教训：**别停留在"听起来合理的架构性假设"**，用 trace 把真实字节流看清楚后根因往往比猜的 simpler。
+
+#### References
+
+- 诊断 trace 样本（诊断完毕已删）: `C:\tmp\kodax-stdout-trace.log`
+- 诊断工具（临时）: `engine.js` constructor 内 `KODAX_TEE_STDOUT=1` env-guarded tee 包装器；修复完成后已移除
+- 相关设计文档: `docs/features/v0.7.30.md` FEATURE_057 Track F 章节（已更新，反映 SSH 闪烁实际根因）
+- 相关路线图说明: `docs/FEATURE_LIST.md` FEATURE_095 吸收到 FEATURE_057 Track F 的备注（已更新）
+- Win32-OpenSSH ConPTY 行为参考: [PowerShell/Win32-OpenSSH wiki](https://github.com/PowerShell/Win32-OpenSSH)
+
 ---
 ### 122: edit / multi_edit 错误消息在 v0.7.26 过度精简 — 丢失关键信息载体导致 LLM 恢复失败
 

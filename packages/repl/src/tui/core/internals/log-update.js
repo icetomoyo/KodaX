@@ -63,6 +63,35 @@ const createStandard = (stream, { showCursor = false } = {}) => {
         previousCursorPosition = undefined;
         cursorWasShown = false;
     };
+    // Merge the effects of clear() + render(str) into a single stream.write.
+    // Callers that need to force a full redraw (managed fullscreen path) used
+    // to invoke clear() then render() sequentially, producing two writes per
+    // frame. Over SSH/ConPTY the terminal re-serialises state between the two
+    // writes, so the client saw a blank intermediate frame → visible flicker.
+    // This method emits eraseLines + new content as one atomic stream.write,
+    // eliminating the blank intermediate state while preserving the
+    // force-redraw semantic.
+    render.clearAndRender = (str) => {
+        if (!showCursor && !hasHiddenCursor) {
+            cliCursor.hide(stream);
+            hasHiddenCursor = true;
+        }
+        const activeCursor = cursorDirty ? cursorPosition : undefined;
+        cursorDirty = false;
+        const lines = str.split('\n');
+        const visibleCount = visibleLineCount(lines, str);
+        const cursorSuffix = buildCursorSuffix(visibleCount, activeCursor);
+        const returnPrefix = buildReturnToBottomPrefix(cursorWasShown, previousLineCount, previousCursorPosition);
+        stream.write(returnPrefix +
+            ansiEscapes.eraseLines(previousLineCount) +
+            str +
+            cursorSuffix);
+        previousOutput = str;
+        previousLineCount = lines.length;
+        previousCursorPosition = activeCursor ? { ...activeCursor } : undefined;
+        cursorWasShown = activeCursor !== undefined;
+        return true;
+    };
     render.done = () => {
         previousOutput = '';
         previousLineCount = 0;
@@ -205,6 +234,30 @@ const createIncremental = (stream, { showCursor = false } = {}) => {
         previousLines = [];
         previousCursorPosition = undefined;
         cursorWasShown = false;
+    };
+    // Same atomic clear+render as createStandard's counterpart — see that
+    // method for the rationale (avoid SSH/ConPTY flicker from the 2-write
+    // pattern).
+    render.clearAndRender = (str) => {
+        if (!showCursor && !hasHiddenCursor) {
+            cliCursor.hide(stream);
+            hasHiddenCursor = true;
+        }
+        const activeCursor = cursorDirty ? cursorPosition : undefined;
+        cursorDirty = false;
+        const nextLines = str.split('\n');
+        const visibleCount = visibleLineCount(nextLines, str);
+        const cursorSuffix = buildCursorSuffix(visibleCount, activeCursor);
+        const returnPrefix = buildReturnToBottomPrefix(cursorWasShown, previousLines.length, previousCursorPosition);
+        stream.write(returnPrefix +
+            ansiEscapes.eraseLines(previousLines.length) +
+            str +
+            cursorSuffix);
+        previousOutput = str;
+        previousLines = nextLines;
+        previousCursorPosition = activeCursor ? { ...activeCursor } : undefined;
+        cursorWasShown = activeCursor !== undefined;
+        return true;
     };
     render.done = () => {
         previousOutput = '';
