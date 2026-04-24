@@ -21,7 +21,12 @@
  * and are still used at runtime by the Runner path.
  */
 import { runKodaX as runDirectKodaX } from './agent.js';
-import { createReasoningPlan, inferIntentGate } from './reasoning.js';
+import {
+  buildAmaControllerDecision,
+  buildFallbackRoutingDecision,
+  createReasoningPlan,
+  inferIntentGate,
+} from './reasoning.js';
 import { resolveProvider } from './providers/index.js';
 import { reshapeToUserConversation } from './task-engine/_internal/round-boundary.js';
 import { runManagedTaskViaRunner } from './task-engine/runner-driven.js';
@@ -166,11 +171,20 @@ async function buildManagedReasoningPlan(options: KodaXOptions, prompt: string) 
     });
   } catch {
     // Match legacy resilience (task-engine.ts:1721-1762): reasoning failure
-    // must not abort the AMA run. `createReasoningPlan` already performs
-    // heuristic routing internally, but if provider resolution itself
-    // throws (e.g. bad model id) we want the Runner to continue with a
-    // minimally-populated plan rather than bailing out. Returning
-    // undefined leaves the Runner to use its current defaults.
-    return undefined;
+    // must not abort the AMA run. Previously returned `undefined` on
+    // provider-resolution failure, which forced runner-driven.ts:4127 to
+    // skip `chainPromptContext` and fall back to SCOUT_INSTRUCTIONS_FALLBACK
+    // — a minimal prompt that omits dispatch_child_task guidance and
+    // evidence strategies. Instead, build a prompt-only heuristic plan so
+    // downstream role prompts still receive the full v0.7.22-parity
+    // context (decision summary, tool-policy, dispatch rules).
+    const fallbackDecision = buildFallbackRoutingDecision(prompt);
+    return {
+      mode: 'off' as const,
+      depth: 'off' as const,
+      decision: fallbackDecision,
+      amaControllerDecision: buildAmaControllerDecision(fallbackDecision),
+      promptOverlay: '',
+    };
   }
 }

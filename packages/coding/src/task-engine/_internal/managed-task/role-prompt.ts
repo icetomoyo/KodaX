@@ -458,31 +458,36 @@ export function createRolePrompt(
         'Respect any stated topology ceiling or upgrade ceiling in the routing metadata.',
         'Always fill `scope` (files / areas the downstream role will touch) and `review_files_or_areas` (high-priority files to consider). The harness infers mutation boundaries from these paths — if every path is docs-like, Generator is restricted to docs-style writes; if the task is a pure review (primaryTask=review) and `scope` is empty, Generator writes are blocked entirely.',
         scoutReviewEvidenceGuidance,
-        // FEATURE_067: dispatch_child_task tool guidance for parallel fan-out
+        // FEATURE_067: dispatch_child_task tool guidance.
+        // v0.7.26 refresh: RULE-based decision tree covers both fan-out
+        // (parallel children) and context-preservation (single child on a
+        // heavy read-only investigation). The prior prompt's categorical
+        // "NEVER dispatch exactly 1 child" blocked the latter case, so
+        // Scout rationalised large multi-file investigations into direct
+        // work and crowded its own context.
         [
-          'PARALLEL CHILD AGENTS: You have access to the dispatch_child_task tool.',
-          'Each call runs ONE independent child agent. To parallelize, call it MULTIPLE TIMES in the SAME response (multiple tool_use blocks). Each child appears as a separate tool with its own status.',
+          'PARALLEL CHILD AGENTS: dispatch_child_task delegates an investigation to a child agent that has its own context window. Calls in the same turn run in parallel; each child\'s findings return as a separate tool result.',
           '',
-          'DECISION RULE — after your initial scope analysis (1-2 turns):',
-          '  Does this task contain 2+ INDEPENDENT sub-tasks, each requiring multi-file reading and multi-step reasoning?',
-          '  → YES (2+ sub-tasks): call dispatch_child_task once PER sub-task in the SAME turn.',
-          '  → NO (only 1 sub-task, or sub-tasks are simple): do the work YOURSELF with parallel tool calls (glob, grep, read).',
+          'DECIDE after your initial 1-2 scoping turns, before any deep investigation:',
           '',
-          'RULE: If you identify 2+ independent sub-tasks, dispatch them ALL as parallel children. Do NOT talk yourself out of parallelism by deciding "I can handle one of them myself" — the whole point is PARALLEL execution.',
+          'RULE A — Fan-out (2+ independent non-trivial threads)',
+          '  "Non-trivial" means each thread on its own would need multiple file reads or multi-round searching. A bundle of small file lookups is NOT fan-out.',
+          '  → Dispatch ONE child per thread, in the SAME turn.',
+          '  Example: "Audit packages/ai, packages/agent, packages/coding for security" → 3 parallel children.',
+          '  If you identify N qualifying threads, dispatch ALL N. Do not rationalize "I\'ll handle one myself" — that defeats the parallelism.',
           '',
-          'ANTI-PATTERN — NEVER dispatch exactly 1 child agent. A single child is ALWAYS worse than doing it yourself:',
-          '  - Extra overhead (child startup, briefing, result relay) with ZERO parallelism benefit.',
-          '  - If you can only identify 1 sub-task, that means the task is not a fan-out task. Handle it directly.',
+          'RULE B — Heavy single investigation (context preservation)',
+          '  Dispatch ONE child when BOTH conditions hold:',
+          '    (1) the raw volume would crowd your own context — any signal qualifies: unclear target set needing multi-round "search → read → re-search", likely ≥10 file reads, or large grep result sets; AND',
+          '    (2) you only need a summary / list / verdict as output — not the raw code in your own context to reason over.',
+          '  Example: "Find every caller of handleAuth() and categorize usage patterns."',
           '',
-          'Example — 3-package security audit (3 independent sub-tasks → 3 parallel children):',
-          '  tool_use: dispatch_child_task({id:"sec-ai",objective:"Analyze packages/ai security...",readOnly:true})',
-          '  tool_use: dispatch_child_task({id:"sec-agent",objective:"Analyze packages/agent security...",readOnly:true})',
-          '  tool_use: dispatch_child_task({id:"sec-coding",objective:"Analyze packages/coding security...",readOnly:true})',
-          'All 3 execute in parallel. You receive each child\'s findings as separate tool results.',
+          'RULE C — Default (targets known, output small, single-round)',
+          '  Do it yourself with parallel tool calls (glob + grep + read together when independent).',
+          '  A single child for work that fits this rule is pure overhead — do not dispatch.',
           '',
-          'TIMING: Decide EARLY (after initial scope, before deep investigation). Once you start deep-diving, child delegation becomes wasted work.',
-          'You may call dispatch_child_task BEFORE deciding your confirmed_harness. Use the findings to make a better-informed harness decision.',
-          'Scout can only dispatch readOnly tasks. Write fan-out is available to Generator only.',
+          'TIMING: decide early. Children\'s findings can inform your emit_scout_verdict harness choice. Dispatching after you have already deep-dived is wasted work.',
+          'Scope: Scout dispatches are readOnly. Write fan-out is Generator-only.',
         ].join('\n'),
         managedProtocolToolInstructions,
         sharedWorkerDiscipline,
@@ -550,16 +555,35 @@ export function createRolePrompt(
         isTerminalAuthority
           ? 'You are the terminal delivery role for this run. Return the final user-facing answer and summarize concrete evidence inline.'
           : 'Leave final judgment to the evaluator and include a crisp evidence handoff.',
-        // FEATURE_067: Generator parallel task guidance via dispatch_child_task tool
+        // FEATURE_067: Generator parallel task guidance via dispatch_child_task tool.
+        // v0.7.26 refresh: mirrors the Scout RULE A/B/C structure so the
+        // same decision model applies to mid-execution investigation.
+        // Categorical "NEVER 1 child" was blocking the context-preservation
+        // case where a Generator faces a heavy read-only verification that
+        // would otherwise crowd its own context.
         [
-          'PARALLEL CHILD AGENTS: You have access to the dispatch_child_task tool.',
-          'Each call runs ONE child agent. Call it MULTIPLE TIMES in the same response for parallel execution.',
-          'NEVER dispatch exactly 1 child — a single child is always worse than doing it yourself (overhead, no parallelism, reduced quality).',
-          'Only dispatch when you have 2+ genuinely independent sub-tasks that each need multi-step investigation.',
-          'For read-only investigation: call with readOnly=true to gather evidence in parallel.',
+          'PARALLEL CHILD AGENTS: dispatch_child_task delegates a sub-task to a child agent with its own context window. Calls in the same turn run in parallel; each child\'s findings return as a separate tool result.',
+          '',
+          'DECIDE when you hit a sub-task that is either fan-out or heavy-volume:',
+          '',
+          'RULE A — Fan-out (2+ independent non-trivial sub-tasks)',
+          '  "Non-trivial" means each sub-task on its own would need multiple file reads / writes or multi-round searching.',
+          '  → Dispatch ONE child per sub-task, in the SAME turn.',
+          '  Example: modifying 3 independent modules in an H2 run → 3 parallel write children.',
+          '  If you identify N qualifying sub-tasks, dispatch ALL N.',
+          '',
+          'RULE B — Heavy single investigation (context preservation)',
+          '  Dispatch ONE readOnly child when BOTH hold:',
+          '    (1) the raw volume would crowd your own context — any signal: unclear target set needing multi-round search, likely ≥10 file reads, or large grep result sets; AND',
+          '    (2) you only need a summary / list / verdict — not raw code in your own context to continue execution.',
+          '  Example: verifying "no other callers of removed API remain" across the repo before committing.',
+          '',
+          'RULE C — Default (targets known, output small, single-round)',
+          '  Do it yourself with parallel tool calls. A single child for work that fits this rule is pure overhead.',
+          '',
           decision.harnessProfile === 'H2_PLAN_EXECUTE_EVAL' && !isTerminalAuthority
-            ? 'For write fan-out: call with readOnly=false when modifying independent modules. Each write child runs in an isolated git worktree. The Evaluator will review all diffs before merging.'
-            : 'Write fan-out (readOnly=false) is only available in H2_PLAN_EXECUTE_EVAL harness.',
+            ? 'WRITE FAN-OUT: In this H2 run you may call with readOnly=false when modifying independent modules. Each write child runs in an isolated git worktree; the Evaluator reviews all diffs before merging.'
+            : 'Write fan-out (readOnly=false) is only available in H2_PLAN_EXECUTE_EVAL harness. In the current harness, children must be readOnly=true.',
         ].join('\n'),
         isTerminalAuthority ? undefined : handoffBlockInstructions,
         sharedWorkerDiscipline,
