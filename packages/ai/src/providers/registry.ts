@@ -61,214 +61,10 @@ type ProviderSnapshot = {
   capabilityProfile: KodaXProviderCapabilityProfile;
 };
 
-// ============== 具体 Provider 实现 ==============
-
-class AnthropicProvider extends KodaXAnthropicCompatProvider {
-  readonly name = 'anthropic';
-  protected readonly config: KodaXProviderConfig = {
-    apiKeyEnv: 'ANTHROPIC_API_KEY',
-    model: 'claude-sonnet-4-6',
-    models: [
-      { id: 'claude-opus-4-6', displayName: 'Opus 4.6', thinkingBudgetCap: 28000 },
-      { id: 'claude-haiku-4-5', displayName: 'Haiku 4.5', thinkingBudgetCap: 10000 },
-    ],
-    supportsThinking: true,
-    reasoningCapability: 'native-budget',
-    contextWindow: 200000,  // 200K tokens
-    // Anthropic API: max_tokens = thinking + output combined budget.
-    // With thinkingBudgetCap=28000, 32768 left only ~4768 for actual output.
-    // 64000 ensures ~36000+ tokens for output even at maximum thinking.
-    maxOutputTokens: 64000,
-    thinkingBudgetCap: 28000,
-  };
-  constructor() { super(); this.client = new Anthropic({ apiKey: this.getApiKey() }); }
-}
-
-class ZhipuCodingProvider extends KodaXAnthropicCompatProvider {
-  readonly name = 'zhipu-coding';
-  protected readonly config: KodaXProviderConfig = {
-    apiKeyEnv: 'ZHIPU_API_KEY',
-    baseUrl: 'https://open.bigmodel.cn/api/anthropic',
-    model: 'glm-5',
-    models: [
-      { id: 'glm-5.1', displayName: 'GLM-5.1' },
-      { id: 'glm-5-turbo', displayName: 'GLM-5 Turbo' },
-    ],
-    supportsThinking: true,
-    reasoningCapability: 'native-budget',
-    contextWindow: 200000,
-    // Provider advertises 128K max output, but real-world long streams
-    // hit Zhipu's ~8 minute server-side kill window well before reaching
-    // that ceiling. We default to the capped value (32K) so typical turns
-    // finish fast; the agent loop escalates to 64K on `stop_reason:
-    // max_tokens` and continues via meta message if even 64K is not enough.
-    // Override with env `KODAX_MAX_OUTPUT_TOKENS` to bypass the escalation
-    // ladder entirely.
-    maxOutputTokens: KODAX_CAPPED_MAX_OUTPUT_TOKENS,
-    thinkingBudgetCap: 16000,
-  };
-  constructor() { super(); this.initClient(); }
-}
-
-class KimiCodeProvider extends KodaXAnthropicCompatProvider {
-  readonly name = 'kimi-code';
-  protected readonly config: KodaXProviderConfig = {
-    apiKeyEnv: 'KIMI_API_KEY',
-    baseUrl: 'https://api.kimi.com/coding/',
-    // api.kimi.com/coding/ is a unified coding endpoint: the server ignores
-    // the model field (probe confirmed it always returns `kimi-for-coding`,
-    // now routing to K2.6 GA). Model IDs here are labels for cost tracking
-    // and UI selection only.
-    model: 'K2.6',
-    models: [
-      { id: 'k2.5', displayName: 'K2.5' },
-    ],
-    supportsThinking: true,
-    reasoningCapability: 'native-budget',
-    contextWindow: 256000,
-    // Kimi Code (K2.x) historically ran at 64K, but long tool_use writes
-    // share the same server-side-termination failure mode as the other
-    // Anthropic-compat coding endpoints. Aligned to the capped default
-    // (32K); the agent loop auto-escalates to 64K on `stop_reason:
-    // max_tokens`, matching prior single-shot capacity, and continues via
-    // meta message beyond that. Set `KODAX_MAX_OUTPUT_TOKENS` to bypass.
-    maxOutputTokens: KODAX_CAPPED_MAX_OUTPUT_TOKENS,
-  };
-  constructor() { super(); this.initClient(); }
-}
-
-class MiniMaxCodingProvider extends KodaXAnthropicCompatProvider {
-  readonly name = 'minimax-coding';
-  protected readonly config: KodaXProviderConfig = {
-    apiKeyEnv: 'MINIMAX_API_KEY',
-    baseUrl: 'https://api.minimaxi.com/anthropic',
-    model: 'MiniMax-M2.7',
-    models: [
-      { id: 'MiniMax-M2.7-highspeed', displayName: 'MiniMax M2.7 Highspeed' },
-      { id: 'MiniMax-M2.5', displayName: 'MiniMax M2.5' },
-      { id: 'MiniMax-M2.5-highspeed', displayName: 'MiniMax M2.5 Highspeed' },
-      { id: 'MiniMax-M2.1', displayName: 'MiniMax M2.1' },
-      { id: 'MiniMax-M2.1-highspeed', displayName: 'MiniMax M2.1 Highspeed' },
-      { id: 'MiniMax-M2', displayName: 'MiniMax M2' },
-    ],
-    supportsThinking: true,
-    reasoningCapability: 'native-budget',
-    contextWindow: 204800,
-    // MiniMax M2.7 advertises 128K max output, but long streams share the
-    // same failure mode as zhipu-coding (server-side termination on
-    // minutes-long generations). Capped at 32K by default with agent-loop
-    // escalation to 64K on `stop_reason: max_tokens`; continuation meta
-    // message handles tasks that exceed 64K output. Override with env
-    // `KODAX_MAX_OUTPUT_TOKENS` to bypass the escalation ladder.
-    maxOutputTokens: KODAX_CAPPED_MAX_OUTPUT_TOKENS,
-  };
-  constructor() { super(); this.initClient(); }
-}
-
-class OpenAIProvider extends KodaXOpenAICompatProvider {
-  readonly name = 'openai';
-  protected readonly config: KodaXProviderConfig = {
-    apiKeyEnv: 'OPENAI_API_KEY',
-    model: 'gpt-5.3-codex',
-    models: [
-      { id: 'gpt-5.4', displayName: 'GPT-5.4' },
-      { id: 'gpt-5.3-codex-spark', displayName: 'GPT-5.3 Codex Spark' },
-    ],
-    supportsThinking: true,
-    reasoningCapability: 'native-effort',
-    contextWindow: 400000,
-    maxOutputTokens: 32768,
-  };
-  constructor() { super(); this.initClient(); }
-}
-
-class DeepSeekProvider extends KodaXOpenAICompatProvider {
-  readonly name = 'deepseek';
-  protected readonly config: KodaXProviderConfig = {
-    apiKeyEnv: 'DEEPSEEK_API_KEY',
-    baseUrl: 'https://api.deepseek.com',
-    model: 'deepseek-chat',
-    models: [
-      {
-        id: 'deepseek-reasoner',
-        displayName: 'DeepSeek Reasoner',
-        reasoningCapability: 'none',
-      },
-    ],
-    supportsThinking: true,
-    reasoningCapability: 'native-toggle',
-    contextWindow: 128000,
-    // DeepSeek V3.2: 32k max output
-    maxOutputTokens: 32768,
-  };
-  constructor() { super(); this.initClient(); }
-}
-
-class KimiProvider extends KodaXOpenAICompatProvider {
-  readonly name = 'kimi';
-  protected readonly config: KodaXProviderConfig = {
-    apiKeyEnv: 'KIMI_API_KEY',
-    baseUrl: 'https://api.moonshot.cn/v1',
-    model: 'kimi-k2.6',
-    models: [
-      { id: 'k2.5', displayName: 'K2.5' },
-    ],
-    supportsThinking: true,
-    reasoningCapability: 'native-effort',
-    contextWindow: 256000,
-    maxOutputTokens: 32768,
-  };
-  constructor() { super(); this.initClient(); }
-}
-
-class QwenProvider extends KodaXOpenAICompatProvider {
-  readonly name = 'qwen';
-  protected readonly config: KodaXProviderConfig = {
-    apiKeyEnv: 'QWEN_API_KEY',
-    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-    model: 'qwen3.5-plus',
-    supportsThinking: true,
-    reasoningCapability: 'native-budget',
-    contextWindow: 256000,
-    maxOutputTokens: 32768,
-  };
-  constructor() { super(); this.initClient(); }
-}
-
-class ZhipuProvider extends KodaXOpenAICompatProvider {
-  readonly name = 'zhipu';
-  protected readonly config: KodaXProviderConfig = {
-    apiKeyEnv: 'ZHIPU_API_KEY',
-    baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
-    model: 'glm-5',
-    models: [
-      { id: 'glm-5.1', displayName: 'GLM-5.1' },
-      { id: 'glm-5-turbo', displayName: 'GLM-5 Turbo' },
-    ],
-    supportsThinking: true,
-    reasoningCapability: 'native-budget',
-    contextWindow: 200000,
-    maxOutputTokens: 32768,
-  };
-  constructor() { super(); this.initClient(); }
-}
-
-// ============== Provider 工厂 ==============
-
-export const KODAX_PROVIDERS: Record<string, () => KodaXBaseProvider> = {
-  anthropic: () => new AnthropicProvider(),
-  openai: () => new OpenAIProvider(),
-  deepseek: () => new DeepSeekProvider(),
-  kimi: () => new KimiProvider(),
-  'kimi-code': () => new KimiCodeProvider(),
-  qwen: () => new QwenProvider(),
-  zhipu: () => new ZhipuProvider(),
-  'zhipu-coding': () => new ZhipuCodingProvider(),
-  'minimax-coding': () => new MiniMaxCodingProvider(),
-  'gemini-cli': () => new KodaXGeminiCliProvider(),
-  'codex-cli': () => new KodaXCodexCliProvider(),
-};
-
+// Canonical source for provider identity (apiKeyEnv, default model,
+// reasoning capability, capability profile). Per-class Provider configs
+// derive the three overlapping fields via `buildProviderConfig` so the
+// two structures cannot drift.
 export const KODAX_PROVIDER_SNAPSHOTS: Record<ProviderName, ProviderSnapshot> = {
   anthropic: {
     apiKeyEnv: 'ANTHROPIC_API_KEY',
@@ -357,6 +153,204 @@ export const KODAX_PROVIDER_SNAPSHOTS: Record<ProviderName, ProviderSnapshot> = 
     reasoningCapability: 'prompt-only',
     capabilityProfile: CLI_BRIDGE_PROVIDER_CAPABILITY_PROFILE,
   },
+};
+
+// Derive a Provider class's config from the canonical snapshot plus the
+// per-class overrides (model metadata, runtime budgets, baseUrl). The
+// three overlapping fields (`apiKeyEnv`, `model`, `reasoningCapability`)
+// are sourced exclusively from the snapshot to eliminate drift.
+function buildProviderConfig<K extends ProviderName>(
+  name: K,
+  extras: Omit<KodaXProviderConfig, 'apiKeyEnv' | 'model' | 'reasoningCapability'>,
+): KodaXProviderConfig {
+  const snapshot = KODAX_PROVIDER_SNAPSHOTS[name];
+  return {
+    apiKeyEnv: snapshot.apiKeyEnv,
+    model: snapshot.model,
+    reasoningCapability: snapshot.reasoningCapability,
+    ...extras,
+  };
+}
+
+// ============== 具体 Provider 实现 ==============
+
+class AnthropicProvider extends KodaXAnthropicCompatProvider {
+  readonly name = 'anthropic';
+  protected readonly config: KodaXProviderConfig = buildProviderConfig('anthropic', {
+    models: [
+      { id: 'claude-opus-4-6', displayName: 'Opus 4.6', thinkingBudgetCap: 28000 },
+      { id: 'claude-haiku-4-5', displayName: 'Haiku 4.5', thinkingBudgetCap: 10000 },
+    ],
+    supportsThinking: true,
+    contextWindow: 200000,  // 200K tokens
+    // Anthropic API: max_tokens = thinking + output combined budget.
+    // With thinkingBudgetCap=28000, 32768 left only ~4768 for actual output.
+    // 64000 ensures ~36000+ tokens for output even at maximum thinking.
+    maxOutputTokens: 64000,
+    thinkingBudgetCap: 28000,
+  });
+  constructor() { super(); this.client = new Anthropic({ apiKey: this.getApiKey() }); }
+}
+
+class ZhipuCodingProvider extends KodaXAnthropicCompatProvider {
+  readonly name = 'zhipu-coding';
+  protected readonly config: KodaXProviderConfig = buildProviderConfig('zhipu-coding', {
+    baseUrl: 'https://open.bigmodel.cn/api/anthropic',
+    models: [
+      { id: 'glm-5.1', displayName: 'GLM-5.1' },
+      { id: 'glm-5-turbo', displayName: 'GLM-5 Turbo' },
+    ],
+    supportsThinking: true,
+    contextWindow: 200000,
+    // Provider advertises 128K max output, but real-world long streams
+    // hit Zhipu's ~8 minute server-side kill window well before reaching
+    // that ceiling. We default to the capped value (32K) so typical turns
+    // finish fast; the agent loop escalates to 64K on `stop_reason:
+    // max_tokens` and continues via meta message if even 64K is not enough.
+    // Override with env `KODAX_MAX_OUTPUT_TOKENS` to bypass the escalation
+    // ladder entirely.
+    maxOutputTokens: KODAX_CAPPED_MAX_OUTPUT_TOKENS,
+    thinkingBudgetCap: 16000,
+  });
+  constructor() { super(); this.initClient(); }
+}
+
+class KimiCodeProvider extends KodaXAnthropicCompatProvider {
+  readonly name = 'kimi-code';
+  protected readonly config: KodaXProviderConfig = buildProviderConfig('kimi-code', {
+    baseUrl: 'https://api.kimi.com/coding/',
+    // api.kimi.com/coding/ is a unified coding endpoint: the server ignores
+    // the model field (probe confirmed it always returns `kimi-for-coding`,
+    // now routing to K2.6 GA). Model IDs here are labels for cost tracking
+    // and UI selection only.
+    models: [
+      { id: 'k2.5', displayName: 'K2.5' },
+    ],
+    supportsThinking: true,
+    contextWindow: 256000,
+    // Kimi Code (K2.x) historically ran at 64K, but long tool_use writes
+    // share the same server-side-termination failure mode as the other
+    // Anthropic-compat coding endpoints. Aligned to the capped default
+    // (32K); the agent loop auto-escalates to 64K on `stop_reason:
+    // max_tokens`, matching prior single-shot capacity, and continues via
+    // meta message beyond that. Set `KODAX_MAX_OUTPUT_TOKENS` to bypass.
+    maxOutputTokens: KODAX_CAPPED_MAX_OUTPUT_TOKENS,
+  });
+  constructor() { super(); this.initClient(); }
+}
+
+class MiniMaxCodingProvider extends KodaXAnthropicCompatProvider {
+  readonly name = 'minimax-coding';
+  protected readonly config: KodaXProviderConfig = buildProviderConfig('minimax-coding', {
+    baseUrl: 'https://api.minimaxi.com/anthropic',
+    models: [
+      { id: 'MiniMax-M2.7-highspeed', displayName: 'MiniMax M2.7 Highspeed' },
+      { id: 'MiniMax-M2.5', displayName: 'MiniMax M2.5' },
+      { id: 'MiniMax-M2.5-highspeed', displayName: 'MiniMax M2.5 Highspeed' },
+      { id: 'MiniMax-M2.1', displayName: 'MiniMax M2.1' },
+      { id: 'MiniMax-M2.1-highspeed', displayName: 'MiniMax M2.1 Highspeed' },
+      { id: 'MiniMax-M2', displayName: 'MiniMax M2' },
+    ],
+    supportsThinking: true,
+    contextWindow: 204800,
+    // MiniMax M2.7 advertises 128K max output, but long streams share the
+    // same failure mode as zhipu-coding (server-side termination on
+    // minutes-long generations). Capped at 32K by default with agent-loop
+    // escalation to 64K on `stop_reason: max_tokens`; continuation meta
+    // message handles tasks that exceed 64K output. Override with env
+    // `KODAX_MAX_OUTPUT_TOKENS` to bypass the escalation ladder.
+    maxOutputTokens: KODAX_CAPPED_MAX_OUTPUT_TOKENS,
+  });
+  constructor() { super(); this.initClient(); }
+}
+
+class OpenAIProvider extends KodaXOpenAICompatProvider {
+  readonly name = 'openai';
+  protected readonly config: KodaXProviderConfig = buildProviderConfig('openai', {
+    models: [
+      { id: 'gpt-5.4', displayName: 'GPT-5.4' },
+      { id: 'gpt-5.3-codex-spark', displayName: 'GPT-5.3 Codex Spark' },
+    ],
+    supportsThinking: true,
+    contextWindow: 400000,
+    maxOutputTokens: 32768,
+  });
+  constructor() { super(); this.initClient(); }
+}
+
+class DeepSeekProvider extends KodaXOpenAICompatProvider {
+  readonly name = 'deepseek';
+  protected readonly config: KodaXProviderConfig = buildProviderConfig('deepseek', {
+    baseUrl: 'https://api.deepseek.com',
+    models: [
+      {
+        id: 'deepseek-reasoner',
+        displayName: 'DeepSeek Reasoner',
+        reasoningCapability: 'none',
+      },
+    ],
+    supportsThinking: true,
+    contextWindow: 128000,
+    // DeepSeek V3.2: 32k max output
+    maxOutputTokens: 32768,
+  });
+  constructor() { super(); this.initClient(); }
+}
+
+class KimiProvider extends KodaXOpenAICompatProvider {
+  readonly name = 'kimi';
+  protected readonly config: KodaXProviderConfig = buildProviderConfig('kimi', {
+    baseUrl: 'https://api.moonshot.cn/v1',
+    models: [
+      { id: 'k2.5', displayName: 'K2.5' },
+    ],
+    supportsThinking: true,
+    contextWindow: 256000,
+    maxOutputTokens: 32768,
+  });
+  constructor() { super(); this.initClient(); }
+}
+
+class QwenProvider extends KodaXOpenAICompatProvider {
+  readonly name = 'qwen';
+  protected readonly config: KodaXProviderConfig = buildProviderConfig('qwen', {
+    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    supportsThinking: true,
+    contextWindow: 256000,
+    maxOutputTokens: 32768,
+  });
+  constructor() { super(); this.initClient(); }
+}
+
+class ZhipuProvider extends KodaXOpenAICompatProvider {
+  readonly name = 'zhipu';
+  protected readonly config: KodaXProviderConfig = buildProviderConfig('zhipu', {
+    baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+    models: [
+      { id: 'glm-5.1', displayName: 'GLM-5.1' },
+      { id: 'glm-5-turbo', displayName: 'GLM-5 Turbo' },
+    ],
+    supportsThinking: true,
+    contextWindow: 200000,
+    maxOutputTokens: 32768,
+  });
+  constructor() { super(); this.initClient(); }
+}
+
+// ============== Provider 工厂 ==============
+
+export const KODAX_PROVIDERS: Record<string, () => KodaXBaseProvider> = {
+  anthropic: () => new AnthropicProvider(),
+  openai: () => new OpenAIProvider(),
+  deepseek: () => new DeepSeekProvider(),
+  kimi: () => new KimiProvider(),
+  'kimi-code': () => new KimiCodeProvider(),
+  qwen: () => new QwenProvider(),
+  zhipu: () => new ZhipuProvider(),
+  'zhipu-coding': () => new ZhipuCodingProvider(),
+  'minimax-coding': () => new MiniMaxCodingProvider(),
+  'gemini-cli': () => new KodaXGeminiCliProvider(),
+  'codex-cli': () => new KodaXCodexCliProvider(),
 };
 
 export const KODAX_DEFAULT_PROVIDER = process.env.KODAX_PROVIDER ?? 'zhipu-coding';
