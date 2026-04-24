@@ -162,6 +162,7 @@ import {
 } from "./utils/message-utils.js";
 import { withCapture, ConsoleCapturer } from "./utils/console-capturer.js";
 import { createRecoveryHistoryItem, createRetryHistoryItem, emitRecoveryHistoryItem, emitRetryHistoryItem } from "./utils/retry-history.js";
+import { createRepoIntelTraceHistoryItem, emitRepoIntelTraceHistoryItem } from "./utils/repo-intel-history.js";
 import {
   formatManagedTaskBreadcrumb,
   formatManagedTaskLiveStatusLabel,
@@ -5029,6 +5030,20 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         text: `[Rate Limit] Retrying in ${delayMs / 1000}s (${attempt}/${maxAttempts})...`,
       }, 'ratelimit');
     },
+    onRepoIntelligenceTrace: (event) => {
+      // v0.7.27 FEATURE_086 — display repo-intelligence trace events
+      // (routing / preturn / module / impact / task-snapshot) inline so
+      // users can see when the agent pulls repo context. Gated upstream
+      // by `repoIntelligenceTrace` in options.context (on by default in
+      // Ink REPL; toggle via `/repointel trace on|off`).
+      if (userInterruptedRef.current) {
+        return;
+      }
+      emitInfoItemToCorrectLayer(
+        createRepoIntelTraceHistoryItem(event),
+        'repointel-trace',
+      );
+    },
     onScoutSuspiciousCompletion: (payload) => {
       // X-layer: Scout's H0 completion was inferred (no explicit escalation)
       // but the harness saw signals that suggest Scout may not actually be
@@ -7346,6 +7361,15 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
   const initialPermissionMode: PermissionMode =
     normalizePermissionMode(config.permissionMode, 'accept-edits') ?? 'accept-edits';
   const repoIntelligenceRuntime = resolveRepoIntelligenceRuntimeConfig();
+  // v0.7.27 FEATURE_086 — repo-intelligence trace is ON by default in the
+  // Ink REPL so users see `ℹ️ [RepoIntel] ...` lines whenever the agent
+  // pulls repo overview / changed scope / active module context. Only
+  // disable when the user explicitly persisted `repoIntelligenceTrace: false`
+  // via `/repointel trace off` or direct config file edit. The legacy
+  // `resolveRepoIntelligenceRuntimeConfig` default (env-only, defaults to
+  // false) still applies to CLI/ACP callers so they aren't flipped by
+  // this REPL-scoped change.
+  const repoIntelligenceTraceDefault = config.repoIntelligenceTrace !== false;
 
   const currentConfig: CurrentConfig = {
     provider: initialProvider,
@@ -7357,7 +7381,7 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
     repoIntelligenceMode: repoIntelligenceRuntime.mode,
     repointelEndpoint: repoIntelligenceRuntime.endpoint,
     repointelBin: repoIntelligenceRuntime.bin,
-    repoIntelligenceTrace: repoIntelligenceRuntime.trace,
+    repoIntelligenceTrace: repoIntelligenceTraceDefault,
   };
 
   // Handle session resume/load
