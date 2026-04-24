@@ -21,19 +21,24 @@ vi.mock('../completers/argument-completer.js', () => ({
   })),
 }));
 
-vi.mock('../autocomplete.js', () => ({
-  FileCompleter: vi.fn().mockImplementation(() => ({
-    canComplete: vi.fn().mockReturnValue(false),
-    getCompletions: vi.fn().mockResolvedValue([]),
-  })),
-  CommandCompleter: vi.fn().mockImplementation(() => ({
-    canComplete: vi.fn((input: string) => input.startsWith('/')),
-    getCompletions: vi.fn().mockResolvedValue([
-      { text: '/help', display: '/help', description: 'Show help', type: 'command' },
-      { text: '/mode', display: '/mode', description: 'Change mode', type: 'command' },
-    ]),
-  })),
-}));
+vi.mock('../autocomplete.js', async () => {
+  const actual = await vi.importActual<typeof import('./autocomplete.js')>('./autocomplete.js');
+  return {
+    ...actual,
+    FileCompleter: vi.fn().mockImplementation(() => ({
+      canComplete: vi.fn().mockReturnValue(false),
+      getCompletions: vi.fn().mockResolvedValue([]),
+    })),
+    CommandCompleter: vi.fn().mockImplementation(() => ({
+      canComplete: vi.fn((input: string) => input.startsWith('/')),
+      getCompletions: vi.fn().mockResolvedValue([
+        { text: '/help', display: '/help', description: 'Show help', type: 'command' },
+        { text: '/mode', display: '/mode', description: 'Change mode', type: 'command' },
+        { text: '/agent-mode', display: '/agent-mode', description: 'Agent mode', type: 'command' },
+      ]),
+    })),
+  };
+});
 
 describe('AutocompleteProvider', () => {
   let provider: AutocompleteProvider;
@@ -283,6 +288,22 @@ describe('AutocompleteProvider', () => {
       const completions = await provider.fetchImmediate('/h', 2);
 
       expect(Array.isArray(completions)).toBe(true);
+    });
+  });
+
+  describe('command ranking', () => {
+    // Regression: typing '/mode' used to rank '/agent-mode' ahead of '/mode'
+    // because prefixMatch compared the pattern 'mode' against the display
+    // '/mode' (starts with '/'), so the exact prefix lost to a fuzzy
+    // subsequence that gained a word-boundary bonus after '-'.
+    it("ranks exact command prefix above fuzzy substring match", async () => {
+      const completions = await provider.fetchImmediate('/mode', 5);
+      const commandNames = completions
+        .filter((c) => c.type === 'command')
+        .map((c) => c.display);
+
+      expect(commandNames[0]).toBe('/mode');
+      expect(commandNames).toContain('/agent-mode');
     });
   });
 });
