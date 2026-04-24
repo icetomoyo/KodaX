@@ -361,11 +361,51 @@ export const KODAX_PROVIDER_SNAPSHOTS: Record<ProviderName, ProviderSnapshot> = 
 
 export const KODAX_DEFAULT_PROVIDER = process.env.KODAX_PROVIDER ?? 'zhipu-coding';
 
+// Lazy singleton cache for built-in provider instances. Keyed on both the
+// provider name and the current apiKey env value so tests that mutate
+// `*_API_KEY` between cases still see a fresh SDK client (Issue: repeated
+// `new Anthropic({...})` is expensive and held onto process state — the
+// cache means each provider class wires its SDK client exactly once per
+// credential configuration, and shared across call sites).
+interface BuiltinProviderCacheEntry {
+  apiKey: string | undefined;
+  instance: KodaXBaseProvider;
+}
+const builtinProviderCache = new Map<string, BuiltinProviderCacheEntry>();
+
+function resolveApiKeyEnvForProvider(name: string): string | undefined {
+  if (!isProviderName(name)) {
+    return undefined;
+  }
+  return KODAX_PROVIDER_SNAPSHOTS[name].apiKeyEnv;
+}
+
 export function getProvider(name?: string): KodaXBaseProvider {
   const n = name ?? KODAX_DEFAULT_PROVIDER;
   const factory = KODAX_PROVIDERS[n];
   if (!factory) throw new KodaXProviderError(`Unknown provider: ${n}. Available: ${Object.keys(KODAX_PROVIDERS).join(', ')}`, n);
-  return factory();
+
+  const apiKeyEnv = resolveApiKeyEnvForProvider(n);
+  const currentApiKey = apiKeyEnv ? process.env[apiKeyEnv] : undefined;
+
+  const cached = builtinProviderCache.get(n);
+  if (cached && cached.apiKey === currentApiKey) {
+    return cached.instance;
+  }
+
+  const instance = factory();
+  builtinProviderCache.set(n, { apiKey: currentApiKey, instance });
+  return instance;
+}
+
+/**
+ * Drop all cached built-in provider instances. Intended for tests that
+ * manipulate `*_API_KEY` env variables outside the normal lifecycle
+ * (the cache already self-invalidates on env changes, but callers may
+ * want an explicit reset for isolation).
+ */
+export function resetBuiltinProviderCache(): void {
+  builtinProviderCache.clear();
 }
 
 // 检查 Provider 是否已配置 API Key

@@ -13,6 +13,7 @@ export {
   KODAX_PROVIDER_SNAPSHOTS,
   KODAX_DEFAULT_PROVIDER,
   getProvider,
+  resetBuiltinProviderCache,
   getProviderConfiguredCapabilityProfile,
   getProviderConfiguredReasoningCapability,
   isProviderConfigured,
