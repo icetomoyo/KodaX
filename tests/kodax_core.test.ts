@@ -43,8 +43,6 @@ import {
 // 从 @kodax/repl 包导入工具函数
 import {
   getGitRoot,
-  getFeatureProgress,
-  checkAllFeaturesComplete,
   rateLimitedCall,
   KODAX_DIR,
   KODAX_SESSIONS_DIR,
@@ -689,32 +687,6 @@ describe('Git Root Detection', () => {
     const gitRoot = await getGitRoot();
     // In a git repo, should return a string; otherwise null
     expect(gitRoot === null || typeof gitRoot === 'string').toBe(true);
-  });
-});
-
-// ============== Feature 进度测试 ==============
-
-describe('Feature Progress', () => {
-  const testDir = path.join(os.tmpdir(), 'kodax-feature-test-' + Date.now());
-
-  beforeEach(async () => {
-    await fs.mkdir(testDir, { recursive: true });
-  });
-
-  afterEach(async () => {
-    await fs.rm(testDir, { recursive: true, force: true });
-  });
-
-  it('should return [0, 0] when no feature_list.json exists', () => {
-    const [completed, total] = getFeatureProgress();
-    // Without feature_list.json in current directory
-    expect(completed).toBeGreaterThanOrEqual(0);
-    expect(total).toBeGreaterThanOrEqual(0);
-  });
-
-  it('should check all features complete', () => {
-    const result = checkAllFeaturesComplete();
-    expect(typeof result).toBe('boolean');
   });
 });
 

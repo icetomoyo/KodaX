@@ -4,10 +4,8 @@ import {
   createKodaXOptions,
   mergeConfiguredExtensions,
   parseAgentModeOption,
-  parseNonNegativeIntWithFallback,
   parseOptionalNonNegativeInt,
   parseOutputModeOption,
-  parsePositiveNumberWithFallback,
   resolveCliModelSelection,
   validateCliModeSelection,
   type CliOptions,
@@ -20,11 +18,6 @@ function createCliOptions(overrides: Partial<CliOptions> = {}): CliOptions {
     reasoningMode: 'auto',
     agentMode: 'ama',
     outputMode: 'text',
-    append: false,
-    overwrite: false,
-    autoContinue: false,
-    maxSessions: 50,
-    maxHours: 2,
     prompt: ['inspect', 'repo'],
     noSession: false,
     ...overrides,
@@ -139,26 +132,6 @@ describe('numeric CLI helpers', () => {
   it('throws on invalid non-negative integers instead of silently swallowing them', () => {
     expect(() => parseOptionalNonNegativeInt('abc')).toThrow(
       'Expected a non-negative integer, got "abc".',
-    );
-  });
-
-  it('uses the fallback for absent non-negative integer values', () => {
-    expect(parseNonNegativeIntWithFallback(undefined, 50)).toBe(50);
-  });
-
-  it('throws on invalid fallback-backed integer values', () => {
-    expect(() => parseNonNegativeIntWithFallback('-1', 50)).toThrow(
-      'Expected a non-negative integer, got "-1".',
-    );
-  });
-
-  it('uses the fallback for absent positive numeric values', () => {
-    expect(parsePositiveNumberWithFallback(undefined, 2)).toBe(2);
-  });
-
-  it('throws on invalid positive numeric values', () => {
-    expect(() => parsePositiveNumberWithFallback('0', 2)).toThrow(
-      'Expected a positive number, got "0".',
     );
   });
 });

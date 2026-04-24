@@ -52,10 +52,8 @@ import {
   mergeConfiguredExtensions,
   parseAgentModeOption,
   parseOptionalNonNegativeInt,
-  parseNonNegativeIntWithFallback,
   parseOutputModeOption,
   parsePermissionModeOption,
-  parsePositiveNumberWithFallback,
   resolveCliAgentMode,
   resolveCliModelSelection,
   resolveCliReasoningMode,
@@ -80,8 +78,6 @@ import {
   createExtensionRuntime,
   registerConfiguredMcpCapabilityProvider,
   KODAX_DEFAULT_PROVIDER,
-  KODAX_FEATURES_FILE,
-  KODAX_PROGRESS_FILE,
   checkPromiseSignal,
   getProvider,
   getAvailableProviderNames,
@@ -91,9 +87,6 @@ import {
 import {
   getGitRoot,
   prepareRuntimeConfig,
-  getFeatureProgress,
-  checkAllFeaturesComplete,
-  buildInitPrompt,
   FileSessionStorage,
   KODAX_CONFIG_FILE,
   resolveInteractiveSurfacePreference,
@@ -191,37 +184,11 @@ const CLI_HELP_TOPICS: Record<string, () => void> = {
     console.log(chalk.dim('  kodax -s delete 20260219   ') + '# Delete a session');
     console.log(chalk.dim('  kodax -p "task" --no-session') + ' # Run without saving\n');
   },
-  init: () => {
-    console.log(chalk.cyan('\nProject Initialization\n'));
-    console.log(chalk.bold('Overview:'));
-    console.log(chalk.dim('  Initialize a long-running project with project truth files and managed runtime state.'));
-    console.log(chalk.dim('  KodaX analyzes your task, creates manageable feature steps, and uses .agent/project/ for plans and harness artifacts.\n'));
-  console.log(chalk.bold('Options:'));
-  console.log(chalk.dim('  --init <task>    ') + 'Initialize new project');
-  console.log(chalk.dim('  --append         ') + 'Deprecated compatibility alias for the old append flow');
-  console.log(chalk.dim('  --overwrite      ') + 'Replace existing feature_list.json\n');
-    console.log(chalk.bold('Workflow:'));
-    console.log(chalk.dim('  1. kodax --init "Build REST API"     # Generate feature_list.json'));
-    console.log(chalk.dim('  2. kodax                             # Enter REPL and use /project status, /project plan, /project next'));
-    console.log(chalk.dim('  OR'));
-    console.log(chalk.dim('  2. kodax --auto-continue             # Non-REPL session loop over pending features'));
-    console.log();
-    console.log(chalk.bold('Examples:'));
-    console.log(chalk.dim('  kodax --init "Create auth system"   ') + '# New project');
-    console.log(chalk.dim('  kodax --init "Add tests"            ') + '# Existing project -> change request flow');
-    console.log(chalk.dim('  kodax --init "Redo" --overwrite     ') + '# Start fresh\n');
-  },
   project: () => {
     console.log(chalk.cyan('\nProject Mode\n'));
     console.log(chalk.bold('Overview:'));
     console.log(chalk.dim('  Project mode spans two surfaces: non-REPL bootstrap commands and REPL /project commands.'));
     console.log(chalk.dim('  Current workflow includes planning, quality review, brainstorm sessions, harness-verified execution, and runtime artifacts under .agent/project/.\n'));
-    console.log(chalk.bold('Non-REPL Entry Points:'));
-    console.log(chalk.dim('  --init <task>          ') + 'Initialize project truth files');
-    console.log(chalk.dim('  --overwrite            ') + 'Replace existing project management truth files');
-    console.log(chalk.dim('  --auto-continue        ') + 'Run a non-REPL session loop across pending features');
-    console.log(chalk.dim('  --max-sessions <n>     ') + 'Bound the auto-continue loop');
-    console.log(chalk.dim('  --max-hours <h>        ') + 'Stop auto-continue after a time budget\n');
     console.log(chalk.bold('REPL /project Commands:'));
     console.log(chalk.dim('  /project status [prompt] [--features|--progress]') + '  Status + guided analysis');
     console.log(chalk.dim('  /project plan [#index|topic]                 ') + '  Generate project or feature planning truth');
@@ -240,28 +207,19 @@ const CLI_HELP_TOPICS: Record<string, () => void> = {
     console.log(chalk.dim('  - /project quality combines deterministic checks with optional model-generated guidance'));
     console.log(chalk.dim('  - /project brainstorm aligns requirements into .agent/project/alignment.md\n'));
     console.log(chalk.bold('Examples:'));
-    console.log(chalk.dim('  kodax --init "Desktop app"'));
     console.log(chalk.dim('  kodax -h project'));
     console.log(chalk.dim('  kodax  # then: /project brainstorm -> /project plan -> /project next'));
     console.log(chalk.dim('  kodax  # then: /project quality | /project verify --last | /project auto --max=3\n'));
   },
   auto: () => {
-    console.log(chalk.cyan('\nAuto Mode & Auto-Continue\n'));
+    console.log(chalk.cyan('\nAuto Mode\n'));
     console.log(chalk.bold('Auto Mode (-y, --auto):'));
     console.log(chalk.dim('  Backward-compatibility alias kept for scripts.'));
     console.log(chalk.dim('  Non-REPL CLI already runs in auto mode by default, so this flag currently has no additional effect.\n'));
-    console.log(chalk.bold('Auto-Continue (--auto-continue):'));
-    console.log(chalk.dim('  Automatically run sessions until all features are complete.'));
-    console.log(chalk.dim('  Works with --init for hands-off project execution.\n'));
     console.log(chalk.bold('Options:'));
-    console.log(chalk.dim('  -y, --auto             ') + 'Backward-compat alias (no-op in non-REPL CLI)');
-    console.log(chalk.dim('  --auto-continue        ') + 'Auto-execute until complete');
-    console.log(chalk.dim('  --max-sessions <n>     ') + 'Max sessions (default: 50)');
-    console.log(chalk.dim('  --max-hours <h>        ') + 'Max runtime hours (default: 2)\n');
+    console.log(chalk.dim('  -y, --auto             ') + 'Backward-compat alias (no-op in non-REPL CLI)\n');
     console.log(chalk.bold('Examples:'));
-    console.log(chalk.dim('  kodax -y "refactor code"          ') + '# Legacy alias; same as plain non-REPL run');
-    console.log(chalk.dim('  kodax --init "API" --auto-continue') + '# Full automation');
-    console.log(chalk.dim('  kodax --auto-continue --max-hours 4') + '# Extended run\n');
+    console.log(chalk.dim('  kodax -y "refactor code"          ') + '# Legacy alias; same as plain non-REPL run\n');
   },
   provider: () => {
     const providerNames = getAvailableProviderNames();
@@ -338,9 +296,8 @@ function showCliHelpTopics(): void {
   console.log(chalk.dim('  kodax -h acp        ') + 'ACP server mode for editors and IDEs');
   console.log(chalk.dim('  kodax -h sessions   ') + 'Session management (-c, -r, -s options)');
   console.log(chalk.dim('  kodax -h skill      ') + 'Skill packaging and installation helpers');
-  console.log(chalk.dim('  kodax -h init       ') + 'Project initialization (--init, --overwrite)');
   console.log(chalk.dim('  kodax -h project    ') + 'Project mode workflow across CLI and /project');
-  console.log(chalk.dim('  kodax -h auto       ') + 'Auto mode and auto-continue');
+  console.log(chalk.dim('  kodax -h auto       ') + 'Auto mode backward-compat alias');
   console.log(chalk.dim('  kodax -h provider   ') + 'LLM provider options');
   console.log(chalk.dim('  kodax -h thinking   ') + 'Reasoning modes and depth control');
   console.log(chalk.dim('  kodax -h print      ') + 'Print mode for scripting\n');
@@ -539,15 +496,9 @@ function showBasicHelp(): void {
   console.log('  -y, --auto              Backward-compat alias; no effect in non-REPL CLI');
   console.log('  -s, --session OP        Legacy session operations: list, resume, delete <id>, delete-all, or raw session ID');
   console.log('  --no-session            Disable session persistence (print mode only)');
-  console.log('  --init TASK             Initialize a long-running task');
-  console.log('  --append                Deprecated compatibility alias for the old append flow');
-  console.log('  --overwrite             With --init: overwrite existing feature_list.json');
-  console.log('  --max-iter N            Max iterations per session (default: 200)');
-  console.log('  --auto-continue         Auto-continue long-running task until all features pass');
-  console.log('  --max-sessions N        Max sessions for --auto-continue (default: 50)');
-  console.log('  --max-hours H           Max hours for --auto-continue (default: 2.0)\n');
+  console.log('  --max-iter N            Max iterations per session (default: 200)\n');
   console.log('Help Topics (use -h <topic>):');
-  console.log('  acp, skill, sessions, init, project, auto, provider, thinking, print\n');
+  console.log('  acp, skill, sessions, project, auto, provider, thinking, print\n');
   console.log('Interactive Commands (in REPL mode):');
   console.log('  /help, /h               Show all commands');
   console.log('  /exit, /quit            Exit interactive mode');
@@ -601,13 +552,7 @@ async function main() {
     .option('--extension <path>', 'Load local extension module (.js/.mjs/.cjs/.ts/.mts/.cts)', collectRepeatedOption, [])
     .option('--no-session', 'Disable session persistence (print mode only)')
     // Long options.
-    .option('--init <task>', 'Initialize a long-running task')
-    .option('--append', 'Deprecated compatibility alias for the old append flow')
-    .option('--overwrite', 'With --init: overwrite existing feature_list.json')
     .option('--max-iter <n>', 'Max iterations (default: 200 from coding package)')
-    .option('--auto-continue', 'Auto-continue long-running task until all features pass')
-    .option('--max-sessions <n>', 'Max sessions for --auto-continue', '50')
-    .option('--max-hours <n>', 'Max hours for --auto-continue', '2')
     .allowUnknownOption(false)
     // Keep the root command executable even when subcommands like `skill` exist.
     .action(() => {});
@@ -631,7 +576,7 @@ _kodax_complete() {
   cur="\${COMP_WORDS[COMP_CWORD]}"
   prev="\${COMP_WORDS[COMP_CWORD-1]}"
   subcmds="acp skill completion"
-  opts="-p -c -r -n -m -t -s -y -h --print --continue --resume --new --provider --model --thinking --reasoning --agent-mode --repo-intelligence --repo-intelligence-trace --repointel-endpoint --repointel-bin --auto --session --extension --no-session --init --append --overwrite --max-iter --auto-continue --max-sessions --max-hours --version"
+  opts="-p -c -r -n -m -t -s -y -h --print --continue --resume --new --provider --model --thinking --reasoning --agent-mode --repo-intelligence --repo-intelligence-trace --repointel-endpoint --repointel-bin --auto --session --extension --no-session --max-iter --version"
 
   case "\${prev}" in
     --provider|-m) COMPREPLY=( $(compgen -W "${providerNames}" -- "\${cur}") ); return 0 ;;
@@ -1095,13 +1040,7 @@ complete -c kodax -l version -d 'Show version'`);
     outputMode: (opts.mode as CliOutputMode | undefined) ?? 'text',
     extensions: activeExtensions,
     session: opts.session,
-    init: opts.init,
-    append: opts.append ?? false,
-    overwrite: opts.overwrite ?? false,
     maxIter: parseOptionalNonNegativeInt(opts.maxIter),
-    autoContinue: opts.autoContinue ?? false,
-    maxSessions: parseNonNegativeIntWithFallback(opts.maxSessions, 50),
-    maxHours: parsePositiveNumberWithFallback(opts.maxHours, 2),
     prompt: opts.print ? [opts.print] : program.args,
     continue: opts.continue ?? false,
     resume: opts.resume,
@@ -1180,176 +1119,6 @@ complete -c kodax -l version -d 'Show version'`);
     }
   }
 
-  // --auto-continue: run non-REPL session loop across pending features.
-  if (options.autoContinue) {
-    if (!fsSync.existsSync(path.resolve(KODAX_FEATURES_FILE))) {
-      console.log(chalk.red(`[Error] --auto-continue requires a long-running project.`));
-      console.log(`Run 'kodax --init "your project"' first.`);
-      process.exit(1);
-    }
-
-    let firstSessionId: string | undefined;
-    const storage = new FileSessionStorage();
-
-    if (options.session === 'resume') {
-      const sessions = await storage.list();
-      firstSessionId = sessions[0]?.id;
-      if (firstSessionId) console.log(chalk.cyan(`[KodaX Auto-Continue] Resuming from session: ${firstSessionId}`));
-    } else if (options.session) {
-      firstSessionId = options.session;
-    }
-
-    const startTime = Date.now();
-    let sessionCount = 0;
-
-    console.log(chalk.cyan(`[KodaX Auto-Continue] Starting automatic session loop`));
-    console.log(chalk.cyan(`[KodaX Auto-Continue] Max sessions: ${options.maxSessions}, Max hours: ${options.maxHours}`));
-    const [completed0, total0] = getFeatureProgress();
-    console.log(chalk.cyan(`[KodaX Auto-Continue] Current progress: ${completed0}/${total0} features complete\n`));
-
-    while (sessionCount < options.maxSessions) {
-      if (checkAllFeaturesComplete()) {
-        console.log('\n' + '='.repeat(60));
-        console.log(chalk.green(`[KodaX Auto-Continue] All features complete!`));
-        console.log('='.repeat(60));
-        break;
-      }
-
-      const elapsedHours = (Date.now() - startTime) / 3600000;
-      if (elapsedHours >= options.maxHours) {
-        console.log('\n' + '='.repeat(60));
-        console.log(chalk.yellow(`[KodaX Auto-Continue] Max time reached (${options.maxHours}h)`));
-        console.log('='.repeat(60));
-        break;
-      }
-
-      sessionCount++;
-      const [completed, total] = getFeatureProgress();
-      console.log('\n' + '='.repeat(60));
-      console.log(chalk.cyan(`[KodaX Auto-Continue] Session ${sessionCount}/${options.maxSessions}`));
-      console.log(chalk.cyan(`[KodaX Auto-Continue] Progress: ${completed}/${total} features | Elapsed: ${elapsedHours.toFixed(1)}h/${options.maxHours}h`));
-      console.log('='.repeat(60));
-
-      const prompt = userPrompt || 'Continue implementing features from feature_list.json';
-      const kodaXOptions = createKodaXOptions({
-        ...options,
-        session: sessionCount === 1 ? firstSessionId : undefined,
-      }, false);
-
-      const result = await runManagedTask({
-        ...kodaXOptions,
-        context: {
-          ...kodaXOptions.context,
-          taskSurface: 'cli',
-        },
-      }, prompt);
-      emitJsonRunResultIfNeeded(options.outputMode, result);
-
-      if (!result.success) {
-        console.log(chalk.red(`\n[KodaX Auto-Continue] Session failed, stopping`));
-        break;
-      }
-
-      if (result.signal === 'COMPLETE') {
-        console.log('\n' + '='.repeat(60));
-        console.log(chalk.green(`[KodaX Auto-Continue] Agent signaled COMPLETE`));
-        console.log('='.repeat(60));
-        break;
-      } else if (result.signal === 'BLOCKED') {
-        console.log('\n' + '='.repeat(60));
-        console.log(chalk.yellow(`[KodaX Auto-Continue] Agent BLOCKED: ${result.signalReason}`));
-        console.log('Waiting for human intervention...');
-        console.log('='.repeat(60));
-        break;
-      } else if (result.signal === 'DECIDE') {
-        console.log('\n' + '='.repeat(60));
-        console.log(chalk.cyan(`[KodaX Auto-Continue] Agent needs decision: ${result.signalReason}`));
-        console.log('='.repeat(60));
-        break;
-      }
-    }
-
-    const [completedF, totalF] = getFeatureProgress();
-    console.log('\n' + '='.repeat(60));
-    console.log(chalk.cyan(`[KodaX Auto-Continue] Final Status:`));
-    console.log(`  Sessions completed: ${sessionCount}`);
-    console.log(`  Features complete: ${completedF}/${totalF}`);
-    console.log(`  Total time: ${((Date.now() - startTime) / 60000).toFixed(1)} minutes`);
-    console.log('='.repeat(60));
-    return;
-  }
-
-  // --init: generate feature_list.json and initialize project truth files.
-  if (options.init) {
-    const currentDate = new Date().toISOString().split('T')[0];
-    const currentOS = process.platform === 'win32' ? 'Windows' : 'Unix/Linux';
-    const featuresPath = path.resolve(KODAX_FEATURES_FILE);
-
-    if (fsSync.existsSync(featuresPath)) {
-      let existingFeatures: any[] = [];
-      let total = 0, completed = 0;
-      try {
-        const data = JSON.parse(fsSync.readFileSync(featuresPath, 'utf-8'));
-        existingFeatures = data.features ?? [];
-        total = existingFeatures.length;
-        completed = existingFeatures.filter((f: any) => f.passes).length;
-      } catch { }
-
-      if (options.append) {
-        console.log(chalk.yellow('[Warning] --append is deprecated. Prefer /project init "<request>" inside the REPL change-request flow.'));
-        console.log(chalk.cyan(`[KodaX] Appending to existing project (${total} features, ${completed} complete)`));
-        userPrompt = `Add new features to an existing project: ${options.init}
-
-**Current Context:**
-- Date: ${currentDate}
-- OS: ${currentOS}
-
-**Existing Features** (DO NOT modify these, keep them as-is):
-${JSON.stringify(existingFeatures, null, 2)}
-
-**Your Task**:
-1. Read the existing feature_list.json to understand what's already done
-2. Create NEW features for: ${options.init}
-3. Use the EDIT tool to APPEND the new features to the existing feature_list.json
-   - Do NOT delete or modify existing features
-   - Just add new features to the "features" array
-4. Add a new section to PROGRESS.md for this phase (don't overwrite)
-
-**New Feature Guidelines:**
-- Aim for 5-10 NEW features (not 40+)
-- Keep each feature SMALL (completable in 1 session)
-- Each new feature should have "passes": false
-
-After updating files, commit:
-   git add .
-   git commit -m "Add new features: ${options.init.slice(0, 50)}"
-
-**Example of appending to feature_list.json:**
-Old: {"features": [{"description": "Old feature", "passes": true}]}
-New: {"features": [
-  {"description": "Old feature", "passes": true},
-  {"description": "New feature 1", "steps": [...], "passes": false},
-  {"description": "New feature 2", "steps": [...], "passes": false}
-]}
-`;
-      } else if (options.overwrite) {
-        console.log(chalk.yellow(`[Warning] Overwriting existing feature_list.json (${total} features will be lost)`));
-        userPrompt = buildInitPrompt(options.init, currentDate, currentOS);
-      } else {
-        console.log(chalk.yellow(`\n[Warning] feature_list.json already exists!`));
-        console.log(`  Current: ${total} features (${completed} complete, ${total - completed} pending)\n`);
-        console.log('  Options:');
-        console.log('  Open the REPL and run /project init "<request>" to create a change request');
-        console.log('  --overwrite   Start fresh (existing features will be lost)\n');
-        console.log(`Example:\n  kodax\n  /project init "${options.init}"`);
-        process.exit(1);
-      }
-    } else {
-      console.log(chalk.cyan(`[KodaX] Initializing long-running task: ${options.init}`));
-      userPrompt = buildInitPrompt(options.init, currentDate, currentOS);
-    }
-  }
-
   // Command dispatch for /command-style invocations.
   if (userPrompt.startsWith('/')) {
     const parsed = parseCommandCall(userPrompt);
@@ -1384,8 +1153,8 @@ New: {"features": [
       }
     }
   }
-  // No prompt and not in print/init mode: enter interactive mode
-  if (!userPrompt && !options.init && !options.print) {
+  // No prompt and not in print mode: enter interactive mode
+  if (!userPrompt && !options.print) {
     const kodaXOptions = createKodaXOptions(options, false);
     const interactiveSurface = resolveInteractiveSurfacePreference();
     const useClassicInteractiveMode = interactiveSurface === 'classic';
@@ -1435,7 +1204,7 @@ New: {"features": [
   }
 
   // No prompt + --print: show basic help and exit.
-  if (!userPrompt && !options.init && options.print) {
+  if (!userPrompt && options.print) {
     showBasicHelp();
     return;
   }

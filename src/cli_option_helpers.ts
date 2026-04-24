@@ -28,13 +28,7 @@ export interface CliOptions {
   extensions?: string[];
   extensionRuntime?: KodaXExtensionRuntime;
   session?: string;
-  init?: string;
-  append: boolean;
-  overwrite: boolean;
   maxIter?: number;
-  autoContinue: boolean;
-  maxSessions: number;
-  maxHours: number;
   prompt: string[];
   continue?: boolean;
   resume?: string;
@@ -89,10 +83,6 @@ export function validateCliModeSelection(
 
   if (cliOptions.print) {
     throw new Error('`--mode json` cannot be combined with `-p/--print`. Pass the prompt as a positional argument instead.');
-  }
-
-  if (cliOptions.init || cliOptions.autoContinue) {
-    throw new Error('`--mode json` currently supports single non-interactive agent runs only.');
   }
 
   if (
@@ -243,30 +233,6 @@ export function parseOptionalNonNegativeInt(value: string | undefined): number |
   if (!Number.isFinite(parsed) || parsed < 0) {
     throw new InvalidArgumentError(
       `Expected a non-negative integer, got "${value}".`,
-    );
-  }
-
-  return parsed;
-}
-
-export function parseNonNegativeIntWithFallback(value: string | undefined, fallback: number): number {
-  return parseOptionalNonNegativeInt(value) ?? fallback;
-}
-
-export function parsePositiveNumberWithFallback(value: string | undefined, fallback: number): number {
-  if (value === undefined) {
-    return fallback;
-  }
-
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return fallback;
-  }
-
-  const parsed = Number.parseFloat(trimmed);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    throw new InvalidArgumentError(
-      `Expected a positive number, got "${value}".`,
     );
   }
 

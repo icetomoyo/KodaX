@@ -98,94 +98,6 @@ describe('SYSTEM_PROMPT Content Verification', () => {
   });
 });
 
-// ============== buildInitPrompt 测试 ==============
-
-describe('buildInitPrompt Content Verification', () => {
-  const cliUtilsPath = path.join(process.cwd(), 'packages', 'repl', 'src', 'common', 'utils.ts');
-
-  it('should contain feature definition', async () => {
-    const content = await fs.readFile(cliUtilsPath, 'utf-8');
-    expect(content).toContain('**What is a Feature?**');
-    expect(content).toContain('A feature is a COMPLETE, TESTABLE functionality');
-    expect(content).toContain('~50-300 lines per feature');
-  });
-
-  it('should contain Feature Count Guidelines', async () => {
-    const content = await fs.readFile(cliUtilsPath, 'utf-8');
-    expect(content).toContain('Feature Count Guidelines');
-    expect(content).toContain('Simple task');
-    expect(content).toContain('Medium task');
-    expect(content).toContain('Complex task');
-  });
-
-  it('should contain DO/DON\'T sections', async () => {
-    const content = await fs.readFile(cliUtilsPath, 'utf-8');
-    expect(content).toContain('**DO:**');
-    expect(content).toContain('Split by user-facing features');
-    expect(content).toContain('**DO NOT:**');
-    expect(content).toContain('Split by technical layers');
-  });
-
-  it('should contain GOOD/BAD examples', async () => {
-    const content = await fs.readFile(cliUtilsPath, 'utf-8');
-    expect(content).toContain('**Examples of GOOD features:**');
-    expect(content).toContain('**Examples of BAD features:**');
-    expect(content).toContain('User authentication (register, login, logout)');
-    expect(content).toContain('Add HTML structure');
-  });
-
-  it('should contain PROGRESS.md template', async () => {
-    const content = await fs.readFile(cliUtilsPath, 'utf-8');
-    expect(content).toContain('2. **PROGRESS.md**');
-    expect(content).toContain('# Progress Log');
-    expect(content).toContain('### Completed');
-    expect(content).toContain('### Next Steps');
-  });
-
-  it('should contain git commit instructions', async () => {
-    const content = await fs.readFile(cliUtilsPath, 'utf-8');
-    expect(content).toContain('git add .');
-    expect(content).toContain('git commit');
-    expect(content).toContain('Initial commit');
-  });
-});
-
-// ============== --append prompt 测试 ==============
-
-describe('--append Prompt Content Verification', () => {
-  const kodaxCliPath = path.join(process.cwd(), 'src', 'kodax_cli.ts');
-
-  it('should contain existing features warning', async () => {
-    const content = await fs.readFile(kodaxCliPath, 'utf-8');
-    expect(content).toContain('**Existing Features** (DO NOT modify these');
-    expect(content).toContain('Do NOT delete or modify existing features');
-  });
-
-  it('should contain task steps', async () => {
-    const content = await fs.readFile(kodaxCliPath, 'utf-8');
-    expect(content).toContain('**Your Task**:');
-    expect(content).toContain('1. Read the existing feature_list.json');
-    expect(content).toContain('2. Create NEW features');
-    expect(content).toContain('3. Use the EDIT tool to APPEND');
-    expect(content).toContain('4. Add a new section to PROGRESS.md');
-  });
-
-  it('should contain New Feature Guidelines', async () => {
-    const content = await fs.readFile(kodaxCliPath, 'utf-8');
-    expect(content).toContain('**New Feature Guidelines:**');
-    expect(content).toContain('5-10 NEW features');
-    expect(content).toContain('completable in 1 session');
-    expect(content).toContain('"passes": false');
-  });
-
-  it('should contain JSON example', async () => {
-    const content = await fs.readFile(kodaxCliPath, 'utf-8');
-    expect(content).toContain('**Example of appending to feature_list.json:**');
-    expect(content).toContain('Old:');
-    expect(content).toContain('New:');
-  });
-});
-
 // ============== toolBash timeout message 测试 ==============
 
 describe('toolBash Timeout Message Verification', () => {
@@ -230,8 +142,6 @@ describe('Retry Prompts Content Verification', () => {
 
 describe('Source File Consistency', () => {
   const systemPromptPath = path.join(process.cwd(), 'packages', 'coding', 'src', 'prompts', 'system.ts');
-  const kodaxCliPath = path.join(process.cwd(), 'src', 'kodax_cli.ts');
-  const cliUtilsPath = path.join(process.cwd(), 'packages', 'repl', 'src', 'common', 'utils.ts');
 
   it('should have SYSTEM_PROMPT in coding/prompts/system.ts', async () => {
     const systemPromptContent = await fs.readFile(systemPromptPath, 'utf-8');
@@ -250,38 +160,6 @@ describe('Source File Consistency', () => {
 
     for (const section of keySections) {
       expect(systemPromptContent).toContain(section);
-    }
-  });
-
-  it('should have buildInitPrompt in cli/utils.ts', async () => {
-    const cliUtilsContent = await fs.readFile(cliUtilsPath, 'utf-8');
-
-    const keySections = [
-      'What is a Feature?',
-      'Feature Count Guidelines',
-      'DO:',
-      'DO NOT:',
-      'Examples of GOOD features:',
-      'Examples of BAD features:',
-      'PROGRESS.md',
-    ];
-
-    for (const section of keySections) {
-      expect(cliUtilsContent).toContain(section);
-    }
-  });
-
-  it('should have --append prompt in kodax_cli.ts', async () => {
-    const kodaxCliContent = await fs.readFile(kodaxCliPath, 'utf-8');
-
-    const keySections = [
-      '**Existing Features** (DO NOT modify these',
-      '**New Feature Guidelines:**',
-      '**Example of appending to feature_list.json:**',
-    ];
-
-    for (const section of keySections) {
-      expect(kodaxCliContent).toContain(section);
     }
   });
 });
