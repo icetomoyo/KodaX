@@ -57,22 +57,6 @@ export {
   type CurrentConfig,
 } from "./interactive/commands.js";
 
-// === 项目管理 ===
-export { ProjectStorage } from "./interactive/project-storage.js";
-export {
-  ProjectFeature,
-  ProjectState,
-  ProjectStatistics,
-  FeatureList,
-  calculateStatistics,
-  getNextPendingIndex,
-  isAllCompleted,
-} from "./interactive/project-state.js";
-export {
-  handleProjectCommand,
-  detectAndShowProjectHint,
-} from "./interactive/project-commands.js";
-
 // === 共享工具 ===
 export {
   getVersion,

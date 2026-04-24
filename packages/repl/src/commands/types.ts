@@ -106,7 +106,6 @@ export interface CommandResultData {
   message?: string;
   data?: unknown;
   skillContent?: string;
-  projectInitPrompt?: string;
   invocation?: CommandInvocationRequest;
 }
 

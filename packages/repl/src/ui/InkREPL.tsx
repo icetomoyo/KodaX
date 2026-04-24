@@ -6590,7 +6590,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         };
 
         let invocationToExecute: CommandInvocationRequest | undefined = undefined;
-        let projectInitPromptToInject: string | undefined = undefined;
 
         try {
           const result = await executeCommand(parsed, context, callbacks, currentConfig);
@@ -6598,10 +6597,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           // Check if result contains invocation metadata to execute
           if (typeof result === 'object' && result !== null && 'invocation' in result) {
             invocationToExecute = result.invocation;
-          }
-          // Check if result contains project init prompt to inject
-          if (typeof result === 'object' && result !== null && 'projectInitPrompt' in result) {
-            projectInitPromptToInject = result.projectInitPrompt;
           }
         } finally {
           console.log = originalLog;
@@ -6649,50 +6644,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           } finally {
             setIsLoading(false);
             stopStreaming();
-            clearThinkingContent();
-          }
-
-          return;
-        }
-
-        // If project init was invoked, run agent with init prompt
-        if (projectInitPromptToInject) {
-          setIsLoading(false);
-          stopStreaming();
-
-          // Re-start streaming for project init execution
-          setIsLoading(true);
-          startStreaming();
-          startThinking();
-
-          try {
-            await runQueueableAgentSequence(
-              projectInitPromptToInject,
-              async (prompt) => runAgentRound(currentOptionsRef.current, prompt),
-            );
-          } catch (err) {
-            const error = err instanceof Error ? err : new Error(String(err));
-
-            // Check if this is an abort error (user pressed Ctrl+C)
-            const isAbortError = error.name === 'AbortError' ||
-              error.message.includes('aborted') ||
-              error.message.includes('ABORTED');
-
-            console.log = originalLog;
-
-            if (isAbortError) {
-              queueInterruptedPersistence();
-            } else {
-              console.log(chalk.red(error.message));
-              appendHistoryItemsWithPersistence([{
-                type: "error",
-                text: error.message,
-              }]);
-            }
-          } finally {
-            setIsLoading(false);
-            stopStreaming();
-            clearResponse();
             clearThinkingContent();
           }
 

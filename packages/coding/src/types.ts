@@ -812,7 +812,7 @@ export interface KodaXOptions {
 
 // ============== 结果类型 ==============
 
-export type KodaXTaskSurface = 'cli' | 'repl' | 'project' | 'plan';
+export type KodaXTaskSurface = 'cli' | 'repl' | 'plan';
 export type KodaXTaskStatus = 'planned' | 'running' | 'blocked' | 'failed' | 'completed';
 export type KodaXTaskRole = 'direct' | 'scout' | 'planner' | 'generator' | 'evaluator';
 

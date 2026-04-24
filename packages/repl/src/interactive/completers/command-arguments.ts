@@ -167,67 +167,6 @@ const STATUS_ARGS: ArgumentDefinition[] = [
 ];
 
 /**
- * Project command arguments - /project 命令参数
- */
-const PROJECT_ARGS: ArgumentDefinition[] = [
-  {
-    name: 'init',
-    description: 'Initialize a new project with AI-generated feature list',
-    type: 'enum',
-  },
-  {
-    name: 'status',
-    description: 'View project status (default), features, or progress',
-    type: 'enum',
-  },
-  {
-    name: 'next',
-    description: 'Execute next pending feature',
-    type: 'enum',
-  },
-  {
-    name: 'auto',
-    description: 'Auto-execute all pending features',
-    type: 'enum',
-  },
-  {
-    name: 'edit',
-    description: 'AI-driven feature editing (e.g., edit #3 "标记为完成")',
-    type: 'enum',
-  },
-  {
-    name: 'reset',
-    description: 'Clear progress or delete all project files',
-    type: 'enum',
-  },
-  {
-    name: 'analyze',
-    description: 'AI-powered project analysis',
-    type: 'enum',
-  },
-  {
-    name: 'pause',
-    description: 'Pause auto-continue mode',
-    type: 'enum',
-  },
-  {
-    name: 'list',
-    description: '[Deprecated] Use /project status --features',
-    type: 'enum',
-  },
-  {
-    name: 'mark',
-    description: '[Deprecated] Use /project edit instead',
-    type: 'enum',
-  },
-  {
-    name: 'progress',
-    description: '[Deprecated] Use /project status --progress',
-    type: 'enum',
-  },
-];
-
-/**
  * Delete command arguments - /delete 命令参数
  */
 const DELETE_ARGS: ArgumentDefinition[] = [

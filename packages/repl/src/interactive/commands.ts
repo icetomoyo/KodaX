@@ -109,24 +109,6 @@ function createManualCompactionConfig(
   };
 }
 
-const LEGACY_PROJECT_COMMAND_NAMES = new Set(['project', 'proj']);
-
-function printProjectMigrationGuidance(): void {
-  console.log(chalk.cyan('\n/project - Legacy Project Surface Retired\n'));
-  console.log(chalk.bold('What changed:'));
-  console.log(chalk.dim('  The old /project product surface has been retired under FEATURE_054.'));
-  console.log(chalk.dim('  Planning and brainstorm now belong to AMA H2 inside the main authority.'));
-  console.log();
-  console.log(chalk.bold('Use instead:'));
-  console.log(chalk.dim('  /agent-mode ama        ') + 'Enable adaptive multi-agent execution');
-  console.log(chalk.dim('  <describe the task>    ') + 'Let AMA route Planner/Generator/Evaluator as needed');
-  console.log(chalk.dim('  /status                ') + 'Inspect current runtime posture');
-  console.log();
-  console.log(chalk.bold('Reference:'));
-  console.log(chalk.dim('  docs/features/v0.7.30.md#feature_054-ama-project-convergence-absorb-project-mode-into-adaptive-h2'));
-  console.log();
-}
-
 function printWorkspaceUnchangedNote(context: InteractiveContext): void {
   if (context.runtimeInfo?.workspaceRoot) {
     console.log(chalk.dim(`  Workspace unchanged: ${formatWorkspaceTruth(context.runtimeInfo)}`));
@@ -1936,11 +1918,6 @@ function printHelp(): void {
 
 // Print detailed help for a specific command.
 function printDetailedHelp(commandName: string): void {
-  if (LEGACY_PROJECT_COMMAND_NAMES.has(commandName.toLowerCase())) {
-    printProjectMigrationGuidance();
-    return;
-  }
-
   // Lazy initialization.
   if (commandRegistry.size === 0) {
     initCommandRegistry();
@@ -2309,7 +2286,6 @@ export function parseCommand(input: string): { command: string; args: string[]; 
 // Execute command.
 export type CommandResult = boolean | {
   skillContent?: string;
-  projectInitPrompt?: string;
   invocation?: CommandInvocationRequest;
 };
 
@@ -2319,11 +2295,6 @@ export async function executeCommand(
   callbacks: CommandCallbacks,
   currentConfig: CurrentConfig
 ): Promise<CommandResult> {
-  if (LEGACY_PROJECT_COMMAND_NAMES.has(parsed.command.toLowerCase())) {
-    printProjectMigrationGuidance();
-    return true;
-  }
-
   // Lazy initialization.
   if (commandRegistry.size === 0) {
     initCommandRegistry(context.gitRoot);

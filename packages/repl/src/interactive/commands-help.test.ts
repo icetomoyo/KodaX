@@ -58,19 +58,6 @@ describe('help command output', () => {
     expect(output).not.toContain('/internal-sync');
   });
 
-  it('redirects /help project to the AMA migration guidance', async () => {
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const helpCommand = BUILTIN_COMMANDS.find((cmd) => cmd.name === 'help');
-
-    expect(helpCommand).toBeDefined();
-    await helpCommand!.handler(['project'], {} as never, {} as never, {} as never);
-
-    const output = logSpy.mock.calls.flat().join('\n');
-    expect(output).toContain('/project - Legacy Project Surface Retired');
-    expect(output).toContain('/agent-mode ama');
-    expect(output).toContain('FEATURE_054');
-  });
-
   it('documents workspace-aware session semantics for save/load/sessions/delete', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const saveCommand = BUILTIN_COMMANDS.find((cmd) => cmd.name === 'save');

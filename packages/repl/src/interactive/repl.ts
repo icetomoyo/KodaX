@@ -968,41 +968,6 @@ Keyboard Shortcuts:
       return;
     }
 
-    if (result.projectInitPrompt) {
-      if (planMode) {
-        await runWithPlanMode(result.projectInitPrompt, {
-          ...currentOptions,
-          provider: currentConfig.provider,
-          thinking: currentConfig.thinking,
-          reasoningMode: currentConfig.reasoningMode,
-        });
-      } else {
-        const runResult = await runAgentRound(
-          {
-            ...currentOptions,
-            provider: currentConfig.provider,
-            thinking: currentConfig.thinking,
-            reasoningMode: currentConfig.reasoningMode,
-          },
-          context,
-          result.projectInitPrompt
-        );
-        context.messages = runResult.messages;
-        context.contextTokenSnapshot = runResult.contextTokenSnapshot;
-        statusBar?.update({ messageCount: context.messages.length });
-        if (context.messages.length > 0) {
-          const title = extractTitle(context.messages);
-          context.title = title;
-          await storage.save(context.sessionId, {
-            messages: context.messages,
-            title,
-            gitRoot: context.gitRoot ?? '',
-            runtimeInfo: context.runtimeInfo,
-          });
-        }
-      }
-    }
-
     if (!result.invocation) {
       return;
     }
