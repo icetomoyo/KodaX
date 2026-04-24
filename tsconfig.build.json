@@ -6,6 +6,7 @@
     { "path": "./packages/core" },
     { "path": "./packages/mcp" },
     { "path": "./packages/session-lineage" },
+    { "path": "./packages/repointel-protocol" },
     { "path": "./packages/skills" },
     { "path": "./packages/agent" },
     { "path": "./packages/coding" },

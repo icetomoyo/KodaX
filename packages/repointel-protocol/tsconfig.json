@@ -12,20 +12,11 @@
     "forceConsistentCasingInFileNames": true,
     "declaration": true,
     "composite": true,
+    "declarationMap": true,
     "sourceMap": true,
-    "resolveJsonModule": true,
-    "allowSyntheticDefaultImports": true,
-    "tsBuildInfoFile": "./dist/tsconfig.tsbuildinfo"
+    "tsBuildInfoFile": "./dist/tsconfig.tsbuildinfo",
+    "resolveJsonModule": true
   },
-  "references": [
-    { "path": "../ai" },
-    { "path": "../agent" },
-    { "path": "../core" },
-    { "path": "../mcp" },
-    { "path": "../repointel-protocol" },
-    { "path": "../session-lineage" },
-    { "path": "../skills" }
-  ],
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]
 }

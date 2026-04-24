@@ -380,7 +380,7 @@ export {
 
 export {
   REPOINTEL_DEFAULT_ENDPOINT,
-} from './repo-intelligence/premium-contract.js';
+} from '@kodax/repointel-protocol';
 
 export {
   renderModuleContext,

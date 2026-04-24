@@ -27,6 +27,7 @@
     "@kodax/ai": ">=0.5.0",
     "@kodax/core": "*",
     "@kodax/mcp": "*",
+    "@kodax/repointel-protocol": "*",
     "@kodax/session-lineage": "*",
     "@kodax/skills": "*"
   },

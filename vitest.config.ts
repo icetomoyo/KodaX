@@ -24,6 +24,7 @@ export default defineConfig({
       '@kodax/agent': resolveFromRoot('packages', 'agent', 'src', 'index.ts'),
       '@kodax/coding': resolveFromRoot('packages', 'coding', 'src', 'index.ts'),
       '@kodax/repl': resolveFromRoot('packages', 'repl', 'src', 'index.ts'),
+      '@kodax/repointel-protocol': resolveFromRoot('packages', 'repointel-protocol', 'src', 'index.ts'),
       '@kodax/skills': resolveFromRoot('packages', 'skills', 'src', 'index.ts'),
     },
   },

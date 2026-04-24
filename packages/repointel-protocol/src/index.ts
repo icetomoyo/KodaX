@@ -1,3 +1,12 @@
+/**
+ * KodaX Repo-Intelligence Protocol
+ *
+ * RPC contract between a host CLI (kodax/codex/claude/opencode) and the
+ * repo-intelligence daemon. Kept as a standalone package so external
+ * clients can depend on the contract without pulling the whole
+ * `@kodax/coding` runtime.
+ */
+
 export const REPOINTEL_CONTRACT_VERSION = 1 as const;
 export const REPOINTEL_DEFAULT_ENDPOINT = 'http://127.0.0.1:47891';
 

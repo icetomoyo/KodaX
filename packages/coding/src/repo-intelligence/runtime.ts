@@ -30,8 +30,8 @@ import type {
   KodaXRepoRoutingSignals,
   KodaXToolExecutionContext,
 } from '../types.js';
-import type { RepoPreturnBundle } from './premium-contract.js';
-import { REPOINTEL_CONTRACT_VERSION } from './premium-contract.js';
+import type { RepoPreturnBundle } from '@kodax/repointel-protocol';
+import { REPOINTEL_CONTRACT_VERSION } from '@kodax/repointel-protocol';
 import {
   callPremiumDaemon,
   resolveRepoIntelligenceMode,
