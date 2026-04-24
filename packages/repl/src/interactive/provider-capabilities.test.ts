@@ -65,7 +65,6 @@ describe('provider capability disclosure', () => {
     expect(output).toContain('Long-running support: limited');
     expect(output).toContain('Common Scenarios:');
     expect(output).toContain('Long-running task: BLOCK');
-    expect(output).toContain('Project harness: BLOCK');
   });
 
   it('keeps bridge providers marked as configured and prompt-only for reasoning UX', () => {

@@ -5,7 +5,6 @@
  */
 
 export { SYSTEM_PROMPT } from './system.js';
-export { LONG_RUNNING_PROMPT } from './long-running.js';
 export { buildSystemPrompt, buildSystemPromptSnapshot } from './builder.js';
 export {
   PROMPT_SECTION_REGISTRY,

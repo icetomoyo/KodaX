@@ -98,67 +98,6 @@ describe('SYSTEM_PROMPT Content Verification', () => {
   });
 });
 
-// ============== LONG_RUNNING_PROMPT 测试 ==============
-
-describe('LONG_RUNNING_PROMPT Content Verification', () => {
-  const longRunningPath = path.join(process.cwd(), 'packages', 'coding', 'src', 'prompts', 'long-running.ts');
-
-  it('should contain Long-Running Task Mode section', async () => {
-    const content = await fs.readFile(longRunningPath, 'utf-8');
-    expect(content).toContain('## Long-Running Task Mode');
-    expect(content).toContain('At the start of EACH session, follow these steps:');
-  });
-
-  it('should contain all 6 steps', async () => {
-    const content = await fs.readFile(longRunningPath, 'utf-8');
-    expect(content).toContain('1. Note the Working Directory from context');
-    expect(content).toContain('2. Read git logs');
-    expect(content).toContain('3. Read feature_list.json and pick ONE incomplete feature');
-    expect(content).toContain('4. **Write a session plan**');
-    expect(content).toContain('5. Execute the plan step by step');
-    expect(content).toContain('6. End session with: git commit');
-  });
-
-  it('should contain IMPORTANT Rules', async () => {
-    const content = await fs.readFile(longRunningPath, 'utf-8');
-    expect(content).toContain('IMPORTANT Rules:');
-    // Check for key rule concepts (without exact backticks)
-    expect(content).toContain('passes');
-    expect(content).toContain('Leave codebase in clean state');
-    expect(content).toContain('Work on ONE feature at a time');
-    expect(content).toContain('verify features work end-to-end');
-  });
-
-  it('should contain Session Planning template', async () => {
-    const content = await fs.readFile(longRunningPath, 'utf-8');
-    expect(content).toContain('## Session Planning (CRITICAL for Quality)');
-    expect(content).toContain('# Session Plan');
-    expect(content).toContain('**Date**:');
-    expect(content).toContain('**Feature**:');
-    expect(content).toContain('## Understanding');
-    expect(content).toContain('## Approach');
-    expect(content).toContain('## Steps');
-    expect(content).toContain('## Considerations');
-    expect(content).toContain('## Risks');
-  });
-
-  it('should contain Efficiency Rules', async () => {
-    const content = await fs.readFile(longRunningPath, 'utf-8');
-    expect(content).toContain('## Efficiency Rules (CRITICAL)');
-    expect(content).toContain('Each session MUST complete at least ONE full feature');
-    expect(content).toContain('Minimum meaningful code change per session: 50+ lines');
-    expect(content).toContain('A single-page display task should be completed in ONE session');
-  });
-
-  it('should contain Promise Signals', async () => {
-    const content = await fs.readFile(longRunningPath, 'utf-8');
-    expect(content).toContain('## Promise Signals (Ralph-Loop Style)');
-    expect(content).toContain('<promise>COMPLETE</promise>');
-    expect(content).toContain('<promise>BLOCKED:reason</promise>');
-    expect(content).toContain('<promise>DECIDE:question</promise>');
-  });
-});
-
 // ============== buildInitPrompt 测试 ==============
 
 describe('buildInitPrompt Content Verification', () => {
@@ -291,7 +230,6 @@ describe('Retry Prompts Content Verification', () => {
 
 describe('Source File Consistency', () => {
   const systemPromptPath = path.join(process.cwd(), 'packages', 'coding', 'src', 'prompts', 'system.ts');
-  const longRunningPath = path.join(process.cwd(), 'packages', 'coding', 'src', 'prompts', 'long-running.ts');
   const kodaxCliPath = path.join(process.cwd(), 'src', 'kodax_cli.ts');
   const cliUtilsPath = path.join(process.cwd(), 'packages', 'repl', 'src', 'common', 'utils.ts');
 
@@ -312,21 +250,6 @@ describe('Source File Consistency', () => {
 
     for (const section of keySections) {
       expect(systemPromptContent).toContain(section);
-    }
-  });
-
-  it('should have LONG_RUNNING_PROMPT in coding/prompts/long-running.ts', async () => {
-    const longRunningContent = await fs.readFile(longRunningPath, 'utf-8');
-
-    const keySections = [
-      '## Long-Running Task Mode',
-      '## Session Planning (CRITICAL for Quality)',
-      '## Efficiency Rules (CRITICAL)',
-      '## Promise Signals (Ralph-Loop Style)',
-    ];
-
-    for (const section of keySections) {
-      expect(longRunningContent).toContain(section);
     }
   });
 

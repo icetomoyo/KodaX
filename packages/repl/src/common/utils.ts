@@ -752,10 +752,6 @@ export function getProviderCommonPolicyScenarios(
     { label: 'General coding', hints: {} },
     { label: 'Evidence-heavy review', hints: { evidenceHeavy: true } },
     { label: 'Long-running task', hints: { longRunning: true } },
-    {
-      label: 'Project harness',
-      hints: { longRunning: true, harness: 'project', evidenceHeavy: true },
-    },
   ];
 
   return scenarios

@@ -1,18 +1,14 @@
-import fsSync from 'fs';
-import path from 'path';
 import type {
   KodaXBaseProvider,
   KodaXProviderCapabilityProfile,
   KodaXReasoningCapability,
 } from '@kodax/ai';
 import { normalizeCapabilityProfile } from '@kodax/ai';
-import { KODAX_FEATURES_FILE } from './constants.js';
 import {
   isCustomProviderName,
   isProviderName,
   isRuntimeModelProviderName,
 } from './providers/index.js';
-import { resolveExecutionCwd } from './runtime-paths.js';
 import type {
   KodaXContextOptions,
   KodaXExecutionMode,
@@ -146,21 +142,6 @@ export function buildProviderCapabilitySnapshot(
   };
 }
 
-function detectLongRunningProjectContext(context?: KodaXContextOptions): boolean {
-  if (!context) {
-    return false;
-  }
-
-  const candidates = [
-    resolveExecutionCwd(context),
-    context.gitRoot ? path.resolve(context.gitRoot) : null,
-  ].filter((entry): entry is string => typeof entry === 'string');
-
-  return candidates.some((dir) =>
-    fsSync.existsSync(path.resolve(dir, KODAX_FEATURES_FILE)),
-  );
-}
-
 function detectMultimodalContext(context?: KodaXContextOptions): boolean {
   return Boolean(
     context?.inputArtifacts?.some((artifact) => artifact.kind === 'image'),
@@ -173,9 +154,7 @@ function inferPromptPolicyHints(prompt?: string): KodaXProviderPolicyHints {
   }
 
   const normalized = prompt.toLowerCase();
-  const usesProjectHarness = normalized.includes('<project-harness>');
   const evidenceHeavy =
-    usesProjectHarness ||
     /merge blocker|review|strict audit|runtime error|stack trace|stderr|failing test|evidence/.test(
       normalized,
     );
@@ -183,10 +162,8 @@ function inferPromptPolicyHints(prompt?: string): KodaXProviderPolicyHints {
   // Hard-gate semantics should come from structured signals rather than
   // free-form user keywords. Mentions such as "project mode", "MCP", or
   // "screenshot support" must not block by themselves, so prompt inference
-  // is limited to protocol markers and warn-level evidence cues.
+  // is limited to warn-level evidence cues.
   return {
-    longRunning: usesProjectHarness ? true : undefined,
-    harness: usesProjectHarness ? 'project' : undefined,
     evidenceHeavy: evidenceHeavy ? true : undefined,
   };
 }
@@ -200,19 +177,13 @@ function resolveProviderPolicyHints(
 ): KodaXProviderPolicyHints {
   const context = options.context ?? options.options?.context;
   const promptHints = inferPromptPolicyHints(options.prompt);
-  const autoLongRunning = detectLongRunningProjectContext(context);
 
   return {
     longRunning: pickBoolean(
       options.hints?.longRunning,
       context?.providerPolicyHints?.longRunning,
       promptHints.longRunning,
-      autoLongRunning,
     ),
-    harness:
-      options.hints?.harness
-      ?? context?.providerPolicyHints?.harness
-      ?? promptHints.harness,
     harnessProfile:
       options.hints?.harnessProfile
       ?? context?.providerPolicyHints?.harnessProfile,
@@ -375,34 +346,6 @@ export function evaluateProviderPolicy(
         summary: 'long-running execution is degraded on this provider',
         detail:
           'Long-running flows may behave inconsistently because this provider only offers limited session or long-running support.',
-      });
-    }
-  }
-
-  if (hints.harness === 'project') {
-    if (
-      snapshot.contextFidelity === 'lossy' ||
-      snapshot.sessionSupport === 'stateless' ||
-      snapshot.toolCallingFidelity === 'none' ||
-      snapshot.evidenceSupport === 'none'
-    ) {
-      pushIssue(issues, {
-        code: 'project-harness-blocked',
-        severity: 'block',
-        summary: 'project harness verification is unsafe on this provider',
-        detail:
-          'Project harness flows require reliable multi-turn context, tool execution, and evidence handling, but this provider cannot guarantee those semantics.',
-      });
-    } else if (
-      snapshot.toolCallingFidelity === 'limited' ||
-      snapshot.evidenceSupport === 'limited'
-    ) {
-      pushIssue(issues, {
-        code: 'project-harness-limited',
-        severity: 'warn',
-        summary: 'project harness verification is constrained on this provider',
-        detail:
-          'Project harness flows may lose evidence fidelity because this provider only offers limited tool-calling or evidence support.',
       });
     }
   }

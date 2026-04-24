@@ -5,15 +5,12 @@
  * truth can be snapshotted, attributed, and regression-tested.
  */
 
-import fsSync from 'fs';
 import path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { KODAX_FEATURES_FILE, KODAX_PROGRESS_FILE } from '../constants.js';
 import { loadAgentsFiles, formatAgentsForPrompt } from '../context/agents-loader.js';
 import { resolveExecutionCwd } from '../runtime-paths.js';
 import type { KodaXOptions } from '../types.js';
-import { LONG_RUNNING_PROMPT } from './long-running.js';
 import {
   buildPromptSnapshot,
   createPromptSection,
@@ -37,9 +34,6 @@ export async function buildSystemPromptSnapshot(
   const projectRoot = options.context?.gitRoot
     ? path.resolve(options.context.gitRoot)
     : executionCwd;
-  const isLongRunning =
-    fsSync.existsSync(path.resolve(projectRoot, KODAX_FEATURES_FILE)) &&
-    !options.context?.longRunning;
   const { prefix: systemPromptPrefix, suffix: systemPromptSuffix } =
     splitSystemPromptTemplate(SYSTEM_PROMPT);
 
@@ -98,19 +92,6 @@ export async function buildSystemPromptSnapshot(
     }
   }
 
-  if (isLongRunning) {
-    const longRunningContext = await getLongRunningContext(projectRoot);
-    if (longRunningContext) {
-      sections.push(
-        createPromptSection(
-          'long-running-context',
-          longRunningContext,
-          'Include tracked feature and progress context when long-running project files are present.',
-        ),
-      );
-    }
-  }
-
   if (options.context?.repoIntelligenceContext?.trim()) {
     sections.push(
       createPromptSection(
@@ -128,16 +109,6 @@ export async function buildSystemPromptSnapshot(
         'mcp-capability-context',
         mcpCapabilityContext,
         'Include runtime-owned MCP capability truth only when active MCP servers are configured.',
-      ),
-    );
-  }
-
-  if (isLongRunning) {
-    sections.push(
-      createPromptSection(
-        'long-running-overlay',
-        LONG_RUNNING_PROMPT,
-        'Activate the long-running overlay when feature tracking files are present.',
       ),
     );
   }
@@ -181,7 +152,7 @@ export async function buildSystemPromptSnapshot(
     isNewSession,
     executionCwd,
     projectRoot,
-    longRunning: isLongRunning,
+    longRunning: false,
   });
 }
 
@@ -342,37 +313,3 @@ async function getProjectSnapshot(
   return lines.join('\n');
 }
 
-async function getLongRunningContext(cwd: string): Promise<string> {
-  const fs = await import('fs/promises');
-  const parts: string[] = [];
-  const featuresPath = path.resolve(cwd, KODAX_FEATURES_FILE);
-  if (fsSync.existsSync(featuresPath)) {
-    try {
-      const features = JSON.parse(await fs.readFile(featuresPath, 'utf-8'));
-      parts.push('## Feature List (from feature_list.json)\n');
-      for (const feature of features.features ?? []) {
-        const status = feature.passes ? '[x]' : '[ ]';
-        const description = feature.description ?? feature.name ?? 'Unknown';
-        parts.push(`- ${status} ${description}`);
-      }
-    } catch {
-      // Ignore malformed feature tracking state in prompt assembly.
-    }
-  }
-
-  const progressPath = path.resolve(cwd, KODAX_PROGRESS_FILE);
-  if (fsSync.existsSync(progressPath)) {
-    try {
-      const progress = await fs.readFile(progressPath, 'utf-8');
-      if (progress.trim()) {
-        parts.push(
-          `\n## Last Session Progress (from PROGRESS.md)\n\n${progress.slice(0, 1500)}`,
-        );
-      }
-    } catch {
-      // Ignore malformed progress logs in prompt assembly.
-    }
-  }
-
-  return parts.join('\n');
-}

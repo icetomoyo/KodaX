@@ -2,7 +2,6 @@ import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { KODAX_FEATURES_FILE, KODAX_PROGRESS_FILE } from '../constants.js';
 import { createExtensionRuntime } from '../extensions/runtime.js';
 import { buildSystemPrompt, buildSystemPromptSnapshot } from './builder.js';
 
@@ -161,40 +160,6 @@ describe('buildSystemPrompt', () => {
     expect(snapshot.rendered.indexOf('## Skills')).toBeGreaterThan(
       snapshot.rendered.indexOf('PROJECT RULE: prefer project-scoped constraints.'),
     );
-  });
-
-  it('captures long-running context and overlay in the prompt snapshot', async () => {
-    const executionCwd = await createTempDir('kodax-prompt-long-running-');
-    cleanupDirs.push(executionCwd);
-    await fs.writeFile(
-      path.join(executionCwd, KODAX_FEATURES_FILE),
-      JSON.stringify({
-        features: [{ passes: false, description: 'Implement Wave C' }],
-      }),
-      'utf-8',
-    );
-    await fs.writeFile(
-      path.join(executionCwd, KODAX_PROGRESS_FILE),
-      'Wave B shipped cleanly.',
-      'utf-8',
-    );
-
-    const snapshot = await buildSystemPromptSnapshot(
-      {
-        provider: 'openai',
-        context: {
-          executionCwd,
-          gitRoot: executionCwd,
-        },
-      },
-      true,
-    );
-
-    expect(snapshot.metadata.longRunning).toBe(true);
-    expect(snapshot.sections.some((section) => section.id === 'long-running-context')).toBe(true);
-    expect(snapshot.sections.some((section) => section.id === 'long-running-overlay')).toBe(true);
-    expect(snapshot.rendered).toContain('## Feature List (from feature_list.json)');
-    expect(snapshot.rendered).toContain('## Long-Running Task Mode');
   });
 
   it('injects MCP capability truth when the extension runtime exposes it', async () => {

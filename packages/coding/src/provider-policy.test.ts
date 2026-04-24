@@ -59,24 +59,20 @@ describe('provider policy', () => {
     });
   });
 
-  it('blocks project-harness long-running work on lossy bridge providers', () => {
+  it('blocks long-running work on lossy bridge providers', () => {
     const decision = evaluateProviderPolicy({
       providerName: 'gemini-cli',
       capabilityProfile: CLI_BRIDGE_PROFILE,
       reasoningCapability: 'prompt-only',
       hints: {
         longRunning: true,
-        harness: 'project',
       },
       reasoningMode: 'off',
     });
 
     expect(decision.status).toBe('block');
     expect(decision.issues.map((issue) => issue.code)).toEqual(
-      expect.arrayContaining([
-        'long-running-blocked',
-        'project-harness-blocked',
-      ]),
+      expect.arrayContaining(['long-running-blocked']),
     );
   });
 
@@ -117,24 +113,6 @@ describe('provider policy', () => {
 
     expect(decision.status).toBe('allow');
     expect(decision.issues).toEqual([]);
-  });
-
-  it('still treats explicit project harness protocol markers as structured long-running signals', () => {
-    const decision = evaluateProviderPolicy({
-      providerName: 'gemini-cli',
-      capabilityProfile: CLI_BRIDGE_PROFILE,
-      reasoningCapability: 'prompt-only',
-      prompt: 'Complete the task and end with <project-harness>{"status":"complete"}</project-harness>.',
-      reasoningMode: 'off',
-    });
-
-    expect(decision.status).toBe('block');
-    expect(decision.issues.map((issue) => issue.code)).toEqual(
-      expect.arrayContaining([
-        'long-running-blocked',
-        'project-harness-blocked',
-      ]),
-    );
   });
 
   it('warns on evidence-heavy bridge flows without blocking simple execution', () => {

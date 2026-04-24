@@ -395,7 +395,6 @@ export {
 
 export {
   SYSTEM_PROMPT,
-  LONG_RUNNING_PROMPT,
   buildSystemPrompt,
   buildSystemPromptSnapshot,
   PROMPT_SECTION_REGISTRY,

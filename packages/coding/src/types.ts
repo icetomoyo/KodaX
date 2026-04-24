@@ -308,7 +308,6 @@ export interface KodaXContextTokenSnapshot {
 
 export interface KodaXProviderPolicyHints {
   longRunning?: boolean;
-  harness?: 'project';
   harnessProfile?: KodaXHarnessProfile;
   evidenceHeavy?: boolean;
   multimodal?: boolean;

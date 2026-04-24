@@ -81,19 +81,18 @@ describe('runKodaX provider policy integration', () => {
     delete process.env[TEST_PROVIDER_API_KEY_ENV];
   });
 
-  it('blocks long-running project flows before the provider stream starts', async () => {
+  it('blocks long-running flows on lossy bridge providers before the provider stream starts', async () => {
     const result = await runKodaX(
       {
         provider: TEST_PROVIDER_NAME,
         context: {
           providerPolicyHints: {
             longRunning: true,
-            harness: 'project',
           },
           repoIntelligenceMode: 'off',
         },
       },
-      'Finish the managed task and keep project mode active.',
+      'Finish the managed task and keep the session active across turns.',
     );
     expect(result.success).toBe(false);
     expect(result.errorMetadata?.lastError).toMatch(/\[Provider Policy\]/);

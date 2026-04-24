@@ -16,8 +16,7 @@ import type { KodaXOptions, KodaXTaskSurface } from '../../../types.js';
  * policy hint.
  */
 export function getManagedTaskSurface(options: KodaXOptions): KodaXTaskSurface {
-  return options.context?.taskSurface
-    ?? (options.context?.providerPolicyHints?.harness === 'project' ? 'project' : 'cli');
+  return options.context?.taskSurface ?? 'cli';
 }
 
 /**
