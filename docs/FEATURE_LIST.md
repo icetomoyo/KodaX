@@ -15,19 +15,17 @@
 |---|---|
 | Tracked feature IDs | `001-097` (026 removed) |
 | Total tracked features | `96` |
-| Completed | `74` |
+| Completed | `78` |
 | Cancelled | `2` |
 | Absorbed | `2` |
 | InProgress | `1` |
-| Planned | `17` |
-| Current released version | `v0.7.25` |
+| Planned | `13` |
+| Current released version | `v0.7.27` |
 
 ### 各版本待做分布
 
 | Version | Planned features |
 |---|---|
-| `v0.7.26` | `2` |
-| `v0.7.27` | `2` |
 | `v0.7.28` | `2` |
 | `v0.7.29` | `1` |
 | `v0.7.30` | `1` |
@@ -53,10 +51,6 @@
 
 | ID | Title | Category | Priority | Planned | Design |
 |---|---|---|---|---|---|
-| `084` | Task Engine Phase 2 — Rewrite Scout/Generator/Evaluator on Layer A Primitives (absorbs FEATURE_059) | Core | High | `v0.7.26` | [v0.7.26](features/v0.7.26.md#feature_084-task-engine-phase-2--rewrite-scoutgeneratorevaluator-on-layer-a-primitives) |
-| `085` | Guardrail Tri-Layer — Input / Output / Tool | Core | High | `v0.7.26` | [v0.7.26](features/v0.7.26.md#feature_085-guardrail-tri-layer--input--output--tool) |
-| `086` | KodaX Prefix Cleanup and Legacy Purge | Core | High | `v0.7.27` | [v0.7.27](features/v0.7.27.md#feature_086-kodax-prefix-cleanup-and-legacy-purge) |
-| `091` | Repo-Intelligence Protocol Package Extraction | Internal | High | `v0.7.27` | [v0.7.27](features/v0.7.27.md#feature_091-repo-intelligence-protocol-package-extraction) |
 | `087` | ConstructionRuntime and Constructed-World Substrate | Core | High | `v0.7.28` | [v0.7.28](features/v0.7.28.md#feature_087-constructionruntime-and-constructed-world-substrate) |
 | `088` | Self-Construction Tier 2 — Tool Generation | Core | High | `v0.7.28` | [v0.7.28](features/v0.7.28.md#feature_088-self-construction-tier-2--tool-generation) |
 | `078` | Role-Aware Reasoning Profiles | Internal | High | `v0.7.29` | [v0.7.29](features/v0.7.29.md#feature_078-role-aware-reasoning-profiles) |
@@ -190,6 +184,10 @@
 | `058` | Transcript Native Scrollback Dump | `v0.7.25` | [v0.7.25](features/v0.7.25.md#feature_058-transcript-native-scrollback-dump) |
 | `075` | Plan Approval Dialog Scroll | `v0.7.25` | [v0.7.25](features/v0.7.25.md#feature_075-plan-approval-dialog-scroll) |
 | `076` | Managed Task Round Boundary — User Conversation Preservation | `v0.7.25` | [v0.7.25](features/v0.7.25.md#feature_076-managed-task-round-boundary--user-conversation-preservation) |
+| `084` | Task Engine Phase 2 — Rewrite Scout/Generator/Evaluator on Layer A Primitives (absorbs FEATURE_059) | `v0.7.26` | [v0.7.26](features/v0.7.26.md#feature_084-task-engine-phase-2--rewrite-scoutgeneratorevaluator-on-layer-a-primitives) |
+| `085` | Guardrail Tri-Layer — Input / Output / Tool | `v0.7.26` | [v0.7.26](features/v0.7.26.md#feature_085-guardrail-tri-layer--input--output--tool) |
+| `086` | KodaX Prefix Cleanup and Legacy Purge (子任务 A 放弃；子任务 B 完成；含 AMA runner-driven repo-intel 注入恢复 / Windows .exe bin quoting 修复 / ensurePremiumDaemonReady / refresh:true 分层超时 / 临时性失败不污染 failure cache / Ink TUI RepoIntel trace surface / Planner/Evaluator/H1-readonly-Generator 开放 repo-intel deep-capsule 工具) | `v0.7.27` | [v0.7.27](features/v0.7.27.md#feature_086-legacy-code-purge-子任务-a-放弃--子任务-b-完成) |
+| `091` | Repo-Intelligence Protocol Package Extraction | `v0.7.27` | [v0.7.27](features/v0.7.27.md#feature_091-repo-intelligence-protocol-package-extraction) |
 
 > `FEATURE_051` close-out posture: keep the current REPL status/footer/task/message surfaces frozen, limit follow-up work to invisible substrate maturity for transcript, scroll/selection, and input behavior, and treat the design doc as a completed close-out record rather than an open rollout plan.
 

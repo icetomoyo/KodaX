@@ -6,6 +6,7 @@ export type RepoIntelTraceHistoryItem = {
   readonly type: "info";
   readonly text: string;
   readonly icon?: string;
+  readonly tightSpacing?: boolean;
 };
 
 /**
@@ -30,6 +31,10 @@ export function createRepoIntelTraceHistoryItem(
     type: "info",
     icon: "\u{1F4E1}",
     text,
+    // Drop the default bottom spacer so consecutive RepoIntel stages
+    // (routing / preturn / module / impact / task-snapshot) stack as a
+    // compact block rather than each claiming an extra blank line.
+    tightSpacing: true,
   };
 }
 

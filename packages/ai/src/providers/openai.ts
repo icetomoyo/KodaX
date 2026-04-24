@@ -133,6 +133,52 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
     this.initClient();
   }
 
+  /**
+   * Collapse every `role: 'system'` message (the `system` parameter plus any
+   * system messages embedded in `messages`) into a single top-of-wire system
+   * content and return the remaining non-system messages. Some OpenAI-compat
+   * gateways — notably third-party Qwen proxies — reject any system message
+   * that is not at position 0, so this normalization guarantees the wire has
+   * exactly one system entry regardless of what the upstream caller passed.
+   *
+   * Post-compact attachments, compaction summaries and handoff-time
+   * `replaceSystemMessage` can all leave secondary `role: 'system'` entries
+   * mid-transcript; merging here is the provider-layer bottleneck that keeps
+   * callers from having to coordinate.
+   */
+  private normalizeSystemForWire(
+    system: string,
+    messages: KodaXMessage[],
+  ): { system: string; rest: KodaXMessage[] } {
+    const parts: string[] = [];
+    if (system && system.trim().length > 0) {
+      parts.push(system);
+    }
+    const rest: KodaXMessage[] = [];
+    for (const message of messages) {
+      if (message.role !== 'system') {
+        rest.push(message);
+        continue;
+      }
+      const text = typeof message.content === 'string'
+        ? message.content
+        : Array.isArray(message.content)
+          ? message.content
+              .filter((block): block is KodaXTextBlock =>
+                typeof block === 'object'
+                && block !== null
+                && (block as { type?: string }).type === 'text'
+                && typeof (block as { text?: unknown }).text === 'string')
+              .map((block) => block.text)
+              .join('\n')
+          : '';
+      if (text.trim().length > 0) {
+        parts.push(text);
+      }
+    }
+    return { system: parts.join('\n\n'), rest };
+  }
+
   private appendExtraBody(
     params: Record<string, unknown>,
     extraBody: Record<string, unknown>,
@@ -263,9 +309,11 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
     signal?: AbortSignal
   ): Promise<KodaXStreamResult> {
     return this.withRateLimit(async () => {
+      const { system: mergedSystem, rest: nonSystemMessages } =
+        this.normalizeSystemForWire(system, messages);
       const fullMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
-        { role: 'system', content: system },
-        ...await this.convertMessages(messages),
+        { role: 'system', content: mergedSystem },
+        ...await this.convertMessages(nonSystemMessages),
       ];
       const openaiTools = tools.map(t => ({ type: 'function' as const, function: { name: t.name, description: t.description, parameters: t.input_schema } }));
 
@@ -498,9 +546,11 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
     signal?: AbortSignal,
   ): Promise<KodaXStreamResult> {
     return this.withRateLimit(async () => {
+      const { system: mergedSystem, rest: nonSystemMessages } =
+        this.normalizeSystemForWire(system, messages);
       const fullMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
-        { role: 'system', content: system },
-        ...await this.convertMessages(messages),
+        { role: 'system', content: mergedSystem },
+        ...await this.convertMessages(nonSystemMessages),
       ];
       const openaiTools = tools.map((tool) => ({
         type: 'function' as const,

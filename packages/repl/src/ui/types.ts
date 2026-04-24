@@ -431,6 +431,14 @@ export interface HistoryItemInfo extends HistoryItemBase {
   text: string;
   icon?: string;
   compactText?: string;
+  /**
+   * When true, drop the default bottom margin so consecutive info items
+   * (e.g. a burst of repo-intelligence trace stages emitted within one
+   * turn) visually stack as a block instead of each getting a blank
+   * spacer line. Non-tight items following a tight run restore normal
+   * spacing on their own via their own `marginBottom`.
+   */
+  tightSpacing?: boolean;
 }
 
 /**

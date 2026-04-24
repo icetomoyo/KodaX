@@ -395,7 +395,7 @@ const EventItemRenderer: React.FC<{ item: HistoryItemEvent; theme: Theme }> = me
  * Info message renderer.
  */
 const InfoItemRenderer: React.FC<{ item: HistoryItemInfo; theme: Theme }> = memo(({ item, theme }) => (
-  <Box flexDirection="column" marginBottom={1}>
+  <Box flexDirection="column" marginBottom={item.tightSpacing ? 0 : 1}>
     <Text color={theme.colors.info}>
       <Text bold>{item.icon ?? "\u2139"} </Text>
       {item.compactText ?? item.text}

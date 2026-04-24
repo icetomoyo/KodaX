@@ -21,11 +21,50 @@ import { debugLogRepoIntelligence } from './internal.js';
 
 const PREMIUM_FAILURE_TTL_MS = 2_000;
 const PREMIUM_REQUEST_TIMEOUT_MS = 4_000;
+/**
+ * v0.7.27 — `refresh: true` forces the daemon to rebuild its semantic
+ * index before answering. On a medium repo (~800 source files) this
+ * takes ~10s; the normal 4s budget is inadequate and produces
+ * deterministic AbortError → OSS fallback on the **first turn** of
+ * every new session (where `isNewSession` → `refresh: true`).
+ *
+ * 30s matches what `repointel warm` / `repointel daemon` subcommands
+ * expect from a cold index rebuild.
+ */
+const PREMIUM_REFRESH_TIMEOUT_MS = 30_000;
 const PREMIUM_BUILD_ID_TIMEOUT_MS = 2_000;
 const PREMIUM_BUILD_ID_CACHE_TTL_MS = 5 * 60_000;
+const DAEMON_READY_POLL_INTERVAL_MS = 150;
+const DAEMON_READY_PROBE_TIMEOUT_MS = 500;
+const DAEMON_READY_MAX_WAIT_MS = 2_000;
 const execFileAsync = promisify(execFile);
 const JS_SCRIPT_EXTENSIONS = new Set(['.js', '.mjs', '.cjs']);
 const TS_SCRIPT_EXTENSIONS = new Set(['.ts', '.mts', '.cts']);
+
+/**
+ * Detect a timeout / abort so we can distinguish "the daemon is slow"
+ * (should NOT poison the 2s failure cache — subsequent turns may
+ * complete within budget) from "the daemon is broken / missing / wrong
+ * version" (SHOULD poison the cache to avoid spam). Covers the three
+ * shapes undici / AbortController produce on Node 18+ / 20+ / 24+.
+ */
+function isTransientTimeoutError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  if (error.name === 'AbortError' || error.name === 'TimeoutError') {
+    return true;
+  }
+  const message = error.message.toLowerCase();
+  if (message.includes('aborted') || message.includes('timeout')) {
+    return true;
+  }
+  const cause = (error as { cause?: unknown }).cause;
+  if (cause instanceof Error) {
+    return isTransientTimeoutError(cause);
+  }
+  return false;
+}
 
 interface PremiumAvailabilityCache {
   failedAt: number;
@@ -168,6 +207,18 @@ function quoteWindowsCmdArg(value: string): string {
   return `"${value.replace(/"/g, '""')}"`;
 }
 
+/**
+ * Windows needs `cmd.exe /c` only for shell launchers like `.bat` / `.cmd`;
+ * `.exe` binaries and no-extension PATH lookups execute fine through
+ * `execFile` directly. Using `cmd.exe /d /s /c` for `.exe` files trips
+ * cmd's `/s` quote-stripping rule (leading+trailing `"` around the full
+ * command line get stripped, leaving orphan quotes inside the path) and
+ * makes the subprocess fail with "command not found" on explicit paths.
+ */
+function windowsBinNeedsShell(extension: string): boolean {
+  return extension === '.bat' || extension === '.cmd';
+}
+
 async function executePremiumBinCommand(
   bin: string,
   command: RepointelCommand,
@@ -204,7 +255,7 @@ async function executePremiumBinCommand(
       timeout: timeoutMs,
       windowsHide: process.platform === 'win32',
     }));
-  } else if (process.platform === 'win32') {
+  } else if (process.platform === 'win32' && windowsBinNeedsShell(extension)) {
     ({ stdout } = await execFileAsync(
       'cmd.exe',
       [
@@ -221,6 +272,7 @@ async function executePremiumBinCommand(
   } else {
     ({ stdout } = await execFileAsync(normalizedBin, [command, payloadJson], {
       timeout: timeoutMs,
+      windowsHide: process.platform === 'win32',
     }));
   }
 
@@ -385,12 +437,24 @@ async function resolveLocalPremiumBuildId(bin: string, options: { forceRefresh?:
     || await probeLocalPremiumBuildId(bin);
 }
 
+/**
+ * Pick the fetch timeout budget for a daemon request.
+ * `refresh: true` forces a semantic-index rebuild on the daemon side
+ * (~10s on a medium repo); use the long budget only in that case so
+ * hot-path requests keep the 4s cap.
+ */
+function selectRequestTimeoutMs(request: RepointelRpcRequest): number {
+  return request.payload?.refresh === true
+    ? PREMIUM_REFRESH_TIMEOUT_MS
+    : PREMIUM_REQUEST_TIMEOUT_MS;
+}
+
 async function fetchPremiumJson(
   endpoint: string,
   request: RepointelRpcRequest,
 ): Promise<RepointelRpcResponse> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), PREMIUM_REQUEST_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), selectRequestTimeoutMs(request));
   try {
     const response = await fetch(`${endpoint.replace(/\/$/, '')}/rpc`, {
       method: 'POST',
@@ -413,7 +477,10 @@ async function fetchPremiumJson(
   }
 }
 
-async function warmPremiumViaBin(bin: string): Promise<number | null> {
+async function runPremiumBinSubcommand(
+  bin: string,
+  subcommand: 'warm' | 'daemon',
+): Promise<number | null> {
   const startedAt = Date.now();
   try {
     const normalizedBin = bin.trim();
@@ -428,35 +495,123 @@ async function warmPremiumViaBin(bin: string): Promise<number | null> {
       : '';
 
     if (JS_SCRIPT_EXTENSIONS.has(extension)) {
-      await execFileAsync(process.execPath, [normalizedBin, 'warm', '{}'], {
+      await execFileAsync(process.execPath, [normalizedBin, subcommand, '{}'], {
         timeout: PREMIUM_REQUEST_TIMEOUT_MS,
         windowsHide: true,
       });
     } else if (TS_SCRIPT_EXTENSIONS.has(extension)) {
       const npxBin = process.platform === 'win32' ? 'npx.cmd' : 'npx';
-      await execFileAsync(npxBin, ['tsx', normalizedBin, 'warm', '{}'], {
+      await execFileAsync(npxBin, ['tsx', normalizedBin, subcommand, '{}'], {
         timeout: PREMIUM_REQUEST_TIMEOUT_MS,
         windowsHide: process.platform === 'win32',
       });
-    } else if (process.platform === 'win32') {
+    } else if (process.platform === 'win32' && windowsBinNeedsShell(extension)) {
       await execFileAsync(
         'cmd.exe',
-        ['/d', '/s', '/c', `${quoteWindowsCmdArg(normalizedBin)} warm "{}"`],
+        ['/d', '/s', '/c', `${quoteWindowsCmdArg(normalizedBin)} ${subcommand} "{}"`],
         {
           timeout: PREMIUM_REQUEST_TIMEOUT_MS,
           windowsHide: true,
         },
       );
     } else {
-      await execFileAsync(normalizedBin, ['warm', '{}'], {
+      await execFileAsync(normalizedBin, [subcommand, '{}'], {
         timeout: PREMIUM_REQUEST_TIMEOUT_MS,
+        windowsHide: process.platform === 'win32',
       });
     }
     return Date.now() - startedAt;
   } catch (error) {
-    debugLogRepoIntelligence(`Premium CLI warm failed via ${bin}.`, error);
+    debugLogRepoIntelligence(`Premium CLI ${subcommand} failed via ${bin}.`, error);
     return null;
   }
+}
+
+async function warmPremiumViaBin(bin: string): Promise<number | null> {
+  return runPremiumBinSubcommand(bin, 'warm');
+}
+
+async function spawnPremiumDaemonViaBin(bin: string): Promise<number | null> {
+  return runPremiumBinSubcommand(bin, 'daemon');
+}
+
+async function probeDaemonEndpoint(endpoint: string): Promise<boolean> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), DAEMON_READY_PROBE_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${endpoint.replace(/\/$/, '')}/rpc`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        contractVersion: REPOINTEL_CONTRACT_VERSION,
+        command: 'status',
+        payload: {},
+      }),
+      signal: controller.signal,
+    });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function waitForDaemonReady(
+  endpoint: string,
+  maxWaitMs = DAEMON_READY_MAX_WAIT_MS,
+): Promise<boolean> {
+  const deadline = Date.now() + maxWaitMs;
+  while (Date.now() < deadline) {
+    if (await probeDaemonEndpoint(endpoint)) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, DAEMON_READY_POLL_INTERVAL_MS));
+  }
+  return false;
+}
+
+/**
+ * v0.7.27 — ensure the premium daemon is listening at `endpoint`. Tries
+ * `bin warm` first (the TS CLI's `warm` spawns the daemon as a side
+ * effect and waits for readiness), and falls back to an explicit
+ * `bin daemon` subcommand for native SEA binaries whose `warm` runs in
+ * direct mode without forking a daemon process. Polls the endpoint until
+ * it responds or the deadline elapses.
+ *
+ * Returns the accumulated bin-side latency when the daemon becomes
+ * reachable, or `null` when every approach failed (bin missing, daemon
+ * refuses to start, readiness poll times out).
+ */
+async function ensurePremiumDaemonReady(
+  bin: string,
+  endpoint: string,
+): Promise<number | null> {
+  if (await probeDaemonEndpoint(endpoint)) {
+    return 0;
+  }
+
+  let totalLatencyMs = 0;
+  const warmLatency = await warmPremiumViaBin(bin);
+  if (warmLatency !== null) {
+    totalLatencyMs += warmLatency;
+    if (await probeDaemonEndpoint(endpoint)) {
+      return totalLatencyMs;
+    }
+  }
+
+  const daemonLatency = await spawnPremiumDaemonViaBin(bin);
+  if (daemonLatency === null) {
+    return warmLatency !== null && await probeDaemonEndpoint(endpoint)
+      ? totalLatencyMs
+      : null;
+  }
+  totalLatencyMs += daemonLatency;
+
+  if (await waitForDaemonReady(endpoint)) {
+    return totalLatencyMs;
+  }
+  return null;
 }
 
 export async function inspectRepoIntelligenceRuntime(
@@ -532,7 +687,10 @@ export async function warmRepoIntelligenceRuntime(
   let warmLatencyMs: number | undefined;
 
   try {
-    warmLatencyMs = await warmPremiumViaBin(config.bin) ?? undefined;
+    // v0.7.27 — use ensurePremiumDaemonReady instead of raw warm so that
+    // native SEA binaries (whose `warm` runs in direct mode without
+    // spawning a daemon) still end up with a live daemon at `endpoint`.
+    warmLatencyMs = await ensurePremiumDaemonReady(config.bin, config.endpoint) ?? undefined;
     if (warmLatencyMs === undefined) {
       throw new Error('repointel warm did not complete successfully.');
     }
@@ -619,7 +777,7 @@ export async function callPremiumDaemon(
       daemonAttemptStartedAt = Date.now();
       response = await fetchPremiumJson(config.endpoint, request);
     } catch (error) {
-      const warmedMs = await warmPremiumViaBin(config.bin);
+      const warmedMs = await ensurePremiumDaemonReady(config.bin, config.endpoint);
       if (warmedMs === null) {
         throw error;
       }
@@ -628,6 +786,10 @@ export async function callPremiumDaemon(
       response = await fetchPremiumJson(config.endpoint, request);
     }
     if (response.contractVersion !== REPOINTEL_CONTRACT_VERSION) {
+      // Contract mismatch: the daemon IS reachable but speaks a different
+      // protocol version. Re-warm the CLI so TS-CLI's `tryRecycleStaleDaemon`
+      // can swap in a matching daemon. No daemon-start fallback needed —
+      // `warmPremiumViaBin` alone is the right tool here.
       const warmedMs = await warmPremiumViaBin(config.bin);
       if (warmedMs !== null) {
         cliLatencyMs = (cliLatencyMs ?? 0) + warmedMs;
@@ -651,6 +813,8 @@ export async function callPremiumDaemon(
         daemonAttemptStartedAt = Date.now();
         response = await fetchPremiumJson(config.endpoint, request);
       } else {
+        // Build mismatch: daemon is reachable, just stale. Re-warm the CLI
+        // to let `tryRecycleStaleDaemon` kill+respawn with the current build.
         const warmedMs = await warmPremiumViaBin(config.bin);
         if (warmedMs !== null) {
           cliLatencyMs = (cliLatencyMs ?? 0) + warmedMs;
@@ -689,7 +853,15 @@ export async function callPremiumDaemon(
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    rememberPremiumFailure(config.endpoint, message);
+    // v0.7.27 — transient timeouts (e.g. refresh:true preturn exceeding
+    // even the 30s budget on an unusually large repo, or a passing network
+    // hiccup) should NOT poison the 2s failure cache. The cache is meant
+    // to suppress spam when the daemon is structurally broken (bin
+    // missing, contract/build mismatch, daemon returning `unavailable`),
+    // not to amplify a single slow call into session-wide OSS fallback.
+    if (!isTransientTimeoutError(error)) {
+      rememberPremiumFailure(config.endpoint, message);
+    }
     debugLogRepoIntelligence(`Premium daemon call failed for ${command}.`, error);
     return null;
   }

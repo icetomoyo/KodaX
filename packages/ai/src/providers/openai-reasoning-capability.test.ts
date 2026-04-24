@@ -423,7 +423,14 @@ describe('openai reasoning capability', () => {
     );
   });
 
-  it('preserves historical system summary messages for openai-compatible providers', async () => {
+  it('preserves historical system summary content by merging it into the single wire system message', async () => {
+    // Third-party OpenAI-compat proxies (notably Qwen) reject any
+    // role:'system' that is not at position 0 ("System message must at the
+    // begin"). The provider therefore collapses the system parameter and
+    // every embedded system message into a single wire system entry while
+    // keeping the historical summary content intact — the previous behaviour
+    // of forwarding multiple separate system messages is what triggered the
+    // 400s in the first place.
     const create = vi.fn().mockResolvedValue(createCompletedOpenAIStream());
     const provider = new TestOpenAIProvider('deepseek', 'native-toggle', {
       chat: { completions: { create } },
@@ -441,10 +448,15 @@ describe('openai reasoning capability', () => {
 
     const requestMessages = create.mock.calls[0]?.[0].messages as Array<Record<string, unknown>>;
     expect(requestMessages).toEqual([
-      { role: 'system', content: 'system' },
-      { role: 'system', content: '[Conversation Summary]\\n\\nPrior tool results...' },
+      {
+        role: 'system',
+        content: 'system\n\n[Conversation Summary]\\n\\nPrior tool results...',
+      },
       { role: 'user', content: 'Continue the task' },
     ]);
+    // Invariant: exactly one wire system message, at position 0.
+    const systemCount = requestMessages.filter((m) => m.role === 'system').length;
+    expect(systemCount).toBe(1);
   });
 
   it('preserves array-based non-streaming assistant content during fallback completion', async () => {

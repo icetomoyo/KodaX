@@ -192,35 +192,70 @@ export const VERIFICATION_SHELL_PATTERNS: readonly string[] = [
   '^(?:pytest|go\\s+test|cargo\\s+test|dotnet\\s+test|mvn\\s+test|gradle\\s+test)\\b',
 ];
 
-/** Planner tool allow-list — read/overview/scope + MCP. 1:1 port. */
+/**
+ * Planner tool allow-list — read/overview/scope + repo-intelligence
+ * deep-capsule lookups + MCP.
+ *
+ * v0.7.27 — repo-intel deep-capsule tools (`module_context`,
+ * `symbol_context`, `process_context`, `impact_estimate`) are added so
+ * Planner can drill into modules outside the active one when shaping a
+ * sprint contract. auto-injection only packs the **active** module /
+ * impact; cross-module planning often needs explicit lookups.
+ */
 export const PLANNER_ALLOWED_TOOLS: readonly string[] = [
   'changed_scope',
   'repo_overview',
   'changed_diff_bundle',
+  'module_context',
+  'symbol_context',
+  'process_context',
+  'impact_estimate',
   'glob',
   'grep',
   'read',
   ...MCP_TOOL_NAMES,
 ];
 
-/** H1 Evaluator tool allow-list — inspection + diff + MCP. 1:1 port. */
+/**
+ * H1 Evaluator tool allow-list — inspection + diff + repo-intelligence
+ * deep-capsule lookups + MCP.
+ *
+ * v0.7.27 — repo-intel deep-capsule tools added so Evaluator can
+ * precisely quantify blast radius / caller-callee chains when
+ * verifying a claim, instead of relying on grep heuristics.
+ */
 export const H1_EVALUATOR_ALLOWED_TOOLS: readonly string[] = [
   'changed_scope',
   'repo_overview',
   'changed_diff_bundle',
   'changed_diff',
+  'module_context',
+  'symbol_context',
+  'process_context',
+  'impact_estimate',
   'glob',
   'grep',
   'read',
   ...MCP_TOOL_NAMES,
 ];
 
-/** H1 read-only Generator tool allow-list — inspection + dispatch + MCP. 1:1 port. */
+/**
+ * H1 read-only Generator tool allow-list — inspection + dispatch +
+ * repo-intelligence deep-capsule lookups + MCP.
+ *
+ * v0.7.27 — repo-intel deep-capsule tools added so a read-only
+ * Generator investigating before dispatch can explicitly surface
+ * module / symbol / impact capsules for its child-task briefs.
+ */
 export const H1_READONLY_GENERATOR_ALLOWED_TOOLS: readonly string[] = [
   'changed_scope',
   'repo_overview',
   'changed_diff_bundle',
   'changed_diff',
+  'module_context',
+  'symbol_context',
+  'process_context',
+  'impact_estimate',
   'glob',
   'grep',
   'read',

@@ -63,10 +63,12 @@ import { resolveProvider } from '../providers/index.js';
 import {
   buildAutoRepoIntelligenceContext,
   bucketProviderPayloadSize,
+  cleanupIncompleteToolCalls,
   describeTransientProviderRetry,
   emitResilienceDebug,
   estimateProviderPayloadBytes,
   saveSessionSnapshot,
+  validateAndFixToolHistory,
 } from '../agent.js';
 import {
   ProviderRecoveryCoordinator,
@@ -2270,9 +2272,31 @@ export function buildRunnerLlmAdapter(
   }
 
   return async (messages, agent) => {
-    const leadingSystem = messages[0]?.role === 'system' ? messages[0] : undefined;
-    const system = typeof leadingSystem?.content === 'string' ? leadingSystem.content : '';
-    const transcript = leadingSystem ? messages.slice(1) : messages;
+    // Strip every leading contiguous system message and concatenate their
+    // content. v0.7.22-style flows pushed a single agent-instructions system
+    // prompt and nothing else, so taking only `messages[0]` was enough. The
+    // Runner-driven path stacks [compaction-summary, post-compact-ledger,
+    // post-compact-file-content, ...] after compaction+inject, and after a
+    // handoff `replaceSystemMessage` only swaps [0] — the rest stay leading
+    // system entries. Keeping only the first one would strand agent role
+    // instructions (Scout/Planner/Generator/Evaluator) behind the summary and
+    // still leak secondary system messages into the transcript, which the
+    // provider layer now merges but which would otherwise confuse strict
+    // proxies that reject any non-leading system message.
+    let cut = 0;
+    while (cut < messages.length && messages[cut]?.role === 'system') {
+      cut += 1;
+    }
+    const systemParts: string[] = [];
+    for (let i = 0; i < cut; i += 1) {
+      const content = messages[i]!.content;
+      const text = typeof content === 'string' ? content : '';
+      if (text.trim().length > 0) {
+        systemParts.push(text);
+      }
+    }
+    const system = systemParts.join('\n\n');
+    const transcript = messages.slice(cut);
 
     const wireTools: KodaXToolDefinition[] = (agent.tools ?? []).map((t) => ({
       name: t.name,
@@ -2376,6 +2400,11 @@ export function buildRunnerLlmAdapter(
         wireTools,
       );
       let providerMessages: KodaXMessage[] = [...transcript];
+      // v0.7.22 parity: clean incomplete tool calls and validate tool history
+      // before every provider call. Legacy agent.ts does this at :2813-2814;
+      // Runner-driven path (FEATURE_084) inadvertently dropped it.
+      providerMessages = cleanupIncompleteToolCalls(providerMessages);
+      providerMessages = validateAndFixToolHistory(providerMessages);
       let attempt = 0;
       let raw!: Awaited<ReturnType<typeof provider.stream>>;
       // FEATURE_085 parity for the Scout/Runner path: mirror the main

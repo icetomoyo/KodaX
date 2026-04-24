@@ -1553,7 +1553,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
    * --------------------------------------------------------------
    */
   const emitInfoItemToCorrectLayer = useCallback((
-    item: { type: "info"; text: string; icon?: string },
+    item: { type: "info"; text: string; icon?: string; tightSpacing?: boolean },
     tag: string,
   ): void => {
     if (managedForegroundOwnerRef.current.workerId) {
@@ -1562,6 +1562,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         type: item.type,
         text: item.text,
         ...(item.icon ? { icon: item.icon } : {}),
+        ...(item.tightSpacing ? { tightSpacing: true } : {}),
         timestamp: Date.now(),
       } as HistoryItem);
     } else {
@@ -5033,9 +5034,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     onRepoIntelligenceTrace: (event) => {
       // v0.7.27 FEATURE_086 — display repo-intelligence trace events
       // (routing / preturn / module / impact / task-snapshot) inline so
-      // users can see when the agent pulls repo context. Gated upstream
-      // by `repoIntelligenceTrace` in options.context (on by default in
-      // Ink REPL; toggle via `/repointel trace on|off`).
+      // users can see when the agent pulls repo context. OFF by default
+      // to match the v0.7.20-era transcript density; enable via
+      // `/repointel trace on`. Gated upstream by
+      // `shouldEmitRepoIntelligenceTrace` in agent.ts — when the toggle
+      // is off, the emitter short-circuits and this handler never fires.
       if (userInterruptedRef.current) {
         return;
       }
@@ -7361,15 +7364,14 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
   const initialPermissionMode: PermissionMode =
     normalizePermissionMode(config.permissionMode, 'accept-edits') ?? 'accept-edits';
   const repoIntelligenceRuntime = resolveRepoIntelligenceRuntimeConfig();
-  // v0.7.27 FEATURE_086 — repo-intelligence trace is ON by default in the
-  // Ink REPL so users see `ℹ️ [RepoIntel] ...` lines whenever the agent
-  // pulls repo overview / changed scope / active module context. Only
-  // disable when the user explicitly persisted `repoIntelligenceTrace: false`
-  // via `/repointel trace off` or direct config file edit. The legacy
-  // `resolveRepoIntelligenceRuntimeConfig` default (env-only, defaults to
-  // false) still applies to CLI/ACP callers so they aren't flipped by
-  // this REPL-scoped change.
-  const repoIntelligenceTraceDefault = config.repoIntelligenceTrace !== false;
+  // v0.7.27 FEATURE_086 — repo-intelligence trace is OFF by default in
+  // the Ink REPL to match v0.7.20-era transcript density (tool calls
+  // surface normally; auto-injection stages stay silent unless the user
+  // opts in). Enable via `/repointel trace on` or persist
+  // `repoIntelligenceTrace: true` in the config file. The
+  // `KODAX_REPO_INTELLIGENCE_TRACE=1` env var and the CLI/ACP surfaces
+  // retain their existing defaults.
+  const repoIntelligenceTraceDefault = config.repoIntelligenceTrace === true;
 
   const currentConfig: CurrentConfig = {
     provider: initialProvider,

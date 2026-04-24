@@ -164,6 +164,67 @@ describe('buildRunnerLlmAdapter (via overrideStream)', () => {
     expect(capturedTranscript[0]!.content).toBe('user-q');
   });
 
+  // Regression: after compaction + `injectPostCompactAttachments`, the
+  // transcript begins with `[compaction-summary, post-compact-ledger,
+  // post-compact-file, ...]` — three or more contiguous role:'system'
+  // entries. The adapter must join all leading system messages into the
+  // `system` parameter so the agent role instructions that the Runner
+  // seeded at position 0 don't get stranded behind the summary and so
+  // strict OpenAI-compat proxies never see a role:'system' after a
+  // user/assistant.
+  it('merges all leading contiguous role:system messages into the system param', async () => {
+    let capturedSystem = '';
+    let capturedTranscript: readonly KodaXMessage[] = [];
+    const adapter = buildRunnerLlmAdapter(makeOptions(), async (transcript, _tools, system) => {
+      capturedSystem = system;
+      capturedTranscript = transcript;
+      return { textBlocks: [{ text: 'ok' }], toolBlocks: [] };
+    });
+    await adapter(
+      [
+        { role: 'system', content: 'agent-instructions' },
+        { role: 'system', content: '[对话历史摘要]\nrecent turn notes' },
+        { role: 'system', content: '[Post-compact: recent operations]\nledger' },
+        { role: 'system', content: '[Post-compact: file content] /a.ts\n...' },
+        { role: 'user', content: 'follow-up' },
+      ],
+      { name: 'x', instructions: 'ignored' },
+    );
+    expect(capturedSystem).toBe(
+      'agent-instructions\n\n'
+        + '[对话历史摘要]\nrecent turn notes\n\n'
+        + '[Post-compact: recent operations]\nledger\n\n'
+        + '[Post-compact: file content] /a.ts\n...',
+    );
+    expect(capturedTranscript).toHaveLength(1);
+    expect(capturedTranscript[0]!.role).toBe('user');
+    expect(capturedTranscript[0]!.content).toBe('follow-up');
+  });
+
+  it('stops at the first non-system message — later role:system stays in transcript for provider-layer merge', async () => {
+    let capturedTranscript: readonly KodaXMessage[] = [];
+    const adapter = buildRunnerLlmAdapter(makeOptions(), async (transcript, _tools, _system) => {
+      capturedTranscript = transcript;
+      return { textBlocks: [{ text: 'ok' }], toolBlocks: [] };
+    });
+    await adapter(
+      [
+        { role: 'system', content: 'leading' },
+        { role: 'user', content: 'q1' },
+        { role: 'system', content: '[Post-compact: stray]' },
+        { role: 'user', content: 'q2' },
+      ],
+      { name: 'x', instructions: 'ignored' },
+    );
+    // Adapter only strips the leading run; the stray mid-transcript
+    // system survives here — the provider layer's normalizeSystemForWire
+    // is the safety net that collapses it before the wire goes out.
+    expect(capturedTranscript).toHaveLength(3);
+    expect(capturedTranscript[0]!.role).toBe('user');
+    expect(capturedTranscript[1]!.role).toBe('system');
+    expect(capturedTranscript[2]!.role).toBe('user');
+  });
+
   it('strips execute function from agent tools when serializing for the wire', async () => {
     let capturedTools: readonly { name: string; execute?: unknown }[] = [];
     const adapter = buildRunnerLlmAdapter(makeOptions(), async (_t, tools) => {
