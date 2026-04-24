@@ -74,7 +74,7 @@ kodax "Review this repository and summarize the architecture"
 ```text
 /help
 /mode
-/project next
+/agent-mode ama
 ```
 
 ### 4. 作为库使用
@@ -91,26 +91,6 @@ const result = await runKodaX(
 );
 ```
 
-## Project 模式
-
-KodaX 的一个核心特性是 Project 模式。它不是简单让模型“自报完成”，而是把项目状态、计划和验证流程落到磁盘与命令流里。
-
-典型流程：
-
-```bash
-kodax --init "Desktop app"
-kodax
-/project brainstorm
-/project plan
-/project next
-/project quality
-```
-
-它适合：
-
-- 长期任务拆分
-- 持续迭代
-- 有验证门槛的工程化执行
 
 ## Repo Intelligence Premium
 
@@ -389,9 +369,9 @@ export { getProvider, KODAX_PROVIDERS, KodaXBaseProvider };
 
 // 工具函数
 export {
-  estimateTokens, compactMessages,
+  estimateTokens,
   getGitRoot, getGitContext, getEnvContext, getProjectSnapshot,
-  checkPromiseSignal, checkAllFeaturesComplete, getFeatureProgress
+  checkPromiseSignal
 };
 ```
 
@@ -403,23 +383,6 @@ export {
 |------|------|------|
 | **Skills** | Agent 能力（KODAX_TOOLS: read, write, bash 等）+ 扩展 Skills | Coding 层 + Skills 层 |
 | **Commands** | CLI 快捷命令（/review, /test 等） | REPL 层 |
-
----
-
-## 长时间运行任务
-
-对于需要跨多个 session 完成的复杂项目：
-
-```bash
-# 初始化
-kodax --init "构建 REST API"
-
-# 自动继续直到完成
-kodax --auto-continue
-
-# 自定义限制
-kodax --auto-continue --max-sessions 20 --max-hours 4.0
-```
 
 ---
 
@@ -464,7 +427,6 @@ KodaX 现在会把 Repo Intelligence 的本地缓存分成两条路径：
 ## 文档
 
 - [设计文档](DESIGN.md) - 架构和实现细节
-- [长时间运行指南](LONG_RUNNING_GUIDE.md) - `--init` 最佳实践
 - [测试指南](TESTING.md) - 如何测试所有功能
 - [test-guides/](test-guides/) - 功能专用测试指南
 - [更新日志](../CHANGELOG.md) - 版本历史

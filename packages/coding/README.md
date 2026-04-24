@@ -184,14 +184,11 @@ export { KodaXError, KodaXToolError, KodaXProviderError };
 // 工具函数
 export {
   estimateTokens,
-  compactMessages,
   getGitRoot,
   getGitContext,
   getEnvContext,
   getProjectSnapshot,
   checkPromiseSignal,
-  checkAllFeaturesComplete,
-  getFeatureProgress,
 };
 ```
 

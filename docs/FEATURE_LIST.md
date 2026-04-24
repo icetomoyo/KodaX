@@ -81,7 +81,7 @@
 - `Scout` 是 AMA 的入口和第一执行者：H0 时 Scout 直接完成任务；H1/H2 时 Scout 升级为 Generator 或 Planner 并保留上下文。
 - `H1` 是 `Generator + 轻量 Evaluator`：无 `Planner`、无 contract negotiation。Evaluator 打回最多 1 次，再不合格则升级到 H2。
 - `H2` 主骨架固定为 `Planner -> Generator <-> Evaluator`。Evaluator 区分 `revise`（执行问题）和 `replan`（计划问题），各最多 1 次。
-- `FEATURE_054` 的目标方向是把 `Project` 模式吸收进 AMA H2；后续设计应默认以“单主 authority + Planner 吸收 brainstorm”为目标，不再扩独立 project/planner 表面。
+- `FEATURE_054` 已于 v0.7.27 归档：`/project` 命令整块删除（CLI flag + `project-*.ts` 模块 + barrels + `KODAX_FEATURES_FILE` / `KODAX_PROGRESS_FILE` 常量），无需再做独立的 AMA 吸收任务。后续设计默认以"单主 authority + Planner 吸收 brainstorm"为目标，不再扩独立 project/planner 表面。
 - `kodax -c` 属于 `user session` 恢复语义，不属于 internal worker-session recovery。
 - `FEATURE_023` 只应继续承担更高层 terminal/delivery ergonomics，不应重新打开 `FEATURE_051 / FEATURE_055` 已冻结的 REPL shell。
 - `FEATURE_057` 是 `FEATURE_023` 下的 renderer-boundary 迁移切片：目标是保留当前 shell 的视觉与信息架构，同时把 transcript/prompt/footer 的视口隔离和 host-aware 降级下沉到自有渲染层，而不是重做一个新的 shell。

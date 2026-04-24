@@ -91,13 +91,6 @@ Read package.json and summarize the architecture
 /mode
 /help
 
-# Project Mode / harness engineering
-kodax --init "Desktop app"
-kodax
-/project brainstorm
-/project plan
-/project next
-
 # One-shot CLI usage
 kodax "Review this repository and summarize the architecture"
 kodax --session review "Find the riskiest parts of src/"
@@ -346,39 +339,6 @@ The installable shared skill itself lives at:
 
 - `clients/repointel/SKILL.md`
 
-## Project Mode
-
-KodaX's most opinionated feature is **Project Mode**: a harness-engineering workflow for long-running coding projects.
-
-Instead of letting the agent self-report "done", Project Mode keeps project truth on disk and pushes execution through deterministic verification loops. The workflow spans both non-REPL bootstrap commands and REPL `/project` commands.
-
-**What makes it different**
-
-- **Verifier-gated execution**: `/project next` and `/project auto` are checked by a harness instead of trusting self-declared completion.
-- **Project truth files**: initialization creates and updates project management artifacts such as `feature_list.json` and files under `.agent/project/`.
-- **Structured planning**: `/project brainstorm` aligns requirements and `/project plan` writes the active execution plan.
-- **Quality checkpoints**: `/project quality` and `/project verify` rerun deterministic checks before you trust a stage as complete.
-
-**Typical flow**
-
-```bash
-kodax --init "Desktop app"
-kodax
-/project brainstorm
-/project plan
-/project next
-/project quality
-```
-
-**Non-REPL alternative**
-
-```bash
-kodax --init "Desktop app"
-kodax --auto-continue --max-hours 2
-```
-
----
-
 ## Architecture
 
 KodaX uses a **monorepo architecture** with npm workspaces, consisting of 5 packages:
@@ -590,27 +550,6 @@ kodax --session todo-app "Add delete functionality"
 kodax --session todo-app "Write tests"
 ```
 
-### Project Mode / Harness Engineering
-
-Project Mode combines bootstrap commands with REPL-side `/project` commands:
-
-```bash
-# Bootstrap project truth
-kodax --init "Build a desktop app"
-
-# Enter REPL and use verifier-gated project commands
-kodax
-/project status
-/project brainstorm
-/project plan
-/project next
-/project verify --last
-/project quality
-
-# Or let the non-REPL loop keep going
-kodax --auto-continue --max-hours 2
-```
-
 ### CLI Reference
 
 ```text
@@ -625,11 +564,7 @@ kodax                    Start the interactive REPL
 -t, --thinking       Compatibility alias for --reasoning auto
 -s, --session <op>   Session ID or legacy session operation
 -j, --parallel       Enable parallel tool execution
---init <task>        Initialize a long-running task
---auto-continue      Continue long-running tasks until complete
 --max-iter <n>       Max iterations
---max-sessions <n>   Max sessions for --auto-continue
---max-hours <n>      Max runtime hours for --auto-continue
 ```
 
 ### Permission Control
@@ -982,10 +917,6 @@ kodax --parallel "Read package.json and tsconfig.json"
 
 # Adaptive multi-agent (AMA) mode — Scout-first fan-out for multi-file work
 kodax --agent-mode ama "Analyze code structure, check test coverage, find bugs"
-
-# Long-running project
-kodax --init "Build a Todo application"
-kodax --auto-continue --max-hours 2
 ```
 
 ---
@@ -1064,9 +995,9 @@ export { getProvider, KODAX_PROVIDERS, KodaXBaseProvider };
 
 // Utilities
 export {
-  estimateTokens, compactMessages,
+  estimateTokens,
   getGitRoot, getGitContext, getEnvContext, getProjectSnapshot,
-  checkPromiseSignal, checkAllFeaturesComplete, getFeatureProgress
+  checkPromiseSignal
 };
 ```
 

@@ -9,6 +9,18 @@ All notable changes to this project will be documented in this file.
 <!-- last-sync: HEAD -->
 
 ### Removed
+- **FEATURE_086 子任务 B 第 3 条 — `/project` 命令整块删除**（FEATURE_054 目标达成并归档；AMA Scout-first via `--agent-mode ama` 自 FEATURE_061 起已完整覆盖。此前版本 /project 与 AMA 并存，本版本只剩 AMA 作为项目级工作流入口）
+  - **破坏性变更**：CLI flag（`--init` / `--append` / `--overwrite` / `--auto-continue` / `--max-sessions` / `--max-hours`）+ 公开 API（`ProjectStorage` / `ProjectFeature` / `ProjectState` / `ProjectStatistics` / `FeatureList` / `calculateStatistics` / `getNextPendingIndex` / `isAllCompleted` / `handleProjectCommand` / `detectAndShowProjectHint` / `buildInitPrompt` / `getFeatureProgress` / `checkAllFeaturesComplete`）+ REPL 命令 `/project *` 全部不可用；未升级到 AMA 的下游代码需在 v0.7.27 前迁移
+  - **迁移路径**：
+    - `kodax --init "..."` / `kodax --auto-continue` → `kodax --agent-mode ama "..."`（Scout 自动路由 H0/H1/H2）
+    - `/project brainstorm` / `/project plan` / `/project next` / `/project auto` → AMA 内置 Planner 自动吸收 brainstorm + plan + execute 流程
+    - `feature_list.json` / `PROGRESS.md` 手工维护 → AMA 内部 evidence bundle + managed-task 归档（`.agent/managed-tasks/`）
+  - **实际删除清单**（Commits A→D，净 −12,000+ 行）：
+    - **Commit A（Layer 6 heuristics）**：`packages/coding/src/prompts/long-running.ts`（LONG_RUNNING_PROMPT），`detectLongRunningProjectContext` / `getLongRunningContext` / `harness: 'project'` hint path，`'Project harness'` /provider 场景
+    - **Commit B（Layer 4+5 CLI surface）**：`src/kodax_cli.ts` 6 个 flag 注册与 help 文案，`src/cli_option_helpers.ts` 的 `init` / `append` / `overwrite` / `autoContinue` / `maxSessions` / `maxHours` 字段与 `parseNonNegativeIntWithFallback` / `parsePositiveNumberWithFallback` helper，`packages/repl/src/common/utils.ts` 的 `buildInitPrompt` / `getFeatureProgress` / `checkAllFeaturesComplete` / `readFeatureProgressSnapshot`
+    - **Commit C（Layer 0-3 module）**：`packages/repl/src/interactive/project-{brainstorm,commands,harness,harness-core,harness-types,planner,quality,state,storage,workflow}.ts`（10 个）+ 对应 `*.test.ts`（9 个）+ `commands-project-shim.test.ts` + `completers/project-completer.ts`；barrel 再导出全量清理（`packages/repl/src/interactive/index.ts` / `packages/repl/src/index.ts` / `src/index.ts`）；`commands.ts` 的 `LEGACY_PROJECT_COMMAND_NAMES` / `printProjectMigrationGuidance` stub + 两处 call sites；`completers/command-arguments.ts` 的 `PROJECT_ARGS` 死常量；`json-guards.ts` 的 `isFeatureList` / `isProjectFeature` / `isProjectWorkflowState` / `isProjectControlState` / `isBrainstormSession` + 配套常量；`repl.ts` + `InkREPL.tsx` 的 `result.projectInitPrompt` 分支；`CommandResult` / `CommandResultData` 类型字段；`KodaXTaskSurface` 收紧为 `'cli' | 'repl' | 'plan'`，`getManagedTaskWorkspaceRoot` 的 `.agent/project/managed-tasks/` 分支合并至 `.agent/managed-tasks/`
+    - **Commit D（尾清理 + 文档）**：`KODAX_FEATURES_FILE` / `KODAX_PROGRESS_FILE` 两个 orphan 常量；README / README_CN / packages/coding/README.md 的 Project Mode 章节与公开 API 示例；`docs/FEATURE_LIST.md` FEATURE_054 scope 归档
+  - **FEATURE_054 归档**：v0.7.27 之前 FEATURE_054 的目标是"把 /project 吸收进 AMA H2"。实际执行中发现 AMA 自 FEATURE_061 起已完整覆盖 /project 功能面，"吸收"任务转为直接"删除"，FEATURE_054 随本版归零
 - **FEATURE_086 子任务 B 第 2 条 — `--team` CLI flag 彻底移除**（ADR-017 定废；FEATURE_027 自 v0.7.10 起已用 `--agent-mode ama|sa` 替代；此前只是 sunset handler 软下架）
   - `src/kodax_cli.ts`：删除 commander `.option('--team <tasks>', ...)` 注册、`team` help topic 对象、help 索引行、全局 help 行、help topics 字符串、bash completion 字符串里的 `--team`、`opts.team` 传递、sunset handler block
   - `src/cli_option_helpers.ts`：删除 `CliOptions.team?: string` 字段 + `validateCliModeSelection` 的 json-mode guard 里的 `|| cliOptions.team` 条件

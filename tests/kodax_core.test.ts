@@ -25,8 +25,6 @@ import {
   KodaXToolExecutionContext,
   KodaXMessage,
   KODAX_DEFAULT_PROVIDER,
-  KODAX_FEATURES_FILE,
-  KODAX_PROGRESS_FILE,
   KODAX_MAX_TOKENS,
   KODAX_DEFAULT_TIMEOUT,
   KODAX_HARD_TIMEOUT,
@@ -419,14 +417,6 @@ describe('Constants Export', () => {
   it('should export KODAX_DEFAULT_PROVIDER', () => {
     expect(KODAX_DEFAULT_PROVIDER).toBeDefined();
     expect(typeof KODAX_DEFAULT_PROVIDER).toBe('string');
-  });
-
-  it('should export KODAX_FEATURES_FILE', () => {
-    expect(KODAX_FEATURES_FILE).toBe('feature_list.json');
-  });
-
-  it('should export KODAX_PROGRESS_FILE', () => {
-    expect(KODAX_PROGRESS_FILE).toBe('PROGRESS.md');
   });
 
   it('should export KODAX_MAX_TOKENS', () => {
