@@ -71,10 +71,19 @@ export type OrchestrationWorkerRunner<TTask extends OrchestrationWorkerSpec = Or
   (task: TTask, context: OrchestrationTaskContext<TTask, TOutput>) => Promise<OrchestrationWorkerResult<TOutput>>;
 
 /**
- * @deprecated FEATURE_083 (v0.7.24): superseded by `AgentSpan` / `HandoffSpan`
- * in `@kodax/tracing`. Scheduled for removal in FEATURE_086 (v0.7.27) as part
- * of the KodaX prefix cleanup and legacy purge. New code should emit spans
- * via the `Runner`'s tracer instead of constructing these events directly.
+ * Trace event emitted by `runOrchestration` while stepping through a task DAG
+ * (run/task start/message/complete/failed/blocked). Persisted as JSONL via
+ * `appendTrace` to `{workspaceDir}/orchestration-trace.jsonl`.
+ *
+ * @deprecated FEATURE_083 (v0.7.24) originally superseded this by
+ * `AgentSpan` / `HandoffSpan` in `@kodax/tracing`. **FEATURE_086 (v0.7.27)
+ * evaluated removal and kept it**: AgentSpan is scoped to a single Runner
+ * lifecycle, whereas OrchestrationTraceEvent spans across Tasks scheduled
+ * by `runOrchestration` — no cross-task span equivalent exists yet, and
+ * `runOrchestration` + this type are part of the `@kodax/coding` public
+ * surface. The `@deprecated` tag is kept as a signal that new code
+ * targeting in-Runner tracing should prefer `@kodax/tracing` spans;
+ * cross-task orchestration code is free to continue using this event.
  */
 export interface OrchestrationTraceEvent {
   type:
