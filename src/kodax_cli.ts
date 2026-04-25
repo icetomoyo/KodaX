@@ -575,7 +575,7 @@ _kodax_complete() {
   COMPREPLY=()
   cur="\${COMP_WORDS[COMP_CWORD]}"
   prev="\${COMP_WORDS[COMP_CWORD-1]}"
-  subcmds="acp skill completion"
+  subcmds="acp skill tools completion"
   opts="-p -c -r -n -m -t -s -y -h --print --continue --resume --new --provider --model --thinking --reasoning --agent-mode --repo-intelligence --repo-intelligence-trace --repointel-endpoint --repointel-bin --auto --session --extension --no-session --max-iter --version"
 
   case "\${prev}" in
@@ -597,7 +597,7 @@ complete -F _kodax_complete kodax`);
 #   eval "$(kodax completion zsh)"
 _kodax() {
   local -a subcmds opts providers reasoning_modes agent_modes repo_modes
-  subcmds=(acp skill completion)
+  subcmds=(acp skill tools completion)
   providers=(${providerNames.replace(/ /g, ' ')})
   reasoning_modes=(off auto quick balanced deep)
   agent_modes=(ama sa)
@@ -623,7 +623,7 @@ compdef _kodax kodax`);
       } else if (shell === 'fish') {
         console.log(`# KodaX fish completion — add to ~/.config/fish/completions/kodax.fish:
 #   kodax completion fish > ~/.config/fish/completions/kodax.fish
-complete -c kodax -n '__fish_use_subcommand' -a 'acp skill completion' -d 'Subcommands'
+complete -c kodax -n '__fish_use_subcommand' -a 'acp skill tools completion' -d 'Subcommands'
 complete -c kodax -s p -l print -d 'Print mode'
 complete -c kodax -s c -l continue -d 'Continue most recent conversation'
 complete -c kodax -s r -l resume -d 'Resume session by ID'
@@ -982,8 +982,61 @@ complete -c kodax -l version -d 'Show version'`);
     }
   }
 
+  // ============== tools subcommand (constructed-tool inventory) ==============
+  // Lifecycle helpers for constructed tools — list / inspect / revoke.
+  // Activate is intentionally NOT exposed here (must originate from the
+  // REPL where a dialog can solicit user approval; see DD §14.5.4).
+  const toolsCommand = program
+    .command('tools')
+    .description('Inspect and manage constructed tools (FEATURE_088, v0.7.28)')
+    .helpOption('-h, --help', 'Show tools subcommand help');
+
+  toolsCommand
+    .command('list')
+    .description('List constructed tools registered in the current workspace')
+    .option('--all', 'Also list builtin / extension tools')
+    .option('--cwd <dir>', 'Workspace root to inspect (defaults to current directory)')
+    .action(async (subOpts: { all?: boolean; cwd?: string }) => {
+      const { runToolsList } = await import('./constructed_cli.js');
+      await runToolsList({ all: subOpts.all, cwd: subOpts.cwd ?? process.cwd() });
+    });
+
+  toolsCommand
+    .command('inspect <spec>')
+    .description("Print an artifact manifest. <spec> is '<name>' (active) or '<name>@<version>'.")
+    .option('--cwd <dir>', 'Workspace root to inspect (defaults to current directory)')
+    .action(async (spec: string, subOpts: { cwd?: string }) => {
+      const { runToolsInspect } = await import('./constructed_cli.js');
+      await runToolsInspect(spec, { cwd: subOpts.cwd ?? process.cwd() });
+    });
+
+  toolsCommand
+    .command('revoke <spec>')
+    .description("Revoke a constructed tool. <spec> must be '<name>@<version>'.")
+    .option('--cwd <dir>', 'Workspace root to inspect (defaults to current directory)')
+    .action(async (spec: string, subOpts: { cwd?: string }) => {
+      const { runToolsRevoke } = await import('./constructed_cli.js');
+      await runToolsRevoke(spec, { cwd: subOpts.cwd ?? process.cwd() });
+    });
+
+  // ============== constructed-tool direct dispatch ==============
+  // BEFORE commander parses, intercept `kodax <constructed-tool-name> ...`
+  // and dispatch to the registered handler. The detection bootstraps the
+  // ConstructionRuntime and consults TOOL_REGISTRY — only fires when the
+  // name matches an activated constructed tool. On no match we fall
+  // through to commander, which preserves existing behavior (skill/acp/
+  // help topics/REPL).
+  if (argv.length > 0) {
+    const { detectConstructedToolDispatch, runConstructedToolDispatch } = await import('./constructed_cli.js');
+    const dispatchTarget = await detectConstructedToolDispatch(argv, process.cwd());
+    if (dispatchTarget) {
+      await runConstructedToolDispatch(dispatchTarget, argv.slice(1), process.cwd());
+      return;
+    }
+  }
+
   await program.parseAsync(process.argv);
-  if (argv[0] === 'skill' || argv[0] === 'acp') {
+  if (argv[0] === 'skill' || argv[0] === 'acp' || argv[0] === 'tools') {
     return;
   }
 
