@@ -264,6 +264,7 @@ describe('openai reasoning capability', () => {
     }, {
       baseUrl: 'https://api.deepseek.com',
       model: 'deepseek-v4-flash',
+      replayReasoningContent: true,
     });
 
     const messages: KodaXMessage[] = [
@@ -324,6 +325,7 @@ describe('openai reasoning capability', () => {
     }, {
       baseUrl: 'https://api.deepseek.com',
       model: 'deepseek-v4-flash',
+      replayReasoningContent: true,
     });
 
     const messages: KodaXMessage[] = [
@@ -353,11 +355,12 @@ describe('openai reasoning capability', () => {
     ]);
   });
 
-  // Sibling guard: non-deepseek providers must NOT have reasoning_content
-  // attached even when the conversation history carries thinking blocks. The
-  // field is a DeepSeek-specific extension; sending it to OpenAI/Qwen/Zhipu
-  // could be rejected as an unknown parameter.
-  it('does not attach reasoning_content for non-deepseek providers', async () => {
+  // Sibling guard: providers without the replayReasoningContent flag must
+  // NOT have reasoning_content attached even when the conversation history
+  // carries thinking blocks. The field is a Chinese OpenAI-compat extension;
+  // sending it to OpenAI proper or to providers that don't use the
+  // convention could be rejected as an unknown parameter.
+  it('does not attach reasoning_content when replayReasoningContent is unset', async () => {
     const create = vi.fn().mockResolvedValue(createCompletedOpenAIStream());
     const provider = new TestOpenAIProvider('qwen', 'native-toggle', {
       chat: { completions: { create } },
@@ -384,6 +387,175 @@ describe('openai reasoning capability', () => {
     const assistantWire = requestMessages.find((m) => m.role === 'assistant');
     expect(assistantWire).toBeDefined();
     expect(assistantWire).not.toHaveProperty('reasoning_content');
+  });
+
+  // Lock the new contract: behavior follows the explicit replayReasoningContent
+  // flag, not the provider name. A deepseek-named provider with the flag
+  // forced false must not echo; a non-deepseek-named provider with the flag
+  // forced true must echo. Required so future Qwen/Zhipu/Kimi/MiniMax opt-in
+  // works purely by registry edit, no openai.ts patch needed.
+  it('honours replayReasoningContent flag regardless of provider name', async () => {
+    const createWithoutFlag = vi.fn().mockResolvedValue(createCompletedOpenAIStream());
+    const deepseekWithoutFlag = new TestOpenAIProvider('deepseek', 'native-effort', {
+      chat: { completions: { create: createWithoutFlag } },
+    }, {
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-v4-flash',
+      replayReasoningContent: false,
+    });
+
+    const createWithFlag = vi.fn().mockResolvedValue(createCompletedOpenAIStream());
+    const qwenWithFlag = new TestOpenAIProvider('qwen', 'native-toggle', {
+      chat: { completions: { create: createWithFlag } },
+    }, {
+      baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      model: 'qwen-max',
+      replayReasoningContent: true,
+    });
+
+    const messages: KodaXMessage[] = [
+      { role: 'user', content: 'Hi' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'monologue' },
+          { type: 'text', text: 'Hello!' },
+        ],
+      },
+      { role: 'user', content: 'Continue.' },
+    ];
+
+    await deepseekWithoutFlag.stream(messages, TOOLS, 'system', reasoning);
+    await qwenWithFlag.stream(messages, TOOLS, 'system', reasoning);
+
+    const deepseekAssistantWire = (createWithoutFlag.mock.calls[0]?.[0].messages as Array<Record<string, unknown>>)
+      .find((m) => m.role === 'assistant');
+    const qwenAssistantWire = (createWithFlag.mock.calls[0]?.[0].messages as Array<Record<string, unknown>>)
+      .find((m) => m.role === 'assistant');
+
+    expect(deepseekAssistantWire).not.toHaveProperty('reasoning_content');
+    expect(qwenAssistantWire).toMatchObject({ reasoning_content: 'monologue' });
+  });
+
+  // Edge case (Hidden bug B): a model can finish a turn having emitted only
+  // thinking — no visible text, no tool calls. The early `return []` in
+  // serializeAssistantMessage used to drop the entire assistant turn from
+  // the wire, breaking the user/assistant alternation contract some
+  // OpenAI-compat gateways enforce, AND erasing the reasoning_content the
+  // next-turn replay needs (DeepSeek V4 then 400s on the missing field).
+  // Inject a minimal placeholder text so the turn survives the wire and
+  // reasoning_content can ride along.
+  it('preserves deepseek assistant turn that emitted only thinking', async () => {
+    const create = vi.fn().mockResolvedValue(createCompletedOpenAIStream());
+    const provider = new TestOpenAIProvider('deepseek', 'native-effort', {
+      chat: { completions: { create } },
+    }, {
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-v4-flash',
+      replayReasoningContent: true,
+    });
+
+    const messages: KodaXMessage[] = [
+      { role: 'user', content: 'Quick check.' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'no public output, just internal reasoning' },
+        ],
+      },
+      { role: 'user', content: 'Continue.' },
+    ];
+
+    await provider.stream(messages, TOOLS, 'system', reasoning);
+
+    const requestMessages = create.mock.calls[0]?.[0].messages as Array<Record<string, unknown>>;
+    // Critical: the assistant turn must NOT vanish from the wire — that
+    // would break user/assistant alternation and discard the thinking
+    // payload DeepSeek requires.
+    const roles = requestMessages.map((m) => m.role);
+    expect(roles).toEqual(['system', 'user', 'assistant', 'user']);
+    const assistantWire = requestMessages.find((m) => m.role === 'assistant') as Record<string, unknown>;
+    expect(assistantWire).toBeDefined();
+    expect(assistantWire.reasoning_content).toBe('no public output, just internal reasoning');
+    // Placeholder content must be a non-empty string (gateways reject
+    // null content on assistant turns without tool_calls).
+    expect(typeof assistantWire.content).toBe('string');
+    expect((assistantWire.content as string).length).toBeGreaterThan(0);
+  });
+
+  // Sibling case to the thinking-only test: an assistant turn with only a
+  // redacted_thinking block (cross-provider history replay scenario) must
+  // also keep its slot on the wire, even though it contributes no
+  // serializable thinking string and no reasoning_content can be echoed.
+  it('preserves assistant turn that carries only redacted_thinking', async () => {
+    const create = vi.fn().mockResolvedValue(createCompletedOpenAIStream());
+    const provider = new TestOpenAIProvider('deepseek', 'native-effort', {
+      chat: { completions: { create } },
+    }, {
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-v4-flash',
+      replayReasoningContent: true,
+    });
+
+    const messages: KodaXMessage[] = [
+      { role: 'user', content: 'Earlier turn from another provider.' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'redacted_thinking', data: 'opaque-blob' },
+        ],
+      },
+      { role: 'user', content: 'Continue.' },
+    ];
+
+    await provider.stream(messages, TOOLS, 'system', reasoning);
+
+    const requestMessages = create.mock.calls[0]?.[0].messages as Array<Record<string, unknown>>;
+    const roles = requestMessages.map((m) => m.role);
+    expect(roles).toEqual(['system', 'user', 'assistant', 'user']);
+    const assistantWire = requestMessages.find((m) => m.role === 'assistant') as Record<string, unknown>;
+    // No reasoning_content because redacted blocks contribute no thinking string,
+    // but the turn slot itself must be preserved.
+    expect(assistantWire).not.toHaveProperty('reasoning_content');
+    expect(typeof assistantWire.content).toBe('string');
+    expect((assistantWire.content as string).length).toBeGreaterThan(0);
+  });
+
+  // The non-streaming complete() fallback used to discard reasoning_content
+  // entirely (hardcoded ''). When streaming fails and the fallback fires
+  // against DeepSeek V4 thinking mode, the lost thinking would then be
+  // missing from history, causing the next replayed turn to 400. Mirror the
+  // streaming-side capture so the inbound paths stay symmetric.
+  it('captures reasoning_content from non-streaming complete() responses', async () => {
+    const create = vi.fn().mockResolvedValue({
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: 'final answer',
+            reasoning_content: 'walked through the analysis offline',
+            tool_calls: [],
+          },
+          finish_reason: 'stop',
+        },
+      ],
+      usage: { prompt_tokens: 5, completion_tokens: 5, total_tokens: 10 },
+    });
+    const provider = new TestOpenAIProvider('deepseek', 'native-effort', {
+      chat: { completions: { create } },
+    }, {
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-v4-flash',
+    });
+
+    const result = await provider.complete(MESSAGES, TOOLS, 'system', reasoning);
+
+    expect(result.thinkingBlocks).toEqual([
+      { type: 'thinking', thinking: 'walked through the analysis offline' },
+    ]);
+    expect(result.textBlocks).toEqual([
+      { type: 'text', text: 'final answer' },
+    ]);
   });
 
   it('captures reasoning_content deltas as thinking blocks', async () => {

@@ -112,6 +112,37 @@ function extractOpenAIMessageText(content: unknown): string {
     .join('');
 }
 
+// Non-streaming counterpart to extractReasoningDelta(). Without this, thinking
+// content silently disappears when streaming falls back to complete().
+function extractOpenAIMessageReasoning(message: unknown): string {
+  if (!message || typeof message !== 'object') {
+    return '';
+  }
+  const raw = Reflect.get(message, 'reasoning_content');
+  if (typeof raw === 'string') {
+    return raw;
+  }
+  if (!Array.isArray(raw)) {
+    return '';
+  }
+  return raw
+    .map((part) => {
+      if (typeof part === 'string') {
+        return part;
+      }
+      if (
+        part &&
+        typeof part === 'object' &&
+        'text' in part &&
+        typeof (part as { text?: unknown }).text === 'string'
+      ) {
+        return (part as { text: string }).text;
+      }
+      return '';
+    })
+    .join('');
+}
+
 export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
   abstract override readonly name: string;
   readonly supportsThinking = true;
@@ -619,7 +650,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
       const choice = response.choices[0];
       const message = choice?.message;
       const textContent = extractOpenAIMessageText(message?.content);
-      const reasoningContent = '';
+      const reasoningContent = extractOpenAIMessageReasoning(message);
       const toolBlocks: KodaXToolUseBlock[] = (message?.tool_calls ?? [])
         .filter(isOpenAIFunctionToolCall)
         .map((toolCall) => {
@@ -719,24 +750,47 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
       .filter(Boolean)
       .join('\n\n');
 
-    if (!text && toolCalls.length === 0) {
+    // Track presence (not just non-empty thinking string) so that turns
+    // carrying only a redacted_thinking block also survive — they have no
+    // serializable content but must still occupy an assistant slot to keep
+    // user/assistant alternation valid for cross-provider history replay.
+    const hasAnyThinking = contentBlocks.some(
+      (block) => block.type === 'thinking' || block.type === 'redacted_thinking',
+    );
+
+    // Thinking-only turns must survive: dropping them breaks user/assistant
+    // alternation and erases reasoning_content the next replay needs.
+    if (!text && toolCalls.length === 0 && !hasAnyThinking) {
       return [];
+    }
+
+    // text → send text; tool-only → null (per OpenAI spec); thinking-only
+    // (or redacted-only) → '...' placeholder so gateways don't reject null
+    // content without tool_calls. The placeholder is wire-only, never
+    // written back into KodaX history. The actual thinking, if any, rides
+    // on reasoning_content below (redacted blocks contribute none).
+    let content: string | null;
+    if (text) {
+      content = text;
+    } else if (toolCalls.length > 0) {
+      content = null;
+    } else {
+      content = '...';
     }
 
     const message: Record<string, unknown> = {
       role: 'assistant',
-      content: text || null,
+      content,
     };
 
     if (toolCalls.length > 0) {
       message.tool_calls = toolCalls;
     }
 
-    // DeepSeek V4 thinking mode requires reasoning_content to be echoed back
-    // on every replayed assistant turn that produced thinking — not only on
-    // tool turns. Omitting it returns: 400 "The reasoning_content in the
-    // thinking mode must be passed back to the API."
-    if (this.name === 'deepseek' && thinking) {
+    // DeepSeek V4 rejects replay turns that drop reasoning_content (400).
+    // Flag-driven (vs hardcoded name) so Qwen/Zhipu/Kimi/MiniMax can opt in
+    // after per-provider verification; OpenAI proper stays explicitly off.
+    if (this.config.replayReasoningContent && thinking) {
       message.reasoning_content = thinking;
     }
 

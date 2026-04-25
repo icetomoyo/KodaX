@@ -302,6 +302,10 @@ class DeepSeekProvider extends KodaXOpenAICompatProvider {
     // already escalates on `stop_reason: max_tokens`.
     contextWindow: 1_000_000,
     maxOutputTokens: KODAX_ESCALATED_MAX_OUTPUT_TOKENS,
+    // V4 thinking mode 400s on multi-turn replays that strip
+    // reasoning_content. Qwen/Zhipu/Kimi/MiniMax use the same field but
+    // remain unset until each is verified individually.
+    replayReasoningContent: true,
   });
   constructor() { super(); this.initClient(); }
 }

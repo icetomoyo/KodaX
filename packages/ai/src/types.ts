@@ -360,6 +360,14 @@ export interface KodaXProviderConfig {
   defaultThinkingBudgets?: Partial<KodaXThinkingBudgetMap>;
   /** 按任务类型覆盖默认 budget */
   taskBudgetOverrides?: KodaXTaskBudgetOverrides;
+  /**
+   * Echo the prior turn's `reasoning_content` back on replayed assistant
+   * messages. Required by DeepSeek V4 thinking mode (replay 400s without it).
+   * Other Chinese OpenAI-compat thinking providers use the same field, but
+   * each needs per-provider verification before opting in. Must stay false
+   * for OpenAI proper.
+   */
+  replayReasoningContent?: boolean;
 }
 
 export interface KodaXProviderStreamOptions {
