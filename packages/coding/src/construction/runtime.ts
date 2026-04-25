@@ -288,9 +288,15 @@ export async function activate(handle: StagedHandle): Promise<void> {
     );
   }
   if (verdict === 'ask-user') {
+    // The REPL surface binds a dialog-based policy in
+    // packages/repl/src/common/construction-bootstrap.ts so 'ask-user'
+    // never reaches here on the interactive path. Hitting this branch
+    // means activation was attempted from a non-interactive surface
+    // whose policy was left at the default (returns 'ask-user' but no
+    // UI to ask through) — treat as a configuration error.
     throw new Error(
-      `Construction policy returned 'ask-user' for '${artifact.name}@${artifact.version}'. `
-      + `v0.7.28 Phase 1 ships no built-in prompt UI; override constructionPolicy in kodax.config.ts to provide one.`,
+      `Construction policy returned 'ask-user' for '${artifact.name}@${artifact.version}', `
+      + `but the current surface has no interactive UI bound. Activation must originate from a session whose policy can prompt the user (e.g. the Ink REPL).`,
     );
   }
 

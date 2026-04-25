@@ -114,12 +114,17 @@ export interface TestResult {
 
 /**
  * Policy gate — invoked once per `activate()` before the artifact is
- * registered. Default rejects implicit auto-approval; user overrides via
- * `kodax.config.ts` for environment-specific rules (corporate auto-reject,
- * self-signed auto-approve, etc.).
+ * registered. Default rejects implicit auto-approval; the REPL surface
+ * binds a dialog-based policy in `packages/repl/src/common/construction-
+ * bootstrap.ts` so user approval flows through the live askUser channel.
  *
  * Modeled as a function type rather than an interface (D3 decision):
- * keeps user extension lightweight, no class boilerplate.
+ * keeps the contract surface tiny, no class boilerplate.
+ *
+ * No declarative `kodax.config.ts` override hatch is provided — see the
+ * "Deferred Design Decisions" section in `features/v0.7.28.md` for why
+ * a `risk_mode` enum (when truly needed) is preferred over user-authored
+ * policy functions.
  */
 export type ConstructionPolicy = (
   artifact: ConstructionArtifact,

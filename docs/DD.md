@@ -747,14 +747,12 @@ type ConstructionPolicy = (
 const defaultPolicy: ConstructionPolicy = async () => 'ask-user'
 ```
 
-用户在 `kodax.config.ts` 里 export `constructionPolicy` 即可覆盖。可配规则示例：
+v0.7.28 的 policy 绑定仅有两个入口：
 
-- `signedBy === 'self'` && `Date.now() - testedAt < 24h` → `'approve'`
-- `kind === 'tool'` && `capabilities.tools` 全在低风险白名单（如 `['read', 'grep']`）→ `'approve'`
-- 企业 / CI 环境一律 `'reject'`
-- 默认 `'ask-user'`
+1. **REPL 默认**：`packages/repl/src/common/construction-bootstrap.ts` 在 InkREPL 启动时调 `configureRuntime({policy: replConstructionPolicy})`，policy 内部走 askUser dialog（弹窗 approve / reject）
+2. **非 REPL 表面**（ACP server / 单次 CLI / 子 Agent）：未绑定 askUser → 默认返回 `'reject'`，避免静默激活
 
-**为什么用 type alias 而非 interface**：v0.7.28 哲学审视的折中——保留扩展点（用户能写自己的 policy 函数）、提供类型安全（`const p: ConstructionPolicy = ...` 编辑器补全），但不引入 OOP 抽象。Policy 函数本身极简，闭包足够承载状态需求。
+**为什么不做声明式配置入口**（如 `kodax.config.ts` export 自定义 policy）：复审后认为违反 KodaX 哲学（CLAUDE.md "NEVER add configuration for hypothetical needs"）。单用户场景下 REPL dialog 已够用；企业 / CI 场景目前无真实需求。等真有用户需要 auto-approve / 一律 reject 的开关时，更智能的做法是加一个 `risk_mode` 三档开关（`'strict' | 'balanced' | 'trusting'`），由 KodaX 根据 capabilities 自动判断风险等级，**不让用户写 policy 函数**。详见 `features/v0.7.28.md` 末尾"Deferred Design Decisions"。
 
 **已知 gap：Rehydrate 路径绕过 Policy Gate（v0.7.28 不修复）**
 

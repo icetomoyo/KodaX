@@ -849,4 +849,6 @@ export {
   buildLlmReviewPrompt,
   parseLlmReviewVerdict,
   runLlmReview,
+  // Test-only — reset module-singleton state between hermetic test runs.
+  _resetRuntimeForTesting,
 } from './construction/index.js';

@@ -864,7 +864,7 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
     name: 'activate_tool',
     description:
       'Activate a staged-and-tested artifact. Invokes the construction policy gate, registers the handler into TOOL_REGISTRY, flips status=active. The tool is then immediately callable as `<name>` in subsequent turns. '
-      + 'Default policy returns ask-user; configure constructionPolicy in kodax.config.ts to override (e.g. auto-approve self-signed in trusted sessions).',
+      + 'Policy: in the Ink REPL, an approve/reject dialog is shown to the user; in non-interactive surfaces (ACP / single-shot CLI / child agents) activation is rejected by default to prevent silent activation.',
     input_schema: {
       type: 'object',
       properties: {
