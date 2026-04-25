@@ -52,6 +52,7 @@ export type ProviderName =
   | 'zhipu'
   | 'zhipu-coding'
   | 'minimax-coding'
+  | 'mimo-coding'
   | 'gemini-cli'
   | 'codex-cli';
 
@@ -143,6 +144,16 @@ export const KODAX_PROVIDER_SNAPSHOTS: Record<ProviderName, ProviderSnapshot> = 
       'MiniMax-M2.1-highspeed',
       'MiniMax-M2',
     ],
+    reasoningCapability: 'native-budget',
+    capabilityProfile: NATIVE_PROVIDER_CAPABILITY_PROFILE,
+  },
+  'mimo-coding': {
+    // Xiaomi MiMo Token Plan subscription endpoint (Anthropic-compat).
+    // Token Plan keys are `tp-xxxxx`; pay-as-you-go keys (`sk-xxxxx`) are
+    // a separate product on a different host and are NOT cross-compatible.
+    apiKeyEnv: 'MIMO_API_KEY',
+    model: 'mimo-v2.5-pro',
+    models: ['mimo-v2.5'],
     reasoningCapability: 'native-budget',
     capabilityProfile: NATIVE_PROVIDER_CAPABILITY_PROFILE,
   },
@@ -274,6 +285,28 @@ class MiniMaxCodingProvider extends KodaXAnthropicCompatProvider {
   constructor() { super(); this.initClient(); }
 }
 
+class MimoCodingProvider extends KodaXAnthropicCompatProvider {
+  readonly name = 'mimo-coding';
+  protected readonly config: KodaXProviderConfig = buildProviderConfig('mimo-coding', {
+    // CN cluster (Token Plan also has SGP / AMS clusters at
+    // token-plan-{sgp,ams}.xiaomimimo.com/anthropic — same protocol,
+    // pin to CN until users surface a region-switch need).
+    baseUrl: 'https://token-plan-cn.xiaomimimo.com/anthropic',
+    models: [
+      { id: 'mimo-v2.5', displayName: 'MiMo V2.5' },
+    ],
+    supportsThinking: true,
+    // V2.5 series advertises a 1M context window (per platform docs).
+    contextWindow: 1_000_000,
+    // Same long-stream cap rationale as zhipu-coding/minimax-coding: agent
+    // loop escalates to 64K on stop_reason: max_tokens; continuation meta
+    // message handles tasks beyond that. Override with KODAX_MAX_OUTPUT_TOKENS.
+    maxOutputTokens: KODAX_CAPPED_MAX_OUTPUT_TOKENS,
+    thinkingBudgetCap: 16_000,
+  });
+  constructor() { super(); this.initClient(); }
+}
+
 class OpenAIProvider extends KodaXOpenAICompatProvider {
   readonly name = 'openai';
   protected readonly config: KodaXProviderConfig = buildProviderConfig('openai', {
@@ -368,6 +401,7 @@ export const KODAX_PROVIDERS: Record<string, () => KodaXBaseProvider> = {
   zhipu: () => new ZhipuProvider(),
   'zhipu-coding': () => new ZhipuCodingProvider(),
   'minimax-coding': () => new MiniMaxCodingProvider(),
+  'mimo-coding': () => new MimoCodingProvider(),
   'gemini-cli': () => new KodaXGeminiCliProvider(),
   'codex-cli': () => new KodaXCodexCliProvider(),
 };

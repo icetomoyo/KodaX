@@ -38,6 +38,15 @@ describe('provider registry', () => {
     expect(() => getProvider('missing-provider')).toThrowError(KodaXProviderError);
   });
 
+  it('registers Xiaomi MiMo Token Plan as mimo-coding (Anthropic-compat, MIMO_API_KEY)', () => {
+    vi.stubEnv('MIMO_API_KEY', 'tp-test-key');
+    const mimo = getProvider('mimo-coding');
+    expect(mimo.name).toBe('mimo-coding');
+    expect(mimo.getEffectiveContextWindow('mimo-v2.5-pro')).toBe(1_000_000);
+    expect(mimo.getEffectiveContextWindow('mimo-v2.5')).toBe(1_000_000);
+    expect(getProviderConfiguredReasoningCapability('mimo-coding', 'mimo-v2.5-pro')).toBe('native-budget');
+  });
+
   it('exposes a stable default provider snapshot', () => {
     expect(typeof KODAX_DEFAULT_PROVIDER).toBe('string');
     expect(getProvider()).toBeDefined();
