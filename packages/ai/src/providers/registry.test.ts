@@ -96,7 +96,11 @@ describe('provider registry', () => {
 
     const kimi = getProvider('kimi');
     expect(kimi.getEffectiveContextWindow('kimi-k2.6')).toBe(256_000);
-    expect(kimi.getEffectiveContextWindow('k2.5')).toBe(128_000);
+    // User-confirmed (2026-04): K2.5 also ships a 256K context window;
+    // the historical 128K pin from FEATURE_098 was either outdated or
+    // sourced incorrectly. Both Kimi models now inherit the 256K
+    // provider-level window without per-model overrides.
+    expect(kimi.getEffectiveContextWindow('k2.5')).toBe(256_000);
 
     const zhipu = getProvider('zhipu');
     expect(zhipu.getEffectiveContextWindow('glm-5')).toBe(200_000);

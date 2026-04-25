@@ -369,14 +369,6 @@ class ArkCodingProvider extends KodaXAnthropicCompatProvider {
     // Per-model context windows below are user-confirmed against the
     // Volcengine console model catalog (2026-04). Provider-level default
     // 200K matches the GLM family; the rest get explicit overrides.
-    //
-    // NOTE: `kimi-k2.5` is pinned to 256K here based on Volcengine's Ark
-    // gateway — this differs from the `kimi` provider's 128K override for
-    // the same model id (FEATURE_098, sourced from Moonshot direct docs at
-    // that time). Either Moonshot upgraded K2.5 since FEATURE_098 was
-    // committed or the Ark gateway serves a different deployment. The
-    // `kimi` provider entry should be re-verified in a separate fix; do
-    // not blindly mirror the value across providers.
     models: [
       { id: 'glm-4.7', displayName: 'GLM-4.7' },
       { id: 'kimi-k2.6', displayName: 'Kimi K2.6', contextWindow: 256_000 },
@@ -447,10 +439,13 @@ class KimiProvider extends KodaXOpenAICompatProvider {
   protected readonly config: KodaXProviderConfig = buildProviderConfig('kimi', {
     baseUrl: 'https://api.moonshot.cn/v1',
     models: [
-      // K2.5 only ships a 128K context; K2.6 (provider default) is 256K.
-      // FEATURE_098: pin the real per-model window so compaction triggers
-      // correctly when the user switches to k2.5.
-      { id: 'k2.5', displayName: 'K2.5', contextWindow: 128_000 },
+      // Both K2.5 and K2.6 ship a 256K context (user-confirmed against
+      // the upstream catalog, 2026-04). FEATURE_098 originally pinned
+      // k2.5 to 128K based on documentation available at that time;
+      // either Moonshot upgraded K2.5 since or the original 128K figure
+      // was incorrect. Drop the override so k2.5 inherits the 256K
+      // provider-level window.
+      { id: 'k2.5', displayName: 'K2.5' },
     ],
     supportsThinking: true,
     contextWindow: 256000,
