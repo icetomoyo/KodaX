@@ -156,9 +156,15 @@ function buildOne(target, version) {
       `--target=${spec.bun}`,
       '--minify',
       '--sourcemap=none',
-      `--define`, `process.env.NODE_ENV="production"`,
-      `--define`, `process.env.KODAX_BUNDLED="true"`,
-      `--define`, `process.env.KODAX_VERSION="${version}"`,
+      // Single-quoted JS string literals are used for the values because
+      // double-quoted strings get their inner `"` stripped when passed
+      // through Node's spawnSync → Windows CreateProcess arg pipeline,
+      // leaving bun to substitute the bare identifier (e.g. `production`)
+      // and producing a runtime "ReferenceError: production is not defined"
+      // at first import. Single quotes survive the round-trip intact.
+      `--define`, `process.env.NODE_ENV='production'`,
+      `--define`, `process.env.KODAX_BUNDLED='true'`,
+      `--define`, `process.env.KODAX_VERSION='${version}'`,
       '--outfile', binaryPath,
     ],
   );
