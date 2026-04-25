@@ -205,7 +205,9 @@ class ZhipuCodingProvider extends KodaXAnthropicCompatProvider {
     baseUrl: 'https://open.bigmodel.cn/api/anthropic',
     models: [
       { id: 'glm-5.1', displayName: 'GLM-5.1' },
-      { id: 'glm-5-turbo', displayName: 'GLM-5 Turbo' },
+      // GLM-5 Turbo on the coding endpoint is the same 128K-context budget
+      // tier as on the public endpoint. FEATURE_098.
+      { id: 'glm-5-turbo', displayName: 'GLM-5 Turbo', contextWindow: 128_000 },
     ],
     supportsThinking: true,
     contextWindow: 200000,
@@ -309,7 +311,10 @@ class KimiProvider extends KodaXOpenAICompatProvider {
   protected readonly config: KodaXProviderConfig = buildProviderConfig('kimi', {
     baseUrl: 'https://api.moonshot.cn/v1',
     models: [
-      { id: 'k2.5', displayName: 'K2.5' },
+      // K2.5 only ships a 128K context; K2.6 (provider default) is 256K.
+      // FEATURE_098: pin the real per-model window so compaction triggers
+      // correctly when the user switches to k2.5.
+      { id: 'k2.5', displayName: 'K2.5', contextWindow: 128_000 },
     ],
     supportsThinking: true,
     contextWindow: 256000,
@@ -335,7 +340,10 @@ class ZhipuProvider extends KodaXOpenAICompatProvider {
     baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
     models: [
       { id: 'glm-5.1', displayName: 'GLM-5.1' },
-      { id: 'glm-5-turbo', displayName: 'GLM-5 Turbo' },
+      // GLM-5 Turbo is the 128K-context budget tier; the GLM-5 / GLM-5.1
+      // pair (provider default) is 200K. FEATURE_098 pin so compaction
+      // doesn't overshoot when the user picks turbo.
+      { id: 'glm-5-turbo', displayName: 'GLM-5 Turbo', contextWindow: 128_000 },
     ],
     supportsThinking: true,
     contextWindow: 200000,

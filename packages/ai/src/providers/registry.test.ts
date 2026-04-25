@@ -42,4 +42,24 @@ describe('provider registry', () => {
     expect(typeof KODAX_DEFAULT_PROVIDER).toBe('string');
     expect(getProvider()).toBeDefined();
   });
+
+  // FEATURE_098: per-model context window override where the model
+  // really diverges from the provider default. Tests guard the data,
+  // not the lookup mechanism (already covered in base.test.ts).
+  it('pins true context windows for models that diverge from provider defaults', () => {
+    vi.stubEnv('KIMI_API_KEY', 'test-key');
+    vi.stubEnv('ZHIPU_API_KEY', 'test-key');
+
+    const kimi = getProvider('kimi');
+    expect(kimi.getEffectiveContextWindow('kimi-k2.6')).toBe(256_000);
+    expect(kimi.getEffectiveContextWindow('k2.5')).toBe(128_000);
+
+    const zhipu = getProvider('zhipu');
+    expect(zhipu.getEffectiveContextWindow('glm-5')).toBe(200_000);
+    expect(zhipu.getEffectiveContextWindow('glm-5.1')).toBe(200_000);
+    expect(zhipu.getEffectiveContextWindow('glm-5-turbo')).toBe(128_000);
+
+    const zhipuCoding = getProvider('zhipu-coding');
+    expect(zhipuCoding.getEffectiveContextWindow('glm-5-turbo')).toBe(128_000);
+  });
 });
