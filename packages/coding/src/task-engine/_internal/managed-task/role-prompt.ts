@@ -138,6 +138,14 @@ export function createRolePrompt(
             ? 'macOS'
             : workspace.platform
       }${workspace.osRelease ? ` (${workspace.osRelease})` : ''}`,
+      // Runtime fact — managed workers (Scout/Planner/Generator/Evaluator)
+      // bypass `buildSystemPrompt` and would otherwise have no provider /
+      // model context, causing the LLM to fall back on pretraining
+      // identity (e.g. GLM-5.1 self-reporting as Claude). Preflight
+      // (2026-04, ark-coding/glm-5.1) confirmed two lines here flip the
+      // answer from "I'm Claude" to "I'm GLM-5.1".
+      workspace.provider ? `Provider: ${workspace.provider}` : undefined,
+      workspace.model ? `Model: ${workspace.model}` : undefined,
       workspace.platform === 'win32'
         ? 'Shell defaults: Windows shell. Use: dir, move, copy, del, type. Avoid Unix-only tools like `head`, `tail`, `rm`, `cp`, `mv`.'
         : 'Shell defaults: Unix shell. Use: ls, mv, cp, rm, cat, head, tail.',

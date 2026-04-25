@@ -4072,6 +4072,11 @@ async function runManagedTaskViaRunnerInner(
     gitRoot: options.context?.gitRoot ?? undefined,
     platform: process.platform,
     osRelease: os.release(),
+    // Forward the active provider/model so each role's `## Environment`
+    // block discloses runtime identity. Mirrors the runtime-fact section
+    // the SA path emits via `buildSystemPrompt`'s `getRuntimeFact`.
+    provider: options.provider,
+    model: options.modelOverride ?? options.model,
   };
   const rolePromptContextFactory: RolePromptContextFactory = (role, currentRecorder) => {
     const scoutPayload = currentRecorder.scout?.payload.scout;

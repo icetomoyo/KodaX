@@ -49,6 +49,15 @@ export interface ManagedRolePromptContext {
     gitRoot?: string;
     platform: NodeJS.Platform;
     osRelease?: string;
+    /**
+     * Active provider name (e.g. `ark-coding`, `kimi-code`). Surfaced in the
+     * `## Environment` block so the LLM answers identity questions from
+     * runtime configuration instead of pretraining guesswork. Optional —
+     * legacy callers that omit it leave the previous behavior unchanged.
+     */
+    provider?: string;
+    /** Active model id (post `modelOverride` resolution). See `provider`. */
+    model?: string;
   };
 }
 
