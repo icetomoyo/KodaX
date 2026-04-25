@@ -66,11 +66,18 @@ describe('provider registry', () => {
       'doubao-seed-2.0-lite',
     ]);
 
-    // Ark gateway routes BY model field — bench-confirmed `kimi-k2.5`
-    // upstream is Moonshot K2.5's 128K window (vs the provider-level 200K).
+    // Per-model context window pins (user-confirmed against Volcengine
+    // console catalog, 2026-04). Default GLM family at 200K, Kimi/Doubao
+    // at 256K, MiniMax at 204_800, DeepSeek V3.2 at 128K.
     expect(ark.getEffectiveContextWindow('glm-5.1')).toBe(200_000);
-    expect(ark.getEffectiveContextWindow('kimi-k2.5')).toBe(128_000);
+    expect(ark.getEffectiveContextWindow('glm-4.7')).toBe(200_000);
+    expect(ark.getEffectiveContextWindow('kimi-k2.6')).toBe(256_000);
+    expect(ark.getEffectiveContextWindow('kimi-k2.5')).toBe(256_000);
+    expect(ark.getEffectiveContextWindow('minimax-latest')).toBe(204_800);
     expect(ark.getEffectiveContextWindow('deepseek-v3.2')).toBe(128_000);
+    expect(ark.getEffectiveContextWindow('doubao-seed-2.0-code')).toBe(256_000);
+    expect(ark.getEffectiveContextWindow('doubao-seed-2.0-pro')).toBe(256_000);
+    expect(ark.getEffectiveContextWindow('doubao-seed-2.0-lite')).toBe(256_000);
 
     expect(getProviderConfiguredReasoningCapability('ark-coding', 'glm-5.1')).toBe('native-budget');
   });

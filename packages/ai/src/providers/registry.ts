@@ -366,20 +366,30 @@ class ArkCodingProvider extends KodaXAnthropicCompatProvider {
     // Coding Plan quota — accidentally pointing here bills outside the
     // subscription.
     baseUrl: 'https://ark.cn-beijing.volces.com/api/coding',
+    // Per-model context windows below are user-confirmed against the
+    // Volcengine console model catalog (2026-04). Provider-level default
+    // 200K matches the GLM family; the rest get explicit overrides.
+    //
+    // NOTE: `kimi-k2.5` is pinned to 256K here based on Volcengine's Ark
+    // gateway — this differs from the `kimi` provider's 128K override for
+    // the same model id (FEATURE_098, sourced from Moonshot direct docs at
+    // that time). Either Moonshot upgraded K2.5 since FEATURE_098 was
+    // committed or the Ark gateway serves a different deployment. The
+    // `kimi` provider entry should be re-verified in a separate fix; do
+    // not blindly mirror the value across providers.
     models: [
       { id: 'glm-4.7', displayName: 'GLM-4.7' },
-      { id: 'kimi-k2.6', displayName: 'Kimi K2.6' },
-      // Ark gateway routes `kimi-k2.5` to upstream Moonshot K2.5 which
-      // ships with a 128K window (matches FEATURE_098 pin on `kimi.k2.5`).
-      { id: 'kimi-k2.5', displayName: 'Kimi K2.5', contextWindow: 128_000 },
+      { id: 'kimi-k2.6', displayName: 'Kimi K2.6', contextWindow: 256_000 },
+      { id: 'kimi-k2.5', displayName: 'Kimi K2.5', contextWindow: 256_000 },
       // `minimax-latest` is the Ark-side alias that resolves to the
-      // current MiniMax GA coding model (M2.7 as of 2026-04).
-      { id: 'minimax-latest', displayName: 'MiniMax Latest' },
+      // current MiniMax GA coding model (M2.7 as of 2026-04). Pinned to
+      // 204_800 to match the `minimax-coding` provider's M2.x family.
+      { id: 'minimax-latest', displayName: 'MiniMax Latest', contextWindow: 204_800 },
       // V3 series 128K window; V4 (1M) is not yet exposed via Ark.
       { id: 'deepseek-v3.2', displayName: 'DeepSeek V3.2', contextWindow: 128_000 },
-      { id: 'doubao-seed-2.0-code', displayName: 'Doubao Seed 2.0 Code' },
-      { id: 'doubao-seed-2.0-pro', displayName: 'Doubao Seed 2.0 Pro' },
-      { id: 'doubao-seed-2.0-lite', displayName: 'Doubao Seed 2.0 Lite' },
+      { id: 'doubao-seed-2.0-code', displayName: 'Doubao Seed 2.0 Code', contextWindow: 256_000 },
+      { id: 'doubao-seed-2.0-pro', displayName: 'Doubao Seed 2.0 Pro', contextWindow: 256_000 },
+      { id: 'doubao-seed-2.0-lite', displayName: 'Doubao Seed 2.0 Lite', contextWindow: 256_000 },
     ],
     supportsThinking: true,
     contextWindow: 200_000,
