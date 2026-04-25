@@ -32,6 +32,7 @@
     "start": "node --max-old-space-size=4096 --require ./scripts/production-env.cjs dist/kodax_cli.js",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:eval": "vitest run -c vitest.eval.config.ts",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "clean:packages": "npm run clean --workspaces"
   },
