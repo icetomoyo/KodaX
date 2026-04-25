@@ -15,7 +15,10 @@ import {
   KodaXReasoningCapability,
 } from '../types.js';
 import { KodaXProviderError } from '../errors.js';
-import { KODAX_CAPPED_MAX_OUTPUT_TOKENS } from '../constants.js';
+import {
+  KODAX_CAPPED_MAX_OUTPUT_TOKENS,
+  KODAX_ESCALATED_MAX_OUTPUT_TOKENS,
+} from '../constants.js';
 import {
   CLI_BRIDGE_PROVIDER_CAPABILITY_PROFILE,
   cloneCapabilityProfile,
@@ -82,13 +85,13 @@ export const KODAX_PROVIDER_SNAPSHOTS: Record<ProviderName, ProviderSnapshot> = 
   },
   deepseek: {
     apiKeyEnv: 'DEEPSEEK_API_KEY',
-    model: 'deepseek-chat',
-    models: ['deepseek-reasoner'],
-    reasoningCapability: 'native-toggle',
-    modelReasoningCapabilities: {
-      'deepseek-chat': 'native-toggle',
-      'deepseek-reasoner': 'none',
-    },
+    // DeepSeek V4 series (1M context, OpenAI-style `reasoning_effort`).
+    // The pre-V4 aliases `deepseek-chat` / `deepseek-reasoner` are slated
+    // for deprecation on 2026-07-24 and have been removed from KodaX —
+    // existing configs pointing at them should switch to v4-flash.
+    model: 'deepseek-v4-flash',
+    models: ['deepseek-v4-pro'],
+    reasoningCapability: 'native-effort',
     capabilityProfile: NATIVE_PROVIDER_CAPABILITY_PROFILE,
   },
   kimi: {
@@ -100,8 +103,12 @@ export const KODAX_PROVIDER_SNAPSHOTS: Record<ProviderName, ProviderSnapshot> = 
   },
   'kimi-code': {
     apiKeyEnv: 'KIMI_API_KEY',
-    model: 'K2.6',
-    models: ['k2.5'],
+    // The Kimi-for-Coding endpoint ignores the request `model` field and
+    // always routes to whichever K2.x GA model the platform has currently
+    // promoted (K2.6 as of 2026-04). We surface a single stable label so
+    // users aren't tempted to pick a specific version that the server will
+    // silently ignore.
+    model: 'kimi-for-coding',
     reasoningCapability: 'native-budget',
     capabilityProfile: NATIVE_PROVIDER_CAPABILITY_PROFILE,
   },
@@ -219,13 +226,14 @@ class KimiCodeProvider extends KodaXAnthropicCompatProvider {
   readonly name = 'kimi-code';
   protected readonly config: KodaXProviderConfig = buildProviderConfig('kimi-code', {
     baseUrl: 'https://api.kimi.com/coding/',
-    // api.kimi.com/coding/ is a unified coding endpoint: the server ignores
-    // the model field (probe confirmed it always returns `kimi-for-coding`,
-    // now routing to K2.6 GA). Model IDs here are labels for cost tracking
-    // and UI selection only.
-    models: [
-      { id: 'k2.5', displayName: 'K2.5' },
-    ],
+    // api.kimi.com/coding/ is a unified subscription-routed coding endpoint:
+    // the server ignores the request `model` field and always serves the
+    // current K2.x GA model. Listing version-specific labels (K2.5 / K2.6)
+    // here would be misleading — the only honest identifier is the routing
+    // alias `kimi-for-coding`, exposed via the snapshot's default model.
+    // K2 server-side prefix caching is automatic on this endpoint, so
+    // switching to the OpenAI-compat sibling (api.kimi.com/coding/v1) would
+    // yield no cache benefit while losing tool_use schema fidelity.
     supportsThinking: true,
     contextWindow: 256000,
     // Kimi Code (K2.x) historically ran at 64K, but long tool_use writes
@@ -283,16 +291,15 @@ class DeepSeekProvider extends KodaXOpenAICompatProvider {
   protected readonly config: KodaXProviderConfig = buildProviderConfig('deepseek', {
     baseUrl: 'https://api.deepseek.com',
     models: [
-      {
-        id: 'deepseek-reasoner',
-        displayName: 'DeepSeek Reasoner',
-        reasoningCapability: 'none',
-      },
+      { id: 'deepseek-v4-pro', displayName: 'DeepSeek V4 Pro' },
     ],
     supportsThinking: true,
-    contextWindow: 128000,
-    // DeepSeek V3.2: 32k max output
-    maxOutputTokens: 32768,
+    // V4 series ships a 1M context. Server advertises a 384K max output
+    // ceiling but we cap per-turn output at the standard escalation budget
+    // so streams finish well under server-side timeouts; the agent loop
+    // already escalates on `stop_reason: max_tokens`.
+    contextWindow: 1_000_000,
+    maxOutputTokens: KODAX_ESCALATED_MAX_OUTPUT_TOKENS,
   });
   constructor() { super(); this.initClient(); }
 }

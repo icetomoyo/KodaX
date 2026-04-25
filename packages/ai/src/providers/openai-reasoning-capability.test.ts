@@ -229,65 +229,6 @@ describe('openai reasoning capability', () => {
     });
   });
 
-  it('enables native thinking toggle for deepseek-chat', async () => {
-    const create = vi.fn().mockResolvedValue(createCompletedOpenAIStream());
-    const provider = new TestOpenAIProvider('deepseek', 'native-toggle', {
-      chat: { completions: { create } },
-    }, {
-      baseUrl: 'https://api.deepseek.com',
-      model: 'deepseek-chat',
-      models: [
-        {
-          id: 'deepseek-reasoner',
-          displayName: 'DeepSeek Reasoner',
-          reasoningCapability: 'none',
-        },
-      ],
-    });
-
-    await provider.stream(MESSAGES, TOOLS, 'system', reasoning);
-
-    expect(create.mock.calls[0]?.[0]).toMatchObject({
-      extra_body: {
-        thinking: {
-          type: 'enabled',
-        },
-      },
-    });
-  });
-
-  it('treats deepseek-reasoner as model-selected reasoning and skips toggle params', async () => {
-    const create = vi.fn().mockResolvedValue(createCompletedOpenAIStream());
-    const provider = new TestOpenAIProvider('deepseek', 'native-toggle', {
-      chat: { completions: { create } },
-    }, {
-      baseUrl: 'https://api.deepseek.com',
-      model: 'deepseek-chat',
-      models: [
-        {
-          id: 'deepseek-reasoner',
-          displayName: 'DeepSeek Reasoner',
-          reasoningCapability: 'none',
-        },
-      ],
-    });
-
-    expect(provider.getReasoningCapability('deepseek-reasoner')).toBe('none');
-
-    await provider.stream(
-      MESSAGES,
-      TOOLS,
-      'system',
-      reasoning,
-      { modelOverride: 'deepseek-reasoner' },
-    );
-
-    expect(create.mock.calls[0]?.[0].model).toBe('deepseek-reasoner');
-    expect(create.mock.calls[0]?.[0]).not.toHaveProperty('extra_body');
-    expect(create.mock.calls[0]?.[0]).not.toHaveProperty('reasoning_effort');
-    expect(create.mock.calls[0]?.[0]).not.toHaveProperty('thinking');
-  });
-
   it('falls back from budget to toggle and persists the override', async () => {
     const create = vi
       .fn()
@@ -318,11 +259,11 @@ describe('openai reasoning capability', () => {
 
   it('replays tool history and reasoning_content for deepseek tool turns', async () => {
     const create = vi.fn().mockResolvedValue(createCompletedOpenAIStream());
-    const provider = new TestOpenAIProvider('deepseek', 'native-toggle', {
+    const provider = new TestOpenAIProvider('deepseek', 'native-effort', {
       chat: { completions: { create } },
     }, {
       baseUrl: 'https://api.deepseek.com',
-      model: 'deepseek-chat',
+      model: 'deepseek-v4-flash',
     });
 
     const messages: KodaXMessage[] = [
@@ -375,11 +316,11 @@ describe('openai reasoning capability', () => {
     const create = vi.fn().mockResolvedValue(createDeepSeekToolStream());
     const onThinkingDelta = vi.fn();
     const onThinkingEnd = vi.fn();
-    const provider = new TestOpenAIProvider('deepseek', 'native-toggle', {
+    const provider = new TestOpenAIProvider('deepseek', 'native-effort', {
       chat: { completions: { create } },
     }, {
       baseUrl: 'https://api.deepseek.com',
-      model: 'deepseek-chat',
+      model: 'deepseek-v4-flash',
     });
 
     const result = await provider.stream(MESSAGES, TOOLS, 'system', reasoning, {
@@ -405,11 +346,11 @@ describe('openai reasoning capability', () => {
   it('emits tool input deltas with tool ids for concurrent-safe consumers', async () => {
     const create = vi.fn().mockResolvedValue(createDeepSeekToolStream());
     const onToolInputDelta = vi.fn();
-    const provider = new TestOpenAIProvider('deepseek', 'native-toggle', {
+    const provider = new TestOpenAIProvider('deepseek', 'native-effort', {
       chat: { completions: { create } },
     }, {
       baseUrl: 'https://api.deepseek.com',
-      model: 'deepseek-chat',
+      model: 'deepseek-v4-flash',
     });
 
     await provider.stream(MESSAGES, TOOLS, 'system', reasoning, {
@@ -432,11 +373,11 @@ describe('openai reasoning capability', () => {
     // of forwarding multiple separate system messages is what triggered the
     // 400s in the first place.
     const create = vi.fn().mockResolvedValue(createCompletedOpenAIStream());
-    const provider = new TestOpenAIProvider('deepseek', 'native-toggle', {
+    const provider = new TestOpenAIProvider('deepseek', 'native-effort', {
       chat: { completions: { create } },
     }, {
       baseUrl: 'https://api.deepseek.com',
-      model: 'deepseek-chat',
+      model: 'deepseek-v4-flash',
     });
 
     const messages: KodaXMessage[] = [
@@ -479,11 +420,11 @@ describe('openai reasoning capability', () => {
       },
     });
     const onTextDelta = vi.fn();
-    const provider = new TestOpenAIProvider('deepseek', 'native-toggle', {
+    const provider = new TestOpenAIProvider('deepseek', 'native-effort', {
       chat: { completions: { create } },
     }, {
       baseUrl: 'https://api.deepseek.com',
-      model: 'deepseek-chat',
+      model: 'deepseek-v4-flash',
     });
 
     const result = await provider.complete(MESSAGES, TOOLS, 'system', reasoning, {

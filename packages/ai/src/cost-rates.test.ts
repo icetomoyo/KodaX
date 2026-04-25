@@ -40,6 +40,21 @@ describe('cost-rates', () => {
       expect(openai['gpt-5.4'].cachePer1M).toBeUndefined();
     });
 
+    it('should have DeepSeek V4 models with cache pricing', () => {
+      const deepseek = DEFAULT_COST_RATES.deepseek;
+      expect(deepseek['deepseek-v4-flash']).toBeDefined();
+      expect(deepseek['deepseek-v4-flash'].cachePer1M).toBeDefined();
+      expect(deepseek['deepseek-v4-pro']).toBeDefined();
+      expect(deepseek['deepseek-v4-pro'].cachePer1M).toBeDefined();
+      // Pro tier should cost meaningfully more than Flash on every axis.
+      expect(deepseek['deepseek-v4-pro'].inputPer1M).toBeGreaterThan(
+        deepseek['deepseek-v4-flash'].inputPer1M,
+      );
+      expect(deepseek['deepseek-v4-pro'].outputPer1M).toBeGreaterThan(
+        deepseek['deepseek-v4-flash'].outputPer1M,
+      );
+    });
+
     it('should have empty entries for CLI bridge providers', () => {
       expect(DEFAULT_COST_RATES['gemini-cli']).toEqual({});
       expect(DEFAULT_COST_RATES['codex-cli']).toEqual({});

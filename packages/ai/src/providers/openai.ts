@@ -270,15 +270,6 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
           params.thinking = {
             type: 'enabled',
           };
-        } else if (
-          this.name === 'deepseek' &&
-          createParams.model === 'deepseek-chat'
-        ) {
-          this.appendExtraBody(params, {
-            thinking: {
-              type: 'enabled',
-            },
-          });
         }
         break;
       }

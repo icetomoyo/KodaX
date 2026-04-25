@@ -29,8 +29,8 @@ describe('provider registry', () => {
   });
 
   it('returns model-specific reasoning capabilities from snapshots', () => {
-    expect(getProviderConfiguredReasoningCapability('deepseek', 'deepseek-reasoner')).toBe('none');
-    expect(getProviderConfiguredReasoningCapability('deepseek', 'deepseek-chat')).toBe('native-toggle');
+    expect(getProviderConfiguredReasoningCapability('deepseek', 'deepseek-v4-pro')).toBe('native-effort');
+    expect(getProviderConfiguredReasoningCapability('deepseek', 'deepseek-v4-flash')).toBe('native-effort');
     expect(getProviderConfiguredReasoningCapability('unknown-provider')).toBe('unknown');
   });
 

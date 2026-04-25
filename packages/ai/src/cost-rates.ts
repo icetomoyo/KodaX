@@ -24,16 +24,23 @@ export const DEFAULT_COST_RATES: Readonly<Record<string, Readonly<Record<string,
     'gpt-5.3-codex-spark': { inputPer1M: 10.0, outputPer1M: 40.0 },
   },
   deepseek: {
-    'deepseek-chat': { inputPer1M: 0.27, outputPer1M: 1.08 },
-    'deepseek-reasoner': { inputPer1M: 0.55, outputPer1M: 2.19 },
+    // V4 series. DeepSeek publishes pricing in CNY/M tokens; values below are
+    // converted at ¥1 ≈ $0.14 (official USD rates not yet posted as of 2026-04).
+    // Update once api-docs.deepseek.com lists USD rates directly.
+    //   v4-flash: ¥1 / ¥0.2 cached / ¥2 out
+    //   v4-pro:   ¥12 / ¥1 cached / ¥24 out
+    'deepseek-v4-flash': { inputPer1M: 0.14, outputPer1M: 0.28, cachePer1M: 0.028 },
+    'deepseek-v4-pro': { inputPer1M: 1.68, outputPer1M: 3.36, cachePer1M: 0.14 },
   },
   kimi: {
     'k2.5': { inputPer1M: 0.005, outputPer1M: 0.015 },
     'kimi-k2.6': { inputPer1M: 0.005, outputPer1M: 0.015 },
   },
   'kimi-code': {
-    'k2.5': { inputPer1M: 0.005, outputPer1M: 0.015 },
-    'K2.6': { inputPer1M: 0.005, outputPer1M: 0.015 },
+    // Kimi-for-Coding is a subscription endpoint — the per-token rate
+    // shown here is a nominal placeholder for cost-tracker accounting;
+    // real-world cost is the flat membership fee plus request-quota.
+    'kimi-for-coding': { inputPer1M: 0.005, outputPer1M: 0.015 },
   },
   qwen: {
     'qwen3.5-plus': { inputPer1M: 0.003, outputPer1M: 0.006 },

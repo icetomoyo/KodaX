@@ -76,8 +76,8 @@ describe('provider capability disclosure', () => {
   });
 
   it('resolves deepseek capability by active model when available', () => {
-    expect(getProviderReasoningCapability('deepseek', 'deepseek-chat')).toBe('native-toggle');
-    expect(getProviderReasoningCapability('deepseek', 'deepseek-reasoner')).toBe('none');
+    expect(getProviderReasoningCapability('deepseek', 'deepseek-v4-pro')).toBe('native-effort');
+    expect(getProviderReasoningCapability('deepseek', 'deepseek-v4-flash')).toBe('native-effort');
   });
 
   it('does not overstate MCP support for native API providers', async () => {

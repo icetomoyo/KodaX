@@ -887,12 +887,12 @@ import { InkREPL } from '@kodax/repl';
 | anthropic | `ANTHROPIC_API_KEY` | Native | claude-sonnet-4-6 |
 | openai | `OPENAI_API_KEY` | Native | gpt-5.3-codex |
 | kimi | `KIMI_API_KEY` | Native | kimi-k2.6 |
-| kimi-code | `KIMI_API_KEY` | Native | K2.6 |
+| kimi-code | `KIMI_API_KEY` | Native | kimi-for-coding |
 | qwen | `QWEN_API_KEY` | Native | qwen3.5-plus |
 | zhipu | `ZHIPU_API_KEY` | Native | glm-5 |
 | zhipu-coding | `ZHIPU_API_KEY` | Native | glm-5 |
 | minimax-coding | `MINIMAX_API_KEY` | Native | MiniMax-M2.5 |
-| deepseek | `DEEPSEEK_API_KEY` | Native | deepseek-chat |
+| deepseek | `DEEPSEEK_API_KEY` | Native | deepseek-v4-flash |
 | gemini-cli | `GEMINI_API_KEY` | Prompt-only / CLI bridge | (via gemini CLI) |
 | codex-cli | `OPENAI_API_KEY` | Prompt-only / CLI bridge | (via codex CLI) |
 

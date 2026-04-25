@@ -228,7 +228,7 @@ interface ProviderConfig {
 const PROVIDERS: ProviderConfig[] = [
   {
     name: 'kimi-code',
-    model: 'k2.5',
+    model: 'kimi-for-coding',
     baseURL: 'https://api.kimi.com/coding/',
     apiKeyEnv: 'KIMI_API_KEY',
   },
