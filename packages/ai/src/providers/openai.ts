@@ -229,7 +229,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
     // Qwen's extra_body or Zhipu's thinking block, so we intentionally attach
     // those fields on the raw request object here.
     const params = createParams as unknown as Record<string, unknown>;
-    const maxOutputTokens = this.getEffectiveMaxOutputTokens();
+    const maxOutputTokens = this.getEffectiveMaxOutputTokens(createParams.model);
     const requestedBudget = clampThinkingBudget(
       resolveThinkingBudget(
         this.config,
@@ -343,7 +343,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         model,
         messages: fullMessages,
         tools: openaiTools,
-        max_completion_tokens: this.getEffectiveMaxOutputTokens(),
+        max_completion_tokens: this.getEffectiveMaxOutputTokens(model),
         stream: true,
       };
 
@@ -571,7 +571,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         model,
         messages: fullMessages,
         tools: openaiTools,
-        max_completion_tokens: this.getEffectiveMaxOutputTokens(),
+        max_completion_tokens: this.getEffectiveMaxOutputTokens(model),
       };
 
       let response: OpenAI.Chat.Completions.ChatCompletion | undefined;
@@ -730,9 +730,14 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
 
     if (toolCalls.length > 0) {
       message.tool_calls = toolCalls;
-      if (this.name === 'deepseek' && thinking) {
-        message.reasoning_content = thinking;
-      }
+    }
+
+    // DeepSeek V4 thinking mode requires reasoning_content to be echoed back
+    // on every replayed assistant turn that produced thinking — not only on
+    // tool turns. Omitting it returns: 400 "The reasoning_content in the
+    // thinking mode must be passed back to the API."
+    if (this.name === 'deepseek' && thinking) {
+      message.reasoning_content = thinking;
     }
 
     return [message as unknown as OpenAI.Chat.ChatCompletionMessageParam];

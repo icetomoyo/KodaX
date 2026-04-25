@@ -312,6 +312,80 @@ describe('openai reasoning capability', () => {
     ]);
   });
 
+  // DeepSeek V4 thinking mode rejects replay turns that strip reasoning_content
+  // ("400 The reasoning_content in the thinking mode must be passed back to
+  // the API"). Pure conversational follow-ups produce thinking + text but no
+  // tool_calls, so reasoning_content must travel even when tool_calls are
+  // absent.
+  it('replays reasoning_content for deepseek text-only assistant turns', async () => {
+    const create = vi.fn().mockResolvedValue(createCompletedOpenAIStream());
+    const provider = new TestOpenAIProvider('deepseek', 'native-effort', {
+      chat: { completions: { create } },
+    }, {
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-v4-flash',
+    });
+
+    const messages: KodaXMessage[] = [
+      { role: 'user', content: 'Explain what you found.' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'Walking through the analysis.' },
+          { type: 'text', text: 'Here is the full analysis...' },
+        ],
+      },
+      { role: 'user', content: 'Now propose a fix.' },
+    ];
+
+    await provider.stream(messages, TOOLS, 'system', reasoning);
+
+    const requestMessages = create.mock.calls[0]?.[0].messages as Array<Record<string, unknown>>;
+    expect(requestMessages).toEqual([
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Explain what you found.' },
+      {
+        role: 'assistant',
+        content: 'Here is the full analysis...',
+        reasoning_content: 'Walking through the analysis.',
+      },
+      { role: 'user', content: 'Now propose a fix.' },
+    ]);
+  });
+
+  // Sibling guard: non-deepseek providers must NOT have reasoning_content
+  // attached even when the conversation history carries thinking blocks. The
+  // field is a DeepSeek-specific extension; sending it to OpenAI/Qwen/Zhipu
+  // could be rejected as an unknown parameter.
+  it('does not attach reasoning_content for non-deepseek providers', async () => {
+    const create = vi.fn().mockResolvedValue(createCompletedOpenAIStream());
+    const provider = new TestOpenAIProvider('qwen', 'native-toggle', {
+      chat: { completions: { create } },
+    }, {
+      baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      model: 'qwen-max',
+    });
+
+    const messages: KodaXMessage[] = [
+      { role: 'user', content: 'Hi' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'internal monologue' },
+          { type: 'text', text: 'Hello!' },
+        ],
+      },
+      { role: 'user', content: 'Continue.' },
+    ];
+
+    await provider.stream(messages, TOOLS, 'system', reasoning);
+
+    const requestMessages = create.mock.calls[0]?.[0].messages as Array<Record<string, unknown>>;
+    const assistantWire = requestMessages.find((m) => m.role === 'assistant');
+    expect(assistantWire).toBeDefined();
+    expect(assistantWire).not.toHaveProperty('reasoning_content');
+  });
+
   it('captures reasoning_content deltas as thinking blocks', async () => {
     const create = vi.fn().mockResolvedValue(createDeepSeekToolStream());
     const onThinkingDelta = vi.fn();

@@ -126,8 +126,8 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
   ): Promise<KodaXStreamResult> {
     return this.withRateLimit(async () => {
       const normalizedReasoning = this.normalizeReasoning(reasoning);
-      const maxOutputTokens = this.getEffectiveMaxOutputTokens();
       const model = streamOptions?.modelOverride ?? this.config.model;
+      const maxOutputTokens = this.getEffectiveMaxOutputTokens(model);
       const convertedMessages = await this.convertMessages(messages);
       const initialCapability = normalizedReasoning.enabled
         ? this.getReasoningCapability(model)
@@ -452,8 +452,8 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
   ): Promise<KodaXStreamResult> {
     return this.withRateLimit(async () => {
       const normalizedReasoning = this.normalizeReasoning(reasoning);
-      const maxOutputTokens = this.getEffectiveMaxOutputTokens();
       const model = streamOptions?.modelOverride ?? this.config.model;
+      const maxOutputTokens = this.getEffectiveMaxOutputTokens(model);
       const convertedMessages = await this.convertMessages(messages);
       const initialCapability = normalizedReasoning.enabled
         ? this.getReasoningCapability(model)
