@@ -115,6 +115,13 @@ describe('buildSystemPrompt', () => {
         },
         {
           "feature": "FEATURE_048",
+          "id": "runtime-fact",
+          "owner": "prompts",
+          "slot": "runtime-context",
+          "stability": "dynamic",
+        },
+        {
+          "feature": "FEATURE_048",
           "id": "working-directory",
           "owner": "prompts",
           "slot": "runtime-context",
@@ -160,6 +167,93 @@ describe('buildSystemPrompt', () => {
     expect(snapshot.rendered.indexOf('## Skills')).toBeGreaterThan(
       snapshot.rendered.indexOf('PROJECT RULE: prefer project-scoped constraints.'),
     );
+  });
+
+  it('Phase A: identity prefix names KodaX as multi-provider agent', async () => {
+    const executionCwd = await createTempDir('kodax-prompt-identity-');
+    cleanupDirs.push(executionCwd);
+
+    const prompt = await buildSystemPrompt(
+      {
+        provider: 'openai',
+        context: { executionCwd, gitRoot: executionCwd },
+      },
+      false,
+    );
+
+    expect(prompt).toContain('You are KodaX');
+    expect(prompt).toContain('multi-provider coding agent');
+    // Anti-regression: no leaked Claude/Anthropic identity in base prompt
+    expect(prompt).not.toMatch(/\bYou are (Claude|Anthropic)\b/);
+    expect(prompt).not.toMatch(/\bhelpful coding assistant\b/);
+  });
+
+  it('Phase B: runtime-fact section discloses provider and model', async () => {
+    const executionCwd = await createTempDir('kodax-prompt-runtime-');
+    cleanupDirs.push(executionCwd);
+
+    const prompt = await buildSystemPrompt(
+      {
+        provider: 'deepseek',
+        model: 'deepseek-v4',
+        context: { executionCwd, gitRoot: executionCwd },
+      },
+      false,
+    );
+
+    expect(prompt).toMatch(/\[Runtime\] provider=deepseek; model=deepseek-v4\./);
+  });
+
+  it('Phase B: modelOverride takes precedence over model in runtime-fact', async () => {
+    const executionCwd = await createTempDir('kodax-prompt-runtime-override-');
+    cleanupDirs.push(executionCwd);
+
+    const prompt = await buildSystemPrompt(
+      {
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-6',
+        modelOverride: 'claude-opus-4-7',
+        context: { executionCwd, gitRoot: executionCwd },
+      },
+      false,
+    );
+
+    expect(prompt).toContain('[Runtime] provider=anthropic; model=claude-opus-4-7.');
+    expect(prompt).not.toContain('model=claude-sonnet-4-6');
+  });
+
+  it('Phase B: runtime-fact lives in runtime-context slot (not cached base prefix)', async () => {
+    const executionCwd = await createTempDir('kodax-prompt-runtime-slot-');
+    cleanupDirs.push(executionCwd);
+
+    const snapshot = await buildSystemPromptSnapshot(
+      {
+        provider: 'openai',
+        model: 'gpt-4o',
+        context: { executionCwd, gitRoot: executionCwd },
+      },
+      false,
+    );
+
+    const runtimeSection = snapshot.sections.find((s) => s.id === 'runtime-fact');
+    expect(runtimeSection).toBeDefined();
+    expect(runtimeSection?.slot).toBe('runtime-context');
+    expect(runtimeSection?.stability).toBe('dynamic');
+  });
+
+  it('Phase B: runtime-fact omitted when provider and model both absent', async () => {
+    const executionCwd = await createTempDir('kodax-prompt-runtime-omit-');
+    cleanupDirs.push(executionCwd);
+
+    const snapshot = await buildSystemPromptSnapshot(
+      {
+        provider: '',
+        context: { executionCwd, gitRoot: executionCwd },
+      },
+      false,
+    );
+
+    expect(snapshot.sections.some((s) => s.id === 'runtime-fact')).toBe(false);
   });
 
   it('injects MCP capability truth when the extension runtime exposes it', async () => {

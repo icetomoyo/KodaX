@@ -12,6 +12,7 @@ import {
   buildAmaControllerDecision,
   buildHeuristicAutoRerouteDecision,
   buildFallbackRoutingDecision,
+  buildPromptOverlay,
   buildProviderPolicyHintsForDecision,
   createReasoningPlan,
   inferIntentGate,
@@ -1109,5 +1110,47 @@ describe('reasoning reroute', () => {
     expect(decision.primaryTask).toBe('edit');
     expect(decision.mutationSurface).toBe('code');
     expect(decision.topologyCeiling).toBe('H2_PLAN_EXECUTE_EVAL');
+  });
+});
+
+describe('Phase C: AMA behavior guidance', () => {
+  it('appends [AMA Behavior] when fanout is admissible', () => {
+    const decision = buildFallbackRoutingDecision(
+      'Investigate why the ingestion worker silently drops events across several modules.',
+    );
+    const ama = buildAmaControllerDecision(decision);
+    // Force admissibility to guarantee the behavior branch is exercised
+    // regardless of heuristic drift in resolveAmaFanoutClass.
+    const admissibleAma = {
+      ...ama,
+      fanout: {
+        ...ama.fanout,
+        admissible: true,
+        class: ama.fanout.class ?? 'evidence-scan',
+        maxChildren: ama.fanout.maxChildren ?? 3,
+      },
+    };
+
+    const overlay = buildPromptOverlay(decision, [], undefined, admissibleAma);
+
+    expect(overlay).toContain('[AMA Behavior]');
+    expect(overlay).toContain('ask one focused clarifying question rather than guessing');
+    expect(overlay).toContain('delegate via the agent tool');
+  });
+
+  it('omits [AMA Behavior] when fanout is not admissible', () => {
+    const decision = buildFallbackRoutingDecision('Rename a local variable.');
+    const ama = buildAmaControllerDecision(decision);
+    const closedAma = {
+      ...ama,
+      fanout: {
+        ...ama.fanout,
+        admissible: false,
+      },
+    };
+
+    const overlay = buildPromptOverlay(decision, [], undefined, closedAma);
+
+    expect(overlay).not.toContain('[AMA Behavior]');
   });
 });

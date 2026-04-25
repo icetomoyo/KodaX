@@ -1224,6 +1224,9 @@ function buildAmaControllerOverlay(
     controller.upgradeTriggers.length > 0
       ? `[AMA Upgrade Triggers] ${controller.upgradeTriggers.join(' ')}`
       : undefined,
+    controller.fanout.admissible
+      ? '[AMA Behavior] If scope is ambiguous, ask one focused clarifying question rather than guessing. If distinct sub-problems exist, delegate via the agent tool rather than walking through them yourself.'
+      : undefined,
   ].filter(Boolean).join('\n');
 }
 

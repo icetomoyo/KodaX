@@ -60,6 +60,16 @@ export async function buildSystemPromptSnapshot(
       'Always disclose runtime platform details so shell guidance stays accurate.',
     ),
   );
+  const runtimeFact = getRuntimeFact(options);
+  if (runtimeFact) {
+    sections.push(
+      createPromptSection(
+        'runtime-fact',
+        runtimeFact,
+        'Always disclose the active provider and model so identity questions can be answered truthfully instead of guessed from pretraining.',
+      ),
+    );
+  }
   sections.push(
     createPromptSection(
       'working-directory',
@@ -193,6 +203,18 @@ function getEnvContext(): string {
   return `Platform: ${
     isWindows ? 'Windows' : platform === 'darwin' ? 'macOS' : 'Linux'
   }\n${commandHint}\nNode: ${process.version}`;
+}
+
+function getRuntimeFact(options: KodaXOptions): string | null {
+  const provider = options.provider?.trim();
+  const model = (options.modelOverride ?? options.model)?.trim();
+  if (!provider && !model) {
+    return null;
+  }
+  const parts: string[] = [];
+  if (provider) parts.push(`provider=${provider}`);
+  if (model) parts.push(`model=${model}`);
+  return `[Runtime] ${parts.join('; ')}.`;
 }
 
 async function getGitContext(cwd: string): Promise<string> {

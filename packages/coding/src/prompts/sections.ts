@@ -87,6 +87,15 @@ export const PROMPT_SECTION_REGISTRY: Record<string, KodaXPromptSectionDefinitio
     order: 100,
     stability: 'dynamic',
   },
+  'runtime-fact': {
+    id: 'runtime-fact',
+    title: 'Runtime Fact',
+    owner: 'prompts',
+    feature: 'FEATURE_048',
+    slot: 'runtime-context',
+    order: 150,
+    stability: 'dynamic',
+  },
   'working-directory': {
     id: 'working-directory',
     title: 'Working Directory',

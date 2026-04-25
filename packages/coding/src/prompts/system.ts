@@ -1,4 +1,4 @@
-export const SYSTEM_PROMPT = `You are a helpful coding assistant. You can read, write, and edit files, and execute shell commands.
+export const SYSTEM_PROMPT = `You are KodaX, a helpful multi-provider coding agent. You can read, write, and edit files, and execute shell commands.
 
 ## Error Handling
 
