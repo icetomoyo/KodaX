@@ -29,30 +29,24 @@ import {
   readArtifact,
   listConstructed,
   listTools,
-  listToolDefinitions,
   getRegisteredToolDefinition,
   executeTool,
   type KodaXToolExecutionContext,
 } from '@kodax/coding';
 
 /**
- * Subcommand names that the kodax CLI reserves at the top level. The
- * direct-dispatch path uses this set to avoid hijacking commander
- * subcommands (e.g. a constructed tool literally named `skill` would
- * collide with `kodax skill`).
+ * Top-level commander subcommands the kodax CLI reserves. The direct-
+ * dispatch path uses this set to avoid hijacking commander subcommands
+ * (e.g. a constructed tool literally named `skill` would otherwise
+ * shadow `kodax skill`). `serve` is a subcommand of `acp`, not a
+ * top-level command, so it is not listed here.
  */
 const RESERVED_SUBCOMMAND_NAMES: ReadonlySet<string> = new Set([
   'skill',
   'acp',
   'completion',
   'tools',
-  'serve',
 ]);
-
-interface CliBootstrapContext {
-  /** Resolved cwd used for both `.kodax/constructed/` lookup and tool execution. */
-  readonly cwd: string;
-}
 
 /**
  * One-time bootstrap for non-REPL surfaces.
@@ -370,8 +364,9 @@ export async function runToolsRevoke(spec: string, opts: { cwd: string }): Promi
 
 /**
  * Print the full manifest JSON for a constructed artifact. Without a
- * version, prints the highest-versioned active entry; with a version,
- * locates that exact entry (regardless of status).
+ * version, prints the currently-active entry (the last-wins top of the
+ * registry stack); with a version, locates that exact entry on disk
+ * regardless of status (active / staged / revoked).
  */
 export async function runToolsInspect(spec: string, opts: { cwd: string }): Promise<void> {
   await bootstrapForCli(opts.cwd);
