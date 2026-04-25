@@ -1,6 +1,6 @@
 # Feature 总表
 
-> Last updated: 2026-04-24 (FEATURE_097 AMA Runner Realtime Todo List — Claude Code 风格实时计划列表，planned for `v0.7.34`，作为 Plan B 主路线 `v0.7.33` 结束后第一个 AMA 可见性增强 feature，依赖 FEATURE_084 重写后的 Scout `executionObligations` 契约稳定形态。同时 FEATURE_095 SSH-Friendly Cell-Level Diff Renderer **Absorbed into FEATURE_057** v0.7.30 — cell-level screen buffer 是 057 §10 renderer-native selection / §11 ScrollBox parity / Track E output ownership 收口的实际前置基础设施，单独成版本会让 TUI 重构故事碎片化。SSH/ConPTY 闪烁的最急迫表现已通过 `engine.js` altScreen 分支 `log.clear() + log()` 合并成单次 `log.clearAndRender()` 的 10 行补丁消除，Track F 不再承担"SSH 闪烁唯一解药"的紧迫性——剩余动机（TextInput 光标漂移、渲染字节量、renderer-native selection/hit-test 基础设施）仍成立。)
+> Last updated: 2026-04-25 (FEATURE_098 Per-Model Context Window & Output Token Limits — 接通 `KodaXModelDescriptor.contextWindow` / `maxOutputTokens` 这两个早已声明但全代码无人读取的死字段，让 compaction trigger 与 wire-level max_tokens 都按当前激活 model 的真实窗口算；修复 `kimi.k2.5` (128k) / `qwen.qwen3.5-plus` (1M) / `zhipu.glm-5-turbo` (128k) 三处已知偏差；自定义 provider `models[]` 升级支持描述符对象格式（兼容旧字面量）；planned for `v0.7.29` 与 FEATURE_078 同版发布。FEATURE_097 AMA Runner Realtime Todo List — Claude Code 风格实时计划列表，planned for `v0.7.34`，作为 Plan B 主路线 `v0.7.33` 结束后第一个 AMA 可见性增强 feature，依赖 FEATURE_084 重写后的 Scout `executionObligations` 契约稳定形态。同时 FEATURE_095 SSH-Friendly Cell-Level Diff Renderer **Absorbed into FEATURE_057** v0.7.30 — cell-level screen buffer 是 057 §10 renderer-native selection / §11 ScrollBox parity / Track E output ownership 收口的实际前置基础设施，单独成版本会让 TUI 重构故事碎片化。SSH/ConPTY 闪烁的最急迫表现已通过 `engine.js` altScreen 分支 `log.clear() + log()` 合并成单次 `log.clearAndRender()` 的 10 行补丁消除，Track F 不再承担"SSH 闪烁唯一解药"的紧迫性——剩余动机（TextInput 光标漂移、渲染字节量、renderer-native selection/hit-test 基础设施）仍成立。)
 
 > 中文阅读说明：
 > 这份 `FEATURE_LIST` 是 roadmap 的总索引。
@@ -13,13 +13,13 @@
 
 | Item | Value |
 |---|---|
-| Tracked feature IDs | `001-097` (026 removed) |
-| Total tracked features | `96` |
+| Tracked feature IDs | `001-098` (026 removed) |
+| Total tracked features | `97` |
 | Completed | `78` |
 | Cancelled | `2` |
 | Absorbed | `2` |
 | InProgress | `1` |
-| Planned | `13` |
+| Planned | `14` |
 | Current released version | `v0.7.27` |
 
 ### 各版本待做分布
@@ -27,7 +27,7 @@
 | Version | Planned features |
 |---|---|
 | `v0.7.28` | `2` |
-| `v0.7.29` | `1` |
+| `v0.7.29` | `2` |
 | `v0.7.30` | `1` |
 | `v0.7.31` | `1` |
 | `v0.7.32` | `1` |
@@ -54,6 +54,7 @@
 | `087` | ConstructionRuntime and Constructed-World Substrate | Core | High | `v0.7.28` | [v0.7.28](features/v0.7.28.md#feature_087-constructionruntime-and-constructed-world-substrate) |
 | `088` | Self-Construction Tier 2 — Tool Generation | Core | High | `v0.7.28` | [v0.7.28](features/v0.7.28.md#feature_088-self-construction-tier-2--tool-generation) |
 | `078` | Role-Aware Reasoning Profiles | Internal | High | `v0.7.29` | [v0.7.29](features/v0.7.29.md#feature_078-role-aware-reasoning-profiles) |
+| `098` | Per-Model Context Window & Output Token Limits | Internal | High | `v0.7.29` | [v0.7.29](features/v0.7.29.md#feature_098-per-model-context-window--output-token-limits) |
 | `060` | Claude-Aligned Bounded-Memory Runtime and OOM Hardening | Internal | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_060-claude-aligned-bounded-memory-runtime-and-oom-hardening) |
 | `089` | Self-Construction Tier 3 — Agent Generation | Core | High | `v0.7.31` | [v0.7.31](features/v0.7.31.md#feature_089-self-construction-tier-3--agent-generation) |
 | `090` | Self-Construction Tier 4 — Agent Self-Modifying Role Spec | Core | High | `v0.7.32` | [v0.7.32](features/v0.7.32.md#feature_090-self-construction-tier-4--agent-self-modifying-role-spec) |
