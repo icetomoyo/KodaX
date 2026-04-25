@@ -23,6 +23,7 @@ npm install @kodax/ai
 | qwen | `QWEN_API_KEY` | No | qwen-max |
 | zhipu | `ZHIPU_API_KEY` | No | glm-4-plus |
 | zhipu-coding | `ZHIPU_API_KEY` | Yes | glm-5 |
+| ark-coding | `ARK_API_KEY` | Yes | glm-5.1 |
 
 ## 使用示例
 

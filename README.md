@@ -928,6 +928,7 @@ import { InkREPL } from '@kodax/repl';
 | zhipu-coding | `ZHIPU_API_KEY` | Native | glm-5 |
 | minimax-coding | `MINIMAX_API_KEY` | Native | MiniMax-M2.7 |
 | mimo-coding | `MIMO_API_KEY` | Native | mimo-v2.5-pro (Xiaomi Token Plan, Anthropic-compat) |
+| ark-coding | `ARK_API_KEY` | Native | glm-5.1 (Volcengine Ark Coding Plan, multi-model gateway, Anthropic-compat) |
 | deepseek | `DEEPSEEK_API_KEY` | Native | deepseek-v4-flash |
 | gemini-cli | `GEMINI_API_KEY` | Prompt-only / CLI bridge | (via gemini CLI) |
 | codex-cli | `OPENAI_API_KEY` | Prompt-only / CLI bridge | (via codex CLI) |

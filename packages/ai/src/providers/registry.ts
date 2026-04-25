@@ -53,6 +53,7 @@ export type ProviderName =
   | 'zhipu-coding'
   | 'minimax-coding'
   | 'mimo-coding'
+  | 'ark-coding'
   | 'gemini-cli'
   | 'codex-cli';
 
@@ -154,6 +155,28 @@ export const KODAX_PROVIDER_SNAPSHOTS: Record<ProviderName, ProviderSnapshot> = 
     apiKeyEnv: 'MIMO_API_KEY',
     model: 'mimo-v2.5-pro',
     models: ['mimo-v2.5'],
+    reasoningCapability: 'native-budget',
+    capabilityProfile: NATIVE_PROVIDER_CAPABILITY_PROFILE,
+  },
+  'ark-coding': {
+    // Volcengine Ark Coding Plan subscription endpoint (Anthropic-compat).
+    // Multi-model gateway routing by the request `model` field — unlike
+    // kimi-for-coding the gateway honors per-request model selection. Bench
+    // (2026-04) confirmed all 9 listed models route correctly with the
+    // standard `x-api-key` header (no Bearer needed despite the official
+    // Claude Code config recommending `ANTHROPIC_AUTH_TOKEN`).
+    apiKeyEnv: 'ARK_API_KEY',
+    model: 'glm-5.1',
+    models: [
+      'glm-4.7',
+      'kimi-k2.6',
+      'kimi-k2.5',
+      'minimax-latest',
+      'deepseek-v3.2',
+      'doubao-seed-2.0-code',
+      'doubao-seed-2.0-pro',
+      'doubao-seed-2.0-lite',
+    ],
     reasoningCapability: 'native-budget',
     capabilityProfile: NATIVE_PROVIDER_CAPABILITY_PROFILE,
   },
@@ -330,6 +353,49 @@ class MimoCodingProvider extends KodaXAnthropicCompatProvider {
   constructor() { super(); this.initClient(); }
 }
 
+class ArkCodingProvider extends KodaXAnthropicCompatProvider {
+  readonly name = 'ark-coding';
+  protected readonly config: KodaXProviderConfig = buildProviderConfig('ark-coding', {
+    // Volcengine Ark Coding Plan, Beijing cluster. The overseas BytePlus
+    // mirror at https://ark.ap-southeast.bytepluses.com/api/coding speaks
+    // the same protocol; users outside CN can override via baseUrl env or
+    // a custom provider entry.
+    //
+    // ⚠️  Use ONLY the `/api/coding` path. The sibling `/api/v3` (without
+    // `coding/`) is the standard pay-per-token Ark API and does NOT consume
+    // Coding Plan quota — accidentally pointing here bills outside the
+    // subscription.
+    baseUrl: 'https://ark.cn-beijing.volces.com/api/coding',
+    models: [
+      { id: 'glm-4.7', displayName: 'GLM-4.7' },
+      { id: 'kimi-k2.6', displayName: 'Kimi K2.6' },
+      // Ark gateway routes `kimi-k2.5` to upstream Moonshot K2.5 which
+      // ships with a 128K window (matches FEATURE_098 pin on `kimi.k2.5`).
+      { id: 'kimi-k2.5', displayName: 'Kimi K2.5', contextWindow: 128_000 },
+      // `minimax-latest` is the Ark-side alias that resolves to the
+      // current MiniMax GA coding model (M2.7 as of 2026-04).
+      { id: 'minimax-latest', displayName: 'MiniMax Latest' },
+      // V3 series 128K window; V4 (1M) is not yet exposed via Ark.
+      { id: 'deepseek-v3.2', displayName: 'DeepSeek V3.2', contextWindow: 128_000 },
+      { id: 'doubao-seed-2.0-code', displayName: 'Doubao Seed 2.0 Code' },
+      { id: 'doubao-seed-2.0-pro', displayName: 'Doubao Seed 2.0 Pro' },
+      { id: 'doubao-seed-2.0-lite', displayName: 'Doubao Seed 2.0 Lite' },
+    ],
+    supportsThinking: true,
+    contextWindow: 200_000,
+    // Bench-confirmed (2026-04, glm-5.1 32K stream + tool_use): completes
+    // cleanly at 947s with stop_reason=tool_use (103K-char HTML payload,
+    // ~30K output tokens). No server-side kill window observed (unlike
+    // zhipu-coding's 308s) and no rate-limit headers exposed; the Ark Plan
+    // uses a 5-hour sliding-window quota visible only in the console.
+    // Standard 32K cap matches the kimi-code/mimo-coding/minimax-coding
+    // pattern; tasks needing more output flow through the L5 continuation
+    // meta path. Override with `KODAX_MAX_OUTPUT_TOKENS` for larger turns.
+    maxOutputTokens: KODAX_CAPPED_MAX_OUTPUT_TOKENS,
+  });
+  constructor() { super(); this.initClient(); }
+}
+
 class OpenAIProvider extends KodaXOpenAICompatProvider {
   readonly name = 'openai';
   protected readonly config: KodaXProviderConfig = buildProviderConfig('openai', {
@@ -425,6 +491,7 @@ export const KODAX_PROVIDERS: Record<string, () => KodaXBaseProvider> = {
   'zhipu-coding': () => new ZhipuCodingProvider(),
   'minimax-coding': () => new MiniMaxCodingProvider(),
   'mimo-coding': () => new MimoCodingProvider(),
+  'ark-coding': () => new ArkCodingProvider(),
   'gemini-cli': () => new KodaXGeminiCliProvider(),
   'codex-cli': () => new KodaXCodexCliProvider(),
 };

@@ -71,6 +71,22 @@ export const DEFAULT_COST_RATES: Readonly<Record<string, Readonly<Record<string,
     'mimo-v2.5-pro': { inputPer1M: 0.01, outputPer1M: 0.03 },
     'mimo-v2.5': { inputPer1M: 0.01, outputPer1M: 0.03 },
   },
+  'ark-coding': {
+    // Volcengine Ark Coding Plan is a 5-hour sliding-window subscription —
+    // per-token rates here are nominal placeholders for cost-tracker
+    // accounting; real-world cost is the Lite/Pro membership fee plus
+    // sliding-window quota. Listed at ~10% of the standard pay-per-token
+    // Ark API rates per the Plan announcement.
+    'glm-5.1': { inputPer1M: 0.005, outputPer1M: 0.015 },
+    'glm-4.7': { inputPer1M: 0.005, outputPer1M: 0.015 },
+    'kimi-k2.6': { inputPer1M: 0.005, outputPer1M: 0.015 },
+    'kimi-k2.5': { inputPer1M: 0.005, outputPer1M: 0.015 },
+    'minimax-latest': { inputPer1M: 0.005, outputPer1M: 0.015 },
+    'deepseek-v3.2': { inputPer1M: 0.005, outputPer1M: 0.015 },
+    'doubao-seed-2.0-code': { inputPer1M: 0.005, outputPer1M: 0.015 },
+    'doubao-seed-2.0-pro': { inputPer1M: 0.005, outputPer1M: 0.015 },
+    'doubao-seed-2.0-lite': { inputPer1M: 0.005, outputPer1M: 0.015 },
+  },
   // CLI bridge providers - no direct cost (user pays their own CLI usage)
   'gemini-cli': {},
   'codex-cli': {},

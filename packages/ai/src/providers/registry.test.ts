@@ -47,6 +47,34 @@ describe('provider registry', () => {
     expect(getProviderConfiguredReasoningCapability('mimo-coding', 'mimo-v2.5-pro')).toBe('native-budget');
   });
 
+  it('registers Volcengine Ark Coding Plan as ark-coding (Anthropic-compat, ARK_API_KEY)', () => {
+    vi.stubEnv('ARK_API_KEY', 'ark-test-key');
+    const ark = getProvider('ark-coding');
+    expect(ark.name).toBe('ark-coding');
+
+    // Default + alts together must cover all 9 models the gateway routes to.
+    const models = ark.getAvailableModels();
+    expect(models).toEqual([
+      'glm-5.1',
+      'glm-4.7',
+      'kimi-k2.6',
+      'kimi-k2.5',
+      'minimax-latest',
+      'deepseek-v3.2',
+      'doubao-seed-2.0-code',
+      'doubao-seed-2.0-pro',
+      'doubao-seed-2.0-lite',
+    ]);
+
+    // Ark gateway routes BY model field — bench-confirmed `kimi-k2.5`
+    // upstream is Moonshot K2.5's 128K window (vs the provider-level 200K).
+    expect(ark.getEffectiveContextWindow('glm-5.1')).toBe(200_000);
+    expect(ark.getEffectiveContextWindow('kimi-k2.5')).toBe(128_000);
+    expect(ark.getEffectiveContextWindow('deepseek-v3.2')).toBe(128_000);
+
+    expect(getProviderConfiguredReasoningCapability('ark-coding', 'glm-5.1')).toBe('native-budget');
+  });
+
   it('exposes a stable default provider snapshot', () => {
     expect(typeof KODAX_DEFAULT_PROVIDER).toBe('string');
     expect(getProvider()).toBeDefined();

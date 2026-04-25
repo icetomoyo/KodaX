@@ -7,7 +7,7 @@ import { DEFAULT_COST_RATES, getCostRate, calculateCost, type CostRate } from '.
 
 describe('cost-rates', () => {
   describe('DEFAULT_COST_RATES', () => {
-    it('should have rates for all 12 providers', () => {
+    it('should have rates for all 13 providers', () => {
       const providers = [
         'anthropic',
         'openai',
@@ -19,11 +19,33 @@ describe('cost-rates', () => {
         'zhipu-coding',
         'minimax-coding',
         'mimo-coding',
+        'ark-coding',
         'gemini-cli',
         'codex-cli',
       ];
       providers.forEach((provider) => {
         expect(DEFAULT_COST_RATES).toHaveProperty(provider);
+      });
+    });
+
+    it('should have ark-coding subscription placeholder rates for all 9 routed models', () => {
+      const ark = DEFAULT_COST_RATES['ark-coding'];
+      expect(ark).toBeDefined();
+      const expectedModels = [
+        'glm-5.1',
+        'glm-4.7',
+        'kimi-k2.6',
+        'kimi-k2.5',
+        'minimax-latest',
+        'deepseek-v3.2',
+        'doubao-seed-2.0-code',
+        'doubao-seed-2.0-pro',
+        'doubao-seed-2.0-lite',
+      ];
+      expectedModels.forEach((model) => {
+        expect(ark[model]).toBeDefined();
+        expect(ark[model].inputPer1M).toBeGreaterThan(0);
+        expect(ark[model].outputPer1M).toBeGreaterThan(0);
       });
     });
 
