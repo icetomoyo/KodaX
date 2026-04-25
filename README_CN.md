@@ -2,7 +2,7 @@
 
 轻量、透明、可定制的 TypeScript AI Coding Agent。
 
-KodaX 既可以作为命令行工具使用，也可以作为库集成到你的项目里。它支持 11 个模型提供商，包含完整的 REPL、会话、工具、Skills，以及 Scout-first 自适应多 Agent 工作流。
+KodaX 既可以作为命令行工具使用，也可以作为库集成到你的项目里，还能打包成**免 Node 运行时**的单文件二进制分发到目标机器。当前支持 12 个模型提供商，包含完整的 REPL、会话、30+ 工具、Skills，以及 Scout-first 自适应多 Agent 工作流。
 
 ## 为什么用 KodaX
 
@@ -91,6 +91,156 @@ const result = await runKodaX(
 );
 ```
 
+### 5. 自定义 Provider（OpenAI / Anthropic 兼容端点）
+
+任何 OpenAI 或 Anthropic 协议兼容的 endpoint 都可以通过 `customProviders[]` 接入，CLI 模式写在 `~/.kodax/config.json` 里：
+
+```json
+{
+  "provider": "my-openai-compatible",
+  "customProviders": [
+    {
+      "name": "my-openai-compatible",
+      "protocol": "openai",
+      "baseUrl": "https://example.com/v1",
+      "apiKeyEnv": "MY_LLM_API_KEY",
+      "model": "my-model",
+      "userAgentMode": "compat"
+    }
+  ]
+}
+```
+
+`userAgentMode` 默认 `"compat"`（发送 `KodaX` 而非上游 SDK 的 User-Agent）；如果你的网关要求原生 SDK header，再切到 `"sdk"`。
+
+库模式下用 `registerCustomProviders()` 显式注册：
+
+```typescript
+import { registerCustomProviders, runKodaX } from 'kodax';
+
+registerCustomProviders([
+  {
+    name: 'my-openai-compatible',
+    protocol: 'openai',
+    baseUrl: 'https://example.com/v1',
+    apiKeyEnv: 'MY_LLM_API_KEY',
+    model: 'my-model',
+    userAgentMode: 'compat',
+  },
+]);
+
+await runKodaX({ provider: 'my-openai-compatible' }, '解释这个仓库');
+```
+
+### 6. 打包成单文件二进制（无需 Node）
+
+KodaX 可以用 `bun --compile` 打包成单可执行文件 + 一个 `builtin/` sidecar 目录，目标机器**不需要安装 Node.js 或任何运行时**。
+
+支持目标：`win-x64`、`linux-x64`、`linux-arm64`、`darwin-x64`、`darwin-arm64`。Win7 / glibc < 2.27 的发行版 / 龙芯 LoongArch 暂不支持。
+
+本地构建：
+
+```bash
+# 先在构建机器上装好 Bun（一次性）
+npm i -g bun                  # 或 scoop / brew / curl，详见 docs/release.md
+
+npm run build:binary          # 当前平台（最快）
+npm run build:binary:all      # 一台机器出全部 5 个目标
+node scripts/build-binary.mjs --target=linux-arm64   # 指定平台
+```
+
+产物在 `dist/binary/<target>/`：
+
+```
+dist/binary/linux-x64/
+├── kodax              # ~60 MB Bun 编译的二进制
+└── builtin/           # 内置 skills sidecar
+```
+
+冒烟验证：`dist/binary/<host>/kodax --version`。
+
+**自动发布**：推送 `v*` git tag 会触发 `.github/workflows/release.yml`，在原生 runner 上构建全部 5 个目标、跑冒烟测试，然后自动创建 GitHub Release 并上传 archives + SHA256SUMS。也可以从 Actions UI 用 `workflow_dispatch` 不打 tag 跑流水线测试。
+
+详细的构建参数、archive 结构、`KODAX_BUNDLED` / `KODAX_VERSION` build-time defines、故障排查，参见 [docs/release.md](docs/release.md)。
+
+## 内置 Provider 列表
+
+| Provider | 环境变量 | Reasoning | 默认 Model |
+|----------|----------|-----------|-----------|
+| anthropic | `ANTHROPIC_API_KEY` | Native | claude-sonnet-4-6 |
+| openai | `OPENAI_API_KEY` | Native | gpt-5.3-codex |
+| kimi | `KIMI_API_KEY` | Native | kimi-k2.6 |
+| kimi-code | `KIMI_API_KEY` | Native | kimi-for-coding |
+| qwen | `QWEN_API_KEY` | Native | qwen3.5-plus |
+| zhipu | `ZHIPU_API_KEY` | Native | glm-5 |
+| zhipu-coding | `ZHIPU_API_KEY` | Native | glm-5（GLM Coding Plan 端点） |
+| minimax-coding | `MINIMAX_API_KEY` | Native | MiniMax-M2.7 |
+| mimo-coding | `MIMO_API_KEY` | Native | mimo-v2.5-pro（小米 MiMo Token Plan，Anthropic 协议） |
+| deepseek | `DEEPSEEK_API_KEY` | Native | deepseek-v4-flash |
+| gemini-cli | `GEMINI_API_KEY` | Prompt-only / CLI bridge | （通过 gemini CLI） |
+| codex-cli | `OPENAI_API_KEY` | Prompt-only / CLI bridge | （通过 codex CLI） |
+
+> 不在表里的端点：用上面"自定义 Provider"那一节加进来即可。
+
+## 内置工具一览
+
+KodaX 有 30+ 个内置工具，按类别分组如下（实际暴露给 LLM 是一张扁平表）。
+
+**文件操作**
+
+| 工具 | 说明 |
+|------|------|
+| `read` | 读取文件（支持 offset / limit） |
+| `write` | 创建新文件或完整重写 |
+| `edit` | 精确字符串替换（支持 `replace_all`） |
+| `multi_edit` | 对同一文件做一批独立 edit，整批原子提交 |
+| `insert_after_anchor` | 在唯一 anchor 后插入内容，避免整文件重写 |
+| `undo` | 撤销最近一次文件修改 |
+
+**Shell 与搜索**
+
+| 工具 | 说明 |
+|------|------|
+| `bash` | 执行 shell 命令（支持后台、输出截断） |
+| `glob` / `grep` | 文件名匹配 / 正则内容搜索 |
+| `code_search` | 代码搜索，比裸 grep 噪音更低 |
+| `semantic_lookup` | 借助 repo intelligence 的符号 / 模块 / 流程感知查找 |
+| `web_search` / `web_fetch` | 联网搜索 / 抓取，自带 trust + 时效信号 |
+
+**Repo Intelligence working tools**
+
+| 工具 | 说明 |
+|------|------|
+| `repo_overview` | 仓库结构、关键区域、入口提示、intelligence 快照 |
+| `changed_scope` | 当前 diff 涉及的文件 / 区域 / 类别 |
+| `changed_diff` / `changed_diff_bundle` | 单文件 / 多文件分页 diff |
+| `module_context` | 模块 capsule（依赖、入口、符号、测试、文档） |
+| `symbol_context` | 定义 + 可能的 caller/callee + 备选 |
+| `process_context` | 入口的近似静态执行/流程 capsule |
+| `impact_estimate` | 符号 / 路径 / 模块的影响面估算 |
+
+**MCP 能力**（配置了 MCP server 时可用）
+
+| 工具 | 说明 |
+|------|------|
+| `mcp_search` / `mcp_describe` / `mcp_call` | 通过共享 capability runtime 发现并调用 MCP 工具 |
+| `mcp_read_resource` / `mcp_get_prompt` | 读取 MCP 资源、获取 MCP prompt |
+
+**Git Worktree**
+
+| 工具 | 说明 |
+|------|------|
+| `worktree_create` | 在隔离分支上新建 worktree，让 agent 安全工作 |
+| `worktree_remove` | 移除 worktree（自带安全检查） |
+
+**Agent 控制 / 交互**
+
+| 工具 | 说明 |
+|------|------|
+| `dispatch_child_task` | 派发子 agent 跑独立调研 / 改动任务 |
+| `ask_user_question` | 向用户发起单选 / 多选 / 自由文本提问 |
+| `exit_plan_mode` | Plan 模式下提交最终方案给用户审批（仅 REPL） |
+| `emit_managed_protocol` | scout / planner / handoff / verdict 内部协议侧信道 |
 
 ## Repo Intelligence Premium
 
@@ -337,15 +487,36 @@ node .\clients\repointel\scripts\install.mjs --host opencode --workspace-root C:
 
 ## 仓库结构
 
-KodaX 是一个基于 npm workspaces 的 TypeScript monorepo。核心包包括：
+KodaX 是一个基于 npm workspaces 的 TypeScript monorepo。核心包：
 
-- `@kodax/ai`
-- `@kodax/agent`
-- `@kodax/skills`
-- `@kodax/coding`
-- `@kodax/repl`
+| 包 | 作用 | 主要依赖 |
+|----|------|---------|
+| `@kodax/ai` | LLM 抽象层（12 个内置 provider + 自定义 provider 注册），可独立使用 | `@anthropic-ai/sdk`, `openai` |
+| `@kodax/agent` | 通用 Agent 框架，会话管理 + tokenization + 可插拔 compaction policy | `@kodax/ai`, `js-tiktoken` |
+| `@kodax/skills` | Agent Skills 标准实现（自然语言触发、变量解析） | 零外部依赖 |
+| `@kodax/coding` | Coding Agent：30+ 工具、prompts、agent loop、auto-continue | `@kodax/ai`, `@kodax/agent`, `@kodax/skills` |
+| `@kodax/repl` | 完整交互式终端 UI（Ink / React、权限模式、命令系统、流式渲染） | `@kodax/coding`, `ink`, `react` |
 
-根目录 `src/` 提供 CLI 和集成入口。
+根目录 `src/kodax_cli.ts` 是 CLI 入口；构建产物在 `dist/`，单文件二进制在 `dist/binary/<target>/`。
+
+```
+KodaX/
+├── packages/
+│   ├── ai/                  # @kodax/ai
+│   │   └── providers/       # 12 个 LLM provider 实现
+│   ├── agent/               # @kodax/agent（session + token）
+│   ├── skills/              # @kodax/skills
+│   │   └── builtin/         # 内置 skills：code-review / tdd / git-workflow / skill-creator
+│   ├── coding/              # @kodax/coding（tools + prompts）
+│   │   └── tools/           # read/write/edit/bash/grep/repo-intel/MCP/worktree/...
+│   └── repl/                # @kodax/repl（Ink TUI）
+├── src/
+│   └── kodax_cli.ts         # CLI 主入口
+├── scripts/
+│   └── build-binary.mjs     # Bun --compile 单文件二进制打包脚本
+└── .github/workflows/
+    └── release.yml          # 推 v* tag 自动发布 GitHub Release
+```
 
 这套拆分让你既可以把 KodaX 当成完整产品使用，也可以只复用其中某一层能力。
 ## API 导出
@@ -398,8 +569,15 @@ npm run build
 # 可选：只构建 workspace packages
 npm run build:packages
 
+# 打包成单文件二进制（当前平台 / 全平台）
+npm run build:binary
+npm run build:binary:all
+
 # 测试
 npm test
+
+# Eval-driven development（provider 矩阵、identity round-trip 等）
+npm run test:eval
 
 # 清理
 npm run clean
@@ -426,10 +604,15 @@ KodaX 现在会把 Repo Intelligence 的本地缓存分成两条路径：
 
 ## 文档
 
-- [设计文档](DESIGN.md) - 架构和实现细节
-- [测试指南](TESTING.md) - 如何测试所有功能
-- [test-guides/](test-guides/) - 功能专用测试指南
-- [更新日志](../CHANGELOG.md) - 版本历史
+- [README.md](README.md) - 英文版 README
+- [docs/release.md](docs/release.md) - 单文件二进制构建与发布流程
+- [docs/PRD.md](docs/PRD.md) - 产品需求
+- [docs/ADR.md](docs/ADR.md) - 架构决策
+- [docs/HLD.md](docs/HLD.md) - 高层设计
+- [docs/DD.md](docs/DD.md) - 详细设计
+- [docs/FEATURE_LIST.md](docs/FEATURE_LIST.md) - Feature 跟踪
+- [docs/test-guides/](docs/test-guides/) - 功能专用测试指南
+- [CHANGELOG.md](CHANGELOG.md) - 更新日志（v0.7.0+；更早版本见 [CHANGELOG_ARCHIVE](docs/CHANGELOG_ARCHIVE.md)）
 
 
 ---

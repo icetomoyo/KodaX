@@ -1,7 +1,7 @@
 {
   "name": "kodax",
   "version": "0.7.27",
-  "description": "极致轻量化 Coding Agent - TypeScript 实现，支持7种LLM提供商",
+  "description": "极致轻量化 Coding Agent - TypeScript 实现，支持 12 个 LLM 提供商，可发布为免 Node 单文件二进制",
   "type": "module",
   "private": true,
   "workspaces": [
@@ -30,6 +30,8 @@
     "repointel:demo": "node clients/repointel/scripts/demo.mjs",
     "repointel:doctor": "node clients/repointel/scripts/doctor.mjs",
     "start": "node --max-old-space-size=4096 --require ./scripts/production-env.cjs dist/kodax_cli.js",
+    "build:binary": "node scripts/build-binary.mjs",
+    "build:binary:all": "node scripts/build-binary.mjs --all",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:eval": "vitest run -c vitest.eval.config.ts",

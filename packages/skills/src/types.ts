@@ -213,6 +213,23 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 /**
+ * Resolve the builtin skills directory.
+ *
+ * Two distribution modes:
+ *  - npm / dev / `bun run` / `node dist/...` → relative to this module's __dirname
+ *    (i.e. `packages/skills/dist/builtin/`, populated by `npm run copy:builtin`).
+ *  - Bun --compile standalone binary → sidecar `builtin/` next to the executable,
+ *    detected via the build-time `KODAX_BUNDLED` flag (injected via `--define`
+ *    so consumers without the flag continue using __dirname unchanged).
+ */
+function resolveBuiltinPath(): string {
+  if (process.env.KODAX_BUNDLED === 'true') {
+    return path.join(path.dirname(process.execPath), 'builtin');
+  }
+  return path.join(__dirname, 'builtin');
+}
+
+/**
  * Get default skill discovery paths
  *
  * Priority order (highest first):
@@ -243,7 +260,7 @@ export function getDefaultSkillPaths(projectRoot?: string): SkillPathsConfig {
     pluginPaths: listPluginSkillPaths(),
 
     // Built-in skills
-    builtinPath: path.join(__dirname, 'builtin'),
+    builtinPath: resolveBuiltinPath(),
   };
 }
 

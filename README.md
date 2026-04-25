@@ -4,7 +4,7 @@ Extreme Lightweight Coding Agent - TypeScript Implementation
 
 ## Overview
 
-KodaX is a **modular, lightweight AI coding agent** built with TypeScript. It supports **11 LLM providers**, works as both a CLI tool and a library, and includes a Scout-first adaptive multi-agent workflow for long-running coding tasks.
+KodaX is a **modular, lightweight AI coding agent** built with TypeScript. It supports **12 LLM providers**, works as both a CLI tool and a library, ships an optional **Node-free standalone binary**, and includes a Scout-first adaptive multi-agent workflow for long-running coding tasks.
 
 **Core Philosophy**: Transparent, Flexible, Minimalist
 
@@ -22,9 +22,10 @@ KodaX is a **modular, lightweight AI coding agent** built with TypeScript. It su
 | Feature | KodaX | Typical hosted coding assistant |
 |---------|-------|----------------------------------|
 | **Architecture** | Modular (5 packages), library-friendly | Usually product-first, less reusable as code |
-| **Provider choice** | 10 providers, custom provider support | Often optimized for one provider |
+| **Provider choice** | 12 providers (incl. Anthropic, OpenAI, DeepSeek, Kimi, Qwen, Zhipu, MiniMax, MiMo, Gemini CLI, Codex CLI) + custom OpenAI/Anthropic-compatible providers | Often optimized for one provider |
 | **Customization** | Edit prompts, tools, skills, session flow directly | Limited extension surface |
 | **Codebase clarity** | Small TypeScript monorepo | Often much larger and harder to trace |
+| **Distribution** | npm install / global link / **standalone binary** (Bun --compile, no Node required on target) | Closed-source installer or web app |
 | **Learning value** | Good for understanding agent internals | More black-box |
 
 ## Quick Start
@@ -347,7 +348,7 @@ KodaX uses a **monorepo architecture** with npm workspaces, consisting of 5 pack
 KodaX/
 ├── packages/
 │   ├── ai/                  # @kodax/ai - Independent LLM abstraction layer
-│   │   └── providers/       # 11 LLM providers (Anthropic, OpenAI, DeepSeek, etc.)
+│   │   └── providers/       # 12 LLM providers (Anthropic, OpenAI, DeepSeek, MiMo, etc.)
 │   │
 │   ├── agent/               # @kodax/agent - Generic Agent framework
 │   │   └── session/         # Session management, message handling
@@ -407,14 +408,17 @@ KodaX/
 
 ## Features
 
-- **Modular Architecture** - Use as CLI or as a library
-- **11 LLM Providers** - Anthropic, OpenAI, DeepSeek, Kimi, Kimi Code, Qwen, Zhipu, Zhipu Coding, MiniMax Coding, Gemini CLI, Codex CLI
+- **Modular Architecture** - Use as CLI, as a library, or as a Node-free single binary
+- **12 LLM Providers** - Anthropic, OpenAI, DeepSeek, Kimi, Kimi Code, Qwen, Zhipu, Zhipu Coding, MiniMax Coding, MiMo Coding (Xiaomi Token Plan), Gemini CLI, Codex CLI — plus user-defined OpenAI/Anthropic-compatible providers
 - **Scout-First AMA** - Adaptive multi-agent with H0/H1/H2 harness levels, Scout-complete direct execution, and context-preserving role upgrades
 - **Reasoning Modes** - Unified `off/auto/quick/balanced/deep` interface across providers
 - **Streaming Output** - Real-time response display
 - **Session Management** - JSONL format with branchable session lineage tree
 - **Skills System** - Natural language triggering, extensible, role-projected in AMA
+- **Repo Intelligence** - OSS baseline + optional `repointel` premium engine, with native KodaX auto-injection lane
+- **Rich Tool Surface** - 30+ built-in tools across file ops, shell, search, repo intelligence, MCP capabilities, git worktree, and agent control
 - **Permission Control** - 3 permission modes with pattern-based control
+- **Standalone Binary** - `bun --compile` releases for Win/macOS/Linux x64+arm64, no Node.js required on target machines
 - **Cross-Platform** - Windows/macOS/Linux
 - **TypeScript Native** - Full type safety and IDE support
 
@@ -441,6 +445,37 @@ npm link
 # Now you can use 'kodax' anywhere
 kodax "your task"
 ```
+
+### As Standalone Binary (no Node required on target)
+
+KodaX can be packaged into a single executable + a small `builtin/` sidecar directory using `bun --compile`. The target machine does **not** need Node.js or any other runtime.
+
+Supported targets: `win-x64`, `linux-x64`, `linux-arm64`, `darwin-x64`, `darwin-arm64`. Win7 / pre-glibc-2.27 distros / LoongArch are not supported.
+
+**Build locally**:
+
+```bash
+# Install Bun once on your build machine
+npm i -g bun                  # or scoop/brew/curl install — see docs/release.md
+
+npm run build:binary          # Current host platform (fastest)
+npm run build:binary:all      # All five targets in sequence
+node scripts/build-binary.mjs --target=linux-arm64   # Specific target
+```
+
+Output lives under `dist/binary/<target>/`:
+
+```
+dist/binary/linux-x64/
+├── kodax              # ~60 MB Bun-compiled executable
+└── builtin/           # Sidecar built-in skills
+```
+
+Smoke-test: `dist/binary/<host>/kodax --version`.
+
+**Automated release**: pushing a `v*` git tag triggers `.github/workflows/release.yml`, which builds all five targets on native runners, runs smoke tests, and publishes a GitHub Release with archives + SHA256SUMS. Use the `workflow_dispatch` button in the Actions UI to test the pipeline without tagging.
+
+See [docs/release.md](docs/release.md) for full details on build flags, archive layout, troubleshooting, and the build-time `KODAX_BUNDLED` / `KODAX_VERSION` defines.
 
 ### As Library
 
@@ -727,9 +762,9 @@ for await (const result of stream) {
 ```
 
 **Key Features**:
-- 11 LLM providers with unified interface
+- 12 LLM providers with a unified interface
 - Streaming output support
-- Thinking mode support
+- Thinking / reasoning mode support
 - Error handling and retry logic
 - Zero business logic dependencies
 
@@ -829,7 +864,7 @@ await client.send('Add a function to it'); // Has context from previous message
 ```
 
 **Key Features**:
-- 8 built-in tools (read, write, edit, bash, glob, grep, undo, ask_user_question)
+- 30+ built-in tools across file ops, shell, search, repo intelligence, MCP, worktree, and agent control (see the [Tools](#tools) section)
 - System prompts for coding tasks
 - Agent loop implementation
 - Session management
@@ -891,10 +926,13 @@ import { InkREPL } from '@kodax/repl';
 | qwen | `QWEN_API_KEY` | Native | qwen3.5-plus |
 | zhipu | `ZHIPU_API_KEY` | Native | glm-5 |
 | zhipu-coding | `ZHIPU_API_KEY` | Native | glm-5 |
-| minimax-coding | `MINIMAX_API_KEY` | Native | MiniMax-M2.5 |
+| minimax-coding | `MINIMAX_API_KEY` | Native | MiniMax-M2.7 |
+| mimo-coding | `MIMO_API_KEY` | Native | mimo-v2.5-pro (Xiaomi Token Plan, Anthropic-compat) |
 | deepseek | `DEEPSEEK_API_KEY` | Native | deepseek-v4-flash |
 | gemini-cli | `GEMINI_API_KEY` | Prompt-only / CLI bridge | (via gemini CLI) |
 | codex-cli | `OPENAI_API_KEY` | Prompt-only / CLI bridge | (via codex CLI) |
+
+> **Custom providers**: any OpenAI- or Anthropic-compatible endpoint can be added via `customProviders[]` in `~/.kodax/config.json` (CLI) or `registerCustomProviders()` (library). See the [Quick Start](#2-configure-a-provider) for the configuration shape.
 
 ### Examples
 
@@ -923,16 +961,60 @@ kodax --agent-mode ama "Analyze code structure, check test coverage, find bugs"
 
 ## Tools
 
+KodaX ships 30+ built-in tools, grouped below. They are registered as a single flat tool surface to the LLM; the categories here are just for navigation.
+
+### File operations
 | Tool | Description |
 |------|-------------|
-| read | Read file contents (supports offset/limit) |
-| write | Write to file |
-| edit | Exact string replacement (supports replace_all) |
-| bash | Execute shell commands |
-| glob | File pattern matching |
-| grep | Content search (supports output_mode) |
-| undo | Revert last modification |
-| ask_user_question | Ask the user to choose between options |
+| `read` | Read file contents (supports offset/limit) |
+| `write` | Write a new file or fully rewrite an existing one |
+| `edit` | Exact string replacement (supports `replace_all`) |
+| `multi_edit` | Atomic batch of independent edits to one file |
+| `insert_after_anchor` | Insert content after a unique anchor without rewriting the file |
+| `undo` | Revert the last file modification |
+
+### Shell & search
+| Tool | Description |
+|------|-------------|
+| `bash` | Execute a shell command (supports `run_in_background`, output truncation) |
+| `glob` | Find files by pattern |
+| `grep` | Regex content search (context lines, multiline, file-type filter, pagination) |
+| `code_search` | Lower-noise code search (extension-provider aware) |
+| `semantic_lookup` | Symbol/module/process-aware search backed by repo intelligence |
+| `web_search` | Discovery-oriented web search with trust + freshness signals |
+| `web_fetch` | Fetch a specific URL with provenance hints |
+
+### Repo Intelligence (working tools)
+| Tool | Description |
+|------|-------------|
+| `repo_overview` | Summarize structure, key areas, entry hints, intelligence snapshot |
+| `changed_scope` | Which files/areas/categories the current diff touches |
+| `changed_diff` | Paged diff slice for a single file |
+| `changed_diff_bundle` | Paged diff slices for multiple files in one call |
+| `module_context` | Module capsule (deps, entries, symbols, tests, docs) |
+| `symbol_context` | Definition + probable callers/callees + alternatives |
+| `process_context` | Approximate static execution capsule for an entry |
+| `impact_estimate` | Blast radius for a symbol/path/module |
+
+### MCP capabilities (when MCP servers are configured)
+| Tool | Description |
+|------|-------------|
+| `mcp_search` / `mcp_describe` / `mcp_call` | Discover and invoke MCP tools through the shared capability runtime |
+| `mcp_read_resource` / `mcp_get_prompt` | Read MCP resources and prompts |
+
+### Git worktree
+| Tool | Description |
+|------|-------------|
+| `worktree_create` | Create a new worktree on an isolated branch for safe agent work |
+| `worktree_remove` | Remove a worktree (with safety checks) |
+
+### Agent control & UX
+| Tool | Description |
+|------|-------------|
+| `dispatch_child_task` | Spawn a sub-agent for an independent investigation/edit task |
+| `ask_user_question` | Single/multi-select or free-text prompt back to the user |
+| `exit_plan_mode` | Present a finalized plan for approval (REPL only) |
+| `emit_managed_protocol` | Internal scout/planner/handoff/verdict side-channel |
 
 ---
 
@@ -1015,8 +1097,15 @@ npm run build
 # Optional: only build workspace packages
 npm run build:packages
 
+# Build standalone binary (current platform / all platforms)
+npm run build:binary
+npm run build:binary:all
+
 # Run tests
 npm test
+
+# Eval-driven development tests (provider matrices, identity round-trip, etc.)
+npm run test:eval
 
 # Clean
 npm run clean
@@ -1061,13 +1150,13 @@ KodaX uses an **English-first** comment style with selective Chinese brief notes
 ## Documentation
 
 - [README_CN.md](README_CN.md) - Chinese Documentation
-- [README_CN.md](README_CN.md) - Chinese Documentation
-- [PRD.md](docs/PRD.md) - Product Requirements
-- [ADR.md](docs/ADR.md) - Architecture Decisions
-- [HLD.md](docs/HLD.md) - High-Level Design
-- [DD.md](docs/DD.md) - Detailed Design
-- [FEATURE_LIST.md](docs/FEATURE_LIST.md) - Feature Tracking
-- [test-guides/](docs/test-guides/) - Feature-specific test guides
+- [docs/release.md](docs/release.md) - Standalone binary build & release pipeline
+- [docs/PRD.md](docs/PRD.md) - Product Requirements
+- [docs/ADR.md](docs/ADR.md) - Architecture Decisions
+- [docs/HLD.md](docs/HLD.md) - High-Level Design
+- [docs/DD.md](docs/DD.md) - Detailed Design
+- [docs/FEATURE_LIST.md](docs/FEATURE_LIST.md) - Feature Tracking
+- [docs/test-guides/](docs/test-guides/) - Feature-specific test guides
 - [CHANGELOG.md](CHANGELOG.md) - Version History (v0.7.0+; [archive](docs/CHANGELOG_ARCHIVE.md) for older)
 
 ---

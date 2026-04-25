@@ -232,10 +232,19 @@ function migrateLegacyPermissionModeInConfig<T extends { permissionMode?: string
 }
 
 // Read version from package.json dynamically - 动态读取版本号
-// Uses import.meta.url for path resolution, works regardless of cwd
-// 使用 import.meta.url 获取路径，无论用户在哪个目录运行都能正确读取
+// In standalone binary builds (Bun --compile), package.json is not on disk;
+// the build script injects `process.env.KODAX_VERSION` via --define so this
+// function returns the baked-in version without filesystem access.
+// 在 Bun 编译后的单文件分发里读不到 package.json，由 build 脚本通过 --define
+// 注入 KODAX_VERSION，运行时优先返回该值。
 export function getVersion(): string {
   if (cachedVersion) {
+    return cachedVersion;
+  }
+
+  const injected = process.env.KODAX_VERSION;
+  if (injected) {
+    cachedVersion = injected;
     return cachedVersion;
   }
 
