@@ -80,13 +80,22 @@
   //     "baseUrl": "http://localhost:11434/v1",     // 必填
   //     "apiKeyEnv": "OLLAMA_API_KEY",              // 必填：API Key 环境变量名
   //     "model": "llama3",                          // 必填：默认模型 ID
-  //     "models": ["codellama", "mistral"],          // 可选模型列表
+  //     // 可选模型列表。FEATURE_098 起支持两种格式：
+  //     //   1. 旧字面量数组（所有 alt 模型继承 provider 级窗口）
+  //     //        "models": ["codellama", "mistral"]
+  //     //   2. 描述符对象数组（按需声明 per-model 真实窗口）
+  //     //        "models": [
+  //     //          { "id": "codellama", "contextWindow": 16000, "maxOutputTokens": 4096 },
+  //     //          "mistral"   // 字符串与对象可混合
+  //     //        ]
+  //     "models": ["codellama", "mistral"],
   //     "userAgentMode": "compat",                   // "compat"（默认，UA=KodaX）
   //                                                  // 或 "sdk"（保留官方 SDK UA）
   //     "supportsThinking": false,
   //     "reasoningCapability": "none",
   //     //   "none" | "native-budget" | "native-effort" | "native-toggle" | "prompt-only"
-  //     "contextWindow": 128000,
+  //     "contextWindow": 128000,                     // provider 默认窗口（同 provider 不同 model 不一致时，
+  //                                                  // 用上面 models[] 描述符 override）
   //     "maxOutputTokens": 4096,
   //     "thinkingBudgetCap": 10000                   // 仅 native-budget 有意义
   //   },
@@ -118,7 +127,15 @@
   //   rollingSummaryPercent    (0..100 默认 10)    — 每一轮滚动摘要处理的窗口比例
   //   pruningThresholdTokens   (int,   默认 500)   — 超过该 token 数的工具结果会被裁剪
   //   pruningGapRatio          (0..1   默认 0.8)   — 裁剪后仍超 trigger*ratio 则继续摘要
-  //   contextWindow            (int)               — 强制覆盖 provider 的上下文窗口
+  //   contextWindow            (int)               — manual override，最高优先级
+  //                                                  优先级：本字段 > 当前激活 model 描述符 contextWindow
+  //                                                            > customProviders[].contextWindow（自定义 provider）
+  //                                                            > 内置 provider 注册表里的真实窗口
+  //                                                            > 200_000 兜底
+  //                                                  内置 provider 通常不需要设此字段——KodaX 已为
+  //                                                  每个内置 model 维护准确窗口。仅当你接入的自定义
+  //                                                  provider 没有声明 contextWindow，且 KodaX 默认值
+  //                                                  与服务端不一致时才设此字段。
   //   keepRecentPercent        (已废弃，V2 已不再使用)
   "compaction": {
     "enabled": true,
