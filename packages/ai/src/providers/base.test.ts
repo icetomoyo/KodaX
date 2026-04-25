@@ -184,14 +184,20 @@ describe('KodaXBaseProvider', () => {
       }
       return undefined as unknown as ReturnType<typeof setTimeout>;
     });
+    // Stub jitter to a deterministic 0 so we can assert an exact delay
+    // (the production formula adds Math.random() * 0.25 * baseDelay).
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
 
     try {
       await expect(
         provider.exposeWithRateLimit(task, undefined, 2, onRateLimit),
       ).resolves.toBe('ok');
-      expect(onRateLimit).toHaveBeenCalledWith(1, 2, 2000);
+      // First retry (i=0): baseDelay = min(500 * 2^0, 32_000) = 500ms,
+      // jitter = 0 (mocked) → total 500ms.
+      expect(onRateLimit).toHaveBeenCalledWith(1, 2, 500);
     } finally {
       timeoutSpy.mockRestore();
+      randomSpy.mockRestore();
     }
   });
 });

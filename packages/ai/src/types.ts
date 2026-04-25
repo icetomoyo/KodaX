@@ -368,6 +368,19 @@ export interface KodaXProviderConfig {
    * for OpenAI proper.
    */
   replayReasoningContent?: boolean;
+  /**
+   * Hard cap on a single streaming request's wall-clock duration (ms).
+   * When exceeded, the resilience layer aborts the stream with a
+   * StreamIncompleteError, which routes through the existing
+   * `non_streaming_fallback` path. Mirrors Claude Code's idle watchdog
+   * pattern but uses request duration (not idle time) because some
+   * providers emit keepalive pings during long tool_use generation.
+   *
+   * Set per-provider just below the known server-side kill window
+   * (e.g. zhipu-coding observed 308s → set 300s here, accounting for
+   * the ~RTT margin between client send and server kill timestamp).
+   */
+  streamMaxDurationMs?: number;
 }
 
 export interface KodaXProviderStreamOptions {

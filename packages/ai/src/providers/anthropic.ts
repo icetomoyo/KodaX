@@ -5,6 +5,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { parse as parsePartialJson } from 'partial-json';
 import { KodaXBaseProvider } from './base.js';
 import { KodaXProviderError } from '../errors.js';
 import {
@@ -342,18 +343,40 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
               });
               // Skip this invalid tool_use block - do not add to toolBlocks
             } else {
-              try {
-                const input = currentToolInput ? JSON.parse(currentToolInput) : {};
-                toolBlocks.push({ type: 'tool_use', id: currentToolId, name: currentToolName, input });
-              } catch (parseError) {
-                console.error('[Tool Block Parse Error] Failed to parse input JSON:', {
-                  id: currentToolId,
-                  name: currentToolName,
-                  error: parseError
-                });
-                // Still add the tool_use with empty input to maintain consistency
-                toolBlocks.push({ type: 'tool_use', id: currentToolId, name: currentToolName, input: {} });
+              // Strict-then-salvage parse strategy:
+              //   1. Try standard JSON.parse for the common (complete) case.
+              //   2. On failure (typically `stop_reason: max_tokens` truncation
+              //      mid-string), fall back to partial-json which closes
+              //      open brackets/strings and returns whatever was parseable.
+              //      This preserves the partial work so the agent loop can
+              //      surface concrete state to the model in the next turn —
+              //      mirrors pi-mono's behavior. Pushing an empty input `{}`
+              //      (the previous behavior) silently dropped useful work.
+              let input: unknown = {};
+              if (currentToolInput) {
+                try {
+                  input = JSON.parse(currentToolInput);
+                } catch {
+                  try {
+                    input = parsePartialJson(currentToolInput) ?? {};
+                    if (process.env.KODAX_DEBUG_TOOL_STREAM) {
+                      console.warn('[Tool Block Salvaged] partial JSON recovered:', {
+                        id: currentToolId,
+                        name: currentToolName,
+                        rawLength: currentToolInput.length,
+                      });
+                    }
+                  } catch {
+                    input = {};
+                  }
+                }
               }
+              toolBlocks.push({
+                type: 'tool_use',
+                id: currentToolId,
+                name: currentToolName,
+                input: (input && typeof input === 'object' ? input : {}) as Record<string, unknown>,
+              });
             }
           }
           currentBlockType = null;

@@ -21,7 +21,8 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.15.0",
     "@anthropic-ai/sdk": "^0.80.0",
-    "openai": "^6.32.0"
+    "openai": "^6.32.0",
+    "partial-json": "^0.1.7"
   },
   "devDependencies": {
     "@types/node": "^22.13.4",

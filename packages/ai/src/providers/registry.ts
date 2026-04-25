@@ -222,15 +222,28 @@ class ZhipuCodingProvider extends KodaXAnthropicCompatProvider {
     ],
     supportsThinking: true,
     contextWindow: 200000,
-    // Provider advertises 128K max output, but real-world long streams
-    // hit Zhipu's ~8 minute server-side kill window well before reaching
-    // that ceiling. We default to the capped value (32K) so typical turns
-    // finish fast; the agent loop escalates to 64K on `stop_reason:
-    // max_tokens` and continues via meta message if even 64K is not enough.
-    // Override with env `KODAX_MAX_OUTPUT_TOKENS` to bypass the escalation
-    // ladder entirely.
-    maxOutputTokens: KODAX_CAPPED_MAX_OUTPUT_TOKENS,
+    // Bench-confirmed: GLM Coding Plan has a ~308s server-side kill window
+    // (mean 308.4s ± 0.2s, 6/6 reproductions on 64K stream tasks). At
+    // ~40-57 tok/s decode rate, even 16K tokens generation typically lands
+    // within the window; tasks needing more output flow through the L5
+    // continuation meta path. Non-stream path bypasses the kill window
+    // entirely (verified at 16K, 607s clean).
+    //
+    // Strategy (the only RST-prone provider in the bench, 2026-04):
+    //   - maxOutputTokens 16K: target completion within the 308s kill
+    //     window for typical tool_use turns (vs prior 32K which crosses).
+    //   - streamMaxDurationMs 300s: GLM's 308s window already includes
+    //     server-side jitter; client-side timer measured from request
+    //     send sees server kill at ~308.5s (after RTT). 300s gives a
+    //     ~8s pre-emption margin so the watchdog aborts BEFORE the
+    //     server RSTs, routing through non_streaming_fallback cleanly.
+    //
+    // Other anthropic-compat coding-plan providers (kimi-code, mimo-coding,
+    // minimax-coding) completed 64K cleanly in bench and need neither cap.
+    // Override with env `KODAX_MAX_OUTPUT_TOKENS` to bypass the cap.
+    maxOutputTokens: 16_000,
     thinkingBudgetCap: 16000,
+    streamMaxDurationMs: 300_000,
   });
   constructor() { super(); this.initClient(); }
 }
@@ -249,12 +262,12 @@ class KimiCodeProvider extends KodaXAnthropicCompatProvider {
     // yield no cache benefit while losing tool_use schema fidelity.
     supportsThinking: true,
     contextWindow: 256000,
-    // Kimi Code (K2.x) historically ran at 64K, but long tool_use writes
-    // share the same server-side-termination failure mode as the other
-    // Anthropic-compat coding endpoints. Aligned to the capped default
-    // (32K); the agent loop auto-escalates to 64K on `stop_reason:
-    // max_tokens`, matching prior single-shot capacity, and continues via
-    // meta message beyond that. Set `KODAX_MAX_OUTPUT_TOKENS` to bypass.
+    // Bench-confirmed (2026-04): kimi-for-coding completes 64K stream
+    // cleanly at 525s with stop_reason=tool_use (23K output tokens, 1400
+    // HTML lines). Does NOT share the zhipu-coding 308s server-side kill
+    // window. Capped at 32K for cost predictability; tasks needing more
+    // output flow through the L5 continuation meta path. Override with
+    // `KODAX_MAX_OUTPUT_TOKENS` to allow larger single-turn generation.
     maxOutputTokens: KODAX_CAPPED_MAX_OUTPUT_TOKENS,
   });
   constructor() { super(); this.initClient(); }
@@ -264,22 +277,29 @@ class MiniMaxCodingProvider extends KodaXAnthropicCompatProvider {
   readonly name = 'minimax-coding';
   protected readonly config: KodaXProviderConfig = buildProviderConfig('minimax-coding', {
     baseUrl: 'https://api.minimaxi.com/anthropic',
+    // Probe (2026-04) against the public Token Plan: bare model IDs
+    // (no `-highspeed` suffix) resolve, the `-highspeed` variants
+    // return 500 "your current token plan not support model". Listing
+    // the bare IDs as the canonical surface; legacy `-highspeed`
+    // entries kept for users who do have them on a higher tier.
     models: [
-      { id: 'MiniMax-M2.7-highspeed', displayName: 'MiniMax M2.7 Highspeed' },
+      { id: 'MiniMax-M2.7', displayName: 'MiniMax M2.7' },
+      { id: 'MiniMax-M2.7-highspeed', displayName: 'MiniMax M2.7 Highspeed (higher-tier plan)' },
       { id: 'MiniMax-M2.5', displayName: 'MiniMax M2.5' },
-      { id: 'MiniMax-M2.5-highspeed', displayName: 'MiniMax M2.5 Highspeed' },
+      { id: 'MiniMax-M2.5-highspeed', displayName: 'MiniMax M2.5 Highspeed (higher-tier plan)' },
       { id: 'MiniMax-M2.1', displayName: 'MiniMax M2.1' },
-      { id: 'MiniMax-M2.1-highspeed', displayName: 'MiniMax M2.1 Highspeed' },
+      { id: 'MiniMax-M2.1-highspeed', displayName: 'MiniMax M2.1 Highspeed (higher-tier plan)' },
       { id: 'MiniMax-M2', displayName: 'MiniMax M2' },
     ],
     supportsThinking: true,
     contextWindow: 204800,
-    // MiniMax M2.7 advertises 128K max output, but long streams share the
-    // same failure mode as zhipu-coding (server-side termination on
-    // minutes-long generations). Capped at 32K by default with agent-loop
-    // escalation to 64K on `stop_reason: max_tokens`; continuation meta
-    // message handles tasks that exceed 64K output. Override with env
-    // `KODAX_MAX_OUTPUT_TOKENS` to bypass the escalation ladder.
+    // Bench-confirmed (2026-04, MiniMax-M2.7 64K stream): completes
+    // cleanly at 464.9s with stop_reason=tool_use (22.7K output tokens,
+    // 2207 HTML lines). Does NOT share the zhipu-coding 308s kill
+    // window. An earlier 304s zero-token observation against M2.5 was
+    // model-specific (token plan capacity behavior on that variant),
+    // not provider-wide. Standard cap (32K) + L5 continuation handles
+    // long generation. Override with `KODAX_MAX_OUTPUT_TOKENS`.
     maxOutputTokens: KODAX_CAPPED_MAX_OUTPUT_TOKENS,
   });
   constructor() { super(); this.initClient(); }
@@ -298,9 +318,12 @@ class MimoCodingProvider extends KodaXAnthropicCompatProvider {
     supportsThinking: true,
     // V2.5 series advertises a 1M context window (per platform docs).
     contextWindow: 1_000_000,
-    // Same long-stream cap rationale as zhipu-coding/minimax-coding: agent
-    // loop escalates to 64K on stop_reason: max_tokens; continuation meta
-    // message handles tasks beyond that. Override with KODAX_MAX_OUTPUT_TOKENS.
+    // Bench-confirmed (2026-04): mimo-v2.5-pro completes 64K stream cleanly
+    // at 309.6s with stop_reason=tool_use (24K output tokens, 1645 HTML
+    // lines). Does NOT share the zhipu-coding 308s server-side kill window.
+    // Capped at 32K for cost predictability; tasks needing more output
+    // flow through the L5 continuation meta path. Override with
+    // `KODAX_MAX_OUTPUT_TOKENS` to allow larger single-turn generation.
     maxOutputTokens: KODAX_CAPPED_MAX_OUTPUT_TOKENS,
     thinkingBudgetCap: 16_000,
   });

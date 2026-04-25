@@ -44,6 +44,9 @@ type OpenAIUsageLike = {
   prompt_tokens?: number;
   completion_tokens?: number;
   total_tokens?: number;
+  prompt_tokens_details?: {
+    cached_tokens?: number | null;
+  } | null;
 } | null | undefined;
 
 function normalizeOpenAIUsage(usage: OpenAIUsageLike): KodaXTokenUsage | undefined {
@@ -66,10 +69,17 @@ function normalizeOpenAIUsage(usage: OpenAIUsageLike): KodaXTokenUsage | undefin
     return undefined;
   }
 
+  const cachedReadTokens =
+    typeof usage.prompt_tokens_details?.cached_tokens === 'number' &&
+    usage.prompt_tokens_details.cached_tokens >= 0
+      ? usage.prompt_tokens_details.cached_tokens
+      : undefined;
+
   return {
     inputTokens,
     outputTokens,
     totalTokens,
+    ...(cachedReadTokens !== undefined ? { cachedReadTokens } : {}),
   };
 }
 

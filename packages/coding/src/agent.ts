@@ -23,7 +23,7 @@ import {
   SessionErrorMetadata,
 } from './types.js';
 import type { KodaXMessage, KodaXStreamResult } from '@kodax/ai';
-import { createCostTracker, recordUsage, getSummary, formatCostReport, KODAX_ESCALATED_MAX_OUTPUT_TOKENS, type CostTracker } from '@kodax/ai';
+import { createCostTracker, recordUsage, getSummary, formatCostReport, type CostTracker } from '@kodax/ai';
 import path from 'path';
 import fsSync from 'fs';
 // FEATURE_093 (v0.7.24): `KodaXClient` is only re-exported from this module
@@ -1646,15 +1646,6 @@ export async function runKodaX(
   let incompleteRetryCount = 0;
   let maxTokensRetryCount = 0;
   let limitReached = false; // Track if we exited due to iteration limit - 追踪是否因达到迭代上限而退出
-  // Max-tokens escalation state. When a capped-budget turn returns
-  // stop_reason:max_tokens we set `pendingMaxOutputOverride` to
-  // KODAX_ESCALATED_MAX_OUTPUT_TOKENS and `continue` the iter loop — the
-  // next iter re-enters the same logical turn with the larger budget.
-  // `hasEscalatedForCurrentLogicalTurn` prevents a second escalation in
-  // the same turn; it resets when the turn commits (assistant pushed)
-  // so subsequent turns (including L5 continuations) can escalate again.
-  let pendingMaxOutputOverride: number | undefined = undefined;
-  let hasEscalatedForCurrentLogicalTurn = false;
   const emitIterationEnd = (
     iterNumber: number,
     snapshotOverride?: typeof contextTokenSnapshot,
@@ -1909,17 +1900,6 @@ export async function runKodaX(
       };
 
       const streamProvider = resolveProvider(currentProviderName);
-      // Apply a pending max_tokens escalation staged by the previous iter's
-      // stop_reason:max_tokens branch. `resolveProvider` always returns a
-      // fresh instance, so we can't carry state on the provider across
-      // iters — we bridge the value through a closure-local variable and
-      // re-apply it here on the new instance. Consumed once; the
-      // provider's `withRateLimit` clears it after the next successful
-      // response, so normal turns (no escalation) start fresh.
-      if (pendingMaxOutputOverride !== undefined) {
-        streamProvider.setMaxOutputTokensOverride(pendingMaxOutputOverride);
-        pendingMaxOutputOverride = undefined;
-      }
       const providerPolicy = evaluateProviderPolicy({
         providerName: currentProviderName,
         model: currentModelOverride,
@@ -1988,6 +1968,24 @@ export async function runKodaX(
         let hardTimer = setTimeout(() => {
           retryTimeoutController.abort(new Error("API Hard Timeout (10 minutes)"));
         }, API_HARD_TIMEOUT_MS);
+
+        // Stream max-duration watchdog: per-provider hard cap on a single
+        // streaming request's wall-clock duration. Set just below a known
+        // server-side kill window to abort BEFORE the server RSTs, routing
+        // through the existing non_streaming_fallback path with a clean
+        // StreamIncompleteError instead of a mid-stream socket reset.
+        // Distinct from the idle timer: kill windows are duration-based and
+        // some providers (e.g. zhipu-coding) emit keepalive pings during
+        // long tool_use generation, so an idle timer never fires.
+        const STREAM_MAX_DURATION_MS = streamProvider.getStreamMaxDurationMs?.() ?? 0;
+        let streamMaxDurationTimer: ReturnType<typeof setTimeout> | undefined;
+        if (STREAM_MAX_DURATION_MS > 0) {
+          streamMaxDurationTimer = setTimeout(() => {
+            retryTimeoutController.abort(
+              new Error(`Stream max duration exceeded (${STREAM_MAX_DURATION_MS}ms; provider has known server-side kill window)`),
+            );
+          }, STREAM_MAX_DURATION_MS);
+        }
 
         // Stream idle timer: disabled by default (API_IDLE_TIMEOUT_MS === 0).
         // When enabled, aborts the stream if no content events arrive within
@@ -2136,6 +2134,7 @@ export async function runKodaX(
               try {
                 clearTimeout(idleTimer);
                 clearTimeout(hardTimer);
+                clearTimeout(streamMaxDurationTimer);
                 boundaryTracker.beginRequest(
                   currentProviderName,
                   currentModelOverride ?? streamProvider.getModel(),
@@ -2190,11 +2189,13 @@ export async function runKodaX(
 
           clearTimeout(hardTimer);
           clearTimeout(idleTimer);
+          clearTimeout(streamMaxDurationTimer);
           await waitForRetryDelay(decision.delayMs, options.abortSignal);
           continue;
         } finally {
           clearTimeout(hardTimer);
           clearTimeout(idleTimer);
+          clearTimeout(streamMaxDurationTimer);
         }
       }
 
@@ -2262,31 +2263,23 @@ export async function runKodaX(
         }
       }
 
-      // L1 escalation: when a capped-budget turn returns stop_reason:max_tokens
-      // we retry the SAME logical turn with KODAX_ESCALATED_MAX_OUTPUT_TOKENS
-      // instead of committing the (often truncated) assistant message to
-      // history. This must run BEFORE `messages.push(assistant)` so a partial
-      // tool_use JSON — already dropped by the Anthropic provider when
-      // `content_block_stop` never arrived — does not pollute the turn.
-      // Mirrors Claude Code's `max_output_tokens_escalate` path (query.ts).
-      // Skipped when the user set KODAX_MAX_OUTPUT_TOKENS (explicit intent
-      // beats auto-ladder) or when the effective budget already meets the
-      // escalated threshold.
-      if (
-        result.stopReason === 'max_tokens'
-        && !hasEscalatedForCurrentLogicalTurn
-        && !process.env.KODAX_MAX_OUTPUT_TOKENS
-        && streamProvider.getEffectiveMaxOutputTokens() < KODAX_ESCALATED_MAX_OUTPUT_TOKENS
-      ) {
-        hasEscalatedForCurrentLogicalTurn = true;
-        pendingMaxOutputOverride = KODAX_ESCALATED_MAX_OUTPUT_TOKENS;
-        events.onRetry?.(
-          `Output budget reached, escalating to ${KODAX_ESCALATED_MAX_OUTPUT_TOKENS} tokens and retrying the same turn`,
-          1,
-          1,
-        );
-        continue;
-      }
+      // Removed: L1 max_tokens escalation (was: same-turn retry at 64K
+      // when capped budget returned stop_reason:max_tokens). Three forces
+      // converged to drop it:
+      //   1. partial-json salvage in anthropic.ts (P0) preserves the
+      //      truncated tool_use input so escalation's "discard the turn"
+      //      premise no longer holds — discarding throws away salvaged work.
+      //   2. Bench (2026-04, kimi-code/mimo-coding/minimax-coding M2.7 all
+      //      complete 64K stream cleanly at 460-525s) confirmed escalation
+      //      paths through 32K → 64K were never end-to-end tested in CI;
+      //      relying on them for production was undertested.
+      //   3. opencode and pi-mono (the two industry references for
+      //      multi-provider coding agents) do not escalate — only Claude
+      //      Code does, and that's tuned to Anthropic's own infrastructure.
+      // Behavior change: max_tokens now always falls through to assistant
+      // commit + L5 continuation meta below. KODAX_ESCALATED_MAX_OUTPUT_TOKENS
+      // remains a public constant in case external callers want to opt in
+      // via direct provider override, but the agent loop no longer wires it.
 
       let assistantContent = [...result.thinkingBlocks, ...result.textBlocks, ...visibleToolBlocks];
       // Guard: never push an assistant message with empty content.
@@ -2298,20 +2291,19 @@ export async function runKodaX(
       messages.push({ role: 'assistant', content: assistantContent });
       const completedTurnTokenSnapshot = createCompletedTurnTokenSnapshot(messages, result.usage);
       contextTokenSnapshot = completedTurnTokenSnapshot;
-      // Turn committed to history. Clear per-turn escalation flag so the
-      // next logical turn (normal continuation after tools, or L5 meta
-      // recovery below) starts fresh and can escalate again if needed.
-      hasEscalatedForCurrentLogicalTurn = false;
 
-      // L5 continuation: escalated budget was still not enough, or no tools
-      // were emitted and output was cut mid-text. Inject Claude Code's
-      // recovery meta message instructing the model to resume mid-thought
-      // and break remaining work into smaller pieces (so a too-large Write
-      // becomes Write+Edit across turns). Capped at
+      // L5 continuation: max_tokens hit and no tool was emitted (so the
+      // model was producing pure text and got cut mid-thought). Inject a
+      // Claude-Code-style recovery meta message instructing the model to
+      // resume mid-thought and break remaining work into smaller pieces
+      // (so a too-large Write becomes Write+Edit across turns). Capped at
       // KODAX_MAX_MAXTOKENS_RETRIES (3) to prevent infinite loops.
-      // Skipped when there are completed tool_use blocks — those will
-      // execute and the model will naturally continue next turn with the
-      // tool_result, no explicit meta nudge needed.
+      //
+      // Skipped when there are completed tool_use blocks — even if those
+      // blocks were salvaged from truncated JSON, the agent can execute
+      // the partial tool, observe the resulting state via tool_result, and
+      // naturally continue with edit/append in the next turn. No explicit
+      // meta nudge needed.
       if (result.stopReason === 'max_tokens' && result.toolBlocks.length === 0) {
         maxTokensRetryCount++;
         if (maxTokensRetryCount <= KODAX_MAX_MAXTOKENS_RETRIES) {

@@ -93,6 +93,16 @@ export abstract class KodaXBaseProvider {
     return this.config.maxOutputTokens ?? KODAX_MAX_TOKENS;
   }
 
+  /**
+   * Hard cap on a single streaming request's wall-clock duration (ms).
+   * Returns undefined when no cap is configured. Consumed by the
+   * resilience layer to abort a doomed stream before the server-side
+   * kill window fires; routed through `non_streaming_fallback`.
+   */
+  public getStreamMaxDurationMs(): number | undefined {
+    return this.config.streamMaxDurationMs;
+  }
+
   abstract stream(
     messages: KodaXMessage[],
     tools: KodaXToolDefinition[],
