@@ -75,6 +75,16 @@ export { toolMcpReadResource } from './mcp-read-resource.js';
 export { toolMcpGetPrompt } from './mcp-get-prompt.js';
 export { toolWorktreeCreate, toolWorktreeRemove } from './worktree.js';
 export {
+  CONSTRUCTION_TOOL_NAMES,
+  isConstructionToolName,
+  filterConstructionToolNames,
+  toolScaffoldTool,
+  toolValidateTool,
+  toolStageConstruction,
+  toolTestTool,
+  toolActivateTool,
+} from './construction.js';
+export {
   stripHtmlToText,
   extractHtmlTitle,
   renderRetrievalResult,

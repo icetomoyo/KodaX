@@ -3833,6 +3833,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       ...options.context,
       repoIntelligenceMode: currentConfig.repoIntelligenceMode,
       repoIntelligenceTrace: currentConfig.repoIntelligenceTrace,
+      // FEATURE_087/088 (v0.7.28): the Ink REPL is the authorized self-
+      // construction surface. The 5 staircase tools (scaffold_tool / ... /
+      // activate_tool) are exposed to the LLM here; child agents and ACP /
+      // single-shot CLI surfaces stay false (their context is built fresh
+      // and does NOT inherit this flag).
+      toolConstructionMode: true,
     },
     session: {
       ...options.session,
@@ -3852,6 +3858,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }, []);
   const pendingInputsRef = useRef<string[]>(streamingState.pendingInputs);
   const userInterruptedRef = useRef(false);
+
   // Issue 116: generation counter to discard results from stale (interrupted) rounds.
   // Incremented on each prompt submission; checked after await to detect supersession.
   const promptGenerationRef = useRef(0);
@@ -4443,6 +4450,44 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       options.map((option) => ({ label: option, value: option })),
     );
   }, [showSelectDialogWithOptions]);
+
+  // FEATURE_087/088 (v0.7.28): bind a stable askUser implementation to the
+  // ConstructionRuntime policy module. The policy needs an interactive
+  // approval dialog to honour 'ask-user' verdicts on activate_tool. The
+  // implementation reuses showSelectDialogWithOptions (component-local
+  // useCallback, stable across renders), so the binding is mount-once and
+  // tear-down on unmount.
+  const askUserForConstructionPolicy = useCallback(
+    async (options: import("@kodax/coding").AskUserQuestionOptions): Promise<string> => {
+      const selectOptions = options.options ? toSelectOptions(options.options) : [];
+      const selected = await showSelectDialogWithOptions(
+        getAskUserDialogTitle(options),
+        selectOptions,
+        options.multiSelect,
+      );
+      // ESC → undefined → return the shared CANCELLED_TOOL_RESULT_MESSAGE
+      // sentinel. The policy maps any non-'approve' answer to 'reject', so a
+      // cancelled dialog rejects.
+      return selected ?? CANCELLED_TOOL_RESULT_MESSAGE;
+    },
+    [showSelectDialogWithOptions],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const { bindAskUserForConstruction } = await import('../common/construction-bootstrap.js');
+      if (cancelled) return;
+      bindAskUserForConstruction(askUserForConstructionPolicy);
+    })();
+    return () => {
+      cancelled = true;
+      void (async () => {
+        const { bindAskUserForConstruction } = await import('../common/construction-bootstrap.js');
+        bindAskUserForConstruction(null);
+      })();
+    };
+  }, [askUserForConstructionPolicy]);
 
   const showInputDialog = useCallback((prompt: string, defaultValue?: string): Promise<string | undefined> => {
     return new Promise((resolve) => {
@@ -7394,6 +7439,24 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
   let existingArtifactLedger: KodaXSessionArtifactLedgerEntry[] | undefined;
   let sessionTitle = "";
   const gitRoot = (await getGitRoot().catch(() => null)) ?? undefined;
+
+  // FEATURE_087/088 (v0.7.28): bootstrap ConstructionRuntime + rehydrate
+  // any previously-activated constructed tools BEFORE the Ink component
+  // renders, so the first system prompt build sees the rehydrated tool
+  // set. The bootstrap is idempotent (configureRuntime overrides; rehydrate
+  // re-registers atomically).
+  try {
+    const { bootstrapConstructionRuntime } = await import('../common/construction-bootstrap.js');
+    const construction = await bootstrapConstructionRuntime(gitRoot ?? process.cwd());
+    if (construction.loaded > 0 || construction.failed > 0) {
+      const failedSuffix = construction.failed > 0 ? `; ${construction.failed} failed (see warnings above)` : '';
+      console.log(chalk.dim(`[Constructed] Rehydrated ${construction.loaded} active tool(s)${failedSuffix}.`));
+    }
+  } catch (err) {
+    // Bootstrap failure must not break the REPL; log and proceed without
+    // construction support for this session.
+    console.warn(chalk.yellow(`[Constructed] Bootstrap failed: ${(err as Error).message}. Self-construction disabled this session.`));
+  }
 
   // Load compaction config before rendering so the <Static> banner has it immediately
   let compactionInfo: { contextWindow: number; triggerPercent: number; enabled: boolean } | undefined;

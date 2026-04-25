@@ -18,6 +18,10 @@ import {
   type KodaXPromptSnapshot,
 } from './sections.js';
 import { SYSTEM_PROMPT } from './system.js';
+import {
+  TOOL_CONSTRUCTION_PROMPT,
+  shouldIncludeToolConstructionSection,
+} from './tool-construction.js';
 
 const execAsync = promisify(exec);
 const SYSTEM_CONTEXT_MARKER = '{context}';
@@ -154,6 +158,16 @@ export async function buildSystemPromptSnapshot(
         'skills-addendum',
         options.context.skillsPrompt,
         'Append skill-specific guidance after project rules as a bounded dynamic addendum.',
+      ),
+    );
+  }
+
+  if (shouldIncludeToolConstructionSection(options.context?.toolConstructionMode)) {
+    sections.push(
+      createPromptSection(
+        'tool-construction',
+        TOOL_CONSTRUCTION_PROMPT,
+        'Append the tool-construction staircase guidance only when self-construction is authorized for this session.',
       ),
     );
   }

@@ -256,6 +256,50 @@ describe('buildSystemPrompt', () => {
     expect(snapshot.sections.some((s) => s.id === 'runtime-fact')).toBe(false);
   });
 
+  it('Phase C (FEATURE_087): tool-construction section omitted by default', async () => {
+    const executionCwd = await createTempDir('kodax-prompt-tc-default-');
+    cleanupDirs.push(executionCwd);
+
+    const snapshot = await buildSystemPromptSnapshot(
+      {
+        provider: 'anthropic',
+        context: { executionCwd, gitRoot: executionCwd },
+      },
+      false,
+    );
+
+    expect(snapshot.sections.some((s) => s.id === 'tool-construction')).toBe(false);
+    expect(snapshot.rendered).not.toContain('[Tool Construction Mode]');
+  });
+
+  it('Phase C (FEATURE_087): tool-construction section injected when toolConstructionMode=true', async () => {
+    const executionCwd = await createTempDir('kodax-prompt-tc-on-');
+    cleanupDirs.push(executionCwd);
+
+    const snapshot = await buildSystemPromptSnapshot(
+      {
+        provider: 'anthropic',
+        context: {
+          executionCwd,
+          gitRoot: executionCwd,
+          toolConstructionMode: true,
+        },
+      },
+      false,
+    );
+
+    const section = snapshot.sections.find((s) => s.id === 'tool-construction');
+    expect(section).toBeDefined();
+    expect(section?.slot).toBe('specialist');
+    expect(snapshot.rendered).toContain('[Tool Construction Mode]');
+    expect(snapshot.rendered).toContain('scaffold_tool');
+    expect(snapshot.rendered).toContain('activate_tool');
+    // Lives at the tail — after skill-addendum (specialist > skill-addendum order).
+    const tcIdx = snapshot.rendered.indexOf('[Tool Construction Mode]');
+    const wdIdx = snapshot.rendered.indexOf('Working Directory:');
+    expect(tcIdx).toBeGreaterThan(wdIdx);
+  });
+
   it('injects MCP capability truth when the extension runtime exposes it', async () => {
     const executionCwd = await createTempDir('kodax-prompt-mcp-');
     cleanupDirs.push(executionCwd);

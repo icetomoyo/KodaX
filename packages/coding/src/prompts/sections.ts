@@ -186,6 +186,15 @@ export const PROMPT_SECTION_REGISTRY: Record<string, KodaXPromptSectionDefinitio
     order: 100,
     stability: 'dynamic',
   },
+  'tool-construction': {
+    id: 'tool-construction',
+    title: 'Tool Construction Mode',
+    owner: 'agent',
+    feature: 'FEATURE_087',
+    slot: 'specialist',
+    order: 100,
+    stability: 'specialist',
+  },
 };
 
 export function createPromptSection(

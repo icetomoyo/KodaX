@@ -759,6 +759,16 @@ export interface KodaXContextOptions {
   /** Optional repo-intelligence trace toggle for this run. */
   repoIntelligenceTrace?: boolean;
   disableAutoTaskReroute?: boolean;
+  /**
+   * FEATURE_087/088 (v0.7.28): when true, the prompt builder injects a
+   * Tool Construction section that orients the LLM to the
+   * scaffold_tool → validate_tool → stage_construction → test_tool →
+   * activate_tool staircase. Off by default; the surrounding agent (REPL
+   * config or task router) flips this on when self-construction is
+   * authorized for the session. The corresponding builtin tool handlers
+   * are still gated independently by the active-tool set.
+   */
+  toolConstructionMode?: boolean;
   /** Skills system prompt snippet for progressive disclosure - Skills 系统提示词片段（渐进式披露） */
   skillsPrompt?: string;
   rawUserInput?: string;

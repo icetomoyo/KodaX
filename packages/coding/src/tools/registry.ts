@@ -38,6 +38,13 @@ import { toolMcpReadResource } from './mcp-read-resource.js';
 import { toolMcpGetPrompt } from './mcp-get-prompt.js';
 import { toolWorktreeCreate, toolWorktreeRemove } from './worktree.js';
 import { toolDispatchChildTask } from './dispatch-child-tasks.js';
+import {
+  toolScaffoldTool,
+  toolValidateTool,
+  toolStageConstruction,
+  toolTestTool,
+  toolActivateTool,
+} from './construction.js';
 
 const TOOL_REGISTRY: ToolRegistry = new Map();
 let nextToolRegistrationId = 0;
@@ -764,6 +771,109 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       },
     },
     handler: toolImpactEstimate,
+  },
+  // ====================================================================
+  // Tool Construction (FEATURE_087 + FEATURE_088, v0.7.28)
+  //
+  // Five-step staircase the LLM walks through to author and ship a tool
+  // at runtime: scaffold → validate → stage → test → activate. The
+  // generated artifact lands in `.kodax/constructed/tools/<name>/<version>.json`
+  // and the activated handler is registered into TOOL_REGISTRY for use
+  // in subsequent turns. Gated at the agent layer: not exposed unless
+  // the session is in tool-construction mode.
+  // ====================================================================
+  {
+    name: 'scaffold_tool',
+    description:
+      'Generate a fillable ConstructionArtifact JSON skeleton for a new tool. Returns a draft you must edit before calling validate_tool / stage_construction. '
+      + 'Use this as the FIRST step when authoring a runtime tool — do NOT hand-write the JSON shape from scratch.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Tool name (must match the value the LLM will use to invoke it).' },
+        version: { type: 'string', description: 'Semver string. Defaults to "0.1.0".' },
+        description: { type: 'string', description: 'One-sentence description of what the tool does.' },
+        capabilities: {
+          type: 'object',
+          description: 'Optional starter capabilities; defaults to {tools: []}.',
+          properties: {
+            tools: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Whitelist of builtin tool names the handler may call via ctx.tools.<name>.',
+            },
+          },
+        },
+      },
+      required: ['name'],
+    },
+    handler: toolScaffoldTool,
+  },
+  {
+    name: 'validate_tool',
+    description:
+      'Dry-run validate a candidate tool artifact JSON: shape sanity + AST hard rules (no-eval / no-Function-constructor / require-handler-signature) + provider schema validation. '
+      + 'Does NOT touch disk. Use this BEFORE stage_construction to fail fast on malformed handlers.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        artifact_json: { type: 'string', description: 'The full ConstructionArtifact as a JSON string.' },
+        provider: {
+          type: 'string',
+          description: "Provider whose tool-schema constraints are checked. Defaults to 'anthropic'.",
+        },
+      },
+      required: ['artifact_json'],
+    },
+    handler: toolValidateTool,
+  },
+  {
+    name: 'stage_construction',
+    description:
+      'Persist an artifact to .kodax/constructed/<kind>s/<name>/<version>.json with status=staged. Refuses to overwrite an active artifact at the same name+version (bump the version instead). '
+      + 'Run validate_tool first; this tool itself does not re-validate the AST or schema.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        artifact_json: { type: 'string', description: 'The full ConstructionArtifact as a JSON string.' },
+      },
+      required: ['artifact_json'],
+    },
+    handler: toolStageConstruction,
+  },
+  {
+    name: 'test_tool',
+    description:
+      'Run the full Phase 2 check pipeline (shape → AST → provider schema → handler materialize) on a staged artifact. Returns ok=true/false plus errors/warnings. '
+      + 'On ok=true the artifact is ready for activate_tool. LLM static review is NOT run from this tool — the calling agent must drive that separately if desired.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Artifact name as stored on disk.' },
+        version: { type: 'string', description: 'Artifact version as stored on disk.' },
+        provider: {
+          type: 'string',
+          description: "Provider whose tool-schema constraints are checked. Defaults to 'anthropic'.",
+        },
+      },
+      required: ['name', 'version'],
+    },
+    handler: toolTestTool,
+  },
+  {
+    name: 'activate_tool',
+    description:
+      'Activate a staged-and-tested artifact. Invokes the construction policy gate, registers the handler into TOOL_REGISTRY, flips status=active. The tool is then immediately callable as `<name>` in subsequent turns. '
+      + 'Default policy returns ask-user; configure constructionPolicy in kodax.config.ts to override (e.g. auto-approve self-signed in trusted sessions).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Artifact name to activate.' },
+        version: { type: 'string', description: 'Artifact version to activate.' },
+      },
+      required: ['name', 'version'],
+    },
+    handler: toolActivateTool,
   },
 ];
 

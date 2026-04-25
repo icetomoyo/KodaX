@@ -796,3 +796,57 @@ export {
   searchMcpCatalog,
   getMcpCachePaths,
 } from '@kodax/mcp';
+
+// FEATURE_087 + FEATURE_088 (v0.7.28): Construction Runtime — runtime-
+// generated tools / agents / skills. v0.7.28 ships tool generation only.
+export type {
+  ConstructionArtifact,
+  ArtifactStatus,
+  Capabilities,
+  ConstructionPolicy,
+  ConstructionPolicyVerdict,
+  ScriptSource,
+  StagedHandle,
+  TestResult,
+  ToolContent,
+  LoadHandlerOptions,
+  LoadHandlerScope,
+  CreateCtxProxyOptions,
+  // Phase 2 static-check pipeline
+  AstCheckResult,
+  AstRuleId,
+  AstRuleViolation,
+  SchemaProvider,
+  SchemaValidationResult,
+  BuildPromptInput,
+  LlmReviewClient,
+  LlmReviewResult,
+  LlmReviewVerdict,
+  TestArtifactOptions,
+} from './construction/index.js';
+
+export {
+  CapabilityDeniedError,
+  ConstructionManifestError,
+  DEFAULT_HANDLER_TIMEOUT_MS,
+  defaultPolicy,
+  configureRuntime,
+  stage,
+  testArtifact,
+  activate,
+  revoke,
+  listArtifacts,
+  readArtifact,
+  rehydrateActiveArtifacts,
+  listConstructed,
+  findByVersion,
+  listAll,
+  loadHandler,
+  createCtxProxy,
+  // Phase 2 static-check pipeline
+  runAstRules,
+  validateToolSchemaForProvider,
+  buildLlmReviewPrompt,
+  parseLlmReviewVerdict,
+  runLlmReview,
+} from './construction/index.js';

@@ -34,6 +34,7 @@ import fsSync from 'fs';
 import { resolveProvider } from './providers/index.js';
 import {
   executeTool,
+  filterConstructionToolNames,
   filterMcpToolNames,
   filterRepoIntelligenceWorkingToolNames,
   getRequiredToolParams,
@@ -453,6 +454,7 @@ function getActiveToolDefinitions(
   repoIntelligenceMode?: KodaXRepoIntelligenceMode,
   allowManagedProtocolTool = false,
   hasCapabilityRuntime = false,
+  toolConstructionMode?: boolean,
 ): ReturnType<typeof listToolDefinitions> {
   const allTools = listToolDefinitions();
   if (activeToolNames.length === 0) {
@@ -460,7 +462,12 @@ function getActiveToolDefinitions(
   }
 
   const allowed = new Set(
-    getRuntimeActiveToolNames(activeToolNames, repoIntelligenceMode, hasCapabilityRuntime),
+    getRuntimeActiveToolNames(
+      activeToolNames,
+      repoIntelligenceMode,
+      hasCapabilityRuntime,
+      toolConstructionMode,
+    ),
   );
   return allTools.filter((tool) => (
     allowed.has(tool.name)
@@ -472,6 +479,7 @@ function getRuntimeActiveToolNames(
   activeToolNames: string[],
   repoIntelligenceMode?: KodaXRepoIntelligenceMode,
   hasCapabilityRuntime = false,
+  toolConstructionMode?: boolean,
 ): string[] {
   let result = resolveKodaXAutoRepoMode(repoIntelligenceMode) === 'off'
     ? filterRepoIntelligenceWorkingToolNames(activeToolNames)
@@ -479,6 +487,7 @@ function getRuntimeActiveToolNames(
   if (!hasCapabilityRuntime) {
     result = filterMcpToolNames(result);
   }
+  result = filterConstructionToolNames(result, toolConstructionMode);
   return result;
 }
 
@@ -1951,6 +1960,7 @@ export async function runKodaX(
         options.context?.repoIntelligenceMode,
         options.context?.managedProtocolEmission?.enabled === true,
         !!runtime,
+        options.context?.toolConstructionMode,
       );
 
       while (true) {
@@ -2542,6 +2552,7 @@ export async function runKodaX(
                   runtimeSessionState.activeTools,
                   options.context?.repoIntelligenceMode,
                   !!runtime,
+                  options.context?.toolConstructionMode,
                 ), options.abortSignal),
                 ctx,
               )
@@ -2568,6 +2579,7 @@ export async function runKodaX(
                   runtimeSessionState.activeTools,
                   options.context?.repoIntelligenceMode,
                   !!runtime,
+                  options.context?.toolConstructionMode,
                 ), options.abortSignal),
               ctx,
             )

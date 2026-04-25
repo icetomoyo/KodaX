@@ -34,9 +34,25 @@ export interface LocalToolDefinition extends KodaXToolDefinition {
 }
 
 export interface ToolDefinitionSource {
-  kind: 'builtin' | 'extension';
+  /**
+   * Origin of the registered tool. `'constructed'` (FEATURE_087, v0.7.28)
+   * marks tools materialized at runtime by `ConstructionRuntime` from
+   * `.kodax/constructed/tools/<name>/<version>.json` artifacts.
+   */
+  kind: 'builtin' | 'extension' | 'constructed';
   id?: string;
   label?: string;
+  /**
+   * Constructed-only: semver of the activated artifact. Used by
+   * `findByVersion()` and by `revoke()` to locate a specific stack entry.
+   */
+  version?: string;
+  /**
+   * Constructed-only: absolute path to the artifact JSON on disk.
+   * Lets revoke / inspect operations round-trip back to the source of
+   * truth without re-globbing.
+   */
+  manifestPath?: string;
 }
 
 export interface RegisteredToolDefinition extends LocalToolDefinition {
