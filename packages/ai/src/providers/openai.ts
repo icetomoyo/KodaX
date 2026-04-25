@@ -7,6 +7,7 @@
 import OpenAI from 'openai';
 import { KodaXBaseProvider } from './base.js';
 import { KodaXProviderError } from '../errors.js';
+import { parseToolInputWithSalvage } from './tool-input-parser.js';
 import {
   KodaXContentBlock,
   KodaXReasoningCapability,
@@ -557,8 +558,12 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
       }
       for (const [, tc] of toolCallsMap) {
         if (tc.id && tc.name) {
-          try { toolBlocks.push({ type: 'tool_use', id: tc.id, name: tc.name, input: JSON.parse(tc.arguments) }); }
-          catch { toolBlocks.push({ type: 'tool_use', id: tc.id, name: tc.name, input: {} }); }
+          toolBlocks.push({
+            type: 'tool_use',
+            id: tc.id,
+            name: tc.name,
+            input: parseToolInputWithSalvage(tc.arguments),
+          });
         }
       }
       return { textBlocks, toolBlocks, thinkingBlocks, usage, stopReason: finishReason ?? undefined };
@@ -663,23 +668,12 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
       const reasoningContent = extractOpenAIMessageReasoning(message);
       const toolBlocks: KodaXToolUseBlock[] = (message?.tool_calls ?? [])
         .filter(isOpenAIFunctionToolCall)
-        .map((toolCall) => {
-          try {
-            return {
-              type: 'tool_use' as const,
-              id: toolCall.id,
-              name: toolCall.function.name,
-              input: toolCall.function.arguments ? JSON.parse(toolCall.function.arguments) : {},
-            };
-          } catch {
-            return {
-              type: 'tool_use' as const,
-              id: toolCall.id,
-              name: toolCall.function.name,
-              input: {},
-            };
-          }
-        });
+        .map((toolCall) => ({
+          type: 'tool_use' as const,
+          id: toolCall.id,
+          name: toolCall.function.name,
+          input: parseToolInputWithSalvage(toolCall.function.arguments),
+        }));
 
       if (textContent) {
         streamOptions?.onTextDelta?.(textContent);

@@ -141,6 +141,16 @@ export {
   getGeminiCliKnownModels,
 } from './providers/cli-bridge-models.js';
 
+// Tool-use input salvage helper. Exposed publicly for custom providers
+// that extend KodaXBaseProvider directly (i.e. don't inherit the
+// stream() implementation from KodaXAnthropicCompatProvider /
+// KodaXOpenAICompatProvider) and therefore need to parse truncated
+// `arguments` / `input_json_delta` buffers themselves on
+// `stop_reason: max_tokens` / `finish_reason: length`. Same helper
+// builtin compat paths use, so behavior stays consistent across
+// transports. See `tool-input-parser.ts` JSDoc for the salvage strategy.
+export { parseToolInputWithSalvage } from './providers/tool-input-parser.js';
+
 // ============== Cost Tracking ==============
 export { DEFAULT_COST_RATES, getCostRate, calculateCost } from './cost-rates.js';
 export type { CostRate } from './cost-rates.js';
