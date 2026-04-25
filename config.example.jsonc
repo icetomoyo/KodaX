@@ -20,7 +20,8 @@
   // 默认 provider，可选内置或自定义 provider 名称。默认 "zhipu-coding"。
   // 内置 provider:
   //   "anthropic" | "openai" | "deepseek" | "kimi" | "kimi-code" | "qwen"
-  //   | "zhipu" | "zhipu-coding" | "minimax-coding" | "gemini-cli" | "codex-cli"
+  //   | "zhipu" | "zhipu-coding" | "minimax-coding" | "mimo-coding"
+  //   | "gemini-cli" | "codex-cli"
   "provider": "zhipu-coding",
 
   // 指定当前 provider 使用的模型 ID（可选，缺省即使用 provider 默认模型）

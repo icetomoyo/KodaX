@@ -2098,6 +2098,11 @@ const DEFAULT_RST_PRONE_PROVIDERS: ReadonlySet<string> = new Set([
   'zhipu-coding',
   'kimi-code',
   'minimax-coding',
+  // mimo-coding is added prophylactically: same architectural pattern as
+  // the three above (Chinese-cloud subscription gateway with /anthropic
+  // shim) and not yet stress-tested on long write/edit turns. Remove via
+  // KODAX_RST_PRONE_PROVIDERS env var once the endpoint proves stable.
+  'mimo-coding',
 ]);
 
 /** P2b — default per-turn ceiling applied when a write/edit tool is

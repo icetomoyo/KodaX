@@ -64,6 +64,13 @@ export const DEFAULT_COST_RATES: Readonly<Record<string, Readonly<Record<string,
     'MiniMax-M2.1-highspeed': { inputPer1M: 0.01, outputPer1M: 0.03 },
     'MiniMax-M2': { inputPer1M: 0.01, outputPer1M: 0.03 },
   },
+  'mimo-coding': {
+    // MiMo Token Plan is a flat-rate subscription — per-token rates here are
+    // a nominal placeholder for cost-tracker accounting; real-world cost is
+    // the monthly fee plus request-quota.
+    'mimo-v2.5-pro': { inputPer1M: 0.01, outputPer1M: 0.03 },
+    'mimo-v2.5': { inputPer1M: 0.01, outputPer1M: 0.03 },
+  },
   // CLI bridge providers - no direct cost (user pays their own CLI usage)
   'gemini-cli': {},
   'codex-cli': {},

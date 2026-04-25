@@ -7,7 +7,7 @@ import { DEFAULT_COST_RATES, getCostRate, calculateCost, type CostRate } from '.
 
 describe('cost-rates', () => {
   describe('DEFAULT_COST_RATES', () => {
-    it('should have rates for all 11 providers', () => {
+    it('should have rates for all 12 providers', () => {
       const providers = [
         'anthropic',
         'openai',
@@ -18,6 +18,7 @@ describe('cost-rates', () => {
         'zhipu',
         'zhipu-coding',
         'minimax-coding',
+        'mimo-coding',
         'gemini-cli',
         'codex-cli',
       ];
