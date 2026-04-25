@@ -1698,6 +1698,7 @@ export async function runKodaX(
         );
       }
       const contextWindow = compactionConfig.contextWindow
+        ?? provider.getEffectiveContextWindow?.(currentModelOverride)
         ?? provider.getContextWindow?.()
         ?? 200000;
       const effectiveReasoningPlan = runtimeThinkingLevel

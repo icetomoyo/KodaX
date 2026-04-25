@@ -312,8 +312,13 @@ export const BUILTIN_COMMANDS: Command[] = [
         // Get custom instructions if provided
         const customInstructions = args.length > 0 ? args.join(' ') : undefined;
 
-        // Get contextWindow: user config > provider > default 200k
+        // Get contextWindow:
+        //   user config (manual override)
+        //   > active model descriptor (FEATURE_098)
+        //   > provider default
+        //   > 200k fallback
         const contextWindow = config.contextWindow
+          ?? provider.getEffectiveContextWindow?.(currentConfig.model)
           ?? provider.getContextWindow?.()
           ?? 200000;
         const currentTokens = context.contextTokenSnapshot?.currentTokens ?? estimateTokens(context.messages);

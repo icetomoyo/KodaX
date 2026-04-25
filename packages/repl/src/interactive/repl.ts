@@ -394,6 +394,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   const { resolveProvider } = await import('@kodax/coding');
   const providerInstance = resolveProvider(currentConfig.provider);
   const effectiveContextWindow = compactionConfig.contextWindow
+    ?? providerInstance.getEffectiveContextWindow?.(currentConfig.model)
     ?? providerInstance.getContextWindow?.()
     ?? 200000;
 

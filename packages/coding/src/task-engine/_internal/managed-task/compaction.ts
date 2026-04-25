@@ -79,7 +79,9 @@ export async function buildManagedTaskCompactionHook(
   }
 
   const provider = resolveProvider(options.provider ?? 'anthropic');
+  const activeModel = options.modelOverride ?? options.model;
   const contextWindow = compactionConfig.contextWindow
+    ?? provider.getEffectiveContextWindow?.(activeModel)
     ?? provider.getContextWindow?.()
     ?? 200_000;
   const events = options.events;
