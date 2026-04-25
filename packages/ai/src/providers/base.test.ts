@@ -19,9 +19,16 @@ class TestProvider extends KodaXBaseProvider {
     models: [
       { id: 'native-toggle-model', reasoningCapability: 'native-toggle' },
       { id: 'plain-model' },
+      {
+        id: 'small-window-model',
+        contextWindow: 50_000,
+        maxOutputTokens: 8_000,
+      },
     ],
     supportsThinking: true,
     reasoningCapability: 'native-budget',
+    contextWindow: 200_000,
+    maxOutputTokens: 32_000,
   };
 
   async stream(
@@ -68,6 +75,7 @@ describe('KodaXBaseProvider', () => {
       'default-model',
       'native-toggle-model',
       'plain-model',
+      'small-window-model',
     ]);
   });
 
@@ -117,6 +125,50 @@ describe('KodaXBaseProvider', () => {
       enabled: false,
       mode: 'off',
     });
+  });
+
+  it('reads contextWindow from the active model descriptor when present', () => {
+    const provider = new TestProvider();
+    expect(provider.getEffectiveContextWindow()).toBe(200_000);
+    expect(provider.getEffectiveContextWindow('default-model')).toBe(200_000);
+    expect(provider.getEffectiveContextWindow('small-window-model')).toBe(50_000);
+    expect(provider.getEffectiveContextWindow('plain-model')).toBe(200_000);
+    expect(provider.getEffectiveContextWindow('unknown-model')).toBe(200_000);
+  });
+
+  it('reads maxOutputTokens from the active model descriptor when present', () => {
+    const provider = new TestProvider();
+    expect(provider.getEffectiveMaxOutputTokens()).toBe(32_000);
+    expect(provider.getEffectiveMaxOutputTokens('default-model')).toBe(32_000);
+    expect(provider.getEffectiveMaxOutputTokens('small-window-model')).toBe(8_000);
+    expect(provider.getEffectiveMaxOutputTokens('plain-model')).toBe(32_000);
+  });
+
+  it('keeps one-shot maxOutputTokens override above descriptor data', () => {
+    const provider = new TestProvider();
+    provider.setMaxOutputTokensOverride(64_000);
+    try {
+      expect(provider.getEffectiveMaxOutputTokens('small-window-model')).toBe(64_000);
+    } finally {
+      provider.setMaxOutputTokensOverride(undefined);
+    }
+  });
+
+  it('keeps env KODAX_MAX_OUTPUT_TOKENS above descriptor data', () => {
+    const provider = new TestProvider();
+    vi.stubEnv('KODAX_MAX_OUTPUT_TOKENS', '12345');
+    try {
+      expect(provider.getEffectiveMaxOutputTokens('small-window-model')).toBe(12_345);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('keeps backwards-compatible getContextWindow() reading the default model', () => {
+    const provider = new TestProvider();
+    // Existing call sites still use the no-arg overload — must continue
+    // resolving to the provider-level (or default-model) value.
+    expect(provider.getContextWindow()).toBe(200_000);
   });
 
   it('surfaces rate-limit retry callbacks with the computed delay', async () => {

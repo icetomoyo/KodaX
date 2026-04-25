@@ -72,18 +72,23 @@ export abstract class KodaXBaseProvider {
    * next request. Precedence (highest to lowest):
    *   1. One-shot override (agent escalation, context-overflow recovery)
    *   2. User env var `KODAX_MAX_OUTPUT_TOKENS` (explicit user intent)
-   *   3. Provider config default
-   *   4. Global `KODAX_MAX_TOKENS` fallback
+   *   3. Active model descriptor's `maxOutputTokens` (FEATURE_098)
+   *   4. Provider config default
+   *   5. Global `KODAX_MAX_TOKENS` fallback
    * Used by provider stream() paths and by the agent loop to decide
    * whether escalation is applicable (see `coding/src/agent.ts`).
    */
-  public getEffectiveMaxOutputTokens(): number {
+  public getEffectiveMaxOutputTokens(model?: string): number {
     if (this.maxOutputTokensOverride !== undefined) {
       return this.maxOutputTokensOverride;
     }
     const envOverride = parseEnvInt(process.env.KODAX_MAX_OUTPUT_TOKENS);
     if (envOverride !== undefined) {
       return envOverride;
+    }
+    const descriptorMax = this.getModelDescriptor(model)?.maxOutputTokens;
+    if (descriptorMax !== undefined) {
+      return descriptorMax;
     }
     return this.config.maxOutputTokens ?? KODAX_MAX_TOKENS;
   }
@@ -237,10 +242,32 @@ export abstract class KodaXBaseProvider {
 
   /**
    * 获取模型的上下文窗口大小
+   *
+   * Backwards-compatible no-arg form: resolves against the provider's
+   * default model descriptor. New call sites that know the active
+   * model should use `getEffectiveContextWindow(model)` directly.
    * @returns 上下文窗口大小 (tokens)
    */
   getContextWindow(): number {
-    return this.config.contextWindow ?? 200000;  // 默认 200k
+    return this.getEffectiveContextWindow();
+  }
+
+  /**
+   * Resolves the context window for a specific model.
+   * Precedence (highest to lowest):
+   *   1. Active model descriptor's `contextWindow` (FEATURE_098)
+   *   2. Provider config default
+   *   3. 200_000 fallback
+   * The user-level `compaction.contextWindow` is layered on top of
+   * this at the call site, so it remains the highest-priority manual
+   * override.
+   */
+  getEffectiveContextWindow(model?: string): number {
+    const descriptorWindow = this.getModelDescriptor(model)?.contextWindow;
+    if (descriptorWindow !== undefined) {
+      return descriptorWindow;
+    }
+    return this.config.contextWindow ?? 200_000;
   }
 
   protected getApiKey(): string {
