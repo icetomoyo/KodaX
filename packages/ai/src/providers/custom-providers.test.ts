@@ -261,6 +261,47 @@ describe('custom providers', () => {
     expect(request.req.headers.get('user-agent')).toMatch(/^Anthropic\/JS/i);
   });
 
+  it('accepts KodaXModelDescriptor objects in models[] for per-model context windows', () => {
+    vi.stubEnv('CUSTOM_OPENAI_API_KEY', 'test-key');
+    const provider = createCustomProvider({
+      ...cloneConfig(OPENAI_CUSTOM),
+      contextWindow: 200_000,
+      maxOutputTokens: 32_000,
+      // Mixed array: legacy string + descriptor object on the same provider
+      models: [
+        'custom-main',
+        { id: 'small-window-alt', contextWindow: 32_000, maxOutputTokens: 4_000 },
+      ],
+    } as KodaXCustomProviderConfig);
+
+    expect(provider.getAvailableModels()).toEqual(['custom-main', 'small-window-alt']);
+    expect(provider.getEffectiveContextWindow('custom-main')).toBe(200_000);
+    expect(provider.getEffectiveContextWindow('small-window-alt')).toBe(32_000);
+    expect(provider.getEffectiveMaxOutputTokens('small-window-alt')).toBe(4_000);
+    expect(provider.getEffectiveMaxOutputTokens('custom-main')).toBe(32_000);
+  });
+
+  it('exposes descriptor-form custom models through the registry helpers as id strings', () => {
+    vi.stubEnv('CUSTOM_OPENAI_API_KEY', 'test-key');
+    registerCustomProviders([
+      {
+        ...cloneConfig(OPENAI_CUSTOM),
+        models: [
+          'custom-main',
+          { id: 'small-window-alt', contextWindow: 32_000 },
+        ],
+      } as KodaXCustomProviderConfig,
+    ]);
+
+    expect(getCustomProviderModels('custom-openai')).toEqual([
+      'custom-main',
+      'small-window-alt',
+    ]);
+
+    const list = getCustomProviderList();
+    expect(list[0]?.models).toEqual(['custom-main', 'small-window-alt']);
+  });
+
   it('rejects duplicate custom provider names during registration', () => {
     expect(() =>
       registerCustomProviders([

@@ -318,7 +318,13 @@ export interface KodaXCustomProviderConfig {
   baseUrl: string;
   apiKeyEnv: string;
   model: string;
-  models?: string[];
+  /**
+   * Additional available models beyond the default. Accepts either a
+   * plain model id string (legacy) or a KodaXModelDescriptor object
+   * (FEATURE_098) carrying per-model `contextWindow` / `maxOutputTokens`
+   * / `thinkingBudgetCap` / `reasoningCapability` overrides.
+   */
+  models?: Array<string | KodaXModelDescriptor>;
   /**
    * Controls which User-Agent header compatibility providers send.
    * - compat: send "KodaX" for gateways that block the official SDK UA

@@ -41,8 +41,13 @@ export function validateCustomProviderConfig(
 }
 
 function buildProviderConfig(custom: KodaXCustomProviderConfig): KodaXProviderConfig {
+  // Accept both legacy string ids and KodaXModelDescriptor objects.
+  // FEATURE_098: descriptor objects carry per-model contextWindow /
+  // maxOutputTokens / reasoningCapability so cross-model providers
+  // can express real differences instead of a single provider-wide
+  // value.
   const models = custom.models?.length
-    ? custom.models.map(id => ({ id }))
+    ? custom.models.map(entry => (typeof entry === 'string' ? { id: entry } : entry))
     : undefined;
 
   return {

@@ -102,8 +102,11 @@ export function getCustomProviderList(): Array<{
   }> = [];
   for (const [name, config] of customProviders) {
     const configured = !!process.env[config.apiKeyEnv];
-    const models = config.model && config.models?.length
-      ? [...new Set([config.model, ...config.models])]
+    const modelIds = (config.models ?? []).map(entry =>
+      typeof entry === 'string' ? entry : entry.id,
+    );
+    const models = config.model && modelIds.length
+      ? [...new Set([config.model, ...modelIds])]
       : [config.model];
     result.push({
       name,
@@ -128,7 +131,10 @@ export function getCustomProviderList(): Array<{
 export function getCustomProviderModels(name: string): string[] | undefined {
   const config = customProviders.get(name);
   if (!config) return undefined;
-  return config.model && config.models?.length
-    ? [...new Set([config.model, ...config.models])]
+  const modelIds = (config.models ?? []).map(entry =>
+    typeof entry === 'string' ? entry : entry.id,
+  );
+  return config.model && modelIds.length
+    ? [...new Set([config.model, ...modelIds])]
     : [config.model];
 }
