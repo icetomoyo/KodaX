@@ -1,6 +1,6 @@
 # Feature 总表
 
-> Last updated: 2026-04-25 (FEATURE_098 Per-Model Context Window & Output Token Limits — 接通 `KodaXModelDescriptor.contextWindow` / `maxOutputTokens` 这两个早已声明但全代码无人读取的死字段，让 compaction trigger 与 wire-level max_tokens 都按当前激活 model 的真实窗口算；修复 `kimi.k2.5` (128k) / `qwen.qwen3.5-plus` (1M) / `zhipu.glm-5-turbo` (128k) 三处已知偏差；自定义 provider `models[]` 升级支持描述符对象格式（兼容旧字面量）；planned for `v0.7.29` 与 FEATURE_078 同版发布。FEATURE_097 AMA Runner Realtime Todo List — Claude Code 风格实时计划列表，planned for `v0.7.34`，作为 Plan B 主路线 `v0.7.33` 结束后第一个 AMA 可见性增强 feature，依赖 FEATURE_084 重写后的 Scout `executionObligations` 契约稳定形态。同时 FEATURE_095 SSH-Friendly Cell-Level Diff Renderer **Absorbed into FEATURE_057** v0.7.30 — cell-level screen buffer 是 057 §10 renderer-native selection / §11 ScrollBox parity / Track E output ownership 收口的实际前置基础设施，单独成版本会让 TUI 重构故事碎片化。SSH/ConPTY 闪烁的最急迫表现已通过 `engine.js` altScreen 分支 `log.clear() + log()` 合并成单次 `log.clearAndRender()` 的 10 行补丁消除，Track F 不再承担"SSH 闪烁唯一解药"的紧迫性——剩余动机（TextInput 光标漂移、渲染字节量、renderer-native selection/hit-test 基础设施）仍成立。)
+> Last updated: 2026-04-25 (FEATURE_099 Provider Catalog Refresh + FEATURE_098 Per-Model Context Window & Output Token Limits — 两块 provider catalog 卫生工作均已实施完成、登记入 `v0.7.28` 已完成表（unreleased）；099 = DeepSeek V4 系列接入 + kimi-code label 收敛 + 删除 deprecated deepseek-chat/reasoner；098 = 接通 `KodaXModelDescriptor.contextWindow` / `maxOutputTokens` 死字段使 compaction trigger 与 wire-level max_tokens 按激活 model 真实窗口工作 + 修复 `kimi.k2.5` (128k) / `zhipu.glm-5-turbo` (128k) 偏差 + 自定义 provider `models[]` 支持描述符对象格式。098 原计划 v0.7.29 与 FEATURE_078 同版发布，因实施提前完成迁入 v0.7.28。FEATURE_097 AMA Runner Realtime Todo List — Claude Code 风格实时计划列表，planned for `v0.7.34`，作为 Plan B 主路线 `v0.7.33` 结束后第一个 AMA 可见性增强 feature，依赖 FEATURE_084 重写后的 Scout `executionObligations` 契约稳定形态。同时 FEATURE_095 SSH-Friendly Cell-Level Diff Renderer **Absorbed into FEATURE_057** v0.7.30 — cell-level screen buffer 是 057 §10 renderer-native selection / §11 ScrollBox parity / Track E output ownership 收口的实际前置基础设施，单独成版本会让 TUI 重构故事碎片化。SSH/ConPTY 闪烁的最急迫表现已通过 `engine.js` altScreen 分支 `log.clear() + log()` 合并成单次 `log.clearAndRender()` 的 10 行补丁消除，Track F 不再承担"SSH 闪烁唯一解药"的紧迫性——剩余动机（TextInput 光标漂移、渲染字节量、renderer-native selection/hit-test 基础设施）仍成立。)
 
 > 中文阅读说明：
 > 这份 `FEATURE_LIST` 是 roadmap 的总索引。
@@ -13,13 +13,13 @@
 
 | Item | Value |
 |---|---|
-| Tracked feature IDs | `001-098` (026 removed) |
-| Total tracked features | `97` |
-| Completed | `78` |
+| Tracked feature IDs | `001-099` (026 removed) |
+| Total tracked features | `98` |
+| Completed | `80` |
 | Cancelled | `2` |
 | Absorbed | `2` |
 | InProgress | `1` |
-| Planned | `14` |
+| Planned | `13` |
 | Current released version | `v0.7.27` |
 
 ### 各版本待做分布
@@ -27,7 +27,7 @@
 | Version | Planned features |
 |---|---|
 | `v0.7.28` | `2` |
-| `v0.7.29` | `2` |
+| `v0.7.29` | `1` |
 | `v0.7.30` | `1` |
 | `v0.7.31` | `1` |
 | `v0.7.32` | `1` |
@@ -54,7 +54,6 @@
 | `087` | ConstructionRuntime and Constructed-World Substrate | Core | High | `v0.7.28` | [v0.7.28](features/v0.7.28.md#feature_087-constructionruntime-and-constructed-world-substrate) |
 | `088` | Self-Construction Tier 2 — Tool Generation | Core | High | `v0.7.28` | [v0.7.28](features/v0.7.28.md#feature_088-self-construction-tier-2--tool-generation) |
 | `078` | Role-Aware Reasoning Profiles | Internal | High | `v0.7.29` | [v0.7.29](features/v0.7.29.md#feature_078-role-aware-reasoning-profiles) |
-| `098` | Per-Model Context Window & Output Token Limits | Internal | High | `v0.7.29` | [v0.7.29](features/v0.7.29.md#feature_098-per-model-context-window--output-token-limits) |
 | `060` | Claude-Aligned Bounded-Memory Runtime and OOM Hardening | Internal | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_060-claude-aligned-bounded-memory-runtime-and-oom-hardening) |
 | `089` | Self-Construction Tier 3 — Agent Generation | Core | High | `v0.7.31` | [v0.7.31](features/v0.7.31.md#feature_089-self-construction-tier-3--agent-generation) |
 | `090` | Self-Construction Tier 4 — Agent Self-Modifying Role Spec | Core | High | `v0.7.32` | [v0.7.32](features/v0.7.32.md#feature_090-self-construction-tier-4--agent-self-modifying-role-spec) |
@@ -189,6 +188,8 @@
 | `085` | Guardrail Tri-Layer — Input / Output / Tool | `v0.7.26` | [v0.7.26](features/v0.7.26.md#feature_085-guardrail-tri-layer--input--output--tool) |
 | `086` | KodaX Prefix Cleanup and Legacy Purge (子任务 A 放弃；子任务 B 完成；含 AMA runner-driven repo-intel 注入恢复 / Windows .exe bin quoting 修复 / ensurePremiumDaemonReady / refresh:true 分层超时 / 临时性失败不污染 failure cache / Ink TUI RepoIntel trace surface / Planner/Evaluator/H1-readonly-Generator 开放 repo-intel deep-capsule 工具) | `v0.7.27` | [v0.7.27](features/v0.7.27.md#feature_086-legacy-code-purge-子任务-a-放弃--子任务-b-完成) |
 | `091` | Repo-Intelligence Protocol Package Extraction | `v0.7.27` | [v0.7.27](features/v0.7.27.md#feature_091-repo-intelligence-protocol-package-extraction) |
+| `099` | Provider Catalog Refresh — DeepSeek V4 + Kimi-code Label Collapse | `v0.7.28` (unreleased) | [v0.7.28](features/v0.7.28.md#feature_099-provider-catalog-refresh--deepseek-v4--kimi-code-label-collapse) |
+| `098` | Per-Model Context Window & Output Token Limits | `v0.7.28` (unreleased) | [v0.7.28](features/v0.7.28.md#feature_098-per-model-context-window--output-token-limits) |
 
 > `FEATURE_051` close-out posture: keep the current REPL status/footer/task/message surfaces frozen, limit follow-up work to invisible substrate maturity for transcript, scroll/selection, and input behavior, and treat the design doc as a completed close-out record rather than an open rollout plan.
 
