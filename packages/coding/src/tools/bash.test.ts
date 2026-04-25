@@ -52,13 +52,26 @@ describe('toolBash', () => {
     expect(result).toContain('Output:');
     expect(result).toContain('kodax-bg-');
 
-    // Wait briefly for the background process to complete and write output
-    await new Promise(resolve => setTimeout(resolve, 500));
-
     const outputMatch = result.match(/Output:\s*(.+)/);
     expect(outputMatch).toBeTruthy();
     const outputPath = outputMatch![1]!.trim();
-    const content = await fs.readFile(outputPath, 'utf-8');
+
+    // Poll for the [Exit:...] marker rather than sleep(500). The background
+    // node process flushes its stdout + the post-exit `[Exit: <code>]` line
+    // asynchronously; on Windows in particular the 500ms fixed sleep is too
+    // tight under loaded CI. Cap the poll at 5s and check every 50ms — this
+    // turns the previous race-prone fixed sleep into a deterministic wait.
+    const deadline = Date.now() + 5_000;
+    let content = '';
+    while (Date.now() < deadline) {
+      try {
+        content = await fs.readFile(outputPath, 'utf-8');
+        if (content.includes('[Exit:')) break;
+      } catch {
+        // file may not exist yet on the first poll iteration
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
     expect(content).toContain('bg-output');
     expect(content).toContain('[Exit:');
   });

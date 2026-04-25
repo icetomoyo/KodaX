@@ -130,7 +130,11 @@ describe('runKodaX provider policy integration', () => {
     ).toBe(1);
     expect(result.routingDecision?.primaryTask).toBe('review');
     expect(result.routingDecision?.harnessProfile).toBe('H0_DIRECT');
-  }, 30_000);
+  // 60_000 (was 30_000): runKodaX with mock provider takes ~22-26s baseline
+  // (system prompt build + routing pipeline + iteration scaffolding). Under
+  // full-suite parallel load it can exceed the 30s default; double the cap
+  // so this stays a deterministic test, not a wall-clock race.
+  }, 60_000);
 
   it('allows benign text-only prompts that merely mention MCP, project mode, or screenshots', async () => {
     const result = await runKodaX(
@@ -150,5 +154,9 @@ describe('runKodaX provider policy integration', () => {
       '[Provider Constraint]',
     );
     expect(result.routingDecision?.harnessProfile).toBe('H0_DIRECT');
-  }, 30_000);
+  // 60_000 (was 30_000): runKodaX with mock provider takes ~22-26s baseline
+  // (system prompt build + routing pipeline + iteration scaffolding). Under
+  // full-suite parallel load it can exceed the 30s default; double the cap
+  // so this stays a deterministic test, not a wall-clock race.
+  }, 60_000);
 });

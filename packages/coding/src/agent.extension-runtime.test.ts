@@ -261,7 +261,10 @@ describe('runKodaX extension runtime integration', () => {
     ).toBe(true);
 
     await runtime.dispose();
-  });
+  // 30_000 (was vitest default 5_000): runKodaX with full extension runtime
+  // takes ~3s baseline single-run; under full-suite parallel load it
+  // occasionally exceeds the 5s default.
+  }, 30_000);
 
   it('respects empty active tool sets and provider hook reasoning overrides', async () => {
     const extensionPath = path.join(tempDir, 'feature-034-empty-tools.mjs');
@@ -305,7 +308,10 @@ describe('runKodaX extension runtime integration', () => {
     });
 
     await runtime.dispose();
-  });
+  // 30_000 (was vitest default 5_000): same rationale as the previous
+  // it-block — extension runtime + runKodaX integration occasionally
+  // exceeds 5s under full-suite parallel scheduling.
+  }, 30_000);
 
   it('persists extension session state and records across session resume', async () => {
     const extensionPath = path.join(tempDir, 'feature-034-persisted-runtime.mjs');
