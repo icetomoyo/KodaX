@@ -272,6 +272,12 @@ const PROVIDERS: ProviderConfig[] = [
     baseURL: 'https://api.minimaxi.com/anthropic',
     apiKeyEnv: 'MINIMAX_API_KEY',
   },
+  {
+    name: 'mimo-coding',
+    model: 'mimo-v2.5-pro',
+    baseURL: 'https://token-plan-cn.xiaomimimo.com/anthropic',
+    apiKeyEnv: 'MIMO_API_KEY',
+  },
 ];
 
 function createClient(provider: ProviderConfig): Anthropic | null {

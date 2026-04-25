@@ -14,6 +14,7 @@
  *   - KIMI_API_KEY       (kimi-code)
  *   - ZHIPU_API_KEY      (zhipu-coding)
  *   - MINIMAX_API_KEY    (minimax-coding)
+ *   - MIMO_API_KEY       (mimo-coding)
  *
  * Providers without API keys are skipped automatically.
  * Uses coding-plan endpoints only (cheap). Anthropic/OpenAI/etc. are
@@ -29,7 +30,7 @@ import { buildSystemPrompt } from '@kodax/coding';
 
 interface ProbeCase {
   id: string;
-  provider: 'kimi-code' | 'zhipu-coding' | 'minimax-coding';
+  provider: 'kimi-code' | 'zhipu-coding' | 'minimax-coding' | 'mimo-coding';
   apiKeyEnv: string;
   model: string;
   expectedIdentityTokens: string[]; // any one of these (case-insensitive) must appear
@@ -56,6 +57,13 @@ const PROBES: ProbeCase[] = [
     apiKeyEnv: 'MINIMAX_API_KEY',
     model: 'MiniMax-M2.7',
     expectedIdentityTokens: ['KodaX', 'minimax'],
+  },
+  {
+    id: 'mimo-coding',
+    provider: 'mimo-coding',
+    apiKeyEnv: 'MIMO_API_KEY',
+    model: 'mimo-v2.5-pro',
+    expectedIdentityTokens: ['KodaX', 'mimo', 'xiaomi', '小米'],
   },
 ];
 
@@ -154,7 +162,7 @@ describe('L2: Identity Roundtrip (coding-plan providers)', () => {
     const configured = PROBES.filter((p) => Boolean(process.env[p.apiKeyEnv]));
     if (configured.length === 0) {
       console.warn(
-        '[L2 eval] No provider API keys found. Set KIMI_API_KEY / ZHIPU_API_KEY / MINIMAX_API_KEY to run identity probes.',
+        '[L2 eval] No provider API keys found. Set KIMI_API_KEY / ZHIPU_API_KEY / MINIMAX_API_KEY / MIMO_API_KEY to run identity probes.',
       );
     }
     // This assertion always passes; the warning above is the signal.
