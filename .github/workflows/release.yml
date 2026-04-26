@@ -50,9 +50,9 @@ jobs:
             archive: tar.gz
             smoke: false               # cannot exec arm64 binary on x64 runner
           - target: darwin-x64
-            runner: macos-13
-            archive: tar.gz
-            smoke: true
+            runner: macos-14            # cross-compile via Bun --target=bun-darwin-x64
+            archive: tar.gz             # macos-13 was deprecated by GitHub Actions and queues indefinitely
+            smoke: false                # Apple Silicon host running x64 needs Rosetta; skip to keep CI deterministic
           - target: darwin-arm64
             runner: macos-14
             archive: tar.gz
