@@ -2194,11 +2194,14 @@ export async function runKodaX(
           // gate so it can fire even when normal retries are exhausted.
           // Mirrors the runner-driven path at runner-driven.ts:2654.
           //
-          // Duplication is intentional migration debt: agent.ts is the
-          // SA-only legacy loop, runner-driven.ts is the Layer-A path
-          // (FEATURE_084). The two converge when SA is fully absorbed by
-          // Layer-A (post-FEATURE_086 direction). When that happens, this
-          // branch should be deleted — not abstracted into a helper. v0.7.28.
+          // The mirror is intentional, not migration debt: this file is
+          // the SA-mode entry (`runDirectKodaX`) and runner-driven.ts is
+          // the AMA-mode path (Scout/Planner/Generator/Evaluator). They
+          // are two parallel execution modes (see task-engine.ts:11-13
+          // dispatch) with no convergence plan, but they share the same
+          // provider stack and therefore see the same thinking-mode
+          // errors. Per CLAUDE.md "abstract only after 3+ real cases",
+          // 2 call sites stay duplicated. v0.7.28.
           if (decision.action === 'sanitize_thinking_and_retry') {
             const recovery = recoveryCoordinator.executeRecovery(providerMessages, decision);
             telemetryRecovery(decision.action, recovery);
