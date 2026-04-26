@@ -485,9 +485,13 @@ describe('openai reasoning capability', () => {
 
   // Sibling case to the thinking-only test: an assistant turn with only a
   // redacted_thinking block (cross-provider history replay scenario) must
-  // also keep its slot on the wire, even though it contributes no
-  // serializable thinking string and no reasoning_content can be echoed.
-  it('preserves assistant turn that carries only redacted_thinking', async () => {
+  // also keep its slot on the wire. Since v0.7.28 wire-level fix:
+  // reasoning_content is *always* attached (default '') when the flag is
+  // set, so DeepSeek's strict "every assistant turn must carry the
+  // field" contract is satisfied even on turns that contribute no
+  // thinking text. Earlier behaviour ('not toHaveProperty') 400-rejected
+  // such turns and was the root cause of the cross-provider switch bug.
+  it('attaches empty reasoning_content for assistant turn carrying only redacted_thinking', async () => {
     const create = vi.fn().mockResolvedValue(createCompletedOpenAIStream());
     const provider = new TestOpenAIProvider('deepseek', 'native-effort', {
       chat: { completions: { create } },
@@ -514,11 +518,95 @@ describe('openai reasoning capability', () => {
     const roles = requestMessages.map((m) => m.role);
     expect(roles).toEqual(['system', 'user', 'assistant', 'user']);
     const assistantWire = requestMessages.find((m) => m.role === 'assistant') as Record<string, unknown>;
-    // No reasoning_content because redacted blocks contribute no thinking string,
-    // but the turn slot itself must be preserved.
-    expect(assistantWire).not.toHaveProperty('reasoning_content');
+    // Field must be present (even empty) so DeepSeek thinking-mode
+    // accepts the replay; redacted blocks contribute no thinking text
+    // so the value collapses to ''.
+    expect(assistantWire).toHaveProperty('reasoning_content', '');
     expect(typeof assistantWire.content).toBe('string');
     expect((assistantWire.content as string).length).toBeGreaterThan(0);
+  });
+
+  // Cross-provider switch scenario: user runs N turns on an
+  // Anthropic-compat provider (e.g., kimi-code, ark-coding) where some
+  // assistant turns produce no thinking blocks at all (continuation
+  // rounds, short text replies, pre-thinking history). They then /model
+  // switch to deepseek. Without the wire-level always-attach, those
+  // thinking-less turns would lack reasoning_content and DeepSeek
+  // thinking-mode would 400 on the first request. This test locks the
+  // contract: every assistant turn gets the field, defaulting to ''.
+  it('attaches empty reasoning_content for assistant turn with no thinking blocks', async () => {
+    const create = vi.fn().mockResolvedValue(createCompletedOpenAIStream());
+    const provider = new TestOpenAIProvider('deepseek', 'native-effort', {
+      chat: { completions: { create } },
+    }, {
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-v4-flash',
+      replayReasoningContent: true,
+    });
+
+    const messages: KodaXMessage[] = [
+      { role: 'user', content: 'Run grep for OAuth scopes.' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 'call_1', name: 'grep', input: { pattern: 'oauth' } },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: 'call_1', content: 'no matches' },
+        ],
+      },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'Got it — no OAuth references in the codebase.' },
+        ],
+      },
+      { role: 'user', content: 'Now check for JWT.' },
+    ];
+
+    await provider.stream(messages, TOOLS, 'system', reasoning);
+
+    const requestMessages = create.mock.calls[0]?.[0].messages as Array<Record<string, unknown>>;
+    const assistantWires = requestMessages.filter((m) => m.role === 'assistant');
+    expect(assistantWires).toHaveLength(2);
+    // Both assistant turns — tool-only and text-only — must carry the
+    // field. Empty string is fine; what matters is field presence.
+    for (const wire of assistantWires) {
+      expect(wire).toHaveProperty('reasoning_content', '');
+    }
+  });
+
+  // Sibling guard: when the flag is unset (e.g., openai proper, qwen
+  // before opt-in verification), reasoning_content must NOT be attached
+  // even with empty thinking. Sending it as an unknown field could be
+  // rejected by strict gateways.
+  it('does not attach reasoning_content when flag unset, even on thinking-less turns', async () => {
+    const create = vi.fn().mockResolvedValue(createCompletedOpenAIStream());
+    const provider = new TestOpenAIProvider('openai', 'native-effort', {
+      chat: { completions: { create } },
+    }, {
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-5',
+      // replayReasoningContent: undefined (default off)
+    });
+
+    const messages: KodaXMessage[] = [
+      { role: 'user', content: 'Hi' },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Hello!' }],
+      },
+      { role: 'user', content: 'Continue.' },
+    ];
+
+    await provider.stream(messages, TOOLS, 'system', reasoning);
+
+    const requestMessages = create.mock.calls[0]?.[0].messages as Array<Record<string, unknown>>;
+    const assistantWire = requestMessages.find((m) => m.role === 'assistant') as Record<string, unknown>;
+    expect(assistantWire).not.toHaveProperty('reasoning_content');
   });
 
   // The non-streaming complete() fallback used to discard reasoning_content

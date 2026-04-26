@@ -791,11 +791,21 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
       message.tool_calls = toolCalls;
     }
 
-    // DeepSeek V4 rejects replay turns that drop reasoning_content (400).
-    // Flag-driven (vs hardcoded name) so Qwen/Zhipu/Kimi/MiniMax can opt in
-    // after per-provider verification; OpenAI proper stays explicitly off.
-    if (this.config.replayReasoningContent && thinking) {
-      message.reasoning_content = thinking;
+    // DeepSeek V4 rejects replay turns that drop reasoning_content (400
+    // "must be passed back to the API"). The strict reading of that
+    // contract is *every* assistant turn in a thinking-mode request must
+    // carry the field — including turns that produced no thinking
+    // content (short text replies, follow-up tool turns, redacted-only
+    // turns, pre-thinking history, cross-provider history before a
+    // /model switch). Conditioning the attach on `thinking` being
+    // non-empty was the original gap: it covered "history has thinking
+    // → echo it" but missed "history has no thinking → still need the
+    // field present". Always attach when the flag is set; default to
+    // empty string when no thinking text is available, so any provider
+    // opting into the flag (Qwen/Zhipu/Kimi/MiniMax all share the same
+    // field convention) gets the same "field-present" invariant.
+    if (this.config.replayReasoningContent) {
+      message.reasoning_content = thinking || '';
     }
 
     return [message as unknown as OpenAI.Chat.ChatCompletionMessageParam];

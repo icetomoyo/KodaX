@@ -602,12 +602,62 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
       // Reference: https://docs.anthropic.com/en/docs/build-with-claude/tool-use
 
       // 1. thinking blocks (must be first for assistant messages)
+      //
+      // strictThinkingSignature mode (Anthropic proper) cryptographically
+      // verifies `signature` server-side. Cross-provider thinking blocks
+      // (kept around when user /model-switches mid-session) carry empty
+      // or other-issuer signatures that fail verification → 400 thinking
+      // signature invalid. Convert those to a `<prior_reasoning>` text
+      // block so the reasoning context survives without being claimed
+      // as Anthropic-generated thinking.
+      //
+      // Lenient mode (default; third-party Anthropic-compat servers like
+      // kimi-code / ark-coding / mimo-coding / zhipu-coding /
+      // minimax-coding) lacks the signing key and accepts any signature
+      // including '', so we pass everything through unchanged.
+      // v0.7.28.
+      const crossProviderReasoning: string[] = [];
       for (const b of m.content) {
         if (b.type === 'thinking') {
-          content.push({ type: 'thinking', thinking: b.thinking, signature: b.signature ?? '' } as any);
+          const trustedSignature = !this.config.strictThinkingSignature
+            || (typeof b.signature === 'string' && b.signature.length > 0);
+          if (trustedSignature) {
+            content.push({ type: 'thinking', thinking: b.thinking, signature: b.signature ?? '' } as any);
+          } else if (b.thinking) {
+            // Strict mode + empty/missing signature → preserve the
+            // reasoning text via a text block, dropped from the
+            // thinking-block channel.
+            crossProviderReasoning.push(b.thinking);
+          }
         } else if (b.type === 'redacted_thinking') {
-          content.push({ type: 'redacted_thinking', data: b.data } as any);
+          if (!this.config.strictThinkingSignature) {
+            // Lenient: third-party server doesn't decrypt the data
+            // field, so passing it through is harmless.
+            content.push({ type: 'redacted_thinking', data: b.data } as any);
+          }
+          // Strict mode: redacted blocks signed by another provider
+          // would fail server-side decryption (data is provider-issued
+          // ciphertext, not plaintext we can salvage). Drop silently —
+          // there's nothing recoverable to convert. The original turn
+          // already had no user-visible content; only the model's
+          // sealed reasoning is lost.
         }
+      }
+
+      // 1.5 Cross-provider reasoning (strictThinkingSignature mode).
+      // Emit immediately after the thinking-block channel so the
+      // converted text occupies the same conceptual slot the original
+      // thinking would have occupied (Anthropic protocol places
+      // thinking first). Without this, the wire order would become
+      // [tool_use, prior_reasoning, text] which inverts the natural
+      // "think, then act, then explain" reading order. Wrapped in
+      // <prior_reasoning> tags so the model treats the block as
+      // historical context, not its own visible output. v0.7.28.
+      if (crossProviderReasoning.length > 0 && m.role === 'assistant') {
+        content.push({
+          type: 'text',
+          text: `<prior_reasoning>\n${crossProviderReasoning.join('\n\n')}\n</prior_reasoning>`,
+        } as Anthropic.Messages.TextBlockParam);
       }
 
       // 2. tool_result MUST come before text in user messages
@@ -649,7 +699,22 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
       // tool-call message to include non-empty reasoning content. For messages that
       // never had thinking blocks (e.g. session restore, pre-thinking history),
       // inject a minimal thinking block to satisfy this requirement.
-      if (role === 'assistant' && this.config.supportsThinking) {
+      //
+      // **Skipped in strictThinkingSignature mode (Anthropic proper)**:
+      // injecting a '...' placeholder with `signature: ''` would itself
+      // fail Anthropic's cryptographic signature verification (400
+      // "thinking signature invalid"). Anthropic doesn't require
+      // thinking blocks on tool-use turns that didn't originally have
+      // them — the guard exists for lenient third-party servers (Kimi)
+      // that strictly check field presence. If a cross-provider
+      // tool-use turn legitimately lacks thinking and Anthropic does
+      // 400 on it, the L3 sanitize_thinking_and_retry recovery cleans
+      // the history once and retries without thinking. v0.7.28.
+      if (
+        role === 'assistant' &&
+        this.config.supportsThinking &&
+        !this.config.strictThinkingSignature
+      ) {
         const hasToolUse = content.some(b => (b as any).type === 'tool_use');
         const hasThinking = content.some(b =>
           (b as any).type === 'thinking' || (b as any).type === 'redacted_thinking',

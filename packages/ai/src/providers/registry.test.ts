@@ -87,6 +87,30 @@ describe('provider registry', () => {
     expect(getProvider()).toBeDefined();
   });
 
+  // OpenAI-compat thinking-mode providers that share the deepseek
+  // reasoning_content convention all opt into the replayReasoningContent
+  // flag for max fault-tolerance (deepseek empirically verified;
+  // kimi/qwen/zhipu unverified but identical failure-mode shape).
+  // OpenAI proper stays off — different protocol, would 400 on unknown
+  // field.
+  it('opts kimi/qwen/zhipu/deepseek into replayReasoningContent (and excludes openai)', () => {
+    vi.stubEnv('DEEPSEEK_API_KEY', 'test-key');
+    vi.stubEnv('KIMI_API_KEY', 'test-key');
+    vi.stubEnv('QWEN_API_KEY', 'test-key');
+    vi.stubEnv('ZHIPU_API_KEY', 'test-key');
+    vi.stubEnv('OPENAI_API_KEY', 'test-key');
+
+    type ConfigCarrier = { config: { replayReasoningContent?: boolean } };
+    const flagOf = (name: string): boolean | undefined =>
+      (getProvider(name) as unknown as ConfigCarrier).config.replayReasoningContent;
+
+    expect(flagOf('deepseek')).toBe(true);
+    expect(flagOf('kimi')).toBe(true);
+    expect(flagOf('qwen')).toBe(true);
+    expect(flagOf('zhipu')).toBe(true);
+    expect(flagOf('openai')).toBeUndefined();
+  });
+
   // FEATURE_098: per-model context window override where the model
   // really diverges from the provider default. Tests guard the data,
   // not the lookup mechanism (already covered in base.test.ts).

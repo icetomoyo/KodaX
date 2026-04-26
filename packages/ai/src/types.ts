@@ -369,6 +369,25 @@ export interface KodaXProviderConfig {
    */
   replayReasoningContent?: boolean;
   /**
+   * Strictly verify Anthropic-style `signature` on `thinking` blocks at
+   * serialise time. Only Anthropic proper (anthropic.com) cryptographically
+   * verifies signatures — third-party Anthropic-compat servers (kimi-code /
+   * ark-coding / mimo-coding / zhipu-coding / minimax-coding) lack the
+   * signing key and accept any signature.
+   *
+   * When true, thinking blocks with empty/cross-provider signatures get
+   * converted to a `<prior_reasoning>` text block instead of being passed
+   * through (which would 400 on signature verification). Cross-provider
+   * `redacted_thinking` blocks (ciphertext signed by their origin) are
+   * dropped silently — there's no plaintext to recover and forging the
+   * field would also fail server-side decryption.
+   *
+   * When false (default), thinking blocks pass through unchanged — matches
+   * legacy behaviour and works for all third-party Anthropic-compat
+   * providers. v0.7.28.
+   */
+  strictThinkingSignature?: boolean;
+  /**
    * Hard cap on a single streaming request's wall-clock duration (ms).
    * When exceeded, the resilience layer aborts the stream with a
    * StreamIncompleteError, which routes through the existing

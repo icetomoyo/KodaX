@@ -229,6 +229,15 @@ class AnthropicProvider extends KodaXAnthropicCompatProvider {
     // 64000 ensures ~36000+ tokens for output even at maximum thinking.
     maxOutputTokens: 64000,
     thinkingBudgetCap: 28000,
+    // Anthropic proper cryptographically verifies `signature` on
+    // `thinking` blocks. Cross-provider thinking (kept around when
+    // user /model-switches mid-session) carries empty or other-issuer
+    // signatures that fail verification → 400. The serialiser converts
+    // those to a `<prior_reasoning>` text block; only Anthropic-issued
+    // thinking blocks pass through. Third-party Anthropic-compat
+    // providers (kimi-code, ark-coding, etc.) lack the signing key and
+    // accept any signature, so they keep the lenient default. v0.7.28.
+    strictThinkingSignature: true,
   });
   constructor() { super(); this.client = new Anthropic({ apiKey: this.getApiKey() }); }
 }
@@ -427,8 +436,10 @@ class DeepSeekProvider extends KodaXOpenAICompatProvider {
     contextWindow: 1_000_000,
     maxOutputTokens: KODAX_ESCALATED_MAX_OUTPUT_TOKENS,
     // V4 thinking mode 400s on multi-turn replays that strip
-    // reasoning_content. Qwen/Zhipu/Kimi/MiniMax use the same field but
-    // remain unset until each is verified individually.
+    // reasoning_content (empirically verified via direct API probe).
+    // Kimi/Qwen/Zhipu share the same OpenAI-compat field convention so
+    // they get the same flag for max fault-tolerance — see those
+    // provider entries below.
     replayReasoningContent: true,
   });
   constructor() { super(); this.initClient(); }
@@ -450,6 +461,12 @@ class KimiProvider extends KodaXOpenAICompatProvider {
     supportsThinking: true,
     contextWindow: 256000,
     maxOutputTokens: 32768,
+    // Same OpenAI-compat reasoning_content convention as DeepSeek V4.
+    // Empirically unverified for Kimi specifically, but the failure mode
+    // (multi-turn 400 when reasoning_content is stripped from history)
+    // is identical in shape — opting in for max fault-tolerance.
+    // OpenAI proper stays explicitly off (different protocol).
+    replayReasoningContent: true,
   });
   constructor() { super(); this.initClient(); }
 }
@@ -461,6 +478,8 @@ class QwenProvider extends KodaXOpenAICompatProvider {
     supportsThinking: true,
     contextWindow: 256000,
     maxOutputTokens: 32768,
+    // Same rationale as Kimi above — unverified, opting in.
+    replayReasoningContent: true,
   });
   constructor() { super(); this.initClient(); }
 }
@@ -479,6 +498,8 @@ class ZhipuProvider extends KodaXOpenAICompatProvider {
     supportsThinking: true,
     contextWindow: 200000,
     maxOutputTokens: 32768,
+    // Same rationale as Kimi above — unverified, opting in.
+    replayReasoningContent: true,
   });
   constructor() { super(); this.initClient(); }
 }
