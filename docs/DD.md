@@ -550,8 +550,8 @@ The current execution ceiling is intentionally strict:
 
 ## 14. Construction Runtime (v0.7.28)
 
-> 本章描述 v0.7.28 引入的自构建底座（FEATURE_087/088）。  
-> 详细 feature 设计：[`features/v0.7.28.md`](features/v0.7.28.md)。  
+> 本章描述 v0.7.28 引入的自构建底座（FEATURE_087/088）。
+> 详细 feature 设计：[`features/v0.7.28.md`](features/v0.7.28.md)。
 > DD 这一节固化**跨模块契约**与**生效语义**——实施时以 DD 为准。
 
 ### 14.1 双世界模型

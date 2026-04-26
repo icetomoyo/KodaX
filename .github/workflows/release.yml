@@ -199,8 +199,11 @@ jobs:
         shell: bash
         run: |
           tag="${GITHUB_REF#refs/tags/}"
-          # Find previous tag (if any) by date
-          prev=$(git tag --sort=-creatordate | grep -v "^${tag}$" | head -1 || true)
+          # Find previous canonical release tag by date. `--list 'v*'`
+          # restricts to tags matching the release naming convention,
+          # excluding local experiment tags (e.g. 'v0.7.27-DSready') that
+          # would otherwise pollute the changelog range.
+          prev=$(git tag --list 'v[0-9]*' --sort=-creatordate | grep -v "^${tag}$" | head -1 || true)
           if [ -n "$prev" ]; then
             range="${prev}..${tag}"
           else
