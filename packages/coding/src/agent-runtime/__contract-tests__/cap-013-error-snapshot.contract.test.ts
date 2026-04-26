@@ -80,6 +80,11 @@ describe('CAP-013: error snapshot persistence contract', () => {
   });
 
   it.todo('CAP-013-002: persisted messages on error path are cleaned (CAP-002) — contract is at agent.ts catch-branch call site, not at this function. Breadcrumb added there. Integration test deferred.');
-  it.todo('CAP-013-003: storage failure does NOT mask original error — DEFERRED to P3 (substrate terminal hook wraps in best-effort isolation; today rejection propagates).');
+  // BLOCKS-P3.1-ENTRY: per docs/features/v0.7.29.md §P3 R8, the
+   // `StepCallbacks.persistSession` wrapper introduced by P3.1 MUST
+   // wrap `storage.save` in try/catch and absorb errors. The first
+   // P3.1 PR that introduces the wrapper factory must promote this
+   // todo to an active `it` and verify the wrapper isolates rejections.
+  it.todo('CAP-013-003: storage failure does NOT mask original error — `StepCallbacks.persistSession` MUST wrap storage.save in try/catch (P3.1 entry blocker, see v0.7.29.md §R8).');
   it.todo('CAP-013-004: consecutiveErrors counter increments across runs (loaded from prior errorMetadata, +1 each crash) — integration test territory.');
 });
