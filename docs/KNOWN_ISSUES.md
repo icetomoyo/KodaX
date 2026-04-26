@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-04-24_
+_Last Updated: 2026-04-26_
 
 ---
 
@@ -68,11 +68,178 @@ _Last Updated: 2026-04-24_
 | 121 | High | Resolved | 超长粘贴（>500 字符）导致用户 prompt 在历史中视觉假消失 + 粘贴后 500ms+ 键击延迟 | v0.7.0+ | v0.7.24 | 2026-04-20 | 2026-04-20 |
 | 122 | Medium | Open | edit / multi_edit 错误消息在 v0.7.26 过度精简 — 丢失关键信息载体导致 LLM 恢复失败 | v0.7.26 | - | 2026-04-23 | - |
 | 123 | High | Resolved | Win10 远端 OpenSSH/ConPTY 下 kodax 全屏闪烁 — altScreen 分支 log.clear()+log() 拆成两次独立 stdout.write | 一直存在 | v0.7.27 | 2026-04-24 | 2026-04-24 |
+| 124 | High | Open | AMA 子 Agent dispatch 实际触发率偏低 — Controller fanout gate + H1 工具白名单串联收得过紧 | v0.7.18 | - | 2026-04-26 | - |
+| 125 | Low | Open | Thinking-mode cross-provider replay — 三个不可测 OpenAI-compat 与 anthropic 官方 strict mode 待实证 | v0.7.28 | - | 2026-04-26 | - |
 
 ---
 
 ## Issue Details
 <!-- Full details for each issue - REQUIRED for all issues -->
+---
+### 125: Thinking-mode cross-provider replay — 三个不可测 OpenAI-compat 与 anthropic 官方 strict mode 待实证
+
+- **Priority**: Low
+- **Status**: Open（tracking — 不阻塞发版，记录待实证项以便未来拿到 API key 时回填）
+- **Introduced**: v0.7.28（伴随 deepseek V4 thinking-mode 400 修复 + 跨 provider 切换保护工作落地）
+- **Created**: 2026-04-26
+- **Target Version**: 无固定版本，等可获取的 API key / 实证窗口
+
+#### Background
+
+DeepSeek V4 thinking-mode 修复（v0.7.28）落地了三层保护：
+
+1. **L1**（[openai.ts:807](../packages/ai/src/providers/openai.ts)）：`replayReasoningContent: true` flag 的 provider 把每个 assistant turn 的 `reasoning_content` 字段补齐（默认 `''`），避免 multi-turn 缺字段时 400
+2. **L5**（[anthropic.ts:619-645](../packages/ai/src/providers/anthropic.ts)）：strict signature mode 下，缺签名的跨 provider thinking 块转 `<prior_reasoning>` text 注入 ——目的是切到 anthropic 官方时不丢推理痕迹
+3. **Kimi guard**（[anthropic.ts:704](../packages/ai/src/providers/anthropic.ts)）：assistant tool_use turn 缺 thinking 块时注入 `{ thinking: '...', signature: '' }` 占位
+
+L1 deepseek V4 路径已实证（直接 API probe 重现 400 + 修复）。但还有三个**未独立实证**的项：
+
+#### Unverified Items
+
+| 项 | 风险 | 现状 |
+|---|---|---|
+| `kimi` / `qwen` / `zhipu` OpenAI-compat 是否真的拒绝缺 `reasoning_content` 的 replay | 低 — 同字段约定，假设失败模式同形 | v0.7.28 全部 opt-in `replayReasoningContent: true`（按 deepseek 方案 max-tolerance），但**没有 probe 证明该 flag 必要 / 安全**。若任一家对额外字段 strict，会引入新 regression（罕见 — Chinese OpenAI-compat 普遍 lenient on extra fields） |
+| Anthropic 官方对历史 thinking 块的签名严格度（L5 strict mode 的真实工作场景） | 极低 — 默认 strict flag 仅对 `anthropic` provider 启用 | 未跑过实测；只在理论上有效。需要 ANTHROPIC_API_KEY 跑一次「带跨 provider thinking history → 切到 anthropic.com」端到端验证 |
+| Kimi guard 注入 `{thinking:'...', signature:''}` 是否仍必要 | 低 — 5 个第三方 Anthropic-compat provider（kimi-code / ark-coding / mimo-coding / minimax-coding / zhipu-coding）实测对 (a) 无 thinking 块 / (b) 空 thinking / (c) `'...'` 占位 / (d) 真 thinking 全 LENIENT | guard 当前可能是死代码。删除是独立 cleanup，等再观察 1-2 个版本无人触发后再做 |
+
+#### Reproduction（待补）
+
+各项需要的实证步骤：
+
+1. **kimi/qwen/zhipu OpenAI-compat 严格度**：用对应的 `KIMI_API_KEY` / `DASHSCOPE_API_KEY` / `ZHIPU_API_KEY`（注意：用户当前持有的 `ZHIPU_API_KEY` 是 `zhipu-coding` 的 Anthropic-compat 端点 key，不是 `zhipu` OpenAI-compat 的；`KIMI_API_KEY` 同理与 `kimi-code` 不同）跑 `c:/tmp/openai-compat-tool-calls-probe.mjs`，看 (II.omit) vs (II.empty) 是否复现 deepseek 的 400/200 模式
+2. **Anthropic 官方 L5 strict**：用 `ANTHROPIC_API_KEY` 构造一段含「signature 缺失或不可信的 thinking block」历史，切到 `anthropic` provider 重发，观察是否真按 strict 拒绝 → 验证 `<prior_reasoning>` text 转换路径
+3. **Kimi guard**：监控生产 trace，若 1-2 版本内无人在含 tool_use 的 anthropic-compat 历史上触发该 guard 注入路径，可视为死代码删除
+
+#### Workaround / Acceptance
+
+当前 v0.7.28 接受这三项 known limitation：
+- kimi/qwen/zhipu OpenAI-compat：opt-in 失败的 risk 低（同协议族 lenient on extra fields），收益大（max-tolerance），用户报障再回退
+- Anthropic 官方 L5：默认行为正确（pass-through with 空签名），strict mode 是额外保护层，最坏情况是退回 pre-v0.7.28 行为
+- Kimi guard：保留无害；观察期满后再删
+
+#### Related
+
+- 修复 commit 链：L0 错误史保护（runner-driven.ts:2679）/ L1 reasoning_content always-attach（openai.ts:807）/ L3 sanitize_thinking_and_retry recovery action / L5 cross-provider thinking conversion（anthropic.ts:619-645）/ Kimi guard（anthropic.ts:704）
+- [v0.7.28.md FEATURE_087/088 Risk 节](features/v0.7.28.md) 同一限制条目
+- 经验性证据矩阵：deepseek V4 直接 API probe 已重现 400 + 修复确认；5 个 Anthropic-compat provider 4 种 thinking shape 全 LENIENT；其余维度未测
+
+---
+### 124: AMA 子 Agent dispatch 实际触发率偏低 — Controller fanout gate + H1 工具白名单串联收得过紧
+
+- **Priority**: High
+- **Status**: Open
+- **Introduced**: v0.7.18 / v0.7.19（FEATURE_067 / 047 / 052 落地时定的保守门槛）
+- **Created**: 2026-04-26
+- **Target Version**: v0.7.28（unreleased，与本次 prompt+gate 调整同期）
+
+#### Current Behavior
+
+`dispatch_child_task` 工具（FEATURE_067）和 fan-out scheduler（FEATURE_047）已经在 v0.7.18-v0.7.19 落地并通过测试，但**真实运行中子 Agent 派发频率明显低于预期**。表现：
+
+- H1 普通改代码任务：Generator 看不到 `dispatch_child_task` 工具（白名单未包含），无法并行修改多个独立模块
+- H1 read-only 调研任务：Scout 升级到 H1 后 controller 的 `fanout.admissible` 立刻变 false，Scout fan-out 提示被关闭
+- H2 写多模块任务：`hypothesis-check` fanout class 在 controller 里硬编码 `return false`，Generator 即使在 H2 也得不到 fanout 提示
+- Plan / systemic 任务的调研阶段：`profile === 'tactical'` 一刀切，managed profile 完全没有 fan-out 路径
+
+#### Expected Behavior
+
+子 Agent dispatch 是已交付能力，应当在能提升效率的场景被自然激活：
+
+- H1 read-only 调研：Scout 和 Generator 都能在多目标场景派 read-only child
+- H2 多模块写入：Generator 能在独立模块改动时派 write child（已有 worktree 隔离机制）
+- Plan / systemic 调研：Scout / Planner 能并行调研多个模块作为决策输入
+
+但**不能**强制并行——Rule A/B/C prompt 仍由 LLM 自主判断，gate 只负责"capability available"。
+
+#### Reproduction
+
+观察任意真实多模块任务的 KodaX session：
+
+1. `kodax "审查 packages/ai 和 packages/coding 的安全问题"` —— 触发 H1 review-only 路径，Scout 会 fan-out（这条路径正常）
+2. `kodax "在 packages/ai、packages/agent、packages/coding 三个独立模块各加一个空函数"` —— 触发 H2 write，但 Generator 不会派 write child（hypothesis-check 硬编码 false）
+3. `kodax "重构 task-engine 的 H1/H2 路由逻辑"` —— 触发 managed profile（`requiresBrainstorm + code` 命中），即使是 read-only 调研阶段也拿不到 fan-out 提示
+
+#### Root Cause（已通过 isolated eval 实测确认）
+
+实测证据：`tests/dispatch-prompt-comparison.eval.ts` 在 zhipu-coding / minimax-coding / deepseek 三家 provider 上，**给 LLM 看到 `dispatch_child_task` 工具 + 现有 RULE A/B/C prompt 的隔离环境下，T1（fan-out）任务全部正确触发 3 child，T2（不该派）全部正确不派，T3（context preservation）多数正确**。说明 LLM 知道何时该派——**问题不在 prompt，在 gate**。
+
+现状的 4 层串联 gate（任一层关上即 0 触发）：
+
+**Layer 1 - Controller fanout class gate**（[reasoning.ts:1098-1133](../packages/coding/src/reasoning.ts)）：
+- `evidence-scan`（bugfix/investigation read-only）只在 `harnessProfile === 'H0_DIRECT'` 启用，H1/H2 一律关闭
+- `module-triage`（lookup）同上
+- `hypothesis-check`（write 类）硬编码 `return false`
+- 只有 `finding-validation`（review）永远开
+
+**Layer 2 - Profile filter**（[reasoning.ts:1158](../packages/coding/src/reasoning.ts)）：
+- `profile === 'tactical'` 一刀切。plan / systemic / brainstorm 任务的 managed profile 直接屏蔽 fan-out
+
+**Layer 3 - H1 工具白名单**（[tool-policy.ts:373-394](../packages/coding/src/task-engine/_internal/managed-task/tool-policy.ts)）：
+- 初步分析以为"H1 Generator 在非 review-only 路径下拿不到 `dispatch_child_task`"，但**实地核对后是误判**：
+  - `H1_READONLY_GENERATOR_ALLOWED_TOOLS` 数组本身已经包含 `dispatch_child_task`
+  - 非 review-only / 非 docs-scoped 的默认 H1 路径返回 `undefined`，没有 `allowedTools` 过滤，全工具可用
+  - [runner-driven.ts:2010](../packages/coding/src/task-engine/runner-driven.ts) Generator agent 的 tools 数组无条件包含 `generatorDispatch`
+- 既有测试 `Shard 6d-Q — dispatch_child_task exposed to Scout + Generator only` 已经覆盖这个不变量
+- **本层无 fix 工作**（A3 移除）
+
+**Layer 4 - 缺乏 telemetry**（[dispatch-child-tasks.ts](../packages/coding/src/tools/dispatch-child-tasks.ts)）：
+- 现有 `onToolUseStart` 已记录 LLM 端的"我要派 child"，但缺乏 child 完成的状态 + 耗时聚合
+- 改完无法度量"触发率上升了多少 / 平均耗时 / 有没有过头"
+- 解决路径：复用工具内已有的 `ctx.reportToolProgress`（KodaXEvents 标准事件），在入口和出口加结构化标记行，无需引入新类型
+
+#### Proposed Solution（v0.7.28 切片）
+
+**Prompt 层（最小化）**：
+- A5b：在 Scout 和 Generator 的 RULE C 后追加 "When NOT to use" 否定清单 4 条（参考 Claude Code / opencode 的 negative-bumper 风格）。**已实测无回归**。
+- 不重写 RULE A/B/C 结构（实测说明对国产 coding 模型 RULE 标签是有效 anchor）
+
+**Gate 层（核心修复）**：
+- A1：`evidence-scan` 解锁到 H1 + read-only（去掉 `harnessProfile === 'H0_DIRECT'` 限制）
+- A2：`hypothesis-check` 解锁到 H2_PLAN_EXECUTE_EVAL（去掉硬 `return false`）
+- ~~A3~~：实地核对后**phantom problem**，Generator 一直能 dispatch_child_task，无 fix 工作
+- B1：`profile === 'tactical'` 改为对 read-only fanout class 不限制 profile，对 hypothesis-check 仍要求 tactical（精确放开，避免一刀切）
+
+**Telemetry 层（验证手段）**：
+- A4：在 `dispatch-child-tasks.ts` 入口和出口通过现有 `ctx.reportToolProgress` 发送结构化标记行（`[dispatch] start childId=... readOnly=...` / `[dispatch] end childId=... status=... duration_ms=...`）。**复用既有 KodaXEvents 通道，零新类型、零新 logger**。session transcript 自动持久化，未来 `grep '\[dispatch\]'` 可聚合"改完之后触发率上升了多少 / 哪些任务派了几个 / 平均跑多久 / 是否过头"。
+
+**Provider/model 行为差异（实测发现）**：
+跨 provider × 跨 deepseek 模型档位的 dispatch 行为不完全一致——这是模型本身的特性，不是 prompt 缺陷：
+- `zhipu-coding (glm-5.1)` / `minimax-coding (M2.7)` / `deepseek-v4-flash`：T1 fan-out 全部 100% 直接派 child
+- `deepseek-v4-pro`：60% 直接 fan-out，40% 先 glob 侦察再下一轮 dispatch（v4-pro 是深度推理档，"scope-first" 是合理特性，**不是漏 dispatch**——延迟一轮而已）
+- `deepseek-chat`（已废弃，2026-07-24 deprecate）：40% 直接 fan-out，因模型问题不是 prompt 问题
+T3（context preservation 单 child）所有 provider 都有概率走"先 grep 再 dispatch"的多轮路径——这是合理 strategy（先看搜索结果再决定要不要 child），不是回归。
+
+**Follow-up（不在本次切片）**：
+- B2：Scout opportunity scan 字段（实测说明非紧急）
+- B3：Rule B 的 `≥10 file reads` 数字调整（实测说明 LLM 用语义不用数字，无害）
+- A2 pre-Scout 限制：`buildAmaControllerDecision` 用的是 routing heuristic 预测的 `harnessProfile`（不是 Scout 确认值）。本次依靠 Generator role-prompt 里的 post-Scout 二次 gate（[role-prompt.ts:608-610](../packages/coding/src/task-engine/_internal/managed-task/role-prompt.ts)）兜底，但 controller 信号在"routing 预测 H1 / Scout 升 H2"路径上仍是关闭的——后续若 telemetry 数据显示该路径有真实需求，可考虑改为 post-Scout 重算 `activeFanoutClass`
+
+#### Acceptance Criteria
+
+Issue 124 关闭条件：
+1. v0.7.28 发布后跑过的真实 session 中，`grep '\[dispatch\] start' ~/.kodax/sessions/*/transcript*` 出现非零结果——证明 telemetry 路径通
+2. 上述结果至少覆盖一种之前关闭的路径（H1 read-only 调研 / managed profile 调研 / H2 write hypothesis-check 至少一种）——证明 gate 解锁实际生效
+3. 没有 user-reported "误派 child / token 飙升" 回归——证明 R5 风险（过度并行）未兑现
+
+不需要硬性"触发率提升 X%"指标，因为没有可信的 baseline（改之前 telemetry 不存在）。改完用绝对触发数 + 主观体感判断即可。
+
+#### Context
+
+- [reasoning.ts:1098-1186](../packages/coding/src/reasoning.ts)（fan-out class gate + buildAmaControllerDecision）
+- [tool-policy.ts:362-394](../packages/coding/src/task-engine/_internal/managed-task/tool-policy.ts)（H1 Generator allowedTools）
+- [role-prompt.ts:476-499](../packages/coding/src/task-engine/_internal/managed-task/role-prompt.ts)（Scout dispatch_child_task prompt）
+- [role-prompt.ts:572-595](../packages/coding/src/task-engine/_internal/managed-task/role-prompt.ts)（Generator dispatch_child_task prompt）
+- [tests/dispatch-prompt-comparison.eval.ts](../tests/dispatch-prompt-comparison.eval.ts)（prompt 实测基线，3 providers × 3 variants × 3 tasks）
+- [tests/dispatch-prompt-deepseek-variance.eval.ts](../tests/dispatch-prompt-deepseek-variance.eval.ts)（deepseek 跨模型方差探针：v4-flash 100% / v4-pro 60% / chat 40% 直接 fan-out）
+
+#### References
+
+- FEATURE_067 Child Agent Execution（v0.7.18 完成）
+- FEATURE_047 Invisible Adaptive Parallelism（v0.7.19 完成）
+- FEATURE_052 Dual-Profile AMA Harness and Child Fan-Out Boundaries（v0.7.19 完成）
+- 用户反馈：现实际使用中子 Agent 触发频率明显偏低
+- 跨家 prompt 风格对比：Claude Code（Agent tool, 4 层结构）、opencode（task tool, "Use 1 / Use multiple" 场景对照）、pi-mono（subagent extension, single/parallel/chain mode 参数）
+
 ---
 ### 123: Win10 远端 OpenSSH/ConPTY 下 kodax 全屏闪烁 — altScreen 分支 `log.clear() + log()` 拆成两次独立 stdout.write
 
