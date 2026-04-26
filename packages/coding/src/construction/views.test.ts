@@ -27,7 +27,8 @@ function buildToolArtifact(name: string, version: string): ConstructionArtifact 
       handler: {
         kind: 'script',
         language: 'javascript',
-        code: `export async function handler() { return "${name}@${version}"; }`,
+        // require-handler-signature mandates at least (input, ctx).
+        code: `export async function handler(input, ctx) { return "${name}@${version}"; }`,
       },
     },
     status: 'staged',

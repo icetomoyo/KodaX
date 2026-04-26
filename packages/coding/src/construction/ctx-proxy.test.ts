@@ -156,7 +156,7 @@ describe('createCtxProxy', () => {
     }).toThrow();
   });
 
-  it('forwards the ORIGINAL host ctx (not the frozen proxy) to dispatched builtin', async () => {
+  it('forwards a mutable ctx with shared references (Map/AbortSignal pass through)', async () => {
     let observedCtx: KodaXToolExecutionContext | undefined;
     registerMock('mock-inspect-ctx', async (_input, capturedCtx) => {
       observedCtx = capturedCtx;
@@ -169,9 +169,104 @@ describe('createCtxProxy', () => {
     };
 
     await proxied.tools['mock-inspect-ctx']({});
-    // The dispatched builtin must observe the unmodified host ctx —
-    // not a frozen proxy that would prevent later mutation by builtins
-    // like `read` (which writes into `ctx.backups`).
-    expect(observedCtx).toBe(hostCtx);
+    // The dispatched builtin observes a *fresh* ctx (so depth tracking
+    // can be threaded), but every reference field — backups Map,
+    // executionCwd, etc. — must point at the same instance the host
+    // owns, and the ctx must NOT be frozen (builtins like `read` write
+    // into ctx.backups).
+    expect(observedCtx).not.toBe(hostCtx);
+    expect(Object.isFrozen(observedCtx)).toBe(false);
+    expect(observedCtx?.backups).toBe(hostCtx.backups);
+    expect(observedCtx?.executionCwd).toBe('/host');
+  });
+
+  it('honors hostCtx.planModeBlockCheck for ctx.tools.<name> calls', async () => {
+    // Plan-mode propagation: a constructed handler must not be able to
+    // bypass the parent's plan-mode gate by routing builtin invocations
+    // through ctx.tools.bash. The predicate closes over live parent
+    // state, so toggles propagate.
+    const handler = vi.fn(async () => 'should-not-run');
+    registerMock('mock-write', handler);
+    const planModeBlockCheck = vi.fn((tool: string, _input: Record<string, unknown>) =>
+      tool === 'mock-write' ? 'Write blocked in plan mode.' : null,
+    );
+    const hostCtx = { ...ctx, planModeBlockCheck } as KodaXToolExecutionContext;
+    const proxied = createCtxProxy(hostCtx, { tools: ['mock-write'] }) as {
+      tools: { 'mock-write': (input: unknown) => Promise<string> };
+    };
+
+    const out = await proxied.tools['mock-write']({ path: '/work/x.ts', content: 'evil' });
+    expect(out).toMatch(/plan-mode applies transitively/);
+    expect(out).toMatch(/Write blocked/);
+    expect(handler).not.toHaveBeenCalled();
+    expect(planModeBlockCheck).toHaveBeenCalledWith(
+      'mock-write',
+      { path: '/work/x.ts', content: 'evil' },
+    );
+  });
+
+  it('lets the call through when planModeBlockCheck returns null', async () => {
+    const handler = vi.fn(async () => 'ok');
+    registerMock('mock-readonly', handler);
+    const planModeBlockCheck = vi.fn(() => null);
+    const hostCtx = { ...ctx, planModeBlockCheck } as KodaXToolExecutionContext;
+    const proxied = createCtxProxy(hostCtx, { tools: ['mock-readonly'] }) as {
+      tools: { 'mock-readonly': (input: unknown) => Promise<string> };
+    };
+
+    expect(await proxied.tools['mock-readonly']({})).toBe('ok');
+    expect(handler).toHaveBeenCalled();
+  });
+
+  it('caps constructed→constructed call depth at MAX_CONSTRUCTED_DEPTH', async () => {
+    // Register a faux "constructed" mock by forcing source.kind='constructed'.
+    // Each call recurses into ctx.tools.<self> with the proxy that load-handler
+    // would have built — so we mirror that here by constructing a fresh proxy
+    // per invocation, threading the same hostCtx (which carries the depth).
+    let invocations = 0;
+    const constructedHandler: import('../tools/types.js').ToolHandlerSync = async (_input, capturedCtx) => {
+      invocations += 1;
+      if (invocations > 50) return 'runaway-guard';
+      const childProxy = createCtxProxy(capturedCtx, { tools: ['recursive'] }) as {
+        tools: { recursive: (input: unknown) => Promise<string> };
+      };
+      return childProxy.tools.recursive({});
+    };
+    const unregister = registerTool(
+      {
+        name: 'recursive',
+        description: 'recurses',
+        input_schema: { type: 'object', properties: {} },
+        handler: constructedHandler,
+      },
+      { source: { kind: 'constructed', id: 'mock:recursive', label: 'recursive', version: '1.0.0' } },
+    );
+    unregisters.push(unregister);
+
+    const proxied = createCtxProxy(ctx, { tools: ['recursive'] }) as {
+      tools: { recursive: (input: unknown) => Promise<string> };
+    };
+    const out = await proxied.tools.recursive({});
+    expect(out).toMatch(/depth limit/);
+    // Outer call (depth 0→1) + 5 nested before the gate fires = 6 invocations.
+    expect(invocations).toBeLessThanOrEqual(6);
+  });
+
+  it('does NOT count constructed→builtin transitions toward the depth limit', async () => {
+    // A constructed tool calling a builtin tool many times should never
+    // hit the depth gate (only constructed→constructed transitions do).
+    let builtinCalls = 0;
+    registerMock('cheap-builtin', async () => {
+      builtinCalls += 1;
+      return 'b';
+    });
+
+    const proxied = createCtxProxy(ctx, { tools: ['cheap-builtin'] }) as {
+      tools: { 'cheap-builtin': (input: unknown) => Promise<string> };
+    };
+    for (let i = 0; i < 20; i += 1) {
+      await proxied.tools['cheap-builtin']({});
+    }
+    expect(builtinCalls).toBe(20);
   });
 });

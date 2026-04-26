@@ -100,7 +100,7 @@ const replConstructionPolicy: ConstructionPolicy = async (artifact) => {
  */
 export async function bootstrapConstructionRuntime(
   cwd: string,
-): Promise<{ loaded: number; failed: number }> {
+): Promise<{ loaded: number; failed: number; tampered: number }> {
   configureRuntime({
     cwd,
     policy: replConstructionPolicy,

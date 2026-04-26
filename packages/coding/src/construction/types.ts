@@ -91,6 +91,18 @@ export interface ConstructionArtifact {
   testedAt?: number;
   activatedAt?: number;
   revokedAt?: number;
+  /**
+   * SHA-256 of `JSON.stringify(content)` captured at activate time.
+   * `rehydrateActiveArtifacts()` recomputes and compares — a mismatch
+   * indicates the manifest was edited between activation and the next
+   * boot (naive cross-session tampering, e.g. an LLM rewriting the .json
+   * via the Write tool without recomputing the hash). Mismatched
+   * artifacts are skipped at rehydrate with a stderr warning. This is
+   * NOT a defense against a coordinated attacker who recomputes the
+   * hash; the threat model is single-user CLI integrity, not multi-user
+   * supply chain.
+   */
+  contentHash?: string;
 }
 
 /**

@@ -10,6 +10,7 @@ import {
   activate,
   revoke,
   listArtifacts,
+  readArtifact,
   rehydrateActiveArtifacts,
   _resetRuntimeForTesting,
 } from './index.js';
@@ -84,12 +85,15 @@ describe('stage()', () => {
 });
 
 describe('testArtifact()', () => {
-  it('returns ok=true and writes testedAt for a valid tool', async () => {
+  it('returns ok=true and persists testedAt to disk for a valid tool', async () => {
     const handle = await stage(buildToolArtifact());
     const result = await testArtifact(handle);
     expect(result.ok).toBe(true);
     expect(result.errors).toBeUndefined();
-    expect(handle.artifact.testedAt).toBeGreaterThan(0);
+    // Disk is the source of truth — testedAt is persisted, not mutated
+    // onto the in-memory handle.artifact (immutable update).
+    const persisted = await readArtifact('echo', '1.0.0');
+    expect(persisted?.testedAt).toBeGreaterThan(0);
   });
 
   it('rejects non-javascript handler language', async () => {
@@ -120,25 +124,32 @@ describe('testArtifact()', () => {
     expect(result.errors?.[0]).toMatch(/non-empty string/);
   });
 
-  it('reports handler materialize failures (module-load throws)', async () => {
+  it('does NOT import the handler during test() (top-level effects must wait for policy gate)', async () => {
+    // A handler whose top-level body throws would crash test() if loadHandler
+    // ran here. With the v0.7.28 ordering fix, test() is static-only —
+    // import (and thus top-level execution) is deferred to activate(),
+    // which runs only after the policy verdict. Here we confirm test()
+    // returns ok=true on a body that WOULD fail to import.
     const base = buildToolArtifact();
     const artifact = {
       ...base,
+      name: 'static-only-test',
       content: {
         ...base.content,
         handler: {
           kind: 'script' as const,
           language: 'javascript' as const,
-          // Valid signature (passes ast-rules) but the module body throws
-          // at import time, so loadHandler() will reject.
-          code: 'export async function handler(input, ctx) { return "ok"; }\nthrow new Error("module-load failure");',
+          // Valid signature; throws at top level if imported.
+          code: 'export async function handler(input, ctx) { return "ok"; }\nthrow new Error("must NOT execute during test()");',
         },
       },
     };
     const handle = await stage(artifact);
     const result = await testArtifact(handle);
-    expect(result.ok).toBe(false);
-    expect(result.errors?.[0]).toMatch(/Handler materialize failed/);
+    expect(result.ok).toBe(true);
+    // Persisted testedAt confirms the AST/schema chain ran to completion.
+    const persisted = await readArtifact('static-only-test', '1.0.0');
+    expect(persisted?.testedAt).toBeGreaterThan(0);
   });
 });
 
@@ -152,19 +163,25 @@ describe('activate() + revoke()', () => {
     expect(registration?.source.kind).toBe('constructed');
     expect(registration?.source.version).toBe('1.0.0');
     expect(registration?.source.manifestPath).toMatch(/reg-test[\\/]1\.0\.0\.json$/);
-    expect(handle.artifact.status).toBe('active');
-    expect(handle.artifact.activatedAt).toBeGreaterThan(0);
+    // Disk is source of truth (DD §14.1) — activate() does not mutate the
+    // in-memory handle.artifact, the persisted record carries the new state.
+    const persisted = await readArtifact('reg-test', '1.0.0');
+    expect(persisted?.status).toBe('active');
+    expect(persisted?.activatedAt).toBeGreaterThan(0);
+    expect(persisted?.contentHash).toMatch(/^[a-f0-9]{64}$/);
   });
 
   it('throws when policy returns reject', async () => {
     configureRuntime({ cwd: tmpRoot, policy: async () => 'reject' });
     const handle = await stage(buildToolArtifact({ name: 'rejected' }));
+    await testArtifact(handle);
     await expect(activate(handle)).rejects.toThrow(/policy rejected/i);
   });
 
   it("throws on policy 'ask-user' (Phase 1 has no built-in prompt UI)", async () => {
     configureRuntime({ cwd: tmpRoot, policy: async () => 'ask-user' });
     const handle = await stage(buildToolArtifact({ name: 'ask-user-fail' }));
+    await testArtifact(handle);
     await expect(activate(handle)).rejects.toThrow(/'ask-user'/);
   });
 
@@ -201,13 +218,47 @@ describe('activate() + revoke()', () => {
     await activate(handle);
     await revoke('lifecycle-guard', '1.0.0');
 
-    // handle.artifact.status is now 'revoked' (mutated in place by revoke()
-    // since stage returns a reference to the same artifact object).
-    // Wait — actually revoke() reads from disk, not the in-memory handle.
-    // Manually flip status to mirror what a fresh-load handle would show.
-    handle.artifact.status = 'revoked';
-
+    // activate() now re-reads from disk, so it sees the revoked status
+    // regardless of what the in-memory handle reports.
     await expect(activate(handle)).rejects.toThrow(/revoked.*terminal/);
+  });
+
+  it('refuses to activate an artifact that has not passed test() (skip-test bypass)', async () => {
+    const handle = await stage(buildToolArtifact({ name: 'skip-test' }));
+    // Deliberately skip testArtifact(handle) — simulate an LLM that calls
+    // stage_tool then activate_tool directly.
+    await expect(activate(handle)).rejects.toThrow(/has not passed test/);
+  });
+
+  it('throws when activate is called for a name+version that is not on disk', async () => {
+    const handle = {
+      artifact: buildToolArtifact({ name: 'not-on-disk', version: '9.9.9' }),
+      stagedAt: Date.now(),
+    };
+    await expect(activate(handle)).rejects.toThrow(/not found on disk/);
+  });
+
+  it('surfaces handler module-load failures at activate() (after policy gate)', async () => {
+    // A handler with a syntactically valid signature whose top-level body
+    // throws on import. test() is static-only — the failure surfaces only
+    // at activate() time, AFTER the policy gate has approved.
+    const base = buildToolArtifact();
+    const artifact = {
+      ...base,
+      name: 'late-fail',
+      content: {
+        ...base.content,
+        handler: {
+          kind: 'script' as const,
+          language: 'javascript' as const,
+          code: 'export async function handler(input, ctx) { return "ok"; }\nthrow new Error("module-load failure");',
+        },
+      },
+    };
+    const handle = await stage(artifact);
+    const test1 = await testArtifact(handle);
+    expect(test1.ok).toBe(true);
+    await expect(activate(handle)).rejects.toThrow(/module-load failure/);
   });
 });
 
@@ -355,24 +406,81 @@ describe('stage() version immutability', () => {
 
     await expect(
       stage(buildToolArtifact({ name: 'immut', version: '1.0.0' })),
-    ).rejects.toThrow(/active version already exists/);
+    ).rejects.toThrow(/manifest already exists/);
   });
 
-  it('allows re-staging when prior status is staged (not yet activated)', async () => {
+  it('refuses to re-stage at the same version when prior status is staged (cache integrity)', async () => {
     await stage(buildToolArtifact({ name: 'restage-staged', version: '1.0.0' }));
-    // Second stage at the same version should succeed (prior status='staged').
-    const handle = await stage(buildToolArtifact({ name: 'restage-staged', version: '1.0.0' }));
-    expect(handle.artifact.status).toBe('staged');
+    // Same version is immutable on disk regardless of status — the ESM
+    // module cache keys by file URL, so re-writing the .js silently
+    // shadows previously-loaded code. Bump semver to update.
+    await expect(
+      stage(buildToolArtifact({ name: 'restage-staged', version: '1.0.0' })),
+    ).rejects.toThrow(/manifest already exists/);
   });
 
-  it('allows re-staging at the same version after revoke (caller accepts cache risk)', async () => {
+  it('refuses to re-stage at the same version after revoke (cache integrity)', async () => {
     const handle = await stage(buildToolArtifact({ name: 'restage-after-revoke', version: '1.0.0' }));
     await testArtifact(handle);
     await activate(handle);
     await revoke('restage-after-revoke', '1.0.0');
-    // Now status === 'revoked'; re-stage permitted (caller has explicitly revoked).
-    const next = await stage(buildToolArtifact({ name: 'restage-after-revoke', version: '1.0.0' }));
-    expect(next.artifact.status).toBe('staged');
+    // Even after revoke the manifest+.js remain on disk for audit, and the
+    // ESM module cache still holds the old export. The only safe-by-
+    // construction update is to bump the semver.
+    await expect(
+      stage(buildToolArtifact({ name: 'restage-after-revoke', version: '1.0.0' })),
+    ).rejects.toThrow(/manifest already exists/);
+  });
+
+  it('clears stale lifecycle timestamps even if caller threaded them in', async () => {
+    // Defends against an LLM-supplied artifact pre-stamping testedAt to
+    // bypass the activate() gate.
+    const tampered = buildToolArtifact({
+      name: 'stamp-defense',
+      version: '1.0.0',
+      testedAt: Date.now(),
+      activatedAt: Date.now(),
+    });
+    await stage(tampered);
+    const persisted = await readArtifact('stamp-defense', '1.0.0');
+    expect(persisted?.testedAt).toBeUndefined();
+    expect(persisted?.activatedAt).toBeUndefined();
+    expect(persisted?.revokedAt).toBeUndefined();
+  });
+});
+
+describe('stage() identifier validation', () => {
+  it.each([
+    '../escape',
+    '..\\escape',
+    'foo/../bar',
+    'foo/bar',
+    'foo\\bar',
+    '.dot-prefix',
+    'sp ace',
+    'ctrl\x00null',
+    '',
+  ])('rejects unsafe name %j', async (badName) => {
+    await expect(
+      stage(buildToolArtifact({ name: badName, version: '1.0.0' })),
+    ).rejects.toThrow(/Invalid artifact\.name|≤ 128 chars/);
+  });
+
+  it.each([
+    '../1.0.0',
+    'foo/bar',
+    '..',
+  ])('rejects unsafe version %j', async (badVersion) => {
+    await expect(
+      stage(buildToolArtifact({ name: 'ok', version: badVersion })),
+    ).rejects.toThrow(/Invalid artifact\.version/);
+  });
+
+  it('rejects names longer than 128 chars', async () => {
+    const tooLong = 'a'.repeat(129);
+    await expect(
+      stage(buildToolArtifact({ name: tooLong, version: '1.0.0' })),
+    ).rejects.toThrow(/≤ 128 chars/);
   });
 });
 
@@ -472,5 +580,67 @@ describe('rehydrateActiveArtifacts()', () => {
     } finally {
       warnSpy.mockRestore();
     }
+  });
+
+  it('refuses to rehydrate when contentHash mismatches (cross-session manifest tampering)', async () => {
+    const handle = await stage(buildToolArtifact({ name: 'tampered', version: '1.0.0' }));
+    await testArtifact(handle);
+    await activate(handle);
+
+    // Simulate an LLM (or attacker) editing the persisted manifest's
+    // handler.code via the Write tool but NOT recomputing contentHash.
+    const manifestPath = path.join(tmpRoot, '.kodax', 'constructed', 'tools', 'tampered', '1.0.0.json');
+    const persisted = JSON.parse(await fs.readFile(manifestPath, 'utf8')) as ConstructionArtifact;
+    const tampered: ConstructionArtifact = {
+      ...persisted,
+      content: {
+        ...persisted.content,
+        handler: {
+          ...persisted.content.handler,
+          code: 'export async function handler(input, ctx) { return "tampered code"; }',
+        },
+      },
+    };
+    // Note: do NOT recompute contentHash — this is the realistic naive
+    // tampering scenario the fingerprint defends against.
+    await fs.writeFile(manifestPath, JSON.stringify(tampered, null, 2), 'utf8');
+
+    _resetRuntimeForTesting();
+    configureRuntime({ cwd: tmpRoot });
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const result = await rehydrateActiveArtifacts();
+      expect(result.loaded).toBe(0);
+      expect(result.tampered).toBe(1);
+      expect(getRegisteredToolDefinition('tampered')).toBeUndefined();
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/contentHash mismatch/));
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('rehydrates artifacts written before contentHash existed (legacy compat)', async () => {
+    // Simulate a manifest persisted by an older KodaX version (pre-v0.7.28
+    // hardening) — no contentHash field at all. Must still rehydrate so
+    // upgrades do not break previously-approved tools.
+    const dir = path.join(tmpRoot, '.kodax', 'constructed', 'tools', 'legacy', '1.0.0.json');
+    await fs.mkdir(path.dirname(dir), { recursive: true });
+    const legacy: ConstructionArtifact = {
+      ...buildToolArtifact({ name: 'legacy', version: '1.0.0' }),
+      status: 'active',
+      testedAt: Date.now() - 1000,
+      activatedAt: Date.now() - 500,
+      // no contentHash
+    };
+    await fs.writeFile(dir, JSON.stringify(legacy, null, 2), 'utf8');
+
+    _resetRuntimeForTesting();
+    configureRuntime({ cwd: tmpRoot });
+
+    const result = await rehydrateActiveArtifacts();
+    expect(result.loaded).toBe(1);
+    expect(result.tampered).toBe(0);
+    expect(getRegisteredToolDefinition('legacy')).toBeDefined();
   });
 });

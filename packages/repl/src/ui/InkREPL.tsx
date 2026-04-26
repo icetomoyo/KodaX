@@ -7448,9 +7448,12 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
   try {
     const { bootstrapConstructionRuntime } = await import('../common/construction-bootstrap.js');
     const construction = await bootstrapConstructionRuntime(gitRoot ?? process.cwd());
-    if (construction.loaded > 0 || construction.failed > 0) {
+    if (construction.loaded > 0 || construction.failed > 0 || construction.tampered > 0) {
       const failedSuffix = construction.failed > 0 ? `; ${construction.failed} failed (see warnings above)` : '';
-      console.log(chalk.dim(`[Constructed] Rehydrated ${construction.loaded} active tool(s)${failedSuffix}.`));
+      const tamperedSuffix = construction.tampered > 0
+        ? `; ${construction.tampered} skipped due to manifest contentHash mismatch — re-stage and re-activate to re-approve`
+        : '';
+      console.log(chalk.dim(`[Constructed] Rehydrated ${construction.loaded} active tool(s)${failedSuffix}${tamperedSuffix}.`));
     }
   } catch (err) {
     // Bootstrap failure must not break the REPL; log and proceed without
