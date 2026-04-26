@@ -257,4 +257,119 @@ describe('anthropic reasoning capability', () => {
       { toolId: 'tool_1' },
     );
   });
+
+  // v0.7.28: Anthropic streams the redacted_thinking payload's `data`
+  // field on `content_block_start` itself (no deltas, no `data` on the
+  // stop event). Earlier code captured nothing at start and tried to
+  // read `event.content_block.data` at stop — which is always undefined,
+  // silently dropping the redacted reasoning. Verify the data reaches
+  // thinkingBlocks intact.
+  it('preserves redacted_thinking data captured at content_block_start', async () => {
+    const REDACTED_PAYLOAD = 'opaque-server-encoded-thinking-blob-XYZ';
+    const stream: AsyncIterable<unknown> = {
+      [Symbol.asyncIterator]() {
+        let i = 0;
+        const events = [
+          { type: 'message_start', message: { usage: {} } },
+          {
+            type: 'content_block_start',
+            content_block: {
+              type: 'redacted_thinking',
+              data: REDACTED_PAYLOAD,
+            },
+          },
+          // No deltas — redacted_thinking arrives as a single payload on start.
+          { type: 'content_block_stop' },
+          { type: 'message_stop' },
+        ];
+        return {
+          next: async () => {
+            if (i >= events.length) return { done: true, value: undefined };
+            const value = events[i];
+            i += 1;
+            return { done: false, value };
+          },
+        };
+      },
+    };
+
+    const create = vi.fn().mockResolvedValue(stream);
+    const provider = new TestAnthropicProvider('native-budget', {
+      messages: { create },
+    });
+    const result = await provider.stream(MESSAGES, TOOLS, 'system', reasoning);
+
+    expect(result.thinkingBlocks).toEqual([
+      { type: 'redacted_thinking', data: REDACTED_PAYLOAD },
+    ]);
+  });
+
+  it('skips redacted_thinking blocks with empty payload (server quirk)', async () => {
+    // Defensive: if the server emits redacted_thinking with no `data`,
+    // there's nothing meaningful to replay. Skip the empty block rather
+    // than push one — keeps wire-format invariants clean.
+    const stream: AsyncIterable<unknown> = {
+      [Symbol.asyncIterator]() {
+        let i = 0;
+        const events = [
+          { type: 'message_start', message: { usage: {} } },
+          { type: 'content_block_start', content_block: { type: 'redacted_thinking' } },
+          { type: 'content_block_stop' },
+          { type: 'message_stop' },
+        ];
+        return {
+          next: async () => {
+            if (i >= events.length) return { done: true, value: undefined };
+            const value = events[i];
+            i += 1;
+            return { done: false, value };
+          },
+        };
+      },
+    };
+
+    const create = vi.fn().mockResolvedValue(stream);
+    const provider = new TestAnthropicProvider('native-budget', {
+      messages: { create },
+    });
+    const result = await provider.stream(MESSAGES, TOOLS, 'system', reasoning);
+    expect(result.thinkingBlocks).toEqual([]);
+  });
+
+  it('isolates redacted_thinking state across consecutive blocks', async () => {
+    // Two redacted_thinking blocks back-to-back must not bleed state —
+    // the second block's data must not leak into the first, and an empty
+    // second block must not duplicate the first.
+    const stream: AsyncIterable<unknown> = {
+      [Symbol.asyncIterator]() {
+        let i = 0;
+        const events = [
+          { type: 'message_start', message: { usage: {} } },
+          { type: 'content_block_start', content_block: { type: 'redacted_thinking', data: 'first' } },
+          { type: 'content_block_stop' },
+          { type: 'content_block_start', content_block: { type: 'redacted_thinking', data: 'second' } },
+          { type: 'content_block_stop' },
+          { type: 'message_stop' },
+        ];
+        return {
+          next: async () => {
+            if (i >= events.length) return { done: true, value: undefined };
+            const value = events[i];
+            i += 1;
+            return { done: false, value };
+          },
+        };
+      },
+    };
+
+    const create = vi.fn().mockResolvedValue(stream);
+    const provider = new TestAnthropicProvider('native-budget', {
+      messages: { create },
+    });
+    const result = await provider.stream(MESSAGES, TOOLS, 'system', reasoning);
+    expect(result.thinkingBlocks).toEqual([
+      { type: 'redacted_thinking', data: 'first' },
+      { type: 'redacted_thinking', data: 'second' },
+    ]);
+  });
 });

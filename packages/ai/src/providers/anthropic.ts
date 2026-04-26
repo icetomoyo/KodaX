@@ -187,6 +187,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
       let currentText = '';
       let currentThinking = '';
       let currentThinkingSignature = '';
+      let currentRedactedData = '';
       let currentToolId = '';
       let currentToolName = '';
       let currentToolInput = '';
@@ -292,7 +293,14 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
             currentThinking = '';
             currentThinkingSignature = (block as any).signature ?? '';
           } else if (block.type === 'redacted_thinking') {
+            // The redacted-thinking payload (`data`) is a single opaque
+            // string carried on `content_block_start` itself — it does not
+            // arrive via deltas. Capture it here; `content_block_stop`
+            // will not re-emit it (the stop event has no `content_block`
+            // field). Defaults to '' for forward-compat with future
+            // server payloads that omit the field.
             currentBlockType = 'redacted_thinking';
+            currentRedactedData = (block as any).data ?? '';
           } else if (block.type === 'text') {
             currentText = '';
           } else if (block.type === 'tool_use') {
@@ -326,10 +334,15 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
               streamOptions?.onThinkingEnd?.(currentThinking);
             }
           } else if (currentBlockType === 'redacted_thinking') {
-            const block = (event as any).content_block;
-            if (block?.data) {
-              thinkingBlocks.push({ type: 'redacted_thinking', data: block.data });
+            // Read from state captured at content_block_start — the stop
+            // event does not carry the `data` field in Anthropic's stream
+            // protocol. Empty payload means the server emitted a
+            // redacted_thinking block with no data, which is meaningless
+            // to replay; skip rather than push an empty block.
+            if (currentRedactedData) {
+              thinkingBlocks.push({ type: 'redacted_thinking', data: currentRedactedData });
             }
+            currentRedactedData = '';
           } else if (currentBlockType === 'text') {
             if (currentText) textBlocks.push({ type: 'text', text: currentText });
           } else if (currentBlockType === 'tool_use') {
