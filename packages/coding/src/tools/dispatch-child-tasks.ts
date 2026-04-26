@@ -46,6 +46,24 @@ export async function* toolDispatchChildTask(
   if (role === 'scout' && !readOnly) {
     return `[Tool Error] ${TOOL_NAME}: Scout can only dispatch read-only tasks. Write fan-out is available to Generator only.`;
   }
+  // Issue 124 (v0.7.28) A4: structured dispatch telemetry. Reuses the existing
+  // reportToolProgress channel (KodaXEvents.onToolProgress) — no new event
+  // type, no new logger. Lines are persisted in the REPL transcript and can
+  // be aggregated later via `grep '\[dispatch\]'`. The end line is paired
+  // via try/finally so an executor exception still produces the marker
+  // (with status=error) — keeping start/end pairs balanced for grep-based
+  // aggregation.
+  const dispatchStartTs = Date.now();
+  ctx.reportToolProgress?.(
+    `[dispatch] start childId=${childId} role=${role ?? 'unknown'} readOnly=${readOnly}`,
+  );
+  let dispatchEndStatus = 'error';
+  const emitDispatchEnd = (): void => {
+    const dispatchDurationMs = Date.now() - dispatchStartTs;
+    ctx.reportToolProgress?.(
+      `[dispatch] end childId=${childId} status=${dispatchEndStatus} duration_ms=${dispatchDurationMs}`,
+    );
+  };
   const bundle: KodaXChildContextBundle = {
     id: childId,
     fanoutClass: 'evidence-scan' as KodaXAmaFanoutClass,
@@ -87,27 +105,38 @@ export async function* toolDispatchChildTask(
     planModeBlockCheck: ctx.planModeBlockCheck,
   };
 
-  // --- Execute single child ---
-  const result = await executeChildAgents([bundle], ctx, options);
+  try {
+    // --- Execute single child ---
+    const result = await executeChildAgents([bundle], ctx, options);
 
-  // --- Register write worktrees for Evaluator diff injection ---
-  if (result.worktreePaths && result.worktreePaths.size > 0 && ctx.registerChildWriteWorktrees) {
-    ctx.registerChildWriteWorktrees(result.worktreePaths);
+    // --- Register write worktrees for Evaluator diff injection ---
+    if (result.worktreePaths && result.worktreePaths.size > 0 && ctx.registerChildWriteWorktrees) {
+      ctx.registerChildWriteWorktrees(result.worktreePaths);
+    }
+
+    // --- Yield completion progress ---
+    const childResult = result.results[0];
+    const status = childResult?.status ?? 'failed';
+    // Issue 124 (v0.7.28) A4: capture the resolved status for the paired
+    // [dispatch] end line emitted by the finally block.
+    dispatchEndStatus = status;
+    yield { stage: 'done', message: `Child "${childId}" → ${status}` };
+
+    // --- Return final result ---
+    if (!childResult || childResult.status === 'failed') {
+      return `Child task "${childId}" failed: ${childResult?.summary?.slice(0, 1000) ?? 'no result'}`;
+    }
+
+    const finding = result.mergedFindings[0];
+    if (finding) {
+      return finding.evidence.join('\n').slice(0, MAX_FINDING_CHARS);
+    }
+    return childResult.summary.slice(0, MAX_FINDING_CHARS);
+  } finally {
+    // Issue 124 (v0.7.28) A4: always emit the [dispatch] end line so grep
+    // aggregation sees balanced start/end pairs even on executor failure.
+    // dispatchEndStatus stays 'error' if executeChildAgents threw before
+    // we could observe the per-child status.
+    emitDispatchEnd();
   }
-
-  // --- Yield completion progress ---
-  const childResult = result.results[0];
-  const status = childResult?.status ?? 'failed';
-  yield { stage: 'done', message: `Child "${childId}" → ${status}` };
-
-  // --- Return final result ---
-  if (!childResult || childResult.status === 'failed') {
-    return `Child task "${childId}" failed: ${childResult?.summary?.slice(0, 1000) ?? 'no result'}`;
-  }
-
-  const finding = result.mergedFindings[0];
-  if (finding) {
-    return finding.evidence.join('\n').slice(0, MAX_FINDING_CHARS);
-  }
-  return childResult.summary.slice(0, MAX_FINDING_CHARS);
 }

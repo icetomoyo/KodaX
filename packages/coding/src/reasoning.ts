@@ -1115,19 +1115,38 @@ function isAmaFanoutClassActive(
     case 'finding-validation':
       return true;
     case 'evidence-scan':
+      // Issue 124 (v0.7.28): A1 — drop the H0_DIRECT gate so H1 read-only
+      // investigation can also fan out. The earlier H0-only restriction made
+      // child dispatch effectively impossible once Scout escalated to H1.
       return decision.mutationSurface === 'read-only'
-        && decision.harnessProfile === 'H0_DIRECT'
         && (
           decision.primaryTask === 'bugfix'
           || decision.recommendedMode === 'investigation'
         );
     case 'module-triage':
+      // Issue 124 (v0.7.28): A1 — same H0 gate removal for lookup tasks.
       return decision.mutationSurface === 'read-only'
-        && decision.harnessProfile === 'H0_DIRECT'
         && decision.executionPattern === 'checked-direct'
         && decision.primaryTask === 'lookup';
     case 'hypothesis-check':
-      return false;
+      // Issue 124 (v0.7.28): A2 — enable write-side hypothesis fan-out in H2,
+      // where worktree isolation + Evaluator review already exist. H1/H0 stay
+      // closed because they lack the merge-review story.
+      //
+      // Note on harnessProfile timing: at buildAmaControllerDecision time this
+      // is the pre-Scout *routing heuristic prediction*, not the Scout-confirmed
+      // value. The actual runtime gate for write fan-out lives in the
+      // Generator role-prompt (`role-prompt.ts:609` reads decision.harnessProfile
+      // via lazy thunk → post-Scout value). This controller-side check therefore
+      // affects fanout-scheduler signals + tactics array + reasoning artifact
+      // text, not the LLM's actual ability to dispatch write children. When
+      // routing predicts H2 but Scout downgrades to H1, the prompt-side gate
+      // closes write dispatch correctly.
+      return decision.harnessProfile === 'H2_PLAN_EXECUTE_EVAL'
+        && (
+          decision.primaryTask === 'bugfix'
+          || decision.recommendedMode === 'investigation'
+        );
     default:
       return false;
   }
@@ -1155,7 +1174,20 @@ export function buildAmaControllerDecision(
     );
   const profile: KodaXAmaProfile = managed ? 'managed' : 'tactical';
   const fanoutClass = resolveAmaFanoutClass(decision);
-  const activeFanoutClass = profile === 'tactical' && isAmaFanoutClassActive(fanoutClass, decision)
+  // Issue 124 (v0.7.28): B1 — drop the blanket `profile === 'tactical'` filter
+  // for read-only fan-out classes. Plan / systemic / brainstorm tasks (managed
+  // profile) often need parallel investigation across modules during their
+  // scoping phase; only write-side hypothesis-check still requires tactical to
+  // keep H2-only worktree-merge semantics intact.
+  const isReadOnlyFanoutClass = fanoutClass === 'finding-validation'
+    || fanoutClass === 'evidence-scan'
+    || fanoutClass === 'module-triage';
+  // For hypothesis-check (write class), isReadOnlyFanoutClass is false, so
+  // profileGateOpen only opens when profile === 'tactical'. Managed-profile
+  // tasks therefore keep write fan-out blocked here (H2 worktree-merge
+  // semantics live in the tactical path's H2 prompt + Evaluator pipeline).
+  const profileGateOpen = isReadOnlyFanoutClass || profile === 'tactical';
+  const activeFanoutClass = profileGateOpen && isAmaFanoutClassActive(fanoutClass, decision)
     ? fanoutClass
     : undefined;
   const fanoutAdmissible = Boolean(activeFanoutClass);
@@ -1171,12 +1203,12 @@ export function buildAmaControllerDecision(
     ? 'No high-value shard class was detected for this task.'
     : !fanoutAdmissible
       ? fanoutClass === 'hypothesis-check'
-        ? 'Hypothesis-check shards remain defined for future rollout, but mutation-side child fan-out is intentionally disabled for now.'
+        ? 'Hypothesis-check shards activate only in H2_PLAN_EXECUTE_EVAL where worktree isolation and Evaluator review can merge parallel write children.'
         : fanoutClass === 'evidence-scan'
-          ? 'Evidence-scan shards only activate for tactical H0 read-only investigation in the current rollout.'
+          ? 'Evidence-scan shards activate for read-only investigation tasks; this task did not match the bugfix / investigation signal.'
         : fanoutClass === 'module-triage'
-            ? 'Module-triage shards only activate for tactical H0 read-only lookup in the current rollout.'
-        : 'Child fan-out stays disabled because this rollout only activates read-only tactical shard classes that are already backed by runtime support.'
+            ? 'Module-triage shards activate for read-only lookup with checked-direct execution; this task did not match.'
+        : 'Child fan-out stays disabled because no eligible shard class matched this routing decision.'
       : activeFanoutClass === 'finding-validation'
         ? 'Review work benefits from finding-level validation shards to keep the main context focused on synthesis.'
         : activeFanoutClass === 'evidence-scan'

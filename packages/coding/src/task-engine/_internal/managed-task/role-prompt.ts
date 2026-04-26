@@ -494,6 +494,16 @@ export function createRolePrompt(
           '  Do it yourself with parallel tool calls (glob + grep + read together when independent).',
           '  A single child for work that fits this rule is pure overhead — do not dispatch.',
           '',
+          // Issue 124 (v0.7.28) A5b: explicit negative-bumper list. Mirrors
+          // the "When NOT to use" pattern used by Claude Code\'s Agent tool
+          // and opencode\'s task tool — concrete refusal cases reduce
+          // accidental dispatch on simple lookups.
+          'When NOT to use dispatch_child_task (do these directly instead):',
+          '  - Reading a known specific file path → use read_file directly.',
+          '  - Searching for a known symbol like `class Foo` or `function bar` → use grep_files.',
+          '  - Looking at 2–3 files you have already identified → parallel read_file calls.',
+          '  - Work where you will keep the raw output in your own context anyway.',
+          '',
           'TIMING: decide early. Children\'s findings can inform your emit_scout_verdict harness choice. Dispatching after you have already deep-dived is wasted work.',
           'Scope: Scout dispatches are readOnly. Write fan-out is Generator-only.',
         ].join('\n'),
@@ -588,6 +598,15 @@ export function createRolePrompt(
           '',
           'RULE C — Default (targets known, output small, single-round)',
           '  Do it yourself with parallel tool calls. A single child for work that fits this rule is pure overhead.',
+          '',
+          // Issue 124 (v0.7.28) A5b: same negative bumper list as Scout, so
+          // Generator mid-execution dispatch decisions follow identical
+          // refusal cases.
+          'When NOT to use dispatch_child_task (do these directly instead):',
+          '  - Reading a known specific file path → use read_file directly.',
+          '  - Searching for a known symbol like `class Foo` or `function bar` → use grep_files.',
+          '  - Looking at 2–3 files you have already identified → parallel read_file calls.',
+          '  - Work where you will keep the raw output in your own context anyway.',
           '',
           decision.harnessProfile === 'H2_PLAN_EXECUTE_EVAL' && !isTerminalAuthority
             ? 'WRITE FAN-OUT: In this H2 run you may call with readOnly=false when modifying independent modules. Each write child runs in an isolated git worktree; the Evaluator reviews all diffs before merging.'

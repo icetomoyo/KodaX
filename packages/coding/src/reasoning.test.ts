@@ -541,7 +541,11 @@ describe('reasoning reroute', () => {
     expect(decision.tactics).not.toContain('planning-pass');
   });
 
-  it('keeps managed-profile investigation evidence-scan fan-out inactive in this rollout', () => {
+  it('exposes managed-profile read-only investigation evidence-scan fan-out (Issue 124, B1)', () => {
+    // v0.7.28 Issue 124: managed profile (plan / systemic / brainstorm tasks)
+    // can now use read-only fan-out classes during their scoping phase. The
+    // earlier blanket `profile === 'tactical'` filter was masking real
+    // parallel-investigation opportunities on systemic work.
     const decision = buildAmaControllerDecision(
       {
         primaryTask: 'bugfix',
@@ -557,14 +561,14 @@ describe('reasoning reroute', () => {
         confidence: 0.88,
         workIntent: 'new',
         requiresBrainstorm: false,
-        reason: 'Managed investigation should not activate read-only fan-out in this rollout.',
+        reason: 'Managed investigation can now activate read-only evidence-scan fan-out for parallel scoping.',
       },
     );
 
     expect(decision.profile).toBe('managed');
-    expect(decision.fanout.admissible).toBe(false);
-    expect(decision.fanout.class).toBeUndefined();
-    expect(decision.tactics).not.toContain('child-fanout');
+    expect(decision.fanout.admissible).toBe(true);
+    expect(decision.fanout.class).toBe('evidence-scan');
+    expect(decision.tactics).toContain('child-fanout');
   });
 
   it('exposes read-only lookup module-triage fan-out once the tactical runtime lands', () => {
@@ -617,8 +621,136 @@ describe('reasoning reroute', () => {
     expect(decision.profile).toBe('tactical');
     expect(decision.fanout.admissible).toBe(false);
     expect(decision.fanout.class).toBeUndefined();
-    expect(decision.fanout.reason).toContain('Module-triage shards only activate for tactical H0 read-only lookup');
+    expect(decision.fanout.reason).toContain('Module-triage shards activate for read-only lookup with checked-direct execution');
     expect(decision.tactics).not.toContain('child-fanout');
+  });
+
+  it('activates hypothesis-check fan-out for H2 bugfix investigation (Issue 124, A2)', () => {
+    // v0.7.28 Issue 124 A2: hypothesis-check (write-side fan-out for parallel
+    // bug-hypothesis verification) opens up in H2 where worktree isolation +
+    // Evaluator merge review already exist. Pre-Scout `harnessProfile`
+    // here is the routing heuristic's prediction; the Generator's runtime
+    // write-fan-out gate is enforced separately in role-prompt.ts using the
+    // post-Scout decision via lazy thunk.
+    const decision = buildAmaControllerDecision(
+      {
+        primaryTask: 'bugfix',
+        taskFamily: 'investigation',
+        actionability: 'actionable',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'investigation',
+        recommendedThinkingDepth: 'high',
+        complexity: 'systemic',
+        riskLevel: 'high',
+        harnessProfile: 'H2_PLAN_EXECUTE_EVAL',
+        mutationSurface: 'code',
+        confidence: 0.9,
+        workIntent: 'new',
+        requiresBrainstorm: false,
+        reason: 'H2 systemic bugfix can use hypothesis-check write fan-out across worktrees.',
+      },
+    );
+
+    // managed profile (systemic complexity) yet read-write hypothesis-check
+    // is gated by `profile === tactical` in B1 → admissible should be FALSE
+    // here because hypothesis-check needs the tactical-profile path. This
+    // test pins MEDIUM-#1 review finding.
+    expect(decision.profile).toBe('managed');
+    expect(decision.fanout.admissible).toBe(false);
+    // class is undefined when admissible=false — see buildAmaControllerDecision
+    // where `activeFanoutClass` short-circuits to undefined under !profileGateOpen
+    expect(decision.fanout.class).toBeUndefined();
+    expect(decision.fanout.reason).toContain(
+      'Hypothesis-check shards activate only in H2_PLAN_EXECUTE_EVAL',
+    );
+  });
+
+  it('activates hypothesis-check fan-out for tactical H2 bugfix (Issue 124, A2 happy path)', () => {
+    // v0.7.28 Issue 124 A2 happy path: tactical profile + H2 + bugfix +
+    // mutation-surface=code → hypothesis-check fan-out admissible.
+    const decision = buildAmaControllerDecision(
+      {
+        primaryTask: 'bugfix',
+        taskFamily: 'investigation',
+        actionability: 'actionable',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'investigation',
+        recommendedThinkingDepth: 'high',
+        complexity: 'complex',
+        riskLevel: 'medium',
+        harnessProfile: 'H2_PLAN_EXECUTE_EVAL',
+        mutationSurface: 'code',
+        confidence: 0.85,
+        workIntent: 'new',
+        requiresBrainstorm: false,
+        reason: 'Tactical H2 bugfix can fan out write hypotheses across worktrees.',
+      },
+    );
+
+    expect(decision.profile).toBe('tactical');
+    expect(decision.fanout.admissible).toBe(true);
+    expect(decision.fanout.class).toBe('hypothesis-check');
+    expect(decision.tactics).toContain('child-fanout');
+  });
+
+  it('keeps hypothesis-check fan-out closed for H1 bugfix (no worktree-merge story, Issue 124, A2)', () => {
+    // v0.7.28 Issue 124 A2: H1 lacks the worktree isolation + Evaluator
+    // merge-review pipeline that makes parallel write children safe; only H2
+    // opens hypothesis-check.
+    const decision = buildAmaControllerDecision(
+      {
+        primaryTask: 'bugfix',
+        taskFamily: 'investigation',
+        actionability: 'actionable',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'investigation',
+        recommendedThinkingDepth: 'medium',
+        complexity: 'moderate',
+        riskLevel: 'medium',
+        harnessProfile: 'H1_EXECUTE_EVAL',
+        mutationSurface: 'code',
+        confidence: 0.85,
+        workIntent: 'new',
+        requiresBrainstorm: false,
+        reason: 'H1 bugfix should not enable write-side hypothesis fan-out.',
+      },
+    );
+
+    expect(decision.profile).toBe('tactical');
+    expect(decision.fanout.admissible).toBe(false);
+    expect(decision.fanout.class).toBeUndefined();
+    expect(decision.fanout.reason).toContain(
+      'Hypothesis-check shards activate only in H2_PLAN_EXECUTE_EVAL',
+    );
+  });
+
+  it('activates evidence-scan fan-out for H1 read-only investigation (Issue 124, A1)', () => {
+    // v0.7.28 Issue 124 A1: read-only investigation in H1 (Scout escalated)
+    // can now fan out for parallel scoping. The earlier H0_DIRECT-only gate
+    // made child dispatch effectively impossible after Scout escalation.
+    const decision = buildAmaControllerDecision(
+      {
+        primaryTask: 'bugfix',
+        taskFamily: 'investigation',
+        actionability: 'actionable',
+        executionPattern: 'checked-direct',
+        recommendedMode: 'investigation',
+        recommendedThinkingDepth: 'medium',
+        complexity: 'moderate',
+        riskLevel: 'medium',
+        harnessProfile: 'H1_EXECUTE_EVAL',
+        mutationSurface: 'read-only',
+        confidence: 0.85,
+        workIntent: 'new',
+        requiresBrainstorm: false,
+        reason: 'H1 read-only investigation can fan out evidence shards.',
+      },
+    );
+
+    expect(decision.profile).toBe('tactical');
+    expect(decision.fanout.admissible).toBe(true);
+    expect(decision.fanout.class).toBe('evidence-scan');
+    expect(decision.tactics).toContain('child-fanout');
   });
 
   it('lets repo-intelligence signals raise routing complexity and planning bias', () => {
