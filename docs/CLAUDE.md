@@ -126,6 +126,7 @@ KodaX/
 | `DD.md` | Detailed Design | ✅ Yes |
 | `FEATURE_LIST.md` | Feature tracking | ✅ Yes |
 | `KNOWN_ISSUES.md` | Known issues and workarounds | ⚠️ Optional |
+| `release.md` | Binary release & distribution pipeline | ⚠️ Optional |
 | `features/v{VERSION}.md` | Feature design by version | ✅ Yes |
 | `test-guides/*.md` | Human test guides | ✅ Yes |
 

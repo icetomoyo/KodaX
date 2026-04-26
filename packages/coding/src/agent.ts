@@ -7,17 +7,13 @@
 import {
   KodaXExtensionSessionRecord,
   KodaXExtensionSessionState,
-  KodaXExecutionMode,
   KodaXEvents,
   KodaXJsonValue,
   KodaXManagedProtocolPayload,
   KodaXOptions,
-  KodaXRepoIntelligenceCarrier,
   KodaXRepoIntelligenceMode,
   KodaXReasoningMode,
   KodaXResult,
-  KodaXTaskType,
-  KodaXThinkingDepth,
   KodaXToolExecutionContext,
   KodaXToolResultBlock,
   SessionErrorMetadata,
@@ -25,7 +21,6 @@ import {
 import type { KodaXMessage, KodaXStreamResult } from '@kodax/ai';
 import { createCostTracker, recordUsage, getSummary, formatCostReport, type CostTracker } from '@kodax/ai';
 import path from 'path';
-import fsSync from 'fs';
 // FEATURE_093 (v0.7.24): `KodaXClient` is only re-exported from this module
 // for backward compatibility. Importing it here creates a cycle
 // (agent ↔ client, since client imports `runKodaX` from this file). The
@@ -33,24 +28,16 @@ import fsSync from 'fs';
 // `./client.js` instead — see line ~592.
 import { resolveProvider } from './providers/index.js';
 import {
-  executeTool,
-  filterConstructionToolNames,
-  filterMcpToolNames,
-  filterRepoIntelligenceWorkingToolNames,
   getRequiredToolParams,
-  inspectEditFailure,
   listToolDefinitions,
-  parseEditToolError,
 } from './tools/index.js';
 import {
-  isManagedProtocolToolName,
   mergeManagedProtocolPayload,
   getManagedBlockNameForRole,
   hasManagedProtocolForRole,
   textContainsManagedBlock,
   MANAGED_PROTOCOL_TOOL_NAME,
 } from './managed-protocol.js';
-import { buildSystemPrompt } from './prompts/index.js';
 import { generateSessionId, extractTitleFromMessages } from './session.js';
 import { checkIncompleteToolCalls } from './messages.js';
 // FEATURE_076 Q4: load-time normalization for pre-v0.7.25 session messages.
@@ -58,9 +45,7 @@ import { normalizeLoadedSessionMessages } from './task-engine/_internal/round-bo
 import { compact as intelligentCompact, needsCompaction, microcompact, DEFAULT_MICROCOMPACTION_CONFIG, buildPostCompactAttachments, buildFileContentMessages, injectPostCompactAttachments, DEFAULT_POST_COMPACT_CONFIG, POST_COMPACT_TOKEN_BUDGET, type CompactionConfig, type CompactionUpdate } from '@kodax/agent';
 import { loadCompactionConfig } from './compaction-config.js';
 import { estimateTokens } from './tokenizer.js';
-import { KODAX_MAX_INCOMPLETE_RETRIES, KODAX_MAX_MAXTOKENS_RETRIES, PROMISE_PATTERN, CANCELLED_TOOL_RESULT_PREFIX, CANCELLED_TOOL_RESULT_MESSAGE } from './constants.js';
-import { exec } from 'child_process';
-import { promisify } from 'util';
+import { KODAX_MAX_INCOMPLETE_RETRIES, KODAX_MAX_MAXTOKENS_RETRIES, CANCELLED_TOOL_RESULT_MESSAGE } from './constants.js';
 import { waitForRetryDelay } from './retry-handler.js';
 import {
   resolveResilienceConfig,
@@ -72,14 +57,13 @@ import {
   telemetryDecision,
   telemetryRecovery,
 } from './resilience/index.js';
+import { buildPromptMessageContent } from './input-artifacts.js';
 import {
-  buildPromptMessageContent,
-  extractComparableUserMessageText,
-} from './input-artifacts.js';
+  appendPromptIfNotDuplicate,
+  resolveInitialMessages,
+} from './agent-runtime/middleware/auto-resume.js';
 import {
-  buildProviderPolicyHintsForDecision,
   createReasoningPlan,
-  maybeCreateAutoReroutePlan,
   reasoningModeToDepth,
   type ReasoningPlan,
 } from './reasoning.js';
@@ -87,21 +71,11 @@ import {
   buildProviderPolicyPromptNotes,
   evaluateProviderPolicy,
 } from './provider-policy.js';
-import { looksLikeActionableRuntimeEvidence } from './runtime-evidence.js';
 import { resolveExecutionCwd, resolveExecutionPath } from './runtime-paths.js';
-import { buildRepoIntelligenceContext } from './repo-intelligence/index.js';
 import {
-  getImpactEstimate,
-  getModuleContext,
-  getRepoPreturnBundle,
   getRepoRoutingSignals,
   resolveKodaXAutoRepoMode,
 } from './repo-intelligence/runtime.js';
-import {
-  renderImpactEstimate,
-  renderModuleContext,
-} from './repo-intelligence/query.js';
-import { createRepoIntelligenceTraceEvent } from './repo-intelligence/trace-events.js';
 import {
   createCompletedTurnTokenSnapshot,
   createContextTokenSnapshot,
@@ -111,1320 +85,223 @@ import {
 } from './token-accounting.js';
 import { applyToolResultGuardrail } from './tools/tool-result-policy.js';
 import {
+  cleanupIncompleteToolCalls,
+  validateAndFixToolHistory,
+} from './agent-runtime/history-cleanup.js';
+// CAP-010 (`getToolExecutionOverride`) was used inline before CAP-024;
+// since CAP-024 moved into `agent-runtime/tool-dispatch.ts`, this
+// agent.ts no longer imports it directly.
+import {
+  estimateProviderPayloadBytes,
+  bucketProviderPayloadSize,
+} from './agent-runtime/provider-payload.js';
+import { checkPromiseSignal } from './agent-runtime/thinking-mode-replay.js';
+import { emitResilienceDebug } from './agent-runtime/resilience-debug.js';
+import { isVisibleToolName, hasQueuedFollowUp } from './agent-runtime/event-emitter.js';
+import { describeTransientProviderRetry } from './agent-runtime/provider-retry-policy.js';
+import {
+  isCancelledToolResultContent,
+  isToolResultErrorContent,
+} from './agent-runtime/tool-result-classify.js';
+import {
+  filterExcludedTools,
+  getActiveToolDefinitions,
+  getRuntimeActiveToolNames,
+} from './agent-runtime/tool-resolution.js';
+import { gracefulCompactDegradation } from './agent-runtime/compaction-fallback.js';
+import { updateToolOutcomeTracking } from './agent-runtime/middleware/tool-outcome-tracking.js';
+import {
+  type ProviderPrepareState,
+  applyProviderPrepareHook,
+} from './agent-runtime/provider-hook.js';
+import {
+  createToolResultBlock,
+  executeToolCall,
+} from './agent-runtime/tool-dispatch.js';
+import { buildReasoningExecutionState } from './agent-runtime/reasoning-plan-entry.js';
+import { resolveContextWindow } from './agent-runtime/context-window.js';
+import {
+  type RuntimeSessionState,
+  buildRuntimeSessionState,
+} from './agent-runtime/runtime-session-state.js';
+import { saveSessionSnapshot } from './agent-runtime/middleware/session-snapshot.js';
+import { emitRepoIntelligenceTrace } from './agent-runtime/middleware/repo-intelligence.js';
+export { buildAutoRepoIntelligenceContext } from './agent-runtime/middleware/repo-intelligence.js';
+import {
+  type RunnableToolCall,
+  buildEditRecoveryUserMessage,
+} from './agent-runtime/middleware/edit-recovery.js';
+import {
+  buildMutationScopeReflection,
+  isMutationScopeSignificant,
+  isMutationTool,
+} from './agent-runtime/middleware/mutation-reflection.js';
+import {
+  hasStrongToolFailureEvidence,
+  isReviewFinalAnswerCandidate,
+  summarizeToolEvidence,
+} from './agent-runtime/middleware/judges.js';
+import { maybeAdvanceAutoReroute } from './agent-runtime/middleware/auto-reroute.js';
+import {
+  appendQueuedRuntimeMessages,
+  createExtensionRuntimeSessionController,
+  settleExtensionTurn,
+} from './agent-runtime/middleware/extension-queue.js';
+export { estimateProviderPayloadBytes, bucketProviderPayloadSize } from './agent-runtime/provider-payload.js';
+export { checkPromiseSignal } from './agent-runtime/thinking-mode-replay.js';
+export { emitResilienceDebug } from './agent-runtime/resilience-debug.js';
+export { saveSessionSnapshot } from './agent-runtime/middleware/session-snapshot.js';
+export { describeTransientProviderRetry } from './agent-runtime/provider-retry-policy.js';
+import {
   emitActiveExtensionEvent,
   getActiveExtensionRuntime,
-  runActiveExtensionHook,
   setActiveExtensionRuntime,
   KodaXExtensionRuntime,
 } from './extensions/runtime.js';
 
-const execAsync = promisify(exec);
-type AutoReroutePlan = Awaited<ReturnType<typeof maybeCreateAutoReroutePlan>>;
-type RunnableToolCall = {
-  id: string;
-  name: string;
-  input: Record<string, unknown> | undefined;
-};
-type MessageContentBlock = Exclude<KodaXMessage['content'], string>[number];
-
-interface RuntimeSessionState {
-  queuedMessages: KodaXMessage[];
-  extensionState: Map<string, Map<string, KodaXJsonValue>>;
-  extensionRecords: KodaXExtensionSessionRecord[];
-  activeTools: string[];
-  editRecoveryAttempts: Map<string, number>;
-  blockedEditWrites: Set<string>;
-  lastToolErrorCode?: string;
-  lastToolResultBytes?: number;
-  modelSelection: {
-    provider?: string;
-    model?: string;
-  };
-  thinkingLevel?: KodaXReasoningMode;
-}
-
-interface ProviderPrepareState {
-  provider: string;
-  model?: string;
-  reasoningMode?: KodaXReasoningMode;
-  systemPrompt: string;
-  blockedReason?: string;
-}
-
-/** FEATURE_067 v3: Filter tools excluded for child agents at API level. */
-function filterExcludedTools(
-  tools: string[],
-  excludeTools: readonly string[] | undefined,
-): string[] {
-  if (!excludeTools || excludeTools.length === 0) return tools;
-  const excluded = new Set(excludeTools);
-  return tools.filter((name) => !excluded.has(name));
-}
-
-function shouldEmitRepoIntelligenceTrace(options: KodaXOptions): boolean {
-  return options.context?.repoIntelligenceTrace === true
-    || process.env.KODAX_REPO_INTELLIGENCE_TRACE === '1';
-}
-
-function emitRepoIntelligenceTrace(
-  events: KodaXEvents | undefined,
-  options: KodaXOptions,
-  stage: 'routing' | 'preturn' | 'module' | 'impact',
-  carrier: KodaXRepoIntelligenceCarrier | null | undefined,
-  detail?: string,
-): void {
-  if (!events?.onRepoIntelligenceTrace || !shouldEmitRepoIntelligenceTrace(options) || !carrier) {
-    return;
-  }
-  const traceEvent = createRepoIntelligenceTraceEvent(stage, carrier, detail);
-  if (traceEvent) {
-    events.onRepoIntelligenceTrace(traceEvent);
-  }
-}
-
-function isTypedContentBlock(block: unknown): block is MessageContentBlock {
-  return block !== null && typeof block === 'object' && 'type' in block;
-}
-
-function isToolUseContentBlock(
-  block: unknown,
-): block is Extract<MessageContentBlock, { type: 'tool_use' }> {
-  return isTypedContentBlock(block) && block.type === 'tool_use';
-}
-
-function isToolResultContentBlock(
-  block: unknown,
-): block is Extract<MessageContentBlock, { type: 'tool_result' }> {
-  return isTypedContentBlock(block) && block.type === 'tool_result';
-}
-
-/**
- * Graceful compact degradation: drop oldest atomic blocks (tool_use + tool_result pairs)
- * one at a time from the front until tokens are below the target threshold.
- * Preserves summary messages, message structure integrity, and recent context.
- */
-function gracefulCompactDegradation(
-  messages: KodaXMessage[],
-  contextWindow: number,
-  config: CompactionConfig,
-): KodaXMessage[] {
-  const targetTokens = Math.floor(contextWindow * (config.triggerPercent / 100) * 0.8);
-
-  // Find the first non-summary message index
-  let startIdx = 0;
-  const firstMsg = messages[0];
-  if (firstMsg && (firstMsg.role === 'system' || (
-    firstMsg.role === 'user' && typeof firstMsg.content === 'string'
-    && firstMsg.content.includes('[对话历史摘要]')
-  ))) {
-    startIdx = 1;
-  }
-
-  let dropIdx = startIdx;
-  while (dropIdx < messages.length && estimateTokens(messages) > targetTokens) {
-    const msg = messages[dropIdx];
-    if (!msg) break;
-
-    const hasToolUse = msg.role === 'assistant' && Array.isArray(msg.content)
-      && msg.content.some((b: unknown) => isTypedContentBlock(b) && b.type === 'tool_use');
-    const hasToolResult = msg.role === 'user' && Array.isArray(msg.content)
-      && msg.content.some(isToolResultContentBlock);
-
-    // Forward pair: assistant(tool_use) followed by user(tool_result) → drop both
-    if (hasToolUse) {
-      const nextMsg = messages[dropIdx + 1];
-      const nextHasResult = nextMsg?.role === 'user' && Array.isArray(nextMsg.content)
-        && nextMsg.content.some(isToolResultContentBlock);
-      if (nextHasResult) {
-        messages = [...messages.slice(0, dropIdx), ...messages.slice(dropIdx + 2)];
-        continue;
-      }
-      // No paired tool_result follows — skip to preserve tool pairing invariant
-      dropIdx++;
-      continue;
-    }
-
-    // Backward pair: user(tool_result) preceded by assistant(tool_use) → drop both
-    if (hasToolResult) {
-      const prevMsg = messages[dropIdx - 1];
-      const prevHasUse = prevMsg?.role === 'assistant' && Array.isArray(prevMsg.content)
-        && prevMsg.content.some((b: unknown) => isTypedContentBlock(b) && b.type === 'tool_use');
-      if (prevHasUse) {
-        messages = [...messages.slice(0, dropIdx - 1), ...messages.slice(dropIdx + 1)];
-        continue;
-      }
-      // No paired assistant precedes — skip to preserve tool pairing invariant
-      dropIdx++;
-      continue;
-    }
-
-    // Non-tool message — safe to drop individually
-    messages = [...messages.slice(0, dropIdx), ...messages.slice(dropIdx + 1)];
-  }
-
-  return messages;
-}
-
-function normalizeQueuedRuntimeMessage(message: string | KodaXMessage): KodaXMessage {
-  return typeof message === 'string'
-    ? { role: 'user', content: message }
-    : message;
-}
-
-function normalizeRuntimeModelSelection(
-  next: { provider?: string; model?: string },
-): { provider?: string; model?: string } {
-  const normalized: { provider?: string; model?: string } = {};
-  if (next.provider?.trim()) {
-    normalized.provider = next.provider.trim();
-  }
-  if (next.model?.trim()) {
-    normalized.model = next.model.trim();
-  }
-  return normalized;
-}
-
-export function describeTransientProviderRetry(error: Error): string {
-  const message = error.message.toLowerCase();
-  if (error.name === 'StreamIncompleteError' || message.includes('stream incomplete')) {
-    return 'Stream interrupted before completion';
-  }
-  if (message.includes('stream stalled') || message.includes('delayed response') || message.includes('60s idle')) {
-    return 'Stream stalled';
-  }
-  if (message.includes('hard timeout') || message.includes('10 minutes')) {
-    return 'Provider response timed out';
-  }
-  if (
-    message.includes('socket hang up')
-    || message.includes('connection error')
-    || message.includes('econnrefused')
-    || message.includes('enotfound')
-    || message.includes('fetch failed')
-    || message.includes('network')
-  ) {
-    return 'Provider connection error';
-  }
-  if (message.includes('timed out') || message.includes('timeout') || message.includes('etimedout')) {
-    return 'Provider request timed out';
-  }
-  if (message.includes('aborted')) {
-    return 'Provider stream aborted';
-  }
-  return 'Transient provider error';
-}
-
-function createRuntimeExtensionState(
-  persisted?: KodaXExtensionSessionState,
-): Map<string, Map<string, KodaXJsonValue>> {
-  const state = new Map<string, Map<string, KodaXJsonValue>>();
-  if (!persisted) {
-    return state;
-  }
-
-  for (const [extensionId, values] of Object.entries(persisted)) {
-    state.set(extensionId, new Map(Object.entries(values)));
-  }
-
-  return state;
-}
-
-function snapshotRuntimeExtensionState(
-  state: RuntimeSessionState['extensionState'],
-): KodaXExtensionSessionState | undefined {
-  const snapshot: KodaXExtensionSessionState = {};
-
-  for (const [extensionId, values] of state.entries()) {
-    if (values.size === 0) {
-      continue;
-    }
-
-    snapshot[extensionId] = Object.fromEntries(values.entries());
-  }
-
-  return Object.keys(snapshot).length > 0 ? snapshot : undefined;
-}
-
-function getExtensionStateBucket(
-  state: RuntimeSessionState['extensionState'],
-  extensionId: string,
-): Map<string, KodaXJsonValue> {
-  const existing = state.get(extensionId);
-  if (existing) {
-    return existing;
-  }
-
-  const next = new Map<string, KodaXJsonValue>();
-  state.set(extensionId, next);
-  return next;
-}
-
-function createSessionRecordId(): string {
-  return `extrec_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function createExtensionRuntimeSessionController(
-  state: RuntimeSessionState,
-) {
-  return {
-    queueUserMessage: (message: KodaXMessage) => {
-      state.queuedMessages.push(normalizeQueuedRuntimeMessage(message));
-    },
-    getSessionState: <T = KodaXJsonValue>(extensionId: string, key: string) =>
-      state.extensionState.get(extensionId)?.get(key) as T | undefined,
-    setSessionState: (extensionId: string, key: string, value: KodaXJsonValue | undefined) => {
-      const bucket = getExtensionStateBucket(state.extensionState, extensionId);
-      if (value === undefined) {
-        bucket.delete(key);
-        if (bucket.size === 0) {
-          state.extensionState.delete(extensionId);
-        }
-        return;
-      }
-      bucket.set(key, value);
-    },
-    getSessionStateSnapshot: (extensionId: string) =>
-      Object.fromEntries((state.extensionState.get(extensionId) ?? new Map()).entries()),
-    appendSessionRecord: (
-      extensionId: string,
-      type: string,
-      data?: KodaXJsonValue,
-      options?: { dedupeKey?: string },
-    ) => {
-      const normalizedType = type.trim();
-      const dedupeKey = options?.dedupeKey?.trim() || undefined;
-      const record: KodaXExtensionSessionRecord = {
-        id: createSessionRecordId(),
-        extensionId,
-        type: normalizedType,
-        ts: Date.now(),
-        ...(data === undefined ? {} : { data }),
-        ...(dedupeKey ? { dedupeKey } : {}),
-      };
-
-      if (dedupeKey) {
-        const existingIndex = state.extensionRecords.findIndex((entry) =>
-          entry.extensionId === extensionId
-          && entry.type === normalizedType
-          && entry.dedupeKey === dedupeKey,
-        );
-        if (existingIndex >= 0) {
-          state.extensionRecords.splice(existingIndex, 1, record);
-          return record;
-        }
-      }
-
-      state.extensionRecords.push(record);
-      return record;
-    },
-    listSessionRecords: (extensionId: string, type?: string) =>
-      state.extensionRecords
-        .filter((record) =>
-          record.extensionId === extensionId
-          && (type === undefined || record.type === type),
-        )
-        .map((record) => ({ ...record })),
-    clearSessionRecords: (extensionId: string, type?: string) => {
-      const before = state.extensionRecords.length;
-      state.extensionRecords = state.extensionRecords.filter((record) =>
-        record.extensionId !== extensionId
-        || (type !== undefined && record.type !== type),
-      );
-      return before - state.extensionRecords.length;
-    },
-    getActiveTools: () => [...state.activeTools],
-    setActiveTools: (toolNames: string[]) => {
-      state.activeTools = Array.from(
-        new Set(toolNames.map((name) => name.trim()).filter(Boolean)),
-      );
-    },
-    getModelSelection: () => ({ ...state.modelSelection }),
-    setModelSelection: (next: { provider?: string; model?: string }) => {
-      state.modelSelection = normalizeRuntimeModelSelection(next);
-    },
-    getThinkingLevel: () => state.thinkingLevel,
-    setThinkingLevel: (level: KodaXReasoningMode) => {
-      state.thinkingLevel = level;
-    },
-  };
-}
-
-function getActiveToolDefinitions(
-  activeToolNames: string[],
-  repoIntelligenceMode?: KodaXRepoIntelligenceMode,
-  allowManagedProtocolTool = false,
-  hasCapabilityRuntime = false,
-  toolConstructionMode?: boolean,
-): ReturnType<typeof listToolDefinitions> {
-  const allTools = listToolDefinitions();
-  if (activeToolNames.length === 0) {
-    return [];
-  }
-
-  const allowed = new Set(
-    getRuntimeActiveToolNames(
-      activeToolNames,
-      repoIntelligenceMode,
-      hasCapabilityRuntime,
-      toolConstructionMode,
-    ),
-  );
-  return allTools.filter((tool) => (
-    allowed.has(tool.name)
-    && (allowManagedProtocolTool || !isManagedProtocolToolName(tool.name))
-  ));
-}
-
-function getRuntimeActiveToolNames(
-  activeToolNames: string[],
-  repoIntelligenceMode?: KodaXRepoIntelligenceMode,
-  hasCapabilityRuntime = false,
-  toolConstructionMode?: boolean,
-): string[] {
-  let result = resolveKodaXAutoRepoMode(repoIntelligenceMode) === 'off'
-    ? filterRepoIntelligenceWorkingToolNames(activeToolNames)
-    : activeToolNames;
-  if (!hasCapabilityRuntime) {
-    result = filterMcpToolNames(result);
-  }
-  result = filterConstructionToolNames(result, toolConstructionMode);
-  return result;
-}
-
-function appendQueuedRuntimeMessages(
-  messages: KodaXMessage[],
-  runtimeSessionState: RuntimeSessionState,
-): boolean {
-  if (runtimeSessionState.queuedMessages.length === 0) {
-    return false;
-  }
-
-  messages.push(...runtimeSessionState.queuedMessages.splice(0));
-  return true;
-}
-
-/**
- * 验证并修复整个工具调用历史 - Issue 072 enhanced fix
- *
- * 扫描整段消息历史，修复所有不合法的 tool_use/tool_result 配对：
- * 1. 删除空 id 的 tool_use 和 tool_result
- * 2. 删除孤立的 tool_result（没有匹配的前一个 tool_use）
- * 3. 删除孤立的 tool_use（没有匹配的后一个 tool_result）
- *
- * @param messages - 消息列表
- * @returns 修复后的消息列表
- */
-function validateAndFixToolHistory(messages: KodaXMessage[]): KodaXMessage[] {
-  // Debug: 打印校验前的状态
-  if (process.env.KODAX_DEBUG_TOOL_HISTORY) {
-    console.error('[ToolHistory] Validating messages:', messages.length);
-    for (let i = 0; i < messages.length; i++) {
-      const msg = messages[i];
-      if (!msg || typeof msg.content === 'string' || !Array.isArray(msg.content)) continue;
-
-      const toolUses = msg.content.filter(isToolUseContentBlock);
-      const toolResults = msg.content.filter(isToolResultContentBlock);
-
-      if (toolUses.length > 0 || toolResults.length > 0) {
-        console.error(`  [${i}] ${msg.role}:`, {
-          toolUses: toolUses.map((toolUse) => ({ id: toolUse.id, name: toolUse.name })),
-          toolResults: toolResults.map((toolResult) => ({ tool_use_id: toolResult.tool_use_id }))
-        });
-      }
-    }
-  }
-
-  const fixedMessages: KodaXMessage[] = [];
-
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i];
-    if (!msg) continue;
-
-    // 只处理有 content 数组的消息
-    if (typeof msg.content === 'string' || !Array.isArray(msg.content)) {
-      fixedMessages.push(msg);
-      continue;
-    }
-
-    const content = msg.content;
-    const fixedContent: typeof content = [];
-
-    if (msg.role === 'assistant') {
-      // 检查每个 tool_use 是否有匹配的 tool_result
-      const nextMsg = messages[i + 1];
-      const resultIds = new Set<string>();
-
-      if (nextMsg?.role === 'user' && Array.isArray(nextMsg.content)) {
-        for (const block of nextMsg.content) {
-          if (isToolResultContentBlock(block) && block.tool_use_id) {
-            resultIds.add(block.tool_use_id);
-          }
-        }
-      }
-
-      // 过滤掉没有匹配 tool_result 的 tool_use
-      for (const block of content) {
-        if (!isTypedContentBlock(block)) {
-          fixedContent.push(block as typeof content[number]);
-          continue;
-        }
-
-        if (block.type === 'tool_use') {
-          // 跳过空 id 或没有匹配 tool_result 的 tool_use
-          if (!block.id || typeof block.id !== 'string' || block.id.trim() === '') {
-            console.error('[ToolHistoryFix] Removed tool_use with empty id');
-            continue;
-          }
-
-          if (!resultIds.has(block.id)) {
-            console.error('[ToolHistoryFix] Removed orphaned tool_use:', block.id);
-            continue;
-          }
-
-          fixedContent.push(block);
-        } else {
-          fixedContent.push(block);
-        }
-      }
-    } else if (msg.role === 'user') {
-      // 获取前一条 assistant 中的 tool_use id
-      const prevMsg = messages[i - 1];
-      const toolUseIds = new Set<string>();
-
-      if (prevMsg?.role === 'assistant' && Array.isArray(prevMsg.content)) {
-        for (const block of prevMsg.content) {
-          if (isToolUseContentBlock(block) && block.id) {
-            toolUseIds.add(block.id);
-          }
-        }
-      }
-
-      // 过滤掉孤立的或空 id 的 tool_result
-      for (const block of content) {
-        if (!isTypedContentBlock(block)) {
-          fixedContent.push(block as typeof content[number]);
-          continue;
-        }
-
-        if (block.type === 'tool_result') {
-          // 跳过空 tool_use_id
-          if (!block.tool_use_id || typeof block.tool_use_id !== 'string' || block.tool_use_id.trim() === '') {
-            console.error('[ToolHistoryFix] Removed tool_result with empty tool_use_id');
-            continue;
-          }
-
-          // 跳过孤立 tool_result（没有匹配的前一个 tool_use）
-          if (!toolUseIds.has(block.tool_use_id)) {
-            console.error('[ToolHistoryFix] Removed orphaned tool_result:', block.tool_use_id);
-            continue;
-          }
-
-          fixedContent.push(block);
-        } else {
-          fixedContent.push(block);
-        }
-      }
-    } else {
-      // 其他角色（如 system）直接保留
-      fixedContent.push(...content);
-    }
-
-    // 只有当 fixedContent 不为空时才添加消息
-    if (fixedContent.length > 0) {
-      // Guard: after tool_use removal + microcompaction clearing thinking text,
-      // an assistant message might only contain cleared thinking blocks (thinking: '')
-      // and/or empty text blocks (text: ''). Providers like Kimi reject these as
-      // "empty" (400 error). Inject minimal placeholder to preserve message alternation
-      // — dropping the message would orphan adjacent tool_result blocks.
-      if (msg.role === 'assistant') {
-        const hasSubstantiveContent = fixedContent.some((block) => {
-          if (!block || typeof block !== 'object' || !('type' in block)) return false;
-          const b = block as { type: string; text?: string; thinking?: string };
-          if (b.type === 'tool_use') return true;
-          if (b.type === 'text') return !!b.text;
-          if (b.type === 'thinking') return !!b.thinking;
-          return true; // preserve unknown block types
-        });
-        if (!hasSubstantiveContent) {
-          fixedMessages.push({ ...msg, content: [{ type: 'text', text: '...' }] });
-          continue;
-        }
-      }
-      fixedMessages.push({ ...msg, content: fixedContent });
-    }
-  }
-
-  // Debug: 报告修复结果
-  if (process.env.KODAX_DEBUG_TOOL_HISTORY && fixedMessages.length !== messages.length) {
-    console.error('[ToolHistory] Fixed: removed', messages.length - fixedMessages.length, 'invalid messages');
-  }
-
-  return fixedMessages;
-}
-
-/**
- * 清理不完整的 tool_use 块 - Issue 072 fix
- *
- * 当流式中断时，assistant 消息可能包含 tool_use 但没有对应的 tool_result。
- * 这会导致下次请求时 API 报错 "tool_call_id not found"。
- *
- * 修复逻辑：
- * 1. 检查最后一条 assistant 消息是否包含 tool_use 块
- * 2. 检查是否有对应的 tool_result 块（应该在下一条 user 消息中）
- * 3. 如果没有对应的 tool_result，移除 tool_use 块，保留 text/thinking 块
- *
- * @param messages - 消息列表
- * @returns 清理后的消息列表
- */
-function cleanupIncompleteToolCalls(messages: KodaXMessage[]): KodaXMessage[] {
-  if (messages.length === 0) return messages;
-
-  const lastMsg = messages[messages.length - 1];
-
-  // 只处理 assistant 消息
-  if (lastMsg?.role !== 'assistant') return messages;
-
-  // 只处理数组形式的 content
-  if (typeof lastMsg.content !== 'string' && Array.isArray(lastMsg.content)) {
-    const content = lastMsg.content;
-
-    // 提取所有 tool_use 的 id
-    const toolUseIds = new Set<string>();
-
-    for (let i = 0; i < content.length; i++) {
-      const block = content[i];
-      if (block && typeof block === 'object' && 'type' in block) {
-        if (block.type === 'tool_use' && 'id' in block) {
-          toolUseIds.add(block.id);
-        }
-      }
-    }
-
-    // 如果没有 tool_use 块，无需清理
-    if (toolUseIds.size === 0) return messages;
-
-    // 收集所有 tool_result 中出现的 tool_use_id（遍历所有消息）
-    const toolResultIds = new Set<string>();
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const msg = messages[i];
-      if (!msg || msg.role !== 'user') continue;
-
-      const userContent = msg.content;
-      if (typeof userContent === 'string' || !Array.isArray(userContent)) continue;
-
-      for (const block of userContent) {
-        if (block && typeof block === 'object' && 'type' in block) {
-          if (block.type === 'tool_result' && 'tool_use_id' in block) {
-            toolResultIds.add(block.tool_use_id);
-          }
-        }
-      }
-    }
-
-    // 检查是否有孤立的 tool_use 块（没有对应的 tool_result）
-    const orphanedToolUseIds = new Set<string>();
-    for (const id of toolUseIds) {
-      if (!toolResultIds.has(id)) {
-        orphanedToolUseIds.add(id);
-      }
-    }
-
-    // 如果有孤立的 tool_use 块，移除它们
-    if (orphanedToolUseIds.size > 0) {
-      // 过滤掉孤立的 tool_use 块，保留其他块（text, thinking, 以及有结果的 tool_use）
-      const cleanedContent = content.filter((block) => {
-        if (!block || typeof block !== 'object') return true;
-        if (!('type' in block)) return true;
-        const typedBlock = block as { type: string; id?: string };
-        if (typedBlock.type !== 'tool_use') return true;
-        // 只保留有对应 tool_result 的 tool_use 块
-        return !orphanedToolUseIds.has(typedBlock.id ?? '');
-      });
-
-      // 如果清理后内容为空，返回去掉最后一条消息
-      if (cleanedContent.length === 0) {
-        return messages.slice(0, -1);
-      }
-
-      // 否则返回修改后的消息
-      return [
-        ...messages.slice(0, -1),
-        { ...lastMsg, content: cleanedContent },
-      ];
-    }
-  }
-
-  return messages;
-}
-
-/**
- * 检查 Promise 信号
- */
-export function checkPromiseSignal(text: string): [string, string] {
-  const match = PROMISE_PATTERN.exec(text);
-  if (match) return [match[1]!.toUpperCase(), match[2] ?? ''];
-  return ['', ''];
-}
-
-function hasQueuedFollowUp(events: KodaXEvents): boolean {
-  return events.hasPendingInputs?.() === true;
-}
-
-function isToolResultErrorContent(content: string): boolean {
-  return /^\[(?:Tool Error|Cancelled|Blocked|Error)\]/.test(content);
-}
-
-function isCancelledToolResultContent(content: string): boolean {
-  return content.startsWith(CANCELLED_TOOL_RESULT_PREFIX);
-}
-
-const MUTATION_TOOL_NAMES = new Set(['edit', 'write', 'multi_edit', 'apply_patch', 'delete', 'remove', 'rename']);
-const SCOPE_REFLECTION_FILE_THRESHOLD = 3;
-const SCOPE_REFLECTION_LINES_THRESHOLD = 100;
-
-function isMutationTool(name: string): boolean {
-  return MUTATION_TOOL_NAMES.has(name.toLowerCase());
-}
-
-function isMutationScopeSignificant(tracker: NonNullable<KodaXToolExecutionContext['mutationTracker']>): boolean {
-  if (tracker.files.size >= SCOPE_REFLECTION_FILE_THRESHOLD) return true;
-  const totalLines = [...tracker.files.values()].reduce((a, b) => a + b, 0);
-  return totalLines >= SCOPE_REFLECTION_LINES_THRESHOLD;
-}
-
-function buildMutationScopeReflection(tracker: NonNullable<KodaXToolExecutionContext['mutationTracker']>): string {
-  const totalLines = [...tracker.files.values()].reduce((a, b) => a + b, 0);
-  const fileList = [...tracker.files.entries()]
-    .map(([file, lines]) => `  - ${file} (~${lines} lines)`)
-    .join('\n');
-  return [
-    '',
-    `[Scope: ${tracker.files.size} files modified, ~${totalLines} lines]`,
-    fileList,
-    'A senior engineer would ask: does this change need review before shipping?',
-    '→ Need review: call emit_managed_protocol({role:"scout", payload:{confirmed_harness:"H1_EXECUTE_EVAL", summary:"...", blocking_evidence:["..."]}})',
-    '→ Need planning: call emit_managed_protocol with H2_PLAN_EXECUTE_EVAL',
-    '→ Confident this is fine: continue working.',
-  ].join('\n');
-}
-
-async function getToolExecutionOverride(
-  events: KodaXEvents,
-  name: string,
-  input: Record<string, unknown>,
-  toolId?: string,
-  executionCwd?: string,
-  gitRoot?: string,
-): Promise<string | undefined> {
-  if (events.beforeToolExecute) {
-    const allowed = await events.beforeToolExecute(name, input, { toolId });
-    if (allowed === false) {
-      return CANCELLED_TOOL_RESULT_MESSAGE;
-    }
-
-    if (typeof allowed === 'string') {
-      return allowed;
-    }
-  }
-
-  const extensionOverride = await runActiveExtensionHook('tool:before', {
-    name,
-    input,
-    toolId,
-    executionCwd,
-    gitRoot,
-  });
-  if (extensionOverride === false) {
-    return CANCELLED_TOOL_RESULT_MESSAGE;
-  }
-
-  return typeof extensionOverride === 'string' ? extensionOverride : undefined;
-}
-
-export async function saveSessionSnapshot(
-  options: KodaXOptions,
-  sessionId: string,
-  data: {
-    messages: KodaXMessage[];
-    title: string;
-    gitRoot?: string;
-    errorMetadata?: SessionErrorMetadata;
-    runtimeSessionState?: RuntimeSessionState;
-  },
-): Promise<void> {
-  if (!options.session?.storage) {
-    return;
-  }
-
-  const gitRoot = data.gitRoot ?? (await getGitRoot()) ?? '';
-  await options.session.storage.save(sessionId, {
-    messages: data.messages,
-    title: data.title,
-    gitRoot,
-    scope: options.session.scope ?? 'user',
-    errorMetadata: data.errorMetadata,
-    extensionState: data.runtimeSessionState
-      ? snapshotRuntimeExtensionState(data.runtimeSessionState.extensionState)
-      : undefined,
-    extensionRecords: data.runtimeSessionState?.extensionRecords.map((record) => ({ ...record })),
-  });
-}
-
-function createToolResultBlock(toolUseId: string, content: string): KodaXToolResultBlock {
-  return {
-    type: 'tool_result',
-    tool_use_id: toolUseId,
-    content,
-    ...(isToolResultErrorContent(content) ? { is_error: true } : {}),
-  };
-}
-
-function isVisibleToolName(name: string): boolean {
-  return !isManagedProtocolToolName(name);
-}
-
-function shouldDebugResilience(): boolean {
-  return process.env.KODAX_DEBUG_STREAM === '1' || process.env.KODAX_DEBUG_RESILIENCE === '1';
-}
-
-export function emitResilienceDebug(label: string, payload: Record<string, unknown>): void {
-  if (!shouldDebugResilience()) {
-    return;
-  }
-  console.error(label, payload);
-}
-
-function extractStructuredToolErrorCode(content: string): string | undefined {
-  const match = /^\[Tool Error\]\s+[^:]+:\s+([A-Z_]+):/.exec(content.trim());
-  return match?.[1];
-}
-
-function resolveToolTargetPath(
-  toolCall: RunnableToolCall,
-  ctx: KodaXToolExecutionContext,
-): string | undefined {
-  const pathValue = toolCall.input?.path;
-  if (typeof pathValue !== 'string' || pathValue.trim().length === 0) {
-    return undefined;
-  }
-  return resolveExecutionPath(pathValue, ctx);
-}
-
-function clearEditRecoveryStateForPath(
-  runtimeSessionState: RuntimeSessionState,
-  resolvedPath: string | undefined,
-): void {
-  if (!resolvedPath) {
-    return;
-  }
-  runtimeSessionState.editRecoveryAttempts.delete(resolvedPath);
-  runtimeSessionState.blockedEditWrites.delete(resolvedPath);
-}
-
-function maybeBlockExistingFileWrite(
-  toolCall: RunnableToolCall,
-  ctx: KodaXToolExecutionContext,
-  runtimeSessionState: RuntimeSessionState,
-): string | undefined {
-  if (toolCall.name !== 'write') {
-    return undefined;
-  }
-
-  const resolvedPath = resolveToolTargetPath(toolCall, ctx);
-  if (!resolvedPath || !runtimeSessionState.blockedEditWrites.has(resolvedPath)) {
-    return undefined;
-  }
-
-  if (!fsSync.existsSync(resolvedPath)) {
-    runtimeSessionState.blockedEditWrites.delete(resolvedPath);
-    return undefined;
-  }
-
-  return `[Tool Error] write: BLOCKED_AFTER_EDIT_FAILURE: Refusing to rewrite existing file ${resolvedPath} while edit anchor recovery is in progress. Retry with edit using a smaller unique anchor or use insert_after_anchor.`;
-}
-
-async function buildEditRecoveryUserMessage(
-  toolCall: RunnableToolCall,
-  toolResult: string,
-  runtimeSessionState: RuntimeSessionState,
-  ctx: KodaXToolExecutionContext,
-): Promise<string | undefined> {
-  const code = parseEditToolError(toolResult);
-  if (!code) {
-    return undefined;
-  }
-
-  const pathValue = typeof toolCall.input?.path === 'string' ? toolCall.input.path : undefined;
-  const resolvedPath = resolveToolTargetPath(toolCall, ctx);
-  if (!pathValue || !resolvedPath) {
-    return undefined;
-  }
-
-  runtimeSessionState.blockedEditWrites.add(resolvedPath);
-  const attempt = (runtimeSessionState.editRecoveryAttempts.get(resolvedPath) ?? 0) + 1;
-  runtimeSessionState.editRecoveryAttempts.set(resolvedPath, attempt);
-  runtimeSessionState.lastToolErrorCode = code;
-
-  if (code === 'EDIT_TOO_LARGE') {
-    emitResilienceDebug('[edit:recovery]', {
-      code,
-      path: resolvedPath,
-      attempt,
-      action: 'split-edit',
-    });
-    return [
-      `The previous edit for ${resolvedPath} failed with ${code}.`,
-      'Do not use write to replace the existing file.',
-      'Split the change into smaller edit calls, or use insert_after_anchor when you are appending a new section after a unique heading.',
-    ].join('\n');
-  }
-
-  if (attempt > 2) {
-    emitResilienceDebug('[edit:recovery]', {
-      code,
-      path: resolvedPath,
-      attempt,
-      action: 'stop-auto-recovery',
-    });
-    return [
-      `The previous edit for ${resolvedPath} failed with ${code}, and automatic anchor recovery is exhausted.`,
-      'Do not escalate to a whole-file write.',
-      'Choose a smaller unique anchor manually, or switch to insert_after_anchor if this is a section append.',
-    ].join('\n');
-  }
-
-  const windowLines = attempt === 1 ? 120 : 400;
-  const diagnostic = await inspectEditFailure(pathValue, String(toolCall.input?.old_string ?? ''), ctx, windowLines);
-  const primary = diagnostic.candidates[0];
-  const alternates = diagnostic.candidates.slice(1, 3);
-
-  emitResilienceDebug('[edit:recovery]', {
-    code,
-    path: resolvedPath,
-    attempt,
-    windowLines,
-    candidateCount: diagnostic.candidates.length,
-  });
-
-  const lines: string[] = [
-    `The previous edit for ${resolvedPath} failed with ${code}.`,
-    'Do not use write to rewrite the existing file.',
-    'Retry with edit using a smaller unique old_string, or use insert_after_anchor when you are appending a new section.',
-  ];
-
-  if (primary) {
-    lines.push('');
-    lines.push(`Best nearby anchor window (${primary.startLine}-${primary.endLine}):`);
-    lines.push('```text');
-    lines.push(primary.excerpt);
-    lines.push('```');
-  }
-
-  if (alternates.length > 0) {
-    lines.push('');
-    lines.push('Other nearby candidate anchors:');
-    for (const candidate of alternates) {
-      lines.push(`- lines ${candidate.startLine}-${candidate.endLine}: ${candidate.preview}`);
-    }
-  }
-
-  return lines.join('\n');
-}
-
-function updateToolOutcomeTracking(
-  toolCall: RunnableToolCall,
-  toolResult: string,
-  runtimeSessionState: RuntimeSessionState,
-  ctx: KodaXToolExecutionContext,
-): void {
-  const resolvedPath = resolveToolTargetPath(toolCall, ctx);
-  runtimeSessionState.lastToolResultBytes = Buffer.byteLength(toolResult, 'utf8');
-  runtimeSessionState.lastToolErrorCode = extractStructuredToolErrorCode(toolResult);
-
-  if (toolCall.name === 'edit') {
-    if (!parseEditToolError(toolResult)) {
-      clearEditRecoveryStateForPath(runtimeSessionState, resolvedPath);
-    }
-    return;
-  }
-
-  if (toolCall.name === 'insert_after_anchor' && !isToolResultErrorContent(toolResult)) {
-    clearEditRecoveryStateForPath(runtimeSessionState, resolvedPath);
-  }
-}
-
-export function estimateProviderPayloadBytes(messages: KodaXMessage[], systemPrompt: string): number {
-  return Buffer.byteLength(JSON.stringify({
-    systemPrompt,
-    messages,
-  }), 'utf8');
-}
-
-export function bucketProviderPayloadSize(bytes: number): string {
-  if (bytes < 16 * 1024) {
-    return 'small';
-  }
-  if (bytes < 64 * 1024) {
-    return 'medium';
-  }
-  if (bytes < 192 * 1024) {
-    return 'large';
-  }
-  return 'xlarge';
-}
-
-async function maybeBuildAutoReroutePlan(
-  provider: ReturnType<typeof resolveProvider>,
-  options: KodaXOptions,
-  prompt: string,
-  reasoningPlan: ReasoningPlan,
-  lastText: string,
-  allowances: {
-    allowDepthEscalation: boolean;
-    allowTaskReroute: boolean;
-  },
-  toolEvidence?: string,
-): Promise<AutoReroutePlan> {
-  try {
-    return await maybeCreateAutoReroutePlan(
-      provider,
-      options,
-      prompt,
-      reasoningPlan,
-      lastText,
-      allowances,
-      toolEvidence ? { toolEvidence } : undefined,
-    );
-  } catch (rerouteError) {
-    if (process.env.KODAX_DEBUG_ROUTING) {
-      console.error('[AutoReroute] Failed, continuing without reroute:', rerouteError);
-    }
-    return null;
-  }
-}
-
-function looksLikeReviewProgressUpdate(text: string): boolean {
-  const normalized = text.trim().toLowerCase();
-  if (!normalized) {
-    return false;
-  }
-  return [
-    'now let me',
-    'let me look',
-    'let me check',
-    'let me inspect',
-    'now i will',
-    '现在让我',
-    '让我看看',
-    '让我检查',
-    '我现在来',
-    '接下来我',
-    '下面我来',
-  ].some((prefix) => normalized.startsWith(prefix));
-}
-
-function isReviewFinalAnswerCandidate(
-  prompt: string,
-  reasoningPlan: ReasoningPlan,
-  lastText: string,
-): boolean {
-  if (reasoningPlan.decision.primaryTask !== 'review') {
-    return true;
-  }
-
-  const normalizedPrompt = prompt.toLowerCase();
-  const normalizedText = lastText.trim();
-  if (!normalizedText || looksLikeReviewProgressUpdate(normalizedText)) {
-    return false;
-  }
-
-  if (normalizedText.length >= 600) {
-    return true;
-  }
-
-  return /\b(must fix|finding|optional improvements|final assessment|verdict)\b/i.test(normalizedText)
-    || /(必须修复|问题|建议|结论|评审报告|最终评审)/.test(normalizedText)
-    || /^\s*(?:[-*]|\d+\.)\s+/m.test(normalizedText)
-    || /\b(must[- ]fix|strict review|pr review|code review)\b/i.test(normalizedPrompt);
-}
-
-function hasStrongToolFailureEvidence(toolEvidence: string): boolean {
-  return /\b(fail(?:ed|ure)?|error|blocked|exception|traceback|assert|regression|not found|timeout|console error|permission denied)\b/i
-    .test(toolEvidence);
-}
-
-async function maybeAdvanceAutoReroute(params: {
-  provider: ReturnType<typeof resolveProvider>;
-  options: KodaXOptions;
-  prompt: string;
-  reasoningPlan: ReasoningPlan;
-  lastText: string;
-  autoFollowUpCount: number;
-  autoDepthEscalationCount: number;
-  autoTaskRerouteCount: number;
-  autoFollowUpLimit: number;
-  events: KodaXEvents;
-  isNewSession: boolean;
-  retryLabelPrefix: string;
-  toolEvidence?: string;
-  allowTaskReroute?: boolean;
-  onApply?: () => Promise<void> | void;
-  persistSession?: {
-    sessionId: string;
-    messages: KodaXMessage[];
-    title: string;
-    runtimeSessionState?: RuntimeSessionState;
-  };
-}): Promise<{
-  reasoningPlan: ReasoningPlan;
-  currentExecution: Awaited<ReturnType<typeof buildReasoningExecutionState>>;
-  autoFollowUpCount: number;
-  autoDepthEscalationCount: number;
-  autoTaskRerouteCount: number;
-} | null> {
-  if (
-    params.reasoningPlan.mode !== 'auto'
-    || params.autoFollowUpCount >= params.autoFollowUpLimit
-    || (params.autoDepthEscalationCount > 0 && params.autoTaskRerouteCount > 0)
-  ) {
-    return null;
-  }
-
-  const followUpPlan = await maybeBuildAutoReroutePlan(
-    params.provider,
-    params.options,
-    params.prompt,
-    params.reasoningPlan,
-    params.lastText,
-    {
-      allowDepthEscalation: params.autoDepthEscalationCount === 0,
-      allowTaskReroute: (params.allowTaskReroute ?? true) && params.autoTaskRerouteCount === 0,
-    },
-    params.toolEvidence,
-  );
-
-  if (!followUpPlan) {
-    return null;
-  }
-
-  const autoFollowUpCount = params.autoFollowUpCount + 1;
-  const autoDepthEscalationCount = params.autoDepthEscalationCount + (followUpPlan.kind === 'depth-escalation' ? 1 : 0);
-  const autoTaskRerouteCount = params.autoTaskRerouteCount + (followUpPlan.kind === 'task-reroute' ? 1 : 0);
-  const currentExecution = await buildReasoningExecutionState(
-    params.options,
-    followUpPlan,
-    params.isNewSession,
-  );
-
-  await params.onApply?.();
-
-  if (params.persistSession) {
-    await saveSessionSnapshot(params.options, params.persistSession.sessionId, {
-      messages: params.persistSession.messages,
-      title: params.persistSession.title,
-      runtimeSessionState: params.persistSession.runtimeSessionState,
-    });
-  }
-
-  params.events.onRetry?.(
-    `${
-      followUpPlan.kind === 'depth-escalation'
-        ? `${params.retryLabelPrefix} depth escalation`
-        : `${params.retryLabelPrefix} reroute`
-    }: ${followUpPlan.decision.reason}`,
-    autoFollowUpCount,
-    params.autoFollowUpLimit,
-  );
-
-  return {
-    reasoningPlan: followUpPlan,
-    currentExecution,
-    autoFollowUpCount,
-    autoDepthEscalationCount,
-    autoTaskRerouteCount,
-  };
-}
-
-async function applyProviderPrepareHook(
-  state: ProviderPrepareState,
-): Promise<ProviderPrepareState> {
-  const mutableState: ProviderPrepareState = { ...state };
-
-  await runActiveExtensionHook('provider:before', {
-    provider: mutableState.provider,
-    model: mutableState.model,
-    reasoningMode: mutableState.reasoningMode,
-    systemPrompt: mutableState.systemPrompt,
-    block: (reason) => {
-      mutableState.blockedReason = reason;
-    },
-    replaceProvider: (provider) => {
-      mutableState.provider = provider;
-    },
-    replaceModel: (model) => {
-      mutableState.model = model;
-    },
-    replaceSystemPrompt: (systemPrompt) => {
-      mutableState.systemPrompt = systemPrompt;
-    },
-    setThinkingLevel: (level) => {
-      mutableState.reasoningMode = level;
-    },
-  });
-
-  return mutableState;
-}
-
-async function settleExtensionTurn(
-  sessionId: string,
-  lastText: string,
-  runtimeSessionState: RuntimeSessionState,
-  options: {
-    hadToolCalls: boolean;
-    success: boolean;
-    signal?: 'COMPLETE' | 'BLOCKED' | 'DECIDE';
-  },
-): Promise<void> {
-  await runActiveExtensionHook('turn:settle', {
-    sessionId,
-    lastText,
-    hadToolCalls: options.hadToolCalls,
-    success: options.success,
-    signal: options.signal,
-    queueUserMessage: (message) => {
-      runtimeSessionState.queuedMessages.push(normalizeQueuedRuntimeMessage(message));
-    },
-    setModelSelection: (next) => {
-      runtimeSessionState.modelSelection = normalizeRuntimeModelSelection(next);
-    },
-    setThinkingLevel: (level) => {
-      runtimeSessionState.thinkingLevel = level;
-    },
-  });
-}
-
-async function executeToolCall(
-  events: KodaXEvents,
-  toolCall: RunnableToolCall,
-  ctx: KodaXToolExecutionContext,
-  runtimeSessionState: RuntimeSessionState,
-  activeToolNames?: string[],
-  abortSignal?: AbortSignal,
-): Promise<string> {
-  // Issue 088: Check abort signal before executing each tool
-  if (abortSignal?.aborted) {
-    return CANCELLED_TOOL_RESULT_MESSAGE;
-  }
-
-  const visibleTool = isVisibleToolName(toolCall.name);
-  if (visibleTool) {
-    await emitActiveExtensionEvent('tool:start', {
-      name: toolCall.name,
-      id: toolCall.id,
-      input: toolCall.input,
-    });
-    events.onToolUseStart?.({
-      name: toolCall.name,
-      id: toolCall.id,
-      input: toolCall.input,
-    });
-  }
-
-  const override = await getToolExecutionOverride(
-    events,
-    toolCall.name,
-    toolCall.input ?? {},
-    toolCall.id,
-    ctx.executionCwd,
-    ctx.gitRoot,
-  );
-  if (override !== undefined) {
-    return override;
-  }
-
-  if (activeToolNames && !activeToolNames.includes(toolCall.name)) {
-    return `[Tool Error] ${toolCall.name}: Tool is not active in the current runtime.`;
-  }
-
-  const blockedWrite = maybeBlockExistingFileWrite(toolCall, ctx, runtimeSessionState);
-  if (blockedWrite) {
-    return blockedWrite;
-  }
-
-  // FEATURE_067 v2: Inject reportToolProgress for long-running tools (dispatch_child_tasks)
-  const ctxWithProgress: KodaXToolExecutionContext = events.onToolProgress
-    ? {
-        ...ctx,
-        reportToolProgress: (message: string) => {
-          events.onToolProgress?.({ id: toolCall.id, message });
-        },
-      }
-    : ctx;
-
-  const result = await executeTool(toolCall.name, toolCall.input ?? {}, ctxWithProgress);
-
-  // MCP fallback: when a built-in tool fails, try to find a same-name MCP tool.
-  if (result.startsWith('[Tool Error]') && ctx.extensionRuntime) {
-    const fallbackResult = await tryMcpFallback(
-      toolCall.name,
-      toolCall.input ?? {},
-      ctx,
-    );
-    if (fallbackResult !== undefined) {
-      return fallbackResult;
-    }
-  }
-
-  return result;
-}
-
-// Only allow MCP fallback for read-only / network-fetch tools.
-// Write, edit, bash, and other mutating tools must never silently
-// redirect to a remote MCP capability.
-const MCP_FALLBACK_ALLOWED_TOOLS = new Set([
-  'web_search',
-  'web_fetch',
-  'glob',
-  'grep',
-  'read',
-  'code_search',
-  'semantic_lookup',
-]);
-
-async function tryMcpFallback(
-  toolName: string,
-  input: Record<string, unknown>,
-  ctx: KodaXToolExecutionContext,
-): Promise<string | undefined> {
-  if (!MCP_FALLBACK_ALLOWED_TOOLS.has(toolName)) {
-    return undefined;
-  }
-  try {
-    const hits = await ctx.extensionRuntime!.searchCapabilities('mcp', toolName, {
-      kind: 'tool',
-      limit: 1,
-    });
-    if (hits.length === 0) {
-      return undefined;
-    }
-    const hit = hits[0] as { id?: string; name?: string };
-    // Only fallback when the MCP tool name exactly matches the built-in name.
-    if (!hit?.id || (hit.name !== toolName && !hit.id.endsWith(`:${toolName}`))) {
-      return undefined;
-    }
-    const mcpResult = await ctx.extensionRuntime!.executeCapability('mcp', hit.id, input);
-    const content = typeof mcpResult.content === 'string'
-      ? mcpResult.content
-      : JSON.stringify(mcpResult.structuredContent ?? mcpResult, null, 2);
-    return `[MCP Fallback via ${hit.id}]\n${content}`;
-  } catch (error) {
-    if (process.env.KODAX_DEBUG_TOOL_HISTORY) {
-      // eslint-disable-next-line no-console
-      console.debug(`[tryMcpFallback] ${toolName} failed:`, error instanceof Error ? error.message : error);
-    }
-    return undefined;
-  }
-}
+// CAP-019 (`AutoReroutePlan`) lives in
+// `agent-runtime/middleware/auto-reroute.ts` since FEATURE_100 P2.
+// CAP-015 (`RunnableToolCall`) lives in
+// `agent-runtime/middleware/edit-recovery.ts` since FEATURE_100 P2;
+// imported above for use in the dispatch loop.
+//
+// `MessageContentBlock` (alias for the array element type of
+// `KodaXMessage.content`) used to live here for the local content-block
+// predicates; both predicates moved to `agent-runtime/compaction-fallback.ts`
+// with CAP-028 in FEATURE_100 P2, and the alias was deleted along with
+// its sole consumer.
+
+// CAP-050 (`RuntimeSessionState` interface) lives in
+// `agent-runtime/runtime-session-state.ts` since FEATURE_100 P2.
+// Imported as a type-only symbol above.
+
+// CAP-023 (`applyProviderPrepareHook`, `ProviderPrepareState`) lives in
+// `agent-runtime/provider-hook.ts` since FEATURE_100 P2.
+// `ProviderPrepareState` is imported above as a type so the call site
+// at `runKodaX`'s prepare-hook step keeps its existing shape.
+
+// CAP-040 (`filterExcludedTools`) lives in
+// `agent-runtime/tool-resolution.ts` since FEATURE_100 P2.
+// Imported above for the call site that builds
+// `RuntimeSessionState.activeTools`.
+
+// CAP-001 (`buildAutoRepoIntelligenceContext`, `emitRepoIntelligenceTrace`,
+// `shouldEmitRepoIntelligenceTrace`) lives in
+// `agent-runtime/middleware/repo-intelligence.ts` since FEATURE_100 P2.
+// `emitRepoIntelligenceTrace` is imported above for the 'routing' stage
+// emission at frame entry; `buildAutoRepoIntelligenceContext` is also
+// re-exported so `runner-driven.ts:64` keeps working unchanged.
+
+// CAP-028 (`gracefulCompactDegradation`) lives in
+// `agent-runtime/compaction-fallback.ts` since FEATURE_100 P2.
+// The two content-block predicates (`isTypedContentBlock`,
+// `isToolResultContentBlock`) moved with it; `isToolUseContentBlock`
+// was retired here because its callers (inside
+// `validateAndFixToolHistory`) had already moved to
+// `agent-runtime/history-cleanup.ts` (CAP-002) along with their own
+// local copy of the predicate, leaving the agent.ts copy without any
+// consumer.
+
+// CAP-020 (`normalizeQueuedRuntimeMessage`, `normalizeRuntimeModelSelection`,
+// `createSessionRecordId`) lives in `agent-runtime/runtime-session-state.ts`
+// since FEATURE_100 P2. CAP-030 will move
+// `normalizeRuntimeModelSelection` to `provider-hook.ts` in a later batch.
+
+// CAP-031 (`describeTransientProviderRetry`) lives in
+// `agent-runtime/provider-retry-policy.ts` since FEATURE_100 P2.
+// Imported above for the resilience-retry banner emission and re-exported
+// so `task-engine/runner-driven.ts:67` keeps working without an
+// import-path churn.
+
+// CAP-050 (`createRuntimeExtensionState`, `snapshotRuntimeExtensionState`,
+// `getExtensionStateBucket`) live in `agent-runtime/runtime-session-state.ts`
+// since FEATURE_100 P2.
+//
+// CAP-020 (`createExtensionRuntimeSessionController`,
+// `appendQueuedRuntimeMessages`, `settleExtensionTurn`) lives in
+// `agent-runtime/middleware/extension-queue.ts` since FEATURE_100 P2.
+// All three are imported above for the call sites in this file.
+
+// CAP-021 (`getActiveToolDefinitions`) + CAP-022 (`getRuntimeActiveToolNames`)
+// live in `agent-runtime/tool-resolution.ts` since FEATURE_100 P2.
+// Imported above for the dispatch loop's per-turn tool resolution.
+
+// CAP-002 (cleanupIncompleteToolCalls + validateAndFixToolHistory) lives in
+// `agent-runtime/history-cleanup.ts` since FEATURE_100 P2. Imported at the top
+// of this file alongside other agent-runtime modules.
+
+// CAP-039 (`checkPromiseSignal`) lives in
+// `agent-runtime/thinking-mode-replay.ts` since FEATURE_100 P2.
+// Re-exported above so external callers (scout-signals.ts, ../index.js)
+// keep working without an import-path churn.
+
+// CAP-038 (`hasQueuedFollowUp`) lives in
+// `agent-runtime/event-emitter.ts` since FEATURE_100 P2.
+// CAP-037 (`isToolResultErrorContent`, `isCancelledToolResultContent`)
+// lives in `agent-runtime/tool-result-classify.ts` since FEATURE_100 P2.
+
+// CAP-016 (`MUTATION_TOOL_NAMES`, `isMutationTool`,
+// `isMutationScopeSignificant`, `buildMutationScopeReflection`) lives in
+// `agent-runtime/middleware/mutation-reflection.ts` since FEATURE_100 P2.
+// Imported above for the post-tool-result loop call site.
+
+// CAP-010 (`getToolExecutionOverride`) lives in
+// `agent-runtime/permission-gate.ts` since FEATURE_100 P2.
+
+// CAP-011 + CAP-013 (`saveSessionSnapshot`) live in
+// `agent-runtime/middleware/session-snapshot.ts` since FEATURE_100 P2.
+// The function is imported above for the four in-file calling sites
+// and re-exported (line 130) so `runner-driven.ts:70` keeps working.
+
+// `createToolResultBlock` (helper, no own CAP) lives in
+// `agent-runtime/tool-dispatch.ts` since FEATURE_100 P2 (CAP-024 batch).
+// Imported above for the dispatch loop's 4 result-block construction
+// sites (success / cancel / blocked / generic error paths).
+
+// CAP-035 (`isVisibleToolName`) lives in
+// `agent-runtime/event-emitter.ts` since FEATURE_100 P2.
+// CAP-036 (`shouldDebugResilience`, `emitResilienceDebug`) lives in
+// `agent-runtime/resilience-debug.ts` since FEATURE_100 P2.
+
+// CAP-032 (`extractStructuredToolErrorCode`) lives in
+// `agent-runtime/tool-result-classify.ts` since FEATURE_100 P2 (shared
+// with CAP-037 in the same module).
+
+// CAP-015 (`resolveToolTargetPath`, `clearEditRecoveryStateForPath`,
+// `maybeBlockExistingFileWrite`, `buildEditRecoveryUserMessage`) lives in
+// `agent-runtime/middleware/edit-recovery.ts` since FEATURE_100 P2.
+// All four are imported above for use in the dispatch loop and
+// `updateToolOutcomeTracking`.
+
+// CAP-026 (`updateToolOutcomeTracking`) lives in
+// `agent-runtime/middleware/tool-outcome-tracking.ts` since FEATURE_100 P2.
+// Imported above for the post-tool-result hook in the dispatch loop.
+// Will likely co-locate with CAP-024 (`tool-dispatch.ts`) in P3 per
+// inventory's "shared with CAP-024" annotation.
+
+// CAP-027 (`estimateProviderPayloadBytes`, `bucketProviderPayloadSize`) lives
+// in `agent-runtime/provider-payload.ts` since FEATURE_100 P2.
+
+// CAP-019 (`maybeBuildAutoReroutePlan`, `maybeAdvanceAutoReroute`) lives in
+// `agent-runtime/middleware/auto-reroute.ts` since FEATURE_100 P2.
+// `maybeAdvanceAutoReroute` takes `buildExecutionState` as a callback so
+// that `buildReasoningExecutionState` (CAP-052, still in this file) does
+// not need to be moved together — see auto-reroute.ts docstring.
+//
+// CAP-017 + CAP-018 (`looksLikeReviewProgressUpdate`,
+// `isReviewFinalAnswerCandidate`, `hasStrongToolFailureEvidence`) live in
+// `agent-runtime/middleware/judges.ts` since FEATURE_100 P2.
+
+// CAP-024 (`executeToolCall`) lives in
+// `agent-runtime/tool-dispatch.ts` since FEATURE_100 P2.
+// Imported above for the dispatch loop's per-`tool_use` execution
+// step inside `runKodaX`.
+
+// CAP-025 (`tryMcpFallback`, `MCP_FALLBACK_ALLOWED_TOOLS`) lives in
+// `agent-runtime/tool-dispatch.ts` since FEATURE_100 P2. `tryMcpFallback`
+// is imported above for the dispatch loop's MCP-fallback branch
+// inside `executeToolCall`. P3 plan: CAP-024 (`executeToolCall`) will
+// co-locate into the same module.
 
 /**
  * 运行 KodaX Agent
@@ -1475,41 +352,20 @@ export async function runKodaX(
 
   const sessionId = resolvedSessionId ?? await generateSessionId();
 
-  // 加载或初始化消息
-  let messages: KodaXMessage[] = [];
-  let title = '';
-  let errorMetadata: SessionErrorMetadata | undefined;
-  let loadedExtensionState: KodaXExtensionSessionState | undefined;
-  let loadedExtensionRecords: KodaXExtensionSessionRecord[] | undefined;
-
-  // 优先使用 initialMessages（用于交互式模式的多轮对话）
-  if (options.session?.initialMessages && options.session.initialMessages.length > 0) {
-    messages = [...options.session.initialMessages];
-    title = extractTitleFromMessages(messages);
-  } else if (options.session?.storage && sessionId) {
-    const loaded = await options.session.storage.load(sessionId);
-    if (loaded) {
-      // FEATURE_076 Q4: sessions saved before v0.7.25 persisted messages
-      // in worker-execution-trace shape. Normalize on load: drop trailing
-      // role-prompt-shaped worker pairs, keep preceding clean user dialog.
-      messages = normalizeLoadedSessionMessages(loaded.messages);
-      title = loaded.title;
-      errorMetadata = loaded.errorMetadata;
-      loadedExtensionState = loaded.extensionState;
-      loadedExtensionRecords = loaded.extensionRecords;
-    }
-  }
-
-  // 防止消息重复推入：如果 initialMessages 的最后一条已经是当前 prompt，跳过 push
-  const lastMsg = messages[messages.length - 1];
-  const isDuplicate = extractComparableUserMessageText(lastMsg) === prompt;
-  if (!isDuplicate) {
-    messages.push({
-      role: 'user',
-      content: buildPromptMessageContent(prompt, options.context?.inputArtifacts),
-    });
-  }
-  if (!title) title = prompt.slice(0, 50) + (prompt.length > 50 ? '...' : '');
+  // CAP-008: resolve transcript from initialMessages → storage.load → empty;
+  // CAP-046: append current prompt unless transcript tail is already the
+  // same canonical text. Both helpers live in
+  // `agent-runtime/middleware/auto-resume.ts` since FEATURE_100 P2.
+  const resumed = await resolveInitialMessages(options, sessionId);
+  let messages = appendPromptIfNotDuplicate(
+    resumed.messages,
+    prompt,
+    options.context?.inputArtifacts,
+  );
+  let title = resumed.title || (prompt.slice(0, 50) + (prompt.length > 50 ? '...' : ''));
+  const errorMetadata: SessionErrorMetadata | undefined = resumed.errorMetadata;
+  const loadedExtensionState: KodaXExtensionSessionState | undefined = resumed.loadedExtensionState;
+  const loadedExtensionRecords: KodaXExtensionSessionRecord[] | undefined = resumed.loadedExtensionRecords;
 
   const executionCwd = resolveExecutionCwd(options.context);
   let emittedManagedProtocolPayload = options.context?.managedProtocolEmission?.enabled
@@ -1575,22 +431,19 @@ export async function runKodaX(
     messages,
     options.context?.contextTokenSnapshot,
   );
-  const runtimeSessionState: RuntimeSessionState = {
-    queuedMessages: [],
-    extensionState: createRuntimeExtensionState(loadedExtensionState),
-    extensionRecords: loadedExtensionRecords?.map((record) => ({ ...record })) ?? [],
+  const runtimeSessionState = buildRuntimeSessionState({
+    loadedExtensionState,
+    loadedExtensionRecords,
     activeTools: filterExcludedTools(
       runtimeDefaults?.activeTools ?? listToolDefinitions().map((tool) => tool.name),
       options.context?.excludeTools,
     ),
-    editRecoveryAttempts: new Map(),
-    blockedEditWrites: new Set(),
     modelSelection: {
       provider: currentProviderName,
       model: currentModelOverride,
     },
     thinkingLevel: runtimeThinkingLevel,
-  };
+  });
   releaseRuntimeBinding = runtime?.bindController(
     createExtensionRuntimeSessionController(runtimeSessionState),
   );
@@ -1697,10 +550,7 @@ export async function runKodaX(
           `Provider "${currentProviderName}" not configured. Set ${provider.getApiKeyEnv()}`,
         );
       }
-      const contextWindow = compactionConfig.contextWindow
-        ?? provider.getEffectiveContextWindow?.(currentModelOverride)
-        ?? provider.getContextWindow?.()
-        ?? 200000;
+      const contextWindow = resolveContextWindow(compactionConfig, provider, currentModelOverride);
       const effectiveReasoningPlan = runtimeThinkingLevel
         ? {
           ...reasoningPlan,
@@ -2453,6 +1303,7 @@ export async function runKodaX(
             isNewSession: messages.length === 1,
             retryLabelPrefix: 'Auto',
             allowTaskReroute: !options.context?.disableAutoTaskReroute,
+            buildExecutionState: buildReasoningExecutionState,
             onApply: () => {
               messages.pop();
             },
@@ -2800,6 +1651,7 @@ export async function runKodaX(
             retryLabelPrefix: 'Post-tool auto',
             toolEvidence,
             allowTaskReroute: !options.context?.disableAutoTaskReroute,
+            buildExecutionState: buildReasoningExecutionState,
             persistSession: {
               sessionId,
               messages,
@@ -2852,7 +1704,14 @@ export async function runKodaX(
         consecutiveErrors: (errorMetadata?.consecutiveErrors ?? 0) + 1,
       };
 
-      // Save session with error metadata
+      // Save session with error metadata.
+      // CAP-013 known gap (P3): `saveSessionSnapshot` does NOT wrap
+      // `storage.save()` in try/catch, so a storage rejection here
+      // clobbers `e` and propagates instead. The substrate executor's
+      // terminal hook in P3 will wrap this call in best-effort isolation.
+      // Until then, `messages: cleanedMessages` (post-`cleanupIncompleteToolCalls`
+      // + `validateAndFixToolHistory`) MUST be passed — raw `messages` would
+      // make `/resume` reload a corrupt history.
       await saveSessionSnapshot(options, sessionId, {
         messages: cleanedMessages,
         title,
@@ -2931,229 +1790,26 @@ export async function runKodaX(
   }
 }
 
-export async function buildAutoRepoIntelligenceContext(
-  options: KodaXOptions,
-  reasoningPlan: ReasoningPlan,
-  isNewSession: boolean,
-  events?: KodaXEvents,
-): Promise<string | undefined> {
-  const autoRepoMode = resolveKodaXAutoRepoMode(options.context?.repoIntelligenceMode);
-  if (autoRepoMode === 'off') {
-    return options.context?.repoIntelligenceContext;
-  }
+// `buildAutoRepoIntelligenceContext` body lives in
+// `agent-runtime/middleware/repo-intelligence.ts` since FEATURE_100 P2.
+// Imported above for the in-file call site at `buildReasoningExecutionState`,
+// and re-exported so `runner-driven.ts:64` keeps working unchanged.
 
-  const decision = reasoningPlan.decision;
-  const includeRepoOverview =
-    isNewSession
-    || decision.primaryTask === 'plan'
-    || decision.harnessProfile !== 'H0_DIRECT'
-    || decision.complexity !== 'simple';
-  const includeChangedScope =
-    decision.primaryTask === 'review'
-    || decision.primaryTask === 'bugfix'
-    || decision.primaryTask === 'edit'
-    || decision.primaryTask === 'refactor';
+// CAP-052 (`buildReasoningExecutionState`) lives in
+// `agent-runtime/reasoning-plan-entry.ts` since FEATURE_100 P2.
+// Imported above for the 4 call sites: initial frame entry, every
+// reroute apply, and as the `buildExecutionState` callback to CAP-019
+// `maybeAdvanceAutoReroute` (DI cycle break — see auto-reroute.ts
+// docstring).
 
-  if (!includeRepoOverview && !includeChangedScope) {
-    return options.context?.repoIntelligenceContext;
-  }
+// CAP-088 (`summarizeToolEvidence` + `looksLikeToolRuntimeEvidence`)
+// lives in `agent-runtime/middleware/judges.ts` since FEATURE_100 P2
+// (shared with CAP-017 / CAP-018). Imported above for the post-tool
+// judge call site.
 
-  try {
-    const activeModuleTargetPath = options.context?.executionCwd ? '.' : undefined;
-    const repoContext = {
-      executionCwd: options.context?.executionCwd,
-      gitRoot: options.context?.gitRoot ?? undefined,
-    };
-    const generatedContext = await buildRepoIntelligenceContext({
-      executionCwd: options.context?.executionCwd,
-      gitRoot: options.context?.gitRoot ?? undefined,
-    }, {
-      includeRepoOverview,
-      includeChangedScope,
-      refreshOverview: isNewSession,
-      changedScope: 'all',
-    });
-
-    const includeActiveModule =
-      decision.primaryTask === 'review'
-      || decision.primaryTask === 'bugfix'
-      || decision.primaryTask === 'edit'
-      || decision.primaryTask === 'refactor';
-    let moduleContext = '';
-    let impactContext = '';
-    let fallbackGuidance = '';
-    let premiumContext = '';
-
-    let moduleResult: Awaited<ReturnType<typeof getModuleContext>> | null = null;
-    let impactResult: Awaited<ReturnType<typeof getImpactEstimate>> | null = null;
-
-    if (includeActiveModule && autoRepoMode === 'premium-native') {
-      const preturn = await getRepoPreturnBundle(repoContext, {
-        targetPath: activeModuleTargetPath,
-        refresh: isNewSession,
-        mode: autoRepoMode,
-      }).catch(() => null);
-      if (preturn) {
-        emitRepoIntelligenceTrace(events, options, 'preturn', preturn, preturn.summary);
-        moduleResult = preturn.moduleContext ?? null;
-        impactResult = preturn.impactEstimate ?? null;
-        premiumContext = preturn.repoContext ?? '';
-      }
-    }
-
-    if (includeActiveModule) {
-      moduleResult = moduleResult ?? await getModuleContext(repoContext, {
-        targetPath: activeModuleTargetPath,
-        refresh: isNewSession,
-        mode: autoRepoMode,
-      }).catch(() => null);
-
-      if (moduleResult) {
-        emitRepoIntelligenceTrace(
-          events,
-          options,
-          'module',
-          moduleResult,
-          `module=${moduleResult.module.moduleId}`,
-        );
-        moduleContext = ['## Active Module Intelligence', renderModuleContext(moduleResult)].join('\n');
-      }
-
-      impactResult = impactResult ?? await getImpactEstimate(repoContext, {
-        targetPath: activeModuleTargetPath,
-        refresh: isNewSession,
-        mode: autoRepoMode,
-      }).catch(() => null);
-
-      if (impactResult) {
-        emitRepoIntelligenceTrace(
-          events,
-          options,
-          'impact',
-          impactResult,
-          `target=${impactResult.target.label}`,
-        );
-        impactContext = ['## Active Impact Intelligence', renderImpactEstimate(impactResult)].join('\n');
-      }
-
-      const lowConfidence =
-        (moduleResult?.confidence ?? 1) < 0.72
-        || (impactResult?.confidence ?? 1) < 0.72;
-      if (lowConfidence || (!moduleResult && !impactResult)) {
-        fallbackGuidance = [
-          '## Repo Intelligence Guidance',
-          '- Current repository intelligence is low-confidence for this area.',
-          '- Validate critical edits with `module_context`, `symbol_context`, `grep`, and `read` before committing to a change.',
-        ].join('\n');
-      }
-    }
-
-    return [
-      options.context?.repoIntelligenceContext,
-      premiumContext,
-      generatedContext,
-      moduleContext,
-      impactContext,
-      fallbackGuidance,
-    ]
-      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
-      .join('\n\n');
-  } catch {
-    return options.context?.repoIntelligenceContext;
-  }
-}
-
-async function buildReasoningExecutionState(
-  options: KodaXOptions,
-  reasoningPlan: ReasoningPlan,
-  isNewSession: boolean,
-): Promise<{
-  effectiveOptions: KodaXOptions;
-  systemPrompt: string;
-  providerReasoning: {
-    enabled: boolean;
-    mode: KodaXReasoningMode;
-    depth: KodaXThinkingDepth;
-    taskType: KodaXTaskType;
-    executionMode: KodaXExecutionMode;
-  };
-}> {
-  const repoIntelligenceContext = await buildAutoRepoIntelligenceContext(
-    options,
-    reasoningPlan,
-    isNewSession,
-    options.events,
-  );
-
-  const effectiveOptions: KodaXOptions = {
-    ...options,
-    reasoningMode: reasoningPlan.mode,
-    context: {
-      ...options.context,
-      executionCwd: resolveExecutionCwd(options.context),
-      repoIntelligenceContext,
-      providerPolicyHints: {
-        ...options.context?.providerPolicyHints,
-        ...buildProviderPolicyHintsForDecision(reasoningPlan.decision),
-      },
-      promptOverlay: [
-        options.context?.promptOverlay,
-        reasoningPlan.promptOverlay,
-      ]
-        .filter(Boolean)
-        .join('\n\n'),
-    },
-  };
-
-  return {
-    effectiveOptions,
-    systemPrompt: options.context?.systemPromptOverride
-      ?? await buildSystemPrompt(effectiveOptions, isNewSession),
-    providerReasoning: {
-      enabled: reasoningPlan.depth !== 'off',
-      mode: reasoningPlan.mode,
-      depth: reasoningPlan.depth,
-      taskType: reasoningPlan.decision.primaryTask,
-      executionMode: reasoningPlan.decision.recommendedMode,
-    },
-  };
-}
-
-/**
- * 获取 Git 根目录
- */
-function summarizeToolEvidence(
-  toolBlocks: Array<{ id: string; name: string }>,
-  toolResults: KodaXToolResultBlock[],
-): string {
-  const evidenceLines: string[] = [];
-
-  for (const result of toolResults) {
-    if (typeof result.content !== 'string') {
-      continue;
-    }
-
-    const toolName = toolBlocks.find((tool) => tool.id === result.tool_use_id)?.name ?? 'tool';
-    const content = result.content.replace(/\s+/g, ' ').trim();
-    if (!content || !looksLikeToolRuntimeEvidence(content)) {
-      continue;
-    }
-
-    const truncated =
-      content.length > 220 ? `${content.slice(0, 217)}...` : content;
-    evidenceLines.push(`- ${toolName}: ${truncated}`);
-  }
-
-  return Array.from(new Set(evidenceLines)).slice(0, 5).join('\n');
-}
-
-function looksLikeToolRuntimeEvidence(content: string): boolean {
-  return looksLikeActionableRuntimeEvidence(content);
-}
-
-async function getGitRoot(): Promise<string | null> {
-  try { const { stdout } = await execAsync('git rev-parse --show-toplevel'); return stdout.trim(); } catch { return null; }
-}
+// `getGitRoot` (CAP-011 helper) lives in
+// `agent-runtime/middleware/session-snapshot.ts` since FEATURE_100 P2.
+// It was a single-caller helper for `saveSessionSnapshot`.
 
 // 导出 Client 类
 // FEATURE_093 (v0.7.24): KodaXClient re-export removed from agent.ts to

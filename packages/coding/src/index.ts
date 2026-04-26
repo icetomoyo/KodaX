@@ -458,9 +458,14 @@ export {
 export {
   runKodaX,
   checkPromiseSignal,
+} from './agent.js';
+
+// CAP-002: extracted from agent.ts to agent-runtime/ in FEATURE_100 P2.
+// Path here changed; SDK consumers via `@kodax/coding` see no API break.
+export {
   cleanupIncompleteToolCalls,
   validateAndFixToolHistory,
-} from './agent.js';
+} from './agent-runtime/history-cleanup.js';
 
 // FEATURE_093 (v0.7.24): KodaXClient imported directly from client.ts to
 // avoid re-creating the agent ↔ client cycle at the barrel.

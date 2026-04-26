@@ -42,3 +42,8 @@ coverage/
 
 # Temp
 .tmp/
+
+# SA refactor goldens — recordings contain user prompts, file paths, and
+# model responses captured from real KodaX sessions. Treat as PII-adjacent;
+# regenerate locally with `tsx tests/sa-refactor-goldens/record-goldens.ts`.
+tests/sa-refactor-goldens/recordings/
