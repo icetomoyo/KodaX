@@ -97,7 +97,14 @@ import {
 } from './agent-runtime/provider-payload.js';
 import { checkPromiseSignal } from './agent-runtime/thinking-mode-replay.js';
 import { emitResilienceDebug } from './agent-runtime/resilience-debug.js';
-import { isVisibleToolName, hasQueuedFollowUp } from './agent-runtime/event-emitter.js';
+import {
+  isVisibleToolName,
+  hasQueuedFollowUp,
+  emitIterationStart as emitIterationStartStep,
+  emitIterationEnd as emitIterationEndStep,
+} from './agent-runtime/event-emitter.js';
+import { resolvePerTurnProvider } from './agent-runtime/per-turn-provider-resolution.js';
+import { resolvePerTurnReasoning } from './agent-runtime/per-turn-reasoning.js';
 import { describeTransientProviderRetry } from './agent-runtime/provider-retry-policy.js';
 import {
   isCancelledToolResultContent,
@@ -508,21 +515,19 @@ export async function runKodaX(
   let incompleteRetryCount = 0;
   let maxTokensRetryCount = 0;
   let limitReached = false; // Track if we exited due to iteration limit - 追踪是否因达到迭代上限而退出
+  // Thin local wrapper over the CAP-053 step helper so the 8 existing
+   // call sites can keep their `emitIterationEnd(iter+1, snapshot?)`
+   // shape while the actual rebase + emission lives in event-emitter.ts.
   const emitIterationEnd = (
     iterNumber: number,
     snapshotOverride?: typeof contextTokenSnapshot,
   ): typeof contextTokenSnapshot => {
-    contextTokenSnapshot = rebaseContextTokenSnapshot(
-      messages,
-      snapshotOverride ?? contextTokenSnapshot,
-    );
-    events.onIterationEnd?.({
+    contextTokenSnapshot = emitIterationEndStep(events, {
       iter: iterNumber,
       maxIter,
-      tokenCount: contextTokenSnapshot.currentTokens,
-      tokenSource: contextTokenSnapshot.source,
-      usage: contextTokenSnapshot.usage,
-      contextTokenSnapshot,
+      messages,
+      currentSnapshot: contextTokenSnapshot,
+      snapshotOverride,
     });
     return contextTokenSnapshot;
   };
@@ -541,40 +546,38 @@ export async function runKodaX(
     const COMPACT_CIRCUIT_BREAKER_LIMIT = 3;
     for (let iter = 0; iter < maxIter; iter++) {
     try {
-      currentProviderName = runtimeSessionState.modelSelection.provider ?? options.provider;
-      currentModelOverride = runtimeSessionState.modelSelection.model ?? options.modelOverride ?? options.model;
-      runtimeThinkingLevel = runtimeSessionState.thinkingLevel;
-      const provider = resolveProvider(currentProviderName);
-      if (!provider.isConfigured()) {
-        throw new Error(
-          `Provider "${currentProviderName}" not configured. Set ${provider.getApiKeyEnv()}`,
-        );
-      }
-      const contextWindow = resolveContextWindow(compactionConfig, provider, currentModelOverride);
-      const effectiveReasoningPlan = runtimeThinkingLevel
-        ? {
-          ...reasoningPlan,
-          mode: runtimeThinkingLevel,
-          depth: reasoningModeToDepth(runtimeThinkingLevel),
-        }
-        : reasoningPlan;
-      currentExecution = await buildReasoningExecutionState(
-        {
-          ...options,
-          provider: currentProviderName,
-          modelOverride: currentModelOverride,
-          reasoningMode: runtimeThinkingLevel ?? options.reasoningMode,
-        },
-        effectiveReasoningPlan,
-        messages.length === 1,
+      // CAP-055: per-turn provider/model/thinkingLevel re-resolution +
+      // CAP-042 per-turn isConfigured check + CAP-056 contextWindow cascade.
+      const turnProvider = resolvePerTurnProvider(
+        runtimeSessionState,
+        options,
+        compactionConfig,
       );
+      currentProviderName = turnProvider.providerName;
+      currentModelOverride = turnProvider.modelOverride;
+      runtimeThinkingLevel = turnProvider.thinkingLevel;
+      const provider = turnProvider.provider;
+      const contextWindow = turnProvider.contextWindow;
+
+      // CAP-057: per-turn effectiveReasoningPlan + currentExecution rebuild.
+      const turnReasoning = await resolvePerTurnReasoning({
+        options,
+        providerName: currentProviderName,
+        modelOverride: currentModelOverride,
+        thinkingLevel: runtimeThinkingLevel,
+        reasoningPlan,
+        messages,
+      });
+      const effectiveReasoningPlan = turnReasoning.effectiveReasoningPlan;
+      currentExecution = turnReasoning.currentExecution;
 
       await emitActiveExtensionEvent('turn:start', {
         sessionId,
         iteration: iter + 1,
         maxIter,
       });
-      events.onIterationStart?.(iter + 1, maxIter);
+      // CAP-058: user-facing iteration-start event.
+      emitIterationStartStep(events, iter, maxIter);
 
       // Microcompaction: lightweight cleanup each turn (no LLM calls)
       // Clears old tool results, thinking blocks, and image blocks
