@@ -57,6 +57,18 @@ export function createRecoveryHistoryItem(
     };
   }
 
+  if (recoveryAction === "sanitize_thinking_and_retry") {
+    // L3 self-heal: history violated the provider's thinking-mode
+    // contract (deepseek "reasoning_content must be passed back" or
+    // Anthropic "thinking signature invalid"). Strip thinking blocks
+    // and retry once. v0.7.28.
+    return {
+      type: "info",
+      icon: "⏳",
+      text: "Provider rejected replay thinking, sanitizing history and retrying",
+    };
+  }
+
   let description: string;
   switch (stage) {
     case "before_first_delta":

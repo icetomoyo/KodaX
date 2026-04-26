@@ -11,8 +11,9 @@ import { KodaXProviderError } from '@kodax/ai';
 import { resolveResilienceConfig, DEFAULT_RESILIENCE_CONFIG } from './config.js';
 import { classifyResilienceError } from './classifier.js';
 import { StableBoundaryTracker } from './stable-boundary.js';
-import { ProviderRecoveryCoordinator } from './recovery-coordinator.js';
+import { ProviderRecoveryCoordinator, sanitizeThinkingBlocks } from './recovery-coordinator.js';
 import { reconstructMessagesWithToolGuard } from './tool-guard.js';
+import type { KodaXMessage } from '@kodax/ai';
 
 // ============== Config Tests ==============
 
@@ -440,6 +441,219 @@ describe('ProviderRecoveryCoordinator', () => {
     const classified = classifyResilienceError(error, 'mid_stream_text');
     expect(coordinator.decideRecoveryAction(error, classified, 3).action).not.toBe('manual_continue');
     expect(coordinator.decideRecoveryAction(error, classified, 4).action).toBe('manual_continue');
+  });
+
+  // L3 (v0.7.28): reasoning_content_required is recoverable — first
+  // hit returns sanitize_thinking_and_retry, subsequent hits fall
+  // through to manual_continue (single-shot guard).
+  it('classifies deepseek reasoning_content 400 as recoverable', () => {
+    const error = new KodaXProviderError(
+      'deepseek API error: 400 The `reasoning_content` in the thinking mode must be passed back to the API.',
+      'deepseek',
+    );
+    const classified = classifyResilienceError(error);
+    expect(classified.errorClass).toBe('reasoning_content_required');
+    expect(classified.retryable).toBe(true);
+  });
+
+  it('classifies anthropic thinking signature error as recoverable', () => {
+    const error = new KodaXProviderError(
+      'anthropic API error: 400 thinking.0.signature: signature invalid',
+      'anthropic',
+    );
+    const classified = classifyResilienceError(error);
+    expect(classified.errorClass).toBe('reasoning_content_required');
+    expect(classified.retryable).toBe(true);
+  });
+
+  // False-positive guard: auth-related "signature invalid" errors must
+  // NOT be classified as reasoning_content_required. They don't mention
+  // "thinking" or "reasoning_content", so a sanitize retry can't help.
+  // Misclassifying them would burn one retry slot on each occurrence.
+  it('does not misclassify generic signature errors as reasoning_content_required', () => {
+    const authError = new KodaXProviderError(
+      'API error: 401 request signature invalid',
+      'someprovider',
+    );
+    const classified = classifyResilienceError(authError);
+    expect(classified.errorClass).not.toBe('reasoning_content_required');
+
+    const apiKeyError = new KodaXProviderError(
+      'API error: 403 API key signature mismatch',
+      'someprovider',
+    );
+    const classified2 = classifyResilienceError(apiKeyError);
+    expect(classified2.errorClass).not.toBe('reasoning_content_required');
+  });
+
+  it('first reasoning_content_required hit returns sanitize_thinking_and_retry', () => {
+    const tracker = new StableBoundaryTracker();
+    const coordinator = new ProviderRecoveryCoordinator(tracker, {});
+    const error = new KodaXProviderError(
+      'deepseek API error: 400 The `reasoning_content` in the thinking mode must be passed back to the API.',
+      'deepseek',
+    );
+    const classified = classifyResilienceError(error);
+    const decision = coordinator.decideRecoveryAction(error, classified, 1);
+    expect(decision.action).toBe('sanitize_thinking_and_retry');
+    expect(decision.reasonCode).toBe('reasoning_content_required');
+  });
+
+  it('reasoning_content_required sanitize fires at most once per coordinator', () => {
+    const tracker = new StableBoundaryTracker();
+    const coordinator = new ProviderRecoveryCoordinator(tracker, {});
+    const error = new KodaXProviderError(
+      'deepseek API error: 400 The `reasoning_content` in the thinking mode must be passed back to the API.',
+      'deepseek',
+    );
+    const classified = classifyResilienceError(error);
+    const first = coordinator.decideRecoveryAction(error, classified, 1);
+    expect(first.action).toBe('sanitize_thinking_and_retry');
+    // Second hit (sanitization already used) — falls through to the
+    // generic ladder. Since reasoning_content errors carry maxRetries=1
+    // in classification but the coordinator uses its own (default 4)
+    // budget, this resolves to fresh_connection_retry / manual_continue
+    // depending on attempt count, but NEVER another sanitize.
+    const second = coordinator.decideRecoveryAction(error, classified, 2);
+    expect(second.action).not.toBe('sanitize_thinking_and_retry');
+  });
+
+  it('sanitize_thinking_and_retry bypasses retry-budget gate (fires even when attempt high)', () => {
+    const tracker = new StableBoundaryTracker();
+    const coordinator = new ProviderRecoveryCoordinator(tracker, { maxRetries: 1 });
+    const error = new KodaXProviderError(
+      'deepseek API error: 400 The `reasoning_content` in the thinking mode must be passed back to the API.',
+      'deepseek',
+    );
+    const classified = classifyResilienceError(error);
+    // attempt=5 with maxRetries=1: normal errors would manual_continue,
+    // but sanitize fires first because the special case is checked
+    // ahead of the budget gate.
+    const decision = coordinator.decideRecoveryAction(error, classified, 5);
+    expect(decision.action).toBe('sanitize_thinking_and_retry');
+  });
+
+  it('sanitize_thinking_and_retry executor strips thinking blocks from history', () => {
+    const tracker = new StableBoundaryTracker();
+    tracker.beginRequest('deepseek', 'deepseek-v4-flash', []);
+    const coordinator = new ProviderRecoveryCoordinator(tracker, {});
+    const messages: KodaXMessage[] = [
+      { role: 'user', content: 'Hi' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'walking through it' },
+          { type: 'text', text: 'Hello!' },
+        ],
+      },
+      { role: 'user', content: 'Continue.' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'redacted_thinking', data: 'opaque' },
+          { type: 'tool_use', id: 'call_1', name: 'grep', input: { pattern: 'x' } },
+        ],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'call_1', content: 'ok' }],
+      },
+    ];
+
+    const result = coordinator.executeRecovery(messages, {
+      action: 'sanitize_thinking_and_retry',
+      ladderStep: 2,
+      delayMs: 0,
+      maxDelayMs: 60_000,
+      shouldUseNonStreaming: false,
+      reasonCode: 'reasoning_content_required',
+      failureStage: 'before_first_delta',
+    });
+
+    // First assistant turn: thinking stripped, text preserved.
+    const a1 = result.messages[1] as KodaXMessage;
+    expect(Array.isArray(a1.content)).toBe(true);
+    const a1Blocks = a1.content as Array<{ type: string }>;
+    expect(a1Blocks.map((b) => b.type)).toEqual(['text']);
+    // Second assistant turn: redacted_thinking stripped, tool_use preserved.
+    const a2 = result.messages[3] as KodaXMessage;
+    const a2Blocks = a2.content as Array<{ type: string }>;
+    expect(a2Blocks.map((b) => b.type)).toEqual(['tool_use']);
+    // User turns untouched.
+    expect((result.messages[0] as KodaXMessage).content).toBe('Hi');
+    expect((result.messages[2] as KodaXMessage).content).toBe('Continue.');
+  });
+
+  it('sanitize collapses thinking-only assistant turn into "..." placeholder', () => {
+    const tracker = new StableBoundaryTracker();
+    tracker.beginRequest('deepseek', 'deepseek-v4-flash', []);
+    const coordinator = new ProviderRecoveryCoordinator(tracker, {});
+    const messages: KodaXMessage[] = [
+      { role: 'user', content: 'Hi' },
+      {
+        role: 'assistant',
+        content: [{ type: 'thinking', thinking: 'silent reasoning' }],
+      },
+      { role: 'user', content: 'Continue.' },
+    ];
+
+    const result = coordinator.executeRecovery(messages, {
+      action: 'sanitize_thinking_and_retry',
+      ladderStep: 2,
+      delayMs: 0,
+      maxDelayMs: 60_000,
+      shouldUseNonStreaming: false,
+      reasonCode: 'reasoning_content_required',
+      failureStage: 'before_first_delta',
+    });
+
+    const assistant = result.messages[1] as KodaXMessage;
+    const blocks = assistant.content as Array<{ type: string; text?: string }>;
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].type).toBe('text');
+    expect(blocks[0].text).toBe('...');
+  });
+});
+
+// ============== Sanitize Thinking ==============
+
+describe('sanitizeThinkingBlocks', () => {
+  it('returns identity for messages with no thinking blocks', () => {
+    const messages: KodaXMessage[] = [
+      { role: 'user', content: 'Hi' },
+      { role: 'assistant', content: [{ type: 'text', text: 'Hello' }] },
+    ];
+    const result = sanitizeThinkingBlocks(messages);
+    expect(result).toHaveLength(2);
+    expect((result[1] as KodaXMessage).content).toEqual([{ type: 'text', text: 'Hello' }]);
+  });
+
+  it('is idempotent', () => {
+    const messages: KodaXMessage[] = [
+      { role: 'user', content: 'Hi' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'reasoning' },
+          { type: 'text', text: 'Hello' },
+        ],
+      },
+    ];
+    const once = sanitizeThinkingBlocks(messages);
+    const twice = sanitizeThinkingBlocks(once);
+    expect(twice).toEqual(once);
+  });
+
+  it('preserves user messages exactly', () => {
+    const messages: KodaXMessage[] = [
+      { role: 'user', content: 'string content' },
+      {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'call_1', content: 'result' }],
+      },
+    ];
+    const result = sanitizeThinkingBlocks(messages);
+    expect(result).toEqual(messages);
   });
 });
 

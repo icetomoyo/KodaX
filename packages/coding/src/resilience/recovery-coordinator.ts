@@ -8,7 +8,12 @@
  * 4. Manual continue — stop and ask user for intervention
  */
 
-import type { KodaXMessage } from '@kodax/ai';
+import type {
+  KodaXMessage,
+  KodaXContentBlock,
+  KodaXThinkingBlock,
+  KodaXRedactedThinkingBlock,
+} from '@kodax/ai';
 import type {
   ResilienceClassification,
   RecoveryAction,
@@ -51,6 +56,11 @@ const STREAMING_ERROR_CLASSES: ResilienceClassification['errorClass'][] = [
 export class ProviderRecoveryCoordinator {
   private readonly config: Required<ProviderResilienceConfig>;
   private nonStreamingFallbackUsed = false;
+  // Single-shot guard for thinking sanitisation. The first
+  // `reasoning_content_required` 400 triggers a sanitize-and-retry; if
+  // the retry hits the same error class again we fall through to
+  // manual_continue rather than loop. v0.7.28.
+  private thinkingSanitizationUsed = false;
 
   constructor(
     private readonly boundaryTracker: StableBoundaryTracker,
@@ -88,6 +98,26 @@ export class ProviderRecoveryCoordinator {
       return {
         action: 'manual_continue',
         ladderStep: 4,
+        delayMs: 0,
+        maxDelayMs: this.config.maxRetryDelayMs,
+        shouldUseNonStreaming: false,
+        reasonCode: classified.errorClass,
+        failureStage: classified.failureStage,
+      };
+    }
+
+    // Thinking-mode contract violation: special-case ahead of the
+    // generic retry-budget gate so the sanitize-and-retry attempt fires
+    // even when the original retry budget is small. Single-shot:
+    // subsequent encounters fall through to manual_continue. v0.7.28.
+    if (
+      classified.errorClass === 'reasoning_content_required' &&
+      !this.thinkingSanitizationUsed
+    ) {
+      this.thinkingSanitizationUsed = true;
+      return {
+        action: 'sanitize_thinking_and_retry',
+        ladderStep: 2,
         delayMs: 0,
         maxDelayMs: this.config.maxRetryDelayMs,
         shouldUseNonStreaming: false,
@@ -161,6 +191,8 @@ export class ProviderRecoveryCoordinator {
         return this.executeNonStreamingFallback(messages, decision);
       case 'manual_continue':
         return this.executeManualContinue(messages, decision);
+      case 'sanitize_thinking_and_retry':
+        return this.executeSanitizeThinking(messages, decision);
     }
   }
 
@@ -280,6 +312,28 @@ export class ProviderRecoveryCoordinator {
     };
   }
 
+  // Strip thinking and redacted_thinking blocks from every assistant
+  // turn in history. The resulting wire-form (after L1 always-attach)
+  // sends `reasoning_content: ''` for every turn, which deepseek
+  // thinking-mode accepts without complaint, and Anthropic interprets
+  // as "no prior thinking" so the next turn naturally generates fresh
+  // thinking. If a turn becomes empty after stripping (was thinking-
+  // only), inject a minimal text placeholder to keep user/assistant
+  // alternation valid. v0.7.28.
+  private executeSanitizeThinking(
+    messages: KodaXMessage[],
+    _decision: RecoveryDecision,
+  ): RecoveryResult {
+    const snapshot = this.boundaryTracker.snapshot();
+    const sanitized = sanitizeThinkingBlocks(messages);
+    return {
+      messages: sanitized,
+      droppedToolCallIds: [],
+      executedToolCallIds: [...snapshot.executedToolCallIds],
+      fallbackUsed: this.nonStreamingFallbackUsed,
+    };
+  }
+
   // ============== Reset ==============
 
   /**
@@ -287,7 +341,55 @@ export class ProviderRecoveryCoordinator {
    */
   reset(): void {
     this.nonStreamingFallbackUsed = false;
+    this.thinkingSanitizationUsed = false;
   }
+}
+
+// ============== Thinking Sanitization ==============
+
+/**
+ * Strips thinking and redacted_thinking blocks from every assistant
+ * turn in history. Used by `sanitize_thinking_and_retry` recovery to
+ * recover from servers that reject the replay because their thinking-
+ * mode invariants were violated (e.g., deepseek "must be passed back",
+ * Anthropic "thinking signature invalid").
+ *
+ * Behavior:
+ * - thinking and redacted_thinking blocks: removed
+ * - text, tool_use, tool_result blocks: preserved
+ * - assistant turns that become empty after stripping (were thinking-
+ *   only) get a minimal '...' text placeholder so user/assistant
+ *   alternation stays valid for the retry
+ * - non-array (string) content: preserved as-is
+ *
+ * Idempotent: running it twice on the same messages produces the same
+ * result.
+ */
+export function sanitizeThinkingBlocks(messages: KodaXMessage[]): KodaXMessage[] {
+  return messages.map((msg) => {
+    if (msg.role !== 'assistant') return msg;
+    if (typeof msg.content === 'string') return msg;
+    if (!Array.isArray(msg.content)) return msg;
+
+    const filtered = (msg.content as KodaXContentBlock[]).filter(
+      (block): block is Exclude<
+        KodaXContentBlock,
+        KodaXThinkingBlock | KodaXRedactedThinkingBlock
+      > => block.type !== 'thinking' && block.type !== 'redacted_thinking',
+    );
+
+    if (filtered.length === 0) {
+      // Was thinking-only — keep a placeholder so the retry doesn't
+      // break user/assistant alternation. '...' is the same convention
+      // used by anthropic.ts:657 / openai.ts content fallback.
+      return {
+        ...msg,
+        content: [{ type: 'text' as const, text: '...' }],
+      };
+    }
+
+    return { ...msg, content: filtered };
+  });
 }
 
 // ============== Delay Calculation ==============

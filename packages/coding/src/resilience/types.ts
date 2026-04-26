@@ -20,7 +20,13 @@ export type ResilienceErrorClass =
   | 'connection_failure'
   | 'incomplete_stream'
   | 'user_abort'
-  | 'non_retryable_provider_error';
+  | 'non_retryable_provider_error'
+  // Server rejected the replay because thinking-mode contract requires
+  // reasoning_content (deepseek V4) or a valid thinking signature
+  // (Anthropic) to be present on every assistant turn that was thought
+  // about in this conversation. Recoverable by stripping/normalising
+  // thinking blocks from history and retrying once. v0.7.28.
+  | 'reasoning_content_required';
 
 // ============== Failure Stages ==============
 
@@ -46,7 +52,10 @@ export type RecoveryAction =
   | 'fresh_connection_retry'
   | 'stable_boundary_retry'
   | 'non_streaming_fallback'
-  | 'manual_continue';
+  | 'manual_continue'
+  // Sanitize thinking blocks out of history (or blank their signatures)
+  // and retry once. Triggered by `reasoning_content_required`. v0.7.28.
+  | 'sanitize_thinking_and_retry';
 
 // ============== Recovery Ladder Step ==============
 

@@ -2645,7 +2645,37 @@ export function buildRunnerLlmAdapter(
             }
           }
 
+          // sanitize_thinking_and_retry is a single-shot history-mutation
+          // recovery (drop thinking blocks once, retry once) and must
+          // bypass the regular retry-budget gate. It's gated by its own
+          // `thinkingSanitizationUsed` latch inside the coordinator, so
+          // it can fire at most once per request chain regardless of how
+          // many normal retries already happened. v0.7.28.
+          if (decision.action === 'sanitize_thinking_and_retry') {
+            const recovery = recoveryCoordinator.executeRecovery(providerMessages, decision);
+            telemetryRecovery(decision.action, recovery);
+            providerMessages = recovery.messages;
+            if (hardTimer) clearTimeout(hardTimer);
+            if (idleTimer) clearTimeout(idleTimer);
+            hardTimer = undefined;
+            idleTimer = undefined;
+            // Don't bill an attempt slot for the sanitize step — same
+            // rationale as the L1 escalation reversal at line ~2546.
+            attempt -= 1;
+            await waitForRetryDelay(decision.delayMs, options.abortSignal);
+            continue;
+          }
+
           if (decision.action === 'manual_continue' || attempt >= resilienceCfg.maxRetries) {
+            // Preserve in-flight providerMessages on the thrown error so the
+            // outer wrapper's session-snapshot save can persist real history
+            // instead of `[]`. Non-enumerable so JSON-serializing telemetry
+            // does not dump conversation history into logs. The outer catch
+            // uses Array.isArray as a guard.
+            Object.defineProperty(error, '__kodaxRecoveredMessages', {
+              value: providerMessages,
+              enumerable: false,
+            });
             throw error;
           }
 
@@ -2692,7 +2722,18 @@ export function buildRunnerLlmAdapter(
         // Push the partial assistant turn + synthetic user continuation
         // onto the outgoing transcript. The provider will see the full
         // mid-thought state and pick up seamlessly.
-        const assistantContent: Array<{ type: 'text'; text: string }> = [
+        //
+        // Thinking blocks accumulated so far must ride along on the
+        // synthetic assistant turn. Without them, providers in strict
+        // thinking-mode (deepseek V4) reject the next replay with
+        // "reasoning_content must be passed back to the API" — the
+        // synthetic turn would be a thinking-less assistant message in
+        // a thinking-enabled request, which violates their per-turn
+        // contract. Mirrors what agent.ts:2294 does for the legacy
+        // path: thinking + text + tool_use stack on the assistant
+        // message in history.
+        const assistantContent: KodaXContentBlock[] = [
+          ...(accumulatedThinking ?? []),
           { type: 'text', text: accumulatedText },
         ];
         providerMessages = [
@@ -3681,10 +3722,22 @@ export async function runManagedTaskViaRunner(
     // v0.7.26 parity (C3): persist an error snapshot so /resume can
     // pick up the last turn even after a crash. Legacy does the same at
     // agent.ts:2824. Best-effort.
+    //
+    // Inner catch (runManagedTaskViaRunnerInner) attaches the in-flight
+    // providerMessages on the thrown error via __kodaxRecoveredMessages
+    // so we can persist real history. Without that carrier we used to
+    // write `messages: []`, which wiped the user's conversation on any
+    // permanent error (e.g., deepseek thinking-mode 400) and made the
+    // next prompt start as a fresh session.
     if (options.session?.storage) {
       try {
+        const recoveredMessages = (err as { __kodaxRecoveredMessages?: unknown })
+          ?.__kodaxRecoveredMessages;
+        const messagesToPersist = Array.isArray(recoveredMessages)
+          ? (recoveredMessages as KodaXMessage[])
+          : [];
         await saveSessionSnapshot(options, initialSessionId, {
-          messages: [],
+          messages: messagesToPersist,
           title: prompt.slice(0, 80),
           gitRoot: options.context?.gitRoot ?? undefined,
           errorMetadata: {

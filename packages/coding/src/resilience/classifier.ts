@@ -117,6 +117,33 @@ const HARD_TIMEOUT_PATTERNS = [
   /\bapi hard timeout\b/i,
 ];
 
+// thinking-mode contract violation patterns. Servers that enforce
+// strict thinking-mode replays (deepseek V4 OpenAI-compat,
+// Anthropic proper) reject 4xx requests when the assistant turns in
+// history don't satisfy their per-turn invariant — either missing
+// `reasoning_content` field (deepseek) or missing/invalid signature
+// on a `thinking` block (Anthropic). The recovery action will strip
+// or normalise thinking blocks and retry once.
+//
+// Patterns deliberately scope to error messages that explicitly link
+// "thinking" with "signature" or mention "reasoning_content" — this
+// avoids false-positives on unrelated auth errors like "API key
+// signature invalid" or "request signature mismatch", which a sanitize
+// retry can't fix anyway.
+const REASONING_CONTENT_REQUIRED_PATTERNS = [
+  // deepseek V4 OpenAI-compat: "The `reasoning_content` in the
+  // thinking mode must be passed back to the API."
+  /reasoning_content/i,
+  // Anthropic strict-signature: variants of "thinking ... signature"
+  // / "signature ... thinking" co-occurring within ~40 chars. Allows
+  // dots in between so JSON-path notation like `thinking.0.signature`
+  // matches. Avoids catching unrelated auth-signature errors that
+  // don't mention thinking at all (e.g. "API key signature invalid",
+  // "request signature mismatch").
+  /thinking.{0,40}signature/i,
+  /signature.{0,40}thinking/i,
+];
+
 // ============== Classification ==============
 
 /**
@@ -260,6 +287,19 @@ export function classifyResilienceError(
         retryable: true,
         maxRetries: 3,
         baseRetryDelay: 2_000,
+      };
+    }
+
+    // 9a. Thinking-mode contract violation — recoverable by stripping
+    // thinking blocks from history and retrying once. Single-shot retry
+    // budget so we don't loop on a genuinely permanent issue. v0.7.28.
+    if (matchesAny(message, REASONING_CONTENT_REQUIRED_PATTERNS)) {
+      return {
+        errorClass: 'reasoning_content_required',
+        failureStage: currentStage ?? 'before_first_delta',
+        retryable: true,
+        maxRetries: 1,
+        baseRetryDelay: 0,
       };
     }
 

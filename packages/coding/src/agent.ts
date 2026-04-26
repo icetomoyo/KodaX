@@ -2188,6 +2188,30 @@ export async function runKodaX(
             }
           }
 
+          // sanitize_thinking_and_retry is a single-shot history-mutation
+          // recovery (drop thinking blocks once, retry once) gated by
+          // its own latch inside the coordinator. Bypass the maxRetries
+          // gate so it can fire even when normal retries are exhausted.
+          // Mirrors the runner-driven path at runner-driven.ts:2654.
+          //
+          // Duplication is intentional migration debt: agent.ts is the
+          // SA-only legacy loop, runner-driven.ts is the Layer-A path
+          // (FEATURE_084). The two converge when SA is fully absorbed by
+          // Layer-A (post-FEATURE_086 direction). When that happens, this
+          // branch should be deleted — not abstracted into a helper. v0.7.28.
+          if (decision.action === 'sanitize_thinking_and_retry') {
+            const recovery = recoveryCoordinator.executeRecovery(providerMessages, decision);
+            telemetryRecovery(decision.action, recovery);
+            providerMessages = recovery.messages;
+            clearTimeout(hardTimer);
+            clearTimeout(idleTimer);
+            clearTimeout(streamMaxDurationTimer);
+            // Don't bill a retry slot for the sanitize step.
+            attempt -= 1;
+            await waitForRetryDelay(decision.delayMs, options.abortSignal);
+            continue;
+          }
+
           if (decision.action === 'manual_continue' || attempt >= resilienceCfg.maxRetries) {
             messages = providerMessages;
             throw error;
