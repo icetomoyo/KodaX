@@ -41,7 +41,7 @@ import { normalizeLoadedSessionMessages } from './task-engine/_internal/round-bo
 import { compact as intelligentCompact, needsCompaction, microcompact, DEFAULT_MICROCOMPACTION_CONFIG, buildPostCompactAttachments, buildFileContentMessages, injectPostCompactAttachments, DEFAULT_POST_COMPACT_CONFIG, POST_COMPACT_TOKEN_BUDGET, type CompactionConfig, type CompactionUpdate } from '@kodax/agent';
 import { loadCompactionConfig } from './compaction-config.js';
 import { estimateTokens } from './tokenizer.js';
-import { KODAX_MAX_MAXTOKENS_RETRIES, CANCELLED_TOOL_RESULT_MESSAGE } from './constants.js';
+import { KODAX_MAX_MAXTOKENS_RETRIES } from './constants.js';
 import { waitForRetryDelay } from './retry-handler.js';
 import { telemetryRecovery } from './resilience/index.js';
 import { buildPromptMessageContent } from './input-artifacts.js';
@@ -66,7 +66,8 @@ import {
   rebaseContextTokenSnapshot,
   resolveContextTokenCount,
 } from './token-accounting.js';
-import { applyToolResultGuardrail } from './tools/tool-result-policy.js';
+// CAP-079 (`applyToolResultGuardrail`) is now wired inside
+// `agent-runtime/tool-dispatch.ts:runToolDispatch` since FEATURE_100 P3.3d.
 import {
   cleanupIncompleteToolCalls,
   validateAndFixToolHistory,
@@ -107,21 +108,24 @@ import {
   CANCELLATION_LAST_TEXT,
 } from './agent-runtime/tool-cancellation.js';
 import { describeTransientProviderRetry } from './agent-runtime/provider-retry-policy.js';
-import { isToolResultErrorContent } from './agent-runtime/tool-result-classify.js';
+// CAP-037 predicates (`isToolResultErrorContent`) consumed inside the
+// dispatch substrate (CAP-024 / CAP-078) since FEATURE_100 P3.3d.
 import {
   filterExcludedTools,
   getActiveToolDefinitions,
   getRuntimeActiveToolNames,
 } from './agent-runtime/tool-resolution.js';
 import { gracefulCompactDegradation } from './agent-runtime/compaction-fallback.js';
-import { updateToolOutcomeTracking } from './agent-runtime/middleware/tool-outcome-tracking.js';
+// CAP-026 (`updateToolOutcomeTracking`) is now wired inside
+// `agent-runtime/tool-dispatch.ts:applyPostToolProcessing` since
+// FEATURE_100 P3.3d.
 import {
   type ProviderPrepareState,
   applyProviderPrepareHook,
 } from './agent-runtime/provider-hook.js';
 import {
-  createToolResultBlock,
-  executeToolCall,
+  runToolDispatch,
+  applyPostToolProcessing,
 } from './agent-runtime/tool-dispatch.js';
 import { buildReasoningExecutionState } from './agent-runtime/reasoning-plan-entry.js';
 import { resolveContextWindow } from './agent-runtime/context-window.js';
@@ -132,15 +136,10 @@ import {
 import { saveSessionSnapshot } from './agent-runtime/middleware/session-snapshot.js';
 import { emitRepoIntelligenceTrace } from './agent-runtime/middleware/repo-intelligence.js';
 export { buildAutoRepoIntelligenceContext } from './agent-runtime/middleware/repo-intelligence.js';
-import {
-  type RunnableToolCall,
-  buildEditRecoveryUserMessage,
-} from './agent-runtime/middleware/edit-recovery.js';
-import {
-  buildMutationScopeReflection,
-  isMutationScopeSignificant,
-  isMutationTool,
-} from './agent-runtime/middleware/mutation-reflection.js';
+// CAP-015 (`buildEditRecoveryUserMessage`, `RunnableToolCall`) and
+// CAP-016 mutation-reflection helpers are wired inside
+// `agent-runtime/tool-dispatch.ts:applyPostToolProcessing` since
+// FEATURE_100 P3.3d.
 import {
   hasStrongToolFailureEvidence,
   isReviewFinalAnswerCandidate,
@@ -248,7 +247,9 @@ import {
 // CAP-016 (`MUTATION_TOOL_NAMES`, `isMutationTool`,
 // `isMutationScopeSignificant`, `buildMutationScopeReflection`) lives in
 // `agent-runtime/middleware/mutation-reflection.ts` since FEATURE_100 P2.
-// Imported above for the post-tool-result loop call site.
+// The post-tool-result call site moved into
+// `agent-runtime/tool-dispatch.ts:applyPostToolProcessing` in
+// FEATURE_100 P3.3d (CAP-078).
 
 // CAP-010 (`getToolExecutionOverride`) lives in
 // `agent-runtime/permission-gate.ts` since FEATURE_100 P2.
@@ -260,8 +261,9 @@ import {
 
 // `createToolResultBlock` (helper, no own CAP) lives in
 // `agent-runtime/tool-dispatch.ts` since FEATURE_100 P2 (CAP-024 batch).
-// Imported above for the dispatch loop's 4 result-block construction
-// sites (success / cancel / blocked / generic error paths).
+// agent.ts no longer imports it directly since FEATURE_100 P3.3d —
+// the dispatch loop's result-block construction sites are now inside
+// `runToolDispatch` and `applyPostToolProcessing` in the same module.
 
 // CAP-035 (`isVisibleToolName`) lives in
 // `agent-runtime/event-emitter.ts` since FEATURE_100 P2.
@@ -275,14 +277,14 @@ import {
 // CAP-015 (`resolveToolTargetPath`, `clearEditRecoveryStateForPath`,
 // `maybeBlockExistingFileWrite`, `buildEditRecoveryUserMessage`) lives in
 // `agent-runtime/middleware/edit-recovery.ts` since FEATURE_100 P2.
-// All four are imported above for use in the dispatch loop and
-// `updateToolOutcomeTracking`.
+// `buildEditRecoveryUserMessage` is now consumed by
+// `agent-runtime/tool-dispatch.ts:applyPostToolProcessing` since
+// FEATURE_100 P3.3d.
 
 // CAP-026 (`updateToolOutcomeTracking`) lives in
 // `agent-runtime/middleware/tool-outcome-tracking.ts` since FEATURE_100 P2.
-// Imported above for the post-tool-result hook in the dispatch loop.
-// Will likely co-locate with CAP-024 (`tool-dispatch.ts`) in P3 per
-// inventory's "shared with CAP-024" annotation.
+// Co-located inside `agent-runtime/tool-dispatch.ts:applyPostToolProcessing`
+// since FEATURE_100 P3.3d (CAP-078).
 
 // CAP-027 (`estimateProviderPayloadBytes`, `bucketProviderPayloadSize`) lives
 // in `agent-runtime/provider-payload.ts` since FEATURE_100 P2.
@@ -298,15 +300,19 @@ import {
 // `agent-runtime/middleware/judges.ts` since FEATURE_100 P2.
 
 // CAP-024 (`executeToolCall`) lives in
-// `agent-runtime/tool-dispatch.ts` since FEATURE_100 P2.
-// Imported above for the dispatch loop's per-`tool_use` execution
-// step inside `runKodaX`.
+// `agent-runtime/tool-dispatch.ts` since FEATURE_100 P2. agent.ts no
+// longer imports it directly since FEATURE_100 P3.3d — both bash and
+// non-bash dispatch are wrapped inside `runToolDispatch` in the same
+// module.
 
 // CAP-025 (`tryMcpFallback`, `MCP_FALLBACK_ALLOWED_TOOLS`) lives in
-// `agent-runtime/tool-dispatch.ts` since FEATURE_100 P2. `tryMcpFallback`
-// is imported above for the dispatch loop's MCP-fallback branch
-// inside `executeToolCall`. P3 plan: CAP-024 (`executeToolCall`) will
-// co-locate into the same module.
+// `agent-runtime/tool-dispatch.ts` since FEATURE_100 P2.
+
+// CAP-077 (`runToolDispatch` — bash sequential / non-bash parallel +
+// CAP-079 guardrail wrapping) and CAP-078 (`applyPostToolProcessing` —
+// per-result chain) live in `agent-runtime/tool-dispatch.ts` since
+// FEATURE_100 P3.3d. Imported above for the dispatch loop's two-step
+// invocation inside `runKodaX`.
 
 /**
  * 运行 KodaX Agent
@@ -1250,8 +1256,8 @@ export async function runKodaX(
       }
 
       // 执行工具
-      const toolResults: KodaXToolResultBlock[] = [];
-      const editRecoveryMessages: string[] = [];
+      let toolResults: KodaXToolResultBlock[] = [];
+      let editRecoveryMessages: string[] = [];
 
       // CAP-076: pre-tool abort check. If Ctrl+C fired between stream
       // end and tool dispatch, synthesize cancelled tool_results for
@@ -1266,91 +1272,39 @@ export async function runKodaX(
       });
 
       if (preToolCancelled !== null) {
+        // Pre-tool aborts skip the post-processing chain (CAP-078) — outcome
+        // tracking, mutation reflection, and edit recovery are intentionally
+        // not run for cancelled-before-dispatch tools (parity preserved from
+        // the pre-FEATURE_100 inline branch).
         toolResults.push(...preToolCancelled);
       } else {
-        const bashTools = result.toolBlocks.filter(tc => tc.name === 'bash');
-        const nonBashTools = result.toolBlocks.filter(tc => tc.name !== 'bash');
-        const resultMap = new Map<string, string>();
-
-        if (nonBashTools.length > 0) {
-          const promises = nonBashTools.map(async tc => ({
-            id: tc.id,
-            content: (
-              await applyToolResultGuardrail(
-                tc.name,
-                await executeToolCall(events, {
-                  id: tc.id,
-                  name: tc.name,
-                  input: tc.input as Record<string, unknown> | undefined,
-                }, ctx, runtimeSessionState, getRuntimeActiveToolNames(
-                  runtimeSessionState.activeTools,
-                  options.context?.repoIntelligenceMode,
-                  !!runtime,
-                  options.context?.toolConstructionMode,
-                ), options.abortSignal),
-                ctx,
-              )
-            ).content,
-          }));
-          const results = await Promise.all(promises);
-          for (const r of results) resultMap.set(r.id, r.content);
-        }
-
-        for (const tc of bashTools) {
-          // Issue 088: Check abort signal before each sequential bash tool
-          if (options.abortSignal?.aborted) {
-            resultMap.set(tc.id, CANCELLED_TOOL_RESULT_MESSAGE);
-            continue;
-          }
-          const content = (
-            await applyToolResultGuardrail(
-              tc.name,
-              await executeToolCall(events, {
-                id: tc.id,
-                name: tc.name,
-                input: tc.input as Record<string, unknown> | undefined,
-                }, ctx, runtimeSessionState, getRuntimeActiveToolNames(
-                  runtimeSessionState.activeTools,
-                  options.context?.repoIntelligenceMode,
-                  !!runtime,
-                  options.context?.toolConstructionMode,
-                ), options.abortSignal),
-              ctx,
-            )
-          ).content;
-          resultMap.set(tc.id, content);
-        }
-
-        for (const tc of result.toolBlocks) {
-          let content = resultMap.get(tc.id) ?? '[Error] No result';
-          // Scope reflection: when mutation tracker crosses threshold, append once to a write tool result.
-          if (
-            ctx.mutationTracker
-            && !ctx.mutationTracker.reflectionInjected
-            && !isToolResultErrorContent(content)
-            && isMutationTool(tc.name)
-            && isMutationScopeSignificant(ctx.mutationTracker)
-          ) {
-            content += buildMutationScopeReflection(ctx.mutationTracker);
-            ctx.mutationTracker.reflectionInjected = true;
-          }
-          updateToolOutcomeTracking(tc, content, runtimeSessionState, ctx);
-          if (tc.name === 'edit' && isToolResultErrorContent(content)) {
-            const recoveryMessage = await buildEditRecoveryUserMessage(tc, content, runtimeSessionState, ctx);
-            if (recoveryMessage) {
-              editRecoveryMessages.push(recoveryMessage);
-            }
-          }
-          if (isVisibleToolName(tc.name)) {
-            await emitActiveExtensionEvent('tool:result', {
-              id: tc.id,
-              name: tc.name,
-              content,
-            });
-            events.onToolResult?.({ id: tc.id, name: tc.name, content });
-            toolResults.push(createToolResultBlock(tc.id, content));
-          }
-        }
+        // CAP-077 + CAP-079: parallel non-bash / sequential bash dispatch
+        // wrapped via the post-tool truncation guardrail.
+        const resultMap = await runToolDispatch({
+          toolBlocks: result.toolBlocks,
+          events,
+          ctx,
+          runtimeSessionState,
+          activeToolNames: getRuntimeActiveToolNames(
+            runtimeSessionState.activeTools,
+            options.context?.repoIntelligenceMode,
+            !!runtime,
+            options.context?.toolConstructionMode,
+          ),
+          abortSignal: options.abortSignal,
+        });
+        // CAP-078: per-result post-processing chain (mutation reflection,
+        // outcome tracking, edit recovery, visibility events).
+        const postProcessed = await applyPostToolProcessing({
+          toolBlocks: result.toolBlocks,
+          resultMap,
+          events,
+          emitActiveExtensionEvent,
+          ctx,
+          runtimeSessionState,
+        });
+        toolResults = postProcessed.toolResults;
+        editRecoveryMessages = postProcessed.editRecoveryMessages;
       }
 
       // CAP-080: any cancelled tool result triggers the cancellation

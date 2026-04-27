@@ -1,12 +1,16 @@
 /**
- * Tool dispatch — CAP-024 + CAP-025
+ * Tool dispatch — CAP-024 + CAP-025 + CAP-077 + CAP-078 + CAP-079
  *
  * Capability inventory:
  *   - docs/features/v0.7.29-capability-inventory.md#cap-024-tool-execution-dispatch
  *   - docs/features/v0.7.29-capability-inventory.md#cap-025-mcp-fallback-resolution
+ *   - docs/features/v0.7.29-capability-inventory.md#cap-077-tool-dispatch-parallelization-bash-sequential-non-bash-parallel
+ *   - docs/features/v0.7.29-capability-inventory.md#cap-078-per-result-post-processing-chain-mutation-reflection-outcome-tracking-edit-recovery-visibility-events
+ *   - docs/features/v0.7.29-capability-inventory.md#cap-079-applytoolresultguardrail-post-tool-truncation-wrapping
  *
  * Class 1 (substrate middleware). The dispatch core: per-`tool_use`
- * block execution + MCP fallback + tool-result block construction.
+ * block execution + MCP fallback + tool-result block construction +
+ * parallel/sequential dispatch split + per-result post-processing.
  *
  * **`createToolResultBlock`** — assembles the `tool_result` content
  * block sent back to the assistant. Sets `is_error: true` when the
@@ -55,11 +59,46 @@
  * **`tryMcpFallback` (CAP-025)** — see CAP-025 docstring section
  * below. Three short-circuits + result wrapping.
  *
+ * **`runToolDispatch` (CAP-077 + CAP-079)** — splits assistant tool_use
+ * blocks into bash and non-bash, runs non-bash tools in parallel
+ * (`Promise.all`) and bash tools sequentially (so side-effecting bash
+ * never races), wrapping each call with `applyToolResultGuardrail` so
+ * the post-tool truncation policy is the FIRST registered guardrail
+ * layer (FEATURE_085 will register more on top). Each iteration of the
+ * bash sequential loop re-checks `abortSignal` (Issue 088 mid-batch
+ * Ctrl+C); the upstream pre-tool abort gate (CAP-076 / `checkPreToolAbort`)
+ * prevents this helper from running at all when the user has already
+ * aborted before dispatch. Returns a `Map<id, content>` keyed by
+ * `tool_use_id`.
+ *
+ * **`applyPostToolProcessing` (CAP-078)** — per-result chain that runs
+ * AFTER the dispatch map is built and BEFORE history push:
+ *
+ *   1. Mutation scope reflection (CAP-016 calling site) — appended
+ *      ONCE per session when the mutation tracker crosses threshold,
+ *      and only to a non-error mutation tool's content.
+ *   2. `updateToolOutcomeTracking` (CAP-026 calling site) updates
+ *      runtime outcome counters used by the auto-reroute judge.
+ *   3. Edit-recovery message synthesis (CAP-015 calling site) — for
+ *      `'edit'` tool results that carry an error envelope, build a
+ *      synthetic recovery user message accumulated for the caller to
+ *      append after the tool_results block.
+ *   4. Visibility events — for visible tool names (CAP-035), emit
+ *      `tool:result` extension event + `events.onToolResult` and push
+ *      a `tool_result` block into the accumulator. Invisible tools
+ *      (managed-protocol) are silently dropped from the transcript.
+ *
+ * Returns `{ toolResults, editRecoveryMessages }` — the caller pushes
+ * `toolResults` into history and (if non-empty) the recovery messages
+ * as a `_synthetic: true` user message.
+ *
  * Migration history: extracted from `agent.ts:873-880`
  * (`createToolResultBlock`), `agent.ts:1306-1379` (`executeToolCall`),
  * `agent.ts:1384-1392` (`MCP_FALLBACK_ALLOWED_TOOLS`),
  * `agent.ts:1394-1428` (`tryMcpFallback`) — pre-FEATURE_100 baseline
- * — during FEATURE_100 P2.
+ * — during FEATURE_100 P2.  `runToolDispatch` and
+ * `applyPostToolProcessing` extracted from `agent.ts:1271-1353`
+ * — pre-FEATURE_100 baseline — during FEATURE_100 P3.3d.
  */
 
 import type {
@@ -67,6 +106,7 @@ import type {
   KodaXToolExecutionContext,
   KodaXToolResultBlock,
 } from '../types.js';
+import type { KodaXToolUseBlock } from '@kodax/ai';
 import { CANCELLED_TOOL_RESULT_MESSAGE } from '../constants.js';
 import { executeTool } from '../tools/index.js';
 import { emitActiveExtensionEvent } from '../extensions/runtime.js';
@@ -75,9 +115,18 @@ import { getToolExecutionOverride } from './permission-gate.js';
 import {
   type RunnableToolCall,
   maybeBlockExistingFileWrite,
+  buildEditRecoveryUserMessage,
 } from './middleware/edit-recovery.js';
 import { isToolResultErrorContent } from './tool-result-classify.js';
 import type { RuntimeSessionState } from './runtime-session-state.js';
+import { applyToolResultGuardrail } from '../tools/tool-result-policy.js';
+import {
+  buildMutationScopeReflection,
+  isMutationScopeSignificant,
+  isMutationTool,
+} from './middleware/mutation-reflection.js';
+import { updateToolOutcomeTracking } from './middleware/tool-outcome-tracking.js';
+import type { ExtensionEventEmitter } from './stream-handler-wiring.js';
 
 export function createToolResultBlock(
   toolUseId: string,
@@ -212,4 +261,164 @@ export async function tryMcpFallback(
     }
     return undefined;
   }
+}
+
+export interface RunToolDispatchInput {
+  readonly toolBlocks: readonly KodaXToolUseBlock[];
+  readonly events: KodaXEvents;
+  readonly ctx: KodaXToolExecutionContext;
+  readonly runtimeSessionState: RuntimeSessionState;
+  readonly activeToolNames: string[] | undefined;
+  readonly abortSignal: AbortSignal | undefined;
+}
+
+/**
+ * CAP-077 + CAP-079: dispatch the assistant's tool_use blocks. Non-bash
+ * tools run in parallel via `Promise.all`; bash tools run sequentially
+ * with a per-iteration `abortSignal` recheck (mid-batch Ctrl+C honored).
+ * Each call is wrapped with `applyToolResultGuardrail` (CAP-079) so the
+ * truncation policy is the FIRST guardrail layer.
+ *
+ * Returns a `Map<id, content>` keyed by tool_use_id. Caller threads the
+ * map into `applyPostToolProcessing` (CAP-078).
+ */
+export async function runToolDispatch(
+  input: RunToolDispatchInput,
+): Promise<Map<string, string>> {
+  const bashTools = input.toolBlocks.filter((tc) => tc.name === 'bash');
+  const nonBashTools = input.toolBlocks.filter((tc) => tc.name !== 'bash');
+  const resultMap = new Map<string, string>();
+
+  if (nonBashTools.length > 0) {
+    const promises = nonBashTools.map(async (tc) => ({
+      id: tc.id,
+      content: (
+        await applyToolResultGuardrail(
+          tc.name,
+          await executeToolCall(
+            input.events,
+            {
+              id: tc.id,
+              name: tc.name,
+              input: tc.input as Record<string, unknown> | undefined,
+            },
+            input.ctx,
+            input.runtimeSessionState,
+            input.activeToolNames,
+            input.abortSignal,
+          ),
+          input.ctx,
+        )
+      ).content,
+    }));
+    const results = await Promise.all(promises);
+    for (const r of results) resultMap.set(r.id, r.content);
+  }
+
+  for (const tc of bashTools) {
+    // Issue 088: Check abort signal before each sequential bash tool.
+    if (input.abortSignal?.aborted) {
+      resultMap.set(tc.id, CANCELLED_TOOL_RESULT_MESSAGE);
+      continue;
+    }
+    const content = (
+      await applyToolResultGuardrail(
+        tc.name,
+        await executeToolCall(
+          input.events,
+          {
+            id: tc.id,
+            name: tc.name,
+            input: tc.input as Record<string, unknown> | undefined,
+          },
+          input.ctx,
+          input.runtimeSessionState,
+          input.activeToolNames,
+          input.abortSignal,
+        ),
+        input.ctx,
+      )
+    ).content;
+    resultMap.set(tc.id, content);
+  }
+
+  return resultMap;
+}
+
+export interface PostToolProcessingInput {
+  readonly toolBlocks: readonly KodaXToolUseBlock[];
+  readonly resultMap: Map<string, string>;
+  readonly events: KodaXEvents;
+  readonly emitActiveExtensionEvent: ExtensionEventEmitter;
+  readonly ctx: KodaXToolExecutionContext;
+  readonly runtimeSessionState: RuntimeSessionState;
+}
+
+export interface PostToolProcessingOutput {
+  readonly toolResults: KodaXToolResultBlock[];
+  readonly editRecoveryMessages: string[];
+}
+
+/**
+ * CAP-078: per-result post-processing chain. For each tool_use block,
+ * in order:
+ *   1. Mutation scope reflection — appended once when the tracker
+ *      crosses threshold and the result is a non-error mutation tool.
+ *   2. `updateToolOutcomeTracking` — outcome counters for the
+ *      auto-reroute judge.
+ *   3. Edit recovery message synthesis — for `'edit'` results carrying
+ *      an error envelope.
+ *   4. Visibility events — `tool:result` extension event +
+ *      `events.onToolResult`, then push `tool_result` block into the
+ *      accumulator for visible tools.
+ *
+ * Invisible tools (managed-protocol) are silently dropped from the
+ * transcript: they neither emit visibility events nor push a
+ * `tool_result` block. The `resultMap` lookup falls back to
+ * `'[Error] No result'` for any block missing from the map.
+ */
+export async function applyPostToolProcessing(
+  input: PostToolProcessingInput,
+): Promise<PostToolProcessingOutput> {
+  const toolResults: KodaXToolResultBlock[] = [];
+  const editRecoveryMessages: string[] = [];
+
+  for (const tc of input.toolBlocks) {
+    let content = input.resultMap.get(tc.id) ?? '[Error] No result';
+    // Scope reflection: when mutation tracker crosses threshold, append
+    // once to a write tool result.
+    if (
+      input.ctx.mutationTracker
+      && !input.ctx.mutationTracker.reflectionInjected
+      && !isToolResultErrorContent(content)
+      && isMutationTool(tc.name)
+      && isMutationScopeSignificant(input.ctx.mutationTracker)
+    ) {
+      content += buildMutationScopeReflection(input.ctx.mutationTracker);
+      input.ctx.mutationTracker.reflectionInjected = true;
+    }
+    updateToolOutcomeTracking(tc, content, input.runtimeSessionState, input.ctx);
+    if (tc.name === 'edit' && isToolResultErrorContent(content)) {
+      const recoveryMessage = await buildEditRecoveryUserMessage(
+        tc,
+        content,
+        input.runtimeSessionState,
+        input.ctx,
+      );
+      if (recoveryMessage) {
+        editRecoveryMessages.push(recoveryMessage);
+      }
+    }
+    if (isVisibleToolName(tc.name)) {
+      await input.emitActiveExtensionEvent('tool:result', {
+        id: tc.id,
+        name: tc.name,
+        content,
+      });
+      input.events.onToolResult?.({ id: tc.id, name: tc.name, content });
+      toolResults.push(createToolResultBlock(tc.id, content));
+    }
+  }
+
+  return { toolResults, editRecoveryMessages };
 }
