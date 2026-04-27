@@ -103,6 +103,7 @@ import { resolvePerTurnProvider } from './agent-runtime/per-turn-provider-resolu
 import { resolvePerTurnReasoning } from './agent-runtime/per-turn-reasoning.js';
 import { buildStreamTimers } from './agent-runtime/stream-timers.js';
 import { applyProviderPolicyGate } from './agent-runtime/provider-policy-gate.js';
+import { buildStreamHandlers } from './agent-runtime/stream-handler-wiring.js';
 import { describeTransientProviderRetry } from './agent-runtime/provider-retry-policy.js';
 import {
   isCancelledToolResultContent,
@@ -843,54 +844,24 @@ export async function runKodaX(
         });
 
         try {
+          // CAP-067: build the 6-handler callback bag (delta / thinking-end /
+          // tool-input / rate-limit / heartbeat). All handlers fan out to
+          // streamTimers.resetIdleTimer() + boundaryTracker + extension
+          // events + consumer events in load-bearing order.
+          const streamCallbacks = buildStreamHandlers({
+            events,
+            boundaryTracker,
+            streamTimers,
+            emitActiveExtensionEvent,
+            providerName: currentProviderName,
+          });
           result = await streamProvider.stream(
             providerMessages,
             activeToolDefinitions,
             effectiveSystemPrompt,
             effectiveProviderReasoning,
             {
-              onTextDelta: (text) => {
-                resetIdleTimer();
-                boundaryTracker.markTextDelta(text);
-                void emitActiveExtensionEvent('text:delta', { text });
-                events.onTextDelta?.(text);
-              },
-              onThinkingDelta: (text) => {
-                resetIdleTimer();
-                boundaryTracker.markThinkingDelta(text);
-                void emitActiveExtensionEvent('thinking:delta', { text });
-                events.onThinkingDelta?.(text);
-              },
-              onThinkingEnd: (thinking) => {
-                resetIdleTimer();
-                void emitActiveExtensionEvent('thinking:end', { thinking });
-                events.onThinkingEnd?.(thinking);
-              },
-              onToolInputDelta: (name, json, meta) => {
-                resetIdleTimer();
-                boundaryTracker.markToolInputStart(meta?.toolId ?? `pending:${name}`);
-                events.onToolInputDelta?.(name, json, meta);
-              },
-              onRateLimit: (rateAttempt, max, delay) => {
-                resetIdleTimer();
-                void emitActiveExtensionEvent('provider:rate-limit', {
-                  provider: currentProviderName,
-                  attempt: rateAttempt,
-                  maxRetries: max,
-                  delayMs: delay,
-                });
-                events.onProviderRateLimit?.(rateAttempt, max, delay);
-              },
-              onHeartbeat: (pause) => {
-                if (pause) {
-                  // Between content blocks: server may be silent while generating
-                  // the next block.  Clear idle timer but do NOT restart it — the
-                  // hard request timeout (10 min) still guards against stuck connections.
-                  streamTimers.clearIdleTimer();
-                } else {
-                  resetIdleTimer();
-                }
-              },
+              ...streamCallbacks,
               modelOverride: currentModelOverride,
               signal: retrySignal,
             },
