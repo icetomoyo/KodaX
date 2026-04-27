@@ -477,6 +477,223 @@ export function resolveRoleReasoning(
   return clampReasoningMode(clampedToProfileMax, userCeiling);
 }
 
+// ---------------------------------------------------------------------------
+// FEATURE_103 (v0.7.29): L5 user-followup escalate
+//
+// Fifth tier of the FEATURE_078 chain. L4 (`escalateThinkingDepth(_, ceiling)`)
+// catches *system*-detected dissatisfaction (Evaluator returned `revise`).
+// L5 catches *user*-detected dissatisfaction (the user came back with a
+// follow-up containing doubt or deepen markers). Both bump depth one
+// rank; both are clamped by the absolute ceiling.
+//
+// Triggers (single bump):
+//   - Doubt category: prior assistant turn in session AND prompt contains
+//     a doubt marker (`不对` / `错了` / `wrong` / `are you sure`, etc.).
+//     The prior-turn requirement avoids false positives on first-round
+//     prompts that happen to contain the word "wrong" out of context.
+//   - Deepen category: prompt contains a deepen marker (`仔细` / `深入` /
+//     `think harder`, etc.). Fires regardless of round — the user is
+//     explicitly asking for more depth.
+//
+// L5 respects the L1 hard cap: `off` stays `off` (kill switch is sacrosanct),
+// and a bumped value never exceeds `deep`. L5 is purely additive — it never
+// lowers depth and never overrides L4.
+// ---------------------------------------------------------------------------
+
+/**
+ * Doubt markers — short Chinese + English phrases that indicate the user
+ * is pushing back on or questioning a prior answer. Matched substring-wise
+ * against the user's latest prompt. Conservative dictionary: every entry
+ * is unambiguous in context (no `not` or `wrong` standalone — those would
+ * false-positive on quoted text or codenames).
+ */
+const FOLLOWUP_DOUBT_MARKERS: readonly string[] = Object.freeze([
+  // Chinese
+  '不对',
+  '错了',
+  '有问题',
+  '真的吗',
+  '你确定',
+  '不是这样',
+  '弄错了',
+  '搞错了',
+  '搞反了',
+  '这不对',
+  '不正确',
+  '答错',
+  '回答错',
+  // English
+  "that's wrong",
+  'that is wrong',
+  "that's not right",
+  'that is not right',
+  'are you sure',
+  'not really',
+  'this is wrong',
+  'this is incorrect',
+  "that's incorrect",
+  'that is incorrect',
+  "you're wrong",
+  'you are wrong',
+]);
+
+/**
+ * Deepen markers — phrases that explicitly request more thinking depth,
+ * round-independent. A user starting a fresh task with `仔细分析...` is
+ * still requesting depth.
+ */
+const FOLLOWUP_DEEPEN_MARKERS: readonly string[] = Object.freeze([
+  // Chinese
+  '仔细',
+  '深入',
+  '认真',
+  '再看看',
+  '再想想',
+  '想清楚',
+  '用心',
+  '深度分析',
+  '仔细分析',
+  '认真分析',
+  '彻底',
+  // English
+  'think harder',
+  'think more carefully',
+  'look more carefully',
+  'dig deeper',
+  'be thorough',
+  'more careful',
+  'more carefully',
+  'reconsider',
+  'reexamine',
+  're-examine',
+]);
+
+export type FollowupSignalCategory = 'doubt' | 'deepen' | null;
+
+export interface FollowupSignal {
+  /** Which marker category fired, or null when no escalation should happen. */
+  readonly category: FollowupSignalCategory;
+  /** The literal marker substring that matched, for telemetry / logs. */
+  readonly matched: string | null;
+}
+
+/**
+ * Detect L5 follow-up signal in a user prompt. Doubt markers require
+ * `hasPriorAssistantTurn` to be true (otherwise return null even if a
+ * doubt marker is present — first-turn doubt-like text is too noisy);
+ * deepen markers fire unconditionally.
+ *
+ * Match is case-insensitive substring against both the original text and
+ * its lower-cased form (CJK chars unchanged by .toLowerCase, ASCII gets
+ * folded so 'Are You Sure' matches 'are you sure').
+ */
+export function detectFollowupSignal(
+  text: string,
+  hasPriorAssistantTurn: boolean,
+): FollowupSignal {
+  if (!text) return { category: null, matched: null };
+  const lowered = text.toLowerCase();
+
+  if (hasPriorAssistantTurn) {
+    for (const marker of FOLLOWUP_DOUBT_MARKERS) {
+      const lower = marker.toLowerCase();
+      if (lowered.includes(lower) || text.includes(marker)) {
+        return { category: 'doubt', matched: marker };
+      }
+    }
+  }
+
+  for (const marker of FOLLOWUP_DEEPEN_MARKERS) {
+    const lower = marker.toLowerCase();
+    if (lowered.includes(lower) || text.includes(marker)) {
+      return { category: 'deepen', matched: marker };
+    }
+  }
+
+  return { category: null, matched: null };
+}
+
+/**
+ * Single-rank bump for L5 escalation. `off` is sacrosanct (kill switch
+ * dominates user pushback — if the user explicitly said "no thinking",
+ * even doubt markers cannot re-enable it). Other modes step up one rank,
+ * capped at `deep`.
+ *
+ * Sequence: off (no bump) | auto → quick → balanced → deep (no bump).
+ */
+export function escalateUserCeiling(
+  ceiling: KodaXReasoningMode,
+): KodaXReasoningMode {
+  if (ceiling === 'off') return 'off';
+  if (compareReasoningModes(ceiling, 'auto') === 0) return 'quick';
+  if (compareReasoningModes(ceiling, 'quick') === 0) return 'balanced';
+  if (compareReasoningModes(ceiling, 'balanced') === 0) return 'deep';
+  return 'deep';
+}
+
+export interface FollowupEscalation {
+  /** The ceiling effective for this round (post-L5 bump if applicable). */
+  readonly effective: KodaXReasoningMode;
+  /** True iff `effective !== input ceiling`. */
+  readonly escalated: boolean;
+  /** Detected signal that triggered escalation, if any. */
+  readonly signal: FollowupSignal;
+}
+
+/**
+ * Apply L5 escalation to a user ceiling. Returns the ceiling unchanged
+ * (with `escalated: false`) when no signal fires or when bumping would
+ * be a no-op (`off` stays `off`, `deep` stays `deep`).
+ *
+ * Pure function — does not mutate inputs. Callers compute this ONCE per
+ * `runKodaX` / `runManagedTaskViaRunner` invocation at the entry point,
+ * then thread the resulting `effective` value through `options.reasoningMode`.
+ * Per-iteration sites in the runner loop see the already-bumped value and
+ * resolve L1-L4 normally on top of it.
+ */
+export function applyFollowupEscalation(
+  ceiling: KodaXReasoningMode,
+  prompt: string,
+  hasPriorAssistantTurn: boolean,
+): FollowupEscalation {
+  const signal = detectFollowupSignal(prompt, hasPriorAssistantTurn);
+  if (signal.category === null) {
+    return { effective: ceiling, escalated: false, signal };
+  }
+  const bumped = escalateUserCeiling(ceiling);
+  if (bumped === ceiling) {
+    return { effective: ceiling, escalated: false, signal };
+  }
+  return { effective: bumped, escalated: true, signal };
+}
+
+/**
+ * Convenience wrapper: read the L1 ceiling from `options`, count prior
+ * assistant turns from `options.session?.initialMessages`, apply L5,
+ * return both the escalation result and a fresh `KodaXOptions` with
+ * `reasoningMode` updated to the bumped value (when bumped).
+ *
+ * Returns the input options reference unchanged when no escalation fires
+ * — callers can rely on `options === result.options` to skip downstream
+ * re-resolution if they care.
+ */
+export function applyFollowupEscalationToOptions<T extends KodaXOptions>(
+  options: T,
+  prompt: string,
+): { options: T; escalation: FollowupEscalation } {
+  const ceiling = resolveReasoningMode(options);
+  const initialMessages = options.session?.initialMessages ?? [];
+  const hasPriorAssistantTurn = initialMessages.some((m) => m?.role === 'assistant');
+  const escalation = applyFollowupEscalation(ceiling, prompt, hasPriorAssistantTurn);
+  if (!escalation.escalated) {
+    return { options, escalation };
+  }
+  return {
+    options: { ...options, reasoningMode: escalation.effective } as T,
+    escalation,
+  };
+}
+
 const TASK_TYPE_KEYWORDS: Record<
   Exclude<KodaXTaskType, 'unknown'>,
   readonly string[]

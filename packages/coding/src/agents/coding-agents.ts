@@ -64,7 +64,18 @@ const scoutSpec: AgentSpec = {
     'hand off to Generator (H1) or Planner (H2) when complexity requires it. ' +
     'Emit the scout verdict via the emit_scout_verdict tool exactly once.',
   tools: [emitScoutVerdict],
-  reasoning: { default: 'quick', max: 'balanced', escalateOnRevise: false },
+  // FEATURE_103 (v0.7.29): default raised from 'quick' to 'balanced' and max
+  // from 'balanced' to 'deep'. Scout post-FEATURE_061 is no longer just a
+  // classifier — it judges H0/H1/H2 (a decision that gates the entire
+  // downstream topology), executes H0 directly, emits executionObligations,
+  // and emits FEATURE_078 downstream_reasoning_hint (meta-reasoning about
+  // what depth Generator needs). 'quick' was sized for the v0.7.16 classifier
+  // role; 'balanced' matches the actual cascade-level decision Scout owns
+  // today. max=deep lets users who explicitly set --reasoning deep have
+  // Scout reason at that depth too (was previously capped at balanced).
+  // escalateOnRevise stays false because Scout has no revise loop — it
+  // emits once and hands off.
+  reasoning: { default: 'balanced', max: 'deep', escalateOnRevise: false },
 };
 
 const plannerSpec: AgentSpec = {

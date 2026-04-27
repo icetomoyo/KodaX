@@ -142,6 +142,7 @@ import type {
 } from '../types.js';
 import type { ReasoningPlan } from '../reasoning.js';
 import {
+  applyFollowupEscalationToOptions,
   buildAmaControllerDecision,
   buildPromptOverlay,
   reasoningModeToDepth,
@@ -3754,21 +3755,27 @@ export async function runManagedTaskViaRunner(
   // (or future SDK consumers) still work without constructing a plan.
   plan?: ReasoningPlan,
 ): Promise<KodaXResult> {
+  // FEATURE_103 (v0.7.29): apply L5 user-followup escalation once at the
+  // AMA entry. Mirrors the SA `runKodaX` wiring so the bumped ceiling
+  // propagates uniformly through createReasoningPlan, buildRunnerLlmAdapter,
+  // and the per-iteration L1-L4 resolver inside the Runner loop. When no
+  // signal fires, the helper returns the input options reference unchanged.
+  const { options: effectiveOptions } = applyFollowupEscalationToOptions(options, prompt);
   // Fire onSessionStart early so REPL / CLI listeners bound to session
   // init trigger for AMA runs the same way they trigger for SA runs.
-  const providerName = options.provider ?? 'anthropic';
-  const initialSessionId = options.session?.id
+  const providerName = effectiveOptions.provider ?? 'anthropic';
+  const initialSessionId = effectiveOptions.session?.id
     ?? `runner-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  if (options.events) {
-    emitSessionStart(options.events, { provider: providerName, sessionId: initialSessionId });
+  if (effectiveOptions.events) {
+    emitSessionStart(effectiveOptions.events, { provider: providerName, sessionId: initialSessionId });
   }
   try {
-    return await runManagedTaskViaRunnerInner(options, prompt, adapterOverride, plan);
+    return await runManagedTaskViaRunnerInner(effectiveOptions, prompt, adapterOverride, plan);
   } catch (err) {
     // Surface onError so top-level consumers can flush telemetry /
     // show UI toast before the rejection propagates.
     const error = err instanceof Error ? err : new Error(String(err));
-    if (options.events) emitError(options.events, error);
+    if (effectiveOptions.events) emitError(effectiveOptions.events, error);
     // v0.7.26 parity (C3): persist an error snapshot so /resume can
     // pick up the last turn even after a crash. Legacy does the same at
     // agent.ts:2824. Best-effort.
@@ -3779,17 +3786,17 @@ export async function runManagedTaskViaRunner(
     // write `messages: []`, which wiped the user's conversation on any
     // permanent error (e.g., deepseek thinking-mode 400) and made the
     // next prompt start as a fresh session.
-    if (options.session?.storage) {
+    if (effectiveOptions.session?.storage) {
       try {
         const recoveredMessages = (err as { __kodaxRecoveredMessages?: unknown })
           ?.__kodaxRecoveredMessages;
         const messagesToPersist = Array.isArray(recoveredMessages)
           ? (recoveredMessages as KodaXMessage[])
           : [];
-        await saveSessionSnapshot(options, initialSessionId, {
+        await saveSessionSnapshot(effectiveOptions, initialSessionId, {
           messages: messagesToPersist,
           title: prompt.slice(0, 80),
-          gitRoot: options.context?.gitRoot ?? undefined,
+          gitRoot: effectiveOptions.context?.gitRoot ?? undefined,
           errorMetadata: {
             lastError: error.message,
             lastErrorTime: Date.now(),
@@ -3810,7 +3817,7 @@ export async function runManagedTaskViaRunner(
     // divergence preserved deliberately — REPL listeners on the AMA
     // path rely on the universal-cleanup semantics. Future work to
     // unify would touch REPL contract.
-    if (options.events) emitComplete(options.events);
+    if (effectiveOptions.events) emitComplete(effectiveOptions.events);
   }
 }
 

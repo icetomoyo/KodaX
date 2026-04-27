@@ -117,8 +117,17 @@ describe('coding-agents — handoff topology', () => {
 });
 
 describe('coding-agents — reasoning profile placeholders', () => {
-  it('scout defaults to quick reasoning', () => {
-    expect(scoutCodingAgent.reasoning?.default).toBe('quick');
+  // FEATURE_103 (v0.7.29): Scout default raised from 'quick' to 'balanced'.
+  // Rationale (see coding-agents.ts:scoutSpec): post-FEATURE_061 Scout is
+  // a cascade-level decision role (judges H0/H1/H2, executes H0, emits
+  // executionObligations + downstream_reasoning_hint). 'quick' was sized
+  // for the v0.7.16 classifier era; 'balanced' is the right floor today.
+  it('scout defaults to balanced reasoning with deep ceiling (FEATURE_103)', () => {
+    expect(scoutCodingAgent.reasoning?.default).toBe('balanced');
+    expect(scoutCodingAgent.reasoning?.max).toBe('deep');
+    // Scout has no revise loop — it emits once and hands off, so
+    // escalateOnRevise stays false.
+    expect(scoutCodingAgent.reasoning?.escalateOnRevise).toBe(false);
   });
 
   it('generator/evaluator default to balanced', () => {

@@ -12,15 +12,22 @@
 import { Runner } from '@kodax/core';
 
 import { createDefaultCodingAgent } from './coding-preset.js';
+import { applyFollowupEscalationToOptions } from './reasoning.js';
 import type { KodaXOptions, KodaXResult } from './types.js';
 
 export async function runKodaX(
   options: KodaXOptions,
   prompt: string,
 ): Promise<KodaXResult> {
+  // FEATURE_103 (v0.7.29): apply L5 user-followup escalation at the SA
+  // entry. When the user's prompt contains a doubt or deepen marker
+  // (and, for doubt, there is a prior assistant turn in the session),
+  // bump the L1 ceiling one rank. Off remains off (kill switch). Pure
+  // option transform — no escalation = same reference returned.
+  const { options: effectiveOptions } = applyFollowupEscalationToOptions(options, prompt);
   const result = await Runner.run<KodaXResult>(createDefaultCodingAgent(), prompt, {
-    presetOptions: options,
-    abortSignal: options.abortSignal,
+    presetOptions: effectiveOptions,
+    abortSignal: effectiveOptions.abortSignal,
   });
   // Substrate executor always lifts full `KodaXResult` onto `data` —
   // missing means the Agent declaration is mis-wired (fail loud, never
