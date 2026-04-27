@@ -41,7 +41,7 @@ import type {
   KodaXToolResultBlock,
 } from '@kodax/ai';
 import { CANCELLED_TOOL_RESULT_MESSAGE } from '../constants.js';
-import { isVisibleToolName, hasQueuedFollowUp } from './event-emitter.js';
+import { isVisibleToolName, hasQueuedFollowUp, emitStreamEnd } from './event-emitter.js';
 import { isCancelledToolResultContent } from './tool-result-classify.js';
 import { createToolResultBlock } from './tool-dispatch.js';
 import { rebaseContextTokenSnapshot } from '../token-accounting.js';
@@ -168,7 +168,7 @@ export async function applyCancellationTerminal(
     hadToolCalls: true,
     signal: undefined,
   });
-  input.events.onStreamEnd?.();
+  emitStreamEnd(input.events);
   await input.emitActiveExtensionEvent('stream:end', undefined);
   return { contextTokenSnapshot, shouldYieldToQueuedFollowUp };
 }

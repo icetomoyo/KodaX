@@ -43,6 +43,7 @@ import type { KodaXProviderStreamOptions } from '@kodax/ai';
 import type { StableBoundaryTracker } from '../resilience/stable-boundary.js';
 import type { ExtensionEventMap } from '../extensions/types.js';
 import type { StreamTimers } from './stream-timers.js';
+import { emitProviderRateLimit } from './event-emitter.js';
 
 /** Generic extension-event emitter signature shared with `runtime.emitEvent` etc. */
 export type ExtensionEventEmitter = <TEvent extends keyof ExtensionEventMap>(
@@ -110,7 +111,7 @@ export function buildStreamHandlers(input: StreamHandlerWiringInput): StreamHand
         maxRetries: max,
         delayMs: delay,
       });
-      events.onProviderRateLimit?.(rateAttempt, max, delay);
+      emitProviderRateLimit(events, rateAttempt, max, delay);
     },
     onHeartbeat: (pause) => {
       if (pause) {

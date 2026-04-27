@@ -59,6 +59,61 @@ export function hasQueuedFollowUp(events: KodaXEvents): boolean {
 }
 
 /**
+ * Fire `onSessionStart` — CAP-003. Single shared site so SA (substrate
+ * frame entry) and AMA (`runManagedTaskViaRunner`) emit through the
+ * same surface. Future contract changes (richer payload, ordering
+ * invariants) only need updating here.
+ */
+export function emitSessionStart(
+  events: KodaXEvents,
+  payload: { provider: string; sessionId: string },
+): void {
+  events.onSessionStart?.(payload);
+}
+
+/**
+ * Fire `onStreamEnd` — CAP-004. Shared between SA's per-turn stream
+ * finalization and AMA's per-worker-turn stream finalization.
+ */
+export function emitStreamEnd(events: KodaXEvents): void {
+  events.onStreamEnd?.();
+}
+
+/**
+ * Fire `onComplete` — CAP-005. Shared terminal signal across all
+ * non-error terminals (success / interrupt / managed-protocol exit).
+ * Mutually exclusive with `emitError` per CAP-084.
+ */
+export function emitComplete(events: KodaXEvents): void {
+  events.onComplete?.();
+}
+
+/**
+ * Fire `onError` — CAP-006. Shared catch-branch signal. Mutually
+ * exclusive with `emitComplete` per CAP-084.
+ */
+export function emitError(events: KodaXEvents, error: Error): void {
+  events.onError?.(error);
+}
+
+/**
+ * Fire `onProviderRateLimit` — CAP-007. Distinct from generic
+ * `onRetry`: only fires when the resilience classifier returns
+ * `reasonCode === 'rate_limit'`. SA dispatches via the provider stream
+ * handler bridge (`stream-handler-wiring.ts`); AMA dispatches inline
+ * during its own retry decision pipeline. Both now emit through this
+ * helper so the (attempt, maxRetries, delayMs) tuple shape is locked.
+ */
+export function emitProviderRateLimit(
+  events: KodaXEvents,
+  attempt: number,
+  maxRetries: number,
+  delayMs: number,
+): void {
+  events.onProviderRateLimit?.(attempt, maxRetries, delayMs);
+}
+
+/**
  * Fire the user-facing `onIterationStart` event. `iter` is 0-based at
  * the call site; this helper translates to the 1-based display value.
  */

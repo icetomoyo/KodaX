@@ -92,6 +92,9 @@ import {
   hasQueuedFollowUp,
   emitIterationStart as emitIterationStartStep,
   emitIterationEnd as emitIterationEndStep,
+  emitSessionStart,
+  emitStreamEnd,
+  emitComplete,
 } from './event-emitter.js';
 import { resolvePerTurnProvider } from './per-turn-provider-resolution.js';
 import { assertProviderConfigured } from './provider-config-check.js';
@@ -540,7 +543,7 @@ export async function runSubstrate(
     return contextTokenSnapshot;
   };
   const currentRoutingDecision = () => reasoningPlan.decision;
-    events.onSessionStart?.({ provider: initialProvider.name, sessionId });
+    emitSessionStart(events, { provider: initialProvider.name, sessionId });
     await emitActiveExtensionEvent('session:start', { provider: initialProvider.name, sessionId });
 
     // Cost tracking — lightweight session-scoped tracker. The closure
@@ -859,7 +862,7 @@ export async function runSubstrate(
       }
 
       // 流式输出结束，通知 CLI 层
-      events.onStreamEnd?.();
+      emitStreamEnd(events);
       await emitActiveExtensionEvent('stream:end', undefined);
 
       // Record cost for this LLM call
@@ -907,7 +910,7 @@ export async function runSubstrate(
             hadToolCalls: false,
             signal: 'COMPLETE',
           });
-          events.onComplete?.();
+          emitComplete(events);
           await emitActiveExtensionEvent('complete', { success: true, signal: 'COMPLETE' });
           return finalizeManagedProtocolResult({
             success: true,
@@ -1083,7 +1086,7 @@ export async function runSubstrate(
           hadToolCalls: false,
           signal: undefined,
         });
-        events.onComplete?.();
+        emitComplete(events);
         await emitActiveExtensionEvent('complete', { success: true, signal: undefined });
         // CAP-085 (clean-exit variant): natural completion path. We still
         // run the iter-terminal helper so the final snapshot save + signal
@@ -1235,7 +1238,7 @@ export async function runSubstrate(
           hadToolCalls: false,
           signal: undefined,
         });
-        events.onComplete?.();
+        emitComplete(events);
         await emitActiveExtensionEvent('complete', { success: true, signal: undefined });
         // CAP-085 (clean-exit variant): natural completion path after a
         // tool turn returned no tool_use blocks. Same routing as the
@@ -1455,7 +1458,7 @@ export async function runSubstrate(
   // completion paths (text-only turn, tools-with-no-results turn) also
   // call `applyIterationLimitTerminal` to preserve the snapshot+signal
   // side effects byte-for-byte, but return with `limitReached: false`
-  // — see the call sites above guarded by `events.onComplete?.()`.
+  // — see the call sites above guarded by `emitComplete(events)`.
   const iterTerminal = await applyIterationLimitTerminal({
     options,
     sessionId,

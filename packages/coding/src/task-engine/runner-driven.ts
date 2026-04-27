@@ -34,14 +34,21 @@ import type {
   KodaXToolDefinition,
   KodaXToolUseBlock,
 } from '@kodax/ai';
+import { KODAX_ESCALATED_MAX_OUTPUT_TOKENS } from '@kodax/ai';
+// CAP-012: per-session cost tracker. Import via the substrate re-export
+// shim (`agent-runtime/middleware/cost-tracker.ts`) instead of reaching
+// directly into `@kodax/ai`, so AMA and SA share one declared substrate
+// surface. Runtime implementation is identical (the shim re-exports the
+// same `@kodax/ai` symbols); the difference is documented sharing — any
+// future cost-tracker substrate wrapper added there is automatically
+// picked up by AMA.
 import {
-  KODAX_ESCALATED_MAX_OUTPUT_TOKENS,
   createCostTracker,
   formatCostReport,
   getSummary as getCostSummary,
   recordUsage as recordCostUsage,
   type CostTracker,
-} from '@kodax/ai';
+} from '../agent-runtime/middleware/cost-tracker.js';
 import { KODAX_MAX_MAXTOKENS_RETRIES } from '../constants.js';
 import type {
   Agent,
@@ -202,6 +209,31 @@ import {
 import { buildManagedTaskCompactionHook } from './_internal/managed-task/compaction.js';
 import { createToolResultTruncationGuardrail } from '../tools/tool-result-truncation-guardrail.js';
 import { buildPromptMessageContent } from '../input-artifacts.js';
+// CAP-003/004/005/006/007: shared event emit helpers. Both SA (substrate
+// frame) and AMA (this runner-driven path) fire through the same
+// surface so the contract for each event lives in exactly one place.
+import {
+  emitComplete,
+  emitError,
+  emitProviderRateLimit,
+  emitSessionStart,
+  emitStreamEnd,
+  isVisibleToolName,
+} from '../agent-runtime/event-emitter.js';
+// CAP-008: shared initial-messages resolver. Three-tier fallback
+// (inline → storage.load → empty) for AMA frame entry; SA already
+// uses this from `run-substrate.ts`.
+import { resolveInitialMessages } from '../agent-runtime/middleware/auto-resume.js';
+// CAP-010: shared tri-state permission gate. AMA's
+// `toolObserver.beforeTool` delegates to this so the extension
+// `tool:before` hook fires on AMA path (pre-FEATURE_100 only SA hit
+// it).
+import { getToolExecutionOverride } from '../agent-runtime/permission-gate.js';
+import { CANCELLED_TOOL_RESULT_MESSAGE } from '../constants.js';
+// CAP-048: shared tool-execution-context builder. Centralizes
+// FEATURE_074 (set_permission_mode NOT forwarded) and FEATURE_067
+// (onChildProgress undefined) invariants so AMA and SA can't drift.
+import { buildToolExecutionContext } from '../agent-runtime/tool-execution-context.js';
 import path from 'node:path';
 import os from 'node:os';
 import { resolveExecutionCwd } from '../runtime-paths.js';
@@ -2576,8 +2608,9 @@ export function buildRunnerLlmAdapter(
           });
           // Dedicated rate-limit event so REPL can render a distinct 429
           // banner (separate from the generic retry UI).
-          if (decision.reasonCode === 'rate_limit') {
-            options.events?.onProviderRateLimit?.(
+          if (decision.reasonCode === 'rate_limit' && options.events) {
+            emitProviderRateLimit(
+              options.events,
               attempt,
               resilienceCfg.maxRetries,
               decision.delayMs,
@@ -2837,7 +2870,7 @@ export function buildRunnerLlmAdapter(
     // onStreamEnd fires after the provider finishes the current turn's
     // stream. The Runner-driven adapter funnels every turn through this
     // single return-path so the event fires once per stream.
-    options.events?.onStreamEnd?.();
+    if (options.events) emitStreamEnd(options.events);
 
     // Fire onIterationEnd so the REPL token-count indicator can refresh
     // after each worker turn. `scope: 'worker'` mirrors the FEATURE_072
@@ -3703,14 +3736,16 @@ export async function runManagedTaskViaRunner(
   const providerName = options.provider ?? 'anthropic';
   const initialSessionId = options.session?.id
     ?? `runner-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  options.events?.onSessionStart?.({ provider: providerName, sessionId: initialSessionId });
+  if (options.events) {
+    emitSessionStart(options.events, { provider: providerName, sessionId: initialSessionId });
+  }
   try {
     return await runManagedTaskViaRunnerInner(options, prompt, adapterOverride, plan);
   } catch (err) {
     // Surface onError so top-level consumers can flush telemetry /
     // show UI toast before the rejection propagates.
     const error = err instanceof Error ? err : new Error(String(err));
-    options.events?.onError?.(error);
+    if (options.events) emitError(options.events, error);
     // v0.7.26 parity (C3): persist an error snapshot so /resume can
     // pick up the last turn even after a crash. Legacy does the same at
     // agent.ts:2824. Best-effort.
@@ -3745,11 +3780,14 @@ export async function runManagedTaskViaRunner(
     throw err;
   } finally {
     // onComplete fires on every terminal — success, block, or error —
-    // so REPL can re-render its status bar. The Runner-driven adapter
-    // funnels every terminal through this single finally so the event
-    // fires once per task; we mirror by putting
-    // it in finally (fires after onError too — matches legacy order).
-    options.events?.onComplete?.();
+    // so REPL can re-render its status bar. NOTE: AMA path's
+    // onComplete fires in finally (i.e. AFTER onError on the error
+    // branch), whereas SA's onComplete is mutually exclusive with
+    // onError (CAP-084). This is a pre-FEATURE_100 behavioral
+    // divergence preserved deliberately — REPL listeners on the AMA
+    // path rely on the universal-cleanup semantics. Future work to
+    // unify would touch REPL contract.
+    if (options.events) emitComplete(options.events);
   }
 }
 
@@ -3869,25 +3907,29 @@ async function runManagedTaskViaRunnerInner(
   //   - planModeBlockCheck: child tool calls bypass FEATURE_074 plan-mode
   //     safety boundary
   //   - exitPlanMode: FEATURE_074 exit_plan_mode tool fails
-  // Mirrors `agent.ts:1510-1552` (v0.7.22 ctx construction).
+  // CAP-048: build base tool-execution-context via the shared substrate
+  // helper so SA and AMA construct ctx through the same path. This
+  // delivers two AMA-side regression fixes:
+  //   1. `managedProtocolRole` + `emitManagedProtocol` — pre-FEATURE_100
+  //      AMA's inline ctx omitted both, so worker tools that called
+  //      `ctx.emitManagedProtocol(...)` were no-ops. The substrate
+  //      helper wires the closure that mutates the payload ref.
+  //   2. FEATURE_074 invariants centralized — set_permission_mode is
+  //      explicitly NOT forwarded; FEATURE_067 `onChildProgress: undefined`
+  //      is set explicitly. Both contracts now pinned in one helper.
+  // The `mutationTracker` field is layered on top because AMA owns its
+  // own per-run tracker (substrate has its own).
   const extensionRuntime = options.extensionRuntime;
+  const managedProtocolPayloadRef: { current: KodaXManagedProtocolPayload | undefined } = {
+    current: undefined,
+  };
+  const substrateBaseCtx = buildToolExecutionContext({
+    options,
+    runtime: extensionRuntime,
+    managedProtocolPayloadRef,
+  });
   const baseCtx: KodaXToolExecutionContext = {
-    backups: new Map<string, string>(),
-    gitRoot: options.context?.gitRoot ?? process.cwd(),
-    executionCwd: options.context?.executionCwd ?? options.context?.gitRoot ?? process.cwd(),
-    extensionRuntime,
-    askUser: options.events?.askUser,
-    askUserMulti: options.events?.askUserMulti,
-    askUserInput: options.events?.askUserInput,
-    exitPlanMode: options.events?.exitPlanMode,
-    abortSignal: options.abortSignal,
-    planModeBlockCheck: options.context?.planModeBlockCheck,
-    parentAgentConfig: {
-      provider: options.provider,
-      model: options.model,
-      reasoningMode: options.reasoningMode,
-    },
-    registerChildWriteWorktrees: options.context?.registerChildWriteWorktrees,
+    ...substrateBaseCtx,
     mutationTracker,
   };
 
@@ -4339,13 +4381,23 @@ async function runManagedTaskViaRunnerInner(
   // round-boundary reshape only rewrites outgoing `result.messages` for
   // display, not the inbound prompt — apply the lift here so the AMA
   // entry message carries multimodal blocks like the SA entry does.
-  const initialMessages = options.session?.initialMessages ?? [];
+  //
+  // CAP-008: resolve initial messages through the substrate helper so AMA
+  // gets the same three-tier resolution SA gets:
+  //   1. caller-supplied `options.session.initialMessages` (REPL multi-turn,
+  //      plan-mode replay, explicit resume) — preferred
+  //   2. `options.session.storage.load(sessionId)` — recover a previously
+  //      persisted session (`/resume <id>` / `--continue`) when no inline
+  //      messages were provided. Pre-FEATURE_100 the AMA path skipped this
+  //      tier and started fresh; substrate parity restores it.
+  //   3. empty messages — first turn / unknown session
+  const resolvedInitial = await resolveInitialMessages(options, options.session?.id);
   const userMessageContent = buildPromptMessageContent(
     promptWithOverlay,
     options.context?.inputArtifacts,
   );
-  const runnerInput = initialMessages.length > 0
-    ? [...initialMessages, { role: 'user' as const, content: userMessageContent }]
+  const runnerInput = resolvedInitial.messages.length > 0
+    ? [...resolvedInitial.messages, { role: 'user' as const, content: userMessageContent }]
     : [{ role: 'user' as const, content: userMessageContent }];
 
   // Load the compaction hook once per run. `intelligentCompact` runs
@@ -4390,23 +4442,38 @@ async function runManagedTaskViaRunnerInner(
     // / cancelled); the Runner observer maps 1:1 onto
     // `onToolUseStart` + `onToolResult` here.
     toolObserver: {
-      // Permission gate: plan-mode / accept-edits / extension
-      // "tool:before" hooks run here. Tri-state contract:
-      // true/undefined allow, false block generic, string block with
-      // custom message.
-      beforeTool: options.events?.beforeToolExecute
+      // CAP-010 tri-state permission gate: plan-mode / accept-edits /
+      // extension "tool:before" hooks run here. Delegates to the
+      // shared substrate helper so SA and AMA evaluate the same gate
+      // chain — pre-FEATURE_100 the AMA path only invoked
+      // `events.beforeToolExecute` and dropped the extension
+      // `tool:before` branch entirely; substrate parity restores it.
+      // Tri-state contract preserved verbatim: undefined → allow;
+      // CANCELLED_TOOL_RESULT_MESSAGE → cancel; other string → block
+      // with that string as the synthesized tool_result content.
+      beforeTool: options.events
         ? async (call) => {
-          const verdict = await options.events!.beforeToolExecute!(
+          const override = await getToolExecutionOverride(
+            options.events!,
             call.name,
             call.input,
-            { toolId: call.id },
+            call.id,
+            options.context?.executionCwd,
+            options.context?.gitRoot ?? undefined,
           );
-          // KodaXEvents.beforeToolExecute contract: boolean | string.
-          // RunnerToolObserver.beforeTool contract: boolean | string | undefined.
-          return verdict;
+          if (override === undefined) return true;
+          if (override === CANCELLED_TOOL_RESULT_MESSAGE) return false;
+          return override;
         }
         : undefined,
       onToolCall: (call) => {
+        // CAP-035: filter internal control-plane tools (emit_managed_protocol,
+        // etc.) so REPL transcript doesn't surface them. Pre-FEATURE_100
+        // AMA emitted every tool call regardless of visibility — REPL
+        // showed `emit_managed_protocol` invocations as if they were
+        // user-facing. SA always filtered via isVisibleToolName; AMA now
+        // does too.
+        if (!isVisibleToolName(call.name)) return;
         options.events?.onToolUseStart?.({
           name: call.name,
           id: call.id,
@@ -4425,6 +4492,8 @@ async function runManagedTaskViaRunnerInner(
             `${call.name}: result was truncated to guardrail policy`,
           );
         }
+        // CAP-035: same visibility filter on the result side.
+        if (!isVisibleToolName(call.name)) return;
         options.events?.onToolResult?.({
           id: call.id,
           name: call.name,

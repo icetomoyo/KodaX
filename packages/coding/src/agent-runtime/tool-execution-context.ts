@@ -37,13 +37,21 @@ import type {
   KodaXOptions,
   KodaXToolExecutionContext,
 } from '../types.js';
-import type { KodaXExtensionRuntime } from '../extensions/runtime.js';
+import type { ExtensionRuntimeContract } from '../extensions/runtime-contract.js';
 import { mergeManagedProtocolPayload } from '../managed-protocol.js';
 import { resolveExecutionCwd } from '../runtime-paths.js';
 
 export interface ToolExecutionContextInput {
   readonly options: KodaXOptions;
-  readonly runtime: KodaXExtensionRuntime | undefined;
+  /**
+   * Extension runtime to bind onto the tool ctx. Typed against the
+   * interface (`ExtensionRuntimeContract`) rather than the concrete
+   * `KodaXExtensionRuntime` class so AMA — which receives the runtime
+   * via `options.extensionRuntime` (interface-typed) — can call this
+   * helper without an unsafe cast. SA passes the concrete class
+   * unchanged (it implements the interface).
+   */
+  readonly runtime: ExtensionRuntimeContract | undefined;
   /**
    * Mutable wrapper for the accumulated managed-protocol payload.
    * The `emitManagedProtocol` closure inside the constructed context
@@ -67,6 +75,7 @@ export function buildToolExecutionContext(
     executionCwd,
     extensionRuntime: runtime,
     askUser: events.askUser, // Issue 069
+    askUserMulti: events.askUserMulti,
     askUserInput: events.askUserInput, // Issue 112
     // FEATURE_074: only forward exit_plan_mode. set_permission_mode is
     // intentionally NOT forwarded — activating it would silently widen

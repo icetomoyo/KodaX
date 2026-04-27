@@ -56,6 +56,7 @@ import { saveSessionSnapshot } from './middleware/session-snapshot.js';
 import { createEstimatedContextTokenSnapshot } from '../token-accounting.js';
 import type { RuntimeSessionState } from './runtime-session-state.js';
 import type { ExtensionEventEmitter } from './stream-handler-wiring.js';
+import { emitError, emitStreamEnd } from './event-emitter.js';
 
 // ---------------------------------------------------------------------------
 // CAP-082 — runCatchCleanup
@@ -135,7 +136,7 @@ export interface AbortErrorTerminalInput {
 export async function applyAbortErrorTerminal(
   input: AbortErrorTerminalInput,
 ): Promise<void> {
-  input.events.onStreamEnd?.();
+  emitStreamEnd(input.events);
   await input.emitActiveExtensionEvent('stream:end', undefined);
 }
 
@@ -163,5 +164,5 @@ export async function applyGenericErrorTerminal(
   input: GenericErrorTerminalInput,
 ): Promise<void> {
   await input.emitActiveExtensionEvent('error', { error: input.error });
-  input.events.onError?.(input.error);
+  emitError(input.events, input.error);
 }
