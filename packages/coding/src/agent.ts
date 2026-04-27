@@ -531,15 +531,19 @@ export async function runKodaX(
   let autoTaskRerouteCount = 0;
   const autoFollowUpLimit = 2;
 
-  let lastText = '';
   let incompleteRetryCount = 0;
 
-  // FEATURE_100 P3.6b — six per-loop counters/latches/accumulators
+  // FEATURE_100 P3.6b/d — seven per-loop counters/latches/accumulators
   // consolidated into one mutable accumulator. The substrate executor
   // (P3.6e) will absorb these into TurnContext fields. The object
   // reference is stable; only its fields mutate, so closures (e.g.
   // `events.getCostReport.current`) that capture `turnState` see the
   // current values at call time.
+  //
+  // `turnState.lastText` is the assistant's most-recent response text — used by
+  // judges, terminals, and signal extraction. Folded into `turnState`
+  // in P3.6d so the substrate's PER_STEP tier mirrors what TurnContext
+  // already declares (turn-context.ts:158).
   const turnState = {
     preAnswerJudgeConsumed: false,
     postToolJudgeConsumed: false,
@@ -547,6 +551,7 @@ export async function runKodaX(
     costTracker: createCostTracker() as CostTracker,
     managedProtocolContinueAttempted: false,
     compactConsecutiveFailures: 0,
+    lastText: '',
   };
   // CAP-085: `limitReached` flag — was a `let` toggled `true` only at
   // the iteration-limit terminal site. Folded into the literal `true`
@@ -909,14 +914,14 @@ export async function runKodaX(
         });
       }
 
-      lastText = result.textBlocks.map(b => b.text).join(' ');
+      turnState.lastText = result.textBlocks.map(b => b.text).join(' ');
       const preAssistantTokenSnapshot = createContextTokenSnapshot(messages, result.usage);
       const visibleToolBlocks = result.toolBlocks.filter((block) => isVisibleToolName(block.name));
 
       // Promise 信号检测
-      const [signal, _reason] = checkPromiseSignal(lastText);
+      const [signal, _reason] = checkPromiseSignal(turnState.lastText);
       if (signal) {
-        await settleExtensionTurn(sessionId, lastText, runtimeSessionState, {
+        await settleExtensionTurn(sessionId, turnState.lastText, runtimeSessionState, {
           hadToolCalls: false,
           success: true,
           signal: signal as 'COMPLETE' | 'BLOCKED' | 'DECIDE',
@@ -927,7 +932,7 @@ export async function runKodaX(
           await emitActiveExtensionEvent('turn:end', {
             sessionId,
             iteration: iter + 1,
-            lastText,
+            lastText: turnState.lastText,
             hadToolCalls: false,
             signal: signal as 'COMPLETE' | 'BLOCKED' | 'DECIDE',
           });
@@ -938,7 +943,7 @@ export async function runKodaX(
           await emitActiveExtensionEvent('turn:end', {
             sessionId,
             iteration: iter + 1,
-            lastText,
+            lastText: turnState.lastText,
             hadToolCalls: false,
             signal: 'COMPLETE',
           });
@@ -946,7 +951,7 @@ export async function runKodaX(
           await emitActiveExtensionEvent('complete', { success: true, signal: 'COMPLETE' });
           return finalizeManagedProtocolResult({
             success: true,
-            lastText,
+            lastText: turnState.lastText,
             signal: 'COMPLETE',
             messages,
             sessionId,
@@ -1021,7 +1026,7 @@ export async function runKodaX(
       // session — the latch round-trips via input/output.
       const protocolContinueOutcome = maybeAutoContinueManagedProtocol({
         result,
-        lastText,
+        lastText: turnState.lastText,
         messages,
         continueAttempted: turnState.managedProtocolContinueAttempted,
         options,
@@ -1035,7 +1040,7 @@ export async function runKodaX(
       }
 
       if (result.toolBlocks.length === 0) {
-        await settleExtensionTurn(sessionId, lastText, runtimeSessionState, {
+        await settleExtensionTurn(sessionId, turnState.lastText, runtimeSessionState, {
           hadToolCalls: false,
           success: true,
         });
@@ -1044,7 +1049,7 @@ export async function runKodaX(
           await emitActiveExtensionEvent('turn:end', {
             sessionId,
             iteration: iter + 1,
-            lastText,
+            lastText: turnState.lastText,
             hadToolCalls: false,
             signal: undefined,
           });
@@ -1056,13 +1061,13 @@ export async function runKodaX(
           await emitActiveExtensionEvent('turn:end', {
             sessionId,
             iteration: iter + 1,
-            lastText,
+            lastText: turnState.lastText,
             hadToolCalls: false,
             signal: undefined,
           });
           return finalizeManagedProtocolResult({
             success: true,
-            lastText,
+            lastText: turnState.lastText,
             messages,
             sessionId,
             routingDecision: currentRoutingDecision(),
@@ -1076,7 +1081,7 @@ export async function runKodaX(
           autoFollowUpCount < autoFollowUpLimit &&
           (autoDepthEscalationCount === 0 || autoTaskRerouteCount === 0) &&
           !turnState.preAnswerJudgeConsumed &&
-          isReviewFinalAnswerCandidate(prompt, effectiveReasoningPlan, lastText)
+          isReviewFinalAnswerCandidate(prompt, effectiveReasoningPlan, turnState.lastText)
         ) {
           turnState.preAnswerJudgeConsumed = true;
           const rerouteState = await maybeAdvanceAutoReroute({
@@ -1084,7 +1089,7 @@ export async function runKodaX(
             options,
             prompt,
             reasoningPlan: effectiveReasoningPlan,
-            lastText,
+            lastText: turnState.lastText,
             autoFollowUpCount,
             autoDepthEscalationCount,
             autoTaskRerouteCount,
@@ -1114,7 +1119,7 @@ export async function runKodaX(
         await emitActiveExtensionEvent('turn:end', {
           sessionId,
           iteration: iter + 1,
-          lastText,
+          lastText: turnState.lastText,
           hadToolCalls: false,
           signal: undefined,
         });
@@ -1134,11 +1139,11 @@ export async function runKodaX(
             messages,
             title,
             runtimeSessionState,
-            lastText,
+            lastText: turnState.lastText,
           });
           return finalizeManagedProtocolResult({
             success: true,
-            lastText,
+            lastText: turnState.lastText,
             signal: iterTerminal.finalSignal,
             signalReason: iterTerminal.finalReason,
             messages,
@@ -1227,7 +1232,7 @@ export async function runKodaX(
       const hasCancellation = hasCancelledToolResult(toolResults);
 
       if (toolResults.length === 0) {
-        await settleExtensionTurn(sessionId, lastText, runtimeSessionState, {
+        await settleExtensionTurn(sessionId, turnState.lastText, runtimeSessionState, {
           hadToolCalls: false,
           success: true,
         });
@@ -1236,7 +1241,7 @@ export async function runKodaX(
           await emitActiveExtensionEvent('turn:end', {
             sessionId,
             iteration: iter + 1,
-            lastText,
+            lastText: turnState.lastText,
             hadToolCalls: false,
             signal: undefined,
           });
@@ -1248,13 +1253,13 @@ export async function runKodaX(
           await emitActiveExtensionEvent('turn:end', {
             sessionId,
             iteration: iter + 1,
-            lastText,
+            lastText: turnState.lastText,
             hadToolCalls: false,
             signal: undefined,
           });
           return finalizeManagedProtocolResult({
             success: true,
-            lastText,
+            lastText: turnState.lastText,
             messages,
             sessionId,
             routingDecision: currentRoutingDecision(),
@@ -1266,7 +1271,7 @@ export async function runKodaX(
         await emitActiveExtensionEvent('turn:end', {
           sessionId,
           iteration: iter + 1,
-          lastText,
+          lastText: turnState.lastText,
           hadToolCalls: false,
           signal: undefined,
         });
@@ -1285,11 +1290,11 @@ export async function runKodaX(
             messages,
             title,
             runtimeSessionState,
-            lastText,
+            lastText: turnState.lastText,
           });
           return finalizeManagedProtocolResult({
             success: true,
-            lastText,
+            lastText: turnState.lastText,
             signal: iterTerminal.finalSignal,
             signalReason: iterTerminal.finalReason,
             messages,
@@ -1339,7 +1344,7 @@ export async function runKodaX(
         runtimeSessionState,
         emitActiveExtensionEvent,
         sessionId,
-        lastText,
+        lastText: turnState.lastText,
         iter,
       });
       contextTokenSnapshot = settleOutcome.contextTokenSnapshot;
@@ -1353,13 +1358,13 @@ export async function runKodaX(
         await emitActiveExtensionEvent('turn:end', {
           sessionId,
           iteration: iter + 1,
-          lastText,
+          lastText: turnState.lastText,
           hadToolCalls: true,
           signal: undefined,
         });
         return finalizeManagedProtocolResult({
           success: true,
-          lastText,
+          lastText: turnState.lastText,
           messages,
           sessionId,
           routingDecision: currentRoutingDecision(),
@@ -1382,7 +1387,7 @@ export async function runKodaX(
             options,
             prompt,
             reasoningPlan: effectiveReasoningPlan,
-            lastText,
+            lastText: turnState.lastText,
             autoFollowUpCount,
             autoDepthEscalationCount,
             autoTaskRerouteCount,
@@ -1426,7 +1431,7 @@ export async function runKodaX(
       await emitActiveExtensionEvent('turn:end', {
         sessionId,
         iteration: iter + 1,
-        lastText,
+        lastText: turnState.lastText,
         hadToolCalls: true,
         signal: undefined,
       });
@@ -1456,7 +1461,7 @@ export async function runKodaX(
         await applyAbortErrorTerminal({ events, emitActiveExtensionEvent });
         return finalizeManagedProtocolResult({
           success: true,
-          lastText,
+          lastText: turnState.lastText,
           messages: cleanedMessages,
           sessionId,
           routingDecision: currentRoutingDecision(),
@@ -1472,7 +1477,7 @@ export async function runKodaX(
       await applyGenericErrorTerminal({ error, events, emitActiveExtensionEvent });
       return finalizeManagedProtocolResult({
         success: false,
-        lastText,
+        lastText: turnState.lastText,
         messages: cleanedMessages,
         sessionId,
         routingDecision: currentRoutingDecision(),
@@ -1497,11 +1502,11 @@ export async function runKodaX(
     messages,
     title,
     runtimeSessionState,
-    lastText,
+    lastText: turnState.lastText,
   });
   return finalizeManagedProtocolResult({
     success: true,
-    lastText,
+    lastText: turnState.lastText,
     signal: iterTerminal.finalSignal,
     signalReason: iterTerminal.finalReason,
     messages,
