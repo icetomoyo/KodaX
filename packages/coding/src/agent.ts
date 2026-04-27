@@ -100,11 +100,14 @@ import {
 import { executeNonStreamingFallback } from './agent-runtime/non-streaming-fallback.js';
 import { guardEmptyAssistantContent } from './agent-runtime/assistant-message-builder.js';
 import { checkAndRetryIncompleteTools } from './agent-runtime/incomplete-tool-retry.js';
-import { describeTransientProviderRetry } from './agent-runtime/provider-retry-policy.js';
 import {
-  isCancelledToolResultContent,
-  isToolResultErrorContent,
-} from './agent-runtime/tool-result-classify.js';
+  checkPreToolAbort,
+  hasCancelledToolResult,
+  applyCancellationTerminal,
+  CANCELLATION_LAST_TEXT,
+} from './agent-runtime/tool-cancellation.js';
+import { describeTransientProviderRetry } from './agent-runtime/provider-retry-policy.js';
+import { isToolResultErrorContent } from './agent-runtime/tool-result-classify.js';
 import {
   filterExcludedTools,
   getActiveToolDefinitions,
@@ -1250,25 +1253,20 @@ export async function runKodaX(
       const toolResults: KodaXToolResultBlock[] = [];
       const editRecoveryMessages: string[] = [];
 
-      // Issue 088: Check abort signal before entering tool execution phase.
-      // Without this guard, tools spawned after Ctrl+C would still run to completion.
-      // Use graceful cancellation (mark all tools as cancelled) instead of throwing,
-      // so the downstream `hasCancellation` check handles exit uniformly.
-      const abortedBeforeTools = options.abortSignal?.aborted === true;
+      // CAP-076: pre-tool abort check. If Ctrl+C fired between stream
+      // end and tool dispatch, synthesize cancelled tool_results for
+      // every visible tool — graceful cancellation routes through the
+      // same `hasCancelledToolResult` (CAP-080) terminal as user-aborted
+      // bash loops, so the exit path is uniform.
+      const preToolCancelled = await checkPreToolAbort({
+        toolBlocks: result.toolBlocks,
+        abortSignal: options.abortSignal,
+        events,
+        emitActiveExtensionEvent,
+      });
 
-      // Non-bash tools run in parallel; bash tools run sequentially (always parallel mode).
-      if (abortedBeforeTools) {
-        for (const tc of result.toolBlocks) {
-          if (isVisibleToolName(tc.name)) {
-            await emitActiveExtensionEvent('tool:result', {
-              id: tc.id,
-              name: tc.name,
-              content: CANCELLED_TOOL_RESULT_MESSAGE,
-            });
-            events.onToolResult?.({ id: tc.id, name: tc.name, content: CANCELLED_TOOL_RESULT_MESSAGE });
-            toolResults.push(createToolResultBlock(tc.id, CANCELLED_TOOL_RESULT_MESSAGE));
-          }
-        }
+      if (preToolCancelled !== null) {
+        toolResults.push(...preToolCancelled);
       } else {
         const bashTools = result.toolBlocks.filter(tc => tc.name === 'bash');
         const nonBashTools = result.toolBlocks.filter(tc => tc.name !== 'bash');
@@ -1355,10 +1353,10 @@ export async function runKodaX(
         }
       }
 
-      // Check if any tool was cancelled by user - 检查是否有工具被用户取消
-      const hasCancellation = toolResults.some(r =>
-        typeof r.content === 'string' && isCancelledToolResultContent(r.content)
-      );
+      // CAP-080: any cancelled tool result triggers the cancellation
+      // terminal branch below. Pre-tool aborts (CAP-076) and bash-loop
+      // mid-execution aborts (CAP-077) both surface here.
+      const hasCancellation = hasCancelledToolResult(toolResults);
 
       if (toolResults.length === 0) {
         await settleExtensionTurn(sessionId, lastText, runtimeSessionState, {
@@ -1410,31 +1408,28 @@ export async function runKodaX(
       }
 
       if (hasCancellation) {
-        const shouldYieldToQueuedFollowUp = hasQueuedFollowUp(events);
-        // User cancelled - add results and exit loop - 用户取消，添加结果并退出循环
-        messages.push({ role: 'user', content: toolResults });
-        // Tool results are already appended, so emit the post-tool rebased snapshot here.
-        contextTokenSnapshot = rebaseContextTokenSnapshot(messages, completedTurnTokenSnapshot);
-        if (shouldYieldToQueuedFollowUp) {
-          emitIterationEnd(iter + 1, contextTokenSnapshot);
-        }
-        await emitActiveExtensionEvent('turn:end', {
+        // CAP-080: cancellation terminal — push results, fire turn:end +
+        // stream:end, return KodaXResult with interrupted flag derived
+        // from queued-follow-up presence.
+        const cancellationTerminal = await applyCancellationTerminal({
+          events,
+          emitActiveExtensionEvent,
+          messages,
+          toolResults,
+          completedTurnTokenSnapshot,
           sessionId,
-          iteration: iter + 1,
-          lastText: 'Operation cancelled by user',
-          hadToolCalls: true,
-          signal: undefined,
+          iter,
+          emitIterationEnd,
         });
-        events.onStreamEnd?.();
-        await emitActiveExtensionEvent('stream:end', undefined);
+        contextTokenSnapshot = cancellationTerminal.contextTokenSnapshot;
         return finalizeManagedProtocolResult({
           success: true,
-          lastText: 'Operation cancelled by user',
+          lastText: CANCELLATION_LAST_TEXT,
           messages,
           sessionId,
           routingDecision: currentRoutingDecision(),
           contextTokenSnapshot,
-          interrupted: !shouldYieldToQueuedFollowUp,
+          interrupted: !cancellationTerminal.shouldYieldToQueuedFollowUp,
         });
       }
 
