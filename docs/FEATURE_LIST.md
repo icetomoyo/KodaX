@@ -1,6 +1,6 @@
 # Feature 总表
 
-> Last updated: 2026-04-26 (**FEATURE_100 added — SA Runner Frame Adoption & Capability Unification**, 占 v0.7.29 整版本，详见 [v0.7.29 设计稿](features/v0.7.29.md#feature_100-sa-runner-frame-adoption--capability-unification) 和 [ADR-020](ADR.md#adr-020-unified-agent-execution-substrate-feature_100-v0729)。把 SA / AMA 两套独立的 agent 执行路径收敛到统一 Runner 帧 + 单一 executor + 多 Agent declaration 模型（Option α），关闭 v0.7.23 FEATURE_080 "Option Y" facade 之后的双底座漂移。原计划于 v0.7.29 的 FEATURE_078 (Role-Aware Reasoning Profiles) 顺延至 v0.7.30，与 FEATURE_057 Track F 共版（工作面零交集）。下游 089/090/092/094 保持原版本，它们对 Runner 级 guardrail / Agent declaration reasoning slot / `Runner.run(constructedAgent, ...)` 调用链的硬依赖由 FEATURE_100 一并提供。基于 `runner-driven.ts` 当前 13 处 `// legacy parity restore` 注释作为 FEATURE_084 漂移的反向实证；P1-P4 phased delivery + 5 重保险（capability inventory + golden trace + capability contract tests + dispatch eval baseline + reverse audit）+ 3 项加强（已知失踪能力 mining / contract test 锁能力存在 / reverse audit 0 命中）保证零回归直接切换。质量优先于节奏，预计 4-5 周。 / 此前更新：FEATURE_099 Provider Catalog Refresh + FEATURE_098 Per-Model Context Window & Output Token Limits — 两块 provider catalog 卫生工作均已实施完成、登记入 `v0.7.28` 已完成表（unreleased）；099 = DeepSeek V4 系列接入 + kimi-code label 收敛 + 删除 deprecated deepseek-chat/reasoner；098 = 接通 `KodaXModelDescriptor.contextWindow` / `maxOutputTokens` 死字段使 compaction trigger 与 wire-level max_tokens 按激活 model 真实窗口工作 + 当时按 Moonshot 文档把 `kimi.k2.5` 当作 128k 修了一遍 [**事后核对发现 K2.5 实际 256K，已于 commit `64785de` 改正，详见 v0.7.28 设计稿"实施后更正"小节**] + 修复 `zhipu.glm-5-turbo` (128k) 偏差 + 自定义 provider `models[]` 支持描述符对象格式。098 原计划 v0.7.29 与 FEATURE_078 同版发布，因实施提前完成迁入 v0.7.28。新增 `ark-coding` provider（Volcengine Ark Coding Plan，9 model，commit `8b5a380` + `4784dbd` per-model 窗口 pin）。FEATURE_097 AMA Runner Realtime Todo List — Claude Code 风格实时计划列表，planned for `v0.7.34`，作为 Plan B 主路线 `v0.7.33` 结束后第一个 AMA 可见性增强 feature，依赖 FEATURE_084 重写后的 Scout `executionObligations` 契约稳定形态。同时 FEATURE_095 SSH-Friendly Cell-Level Diff Renderer **Absorbed into FEATURE_057** v0.7.30 — cell-level screen buffer 是 057 §10 renderer-native selection / §11 ScrollBox parity / Track E output ownership 收口的实际前置基础设施，单独成版本会让 TUI 重构故事碎片化。SSH/ConPTY 闪烁的最急迫表现已通过 `engine.js` altScreen 分支 `log.clear() + log()` 合并成单次 `log.clearAndRender()` 的 10 行补丁消除，Track F 不再承担"SSH 闪烁唯一解药"的紧迫性——剩余动机（TextInput 光标漂移、渲染字节量、renderer-native selection/hit-test 基础设施）仍成立。)
+> Last updated: 2026-04-27 (**FEATURE_102 added — Adaptive Multi-Provider Orchestration Runtime**, planned for `v0.7.45`，详见 [v0.7.45 设计稿](features/v0.7.45.md#feature_102-adaptive-multi-provider-orchestration-runtime)。把 KodaX 从"provider 兼容层"升级为"可观测、可验证、可配置、逐步自适应的 orchestration runtime"，核心判断是**多模型收益来自分工 + 盲区互补，而非全程投票**；coding agent 比通用聊天更适合做多模型编排，因为存在客观裁决信号（测试 / typecheck / lint / build / patch apply / 运行结果）。**第一优先级是 telemetry / trace** —— 没有真实数据，任何路由策略都是占卜。Provider 切换严格发生在 stage boundary（结构化中间产物边界，而非时间边界），单 task 内不跨 provider 接力以保留 prompt cache 和 tool-call 协议一致性。**4 阶段实施路线（顺序硬性不可调换）**：Phase 0 Instrumentation/Trace（基础设施，先记原始事件不急定义 derived metric） → Phase 1 Review Fan-out + Objective Arbiter（最高确定性收益，可验证 finding 用测试/lint/typecheck 裁决，不可验证项才走 LLM judge） → Phase 2 Stage-level Capability Routing（约束版，仅对 long_context / vision / cheap_classify / main coding loop / review 5 类做静态路由，capability profile 必须能被 telemetry 修正） → Phase 3 Fallback / Health Checks（provider 限流/超时/质量异常自动降级） → Phase 4 Data-driven Adaptive（基于 Phase 0 数据引入 scoring / contextual bandit / Bayesian shrinkage 应对稀疏统计）。**显式不做**：task 内频繁跨 provider 接力 / LLM router 实时决定每一步 / 全程多模型投票 / 弱模型产出关键不可验证 plan 强模型盲目执行 / 没有 telemetry 就声称 adaptive。/ 此前更新：FEATURE_100 added — SA Runner Frame Adoption & Capability Unification, 占 v0.7.29 整版本，详见 [v0.7.29 设计稿](features/v0.7.29.md#feature_100-sa-runner-frame-adoption--capability-unification) 和 [ADR-020](ADR.md#adr-020-unified-agent-execution-substrate-feature_100-v0729)。把 SA / AMA 两套独立的 agent 执行路径收敛到统一 Runner 帧 + 单一 executor + 多 Agent declaration 模型（Option α），关闭 v0.7.23 FEATURE_080 "Option Y" facade 之后的双底座漂移。原计划于 v0.7.29 的 FEATURE_078 (Role-Aware Reasoning Profiles) 顺延至 v0.7.30，与 FEATURE_057 Track F 共版（工作面零交集）。下游 089/090/092/094 保持原版本，它们对 Runner 级 guardrail / Agent declaration reasoning slot / `Runner.run(constructedAgent, ...)` 调用链的硬依赖由 FEATURE_100 一并提供。基于 `runner-driven.ts` 当前 13 处 `// legacy parity restore` 注释作为 FEATURE_084 漂移的反向实证；P1-P4 phased delivery + 5 重保险（capability inventory + golden trace + capability contract tests + dispatch eval baseline + reverse audit）+ 3 项加强（已知失踪能力 mining / contract test 锁能力存在 / reverse audit 0 命中）保证零回归直接切换。质量优先于节奏，预计 4-5 周。 / 此前更新：FEATURE_099 Provider Catalog Refresh + FEATURE_098 Per-Model Context Window & Output Token Limits — 两块 provider catalog 卫生工作均已实施完成、登记入 `v0.7.28` 已完成表（unreleased）；099 = DeepSeek V4 系列接入 + kimi-code label 收敛 + 删除 deprecated deepseek-chat/reasoner；098 = 接通 `KodaXModelDescriptor.contextWindow` / `maxOutputTokens` 死字段使 compaction trigger 与 wire-level max_tokens 按激活 model 真实窗口工作 + 当时按 Moonshot 文档把 `kimi.k2.5` 当作 128k 修了一遍 [**事后核对发现 K2.5 实际 256K，已于 commit `64785de` 改正，详见 v0.7.28 设计稿"实施后更正"小节**] + 修复 `zhipu.glm-5-turbo` (128k) 偏差 + 自定义 provider `models[]` 支持描述符对象格式。098 原计划 v0.7.29 与 FEATURE_078 同版发布，因实施提前完成迁入 v0.7.28。新增 `ark-coding` provider（Volcengine Ark Coding Plan，9 model，commit `8b5a380` + `4784dbd` per-model 窗口 pin）。FEATURE_097 AMA Runner Realtime Todo List — Claude Code 风格实时计划列表，planned for `v0.7.34`，作为 Plan B 主路线 `v0.7.33` 结束后第一个 AMA 可见性增强 feature，依赖 FEATURE_084 重写后的 Scout `executionObligations` 契约稳定形态。同时 FEATURE_095 SSH-Friendly Cell-Level Diff Renderer **Absorbed into FEATURE_057** v0.7.30 — cell-level screen buffer 是 057 §10 renderer-native selection / §11 ScrollBox parity / Track E output ownership 收口的实际前置基础设施，单独成版本会让 TUI 重构故事碎片化。SSH/ConPTY 闪烁的最急迫表现已通过 `engine.js` altScreen 分支 `log.clear() + log()` 合并成单次 `log.clearAndRender()` 的 10 行补丁消除，Track F 不再承担"SSH 闪烁唯一解药"的紧迫性——剩余动机（TextInput 光标漂移、渲染字节量、renderer-native selection/hit-test 基础设施）仍成立。)
 
 > 中文阅读说明：
 > 这份 `FEATURE_LIST` 是 roadmap 的总索引。
@@ -13,13 +13,13 @@
 
 | Item | Value |
 |---|---|
-| Tracked feature IDs | `001-101` (026 removed) |
-| Total tracked features | `100` |
+| Tracked feature IDs | `001-102` (026 removed) |
+| Total tracked features | `101` |
 | Completed | `80` |
 | Cancelled | `2` |
 | Absorbed | `2` |
 | InProgress | `1` |
-| Planned | `15` |
+| Planned | `16` |
 | Current released version | `v0.7.27` |
 
 ### 各版本待做分布
@@ -35,6 +35,7 @@
 | `v0.7.34` | `1` |
 | `v0.7.36` | `1` |
 | `v0.7.39` | `1` |
+| `v0.7.45` | `1` |
 | `v0.8.0` | `3` |
 
 ---
@@ -64,6 +65,7 @@
 | `094` | Deep Anti-Escape Hardening — Runtime Detection and Retry Contract for Generative Large-File Writes | Core | Medium | `v0.7.36` | [v0.7.36](features/v0.7.36.md#feature_094-deep-anti-escape-hardening--runtime-detection-and-retry-contract-for-generative-large-file-writes) |
 | `095` | ~~SSH-Friendly Cell-Level Diff Renderer for Ink Substrate~~ | ~~Refactor~~ | ~~Medium~~ | ~~`v0.7.39`~~ | [v0.7.30](features/v0.7.30.md#track-f-cell-level-diff-renderer-for-ssh-friendly-output-absorbs-feature_095) | **Absorbed into FEATURE_057**: cell-level screen buffer 是 057 §10 renderer-native selection / §11 ScrollBox parity / Track E output ownership 收口的实际前置基础设施，并入 057 作为 Track F 统一设计与交付 |
 | `096` | Windows-SSH ConPTY Host Auto-Downgrade to Main-Screen Policy | Enhancement | Medium | `v0.7.39` | [v0.7.39](features/v0.7.39.md#feature_096-windows-ssh-conpty-host-auto-downgrade-to-main-screen-policy) |
+| `102` | Adaptive Multi-Provider Orchestration Runtime | Internal / Core | High | `v0.7.45` | [v0.7.45](features/v0.7.45.md#feature_102-adaptive-multi-provider-orchestration-runtime) |
 | `093` | Coding and REPL Internal Circular Dependency Decoupling | Internal | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_093-coding-and-repl-internal-circular-dependency-decoupling) |
 | `007` | Theme System Consolidation | Enhancement | Medium | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_007-theme-system-consolidation) |
 | `030` | Multi-Surface Delivery | Enhancement | High | `v0.8.0` | [v0.8.0](features/v0.8.0.md#feature_030-multi-surface-delivery) |

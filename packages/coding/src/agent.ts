@@ -38,9 +38,11 @@ import {
 import { generateSessionId, extractTitleFromMessages } from './session.js';
 // FEATURE_076 Q4: load-time normalization for pre-v0.7.25 session messages.
 import { normalizeLoadedSessionMessages } from './task-engine/_internal/round-boundary.js';
-import { compact as intelligentCompact, microcompact, DEFAULT_MICROCOMPACTION_CONFIG, type CompactionConfig, type CompactionUpdate } from '@kodax/agent';
+import { microcompact, DEFAULT_MICROCOMPACTION_CONFIG, type CompactionConfig } from '@kodax/agent';
 import { loadCompactionConfig } from './compaction-config.js';
-import { estimateTokens } from './tokenizer.js';
+// CAP-014/060/061/062 token estimation now happens inside the
+// substrate compaction modules; agent.ts no longer imports
+// `estimateTokens` directly since FEATURE_100 P3.4c.
 import { KODAX_MAX_MAXTOKENS_RETRIES } from './constants.js';
 import { waitForRetryDelay } from './retry-handler.js';
 import { telemetryRecovery } from './resilience/index.js';
@@ -115,9 +117,11 @@ import {
   getActiveToolDefinitions,
   getRuntimeActiveToolNames,
 } from './agent-runtime/tool-resolution.js';
-import { gracefulCompactDegradation } from './agent-runtime/compaction-fallback.js';
+// CAP-028 / CAP-062 (`gracefulCompactDegradation`) is wired inside
+// `agent-runtime/middleware/compaction-orchestration.ts` since
+// FEATURE_100 P3.4c.
 import { shouldCompact } from './agent-runtime/compaction-trigger.js';
-import { applyPostCompactAttachments } from './agent-runtime/middleware/post-compact-attachments.js';
+import { runCompactionLifecycle } from './agent-runtime/middleware/compaction-orchestration.js';
 // CAP-026 (`updateToolOutcomeTracking`) is now wired inside
 // `agent-runtime/tool-dispatch.ts:applyPostToolProcessing` since
 // FEATURE_100 P3.3d.
@@ -550,7 +554,6 @@ export async function runKodaX(
 
     let managedProtocolContinueAttempted = false;
     let compactConsecutiveFailures = 0;
-    const COMPACT_CIRCUIT_BREAKER_LIMIT = 3;
     for (let iter = 0; iter < maxIter; iter++) {
     try {
       // CAP-055: per-turn provider/model/thinkingLevel re-resolution +
@@ -590,13 +593,11 @@ export async function runKodaX(
       // Clears old tool results, thinking blocks, and image blocks
       messages = microcompact(messages, DEFAULT_MICROCOMPACTION_CONFIG) as KodaXMessage[];
 
-      // Compaction: 统一使用智能压缩，废除遗留的粗暴截断
-      let compacted: KodaXMessage[];
-      let didCompactMessages = false;
-      let compactionUpdate: CompactionUpdate | undefined;
-
-      // CAP-059: 判断是否需要压缩。`shouldCompact` wraps the config-enabled
-      // gate + underlying threshold check from `@kodax/agent`.
+      // CAP-059/060/061/062/063: compaction lifecycle (trigger gate +
+      // LLM compact + post-compact attachments + graceful degradation +
+      // validate/commit). The orchestrator returns the next-turn
+      // counter and a fresh contextTokenSnapshot only when compaction
+      // actually fired.
       const currentTokens = resolveContextTokenCount(messages, contextTokenSnapshot);
       const needsCompact = shouldCompact({
         messages,
@@ -604,126 +605,21 @@ export async function runKodaX(
         contextWindow,
         currentTokens,
       });
-
-      // Circuit breaker: only disables LLM-based summarization, NOT the fallback
-      const circuitBreakerTripped = compactConsecutiveFailures >= COMPACT_CIRCUIT_BREAKER_LIMIT;
-
-      if (needsCompact && !circuitBreakerTripped) {
-        // LLM-based intelligent compaction path
-        events.onCompactStart?.();
-        try {
-          const result = await intelligentCompact(
-            messages,
-            compactionConfig,
-            provider,
-            contextWindow,
-            undefined, // customInstructions
-            currentExecution.systemPrompt,
-            currentTokens,
-          );
-
-          if (result.compacted) {
-            compacted = result.messages;
-
-            // CAP-061: Post-compact reconstruction — inject artifact ledger
-            // summary + file content. FEATURE_072: `postCompactAttachmentsForLineage`
-            // captures the flat attachment messages so they can also be
-            // routed via `compactionUpdate.postCompactAttachments` for
-            // REPL-side native storage on the CompactionEntry. agent.ts
-            // still inlines them into local `messages` for consumers that
-            // continue to read flat messages.
-            let postCompactAttachmentsForLineage: readonly KodaXMessage[] = [];
-            if (result.artifactLedger && result.artifactLedger.length > 0) {
-              const attached = await applyPostCompactAttachments({
-                compacted,
-                artifactLedger: result.artifactLedger,
-                tokensBefore: result.tokensBefore,
-                tokensAfter: result.tokensAfter,
-              });
-              compacted = attached.compacted;
-              postCompactAttachmentsForLineage = attached.postCompactAttachmentsForLineage;
-            }
-
-            didCompactMessages = true;
-            // Only reset the circuit-breaker counter when compaction actually
-            // reduced context below trigger. "Partial success" (pruning only,
-            // with silent summary failure) would otherwise keep the counter
-            // at zero forever and prevent graceful degradation from ever running.
-            const triggerTokens = contextWindow * (compactionConfig.triggerPercent / 100);
-            const postCompactTokens = estimateTokens(compacted);
-            if (postCompactTokens < triggerTokens) {
-              compactConsecutiveFailures = 0;
-            } else {
-              compactConsecutiveFailures++;
-              console.warn(`[Compaction] Partial success: still above trigger (${postCompactTokens} > ${Math.floor(triggerTokens)}) — attempt ${compactConsecutiveFailures}/${COMPACT_CIRCUIT_BREAKER_LIMIT}`);
-            }
-            compactionUpdate = {
-              anchor: result.anchor,
-              artifactLedger: result.artifactLedger,
-              memorySeed: result.memorySeed,
-              postCompactAttachments: postCompactAttachmentsForLineage.length > 0
-                ? postCompactAttachmentsForLineage
-                : undefined,
-            };
-            events.onCompactStats?.({
-              tokensBefore: result.tokensBefore,
-              tokensAfter: postCompactTokens,
-            });
-            events.onCompact?.(result.tokensBefore);
-          } else {
-            compacted = result.messages;
-          }
-        } catch (error) {
-          compactConsecutiveFailures++;
-          console.error(`[Compaction Error] LLM summary failed (attempt ${compactConsecutiveFailures}/${COMPACT_CIRCUIT_BREAKER_LIMIT}):`, error);
-
-          // Fall through to graceful degradation below
-          compacted = messages;
-        } finally {
-          events.onCompactEnd?.();
-        }
-      } else {
-        compacted = messages;
-      }
-
-      // Graceful degradation: runs when:
-      //   - LLM compact threw (compacted === messages because catch set it)
-      //   - Circuit breaker tripped (needsCompact && circuitBreakerTripped → else branch)
-      //   - LLM compact "partial success" left context still above trigger (new ref, tokens still high)
-      // Gating by remaining tokens instead of reference equality catches the third case,
-      // which is the root cause of monotonic context growth observed in 0.7.18+.
-      //
-      // Pass `compacted` (not `messages`) so we keep any pruning work done by
-      // intelligentCompact and let graceful do additional atomic-block removal
-      // on top, rather than discarding the pruning and starting over.
-      if (needsCompact) {
-        const triggerTokens = contextWindow * (compactionConfig.triggerPercent / 100);
-        const gapRatio = compactionConfig.pruningGapRatio ?? 0.8;
-        const stillOverTrigger = estimateTokens(compacted) > triggerTokens * gapRatio;
-        if (stillOverTrigger) {
-          const degraded = gracefulCompactDegradation(compacted, contextWindow, compactionConfig);
-          if (degraded !== compacted) {
-            compacted = degraded;
-            didCompactMessages = true;
-            events.onCompactStats?.({
-              tokensBefore: currentTokens,
-              tokensAfter: estimateTokens(compacted),
-            });
-            events.onCompact?.(estimateTokens(compacted));
-          }
-        }
-      }
-
-      // CRITICAL FIX: Always validate and fix tool history before sending to API
-      // This prevents "tool_call_id is not found" errors caused by corrupted history
-      compacted = validateAndFixToolHistory(compacted);
-
-      // CRITICAL FIX: Update the global session messages to the compacted version!
-      // This permanently applies the summary/truncation and prevents the session history from growing infinitely.
-      messages = compacted;
-      if (didCompactMessages) {
-        contextTokenSnapshot = createEstimatedContextTokenSnapshot(messages);
-        events.onCompactedMessages?.(messages, compactionUpdate);
+      const compactionLifecycle = await runCompactionLifecycle({
+        messages,
+        needsCompact,
+        compactConsecutiveFailures,
+        compactionConfig,
+        provider,
+        contextWindow,
+        systemPrompt: currentExecution.systemPrompt,
+        currentTokens,
+        events,
+      });
+      messages = compactionLifecycle.messages;
+      compactConsecutiveFailures = compactionLifecycle.nextCompactConsecutiveFailures;
+      if (compactionLifecycle.contextTokenSnapshot !== undefined) {
+        contextTokenSnapshot = compactionLifecycle.contextTokenSnapshot;
       }
 
       const preparedProviderState = await applyProviderPrepareHook({
@@ -789,7 +685,7 @@ export async function runKodaX(
       );
       const API_HARD_TIMEOUT_MS = resilienceCfg.requestTimeoutMs; // Issue 084: 10-min hard timeout
       const API_IDLE_TIMEOUT_MS = resilienceCfg.streamIdleTimeoutMs; // Issue 084: 60s idle, reset on delta
-      let providerMessages = compacted;
+      let providerMessages = messages;
       let result!: KodaXStreamResult;
       let attempt = 0;
       const activeToolDefinitions = getActiveToolDefinitions(
@@ -987,7 +883,7 @@ export async function runKodaX(
       }
 
       lastText = result.textBlocks.map(b => b.text).join(' ');
-      const preAssistantTokenSnapshot = createContextTokenSnapshot(compacted, result.usage);
+      const preAssistantTokenSnapshot = createContextTokenSnapshot(messages, result.usage);
       const visibleToolBlocks = result.toolBlocks.filter((block) => isVisibleToolName(block.name));
 
       // Promise 信号检测
