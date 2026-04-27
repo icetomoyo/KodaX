@@ -350,6 +350,15 @@ export interface PostToolProcessingInput {
   readonly resultMap: Map<string, string>;
   readonly events: KodaXEvents;
   readonly emitActiveExtensionEvent: ExtensionEventEmitter;
+  /**
+   * Tool execution context. The function MUTATES
+   * `ctx.mutationTracker.reflectionInjected` to `true` on the first
+   * significant mutation result it processes — this latch is owned
+   * by the caller's tracker (per-session, propagates back through the
+   * shared reference). The `readonly` modifier on this field protects
+   * the input wrapper, NOT the tracker's interior. Callers passing a
+   * non-shared tracker will lose the once-per-session invariant.
+   */
   readonly ctx: KodaXToolExecutionContext;
   readonly runtimeSessionState: RuntimeSessionState;
 }
@@ -395,6 +404,8 @@ export async function applyPostToolProcessing(
       && isMutationScopeSignificant(input.ctx.mutationTracker)
     ) {
       content += buildMutationScopeReflection(input.ctx.mutationTracker);
+      // MUTATION: latches the once-per-session contract — see
+      // `PostToolProcessingInput.ctx` JSDoc for the ownership note.
       input.ctx.mutationTracker.reflectionInjected = true;
     }
     updateToolOutcomeTracking(tc, content, input.runtimeSessionState, input.ctx);
