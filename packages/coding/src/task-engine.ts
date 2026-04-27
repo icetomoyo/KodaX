@@ -50,7 +50,7 @@ import type {
   KodaXTaskRoutingDecision,
 } from './types.js';
 
-function resolveManagedAgentMode(options: KodaXOptions): KodaXAgentMode {
+export function resolveManagedAgentMode(options: KodaXOptions): KodaXAgentMode {
   return options.agentMode ?? 'ama';
 }
 

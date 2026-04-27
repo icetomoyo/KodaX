@@ -4,28 +4,52 @@
  * Inventory entry: docs/features/v0.7.29-capability-inventory.md#cap-089-task-enginets-mode-dispatcher
  *
  * Test obligations:
- * - CAP-DISPATCH-001: SA mode → defaultCodingAgent
- * - CAP-DISPATCH-002: AMA mode → scoutAgent
+ * - CAP-DISPATCH-001: SA mode → runKodaX (INTEGRATION-LEVEL — requires
+ *   hoisted vi.mock against ./agent.js to intercept the routing call;
+ *   deferred until substrate-executor migration extracts the dispatcher
+ *   into a standalone module that can be unit-tested with explicit DI.)
+ * - CAP-DISPATCH-002: AMA mode → runManagedTaskViaRunner
+ *   (INTEGRATION-LEVEL — same constraint as 001.)
  * - CAP-DISPATCH-003: default agentMode = 'ama'
+ *   (FUNCTION-LEVEL — fully active here against `resolveManagedAgentMode`.)
  *
- * Risk: HIGH (the load-bearing fork point for FEATURE_100 — post-refactor this becomes a thin Agent-declaration selector instead of a body fork)
+ * Risk: HIGH (load-bearing fork point — getting the default wrong
+ * silently routes every unannotated task to the SA path, losing
+ * AMA orchestration entirely).
  *
  * Class: 1
  *
- * Verified location: task-engine.ts:53-55 (resolveManagedAgentMode); :91-128 (executeRunManagedTask)
+ * Verified location: task-engine.ts:53 (resolveManagedAgentMode,
+ * exported during FEATURE_100 P3.6p for contract activation).
  *
- * Time-ordering constraint: at top of runManagedTask; the result is wrapped by reshapeToUserConversation (CAP-092).
+ * Time-ordering constraint: at top of runManagedTask; the result is
+ * wrapped by reshapeToUserConversation (CAP-092).
  *
- * STATUS: P1 stub.
+ * STATUS: ACTIVE-PARTIAL since FEATURE_100 P3.6p.
  */
 
-import { describe, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
-// Post-FEATURE_100 import target (uncomment in P2):
-// import { executeRunManagedTask } from '../../task-engine.js';
+import { resolveManagedAgentMode } from '../../task-engine.js';
+import type { KodaXOptions } from '../../types.js';
 
 describe('CAP-089: task-engine.ts mode dispatcher contract', () => {
-  it.todo('CAP-DISPATCH-001: when agentMode is "sa", executeRunManagedTask routes to runKodaX (defaultCodingAgent path with intent-gate-derived prompt overlay)');
-  it.todo('CAP-DISPATCH-002: when agentMode is "ama", executeRunManagedTask routes to runManagedTaskViaRunner (scoutAgent AMA path with full reasoning plan)');
-  it.todo('CAP-DISPATCH-003: when options.agentMode is not provided, resolveManagedAgentMode defaults to "ama"');
+  it.todo(
+    'CAP-DISPATCH-001: when agentMode is "sa", executeRunManagedTask routes to runKodaX — INTEGRATION-LEVEL, deferred until substrate-executor extracts dispatcher into a standalone module.',
+  );
+  it.todo(
+    'CAP-DISPATCH-002: when agentMode is "ama", executeRunManagedTask routes to runManagedTaskViaRunner — INTEGRATION-LEVEL, deferred (same as 001).',
+  );
+
+  it('CAP-DISPATCH-003a: when options.agentMode is undefined, resolveManagedAgentMode defaults to "ama"', () => {
+    expect(resolveManagedAgentMode({} as KodaXOptions)).toBe('ama');
+  });
+
+  it('CAP-DISPATCH-003b: explicit "sa" agentMode is preserved verbatim', () => {
+    expect(resolveManagedAgentMode({ agentMode: 'sa' } as KodaXOptions)).toBe('sa');
+  });
+
+  it('CAP-DISPATCH-003c: explicit "ama" agentMode is preserved verbatim', () => {
+    expect(resolveManagedAgentMode({ agentMode: 'ama' } as KodaXOptions)).toBe('ama');
+  });
 });
