@@ -441,8 +441,8 @@ function resolveRoleInstructions(
     undefined, // workerId — unused by createRolePrompt body
     false, // isTerminalAuthority — Runner-driven path always runs with Evaluator
   );
-  // v0.7.27 FEATURE_086 parity restore — prepend the pre-computed
-  // repo-intelligence context block so every role sees repo overview /
+  // FEATURE_086: prepend the pre-computed repo-intelligence context
+  // block so every role sees repo overview /
   // changed scope / active module / impact metadata from turn 1. Legacy
   // `runKodaX` injected this via `buildAutoRepoIntelligenceContext` inside
   // `buildReasoningExecutionState`; the Runner-driven path (FEATURE_084
@@ -2577,9 +2577,8 @@ export function buildRunnerLlmAdapter(
             fallbackUsed: decision.shouldUseNonStreaming,
             serverRetryAfterMs: decision.serverRetryAfterMs,
           });
-          // v0.7.22 parity: dedicated rate-limit event so REPL can render
-          // a distinct 429 banner (separate from the generic retry UI).
-          // Legacy agent.ts:2064 fires this on the same branch.
+          // Dedicated rate-limit event so REPL can render a distinct 429
+          // banner (separate from the generic retry UI).
           if (decision.reasonCode === 'rate_limit') {
             options.events?.onProviderRateLimit?.(
               attempt,
@@ -3704,9 +3703,8 @@ export async function runManagedTaskViaRunner(
   // (or future SDK consumers) still work without constructing a plan.
   plan?: ReasoningPlan,
 ): Promise<KodaXResult> {
-  // v0.7.26 parity: fire onSessionStart early so REPL / CLI listeners
-  // bound to session init trigger for AMA runs the same way they trigger
-  // for SA runs. Legacy agent.ts:1677 fires this once per runKodaX entry.
+  // Fire onSessionStart early so REPL / CLI listeners bound to session
+  // init trigger for AMA runs the same way they trigger for SA runs.
   const providerName = options.provider ?? 'anthropic';
   const initialSessionId = options.session?.id
     ?? `runner-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -3714,9 +3712,8 @@ export async function runManagedTaskViaRunner(
   try {
     return await runManagedTaskViaRunnerInner(options, prompt, adapterOverride, plan);
   } catch (err) {
-    // v0.7.22 parity: surface onError so top-level consumers can flush
-    // telemetry / show UI toast. Legacy agent.ts:2854 fires this before
-    // rethrowing; we keep the same contract.
+    // Surface onError so top-level consumers can flush telemetry /
+    // show UI toast before the rejection propagates.
     const error = err instanceof Error ? err : new Error(String(err));
     options.events?.onError?.(error);
     // v0.7.26 parity (C3): persist an error snapshot so /resume can
@@ -4348,8 +4345,8 @@ async function runManagedTaskViaRunnerInner(
   // reach the Scout turn as multimodal content blocks. Without this the
   // LLM sees a plain-text prompt and never perceives the image —
   // round-boundary reshape only rewrites outgoing `result.messages` for
-  // display, not the inbound prompt. Legacy agent.ts:1500 applies this
-  // at the single SA entry message; we mirror it here.
+  // display, not the inbound prompt — apply the lift here so the AMA
+  // entry message carries multimodal blocks like the SA entry does.
   const initialMessages = options.session?.initialMessages ?? [];
   const userMessageContent = buildPromptMessageContent(
     promptWithOverlay,
@@ -4401,11 +4398,10 @@ async function runManagedTaskViaRunnerInner(
     // / cancelled); the Runner observer maps 1:1 onto
     // `onToolUseStart` + `onToolResult` here.
     toolObserver: {
-      // v0.7.22 parity: permission gate. plan-mode / accept-edits /
-      // extension "tool:before" hooks run here. Legacy agent.ts:810 ran
-      // this pre-execute; we preserve the tri-state contract
-      // (true/undefined allow, false block generic, string block with
-      // custom message).
+      // Permission gate: plan-mode / accept-edits / extension
+      // "tool:before" hooks run here. Tri-state contract:
+      // true/undefined allow, false block generic, string block with
+      // custom message.
       beforeTool: options.events?.beforeToolExecute
         ? async (call) => {
           const verdict = await options.events!.beforeToolExecute!(
@@ -4641,11 +4637,11 @@ async function runManagedTaskViaRunnerInner(
     // best-effort; failures should not abort the task run.
   }
 
-  // v0.7.26 parity (C3): persist session snapshot to disk so `/resume <id>`
-  // and `--continue` can reload the AMA conversation. Legacy agent.ts:851
-  // calls saveSessionSnapshot at three terminal sites (success, block,
-  // error); in the Runner-driven path the single non-error terminal lives
-  // here. Best-effort — a storage failure must not fail the task run.
+  // Persist session snapshot to disk so `/resume <id>` and `--continue`
+  // can reload the AMA conversation. The Runner-driven path has a
+  // single non-error terminal (here); `saveSessionSnapshot` already
+  // wraps storage failures internally so a transient backend issue
+  // cannot abort the task run.
   if (options.session?.storage) {
     try {
       await saveSessionSnapshot(options, result.sessionId, {
