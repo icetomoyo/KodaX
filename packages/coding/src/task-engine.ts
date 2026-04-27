@@ -8,7 +8,7 @@
  * was replaced by the Runner-driven path in `./task-engine/runner-driven.ts`.
  *
  * Dispatch:
- *   - SA mode  -> `runDirectKodaX` with a direct-path prompt overlay.
+ *   - SA mode  -> `runKodaX` with a direct-path prompt overlay.
  *   - AMA mode -> `runManagedTaskViaRunner` (Scout → Planner? → Generator
  *                 → Evaluator via Layer-A Runner + protocol emit tools).
  *
@@ -20,7 +20,7 @@
  * underlying helpers live in `./task-engine/_internal/managed-task/checkpoint.ts`
  * and are still used at runtime by the Runner path.
  */
-import { runKodaX as runDirectKodaX } from './agent.js';
+import { runKodaX } from './agent.js';
 import {
   buildAmaControllerDecision,
   buildFallbackRoutingDecision,
@@ -95,7 +95,7 @@ async function executeRunManagedTask(
   const agentMode = resolveManagedAgentMode(options);
   if (agentMode === 'sa') {
     const intentGate = inferIntentGate(prompt);
-    return runDirectKodaX(
+    return runKodaX(
       {
         ...options,
         context: {
