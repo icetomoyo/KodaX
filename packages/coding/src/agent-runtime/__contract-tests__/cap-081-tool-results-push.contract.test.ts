@@ -30,12 +30,14 @@
  * STATUS: ACTIVE since FEATURE_100 P3.3e.
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { KodaXMessage, KodaXToolResultBlock } from '@kodax/ai';
 import type { KodaXContextTokenSnapshot } from '../../types.js';
 
 import { pushToolResultsAndSettle } from '../middleware/extension-queue.js';
+import { createExtensionRuntime } from '../../extensions/index.js';
+import { setActiveExtensionRuntime } from '../../extensions/runtime.js';
 import {
   buildRuntimeSessionState,
   type RuntimeSessionState,
@@ -182,5 +184,37 @@ describe('CAP-081: pushToolResultsAndSettle — settle/drain ordering', () => {
     expect(emit).not.toHaveBeenCalled();
   });
 
-  it.todo('CAP-TOOL-RESULTS-PUSH-002c: settleExtensionTurn fires turn:settle hook BEFORE drain — pinned by CAP-020 contract; cross-CAP integration test deferred');
+  it('CAP-TOOL-RESULTS-PUSH-002c: turn:settle hook fires BEFORE drain — messages the hook queues are picked up by the same drain pass', async () => {
+    // Install a real extension runtime + register a turn:settle hook
+    // that uses queueUserMessage. If settle were to run AFTER drain,
+    // the hook-queued message would be left behind and
+    // drainedQueuedMessages would be false. Asserting both
+    // (drainedQueuedMessages=true AND the hook's message is in
+    // `messages`) pins the order.
+    const runtime = createExtensionRuntime();
+    runtime.registerHook('turn:settle', async (ctx) => {
+      ctx.queueUserMessage('hook-queued message');
+    });
+    setActiveExtensionRuntime(runtime);
+
+    const messages: KodaXMessage[] = [];
+    const out = await pushToolResultsAndSettle({
+      messages,
+      toolResults: [toolResult('t1')],
+      editRecoveryMessages: [],
+      completedTurnTokenSnapshot: fakeSnapshot(),
+      runtimeSessionState: freshState(),
+      emitActiveExtensionEvent: fakeEmitter(),
+      sessionId: 'sess-settle',
+      lastText: 'last',
+      iter: 0,
+    });
+
+    expect(out.drainedQueuedMessages).toBe(true);
+    expect(messages.some((m) => m.content === 'hook-queued message')).toBe(true);
+  });
+});
+
+afterEach(() => {
+  setActiveExtensionRuntime(null);
 });

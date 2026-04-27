@@ -53,6 +53,26 @@ export interface AgentReasoningProfile {
 }
 
 /**
+ * Declarative middleware reference attached to an Agent.
+ *
+ * FEATURE_100 (v0.7.29) introduces this field so the coding preset
+ * can declare the four substrate middlewares (auto-reroute,
+ * mutation-reflection, pre-answer-judge, post-tool-judge) on the
+ * Agent declaration itself. Today these middlewares fire inside
+ * the substrate body; the declaration field serves as the
+ * machine-readable contract that the substrate honours, and lets
+ * SDK consumers introspect / override middleware policy without
+ * touching `runKodaX` internals.
+ *
+ * `enabled` is the only knob today; future versions add config
+ * payload as additional fields (kept declarative — no fn callbacks).
+ */
+export interface AgentMiddlewareDeclaration {
+  readonly name: string;
+  readonly enabled: boolean;
+}
+
+/**
  * Guardrail placeholder. Layer A declares the slot; the actual
  * input/output/tool-call gating runtime lives in FEATURE_085 (v0.7.26).
  *
@@ -121,6 +141,16 @@ export interface Agent<TContext = unknown> {
    * `PresetDispatcher` shape declared in `runner.ts` at the call site.
    */
   readonly substrateExecutor?: unknown;
+  /**
+   * FEATURE_100 (v0.7.29) declarative middleware list. The coding
+   * preset declares the four substrate middlewares it ships with
+   * (auto-reroute, mutation-reflection, pre-answer-judge,
+   * post-tool-judge). Substrate consults this list on entry and
+   * skips the corresponding step when `enabled === false`. SDK
+   * consumers can introspect or override declared middleware
+   * without touching the substrate body.
+   */
+  readonly middleware?: readonly AgentMiddlewareDeclaration[];
 }
 
 /**

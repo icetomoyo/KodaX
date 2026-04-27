@@ -12,6 +12,7 @@
 export type {
   Agent,
   AgentMessage,
+  AgentMiddlewareDeclaration,
   AgentReasoningProfile,
   AgentTool,
   Guardrail,

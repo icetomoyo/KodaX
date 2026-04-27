@@ -24,15 +24,18 @@
  * caller's promptOverlay via `\n\n` join.
  *
  * STATUS: ACTIVE since FEATURE_100 P3.6g. CAP-DIRECT-PATH-RULE-006
- * stays `it.todo` because it asserts a NEGATIVE invariant about the AMA
- * path call site, which is integration-level (no exported boundary on
- * the AMA branch to assert against without spinning up the full
- * dispatcher).
+ * activated in FEATURE_100 P3.6t — the negative invariant (AMA path
+ * doesn't apply the SA direct-path overlay) is now testable through
+ * the `dispatchManagedTask({ runSA, runAMA, … })` DI boundary.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { buildDirectPathTaskFamilyPromptOverlay } from '../../task-engine.js';
+import {
+  buildDirectPathTaskFamilyPromptOverlay,
+  dispatchManagedTask,
+} from '../../task-engine.js';
+import type { KodaXOptions, KodaXResult } from '../../types.js';
 
 describe('CAP-090: SA-path task-family prompt overlay (direct path rules) contract', () => {
   it('CAP-DIRECT-PATH-RULE-001: review task family produces a "[Direct Path Rule]" overlay with the review instruction', () => {
@@ -78,5 +81,65 @@ describe('CAP-090: SA-path task-family prompt overlay (direct path rules) contra
     expect(overlay.startsWith('first-section\n\nsecond-section\n\n[Direct Path Rule]')).toBe(true);
   });
 
-  it.todo('CAP-DIRECT-PATH-RULE-006: AMA path (agentMode !== "sa") does not call buildDirectPathTaskFamilyPromptOverlay — integration-level, requires dispatcher boundary mocking');
+  it('CAP-DIRECT-PATH-RULE-006: AMA path does NOT inject the SA direct-path overlay into runAMA options', async () => {
+    const runSA = vi.fn();
+    const runAMA = vi.fn().mockResolvedValue({
+      success: true,
+      lastText: '',
+      messages: [],
+      sessionId: 's',
+    } as KodaXResult);
+    const buildPlan = vi.fn().mockResolvedValue({
+      mode: 'off',
+      depth: 'off',
+      decision: {},
+      promptOverlay: '',
+    });
+
+    await dispatchManagedTask(
+      {
+        agentMode: 'ama',
+        // Original caller-supplied overlay should pass through, but
+        // NOT have a "[Direct Path Rule]" appended.
+        context: { promptOverlay: 'caller-only' },
+      } as KodaXOptions,
+      'review the auth module',
+      { runSA, runAMA, buildPlan },
+    );
+
+    expect(runSA).not.toHaveBeenCalled();
+    expect(runAMA).toHaveBeenCalledTimes(1);
+    const [optsToAMA] = runAMA.mock.calls[0]!;
+    // The dispatcher passes the original options through to runAMA
+    // — promptOverlay is unchanged from caller value.
+    expect(optsToAMA.context?.promptOverlay).toBe('caller-only');
+    // No "[Direct Path Rule]" leaked into the AMA branch.
+    expect(optsToAMA.context?.promptOverlay).not.toContain('[Direct Path Rule]');
+  });
+
+  it('CAP-DIRECT-PATH-RULE-006b: SA path DOES inject the direct-path overlay into runSA options', async () => {
+    const runSA = vi.fn().mockResolvedValue({
+      success: true,
+      lastText: '',
+      messages: [],
+      sessionId: 's',
+    } as KodaXResult);
+    const runAMA = vi.fn();
+    const buildPlan = vi.fn();
+
+    await dispatchManagedTask(
+      {
+        agentMode: 'sa',
+        context: { promptOverlay: 'caller-section' },
+      } as KodaXOptions,
+      // A "review" task family triggers the review-specific direct-path rule.
+      'review the diff for issues',
+      { runSA, runAMA, buildPlan },
+    );
+
+    expect(runSA).toHaveBeenCalledTimes(1);
+    const [optsToSA] = runSA.mock.calls[0]!;
+    expect(optsToSA.context?.promptOverlay).toContain('caller-section');
+    expect(optsToSA.context?.promptOverlay).toContain('[Direct Path Rule]');
+  });
 });

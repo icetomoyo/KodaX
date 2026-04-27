@@ -139,7 +139,33 @@ describe('CAP-078: applyPostToolProcessing — mutation reflection (CAP-016)', (
     expect(ctx.mutationTracker?.reflectionInjected).toBeFalsy();
   });
 
-  it.todo('CAP-POST-TOOL-001e: cancelled mid-bash mutation tool result (CANCELLED_TOOL_RESULT_MESSAGE has `[Cancelled]` prefix → matches isToolResultErrorContent envelope) → reflection NOT injected; protected by the same envelope guard');
+  it('CAP-POST-TOOL-001e: cancelled mutation tool result ([Cancelled] envelope) → reflection NOT injected (envelope guard treats cancelled as failure)', async () => {
+    const ctx: KodaXToolExecutionContext = {
+      backups: new Map(),
+      mutationTracker: {
+        files: new Map([['a.ts', 50], ['b.ts', 50], ['c.ts', 50]]),
+        totalOps: 0,
+      },
+    };
+    // [Cancelled] prefix is the same envelope shape that the
+    // mid-bash cancellation path emits; mutation reflection must
+    // skip just like it does for other error envelopes.
+    const resultMap = new Map<string, string>([
+      ['t1', '[Cancelled] Operation cancelled by user'],
+    ]);
+
+    const out = await applyPostToolProcessing({
+      toolBlocks: [tool('t1', 'bash', { command: 'rm -rf /tmp/x' })],
+      resultMap,
+      events: {} as KodaXEvents,
+      emitActiveExtensionEvent: fakeEmitter(),
+      ctx,
+      runtimeSessionState: freshState(),
+    });
+
+    expect(out.toolResults[0]!.content).toBe('[Cancelled] Operation cancelled by user');
+    expect(ctx.mutationTracker?.reflectionInjected).toBeFalsy();
+  });
 
   it('CAP-POST-TOOL-001d: reflection injected ONCE — second mutation result in same batch does NOT re-append', async () => {
     const ctx: KodaXToolExecutionContext = {

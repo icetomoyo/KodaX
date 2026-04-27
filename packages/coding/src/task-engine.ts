@@ -71,6 +71,22 @@ export function buildDirectPathTaskFamilyPromptOverlay(
   return [...sections, familyRule].filter(Boolean).join('\n\n');
 }
 
+/**
+ * FEATURE_100 P3.6t: extracted from `buildManagedReasoningPlan` so
+ * CAP-091-002 can verify the "last 10" constraint at function level.
+ *
+ * Returns `undefined` when initialMessages is missing / empty, otherwise
+ * slices to the most recent 10 messages.
+ */
+export function extractRecentMessagesForPlan<T>(
+  initialMessages: readonly T[] | undefined,
+): readonly T[] | undefined {
+  if (!Array.isArray(initialMessages) || initialMessages.length === 0) {
+    return undefined;
+  }
+  return initialMessages.slice(-10);
+}
+
 export const __checkpointTestables = {
   writeCheckpoint,
   deleteCheckpoint,
@@ -88,14 +104,38 @@ export async function runManagedTask(
   return reshapeToUserConversation(result, options, prompt);
 }
 
-async function executeRunManagedTask(
+/**
+ * Dispatcher dependencies. Defaulted to the production wiring; tests
+ * (and CAP-089 / CAP-090 / CAP-091 contract suites) inject mocks to
+ * verify the agentMode → executor routing without spinning up the
+ * full substrate.
+ *
+ * FEATURE_100 P3.6t: extracted from inline `executeRunManagedTask` so
+ * CAP-DISPATCH-001 / CAP-DISPATCH-002 / CAP-DIRECT-PATH-RULE-006 /
+ * CAP-MANAGED-REASONING-002 can be activated as function-level
+ * contracts without hoisted vi.mock.
+ */
+export interface ManagedDispatchDeps {
+  readonly runSA: (options: KodaXOptions, prompt: string) => Promise<KodaXResult>;
+  readonly runAMA: typeof runManagedTaskViaRunner;
+  readonly buildPlan: typeof buildManagedReasoningPlan;
+}
+
+export const defaultManagedDispatchDeps: ManagedDispatchDeps = {
+  runSA: runKodaX,
+  runAMA: runManagedTaskViaRunner,
+  buildPlan: buildManagedReasoningPlan,
+};
+
+export async function dispatchManagedTask(
   options: KodaXOptions,
   prompt: string,
+  deps: ManagedDispatchDeps = defaultManagedDispatchDeps,
 ): Promise<KodaXResult> {
   const agentMode = resolveManagedAgentMode(options);
   if (agentMode === 'sa') {
     const intentGate = inferIntentGate(prompt);
-    return runKodaX(
+    return deps.runSA(
       {
         ...options,
         context: {
@@ -123,8 +163,15 @@ async function executeRunManagedTask(
   // directives, provider policy notes) legacy injected into every managed
   // worker's prompt. We thread it into the Runner chain so Scout/Planner/
   // Generator/Evaluator see the same contextual overlay as legacy workers.
-  const plan = await buildManagedReasoningPlan(options, prompt);
-  return runManagedTaskViaRunner(options, prompt, undefined, plan);
+  const plan = await deps.buildPlan(options, prompt);
+  return deps.runAMA(options, prompt, undefined, plan);
+}
+
+async function executeRunManagedTask(
+  options: KodaXOptions,
+  prompt: string,
+): Promise<KodaXResult> {
+  return dispatchManagedTask(options, prompt);
 }
 
 export async function buildManagedReasoningPlan(options: KodaXOptions, prompt: string) {
@@ -161,10 +208,10 @@ export async function buildManagedReasoningPlan(options: KodaXOptions, prompt: s
 
   try {
     const provider = resolveProvider(options.provider);
-    const recentMessages = Array.isArray(options.session?.initialMessages)
-      && options.session.initialMessages.length > 0
-      ? options.session.initialMessages.slice(-10)
-      : undefined;
+    const recentMessagesReadonly = extractRecentMessagesForPlan(options.session?.initialMessages);
+    // createReasoningPlan accepts a mutable array — copy from the
+    // readonly slice so we don't widen its signature for one caller.
+    const recentMessages = recentMessagesReadonly ? [...recentMessagesReadonly] : undefined;
     return await createReasoningPlan(options, prompt, provider, {
       repoSignals: repoRoutingSignals ?? undefined,
       recentMessages,

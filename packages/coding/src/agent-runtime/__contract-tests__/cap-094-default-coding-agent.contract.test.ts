@@ -24,10 +24,9 @@
  *
  * Time-ordering constraint: at SDK entry or substrate frame initialization.
  *
- * STATUS: ACTIVE-PARTIAL since FEATURE_100 P3.6i. CAP-DEFAULT-AGENT-001
- * is split: the name + frozenness assertions are active here; the
- * middleware-defaults assertion stays `it.todo` pending the substrate
- * executor's `Agent.middleware[]` shape.
+ * STATUS: ACTIVE since FEATURE_100 P3.6t. CAP-DEFAULT-AGENT-001's
+ * middleware-defaults assertion was activated when `Agent.middleware[]`
+ * landed in `core/agent.ts` (FEATURE_100 P3.6t).
  */
 
 import { describe, expect, it } from 'vitest';
@@ -56,9 +55,24 @@ describe('CAP-094: default coding agent declaration constructor contract', () =>
     expect(typeof agent.substrateExecutor).toBe('function');
   });
 
-  it.todo(
-    'CAP-DEFAULT-AGENT-001c: middleware defaults — auto-reroute, mutation-reflection, pre-answer-judge, post-tool-judge — are declared on the Agent. Currently these live as branches inside `runKodaX` body, NOT as `Agent.middleware[]` entries (the field does not exist on the `Agent` interface today). Activation deferred until the substrate executor introduces declarative middleware on Agent.',
-  );
+  it('CAP-DEFAULT-AGENT-001c: middleware defaults — autoReroute, mutationReflection, preAnswerJudge, postToolJudge — are declared on the Agent (FEATURE_100 P3.6t introduced `Agent.middleware[]`)', () => {
+    const agent = createDefaultCodingAgent();
+    expect(agent.middleware).toBeDefined();
+    const names = agent.middleware!.map((m) => m.name);
+    expect(names).toEqual(
+      expect.arrayContaining([
+        'autoReroute',
+        'mutationReflection',
+        'preAnswerJudge',
+        'postToolJudge',
+      ]),
+    );
+    // All four ship enabled by default — substrate honors `enabled`
+    // when consulting the declaration.
+    for (const m of agent.middleware!) {
+      expect(m.enabled).toBe(true);
+    }
+  });
 
   it('CAP-DEFAULT-AGENT-002: overrides passed to createDefaultCodingAgent are preserved in the returned Agent', () => {
     const customReasoning = {
@@ -89,7 +103,7 @@ describe('CAP-094: default coding agent declaration constructor contract', () =>
     expect(agent.model).toBe('claude-sonnet-4-6');
   });
 
-  it('CAP-DEFAULT-AGENT-002b: createDefaultCodingAgent({}) without overrides returns an Agent with NO override fields (only name + instructions + substrateExecutor)', () => {
+  it('CAP-DEFAULT-AGENT-002b: createDefaultCodingAgent({}) without overrides returns an Agent with NO override fields (only name + instructions + substrateExecutor + middleware)', () => {
     const agent = createDefaultCodingAgent();
     expect(agent.tools).toBeUndefined();
     expect(agent.handoffs).toBeUndefined();
@@ -100,5 +114,9 @@ describe('CAP-094: default coding agent declaration constructor contract', () =>
     // `substrateExecutor` is intentionally always present — it's how
     // FEATURE_100 P3.6s wires the coding pipeline post Option-Y deletion.
     expect(typeof agent.substrateExecutor).toBe('function');
+    // `middleware` is intentionally always present — it's how
+    // FEATURE_100 P3.6t declaratively pins the default middleware
+    // policy (CAP-094-001c) on the declaration.
+    expect(Array.isArray(agent.middleware)).toBe(true);
   });
 });

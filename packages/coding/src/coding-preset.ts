@@ -25,6 +25,7 @@ import {
   extractAssistantTextFromMessage,
   type Agent,
   type AgentMessage,
+  type AgentMiddlewareDeclaration,
   type PresetDispatcher,
   type RunResult,
 } from '@kodax/core';
@@ -130,6 +131,21 @@ const codingSubstrate: PresetDispatcher = async (
 };
 
 /**
+ * Default middleware declarations the coding substrate ships with.
+ * The substrate body in `agent-runtime/run-substrate.ts` runs each of
+ * these as branches today; the declaration list serves as the
+ * machine-readable contract that the substrate honours, and lets
+ * SDK consumers override (`createDefaultCodingAgent({ middleware: […] })`)
+ * without forking the substrate body.
+ */
+export const DEFAULT_CODING_MIDDLEWARE: readonly AgentMiddlewareDeclaration[] = Object.freeze([
+  Object.freeze({ name: 'autoReroute', enabled: true }),
+  Object.freeze({ name: 'mutationReflection', enabled: true }),
+  Object.freeze({ name: 'preAnswerJudge', enabled: true }),
+  Object.freeze({ name: 'postToolJudge', enabled: true }),
+]);
+
+/**
  * Construct the default coding Agent declaration. SDK consumers may write
  * `Runner.run(createDefaultCodingAgent(), prompt, { presetOptions })` and
  * the Runner will execute the substrate via `Agent.substrateExecutor`.
@@ -146,6 +162,7 @@ export function createDefaultCodingAgent(
     name: DEFAULT_CODING_AGENT_NAME,
     instructions: DEFAULT_CODING_INSTRUCTIONS,
     substrateExecutor: codingSubstrate,
+    middleware: DEFAULT_CODING_MIDDLEWARE,
     ...overrides,
   });
 }

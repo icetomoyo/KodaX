@@ -19,12 +19,18 @@
  * Time-ordering constraint: AFTER mode dispatch (CAP-089) decided AMA;
  * BEFORE runManagedTaskViaRunner.
  *
- * STATUS: ACTIVE since FEATURE_100 P3.6h.
+ * STATUS: ACTIVE since FEATURE_100 P3.6h. CAP-MANAGED-REASONING-002
+ * activated in FEATURE_100 P3.6t after `extractRecentMessagesForPlan`
+ * was lifted out of the inline transform — function-level test no
+ * longer needs hoisted vi.mock.
  */
 
 import { describe, expect, it } from 'vitest';
 
-import { buildManagedReasoningPlan } from '../../task-engine.js';
+import {
+  buildManagedReasoningPlan,
+  extractRecentMessagesForPlan,
+} from '../../task-engine.js';
 import type { KodaXOptions } from '../../types.js';
 
 describe('CAP-091: AMA-only managed reasoning plan builder contract', () => {
@@ -56,7 +62,33 @@ describe('CAP-091: AMA-only managed reasoning plan builder contract', () => {
     expect(plan.promptOverlay).toBe('');
   });
 
-  it.todo(
-    'CAP-MANAGED-REASONING-002: only the last 10 messages from options.session.initialMessages are forwarded as recentMessages to createReasoningPlan — needs hoisted vi.mock against `./reasoning.js` from the SUT side; vi.doMock + dynamic re-import does not re-bind the existing import in task-engine.ts. Activation deferred until the substrate-executor migration extracts buildManagedReasoningPlan into a standalone module that can be unit-tested with explicit DI.',
-  );
+  it('CAP-MANAGED-REASONING-002a: extractRecentMessagesForPlan returns undefined for missing/empty initialMessages', () => {
+    expect(extractRecentMessagesForPlan(undefined)).toBeUndefined();
+    expect(extractRecentMessagesForPlan([])).toBeUndefined();
+  });
+
+  it('CAP-MANAGED-REASONING-002b: extractRecentMessagesForPlan returns at most the last 10 messages, in order', () => {
+    const fifteen = Array.from({ length: 15 }, (_, i) => ({
+      role: 'user' as const,
+      content: `m${i}`,
+    }));
+    const sliced = extractRecentMessagesForPlan(fifteen);
+    expect(sliced).toBeDefined();
+    expect(sliced!.length).toBe(10);
+    // Last 10 in order: m5..m14
+    expect(sliced![0]!.content).toBe('m5');
+    expect(sliced![9]!.content).toBe('m14');
+  });
+
+  it('CAP-MANAGED-REASONING-002c: when initialMessages.length <= 10, all messages are returned (no slicing artifact)', () => {
+    const seven = Array.from({ length: 7 }, (_, i) => ({
+      role: 'assistant' as const,
+      content: `r${i}`,
+    }));
+    const sliced = extractRecentMessagesForPlan(seven);
+    expect(sliced).toBeDefined();
+    expect(sliced!.length).toBe(7);
+    expect(sliced![0]!.content).toBe('r0');
+    expect(sliced![6]!.content).toBe('r6');
+  });
 });
