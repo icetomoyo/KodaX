@@ -102,6 +102,7 @@ import {
   runRecoveryPipeline,
 } from './agent-runtime/provider-retry-policy.js';
 import { executeNonStreamingFallback } from './agent-runtime/non-streaming-fallback.js';
+import { guardEmptyAssistantContent } from './agent-runtime/assistant-message-builder.js';
 import { describeTransientProviderRetry } from './agent-runtime/provider-retry-policy.js';
 import {
   isCancelledToolResultContent,
@@ -1061,13 +1062,15 @@ export async function runKodaX(
       // remains a public constant in case external callers want to opt in
       // via direct provider override, but the agent loop no longer wires it.
 
-      let assistantContent = [...result.thinkingBlocks, ...result.textBlocks, ...visibleToolBlocks];
-      // Guard: never push an assistant message with empty content.
-      // This can happen when the model only emits invisible tool calls (e.g. emit_managed_protocol)
-      // with no text or thinking. Providers like Kimi reject empty content (400 error).
-      if (assistantContent.length === 0) {
-        assistantContent = [{ type: 'text' as const, text: '...' }];
-      }
+      // CAP-073: empty-content guard — if the model emitted only invisible
+      // tool calls (e.g. emit_managed_protocol) with no text/thinking,
+      // replace the empty array with a single '...' placeholder so
+      // providers that reject empty content (Kimi 400) don't trip.
+      const assistantContent = guardEmptyAssistantContent([
+        ...result.thinkingBlocks,
+        ...result.textBlocks,
+        ...visibleToolBlocks,
+      ]);
       messages.push({ role: 'assistant', content: assistantContent });
       const completedTurnTokenSnapshot = createCompletedTurnTokenSnapshot(messages, result.usage);
       contextTokenSnapshot = completedTurnTokenSnapshot;
