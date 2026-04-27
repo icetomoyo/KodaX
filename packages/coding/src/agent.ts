@@ -93,6 +93,7 @@ import {
   emitIterationEnd as emitIterationEndStep,
 } from './agent-runtime/event-emitter.js';
 import { resolvePerTurnProvider } from './agent-runtime/per-turn-provider-resolution.js';
+import { assertProviderConfigured } from './agent-runtime/provider-config-check.js';
 import { resolvePerTurnReasoning } from './agent-runtime/per-turn-reasoning.js';
 import { buildStreamTimers } from './agent-runtime/stream-timers.js';
 import { applyProviderPolicyGate } from './agent-runtime/provider-policy-gate.js';
@@ -385,11 +386,7 @@ export async function runKodaX(
   // Load compaction config
   const compactionConfig = await loadCompactionConfig(options.context?.gitRoot ?? undefined);
   const initialProvider = resolveProvider(turnState.currentProviderName);
-  if (!initialProvider.isConfigured()) {
-    throw new Error(
-      `Provider "${turnState.currentProviderName}" not configured. Set ${initialProvider.getApiKeyEnv()}`,
-    );
-  }
+  assertProviderConfigured(initialProvider, turnState.currentProviderName);
 
   // 处理 autoResume/resume：自动加载当前目录最近会话
   let resolvedSessionId = options.session?.id;
@@ -694,11 +691,7 @@ export async function runKodaX(
         executionMode: effectiveReasoningPlan.decision.recommendedMode,
         baseSystemPrompt: preparedProviderState.systemPrompt,
       });
-      if (!streamProvider.isConfigured()) {
-        throw new Error(
-          `Provider "${turnState.currentProviderName}" not configured. Set ${streamProvider.getApiKeyEnv()}`,
-        );
-      }
+      assertProviderConfigured(streamProvider, turnState.currentProviderName);
 
       await emitActiveExtensionEvent('provider:selected', {
         provider: turnState.currentProviderName,
