@@ -1,35 +1,38 @@
 /**
- * Default coding agent preset + Runner dispatcher registration.
+ * Default coding agent preset (FEATURE_080 → FEATURE_100).
  *
- * FEATURE_080 (v0.7.23): the "Option Y" dog-food wiring. Importing this
- * module registers `runKodaX` as the dispatcher for the default coding
- * agent, so `Runner.run(createDefaultCodingAgent(), prompt, { presetOptions })`
- * routes through the existing task engine with zero behavior change.
+ * History:
+ *   v0.7.23 (FEATURE_080) introduced "Option Y": a `registerPresetDispatcher`
+ *   indirection that wrapped `runKodaX` so `Runner.run(defaultCodingAgent, …)`
+ *   appeared SDK-native while the body stayed on the legacy path. The trade-off
+ *   was deliberate parity insurance during the Layer-A primitives rollout.
  *
- * FEATURE_082 (v0.7.24): Layer A primitives moved to `@kodax/core`. This
- * file stays in `@kodax/coding` because it binds the Runner to the
- * coding-specific `runKodaX` runtime — moving it up would pull coding into
- * core and create a circular dependency.
+ *   v0.7.29 (FEATURE_100) deletes Option Y per ADR-020. The substrate executor
+ *   is attached directly to the Agent declaration via `Agent.substrateExecutor`
+ *   (an Agent field added in this version), and `Runner.run` consults that
+ *   field before any registry lookup. No `registerPresetDispatcher` call is
+ *   made any more, so `Runner.run(createDefaultCodingAgent(), …)` and
+ *   `runKodaX(opts, prompt)` (now a thin `Runner.run` wrapper in `agent.ts`)
+ *   share one execution path.
  *
- * Importing `@kodax/core` alone does NOT load `runKodaX`. Consumers who only
- * need the generic Agent/Runner types should import from `@kodax/core` and
- * avoid this module.
+ * This file stays in `@kodax/coding` because the substrate executor closure
+ * imports `runSubstrate` from `agent-runtime/run-substrate.ts`. Importing
+ * `@kodax/core` alone never loads the substrate body.
  */
 
 import {
   createAgent,
   extractAssistantTextFromMessage,
-  registerPresetDispatcher,
   type Agent,
   type AgentMessage,
   type PresetDispatcher,
   type RunResult,
 } from '@kodax/core';
 
-import { runKodaX } from './agent.js';
+import { runSubstrate } from './agent-runtime/run-substrate.js';
 import type { KodaXOptions, KodaXResult } from './types.js';
 
-/** Stable name used as the Runner dispatch key for the built-in coding preset. */
+/** Stable name used as the dispatch key for the built-in coding preset. */
 export const DEFAULT_CODING_AGENT_NAME = 'kodax/coding/default';
 
 const DEFAULT_CODING_INSTRUCTIONS = `KodaX default coding agent.
@@ -63,19 +66,34 @@ function extractFinalAssistantText(result: KodaXResult): string {
   return '';
 }
 
-const codingDispatcher: PresetDispatcher = async (_agent, input, opts, tracingContext) => {
+/**
+ * Substrate executor closure attached to `createDefaultCodingAgent()`.
+ * Adapts the Layer-A `Runner.run` signature → coding-specific
+ * `runSubstrate(KodaXOptions, prompt)` and lifts the full `KodaXResult`
+ * onto `RunResult.data` so the `runKodaX` shim (and any other internal
+ * caller that needs the coding-specific shape — `client.ts`,
+ * `task-engine.ts`, `child-executor.ts`, `acp_server.ts`, golden
+ * recorder, integration tests) recovers it without a second execution.
+ */
+const codingSubstrate: PresetDispatcher = async (
+  _agent,
+  input,
+  opts,
+  tracingContext,
+) => {
   const presetOptions = (opts?.presetOptions ?? {}) as KodaXOptions;
   const merged: KodaXOptions = opts?.abortSignal
     ? { ...presetOptions, abortSignal: opts.abortSignal }
     : presetOptions;
   const prompt = extractPrompt(input);
 
-  // FEATURE_083 (v0.7.24): record a GenerationSpan around the `runKodaX`
-  // call when a tracing context is supplied. The SA path executes a full
-  // reasoning+tool loop internally; this span represents the boundary call
-  // and carries the provider/model declared on the preset options.
+  // FEATURE_083 (v0.7.24): record a GenerationSpan around the substrate
+  // call when a tracing context is supplied. The substrate path executes
+  // a full reasoning+tool loop internally; this span represents the
+  // boundary call and carries the provider/model declared on the preset
+  // options.
   const genSpan = tracingContext
-    ? tracingContext.agentSpan.addChild('coding:runKodaX', {
+    ? tracingContext.agentSpan.addChild('coding:runSubstrate', {
         kind: 'generation',
         agentName: DEFAULT_CODING_AGENT_NAME,
         provider: merged.provider ?? 'unknown',
@@ -83,9 +101,9 @@ const codingDispatcher: PresetDispatcher = async (_agent, input, opts, tracingCo
       })
     : null;
 
-  let result: Awaited<ReturnType<typeof runKodaX>>;
+  let result: KodaXResult;
   try {
-    result = await runKodaX(merged, prompt);
+    result = await runSubstrate(merged, prompt);
   } catch (err) {
     if (genSpan) {
       genSpan.setError(err instanceof Error ? err : new Error(String(err)));
@@ -98,29 +116,28 @@ const codingDispatcher: PresetDispatcher = async (_agent, input, opts, tracingCo
   }
 
   const output = extractFinalAssistantText(result);
-  // Intentionally omit `data`: the full `KodaXResult` shape is a coding
-  // preset implementation detail and should not leak through the Layer A
-  // `RunResult` to external SDK consumers. Callers that need the raw
-  // `KodaXResult` should invoke `runKodaX` directly.
-  const runResult: RunResult = {
+  // Lift the full `KodaXResult` onto `RunResult.data`. SDK consumers
+  // that only need `output` / `messages` / `sessionId` ignore it; the
+  // `runKodaX` shim and other internal callers cast it back via
+  // `Runner.run<KodaXResult>` to recover lastText / success / usage / etc.
+  const runResult: RunResult<KodaXResult> = {
     output,
     messages: result.messages,
     sessionId: result.sessionId,
+    data: result,
   };
   return runResult;
 };
 
-registerPresetDispatcher(DEFAULT_CODING_AGENT_NAME, codingDispatcher);
-
 /**
- * Construct the default coding Agent. Exists as an Agent instance so SDK
- * consumers can write `Runner.run(createDefaultCodingAgent(), prompt, ...)`.
+ * Construct the default coding Agent declaration. SDK consumers may write
+ * `Runner.run(createDefaultCodingAgent(), prompt, { presetOptions })` and
+ * the Runner will execute the substrate via `Agent.substrateExecutor`.
  *
- * `overrides` lets callers attach additional declarative fields (e.g. custom
- * `reasoning` profile, extra `guardrails`) — these are preserved on the Agent
- * object but the dispatcher currently only consumes `presetOptions` for
- * runtime behavior. Full wiring of declarative fields lands with FEATURE_084
- * (v0.7.26).
+ * `overrides` lets callers attach additional declarative fields
+ * (e.g. custom `reasoning` profile, extra `guardrails`, custom
+ * `provider`/`model`); these are preserved on the Agent and may be
+ * consumed by the substrate executor through `presetOptions`.
  */
 export function createDefaultCodingAgent(
   overrides: Partial<Omit<Agent, 'name' | 'instructions'>> = {},
@@ -128,6 +145,7 @@ export function createDefaultCodingAgent(
   return createAgent({
     name: DEFAULT_CODING_AGENT_NAME,
     instructions: DEFAULT_CODING_INSTRUCTIONS,
+    substrateExecutor: codingSubstrate,
     ...overrides,
   });
 }

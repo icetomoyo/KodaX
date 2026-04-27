@@ -1,20 +1,38 @@
 /**
- * KodaX Agent — public re-export shim post-FEATURE_100 P3.6r.
+ * KodaX Agent — public SDK entry post-FEATURE_100 P3.6r/P3.6s.
  *
- * The substrate executor body lives in
- * `agent-runtime/run-substrate.ts`. This module is preserved as a
- * thin re-export so SDK consumers (`from '@kodax/coding/agent.js'`)
- * and internal callers (`./agent.js`) see no API break.
- *
- * Re-exports below mirror the public surface that pre-FEATURE_100
- * `agent.ts` exposed:
- *   - `runKodaX` — the substrate entry function.
- *   - Capability-specific helpers that historically lived in agent.ts
- *     and were moved into agent-runtime/ during P2/P3; these stay
- *     re-exported here for the same backward-compat reason.
+ * `runKodaX(opts, prompt)` is the stable SDK signature; internally it
+ * delegates to `Runner.run(createDefaultCodingAgent(), …)` so SA
+ * execution always flows through the Layer-A frame (Option Y deletion
+ * per ADR-020 / v0.7.29 §239 §371). Substrate body lives in
+ * `agent-runtime/run-substrate.ts` (`runSubstrate`) and is wired via
+ * the `Agent.substrateExecutor` closure attached in `coding-preset.ts`.
  */
 
-export { runKodaX } from './agent-runtime/run-substrate.js';
+import { Runner } from '@kodax/core';
+
+import { createDefaultCodingAgent } from './coding-preset.js';
+import type { KodaXOptions, KodaXResult } from './types.js';
+
+export async function runKodaX(
+  options: KodaXOptions,
+  prompt: string,
+): Promise<KodaXResult> {
+  const result = await Runner.run<KodaXResult>(createDefaultCodingAgent(), prompt, {
+    presetOptions: options,
+    abortSignal: options.abortSignal,
+  });
+  // Substrate executor always lifts full `KodaXResult` onto `data` —
+  // missing means the Agent declaration is mis-wired (fail loud, never
+  // return a truncated `RunResult` typed as `KodaXResult`).
+  if (!result.data) {
+    throw new Error(
+      'runKodaX: substrate executor did not lift KodaXResult onto RunResult.data — '
+      + 'verify createDefaultCodingAgent().substrateExecutor in coding-preset.ts',
+    );
+  }
+  return result.data;
+}
 
 export { buildAutoRepoIntelligenceContext } from './agent-runtime/middleware/repo-intelligence.js';
 export {

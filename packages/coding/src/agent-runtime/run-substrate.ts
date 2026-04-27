@@ -330,10 +330,18 @@ import {
 // invocation inside `runKodaX`.
 
 /**
- * 运行 KodaX Agent
- * 核心入口函数 - 极简 API
+ * Substrate executor body — the full SA execution pipeline (provider
+ * resolution, tool loop, microcompact, edit recovery, extension queue,
+ * managed protocol, terminals). FEATURE_100 (v0.7.29) renamed this from
+ * `runKodaX` to `runSubstrate` so the public-facing `runKodaX`
+ * (`agent.ts`) can become a thin `Runner.run(defaultCodingAgent, …)`
+ * shim per ADR-020.
+ *
+ * Direct callers (the coding preset's substrate executor closure +
+ * `runKodaX` shim) only — SDK consumers should use `runKodaX` or
+ * `Runner.run(createDefaultCodingAgent(), …)`.
  */
-export async function runKodaX(
+export async function runSubstrate(
   options: KodaXOptions,
   prompt: string
 ): Promise<KodaXResult> {

@@ -595,6 +595,15 @@ export class Runner {
 
     if (!tracer) {
       // Tracing disabled — fall through to the no-span fast path.
+      // FEATURE_100 (v0.7.29): declaration-borne substrate executor takes
+      // precedence over the preset-dispatcher registry. This is how the
+      // coding preset hooks `runKodaX` after Option Y deletion — the
+      // executor is a field on the Agent declaration itself, no
+      // `registerPresetDispatcher` indirection needed.
+      const declaredSubstrate = agent.substrateExecutor as PresetDispatcher | undefined;
+      if (declaredSubstrate) {
+        return declaredSubstrate(agent, input, opts) as Promise<RunResult<TData>>;
+      }
       const preset = presetDispatchers.get(agent.name);
       if (preset) {
         return preset(agent, input, opts) as Promise<RunResult<TData>>;
@@ -624,7 +633,10 @@ export class Runner {
         });
 
     try {
-      const preset = presetDispatchers.get(agent.name);
+      // FEATURE_100 (v0.7.29): declaration-borne substrate takes
+      // precedence over the registry — see the no-span branch comment.
+      const declaredSubstrate = agent.substrateExecutor as PresetDispatcher | undefined;
+      const preset = declaredSubstrate ?? presetDispatchers.get(agent.name);
       let result: RunResult;
       if (preset) {
         result = await preset(agent, input, opts, { tracer, trace, agentSpan });

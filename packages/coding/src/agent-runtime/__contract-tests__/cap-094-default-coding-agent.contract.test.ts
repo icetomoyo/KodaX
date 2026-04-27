@@ -4,14 +4,14 @@
  * Inventory entry: docs/features/v0.7.29-capability-inventory.md#cap-094-default-coding-agent-declaration-constructor
  *
  * Test obligations:
- * - CAP-DEFAULT-AGENT-001: declaration has expected name (PARTIAL: the
+ * - CAP-DEFAULT-AGENT-001: declaration has expected name + frozen +
+ *   declaration-borne substrate executor (post-FEATURE_100 P3.6s,
+ *   `Agent.substrateExecutor` is the canonical hook for the coding
+ *   pipeline — no `registerPresetDispatcher` indirection.) The
  *   middleware-defaults portion of the original claim — auto-reroute /
- *   mutation-reflection / pre-answer-judge / post-tool-judge — refers
- *   to a post-substrate Agent shape that the current
- *   `Agent` interface in `@kodax/core` does not declare. Those
- *   middlewares live as branches inside `runKodaX` today; once the
- *   substrate executor lands they become declarative `Agent.middleware[]`
- *   entries and this test grows.)
+ *   mutation-reflection / pre-answer-judge / post-tool-judge — still
+ *   awaits a future `Agent.middleware[]` field; today these live as
+ *   branches inside the substrate body itself.
  * - CAP-DEFAULT-AGENT-002: overrides preserved (FULLY ACTIVE)
  *
  * Risk: MEDIUM
@@ -51,6 +51,11 @@ describe('CAP-094: default coding agent declaration constructor contract', () =>
     expect(Object.isFrozen(agent)).toBe(true);
   });
 
+  it('CAP-DEFAULT-AGENT-001d: createDefaultCodingAgent() attaches a `substrateExecutor` closure on the declaration (FEATURE_100 P3.6s — replaces Option Y `registerPresetDispatcher` indirection)', () => {
+    const agent = createDefaultCodingAgent();
+    expect(typeof agent.substrateExecutor).toBe('function');
+  });
+
   it.todo(
     'CAP-DEFAULT-AGENT-001c: middleware defaults — auto-reroute, mutation-reflection, pre-answer-judge, post-tool-judge — are declared on the Agent. Currently these live as branches inside `runKodaX` body, NOT as `Agent.middleware[]` entries (the field does not exist on the `Agent` interface today). Activation deferred until the substrate executor introduces declarative middleware on Agent.',
   );
@@ -84,7 +89,7 @@ describe('CAP-094: default coding agent declaration constructor contract', () =>
     expect(agent.model).toBe('claude-sonnet-4-6');
   });
 
-  it('CAP-DEFAULT-AGENT-002b: createDefaultCodingAgent({}) without overrides returns an Agent with NO override fields (only name + instructions)', () => {
+  it('CAP-DEFAULT-AGENT-002b: createDefaultCodingAgent({}) without overrides returns an Agent with NO override fields (only name + instructions + substrateExecutor)', () => {
     const agent = createDefaultCodingAgent();
     expect(agent.tools).toBeUndefined();
     expect(agent.handoffs).toBeUndefined();
@@ -92,5 +97,8 @@ describe('CAP-094: default coding agent declaration constructor contract', () =>
     expect(agent.guardrails).toBeUndefined();
     expect(agent.provider).toBeUndefined();
     expect(agent.model).toBeUndefined();
+    // `substrateExecutor` is intentionally always present — it's how
+    // FEATURE_100 P3.6s wires the coding pipeline post Option-Y deletion.
+    expect(typeof agent.substrateExecutor).toBe('function');
   });
 });

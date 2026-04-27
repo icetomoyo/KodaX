@@ -107,6 +107,20 @@ export interface Agent<TContext = unknown> {
   readonly outputSchema?: unknown;
   readonly model?: string;
   readonly provider?: string;
+  /**
+   * FEATURE_100 (v0.7.29) substrate executor: when set, `Runner.run`
+   * delegates execution to this function instead of consulting the
+   * preset-dispatcher registry or running the generic LLM loop. The
+   * coding preset attaches `runKodaX`'s full execution pipeline here so
+   * the SDK surface `Runner.run(createDefaultCodingAgent(), prompt, opts)`
+   * directly drives substrate without a `registerPresetDispatcher`
+   * indirection (the v0.7.23 "Option Y" facade).
+   *
+   * Type is intentionally `unknown` to avoid a `core/agent.ts` ↔
+   * `core/runner.ts` module cycle. `Runner.run` casts to the
+   * `PresetDispatcher` shape declared in `runner.ts` at the call site.
+   */
+  readonly substrateExecutor?: unknown;
 }
 
 /**

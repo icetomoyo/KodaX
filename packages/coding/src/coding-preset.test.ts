@@ -1,16 +1,21 @@
 /**
- * Unit test for coding-preset wiring (FEATURE_080 v0.7.23).
+ * Unit test for coding-preset wiring.
  *
- * Scope: verifies the Option-Y plumbing — importing `coding-preset.ts`
- * registers a dispatcher for the default coding agent name, and
- * `Runner.run` routes to that dispatcher. The real dispatcher invokes
- * `runKodaX` which requires a configured provider; the test overrides it
- * with a mock to keep this isolated from network / provider state.
+ * v0.7.23 (FEATURE_080): tested the "Option Y" path —
+ *   `registerPresetDispatcher` registered a dispatcher; `Runner.run`
+ *   routed to it via the registry.
+ *
+ * v0.7.29 (FEATURE_100): Option Y deleted per ADR-020. The substrate
+ *   executor is now attached directly to the Agent declaration via
+ *   `Agent.substrateExecutor`; `Runner.run` consults that field
+ *   *before* the registry. This test reflects the new shape — a mock
+ *   executor is attached to a custom Agent (NOT registered globally),
+ *   exercising the declaration-borne dispatch path.
  */
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { Runner, registerPresetDispatcher, type PresetDispatcher } from '@kodax/core';
+import { Runner, createAgent, type PresetDispatcher } from '@kodax/core';
 import { DEFAULT_CODING_AGENT_NAME, createDefaultCodingAgent } from './coding-preset.js';
 
 describe('coding-preset', () => {
@@ -20,32 +25,36 @@ describe('coding-preset', () => {
     expect(typeof agent.instructions).toBe('string');
   });
 
-  it('Runner.run dispatches to the registered default coding dispatcher', async () => {
+  it('createDefaultCodingAgent attaches a substrate executor closure on the declaration', () => {
+    const agent = createDefaultCodingAgent();
+    expect(typeof agent.substrateExecutor).toBe('function');
+  });
+
+  it('Runner.run delegates to Agent.substrateExecutor (declaration-borne, no registry)', async () => {
     const mock: PresetDispatcher = vi.fn(async () => ({
       output: 'mocked coding output',
       messages: [{ role: 'assistant' as const, content: 'mocked coding output' }],
       sessionId: 'mock-session',
     }));
-    const unregister = registerPresetDispatcher(DEFAULT_CODING_AGENT_NAME, mock);
-    try {
-      const agent = createDefaultCodingAgent();
-      // Skip tracing so the dispatcher sees the 3-arg backward-compatible
-      // shape; tracing wiring is exercised in packages/tracing tests.
-      const result = await Runner.run(agent, 'implement thing', {
-        presetOptions: { provider: 'test-provider' },
-        tracer: null,
-      });
-      expect(result.output).toBe('mocked coding output');
-      expect(result.sessionId).toBe('mock-session');
-      expect(mock).toHaveBeenCalledTimes(1);
-      expect(mock).toHaveBeenCalledWith(
-        agent,
-        'implement thing',
-        { presetOptions: { provider: 'test-provider' }, tracer: null },
-      );
-    } finally {
-      unregister();
-    }
+    // Build a custom agent with our mock executor — proves Runner.run
+    // dispatches off the declaration field, not a global registry.
+    const customAgent = createAgent({
+      name: 'test/coding/declaration-borne',
+      instructions: 'test',
+      substrateExecutor: mock,
+    });
+    const result = await Runner.run(customAgent, 'implement thing', {
+      presetOptions: { provider: 'test-provider' },
+      tracer: null,
+    });
+    expect(result.output).toBe('mocked coding output');
+    expect(result.sessionId).toBe('mock-session');
+    expect(mock).toHaveBeenCalledTimes(1);
+    expect(mock).toHaveBeenCalledWith(
+      customAgent,
+      'implement thing',
+      { presetOptions: { provider: 'test-provider' }, tracer: null },
+    );
   });
 
   it('createDefaultCodingAgent accepts overrides for declarative fields', () => {
@@ -57,5 +66,7 @@ describe('coding-preset', () => {
     expect(agent.guardrails).toHaveLength(1);
     expect(agent.guardrails?.[0]).toEqual({ kind: 'input', name: 'safety' });
     expect(agent.name).toBe(DEFAULT_CODING_AGENT_NAME);
+    // Overrides MUST NOT overwrite the substrate executor closure.
+    expect(typeof agent.substrateExecutor).toBe('function');
   });
 });
