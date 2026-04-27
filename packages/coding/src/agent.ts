@@ -104,6 +104,7 @@ import { resolvePerTurnReasoning } from './agent-runtime/per-turn-reasoning.js';
 import { buildStreamTimers } from './agent-runtime/stream-timers.js';
 import { applyProviderPolicyGate } from './agent-runtime/provider-policy-gate.js';
 import { buildStreamHandlers } from './agent-runtime/stream-handler-wiring.js';
+import { BoundaryTrackerSession } from './agent-runtime/boundary-tracker-session.js';
 import { describeTransientProviderRetry } from './agent-runtime/provider-retry-policy.js';
 import {
   isCancelledToolResultContent,
@@ -794,7 +795,12 @@ export async function runKodaX(
       let providerMessages = compacted;
       let result!: KodaXStreamResult;
       let attempt = 0;
-      const boundaryTracker = new StableBoundaryTracker();
+      // CAP-068: BoundaryTrackerSession owns the tracker + the
+      // beginRequest+telemetryBoundary pairing for the 2 attempt sites
+      // (main stream + non-streaming fallback). Stream-handler-wiring
+      // marks deltas via session.markX delegates.
+      const boundarySession = new BoundaryTrackerSession();
+      const boundaryTracker = boundarySession.tracker;
       const recoveryCoordinator = new ProviderRecoveryCoordinator(boundaryTracker, {
         ...resilienceCfg,
         enableNonStreamingFallback:
@@ -810,14 +816,13 @@ export async function runKodaX(
 
       while (true) {
         attempt += 1;
-        boundaryTracker.beginRequest(
+        boundarySession.beginAttempt(
           currentProviderName,
           currentModelOverride ?? streamProvider.getModel(),
           providerMessages,
           attempt,
           false,
         );
-        telemetryBoundary(boundaryTracker.snapshot());
 
         // CAP-066: stream-timer lifecycle (hard / max-duration / idle +
         // merged retrySignal). All three timers fire into a single
@@ -923,14 +928,13 @@ export async function runKodaX(
               }, API_HARD_TIMEOUT_MS);
               try {
                 streamTimers.clearAll();
-                boundaryTracker.beginRequest(
+                boundarySession.beginAttempt(
                   currentProviderName,
                   currentModelOverride ?? streamProvider.getModel(),
                   providerMessages,
                   attempt,
                   true,
                 );
-                telemetryBoundary(boundaryTracker.snapshot());
                 result = await streamProvider.complete(
                   providerMessages,
                   activeToolDefinitions,
