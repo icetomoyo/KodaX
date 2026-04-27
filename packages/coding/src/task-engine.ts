@@ -127,7 +127,7 @@ async function executeRunManagedTask(
   return runManagedTaskViaRunner(options, prompt, undefined, plan);
 }
 
-async function buildManagedReasoningPlan(options: KodaXOptions, prompt: string) {
+export async function buildManagedReasoningPlan(options: KodaXOptions, prompt: string) {
   // Mirror the conditional repo-routing-signal capture from legacy
   // `createManagedReasoningPlan` (task-engine.ts:1670-1689): read signals
   // only when the workspace is available AND repo-intel auto mode is not
