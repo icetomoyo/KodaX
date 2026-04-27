@@ -9,9 +9,10 @@
  * - CAP-SESSION-SNAPSHOT-002: error path persists snapshot with errorMetadata
  *   (shared with CAP-013 — `/resume` can pick up failed run)
  * - CAP-SESSION-SNAPSHOT-003: storage failure does NOT fail run
- *   — DEFERRED to P3 (see module docstring "Open contract gap"). Today
- *   the function rethrows. The substrate executor's terminal hook will
- *   wrap the call in best-effort isolation. Marked `it.todo`.
+ *   — ACTIVE since FEATURE_100 P3.6a. `saveSessionSnapshot` now wraps
+ *   `storage.save` in try/catch and logs failures via `console.error`.
+ *   Particularly important inside `runCatchCleanup` where a storage
+ *   rejection would otherwise clobber the original caught error.
  * - CAP-SESSION-SNAPSHOT-004: limit-reached terminal also persists final state
  *   — covered by exercising the same function at the limit-reached call site.
  *
@@ -92,7 +93,27 @@ describe('CAP-011 + CAP-013: saveSessionSnapshot contract', () => {
     expect(save.mock.calls[0]![1]).toMatchObject({ errorMetadata });
   });
 
-  it.todo('CAP-SESSION-SNAPSHOT-003: storage failure does NOT fail run — DEFERRED to P3 (substrate executor terminal hook will wrap in best-effort isolation; today the rejection propagates)');
+  it('CAP-SESSION-SNAPSHOT-003: storage failure does NOT fail the run — saveSessionSnapshot absorbs storage.save rejections (closed in FEATURE_100 P3.6a)', async () => {
+    const save = vi.fn().mockRejectedValue(new Error('FS write failed'));
+    const options = {
+      session: { storage: { save, load: vi.fn() } as KodaXSessionStorage },
+    } as KodaXOptions;
+
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(
+      saveSessionSnapshot(options, 'sid-storage-fail', {
+        messages: [{ role: 'user', content: 'hi' }],
+        title: 'Test Session',
+        gitRoot: '/repo',
+      }),
+    ).resolves.toBeUndefined();
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[SessionSnapshot]'),
+      expect.any(Error),
+    );
+    consoleSpy.mockRestore();
+  });
 
   it('CAP-SESSION-SNAPSHOT-NO-STORAGE: when options.session.storage is undefined, returns silently without throwing', async () => {
     const options = { session: {} } as KodaXOptions;

@@ -156,4 +156,35 @@ describe('CAP-082: runCatchCleanup — error metadata accounting', () => {
     expect(savedPayload.errorMetadata).toBe(out.updatedErrorMetadata);
     expect(savedPayload.errorMetadata.consecutiveErrors).toBe(5);
   });
+
+  it('CAP-CATCH-CLEANUP-STORAGE-FAILURE: storage rejection inside runCatchCleanup does NOT propagate — the helper still returns cleaned messages + updated metadata so the caller can surface the ORIGINAL error (P3.5 reviewer MEDIUM, closed in P3.6a)', async () => {
+    const originalError = new Error('original — caller wants to surface this');
+    const save = vi.fn().mockRejectedValue(new Error('storage transient failure'));
+
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    // The cleanup must resolve normally; if it rejected with the storage
+    // error, the catch-flow in agent.ts would observe the wrong error.
+    const out = await runCatchCleanup({
+      error: originalError,
+      messages: [{ role: 'user', content: 'hi' }],
+      errorMetadata: undefined,
+      options: makeOptions(save),
+      sessionId: 'sess-storage-fail',
+      title: 't',
+      runtimeSessionState: freshState(),
+    });
+
+    // History cleanup + metadata increment happened despite storage failure.
+    expect(out.updatedErrorMetadata.lastError).toBe(originalError.message);
+    expect(out.updatedErrorMetadata.consecutiveErrors).toBe(1);
+    // Storage was attempted exactly once.
+    expect(save).toHaveBeenCalledOnce();
+    // Failure was logged, not thrown.
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[SessionSnapshot]'),
+      expect.any(Error),
+    );
+    consoleSpy.mockRestore();
+  });
 });

@@ -26,16 +26,19 @@
  * - `extensionRecords` are deep-cloned at the field level so subsequent
  *   in-memory mutations do not mutate the persisted snapshot.
  *
- * **Open contract gap (P3 territory, NOT fixed in P2)**: today storage
- * `.save` rejection propagates to the caller. CAP-SESSION-SNAPSHOT-003
- * ("storage failure does not fail the run") is aspirational — it
- * describes the post-substrate-adoption contract where the executor's
- * terminal hook is wrapped in best-effort isolation. P2 migration is
- * byte-for-byte parity, so the bug is preserved.
+ * **Storage failure isolation (CAP-013-003 / CAP-SESSION-SNAPSHOT-003)**:
+ * `storage.save` rejections are absorbed locally and logged via
+ * `console.error('[SessionSnapshot] ...')`. The function NEVER propagates
+ * a storage error to the caller. Rationale: snapshots are best-effort
+ * session continuity, NOT load-bearing for the run's success/failure.
+ * Particularly important inside the catch-block cleanup chain
+ * (`runCatchCleanup`) where a storage failure would otherwise clobber
+ * the original error we are trying to record. Closed in FEATURE_100
+ * P3.6a (was P3-deferred during P2 byte-for-byte migration).
  *
  * Migration history: extracted from `agent.ts:844-872` (function) and
  * `agent.ts:3154-3156` (`getGitRoot` private helper) — pre-FEATURE_100
- * baseline — during FEATURE_100 P2.
+ * baseline — during FEATURE_100 P2. Storage isolation added in P3.6a.
  */
 
 import { exec } from 'child_process';
@@ -76,15 +79,26 @@ export async function saveSessionSnapshot(
   }
 
   const gitRoot = data.gitRoot ?? (await getGitRoot()) ?? '';
-  await options.session.storage.save(sessionId, {
-    messages: data.messages,
-    title: data.title,
-    gitRoot,
-    scope: options.session.scope ?? 'user',
-    errorMetadata: data.errorMetadata,
-    extensionState: data.runtimeSessionState
-      ? snapshotRuntimeExtensionState(data.runtimeSessionState.extensionState)
-      : undefined,
-    extensionRecords: data.runtimeSessionState?.extensionRecords.map((record) => ({ ...record })),
-  });
+  // CAP-013-003 / CAP-SESSION-SNAPSHOT-003: storage failures are absorbed
+  // here so a transient backend issue (disk full, FS permission, race) cannot
+  // mask the caller's original error nor abort an otherwise-successful run.
+  // Snapshots are best-effort; resume just won't see the latest state.
+  try {
+    await options.session.storage.save(sessionId, {
+      messages: data.messages,
+      title: data.title,
+      gitRoot,
+      scope: options.session.scope ?? 'user',
+      errorMetadata: data.errorMetadata,
+      extensionState: data.runtimeSessionState
+        ? snapshotRuntimeExtensionState(data.runtimeSessionState.extensionState)
+        : undefined,
+      extensionRecords: data.runtimeSessionState?.extensionRecords.map((record) => ({ ...record })),
+    });
+  } catch (storageError) {
+    console.error(
+      '[SessionSnapshot] storage.save failed; continuing without snapshot persistence:',
+      storageError,
+    );
+  }
 }

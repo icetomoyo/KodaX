@@ -80,11 +80,38 @@ describe('CAP-013: error snapshot persistence contract', () => {
   });
 
   it.todo('CAP-013-002: persisted messages on error path are cleaned (CAP-002) — contract is at agent.ts catch-branch call site, not at this function. Breadcrumb added there. Integration test deferred.');
-  // BLOCKS-P3.1-ENTRY: per docs/features/v0.7.29.md §P3 R8, the
-   // `StepCallbacks.persistSession` wrapper introduced by P3.1 MUST
-   // wrap `storage.save` in try/catch and absorb errors. The first
-   // P3.1 PR that introduces the wrapper factory must promote this
-   // todo to an active `it` and verify the wrapper isolates rejections.
-  it.todo('CAP-013-003: storage failure does NOT mask original error — `StepCallbacks.persistSession` MUST wrap storage.save in try/catch (P3.1 entry blocker, see v0.7.29.md §R8).');
+
+  it('CAP-013-003: storage failure does NOT mask original error — saveSessionSnapshot absorbs storage.save rejections internally (closed in FEATURE_100 P3.6a)', async () => {
+    const save = vi.fn().mockRejectedValue(new Error('disk full'));
+    const options = {
+      session: { storage: { save, load: vi.fn() } as KodaXSessionStorage },
+    } as KodaXOptions;
+    const errorMetadata: SessionErrorMetadata = {
+      lastError: 'API rate limit exceeded after 3 retries',
+      lastErrorTime: 1714123456789,
+      consecutiveErrors: 3,
+    };
+
+    // The original `error` (caller's) must NOT be replaced by the storage
+    // rejection — `saveSessionSnapshot` returns normally and logs the
+    // storage failure rather than propagating.
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(
+      saveSessionSnapshot(options, 'sid-err', {
+        messages: [{ role: 'user', content: 'hi' }],
+        title: 'Errored Session',
+        gitRoot: '/repo',
+        errorMetadata,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[SessionSnapshot]'),
+      expect.any(Error),
+    );
+    consoleSpy.mockRestore();
+  });
+
   it.todo('CAP-013-004: consecutiveErrors counter increments across runs (loaded from prior errorMetadata, +1 each crash) — integration test territory.');
 });

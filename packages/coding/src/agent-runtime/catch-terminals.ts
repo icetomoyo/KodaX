@@ -84,9 +84,11 @@ export interface CatchCleanupOutput {
  * CAP-082: catch-block cleanup chain. ALWAYS runs first in the catch
  * branch; both terminal sub-branches consume its output.
  *
- * Note (CAP-013 known gap): `saveSessionSnapshot` does NOT wrap
- * `storage.save()` in try/catch, so a storage rejection here clobbers
- * `error` and propagates instead. P3.6 cleanup target.
+ * Storage-failure isolation: `saveSessionSnapshot` absorbs `storage.save`
+ * rejections internally (CAP-013-003 / CAP-SESSION-SNAPSHOT-003 — closed
+ * in P3.6a), so a transient storage failure here will NOT clobber the
+ * original `error` or short-circuit the catch-flow. The caller still
+ * sees the original error via the AbortError vs generic-error branch.
  */
 export async function runCatchCleanup(
   input: CatchCleanupInput,
