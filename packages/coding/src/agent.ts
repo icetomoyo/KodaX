@@ -922,6 +922,18 @@ export async function runKodaX(
               messages = providerMessages;
               break;
             }
+            // Fallback failed — reassign `error` and fall through to the
+            // sanitize_thinking_and_retry / manual_continue / retry-delay
+            // branches below. Note: the original `decision` is reused; we
+            // do NOT re-classify the post-fallback error. This matches
+            // pre-FEATURE_100 baseline behavior — the design choice is that
+            // a failed fallback represents the same failure class as the
+            // streaming attempt that triggered it (rate-limit / network /
+            // stream incomplete), not a new error class. If a future
+            // provider.complete starts throwing thinking-mode errors that
+            // would benefit from sanitize_thinking_and_retry, this branch
+            // will need a second runRecoveryPipeline pass — flagged in
+            // P3.2 holistic review (deferred to integration testing).
             error = fallbackOutcome.error;
           }
 

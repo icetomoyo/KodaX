@@ -86,6 +86,13 @@ export type NonStreamingFallbackOutcome =
 export async function executeNonStreamingFallback(
   input: NonStreamingFallbackInput,
 ): Promise<NonStreamingFallbackOutcome> {
+  // Arm the fallback timer first, then clear stream timers in the try
+  // block. The two controllers are independent — the fallback's
+  // controller is not observed by the stream-mode retryTimeoutController
+  // and vice versa — so the brief overlap window is benign even if a
+  // queued stream-mode idle timer fires after this point. The streaming
+  // attempt has already failed (we are inside its catch block), so any
+  // late stream-mode abort hits a no-op.
   const fallbackTimeoutController = new AbortController();
   const fallbackSignal = input.callerAbortSignal
     ? AbortSignal.any([input.callerAbortSignal, fallbackTimeoutController.signal])
