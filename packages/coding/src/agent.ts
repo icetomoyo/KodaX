@@ -28,13 +28,10 @@ import path from 'path';
 // `./client.js` instead — see line ~592.
 import { resolveProvider } from './providers/index.js';
 import { listToolDefinitions } from './tools/index.js';
-import {
-  mergeManagedProtocolPayload,
-  getManagedBlockNameForRole,
-  hasManagedProtocolForRole,
-  textContainsManagedBlock,
-  MANAGED_PROTOCOL_TOOL_NAME,
-} from './managed-protocol.js';
+import { mergeManagedProtocolPayload } from './managed-protocol.js';
+// CAP-075 (`getManagedBlockNameForRole`, `hasManagedProtocolForRole`,
+// `textContainsManagedBlock`, `MANAGED_PROTOCOL_TOOL_NAME`) is wired
+// inside `agent-runtime/managed-protocol-continue.ts` since FEATURE_100 P3.5b.
 import { generateSessionId, extractTitleFromMessages } from './session.js';
 // FEATURE_076 Q4: load-time normalization for pre-v0.7.25 session messages.
 import { normalizeLoadedSessionMessages } from './task-engine/_internal/round-boundary.js';
@@ -124,6 +121,7 @@ import {
 import { shouldCompact } from './agent-runtime/compaction-trigger.js';
 import { runCompactionLifecycle } from './agent-runtime/middleware/compaction-orchestration.js';
 import { maybeContinueAfterMaxTokens } from './agent-runtime/max-tokens-continuation.js';
+import { maybeAutoContinueManagedProtocol } from './agent-runtime/managed-protocol-continue.js';
 // CAP-026 (`updateToolOutcomeTracking`) is now wired inside
 // `agent-runtime/tool-dispatch.ts:applyPostToolProcessing` since
 // FEATURE_100 P3.3d.
@@ -991,35 +989,22 @@ export async function runKodaX(
         continue;
       }
 
-      // Fallback: auto-continue when end_turn fires but required managed protocol block is missing.
-      // Skipped when protocol is optional (e.g. Scout with full tools — protocol only needed for escalation).
-      if (
-        !managedProtocolContinueAttempted
-        && result.stopReason === 'end_turn'
-        && result.toolBlocks.length === 0
-        && lastText
-        && options.context?.managedProtocolEmission?.enabled
-        && !options.context.managedProtocolEmission.optional
-      ) {
-        const role = options.context.managedProtocolEmission.role;
-        const blockName = getManagedBlockNameForRole(role);
-        if (
-          blockName
-          && !hasManagedProtocolForRole(emittedManagedProtocolPayload, role)
-          && !textContainsManagedBlock(lastText, blockName)
-        ) {
-          managedProtocolContinueAttempted = true;
-          messages.push({
-            role: 'user',
-            content: [{
-              type: 'text',
-              text: `Your response is complete but the required protocol was not emitted. Do NOT output any text — ONLY call the "${MANAGED_PROTOCOL_TOOL_NAME}" tool now, or append a \`\`\`${blockName}\`\`\` fenced block. No other output.`,
-            }],
-            _synthetic: true,
-          });
-          contextTokenSnapshot = rebaseContextTokenSnapshot(messages, completedTurnTokenSnapshot);
-          continue;
-        }
+      // CAP-075: Fallback auto-continue when end_turn fires but the
+      // required managed-protocol block is missing. Single-shot per
+      // session — the latch round-trips via input/output.
+      const protocolContinueOutcome = maybeAutoContinueManagedProtocol({
+        result,
+        lastText,
+        messages,
+        continueAttempted: managedProtocolContinueAttempted,
+        options,
+        emittedManagedProtocolPayload,
+        completedTurnTokenSnapshot,
+      });
+      managedProtocolContinueAttempted = protocolContinueOutcome.nextContinueAttempted;
+      if (protocolContinueOutcome.outcome === 'continue') {
+        contextTokenSnapshot = protocolContinueOutcome.nextContextTokenSnapshot;
+        continue;
       }
 
       if (result.toolBlocks.length === 0) {
