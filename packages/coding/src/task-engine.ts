@@ -54,7 +54,7 @@ function resolveManagedAgentMode(options: KodaXOptions): KodaXAgentMode {
   return options.agentMode ?? 'ama';
 }
 
-function buildDirectPathTaskFamilyPromptOverlay(
+export function buildDirectPathTaskFamilyPromptOverlay(
   family: KodaXTaskRoutingDecision['taskFamily'] | undefined,
   sections: Array<string | undefined>,
 ): string {

@@ -15,23 +15,68 @@
  *
  * Class: 1
  *
- * Verified location: task-engine.ts:57-72 (buildDirectPathTaskFamilyPromptOverlay); :97 (inferIntentGate call)
+ * Verified location: task-engine.ts:buildDirectPathTaskFamilyPromptOverlay
+ * (exported during FEATURE_100 P3.6g for contract activation; the
+ * post-substrate target `agent-runtime/direct-path-rules.ts` is
+ * deferred to the substrate-executor migration phase).
  *
- * Time-ordering constraint: BEFORE runDirectKodaX invocation; merged with caller's promptOverlay via \\n\\n join.
+ * Time-ordering constraint: BEFORE runKodaX invocation; merged with
+ * caller's promptOverlay via `\n\n` join.
  *
- * STATUS: P1 stub.
+ * STATUS: ACTIVE since FEATURE_100 P3.6g. CAP-DIRECT-PATH-RULE-006
+ * stays `it.todo` because it asserts a NEGATIVE invariant about the AMA
+ * path call site, which is integration-level (no exported boundary on
+ * the AMA branch to assert against without spinning up the full
+ * dispatcher).
  */
 
-import { describe, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
-// Post-FEATURE_100 import target (uncomment in P2):
-// import { buildDirectPathTaskFamilyPromptOverlay } from '../direct-path-rules.js';
+import { buildDirectPathTaskFamilyPromptOverlay } from '../../task-engine.js';
 
 describe('CAP-090: SA-path task-family prompt overlay (direct path rules) contract', () => {
-  it.todo('CAP-DIRECT-PATH-RULE-001: review task family produces "[Direct Path Rule]" overlay with "Return a review report, not a plan. Findings first..." instruction');
-  it.todo('CAP-DIRECT-PATH-RULE-002: lookup task family produces "[Direct Path Rule]" overlay with "Return a concise factual answer with the relevant file path(s)..." instruction');
-  it.todo('CAP-DIRECT-PATH-RULE-003: planning task family produces "[Direct Path Rule]" overlay with "Return a concrete plan, not an implementation report." instruction');
-  it.todo('CAP-DIRECT-PATH-RULE-004: investigation task family produces "[Direct Path Rule]" overlay with "Return diagnosis, evidence, and next steps." instruction');
-  it.todo('CAP-DIRECT-PATH-RULE-005: undefined task family (inferIntentGate returns no family) results in no rule being appended to the overlay');
-  it.todo('CAP-DIRECT-PATH-RULE-006: AMA path (agentMode !== "sa") does not call buildDirectPathTaskFamilyPromptOverlay — role prompts of AMA agents supersede');
+  it('CAP-DIRECT-PATH-RULE-001: review task family produces a "[Direct Path Rule]" overlay with the review instruction', () => {
+    const overlay = buildDirectPathTaskFamilyPromptOverlay('review', []);
+    expect(overlay).toContain('[Direct Path Rule]');
+    expect(overlay).toContain('Return a review report, not a plan');
+    expect(overlay).toContain('Findings first');
+  });
+
+  it('CAP-DIRECT-PATH-RULE-002: lookup task family produces a "[Direct Path Rule]" overlay with the lookup instruction', () => {
+    const overlay = buildDirectPathTaskFamilyPromptOverlay('lookup', []);
+    expect(overlay).toContain('[Direct Path Rule]');
+    expect(overlay).toContain('Return a concise factual answer');
+    expect(overlay).toContain('relevant file path');
+  });
+
+  it('CAP-DIRECT-PATH-RULE-003: planning task family produces a "[Direct Path Rule]" overlay with the planning instruction', () => {
+    const overlay = buildDirectPathTaskFamilyPromptOverlay('planning', []);
+    expect(overlay).toContain('[Direct Path Rule]');
+    expect(overlay).toContain('Return a concrete plan, not an implementation report');
+  });
+
+  it('CAP-DIRECT-PATH-RULE-004: investigation task family produces a "[Direct Path Rule]" overlay with the investigation instruction', () => {
+    const overlay = buildDirectPathTaskFamilyPromptOverlay('investigation', []);
+    expect(overlay).toContain('[Direct Path Rule]');
+    expect(overlay).toContain('Return diagnosis, evidence, and next steps');
+  });
+
+  it('CAP-DIRECT-PATH-RULE-005: undefined task family results in no rule being appended (sections-only output)', () => {
+    const overlay = buildDirectPathTaskFamilyPromptOverlay(undefined, ['caller-section']);
+    expect(overlay).toBe('caller-section');
+    // No "[Direct Path Rule]" prefix added when family is undefined.
+    expect(overlay).not.toContain('[Direct Path Rule]');
+  });
+
+  it('CAP-DIRECT-PATH-RULE-005b: undefined family with no caller sections produces an empty overlay', () => {
+    const overlay = buildDirectPathTaskFamilyPromptOverlay(undefined, []);
+    expect(overlay).toBe('');
+  });
+
+  it('CAP-DIRECT-PATH-RULE-005c: caller sections are joined with \\n\\n and prepended before the family rule', () => {
+    const overlay = buildDirectPathTaskFamilyPromptOverlay('review', ['first-section', 'second-section']);
+    expect(overlay.startsWith('first-section\n\nsecond-section\n\n[Direct Path Rule]')).toBe(true);
+  });
+
+  it.todo('CAP-DIRECT-PATH-RULE-006: AMA path (agentMode !== "sa") does not call buildDirectPathTaskFamilyPromptOverlay — integration-level, requires dispatcher boundary mocking');
 });
