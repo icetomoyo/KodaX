@@ -1,0 +1,5 @@
+# Persisted prompt-benchmark runs (FEATURE_104 v2). Ignored by default;
+# commit a specific snapshot directory only when you want it as a
+# regression baseline alongside a prompt-change PR.
+*
+!.gitignore

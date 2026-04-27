@@ -20,7 +20,14 @@ import {
 } from './prompt-eval/aliases.js';
 import {
   formatComparisonTable,
+  speedScore,
+  DEFAULT_BENCHMARK_RUNS,
+  DEFAULT_SPEED_IDEAL_MS,
+  DEFAULT_SPEED_CEILING_MS,
+  DEFAULT_COMPOSITE_WEIGHTS,
   type ABComparisonResult,
+  type BenchmarkResult,
+  type BenchmarkCellSummary,
   type VariantOutcome,
 } from './prompt-eval/harness.js';
 import {
@@ -32,7 +39,16 @@ import {
   mustNotMatch,
   parseAndAssert,
   runJudges,
+  type PromptJudge,
 } from './prompt-eval/judges.js';
+import {
+  renderBenchmarkReport,
+  renderCompactSummary,
+} from './prompt-eval/report.js';
+import { readBenchmarkResult, writeBenchmarkReport } from './prompt-eval/persist.js';
+import { promises as fs } from 'fs';
+import path from 'path';
+import os from 'os';
 
 // ---------------------------------------------------------------------------
 // aliases.ts
@@ -242,6 +258,327 @@ describe('FEATURE_104 judges — runJudges aggregation', () => {
 // ---------------------------------------------------------------------------
 // harness.ts — comparison aggregation (without provider calls)
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// FEATURE_104 v2 — judge category + decomposed aggregation
+// ---------------------------------------------------------------------------
+
+describe('FEATURE_104 v2 — judges with category', () => {
+  it('runJudges decomposes byCategory + reports format gate', () => {
+    const j: PromptJudge[] = [
+      { name: 'parses', category: 'format', judge: () => ({ passed: true }) },
+      { name: 'has-X',  category: 'correctness', judge: () => ({ passed: true }) },
+      { name: 'has-Y',  category: 'correctness', judge: () => ({ passed: false, reason: 'missing Y' }) },
+      { name: 'no-claude', category: 'safety', judge: () => ({ passed: true }) },
+    ];
+    const r = runJudges('output', j);
+    expect(r.passed).toBe(false);  // has-Y failed
+    expect(r.formatPassed).toBe(true);
+    expect(r.byCategory.format).toEqual({ passed: 1, total: 1 });
+    expect(r.byCategory.correctness).toEqual({ passed: 1, total: 2 });
+    expect(r.byCategory.safety).toEqual({ passed: 1, total: 1 });
+  });
+
+  it('runJudges defaults missing category to correctness', () => {
+    const j: PromptJudge[] = [
+      { name: 'a', judge: () => ({ passed: true }) },
+      { name: 'b', judge: () => ({ passed: true }) },
+    ];
+    const r = runJudges('o', j);
+    expect(r.byCategory.correctness).toEqual({ passed: 2, total: 2 });
+    expect(r.byCategory.format).toBeUndefined();
+  });
+
+  it('runJudges marks formatPassed=false when format-category judge fails', () => {
+    const j: PromptJudge[] = [
+      { name: 'parses', category: 'format', judge: () => ({ passed: false, reason: 'bad shape' }) },
+      { name: 'has-X', category: 'correctness', judge: () => ({ passed: true }) },
+    ];
+    const r = runJudges('o', j);
+    expect(r.passed).toBe(false);
+    expect(r.formatPassed).toBe(false);
+    expect(r.byCategory.format).toEqual({ passed: 0, total: 1 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FEATURE_104 v2 — speed scoring tolerance window
+// ---------------------------------------------------------------------------
+
+describe('FEATURE_104 v2 — speedScore (anti-pattern 1: not linear from 0)', () => {
+  it('returns 100 when duration is within ideal window', () => {
+    expect(speedScore(0, 30_000, 240_000)).toBe(100);
+    expect(speedScore(15_000, 30_000, 240_000)).toBe(100);
+    expect(speedScore(30_000, 30_000, 240_000)).toBe(100);
+  });
+
+  it('returns 0 when duration is at or past ceiling', () => {
+    expect(speedScore(240_000, 30_000, 240_000)).toBe(0);
+    expect(speedScore(300_000, 30_000, 240_000)).toBe(0);
+    expect(speedScore(999_999, 30_000, 240_000)).toBe(0);
+  });
+
+  it('linearly interpolates between ideal and ceiling', () => {
+    // Halfway between 30s (100) and 240s (0) → 50
+    const halfway = (30_000 + 240_000) / 2;
+    expect(speedScore(halfway, 30_000, 240_000)).toBe(50);
+  });
+
+  it('clamps to [0, 100]', () => {
+    expect(speedScore(-1000, 30_000, 240_000)).toBe(100);
+    expect(speedScore(1_000_000, 30_000, 240_000)).toBe(0);
+  });
+
+  it('handles degenerate ideal >= ceiling gracefully (binary)', () => {
+    expect(speedScore(50, 100, 100)).toBe(100); // duration <= ideal
+    expect(speedScore(150, 100, 100)).toBe(0);  // duration > ideal
+  });
+
+  it('default constants reflect interactive coding-CLI workload', () => {
+    expect(DEFAULT_SPEED_IDEAL_MS).toBe(30_000);
+    expect(DEFAULT_SPEED_CEILING_MS).toBe(240_000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FEATURE_104 v2 — defaults match LiveCanvas recipe
+// ---------------------------------------------------------------------------
+
+describe('FEATURE_104 v2 — benchmark defaults', () => {
+  it('default runs is 3 (anti-pattern 4: judging from a single lucky run)', () => {
+    expect(DEFAULT_BENCHMARK_RUNS).toBe(3);
+  });
+
+  it('default composite weights favor quality 0.85 / speed 0.15', () => {
+    expect(DEFAULT_COMPOSITE_WEIGHTS.quality).toBe(0.85);
+    expect(DEFAULT_COMPOSITE_WEIGHTS.speed).toBe(0.15);
+    expect(DEFAULT_COMPOSITE_WEIGHTS.quality + DEFAULT_COMPOSITE_WEIGHTS.speed).toBeCloseTo(1.0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FEATURE_104 v2 — report rendering (without provider calls)
+// ---------------------------------------------------------------------------
+
+function fixtureBenchmarkResult(): BenchmarkResult {
+  // Hand-built result mimicking what runBenchmark would produce.
+  // Two variants × two models × 3 runs.
+  const cell = (
+    variantId: string,
+    alias: 'zhipu/glm51' | 'ds/v4flash',
+    quality: number,
+    speed: number,
+    composite: number,
+    correctnessPassed = 2,
+  ): BenchmarkCellSummary => ({
+    variantId,
+    alias,
+    runs: 3,
+    completed: 3,
+    passRate: quality,
+    passRateStdDev: 5,
+    byCategory: {
+      format: { passed: 3, total: 3 },
+      correctness: { passed: correctnessPassed, total: 6 },
+    } as BenchmarkCellSummary['byCategory'],
+    qualityByCategory: {
+      format: 100,
+      correctness: (correctnessPassed / 6) * 100,
+    } as BenchmarkCellSummary['qualityByCategory'],
+    quality,
+    speed,
+    composite,
+    duration: { min: 5000, median: 8000, mean: 9000, p95: 12000, max: 15000 },
+    runsRaw: [
+      {
+        variantId,
+        alias,
+        runIndex: 0,
+        text: `output for ${variantId}/${alias}#0`,
+        toolCalls: [],
+        durationMs: 8000,
+        judges: [
+          { name: 'parses', category: 'format', passed: true },
+          { name: 'has-X', category: 'correctness', passed: true },
+          {
+            name: 'has-Y',
+            category: 'correctness',
+            passed: false,
+            reason: 'Y missing — see prompt §channel-hookup',
+          },
+        ],
+        judgeAggregate: {
+          passed: false,
+          results: [
+            { name: 'parses', category: 'format', passed: true },
+            { name: 'has-X', category: 'correctness', passed: true },
+            {
+              name: 'has-Y',
+              category: 'correctness',
+              passed: false,
+              reason: 'Y missing — see prompt §channel-hookup',
+            },
+          ],
+          byCategory: {
+            format: { passed: 1, total: 1 },
+            correctness: { passed: 1, total: 2 },
+          } as Record<
+            'format' | 'correctness' | 'style' | 'safety' | 'custom',
+            { passed: number; total: number }
+          >,
+          formatPassed: true,
+        },
+        passed: false,
+      },
+    ],
+  });
+
+  return {
+    variants: [
+      { id: 'v1', systemPrompt: 'old prompt', userMessage: 'task' },
+      { id: 'v2', systemPrompt: 'new prompt', userMessage: 'task' },
+    ],
+    models: ['zhipu/glm51', 'ds/v4flash'],
+    cells: [
+      cell('v1', 'zhipu/glm51', 33, 100, 36),
+      cell('v1', 'ds/v4flash', 50, 100, 53),
+      cell('v2', 'zhipu/glm51', 100, 100, 100, 6),
+      cell('v2', 'ds/v4flash', 83, 100, 84, 5),
+    ],
+    byVariant: {
+      v1: [],
+      v2: [],
+    },
+    byModel: {
+      'zhipu/glm51': [],
+      'ds/v4flash': [],
+    },
+    variantsDominantOnEveryModel: ['v2'],
+    totalSeconds: 120.5,
+    config: {
+      runs: 3,
+      speedIdealMs: 30_000,
+      speedCeilingMs: 240_000,
+      compositeWeights: { quality: 0.85, speed: 0.15 },
+    },
+    startedAt: '2026-04-27T12:34:56.789Z',
+  };
+}
+
+describe('FEATURE_104 v2 — renderBenchmarkReport', () => {
+  it('emits all 9 sections', () => {
+    const md = renderBenchmarkReport(fixtureBenchmarkResult());
+    expect(md).toContain('# Prompt Benchmark Report');
+    expect(md).toContain('## 1. Run summary');
+    expect(md).toContain('## 2. Methodology');
+    expect(md).toContain('## 3. Score matrix');
+    expect(md).toContain('## 4. Quality sub-dimensions');
+    expect(md).toContain('## 5. Time analysis');
+    expect(md).toContain('## 6. Variance');
+    expect(md).toContain('## 7. Variant ranking');
+    expect(md).toContain('## 8. Assertion failure patterns');
+    expect(md).toContain('## 9. Reproduction');
+  });
+
+  it('records the dominant variant in §7', () => {
+    const md = renderBenchmarkReport(fixtureBenchmarkResult());
+    expect(md).toContain('strictly ≥');
+    expect(md).toContain('`v2`');
+  });
+
+  it('aggregates and ranks failure patterns in §8 by frequency', () => {
+    const md = renderBenchmarkReport(fixtureBenchmarkResult());
+    expect(md).toContain('has-Y');
+    expect(md).toContain('Y missing');
+    expect(md).toContain('Assertion failure patterns');
+  });
+
+  it('embeds the statistical-significance caveat in §7', () => {
+    const md = renderBenchmarkReport(fixtureBenchmarkResult());
+    expect(md).toContain('statistically indistinguishable');
+  });
+
+  it('decomposes per-category in §4', () => {
+    const md = renderBenchmarkReport(fixtureBenchmarkResult());
+    expect(md).toContain('### Variant `v1`');
+    expect(md).toContain('### Variant `v2`');
+    expect(md).toContain('format');
+    expect(md).toContain('correctness');
+  });
+});
+
+describe('FEATURE_104 v2 — renderCompactSummary', () => {
+  it('produces a one-line summary with key numbers', () => {
+    const fixture = fixtureBenchmarkResult();
+    const cell = fixture.cells[0]!;
+    const line = renderCompactSummary(cell);
+    expect(line).toContain(cell.variantId);
+    expect(line).toContain(cell.alias);
+    expect(line).toContain('pass=');
+    expect(line).toContain('q=');
+    expect(line).toContain('comp=');
+  });
+});
+
+describe('FEATURE_104 v2 — persistence (writeBenchmarkReport / readBenchmarkResult)', () => {
+  it('writes results.json + REPORT.md + codes/ to a fresh tmpdir, then reads back', async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-bench-'));
+    try {
+      const result = fixtureBenchmarkResult();
+      const persisted = await writeBenchmarkReport(result, { outDir: tmp });
+
+      // results.json
+      expect(persisted.resultsJsonPath).toBe(path.join(tmp, 'results.json'));
+      const json = await fs.readFile(persisted.resultsJsonPath, 'utf8');
+      expect(JSON.parse(json).startedAt).toBe(result.startedAt);
+
+      // REPORT.md
+      expect(persisted.reportMdPath).toBe(path.join(tmp, 'REPORT.md'));
+      const md = await fs.readFile(persisted.reportMdPath, 'utf8');
+      expect(md).toContain('# Prompt Benchmark Report');
+
+      // codes/
+      expect(persisted.codesDir).toBe(path.join(tmp, 'codes'));
+      const codes = await fs.readdir(persisted.codesDir!);
+      expect(codes.length).toBeGreaterThan(0);
+
+      // codes-index.json
+      expect(persisted.codesIndexPath).toBe(path.join(tmp, 'codes-index.json'));
+      const indexJson = JSON.parse(
+        await fs.readFile(persisted.codesIndexPath!, 'utf8'),
+      ) as Record<string, string>;
+      expect(Object.keys(indexJson).length).toBeGreaterThan(0);
+
+      // round-trip via readBenchmarkResult
+      const reloaded = await readBenchmarkResult(tmp);
+      expect(reloaded.startedAt).toBe(result.startedAt);
+      expect(reloaded.cells.length).toBe(result.cells.length);
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('skipRawOutputs=true omits codes/ + codes-index.json', async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-bench-'));
+    try {
+      const persisted = await writeBenchmarkReport(fixtureBenchmarkResult(), {
+        outDir: tmp,
+        skipRawOutputs: true,
+      });
+      expect(persisted.codesDir).toBeUndefined();
+      expect(persisted.codesIndexPath).toBeUndefined();
+      // codes/ directory shouldn't exist
+      let exists = false;
+      try {
+        await fs.access(path.join(tmp, 'codes'));
+        exists = true;
+      } catch {}
+      expect(exists).toBe(false);
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('FEATURE_104 harness — formatComparisonTable', () => {
   it('renders empty table when no outcomes', () => {

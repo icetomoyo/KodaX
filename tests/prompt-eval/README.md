@@ -41,8 +41,18 @@ A typical local run uses 1-3 of the 8 supported coding-plan providers.
 ```
 tests/prompt-eval/
   aliases.ts    — short alias map: 'zhipu/glm51' → { provider, model, apiKeyEnv }
-  judges.ts     — reusable judges: mustContainAll, mustNotMatch, lengthWithin, ...
-  harness.ts    — runOneShot / runABComparison / formatComparisonTable
+  judges.ts     — reusable judges with categories: format / correctness / style / safety / custom
+                  factories: mustContainAll/Any, mustNotContain, mustMatch/NotMatch,
+                  lengthWithin, parseAndAssert, runJudges (decomposed aggregation)
+  harness.ts    — runOneShot           (single probe + duration)
+                  runABComparison      (lightweight pass/fail matrix; v1)
+                  runBenchmark         (v2: multi-run + variance + speed + decomposed quality + composite)
+                  speedScore           (tolerance-window scoring helper)
+  report.ts     — renderBenchmarkReport (9-section markdown)
+                  renderCompactSummary  (one-line per cell)
+  persist.ts    — writeBenchmarkReport  (results.json + REPORT.md + codes/)
+                  readBenchmarkResult   (round-trip for baseline diffs)
+  __results__/  — git-ignored output directory; persist target
 ```
 
 Eval cases themselves live at `tests/<topic>.eval.ts` (existing convention,
@@ -94,9 +104,9 @@ describe.skipIf(TARGETS.length === 0)('my prompt eval', () => {
 });
 ```
 
-## Pattern 2 — A/B variant comparison
+## Pattern 2 — A/B variant comparison (lightweight)
 
-For "does prompt v2 beat v1?":
+For a quick "does prompt v2 beat v1?" check (single run, flat pass/fail):
 
 ```ts
 import { describe, it, expect } from 'vitest';
@@ -126,6 +136,112 @@ describe.skipIf(TARGETS.length === 0)('refactor instruction prompt — v1 vs v2'
   });
 });
 ```
+
+## Pattern 3 — Quantitative benchmark (decision-grade)
+
+For "is v2 STATISTICALLY better than v1, and where exactly?". Uses
+multi-run (n=3 default), per-category scoring, speed tolerance window,
+composite ranking, and full markdown REPORT.md output.
+
+```ts
+import { describe, it, expect } from 'vitest';
+import { availableAliases } from './prompt-eval/aliases.js';
+import { runBenchmark } from './prompt-eval/harness.js';
+import { writeBenchmarkReport } from './prompt-eval/persist.js';
+import {
+  mustContainAll,
+  mustMatch,
+  mustNotMatch,
+  type PromptJudge,
+} from './prompt-eval/judges.js';
+
+const TARGETS = availableAliases('zhipu/glm51', 'mmx/m27', 'ds/v4flash');
+
+describe.skipIf(TARGETS.length === 0)('refactor prompt v1 vs v2 — benchmark', () => {
+  it('v2 is dominant on every model and improves correctness', async () => {
+    const judges: PromptJudge[] = [
+      // format = does the output parse / shape OK
+      { name: 'has-code-fence', category: 'format',
+        judge: (out) => ({ passed: /```[\s\S]+```/.test(out) }) },
+      // correctness = does it actually do what was asked
+      { ...mustContainAll('preserve behavior'), category: 'correctness' },
+      { ...mustMatch(/export\s+(default\s+)?function|class /, 'top-level-export'),
+        category: 'correctness' },
+      // safety = no distillation bleed
+      { ...mustNotMatch(/I'?m Claude/i, 'no-claude'), category: 'safety' },
+    ];
+
+    const result = await runBenchmark({
+      models: TARGETS,
+      variants: [
+        { id: 'v1', systemPrompt: V1_PROMPT, userMessage: TASK },
+        { id: 'v2', systemPrompt: V2_REWRITTEN, userMessage: TASK },
+      ],
+      judges,
+      runs: 3,
+    });
+
+    // Persist for diffing later. Snapshot directory under
+    // tests/prompt-eval/__results__/<timestamp>/. Commit-or-not is
+    // your call (gitignored by default).
+    const persisted = await writeBenchmarkReport(result);
+    console.log(`REPORT: ${persisted.reportMdPath}`);
+
+    // Decision-grade assertion: v2 must be strictly ≥ v1 across the board.
+    expect(result.variantsDominantOnEveryModel).toContain('v2');
+
+    // Or look at specific categories: e.g., correctness must improve.
+    for (const alias of TARGETS) {
+      const v1 = result.cells.find((c) => c.variantId === 'v1' && c.alias === alias)!;
+      const v2 = result.cells.find((c) => c.variantId === 'v2' && c.alias === alias)!;
+      const v1Correctness = v1.qualityByCategory.correctness ?? 0;
+      const v2Correctness = v2.qualityByCategory.correctness ?? 0;
+      // Allow ±10pp noise at n=3; require improvement that exceeds noise.
+      expect(v2Correctness).toBeGreaterThanOrEqual(v1Correctness - 10);
+    }
+  });
+});
+```
+
+The persisted REPORT.md has 9 sections (run summary, methodology, score
+matrix, sub-dimensions, time analysis, variance, ranking, **assertion
+failure patterns sorted by frequency**, reproduction). §8 is the gold:
+the top-of-list failure pattern is the prompt-improvement opportunity.
+
+## The iteration workflow (drilled-down)
+
+Once you have a benchmark with a baseline:
+
+1. **Run the baseline**: `npm run test:eval -- tests/your-prompt.eval.ts`
+2. **Read REPORT.md §8**: pick the top failure pattern. Form a hypothesis:
+   "this is a prompt issue, not a model issue, because no provider is
+   dramatically better at it" (test: model-issue would show one provider
+   at 90% and others at 10%; prompt-issue shows all at 15-30%).
+3. **Edit ONE prompt section** that targets that failure. Resist the urge
+   to rewrite the whole prompt — the diff is what tells you what helped.
+4. **Smoke test**: run 1 case × 2 strong models × 1 run. If the failure
+   pattern doesn't move, the prompt change didn't take. Don't waste a
+   full bench run.
+5. **Full re-run**: same scope as baseline.
+6. **Diff REPORT.md A vs B**: §3 (composite) tells you direction; §8
+   (failure patterns) tells you what specifically moved.
+7. **Watch for regressions**: small assertion regressions on unrelated
+   cases are usually noise (±10pp at n=3). Chase only product-relevant ones.
+
+## Statistical caveats baked into the harness
+
+- **n=3 default** — minimum for variance to be meaningful. Single-run
+  decisions are vulnerable to lucky outputs.
+- **Variance flag** — REPORT.md §6 marks cells with std-dev > 20pp as
+  ⚠️ noisy. Bump to n=5+ before treating those as decision-grade.
+- **3-point indistinguishability** — two cells within 3 composite points
+  are statistically indistinguishable at n≤5. The harness doesn't try
+  to "rank" them — that's the eval-file caller's call.
+- **Speed window** — 100 at ≤30s, 0 at ≥240s, linear between. NOT
+  linear-from-0 (which would penalize fast models for being fast). Tune
+  the window per workload via `runs.speedIdealMs` / `speedCeilingMs`.
+- **Composite weights** — default 0.85 quality / 0.15 speed favors
+  correctness. Style and speed are necessary but never sufficient.
 
 ## Conventions
 

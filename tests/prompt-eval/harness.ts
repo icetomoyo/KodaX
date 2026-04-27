@@ -28,6 +28,9 @@ import {
 } from './aliases.js';
 import {
   runJudges,
+  type AggregatedJudgeRun,
+  type JudgeCategory,
+  type JudgeRunResult,
   type PromptJudge,
 } from './judges.js';
 
@@ -50,13 +53,15 @@ export interface OneShotOutput {
 
 /**
  * Run one (system + user) round against one model alias. Returns the
- * concatenated assistant text plus any tool calls. The eval-file caller
- * applies its own assertions / judges.
+ * concatenated assistant text plus any tool calls AND the wall-clock
+ * duration (used by `runBenchmark` to compute speed-scoring + p95
+ * latency stats). The eval-file caller applies its own assertions /
+ * judges.
  */
 export async function runOneShot(
   alias: ModelAlias,
   input: OneShotInput,
-): Promise<OneShotOutput> {
+): Promise<OneShotOutput & { durationMs: number }> {
   const target = resolveAlias(alias);
   const provider = getProvider(target.provider);
 
@@ -65,7 +70,10 @@ export async function runOneShot(
     { role: 'user', content: input.userMessage },
   ];
   const tools = input.tools ?? [];
+
+  const startedAt = Date.now();
   const result = await provider.stream(messages, tools, input.systemPrompt);
+  const durationMs = Date.now() - startedAt;
 
   const text = result.textBlocks.map((b) => b.text).join('').trim();
   const toolCalls = result.toolBlocks.map((b) => ({
@@ -73,7 +81,7 @@ export async function runOneShot(
     input: b.input,
   }));
 
-  return { alias, target, text, toolCalls };
+  return { alias, target, text, toolCalls, durationMs };
 }
 
 export interface PromptVariant {
@@ -237,4 +245,349 @@ export function formatComparisonTable(result: ABComparisonResult): string {
     lines.push(`${m.padEnd(modelColWidth)}  ${row}`);
   }
   return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// FEATURE_104 v2 — Quantitative benchmark (multi-run + variance + speed
+// + decomposed scoring). Drawn from the LiveCanvas prompt benchmark recipe:
+//
+// 1. n=3 minimum runs per cell — n=1 is anti-pattern 4 ("judging from a
+//    single lucky run"). Std-dev of pass rate across runs surfaces noisy
+//    providers; "two competitors within 3 composite points are
+//    statistically indistinguishable at this sample size".
+// 2. Decomposed quality (format / correctness / style / safety) — anti-
+//    pattern 2 ("scoring style without correctness"). Per-category pass
+//    rates show WHY a variant wins.
+// 3. Speed scoring with tolerance window — anti-pattern 1 ("speed scored
+//    linearly from 0"). 100 if duration ≤ idealMs; 0 if ≥ ceilingMs;
+//    linear in between.
+// 4. Composite = qualityWeight × quality + speedWeight × speed.
+//    Default 0.85/0.15 favors correctness over speed (per recipe:
+//    "Style is necessary but never sufficient").
+//
+// `runBenchmark` returns a structured result with all numbers; rendering
+// to markdown REPORT.md lives in `report.ts` (separate file so eval cases
+// can also consume the raw result programmatically).
+// ---------------------------------------------------------------------------
+
+/** Default n=3 runs per cell — minimum for variance to be meaningful. */
+export const DEFAULT_BENCHMARK_RUNS = 3;
+
+/**
+ * Default speed scoring window: 100 at ≤ 30s, 0 at ≥ 240s, linear between.
+ * Tuned for interactive coding-CLI workloads. Eval cases can override.
+ */
+export const DEFAULT_SPEED_IDEAL_MS = 30_000;
+export const DEFAULT_SPEED_CEILING_MS = 240_000;
+
+/** Default composite weights: 0.85 quality / 0.15 speed (correctness > speed). */
+export const DEFAULT_COMPOSITE_WEIGHTS = Object.freeze({ quality: 0.85, speed: 0.15 });
+
+export interface BenchmarkRunCell {
+  readonly variantId: string;
+  readonly alias: ModelAlias;
+  /** Run index within this cell (0-based). */
+  readonly runIndex: number;
+  readonly text: string;
+  readonly toolCalls: ReadonlyArray<{ name: string; input: unknown }>;
+  readonly durationMs: number;
+  /** Set when the provider call itself errored (rate-limit, timeout, etc.). */
+  readonly error?: string;
+  readonly judges: readonly JudgeRunResult[];
+  readonly judgeAggregate: AggregatedJudgeRun;
+  readonly passed: boolean;
+}
+
+export interface DurationStats {
+  readonly min: number;
+  readonly median: number;
+  readonly mean: number;
+  readonly p95: number;
+  readonly max: number;
+}
+
+export interface BenchmarkCellSummary {
+  readonly variantId: string;
+  readonly alias: ModelAlias;
+  /** Total runs attempted (= input.runs). */
+  readonly runs: number;
+  /** Runs that completed without provider error. */
+  readonly completed: number;
+  /** 0-100. (passedRuns / completedRuns) × 100. NaN-safe = 0 when completed=0. */
+  readonly passRate: number;
+  /** Std-dev of per-run pass-or-fail (0/1). Higher = noisier provider. */
+  readonly passRateStdDev: number;
+  /** Per-category pass count / total count, summed across runs. */
+  readonly byCategory: Readonly<Record<JudgeCategory, { passed: number; total: number }>>;
+  /** Per-category pass rate (0-100), summed across runs. */
+  readonly qualityByCategory: Readonly<Record<JudgeCategory, number>>;
+  /** 0-100 quality score (overall pass rate, gated by format). */
+  readonly quality: number;
+  /** 0-100 speed score from tolerance window. */
+  readonly speed: number;
+  /** Weighted composite. */
+  readonly composite: number;
+  readonly duration: DurationStats;
+  readonly runsRaw: readonly BenchmarkRunCell[];
+}
+
+export interface BenchmarkRunInput {
+  readonly variants: readonly PromptVariant[];
+  readonly models: readonly ModelAlias[];
+  readonly judges: readonly PromptJudge[];
+  /** Number of runs per cell. Defaults to DEFAULT_BENCHMARK_RUNS (3). */
+  readonly runs?: number;
+  /** Speed-scoring window. Defaults to ideal=30s / ceiling=240s. */
+  readonly speedIdealMs?: number;
+  readonly speedCeilingMs?: number;
+  /** Composite weights. Defaults to 0.85 quality / 0.15 speed. */
+  readonly compositeWeights?: { quality: number; speed: number };
+}
+
+export interface BenchmarkResult {
+  readonly variants: readonly PromptVariant[];
+  readonly models: readonly ModelAlias[];
+  readonly cells: ReadonlyArray<BenchmarkCellSummary>;
+  /** Variant id → cells for that variant (one per model). */
+  readonly byVariant: Readonly<Record<string, readonly BenchmarkCellSummary[]>>;
+  /** Model alias → cells for that model (one per variant). */
+  readonly byModel: Readonly<Record<string, readonly BenchmarkCellSummary[]>>;
+  /** Variants whose composite >= every other variant on every model. */
+  readonly variantsDominantOnEveryModel: readonly string[];
+  /** Total wall-clock seconds end-to-end (sequential). */
+  readonly totalSeconds: number;
+  /** Run config snapshot (for reports + reproducibility). */
+  readonly config: {
+    readonly runs: number;
+    readonly speedIdealMs: number;
+    readonly speedCeilingMs: number;
+    readonly compositeWeights: { quality: number; speed: number };
+  };
+  /** ISO timestamp of run start, for persistence + reproduction. */
+  readonly startedAt: string;
+}
+
+function median(sorted: readonly number[]): number {
+  if (sorted.length === 0) return 0;
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) return sorted[mid]!;
+  return (sorted[mid - 1]! + sorted[mid]!) / 2;
+}
+
+function percentile(sorted: readonly number[], p: number): number {
+  if (sorted.length === 0) return 0;
+  if (sorted.length === 1) return sorted[0]!;
+  const rank = (p / 100) * (sorted.length - 1);
+  const lo = Math.floor(rank);
+  const hi = Math.ceil(rank);
+  if (lo === hi) return sorted[lo]!;
+  const frac = rank - lo;
+  return sorted[lo]! * (1 - frac) + sorted[hi]! * frac;
+}
+
+function stdDev(values: readonly number[]): number {
+  if (values.length === 0) return 0;
+  const mean = values.reduce((s, v) => s + v, 0) / values.length;
+  const variance = values.reduce((s, v) => s + (v - mean) ** 2, 0) / values.length;
+  return Math.sqrt(variance);
+}
+
+/** 100 if ≤ ideal, 0 if ≥ ceiling, linear between. Clamped to [0, 100]. */
+export function speedScore(
+  durationMs: number,
+  idealMs: number,
+  ceilingMs: number,
+): number {
+  if (idealMs >= ceilingMs) return durationMs <= idealMs ? 100 : 0;
+  if (durationMs <= idealMs) return 100;
+  if (durationMs >= ceilingMs) return 0;
+  const span = ceilingMs - idealMs;
+  return Math.max(0, Math.min(100, 100 * (1 - (durationMs - idealMs) / span)));
+}
+
+/**
+ * Run the full N×M×K benchmark matrix and aggregate. Returns a structured
+ * BenchmarkResult that callers can pass to `writeBenchmarkReport` (in
+ * `./report.ts`) or inspect programmatically.
+ *
+ * Cells where a provider error occurs (rate-limit, timeout, malformed
+ * response) record the error on that run and continue — a single cell
+ * failure does not abort the matrix. Eval cases that need stricter
+ * behavior can inspect `cell.runsRaw[*].error` and assert on it.
+ */
+export async function runBenchmark(input: BenchmarkRunInput): Promise<BenchmarkResult> {
+  const runs = input.runs ?? DEFAULT_BENCHMARK_RUNS;
+  const idealMs = input.speedIdealMs ?? DEFAULT_SPEED_IDEAL_MS;
+  const ceilingMs = input.speedCeilingMs ?? DEFAULT_SPEED_CEILING_MS;
+  const weights = input.compositeWeights ?? DEFAULT_COMPOSITE_WEIGHTS;
+
+  const startedAt = new Date().toISOString();
+  const startedAtMs = Date.now();
+
+  const cells: BenchmarkCellSummary[] = [];
+
+  for (const variant of input.variants) {
+    for (const alias of input.models) {
+      const runsRaw: BenchmarkRunCell[] = [];
+
+      for (let runIndex = 0; runIndex < runs; runIndex++) {
+        let text = '';
+        let durationMs = 0;
+        let toolCalls: BenchmarkRunCell['toolCalls'] = [];
+        let error: string | undefined;
+        try {
+          const out = await runOneShot(alias, {
+            systemPrompt: variant.systemPrompt,
+            userMessage: variant.userMessage,
+            tools: variant.tools,
+            priorMessages: variant.priorMessages,
+          });
+          text = out.text;
+          toolCalls = out.toolCalls;
+          durationMs = out.durationMs;
+        } catch (err) {
+          error = err instanceof Error ? err.message : String(err);
+        }
+
+        const aggregate: AggregatedJudgeRun = error
+          ? {
+              passed: false,
+              results: [{ name: 'provider-call', category: 'format', passed: false, reason: error }],
+              byCategory: { format: { passed: 0, total: 1 } } as Record<
+                JudgeCategory,
+                { passed: number; total: number }
+              >,
+              formatPassed: false,
+            }
+          : runJudges(text, input.judges);
+
+        runsRaw.push({
+          variantId: variant.id,
+          alias,
+          runIndex,
+          text,
+          toolCalls,
+          durationMs,
+          error,
+          judges: aggregate.results,
+          judgeAggregate: aggregate,
+          passed: aggregate.passed,
+        });
+      }
+
+      // Cell aggregation
+      const completedRuns = runsRaw.filter((r) => !r.error);
+      const completed = completedRuns.length;
+      const passedRuns = runsRaw.filter((r) => r.passed).length;
+      const passRate = runs === 0 ? 0 : (passedRuns / runs) * 100;
+      const passRateStdDev = runs === 0 ? 0 : stdDev(runsRaw.map((r) => (r.passed ? 1 : 0))) * 100;
+
+      // Per-category aggregation across runs (sum, not average — preserves run count)
+      const byCategory = {} as Record<JudgeCategory, { passed: number; total: number }>;
+      for (const r of runsRaw) {
+        for (const [cat, counts] of Object.entries(r.judgeAggregate.byCategory) as Array<
+          [JudgeCategory, { passed: number; total: number }]
+        >) {
+          if (!byCategory[cat]) byCategory[cat] = { passed: 0, total: 0 };
+          byCategory[cat]!.passed += counts.passed;
+          byCategory[cat]!.total += counts.total;
+        }
+      }
+      const qualityByCategory = {} as Record<JudgeCategory, number>;
+      for (const [cat, counts] of Object.entries(byCategory) as Array<
+        [JudgeCategory, { passed: number; total: number }]
+      >) {
+        qualityByCategory[cat] = counts.total === 0 ? 0 : (counts.passed / counts.total) * 100;
+      }
+
+      // Quality: pass rate gated by format (LiveCanvas recipe — no points for unparseable output)
+      const formatRate = byCategory.format
+        ? byCategory.format.total === 0
+          ? 100
+          : (byCategory.format.passed / byCategory.format.total) * 100
+        : 100;
+      const quality = formatRate < 100 ? formatRate * (passRate / 100) : passRate;
+
+      // Speed: average of per-run speed scores across COMPLETED runs.
+      // Failed runs don't contribute (they're already 0-quality so speed is moot).
+      const completedDurations = completedRuns.map((r) => r.durationMs);
+      const speed =
+        completed === 0
+          ? 0
+          : completedDurations.reduce((s, d) => s + speedScore(d, idealMs, ceilingMs), 0) /
+            completed;
+      const composite = weights.quality * quality + weights.speed * speed;
+
+      // Duration stats from completed runs only (failed = no signal)
+      const sortedDur = [...completedDurations].sort((a, b) => a - b);
+      const meanDur =
+        completed === 0 ? 0 : completedDurations.reduce((s, d) => s + d, 0) / completed;
+      const duration: DurationStats = {
+        min: sortedDur[0] ?? 0,
+        median: median(sortedDur),
+        mean: meanDur,
+        p95: percentile(sortedDur, 95),
+        max: sortedDur[sortedDur.length - 1] ?? 0,
+      };
+
+      cells.push({
+        variantId: variant.id,
+        alias,
+        runs,
+        completed,
+        passRate,
+        passRateStdDev,
+        byCategory,
+        qualityByCategory,
+        quality,
+        speed,
+        composite,
+        duration,
+        runsRaw,
+      });
+    }
+  }
+
+  const byVariant: Record<string, BenchmarkCellSummary[]> = {};
+  const byModel: Record<string, BenchmarkCellSummary[]> = {};
+  for (const c of cells) {
+    (byVariant[c.variantId] ??= []).push(c);
+    (byModel[c.alias] ??= []).push(c);
+  }
+
+  // "Dominant on every model" = for every model, this variant has composite
+  // >= every other variant. Useful for "is v2 strictly ≥ v1 across the board?"
+  const variantsDominantOnEveryModel: string[] = [];
+  for (const variant of input.variants) {
+    const dominantEverywhere = input.models.every((alias) => {
+      const myCell = cells.find((c) => c.variantId === variant.id && c.alias === alias);
+      if (!myCell) return false;
+      return input.variants.every((other) => {
+        if (other.id === variant.id) return true;
+        const otherCell = cells.find((c) => c.variantId === other.id && c.alias === alias);
+        if (!otherCell) return true;
+        return myCell.composite >= otherCell.composite;
+      });
+    });
+    if (dominantEverywhere) variantsDominantOnEveryModel.push(variant.id);
+  }
+
+  const totalSeconds = (Date.now() - startedAtMs) / 1000;
+
+  return {
+    variants: input.variants,
+    models: input.models,
+    cells,
+    byVariant,
+    byModel,
+    variantsDominantOnEveryModel,
+    totalSeconds,
+    config: {
+      runs,
+      speedIdealMs: idealMs,
+      speedCeilingMs: ceilingMs,
+      compositeWeights: weights,
+    },
+    startedAt,
+  };
 }

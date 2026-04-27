@@ -17,8 +17,31 @@ export interface JudgeResult {
   readonly reason?: string;
 }
 
+/**
+ * Quality dimension a judge contributes to. Drawn from the LiveCanvas
+ * prompt benchmark recipe (anti-pattern 2: "scoring style without
+ * correctness"). When you decompose quality you can see WHY a variant
+ * wins, instead of just a flat pass/fail rate.
+ *
+ * - 'format':      output parses / has the expected shape (worth 0 if fails — kills the cell)
+ * - 'correctness': the answer is logically right (assertion-based)
+ * - 'style':       formatting, idiom, tone (necessary but never sufficient)
+ * - 'safety':      no leaked secrets, no wrong identity, no forbidden patterns
+ * - 'custom':      domain-specific bucket the eval file owns
+ *
+ * Default category is 'correctness' to push casual judges toward what
+ * matters most. Eval files override when they explicitly want style/format/etc.
+ */
+export type JudgeCategory = 'format' | 'correctness' | 'style' | 'safety' | 'custom';
+
 export interface PromptJudge {
   readonly name: string;
+  /**
+   * Optional dimension this judge contributes to. Defaults to 'correctness'
+   * when unspecified. Use this so reports can break down "v2 wins on
+   * correctness but tied on style" instead of just "v2 wins overall".
+   */
+  readonly category?: JudgeCategory;
   judge(output: string): JudgeResult;
 }
 
@@ -147,21 +170,60 @@ export function parseAndAssert<T>(
   };
 }
 
+export interface JudgeRunResult {
+  readonly name: string;
+  readonly category: JudgeCategory;
+  readonly passed: boolean;
+  readonly reason?: string;
+}
+
+export interface AggregatedJudgeRun {
+  /** Pass iff every judge passed (composite). */
+  readonly passed: boolean;
+  /** Detailed per-judge results, in order of invocation. */
+  readonly results: readonly JudgeRunResult[];
+  /** Per-category pass count / total count. Empty categories are omitted. */
+  readonly byCategory: Readonly<Record<JudgeCategory, { passed: number; total: number }>>;
+  /**
+   * Whether the 'format' bucket passed. When false, the cell is treated
+   * as 0 quality regardless of other dimensions (LiveCanvas recipe:
+   * "quality = sub-dimensions IF format passes; else 0"). Defaults to
+   * true when no 'format'-category judge is supplied.
+   */
+  readonly formatPassed: boolean;
+}
+
 /**
- * Apply every judge to `output` and aggregate. Returns `passed: true`
- * iff every judge passed. Use this in eval cases to avoid hand-rolling
- * the loop.
+ * Apply every judge to `output` and aggregate. Returns the flat pass/fail
+ * for backward-compat (`passed`) plus per-category pass-counts so reports
+ * can decompose quality into format / correctness / style / safety
+ * dimensions instead of shipping a single number.
  */
 export function runJudges(
   output: string,
   judges: readonly PromptJudge[],
-): {
-  readonly passed: boolean;
-  readonly results: ReadonlyArray<{ name: string; passed: boolean; reason?: string }>;
-} {
-  const results = judges.map((j) => {
+): AggregatedJudgeRun {
+  const results: JudgeRunResult[] = judges.map((j) => {
     const r = j.judge(output);
-    return { name: j.name, passed: r.passed, reason: r.reason };
+    return {
+      name: j.name,
+      category: j.category ?? 'correctness',
+      passed: r.passed,
+      reason: r.reason,
+    };
   });
-  return { passed: results.every((r) => r.passed), results };
+  const byCategory = {} as Record<JudgeCategory, { passed: number; total: number }>;
+  for (const r of results) {
+    if (!byCategory[r.category]) byCategory[r.category] = { passed: 0, total: 0 };
+    byCategory[r.category]!.total += 1;
+    if (r.passed) byCategory[r.category]!.passed += 1;
+  }
+  const formatBucket = byCategory.format;
+  const formatPassed = formatBucket ? formatBucket.passed === formatBucket.total : true;
+  return {
+    passed: results.every((r) => r.passed),
+    results,
+    byCategory,
+    formatPassed,
+  };
 }
