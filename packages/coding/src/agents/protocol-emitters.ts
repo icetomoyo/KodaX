@@ -206,6 +206,19 @@ export const emitScoutVerdict: RunnableTool = buildEmitter({
         enum: ['yes', 'no'],
         description: 'For H0 only — is the direct answer already complete?',
       },
+      downstream_reasoning_hint: {
+        type: 'string',
+        enum: ['off', 'auto', 'quick', 'balanced', 'deep'],
+        description:
+          'FEATURE_078: optional non-binding suggestion for the reasoning depth ' +
+          'downstream workers (Planner / Generator / Evaluator) should use. Set ' +
+          'sparingly — only when the scoped task is atypically simple (suggest ' +
+          '"quick") or atypically risky/complex (suggest "deep"). Leave unset to ' +
+          'let each downstream agent stick to its declared default profile. The ' +
+          'value is clamped by the user-supplied `--reasoning <mode>` ceiling and ' +
+          'by each agent\'s own `max` field, so this hint can never escalate ' +
+          'beyond what the user explicitly authorized.',
+      },
       evidence_acquisition_mode: {
         type: 'string',
         enum: ['overview', 'diff-bundle', 'diff-slice', 'file-read'],

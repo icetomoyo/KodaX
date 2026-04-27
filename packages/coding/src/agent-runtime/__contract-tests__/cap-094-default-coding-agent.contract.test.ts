@@ -103,11 +103,10 @@ describe('CAP-094: default coding agent declaration constructor contract', () =>
     expect(agent.model).toBe('claude-sonnet-4-6');
   });
 
-  it('CAP-DEFAULT-AGENT-002b: createDefaultCodingAgent({}) without overrides returns an Agent with NO override fields (only name + instructions + substrateExecutor + middleware)', () => {
+  it('CAP-DEFAULT-AGENT-002b: createDefaultCodingAgent({}) without overrides returns an Agent with NO override fields (only name + instructions + substrateExecutor + middleware + reasoning)', () => {
     const agent = createDefaultCodingAgent();
     expect(agent.tools).toBeUndefined();
     expect(agent.handoffs).toBeUndefined();
-    expect(agent.reasoning).toBeUndefined();
     expect(agent.guardrails).toBeUndefined();
     expect(agent.provider).toBeUndefined();
     expect(agent.model).toBeUndefined();
@@ -118,5 +117,19 @@ describe('CAP-094: default coding agent declaration constructor contract', () =>
     // FEATURE_100 P3.6t declaratively pins the default middleware
     // policy (CAP-094-001c) on the declaration.
     expect(Array.isArray(agent.middleware)).toBe(true);
+    // FEATURE_078 (v0.7.29): `reasoning` is intentionally always present
+    // on the SA declaration — the L2 default of the L1-L4 chain. The
+    // exact shape is defined by `DEFAULT_CODING_REASONING_PROFILE` and
+    // pinned by CAP-DEFAULT-AGENT-002c below.
+    expect(agent.reasoning).toBeDefined();
+  });
+
+  it('CAP-DEFAULT-AGENT-002c: default reasoning profile is { default: balanced, max: deep, escalateOnRevise: true } — FEATURE_078 L2 contract', () => {
+    const agent = createDefaultCodingAgent();
+    expect(agent.reasoning).toEqual({
+      default: 'balanced',
+      max: 'deep',
+      escalateOnRevise: true,
+    });
   });
 });

@@ -125,6 +125,7 @@ import type {
   KodaXManagedTask,
   KodaXManagedTaskPhase,
   KodaXOptions,
+  KodaXReasoningMode,
   KodaXResult,
   KodaXRoleRoundSummary,
   KodaXTaskContract,
@@ -144,6 +145,9 @@ import {
   buildAmaControllerDecision,
   buildPromptOverlay,
   reasoningModeToDepth,
+  resolveReasoningMode,
+  resolveRoleReasoning,
+  type ReasoningRole,
 } from '../reasoning.js';
 import type { ManagedTaskBudgetController } from './_internal/managed-task/budget.js';
 import {
@@ -2287,6 +2291,15 @@ export function buildRunnerLlmAdapter(
     system: string,
   ) => Promise<{ textBlocks?: readonly { text: string }[]; toolBlocks?: readonly KodaXToolUseBlock[] }>,
   tokenStateRef?: { current: RunnerAdapterTokenState },
+  /**
+   * FEATURE_078: optional callback that returns Scout's current
+   * `downstream_reasoning_hint` (L3 input). Called once per per-role
+   * adapter invocation so the resolver sees the hint as soon as the
+   * Scout payload is populated. Returning `undefined` bypasses L3 and
+   * falls back to L2 (`agent.reasoning.default`) clamped by L1
+   * (user ceiling). The callback closes over the AMA frame's recorder.
+   */
+  getScoutReasoningHint?: () => KodaXReasoningMode | undefined,
 ): (messages: readonly KodaXMessage[], agent: Agent) => Promise<RunnerLlmResult> {
   // FEATURE_072 parity: the REPL's token-count indicator reads
   // `onIterationEnd` to refresh after each worker LLM turn. Track a
@@ -2337,13 +2350,23 @@ export function buildRunnerLlmAdapter(
       input_schema: t.input_schema,
     }));
 
-    // v0.7.26 fix — build the provider reasoning request from the
-    // Agent's declared reasoning profile. Without this, provider.stream
-    // was always called with `reasoning: undefined`, so thinking mode
-    // was off for every managed worker — REPL's thinking indicator
-    // never lit up and `onThinkingDelta` never fired. Matches legacy
-    // agent.ts:1880 `effectiveProviderReasoning` shape.
-    const reasoningMode = agent.reasoning?.default ?? 'auto';
+    // FEATURE_078 (v0.7.29): resolve per-role reasoning through the L1-L4
+    // chain rather than reading `agent.reasoning?.default` directly:
+    //   L1 (user ceiling)   ← `--reasoning <mode>` / options.reasoningMode
+    //   L2 (agent default)  ← agent.reasoning.default + .max
+    //   L3 (scout hint)     ← Scout's downstream_reasoning_hint, if any
+    //   L4 (revise escalate) — handled later by escalateThinkingDepth
+    // Pre-FEATURE_078 path was L2 only; that path is preserved when no
+    // user ceiling override + no scout hint is in play (resolver collapses).
+    const userCeiling = resolveReasoningMode(options);
+    const scoutHint = getScoutReasoningHint?.();
+    const role: ReasoningRole =
+      agent.name === SCOUT_AGENT_NAME ? 'scout'
+      : agent.name === PLANNER_AGENT_NAME ? 'planner'
+      : agent.name === GENERATOR_AGENT_NAME ? 'generator'
+      : agent.name === EVALUATOR_AGENT_NAME ? 'evaluator'
+      : 'sa';
+    const reasoningMode = resolveRoleReasoning(role, userCeiling, agent.reasoning, scoutHint);
     const providerReasoning: import('@kodax/ai').KodaXReasoningRequest | undefined =
       reasoningMode === 'off'
         ? { enabled: false, mode: 'off' }
@@ -4352,7 +4375,16 @@ async function runManagedTaskViaRunnerInner(
     chainPromptContext,
     options.events,
   );
-  const llm = buildRunnerLlmAdapter(options, adapterOverride, tokenStateRef);
+  // FEATURE_078: provide a callback that surfaces Scout's
+  // `downstream_reasoning_hint` to the per-role adapter. Read lazily —
+  // Scout's payload only populates after Scout's own turn returns, so
+  // the callback closes over `recorder` and reads on each adapter call.
+  const llm = buildRunnerLlmAdapter(
+    options,
+    adapterOverride,
+    tokenStateRef,
+    () => recorder.scout?.payload.scout?.downstreamReasoningHint,
+  );
 
   // Shard 6d-L: stitch `plan.promptOverlay` (the routing-notes block
   // `createReasoningPlan` produces — task-family guidance, work intent,

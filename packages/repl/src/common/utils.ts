@@ -576,6 +576,14 @@ export function loadConfig(): {
   model?: string;
   thinking?: boolean;
   reasoningMode?: KodaXReasoningMode;
+  /**
+   * FEATURE_078 (v0.7.29): preferred name for `reasoningMode`. Both
+   * fields map to the same runtime L1 user-ceiling semantic; when both
+   * are present `reasoningCeiling` wins. Prefer this name in new
+   * configs — `reasoningMode` is kept accepted for backward
+   * compatibility and never auto-renamed (no user-visible churn).
+   */
+  reasoningCeiling?: KodaXReasoningMode;
   agentMode?: KodaXAgentMode;
   permissionMode?: string;
   locale?: string;
@@ -597,6 +605,7 @@ export function loadConfig(): {
         model?: string;
         thinking?: boolean;
         reasoningMode?: KodaXReasoningMode;
+        reasoningCeiling?: KodaXReasoningMode;
         agentMode?: KodaXAgentMode;
         permissionMode?: string;
         locale?: string;
@@ -611,8 +620,17 @@ export function loadConfig(): {
         repoIntelligenceTrace?: boolean;
         streamIdleTimeoutMs?: number;
       };
+      // FEATURE_078: collapse `reasoningCeiling` (preferred) onto
+      // `reasoningMode` so existing call sites that read
+      // `options.reasoningMode` keep working unchanged. When both are
+      // present we trust `reasoningCeiling` — that's the deliberately
+      // named L1 ceiling field, and the legacy `reasoningMode` is
+      // typically left over from older configs the user forgot about.
+      const collapsedReasoning: KodaXReasoningMode | undefined =
+        parsed.reasoningCeiling ?? parsed.reasoningMode;
       return migrateLegacyPermissionModeInConfig({
         ...parsed,
+        reasoningMode: collapsedReasoning,
         extensions: normalizeConfiguredExtensions(parsed.extensions),
       });
     }

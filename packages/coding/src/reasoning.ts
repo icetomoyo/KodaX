@@ -29,6 +29,7 @@ import {
   KODAX_REASONING_MODE_SEQUENCE,
 } from '@kodax/ai';
 import type { KodaXBaseProvider } from '@kodax/ai';
+import type { AgentReasoningProfile } from '@kodax/core';
 import {
   hasNonTransientRuntimeEvidence,
   hasTransientRetryEvidence,
@@ -345,6 +346,22 @@ const REVIEW_MASSIVE_FILE_THRESHOLD = 30;
 const REVIEW_MASSIVE_LINE_THRESHOLD = 4000;
 const REVIEW_MASSIVE_MODULE_THRESHOLD = 5;
 
+/**
+ * Resolve the **L1 user ceiling** for reasoning depth.
+ *
+ * In FEATURE_078 (v0.7.29) the semantics of `--reasoning <mode>` /
+ * `options.reasoningMode` shifted from "all roles use this mode" to
+ * "ceiling + bias for default": a hard upper bound on per-role depth
+ * with the same value also serving as the suggested default when an
+ * Agent declaration has no profile of its own.
+ *
+ * This function continues to return the user-supplied mode unchanged —
+ * what changed is how downstream code consumes it. Direct callers that
+ * still treat the return value as the final per-role depth will get
+ * pre-FEATURE_078 behaviour (everything pinned to `userCeiling`); they
+ * are migrated in this same patch to call `resolveRoleReasoning(...)`
+ * instead, which honours the L1-L4 chain.
+ */
 export function resolveReasoningMode(options: KodaXOptions): KodaXReasoningMode {
   if (options.reasoningMode) {
     return options.reasoningMode;
@@ -365,6 +382,99 @@ export function reasoningModeToDepth(
   mode: KodaXReasoningMode,
 ): KodaXThinkingDepth {
   return getDefaultThinkingDepthForMode(mode);
+}
+
+// ---------------------------------------------------------------------------
+// FEATURE_078: Role-Aware Reasoning Profiles
+// ---------------------------------------------------------------------------
+
+/**
+ * Roles whose Agent declarations carry a `reasoning` profile. Naming
+ * matches the AMA topology workers + the SA single-agent declaration
+ * (`'sa'` corresponds to `defaultCodingAgent`).
+ */
+export type ReasoningRole = 'scout' | 'planner' | 'generator' | 'evaluator' | 'sa';
+
+const REASONING_MODE_RANK: Record<KodaXReasoningMode, number> = {
+  off: 0,
+  auto: 1,
+  quick: 2,
+  balanced: 3,
+  deep: 4,
+};
+
+/**
+ * Compare two reasoning modes by depth. Returns -1, 0, or 1 mirroring
+ * `Array.prototype.sort`'s comparator contract: lower-rank modes (`off`)
+ * come first, higher-rank modes (`deep`) last. `auto` ranks above `off`
+ * because the resolver treats it as "let the system pick a sensible
+ * default", which is always >= no thinking at all.
+ */
+export function compareReasoningModes(
+  a: KodaXReasoningMode,
+  b: KodaXReasoningMode,
+): -1 | 0 | 1 {
+  const rankA = REASONING_MODE_RANK[a];
+  const rankB = REASONING_MODE_RANK[b];
+  if (rankA < rankB) return -1;
+  if (rankA > rankB) return 1;
+  return 0;
+}
+
+/**
+ * Clamp `mode` to be no deeper than `ceiling`. When `mode` is already
+ * at or below the ceiling, it passes through unchanged. Used by the
+ * L1-L4 resolver and by `escalateThinkingDepth` (after this commit) to
+ * enforce the hard upper bound the user expressed via `--reasoning`.
+ */
+export function clampReasoningMode(
+  mode: KodaXReasoningMode,
+  ceiling: KodaXReasoningMode,
+): KodaXReasoningMode {
+  return compareReasoningModes(mode, ceiling) > 0 ? ceiling : mode;
+}
+
+/**
+ * Resolve the effective per-role reasoning **mode** through the four-level
+ * decision chain laid out in FEATURE_078:
+ *
+ *   L1 (`userCeiling`)              — caller-supplied upper bound + bias
+ *   L2 (`profile.default` / `.max`) — Agent declaration's role default
+ *   L3 (`scoutHint`)                — optional hint from Scout's payload
+ *   L4 (escalate-on-revise)         — handled by `escalateThinkingDepth(_, ceiling)`
+ *
+ * The chain combines L2/L3 to pick a base mode, then clamps to L1 (and
+ * to `profile.max` if the agent declaration set one). Returns a mode
+ * the caller can hand to `reasoningModeToDepth(...)` to get the
+ * provider-facing depth, or pass into the next escalate step.
+ *
+ * **Backward compatibility**: when `profile` is undefined and there is
+ * no `scoutHint`, this collapses to `userCeiling` — i.e. exactly what
+ * pre-FEATURE_078 code did. The new behaviour only kicks in once
+ * Agent declarations carry profiles.
+ */
+export function resolveRoleReasoning(
+  _role: ReasoningRole,
+  userCeiling: KodaXReasoningMode,
+  profile?: AgentReasoningProfile,
+  scoutHint?: KodaXReasoningMode,
+): KodaXReasoningMode {
+  // Off short-circuit: `--reasoning off` is a hard kill switch — no
+  // role default or scout hint can re-enable thinking. This matches
+  // the legacy contract (`options.thinking === false` produced 'off').
+  if (userCeiling === 'off') return 'off';
+
+  // No profile + no hint → behave exactly like the legacy resolver.
+  if (!profile && !scoutHint) return userCeiling;
+
+  // Pick the base from L3 (Scout hint, if provided) or L2 (declaration default).
+  const base: KodaXReasoningMode = scoutHint ?? profile?.default ?? userCeiling;
+
+  // Apply the agent's own max ceiling first (a Scout that says
+  // `max: 'balanced'` should never be pushed to 'deep' even if the user
+  // ceiling allows it). Then apply the user ceiling as the absolute hard cap.
+  const clampedToProfileMax = profile?.max ? clampReasoningMode(base, profile.max) : base;
+  return clampReasoningMode(clampedToProfileMax, userCeiling);
 }
 
 const TASK_TYPE_KEYWORDS: Record<
@@ -1379,7 +1489,10 @@ export async function maybeCreateAutoReroutePlan(
     return null;
   }
 
-  const fallback = buildHeuristicAutoRerouteDecision(currentPlan, rerouteEvidenceText);
+  // FEATURE_078: thread the L1 user ceiling through the heuristic and
+  // normalizer so escalateThinkingDepth respects `--reasoning quick` etc.
+  const userCeiling = resolveReasoningMode(options);
+  const fallback = buildHeuristicAutoRerouteDecision(currentPlan, rerouteEvidenceText, userCeiling);
   const judged = await judgeAutoRerouteWithLLM(
     provider,
     options,
@@ -1392,6 +1505,7 @@ export async function maybeCreateAutoReroutePlan(
     currentPlan,
     judged ?? fallback,
     allowances,
+    userCeiling,
   );
 
   if (!normalized) {
@@ -1435,6 +1549,7 @@ export async function maybeCreateAutoReroutePlan(
 export function buildHeuristicAutoRerouteDecision(
   currentPlan: ReasoningPlan,
   assistantText: string,
+  ceiling?: KodaXReasoningMode,
 ): AutoRerouteDecision {
   const text = assistantText.toLowerCase();
   const hasUncertainty = UNCERTAINTY_MARKERS.some((marker) => text.includes(marker));
@@ -1462,8 +1577,8 @@ export function buildHeuristicAutoRerouteDecision(
   }
 
   if (hasUncertainty) {
-    const nextDepth = escalateThinkingDepth(currentPlan.depth);
-    if (nextDepth !== currentPlan.depth) {
+    const nextDepth = escalateThinkingDepth(currentPlan.depth, ceiling);
+    if (nextDepth !== currentPlan.depth && nextDepth !== 'off') {
       return {
         shouldReroute: true,
         nextPrimaryTask: currentPlan.decision.primaryTask,
@@ -1479,8 +1594,8 @@ export function buildHeuristicAutoRerouteDecision(
     hasLowValueReview &&
     !hasHighImpact
   ) {
-    const nextDepth = escalateThinkingDepth(currentPlan.depth);
-    if (nextDepth !== currentPlan.depth) {
+    const nextDepth = escalateThinkingDepth(currentPlan.depth, ceiling);
+    if (nextDepth !== currentPlan.depth && nextDepth !== 'off') {
       return {
         shouldReroute: true,
         nextPrimaryTask: 'review',
@@ -1497,19 +1612,79 @@ export function buildHeuristicAutoRerouteDecision(
   };
 }
 
+/**
+ * Map from `KodaXReasoningMode` (user-facing) to its corresponding
+ * upper-bound `KodaXThinkingDepth` (provider-facing). Used to clamp
+ * escalation against an L1 ceiling — `escalateThinkingDepth` mustn't
+ * return a depth deeper than what the user said they would tolerate.
+ *
+ * Semantics:
+ *   - `off`      → depth `'off'`  — `--reasoning off` is a hard kill
+ *                                   switch; escalate is a no-op.
+ *   - `auto`     → depth `'high'` — `auto` means "let the system pick";
+ *                                   no user-imposed ceiling on escalation.
+ *   - `quick`    → depth `'low'`
+ *   - `balanced` → depth `'medium'`
+ *   - `deep`     → depth `'high'`
+ */
+const REASONING_MODE_TO_DEPTH_CEILING: Record<KodaXReasoningMode, KodaXThinkingDepth> = {
+  off: 'off',
+  auto: 'high',
+  quick: 'low',
+  balanced: 'medium',
+  deep: 'high',
+};
+
+const THINKING_DEPTH_RANK: Record<KodaXThinkingDepth, number> = {
+  off: 0,
+  low: 1,
+  medium: 2,
+  high: 3,
+};
+
+/**
+ * Escalate one notch deeper. When `ceiling` is provided (FEATURE_078),
+ * the result is clamped so it never exceeds the depth corresponding to
+ * the L1 user ceiling — preventing revise-loop driven escalation from
+ * silently overriding the user's explicit `--reasoning quick` choice.
+ *
+ * **Backward compatibility**: when `ceiling` is omitted, the behaviour
+ * is identical to the pre-FEATURE_078 implementation (cap at `'high'`).
+ * Callers that already enforce ceilings via the surrounding planner can
+ * keep calling without the second argument; downstream callers were
+ * updated in this same patch to pass the user ceiling when known.
+ */
 export function escalateThinkingDepth(
   depth: KodaXThinkingDepth,
-): Exclude<KodaXThinkingDepth, 'off'> {
+  ceiling?: KodaXReasoningMode,
+): Exclude<KodaXThinkingDepth, 'off'> | 'off' {
+  let next: Exclude<KodaXThinkingDepth, 'off'>;
   switch (depth) {
     case 'off':
-      return 'low';
+      next = 'low';
+      break;
     case 'low':
-      return 'medium';
+      next = 'medium';
+      break;
     case 'medium':
     case 'high':
     default:
-      return 'high';
+      next = 'high';
+      break;
   }
+
+  if (ceiling === undefined) return next;
+
+  // Clamp: never exceed the depth implied by the user ceiling. When
+  // ceiling='off' this returns 'off', signalling the caller to skip
+  // the escalation entirely (the surrounding `mode !== 'auto'` gate
+  // typically prevents reaching this branch with off-ceiling, but
+  // the contract is honoured defensively).
+  const ceilingDepth = REASONING_MODE_TO_DEPTH_CEILING[ceiling];
+  if (THINKING_DEPTH_RANK[next] > THINKING_DEPTH_RANK[ceilingDepth]) {
+    return ceilingDepth;
+  }
+  return next;
 }
 
 async function routeTaskWithLLM(
@@ -1913,6 +2088,7 @@ function normalizeAutoRerouteDecision(
     allowDepthEscalation: boolean;
     allowTaskReroute: boolean;
   },
+  ceiling?: KodaXReasoningMode,
 ): {
   kind: ReasoningFollowUpKind;
   nextPrimaryTask: KodaXTaskType;
@@ -1925,7 +2101,7 @@ function normalizeAutoRerouteDecision(
   }
 
   if (allowances.allowTaskReroute) {
-    const reroute = normalizeTaskRerouteDecision(currentPlan, decision);
+    const reroute = normalizeTaskRerouteDecision(currentPlan, decision, ceiling);
     if (reroute) {
       return {
         kind: 'task-reroute',
@@ -1938,6 +2114,7 @@ function normalizeAutoRerouteDecision(
     const depthEscalation = normalizeDepthEscalationDecision(
       currentPlan,
       decision,
+      ceiling,
     );
     if (depthEscalation) {
       return {
@@ -1953,6 +2130,7 @@ function normalizeAutoRerouteDecision(
 function normalizeTaskRerouteDecision(
   currentPlan: ReasoningPlan,
   decision: AutoRerouteDecision,
+  ceiling?: KodaXReasoningMode,
 ): {
   nextPrimaryTask: KodaXTaskType;
   nextRecommendedMode: KodaXExecutionMode;
@@ -1961,7 +2139,11 @@ function normalizeTaskRerouteDecision(
 } | null {
   const nextMode = decision.nextRecommendedMode ?? currentPlan.decision.recommendedMode;
   const nextTask = decision.nextPrimaryTask ?? currentPlan.decision.primaryTask;
-  const nextDepth = decision.nextThinkingDepth ?? escalateThinkingDepth(currentPlan.depth);
+  const escalated = decision.nextThinkingDepth ?? escalateThinkingDepth(currentPlan.depth, ceiling);
+  // FEATURE_078: when ceiling='off' the escalate path returns 'off'; the
+  // surrounding `mode !== 'auto'` gate already short-circuits this code
+  // path before that happens, but we widen `Exclude<...>` defensively.
+  const nextDepth = escalated === 'off' ? 'low' : escalated;
   const currentDepthRank = THINKING_DEPTH_ORDER[currentPlan.depth];
   const nextDepthRank = THINKING_DEPTH_ORDER[nextDepth];
   const modeChanged = nextMode !== currentPlan.decision.recommendedMode;
@@ -1997,6 +2179,7 @@ function normalizeTaskRerouteDecision(
 function normalizeDepthEscalationDecision(
   currentPlan: ReasoningPlan,
   decision: AutoRerouteDecision,
+  ceiling?: KodaXReasoningMode,
 ): {
   nextPrimaryTask: KodaXTaskType;
   nextRecommendedMode: KodaXExecutionMode;
@@ -2005,7 +2188,11 @@ function normalizeDepthEscalationDecision(
 } | null {
   const nextMode = decision.nextRecommendedMode ?? currentPlan.decision.recommendedMode;
   const nextTask = decision.nextPrimaryTask ?? currentPlan.decision.primaryTask;
-  const nextDepth = decision.nextThinkingDepth ?? escalateThinkingDepth(currentPlan.depth);
+  const escalated = decision.nextThinkingDepth ?? escalateThinkingDepth(currentPlan.depth, ceiling);
+  // FEATURE_078: depth-escalation path never makes sense with ceiling='off';
+  // the heuristic returns null in that case, but coerce defensively.
+  if (escalated === 'off') return null;
+  const nextDepth = escalated;
   const currentDepthRank = THINKING_DEPTH_ORDER[currentPlan.depth];
   const nextDepthRank = THINKING_DEPTH_ORDER[nextDepth];
 

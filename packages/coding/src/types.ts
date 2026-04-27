@@ -1052,6 +1052,18 @@ export interface KodaXManagedScoutPayload {
   harnessRationale?: string;
   blockingEvidence?: string[];
   directCompletionReady?: 'yes' | 'no';
+  /**
+   * FEATURE_078 (v0.7.29): Scout's optional non-binding suggestion for
+   * the reasoning depth downstream workers (Planner / Generator /
+   * Evaluator) should use. Resolved by `resolveRoleReasoning(role,
+   * userCeiling, profile, scoutHint)` as the L3 input — clamped by L1
+   * (user ceiling) and L2 (agent profile max). Scout SHOULD set this
+   * sparingly: only when the scoped task signals atypically low
+   * complexity (`'quick'`) or atypically high stakes (`'deep'`); leave
+   * undefined for the default path so workers stick to their own
+   * `Agent.reasoning.default`.
+   */
+  downstreamReasoningHint?: KodaXReasoningMode;
   userFacingText?: string;
   skillMap?: {
     skillSummary?: string;

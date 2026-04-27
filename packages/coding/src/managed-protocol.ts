@@ -4,6 +4,7 @@ import type {
   KodaXManagedProtocolPayload,
   KodaXManagedScoutPayload,
   KodaXManagedVerdictPayload,
+  KodaXReasoningMode,
   KodaXTaskRole,
 } from './types.js';
 
@@ -234,6 +235,28 @@ export function normalizeManagedDirectCompletionReady(
   return undefined;
 }
 
+/**
+ * FEATURE_078: normalize a Scout-emitted `downstream_reasoning_hint`. The
+ * field is optional and silently dropped when it doesn't match the
+ * `KodaXReasoningMode` literal set — this prevents a hallucinated
+ * `'medium'` / `'thorough'` / `'extra'` etc. from poisoning the L3 input
+ * to `resolveRoleReasoning`.
+ */
+function normalizeReasoningHint(value: unknown): KodaXReasoningMode | undefined {
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (
+    normalized === 'off'
+    || normalized === 'auto'
+    || normalized === 'quick'
+    || normalized === 'balanced'
+    || normalized === 'deep'
+  ) {
+    return normalized;
+  }
+  return undefined;
+}
+
 export function normalizeStringListValue(value: unknown): string[] {
   if (Array.isArray(value)) {
     return value.map((item) => String(item).trim()).filter(Boolean);
@@ -338,6 +361,14 @@ export function coerceManagedProtocolToolPayload(
       : typeof (payload.direct_completion_ready ?? payload.directCompletionReady) === 'boolean'
         ? ((payload.direct_completion_ready ?? payload.directCompletionReady) ? 'yes' : 'no')
         : undefined;
+    // FEATURE_078: Scout MAY suggest a downstream reasoning depth. Accept
+    // both snake_case (LLM-emitted JSON convention) and camelCase
+    // (programmatic carrier). The value is a `KodaXReasoningMode` literal —
+    // anything else is silently dropped so a hallucinated `'medium'` /
+    // `'thorough'` etc. doesn't poison the L3 input.
+    const downstreamReasoningHint = normalizeReasoningHint(
+      payload.downstream_reasoning_hint ?? payload.downstreamReasoningHint,
+    );
     if (
       !summary
       && scope.length === 0
@@ -347,6 +378,7 @@ export function coerceManagedProtocolToolPayload(
       && !harnessRationale
       && blockingEvidence.length === 0
       && !directCompletionReady
+      && !downstreamReasoningHint
       && !evidenceAcquisitionMode
       && !skillSummary
       && executionObligations.length === 0
@@ -368,6 +400,7 @@ export function coerceManagedProtocolToolPayload(
         harnessRationale,
         blockingEvidence,
         directCompletionReady,
+        downstreamReasoningHint,
         userFacingText: visibleText || undefined,
         skillMap: skillSummary || executionObligations.length > 0 || verificationObligations.length > 0 || ambiguities.length > 0 || projectionConfidence
           ? {
