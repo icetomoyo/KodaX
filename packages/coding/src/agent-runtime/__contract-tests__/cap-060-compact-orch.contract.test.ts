@@ -33,7 +33,7 @@
  * STATUS: ACTIVE since FEATURE_100 P3.4c.
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { KodaXBaseProvider, KodaXMessage } from '@kodax/ai';
 import type { CompactionConfig, CompactionResult } from '@kodax/agent';
@@ -58,6 +58,13 @@ import type { KodaXEvents } from '../../types.js';
 
 const compactMock = mockedCompact as unknown as ReturnType<typeof vi.fn>;
 
+// Reset the mock at the top-level so gate tests (which never reach
+// the LLM call) do not inherit stale state from a future edit that
+// adds a path-reaching test in the wrong describe.
+beforeEach(() => {
+  compactMock.mockReset();
+});
+
 // ---------------------------------------------------------------------------
 // Test fixtures
 // ---------------------------------------------------------------------------
@@ -78,22 +85,13 @@ const baseMessages: KodaXMessage[] = [
 ];
 
 /**
- * Provider stub. The compaction module's `intelligentCompact` calls
- * the provider's `streamMessage` method. Returning a plan that the
- * compactor can use is too involved for a unit test; instead, we
- * exercise the wrapper's branches that DON'T require a real LLM:
- *   - `needsCompact === false` (no LLM call)
- *   - circuit breaker tripped (no LLM call)
- *   - LLM throws (we make `streamMessage` reject)
- * For the success branch we use a provider that resolves to a
- * minimal stream, but verify only that the four events fire — the
- * inner shape of `result` is owned by `@kodax/agent`'s own tests.
+ * Provider stub. Since `intelligentCompact` is mocked at module
+ * scope (see `vi.mock('@kodax/agent', ...)` above), the provider's
+ * methods are never actually invoked. We just need a typed
+ * placeholder that satisfies the helper's input contract.
  */
-function rejectingProvider(reason = 'simulated provider failure'): KodaXBaseProvider {
-  return {
-    name: 'test-provider',
-    streamMessage: vi.fn().mockRejectedValue(new Error(reason)),
-  } as unknown as KodaXBaseProvider;
+function rejectingProvider(): KodaXBaseProvider {
+  return { name: 'test-provider' } as unknown as KodaXBaseProvider;
 }
 
 describe('CAP-060: tryIntelligentCompact — gate short-circuits', () => {
@@ -143,7 +141,7 @@ describe('CAP-060: tryIntelligentCompact — gate short-circuits', () => {
     expect(out.didCompactMessages).toBe(false);
     expect(out.nextCompactConsecutiveFailures).toBe(COMPACT_CIRCUIT_BREAKER_LIMIT);
     // LLM gate prevented the call.
-    expect((provider.streamMessage as unknown as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    expect(compactMock).not.toHaveBeenCalled();
     expect(events.onCompactStart).not.toHaveBeenCalled();
   });
 
@@ -162,7 +160,7 @@ describe('CAP-060: tryIntelligentCompact — gate short-circuits', () => {
       circuitBreakerLimit: 1, // tripped at 1
     });
     expect(out.didCompactMessages).toBe(false);
-    expect((provider.streamMessage as unknown as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    expect(compactMock).not.toHaveBeenCalled();
   });
 });
 
