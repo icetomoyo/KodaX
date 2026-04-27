@@ -206,19 +206,19 @@ describe('P3.3 integration: pre-tool abort routing invariant', () => {
 
 describe('P3.3 integration: non-cancelled dispatch routes to push-and-settle (no terminal misfire)', () => {
   it('P3.3-FLOW-003: signal not aborted + no cancelled tool_results in map → push-and-settle is sole epilogue', async () => {
-    // The helper composes with an empty resultMap; the post-processing
-    // chain produces no toolResults (no visible blocks to push).
-    // That routes to the `no-tools` branch — not the cancellation
-    // terminal. This pins the negative-routing invariant.
+    // The helper composes with an empty resultMap. `read` is a visible
+    // tool, so `applyPostToolProcessing` pushes a fallback
+    // `'[Error] No result'` block into toolResults (visible-tool gate
+    // is true; the resultMap miss surfaces as the fallback string).
+    // That content does NOT match `CANCELLED_TOOL_RESULT_MESSAGE`, so
+    // `hasCancelledToolResult` returns false and the flow takes the
+    // push-and-settle branch — pinning the negative-routing invariant
+    // (no cancellation terminal misfire on plain dispatch errors).
     const out = await runDispatchFlow({
       toolBlocks: [tool('t1', 'read')],
       abortSignal: undefined,
       events: {},
     });
-    // Even though `read` is visible, the empty resultMap produces a
-    // fallback `'[Error] No result'` content — non-cancellation —
-    // which routes through push-and-settle (NOT the cancellation
-    // terminal). This is the routing invariant under test.
     expect(out.branch).toBe('push-and-settle');
   });
 });
