@@ -47,16 +47,7 @@ import { loadCompactionConfig } from './compaction-config.js';
 import { estimateTokens } from './tokenizer.js';
 import { KODAX_MAX_INCOMPLETE_RETRIES, KODAX_MAX_MAXTOKENS_RETRIES, CANCELLED_TOOL_RESULT_MESSAGE } from './constants.js';
 import { waitForRetryDelay } from './retry-handler.js';
-import {
-  resolveResilienceConfig,
-  classifyResilienceError,
-  ProviderRecoveryCoordinator,
-  StableBoundaryTracker,
-  telemetryBoundary,
-  telemetryClassify,
-  telemetryDecision,
-  telemetryRecovery,
-} from './resilience/index.js';
+import { telemetryRecovery } from './resilience/index.js';
 import { buildPromptMessageContent } from './input-artifacts.js';
 import {
   appendPromptIfNotDuplicate,
@@ -105,6 +96,11 @@ import { buildStreamTimers } from './agent-runtime/stream-timers.js';
 import { applyProviderPolicyGate } from './agent-runtime/provider-policy-gate.js';
 import { buildStreamHandlers } from './agent-runtime/stream-handler-wiring.js';
 import { BoundaryTrackerSession } from './agent-runtime/boundary-tracker-session.js';
+import {
+  buildResilienceSession,
+  translateAbortError,
+  runRecoveryPipeline,
+} from './agent-runtime/provider-retry-policy.js';
 import { describeTransientProviderRetry } from './agent-runtime/provider-retry-policy.js';
 import {
   isCancelledToolResultContent,
@@ -786,26 +782,24 @@ export async function runKodaX(
         model: currentModelOverride,
       });
 
-      // 流式调用 Provider - with automatic retry for transient errors
-      // 注入 API 硬超时保护：防止大型 payload 导致 API 静默丢包引发无限等待
-      // Feature 045: resilience config replaces hardcoded timeouts
-      const resilienceCfg = resolveResilienceConfig(currentProviderName);
-      const API_HARD_TIMEOUT_MS = resilienceCfg.requestTimeoutMs; // Issue 084: 提升到 10 分钟硬超时
-      const API_IDLE_TIMEOUT_MS = resilienceCfg.streamIdleTimeoutMs;  // Issue 084: 60 秒空闲/停滞超时，如果有 delta 刷新则重置
-      let providerMessages = compacted;
-      let result!: KodaXStreamResult;
-      let attempt = 0;
       // CAP-068: BoundaryTrackerSession owns the tracker + the
       // beginRequest+telemetryBoundary pairing for the 2 attempt sites
       // (main stream + non-streaming fallback). Stream-handler-wiring
       // marks deltas via session.markX delegates.
       const boundarySession = new BoundaryTrackerSession();
       const boundaryTracker = boundarySession.tracker;
-      const recoveryCoordinator = new ProviderRecoveryCoordinator(boundaryTracker, {
-        ...resilienceCfg,
-        enableNonStreamingFallback:
-          resilienceCfg.enableNonStreamingFallback && streamProvider.supportsNonStreamingFallback(),
-      });
+      // CAP-065: per-turn resilience session — fresh recovery coordinator
+      // so single-shot latches (e.g. sanitize-thinking-and-retry) reset.
+      const { resilienceCfg, recoveryCoordinator } = buildResilienceSession(
+        currentProviderName,
+        streamProvider,
+        boundaryTracker,
+      );
+      const API_HARD_TIMEOUT_MS = resilienceCfg.requestTimeoutMs; // Issue 084: 10-min hard timeout
+      const API_IDLE_TIMEOUT_MS = resilienceCfg.streamIdleTimeoutMs; // Issue 084: 60s idle, reset on delta
+      let providerMessages = compacted;
+      let result!: KodaXStreamResult;
+      let attempt = 0;
       const activeToolDefinitions = getActiveToolDefinitions(
         runtimeSessionState.activeTools,
         options.context?.repoIntelligenceMode,
@@ -877,37 +871,21 @@ export async function runKodaX(
           break;
         } catch (rawError) {
           let error = rawError instanceof Error ? rawError : new Error(String(rawError));
-          if (error.name === 'AbortError' && retryTimeoutController.signal.aborted && !options.abortSignal?.aborted) {
-            const reason = retryTimeoutController.signal.reason?.message ?? 'Stream stalled';
-            const { KodaXNetworkError } = await import('@kodax/ai');
-            error = new KodaXNetworkError(reason, true);
-          }
+          // CAP-070: translate timer-driven AbortError into KodaXNetworkError
+          // so the recovery pipeline treats it as a stalled-stream rather
+          // than a clean user-cancel. User-driven aborts pass through.
+          error = await translateAbortError(error, retryTimeoutController, options.abortSignal);
 
-          const failureStage = boundaryTracker.inferFailureStage();
-          const classified = classifyResilienceError(error, failureStage);
-          telemetryClassify(error, classified);
-          const decision = recoveryCoordinator.decideRecoveryAction(error, classified, attempt);
-          telemetryDecision(decision, attempt);
-
-          events.onProviderRecovery?.({
-            stage: decision.failureStage,
-            errorClass: decision.reasonCode,
+          // CAP-069: classify → decide → emit (onProviderRecovery + onRetry).
+          const failureStage = boundarySession.inferFailureStage();
+          const { decision } = runRecoveryPipeline({
+            error,
+            failureStage,
             attempt,
-            maxAttempts: resilienceCfg.maxRetries,
-            delayMs: decision.delayMs,
-            recoveryAction: decision.action,
-            ladderStep: decision.ladderStep,
-            fallbackUsed: decision.shouldUseNonStreaming,
-            serverRetryAfterMs: decision.serverRetryAfterMs,
+            events,
+            resilienceCfg,
+            recoveryCoordinator,
           });
-
-          if (!events.onProviderRecovery && decision.action !== 'manual_continue') {
-            events.onRetry?.(
-              `${describeTransientProviderRetry(error)} · retry ${attempt}/${resilienceCfg.maxRetries} in ${Math.round(decision.delayMs / 1000)}s`,
-              attempt,
-              resilienceCfg.maxRetries,
-            );
-          }
 
           if (decision.shouldUseNonStreaming) {
             const fallbackBytes = estimateProviderPayloadBytes(providerMessages, effectiveSystemPrompt);

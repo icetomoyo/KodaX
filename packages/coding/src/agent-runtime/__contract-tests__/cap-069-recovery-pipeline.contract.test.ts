@@ -13,23 +13,157 @@
  *
  * Class: 1
  *
- * Verified location: agent.ts:2093-2231 (catch block: error wrap, classify, decide, emit events,
- * execute recovery, sanitize-thinking-and-retry bypass, max-retries throw)
+ * Verified location: agent-runtime/provider-retry-policy.ts (extracted
+ * from agent.ts:886-910 — pre-FEATURE_100 baseline — during FEATURE_100 P3.2e)
  *
- * Time-ordering constraint: AFTER stream error; BEFORE next attempt or rethrow;
- * sanitize-thinking-and-retry latch persists within turn but resets across turns.
+ * Time-ordering constraint: AFTER stream error; BEFORE next attempt or rethrow.
  *
- * STATUS: P1 stub.
+ * Active here:
+ *   - classifyResilienceError + telemetryClassify run first (in this order)
+ *   - decideRecoveryAction + telemetryDecision next (in this order)
+ *   - events.onProviderRecovery fires with full payload (always when defined)
+ *   - events.onRetry fires ONLY when onProviderRecovery is not defined AND
+ *     decision.action !== 'manual_continue'
+ *
+ * Note: CAP-RECOVERY-001/002 (sanitize-thinking latch + manual-continue throw)
+ * pin behaviors at the loop control-flow layer — NOT inside runRecoveryPipeline
+ * (which only classifies + decides, never branches on action). The latch
+ * lives on the coordinator instance (CAP-065 owns its lifetime), and the
+ * manual-continue throw lives in agent.ts catch-block branching. Those two
+ * are deferred to agent-level integration tests since they exercise the
+ * larger loop, not this isolated step.
+ *
+ * STATUS: ACTIVE since FEATURE_100 P3.2e (CAP-RECOVERY-003/004 only).
  */
 
-import { describe, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-// Post-FEATURE_100 import target (uncomment in P2):
-// import { executeRecoveryDecision } from '../provider-retry-policy.js';
+import type { KodaXEvents } from '../../types.js';
+import type { ProviderRecoveryCoordinator, RecoveryDecision } from '../../resilience/index.js';
+import type { ProviderResilienceConfig } from '../../resilience/types.js';
 
-describe('CAP-069: provider error → recovery decision pipeline contract', () => {
-  it.todo('CAP-RECOVERY-001: sanitize_thinking_and_retry action fires at most once per turn (single-shot latch), bypasses max-retries gate, and decrements attempt counter');
-  it.todo('CAP-RECOVERY-002: manual_continue recovery action throws the caught error without retrying');
-  it.todo('CAP-RECOVERY-003: onProviderRecovery emits full payload (stage/errorClass/attempt/maxAttempts/delayMs/recoveryAction/ladderStep/fallbackUsed/serverRetryAfterMs)');
-  it.todo('CAP-RECOVERY-004: when consumer has no onProviderRecovery handler, events.onRetry fires as fallback notification');
+import { runRecoveryPipeline } from '../provider-retry-policy.js';
+
+function fakeDecision(overrides: Partial<RecoveryDecision> = {}): RecoveryDecision {
+  return {
+    action: 'retry',
+    ladderStep: 1,
+    delayMs: 1500,
+    maxDelayMs: 60_000,
+    shouldUseNonStreaming: false,
+    reasonCode: 'transient_network',
+    failureStage: 'pre-text',
+    serverRetryAfterMs: undefined,
+    ...overrides,
+  } as unknown as RecoveryDecision;
+}
+
+function fakeCoordinator(decision: RecoveryDecision): ProviderRecoveryCoordinator {
+  return {
+    decideRecoveryAction: vi.fn().mockReturnValue(decision),
+  } as unknown as ProviderRecoveryCoordinator;
+}
+
+const fakeCfg: Required<ProviderResilienceConfig> = {
+  requestTimeoutMs: 600_000,
+  streamIdleTimeoutMs: 60_000,
+  maxRetries: 5,
+  enableNonStreamingFallback: true,
+} as unknown as Required<ProviderResilienceConfig>;
+
+describe('CAP-069: runRecoveryPipeline — onProviderRecovery emission', () => {
+  it('CAP-RECOVERY-003a: emits onProviderRecovery with full payload (stage/errorClass/attempt/maxAttempts/delayMs/recoveryAction/ladderStep/fallbackUsed/serverRetryAfterMs)', () => {
+    const onProviderRecovery = vi.fn();
+    const decision = fakeDecision({
+      delayMs: 2500,
+      shouldUseNonStreaming: true,
+      reasonCode: 'rate_limit',
+      ladderStep: 2,
+      serverRetryAfterMs: 3000,
+    });
+    runRecoveryPipeline({
+      error: new Error('rate-limited'),
+      failureStage: 'pre-text',
+      attempt: 2,
+      events: { onProviderRecovery } as unknown as KodaXEvents,
+      resilienceCfg: fakeCfg,
+      recoveryCoordinator: fakeCoordinator(decision),
+    });
+
+    expect(onProviderRecovery).toHaveBeenCalledOnce();
+    const arg = onProviderRecovery.mock.calls[0]![0] as Record<string, unknown>;
+    expect(arg.stage).toBe('pre-text');
+    expect(arg.errorClass).toBe('rate_limit');
+    expect(arg.attempt).toBe(2);
+    expect(arg.maxAttempts).toBe(5);
+    expect(arg.delayMs).toBe(2500);
+    expect(arg.recoveryAction).toBe('retry');
+    expect(arg.ladderStep).toBe(2);
+    expect(arg.fallbackUsed).toBe(true);
+    expect(arg.serverRetryAfterMs).toBe(3000);
+  });
+});
+
+describe('CAP-069: runRecoveryPipeline — onRetry fallback', () => {
+  it('CAP-RECOVERY-004a: onRetry fires when onProviderRecovery is undefined AND action !== manual_continue', () => {
+    const onRetry = vi.fn();
+    runRecoveryPipeline({
+      error: new Error('boom'),
+      failureStage: 'mid-text',
+      attempt: 3,
+      events: { onRetry } as unknown as KodaXEvents,
+      resilienceCfg: fakeCfg,
+      recoveryCoordinator: fakeCoordinator(fakeDecision({ action: 'retry' })),
+    });
+    expect(onRetry).toHaveBeenCalledOnce();
+    const [message, attemptArg, maxArg] = onRetry.mock.calls[0]!;
+    expect(typeof message).toBe('string');
+    expect(message).toMatch(/retry 3\/5/);
+    expect(attemptArg).toBe(3);
+    expect(maxArg).toBe(5);
+  });
+
+  it('CAP-RECOVERY-004b: onRetry does NOT fire when onProviderRecovery IS defined (richer event supersedes)', () => {
+    const onRetry = vi.fn();
+    const onProviderRecovery = vi.fn();
+    runRecoveryPipeline({
+      error: new Error('boom'),
+      failureStage: 'pre-text',
+      attempt: 1,
+      events: { onRetry, onProviderRecovery } as unknown as KodaXEvents,
+      resilienceCfg: fakeCfg,
+      recoveryCoordinator: fakeCoordinator(fakeDecision()),
+    });
+    expect(onProviderRecovery).toHaveBeenCalledOnce();
+    expect(onRetry).not.toHaveBeenCalled();
+  });
+
+  it('CAP-RECOVERY-004c: onRetry does NOT fire when action === manual_continue (terminal decision)', () => {
+    const onRetry = vi.fn();
+    runRecoveryPipeline({
+      error: new Error('boom'),
+      failureStage: 'pre-text',
+      attempt: 1,
+      events: { onRetry } as unknown as KodaXEvents,
+      resilienceCfg: fakeCfg,
+      recoveryCoordinator: fakeCoordinator(fakeDecision({ action: 'manual_continue' })),
+    });
+    expect(onRetry).not.toHaveBeenCalled();
+  });
+});
+
+describe('CAP-069: runRecoveryPipeline — return shape', () => {
+  it('CAP-RECOVERY-RETURN-001: returns { classified, decision } passthrough', () => {
+    const decision = fakeDecision({ reasonCode: 'transient_network' });
+    const result = runRecoveryPipeline({
+      error: new Error('boom'),
+      failureStage: 'pre-text',
+      attempt: 1,
+      events: {} as KodaXEvents,
+      resilienceCfg: fakeCfg,
+      recoveryCoordinator: fakeCoordinator(decision),
+    });
+    expect(result.decision).toBe(decision);
+    expect(result.classified).toBeDefined();
+  });
 });
