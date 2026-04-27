@@ -42,12 +42,18 @@ describe('CAP-044: session id generation fallback contract', () => {
   });
 
   it('CAP-SESSION-ID-002: encodes the current local date as the leading 8 digits (YYYYMMDD)', async () => {
+    // Snapshot `now` BEFORE generating the id so a midnight rollover
+    // between `generateSessionId()` and `expectedDatePrefix` cannot
+    // cause a flaky mismatch — verify the id's prefix is one of the
+    // two adjacent dates that `now` could represent.
+    const beforeNow = new Date();
     const id = await generateSessionId();
-    const now = new Date();
-    const expectedDatePrefix =
-      `${now.getFullYear()}` +
-      `${String(now.getMonth() + 1).padStart(2, '0')}` +
-      `${String(now.getDate()).padStart(2, '0')}`;
-    expect(id.slice(0, 8)).toBe(expectedDatePrefix);
+    const afterNow = new Date();
+
+    const datePrefix = (d: Date) =>
+      `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+
+    const idPrefix = id.slice(0, 8);
+    expect([datePrefix(beforeNow), datePrefix(afterNow)]).toContain(idPrefix);
   });
 });
