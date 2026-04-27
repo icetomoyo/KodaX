@@ -105,6 +105,7 @@ import {
 } from './agent-runtime/event-emitter.js';
 import { resolvePerTurnProvider } from './agent-runtime/per-turn-provider-resolution.js';
 import { resolvePerTurnReasoning } from './agent-runtime/per-turn-reasoning.js';
+import { buildStreamTimers } from './agent-runtime/stream-timers.js';
 import { describeTransientProviderRetry } from './agent-runtime/provider-retry-policy.js';
 import {
   isCancelledToolResultContent,
@@ -827,53 +828,18 @@ export async function runKodaX(
         );
         telemetryBoundary(boundaryTracker.snapshot());
 
-        const retryTimeoutController = new AbortController();
-        let hardTimer = setTimeout(() => {
-          retryTimeoutController.abort(new Error("API Hard Timeout (10 minutes)"));
-        }, API_HARD_TIMEOUT_MS);
-
-        // Stream max-duration watchdog: per-provider hard cap on a single
-        // streaming request's wall-clock duration. Set just below a known
-        // server-side kill window to abort BEFORE the server RSTs, routing
-        // through the existing non_streaming_fallback path with a clean
-        // StreamIncompleteError instead of a mid-stream socket reset.
-        // Distinct from the idle timer: kill windows are duration-based and
-        // some providers (e.g. zhipu-coding) emit keepalive pings during
-        // long tool_use generation, so an idle timer never fires.
-        const STREAM_MAX_DURATION_MS = streamProvider.getStreamMaxDurationMs?.() ?? 0;
-        let streamMaxDurationTimer: ReturnType<typeof setTimeout> | undefined;
-        if (STREAM_MAX_DURATION_MS > 0) {
-          streamMaxDurationTimer = setTimeout(() => {
-            retryTimeoutController.abort(
-              new Error(`Stream max duration exceeded (${STREAM_MAX_DURATION_MS}ms; provider has known server-side kill window)`),
-            );
-          }, STREAM_MAX_DURATION_MS);
-        }
-
-        // Stream idle timer: disabled by default (API_IDLE_TIMEOUT_MS === 0).
-        // When enabled, aborts the stream if no content events arrive within
-        // the timeout window.  The hard timeout above is always active.
-        const idleEnabled = API_IDLE_TIMEOUT_MS > 0;
-        let idleTimer: ReturnType<typeof setTimeout> | undefined;
-        if (idleEnabled) {
-          idleTimer = setTimeout(() => {
-            retryTimeoutController.abort(new Error(`Stream stalled or delayed response (${API_IDLE_TIMEOUT_MS}ms idle)`));
-          }, API_IDLE_TIMEOUT_MS);
-        }
-
-        const resetIdleTimer = () => {
-          if (!idleEnabled) return;
-          clearTimeout(idleTimer);
-          if (!retryTimeoutController.signal.aborted) {
-            idleTimer = setTimeout(() => {
-              retryTimeoutController.abort(new Error(`Stream stalled or delayed response (${API_IDLE_TIMEOUT_MS}ms idle)`));
-            }, API_IDLE_TIMEOUT_MS);
-          }
-        };
-
-        const retrySignal = options.abortSignal
-          ? AbortSignal.any([options.abortSignal, retryTimeoutController.signal])
-          : retryTimeoutController.signal;
+        // CAP-066: stream-timer lifecycle (hard / max-duration / idle +
+        // merged retrySignal). All three timers fire into a single
+        // retryTimeoutController; clearAll() must run on every exit.
+        const streamTimers = buildStreamTimers({
+          hardTimeoutMs: API_HARD_TIMEOUT_MS,
+          idleTimeoutMs: API_IDLE_TIMEOUT_MS,
+          streamMaxDurationMs: streamProvider.getStreamMaxDurationMs?.() ?? 0,
+          callerAbortSignal: options.abortSignal,
+        });
+        const retryTimeoutController = streamTimers.retryTimeoutController;
+        const retrySignal = streamTimers.retrySignal;
+        const resetIdleTimer = streamTimers.resetIdleTimer;
 
         const payloadBytes = estimateProviderPayloadBytes(providerMessages, effectiveSystemPrompt);
         emitResilienceDebug('[resilience:request]', {
@@ -930,7 +896,7 @@ export async function runKodaX(
                   // Between content blocks: server may be silent while generating
                   // the next block.  Clear idle timer but do NOT restart it — the
                   // hard request timeout (10 min) still guards against stuck connections.
-                  clearTimeout(idleTimer);
+                  streamTimers.clearIdleTimer();
                 } else {
                   resetIdleTimer();
                 }
@@ -995,9 +961,7 @@ export async function runKodaX(
                 fallbackTimeoutController.abort(new Error("API Hard Timeout (10 minutes)"));
               }, API_HARD_TIMEOUT_MS);
               try {
-                clearTimeout(idleTimer);
-                clearTimeout(hardTimer);
-                clearTimeout(streamMaxDurationTimer);
+                streamTimers.clearAll();
                 boundaryTracker.beginRequest(
                   currentProviderName,
                   currentModelOverride ?? streamProvider.getModel(),
@@ -1059,9 +1023,7 @@ export async function runKodaX(
             const recovery = recoveryCoordinator.executeRecovery(providerMessages, decision);
             telemetryRecovery(decision.action, recovery);
             providerMessages = recovery.messages;
-            clearTimeout(hardTimer);
-            clearTimeout(idleTimer);
-            clearTimeout(streamMaxDurationTimer);
+            streamTimers.clearAll();
             // Don't bill a retry slot for the sanitize step.
             attempt -= 1;
             await waitForRetryDelay(decision.delayMs, options.abortSignal);
@@ -1077,15 +1039,11 @@ export async function runKodaX(
           telemetryRecovery(decision.action, recovery);
           providerMessages = recovery.messages;
 
-          clearTimeout(hardTimer);
-          clearTimeout(idleTimer);
-          clearTimeout(streamMaxDurationTimer);
+          streamTimers.clearAll();
           await waitForRetryDelay(decision.delayMs, options.abortSignal);
           continue;
         } finally {
-          clearTimeout(hardTimer);
-          clearTimeout(idleTimer);
-          clearTimeout(streamMaxDurationTimer);
+          streamTimers.clearAll();
         }
       }
 
