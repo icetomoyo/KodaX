@@ -2,15 +2,18 @@
  * FEATURE_104 v2 — Markdown REPORT.md generator for `BenchmarkResult`.
  *
  * The report is the single source of truth a human reads after a bench
- * run. Section structure follows the LiveCanvas prompt benchmark recipe:
+ * run. Section structure adapted from the LiveCanvas prompt benchmark
+ * recipe, with one KodaX-specific deviation: **quality is the only
+ * scoring metric**. Latency is reported but not scored — for a coding
+ * agent, a slow correct answer beats a fast wrong one.
  *
  *   1. Run summary             (cells, runs, format pass rate, wall-clock)
- *   2. Methodology             (scoring formulas, brief)
- *   3. Score matrix            (cells × variants, composite cell)
+ *   2. Methodology             (scoring formula = quality only)
+ *   3. Score matrix            (cells × variants, quality + per-category)
  *   4. Quality sub-dimensions  (per-category breakdown)
- *   5. Time analysis           (min / median / mean / p95 / max per cell)
+ *   5. Latency observed        (informational only, not scored)
  *   6. Variance                (pass-rate std-dev — flags noisy providers)
- *   7. Variant ranking         (composite, with statistical-significance note)
+ *   7. Variant ranking         (quality, with statistical-significance note)
  *   8. Assertion failure patterns (what specifically failed, sorted by frequency)
  *   9. Reproduction commands
  *
@@ -26,7 +29,7 @@ import type {
 import type { JudgeCategory } from './judges.js';
 
 const SIGNIFICANCE_NOTE_PROSE =
-  'Two cells within 3 composite points are statistically indistinguishable at n≤5. ' +
+  'Two cells within 3 quality points are statistically indistinguishable at n≤5. ' +
   'Bump runs to ≥5 on contested rows for decision-grade comparisons.';
 
 function fmtPct(n: number, decimals = 1): string {
@@ -74,26 +77,30 @@ function renderSection1Summary(r: BenchmarkResult): string {
   ].join('\n');
 }
 
-function renderSection2Methodology(r: BenchmarkResult): string {
-  const w = r.config.compositeWeights;
+function renderSection2Methodology(_r: BenchmarkResult): string {
   return [
     '## 2. Methodology',
     '',
+    '- **Quality is the only scoring metric.** KodaX is a coding agent —',
+    '  a slow correct answer is strictly better than a fast wrong one,',
+    '  so latency does not feed into rank. (Multi-dimensional scoring',
+    '  that combines quality and latency makes sense for interactive UIs',
+    '  where the user waits; not here.)',
     '- **Quality**: per-cell pass rate across runs, gated by format —',
     '  if format-category judges fail, quality is multiplied by the format pass rate.',
-    `- **Speed**: tolerance window — 100 if duration ≤ ${fmtMs(r.config.speedIdealMs)}, ` +
-      `0 if ≥ ${fmtMs(r.config.speedCeilingMs)}, linear between. Average across completed runs.`,
-    `- **Composite**: ${w.quality} × quality + ${w.speed} × speed.`,
     '- **Variance**: std-dev of per-run pass-or-fail (0/1) × 100. >20 means noisy.',
     '- **Categories**: judges declare `format` / `correctness` / `style` / `safety` / `custom`.',
     '  Aggregating per category lets you see WHY a variant wins, not just THAT it wins.',
+    '- **Latency**: tracked per run (§5) for diagnostics only — outliers',
+    '  (e.g. a provider hanging for 10 minutes) are still worth noticing,',
+    '  but they do not affect ranking.',
   ].join('\n');
 }
 
 function renderSection3ScoreMatrix(r: BenchmarkResult): string {
   const headers = ['model', ...r.variants.map((v) => v.id)];
   const lines: string[] = [];
-  lines.push(`## 3. Score matrix (composite, higher = better)`);
+  lines.push(`## 3. Score matrix (quality 0-100, higher = better)`);
   lines.push('');
   lines.push(`| ${headers.join(' | ')} |`);
   lines.push(`| ${headers.map(() => '---').join(' | ')} |`);
@@ -105,9 +112,7 @@ function renderSection3ScoreMatrix(r: BenchmarkResult): string {
         row.push('-');
         continue;
       }
-      row.push(
-        `**${fmtPct(cell.composite)}** (q=${fmtPct(cell.quality)}, sp=${fmtPct(cell.speed)})`,
-      );
+      row.push(`**${fmtPct(cell.quality)}** (pass=${fmtPct(cell.passRate)}, ±${fmtPct(cell.passRateStdDev)})`);
     }
     lines.push(`| ${row.join(' | ')} |`);
   }
@@ -152,7 +157,9 @@ function renderSection4SubDimensions(r: BenchmarkResult): string {
 
 function renderSection5Time(r: BenchmarkResult): string {
   const lines: string[] = [];
-  lines.push('## 5. Time analysis');
+  lines.push('## 5. Latency observed (informational only — not part of scoring)');
+  lines.push('');
+  lines.push('_Reported for diagnostics: outlier providers (e.g. one hanging for minutes) are worth noticing. Does not affect rank or quality._');
   lines.push('');
   lines.push('| variant | model | duration |');
   lines.push('| --- | --- | --- |');
@@ -185,24 +192,24 @@ function renderSection6Variance(r: BenchmarkResult): string {
 function renderSection7Ranking(r: BenchmarkResult): string {
   const variantTotals = r.variants.map((v) => {
     const cells = r.byVariant[v.id] ?? [];
-    const totalComposite = cells.reduce((s, c) => s + c.composite, 0);
-    const avgComposite = cells.length === 0 ? 0 : totalComposite / cells.length;
-    return { id: v.id, avgComposite, n: cells.length };
+    const totalQuality = cells.reduce((s, c) => s + c.quality, 0);
+    const avgQuality = cells.length === 0 ? 0 : totalQuality / cells.length;
+    return { id: v.id, avgQuality, n: cells.length };
   });
-  variantTotals.sort((a, b) => b.avgComposite - a.avgComposite);
+  variantTotals.sort((a, b) => b.avgQuality - a.avgQuality);
   const lines: string[] = [];
-  lines.push('## 7. Variant ranking (composite, averaged across models)');
+  lines.push('## 7. Variant ranking (quality, averaged across models)');
   lines.push('');
-  lines.push('| rank | variant | avg composite | n cells |');
+  lines.push('| rank | variant | avg quality | n cells |');
   lines.push('| --- | --- | --- | --- |');
   for (let i = 0; i < variantTotals.length; i++) {
     const t = variantTotals[i]!;
-    lines.push(`| ${i + 1} | \`${t.id}\` | ${fmtPct(t.avgComposite)} | ${t.n} |`);
+    lines.push(`| ${i + 1} | \`${t.id}\` | ${fmtPct(t.avgQuality)} | ${t.n} |`);
   }
   if (r.variantsDominantOnEveryModel.length > 0) {
     lines.push('');
     lines.push(
-      `**Variants strictly ≥ every other variant on every model**: ${r.variantsDominantOnEveryModel
+      `**Variants strictly ≥ every other variant on every model (by quality)**: ${r.variantsDominantOnEveryModel
         .map((id) => `\`${id}\``)
         .join(', ')}`,
     );
@@ -275,7 +282,7 @@ function renderSection9Reproduction(r: BenchmarkResult): string {
     '# 4. Full re-run; diff §3 + §8 vs this baseline',
     '```',
     '',
-    `_Config: runs=${r.config.runs}, speed window=${fmtMs(r.config.speedIdealMs)}/${fmtMs(r.config.speedCeilingMs)}, composite weights=${r.config.compositeWeights.quality}/${r.config.compositeWeights.speed}_`,
+    `_Config: runs=${r.config.runs}, scoring=quality-only (latency reported but not scored — KodaX coding-agent design choice)_`,
   ].join('\n');
 }
 
@@ -318,7 +325,7 @@ export function renderCompactSummary(cell: BenchmarkCellSummary): string {
   return (
     `${cell.variantId}/${cell.alias}: ` +
     `pass=${fmtPct(cell.passRate)}% (±${fmtPct(cell.passRateStdDev)}) ` +
-    `q=${fmtPct(cell.quality)} sp=${fmtPct(cell.speed)} comp=${fmtPct(cell.composite)} ` +
-    `dur=${fmtMs(cell.duration.median)}`
+    `quality=${fmtPct(cell.quality)} ` +
+    `dur=${fmtMs(cell.duration.median)} (informational)`
   );
 }

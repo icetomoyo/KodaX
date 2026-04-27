@@ -46,8 +46,9 @@ tests/prompt-eval/
                   lengthWithin, parseAndAssert, runJudges (decomposed aggregation)
   harness.ts    — runOneShot           (single probe + duration)
                   runABComparison      (lightweight pass/fail matrix; v1)
-                  runBenchmark         (v2: multi-run + variance + speed + decomposed quality + composite)
-                  speedScore           (tolerance-window scoring helper)
+                  runBenchmark         (v2: multi-run + variance + decomposed quality)
+                                       (latency tracked but NOT scored — KodaX is a
+                                        coding agent, quality is the only ranking metric)
   report.ts     — renderBenchmarkReport (9-section markdown)
                   renderCompactSummary  (one-line per cell)
   persist.ts    — writeBenchmarkReport  (results.json + REPORT.md + codes/)
@@ -140,8 +141,14 @@ describe.skipIf(TARGETS.length === 0)('refactor instruction prompt — v1 vs v2'
 ## Pattern 3 — Quantitative benchmark (decision-grade)
 
 For "is v2 STATISTICALLY better than v1, and where exactly?". Uses
-multi-run (n=3 default), per-category scoring, speed tolerance window,
-composite ranking, and full markdown REPORT.md output.
+multi-run (n=3 default), per-category quality scoring, and full
+markdown REPORT.md output.
+
+> **KodaX-specific design choice**: ranking is **quality-only**.
+> Latency is recorded for diagnostics (REPORT.md §5) but does NOT feed
+> into rank or dominance. KodaX is a coding agent — a slow correct
+> answer beats a fast wrong one. Multi-dimensional scoring that combines
+> quality and latency makes sense for interactive UI gen, not here.
 
 ```ts
 import { describe, it, expect } from 'vitest';
@@ -223,7 +230,7 @@ Once you have a benchmark with a baseline:
    pattern doesn't move, the prompt change didn't take. Don't waste a
    full bench run.
 5. **Full re-run**: same scope as baseline.
-6. **Diff REPORT.md A vs B**: §3 (composite) tells you direction; §8
+6. **Diff REPORT.md A vs B**: §3 (quality matrix) tells you direction; §8
    (failure patterns) tells you what specifically moved.
 7. **Watch for regressions**: small assertion regressions on unrelated
    cases are usually noise (±10pp at n=3). Chase only product-relevant ones.
@@ -234,14 +241,13 @@ Once you have a benchmark with a baseline:
   decisions are vulnerable to lucky outputs.
 - **Variance flag** — REPORT.md §6 marks cells with std-dev > 20pp as
   ⚠️ noisy. Bump to n=5+ before treating those as decision-grade.
-- **3-point indistinguishability** — two cells within 3 composite points
+- **3-point indistinguishability** — two cells within 3 quality points
   are statistically indistinguishable at n≤5. The harness doesn't try
   to "rank" them — that's the eval-file caller's call.
-- **Speed window** — 100 at ≤30s, 0 at ≥240s, linear between. NOT
-  linear-from-0 (which would penalize fast models for being fast). Tune
-  the window per workload via `runs.speedIdealMs` / `speedCeilingMs`.
-- **Composite weights** — default 0.85 quality / 0.15 speed favors
-  correctness. Style and speed are necessary but never sufficient.
+- **Quality-only ranking** — for KodaX (a coding agent), correctness
+  is the only thing that matters. Latency is reported (§5) but does
+  not affect rank. If you need a composite that scores both, build it
+  in your eval file from `cell.quality` + `cell.duration` directly.
 
 ## Conventions
 

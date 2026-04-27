@@ -20,11 +20,7 @@ import {
 } from './prompt-eval/aliases.js';
 import {
   formatComparisonTable,
-  speedScore,
   DEFAULT_BENCHMARK_RUNS,
-  DEFAULT_SPEED_IDEAL_MS,
-  DEFAULT_SPEED_CEILING_MS,
-  DEFAULT_COMPOSITE_WEIGHTS,
   type ABComparisonResult,
   type BenchmarkResult,
   type BenchmarkCellSummary,
@@ -302,57 +298,26 @@ describe('FEATURE_104 v2 — judges with category', () => {
 });
 
 // ---------------------------------------------------------------------------
-// FEATURE_104 v2 — speed scoring tolerance window
-// ---------------------------------------------------------------------------
-
-describe('FEATURE_104 v2 — speedScore (anti-pattern 1: not linear from 0)', () => {
-  it('returns 100 when duration is within ideal window', () => {
-    expect(speedScore(0, 30_000, 240_000)).toBe(100);
-    expect(speedScore(15_000, 30_000, 240_000)).toBe(100);
-    expect(speedScore(30_000, 30_000, 240_000)).toBe(100);
-  });
-
-  it('returns 0 when duration is at or past ceiling', () => {
-    expect(speedScore(240_000, 30_000, 240_000)).toBe(0);
-    expect(speedScore(300_000, 30_000, 240_000)).toBe(0);
-    expect(speedScore(999_999, 30_000, 240_000)).toBe(0);
-  });
-
-  it('linearly interpolates between ideal and ceiling', () => {
-    // Halfway between 30s (100) and 240s (0) → 50
-    const halfway = (30_000 + 240_000) / 2;
-    expect(speedScore(halfway, 30_000, 240_000)).toBe(50);
-  });
-
-  it('clamps to [0, 100]', () => {
-    expect(speedScore(-1000, 30_000, 240_000)).toBe(100);
-    expect(speedScore(1_000_000, 30_000, 240_000)).toBe(0);
-  });
-
-  it('handles degenerate ideal >= ceiling gracefully (binary)', () => {
-    expect(speedScore(50, 100, 100)).toBe(100); // duration <= ideal
-    expect(speedScore(150, 100, 100)).toBe(0);  // duration > ideal
-  });
-
-  it('default constants reflect interactive coding-CLI workload', () => {
-    expect(DEFAULT_SPEED_IDEAL_MS).toBe(30_000);
-    expect(DEFAULT_SPEED_CEILING_MS).toBe(240_000);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// FEATURE_104 v2 — defaults match LiveCanvas recipe
+// FEATURE_104 v2 — defaults
+//
+// Note: speed/composite scoring deliberately removed for KodaX. Coding-agent
+// users tolerate near-arbitrary latency for a correct answer; ranking on
+// composite (quality + speed) makes sense for interactive UI gen, not here.
 // ---------------------------------------------------------------------------
 
 describe('FEATURE_104 v2 — benchmark defaults', () => {
   it('default runs is 3 (anti-pattern 4: judging from a single lucky run)', () => {
     expect(DEFAULT_BENCHMARK_RUNS).toBe(3);
   });
+});
 
-  it('default composite weights favor quality 0.85 / speed 0.15', () => {
-    expect(DEFAULT_COMPOSITE_WEIGHTS.quality).toBe(0.85);
-    expect(DEFAULT_COMPOSITE_WEIGHTS.speed).toBe(0.15);
-    expect(DEFAULT_COMPOSITE_WEIGHTS.quality + DEFAULT_COMPOSITE_WEIGHTS.speed).toBeCloseTo(1.0);
+describe('FEATURE_104 v2 — quality-only ranking (KodaX-specific)', () => {
+  it('harness module does NOT export speedScore / DEFAULT_SPEED_*  / DEFAULT_COMPOSITE_WEIGHTS', async () => {
+    const harnessModule = (await import('./prompt-eval/harness.js')) as Record<string, unknown>;
+    expect(harnessModule.speedScore).toBeUndefined();
+    expect(harnessModule.DEFAULT_SPEED_IDEAL_MS).toBeUndefined();
+    expect(harnessModule.DEFAULT_SPEED_CEILING_MS).toBeUndefined();
+    expect(harnessModule.DEFAULT_COMPOSITE_WEIGHTS).toBeUndefined();
   });
 });
 
@@ -367,8 +332,6 @@ function fixtureBenchmarkResult(): BenchmarkResult {
     variantId: string,
     alias: 'zhipu/glm51' | 'ds/v4flash',
     quality: number,
-    speed: number,
-    composite: number,
     correctnessPassed = 2,
   ): BenchmarkCellSummary => ({
     variantId,
@@ -386,8 +349,6 @@ function fixtureBenchmarkResult(): BenchmarkResult {
       correctness: (correctnessPassed / 6) * 100,
     } as BenchmarkCellSummary['qualityByCategory'],
     quality,
-    speed,
-    composite,
     duration: { min: 5000, median: 8000, mean: 9000, p95: 12000, max: 15000 },
     runsRaw: [
       {
@@ -440,10 +401,10 @@ function fixtureBenchmarkResult(): BenchmarkResult {
     ],
     models: ['zhipu/glm51', 'ds/v4flash'],
     cells: [
-      cell('v1', 'zhipu/glm51', 33, 100, 36),
-      cell('v1', 'ds/v4flash', 50, 100, 53),
-      cell('v2', 'zhipu/glm51', 100, 100, 100, 6),
-      cell('v2', 'ds/v4flash', 83, 100, 84, 5),
+      cell('v1', 'zhipu/glm51', 33),
+      cell('v1', 'ds/v4flash', 50),
+      cell('v2', 'zhipu/glm51', 100, 6),
+      cell('v2', 'ds/v4flash', 83, 5),
     ],
     byVariant: {
       v1: [],
@@ -455,12 +416,7 @@ function fixtureBenchmarkResult(): BenchmarkResult {
     },
     variantsDominantOnEveryModel: ['v2'],
     totalSeconds: 120.5,
-    config: {
-      runs: 3,
-      speedIdealMs: 30_000,
-      speedCeilingMs: 240_000,
-      compositeWeights: { quality: 0.85, speed: 0.15 },
-    },
+    config: { runs: 3 },
     startedAt: '2026-04-27T12:34:56.789Z',
   };
 }
@@ -473,7 +429,7 @@ describe('FEATURE_104 v2 — renderBenchmarkReport', () => {
     expect(md).toContain('## 2. Methodology');
     expect(md).toContain('## 3. Score matrix');
     expect(md).toContain('## 4. Quality sub-dimensions');
-    expect(md).toContain('## 5. Time analysis');
+    expect(md).toContain('## 5. Latency observed');
     expect(md).toContain('## 6. Variance');
     expect(md).toContain('## 7. Variant ranking');
     expect(md).toContain('## 8. Assertion failure patterns');
@@ -515,8 +471,22 @@ describe('FEATURE_104 v2 — renderCompactSummary', () => {
     expect(line).toContain(cell.variantId);
     expect(line).toContain(cell.alias);
     expect(line).toContain('pass=');
-    expect(line).toContain('q=');
-    expect(line).toContain('comp=');
+    expect(line).toContain('quality=');
+    expect(line).toContain('informational');
+  });
+});
+
+describe('FEATURE_104 v2 — REPORT.md does not score on speed', () => {
+  it('§5 is "Latency observed" (informational), not "Time analysis" with composite scoring', () => {
+    const md = renderBenchmarkReport(fixtureBenchmarkResult());
+    expect(md).toContain('## 5. Latency observed');
+    expect(md).toContain('informational only');
+    expect(md).not.toContain('Time analysis');
+    // Ranking + score matrix are quality-based, not composite-based.
+    expect(md).toContain('## 3. Score matrix (quality');
+    expect(md).toContain('## 7. Variant ranking (quality');
+    expect(md).not.toMatch(/composite/i);
+    expect(md).not.toMatch(/speed.*window|speedScore/i);
   });
 });
 

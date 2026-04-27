@@ -248,22 +248,35 @@ export function formatComparisonTable(result: ABComparisonResult): string {
 }
 
 // ---------------------------------------------------------------------------
-// FEATURE_104 v2 — Quantitative benchmark (multi-run + variance + speed
-// + decomposed scoring). Drawn from the LiveCanvas prompt benchmark recipe:
+// FEATURE_104 v2 — Quantitative benchmark (multi-run + variance +
+// decomposed scoring). Adapted from the LiveCanvas prompt benchmark recipe
+// with one deliberate divergence:
+//
+//   **Quality is the only scoring metric. Speed is NOT scored.**
+//
+// LiveCanvas scores (quality, speed, composite) because it's an interactive
+// UI generator — users wait for the answer, and a slow-but-correct
+// provider has worse UX than a fast-good one. KodaX is a coding agent:
+// the user pushes Enter and goes to lunch; a slow-but-correct provider
+// is strictly better than a fast-but-wrong one. So the LiveCanvas
+// composite formula does not transplant. Quality-only ranking is the
+// right primitive.
+//
+// `durationMs` is still tracked per run as **diagnostic** info (spotting
+// a provider that hangs for 10 minutes is still useful) and surfaced in
+// REPORT.md §5 "Latency observed (informational, not scored)" — but it
+// does not feed into rank, dominance, or any cell score.
+//
+// What v2 keeps from the recipe:
 //
 // 1. n=3 minimum runs per cell — n=1 is anti-pattern 4 ("judging from a
 //    single lucky run"). Std-dev of pass rate across runs surfaces noisy
-//    providers; "two competitors within 3 composite points are
+//    providers; "two competitors within 3 quality points are
 //    statistically indistinguishable at this sample size".
 // 2. Decomposed quality (format / correctness / style / safety) — anti-
 //    pattern 2 ("scoring style without correctness"). Per-category pass
 //    rates show WHY a variant wins.
-// 3. Speed scoring with tolerance window — anti-pattern 1 ("speed scored
-//    linearly from 0"). 100 if duration ≤ idealMs; 0 if ≥ ceilingMs;
-//    linear in between.
-// 4. Composite = qualityWeight × quality + speedWeight × speed.
-//    Default 0.85/0.15 favors correctness over speed (per recipe:
-//    "Style is necessary but never sufficient").
+// 3. Persisted raw outputs (anti-pattern 3) — see `./persist.ts`.
 //
 // `runBenchmark` returns a structured result with all numbers; rendering
 // to markdown REPORT.md lives in `report.ts` (separate file so eval cases
@@ -272,16 +285,6 @@ export function formatComparisonTable(result: ABComparisonResult): string {
 
 /** Default n=3 runs per cell — minimum for variance to be meaningful. */
 export const DEFAULT_BENCHMARK_RUNS = 3;
-
-/**
- * Default speed scoring window: 100 at ≤ 30s, 0 at ≥ 240s, linear between.
- * Tuned for interactive coding-CLI workloads. Eval cases can override.
- */
-export const DEFAULT_SPEED_IDEAL_MS = 30_000;
-export const DEFAULT_SPEED_CEILING_MS = 240_000;
-
-/** Default composite weights: 0.85 quality / 0.15 speed (correctness > speed). */
-export const DEFAULT_COMPOSITE_WEIGHTS = Object.freeze({ quality: 0.85, speed: 0.15 });
 
 export interface BenchmarkRunCell {
   readonly variantId: string;
@@ -313,20 +316,21 @@ export interface BenchmarkCellSummary {
   readonly runs: number;
   /** Runs that completed without provider error. */
   readonly completed: number;
-  /** 0-100. (passedRuns / completedRuns) × 100. NaN-safe = 0 when completed=0. */
+  /** 0-100. (passedRuns / runs) × 100. */
   readonly passRate: number;
-  /** Std-dev of per-run pass-or-fail (0/1). Higher = noisier provider. */
+  /** Std-dev of per-run pass-or-fail (0/1) × 100. Higher = noisier provider. */
   readonly passRateStdDev: number;
   /** Per-category pass count / total count, summed across runs. */
   readonly byCategory: Readonly<Record<JudgeCategory, { passed: number; total: number }>>;
   /** Per-category pass rate (0-100), summed across runs. */
   readonly qualityByCategory: Readonly<Record<JudgeCategory, number>>;
-  /** 0-100 quality score (overall pass rate, gated by format). */
+  /**
+   * 0-100 quality score (overall pass rate, gated by format). This is the
+   * single ranking metric — `variantsDominantOnEveryModel` is computed on
+   * this value alone.
+   */
   readonly quality: number;
-  /** 0-100 speed score from tolerance window. */
-  readonly speed: number;
-  /** Weighted composite. */
-  readonly composite: number;
+  /** Per-run duration stats. **Informational only — not part of any score.** */
   readonly duration: DurationStats;
   readonly runsRaw: readonly BenchmarkRunCell[];
 }
@@ -337,11 +341,6 @@ export interface BenchmarkRunInput {
   readonly judges: readonly PromptJudge[];
   /** Number of runs per cell. Defaults to DEFAULT_BENCHMARK_RUNS (3). */
   readonly runs?: number;
-  /** Speed-scoring window. Defaults to ideal=30s / ceiling=240s. */
-  readonly speedIdealMs?: number;
-  readonly speedCeilingMs?: number;
-  /** Composite weights. Defaults to 0.85 quality / 0.15 speed. */
-  readonly compositeWeights?: { quality: number; speed: number };
 }
 
 export interface BenchmarkResult {
@@ -352,16 +351,13 @@ export interface BenchmarkResult {
   readonly byVariant: Readonly<Record<string, readonly BenchmarkCellSummary[]>>;
   /** Model alias → cells for that model (one per variant). */
   readonly byModel: Readonly<Record<string, readonly BenchmarkCellSummary[]>>;
-  /** Variants whose composite >= every other variant on every model. */
+  /** Variants whose `quality` >= every other variant on every model. */
   readonly variantsDominantOnEveryModel: readonly string[];
-  /** Total wall-clock seconds end-to-end (sequential). */
+  /** Total wall-clock seconds end-to-end (sequential). Diagnostic only. */
   readonly totalSeconds: number;
   /** Run config snapshot (for reports + reproducibility). */
   readonly config: {
     readonly runs: number;
-    readonly speedIdealMs: number;
-    readonly speedCeilingMs: number;
-    readonly compositeWeights: { quality: number; speed: number };
   };
   /** ISO timestamp of run start, for persistence + reproduction. */
   readonly startedAt: string;
@@ -392,19 +388,6 @@ function stdDev(values: readonly number[]): number {
   return Math.sqrt(variance);
 }
 
-/** 100 if ≤ ideal, 0 if ≥ ceiling, linear between. Clamped to [0, 100]. */
-export function speedScore(
-  durationMs: number,
-  idealMs: number,
-  ceilingMs: number,
-): number {
-  if (idealMs >= ceilingMs) return durationMs <= idealMs ? 100 : 0;
-  if (durationMs <= idealMs) return 100;
-  if (durationMs >= ceilingMs) return 0;
-  const span = ceilingMs - idealMs;
-  return Math.max(0, Math.min(100, 100 * (1 - (durationMs - idealMs) / span)));
-}
-
 /**
  * Run the full N×M×K benchmark matrix and aggregate. Returns a structured
  * BenchmarkResult that callers can pass to `writeBenchmarkReport` (in
@@ -417,9 +400,6 @@ export function speedScore(
  */
 export async function runBenchmark(input: BenchmarkRunInput): Promise<BenchmarkResult> {
   const runs = input.runs ?? DEFAULT_BENCHMARK_RUNS;
-  const idealMs = input.speedIdealMs ?? DEFAULT_SPEED_IDEAL_MS;
-  const ceilingMs = input.speedCeilingMs ?? DEFAULT_SPEED_CEILING_MS;
-  const weights = input.compositeWeights ?? DEFAULT_COMPOSITE_WEIGHTS;
 
   const startedAt = new Date().toISOString();
   const startedAtMs = Date.now();
@@ -508,17 +488,10 @@ export async function runBenchmark(input: BenchmarkRunInput): Promise<BenchmarkR
         : 100;
       const quality = formatRate < 100 ? formatRate * (passRate / 100) : passRate;
 
-      // Speed: average of per-run speed scores across COMPLETED runs.
-      // Failed runs don't contribute (they're already 0-quality so speed is moot).
+      // Duration stats from completed runs only (failed = no signal).
+      // Diagnostic only — does NOT feed into ranking. KodaX is a coding
+      // agent: a slow correct answer is strictly better than a fast wrong one.
       const completedDurations = completedRuns.map((r) => r.durationMs);
-      const speed =
-        completed === 0
-          ? 0
-          : completedDurations.reduce((s, d) => s + speedScore(d, idealMs, ceilingMs), 0) /
-            completed;
-      const composite = weights.quality * quality + weights.speed * speed;
-
-      // Duration stats from completed runs only (failed = no signal)
       const sortedDur = [...completedDurations].sort((a, b) => a - b);
       const meanDur =
         completed === 0 ? 0 : completedDurations.reduce((s, d) => s + d, 0) / completed;
@@ -540,8 +513,6 @@ export async function runBenchmark(input: BenchmarkRunInput): Promise<BenchmarkR
         byCategory,
         qualityByCategory,
         quality,
-        speed,
-        composite,
         duration,
         runsRaw,
       });
@@ -555,8 +526,9 @@ export async function runBenchmark(input: BenchmarkRunInput): Promise<BenchmarkR
     (byModel[c.alias] ??= []).push(c);
   }
 
-  // "Dominant on every model" = for every model, this variant has composite
+  // "Dominant on every model" = for every model, this variant has quality
   // >= every other variant. Useful for "is v2 strictly ≥ v1 across the board?"
+  // Quality is the single ranking metric — speed is informational only.
   const variantsDominantOnEveryModel: string[] = [];
   for (const variant of input.variants) {
     const dominantEverywhere = input.models.every((alias) => {
@@ -566,7 +538,7 @@ export async function runBenchmark(input: BenchmarkRunInput): Promise<BenchmarkR
         if (other.id === variant.id) return true;
         const otherCell = cells.find((c) => c.variantId === other.id && c.alias === alias);
         if (!otherCell) return true;
-        return myCell.composite >= otherCell.composite;
+        return myCell.quality >= otherCell.quality;
       });
     });
     if (dominantEverywhere) variantsDominantOnEveryModel.push(variant.id);
@@ -582,12 +554,7 @@ export async function runBenchmark(input: BenchmarkRunInput): Promise<BenchmarkR
     byModel,
     variantsDominantOnEveryModel,
     totalSeconds,
-    config: {
-      runs,
-      speedIdealMs: idealMs,
-      speedCeilingMs: ceilingMs,
-      compositeWeights: weights,
-    },
+    config: { runs },
     startedAt,
   };
 }
