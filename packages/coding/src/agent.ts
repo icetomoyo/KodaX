@@ -1108,8 +1108,34 @@ export async function runKodaX(
         });
         events.onComplete?.();
         await emitActiveExtensionEvent('complete', { success: true, signal: undefined });
-        // limitReached 保持 false（初始值）
-        break;
+        // CAP-085 (clean-exit variant): natural completion path. We still
+        // run the iter-terminal helper so the final snapshot save + signal
+        // extraction match the pre-FEATURE_100 byte-for-byte behavior, but
+        // return with `limitReached: false` — this is a model-driven
+        // completion, NOT iteration-budget exhaustion. Without the explicit
+        // `false` flag, downstream `scout-signals.ts` would mis-tag this as
+        // 'budget-exhausted'.
+        {
+          const iterTerminal = await applyIterationLimitTerminal({
+            options,
+            sessionId,
+            messages,
+            title,
+            runtimeSessionState,
+            lastText,
+          });
+          return finalizeManagedProtocolResult({
+            success: true,
+            lastText,
+            signal: iterTerminal.finalSignal,
+            signalReason: iterTerminal.finalReason,
+            messages,
+            sessionId,
+            routingDecision: currentRoutingDecision(),
+            contextTokenSnapshot,
+            limitReached: false,
+          });
+        }
       }
 
       // CAP-072: incomplete-tool-call truncation retry. Single-shot-then-degrade
@@ -1234,7 +1260,33 @@ export async function runKodaX(
         });
         events.onComplete?.();
         await emitActiveExtensionEvent('complete', { success: true, signal: undefined });
-        break;
+        // CAP-085 (clean-exit variant): natural completion path after a
+        // tool turn returned no tool_use blocks. Same routing as the
+        // text-only break above — run the iter-terminal helper for
+        // snapshot save + signal extraction, return with
+        // `limitReached: false` so downstream `scout-signals.ts` does NOT
+        // mis-tag this as 'budget-exhausted'.
+        {
+          const iterTerminal = await applyIterationLimitTerminal({
+            options,
+            sessionId,
+            messages,
+            title,
+            runtimeSessionState,
+            lastText,
+          });
+          return finalizeManagedProtocolResult({
+            success: true,
+            lastText,
+            signal: iterTerminal.finalSignal,
+            signalReason: iterTerminal.finalReason,
+            messages,
+            sessionId,
+            routingDecision: currentRoutingDecision(),
+            contextTokenSnapshot,
+            limitReached: false,
+          });
+        }
       }
 
       if (hasCancellation) {
@@ -1418,11 +1470,15 @@ export async function runKodaX(
     }
   }
 
-  // CAP-085: iteration-limit terminal — natural for-loop exit.
+  // CAP-085: iteration-limit terminal — natural for-loop exhaustion.
   // Runs the final snapshot save + signal extraction; the caller wraps
-  // with `finalizeManagedProtocolResult` and returns. `limitReached`
-  // is unconditional `true` here (this is the only call site for the
-  // terminal).
+  // with `finalizeManagedProtocolResult` and returns with
+  // `limitReached: true`. This branch is reached ONLY when every iter
+  // is consumed without an early `return`. The two model-driven
+  // completion paths (text-only turn, tools-with-no-results turn) also
+  // call `applyIterationLimitTerminal` to preserve the snapshot+signal
+  // side effects byte-for-byte, but return with `limitReached: false`
+  // — see the call sites above guarded by `events.onComplete?.()`.
   const iterTerminal = await applyIterationLimitTerminal({
     options,
     sessionId,

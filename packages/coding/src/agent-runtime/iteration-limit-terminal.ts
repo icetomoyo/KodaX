@@ -3,29 +3,30 @@
  *
  * Capability inventory: docs/features/v0.7.29-capability-inventory.md#cap-085-iteration-limit-terminal
  *
- * Class 1 (substrate). The natural-completion terminal — fires only
- * when the turn loop runs all `maxIter` iterations without an early
- * break (no COMPLETE signal, no interrupt, no error). Performs:
+ * Class 1 (substrate). Side-effect helper that runs the standard
+ * end-of-turn finalization regardless of whether the exit is a genuine
+ * iteration-budget exhaustion or a model-driven clean completion.
+ * Performs:
  *
  *   1. Final session snapshot save (CAP-011 calling site).
  *   2. Promise-signal extraction from `lastText` via `checkPromiseSignal`
  *      (CAP-039 calling site) — surfaces COMPLETE/BLOCKED/DECIDE if
- *      the model hinted at one in its closing message even though the
- *      loop ran out of iterations.
+ *      the model hinted at one in its closing message.
  *
  * Returns the data the caller needs to assemble the final
- * `KodaXResult` with `success: true, limitReached: true`. The caller
- * is responsible for the `finalizeManagedProtocolResult` wrap (closure
- * over `emittedManagedProtocolPayload`) and the actual return.
- *
- * Time-ordering constraint: ONLY reached on natural `for` loop exit;
- * AFTER all turns consumed without an early break.
+ * `KodaXResult`. The caller decides `limitReached`:
+ *   - `true` for the post-loop natural-exhaustion branch (every iter
+ *     consumed without an early `return`).
+ *   - `false` for the two model-driven completion paths (text-only
+ *     turn and tools-with-no-results turn) — these are NOT
+ *     budget-exhaustion and must not be tagged as such.
  *
  * Migration history: extracted from `agent.ts:1422-1432` — pre-FEATURE_100
- * baseline — during FEATURE_100 P3.5c. The `let limitReached` toggle is
- * folded: callers of this helper set the flag literal `true` at the
- * single use site since the iteration-limit branch is the only place
- * the terminal fires.
+ * baseline — during FEATURE_100 P3.5c. Two additional call sites added
+ * during the P3.5 verify-fixes pass to fix the `break`-fallthrough bug
+ * (clean-completion exits were getting `limitReached: true` and
+ * downstream `scout-signals.ts` was misclassifying them as
+ * 'budget-exhausted').
  */
 
 import type { KodaXMessage } from '@kodax/ai';
