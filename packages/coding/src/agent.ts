@@ -67,10 +67,6 @@ import {
   reasoningModeToDepth,
   type ReasoningPlan,
 } from './reasoning.js';
-import {
-  buildProviderPolicyPromptNotes,
-  evaluateProviderPolicy,
-} from './provider-policy.js';
 import { resolveExecutionCwd, resolveExecutionPath } from './runtime-paths.js';
 import {
   getRepoRoutingSignals,
@@ -106,6 +102,7 @@ import {
 import { resolvePerTurnProvider } from './agent-runtime/per-turn-provider-resolution.js';
 import { resolvePerTurnReasoning } from './agent-runtime/per-turn-reasoning.js';
 import { buildStreamTimers } from './agent-runtime/stream-timers.js';
+import { applyProviderPolicyGate } from './agent-runtime/provider-policy-gate.js';
 import { describeTransientProviderRetry } from './agent-runtime/provider-retry-policy.js';
 import {
   isCancelledToolResultContent,
@@ -763,26 +760,19 @@ export async function runKodaX(
       };
 
       const streamProvider = resolveProvider(currentProviderName);
-      const providerPolicy = evaluateProviderPolicy({
+      // CAP-064: provider-policy gate — throws on block status, produces
+      // the effective system prompt with any policy issue notes appended.
+      const { effectiveSystemPrompt } = applyProviderPolicyGate({
         providerName: currentProviderName,
         model: currentModelOverride,
         provider: streamProvider,
         prompt,
-        options: currentExecution.effectiveOptions,
-        context: currentExecution.effectiveOptions.context,
+        effectiveOptions: currentExecution.effectiveOptions,
         reasoningMode: effectiveProviderReasoningMode,
         taskType: effectiveReasoningPlan.decision.primaryTask,
         executionMode: effectiveReasoningPlan.decision.recommendedMode,
+        baseSystemPrompt: preparedProviderState.systemPrompt,
       });
-      if (providerPolicy.status === 'block') {
-        throw new Error(`[Provider Policy] ${providerPolicy.summary}`);
-      }
-      const effectiveSystemPrompt = providerPolicy.issues.length > 0
-        ? [
-          preparedProviderState.systemPrompt,
-          buildProviderPolicyPromptNotes(providerPolicy).join('\n'),
-        ].join('\n\n')
-        : preparedProviderState.systemPrompt;
       if (!streamProvider.isConfigured()) {
         throw new Error(
           `Provider "${currentProviderName}" not configured. Set ${streamProvider.getApiKeyEnv()}`,
