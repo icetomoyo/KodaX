@@ -2,7 +2,7 @@
  * FEATURE_104 v2 — Persistence layer for `BenchmarkResult`.
  *
  * Writes a full bench run to disk under
- * `tests/prompt-eval/__results__/<ISO-timestamp>/`:
+ * `benchmark/results/<ISO-timestamp>/`:
  *
  *   results.json       Full BenchmarkResult JSON (programmatic re-load).
  *   REPORT.md          Human-readable markdown (renderBenchmarkReport).
@@ -14,10 +14,11 @@
  * actually do differently before vs after the prompt change", only
  * compare aggregate scores. Persistence makes the bench instrumentable.
  *
- * The `__results__/` directory is git-ignored by repo policy (see
- * `tests/prompt-eval/__results__/.gitignore`), so committing a results
- * snapshot is opt-in (e.g. as a regression baseline alongside a prompt
- * change PR).
+ * The `benchmark/results/` directory is git-ignored by repo policy
+ * (see `benchmark/results/.gitignore`), so committing a results
+ * snapshot is opt-in (e.g. as a regression baseline alongside a
+ * prompt-change PR). The convention docs (`benchmark/README.md`) and
+ * datasets (`benchmark/datasets/`) ARE version-tracked.
  */
 
 import { promises as fs } from 'fs';
@@ -26,12 +27,7 @@ import path from 'path';
 import type { BenchmarkResult } from './harness.js';
 import { renderBenchmarkReport } from './report.js';
 
-const DEFAULT_RESULTS_ROOT = path.join(
-  process.cwd(),
-  'tests',
-  'prompt-eval',
-  '__results__',
-);
+const DEFAULT_RESULTS_ROOT = path.join(process.cwd(), 'benchmark', 'results');
 
 function timestampSlug(iso: string): string {
   // Replace ':' / '.' so the path is filesystem-safe across Windows / mac / linux.
@@ -46,7 +42,7 @@ function safeFilename(...parts: string[]): string {
 }
 
 export interface PersistOptions {
-  /** Directory to write under. Defaults to `tests/prompt-eval/__results__/<timestamp>/`. */
+  /** Directory to write under. Defaults to `benchmark/results/<timestamp>/`. */
   readonly outDir?: string;
   /** Override timestamp slug — useful for tests that need deterministic paths. */
   readonly timestampSlug?: string;

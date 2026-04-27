@@ -17,7 +17,7 @@ import {
   MODEL_ALIASES,
   resolveAlias,
   type ModelAlias,
-} from './prompt-eval/aliases.js';
+} from './aliases.js';
 import {
   formatComparisonTable,
   DEFAULT_BENCHMARK_RUNS,
@@ -25,7 +25,7 @@ import {
   type BenchmarkResult,
   type BenchmarkCellSummary,
   type VariantOutcome,
-} from './prompt-eval/harness.js';
+} from './harness.js';
 import {
   lengthWithin,
   mustContainAll,
@@ -36,12 +36,12 @@ import {
   parseAndAssert,
   runJudges,
   type PromptJudge,
-} from './prompt-eval/judges.js';
+} from './judges.js';
 import {
   renderBenchmarkReport,
   renderCompactSummary,
-} from './prompt-eval/report.js';
-import { readBenchmarkResult, writeBenchmarkReport } from './prompt-eval/persist.js';
+} from './report.js';
+import { readBenchmarkResult, writeBenchmarkReport } from './persist.js';
 import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
@@ -313,7 +313,7 @@ describe('FEATURE_104 v2 — benchmark defaults', () => {
 
 describe('FEATURE_104 v2 — quality-only ranking (KodaX-specific)', () => {
   it('harness module does NOT export speedScore / DEFAULT_SPEED_*  / DEFAULT_COMPOSITE_WEIGHTS', async () => {
-    const harnessModule = (await import('./prompt-eval/harness.js')) as Record<string, unknown>;
+    const harnessModule = (await import('./harness.js')) as Record<string, unknown>;
     expect(harnessModule.speedScore).toBeUndefined();
     expect(harnessModule.DEFAULT_SPEED_IDEAL_MS).toBeUndefined();
     expect(harnessModule.DEFAULT_SPEED_CEILING_MS).toBeUndefined();

@@ -38,6 +38,9 @@ export default defineConfig({
       'src/**/*.test.tsx',
       'tests/**/*.test.ts',
       'tests/**/*.test.tsx',
+      // FEATURE_104 prompt-eval harness self-test (zero-LLM unit tests).
+      // Benchmark module + datasets + gitignored run results live under benchmark/.
+      'benchmark/**/*.test.ts',
     ],
   },
 });

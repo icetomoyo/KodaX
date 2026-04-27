@@ -39,25 +39,32 @@ A typical local run uses 1-3 of the 8 supported coding-plan providers.
 ## Module layout
 
 ```
-tests/prompt-eval/
-  aliases.ts    — short alias map: 'zhipu/glm51' → { provider, model, apiKeyEnv }
-  judges.ts     — reusable judges with categories: format / correctness / style / safety / custom
-                  factories: mustContainAll/Any, mustNotContain, mustMatch/NotMatch,
-                  lengthWithin, parseAndAssert, runJudges (decomposed aggregation)
-  harness.ts    — runOneShot           (single probe + duration)
-                  runABComparison      (lightweight pass/fail matrix; v1)
-                  runBenchmark         (v2: multi-run + variance + decomposed quality)
-                                       (latency tracked but NOT scored — KodaX is a
-                                        coding agent, quality is the only ranking metric)
-  report.ts     — renderBenchmarkReport (9-section markdown)
-                  renderCompactSummary  (one-line per cell)
-  persist.ts    — writeBenchmarkReport  (results.json + REPORT.md + codes/)
-                  readBenchmarkResult   (round-trip for baseline diffs)
-  __results__/  — git-ignored output directory; persist target
+benchmark/                    Top-level folder for everything benchmark-related.
+  README.md                   This file. Convention guide + KodaX-vs-LiveCanvas rationale.
+  harness/                    Code modules. Version-tracked.
+    aliases.ts                Short alias map: 'zhipu/glm51' → { provider, model, apiKeyEnv }
+    judges.ts                 Reusable judges with categories: format / correctness / style / safety / custom
+                              Factories: mustContainAll/Any, mustNotContain, mustMatch/NotMatch,
+                              lengthWithin, parseAndAssert, runJudges (decomposed aggregation)
+    harness.ts                runOneShot           (single probe + duration)
+                              runABComparison      (lightweight pass/fail matrix; v1)
+                              runBenchmark         (v2: multi-run + variance + decomposed quality)
+                                                   (latency tracked but NOT scored — KodaX is a
+                                                    coding agent, quality is the only ranking metric)
+    report.ts                 renderBenchmarkReport (9-section markdown)
+                              renderCompactSummary  (one-line per cell)
+    persist.ts                writeBenchmarkReport  (results.json + REPORT.md + codes/)
+                              readBenchmarkResult   (round-trip for baseline diffs)
+    self-test.test.ts         Zero-LLM unit tests; runs in default `npm test`
+  datasets/                   Test cases + golden inputs. Version-tracked.
+    README.md                 How to author a dataset
+    <dataset-id>/             Self-contained scenario folder (added opportunistically)
+  results/                    Run output. **NOT version-tracked** (.gitignore).
+                              Persisted runs land here as benchmark/results/<ISO-timestamp>/
 ```
 
-Eval cases themselves live at `tests/<topic>.eval.ts` (existing convention,
-not changed). They import from `tests/prompt-eval/*` for shared helpers.
+Eval test files (`tests/*.eval.ts`) live in the standard `tests/` directory
+and import from `../benchmark/harness/*` for shared helpers.
 
 ## Provider/model alias scheme
 
@@ -86,8 +93,8 @@ For cases where the eval owns its scoring logic:
 
 ```ts
 import { describe, it, expect } from 'vitest';
-import { availableAliases } from './prompt-eval/aliases.js';
-import { runOneShot } from './prompt-eval/harness.js';
+import { availableAliases } from '../benchmark/harness/aliases.js';
+import { runOneShot } from '../benchmark/harness/harness.js';
 
 const TARGETS = availableAliases('zhipu/glm51', 'ds/v4flash');
 
@@ -111,9 +118,9 @@ For a quick "does prompt v2 beat v1?" check (single run, flat pass/fail):
 
 ```ts
 import { describe, it, expect } from 'vitest';
-import { availableAliases } from './prompt-eval/aliases.js';
-import { runABComparison, formatComparisonTable } from './prompt-eval/harness.js';
-import { mustContainAll, mustNotMatch } from './prompt-eval/judges.js';
+import { availableAliases } from '../benchmark/harness/aliases.js';
+import { runABComparison, formatComparisonTable } from '../benchmark/harness/harness.js';
+import { mustContainAll, mustNotMatch } from '../benchmark/harness/judges.js';
 
 const TARGETS = availableAliases('zhipu/glm51', 'mmx/m27', 'ds/v4flash');
 
@@ -152,15 +159,15 @@ markdown REPORT.md output.
 
 ```ts
 import { describe, it, expect } from 'vitest';
-import { availableAliases } from './prompt-eval/aliases.js';
-import { runBenchmark } from './prompt-eval/harness.js';
-import { writeBenchmarkReport } from './prompt-eval/persist.js';
+import { availableAliases } from '../benchmark/harness/aliases.js';
+import { runBenchmark } from '../benchmark/harness/harness.js';
+import { writeBenchmarkReport } from '../benchmark/harness/persist.js';
 import {
   mustContainAll,
   mustMatch,
   mustNotMatch,
   type PromptJudge,
-} from './prompt-eval/judges.js';
+} from '../benchmark/harness/judges.js';
 
 const TARGETS = availableAliases('zhipu/glm51', 'mmx/m27', 'ds/v4flash');
 
@@ -189,7 +196,7 @@ describe.skipIf(TARGETS.length === 0)('refactor prompt v1 vs v2 — benchmark', 
     });
 
     // Persist for diffing later. Snapshot directory under
-    // tests/prompt-eval/__results__/<timestamp>/. Commit-or-not is
+    // benchmark/results/<timestamp>/. Commit-or-not is
     // your call (gitignored by default).
     const persisted = await writeBenchmarkReport(result);
     console.log(`REPORT: ${persisted.reportMdPath}`);

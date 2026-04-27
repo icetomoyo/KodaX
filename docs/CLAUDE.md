@@ -194,8 +194,8 @@ npm run start        # Production mode
 ### Prompt Eval (FEATURE_104, v0.7.29)
 
 Any change that touches **LLM-facing prompt content** must include a
-prompt-eval case under `tests/*.eval.ts` using the
-`tests/prompt-eval/` harness (`aliases.ts` + `judges.ts` + `harness.ts`).
+prompt-eval case under `tests/*.eval.ts` using the `benchmark/harness/`
+module (`aliases.ts` + `judges.ts` + `harness.ts` + `report.ts` + `persist.ts`).
 
 **Triggers** (must add/update an eval):
 - `packages/coding/src/agent-runtime/system-prompt-*.ts`
@@ -209,8 +209,13 @@ prompt-eval case under `tests/*.eval.ts` using the
 - Routing / dispatcher logic (no prompt content change)
 - Compaction / session persistence infrastructure
 
-**Run**: `npm run test:eval` (skips when API keys absent). See
-`tests/prompt-eval/README.md` for the convention guide and patterns.
+**Run**: `npm run test:eval` (skips when API keys absent).
+
+**Folder layout** (FEATURE_104 v2 restructure):
+- `benchmark/README.md` — convention guide + patterns + statistical caveats
+- `benchmark/harness/` — code modules + zero-LLM self-test (version-tracked)
+- `benchmark/datasets/` — test cases / golden inputs (version-tracked)
+- `benchmark/results/` — run outputs (**NOT** version-tracked)
 5. Refactor (IMPROVE)
 
 ## **CRITICAL** Forbidden Items
