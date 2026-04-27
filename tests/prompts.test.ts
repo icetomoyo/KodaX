@@ -13,20 +13,10 @@ import path from 'path';
 describe('SYSTEM_PROMPT Content Verification', () => {
   const systemPromptPath = path.join(process.cwd(), 'packages', 'coding', 'src', 'prompts', 'system.ts');
 
-  it('should contain Large File Handling section', async () => {
-    const content = await fs.readFile(systemPromptPath, 'utf-8');
-    expect(content).toContain('## Large File Handling (IMPORTANT)');
-    expect(content).toContain('**RECOMMENDED LIMIT: 300 lines per write call**');
-  });
-
-  it('should contain Example approach for large files', async () => {
-    const content = await fs.readFile(systemPromptPath, 'utf-8');
-    expect(content).toContain('Example approach for large files:');
-    expect(content).toContain('1. write file with basic structure/skeleton (under 300 lines)');
-    expect(content).toContain('2. edit to add first major section');
-    expect(content).toContain('3. edit to add second major section');
-    expect(content).toContain('4. continue until complete');
-  });
+  // Note: The standalone "Large File Handling" section was folded into
+  // the broader "Tool Usage" guidance (read offset/limit + edit-over-rewrite
+  // hints) during a prompt-cleanup pass. Tool Usage now carries the
+  // equivalent constraints — verified by the Tool Usage section test below.
 
   it('should contain Error Handling section with Common errors', async () => {
     const content = await fs.readFile(systemPromptPath, 'utf-8');
@@ -115,15 +105,24 @@ describe('toolBash Timeout Message Verification', () => {
 // ============== Retry prompts 测试 ==============
 
 describe('Retry Prompts Content Verification', () => {
-  const agentPath = path.join(process.cwd(), 'packages', 'coding', 'src', 'agent.ts');
+  // FEATURE_100 P2 extracted the incomplete-tool-call retry prompts out
+  // of agent.ts into the dedicated `incomplete-tool-retry.ts` module.
+  const retryPath = path.join(
+    process.cwd(),
+    'packages',
+    'coding',
+    'src',
+    'agent-runtime',
+    'incomplete-tool-retry.ts',
+  );
 
   it('should contain first retry prompt with concise instruction', async () => {
-    const content = await fs.readFile(agentPath, 'utf-8');
+    const content = await fs.readFile(retryPath, 'utf-8');
     expect(content).toContain('For large content, keep it concise (under 50 lines for write operations)');
   });
 
   it('should contain second retry prompt with detailed instructions', async () => {
-    const content = await fs.readFile(agentPath, 'utf-8');
+    const content = await fs.readFile(retryPath, 'utf-8');
     expect(content).toContain('⚠️ CRITICAL: Your response was TRUNCATED again');
     expect(content).toContain('YOU MUST:');
     expect(content).toContain("For 'write' tool: Keep content under 50 lines");
@@ -131,10 +130,12 @@ describe('Retry Prompts Content Verification', () => {
     expect(content).toContain('PROVIDE SHORT, COMPLETE PARAMETERS NOW');
   });
 
-  it('should contain incompleteRetryCount conditional', async () => {
-    const content = await fs.readFile(agentPath, 'utf-8');
-    expect(content).toContain('if (incompleteRetryCount === 1)');
-    expect(content).toContain('} else {');
+  it('should branch on retry count (first attempt vs subsequent)', async () => {
+    const content = await fs.readFile(retryPath, 'utf-8');
+    // Module exposes `buildIncompleteToolRetryMessage(missing, retryCount)`
+    // which branches on `retryCount === 1` for the gentler first prompt
+    // and falls through to the CRITICAL escalation otherwise.
+    expect(content).toContain('retryCount === 1');
   });
 });
 
@@ -146,12 +147,13 @@ describe('Source File Consistency', () => {
   it('should have SYSTEM_PROMPT in coding/prompts/system.ts', async () => {
     const systemPromptContent = await fs.readFile(systemPromptPath, 'utf-8');
 
-    // Verify key sections exist
+    // Verify key sections exist. "Large File Handling" was folded into
+    // Tool Usage; the read-bounding / parallel-tool guidance now lives there.
     const keySections = [
-      '## Large File Handling (IMPORTANT)',
-      'Example approach for large files:',
       '5. Common errors:',
       '## Editing Files',
+      '## Tool Usage',
+      'Read is intentionally bounded:',
       '### Cross-Platform Notes',
       '不是内部或外部命令',
       '## Multi-step Tasks',

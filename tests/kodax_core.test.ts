@@ -113,7 +113,10 @@ describe('Core Module Exports', () => {
 
   it('should export KODAX_TOOLS array', () => {
     expect(Array.isArray(KODAX_TOOLS)).toBe(true);
-    expect(KODAX_TOOLS.length).toBe(30);
+    // Tool count grew with each FEATURE adding domain-specific tools
+    // (worktree mgmt, dispatch_child_task v2, plan-mode tools, etc.).
+    // The minimum guarantee is the full v0.7.x core tool surface.
+    expect(KODAX_TOOLS.length).toBeGreaterThanOrEqual(30);
   });
 
   it('should export getRequiredToolParams', () => {
@@ -385,9 +388,12 @@ describe('Tool Definitions', () => {
 // ============== Provider 测试 ==============
 
 describe('Provider System', () => {
-  it('should have 11 providers', () => {
+  it('should have at least the v0.7.0 baseline of 11 providers', () => {
     const providerCount = Object.keys(KODAX_PROVIDERS).length;
-    expect(providerCount).toBe(11);
+    // FEATURE_099 (v0.7.28) added DeepSeek V4 + ark-coding (Volcengine
+    // Ark Coding Plan); future provider catalog refreshes will continue
+    // to grow this count. The minimum guarantee is the original 11.
+    expect(providerCount).toBeGreaterThanOrEqual(11);
   });
 
   it('should throw error for unknown provider', () => {
