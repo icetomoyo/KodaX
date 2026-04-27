@@ -38,7 +38,7 @@ import {
 import { generateSessionId, extractTitleFromMessages } from './session.js';
 // FEATURE_076 Q4: load-time normalization for pre-v0.7.25 session messages.
 import { normalizeLoadedSessionMessages } from './task-engine/_internal/round-boundary.js';
-import { compact as intelligentCompact, microcompact, DEFAULT_MICROCOMPACTION_CONFIG, buildPostCompactAttachments, buildFileContentMessages, injectPostCompactAttachments, DEFAULT_POST_COMPACT_CONFIG, POST_COMPACT_TOKEN_BUDGET, type CompactionConfig, type CompactionUpdate } from '@kodax/agent';
+import { compact as intelligentCompact, microcompact, DEFAULT_MICROCOMPACTION_CONFIG, type CompactionConfig, type CompactionUpdate } from '@kodax/agent';
 import { loadCompactionConfig } from './compaction-config.js';
 import { estimateTokens } from './tokenizer.js';
 import { KODAX_MAX_MAXTOKENS_RETRIES } from './constants.js';
@@ -117,6 +117,7 @@ import {
 } from './agent-runtime/tool-resolution.js';
 import { gracefulCompactDegradation } from './agent-runtime/compaction-fallback.js';
 import { shouldCompact } from './agent-runtime/compaction-trigger.js';
+import { applyPostCompactAttachments } from './agent-runtime/middleware/post-compact-attachments.js';
 // CAP-026 (`updateToolOutcomeTracking`) is now wired inside
 // `agent-runtime/tool-dispatch.ts:applyPostToolProcessing` since
 // FEATURE_100 P3.3d.
@@ -624,46 +625,23 @@ export async function runKodaX(
           if (result.compacted) {
             compacted = result.messages;
 
-            // Post-compact reconstruction: inject artifact ledger summary + file content
-            // FEATURE_072: `postCompactAttachmentsForLineage` captures the flat
-            // attachment messages so they can also be routed via
-            // `compactionUpdate.postCompactAttachments` for REPL-side native
-            // storage on the CompactionEntry. Agent.ts still inlines them into
-            // local `messages` for consumers that continue to read flat messages.
+            // CAP-061: Post-compact reconstruction — inject artifact ledger
+            // summary + file content. FEATURE_072: `postCompactAttachmentsForLineage`
+            // captures the flat attachment messages so they can also be
+            // routed via `compactionUpdate.postCompactAttachments` for
+            // REPL-side native storage on the CompactionEntry. agent.ts
+            // still inlines them into local `messages` for consumers that
+            // continue to read flat messages.
             let postCompactAttachmentsForLineage: readonly KodaXMessage[] = [];
             if (result.artifactLedger && result.artifactLedger.length > 0) {
-              const freedTokens = result.tokensBefore - result.tokensAfter;
-              const attachments = buildPostCompactAttachments(
-                result.artifactLedger,
-                freedTokens,
-              );
-
-              // Read recently modified files and inject content (async I/O)
-              // Budget = total post-compact budget minus ledger tokens, capped by absolute budget.
-              // Aligns with Claude Code's POST_COMPACT_TOKEN_BUDGET (fixed cap, not proportional).
-              const totalPostCompactBudget = Math.min(
-                Math.floor(freedTokens * DEFAULT_POST_COMPACT_CONFIG.budgetRatio),
-                POST_COMPACT_TOKEN_BUDGET,
-              );
-              const fileBudget = Math.max(0, totalPostCompactBudget - attachments.totalTokens);
-              const fileMessages = fileBudget > 0
-                ? await buildFileContentMessages(result.artifactLedger, fileBudget)
-                : [];
-
-              const fullAttachments = {
-                ...attachments,
-                fileMessages,
-                totalTokens: attachments.totalTokens + estimateTokens(fileMessages as KodaXMessage[]),
-              };
-
-              if (fullAttachments.totalTokens > 0) {
-                compacted = injectPostCompactAttachments(compacted, fullAttachments);
-                // Flat list for compactionUpdate: preserves [ledgerMessage, ...fileMessages] order
-                postCompactAttachmentsForLineage = [
-                  ...(fullAttachments.ledgerMessage ? [fullAttachments.ledgerMessage] : []),
-                  ...fullAttachments.fileMessages,
-                ];
-              }
+              const attached = await applyPostCompactAttachments({
+                compacted,
+                artifactLedger: result.artifactLedger,
+                tokensBefore: result.tokensBefore,
+                tokensAfter: result.tokensAfter,
+              });
+              compacted = attached.compacted;
+              postCompactAttachmentsForLineage = attached.postCompactAttachmentsForLineage;
             }
 
             didCompactMessages = true;
