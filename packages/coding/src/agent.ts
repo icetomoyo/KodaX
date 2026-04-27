@@ -38,7 +38,7 @@ import {
 import { generateSessionId, extractTitleFromMessages } from './session.js';
 // FEATURE_076 Q4: load-time normalization for pre-v0.7.25 session messages.
 import { normalizeLoadedSessionMessages } from './task-engine/_internal/round-boundary.js';
-import { compact as intelligentCompact, needsCompaction, microcompact, DEFAULT_MICROCOMPACTION_CONFIG, buildPostCompactAttachments, buildFileContentMessages, injectPostCompactAttachments, DEFAULT_POST_COMPACT_CONFIG, POST_COMPACT_TOKEN_BUDGET, type CompactionConfig, type CompactionUpdate } from '@kodax/agent';
+import { compact as intelligentCompact, microcompact, DEFAULT_MICROCOMPACTION_CONFIG, buildPostCompactAttachments, buildFileContentMessages, injectPostCompactAttachments, DEFAULT_POST_COMPACT_CONFIG, POST_COMPACT_TOKEN_BUDGET, type CompactionConfig, type CompactionUpdate } from '@kodax/agent';
 import { loadCompactionConfig } from './compaction-config.js';
 import { estimateTokens } from './tokenizer.js';
 import { KODAX_MAX_MAXTOKENS_RETRIES } from './constants.js';
@@ -116,6 +116,7 @@ import {
   getRuntimeActiveToolNames,
 } from './agent-runtime/tool-resolution.js';
 import { gracefulCompactDegradation } from './agent-runtime/compaction-fallback.js';
+import { shouldCompact } from './agent-runtime/compaction-trigger.js';
 // CAP-026 (`updateToolOutcomeTracking`) is now wired inside
 // `agent-runtime/tool-dispatch.ts:applyPostToolProcessing` since
 // FEATURE_100 P3.3d.
@@ -593,11 +594,15 @@ export async function runKodaX(
       let didCompactMessages = false;
       let compactionUpdate: CompactionUpdate | undefined;
 
-      // 判断是否需要压缩：只依据智能压缩阈值 (默认 75%)
+      // CAP-059: 判断是否需要压缩。`shouldCompact` wraps the config-enabled
+      // gate + underlying threshold check from `@kodax/agent`.
       const currentTokens = resolveContextTokenCount(messages, contextTokenSnapshot);
-      const needsCompact =
-        compactionConfig.enabled
-        && needsCompaction(messages, compactionConfig, contextWindow, currentTokens);
+      const needsCompact = shouldCompact({
+        messages,
+        compactionConfig,
+        contextWindow,
+        currentTokens,
+      });
 
       // Circuit breaker: only disables LLM-based summarization, NOT the fallback
       const circuitBreakerTripped = compactConsecutiveFailures >= COMPACT_CIRCUIT_BREAKER_LIMIT;
