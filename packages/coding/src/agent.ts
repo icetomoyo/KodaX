@@ -27,10 +27,7 @@ import path from 'path';
 // public barrel `index.ts` re-exports `KodaXClient` directly from
 // `./client.js` instead — see line ~592.
 import { resolveProvider } from './providers/index.js';
-import {
-  getRequiredToolParams,
-  listToolDefinitions,
-} from './tools/index.js';
+import { listToolDefinitions } from './tools/index.js';
 import {
   mergeManagedProtocolPayload,
   getManagedBlockNameForRole,
@@ -39,13 +36,12 @@ import {
   MANAGED_PROTOCOL_TOOL_NAME,
 } from './managed-protocol.js';
 import { generateSessionId, extractTitleFromMessages } from './session.js';
-import { checkIncompleteToolCalls } from './messages.js';
 // FEATURE_076 Q4: load-time normalization for pre-v0.7.25 session messages.
 import { normalizeLoadedSessionMessages } from './task-engine/_internal/round-boundary.js';
 import { compact as intelligentCompact, needsCompaction, microcompact, DEFAULT_MICROCOMPACTION_CONFIG, buildPostCompactAttachments, buildFileContentMessages, injectPostCompactAttachments, DEFAULT_POST_COMPACT_CONFIG, POST_COMPACT_TOKEN_BUDGET, type CompactionConfig, type CompactionUpdate } from '@kodax/agent';
 import { loadCompactionConfig } from './compaction-config.js';
 import { estimateTokens } from './tokenizer.js';
-import { KODAX_MAX_INCOMPLETE_RETRIES, KODAX_MAX_MAXTOKENS_RETRIES, CANCELLED_TOOL_RESULT_MESSAGE } from './constants.js';
+import { KODAX_MAX_MAXTOKENS_RETRIES, CANCELLED_TOOL_RESULT_MESSAGE } from './constants.js';
 import { waitForRetryDelay } from './retry-handler.js';
 import { telemetryRecovery } from './resilience/index.js';
 import { buildPromptMessageContent } from './input-artifacts.js';
@@ -103,6 +99,7 @@ import {
 } from './agent-runtime/provider-retry-policy.js';
 import { executeNonStreamingFallback } from './agent-runtime/non-streaming-fallback.js';
 import { guardEmptyAssistantContent } from './agent-runtime/assistant-message-builder.js';
+import { checkAndRetryIncompleteTools } from './agent-runtime/incomplete-tool-retry.js';
 import { describeTransientProviderRetry } from './agent-runtime/provider-retry-policy.js';
 import {
   isCancelledToolResultContent,
@@ -1230,58 +1227,23 @@ export async function runKodaX(
         break;
       }
 
-      // 检测截断 + 自动重试
-      const incomplete = checkIncompleteToolCalls(result.toolBlocks);
-      if (incomplete.length > 0) {
-        incompleteRetryCount++;
-        if (incompleteRetryCount <= KODAX_MAX_INCOMPLETE_RETRIES) {
-          events.onRetry?.(`Incomplete tool calls: ${incomplete.join(', ')}`, incompleteRetryCount, KODAX_MAX_INCOMPLETE_RETRIES);
-          messages.pop();
-          let retryPrompt: string;
-          if (incompleteRetryCount === 1) {
-            retryPrompt = `Your previous response was truncated. Missing required parameters:\n${incomplete.map(i => `- ${i}`).join('\n')}\n\nPlease provide the complete tool calls with ALL required parameters.\nFor large content, keep it concise (under 50 lines for write operations).`;
-          } else {
-            retryPrompt = `⚠️ CRITICAL: Your response was TRUNCATED again. This is retry ${incompleteRetryCount}/${KODAX_MAX_INCOMPLETE_RETRIES}.\n\nMISSING PARAMETERS:\n${incomplete.map(i => `- ${i}`).join('\n')}\n\nYOU MUST:\n1. For 'write' tool: Keep content under 50 lines - write structure first, fill in later with 'edit'\n2. For 'edit' tool: Keep new_string under 30 lines - make smaller, focused changes\n3. Provide ALL required parameters in your tool call\n\nIf your response is truncated again, the task will FAIL.\nPROVIDE SHORT, COMPLETE PARAMETERS NOW.`;
-          }
-          messages.push({ role: 'user', content: retryPrompt, _synthetic: true });
-          contextTokenSnapshot = rebaseContextTokenSnapshot(messages, preAssistantTokenSnapshot);
-          continue;
-        } else {
-          // 超过重试次数，过滤掉不完整的工具调用并添加错误结果
-          events.onRetry?.(`Max retries exceeded for incomplete tool calls. Skipping: ${incomplete.join(', ')}`, incompleteRetryCount, KODAX_MAX_INCOMPLETE_RETRIES);
-          const incompleteIds = new Set<string>();
-          for (const tc of result.toolBlocks) {
-            const required = getRequiredToolParams(tc.name);
-            const input = (tc.input ?? {}) as Record<string, unknown>;
-            for (const param of required) {
-              if (input[param] === undefined || input[param] === null || input[param] === '') {
-                incompleteIds.add(tc.id);
-                break;
-              }
-            }
-          }
-          // 直接添加错误结果，不执行不完整的工具调用
-          const errorResults: KodaXToolResultBlock[] = [];
-          for (const id of incompleteIds) {
-            const tc = result.toolBlocks.find(t => t.id === id);
-            if (tc) {
-              const errorMsg = `[Tool Error] ${tc.name}: Skipped due to missing required parameters after ${KODAX_MAX_INCOMPLETE_RETRIES} retries`;
-              await emitActiveExtensionEvent('tool:result', {
-                id: tc.id,
-                name: tc.name,
-                content: errorMsg,
-              });
-              events.onToolResult?.({ id: tc.id, name: tc.name, content: errorMsg });
-              errorResults.push(createToolResultBlock(tc.id, errorMsg));
-            }
-          }
-          messages.push({ role: 'user', content: errorResults });
-          contextTokenSnapshot = rebaseContextTokenSnapshot(messages, completedTurnTokenSnapshot);
-          incompleteRetryCount = 0;
-          continue;
-        }
-      } else {
-        incompleteRetryCount = 0;
+      // CAP-072: incomplete-tool-call truncation retry. Single-shot-then-degrade
+      // recovery: under cap → pop assistant + push synthetic user prompt and
+      // retry; at cap → push error tool_results for missing-param tools and
+      // continue the loop; no incomplete → reset counter and fall through.
+      const incompleteRetryResult = await checkAndRetryIncompleteTools({
+        toolBlocks: result.toolBlocks,
+        events,
+        emitActiveExtensionEvent,
+        messages,
+        incompleteRetryCount,
+        preAssistantTokenSnapshot,
+        completedTurnTokenSnapshot,
+      });
+      incompleteRetryCount = incompleteRetryResult.nextIncompleteRetryCount;
+      contextTokenSnapshot = incompleteRetryResult.nextContextTokenSnapshot;
+      if (incompleteRetryResult.outcome !== 'no_incomplete') {
+        continue;
       }
 
       // 执行工具
