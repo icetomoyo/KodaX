@@ -72,8 +72,8 @@ import {
 // `agent-runtime/tool-dispatch.ts:runToolDispatch` since FEATURE_100 P3.3d.
 // CAP-002 (`cleanupIncompleteToolCalls`, `validateAndFixToolHistory`) is
 // consumed inside `agent-runtime/catch-terminals.ts:runCatchCleanup`
-// since FEATURE_100 P3.5d. Both are still re-exported below for the
-// public agent.ts barrel.
+// since FEATURE_100 P3.5d. Public surface for these helpers is the
+// `agent.ts` shim re-export — no duplicate re-export here.
 import {
   cleanupIncompleteToolCalls,
   validateAndFixToolHistory,
@@ -155,7 +155,6 @@ import {
 } from './runtime-session-state.js';
 import { saveSessionSnapshot } from './middleware/session-snapshot.js';
 import { emitRepoIntelligenceTrace } from './middleware/repo-intelligence.js';
-export { buildAutoRepoIntelligenceContext } from './middleware/repo-intelligence.js';
 // CAP-015 (`buildEditRecoveryUserMessage`, `RunnableToolCall`) and
 // CAP-016 mutation-reflection helpers are wired inside
 // `agent-runtime/tool-dispatch.ts:applyPostToolProcessing` since
@@ -172,11 +171,6 @@ import {
   pushToolResultsAndSettle,
   settleExtensionTurn,
 } from './middleware/extension-queue.js';
-export { estimateProviderPayloadBytes, bucketProviderPayloadSize } from './provider-payload.js';
-export { checkPromiseSignal } from './thinking-mode-replay.js';
-export { emitResilienceDebug } from './resilience-debug.js';
-export { saveSessionSnapshot } from './middleware/session-snapshot.js';
-export { describeTransientProviderRetry } from './provider-retry-policy.js';
 import {
   emitActiveExtensionEvent,
   getActiveExtensionRuntime,
@@ -1507,6 +1501,3 @@ export async function runKodaX(
 // FEATURE_093 (v0.7.24): KodaXClient re-export removed from agent.ts to
 // break the agent ↔ client cycle. Barrel `index.ts` imports KodaXClient
 // directly from './client.js'.
-
-// 导出工具函数
-export { cleanupIncompleteToolCalls, validateAndFixToolHistory };
