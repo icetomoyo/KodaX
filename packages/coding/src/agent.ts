@@ -47,6 +47,7 @@ import { telemetryRecovery } from './resilience/index.js';
 import { buildPromptMessageContent } from './input-artifacts.js';
 import {
   appendPromptIfNotDuplicate,
+  discoverAutoResumeSessionId,
   resolveInitialMessages,
 } from './agent-runtime/middleware/auto-resume.js';
 import {
@@ -388,18 +389,10 @@ export async function runKodaX(
   const initialProvider = resolveProvider(turnState.currentProviderName);
   assertProviderConfigured(initialProvider, turnState.currentProviderName);
 
-  // 处理 autoResume/resume：自动加载当前目录最近会话
-  let resolvedSessionId = options.session?.id;
-  if ((options.session?.autoResume || options.session?.resume) && options.session?.storage && !resolvedSessionId) {
-    const storage = options.session.storage;
-    if (storage.list) {
-      const sessions = await storage.list();
-      if (sessions.length > 0) {
-        resolvedSessionId = sessions[0]!.id;  // 最近会话
-      }
-    }
-  }
-
+  // CAP-043: autoResume / resume — pick the most recent persisted
+  // session when no explicit id was supplied. Folded into
+  // `discoverAutoResumeSessionId` during P3.6n.
+  const resolvedSessionId = await discoverAutoResumeSessionId(options);
   const sessionId = resolvedSessionId ?? await generateSessionId();
 
   // CAP-008: resolve transcript from initialMessages → storage.load → empty;

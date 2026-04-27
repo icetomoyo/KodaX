@@ -147,3 +147,37 @@ export function appendPromptIfNotDuplicate(
     },
   ];
 }
+
+/**
+ * CAP-043: discover the most recent persisted session id when
+ * `options.session.autoResume` (or `options.session.resume`) is set
+ * and no explicit `options.session.id` was provided.
+ *
+ * Returns the discovered id, or `undefined` if:
+ *   - autoResume / resume flag is not set
+ *   - storage is not configured
+ *   - storage has no `list` method
+ *   - storage.list() returns an empty array
+ *   - explicit `options.session.id` was already supplied (caller wins)
+ *
+ * The caller is expected to fall back to `generateSessionId()` when
+ * this returns undefined.
+ *
+ * Behaviour preserved verbatim from `agent.ts:391-401` baseline.
+ * Extracted during FEATURE_100 P3.6n.
+ */
+export async function discoverAutoResumeSessionId(
+  options: KodaXOptions,
+): Promise<string | undefined> {
+  const explicit = options.session?.id;
+  if (explicit) return explicit;
+
+  const shouldAutoResume = options.session?.autoResume || options.session?.resume;
+  if (!shouldAutoResume) return undefined;
+
+  const storage = options.session?.storage;
+  if (!storage?.list) return undefined;
+
+  const sessions = await storage.list();
+  return sessions.length > 0 ? sessions[0]!.id : undefined;
+}
