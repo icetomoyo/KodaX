@@ -62,12 +62,17 @@ import {
 import {
   createCompletedTurnTokenSnapshot,
   createContextTokenSnapshot,
-  createEstimatedContextTokenSnapshot,
   rebaseContextTokenSnapshot,
   resolveContextTokenCount,
 } from './token-accounting.js';
+// CAP-082 (`createEstimatedContextTokenSnapshot`) is consumed inside
+// `agent-runtime/catch-terminals.ts:runCatchCleanup` since FEATURE_100 P3.5d.
 // CAP-079 (`applyToolResultGuardrail`) is now wired inside
 // `agent-runtime/tool-dispatch.ts:runToolDispatch` since FEATURE_100 P3.3d.
+// CAP-002 (`cleanupIncompleteToolCalls`, `validateAndFixToolHistory`) is
+// consumed inside `agent-runtime/catch-terminals.ts:runCatchCleanup`
+// since FEATURE_100 P3.5d. Both are still re-exported below for the
+// public agent.ts barrel.
 import {
   cleanupIncompleteToolCalls,
   validateAndFixToolHistory,
@@ -123,6 +128,11 @@ import { runCompactionLifecycle } from './agent-runtime/middleware/compaction-or
 import { maybeContinueAfterMaxTokens } from './agent-runtime/max-tokens-continuation.js';
 import { maybeAutoContinueManagedProtocol } from './agent-runtime/managed-protocol-continue.js';
 import { applyIterationLimitTerminal } from './agent-runtime/iteration-limit-terminal.js';
+import {
+  runCatchCleanup,
+  applyAbortErrorTerminal,
+  applyGenericErrorTerminal,
+} from './agent-runtime/catch-terminals.js';
 // CAP-026 (`updateToolOutcomeTracking`) is now wired inside
 // `agent-runtime/tool-dispatch.ts:applyPostToolProcessing` since
 // FEATURE_100 P3.3d.
@@ -1359,45 +1369,29 @@ export async function runKodaX(
     } catch (e) {
       const error = e instanceof Error ? e : new Error(String(e));
 
-      // CRITICAL FIX: Always clean incomplete tool calls AND validate entire history
-      // This prevents "tool_call_id not found" errors on next API call
-      let cleanedMessages = cleanupIncompleteToolCalls(messages);
-      cleanedMessages = validateAndFixToolHistory(cleanedMessages);
-
-      // Update error metadata - increment consecutive error count
-      const updatedErrorMetadata: SessionErrorMetadata = {
-        lastError: error.message,
-        lastErrorTime: Date.now(),
-        consecutiveErrors: (errorMetadata?.consecutiveErrors ?? 0) + 1,
-      };
-
-      // Save session with error metadata.
-      // CAP-013 known gap (P3): `saveSessionSnapshot` does NOT wrap
-      // `storage.save()` in try/catch, so a storage rejection here
-      // clobbers `e` and propagates instead. The substrate executor's
-      // terminal hook in P3 will wrap this call in best-effort isolation.
-      // Until then, `messages: cleanedMessages` (post-`cleanupIncompleteToolCalls`
-      // + `validateAndFixToolHistory`) MUST be passed — raw `messages` would
-      // make `/resume` reload a corrupt history.
-      await saveSessionSnapshot(options, sessionId, {
-        messages: cleanedMessages,
+      // CAP-082: cleanup chain — ALWAYS runs first in the catch branch.
+      // Cleans incomplete tool calls + validates history (Issue 072
+      // prevention), increments consecutiveErrors, persists snapshot
+      // with cleaned messages, rebases the context-token snapshot.
+      const cleanup = await runCatchCleanup({
+        error,
+        messages,
+        errorMetadata,
+        options,
+        sessionId,
         title,
-        errorMetadata: updatedErrorMetadata,
         runtimeSessionState,
       });
-      contextTokenSnapshot = createEstimatedContextTokenSnapshot(cleanedMessages);
+      const cleanedMessages = cleanup.cleanedMessages;
+      const updatedErrorMetadata = cleanup.updatedErrorMetadata;
+      contextTokenSnapshot = cleanup.contextTokenSnapshot;
 
-      // 检查是否为 AbortError（用户中断）
-      // 参考 Gemini CLI: 静默处理中断，不报告为错误
+      // CAP-083: AbortError silent terminal. Per Gemini CLI parity,
+      // user interrupts return success:true with interrupted flag.
       if (error.name === 'AbortError') {
-        events.onStreamEnd?.();
-        await emitActiveExtensionEvent('stream:end', undefined);
-
-        // Issue 072 fix: 清理不完整的 tool_use 块
-        // 当流式中断时，assistant 消息可能包含 tool_use 但没有对应的 tool_result
-        // 这会导致下次请求时 API 报错 "tool_call_id not found"
+        await applyAbortErrorTerminal({ events, emitActiveExtensionEvent });
         return finalizeManagedProtocolResult({
-          success: true,  // 中断不算失败
+          success: true,
           lastText,
           messages: cleanedMessages,
           sessionId,
@@ -1408,12 +1402,14 @@ export async function runKodaX(
         });
       }
 
-      await emitActiveExtensionEvent('error', { error });
-      events.onError?.(error);
+      // CAP-084: generic error terminal. Emits `error` event +
+      // events.onError; returns success:false with the cleaned
+      // messages so a follow-up resume doesn't reload corrupt history.
+      await applyGenericErrorTerminal({ error, events, emitActiveExtensionEvent });
       return finalizeManagedProtocolResult({
         success: false,
         lastText,
-        messages: cleanedMessages,  // ✅ Use cleaned messages to prevent error loop
+        messages: cleanedMessages,
         sessionId,
         routingDecision: currentRoutingDecision(),
         contextTokenSnapshot,
