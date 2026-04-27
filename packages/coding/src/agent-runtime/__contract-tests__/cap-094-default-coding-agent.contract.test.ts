@@ -4,26 +4,93 @@
  * Inventory entry: docs/features/v0.7.29-capability-inventory.md#cap-094-default-coding-agent-declaration-constructor
  *
  * Test obligations:
- * - CAP-DEFAULT-AGENT-001: declaration has expected name + middleware defaults
- * - CAP-DEFAULT-AGENT-002: overrides preserved
+ * - CAP-DEFAULT-AGENT-001: declaration has expected name (PARTIAL: the
+ *   middleware-defaults portion of the original claim — auto-reroute /
+ *   mutation-reflection / pre-answer-judge / post-tool-judge — refers
+ *   to a post-substrate Agent shape that the current
+ *   `Agent` interface in `@kodax/core` does not declare. Those
+ *   middlewares live as branches inside `runKodaX` today; once the
+ *   substrate executor lands they become declarative `Agent.middleware[]`
+ *   entries and this test grows.)
+ * - CAP-DEFAULT-AGENT-002: overrides preserved (FULLY ACTIVE)
  *
- * Risk: MEDIUM (post-FEATURE_100 this becomes the canonical SA Agent declaration; FEATURE_078 v0.7.30 layers reasoning profile on top via overrides)
+ * Risk: MEDIUM
  *
  * Class: 1
  *
- * Verified location: coding-preset.ts:125-133 (createDefaultCodingAgent)
+ * Verified location: coding-preset.ts:125-133 (createDefaultCodingAgent).
+ * Post-substrate this moves to `agents/default-coding-agent.ts`; the
+ * relocation is deferred to the substrate-executor migration phase.
  *
  * Time-ordering constraint: at SDK entry or substrate frame initialization.
  *
- * STATUS: P1 stub.
+ * STATUS: ACTIVE-PARTIAL since FEATURE_100 P3.6i. CAP-DEFAULT-AGENT-001
+ * is split: the name + frozenness assertions are active here; the
+ * middleware-defaults assertion stays `it.todo` pending the substrate
+ * executor's `Agent.middleware[]` shape.
  */
 
-import { describe, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
-// Post-FEATURE_100 import target (uncomment in P2):
-// import { createDefaultCodingAgent } from '../../agents/default-coding-agent.js';
+import {
+  DEFAULT_CODING_AGENT_NAME,
+  createDefaultCodingAgent,
+} from '../../coding-preset.js';
 
 describe('CAP-094: default coding agent declaration constructor contract', () => {
-  it.todo('CAP-DEFAULT-AGENT-001: createDefaultCodingAgent() returns Agent with name "kodax/coding/default" and middleware defaults including auto-reroute, mutation-reflection, pre-answer-judge, and post-tool-judge enabled');
-  it.todo('CAP-DEFAULT-AGENT-002: overrides passed to createDefaultCodingAgent are preserved in the returned Agent (e.g. reasoning profile, guardrails, custom middleware)');
+  it('CAP-DEFAULT-AGENT-001a: createDefaultCodingAgent() returns an Agent with name "kodax/coding/default" and a non-empty instructions string', () => {
+    const agent = createDefaultCodingAgent();
+    expect(agent.name).toBe(DEFAULT_CODING_AGENT_NAME);
+    expect(agent.name).toBe('kodax/coding/default');
+    expect(typeof agent.instructions).toBe('string');
+    expect((agent.instructions as string).length).toBeGreaterThan(0);
+  });
+
+  it('CAP-DEFAULT-AGENT-001b: createDefaultCodingAgent() returns a frozen Agent — accidental mutation throws (or is silently ignored in non-strict mode)', () => {
+    const agent = createDefaultCodingAgent();
+    expect(Object.isFrozen(agent)).toBe(true);
+  });
+
+  it.todo(
+    'CAP-DEFAULT-AGENT-001c: middleware defaults — auto-reroute, mutation-reflection, pre-answer-judge, post-tool-judge — are declared on the Agent. Currently these live as branches inside `runKodaX` body, NOT as `Agent.middleware[]` entries (the field does not exist on the `Agent` interface today). Activation deferred until the substrate executor introduces declarative middleware on Agent.',
+  );
+
+  it('CAP-DEFAULT-AGENT-002: overrides passed to createDefaultCodingAgent are preserved in the returned Agent', () => {
+    const customReasoning = {
+      default: 'deep' as const,
+      escalateOnRevise: true,
+    };
+    const customGuardrail = {
+      kind: 'output' as const,
+      name: 'custom-guard',
+    };
+    const agent = createDefaultCodingAgent({
+      reasoning: customReasoning,
+      guardrails: [customGuardrail],
+      tools: [],
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-6',
+    });
+    // Name + instructions are NOT overridable (the function signature
+    // is `Partial<Omit<Agent, 'name' | 'instructions'>>`).
+    expect(agent.name).toBe(DEFAULT_CODING_AGENT_NAME);
+    // Override fields are preserved verbatim.
+    expect(agent.reasoning).toEqual(customReasoning);
+    expect(agent.guardrails).toHaveLength(1);
+    expect(agent.guardrails?.[0]?.name).toBe('custom-guard');
+    expect(agent.guardrails?.[0]?.kind).toBe('output');
+    expect(agent.tools).toEqual([]);
+    expect(agent.provider).toBe('anthropic');
+    expect(agent.model).toBe('claude-sonnet-4-6');
+  });
+
+  it('CAP-DEFAULT-AGENT-002b: createDefaultCodingAgent({}) without overrides returns an Agent with NO override fields (only name + instructions)', () => {
+    const agent = createDefaultCodingAgent();
+    expect(agent.tools).toBeUndefined();
+    expect(agent.handoffs).toBeUndefined();
+    expect(agent.reasoning).toBeUndefined();
+    expect(agent.guardrails).toBeUndefined();
+    expect(agent.provider).toBeUndefined();
+    expect(agent.model).toBeUndefined();
+  });
 });
