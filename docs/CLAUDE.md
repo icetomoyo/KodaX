@@ -190,6 +190,27 @@ npm run start        # Production mode
 2. Run test - should FAIL
 3. Write minimal implementation (GREEN)
 4. Run test - should PASS
+
+### Prompt Eval (FEATURE_104, v0.7.29)
+
+Any change that touches **LLM-facing prompt content** must include a
+prompt-eval case under `tests/*.eval.ts` using the
+`tests/prompt-eval/` harness (`aliases.ts` + `judges.ts` + `harness.ts`).
+
+**Triggers** (must add/update an eval):
+- `packages/coding/src/agent-runtime/system-prompt-*.ts`
+- `packages/coding/src/task-engine/_internal/managed-task/role-prompt.ts`
+- Tool `description` fields in `packages/coding/src/tools/`
+- `coding-preset.ts:DEFAULT_CODING_INSTRUCTIONS`
+- `packages/coding/src/agents/protocol-emitters.ts` prompts
+
+**Non-triggers** (no eval needed):
+- Reasoning depth / parameter changes (FEATURE_078 / FEATURE_103 L1-L5 chain)
+- Routing / dispatcher logic (no prompt content change)
+- Compaction / session persistence infrastructure
+
+**Run**: `npm run test:eval` (skips when API keys absent). See
+`tests/prompt-eval/README.md` for the convention guide and patterns.
 5. Refactor (IMPROVE)
 
 ## **CRITICAL** Forbidden Items

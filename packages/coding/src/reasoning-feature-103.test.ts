@@ -212,6 +212,7 @@ describe('applyFollowupEscalation', () => {
 // ---------------------------------------------------------------------------
 
 const BASE_OPTIONS: KodaXOptions = {
+  provider: 'anthropic',
   reasoningMode: 'balanced',
 };
 
@@ -268,6 +269,7 @@ describe('applyFollowupEscalationToOptions', () => {
 
   it('honours off kill switch even when signal present', () => {
     const opts: KodaXOptions = {
+      provider: 'anthropic',
       reasoningMode: 'off',
       session: { initialMessages: [PRIOR_USER, PRIOR_ASSISTANT] },
     };
