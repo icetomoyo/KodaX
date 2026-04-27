@@ -25,7 +25,7 @@ import { describe, it } from 'vitest';
 // import { executeRunManagedTask } from '../../task-engine.js';
 
 describe('CAP-089: task-engine.ts mode dispatcher contract', () => {
-  it.todo('CAP-DISPATCH-001: when agentMode is "sa", executeRunManagedTask routes to runDirectKodaX (defaultCodingAgent path with intent-gate-derived prompt overlay)');
+  it.todo('CAP-DISPATCH-001: when agentMode is "sa", executeRunManagedTask routes to runKodaX (defaultCodingAgent path with intent-gate-derived prompt overlay)');
   it.todo('CAP-DISPATCH-002: when agentMode is "ama", executeRunManagedTask routes to runManagedTaskViaRunner (scoutAgent AMA path with full reasoning plan)');
   it.todo('CAP-DISPATCH-003: when options.agentMode is not provided, resolveManagedAgentMode defaults to "ama"');
 });

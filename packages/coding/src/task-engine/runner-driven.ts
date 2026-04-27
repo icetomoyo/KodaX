@@ -4639,20 +4639,15 @@ async function runManagedTaskViaRunnerInner(
 
   // Persist session snapshot to disk so `/resume <id>` and `--continue`
   // can reload the AMA conversation. The Runner-driven path has a
-  // single non-error terminal (here); `saveSessionSnapshot` already
-  // wraps storage failures internally so a transient backend issue
-  // cannot abort the task run.
-  if (options.session?.storage) {
-    try {
-      await saveSessionSnapshot(options, result.sessionId, {
-        messages: [...result.messages],
-        title: prompt.slice(0, 80),
-        gitRoot: options.context?.gitRoot ?? undefined,
-      });
-    } catch {
-      // best-effort; storage IO failures never abort the task.
-    }
-  }
+  // single non-error terminal (here). `saveSessionSnapshot` early-
+  // returns when `options.session?.storage` is undefined and absorbs
+  // any `storage.save` rejections internally (CAP-013-003 closed in
+  // P3.6a), so we don't need a guard or try/catch at this call site.
+  await saveSessionSnapshot(options, result.sessionId, {
+    messages: [...result.messages],
+    title: prompt.slice(0, 80),
+    gitRoot: options.context?.gitRoot ?? undefined,
+  });
 
   return result;
 }
