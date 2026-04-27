@@ -43,7 +43,8 @@ import { loadCompactionConfig } from './compaction-config.js';
 // CAP-014/060/061/062 token estimation now happens inside the
 // substrate compaction modules; agent.ts no longer imports
 // `estimateTokens` directly since FEATURE_100 P3.4c.
-import { KODAX_MAX_MAXTOKENS_RETRIES } from './constants.js';
+// CAP-074 (KODAX_MAX_MAXTOKENS_RETRIES) is consumed inside
+// `agent-runtime/max-tokens-continuation.ts` since FEATURE_100 P3.5a.
 import { waitForRetryDelay } from './retry-handler.js';
 import { telemetryRecovery } from './resilience/index.js';
 import { buildPromptMessageContent } from './input-artifacts.js';
@@ -122,6 +123,7 @@ import {
 // FEATURE_100 P3.4c.
 import { shouldCompact } from './agent-runtime/compaction-trigger.js';
 import { runCompactionLifecycle } from './agent-runtime/middleware/compaction-orchestration.js';
+import { maybeContinueAfterMaxTokens } from './agent-runtime/max-tokens-continuation.js';
 // CAP-026 (`updateToolOutcomeTracking`) is now wired inside
 // `agent-runtime/tool-dispatch.ts:applyPostToolProcessing` since
 // FEATURE_100 P3.3d.
@@ -973,26 +975,20 @@ export async function runKodaX(
       // the partial tool, observe the resulting state via tool_result, and
       // naturally continue with edit/append in the next turn. No explicit
       // meta nudge needed.
-      if (result.stopReason === 'max_tokens' && result.toolBlocks.length === 0) {
-        maxTokensRetryCount++;
-        if (maxTokensRetryCount <= KODAX_MAX_MAXTOKENS_RETRIES) {
-          events.onTextDelta?.('\n\n[output token limit hit, continuing…]\n\n');
-          messages.push({
-            role: 'user',
-            content: [{
-              type: 'text',
-              text:
-                'Output token limit hit. Resume directly — no apology, no recap of what you were doing. ' +
-                'Pick up mid-thought if that is where the cut happened. ' +
-                'Break remaining work into smaller pieces.',
-            }],
-            _synthetic: true,
-          });
-          contextTokenSnapshot = rebaseContextTokenSnapshot(messages, completedTurnTokenSnapshot);
-          continue;
-        }
-        // Retries exhausted — fall through to text-only response handling
-        events.onRetry?.(`max_tokens truncation limit reached (${maxTokensRetryCount - 1}/${KODAX_MAX_MAXTOKENS_RETRIES})`, maxTokensRetryCount - 1, KODAX_MAX_MAXTOKENS_RETRIES);
+      // CAP-074: L5 max_tokens continuation. Synthetic "resume mid-thought"
+      // user message capped at KODAX_MAX_MAXTOKENS_RETRIES; skipped when
+      // tool_blocks are present (partial-JSON salvage handles those naturally).
+      const maxTokensOutcome = maybeContinueAfterMaxTokens({
+        result,
+        messages,
+        maxTokensRetryCount,
+        completedTurnTokenSnapshot,
+        events,
+      });
+      maxTokensRetryCount = maxTokensOutcome.nextMaxTokensRetryCount;
+      if (maxTokensOutcome.outcome === 'continue') {
+        contextTokenSnapshot = maxTokensOutcome.nextContextTokenSnapshot;
+        continue;
       }
 
       // Fallback: auto-continue when end_turn fires but required managed protocol block is missing.
