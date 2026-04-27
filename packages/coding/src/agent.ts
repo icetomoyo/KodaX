@@ -95,6 +95,7 @@ import {
 } from './agent-runtime/event-emitter.js';
 import { resolvePerTurnProvider } from './agent-runtime/per-turn-provider-resolution.js';
 import { assertProviderConfigured } from './agent-runtime/provider-config-check.js';
+import { buildToolExecutionContext } from './agent-runtime/tool-execution-context.js';
 import { resolvePerTurnReasoning } from './agent-runtime/per-turn-reasoning.js';
 import { buildStreamTimers } from './agent-runtime/stream-timers.js';
 import { applyProviderPolicyGate } from './agent-runtime/provider-policy-gate.js';
@@ -411,57 +412,26 @@ export async function runKodaX(
   const loadedExtensionRecords: KodaXExtensionSessionRecord[] | undefined = resumed.loadedExtensionRecords;
 
   const executionCwd = resolveExecutionCwd(options.context);
-  let emittedManagedProtocolPayload = options.context?.managedProtocolEmission?.enabled
-    ? mergeManagedProtocolPayload(undefined, undefined)
-    : undefined;
 
-  // Simplified context - no permission fields (handled by REPL layer)
-  const ctx: KodaXToolExecutionContext = {
-    backups: new Map(),
-    gitRoot: options.context?.gitRoot ?? undefined,
-    executionCwd,
-    extensionRuntime: runtime ?? undefined,
-    askUser: events.askUser, // Issue 069: Pass askUser callback from events
-    askUserInput: events.askUserInput, // Issue 112: Pass askUserInput callback from events
-    // FEATURE_074: only forward the new exit_plan_mode callback.
-    // set_permission_mode is NOT forwarded — it was broken before this feature
-    // (callback never wired), and a corpus of sessions shows LLMs occasionally
-    // call it in auto-in-project too, not just plan mode. Activating it now would
-    // silently widen permissions (auto-in-project's path scope → accept-edits's
-    // no-scope) on any misfire. Keep it failing until removal in v0.7.21+.
-    exitPlanMode: events.exitPlanMode,
-    abortSignal: options.abortSignal, // Issue 113: Pass abort signal to tool handlers
-    managedProtocolRole: options.context?.managedProtocolEmission?.enabled
-      ? options.context.managedProtocolEmission.role
+  // FEATURE_100 P3.6p — `emittedManagedProtocolPayload` lifted from a
+  // function-local `let` into a `{ current }` wrapper so the
+  // emitManagedProtocol closure can live inside `buildToolExecutionContext`.
+  const managedProtocolPayloadRef: { current: KodaXManagedProtocolPayload | undefined } = {
+    current: options.context?.managedProtocolEmission?.enabled
+      ? mergeManagedProtocolPayload(undefined, undefined)
       : undefined,
-    emitManagedProtocol: options.context?.managedProtocolEmission?.enabled
-      ? (payload: Partial<KodaXManagedProtocolPayload>) => {
-          emittedManagedProtocolPayload = mergeManagedProtocolPayload(
-            emittedManagedProtocolPayload,
-            payload,
-          );
-        }
-      : undefined,
-    registerChildWriteWorktrees: options.context?.registerChildWriteWorktrees,
-    mutationTracker: options.context?.mutationTracker,
-    // FEATURE_074: forward parent's plan-mode predicate so dispatch_child_task
-    // can enforce plan mode on child tool calls using live parent state.
-    planModeBlockCheck: options.context?.planModeBlockCheck,
-    parentAgentConfig: {
-      provider: options.provider,
-      model: options.model,
-      reasoningMode: options.reasoningMode,
-    },
-    // FEATURE_067: onChildProgress removed — it fired onManagedTaskStatus with
-    // activeWorkerId='child', which triggered a foreground worker transition in the
-    // REPL and cleared all live tool calls. Progress is now handled entirely via
-    // reportToolProgress → onToolProgress, which updates both the tool block and spinner.
-    onChildProgress: undefined,
   };
+
+  const ctx = buildToolExecutionContext({
+    options,
+    runtime: runtime ?? undefined,
+    managedProtocolPayloadRef,
+  });
+
   const finalizeManagedProtocolResult = (result: KodaXResult): KodaXResult => {
     const payload = mergeManagedProtocolPayload(
       result.managedProtocolPayload,
-      emittedManagedProtocolPayload,
+      managedProtocolPayloadRef.current,
     );
     return payload
       ? {
@@ -1019,7 +989,7 @@ export async function runKodaX(
         messages,
         continueAttempted: turnState.managedProtocolContinueAttempted,
         options,
-        emittedManagedProtocolPayload,
+        emittedManagedProtocolPayload: managedProtocolPayloadRef.current,
         completedTurnTokenSnapshot,
       });
       turnState.managedProtocolContinueAttempted = protocolContinueOutcome.nextContinueAttempted;
