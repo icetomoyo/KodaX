@@ -46,13 +46,13 @@ import { runRecoveryPipeline } from '../provider-retry-policy.js';
 
 function fakeDecision(overrides: Partial<RecoveryDecision> = {}): RecoveryDecision {
   return {
-    action: 'retry',
+    action: 'fresh_connection_retry',
     ladderStep: 1,
     delayMs: 1500,
     maxDelayMs: 60_000,
     shouldUseNonStreaming: false,
-    reasonCode: 'transient_network',
-    failureStage: 'pre-text',
+    reasonCode: 'connection_failure',
+    failureStage: 'before_first_delta',
     serverRetryAfterMs: undefined,
     ...overrides,
   } as unknown as RecoveryDecision;
@@ -83,7 +83,7 @@ describe('CAP-069: runRecoveryPipeline — onProviderRecovery emission', () => {
     });
     runRecoveryPipeline({
       error: new Error('rate-limited'),
-      failureStage: 'pre-text',
+      failureStage: 'before_first_delta',
       attempt: 2,
       events: { onProviderRecovery } as unknown as KodaXEvents,
       resilienceCfg: fakeCfg,
@@ -92,12 +92,12 @@ describe('CAP-069: runRecoveryPipeline — onProviderRecovery emission', () => {
 
     expect(onProviderRecovery).toHaveBeenCalledOnce();
     const arg = onProviderRecovery.mock.calls[0]![0] as Record<string, unknown>;
-    expect(arg.stage).toBe('pre-text');
+    expect(arg.stage).toBe('before_first_delta');
     expect(arg.errorClass).toBe('rate_limit');
     expect(arg.attempt).toBe(2);
     expect(arg.maxAttempts).toBe(5);
     expect(arg.delayMs).toBe(2500);
-    expect(arg.recoveryAction).toBe('retry');
+    expect(arg.recoveryAction).toBe('fresh_connection_retry');
     expect(arg.ladderStep).toBe(2);
     expect(arg.fallbackUsed).toBe(true);
     expect(arg.serverRetryAfterMs).toBe(3000);
@@ -109,11 +109,11 @@ describe('CAP-069: runRecoveryPipeline — onRetry fallback', () => {
     const onRetry = vi.fn();
     runRecoveryPipeline({
       error: new Error('boom'),
-      failureStage: 'mid-text',
+      failureStage: 'mid_stream_text',
       attempt: 3,
       events: { onRetry } as unknown as KodaXEvents,
       resilienceCfg: fakeCfg,
-      recoveryCoordinator: fakeCoordinator(fakeDecision({ action: 'retry' })),
+      recoveryCoordinator: fakeCoordinator(fakeDecision({ action: 'fresh_connection_retry' })),
     });
     expect(onRetry).toHaveBeenCalledOnce();
     const [message, attemptArg, maxArg] = onRetry.mock.calls[0]!;
@@ -128,7 +128,7 @@ describe('CAP-069: runRecoveryPipeline — onRetry fallback', () => {
     const onProviderRecovery = vi.fn();
     runRecoveryPipeline({
       error: new Error('boom'),
-      failureStage: 'pre-text',
+      failureStage: 'before_first_delta',
       attempt: 1,
       events: { onRetry, onProviderRecovery } as unknown as KodaXEvents,
       resilienceCfg: fakeCfg,
@@ -142,7 +142,7 @@ describe('CAP-069: runRecoveryPipeline — onRetry fallback', () => {
     const onRetry = vi.fn();
     runRecoveryPipeline({
       error: new Error('boom'),
-      failureStage: 'pre-text',
+      failureStage: 'before_first_delta',
       attempt: 1,
       events: { onRetry } as unknown as KodaXEvents,
       resilienceCfg: fakeCfg,
@@ -154,10 +154,10 @@ describe('CAP-069: runRecoveryPipeline — onRetry fallback', () => {
 
 describe('CAP-069: runRecoveryPipeline — return shape', () => {
   it('CAP-RECOVERY-RETURN-001: returns { classified, decision } passthrough', () => {
-    const decision = fakeDecision({ reasonCode: 'transient_network' });
+    const decision = fakeDecision({ reasonCode: 'connection_failure' });
     const result = runRecoveryPipeline({
       error: new Error('boom'),
-      failureStage: 'pre-text',
+      failureStage: 'before_first_delta',
       attempt: 1,
       events: {} as KodaXEvents,
       resilienceCfg: fakeCfg,

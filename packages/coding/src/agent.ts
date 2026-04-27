@@ -101,6 +101,7 @@ import {
   translateAbortError,
   runRecoveryPipeline,
 } from './agent-runtime/provider-retry-policy.js';
+import { executeNonStreamingFallback } from './agent-runtime/non-streaming-fallback.js';
 import { describeTransientProviderRetry } from './agent-runtime/provider-retry-policy.js';
 import {
   isCancelledToolResultContent,
@@ -896,56 +897,32 @@ export async function runKodaX(
               payloadBucket: bucketProviderPayloadSize(fallbackBytes),
             });
 
-            try {
-              const fallbackTimeoutController = new AbortController();
-              const fallbackSignal = options.abortSignal
-                ? AbortSignal.any([options.abortSignal, fallbackTimeoutController.signal])
-                : fallbackTimeoutController.signal;
-              const fallbackHardTimer = setTimeout(() => {
-                fallbackTimeoutController.abort(new Error("API Hard Timeout (10 minutes)"));
-              }, API_HARD_TIMEOUT_MS);
-              try {
-                streamTimers.clearAll();
-                boundarySession.beginAttempt(
-                  currentProviderName,
-                  currentModelOverride ?? streamProvider.getModel(),
-                  providerMessages,
-                  attempt,
-                  true,
-                );
-                result = await streamProvider.complete(
-                  providerMessages,
-                  activeToolDefinitions,
-                  effectiveSystemPrompt,
-                  effectiveProviderReasoning,
-                  {
-                    onTextDelta: (text) => {
-                      boundaryTracker.markTextDelta(text);
-                      void emitActiveExtensionEvent('text:delta', { text });
-                      events.onTextDelta?.(text);
-                    },
-                    onThinkingDelta: (text) => {
-                      boundaryTracker.markThinkingDelta(text);
-                      void emitActiveExtensionEvent('thinking:delta', { text });
-                      events.onThinkingDelta?.(text);
-                    },
-                    onThinkingEnd: (thinking) => {
-                      void emitActiveExtensionEvent('thinking:end', { thinking });
-                      events.onThinkingEnd?.(thinking);
-                    },
-                    modelOverride: currentModelOverride,
-                    signal: fallbackSignal,
-                  },
-                  fallbackSignal,
-                );
-                messages = providerMessages;
-                break;
-              } finally {
-                clearTimeout(fallbackHardTimer);
-              }
-            } catch (fallbackError) {
-              error = fallbackError instanceof Error ? fallbackError : new Error(String(fallbackError));
+            // CAP-071: non-streaming fallback. On success, the outer
+            // attempt loop must `break` with the buffered result. On
+            // failure, fall through to recovery-action branches with
+            // the new error.
+            const fallbackOutcome = await executeNonStreamingFallback({
+              events,
+              streamProvider,
+              providerMessages,
+              activeToolDefinitions,
+              effectiveSystemPrompt,
+              effectiveProviderReasoning,
+              callerAbortSignal: options.abortSignal,
+              modelOverride: currentModelOverride,
+              hardTimeoutMs: API_HARD_TIMEOUT_MS,
+              boundarySession,
+              emitActiveExtensionEvent,
+              providerName: currentProviderName,
+              attempt,
+              clearStreamTimers: streamTimers.clearAll,
+            });
+            if (fallbackOutcome.ok) {
+              result = fallbackOutcome.result;
+              messages = providerMessages;
+              break;
             }
+            error = fallbackOutcome.error;
           }
 
           // sanitize_thinking_and_retry is a single-shot history-mutation
