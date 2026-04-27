@@ -20,7 +20,7 @@
 | Absorbed | `2` |
 | InProgress | `1` |
 | Planned | `18` |
-| Current released version | `v0.7.27` |
+| Current released version | `v0.7.29` |
 
 ### 各版本待做分布
 
