@@ -824,13 +824,12 @@ export async function runSubstrate(
           // Mirrors the runner-driven path at runner-driven.ts:2654.
           //
           // The mirror is intentional, not migration debt: this file is
-          // the SA-mode entry (`runDirectKodaX`) and runner-driven.ts is
-          // the AMA-mode path (Scout/Planner/Generator/Evaluator). They
-          // are two parallel execution modes (see task-engine.ts:11-13
-          // dispatch) with no convergence plan, but they share the same
-          // provider stack and therefore see the same thinking-mode
-          // errors. Per CLAUDE.md "abstract only after 3+ real cases",
-          // 2 call sites stay duplicated. v0.7.28.
+          // the SA-mode substrate body and runner-driven.ts is the AMA-mode
+          // path (Scout/Planner/Generator/Evaluator). They are two parallel
+          // execution modes dispatched by `task-engine.ts:dispatchManagedTask`,
+          // sharing the same provider stack and therefore seeing the same
+          // thinking-mode errors. Per CLAUDE.md "abstract only after 3+
+          // real cases", 2 call sites stay duplicated. v0.7.28.
           if (decision.action === 'sanitize_thinking_and_retry') {
             const recovery = recoveryCoordinator.executeRecovery(providerMessages, decision);
             telemetryRecovery(decision.action, recovery);

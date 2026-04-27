@@ -314,14 +314,12 @@ export interface RunnerChainPromptContext {
   /** Optional role-context factory for skillMap / scoutScope / childWriteReviewPrompt injection. */
   readonly contextFactory?: RolePromptContextFactory;
   /**
-   * v0.7.27 FEATURE_086 parity restore — pre-computed repo-intelligence
-   * context block (Repository Overview / Changed Scope / Active Module /
-   * Impact / Fallback Guidance / Premium Context sections). Built once
-   * per `runManagedTaskViaRunner` entry via `buildAutoRepoIntelligenceContext`
-   * and prepended to every role's system prompt so Scout/Planner/
-   * Generator/Evaluator see repo context from turn 1, matching the
-   * legacy `runKodaX` behaviour that the Runner-driven path (FEATURE_084)
-   * inadvertently dropped.
+   * Pre-computed repo-intelligence context block (Repository Overview /
+   * Changed Scope / Active Module / Impact / Fallback Guidance /
+   * Premium Context sections). Built once per `runManagedTaskViaRunner`
+   * entry via `buildAutoRepoIntelligenceContext` and prepended to every
+   * role's system prompt so Scout/Planner/Generator/Evaluator see repo
+   * context from turn 1.
    */
   readonly repoIntelligenceContext?: string;
 }
@@ -916,7 +914,7 @@ function wrapEmitterWithRecorder(
               // Shard 6d-U: user explicitly denied a budget extension on
               // revise — continue at current budget cap but flag
               // `degradedContinue` so the caller can render the warning.
-              // Legacy parity: `skipped` means "didn't need to ask" (no
+              // Note: `skipped` means "didn't need to ask" (no
               // callback / under 90% / already bumped at this tier) and
               // does NOT constitute degradation.
               budgetExtension.degradedContinueRef.current = true;
@@ -936,8 +934,8 @@ function wrapEmitterWithRecorder(
  *
  * H0 default bumped from the legacy 50 → 100 because even a modest review
  * task easily burns 30 file reads + 15 grep scans + a few bash inspections
- * before Scout can commit a verdict. H1/H2 stay at 200 (matching legacy
- * `DEFAULT_MANAGED_WORK_BUDGET`) — those tiers get the budget-extension
+ * before Scout can commit a verdict. H1/H2 stay at 200 (the
+ * `DEFAULT_MANAGED_WORK_BUDGET` baseline) — those tiers get the budget-extension
  * dialog at 90% utilization so a long task can top up as needed rather
  * than front-load a huge base cap.
  */
@@ -1088,7 +1086,7 @@ function buildEvidenceEntryForRoleEmit(args: {
  *     (detailNote comes from the recorder's most-recent payload summary
  *     when available)
  *   - persistToHistory — `true` for terminal events (completed / blocked)
- *     and `false` for transient progress ticks, matching legacy contract
+ *     and `false` for transient progress ticks (REPL ledger contract)
  *   - events[] — inline live-event list, currently one entry per observer
  *     tick so the REPL ticker has something to render
  */
@@ -1173,10 +1171,9 @@ function applyScoutDecisionToPlanRunner(
 }
 
 /**
- * H3 parity (v0.7.26) — compact routing-note builder matching legacy
- * `createLiveRoutingNote` (task-engine.ts:1529). Emitted once before
- * Scout's preflight so the REPL work-strip can label the task's routing
- * context (review target, review scale, routing override reason). The
+ * H3 routing-note builder. Emitted once before Scout's preflight so the
+ * REPL work-strip can label the task's routing context (review target,
+ * review scale, routing override reason). The
  * Runner-driven path doesn't have `repoRoutingSignals` in plan (those
  * were computed by the legacy planner earlier); we fall back to the
  * decision fields plan surfaces directly.
@@ -1390,7 +1387,7 @@ function wrapCodingToolAsRunnable(
     ): Promise<RunnerToolResult> => {
       if (budget) incrementManagedBudgetUsage(budget, 1);
       recordMutationForTool(baseCtx.mutationTracker, definition.name, input);
-      // v0.7.26 parity: attach reportToolProgress per-call so async-generator
+      // Attach reportToolProgress per-call so async-generator
       // tools (dispatch_child_task) can surface their internal progress via
       // KodaXEvents.onToolProgress → REPL transcript. Mirrors
       // `agent.ts:1345-1353` (ctxWithProgress wrapping).
@@ -1521,9 +1518,8 @@ function wrapReadOnlyBash(bashTool: RunnableTool, roleTitle: string): RunnableTo
  * Shard 6d-M replaces the earlier "Scout self-declares `mutation_intent`"
  * pattern with `inferScoutMutationIntent` — we classify intent from
  * Scout's emitted `scope` + `reviewFilesOrAreas` + the routing
- * `primaryTask`, matching legacy Issue 119 inference. Scout's LLM
- * payload is no longer consulted for this boundary; its scope list is
- * the evidence.
+ * `primaryTask` (Issue 119 inference). Scout's LLM payload is no longer
+ * consulted for this boundary; its scope list is the evidence.
  *
  * The wrappers close over the shared `VerdictRecorder` + plan ref and
  * read intent lazily at invocation time — `buildRunnerAgentChain`
@@ -1632,7 +1628,7 @@ function wrapDispatchChildTaskForRole(
       runnerCtx?: RunnerToolContext,
     ): Promise<RunnerToolResult> => {
       if (budget) incrementManagedBudgetUsage(budget, 1);
-      // v0.7.22 parity: fire a fanout status event so the REPL's
+      // Fire a fanout status event so the REPL's
       // AmaWorkStrip can render a "Scout/Generator fanning out" badge.
       // Best-effort — Runner tool loop runs each tool_use serially, so
       // per-call count=1 reflects the current invocation; the downstream
@@ -1830,7 +1826,7 @@ export function buildRunnerAgentChain(
   // (FEATURE_067 v2 parity). The caller owns the map; the Runner-internal
   // wrappers only append.
   childWriteWorktreePathsRef: { current: Map<string, string> } = { current: new Map() },
-  // v0.7.26 parity: full role-prompt context (original task, decision,
+  // Full role-prompt context (original task, decision,
   // metadata, tool policy, skill / scope factory). When provided, every
   // role's `instructions` resolves through `createRolePrompt` — the
   // v0.7.22 prompt surface (decision summary, contract, metadata,
@@ -1839,7 +1835,7 @@ export function buildRunnerAgentChain(
   // handoff/verdict/contract block specs, shared closing rules). When
   // absent (test paths), the fallback minimal instructions are used.
   promptContext?: RunnerChainPromptContext,
-  // v0.7.26 parity: events bus so coding-tool wrappers can attach
+  // Events bus so coding-tool wrappers can attach
   // `reportToolProgress` per tool_use call. Without this wiring,
   // async-generator tools (dispatch_child_task) fire progress events
   // that vanish silently — the REPL transcript's "Running: ..." line
@@ -1889,7 +1885,7 @@ export function buildRunnerAgentChain(
 
   type WritableAgent = { -readonly [K in keyof Agent]: Agent[K] };
 
-  // v0.7.26 parity: dynamic role instructions. Every agent's `instructions`
+  // Dynamic role instructions. Every agent's `instructions`
   // closure resolves on each Runner invocation so Scout's post-emit
   // skillMap / scoutScope reach downstream prompts. When `promptContext`
   // is provided, each role gets the full v0.7.22 prompt surface via
@@ -1916,7 +1912,7 @@ export function buildRunnerAgentChain(
       // v0.7.26 Scout-tool-restoration: legacy v0.7.22 gave Scout the
       // full default tool set (`_internal/prompts/tool-policy.ts:232`
       // returned `undefined` for Scout so `buildManagedWorkerToolPolicy`
-      // emitted no restrictions; Scout ran via `runDirectKodaX` with
+      // emitted no restrictions; Scout ran via the SA-mode entry with
       // unwrapped bash/write/edit). The three-level H0/H1/H2 quality
       // framework was enforced by prompt ONLY — tools layer deliberately
       // didn't police it. FEATURE_084 regressed this: Scout's bash got
@@ -2267,9 +2263,9 @@ export function buildRunnerLlmAdapter(
   let iteration = 0;
   const MAX_ITER_HINT = 20; // matches core/src/runner-tool-loop.ts MAX_TOOL_LOOP_ITERATIONS
 
-  // v0.7.22 parity: cost tracker. Legacy agent.ts:1681 creates one per
-  // session and recordUsage after every provider.stream usage payload.
-  // REPL /cost reads through `events.getCostReport.current`.
+  // Cost tracker — one per session; `recordUsage` is called after every
+  // provider.stream usage payload. REPL /cost reads through
+  // `events.getCostReport.current`.
   let costTracker: CostTracker = createCostTracker();
   if (options.events?.getCostReport) {
     options.events.getCostReport.current = () =>
@@ -2405,9 +2401,10 @@ export function buildRunnerLlmAdapter(
         wireTools,
       );
       let providerMessages: KodaXMessage[] = [...transcript];
-      // v0.7.22 parity: clean incomplete tool calls and validate tool history
-      // before every provider call. Legacy agent.ts does this at :2813-2814;
-      // Runner-driven path (FEATURE_084) inadvertently dropped it.
+      // Clean incomplete tool calls and validate tool history before
+      // every provider call (CAP-002). Both helpers come from
+      // `agent-runtime/history-cleanup.ts` and are shared with the
+      // SA-mode substrate (see catch-terminals.ts:runCatchCleanup).
       providerMessages = cleanupIncompleteToolCalls(providerMessages);
       providerMessages = validateAndFixToolHistory(providerMessages);
       let attempt = 0;
@@ -2824,8 +2821,7 @@ export function buildRunnerLlmAdapter(
       };
     }
 
-    // v0.7.22 parity: record turn usage into the cost tracker so `/cost`
-    // reflects AMA spend. Mirrors agent.ts:2205-2213.
+    // Record turn usage into the cost tracker so `/cost` reflects AMA spend.
     if (streamResult.usage) {
       const providerName = options.provider ?? 'anthropic';
       costTracker = recordCostUsage(costTracker, {
@@ -2838,10 +2834,9 @@ export function buildRunnerLlmAdapter(
       });
     }
 
-    // v0.7.22 parity: onStreamEnd fires after the provider finishes the
-    // current turn's stream. Legacy agent.ts:2201 / :2687 / :2835 fires
-    // this at three terminal points; the Runner-driven adapter funnels
-    // every turn through this single return-path.
+    // onStreamEnd fires after the provider finishes the current turn's
+    // stream. The Runner-driven adapter funnels every turn through this
+    // single return-path so the event fires once per stream.
     options.events?.onStreamEnd?.();
 
     // Fire onIterationEnd so the REPL token-count indicator can refresh
@@ -2913,7 +2908,7 @@ export function buildRunnerLlmAdapter(
         }
       }
     }
-    // v0.7.26 parity: forward thinking blocks so
+    // Forward thinking blocks so
     // `buildAssistantMessageFromLlmResult` can prepend them to the
     // assistant content. Required for Anthropic extended thinking —
     // provider returns 400 if prior assistant turns with tool_use are
@@ -2929,7 +2924,7 @@ export function buildRunnerLlmAdapter(
 
 function extractUserFacingText(result: { messages: readonly KodaXMessage[]; output: string }): string {
   const raw = extractUserFacingRaw(result);
-  // v0.7.26 parity: strip internal managed control-plane markers and any
+  // Strip internal managed control-plane markers and any
   // stray ```kodax-task-*``` fences (complete or truncated) that the LLM
   // might emit in assistant text despite using structured emit tools.
   // Legacy task-engine.ts applied this at 14 call sites; re-added at the
@@ -3180,8 +3175,8 @@ function buildManagedTaskPayload(args: {
     workItems: [],
     evidence: {
       workspaceDir,
-      // Legacy parity (task-engine.ts:4324 + 5084): every managed task
-      // advertises a fixed set of 10 snapshot files the writeManagedTaskArtifacts
+      // Every managed task advertises a fixed set of 10 snapshot files
+      // the writeManagedTaskArtifacts
       // pass is expected to produce. Downstream consumers (`resumeManagedTask`,
       // harness observers, the REPL transcript dump) index evidence by
       // artifact path, so we surface the records here even when the actual
@@ -3749,9 +3744,10 @@ export async function runManagedTaskViaRunner(
     }
     throw err;
   } finally {
-    // v0.7.22 parity: onComplete fires on every terminal — success, block,
-    // or error — so REPL can re-render its status bar. Legacy agent.ts
-    // fires this at 3 sites (:2249 / :2450 / :2666); we mirror by putting
+    // onComplete fires on every terminal — success, block, or error —
+    // so REPL can re-render its status bar. The Runner-driven adapter
+    // funnels every terminal through this single finally so the event
+    // fires once per task; we mirror by putting
     // it in finally (fires after onError too — matches legacy order).
     options.events?.onComplete?.();
   }
@@ -3859,7 +3855,7 @@ async function runManagedTaskViaRunnerInner(
     files: new Map<string, number>(),
     totalOps: 0,
   };
-  // v0.7.26 parity: baseCtx must carry the full KodaXToolExecutionContext
+  // baseCtx must carry the full KodaXToolExecutionContext
   // surface that tools expect — without these fields several tool families
   // early-return "... not available" in AMA mode:
   //   - askUser / askUserInput / askUserMulti: ask_user_question,
@@ -4103,8 +4099,8 @@ async function runManagedTaskViaRunnerInner(
   const tokenStateRef: { current: RunnerAdapterTokenState } = {
     current: { totalTokens: 0, source: 'estimate' },
   };
-  // v0.7.26 parity: build the full role-prompt context so every role's
-  // system prompt carries the v0.7.22 surface (decision summary + contract
+  // Build the full role-prompt context so every role's
+  // system prompt carries the full surface (decision summary + contract
   // + metadata + verification + tool policy + evidence strategies +
   // dispatch_child_task guidance + H0/H1/H2 quality framework +
   // handoff/verdict/contract block specs). The context factory closes over
@@ -4235,14 +4231,10 @@ async function runManagedTaskViaRunnerInner(
     }
     return ctx;
   };
-  // v0.7.27 FEATURE_086 parity restore — pre-compute the repo-intelligence
-  // context block once per Runner-driven entry so every role's system
-  // prompt carries repo overview + changed scope + active module + impact
-  // metadata from turn 1. Legacy `runKodaX` built this inline in
-  // `buildReasoningExecutionState`; the Runner-driven path (FEATURE_084
-  // Shard 6d-L) routed around `runKodaX`, so the injection was dropped
-  // and AMA agents lost prompt-level repo awareness. Best-effort: failure
-  // to build must not fail the run.
+  // Pre-compute the repo-intelligence context block once per
+  // Runner-driven entry so every role's system prompt carries repo
+  // overview + changed scope + active module + impact metadata from
+  // turn 1. Best-effort: failure to build must not fail the run.
   //
   // `isNewSession` mirrors the `messages.length === 1` heuristic used by
   // `runKodaX` at agent.ts:2423 — when the session has no prior messages,
@@ -4336,7 +4328,7 @@ async function runManagedTaskViaRunnerInner(
   // Session continuity: when the caller passes `options.session.initialMessages`
   // (REPL multi-turn, session resume, plan-mode replay), prepend them as the
   // Runner transcript so the Scout/Planner/Generator/Evaluator see full
-  // prior context — matching legacy `runKodaX` behaviour via the session
+  // prior context — same behaviour as the SA-mode entry via the session
   // loader.
   //
   // v0.7.26 parity (C1): the user message content is built through
@@ -4356,9 +4348,9 @@ async function runManagedTaskViaRunnerInner(
     ? [...initialMessages, { role: 'user' as const, content: userMessageContent }]
     : [{ role: 'user' as const, content: userMessageContent }];
 
-  // v0.7.26 parity: load the compaction hook once per run. Legacy
-  // agent.ts ran `intelligentCompact` before every provider.stream call;
-  // the Runner-driven path routes the same logic through Runner's
+  // Load the compaction hook once per run. `intelligentCompact` runs
+  // before every provider.stream call; the Runner-driven path routes
+  // it through Runner's
   // `compactionHook` (fired after each tool-result append). Without this
   // wiring, long AMA sessions hit context window overflow and 400.
   const compactionHook = await buildManagedTaskCompactionHook(options);
@@ -4379,9 +4371,9 @@ async function runManagedTaskViaRunnerInner(
     llm,
     abortSignal: options.abortSignal,
     compactionHook,
-    // v0.7.26 parity: register the tool-result truncation guardrail so
-    // every tool invocation flows through the same post-execute size
-    // policy the legacy path applies (agent.ts via
+    // Register the tool-result truncation guardrail so every tool
+    // invocation flows through the same post-execute size policy
+    // the SA-mode substrate applies (via
     // `applyToolResultGuardrail`). Without it the LLM sees raw
     // unbounded tool output, blowing the context window on read/grep
     // of large files. The guardrail is authored in
@@ -4389,8 +4381,8 @@ async function runManagedTaskViaRunnerInner(
     // the core Guardrail lifecycle (Span emission + declaration-order
     // composition).
     guardrails: [createToolResultTruncationGuardrail(baseCtx)],
-    // v0.7.26 parity: surface Runner tool-loop invocations through the
-    // same KodaXEvents channels legacy runManagedTask used. Without this
+    // Surface Runner tool-loop invocations through the
+    // KodaXEvents channels the worker ledger consumes. Without this
     // wiring the REPL worker ledger stays empty mid-run — only the final
     // formal output reaches the user (observed regression report:
     // "除了正式输出之外的任何别的信息都看不到"). Legacy agent.ts fired
@@ -4456,7 +4448,7 @@ async function runManagedTaskViaRunnerInner(
   const lastText = extractUserFacingText(runResult);
   const { signal, verdictStatus, reason, userAnswer } = deriveFinalStatus(recorder);
 
-  // v0.7.26 parity: Evaluator's user_answer may carry internal role
+  // Evaluator's user_answer may carry internal role
   // framing ("I verified the Generator…", "Let me double-check…") even
   // after the fence sanitizer runs. Strip that framing specifically for
   // review-like tasks where the evaluator was told to speak as the

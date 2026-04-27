@@ -7,8 +7,10 @@
  * - CAP-SESSION-RESUME-001: REPL multi-turn / /resume / --continue /
  *   plan-mode replay all seed messages from initialMessages
  *
- * Risk: HIGH_RISK_PARITY — `runner-driven.ts:4339-4353` parity-restore evidence:
- * "matching legacy `runKodaX` behaviour via the session loader"
+ * Risk: HIGH — session-resume continuity is shared between SA and AMA
+ * paths via `resolveInitialMessages` (auto-resume middleware). Both
+ * branches must seed the transcript identically; divergence breaks
+ * /resume + --continue.
  *
  * Verified location: agent-runtime/middleware/auto-resume.ts (extracted from
  * agent.ts:1485-1503 — pre-FEATURE_100 baseline — during FEATURE_100 P2)

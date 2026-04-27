@@ -2503,8 +2503,8 @@ describe('Shard 6d-f — evaluator graceful fallback when verdict is not emitted
     });
     const result = await runManagedTaskViaRunner(makeOptions(), 'task', mock);
     // Without a verdict, runner defaults to signal='COMPLETE' and uses
-    // the last assistant text as the answer (matching legacy's
-    // degraded-verification fallback semantics, minus the explicit note).
+    // the last assistant text as the answer (degraded-verification
+    // fallback semantics, minus the explicit note).
     expect(result.signal).toBe('COMPLETE');
     expect(result.lastText).toContain('could not structure a verdict');
   });
@@ -2583,8 +2583,8 @@ describe('Shard 6d-c4 — onIterationEnd + contextTokenSnapshot', () => {
 
   it('returns undefined contextTokenSnapshot when no provider usage is reported', async () => {
     // Using adapterOverride (no real provider.stream) means no usage data,
-    // so the snapshot stays undefined — matching legacy behaviour for
-    // estimated-only runs.
+    // so the snapshot stays undefined — same behaviour as the SA-mode
+    // path for estimated-only runs.
     const result = await runManagedTaskViaRunner(
       makeOptions(),
       'Hi',

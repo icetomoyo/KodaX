@@ -7,7 +7,9 @@
  * - CAP-MANAGED-REASONING-001: provider-failure fallback produces non-empty decision
  * - CAP-MANAGED-REASONING-002: recent messages capped at 10
  *
- * Risk: MEDIUM (FEATURE_086 parity restore)
+ * Risk: MEDIUM (reasoning-plan failure must NOT abort the AMA run —
+ * provider-resolution failure builds a heuristic fallback decision so
+ * downstream role prompts still receive the full context envelope)
  *
  * Class: 1
  *
