@@ -122,6 +122,7 @@ import { shouldCompact } from './agent-runtime/compaction-trigger.js';
 import { runCompactionLifecycle } from './agent-runtime/middleware/compaction-orchestration.js';
 import { maybeContinueAfterMaxTokens } from './agent-runtime/max-tokens-continuation.js';
 import { maybeAutoContinueManagedProtocol } from './agent-runtime/managed-protocol-continue.js';
+import { applyIterationLimitTerminal } from './agent-runtime/iteration-limit-terminal.js';
 // CAP-026 (`updateToolOutcomeTracking`) is now wired inside
 // `agent-runtime/tool-dispatch.ts:applyPostToolProcessing` since
 // FEATURE_100 P3.3d.
@@ -525,7 +526,11 @@ export async function runKodaX(
   let lastText = '';
   let incompleteRetryCount = 0;
   let maxTokensRetryCount = 0;
-  let limitReached = false; // Track if we exited due to iteration limit - 追踪是否因达到迭代上限而退出
+  // CAP-085: `limitReached` flag — was a `let` toggled `true` only at
+  // the iteration-limit terminal site. Folded into the literal `true`
+  // at that single call site since FEATURE_100 P3.5c (substrate
+  // `applyIterationLimitTerminal` owns the terminal). Other branches
+  // pass `limitReached: false` literally.
   // Thin local wrapper over the CAP-053 step helper so the 8 existing
    // call sites can keep their `emitIterationEnd(iter+1, snapshot?)`
    // shape while the actual rebase + emission lives in event-emitter.ts.
@@ -1417,32 +1422,29 @@ export async function runKodaX(
     }
   }
 
-  // 达到迭代上限 - 循环完成所有迭代没有提前退出
-  // 如果代码执行到这里，说明循环正常结束（没有 COMPLETE、中断或错误）
-  limitReached = true;
-
-  // 最终保存
-  await saveSessionSnapshot(options, sessionId, {
+  // CAP-085: iteration-limit terminal — natural for-loop exit.
+  // Runs the final snapshot save + signal extraction; the caller wraps
+  // with `finalizeManagedProtocolResult` and returns. `limitReached`
+  // is unconditional `true` here (this is the only call site for the
+  // terminal).
+  const iterTerminal = await applyIterationLimitTerminal({
+    options,
+    sessionId,
     messages,
     title,
     runtimeSessionState,
+    lastText,
   });
-
-  // 检查最终信号
-  const [finalSignal, finalReason] = checkPromiseSignal(lastText);
-
-  // 达到迭代上限 (循环正常结束但没有 COMPLETE 信号且没有提前退出)
-  // 使用 limitReached 变量来准确判断
   return finalizeManagedProtocolResult({
     success: true,
     lastText,
-    signal: finalSignal as 'COMPLETE' | 'BLOCKED' | 'DECIDE' | undefined,
-    signalReason: finalReason,
+    signal: iterTerminal.finalSignal,
+    signalReason: iterTerminal.finalReason,
     messages,
     sessionId,
     routingDecision: currentRoutingDecision(),
     contextTokenSnapshot,
-    limitReached,
+    limitReached: true,
   });
   } finally {
     releaseRuntimeBinding?.();
