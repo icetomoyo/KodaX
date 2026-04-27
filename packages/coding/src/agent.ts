@@ -530,12 +530,24 @@ export async function runKodaX(
   let autoDepthEscalationCount = 0;
   let autoTaskRerouteCount = 0;
   const autoFollowUpLimit = 2;
-  let preAnswerJudgeConsumed = false;
-  let postToolJudgeConsumed = false;
 
   let lastText = '';
   let incompleteRetryCount = 0;
-  let maxTokensRetryCount = 0;
+
+  // FEATURE_100 P3.6b — six per-loop counters/latches/accumulators
+  // consolidated into one mutable accumulator. The substrate executor
+  // (P3.6e) will absorb these into TurnContext fields. The object
+  // reference is stable; only its fields mutate, so closures (e.g.
+  // `events.getCostReport.current`) that capture `turnState` see the
+  // current values at call time.
+  const turnState = {
+    preAnswerJudgeConsumed: false,
+    postToolJudgeConsumed: false,
+    maxTokensRetryCount: 0,
+    costTracker: createCostTracker() as CostTracker,
+    managedProtocolContinueAttempted: false,
+    compactConsecutiveFailures: 0,
+  };
   // CAP-085: `limitReached` flag — was a `let` toggled `true` only at
   // the iteration-limit terminal site. Folded into the literal `true`
   // at that single call site since FEATURE_100 P3.5c (substrate
@@ -561,14 +573,14 @@ export async function runKodaX(
     events.onSessionStart?.({ provider: initialProvider.name, sessionId });
     await emitActiveExtensionEvent('session:start', { provider: initialProvider.name, sessionId });
 
-    // Cost tracking — lightweight session-scoped tracker
-    let costTracker: CostTracker = createCostTracker();
+    // Cost tracking — lightweight session-scoped tracker. The closure
+    // captures the stable `turnState` reference; reads see the latest
+    // tracker value at call time (recordUsage produces a new value each
+    // turn, written back via `turnState.costTracker = ...`).
     if (events.getCostReport) {
-      events.getCostReport.current = () => formatCostReport(getSummary(costTracker));
+      events.getCostReport.current = () => formatCostReport(getSummary(turnState.costTracker));
     }
 
-    let managedProtocolContinueAttempted = false;
-    let compactConsecutiveFailures = 0;
     for (let iter = 0; iter < maxIter; iter++) {
     try {
       // CAP-055: per-turn provider/model/thinkingLevel re-resolution +
@@ -623,7 +635,7 @@ export async function runKodaX(
       const compactionLifecycle = await runCompactionLifecycle({
         messages,
         needsCompact,
-        compactConsecutiveFailures,
+        compactConsecutiveFailures: turnState.compactConsecutiveFailures,
         compactionConfig,
         provider,
         contextWindow,
@@ -632,7 +644,7 @@ export async function runKodaX(
         events,
       });
       messages = compactionLifecycle.messages;
-      compactConsecutiveFailures = compactionLifecycle.nextCompactConsecutiveFailures;
+      turnState.compactConsecutiveFailures = compactionLifecycle.nextCompactConsecutiveFailures;
       if (compactionLifecycle.contextTokenSnapshot !== undefined) {
         contextTokenSnapshot = compactionLifecycle.contextTokenSnapshot;
       }
@@ -887,7 +899,7 @@ export async function runKodaX(
 
       // Record cost for this LLM call
       if (result.usage) {
-        costTracker = recordUsage(costTracker, {
+        turnState.costTracker = recordUsage(turnState.costTracker, {
           provider: currentProviderName,
           model: currentModelOverride ?? 'unknown',
           inputTokens: result.usage.inputTokens,
@@ -994,11 +1006,11 @@ export async function runKodaX(
       const maxTokensOutcome = maybeContinueAfterMaxTokens({
         result,
         messages,
-        maxTokensRetryCount,
+        maxTokensRetryCount: turnState.maxTokensRetryCount,
         completedTurnTokenSnapshot,
         events,
       });
-      maxTokensRetryCount = maxTokensOutcome.nextMaxTokensRetryCount;
+      turnState.maxTokensRetryCount = maxTokensOutcome.nextMaxTokensRetryCount;
       if (maxTokensOutcome.outcome === 'continue') {
         contextTokenSnapshot = maxTokensOutcome.nextContextTokenSnapshot;
         continue;
@@ -1011,12 +1023,12 @@ export async function runKodaX(
         result,
         lastText,
         messages,
-        continueAttempted: managedProtocolContinueAttempted,
+        continueAttempted: turnState.managedProtocolContinueAttempted,
         options,
         emittedManagedProtocolPayload,
         completedTurnTokenSnapshot,
       });
-      managedProtocolContinueAttempted = protocolContinueOutcome.nextContinueAttempted;
+      turnState.managedProtocolContinueAttempted = protocolContinueOutcome.nextContinueAttempted;
       if (protocolContinueOutcome.outcome === 'continue') {
         contextTokenSnapshot = protocolContinueOutcome.nextContextTokenSnapshot;
         continue;
@@ -1063,10 +1075,10 @@ export async function runKodaX(
           effectiveReasoningPlan.mode === 'auto' &&
           autoFollowUpCount < autoFollowUpLimit &&
           (autoDepthEscalationCount === 0 || autoTaskRerouteCount === 0) &&
-          !preAnswerJudgeConsumed &&
+          !turnState.preAnswerJudgeConsumed &&
           isReviewFinalAnswerCandidate(prompt, effectiveReasoningPlan, lastText)
         ) {
-          preAnswerJudgeConsumed = true;
+          turnState.preAnswerJudgeConsumed = true;
           const rerouteState = await maybeAdvanceAutoReroute({
             provider,
             options,
@@ -1360,11 +1372,11 @@ export async function runKodaX(
         effectiveReasoningPlan.mode === 'auto' &&
         autoFollowUpCount < autoFollowUpLimit &&
         (autoDepthEscalationCount === 0 || autoTaskRerouteCount === 0) &&
-        !postToolJudgeConsumed
+        !turnState.postToolJudgeConsumed
       ) {
         const toolEvidence = summarizeToolEvidence(result.toolBlocks, toolResults);
         if (toolEvidence && hasStrongToolFailureEvidence(toolEvidence)) {
-          postToolJudgeConsumed = true;
+          turnState.postToolJudgeConsumed = true;
           const rerouteState = await maybeAdvanceAutoReroute({
             provider,
             options,
