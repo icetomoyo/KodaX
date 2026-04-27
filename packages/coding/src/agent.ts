@@ -149,6 +149,7 @@ import { maybeAdvanceAutoReroute } from './agent-runtime/middleware/auto-reroute
 import {
   appendQueuedRuntimeMessages,
   createExtensionRuntimeSessionController,
+  pushToolResultsAndSettle,
   settleExtensionTurn,
 } from './agent-runtime/middleware/extension-queue.js';
 export { estimateProviderPayloadBytes, bucketProviderPayloadSize } from './agent-runtime/provider-payload.js';
@@ -1387,29 +1388,23 @@ export async function runKodaX(
         });
       }
 
-      messages.push({ role: 'user', content: toolResults });
-      if (editRecoveryMessages.length > 0) {
-        messages.push({
-          role: 'user',
-          content: editRecoveryMessages.join('\n\n'),
-          _synthetic: true,
-        });
-      }
-      // Keep UI/context accounting aligned with the tool-result message we just appended.
-      contextTokenSnapshot = rebaseContextTokenSnapshot(messages, completedTurnTokenSnapshot);
-      await settleExtensionTurn(sessionId, lastText, runtimeSessionState, {
-        hadToolCalls: true,
-        success: true,
+      // CAP-081: push toolResults (+ recovery messages) into history,
+      // rebase the snapshot, settle, drain the queue. If the drain
+      // surfaced new messages, the helper emits `turn:end` itself and
+      // we `continue` to consume them in the next iteration.
+      const settleOutcome = await pushToolResultsAndSettle({
+        messages,
+        toolResults,
+        editRecoveryMessages,
+        completedTurnTokenSnapshot,
+        runtimeSessionState,
+        emitActiveExtensionEvent,
+        sessionId,
+        lastText,
+        iter,
       });
-      if (appendQueuedRuntimeMessages(messages, runtimeSessionState)) {
-        contextTokenSnapshot = rebaseContextTokenSnapshot(messages, contextTokenSnapshot);
-        await emitActiveExtensionEvent('turn:end', {
-          sessionId,
-          iteration: iter + 1,
-          lastText,
-          hadToolCalls: true,
-          signal: undefined,
-        });
+      contextTokenSnapshot = settleOutcome.contextTokenSnapshot;
+      if (settleOutcome.drainedQueuedMessages) {
         continue;
       }
 

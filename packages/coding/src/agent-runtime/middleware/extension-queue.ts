@@ -1,9 +1,11 @@
 /**
- * Extension queue + per-turn settle middleware — CAP-020
+ * Extension queue + per-turn settle middleware — CAP-020 + CAP-081
  *
- * Capability inventory: docs/features/v0.7.29-capability-inventory.md#cap-020-extensionruntime-per-turn-queued-message-consumption
+ * Capability inventory:
+ *   - docs/features/v0.7.29-capability-inventory.md#cap-020-extensionruntime-per-turn-queued-message-consumption
+ *   - docs/features/v0.7.29-capability-inventory.md#cap-081-tool-result-accumulation--editrecoverymessages-append--settle
  *
- * Class 1 (substrate middleware). Three responsibilities, all triggered
+ * Class 1 (substrate middleware). Four responsibilities, all triggered
  * at the per-turn epilogue of the SA loop:
  *
  *   1. **`createExtensionRuntimeSessionController`** — factory that
@@ -26,6 +28,17 @@
  *      Time-ordering: AFTER `settleExtensionTurn`; BEFORE next prompt
  *      build.
  *
+ *   4. **`pushToolResultsAndSettle` (CAP-081)** — the post-tool epilogue
+ *      orchestrator that wires the above three together for the
+ *      non-cancellation success branch. Pushes `toolResults` into
+ *      history (and `editRecoveryMessages` as a `_synthetic: true`
+ *      user message), rebases the context-token snapshot, runs
+ *      `settleExtensionTurn`, drains the queue via
+ *      `appendQueuedRuntimeMessages`, and — when anything drained —
+ *      rebases again and emits `turn:end` so the caller can `continue`
+ *      cleanly. Returns the new snapshot plus a boolean flag
+ *      indicating the drain outcome.
+ *
  * The four `settleExtensionTurn` call sites in agent.ts (turn-end
  * success, COMPLETE, BLOCKED, error) all fire BEFORE
  * `appendQueuedRuntimeMessages` to preserve the invariant: extensions
@@ -36,12 +49,15 @@
  * (`createExtensionRuntimeSessionController`), `agent.ts:494-502`
  * (`appendQueuedRuntimeMessages`), `agent.ts:1278-1304`
  * (`settleExtensionTurn`) — pre-FEATURE_100 baseline — during
- * FEATURE_100 P2.
+ * FEATURE_100 P2.  `pushToolResultsAndSettle` extracted from
+ * `agent.ts:1390-1414` — pre-FEATURE_100 baseline — during
+ * FEATURE_100 P3.3e.
  */
 
-import type { KodaXMessage } from '@kodax/ai';
+import type { KodaXMessage, KodaXToolResultBlock } from '@kodax/ai';
 
 import type {
+  KodaXContextTokenSnapshot,
   KodaXExtensionSessionRecord,
   KodaXJsonValue,
   KodaXReasoningMode,
@@ -54,6 +70,8 @@ import {
   normalizeQueuedRuntimeMessage,
   normalizeRuntimeModelSelection,
 } from '../runtime-session-state.js';
+import { rebaseContextTokenSnapshot } from '../../token-accounting.js';
+import type { ExtensionEventEmitter } from '../stream-handler-wiring.js';
 
 export function appendQueuedRuntimeMessages(
   messages: KodaXMessage[],
@@ -177,4 +195,78 @@ export function createExtensionRuntimeSessionController(state: RuntimeSessionSta
       state.thinkingLevel = level;
     },
   };
+}
+
+export interface PushToolResultsAndSettleInput {
+  /** Live message buffer — mutated in place. */
+  readonly messages: KodaXMessage[];
+  readonly toolResults: readonly KodaXToolResultBlock[];
+  readonly editRecoveryMessages: readonly string[];
+  readonly completedTurnTokenSnapshot: KodaXContextTokenSnapshot;
+  readonly runtimeSessionState: RuntimeSessionState;
+  readonly emitActiveExtensionEvent: ExtensionEventEmitter;
+  readonly sessionId: string;
+  readonly lastText: string;
+  /** Current iteration index (caller passes the same value used for `iter + 1` in turn:end). */
+  readonly iter: number;
+}
+
+export interface PushToolResultsAndSettleOutput {
+  /** New snapshot caller assigns to its mutable holder. */
+  readonly contextTokenSnapshot: KodaXContextTokenSnapshot;
+  /**
+   * `true` iff the queue drain produced new messages — caller MUST
+   * `continue` the outer turn loop to consume them. `false` means the
+   * caller falls through to the post-tool judge / next-turn dispatch.
+   */
+  readonly drainedQueuedMessages: boolean;
+}
+
+/**
+ * CAP-081: post-tool epilogue for the non-cancellation branch.
+ * Pushes `toolResults` and (when present) `editRecoveryMessages` into
+ * history, rebases the context-token snapshot, runs
+ * `settleExtensionTurn`, drains the runtime queue. When the drain
+ * surfaced new messages, also rebases the snapshot a second time and
+ * emits `turn:end` so the caller can `continue` cleanly.
+ *
+ * The two-step rebase is intentional: the first reflects the
+ * tool_results message we just appended; the second reflects the
+ * queue-drained user messages. Skipping either would leave the UI's
+ * token accounting off by the corresponding payload.
+ */
+export async function pushToolResultsAndSettle(
+  input: PushToolResultsAndSettleInput,
+): Promise<PushToolResultsAndSettleOutput> {
+  input.messages.push({ role: 'user', content: [...input.toolResults] });
+  if (input.editRecoveryMessages.length > 0) {
+    input.messages.push({
+      role: 'user',
+      content: input.editRecoveryMessages.join('\n\n'),
+      _synthetic: true,
+    });
+  }
+  let contextTokenSnapshot = rebaseContextTokenSnapshot(
+    input.messages,
+    input.completedTurnTokenSnapshot,
+  );
+  await settleExtensionTurn(input.sessionId, input.lastText, input.runtimeSessionState, {
+    hadToolCalls: true,
+    success: true,
+  });
+  const drainedQueuedMessages = appendQueuedRuntimeMessages(
+    input.messages,
+    input.runtimeSessionState,
+  );
+  if (drainedQueuedMessages) {
+    contextTokenSnapshot = rebaseContextTokenSnapshot(input.messages, contextTokenSnapshot);
+    await input.emitActiveExtensionEvent('turn:end', {
+      sessionId: input.sessionId,
+      iteration: input.iter + 1,
+      lastText: input.lastText,
+      hadToolCalls: true,
+      signal: undefined,
+    });
+  }
+  return { contextTokenSnapshot, drainedQueuedMessages };
 }
