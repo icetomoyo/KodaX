@@ -1,24 +1,86 @@
 /**
  * Contract test for CAP-004: onStreamEnd event
  *
- * Inventory entry: docs/features/v0.7.29-capability-inventory.md#cap-004-onstreamend-event
- *
  * Test obligations:
- * - CAP-EVENTS-STREAM-END-001: fires once per turn including final turn
+ * - CAP-EVENTS-STREAM-END-001: fires at least once per provider stream
+ *   completion (including the final turn before the substrate terminal)
  *
- * Risk: HIGH_RISK_PARITY — `runner-driven.ts:2842-2846` parity-restore evidence:
- * "Legacy agent.ts:2201 / :2687 / :2835 fires this at three terminal points"
+ * Risk: HIGH — REPL relies on this to clear streaming UI on every turn.
  *
- * Verified call sites: agent.ts:2240 / :2719 / :2867 (legacy citation drifted)
+ * Verified call site: agent-runtime/run-substrate.ts (multiple sites
+ * — one per provider call completion). Multi-site is deliberate so the
+ * recovery path's re-stream still produces a fresh `onStreamEnd`.
  *
- * STATUS: P1 stub.
+ * STATUS: ACTIVE since FEATURE_100 P3.6u.
  */
 
-import { describe, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  KodaXBaseProvider,
+  clearRuntimeModelProviders,
+  registerModelProvider,
+} from '@kodax/ai';
+import type {
+  KodaXMessage,
+  KodaXProviderConfig,
+  KodaXProviderStreamOptions,
+  KodaXReasoningRequest,
+  KodaXStreamResult,
+  KodaXToolDefinition,
+} from '@kodax/ai';
 
-// Post-FEATURE_100 import target (uncomment in P2):
-// import { setupStreamEndHook } from '../event-emitter.js';
+import { runKodaX } from '../../agent.js';
+
+const PROVIDER_NAME = 'cap-004-test-provider';
+const API_KEY_ENV = 'CAP_004_TEST_PROVIDER_API_KEY';
+
+class TextOnlyProvider extends KodaXBaseProvider {
+  readonly name = PROVIDER_NAME;
+  readonly supportsThinking = false;
+  protected readonly config: KodaXProviderConfig = {
+    apiKeyEnv: API_KEY_ENV,
+    model: 'baseline-model',
+    supportsThinking: false,
+  };
+
+  async stream(
+    _messages: KodaXMessage[],
+    _tools: KodaXToolDefinition[],
+    _system: string,
+    _reasoning?: boolean | KodaXReasoningRequest,
+    _streamOptions?: KodaXProviderStreamOptions,
+    _signal?: AbortSignal,
+  ): Promise<KodaXStreamResult> {
+    return {
+      textBlocks: [{ type: 'text', text: 'final answer' }],
+      toolBlocks: [],
+      thinkingBlocks: [],
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    };
+  }
+}
 
 describe('CAP-004: onStreamEnd event contract', () => {
-  it.todo('CAP-EVENTS-STREAM-END-001: fires once per turn after provider stream finalizes, including the final turn before terminal');
+  beforeEach(() => {
+    process.env[API_KEY_ENV] = 'test-key';
+    registerModelProvider(PROVIDER_NAME, () => new TextOnlyProvider());
+  });
+
+  afterEach(() => {
+    delete process.env[API_KEY_ENV];
+    clearRuntimeModelProviders();
+  });
+
+  it('CAP-EVENTS-STREAM-END-001: fires at least once after the provider stream finalizes (text-only single-turn run)', async () => {
+    const onStreamEnd = vi.fn();
+    await runKodaX(
+      {
+        provider: PROVIDER_NAME,
+        model: 'baseline-model',
+        events: { onStreamEnd },
+      },
+      'do thing',
+    );
+    expect(onStreamEnd.mock.calls.length).toBeGreaterThanOrEqual(1);
+  });
 });
