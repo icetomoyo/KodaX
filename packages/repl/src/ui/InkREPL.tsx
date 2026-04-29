@@ -10,7 +10,7 @@
  * - Uses StreamingContext for streaming response management
  */
 
-import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import React, { useState, useCallback, useRef, useEffect, useMemo, useDeferredValue } from "react";
 import { render, Box, useApp, Text, Static, useStdout, useStdin, useTerminalWrite } from "./tui.js";
 import { AlternateScreen, type ScrollBoxWindow } from "../tui/index.js";
 import { StatusBar } from "./components/StatusBar.js";
@@ -212,9 +212,12 @@ import {
 } from "../tui/core/termio.js";
 import {
   buildTranscriptRenderModel,
+  computeTranscriptCapStart,
   materializeTranscriptRenderModel,
   sliceHistoryToRecentRounds,
   TRANSCRIPT_HARD_LINE_CAP,
+  TRANSCRIPT_MODE_VISIBLE_MESSAGES,
+  type TranscriptCapAnchor,
   type TranscriptRenderModel,
   type TranscriptRow,
   type TranscriptSection,
@@ -1433,14 +1436,37 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   // A "round" = one user input + AI response(s)
   // Full history remains in state, only rendering is limited
   const MAX_VISIBLE_ROUNDS = 20;
-  const displayHistory = useMemo(
+  // FEATURE_060 Tier 2 (v0.7.30): UUID-anchored 200-item hard cap on the
+  // historical transcript items consumed by the prompt + transcript
+  // surfaces. Round-based capping (`MAX_VISIBLE_ROUNDS = 20`) is a UX
+  // choice; this is a perf safety net that prevents `kodax -c` resume of
+  // a long session from blasting all N items into Ink's `<Static>` block
+  // on first paint. Anchor survives id churn from collapse/regrouping
+  // (`computeTranscriptCapStart` falls back to stored idx when id is
+  // gone, mirroring CC-1174).
+  const transcriptCapAnchorRef = useRef<TranscriptCapAnchor>(null);
+  const fullDisplayHistory = useMemo(
     () => [...history, ...managedForegroundTurnItems],
     [history, managedForegroundTurnItems],
   );
+  const displayHistory = useMemo(() => {
+    const start = computeTranscriptCapStart(
+      fullDisplayHistory,
+      transcriptCapAnchorRef,
+    );
+    return start === 0 ? fullDisplayHistory : fullDisplayHistory.slice(start);
+  }, [fullDisplayHistory]);
+  // FEATURE_060 Tier 2: defer the heavy transcript items state so that
+  // keyboard input + spinner ticks don't get blocked behind a full
+  // `buildTranscriptRenderModel` rebuild. React schedules this on a
+  // low-priority track; the input + spinner state stays on the
+  // high-priority track and re-renders cheaply against the previous
+  // (already-materialized) deferred value. Mirrors CC's REPL.tsx:1318.
+  const deferredDisplayHistory = useDeferredValue(displayHistory);
   const renderHistory = useMemo(() => {
-    return sliceHistoryToRecentRounds(displayHistory, MAX_VISIBLE_ROUNDS);
-  }, [displayHistory]);
-  const transcriptHistory = displayHistory;
+    return sliceHistoryToRecentRounds(deferredDisplayHistory, MAX_VISIBLE_ROUNDS);
+  }, [deferredDisplayHistory]);
+  const transcriptHistory = deferredDisplayHistory;
   const showWorkStripTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const hideWorkStripTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const iterationToolsRef = useRef<string[]>([]);
@@ -2268,12 +2294,29 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   );
   const foregroundManagedLedgerHasContent = managedForegroundTurnItems.length > 0;
   const foregroundManagedOwnsLivePreview = fullscreenPolicy.streamingPreview && foregroundManagedLedgerVisible;
-  const transcriptDisplayItems = resolveTranscriptSurfaceItems({
+  const rawTranscriptDisplayItems = resolveTranscriptSurfaceItems({
     surface: "transcript",
     snapshot: displaySnapshot,
     promptItems: renderHistory,
     transcriptItems: transcriptHistory,
   });
+  // FEATURE_060 Tier 2 (v0.7.30): when transcript-mode is active and the
+  // user has NOT toggled show-all, slice to the last 30 messages with a
+  // hidden-count divider — mirrors CC's `MAX_MESSAGES_TO_SHOW_IN_TRANSCRIPT_MODE = 30`
+  // (Messages.tsx:276). The 200-item cap (anchor above) is the perf safety
+  // net for `<Static>` first-paint on `kodax -c`; this 30-cap is the
+  // transcript-mode UX (so the surface lands close to the active turn,
+  // not buried under hundreds of historical rounds). `showAllInTranscript`
+  // toggles back to the full (200-capped) view.
+  const transcriptDisplayItems = useMemo(() => {
+    if (!isTranscriptMode || showAllInTranscript) {
+      return rawTranscriptDisplayItems;
+    }
+    if (rawTranscriptDisplayItems.length <= TRANSCRIPT_MODE_VISIBLE_MESSAGES) {
+      return rawTranscriptDisplayItems;
+    }
+    return rawTranscriptDisplayItems.slice(-TRANSCRIPT_MODE_VISIBLE_MESSAGES);
+  }, [rawTranscriptDisplayItems, isTranscriptMode, showAllInTranscript]);
   const transcriptDisplayIsLoading = displaySnapshot?.isLoading ?? isLoading;
   const promptStreamingState = fullscreenPolicy.streamingPreview
     ? {

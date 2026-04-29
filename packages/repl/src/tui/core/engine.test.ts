@@ -297,6 +297,39 @@ describe("tui engine (Phase 6: cell renderer is sole render path)", () => {
     expect(hideMatches).toHaveLength(1);
   });
 
+  it("setCursorPosition clamps out-of-bounds coordinates so a future re-application can't hit setCellAt RangeError", () => {
+    const engine = new Engine({
+      stdout: mocks.stdout,
+      stdin: mocks.stdin,
+      stderr: mocks.stderr,
+      shellMode: "main-screen",
+      exitOnCtrlC: false,
+      patchConsole: false,
+      kittyKeyboard: { mode: "disabled" },
+    } as ConstructorParameters<typeof Engine>[0]) as unknown as {
+      setCursorPosition: (p: { x: number; y: number } | undefined) => void;
+      cursorPosition: { x: number; y: number } | undefined;
+    };
+
+    // stdout fixture is 80×4 (mocks.stdout above). Out-of-bounds writes:
+    //   - x = 200 → clamp to 79
+    //   - y = 100 → clamp to 3
+    //   - negative coordinates → clamp to 0
+    engine.setCursorPosition({ x: 200, y: 100 });
+    expect(engine.cursorPosition).toEqual({ x: 79, y: 3 });
+
+    engine.setCursorPosition({ x: -5, y: -1 });
+    expect(engine.cursorPosition).toEqual({ x: 0, y: 0 });
+
+    // In-bounds is preserved verbatim.
+    engine.setCursorPosition({ x: 10, y: 2 });
+    expect(engine.cursorPosition).toEqual({ x: 10, y: 2 });
+
+    // Undefined clears the stored position.
+    engine.setCursorPosition(undefined);
+    expect(engine.cursorPosition).toBeUndefined();
+  });
+
   it("resetOutputTracking reseeds prevFrame so the next onRender repaints from scratch", () => {
     // First render establishes prevFrame = the rendered frame (height 2).
     mocks.renderTree.mockReturnValue(

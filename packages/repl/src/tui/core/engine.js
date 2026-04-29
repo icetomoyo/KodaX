@@ -239,14 +239,34 @@ const Ink = class Ink {
         this.unmount();
     };
     setCursorPosition = (position) => {
-        // Phase 6: cell renderer derives terminal cursor placement from
-        // `frame.cursor` (set by renderer.js to (0, screen.height)). The
-        // legacy `log-update.setCursorPosition` IME-positioning path is
-        // gone; `cursorPosition` instance state is preserved for any
-        // future renderer-level IME wiring. Today, custom TextInput owns
-        // its own visible cursor via inverse-color cell, so the terminal
-        // cursor's exact column doesn't matter for the user.
-        this.cursorPosition = position;
+        // Phase 6 (v0.7.30): cell renderer derives terminal cursor placement
+        // from `frame.cursor` (set by renderer.js to (0, screen.height)) on
+        // every dispatch; today the legacy log-update IME-positioning path is
+        // not re-applied (custom `TextInput` owns its own visible cursor via
+        // inverse-color cell). The state is preserved here for any future
+        // renderer-level IME wiring.
+        //
+        // Defensive clamp: if a future call site reapplies `cursorPosition`
+        // through `cellLogUpdate.render` or `applyDiff`, an out-of-bounds
+        // (x, y) would hit `setCellAt`'s RangeError and crash the process.
+        // Clamp into [0, width-1] × [0, height-1] at the storage boundary so
+        // the stored value can always be safely consumed downstream.
+        if (position === undefined) {
+            this.cursorPosition = undefined;
+            return;
+        }
+        const cols = this.getTerminalWidth();
+        const rows = this.options.stdout.rows ?? 24;
+        // width / height of zero (very edge cases — TTY just resized away)
+        // would make any non-undefined position out-of-bounds; drop to
+        // undefined rather than store a guaranteed-broken coordinate.
+        if (cols <= 0 || rows <= 0) {
+            this.cursorPosition = undefined;
+            return;
+        }
+        const x = Math.max(0, Math.min(position.x | 0, cols - 1));
+        const y = Math.max(0, Math.min(position.y | 0, rows - 1));
+        this.cursorPosition = { x, y };
     };
     resetOutputTracking = () => {
         this.lastOutput = '';

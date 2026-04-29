@@ -7,12 +7,17 @@ import {
   buildTranscriptRows,
   buildStaticTranscriptSections,
   capHistoryByTranscriptRows,
+  computeTranscriptCapStart,
   flattenTranscriptSections,
   getVisibleTranscriptRows,
   materializeTranscriptRenderModel,
   sliceHistoryToRecentRounds,
   THINKING_SHOW_ALL_HARD_CHAR_CAP,
   TRANSCRIPT_HARD_LINE_CAP,
+  TRANSCRIPT_MODE_VISIBLE_MESSAGES,
+  TRANSCRIPT_RENDER_CAP,
+  TRANSCRIPT_RENDER_CAP_STEP,
+  type TranscriptCapAnchor,
 } from "./transcript-layout.js";
 
 function renderedText(model: ReturnType<typeof buildTranscriptRenderModel>): string {
@@ -1094,5 +1099,117 @@ describe("transcript-layout", () => {
       const flat = rows.map((row) => row.text).join("\n");
       expect(flat).not.toMatch(/show-all truncated/i);
     });
+  });
+});
+
+describe("computeTranscriptCapStart — FEATURE_060 Tier 2 (UUID-anchored 200-cap)", () => {
+  function items(count: number, prefix = "i"): Array<{ id: string }> {
+    return Array.from({ length: count }, (_, i) => ({ id: `${prefix}-${i}` }));
+  }
+
+  it("under cap: start = 0 and anchor seeded from items[0]", () => {
+    const list = items(50);
+    const ref = { current: null as TranscriptCapAnchor };
+    const start = computeTranscriptCapStart(list, ref);
+    expect(start).toBe(0);
+    expect(ref.current).toEqual({ id: "i-0", idx: 0 });
+  });
+
+  it("at cap: start still 0 — advancement only triggers past cap+step", () => {
+    const list = items(TRANSCRIPT_RENDER_CAP);
+    const ref = { current: null as TranscriptCapAnchor };
+    const start = computeTranscriptCapStart(list, ref);
+    expect(start).toBe(0);
+    expect(list.length - start).toBe(TRANSCRIPT_RENDER_CAP);
+  });
+
+  it("at cap+step (250 with cap=200, step=50): still 0 — boundary is strictly greater than cap+step", () => {
+    const list = items(TRANSCRIPT_RENDER_CAP + TRANSCRIPT_RENDER_CAP_STEP);
+    const ref = { current: null as TranscriptCapAnchor };
+    const start = computeTranscriptCapStart(list, ref);
+    expect(start).toBe(0);
+  });
+
+  it("past cap+step (251): advances to length - cap and anchors there", () => {
+    const list = items(TRANSCRIPT_RENDER_CAP + TRANSCRIPT_RENDER_CAP_STEP + 1);
+    const ref = { current: null as TranscriptCapAnchor };
+    const start = computeTranscriptCapStart(list, ref);
+    expect(start).toBe(list.length - TRANSCRIPT_RENDER_CAP);
+    expect(ref.current?.id).toBe(list[start].id);
+  });
+
+  it("appends within cap+step window do NOT shift start (CC-941: no scrollback churn)", () => {
+    const list = items(TRANSCRIPT_RENDER_CAP + TRANSCRIPT_RENDER_CAP_STEP + 1);
+    const ref = { current: null as TranscriptCapAnchor };
+    const firstStart = computeTranscriptCapStart(list, ref);
+    expect(firstStart).toBe(list.length - TRANSCRIPT_RENDER_CAP);
+    const anchorIdAfterFirst = ref.current?.id;
+    // Append 10 more — total length grows but length - start = cap + 10,
+    // still <= cap + step, so anchor stays put.
+    const grown = list.concat(items(10, "j"));
+    const secondStart = computeTranscriptCapStart(grown, ref);
+    expect(secondStart).toBe(firstStart);
+    expect(ref.current?.id).toBe(anchorIdAfterFirst);
+  });
+
+  it("anchor id vanishes with list > cap: fallback clamps stored idx against length - cap (CC-1174)", () => {
+    // 250 items (> cap=200), anchor at idx=100 with a vanished id (e.g.,
+    // collapseToolCalls shuffled merged-summary ids). CC's fallback uses
+    // `min(anchor.idx, length - cap)` so when the stored idx is *deeper*
+    // into the history than the cap allows, it clamps to length - cap (50)
+    // instead of returning 0 — which would yank the entire 200-item static
+    // block into a re-paint.
+    const list = items(250);
+    const ref = {
+      current: { id: "vanished", idx: 100 } as TranscriptCapAnchor,
+    };
+    const start = computeTranscriptCapStart(list, ref);
+    expect(start).toBe(50); // min(100, 250 - 200) = 50
+    // Anchor refreshed to live id at the new start.
+    expect(ref.current?.id).toBe(list[50].id);
+    expect(ref.current?.idx).toBe(50);
+  });
+
+  it("anchor id vanishes with list ≤ cap: fallback returns 0 (correct full view)", () => {
+    // Length below the cap → no slicing needed; fallback to 0 is the
+    // correct "show everything" semantic.
+    const list = items(50);
+    const ref = {
+      current: { id: "vanished", idx: 10 } as TranscriptCapAnchor,
+    };
+    const start = computeTranscriptCapStart(list, ref);
+    expect(start).toBe(0);
+    // Anchor refreshed to items[0].
+    expect(ref.current?.id).toBe(list[0].id);
+    expect(ref.current?.idx).toBe(0);
+  });
+
+  it("anchor stored idx clamped on shrunk list (length < cap): start = 0", () => {
+    // 30 items, stale anchor idx=500. min(500, max(0, 30-200)) = 0.
+    const list = items(30);
+    const ref = {
+      current: { id: "vanished", idx: 500 } as TranscriptCapAnchor,
+    };
+    const start = computeTranscriptCapStart(list, ref);
+    expect(start).toBe(0);
+  });
+
+  it("empty list with stale anchor: start = 0, anchor cleared", () => {
+    const list: Array<{ id: string }> = [];
+    const ref = {
+      current: { id: "old", idx: 5 } as TranscriptCapAnchor,
+    };
+    const start = computeTranscriptCapStart(list, ref);
+    expect(start).toBe(0);
+    expect(ref.current).toBeNull();
+  });
+
+  it("cap is exported as 200, step as 50 (CC parity)", () => {
+    expect(TRANSCRIPT_RENDER_CAP).toBe(200);
+    expect(TRANSCRIPT_RENDER_CAP_STEP).toBe(50);
+  });
+
+  it("transcript-mode visible message constant is 30 (CC parity)", () => {
+    expect(TRANSCRIPT_MODE_VISIBLE_MESSAGES).toBe(30);
   });
 });

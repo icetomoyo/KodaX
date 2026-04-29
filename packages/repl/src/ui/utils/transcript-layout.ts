@@ -917,6 +917,78 @@ export function resolveVisibleTranscriptRows(
   return rows;
 }
 
+/**
+ * FEATURE_060 Tier 2 (v0.7.30) — count-based hard cap on transcript items
+ * with UUID-anchored slice boundary.
+ *
+ * KodaX wraps Ink's `<Static>` block around historical items so each item
+ * paints to terminal scrollback exactly once. But on `kodax -c` resume of a
+ * long session, that one-time paint is one giant `stream.write` of all N
+ * historical items at once — under SSH/ConPTY this stalls the connection
+ * for seconds and the local-host CPU pays O(N) Ink fiber + Yoga layout cost
+ * per render even though the *bytes* only flush once.
+ *
+ * Mirrors `claudecode/src/components/Messages.tsx:307` (`MAX_MESSAGES_WITHOUT_VIRTUALIZATION = 200`)
+ * + `MESSAGE_CAP_STEP = 50`. The 50-step quantization avoids the front item
+ * sliding off on every append, which would shift `<Static>` content and
+ * force a full repaint per turn (CC-941). UUID-anchored boundary survives
+ * collapse/regrouping churn (where `items.length` changes without items
+ * actually being added — CC-1174).
+ */
+export const TRANSCRIPT_RENDER_CAP = 200;
+export const TRANSCRIPT_RENDER_CAP_STEP = 50;
+
+/**
+ * Transcript-mode "compact view" cap — when the user is in transcript-mode
+ * and has NOT toggled `showAllInTranscript`, only the last N items render.
+ * Mirrors `claudecode/src/components/Messages.tsx:276`
+ * (`MAX_MESSAGES_TO_SHOW_IN_TRANSCRIPT_MODE = 30`).
+ */
+export const TRANSCRIPT_MODE_VISIBLE_MESSAGES = 30;
+
+export type TranscriptCapAnchor = { id: string; idx: number } | null;
+
+/**
+ * Compute the start index for the capped slice. Mutates `anchorRef.current`
+ * to track the front item's id+idx so subsequent calls remain stable across
+ * id churn.
+ *
+ *   - Anchor found by id   → slice from there
+ *   - Anchor lost (id gone) → fall back to clamped stored idx, so collapse
+ *     regrouping doesn't reset to 0 and yank ~200 messages of static
+ *     content from scrollback into a re-paint
+ *   - No anchor yet         → slice from 0 (until first advancement)
+ *   - Once `length - start > cap + step`, advance to `length - cap`
+ */
+export function computeTranscriptCapStart(
+  items: ReadonlyArray<{ id: string }>,
+  anchorRef: { current: TranscriptCapAnchor },
+  cap: number = TRANSCRIPT_RENDER_CAP,
+  step: number = TRANSCRIPT_RENDER_CAP_STEP,
+): number {
+  const anchor = anchorRef.current;
+  const anchorIdx = anchor
+    ? items.findIndex((m) => m.id === anchor.id)
+    : -1;
+  let start = anchorIdx >= 0
+    ? anchorIdx
+    : anchor
+      ? Math.min(anchor.idx, Math.max(0, items.length - cap))
+      : 0;
+  if (items.length - start > cap + step) {
+    start = items.length - cap;
+  }
+  // Refresh anchor from whatever now lives at start — heals stale id after
+  // a fallback and captures a new id after advancement.
+  const itemAtStart = items[start];
+  if (itemAtStart && (anchor?.id !== itemAtStart.id || anchor.idx !== start)) {
+    anchorRef.current = { id: itemAtStart.id, idx: start };
+  } else if (!itemAtStart && anchor) {
+    anchorRef.current = null;
+  }
+  return start;
+}
+
 export function sliceHistoryToRecentRounds(
   items: HistoryItem[],
   maxRounds: number
