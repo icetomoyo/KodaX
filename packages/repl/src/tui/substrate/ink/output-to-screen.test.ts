@@ -146,4 +146,52 @@ describe("substrate/ink/output-to-screen (FEATURE_057 Track F, Phase 4a)", () =>
     expect(z?.char).toBe("Z");
     expect(z?.hyperlink).toBe(URL);
   });
+
+  it("v0.7.30 hotfix: write that overflows the right edge does NOT throw — adapter clamps to output.width", () => {
+    // Regression for the production crash:
+    //   RangeError: setCellAt out of bounds: (148, 6) on 148x15
+    //   at outputToScreen (output-to-screen.ts) → setCellAt (cell-screen.ts)
+    // Root cause: Output.getGrid() does not clamp writes to `width`; long
+    // lines (status bars, padding, wrapped content) leave the row array
+    // longer than width. The legacy `Output.get()` path tolerated this via
+    // `filter(undefined).trimEnd()`. The cell-renderer adapter must apply
+    // the equivalent clamp at its boundary.
+    const output = new Output({ width: 5, height: 1 });
+    // 8-char write into a 5-cell screen: chars 5..7 spill past the right
+    // edge. Without the adapter clamp, setCellAt(5, 0, ...) throws.
+    output.write(0, 0, "abcdefgh", { transformers: [] });
+    expect(() => outputToScreen(output)).not.toThrow();
+    const screen = outputToScreen(output);
+    expect(screen.width).toBe(5);
+    // Cells 0..4 carry the in-bounds slice; cells beyond width are
+    // discarded (they would not be visible anyway).
+    expect(cellAt(screen, 0, 0)?.char).toBe("a");
+    expect(cellAt(screen, 4, 0)?.char).toBe("e");
+  });
+
+  it("v0.7.30 hotfix: row arrays longer than width never produce out-of-bounds setCellAt calls", () => {
+    // Direct repro using a fake grid (mirrors what Output.getGrid() returns
+    // when overflow occurs): a row whose length exceeds width.
+    const fakeGrid = [
+      [
+        { type: "char" as const, value: "a", fullWidth: false, styles: [] },
+        { type: "char" as const, value: "b", fullWidth: false, styles: [] },
+        { type: "char" as const, value: "c", fullWidth: false, styles: [] },
+        // Index 3, but width is 3 → index 3 is out of bounds. Without the
+        // adapter clamp, this would call setCellAt(3, 0, ...) → throws.
+        { type: "char" as const, value: "X", fullWidth: false, styles: [] },
+      ],
+    ];
+    const fakeOutput = {
+      width: 3,
+      height: 1,
+      getGrid: () => fakeGrid,
+    };
+    expect(() => outputToScreen(fakeOutput)).not.toThrow();
+    const screen = outputToScreen(fakeOutput);
+    expect(cellAt(screen, 0, 0)?.char).toBe("a");
+    expect(cellAt(screen, 2, 0)?.char).toBe("c");
+    // Cell at x=3 doesn't exist — screen is 3 wide.
+    expect(cellAt(screen, 3, 0)).toBeUndefined();
+  });
 });

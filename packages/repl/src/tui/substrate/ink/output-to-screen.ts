@@ -178,10 +178,21 @@ export function outputToScreen(output: OutputLike): Screen {
 
   let screen = createScreen(width, height);
 
-  for (let y = 0; y < grid.length; y++) {
+  // `Output.getGrid()` does NOT clamp writes to `output.width` — a write
+  // operation whose text overflows the right edge causes the row array to
+  // grow past `width` (the legacy `get()` path tolerated this via
+  // `filter(undefined).trimEnd()`). Clamp at the adapter boundary here so
+  // we never hand out-of-grid coordinates to `setCellAt`, which throws by
+  // design to surface internal grid bugs. The same clamp is applied to
+  // `y` for symmetry — `getGrid()` only allocates `height` rows, but a
+  // future change to the vendored Output should not be able to crash the
+  // renderer either.
+  const yLimit = Math.min(grid.length, height);
+  for (let y = 0; y < yLimit; y++) {
     const row = grid[y];
     if (!row) continue;
-    for (let x = 0; x < row.length; x++) {
+    const xLimit = Math.min(row.length, width);
+    for (let x = 0; x < xLimit; x++) {
       const sc = row[x];
       if (!sc) continue;
       const cell = styledCharToCell(sc);
