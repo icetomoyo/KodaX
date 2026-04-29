@@ -18,14 +18,22 @@ function stripShebang(): Plugin {
 export default defineConfig({
   plugins: [stripShebang()],
   resolve: {
+    // Every workspace package gets a src-level alias so test runs are
+    // build-independent (see packages/repl/vitest.config.ts for the
+    // full rationale). Subpath aliases must come before package-root
+    // aliases (Vite prefix-match order).
     alias: {
       '@kodax/skills/shared/yaml': resolveFromRoot('packages', 'skills', 'src', 'shared', 'yaml.ts'),
-      '@kodax/ai': resolveFromRoot('packages', 'ai', 'src', 'index.ts'),
       '@kodax/agent': resolveFromRoot('packages', 'agent', 'src', 'index.ts'),
+      '@kodax/ai': resolveFromRoot('packages', 'ai', 'src', 'index.ts'),
       '@kodax/coding': resolveFromRoot('packages', 'coding', 'src', 'index.ts'),
+      '@kodax/core': resolveFromRoot('packages', 'core', 'src', 'index.ts'),
+      '@kodax/mcp': resolveFromRoot('packages', 'mcp', 'src', 'index.ts'),
       '@kodax/repl': resolveFromRoot('packages', 'repl', 'src', 'index.ts'),
       '@kodax/repointel-protocol': resolveFromRoot('packages', 'repointel-protocol', 'src', 'index.ts'),
+      '@kodax/session-lineage': resolveFromRoot('packages', 'session-lineage', 'src', 'index.ts'),
       '@kodax/skills': resolveFromRoot('packages', 'skills', 'src', 'index.ts'),
+      '@kodax/tracing': resolveFromRoot('packages', 'tracing', 'src', 'index.ts'),
     },
   },
   test: {
