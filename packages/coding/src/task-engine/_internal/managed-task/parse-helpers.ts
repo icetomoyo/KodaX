@@ -33,18 +33,41 @@ import type {
 } from '../../../types.js';
 
 /**
+ * FEATURE_060 Track 1 (v0.7.30): when `text` is larger than this threshold,
+ * `findLastFencedBlock` switches to a tail-only scan. Managed-protocol
+ * fenced blocks are emitted at the end of LLM responses by convention
+ * (post-visible-text); scanning the last 128KB instead of the full payload
+ * keeps regex cost bounded against runaway LLM output (verbose-mode loops,
+ * malformed protocol streams, repeated-injection attacks) without changing
+ * the parse result on well-formed inputs.
+ */
+const FENCED_BLOCK_SCAN_TAIL_THRESHOLD = 128 * 1024;
+const FENCED_BLOCK_SCAN_TAIL_WINDOW = 128 * 1024;
+
+/**
  * Scan `text` for the last occurrence of a triple-backtick fenced block with
  * the given `blockName` info string. Returns the trimmed body and start index,
  * or `undefined` if no such fence exists. Case-insensitive on the info string.
+ *
+ * For texts larger than `FENCED_BLOCK_SCAN_TAIL_THRESHOLD` (128KB), only the
+ * trailing `FENCED_BLOCK_SCAN_TAIL_WINDOW` chars are scanned. The returned
+ * `index` is mapped back to the full-text coordinate space so callers using
+ * `text.slice(0, block.index)` continue to receive the correct visible-text
+ * prefix.
  */
 export function findLastFencedBlock(
   text: string,
   blockName: string,
 ): { body: string; index: number } | undefined {
+  const tailOffset = text.length > FENCED_BLOCK_SCAN_TAIL_THRESHOLD
+    ? text.length - FENCED_BLOCK_SCAN_TAIL_WINDOW
+    : 0;
+  const scanText = tailOffset > 0 ? text.slice(tailOffset) : text;
+
   const pattern = new RegExp(String.raw`\`\`\`${blockName}\s*([\s\S]*?)\`\`\``, 'ig');
   let lastMatch: RegExpExecArray | undefined;
   for (;;) {
-    const match = pattern.exec(text);
+    const match = pattern.exec(scanText);
     if (!match) {
       break;
     }
@@ -55,7 +78,7 @@ export function findLastFencedBlock(
   }
   return {
     body: lastMatch[1]?.trim() ?? '',
-    index: lastMatch.index,
+    index: lastMatch.index + tailOffset,
   };
 }
 

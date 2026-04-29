@@ -13,7 +13,7 @@ const useCursor = () => {
     const setCursorPosition = useCallback((position) => {
         positionRef.current = position;
     }, []);
-    // Propagate cursor position to log-update only during commit phase.
+    // Propagate cursor position to the renderer only during commit phase.
     // useInsertionEffect runs before resetAfterCommit (which triggers onRender),
     // and does NOT run for abandoned concurrent renders (e.g. suspended components).
     // This prevents cursor state from leaking across render boundaries.

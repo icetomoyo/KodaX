@@ -42,6 +42,7 @@ export {
   getTerminalHostCapabilities,
   hasCursorUpViewportYankRisk,
   hasMainScreenRenderScrollRisk,
+  isRemoteConptyHost,
   isTmuxControlMode,
   isVsCodeTerminalHostEnv,
   resetTmuxControlModeProbeForTesting,

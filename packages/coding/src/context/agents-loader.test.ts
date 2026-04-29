@@ -1,14 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, writeFileSync, rmSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { loadAgentsFiles, formatAgentsForPrompt, getKodaxGlobalDir } from "./agents-loader.js";
 
 describe("agents-loader", () => {
-  const testDir = join(__dirname, "test-fixture-agents");
+  // Use OS tmpdir so the parent-directory walk doesn't pick up the repo's
+  // own AGENTS.md / CLAUDE.md (added in fb15937 — moving this fixture out
+  // of the repo prevents the loader from finding ancestor agent files).
+  let testDir: string;
 
   beforeEach(() => {
-    // Create test directory structure
-    mkdirSync(testDir, { recursive: true });
+    testDir = mkdtempSync(join(tmpdir(), "kodax-agents-loader-"));
   });
 
   afterEach(() => {

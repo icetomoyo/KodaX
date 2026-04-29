@@ -4743,8 +4743,15 @@ async function runManagedTaskViaRunnerInner(
   // returns when `options.session?.storage` is undefined and absorbs
   // any `storage.save` rejections internally (CAP-013-003 closed in
   // P3.6a), so we don't need a guard or try/catch at this call site.
+  //
+  // FEATURE_060 Track 2: pass `result.messages` by reference instead of
+  // spreading. `result.messages` was already cloned at line 4676 from
+  // `runResult.messages`; spreading again here would create a third
+  // in-memory copy of the full transcript. `saveSessionSnapshot` does
+  // not mutate the passed array (it forwards directly to
+  // `storage.save`), so reference-passing is safe.
   await saveSessionSnapshot(options, result.sessionId, {
-    messages: [...result.messages],
+    messages: result.messages,
     title: prompt.slice(0, 80),
     gitRoot: options.context?.gitRoot ?? undefined,
   });

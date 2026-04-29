@@ -89,6 +89,30 @@ const THINKING_PREVIEW_MAX_CHARS = 400;
 const THINKING_PREVIEW_TRUNCATION_HINT =
   "... (thinking truncated; press Ctrl+O to inspect full reasoning)";
 
+/**
+ * FEATURE_060 Track 3 (v0.7.30): hard char cap per thinking block, applied
+ * even when `showFullThinking`/`showAllContent` is on. Protects against
+ * pathological reasoning traces (LLM stuck in a tight loop, runaway
+ * verbose-mode output, malformed protocol leaking into the transcript)
+ * driving the layout pass to materialize tens of MB of wrapped rows. The
+ * cap is set well above any realistic single-block reasoning length so
+ * normal show-all UX is unaffected; the truncation hint mirrors the
+ * preview-mode hint and points at the same `Ctrl+O` inspection affordance.
+ */
+export const THINKING_SHOW_ALL_HARD_CHAR_CAP = 200_000;
+const THINKING_SHOW_ALL_TRUNCATION_HINT =
+  "... (thinking show-all truncated at 200K chars; full content available via session artifacts)";
+
+/**
+ * FEATURE_060 Track 3: hard-cap on the per-item line budget used by
+ * `buildThinkingPreview` and downstream layout. Replaces the previous
+ * `Number.POSITIVE_INFINITY` value passed in show-all transcript mode.
+ * 100_000 lines at ~100 chars/line ≈ 10 MB of materialized rows — orders
+ * of magnitude beyond any realistic interactive session, while preventing
+ * unbounded growth on degenerate inputs.
+ */
+export const TRANSCRIPT_HARD_LINE_CAP = 100_000;
+
 function normalizeManagedLiveActivityLabel(label: string | undefined, workerTitle?: string): string | undefined {
   if (!label || !workerTitle) {
     return label;
@@ -170,6 +194,13 @@ function buildThinkingPreview(
   showAllContent = false,
 ): string {
   if (showFullThinking || showAllContent) {
+    // FEATURE_060 Track 3: even in show-all mode, cap individual thinking
+    // blocks at THINKING_SHOW_ALL_HARD_CHAR_CAP. Pathological inputs (LLM
+    // loop / runaway verbose / malformed protocol leak) would otherwise
+    // materialize unbounded wrapped-row arrays into the layout pass.
+    if (text.length > THINKING_SHOW_ALL_HARD_CHAR_CAP) {
+      return `${text.slice(0, THINKING_SHOW_ALL_HARD_CHAR_CAP)}\n\n${THINKING_SHOW_ALL_TRUNCATION_HINT}`;
+    }
     return text;
   }
 
@@ -482,8 +513,12 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
         break;
       case "thinking":
         {
+          // FEATURE_060 Track 3: route show-all through buildThinkingPreview
+          // so the per-block hard char cap fires even when showAllContent is
+          // true. The previous short-circuit `showAllContent ? item.text : ...`
+          // bypassed all caps in show-all mode.
           const preview = showAllContent
-            ? item.text
+            ? buildThinkingPreview(item.text, maxLines, showFullThinking, showAllContent)
             : item.compactText ?? buildThinkingPreview(item.text, maxLines, showFullThinking, showAllContent);
         pushWrappedRows(rows, `${item.id}-header`, "Thinking", viewportWidth, {
           color: "thinking",

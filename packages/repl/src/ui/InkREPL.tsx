@@ -214,6 +214,7 @@ import {
   buildTranscriptRenderModel,
   materializeTranscriptRenderModel,
   sliceHistoryToRecentRounds,
+  TRANSCRIPT_HARD_LINE_CAP,
   type TranscriptRenderModel,
   type TranscriptRow,
   type TranscriptSection,
@@ -2163,8 +2164,16 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const isHistorySearchActive = transcriptDisplayState.searchMode === "history";
   const isTranscriptMode = transcriptDisplayState.surface === "transcript";
   const isAwaitingUserInteraction = !!confirmRequest || !!uiRequest || isHistorySearchActive;
+  // FEATURE_060 Track 3 (v0.7.30): replaced `Number.POSITIVE_INFINITY` with
+  // `TRANSCRIPT_HARD_LINE_CAP` (100K lines, ~10MB of materialized rows) so
+  // pathological show-all sessions can't reintroduce unbounded retained
+  // render models. Normal show-all usage stays unaffected — a 100K-line
+  // budget is orders of magnitude beyond any realistic interactive session.
+  // Proper viewport-virtualization (only materializing visible rows) is
+  // tracked as a separate refactor; this cap is the Tier 1 boundedness
+  // guarantee.
   const transcriptMaxLines = isTranscriptMode
-    ? (showAllInTranscript ? Number.POSITIVE_INFINITY : 1000)
+    ? (showAllInTranscript ? TRANSCRIPT_HARD_LINE_CAP : 1000)
     : 12;
   const surfaceInteractionPolicy = resolveTranscriptInteractionPolicy(
     fullscreenPolicy,
@@ -4924,13 +4933,20 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
 
       // Build a multi-line error payload and route it to the correct
-      // rendering layer. Previously each line was emitted via
-      // `console.log(chalk.*)` which Ink's `patchConsole` captures into
-      // the static area BELOW the user prompt — defeating the chronological
-      // position the 052c23b fix established. When a managed worker is
-      // still owning the turn, append the error into the foreground ledger
-      // so it renders inside the worker's group, right where the failure
-      // happened. Otherwise fall back to a normal history item.
+      // rendering layer. Earlier code emitted each line via
+      // `console.log(chalk.*)`. Two evolutions made that wrong:
+      //   1. When Ink's `patchConsole` was active it routed console output
+      //      into the static area BELOW the user prompt — defeating the
+      //      chronological position the 052c23b fix established.
+      //   2. The renderer now runs with `patchConsole: false` (vendored
+      //      substrate, FEATURE_057), so console.log bypasses Ink entirely
+      //      and writes straight into the alt-screen buffer, colliding
+      //      with the React render output.
+      // Either way the history-item path below is the single source of
+      // truth: when a managed worker is still owning the turn, append the
+      // error into the foreground ledger so it renders inside the worker's
+      // group, right where the failure happened. Otherwise fall back to a
+      // normal history item.
       const categoryName = categoryNames[classification.category] || 'Unknown';
       const errorLines: string[] = [`\u274C API Error (${categoryName}): ${error.message}`];
       if (classification.shouldCleanup) {
@@ -5312,7 +5328,14 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
         if (!result.confirmed) {
           // Issue 051: show cancellation feedback (now via i18n).
-          console.log(chalk.yellow(t("cancelled")));
+          // FEATURE_057 Track E: route through addHistoryItem rather than
+          // direct console.log. With patchConsole=false (the renderer no
+          // longer captures stdout), a raw console.log would bypass the
+          // React tree and write straight into the alt-screen buffer,
+          // colliding with Ink's render output. Routing through the
+          // history-item channel keeps the cancellation message in the
+          // chronological transcript slot where the user expects it.
+          addHistoryItem({ type: "info", text: t("cancelled") });
           // FEATURE_066: Record denial to avoid re-prompting
           denialTrackerRef.current = recordDenial(
             denialTrackerRef.current, tool, input,
@@ -6698,7 +6721,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             if (isAbortError) {
               queueInterruptedPersistence();
             } else {
-              console.log(chalk.red(error.message));
+              // FEATURE_057 Track E: route the error solely through the
+              // history-item channel. The previous double-emit (raw
+              // console.log + appendHistoryItemsWithPersistence) wrote the
+              // same message to two different rendering layers — the bare
+              // stdout write would land in the wrong position now that
+              // patchConsole is disabled (Ink no longer captures it).
               appendHistoryItemsWithPersistence([{
                 type: "error",
                 text: error.message,
@@ -6788,7 +6816,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           if (isAbortError) {
             queueInterruptedPersistence();
           } else {
-            console.log(chalk.red(`[Plan Mode Error] ${error.message}`));
+            // FEATURE_057 Track E: drop the raw console.log — its only
+            // purpose was a double-emit that landed in the wrong screen
+            // position (patchConsole=false means it bypasses Ink's
+            // chronological renderer entirely). The history-item path
+            // below is the single source of truth.
             addHistoryItem({
               type: "error",
               text: error.message,
@@ -6898,11 +6930,17 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           //   - Otherwise, add a normal error history item (previous
           //     behaviour for non-AMA flows).
           //
-          // Critical: do NOT `console.log(chalk.red(...))` here. Ink's
-          // `patchConsole` captures console output into the static area
-          // below the user prompt — exactly the wrong position when a
-          // managed-foreground worker just crashed. The history-item path
-          // below renders in the correct chronological slot.
+          // Critical: do NOT `console.log(chalk.red(...))` here. Two
+          // independent reasons:
+          //   - Historic: when Ink's `patchConsole` was active it routed
+          //     console output into the static area below the user prompt.
+          //   - Current: with `patchConsole: false` (vendored substrate,
+          //     FEATURE_057), console.log bypasses the React tree and
+          //     writes raw bytes into the alt-screen buffer — colliding
+          //     with Ink's rendered output and showing in the wrong slot
+          //     when a managed-foreground worker just crashed.
+          // The history-item path below is the single rendering source of
+          // truth and lands in the correct chronological slot.
           if (managedForegroundOwnerRef.current.workerId) {
             appendManagedForegroundLedgerItem({
               id: `error-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -7550,8 +7588,9 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
         stdin,
         exitOnCtrlC: false,
         patchConsole: false,
-        // Note: incrementalRendering disabled - causes cursor positioning issues with custom TextInput
-        // Ink 6.x still has synchronized updates (auto-enabled) which helps reduce flickering
+        // FEATURE_057 Track F Phase 6 (v0.7.30): cell-level diff renderer
+        // is the sole render path. The legacy `log-update.js` factory and
+        // its `incrementalRendering` toggle are gone.
         maxFps: 30,          // Ink 6.3.0+: Limit frame rate to reduce flickering
         shellMode: fullscreenPolicy.enabled ? fullscreenPolicy.promptShell : "main-screen",
       }

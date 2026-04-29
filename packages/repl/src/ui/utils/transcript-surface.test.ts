@@ -335,4 +335,37 @@ describe("transcript-surface", () => {
     expect(shouldOwnTranscriptViewport(mixedShellPolicy, "prompt", true)).toBe(false);
     expect(shouldOwnTranscriptViewport(mixedShellPolicy, "transcript", false)).toBe(true);
   });
+
+  // FEATURE_096: remote_conpty_host (Windows-SSH) gets main-screen + native scroll
+  // with spinner-only animation. Streaming preview is OFF to avoid ghost frames
+  // in the terminal scrollback (matches Claude Code external-user main-screen path).
+  it("derives a native-scroll interaction policy for remote_conpty_host (Windows-SSH downgrade)", () => {
+    const remoteConptyPolicy = {
+      enabled: false,
+      promptShell: "main-screen",
+      transcriptShell: "main-screen",
+      mouseWheel: false,
+      mouseClicks: false,
+      streamingPreview: false,
+      transcriptSpinnerAnimation: true,
+    } as const;
+
+    expect(resolveFullscreenShellMode(remoteConptyPolicy, "prompt")).toBe("main-screen");
+    expect(resolveFullscreenShellMode(remoteConptyPolicy, "transcript")).toBe("main-screen");
+    expect(shouldUseAlternateScreenShell(remoteConptyPolicy, "prompt")).toBe(false);
+    expect(shouldUseRendererViewportShell(remoteConptyPolicy, "prompt")).toBe(false);
+    expect(shouldOwnTranscriptViewport(remoteConptyPolicy, "prompt", false)).toBe(false);
+
+    expect(resolveTranscriptInteractionPolicy(remoteConptyPolicy, "prompt")).toEqual({
+      shellMode: "main-screen",
+      usesAlternateScreenShell: false,
+      usesRendererViewportShell: false,
+      usesRendererMouseTracking: false,
+      usesManagedMouseClicks: false,
+      usesManagedMouseWheel: false,
+      usesManagedSelection: false,
+      usesManagedWheelHistory: false,
+      usesNativeMainScreenScrollback: true,
+    });
+  });
 });

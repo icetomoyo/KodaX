@@ -68,7 +68,14 @@ export default class Output {
             type: 'unclip',
         });
     }
-    get() {
+    /**
+     * Build the 2D StyledChar grid by replaying queued operations.
+     * Extracted from get() so the cell-level renderer (FEATURE_057 Track F)
+     * can consume the same grid without re-running ANSI tokenization or the
+     * trailing string join. get() now wraps this method to preserve its
+     * original return shape.
+     */
+    getGrid() {
         // Initialize output array with a specific set of rows, so that margin/padding at the bottom is preserved
         const output = [];
         for (let y = 0; y < this.height; y++) {
@@ -167,7 +174,11 @@ export default class Output {
                 }
             }
         }
-        const generatedOutput = output
+        return output;
+    }
+    get() {
+        const grid = this.getGrid();
+        const generatedOutput = grid
             .map(line => {
             // See https://github.com/vadimdemedes/ink/pull/564#issuecomment-1637022742
             const lineWithoutEmptyItems = line.filter(item => item !== undefined);
@@ -176,7 +187,7 @@ export default class Output {
             .join('\n');
         return {
             output: generatedOutput,
-            height: output.length,
+            height: grid.length,
         };
     }
 }

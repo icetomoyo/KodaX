@@ -57,7 +57,6 @@ export interface RenderOptions {
   onRender?: (metrics: { renderTime: number }) => void;
   isScreenReaderEnabled?: boolean;
   maxFps?: number;
-  incrementalRendering?: boolean;
   concurrent?: boolean;
   shellMode?: "virtual" | "main-screen";
   kittyKeyboard?: {
@@ -177,7 +176,6 @@ export function render(
     exitOnCtrlC: true,
       patchConsole: false,
       maxFps: 30,
-      incrementalRendering: false,
       concurrent: false,
       ...getOptions(options),
   };
@@ -212,7 +210,6 @@ export function createRoot(options: RenderOptions = {}): TuiRoot {
     exitOnCtrlC: true,
       patchConsole: false,
       maxFps: 30,
-      incrementalRendering: false,
       concurrent: false,
       ...options,
   };

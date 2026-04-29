@@ -11,6 +11,8 @@ import {
   getVisibleTranscriptRows,
   materializeTranscriptRenderModel,
   sliceHistoryToRecentRounds,
+  THINKING_SHOW_ALL_HARD_CHAR_CAP,
+  TRANSCRIPT_HARD_LINE_CAP,
 } from "./transcript-layout.js";
 
 function renderedText(model: ReturnType<typeof buildTranscriptRenderModel>): string {
@@ -1022,5 +1024,75 @@ describe("transcript-layout", () => {
 
     expect(text).toContain("tail");
     expect(text).not.toContain("line 1");
+  });
+
+  describe("FEATURE_060 Track 3: bounded transcript materialization", () => {
+    it("exports finite hard-cap constants suitable for replacing POSITIVE_INFINITY", () => {
+      // Sanity: these constants are real numbers, not Infinity / NaN — the
+      // whole point of the FEATURE_060 Tier 1 fix is that the show-all
+      // budget is a finite ceiling.
+      expect(Number.isFinite(TRANSCRIPT_HARD_LINE_CAP)).toBe(true);
+      expect(Number.isFinite(THINKING_SHOW_ALL_HARD_CHAR_CAP)).toBe(true);
+      expect(TRANSCRIPT_HARD_LINE_CAP).toBeGreaterThan(0);
+      expect(THINKING_SHOW_ALL_HARD_CHAR_CAP).toBeGreaterThan(0);
+    });
+
+    it("under showAllContent, an oversized thinking block is truncated at THINKING_SHOW_ALL_HARD_CHAR_CAP with a hint", () => {
+      // Build a thinking item with text larger than the show-all cap.
+      const oversize = "a".repeat(THINKING_SHOW_ALL_HARD_CHAR_CAP + 5_000);
+      const items: HistoryItem[] = [
+        {
+          id: "thinking-1",
+          type: "thinking",
+          text: oversize,
+          timestamp: Date.now(),
+        },
+      ];
+
+      const rows = buildTranscriptRows({
+        items,
+        viewportWidth: 80,
+        // showAllContent=true is the show-all transcript-mode signal that
+        // legacy code combined with `transcriptMaxLines = POSITIVE_INFINITY`
+        // — Tier 1 still caps individual blocks via the hard char cap.
+        showAllContent: true,
+        showFullThinking: true,
+        // Stays a finite line budget too.
+        maxLines: TRANSCRIPT_HARD_LINE_CAP,
+      });
+
+      const flat = rows.map((row) => row.text).join("\n");
+      // Must contain the truncation hint, must NOT contain the full
+      // (uncapped) "a" sequence — the body was sliced.
+      expect(flat).toMatch(/show-all truncated/i);
+      // The cap is a CHAR cap; verify the materialized "a" run is at
+      // most cap-sized (the hint adds chars but they are not "a").
+      const aRun = flat.match(/a+/g)?.reduce((max, run) => Math.max(max, run.length), 0) ?? 0;
+      expect(aRun).toBeLessThanOrEqual(THINKING_SHOW_ALL_HARD_CHAR_CAP);
+    });
+
+    it("under showAllContent, a thinking block under the cap is rendered in full (no truncation hint)", () => {
+      // Stay well under the cap.
+      const text = "a".repeat(1_000);
+      const items: HistoryItem[] = [
+        {
+          id: "thinking-2",
+          type: "thinking",
+          text,
+          timestamp: Date.now(),
+        },
+      ];
+
+      const rows = buildTranscriptRows({
+        items,
+        viewportWidth: 80,
+        showAllContent: true,
+        showFullThinking: true,
+        maxLines: TRANSCRIPT_HARD_LINE_CAP,
+      });
+
+      const flat = rows.map((row) => row.text).join("\n");
+      expect(flat).not.toMatch(/show-all truncated/i);
+    });
   });
 });

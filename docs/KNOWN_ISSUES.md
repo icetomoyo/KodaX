@@ -70,11 +70,66 @@ _Last Updated: 2026-04-26_
 | 123 | High | Resolved | Win10 远端 OpenSSH/ConPTY 下 kodax 全屏闪烁 — altScreen 分支 log.clear()+log() 拆成两次独立 stdout.write | 一直存在 | v0.7.27 | 2026-04-24 | 2026-04-24 |
 | 124 | High | Open | AMA 子 Agent dispatch 实际触发率偏低 — Controller fanout gate + H1 工具白名单串联收得过紧 | v0.7.18 | - | 2026-04-26 | - |
 | 125 | Low | Open | Thinking-mode cross-provider replay — 三个不可测 OpenAI-compat 与 anthropic 官方 strict mode 待实证 | v0.7.28 | - | 2026-04-26 | - |
+| 126 | Low | Open | tmux 默认不透传 OSC 8 超链接 — kodax 输出中的 file:// / docs URL 在 tmux 内不可点击 | 一直存在 | - | 2026-04-28 | - |
 
 ---
 
 ## Issue Details
 <!-- Full details for each issue - REQUIRED for all issues -->
+---
+### 126: tmux 默认不透传 OSC 8 超链接 — kodax 输出中的 file:// / docs URL 在 tmux 内不可点击
+
+- **Priority**: Low
+- **Status**: Open（terminal multiplexer 默认配置问题，非 KodaX bug；提供一行 workaround）
+- **Introduced**: 一直存在（OSC 8 hyperlink 自 v0.6.x 起被广泛用于 file 路径 / docs 链接）
+- **Created**: 2026-04-28
+- **Target Version**: 不修复（外部依赖）
+
+#### Background
+
+KodaX 在多处使用 OSC 8 hyperlink escape sequence（`\x1b]8;;<URL>\x1b]8;;\x07`）让支持的终端把 URL 渲染成可点击文本：
+
+- `file://` 链接：edit/read 工具结果中的文件引用
+- `docs/...` 路径：诊断消息中指向项目文档的快捷跳转
+- 外部 URL：知识/技能链接
+
+主流现代终端（iTerm2、WezTerm、Alacritty、Windows Terminal、Ghostty、VS Code integrated terminal）默认支持 OSC 8。**但 tmux ≤ 3.3 默认开启的"过滤未知 OSC"行为会丢弃所有 OSC 8 序列**，URL 不渲染为可点击，只看到裸文字。
+
+FEATURE_057 Track F（v0.7.30 cell-level diff renderer）评审过程中确认这是 tmux 已知缺省行为，与 KodaX 的渲染层无关——legacy log-update.js 路径同样被影响。
+
+#### Reproduction
+
+1. 在原生终端（iTerm2 / WezTerm / Windows Terminal）运行 kodax，让其输出一条带 `file://` 链接的诊断消息 → 链接显示为带下划线、可 Cmd/Ctrl+点击
+2. 进入 tmux session（默认配置），同样运行 → 链接显示为普通文本，鼠标点击无响应
+3. `cat` 一段内联 OSC 8 测试串验证：`printf '\e]8;;https://example.com\e\\example link\e]8;;\e\\\n'`
+
+#### Workaround
+
+在用户的 `~/.tmux.conf` 添加一行：
+
+```
+set -g allow-passthrough on
+```
+
+之后 `tmux kill-server` + 重新 attach 生效。`allow-passthrough` 让 tmux 把它不识别的 OSC/CSI/DCS 序列原样转给底层终端，OSC 8 即被外部终端解析。
+
+注意：`allow-passthrough on` 是 tmux 3.3+ 的设置。tmux 3.2 及以下需要升级或忍受 OSC 8 不可用。
+
+#### Why Not Fix in KodaX
+
+- 关闭 OSC 8 emission 会让所有非 tmux 用户失去可点击链接（占绝大多数）
+- 自动 detect tmux 不可靠：`$TMUX` 环境变量在嵌套 SSH / sudo 后可能丢失，且无法判断用户是否已设 passthrough
+- terminfo 没有标准化 OSC 8 capability bit，运行时 probe 成本高
+- tmux upstream 已在演进 passthrough 默认策略，由 tmux 维护者收敛是更合理的归宿
+
+KodaX 选择记录 known issue + 一行 workaround，让 tmux 用户主动配置。
+
+#### Related
+
+- FEATURE_057 Track F Phase 4 review（v0.7.30）— 在 cell-level renderer 终端兼容性分析中确认该 issue 跨 legacy / cell 路径同形
+- `packages/repl/src/tui/substrate/ink/osc.ts` — OSC 8 emit 实现（`link()` / `LINK_END`）
+- tmux upstream 讨论：[tmux/tmux#3083](https://github.com/tmux/tmux/issues/3083) passthrough default 历史记录
+
 ---
 ### 125: Thinking-mode cross-provider replay — 三个不可测 OpenAI-compat 与 anthropic 官方 strict mode 待实证
 
@@ -3192,7 +3247,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 46 (20 Open, 26 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 53 (25 Open, 28 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 

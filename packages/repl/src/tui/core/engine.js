@@ -15,7 +15,10 @@ import { isDev } from './utils.js';
 import reconciler from './internals/reconciler.js';
 import render from './internals/renderer.js';
 import * as dom from './internals/dom.js';
-import logUpdate from './internals/log-update.js';
+import { LogUpdate as CellLogUpdate } from '../substrate/ink/cell-renderer.js';
+import { applyCellFrame as applyCellFrameHelper } from '../substrate/ink/apply-cell-frame.js';
+import { applyDiff } from '../substrate/ink/apply-diff.js';
+import { emptyFrame } from '../substrate/ink/frame.js';
 import { bsu, esu, shouldSynchronize } from './write-synchronized.js';
 import instances from './instances.js';
 import App from './components/App.js';
@@ -100,9 +103,7 @@ const isErrorInput = (value) => {
 const Ink = class Ink {
     isConcurrent;
     options;
-    log;
     cursorPosition;
-    throttledLog;
     isScreenReaderEnabled;
     isUnmounted;
     isUnmounting;
@@ -126,6 +127,7 @@ const Ink = class Ink {
     shellMode;
     mouseTrackingActive = false;
     shellTransitionPhase = undefined;
+    cursorHidden = false;
     constructor(options) {
         autoBind(this);
         this.options = options;
@@ -153,26 +155,19 @@ const Ink = class Ink {
             this.throttledOnRender = throttled;
         }
         this.rootNode.onImmediateRender = this.onRender;
-        this.log = logUpdate.create(options.stdout, {
-            incremental: options.incrementalRendering,
+        // FEATURE_057 Track F Phase 6 (v0.7.30): cell-level renderer is the
+        // sole render path. `applyCellFrame(frame)` owns every dispatch in
+        // `onRender()` (debug / CI / screen-reader branches still bypass
+        // cell renderer for compatibility — those have specialized output
+        // pipelines that don't benefit from cell-level diffing).
+        this.cellLogUpdate = new CellLogUpdate({
+            isTTY: Boolean(options.stdout.isTTY),
         });
+        this.prevFrame = emptyFrame(
+            options.stdout.rows ?? 24,
+            options.stdout.columns ?? 80,
+        );
         this.cursorPosition = undefined;
-        this.throttledLog = unthrottled
-            ? this.log
-            : throttle((output) => {
-                const shouldWrite = this.log.willRender(output);
-                const sync = shouldSynchronize(this.options.stdout);
-                if (sync && shouldWrite) {
-                    this.options.stdout.write(bsu);
-                }
-                this.log(output);
-                if (sync && shouldWrite) {
-                    this.options.stdout.write(esu);
-                }
-            }, undefined, {
-                leading: true,
-                trailing: true,
-            });
         this.isUnmounted = false;
         this.isUnmounting = false;
         this.isConcurrent = options.concurrent ?? false;
@@ -209,9 +204,21 @@ const Ink = class Ink {
     resized = () => {
         const currentWidth = this.getTerminalWidth();
         if (currentWidth < this.lastTerminalWidth) {
-            this.log.clear();
+            // Phase 6: width shrink — clear visible render area + reseed cell
+            // renderer's prevFrame so the next applyCellFrame paints from
+            // scratch. `shouldFullReset` Case 1 also catches viewport-shrink /
+            // width-change on the next render's own merits, but the explicit
+            // erase-on-shrink keeps the screen clean across the resize.
+            const eraseSeq = this.lastOutputHeight > 0
+                ? ansiEscapes.eraseLines(this.lastOutputHeight)
+                : '';
+            if (eraseSeq.length > 0) {
+                this.options.stdout.write(eraseSeq);
+            }
             this.lastOutput = '';
             this.lastOutputToRender = '';
+            this.cellLogUpdate.reset();
+            this.prevFrame = emptyFrame(this.options.stdout.rows ?? 24, currentWidth);
         }
         this.calculateLayout();
         this.onRender();
@@ -232,15 +239,27 @@ const Ink = class Ink {
         this.unmount();
     };
     setCursorPosition = (position) => {
+        // Phase 6: cell renderer derives terminal cursor placement from
+        // `frame.cursor` (set by renderer.js to (0, screen.height)). The
+        // legacy `log-update.setCursorPosition` IME-positioning path is
+        // gone; `cursorPosition` instance state is preserved for any
+        // future renderer-level IME wiring. Today, custom TextInput owns
+        // its own visible cursor via inverse-color cell, so the terminal
+        // cursor's exact column doesn't matter for the user.
         this.cursorPosition = position;
-        this.log.setCursorPosition(position);
     };
     resetOutputTracking = () => {
-        this.log.reset?.();
         this.lastOutput = '';
         this.lastOutputToRender = '';
         this.lastOutputHeight = 0;
         this.cursorPosition = undefined;
+        // Phase 6: callers (`setShellMode` / `setAltScreenActive`) invoke this
+        // when the substrate cursor pipeline has just emitted alt-screen
+        // toggles or mouse-tracking flips outside the cell-renderer pipeline.
+        // The actual screen state is now decoupled from `prevFrame`, so the
+        // next `applyCellFrame` must paint from scratch — otherwise its diff
+        // computes against a stale `prevFrame` and leaves rows un-repainted.
+        this.invalidateCellFrame();
     };
     usesVirtualShellOwnership = (options = {}) => {
         const altScreenActive = options.altScreenActive ?? this.altScreenActive;
@@ -284,8 +303,20 @@ const Ink = class Ink {
     clearTextSelection() {
     }
     restoreLastOutput = () => {
-        this.log.setCursorPosition(this.cursorPosition);
-        this.log(this.lastOutputToRender || this.lastOutput + '\n');
+        // Phase 6: replay the last cell-level frame at the current cursor
+        // position. Used after `writeToStdout` / `writeToStderr` injects
+        // external bytes above the rendered UI — we erase the rendered
+        // area, write the external data, then paint the prev frame back
+        // below it via a cell-renderer diff against an empty seed. The
+        // diff's first-render-via-incremental path paints all rows with
+        // row-final `\r\n`, landing the cursor at (0, prevFrame.screen.height).
+        if (this.prevFrame.screen.height === 0) return;
+        const empty = emptyFrame(
+            this.options.stdout.rows ?? 24,
+            this.getTerminalWidth(),
+        );
+        const diff = this.cellLogUpdate.render(empty, this.prevFrame);
+        applyDiff(this.options.stdout, diff);
     };
     shouldRestoreManagedShellAfterExternalWrite = () => this.altScreenActive;
     calculateLayout = () => {
@@ -298,8 +329,33 @@ const Ink = class Ink {
         if (this.isUnmounted) {
             return;
         }
+        // Phase 6 cursor visibility: legacy `log-update.js`'s `createStandard`
+        // called `cliCursor.hide(stream)` on the first render when `showCursor`
+        // was unset (the engine never set it, so this fired by default). The
+        // cell renderer doesn't emit `cursorHide` patches automatically — the
+        // OS terminal cursor would otherwise blink at the bottom-left of the
+        // rendered UI (the post-render cursor lands at `(0, screen.height)`).
+        // Emit a one-time `\x1b[?25l` here, paired with `App.js`'s useEffect
+        // cleanup that calls `cliCursor.show(stdout)` on unmount. Skip in CI
+        // / debug / screen-reader modes — those paths bypass the cell renderer
+        // entirely and don't render an interactive UI that would benefit from
+        // cursor hiding.
+        if (!this.cursorHidden
+            && !isInCi
+            && !this.options.debug
+            && !this.isScreenReaderEnabled) {
+            this.options.stdout.write('[?25l');
+            this.cursorHidden = true;
+        }
         const startTime = performance.now();
-        const { output, outputHeight, staticOutput } = render(this.rootNode, this.isScreenReaderEnabled);
+        // Phase 6: pass terminalSize so renderer.js can build `frame.viewport`
+        // from the real TTY dimensions (Phase 3b's scrollback decisions need
+        // the visible viewport, not the rendered content size).
+        const cellTerminalSize = {
+            rows: this.options.stdout.rows ?? 24,
+            columns: this.getTerminalWidth(),
+        };
+        const { output, outputHeight, staticOutput, frame } = render(this.rootNode, this.isScreenReaderEnabled, cellTerminalSize);
         this.options.onRender?.({ renderTime: performance.now() - startTime });
         const hasStaticOutput = staticOutput && staticOutput !== '\n';
         if (this.options.debug) {
@@ -368,27 +424,40 @@ const Ink = class Ink {
             && usesManagedVirtualFullscreenShell;
         const outputToRender = shouldUseFullscreenFrameOwnership ? output : output + '\n';
         if (this.lastOutputHeight >= this.options.stdout.rows && usesManagedVirtualFullscreenShell) {
+            // Phase 6 fullscreen branch: previous render filled or exceeded
+            // the viewport. We need to clear the visible area + repaint with
+            // the new full-frame content. Cell renderer's `shouldFullReset`
+            // Case 3 covers the "scrollback cell change" subset; the
+            // explicit branch here also handles the "viewport-filling
+            // re-render with no scrollback cell change" case (e.g.,
+            // toggling between two same-shape full screens — the diff would
+            // be incremental but we still want clearAndRender atomicity for
+            // Win10 OpenSSH/ConPTY where two-write erase+paint flickers).
             const sync = shouldSynchronize(this.options.stdout);
             if (sync) {
                 this.options.stdout.write(bsu);
             }
             const fullFrameOutput = this.fullStaticOutput + outputToRender;
             if (this.altScreenActive) {
-                // Use clearAndRender (single stream.write) instead of
-                // clear() + log() (two stream.writes). The two-write variant
-                // exposes a blank intermediate frame over SSH/ConPTY — the
-                // primary kodax SSH flicker root cause.
-                this.log.clearAndRender(fullFrameOutput);
+                // Single atomic stream.write to avoid the FEATURE_096
+                // Win10/ConPTY two-write blank intermediate frame.
+                const eraseSeq = this.lastOutputHeight > 0
+                    ? ansiEscapes.eraseLines(this.lastOutputHeight)
+                    : '';
+                this.options.stdout.write(eraseSeq + fullFrameOutput);
             }
             else {
                 this.options.stdout.write(ansiEscapes.clearTerminal + this.fullStaticOutput + output);
-                this.log.sync(outputToRender);
             }
             this.lastOutput = output;
             this.lastOutputToRender = this.altScreenActive
                 ? fullFrameOutput
                 : outputToRender;
             this.lastOutputHeight = outputHeight;
+            // Reseed the cell renderer's prevFrame so the next applyCellFrame
+            // goes through the full-frame paint path — we just wrote string
+            // content to stdout outside the cell-renderer pipeline.
+            this.invalidateCellFrame();
             if (sync) {
                 this.options.stdout.write(esu);
             }
@@ -399,19 +468,61 @@ const Ink = class Ink {
             if (sync) {
                 this.options.stdout.write(bsu);
             }
-            this.log.clear();
-            this.options.stdout.write(staticOutput);
-            this.log(outputToRender);
+            // Phase 6: erase main render area, write the new <Static> block
+            // (which scrolls up into terminal scrollback), then paint the
+            // main render via the cell renderer. invalidateCellFrame()
+            // before applyCellFrame so the cell path treats this as a
+            // first-render at the current cursor position (post-static).
+            const eraseSeq = this.lastOutputHeight > 0
+                ? ansiEscapes.eraseLines(this.lastOutputHeight)
+                : '';
+            this.options.stdout.write(eraseSeq + staticOutput);
+            this.invalidateCellFrame();
+            this.applyCellFrame(frame);
             if (sync) {
                 this.options.stdout.write(esu);
             }
         }
-        else if (output !== this.lastOutput || this.log.isCursorDirty()) {
-            this.throttledLog(outputToRender);
+        else {
+            // Phase 6: cell renderer is the sole render path. Returns true
+            // when the cell path consumed the frame; with `frame` always
+            // populated post-Phase-6 (renderer.js gate is now unconditional
+            // for non-screen-reader paths), the call always succeeds.
+            this.applyCellFrame(frame);
         }
         this.lastOutput = output;
         this.lastOutputToRender = outputToRender;
         this.lastOutputHeight = outputHeight;
+    };
+    /**
+     * Apply a cell-level Frame to the terminal. Returns `true` when the
+     * cell path consumed the frame, `false` when it didn't (frame was
+     * undefined — only happens on the screen-reader path).
+     */
+    applyCellFrame = (frame) => {
+        const state = {
+            cellLogUpdate: this.cellLogUpdate,
+            prevFrame: this.prevFrame,
+            stdout: this.options.stdout,
+        };
+        const applied = applyCellFrameHelper(state, frame);
+        this.prevFrame = state.prevFrame;
+        return applied;
+    };
+    /**
+     * Invalidate the cell renderer's `prevFrame`. Called whenever a write
+     * to stdout outside the cell-renderer pipeline (writeToStdout /
+     * writeToStderr / clear() / fullscreen branch's raw write) leaves
+     * `prevFrame` out of sync with the actual screen state. Reseeding
+     * with `emptyFrame` forces the next `applyCellFrame` through the
+     * first-render-via-incremental path, painting from scratch.
+     */
+    invalidateCellFrame = () => {
+        this.cellLogUpdate.reset();
+        this.prevFrame = emptyFrame(
+            this.options.stdout.rows ?? 24,
+            this.getTerminalWidth(),
+        );
     };
     render(node) {
         const tree = (React.createElement(AccessibilityContext.Provider, { value: { isScreenReaderEnabled: this.isScreenReaderEnabled } },
@@ -438,14 +549,24 @@ const Ink = class Ink {
         }
         if (!this.shouldRestoreManagedShellAfterExternalWrite()) {
             this.options.stdout.write(data);
+            // Raw stdout write bypasses the cell-renderer pipeline; the
+            // next applyCellFrame must repaint from a clean slate.
+            this.invalidateCellFrame();
             return;
         }
         const sync = shouldSynchronize(this.options.stdout);
         if (sync) {
             this.options.stdout.write(bsu);
         }
-        this.log.clear();
-        this.options.stdout.write(data);
+        // Phase 6: erase the rendered UI area, write the external `data`
+        // (which lands above the UI in scrollback / scroll history), then
+        // replay the last cell frame at the new cursor position via
+        // `restoreLastOutput`. After the replay the cell renderer's
+        // prevFrame is in sync with the screen — no invalidation needed.
+        const eraseSeq = this.lastOutputHeight > 0
+            ? ansiEscapes.eraseLines(this.lastOutputHeight)
+            : '';
+        this.options.stdout.write(eraseSeq + data);
         this.restoreLastOutput();
         if (sync) {
             this.options.stdout.write(esu);
@@ -466,13 +587,25 @@ const Ink = class Ink {
         }
         if (!this.shouldRestoreManagedShellAfterExternalWrite()) {
             this.options.stderr.write(data);
+            // Raw stderr write bypasses the cell-renderer pipeline.
+            this.invalidateCellFrame();
             return;
         }
         const sync = shouldSynchronize(this.options.stdout);
         if (sync) {
             this.options.stdout.write(bsu);
         }
-        this.log.clear();
+        // Phase 6: erase rendered UI on stdout, write `data` to stderr,
+        // replay last cell frame on stdout. The erase + write needs two
+        // separate streams (stdout for erase, stderr for data), so it's
+        // inherently a two-write sequence — cell-renderer atomicity does
+        // not apply across stream boundaries.
+        const eraseSeq = this.lastOutputHeight > 0
+            ? ansiEscapes.eraseLines(this.lastOutputHeight)
+            : '';
+        if (eraseSeq.length > 0) {
+            this.options.stdout.write(eraseSeq);
+        }
         this.options.stderr.write(data);
         this.restoreLastOutput();
         if (sync) {
@@ -521,8 +654,6 @@ const Ink = class Ink {
         if (this.cancelKittyDetection) {
             this.cancelKittyDetection();
         }
-        const throttledLog = this.throttledLog;
-        settleThrottle(throttledLog);
         if (canWriteToStdout) {
             if (this.kittyProtocolEnabled) {
                 try {
@@ -534,9 +665,11 @@ const Ink = class Ink {
             if (isInCi) {
                 this.options.stdout.write(this.lastOutput + '\n');
             }
-            else if (!this.options.debug) {
-                this.log.done();
-            }
+            // Phase 6: no `this.log.done()` cleanup needed — cell renderer
+            // is stateless at the stream level. The cursor visibility
+            // restore that legacy `done()` performed via cliCursor.show
+            // is handled by the substrate cursor pipeline + alt-screen
+            // cleanup at the higher renderer-runtime / runtime layers.
         }
         this.kittyProtocolEnabled = false;
         this.shellTransitionPhase = undefined;
@@ -585,8 +718,15 @@ const Ink = class Ink {
     }
     clear() {
         if (!isInCi && !this.options.debug) {
-            this.log.clear();
-            this.log.sync(this.lastOutputToRender || this.lastOutput + '\n');
+            // Phase 6: erase the visible render area; reseed cell renderer's
+            // prevFrame so the next applyCellFrame paints from scratch.
+            const eraseSeq = this.lastOutputHeight > 0
+                ? ansiEscapes.eraseLines(this.lastOutputHeight)
+                : '';
+            if (eraseSeq.length > 0) {
+                this.options.stdout.write(eraseSeq);
+            }
+            this.invalidateCellFrame();
         }
     }
     patchConsole() {

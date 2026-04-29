@@ -274,4 +274,141 @@ describe("terminal-host-profile", () => {
       transcriptSpinnerAnimation: true,
     });
   });
+
+  // FEATURE_096: Windows-SSH ConPTY auto-downgrade
+  describe("remote_conpty_host detection (FEATURE_096)", () => {
+    const SSH_ENV: NodeJS.ProcessEnv = { SSH_CONNECTION: "1.2.3.4 22 5.6.7.8 22" } as NodeJS.ProcessEnv;
+
+    it("detects Windows + SSH_CONNECTION as remote_conpty_host", () => {
+      expect(detectTerminalHostProfile({
+        env: SSH_ENV,
+        platform: "win32",
+        isTTY: true,
+        rawModeSupported: true,
+      })).toBe("remote_conpty_host");
+    });
+
+    it("detects Windows + SSH_CLIENT as remote_conpty_host", () => {
+      expect(detectTerminalHostProfile({
+        env: { SSH_CLIENT: "1.2.3.4 22 22" } as NodeJS.ProcessEnv,
+        platform: "win32",
+        isTTY: true,
+        rawModeSupported: true,
+      })).toBe("remote_conpty_host");
+    });
+
+    it("detects Windows + SSH_TTY as remote_conpty_host", () => {
+      expect(detectTerminalHostProfile({
+        env: { SSH_TTY: "/dev/pts/0" } as NodeJS.ProcessEnv,
+        platform: "win32",
+        isTTY: true,
+        rawModeSupported: true,
+      })).toBe("remote_conpty_host");
+    });
+
+    it("does not promote Linux SSH session to remote_conpty_host", () => {
+      expect(detectTerminalHostProfile({
+        env: SSH_ENV,
+        platform: "linux",
+        isTTY: true,
+        rawModeSupported: true,
+      })).toBe("native_vt");
+    });
+
+    it("does not promote macOS SSH session to remote_conpty_host", () => {
+      expect(detectTerminalHostProfile({
+        env: { SSH_TTY: "/dev/ttys001" } as NodeJS.ProcessEnv,
+        platform: "darwin",
+        isTTY: true,
+        rawModeSupported: true,
+      })).toBe("native_vt");
+    });
+
+    it("keeps VS Code Remote-SSH on the xtermjs path even on Windows", () => {
+      // VS Code's xterm.js handles mouse events directly, not via ConPTY VT.
+      // xtermjs check must run before remote_conpty_host so VS Code Remote-SSH
+      // (TERM_PROGRAM=vscode + SSH_* on win32) is not falsely downgraded.
+      expect(detectTerminalHostProfile({
+        env: { TERM_PROGRAM: "vscode", SSH_CONNECTION: "1.2.3.4 22 5.6.7.8 22" } as NodeJS.ProcessEnv,
+        platform: "win32",
+        isTTY: true,
+        rawModeSupported: true,
+      })).toBe("xtermjs_host");
+    });
+
+    it("returns main-screen + mouse off + spinner-only (no streaming) for remote_conpty_host (owned)", () => {
+      // Streaming preview is intentionally OFF in main-screen paths to avoid
+      // ghost frames in the terminal scrollback (see KODAX_FULLSCREEN_DISABLE_POLICY).
+      // Spinner stays on so users still see the app is alive.
+      expect(resolveFullscreenPolicy("remote_conpty_host", "owned")).toEqual({
+        enabled: false,
+        promptShell: "main-screen",
+        transcriptShell: "main-screen",
+        mouseWheel: false,
+        mouseClicks: false,
+        streamingPreview: false,
+        transcriptSpinnerAnimation: true,
+      });
+    });
+
+    it("collapses remote_conpty_host into degraded main-screen for legacy renderer mode", () => {
+      expect(resolveFullscreenPolicy("remote_conpty_host", "legacy")).toEqual({
+        enabled: false,
+        promptShell: "main-screen",
+        transcriptShell: "main-screen",
+        mouseWheel: false,
+        mouseClicks: false,
+        streamingPreview: false,
+        transcriptSpinnerAnimation: false,
+      });
+    });
+  });
+
+  describe("KODAX_FULLSCREEN escape hatch (FEATURE_096)", () => {
+    it("=1 makes Windows-SSH detect fall back through to degraded_vt fullscreen", () => {
+      // Force fullscreen wins at detect layer: isRemoteConptyHost short-circuits
+      // and the host is classified by its underlying platform path.
+      expect(detectTerminalHostProfile({
+        env: { SSH_CONNECTION: "1.2.3.4 22 5.6.7.8 22", KODAX_FULLSCREEN: "1" } as NodeJS.ProcessEnv,
+        platform: "win32",
+        isTTY: true,
+        rawModeSupported: true,
+      })).toBe("degraded_vt");
+    });
+
+    it("=0 forces main-screen + mouse off + spinner-only (no streaming) on any host", () => {
+      // Disable fullscreen wins at policy layer regardless of host classification.
+      // streamingPreview is OFF to avoid ghost frames in main-screen scrollback;
+      // spinner stays ON so the app still feels alive.
+      const policy = resolveFullscreenPolicy("native_vt", "owned", {
+        env: { KODAX_FULLSCREEN: "0" } as NodeJS.ProcessEnv,
+      });
+      expect(policy).toEqual({
+        enabled: false,
+        promptShell: "main-screen",
+        transcriptShell: "main-screen",
+        mouseWheel: false,
+        mouseClicks: false,
+        streamingPreview: false,
+        transcriptSpinnerAnimation: true,
+      });
+    });
+
+    it("=0 also overrides xtermjs_host into main-screen + spinner-only (no streaming)", () => {
+      const policy = resolveFullscreenPolicy("xtermjs_host", "owned", {
+        env: { KODAX_FULLSCREEN: "0" } as NodeJS.ProcessEnv,
+      });
+      expect(policy.enabled).toBe(false);
+      expect(policy.promptShell).toBe("main-screen");
+      expect(policy.streamingPreview).toBe(false);
+      expect(policy.transcriptSpinnerAnimation).toBe(true);
+    });
+
+    it("unset value falls back to per-host default (no override)", () => {
+      // Confirm the new options arg is non-breaking when absent.
+      expect(resolveFullscreenPolicy("native_vt", "owned", {
+        env: {} as NodeJS.ProcessEnv,
+      }).enabled).toBe(true);
+    });
+  });
 });
