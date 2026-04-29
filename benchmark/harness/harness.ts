@@ -19,7 +19,12 @@
  * the runnable subset and pass it in.
  */
 
-import { getProvider, type KodaXMessage, type KodaXToolDefinition } from '@kodax/ai';
+import {
+  getProvider,
+  type KodaXMessage,
+  type KodaXReasoningRequest,
+  type KodaXToolDefinition,
+} from '@kodax/ai';
 
 import {
   resolveAlias,
@@ -41,6 +46,13 @@ export interface OneShotInput {
   readonly tools?: readonly KodaXToolDefinition[];
   /** Optional pre-conversation context (default: empty). */
   readonly priorMessages?: readonly KodaXMessage[];
+  /**
+   * Optional reasoning request — threaded into provider.stream's 4th
+   * argument. When omitted, provider falls back to its configured
+   * reasoning capability. Used by FEATURE_106 Stage 2 to vary the
+   * reasoning axis (quick / balanced / deep) per cell.
+   */
+  readonly reasoning?: KodaXReasoningRequest;
 }
 
 export interface OneShotOutput {
@@ -72,7 +84,12 @@ export async function runOneShot(
   const tools = input.tools ?? [];
 
   const startedAt = Date.now();
-  const result = await provider.stream(messages, tools, input.systemPrompt);
+  const result = await provider.stream(
+    messages,
+    tools,
+    input.systemPrompt,
+    input.reasoning,
+  );
   const durationMs = Date.now() - startedAt;
 
   const text = result.textBlocks.map((b) => b.text).join('').trim();
@@ -93,6 +110,12 @@ export interface PromptVariant {
   readonly userMessage: string;
   readonly tools?: readonly KodaXToolDefinition[];
   readonly priorMessages?: readonly KodaXMessage[];
+  /**
+   * Optional reasoning request, threaded into provider.stream so each
+   * variant can fix its own reasoning axis. Stage 2 of FEATURE_106 uses
+   * this to compare {quick, balanced, deep} × {current, feature_106}.
+   */
+  readonly reasoning?: KodaXReasoningRequest;
 }
 
 export interface VariantOutcome {
@@ -146,6 +169,7 @@ export async function runABComparison(
           userMessage: variant.userMessage,
           tools: variant.tools,
           priorMessages: variant.priorMessages,
+          reasoning: variant.reasoning,
         });
         text = out.text;
         toolCalls = out.toolCalls;
@@ -421,6 +445,7 @@ export async function runBenchmark(input: BenchmarkRunInput): Promise<BenchmarkR
             userMessage: variant.userMessage,
             tools: variant.tools,
             priorMessages: variant.priorMessages,
+            reasoning: variant.reasoning,
           });
           text = out.text;
           toolCalls = out.toolCalls;
