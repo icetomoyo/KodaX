@@ -25,10 +25,20 @@ import path from 'path';
 import fs from 'fs/promises';
 import crypto from 'crypto';
 
+import { Runner } from '@kodax/core';
 import type { LocalToolDefinition } from '../tools/types.js';
 import { registerTool } from '../tools/registry.js';
 import type { KodaXToolDefinition } from '@kodax/ai';
 
+import { buildAdmissionManifest } from './admission-bridge.js';
+import {
+  _resetAgentResolverForTesting,
+  registerConstructedAgent,
+} from './agent-resolver.js';
+import {
+  runSandboxAgentTest,
+  type SandboxLlmCallback,
+} from './sandbox-runner.js';
 import { loadHandler } from './load-handler.js';
 import { runAstRules } from './ast-rules.js';
 import { validateToolSchemaForProvider, type SchemaProvider } from './provider-schema.js';
@@ -38,6 +48,8 @@ import {
   type ConstructionPolicy,
   type StagedHandle,
   type TestResult,
+  type ToolArtifact,
+  type AgentArtifact,
   defaultPolicy,
   ConstructionManifestError,
 } from './types.js';
@@ -75,12 +87,12 @@ function computeContentHash(content: ConstructionArtifact['content']): string {
 
 /**
  * Single source of truth for which artifact kinds the runtime understands.
- * v0.7.28 ships only `'tool'`; FEATURE_089 adds `'agent'`, FEATURE_090
- * adds `'skill'`, etc. Adding a new kind to this constant is the only
- * change required in this file — both `loadAllArtifacts()` and
- * `readArtifactByVersion()` iterate over it.
+ * v0.7.28 shipped `'tool'`; FEATURE_089 (v0.7.31) adds `'agent'`. Adding
+ * a new kind to this constant + the test/activate dispatch sites is the
+ * only change required in this file — `loadAllArtifacts()` and
+ * `readArtifactByVersion()` iterate over the constant.
  */
-const SUPPORTED_KINDS: ReadonlyArray<ConstructionArtifact['kind']> = ['tool'];
+const SUPPORTED_KINDS: ReadonlyArray<ConstructionArtifact['kind']> = ['tool', 'agent'];
 
 interface RuntimeOptions {
   /** Workspace root for `.kodax/constructed/`. Defaults to `process.cwd()`. */
@@ -113,6 +125,7 @@ export function _resetRuntimeForTesting(): void {
     unregister();
   }
   _activated.clear();
+  _resetAgentResolverForTesting();
   _options = { cwd: process.cwd(), policy: defaultPolicy };
 }
 
@@ -209,6 +222,21 @@ export interface TestArtifactOptions {
   readonly provider?: SchemaProvider;
   /** Inject a real or mock LLM client to run static review. Optional. */
   readonly llmReviewer?: LlmReviewClient;
+  /**
+   * FEATURE_089 Phase 3.5 — sandbox test runner LLM callback. When
+   * supplied AND the artifact is `kind: 'agent'` AND `content.testCases`
+   * is non-empty, `testAgentArtifact` runs each test case through
+   * `Runner.run` with this callback and folds the results into
+   * `TestResult.errors` / `TestResult.warnings`. When omitted, agent
+   * test pipeline runs only the manifest shape + admission audit
+   * — cases are skipped silently (caller's choice not to sandbox).
+   */
+  readonly sandboxLlm?: SandboxLlmCallback;
+  /**
+   * Per-case wall-clock budget for sandbox cases. Forwarded to
+   * `runSandboxAgentTest`. Defaults to 30s when undefined.
+   */
+  readonly sandboxBudgetMs?: number;
 }
 
 export async function test(
@@ -216,13 +244,33 @@ export async function test(
   options: TestArtifactOptions = {},
 ): Promise<TestResult> {
   const { artifact } = handle;
+  if (artifact.kind === 'tool') {
+    return testToolArtifact(artifact, options);
+  }
+  if (artifact.kind === 'agent') {
+    return testAgentArtifact(artifact, options);
+  }
+  // Discriminant exhaustiveness: if a future kind lands without a
+  // dispatch case, the type system would have caught it at the union
+  // edit; this branch defends against runtime data whose 'kind' field
+  // doesn't match the type contract.
+  return {
+    ok: false,
+    errors: [
+      `Unsupported artifact kind '${(artifact as { kind?: string }).kind ?? '<missing>'}'. ` +
+        `Runtime understands: ${SUPPORTED_KINDS.join(', ')}.`,
+    ],
+  };
+}
+
+async function testToolArtifact(
+  artifact: ToolArtifact,
+  options: TestArtifactOptions,
+): Promise<TestResult> {
   const errors: string[] = [];
   const warnings: string[] = [];
 
   // 1. Shape sanity
-  if (artifact.kind !== 'tool') {
-    errors.push(`Unsupported artifact kind '${artifact.kind}'. v0.7.28 only generates tools.`);
-  }
   if (artifact.content.handler.language !== 'javascript') {
     errors.push(`Handler language must be 'javascript' (got '${artifact.content.handler.language}').`);
   }
@@ -294,7 +342,98 @@ export async function test(
 
   // Persist a NEW artifact with testedAt set (immutable update — never
   // mutate the input). The persisted record drives the activate() gate.
-  const tested: ConstructionArtifact = { ...artifact, testedAt: Date.now() };
+  const tested: ToolArtifact = { ...artifact, testedAt: Date.now() };
+  await persistArtifact(tested);
+  return warnings.length > 0 ? { ok: true, warnings } : { ok: true };
+}
+
+/**
+ * FEATURE_089 (v0.7.31) — agent-kind static check pipeline. Two stages:
+ *
+ *   1. Surface shape check — same conservative bar as the v0.7.28 tool
+ *      pipeline (instructions present + non-empty; tools/refs
+ *      well-formed). Cheap fast-fail before the heavier admission pass.
+ *   2. FEATURE_101 admission audit — `buildAdmissionManifest` lifts the
+ *      `AgentContent` to an `AgentManifest`; `Runner.admit` runs the
+ *      5-step audit (schema → invariants → cap composition → patch
+ *      apply). Reject becomes errors[]; clamp becomes warnings[]; ok
+ *      records `testedAt` and persists.
+ *
+ * Admission registration is the caller's concern (REPL bootstrap calls
+ * `registerCodingInvariants()` once on startup). Tests that exercise
+ * the agent path register-and-reset around their describe blocks; see
+ * `runtime-agent-admit.test.ts`.
+ */
+async function testAgentArtifact(
+  artifact: AgentArtifact,
+  options: TestArtifactOptions,
+): Promise<TestResult> {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  // 1. Surface shape check.
+  if (typeof artifact.content.instructions !== 'string' || artifact.content.instructions.length === 0) {
+    errors.push('agent.content.instructions must be a non-empty string.');
+  }
+  if (artifact.content.tools !== undefined) {
+    if (!Array.isArray(artifact.content.tools)) {
+      errors.push('agent.content.tools, when present, must be an array of ToolRef objects.');
+    } else {
+      for (let i = 0; i < artifact.content.tools.length; i += 1) {
+        const ref = (artifact.content.tools[i] as { ref?: unknown } | undefined)?.ref;
+        if (typeof ref !== 'string' || ref.length === 0) {
+          errors.push(`agent.content.tools[${i}].ref must be a non-empty string.`);
+          break;
+        }
+      }
+    }
+  }
+  if (errors.length > 0) {
+    return { ok: false, errors };
+  }
+
+  // 2. FEATURE_101 admission — full 5-step audit.
+  const manifest = buildAdmissionManifest({ name: artifact.name, content: artifact.content });
+  const verdict = await Runner.admit(manifest);
+  if (!verdict.ok) {
+    errors.push(`[admission] ${verdict.reason} (retryable=${verdict.retryable})`);
+    return { ok: false, errors };
+  }
+  for (const note of verdict.clampNotes) {
+    warnings.push(`[admission] ${note}`);
+  }
+
+  // 3. FEATURE_089 Phase 3.5 — sandbox test cases. Runs only when
+  // a sandbox LLM is wired AND the manifest declares testCases. The
+  // resolved Agent override is built directly from the manifest so
+  // we don't have to register-then-revoke around the test (which
+  // would race against rehydrate or concurrent admit checks).
+  const cases = artifact.content.testCases ?? [];
+  if (cases.length > 0 && options.sandboxLlm) {
+    // Build a transient Agent from the admitted manifest. We don't
+    // call `registerConstructedAgent` because that would expose this
+    // un-policy-gated agent to other consumers mid-test.
+    const resolvedAgent = {
+      name: manifest.name,
+      instructions: manifest.instructions,
+      ...(manifest.tools ? { tools: manifest.tools } : {}),
+      ...(manifest.handoffs ? { handoffs: manifest.handoffs } : {}),
+      ...(manifest.reasoning ? { reasoning: manifest.reasoning } : {}),
+    };
+    const sandbox = await runSandboxAgentTest(artifact, {
+      llm: options.sandboxLlm,
+      budgetMs: options.sandboxBudgetMs,
+      resolvedAgent,
+    });
+    for (const c of sandbox.cases) {
+      if (!c.ok) errors.push(`[sandbox:${c.caseId}] ${c.error ?? 'failed'}`);
+    }
+    if (!sandbox.ok) {
+      return { ok: false, errors, warnings };
+    }
+  }
+
+  const tested: AgentArtifact = { ...artifact, testedAt: Date.now() };
   await persistArtifact(tested);
   return warnings.length > 0 ? { ok: true, warnings } : { ok: true };
 }
@@ -356,6 +495,33 @@ export async function activate(handle: StagedHandle): Promise<void> {
     );
   }
 
+  // FEATURE_089 Phase 3.6 review fix — re-run admission on agent kind.
+  // The within-session window between `test_agent` (admission stamps
+  // testedAt) and `activate_agent` is exploitable by an LLM with
+  // filesystem write access: an attacker could overwrite the persisted
+  // manifest after admission passed but before activate registers it
+  // in the resolver. The `contentHash` recorded below only protects
+  // cross-session integrity (rehydrate compares hashes); within a
+  // single session it's set AFTER tampering would have happened.
+  // Re-running admission here closes the window. Tools have their own
+  // safety chain (AST + materialize) so this re-validation is
+  // agent-specific.
+  if (artifact.kind === 'agent') {
+    const manifest = buildAdmissionManifest({
+      name: artifact.name,
+      content: artifact.content,
+    });
+    const verdict = await Runner.admit(manifest);
+    if (!verdict.ok) {
+      throw new Error(
+        `Cannot activate '${artifact.name}@${artifact.version}': re-admission at activate-time failed. `
+        + `${verdict.reason} (retryable=${verdict.retryable}). `
+        + `This indicates the persisted manifest changed between test_agent and activate_agent — `
+        + `re-stage with a fresh version.`,
+      );
+    }
+  }
+
   const verdict = await _options.policy(artifact);
   if (verdict === 'reject') {
     throw new Error(
@@ -399,6 +565,15 @@ export async function activate(handle: StagedHandle): Promise<void> {
  * unregistered before the new one is pushed, preventing double entries.
  */
 async function registerActiveArtifact(artifact: ConstructionArtifact): Promise<void> {
+  if (artifact.kind === 'tool') {
+    return registerActiveToolArtifact(artifact);
+  }
+  if (artifact.kind === 'agent') {
+    return registerActiveAgentArtifact(artifact);
+  }
+}
+
+async function registerActiveToolArtifact(artifact: ToolArtifact): Promise<void> {
   const handler = await loadHandler(
     { name: artifact.name, version: artifact.version, cwd: _options.cwd },
     artifact.content.handler,
@@ -428,6 +603,20 @@ async function registerActiveArtifact(artifact: ConstructionArtifact): Promise<v
     },
   });
 
+  _activated.set(activeKey(artifact), unregister);
+}
+
+/**
+ * FEATURE_089 Phase 3.4 — register an activated agent into the
+ * Constructed Agent Resolver so subsequent `resolveConstructedAgent
+ * (name)` lookups (and Runner.run consumers that thread the resolver)
+ * can find it. Mirrors `registerActiveToolArtifact`'s use of
+ * `registerTool`.
+ */
+async function registerActiveAgentArtifact(artifact: AgentArtifact): Promise<void> {
+  const existing = _activated.get(activeKey(artifact));
+  if (existing) existing();
+  const unregister = registerConstructedAgent(artifact);
   _activated.set(activeKey(artifact), unregister);
 }
 

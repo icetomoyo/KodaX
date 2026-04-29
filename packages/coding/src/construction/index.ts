@@ -8,15 +8,23 @@
 
 // Types
 export type {
+  AgentArtifact,
+  AgentContent,
+  AgentHandoffRef,
+  AgentReasoningRef,
+  AgentTestCase,
   ConstructionArtifact,
   ArtifactStatus,
   Capabilities,
   ConstructionPolicy,
   ConstructionPolicyVerdict,
+  GuardrailRef,
   ScriptSource,
   StagedHandle,
   TestResult,
+  ToolArtifact,
   ToolContent,
+  ToolRef,
 } from './types.js';
 
 export {
@@ -44,6 +52,34 @@ export {
 
 // View-layer
 export { listConstructed, findByVersion, listAll } from './views.js';
+
+// FEATURE_089 (v0.7.31) — Constructed Agent Resolver. Activated
+// `kind: 'agent'` artifacts register here so consumers can lookup
+// runnable Agent objects by name.
+export {
+  _resetAgentResolverForTesting,
+  listConstructedAgents,
+  registerConstructedAgent,
+  resolveConstructedAgent,
+} from './agent-resolver.js';
+
+// FEATURE_089 admission bridge — exposed so SDK consumers can
+// pre-validate manifests outside the `test()` lifecycle.
+export {
+  buildAdmissionManifest,
+  parseToolNameFromRef,
+} from './admission-bridge.js';
+
+// FEATURE_089 Phase 3.5 — sandbox runner.
+export {
+  runSandboxAgentTest,
+} from './sandbox-runner.js';
+export type {
+  SandboxCaseResult,
+  SandboxLlmCallback,
+  SandboxRunResult,
+  SandboxRunnerOptions,
+} from './sandbox-runner.js';
 
 // Lower-level building blocks (for advanced callers / tests)
 export { loadHandler } from './load-handler.js';

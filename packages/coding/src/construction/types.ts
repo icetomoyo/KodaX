@@ -73,17 +73,135 @@ export const DEFAULT_HANDLER_TIMEOUT_MS = 30_000;
 export type ArtifactStatus = 'staged' | 'active' | 'revoked';
 
 /**
- * Persisted artifact shape (one JSON file per name/version under
- * `.kodax/constructed/<kind>/<name>/<version>.json`).
+ * Reference to a tool by stable id. v0.7.31 (FEATURE_089) introduces
+ * Agent manifests that bundle tool refs rather than inline tool bodies;
+ * the resolver expands these refs to concrete `KodaXToolDefinition`
+ * instances at activate time.
  *
- * v0.7.28 only emits `kind: 'tool'`. The `kind` union is intentionally
- * narrow now; FEATURE_089 / FEATURE_090 will widen it.
+ * `ref` shape:
+ *   - `builtin:<name>`            — a tool from the static registry
+ *     (e.g. `builtin:read`, `builtin:bash`)
+ *   - `constructed:<name>@<ver>`  — a previously-activated constructed tool
  */
-export interface ConstructionArtifact {
-  readonly kind: 'tool';
+export interface ToolRef {
+  readonly ref: string;
+}
+
+/**
+ * Reference to a Guardrail by stable id. The Layer A `Guardrail`
+ * declaration is name-only (no runtime hooks); resolvers map known
+ * names to constructed `ToolGuardrail` / `InputGuardrail` /
+ * `OutputGuardrail` instances at activation time.
+ */
+export interface GuardrailRef {
+  readonly kind: 'input' | 'output' | 'tool';
+  readonly ref: string;
+}
+
+/**
+ * Reference to a handoff target by stable id (another constructed agent
+ * or a builtin role). The resolver expands `target.ref` to the actual
+ * `Agent` declaration at admission time so the handoff DAG check
+ * (`handoffLegality` invariant) sees the full graph.
+ */
+export interface AgentHandoffRef {
+  readonly target: { readonly ref: string };
+  readonly kind: 'continuation' | 'as-tool';
+  readonly description?: string;
+}
+
+/**
+ * Reasoning profile declaration mirroring the Layer A
+ * `AgentReasoningProfile`. Kept structurally identical so the resolver
+ * passes the value through without re-shaping.
+ */
+export interface AgentReasoningRef {
+  readonly default: 'quick' | 'balanced' | 'deep';
+  readonly max?: 'quick' | 'balanced' | 'deep';
+  readonly escalateOnRevise?: boolean;
+}
+
+/**
+ * Sandbox test case. Used by `sandbox_test_agent` to verify a
+ * constructed agent before it can activate. Each case feeds `input`
+ * to a sandbox Runner instance and grades the agent's final output:
+ *
+ *   - `expectMatch`     — final text must match this regex (string form)
+ *   - `expectNotMatch`  — final text must NOT match this regex
+ *   - `expectFinalText` — exact substring match (case-sensitive)
+ *
+ * At least one of the three expect-fields must be present; the cases
+ * are graded by `runSandboxAgentTest()` (FEATURE_089 Phase 3.5).
+ */
+export interface AgentTestCase {
+  readonly id: string;
+  readonly input: string;
+  readonly expectMatch?: string;
+  readonly expectNotMatch?: string;
+  readonly expectFinalText?: string;
+}
+
+/**
+ * Agent-kind artifact body (the `content` of `ConstructionArtifact`
+ * when `kind === 'agent'`).
+ *
+ * FEATURE_089 (v0.7.31): all fields except `instructions` are optional;
+ * a minimal "echo agent" can be expressed as `{ instructions: '...' }`.
+ * Tool / handoff / guardrail refs are resolved at admission time
+ * (Runner.admit's 5-step audit expands them and feeds the resolved
+ * Agent through the invariant chain).
+ */
+export interface AgentContent {
+  readonly instructions: string;
+  readonly tools?: readonly ToolRef[];
+  readonly handoffs?: readonly AgentHandoffRef[];
+  readonly reasoning?: AgentReasoningRef;
+  readonly guardrails?: readonly GuardrailRef[];
+  readonly model?: string;
+  readonly provider?: string;
+  /**
+   * Optional structured-output schema mirroring `Agent.outputSchema`.
+   * Pure pass-through to the runtime — admission does not validate
+   * shape semantics here, only well-formed JSON.
+   */
+  readonly outputSchema?: Record<string, unknown>;
+  /**
+   * Optional sandbox test cases. When present, `sandbox_test_agent`
+   * runs them; when absent, the test step performs only the static
+   * checks (manifest schema + admission audit).
+   */
+  readonly testCases?: readonly AgentTestCase[];
+  /**
+   * Maximum total budget (iteration count) the agent may consume.
+   * Plumbed onto the resolved `AgentManifest.maxBudget` and clamped by
+   * `budgetCeiling` invariant during admission.
+   */
+  readonly maxBudget?: number;
+  /**
+   * Voluntary additional invariants the LLM declares this agent
+   * commits to. Plumbed onto `AgentManifest.declaredInvariants`;
+   * unioned on top of the required set during admission.
+   */
+  readonly declaredInvariants?: readonly string[];
+}
+
+/**
+ * Persisted artifact shape (one JSON file per name/version under
+ * `.kodax/constructed/<kind>s/<name>/<version>.json`).
+ *
+ * Discriminated union over `kind`:
+ *   - `kind: 'tool'`  — v0.7.28 (FEATURE_088) tool generation
+ *   - `kind: 'agent'` — v0.7.31 (FEATURE_089) agent generation; passes
+ *                       through `Runner.admit()` at activation time
+ *
+ * Lifecycle fields (status / timestamps / contentHash / sourceAgent /
+ * signedBy) are common to all kinds.
+ */
+export type ConstructionArtifact = ToolArtifact | AgentArtifact;
+
+interface ConstructionArtifactBase {
   readonly name: string;
   readonly version: string;
-  readonly content: ToolContent;
   status: ArtifactStatus;
   readonly signedBy?: string;
   readonly createdAt: number;
@@ -103,6 +221,16 @@ export interface ConstructionArtifact {
    * supply chain.
    */
   contentHash?: string;
+}
+
+export interface ToolArtifact extends ConstructionArtifactBase {
+  readonly kind: 'tool';
+  readonly content: ToolContent;
+}
+
+export interface AgentArtifact extends ConstructionArtifactBase {
+  readonly kind: 'agent';
+  readonly content: AgentContent;
 }
 
 /**

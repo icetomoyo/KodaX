@@ -45,6 +45,13 @@ import {
   toolTestTool,
   toolActivateTool,
 } from './construction.js';
+import {
+  toolScaffoldAgent,
+  toolValidateAgent,
+  toolStageAgentConstruction,
+  toolTestAgent,
+  toolActivateAgent,
+} from './agent-construction.js';
 
 const TOOL_REGISTRY: ToolRegistry = new Map();
 let nextToolRegistrationId = 0;
@@ -874,6 +881,93 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['name', 'version'],
     },
     handler: toolActivateTool,
+  },
+  // ====================================================================
+  // FEATURE_089 (v0.7.31) — runtime AGENT construction staircase. Mirrors
+  // the FEATURE_088 tool-construction tools above. Each tool produces a
+  // manifest under `.kodax/constructed/agents/<name>/<version>.json`.
+  // The activated agent goes through `Runner.admit` (FEATURE_101 5-step
+  // audit) at test time. Gated at the agent layer:
+  // `filterAgentConstructionToolNames` mirrors the tool-construction
+  // gate; not exposed unless the session enables agent-construction mode.
+  // ====================================================================
+  {
+    name: 'scaffold_agent',
+    description:
+      'Generate a fillable AgentArtifact JSON skeleton for a new agent. Returns a draft you must edit before calling validate_agent / stage_agent_construction. '
+      + 'Use this as the FIRST step when authoring a runtime agent — do NOT hand-write the JSON shape from scratch.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Agent name (resolver lookup key once activated).' },
+        version: { type: 'string', description: 'Semver string. Defaults to "0.1.0".' },
+        description: {
+          type: 'string',
+          description: 'One-sentence description of the agent\'s purpose. Becomes the lead line of `instructions`.',
+        },
+      },
+      required: ['name'],
+    },
+    handler: toolScaffoldAgent,
+  },
+  {
+    name: 'validate_agent',
+    description:
+      'Dry-run admission audit (Runner.admit, FEATURE_101 5-step) on a candidate agent manifest JSON: schema validation + invariant.admit hooks + tool-capability cap + budget cap + handoff DAG check. '
+      + 'Does NOT touch disk. Use this BEFORE stage_agent_construction to fail fast on rejected manifests.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        artifact_json: { type: 'string', description: 'The full AgentArtifact as a JSON string.' },
+      },
+      required: ['artifact_json'],
+    },
+    handler: toolValidateAgent,
+  },
+  {
+    name: 'stage_agent_construction',
+    description:
+      'Persist an agent manifest to .kodax/constructed/agents/<name>/<version>.json with status=staged. Refuses to overwrite an existing same-name+version (bump the version instead). '
+      + 'Run validate_agent first; this tool itself does not re-run admission.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        artifact_json: { type: 'string', description: 'The full AgentArtifact as a JSON string.' },
+      },
+      required: ['artifact_json'],
+    },
+    handler: toolStageAgentConstruction,
+  },
+  {
+    name: 'test_agent',
+    description:
+      'Run the agent test pipeline (manifest shape check + Runner.admit + sandbox case execution) on a staged agent. '
+      + 'Returns ok=true/false with errors / warnings. On ok=true the agent is ready for activate_agent.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Agent name as stored on disk.' },
+        version: { type: 'string', description: 'Agent version as stored on disk.' },
+      },
+      required: ['name', 'version'],
+    },
+    handler: toolTestAgent,
+  },
+  {
+    name: 'activate_agent',
+    description:
+      'Activate a staged-and-tested agent. Invokes the construction policy gate, flips status=active, records contentHash, '
+      + 'and registers the agent in the resolver so Runner.run can find it by name. '
+      + 'Policy: in the Ink REPL, an approve/reject dialog is shown to the user; in non-interactive surfaces activation is rejected by default.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Agent name to activate.' },
+        version: { type: 'string', description: 'Agent version to activate.' },
+      },
+      required: ['name', 'version'],
+    },
+    handler: toolActivateAgent,
   },
 ];
 

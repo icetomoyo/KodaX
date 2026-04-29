@@ -249,6 +249,14 @@ export async function toolValidateTool(
     const errors: string[] = [];
     const warnings: string[] = [];
 
+    if (artifact.kind !== 'tool') {
+      errors.push(
+        `validate_tool only inspects tool artifacts (got kind='${artifact.kind}'). ` +
+          'Use validate_agent for agent artifacts (FEATURE_089).',
+      );
+      return renderTestResult({ ok: false, errors });
+    }
+
     // Shape: capabilities.tools array sanity (handled in asConstructionArtifact for top-level).
     const capTools = (artifact.content.capabilities as { tools?: unknown }).tools;
     if (!Array.isArray(capTools)) {

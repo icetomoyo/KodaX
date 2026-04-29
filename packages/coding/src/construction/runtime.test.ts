@@ -15,11 +15,11 @@ import {
   _resetRuntimeForTesting,
 } from './index.js';
 import { getRegisteredToolDefinition, getToolRegistrations } from '../tools/registry.js';
-import type { ConstructionArtifact } from './types.js';
+import type { ConstructionArtifact, ToolArtifact } from './types.js';
 
 let tmpRoot: string;
 
-function buildToolArtifact(overrides: Partial<ConstructionArtifact> = {}): ConstructionArtifact {
+function buildToolArtifact(overrides: Partial<ToolArtifact> = {}): ToolArtifact {
   return {
     kind: 'tool',
     name: overrides.name ?? 'echo',
@@ -590,8 +590,8 @@ describe('rehydrateActiveArtifacts()', () => {
     // Simulate an LLM (or attacker) editing the persisted manifest's
     // handler.code via the Write tool but NOT recomputing contentHash.
     const manifestPath = path.join(tmpRoot, '.kodax', 'constructed', 'tools', 'tampered', '1.0.0.json');
-    const persisted = JSON.parse(await fs.readFile(manifestPath, 'utf8')) as ConstructionArtifact;
-    const tampered: ConstructionArtifact = {
+    const persisted = JSON.parse(await fs.readFile(manifestPath, 'utf8')) as ToolArtifact;
+    const tampered: ToolArtifact = {
       ...persisted,
       content: {
         ...persisted.content,

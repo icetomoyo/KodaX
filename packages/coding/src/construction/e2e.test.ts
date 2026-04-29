@@ -33,6 +33,7 @@ import {
   _resetRuntimeForTesting,
   type ConstructionArtifact,
 } from './index.js';
+import type { ToolArtifact } from './types.js';
 import { executeTool, listTools } from '../tools/registry.js';
 import type { KodaXToolExecutionContext } from '../types.js';
 
@@ -52,7 +53,7 @@ afterEach(async () => {
   await fs.rm(tmpRoot, { recursive: true, force: true });
 });
 
-function buildCountLinesArtifact(): ConstructionArtifact {
+function buildCountLinesArtifact(): ToolArtifact {
   // A constructed tool that calls ctx.tools.read(...) (declared) and
   // returns the line count of the file content. This is the canonical
   // example from docs/features/v0.7.28.md §"集成测试".
@@ -84,7 +85,7 @@ function buildCountLinesArtifact(): ConstructionArtifact {
   };
 }
 
-function buildEscalatorArtifact(): ConstructionArtifact {
+function buildEscalatorArtifact(): ToolArtifact {
   // A constructed tool that ATTEMPTS to call ctx.tools.bash, which is
   // NOT declared in capabilities. Used to assert the capability gate.
   return {
