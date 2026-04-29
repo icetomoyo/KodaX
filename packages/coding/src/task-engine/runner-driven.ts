@@ -212,6 +212,7 @@ import {
   sanitizeManagedUserFacingText,
 } from './_internal/managed-task/sanitize.js';
 import { buildManagedTaskCompactionHook } from './_internal/managed-task/compaction.js';
+import { createScopeAwareHarnessGuardrail } from '../agent-runtime/middleware/scope-aware-harness-guardrail.js';
 import { createToolResultTruncationGuardrail } from '../tools/tool-result-truncation-guardrail.js';
 import { buildPromptMessageContent } from '../input-artifacts.js';
 // CAP-003/004/005/006/007: shared event emit helpers. Both SA (substrate
@@ -4462,16 +4463,36 @@ async function runManagedTaskViaRunnerInner(
     llm,
     abortSignal: options.abortSignal,
     compactionHook,
-    // Register the tool-result truncation guardrail so every tool
-    // invocation flows through the same post-execute size policy
-    // the SA-mode substrate applies (via
-    // `applyToolResultGuardrail`). Without it the LLM sees raw
-    // unbounded tool output, blowing the context window on read/grep
-    // of large files. The guardrail is authored in
-    // `tools/tool-result-truncation-guardrail.ts` and participates in
-    // the core Guardrail lifecycle (Span emission + declaration-order
-    // composition).
-    guardrails: [createToolResultTruncationGuardrail(baseCtx)],
+    // Register two run-scoped guardrails:
+    //
+    //   1. tool-result-truncation: post-execute size policy parity
+    //      with the SA substrate (`applyToolResultGuardrail`). Without
+    //      it the LLM sees raw unbounded tool output, blowing the
+    //      context window on read/grep of large files.
+    //   2. scope-aware-harness (FEATURE_106 v0.7.31): when Scout has
+    //      committed to H0_DIRECT (or hasn't committed at all) and
+    //      Generator-stage mutations cross the significance threshold
+    //      (≥3 files OR ≥100 lines), append the canonical
+    //      emit_scout_verdict hint so the LLM can promote to H1/H2.
+    //      Idempotent on `mutationTracker.reflectionInjected`; reads
+    //      `managedProtocolPayloadRef.current.scout.confirmedHarness`
+    //      to skip when Scout already escalated.
+    //
+    // Both participate in the core Guardrail lifecycle (Span emission +
+    // declaration-order composition).
+    guardrails: [
+      createToolResultTruncationGuardrail(baseCtx),
+      // `mutationTracker` is constructed unconditionally above (line ~3923),
+      // so the guardrail is always wired here. Its internal filters
+      // (mutation-tool predicate, scope-significance threshold, Scout
+      // verdict check, idempotency flag) handle the no-op cases at
+      // runtime — short-circuit branches return `{ action: 'allow' }`
+      // without touching the tool result.
+      createScopeAwareHarnessGuardrail({
+        mutationTracker,
+        payloadRef: managedProtocolPayloadRef,
+      }),
+    ],
     // Surface Runner tool-loop invocations through the
     // KodaXEvents channels the worker ledger consumes. Without this
     // wiring the REPL worker ledger stays empty mid-run — only the final

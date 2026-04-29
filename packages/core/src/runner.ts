@@ -21,6 +21,8 @@ import type { Span, Tracer, Trace } from '@kodax/tracing';
 import { defaultTracer } from '@kodax/tracing';
 
 import type { Agent, AgentMessage, Guardrail } from './agent.js';
+import type { AdmissionVerdict, AgentManifest } from './admission.js';
+import { runAdmissionAudit, type AdmissionAuditOptions } from './admission-audit.js';
 import type { Session } from './session.js';
 import {
   MAX_TOOL_LOOP_ITERATIONS,
@@ -654,6 +656,34 @@ export class Runner {
         trace.end();
       }
     }
+  }
+
+  /**
+   * FEATURE_101 (v0.7.31): admit an untrusted `AgentManifest` against the
+   * admission contract. Returns an `AdmissionVerdict` — `{ ok: true,
+   * handle, clampNotes }` on admission, `{ ok: false, reason, retryable }`
+   * on schema/invariant rejection.
+   *
+   * `Runner.admit` is the single gate between an LLM-emitted manifest and
+   * an executable Agent. The caller MUST receive an admitted handle
+   * before invoking `Runner.run` on any LLM-constructed agent (FEATURE_089
+   * agent-generation enforces this via the activate handle plumbing in
+   * v0.7.31; SDK consumers calling `Runner.run` on hand-authored Agents
+   * are trusted by definition and skip admission).
+   *
+   * Pure delegation to `runAdmissionAudit` — invariants are resolved from
+   * the shared module-scope registry (registered via
+   * `registerCoreInvariants()` and the @kodax/coding capability-coupled
+   * invariants). The runtime stays sync (no I/O); `async` is reserved
+   * for future versions that may need to consult external policy stores.
+   *
+   * @experimental
+   */
+  static async admit(
+    manifest: AgentManifest,
+    options?: AdmissionAuditOptions,
+  ): Promise<AdmissionVerdict> {
+    return runAdmissionAudit(manifest, options);
   }
 
   /**

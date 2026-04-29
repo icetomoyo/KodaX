@@ -117,3 +117,55 @@ export type {
   CapabilityProvider,
   CapabilityResult,
 } from './capability.js';
+
+// FEATURE_101 (v0.7.31) — Constructed Agent Admission Contract types.
+// Runner.admit() runtime + invariant registry are added in subsequent
+// 1A.2 / 1A.3 increments; this export only surfaces the data shapes so
+// that @kodax/coding can declare invariant implementations against them.
+export type {
+  AdmissionCtx,
+  AdmissionVerdict,
+  AdmittedHandle,
+  AgentManifest,
+  Deliverable,
+  InvariantId,
+  InvariantResult,
+  ManifestPatch,
+  ObserveCtx,
+  QualityInvariant,
+  ReadonlyMutationTracker,
+  ReadonlyRecorder,
+  RunnerEvent,
+  SystemCap,
+  TerminalCtx,
+  ToolCapability,
+  ToolPermission,
+} from './admission.js';
+
+export {
+  _resetInvariantRegistry,
+  applyManifestPatch,
+  composePatches,
+  getInvariant,
+  listRegisteredInvariants,
+  registerInvariant,
+  resolveEffectiveInvariants,
+  resolveRequiredInvariants,
+} from './admission-runtime.js';
+
+export type { AdmissionAuditOptions } from './admission-audit.js';
+export { DEFAULT_SYSTEM_CAP, runAdmissionAudit } from './admission-audit.js';
+
+// FEATURE_101 v1 pure-new invariants — registered to the shared runtime
+// registry via `registerCoreInvariants()`. SDK consumers that want
+// admission can either call `registerCoreInvariants()` once at startup
+// or import the @kodax/coding bootstrap which registers all 8 invariants
+// (4 pure + 4 capability-coupled).
+export {
+  CORE_INVARIANTS,
+  evidenceTrail,
+  finalOwner,
+  handoffLegality,
+  harnessSelectionTiming,
+  registerCoreInvariants,
+} from './invariants/index.js';

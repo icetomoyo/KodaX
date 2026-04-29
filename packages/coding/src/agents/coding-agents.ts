@@ -37,15 +37,31 @@ import {
   type Agent,
   type AgentReasoningProfile,
   type AgentTool,
+  type Guardrail,
   type Handoff,
 } from '@kodax/core';
 
+import { SCOPE_AWARE_HARNESS_GUARDRAIL_NAME } from '../agent-runtime/middleware/scope-aware-harness-guardrail.js';
 import {
   emitContract,
   emitHandoff,
   emitScoutVerdict,
   emitVerdict,
 } from './protocol-emitters.js';
+
+// FEATURE_106 (v0.7.31): declarative marker that Scout + Generator carry
+// the scope-aware harness guardrail. Layer A `Guardrail` is name-only —
+// the constructed `ToolGuardrail` (with the `afterTool` hook) is wired
+// per-run by `task-engine/runner-driven.ts` via `Runner.run({ guardrails })`
+// because the hook needs run-scoped references (mutation tracker, managed-
+// protocol payload). Keeping the declaration here documents the topology
+// intent — "Scout and Generator are the multi-file mutation surface; that
+// is where harness commitment must be enforced" — and lets SDK consumers
+// who introspect the agent specs see which roles carry which guardrails.
+const scopeAwareHarnessGuardrailMarker: Guardrail = {
+  kind: 'tool',
+  name: SCOPE_AWARE_HARNESS_GUARDRAIL_NAME,
+};
 
 /** Marker exported for tests and for future binding sites in Shard 5. */
 export const CODING_AGENT_MARKER = 'kodax-coding-agent@0.7.26' as const;
@@ -55,6 +71,7 @@ interface AgentSpec {
   readonly instructions: string;
   readonly tools: readonly AgentTool[];
   readonly reasoning: AgentReasoningProfile;
+  readonly guardrails?: readonly Guardrail[];
 }
 
 const scoutSpec: AgentSpec = {
@@ -64,6 +81,10 @@ const scoutSpec: AgentSpec = {
     'hand off to Generator (H1) or Planner (H2) when complexity requires it. ' +
     'Emit the scout verdict via the emit_scout_verdict tool exactly once.',
   tools: [emitScoutVerdict],
+  // FEATURE_106 — scope-aware harness guardrail attached to the Scout
+  // role: H0 self-execution can drift into multi-file work, the
+  // guardrail surfaces that drift at runtime.
+  guardrails: [scopeAwareHarnessGuardrailMarker],
   // FEATURE_103 (v0.7.29): default raised from 'quick' to 'balanced' and max
   // from 'balanced' to 'deep'. Scout post-FEATURE_061 is no longer just a
   // classifier — it judges H0/H1/H2 (a decision that gates the entire
@@ -96,6 +117,12 @@ const generatorSpec: AgentSpec = {
     'emit_handoff exactly once when execution is complete or blocked.',
   tools: [emitHandoff],
   reasoning: { default: 'balanced', max: 'deep', escalateOnRevise: true },
+  // FEATURE_106 — Generator is the canonical multi-file mutation
+  // surface; the guardrail catches edge cases where Scout admitted H0
+  // and the Generator (post-handoff) ends up writing more than one
+  // file anyway. Idempotency on `tracker.reflectionInjected` ensures
+  // a single firing across the full Scout → Generator handoff.
+  guardrails: [scopeAwareHarnessGuardrailMarker],
 };
 
 const evaluatorSpec: AgentSpec = {
@@ -131,6 +158,7 @@ function createCodingAgents(): {
     instructions: spec.instructions,
     tools: spec.tools,
     reasoning: spec.reasoning,
+    guardrails: spec.guardrails,
     handoffs: undefined,
   });
 

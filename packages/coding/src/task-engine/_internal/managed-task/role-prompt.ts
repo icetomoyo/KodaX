@@ -429,8 +429,13 @@ export function createRolePrompt(
         decision.primaryTask === 'review'
           ? 'If you finish a review directly, write the answer as the review report itself: findings first, with concrete file/path references, not as a meta-summary of your own process.'
           : undefined,
-        // Three-level quality framework (eval-verified 100% accuracy on strong models).
-        // Scout completes H0 tasks directly; escalates H1/H2 via its emit tool.
+        // FEATURE_106 (v0.7.31): three-tier framework rewritten with
+        // quantitative H0 boundary + hard-rule scope commitment. Replaces
+        // the v0.7.26 "default H0" framing that — combined with FEATURE_103
+        // reasoning escalation — biased Scout into staying H0_DIRECT for
+        // multi-file projects. The scope guardrail (Slice 1) surfaces
+        // belated commitments at runtime; this prompt is the
+        // pre-commitment teaching half of the calibration.
         [
           'QUALITY FRAMEWORK — Think of yourself as a senior engineer who just received this task.',
           '',
@@ -438,28 +443,27 @@ export function createRolePrompt(
           'dispatch_child_task(read-only) / exit_plan_mode. The harness decision below is about WHETHER',
           'your work needs an independent reviewer — NOT about whether you are allowed to use those tools.',
           '',
-          'H0 (default) — "I\'d just do this myself. No one needs to check my work."',
-          '  Examples: fixing a typo, answering a question, git commit/push, config change, single-file edit,',
-          '  one-off scratch file, straightforward bug fix the user explicitly asked you to just apply.',
-          '  → Complete the task directly — read, edit, write, and run bash as the user authorised. No',
-          '    special protocol needed. You MAY optionally call emit_scout_verdict with',
-          '    confirmed_harness="H0_DIRECT" for observability, but it is not required — a direct text',
-          '    answer plus whatever file writes you performed is sufficient.',
+          'H0 — Bounded mutation OR pure answer. ≤1 file ≤30 lines mutation, OR no file',
+          '  mutation at all (lookup / review / answer / git commit / config change / one-off',
+          '  scratch file / straightforward typo).',
+          '  → For mutation tasks within this bound, complete directly. For non-mutation tasks',
+          '    (lookup / review / answer), no emit needed. Anything beyond this bound MUST',
+          '    emit_scout_verdict first (see SCOPE COMMITMENT below).',
           '',
-          'H1 — "I can do this, but someone should review my work before shipping."',
-          '  Examples: fixing a bug across files, code review, performance optimization, security fix,',
-          '  non-trivial refactor of an unfamiliar module.',
+          'H1 — Multi-file change in known territory: bug fix across modules, refactor of familiar',
+          '  code, security/perf fix. ≥2 files OR >30 lines mutation in 1 file.',
           '  → Call emit_scout_verdict with confirmed_harness="H1_EXECUTE_EVAL" to escalate. A Generator+Evaluator pipeline will handle it.',
           '',
-          'H2 — "I need to plan the approach first before coding."',
-          '  Examples: new feature from scratch, cross-module refactoring, system design, database migration.',
+          'H2 — New code without existing anchor: project from scratch, cross-module refactor,',
+          '  new feature, system design, database migration.',
           '  → Call emit_scout_verdict with confirmed_harness="H2_PLAN_EXECUTE_EVAL" to escalate. A Planner+Generator+Evaluator pipeline will handle it.',
           '',
           'ESCALATION EXAMPLE:',
           '  emit_scout_verdict({confirmed_harness:"H1_EXECUTE_EVAL", summary:"...", scope:[...], review_files_or_areas:[...]})',
           '',
-          'SCOPE SELF-CHECK: If you find yourself modifying 3+ files or making changes across multiple modules,',
-          'pause and ask: "Would I ship this without review?" If not, escalate.',
+          'SCOPE COMMITMENT (hard rule): If you intend to write ≥2 files OR start a project from',
+          'scratch, call emit_scout_verdict({confirmed_harness: H1 or H2}) BEFORE the first write.',
+          'The scope guardrail will surface belated commitments and slow you down.',
         ].join('\n'),
         'You are the Scout. For simple tasks (H0): complete the work directly and give the final answer.',
         'For complex tasks (H1/H2): investigate scope, then call emit_scout_verdict with the right harness to escalate. Do NOT do the implementation yourself for H1/H2 tasks.',

@@ -57,7 +57,13 @@ export function isMutationScopeSignificant(tracker: MutationTracker): boolean {
   return totalLines >= SCOPE_REFLECTION_LINES_THRESHOLD;
 }
 
-export function buildMutationScopeReflection(tracker: MutationTracker): string {
+/**
+ * Render the file-list / line-count header. Shared by the legacy CAP-016
+ * builder and FEATURE_106's `scope-aware-harness-guardrail`. Exporting
+ * the header separately removes the need for downstream callers to
+ * string-parse the legacy builder's output to find a cutoff point.
+ */
+export function buildMutationScopeReflectionHeader(tracker: MutationTracker): string {
   const totalLines = [...tracker.files.values()].reduce((a, b) => a + b, 0);
   const fileList = [...tracker.files.entries()]
     .map(([file, lines]) => `  - ${file} (~${lines} lines)`)
@@ -66,6 +72,12 @@ export function buildMutationScopeReflection(tracker: MutationTracker): string {
     '',
     `[Scope: ${tracker.files.size} files modified, ~${totalLines} lines]`,
     fileList,
+  ].join('\n');
+}
+
+export function buildMutationScopeReflection(tracker: MutationTracker): string {
+  return [
+    buildMutationScopeReflectionHeader(tracker),
     'A senior engineer would ask: does this change need review before shipping?',
     '→ Need review: call emit_managed_protocol({role:"scout", payload:{confirmed_harness:"H1_EXECUTE_EVAL", summary:"...", blocking_evidence:["..."]}})',
     '→ Need planning: call emit_managed_protocol with H2_PLAN_EXECUTE_EVAL',

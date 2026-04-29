@@ -467,6 +467,20 @@ export {
   validateAndFixToolHistory,
 } from './agent-runtime/history-cleanup.js';
 
+// FEATURE_101 (v0.7.31): admission contract — capability-coupled
+// invariants (budgetCeiling / toolPermission / boundedRevise /
+// independentReview) plus the bootstrap that registers the full v1 set
+// (4 core pure + 4 coding coupled = 8 ids).
+export {
+  CODING_INVARIANTS,
+  boundedRevise,
+  budgetCeiling,
+  independentReview,
+  registerCodingInvariants,
+  resolveToolCapability,
+  toolPermission,
+} from './agent-runtime/invariants/index.js';
+
 // FEATURE_093 (v0.7.24): KodaXClient imported directly from client.ts to
 // avoid re-creating the agent ↔ client cycle at the barrel.
 export { KodaXClient } from './client.js';
