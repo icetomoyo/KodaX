@@ -21,8 +21,9 @@ const SYS_CAP: SystemCap = {
 function admitCtx(
   manifest: AgentManifest,
   activatedAgents: ReadonlyMap<string, Agent> = new Map(),
+  stagedAgents: ReadonlyMap<string, Agent> = new Map(),
 ): AdmissionCtx {
-  return { manifest, activatedAgents, systemCap: SYS_CAP };
+  return { manifest, activatedAgents, stagedAgents, systemCap: SYS_CAP };
 }
 
 function termCtx(manifest: AgentManifest, deliverable: Deliverable): TerminalCtx {

@@ -97,8 +97,21 @@ function findCycle(
 function admit(manifest: AgentManifest, ctx: AdmissionCtx): InvariantResult {
   // Build adjacency: manifest acts as one node; every activated agent
   // contributes its own outgoing edges. Names are the keys.
+  //
+  // FEATURE_101 v0.7.31.1 — same-batch transitive cycle detection.
+  // The graph also incorporates `stagedAgents` (manifests already
+  // staged but not yet activated). Without this, a generator that
+  // submits A→B and B→A in the same batch slips through because each
+  // individual admission only sees the OTHER as un-staged. Activated
+  // agents take precedence over staged when name collisions occur
+  // (an activated copy is the authoritative version).
   const adjacency = new Map<string, readonly string[]>();
   adjacency.set(manifest.name, getOutgoingTargets(manifest));
+  for (const [name, agent] of ctx.stagedAgents) {
+    if (name === manifest.name) continue;
+    if (ctx.activatedAgents.has(name)) continue;
+    adjacency.set(name, getOutgoingTargets(agent));
+  }
   for (const [name, agent] of ctx.activatedAgents) {
     if (name === manifest.name) {
       // The manifest is being re-admitted under its own name — this would

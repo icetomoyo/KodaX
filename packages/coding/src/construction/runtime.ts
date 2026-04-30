@@ -33,8 +33,10 @@ import type { KodaXToolDefinition } from '@kodax/ai';
 import { buildAdmissionManifest } from './admission-bridge.js';
 import {
   _resetAgentResolverForTesting,
+  listConstructedAgents,
   registerConstructedAgent,
 } from './agent-resolver.js';
+import type { Agent as CoreAgent } from '@kodax/core';
 import {
   runSandboxAgentTest,
   type SandboxLlmCallback,
@@ -393,8 +395,16 @@ async function testAgentArtifact(
   }
 
   // 2. FEATURE_101 admission — full 5-step audit.
+  // FEATURE_101 v0.7.31.1 patch: thread activated + staged agent maps so
+  // `handoffLegality` sees the full cross-manifest graph (not just the
+  // single manifest in isolation). Without the staged map, two manifests
+  // submitted in the same batch with mutual handoffs would each admit
+  // because neither sees the other yet.
   const manifest = buildAdmissionManifest({ name: artifact.name, content: artifact.content });
-  const verdict = await Runner.admit(manifest);
+  const verdict = await Runner.admit(manifest, {
+    activatedAgents: await buildActivatedAgentsMap(),
+    stagedAgents: await buildStagedAgentsMap(artifact.name),
+  });
   if (!verdict.ok) {
     errors.push(`[admission] ${verdict.reason} (retryable=${verdict.retryable})`);
     return { ok: false, errors };
@@ -506,12 +516,21 @@ export async function activate(handle: StagedHandle): Promise<void> {
   // Re-running admission here closes the window. Tools have their own
   // safety chain (AST + materialize) so this re-validation is
   // agent-specific.
+  //
+  // FEATURE_101 v0.7.31.1: capture the `AdmittedHandle` so we can
+  // thread `invariantBindings` + admitted manifest into the resolver
+  // registration. `Runner.run` consults the bindings to dispatch
+  // observe / assertTerminal hooks at run time.
+  let admittedHandle: import('@kodax/core').AdmittedHandle | undefined;
   if (artifact.kind === 'agent') {
     const manifest = buildAdmissionManifest({
       name: artifact.name,
       content: artifact.content,
     });
-    const verdict = await Runner.admit(manifest);
+    const verdict = await Runner.admit(manifest, {
+      activatedAgents: await buildActivatedAgentsMap(),
+      stagedAgents: await buildStagedAgentsMap(artifact.name),
+    });
     if (!verdict.ok) {
       throw new Error(
         `Cannot activate '${artifact.name}@${artifact.version}': re-admission at activate-time failed. `
@@ -520,6 +539,7 @@ export async function activate(handle: StagedHandle): Promise<void> {
         + `re-stage with a fresh version.`,
       );
     }
+    admittedHandle = verdict.handle;
   }
 
   const verdict = await _options.policy(artifact);
@@ -541,7 +561,7 @@ export async function activate(handle: StagedHandle): Promise<void> {
     );
   }
 
-  await registerActiveArtifact(artifact);
+  await registerActiveArtifact(artifact, { admittedHandle });
 
   // Immutable update — persist a NEW artifact record rather than mutating
   // the caller's reference. Records contentHash for rehydrate integrity.
@@ -563,13 +583,27 @@ export async function activate(handle: StagedHandle): Promise<void> {
  *
  * Idempotent on the same name@version: existing registration is
  * unregistered before the new one is pushed, preventing double entries.
+ *
+ * FEATURE_101 v0.7.31.1: `options.admittedHandle` is passed by `activate`
+ * after re-admission (so the resolver can attach invariant bindings to
+ * the runnable Agent). `rehydrateActiveArtifacts` does not have a fresh
+ * handle — it re-runs admission on hydrate to recover bindings, which
+ * is cheaper than persisting them and more robust against drift between
+ * the persisted manifest and the registered invariant set.
  */
-async function registerActiveArtifact(artifact: ConstructionArtifact): Promise<void> {
+interface RegisterActiveOptions {
+  readonly admittedHandle?: import('@kodax/core').AdmittedHandle;
+}
+
+async function registerActiveArtifact(
+  artifact: ConstructionArtifact,
+  options: RegisterActiveOptions = {},
+): Promise<void> {
   if (artifact.kind === 'tool') {
     return registerActiveToolArtifact(artifact);
   }
   if (artifact.kind === 'agent') {
-    return registerActiveAgentArtifact(artifact);
+    return registerActiveAgentArtifact(artifact, options);
   }
 }
 
@@ -612,11 +646,52 @@ async function registerActiveToolArtifact(artifact: ToolArtifact): Promise<void>
  * (name)` lookups (and Runner.run consumers that thread the resolver)
  * can find it. Mirrors `registerActiveToolArtifact`'s use of
  * `registerTool`.
+ *
+ * FEATURE_101 v0.7.31.1: when an `admittedHandle` is supplied
+ * (activation path), the resolver attaches invariantBindings + admitted
+ * manifest to the runnable Agent so `Runner.run` can dispatch observe /
+ * assertTerminal hooks. The hydrate path passes no handle — it re-runs
+ * admission below to recover bindings on each rehydrated agent.
  */
-async function registerActiveAgentArtifact(artifact: AgentArtifact): Promise<void> {
+async function registerActiveAgentArtifact(
+  artifact: AgentArtifact,
+  options: RegisterActiveOptions = {},
+): Promise<void> {
   const existing = _activated.get(activeKey(artifact));
   if (existing) existing();
-  const unregister = registerConstructedAgent(artifact);
+
+  let bindings: readonly import('@kodax/core').InvariantId[] | undefined;
+  let admittedManifest: import('@kodax/core').AgentManifest | undefined;
+  if (options.admittedHandle) {
+    bindings = options.admittedHandle.invariantBindings;
+    admittedManifest = options.admittedHandle.manifest;
+  } else {
+    // Rehydrate path: re-run admission to recover bindings. Cheaper
+    // than persisting them (avoids drift between manifest contents and
+    // the registered invariant set on disk). If admission fails on
+    // rehydrate, we fall back to a trusted-agent registration so the
+    // hydrate banner still loads — admission failure here means a
+    // previously-admitted manifest no longer admits, which the rehydrate
+    // hash check should already have caught.
+    const manifest = buildAdmissionManifest({
+      name: artifact.name,
+      content: artifact.content,
+    });
+    const verdict = await Runner.admit(manifest, {
+      activatedAgents: await buildActivatedAgentsMap(),
+      stagedAgents: await buildStagedAgentsMap(artifact.name),
+    });
+    if (verdict.ok) {
+      bindings = verdict.handle.invariantBindings;
+      admittedManifest = verdict.handle.manifest;
+    }
+  }
+
+  const registration =
+    bindings && admittedManifest
+      ? { bindings, manifest: admittedManifest }
+      : {};
+  const unregister = registerConstructedAgent(artifact, registration);
   _activated.set(activeKey(artifact), unregister);
 }
 
@@ -851,6 +926,60 @@ async function loadAllArtifacts(
   }
 
   return out;
+}
+
+// FEATURE_101 v0.7.31.1 — Build the cross-manifest agent maps that
+// admission consults for transitive cycle detection.
+//
+// `buildActivatedAgentsMap`: snapshot of currently-activated constructed
+// agents from the resolver registry. Same map shape `Runner.admit`
+// expects: name → Agent.
+//
+// `buildStagedAgentsMap`: scans `.kodax/constructed/agents/` for
+// status='staged' manifests and builds stub Agents (name + outgoing
+// handoffs only — admission's handoffLegality only walks names + edges).
+// `excludeName` skips the manifest currently being audited so it isn't
+// double-counted in the adjacency graph.
+
+async function buildActivatedAgentsMap(): Promise<ReadonlyMap<string, CoreAgent>> {
+  const map = new Map<string, CoreAgent>();
+  for (const agent of listConstructedAgents()) {
+    map.set(agent.name, agent);
+  }
+  return map;
+}
+
+async function buildStagedAgentsMap(
+  excludeName?: string,
+): Promise<ReadonlyMap<string, CoreAgent>> {
+  const map = new Map<string, CoreAgent>();
+  const all = await loadAllArtifacts(_options.cwd, 'agent');
+  for (const artifact of all) {
+    if (artifact.status !== 'staged') continue;
+    if (artifact.kind !== 'agent') continue;
+    if (excludeName && artifact.name === excludeName) continue;
+    // Stub agent — name + outgoing handoff targets. Admission's
+    // handoffLegality is the only invariant that consults this; it
+    // walks name + Handoff[].target.name. No need to lift tools or
+    // resolve refs.
+    const handoffs = artifact.content.handoffs?.map((h) => {
+      const ref = h.target.ref;
+      const colon = ref.indexOf(':');
+      const tail = colon === -1 ? ref : ref.slice(colon + 1);
+      const at = tail.indexOf('@');
+      const targetName = at === -1 ? tail : tail.slice(0, at);
+      return {
+        target: { name: targetName, instructions: '' } as CoreAgent,
+        kind: h.kind,
+      };
+    }) ?? [];
+    map.set(artifact.name, {
+      name: artifact.name,
+      instructions: '',
+      handoffs,
+    } as CoreAgent);
+  }
+  return map;
 }
 
 // Re-export for downstream modules

@@ -130,11 +130,18 @@ describe('runKodaX provider policy integration', () => {
     ).toBe(1);
     expect(result.routingDecision?.primaryTask).toBe('review');
     expect(result.routingDecision?.harnessProfile).toBe('H0_DIRECT');
-  // 60_000 (was 30_000): runKodaX with mock provider takes ~22-26s baseline
-  // (system prompt build + routing pipeline + iteration scaffolding). Under
-  // full-suite parallel load it can exceed the 30s default; double the cap
-  // so this stays a deterministic test, not a wall-clock race.
-  }, 60_000);
+  // 90_000 (was 60_000, originally 30_000): runKodaX with mock provider
+  // takes ~22-26s baseline (system prompt build + routing pipeline +
+  // iteration scaffolding). Under full-suite parallel load it pushed
+  // past 30s (bb6ed0d), and v0.7.31.1's +89 admission/wrap tests pushed
+  // it past 60s on busier machines (~50-55s observed). 90s gives ~35s
+  // headroom against the worst observed wall-clock. NOTE: Vitest's
+  // timeout aborts the it-block but does NOT cancel the runKodaX
+  // substrate's in-flight provider.stream — a timeout here therefore
+  // cascades into the next test's `Feature029BridgeProvider.calls`
+  // length assertion (leaked call lands in the next test's bucket).
+  // Keeping deterministic headroom prevents that cascade.
+  }, 90_000);
 
   it('allows benign text-only prompts that merely mention MCP, project mode, or screenshots', async () => {
     const result = await runKodaX(
@@ -154,9 +161,10 @@ describe('runKodaX provider policy integration', () => {
       '[Provider Constraint]',
     );
     expect(result.routingDecision?.harnessProfile).toBe('H0_DIRECT');
-  // 60_000 (was 30_000): runKodaX with mock provider takes ~22-26s baseline
-  // (system prompt build + routing pipeline + iteration scaffolding). Under
-  // full-suite parallel load it can exceed the 30s default; double the cap
-  // so this stays a deterministic test, not a wall-clock race.
-  }, 60_000);
+  // 90_000: see preceding test for rationale. Bumped together so the
+  // pair stays symmetric — if the warning-only test times out and leaks
+  // its substrate, this test's `calls.length === 1` assertion absorbs
+  // the leaked call and fails with "got 2 vs 1". Keeping both tests
+  // bounded above the worst observed wall-clock prevents the cascade.
+  }, 90_000);
 });

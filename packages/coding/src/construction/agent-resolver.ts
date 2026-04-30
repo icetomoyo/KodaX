@@ -38,11 +38,47 @@
  * stale refs are an LLM-authoring footgun, not a security bypass.
  */
 
-import type { Agent, AgentTool, Handoff } from '@kodax/core';
+import type { Agent, AgentManifest, AgentTool, Handoff, InvariantId } from '@kodax/core';
+import {
+  _resetAdmittedAgentBindings,
+  evaluatorAgent,
+  generatorAgent,
+  plannerAgent,
+  scoutAgent,
+  setAdmittedAgentBindings,
+} from '@kodax/core';
 
 import { getRegisteredToolDefinition } from '../tools/registry.js';
 
 import type { AgentArtifact, AgentContent, AgentHandoffRef, ToolRef } from './types.js';
+
+/**
+ * FEATURE_101 v0.7.31.1 — builtin agent registry.
+ *
+ * Maps the 4 v1 builtin role names to their `@kodax/core/task-engine-agents`
+ * declarations. Constructed agents that handoff to a builtin role
+ * (e.g. `target: { ref: 'builtin:scout' }`) get the real role declaration
+ * here instead of a phantom stub `{ name, instructions: '' }`.
+ *
+ * Without this map, builtin handoffs silently degraded — admission's
+ * handoffLegality DAG check passed because the stub had no outgoing
+ * edges, but the runtime resolution returned a no-op agent. Whatever
+ * tools / instructions the builtin role contributes were missing from
+ * the constructed-agent's downstream context.
+ *
+ * The map is also keyed on the short alias (`scout`) and the
+ * `kodax/role/<x>` canonical form so refs written either way resolve.
+ */
+const BUILTIN_AGENTS: ReadonlyMap<string, Agent> = new Map<string, Agent>([
+  ['scout', scoutAgent],
+  ['planner', plannerAgent],
+  ['generator', generatorAgent],
+  ['evaluator', evaluatorAgent],
+  ['kodax/role/scout', scoutAgent],
+  ['kodax/role/planner', plannerAgent],
+  ['kodax/role/generator', generatorAgent],
+  ['kodax/role/evaluator', evaluatorAgent],
+]);
 
 const AGENT_REGISTRY = new Map<string, RegisteredConstructedAgent>();
 
@@ -73,6 +109,9 @@ export function listConstructedAgents(): readonly Agent[] {
  * Production code MUST NOT call this.
  */
 export function _resetAgentResolverForTesting(): void {
+  for (const entry of AGENT_REGISTRY.values()) {
+    _resetAdmittedAgentBindings(entry.agent);
+  }
   AGENT_REGISTRY.clear();
 }
 
@@ -104,20 +143,38 @@ function liftToolRef(ref: ToolRef): AgentTool | undefined {
 }
 
 /**
- * Resolve a handoff ref to its target Agent. If the target is another
- * activated constructed agent, return that. If it's a builtin role
- * (scout / planner / generator / evaluator) the resolver doesn't have
- * a registry of those today — return a stub Agent with the parsed
- * name. Runner.run consumers that need the real builtin Agent should
- * supply it via their own resolution layer.
+ * Resolve a handoff ref to its target Agent.
+ *
+ * Resolution order (FEATURE_101 v0.7.31.1):
+ *   1. `builtin:<role>` → look up in BUILTIN_AGENTS (returns the real
+ *      `@kodax/core` task-engine declaration with full instructions /
+ *      reasoning profile).
+ *   2. `constructed:<name>[@version]` → look up in AGENT_REGISTRY
+ *      (returns the activated constructed agent).
+ *   3. Bare ref / unknown scheme → fall back to a stub `{ name,
+ *      instructions: '' }`. The stub keeps the handoff graph traversable
+ *      for admission's name-only DAG check; runtime consumers that need
+ *      to actually invoke the target see the empty instructions and
+ *      can decide how to handle (typically: skip).
+ *
+ * Pre-patch behaviour silently degraded builtin refs to stubs — fixed
+ * here so `Runner.run` on a constructed agent that handoffs to a builtin
+ * gets the real role declaration.
  */
 function liftHandoffRef(ref: AgentHandoffRef): Handoff {
   const colon = ref.target.ref.indexOf(':');
-  const name = colon === -1
-    ? ref.target.ref
-    : ref.target.ref.slice(colon + 1).split('@')[0]!;
-  const registered = AGENT_REGISTRY.get(name);
-  const target: Agent = registered?.agent ?? { name, instructions: '' };
+  const scheme = colon === -1 ? '' : ref.target.ref.slice(0, colon);
+  const tail = colon === -1 ? ref.target.ref : ref.target.ref.slice(colon + 1);
+  const at = tail.indexOf('@');
+  const name = at === -1 ? tail : tail.slice(0, at);
+
+  let target: Agent;
+  if (scheme === 'builtin') {
+    target = BUILTIN_AGENTS.get(name) ?? { name, instructions: '' };
+  } else {
+    const registered = AGENT_REGISTRY.get(name);
+    target = registered?.agent ?? { name, instructions: '' };
+  }
   return {
     target,
     kind: ref.kind,
@@ -165,6 +222,19 @@ function buildAgentFromContent(name: string, content: AgentContent): Agent {
 }
 
 /**
+ * Optional admission metadata attached at registration time so
+ * `Runner.run` can dispatch observe / assertTerminal hooks for the
+ * agent. Required for FEATURE_101 v0.7.31.1 runtime invariant
+ * enforcement; omitting it (e.g. in legacy tests) leaves the agent
+ * trusted from the Runner's perspective — invariants only run during
+ * admit, and observe/terminal silently skip.
+ */
+export interface ConstructedAgentRegistration {
+  readonly bindings?: readonly InvariantId[];
+  readonly manifest?: AgentManifest;
+}
+
+/**
  * Register a constructed agent. Replaces any existing entry at the
  * same name (idempotent — re-activate of the same name+version is a
  * no-op for the resolver). Returns an unregister callback the
@@ -174,13 +244,27 @@ function buildAgentFromContent(name: string, content: AgentContent): Agent {
  * does NOT itself enforce that the artifact has been admitted; that's
  * the runtime's responsibility (testedAt precondition + admission audit
  * during `testAgentArtifact`).
+ *
+ * FEATURE_101 v0.7.31.1: `registration.bindings` + `registration.manifest`
+ * carry the AdmittedHandle output produced by `Runner.admit` at activate
+ * time, threaded through so the resolved Agent can dispatch observe /
+ * assertTerminal hooks at run time. The runtime calls this with both
+ * fields populated; tests that bypass admission (e.g. resolver-only
+ * unit coverage) may omit them and accept the trusted-agent semantics.
  */
-export function registerConstructedAgent(artifact: AgentArtifact): () => void {
+export function registerConstructedAgent(
+  artifact: AgentArtifact,
+  registration: ConstructedAgentRegistration = {},
+): () => void {
   const agent = buildAgentFromContent(artifact.name, artifact.content);
   AGENT_REGISTRY.set(artifact.name, { artifact, agent });
+  if (registration.bindings && registration.manifest) {
+    setAdmittedAgentBindings(agent, registration.manifest, registration.bindings);
+  }
   return () => {
     const current = AGENT_REGISTRY.get(artifact.name);
     if (current && current.artifact.version === artifact.version) {
+      _resetAdmittedAgentBindings(current.agent);
       AGENT_REGISTRY.delete(artifact.name);
     }
     // If a different version is now active under the same name, leave

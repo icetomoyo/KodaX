@@ -204,11 +204,21 @@ export interface SystemCap {
  * agents — used by `handoffLegality` for transitive cycle detection
  * (handoffs reference these by name).
  *
+ * `stagedAgents` is the set of manifests that have been staged in the
+ * current generation batch but are not yet activated. FEATURE_101
+ * v0.7.31.1 patch: `handoffLegality` consults both maps so a same-batch
+ * cycle (A→B + B→A staged together, neither yet activated) is rejected
+ * at admission time instead of slipping through. The map is
+ * intentionally separate from `activatedAgents` so invariants that
+ * only care about already-running agents (future work) can still
+ * distinguish.
+ *
  * Frozen at admission entry; invariants must not mutate.
  */
 export interface AdmissionCtx {
   readonly manifest: AgentManifest;
   readonly activatedAgents: ReadonlyMap<string, Agent>;
+  readonly stagedAgents: ReadonlyMap<string, Agent>;
   readonly systemCap: SystemCap;
 }
 

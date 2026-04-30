@@ -18,6 +18,7 @@ function ctx(manifest: AgentManifest, allowed: readonly ToolCapability[]): Admis
   return {
     manifest,
     activatedAgents: new Map(),
+    stagedAgents: new Map(),
     systemCap: { maxBudget: 200, maxIterations: 200, allowedToolCapabilities: allowed },
   };
 }

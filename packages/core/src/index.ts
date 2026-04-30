@@ -50,6 +50,7 @@ export type {
 } from './runner.js';
 export {
   Runner,
+  buildSystemPrompt,
   registerPresetDispatcher,
   _resetPresetDispatchers,
   extractAssistantTextFromMessage,
@@ -155,6 +156,34 @@ export {
 
 export type { AdmissionAuditOptions } from './admission-audit.js';
 export { DEFAULT_SYSTEM_CAP, runAdmissionAudit } from './admission-audit.js';
+
+// FEATURE_101 (v0.7.31.1) — runtime hook dispatch (observe + assertTerminal).
+// Fills the gap left by v0.7.31 ship: only `admit` was wired into Runner.
+// `setAdmittedAgentBindings` is set by ConstructionRuntime.activate; the
+// session is auto-created in Runner.run when bindings exist on the agent.
+export type { SessionDispatchResult } from './admission-session.js';
+export {
+  InvariantSession,
+  createInvariantSessionForAgent,
+  getAdmittedAgentBindings,
+  setAdmittedAgentBindings,
+  _resetAdmittedAgentBindings,
+} from './admission-session.js';
+
+// FEATURE_101 (v0.7.31.1) — admission metrics + debug surface.
+// Counters are process-local; exporters scrape `getAdmissionMetricsSnapshot`
+// on a cadence. KODAX_DEBUG_ADMISSION env flag enables verbose verdict
+// logging from the audit runtime.
+export type { AdmissionMetricsSnapshot } from './admission-metrics.js';
+export {
+  _resetAdmissionMetrics,
+  getAdmissionMetricsSnapshot,
+  isAdmissionDebugEnabled,
+} from './admission-metrics.js';
+
+// FEATURE_101 (v0.7.31.1) — static prompt-injection scanner. Public so
+// SDK consumers can pre-validate before submitting to admission.
+export { detectInstructionsInjection } from './admission-audit.js';
 
 // FEATURE_101 v1 pure-new invariants — registered to the shared runtime
 // registry via `registerCoreInvariants()`. SDK consumers that want

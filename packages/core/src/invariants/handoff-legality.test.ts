@@ -25,8 +25,9 @@ const SYS_CAP: SystemCap = {
 function ctx(
   manifest: AgentManifest,
   activatedAgents: ReadonlyMap<string, Agent> = new Map(),
+  stagedAgents: ReadonlyMap<string, Agent> = new Map(),
 ): AdmissionCtx {
-  return { manifest, activatedAgents, systemCap: SYS_CAP };
+  return { manifest, activatedAgents, stagedAgents, systemCap: SYS_CAP };
 }
 
 function stub(name: string, handoffTargets: readonly string[] = []): Agent {
@@ -39,6 +40,58 @@ function stub(name: string, handoffTargets: readonly string[] = []): Agent {
     })),
   };
 }
+
+describe('handoffLegality.admit — same-batch staged cycle (FEATURE_101 v0.7.31.1)', () => {
+  it('rejects A→B when B is staged and points back to A', () => {
+    const a = stub('a', ['b']);
+    const b = stub('b', ['a']);
+    const stagedAgents = new Map<string, Agent>([['b', b]]);
+    const verdict = handoffLegality.admit!(
+      a as AgentManifest,
+      ctx(a as AgentManifest, new Map(), stagedAgents),
+    );
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) {
+      expect(verdict.severity).toBe('reject');
+      expect(verdict.reason).toMatch(/cycle/i);
+      expect(verdict.reason).toMatch(/a/);
+      expect(verdict.reason).toMatch(/b/);
+    }
+  });
+
+  it('admits a chain when staged predecessor never closes the loop', () => {
+    const a = stub('a', ['b']);
+    const b = stub('b', ['c']);
+    const c = stub('c'); // terminal — no outgoing.
+    const staged = new Map<string, Agent>([
+      ['b', b],
+      ['c', c],
+    ]);
+    const verdict = handoffLegality.admit!(
+      a as AgentManifest,
+      ctx(a as AgentManifest, new Map(), staged),
+    );
+    expect(verdict.ok).toBe(true);
+  });
+
+  it('activated agents take precedence over staged on name collision', () => {
+    // staged 'b' has a back-edge to 'a' (would form cycle).
+    // activated 'b' (different version of the same name) is terminal.
+    // Activated wins, so admission accepts.
+    const stagedB = stub('b', ['a']);
+    const activatedB = stub('b'); // terminal
+    const a = stub('a', ['b']);
+    const verdict = handoffLegality.admit!(
+      a as AgentManifest,
+      ctx(
+        a as AgentManifest,
+        new Map<string, Agent>([['b', activatedB]]),
+        new Map<string, Agent>([['b', stagedB]]),
+      ),
+    );
+    expect(verdict.ok).toBe(true);
+  });
+});
 
 describe('handoffLegality.admit', () => {
   it('admits a single agent with no handoffs', () => {

@@ -28,8 +28,9 @@ const SYS_CAP: SystemCap = {
 function ctx(
   manifest: AgentManifest,
   activatedAgents: ReadonlyMap<string, Agent> = new Map(),
+  stagedAgents: ReadonlyMap<string, Agent> = new Map(),
 ): AdmissionCtx {
-  return { manifest, activatedAgents, systemCap: SYS_CAP };
+  return { manifest, activatedAgents, stagedAgents, systemCap: SYS_CAP };
 }
 
 describe('finalOwner.admit', () => {

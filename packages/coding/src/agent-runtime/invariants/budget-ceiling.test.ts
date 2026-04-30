@@ -16,7 +16,12 @@ const SYS_CAP: SystemCap = {
 };
 
 function ctx(manifest: AgentManifest): AdmissionCtx {
-  return { manifest, activatedAgents: new Map(), systemCap: SYS_CAP };
+  return {
+    manifest,
+    activatedAgents: new Map(),
+    stagedAgents: new Map(),
+    systemCap: SYS_CAP,
+  };
 }
 
 describe('budgetCeiling.admit', () => {

@@ -23,6 +23,7 @@ import {
   _resetInvariantRegistry,
   registerInvariant,
 } from './admission-runtime.js';
+import { _resetAdmissionMetrics } from './admission-metrics.js';
 import type {
   AgentManifest,
   QualityInvariant,
@@ -41,9 +42,13 @@ const SYS_CAP: SystemCap = {
 describe('runAdmissionAudit — schema validation (Step 1)', () => {
   beforeEach(() => {
     _resetInvariantRegistry();
+    _resetAdmissionMetrics();
     registerCoreInvariants();
   });
-  afterEach(() => _resetInvariantRegistry());
+  afterEach(() => {
+    _resetInvariantRegistry();
+    _resetAdmissionMetrics();
+  });
 
   it('rejects manifest with empty name', () => {
     const result = runAdmissionAudit({ name: '', instructions: 'x' });
@@ -109,9 +114,13 @@ describe('runAdmissionAudit — schema validation (Step 1)', () => {
 describe('runAdmissionAudit — happy path (Steps 2–5)', () => {
   beforeEach(() => {
     _resetInvariantRegistry();
+    _resetAdmissionMetrics();
     registerCoreInvariants();
   });
-  afterEach(() => _resetInvariantRegistry());
+  afterEach(() => {
+    _resetInvariantRegistry();
+    _resetAdmissionMetrics();
+  });
 
   it('admits a minimal manifest and produces an AdmittedHandle', () => {
     const m: AgentManifest = createAgent({ name: 'minimal', instructions: 'do' });
@@ -201,9 +210,13 @@ describe('runAdmissionAudit — happy path (Steps 2–5)', () => {
 describe('runAdmissionAudit — reject short-circuit (Step 3 reject)', () => {
   beforeEach(() => {
     _resetInvariantRegistry();
+    _resetAdmissionMetrics();
     registerCoreInvariants();
   });
-  afterEach(() => _resetInvariantRegistry());
+  afterEach(() => {
+    _resetInvariantRegistry();
+    _resetAdmissionMetrics();
+  });
 
   it('rejects a self-loop (finalOwner runs first in the required order — diagnoses "no terminal")', () => {
     // Self-loop: both finalOwner and handoffLegality flag this; finalOwner
@@ -373,9 +386,13 @@ describe('runAdmissionAudit — clamp composition (Steps 3–5)', () => {
 describe('Runner.admit — thin wrapper around runAdmissionAudit', () => {
   beforeEach(() => {
     _resetInvariantRegistry();
+    _resetAdmissionMetrics();
     registerCoreInvariants();
   });
-  afterEach(() => _resetInvariantRegistry());
+  afterEach(() => {
+    _resetInvariantRegistry();
+    _resetAdmissionMetrics();
+  });
 
   it('delegates to runAdmissionAudit and returns the same verdict shape', async () => {
     const m: AgentManifest = createAgent({ name: 'wrapped', instructions: 'go' });
