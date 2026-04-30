@@ -6,7 +6,7 @@
 
 ## Selection criteria (applied uniformly to every candidate)
 
-A candidate qualifies as `H2 ✓` iff it satisfies all four:
+A candidate qualifies as `H2 ✓` iff it satisfies all five (criterion 5 added per codex review HIGH#2):
 
 | Criterion | Pass when |
 |---|---|
@@ -14,10 +14,11 @@ A candidate qualifies as `H2 ✓` iff it satisfies all four:
 | **Bounded scope** | Completable in single session — not multi-version sprawling |
 | **Has acceptance** | Design doc or issue description gives clear pass/fail signal |
 | **Reproducible** | Pre-task SHA + repo state can be checked out (`git cat-file -e <sha>`) |
+| **Agent-doable in worktree** *(codex#2)* | No external service / network / build-infra dependency. Worktree-isolated eval has `bash:network` disabled |
 
 Rating:
-- `✓` — meets all 4
-- `?` — meets 3/4, requires P1.5 review
+- `✓` — meets all 5
+- `?` — meets 4/5, requires P1.5 review
 - `✗` — fails ≥2, exclude
 
 Below, when a row is `✗` or `?`, the **specific failed criterion** is named (not a vague verdict). This is the protection against gut-feel filtering.
@@ -376,6 +377,59 @@ The 6 originally sampled but NOT in mineable list (046, 047, 052, 061, 062, 072,
 | **Total viable** | ~22 | **19** | -3 |
 
 19 viable → can pick 18 with 1-case slack. Tight but feasible. Per FEATURE_107 doc's "dataset shortfall fallback" rule, this is in the "≥18" zone (no scaling needed).
+
+### Codex review HIGH findings — incorporated 2026-04-30
+
+External `codex-rescue` agent did independent review. Three HIGH findings actioned:
+
+| Finding | Action taken | Where |
+|---|---|---|
+| **#1 Perf gate misses context-window** | Promoted context window peak from P4 secondary to **P2 mandatory gate**; B-path × 1.10 vs A-path; B撞 cap 触发 P2 阻断而非 P4 排除 | `v0.7.32.md` 性能退化零容忍节 updated |
+| **#2 Missing "agent-doable" criterion** | Added criterion 5 to selection filter; re-rated I-108, I-118, I-119 below | (this file, criteria block above + table below) |
+| **#3 Shortfall cutoff statistically baseless** | Reframed as "effect-size threshold not p-value"; eval declared exploratory not confirmatory; cannot claim "no difference" at this N | `v0.7.32.md` 新增 "Eval 信号定性" + 修订 "Dataset 不足 fallback" |
+
+Plus 3 MEDIUM findings:
+- **#4 Source × Type confound (codex)**: My self-critique D understates — Pool 3 only contributes new-feature/refactor cells, never bug-fix → structural source-type confound. **Action**: P5 analysis runs both type-sliced (with confound disclaimer) and unsliced (primary signal); see v0.7.32.md
+- **#5 I-119 not deep-checked**: Verified — `mutationSurface` symbol exists at HEAD (59 occurrences) but [runner-driven.ts:1136-1141](packages/coding/src/task-engine/runner-driven.ts#L1136) explicitly handles "stale pre-Scout snapshot". Likely silently fixed during FEATURE_100/084 refactor; KNOWN_ISSUES.md doc lag. **Action**: I-119 demoted to ✗
+- **#6 Pool 3 estimates were speculation**: Original "~6 viable" was guess; actual archaeology yielded 2. Already corrected in commit 1ac51d0; previous "~6" claims stripped from coverage matrix.
+
+Plus 2 LOW findings:
+- **#7 Severity I (wrong question) mitigation is reporting patch**: Acknowledged. Pre-registered as "construct validity limitation" rather than P5.5 review item.
+- **#8 Severity D may be MEDIUM not HIGH**: Acknowledged — type imbalance is symmetric across A/B so cancels in primary contrast.
+
+### P1.5b second-pass demotions (post-codex)
+
+After applying criterion 5 + verifying I-119:
+
+| ID | Original verdict | New verdict | Reason |
+|---|---|---|---|
+| **I-108** ACP–MCP integration | ✓ | **✗** | Requires running real MCP server endpoints; criterion 5 fails |
+| **I-118** esbuild swap | ✓ | **✗** | Requires `npm install esbuild` over network + build-infra change; criterion 5 fails |
+| **I-119** Scout H0→H1 mutationSurface residual | ✓ | **✗** | Likely silently fixed in FEATURE_100/084; comments at runner-driven.ts:1136 explicitly handle pre-Scout snapshot |
+
+### Final viable count (after all critique applied)
+
+| Pool | Pre-codex ✓ | Post-codex ✓ | Δ |
+|---|---|---|---|
+| Pool 1 (Planned) | 7 | **7** | unchanged (no criterion-5 fails) |
+| Pool 2 (Issues) | 10 | **7** | -3 (I-108, I-118, I-119) |
+| Pool 3 (Completed archaeology) | 2 | **2** | unchanged |
+| **Total viable** | 19 | **16** | -3 |
+
+**16 viable < 18 target** → falls into `12-17` zone of dataset-shortfall fallback. Eval will be run with **16 cases**, framed exploratory (effect-size only, no significance claims), P5.5 marks limitation.
+
+Per user's hard constraint "如果实在找不到，不做过度的事情": **do not invent, do not pull cross-project, do not lower thresholds**. 16 is what the data supports honestly.
+
+### Updated coverage matrix (final)
+
+|                   | new-feature | refactor | bug-fix / quality-fix | cross-cutting | row total |
+|---|---|---|---|---|---|
+| **Planned**       | 097, 057-F, 105, 007 | (none ✓) | 094 | 090, 092 | **7** |
+| **Open Issues**   | 109, 110, 112 | 107 | 105, 106, 124 | (none clean ✓) | **7** |
+| **Completed**     | (none) | 098 | (none) | 104 | **2** |
+| **column total**  | **7** | **2** | **4** | **3** | **16** |
+
+**Type-distribution acknowledgment** (codex#4 confound): Pool 3 has 0 bug-fix → all bug-fix cases come from Pool 2. Pool 1 has 0 refactor → refactor pulls from Pool 2 (107) + Pool 3 (098). This means Source×Type slice is structurally confounded; P5 will run unsliced as primary analysis.
 
 ### Pool 3 specific cases for cases.ts
 
