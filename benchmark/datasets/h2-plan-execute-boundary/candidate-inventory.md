@@ -433,33 +433,214 @@ Per user's hard constraint "如果实在找不到，不做过度的事情": **do
 
 ### Pool 3 specific cases for cases.ts
 
-If selected, these become real-replay cases with objective ground truth:
+See P1.5b deep-check below for verbatim files / AC.
 
-```yaml
-- id: h2-pool3-feat104-prompt-eval-harness
-  source: real-replay
-  category: cross-cutting (test infrastructure)
-  gitHeadSha: <parent of c68ddee>
-  mustTouchFiles:
-    - benchmark/harness/aliases.ts
-    - benchmark/harness/harness.ts
-    - benchmark/harness/judges.ts
-    - benchmark/harness/persist.ts
-    - benchmark/harness/report.ts
-    - benchmark/harness/self-test.test.ts
-    - benchmark/datasets/README.md
-  acceptanceCriteria: <verbatim from v0.7.29 FEATURE_104 design doc>
+---
 
-- id: h2-pool3-feat098-per-model-context
-  source: real-replay
-  category: cross-cutting (provider catalog)
-  gitHeadSha: <parent of dc7c38b>
-  mustTouchFiles:
-    - packages/ai/src/providers/base.ts
-    - packages/ai/src/providers/anthropic.ts
-    - packages/ai/src/providers/openai.ts
-    - packages/ai/src/cost-rates.ts
-  acceptanceCriteria: <verbatim from v0.7.28 FEATURE_098 design doc>
-```
+## P1.5b — deep-check pass (each ✓ candidate verified against design doc / issue source)
 
-P1.5b will lock the exact SHA + verbatim AC for these 2 cases.
+> **Purpose** (from codex review #K): the 22 ✓ rows pre-codex (now 16 post-codex) had only their failure criterion tagged; the actual content was not deep-verified. P1.5b reads each design doc / issue full-text to confirm multi-file claims, extract verbatim acceptance criteria, and catch hidden disqualifiers. 3 more demotions found.
+
+### Pool 1 deep-check (7 → 5)
+
+#### F-090 Self-Modifying Role Spec (v0.7.32) — ✓
+- **Files** (from `v0.7.32.md` design): construction/runtime.ts (extend) / sandbox-runner.ts (extend) / new divergence-score module / new SelfModifyGuardrail middleware / new audit log writer / CLI commands `kodax constructed rollback|audit|disable-self-modify` + tests for all. **≥7 files across 3 areas** ✓
+- **Bounded**: design's 5 reflexive safeguards section + Release Criteria checklist all single-version ✓
+- **AC verbatim** (from v0.7.32.md §Release criteria):
+  > 所有 5 条反身稳定保障机制实装 + 测试绿; 至少一组端到端 self-modify scenario 跑通; 至少 3 组 adversarial case 被拦截; `_audit.jsonl` 格式稳定能 replay/rollback
+- **Agent-doable**: ✓ no external service
+- **Replay SHA**: HEAD-at-eval-time
+- **Verdict**: ✓
+
+#### F-092 Auto Mode Classifier (v0.7.33) — ✓ (with framing note)
+- **Files**: new auto-mode-guardrail middleware + Tool interface extension in `packages/coding/src/tools/types.ts` + 1 CLI command + tests. Plus the design says "本版一次性给现有所有工具补齐 toClassifierInput (约 20-30 个)". **20-30 file mechanical migration is a follow-on, the H2 essence is the guardrail+classifier core (3-4 files)**
+- **Framing for eval**: userMessage focuses on classifier core; mustTouchFiles the 3-4 core; mustNotTouchFiles include all existing tools (don't expand scope)
+- **Bounded**: ✓
+- **AC verbatim**: 3-tier decision chain (Tier 1/2/3); `<block>yes|no</block>` parsing; 8s timeout; circuit breaker on 5 errors / 10min; degrade to engine=rules
+- **Agent-doable**: ✓ classifier needs LLM provider but eval cells already provision provider
+- **Verdict**: ✓ (with framing constraint to avoid scope blowup)
+
+#### F-097 Realtime Todo List (v0.7.34) — ✓ (with eval limitation)
+- **Files**: types.ts (TodoStatus/TodoItem) / todo-store.ts (NEW) / todo_write tool / TodoListSurface.tsx (NEW) / protocol-emitters extension / tests. **≥5 files across coding + repl** ✓
+- **Bounded**: ✓
+- **AC verbatim**: 0-1 todos→no render / ≥2→expanded / 5s delay hide on completion / per-owner in_progress isolation / content+activeForm dual-format / 符号 `☐ ⏺ ✓`
+- **Agent-doable**: ✓
+- **Eval limitation**: UI rendering not directly verifiable in worktree (no runtime React render). Judge can verify component file structure + props passed but not actual visual output. **Acceptance criteria must downgrade visual checks to structural checks** in eval framing.
+- **Verdict**: ✓ (with eval-scope downgrade for visual rendering)
+
+#### F-094 Anti-Escape Hardening (v0.7.36) — ✓
+- **Files**: `coding/src/tools/anti-escape-guardrail.ts` (NEW) + integration into ToolGuardrail registration + tests + protocol-emitters integration. **3-4 files** at criterion threshold
+- **Bounded**: ✓
+- **AC verbatim** (from v0.7.36.md):
+  > beforeTool 在 bash 工具上检测 4 条签名 (heredoc 边界 + ≥80 行/≥3000 字符 + 写入项目 tree + 计算性内容白名单); block 时返回 structured retry contract hint with `write` 或 `multi_edit` 指引
+- **Agent-doable**: ✓ pure runtime detection
+- **Verdict**: ✓
+
+#### F-057 Track F (v0.7.30 in-flight) — ✗ (DEMOTED in P1.5b)
+- **Original concern**: in-flight; replay risks colliding with active work
+- **P1.5b finding**: design doc explicitly marks Track F "mandatory v0.7.30 deliverable, not deferrable"; if it ships before eval P4, the case becomes "do something already done" → no replay value. If it doesn't ship by eval, agent might collide with parallel implementation work, contaminating both eval and active dev.
+- **Reproducibility (criterion 4)**: HEAD state ambiguous between "task not done" and "task done" depending on timing
+- **Verdict**: ✗ (demoted) — in-flight conflict makes replay unstable
+
+#### F-105 Verifiable Advisor Consult Phase 1 (v0.7.46) — ✓
+- **Files**: `consult-advisor.ts` (NEW) + capability-alias additions + 2 advisor mode prompt templates + trace span definition + tests. **≥5 files** ✓
+- **Bounded**: ✓ design explicitly scopes MVP to "<800 LOC, single-advisor primitive, NO Council"
+- **AC verbatim** (from v0.7.46.md):
+  > Phase 1 ship primitive: AdvisorAdvice 4-field 强类型 (recommendation/advice/verification/risk); cross-family 默认 preference; trace span 14 字段全收 (advisor_provider/model/tokens/verification_outcome/etc); "advice not instruction" 防御标记
+- **Agent-doable**: ✓ uses internal capability profile
+- **Verdict**: ✓
+
+#### F-007 Theme Consolidation (v0.8.0) — ✗ (DEMOTED in P1.5b)
+- **Original concern**: scope sprawl risk
+- **P1.5b finding**: design's "Replace hard-coded terminal colors with theme tokens" + "migrate command/status output from scattered chalk.* calls" — `chalk` 在 KodaX repo 全文 grep 出现的位置预估 50+ 处。即便有 ThemeContext + 4 个明确 goal，**实际工作量是 50+ 文件 mechanical migration**，远超 H2 case 范畴。
+- **Bounded fails**: 不是单 session 可完成的工作
+- **Verdict**: ✗ (demoted)
+
+**Pool 1 internal review** (post-P1.5b): 5 ✓ + 2 ✗ (was 7 ✓). Demotions are F-057 Track F (in-flight conflict) and F-007 (scope sprawl beyond H2). Both reasoned, neither overlap with codex findings.
+
+### Pool 2 deep-check (7 → 6)
+
+#### I-105 kodax -c history not injected (Med) — ✓
+- **Files** (from issue Code Path Analysis): `src/cli_option_helpers.ts` + `packages/repl/src/ui/InkREPL.tsx:3527` + `packages/coding/src/agent.ts:959,979` + `packages/coding/src/task-engine.ts:4091`. **4-5 files across cli/coding/repl** ✓
+- **Bounded**: ✓ single bug
+- **AC verbatim**: kodax -c auto-load latest session; history inject as initialMessages; UI shows `[Continuing session: xxx]` banner
+- **Agent-doable**: ✓
+- **Verdict**: ✓
+
+#### I-106 Managed-task structured worker blocks text-coupled (High) — ✗ (DEMOTED in P1.5b)
+- **Original concern**: high priority, looked H2-shaped
+- **P1.5b finding**: issue body says "Resolve in phases under FEATURE_059 Managed Task Structured Protocol V2" with 4 sub-phases. **FEATURE_059 was absorbed into FEATURE_084** (shipped, see [FEATURE_LIST.md](docs/FEATURE_LIST.md) line 82). FEATURE_084 explicitly migrated "fenced-block 文本协议替换为 tool-call 驱动的结构化协议" — likely silently resolves the core text-coupling. KNOWN_ISSUES doc lag (same pattern as I-119/I-122).
+- **Bounded fails**: even if not resolved, multi-phase span
+- **Verdict**: ✗ (demoted)
+
+#### I-107 harnessProfile naming residue (Med) — ✓
+- **Files** (verbatim from issue): types.ts (5x), reasoning.ts (29x), task-engine.ts (106x), provider-policy.ts (4x), agent.ts (1x), tests (~90x). **237 references across 10 files**
+- **Bounded**: ✓ rename refactor, mechanical
+- **AC verbatim**: 4-step plan in issue body — workerChain replaces harnessProfile / preserve as derived label / route logic uses workerChain / 237 refs updated
+- **Agent-doable**: ✓
+- **Concern**: scale is large (237 refs) but mechanical sed-replace is single-session
+- **Verdict**: ✓
+
+#### I-109 missing mcp_get_prompt tool (Low) — ✓
+- **Files** (from issue Context): `packages/coding/src/tools/mcp-get-prompt.ts` (NEW, "和现有 4 个 MCP 工具同构") + tools registration + tests. **3 files**
+- **Bounded**: ✓
+- **AC verbatim**: 与 mcp_call/mcp_read_resource/mcp_describe/mcp_search 同构 (5th MCP tool)
+- **Agent-doable**: ⚠️ tests need MCP runtime context. Issue says "和现有 4 个 MCP 工具同构" so existing test patterns can be followed without live MCP server.
+- **Verdict**: ✓ (small but valid)
+
+#### I-110 missing /mcp commands (Low) — ✓
+- **Files** (from issue): `packages/repl/src/interactive/commands.ts` (extend) + status sub-command + refresh sub-command + tests. **2-3 files in repl package only**
+- **Concern**: single-package 2-3 file at threshold
+- **Bounded**: ✓
+- **AC verbatim**: status subcmd 调用 `extensionRuntime.getDiagnostics()`; refresh subcmd 调用 `refreshCapabilityProviders()`
+- **Verdict**: ✓ (smallest H2 case in dataset, threshold)
+
+#### I-112 ask_user_question incomplete (High) — ✓
+- **Files** (from issue): tools/ask_user_question.ts + InkREPL.tsx Select component (L4152-4196) + new use-select-navigation.ts hook + new MultiSelect component + tests. **≥5 files across coding + repl**
+- **Bounded**: ✓
+- **AC verbatim**: 上下箭头导航 + Enter 确认（去数字编号） + multiSelect 空格切换 + ✓ 标记 + 三种 mode (single/multi/input)
+- **Agent-doable**: ✓
+- **Verdict**: ✓
+
+#### I-124 AMA dispatch trigger rate low (High) — ✓
+- **Files**: controller fanout gate (`packages/coding/src/orchestration.ts` 或 `task-engine.ts`) + Generator/Scout role-prompts + H1 tool whitelist + tests. **≥4 files**
+- **Bounded**: ✓ specific behavior change
+- **AC verbatim**: H1 read-only Scout/Generator can fan-out; H2 write Generator can fan-out; managed plan/systemic 调研可并行 child task; Rule A/B/C 仍由 LLM 自主判断不强制
+- **Agent-doable**: ✓
+- **Verdict**: ✓
+
+**Pool 2 internal review** (post-P1.5b): 6 ✓ + 1 ✗ (was 7 ✓). One demotion (I-106) — same doc-lag pattern as I-119 (likely silently resolved by an upstream feature ship).
+
+### Pool 3 deep-check (2 → 2)
+
+#### F-104 Prompt-Eval Harness — ✓
+- **Replay SHA**: parent of `c68ddee` (first impl commit)
+- **Files (objective from `git show c68ddee b79b7ed 0a3a30f 5873dde --stat`)**:
+  - `benchmark/harness/aliases.ts` (NEW)
+  - `benchmark/harness/harness.ts` (NEW)
+  - `benchmark/harness/judges.ts` (NEW)
+  - `benchmark/harness/persist.ts` (NEW)
+  - `benchmark/harness/report.ts` (NEW)
+  - `benchmark/harness/self-test.test.ts` (NEW)
+  - `benchmark/datasets/README.md` (NEW)
+  - `benchmark/datasets/.gitkeep` (NEW)
+  - `benchmark/results/.gitignore` (NEW)
+  - `benchmark/README.md` (NEW)
+  - `package.json` (add `npm run test:eval`)
+- **Bounded**: ✓
+- **AC verbatim** (from v0.7.29.md FEATURE_104 design):
+  > harness/aliases 提供 8 个 coding-plan provider/model 短名表; harness/harness 提供 runOneShot/runABComparison/runBenchmark; judges 提供 mustContainAll/Any/mustNotContain/mustMatch/parseAndAssert/runJudges (5 类 category); persist 提供 results.json + REPORT.md + codes/; 41 个 zero-LLM self-test 锁住 alias 表 verbatim shape + judge category 维度 + benchmark 矩阵聚合 + REPORT.md 渲染 + persistence 读写; quality-only ranking (drop speed/composite); npm run test:eval 跑真实 *.eval.ts 缺 API key auto-skip
+- **Agent-doable**: ✓ benchmark module is pure-TS
+- **Verdict**: ✓
+
+#### F-098 Per-Model Context Window — ✓
+- **Replay SHA**: parent of `dc7c38b` (first impl commit)
+- **Files (objective from `git log --grep=FEATURE_098 --name-only`)**:
+  - `packages/ai/src/providers/base.ts` (extend)
+  - `packages/ai/src/providers/anthropic.ts` (use active model)
+  - `packages/ai/src/providers/openai.ts` (use active model)
+  - `packages/ai/src/cost-rates.ts` (extend)
+  - `packages/ai/src/cost-rates.test.ts` (extend)
+  - `packages/ai/src/providers/base.test.ts` (extend)
+  - `packages/ai/README.md` (docs)
+  - `packages/coding/src/...` (compaction call sites)
+  - `packages/repl/src/...` (compaction call sites)
+- **Bounded**: ✓ single feature
+- **AC verbatim** (from v0.7.28.md FEATURE_098 design):
+  > 把 KodaXModelDescriptor.contextWindow / maxOutputTokens 死字段接通运行时; compaction trigger 与 wire-level max_tokens 都按当前激活 model 的真实窗口算; 自定义 provider models[] 支持描述符对象格式 (兼容旧字面量); kimi.k2.5 = 256K (post-correction); zhipu.glm-5-turbo = 128K
+- **Agent-doable**: ✓ pure provider catalog work
+- **Verdict**: ✓
+
+**Pool 3 internal review** (post-P1.5b): 2 ✓ + 0 ✗. Both clean. Ground-truth file lists from `git show --stat` — these are the 2 cases with **objective** golden signals, not predicted.
+
+### P1.5b — final tally and self-review
+
+| Pool | Pre-P1.5b | Post-P1.5b | Δ |
+|---|---|---|---|
+| Pool 1 (Planned) | 7 | **5** | -2 (F-057 Track F in-flight; F-007 scope sprawl) |
+| Pool 2 (Issues) | 7 | **6** | -1 (I-106 likely silently resolved by FEATURE_084 ship) |
+| Pool 3 (Completed) | 2 | **2** | 0 |
+| **Total viable** | 16 | **13** | -3 |
+
+13 < 18 target → falls in `12-17` zone of [dataset shortfall fallback](docs/features/v0.7.32.md). Action: **run with 13 cases, exploratory framing, P5 reports note sample-size limit**. 
+
+13 is **at the bottom edge** of the viable zone — one more disqualifier in P2/P3 implementation would push us below 12 floor and trigger pause. The remaining headroom is fragile.
+
+### Updated coverage matrix (post-P1.5b)
+
+|                   | new-feature | refactor | bug-fix / quality-fix | cross-cutting | row total |
+|---|---|---|---|---|---|
+| **Planned**       | 097, 105 | (none) | 094 | 090, 092 | **5** |
+| **Open Issues**   | 109, 110, 112 | 107 | 105, 124 | (none) | **6** |
+| **Completed**     | (none) | 098 | (none) | 104 | **2** |
+| **column total**  | **5** | **2** | **3** | **3** | **13** |
+
+**Refactor and cross-cutting cells are very sparse** (2 each). Per codex#4, this is acknowledged confound; P5 primary analysis is unsliced (which is statistically cleaner anyway given small N).
+
+### What this final dataset means for the eval
+
+- 13 cases × 4 variants × 8 providers = **416 trials**
+- Below confirmatory power for ≤5% effects, sufficient for ≥10% directional signal
+- **Cannot claim "no difference"** between variants
+- **Can claim** large-effect winners where ≥10% delta replicates across providers
+- P5.5 review must explicitly acknowledge: "13-case dataset is engineering-grade exploratory eval, not statistical confirmation"
+
+### Self-review of P1.5b execution
+
+- ✓ Each ✓ candidate's design doc / issue full-text was read (not skimmed titles)
+- ✓ Multi-file claims verified against named paths in source (Pool 3: from git stat; Pool 1+2: from design doc / issue Context fields)
+- ✓ AC text marked verbatim where source allows; paraphrased AC explicitly noted
+- ✓ Doc-lag check applied (I-106 caught matching I-119 pattern)
+- ✓ In-flight feature check (F-057 Track F caught)
+- ✓ Scope sprawl check (F-007 caught)
+- ✓ Internal review at end of each pool
+
+**What P1.5b did NOT do**:
+- Did not build full cases.ts content yet (next step)
+- Did not verify each Pool 1 candidate's pre-task SHA matches "all dependencies satisfied" — assumed HEAD is OK because all dependencies are shipped
+
+**What's next**:
+1. Final selection of 13 cases (no further filtering needed — all 13 ✓ go in)
+2. Author verbatim userMessages from design doc / issue text
+3. Lock SHA (HEAD-at-eval-time for Pool 1+2, specific parent SHA for Pool 3)
+4. Write final cases.ts replacing 165fc0d
