@@ -605,6 +605,19 @@ async function registerActiveArtifact(
   if (artifact.kind === 'agent') {
     return registerActiveAgentArtifact(artifact, options);
   }
+  // Exhaustiveness guard. ConstructionArtifact is a closed `tool|agent`
+  // discriminated union today; the two branches above cover it. If a
+  // future kind is added (e.g. preset/workflow/guardrail) without a
+  // matching branch, TypeScript fails compilation here because the
+  // residual type is no longer assignable to `never`. Matches the
+  // failure-mode parity of `testAgentArtifact`, which already returns
+  // an explicit error for unsupported kinds — without this guard,
+  // `activate` would persist `status: 'active'` to disk for an artifact
+  // never registered in TOOL_REGISTRY / AGENT_REGISTRY (silent drift).
+  const _exhaustive: never = artifact;
+  throw new Error(
+    `registerActiveArtifact: unknown artifact kind '${(_exhaustive as ConstructionArtifact).kind}'`,
+  );
 }
 
 async function registerActiveToolArtifact(artifact: ToolArtifact): Promise<void> {

@@ -52,6 +52,15 @@ import type { Agent } from './agent.js';
 export type AgentManifest = Agent & {
   readonly requestedToolCapabilities?: readonly ToolPermission[];
   readonly maxBudget?: number;
+  /**
+   * Tool-loop iteration ceiling the manifest commits to. Admission
+   * clamps to `system_cap.maxIterations` via `clampMaxIterations` patch;
+   * Runner.run reads the post-clamp value through `getAdmittedAgentBindings`
+   * and takes min-wins against `RunOptions.maxToolLoopIterations`. Symmetric
+   * with `maxBudget` — both are activation caps, both flow through the
+   * patch reducer, both consulted at runtime via the WeakMap binding.
+   */
+  readonly maxIterations?: number;
   readonly declaredInvariants?: readonly InvariantId[];
 };
 

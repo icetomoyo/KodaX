@@ -42,12 +42,11 @@ import type {
  *
  *   - `removeTools`:        manifest.tools filtered by `(t) => !patch.removeTools.includes(t.name)`
  *   - `clampMaxBudget`:     manifest.maxBudget = min(current, patch.clampMaxBudget) when current > clamp
- *   - `clampMaxIterations`: NO field on Agent today — recorded in the new
- *                           manifest's `declaredInvariants` via 'boundedRevise'
- *                           (see § Required vs Declared Invariants); the
- *                           clamp value is honoured at runtime by the
- *                           budget controller. We expose the value via the
- *                           `_admissionMeta` symbol path (future-compatible).
+ *   - `clampMaxIterations`: manifest.maxIterations = min(current, patch.clampMaxIterations) when current > clamp.
+ *                           v0.7.31.2 added `AgentManifest.maxIterations` as a first-class
+ *                           field (symmetric with maxBudget). Runner.run reads the post-
+ *                           clamp manifest through `getAdmittedAgentBindings` and takes
+ *                           min-wins against `RunOptions.maxToolLoopIterations`.
  *   - `addInvariants`:      union into manifest.declaredInvariants
  *   - `notes`:              ignored at the manifest level — surfaced
  *                           through AdmissionVerdict.clampNotes
@@ -76,6 +75,13 @@ export function applyManifestPatch(
     const current = next.maxBudget;
     if (typeof current !== 'number' || current > patch.clampMaxBudget) {
       next = { ...next, maxBudget: patch.clampMaxBudget };
+    }
+  }
+
+  if (typeof patch.clampMaxIterations === 'number') {
+    const current = next.maxIterations;
+    if (typeof current !== 'number' || current > patch.clampMaxIterations) {
+      next = { ...next, maxIterations: patch.clampMaxIterations };
     }
   }
 

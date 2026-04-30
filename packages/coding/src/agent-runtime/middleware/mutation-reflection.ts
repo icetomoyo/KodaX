@@ -1,13 +1,13 @@
 /**
- * Mutation scope reflection middleware — CAP-016
+ * Mutation scope reflection middleware — CAP-016 (SA-only).
  *
  * Capability inventory: docs/features/v0.7.29-capability-inventory.md#cap-016-mutation-scope-reflection
  *
  * Class 3 (declarable opt-in middleware). When `mutationTracker` is wired
  * into the tool execution context AND the active Agent declaration enables
- * `middleware.mutationScopeReflection`, this appends a one-line scope
- * reflection to the tool result so the model perceives the size of the
- * change it just made:
+ * `middleware.mutationScopeReflection`, this appends a self-review prompt
+ * to the tool result so the model perceives the size of the change it
+ * just made:
  *
  *   `[Scope: 5 files modified, ~412 lines]` followed by per-file lines
  *   and a senior-engineer rhetorical prompt.
@@ -18,9 +18,19 @@
  * came from product judgement, not configuration. Only the on/off
  * decision is declaration-controlled.
  *
- * **Default for**: `defaultCodingAgent` (preserves SA current behavior).
+ * **Default for**: `defaultCodingAgent` (SA mode only).
  * **NOT for** AMA agents — Generator's mutation tracking is handled by the
  * Evaluator's verdict pass instead, so reflection here would double-fire.
+ * AMA's equivalent (FEATURE_106) lives in `scope-aware-harness-guardrail.ts`
+ * and emits the harness-commitment hint via `emit_scout_verdict`.
+ *
+ * v0.7.31.2 — text rewrite: removed the dead AMA-escalation hint
+ * (`emit_managed_protocol` references for H1/H2 confirmation) per
+ * ADR-003 / FEATURE_106. SA mode is direct execution — there is no
+ * mid-run harness escalation path, so prompting the LLM toward an
+ * unavailable tool produced hallucinated tool calls. The replacement
+ * text is SA-self-review oriented: SA has no Evaluator role, so the
+ * reflection asks the model to verify its own change.
  *
  * Migration history: extracted from `agent.ts:781-809` — the `MUTATION_TOOL_NAMES`
  * + `SCOPE_REFLECTION_*` constants, the `isMutationTool` /
@@ -78,9 +88,9 @@ export function buildMutationScopeReflectionHeader(tracker: MutationTracker): st
 export function buildMutationScopeReflection(tracker: MutationTracker): string {
   return [
     buildMutationScopeReflectionHeader(tracker),
-    'A senior engineer would ask: does this change need review before shipping?',
-    '→ Need review: call emit_managed_protocol({role:"scout", payload:{confirmed_harness:"H1_EXECUTE_EVAL", summary:"...", blocking_evidence:["..."]}})',
-    '→ Need planning: call emit_managed_protocol with H2_PLAN_EXECUTE_EVAL',
-    '→ Confident this is fine: continue working.',
+    'A senior engineer would pause here. SA mode has no Evaluator — you own the review:',
+    '→ Re-read the diff: did each edit land on the intended file/region, and does the change as a whole match the user\'s intent?',
+    '→ Run the project\'s typecheck/tests if available — uncaught regressions are your responsibility in SA mode.',
+    '→ If this turned into a multi-stage task (plan → generate → verify), tell the user it would benefit from a re-run under AMA mode for an independent Evaluator pass.',
   ].join('\n');
 }

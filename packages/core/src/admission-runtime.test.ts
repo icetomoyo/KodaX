@@ -76,6 +76,26 @@ describe('applyManifestPatch', () => {
     expect(clamped.maxBudget).toBe(3000);
   });
 
+  // FEATURE_101 v0.7.31.2 — clampMaxIterations symmetric with clampMaxBudget.
+  // Pre-v0.7.31.2 the patch field was composed in `composePatches` but
+  // never applied to a manifest field, so any invariant that emitted it
+  // produced verdict=ok + clampNotes but a manifest unchanged on
+  // maxIterations — silent footgun for future invariant authors.
+  it('clampMaxIterations only lowers, never raises', () => {
+    const m: AgentManifest = { ...baseManifest, maxIterations: 30 };
+    const lower = applyManifestPatch(m, { clampMaxIterations: 10 });
+    expect(lower.maxIterations).toBe(10);
+
+    const noop = applyManifestPatch(m, { clampMaxIterations: 50 });
+    expect(noop.maxIterations).toBe(30); // not raised to 50
+  });
+
+  it('clampMaxIterations sets the field when the manifest had no maxIterations originally', () => {
+    const noIter: AgentManifest = createAgent({ name: 'x', instructions: 'y' });
+    const clamped = applyManifestPatch(noIter, { clampMaxIterations: 8 });
+    expect(clamped.maxIterations).toBe(8);
+  });
+
   it('addInvariants unions into manifest.declaredInvariants', () => {
     const result = applyManifestPatch(baseManifest, {
       addInvariants: ['evidenceTrail', 'independentReview'],

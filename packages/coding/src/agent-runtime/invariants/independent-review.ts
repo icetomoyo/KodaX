@@ -39,6 +39,7 @@ const EVALUATOR_NAME = 'evaluator';
 function reachableNames(
   start: AgentManifest,
   activatedAgents: ReadonlyMap<string, Agent>,
+  stagedAgents: ReadonlyMap<string, Agent>,
 ): ReadonlySet<string> {
   const seen = new Set<string>([start.name]);
   const queue: Agent[] = [start];
@@ -52,8 +53,17 @@ function reachableNames(
       if (typeof tname !== 'string' || tname.length === 0) continue;
       if (seen.has(tname)) continue;
       seen.add(tname);
+      // FEATURE_101 v0.7.31.2 — same-batch stagedAgents fallback (mirrors
+      // `handoffLegality`'s authoritative-resolution rule). Activated
+      // copies win; otherwise prefer the staged manifest over the inline
+      // handoff target (which may be a stub captured before the staged
+      // manifest's handoffs were scaffolded). Inline target is the last
+      // resort so a manifest whose generator/evaluator pair is split
+      // across the same batch still admits.
       const activated = activatedAgents.get(tname);
+      const staged = !activated ? stagedAgents.get(tname) : undefined;
       if (activated) queue.push(activated);
+      else if (staged) queue.push(staged);
       else if (target) queue.push(target as Agent);
     }
   }
@@ -61,7 +71,7 @@ function reachableNames(
 }
 
 function admit(manifest: AgentManifest, ctx: AdmissionCtx): InvariantResult {
-  const names = reachableNames(manifest, ctx.activatedAgents);
+  const names = reachableNames(manifest, ctx.activatedAgents, ctx.stagedAgents);
   const hasGenerator = names.has(GENERATOR_NAME);
   if (!hasGenerator) return { ok: true };
   const hasEvaluator = names.has(EVALUATOR_NAME);

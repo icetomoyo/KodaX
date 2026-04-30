@@ -84,12 +84,29 @@ export function resolveToolCapability(toolName: string): ToolCapability {
     // tool-registry mutations through ConstructionRuntime — strictest
     // tier so deployments must explicitly allow-list them.
     case 'dispatch_child_task':
-    case 'emit_managed_protocol':
+    // AMA managed-protocol emitters (FEATURE_080+, canonical names since
+    // v0.7.23). These are tier-`subagent` because emitting a verdict /
+    // contract / handoff / final-verdict structurally drives the
+    // multi-agent topology — equivalent capability surface to
+    // `dispatch_child_task` at the role-routing layer.
+    case 'emit_scout_verdict':
+    case 'emit_contract':
+    case 'emit_handoff':
+    case 'emit_verdict':
+    case 'emit_managed_protocol':         // v0.7.22 deprecated alias — keep until removed
     case 'scaffold_tool':
     case 'validate_tool':
     case 'stage_construction':
     case 'test_tool':
     case 'activate_tool':
+    // FEATURE_089 (v0.7.31) agent self-construction staircase — same
+    // tier as the tool staircase: each gate point can promote an LLM-
+    // authored manifest into the resolver registry. Strictest.
+    case 'scaffold_agent':
+    case 'validate_agent':
+    case 'stage_agent_construction':
+    case 'test_agent':
+    case 'activate_agent':
     // Worktree tools mutate git state (branch creation / removal).
     // 'subagent' rather than 'edit' because they affect repo
     // topology, not file content — the closest existing tier.

@@ -70,6 +70,24 @@ describe('resolveToolCapability', () => {
     expect(resolveToolCapability('worktree_remove')).toBe('subagent');
   });
 
+  it('maps FEATURE_089 agent-construction staircase to "subagent"', () => {
+    expect(resolveToolCapability('scaffold_agent')).toBe('subagent');
+    expect(resolveToolCapability('validate_agent')).toBe('subagent');
+    expect(resolveToolCapability('stage_agent_construction')).toBe('subagent');
+    expect(resolveToolCapability('test_agent')).toBe('subagent');
+    expect(resolveToolCapability('activate_agent')).toBe('subagent');
+  });
+
+  it('maps AMA managed-protocol emit tools to "subagent" (canonical names + deprecated alias)', () => {
+    // Canonical names since v0.7.23 (FEATURE_080+).
+    expect(resolveToolCapability('emit_scout_verdict')).toBe('subagent');
+    expect(resolveToolCapability('emit_contract')).toBe('subagent');
+    expect(resolveToolCapability('emit_handoff')).toBe('subagent');
+    expect(resolveToolCapability('emit_verdict')).toBe('subagent');
+    // Deprecated v0.7.22 alias retained until removed.
+    expect(resolveToolCapability('emit_managed_protocol')).toBe('subagent');
+  });
+
   it('maps bash to "bash:mutating"', () => {
     expect(resolveToolCapability('bash')).toBe('bash:mutating');
   });

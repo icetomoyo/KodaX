@@ -487,7 +487,15 @@ async function genericRun<TData>(
     }
   }
 
-  const iterationCap = opts.maxToolLoopIterations ?? MAX_TOOL_LOOP_ITERATIONS;
+  // FEATURE_101 v0.7.31.2: when the entry agent is admitted and its
+  // post-clamp manifest declares `maxIterations`, take min-wins against
+  // RunOptions.maxToolLoopIterations and the engine default. Symmetric
+  // with maxBudget runtime enforcement (delegated to the budget controller).
+  // Min-wins guarantees admission can only narrow, never expand, the cap.
+  const optsCap = opts.maxToolLoopIterations ?? MAX_TOOL_LOOP_ITERATIONS;
+  const manifestCap = getAdmittedAgentBindings(startAgent)?.manifest.maxIterations;
+  const iterationCap =
+    typeof manifestCap === 'number' ? Math.min(optsCap, manifestCap) : optsCap;
   for (let iteration = 0; iteration < iterationCap; iteration += 1) {
     const { result: turn, wasPlainString } = await runGenerationTurn(
       currentAgent,

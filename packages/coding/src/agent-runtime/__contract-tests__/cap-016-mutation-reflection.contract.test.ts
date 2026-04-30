@@ -86,7 +86,7 @@ describe('CAP-016: mutation scope reflection contract', () => {
     expect(isMutationScopeSignificant(makeTracker([['a.ts', 60], ['b.ts', 60]]))).toBe(true);
   });
 
-  it('CAP-MUTATION-REFLECT-001e: buildMutationScopeReflection produces the six-line canonical text including file count, total lines, file list, and the senior-engineer rhetorical prompt', () => {
+  it('CAP-MUTATION-REFLECT-001e: buildMutationScopeReflection produces the SA-self-review text including file count, total lines, file list, and the senior-engineer rhetorical prompt', () => {
     const text = buildMutationScopeReflection(
       makeTracker([['src/foo.ts', 40], ['src/bar.ts', 80]]),
     );
@@ -94,10 +94,18 @@ describe('CAP-016: mutation scope reflection contract', () => {
     expect(text).toContain('[Scope: 2 files modified, ~120 lines]');
     expect(text).toContain('  - src/foo.ts (~40 lines)');
     expect(text).toContain('  - src/bar.ts (~80 lines)');
-    expect(text).toContain('A senior engineer would ask: does this change need review before shipping?');
-    expect(text).toContain('emit_managed_protocol');
-    expect(text).toContain('H1_EXECUTE_EVAL');
-    expect(text).toContain('H2_PLAN_EXECUTE_EVAL');
+    expect(text).toContain('A senior engineer would pause here.');
+    expect(text).toContain('SA mode has no Evaluator');
+    // v0.7.31.2 — the text MUST NOT reference the AMA escalation tool
+    // names (`emit_managed_protocol`, `emit_scout_verdict`,
+    // `H1_EXECUTE_EVAL`, `H2_PLAN_EXECUTE_EVAL`). SA mode has no mid-run
+    // escalation path, and the legacy tool names produced hallucinated
+    // tool calls when the LLM took the prompt at face value. Equivalent
+    // AMA prompting lives in `scope-aware-harness-guardrail.ts`.
+    expect(text).not.toContain('emit_managed_protocol');
+    expect(text).not.toContain('emit_scout_verdict');
+    expect(text).not.toContain('H1_EXECUTE_EVAL');
+    expect(text).not.toContain('H2_PLAN_EXECUTE_EVAL');
   });
 
   it('CAP-MUTATION-REFLECT-001f: buildMutationScopeReflection starts with a leading blank line so the appended text separates from the preceding tool-result content', () => {

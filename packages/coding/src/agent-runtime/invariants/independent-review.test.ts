@@ -82,6 +82,34 @@ describe('independentReview.admit', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.severity).toBe('reject');
   });
+
+  it('admits when generator+evaluator pair is split across the same staging batch (FEATURE_101 v0.7.31.2)', () => {
+    // Reproduces the v0.7.31 footgun: planner captured a stub handoff
+    // target before generator's full topology was scaffolded. Without
+    // the stagedAgents fallback in `reachableNames`, the walk stops at
+    // the stub (which has no handoffs to evaluator) and admission
+    // wrongly rejects. The fix resolves the staged manifest as the
+    // authoritative copy so the evaluator becomes reachable.
+    const generatorStub = createAgent({ name: 'generator', instructions: 'stub' });
+    const evaluator = createAgent({ name: 'evaluator', instructions: 'e' });
+    const realGenerator = createAgent({
+      name: 'generator',
+      instructions: 'g',
+      handoffs: [createHandoff({ target: evaluator, kind: 'continuation' })],
+    });
+    const planner: AgentManifest = createAgent({
+      name: 'planner',
+      instructions: 'p',
+      handoffs: [createHandoff({ target: generatorStub, kind: 'continuation' })],
+    });
+    const staged = new Map<string, Agent>([
+      ['generator', realGenerator],
+      ['evaluator', evaluator],
+    ]);
+    expect(
+      independentReview.admit!(planner, admitCtx(planner, new Map(), staged)).ok,
+    ).toBe(true);
+  });
 });
 
 describe('independentReview.assertTerminal', () => {
