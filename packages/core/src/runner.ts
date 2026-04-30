@@ -492,6 +492,17 @@ async function genericRun<TData>(
   // RunOptions.maxToolLoopIterations and the engine default. Symmetric
   // with maxBudget runtime enforcement (delegated to the budget controller).
   // Min-wins guarantees admission can only narrow, never expand, the cap.
+  //
+  // **Scope: per-run, not per-agent.** The cap is read from `startAgent`'s
+  // bindings ONCE here; after a handoff swaps `currentAgent` (line ~760),
+  // the iteration counter keeps counting under the entry agent's cap. v1
+  // admission audits at run entry only — there is no per-handoff
+  // re-admission, so the entry manifest's cap acts as the total run
+  // budget that successor agents share. Symmetric with how
+  // `RunOptions.maxToolLoopIterations` has always been a per-run cap. If
+  // a future v2 wants per-handoff reclamping, the change point is to
+  // re-read `getAdmittedAgentBindings(handoffSignal.to)?.manifest
+  // .maxIterations` at the handoff site and re-take min-wins.
   const optsCap = opts.maxToolLoopIterations ?? MAX_TOOL_LOOP_ITERATIONS;
   const manifestCap = getAdmittedAgentBindings(startAgent)?.manifest.maxIterations;
   const iterationCap =

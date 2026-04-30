@@ -17,15 +17,23 @@
  * lights one round earlier than the hard cap, which is the desired
  * direction for a soft signal.
  *
- * No admit hook in v1 — `AgentManifest` doesn't carry `maxIterations`
- * as a top-level field today. The patch shape `clampMaxIterations`
- * exists but no v1 invariant emits it; tracking the gap explicitly
- * here so a future version can promote this invariant to admit+observe
- * once manifests declare iteration intent. This is a deliberate scope
- * deferral, NOT a contract hole — admission.ts §第一版 Invariant 清单
- * "boundedRevise: maxIterations ≤ system; runtime tracks revise count"
- * is satisfied by the runtime budget controller (the hard cap) plus
- * this observe-time soft warn.
+ * No admit hook in v1 — and that stays true in v0.7.31.2 even though
+ * the surrounding plumbing now supports it. v0.7.31.2 added
+ * `AgentManifest.maxIterations` (admission.ts) plus the
+ * `applyManifestPatch` apply branch for `clampMaxIterations`, and
+ * `Runner.run` reads the post-clamp manifest cap via
+ * `getAdmittedAgentBindings`. What's still missing is an admit-time
+ * SOURCE: no v1 invariant inspects manifest content and emits a
+ * `clampMaxIterations` patch. So the field exists, the apply path
+ * exists, and the runtime enforcement exists — but `boundedRevise`
+ * itself stays observe-only by design (its v1 contract is the
+ * runtime soft warn, not admit-time clamping). A future version may
+ * promote this invariant to admit+observe once we have a concrete
+ * policy ("manifests declaring revise-heavy roles get clamped to N
+ * iterations"). admission.ts §第一版 Invariant 清单 "boundedRevise:
+ * maxIterations ≤ system; runtime tracks revise count" is satisfied
+ * by the runtime budget controller (the hard cap) plus this
+ * observe-time soft warn.
  */
 
 import type {

@@ -11,8 +11,12 @@
  *   • `isMutationTool(name)` — predicate for mutation tool names.
  *   • `isMutationScopeSignificant(tracker)` — file-count OR line-count
  *     threshold predicate.
- *   • `buildMutationScopeReflection(tracker)` — text builder with the
- *     six canonical lines.
+ *   • `buildMutationScopeReflection(tracker)` — text builder. v0.7.31.2
+ *     rewrote the body to be SA-self-review oriented (header line +
+ *     senior-engineer rhetorical line + 3 self-review action lines)
+ *     after the legacy "six canonical lines" with `emit_managed_protocol`
+ *     references was found to induce hallucinated tool calls in SA
+ *     mode (which has no AMA escalation tools on its surface).
  *
  * - CAP-MUTATION-REFLECT-002: read-only tool name → `isMutationTool`
  *   returns false (so the call site short-circuits before invoking

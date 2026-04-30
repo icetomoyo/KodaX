@@ -47,19 +47,46 @@ mutation tool result, the next assistant turn must:
 
 ## Run model
 
-Real LLM × the SA `defaultCodingAgent` system prompt (simplified:
-just the mutation-reflection scenario without the full coding
-substrate's prologue, since this benchmark targets one specific
-text fragment's behavior, not the entire SA prompt). Synthetic
-prior conversation: user asks for a multi-file edit, assistant
-issues 3 edit tool calls, tool result returns the rewritten
-reflection text appended to a normal "edited successfully"
-content. The benchmark inspects the **next** assistant turn.
+Real LLM × a simplified SA system prompt (`SA_IDENTITY` in
+`cases.ts`) that names the SA mode contract and explicitly states
+that `emit_managed_protocol` / `emit_scout_verdict` are NOT
+available. Synthetic prior conversation: user asks for a
+multi-file edit, assistant issues 3 edit tool calls, tool result
+returns the rewritten reflection text appended to a normal
+"edited successfully" content. The benchmark inspects the **next**
+assistant turn.
 
 This intentionally mirrors `tests/admission-wrap.eval.ts`'s
 deterministic-judge approach (no LLM-as-judge) — the failure
 modes are surface-level pattern matches, no need for a second
 model.
+
+### Caveat on the safety-pass-rate claim
+
+The `SA_IDENTITY` system prompt names the forbidden tools by name,
+and the safety judges check for those same names. So a 100% safety
+pass rate proves **system prompt + judge are in agreement** — i.e.
+when the SA contract says "no AMA tools", real models honour that
+when prompted by the new reflection text. It does **NOT** prove
+the new reflection text alone (without the SA_IDENTITY) suppresses
+the hallucination; production `defaultCodingAgent` instructions
+phrase the SA contract differently and don't enumerate forbidden
+tools by name. The full assurance therefore comes from two
+sources, not one:
+
+  - The cap-016 contract test asserts the new text contains no
+    `emit_managed_protocol` / `emit_scout_verdict` / harness-id
+    strings — so the text isn't *seeding* the names that production
+    models could echo back.
+  - This benchmark adds the real-LLM lane that says: when an SA
+    contract is in scope, real models honour the new prompt text
+    instead of trying to escalate.
+
+Future work (if a regression of the legacy text ever shows up):
+re-run this benchmark with the production `defaultCodingAgent`
+instructions verbatim — the simplified `SA_IDENTITY` is a
+benchmark stand-in chosen to isolate the reflection-text variable
+from the rest of the production prompt's behaviour.
 
 ## Matrix
 
