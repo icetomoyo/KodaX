@@ -173,3 +173,159 @@ These secondary dimensions become relevant in P1.5 selection, not for the viable
 - **Bounded column relies on design-doc claims**: some "✓ bounded" features may turn out larger when implementing — but at design-time-truth they are bounded, which is what eval needs.
 - **Has-AC column is "can I find a pass criterion"**, not "criteria are unambiguous". P1.5 may downgrade some `✓` → `?` if criteria turn out to be narrative without verifiable assertion.
 - **My ratings can be wrong**: this artifact is for you to overrule. Each row's failure reason is named so you can verify or challenge it.
+
+---
+
+## P1.5 verification of `?` rows (deep-check after design doc / issue detail read)
+
+Each ? row got resolved by reading the design doc / issue detail in full.
+
+| ID | Source | Original ? | Verification finding | New verdict |
+|---|---|---|---|---|
+| **F-105** | Planned (v0.7.46) | Phase 1 vs full feature ambiguous | Design explicitly scopes MVP to "tool 文件 + capability alias + 2 mode prompt 模板, < 800 LOC". Phase 1 is bounded; Phases 2/3 are post-MVP benchmark-driven. | **✓** (Phase 1 scope only) |
+| **F-093** | Planned (v0.8.0) | Multi-file + bounded uncertain | Design doc reveals: FEATURE_082 (v0.7.24) **already cleared 49/50 cycles**. Only 1 cycle remains. Scope too small for H2. | **✗** (scope shrunk to near-trivial) |
+| **F-007** | Planned (v0.8.0) | Multi-file + AC uncertain | Design has 4 explicit goals (replace hard-coded colors / theme persistence / `/theme` commands / cleanup legacy). Multi-file confirmed (`ThemeContext` + chalk migration + commands). | **✓** |
+| **F-060** | Planned (v0.7.30) | Bounded uncertain | Design doc Status field: **"Completed (Tier 1 landed; profile-driven stretch goals deferred)"**. Already shipped — should not be in Planned pool. | **✗** (already completed) |
+| **I-095** | Issue (Med) | Multi-file uncertain | Issue body: "Source Debt IDs H38-H44, M39" (7 debt items). "Sprawling code-quality debt" — not bounded. | **✗** (bounded fails) |
+| **I-111** | Issue (Low) | AC uncertain | Issue body: only `transport.ts` test coverage; estimated 1-2 test files. **Too small for H2** — borderline H1/H0. | **✗** (multi-file fails) |
+| **I-120** | Issue (High) | Multi-file uncertain | Issue body: "约 30 行集中在 InkREPL.tsx" — **single-file 30-line fix**. Bounded ✓ but multi-file ✗. | **✗** (multi-file fails) |
+| **I-122** | Issue (Med) | Multi-file uncertain | **Issue is already fixed** at commit `4423e0d` (verified ancestor of HEAD). Doc lag — issue still marked Open in KNOWN_ISSUES.md but bug is gone. | **✗** (already resolved) |
+
+### Updated viable counts after P1.5 verification
+
+| Pool | Original ✓ | After verify | Δ |
+|---|---|---|---|
+| **Planned post-v0.7.31** | 5 | **6** | +1 (gained 105, 007; lost 060, 093) |
+| **Open Issues** | 11 | **11** | 0 (all 4 ? resolved to ✗) |
+| **Completed (sample)** | ~6 (estimated) | TBD | needs git archaeology |
+| **Total viable** | 22 | **17 + ~6** | **~23** |
+
+Picking 18 final cases is still feasible, though tighter than before.
+
+### Updated coverage matrix (after verification)
+
+|                   | new-feature | refactor | bug-fix / quality-fix | cross-cutting | row total |
+|---|---|---|---|---|---|
+| **Planned**       | 097, 057-F, 105, 007 | (none ✓) | 094 | 090, 092 | **7** |
+| **Open Issues**   | 109, 110, 112, 108, 118 | 107 | 105, 106, 119, 124 | (none clean ✓) | **11** |
+| **Completed**     | 046, 047, 085 | 062, 076 | (none of sample) | 052, 072 | **~6** |
+| **column total**  | **~12** | **3** | **5** | **5** | **~25 viable** |
+
+---
+
+## Self-audit of this framework (Q4 from user)
+
+The user asked me to seriously challenge the framework I built, since they cannot independently evaluate it. Below is my honest critique of my own work, ordered by severity. Mitigations are noted but not all are actionable inside FEATURE_107 scope.
+
+### A. The 4-criteria filter is my construct, not validated against any reference
+
+I picked **multi-file / bounded / has-AC / reproducible** as the gates. I did not:
+- Reference an external eval-design best-practice document
+- Define why these 4 and not others (e.g., "agent-doable without external services" is missing)
+- Validate the criteria against pilot eval runs
+
+What I did do: chose criteria that would mechanically filter out clearly non-H2 cases. They work as a coarse filter but they're not principled.
+
+**Mitigation possible**: Add "agent-doable" as a 5th criterion (no external auth/account/billing). May not change current verdicts.
+
+**Mitigation NOT possible inside FEATURE_107 scope**: Validate criteria against external eval framework — would require pilot runs.
+
+### B. Multi-file threshold ≥3 is arbitrary
+
+I picked 3. Could be 2, could be 5. There is no principled choice.
+
+If we tightened to ≥5, several Issue ✓ rows (109, 110) would become ✗ — they pass at 3 but fail at 5. The viable pool would shrink to ~18 from ~25.
+
+**Mitigation**: Document the threshold explicitly with rationale "≥3 because 1-2 file tasks usually H1; ≥3 forces planning consideration." Acknowledge sensitivity.
+
+### C. The `?` bucket was an escape hatch
+
+8 ? rows let me defer hard calls in v1 of the inventory. The verification step closed them all — but a stricter upfront rubric would have produced better v1.
+
+**Mitigation**: For future inventories, force binary ✓/✗ at v1 with explicit "needs-data" flags rather than ? bucket.
+
+### D. Source × Type matrix bakes in an unproven assumption
+
+The whole reason I structured by Source × Type is so that P5 analysis can slice eval results by category. **This presumes type-specific lossiness exists**. We don't know that.
+
+If type doesn't matter, balancing by type is wasted effort and a random sample of viable H2 cases would be statistically cleaner.
+
+**Mitigation**: Document the assumption. Run P5 analysis BOTH with and without type slicing. If type-slicing shows no differential, conclude "type doesn't matter for plan/execute lossiness" — that's also a valuable finding.
+
+### E. Pool 3 sample is cherry-picked
+
+I picked 10 "representative" Completed features by intuition. Not random, not exhaustive.
+
+A truly random sample from 80 might give different distribution. An exhaustive scan (all 80 with the same filter) would be most defensible but costs 6+ hours.
+
+**Mitigation**: Document sampling method. Acknowledge selection bias. If user wants fully random or exhaustive, they should ask.
+
+### F. "Has AC" is my inference, not the source's gift
+
+Many issues describe complaints, not specifications. I marked "has AC" when I could derive a pass/fail criterion from the description. **That criterion is mine**, not the issue author's.
+
+This is a bias multiplier — agents will be evaluated against criteria I invented based on issues someone else wrote.
+
+**Mitigation**: When authoring final cases.ts, lift acceptance criteria text VERBATIM from issue/design-doc where possible. Mark explicitly when I had to add inference.
+
+### G. HEAD-anchored cases drift over time
+
+Pool 1 (Planned) and Pool 2 (Issues) cases anchor SHA = HEAD. Eval runs today vs 6 months later differ.
+
+**Mitigation**: Pin SHA to current HEAD at P1.5 time. Document "cases reproducible against SHA `<X>`; later SHAs may give different results."
+
+### H. The whole exercise is solo work without external review
+
+No second reviewer. No external eval-framework benchmark. I'm reasoning from first principles + Anthropic harness blog + Claude Code's Agent docs.
+
+Could be missing standard eval-design wisdom that someone with experience would catch.
+
+**Mitigation possible**: Send the inventory + framework to `codex-rescue` agent for an independent second-opinion review pass.
+
+### I. The deepest critique: FEATURE_107 may be testing the wrong question
+
+P1.0 scan showed: KodaX user (you) had **0 H2 sessions in 533**. Even if we get this eval right, the answer's real-world impact on your workflow is small.
+
+Counter-argument I made earlier: "architectural value matters even if frequency is low." That's true but weak — we may be investing significant effort to answer a question whose answer doesn't change much in practice.
+
+A more relevant question might be: "Why does H2 trigger so rarely? Is the threshold wrong?" — that's a totally different eval (about Scout's classification calibration, not plan/execute boundary).
+
+**Mitigation NOT possible inside FEATURE_107 scope**: this would require restarting from FEATURE_107's framing question.
+
+**Mitigation possible**: Frame eval results conservatively in P5 — "B vs A on synthetic+inferred H2 distribution; not validated against organic user H2 distribution because no organic H2 data exists."
+
+### J. "Refactor" cell is structurally underpopulated
+
+After verification, refactor cell has only 3 candidates (Issue 107 + Completed 062, 076). Even all-3-picked gives only 3 cases for refactor — too few for sub-category statistics.
+
+**Mitigation**: Either (a) accept refactor as small-sample or (b) deliberately mine more refactor-class Completed features — would expand Pool 3 archaeology cost.
+
+### K. The frame still trusts my judgment on non-? rows
+
+I deep-checked the 8 ? rows. The 22 non-? rows (✓ or ✗) **were not deep-verified**. Some ✓ rows (e.g., I-119 Scout mutationSurface, I-124 dispatch trigger rate) may have hidden problems I didn't catch.
+
+**Mitigation**: When authoring final cases.ts, do a P1.5b pass that deep-reads each picked candidate before locking. Find any disqualifiers before they pollute the dataset.
+
+---
+
+### Summary of what self-audit changes vs my original framework
+
+| Concern | Magnitude | Actionable within FEATURE_107? |
+|---|---|---|
+| A — criteria validation | Medium | Add "agent-doable"; document choice |
+| B — ≥3 threshold arbitrary | Low | Document + acknowledge sensitivity |
+| C — ? bucket | Low | Already closed by verification |
+| D — type-balanced sampling | **High** | Run P5 analysis without type slicing too |
+| E — Pool 3 sampling | Medium | Document; let user request fuller scan |
+| F — AC inference | Medium | Use verbatim text where possible |
+| G — HEAD drift | Low | Pin SHA at P1.5 |
+| H — solo work | Medium | Get codex-rescue second-opinion review |
+| I — wrong question | **High** | Conservative P5 framing |
+| J — refactor underpopulated | Medium | Accept small sample OR mine more |
+| K — non-? rows not deep-checked | Medium | Add P1.5b deep-check pass |
+
+### Things the self-audit does NOT solve
+
+- I cannot make this framework "objectively correct"
+- I can only make it **as defensible as a single agent's careful work allows**
+- The user retaining final approval rights remains the primary safeguard against my errors
