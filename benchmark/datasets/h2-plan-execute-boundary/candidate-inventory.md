@@ -329,3 +329,83 @@ I deep-checked the 8 ? rows. The 22 non-? rows (✓ or ✗) **were not deep-veri
 - I cannot make this framework "objectively correct"
 - I can only make it **as defensible as a single agent's careful work allows**
 - The user retaining final approval rights remains the primary safeguard against my errors
+
+---
+
+## Pool 3 archaeology — actual findings (replaces estimate)
+
+Original estimate: ~6 viable Completed features. **Reality: 2-3.**
+
+### Why the gap
+
+`git log --all --grep="FEATURE_NNN"` shows **only 10 features** have ≥3 commits with explicit FEATURE-tag in commit messages:
+
+```
+52  FEATURE_100  (multi-phase SA Runner, sprawling)
+14  FEATURE_086  (prefix cleanup hygiene)
+13  FEATURE_084  (Layer A primitives, sprawling)
+ 8  FEATURE_107  (this feature — self-reference, exclude)
+ 4  FEATURE_104  (Prompt-Eval Harness)  ← clean
+ 3  FEATURE_101  (Admission Contract — bundled with 106 in 51ba874)
+ 3  FEATURE_098  (Per-Model Context Window) ← clean
+ 3  FEATURE_085  (Guardrail Runtime — bundled with 084 in edec529)
+ 3  FEATURE_077  (older Skills work)
+ 3  FEATURE_061  (mostly later evolution touches)
+```
+
+**The other ~70 completed features did not reference their FEATURE_NNN in commit messages** — typical KodaX commits use feature-area scope tags like `feat(coding):` or `refactor(repl):`. So git-archaeology via grep doesn't reach them.
+
+### Per-candidate verdict (after archaeology)
+
+| ID | First impl SHA (parent for replay) | Files changed | Clean? | Verdict |
+|---|---|---|---|---|
+| **F-104** Prompt-Eval Harness | `c68ddee^` (parent of c68ddee) | 15 files: `benchmark/harness/*` + `benchmark/datasets/*` + docs + package.json | ✓ clean 4-commit chain | **✓** |
+| **F-098** Per-Model Context Window | `dc7c38b^` (parent of dc7c38b) | ~10 files in `packages/ai/` + docs | ✓ clean coherent series | **✓** |
+| **F-101** Admission Contract | `51ba874^` (parent) | sprawling: core + coding + benchmark + multiple datasets + 2 follow-up patches | bundled with FEATURE_106; cross-package broad | **?** scope too broad to be clean H2 case |
+| **F-085** Guardrail Runtime | `edec529^` (parent) | bundled with FEATURE_084 in same commit; cannot cleanly extract just 085's diff | extraction fail | **?** bundle problem |
+
+The 6 originally sampled but NOT in mineable list (046, 047, 052, 061, 062, 072, 076, 084) — drop from Pool 3.
+
+### Updated viable count (final)
+
+| Pool | Original ✓ | After all verification | Δ |
+|---|---|---|---|
+| Pool 1 (Planned post-v0.7.31) | 5 | **7** | +2 (105/007 promoted) |
+| Pool 2 (Open Issues) | 11 | **10** | -1 (recount, unchanged after ?-verify) |
+| Pool 3 (Completed) | ~6 estimate | **2** | -4 (most untraceable via grep) |
+| **Total viable** | ~22 | **19** | -3 |
+
+19 viable → can pick 18 with 1-case slack. Tight but feasible. Per FEATURE_107 doc's "dataset shortfall fallback" rule, this is in the "≥18" zone (no scaling needed).
+
+### Pool 3 specific cases for cases.ts
+
+If selected, these become real-replay cases with objective ground truth:
+
+```yaml
+- id: h2-pool3-feat104-prompt-eval-harness
+  source: real-replay
+  category: cross-cutting (test infrastructure)
+  gitHeadSha: <parent of c68ddee>
+  mustTouchFiles:
+    - benchmark/harness/aliases.ts
+    - benchmark/harness/harness.ts
+    - benchmark/harness/judges.ts
+    - benchmark/harness/persist.ts
+    - benchmark/harness/report.ts
+    - benchmark/harness/self-test.test.ts
+    - benchmark/datasets/README.md
+  acceptanceCriteria: <verbatim from v0.7.29 FEATURE_104 design doc>
+
+- id: h2-pool3-feat098-per-model-context
+  source: real-replay
+  category: cross-cutting (provider catalog)
+  gitHeadSha: <parent of dc7c38b>
+  mustTouchFiles:
+    - packages/ai/src/providers/base.ts
+    - packages/ai/src/providers/anthropic.ts
+    - packages/ai/src/providers/openai.ts
+    - packages/ai/src/cost-rates.ts
+  acceptanceCriteria: <verbatim from v0.7.28 FEATURE_098 design doc>
+```
+
+P1.5b will lock the exact SHA + verbatim AC for these 2 cases.
