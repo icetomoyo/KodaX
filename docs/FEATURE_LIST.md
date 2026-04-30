@@ -20,7 +20,7 @@
 | Absorbed | `2` |
 | InProgress | `1` |
 | Planned | `24` |
-| Current released version | `v0.7.30` |
+| Current released version | `v0.7.31` |
 
 > Note: `Planned` includes 4 strikethrough rows (`095` absorbed → 057, `059` absorbed → 084, `063` cancelled, `073` cancelled) that remain in the planned table for traceability. The `Cancelled` and `Absorbed` counters above slice the same rows by lifecycle reason.
 

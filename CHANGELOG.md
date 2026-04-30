@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-<!-- last-sync: 350a50a -->
+<!-- last-sync: 5456d9a -->
 
 ---
 
@@ -35,6 +35,43 @@ Three coupled features close out v0.7.31: **FEATURE_101** turns Layer A's struct
 ### Migration
 
 - No user-facing migration required. FEATURE_101's `Runner.admit()` is opt-in for callers building agents from a manifest; all existing `Runner.run()` paths in REPL / coding / mcp continue to work without change. FEATURE_089's 5 new construction tools are gated behind the same construction-policy permission gate as FEATURE_088's tool tools — non-interactive surfaces continue to reject activation by default. FEATURE_106's prompt rewrite ships in the production Scout role-prompt; restart of an active KodaX REPL session is sufficient to pick it up.
+
+### Post-release implementation completion patches (folded into v0.7.31 tag)
+
+The v0.7.31 tag points at HEAD = `5456d9a`, which includes two post-release audit patches and one review follow-up on top of the original `9ef5aad` release commit. All three close silent-footgun gaps surfaced after the initial commit; none change documented v0.7.31 behavior. Captured here so the tag-to-release-notes correspondence is unambiguous.
+
+#### v0.7.31.1 — FEATURE_101 implementation completion patch (commit `4668732`)
+
+8 admission-runtime wiring gaps closed:
+
+- `admission-session.ts` — `setAdmittedAgentBindings` / `getAdmittedAgentBindings` WeakMap binding registry promoted from per-test scaffolding to first-class production primitive that carries `{bindings, manifest}` for the dispatch site to consult.
+- `admission-metrics.ts` — `_incAdmitOk(clamped)` / `_incAdmitReject(retryable)` rate counters wired so `admission_clamp_rate` / `admission_reject_after_retry_rate` / `invariant_violation_rate` can be queried at runtime instead of computed from logs.
+- `runner.ts` admit-time double-wrap fix — `buildSystemPrompt` no longer wraps a manifest's instructions twice when the manifest was already admitted (TRUSTED_HEADER + role spec + TRUSTED_FOOTER fence). Q6 baseline (5 tasks × 8 alias) re-verified post-fix at 40/40 cells 100/100.
+- Runtime-clamp invariant hooks — `runner.ts`'s tool-result callback synchronously calls `invariantSession.recordMutation` so `evidenceTrail.observe` sees individual file events; `mutationTracker.files.size` exposed for threshold-class assertions.
+- Same-batch handoff cycle detection — `handoffLegality.admit` now consults `ctx.stagedAgents` (in addition to `activatedAgents`) so two manifests staged together with `A→B` and `B→A` cannot slip through admission individually-each.
+- Debug flag — `KODAX_ADMISSION_DEBUG=1` env triggers verbose admission audit logs for offline trace replay.
+- Built-in handoff resolution — `Runner.admit` resolves built-in agent names (`generator`, `evaluator`, `planner`, `scout`) to the canonical specs in `coding-agents.ts` so a manifest declaring a handoff to one of them by name no longer rejects with "unknown target".
+- Q3 retry-cap rollback — the v0.7.31.1 first-cut implementation added per-name `KODAX_ADMISSION_RETRY_CAP` env defense; threat-model audit confirmed it solved a non-existent threat (KodaX is single-user CLI, no retry-attack surface) and was over-engineered. Reverted before commit.
+
+#### v0.7.31.2 — FEATURE_101/106 second implementation completion patch (commit `ff22562`)
+
+5 silent-footgun gaps closed:
+
+- **SA mutation-reflection text rewrite (CAP-016)** — `packages/coding/src/agent-runtime/middleware/mutation-reflection.ts` removed the dead AMA-escalation hint that referenced `emit_managed_protocol`. Per ADR-003, SA mode is direct execution with no mid-run harness escalation; the legacy text was inherited from a pre-FEATURE_106 era and induced hallucinated tool calls in real models. New text is SA-self-review oriented (re-read diff / run typecheck/tests / suggest user re-run under AMA mode). Real-LLM benchmark across 8 coding-plan providers × 3 task scenarios shows **100% safety judges pass, zero hallucinated AMA tool calls**.
+- **`toolPermission` classifier expansion** — 9 NEW tool names added to the `subagent` tier classification: 4 canonical AMA emit (`emit_scout_verdict` / `emit_contract` / `emit_handoff` / `emit_verdict`) + 5 FEATURE_089 staircase (`scaffold_agent` / `validate_agent` / `stage_agent_construction` / `test_agent` / `activate_agent`). Internal admission audit, not LLM-facing — no benchmark needed. +2 unit tests.
+- **`independentReview` stagedAgents fallback** — `reachableNames` now consults `ctx.stagedAgents` so a same-batch staging where the planner's handoff captured a stub generator before the staged generator's full topology was scaffolded still admits correctly. Mirrors `handoffLegality`'s authoritative-resolution pattern (activated > staged > inline target). +1 unit test.
+- **`registerActiveArtifact` exhaustiveness guard** — `const _exhaustive: never = artifact` assertion + throw added so a future tier-3 artifact kind cannot silently fall through. Defensive only.
+- **`clampMaxIterations` real implementation** — added `AgentManifest.maxIterations` field (symmetric with `maxBudget`), `applyManifestPatch` apply branch (monotone, only narrows), and `Runner.run` min-wins wiring through the WeakMap binding registry: `getAdmittedAgentBindings(startAgent)?.manifest.maxIterations` against `RunOptions.maxToolLoopIterations`. **Scope: per-run, not per-agent** — the cap is read from the entry agent's manifest once before the tool loop; v1 admission audits at run entry only, no per-handoff reclamping. Successor agents share the entry cap as the run total. +2 unit tests + 5 integration tests in new `runner-iteration-clamp.test.ts`.
+
+#### v0.7.31.2 review follow-up (commit `5456d9a`)
+
+5 documentation/comment-drift fixes from the post-commit independent review (no production behavior changes):
+
+- `bounded-revise.ts` — comment claimed `AgentManifest` doesn't carry `maxIterations`; rewritten to explain v0.7.31.2 added the field + apply path + Runner.run wiring while clarifying that the invariant's own admit-time hook stays observe-only by design.
+- `cap-016-mutation-reflection.contract.test.ts` — file header docstring's "six canonical lines" updated to the post-rewrite shape (header + senior-engineer rhetorical line + 3 self-review action lines).
+- `benchmark/datasets/sa-mutation-reflection/README.md` — added a "Caveat on the safety-pass-rate claim" section: the simplified `SA_IDENTITY` prompt names the forbidden tools by name and the safety judges check for those same names, so 100% safety pass proves "system prompt + judge are in agreement", not that the new reflection text alone suppresses hallucination. cap-016 contract test (text doesn't seed forbidden names) is the load-bearing assurance.
+- `docs/features/v0.7.31.md` §v0.7.31.2 — Fix #2 row now lists the 9 NEW tool names explicitly with a note that the v0.7.31.2 commit message body's per-name attribution was wrong (count is correct, attribution isn't); Fix #5 row gained a "Scope note" paragraph on per-run vs per-agent semantics.
+- `runner.ts` (around line 490) — added the same scope-note inline at the iterationCap site, naming the change point a future v2 would modify (re-read `getAdmittedAgentBindings(handoffSignal.to)` at the handoff site) so reading the code alone tells you the cap is intentionally entry-agent-scoped, not an oversight.
 
 ---
 
