@@ -1,424 +1,540 @@
 /**
- * H2 Plan-Execute Boundary Eval — dataset for FEATURE_107 (v0.7.32).
+ * H2 Plan-Execute Boundary Eval — grounded dataset for FEATURE_107 (v0.7.32).
  *
- * See ./README.md for the product question. This module exports:
+ * **STATUS: ABOVE VIABLE FLOOR — exploratory eval framing still required**
  *
- *   - `H2_BOUNDARY_TASKS`  — 18 H2-class task cases (1 real-replay + 17 hand-curated)
- *   - `EvalVariant`        — ('H2-A' | 'H2-B' | 'H1-ref') the 3 variants under test
+ * **2026-04-30 P2.1 design pass re-framed the eval question**:
+ * Original framing assumed A=current=`new-session+plan artifact` (lossy by
+ * hypothesis). Code reading revealed all current handoffs are
+ * `kind:'continuation'` with `inputFilter: undefined` — A is actually
+ * same-session full-transcript. v0.7.16's `new session + plan artifact`
+ * design rule was never implemented in the v0.7.26 Layer A rewrite.
  *
- * Cases are designed to be run via worktree isolation (see harness P3) — each
- * case checks out the historical SHA (real-replay) or HEAD (hand-curated) into
- * `/tmp/kodax-eval-<id>/`, runs the task there, then deletes the worktree.
- * Production repos are never touched.
+ * Re-framed variant semantics (cases stay the same; what variants MEAN flipped):
+ *   - H2-A "naked"     — current code, no inputFilter, full Planner transcript flows to Generator
+ *   - H2-B "filtered"  — adds inputFilter to plannerHandoffs, Generator sees only plan artifact
+ *                        (this is what v0.7.16 design doc *intended*)
+ *   - H1-ref           — bypass Planner entirely (Scout→Generator→Evaluator)
+ *   - H0-actual        — baseline from session jsonl, no rerun
  *
- * Category tags help P5.5 review — eval results sliced by category tell us
- * whether plan/execute boundary loss is uniform or category-specific.
+ * Re-framed question: should v0.7.16's "new session + plan artifact" rule
+ * actually be implemented (B), or is the v0.7.26 drift (A) actually fine /
+ * better? See `docs/features/v0.7.32.md` §背景 §假设 (re-framed) for full text.
+ *
+ * Final viable count after P1.5b + post-cases.ts state verification + broader
+ * Planned-pool sweep + git-history archaeology: **14 cases**
+ *   (6 Planned + 3 Open Issues + 5 Replay).
+ *
+ * This is **above** the 12-case fallback floor declared in
+ * `docs/features/v0.7.32.md` §Dataset 不足 fallback. Per that rule, 12-17 zone
+ * runs eval as exploratory with framing caveats. We pulled 3 additional Pool 3
+ * cases via git-history archaeology after user pointed out 821-commit history
+ * was under-mined by FEATURE_NNN-only grep:
+ *   - f6f08cc API error recovery (cross-cutting, 5-phase bug-fix flavor)
+ *   - 458f333 FEATURE_074 subagent permission boundary (bug-fix, replace broken set_permission_mode)
+ *   - 40ef809 Issue 116 stale-round guard + stream resilience (bug-fix)
+ *
+ * Decision: proceed with 14 cases under exploratory framing. Cannot claim
+ * statistical confirmation; effect-size thresholds (≥10%) are the only valid
+ * decision criterion.
+ *
+ * **Replaces** the speculative cases.ts from commit 165fc0d. Every case here
+ * is grounded in either a real KodaX design document, an open KNOWN_ISSUES
+ * entry, or a completed-feature git history.
+ *
+ * Generated 2026-04-30 after FEATURE_107 P1.5b deep-check + codex-rescue
+ * second-opinion review + post-cases.ts state verification + broader-pool
+ * sweep (per user "look at OTHER unimplemented features" feedback). See
+ * `./candidate-inventory.md` for full methodology and demotion rationale.
+ *
+ * Module exports:
+ *   - `H2_BOUNDARY_TASKS`   — 14 grounded H2-class cases
+ *   - `H2_BOUNDARY_VARIANTS` — ('H2-A' | 'H2-B' | 'H1-ref') the 3 eval variants
+ *
+ * Worktree isolation: each case runs in `/tmp/kodax-eval-<id>/` checked out
+ * at `gitHeadSha` (or HEAD if null), worktree removed after. Production repos
+ * never touched. See FEATURE_107 §Eval 执行隔离 for safeguards.
+ *
+ * Eval framing: At 14 cases × 4 variants × 8 providers = 448 trials, this is
+ * STRICTLY exploratory not confirmatory. Decisions would need to use effect-size
+ * thresholds (≥10% delta), NOT statistical significance. Cannot claim "no
+ * difference" at this N.
+ *
+ * Removed during state verification (post-cases.ts authoring):
+ *   - I-109 mcp_get_prompt — file already exists at packages/coding/src/tools/mcp-get-prompt.ts (doc-lag)
+ *   - I-110 /mcp commands  — already implemented at commands.ts:605 (doc-lag)
+ *   - I-112 ask_user_question modes — 3 modes already implemented; remaining UI work below H2 threshold
+ *
+ * Verified-shipped during broader sweep (FEATURE_LIST.md doc-lag, no inclusion):
+ *   - F-087 ConstructionRuntime — packages/coding/src/construction/ exists with 28 files
+ *   - F-088 Tool Generation Tier 2 — shipped as part of F-089 admission contract
+ *   - F-100 SA Runner Frame — git log shows P3.6a-v complete in commits up to 3758b02
+ *   - F-078 Role-Aware Reasoning — shipped at 581c9b8
+ *   - F-103 Scout Calibration — shipped at 71a0574
  */
 
 export type EvalVariant = 'H2-A' | 'H2-B' | 'H1-ref';
-export type CaseSource = 'real-replay' | 'hand-curated';
-export type CaseCategory =
-  | 'real-replay'
-  | 'multi-file-feature'
-  | 'cross-package-refactor'
-  | 'multi-file-bugfix'
-  | 'tdd-multi-file';
+
+export type CaseSource = 'planned' | 'open-issue' | 'real-replay';
+
+export type CaseCategory = 'new-feature' | 'refactor' | 'bug-fix' | 'cross-cutting';
 
 export interface H2BoundaryCase {
   readonly id: string;
   readonly source: CaseSource;
   readonly category: CaseCategory;
+  /** One-line summary for reports. */
   readonly description: string;
+  /**
+   * Source document citation (design doc / issue body). Format:
+   * "docs/features/v0.7.X.md#feature_NNN" or "docs/KNOWN_ISSUES.md ISSUE_NNN".
+   * Eval reproducer uses this to verify text didn't drift since dataset locked.
+   */
+  readonly sourceCitation: string;
+  /**
+   * Paraphrased user request, in the user's voice, derived from sourceCitation.
+   * Length capped to keep prompt token cost predictable across providers.
+   */
   readonly userMessage: string;
-  /** null → run at HEAD; string → checkout this historical SHA in worktree. */
+  /**
+   * Replay anchor. `null` = checkout HEAD-at-eval-time; `string` = pin to
+   * specific historical SHA (real-replay cases only).
+   */
   readonly gitHeadSha: string | null;
-  /** Files that MUST be touched (modified or created) for the task to count as done. */
+  /**
+   * Files that MUST be modified or created for the task to count as done.
+   * For real-replay cases: from `git show <impl-sha> --stat` (objective).
+   * For planned/open-issue cases: from design-doc Context or issue body
+   * (predicted; LLM judge has tolerance for paths agent finds equivalent).
+   */
   readonly mustTouchFiles: readonly string[];
-  /** Files that MUST NOT be touched — guards against blast radius. */
+  /** Files that MUST NOT be touched — guards blast radius. */
   readonly mustNotTouchFiles: readonly string[];
-  /** Natural-language criteria fed to the LLM judge for plan-intent fidelity / final acceptance. */
+  /**
+   * Verbatim or closely-paraphrased acceptance criteria from sourceCitation.
+   * Fed to LLM judge for plan-intent fidelity / final acceptance scoring.
+   * Prefixed with [verbatim] or [paraphrased] tag for transparency.
+   */
   readonly acceptanceCriteria: string;
+  /**
+   * Optional case-specific eval limitation that judges should account for.
+   * E.g., visual UI rendering not directly verifiable in worktree.
+   */
+  readonly evalLimitations?: string;
 }
 
-const REAL_REPLAY_CASES: readonly H2BoundaryCase[] = [
-  {
-    id: 'h2-real-001-readonly-child-dispatch',
-    source: 'real-replay',
-    category: 'real-replay',
-    description:
-      'Investigation that produced multi-file fix to readOnly child dispatch logic. ' +
-      'Original session was tagged H0_DIRECT but ended up editing 2 files across 333 tool calls / 47min — ' +
-      'classic should-have-been-H2 case from runner-1777024449767.jsonl.',
-    userMessage:
-      '当前KodaX在做调研工作时，没有充分利用并行 dispatch 子 Agent。我希望你分析为什么 ' +
-      'Scout/Generator 在重型 read-only 调研任务中不主动派发并行子 agent，找出根因并给出修复。' +
-      '关注 packages/coding/src/agent-runtime/ 里 dispatch_child_task 的触发逻辑，以及 ' +
-      'task-engine 的 fanout-scheduler 决策。如果根因清楚，直接修；不清楚就先讲清楚。',
-    gitHeadSha: 'fd75c5d9',
-    mustTouchFiles: [
-      'packages/ai/src/providers/openai.ts',
-      'packages/coding/src/task-engine/runner-driven.ts',
-    ],
-    mustNotTouchFiles: ['docs/', 'CHANGELOG.md', 'package.json'],
-    acceptanceCriteria:
-      'Deliverable demonstrates: (1) clear root-cause analysis of why parallel dispatch is suppressed in heavy read-only investigation; (2) targeted fix in the two files that enables single-readOnly-child dispatch without breaking existing parallel paths; (3) no broad refactoring beyond the immediate fix; (4) tests or manual verification reasoning included.',
-  },
-];
+// ---------------------------------------------------------------------------
+// Pool 1 — Unimplemented Planned Features (post-v0.7.31)
+// All run at HEAD-at-eval-time.
+// ---------------------------------------------------------------------------
 
-const MULTI_FILE_FEATURE_CASES: readonly H2BoundaryCase[] = [
+const PLANNED_CASES: readonly H2BoundaryCase[] = [
   {
-    id: 'h2-hc-invariant-temporal',
-    source: 'hand-curated',
-    category: 'multi-file-feature',
-    description: 'Add a new admission invariant `temporalConsistency` checking admit timestamps monotonic.',
+    id: 'h2-planned-090-self-modify-role-spec',
+    source: 'planned',
+    category: 'cross-cutting',
+    description: 'Tier 4 self-construction — agent modifies its own role spec with reflexive safeguards',
+    sourceCitation: 'docs/features/v0.7.32.md#feature_090',
     userMessage:
-      '给 admission contract 加一个新 invariant `temporalConsistency`：在 admit 阶段，' +
-      '检查同一 agent 的 admit 时间戳不能回退（防止 manifest 被注入伪造的旧时间戳来绕过 ratchet 类规则）。' +
-      '这个 invariant 应该和现有 7 项一样注册到 invariant runtime，写完整的 admit hook，' +
-      '加到 requiredInvariants 默认集，并补单元测试和集成测试。',
+      '实装 KodaX Tier 4 self-construction：让一个 constructed agent 能在运行中修改自己的 role spec（reasoning profile / instructions / handoffs / guardrails）。' +
+      '配 5 条反身稳定保障：(1) 当前 run 不 swap 自己（新 manifest activate 后下一次 Runner.run 才生效）(2) divergence 检测（instructions 相似度低于阈值 reject）(3) modification budget 默认 N=3 (4) rollback 旧版本保留 (5) 审计日志写入 .kodax/constructed/_audit.jsonl。' +
+      'policy gate 强制 ask-user，永远不 auto-approve。修改边界：instructions/reasoning/tools/handoffs/guardrails 允许改（guardrails 只能加不能减），name 不允许改。',
     gitHeadSha: null,
     mustTouchFiles: [
-      'packages/core/src/invariants/',
-      'packages/core/src/admission.ts',
-      'packages/core/src/index.ts',
+      'packages/coding/src/construction/runtime.ts',
+      'packages/coding/src/construction/sandbox-runner.ts',
+      'packages/coding/src/agent-runtime/middleware/self-modify-guardrail.ts',
+      'packages/coding/src/cli/constructed.ts',
     ],
-    mustNotTouchFiles: ['packages/coding/src/agent-runtime/', 'packages/repl/'],
+    mustNotTouchFiles: ['packages/repl/', 'packages/ai/', 'packages/agent/', 'docs/', 'CHANGELOG.md'],
     acceptanceCriteria:
-      'New invariant file under packages/core/src/invariants/temporal-consistency.ts; admit hook rejects manifests with backwards timestamps; registered to invariant runtime; default set includes it; unit tests cover both pass and reject paths; no changes outside packages/core.',
+      '[verbatim §Release criteria] 所有 5 条反身稳定保障机制实装 + 测试绿；至少一组端到端 self-modify scenario 跑通（如 evaluator 自升 reasoning 档位）；至少 3 组 adversarial case 被拦截（prompt injection / 越权 / 无限反身）；_audit.jsonl 格式稳定能 replay/rollback；CLI 命令 `kodax constructed rollback|audit|disable-self-modify` 可用。',
   },
   {
-    id: 'h2-hc-judge-token-budget',
-    source: 'hand-curated',
-    category: 'multi-file-feature',
-    description: 'Add a token-budget judge to benchmark/harness/judges.ts with full integration.',
+    id: 'h2-planned-092-auto-mode-classifier-core',
+    source: 'planned',
+    category: 'cross-cutting',
+    description: 'Auto Mode Classifier — 3-tier permission pyramid with LLM-reviewed Tier 3 (core only, NOT tool migration)',
+    sourceCitation: 'docs/features/v0.7.33.md#feature_092',
     userMessage:
-      '给 benchmark/harness/judges.ts 加一个新 judge 类型 `tokenBudgetWithin(maxTokens)`，' +
-      '检查模型输出 token 数不超阈值。要做完整集成：在 `runJudges` 聚合里能正确分类（category=`safety`），' +
-      '在 self-test.test.ts 里加测试覆盖通过 / 失败两种情况，' +
-      '并在 ama-harness-selection 数据集里示范用法（给一个现有 case 加上这个 judge）。',
+      '把 KodaX auto 模式从规则围栏升级为规则+LLM 双层审查。3 层金字塔：' +
+      'Tier 1 read-only tools（toClassifierInput 返回空字符串）跳过分类器；' +
+      'Tier 2 path-inside-project 写入 + bash readonly 命令跳过分类器；' +
+      'Tier 3 调用 classify() 返回 <block>yes</block> 或 <block>no</block>。' +
+      '8s timeout，10min 5 错触发 circuit breaker 自动降级到 engine=rules。Mode (plan/accept-edits/auto) × Engine (rules/llm) 二维分离。' +
+      '本 task 只做 guardrail+classifier 核心实装（auto-mode-guardrail.ts + Tool 接口加 toClassifierInput 字段 required + /auto-engine 命令），' +
+      '**不要**给现有 ~20 个工具批量补 toClassifierInput——那是 follow-on，scope 外。',
     gitHeadSha: null,
     mustTouchFiles: [
-      'benchmark/harness/judges.ts',
-      'benchmark/harness/self-test.test.ts',
-      'benchmark/datasets/ama-harness-selection/cases.ts',
+      'packages/coding/src/agent-runtime/middleware/auto-mode-guardrail.ts',
+      'packages/coding/src/tools/types.ts',
+      'packages/repl/src/interactive/commands.ts',
     ],
-    mustNotTouchFiles: ['packages/'],
+    mustNotTouchFiles: ['packages/coding/src/tools/read.ts', 'packages/coding/src/tools/grep.ts', 'packages/coding/src/tools/bash.ts', 'packages/coding/src/tools/write.ts', 'packages/coding/src/tools/edit.ts'],
     acceptanceCriteria:
-      'New `tokenBudgetWithin` factory exported; integrates with runJudges; tests cover pass/fail; one ama-harness-selection case demonstrates usage; no changes outside benchmark/.',
+      '[paraphrased v0.7.33.md] auto-mode-guardrail 实装 3-tier 决策链；Tool interface required `toClassifierInput`；classifier 用 provider-qualified id 复用主会话或独立 model；8s timeout / 10min 5 错 circuit break；deny pattern 3 连转用户确认；输出不可解析 fail-closed；engine=rules 跳过 classify() 其他 Tier 1/2 逻辑相同；`/auto-engine` 命令切换。',
+    evalLimitations: 'Scope-restricted to classifier core; per-tool toClassifierInput migration explicitly excluded to keep this case bounded for H2 eval. Judge should not penalize agent for not migrating ~20 tool files.',
   },
   {
-    id: 'h2-hc-policy-gate-rate-limit',
-    source: 'hand-curated',
-    category: 'multi-file-feature',
-    description: 'Add rate limiting to policy gate (e.g., max 5 ask-user prompts per minute).',
+    id: 'h2-planned-097-realtime-todo-list',
+    source: 'planned',
+    category: 'new-feature',
+    description: 'Claude-style Realtime Todo List for AMA Runner with content+activeForm dual format',
+    sourceCitation: 'docs/features/v0.7.34.md#feature_097',
     userMessage:
-      '给 policy gate 加一个 rate limit：单个 session 内同类 ask-user prompt 1 分钟内最多触发 5 次，' +
-      '超限自动 reject 并提示用户调整 policy。需要：rate limit 状态持久化（per-session）、' +
-      '配置项暴露（默认 5/min，可调）、对 ToolGuardrail 路径透明、单元测试覆盖正常+超限+边界场景、' +
-      '集成测试验证多个 session 隔离。',
-    gitHeadSha: null,
-    mustTouchFiles: [
-      'packages/coding/src/agent-runtime/',
-      'packages/coding/src/agent-runtime/policy-gate.ts',
-    ],
-    mustNotTouchFiles: ['packages/core/', 'packages/ai/'],
-    acceptanceCriteria:
-      'Rate limit enforces 5/min default; per-session isolated; config option exposed and documented; tests cover normal/limit-hit/cross-session; no leakage to core or ai packages.',
-  },
-  {
-    id: 'h2-hc-eval-dataset-prompt-drift',
-    source: 'hand-curated',
-    category: 'multi-file-feature',
-    description: 'Add a new eval dataset for prompt drift detection across releases.',
-    userMessage:
-      '加一个新 eval dataset `benchmark/datasets/prompt-drift-baseline/`，' +
-      '用来检测某次 release 的 system prompt 相比上一个 release 的语义漂移。' +
-      '需要：dataset README 解释产品问题、cases.ts 列 5 个 baseline prompt + 期望响应骨架、' +
-      'judge 用 mustMatch 验证骨架结构、tests/prompt-drift.eval.ts 跑全套 8 alias、' +
-      'README 写运行说明。沿用 ama-harness-selection 的格式。',
-    gitHeadSha: null,
-    mustTouchFiles: [
-      'benchmark/datasets/prompt-drift-baseline/README.md',
-      'benchmark/datasets/prompt-drift-baseline/cases.ts',
-      'tests/prompt-drift.eval.ts',
-    ],
-    mustNotTouchFiles: ['packages/', 'docs/'],
-    acceptanceCriteria:
-      'Dataset directory created with README + cases.ts; cases.ts follows ama-harness-selection pattern (typed exports, judges, variants); .eval.ts test file gracefully skips when API keys absent; full set of 5 cases authored.',
-  },
-  {
-    id: 'h2-hc-replay-cache-format',
-    source: 'hand-curated',
-    category: 'multi-file-feature',
-    description: 'Add session replay cache format to session-lineage with golden tests.',
-    userMessage:
-      '在 session-lineage 包里实现一个 replay cache：把一个 session 的 lineage entries ' +
-      '编译成一个紧凑的 replay 格式（去掉 thinking content，保留 tool calls + 结果），存到磁盘。' +
-      '需要：编译函数、读回函数、版本化的格式 schema（zod）、golden tests 用至少 3 个真实 session 样本、' +
-      '处理 schema 升级的迁移逻辑骨架。',
-    gitHeadSha: null,
-    mustTouchFiles: [
-      'packages/session-lineage/src/replay-cache.ts',
-      'packages/session-lineage/src/replay-cache.test.ts',
-      'packages/session-lineage/src/index.ts',
-    ],
-    mustNotTouchFiles: ['packages/coding/', 'packages/repl/'],
-    acceptanceCriteria:
-      'New replay-cache module exports compile/read functions; zod schema with version field; golden tests with 3+ samples covering both directions; migration scaffold present; index.ts re-exports the public API.',
-  },
-];
-
-const CROSS_PACKAGE_REFACTOR_CASES: readonly H2BoundaryCase[] = [
-  {
-    id: 'h2-hc-extract-session-snapshot-util',
-    source: 'hand-curated',
-    category: 'cross-package-refactor',
-    description: 'Extract session-snapshot utility from coding to core (used by both).',
-    userMessage:
-      '`packages/coding/src/agent-runtime/middleware/session-snapshot.ts` 里有几个工具函数 ' +
-      '（serialize / restore / diff）现在只在 coding 包里用，但 core 的 admission-session 也需要类似功能。' +
-      '请把这些函数抽到 `packages/core/src/session-snapshot.ts`，让 coding 和 core 都从 core import。' +
-      '保留 coding 里的 middleware 包装（business logic 不变），只把纯工具函数下沉。' +
-      '更新所有 import；测试不能 break。',
-    gitHeadSha: null,
-    mustTouchFiles: [
-      'packages/core/src/session-snapshot.ts',
-      'packages/core/src/index.ts',
-      'packages/coding/src/agent-runtime/middleware/session-snapshot.ts',
-    ],
-    mustNotTouchFiles: ['packages/repl/', 'packages/agent/'],
-    acceptanceCriteria:
-      'Pure utility functions moved to core; coding imports from core; middleware wrapper retained in coding; all tests pass; no circular dependency introduced; no API surface change for downstream consumers.',
-  },
-  {
-    id: 'h2-hc-rename-harness-id',
-    source: 'hand-curated',
-    category: 'cross-package-refactor',
-    description: 'Rename H1_EXECUTE_EVAL → H1_VERIFIED across all packages.',
-    userMessage:
-      '我决定把 harness id `H1_EXECUTE_EVAL` 改名为 `H1_VERIFIED`（更短更清晰）。请扫全 monorepo ' +
-      '把所有出现替换掉：types 定义、role-prompt 文本、role-prompt 注释、prompt eval datasets、' +
-      'README 文档、CHANGELOG 引用都要改。注意 emit_scout_verdict 工具的 schema 也要更新。' +
-      '改完跑全测，确保没有遗漏。',
+      '在 AMA spinner 下方加一个 Claude Code 风格的实时计划列表（TodoListSurface）。' +
+      '数据模型：TodoItem { id, content (指令形如 "Run tests"), activeForm (进行时如 "Running tests"), status (pending/in_progress/completed/failed/skipped), owner?, sourceObligationId? }。' +
+      '后端 todo-store 接收 todo_write 工具更新 + Evaluator verdict 自动收尾。' +
+      'UI 视觉：符号 ☐ pending / ⏺ in_progress / ✓ completed；状态颜色 dim / cyan bold / green；左侧装订线 + 右上角 N/M counter。' +
+      '显示策略：0-1 todo 不渲染（简单任务自然不出现），2+ 渲染。所有 completed 后 5 秒延迟隐藏。每个 owner 一个 in_progress（按 owner 分组允许跨 owner 并行 child task）。',
     gitHeadSha: null,
     mustTouchFiles: [
       'packages/coding/src/types.ts',
-      'packages/coding/src/task-engine/_internal/managed-task/role-prompt.ts',
-      'benchmark/datasets/ama-harness-selection/cases.ts',
+      'packages/coding/src/task-engine/todo-store.ts',
+      'packages/coding/src/tools/todo_write.ts',
+      'packages/repl/src/ui/components/TodoListSurface.tsx',
     ],
-    mustNotTouchFiles: ['CHANGELOG_ARCHIVE.md'],
+    mustNotTouchFiles: ['packages/ai/', 'packages/agent/'],
     acceptanceCriteria:
-      'All H1_EXECUTE_EVAL occurrences renamed to H1_VERIFIED; emit_scout_verdict schema updated; no stale references remain; all tests pass; CHANGELOG entry added documenting the rename.',
+      '[verbatim §设计] TodoStatus = pending | in_progress | completed | failed | skipped; content/activeForm 双形式必填; 0-1 不渲染 / 2+ 展开; 5 秒延迟隐藏; per-owner in_progress 约束走 prompt 层（代码层不 enforce 与 Claude Code 对齐）; failed 在下一轮可重置 pending; skipped 用于 Planner 合并 obligation 场景。',
+    evalLimitations: 'UI rendering not directly verifiable in worktree (no React runtime). Judge can verify component file structure + props shape + import wiring, but NOT actual visual output. Treat structural completeness as proxy for visual correctness.',
   },
   {
-    id: 'h2-hc-unify-tool-error-codes',
-    source: 'hand-curated',
-    category: 'cross-package-refactor',
-    description: 'Unify per-tool error codes into a shared enum across coding/tools/*.',
+    id: 'h2-planned-094-anti-escape-guardrail',
+    source: 'planned',
+    category: 'bug-fix',
+    description: 'Anti-Escape Hardening — runtime guardrail blocks generative large-file writes via bash heredoc',
+    sourceCitation: 'docs/features/v0.7.36.md#feature_094',
     userMessage:
-      '`packages/coding/src/tools/` 下每个工具自己定义 error codes（write 的 EWRITE_DENIED、' +
-      'edit 的 EEDIT_NOT_FOUND 等），格式不一致。请抽取一个 shared enum `ToolErrorCode`，' +
-      '统一格式（按 tool category + 错误类型组织），更新每个工具的 throw 路径用新 enum，' +
-      '保持错误信息文案不变（只统一 code）。补充类型测试。',
+      '中档模型（Kimi-Code / MiniMax-Coding / GLM-Coding）在大文件任务上有 ~15% bash-heredoc 绕行率，绕开 write 工具的 P0/P2a/P2b 三层防御。' +
+      '加一个新的 ToolGuardrail (anti-escape-guardrail) 挂 bash 工具的 beforeTool。' +
+      '检测 generative-large-file-write 4 条签名：(1) heredoc 边界标记 (<<EOF/<<\'EOF\'/<<PY/<<\'PY\'); (2) heredoc body ≥80 行或 ≥3000 字符 (3) 写入文件系统 (cat>/tee/python open) (4) 路径命中项目 tree (非 /tmp 临时调试)。' +
+      '命中则 block 并返回 structured retry contract hint，引导改用 write 或 multi_edit。env-var KODAX_DISABLE_ANTI_ESCAPE_GUARDRAIL=1 可关闭。' +
+      '白名单：heredoc body 含 ${VAR} 内插 / `...` / $(...) 子进程的"计算性"模板放行。',
     gitHeadSha: null,
     mustTouchFiles: [
-      'packages/coding/src/tools/errors.ts',
+      'packages/coding/src/tools/anti-escape-guardrail.ts',
+      'packages/coding/src/tools/anti-escape-guardrail.test.ts',
       'packages/coding/src/tools/index.ts',
     ],
     mustNotTouchFiles: ['packages/core/', 'packages/ai/', 'packages/repl/'],
     acceptanceCriteria:
-      'New ToolErrorCode enum exported; all tools use it; error messages unchanged; type tests cover all codes; no breaking change to public tool API.',
+      '[verbatim §设计] 4 条签名检测准确；白名单（计算性 heredoc）放行；retry contract hint 包含工具名 + 参数名 + 原路径；env-var 关闭路径可用；测试覆盖 (a) 正向命中 (b) 白名单放行 (c) 阈值边界 (79 行/3000 字符) (d) env-var 关闭。',
   },
   {
-    id: 'h2-hc-move-admission-types',
-    source: 'hand-curated',
-    category: 'cross-package-refactor',
-    description: 'Move admission types from core to a types-only sub-entry to avoid runtime coupling.',
+    id: 'h2-planned-102-orchestration-phase0-telemetry',
+    source: 'planned',
+    category: 'cross-cutting',
+    description: 'Multi-Provider Orchestration Phase 0 — telemetry/trace infrastructure (no derived metrics yet)',
+    sourceCitation: 'docs/features/v0.7.45.md#feature_102 §Phase-0',
     userMessage:
-      'admission contract 的 type 定义（AgentManifest / InvariantId / ToolCapability 等）现在 ' +
-      '住在 `packages/core/src/admission.ts` 里，但 coding 包只需要 type 不需要 runtime。' +
-      '请抽出一个 types-only entry `packages/core/src/admission-types.ts`，让 coding 用 ' +
-      '`import type` 形式引用，避免拖入 runtime 副作用。验证 coding 包构建后不再依赖 core 运行时模块。',
+      '实装 FEATURE_102 Phase 0 — Instrumentation/Trace 基础设施。**只做 Phase 0，不做 Phase 1/2/3/4**。' +
+      '目标：让所有 LLM 调用 + subagent 行为可被本地查询、回放、比较，但暂不定义 derived metric（"成功/失败/返工"信号噪声大，等数据攒齐再说）。' +
+      '记录字段（建议最小集）：task_id / trace_id / parent_trace_id / stage (scout|planner|generator|evaluator|reviewer|classifier) / subagent_role / provider / model / capability_request / ' +
+      'prompt_tokens / completion_tokens / cache_hit / cache_write / latency_ms / cost_usd / tool_call_total / tool_call_failed / tool_call_failure_reason / ' +
+      'fallback_count / retry_count / triggered_rework / objective_signals (test/lint/typecheck/build pass|fail|n_a) / user_outcome_event。' +
+      '存储：本地 JSONL 或 SQLite，**不要引入 OTel**（单用户 CLI 不需要企业基础设施）。复用现有 @kodax/tracing 的 Tracer/Span 抽象（FEATURE_083 v0.7.24 已落地），新增本地 TracingProcessor 子类做持久化。' +
+      '注入层：调用层强制打基础字段（provider/model/tokens/latency/tool_result），subagent 提供 stage tag。' +
+      '隐私 / 本地优先：trace 数据完全 local-only，默认不上报；提供配置开关（默认开，可关闭）。',
     gitHeadSha: null,
     mustTouchFiles: [
-      'packages/core/src/admission-types.ts',
-      'packages/core/src/admission.ts',
-      'packages/core/src/index.ts',
-      'packages/coding/src/',
+      'packages/tracing/src/processors/local-persistence.ts',
+      'packages/coding/src/agent-runtime/run-substrate.ts',
+      'packages/coding/src/agents/protocol-emitters.ts',
+      'src/cli_option_helpers.ts',
     ],
-    mustNotTouchFiles: ['packages/repl/', 'packages/agent/'],
+    mustNotTouchFiles: ['packages/ai/src/providers/', 'packages/repl/'],
     acceptanceCriteria:
-      'Types extracted to admission-types.ts; coding imports use `import type`; build verifies no runtime dep on admission.ts module from coding; all tests pass.',
+      '[verbatim v0.7.45.md §Phase-0 验收标准] 所有 subagent / LLM 调用都被 trace 记录，可通过本地存储查询；Trace schema 文档化，且支持后续追加字段而不破坏旧数据；至少能回答两个问题：(1) 各 stage 实际使用了哪些 model；(2) tool-call 在不同 provider 上的失败率分布；配置中提供 telemetry 开关（默认开，可关闭）。',
+    evalLimitations: 'Phase 0 deliberately omits derived metrics (success/failure/rework) per design intent — judge should NOT penalize agent for not computing aggregate signals; the explicit goal is "记原始事件，不急定义 derived metric". Schema completeness + storage roundtrip + 2-question answerability are the only acceptance signals.',
+  },
+  {
+    id: 'h2-planned-105-advisor-consult-phase1',
+    source: 'planned',
+    category: 'cross-cutting',
+    description: 'Verifiable Advisor Consult Primitive (Phase 1 only — single-advisor MVP, no Council)',
+    sourceCitation: 'docs/features/v0.7.46.md#feature_105',
+    userMessage:
+      '实装 Verifiable Advisor Consult Primitive 的 Phase 1（MVP，不做 Council/specialty 扩展）。' +
+      '新增 consult-advisor 工具：' +
+      '入参 ConsultAdvisorInput { mode: "architecture" | "debug", question, context? }；' +
+      '出参 AdvisorAdvice { recommendation: "continue"|"correct"|"pivot"|"stop", advice, verification?: { command?, expected? }, risk? }（强类型，runtime validator 验证）。' +
+      '默认偏好：跨 provider 家族（cross_family_preferred）；' +
+      'max_uses=2 per task，禁递归 consult，禁 advisor 调用任何 tool。' +
+      '2 份 system prompt 模板（architecture/debug 各一）告知 advisor "你是被咨询方，不接管 driving"。' +
+      'trace span 14 字段全收（task_id/parent_trace_id/executor 与 advisor provider/model/tokens/latency/recommendation/verification_outcome/cross_family/fallback_triggered 等）。' +
+      'MVP 总量 < 800 LOC。',
+    gitHeadSha: null,
+    mustTouchFiles: [
+      'packages/coding/src/tools/consult-advisor.ts',
+      'packages/coding/src/tools/consult-advisor.test.ts',
+      'packages/coding/src/tools/index.ts',
+      'packages/coding/src/agents/protocol-emitters.ts',
+      'packages/tracing/src/spans/advisor-span.ts',
+    ],
+    mustNotTouchFiles: ['packages/coding/src/orchestration.ts', 'benchmark/'],
+    acceptanceCriteria:
+      '[verbatim §核心判断] MVP 是 primitive 不是 Council; 跨 provider 异构是 default preference 不是硬约束; AdvisorAdvice 4 字段强类型; advisor 不能 consult 第二个 advisor; advisor 不能调任何 tool; trace span 14 字段全收; "advice not instruction" 防御标记防 prompt injection; verification.command 字段鼓励填（executor 跑后回灌 trace）。',
   },
 ];
 
-const MULTI_FILE_BUGFIX_CASES: readonly H2BoundaryCase[] = [
+// ---------------------------------------------------------------------------
+// Pool 2 — Open Issues from KNOWN_ISSUES.md
+// All run at HEAD-at-eval-time. Bug-fix tasks; agent must reproduce + fix.
+// ---------------------------------------------------------------------------
+
+const OPEN_ISSUE_CASES: readonly H2BoundaryCase[] = [
   {
-    id: 'h2-hc-fix-budget-snapshot-drift',
-    source: 'hand-curated',
-    category: 'multi-file-bugfix',
-    description: 'Fix synthetic bug: budget snapshot diverges between core and coding consumers.',
+    id: 'h2-issue-105-resume-history-not-injected',
+    source: 'open-issue',
+    category: 'bug-fix',
+    description: 'kodax -c continues session but LLM does not see history — gitRoot filter / initialMessages drift bug',
+    sourceCitation: 'docs/KNOWN_ISSUES.md#issue-105',
     userMessage:
-      'Bug: 我观察到在长任务里 budget snapshot 在 core 和 coding 看到的值不一致——' +
-      'core 的 budget controller 减了 10 个 token，但 coding 的 status panel 还是显示扣减前的值。' +
-      '怀疑是某个地方 cache 了旧 snapshot 没刷新。请追根因，修掉漂移点。' +
-      '可能涉及 budget controller、status event publishing、repl 的状态订阅链路。',
+      'Bug：用户用 kodax -c 继续会话后 LLM 似乎"忘记"了之前的对话内容，表现为不认识之前讨论过的话题。' +
+      '预期行为：(1) kodax -c 自动加载当前目录最近的会话历史 (2) 历史消息作为 initialMessages 注入 LLM 上下文 (3) UI 显示 [Continuing session: xxx] 横幅。' +
+      '怀疑路径在 cli_option_helpers.ts:295（设 resume=true）/ InkREPL.tsx:3527（用 storage.list(gitRoot) 过滤）/ agent.ts:959（runKodaX 调 storage.list 不传 gitRoot）/ agent.ts:979（initialMessages 优先级）/ task-engine.ts:4091（managed task worker 路径下 compact 策略可能让 initialMessages 设 undefined）。' +
+      '请定位真实漏洞点并修复，加回归测试覆盖 (a) clean resume (b) gitRoot 切换 (c) compact 路径下 history 不丢。',
     gitHeadSha: null,
     mustTouchFiles: [
-      'packages/coding/src/task-engine/',
-      'packages/repl/src/',
+      'src/cli_option_helpers.ts',
+      'packages/coding/src/agent.ts',
+      'packages/coding/src/task-engine.ts',
     ],
-    mustNotTouchFiles: ['packages/ai/', 'packages/agent/', 'packages/skills/'],
+    mustNotTouchFiles: ['packages/ai/', 'docs/'],
     acceptanceCriteria:
-      'Root cause identified and explained; fix in the right layer (likely status event publishing); regression test added; no broad refactor; original bug reproducible before fix and not after.',
+      '[verbatim §Expected Behavior] kodax -c 应该自动加载当前目录最近的会话历史；历史消息应该作为 initialMessages 注入 LLM 上下文；UI 应显示 [Continuing session: xxx] 横幅。修复后回归测试通过且不引入新 regression。',
   },
   {
-    id: 'h2-hc-fix-handoff-cycle-detection',
-    source: 'hand-curated',
-    category: 'multi-file-bugfix',
-    description: 'Fix synthetic bug: transitive handoff cycles slip through admission.',
+    id: 'h2-issue-107-harness-profile-rename',
+    source: 'open-issue',
+    category: 'refactor',
+    description: 'Rename harnessProfile {H0_DIRECT|H1_EXECUTE_EVAL|H2_PLAN_EXECUTE_EVAL} to workerChain composition (237 refs)',
+    sourceCitation: 'docs/KNOWN_ISSUES.md#issue-107',
     userMessage:
-      'Bug: FEATURE_101 的 handoffLegality invariant 检查 handoff DAG 无环，但我发现 ' +
-      'A→B / B→C / C→A 这种 transitive cycle 在某些 manifest 顺序下能 slip through。' +
-      '怀疑 admission 时只检查了"加入本 manifest 后"的局部图，没考虑已激活 agents 的全局图。' +
-      '请定位漏洞并修，加针对 transitive cycle 的回归测试。',
+      'FEATURE_061 移除了预 Scout 状态机和 Tactical Flow，但 harnessProfile 类型命名 (H0_DIRECT/H1_EXECUTE_EVAL/H2_PLAN_EXECUTE_EVAL) 残留在 237 处引用、10 个文件中：types.ts(5) / reasoning.ts(29) / task-engine.ts(106) / provider-policy.ts(4) / agent.ts(1) / 测试文件(~90)。' +
+      '当前 harnessProfile 实际只是 worker chain 的标签：H0_DIRECT → [scout]，H1_EXECUTE_EVAL → [generator, evaluator]，H2_PLAN_EXECUTE_EVAL → [planner, generator, evaluator]。buildManagedTaskWorkers 已经做这个映射。' +
+      '步骤：(1) 在 KodaXTaskRoutingDecision 用 workerChain: KodaXTaskRole[] 替代 harnessProfile (2) 保留 harnessProfile 作为 derived label 向后兼容导出类型 (3) 内部路由逻辑改为基于 workerChain 而非 harnessProfile (4) 逐步更新 237 处引用。' +
+      '完成后所有测试绿。',
     gitHeadSha: null,
     mustTouchFiles: [
-      'packages/core/src/invariants/handoff-legality.ts',
-      'packages/core/src/invariants/handoff-legality.test.ts',
+      'packages/coding/src/types.ts',
+      'packages/coding/src/reasoning.ts',
+      'packages/coding/src/task-engine.ts',
+      'packages/coding/src/provider-policy.ts',
+      'packages/coding/src/agent.ts',
     ],
-    mustNotTouchFiles: ['packages/coding/'],
+    mustNotTouchFiles: ['packages/ai/', 'packages/repl/', 'packages/agent/'],
     acceptanceCriteria:
-      'Transitive cycle case identified; admission rejects A→B/B→C/C→A; test case for 3-cycle and 4-cycle added; existing direct-cycle tests still pass.',
+      '[verbatim §Planned Resolution] 1. KodaXTaskRoutingDecision 中用 workerChain 替代 harnessProfile；2. 保留 harnessProfile 作为 derived label（向后兼容）；3. 内部路由逻辑改为基于 workerChain；4. 逐步更新 237 处引用。完成后所有 vitest 测试通过、不引入循环依赖、derived label 正确反向计算。',
   },
+  // I-109 mcp_get_prompt — REMOVED 2026-04-30
+  //   Verification at HEAD: file packages/coding/src/tools/mcp-get-prompt.ts exists
+  //   (created Apr 13), registered in index.ts:75. KNOWN_ISSUES doc-lag.
+  //
+  // I-110 /mcp commands — REMOVED 2026-04-30
+  //   Verification at HEAD: commands.ts:605 has `usage: '/mcp [status|refresh]'`
+  //   with status + refresh subcommands wired to extensionRuntime.
+  //
+  // I-112 ask_user_question modes — REMOVED 2026-04-30
+  //   Verification at HEAD: tool docstring says "Supports: single-select,
+  //   multi-select, free-text input, and multi-question modes." All 3 modes
+  //   implemented. Remaining UI gap (number-vs-arrow nav) is single-file <H2 scope.
+
   {
-    id: 'h2-hc-fix-evaluator-context-leak',
-    source: 'hand-curated',
-    category: 'multi-file-bugfix',
-    description: 'Fix synthetic bug: Evaluator session inherits Generator reasoning despite design.',
+    id: 'h2-issue-124-ama-dispatch-rate',
+    source: 'open-issue',
+    category: 'bug-fix',
+    description: 'AMA child agent dispatch trigger rate too low — fanout gate + H1 tool whitelist over-restrictive',
+    sourceCitation: 'docs/KNOWN_ISSUES.md#issue-124',
     userMessage:
-      'Bug: 设计上 Evaluator 应该 fresh session（只看 task + deliverable），' +
-      '但我观察到某些情况下 Evaluator 的 prompt 里出现了 Generator 的 thinking 文本。' +
-      '怀疑 H1 revise 路径里 session resumption 把 Generator 的 reasoning 漏出去给了 Evaluator。' +
-      '请定位漏洞并修。需要修 task-engine 的 revise 路径 + 加 prompt-content 隔离测试。',
+      'dispatch_child_task 工具（FEATURE_067）和 fan-out scheduler（FEATURE_047）已落地并通过测试，但真实运行中子 Agent 派发频率明显低于预期。具体表现：' +
+      '(1) H1 read-only 调研：Scout 升级到 H1 后 controller 的 fanout.admissible 立刻变 false，Scout fan-out 提示被关闭。' +
+      '(2) H1 普通改代码任务：Generator 看不到 dispatch_child_task 工具（白名单未包含），无法并行修改多个独立模块。' +
+      '(3) H2 写多模块任务：hypothesis-check fanout class 在 controller 里硬编码 return false。' +
+      '(4) Plan / systemic 任务的调研阶段：profile === "tactical" 一刀切，managed profile 完全没有 fan-out 路径。' +
+      '请修：让 H1 read-only / H2 write / managed plan 调研都能在合适场景拿到 fan-out 提示，但保持 LLM 自主判断（gate 只负责 capability available 不强制并行）。',
     gitHeadSha: null,
     mustTouchFiles: [
-      'packages/coding/src/task-engine/',
-      'packages/coding/src/task-engine.test.ts',
+      'packages/coding/src/orchestration.ts',
+      'packages/coding/src/task-engine.ts',
+      'packages/coding/src/agents/protocol-emitters.ts',
     ],
-    mustNotTouchFiles: ['packages/core/', 'packages/ai/'],
+    mustNotTouchFiles: ['packages/ai/', 'packages/repl/'],
     acceptanceCriteria:
-      'Leak path identified in revise resumption logic; fix isolates Generator thinking from Evaluator prompt; test verifies Evaluator prompt does NOT contain Generator reasoning markers; no regression in revise success rate.',
-  },
-  {
-    id: 'h2-hc-fix-tool-permission-clamp',
-    source: 'hand-curated',
-    category: 'multi-file-bugfix',
-    description: 'Fix synthetic bug: tool permission clamp does not propagate to subagent.',
-    userMessage:
-      'Bug: parent agent 的 toolPermissions 被 admission clamp 后（比如 bash:network 被剥离），' +
-      'subagent 通过 dispatch_child_task spawn 出来时仍然能调 bash:network——clamp 没传下去。' +
-      '请追源码，找到 subagent 创建时的 permission 继承逻辑，修掉漂移。' +
-      '加测试覆盖 parent clamp 后 subagent 不能越权的场景。',
-    gitHeadSha: null,
-    mustTouchFiles: [
-      'packages/coding/src/agent-runtime/',
-      'packages/coding/src/agent-runtime/policy-gate.ts',
-    ],
-    mustNotTouchFiles: ['packages/core/', 'packages/repl/'],
-    acceptanceCriteria:
-      'Root cause in subagent permission inheritance fixed; test covers parent-clamped → subagent-cannot-bypass; no regression in normal subagent dispatch; clear explanation of where the leak was.',
+      '[verbatim §Expected Behavior] H1 read-only 调研：Scout 和 Generator 都能在多目标场景派 read-only child；H2 多模块写入：Generator 能在独立模块改动时派 write child（已有 worktree 隔离机制）；Plan / systemic 调研：Scout / Planner 能并行调研多个模块作为决策输入。Rule A/B/C prompt 仍由 LLM 自主判断，gate 只负责 "capability available"。',
   },
 ];
 
-const TDD_MULTI_FILE_CASES: readonly H2BoundaryCase[] = [
+// ---------------------------------------------------------------------------
+// Pool 3 — Real Replays of Completed Features
+// gitHeadSha pinned to parent of first impl commit. mustTouchFiles from
+// `git show <impl-sha> --stat` (objective ground truth, not predicted).
+// ---------------------------------------------------------------------------
+
+const REAL_REPLAY_CASES: readonly H2BoundaryCase[] = [
   {
-    id: 'h2-hc-tdd-divergence-score-threshold',
-    source: 'hand-curated',
-    category: 'tdd-multi-file',
-    description: 'TDD impl divergence score threshold tuning logic for self-modify.',
+    id: 'h2-replay-feat104-prompt-eval-harness',
+    source: 'real-replay',
+    category: 'cross-cutting',
+    description: 'Build benchmark/harness/ prompt-eval module — alias table + harness + judges + persistence',
+    sourceCitation: 'docs/features/v0.7.29.md#feature_104 (impl commits c68ddee → 5873dde)',
     userMessage:
-      'TDD 实装：FEATURE_090 self-modify 的 divergence score 当前是固定阈值。请改成可配置 + 根据修改字段类型分级' +
-      '（instructions 改动阈值严格、reasoning 宽松）。' +
-      '严格 TDD 流程：先写 4 个测试用例覆盖各 tier 通过/拒绝场景（RED），' +
-      '再写最小实装让测试 GREEN，最后 refactor。' +
-      '所有改动在 packages/coding/src/construction/ 下完成。',
-    gitHeadSha: null,
+      'KodaX 当前 7 个 tests/*.eval.ts 各自 inline (provider, model, apiKeyEnv) 三元组，没有共享 harness。' +
+      '实装 prompt-eval 测试基础设施模块化：' +
+      '(1) 建 benchmark/harness/aliases.ts，收敛到 8 个用户指定 coding-plan 短名 (zhipu/glm51, kimi, mimo/v25, mimo/v25pro, mmx/m27, ark/glm51, ds/v4pro, ds/v4flash)；' +
+      '(2) benchmark/harness/judges.ts 提供共享 judges (mustContainAll, mustContainAny, mustNotContain, mustMatch, mustNotMatch, lengthWithin, parseAndAssert, runJudges) 含 5 类 category (format/correctness/style/safety/custom)；' +
+      '(3) benchmark/harness/harness.ts 提供 runOneShot / runABComparison / runBenchmark 量化版（multi-run + variance + decomposed quality + 9 段 REPORT.md）；' +
+      '(4) benchmark/harness/persist.ts 把结果存 benchmark/results/<timestamp>/；' +
+      '(5) 41 个 zero-LLM self-test 锁住 alias 表 + judge category + benchmark 矩阵 + REPORT.md 渲染 + persistence + quality-only 设计；' +
+      '(6) npm run test:eval 跑真实 *.eval.ts，缺 API key auto-skip。folder 结构 benchmark/{harness,datasets,results}，harness+datasets 进 git，results 不进。' +
+      'KodaX 唯一 deviation 是 quality 是唯一打分维度（latency 仅诊断不打分）。',
+    gitHeadSha: '71a0574',
     mustTouchFiles: [
-      'packages/coding/src/construction/divergence-score.ts',
-      'packages/coding/src/construction/divergence-score.test.ts',
-    ],
-    mustNotTouchFiles: ['packages/core/', 'packages/ai/'],
-    acceptanceCriteria:
-      'Test file written FIRST (visible in commit history or in deliverable narrative); 4+ test cases per tier; impl is minimal; tier-specific thresholds work; default config sane; refactor pass cleaned up duplication.',
-  },
-  {
-    id: 'h2-hc-tdd-fanout-scheduler-fairness',
-    source: 'hand-curated',
-    category: 'tdd-multi-file',
-    description: 'TDD impl fairness in fanout-scheduler dispatch ordering.',
-    userMessage:
-      'TDD 实装：fanout-scheduler 当前按 FIFO 派发子 agent，多个 parent role 同时 spawn 时存在饥饿。' +
-      '请实装 fair dispatch（round-robin per parent role）。' +
-      'TDD：先写测试覆盖（1）单 parent 多子任务、（2）多 parent 公平轮转、（3）一 parent 阻塞不影响其他、' +
-      '（4）饥饿避免（time-bounded）。再写最小实装。',
-    gitHeadSha: null,
-    mustTouchFiles: [
-      'packages/coding/src/fanout-scheduler.ts',
-      'packages/coding/src/fanout-scheduler.test.ts',
-    ],
-    mustNotTouchFiles: ['packages/core/', 'packages/repl/'],
-    acceptanceCriteria:
-      'Tests authored before impl; 4+ test cases as specified; fair round-robin verifiable; starvation bounded; existing FIFO behavior preserved as fallback when single-parent.',
-  },
-  {
-    id: 'h2-hc-tdd-judges-decomposed-aggregation',
-    source: 'hand-curated',
-    category: 'tdd-multi-file',
-    description: 'TDD impl decomposed quality aggregation in benchmark runJudges.',
-    userMessage:
-      'TDD 实装：当前 `runJudges` 只返回总 pass/fail。请扩展成 decomposed 聚合——按 category ' +
-      '（format / correctness / style / safety / custom）分别 reduce。' +
-      'TDD：先写测试覆盖（1）单 category 全 pass、（2）混合 pass/fail、（3）空 category、' +
-      '（4）category 优先级（safety > correctness > style）。再写最小实装。' +
-      '保证现有 caller 不破。',
-    gitHeadSha: null,
-    mustTouchFiles: [
+      'benchmark/harness/aliases.ts',
+      'benchmark/harness/harness.ts',
       'benchmark/harness/judges.ts',
+      'benchmark/harness/persist.ts',
+      'benchmark/harness/report.ts',
       'benchmark/harness/self-test.test.ts',
+      'benchmark/datasets/README.md',
+      'benchmark/datasets/.gitkeep',
+      'benchmark/results/.gitignore',
+      'benchmark/README.md',
+      'tests/prompt-eval-harness.test.ts',
+      'vitest.config.ts',
     ],
     mustNotTouchFiles: ['packages/'],
     acceptanceCriteria:
-      'Tests written first; 4+ cases as specified; backward compat verified for existing callers; category priority correct; output type extended without breaking change.',
+      '[verbatim v0.7.29.md FEATURE_104] aliases 表 8 个 coding-plan provider/model；harness 三函数 runOneShot/runABComparison/runBenchmark；judges 5 类 category；persist 写 results.json + REPORT.md + codes/；41 个 self-test 跑在默认 npm test 零 LLM 成本；npm run test:eval 跑真实 .eval.ts；quality-only ranking 不含 speedScore/composite。',
   },
   {
-    id: 'h2-hc-tdd-replay-cache-migration',
-    source: 'hand-curated',
-    category: 'tdd-multi-file',
-    description: 'TDD impl replay cache schema migration logic.',
+    id: 'h2-replay-recovery-comprehensive-error-recovery',
+    source: 'real-replay',
+    category: 'cross-cutting',
+    description: 'Comprehensive API error recovery: cleanup incomplete tool calls + classification + retry + session recovery',
+    sourceCitation: 'commit f6f08cc "feat(recovery): comprehensive API error recovery mechanism" (2026-03-07)',
     userMessage:
-      'TDD 实装：session-lineage 的 replay cache 升级 schema 时需要迁移老数据。' +
-      '请实装 migration framework：版本号比较、ordered migration steps、rollback safety。' +
-      'TDD：先写测试覆盖（1）v1→v2 直升、（2）v1→v3 多步、（3）目标版本相同 no-op、' +
-      '（4）migration 中途失败回滚。再写最小实装。',
-    gitHeadSha: null,
+      '当前 KodaX 在 LLM API 出错时容易陷入死循环 ——"tool_call_id not found" 反复触发，错误消息对用户也不友好。' +
+      '请实装一套完整的 API 错误恢复机制（5 phase）：' +
+      '(1) Phase 1：任何错误发生时**总是**清理未完成的 tool call，避免下一轮 prompt 携带 dangling tool_call_id；' +
+      '(2) Phase 2：错误分类系统 (TRANSIENT / PERMANENT / TOOL_CALL_ID / USER_ABORT)，新建 error-classification 模块；' +
+      '(3) Phase 3：把 retry + jittered exponential backoff 接入 transient error 路径，新建 retry-handler 模块；' +
+      '(4) Phase 4：session 级 consecutiveErrors 计数 + SessionErrorMetadata，crash 后能自动恢复；' +
+      '(5) Phase 5：用户友好错误消息——把分类结果转成 actionable guidance，REPL 端通过 onError/onRetry callback 反馈给用户。' +
+      '原 bug 信号：用户报告"卡住后只能 Ctrl+C，再启动还是同样错误"；预期行为：transient error auto-retry，permanent error 给用户清晰指引。',
+    gitHeadSha: 'afc0cd4',
     mustTouchFiles: [
-      'packages/session-lineage/src/migrations.ts',
-      'packages/session-lineage/src/migrations.test.ts',
-      'packages/session-lineage/src/index.ts',
+      'packages/coding/src/agent.ts',
+      'packages/coding/src/error-classification.ts',
+      'packages/coding/src/retry-handler.ts',
+      'packages/coding/src/types.ts',
+      'packages/agent/src/types.ts',
+      'packages/ai/src/errors.ts',
+      'packages/repl/src/interactive/storage.ts',
+      'packages/repl/src/ui/InkREPL.tsx',
     ],
-    mustNotTouchFiles: ['packages/coding/', 'packages/repl/'],
+    mustNotTouchFiles: ['packages/skills/'],
     acceptanceCriteria:
-      'Tests authored before impl; 4+ cases as specified; migration framework supports skip/multi-step/rollback; index.ts exports public API; no shared state between test runs.',
+      '[paraphrased from commit body] (1) 任何错误路径都清理 incomplete tool call，杜绝 "tool_call_id not found" 死循环；(2) error-classification 模块提供 4 类分类 (TRANSIENT/PERMANENT/TOOL_CALL_ID/USER_ABORT)；(3) retry-handler 模块对 transient 错误做 jittered exponential backoff，对 permanent 错误不重试；(4) SessionErrorMetadata 跟踪跨 session 的 consecutiveErrors 计数；(5) REPL 通过 onError/onRetry callback 给用户友好提示并提供 actionable guidance。',
+  },
+  {
+    id: 'h2-replay-feat074-subagent-permission-boundary',
+    source: 'real-replay',
+    category: 'bug-fix',
+    description: 'FEATURE_074: replace broken set_permission_mode with exit_plan_mode + propagate plan-mode to children via live closure',
+    sourceCitation: 'commit 458f333 "feat(permission): FEATURE_074 subagent permission boundary hardening" (2026-04-18)',
+    userMessage:
+      'set_permission_mode 工具自引入以来 callback 从未被 wire，整个工具是坏的。请：' +
+      '(1) 删除 set_permission_mode（broken since introduction）；' +
+      '(2) 引入 exit_plan_mode 作为规范的 plan-exit 工具，tri-state callback 返回 true | false | "not-in-plan-mode"；exit_plan_mode 是 parent-only 工具（CHILD_EXCLUDE_TOOLS_BASE 过滤）；' +
+      '(3) plan-mode 约束传给 child agent 走 live predicate closure 不是 snapshot——这样 mid-run 用户切 plan↔accept-edits，下一次 child tool call 就能感知到；' +
+      '(4) buildToolConfirmationDisplay 给 exit_plan_mode 单独 case：plan 拆成 detail line；超过 15 行时 head(12) + ellipsis + tail(2)，让用户在 InkREPL 高度受限下也能看到首尾；' +
+      '(5) 顺手修一个 scope-adjacent bug——isAlwaysConfirmPath 把 system temp (os.tmpdir / $TEMP / $TMP / $TMPDIR) 排除出"项目外路径必确认"规则，accept-edits 和 auto-in-project 不再为 /tmp 写入弹 dialog（.kodax/ 和 ~/.kodax/ 仍然永远保护）。',
+    gitHeadSha: 'c70d8e0',
+    mustTouchFiles: [
+      'packages/coding/src/agent.ts',
+      'packages/coding/src/child-executor.ts',
+      'packages/coding/src/tools/exit-plan-mode.ts',
+      'packages/coding/src/tools/registry.ts',
+      'packages/coding/src/tools/index.ts',
+      'packages/coding/src/types.ts',
+      'packages/repl/src/common/tool-confirmation.ts',
+      'packages/repl/src/permission/permission.ts',
+      'packages/repl/src/interactive/repl.ts',
+      'packages/repl/src/ui/InkREPL.tsx',
+    ],
+    mustNotTouchFiles: ['packages/ai/', 'packages/skills/'],
+    acceptanceCriteria:
+      '[verbatim commit body] set_permission_mode 删除；exit_plan_mode 实装 tri-state callback (true|false|"not-in-plan-mode") 且 parent-only via CHILD_EXCLUDE_TOOLS_BASE；plan-mode 约束走 live predicate closure 不是 snapshot；buildToolConfirmationDisplay 对 plan>15 行 head(12)+ellipsis+tail(2)；isAlwaysConfirmPath 把 os.tmpdir/$TEMP/$TMP/$TMPDIR 从 confirm 规则中豁免；.kodax/ 和 ~/.kodax/ 仍永远保护。',
+  },
+  {
+    id: 'h2-replay-issue116-stream-resilience-stale-round-guard',
+    source: 'real-replay',
+    category: 'bug-fix',
+    description: 'Stream resilience + Issue 116 stale-round guard: generation counter + bufferSealed flag + onStreamEnd guard',
+    sourceCitation: 'commit 40ef809 "feat: stream resilience improvements, Issue 116 stale-round guard, child-agent prompt refinement" (2026-04-14)',
+    userMessage:
+      'Issue 116：用户 Ctrl+C abort 当前轮次后，旧轮次的 streaming 结果还会回灌到下一轮，污染新轮 state（用户看见上一轮残留内容飘进新输入）。' +
+      '请加 stream resilience：' +
+      '(1) Issue 116 核心：promptGenerationRef generation counter，Ctrl+C 后 increment；旧 round 的 stream 结果被识别为 stale 直接 discard；StreamingContext 加 bufferSealed flag，abort 后拒绝写入；onStreamEnd 加 guard 防止旧 round 污染新 round state；' +
+      '(2) Stream stall detection：Anthropic / OpenAI provider 检测 SSE gap >30s，passive logging（不 abort，仅诊断）；' +
+      '(3) Heartbeat idle timer：onHeartbeat callback 在 content_block boundary 支持 pause；idle timer 默认关，env/config opt-in；' +
+      '(4) max_tokens retry cap：thinking 吃掉输出预算时，auto-continue 重试有上限 KODAX_MAX_MAXTOKENS_RETRIES (default 2)，防死循环；' +
+      '(5) Provider recovery UX：recovery info inline 渲染在 streaming 区域内，不再作为独立 history item（修一个 positioning bug）；' +
+      '(6) Child agent dispatch：prompt 加更强的 anti-pattern guidance（never dispatch exactly 1 child）。',
+    gitHeadSha: '51c0836',
+    mustTouchFiles: [
+      'packages/coding/src/agent.ts',
+      'packages/coding/src/task-engine.ts',
+      'packages/coding/src/resilience/config.ts',
+      'packages/ai/src/providers/anthropic.ts',
+      'packages/ai/src/providers/openai.ts',
+      'packages/ai/src/types.ts',
+      'packages/repl/src/ui/InkREPL.tsx',
+      'packages/repl/src/ui/contexts/StreamingContext.tsx',
+    ],
+    mustNotTouchFiles: ['packages/skills/'],
+    acceptanceCriteria:
+      '[paraphrased commit body] Issue 116: promptGenerationRef counter + bufferSealed flag + onStreamEnd guard 共同 fail-closed 拦截 stale-round 污染；stream stall detection 在 Anthropic/OpenAI 上 passive logging（>30s gap，不 abort）；heartbeat idle timer 默认关 env opt-in；max_tokens retry 默认 cap=2 (KODAX_MAX_MAXTOKENS_RETRIES env override)；provider recovery info 渲染在 streaming 区域 inline；child-agent prompt 加 "never dispatch exactly 1" 反 anti-pattern。',
+  },
+  {
+    id: 'h2-replay-feat098-per-model-context-window',
+    source: 'real-replay',
+    category: 'refactor',
+    description: 'Wire KodaXModelDescriptor.contextWindow / maxOutputTokens through to compaction trigger and wire-level max_tokens',
+    sourceCitation: 'docs/features/v0.7.28.md#feature_098 (impl commits dc7c38b → 482c2c4)',
+    userMessage:
+      'KodaXModelDescriptor.contextWindow 和 maxOutputTokens 这两个字段在 KodaX 已声明但运行时**全代码无人读取**——是死字段。' +
+      '把它们接通运行时：' +
+      '(1) 让 compaction trigger 用当前激活 model 的真实 contextWindow 算（之前硬编码默认值）；' +
+      '(2) wire-level max_tokens 用 maxOutputTokens 不是硬编码默认；' +
+      '(3) 升级自定义 provider 的 models[] 字段支持描述符对象格式（兼容旧字面量）；' +
+      '(4) 修正已知偏差：kimi.k2.5 实际是 256K 不是 128K；zhipu.glm-5-turbo 是 128K；' +
+      '(5) compaction 调用点（packages/coding 和 packages/repl 各自的 compaction caller）传入 active model。' +
+      '加测试覆盖 cost-rates / base provider 的查找逻辑。',
+    gitHeadSha: '1e7f9a1',
+    mustTouchFiles: [
+      'packages/ai/src/providers/base.ts',
+      'packages/ai/src/providers/base.test.ts',
+      'packages/ai/src/providers/registry.ts',
+      'packages/ai/src/providers/registry.test.ts',
+      'config.example.jsonc',
+    ],
+    mustNotTouchFiles: ['packages/agent/', 'packages/skills/', 'packages/session-lineage/'],
+    acceptanceCriteria:
+      '[verbatim v0.7.28.md FEATURE_098] contextWindow / maxOutputTokens 死字段接通运行时；compaction trigger 与 wire-level max_tokens 都按当前激活 model 的真实窗口算；自定义 provider models[] 支持描述符对象格式（兼容旧字面量）；kimi.k2.5 = 256K (post-correction)；zhipu.glm-5-turbo = 128K；测试通过。',
   },
 ];
 
+// ---------------------------------------------------------------------------
+// Final dataset (14 cases — comfortably above exploratory floor)
+// ---------------------------------------------------------------------------
+
 export const H2_BOUNDARY_TASKS: readonly H2BoundaryCase[] = Object.freeze([
+  ...PLANNED_CASES,
+  ...OPEN_ISSUE_CASES,
   ...REAL_REPLAY_CASES,
-  ...MULTI_FILE_FEATURE_CASES,
-  ...CROSS_PACKAGE_REFACTOR_CASES,
-  ...MULTI_FILE_BUGFIX_CASES,
-  ...TDD_MULTI_FILE_CASES,
 ]);
 
 export const H2_BOUNDARY_VARIANTS: readonly EvalVariant[] = Object.freeze([
@@ -426,3 +542,11 @@ export const H2_BOUNDARY_VARIANTS: readonly EvalVariant[] = Object.freeze([
   'H2-B',
   'H1-ref',
 ]);
+
+// Sanity check at module load — fail fast if dataset shape drifts
+if (H2_BOUNDARY_TASKS.length !== 14) {
+  throw new Error(
+    `FEATURE_107 dataset locked at 14 cases; found ${H2_BOUNDARY_TASKS.length}. ` +
+      'See ./candidate-inventory.md if adding/removing cases.',
+  );
+}

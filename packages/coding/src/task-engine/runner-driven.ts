@@ -52,6 +52,7 @@ import {
 import { KODAX_MAX_MAXTOKENS_RETRIES } from '../constants.js';
 import type {
   Agent,
+  AgentMessage,
   Handoff,
   RunnableTool,
   RunnerLlmResult,
@@ -89,6 +90,7 @@ import {
 } from '../resilience/index.js';
 import { waitForRetryDelay } from '../retry-handler.js';
 import {
+  EMIT_CONTRACT_TOOL_NAME,
   emitContract,
   emitHandoff,
   emitScoutVerdict,
@@ -831,6 +833,39 @@ function wrapEmitterWithRecorder(
                 currentHarness,
                 revisesSoFar + 1,
               );
+            }
+          }
+        }
+        // FEATURE_107 P2.1: DELETE WITH B-PATH IMPL AT P6 unless 档 1 wins.
+        // Eval-only Scout-verdict force. Setting the plan-level
+        // harnessProfile in task-engine.ts is not enough because Scout's
+        // own runtime emit wins downstream (see line ~3215 "Scout's emitted
+        // harness still wins over the plan's recommendation"). To force a
+        // specific harness for variant comparison we have to rewrite Scout's
+        // recorded emit — both `confirmedHarness` and `handoffTarget` —
+        // before any consumer reads it. Production code never sets
+        // KODAX_FORCE_MAX_HARNESS so this collapses to identity.
+        if (slot === 'scout' && !result.isError && result.metadata) {
+          const forced = process.env.KODAX_FORCE_MAX_HARNESS;
+          if (forced === 'H1' || forced === 'H2') {
+            const meta = result.metadata as unknown as ProtocolEmitterMetadata;
+            const scoutPayload = meta.payload?.scout;
+            if (scoutPayload) {
+              const targetHarness = forced === 'H1' ? 'H1_EXECUTE_EVAL' : 'H2_PLAN_EXECUTE_EVAL';
+              const targetHandoff = forced === 'H1' ? GENERATOR_AGENT_NAME : PLANNER_AGENT_NAME;
+              const rewritten: ProtocolEmitterMetadata = {
+                ...meta,
+                payload: {
+                  ...meta.payload,
+                  scout: {
+                    ...scoutPayload,
+                    confirmedHarness: targetHarness,
+                    directCompletionReady: 'no',
+                  },
+                },
+                handoffTarget: targetHandoff,
+              };
+              result = { ...result, metadata: rewritten as unknown as Record<string, unknown> };
             }
           }
         }
@@ -1831,6 +1866,54 @@ const NULL_OBSERVER: ObserverBridge = {
 };
 
 /**
+ * FEATURE_107 P2.1: DELETE WITH B-PATH IMPL AT P6 unless 档 1 wins.
+ *
+ * inputFilter for plannerHandoffs that strips Planner's intermediate
+ * reasoning + tool calls before handing off to Generator, leaving only:
+ *   1. the leading user prompt (the original task)
+ *   2. the assistant message containing the final `emit_contract` tool_use
+ *      (the plan artifact)
+ *
+ * This realizes the v0.7.16 design intent ("Planner → Generator: new
+ * session + plan artifact") that the v0.7.26 Layer A rewrite never wired
+ * in. Behind `KODAX_PLANNER_INPUTFILTER=strip-reasoning` env so production
+ * default is unchanged.
+ *
+ * Exported so the unit test can call it deterministically without spinning
+ * up Runner.run.
+ */
+export function stripPlannerReasoningForGenerator(
+  history: readonly AgentMessage[],
+): readonly AgentMessage[] {
+  const firstUser = history.find((m) => m.role === 'user');
+  // Walk from the end to find the last assistant message that emitted
+  // the contract — that's the plan artifact.
+  let planArtifact: AgentMessage | undefined;
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    const m = history[i];
+    if (!m || m.role !== 'assistant') continue;
+    if (typeof m.content === 'string') continue;
+    const hasContractEmit = m.content.some(
+      (block) =>
+        block.type === 'tool_use' && block.name === EMIT_CONTRACT_TOOL_NAME,
+    );
+    if (hasContractEmit) {
+      planArtifact = m;
+      break;
+    }
+  }
+  // If we can't find a plan artifact (Planner didn't emit, e.g. degenerate
+  // case), fall back to the unfiltered history rather than nuking everything
+  // — Generator without any context would be strictly worse than the leak
+  // we're trying to test.
+  if (!planArtifact) return history;
+  const out: AgentMessage[] = [];
+  if (firstUser) out.push(firstUser);
+  out.push(planArtifact);
+  return out;
+}
+
+/**
  * Build the full runtime agent chain. Each agent carries:
  *   - self-contained role instructions (no legacy prompt context)
  *   - role-appropriate coding tools
@@ -2071,8 +2154,23 @@ export function buildRunnerAgentChain(
     { target: generator, kind: 'continuation', description: 'Upgrade to H1 — execute + evaluate' },
     { target: planner, kind: 'continuation', description: 'Upgrade to H2 — plan + execute + evaluate' },
   ];
+  // FEATURE_107 P2.1: DELETE WITH B-PATH IMPL AT P6 unless 档 1 wins.
+  // Eval-only inputFilter that strips Planner's intermediate reasoning so
+  // Generator sees only the original user prompt + the final emit_contract
+  // tool_use (the plan artifact). Production code never sets the env var,
+  // so plannerInputFilter stays undefined and the handoff behaves exactly
+  // as it did before this feature. See docs/features/v0.7.32.md §假设
+  // (re-framed) for why this is the B-path of the eval.
+  const plannerInputFilter = process.env.KODAX_PLANNER_INPUTFILTER === 'strip-reasoning'
+    ? stripPlannerReasoningForGenerator
+    : undefined;
   const plannerHandoffs: Handoff[] = [
-    { target: generator, kind: 'continuation', description: 'Hand off execution to Generator' },
+    {
+      target: generator,
+      kind: 'continuation',
+      description: 'Hand off execution to Generator',
+      inputFilter: plannerInputFilter,
+    },
   ];
   const generatorHandoffs: Handoff[] = [
     { target: evaluator, kind: 'continuation', description: 'Hand off to Evaluator for verification' },

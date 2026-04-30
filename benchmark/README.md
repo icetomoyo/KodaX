@@ -276,11 +276,54 @@ Once you have a benchmark with a baseline:
   always lag on certain prompt patterns. Assert "v2 ≥ v1" not "v2 passes
   everywhere".
 
+## Pattern 4 — Agent-level eval (FEATURE_107, v0.7.32)
+
+For cases where the question can't be answered by a single LLM call but
+requires running KodaX's full task loop (Scout → Planner → Generator ↔
+Evaluator) against historical repo states:
+
+```
+benchmark/harness/
+  worktree-runner.ts          git-worktree isolation envelope
+                              setupWorktree / cleanupWorktree / runInWorktree
+                              scanAndCleanOrphanWorktrees
+  agent-task-runner.ts        spawn `kodax -p` in worktree with isolated HOME
+                              + variant-forcing env vars
+  plan-intent-fidelity.ts     LLM-as-judge: deliverable vs Planner intent
+  h2-boundary-runner.ts       (P2.0f) orchestrator: cases × aliases × variants
+benchmark/datasets/h2-plan-execute-boundary/
+  cases.ts                    14 grounded H2-class cases (P1.5b locked)
+  candidate-inventory.md      Methodology + verification trail
+```
+
+**Variant-forcing env-var contract** (consumed by KodaX source-side, P2.1):
+
+| Env var | Values | Effect |
+|---|---|---|
+| `KODAX_FORCE_MAX_HARNESS` | `H1` / `H2` / unset | Override Scout verdict; eval-only path |
+| `KODAX_PLANNER_INPUTFILTER` | `strip-reasoning` / unset | Activate plannerHandoffs `inputFilter` to strip Planner reasoning, leaving only plan artifact (v0.7.16 design intent, B-path) |
+
+Both are eval-only (read once each in source); never set in production.
+Removed at FEATURE_107 P6 cleanup unless 档 1 (B wins) triggers, in which
+case B-path becomes default and env-var is removed in favor of unconditional
+`inputFilter`.
+
+**Re-framed 2026-04-30**: original `KODAX_PLANNER_GENERATOR_MERGED` env was
+based on the (incorrect) assumption that current code is `new-session`. P2.1
+design pass found current code is already `same-session` (no `inputFilter`
+on any handoff), so B-path is "add `inputFilter`" not "switch to same-session".
+
+**Why not extend `harness.ts`**: prompt-eval (`runOneShot`/`runBenchmark`)
+is single-call + zero-filesystem. Agent-level eval requires worktree
+isolation + multi-round task loop + transcript parsing — a different shape.
+Two harnesses, same `aliases.ts`/`persist.ts` infrastructure.
+
 ## What's not in this module
 
-- **LLM-as-judge**. Some quality dimensions (style, naturalness) aren't
-  expressible as deterministic judges. Cases that need an LLM judge keep
-  that logic inline; we'll generalize after 3+ real cases (CLAUDE.md).
+- **LLM-as-judge** (general). Some quality dimensions (style, naturalness)
+  aren't expressible as deterministic judges. Cases that need an LLM judge
+  keep that logic inline; first instance is plan-intent-fidelity.ts —
+  generalize after 3+ real cases (CLAUDE.md).
 - **Cost tracking / token counting**. Out of scope — eval cases run on
   manual local pulses, not a CI budget. If we ever automate, this is
   where it'd plug in.

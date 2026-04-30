@@ -644,3 +644,111 @@ See P1.5b deep-check below for verbatim files / AC.
 2. Author verbatim userMessages from design doc / issue text
 3. Lock SHA (HEAD-at-eval-time for Pool 1+2, specific parent SHA for Pool 3)
 4. Write final cases.ts replacing 165fc0d
+
+---
+
+## Post-cases.ts state verification (2026-04-30)
+
+After authoring cases.ts at 13 cases, ran HEAD verification on each Pool 2 ✓ entry. Three additional doc-lag demotions discovered:
+
+| ID | Verification finding | New verdict |
+|---|---|---|
+| **I-109** missing mcp_get_prompt | `packages/coding/src/tools/mcp-get-prompt.ts` exists at HEAD (created Apr 13); registered at `index.ts:75`. KNOWN_ISSUES doc-lag — issue still marked Open but tool shipped. | **✗** |
+| **I-110** missing /mcp commands | `packages/repl/src/interactive/commands.ts:605` has `usage: '/mcp [status\|refresh]'` with both subcommands wired to `extensionRuntime`. Doc-lag. | **✗** |
+| **I-112** ask_user_question incomplete | Tool docstring at HEAD says "Supports: single-select, multi-select, free-text input, and multi-question modes." All 3 modes implemented. Remaining UI gap (number-vs-arrow nav) is single-file <H2 scope. | **✗** |
+
+This brought viable count from 13 → 10. Below the 12-case floor declared in `docs/features/v0.7.32.md` §Dataset 不足 fallback.
+
+---
+
+## Broader-pool sweep (2026-04-30, post user feedback "look at OTHER unimplemented features")
+
+User noted I had narrowed scope too aggressively. Sweep verified each remaining "Planned" feature against HEAD state:
+
+| Feature | Doc claim | HEAD state | Verdict |
+|---|---|---|---|
+| **F-087** ConstructionRuntime (v0.7.28) | Planned | `packages/coding/src/construction/` has 28 files including runtime.ts/sandbox-runner.ts | **doc-lag, shipped** — exclude |
+| **F-088** Tool Generation Tier 2 (v0.7.28) | Planned | Shipped as part of F-089 admission contract chain (v0.7.31) | **doc-lag, shipped** — exclude |
+| **F-100** SA Runner Frame (v0.7.29) | Planned/Critical | git log shows P3.6a-v complete: `3758b02 FEATURE_100 P3.6v — true AMA convergence (17/17 substrate-shared CAPs)` | **shipped** — exclude |
+| **F-078** Role-Aware Reasoning (v0.7.29) | Planned | Shipped at `581c9b8 feat(coding): FEATURE_078 — Role-Aware Reasoning Profiles` | **shipped** — exclude |
+| **F-103** Scout Calibration (v0.7.29) | Planned | Shipped at `71a0574 feat(coding): FEATURE_103 — Scout calibration` | **shipped** — exclude |
+| **F-060** Bounded-Memory stretch goals | "Tier 1 landed; stretch deferred-pending-profile" | Stretch goals explicitly require profile-driven trigger criterion (concrete heap repro / viewport profiling / new CLI surface) before promotion | **not viable** — deferred-pending-data, not "ready to implement" |
+| **F-102 Phase 0** Telemetry/Trace (v0.7.45) | Planned, 4-phase feature | **Phase 0 alone is a clean bounded sub-feature**: trace schema documentation, local persistence (JSONL/SQLite), 4 explicit AC items, sub-800 LOC. Phases 1-4 explicitly depend on Phase 0 data. | **✓ NEW CANDIDATE** — added to dataset |
+| F-007 Theme Consolidation | already P1.5b ✗ (50+ chalk migrations) | unchanged | exclude |
+| F-030 Multi-Surface Delivery | already ✗ (multi-version sprawling) | unchanged | exclude |
+| F-093 Coding/REPL Decoupling | already ✗ (49/50 cycles cleared, near-trivial) | unchanged | exclude |
+
+**Net result**: +1 case (F-102 Phase 0). Final count: **11 cases** (5+1 Planned + 3 Issues + 2 Replay).
+
+---
+
+## Pool 3 deep archaeology (2026-04-30, post user feedback "800+ commits, you can replay more from history")
+
+User pointed out my Pool 3 archaeology only used `git log --grep="FEATURE_NNN"` which catches ~10 features. Real history has **821 commits** — most use scope-tag prefixes (`feat(coding):`, `refactor(repl):`) without FEATURE_NNN reference.
+
+### Re-mining strategy
+
+```bash
+git log --pretty=format:"%H|%s" --shortstat \
+  | awk-aggregate \
+  | filter: 3 ≤ files ≤ 20 AND prefix in (feat|refactor|fix) AND not (test|chore|release)
+```
+
+Result: ~150 candidate commits. Filtered by:
+1. **Coherent single feature** (not bundled multi-FEATURE commits)
+2. **Source files dominate** (not docs+package.json+ tiny code)
+3. **Bounded** (single commit, no required follow-ups)
+4. **Diverse from existing dataset** (cover bug-fix in Pool 3, currently 0)
+5. **Recent enough** (≥v0.6 era so codebase shape recognizable)
+
+### 3 picked commits
+
+| Commit | Date | Title | Files | Why picked |
+|---|---|---|---|---|
+| **f6f08cc** | 2026-03-07 | comprehensive API error recovery | 18 (8 substantive source) | Cross-cutting bug-fix flavor; 5-phase implementation has clear AC; closes "tool_call_id not found" infinite loop bug |
+| **458f333** | 2026-04-18 | FEATURE_074 subagent permission boundary | 19 (10 source) | Bug-fix replacing broken `set_permission_mode` with `exit_plan_mode` + live closure plan-mode propagation; clear pre-state |
+| **40ef809** | 2026-04-14 | Issue 116 stale-round guard + stream resilience | 20 (8 substantive source) | Bug-fix anchored to specific user-reported issue (stale round contamination after Ctrl+C); clear before/after observable behavior |
+
+### Considered but skipped
+
+| Commit | Why skipped |
+|---|---|
+| **bbac0d0** CLI OAuth providers | 2 huge files (gemini-cli.ts 803 LOC + codex-cli.ts 582 LOC); rest is package.json bumps. Multi-file fails — essentially 2 big-file work, not 3+ coordinated files. |
+| **e5284e2** FEATURE_080+081 Layer A primitives | Too sprawling (cross-package architecture overhaul); bounded fails. |
+| **fcee4f3** Ask + Plan mode | v0.5.21 era — codebase shape too different from current AMA architecture; replay risk. |
+| **65bba03** complete tool interaction maturity layer | Vague commit message "complete X layer" — AC not extractable without significant guess work. |
+| **910ee707** /project command | FEATURE_054 absorbed/removed — target functionality no longer exists; replay is meaningless. |
+| **11ed043** compaction bash-intent + microcompact v2 | Bundle of 4 sub-features with no clean inter-dependency story. |
+
+### Replay safety check
+
+All 3 parent SHAs verified existent:
+- `f6f08cc^` = `afc0cd4`
+- `458f333^` = `c70d8e0`
+- `40ef809^` = `51c0836`
+
+All 3 are pre-FEATURE_100/106 era so worktree at parent SHA gives a coherent (if older) AMA shape. Risk: agent under eval might not have all current tools — acceptable, since the original implementer also did not have today's tools. **Replay parity is preserved.**
+
+---
+
+## Final tally (post deep archaeology, locked 2026-04-30)
+
+| Pool | Count | Cases |
+|---|---|---|
+| **Planned post-v0.7.31** | 6 | F-090, F-092, F-097, F-094, F-102 Phase 0, F-105 Phase 1 |
+| **Open Issues** | 3 | I-105, I-107, I-124 |
+| **Completed Replay** | **5** | F-104, F-098, **f6f08cc** (recovery), **458f333** (FEATURE_074 permission), **40ef809** (Issue 116) |
+| **Total** | **14** | |
+
+14 ≥ 12 floor by 2. Per `docs/features/v0.7.32.md` §Dataset 不足 fallback, this falls in the 12-17 exploratory zone. **Decision: proceed with eval framed as exploratory.**
+
+**Eval framing remains**: exploratory only, no significance claims at this N. Effect-size threshold (≥10% delta replicated across providers) is the only valid go/no-go criterion. P5.5 review notes sample-size limit but no longer flags floor-proximity risk.
+
+### Doc-lag pattern as a finding (not a workaround)
+
+The broader sweep found **5 features** flagged as Planned in FEATURE_LIST.md but actually shipped (F-087, F-088, F-100, F-078, F-103). This is the **pervasive doc-lag pattern** also observed at I-119, I-122, I-109, I-110, I-112, I-106. Recommendation for separate followup (NOT scope of FEATURE_107):
+- Audit FEATURE_LIST.md "Planned" rows against git log
+- Audit KNOWN_ISSUES.md "Open" rows against HEAD code state
+- Either reflect actual status or migrate truly-stale entries to "Completed (doc updated retroactively)"
+
+This finding is independently valuable regardless of FEATURE_107 outcome.
