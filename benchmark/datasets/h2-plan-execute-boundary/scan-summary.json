@@ -1,0 +1,14 @@
+{
+  "totalSessions": 533,
+  "parseFailures": 8,
+  "skippedNonTargetGitRoot": 106,
+  "h0DirectCount": 73,
+  "h1Count": 0,
+  "h2Count": 0,
+  "otherHarnessCount": 346,
+  "candidatesByScore": {
+    "2": 26,
+    "3": 19
+  },
+  "candidatesAboveThreshold": 45
+}
