@@ -38,6 +38,7 @@ import {
   stage as stageArtifact,
   testArtifact,
   activate as activateArtifact,
+  listArtifacts,
   readArtifact,
 } from '../construction/index.js';
 import { buildAdmissionManifest } from '../construction/admission-bridge.js';
@@ -251,6 +252,26 @@ export async function toolStageAgentConstruction(
   try {
     const raw = readRequiredString(input, 'artifact_json');
     const artifact = asAgentArtifact(parseArtifactJson(raw));
+
+    // FEATURE_090 (v0.7.32) — self-modify-in-disguise guard. An agent
+    // could otherwise bump its own version through the FEATURE_089
+    // stage_agent_construction path and bypass FEATURE_090's hard
+    // checks (guardrail ratchet / budget / force ask-user). Refuse
+    // to stage when the manifest's name collides with a still-active
+    // agent — the LLM must explicitly call stage_self_modify to
+    // travel the self-modify lifecycle.
+    const activeCollision = (await listArtifacts('agent')).find(
+      (a) => a.kind === 'agent' && a.name === artifact.name && a.status === 'active',
+    );
+    if (activeCollision) {
+      return [
+        `[Tool Error] stage_agent_construction:`,
+        `'${artifact.name}' already has an active manifest (${activeCollision.version}).`,
+        `Modifying an existing constructed agent must go through stage_self_modify so the FEATURE_090 hard checks (guardrail ratchet, budget, force-ask-user) apply.`,
+        `Pick a different name to create a separate agent.`,
+      ].join(' ');
+    }
+
     const handle = await stageArtifact(artifact);
     return [
       `staged: ${handle.artifact.name}@${handle.artifact.version} (kind=agent)`,

@@ -46,6 +46,9 @@ const RESERVED_SUBCOMMAND_NAMES: ReadonlySet<string> = new Set([
   'acp',
   'completion',
   'tools',
+  // FEATURE_090 (v0.7.32) — `kodax constructed <action>` lifecycle
+  // helpers for constructed agent self-modify governance.
+  'constructed',
 ]);
 
 /**

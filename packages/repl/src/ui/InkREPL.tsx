@@ -72,6 +72,7 @@ import {
   KodaXSessionUiHistoryItem,
   mergeArtifactLedger,
   runManagedTask,
+  drainPendingSwaps,
   KODAX_DEFAULT_PROVIDER,
   KodaXTerminalError,
   classifyError,
@@ -5646,19 +5647,31 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       return getPlanModeBlockReason(tool, input, context.gitRoot ?? process.cwd());
     };
 
-    return runManagedTask(
-      {
-        ...opts,
-        session: {
-          ...opts.session,
-          initialMessages,
+    try {
+      return await runManagedTask(
+        {
+          ...opts,
+          session: {
+            ...opts.session,
+            initialMessages,
+          },
+          context: managedRunContext,
+          events,
+          abortSignal: getSignal(),
         },
-        context: managedRunContext,
-        events,
-        abortSignal: getSignal(),
-      },
-      prompt
-    );
+        prompt
+      );
+    } finally {
+      // FEATURE_090 (v0.7.32) — drain self-modify pending resolver swaps
+      // at the conversation-turn boundary. The G1 deferred-swap guarantee
+      // protects the in-flight Runner.run by holding new versions in a
+      // pending queue; activating them here means the next runAgentRound
+      // resolves the modified agent. `finally` so abort / error paths
+      // also drain (operator-approved swaps stick regardless of run
+      // outcome — staying with the prior version on error would silently
+      // diverge from disk state).
+      drainPendingSwaps();
+    }
   };
 
   const reconcileContextLineage = useCallback((messages: readonly KodaXMessage[]): KodaXSessionLineage => {

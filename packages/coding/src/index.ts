@@ -842,6 +842,21 @@ export type {
   LlmReviewResult,
   LlmReviewVerdict,
   TestArtifactOptions,
+  // FEATURE_090 (v0.7.32): self-modify governance types — surface
+  // consumed by the `kodax constructed *` CLI commands (P5/P6) and
+  // the REPL self-modify bootstrap. `AgentContent` stays
+  // package-private — it's a manifest internal, not a CLI/REPL-facing
+  // shape; if a downstream consumer ever needs it we add it back then.
+  AgentArtifact,
+  AuditEntry,
+  AuditEventKind,
+  BudgetState,
+  DisableState,
+  RollbackResult,
+  SelfModifyAskUser,
+  SelfModifyAskUserInput,
+  SelfModifyDiffSummary,
+  SelfModifyDiffSeverity,
 } from './construction/index.js';
 
 export {
@@ -868,6 +883,21 @@ export {
   buildLlmReviewPrompt,
   parseLlmReviewVerdict,
   runLlmReview,
+  // FEATURE_090 (v0.7.32): self-modify governance — audit log,
+  // budget counter, deferred resolver swap. CLI surface and REPL
+  // bootstrap consume these.
+  appendAuditEntry,
+  readAuditEntries,
+  DEFAULT_SELF_MODIFY_BUDGET,
+  readBudget,
+  resetBudget,
+  remainingSelfModifyBudget,
+  disableSelfModify,
+  readDisableState,
+  rollbackSelfModify,
+  drainPendingSwaps,
+  hasPendingSwap,
+  resolveConstructedAgent,
   // Test-only — reset module-singleton state between hermetic test runs.
   _resetRuntimeForTesting,
 } from './construction/index.js';

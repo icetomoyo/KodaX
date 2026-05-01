@@ -82,6 +82,28 @@ const BUILTIN_AGENTS: ReadonlyMap<string, Agent> = new Map<string, Agent>([
 
 const AGENT_REGISTRY = new Map<string, RegisteredConstructedAgent>();
 
+/**
+ * FEATURE_090 (v0.7.32) — pending registry for self-modify activations.
+ *
+ * Self-modify activations register here instead of `AGENT_REGISTRY` so
+ * the in-flight `Runner.run` that initiated the change keeps using the
+ * pre-self-modify Agent reference. `drainPendingSwaps()` promotes every
+ * pending entry into `AGENT_REGISTRY` and is expected to be called by
+ * the REPL surface once the top-level run completes. Within KodaX's
+ * single-user / single-process CLI threat model that is "the run that
+ * triggered the change finishes" — there is no concurrent run to
+ * coordinate with.
+ *
+ * Why a separate map (not a flag inside the active entry):
+ *   - Lookups (`resolveConstructedAgent`, `liftHandoffRef`) MUST keep
+ *     returning the prior version while a swap is pending. A flag-on-
+ *     entry approach would force every lookup to discriminate
+ *     `pending ? prev : current`, scattering the rule across the file.
+ *   - The drain operation is a single map move; a flag would require
+ *     mutating in place and re-firing the resolver bindings.
+ */
+const _pendingSwap = new Map<string, RegisteredConstructedAgent>();
+
 interface RegisteredConstructedAgent {
   readonly artifact: AgentArtifact;
   readonly agent: Agent;
@@ -113,6 +135,51 @@ export function _resetAgentResolverForTesting(): void {
     _resetAdmittedAgentBindings(entry.agent);
   }
   AGENT_REGISTRY.clear();
+  for (const entry of _pendingSwap.values()) {
+    _resetAdmittedAgentBindings(entry.agent);
+  }
+  _pendingSwap.clear();
+}
+
+/**
+ * FEATURE_090 — `true` iff a self-modify activation has been staged
+ * for `name` but has not yet been drained into the active registry.
+ * Surfaces for tooling that wants to display "next run will use
+ * version X" hints, and as a sanity-check assertion in tests.
+ */
+export function hasPendingSwap(name: string): boolean {
+  return _pendingSwap.has(name);
+}
+
+/**
+ * FEATURE_090 — promote every pending self-modify entry into
+ * `AGENT_REGISTRY`, replacing the prior active version. Returns the
+ * names that were drained so the caller can surface a hint
+ * ("alpha is now running version 1.1.0").
+ *
+ * Idempotent: calling on an empty pending map is a no-op. Atomic at
+ * the JS event-loop level (a single synchronous pass); drain cannot
+ * partially complete.
+ *
+ * Integration contract: the REPL surface calls this immediately after
+ * any top-level `Runner.run` returns. KodaX is single-process and
+ * single-user, so "the run that triggered the change" and "all
+ * in-flight runs" are the same set — no concurrent-run coordination
+ * needed.
+ */
+export function drainPendingSwaps(): readonly string[] {
+  if (_pendingSwap.size === 0) return [];
+  const drained: string[] = [];
+  for (const [name, pending] of _pendingSwap) {
+    const prior = AGENT_REGISTRY.get(name);
+    if (prior) {
+      _resetAdmittedAgentBindings(prior.agent);
+    }
+    AGENT_REGISTRY.set(name, pending);
+    drained.push(name);
+  }
+  _pendingSwap.clear();
+  return drained;
 }
 
 /**
@@ -235,6 +302,18 @@ export interface ConstructedAgentRegistration {
 }
 
 /**
+ * FEATURE_090 — registration options. `deferred=true` routes the new
+ * Agent into the pending swap map instead of the active registry, so
+ * lookups continue to return the prior active version until the next
+ * `drainPendingSwaps()` call. Used by the self-modify activate path
+ * so the in-flight Runner.run that triggered the modification keeps
+ * its captured Agent reference consistent until termination.
+ */
+export interface ConstructedAgentRegisterOptions {
+  readonly deferred?: boolean;
+}
+
+/**
  * Register a constructed agent. Replaces any existing entry at the
  * same name (idempotent — re-activate of the same name+version is a
  * no-op for the resolver). Returns an unregister callback the
@@ -255,19 +334,38 @@ export interface ConstructedAgentRegistration {
 export function registerConstructedAgent(
   artifact: AgentArtifact,
   registration: ConstructedAgentRegistration = {},
+  options: ConstructedAgentRegisterOptions = {},
 ): () => void {
   const agent = buildAgentFromContent(artifact.name, artifact.content);
-  AGENT_REGISTRY.set(artifact.name, { artifact, agent });
   if (registration.bindings && registration.manifest) {
     setAdmittedAgentBindings(agent, registration.manifest, registration.bindings);
   }
+
+  // FEATURE_090 — deferred path stages into `_pendingSwap` instead of
+  // touching the active registry. Lookups (resolveConstructedAgent,
+  // liftHandoffRef) still see the prior active version until
+  // `drainPendingSwaps()` runs.
+  const target = options.deferred ? _pendingSwap : AGENT_REGISTRY;
+  target.set(artifact.name, { artifact, agent });
+
   return () => {
+    // The unregister callback must work whether the entry is currently
+    // pending (deferred and not yet drained) or active (drained, or
+    // registered without deferral). Check pending first so a "revoke
+    // before drain" path doesn't accidentally match against a stale
+    // active version that happens to share the same name.
+    const pending = _pendingSwap.get(artifact.name);
+    if (pending && pending.artifact.version === artifact.version) {
+      _resetAdmittedAgentBindings(pending.agent);
+      _pendingSwap.delete(artifact.name);
+      return;
+    }
     const current = AGENT_REGISTRY.get(artifact.name);
     if (current && current.artifact.version === artifact.version) {
       _resetAdmittedAgentBindings(current.agent);
       AGENT_REGISTRY.delete(artifact.name);
     }
-    // If a different version is now active under the same name, leave
-    // it alone — this unregister callback is stale.
+    // If a different version is now active/pending under the same
+    // name, leave it alone — this unregister callback is stale.
   };
 }

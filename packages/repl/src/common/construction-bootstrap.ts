@@ -29,6 +29,7 @@ import {
   type AskUserQuestionOptions,
   type ConstructionArtifact,
   type ConstructionPolicy,
+  type SelfModifyAskUser,
   configureRuntime,
   rehydrateActiveArtifacts,
 } from '@kodax/coding';
@@ -91,6 +92,64 @@ const replConstructionPolicy: ConstructionPolicy = async (artifact) => {
 };
 
 /**
+ * FEATURE_090 (v0.7.32) — REPL-bound self-modify ask-user gate. The
+ * runtime invokes this whenever a constructed agent's `activate_agent`
+ * call is detected as a self-modify (sourceAgent === name + an active
+ * version on disk). The operator sees the LLM diff summary, the raw
+ * prev/next instructions, severity, and budget snapshot — the LLM
+ * summary is advisory; rejection of an injected instruction depends on
+ * the operator reading the raw text below it.
+ *
+ * Returns 'reject' if no askUser cell is bound (ACP / single-shot CLI):
+ * the same defensive default the regular ConstructionPolicy uses.
+ */
+const replSelfModifyAskUser: SelfModifyAskUser = async (input) => {
+  if (!activeAskUser) {
+    return 'reject';
+  }
+  const flagged = input.llmSummary.flaggedConcerns.length > 0
+    ? input.llmSummary.flaggedConcerns.map((c) => `  • ${c}`).join('\n')
+    : '  • <none>';
+  const prevInstructions = input.prevContent.instructions ?? '<no instructions>';
+  const nextInstructions = input.nextContent.instructions ?? '<no instructions>';
+  const question = [
+    `Self-modify activation: ${input.agentName}@${input.fromVersion} → ${input.toVersion}`,
+    '',
+    `LLM diff summary (severity=${input.llmSummary.severity}):`,
+    `  ${input.llmSummary.summary}`,
+    '',
+    'Flagged concerns:',
+    flagged,
+    '',
+    `Budget remaining (after approve): ${input.budgetRemaining - 1}/${input.budgetLimit}`,
+    '',
+    '── Previous instructions ────────────────────────────────',
+    prevInstructions,
+    '── Proposed instructions ────────────────────────────────',
+    nextInstructions,
+    '─────────────────────────────────────────────────────────',
+    '',
+    'The LLM summary is advisory — read the proposed instructions above before approving.',
+  ].join('\n');
+  const answer = await activeAskUser({
+    question,
+    options: [
+      {
+        label: 'Approve — activate the new version on the next run',
+        description: 'Resolver swap is deferred to the next Runner.run boundary so the in-flight conversation keeps the prior reference.',
+        value: 'approve',
+      },
+      {
+        label: 'Reject — stay on the previous version',
+        description: 'Budget is not consumed on rejection; the staged version is left on disk for diff inspection.',
+        value: 'reject',
+      },
+    ],
+  });
+  return answer === 'approve' ? 'approve' : 'reject';
+};
+
+/**
  * One-time REPL startup hook: configure ConstructionRuntime cwd + policy,
  * then rehydrate any previously-activated constructed tools.
  *
@@ -104,6 +163,7 @@ export async function bootstrapConstructionRuntime(
   configureRuntime({
     cwd,
     policy: replConstructionPolicy,
+    selfModifyAskUser: replSelfModifyAskUser,
   });
   return rehydrateActiveArtifacts();
 }

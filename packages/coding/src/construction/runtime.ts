@@ -46,12 +46,27 @@ import { runAstRules } from './ast-rules.js';
 import { validateToolSchemaForProvider, type SchemaProvider } from './provider-schema.js';
 import { runLlmReview, type LlmReviewClient, type LlmReviewResult } from './llm-review.js';
 import {
+  appendAuditEntry,
+  computeDiffHash,
+} from './audit-log.js';
+import {
+  consumeBudget,
+  readBudget,
+  remaining as remainingBudget,
+} from './budget.js';
+import { readDisableState } from './disable-state.js';
+import {
+  runSelfModifyDiffSummary,
+  type SelfModifyDiffSummary,
+} from './self-modify-summary.js';
+import {
   type ConstructionArtifact,
   type ConstructionPolicy,
   type StagedHandle,
   type TestResult,
   type ToolArtifact,
   type AgentArtifact,
+  type AgentContent,
   defaultPolicy,
   ConstructionManifestError,
 } from './types.js';
@@ -96,11 +111,60 @@ function computeContentHash(content: ConstructionArtifact['content']): string {
  */
 const SUPPORTED_KINDS: ReadonlyArray<ConstructionArtifact['kind']> = ['tool', 'agent'];
 
+/**
+ * Input passed to a `SelfModifyAskUser` callback when the activate
+ * path detects a self-modify. Carries everything the surface needs
+ * to render an informed approve/reject prompt: prev + proposed
+ * manifests for raw diff, the LLM summary, and the budget snapshot.
+ *
+ * Kept separate from FEATURE_088's `ConstructionPolicy` shape so the
+ * existing first-time-staging policy flow stays unchanged. The two
+ * gates are mutually exclusive — self-modify never reaches
+ * `_options.policy`.
+ */
+export interface SelfModifyAskUserInput {
+  readonly agentName: string;
+  readonly fromVersion: string;
+  readonly toVersion: string;
+  readonly prevContent: AgentContent;
+  readonly nextContent: AgentContent;
+  readonly llmSummary: SelfModifyDiffSummary;
+  readonly budgetRemaining: number;
+  readonly budgetLimit: number;
+}
+
+/**
+ * Force-ask-user gate for self-modify activations. Returns the user's
+ * verdict; never `'ask-user'` because by reaching this callback we
+ * already know we need to ask the user. REPL surfaces wire a
+ * dialog-based callback at startup; non-REPL surfaces leave this
+ * undefined and self-modify activations hard-fail with a clear
+ * configuration error.
+ */
+export type SelfModifyAskUser = (
+  input: SelfModifyAskUserInput,
+) => Promise<'approve' | 'reject'>;
+
 interface RuntimeOptions {
   /** Workspace root for `.kodax/constructed/`. Defaults to `process.cwd()`. */
   readonly cwd: string;
   /** Activation policy gate. Defaults to `defaultPolicy` (ask-user). */
   readonly policy: ConstructionPolicy;
+  /**
+   * FEATURE_090 — optional LLM client used for self-modify diff
+   * summaries. When undefined, `runSelfModifyDiffSummary` falls back
+   * to the unavailable-summary record (severity='major', user still
+   * sees the raw diff). REPL bootstrap binds the same KodaXClient as
+   * `test_agent`'s LLM reviewer.
+   */
+  readonly llmReviewer?: LlmReviewClient;
+  /**
+   * FEATURE_090 — force-ask-user callback for self-modify activations.
+   * Required from any surface that wants self-modify to succeed; if
+   * undefined, self-modify activations are rejected (matches the
+   * non-interactive default for the regular policy gate).
+   */
+  readonly selfModifyAskUser?: SelfModifyAskUser;
 }
 
 let _options: RuntimeOptions = {
@@ -118,7 +182,21 @@ export function configureRuntime(overrides: Partial<RuntimeOptions>): void {
   _options = {
     cwd: overrides.cwd ?? _options.cwd,
     policy: overrides.policy ?? _options.policy,
+    llmReviewer: overrides.llmReviewer ?? _options.llmReviewer,
+    selfModifyAskUser: overrides.selfModifyAskUser ?? _options.selfModifyAskUser,
   };
+}
+
+/**
+ * Public read of the configured workspace root. FEATURE_090 helpers
+ * (`stage_self_modify` budget + audit-log writes) need to point at the
+ * SAME directory the rest of the construction runtime reads from, so
+ * they read this rather than `process.cwd()` directly. Exporting the
+ * getter keeps `_options` private while letting peer modules avoid
+ * duplicating "where does the construction runtime live."
+ */
+export function getRuntimeCwd(): string {
+  return _options.cwd;
 }
 
 /** Test-only — clears in-memory state. Does not touch the filesystem. */
@@ -128,7 +206,12 @@ export function _resetRuntimeForTesting(): void {
   }
   _activated.clear();
   _resetAgentResolverForTesting();
-  _options = { cwd: process.cwd(), policy: defaultPolicy };
+  _options = {
+    cwd: process.cwd(),
+    policy: defaultPolicy,
+    llmReviewer: undefined,
+    selfModifyAskUser: undefined,
+  };
 }
 
 // ============================================================
@@ -542,6 +625,30 @@ export async function activate(handle: StagedHandle): Promise<void> {
     admittedHandle = verdict.handle;
   }
 
+  // FEATURE_090 (v0.7.32) — self-modify gate.
+  //
+  // Self-modify is detected when the artifact carries an explicit
+  // sourceAgent claim equal to its own name AND a different version
+  // of the same name is currently active. Both conditions must hold:
+  //   - sourceAgent === name proves the staging tool that produced
+  //     this manifest was `stage_self_modify` (the only path that
+  //     stamps that field with that semantics).
+  //   - prev active version exists because self-modify is, by
+  //     definition, modifying an existing agent.
+  //
+  // When self-modify is detected, the regular FEATURE_088 policy
+  // gate is BYPASSED — replaced by force-ask-user with an LLM diff
+  // summary attached. The two gates are mutually exclusive.
+  const selfModifyPrev = await detectSelfModify(artifact);
+  if (selfModifyPrev) {
+    await runSelfModifyActivation({
+      next: artifact,
+      prev: selfModifyPrev,
+      admittedHandle,
+    });
+    return;
+  }
+
   const verdict = await _options.policy(artifact);
   if (verdict === 'reject') {
     throw new Error(
@@ -575,6 +682,223 @@ export async function activate(handle: StagedHandle): Promise<void> {
 }
 
 /**
+ * Detect whether the activation is a self-modify by looking for a
+ * still-active prior version of the same name. Returns the prior
+ * `AgentArtifact` when both conditions hold (sourceAgent stamp +
+ * active prev), `undefined` otherwise.
+ *
+ * The caller treats `undefined` as "fall through to FEATURE_088
+ * policy gate." This keeps the existing first-time-staging path
+ * unchanged when the manifest happens to carry a `sourceAgent`
+ * field (e.g. an agent that generated *another* agent — sourceAgent
+ * points at the generator, not the artifact itself).
+ */
+async function detectSelfModify(
+  artifact: ConstructionArtifact,
+): Promise<AgentArtifact | undefined> {
+  if (artifact.kind !== 'agent') return undefined;
+  if (!artifact.sourceAgent || artifact.sourceAgent !== artifact.name) {
+    return undefined;
+  }
+  const all = await loadAllArtifacts(_options.cwd, 'agent');
+  return all.find(
+    (a): a is AgentArtifact =>
+      a.kind === 'agent'
+      && a.name === artifact.name
+      && a.status === 'active'
+      && a.version !== artifact.version,
+  );
+}
+
+interface SelfModifyActivationInput {
+  readonly next: ConstructionArtifact;
+  readonly prev: AgentArtifact;
+  readonly admittedHandle: import('@kodax/core').AdmittedHandle | undefined;
+}
+
+/**
+ * Self-modify activation orchestration:
+ *
+ *   1. Run the LLM diff summary (graceful fallback on no client).
+ *   2. Snapshot the current budget (used both for ask-user UI and
+ *      audit logging — the snapshot is BEFORE consume).
+ *   3. Force-ask-user via the configured callback. No callback wired
+ *      → hard fail (mirrors the FEATURE_088 'ask-user' fallthrough
+ *      error). Also requires the next artifact to be `kind: 'agent'`
+ *      — defensive narrowing since detectSelfModify already gated.
+ *   4. On reject: write `self_modify_rejected` audit and throw.
+ *   5. On approve: consume budget, register active, persist
+ *      `status='active'`, write `self_modify_activated` audit. The
+ *      registry registration goes through `registerActiveArtifact`
+ *      same as the regular path; FEATURE_090 P4 will retrofit a
+ *      `deferred` flag here so the in-flight Runner.run keeps the
+ *      old version for the rest of its execution.
+ */
+async function runSelfModifyActivation(
+  input: SelfModifyActivationInput,
+): Promise<void> {
+  const { next, prev } = input;
+  // detectSelfModify already proved kind === 'agent', narrow for TS.
+  if (next.kind !== 'agent') {
+    throw new Error(
+      `runSelfModifyActivation: expected kind='agent', got '${next.kind}'.`,
+    );
+  }
+
+  // 1. LLM diff summary — advisory, not load-bearing. Always succeeds
+  //    (returns the fallback record on failure).
+  const llmSummary = _options.llmReviewer
+    ? await runSelfModifyDiffSummary(
+        {
+          agentName: next.name,
+          fromVersion: prev.version,
+          toVersion: next.version,
+          prev: prev.content,
+          next: next.content,
+        },
+        _options.llmReviewer,
+      )
+    : ({
+        summary:
+          'No LLM reviewer configured — review the raw manifest diff before approving.',
+        severity: 'major',
+        flaggedConcerns: ['No LLM reviewer wired into the runtime; summary skipped.'],
+      } satisfies SelfModifyDiffSummary);
+
+  // 2a. Disable check. Operator-set marker hard-rejects activation
+  //     even though stage may have predated the disable. We catch the
+  //     race here at the activate boundary so the disable verdict is
+  //     authoritative regardless of which side of the stage call it
+  //     was set.
+  const disableState = await readDisableState(next.name, { cwd: _options.cwd });
+  if (disableState.disabled) {
+    await appendAuditEntry(
+      {
+        ts: new Date().toISOString(),
+        event: 'self_modify_rejected',
+        agentName: next.name,
+        toVersion: next.version,
+        fromVersion: prev.version,
+        diffHash: computeDiffHash(prev.content, next.content),
+        rejectRule: 'self-modify-disabled',
+        rejectReason:
+          'Self-modify is disabled for this agent; the disable marker was found at activate time.',
+      },
+      { cwd: _options.cwd },
+    );
+    throw new Error(
+      `Self-modify is disabled for '${next.name}'. The activate request is rejected; bump version + author a separately-named agent if a different posture is required.`,
+    );
+  }
+
+  // 2b. Budget snapshot (pre-consume).
+  const budgetState = await readBudget(next.name, { cwd: _options.cwd });
+  const budgetRemaining = remainingBudget(budgetState);
+  if (budgetRemaining <= 0) {
+    // stage_self_modify also checks budget at stage time, but a
+    // resourceful caller could stage when budget=1 and then activate
+    // after another self-modify already consumed the slot. Re-check
+    // here so the budget invariant holds at the only moment that
+    // matters — the activate boundary.
+    await appendAuditEntry(
+      {
+        ts: new Date().toISOString(),
+        event: 'self_modify_rejected',
+        agentName: next.name,
+        toVersion: next.version,
+        fromVersion: prev.version,
+        diffHash: computeDiffHash(prev.content, next.content),
+        budgetRemaining: 0,
+        rejectRule: 'budget-exhausted',
+        rejectReason:
+          'Modification budget was exhausted between stage and activate.',
+      },
+      { cwd: _options.cwd },
+    );
+    throw new Error(
+      `Cannot activate self-modify of '${next.name}@${next.version}': budget exhausted between stage and activate. Run 'kodax constructed reset-self-modify-budget ${next.name}' to unlock.`,
+    );
+  }
+
+  // 3. Force-ask-user.
+  if (!_options.selfModifyAskUser) {
+    throw new Error(
+      `Self-modify activation of '${next.name}@${next.version}' requires an interactive surface that wires \`selfModifyAskUser\` via configureRuntime. The current surface has none — activation rejected.`,
+    );
+  }
+  const verdict = await _options.selfModifyAskUser({
+    agentName: next.name,
+    fromVersion: prev.version,
+    toVersion: next.version,
+    prevContent: prev.content,
+    nextContent: next.content,
+    llmSummary,
+    budgetRemaining,
+    budgetLimit: budgetState.limit,
+  });
+
+  const diffHash = computeDiffHash(prev.content, next.content);
+  if (verdict === 'reject') {
+    await appendAuditEntry(
+      {
+        ts: new Date().toISOString(),
+        event: 'self_modify_rejected',
+        agentName: next.name,
+        toVersion: next.version,
+        fromVersion: prev.version,
+        diffHash,
+        llmSummary: llmSummary.summary,
+        severity: llmSummary.severity,
+        flaggedConcerns: llmSummary.flaggedConcerns,
+        policyVerdict: 'reject',
+        budgetRemaining,
+        rejectRule: 'user-rejected',
+        rejectReason: 'User rejected the self-modify proposal at the activate gate.',
+      },
+      { cwd: _options.cwd },
+    );
+    throw new Error(
+      `User rejected self-modify of '${next.name}@${next.version}'.`,
+    );
+  }
+
+  // 4. Approve path — consume budget, register (deferred), persist,
+  //    audit. `deferred: true` routes registration into the resolver's
+  //    pending swap queue so the in-flight Runner.run that triggered
+  //    the modification keeps using its captured (prior-version) Agent
+  //    reference. The REPL surface calls `drainPendingSwaps()` after
+  //    the top-level run completes to promote the new version.
+  const postConsume = await consumeBudget(next.name, { cwd: _options.cwd });
+  await registerActiveArtifact(next, {
+    admittedHandle: input.admittedHandle,
+    deferred: true,
+  });
+  const activated: ConstructionArtifact = {
+    ...next,
+    status: 'active',
+    activatedAt: Date.now(),
+    contentHash: computeContentHash(next.content),
+  };
+  await persistArtifact(activated);
+  await appendAuditEntry(
+    {
+      ts: new Date().toISOString(),
+      event: 'self_modify_activated',
+      agentName: next.name,
+      toVersion: next.version,
+      fromVersion: prev.version,
+      diffHash,
+      llmSummary: llmSummary.summary,
+      severity: llmSummary.severity,
+      flaggedConcerns: llmSummary.flaggedConcerns,
+      policyVerdict: 'force-ask-user',
+      budgetRemaining: remainingBudget(postConsume),
+    },
+    { cwd: _options.cwd },
+  );
+}
+
+/**
  * Internal: load handler + register into TOOL_REGISTRY without going
  * through the policy gate. Used by `activate()` (after policy approval)
  * and by `rehydrateActiveArtifacts()` (where the artifact was already
@@ -593,6 +917,14 @@ export async function activate(handle: StagedHandle): Promise<void> {
  */
 interface RegisterActiveOptions {
   readonly admittedHandle?: import('@kodax/core').AdmittedHandle;
+  /**
+   * FEATURE_090 — when true, agent kind registers into the resolver's
+   * pending swap queue instead of the active registry. Lookups
+   * continue returning the prior active version until
+   * `drainPendingSwaps()` runs. Tool kind ignores this flag — there
+   * is no "in-flight tool execution" analogue to shield from a swap.
+   */
+  readonly deferred?: boolean;
 }
 
 async function registerActiveArtifact(
@@ -704,7 +1036,9 @@ async function registerActiveAgentArtifact(
     bindings && admittedManifest
       ? { bindings, manifest: admittedManifest }
       : {};
-  const unregister = registerConstructedAgent(artifact, registration);
+  const unregister = registerConstructedAgent(artifact, registration, {
+    deferred: options.deferred ?? false,
+  });
   _activated.set(activeKey(artifact), unregister);
 }
 
@@ -912,6 +1246,12 @@ async function loadAllArtifacts(
       }
       for (const versionFile of versionFiles) {
         if (!versionFile.endsWith('.json')) continue;
+        // Skip per-agent metadata files (FEATURE_090 budget counter at
+        // `_self_modify.json`, future `_*.json` siblings). Leading
+        // underscore is the convention for "not a versioned manifest"
+        // — manifests follow semver-friendly names that cannot start
+        // with `_` per `assertSafeIdentifier`.
+        if (versionFile.startsWith('_')) continue;
         const filePath = path.join(namePath, versionFile);
         try {
           const raw = await fs.readFile(filePath, 'utf8');

@@ -52,6 +52,10 @@ import {
   toolTestAgent,
   toolActivateAgent,
 } from './agent-construction.js';
+import {
+  toolStageSelfModify,
+  SELF_MODIFY_TOOL_NAME,
+} from './self-modify-tool.js';
 
 const TOOL_REGISTRY: ToolRegistry = new Map();
 let nextToolRegistrationId = 0;
@@ -968,6 +972,34 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['name', 'version'],
     },
     handler: toolActivateAgent,
+  },
+
+  // ====================================================================
+  // FEATURE_090 (v0.7.32) — Self-modify staircase. The stage step is
+  // separated from `stage_agent_construction` (above) so the LLM picks
+  // its intent explicitly: "I am modifying myself" vs "I am creating
+  // a different agent." Test/activate are reused from FEATURE_089 —
+  // admission audit + sandbox runner work identically regardless of
+  // which stage tool produced the manifest.
+  // ====================================================================
+  {
+    name: SELF_MODIFY_TOOL_NAME,
+    description:
+      'Stage a new version of YOURSELF — the active constructed agent calling this tool. '
+      + 'Requires artifact.name === artifact.sourceAgent === your own name, plus an existing active version on disk. '
+      + 'Runs hard checks (guardrail ratchet — cannot remove existing guardrails; reasoning ceiling; modification budget) before persisting. '
+      + 'Then call test_agent and activate_agent on the staged version. Activation force-prompts the user (no auto-approve for self-modify) and only takes effect on the NEXT Runner.run, never within the run that submitted the change.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        artifact_json: {
+          type: 'string',
+          description: 'The full AgentArtifact as a JSON string. artifact.name must equal artifact.sourceAgent.',
+        },
+      },
+      required: ['artifact_json'],
+    },
+    handler: toolStageSelfModify,
   },
 ];
 

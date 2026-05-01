@@ -40,6 +40,7 @@ export {
 // with vitest's global `test` and JS's frequent `list` identifier.
 export {
   configureRuntime,
+  getRuntimeCwd,
   stage,
   test as testArtifact,
   activate,
@@ -56,8 +57,15 @@ export { listConstructed, findByVersion, listAll } from './views.js';
 // FEATURE_089 (v0.7.31) — Constructed Agent Resolver. Activated
 // `kind: 'agent'` artifacts register here so consumers can lookup
 // runnable Agent objects by name.
+//
+// FEATURE_090 (v0.7.32) adds `drainPendingSwaps` + `hasPendingSwap`
+// for the deferred swap mechanism — REPL bootstrap calls drain after
+// each top-level Runner.run terminates so self-modify activations
+// stay shielded from the run that triggered them.
 export {
   _resetAgentResolverForTesting,
+  drainPendingSwaps,
+  hasPendingSwap,
   listConstructedAgents,
   registerConstructedAgent,
   resolveConstructedAgent,
@@ -110,4 +118,39 @@ export type {
   LlmReviewVerdict,
 } from './llm-review.js';
 
-export type { TestArtifactOptions } from './runtime.js';
+export type {
+  TestArtifactOptions,
+  SelfModifyAskUser,
+  SelfModifyAskUserInput,
+} from './runtime.js';
+
+// FEATURE_090 (v0.7.32) — external surface for REPL bootstrap + CLI
+// consumers. Internal helpers (validation, summary build/parse,
+// diffHash, consumeBudget) stay package-private — peers inside
+// `construction/` and the FEATURE_090 tool import them via relative
+// paths instead.
+//
+// `appendAuditEntry` is re-exported because the CLI surface
+// (`self_modify_cli.ts`) records FEATURE_090 lifecycle events from
+// three distinct commands (reset-budget, rollback, disable-self-
+// modify) — the 3+-case threshold for justifying public exposure.
+export { appendAuditEntry, readAuditEntries } from './audit-log.js';
+export type { AuditEntry, AuditEventKind } from './audit-log.js';
+export {
+  DEFAULT_SELF_MODIFY_BUDGET,
+  readBudget,
+  resetBudget,
+  remaining as remainingSelfModifyBudget,
+} from './budget.js';
+export type { BudgetState } from './budget.js';
+export {
+  disableSelfModify,
+  readDisableState,
+} from './disable-state.js';
+export type { DisableState } from './disable-state.js';
+export { rollbackSelfModify } from './rollback.js';
+export type { RollbackResult } from './rollback.js';
+export type {
+  SelfModifyDiffSummary,
+  SelfModifyDiffSeverity,
+} from './self-modify-summary.js';
