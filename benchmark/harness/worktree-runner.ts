@@ -51,6 +51,22 @@ export interface SetupOptions {
   readonly sha?: string | null;
   /** Override tmpdir base (default: `os.tmpdir()`). Test seam. */
   readonly tmpRoot?: string;
+  /**
+   * Seed `node_modules` from `repoRoot` into the worktree after creation so
+   * the spawned agent can run tests / build without redoing `npm install`.
+   * Defaults to false to keep the helper general-purpose; FEATURE_107 eval
+   * passes `true` because cases that ask the agent to "verify with tests"
+   * burn the timeout cycling through pnpm/npm install attempts otherwise.
+   *
+   * Implementation: copies node_modules (root + monorepo packages/*).
+   * Measured ~28s on Windows for the 150 MB / 10k-file KodaX tree (2026-05-01,
+   * SSD). Earlier symlink-based seeding was faster (~0s) but leaked: an agent
+   * that ran `npm install <pkg>` inside a worktree would mutate the primary
+   * repo's node_modules through the symlink. Copy fully isolates each cell
+   * at the cost of ~190 MB / cell peak disk during execution; cleanup at
+   * worktree teardown reclaims it.
+   */
+  readonly seedNodeModules?: boolean;
 }
 
 /**
@@ -110,7 +126,67 @@ export async function setupWorktree(opts: SetupOptions): Promise<WorktreeHandle>
     { cwd: repoRoot },
   );
 
+  if (opts.seedNodeModules) {
+    await seedNodeModulesIntoWorktree(repoRoot, worktreePath);
+  }
+
   return { path: worktreePath, id: opts.id, sha };
+}
+
+/**
+ * Copy node_modules from primary repo into the worktree (root + monorepo
+ * packages/* so workspaces are covered).
+ *
+ * Why copy instead of symlink: a symlinked node_modules works for read but
+ * leaks under write — an agent that runs `npm install <pkg>` writes through
+ * the symlink and pollutes the primary repo's node_modules. Copy gives full
+ * isolation at the cost of ~28s setup + 190 MB / worktree disk.
+ *
+ * Why not `npm ci` per worktree: 60-180s per cell with network + cache
+ * misses, vs ~28s for a local fs copy from a warm tree.
+ *
+ * Symlink edge cases preserved: `dereference: false` keeps the relative
+ * symlinks inside node_modules (e.g. `.bin/*` shims) so they resolve inside
+ * the worktree without needing to follow them at copy time.
+ */
+async function seedNodeModulesIntoWorktree(
+  repoRoot: string,
+  worktreePath: string,
+): Promise<void> {
+  const candidates = ['node_modules'];
+  // Also seed monorepo package node_modules if present (workspaces split deps).
+  try {
+    const packagesDir = path.join(repoRoot, 'packages');
+    const stat = await fs.stat(packagesDir);
+    if (stat.isDirectory()) {
+      const entries = await fs.readdir(packagesDir);
+      for (const e of entries) {
+        candidates.push(path.join('packages', e, 'node_modules'));
+      }
+    }
+  } catch {
+    // No monorepo packages — skip.
+  }
+
+  for (const rel of candidates) {
+    const src = path.join(repoRoot, rel);
+    const dst = path.join(worktreePath, rel);
+    try {
+      const st = await fs.stat(src);
+      if (!st.isDirectory()) continue;
+      await fs.mkdir(path.dirname(dst), { recursive: true });
+      await fs.cp(src, dst, {
+        recursive: true,
+        force: true,
+        dereference: false,
+        errorOnExist: false,
+      });
+    } catch {
+      // node_modules may not exist for this package, or copy may hit a
+      // transient lock on Windows — skip silently. Agent falls back to
+      // its own install path (slower, but the run still works).
+    }
+  }
 }
 
 /**
@@ -216,11 +292,120 @@ export async function scanAndCleanOrphanWorktrees(opts: {
 }
 
 /**
- * Confirm running an eval inside `handle.path` did not move the primary
- * repo's HEAD. Per Release Criteria: "0 个 case 执行污染主仓 ... git log head
- * 无变化". Caller snapshots HEAD before any eval starts and passes it here
- * after each case (or at end of run). Working-tree dirty state is excluded
- * because users may have pre-existing dirty files unrelated to eval.
+ * Snapshot the primary repo's drift surface: HEAD SHA + sorted untracked
+ * file list + sorted tracked-modified file list. Used by
+ * `assertPrimaryUnchanged` to detect committed changes, xcopy-style
+ * untracked leaks, AND tracked-file modifications by agents.
+ *
+ * **2026-05-01 second pollution incident** showed the previous
+ * untracked-only check was insufficient. An agent leaked
+ * `auto-resume.ts` / `runner-driven.ts` / `repl.ts` modifications into
+ * the primary repo and slipped past detection because they're tracked
+ * files. The fix: also snapshot the list of tracked-modified files. Any
+ * NEW tracked-modified file (one that was clean before and is dirty
+ * after) is flagged.
+ *
+ * Pre-existing user dirty edits stay safe: they're in the baseline
+ * snapshot, so they don't trigger drift unless their content also changes
+ * (we don't currently hash content — content drift on a pre-dirty file
+ * still slips through; acceptable trade-off for v1).
+ */
+export interface PrimaryRepoSnapshot {
+  readonly head: string;
+  /** Sorted array of untracked file paths relative to repo root. */
+  readonly untracked: readonly string[];
+  /**
+   * Sorted array of tracked-modified file paths (from `git diff --name-only`)
+   * — represents the user's pre-existing dirty edits. Snapshot reference
+   * point: any tracked file that goes clean→modified between snapshot and
+   * assert is treated as agent pollution.
+   */
+  readonly trackedModified: readonly string[];
+}
+
+export async function snapshotPrimaryRepo(repoRoot?: string): Promise<PrimaryRepoSnapshot> {
+  const root = repoRoot ?? process.cwd();
+  const head = await resolveHead(root);
+  let untracked: string[] = [];
+  let trackedModified: string[] = [];
+  try {
+    const { stdout } = await execFileAsync(
+      'git',
+      ['ls-files', '--others', '--exclude-standard'],
+      { cwd: root },
+    );
+    untracked = stdout.split('\n').filter(Boolean).sort();
+  } catch {
+    // git failure is non-fatal; treat as empty untracked.
+  }
+  try {
+    // `git diff --name-only HEAD` lists tracked files modified vs HEAD
+    // (covers both unstaged and staged changes). Stable sort for deterministic
+    // diffing.
+    const { stdout } = await execFileAsync(
+      'git',
+      ['diff', '--name-only', 'HEAD'],
+      { cwd: root },
+    );
+    trackedModified = stdout.split('\n').filter(Boolean).sort();
+  } catch {
+    // git failure is non-fatal; treat as empty modified set.
+  }
+  return { head, untracked, trackedModified };
+}
+
+/**
+ * Confirm running an eval inside the worktree(s) did not pollute the primary
+ * repo. Checks three surfaces:
+ *   1. HEAD SHA unchanged (no commits / resets).
+ *   2. No NEW untracked files appeared (catches `xcopy worktree primary`).
+ *   3. No tracked file went clean→modified (catches in-place edits to
+ *      `runner-driven.ts` etc by agents that found the primary repo via
+ *      the bash-deny escape).
+ *
+ * Caller snapshots before any eval starts (`snapshotPrimaryRepo`) and
+ * passes the snapshot here after the run.
+ *
+ * Files dirty in the baseline snapshot are intentionally ignored — they're
+ * the user's working state, unrelated to eval pollution. Content drift on
+ * a pre-dirty file is NOT detected (would need full file hashing).
+ */
+export async function assertPrimaryUnchanged(opts: {
+  repoRoot?: string;
+  expected: PrimaryRepoSnapshot;
+}): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const after = await snapshotPrimaryRepo(opts.repoRoot);
+  if (after.head !== opts.expected.head) {
+    return {
+      ok: false,
+      reason: `Primary repo HEAD changed from ${opts.expected.head} to ${after.head}`,
+    };
+  }
+  const untrackedBaseline = new Set(opts.expected.untracked);
+  const newUntracked = after.untracked.filter((p) => !untrackedBaseline.has(p));
+  if (newUntracked.length > 0) {
+    return {
+      ok: false,
+      reason: `Primary repo has ${newUntracked.length} new untracked file(s) — possible eval leak: ${newUntracked.slice(0, 10).join(', ')}${newUntracked.length > 10 ? '...' : ''}`,
+    };
+  }
+  const modifiedBaseline = new Set(opts.expected.trackedModified);
+  const newlyModified = after.trackedModified.filter((p) => !modifiedBaseline.has(p));
+  if (newlyModified.length > 0) {
+    return {
+      ok: false,
+      reason: `Primary repo has ${newlyModified.length} newly-modified tracked file(s) — possible agent in-place edit: ${newlyModified.slice(0, 10).join(', ')}${newlyModified.length > 10 ? '...' : ''}`,
+    };
+  }
+  return { ok: true };
+}
+
+/**
+ * Backward-compat shim: HEAD-only check. New callers should use
+ * `assertPrimaryUnchanged` with a `snapshotPrimaryRepo` snapshot — that
+ * version also catches untracked-file appearance and tracked-file
+ * modification (the two real-world leak paths observed during
+ * FEATURE_107 P5/P6).
  */
 export async function assertPrimaryHeadUnchanged(opts: {
   repoRoot?: string;

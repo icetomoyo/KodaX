@@ -69,6 +69,27 @@ export interface AgentTaskInput {
    * appended to whatever the override produces.
    */
   readonly binOverride?: { command: string; args?: readonly string[] };
+  /**
+   * Copy primary repo's node_modules into the worktree (root + monorepo
+   * packages/* node_modules). Default false. Eval cases that ask the agent
+   * to "verify with tests / build" otherwise burn the timeout cycling
+   * through `pnpm/npm install` attempts because git worktree doesn't carry
+   * gitignored node_modules. See `worktree-runner.ts:seedNodeModulesIntoWorktree`.
+   *
+   * 2026-05-01 (v0.7.32 P5): switched from symlink (~0s, leaky) to copy
+   * (~28s, fully isolated). Symlinked node_modules let an agent's
+   * `npm install` mutate the primary repo's node_modules; copy contains
+   * everything inside the worktree's own files.
+   */
+  readonly seedNodeModules?: boolean;
+  /**
+   * Extra env vars forwarded to the spawned KodaX process, on top of HOME /
+   * provider key / variant-forcing flags. Used by FEATURE_107 P5 to flip
+   * `KODAX_GENERATOR_REASONING_DISCIPLINE=on` for the discipline-prompt A/B
+   * experiment without touching `variantEnv`. Production code never sets
+   * these; eval-only flags are scrubbed at P6 cleanup.
+   */
+  readonly extraEnv?: Readonly<Record<string, string>>;
 }
 
 export interface AgentTaskResult {
@@ -196,6 +217,7 @@ function buildSpawnEnv(opts: {
   isolatedHome: string;
   alias: ModelAlias;
   variant: EvalVariant;
+  extraEnv?: Readonly<Record<string, string>>;
 }): NodeJS.ProcessEnv {
   const provider = providerEnv(opts.alias);
   return {
@@ -204,8 +226,10 @@ function buildSpawnEnv(opts: {
     USERPROFILE: opts.isolatedHome,
     [provider.name]: provider.value,
     ...variantEnv(opts.variant),
-    // Disable telemetry / banner that would slow down spawn cost.
     KODAX_DISABLE_BANNER: '1',
+    // Eval-only experiment overrides (eg compaction trigger sweep). Spread
+    // last so caller can intentionally override anything above.
+    ...(opts.extraEnv ?? {}),
   };
 }
 
@@ -230,6 +254,7 @@ export async function runAgentTaskInWorktree(
     id: input.caseId,
     sha: input.gitHeadSha,
     repoRoot,
+    seedNodeModules: input.seedNodeModules ?? false,
   });
   // Isolated HOME: a sibling temp dir to the worktree.
   const isolatedHome = `${handle.path}.home`;
@@ -271,6 +296,7 @@ export async function runAgentTaskInWorktree(
           isolatedHome,
           alias: input.alias,
           variant: input.variant,
+          extraEnv: input.extraEnv,
         }),
         shell: needsShell,
         stdio: ['ignore', 'pipe', 'pipe'],
