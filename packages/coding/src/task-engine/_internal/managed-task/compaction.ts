@@ -71,15 +71,14 @@ export type RunnerCompactionHook = (
 export async function buildManagedTaskCompactionHook(
   options: KodaXOptions,
 ): Promise<RunnerCompactionHook | undefined> {
+  const provider = resolveProvider(options.provider ?? 'anthropic');
+  const activeModel = options.modelOverride ?? options.model;
   const compactionConfig: CompactionConfig = await loadCompactionConfig(
-    options.context?.gitRoot ?? undefined,
+    provider.getContextWindow(),
   );
   if (!compactionConfig.enabled) {
     return undefined;
   }
-
-  const provider = resolveProvider(options.provider ?? 'anthropic');
-  const activeModel = options.modelOverride ?? options.model;
   const contextWindow = compactionConfig.contextWindow
     ?? provider.getEffectiveContextWindow?.(activeModel)
     ?? provider.getContextWindow?.()

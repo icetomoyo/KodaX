@@ -154,6 +154,21 @@ export async function tryIntelligentCompact(
       // zero forever and prevent graceful degradation from ever running.
       const triggerTokens = input.contextWindow * (input.compactionConfig.triggerPercent / 100);
       const postCompactTokens = estimateTokens(compacted);
+
+      // Emit one stderr line per successful compaction so users (and eval
+      // harnesses) can see when compaction fires + how much it saved. Zero
+      // perf cost (one line per compaction event, never per turn).
+      // eslint-disable-next-line no-console
+      console.error(
+        `[Compaction] triggered ${JSON.stringify({
+          contextWindow: input.contextWindow,
+          triggerPercent: input.compactionConfig.triggerPercent,
+          triggerTokens: Math.floor(triggerTokens),
+          tokensBefore: result.tokensBefore,
+          tokensAfter: postCompactTokens,
+          reduction: result.tokensBefore - postCompactTokens,
+        })}`,
+      );
       if (postCompactTokens < triggerTokens) {
         nextFailures = 0;
       } else {

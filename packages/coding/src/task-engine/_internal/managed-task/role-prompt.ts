@@ -159,6 +159,18 @@ export function createRolePrompt(
   // result: workers wrote scratch files to project root / system tmp
   // instead of `.agent/tmp/`. Re-inject the essential discipline as a
   // shared block prepended to every role's prompt.
+  //
+  // Generator reasoning-discipline block — adapted verbatim from Claude
+  // Code's stuck-handling guidance (Anthropic-tuned). Bidirectional:
+  // catches both retry-blindly and abandon-too-early failure modes. Sets
+  // a HIGH bar for emit_handoff status="blocked" ("genuine impasses after
+  // investigation"). Adopted as default v0.7.32 after FEATURE_107 P6 eval
+  // showed it is harmless across 6 aliases on low-context tasks. Only
+  // KodaX adaptation: emit_handoff status="blocked" replaces Claude
+  // Code's AskUserQuestion (different protocol surface).
+  const generatorReasoningDiscipline =
+    'If an approach fails, diagnose why before switching tactics — read the error, check your assumptions, try a focused fix. Don\'t retry the identical action blindly, but don\'t abandon a viable approach after a single failure either. Reserve emit_handoff status="blocked" for genuine impasses after investigation, not as a first response to friction.';
+
   const sharedWorkerDiscipline = [
     'Workspace discipline:',
     '- Helper scripts / scratch files are a last resort, not a default recovery path.',
@@ -574,6 +586,8 @@ export function createRolePrompt(
         'The Scout-confirmed harness is the active harness for this run. Do not reinterpret it locally; only request a stronger harness through an explicit later verdict if the evidence truly demands it.',
         'Read the managed task artifacts and dependency handoff artifacts before acting. Treat them as the primary coordination surface.',
         'Execute the task or produce the requested deliverable.',
+        // FEATURE_107 P5: experimental, env-gated, P6 cleanup target.
+        generatorReasoningDiscipline,
         isTerminalAuthority
           ? 'You are the terminal delivery role for this run. Return the final user-facing answer and summarize concrete evidence inline.'
           : 'Leave final judgment to the evaluator and include a crisp evidence handoff.',

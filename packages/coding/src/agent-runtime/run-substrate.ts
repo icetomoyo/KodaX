@@ -390,10 +390,12 @@ export async function runSubstrate(
     runtimeThinkingLevel: runtimeDefaults?.thinkingLevel,
   };
 
-  // Load compaction config
-  const compactionConfig = await loadCompactionConfig(options.context?.gitRoot ?? undefined);
+  // Resolve the initial provider first so we know the context window —
+  // loadCompactionConfig uses it to pick an adaptive triggerPercent
+  // (short-window models compact earlier; user config can still override).
   const initialProvider = resolveProvider(turnState.currentProviderName);
   assertProviderConfigured(initialProvider, turnState.currentProviderName);
+  const compactionConfig = await loadCompactionConfig(initialProvider.getContextWindow());
 
   // CAP-043: autoResume / resume — pick the most recent persisted
   // session when no explicit id was supplied. Folded into

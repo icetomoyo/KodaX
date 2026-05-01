@@ -165,31 +165,7 @@ export async function dispatchManagedTask(
   // worker's prompt. We thread it into the Runner chain so Scout/Planner/
   // Generator/Evaluator see the same contextual overlay as legacy workers.
   const plan = await deps.buildPlan(options, prompt);
-  return deps.runAMA(options, prompt, undefined, applyForcedHarness(plan));
-}
-
-/**
- * FEATURE_107 P2.1: DELETE WITH B-PATH IMPL AT P6 unless 档 1 wins.
- *
- * Eval-only Scout-verdict bypass for FEATURE_107 H2 plan-execute boundary
- * eval. Lets the harness force H1 / H2 routing across cells without
- * re-prompting Scout (which is non-deterministic and would confound the
- * variant comparison). Production code never sets `KODAX_FORCE_MAX_HARNESS`
- * so this collapses to identity at runtime.
- */
-function applyForcedHarness<T extends { decision?: { harnessProfile?: KodaXHarnessProfile } } | undefined>(
-  plan: T,
-): T {
-  const forced = process.env.KODAX_FORCE_MAX_HARNESS;
-  if (forced !== 'H1' && forced !== 'H2') return plan;
-  if (!plan || !plan.decision) return plan;
-  const target: KodaXHarnessProfile =
-    forced === 'H1' ? 'H1_EXECUTE_EVAL' : 'H2_PLAN_EXECUTE_EVAL';
-  if (plan.decision.harnessProfile === target) return plan;
-  return {
-    ...plan,
-    decision: { ...plan.decision, harnessProfile: target },
-  };
+  return deps.runAMA(options, prompt, undefined, plan);
 }
 
 async function executeRunManagedTask(
