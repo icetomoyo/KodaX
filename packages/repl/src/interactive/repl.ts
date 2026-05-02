@@ -482,6 +482,17 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
       effectiveModel,
       currentConfig.reasoningMode,
     ));
+    // FEATURE_092 phase 2b.8: seed the engine indicator if the session
+    // started in auto mode. The guardrail factory is built but the
+    // guardrail itself only constructs lazily on first tool call —
+    // we trigger eager construction here so the bar can read engine
+    // immediately. The cost is one rules-load + one classifier-projection
+    // setup, paid only when the user is in auto mode.
+    if (isAutoMode(currentPermissionMode)) {
+      statusBar.update({
+        autoModeEngine: autoModeBootstrap.getGuardrail().getEngine(),
+      });
+    }
   }
 
   // Keyboard shortcut state (Phase 2 will use) - 键盘快捷键状态 (Phase 2 将实际使用)
@@ -711,7 +722,13 @@ Keyboard Shortcuts:
     setPermissionMode: (mode: PermissionMode) => {
       currentConfig.permissionMode = mode;
       currentPermissionMode = mode; // Sync with local permission state
-      statusBar?.update({ permissionMode: mode });
+      // FEATURE_092 phase 2b.8: keep the status bar engine indicator in sync
+      // when the user toggles in/out of auto mode. Outside auto modes,
+      // setting `autoModeEngine: undefined` removes the [llm]/[rules] suffix.
+      const autoModeEngine = isAutoMode(mode)
+        ? autoModeBootstrap.getGuardrail().getEngine()
+        : undefined;
+      statusBar?.update({ permissionMode: mode, autoModeEngine });
       // FEATURE_092 phase 2b.7b slice E: surface the deprecation when the
       // user explicitly picks the alias via `/mode auto-in-project`.
       // Once-per-session semantics means picking it at startup THEN typing
@@ -866,6 +883,19 @@ Keyboard Shortcuts:
       planMode = enabled;
     },
     getCostReport: () => costReportRef.current?.() ?? null,
+    // FEATURE_092 phase 2b.8: auto-mode read-only stats + manual engine setter
+    // for /auto-engine, /auto-denials, status bar indicator. The accessors
+    // delegate to the lazy guardrail factory — when REPL never enters auto
+    // mode, the guardrail is never constructed and the stats are undefined.
+    getAutoModeStats: () => {
+      if (!isAutoMode(currentPermissionMode)) return undefined;
+      return autoModeBootstrap.getGuardrail().getStats();
+    },
+    setAutoModeEngine: (engine) => {
+      if (!isAutoMode(currentPermissionMode)) return;
+      autoModeBootstrap.getGuardrail().setEngine(engine);
+      statusBar?.update({ permissionMode: currentPermissionMode });
+    },
     createKodaXOptions: () => {
       // FEATURE_074: live plan-mode check for child agents. The closure reads
       // currentPermissionMode lazily, so mid-run parent-mode toggles propagate

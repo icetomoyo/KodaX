@@ -56,3 +56,44 @@ describe('status bar', () => {
     expect(supportsStatusBar()).toBe(false);
   });
 });
+
+describe('status bar — auto-mode engine indicator (FEATURE_092 phase 2b.8)', () => {
+  it('renders auto[llm] when permissionMode=auto and engine=llm', () => {
+    const state = createStatusBarState('s1', 'auto', 'kimi-code', 'kimi-for-coding', 'off');
+    const content = buildStatusBarContent({ ...state, autoModeEngine: 'llm' }, 200);
+    expect(content).toContain('auto');
+    expect(content).toContain('[llm]');
+  });
+
+  it('renders auto[rules] when permissionMode=auto and engine=rules (downgraded)', () => {
+    const state = createStatusBarState('s1', 'auto', 'kimi-code', 'kimi-for-coding', 'off');
+    const content = buildStatusBarContent({ ...state, autoModeEngine: 'rules' }, 200);
+    expect(content).toContain('auto');
+    expect(content).toContain('[rules]');
+  });
+
+  it('renders auto-in-project[llm] for the deprecated alias too', () => {
+    const state = createStatusBarState('s1', 'auto-in-project', 'kimi-code', 'kimi-for-coding', 'off');
+    const content = buildStatusBarContent({ ...state, autoModeEngine: 'llm' }, 200);
+    expect(content).toContain('auto-in-project');
+    expect(content).toContain('[llm]');
+  });
+
+  it('omits the engine suffix entirely when autoModeEngine is undefined', () => {
+    const state = createStatusBarState('s1', 'auto', 'kimi-code', 'kimi-for-coding', 'off');
+    const content = buildStatusBarContent(state, 200);
+    expect(content).toContain('auto');
+    expect(content).not.toContain('[llm]');
+    expect(content).not.toContain('[rules]');
+  });
+
+  it('does NOT render engine suffix outside auto modes (plan / accept-edits)', () => {
+    const planState = createStatusBarState('s1', 'plan', 'kimi-code', 'kimi-for-coding', 'off');
+    const editsState = createStatusBarState('s1', 'accept-edits', 'kimi-code', 'kimi-for-coding', 'off');
+    // Even if autoModeEngine is somehow set, the suffix is gated on the mode.
+    const planContent = buildStatusBarContent({ ...planState, autoModeEngine: 'rules' }, 200);
+    const editsContent = buildStatusBarContent({ ...editsState, autoModeEngine: 'rules' }, 200);
+    expect(planContent).not.toContain('[rules]');
+    expect(editsContent).not.toContain('[rules]');
+  });
+});

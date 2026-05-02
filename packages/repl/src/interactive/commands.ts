@@ -861,6 +861,91 @@ export const BUILTIN_COMMANDS: Command[] = [
     },
   },
   {
+    // FEATURE_092 phase 2b.8: read-only or set classifier engine for current session.
+    name: 'auto-engine',
+    description: 'Show or set auto-mode classifier engine (llm | rules)',
+    usage: '/auto-engine [llm|rules]',
+    handler: async (args, _context, callbacks) => {
+      const stats = callbacks.getAutoModeStats?.();
+      if (!stats) {
+        console.log(chalk.yellow('\n[auto-engine] not in auto mode — switch via /mode auto first'));
+        return;
+      }
+      if (args.length === 0) {
+        console.log(chalk.dim(`\nClassifier engine: ${chalk.cyan(stats.engine)}`));
+        console.log(chalk.dim(`  consecutive denials: ${stats.denials.consecutive}`));
+        console.log(chalk.dim(`  cumulative denials:  ${stats.denials.cumulative}`));
+        console.log(chalk.dim(`  breaker errors:      ${stats.breaker.timestamps.filter((t) => t >= Date.now() - 10 * 60 * 1000).length}`));
+        console.log(chalk.dim('Usage: /auto-engine [llm|rules]'));
+        return;
+      }
+      const newEngine = args[0];
+      if (newEngine !== 'llm' && newEngine !== 'rules') {
+        console.log(chalk.red(`\n[auto-engine] unknown engine "${args[0]}" — use llm or rules`));
+        return;
+      }
+      callbacks.setAutoModeEngine?.(newEngine);
+      console.log(chalk.cyan(`\n[auto-engine] switched to ${newEngine}`));
+      if (newEngine === 'rules') {
+        console.log(chalk.dim('  every non-Tier-1 tool call now escalates to user confirmation'));
+      } else {
+        console.log(chalk.dim('  classifier consultation resumed; threshold downgrades still apply'));
+      }
+    },
+    detailedHelp: () => {
+      console.log(chalk.cyan('\n/auto-engine - Auto-Mode Classifier Engine Toggle\n'));
+      console.log(chalk.bold('Usage:'));
+      console.log(chalk.dim('  /auto-engine                 ') + 'Show current engine + denial/breaker counts');
+      console.log(chalk.dim('  /auto-engine llm             ') + 'Resume classifier consultation (default)');
+      console.log(chalk.dim('  /auto-engine rules           ') + 'Skip classifier; every non-Tier-1 call asks user');
+      console.log();
+      console.log(chalk.bold('Notes:'));
+      console.log(chalk.dim('  - Only meaningful in auto mode (/mode auto).'));
+      console.log(chalk.dim('  - The classifier may auto-downgrade to rules after 3 consecutive blocks,'));
+      console.log(chalk.dim('    20 cumulative blocks, or 5 errors in a 10-minute window. /auto-engine llm'));
+      console.log(chalk.dim('    manually flips back to llm.'));
+      console.log(chalk.dim('  - Override via env: KODAX_AUTO_MODE_ENGINE=rules.'));
+      console.log();
+    },
+  },
+  {
+    // FEATURE_092 phase 2b.8: dump tracker + breaker stats. Useful for the
+    // pilot to verify "5 fallback paths" manually + for debugging downgrades.
+    name: 'auto-denials',
+    description: 'Show auto-mode classifier denial tracker + circuit breaker stats',
+    usage: '/auto-denials',
+    handler: async (_args, _context, callbacks) => {
+      const stats = callbacks.getAutoModeStats?.();
+      if (!stats) {
+        console.log(chalk.yellow('\n[auto-denials] not in auto mode — switch via /mode auto first'));
+        return;
+      }
+      console.log(chalk.cyan('\n[auto-mode classifier stats]'));
+      console.log(chalk.dim(`  engine:               ${chalk.cyan(stats.engine)}`));
+      console.log(chalk.dim('  Denial tracker:'));
+      console.log(chalk.dim(`    consecutive blocks: ${stats.denials.consecutive} / 3`));
+      console.log(chalk.dim(`    cumulative blocks:  ${stats.denials.cumulative} / 20`));
+      console.log(chalk.dim('  Circuit breaker:'));
+      console.log(chalk.dim(`    errors in window:   ${stats.breaker.timestamps.filter((t) => t >= Date.now() - 10 * 60 * 1000).length} / 5 (10 min)`));
+      console.log();
+      if (stats.engine === 'rules') {
+        console.log(chalk.yellow('  ↪ engine has downgraded to rules. /auto-engine llm to flip back.'));
+      }
+      console.log();
+    },
+    detailedHelp: () => {
+      console.log(chalk.cyan('\n/auto-denials - Auto-Mode Classifier Diagnostic Dump\n'));
+      console.log(chalk.bold('Usage:'));
+      console.log(chalk.dim('  /auto-denials                ') + 'Print engine + tracker + breaker counters');
+      console.log();
+      console.log(chalk.bold('Thresholds (FEATURE_092):'));
+      console.log(chalk.dim('  - 3 consecutive blocks  → engine downgrade to rules'));
+      console.log(chalk.dim('  - 20 cumulative blocks  → engine downgrade to rules'));
+      console.log(chalk.dim('  - 5 errors in 10-min    → circuit breaker trips → engine downgrade'));
+      console.log();
+    },
+  },
+  {
     name: 'save',
     description: 'Save current session',
     handler: async (_args, context, callbacks) => {

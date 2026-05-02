@@ -40,6 +40,8 @@ vi.mock('@kodax/coding', async () => {
 
 import type * as readline from 'readline';
 
+import { bootstrapAutoMode } from './auto-mode-bootstrap.js';
+
 const fakeRl = {} as readline.Interface;
 
 const baseDeps = () => ({
@@ -59,7 +61,6 @@ const baseDeps = () => ({
 
 describe('bootstrapAutoMode', () => {
   it('returns rulesLoadResult and a getGuardrail factory', async () => {
-    const { bootstrapAutoMode } = await import('./auto-mode-bootstrap.js');
     const result = await bootstrapAutoMode(baseDeps());
     expect(result.rulesLoadResult).toBeDefined();
     expect(result.rulesLoadResult.merged).toEqual({
@@ -71,7 +72,6 @@ describe('bootstrapAutoMode', () => {
   });
 
   it('getGuardrail returns the same instance on repeated calls (state-sharing)', async () => {
-    const { bootstrapAutoMode } = await import('./auto-mode-bootstrap.js');
     const result = await bootstrapAutoMode(baseDeps());
     const a = result.getGuardrail();
     const b = result.getGuardrail();
@@ -79,7 +79,6 @@ describe('bootstrapAutoMode', () => {
   });
 
   it('guardrail has stable kind=tool name=auto-mode (Runner registration contract)', async () => {
-    const { bootstrapAutoMode } = await import('./auto-mode-bootstrap.js');
     const result = await bootstrapAutoMode(baseDeps());
     const g = result.getGuardrail();
     expect(g.kind).toBe('tool');
@@ -87,14 +86,12 @@ describe('bootstrapAutoMode', () => {
   });
 
   it('starts in llm engine (not pre-downgraded) when autoModeSettings.engine="llm"', async () => {
-    const { bootstrapAutoMode } = await import('./auto-mode-bootstrap.js');
     const result = await bootstrapAutoMode(baseDeps());
     const g = result.getGuardrail();
     expect(g.getEngineForTest()).toBe('llm');
   });
 
   it('starts in rules engine when autoModeSettings.engine="rules" (slice C wiring)', async () => {
-    const { bootstrapAutoMode } = await import('./auto-mode-bootstrap.js');
     const result = await bootstrapAutoMode({
       ...baseDeps(),
       autoModeSettings: {
@@ -109,7 +106,6 @@ describe('bootstrapAutoMode', () => {
   });
 
   it('does not eagerly construct the guardrail (lazy on first getGuardrail)', async () => {
-    const { bootstrapAutoMode } = await import('./auto-mode-bootstrap.js');
     const result = await bootstrapAutoMode(baseDeps());
     // The factory is returned, but no guardrail has been built until
     // `getGuardrail()` is called. Verifying laziness directly is hard

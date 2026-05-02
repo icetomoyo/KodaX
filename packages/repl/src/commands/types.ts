@@ -98,6 +98,21 @@ export interface CommandCallbacks {
   forkSession?: (selector?: string) => Promise<SessionForkStatus>;
   rewindSession?: (selector?: string) => Promise<SessionRewindStatus>;
   getCostReport?: () => string | null;
+  /**
+   * FEATURE_092 phase 2b.8: read-only stats accessor for the auto-mode
+   * classifier guardrail. Returns undefined when the guardrail hasn't been
+   * constructed yet (REPL never entered auto mode this session). The
+   * returned snapshot is a copy of references — caller cannot mutate
+   * guardrail state through it. Used by `/auto-engine` (show), `/auto-denials`,
+   * and the status bar engine indicator.
+   */
+  getAutoModeStats?: () => import('@kodax/coding').AutoModeStats | undefined;
+  /**
+   * FEATURE_092 phase 2b.8: manual engine setter for `/auto-engine llm|rules`.
+   * No-op when the guardrail hasn't been constructed yet. Threshold downgrades
+   * still operate normally — a subsequent denial cross will downgrade again.
+   */
+  setAutoModeEngine?: (engine: 'llm' | 'rules') => void;
   ui: UIContext;
 }
 

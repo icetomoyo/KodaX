@@ -166,17 +166,36 @@ export interface AutoModeGuardrailConfig {
   readonly timeoutMs?: number;
 }
 
+/**
+ * Snapshot of the auto-mode guardrail's session-scoped state. Returned by
+ * `getStats()` for diagnostic surfaces (`/auto-denials`) and the status bar
+ * engine indicator. The DenialTracker / CircuitBreaker types are immutable
+ * value objects, so this is a copy of the references — caller cannot mutate
+ * guardrail state through it.
+ */
+export interface AutoModeStats {
+  readonly engine: AutoModeEngine;
+  readonly denials: DenialTracker;
+  readonly breaker: CircuitBreaker;
+}
+
 export interface AutoModeToolGuardrail extends ToolGuardrail {
+  /** Current engine for this session. */
+  getEngine(): AutoModeEngine;
+  /** Snapshot of engine + denial tracker + circuit breaker. */
+  getStats(): AutoModeStats;
   /**
-   * Test-only accessor: peek at the current engine. Production callers
-   * should treat this state as opaque.
+   * Manually set the engine. Used by `/auto-engine` slash command to flip
+   * back to 'llm' after an automatic downgrade or to flip to 'rules' for
+   * manual testing. The downgrade thresholds still operate normally — a
+   * subsequent threshold cross will downgrade again.
    */
+  setEngine(engine: AutoModeEngine): void;
+
+  /** Test-only alias for getEngine(). Backward-compat for test files. */
   getEngineForTest(): AutoModeEngine;
-  getStatsForTest(): {
-    readonly engine: AutoModeEngine;
-    readonly denials: DenialTracker;
-    readonly breaker: CircuitBreaker;
-  };
+  /** Test-only alias for getStats(). Backward-compat for test files. */
+  getStatsForTest(): AutoModeStats;
   /** Test-only override: swap the provider mid-test (for downgrade scenarios). */
   setProviderForTest(provider: KodaXBaseProvider): void;
 }
@@ -300,16 +319,23 @@ export function createAutoModeToolGuardrail(
     }
   };
 
+  const getStats = (): AutoModeStats => ({
+    engine: state.engine,
+    denials: state.denials,
+    breaker: state.breaker,
+  });
   return {
     kind: 'tool',
     name: 'auto-mode',
     beforeTool,
+    getEngine: () => state.engine,
+    getStats,
+    setEngine: (engine) => {
+      state.engine = engine;
+    },
+    // Test-only aliases — kept for backward compat with the existing test files.
     getEngineForTest: () => state.engine,
-    getStatsForTest: () => ({
-      engine: state.engine,
-      denials: state.denials,
-      breaker: state.breaker,
-    }),
+    getStatsForTest: getStats,
     setProviderForTest: (p) => { providerOverride = p; },
   };
 }

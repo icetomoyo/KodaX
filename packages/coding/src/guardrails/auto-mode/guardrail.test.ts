@@ -209,6 +209,50 @@ describe('AutoModeToolGuardrail — abort propagation', () => {
   });
 });
 
+describe('AutoModeToolGuardrail — public state surface (FEATURE_092 phase 2b.8)', () => {
+  it('getEngine() returns the same value as getEngineForTest()', () => {
+    const g = createAutoModeToolGuardrail(baseConfig('<block>no</block><reason>x</reason>'));
+    expect(g.getEngine()).toBe(g.getEngineForTest());
+    expect(g.getEngine()).toBe('llm');
+  });
+
+  it('getStats() returns a snapshot with engine/denials/breaker', () => {
+    const g = createAutoModeToolGuardrail(baseConfig('<block>no</block><reason>x</reason>'));
+    const stats = g.getStats();
+    expect(stats.engine).toBe('llm');
+    expect(stats.denials).toBeDefined();
+    expect(stats.breaker).toBeDefined();
+    // matches the test alias
+    expect(stats).toEqual(g.getStatsForTest());
+  });
+
+  it('setEngine("rules") flips the engine; subsequent non-Tier-1 calls take the rules path', async () => {
+    const g = createAutoModeToolGuardrail(baseConfig('<block>no</block><reason>x</reason>'));
+    expect(g.getEngine()).toBe('llm');
+    g.setEngine('rules');
+    expect(g.getEngine()).toBe('rules');
+    // Without askUser, the rules path returns escalate.
+    const verdict = await g.beforeTool!(callBash('ls'), ctx());
+    expect(verdict.action).toBe('escalate');
+  });
+
+  it('setEngine("llm") restores classifier consultation after manual rules toggle', async () => {
+    let classifierCalls = 0;
+    const provider = new StubProvider(async () => {
+      classifierCalls += 1;
+      return okResult('<block>no</block><reason>x</reason>');
+    });
+    const g = createAutoModeToolGuardrail({
+      ...baseConfig(''),
+      resolveProvider: () => provider,
+    });
+    g.setEngine('rules');
+    g.setEngine('llm');
+    await g.beforeTool!(callBash('ls'), ctx());
+    expect(classifierCalls).toBe(1); // classifier consulted because engine is back on llm
+  });
+});
+
 describe('AutoModeToolGuardrail — initialEngine + timeoutMs config (FEATURE_092 phase 2b.7b slice C)', () => {
   it('initialEngine="rules" starts in rules mode without ever calling the classifier', async () => {
     let classifierCalled = false;

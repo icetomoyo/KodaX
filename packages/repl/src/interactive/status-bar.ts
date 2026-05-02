@@ -24,6 +24,13 @@ export interface StatusBarState {
     totalFeatures: number;
   };
   messageCount?: number;
+  /**
+   * FEATURE_092 phase 2b.8: auto-mode classifier engine indicator. Only
+   * meaningful when `permissionMode === 'auto'` or `'auto-in-project'`. When
+   * present the status bar renders the mode as `auto[llm]` / `auto[rules]`
+   * so the user can see at a glance whether the classifier downgraded.
+   */
+  autoModeEngine?: 'llm' | 'rules';
 }
 
 const ANSI_REGEX = /\x1b\[[0-9;]*m/g;
@@ -84,7 +91,16 @@ export function buildStatusBarContent(state: StatusBarState, width = getTerminal
           ? chalk.magenta
           : chalk.green;
 
-  parts.push(modeColor(state.permissionMode));
+  // FEATURE_092 phase 2b.8: append [llm] or [rules] when in an auto-family
+  // mode so users can see whether the classifier downgraded mid-session.
+  // Yellow [rules] signals a downgrade; green [llm] is the healthy state.
+  const isAuto = state.permissionMode === 'auto' || state.permissionMode === 'auto-in-project';
+  const engineSuffix = isAuto && state.autoModeEngine
+    ? state.autoModeEngine === 'llm'
+      ? chalk.green('[llm]')
+      : chalk.yellow('[rules]')
+    : '';
+  parts.push(modeColor(state.permissionMode) + engineSuffix);
 
   if (state.reasoningMode) {
     parts.push(chalk.yellow(`reason:${state.reasoningMode}`));
