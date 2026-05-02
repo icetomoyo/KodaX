@@ -99,6 +99,15 @@ export interface ChildExecutorOptions {
    * run without plan-mode enforcement.
    */
   readonly planModeBlockCheck?: PlanModeBlockCheck;
+
+  /**
+   * FEATURE_092 phase 2b.7b slice D: parent-Runner guardrails forwarded into
+   * each child's `Runner.run` via `KodaXOptions.guardrails`. The auto-mode
+   * guardrail's mutable state (engine + denialTracker + circuitBreaker) is
+   * shared by passing the SAME instance — preventing children from reaching
+   * a fresh threshold and bypassing the parent's downgrade.
+   */
+  readonly guardrails?: readonly import('@kodax/core').Guardrail[];
 }
 
 export async function executeChildAgents(
@@ -217,6 +226,10 @@ async function executeReadChild(
         maxIter: options.maxIterationsPerChild,
         abortSignal: options.abortSignal,
         extensionRuntime: options.parentOptions.extensionRuntime,
+        // FEATURE_092 phase 2b.7b slice D: forward parent-Runner guardrails so
+        // child tool calls go through the SAME auto-mode classifier instance
+        // (shared engine + denialTracker + circuitBreaker state).
+        guardrails: options.guardrails,
         context: {
           gitRoot: parentCtx.gitRoot,
           executionCwd: parentCtx.executionCwd ?? parentCtx.gitRoot,
@@ -288,6 +301,10 @@ async function executeWriteChild(
         maxIter: options.maxIterationsPerChild,
         abortSignal: options.abortSignal,
         extensionRuntime: options.parentOptions.extensionRuntime,
+        // FEATURE_092 phase 2b.7b slice D: forward parent-Runner guardrails so
+        // child tool calls go through the SAME auto-mode classifier instance
+        // (shared engine + denialTracker + circuitBreaker state).
+        guardrails: options.guardrails,
         context: {
           gitRoot: wtPath,
           executionCwd: wtPath,

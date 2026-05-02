@@ -98,6 +98,11 @@ export function buildToolExecutionContext(
     // FEATURE_074: forward parent's plan-mode predicate so
     // dispatch_child_task can enforce plan mode on child tool calls.
     planModeBlockCheck: options.context?.planModeBlockCheck,
+    // FEATURE_092 phase 2b.7b slice D: forward parent-Runner guardrails so
+    // dispatch_child_task can register the SAME instances on the child's
+    // Runner — auto-mode state (engine + denial tracker + circuit breaker)
+    // propagates across parent/child without per-child reset.
+    guardrails: options.guardrails,
     parentAgentConfig: {
       provider: options.provider,
       model: options.model,

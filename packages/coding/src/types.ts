@@ -1235,4 +1235,19 @@ export interface KodaXToolExecutionContext {
    * live parent state so mid-run mode toggles propagate into in-flight children.
    */
   planModeBlockCheck?: (tool: string, input: Record<string, unknown>) => string | null;
+
+  /**
+   * FEATURE_092 phase 2b.7b slice D: parent-Runner guardrails surfaced into the
+   * tool-execution context so `dispatch_child_task` can forward them to the
+   * child's `Runner.run` via `KodaXOptions.guardrails`. Sharing the SAME
+   * guardrail instance means the auto-mode `engine` + `denialTracker` +
+   * `circuitBreaker` state is observed across the parent/child boundary —
+   * design doc "防绕阈值" defense (a child can't escape the parent's
+   * rate-limit by hitting the threshold from a fresh tracker).
+   *
+   * Single-process / single-thread execution makes the shared mutable state
+   * safe under JS run-to-completion semantics — concurrent child tool calls
+   * produce interleaved `recordBlock` / `recordAllow` updates with no tearing.
+   */
+  guardrails?: readonly import('@kodax/core').Guardrail[];
 }

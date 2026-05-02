@@ -103,6 +103,10 @@ export async function* toolDispatchChildTask(
     // executor. The predicate is a live closure — it reads parent state at each
     // child tool call, so mid-run mode toggles propagate without respawn.
     planModeBlockCheck: ctx.planModeBlockCheck,
+    // FEATURE_092 phase 2b.7b slice D: forward parent-Runner guardrails so the
+    // child Runner registers the SAME instances — auto-mode engine + tracker
+    // state propagate across the parent/child boundary.
+    guardrails: ctx.guardrails,
   };
 
   try {

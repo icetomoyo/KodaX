@@ -60,6 +60,57 @@ function createCtx() {
   };
 }
 
+describe('executeChildAgents — guardrails propagation (FEATURE_092 phase 2b.7b slice D)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const okResult = (lastText = 'done') => ({
+    success: true,
+    lastText,
+    messages: [{ role: 'assistant', content: lastText }],
+    sessionId: 's1',
+  });
+
+  it('forwards options.guardrails to the child runKodaX call (read child)', async () => {
+    const fakeGuardrail = { kind: 'tool', name: 'auto-mode' } as const;
+    mockRunKodaX.mockResolvedValue(okResult('inspected'));
+    const bundles = [createBundle({ id: 'cb-g1', readOnly: true, objective: 'inspect' })];
+    await executeChildAgents(bundles, createCtx(), createOptions({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      guardrails: [fakeGuardrail as any],
+    } as Partial<ChildExecutorOptions>));
+    expect(mockRunKodaX).toHaveBeenCalled();
+    const childOptions = mockRunKodaX.mock.calls[0]![0] as { guardrails?: readonly unknown[] };
+    expect(childOptions.guardrails).toBeDefined();
+    expect(childOptions.guardrails).toEqual([fakeGuardrail]);
+  });
+
+  it('omits guardrails on child runKodaX when parent did not supply any (backward compat)', async () => {
+    mockRunKodaX.mockResolvedValue(okResult('inspected'));
+    const bundles = [createBundle({ id: 'cb-g2', readOnly: true, objective: 'inspect' })];
+    await executeChildAgents(bundles, createCtx(), createOptions());
+    expect(mockRunKodaX).toHaveBeenCalled();
+    const childOptions = mockRunKodaX.mock.calls[0]![0] as { guardrails?: readonly unknown[] };
+    expect(childOptions.guardrails).toBeUndefined();
+  });
+
+  it('forwards the SAME guardrail instance by reference (state-sharing contract)', async () => {
+    // The auto-mode guardrail relies on a single shared mutable instance —
+    // pass-by-reference is the contract that makes engine/tracker state
+    // observable across the parent/child boundary.
+    const fakeGuardrail = { kind: 'tool', name: 'auto-mode', mutableMarker: {} } as const;
+    mockRunKodaX.mockResolvedValue(okResult('done'));
+    const bundles = [createBundle({ id: 'cb-g3', readOnly: true, objective: 'read' })];
+    await executeChildAgents(bundles, createCtx(), createOptions({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      guardrails: [fakeGuardrail as any],
+    } as Partial<ChildExecutorOptions>));
+    const childGuardrails = (mockRunKodaX.mock.calls[0]![0] as { guardrails?: readonly unknown[] }).guardrails;
+    expect(childGuardrails![0]).toBe(fakeGuardrail); // identity, not equality
+  });
+});
+
 describe('executeChildAgents', () => {
   beforeEach(() => {
     vi.clearAllMocks();
