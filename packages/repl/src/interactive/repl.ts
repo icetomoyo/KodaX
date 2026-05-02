@@ -43,7 +43,8 @@ import {
 } from '@kodax/coding';
 import type { AgentsFile } from '@kodax/coding';
 import type { PermissionMode, ConfirmResult } from '../permission/types.js';
-import { computeConfirmTools, FILE_MODIFICATION_TOOLS, normalizePermissionMode } from '../permission/types.js';
+import { computeConfirmTools, FILE_MODIFICATION_TOOLS, isAutoMode, normalizePermissionMode } from '../permission/types.js';
+import { bootstrapAutoMode, type AutoModeBootstrapResult } from './auto-mode-bootstrap.js';
 import { isToolCallAllowed, isAlwaysConfirmPath, isBashReadCommand, getPlanModeBlockReason } from '../permission/permission.js';
 import { getGitRoot, prepareRuntimeConfig, getProviderModel, getProviderAvailableModels, KODAX_VERSION } from '../common/utils.js';
 import {
@@ -433,6 +434,22 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
       }).catch(() => {
         callback(null, [[], line]);
       });
+    },
+  });
+
+  // FEATURE_092 phase 2b.7b: bootstrap auto-mode guardrail (factory only;
+  // the guardrail is constructed lazily on first 'auto' tool call so the
+  // cost is paid only by users who actually use auto mode).
+  const autoModeBootstrap: AutoModeBootstrapResult = await bootstrapAutoMode({
+    rl,
+    projectRoot: gitRoot ?? process.cwd(),
+    getAgentsFiles: () => agentsFiles,
+    getCurrentProviderName: () => currentConfig.provider,
+    getCurrentModel: () => currentConfig.model,
+    getCurrentPermissionMode: () => currentPermissionMode,
+    log: (level, msg) => {
+      if (level === 'warn') console.warn(chalk.yellow(msg));
+      else console.log(chalk.dim(msg));
     },
   });
 
@@ -833,12 +850,20 @@ Keyboard Shortcuts:
         if (currentPermissionMode !== 'plan') return null;
         return getPlanModeBlockReason(tool, input, gitRoot ?? process.cwd());
       };
+      // FEATURE_092 phase 2b.7b: when the user is in 'auto' (canonical) or
+      // 'auto-in-project' (alias), forward the AutoModeToolGuardrail to
+      // Runner via KodaXOptions.guardrails. The lazy factory means we only
+      // pay the construction + rules-load cost for users who use auto mode.
+      const guardrails = isAutoMode(currentPermissionMode)
+        ? [autoModeBootstrap.getGuardrail()]
+        : undefined;
       return {
         ...currentOptions,
         provider: currentConfig.provider,
         model: currentConfig.model,
         thinking: currentConfig.thinking,
         reasoningMode: currentConfig.reasoningMode,
+        guardrails,
         context: {
           ...currentOptions.context,
           planModeBlockCheck,

@@ -71,9 +71,40 @@ export interface AutoModeSharedState {
   breaker: CircuitBreaker;
 }
 
+/**
+ * User answer for an escalated tool-call. The guardrail translates this into
+ * the actual `GuardrailVerdict` returned to the Runner. `'block'` preserves
+ * the original escalation reason as the verdict reason so downstream consumers
+ * see why the tool was blocked.
+ */
+export type AutoModeAskUserVerdict = 'allow' | 'block';
+
+/**
+ * Optional REPL-supplied prompt callback for the 6 escalate paths in
+ * `beforeTool` (engine-downgraded, denial-threshold-just-crossed,
+ * breaker-just-tripped, classifier-error, classifier-decision-escalate,
+ * provider-not-configured). When supplied, the guardrail calls this and
+ * translates the user's answer into `'allow'` or `'block'`. When NOT
+ * supplied, the guardrail returns `'escalate'` as before — the Runner will
+ * then throw `GuardrailEscalateError` (preserves backward compat with
+ * SDK-side guardrail consumers that have no askUser surface).
+ *
+ * Rejection propagates: if the user cancels (Ctrl-C in the prompt), throw
+ * an AbortError-shaped exception and the Runner aborts the run cleanly.
+ */
+export type AutoModeAskUser = (
+  call: RunnerToolCall,
+  reason: string,
+) => Promise<AutoModeAskUserVerdict>;
+
 export interface AutoModeGuardrailConfig {
   readonly rules: AutoRules;
   readonly claudeMd?: string;
+  /**
+   * FEATURE_092 phase 2b.7b: optional user-prompt callback for escalate
+   * paths. See `AutoModeAskUser` for semantics.
+   */
+  readonly askUser?: AutoModeAskUser;
 
   /**
    * Look up a tool's `toClassifierInput` projection by tool name.
@@ -152,6 +183,18 @@ export function createAutoModeToolGuardrail(
     call: RunnerToolCall,
     ctx: GuardrailContext,
   ): Promise<GuardrailVerdict> => {
+    // When the REPL has supplied askUser, every "escalate" path is resolved
+    // here into a concrete allow/block; otherwise we fall through to the
+    // legacy escalate verdict (Runner throws GuardrailEscalateError).
+    const escalateOrAsk = async (reason: string): Promise<GuardrailVerdict> => {
+      if (!config.askUser) {
+        return { action: 'escalate', reason };
+      }
+      const verdict = await config.askUser(call, reason);
+      if (verdict === 'allow') return { action: 'allow' };
+      return { action: 'block', reason };
+    };
+
     // Tier 1: tool opted out of classifier via empty projection
     const projector = config.getToolProjection(call.name);
     const action = projector ? projector(call.input) : '';
@@ -163,38 +206,30 @@ export function createAutoModeToolGuardrail(
     // "Tier 1/2 allow, else escalate to user"; v1 doesn't yet implement
     // Tier 2 path-shortcuts so all non-Tier-1 calls escalate.
     if (state.engine === 'rules') {
-      return {
-        action: 'escalate',
-        reason: 'auto-mode engine is in rules mode (downgraded); user confirmation required',
-      };
+      return escalateOrAsk(
+        'auto-mode engine is in rules mode (downgraded); user confirmation required',
+      );
     }
 
     // Threshold checks — engine downgrade BEFORE making another classify call
     if (denialShouldFallback(state.denials)) {
       state.engine = 'rules';
       config.log?.('warn', '[auto-mode] denial threshold crossed — engine downgraded to rules');
-      return {
-        action: 'escalate',
-        reason: 'auto-mode engine downgraded after consecutive denials; user confirmation required',
-      };
+      return escalateOrAsk(
+        'auto-mode engine downgraded after consecutive denials; user confirmation required',
+      );
     }
     if (breakerShouldFallback(state.breaker, Date.now())) {
       state.engine = 'rules';
       config.log?.('warn', '[auto-mode] circuit breaker tripped — engine downgraded to rules');
-      return {
-        action: 'escalate',
-        reason: 'classifier infrastructure unstable; engine downgraded',
-      };
+      return escalateOrAsk('classifier infrastructure unstable; engine downgraded');
     }
 
     // Resolve which (provider, model) the classifier should use this call
     const resolved = resolveClassifierModel(buildResolveOptions(config));
     const provider = providerOverride ?? config.resolveProvider(resolved.providerName);
     if (!provider) {
-      return {
-        action: 'escalate',
-        reason: `classifier provider "${resolved.providerName}" is not configured`,
-      };
+      return escalateOrAsk(`classifier provider "${resolved.providerName}" is not configured`);
     }
 
     // Run the classifier. AbortError propagates to caller; we don't capture it.
@@ -217,10 +252,9 @@ export function createAutoModeToolGuardrail(
       }
       // Any other error gets routed through the breaker
       state.breaker = recordBreakerError(state.breaker, Date.now());
-      return {
-        action: 'escalate',
-        reason: `classifier error: ${err instanceof Error ? err.message : String(err)}`,
-      };
+      return escalateOrAsk(
+        `classifier error: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
 
     // Map decision → verdict + update tracker / breaker.
@@ -245,7 +279,7 @@ export function createAutoModeToolGuardrail(
           state.engine = 'rules';
           config.log?.('warn', '[auto-mode] circuit breaker tripped — engine downgraded to rules');
         }
-        return { action: 'escalate', reason: decision.reason };
+        return escalateOrAsk(decision.reason);
     }
   };
 

@@ -209,6 +209,102 @@ describe('AutoModeToolGuardrail — abort propagation', () => {
   });
 });
 
+describe('AutoModeToolGuardrail — askUser escalation handling (FEATURE_092 phase 2b.7b)', () => {
+  it('classifier-escalate path: askUser supplied + answers allow → verdict allow', async () => {
+    const askUser = vi.fn(async () => 'allow' as const);
+    // sideQuery returns a 'tool_use'-like contract violation that maps to escalate;
+    // simpler path: stub provider that throws → breaker records error → escalate.
+    const provider = new StubProvider(async () => { throw new Error('500 transient'); });
+    const g = createAutoModeToolGuardrail({
+      ...baseConfig(''),
+      resolveProvider: () => provider,
+      askUser,
+    });
+    const verdict = await g.beforeTool!(callBash('ls'), ctx());
+    expect(verdict.action).toBe('allow');
+    expect(askUser).toHaveBeenCalledOnce();
+    const [callArg, reasonArg] = askUser.mock.calls[0]!;
+    expect(callArg.name).toBe('bash');
+    expect(reasonArg).toMatch(/classifier error/i);
+  });
+
+  it('classifier-escalate path: askUser supplied + answers block → verdict block (reason preserved)', async () => {
+    const askUser = vi.fn(async () => 'block' as const);
+    const provider = new StubProvider(async () => { throw new Error('500 transient'); });
+    const g = createAutoModeToolGuardrail({
+      ...baseConfig(''),
+      resolveProvider: () => provider,
+      askUser,
+    });
+    const verdict = await g.beforeTool!(callBash('ls'), ctx());
+    expect(verdict.action).toBe('block');
+    if (verdict.action === 'block') {
+      expect(verdict.reason).toMatch(/classifier error/i);
+    }
+  });
+
+  it('rules-engine path (engine already downgraded): askUser called with rules reason', async () => {
+    const askUser = vi.fn(async () => 'allow' as const);
+    const g = createAutoModeToolGuardrail({
+      ...baseConfig('<block>yes</block><reason>nope</reason>'),
+      askUser,
+    });
+    // Push the engine into 'rules' via 3 consecutive blocks.
+    for (let i = 0; i < 3; i += 1) {
+      await g.beforeTool!(callBash('rm -rf /'), ctx());
+    }
+    expect(g.getEngineForTest()).toBe('rules');
+    askUser.mockClear();
+    // Now a fresh non-Tier-1 call should hit askUser, not the classifier.
+    const verdict = await g.beforeTool!(callBash('ls'), ctx());
+    expect(verdict.action).toBe('allow');
+    expect(askUser).toHaveBeenCalledOnce();
+    expect(askUser.mock.calls[0]![1]).toMatch(/rules mode/i);
+  });
+
+  it('askUser NOT supplied → existing escalate verdict preserved (backward compat)', async () => {
+    const provider = new StubProvider(async () => { throw new Error('500 transient'); });
+    const g = createAutoModeToolGuardrail({
+      ...baseConfig(''),
+      resolveProvider: () => provider,
+      // askUser intentionally omitted
+    });
+    const verdict = await g.beforeTool!(callBash('ls'), ctx());
+    expect(verdict.action).toBe('escalate');
+  });
+
+  it('askUser rejection propagates (does not silently allow/block)', async () => {
+    const askUser = vi.fn(async () => { throw new Error('user cancelled'); });
+    const provider = new StubProvider(async () => { throw new Error('500 transient'); });
+    const g = createAutoModeToolGuardrail({
+      ...baseConfig(''),
+      resolveProvider: () => provider,
+      askUser,
+    });
+    await expect(g.beforeTool!(callBash('ls'), ctx())).rejects.toThrow(/user cancelled/);
+  });
+
+  it('askUser block does NOT undowngrade the engine (downgrade is sticky)', async () => {
+    const askUser = vi.fn(async () => 'allow' as const);
+    const g = createAutoModeToolGuardrail({
+      ...baseConfig('<block>yes</block><reason>nope</reason>'),
+      askUser,
+    });
+    // 3 blocks downgrade engine. askUser is NOT consulted here — these are
+    // hard 'block' verdicts, not escalate. Engine downgrade fires on the 3rd.
+    for (let i = 0; i < 3; i += 1) {
+      const v = await g.beforeTool!(callBash('rm -rf /'), ctx());
+      expect(v.action).toBe('block');
+    }
+    expect(g.getEngineForTest()).toBe('rules');
+    // Now a 4th call escalates via rules-engine path → askUser → allow.
+    const v4 = await g.beforeTool!(callBash('ls'), ctx());
+    expect(v4.action).toBe('allow');
+    // Engine stays in rules (no automatic restore).
+    expect(g.getEngineForTest()).toBe('rules');
+  });
+});
+
 describe('AutoModeToolGuardrail — wire-up details', () => {
   it('passes the live transcript to the classifier via ctx.messages', async () => {
     let capturedTranscript: readonly KodaXMessage[] | undefined;

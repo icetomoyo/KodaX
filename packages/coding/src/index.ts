@@ -972,4 +972,6 @@ export type {
   AutoModeSharedState,
   AutoModeGuardrailConfig,
   AutoModeToolGuardrail,
+  AutoModeAskUser,
+  AutoModeAskUserVerdict,
 } from './guardrails/auto-mode/guardrail.js';
