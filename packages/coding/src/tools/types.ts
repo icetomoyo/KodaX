@@ -43,19 +43,21 @@ export interface LocalToolDefinition extends KodaXToolDefinition {
    *
    *   1. ZERO RISK (read-only, structural):
    *      → return ''  (Tier 1 — classifier is skipped entirely, zero token cost)
-   *      Examples: read, grep, glob, todo_write, ask_user_question
+   *      Examples: read, grep, glob, ask_user_question, exit_plan_mode
    *
    *   2. HIGH RISK (mutates state, network, exec, spawn):
    *      → write a CUSTOM projection that surfaces the risk-bearing fields
    *      Examples: bash (`Bash: ${i.command}`), web_fetch (`WebFetch ${i.url}`)
    *      See `classifier-projection.ts` for examples by category.
    *
-   *   3. LOW RISK (structured input, no mutations):
+   *   3. LOW RISK (structured input, side-effect-capable):
    *      → return defaultToClassifierInput(name, input)  (one-line helper)
-   *      Examples: semantic_lookup, code_search, module_context
+   *      Examples: semantic_lookup (refresh: true rebuilds index)
    *
-   * KEEP IT SHORT: ≤ 100 chars typical. Long blobs cost tokens and dilute
-   * the signal the classifier needs.
+   * KEEP IT SHORT: ≤ 100 chars typical. Variable-length user-provided fields
+   * (bash command, URL, dispatch_child_task objective) may legitimately
+   * exceed this — the projection's job is to make the risk visible, not to
+   * fit a fixed budget at the cost of hiding it.
    *
    * NEVER include: raw file contents, secrets, API keys, full LLM-emitted
    * reasoning, or untrusted text passed through verbatim. Use byte/line

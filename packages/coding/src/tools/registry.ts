@@ -525,7 +525,10 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['query'],
     },
     handler: toolSemanticLookup,
-    toClassifierInput: () => '',
+    // refresh: true rebuilds the repo-intel snapshot (disk side effect),
+    // so this is not strictly Tier 1 — surface name + truncated input via
+    // the helper so the classifier can see when refresh is requested.
+    toClassifierInput: (input) => defaultToClassifierInput('semantic_lookup', input),
   },
   {
     name: 'mcp_search',
@@ -578,9 +581,13 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
     toClassifierInput: (input) => {
       const i = input as { id?: string; args?: unknown };
       const capability = typeof i?.id === 'string' ? i.id : '<no-id>';
-      // Capability id (from mcp_search) is opaque "server.tool" form already;
-      // pass it as both server and tool — mcp helper handles the prefix.
-      return mcpToClassifierInput(capability, 'call', i?.args ?? {});
+      // Capability id (from mcp_search) is the "server.tool" form already.
+      // Split on the first '.' to recover the real server / tool pair so the
+      // helper produces `MCP[server.tool]: …` (not `MCP[server.tool.call]`).
+      const dotIdx = capability.indexOf('.');
+      const server = dotIdx > 0 ? capability.slice(0, dotIdx) : capability;
+      const tool = dotIdx > 0 ? capability.slice(dotIdx + 1) : '<no-tool>';
+      return mcpToClassifierInput(server, tool, i?.args ?? {});
     },
   },
   {
