@@ -477,3 +477,120 @@ describe('Runner integration — GuardrailSpan emission', () => {
     expect(errSpan?.error).toMatch(/kaboom/);
   });
 });
+
+describe('GuardrailContext.messages propagation (FEATURE_092 v0.7.33)', () => {
+  afterEach(() => _resetPresetDispatchers());
+
+  it('runToolBeforeGuardrails forwards ctx.messages to beforeTool callback', async () => {
+    const transcript = [
+      { role: 'system' as const, content: 'sys' },
+      { role: 'user' as const, content: 'classify this' },
+    ];
+    let seenMessages: readonly { role: string; content: unknown }[] | undefined;
+    const g: ToolGuardrail = {
+      kind: 'tool',
+      name: 'spy',
+      beforeTool: async (_call, ctx) => {
+        seenMessages = ctx.messages;
+        return { action: 'allow' };
+      },
+    };
+    const ctxWithMessages = { agent: dummyAgent, messages: transcript };
+    await runToolBeforeGuardrails(
+      { id: 'c1', name: 'echo', input: {} },
+      [g],
+      ctxWithMessages,
+      null,
+    );
+    expect(seenMessages).toBeDefined();
+    expect(seenMessages).toEqual(transcript);
+  });
+
+  it('runToolAfterGuardrails forwards ctx.messages to afterTool callback', async () => {
+    const transcript = [{ role: 'user' as const, content: 'hi' }];
+    let seenMessages: readonly { role: string; content: unknown }[] | undefined;
+    const g: ToolGuardrail = {
+      kind: 'tool',
+      name: 'spy',
+      afterTool: async (_call, _result, ctx) => {
+        seenMessages = ctx.messages;
+        return { action: 'allow' };
+      },
+    };
+    const ctxWithMessages = { agent: dummyAgent, messages: transcript };
+    await runToolAfterGuardrails(
+      { id: 'c1', name: 'echo', input: {} },
+      { content: 'r' },
+      [g],
+      ctxWithMessages,
+      null,
+    );
+    expect(seenMessages).toEqual(transcript);
+  });
+
+  it('messages field is optional — guardrails that ignore it still work', async () => {
+    // Backward-compat: existing dummyCtx has no messages field at all
+    const g: ToolGuardrail = {
+      kind: 'tool',
+      name: 'noop',
+      beforeTool: async () => ({ action: 'allow' }),
+      afterTool: async () => ({ action: 'allow' }),
+    };
+    const before = await runToolBeforeGuardrails(
+      { id: 'c1', name: 'echo', input: {} },
+      [g],
+      dummyCtx,
+      null,
+    );
+    expect(before.kind).toBe('allow');
+    const after = await runToolAfterGuardrails(
+      { id: 'c1', name: 'echo', input: {} },
+      { content: 'r' },
+      [g],
+      dummyCtx,
+      null,
+    );
+    expect(after.content).toBe('r');
+  });
+
+  it('Runner integration — beforeTool ctx.messages contains the live transcript at the call site', async () => {
+    const observed: Array<readonly { role: string; content: unknown }[]> = [];
+    const echoTool = {
+      name: 'echo',
+      description: 'echo',
+      input_schema: { type: 'object' as const, properties: {} },
+      execute: async () => ({ content: 'echoed' }),
+    };
+    const toolGuardrail: ToolGuardrail = {
+      kind: 'tool',
+      name: 'transcript-spy',
+      beforeTool: async (_call, ctx) => {
+        observed.push(ctx.messages ?? []);
+        return { action: 'allow' };
+      },
+    };
+    const agent = createAgent({
+      name: 'tx-agent',
+      instructions: 'sys',
+      tools: [echoTool],
+      guardrails: [toolGuardrail],
+    });
+    let turn = 0;
+    const llm = async (): Promise<RunnerLlmResult> => {
+      turn += 1;
+      if (turn === 1) return { text: '', toolCalls: [{ id: 'c1', name: 'echo', input: {} }] };
+      return { text: 'done', toolCalls: [] };
+    };
+
+    await Runner.run(agent, 'classify-me', { llm });
+
+    expect(observed).toHaveLength(1);
+    const transcript = observed[0]!;
+    // At beforeTool fire time, transcript MUST contain the original system + user messages
+    // (the assistant turn that emitted the tool call has not yet been pushed; that's by design).
+    const roles = transcript.map((m) => m.role);
+    const contents = transcript.map((m) => m.content);
+    expect(roles).toContain('user');
+    expect(contents).toContain('classify-me');
+  });
+});

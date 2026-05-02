@@ -586,7 +586,7 @@ async function genericRun<TData>(
         const beforeOutcome = await runToolBeforeGuardrails(
           call,
           guardrailSlots.tool,
-          { ...guardrailCtx, agent: currentAgent },
+          { ...guardrailCtx, agent: currentAgent, messages: transcript },
           agentSpan,
         );
         if (beforeOutcome.kind === 'block') {
@@ -675,7 +675,7 @@ async function genericRun<TData>(
           call,
           result,
           guardrailSlots.tool,
-          { ...guardrailCtx, agent: currentAgent },
+          { ...guardrailCtx, agent: currentAgent, messages: transcript },
           agentSpan,
         );
       }

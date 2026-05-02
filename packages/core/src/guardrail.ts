@@ -34,10 +34,23 @@ import type { RunnerToolCall, RunnerToolResult } from './runner-tool-loop.js';
 
 /**
  * Shared execution context passed to every guardrail.
+ *
+ * `messages` is the live conversation transcript at the moment this
+ * guardrail fires. For tool-side guardrails this is the transcript at
+ * call-site time — it does NOT yet include the assistant turn that
+ * emitted the current tool_use, since that turn is appended only after
+ * the full tool batch settles. Optional so existing guardrails that
+ * don't read context still type-check; populated by the Runner for all
+ * production hook points.
+ *
+ * Added in FEATURE_092 (v0.7.33) so the auto-mode classifier guardrail
+ * can extract intent context (user prompt + prior tool_use / tool_result
+ * blocks) without reaching into Runner internals.
  */
 export interface GuardrailContext {
   readonly agent: Agent;
   readonly abortSignal?: AbortSignal;
+  readonly messages?: readonly AgentMessage[];
 }
 
 /**
