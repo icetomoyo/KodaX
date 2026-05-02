@@ -901,3 +901,75 @@ export {
   // Test-only — reset module-singleton state between hermetic test runs.
   _resetRuntimeForTesting,
 } from './construction/index.js';
+
+// ============== FEATURE_092 (v0.7.33): Auto-Mode Classifier ==============
+//
+// Public surface for the auto-mode tool-call classifier. Phase 2b.7b/2b.8
+// will internally consume these to register the guardrail and surface
+// /auto-engine, /auto-model commands; the eval suite consumes the same
+// surface to measure classifier quality.
+export { classify } from './guardrails/auto-mode/classify.js';
+export type {
+  ClassifyOptions,
+  ClassifyDecision,
+} from './guardrails/auto-mode/classify.js';
+export {
+  loadAutoRules,
+  parseAutoRules,
+  computeRulesFingerprint,
+  trustProjectRules,
+  readTrustState,
+} from './guardrails/auto-mode/rules.js';
+export type {
+  AutoRules,
+  RulesLoadResult,
+  LoadedRulesSource,
+  SkippedRulesSource,
+  RulesLoadError,
+  TrustState,
+} from './guardrails/auto-mode/rules.js';
+export { buildClassifierPrompt } from './guardrails/auto-mode/classifier-prompt.js';
+export type {
+  BuildClassifierPromptInput,
+  ClassifierPrompt,
+} from './guardrails/auto-mode/classifier-prompt.js';
+export { stripAssistantText } from './guardrails/auto-mode/transcript-strip.js';
+export type { StripOptions } from './guardrails/auto-mode/transcript-strip.js';
+export { parseClassifierOutput } from './guardrails/auto-mode/parse-output.js';
+export type { ClassifierDecision } from './guardrails/auto-mode/parse-output.js';
+// Auto-mode denial counter (cumulative + consecutive block tally) — distinct
+// from the FEATURE_044/045 input-signature `DenialTracker` exported above.
+export {
+  createDenialTracker as createAutoModeDenialTracker,
+  recordBlock as recordAutoModeBlock,
+  recordAllow as recordAutoModeAllow,
+  shouldFallback as autoModeDenialShouldFallback,
+  CONSECUTIVE_THRESHOLD as AUTO_MODE_DENIAL_CONSECUTIVE_THRESHOLD,
+  CUMULATIVE_THRESHOLD as AUTO_MODE_DENIAL_CUMULATIVE_THRESHOLD,
+} from './guardrails/auto-mode/denial-tracker.js';
+export type { DenialTracker as AutoModeDenialTracker } from './guardrails/auto-mode/denial-tracker.js';
+export {
+  createCircuitBreaker,
+  recordError as recordBreakerError,
+  shouldFallback as breakerShouldFallback,
+  ERROR_THRESHOLD as BREAKER_ERROR_THRESHOLD,
+  WINDOW_MS as BREAKER_WINDOW_MS,
+} from './guardrails/auto-mode/circuit-breaker.js';
+export type { CircuitBreaker } from './guardrails/auto-mode/circuit-breaker.js';
+export {
+  parseModelSpec,
+  resolveClassifierModel,
+} from './guardrails/auto-mode/model-resolver.js';
+export type {
+  ParsedModelSpec,
+  ResolveSource,
+  ResolveClassifierModelOptions,
+  ResolvedClassifierModel,
+} from './guardrails/auto-mode/model-resolver.js';
+export { createAutoModeToolGuardrail } from './guardrails/auto-mode/guardrail.js';
+export type {
+  AutoModeEngine,
+  AutoModeSharedState,
+  AutoModeGuardrailConfig,
+  AutoModeToolGuardrail,
+} from './guardrails/auto-mode/guardrail.js';
