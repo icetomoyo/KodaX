@@ -209,6 +209,87 @@ describe('AutoModeToolGuardrail — abort propagation', () => {
   });
 });
 
+describe('AutoModeToolGuardrail — initialEngine + timeoutMs config (FEATURE_092 phase 2b.7b slice C)', () => {
+  it('initialEngine="rules" starts in rules mode without ever calling the classifier', async () => {
+    let classifierCalled = false;
+    const provider = new StubProvider(async () => {
+      classifierCalled = true;
+      return okResult('<block>no</block><reason>x</reason>');
+    });
+    const askUser = vi.fn(async () => 'allow' as const);
+    const g = createAutoModeToolGuardrail({
+      ...baseConfig(''),
+      resolveProvider: () => provider,
+      askUser,
+      initialEngine: 'rules',
+    });
+    expect(g.getEngineForTest()).toBe('rules');
+    const verdict = await g.beforeTool!(callBash('ls'), ctx());
+    expect(verdict.action).toBe('allow');
+    expect(classifierCalled).toBe(false);
+    expect(askUser).toHaveBeenCalledOnce();
+    expect(askUser.mock.calls[0]![1]).toMatch(/rules mode/i);
+  });
+
+  it('initialEngine omitted defaults to "llm" (existing behaviour preserved)', async () => {
+    const g = createAutoModeToolGuardrail(baseConfig('<block>no</block><reason>x</reason>'));
+    expect(g.getEngineForTest()).toBe('llm');
+  });
+
+  it('timeoutMs override forces a fast classifier timeout when sideQuery hangs', async () => {
+    // Provider that hangs but observes the abort signal. sideQuery's
+    // internal timeout (classify forwards opts.timeoutMs to sideQuery)
+    // must fire — the guardrail's default is 8000ms, so without the
+    // override this would hang. Setting timeoutMs: 25 forces fast escalate.
+    class HangingProvider extends KodaXBaseProvider {
+      readonly name = 'hanging';
+      readonly supportsThinking = false;
+      protected readonly config: KodaXProviderConfig = {
+        apiKeyEnv: 'STUB_API_KEY',
+        model: 'stub-default',
+        supportsThinking: false,
+        reasoningCapability: 'none',
+      };
+      async stream(
+        _messages: KodaXMessage[],
+        _tools: KodaXToolDefinition[],
+        _system: string,
+        _reasoning?: boolean | KodaXReasoningRequest,
+        _streamOptions?: KodaXProviderStreamOptions,
+        signal?: AbortSignal,
+      ): Promise<KodaXStreamResult> {
+        return new Promise<KodaXStreamResult>((_, reject) => {
+          if (signal?.aborted) {
+            reject(new DOMException('Request aborted', 'AbortError'));
+            return;
+          }
+          signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('Request aborted', 'AbortError')),
+            { once: true },
+          );
+        });
+      }
+    }
+    const g = createAutoModeToolGuardrail({
+      ...baseConfig(''),
+      resolveProvider: () => new HangingProvider(),
+      timeoutMs: 25,
+    });
+    const start = Date.now();
+    const verdict = await g.beforeTool!(callBash('ls'), ctx());
+    const elapsed = Date.now() - start;
+    expect(verdict.action).toBe('escalate');
+    if (verdict.action === 'escalate') {
+      expect(verdict.reason).toMatch(/timeout/i);
+    }
+    // The default 8000ms must NOT have been used — assert we returned in
+    // well under 1s. The 500ms cap leaves slack for slow CI without
+    // accidentally validating the default.
+    expect(elapsed).toBeLessThan(500);
+  });
+});
+
 describe('AutoModeToolGuardrail — askUser escalation handling (FEATURE_092 phase 2b.7b)', () => {
   it('classifier-escalate path: askUser supplied + answers allow → verdict allow', async () => {
     const askUser = vi.fn(async () => 'allow' as const);

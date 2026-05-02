@@ -51,10 +51,29 @@ export interface AutoModeBootstrapDeps {
   readonly getCurrentModel: () => string | undefined;
   readonly getCurrentPermissionMode: () => PermissionMode;
   /**
+   * FEATURE_092 phase 2b.7b slice C: resolved settings/env block. The REPL
+   * computes this once via `loadAutoModeSettings()` (in
+   * `packages/repl/src/common/permission-config.ts`) and threads it here so
+   * the bootstrap stays free of file-system I/O and is hermetically testable.
+   */
+  readonly autoModeSettings: ResolvedAutoModeBootstrapSettings;
+  /**
    * Optional structured logger. Defaults to writing yellow warnings + dim
    * info lines to stderr via console (matching REPL conventions).
    */
   readonly log?: (level: 'info' | 'warn', msg: string) => void;
+}
+
+/**
+ * Subset of `ResolvedAutoModeSettings` the bootstrap actually needs. Imported
+ * via structural typing so bootstrap doesn't pull a dependency on
+ * `permission-config.ts` (which would create a cycle through the REPL barrel).
+ */
+export interface ResolvedAutoModeBootstrapSettings {
+  readonly engine: 'llm' | 'rules';
+  readonly classifierModel?: string;
+  readonly classifierModelEnv?: string;
+  readonly timeoutMs?: number;
 }
 
 export interface AutoModeBootstrapResult {
@@ -121,6 +140,14 @@ export async function bootstrapAutoMode(
       defaultModel: deps.getCurrentModel() ?? '',
       askUser,
       log: deps.log,
+      // FEATURE_092 phase 2b.7b slice C: starting engine + timeout + classifier
+      // model overrides. `userSettings` is layer 4 of `resolveClassifierModel`;
+      // `envVar` is layer 2 (cli flag and session-override remain unset until
+      // phase 2b.8 surfaces them via `/auto-model`).
+      initialEngine: deps.autoModeSettings.engine,
+      timeoutMs: deps.autoModeSettings.timeoutMs,
+      userSettings: deps.autoModeSettings.classifierModel,
+      envVar: deps.autoModeSettings.classifierModelEnv,
     });
     return guardrail;
   };

@@ -62,7 +62,7 @@ import {
 } from './commands.js';
 import { runWithPlanMode } from '../common/plan-mode.js';
 import { loadCompactionConfig } from '../common/compaction-config.js';
-import { loadAlwaysAllowTools, saveAlwaysAllowToolPattern } from '../common/permission-config.js';
+import { loadAlwaysAllowTools, loadAutoModeSettings, saveAlwaysAllowToolPattern } from '../common/permission-config.js';
 import {
   confirmToolExecution,
   getTerminalWidth,
@@ -440,6 +440,9 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   // FEATURE_092 phase 2b.7b: bootstrap auto-mode guardrail (factory only;
   // the guardrail is constructed lazily on first 'auto' tool call so the
   // cost is paid only by users who actually use auto mode).
+  // Slice C: settings/env block resolved here so the bootstrap stays free
+  // of file-system I/O — env override layers feed the resolver chain.
+  const autoModeSettings = loadAutoModeSettings();
   const autoModeBootstrap: AutoModeBootstrapResult = await bootstrapAutoMode({
     rl,
     projectRoot: gitRoot ?? process.cwd(),
@@ -447,6 +450,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     getCurrentProviderName: () => currentConfig.provider,
     getCurrentModel: () => currentConfig.model,
     getCurrentPermissionMode: () => currentPermissionMode,
+    autoModeSettings,
     log: (level, msg) => {
       if (level === 'warn') console.warn(chalk.yellow(msg));
       else console.log(chalk.dim(msg));

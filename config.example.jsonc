@@ -37,11 +37,13 @@
   // Agent 模式: "ama"（adaptive multi-agent，默认） | "sa"（single-agent）
   // "agentMode": "ama",
 
-  // 权限模式: "plan" | "accept-edits" | "auto-in-project"
+  // 权限模式: "plan" | "accept-edits" | "auto" | "auto-in-project"
   //   - plan:            只读规划模式，修改类工具一律要求确认
   //   - accept-edits:    自动允许文件编辑，shell 命令仍需确认（默认）
-  //   - auto-in-project: 项目目录内自动允许所有工具，外部仍需确认
-  // 注: "auto"（LLM 分类器驱动）属于 FEATURE_092 规划中功能，当前版本尚未启用。
+  //   - auto:            FEATURE_092 (v0.7.33) — LLM 分类器对每次工具调用做风险判定；
+  //                      详见下方 §9 autoMode。
+  //   - auto-in-project: 项目目录内自动允许所有工具，外部仍需确认（v0.8 起将作为
+  //                      "auto" 的 deprecated alias，建议新配置直接用 "auto"）
   "permissionMode": "accept-edits",
 
   // UI 语言: "en" | "zh" | "auto"（根据 LANG/LC_ALL 自动检测）。缺省 "en"。
@@ -205,14 +207,33 @@
   //   "C:\\Tools\\kodax-ext\\index.js"
   // ],
 
-  // ─── 9. Auto Mode 分类器（FEATURE_092, v0.7.33 规划中）────────────────
-  // 当 `permissionMode` 为 "auto" 时，由分类器决定是否放行风险调用。
-  // 注意: 当前版本该特性尚未落地，以下字段仅作预留，解析器会忽略。
+  // ─── 9. Auto Mode 分类器（FEATURE_092, v0.7.33）─────────────────────────
+  // 仅当 `permissionMode` 设为 "auto"（或别名 "auto-in-project"）时生效。
+  // 由 `packages/repl/src/common/permission-config.ts :: loadAutoModeSettings()`
+  // 读取，再经 `bootstrapAutoMode()` 注入到 AutoModeToolGuardrail。
+  //
+  // 字段:
+  //   engine             "llm"（默认） | "rules"
+  //                      - "llm"  :  分类器对每次非零成本工具调用做风险判定
+  //                      - "rules":  跳过分类器，所有非 Tier 1 调用都触发用户确认对话
+  //                      会话内一旦因连续 deny / circuit breaker 触发降级到 rules，
+  //                      不会自动恢复到 llm（设计 §"防绕阈值"）
+  //   classifierModel    "provider:model" 或 "model"（provider 继承主会话）。
+  //                      置空则复用主会话 (provider, model)。
+  //                      详见 docs/features/v0.7.33.md §"跨 provider 配置"
+  //   timeoutMs          分类器 sideQuery 超时毫秒数。默认 8000。
+  //
+  // 环境变量覆盖（优先级高于本字段）:
+  //   KODAX_AUTO_MODE_ENGINE             "llm" | "rules"
+  //   KODAX_AUTO_MODE_CLASSIFIER_MODEL   "provider:model" 或 "model"
+  //   KODAX_AUTO_MODE_TIMEOUT_MS         整数毫秒
+  //
   // 详见 docs/features/v0.7.33.md。
 
   // "autoMode": {
-  //   "engine": "llm",                      // "rules" | "llm"
-  //   "classifierModel": "minimax:abab6.5t-chat"
+  //   "engine": "llm",
+  //   "classifierModel": "minimax:abab6.5t-chat",
+  //   "timeoutMs": 8000
   // },
 
   // ─── 10. 仓库智能 Repo Intelligence ────────────────────────────────────

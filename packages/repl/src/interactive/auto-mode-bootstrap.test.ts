@@ -49,6 +49,12 @@ const baseDeps = () => ({
   getCurrentProviderName: () => 'kimi-code',
   getCurrentModel: () => 'kimi-for-coding',
   getCurrentPermissionMode: () => 'auto' as const,
+  autoModeSettings: {
+    engine: 'llm' as const,
+    classifierModel: undefined,
+    classifierModelEnv: undefined,
+    timeoutMs: undefined,
+  },
 });
 
 describe('bootstrapAutoMode', () => {
@@ -80,11 +86,26 @@ describe('bootstrapAutoMode', () => {
     expect(g.name).toBe('auto-mode');
   });
 
-  it('starts in llm engine (not pre-downgraded)', async () => {
+  it('starts in llm engine (not pre-downgraded) when autoModeSettings.engine="llm"', async () => {
     const { bootstrapAutoMode } = await import('./auto-mode-bootstrap.js');
     const result = await bootstrapAutoMode(baseDeps());
     const g = result.getGuardrail();
     expect(g.getEngineForTest()).toBe('llm');
+  });
+
+  it('starts in rules engine when autoModeSettings.engine="rules" (slice C wiring)', async () => {
+    const { bootstrapAutoMode } = await import('./auto-mode-bootstrap.js');
+    const result = await bootstrapAutoMode({
+      ...baseDeps(),
+      autoModeSettings: {
+        engine: 'rules' as const,
+        classifierModel: undefined,
+        classifierModelEnv: undefined,
+        timeoutMs: undefined,
+      },
+    });
+    const g = result.getGuardrail();
+    expect(g.getEngineForTest()).toBe('rules');
   });
 
   it('does not eagerly construct the guardrail (lazy on first getGuardrail)', async () => {

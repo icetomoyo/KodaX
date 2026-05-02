@@ -40,6 +40,93 @@ function getProjectConfigFile(): string {
 interface PermissionConfigData {
   permissionMode?: string;
   alwaysAllowTools?: string[];
+  /**
+   * FEATURE_092 phase 2b.7b slice C: auto-mode classifier settings.
+   * Only consulted when `permissionMode === 'auto'`.
+   */
+  autoMode?: AutoModeSettings;
+}
+
+/**
+ * Auto-mode classifier configuration. Read from `~/.kodax/config.json` (user-
+ * level only — project-level is intentionally not consulted, matching
+ * `permissionMode`'s scope) plus the `KODAX_AUTO_MODE_*` env override family.
+ */
+export interface AutoModeSettings {
+  /**
+   * Starting engine for the session.
+   * - `'llm'` (default): classifier runs on every non-Tier-1 tool call
+   * - `'rules'`: classifier skipped; every non-Tier-1 call escalates to askUser
+   * Engine downgrades stay sticky within the session regardless of this value.
+   */
+  engine?: 'llm' | 'rules';
+  /**
+   * Classifier model spec — `"provider:model"` or `"model"` (provider then
+   * inherits from the main session). Feeds layer 4 of `resolveClassifierModel`.
+   */
+  classifierModel?: string;
+  /** sideQuery timeout in ms. Default 8000. */
+  timeoutMs?: number;
+}
+
+export interface ResolvedAutoModeSettings {
+  readonly engine: 'llm' | 'rules';
+  readonly classifierModel?: string;
+  readonly classifierModelEnv?: string;
+  readonly timeoutMs?: number;
+}
+
+/**
+ * Resolve auto-mode settings from `~/.kodax/config.json` and the
+ * `KODAX_AUTO_MODE_*` env override family. Pure (no side effects).
+ *
+ * Env priority (highest first):
+ *   - KODAX_AUTO_MODE_ENGINE: 'llm' | 'rules' — overrides settings.engine
+ *   - KODAX_AUTO_MODE_CLASSIFIER_MODEL: model spec — surfaced as `classifierModelEnv`
+ *     so it reaches `AutoModeGuardrailConfig.envVar` (the resolver's layer 2)
+ *   - KODAX_AUTO_MODE_TIMEOUT_MS: integer ms — overrides settings.timeoutMs
+ *
+ * Invalid env values fall through to settings (defensive: a typo in an env
+ * var must not silently disable the classifier).
+ */
+export function loadAutoModeSettings(env: NodeJS.ProcessEnv = process.env): ResolvedAutoModeSettings {
+  const userConfig = readJsonFile(USER_CONFIG_FILE) as PermissionConfigData;
+  const fileSettings = userConfig.autoMode ?? {};
+
+  const envEngineRaw = env.KODAX_AUTO_MODE_ENGINE?.trim();
+  const envEngine =
+    envEngineRaw === 'llm' || envEngineRaw === 'rules' ? envEngineRaw : undefined;
+  const fileEngine =
+    fileSettings.engine === 'llm' || fileSettings.engine === 'rules'
+      ? fileSettings.engine
+      : undefined;
+  const engine: 'llm' | 'rules' = envEngine ?? fileEngine ?? 'llm';
+
+  const classifierModel = nonEmptyString(fileSettings.classifierModel);
+  const classifierModelEnv = nonEmptyString(env.KODAX_AUTO_MODE_CLASSIFIER_MODEL);
+
+  const envTimeoutRaw = env.KODAX_AUTO_MODE_TIMEOUT_MS?.trim();
+  const envTimeoutNum = envTimeoutRaw !== undefined ? Number(envTimeoutRaw) : NaN;
+  const envTimeoutMs = Number.isFinite(envTimeoutNum) && envTimeoutNum > 0
+    ? Math.floor(envTimeoutNum)
+    : undefined;
+  const fileTimeoutMs =
+    typeof fileSettings.timeoutMs === 'number' && fileSettings.timeoutMs > 0
+      ? Math.floor(fileSettings.timeoutMs)
+      : undefined;
+
+  return {
+    engine,
+    classifierModel,
+    classifierModelEnv,
+    timeoutMs: envTimeoutMs ?? fileTimeoutMs,
+  };
+}
+
+function nonEmptyString(s: unknown): string | undefined {
+  if (typeof s !== 'string') return undefined;
+  const trimmed = s.trim();
+  return trimmed.length === 0 ? undefined : trimmed;
 }
 
 function readJsonFile(filePath: string): Record<string, unknown> {

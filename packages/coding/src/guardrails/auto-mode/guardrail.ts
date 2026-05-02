@@ -148,6 +148,22 @@ export interface AutoModeGuardrailConfig {
    * tracker advances are visible across the session boundary.
    */
   readonly sharedState?: AutoModeSharedState;
+
+  /**
+   * FEATURE_092 phase 2b.7b slice C: starting engine. Defaults to `'llm'`.
+   * Set to `'rules'` to skip the classifier entirely from session start
+   * (the rules-mode escalate path runs immediately on the first non-Tier-1
+   * tool call). Resolved by the REPL from `~/.kodax/config.json`
+   * `autoMode.engine` and the `KODAX_AUTO_MODE_ENGINE` env var.
+   */
+  readonly initialEngine?: AutoModeEngine;
+
+  /**
+   * FEATURE_092 phase 2b.7b slice C: classifier sideQuery timeout in ms.
+   * Defaults to 8000. Resolved by the REPL from `~/.kodax/config.json`
+   * `autoMode.timeoutMs`.
+   */
+  readonly timeoutMs?: number;
 }
 
 export interface AutoModeToolGuardrail extends ToolGuardrail {
@@ -165,16 +181,17 @@ export interface AutoModeToolGuardrail extends ToolGuardrail {
   setProviderForTest(provider: KodaXBaseProvider): void;
 }
 
-const TIMEOUT_MS = 8000;
+const DEFAULT_TIMEOUT_MS = 8000;
 
 export function createAutoModeToolGuardrail(
   config: AutoModeGuardrailConfig,
 ): AutoModeToolGuardrail {
   const state: AutoModeSharedState = config.sharedState ?? {
-    engine: 'llm',
+    engine: config.initialEngine ?? 'llm',
     denials: createDenialTracker(),
     breaker: createCircuitBreaker(),
   };
+  const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   // For tests only: lets us swap the provider mid-flight to verify downgrade.
   let providerOverride: KodaXBaseProvider | undefined;
@@ -242,7 +259,7 @@ export function createAutoModeToolGuardrail(
         claudeMd: config.claudeMd,
         transcript: ctx.messages ?? [],
         action,
-        timeoutMs: TIMEOUT_MS,
+        timeoutMs,
         abortSignal: ctx.abortSignal,
         costTracker: config.getCostTracker?.(),
       });
