@@ -15,11 +15,11 @@
 |---|---|
 | Tracked feature IDs | `001-109` (026 removed) |
 | Total tracked features | `108` |
-| Completed | `80` |
+| Completed | `82` |
 | Cancelled | `2` |
 | Absorbed | `2` |
 | InProgress | `1` |
-| Planned | `26` |
+| Planned | `25` |
 | Current released version | `v0.7.31` |
 
 > Note: `Planned` includes 4 strikethrough rows (`095` absorbed → 057, `059` absorbed → 084, `063` cancelled, `073` cancelled) that remain in the planned table for traceability. The `Cancelled` and `Absorbed` counters above slice the same rows by lifecycle reason.
@@ -34,7 +34,6 @@
 | `v0.7.29` | `4` |
 | `v0.7.30` | `2` |
 | `v0.7.31` | `3` |
-| `v0.7.32` | `1` |
 | `v0.7.33` | `1` |
 | `v0.7.34` | `1` |
 | `v0.7.36` | `1` |
@@ -70,7 +69,6 @@
 | `101` | Constructed Agent Admission Contract — Quality Invariants & 5-Step Manifest Vetting | Core / Safety Substrate | Critical | `v0.7.31` | [v0.7.31](features/v0.7.31.md#feature_101-constructed-agent-admission-contract) |
 | `089` | Self-Construction Tier 3 — Agent Generation | Core | High | `v0.7.31` | [v0.7.31](features/v0.7.31.md#feature_089-self-construction-tier-3--agent-generation) |
 | `106` | AMA Harness Selection Calibration — Scope-Aware ToolGuardrail + Scout Prompt Hard Rule | Core / Quality | High | `v0.7.31` | [v0.7.31](features/v0.7.31.md#feature_106-ama-harness-selection-calibration) |
-| `090` | Self-Construction Tier 4 — Agent Self-Modifying Role Spec | Core | High | `v0.7.32` | [v0.7.32](features/v0.7.32.md#feature_090-self-construction-tier-4--agent-self-modifying-role-spec) |
 | `092` | Auto Mode Classifier — LLM-Reviewed Permission Tier | Core | High | `v0.7.33` | [v0.7.33](features/v0.7.33.md#feature_092-auto-mode-classifier--llm-reviewed-permission-tier-for-high-risk-tool-calls) |
 | `097` | AMA Runner Realtime Todo List — Claude-Aligned Visibility Surface | Enhancement | High | `v0.7.34` | [v0.7.34](features/v0.7.34.md#feature_097-ama-runner-realtime-todo-list--claude-aligned-visibility-surface) |
 | `094` | Deep Anti-Escape Hardening — Runtime Detection and Retry Contract for Generative Large-File Writes | Core | Medium | `v0.7.36` | [v0.7.36](features/v0.7.36.md#feature_094-deep-anti-escape-hardening--runtime-detection-and-retry-contract-for-generative-large-file-writes) |
@@ -216,6 +214,8 @@
 | `091` | Repo-Intelligence Protocol Package Extraction | `v0.7.27` | [v0.7.27](features/v0.7.27.md#feature_091-repo-intelligence-protocol-package-extraction) |
 | `099` | Provider Catalog Refresh — DeepSeek V4 + Kimi-code Label Collapse | `v0.7.28` (unreleased) | [v0.7.28](features/v0.7.28.md#feature_099-provider-catalog-refresh--deepseek-v4--kimi-code-label-collapse) |
 | `098` | Per-Model Context Window & Output Token Limits | `v0.7.28` (unreleased) | [v0.7.28](features/v0.7.28.md#feature_098-per-model-context-window--output-token-limits) |
+| `090` | Self-Construction Tier 4 — Agent Self-Modifying Role Spec | `v0.7.32` (unreleased) | [v0.7.32](features/v0.7.32.md#feature_090-self-construction-tier-4--agent-self-modifying-role-spec) |
+| `107` | AMA H2 Plan-Execute Boundary Eval | `v0.7.32` (unreleased) | [v0.7.32](features/v0.7.32.md#feature_107-ama-h2-plan-execute-boundary-eval) |
 
 > `FEATURE_051` close-out posture: keep the current REPL status/footer/task/message surfaces frozen, limit follow-up work to invisible substrate maturity for transcript, scroll/selection, and input behavior, and treat the design doc as a completed close-out record rather than an open rollout plan.
 
