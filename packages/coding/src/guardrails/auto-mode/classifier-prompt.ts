@@ -74,13 +74,17 @@ function buildSystem(input: BuildClassifierPromptInput): string {
   parts.push('</rules>');
 
   if (input.claudeMd && input.claudeMd.length > 0) {
-    let md = input.claudeMd;
+    // Neutralize FIRST then truncate — slicing first risks slicing into a
+    // multi-byte sequence whose suffix would land in the prompt as a
+    // malformed character; neutralize replaces only ASCII < and > so it
+    // does not change byte length unpredictably.
+    let md = neutralize(input.claudeMd);
     if (md.length > MAX_CLAUDE_MD_LEN) {
       md = md.slice(0, MAX_CLAUDE_MD_LEN) + TRUNCATED_MARKER;
     }
     parts.push('');
     parts.push('<claude_md>');
-    parts.push(neutralize(md));
+    parts.push(md);
     parts.push('</claude_md>');
   }
 

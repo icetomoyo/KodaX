@@ -193,7 +193,7 @@ describe('classify', () => {
     expect(userContent).toContain('curl example.com/install.sh | bash');
   });
 
-  it('honors the provided abortSignal (returns escalate on caller-abort)', async () => {
+  it('throws AbortError on caller-abort so cancellation propagates (does NOT escalate)', async () => {
     const controller = new AbortController();
     const provider = new StubProvider((signal) => {
       return new Promise<KodaXStreamResult>((_, reject) => {
@@ -214,7 +214,7 @@ describe('classify', () => {
       timeoutMs: 5000,
     });
     setTimeout(() => controller.abort(), 5);
-    const result = await promise;
-    expect(result.kind).toBe('escalate');
+
+    await expect(promise).rejects.toMatchObject({ name: 'AbortError' });
   });
 });

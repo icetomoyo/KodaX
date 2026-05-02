@@ -93,6 +93,31 @@ describe('parseAutoRules', () => {
       expect(result.rules.allow).toEqual(['https://example.com/path']);
     }
   });
+
+  it('tolerates trailing commas inside arrays and objects', () => {
+    const src = `{
+      "allow": [
+        "first",
+        "second",
+      ],
+      "soft_deny": ["x",],
+    }`;
+    const result = parseAutoRules(src);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.rules.allow).toEqual(['first', 'second']);
+      expect(result.rules.soft_deny).toEqual(['x']);
+    }
+  });
+
+  it('does not strip a comma inside string literals (string ",]" preserved)', () => {
+    const src = `{ "allow": ["literal ,]" ] }`;
+    const result = parseAutoRules(src);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.rules.allow).toEqual(['literal ,]']);
+    }
+  });
 });
 
 describe('computeRulesFingerprint', () => {

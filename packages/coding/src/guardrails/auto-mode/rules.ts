@@ -135,10 +135,14 @@ export async function trustProjectRules(
 // =============== JSONC parser (minimal, no extra dependency) ===============
 
 /**
- * Strip JS-style line and block comments from a source string while
- * preserving content inside string literals. Sufficient for user-edited
- * config files; not a full JSONC spec implementation (no trailing-comma
- * tolerance, since `JSON.parse` would still reject those).
+ * Strip JS-style line and block comments AND trailing commas from a source
+ * string while preserving content inside string literals. Sufficient for
+ * user-edited config files; trailing-comma tolerance handles the most
+ * common hand-edit mistake (`["a", "b",]`) which `JSON.parse` would
+ * otherwise reject with a confusing error.
+ *
+ * Single-pass, string-aware: tracks string-literal state so that `//` or
+ * `,]` inside a string are passed through unchanged.
  */
 function stripJsonComments(src: string): string {
   let out = '';
@@ -173,18 +177,47 @@ function stripJsonComments(src: string): string {
     }
 
     if (ch === '/' && next === '/') {
-      // Skip until newline
       i += 2;
       while (i < src.length && src[i] !== '\n') i += 1;
       continue;
     }
 
     if (ch === '/' && next === '*') {
-      // Skip until '*/'
       i += 2;
       while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) i += 1;
       i += 2;
       continue;
+    }
+
+    // Trailing comma: a comma followed (after whitespace/comments) by ] or }.
+    // Look ahead through whitespace and skipping nested comments to decide.
+    if (ch === ',') {
+      let j = i + 1;
+      while (j < src.length) {
+        const c = src[j]!;
+        const c2 = src[j + 1];
+        if (c === ' ' || c === '\t' || c === '\n' || c === '\r') {
+          j += 1;
+          continue;
+        }
+        if (c === '/' && c2 === '/') {
+          j += 2;
+          while (j < src.length && src[j] !== '\n') j += 1;
+          continue;
+        }
+        if (c === '/' && c2 === '*') {
+          j += 2;
+          while (j < src.length && !(src[j] === '*' && src[j + 1] === '/')) j += 1;
+          j += 2;
+          continue;
+        }
+        break;
+      }
+      if (src[j] === ']' || src[j] === '}') {
+        // Drop this comma (don't append) — JSON.parse would reject it.
+        i += 1;
+        continue;
+      }
     }
 
     out += ch;

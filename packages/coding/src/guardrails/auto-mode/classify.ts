@@ -94,10 +94,11 @@ export async function classify(opts: ClassifyOptions): Promise<ClassifyDecision>
       };
 
     case 'aborted':
-      return {
-        kind: 'escalate',
-        reason: 'classifier call aborted by caller',
-      };
+      // Caller-abort means the user cancelled the entire tool-call evaluation
+      // (Ctrl-C upstream). Returning escalate would show a confirm dialog to a
+      // user who has already requested cancellation. Re-throw an AbortError so
+      // the caller's abort chain propagates cleanly.
+      throw new DOMException('classify aborted', 'AbortError');
 
     case 'error':
     default: {
