@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createAutoModeToolGuardrail } from './guardrail.js';
-import type { AutoModeGuardrailConfig } from './guardrail.js';
+import type { AutoModeAskUser, AutoModeGuardrailConfig } from './guardrail.js';
 import type { AutoRules } from './rules.js';
 import { KodaXBaseProvider } from '@kodax/ai';
 import type {
@@ -260,7 +260,7 @@ describe('AutoModeToolGuardrail — initialEngine + timeoutMs config (FEATURE_09
       classifierCalled = true;
       return okResult('<block>no</block><reason>x</reason>');
     });
-    const askUser = vi.fn(async () => 'allow' as const);
+    const askUser = vi.fn<AutoModeAskUser>(async () => 'allow');
     const g = createAutoModeToolGuardrail({
       ...baseConfig(''),
       resolveProvider: () => provider,
@@ -336,7 +336,7 @@ describe('AutoModeToolGuardrail — initialEngine + timeoutMs config (FEATURE_09
 
 describe('AutoModeToolGuardrail — askUser escalation handling (FEATURE_092 phase 2b.7b)', () => {
   it('classifier-escalate path: askUser supplied + answers allow → verdict allow', async () => {
-    const askUser = vi.fn(async () => 'allow' as const);
+    const askUser = vi.fn<AutoModeAskUser>(async () => 'allow');
     // sideQuery returns a 'tool_use'-like contract violation that maps to escalate;
     // simpler path: stub provider that throws → breaker records error → escalate.
     const provider = new StubProvider(async () => { throw new Error('500 transient'); });
@@ -354,7 +354,7 @@ describe('AutoModeToolGuardrail — askUser escalation handling (FEATURE_092 pha
   });
 
   it('classifier-escalate path: askUser supplied + answers block → verdict block (reason preserved)', async () => {
-    const askUser = vi.fn(async () => 'block' as const);
+    const askUser = vi.fn<AutoModeAskUser>(async () => 'block');
     const provider = new StubProvider(async () => { throw new Error('500 transient'); });
     const g = createAutoModeToolGuardrail({
       ...baseConfig(''),
@@ -369,7 +369,7 @@ describe('AutoModeToolGuardrail — askUser escalation handling (FEATURE_092 pha
   });
 
   it('rules-engine path (engine already downgraded): askUser called with rules reason', async () => {
-    const askUser = vi.fn(async () => 'allow' as const);
+    const askUser = vi.fn<AutoModeAskUser>(async () => 'allow');
     const g = createAutoModeToolGuardrail({
       ...baseConfig('<block>yes</block><reason>nope</reason>'),
       askUser,
@@ -399,7 +399,7 @@ describe('AutoModeToolGuardrail — askUser escalation handling (FEATURE_092 pha
   });
 
   it('askUser rejection propagates (does not silently allow/block)', async () => {
-    const askUser = vi.fn(async () => { throw new Error('user cancelled'); });
+    const askUser = vi.fn<AutoModeAskUser>(async () => { throw new Error('user cancelled'); });
     const provider = new StubProvider(async () => { throw new Error('500 transient'); });
     const g = createAutoModeToolGuardrail({
       ...baseConfig(''),
@@ -410,7 +410,7 @@ describe('AutoModeToolGuardrail — askUser escalation handling (FEATURE_092 pha
   });
 
   it('askUser block does NOT undowngrade the engine (downgrade is sticky)', async () => {
-    const askUser = vi.fn(async () => 'allow' as const);
+    const askUser = vi.fn<AutoModeAskUser>(async () => 'allow');
     const g = createAutoModeToolGuardrail({
       ...baseConfig('<block>yes</block><reason>nope</reason>'),
       askUser,
@@ -469,5 +469,74 @@ describe('AutoModeToolGuardrail — wire-up details', () => {
       await g.beforeTool!(callBash('rm'), ctx());
     }
     expect(g.getEngineForTest()).toBe('rules');
+  });
+});
+
+describe('AutoModeToolGuardrail — onEngineChange callback (FEATURE_092 phase 2b.8)', () => {
+  it('fires once when 3 consecutive blocks downgrade engine to rules', async () => {
+    const onEngineChange = vi.fn<(engine: 'llm' | 'rules') => void>();
+    const g = createAutoModeToolGuardrail({
+      ...baseConfig('<block>yes</block><reason>nope</reason>'),
+      onEngineChange,
+    });
+    // Two blocks: still in llm, no callback yet.
+    await g.beforeTool!(callBash('rm -rf /'), ctx());
+    await g.beforeTool!(callBash('rm -rf /'), ctx());
+    expect(onEngineChange).not.toHaveBeenCalled();
+    // Third block crosses the threshold.
+    await g.beforeTool!(callBash('rm -rf /'), ctx());
+    expect(onEngineChange).toHaveBeenCalledOnce();
+    expect(onEngineChange).toHaveBeenCalledWith('rules');
+  });
+
+  it('fires once when circuit breaker trips (5 errors)', async () => {
+    const onEngineChange = vi.fn<(engine: 'llm' | 'rules') => void>();
+    const provider = new StubProvider(async () => { throw new Error('500 Internal'); });
+    const g = createAutoModeToolGuardrail({
+      ...baseConfig(''),
+      resolveProvider: () => provider,
+      onEngineChange,
+    });
+    for (let i = 0; i < 5; i += 1) {
+      await g.beforeTool!(callBash(`echo ${i}`), ctx());
+    }
+    expect(onEngineChange).toHaveBeenCalledOnce();
+    expect(onEngineChange).toHaveBeenCalledWith('rules');
+  });
+
+  it('fires on manual setEngine() that changes the engine', () => {
+    const onEngineChange = vi.fn<(engine: 'llm' | 'rules') => void>();
+    const g = createAutoModeToolGuardrail({
+      ...baseConfig('<block>no</block><reason>x</reason>'),
+      onEngineChange,
+    });
+    g.setEngine('rules');
+    expect(onEngineChange).toHaveBeenCalledOnce();
+    expect(onEngineChange).toHaveBeenCalledWith('rules');
+    g.setEngine('llm');
+    expect(onEngineChange).toHaveBeenCalledTimes(2);
+    expect(onEngineChange).toHaveBeenLastCalledWith('llm');
+  });
+
+  it('does NOT fire when setEngine() is called with the current engine value', () => {
+    const onEngineChange = vi.fn<(engine: 'llm' | 'rules') => void>();
+    const g = createAutoModeToolGuardrail({
+      ...baseConfig('<block>no</block><reason>x</reason>'),
+      onEngineChange,
+    });
+    expect(g.getEngine()).toBe('llm');
+    g.setEngine('llm'); // no-op
+    expect(onEngineChange).not.toHaveBeenCalled();
+  });
+
+  it('does NOT fire on classifier-allow path (no engine change)', async () => {
+    const onEngineChange = vi.fn<(engine: 'llm' | 'rules') => void>();
+    const g = createAutoModeToolGuardrail({
+      ...baseConfig('<block>no</block><reason>safe</reason>'),
+      onEngineChange,
+    });
+    const verdict = await g.beforeTool!(callBash('ls'), ctx());
+    expect(verdict.action).toBe('allow');
+    expect(onEngineChange).not.toHaveBeenCalled();
   });
 });

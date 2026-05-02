@@ -17,10 +17,6 @@
 
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('./prompts.js', () => ({
-  confirmToolExecution: vi.fn(async () => ({ confirmed: true, always: false })),
-}));
-
 // `bootstrapAutoMode` calls `loadAutoRules` against the real filesystem.
 // We mock it to return an empty merge so the test doesn't depend on the
 // developer's `~/.kodax/auto-rules.jsonc` (it doesn't exist in CI).
@@ -38,14 +34,10 @@ vi.mock('@kodax/coding', async () => {
   };
 });
 
-import type * as readline from 'readline';
-
 import { bootstrapAutoMode } from './auto-mode-bootstrap.js';
 
-const fakeRl = {} as readline.Interface;
-
 const baseDeps = () => ({
-  rl: fakeRl,
+  askUser: vi.fn(async () => 'allow' as const),
   projectRoot: '/test/project',
   getAgentsFiles: () => [],
   getCurrentProviderName: () => 'kimi-code',

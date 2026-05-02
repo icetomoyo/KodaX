@@ -24,8 +24,6 @@
  *     phase 2b.8 via `/auto-model`.
  */
 
-import type * as readline from 'readline';
-
 import {
   createAutoModeToolGuardrail,
   formatAgentsForPrompt,
@@ -41,10 +39,15 @@ import {
 } from '@kodax/coding';
 import type { KodaXBaseProvider } from '@kodax/ai';
 import type { PermissionMode } from '../permission/types.js';
-import { confirmToolExecution } from './prompts.js';
 
 export interface AutoModeBootstrapDeps {
-  readonly rl: readline.Interface;
+  /**
+   * Surface-specific user-confirmation callback. Readline REPL wraps
+   * `confirmToolExecution(rl, ...)`; Ink REPL wraps `showConfirmDialog`.
+   * Bootstrap stays surface-agnostic so the same factory can wire both
+   * UIs without depending on readline.
+   */
+  readonly askUser: AutoModeAskUser;
   readonly projectRoot: string;
   readonly getAgentsFiles: () => AgentsFile[];
   readonly getCurrentProviderName: () => string;
@@ -62,6 +65,14 @@ export interface AutoModeBootstrapDeps {
    * info lines to stderr via console (matching REPL conventions).
    */
   readonly log?: (level: 'info' | 'warn', msg: string) => void;
+  /**
+   * Fired whenever the guardrail's classifier engine changes — both on
+   * automatic downgrades (denial threshold / circuit breaker) and on
+   * manual `setEngine` calls. The REPL surfaces this into status-bar
+   * state so the engine indicator stays accurate without requiring a
+   * mode toggle to refresh.
+   */
+  readonly onEngineChange?: (engine: 'llm' | 'rules') => void;
 }
 
 /**
@@ -105,19 +116,6 @@ export async function bootstrapAutoMode(
 
   let guardrail: AutoModeToolGuardrail | undefined;
 
-  const askUser: AutoModeAskUser = async (call, reason) => {
-    const result = await confirmToolExecution(
-      deps.rl,
-      call.name,
-      call.input as Record<string, unknown>,
-      {
-        permissionMode: deps.getCurrentPermissionMode(),
-        reason: `[auto-mode] ${reason}`,
-      },
-    );
-    return result.confirmed ? 'allow' : 'block';
-  };
-
   const getGuardrail = (): AutoModeToolGuardrail => {
     if (guardrail) return guardrail;
     guardrail = createAutoModeToolGuardrail({
@@ -138,8 +136,9 @@ export async function bootstrapAutoMode(
       },
       defaultProvider: deps.getCurrentProviderName(),
       defaultModel: deps.getCurrentModel() ?? '',
-      askUser,
+      askUser: deps.askUser,
       log: deps.log,
+      onEngineChange: deps.onEngineChange,
       // FEATURE_092 phase 2b.7b slice C: starting engine + timeout + classifier
       // model overrides. `userSettings` is layer 4 of `resolveClassifierModel`;
       // `envVar` is layer 2 (cli flag and session-override remain unset until

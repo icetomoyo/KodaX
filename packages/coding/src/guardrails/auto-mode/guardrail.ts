@@ -142,6 +142,16 @@ export interface AutoModeGuardrailConfig {
   readonly log?: (level: 'info' | 'warn', msg: string) => void;
 
   /**
+   * Fired whenever the active engine changes — both on automatic downgrades
+   * (denial threshold / circuit breaker) AND on manual `setEngine(...)`
+   * calls. UI surfaces (status bar engine indicator, slash-command
+   * confirmations) subscribe here so the displayed engine stays in sync
+   * with the guardrail's internal state without the user having to trigger
+   * another mode toggle just to refresh the bar.
+   */
+  readonly onEngineChange?: (engine: AutoModeEngine) => void;
+
+  /**
    * Optional shared state for subagent threshold-bypass defense
    * (design doc "防绕阈值"). When supplied, the parent and child
    * guardrails reference the SAME object — engine downgrades and
@@ -215,6 +225,17 @@ export function createAutoModeToolGuardrail(
   // For tests only: lets us swap the provider mid-flight to verify downgrade.
   let providerOverride: KodaXBaseProvider | undefined;
 
+  // Single mutation point for `state.engine`. Fires `onEngineChange` on every
+  // real transition (no callback when the new value equals the old) so UI
+  // surfaces (status bar engine indicator) stay in sync without polling. The
+  // automatic-downgrade paths (denial threshold, circuit breaker) and the
+  // manual `setEngine(...)` path both go through here.
+  const transitionEngine = (next: AutoModeEngine): void => {
+    if (state.engine === next) return;
+    state.engine = next;
+    config.onEngineChange?.(next);
+  };
+
   const beforeTool = async (
     call: RunnerToolCall,
     ctx: GuardrailContext,
@@ -249,14 +270,14 @@ export function createAutoModeToolGuardrail(
 
     // Threshold checks — engine downgrade BEFORE making another classify call
     if (denialShouldFallback(state.denials)) {
-      state.engine = 'rules';
+      transitionEngine('rules');
       config.log?.('warn', '[auto-mode] denial threshold crossed — engine downgraded to rules');
       return escalateOrAsk(
         'auto-mode engine downgraded after consecutive denials; user confirmation required',
       );
     }
     if (breakerShouldFallback(state.breaker, Date.now())) {
-      state.engine = 'rules';
+      transitionEngine('rules');
       config.log?.('warn', '[auto-mode] circuit breaker tripped — engine downgraded to rules');
       return escalateOrAsk('classifier infrastructure unstable; engine downgraded');
     }
@@ -281,6 +302,7 @@ export function createAutoModeToolGuardrail(
         timeoutMs,
         abortSignal: ctx.abortSignal,
         costTracker: config.getCostTracker?.(),
+        setCostTracker: config.setCostTracker,
       });
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {
@@ -304,7 +326,7 @@ export function createAutoModeToolGuardrail(
       case 'block':
         state.denials = recordDenialBlock(state.denials);
         if (denialShouldFallback(state.denials)) {
-          state.engine = 'rules';
+          transitionEngine('rules');
           config.log?.('warn', '[auto-mode] denial threshold crossed — engine downgraded to rules');
         }
         return { action: 'block', reason: decision.reason };
@@ -312,7 +334,7 @@ export function createAutoModeToolGuardrail(
       case 'escalate':
         state.breaker = recordBreakerError(state.breaker, Date.now());
         if (breakerShouldFallback(state.breaker, Date.now())) {
-          state.engine = 'rules';
+          transitionEngine('rules');
           config.log?.('warn', '[auto-mode] circuit breaker tripped — engine downgraded to rules');
         }
         return escalateOrAsk(decision.reason);
@@ -331,7 +353,7 @@ export function createAutoModeToolGuardrail(
     getEngine: () => state.engine,
     getStats,
     setEngine: (engine) => {
-      state.engine = engine;
+      transitionEngine(engine);
     },
     // Test-only aliases — kept for backward compat with the existing test files.
     getEngineForTest: () => state.engine,

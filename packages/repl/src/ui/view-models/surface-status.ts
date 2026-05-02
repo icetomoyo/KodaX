@@ -44,6 +44,7 @@ export interface BuildSurfaceStatusBarPropsOptions {
   contextUsage?: SurfaceStatusContextUsage;
   isLoading: boolean;
   managedState?: SurfaceStatusManagedState;
+  autoModeEngine?: StatusBarProps["autoModeEngine"];
 }
 
 export function buildSurfaceStatusBarProps(
@@ -85,5 +86,6 @@ export function buildSurfaceStatusBarProps(
     managedBudgetApprovalRequired: options.isLoading
       ? options.managedState?.budgetApprovalRequired
       : undefined,
+    autoModeEngine: options.autoModeEngine,
   };
 }

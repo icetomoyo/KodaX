@@ -92,8 +92,8 @@ import {
   resolveInteractiveSurfacePreference,
   runInteractiveMode,
   runInkInteractiveMode,
-  type PermissionMode,
 } from '@kodax/repl';
+import type { AcpPermissionMode } from './acp_server.js';
 export {
   ACP_PERMISSION_MODES,
   getDefaultCommandDir,
@@ -504,7 +504,7 @@ function showBasicHelp(): void {
   console.log('  /exit, /quit            Exit interactive mode');
   console.log('  /clear                  Clear conversation history');
   console.log('  /status                 Show session status');
-  console.log('  /mode [plan|accept-edits|auto-in-project]  Switch permission mode');
+  console.log('  /mode [plan|accept-edits|auto]  Switch permission mode');
   console.log('  /project ...            Project workflow commands');
   console.log('  /sessions               List saved sessions\n');
   console.log('Examples:');
@@ -673,7 +673,7 @@ complete -c kodax -l version -d 'Show version'`);
       repoIntelligenceTrace?: boolean;
       repointelEndpoint?: string;
       repointelBin?: string;
-      permissionMode?: PermissionMode;
+      permissionMode?: AcpPermissionMode;
     }) => {
       if (typeof subcommandOptions.repoIntelligence === 'string' && subcommandOptions.repoIntelligence.trim()) {
         process.env.KODAX_REPO_INTELLIGENCE_MODE = subcommandOptions.repoIntelligence.trim();

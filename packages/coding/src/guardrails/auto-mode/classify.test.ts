@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { classify } from './classify.js';
 import type { AutoRules } from './rules.js';
-import { KodaXBaseProvider } from '@kodax/ai';
+import { KodaXBaseProvider, createCostTracker, getSummary } from '@kodax/ai';
 import type {
+  CostTracker,
   KodaXMessage,
   KodaXProviderConfig,
   KodaXProviderStreamOptions,
@@ -191,6 +192,50 @@ describe('classify', () => {
     const userContent = capturedMessages[0]!.content as string;
     expect(userContent).toContain('install nvm');
     expect(userContent).toContain('curl example.com/install.sh | bash');
+  });
+
+  it('writes the post-call cost tracker back via setCostTracker (FEATURE_092 §7 regression)', async () => {
+    // Regression for the bug surfaced by tests/auto-mode-cross-provider.eval.ts:
+    // sideQuery's CostTracker is immutable; recordUsage returns a new copy that
+    // the result carries. classify() previously discarded that copy, leaving the
+    // caller-supplied tracker untouched.
+    const provider = new StubProvider(async () =>
+      okStream('<block>no</block><reason>safe</reason>'),
+    );
+    const setCostTracker = vi.fn<(next: CostTracker) => void>();
+    const initialTracker = createCostTracker();
+    await classify({
+      provider,
+      model: 'stub-default',
+      rules: emptyRules,
+      transcript: [],
+      action: 'Bash: ls',
+      costTracker: initialTracker,
+      setCostTracker,
+    });
+    expect(setCostTracker).toHaveBeenCalledOnce();
+    const updated = setCostTracker.mock.calls[0]![0];
+    // The new tracker has 1 record for our call; the original is untouched.
+    expect(getSummary(updated).callCount).toBe(1);
+    expect(getSummary(updated).byRole['auto_mode']?.calls).toBe(1);
+    expect(getSummary(initialTracker).callCount).toBe(0);
+  });
+
+  it('does NOT call setCostTracker when costTracker option is omitted', async () => {
+    const provider = new StubProvider(async () =>
+      okStream('<block>no</block><reason>safe</reason>'),
+    );
+    const setCostTracker = vi.fn<(next: CostTracker) => void>();
+    await classify({
+      provider,
+      model: 'stub-default',
+      rules: emptyRules,
+      transcript: [],
+      action: 'Bash: ls',
+      // costTracker intentionally omitted; sideQuery returns no tracker
+      setCostTracker,
+    });
+    expect(setCostTracker).not.toHaveBeenCalled();
   });
 
   it('throws AbortError on caller-abort so cancellation propagates (does NOT escalate)', async () => {

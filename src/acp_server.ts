@@ -59,8 +59,27 @@ import {
   type AcpEventSink,
 } from './acp_events.js';
 
+/**
+ * Permission mode ids exposed to ACP clients. These are wire-protocol values
+ * advertised in `SessionMode.id`, so the set is intentionally narrower than
+ * the canonical `PermissionMode` from `@kodax/repl`.
+ *
+ * Why `'auto'` (canonical FEATURE_092 v0.7.33) is **not** here:
+ *
+ *   1. ACP's auto-mode classifier path requires an interactive `askUser`
+ *      surface (the readline confirm prompt or Ink confirm dialog).
+ *      `KodaXAcpServer` runs out-of-process and routes confirmations through
+ *      `connection.requestPermission` — a different protocol that has no
+ *      structural place for the classifier-escalate `<reason>` payload.
+ *   2. ACP clients that want auto-style behavior continue to use the
+ *      legacy alias `'auto-in-project'`, which goes through
+ *      `evaluateToolPermission` → `requestPermissionFromClient` (no LLM
+ *      classifier, identical pre-v0.7.33 semantics).
+ *   3. Once an ACP-native classifier-escalate channel lands, `'auto'` will
+ *      be added here as a third id without breaking existing clients.
+ */
 export const ACP_PERMISSION_MODE_IDS = ['plan', 'accept-edits', 'auto-in-project'] as const;
-type AcpPermissionMode = (typeof ACP_PERMISSION_MODE_IDS)[number];
+export type AcpPermissionMode = (typeof ACP_PERMISSION_MODE_IDS)[number];
 
 const ACP_TOOL_FILE_MODIFICATION_TOOLS = new Set(['write', 'edit']);
 const ACP_TOOL_KIND_MAP: Record<string, ToolKind> = {

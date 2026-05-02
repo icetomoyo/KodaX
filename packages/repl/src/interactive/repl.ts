@@ -458,7 +458,18 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   // of file-system I/O — env override layers feed the resolver chain.
   const autoModeSettings = loadAutoModeSettings();
   const autoModeBootstrap: AutoModeBootstrapResult = await bootstrapAutoMode({
-    rl,
+    askUser: async (call, reason) => {
+      const result = await confirmToolExecution(
+        rl,
+        call.name,
+        call.input as Record<string, unknown>,
+        {
+          permissionMode: currentPermissionMode,
+          reason: `[auto-mode] ${reason}`,
+        },
+      );
+      return result.confirmed ? 'allow' : 'block';
+    },
     projectRoot: gitRoot ?? process.cwd(),
     getAgentsFiles: () => agentsFiles,
     getCurrentProviderName: () => currentConfig.provider,
@@ -468,6 +479,15 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     log: (level, msg) => {
       if (level === 'warn') console.warn(chalk.yellow(msg));
       else console.log(chalk.dim(msg));
+    },
+    // FEATURE_092 phase 2b.8: refresh the readline status bar engine
+    // indicator on automatic downgrades (denial threshold / circuit breaker)
+    // so the user sees `auto[RULES]` immediately after the guardrail flips
+    // — without waiting for the next mode toggle.
+    onEngineChange: (engine) => {
+      if (isAutoMode(currentPermissionMode)) {
+        statusBar?.update({ autoModeEngine: engine });
+      }
     },
   });
 
@@ -724,7 +744,7 @@ Keyboard Shortcuts:
       currentPermissionMode = mode; // Sync with local permission state
       // FEATURE_092 phase 2b.8: keep the status bar engine indicator in sync
       // when the user toggles in/out of auto mode. Outside auto modes,
-      // setting `autoModeEngine: undefined` removes the [llm]/[rules] suffix.
+      // setting `autoModeEngine: undefined` removes the [LLM]/[RULES] suffix.
       const autoModeEngine = isAutoMode(mode)
         ? autoModeBootstrap.getGuardrail().getEngine()
         : undefined;

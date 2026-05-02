@@ -13,6 +13,7 @@ export {
   computeConfirmTools,
   isPermissionMode,
   normalizePermissionMode,
+  permissionModeDisplayName,
 } from './types.js';
 
 // Permission utilities

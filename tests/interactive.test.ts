@@ -281,7 +281,10 @@ describe('executeCommand', () => {
   it('should execute auto command', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     await executeCommand({ command: 'auto', args: [] }, context, callbacks, currentConfig);
-    expect(currentConfig.permissionMode).toBe('auto-in-project');
+    // FEATURE_092 (v0.7.33): /auto switches to canonical 'auto', not the
+    // deprecated 'auto-in-project' alias. The alias remains accessible via
+    // /mode auto-in-project for users who explicitly want it.
+    expect(currentConfig.permissionMode).toBe('auto');
     consoleSpy.mockRestore();
   });
 

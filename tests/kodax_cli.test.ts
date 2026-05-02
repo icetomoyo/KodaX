@@ -333,7 +333,7 @@ describe('CLI Entry Point', () => {
     expect(source).toContain('/project ...            Project workflow commands');
     expect(source).toContain('Legacy no-op; current CLI already starts a fresh session by default');
     expect(source).toContain('Resume session by ID (no ID = list recent sessions, then resume the latest)');
-    expect(source).toContain('/mode [plan|accept-edits|auto-in-project]');
+    expect(source).toContain('/mode [plan|accept-edits|auto]');
     expect(source).toContain('Backward-compat alias; no effect in non-REPL CLI');
     expect(source).not.toContain('Pick session to resume');
     expect(source).not.toContain('echo "task" | kodax -p -');
@@ -654,5 +654,13 @@ describe('parsePermissionModeOption', () => {
 
   it('rejects invalid ACP permission modes', () => {
     expect(() => parsePermissionModeOption('architect')).toThrow(/Expected one of: plan, accept-edits, auto-in-project/);
+  });
+
+  it("rejects canonical 'auto' with a hint that ACP does not support it yet (FEATURE_092)", () => {
+    // Users who learned 'auto' from the REPL will reach for the same flag on
+    // ACP; the error must point them at 'auto-in-project' instead of just
+    // listing the allowed set. Otherwise it looks like 'auto' was forgotten.
+    expect(() => parsePermissionModeOption('auto')).toThrow(/'auto' mode is not yet supported over the ACP protocol/);
+    expect(() => parsePermissionModeOption('auto')).toThrow(/auto-in-project/);
   });
 });

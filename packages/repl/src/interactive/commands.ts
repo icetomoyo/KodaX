@@ -1523,25 +1523,25 @@ export const BUILTIN_COMMANDS: Command[] = [
   {
     name: 'auto',
     aliases: ['a'],
-    description: 'Quick switch to auto-in-project mode',
+    description: 'Quick switch to auto mode',
     handler: async (_args, _context, callbacks, currentConfig) => {
-      currentConfig.permissionMode = 'auto-in-project';
-      callbacks.setPermissionMode?.('auto-in-project');
-      savePermissionModeUser('auto-in-project');
-      console.log(chalk.cyan('\n[Switched to auto-in-project mode] (saved)'));
+      currentConfig.permissionMode = 'auto';
+      callbacks.setPermissionMode?.('auto');
+      savePermissionModeUser('auto');
+      console.log(chalk.cyan('\n[Switched to auto mode] (saved)'));
     },
     detailedHelp: () => {
-      console.log(chalk.cyan('\n/auto - Quick Switch to Auto-in-Project Mode\n'));
+      console.log(chalk.cyan('\n/auto - Quick Switch to Auto Mode\n'));
       console.log(chalk.bold('Usage:'));
-      console.log(chalk.dim('  /auto              ') + 'Switch to auto-in-project mode');
+      console.log(chalk.dim('  /auto              ') + 'Switch to auto mode');
       console.log(chalk.dim('  /a                 ') + 'Alias for /auto');
       console.log();
       console.log(chalk.bold('Description:'));
-      console.log(chalk.dim('  Equivalent to /mode auto-in-project.'));
-      console.log(chalk.dim('  All tools auto-approved within project directory.'));
-      console.log(chalk.dim('  Operations outside project still require confirmation.'));
+      console.log(chalk.dim('  Equivalent to /mode auto.'));
+      console.log(chalk.dim('  Auto-mode classifier evaluates each non-Tier-1 tool call;'));
+      console.log(chalk.dim('  benign actions auto-approve, risky ones escalate to user confirm.'));
       console.log();
-      console.log(chalk.dim('  See also: /help mode'));
+      console.log(chalk.dim('  See also: /help mode, /auto-engine, /auto-denials'));
       console.log();
     },
   },

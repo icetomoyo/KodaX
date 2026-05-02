@@ -5,6 +5,7 @@
 import chalk from 'chalk';
 import { getTerminalWidth } from './prompts.js';
 import { hasMainScreenRenderScrollRisk } from '../ui/utils/terminal-host-profile.js';
+import { permissionModeDisplayName, type PermissionMode } from '../permission/types.js';
 
 export interface StatusBarState {
   sessionId: string;
@@ -27,7 +28,7 @@ export interface StatusBarState {
   /**
    * FEATURE_092 phase 2b.8: auto-mode classifier engine indicator. Only
    * meaningful when `permissionMode === 'auto'` or `'auto-in-project'`. When
-   * present the status bar renders the mode as `auto[llm]` / `auto[rules]`
+   * present the status bar renders the mode as `auto[LLM]` / `auto[RULES]`
    * so the user can see at a glance whether the classifier downgraded.
    */
   autoModeEngine?: 'llm' | 'rules';
@@ -91,16 +92,20 @@ export function buildStatusBarContent(state: StatusBarState, width = getTerminal
           ? chalk.magenta
           : chalk.green;
 
-  // FEATURE_092 phase 2b.8: append [llm] or [rules] when in an auto-family
-  // mode so users can see whether the classifier downgraded mid-session.
-  // Yellow [rules] signals a downgrade; green [llm] is the healthy state.
+  // FEATURE_092 phase 2b.8: render Title-Case short mode name (Plan / Edits /
+  // Auto), append [LLM] or [RULES] in auto-family modes so users can see at a
+  // glance whether the classifier downgraded mid-session. Both engine labels
+  // are uppercase for status-indicator convention (`[OK]` / `[ERROR]` /
+  // `[WARN]` style); LLM is an acronym so lowercasing would look wrong.
+  // Yellow [RULES] signals a downgrade; green [LLM] is the healthy state.
+  const displayName = permissionModeDisplayName(state.permissionMode as PermissionMode);
   const isAuto = state.permissionMode === 'auto' || state.permissionMode === 'auto-in-project';
   const engineSuffix = isAuto && state.autoModeEngine
     ? state.autoModeEngine === 'llm'
-      ? chalk.green('[llm]')
-      : chalk.yellow('[rules]')
+      ? chalk.green('[LLM]')
+      : chalk.yellow('[RULES]')
     : '';
-  parts.push(modeColor(state.permissionMode) + engineSuffix);
+  parts.push(modeColor(displayName) + engineSuffix);
 
   if (state.reasoningMode) {
     parts.push(chalk.yellow(`reason:${state.reasoningMode}`));

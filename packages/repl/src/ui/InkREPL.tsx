@@ -134,7 +134,12 @@ import { buildToolConfirmationPrompt } from "../common/tool-confirmation.js";
 import { t } from "../common/i18n.js";
 import { KODAX_VERSION } from "../common/utils.js";
 import { runWithPlanMode } from "../common/plan-mode.js";
-import { saveAlwaysAllowToolPattern, loadAlwaysAllowTools, savePermissionModeUser } from "../common/permission-config.js";
+import { saveAlwaysAllowToolPattern, loadAlwaysAllowTools, savePermissionModeUser, loadAutoModeSettings } from "../common/permission-config.js";
+import {
+  bootstrapAutoMode,
+  type AutoModeBootstrapResult,
+} from "../interactive/auto-mode-bootstrap.js";
+import { isAutoMode, createAutoInProjectDeprecationEmitter } from "../permission/types.js";
 import { copyTextToClipboard } from "../common/clipboard.js";
 import { initializeSkillRegistry, getSkillRegistry } from "@kodax/skills";
 import { getTheme } from "./themes/index.js";
@@ -326,6 +331,49 @@ interface InkREPLProps {
   rendererMode: EffectiveTuiRendererMode;
   fullscreenPolicy: FullscreenPolicy;
   onExit: () => void;
+  /**
+   * FEATURE_092 phase 2b.7b: auto-mode guardrail factory + rules-load result.
+   * Built once per session in `runInkInteractiveMode` (async, requires
+   * filesystem reads) and threaded into the component so:
+   *   - `createKodaXOptions` can inject `guardrails` when in auto mode
+   *   - `/auto-engine` and `/auto-denials` slash commands can read engine + tracker stats
+   *   - the status bar can render the `auto[LLM]/auto[RULES]` engine indicator
+   * Without this prop, the Ink REPL silently ignored auto-mode (regression
+   * fixed pre-v0.7.33 release after the readline REPL had already wired it).
+   */
+  autoModeBootstrap: AutoModeBootstrapResult;
+  /**
+   * Setter the component invokes once on mount to hand the bootstrap a
+   * surface-aware askUser implementation (Ink-flavored confirm dialog). The
+   * setter writes into a ref captured by the bootstrap's askUser closure,
+   * so subsequent classifier escalations route through Ink's confirm UI.
+   */
+  setAutoModeAskUser: (
+    handler:
+      | ((call: import("@kodax/core").RunnerToolCall, reason: string) => Promise<"allow" | "block">)
+      | null,
+  ) => void;
+  /**
+   * Setter the component invokes on mount to subscribe to guardrail
+   * engine-change events (automatic downgrades from circuit breaker /
+   * denial threshold, plus manual `setEngine` calls). Without this the
+   * status-bar engine indicator would go stale after the guardrail
+   * auto-downgrades to `'rules'` mid-session.
+   */
+  setAutoModeEngineChange: (
+    handler: ((engine: 'llm' | 'rules') => void) | null,
+  ) => void;
+  /**
+   * Hook the component invokes after `/reload-agents` so the bootstrap's
+   * agents-files ref refreshes. Without this, a `/reload-agents` after
+   * AGENTS.md edits would update the React state but the auto-mode
+   * guardrail's `getAgentsFiles` closure would still return the original
+   * snapshot (the guardrail itself caches `claudeMd` at construction time
+   * so this only helps when the user reloads BEFORE the first auto-mode
+   * tool call — but that's the intended semantics and matches the
+   * readline REPL).
+   */
+  onAgentsFilesReload: (files: AgentsFile[]) => void;
 }
 
 // Banner Props
@@ -368,6 +416,22 @@ interface ManagedForegroundLedgerState {
 
 const PLAN_MODE_BLOCK_GUIDANCE =
   "Do not try to modify files while planning. Finish the plan first, then call exit_plan_mode with the finalized plan — the user will review and approve or reject.";
+
+/**
+ * FEATURE_092 phase 2b.7b: single source of truth for "should this session
+ * carry the auto-mode guardrail in `KodaXOptions.guardrails`?" Centralized
+ * here so any code path that builds options consults the same predicate
+ * (initial useRef seed, `setSessionPermissionMode`, slash-command-driven
+ * `createKodaXOptions`). Returns `undefined` (not `[]`) outside auto mode
+ * so the runner sees the same shape as before this feature shipped.
+ */
+function buildAutoModeGuardrails(
+  mode: PermissionMode,
+  bootstrap: AutoModeBootstrapResult,
+): readonly import("@kodax/core").ToolGuardrail[] | undefined {
+  if (!isAutoMode(mode)) return undefined;
+  return [bootstrap.getGuardrail()];
+}
 
 function resolveInitialReasoningMode(
   options: Pick<KodaXOptions, 'reasoningMode' | 'thinking'>,
@@ -1260,6 +1324,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   fullscreenPolicy,
   onExit,
   compactionInfo,
+  autoModeBootstrap,
+  setAutoModeAskUser,
+  setAutoModeEngineChange,
+  onAgentsFilesReload,
 }) => {
   const { exit } = useApp();
   const { stdout } = useStdout();
@@ -2964,6 +3032,18 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       isCompacting: effectivePromptStreamingState.isCompacting,
     };
   const statusBarIsLoading = isTranscriptMode ? transcriptDisplayIsLoading : effectivePromptIsLoading;
+  // FEATURE_092 phase 2b.8: classifier engine state. Tracked here (rather
+  // than near setSessionPermissionMode below) because the statusBarProps
+  // useMemo on the next block needs it, and React's let-binding TDZ
+  // forbids forward references across hook ordering. The setter is bound
+  // into setSessionPermissionMode + the /auto-engine slash command callback
+  // further down so manual + automatic engine flips both refresh the bar.
+  const [autoModeEngine, setAutoModeEngineState] = useState<'llm' | 'rules' | undefined>(
+    () =>
+      isAutoMode(currentConfig.permissionMode)
+        ? autoModeBootstrap.getGuardrail().getEngine()
+        : undefined,
+  );
   const statusBarProps = useMemo(
     () =>
       buildSurfaceStatusBarProps({
@@ -2992,6 +3072,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           budgetUsage: managedTaskStatus?.budgetUsage,
           budgetApprovalRequired: managedTaskStatus?.budgetApprovalRequired,
         },
+        autoModeEngine,
       }),
     [
       context.sessionId,
@@ -3014,6 +3095,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       managedTaskStatus?.globalWorkBudget,
       managedTaskStatus?.budgetUsage,
       managedTaskStatus?.budgetApprovalRequired,
+      autoModeEngine,
     ],
   );
 
@@ -3897,6 +3979,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       ...options.session,
       id: context.sessionId,
     },
+    // FEATURE_092 phase 2b.7b: seed guardrails from the initial permission
+    // mode. setSessionPermissionMode keeps this in sync on subsequent toggles.
+    guardrails: buildAutoModeGuardrails(currentConfig.permissionMode, autoModeBootstrap),
   });
   // Permission-related refs (not part of KodaXOptions anymore)
   const permissionModeRef = useRef<PermissionMode>(currentConfig.permissionMode);
@@ -3905,10 +3990,39 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }, [currentConfig.permissionMode]);
   const alwaysAllowToolsRef = useRef<string[]>(loadAlwaysAllowTools());
 
+  // FEATURE_092 phase 2b.7b slice E: emit the auto-in-project alias deprecation
+  // notice at most once per session. Same factory the readline REPL uses; the
+  // emitter caches its own fired-once flag.
+  const emitAutoInProjectDeprecationRef = useRef(createAutoInProjectDeprecationEmitter());
+  // Run once on mount: if the session started in the deprecated alias mode,
+  // surface the warning immediately (mirrors readline REPL semantics).
+  useEffect(() => {
+    if (currentConfig.permissionMode === 'auto-in-project') {
+      emitAutoInProjectDeprecationRef.current();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const setSessionPermissionMode = useCallback((mode: PermissionMode) => {
     setCurrentConfig((prev) => ({ ...prev, permissionMode: mode }));
     permissionModeRef.current = mode;
-  }, []);
+    // FEATURE_092 phase 2b.7b: keep the live KodaXOptions in sync so a
+    // mid-session /auto switch lights up the guardrail on the very next
+    // tool call, and stepping out of auto removes it.
+    currentOptionsRef.current = {
+      ...currentOptionsRef.current,
+      guardrails: buildAutoModeGuardrails(mode, autoModeBootstrap),
+    };
+    // FEATURE_092 phase 2b.8: refresh the status-bar engine indicator. Outside
+    // auto mode we clear it; inside auto mode we read the current engine off
+    // the guardrail (may differ from default after a downgrade).
+    setAutoModeEngineState(
+      isAutoMode(mode) ? autoModeBootstrap.getGuardrail().getEngine() : undefined,
+    );
+    if (mode === 'auto-in-project') {
+      emitAutoInProjectDeprecationRef.current();
+    }
+  }, [autoModeBootstrap]);
   const pendingInputsRef = useRef<string[]>(streamingState.pendingInputs);
   const userInterruptedRef = useRef(false);
 
@@ -5608,6 +5722,36 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     });
   };
 
+  // FEATURE_092 phase 2b.7b: hand the bootstrap an Ink-flavored askUser. The
+  // bootstrap was created in `runInkInteractiveMode` (before the component
+  // mounted), so its askUser closure reads from a ref the parent populates
+  // here. Cleanup on unmount clears the ref so a unmounted dialog doesn't
+  // leak its confirmRequest setter.
+  useEffect(() => {
+    setAutoModeAskUser(async (call, reason) => {
+      const result = await showConfirmDialog(
+        call.name,
+        {
+          ...(call.input as Record<string, unknown>),
+          _reason: `[auto-mode] ${reason}`,
+        },
+      );
+      return result.confirmed ? 'allow' : 'block';
+    });
+    // FEATURE_092 phase 2b.8: subscribe to guardrail engine-change events so
+    // auto-downgrades (denial threshold / circuit breaker) refresh the status
+    // bar `auto[LLM]/auto[RULES]` indicator immediately. Without this the
+    // bar stays stale until the user toggles permission mode.
+    setAutoModeEngineChange((engine) => {
+      setAutoModeEngineState(engine);
+    });
+    return () => {
+      setAutoModeAskUser(null);
+      setAutoModeEngineChange(null);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Run agent round
   const runAgentRound = async (
     opts: KodaXOptions,
@@ -6670,6 +6814,20 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           setPlanMode: (enabled: boolean) => {
             setPlanMode(enabled);
           },
+          // FEATURE_092 phase 2b.8: read-only auto-mode stats + manual engine
+          // setter. Returning undefined when not in auto mode lets the slash
+          // command print "not in auto mode" instead of leaking guardrail
+          // internals to non-auto sessions.
+          getAutoModeStats: () => {
+            if (!isAutoMode(permissionModeRef.current)) return undefined;
+            return autoModeBootstrap.getGuardrail().getStats();
+          },
+          setAutoModeEngine: (engine) => {
+            if (!isAutoMode(permissionModeRef.current)) return;
+            autoModeBootstrap.getGuardrail().setEngine(engine);
+            // Refresh the status-bar engine indicator after manual /auto-engine flip.
+            setAutoModeEngineState(engine);
+          },
           createKodaXOptions: () => ({
             ...currentOptionsRef.current,
             provider: currentConfig.provider,
@@ -6677,13 +6835,24 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             thinking: currentConfig.thinking,
             reasoningMode: currentConfig.reasoningMode,
             agentMode: currentConfig.agentMode,
+            // FEATURE_092 phase 2b.7b: inject the AutoModeToolGuardrail into
+            // KodaXOptions when the session is in auto mode (canonical 'auto'
+            // or deprecated 'auto-in-project'). The lazy bootstrap factory
+            // means non-auto sessions pay zero classifier construction cost.
+            guardrails: buildAutoModeGuardrails(permissionModeRef.current, autoModeBootstrap),
             events: createStreamingEvents(), // Include streaming events for /project commands
           }),
           reloadAgentsFiles: async (): Promise<AgentsFile[]> => {
-            return loadAgentsFiles({
+            const fresh = await loadAgentsFiles({
               cwd: process.cwd(),
               projectRoot: context.gitRoot ?? undefined,
             });
+            // Propagate to the bootstrap's mutable ref so the auto-mode
+            // guardrail's `getAgentsFiles` closure sees the refresh on its
+            // next read (helps if the reload happens BEFORE the guardrail
+            // is lazy-constructed; after that, claudeMd is frozen).
+            onAgentsFilesReload(fresh);
+            return fresh;
           },
           // Start and stop the compacting indicator.
           startCompacting: () => {
@@ -7617,6 +7786,59 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
   });
   context.title = sessionTitle;
 
+  // FEATURE_092 phase 2b.7b: bootstrap the auto-mode guardrail factory before
+  // render so the Ink component receives a ready-to-use accessor. Agents files
+  // are loaded once here and exposed via a mutable ref so /reload-agents
+  // refreshes propagate into the guardrail's claudeMd snapshot when the
+  // guardrail is first constructed (lazy on first auto-mode tool call).
+  // askUser is wired to a ref the component fills in once `showConfirmDialog`
+  // is in scope; until then escalations fail closed (block) — see
+  // `inkAutoModeAskUserRef` below.
+  const initialAgentsFiles = await loadAgentsFiles({
+    cwd: process.cwd(),
+    projectRoot: gitRoot ?? undefined,
+  });
+  const agentsFilesRef: { current: AgentsFile[] } = { current: initialAgentsFiles };
+  const inkAutoModeAskUserRef: {
+    current:
+      | ((call: import("@kodax/core").RunnerToolCall, reason: string) => Promise<"allow" | "block">)
+      | null;
+  } = { current: null };
+  // Ref-bridge for engine-change notifications: the React component fills
+  // this with its `setAutoModeEngineState` setter after mount, so automatic
+  // downgrades fired from inside the guardrail (running on the agent's
+  // tool-call path) immediately update the status-bar `auto[LLM]/auto[RULES]`
+  // indicator without waiting for the next mode toggle.
+  const inkAutoModeEngineChangeRef: {
+    current: ((engine: 'llm' | 'rules') => void) | null;
+  } = { current: null };
+  const autoModeSettings = loadAutoModeSettings();
+  const autoModeBootstrap: AutoModeBootstrapResult = await bootstrapAutoMode({
+    askUser: async (call, reason) => {
+      const handler = inkAutoModeAskUserRef.current;
+      if (!handler) {
+        // Component hasn't mounted its showConfirmDialog yet (vanishingly rare
+        // — bootstrap runs before render, but guardrail construction is lazy
+        // and only triggers on a real tool call after mount). Fail closed.
+        return 'block';
+      }
+      return handler(call, reason);
+    },
+    projectRoot: gitRoot ?? process.cwd(),
+    getAgentsFiles: () => agentsFilesRef.current,
+    getCurrentProviderName: () => currentConfig.provider,
+    getCurrentModel: () => currentConfig.model,
+    getCurrentPermissionMode: () => currentConfig.permissionMode,
+    autoModeSettings,
+    log: (level, msg) => {
+      if (level === 'warn') console.warn(chalk.yellow(msg));
+      else console.log(chalk.dim(msg));
+    },
+    onEngineChange: (engine) => {
+      inkAutoModeEngineChangeRef.current?.(engine);
+    },
+  });
+
   // Note: Banner is now shown inside Ink component (Banner.tsx)
   // This ensures it's visible in the alternate buffer
 
@@ -7635,6 +7857,16 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
         compactionInfo={compactionInfo}
         rendererMode={rendererMode}
         fullscreenPolicy={fullscreenPolicy}
+        autoModeBootstrap={autoModeBootstrap}
+        setAutoModeAskUser={(handler) => {
+          inkAutoModeAskUserRef.current = handler;
+        }}
+        setAutoModeEngineChange={(handler) => {
+          inkAutoModeEngineChangeRef.current = handler;
+        }}
+        onAgentsFilesReload={(files) => {
+          agentsFilesRef.current = files;
+        }}
         onExit={() => {
           exitMessageRequested = true;
         }}

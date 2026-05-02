@@ -52,6 +52,34 @@ export function canonicalizePermissionMode(mode: PermissionMode): PermissionMode
   return mode === "auto-in-project" ? "auto" : mode;
 }
 
+/**
+ * Status-bar display name for a permission mode. Title-Case short labels
+ * (mirrors Claude Code's `shortTitle` convention in
+ * `src/utils/permissions/PermissionMode.ts`):
+ *   - `plan`             → `Plan`
+ *   - `accept-edits`     → `Edits`
+ *   - `auto`             → `Auto`
+ *   - `auto-in-project`  → `Auto`  (deprecated alias folds into the canonical
+ *                                   display name; the deprecation notice
+ *                                   surfaces once per session at startup)
+ *
+ * Single source of truth — both the readline status-bar
+ * (`packages/repl/src/interactive/status-bar.ts`) and the Ink view-model
+ * (`packages/repl/src/ui/view-models/status-bar.ts`) consume this so the two
+ * surfaces never drift on capitalization or short-form choice.
+ */
+export function permissionModeDisplayName(mode: PermissionMode): string {
+  switch (mode) {
+    case "plan":
+      return "Plan";
+    case "accept-edits":
+      return "Edits";
+    case "auto":
+    case "auto-in-project":
+      return "Auto";
+  }
+}
+
 // ============== Deprecated alias soft-warning (FEATURE_092 phase 2b.7b slice E) ==============
 
 /**

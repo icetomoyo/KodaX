@@ -44,6 +44,15 @@ export interface ClassifyOptions {
   readonly timeoutMs?: number;
   readonly abortSignal?: AbortSignal;
   readonly costTracker?: CostTracker;
+  /**
+   * Optional setter — invoked once after `sideQuery` returns when the
+   * classifier successfully recorded its token usage. The CostTracker is
+   * immutable, so `sideQuery` produces a fresh tracker copy with the new
+   * record; without this setter the recorded call is silently dropped.
+   * Wired by the AutoModeToolGuardrail so the agent's tracker accumulates
+   * classifier calls under role='auto_mode'.
+   */
+  readonly setCostTracker?: (next: CostTracker) => void;
 }
 
 export type ClassifyDecision =
@@ -73,6 +82,10 @@ export async function classify(opts: ClassifyOptions): Promise<ClassifyDecision>
     querySource: QUERY_SOURCE,
     costTracker: opts.costTracker,
   });
+
+  if (opts.setCostTracker && result.costTracker !== undefined && result.costTracker !== opts.costTracker) {
+    opts.setCostTracker(result.costTracker);
+  }
 
   switch (result.stopReason) {
     case 'end_turn':

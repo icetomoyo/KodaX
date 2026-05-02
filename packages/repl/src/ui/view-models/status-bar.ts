@@ -1,4 +1,5 @@
 import type { StatusBarProps } from "../types.js";
+import { permissionModeDisplayName } from "../../permission/types.js";
 
 const ITERATION_SYMBOL = "\u{1F504}";
 const BAR_FILLED = "\u2588";
@@ -118,13 +119,39 @@ function getPermissionModeColor(permissionMode: StatusBarProps["permissionMode"]
     case "auto":
     case "auto-in-project":
       // FEATURE_092 v0.7.33: 'auto' (canonical) shares the deprecated
-      // 'auto-in-project' coloring. Engine-level distinction (auto[rules]
-      // vs auto[llm]) is added when the status-bar engine indicator lands
-      // in Phase 2b.8.
+      // 'auto-in-project' coloring. The engine suffix appended by
+      // `buildPermissionModeText` carries the rules/llm visual distinction.
       return "warning";
     default:
       return "magenta";
   }
+}
+
+/**
+ * Compose the permission-mode segment text. Mode names render Title-Case
+ * short labels (`Plan` / `Edits` / `Auto`) sourced from
+ * `permissionModeDisplayName` — same helper the readline status bar uses
+ * so the two surfaces never drift on capitalization. The auto-family
+ * deprecated alias (`auto-in-project`) folds into the canonical `Auto`
+ * display because the deprecation notice surfaces once at startup; the
+ * status bar doesn't need to re-litigate it every frame.
+ *
+ * The engine suffix (`[LLM]` healthy / `[RULES]` downgraded) is uppercase
+ * regardless — LLM is an acronym, and `[OK]` / `[ERROR]` / `[WARN]`-style
+ * uppercase status indicators are the terminal convention.
+ */
+function buildPermissionModeText(
+  permissionMode: StatusBarProps["permissionMode"],
+  autoModeEngine: StatusBarProps["autoModeEngine"],
+): string {
+  const display = permissionModeDisplayName(permissionMode);
+  const isAutoFamily =
+    permissionMode === "auto" || permissionMode === "auto-in-project";
+  if (!isAutoFamily || !autoModeEngine) {
+    return display;
+  }
+  const suffix = autoModeEngine === "llm" ? "[LLM]" : "[RULES]";
+  return `${display}${suffix}`;
 }
 
 function formatToolAction(currentTool: string): string {
@@ -391,7 +418,7 @@ function buildStatusBarSegments(props: StatusBarProps): StatusBarSegment[] {
     },
     {
       id: "permission-mode",
-      text: permissionMode.toUpperCase(),
+      text: buildPermissionModeText(permissionMode, props.autoModeEngine),
       color: getPermissionModeColor(permissionMode),
     },
   ];

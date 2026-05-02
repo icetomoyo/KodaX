@@ -99,6 +99,7 @@ export {
   PERMISSION_MODES,
   isPermissionMode,
   normalizePermissionMode,
+  permissionModeDisplayName,
   isToolCallAllowed,
   isAlwaysConfirmPath,
   isBashReadCommand,

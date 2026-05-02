@@ -242,6 +242,13 @@ export interface StatusBarProps {
   managedGlobalWorkBudget?: number;
   managedBudgetUsage?: number;
   managedBudgetApprovalRequired?: boolean;
+  /**
+   * FEATURE_092 phase 2b.8: classifier engine indicator. Only renders when
+   * permissionMode is in the auto family. `'llm'` shows green `auto[LLM]`
+   * (healthy), `'rules'` shows yellow `auto[RULES]` (downgraded — every
+   * non-Tier-1 tool call escalates to user confirm).
+   */
+  autoModeEngine?: 'llm' | 'rules';
 }
 
 /**

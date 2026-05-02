@@ -58,33 +58,39 @@ describe('status bar', () => {
 });
 
 describe('status bar — auto-mode engine indicator (FEATURE_092 phase 2b.8)', () => {
-  it('renders auto[llm] when permissionMode=auto and engine=llm', () => {
+  it('renders Auto[LLM] when permissionMode=auto and engine=llm', () => {
     const state = createStatusBarState('s1', 'auto', 'kimi-code', 'kimi-for-coding', 'off');
     const content = buildStatusBarContent({ ...state, autoModeEngine: 'llm' }, 200);
-    expect(content).toContain('auto');
-    expect(content).toContain('[llm]');
+    expect(content).toContain('Auto');
+    expect(content).toContain('[LLM]');
+    // Title-Case short label (FEATURE_092 phase 2b.8) — not raw lowercase 'auto'
+    expect(content).not.toMatch(/\bauto\b/);
   });
 
-  it('renders auto[rules] when permissionMode=auto and engine=rules (downgraded)', () => {
+  it('renders Auto[RULES] when permissionMode=auto and engine=rules (downgraded)', () => {
     const state = createStatusBarState('s1', 'auto', 'kimi-code', 'kimi-for-coding', 'off');
     const content = buildStatusBarContent({ ...state, autoModeEngine: 'rules' }, 200);
-    expect(content).toContain('auto');
-    expect(content).toContain('[rules]');
+    expect(content).toContain('Auto');
+    expect(content).toContain('[RULES]');
   });
 
-  it('renders auto-in-project[llm] for the deprecated alias too', () => {
+  it('renders Auto[LLM] for the deprecated auto-in-project alias too (folds into canonical short label)', () => {
     const state = createStatusBarState('s1', 'auto-in-project', 'kimi-code', 'kimi-for-coding', 'off');
     const content = buildStatusBarContent({ ...state, autoModeEngine: 'llm' }, 200);
-    expect(content).toContain('auto-in-project');
-    expect(content).toContain('[llm]');
+    // auto-in-project collapses to 'Auto' in the bar — deprecation notice
+    // already fired at startup, no need to re-litigate it every frame.
+    expect(content).toContain('Auto');
+    expect(content).not.toContain('auto-in-project');
+    expect(content).not.toContain('Auto-In-Project');
+    expect(content).toContain('[LLM]');
   });
 
   it('omits the engine suffix entirely when autoModeEngine is undefined', () => {
     const state = createStatusBarState('s1', 'auto', 'kimi-code', 'kimi-for-coding', 'off');
     const content = buildStatusBarContent(state, 200);
-    expect(content).toContain('auto');
-    expect(content).not.toContain('[llm]');
-    expect(content).not.toContain('[rules]');
+    expect(content).toContain('Auto');
+    expect(content).not.toContain('[LLM]');
+    expect(content).not.toContain('[RULES]');
   });
 
   it('does NOT render engine suffix outside auto modes (plan / accept-edits)', () => {
@@ -93,7 +99,7 @@ describe('status bar — auto-mode engine indicator (FEATURE_092 phase 2b.8)', (
     // Even if autoModeEngine is somehow set, the suffix is gated on the mode.
     const planContent = buildStatusBarContent({ ...planState, autoModeEngine: 'rules' }, 200);
     const editsContent = buildStatusBarContent({ ...editsState, autoModeEngine: 'rules' }, 200);
-    expect(planContent).not.toContain('[rules]');
-    expect(editsContent).not.toContain('[rules]');
+    expect(planContent).not.toContain('[RULES]');
+    expect(editsContent).not.toContain('[RULES]');
   });
 });

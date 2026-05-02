@@ -10,10 +10,10 @@ import {
   createCliEvents,
   createJsonEvents,
   FileSessionStorage,
-  type PermissionMode,
 } from '@kodax/repl';
+import type { AcpPermissionMode } from './acp_server.js';
 
-export const ACP_PERMISSION_MODES: PermissionMode[] = ['plan', 'accept-edits', 'auto-in-project'];
+export const ACP_PERMISSION_MODES: AcpPermissionMode[] = ['plan', 'accept-edits', 'auto-in-project'];
 export const CLI_OUTPUT_MODES = ['text', 'json'] as const;
 export const KODAX_AGENT_MODES = ['ama', 'sa'] as const;
 export type CliOutputMode = typeof CLI_OUTPUT_MODES[number];
@@ -102,11 +102,22 @@ export function validateCliModeSelection(
   }
 }
 
-export function parsePermissionModeOption(value: string): PermissionMode {
-  if (ACP_PERMISSION_MODES.includes(value as PermissionMode)) {
-    return value as PermissionMode;
+export function parsePermissionModeOption(value: string): AcpPermissionMode {
+  if (ACP_PERMISSION_MODES.includes(value as AcpPermissionMode)) {
+    return value as AcpPermissionMode;
   }
 
+  // Help users who reasonably expected canonical 'auto' (the FEATURE_092
+  // default for the REPL) to also work over ACP. The classifier path is
+  // currently REPL-only — see ACP_PERMISSION_MODE_IDS in src/acp_server.ts
+  // for the rationale.
+  if (value === 'auto') {
+    throw new InvalidArgumentError(
+      `'auto' mode is not yet supported over the ACP protocol. `
+      + `Use 'auto-in-project' for the rules-only auto path, or one of: `
+      + `${ACP_PERMISSION_MODES.join(', ')}.`,
+    );
+  }
   throw new InvalidArgumentError(
     `Expected one of: ${ACP_PERMISSION_MODES.join(', ')}.`,
   );
