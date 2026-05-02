@@ -43,7 +43,13 @@ import {
 } from '@kodax/coding';
 import type { AgentsFile } from '@kodax/coding';
 import type { PermissionMode, ConfirmResult } from '../permission/types.js';
-import { computeConfirmTools, FILE_MODIFICATION_TOOLS, isAutoMode, normalizePermissionMode } from '../permission/types.js';
+import {
+  computeConfirmTools,
+  createAutoInProjectDeprecationEmitter,
+  FILE_MODIFICATION_TOOLS,
+  isAutoMode,
+  normalizePermissionMode,
+} from '../permission/types.js';
 import { bootstrapAutoMode, type AutoModeBootstrapResult } from './auto-mode-bootstrap.js';
 import { isToolCallAllowed, isAlwaysConfirmPath, isBashReadCommand, getPlanModeBlockReason } from '../permission/permission.js';
 import { getGitRoot, prepareRuntimeConfig, getProviderModel, getProviderAvailableModels, KODAX_VERSION } from '../common/utils.js';
@@ -339,6 +345,14 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   const initialThinking = initialReasoningMode !== 'off';
   const initialPermissionMode: PermissionMode =
     normalizePermissionMode((config as { permissionMode?: string }).permissionMode, 'accept-edits') ?? 'accept-edits';
+  // FEATURE_092 phase 2b.7b slice E: emit the auto-in-project alias
+  // deprecation notice once per session — at startup if config picked the
+  // alias, plus on `/mode auto-in-project`. Internal state is shared so
+  // it fires AT MOST once even across both code paths.
+  const emitAutoInProjectDeprecation = createAutoInProjectDeprecationEmitter();
+  if (initialPermissionMode === 'auto-in-project') {
+    emitAutoInProjectDeprecation();
+  }
   const repoIntelligenceRuntime = resolveRepoIntelligenceRuntimeConfig();
 
   const configuredTheme = (config as { theme?: string }).theme;
@@ -698,6 +712,13 @@ Keyboard Shortcuts:
       currentConfig.permissionMode = mode;
       currentPermissionMode = mode; // Sync with local permission state
       statusBar?.update({ permissionMode: mode });
+      // FEATURE_092 phase 2b.7b slice E: surface the deprecation when the
+      // user explicitly picks the alias via `/mode auto-in-project`.
+      // Once-per-session semantics means picking it at startup THEN typing
+      // /mode auto-in-project later still emits AT MOST once.
+      if (mode === 'auto-in-project') {
+        emitAutoInProjectDeprecation();
+      }
       // Note: permissionMode is no longer part of KodaXOptions
       // Permission control is handled locally via beforeToolExecute callback
     },

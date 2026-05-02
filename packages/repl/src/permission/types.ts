@@ -52,6 +52,39 @@ export function canonicalizePermissionMode(mode: PermissionMode): PermissionMode
   return mode === "auto-in-project" ? "auto" : mode;
 }
 
+// ============== Deprecated alias soft-warning (FEATURE_092 phase 2b.7b slice E) ==============
+
+/**
+ * One-line user-facing notice surfaced when the user explicitly chooses
+ * `auto-in-project` (either at REPL startup from `~/.kodax/config.json` or
+ * via `/mode auto-in-project`). The alias is preserved for 5 minor versions
+ * for backward compat — design doc validation §4 requires the warning emit
+ * once per session, not per-call.
+ */
+export const AUTO_IN_PROJECT_DEPRECATION_MSG =
+  '[deprecated] permissionMode "auto-in-project" is now an alias for "auto" (FEATURE_092, v0.7.33). '
+  + 'The alias will be removed in v0.7.38 — please update ~/.kodax/config.json to use "auto".';
+
+/**
+ * Build a once-per-session emitter for the auto-in-project deprecation
+ * notice. The factory shape (vs. a module-scoped `let emitted = false`)
+ * makes the once-semantics testable without resetting module state and
+ * lets the REPL own the lifecycle (one emitter per session).
+ *
+ * `printer` defaults to `console.warn` so the warning lands on stderr —
+ * doesn't pollute piped stdout (e.g. `kodax | jq`).
+ */
+export function createAutoInProjectDeprecationEmitter(
+  printer: (msg: string) => void = console.warn,
+): () => void {
+  let emitted = false;
+  return () => {
+    if (emitted) return;
+    emitted = true;
+    printer(AUTO_IN_PROJECT_DEPRECATION_MSG);
+  };
+}
+
 // ============== Confirm Result ==============
 
 export interface ConfirmResult {

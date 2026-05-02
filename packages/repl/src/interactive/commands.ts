@@ -821,13 +821,13 @@ export const BUILTIN_COMMANDS: Command[] = [
   },
   {
     name: 'mode',
-    description: 'Show or switch permission mode (plan/accept-edits/auto-in-project)',
-    usage: '/mode [plan|accept-edits|auto-in-project]',
+    description: 'Show or switch permission mode (plan/accept-edits/auto)',
+    usage: '/mode [plan|accept-edits|auto]',
     handler: async (args, _context, callbacks, currentConfig) => {
       if (args.length === 0) {
         const m = normalizePermissionMode(currentConfig.permissionMode, 'accept-edits') ?? 'accept-edits';
         console.log(chalk.dim(`\nCurrent mode: ${chalk.cyan(m)}`));
-        console.log(chalk.dim('Usage: /mode [plan|accept-edits|auto-in-project]'));
+        console.log(chalk.dim('Usage: /mode [plan|accept-edits|auto]'));
         return;
       }
       const newMode = args[0] as PermissionMode;
@@ -837,7 +837,7 @@ export const BUILTIN_COMMANDS: Command[] = [
         savePermissionModeUser(newMode);
         console.log(chalk.cyan(`\n[Switched to ${newMode} mode] (saved)`));
       } else {
-        console.log(chalk.red(`\n[Unknown mode: ${args[0]}. Use: plan | accept-edits | auto-in-project]`));
+        console.log(chalk.red(`\n[Unknown mode: ${args[0]}. Use: plan | accept-edits | auto]`));
       }
     },
     detailedHelp: () => {
@@ -846,12 +846,13 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log(chalk.dim('  /mode                        ') + 'Show current permission mode');
       console.log(chalk.dim('  /mode plan                   ') + 'Read-only: blocks all modifications');
       console.log(chalk.dim('  /mode accept-edits           ') + 'File edits auto, bash requires confirmation');
-      console.log(chalk.dim('  /mode auto-in-project        ') + 'Project-internal fully auto');
+      console.log(chalk.dim('  /mode auto                   ') + 'LLM classifier reviews each tool call (FEATURE_092)');
+      console.log(chalk.dim('  /mode auto-in-project        ') + chalk.gray('(deprecated alias for auto; will be removed in v0.7.38)'));
       console.log();
       console.log(chalk.bold('Permission Levels:'));
       console.log(chalk.yellow('  plan          ') + chalk.dim('- Read-only planning, no file/command modifications'));
       console.log(chalk.green('  accept-edits  ') + chalk.dim('- File edits auto-approved, bash still requires confirmation'));
-      console.log(chalk.green('  auto-in-project') + chalk.dim('- All tools auto within project, outside requires confirmation'));
+      console.log(chalk.green('  auto          ') + chalk.dim('- LLM classifier (engine=llm, default) or rules engine reviews each call'));
       console.log();
       console.log(chalk.bold('Notes:'));
       console.log(chalk.dim('  - .kodax/ directory and project-external paths always require confirmation'));
