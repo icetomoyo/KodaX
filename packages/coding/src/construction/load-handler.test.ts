@@ -31,6 +31,7 @@ function registerMock(
       description: `mock ${name}`,
       input_schema: { type: 'object', properties: {} },
       handler,
+      toClassifierInput: () => '',
     },
     { source: { kind: 'extension', id: `mock:${name}`, label: name } },
   );

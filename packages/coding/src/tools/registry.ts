@@ -8,6 +8,10 @@ import type {
   ToolRegistry,
   ToolRegistrationOptions,
 } from './types.js';
+import {
+  defaultToClassifierInput,
+  mcpToClassifierInput,
+} from './classifier-projection.js';
 import { toolRead } from './read.js';
 import { toolWrite } from './write.js';
 import { toolEdit } from './edit.js';
@@ -160,6 +164,27 @@ function registerToolInternal(
   };
 }
 
+/**
+ * Classifier projection helper for `stage_*` construction tools whose input
+ * is the artifact serialized as a JSON string. Parses opportunistically and
+ * extracts `name@version` for the projection; falls back to "<unparseable>"
+ * if the input is malformed (the classifier still sees the tool name as
+ * context, so a parse failure is informative on its own).
+ */
+function stageArtifactPreview(artifactJson: string | undefined): string {
+  if (typeof artifactJson !== 'string' || artifactJson.length === 0) {
+    return '<no-artifact>';
+  }
+  try {
+    const parsed = JSON.parse(artifactJson) as { name?: unknown; version?: unknown };
+    const name = typeof parsed?.name === 'string' ? parsed.name : '<no-name>';
+    const version = typeof parsed?.version === 'string' ? parsed.version : '<no-version>';
+    return `${name}@${version}`;
+  } catch {
+    return '<unparseable>';
+  }
+}
+
 const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
   {
     name: 'read',
@@ -174,6 +199,7 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['path'],
     },
     handler: toolRead,
+    toClassifierInput: () => '',
   },
   {
     name: 'write',
@@ -203,6 +229,11 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['path', 'content'],
     },
     handler: toolWrite,
+    toClassifierInput: (input) => {
+      const i = input as { path?: string; content?: string };
+      const size = typeof i?.content === 'string' ? i.content.length : 0;
+      return `Write ${i?.path ?? '<unknown>'} (${size} bytes)`;
+    },
   },
   {
     name: 'edit',
@@ -228,6 +259,10 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['path', 'old_string', 'new_string'],
     },
     handler: toolEdit,
+    toClassifierInput: (input) => {
+      const i = input as { path?: string; replace_all?: boolean };
+      return `Edit ${i?.path ?? '<unknown>'}${i?.replace_all ? ' [replace_all]' : ''}`;
+    },
   },
   {
     name: 'multi_edit',
@@ -276,6 +311,11 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['path', 'edits'],
     },
     handler: toolMultiEdit,
+    toClassifierInput: (input) => {
+      const i = input as { path?: string; edits?: unknown[] };
+      const count = Array.isArray(i?.edits) ? i.edits.length : 0;
+      return `MultiEdit ${i?.path ?? '<unknown>'}: ${count} edits`;
+    },
   },
   {
     name: 'insert_after_anchor',
@@ -290,6 +330,11 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['path', 'anchor', 'content'],
     },
     handler: toolInsertAfterAnchor,
+    toClassifierInput: (input) => {
+      const i = input as { path?: string; anchor?: string };
+      const anchor = typeof i?.anchor === 'string' ? i.anchor.slice(0, 40) : '<no-anchor>';
+      return `InsertAfterAnchor ${i?.path ?? '<unknown>'} after "${anchor}"`;
+    },
   },
   {
     name: 'bash',
@@ -319,6 +364,10 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['command'],
     },
     handler: toolBash,
+    toClassifierInput: (input) => {
+      const i = input as { command?: string };
+      return `Bash: ${typeof i?.command === 'string' ? i.command : '<no-command>'}`;
+    },
   },
   {
     name: 'glob',
@@ -332,6 +381,7 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['pattern'],
     },
     handler: toolGlob,
+    toClassifierInput: () => '',
   },
   {
     name: 'grep',
@@ -361,6 +411,7 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['pattern'],
     },
     handler: toolGrep,
+    toClassifierInput: () => '',
   },
   {
     name: 'emit_managed_protocol',
@@ -381,6 +432,7 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['role', 'payload'],
     },
     handler: toolEmitManagedProtocol,
+    toClassifierInput: () => '',
   },
   {
     name: 'dispatch_child_task',
@@ -398,6 +450,12 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['objective'],
     },
     handler: toolDispatchChildTask,
+    toClassifierInput: (input) => {
+      const i = input as { objective?: string; readOnly?: boolean };
+      const obj = typeof i?.objective === 'string' ? i.objective.slice(0, 200) : '<no-objective>';
+      const mutability = i?.readOnly === false ? 'mutating' : 'readonly';
+      return `Dispatch(${mutability}): ${obj}`;
+    },
   },
   {
     name: 'web_search',
@@ -412,6 +470,7 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['query'],
     },
     handler: toolWebSearch,
+    toClassifierInput: () => '',
   },
   {
     name: 'web_fetch',
@@ -425,6 +484,10 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       },
     },
     handler: toolWebFetch,
+    toClassifierInput: (input) => {
+      const i = input as { url?: string };
+      return `WebFetch ${typeof i?.url === 'string' ? i.url : '<no-url>'}`;
+    },
   },
   {
     name: 'code_search',
@@ -441,6 +504,7 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['query'],
     },
     handler: toolCodeSearch,
+    toClassifierInput: () => '',
   },
   {
     name: 'semantic_lookup',
@@ -461,6 +525,7 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['query'],
     },
     handler: toolSemanticLookup,
+    toClassifierInput: () => '',
   },
   {
     name: 'mcp_search',
@@ -480,6 +545,7 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['query'],
     },
     handler: toolMcpSearch,
+    toClassifierInput: () => '',
   },
   {
     name: 'mcp_describe',
@@ -492,6 +558,7 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['id'],
     },
     handler: toolMcpDescribe,
+    toClassifierInput: () => '',
   },
   {
     name: 'mcp_call',
@@ -508,6 +575,13 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['id'],
     },
     handler: toolMcpCall,
+    toClassifierInput: (input) => {
+      const i = input as { id?: string; args?: unknown };
+      const capability = typeof i?.id === 'string' ? i.id : '<no-id>';
+      // Capability id (from mcp_search) is opaque "server.tool" form already;
+      // pass it as both server and tool — mcp helper handles the prefix.
+      return mcpToClassifierInput(capability, 'call', i?.args ?? {});
+    },
   },
   {
     name: 'mcp_read_resource',
@@ -520,6 +594,7 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['id'],
     },
     handler: toolMcpReadResource,
+    toClassifierInput: () => '',
   },
   {
     name: 'mcp_get_prompt',
@@ -536,6 +611,7 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['id'],
     },
     handler: toolMcpGetPrompt,
+    toClassifierInput: () => '',
   },
   {
     name: 'worktree_create',
@@ -548,6 +624,13 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       },
     },
     handler: toolWorktreeCreate,
+    toClassifierInput: (input) => {
+      const i = input as { branch_name?: string; description?: string };
+      const branch = typeof i?.branch_name === 'string'
+        ? i.branch_name
+        : (typeof i?.description === 'string' ? `<auto from "${i.description.slice(0, 40)}">` : '<auto>');
+      return `WorktreeCreate ${branch}`;
+    },
   },
   {
     name: 'worktree_remove',
@@ -569,12 +652,18 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['action', 'worktree_path'],
     },
     handler: toolWorktreeRemove,
+    toClassifierInput: (input) => {
+      const i = input as { action?: string; worktree_path?: string; discard_changes?: boolean };
+      const flags = i?.discard_changes ? ' [discard_changes]' : '';
+      return `WorktreeRemove ${i?.action ?? '<no-action>'} ${i?.worktree_path ?? '<no-path>'}${flags}`;
+    },
   },
   {
     name: 'undo',
     description: 'Revert the last file modification.',
     input_schema: { type: 'object', properties: {} },
     handler: toolUndo,
+    toClassifierInput: () => 'Undo: revert last file modification',
   },
   {
     name: 'ask_user_question',
@@ -641,6 +730,7 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['question'],
     },
     handler: toolAskUserQuestion,
+    toClassifierInput: () => '',
   },
   {
     name: 'exit_plan_mode',
@@ -656,6 +746,7 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['plan'],
     },
     handler: toolExitPlanMode,
+    toClassifierInput: () => '',
   },
   {
     name: 'repo_overview',
@@ -668,6 +759,7 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       },
     },
     handler: toolRepoOverview,
+    toClassifierInput: () => '',
   },
   {
     name: 'changed_scope',
@@ -686,6 +778,7 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       },
     },
     handler: toolChangedScope,
+    toClassifierInput: () => '',
   },
   {
     name: 'changed_diff',
@@ -704,6 +797,7 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['path'],
     },
     handler: toolChangedDiff,
+    toClassifierInput: () => '',
   },
   {
     name: 'changed_diff_bundle',
@@ -726,6 +820,7 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['paths'],
     },
     handler: toolChangedDiffBundle,
+    toClassifierInput: () => '',
   },
   {
     name: 'module_context',
@@ -739,6 +834,7 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       },
     },
     handler: toolModuleContext,
+    toClassifierInput: () => '',
   },
   {
     name: 'symbol_context',
@@ -753,6 +849,7 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       },
     },
     handler: toolSymbolContext,
+    toClassifierInput: () => '',
   },
   {
     name: 'process_context',
@@ -767,6 +864,7 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       },
     },
     handler: toolProcessContext,
+    toClassifierInput: () => '',
   },
   {
     name: 'impact_estimate',
@@ -782,6 +880,7 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       },
     },
     handler: toolImpactEstimate,
+    toClassifierInput: () => '',
   },
   // ====================================================================
   // Tool Construction (FEATURE_087 + FEATURE_088, v0.7.28)
@@ -819,6 +918,7 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['name'],
     },
     handler: toolScaffoldTool,
+    toClassifierInput: () => '',
   },
   {
     name: 'validate_tool',
@@ -837,6 +937,7 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['artifact_json'],
     },
     handler: toolValidateTool,
+    toClassifierInput: () => '',
   },
   {
     name: 'stage_construction',
@@ -851,6 +952,10 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['artifact_json'],
     },
     handler: toolStageConstruction,
+    toClassifierInput: (input) => {
+      const i = input as { artifact_json?: string };
+      return `StageTool: ${stageArtifactPreview(i?.artifact_json)}`;
+    },
   },
   {
     name: 'test_tool',
@@ -870,6 +975,7 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['name', 'version'],
     },
     handler: toolTestTool,
+    toClassifierInput: () => '',
   },
   {
     name: 'activate_tool',
@@ -885,6 +991,10 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['name', 'version'],
     },
     handler: toolActivateTool,
+    toClassifierInput: (input) => {
+      const i = input as { name?: string; version?: string };
+      return `ActivateTool: ${i?.name ?? '<no-name>'}@${i?.version ?? '<no-version>'}`;
+    },
   },
   // ====================================================================
   // FEATURE_089 (v0.7.31) — runtime AGENT construction staircase. Mirrors
@@ -913,6 +1023,7 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['name'],
     },
     handler: toolScaffoldAgent,
+    toClassifierInput: () => '',
   },
   {
     name: 'validate_agent',
@@ -927,6 +1038,7 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['artifact_json'],
     },
     handler: toolValidateAgent,
+    toClassifierInput: () => '',
   },
   {
     name: 'stage_agent_construction',
@@ -941,6 +1053,10 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['artifact_json'],
     },
     handler: toolStageAgentConstruction,
+    toClassifierInput: (input) => {
+      const i = input as { artifact_json?: string };
+      return `StageAgent: ${stageArtifactPreview(i?.artifact_json)}`;
+    },
   },
   {
     name: 'test_agent',
@@ -956,6 +1072,7 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['name', 'version'],
     },
     handler: toolTestAgent,
+    toClassifierInput: () => '',
   },
   {
     name: 'activate_agent',
@@ -972,6 +1089,10 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['name', 'version'],
     },
     handler: toolActivateAgent,
+    toClassifierInput: (input) => {
+      const i = input as { name?: string; version?: string };
+      return `ActivateAgent: ${i?.name ?? '<no-name>'}@${i?.version ?? '<no-version>'}`;
+    },
   },
 
   // ====================================================================
@@ -1000,6 +1121,10 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['artifact_json'],
     },
     handler: toolStageSelfModify,
+    toClassifierInput: (input) => {
+      const i = input as { artifact_json?: string };
+      return `StageSelfModify: ${stageArtifactPreview(i?.artifact_json)}`;
+    },
   },
 ];
 

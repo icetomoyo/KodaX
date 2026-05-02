@@ -31,6 +31,39 @@ export type ToolHandler = ToolHandlerSync | ToolHandlerStreaming;
 
 export interface LocalToolDefinition extends KodaXToolDefinition {
   handler: ToolHandler;
+
+  /**
+   * Classifier projection — REQUIRED (FEATURE_092 v0.7.33).
+   *
+   * Returns a one-line string that the auto-mode classifier sees as the
+   * `<action>` to evaluate. The classifier asks: "Given the user's
+   * intent + rules, should the agent be allowed to run this?"
+   *
+   * THREE-TIER STRATEGY (pick by tool's risk profile):
+   *
+   *   1. ZERO RISK (read-only, structural):
+   *      → return ''  (Tier 1 — classifier is skipped entirely, zero token cost)
+   *      Examples: read, grep, glob, todo_write, ask_user_question
+   *
+   *   2. HIGH RISK (mutates state, network, exec, spawn):
+   *      → write a CUSTOM projection that surfaces the risk-bearing fields
+   *      Examples: bash (`Bash: ${i.command}`), web_fetch (`WebFetch ${i.url}`)
+   *      See `classifier-projection.ts` for examples by category.
+   *
+   *   3. LOW RISK (structured input, no mutations):
+   *      → return defaultToClassifierInput(name, input)  (one-line helper)
+   *      Examples: semantic_lookup, code_search, module_context
+   *
+   * KEEP IT SHORT: ≤ 100 chars typical. Long blobs cost tokens and dilute
+   * the signal the classifier needs.
+   *
+   * NEVER include: raw file contents, secrets, API keys, full LLM-emitted
+   * reasoning, or untrusted text passed through verbatim. Use byte/line
+   * counts as proxies (`Write ${path} (${content.length} bytes)`).
+   *
+   * See `docs/features/v0.7.33.md` "Tool 接口扩展" for design rationale.
+   */
+  toClassifierInput: (input: unknown) => string;
 }
 
 export interface ToolDefinitionSource {

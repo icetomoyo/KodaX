@@ -34,6 +34,7 @@ describe('createCtxProxy', () => {
         description: `mock ${name}`,
         input_schema: { type: 'object', properties: {} },
         handler,
+        toClassifierInput: () => '',
       },
       { source: { kind: 'extension', id: `mock:${name}`, label: name } },
     );
@@ -238,6 +239,7 @@ describe('createCtxProxy', () => {
         description: 'recurses',
         input_schema: { type: 'object', properties: {} },
         handler: constructedHandler,
+        toClassifierInput: () => '',
       },
       { source: { kind: 'constructed', id: 'mock:recursive', label: 'recursive', version: '1.0.0' } },
     );

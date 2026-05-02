@@ -8,6 +8,21 @@ All notable changes to this project will be documented in this file.
 
 <!-- last-sync: a6677bd -->
 
+### Added (v0.7.33 in progress — FEATURE_092 Auto Mode Classifier)
+
+- **`@kodax/ai sideQuery` API** (Phase 1, commit `a0e3502`) — independent one-shot LLM invocation for features that need a clean call boundary outside the main agent loop. Constraints by design: `tools=[]` hardcoded, text-only output, independent timeout, `querySource` mapped to `TokenUsageRecord.role` for cost bucketing, never throws (all failures produce a result with `stopReason='timeout' | 'aborted' | 'error'`). First consumer is the auto-mode classifier; future consumers include compaction, title generation, SA mutation reflection. 15 tests covering happy path, isolation guarantees, cost tracking, tool-rejection contract, timeout vs caller-abort label fidelity (deterministic `abortCause` tracking eliminates the race), provider-error path.
+- **`@kodax/core GuardrailContext.messages`** (Phase 2a, commit `625fca1`) — optional `messages?: readonly AgentMessage[]` field on `GuardrailContext` so tool-side guardrails can inspect the live conversation transcript without reaching into Runner internals. Runner populates the field at both `beforeTool` and `afterTool` call sites. Backward compatible — existing tool guardrail consumers unaffected.
+- **`@kodax/coding classifier-projection` helpers** (Phase 2b.1) — exports `defaultToClassifierInput(name, input)` (conservative `name + truncated JSON` projection for low-risk structured tools) and `mcpToClassifierInput(server, tool, input)` (hybrid projection: extract action field — method/command/url/query/action priority — then append structural context). 14 tests cover projection format, action priority, structure summarization, edge cases (circular refs, primitives, null).
+
+### Changed (BREAKING — v0.7.33)
+
+- **`LocalToolDefinition.toClassifierInput: (input: unknown) => string`** is now a **required** field (Phase 2b.1). Authors of custom tools (extensions via FEATURE_034, runtime construction via FEATURE_087) must supply a projection that the auto-mode classifier evaluates. Three-tier strategy:
+  - **Zero-risk (read-only / structural):** return `''` — Tier 1 short-circuits the classifier entirely (zero token cost). Examples: read, grep, glob, scaffold/validate/test of construction tools.
+  - **High-risk (mutation / network / exec / spawn):** custom projection surfacing the risk-bearing field. Examples: `Bash: ${i.command}`, `Write ${i.path} (${i.content.length} bytes)`, `WebFetch ${i.url}`, `ActivateTool: ${name}@${version}`.
+  - **Low-risk structured:** call `defaultToClassifierInput(name, input)` (one-line helper).
+
+  All 41 built-in tools migrated. The construction runtime falls back to `defaultToClassifierInput(artifact.name, input)` for constructed tools that don't yet declare a custom projection (a future artifact-schema field will let authors override). External extension authors must add the field to their `LocalToolDefinition` literals — see JSDoc on the field and the example collection at the top of `packages/coding/src/tools/classifier-projection.ts` for guidance.
+
 ---
 
 ## [0.7.32] - 2026-05-02

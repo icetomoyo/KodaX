@@ -57,6 +57,7 @@ describe('tool registry', () => {
         required: ['path'],
       },
       handler: async (input) => `override:${String(input.path)}`,
+      toClassifierInput: () => '',
     });
 
     await expect(

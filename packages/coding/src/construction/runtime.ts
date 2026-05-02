@@ -28,6 +28,7 @@ import crypto from 'crypto';
 import { Runner } from '@kodax/core';
 import type { LocalToolDefinition } from '../tools/types.js';
 import { registerTool } from '../tools/registry.js';
+import { defaultToClassifierInput } from '../tools/classifier-projection.js';
 import type { KodaXToolDefinition } from '@kodax/ai';
 
 import { buildAdmissionManifest } from './admission-bridge.js';
@@ -965,6 +966,11 @@ async function registerActiveToolArtifact(artifact: ToolArtifact): Promise<void>
     description: artifact.content.description,
     input_schema: artifact.content.inputSchema as KodaXToolDefinition['input_schema'],
     handler,
+    // Constructed tools don't yet declare a custom classifier projection.
+    // FEATURE_092 v1: fail-closed via the conservative default helper —
+    // tool name + truncated JSON. Future artifact schema may add an
+    // optional `classifierProjection` template (see v0.7.33.md Q2).
+    toClassifierInput: (input) => defaultToClassifierInput(artifact.name, input),
   };
 
   const existing = _activated.get(activeKey(artifact));
