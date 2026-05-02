@@ -1,0 +1,47 @@
+[pilot] alias=zhipu/glm51 model=glm-5.1 cells=70
+  accuracy:    block=44/56 (TP=78.6%) allow=13/14 (FP=7.1%) escalate=0 unparseable=0 error=0
+  tokens/call: input=2087 output=32 total=2119
+  by fixture:  empty=386 short=515 medium=818 long=1431 huge=7443
+  latency:     p50=2665ms p90=4755ms p99=6614ms
+--
+[pilot] alias=kimi model=kimi-for-coding cells=70
+  accuracy:    block=43/53 (TP=81.1%) allow=15/16 (FP=6.3%) escalate=0 unparseable=0 error=1
+  tokens/call: input=2147 output=31 total=2178
+  by fixture:  empty=364 short=518 medium=842 long=1469 huge=7696
+  latency:     p50=1379ms p90=1941ms p99=21888ms
+--
+[pilot] alias=mimo/v25 model=mimo-v2.5 cells=70
+  accuracy:    block=1/1 (TP=100.0%) allow=0/0 (FP=n/a%) escalate=0 unparseable=0 error=69
+  tokens/call: input=5 output=9 total=14
+  by fixture:  empty=72 short=0 medium=0 long=0 huge=0
+  latency:     p50=5889ms p90=6217ms p99=7955ms
+--
+[pilot] alias=mimo/v25pro model=mimo-v2.5-pro cells=70
+  accuracy:    block=0/0 (TP=n/a%) allow=0/0 (FP=n/a%) escalate=0 unparseable=0 error=70
+  tokens/call: input=0 output=0 total=0
+  by fixture:  empty=0 short=0 medium=0 long=0 huge=0
+  latency:     p50=5886ms p90=6114ms p99=7380ms
+--
+[pilot] alias=mmx/m27 model=MiniMax-M2.7 cells=70
+  accuracy:    block=43/51 (TP=84.3%) allow=17/19 (FP=10.5%) escalate=0 unparseable=0 error=0
+  tokens/call: input=2165 output=259 total=2425
+  by fixture:  empty=575 short=751 medium=1090 long=1707 huge=8000
+  latency:     p50=7693ms p90=11203ms p99=17008ms
+--
+[pilot] alias=ark/glm51 model=glm-5.1 cells=70
+  accuracy:    block=45/57 (TP=78.9%) allow=13/13 (FP=0.0%) escalate=0 unparseable=0 error=0
+  tokens/call: input=2088 output=83 total=2170
+  by fixture:  empty=416 short=561 medium=868 long=1474 huge=7533
+  latency:     p50=4899ms p90=9037ms p99=16111ms
+--
+[pilot] alias=ds/v4pro model=deepseek-v4-pro cells=70
+  accuracy:    block=43/51 (TP=84.3%) allow=17/17 (FP=0.0%) escalate=0 unparseable=2 error=0
+  tokens/call: input=2196 output=172 total=2368
+  by fixture:  empty=515 short=654 medium=1012 long=1665 huge=7993
+  latency:     p50=5464ms p90=9022ms p99=11519ms
+--
+[pilot] alias=ds/v4flash model=deepseek-v4-flash cells=70
+  accuracy:    block=45/57 (TP=78.9%) allow=13/13 (FP=0.0%) escalate=0 unparseable=0 error=0
+  tokens/call: input=2196 output=180 total=2376
+  by fixture:  empty=528 short=682 medium=1008 long=1678 huge=7984
+  latency:     p50=2817ms p90=4492ms p99=5742ms
