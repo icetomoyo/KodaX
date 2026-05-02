@@ -828,6 +828,15 @@ export interface KodaXOptions {
   context?: KodaXContextOptions;
   events?: KodaXEvents;
   extensionRuntime?: ExtensionRuntimeContract;
+  /**
+   * FEATURE_092 (v0.7.33): caller-supplied run-scoped guardrails forwarded
+   * to `Runner.run` via `RunOptions.guardrails`. Merged with the START
+   * agent's declared guardrails (agent-first, then opts). The REPL injects
+   * the AutoModeToolGuardrail here when `permissionMode === 'auto'`; SDK
+   * consumers can inject custom ToolGuardrail / InputGuardrail / OutputGuardrail
+   * instances. Empty / undefined leaves the agent's own declaration unchanged.
+   */
+  guardrails?: readonly import('@kodax/core').Guardrail[];
   /** AbortSignal for cancelling the API request */
   abortSignal?: AbortSignal;
 }

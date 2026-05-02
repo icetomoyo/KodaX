@@ -28,6 +28,10 @@ export async function runKodaX(
   const result = await Runner.run<KodaXResult>(createDefaultCodingAgent(), prompt, {
     presetOptions: effectiveOptions,
     abortSignal: effectiveOptions.abortSignal,
+    // FEATURE_092 (v0.7.33): forward caller-supplied run-scoped guardrails
+    // (e.g. AutoModeToolGuardrail injected by the REPL bootstrap when
+    // permissionMode === 'auto'). Runner merges with `agent.guardrails`.
+    guardrails: effectiveOptions.guardrails,
   });
   // Substrate executor always lifts full `KodaXResult` onto `data` —
   // missing means the Agent declaration is mis-wired (fail loud, never

@@ -203,6 +203,7 @@ module (`aliases.ts` + `judges.ts` + `harness.ts` + `report.ts` + `persist.ts`).
 - Tool `description` fields in `packages/coding/src/tools/`
 - `coding-preset.ts:DEFAULT_CODING_INSTRUCTIONS`
 - `packages/coding/src/agents/protocol-emitters.ts` prompts
+- `packages/coding/src/guardrails/auto-mode/classifier-prompt.ts` (FEATURE_092 v0.7.33 — auto-mode classifier system prompt; eval: `tests/auto-mode-classifier.eval.ts`)
 
 **Non-triggers** (no eval needed):
 - Reasoning depth / parameter changes (FEATURE_078 / FEATURE_103 L1-L5 chain)
