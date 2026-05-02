@@ -168,3 +168,11 @@ export type {
   SessionCostSummary,
   CostTracker,
 } from './cost-tracker.js';
+
+// ============== Side Query (independent one-shot LLM invocation) ==============
+export { sideQuery } from './side-query.js';
+export type {
+  SideQueryRequest,
+  SideQueryResult,
+  SideQueryStopReason,
+} from './side-query.js';
