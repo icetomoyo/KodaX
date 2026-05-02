@@ -8,15 +8,49 @@
  * Permission mode
  * - plan: Read-only planning, all modifications blocked unless explicitly whitelisted
  * - accept-edits: File edits auto-approved, shell commands require confirmation
- * - auto-in-project: All tools auto-approved within project, outside requires confirmation
+ * - auto: All tools auto-approved (with optional LLM classifier review when
+ *         auto-mode engine === 'llm'; FEATURE_092 v0.7.33). When engine === 'rules',
+ *         falls back to the legacy "all tools approved within project, outside
+ *         requires confirmation" behavior — i.e., the v0.7.32 `auto-in-project`
+ *         shape. The `auto-in-project` name is preserved as a deprecated alias
+ *         for 5 minor versions (removed in v0.7.38).
  */
-export type PermissionMode = "plan" | "accept-edits" | "auto-in-project";
+export type PermissionMode = "plan" | "accept-edits" | "auto" | "auto-in-project";
 
 export const PERMISSION_MODES: PermissionMode[] = [
   "plan",
   "accept-edits",
-  "auto-in-project",
+  "auto",
+  "auto-in-project", // deprecated alias; behavior identical to 'auto'
 ];
+
+/**
+ * Canonical mode names that should appear in user-facing UI / Shift-Tab
+ * cycling (excludes deprecated aliases).
+ */
+export const CANONICAL_PERMISSION_MODES: PermissionMode[] = [
+  "plan",
+  "accept-edits",
+  "auto",
+];
+
+/**
+ * Returns true when `mode` is the auto family (canonical 'auto' or the
+ * deprecated 'auto-in-project' alias). Use this in conditional branches
+ * that need to detect auto-mode without binding to either spelling.
+ */
+export function isAutoMode(mode: PermissionMode): boolean {
+  return mode === "auto" || mode === "auto-in-project";
+}
+
+/**
+ * Map legacy mode names to their canonical form. v0.7.33: auto-in-project → auto.
+ * Use at value-read boundaries (settings load, persisted session restore) so
+ * downstream code only ever sees canonical names.
+ */
+export function canonicalizePermissionMode(mode: PermissionMode): PermissionMode {
+  return mode === "auto-in-project" ? "auto" : mode;
+}
 
 // ============== Confirm Result ==============
 
@@ -108,6 +142,7 @@ export function computeConfirmTools(mode: PermissionMode): Set<string> {
       return new Set(["bash", "write", "edit", "undo"]);
     case "accept-edits":
       return new Set(["bash"]);
+    case "auto":
     case "auto-in-project":
       return new Set();
   }

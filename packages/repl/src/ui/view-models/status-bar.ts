@@ -115,7 +115,12 @@ function getPermissionModeColor(permissionMode: StatusBarProps["permissionMode"]
       return "blue";
     case "accept-edits":
       return "green";
+    case "auto":
     case "auto-in-project":
+      // FEATURE_092 v0.7.33: 'auto' (canonical) shares the deprecated
+      // 'auto-in-project' coloring. Engine-level distinction (auto[rules]
+      // vs auto[llm]) is added when the status-bar engine indicator lands
+      // in Phase 2b.8.
       return "warning";
     default:
       return "magenta";
