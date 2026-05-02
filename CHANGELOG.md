@@ -6,9 +6,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-<!-- last-sync: a6677bd -->
+<!-- last-sync: 75e7048 -->
 
-### Added (v0.7.33 in progress — FEATURE_092 Auto Mode Classifier)
+---
+
+## [0.7.33] - 2026-05-02
+
+### Theme
+
+**FEATURE_092 — Auto Mode Classifier** ships its full release surface. The LLM-reviewed permission tier (Phase 2b classifier core, denial tracker / circuit breaker, model resolver, `AutoModeToolGuardrail` consumer) ships with end-to-end wire-up across both REPL surfaces (readline + Ink), settings / CLI / env override family, slash commands (`/auto-engine`, `/auto-denials`), and a status-bar engine indicator (`Auto[LLM]` green / `Auto[RULES]` yellow) so users can see at a glance whether the classifier downgraded mid-session. The §7 cross-provider release-gate eval (`KODAX_EVAL_AUTO_MODE_CROSS_PROVIDER=1`) verifies 3 cross-provider combos and uncovered a latent bug where `classify()` discarded `sideQuery`'s post-call cost-tracker copy — fixed by threading `setCostTracker` through `ClassifyOptions` so the agent's tracker accumulates classifier calls under `role='auto_mode'`. The canonical `'auto'` permission mode joins `plan` / `accept-edits` (with `'auto-in-project'` retained as a deprecated alias emitting a once-per-session deprecation notice). Status-bar text adopts Title-Case short labels (`Plan` / `Edits` / `Auto[LLM]` / `Auto[RULES]`) matching Claude Code's `permissionModeShortTitle` convention, unified across both readline and Ink surfaces via the new `permissionModeDisplayName` helper.
+
+### Added
 
 - **`@kodax/ai sideQuery` API** (Phase 1, commit `a0e3502`) — independent one-shot LLM invocation for features that need a clean call boundary outside the main agent loop. Constraints by design: `tools=[]` hardcoded, text-only output, independent timeout, `querySource` mapped to `TokenUsageRecord.role` for cost bucketing, never throws (all failures produce a result with `stopReason='timeout' | 'aborted' | 'error'`). First consumer is the auto-mode classifier; future consumers include compaction, title generation, SA mutation reflection. 15 tests covering happy path, isolation guarantees, cost tracking, tool-rejection contract, timeout vs caller-abort label fidelity (deterministic `abortCause` tracking eliminates the race), provider-error path.
 - **`@kodax/core GuardrailContext.messages`** (Phase 2a, commit `625fca1`) — optional `messages?: readonly AgentMessage[]` field on `GuardrailContext` so tool-side guardrails can inspect the live conversation transcript without reaching into Runner internals. Runner populates the field at both `beforeTool` and `afterTool` call sites. Backward compatible — existing tool guardrail consumers unaffected.
@@ -22,7 +30,7 @@ All notable changes to this project will be documented in this file.
 - **Auto-mode classifier eval dataset** (Phase 2b.9) — `benchmark/datasets/auto-mode-classifier/cases.ts` 14 synthetic cases across 6 tags (`exfiltration` ×2, `remote-exec` ×2, `dest-irrev` ×2, `dep-poisoning` ×1, `prompt-inject` ×2, `legit-work` ×5). `cases.test.ts` (8 hermetic shape tests, no LLM). `tests/auto-mode-classifier.eval.ts` skip-by-default Stage 0 stub — opt-in live measurement via `KODAX_EVAL_AUTO_MODE_LIVE=1`; per-alias TP/FP/escalate counters; quality thresholds NOT enforced yet (gated to Stage 1 post-pilot per `benchmark/datasets/auto-mode-classifier/README.md`).
 - **`@kodax/coding` public surface** — auto-mode classifier modules exported under the `// FEATURE_092` heading: `classify`, `loadAutoRules` family, `buildClassifierPrompt`, `stripAssistantText`, `parseClassifierOutput`, denial-tracker family (renamed at the index boundary to `createAutoModeDenialTracker` / `recordAutoModeBlock` / etc. to avoid collision with the FEATURE_044/045 input-signature `DenialTracker` already exported), circuit-breaker family, model-resolver family, `createAutoModeToolGuardrail`, plus all corresponding types.
 
-### Wired through (v0.7.33 release surface)
+### Wired through
 
 The Phase 2b roadmap shipped in three waves; what follows is the live surface as of release:
 
@@ -34,7 +42,7 @@ The dataset's Stage 1 (`benchmark/datasets/auto-mode-classifier/README.md`) gate
 
 **ACP scope note (v0.7.33)**: the canonical `'auto'` permission mode is **not** exposed over ACP. ACP clients see the legacy 3-mode set (`plan`, `accept-edits`, `auto-in-project`) — see code comment on `ACP_PERMISSION_MODE_IDS` in `src/acp_server.ts`. The classifier requires an interactive `askUser` surface (readline / Ink confirm dialog) and `KodaXAcpServer.requestPermissionFromClient` has no protocol slot for the classifier-escalate `<reason>` payload yet; an ACP-native classifier-escalate channel lands in a follow-up version. Until then, ACP's `'auto-in-project'` continues with the pre-v0.7.33 rules-only semantics.
 
-### Changed (BREAKING — v0.7.33)
+### Changed (BREAKING)
 
 - **`LocalToolDefinition.toClassifierInput: (input: unknown) => string`** is now a **required** field (Phase 2b.1). Authors of custom tools (extensions via FEATURE_034, runtime construction via FEATURE_087) must supply a projection that the auto-mode classifier evaluates. Three-tier strategy:
   - **Zero-risk (read-only / structural):** return `''` — Tier 1 short-circuits the classifier entirely (zero token cost). Examples: read, grep, glob, scaffold/validate/test of construction tools.
