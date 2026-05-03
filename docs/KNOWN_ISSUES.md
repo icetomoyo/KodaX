@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-04-26_
+_Last Updated: 2026-05-03_
 
 ---
 
@@ -71,11 +71,233 @@ _Last Updated: 2026-04-26_
 | 124 | High | Open | AMA 子 Agent dispatch 实际触发率偏低 — Controller fanout gate + H1 工具白名单串联收得过紧 | v0.7.18 | - | 2026-04-26 | - |
 | 125 | Low | Open | Thinking-mode cross-provider replay — 三个不可测 OpenAI-compat 与 anthropic 官方 strict mode 待实证 | v0.7.28 | - | 2026-04-26 | - |
 | 126 | Low | Open | tmux 默认不透传 OSC 8 超链接 — kodax 输出中的 file:// / docs URL 在 tmux 内不可点击 | 一直存在 | - | 2026-04-28 | - |
+| 127 | High | Resolved | AMA 每次 query 都弹出"发现未完成的任务"对话框 — managed task checkpoint 清理 race + 错误/取消路径未清理 | v0.7.26 | v0.7.34 | 2026-05-03 | 2026-05-03 |
+| 128 | Medium | Resolved | runKodaX 端到端 contract 测试在并发负载下 5000ms 超时偶发 flake | 一直存在 | v0.7.34 | 2026-05-03 | 2026-05-03 |
 
 ---
 
 ## Issue Details
 <!-- Full details for each issue - REQUIRED for all issues -->
+---
+### 128: runKodaX 端到端 contract 测试在并发负载下 5000ms 超时偶发 flake
+
+- **Priority**: Medium（CI 不稳定，但不阻塞功能；单跑测试 100% 通过）
+- **Status**: Resolved
+- **Introduced**: 一直存在（vitest default testTimeout = 5000ms 与 211 文件并发负载组合下擦边）
+- **Fixed**: v0.7.34
+- **Created**: 2026-05-03
+- **Resolved**: 2026-05-03
+
+#### Original Problem
+
+跑 `npx vitest run packages/coding`（211 测试文件，~1937 个 case）时，每次有 2-6 个 contract test 因 `Test timed out in 5000ms` 失败。**单独跑 100% 通过**，每次 fail 的 file 也不一样，典型 load-induced flake。
+
+实测 baseline（不带 Issue 127 修复）：2/1935 fail
+实测带 Issue 127 修复：1-6/1937 fail（不同次跑不一样）
+
+#### Root Cause
+
+涉及 file 全部是 `__contract-tests__/cap-*.contract.test.ts` 中调 `await runKodaX(...)` 的 9 个端到端 contract test，外加 `orchestration.test.ts`：
+
+- 每个 case 跑完整 `runKodaX` 链路（builder + agent loop + provider stub + event observers），单跑 < 1s
+- vitest default `testTimeout = 5000ms`
+- 211 文件 fork pool 并发运行时，I/O 竞争 + 进程调度抖动让某些 case 偶尔擦边 > 5000ms
+
+#### Verification
+
+- 用 `--testTimeout=15000` 实测 211/211 全绿（无 deterministic bug）
+- 单独跑各 fail 文件 24/24 全绿
+
+#### Resolution
+
+精准切口：给 10 个 end-to-end test suite 在 `describe(name, options, factory)` 加 `{ timeout: 15_000 }`，**不动**：
+- vitest 全局 `testTimeout`（避免掩盖性能回归类 bug）
+- 其他 91 个 unit-style contract tests（unaffected，仍 5000ms 默认）
+- 任何核心代码
+
+10 秒额外 headroom 足以吸收并发 load 抖动；real hang / perf regression 仍会在 15s 内被捕获。
+
+#### Files Changed
+
+10 个测试文件加 `{ timeout: 15_000 }` 选项：
+
+- `packages/coding/src/agent-runtime/__contract-tests__/cap-003-events-session-start.contract.test.ts`
+- `packages/coding/src/agent-runtime/__contract-tests__/cap-004-events-stream-end.contract.test.ts`
+- `packages/coding/src/agent-runtime/__contract-tests__/cap-005-events-complete.contract.test.ts`
+- `packages/coding/src/agent-runtime/__contract-tests__/cap-006-events-error.contract.test.ts`
+- `packages/coding/src/agent-runtime/__contract-tests__/cap-007-events-rate-limit.contract.test.ts`
+- `packages/coding/src/agent-runtime/__contract-tests__/cap-041-ext-runtime-lifecycle.contract.test.ts`
+- `packages/coding/src/agent-runtime/__contract-tests__/cap-051-repo-routing.contract.test.ts`
+- `packages/coding/src/agent-runtime/__contract-tests__/cap-054-ext-events.contract.test.ts`
+- `packages/coding/src/agent-runtime/__contract-tests__/cap-086-finally-release.contract.test.ts`
+- `packages/coding/src/orchestration.test.ts`
+
+#### Verification After Fix
+
+- 连续跑 3 次 `npx vitest run packages/coding`：全 211/211 ✅
+- 单跑各 contract test：全通过
+- `npm run build`：通过
+
+#### Why Not Bump Global testTimeout
+
+User reflection 提到的关键风险：bump 全局 5000 → 15000 会**掩盖性能回归类 bug**。慢 unit test 应该被 5000ms 抓出，给到 15s 后人类难以发现。所以只针对 inherently-heavy 端到端 suite scope 化。
+
+---
+### 127: AMA 每次 query 都弹出"发现未完成的任务"对话框 — managed task checkpoint 清理 race + 错误/取消路径未清理
+
+- **Priority**: High（每次 query 都被打断，体验严重受损；非 corrupt-data，仅 UX）
+- **Status**: Resolved
+- **Introduced**: v0.7.26（FEATURE_071 worker checkpoint + Shard 6c structural resume 落地时引入；race 与 lifecycle gap 自始存在）
+- **Fixed**: v0.7.34
+- **Created**: 2026-05-03
+- **Resolved**: 2026-05-03
+
+#### Current Behavior
+
+REPL 模式下，**任意一次 AMA query 完成（Task completed）后**，下一次输入 query 都会立即弹出三选一对话框：
+
+```
+[Select] 发现未完成的任务
+> 继续未完成的工作 - 在先前 Scout/执行结果的基础上继续（上下文保留）
+  重新开始 - 丢弃之前的进度，重新开始
+  取消 - 中止当前请求
+```
+
+无论上一次任务是 **success / blocked / error / 取消**，都会弹。即使每次都选"重新开始"清掉，下一次仍弹。git HEAD 不变 + 1 小时窗口内连续做几次 query 必触发。
+
+H0_DIRECT 直答任务（Scout 单 emit 即终止）触发率最高，因为生命周期最短。
+
+#### Expected Behavior
+
+只有当 **真的存在中断 / 崩溃留下的未完成任务** 时才弹。正常完成（success / blocked terminal exit）+ 错误终止 + 用户取消都应在退出时清理 checkpoint，下一次 query 直接进入 Scout，不打断用户。
+
+#### Reproduction
+
+REPL 内连续提两个不相关问题：
+
+1. `kodax`（启动 REPL）
+2. 输入：`你好` → 等到底部出现 "Task completed"
+3. 输入：`今天天气如何` → **弹窗立即出现**
+
+或非交互式重现 race（已 100% 复现）：
+
+```
+node packages/coding/src/task-engine/runner-driven-checkpoint-race.test.ts
+```
+
+复现率：实测 200/200（无人工延迟）/ 200/200（1ms 同步延迟），即每次 H0_DIRECT 短任务都会留 orphan。
+
+#### Root Cause（已通过隔离测试 + 代码审计确认）
+
+涉及三层缺陷，串联放大问题：
+
+**A. 成功路径 race condition**（[runner-driven.ts:4029-4097](../packages/coding/src/task-engine/runner-driven.ts#L4029-L4097) + [runner-driven.ts:4676-4683](../packages/coding/src/task-engine/runner-driven.ts#L4676-L4683)）
+
+```ts
+let lastCheckpointWorkspaceDir: string | undefined;
+const checkpointWriter = (role) => {
+  void writeCurrentCheckpoint({...}).then((dir) => {
+    if (dir) lastCheckpointWorkspaceDir = dir;       // ← 异步赋值
+  });
+};
+// ── runner.run() 返回，L4585-L4671 全是同步代码 ──
+// ── 没有任何 await 让微任务队列推进 ──
+if (lastCheckpointWorkspaceDir) {                     // ← 还是 undefined！
+  await deleteCheckpoint(lastCheckpointWorkspaceDir);
+}
+```
+
+`void`...`.then()` 依赖微任务队列推进才能赋值，但 L4585-L4671 全是同步代码，cleanup 跑到时 `lastCheckpointWorkspaceDir` 还是 `undefined`，`if` 跳过。然后异步 write 完成，落盘成 orphan。
+
+H0_DIRECT 单 Scout emit 任务尤其严重：emit → write 启动 → Runner 同步 return → cleanup 同步执行 → write 落盘（race 窗口 ~5-50ms）。
+
+**B. 错误路径无清理**（[runner-driven.ts:3819](../packages/coding/src/task-engine/runner-driven.ts#L3819)）
+
+外层 `catch (err)` 只调用 `emitError` + `saveSessionSnapshot`，**没有 `deleteCheckpoint` 调用**。LLM 报错、provider 超时、网络抖动都会留 orphan。
+
+**C. 取消路径无清理**
+
+`AbortSignal` 触发的中断（Esc / Ctrl-C）没有 checkpoint cleanup hook。
+
+**为什么过期 / git mismatch 自动清理不能兜底**：[checkpoint.ts:138-143](../packages/coding/src/task-engine/_internal/managed-task/checkpoint.ts#L138-L143) 只在 age > 1h **或** gitCommit 不匹配时清理。同一 git HEAD 下连续 query 全部命中"valid"分支。
+
+#### Verification（已完成）
+
+- 隔离 race 测试 [runner-driven-checkpoint-race.test.ts](../packages/coding/src/task-engine/runner-driven-checkpoint-race.test.ts) 用真实 `writeCheckpoint` / `deleteCheckpoint` 复现生产模式；当前实现下 1/1 失败（73ms 内）
+- 200 次重复模拟脚本（runtime fire-and-forget vs sync cleanup）：200/200 留 orphan
+- 现有 `checkpoint.test.ts` 7 个测试全过 —— 覆盖原语正确性，**未覆盖 lifecycle / cleanup race**
+
+#### Resolution
+
+实施位置：[runner-driven.ts:4029-4708](../packages/coding/src/task-engine/runner-driven.ts#L4029-L4708)（`runManagedTaskViaRunnerInner` 内）
+
+**1. Race fix（根因 A）** — 替换 fire-and-forget + async 赋值的旧 pattern：
+
+```ts
+// 旧（buggy）：依赖 .then() 异步赋值，cleanup 时还是 undefined
+let lastCheckpointWorkspaceDir: string | undefined;
+void writeCurrentCheckpoint(...).then((dir) => {
+  if (dir) lastCheckpointWorkspaceDir = dir;
+});
+if (lastCheckpointWorkspaceDir) await deleteCheckpoint(lastCheckpointWorkspaceDir);
+
+// 新：累积 promise + Promise.allSettled + 确定性 workspaceDir
+const pendingCheckpointWrites: Array<Promise<unknown>> = [];
+const cleanupRunCheckpoint = async (): Promise<void> => {
+  if (!checkpointingEnabled) return;
+  await Promise.allSettled(pendingCheckpointWrites);
+  await deleteCheckpoint(workspaceDir).catch(() => undefined);
+};
+pendingCheckpointWrites.push(writeCurrentCheckpoint({...}));  // 替换 void/.then
+// ...
+await cleanupRunCheckpoint();
+```
+
+`workspaceDir` 沿用 [runner-driven.ts:3899](../packages/coding/src/task-engine/runner-driven.ts#L3899) 在 run 开始就算好的确定性路径。
+
+**2. 错误/取消路径（根因 B + C）** — 链式 `.catch` 包 `Runner.run`：
+
+```ts
+const runResult = await Runner.run(entryAgent, runnerInput, {...}).catch(async (err: unknown) => {
+  await cleanupRunCheckpoint();
+  throw err;
+});
+```
+
+`Runner.run` 内部消费 `options.abortSignal`，abort 触发时 reject，此 catch 同时覆盖 abort（Esc/Ctrl-C）+ LLM 报错 + provider 超时所有非成功终止。**没有引入新的 abort listener** —— 直接复用 Runner 现有的 abort propagation。
+
+#### Files Changed
+
+- [packages/coding/src/task-engine/runner-driven.ts](../packages/coding/src/task-engine/runner-driven.ts) — race fix + error path cleanup（净 +25 / -10 行）
+
+#### Tests Added
+
+- [packages/coding/src/task-engine/runner-driven-checkpoint-race.test.ts](../packages/coding/src/task-engine/runner-driven-checkpoint-race.test.ts) — 2 cases（success path / error path），镜像生产新 pattern；旧 pattern 下 200/200 失败实测过
+- 既有 7 个 `checkpoint.test.ts` + 97 个 `runner-driven.test.ts` 全数 PASS（无回归）
+- TypeScript `tsc --noEmit` 通过
+
+#### Why This Approach
+
+替代方案考虑过：
+- **try/finally 大包裹**：把整个 `runManagedTaskViaRunnerInner` body（~880 行）放进 try/finally，cleanup 在 finally。语义最干净但 +2 indent diff 巨大
+- **AbortSignal 监听 + outer catch**：需要在 outer wrapper（`runManagedTaskViaRunner`）catch 里访问内层 `workspaceDir`，需要把状态用 `(err as any).__cleanup` 之类的 hack 传出来
+
+最终方案是**最小切口**：`pendingCheckpointWrites` 数组替换 race-prone 状态，`Runner.run().catch()` 链式接 cleanup-then-rethrow，复用 Runner 自身的 abort propagation。
+
+#### Workaround（修复落地前 / 历史记录）
+
+- 用户层面：每次弹窗选"重新开始"（功能性可用，但每次被打断）
+- 手动清理：`find <cwd>/.agent/managed-tasks/ -name checkpoint.json -delete`（Windows: `del /s /q .agent\managed-tasks\*\checkpoint.json`）
+- 跨 commit 自动清理：每次 `git commit` 后下一次 query 不再弹（gitCommit mismatch 触发 [checkpoint.ts:142-143](../packages/coding/src/task-engine/_internal/managed-task/checkpoint.ts#L142-L143) 自动清理）
+
+#### Related
+
+- FEATURE_071（worker checkpoint & mid-execution recovery）— 引入 checkpoint 机制本身
+- Shard 6c / H1 structural resume（v0.7.26）— 引入 `handlePreRunCheckpoint` + 三选一 prompt
+- [runner-driven.ts:3439-3523](../packages/coding/src/task-engine/runner-driven.ts#L3439-L3523) — `handlePreRunCheckpoint` 实现
+- [runner-driven.ts:3707-3737](../packages/coding/src/task-engine/runner-driven.ts#L3707-L3737) — `writeCurrentCheckpoint` helper（fire-and-forget 调用点）
+- [checkpoint.ts:78-163](../packages/coding/src/task-engine/_internal/managed-task/checkpoint.ts#L78-L163) — `findValidCheckpoint` 扫描逻辑
+
 ---
 ### 126: tmux 默认不透传 OSC 8 超链接 — kodax 输出中的 file:// / docs URL 在 tmux 内不可点击
 

@@ -74,7 +74,9 @@ class CaptureProvider extends KodaXBaseProvider {
   }
 }
 
-describe('CAP-054: extension event lifecycle contract', () => {
+// Issue 128: contract tests drive runKodaX end-to-end and flake at 5000ms
+// default under heavy parallel vitest load. Bump per-suite to 15s.
+describe('CAP-054: extension event lifecycle contract', { timeout: 15_000 }, () => {
   let runtime: ReturnType<typeof createExtensionRuntime>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let emitSpy: any;

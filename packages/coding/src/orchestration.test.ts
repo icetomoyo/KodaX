@@ -30,7 +30,9 @@ afterEach(async () => {
   }
 });
 
-describe('runOrchestration', () => {
+// Issue 128: orchestration drives heavy task chains end-to-end and flakes
+// at 5000ms default under heavy parallel vitest load. Bump per-suite to 15s.
+describe('runOrchestration', { timeout: 15_000 }, () => {
   it('runs parallel-safe ready tasks, then hands their outputs to dependent tasks', async () => {
     const workspaceDir = await createTempDir('kodax-orch-');
     let concurrent = 0;

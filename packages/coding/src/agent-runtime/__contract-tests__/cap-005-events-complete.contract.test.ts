@@ -69,7 +69,9 @@ class CompleteEventProvider extends KodaXBaseProvider {
   }
 }
 
-describe('CAP-005: onComplete event contract', () => {
+// Issue 128: contract tests drive runKodaX end-to-end and flake at 5000ms
+// default under heavy parallel vitest load. Bump per-suite to 15s.
+describe('CAP-005: onComplete event contract', { timeout: 15_000 }, () => {
   beforeEach(() => {
     process.env[API_KEY_ENV] = 'test-key';
   });

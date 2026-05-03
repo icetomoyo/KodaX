@@ -4026,8 +4026,24 @@ async function runManagedTaskViaRunnerInner(
   //      an interactive `askUser` callback the user cannot be prompted
   //      to resume, so the checkpoint ledger is dead weight for
   //      non-interactive callers (unit tests, SDK consumers).
-  let lastCheckpointWorkspaceDir: string | undefined;
+  // Issue 127: collect every fire-and-forget checkpoint write so the
+  // terminal cleanup can `await Promise.allSettled` them before deleting.
+  // Without this, the delete races against the in-flight write — a write
+  // that resolves AFTER the delete recreates an orphan checkpoint.json,
+  // triggering the "found incomplete task" prompt on the next query
+  // even though the task completed successfully.
   const checkpointingEnabled = Boolean(options.events?.askUser);
+  const pendingCheckpointWrites: Array<Promise<unknown>> = [];
+  const cleanupRunCheckpoint = async (): Promise<void> => {
+    if (!checkpointingEnabled) return;
+    await Promise.allSettled(pendingCheckpointWrites);
+    try {
+      await deleteCheckpoint(workspaceDir);
+    } catch {
+      // best-effort cleanup; stale checkpoints will be handled by
+      // handlePreRunCheckpoint on the next run.
+    }
+  };
   const checkpointWriter = (role: KodaXTaskRole): void => {
     // v0.7.26 C4 parity — when Scout emits with a freshly derived
     // skillMap, re-persist the skill artefacts so downstream roles and
@@ -4085,15 +4101,13 @@ async function runManagedTaskViaRunnerInner(
     }
     const scoutCompleted = Boolean(recorder.scout);
     const currentRound = rolesRef.emitted.length;
-    void writeCurrentCheckpoint({
+    pendingCheckpointWrites.push(writeCurrentCheckpoint({
       options,
       managedTask: snapshot,
       currentRound,
       completedWorkerIds: rolesRef.emitted.map((r) => r),
       scoutCompleted,
-    }).then((dir) => {
-      if (dir) lastCheckpointWorkspaceDir = dir;
-    });
+    }));
   };
 
   const observer = buildObserverBridge(
@@ -4580,7 +4594,26 @@ async function runManagedTaskViaRunnerInner(
     // the user at the 90% threshold long before this cap, so reaching 500
     // genuinely indicates a prompt / tool-design bug worth flagging.
     maxToolLoopIterations: 500,
+  }).catch(async (err: unknown) => {
+    // Issue 127: clean up checkpoint on abort (Esc / Ctrl-C) and any
+    // LLM / Runner error before the rejection propagates. Without this,
+    // a non-success terminal exit leaves a fresh checkpoint.json on
+    // disk, which the next query's findValidCheckpoint scan picks up
+    // and triggers the "found incomplete task" prompt — same UX bug as
+    // the success-path race, just on the error/abort branch.
+    await cleanupRunCheckpoint();
+    throw err;
   });
+
+  // Issue 127 (review feedback): clean up the checkpoint EARLY — the
+  // moment Runner.run resolves successfully — so any throw from the
+  // post-run synchronous block below (`buildManagedTaskPayload` /
+  // `observer.completed`'s user-provided callbacks /
+  // `detectScoutSuspiciousSignals`) cannot bypass cleanup and leave an
+  // orphan. None of the post-run code reads checkpoint.json from disk,
+  // so deleting it early is semantically equivalent to the original
+  // late-cleanup placement, just with broader error coverage.
+  await cleanupRunCheckpoint();
 
   const lastText = extractUserFacingText(runResult);
   const { signal, verdictStatus, reason, userAnswer } = deriveFinalStatus(recorder);
@@ -4667,18 +4700,6 @@ async function runManagedTaskViaRunnerInner(
         sessionId: runResult.sessionId,
         lastTextPreview: (resolvedText ?? '').slice(0, SUSPICIOUS_LAST_TEXT_PREVIEW_LIMIT),
       });
-    }
-  }
-
-  // Shard 6c: delete checkpoint on successful or blocked terminal exit.
-  // (Blocked is still "the task concluded" from the checkpoint perspective
-  // — the user saw a definitive answer, not an interrupted run.)
-  if (lastCheckpointWorkspaceDir) {
-    try {
-      await deleteCheckpoint(lastCheckpointWorkspaceDir);
-    } catch {
-      // best-effort cleanup; stale checkpoints will be handled by
-      // handlePreRunCheckpoint on the next run.
     }
   }
 
