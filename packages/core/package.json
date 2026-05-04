@@ -1,6 +1,6 @@
 {
   "name": "@kodax/core",
-  "version": "0.7.33",
+  "version": "0.7.34",
   "description": "KodaX Core - Layer A primitives (Agent / Handoff / Runner / Guardrail / Session / CompactionPolicy)",
   "type": "module",
   "main": "dist/index.js",

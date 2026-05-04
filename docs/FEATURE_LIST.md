@@ -15,12 +15,12 @@
 |---|---|
 | Tracked feature IDs | `001-113` (026 removed) |
 | Total tracked features | `111` |
-| Completed | `83` |
+| Completed | `86` |
 | Cancelled | `2` |
 | Absorbed | `2` |
 | InProgress | `1` |
-| Planned | `27` |
-| Current released version | `v0.7.33` |
+| Planned | `24` |
+| Current released version | `v0.7.34` |
 
 > Note: `Planned` includes 4 strikethrough rows (`095` absorbed → 057, `059` absorbed → 084, `063` cancelled, `073` cancelled) that remain in the planned table for traceability. The `Cancelled` and `Absorbed` counters above slice the same rows by lifecycle reason.
 
@@ -34,7 +34,6 @@
 | `v0.7.29` | `4` |
 | `v0.7.30` | `2` |
 | `v0.7.31` | `3` |
-| `v0.7.34` | `2` |
 | `v0.7.35` | `1` |
 | `v0.7.36` | `1` |
 | `~~v0.7.39~~` | `1` |
@@ -70,8 +69,6 @@
 | `101` | Constructed Agent Admission Contract — Quality Invariants & 5-Step Manifest Vetting | Core / Safety Substrate | Critical | `v0.7.31` | [v0.7.31](features/v0.7.31.md#feature_101-constructed-agent-admission-contract) |
 | `089` | Self-Construction Tier 3 — Agent Generation | Core | High | `v0.7.31` | [v0.7.31](features/v0.7.31.md#feature_089-self-construction-tier-3--agent-generation) |
 | `106` | AMA Harness Selection Calibration — Scope-Aware ToolGuardrail + Scout Prompt Hard Rule | Core / Quality | High | `v0.7.31` | [v0.7.31](features/v0.7.31.md#feature_106-ama-harness-selection-calibration) |
-| `110` | Remove Legacy Plan Mode (Path 1) | Refactor / Cleanup | High | `v0.7.34` | [v0.7.34](features/v0.7.34.md#feature_110-remove-legacy-plan-mode-path-1) |
-| `097` | AMA Runner Realtime Todo List — Claude-Aligned Visibility Surface | Enhancement | High | `v0.7.34` | [v0.7.34](features/v0.7.34.md#feature_097-ama-runner-realtime-todo-list--claude-aligned-visibility-surface) |
 | `111` | Runner-Level Soft-Pause Protocol | Enhancement / UX | High | `v0.7.35` | [v0.7.35](features/v0.7.35.md#feature_111-runner-level-soft-pause-protocol) |
 | `094` | Deep Anti-Escape Hardening — Runtime Detection and Retry Contract for Generative Large-File Writes | Core | Medium | `v0.7.36` | [v0.7.36](features/v0.7.36.md#feature_094-deep-anti-escape-hardening--runtime-detection-and-retry-contract-for-generative-large-file-writes) |
 | `095` | ~~SSH-Friendly Cell-Level Diff Renderer for Ink Substrate~~ | ~~Refactor~~ | ~~Medium~~ | ~~`v0.7.39`~~ | [v0.7.30](features/v0.7.30.md#track-f-cell-level-diff-renderer-for-ssh-friendly-output-absorbs-feature_095) | **Absorbed into FEATURE_057**: cell-level screen buffer 是 057 §10 renderer-native selection / §11 ScrollBox parity / Track E output ownership 收口的实际前置基础设施，并入 057 作为 Track F 统一设计与交付 |
@@ -224,6 +221,9 @@
 | `090` | Self-Construction Tier 4 — Agent Self-Modifying Role Spec | `v0.7.32` | [v0.7.32](features/v0.7.32.md#feature_090-self-construction-tier-4--agent-self-modifying-role-spec) |
 | `107` | AMA H2 Plan-Execute Boundary Eval | `v0.7.32` | [v0.7.32](features/v0.7.32.md#feature_107-ama-h2-plan-execute-boundary-eval) |
 | `092` | Auto Mode Classifier — LLM-Reviewed Permission Tier | `v0.7.33` (unreleased) | [v0.7.33](features/v0.7.33.md#feature_092-auto-mode-classifier--llm-reviewed-permission-tier-for-high-risk-tool-calls) |
+| `110` | Remove Legacy Plan Mode (Path 1) | `v0.7.34` | [v0.7.34](features/v0.7.34.md#feature_110-remove-legacy-plan-mode-path-1) |
+| `112` | Investigation-Scale-Aware Routing — Read-Scope Fix | `v0.7.34` | [v0.7.34](features/v0.7.34.md#feature_112-investigation-scale-aware-routing--read-scope-fix) |
+| `097` | AMA Runner Realtime Todo List — Claude-Aligned Visibility Surface | `v0.7.34` | [v0.7.34](features/v0.7.34.md#feature_097-ama-runner-realtime-todo-list--claude-aligned-visibility-surface) |
 
 > `FEATURE_051` close-out posture: keep the current REPL status/footer/task/message surfaces frozen, limit follow-up work to invisible substrate maturity for transcript, scroll/selection, and input behavior, and treat the design doc as a completed close-out record rather than an open rollout plan.
 
