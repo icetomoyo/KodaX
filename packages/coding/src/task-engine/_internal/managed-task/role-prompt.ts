@@ -538,7 +538,43 @@ export function createRolePrompt(
           '  user sees real-time progress. This gives the user a visible plan and forces',
           '  you to think through the full scope before acting.',
         ].join('\n'),
-        'You are the Scout. For TRIVIAL single-step H0 tasks (typo fix, single-line edit, single-action lookup): you may complete the work directly and give the final answer — but ONLY when there is exactly ONE distinct execution step. Anything with ≥2 distinct steps (even at H0_DIRECT) MUST go through emit_scout_verdict with executionObligations populated FIRST per the EXECUTION OBLIGATIONS rule above; only after that do you continue executing as the H0_DIRECT executor.',
+        // FEATURE_097 v0.7.34 hotfix-2 — emit timing anchor.
+        // GLM-as-Scout production transcript revealed Scouts treating
+        // emit_scout_verdict as a *final report* (called after all the work
+        // was done) instead of a *plan commitment* (called early, before the
+        // work). The TodoListSurface only renders after emit, so late-emit
+        // = invisible plan list = FEATURE_097 silently broken even when the
+        // parser fix correctly reads executionObligations.
+        [
+          'EMIT TIMING (CRITICAL — read this carefully):',
+          '  emit_scout_verdict is your PLAN COMMITMENT, not a final report. Call it',
+          '  EARLY — within the first 1-2 scoping turns (read/grep/glob), BEFORE the',
+          '  main implementation or investigation work. executionObligations describes',
+          '  what you PLAN TO DO next, NOT what you have already done.',
+          '',
+          '  Why timing matters: the realtime plan list (TodoListSurface) only',
+          '  renders AFTER emit_scout_verdict is parsed. Emitting at the END of the',
+          '  task with executionObligations listing completed work is a defect,',
+          '  not a shortcut — by then the user has already missed the entire',
+          '  visibility window and todo_update has nothing left to drive.',
+          '',
+          '  ANTI-PATTERN (do NOT do this):',
+          '    1. Investigate / dispatch children / read many files / produce findings',
+          '    2. Synthesize the answer',
+          '    3. Call emit_scout_verdict at the END with obligations describing',
+          '       what was already done',
+          '  Correct flow: commit plan EARLY → execute → todo_update at each step',
+          '  transition → final answer.',
+          '',
+          '  TRIVIAL-EXEMPTION (narrow, do not abuse): you may execute directly',
+          '  WITHOUT emit_scout_verdict ONLY for tasks with exactly ONE distinct',
+          '  execution step — a single typo fix, a single-line edit, a single-action',
+          '  lookup, a one-sentence answer. EVERYTHING ELSE — including review /',
+          '  audit / investigation tasks that touch ≥2 files, areas, or feature',
+          '  threads, even when the harness ends up being H0_DIRECT — MUST',
+          '  emit_scout_verdict EARLY with executionObligations populated, THEN',
+          '  continue as the H0 executor and call todo_update at each step transition.',
+        ].join('\n'),
         'For complex tasks (H1/H2): investigate scope, then call emit_scout_verdict with the right harness to escalate. Do NOT do the implementation yourself for H1/H2 tasks.',
         'Respect any stated topology ceiling or upgrade ceiling in the routing metadata.',
         'Always fill `scope` (files / areas the downstream role will touch) and `review_files_or_areas` (high-priority files to consider). The harness infers mutation boundaries from these paths — if every path is docs-like, Generator is restricted to docs-style writes; if the task is a pure review (primaryTask=review) and `scope` is empty, Generator writes are blocked entirely.',
