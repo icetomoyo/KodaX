@@ -66,7 +66,6 @@ import {
   CommandCallbacks,
   CurrentConfig,
 } from './commands.js';
-import { runWithPlanMode } from '../common/plan-mode.js';
 import { loadCompactionConfig } from '../common/compaction-config.js';
 import { loadAlwaysAllowTools, loadAutoModeSettings, saveAlwaysAllowToolPattern } from '../common/permission-config.js';
 import {
@@ -378,9 +377,6 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   // Local permission state - 本地权限状态
   let currentPermissionMode: PermissionMode = initialPermissionMode;
   let alwaysAllowTools: string[] = loadAlwaysAllowTools();
-
-  // Plan mode state - Plan mode 状态
-  let planMode = false;
 
   // Esc+Esc edit state - Esc+Esc 编辑状态
   let lastEscTime = 0;
@@ -899,9 +895,6 @@ Keyboard Shortcuts:
       console.log(chalk.dim(`  Messages: ${rewound.messages.length}`));
       return 'rewound';
     },
-    setPlanMode: (enabled: boolean) => {
-      planMode = enabled;
-    },
     getCostReport: () => costReportRef.current?.() ?? null,
     // FEATURE_092 phase 2b.8: auto-mode read-only stats + manual engine setter
     // for /auto-engine, /auto-denials, status bar indicator. The accessors
@@ -1099,12 +1092,6 @@ Keyboard Shortcuts:
     }
 
     try {
-      if (planMode) {
-        await runWithPlanMode(prepared.prompt, prepared.options);
-        await prepared.finalize();
-        return;
-      }
-
       const initialMessages = prepared.mode === 'fork' ? [] : context.messages;
       const runResult = await runAgentRound(
         prepared.options,
@@ -1183,77 +1170,62 @@ Keyboard Shortcuts:
 
         // Run agent (copy main loop logic) - 运行 agent (复制主循环逻辑)
         try {
-          if (planMode) {
-            await runWithPlanMode(processed, {
+          const result = await runManagedTask(
+            {
               ...currentOptions,
               provider: currentConfig.provider,
               thinking: currentConfig.thinking,
               reasoningMode: currentConfig.reasoningMode,
+              session: {
+                ...currentOptions.session,
+                // FEATURE_072: Scout / managed-task workers inherit the
+                // derived view (summary + attachments + kept tail) when a
+                // lineage is available, instead of the flat `context.messages`
+                // snapshot. Behaviour is identical post-072-Phase-B because
+                // lineage is reconciled on every compaction; the derived
+                // view is preferred as the authoritative source.
+                initialMessages: context.lineage
+                  ? getSessionMessagesFromLineage(context.lineage, context.lineage.activeEntryId)
+                  : context.messages,
+              },
               context: {
                 ...currentOptions.context,
+                taskSurface: 'repl',
+                // FEATURE_074: live plan-mode check for child-agent inheritance.
+                // Separate code path from createKodaXOptions — must propagate too.
+                planModeBlockCheck: (tool: string, input: Record<string, unknown>): string | null => {
+                  if (currentPermissionMode !== 'plan') return null;
+                  return getPlanModeBlockReason(tool, input, gitRoot ?? process.cwd());
+                },
                 ...(preparedArtifacts.inputArtifacts.length > 0
                   ? { inputArtifacts: preparedArtifacts.inputArtifacts }
                   : {}),
               },
-            });
-          } else {
-            const result = await runManagedTask(
-              {
-                ...currentOptions,
-                provider: currentConfig.provider,
-                thinking: currentConfig.thinking,
-                reasoningMode: currentConfig.reasoningMode,
-                session: {
-                  ...currentOptions.session,
-                  // FEATURE_072: Scout / managed-task workers inherit the
-                  // derived view (summary + attachments + kept tail) when a
-                  // lineage is available, instead of the flat `context.messages`
-                  // snapshot. Behaviour is identical post-072-Phase-B because
-                  // lineage is reconciled on every compaction; the derived
-                  // view is preferred as the authoritative source.
-                  initialMessages: context.lineage
-                    ? getSessionMessagesFromLineage(context.lineage, context.lineage.activeEntryId)
-                    : context.messages,
-                },
-                context: {
-                  ...currentOptions.context,
-                  taskSurface: 'repl',
-                  // FEATURE_074: live plan-mode check for child-agent inheritance.
-                  // Separate code path from createKodaXOptions — must propagate too.
-                  planModeBlockCheck: (tool: string, input: Record<string, unknown>): string | null => {
-                    if (currentPermissionMode !== 'plan') return null;
-                    return getPlanModeBlockReason(tool, input, gitRoot ?? process.cwd());
-                  },
-                  ...(preparedArtifacts.inputArtifacts.length > 0
-                    ? { inputArtifacts: preparedArtifacts.inputArtifacts }
-                    : {}),
-                },
-              },
-              processed
-            );
-            context.messages = result.messages;
-            context.contextTokenSnapshot = result.contextTokenSnapshot;
-            // FEATURE_076: prefer pre-extracted result.artifactLedger; fall
-            // back to walking result.messages for backward compatibility
-            // with paths that have not yet been reshape-updated.
-            context.artifactLedger = mergeArtifactLedger(
-              context.artifactLedger ?? [],
-              (result.artifactLedger as typeof context.artifactLedger | undefined)
-                ?? extractArtifactLedger(result.messages),
-            );
+            },
+            processed
+          );
+          context.messages = result.messages;
+          context.contextTokenSnapshot = result.contextTokenSnapshot;
+          // FEATURE_076: prefer pre-extracted result.artifactLedger; fall
+          // back to walking result.messages for backward compatibility
+          // with paths that have not yet been reshape-updated.
+          context.artifactLedger = mergeArtifactLedger(
+            context.artifactLedger ?? [],
+            (result.artifactLedger as typeof context.artifactLedger | undefined)
+              ?? extractArtifactLedger(result.messages),
+          );
 
-            // Auto save - 自动保存
-            if (context.messages.length > 0) {
-              const title = extractTitle(context.messages);
-              context.title = title;
-              await storage.save(context.sessionId, {
-                messages: context.messages,
-                title,
-                gitRoot: context.gitRoot ?? '',
-                runtimeInfo: context.runtimeInfo,
-                artifactLedger: context.artifactLedger,
-              });
-            }
+          // Auto save - 自动保存
+          if (context.messages.length > 0) {
+            const title = extractTitle(context.messages);
+            context.title = title;
+            await storage.save(context.sessionId, {
+              messages: context.messages,
+              title,
+              gitRoot: context.gitRoot ?? '',
+              runtimeInfo: context.runtimeInfo,
+              artifactLedger: context.artifactLedger,
+            });
           }
         } catch (err) {
           const error = err instanceof Error ? err : new Error(String(err));
@@ -1266,7 +1238,7 @@ Keyboard Shortcuts:
       }
     }
 
-    const prompt = getPrompt(currentConfig.permissionMode, currentConfig, planMode);
+    const prompt = getPrompt(currentConfig.permissionMode, currentConfig);
     const input = await askInput(rl, prompt);
 
     if (!isRunning) break;
@@ -1312,28 +1284,6 @@ Keyboard Shortcuts:
 
     // Update status bar message count - 更新状态栏消息数量
     statusBar?.update({ messageCount: context.messages.length });
-
-    // If Plan Mode is enabled, execute in plan mode - 如果启用了 Plan Mode，使用计划模式执行
-    if (planMode) {
-      try {
-        await runWithPlanMode(processed, {
-          ...currentOptions,
-          provider: currentConfig.provider,
-          thinking: currentConfig.thinking,
-          reasoningMode: currentConfig.reasoningMode,
-          context: {
-            ...currentOptions.context,
-            ...(preparedArtifacts.inputArtifacts.length > 0
-              ? { inputArtifacts: preparedArtifacts.inputArtifacts }
-              : {}),
-          },
-        });
-      } catch (err) {
-        const error = err instanceof Error ? err : new Error(String(err));
-        console.log(chalk.red(`\n[Plan Mode Error] ${error.message}`));
-      }
-      continue;
-    }
 
     // Run Agent - 运行 Agent
     try {
@@ -1403,7 +1353,7 @@ Keyboard Shortcuts:
 }
 
 // Get prompt (responsive, using theme colors) - 获取提示符 (响应式，使用主题颜色)
-function getPrompt(mode: string, config: CurrentConfig, planMode: boolean): string {
+function getPrompt(mode: string, config: CurrentConfig): string {
   const theme = getCurrentTheme();
   const modeColor = mode === 'plan' ? chalk.hex(theme.colors.warning) : chalk.hex(theme.colors.success);
   const model = config.model ?? getProviderModel(config.provider) ?? config.provider;
@@ -1416,11 +1366,9 @@ function getPrompt(mode: string, config: CurrentConfig, planMode: boolean): stri
     return modeColor(`${modeIndicator} `);
   } else if (width < 100) {
     // Medium width: short prompt - 中等宽度：简短提示符
-    const flagChar = planMode
-      ? 'P'
-      : config.reasoningMode !== 'off'
-        ? config.reasoningMode[0]?.toUpperCase() ?? 'R'
-        : '';
+    const flagChar = config.reasoningMode !== 'off'
+      ? config.reasoningMode[0]?.toUpperCase() ?? 'R'
+      : '';
     const flagPart = flagChar ? chalk.hex(theme.colors.dim)(`[${flagChar}]`) : '';
     return modeColor(`kodax:${mode}${flagPart}> `);
   }
@@ -1429,9 +1377,7 @@ function getPrompt(mode: string, config: CurrentConfig, planMode: boolean): stri
   const reasoningFlag = config.reasoningMode !== 'off'
     ? chalk.hex(theme.colors.info)(`[reason:${config.reasoningMode}]`)
     : '';
-  const planFlag = planMode ? chalk.hex(theme.colors.accent)('[plan]') : '';
-  const flags = [reasoningFlag, planFlag].filter(Boolean).join('');
-  return modeColor(`kodax:${mode} (${config.provider}:${model})${flags}> `);
+  return modeColor(`kodax:${mode} (${config.provider}:${model})${reasoningFlag}> `);
 }
 
 // Read input (supports multiline and external editor) - 读取输入 (支持多行和外部编辑器)

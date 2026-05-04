@@ -51,12 +51,5 @@ export {
   KODAX_DIR,
   KODAX_SESSIONS_DIR,
   KODAX_CONFIG_FILE,
-  runWithPlanMode,
-  listPlans,
-  resumePlan,
-  clearCompletedPlans,
-  PlanStorage,
-  planStorage,
-  type ExecutionPlan,
   FileSessionStorage,
 } from '@kodax/repl';

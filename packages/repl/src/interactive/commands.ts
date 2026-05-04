@@ -47,7 +47,6 @@ import {
   saveConfig,
 } from '../common/utils.js';
 import { savePermissionModeUser } from '../common/permission-config.js';
-import { runWithPlanMode, listPlans, resumePlan, clearCompletedPlans } from '../common/plan-mode.js';
 import { compact } from '@kodax/agent';
 import type { CompactionConfig } from '@kodax/agent';
 import { loadCompactionConfig } from '../common/compaction-config.js';
@@ -1542,101 +1541,6 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log(chalk.dim('  benign actions auto-approve, risky ones escalate to user confirm.'));
       console.log();
       console.log(chalk.dim('  See also: /help mode, /auto-engine, /auto-denials'));
-      console.log();
-    },
-  },
-  {
-    name: 'plan',
-    aliases: ['p'],
-    description: 'Plan mode management',
-    usage: '/plan [on|off|once|list|resume|clear] [args]',
-    handler: async (args, _context, callbacks, _currentConfig) => {
-      const subCommand = args[0]?.toLowerCase();
-
-      switch (subCommand) {
-        case 'on':
-          callbacks.setPlanMode?.(true);
-          console.log(chalk.cyan('\n[Plan mode enabled]'));
-          break;
-
-        case 'off':
-          callbacks.setPlanMode?.(false);
-          console.log(chalk.cyan('\n[Plan mode disabled]'));
-          break;
-
-        case 'once': {
-          const prompt = args.slice(1).join(' ');
-          if (!prompt) {
-            console.log(chalk.yellow('\n[Usage: /plan once <your request>]'));
-            return;
-          }
-          const options = callbacks.createKodaXOptions?.();
-          if (options) {
-            await runWithPlanMode(prompt, options);
-          }
-          break;
-        }
-
-        case 'list':
-          await listPlans();
-          break;
-
-        case 'resume': {
-          const planId = args[1];
-          if (!planId) {
-            console.log(chalk.yellow('\n[Usage: /plan resume <plan-id>]'));
-            return;
-          }
-          const options = callbacks.createKodaXOptions?.();
-          if (options) {
-            await resumePlan(planId, options);
-          }
-          break;
-        }
-
-        case 'clear':
-          await clearCompletedPlans();
-          break;
-
-        default:
-          console.log(chalk.dim('\nUsage: /plan [on|off|once|list|resume|clear]'));
-          console.log(chalk.dim('  on    - Enable plan mode for all requests'));
-          console.log(chalk.dim('  off   - Disable plan mode'));
-          console.log(chalk.dim('  once  - Run plan mode for a single request'));
-          console.log(chalk.dim('  list  - List saved plans'));
-          console.log(chalk.dim('  resume- Resume a saved plan'));
-          console.log(chalk.dim('  clear - Clear completed plans\n'));
-      }
-    },
-    detailedHelp: () => {
-      console.log(chalk.cyan('\n/plan - Plan Mode Management\n'));
-      console.log(chalk.bold('Usage:'));
-      console.log(chalk.dim('  /plan              ') + 'Show usage help');
-      console.log(chalk.dim('  /plan on           ') + 'Enable plan mode for all requests');
-      console.log(chalk.dim('  /plan off          ') + 'Disable plan mode');
-      console.log(chalk.dim('  /plan once <task>  ') + 'Run a single task in plan mode');
-      console.log(chalk.dim('  /plan list         ') + 'List all saved plans');
-      console.log(chalk.dim('  /plan resume <id>  ') + 'Resume a saved plan');
-      console.log(chalk.dim('  /plan clear        ') + 'Clear completed plans');
-      console.log(chalk.dim('  /p                 ') + 'Alias for /plan');
-      console.log();
-      console.log(chalk.bold('Description:'));
-      console.log(chalk.dim('  Plan mode breaks down complex tasks into executable steps.'));
-      console.log(chalk.dim('  The agent creates a structured plan before execution,'));
-      console.log(chalk.dim('  allowing you to review and approve each step.'));
-      console.log();
-      console.log(chalk.bold('Workflow:'));
-      console.log(chalk.dim('  1. Enable plan mode with /plan on'));
-      console.log(chalk.dim('  2. Enter your complex request'));
-      console.log(chalk.dim('  3. Review the generated plan'));
-      console.log(chalk.dim('  4. Approve or modify the plan'));
-      console.log(chalk.dim('  5. Execute step by step'));
-      console.log();
-      console.log(chalk.bold('Examples:'));
-      console.log(chalk.dim('  /plan on                      ') + '# Enable persistent plan mode');
-      console.log(chalk.dim('  /plan once refactor auth.ts   ') + '# Single task with planning');
-      console.log(chalk.dim('  /plan list                    ') + '# See saved plans');
-      console.log(chalk.dim('  /plan resume plan_20260219    ') + '# Resume a saved plan');
       console.log();
     },
   },

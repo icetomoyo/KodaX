@@ -77,17 +77,6 @@ export {
   KODAX_CONFIG_FILE,
   PREVIEW_MAX_LENGTH,
 } from "./common/utils.js";
-export {
-  runWithPlanMode,
-  listPlans,
-  resumePlan,
-  clearCompletedPlans,
-} from "./common/plan-mode.js";
-export {
-  PlanStorage,
-  planStorage,
-  type ExecutionPlan,
-} from "./common/plan-storage.js";
 
 // === 会话存储 ===
 export { FileSessionStorage } from "./interactive/storage.js";

@@ -85,7 +85,6 @@ export interface CommandCallbacks {
   }) => void;
   deleteSession?: (id: string) => Promise<void>;
   deleteAllSessions?: () => Promise<void>;
-  setPlanMode?: (enabled: boolean) => void;
   createKodaXOptions?: () => KodaXOptions;
   reloadAgentsFiles?: () => Promise<AgentsFile[]>;
   confirm?: (message: string) => Promise<boolean>;

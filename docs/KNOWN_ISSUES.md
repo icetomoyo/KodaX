@@ -1030,9 +1030,11 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 - **Fixed**: -
 - **Created**: 2026-04-20
 
+- **Update 2026-05-04 (FEATURE_110, v0.7.34)**: plan-mode 路径 1 已整体删除（`runWithPlanMode` / `/plan` slash 命令 / `[planMode, setPlanMode]` state 全部移除），本 issue 现仅剩 skill / prompt 调用一条路径。skill 路径已在 v0.7.24 (Issue 121) 顺手补了 `setCanQueueFollowUps(true)` 包裹（[InkREPL.tsx:6237-6239](packages/repl/src/ui/InkREPL.tsx#L6237-L6239)），需独立验证是否完全闭合。
+
 - **Original Problem**:
 
-  用户通过 `/skill:...`（例如 `/skill:smart-changelog`）或 plan-mode 触发 agent 执行期间，在流式过程中按 Enter 想排队追加下一条 prompt，会出现：
+  用户通过 `/skill:...`（例如 `/skill:smart-changelog`）或 plan-mode（已于 v0.7.34 删除）触发 agent 执行期间，在流式过程中按 Enter 想排队追加下一条 prompt，会出现：
 
   - 输入栏字符被吞（由 [prompt-input-controller.ts:251-252](packages/repl/src/ui/utils/prompt-input-controller.ts#L251-L252) 无条件 `clear()` 导致）
   - 底部 `QueuedCommandsSurface` 无排队提示

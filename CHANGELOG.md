@@ -8,6 +8,15 @@ All notable changes to this project will be documented in this file.
 
 <!-- last-sync: 75e7048 -->
 
+### Removed
+
+- **Legacy plan-mode (FEATURE_110, path 1)** — deleted `runWithPlanMode` / `listPlans` / `resumePlan` / `clearCompletedPlans` / `PlanStorage` / `planStorage` / `ExecutionPlan` and the `/plan` (`/p`) slash command (with all `/plan on|off|once|list|resume|clear` subcommands). The v0.3.1-era readline + chalk wizard was fully superseded by FEATURE_074's `PermissionMode="plan"` + `exit_plan_mode` tool + Ink-native PlanScrollPanel approval UI (v0.7.20). The two paths could conflict at runtime (e.g. `/plan on` + `PermissionMode="plan"` would block writes via `planModeBlockCheck` after wizard `confirm` already y'd them) and the legacy path's KNOWN_ISSUES backlog (`pendingInputs` not wired) had stayed unaddressed for 2+ versions. Net `~ -603` lines removed, 0 added. **Breaking** for any external SDK consumer importing the listed symbols from `kodax` or `@kodax/repl` — all 7 were undocumented internal exports leaking via `src/index.ts` re-export, not present in README's first-class API table. Existing `~/.kodax/plans/*.json` user data is left in place — users may safely `rm -rf ~/.kodax/plans/` after upgrading; KodaX no longer reads or writes those files.
+
+### Fixed
+
+- **Issue 127** (commit `afff423`) — managed-task checkpoint cleanup race in `runManagedTaskViaRunnerInner` left an orphan `checkpoint.json` on every successful single-role H0 task, triggering "found incomplete task / continue / restart / cancel" prompt on the next REPL query. Replaced fire-and-forget `void writeCheckpoint().then(d => last = dir)` with `pendingCheckpointWrites: Promise[]` + `Promise.allSettled` before delete; added `.catch(cleanupRunCheckpoint)` on `Runner.run()` for abort + LLM-error paths; moved cleanup ahead of post-Runner sync block so `buildManagedTaskPayload` / `observer.completed` / `detectScoutSuspiciousSignals` throws cannot bypass cleanup either.
+- **Issue 128** (commit `afff423`) — 9 `__contract-tests__/cap-*.contract.test.ts` end-to-end suites + `orchestration.test.ts` flaked at vitest's 5000ms default under heavy parallel load (211 files concurrently). Bumped per-suite timeout to 15s on those 10 suites only (other 91 contract suites + global `testTimeout` untouched so unit-test perf regressions still surface fast).
+
 ---
 
 ## [0.7.33] - 2026-05-02
