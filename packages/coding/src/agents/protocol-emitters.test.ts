@@ -276,3 +276,79 @@ describe('protocol emitters — parity with legacy parser', () => {
     expect(meta.payload).toEqual(legacy);
   });
 });
+
+describe('coerceManagedProtocolToolPayload — FEATURE_097 nested skill_map regression', () => {
+  // The protocol-emitters JSON schema (protocol-emitters.ts:227-236) nests
+  // the skill_map fields inside a `skill_map` object. The pre-fix parser
+  // only read these fields at the top level of the payload, so a
+  // schema-correct LLM emission like
+  //   { skill_map: { execution_obligations: ['a','b','c'] } }
+  // would produce executionObligations=[] in the parsed payload, and the
+  // FEATURE_097 todo seeding gate (≥2 obligations) would never fire.
+
+  it('reads execution_obligations from nested skill_map (snake_case)', () => {
+    const result = coerceManagedProtocolToolPayload('scout', {
+      confirmed_harness: 'H2_PLAN_EXECUTE_EVAL',
+      skill_map: {
+        skill_summary: 'investigate auth flow',
+        execution_obligations: [
+          'enumerate scope',
+          'collect evidence',
+          'emit scout verdict',
+        ],
+        verification_obligations: ['unit tests pass'],
+        ambiguities: ['unclear whether refactor is allowed'],
+        projection_confidence: 'high',
+      },
+    });
+    expect(result?.scout?.skillMap?.executionObligations).toEqual([
+      'enumerate scope',
+      'collect evidence',
+      'emit scout verdict',
+    ]);
+    expect(result?.scout?.skillMap?.verificationObligations).toEqual([
+      'unit tests pass',
+    ]);
+    expect(result?.scout?.skillMap?.ambiguities).toEqual([
+      'unclear whether refactor is allowed',
+    ]);
+    expect(result?.scout?.skillMap?.skillSummary).toBe('investigate auth flow');
+    expect(result?.scout?.skillMap?.projectionConfidence).toBe('high');
+  });
+
+  it('reads execution_obligations from nested skillMap (camelCase)', () => {
+    const result = coerceManagedProtocolToolPayload('scout', {
+      confirmed_harness: 'H2_PLAN_EXECUTE_EVAL',
+      skillMap: {
+        executionObligations: ['step 1', 'step 2'],
+      },
+    });
+    expect(result?.scout?.skillMap?.executionObligations).toEqual([
+      'step 1',
+      'step 2',
+    ]);
+  });
+
+  it('top-level wins over nested when both are present (back-compat)', () => {
+    const result = coerceManagedProtocolToolPayload('scout', {
+      confirmed_harness: 'H2_PLAN_EXECUTE_EVAL',
+      execution_obligations: ['top a', 'top b'],
+      skill_map: {
+        execution_obligations: ['nested a', 'nested b', 'nested c'],
+      },
+    });
+    expect(result?.scout?.skillMap?.executionObligations).toEqual([
+      'top a',
+      'top b',
+    ]);
+  });
+
+  it('non-object skill_map is ignored (defensive)', () => {
+    const result = coerceManagedProtocolToolPayload('scout', {
+      confirmed_harness: 'H1_EXECUTE_EVAL',
+      skill_map: 'not an object',
+      execution_obligations: ['only top'],
+    });
+    expect(result?.scout?.skillMap?.executionObligations).toEqual(['only top']);
+  });
+});

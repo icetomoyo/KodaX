@@ -336,22 +336,58 @@ export function coerceManagedProtocolToolPayload(
     const requiredEvidence = normalizeStringListValue(payload.required_evidence ?? payload.requiredEvidence);
     const reviewFilesOrAreas = normalizeStringListValue(payload.review_files_or_areas ?? payload.reviewFilesOrAreas);
     const blockingEvidence = normalizeStringListValue(payload.blocking_evidence ?? payload.blockingEvidence);
-    const executionObligations = normalizeStringListValue(payload.execution_obligations ?? payload.executionObligations);
-    const verificationObligations = normalizeStringListValue(payload.verification_obligations ?? payload.verificationObligations);
-    const ambiguities = normalizeStringListValue(payload.ambiguities);
+    // FEATURE_097 P0 FIX: protocol-emitters schema nests skill_map fields, but
+    // some LLMs / older prompts emit them at top level. Read both shapes so the
+    // todo seed gate (≥2 executionObligations) actually fires when the LLM
+    // emits the schema-correct nested form.
+    const skillMapPayload = (() => {
+      const raw = payload.skill_map ?? payload.skillMap;
+      return raw && typeof raw === 'object' && !Array.isArray(raw)
+        ? (raw as Record<string, unknown>)
+        : undefined;
+    })();
+    const executionObligations = normalizeStringListValue(
+      payload.execution_obligations
+        ?? payload.executionObligations
+        ?? skillMapPayload?.execution_obligations
+        ?? skillMapPayload?.executionObligations,
+    );
+    const verificationObligations = normalizeStringListValue(
+      payload.verification_obligations
+        ?? payload.verificationObligations
+        ?? skillMapPayload?.verification_obligations
+        ?? skillMapPayload?.verificationObligations,
+    );
+    const ambiguities = normalizeStringListValue(
+      payload.ambiguities ?? skillMapPayload?.ambiguities,
+    );
     const confirmedHarness = typeof (payload.confirmed_harness ?? payload.confirmedHarness) === 'string'
       ? normalizeManagedScoutHarness(String(payload.confirmed_harness ?? payload.confirmedHarness))
       : undefined;
     const evidenceAcquisitionMode = typeof (payload.evidence_acquisition_mode ?? payload.evidenceAcquisitionMode) === 'string'
       ? normalizeManagedEvidenceAcquisitionMode(String(payload.evidence_acquisition_mode ?? payload.evidenceAcquisitionMode))
       : undefined;
-    const skillSummary = typeof payload.skill_summary === 'string'
-      ? payload.skill_summary.trim() || undefined
-      : typeof payload.skillSummary === 'string'
-        ? payload.skillSummary.trim() || undefined
-        : undefined;
-    const projectionConfidence = typeof (payload.projection_confidence ?? payload.projectionConfidence) === 'string'
-      ? normalizeManagedProjectionConfidence(String(payload.projection_confidence ?? payload.projectionConfidence))
+    const skillSummary = (() => {
+      const candidates = [
+        payload.skill_summary,
+        payload.skillSummary,
+        skillMapPayload?.skill_summary,
+        skillMapPayload?.skillSummary,
+      ];
+      for (const c of candidates) {
+        if (typeof c === 'string') {
+          const trimmed = c.trim();
+          if (trimmed) return trimmed;
+        }
+      }
+      return undefined;
+    })();
+    const projectionConfidenceRaw = payload.projection_confidence
+      ?? payload.projectionConfidence
+      ?? skillMapPayload?.projection_confidence
+      ?? skillMapPayload?.projectionConfidence;
+    const projectionConfidence = typeof projectionConfidenceRaw === 'string'
+      ? normalizeManagedProjectionConfidence(String(projectionConfidenceRaw))
       : undefined;
     const harnessRationale = typeof (payload.harness_rationale ?? payload.harnessRationale) === 'string'
       ? String(payload.harness_rationale ?? payload.harnessRationale).trim() || undefined

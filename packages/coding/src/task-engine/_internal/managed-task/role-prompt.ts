@@ -538,7 +538,7 @@ export function createRolePrompt(
           '  user sees real-time progress. This gives the user a visible plan and forces',
           '  you to think through the full scope before acting.',
         ].join('\n'),
-        'You are the Scout. For simple tasks (H0): complete the work directly and give the final answer.',
+        'You are the Scout. For TRIVIAL single-step H0 tasks (typo fix, single-line edit, single-action lookup): you may complete the work directly and give the final answer — but ONLY when there is exactly ONE distinct execution step. Anything with ≥2 distinct steps (even at H0_DIRECT) MUST go through emit_scout_verdict with executionObligations populated FIRST per the EXECUTION OBLIGATIONS rule above; only after that do you continue executing as the H0_DIRECT executor.',
         'For complex tasks (H1/H2): investigate scope, then call emit_scout_verdict with the right harness to escalate. Do NOT do the implementation yourself for H1/H2 tasks.',
         'Respect any stated topology ceiling or upgrade ceiling in the routing metadata.',
         'Always fill `scope` (files / areas the downstream role will touch) and `review_files_or_areas` (high-priority files to consider). The harness infers mutation boundaries from these paths — if every path is docs-like, Generator is restricted to docs-style writes; if the task is a pure review (primaryTask=review) and `scope` is empty, Generator writes are blocked entirely.',
