@@ -91,6 +91,24 @@ export function createRolePrompt(
   // Issue 119: For post-Scout roles (generator/planner/evaluator), `decision.mutationSurface`
   // is a stale pre-Scout regex heuristic. Show it only to Scout — downstream workers get
   // scope cues from Scout's own scope/reviewFilesOrAreas via the handoff.
+  // FEATURE_112 (v0.7.34): Topology ceiling is rendered with a brief semantic gloss
+  // **only for Scout** — the bare value (H1_EXECUTE_EVAL / H2_PLAN_EXECUTE_EVAL)
+  // had no instruction telling Scout what the ceiling means or what action it
+  // implies, so the ceiling lift from Slice 1 had no inference path into Scout's
+  // H0/H1/H2 choice. Generator/Planner/Evaluator do NOT see the gloss because
+  // (a) Evaluator IS the auditor — telling it "Evaluator can audit your
+  // conclusion" is self-referential nonsense; (b) Planner/Generator do not
+  // call emit_scout_verdict so "if you escalate" is meaningless; (c) the bare
+  // ceiling value is the upper bound the post-Scout roles already operate
+  // within and needs no further explanation at runtime.
+  const ceilingValue = decision.topologyCeiling ?? decision.upgradeCeiling ?? 'none';
+  const scoutCeilingGloss = role === 'scout'
+    ? ceilingValue === 'H2_PLAN_EXECUTE_EVAL'
+      ? ' — Planner+Generator+Evaluator pipeline available if you escalate to H2'
+      : ceilingValue === 'H1_EXECUTE_EVAL'
+        ? ' — Evaluator can audit your conclusion if you escalate to H1'
+        : ''
+    : '';
   const decisionSummary = [
     `Primary task: ${decision.primaryTask}`,
     ...(role === 'scout' ? [`Mutation surface (heuristic): ${decision.mutationSurface ?? 'unknown'}`] : []),
@@ -101,10 +119,10 @@ export function createRolePrompt(
     // FEATURE_061: Don't show pre-decided harness to Scout. Scout is the routing
     // authority and decides the harness based on its own evidence analysis.
     ...(role === 'scout'
-      ? [`Topology ceiling: ${decision.topologyCeiling ?? decision.upgradeCeiling ?? 'none'}`]
+      ? [`Topology ceiling: ${ceilingValue}${scoutCeilingGloss}`]
       : [
         `Harness: ${decision.harnessProfile}`,
-        `Topology ceiling: ${decision.topologyCeiling ?? decision.upgradeCeiling ?? 'none'}`,
+        `Topology ceiling: ${ceilingValue}`,
       ]),
     `Brainstorm required: ${decision.requiresBrainstorm ? 'yes' : 'no'}`,
   ].join('\n');
@@ -473,9 +491,23 @@ export function createRolePrompt(
           'ESCALATION EXAMPLE:',
           '  emit_scout_verdict({confirmed_harness:"H1_EXECUTE_EVAL", summary:"...", scope:[...], review_files_or_areas:[...]})',
           '',
-          'SCOPE COMMITMENT (hard rule): If you intend to write ≥2 files OR start a project from',
-          'scratch, call emit_scout_verdict({confirmed_harness: H1 or H2}) BEFORE the first write.',
-          'The scope guardrail will surface belated commitments and slow you down.',
+          'SCOPE COMMITMENT (hard rule):',
+          '  Default harness is H0_DIRECT. The triggers below are escalation conditions, not defaults —',
+          '  apply them only when one fires for the current task. Simple lookups, single-file edits, and',
+          '  pure answer questions stay at H0 even when the rules below are present in this prompt.',
+          '',
+          '  • Mutation scope: If you intend to write ≥2 files OR start a project from scratch,',
+          '    call emit_scout_verdict({confirmed_harness: H1 or H2}) BEFORE the first write.',
+          '    The scope guardrail will surface belated commitments and slow you down.',
+          '  • Investigation scope: If your read-only investigation reaches ≥5 distinct files',
+          '    OR ≥8 searches without converging on a diagnosis, treat that as a signal the work',
+          '    has exceeded H0 — emit emit_scout_verdict({confirmed_harness:"H1_EXECUTE_EVAL"}) so',
+          '    an Evaluator can audit your conclusion. Continuing solo past this threshold loses',
+          '    the audit signal.',
+          '  • Multi-thread early decision: If your initial 1-2 scoping turns reveal ≥2',
+          '    independent investigation threads, prefer dispatch_child_task over deep-diving',
+          '    solo (per RULE A/B below). Dispatching AFTER you have already deep-dived is',
+          '    wasted work — decide early.',
         ].join('\n'),
         'You are the Scout. For simple tasks (H0): complete the work directly and give the final answer.',
         'For complex tasks (H1/H2): investigate scope, then call emit_scout_verdict with the right harness to escalate. Do NOT do the implementation yourself for H1/H2 tasks.',

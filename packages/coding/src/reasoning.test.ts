@@ -939,7 +939,12 @@ describe('reasoning reroute', () => {
     expect(decision.harnessProfile).toBe('H0_DIRECT');
     expect(decision.mutationSurface).toBe('read-only');
     expect(decision.needsIndependentQA).toBe(false);
-    expect(decision.topologyCeiling).toBe('H0_DIRECT');
+    // FEATURE_112 (v0.7.34): read-only + complex evidence now lifts ceiling
+    // to H1. The harnessProfile is still H0_DIRECT (FEATURE_061: Scout owns
+    // the upgrade decision); ceiling is only an upper bound, not a forced
+    // escalation. Scout can still elect to stay H0 for massive reviews if
+    // sharded fan-out (FEATURE_067) is the better strategy.
+    expect(decision.topologyCeiling).toBe('H1_EXECUTE_EVAL');
     expect(decision.reviewScale).toBe('massive');
   });
 
@@ -1231,7 +1236,12 @@ describe('reasoning reroute', () => {
     expect(decision.primaryTask).toBe('edit');
     expect(decision.mutationSurface).toBe('docs-only');
     expect(decision.harnessProfile).toBe('H0_DIRECT');
-    expect(decision.topologyCeiling).toBe('H0_DIRECT');
+    // FEATURE_112 (v0.7.34): "migration" keyword triggers complex complexity,
+    // and docs-only + complex now lifts ceiling to H1. The mutationSurface
+    // (docs-only) and harnessProfile (H0_DIRECT pre-Scout) are unchanged;
+    // only the upgrade ceiling moves. Scout can still keep this at H0 if
+    // the docs change really is bounded.
+    expect(decision.topologyCeiling).toBe('H1_EXECUTE_EVAL');
   });
 
   it('does not let code-comment edits hide behind README-only phrasing', () => {

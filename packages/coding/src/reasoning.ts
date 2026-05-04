@@ -1151,14 +1151,24 @@ function deriveAssuranceIntent(
   return 'default';
 }
 
-function deriveTopologyCeiling(
+export function deriveTopologyCeiling(
   mutationSurface: KodaXMutationSurface,
   assuranceIntent: KodaXAssuranceIntent,
+  complexity?: KodaXTaskComplexity,
 ): KodaXHarnessProfile {
   if (mutationSurface === 'read-only' || mutationSurface === 'docs-only') {
-    return assuranceIntent === 'explicit-check'
-      ? 'H1_EXECUTE_EVAL'
-      : 'H0_DIRECT';
+    if (assuranceIntent === 'explicit-check') {
+      return 'H1_EXECUTE_EVAL';
+    }
+    // FEATURE_112 (v0.7.34): unlock H1 ceiling for heavy read-only investigation.
+    // The legacy rule only opened H1 on explicit assurance signals (audit/verify
+    // keywords), which left "read-many-files-to-form-a-conclusion" tasks capped
+    // at H0 even when complexity≥complex. Scout still owns the upgrade decision
+    // — this only widens the ceiling so the option is reachable.
+    if (complexity === 'complex' || complexity === 'systemic') {
+      return 'H1_EXECUTE_EVAL';
+    }
+    return 'H0_DIRECT';
   }
 
   return 'H2_PLAN_EXECUTE_EVAL';
@@ -1527,7 +1537,15 @@ export function buildAmaControllerDecision(
   ]);
 
   const fanoutReason = !fanoutClass
-    ? 'No high-value shard class was detected for this task.'
+    ? decision.primaryTask === 'unknown'
+      // FEATURE_112 (v0.7.34): unknown tasks should not see "No high-value
+      // shard class detected" because that reads as a negative dispatch signal
+      // to the LLM. Replace with a neutral message: dispatch_child_task is
+      // still on the surface, RULE A/B/C in the Scout role-prompt govern when
+      // to use it. The fanoutAdmissible value is unchanged — this is only the
+      // human-readable reason text that lands in the controller overlay.
+      ? 'Task scope is unclassified; dispatch_child_task remains available if investigation threads emerge during scoping.'
+      : 'No high-value shard class was detected for this task.'
     : !fanoutAdmissible
       ? fanoutClass === 'hypothesis-check'
         ? 'Hypothesis-check shards activate only in H2_PLAN_EXECUTE_EVAL where worktree isolation and Evaluator review can merge parallel write children.'
@@ -2716,7 +2734,11 @@ function selectHarnessProfile(
     taskFamily,
   });
   const assuranceIntent = deriveAssuranceIntent(prompt, decision);
-  const topologyCeiling = deriveTopologyCeiling(mutationSurface, assuranceIntent);
+  const topologyCeiling = deriveTopologyCeiling(
+    mutationSurface,
+    assuranceIntent,
+    decision.complexity,
+  );
 
   const hints: string[] = [];
   if (decision.complexity === 'complex' || decision.complexity === 'systemic') {
@@ -3214,6 +3236,7 @@ function stabilizeRoutingDecision(
   const topologyCeiling = deriveTopologyCeiling(
     mutationSurface,
     assuranceIntent,
+    complexity,
   );
   const requiresBrainstorm = inferRequiresBrainstorm(
     prompt,
