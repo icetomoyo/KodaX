@@ -1,6 +1,6 @@
 {
   "name": "@kodax/tracing",
-  "version": "0.7.34",
+  "version": "0.7.35",
   "description": "KodaX Tracing - Trace / Span / SpanData / TracingProcessor (FEATURE_083)",
   "type": "module",
   "main": "dist/index.js",

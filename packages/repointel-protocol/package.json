@@ -1,6 +1,6 @@
 {
   "name": "@kodax/repointel-protocol",
-  "version": "0.7.34",
+  "version": "0.7.35",
   "description": "KodaX Repo-Intelligence Protocol - RPC contract for repo-intelligence daemon, reusable by external CLI clients",
   "type": "module",
   "main": "dist/index.js",
