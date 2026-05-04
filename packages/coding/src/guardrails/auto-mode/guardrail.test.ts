@@ -540,3 +540,96 @@ describe('AutoModeToolGuardrail — onEngineChange callback (FEATURE_092 phase 2
     expect(onEngineChange).not.toHaveBeenCalled();
   });
 });
+
+describe('AutoModeToolGuardrail — defaultProvider/defaultModel staleness fix (FEATURE_092 v0.7.34 hotfix-3)', () => {
+  // The bug: pre-fix, defaultProvider/defaultModel were `string` fields
+  // captured at first createAutoModeToolGuardrail call. Mid-session `/model`
+  // and `/provider` swaps in the REPL didn't retarget the classifier — it
+  // kept calling the original (provider, model) until restart.
+  //
+  // The fix: optional `getDefaultProvider` / `getDefaultModel` getters in
+  // AutoModeGuardrailConfig take precedence over the static string fields
+  // and are evaluated INSIDE buildResolveOptions on every classify, so the
+  // classifier always uses the live main-session pair.
+
+  it('getDefaultProvider/getDefaultModel are called fresh on every classify', async () => {
+    const getProvider = vi.fn(() => 'stub');
+    const getModel = vi.fn(() => 'stub-default');
+    const g = createAutoModeToolGuardrail({
+      ...baseConfig('<block>no</block><reason>safe</reason>'),
+      getDefaultProvider: getProvider,
+      getDefaultModel: getModel,
+    });
+
+    await g.beforeTool!(callBash('ls'), ctx());
+    expect(getProvider).toHaveBeenCalledOnce();
+    expect(getModel).toHaveBeenCalledOnce();
+
+    await g.beforeTool!(callBash('pwd'), ctx());
+    expect(getProvider).toHaveBeenCalledTimes(2);
+    expect(getModel).toHaveBeenCalledTimes(2);
+  });
+
+  it('getDefaultProvider takes precedence over defaultProvider string', async () => {
+    // Closure variable that mutates between calls — simulates `/provider`
+    // mid-session swap. If precedence is wrong, the static string would
+    // win and the closure update would never reach the classifier.
+    let liveProvider = 'stub-v1';
+    const provider = new StubProvider(okResult('<block>no</block><reason>safe</reason>'));
+    let resolveProviderCalls: string[] = [];
+    const g = createAutoModeToolGuardrail({
+      ...baseConfig('<block>no</block><reason>safe</reason>'),
+      defaultProvider: 'static-stub',
+      defaultModel: 'static-model',
+      getDefaultProvider: () => liveProvider,
+      resolveProvider: (name) => {
+        resolveProviderCalls.push(name);
+        return provider;
+      },
+    });
+
+    await g.beforeTool!(callBash('ls'), ctx());
+    expect(resolveProviderCalls.at(-1)).toBe('stub-v1');
+
+    liveProvider = 'stub-v2';
+    await g.beforeTool!(callBash('pwd'), ctx());
+    expect(resolveProviderCalls.at(-1)).toBe('stub-v2');
+  });
+
+  it('back-compat: string-only defaultProvider/defaultModel still works (no getters)', async () => {
+    let resolveProviderCalls: string[] = [];
+    const provider = new StubProvider(okResult('<block>no</block><reason>safe</reason>'));
+    const g = createAutoModeToolGuardrail({
+      ...baseConfig('<block>no</block><reason>safe</reason>'),
+      defaultProvider: 'static-stub',
+      defaultModel: 'static-model',
+      // No getDefaultProvider / getDefaultModel — exercises the back-compat
+      // path used by SDK consumers that pre-date the hotfix.
+      resolveProvider: (name) => {
+        resolveProviderCalls.push(name);
+        return provider;
+      },
+    });
+    const verdict = await g.beforeTool!(callBash('ls'), ctx());
+    expect(verdict.action).toBe('allow');
+    expect(resolveProviderCalls.at(-1)).toBe('static-stub');
+  });
+
+  it('partial getter — only getDefaultModel set — falls back to defaultProvider string', async () => {
+    let resolveProviderCalls: string[] = [];
+    const provider = new StubProvider(okResult('<block>no</block><reason>safe</reason>'));
+    const g = createAutoModeToolGuardrail({
+      ...baseConfig('<block>no</block><reason>safe</reason>'),
+      defaultProvider: 'static-stub',
+      defaultModel: 'static-model',
+      getDefaultModel: () => 'dynamic-model',
+      // getDefaultProvider deliberately omitted
+      resolveProvider: (name) => {
+        resolveProviderCalls.push(name);
+        return provider;
+      },
+    });
+    await g.beforeTool!(callBash('ls'), ctx());
+    expect(resolveProviderCalls.at(-1)).toBe('static-stub');
+  });
+});

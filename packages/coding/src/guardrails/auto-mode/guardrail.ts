@@ -125,6 +125,18 @@ export interface AutoModeGuardrailConfig {
   readonly defaultProvider: string;
   readonly defaultModel: string;
 
+  /**
+   * FEATURE_092 v0.7.34 hotfix-3 — defaultProvider/defaultModel staleness fix.
+   *
+   * When supplied, these are called on EVERY classify() invocation, so the
+   * classifier follows the user's current main session provider/model even
+   * after `/model` or `/provider` mid-session swaps. Falls back to
+   * `defaultProvider` / `defaultModel` (static strings) when unset, preserving
+   * backward compatibility for SDK consumers that pass string literals.
+   */
+  readonly getDefaultProvider?: () => string;
+  readonly getDefaultModel?: () => string;
+
   // Override layers consumed by `resolveClassifierModel`
   readonly cliFlag?: string;
   readonly envVar?: string;
@@ -365,12 +377,17 @@ export function createAutoModeToolGuardrail(
 function buildResolveOptions(
   config: AutoModeGuardrailConfig,
 ): ResolveClassifierModelOptions {
+  // FEATURE_092 v0.7.34 hotfix-3: normalize getDefaultProvider/getDefaultModel
+  // (live getters) over defaultProvider/defaultModel (static strings) so the
+  // classifier picks up mid-session `/model` and `/provider` swaps. The
+  // ResolveClassifierModelOptions interface stays string-typed — normalization
+  // happens here, before the call into resolveClassifierModel.
   return {
     cliFlag: config.cliFlag,
     envVar: config.envVar,
     sessionOverride: config.sessionOverride,
     userSettings: config.userSettings,
-    defaultProvider: config.defaultProvider,
-    defaultModel: config.defaultModel,
+    defaultProvider: config.getDefaultProvider?.() ?? config.defaultProvider,
+    defaultModel: config.getDefaultModel?.() ?? config.defaultModel,
   };
 }

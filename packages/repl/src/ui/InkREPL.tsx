@@ -370,6 +370,15 @@ interface InkREPLProps {
     handler: ((engine: 'llm' | 'rules') => void) | null,
   ) => void;
   /**
+   * FEATURE_092 v0.7.34 hotfix-3: setter the component invokes inside a
+   * `useEffect` on every `currentConfig` state change. Writes the latest
+   * config into a ref read by the auto-mode bootstrap's
+   * `getCurrentProviderName` / `getCurrentModel` / `getCurrentPermissionMode`
+   * closures, so mid-session `/model` and `/provider` swaps retarget the
+   * classifier without restart.
+   */
+  setCurrentConfigRef: (cfg: CurrentConfig) => void;
+  /**
    * Hook the component invokes after `/reload-agents` so the bootstrap's
    * agents-files ref refreshes. Without this, a `/reload-agents` after
    * AGENTS.md edits would update the React state but the auto-mode
@@ -1333,6 +1342,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   autoModeBootstrap,
   setAutoModeAskUser,
   setAutoModeEngineChange,
+  setCurrentConfigRef,
   onAgentsFilesReload,
 }) => {
   const { exit } = useApp();
@@ -5832,6 +5842,19 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // FEATURE_092 v0.7.34 hotfix-3: keep the bootstrap's currentConfig ref in
+  // sync with React state. The auto-mode bootstrap was created in
+  // `runInkInteractiveMode` (before mount) and its
+  // `getCurrentProviderName` / `getCurrentModel` / `getCurrentPermissionMode`
+  // closures read from `inkCurrentConfigRef`. Without this effect, those
+  // closures would forever return the startup-time provider/model and
+  // mid-session `/model` and `/provider` swaps would not retarget the
+  // classifier. The effect body only writes a ref (no setState), so it
+  // does not schedule a re-render itself.
+  useEffect(() => {
+    setCurrentConfigRef(currentConfig);
+  }, [currentConfig, setCurrentConfigRef]);
+
   // Run agent round
   const runAgentRound = async (
     opts: KodaXOptions,
@@ -7829,6 +7852,22 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
   const inkAutoModeEngineChangeRef: {
     current: ((engine: 'llm' | 'rules') => void) | null;
   } = { current: null };
+  // FEATURE_092 v0.7.34 hotfix-3: ref-bridge for live currentConfig.
+  //
+  // The React component at the bottom of this file owns the live
+  // `currentConfig` (a `useState<CurrentConfig>` populated by
+  // `setCurrentConfig` on every `/model` / `/provider` / `/mode` swap). The
+  // bootstrap callbacks below run OUTSIDE the component (they're closures in
+  // `runReplApp` scope), so they cannot read React state directly. The ref
+  // here is the bridge: the component calls `setCurrentConfigRef` (passed as
+  // a prop) inside a `useEffect` that fires on every state change, keeping
+  // `inkCurrentConfigRef.current` in sync with the live value. The bootstrap
+  // closures read `inkCurrentConfigRef.current.provider` etc. so they
+  // observe the latest values whenever the classifier or askUser fires.
+  //
+  // The same pattern is used for `inkAutoModeAskUserRef` /
+  // `inkAutoModeEngineChangeRef` / `agentsFilesRef` above.
+  const inkCurrentConfigRef: { current: CurrentConfig } = { current: currentConfig };
   const autoModeSettings = loadAutoModeSettings();
   const autoModeBootstrap: AutoModeBootstrapResult = await bootstrapAutoMode({
     askUser: async (call, reason) => {
@@ -7843,9 +7882,9 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
     },
     projectRoot: gitRoot ?? process.cwd(),
     getAgentsFiles: () => agentsFilesRef.current,
-    getCurrentProviderName: () => currentConfig.provider,
-    getCurrentModel: () => currentConfig.model,
-    getCurrentPermissionMode: () => currentConfig.permissionMode,
+    getCurrentProviderName: () => inkCurrentConfigRef.current.provider,
+    getCurrentModel: () => inkCurrentConfigRef.current.model,
+    getCurrentPermissionMode: () => inkCurrentConfigRef.current.permissionMode,
     autoModeSettings,
     log: (level, msg) => {
       if (level === 'warn') console.warn(chalk.yellow(msg));
@@ -7880,6 +7919,9 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
         }}
         setAutoModeEngineChange={(handler) => {
           inkAutoModeEngineChangeRef.current = handler;
+        }}
+        setCurrentConfigRef={(cfg) => {
+          inkCurrentConfigRef.current = cfg;
         }}
         onAgentsFilesReload={(files) => {
           agentsFilesRef.current = files;

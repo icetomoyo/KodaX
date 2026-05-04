@@ -16,12 +16,14 @@
  *   - `getCurrentPermissionMode` is read by `askUser` so the confirm dialog
  *     copy reflects the user's actual mode (the guardrail itself doesn't
  *     care about permission mode beyond "we're in auto").
- *   - `getCurrentProvider` / `getCurrentModel` resolve at first guardrail
- *     construction time. Mid-session model swaps will not retarget the
- *     classifier in v1; this is acceptable because the resolver chain
- *     (env / settings / sessionOverride / fallback) is what FEATURE_092
- *     wants surfaced to the user — the swap channel for that lands in
- *     phase 2b.8 via `/auto-model`.
+ *   - `getCurrentProvider` / `getCurrentModel` are passed as the
+ *     `getDefaultProvider` / `getDefaultModel` LIVE getters on the guardrail
+ *     config (FEATURE_092 v0.7.34 hotfix-3). They are evaluated on every
+ *     classify() call, so mid-session `/model` and `/provider` swaps DO
+ *     retarget the classifier without the user re-entering auto mode.
+ *     `claudeMd` and `rules` remain captured-at-init by design (CLAUDE.md
+ *     and `~/.kodax/auto-rules.jsonc` mid-session edits are rare; restart
+ *     applies them).
  */
 
 import {
@@ -134,8 +136,28 @@ export async function bootstrapAutoMode(
           return undefined;
         }
       },
+      // Static fallback values (still required by the config interface for
+      // SDK consumers that don't supply getters). Snapshotted at first
+      // getGuardrail() call.
       defaultProvider: deps.getCurrentProviderName(),
       defaultModel: deps.getCurrentModel() ?? '',
+      // FEATURE_092 v0.7.34 hotfix-3: live getters re-read provider/model on
+      // every classify() so `/model` + `/provider` mid-session swaps retarget
+      // the classifier. The empty-model warn surfaces a misconfiguration
+      // (main session has no model set) instead of failing silently inside
+      // sideQuery.
+      getDefaultProvider: deps.getCurrentProviderName,
+      getDefaultModel: () => {
+        const m = deps.getCurrentModel();
+        if (!m) {
+          deps.log?.(
+            'warn',
+            '[auto-mode] classifier defaultModel is empty; main session has no model set — classifier will likely fail',
+          );
+          return '';
+        }
+        return m;
+      },
       askUser: deps.askUser,
       log: deps.log,
       onEngineChange: deps.onEngineChange,
