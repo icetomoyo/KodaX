@@ -34,6 +34,11 @@ import { StatusNoticesSurface } from "./components/StatusNoticesSurface.js";
 import { StashNotice } from "./components/StashNotice.js";
 import { Spinner } from "./components/LoadingIndicator.js";
 import { BackgroundTaskBar } from "./components/BackgroundTaskBar.js";
+import { TodoListSurface } from "./components/TodoListSurface.js";
+import {
+  buildTodoPlanViewModel,
+  isPlanFullyClosed,
+} from "./view-models/todo-plan.js";
 import { buildFooterHeaderViewModel } from "./view-models/footer-header.js";
 import {
   UIStateProvider,
@@ -91,6 +96,8 @@ import type {
   CompactionUpdate,
   KodaXSessionArtifactLedgerEntry,
   KodaXSessionLineage,
+  TodoItem,
+  TodoList,
 } from "@kodax/coding";
 import { estimateTokens } from "@kodax/agent";
 import {
@@ -1471,6 +1478,15 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const [transcriptSnapshot, setTranscriptSnapshot] = useState<TranscriptSnapshot | null>(null);
   const [promptSurfaceSnapshot, setPromptSurfaceSnapshot] = useState<TranscriptSnapshot | null>(null);
   const [managedTaskStatus, setManagedTaskStatus] = useState<KodaXManagedTaskStatusEvent | null>(null);
+  // FEATURE_097 (v0.7.34) — todo plan surface state. Single source of
+  // truth for the rendered list; the runner-side `onTodoUpdate` handler
+  // does `setTodoItems(items)` directly (no managedForegroundLedger
+  // round-trip — the list is task-global, not per-worker).
+  const [todoItems, setTodoItems] = useState<readonly TodoItem[]>([]);
+  // Tracks the wall-clock at which all items first became terminal.
+  // Used by the view-model to enforce the 5 s post-completion linger.
+  // `null` whenever any pending / in_progress / failed item is present.
+  const [todoLastAllCompletedAt, setTodoLastAllCompletedAt] = useState<number | null>(null);
   const [managedLiveEvents, setManagedLiveEvents] = useState<HistoryItem[]>([]);
   const [managedForegroundTurnItems, setManagedForegroundTurnItems] = useState<HistoryItem[]>([]);
   const [lastLiveActivityLabel, setLastLiveActivityLabel] = useState<string | undefined>(undefined);
@@ -3131,6 +3147,38 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     ],
   );
   const promptBusyText = promptActivityViewModel?.text;
+
+  // FEATURE_097 (v0.7.34) — recompute the todo plan view-model whenever
+  // the underlying items snapshot, the closed-at timestamp, or the
+  // managed-foreground spinner state changes. The view-model itself
+  // gates rendering on item count + linger-window expiry; the host
+  // additionally only mounts the surface while the spinner is showing
+  // (i.e. a managed task is actively in flight) per design §"挂载点".
+  // `Date.now()` is read inside the memo so a re-render after the
+  // 5 s linger expires sees a stale-enough `now` to hide the surface.
+  const todoPlanViewModel = useMemo(
+    () => buildTodoPlanViewModel(todoItems, {
+      now: Date.now(),
+      lastAllCompletedAt: todoLastAllCompletedAt,
+    }),
+    [todoItems, todoLastAllCompletedAt],
+  );
+  // After all items close, set up a one-shot timer to force a re-render
+  // ~5 s later so the linger window actually fires. Without this, no
+  // event would fire to drop the surface — items stayed terminal but
+  // React had no reason to re-render.
+  useEffect(() => {
+    if (todoLastAllCompletedAt === null) return;
+    const elapsed = Date.now() - todoLastAllCompletedAt;
+    const remaining = Math.max(0, 5_000 - elapsed) + 100;
+    const timer = setTimeout(() => {
+      // Drop the items so the next render returns null. This also
+      // resets the closed-at flag so a new task can re-arm the surface.
+      setTodoItems([]);
+      setTodoLastAllCompletedAt(null);
+    }, remaining);
+    return () => clearTimeout(timer);
+  }, [todoLastAllCompletedAt]);
 
   const statusBarViewModel = useMemo(
     () => buildStatusBarViewModel(statusBarProps),
@@ -5264,6 +5312,40 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         'repointel-trace',
       );
     },
+    onTodoUpdate: (items: TodoList) => {
+      // FEATURE_097 (v0.7.34) — direct setState path. Per design
+      // §"事件路由注意", todo state is task-global, not per-worker, so it
+      // does NOT route through `emitInfoItemToCorrectLayer`. The store's
+      // onChange callback already handed us a frozen snapshot — push it
+      // straight into React state. We also maintain a closed-at timestamp
+      // so the view-model's 5 s linger window has a wall-clock anchor.
+      //
+      // Brief-false-arm note: on a `revise` verdict the wrapper marks
+      // every in_progress item as `failed`, which is a terminal state,
+      // so this handler arms the linger timer momentarily. The next
+      // Generator turn's `instructions` closure then calls
+      // `todoStore.resetFailed()` (failed → pending), which fires
+      // another `onTodoUpdate` that flips `todoLastAllCompletedAt` back
+      // to `null`. The matching `useEffect` cleanup cancels the timer
+      // before it ever expires, so the surface stays mounted across the
+      // retry boundary. Self-correcting; no user-visible glitch.
+      if (userInterruptedRef.current) {
+        return;
+      }
+      setTodoItems(items);
+      const allClosed = isPlanFullyClosed(items);
+      setTodoLastAllCompletedAt((prev) => {
+        if (allClosed) {
+          // First flip into "everything terminal" arms the linger timer;
+          // subsequent flips while still all-closed leave the timer alone
+          // so the surface really does disappear ~5 s after the LAST
+          // transition, not after the most recent re-render.
+          return prev ?? Date.now();
+        }
+        // Any non-terminal item present → reset the linger timer.
+        return null;
+      });
+    },
     onScoutSuspiciousCompletion: (payload) => {
       // X-layer: Scout's H0 completion was inferred (no explicit escalation)
       // but the harness saw signals that suggest Scout may not actually be
@@ -7201,6 +7283,19 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           </Text>
         </Box>
       ) : undefined}
+      todoSurface={
+        // FEATURE_097 (v0.7.34) — gate on the same spinner the design
+        // anchors against (`promptActivityViewModel.showSpinner`); the
+        // view-model itself decides whether to render rows. The two
+        // gates are intentionally redundant: the spinner gate hides the
+        // surface during idle prompts, and the view-model gate hides it
+        // for too-short tasks / post-linger / empty list.
+        promptActivityViewModel?.showSpinner ? (
+          <Box paddingX={1}>
+            <TodoListSurface viewModel={todoPlanViewModel} />
+          </Box>
+        ) : undefined
+      }
       composer={(
         <PromptComposer
           onSubmit={handleSubmit}

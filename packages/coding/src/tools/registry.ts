@@ -42,6 +42,7 @@ import { toolMcpReadResource } from './mcp-read-resource.js';
 import { toolMcpGetPrompt } from './mcp-get-prompt.js';
 import { toolWorktreeCreate, toolWorktreeRemove } from './worktree.js';
 import { toolDispatchChildTask } from './dispatch-child-tasks.js';
+import { toolTodoUpdate } from './todo-update.js';
 import {
   toolScaffoldTool,
   toolValidateTool,
@@ -753,6 +754,39 @@ const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] = [
       required: ['plan'],
     },
     handler: toolExitPlanMode,
+    toClassifierInput: () => '',
+  },
+  {
+    name: 'todo_update',
+    description:
+      'Update the status of a planned todo item so the user can see real-time progress on the visible plan checklist. Use this every time you start or finish a major step. Rules: ' +
+      '(1) Set status="in_progress" BEFORE starting work on an item. ' +
+      '(2) Set status="completed" AFTER finishing that item. ' +
+      '(3) Only ONE item should be in_progress per owner at any time — finish or fail the current item before starting the next. ' +
+      '(4) Use status="failed" if an attempt clearly failed and needs retry. ' +
+      '(5) Use status="skipped" only when the item turned out to be unnecessary (e.g. Planner merged two obligations into one). ' +
+      'If the call returns ok=false with reason "Unknown todo id", inspect the listed valid ids and retry with a correct one. ' +
+      'If the call returns ok=false with reason "todo_update is not active", the current run has no plan list and you may continue working without further todo_update calls.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        id: {
+          type: 'string',
+          description: 'The id of the todo item to update (e.g. "todo_3"). Must match a current valid id in the plan list.',
+        },
+        status: {
+          type: 'string',
+          enum: ['in_progress', 'completed', 'failed', 'skipped'],
+          description: 'New status. "pending" is intentionally not allowed — items start as pending automatically and only the runner moves them back to pending after a revise verdict.',
+        },
+        note: {
+          type: 'string',
+          description: 'Optional free-text reason or detail. When omitted, any pre-existing note on the item is preserved.',
+        },
+      },
+      required: ['id', 'status'],
+    },
+    handler: toolTodoUpdate,
     toClassifierInput: () => '',
   },
   {

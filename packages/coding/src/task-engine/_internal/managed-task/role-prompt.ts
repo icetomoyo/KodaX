@@ -509,6 +509,35 @@ export function createRolePrompt(
           '    solo (per RULE A/B below). Dispatching AFTER you have already deep-dived is',
           '    wasted work — decide early.',
         ].join('\n'),
+        // FEATURE_097 (v0.7.34) — H0 mini-planner addendum, Heavy variant.
+        // Pinned VERBATIM from the 2026-05-04 64-cell A/B eval winner;
+        // see `benchmark/datasets/scout-h0-mini-planner/cases.ts` and
+        // `benchmark/results/feature-097--pilot-1run--ANALYSIS.md`. Heavy
+        // beat Light by +14.5pp obligation_coherence (eliminating "Read X"
+        // filler steps across zhipu / kimi / ark families) while keeping
+        // simple_overformalization at 0%. Do not edit this block without
+        // re-running the eval and updating the pin.
+        [
+          'EXECUTION OBLIGATIONS:',
+          '  For any task that requires ≥ 2 distinct execution steps (whether at H0_DIRECT,',
+          '  H1_EXECUTE_EVAL, or H2_PLAN_EXECUTE_EVAL), populate executionObligations with',
+          '  one entry per step BEFORE calling emit_scout_verdict.',
+          '',
+          '  Examples of "distinct execution steps" (DO list separately):',
+          '    - Editing files in different modules',
+          '    - Refactor + verification (e.g. rename + run tests)',
+          '    - Multiple changes to the same file when each is independent',
+          '',
+          '  Examples of NOT distinct steps (do NOT split into multiple obligations):',
+          '    - Reading a file before editing it (preparation, not a step)',
+          '    - "Think about X" or "analyze Y" (reasoning, not a step)',
+          '    - Single-token typo fixes (single action, no plan needed)',
+          '',
+          '  After emit_scout_verdict, when continuing as H0_DIRECT executor, call',
+          '  todo_update at each transition (pending → in_progress → completed) so the',
+          '  user sees real-time progress. This gives the user a visible plan and forces',
+          '  you to think through the full scope before acting.',
+        ].join('\n'),
         'You are the Scout. For simple tasks (H0): complete the work directly and give the final answer.',
         'For complex tasks (H1/H2): investigate scope, then call emit_scout_verdict with the right harness to escalate. Do NOT do the implementation yourself for H1/H2 tasks.',
         'Respect any stated topology ceiling or upgrade ceiling in the routing metadata.',
@@ -582,6 +611,12 @@ export function createRolePrompt(
         'Even if evidence is still incomplete, produce the best current contract and record the missing proof in required_evidence or constraints rather than omitting the call.',
         'Do not linearly page large raw diffs or perform file-by-file claim verification. Stop at overview evidence and hand deep inspection to the Generator.',
         'Do not perform the work yet and do not self-certify completion.',
+        // FEATURE_097 (v0.7.34): when refining Scout obligations, the runner
+        // updates the user-visible plan list automatically from your contract.
+        // You only need to call todo_update if you want to record interim
+        // status transitions (rare for a planner; status transitions are
+        // mostly Generator territory).
+        'PLAN PROGRESS: The user-visible plan list is refreshed automatically from your contract. You generally do not need to call todo_update; if you do, restrict it to status="skipped" when an obligation turned out to be unnecessary (Generator handles in_progress / completed transitions). If todo_update returns ok=false with reason "not active", no plan list was seeded for this run.',
         [
           `Contract payload shape (pass to ${ROLE_EMIT_TOOL_NAMES.planner}):`,
           'summary: <one-line contract summary>',
@@ -618,6 +653,10 @@ export function createRolePrompt(
         'The Scout-confirmed harness is the active harness for this run. Do not reinterpret it locally; only request a stronger harness through an explicit later verdict if the evidence truly demands it.',
         'Read the managed task artifacts and dependency handoff artifacts before acting. Treat them as the primary coordination surface.',
         'Execute the task or produce the requested deliverable.',
+        // FEATURE_097 (v0.7.34): drive the user-visible plan list so progress
+        // is observable round-to-round. The tool soft-fails if no plan was
+        // seeded for this run, so calling it is always safe.
+        'PLAN PROGRESS: When the run carries a visible obligation list (Scout produced ≥ 2 execution obligations), call todo_update at each transition: status="in_progress" BEFORE starting an obligation, status="completed" AFTER finishing it. Only ONE obligation should be in_progress at a time (per owner). If a step clearly fails and needs retry, set status="failed" with a brief note. If todo_update returns ok=false with reason "not active", no plan list was seeded for this run — continue without calling it.',
         // FEATURE_107 P5: experimental, env-gated, P6 cleanup target.
         generatorReasoningDiscipline,
         isTerminalAuthority

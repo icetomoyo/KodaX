@@ -72,6 +72,14 @@ export interface PromptFooterProps {
   notifications?: React.ReactNode;
   inlineNotices?: React.ReactNode;
   activityBar?: React.ReactNode;
+  /**
+   * FEATURE_097 (v0.7.34) — todo list slot. Mounted between the
+   * activity bar (spinner) and the composer so the Scout-seeded plan
+   * list sits directly under the spinner, above the user prompt and
+   * the BackgroundTaskBar. Layout reference: docs/features/v0.7.34.md
+   * §"挂载点".
+   */
+  todoSurface?: React.ReactNode;
   composer: React.ReactNode;
   inlineSuggestions?: React.ReactNode;
   helpSurface?: React.ReactNode;
@@ -88,6 +96,7 @@ export const PromptFooter: React.FC<PromptFooterProps> = ({
   notifications,
   inlineNotices,
   activityBar,
+  todoSurface,
   composer,
   inlineSuggestions,
   helpSurface,
@@ -108,6 +117,7 @@ export const PromptFooter: React.FC<PromptFooterProps> = ({
       {notifications}
       {inlineNotices}
       {activityBar}
+      {todoSurface}
       {composer}
       {inlineSuggestions}
       {inlineDialogs}

@@ -207,6 +207,16 @@ export interface KodaXEvents {
   onRetry?: (reason: string, attempt: number, maxAttempts: number) => void;
   onProviderRateLimit?: (attempt: number, maxRetries: number, delayMs: number) => void;
   onRepoIntelligenceTrace?: (event: KodaXRepoIntelligenceTraceEvent) => void;
+  /**
+   * FEATURE_097 (v0.7.34): emitted whenever the Scout-seeded todo list
+   * changes — initial seed at `emit_scout_verdict`, per-item updates from
+   * `todo_update` tool calls, and Evaluator-verdict auto-handling
+   * (accept/revise/replan). Single-rail (no `KodaXManagedTaskStatusEvent`
+   * snapshot fallback): KodaX is a single-process CLI, all consumers live
+   * in one event loop, so subscriber lag is not a real failure mode
+   * (FEATURE_086 onRepoIntelligenceTrace single-rail precedent).
+   */
+  onTodoUpdate?: (items: TodoList) => void;
   /** Structured provider recovery event (Feature 045) */
   onProviderRecovery?: (event: ProviderRecoveryEvent) => void;
   onComplete?: () => void;
@@ -397,6 +407,43 @@ export interface KodaXRepoIntelligenceCarrier {
   capability?: KodaXRepoIntelligenceCapability;
   trace?: KodaXRepoIntelligenceTrace;
 }
+
+// ============== Todo Plan Surface (FEATURE_097, v0.7.34) ==============
+
+/**
+ * Status of a planned todo item. Lifecycle: pending → in_progress →
+ * (completed | failed | skipped). Failed items are reset to pending
+ * when the next iteration begins (Evaluator revise verdict). Skipped
+ * is for Planner-side merging of two obligations into one.
+ */
+export type TodoStatus =
+  | 'pending'
+  | 'in_progress'
+  | 'completed'
+  | 'failed'
+  | 'skipped';
+
+/**
+ * One row in the planner-produced todo list. Content is sourced from
+ * Scout's existing `executionObligations: string[]` payload (no schema
+ * change at the protocol layer). Status is advanced via the
+ * `todo_update` tool by Scout (H0 path) / Generator / Planner.
+ *
+ * `owner` partitions the list when child agents run in parallel under
+ * `dispatch_child_task`; "main" is the parent thread.
+ */
+export interface TodoItem {
+  readonly id: string;
+  readonly content: string;
+  readonly status: TodoStatus;
+  readonly owner?: string;
+  /** Index into the originating `executionObligations: string[]` array (0-based). */
+  readonly sourceObligationIndex?: number;
+  /** Optional note attached on a status transition (e.g. failure reason). */
+  readonly note?: string;
+}
+
+export type TodoList = readonly TodoItem[];
 
 export interface KodaXRepoRoutingSignals {
   workspaceRoot?: string;
@@ -1250,4 +1297,14 @@ export interface KodaXToolExecutionContext {
    * produce interleaved `recordBlock` / `recordAllow` updates with no tearing.
    */
   guardrails?: readonly import('@kodax/core').Guardrail[];
+  /**
+   * FEATURE_097 (v0.7.34): Scout-seeded todo plan store. Populated by
+   * runner-driven setup whenever Scout's `executionObligations` reaches
+   * the display threshold (≥2 entries); the `todo_update` tool reads
+   * `has(id)` / `allIds()` for unknown-id error reasons and calls
+   * `updateStatus(...)` for state transitions. The store emits its own
+   * `onTodoUpdate` events via the `onChange` callback wired at creation
+   * — tools do not have to forward events themselves.
+   */
+  todoStore?: import('./task-engine/todo-store.js').TodoStore;
 }

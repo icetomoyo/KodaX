@@ -158,6 +158,9 @@ export type {
   KodaXRepoIntelligenceResolvedMode,
   KodaXRepoIntelligenceTraceEvent,
   KodaXRepoIntelligenceTrace,
+  TodoStatus,
+  TodoItem,
+  TodoList,
   SessionErrorMetadata,
 } from './types.js';
 

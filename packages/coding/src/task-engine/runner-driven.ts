@@ -102,6 +102,7 @@ import { toolBash } from '../tools/bash.js';
 import { toolEdit } from '../tools/edit.js';
 import { toolMultiEdit } from '../tools/multi-edit.js';
 import { toolExitPlanMode } from '../tools/exit-plan-mode.js';
+import { toolTodoUpdate } from '../tools/todo-update.js';
 import { toolGlob } from '../tools/glob.js';
 import { toolGrep } from '../tools/grep.js';
 import { toolRead } from '../tools/read.js';
@@ -196,6 +197,16 @@ import {
   type ScorecardVerdictDirective,
 } from './_internal/managed-task/scorecard.js';
 import { applyCurrentDiffReviewRoutingFloor } from './_internal/managed-task/review-routing.js';
+import { createTodoStore, type TodoStore } from './todo-store.js';
+import {
+  buildTodoReminderText,
+  createTodoReminderState,
+  detectAgentTransition,
+  resetTodoReminderState,
+  shouldFireTodoReminder,
+  tickTodoReminder,
+  type TodoReminderState,
+} from './todo-throttle-reminder.js';
 import {
   SUSPICIOUS_LAST_TEXT_PREVIEW_LIMIT,
   detectScoutSuspiciousSignals,
@@ -713,6 +724,28 @@ function wrapEmitterWithRecorder(
   // emit time with a user-visible status event + server-side log.
   mutationTracker?: ManagedMutationTracker,
   events?: KodaXEvents,
+  // FEATURE_097 (v0.7.34) — todo-store hooks. The store is created
+  // once per `runManagedTaskViaRunnerInner` call, then woven through
+  // `baseCtx.todoStore` (so the `todo_update` tool can mutate it) AND
+  // through this wrapper (so the Runner can auto-handle three
+  // emit-time transitions per design §5 ①):
+  //   - scout slot   → seed from `executionObligations` when ≥ 2
+  //   - contract slot → replace from `successCriteria` when store is
+  //                     empty (e.g. after a replan reset, or H2 path
+  //                     where Scout obligations < 2 but Planner
+  //                     refines)
+  //   - verdict slot → dispatch on Evaluator verdict:
+  //                    accept → autoCompleteOnAccept
+  //                    revise (route Generator) → markInProgressFailed
+  //                                               + arm the pending
+  //                                               reset-failed flag
+  //                    revise (route Planner / replan) → reset
+  //                    blocked → no-op (terminal; list state is moot)
+  // `pendingFailedResetRef` is consumed at the next Generator turn's
+  // `instructions` resolve so the user briefly sees ✗ before ☐
+  // (matches the design's "下一轮 Generator 开始前 reset" semantics).
+  todoStore?: TodoStore,
+  pendingFailedResetRef?: { current: boolean },
 ): RunnableTool {
   return {
     ...base,
@@ -837,6 +870,70 @@ function wrapEmitterWithRecorder(
           }
         }
         recorder[slot] = result.metadata as unknown as ProtocolEmitterMetadata;
+        // FEATURE_097 (v0.7.34) — todo-store seeding + auto-handling.
+        // Per design §5 ①, the Runner is the single source of truth for
+        // three transitions; the Evaluator emits an unmodified verdict
+        // and we dispatch from its status here. Each branch is a no-op
+        // when `todoStore` was not threaded (older callers / unit-test
+        // fixtures that don't wire FEATURE_097).
+        if (todoStore) {
+          if (slot === 'scout') {
+            const obligations = recorder.scout?.payload.scout?.skillMap?.executionObligations;
+            if (Array.isArray(obligations) && obligations.length >= 2) {
+              // Seed once. The store's `init()` is idempotent on content but
+              // always re-fires onChange — that's the right behavior on a
+              // re-emit (extremely rare; Scout emits exactly once per run).
+              const seeds = obligations.map((content, idx) => ({
+                id: `todo_${idx + 1}`,
+                content,
+                sourceObligationIndex: idx,
+              }));
+              todoStore.init(seeds);
+            }
+          } else if (slot === 'contract') {
+            // H2 replan path: store is empty after `replan` reset →
+            // Planner's refined `successCriteria` becomes the new list.
+            // When the store already has items (the normal H2 first-pass),
+            // leave them alone — Scout's obligations remain canonical and
+            // Planner uses `todo_update` for status changes.
+            if (!todoStore.hasItems()) {
+              const criteria = recorder.contract?.payload.contract?.successCriteria;
+              if (Array.isArray(criteria) && criteria.length >= 2) {
+                const seeds = criteria.map((content, idx) => ({
+                  id: `todo_${idx + 1}`,
+                  content,
+                  sourceObligationIndex: idx,
+                }));
+                todoStore.init(seeds);
+              }
+            }
+          } else if (slot === 'verdict') {
+            const verdictPayload = recorder.verdict?.payload.verdict;
+            const status = verdictPayload?.status;
+            const nextHarness = verdictPayload?.nextHarness;
+            if (status === 'accept') {
+              todoStore.autoCompleteOnAccept();
+            } else if (status === 'revise') {
+              if (nextHarness === 'H2_PLAN_EXECUTE_EVAL') {
+                // Replan disposition — drop the list; Planner's next
+                // contract will repopulate via the contract-slot branch.
+                todoStore.reset();
+              } else {
+                // Default revise route: Generator retries. Mark current
+                // in_progress as failed; the next Generator turn's
+                // `instructions` closure will reset failed → pending so
+                // the user sees ● → ✗ → ☐ → ● across the retry boundary.
+                todoStore.markInProgressFailed('Evaluator requested revision');
+                if (pendingFailedResetRef) {
+                  pendingFailedResetRef.current = true;
+                }
+              }
+            }
+            // status === 'blocked' is terminal — leave the list as-is so
+            // the final UI render reflects whatever state the work
+            // actually reached.
+          }
+        }
         // M5 (v0.7.26) — Scout pre-handoff write warning. Scout's tool
         // set includes write/edit/multi_edit for H0_DIRECT parity with
         // v0.7.22. But on H1/H2 handoffs, any Scout-era write bleeds
@@ -1728,6 +1825,14 @@ interface CodingToolBundle {
   readonly multiEdit: RunnableTool;
   /** FEATURE_074 parity — exit_plan_mode approval tool (Generator only). */
   readonly exitPlanMode: RunnableTool;
+  /**
+   * FEATURE_097 (v0.7.34) — todo_update drives the Scout-seeded plan
+   * checklist visible in the AMA REPL surface. Injected into Scout
+   * (H0 path), Generator, and Planner tool sets unconditionally; the
+   * tool gracefully degrades to `{ok:false, reason:"not active"}` when
+   * Scout produced fewer than 2 obligations and no store was wired.
+   */
+  readonly todoUpdate: RunnableTool;
   /** M1 parity (v0.7.26) — repo-intel + MCP surface restored to Planner.
    * v0.7.22's `buildManagedWorkerToolPolicy('planner')` exposed
    * `changed_scope`, `repo_overview`, `changed_diff_bundle`, `read`,
@@ -1758,9 +1863,10 @@ function buildCodingToolBundle(
   const edit = getToolDefinition('edit');
   const multiEdit = getToolDefinition('multi_edit');
   const exitPlanMode = getToolDefinition('exit_plan_mode');
-  if (!read || !grep || !glob || !bash || !write || !edit || !multiEdit || !exitPlanMode) {
+  const todoUpdate = getToolDefinition('todo_update');
+  if (!read || !grep || !glob || !bash || !write || !edit || !multiEdit || !exitPlanMode || !todoUpdate) {
     throw new Error(
-      'Runner-driven path: expected core tools (read/grep/glob/bash/write/edit/multi_edit/exit_plan_mode) to be registered',
+      'Runner-driven path: expected core tools (read/grep/glob/bash/write/edit/multi_edit/exit_plan_mode/todo_update) to be registered',
     );
   }
   // M1 parity (v0.7.26) — optionally wrap repo-intel + MCP tools so
@@ -1797,6 +1903,7 @@ function buildCodingToolBundle(
     edit: wrapCodingToolAsRunnable(edit, toolEdit, baseCtx, budget, events),
     multiEdit: wrapCodingToolAsRunnable(multiEdit, toolMultiEdit, baseCtx, budget, events),
     exitPlanMode: wrapCodingToolAsRunnable(exitPlanMode, toolExitPlanMode, baseCtx, budget, events),
+    todoUpdate: wrapCodingToolAsRunnable(todoUpdate, toolTodoUpdate, baseCtx, budget, events),
     repoOverview: repoOverviewDef
       ? wrapCodingToolAsRunnable(repoOverviewDef, toolRepoOverview, baseCtx, budget, events)
       : undefined,
@@ -1881,8 +1988,47 @@ export function buildRunnerAgentChain(
   // that vanish silently — the REPL transcript's "Running: ..." line
   // never updates mid-run.
   events?: KodaXEvents,
+  // FEATURE_097 (v0.7.34) — see wrapEmitterWithRecorder docstring.
+  // Optional: when omitted, the chain runs without the Scout-seeded
+  // plan list (older test fixtures, callers that never enabled
+  // FEATURE_097). The `todo_update` tool soft-fails with "not active".
+  todoStore?: TodoStore,
+  pendingFailedResetRef?: { current: boolean },
+  // FEATURE_097 §5 ② — when provided, every successful `todo_update`
+  // call resets the throttle reminder counter (model is making
+  // progress; the no-update streak is broken).
+  todoReminderState?: TodoReminderState,
 ): RunnerAgentChain {
   const codingTools = buildCodingToolBundle(ctx, budget, events);
+  // FEATURE_097 (v0.7.34) §5 ② — wrap `todo_update` so every successful
+  // call resets the Layer 2 throttle counter. The base tool already
+  // returns `{ok:true}` on success and `{ok:false, reason:...}` on
+  // failure (unknown id / bad input / store inactive); only the success
+  // path resets the counter so a model spamming malformed updates does
+  // NOT escape the reminder. Read the JSON envelope to discriminate.
+  if (todoReminderState) {
+    const baseTodoUpdate = codingTools.todoUpdate;
+    const wrappedTodoUpdate: RunnableTool = {
+      ...baseTodoUpdate,
+      execute: async (input, runnerCtx): Promise<RunnerToolResult> => {
+        const result = await baseTodoUpdate.execute(input, runnerCtx);
+        if (!result.isError && typeof result.content === 'string') {
+          try {
+            const parsed = JSON.parse(result.content) as { ok?: boolean };
+            if (parsed.ok === true) {
+              resetTodoReminderState(todoReminderState);
+            }
+          } catch {
+            // Tool output should always be JSON, but if a future change
+            // breaks that contract we silently skip the reset rather
+            // than crash the Runner mid-turn.
+          }
+        }
+        return result;
+      },
+    };
+    (codingTools as { -readonly [K in keyof typeof codingTools]: typeof codingTools[K] }).todoUpdate = wrappedTodoUpdate;
+  }
   const dispatchDefinition = getToolDefinition('dispatch_child_task');
   if (!dispatchDefinition) {
     throw new Error('dispatch_child_task tool not registered — tools/registry.ts bootstrap failure');
@@ -1909,6 +2055,9 @@ export function buildRunnerAgentChain(
   // M5 (v0.7.26) — only the scout slot needs the mutation-tracker /
   // events channel to surface "Scout wrote files before handing off"
   // warnings. The other slots don't need that wiring.
+  // FEATURE_097 (v0.7.34) — scout/contract/verdict slots need the
+  // todoStore for seeding + Evaluator auto-handling; handoff slot does
+  // not (Generator's tool calls already mutate via `todo_update`).
   const scoutEmit = wrapEmitterWithRecorder(
     emitScoutVerdict,
     'scout',
@@ -1918,10 +2067,34 @@ export function buildRunnerAgentChain(
     undefined,
     ctx.mutationTracker,
     events,
+    todoStore,
+    pendingFailedResetRef,
   );
-  const contractEmit = wrapEmitterWithRecorder(emitContract, 'contract', recorder, observer, budget);
+  const contractEmit = wrapEmitterWithRecorder(
+    emitContract,
+    'contract',
+    recorder,
+    observer,
+    budget,
+    undefined,
+    undefined,
+    undefined,
+    todoStore,
+    pendingFailedResetRef,
+  );
   const handoffEmit = wrapEmitterWithRecorder(emitHandoff, 'handoff', recorder, observer, budget);
-  const verdictEmit = wrapEmitterWithRecorder(emitVerdict, 'verdict', recorder, observer, budget, budgetExtension);
+  const verdictEmit = wrapEmitterWithRecorder(
+    emitVerdict,
+    'verdict',
+    recorder,
+    observer,
+    budget,
+    budgetExtension,
+    undefined,
+    undefined,
+    todoStore,
+    pendingFailedResetRef,
+  );
 
   type WritableAgent = { -readonly [K in keyof Agent]: Agent[K] };
 
@@ -1969,6 +2142,13 @@ export function buildRunnerAgentChain(
       // for parity with v0.7.22's Scout default tool set.
       codingTools.multiEdit,
       codingTools.exitPlanMode,
+      // FEATURE_097 (v0.7.34) — Scout receives todo_update because in H0
+      // it is also the executor (continues calling tools after
+      // emit_scout_verdict). Scout role-prompt limits use to "after
+      // emit_scout_verdict, when continuing as H0_DIRECT executor"
+      // (Heavy variant, eval-confirmed 2026-05-04). The tool soft-fails
+      // with `not active` when no plan list was seeded (obligations<2).
+      codingTools.todoUpdate,
       // Shard 6d-Q: Scout may dispatch read-only child investigations
       // (evidence scans, repo reconnaissance) in parallel before
       // emitting its verdict. The dispatch tool itself enforces
@@ -1996,6 +2176,11 @@ export function buildRunnerAgentChain(
   if (codingTools.changedScope) plannerTools.push(codingTools.changedScope);
   if (codingTools.changedDiffBundle) plannerTools.push(codingTools.changedDiffBundle);
   if (codingTools.changedDiff) plannerTools.push(codingTools.changedDiff);
+  // FEATURE_097 (v0.7.34) — Planner refines Scout obligations into a
+  // detailed contract; it uses todo_update with a prior `replace()` call
+  // (handled at runner-driven seeding hooks) to swap the displayed plan.
+  // Per-step status updates after replace use this tool.
+  plannerTools.push(codingTools.todoUpdate);
   plannerTools.push(...codingTools.mcp);
   const planner: WritableAgent = {
     name: PLANNER_AGENT_NAME,
@@ -2013,14 +2198,31 @@ export function buildRunnerAgentChain(
   };
   const generator: WritableAgent = {
     name: GENERATOR_AGENT_NAME,
-    instructions: () => resolveRoleInstructions(
-      'generator',
-      GENERATOR_AGENT_NAME,
-      GENERATOR_INSTRUCTIONS_FALLBACK,
-      recorder,
-      promptContext,
-      verification,
-    ),
+    instructions: () => {
+      // FEATURE_097 (v0.7.34) — consume pending failed → pending reset
+      // at the start of every Generator turn. The verdict-slot wrapper
+      // arms this flag on `revise` (Generator-targeted route); reading
+      // + clearing it here gives the user the ● → ✗ → ☐ → ● visual
+      // sequence across the retry boundary. The closure resolves on
+      // every Runner invocation of Generator, so the reset fires at
+      // the natural "Generator turn starts" boundary.
+      if (
+        pendingFailedResetRef
+        && pendingFailedResetRef.current
+        && todoStore
+      ) {
+        todoStore.resetFailed();
+        pendingFailedResetRef.current = false;
+      }
+      return resolveRoleInstructions(
+        'generator',
+        GENERATOR_AGENT_NAME,
+        GENERATOR_INSTRUCTIONS_FALLBACK,
+        recorder,
+        promptContext,
+        verification,
+      );
+    },
     tools: [
       handoffEmit,
       codingTools.read,
@@ -2039,6 +2241,10 @@ export function buildRunnerAgentChain(
       // request approval and either (a) writes without approval or
       // (b) stalls asking "how do I exit plan mode?".
       codingTools.exitPlanMode,
+      // FEATURE_097 (v0.7.34) — Generator is the canonical H1/H2
+      // executor and the primary driver of todo_update transitions
+      // (pending → in_progress → completed) per major step.
+      codingTools.todoUpdate,
       // Shard 6d-Q: Generator may dispatch write-capable child tasks for
       // parallel fan-out. Worktree paths flow through
       // `childWriteWorktreePathsRef` so the Evaluator can inject the
@@ -2310,6 +2516,19 @@ export function buildRunnerLlmAdapter(
    * (user ceiling). The callback closes over the AMA frame's recorder.
    */
   getScoutReasoningHint?: () => KodaXReasoningMode | undefined,
+  /**
+   * FEATURE_097 (v0.7.34) §5 ② — Layer 2 throttle reminder hook. When
+   * provided, the adapter:
+   *   1. detects agent transitions and resets the counter on each one
+   *   2. checks `shouldFireTodoReminder` before each provider call;
+   *      if it fires, appends the `<system-reminder>` text to `system`
+   *      so the model sees it before its next response
+   *   3. ticks the counter forward (one round = one adapter call)
+   * Omitting either argument disables the reminder logic entirely
+   * (older callers / unit-test fixtures).
+   */
+  todoStore?: TodoStore,
+  todoReminderState?: TodoReminderState,
 ): (messages: readonly KodaXMessage[], agent: Agent) => Promise<RunnerLlmResult> {
   // FEATURE_072 parity: the REPL's token-count indicator reads
   // `onIterationEnd` to refresh after each worker LLM turn. Track a
@@ -2351,8 +2570,27 @@ export function buildRunnerLlmAdapter(
         systemParts.push(text);
       }
     }
-    const system = systemParts.join('\n\n');
+    let system = systemParts.join('\n\n');
     const transcript = messages.slice(cut);
+
+    // FEATURE_097 (v0.7.34) §5 ② — Layer 2 throttle reminder. Detect
+    // agent transitions to reset the counter (per-task scope, but a
+    // role swap is a natural reset point — Scout → Planner → Generator
+    // → Evaluator each represent a fresh attempt at making progress on
+    // the list). Then, if the threshold has been hit and we're armed,
+    // append the reminder text to `system` so the model reads it
+    // alongside its role instructions on this exact turn. Finally,
+    // tick the counter forward — one adapter call = one round.
+    if (todoStore && todoReminderState) {
+      if (detectAgentTransition(todoReminderState, agent.name)) {
+        resetTodoReminderState(todoReminderState);
+      }
+      if (shouldFireTodoReminder(todoReminderState, todoStore)) {
+        const reminder = buildTodoReminderText(todoStore);
+        system = system.length > 0 ? `${system}\n\n${reminder}` : reminder;
+      }
+      tickTodoReminder(todoReminderState);
+    }
 
     const wireTools: KodaXToolDefinition[] = (agent.tools ?? []).map((t) => ({
       name: t.name,
@@ -3967,9 +4205,32 @@ async function runManagedTaskViaRunnerInner(
     runtime: extensionRuntime,
     managedProtocolPayloadRef,
   });
+  // FEATURE_097 (v0.7.34) — todo store for the Scout-seeded plan list.
+  // Created here so its `onChange` callback can fan changes out to the
+  // KodaXEvents bus (`onTodoUpdate`) without each individual mutation
+  // site (the `todo_update` tool, the wrapper's verdict-slot
+  // auto-handlers) having to remember to fire. Lives for one
+  // managed-task run and is dropped when the function returns —
+  // task-scoped, not session-scoped, per design §5 ④.
+  const todoStore: TodoStore = createTodoStore({
+    onChange: (items) => {
+      options.events?.onTodoUpdate?.(items);
+    },
+  });
+  // Set when the verdict-slot wrapper marks in_progress → failed
+  // on a Generator-targeted revise; consumed at the start of the
+  // next Generator turn (the agent's `instructions` closure).
+  // Scoped to one task run; survives mid-run handoffs.
+  const pendingFailedResetRef: { current: boolean } = { current: false };
+  // FEATURE_097 §5 ② — Layer 2 throttle reminder state. Lives for one
+  // managed-task run; the LLM adapter increments the counter on each
+  // call, the `todo_update` wrapper resets it on success, the agent-
+  // transition detector resets it on role switches.
+  const todoReminderState = createTodoReminderState();
   const baseCtx: KodaXToolExecutionContext = {
     ...substrateBaseCtx,
     mutationTracker,
+    todoStore,
   };
 
   // Budget controller. Start with H0 cap (50); `wrapEmitterWithRecorder`
@@ -4404,6 +4665,9 @@ async function runManagedTaskViaRunnerInner(
     childWriteWorktreePathsRef,
     chainPromptContext,
     options.events,
+    todoStore,
+    pendingFailedResetRef,
+    todoReminderState,
   );
   // FEATURE_078: provide a callback that surfaces Scout's
   // `downstream_reasoning_hint` to the per-role adapter. Read lazily —
@@ -4414,6 +4678,8 @@ async function runManagedTaskViaRunnerInner(
     adapterOverride,
     tokenStateRef,
     () => recorder.scout?.payload.scout?.downstreamReasoningHint,
+    todoStore,
+    todoReminderState,
   );
 
   // Shard 6d-L: stitch `plan.promptOverlay` (the routing-notes block
