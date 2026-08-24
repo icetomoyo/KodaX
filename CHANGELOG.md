@@ -6,6 +6,30 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Bundled Windows binaries (Bun `--compile`) no longer resolve the Windows
+  sandbox runtime binary onto Bun's virtual `B:\` drive: the build ships a
+  `vendor/srt-win/<arch>/srt-win.exe` sidecar next to the executable,
+  `resolveSrtWinSourcePath()` prefers it in bundled builds, and
+  `kodax sandbox setup` installs through the prepared runner's resolved
+  descriptor instead of the library's module-relative lookup (Issue 303).
+- Documented and pinned the Windows pending-reset fail-closed behavior where a
+  long-lived background sandbox command parks a workspace session close and
+  every later sandboxed `write` fails as
+  `The Runtime sandboxed file mutation is unavailable` (Issue 304, fix pending
+  design).
+
+### Added
+
+- DeepSeek vision model `deepseek-v4-flash-vision-exp` is registered on the
+  `deepseek` provider (selectable via `/model`). It reuses the existing
+  OpenAI-style `image_url` wire path, so pasted/read images are forwarded on
+  user turns, while `deepseek-v4-flash` / `deepseek-v4-pro` stay text-only via
+  per-model media routing (ark-coding mixed-capability convention). Cost
+  accounting uses flash pricing — images bill as size-derived tokens (≤384 per
+  image) at text-token rates.
+
 ---
 
 ## [0.7.95] - 2026-08-23

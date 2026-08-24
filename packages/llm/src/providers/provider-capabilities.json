@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-14",
+  "updatedAt": "2026-08-24",
   "providers": {
     "anthropic": {
       "apiKeyEnv": "ANTHROPIC_API_KEY",
@@ -180,6 +180,10 @@
             "supportsReasoningEffort": true,
             "supportsDisabledThinking": true
           }
+        },
+        {
+          "id": "deepseek-v4-flash-vision-exp",
+          "displayName": "DeepSeek V4 Flash Vision"
         }
       ],
       "reasoningCapability": "native-effort",
@@ -205,7 +209,7 @@
         "supportsReasoningEffort": true,
         "supportsDisabledThinking": true
       },
-      "capabilityProfile": "native",
+      "capabilityProfile": "image-input-native",
       "supportsThinking": true,
       "contextWindow": 1000000,
       "maxOutputTokens": 64000,

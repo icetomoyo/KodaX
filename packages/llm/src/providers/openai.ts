@@ -1435,8 +1435,9 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         // is the array form (e.g. `read` on an image path), downgrade:
         // emit text items as-is and replace image items with a textual
         // path-free placeholder. This preserves the tool-result
-        // contract for text-only OpenAI-compat gateways (DeepSeek, Zhipu
-        // text channel, MiniMax, etc.) without rejecting the request.
+        // contract for OpenAI-compat gateways whose tool-message wire
+        // format is text-only (DeepSeek, Zhipu, MiniMax, etc. — applies
+        // even to vision-capable models) without rejecting the request.
         let toolContent: string;
         if (typeof block.content === 'string') {
           toolContent = block.content;

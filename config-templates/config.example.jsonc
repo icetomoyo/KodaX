@@ -10,7 +10,7 @@
   // "model": "deepseek-v4-flash",
   // Add or reorder model ids shown by `/model` for a provider.
   // "providerModels": {
-  //   "deepseek": ["deepseek-v4-flash", "deepseek-v4-pro"]
+  //   "deepseek": ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp"]
   // },
 
   // Interactive Runtime hosting: "embedded" (this process) or "daemon".

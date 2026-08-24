@@ -9,7 +9,7 @@ dedicated environment variable — no key is ever stored in config files.
 |---|---|---|---|
 | `anthropic` | `ANTHROPIC_API_KEY` | Yes | `claude-sonnet-4-6` |
 | `openai` | `OPENAI_API_KEY` | Yes | `gpt-5.3-codex` |
-| `deepseek` | `DEEPSEEK_API_KEY` | Yes | `deepseek-v4-flash` |
+| `deepseek` | `DEEPSEEK_API_KEY` | Yes | `deepseek-v4-flash` (also `deepseek-v4-pro`; vision `deepseek-v4-flash-vision-exp`) |
 | `kimi` | `KIMI_API_KEY` | Yes | `kimi-k2.7-code` |
 | `kimi-code` | `KIMI_CODE_API_KEY` | Yes | `k3-256k` |
 | `qwen` | `QWEN_API_KEY` | Yes | `qwen3.5-plus` |
@@ -24,7 +24,7 @@ dedicated environment variable — no key is ever stored in config files.
 | `gemini-cli` | `GEMINI_API_KEY` | No | CLI bridge default |
 | `codex-cli` | `OPENAI_API_KEY` | No | CLI bridge default |
 
-> Model snapshot date: 2026-08-15. Run `kodax setup --help` for the latest list.
+> Model snapshot date: 2026-08-24. Run `kodax setup --help` for the latest list.
 
 ## GLM Coding Plan routes
 

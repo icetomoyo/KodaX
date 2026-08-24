@@ -62,6 +62,7 @@ const SOURCE_BACKED_IMAGE_ROUTES = new Set([
   'ark-coding/kimi-k2.6',
   'ark-coding/kimi-k2.7-code',
   'ark-coding/minimax-m3',
+  'deepseek/deepseek-v4-flash-vision-exp',
   'kimi-code/k3-256k',
   'qwen-token-plan/qwen3.8-max',
   'qwen-token-plan/qwen3.8-max-preview',

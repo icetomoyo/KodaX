@@ -129,6 +129,13 @@ describe('cost-rates', () => {
         outputPer1M: 0.87,
         cachePer1M: 0.003625,
       });
+      // Vision model is priced identically to flash; images are billed as
+      // size-derived tokens (≤384/image) at text rates.
+      expect(deepseek['deepseek-v4-flash-vision-exp']).toEqual({
+        inputPer1M: 0.14,
+        outputPer1M: 0.28,
+        cachePer1M: 0.0028,
+      });
     });
 
     it('should price both Qwen 3.8 Token Plan model IDs', () => {

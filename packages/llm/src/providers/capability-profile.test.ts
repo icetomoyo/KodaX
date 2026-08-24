@@ -79,6 +79,7 @@ describe('provider capability profiles', () => {
     const visionCapableProviders = [
       'anthropic',
       'openai',
+      'deepseek',
       'kimi',
       'kimi-code',
       'qwen',
@@ -99,9 +100,12 @@ describe('provider capability profiles', () => {
     }
   });
 
-  it('keeps DeepSeek V4 text-only', () => {
+  it('marks DeepSeek image-input capable for the vision-exp model route', () => {
+    // Provider-level gate opened with the 2026-08 deepseek-v4-flash-vision-exp
+    // announcement; per-model routing (only the vision model accepts images,
+    // flash/pro stay text-only) lives in @kodax-ai/agent media capabilities.
     expect(getProviderConfiguredCapabilityProfile('deepseek')).toEqual(
-      EXPECTED_NATIVE_PROFILE,
+      EXPECTED_IMAGE_INPUT_NATIVE_PROFILE,
     );
   });
 

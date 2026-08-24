@@ -64,6 +64,9 @@ export const DEFAULT_COST_RATES: Readonly<Record<string, Readonly<Record<string,
     // the current base rates rather than a speculative time-of-day schedule.
     'deepseek-v4-flash': { inputPer1M: 0.14, outputPer1M: 0.28, cachePer1M: 0.0028 },
     'deepseek-v4-pro': { inputPer1M: 0.435, outputPer1M: 0.87, cachePer1M: 0.003625 },
+    // Vision model (announced 2026-08-21) is priced identically to flash;
+    // images are billed as size-derived tokens (≤384/image) at text rates.
+    'deepseek-v4-flash-vision-exp': { inputPer1M: 0.14, outputPer1M: 0.28, cachePer1M: 0.0028 },
   },
   kimi: {
     // Official prices are published in CNY; converted at ¥1 ≈ $0.14,
