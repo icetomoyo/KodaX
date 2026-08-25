@@ -96,19 +96,25 @@ sandbox at Run start instead of aborting the Run.
 
 ## Background commands and session reuse (v0.7.96)
 
-A long-lived background command (for example a dev server started through the
-`bash` tool) no longer interferes with later sandboxed tool calls on Windows:
+Within one Runtime process, a long-lived background command (for example a dev
+server started through the `bash` tool) no longer interferes with later
+sandboxed tool calls on Windows:
 
 - The workspace session it shares stays cached and reusable, so subsequent
   `write`/`edit` calls execute sandboxed instead of failing or falling back.
 - Session cleanup defers behind live leases and never terminates a running
-  background command; cleanup converges automatically after the command exits
-  (worst case ~5 s later), and a deferred close that waits on a leaked lease is
-  reported through diagnostics rather than killed.
+  background command; cleanup converges automatically after the command exits,
+  and a deferred close that waits on a leaked lease is reported through
+  diagnostics rather than killed.
 - Cleanups that never started no longer poison the Windows sandbox account, so
   the "unavailable until reboot" lockout this produced in v0.7.95 is gone.
 - Standalone SDK admission (see below) fails with a structured contention
   error while a leased session is active instead of terminating it.
+
+Known limit: with TWO Runtime processes sharing one machine home, an idle
+close in one Runtime can still queue a machine-wide cleanup transition that
+briefly blocks same-policy writes in that Runtime until the other Runtime's
+command completes (Issue 305; the structural fix is the ADR-065 migration).
 
 When a sandboxed text mutation is unavailable, the error carries a structured
 reason: `not_ready` (setup or readiness), `not_selected` (the call was not

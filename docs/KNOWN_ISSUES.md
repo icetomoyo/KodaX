@@ -463,7 +463,7 @@ live (structured, retryable), and a cross-Runtime idle close can still queue
 the account-wide cleanup transition tracked as Issue 305. These residuals —
 and the owner-exclusivity protocol they belong to — are resolved structurally
 by
-[ADR-065](ADR.md##adr-065-windows-sandbox-migrates-to-token-carried-capability-scoping-over-an-append-only-acl-substrate)
+[ADR-065](ADR.md#adr-065-windows-sandbox-migrates-to-token-carried-capability-scoping-over-an-append-only-acl-substrate)
 (token-carried capability scoping over an append-only ACL substrate).
 
 ### 303: Bundled Windows binary resolved srt-win.exe onto Bun's virtual `B:\` drive, so the sandbox backend was permanently unavailable

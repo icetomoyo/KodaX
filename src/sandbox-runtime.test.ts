@@ -3800,6 +3800,133 @@ describe('ASRT workspace shell adapter', () => {
   );
 
   it.runIf(process.platform === 'win32')(
+    'never upgrades a parked lifecycle close in place when forced close piggybacks',
+    async () => {
+      // Forced-close piggyback interleaving (cross-review Major 1): a
+      // lifecycle close parks in fence admission, a live lease arrives, and a
+      // forced caller (shutdown) piggybacks. The lifecycle close must still
+      // SKIP for the lease — never terminate it in place — and the forced
+      // path must re-run in full: drain the lease, then terminate orderly.
+      const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-forced-piggyback-'));
+      tempRoots.push(root);
+      const sandbox = createAsrtShellSandbox({
+        workspaceRoot: root,
+        shouldSandbox: () => true,
+      });
+      const prepare = (toolCallId: string) => sandbox.prepare({
+        toolCallId,
+        toolInput: { command: 'node --version' },
+        command: 'node --version',
+        executable: process.execPath,
+        args: ['--version'],
+        cwd: root,
+        env: process.env,
+      });
+      const first = await prepare('bash-piggyback-1');
+      if (!first) throw new Error('expected first invocation');
+      const releaseFence = await acquireExclusiveFileSystemEffectLease();
+      // The idle close parks in fence admission behind the held fence.
+      const parkedCleanup = first.cleanup();
+      // A live lease arrives while the close waits (session reuse).
+      const second = await prepare('bash-piggyback-2');
+      if (!second) throw new Error('expected leased reuse while the close parks');
+      expect(capturedWorkspaceSessionConfigs).toHaveLength(1);
+      // The forced caller piggybacks the parked lifecycle close.
+      const shutdown = shutdownAsrtWorkspaceSessions();
+      await new Promise<void>((resolve) => setTimeout(resolve, 200));
+      // Releasing the fence lets the lifecycle close skip for the live lease;
+      // the forced re-run drains it once the lease is released.
+      await releaseFence();
+      await second.cleanup().then(
+        () => undefined,
+        () => undefined,
+      );
+      await shutdown.then(
+        () => undefined,
+        () => undefined,
+      );
+      await parkedCleanup.then(
+        () => undefined,
+        () => undefined,
+      );
+      for (const directory of [
+        path.join(path.resolve(process.env.KODAX_HOME!), 'sandbox-runtime', 'acl-poison'),
+        path.join(path.resolve(process.env.ProgramData!), 'KodaX', 'sandbox-runtime', 'acl-poison'),
+      ]) {
+        await expect(readdir(directory)).resolves.toEqual([]);
+      }
+      // The lease was drained, not killed: the owner exited orderly and no
+      // process-tree kill was issued against the session child.
+      expect(capturedProcessTreeKillOptions).toHaveLength(0);
+    },
+  );
+
+  it.runIf(process.platform === 'win32')(
+    'keeps tracking a close whose caller-visible promise timed out at the admission deadline',
+    async () => {
+      // Cross-review Major 2: the caller-visible close settles at the 130s
+      // admission deadline while the underlying cleanup workflow keeps
+      // converging. Drains must stay blocked on the AUTHORITATIVE workflow —
+      // a timeout must not drop the close from the in-flight set.
+      let now = performance.now();
+      const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => now);
+      try {
+        const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-authoritative-tracking-'));
+        tempRoots.push(root);
+        const sandbox = createAsrtShellSandbox({
+          workspaceRoot: root,
+          shouldSandbox: () => true,
+        });
+        const prepared = await sandbox.prepare({
+          toolCallId: 'bash-authoritative-tracking',
+          toolInput: { command: 'node --version' },
+          command: 'node --version',
+          executable: process.execPath,
+          args: ['--version'],
+          cwd: root,
+          env: process.env,
+        });
+        if (!prepared) throw new Error('expected workspace invocation');
+        const blocker = await acquireFileSystemMutationLease('authoritative-tracking-blocker');
+        await blocker.bindEffectProcess(process.pid, false);
+
+        const cleanup = prepared.cleanup();
+        await vi.waitFor(() => expect(hasQueuedFileSystemCleanup()).toBe(true));
+        // Advance past the 130s caller deadline so the caller-visible close
+        // settles with an admission timeout while the workflow stays queued.
+        now += 131_000;
+        await new Promise<void>((resolve) => setTimeout(resolve, 50));
+        await cleanup;
+        // Continue the fake clock in real time from the advanced point —
+        // never backwards: lease retry deadlines computed while frozen must
+        // still elapse for the convergence phase below.
+        const advancedNow = now;
+        const wallStart = Date.now();
+        nowSpy.mockImplementation(() => advancedNow + (Date.now() - wallStart));
+
+        // The drain must still wait for the queued workflow: racing it
+        // against a short timer shows it has not settled.
+        const drainProbe = waitForWorkspaceSessionResetsForTest();
+        const shortTimer = new Promise<'timer'>((resolve) => {
+          const timer = setTimeout(() => resolve('timer'), 2_000);
+          timer.unref?.();
+        });
+        await expect(Promise.race([drainProbe.then(() => 'drained'), shortTimer]))
+          .resolves.toBe('timer');
+
+        // Release the blocker so the queued workflow can converge (its
+        // post-timeout convergence is separately pinned by the
+        // 'clears ACL owner markers after a timed-out cleanup later
+        // converges' regression); the afterEach reset drains the rest.
+        await blocker.finishEffectProcess();
+        await blocker();
+      } finally {
+        vi.restoreAllMocks();
+      }
+    },
+  );
+
+  it.runIf(process.platform === 'win32')(
     'reuses a cached workspace session while its close waits behind a held fence',
     async () => {
       // Issue 304 core acceptance: a long-lived command holds the exclusive

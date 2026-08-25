@@ -15,6 +15,7 @@ export {
   sandboxRuntimeCapability as getKodaXSandboxCapability,
   sandboxSetupGuidance as getKodaXSandboxSetupGuidance,
   setupSandboxRuntime as setupKodaXSandbox,
+  WorkspaceSessionLeaseContentionError,
 } from './sandbox-runtime.js';
 
 export type {

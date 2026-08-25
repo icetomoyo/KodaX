@@ -1202,8 +1202,23 @@ async function runCleanupLeaseWorkflow<T>(
     // live daemon would never see it reclaimed as stale, and every later
     // filesystem effect would queue behind it. Release best-effort before
     // surfacing the failure; the cleanup action never started, so there is
-    // no partially applied ACL state to recover.
-    await lease().catch(() => undefined);
+    // no partially applied ACL state to recover. A rollback failure is
+    // surfaced alongside the original error instead of being swallowed —
+    // a half-committed durable owner is exactly the state callers must see.
+    let rollbackError: unknown;
+    try {
+      await lease();
+    } catch (releaseError) {
+      rollbackError = releaseError;
+    }
+    if (rollbackError !== undefined) {
+      throw new AggregateError(
+        [error, rollbackError],
+        'Filesystem cleanup lease bind failed and its rollback could not '
+        + 'release the acquired lease; the Job-backed janitor remains the '
+        + 'recovery path for the bound owner.',
+      );
+    }
     throw error;
   }
   const result = await action();
@@ -1254,6 +1269,7 @@ export function withExclusiveFileSystemCleanupLease<T>(
   onDeferredFailure?: (error: unknown) => Promise<void>,
   onLeaseAcquired?: (lease: FileSystemMutationLeaseRelease) => void,
   onLeaseReleased?: (lease: FileSystemMutationLeaseRelease) => void,
+  onWorkflow?: (workflow: Promise<unknown>) => void,
 ): Promise<T> {
   let cleanupActionStarted = false;
   let cleanupActionCompleted = false;
@@ -1270,6 +1286,10 @@ export function withExclusiveFileSystemCleanupLease<T>(
     onLeaseAcquired,
     onLeaseReleased,
   );
+  // The authoritative workflow keeps converging after the caller-visible
+  // deadline race below settles; onWorkflow hands that long-lived promise to
+  // callers that need to track real completion (e.g. session close latches).
+  onWorkflow?.(workflow);
   observeDeferredCleanupFailure(
     workflow,
     deadline,

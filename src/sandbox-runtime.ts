@@ -4726,12 +4726,14 @@ function standaloneBrokerShutdownTimeoutError(timeoutMs: number): Error {
 
 /** Standalone sandbox admission contended with a live leased workspace session. */
 export class WorkspaceSessionLeaseContentionError extends Error {
+  readonly liveSessions: number;
   constructor(liveSessions: number) {
     super(
       `A leased workspace sandbox session is still active (${String(liveSessions)}); `
         + 'standalone sandbox admission is unavailable until its background command completes.',
     );
     this.name = 'WorkspaceSessionLeaseContentionError';
+    this.liveSessions = liveSessions;
   }
 }
 
@@ -4993,6 +4995,7 @@ async function withExclusiveFileSystemCleanupFence<T>(
   child: ReturnType<typeof spawn>,
   effectJob: WindowsEffectJob | undefined,
   onDeferredFailure: (error: unknown) => Promise<void>,
+  onWorkflow?: (workflow: Promise<unknown>) => void,
 ): Promise<T> {
   if (process.platform !== 'win32') {
     return withExclusiveFileSystemEffectFence(false, action, sandboxPolicyKey);
@@ -5008,7 +5011,7 @@ async function withExclusiveFileSystemCleanupFence<T>(
     if (effectJob !== undefined) recoverableWindowsEffectFences.set(effectJob.jobName, lease);
   }, () => {
     if (effectJob !== undefined) recoverableWindowsEffectFences.delete(effectJob.jobName);
-  });
+  }, onWorkflow);
 }
 
 async function startWorkspaceSessionClientWithFence(
@@ -5188,7 +5191,7 @@ async function startWorkspaceSessionClientWithFence(
   let resolveDrained: (() => void) | undefined;
   let idleTimer: NodeJS.Timeout | undefined;
   let closePromise: Promise<void> | undefined;
-  let forcedRequested = false;
+  let authoritativeCapture: ((workflow: Promise<unknown>) => void) | undefined;
   const tempCleanup = childExit.then(async () => {
     if (tempDirectory === undefined) return;
     try {
@@ -5671,14 +5674,13 @@ async function startWorkspaceSessionClientWithFence(
       if (closePromise) {
         if (mode !== 'forced') return closePromise;
         // A forced caller (shutdown/reset) piggybacking an in-flight lifecycle
-        // close must still get forced semantics: the close below may not skip
-        // for a lease that arrived while it waited for admission.
-        forcedRequested = true;
+        // close never upgrades it in place: the lifecycle close keeps its own
+        // semantics (it may still skip for a lease that arrived while it
+        // waited for admission) and, once it settles without having closed
+        // the session, the full forced path runs — lease drain, terminate,
+        // and keyless reset tracking.
         const piggybacked = closePromise;
         const rerunForcedIfUnsettled = async (): Promise<void> => {
-          // If the piggybacked close skipped or failed without closing the
-          // session, run the full forced path (lease drain, terminate,
-          // keyless reset tracking) instead of reporting success.
           if (!exited && closePromise !== piggybacked) {
             await client.close('forced');
           }
@@ -5705,8 +5707,46 @@ async function startWorkspaceSessionClientWithFence(
       let aclActionStarted = false;
       let aclRecoveryConfirmed = false;
       let closeSkippedForNewLease = false;
-      let closeFailed = false;
       let settleTrackedReset: (() => void) | undefined;
+      let authoritativeWorkflow: Promise<unknown> | undefined;
+      // The caller-visible promise may settle at the 130s admission deadline
+      // while the underlying cleanup workflow keeps converging. Latch release
+      // and in-flight tracking follow the AUTHORITATIVE workflow when the
+      // fence reports it; the caller-visible fallback attachment never
+      // releases the latch for an admission timeout (the workflow is still
+      // running). Both attachments are idempotent, and the callbacks reference
+      // `current` lazily so this can be installed before the IIFE below — a
+      // lifecycle close reaches the fence synchronously and reports its
+      // workflow immediately.
+      const attachAuthoritativeSettlement = (
+        settlement: Promise<unknown>,
+        callerVisible: boolean,
+      ): void => {
+        let failed = false;
+        void settlement.catch((error: unknown) => {
+          failed = !(callerVisible && error instanceof FileSystemCleanupAdmissionTimeoutError);
+        });
+        void settlement.catch(() => undefined).finally(() => {
+          // When the fence reported its workflow, ONLY that attachment owns
+          // the in-flight registration: the caller-visible promise settling
+          // at the admission deadline must not drop a still-running close
+          // from the drains.
+          if (callerVisible && authoritativeWorkflow !== undefined) return;
+          if ((closeSkippedForNewLease || failed) && closePromise === current) {
+            closePromise = undefined;
+          }
+          inFlightWorkspaceSessionCloses.delete(inflightClose);
+          settleInflightClose();
+        });
+      };
+      authoritativeCapture = (workflow) => {
+        if (authoritativeWorkflow !== undefined) return;
+        authoritativeWorkflow = workflow;
+        attachAuthoritativeSettlement(workflow, false);
+        if (mode === 'forced') {
+          trackWorkspaceSessionReset(workflow.then(() => undefined));
+        }
+      };
       const current = (async () => {
         if (idleTimer) clearTimeout(idleTimer);
         stopCloseDeferralWatchdog();
@@ -5726,12 +5766,13 @@ async function startWorkspaceSessionClientWithFence(
         }
         await withExclusiveFileSystemCleanupFence(
           async () => {
-            if (mode === 'lifecycle' && !forcedRequested && !exited && activeLeases > 0) {
+            if (mode === 'lifecycle' && !exited && activeLeases > 0) {
               // A new lease arrived while this close waited for admission.
               // Committing now would terminate the session under that live
               // command; skip instead — the lease's release re-fires the
               // close — and leave the latch open for that retry. A forced
-              // caller never skips: shutdown keeps its terminate semantics.
+              // caller is never upgraded in place: it piggybacks above and
+              // re-runs the full forced path after this close settles.
               closeSkippedForNewLease = true;
               startCloseDeferralWatchdog();
               return;
@@ -5766,9 +5807,11 @@ async function startWorkspaceSessionClientWithFence(
               await retainWindowsSandboxAclOwnerPoison(windowsAclOwnerMarker, error);
             }
           },
+          (workflow) => {
+            authoritativeCapture?.(workflow);
+          },
         );
       })().catch(async (error: unknown) => {
-        closeFailed = true;
         setWorkspaceSessionReferenced(child, false);
         if (
           !aclRecoveryConfirmed
@@ -5778,21 +5821,12 @@ async function startWorkspaceSessionClientWithFence(
           await retainWindowsSandboxAclOwnerPoison(windowsAclOwnerMarker, error);
         }
         throw error;
-      }).finally(() => {
-        // Release the latch whenever the caller-visible close did not commit:
-        // a skip re-arms from the lease release, and a caller-deadline timeout
-        // or failure must never pin a settled promise that blocks every later
-        // close (the background workflow keeps converging on its own).
-        if ((closeSkippedForNewLease || closeFailed) && closePromise === current) {
-          closePromise = undefined;
-        }
-        inFlightWorkspaceSessionCloses.delete(inflightClose);
-        settleInflightClose();
       });
-      closePromise = current;
+      attachAuthoritativeSettlement(current, true);
       if (mode === 'forced') {
-        trackWorkspaceSessionReset(current);
+        trackWorkspaceSessionReset(current.then(() => undefined));
       }
+      closePromise = current;
       return current;
     },
   };
