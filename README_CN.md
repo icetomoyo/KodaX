@@ -723,34 +723,28 @@ Verifier 的 `revise` / `blocked` 可执行消息；JSONL 输出使用同形
 
 #### 给自定义 provider 开图片 / vision 输入（FEATURE_134 v0.7.40）
 
-如果你的自定义 provider 后面的模型支持 vision，加 `capabilityProfile.multimodalSupport: "image-input"` 显式开启，KodaX 的 SA-path policy gate 就不会人为拦截多模态请求。内置 vision-capable alias（Anthropic、OpenAI、Kimi、Qwen、Zhipu、MiniMax、MiMo、Ark，以及通过 CLI `@<path>` file-include 语法传图的 Gemini-CLI）已经默认开了这个 flag。DeepSeek V4 和 Codex-CLI 是纯文本模型；自定义 provider 在底层模型支持图片输入时需要手动 opt-in。
+如果你的自定义 provider 后面的模型支持 vision，设置 `"imageInput": true` 即可，KodaX 的图片路由和 provider policy gate 都会放行图片输入。这是自托管多模态模型（vLLM / SGLang 部署 Qwen-VL 类模型、OpenAI-compatible 端点）的典型用法：
 
 ```json
 {
   "customProviders": [
     {
-      "name": "my-vision-provider",
+      "name": "my-vllm",
       "protocol": "openai",
-      "baseUrl": "https://example.com/v1",
-      "apiKeyEnv": "MY_LLM_API_KEY",
-      "model": "my-vision-model",
-      "capabilityProfile": {
-        "transport": "native-api",
-        "conversationSemantics": "full-history",
-        "mcpSupport": "none",
-        "contextFidelity": "full",
-        "toolCallingFidelity": "full",
-        "sessionSupport": "full",
-        "longRunningSupport": "full",
-        "multimodalSupport": "image-input",
-        "evidenceSupport": "full"
-      }
+      "baseUrl": "http://localhost:8000/v1",
+      "apiKeyEnv": "MY_VLLM_API_KEY",
+      "model": "Qwen/Qwen3.8-27B-Instruct",
+      "imageInput": true
     }
   ]
 }
 ```
 
-序列化层（Anthropic-compat 走 `packages/llm/src/providers/anthropic.ts:770`，OpenAI-compat 走 `openai.ts:904`）通过基类继承自动转发 image block。这个 flag 只控制 KodaX 自身是否预先拒绝多模态请求 —— 上游模型到底支不支持 vision 由 provider 自己决定。如果模型实际是 text-only，你会看到真实的上游 API 错误，而不是 KodaX 一侧的 `[Provider Policy] multimodal requests are unsupported` 预拦截。
+`imageInput: true` 会在 KodaX 所有层面（provider 实例、能力查询、policy gate）强制 `capabilityProfile.multimodalSupport: "image-input"`，显式写了 `"none"` 也会被覆盖。进阶写法 —— 手写 `capabilityProfile` 块并设 `"multimodalSupport": "image-input"` —— 同样有效，详见 [Custom Providers](public_docs/configuration/custom-providers.md)。纯文本模型保持不设即可，图片 artifact 会在请求发出前被 `MODEL_INPUT_UNSUPPORTED` 拒绝。
+
+内置 vision-capable alias（Anthropic、OpenAI、Kimi、Qwen、Zhipu、MiniMax、MiMo、Ark，以及通过 CLI `@<path>` file-include 语法传图的 Gemini-CLI）已经默认开了图片输入。DeepSeek V4 默认模型（`deepseek-v4-flash` / `deepseek-v4-pro`）和 Codex-CLI 是纯文本 —— 内置 `deepseek` 只有 `deepseek-v4-flash-vision-exp` 这一个路由收图；自定义 provider 在底层模型支持图片输入时需要手动 opt-in。
+
+序列化层（Anthropic-compat 走 `packages/llm/src/providers/anthropic.ts:1431`，OpenAI-compat 走 `openai.ts:1496`）通过基类继承自动转发 image block —— OpenAI-compatible 端点收到的是标准 `image_url` 块。这个 flag 只控制 KodaX 自身是否预先拒绝多模态请求 —— 上游模型到底支不支持 vision 由 provider 自己决定。如果模型实际是 text-only，你会看到真实的上游 API 错误，而不是 KodaX 一侧的 `[Provider Policy] multimodal requests are unsupported` 预拦截。
 
 库模式下用 `registerCustomProviders()` 显式注册：
 

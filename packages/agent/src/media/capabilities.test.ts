@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+
+import { registerCustomProviders } from '@kodax-ai/llm';
 
 import { getModelInputCapabilities } from './capabilities.js';
 
@@ -117,5 +119,81 @@ describe('getModelInputCapabilities', () => {
     expect(getModelInputCapabilities({ provider: 'minimax-coding' }).image.status).toBe('supported');
     expect(getModelInputCapabilities({ provider: 'mimo-coding' }).image.status).toBe('unsupported');
     expect(getModelInputCapabilities({ provider: 'mimo-coding', model: 'mimo-v2.5' }).image.status).toBe('supported');
+  });
+});
+
+describe('getModelInputCapabilities: custom providers', () => {
+  afterEach(() => {
+    registerCustomProviders([]);
+  });
+
+  it('supports image input for a custom provider declared with imageInput:true', () => {
+    registerCustomProviders([{
+      name: 'my-vllm',
+      protocol: 'openai',
+      baseUrl: 'http://localhost:8000/v1',
+      apiKeyEnv: 'MY_VLLM_API_KEY',
+      model: 'Qwen/Qwen3.8-27B-Instruct',
+      imageInput: true,
+    }]);
+
+    const caps = getModelInputCapabilities({
+      provider: 'my-vllm',
+      model: 'Qwen/Qwen3.8-27B-Instruct',
+    });
+    expect(caps.image.status).toBe('supported');
+    expect(caps.image.sdkSupported).toBe(true);
+    expect(caps.video.status).toBe('unsupported');
+  });
+
+  it('matches the custom provider name case-insensitively', () => {
+    registerCustomProviders([{
+      name: 'My-VLLM',
+      protocol: 'openai',
+      baseUrl: 'http://localhost:8000/v1',
+      apiKeyEnv: 'MY_VLLM_API_KEY',
+      model: 'qwen-vl',
+      imageInput: true,
+    }]);
+
+    expect(getModelInputCapabilities({ provider: 'my-vllm', model: 'qwen-vl' }).image.status)
+      .toBe('supported');
+  });
+
+  it('keeps custom providers without imageInput image-unsupported', () => {
+    registerCustomProviders([{
+      name: 'my-relay',
+      protocol: 'openai',
+      baseUrl: 'http://localhost:8000/v1',
+      apiKeyEnv: 'MY_RELAY_API_KEY',
+      model: 'some-text-model',
+    }]);
+
+    expect(getModelInputCapabilities({ provider: 'my-relay', model: 'some-text-model' }).image.status)
+      .toBe('unsupported');
+  });
+
+  it('also honors an explicit capabilityProfile multimodalSupport image-input', () => {
+    registerCustomProviders([{
+      name: 'my-explicit-profile',
+      protocol: 'anthropic',
+      baseUrl: 'https://example.test/anthropic',
+      apiKeyEnv: 'MY_EXPLICIT_API_KEY',
+      model: 'some-vision-model',
+      capabilityProfile: {
+        transport: 'native-api',
+        conversationSemantics: 'full-history',
+        mcpSupport: 'none',
+        multimodalSupport: 'image-input',
+      },
+    }]);
+
+    expect(getModelInputCapabilities({ provider: 'my-explicit-profile', model: 'some-vision-model' }).image.status)
+      .toBe('supported');
+  });
+
+  it('does not treat unregistered names as custom image routes', () => {
+    expect(getModelInputCapabilities({ provider: 'not-a-provider', model: 'x' }).image.status)
+      .toBe('unsupported');
   });
 });

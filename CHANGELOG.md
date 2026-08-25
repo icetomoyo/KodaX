@@ -25,6 +25,14 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Custom providers can opt into image / vision input with a single
+  `"imageInput": true` field (typical for self-hosted multimodal models on
+  vLLM / SGLang OpenAI-compatible endpoints, e.g. Qwen-VL). The flag forces
+  `capabilityProfile.multimodalSupport: "image-input"` on every surface —
+  provider instance, keyless capability queries, media routing, and the
+  provider-policy gate — so image artifacts pass `MODEL_INPUT_UNSUPPORTED`
+  validation and are forwarded as standard `image_url` blocks. Leaving it
+  unset changes nothing; text-only models keep the pre-send rejection.
 - DeepSeek vision model `deepseek-v4-flash-vision-exp` is registered on the
   `deepseek` provider (selectable via `/model`). It reuses the existing
   OpenAI-style `image_url` wire path, so pasted/read images are forwarded on

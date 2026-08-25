@@ -3,6 +3,7 @@ import type { KodaXCustomProviderConfig, KodaXReasoningProfile } from '../types.
 import { createCustomProvider } from './custom-provider.js';
 import {
   getCustomProvider,
+  getCustomProviderCapabilityProfile,
   getCustomProviderList,
   getCustomModelCapabilities,
   getCustomProviderModelDescriptors,
@@ -1000,5 +1001,75 @@ describe('custom providers', () => {
     );
     expect(() => resolveProvider('missing-provider')).toThrowError(/custom-openai/);
     expect(() => resolveProvider('missing-provider')).toThrowError(/openai/);
+  });
+});
+
+describe('custom provider imageInput', () => {
+  afterEach(() => {
+    registerCustomProviders([]);
+    vi.unstubAllEnvs();
+  });
+
+  it('imageInput:true forces multimodalSupport image-input on the provider instance', () => {
+    vi.stubEnv('CUSTOM_OPENAI_API_KEY', 'test-key');
+    const provider = createCustomProvider({
+      ...cloneConfig(OPENAI_CUSTOM),
+      imageInput: true,
+    });
+
+    const profile = provider.getCapabilityProfile();
+    expect(profile.multimodalSupport).toBe('image-input');
+    // Explicit partial-profile fields survive the merge.
+    expect(profile.mcpSupport).toBe('native');
+  });
+
+  it('keeps multimodalSupport none when imageInput is absent', () => {
+    vi.stubEnv('CUSTOM_OPENAI_API_KEY', 'test-key');
+    const provider = createCustomProvider(cloneConfig(OPENAI_CUSTOM));
+
+    expect(provider.getCapabilityProfile().multimodalSupport).toBe('none');
+  });
+
+  it('imageInput:true overrides an explicit capabilityProfile multimodalSupport none', () => {
+    vi.stubEnv('CUSTOM_OPENAI_API_KEY', 'test-key');
+    const provider = createCustomProvider({
+      ...cloneConfig(OPENAI_CUSTOM),
+      imageInput: true,
+      capabilityProfile: {
+        ...cloneConfig(OPENAI_CUSTOM).capabilityProfile!,
+        multimodalSupport: 'none',
+      },
+    });
+
+    expect(provider.getCapabilityProfile().multimodalSupport).toBe('image-input');
+  });
+
+  it('getCustomProviderList reflects the merged profile', () => {
+    registerCustomProviders([{ ...cloneConfig(OPENAI_CUSTOM), imageInput: true }]);
+
+    const entry = getCustomProviderList().find((p) => p.name === 'custom-openai');
+    expect(entry?.capabilityProfile.multimodalSupport).toBe('image-input');
+  });
+
+  it('getCustomProviderCapabilityProfile is keyless and case-insensitive', () => {
+    // No CUSTOM_OPENAI_API_KEY stubbed — the lookup must not require the key.
+    registerCustomProviders([{ ...cloneConfig(OPENAI_CUSTOM), imageInput: true }]);
+
+    expect(getCustomProviderCapabilityProfile('custom-openai')?.multimodalSupport)
+      .toBe('image-input');
+    expect(getCustomProviderCapabilityProfile('CUSTOM-OPENAI')?.multimodalSupport)
+      .toBe('image-input');
+    // Default profile (no flag) still resolves, keyless.
+    registerCustomProviders([cloneConfig(OPENAI_CUSTOM)]);
+    expect(getCustomProviderCapabilityProfile('custom-openai')?.multimodalSupport)
+      .toBe('none');
+    expect(getCustomProviderCapabilityProfile('not-registered')).toBeUndefined();
+  });
+
+  it('rejects a non-boolean imageInput', () => {
+    expect(() => createCustomProvider({
+      ...cloneConfig(OPENAI_CUSTOM),
+      imageInput: 'yes' as unknown as boolean,
+    })).toThrowError(/imageInput/);
   });
 });

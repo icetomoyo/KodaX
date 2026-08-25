@@ -706,6 +706,15 @@ export interface KodaXCustomProviderConfig {
   /** @deprecated Auto-migrated on load. Prefer `reasoning: { efforts, default }`. */
   reasoningCapability?: KodaXReasoningCapability;
   reasoningProfile?: KodaXReasoningProfile;
+  /**
+   * Friendly image-input opt-in for self-hosted multimodal endpoints
+   * (vLLM / SGLang serving Qwen-VL-style models over an OpenAI- or
+   * Anthropic-compatible API). `true` forces
+   * `capabilityProfile.multimodalSupport: 'image-input'` on every surface
+   * (provider instance, capability queries, policy gates); any other value
+   * leaves an explicit `capabilityProfile` untouched.
+   */
+  imageInput?: boolean;
   capabilityProfile?: KodaXProviderCapabilityProfile;
   contextWindow?: number;
   maxOutputTokens?: number;

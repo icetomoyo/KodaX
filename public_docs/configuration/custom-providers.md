@@ -101,38 +101,59 @@ compatible gateways reject unknown request fields.
 
 ## Vision / image input
 
-If your custom provider's underlying model supports image input (vision), add a
-`capabilityProfile.multimodalSupport: "image-input"` block so KodaX does not
-artificially block multimodal requests at the policy gate:
+If your custom provider's underlying model accepts image input (vision), set
+`"imageInput": true` so KodaX's image routing and the provider-policy gate both
+let image artifacts through:
 
 ```json
 {
   "customProviders": [
     {
-      "name": "my-vision-provider",
+      "name": "my-vllm",
       "protocol": "openai",
-      "baseUrl": "https://example.com/v1",
-      "apiKeyEnv": "MY_LLM_API_KEY",
-      "model": "my-vision-model",
-      "capabilityProfile": {
-        "transport": "native-api",
-        "conversationSemantics": "full-history",
-        "mcpSupport": "none",
-        "contextFidelity": "full",
-        "toolCallingFidelity": "full",
-        "sessionSupport": "full",
-        "longRunningSupport": "full",
-        "multimodalSupport": "image-input",
-        "evidenceSupport": "full"
-      }
+      "baseUrl": "http://localhost:8000/v1",
+      "apiKeyEnv": "MY_VLLM_API_KEY",
+      "model": "Qwen/Qwen3.8-27B-Instruct",
+      "imageInput": true
     }
   ]
 }
 ```
 
+This is the typical shape for self-hosted multimodal models served by vLLM or
+SGLang behind an OpenAI-compatible endpoint (Qwen-VL-style models). Images are
+sent as standard `image_url` blocks, which those servers consume directly.
+
+`imageInput: true` forces `capabilityProfile.multimodalSupport: "image-input"`
+on every KodaX surface (provider instance, capability queries, policy gates),
+overriding an explicit `"none"`. An advanced alternative is writing
+`capabilityProfile` by hand with `"multimodalSupport": "image-input"` —
+it works too, but `imageInput` is the one-field version:
+
+```json
+{
+  "name": "my-vision-provider",
+  "protocol": "openai",
+  "baseUrl": "https://example.com/v1",
+  "apiKeyEnv": "MY_LLM_API_KEY",
+  "model": "my-vision-model",
+  "capabilityProfile": {
+    "transport": "native-api",
+    "conversationSemantics": "full-history",
+    "mcpSupport": "none",
+    "multimodalSupport": "image-input"
+  }
+}
+```
+
+Leave `imageInput` unset for text-only models — image artifacts are then
+rejected with `MODEL_INPUT_UNSUPPORTED` before the request is sent.
+
 Built-in vision-capable aliases (Anthropic, OpenAI, Kimi, Qwen, Zhipu, MiniMax,
-MiMo, Ark, plus Gemini-CLI) already ship with this flag enabled. DeepSeek V4
-and Codex-CLI are text-only; custom providers need to opt in.
+MiMo, Ark, plus Gemini-CLI) already ship with image input enabled. DeepSeek V4's
+default models (`deepseek-v4-flash` / `deepseek-v4-pro`) and Codex-CLI are
+text-only — on the built-in `deepseek` alias only `deepseek-v4-flash-vision-exp`
+takes images; custom providers need to opt in.
 
 ## See also
 

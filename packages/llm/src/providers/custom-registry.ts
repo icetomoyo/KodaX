@@ -15,6 +15,7 @@ import type { KodaXBaseProvider } from './base.js';
 import {
   createCustomProvider,
   legacyCapabilityFromReasoningProfile,
+  mergeCapabilityProfileWithImageInput,
   resolveCustomModelReasoningProfile,
   resolveCustomProviderReasoningProfile,
   validateCustomProviderConfig,
@@ -123,6 +124,31 @@ export function getCustomProvider(name: string): KodaXBaseProvider | undefined {
 }
 
 /**
+ * Effective capability profile for a custom provider, read from the stored
+ * config WITHOUT instantiation — so no API key is required (v0.7.43
+ * keyless-query convention). Applies the same `imageInput` merge rule as
+ * `createCustomProvider`, keeping the keyless surface consistent with the
+ * runtime. Exact name match wins, then a case-insensitive fallback (callers
+ * such as the media capability layer may pass differently-cased names).
+ * Returns undefined when the name is not a registered custom provider.
+ */
+export function getCustomProviderCapabilityProfile(
+  name: string,
+): import('../types.js').KodaXProviderCapabilityProfile | undefined {
+  const config = customProviders.get(name)
+    ?? [...customProviders.entries()].find(
+      ([key]) => key.toLowerCase() === name.toLowerCase(),
+    )?.[1];
+  if (!config) return undefined;
+  return cloneCapabilityProfile(
+    mergeCapabilityProfileWithImageInput(
+      config.capabilityProfile,
+      config.imageInput,
+    ) ?? NATIVE_PROVIDER_CAPABILITY_PROFILE,
+  );
+}
+
+/**
  * Check if a name refers to a custom provider.
  */
 export function isCustomProviderName(name: string): boolean {
@@ -182,7 +208,10 @@ export function getCustomProviderList(): Array<{
             ?? legacyCapabilityFromReasoningProfile(reasoningProfile)
             ?? 'none'),
       capabilityProfile: cloneCapabilityProfile(
-        config.capabilityProfile ?? NATIVE_PROVIDER_CAPABILITY_PROFILE,
+        mergeCapabilityProfileWithImageInput(
+          config.capabilityProfile,
+          config.imageInput,
+        ) ?? NATIVE_PROVIDER_CAPABILITY_PROFILE,
       ),
       custom: true,
     });

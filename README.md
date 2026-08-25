@@ -341,34 +341,28 @@ Sidecar verifier judge calls use provider-level forced tool choice when supporte
 
 #### Opting a custom provider into image / vision input (FEATURE_134 v0.7.40)
 
-If your custom provider's underlying model supports image input (vision), add a `capabilityProfile.multimodalSupport: "image-input"` block so KodaX does not artificially block multimodal requests at the SA-path policy gate. Built-in vision-capable aliases (Anthropic, OpenAI, compatible aliases such as Kimi, Qwen, Zhipu, MiniMax, MiMo, Ark, plus Gemini-CLI via the CLI's `@<path>` file-include syntax) already ship with this flag enabled by default. DeepSeek V4 and Codex-CLI are text-only; custom providers need to opt in when their underlying model supports image input.
+If your custom provider's underlying model supports image input (vision), set `"imageInput": true` so KodaX's image routing and the provider-policy gate both let image artifacts through. This is the typical shape for self-hosted multimodal models served by vLLM or SGLang behind an OpenAI-compatible endpoint (Qwen-VL-style models):
 
 ```json
 {
   "customProviders": [
     {
-      "name": "my-vision-provider",
+      "name": "my-vllm",
       "protocol": "openai",
-      "baseUrl": "https://example.com/v1",
-      "apiKeyEnv": "MY_LLM_API_KEY",
-      "model": "my-vision-model",
-      "capabilityProfile": {
-        "transport": "native-api",
-        "conversationSemantics": "full-history",
-        "mcpSupport": "none",
-        "contextFidelity": "full",
-        "toolCallingFidelity": "full",
-        "sessionSupport": "full",
-        "longRunningSupport": "full",
-        "multimodalSupport": "image-input",
-        "evidenceSupport": "full"
-      }
+      "baseUrl": "http://localhost:8000/v1",
+      "apiKeyEnv": "MY_VLLM_API_KEY",
+      "model": "Qwen/Qwen3.8-27B-Instruct",
+      "imageInput": true
     }
   ]
 }
 ```
 
-The serializer layer (`packages/llm/src/providers/anthropic.ts:770` for Anthropic-compat, `openai.ts:904` for OpenAI-compat) forwards image blocks automatically through base-class inheritance. The flag only gates whether KodaX's policy layer pre-rejects multimodal requests — the model-level vision contract remains your upstream provider's responsibility. If the model is actually text-only, you'll see the real upstream API error instead of a KodaX-side rejection.
+`imageInput: true` forces `capabilityProfile.multimodalSupport: "image-input"` on every KodaX surface (provider instance, capability queries, policy gates), overriding an explicit `"none"`. The advanced alternative — a hand-written `capabilityProfile` block with `"multimodalSupport": "image-input"` — works too; see [Custom Providers](public_docs/configuration/custom-providers.md). Leave it unset for text-only models and image artifacts are rejected with `MODEL_INPUT_UNSUPPORTED` before the request is sent.
+
+Built-in vision-capable aliases (Anthropic, OpenAI, compatible aliases such as Kimi, Qwen, Zhipu, MiniMax, MiMo, Ark, plus Gemini-CLI via the CLI's `@<path>` file-include syntax) already ship with image input enabled. DeepSeek V4's default models (`deepseek-v4-flash` / `deepseek-v4-pro`) and Codex-CLI are text-only — on the built-in `deepseek` alias only `deepseek-v4-flash-vision-exp` takes images; custom providers need to opt in when their underlying model supports image input.
+
+The serializer layer (`packages/llm/src/providers/anthropic.ts:1431` for Anthropic-compat, `openai.ts:1496` for OpenAI-compat) forwards image blocks automatically through base-class inheritance — OpenAI-compatible endpoints receive standard `image_url` blocks. The flag only gates whether KodaX's policy layer pre-rejects multimodal requests — the model-level vision contract remains your upstream provider's responsibility. If the model is actually text-only, you'll see the real upstream API error instead of a KodaX-side rejection.
 
 ### 3. Start in REPL or run a one-shot task
 

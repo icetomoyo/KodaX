@@ -1,4 +1,5 @@
 import {
+  getCustomProviderCapabilityProfile,
   KODAX_PROVIDER_SNAPSHOTS,
   normalizeCapabilityProfile,
 } from '@kodax-ai/llm';
@@ -173,12 +174,27 @@ function hasSourceBackedImage(provider: string, model: string | undefined): bool
   return SOURCE_BACKED_IMAGE_ROUTES.has(`${provider}/${normalizedModel}`);
 }
 
+/**
+ * Custom-provider image route: a user-declared `imageInput: true` on a
+ * registered custom provider (self-hosted vLLM/SGLang multimodal endpoints).
+ * Keyless registry lookup — must not require the provider's API key. Uses the
+ * RAW provider name (the registry applies its own case-insensitive fallback).
+ */
+function hasCustomProviderImageSupport(rawProvider: string): boolean {
+  const trimmed = rawProvider.trim();
+  if (!trimmed) return false;
+  const profile = getCustomProviderCapabilityProfile(trimmed);
+  return profile?.multimodalSupport === 'image-input';
+}
+
 function resolveImageCapabilityRoute(
   provider: string,
   officialImageSupported: boolean,
-  sourceBackedNativeMedia: boolean,
+  sourceBackedImage: boolean,
+  customImageSupported: boolean,
 ): ImageCapabilityRoute | undefined {
-  if (sourceBackedNativeMedia) return 'source-backed';
+  if (sourceBackedImage) return 'source-backed';
+  if (customImageSupported) return 'source-backed';
   if (!officialImageSupported) return undefined;
   if (provider === 'openai') return 'openai-official';
   if (provider === 'anthropic') return 'anthropic-official';
@@ -210,6 +226,7 @@ export function getModelInputCapabilities(
     provider,
     officialImageSupported,
     sourceBackedImage,
+    hasCustomProviderImageSupport(input.provider),
   );
   const imageSupported = imageCapabilityRoute !== undefined;
   const videoNative = sourceBackedNativeMedia;

@@ -2241,6 +2241,16 @@ should likewise use the model-specific `deepseek-v4-flash-openai` or
 `deepseek-v4-pro-openai` reasoning preset. Both built-in DeepSeek V4 routes are
 text-only.
 
+For a self-hosted multimodal endpoint (vLLM / SGLang serving a Qwen-VL-style
+model), set `imageInput: true` on the custom provider config. The flag feeds
+the same `capabilityProfile.multimodalSupport: 'image-input'` merge that
+built-in vision routes use, so `getModelInputCapabilities()` reports image
+support and `validateInputArtifactsForModel()` accepts image artifacts for that
+provider. The field flows through every write path that takes
+`KodaXCustomProviderConfig` — `registerCustomProviders()`,
+`~/.kodax/config.json`, and `runtime.catalog.upsertCustomProvider()` over the
+daemon.
+
 The validator rejects illegal combinations:
 - `protocol: 'openai'` + `verifyStrategy: 'count-tokens'` → throws (OpenAI protocol has no count_tokens endpoint).
 
@@ -2416,7 +2426,10 @@ await runKodaX(
 ### Capability query
 
 Use provider and model together. The same model name behind a gateway route is
-not assumed to support media unless that route is verified.
+not assumed to support media unless that route is verified. A registered custom
+provider with `imageInput: true` is treated as a verified image route — the
+host declares the endpoint's vision capability, so no per-model probe is
+needed.
 
 ```ts
 const caps = getModelInputCapabilities({
@@ -3341,6 +3354,7 @@ await runtime.catalog.upsertCustomProvider({
   baseUrl: 'https://example.com/v1',
   apiKeyEnv: 'MY_LLM_API_KEY',
   model: 'my-model',
+  // imageInput: true,  // uncomment when the endpoint is multimodal (vision)
 });
 
 await runtime.mcp.upsertServer('filesystem', {

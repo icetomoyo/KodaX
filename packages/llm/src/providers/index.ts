@@ -32,6 +32,7 @@ export { createCustomProvider, validateCustomProviderConfig } from './custom-pro
 export {
   registerCustomProviders,
   getCustomProvider,
+  getCustomProviderCapabilityProfile,
   isCustomProviderName,
   getCustomProviderNames,
   getCustomProviderList,

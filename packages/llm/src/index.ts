@@ -171,6 +171,7 @@ export {
   validateCustomProviderConfig,
   registerCustomProviders,
   getCustomProvider,
+  getCustomProviderCapabilityProfile,
   isCustomProviderName,
   getCustomProviderNames,
   getCustomProviderList,

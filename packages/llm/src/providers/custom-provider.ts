@@ -10,6 +10,7 @@ import {
   type KodaXModelDescriptor,
   type KodaXOpenAICompatMaxOutputTokensField,
   type KodaXProtocolFamily,
+  type KodaXProviderCapabilityProfile,
   type KodaXProviderConfig,
   type KodaXReasoningCapability,
   type KodaXReasoningConfig,
@@ -20,6 +21,7 @@ import {
 import { KodaXBaseProvider } from './base.js';
 import { KodaXAnthropicCompatProvider } from './anthropic.js';
 import { KodaXOpenAICompatProvider } from './openai.js';
+import { NATIVE_PROVIDER_CAPABILITY_PROFILE } from './capability-profile.js';
 import { createReasoningProfileFromPreset } from '../reasoning.js';
 
 const VALID_CUSTOM_PROVIDER_USER_AGENT_MODES = new Set(['compat', 'sdk']);
@@ -363,6 +365,15 @@ export function validateCustomProviderConfig(
     );
   }
 
+  if (
+    custom.imageInput !== undefined
+    && typeof custom.imageInput !== 'boolean'
+  ) {
+    throw new Error(
+      `Custom provider "${custom.name}": imageInput must be a boolean.`,
+    );
+  }
+
   validateMaxOutputTokensField(
     custom,
     custom.maxOutputTokensField,
@@ -390,6 +401,24 @@ export function validateCustomProviderConfig(
       );
     }
   }
+}
+
+/**
+ * Merge rule for the friendly `imageInput` opt-in (single-track, mirrors the
+ * `supportsThinking:false` master-switch precedent): `imageInput === true`
+ * forces `multimodalSupport: 'image-input'` — overriding even an explicit
+ * `'none'` in the profile, so every surface (provider instance, capability
+ * queries, policy gates) agrees. Any other value leaves the profile as-is.
+ */
+export function mergeCapabilityProfileWithImageInput(
+  profile: KodaXProviderCapabilityProfile | undefined,
+  imageInput: boolean | undefined,
+): KodaXProviderCapabilityProfile | undefined {
+  if (imageInput !== true) return profile;
+  return {
+    ...(profile ?? NATIVE_PROVIDER_CAPABILITY_PROFILE),
+    multimodalSupport: 'image-input',
+  };
 }
 
 function buildProviderConfig(custom: KodaXCustomProviderConfig): KodaXProviderConfig {
@@ -437,7 +466,10 @@ function buildProviderConfig(custom: KodaXCustomProviderConfig): KodaXProviderCo
     supportsThinking,
     reasoningCapability,
     reasoningProfile,
-    capabilityProfile: custom.capabilityProfile,
+    capabilityProfile: mergeCapabilityProfileWithImageInput(
+      custom.capabilityProfile,
+      custom.imageInput,
+    ),
     contextWindow: custom.contextWindow,
     maxOutputTokens: custom.maxOutputTokens,
     maxOutputTokensField: custom.maxOutputTokensField,

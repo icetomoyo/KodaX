@@ -81,6 +81,7 @@
   //     "maxOutputTokens": 8192,
   //     "maxOutputTokensField": "max_completion_tokens",
   //     "thinkingBudgetCap": 32000,
+  //     "imageInput": true,
   //     "promptCacheAffinity": false,
   //     "replayReasoningContent": false,
   //     "strictThinkingSignature": false,
