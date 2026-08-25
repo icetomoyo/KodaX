@@ -330,7 +330,12 @@ export type KodaXShellSandboxObservation =
   | {
       readonly version: 1;
       readonly state: 'fallback';
-      readonly reason: 'not_ready' | 'prepare_failed' | 'backend_failed';
+      readonly reason:
+        | 'not_ready'
+        | 'prepare_failed'
+        | 'backend_failed'
+        | 'session_reset_pending'
+        | 'acl_transition_pending';
       readonly execution: 'normal_permission_policy';
     }
   | {
@@ -1723,13 +1728,20 @@ export interface KodaXTextFileMutationRequest {
   readonly signal?: AbortSignal;
 }
 
+/** Why a sandboxed text mutation was unavailable, for structured diagnostics. */
+export type KodaXTextFileMutationUnavailableReason =
+  | 'not_ready'
+  | 'not_selected'
+  | 'session_reset_pending'
+  | 'acl_transition_pending';
+
 /** Runtime-owned narrow filesystem capability for direct text mutation tools. */
 export interface KodaXTextFileMutationSandbox {
   /** Whether this capability covers the path; uncovered paths use the legacy host fence. */
   canHandlePath?(filePath: string): boolean;
   read(input: KodaXTextFileMutationRequest): Promise<
     | { readonly status: 'ok'; readonly snapshot: KodaXTextFileSnapshot }
-    | { readonly status: 'unavailable' }
+    | { readonly status: 'unavailable'; readonly reason?: KodaXTextFileMutationUnavailableReason }
   >;
   write(input: KodaXTextFileMutationRequest & {
     readonly content: string;
@@ -1738,7 +1750,7 @@ export interface KodaXTextFileMutationSandbox {
   }): Promise<
     | { readonly status: 'written' }
     | { readonly status: 'conflict' }
-    | { readonly status: 'unavailable' }
+    | { readonly status: 'unavailable'; readonly reason?: KodaXTextFileMutationUnavailableReason }
   >;
 }
 

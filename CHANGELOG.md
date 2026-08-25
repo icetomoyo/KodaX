@@ -14,11 +14,14 @@ All notable changes to this project will be documented in this file.
   `resolveSrtWinSourcePath()` prefers it in bundled builds, and
   `kodax sandbox setup` installs through the prepared runner's resolved
   descriptor instead of the library's module-relative lookup (Issue 303).
-- Documented and pinned the Windows pending-reset fail-closed behavior where a
-  long-lived background sandbox command parks a workspace session close and
-  every later sandboxed `write` fails as
-  `The Runtime sandboxed file mutation is unavailable` (Issue 304, fix pending
-  design).
+- A long-lived background sandbox command no longer makes every later
+  sandboxed `write` fail as `The Runtime sandboxed file mutation is
+  unavailable`: workspace session closes defer behind live leases instead of
+  parking a reset (and never terminate the live command), cleanups that never
+  started no longer poison the sandbox account across reboots, cleanup RPC
+  timeouts retire only the timed-out request, standalone SDK admission fails
+  structurally behind leased sessions, pending resets are scoped per policy
+  key, and unavailability now carries a structured reason (Issue 304).
 
 ### Added
 

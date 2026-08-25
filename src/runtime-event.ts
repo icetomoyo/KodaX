@@ -162,6 +162,8 @@ function validateKnownRuntimeEventPayload(
             observation.reason === 'not_ready'
             || observation.reason === 'prepare_failed'
             || observation.reason === 'backend_failed'
+            || observation.reason === 'session_reset_pending'
+            || observation.reason === 'acl_transition_pending'
           )
           && observation.execution === 'normal_permission_policy'
         )

@@ -201,7 +201,8 @@ async function readSandboxedSnapshot(
 ): Promise<KodaXTextFileSnapshot> {
   const result = await sandbox.read(request);
   if (result.status === 'ok') return result.snapshot;
-  throw new Error('The Runtime sandboxed file mutation is unavailable.');
+  const suffix = result.reason === undefined ? '' : ` (${result.reason})`;
+  throw new Error(`The Runtime sandboxed file mutation is unavailable.${suffix}`);
 }
 
 function mutationBackup(
@@ -245,7 +246,8 @@ async function writeSandboxedTextFile(
   if (result?.status === 'conflict') {
     throw new Error(`File changed during mutation: ${snapshot.request.path}. Re-read and retry.`);
   }
-  throw new Error('The sandboxed file mutation became unavailable before commit.');
+  const suffix = result?.reason === undefined ? '' : ` (${result.reason})`;
+  throw new Error(`The sandboxed file mutation became unavailable before commit.${suffix}`);
 }
 
 async function writeHostTextFile(

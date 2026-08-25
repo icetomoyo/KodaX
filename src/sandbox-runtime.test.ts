@@ -30,6 +30,8 @@ import {
   acquireFileSystemMutationLease,
   acquireHostFileSystemMutationLease,
 } from '../packages/coding/src/tools/_internal/file-mutation-queue.js';
+import { withTextFileMutation } from '../packages/coding/src/tools/_internal/text-file-mutation.js';
+import type { KodaXToolExecutionContext } from '../packages/coding/src/types.js';
 
 const capturedBrokerRequests = vi.hoisted(
   () => [] as Array<Readonly<Record<string, unknown>>>,
@@ -212,6 +214,7 @@ const windowsSandboxMock = vi.hoisted(() => ({
   grants: [] as Array<Readonly<Record<string, unknown>>>,
   revokes: [] as Array<Readonly<Record<string, unknown>>>,
   installCalls: 0,
+  installOptions: [] as Array<Readonly<Record<string, unknown>>>,
 }));
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -1205,8 +1208,9 @@ vi.mock('@anthropic-ai/sandbox-runtime', async (importOriginal) => {
     },
     getWindowsSandboxUserStatus: () => ({ ...windowsSandboxMock.user }),
     verifyWindowsWfpEgress: () => Promise.resolve(),
-    installWindowsSandbox: () => {
+    installWindowsSandbox: (options?: Readonly<Record<string, unknown>>) => {
       windowsSandboxMock.installCalls += 1;
+      windowsSandboxMock.installOptions.push(options ?? {});
       return { cancelled: false };
     },
   };
@@ -1214,6 +1218,7 @@ vi.mock('@anthropic-ai/sandbox-runtime', async (importOriginal) => {
 
 import {
   KODAX_ASRT_VERSION,
+  bundledSrtWinSidecarPath,
   clearWindowsSandboxAclMarkersForRuntimeOwner,
   createAsrtShellSandbox,
   createAsrtSkillScriptRunner,
@@ -1227,7 +1232,9 @@ import {
   recoverWindowsSandboxAclsForRuntimeOwner,
   runKodaXSandboxed,
   runAsrtBrokerProcess,
+  setupSandboxRuntime,
   resetAsrtWorkspaceSessionsForTest,
+  resolveSrtWinSourcePath,
   rewriteWindowsGitSafeDirectoryArgv,
   sandboxRuntimeCapability,
   sandboxSetupGuidance,
@@ -1411,6 +1418,7 @@ afterEach(async () => {
   windowsSandboxMock.grants.length = 0;
   windowsSandboxMock.revokes.length = 0;
   windowsSandboxMock.installCalls = 0;
+  windowsSandboxMock.installOptions.length = 0;
   sandboxWrapper.mode = 'attest';
   vi.unstubAllEnvs();
   await Promise.all(tempRoots.splice(0).map((root) => rm(root, {
@@ -1664,7 +1672,7 @@ describe('ASRT workspace shell adapter', () => {
           toolName: 'edit',
           toolInput: { path: blockedTarget },
           path: blockedTarget,
-        })).resolves.toEqual({ status: 'unavailable' });
+        })).resolves.toMatchObject({ status: 'unavailable' });
         expect(capturedWorkspaceSessionConfigs).toHaveLength(0);
       } finally {
         await releaseStartupNamespace();
@@ -1772,7 +1780,7 @@ describe('ASRT workspace shell adapter', () => {
       path: target,
     };
 
-    await expect(sandbox.read(request)).resolves.toEqual({ status: 'unavailable' });
+    await expect(sandbox.read(request)).resolves.toMatchObject({ status: 'unavailable' });
     await expect(readFile(target, 'utf8')).resolves.toBe('current');
     expect(shouldSandbox).not.toHaveBeenCalled();
     expect(capturedWorkspaceSessionConfigs).toHaveLength(0);
@@ -2768,6 +2776,7 @@ describe('ASRT workspace shell adapter', () => {
       workspaceSessionControl.releaseClose?.();
       workspaceSessionControl.releaseClose = undefined;
       await firstCleanup;
+      await waitForWorkspaceSessionResetsForTest();
 
       await expect(secondPending).resolves.toBeUndefined();
       const second = await sandbox.prepare({
@@ -3624,7 +3633,9 @@ describe('ASRT workspace shell adapter', () => {
       const cleanup = prepared.cleanup();
       await vi.waitFor(() => expect(hasQueuedFileSystemCleanup()).toBe(true));
       now += 131_000;
-      await expect(cleanup).rejects.toThrow(/cleanup.*drain.*deadline/i);
+      // The caller-visible cleanup resolves after its bounded idle-close wait;
+      // the queued close keeps converging in the background without poisoning.
+      await cleanup;
       for (const directory of poisonDirectories) {
         const entries = await readdir(directory);
         expect(entries.some((entry) => entry.startsWith('unconfirmed-owner-'))).toBe(false);
@@ -3663,7 +3674,9 @@ describe('ASRT workspace shell adapter', () => {
       if (!prepared) throw new Error('expected workspace invocation');
       recoveryLockMock.effectFailureStartCall = recoveryLockMock.effectCalls + 4;
 
-      await expect(prepared.cleanup()).rejects.toThrow();
+      // Close failures surface as diagnostics now; the caller-visible cleanup
+      // resolves after its bounded idle-close wait without creating poison.
+      await prepared.cleanup();
       const poisonDirectories = [
         path.join(path.resolve(process.env.KODAX_HOME!), 'sandbox-runtime', 'acl-poison'),
         path.join(
@@ -3680,11 +3693,15 @@ describe('ASRT workspace shell adapter', () => {
       const effectCallsAfterFailure = recoveryLockMock.effectCalls;
       const cleanupRequestsAfterFailure = workspaceSessionControl.cleanupRequests;
       recoveryLockMock.effectFailureStartCall = undefined;
+      // The background close convergence retries the coordinator on its own;
+      // no new session cleanup RPCs may be issued for that recovery.
+      await vi.waitFor(() => {
+        expect(recoveryLockMock.effectCalls).toBeGreaterThan(effectCallsAfterFailure);
+      }, { timeout: 10_000 });
       await expect(Promise.all([
         prepared.cleanup(),
         prepared.cleanup(),
       ])).resolves.toEqual([undefined, undefined]);
-      expect(recoveryLockMock.effectCalls).toBeGreaterThan(effectCallsAfterFailure);
       expect(workspaceSessionControl.cleanupRequests).toBe(cleanupRequestsAfterFailure);
       const effectCallsAfterRecovery = recoveryLockMock.effectCalls;
       await prepared.cleanup();
@@ -3713,16 +3730,10 @@ describe('ASRT workspace shell adapter', () => {
       const first = await prepare('bash-before-reset-recovery-failure');
       if (!first) throw new Error('expected first workspace invocation');
       windowsSandboxMock.aclRecoveryOutcome = 'malformed';
-      const cleanupFailure = await first.cleanup().then(
-        () => undefined,
-        (error: unknown) => error,
-      );
-      expect(cleanupFailure).toBeInstanceOf(AggregateError);
-      expect((cleanupFailure as AggregateError).errors.map(String)).toEqual(
-        expect.arrayContaining([
-          expect.stringContaining('Windows sandbox ACL recovery failed'),
-        ]),
-      );
+      // The failed close recovery surfaces as a diagnostic now; the cleanup
+      // itself resolves after its bounded idle-close wait, and admission stays
+      // failed closed until the automatic recovery converges.
+      await first.cleanup();
       await expect(prepare('bash-after-reset-recovery-failure')).resolves.toBeUndefined();
       expect(capturedWorkspaceSessionConfigs).toHaveLength(1);
       windowsSandboxMock.aclRecoveryOutcome = 'success';
@@ -3734,6 +3745,294 @@ describe('ASRT workspace shell adapter', () => {
       if (!recovered) throw new Error('expected automatic ACL recovery to restore sandbox admission');
       await recovered.cleanup();
       expect(capturedWorkspaceSessionConfigs).toHaveLength(2);
+    },
+  );
+
+  it.runIf(process.platform === 'win32')(
+    'fails sandbox admission closed while a workspace session reset is pending',
+    async () => {
+      // Mirrors the 0.7.95 field report: a long-lived background command
+      // (e.g. `kodax run` with a background bash) parks a cached workspace
+      // session close that cannot finish, so pendingWorkspaceSessionResets
+      // stays non-empty and every subsequent sandboxed text mutation fails
+      // closed as unavailable instead of waiting.
+      const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-text-pending-reset-'));
+      tempRoots.push(root);
+      const sandbox = createAsrtShellSandbox({
+        workspaceRoot: root,
+        shouldSandbox: () => true,
+      });
+      const prepare = (toolCallId: string) => sandbox.prepare({
+        toolCallId,
+        toolInput: { command: 'node --version' },
+        command: 'node --version',
+        executable: process.execPath,
+        args: ['--version'],
+        cwd: root,
+        env: process.env,
+      });
+      const first = await prepare('bash-before-pending-reset');
+      if (!first) throw new Error('expected first workspace invocation');
+
+      workspaceSessionControl.delayClose = true;
+      // Park the session close the way a long-lived background command does:
+      // the close is tracked as a pending reset but cannot finish while the
+      // command holds its cleanup fence.
+      const parkedCleanup = first.cleanup();
+      await vi.waitFor(() => expect(workspaceSessionControl.releaseClose).toBeTypeOf('function'));
+
+      const startedAt = Date.now();
+      await expect(prepare('bash-during-pending-reset')).resolves.toBeUndefined();
+      expect(Date.now() - startedAt).toBeLessThan(2_000);
+
+      workspaceSessionControl.delayClose = false;
+      workspaceSessionControl.releaseClose?.();
+      workspaceSessionControl.releaseClose = undefined;
+      await parkedCleanup;
+      // Command cleanup no longer blocks on session close convergence (the
+      // close is fire-and-forget behind the fence), so drain the reset here.
+      await waitForWorkspaceSessionResetsForTest();
+
+      const after = await prepare('bash-after-pending-reset');
+      if (!after) throw new Error('expected admission to recover after the reset settled');
+      await after.cleanup();
+    },
+  );
+
+  it.runIf(process.platform === 'win32')(
+    'reuses a cached workspace session while its close waits behind a held fence',
+    async () => {
+      // Issue 304 core acceptance: a long-lived command holds the exclusive
+      // durable fence; an idle session's close parks in admission WITHOUT
+      // evicting the cache, so same-policy admissions reuse the live session.
+      // Releasing the fence converges the deferred close automatically.
+      const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-text-fence-reuse-'));
+      tempRoots.push(root);
+      const sandbox = createAsrtShellSandbox({
+        workspaceRoot: root,
+        shouldSandbox: () => true,
+      });
+      const prepare = (toolCallId: string) => sandbox.prepare({
+        toolCallId,
+        toolInput: { command: 'node --version' },
+        command: 'node --version',
+        executable: process.execPath,
+        args: ['--version'],
+        cwd: root,
+        env: process.env,
+      });
+      const first = await prepare('bash-under-held-fence-1');
+      if (!first) throw new Error('expected first invocation');
+      const releaseFence = await acquireExclusiveFileSystemEffectLease();
+      try {
+        await first.cleanup();
+        const second = await prepare('bash-under-held-fence-2');
+        if (!second) throw new Error('expected cached session reuse while the close waits on the fence');
+        expect(capturedWorkspaceSessionConfigs).toHaveLength(1);
+        await second.cleanup();
+      } finally {
+        await releaseFence();
+      }
+      await releaseFence();
+      // The parked close converges asynchronously once the fence frees; keep
+      // preparing until the cached session is retired and a fresh one starts.
+      let third: Awaited<ReturnType<typeof prepare>> = undefined;
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 100));
+        await waitForWorkspaceSessionResetsForTest();
+        const candidate = await prepare(`bash-after-fence-release-${attempt}`);
+        if (candidate) {
+          if (capturedWorkspaceSessionConfigs.length >= 2) {
+            third = candidate;
+            break;
+          }
+          await candidate.cleanup().then(
+            () => undefined,
+            () => undefined,
+          );
+        }
+      }
+      if (!third) throw new Error('expected a fresh session after the fence was released');
+      await third.cleanup();
+      expect(capturedWorkspaceSessionConfigs).toHaveLength(2);
+    },
+  );
+
+  it.runIf(process.platform === 'win32')(
+    'keeps workspace admission working after a cleanup request times out behind live work',
+    async () => {
+      // A cleanup RPC that legitimately queues behind live work must time out
+      // without failing the whole session: only the request is retired.
+      const restoreTimeouts = overrideWorkspaceSessionRpcTimeoutsForTest({ cleanupMs: 60 });
+      try {
+        const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-cleanup-timeout-'));
+        tempRoots.push(root);
+        const sandbox = createAsrtShellSandbox({
+          workspaceRoot: root,
+          shouldSandbox: () => true,
+        });
+        const prepare = (toolCallId: string) => sandbox.prepare({
+          toolCallId,
+          toolInput: { command: 'node --version' },
+          command: 'node --version',
+          executable: process.execPath,
+          args: ['--version'],
+          cwd: root,
+          env: process.env,
+        });
+        const first = await prepare('bash-cleanup-timeout-1');
+        if (!first) throw new Error('expected first invocation');
+        workspaceSessionControl.delayCleanup = true;
+        await first.cleanup().then(
+          () => undefined,
+          () => undefined,
+        );
+        workspaceSessionControl.delayCleanup = false;
+        workspaceSessionControl.releaseCleanup?.();
+        workspaceSessionControl.releaseCleanup = undefined;
+        await waitForWorkspaceSessionResetsForTest();
+        const second = await prepare('bash-cleanup-timeout-2');
+        if (!second) throw new Error('expected admission after a cleanup request timeout');
+        await second.cleanup();
+      } finally {
+        restoreTimeouts();
+      }
+    },
+  );
+
+  it.runIf(process.platform === 'win32')(
+    'fails standalone admission structuredly while a leased workspace session is active',
+    async () => {
+      // A live lease keeps its session cached; standalone SDK admission must
+      // fail with a clear contention error instead of terminating the lease.
+      const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-standalone-leased-'));
+      tempRoots.push(root);
+      const sandbox = createAsrtShellSandbox({
+        workspaceRoot: root,
+        shouldSandbox: () => true,
+      });
+      const prepare = (toolCallId: string) => sandbox.prepare({
+        toolCallId,
+        toolInput: { command: 'node --version' },
+        command: 'node --version',
+        executable: process.execPath,
+        args: ['--version'],
+        cwd: root,
+        env: process.env,
+      });
+      // A prepared-but-not-yet-cleaned-up invocation holds its session lease,
+      // exactly like a live background bash.
+      const first = await prepare('bash-leased-1');
+      if (!first) throw new Error('expected leased invocation');
+      await expect(runKodaXSandboxed({
+        command: process.execPath,
+        args: ['--version'],
+        cwd: root,
+        filesystem: { allowRead: [], allowWrite: [] },
+      })).rejects.toThrow(/leased workspace sandbox session/i);
+      expect(capturedBrokerRequests).toHaveLength(0);
+      await first.cleanup().then(
+        () => undefined,
+        () => undefined,
+      );
+    },
+  );
+
+  it.runIf(process.platform === 'win32')(
+    'reports a structured session_reset_pending reason for sandboxed text mutations',
+    async () => {
+      // The 304 user-facing contract: while this policy's session reset is
+      // parked mid-action, a sandboxed text mutation must fail closed with a
+      // structured reason, not a bare unavailable.
+      const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-text-pending-reason-'));
+      tempRoots.push(root);
+      const sandbox = createAsrtTextFileMutationSandbox({
+        workspaceRoot: root,
+        shouldSandbox: () => true,
+      });
+      const shellSandbox = createAsrtShellSandbox({
+        workspaceRoot: root,
+        shouldSandbox: () => true,
+      });
+      const first = await shellSandbox.prepare({
+        toolCallId: 'bash-before-pending-reason',
+        toolInput: { command: 'node --version' },
+        command: 'node --version',
+        executable: process.execPath,
+        args: ['--version'],
+        cwd: root,
+        env: process.env,
+      });
+      if (!first) throw new Error('expected first workspace invocation');
+      const target = path.join(root, 'hello.md');
+      workspaceSessionControl.delayClose = true;
+      const parkedCleanup = first.cleanup();
+      await vi.waitFor(() => expect(workspaceSessionControl.releaseClose).toBeTypeOf('function'));
+      const denied = await sandbox.read({
+        toolCallId: 'read-during-pending-reason',
+        toolName: 'write',
+        toolInput: { path: target, content: 'hello' },
+        path: target,
+      });
+      expect(denied).toMatchObject({
+        status: 'unavailable',
+        reason: 'session_reset_pending',
+      });
+      workspaceSessionControl.delayClose = false;
+      workspaceSessionControl.releaseClose?.();
+      workspaceSessionControl.releaseClose = undefined;
+      await parkedCleanup;
+      await waitForWorkspaceSessionResetsForTest();
+    },
+  );
+
+  it.runIf(process.platform === 'win32')(
+    'blocks admission globally while a forced session reset is pending',
+    async () => {
+      // Forced (shutdown-path) resets carry no policy key, so they stay
+      // account-wide blockers: the scoped gate must still fail closed for the
+      // same policy while a forced close parks mid-action.
+      const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-forced-pending-'));
+      tempRoots.push(root);
+      const sandbox = createAsrtShellSandbox({
+        workspaceRoot: root,
+        shouldSandbox: () => true,
+      });
+      const prepare = (toolCallId: string) => sandbox.prepare({
+        toolCallId,
+        toolInput: { command: 'node --version' },
+        command: 'node --version',
+        executable: process.execPath,
+        args: ['--version'],
+        cwd: root,
+        env: process.env,
+      });
+      const first = await prepare('bash-before-forced-reset');
+      if (!first) throw new Error('expected first invocation');
+      const releaseFence = await acquireExclusiveFileSystemEffectLease();
+      await first.cleanup();
+      const shutdown = shutdownAsrtWorkspaceSessions();
+      // The forced close parks behind the held fence and registers its
+      // account-wide pending reset; admission must fail closed meanwhile.
+      await new Promise<void>((resolve) => setTimeout(resolve, 200));
+      const startedAt = Date.now();
+      await expect(prepare('bash-during-forced-reset')).resolves.toBeUndefined();
+      expect(Date.now() - startedAt).toBeLessThan(2_000);
+      await releaseFence();
+      await shutdown.then(
+        () => undefined,
+        () => undefined,
+      );
+      await waitForWorkspaceSessionResetsForTest();
+      let after: Awaited<ReturnType<typeof prepare>> = undefined;
+      for (let attempt = 0; after === undefined && attempt < 20; attempt += 1) {
+        after = await prepare(`bash-after-forced-reset-${attempt}`);
+        if (after === undefined) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 50));
+        }
+      }
+      if (!after) throw new Error('expected admission to recover after the forced reset settled');
+      await after.cleanup();
     },
   );
 
@@ -4416,7 +4715,15 @@ describe('ASRT workspace shell adapter', () => {
       const recovered = await prepare(`bash-after-${failurePoint}-failure`);
       if (!recovered) throw new Error('expected replacement workspace invocation');
       await recovered.cleanup();
-      expect(capturedWorkspaceOwnerArgv()).toHaveLength(2);
+      if (failurePoint === 'wrap') {
+        // The failed wrap retired the session; the replacement starts a fresh owner.
+        expect(capturedWorkspaceOwnerArgv()).toHaveLength(2);
+      } else {
+        // The failed command cleanup leaves the lease held, so the session's
+        // close defers and the session stays reusable: the replacement reuses
+        // the same owner instead of terminating it underneath a live lease.
+        expect(capturedWorkspaceOwnerArgv()).toHaveLength(1);
+      }
     },
   );
 
@@ -5200,7 +5507,6 @@ describe('ASRT workspace shell adapter', () => {
       await expect(timeoutOutcome).resolves.toMatchObject({ name: 'TimeoutError' });
       workspaceSessionControl.releaseReady?.();
       workspaceSessionControl.releaseReady = undefined;
-      await waitForWorkspaceSessionResetsForTest();
       const poisonDirectory = path.join(
         path.resolve(process.env.KODAX_HOME!),
         'sandbox-runtime',
@@ -5212,8 +5518,12 @@ describe('ASRT workspace shell adapter', () => {
         'sandbox-runtime',
         'acl-poison',
       );
-      await expect(readdir(poisonDirectory)).resolves.toEqual([]);
-      await expect(readdir(globalPoisonDirectory)).resolves.toEqual([]);
+      // The late owner close converges asynchronously after the session
+      // admission resolves, so poll for the marker cleanup.
+      await vi.waitFor(async () => {
+        await expect(readdir(poisonDirectory)).resolves.toEqual([]);
+        await expect(readdir(globalPoisonDirectory)).resolves.toEqual([]);
+      }, { timeout: 10_000 });
     },
   );
 
@@ -5657,6 +5967,92 @@ describe('ASRT workspace shell adapter', () => {
     }
   });
 
+  describe('bundled srt-win sidecar resolution', () => {
+    it('returns the sidecar path when it exists next to the executable', async () => {
+      const execDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-srtwin-sidecar-'));
+      tempRoots.push(execDir);
+      const archDirectory = process.arch === 'arm64' ? 'arm64' : 'x64';
+      const sidecarDir = path.join(execDir, 'vendor', 'srt-win', archDirectory);
+      await mkdir(sidecarDir, { recursive: true });
+      await writeFile(path.join(sidecarDir, 'srt-win.exe'), 'stub', 'utf8');
+      expect(bundledSrtWinSidecarPath(execDir)).toBe(
+        path.join(sidecarDir, 'srt-win.exe'),
+      );
+    });
+
+    it('returns undefined when the sidecar is missing', async () => {
+      const execDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-srtwin-sidecar-'));
+      tempRoots.push(execDir);
+      expect(bundledSrtWinSidecarPath(execDir)).toBeUndefined();
+    });
+
+    it('prefers the sidecar over the library lookup in bundled builds', async () => {
+      const execDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-srtwin-sidecar-'));
+      tempRoots.push(execDir);
+      const archDirectory = process.arch === 'arm64' ? 'arm64' : 'x64';
+      const sidecarDir = path.join(execDir, 'vendor', 'srt-win', archDirectory);
+      await mkdir(sidecarDir, { recursive: true });
+      await writeFile(path.join(sidecarDir, 'srt-win.exe'), 'stub', 'utf8');
+      const original = process.env.KODAX_BUNDLED;
+      process.env.KODAX_BUNDLED = 'true';
+      try {
+        expect(resolveSrtWinSourcePath(execDir)).toBe(
+          path.join(sidecarDir, 'srt-win.exe'),
+        );
+      } finally {
+        if (original === undefined) delete process.env.KODAX_BUNDLED;
+        else process.env.KODAX_BUNDLED = original;
+      }
+    });
+
+    it('falls back to the library lookup when a bundled build lacks the sidecar', async () => {
+      const execDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-srtwin-sidecar-'));
+      tempRoots.push(execDir);
+      const original = process.env.KODAX_BUNDLED;
+      process.env.KODAX_BUNDLED = 'true';
+      try {
+        windowsSandboxMock.runnerSource = 'C:\\mock\\runner-source.exe';
+        expect(resolveSrtWinSourcePath(execDir)).toBe('C:\\mock\\runner-source.exe');
+      } finally {
+        windowsSandboxMock.runnerSource = '';
+        if (original === undefined) delete process.env.KODAX_BUNDLED;
+        else process.env.KODAX_BUNDLED = original;
+      }
+    });
+
+    it('uses the library lookup when not bundled', () => {
+      const original = process.env.KODAX_BUNDLED;
+      delete process.env.KODAX_BUNDLED;
+      try {
+        windowsSandboxMock.runnerSource = 'C:\\mock\\runner-source.exe';
+        expect(resolveSrtWinSourcePath()).toBe('C:\\mock\\runner-source.exe');
+      } finally {
+        windowsSandboxMock.runnerSource = '';
+        if (original === undefined) delete process.env.KODAX_BUNDLED;
+        else process.env.KODAX_BUNDLED = original;
+      }
+    });
+
+    it.runIf(process.platform === 'win32')(
+      'installs the Windows sandbox through the prepared runner srt-win',
+      async () => {
+        const previousUser = windowsSandboxMock.user;
+        windowsSandboxMock.user = { ...previousUser, provisioned: false, credPresent: false };
+        try {
+          await setupSandboxRuntime();
+          expect(windowsSandboxMock.installCalls).toBeGreaterThan(0);
+          const installOption = windowsSandboxMock.installOptions.at(-1) as {
+            srtWin?: { exe?: string };
+          };
+          expect(installOption?.srtWin?.exe).toContain('sandbox-runtime');
+          expect(installOption?.srtWin?.exe).toContain('runner');
+        } finally {
+          windowsSandboxMock.user = previousUser;
+        }
+      },
+    );
+  });
+
   it('uses packaged Electron as the sandbox target JavaScript runtime', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-asrt-electron-bootstrap-'));
     tempRoots.push(root);
@@ -5762,6 +6158,77 @@ describe('ASRT workspace shell adapter', () => {
       reason: 'not_ready',
       execution: 'normal_permission_policy',
     });
+  });
+
+  it('fails a direct write tool call closed while bash falls back when the runtime is not ready', async () => {
+    await markSandboxRuntimeUnavailable();
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-asrt-write-not-ready-'));
+    tempRoots.push(root);
+    const target = path.join(root, 'hello.md');
+    const shouldSandbox = vi.fn(() => true);
+
+    const reportObservation = vi.fn();
+    await expect(createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox }).prepare({
+      toolCallId: 'bash-hello',
+      toolInput: { command: 'echo hello > hello.md' },
+      command: 'echo hello > hello.md',
+      cwd: root,
+      env: process.env,
+      reportObservation,
+    })).resolves.toBeUndefined();
+    expect(reportObservation).toHaveBeenCalledWith(expect.objectContaining({
+      state: 'fallback',
+      reason: 'not_ready',
+      execution: 'normal_permission_policy',
+    }));
+
+    const sandbox = createAsrtTextFileMutationSandbox({ workspaceRoot: root, shouldSandbox });
+    const ctx: KodaXToolExecutionContext = {
+      backups: new Map(),
+      toolCallId: 'write-hello',
+      textFileMutationSandbox: sandbox,
+    };
+    await expect(withTextFileMutation(
+      target,
+      'write',
+      { path: target, content: 'hello' },
+      ctx,
+      async () => 'unreachable',
+    )).rejects.toThrow('The Runtime sandboxed file mutation is unavailable.');
+    await expect(stat(target)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('fails a direct write tool call closed when the runtime never selected a sandbox', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-asrt-write-not-selected-'));
+    tempRoots.push(root);
+    const target = path.join(root, 'hello.md');
+    const shouldSandbox = vi.fn(() => false);
+
+    const reportObservation = vi.fn();
+    await expect(createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox }).prepare({
+      toolCallId: 'bash-hello',
+      toolInput: { command: 'echo hello > hello.md' },
+      command: 'echo hello > hello.md',
+      cwd: root,
+      env: process.env,
+      reportObservation,
+    })).resolves.toBeUndefined();
+    expect(reportObservation).toHaveBeenCalledWith({ version: 1, state: 'not_selected' });
+
+    const sandbox = createAsrtTextFileMutationSandbox({ workspaceRoot: root, shouldSandbox });
+    const ctx: KodaXToolExecutionContext = {
+      backups: new Map(),
+      toolCallId: 'write-hello',
+      textFileMutationSandbox: sandbox,
+    };
+    await expect(withTextFileMutation(
+      target,
+      'write',
+      { path: target, content: 'hello' },
+      ctx,
+      async () => 'unreachable',
+    )).rejects.toThrow('The Runtime sandboxed file mutation is unavailable.');
+    await expect(stat(target)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('does not expose a fail-closed mode when an admitted call is unavailable', async () => {

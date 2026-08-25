@@ -1205,6 +1205,7 @@ async function runCleanupLeaseWorkflow<T>(
 function observeDeferredCleanupFailure<T>(
   workflow: Promise<T>,
   deadline: CleanupAdmissionDeadline,
+  actionStarted: () => boolean,
   actionCompleted: () => boolean,
   onDeferredFailure: ((error: unknown) => Promise<void>) | undefined,
 ): void {
@@ -1216,7 +1217,10 @@ function observeDeferredCleanupFailure<T>(
       message: 'Filesystem cleanup failed after its caller deadline; the durable fence remains closed.',
       detail: error,
     });
-    if (actionCompleted() || onDeferredFailure === undefined) return;
+    // Only an action that actually started can leave partially applied ACL
+    // state behind. Admission or bind failures leave the owner untouched, so
+    // they must not escalate to durable ACL recovery.
+    if (!actionStarted() || actionCompleted() || onDeferredFailure === undefined) return;
     try {
       await onDeferredFailure(error);
     } catch (handlerError: unknown) {
@@ -1241,12 +1245,16 @@ export function withExclusiveFileSystemCleanupLease<T>(
   onLeaseAcquired?: (lease: FileSystemMutationLeaseRelease) => void,
   onLeaseReleased?: (lease: FileSystemMutationLeaseRelease) => void,
 ): Promise<T> {
+  let cleanupActionStarted = false;
   let cleanupActionCompleted = false;
   const deadline = createCleanupAdmissionDeadline();
   const workflow = runCleanupLeaseWorkflow(
     sandboxPolicyKey,
     cleanupProcess,
-    action,
+    async () => {
+      cleanupActionStarted = true;
+      return action();
+    },
     deadline,
     () => { cleanupActionCompleted = true; },
     onLeaseAcquired,
@@ -1255,6 +1263,7 @@ export function withExclusiveFileSystemCleanupLease<T>(
   observeDeferredCleanupFailure(
     workflow,
     deadline,
+    () => cleanupActionStarted,
     () => cleanupActionCompleted,
     onDeferredFailure,
   );

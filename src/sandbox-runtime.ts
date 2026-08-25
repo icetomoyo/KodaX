@@ -69,6 +69,7 @@ import {
   KodaXSkillScriptRunInput,
   KodaXSkillScriptRunner,
   KodaXTextFileMutationRequest,
+  KodaXTextFileMutationUnavailableReason,
   KodaXTextFileMutationSandbox,
 } from '@kodax-ai/coding';
 import {
@@ -1041,10 +1042,42 @@ async function installWindowsRunnerCopy(
   }
 }
 
+const SRT_WIN_ARCH_DIRECTORIES: Readonly<Record<string, string>> = { x64: 'x64', arm64: 'arm64' };
+
+/**
+ * Sidecar `srt-win.exe` shipped next to a bundled (Bun `--compile`) Windows
+ * executable. The ASRT library's own lookup is module-relative, which inside
+ * a Bun binary resolves onto the virtual `B:\` drive and can never exist.
+ */
+export function bundledSrtWinSidecarPath(execDir: string): string | undefined {
+  const archDirectory = SRT_WIN_ARCH_DIRECTORIES[process.arch];
+  if (archDirectory === undefined) return undefined;
+  const sidecar = path.join(execDir, 'vendor', 'srt-win', archDirectory, 'srt-win.exe');
+  return existsSync(sidecar) ? sidecar : undefined;
+}
+
+/**
+ * Source path for staging the Windows sandbox runner. Bundled builds prefer
+ * the sidecar next to the real executable — inside a Bun `--compile` binary
+ * the library's module-relative lookup resolves onto the virtual `B:\` drive
+ * and can never exist. Every layout still falls back to the library lookup so
+ * mocked and development trees keep working. The parameter exists so tests
+ * can point at a temporary layout.
+ */
+export function resolveSrtWinSourcePath(
+  execDir: string = path.dirname(process.execPath),
+): string {
+  if (process.env.KODAX_BUNDLED === 'true') {
+    const sidecar = bundledSrtWinSidecarPath(execDir);
+    if (sidecar !== undefined) return sidecar;
+  }
+  return getSrtWinPath();
+}
+
 async function prepareWindowsSandboxRunner(): Promise<PreparedWindowsSandboxRunner> {
   if (preparedWindowsRunnerPromise === undefined) {
     const preparation = (async () => {
-      const source = await readFile(getSrtWinPath());
+      const source = await readFile(resolveSrtWinSourcePath());
       const contentId = createHash('sha256').update(source).digest('hex').slice(0, 16);
       const directory = path.join(
         path.resolve(getAgentConfigHome()),
@@ -2743,9 +2776,9 @@ async function setupWindowsSandboxRuntimeWithLock(): Promise<SandboxRuntimeDocto
     const repaired = await doctorSandboxRuntime({ refresh: true });
     if (repaired.ready) return repaired;
   }
-  const result = installWindowsSandbox();
+  const runner = await prepareWindowsSandboxRunner();
+  const result = installWindowsSandbox({ srtWin: runner.srtWin });
   if (result.cancelled) throw new Error('Sandbox setup was cancelled.');
-  await prepareWindowsSandboxRunner();
   installWindowsAclGuards(windowsPersistentAclGuardRoots(), 'read');
   return doctorSandboxRuntime({ refresh: true });
 }
@@ -3409,13 +3442,19 @@ async function runBrokerResult(
   try {
     if (process.platform === 'win32') {
       await waitForWorkspaceSessionResets();
-      const resetFailures = await closeCachedWorkspaceSessions();
-      if (resetFailures.length === 1) throw resetFailures[0];
-      if (resetFailures.length > 1) {
-        throw new AggregateError(
-          resetFailures,
-          'Cached workspace sandbox reset was not confirmed before standalone execution.',
-        );
+      const leasedSessions = await closeIdleCachedWorkspaceSessionsForStandalone();
+      if (leasedSessions > 0) {
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, WORKSPACE_SESSION_TERMINATE_GRACE_MS);
+          timer.unref?.();
+        });
+        const stillLeased = await closeIdleCachedWorkspaceSessionsForStandalone();
+        if (stillLeased > 0) {
+          throw new Error(
+            `A leased workspace sandbox session is still active (${String(stillLeased)}); `
+            + 'standalone sandbox admission is unavailable until its background command completes.',
+          );
+        }
       }
       await ensureWindowsSandboxAclRecovery();
       windowsOwnerFence = await acquireExclusiveFileSystemEffectLease();
@@ -4498,6 +4537,17 @@ interface WorkspaceSessionLease {
   release(): Promise<void>;
 }
 
+/** Why a workspace session admission was denied (structured reasons, Issue 304). */
+type WorkspaceSessionDenialReason =
+  | 'doctor_not_ready'
+  | 'doctor_setup_required'
+  | 'session_reset_pending'
+  | 'acl_transition_pending';
+
+type WorkspaceSessionAdmission =
+  | { readonly session: WorkspaceSessionClient }
+  | { readonly denied: WorkspaceSessionDenialReason };
+
 interface WorkspaceSessionClient {
   readonly policyKey: string;
   readonly tempDirectory?: string;
@@ -4506,7 +4556,15 @@ interface WorkspaceSessionClient {
     signal?: AbortSignal,
     deadlineAt?: number,
   ): Promise<WorkspaceSessionLease>;
-  close(): Promise<void>;
+  /**
+   * `lifecycle` closes defer while the session still holds active leases; the
+   * last lease release re-fires them, so a live background command is never
+   * terminated by a convenience close. `forced` closes keep the historical
+   * shutdown semantics (bounded lease drain, then terminate).
+   */
+  close(mode?: 'lifecycle' | 'forced'): Promise<void>;
+  /** True while at least one active lease keeps this session servable. */
+  leased(): boolean;
 }
 
 const WORKSPACE_SESSION_IDLE_MS = 5 * 60_000;
@@ -4528,6 +4586,13 @@ const MAX_CACHED_SCOPED_WORKSPACE_SESSIONS = 8;
 const workspaceSessions = new Map<string, Promise<WorkspaceSessionClient>>();
 const pendingWorkspaceSessionWarmups = new Set<Promise<WorkspaceSessionClient | undefined>>();
 const pendingWorkspaceSessionResets = new Set<Promise<void>>();
+/**
+ * Every in-flight session close, registered at close() entry so shutdown and
+ * drain paths can wait for closes that have not yet committed (their tracked
+ * reset registers only when the fence admission is held). Admission gates do
+ * NOT consult this set — only drains do.
+ */
+const inFlightWorkspaceSessionCloses = new Set<Promise<void>>();
 const pendingWindowsSandboxAclTransitions = new Set<Promise<void>>();
 const pendingStandaloneBrokerSettlements = new Set<Promise<void>>();
 let windowsSandboxAclFailure: Error | undefined;
@@ -4595,13 +4660,26 @@ function assertWindowsSandboxAclSafe(policyKey?: string): void {
   assertNoPersistentWindowsSandboxAclPoison(policyKey);
 }
 
-function trackWorkspaceSessionReset(reset: Promise<void>): void {
+function trackWorkspaceSessionReset(reset: Promise<void>, policyKey?: string): void {
   pendingWorkspaceSessionResets.add(reset);
+  trackedPolicyKeys.set(reset, policyKey);
   void reset.then(
-    () => pendingWorkspaceSessionResets.delete(reset),
-    () => pendingWorkspaceSessionResets.delete(reset),
+    () => {
+      pendingWorkspaceSessionResets.delete(reset);
+      trackedPolicyKeys.delete(reset);
+    },
+    () => {
+      pendingWorkspaceSessionResets.delete(reset);
+      trackedPolicyKeys.delete(reset);
+    },
   );
 }
+
+/**
+ * Policy keys for in-flight session resets. Entries with an undefined key (or
+ * the empty-string sentinel) are account-wide and block every policy.
+ */
+const trackedPolicyKeys = new WeakMap<Promise<void>, string | undefined>();
 
 function trackWindowsSandboxAclTransition(transition: Promise<void>): void {
   pendingWindowsSandboxAclTransitions.add(transition);
@@ -4665,8 +4743,16 @@ async function waitForStandaloneBrokerSettlementsBeforeShutdown(): Promise<void>
 }
 
 async function waitForWorkspaceSessionResets(): Promise<void> {
-  while (pendingWorkspaceSessionResets.size > 0) {
-    await Promise.allSettled([...pendingWorkspaceSessionResets]);
+  for (;;) {
+    const before = pendingWorkspaceSessionResets.size + inFlightWorkspaceSessionCloses.size;
+    if (before === 0) break;
+    await Promise.allSettled([
+      ...pendingWorkspaceSessionResets,
+      ...inFlightWorkspaceSessionCloses,
+    ]);
+    if (
+      pendingWorkspaceSessionResets.size + inFlightWorkspaceSessionCloses.size === 0
+    ) break;
   }
   await waitForWindowsSandboxAclTransitions();
   if (process.platform !== 'win32') assertWindowsSandboxAclProcessSafe();
@@ -4683,7 +4769,7 @@ async function closeCachedWorkspaceSessions(): Promise<unknown[]> {
   const failures: unknown[] = [];
   for (const pendingSession of sessions) {
     try {
-      await (await pendingSession).close();
+      await (await pendingSession).close('forced');
     } catch (error: unknown) {
       failures.push(error);
       emitKodaXDiagnostic({
@@ -4695,6 +4781,50 @@ async function closeCachedWorkspaceSessions(): Promise<unknown[]> {
     }
   }
   return failures;
+}
+
+/**
+ * Closes only cached sessions that hold no active lease; leased sessions stay
+ * cached and servable. Used before standalone admission: a live background
+ * command's session must not be terminated, so the standalone run is failed
+ * instead once the short drain grace below expires.
+ */
+async function closeIdleCachedWorkspaceSessionsForStandalone(): Promise<number> {
+  const failures: unknown[] = [];
+  let leased = 0;
+  for (const [key, pendingSession] of [...workspaceSessions.entries()]) {
+    let session: WorkspaceSessionClient;
+    try {
+      session = await pendingSession;
+    } catch {
+      workspaceSessions.delete(key);
+      continue;
+    }
+    if (session.leased()) {
+      leased += 1;
+      continue;
+    }
+    workspaceSessions.delete(key);
+    try {
+      await session.close();
+    } catch (error: unknown) {
+      failures.push(error);
+      emitKodaXDiagnostic({
+        source: 'sandbox:workspace-session',
+        level: 'warn',
+        message: 'Workspace sandbox standalone admission could not confirm a cached reset.',
+        detail: error,
+      });
+    }
+  }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) {
+    throw new AggregateError(
+      failures,
+      'Cached workspace sandbox reset was not confirmed before standalone execution.',
+    );
+  }
+  return leased;
 }
 
 const closeWorkspaceSessionsBeforeExit = (): void => {
@@ -5044,6 +5174,7 @@ async function startWorkspaceSessionClientWithFence(
   let resolveDrained: (() => void) | undefined;
   let idleTimer: NodeJS.Timeout | undefined;
   let closePromise: Promise<void> | undefined;
+  let forcedRequested = false;
   const tempCleanup = childExit.then(async () => {
     if (tempDirectory === undefined) return;
     try {
@@ -5073,6 +5204,27 @@ async function startWorkspaceSessionClientWithFence(
     if (evicted) return;
     evicted = true;
     onExit();
+  };
+  let closeDeferralWatchdog: NodeJS.Timeout | undefined;
+  let closeDeferralWatchdogFires = 0;
+  const startCloseDeferralWatchdog = (): void => {
+    if (closeDeferralWatchdog !== undefined || exited) return;
+    closeDeferralWatchdog = setInterval(() => {
+      closeDeferralWatchdogFires += 1;
+      emitKodaXDiagnostic({
+        source: 'sandbox:workspace-session',
+        level: closeDeferralWatchdogFires === 1 ? 'warn' : 'error',
+        message: 'A deferred workspace session close is still waiting on active leases; '
+          + `policyKey=${policyKey} leases=${String(activeLeases)}. `
+          + 'The session stays reusable; a leaked lease keeps it alive until process exit.',
+      });
+    }, WORKSPACE_SESSION_WINDOWS_RESET_GRACE_MS);
+    closeDeferralWatchdog.unref?.();
+  };
+  const stopCloseDeferralWatchdog = (): void => {
+    if (closeDeferralWatchdog !== undefined) clearInterval(closeDeferralWatchdog);
+    closeDeferralWatchdog = undefined;
+    closeDeferralWatchdogFires = 0;
   };
   const waitForOrderlyClose = async (): Promise<boolean> => {
     if (
@@ -5205,6 +5357,7 @@ async function startWorkspaceSessionClientWithFence(
   });
   void childExit.then(({ code, signal }) => {
     if (idleTimer) clearTimeout(idleTimer);
+    stopCloseDeferralWatchdog();
     const exitError = new Error(
       `ASRT workspace session exited ${signal ?? code ?? 1}: ${stderrTail.trim() || 'no diagnostics'}`,
     );
@@ -5260,13 +5413,26 @@ async function startWorkspaceSessionClientWithFence(
       pending.set(id, { resolve, reject });
     });
     const timeout = setTimeout(() => {
-      // Do not force-kill the session on an RPC timeout: a hard kill cannot
-      // exit cleanly, so its ACL reset stays unconfirmed and would poison the
-      // Windows sandbox owner marker for the whole boot. Fail the pending
-      // requests and retire the session through close(), which drains leases
-      // first and gives the child the orderly-close grace to reset cleanly.
-      fail(new Error(`ASRT workspace session ${type} request timed out.`));
-      void client.close().catch((closeError: unknown) => {
+      const timeoutError = new Error(`ASRT workspace session ${type} request timed out.`);
+      if (type === 'cleanup') {
+        // A cleanup legitimately queues behind in-flight wraps on the
+        // session's serial queue. Retire only this request: the caller
+        // finalizes its lease and the close deferral keeps the session
+        // servable, instead of failing every pending wrap and killing the
+        // child — which is exactly the long-background-command failure mode.
+        const item = pending.get(id);
+        if (item) {
+          pending.delete(id);
+          item.reject(timeoutError);
+        }
+        return;
+      }
+      // Wrap timeouts mean the child is not answering handshakes: fail the
+      // pending requests and retire the session through a forced close,
+      // which drains leases first and gives the child the orderly-close
+      // grace to reset cleanly instead of poisoning the owner marker.
+      fail(timeoutError);
+      void client.close('forced').catch((closeError: unknown) => {
         emitKodaXDiagnostic({
           source: 'sandbox:workspace-session',
           level: 'warn',
@@ -5315,6 +5481,7 @@ async function startWorkspaceSessionClientWithFence(
   const client: WorkspaceSessionClient = {
     policyKey,
     ...(tempDirectory === undefined ? {} : { tempDirectory }),
+    leased: () => activeLeases > 0 && !exited,
     async acquire(value, signal, deadlineAt) {
       assertWindowsSandboxAclSafe(policyKey);
       throwIfWorkspacePreparationStopped(signal, deadlineAt);
@@ -5343,7 +5510,27 @@ async function startWorkspaceSessionClientWithFence(
           closeRequiredAfterFinalize = finalize() && process.platform === 'win32';
         }
         if (closeRequiredAfterFinalize) {
-          await client.close();
+          // Bounded wait: normally the idle close converges in milliseconds.
+          // Under fence contention it may defer or skip for a new lease, and
+          // a finishing command's cleanup must not block on that convergence;
+          // the deferral re-arms from the last lease release.
+          await Promise.race([
+            client.close().then(
+              () => undefined,
+              (closeError: unknown) => {
+                emitKodaXDiagnostic({
+                  source: 'sandbox:workspace-session',
+                  level: 'warn',
+                  message: 'Idle workspace sandbox session could not confirm ACL reset.',
+                  detail: closeError,
+                });
+              },
+            ),
+            new Promise<void>((resolve) => {
+              const timer = setTimeout(resolve, WORKSPACE_SESSION_TERMINATE_GRACE_MS);
+              timer.unref?.();
+            }),
+          ]);
         }
       };
       const retireAfterCleanupFailure = (message: string, error: unknown): void => {
@@ -5390,14 +5577,16 @@ async function startWorkspaceSessionClientWithFence(
         if (!response.ok || !response.invocation) {
           finalize();
           const wrapError = new Error(response.error ?? 'ASRT workspace wrapping failed.');
-          try {
-            await client.close();
-          } catch (closeError: unknown) {
-            const detail = closeError instanceof Error ? closeError.message : String(closeError);
-            throw new Error(`${wrapError.message} Workspace session reset failed: ${detail}`, {
-              cause: wrapError,
+          // Fire-and-forget: the session close defers behind surviving leases
+          // (a live background command) and must not delay this error path.
+          void client.close().catch((closeError: unknown) => {
+            emitKodaXDiagnostic({
+              source: 'sandbox:workspace-session',
+              level: 'warn',
+              message: 'Failed workspace sandbox wrap could not retire its session.',
+              detail: closeError,
             });
-          }
+          });
           throw wrapError;
         }
         try {
@@ -5441,6 +5630,9 @@ async function startWorkspaceSessionClientWithFence(
                   throw cleanupError;
                 }
                 if (!cleanup.ok) {
+                  // The lease intentionally stays unfinalized: the background
+                  // cleanup retry re-sends the session cleanup RPC through
+                  // release(), and its eventual success finalizes the lease.
                   throw new Error(cleanup.error ?? 'ASRT command cleanup failed.');
                 }
                 cleanupCompleted = true;
@@ -5461,31 +5653,84 @@ async function startWorkspaceSessionClientWithFence(
         throw error;
       }
     },
-    async close() {
-      if (closePromise) return closePromise;
-      closing = true;
-      evict();
+    async close(mode: 'lifecycle' | 'forced' = 'lifecycle') {
+      if (closePromise) {
+        // A forced caller (shutdown/reset) piggybacking an in-flight lifecycle
+        // close must still get forced semantics: the close below may not skip
+        // for a lease that arrived while it waited for admission.
+        if (mode === 'forced') forcedRequested = true;
+        return closePromise;
+      }
+      if (mode === 'lifecycle' && !exited && activeLeases > 0) {
+        // A live background command still holds this session. Defer the close
+        // without evicting it from the cache: the session stays servable, and
+        // the last lease release (finalizeAndCloseIfIdle) re-fires the close,
+        // so the deferral is always re-armed by the existing release path.
+        startCloseDeferralWatchdog();
+        return;
+      }
+      let settleInflightClose!: () => void;
+      const inflightClose = new Promise<void>((resolve) => {
+        settleInflightClose = resolve;
+      });
+      inFlightWorkspaceSessionCloses.add(inflightClose);
+      if (mode === 'forced') {
+        closing = true;
+        evict();
+      }
+      let aclActionStarted = false;
       let aclRecoveryConfirmed = false;
+      let closeSkippedForNewLease = false;
+      let settleTrackedReset: (() => void) | undefined;
       const current = (async () => {
         if (idleTimer) clearTimeout(idleTimer);
-        setWorkspaceSessionReferenced(child, true);
-        if (activeLeases > 0) {
-          await new Promise<void>((resolve) => {
-            const timer = setTimeout(resolve, WORKSPACE_SESSION_TERMINATE_GRACE_MS);
-            timer.unref?.();
-            resolveDrained = () => {
-              clearTimeout(timer);
-              resolve();
-            };
-          });
+        stopCloseDeferralWatchdog();
+        if (mode === 'forced') {
+          setWorkspaceSessionReferenced(child, true);
+          if (activeLeases > 0) {
+            await new Promise<void>((resolve) => {
+              const timer = setTimeout(resolve, WORKSPACE_SESSION_TERMINATE_GRACE_MS);
+              timer.unref?.();
+              resolveDrained = () => {
+                clearTimeout(timer);
+                resolve();
+              };
+            });
+          }
+          setWorkspaceSessionReferenced(child, false);
         }
-        setWorkspaceSessionReferenced(child, false);
         await withExclusiveFileSystemCleanupFence(
           async () => {
-            setWorkspaceSessionReferenced(child, true);
-            await terminate();
-            await confirmCleanReset();
-            aclRecoveryConfirmed = true;
+            if (mode === 'lifecycle' && !forcedRequested && !exited && activeLeases > 0) {
+              // A new lease arrived while this close waited for admission.
+              // Committing now would terminate the session under that live
+              // command; skip instead — the lease's release re-fires the
+              // close — and leave the latch open for that retry. A forced
+              // caller never skips: shutdown keeps its terminate semantics.
+              closeSkippedForNewLease = true;
+              startCloseDeferralWatchdog();
+              return;
+            }
+            aclActionStarted = true;
+            if (mode === 'lifecycle') {
+              // Commit the close only now, with the cleanup fence admission
+              // held: until this point the session stays cached and reusable
+              // while its close waits behind a long-lived command's lease.
+              closing = true;
+              evict();
+              const trackedReset = new Promise<void>((resolve) => {
+                settleTrackedReset = resolve;
+              });
+              trackWorkspaceSessionReset(trackedReset, policyKey);
+            }
+            try {
+              setWorkspaceSessionReferenced(child, true);
+              await terminate();
+              await confirmCleanReset();
+              aclRecoveryConfirmed = true;
+            } finally {
+              settleTrackedReset?.();
+            }
           },
           policyKey,
           child,
@@ -5501,20 +5746,24 @@ async function startWorkspaceSessionClientWithFence(
         setWorkspaceSessionReferenced(child, false);
         if (
           !aclRecoveryConfirmed
+          && aclActionStarted
           && !(error instanceof FileSystemCleanupAdmissionTimeoutError)
         ) {
           await retainWindowsSandboxAclOwnerPoison(windowsAclOwnerMarker, error);
         }
         throw error;
+      }).finally(() => {
+        if (closeSkippedForNewLease && closePromise === current) {
+          closePromise = undefined;
+        }
+        inFlightWorkspaceSessionCloses.delete(inflightClose);
+        settleInflightClose();
       });
       closePromise = current;
-      trackWorkspaceSessionReset(current);
-      try {
-        await current;
-      } catch (error: unknown) {
-        if (closePromise === current) closePromise = undefined;
-        throw error;
+      if (mode === 'forced') {
+        trackWorkspaceSessionReset(current);
       }
+      return current;
     },
   };
   scheduleIdleClose();
@@ -5665,17 +5914,14 @@ async function getWorkspaceSession(
   ),
   baselineReadScopes: readonly string[] = runtimeReadScopes,
   aclFenceHeld = false,
-): Promise<WorkspaceSessionClient | undefined> {
-  if (process.platform === 'win32') {
-    if (
-      pendingWorkspaceSessionResets.size > 0
-      || pendingWindowsSandboxAclTransitions.size > 0
-    ) return undefined;
-  } else {
+): Promise<WorkspaceSessionAdmission> {
+  if (process.platform !== 'win32') {
     await waitForWorkspaceSessionResets();
   }
   const doctor = await doctorSandboxRuntime();
-  if (!doctor.ready && !doctorHasWindowsSandboxAclCleanupBlock(doctor)) return undefined;
+  if (!doctor.ready && !doctorHasWindowsSandboxAclCleanupBlock(doctor)) {
+    return { denied: 'doctor_not_ready' };
+  }
   if (process.platform !== 'win32') {
     // The sandbox and filesystem-effect coordinator create internal state under
     // KODAX_HOME. Make that expected initialization visible before capturing the
@@ -5695,7 +5941,25 @@ async function getWorkspaceSession(
     filesystemAccess,
     runtimeReadScopes,
   );
-  if (!doctor.ready && doctor.setupRequired) return undefined;
+  if (process.platform === 'win32') {
+    // Fail closed while this policy's own session reset is in flight, or while
+    // any account-wide ACL transition is pending (undefined-key resets and all
+    // poison transitions are account-wide and block every policy). A different
+    // policy's in-flight reset no longer blocks this one: the durable ACL
+    // owner marker layer remains the authoritative cross-policy serializer.
+    if (pendingWindowsSandboxAclTransitions.size > 0) {
+      return { denied: 'acl_transition_pending' };
+    }
+    if ([...pendingWorkspaceSessionResets].some((reset) => {
+      const trackedKey = trackedPolicyKeys.get(reset);
+      return trackedKey === undefined || trackedKey === '' || trackedKey === policyKey;
+    })) {
+      return { denied: 'session_reset_pending' };
+    }
+  }
+  if (!doctor.ready && doctor.setupRequired) {
+    return { denied: 'doctor_setup_required' };
+  }
   registerWorkspaceSessionBeforeExit();
   const scopedAccess = process.platform === 'win32'
     ? agentHomeAccess
@@ -5727,15 +5991,17 @@ async function getWorkspaceSession(
     ? policyKey
     : `${workspaceKey}\0${accessKey}`;
   if (scopedAccess?.ephemeral === true) {
-    return startWorkspaceSessionClient(
-      workspaceRoot,
-      scopedAccess,
-      filesystemAccess,
-      runtimeReadScopes,
-      policyKey,
-      aclFenceHeld,
-      () => undefined,
-    );
+    return {
+      session: await startWorkspaceSessionClient(
+        workspaceRoot,
+        scopedAccess,
+        filesystemAccess,
+        runtimeReadScopes,
+        policyKey,
+        aclFenceHeld,
+        () => undefined,
+      ),
+    };
   }
   let session = workspaceSessions.get(key);
   if (session) {
@@ -5784,7 +6050,7 @@ async function getWorkspaceSession(
       if (workspaceSessions.get(key) === session) workspaceSessions.delete(key);
     });
   }
-  return session;
+  return { session: await session };
 }
 
 /** Test-only cleanup for mocked or disposable workspace sessions. */
@@ -5877,6 +6143,11 @@ export function createAsrtShellSandbox(
       undefined,
       baselineReadScopes,
       baselineReadScopes,
+    ).then(
+      (admission): WorkspaceSessionClient | undefined => (
+        'denied' in admission ? undefined : admission.session
+      ),
+      (): WorkspaceSessionClient | undefined => undefined,
     );
   if (workspaceWarmup !== undefined) {
     pendingWorkspaceSessionWarmups.add(workspaceWarmup);
@@ -5977,12 +6248,19 @@ export function createAsrtShellSandbox(
           baselineReadScopes,
         );
         let session: WorkspaceSessionClient | undefined;
+        let admissionDenied: WorkspaceSessionDenialReason | undefined;
         try {
           session = await waitForWorkspacePreparation(
             pendingSession,
             shellInput.signal,
             shellInput.deadlineAt,
-          );
+          ).then((admission): WorkspaceSessionClient | undefined => {
+            if ('denied' in admission) {
+              admissionDenied = admission.denied;
+              return undefined;
+            }
+            return admission.session;
+          });
         } catch (error: unknown) {
           if (
             process.platform === 'win32'
@@ -5995,12 +6273,11 @@ export function createAsrtShellSandbox(
             )
           ) {
             const lateRollback = pendingSession.then(
-              async (lateSession) => {
-                if (lateSession) await lateSession.close();
+              async (lateAdmission) => {
+                if ('session' in lateAdmission) await lateAdmission.session.close();
               },
               async () => undefined,
             );
-            trackWorkspaceSessionReset(lateRollback);
             void lateRollback.catch((closeError: unknown) => {
               emitKodaXDiagnostic({
                 source: 'sandbox:workspace-session',
@@ -6016,7 +6293,10 @@ export function createAsrtShellSandbox(
           shellInput.reportObservation?.({
             version: 1,
             state: 'fallback',
-            reason: 'not_ready',
+            reason: admissionDenied === 'session_reset_pending'
+              || admissionDenied === 'acl_transition_pending'
+              ? admissionDenied
+              : 'not_ready',
             execution: 'normal_permission_policy',
           });
           return undefined;
@@ -6419,6 +6699,7 @@ async function executePreparedTextFileMutation(
   workspaceRoot: string,
   request: KodaXTextFileMutationRequest,
   payload: Readonly<Record<string, unknown>>,
+  observeFallback?: (observation: KodaXShellSandboxObservation) => void,
 ): Promise<Readonly<Record<string, unknown>> | undefined> {
   const toolCallId = request.toolCallId ?? `text-file-${randomUUID()}`;
   const invocation = await sandbox.prepare({
@@ -6438,6 +6719,7 @@ async function executePreparedTextFileMutation(
     env: sanitizedEnvironment(),
     fallbackToNormalExecution: false,
     signal: request.signal,
+    reportObservation: observeFallback,
   });
   if (invocation === undefined) return undefined;
 
@@ -6605,6 +6887,15 @@ async function executePreparedTextFileMutation(
   }
 }
 
+function textMutationUnavailableReason(
+  observation: KodaXShellSandboxObservation,
+): KodaXTextFileMutationUnavailableReason {
+  if (observation.state === 'not_selected') return 'not_selected';
+  if (observation.reason === 'session_reset_pending') return 'session_reset_pending';
+  if (observation.reason === 'acl_transition_pending') return 'acl_transition_pending';
+  return 'not_ready';
+}
+
 /** Direct text tools use the same workspace sandbox policy as shell tools. */
 export function createAsrtTextFileMutationSandbox(
   input: CreateAsrtShellSandboxInput,
@@ -6682,11 +6973,17 @@ export function createAsrtTextFileMutationSandbox(
   return {
     canHandlePath,
     async read(request) {
-      const response = await executePreparedTextFileMutation(sandbox, workspaceRoot, request, {
-        action: 'read',
-        path: request.path,
-      });
-      if (response === undefined) return { status: 'unavailable' };
+      let unavailableReason: KodaXTextFileMutationUnavailableReason = 'not_ready';
+      const response = await executePreparedTextFileMutation(
+        sandbox,
+        workspaceRoot,
+        request,
+        { action: 'read', path: request.path },
+        (observation) => {
+          unavailableReason = textMutationUnavailableReason(observation);
+        },
+      );
+      if (response === undefined) return { status: 'unavailable', reason: unavailableReason };
       const snapshot = response.snapshot;
       if (
         response.status !== 'ok'
@@ -6713,15 +7010,24 @@ export function createAsrtTextFileMutationSandbox(
       };
     },
     async write(request) {
+      let unavailableReason: KodaXTextFileMutationUnavailableReason = 'not_ready';
       try {
-        const response = await executePreparedTextFileMutation(sandbox, workspaceRoot, request, {
-          action: 'write',
-          path: request.path,
-          content: request.content,
-          expectedRevision: request.expectedRevision,
-          createParentDirectories: request.createParentDirectories,
-        });
-        if (response === undefined) return { status: 'unavailable' };
+        const response = await executePreparedTextFileMutation(
+          sandbox,
+          workspaceRoot,
+          request,
+          {
+            action: 'write',
+            path: request.path,
+            content: request.content,
+            expectedRevision: request.expectedRevision,
+            createParentDirectories: request.createParentDirectories,
+          },
+          (observation) => {
+            unavailableReason = textMutationUnavailableReason(observation);
+          },
+        );
+        if (response === undefined) return { status: 'unavailable', reason: unavailableReason };
         if (response.status === 'written') return { status: 'written' };
         if (response.status === 'conflict') return { status: 'conflict' };
         throw new Error('Sandboxed text write returned an invalid response.');

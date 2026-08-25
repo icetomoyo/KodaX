@@ -358,6 +358,27 @@ function buildOne(target, version) {
     cpSync(source, join(outDir, filename));
   }
 
+  // 5. Sidecar vendor/srt-win/<arch>/srt-win.exe (Windows only).
+  //
+  // The ASRT library locates srt-win.exe relative to its module URL; inside a
+  // Bun --compile binary that resolves onto the virtual B:\ drive and never
+  // exists, so every sandboxed operation (and `sandbox doctor`/`setup`)
+  // reports the backend unavailable. resolveSrtWinSourcePath() in
+  // src/sandbox-runtime.ts reads this sidecar next to the executable instead.
+  if (target.startsWith('win-')) {
+    const srtWinArch = target.endsWith('x64') ? 'x64' : 'arm64';
+    const srtWinSrc = join(
+      ROOT, 'node_modules', '@anthropic-ai', 'sandbox-runtime',
+      'vendor', 'srt-win', srtWinArch, 'srt-win.exe',
+    );
+    if (!existsSync(srtWinSrc)) {
+      throw new Error(`Missing ${srtWinSrc}. Run 'npm install' first.`);
+    }
+    const srtWinDir = join(outDir, 'vendor', 'srt-win', srtWinArch);
+    mkdirSync(srtWinDir, { recursive: true });
+    cpSync(srtWinSrc, join(srtWinDir, 'srt-win.exe'));
+  }
+
   console.log(`    ✓ ${target}: ${binaryPath}`);
 }
 

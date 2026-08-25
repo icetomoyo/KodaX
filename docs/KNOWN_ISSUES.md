@@ -151,6 +151,8 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 304 | High | Resolved | A long-lived background sandbox command parks a workspace session reset and every later text mutation fails closed as unavailable | v0.7.9x Windows pending-reset fail-closed (sandboxRuntime:5) | v0.7.96 development | 2026-08-24 | 2026-08-25 |
+| 303 | High | Resolved | Bundled Windows binary resolved srt-win.exe onto Bun's virtual `B:\` drive, so the sandbox backend was permanently unavailable | bundled (Bun `--compile`) Windows builds | v0.7.96 development | 2026-08-24 | 2026-08-24 |
 | 302 | High | Resolved | Runtime completion fallback could publish an empty A2A answer before the coding result settled | v0.7.79 Runtime completion fallback | v0.7.95 release | 2026-08-23 | 2026-08-23 |
 | 301 | High | Resolved | Stale invalid learning lock could stall interactive work and TUI teardown lacked a direct terminal restore fallback | shared learning lock / fullscreen TUI | v0.7.95 release | 2026-08-23 | 2026-08-23 |
 | 300 | Medium | Resolved | Sandboxed git `safe.directory` trust set misaligned with authorized roots | v0.7.93 ASRT 0.0.65 git trust | v0.7.94 | 2026-08-20 | 2026-08-21 |
@@ -341,6 +343,130 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 ## Issue Details
 <!-- Full details for each issue - REQUIRED for all issues -->
+
+### 304: A long-lived background sandbox command parks a workspace session reset and every later text mutation fails closed as unavailable
+
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: v0.7.9x Windows pending-reset fail-closed (sandboxRuntime:5)
+- **Fixed**: v0.7.96 development
+- **Created**: 2026-08-24
+- **Resolved**: 2026-08-25
+
+#### Original Problem
+
+Field report (0.7.95): after starting a background bash through `kodax run`,
+every subsequent `write` tool call fails with
+`The Runtime sandboxed file mutation is unavailable`, while `bash` itself keeps
+working through its normal-permission fallback. Rebooting did not help while the
+background command's state persisted.
+
+#### Root Cause
+
+`getWorkspaceSession` fails closed on Windows: while
+`pendingWorkspaceSessionResets` or `pendingWindowsSandboxAclTransitions` is
+non-empty it returns `undefined` immediately (src/sandbox-runtime.ts), so text
+mutation preparation reports `not_ready` and the write tool resolves
+`{status:'unavailable'}`. A session close runs inside
+`withExclusiveFileSystemCleanupFence`; when a long-lived background command
+holds the exclusive filesystem-effect fence (or the Windows ACL owner
+admission), the close cannot finish and the tracked reset stays pending for the
+command's whole lifetime. Every sandboxed text mutation during that window
+fails closed instantly instead of waiting for or reusing the still-live session.
+The pinned regression
+(`fails sandbox admission closed while a workspace session reset is pending`)
+documents the current semantics and the recovery once the reset settles.
+
+#### Resolution
+
+The fix keeps the fail-closed admission gate for genuinely in-flight ACL
+transitions but removes every path where a long-lived background command could
+park one permanently (validated by a three-way research review —
+implementation feasibility, safety red team, and a codex architecture
+cross-check):
+
+- **Deferred close, defer-before-evict** (`close(mode)` in the workspace
+  session client): a lifecycle close defers while the session still holds
+  active leases instead of draining 1.5s and terminating the live background
+  command; the last lease release re-fires it, and the lease-held deferral is
+  diagnosed by an observability-only watchdog (never a kill — a leaked lease is
+  indistinguishable from a long compile at the session layer). `closing`,
+  cache eviction, and the pending-reset registration move inside the cleanup
+  fence action, so a close waiting behind a held fence leaves the session
+  cached and reusable, and the tracked reset is visible only between fence
+  admission and settle. The fence action re-checks leases before committing so
+  a close can never terminate a session under a lease that arrived while it
+  waited. Forced closes (shutdown, `beforeExit`, test reset, RPC-timeout
+  retire) keep the historical drain-then-terminate semantics.
+- **No poison for never-started cleanups**: the filesystem-effect coordinator
+  only escalates a deferred cleanup failure to durable ACL recovery when the
+  cleanup action actually started; admission/bind failures leave the session
+  legitimately owning its marker. This closes the reboot-persistent
+  account-wide lockout that made the field report survive restarts.
+- **Cleanup RPC timeouts retire only the request**: a cleanup legitimately
+  queued behind live work no longer fails every pending wrap and kills the
+  session child — the exact 130-second background-command failure mode.
+- **Lease-aware standalone admission**: standalone SDK admission no longer
+  pre-clears the whole session cache; it closes idle sessions, leaves leased
+  sessions cached and servable, and fails with a structured contention error
+  after a short grace instead of proceeding to the keyless owner over a live
+  session (preserving the standalone path's all-sessions-reset precondition).
+- **Per-policy pending resets**: the admission gate blocks only on same-policy
+  resets plus account-wide transitions; resets without a policy key remain
+  global blockers, and all drain consumers (shutdown, standalone startup,
+  test reset) still wait for every in-flight close via a new entry-registered
+  in-flight set.
+- **Structured unavailability reasons**: text mutations report
+  `not_ready` / `not_selected` / `session_reset_pending` /
+  `acl_transition_pending` through the observation and the user-facing error.
+
+Acceptance tests: fence-held session reuse, cleanup-timeout survival,
+structured standalone contention, global blocking of forced resets, plus the
+retained regression pinning fail-closed admission during a mid-action reset.
+
+### 303: Bundled Windows binary resolved srt-win.exe onto Bun's virtual `B:\` drive, so the sandbox backend was permanently unavailable
+
+- **Priority**: High
+- **Status**: Resolved
+- **Introduced**: bundled (Bun `--compile`) Windows builds
+- **Fixed**: v0.7.96 development
+- **Created**: 2026-08-24
+- **Resolved**: 2026-08-24
+
+#### Original Problem
+
+On a customer machine running the bundled `dist/binary/win-x64/kodax.exe`,
+`kodax sandbox doctor` and `kodax sandbox setup` failed with
+`srt-win.exe not found. … Looked in: B:\vendor\srt-win\x64\srt-win.exe,
+B:\vendor\srt-win-src\target\release\srt-win.exe`, and every `write` tool call
+reported `The Runtime sandboxed file mutation is unavailable`. Rebooting did
+not help. `bash` kept working through its normal-permission fallback.
+
+#### Root Cause
+
+Bun `--compile` mounts embedded modules on the virtual drive `B:\~bun\root`.
+The ASRT library's `getSrtWinPath()` is module-URL relative, so inside the
+bundled binary its candidates resolve onto `B:\vendor\...` and never exist.
+KodaX stages srt-win.exe through `prepareWindowsSandboxRunner()`
+(`readFile(getSrtWinPath())`), which is the single library-default resolution
+point; when it throws, the whole Windows sandbox backend is unavailable. A
+first sidecar-only repair attempt still left `kodax sandbox setup` broken on
+machines without a previously provisioned sandbox account because the setup
+path called `installWindowsSandbox()` without the prepared-runner override, and
+the ASRT install helper re-ran the same module-relative lookup.
+
+#### Resolution
+
+`scripts/build-binary.mjs` now ships
+`vendor/srt-win/<arch>/srt-win.exe` next to the bundled executable (build fails
+if the packaged binary is missing). `resolveSrtWinSourcePath()` prefers that
+sidecar in `KODAX_BUNDLED` builds and falls back to the library lookup for
+development and mocked layouts; `prepareWindowsSandboxRunner()` stages from it.
+`setupWindowsSandboxRuntimeWithLock()` prepares the runner first and passes
+`installWindowsSandbox({ srtWin: runner.srtWin })`, so setup no longer depends
+on the library lookup on any layout. Covered by the
+`bundled srt-win sidecar resolution` test group, including the setup-through-
+runner assertion.
 
 ### 302: Runtime completion fallback could publish an empty A2A answer before the coding result settled
 
@@ -13038,11 +13164,43 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 181 (27 Open, 154 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 183 (27 Open, 156 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-08-25: Issue 304 resolved (v0.7.96 development)
+- Workspace session closes now defer behind live leases (defer-before-evict,
+  lease re-check at fence commit, entry-registered in-flight drain set) so a
+  long-lived background command keeps its session reusable instead of parking
+  a reset that fails every later text mutation closed.
+- Cleanups that never started no longer poison the Windows sandbox owner
+  account; cleanup RPC timeouts retire only the timed-out request; and
+  standalone SDK admission fails structurally behind leased sessions instead
+  of pre-clearing the cache and terminating them.
+- Pending session resets are scoped per policy key (keyless resets and all
+  ACL transitions stay globally blocking), and text mutations carry
+  structured unavailability reasons through to the user-facing error.
+
+### 2026-08-24: Issue 304 opened
+- Documented the Windows pending-reset fail-closed collision with long-lived
+  background sandbox commands: a parked workspace session close keeps
+  `pendingWorkspaceSessionResets` non-empty, and `getWorkspaceSession` returns
+  `undefined` immediately, so every later sandboxed text mutation reports
+  unavailable. Pinned current semantics with a regression test; deep fix needs
+  a design decision (bounded wait, lease-aware close abandonment, or fence-owner
+  sharing).
+
+### 2026-08-24: Issue 303 resolved (v0.7.96 development)
+- Bundled Windows builds now ship a `vendor/srt-win/<arch>/srt-win.exe` sidecar
+  and resolve it from `resolveSrtWinSourcePath()` instead of the ASRT
+  library's module-relative lookup, which points onto Bun's virtual `B:\`
+  drive inside `--compile` binaries.
+- Windows sandbox setup prepares the runner first and passes its resolved
+  spawn descriptor to `installWindowsSandbox()`, so account provisioning no
+  longer re-runs the broken library lookup on machines without an existing
+  sandbox account.
 
 ### 2026-08-23: Issue 302 resolved (v0.7.95)
 - Delayed the coding `onComplete` signal until extension completion and
