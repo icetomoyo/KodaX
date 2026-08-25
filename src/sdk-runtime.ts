@@ -13291,40 +13291,68 @@ function createRuntimePersistence(
       if (!entry.isDirectory()) continue;
       const file = path.join(runsDir, entry.name, "events.jsonl");
       if (!fs.existsSync(file)) continue;
-      const size = fs.statSync(file).size;
-      let readBytes = Math.min(size, MAX_RUNTIME_EVENT_SEQUENCE_TAIL_BYTES);
-      while (readBytes > 0) {
-        const buffer = Buffer.allocUnsafe(readBytes);
-        const descriptor = fs.openSync(file, "r");
-        try {
-          fs.readSync(descriptor, buffer, 0, readBytes, size - readBytes);
-        } finally {
-          fs.closeSync(descriptor);
-        }
-        const lines = buffer.toString("utf-8").split(/\r?\n/);
-        if (readBytes < size) lines.shift();
-        let foundCompleteEvent = false;
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const parsed: unknown = JSON.parse(line);
-            if (
-              isRuntimeEvent(parsed)
-              && parsed.sessionId === sessionId
-              && runtimeEventHasValidCursor(parsed)
-              && parsed.cursor.journalEpoch === journalEpoch
-              && Number.isSafeInteger(parsed.seq)
-            ) {
-              maxSeq = Math.max(maxSeq, parsed.seq);
-              foundCompleteEvent = true;
-            }
-          } catch {
-            // Keep expanding the tail until a complete event is found.
-          }
-        }
-        if (foundCompleteEvent || readBytes === size) break;
-        readBytes = Math.min(size, readBytes * 2);
+      try {
+        maxSeq = Math.max(
+          maxSeq,
+          readPersistedEventSeqTail(file, sessionId, journalEpoch),
+        );
+      } catch (error: unknown) {
+        // An unreadable ledger (disk-sector failure, filter state, EIO) must
+        // never fail session creation: skip it for sequence recovery. The
+        // diagnostic is emitted directly — reserving a persistence-warning
+        // event here would re-enter the sequence lock the caller already
+        // holds.
+        emitKodaXDiagnostic({
+          source: "runtime.persistence",
+          level: "warn",
+          message: `Unreadable run event ledger skipped during sequence recovery: ${file} `
+            + '(run history stays on disk untouched)',
+          detail: error,
+        });
       }
+    }
+    return maxSeq;
+  };
+
+  const readPersistedEventSeqTail = (
+    file: string,
+    sessionId: string,
+    journalEpoch: string,
+  ): number => {
+    let maxSeq = 0;
+    const size = fs.statSync(file).size;
+    let readBytes = Math.min(size, MAX_RUNTIME_EVENT_SEQUENCE_TAIL_BYTES);
+    while (readBytes > 0) {
+      const buffer = Buffer.allocUnsafe(readBytes);
+      const descriptor = fs.openSync(file, "r");
+      try {
+        fs.readSync(descriptor, buffer, 0, readBytes, size - readBytes);
+      } finally {
+        fs.closeSync(descriptor);
+      }
+      const lines = buffer.toString("utf-8").split(/\r?\n/);
+      if (readBytes < size) lines.shift();
+      let foundCompleteEvent = false;
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const parsed: unknown = JSON.parse(line);
+          if (
+            isRuntimeEvent(parsed)
+            && parsed.sessionId === sessionId
+            && runtimeEventHasValidCursor(parsed)
+            && parsed.cursor.journalEpoch === journalEpoch
+            && Number.isSafeInteger(parsed.seq)
+          ) {
+            maxSeq = Math.max(maxSeq, parsed.seq);
+            foundCompleteEvent = true;
+          }
+        } catch {
+          // Keep expanding the tail until a complete event is found.
+        }
+      }
+      if (foundCompleteEvent || readBytes === size) break;
+      readBytes = Math.min(size, readBytes * 2);
     }
     return maxSeq;
   };

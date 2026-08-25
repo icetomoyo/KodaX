@@ -2361,6 +2361,68 @@ describe("createKodaXRuntime", () => {
     }
   });
 
+  it("skips unreadable run event ledgers during session sequence recovery", async () => {
+    // A run ledger that cannot be read at the fs level (disk-sector failure,
+    // filter state, EIO) must degrade to a skip: the sequence scan must never
+    // fail session creation or the first turn.
+    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const runtimeDir = path.join(tempRoot, ".kodax", "runtime");
+    const corruptDir = path.join(runtimeDir, "runs", "unreadable-ledger-eio");
+    await fs.mkdir(corruptDir, { recursive: true });
+    const corruptFile = path.join(corruptDir, "events.jsonl");
+    await fs.writeFile(corruptFile, `${"x".repeat(64)}\n`.repeat(64), "utf-8");
+    const sentinelFd = 0x7ffffff0;
+    const originalOpenSync = mutableNodeFs.openSync;
+    const originalReadSync = mutableNodeFs.readSync;
+    const originalCloseSync = mutableNodeFs.closeSync;
+    mutableNodeFs.openSync = ((file, flags, mode) => (
+      String(file) === corruptFile
+        ? sentinelFd
+        : originalOpenSync(file, flags, mode)
+    )) as typeof nodeFs.openSync;
+    mutableNodeFs.readSync = ((fd, ...rest) => {
+      if (fd === sentinelFd) {
+        throw Object.assign(new Error("EIO: i/o error, read"), { code: "EIO" });
+      }
+      return originalReadSync(fd, ...rest);
+    }) as typeof nodeFs.readSync;
+    mutableNodeFs.closeSync = ((fd) => {
+      if (fd === sentinelFd) return;
+      return originalCloseSync(fd);
+    }) as typeof nodeFs.closeSync;
+    syncBuiltinESMExports();
+    let runtime: Awaited<ReturnType<typeof createKodaXRuntime>> | undefined;
+    try {
+      runtime = await createKodaXRuntime({
+        homeDir: tempRoot,
+        defaultProvider: "mock-provider",
+      });
+      const session = await runtime.sessions.create({
+        sessionId: "unreadable-ledger-session",
+      });
+      codingMock.startKodaX.mockImplementation((options: KodaXOptions): RunningSession => (
+        fakeRunningSession(options, Promise.resolve({
+          success: true,
+          lastText: "unreadable ledger witness done",
+          messages: [],
+          sessionId: session.id,
+        }))
+      ));
+      const handle = await runtime.runs.start({
+        sessionId: session.id,
+        prompt: "unreadable ledger witness",
+      });
+      expect(handle).toBeTruthy();
+      await runtime.runs.abort(handle.runId);
+    } finally {
+      mutableNodeFs.openSync = originalOpenSync;
+      mutableNodeFs.readSync = originalReadSync;
+      mutableNodeFs.closeSync = originalCloseSync;
+      syncBuiltinESMExports();
+      await runtime?.close();
+    }
+  });
+
   it("marks a clean run-status index dirty before a recovered Run becomes terminal", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const runtimeDir = path.join(tempRoot, ".kodax", "runtime");
