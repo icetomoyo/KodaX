@@ -211,4 +211,29 @@ describe('FEATURE_258 Runtime agent store', () => {
     const store = createRuntimeAgentExecutorPlaneStore(tempDir);
     await expect(store.loadEvents(task.taskId)).rejects.toThrow(/strictly increasing positive sequence/i);
   });
+
+  it('skips an unreadable task snapshot instead of failing the store scan', async () => {
+    // An fs-level unreadable snapshot (disk-sector failure, filter state,
+    // EIO/EISDIR) must never fail loadTasks — the store scan feeds Runtime
+    // creation, so a corrupt historical snapshot would brick every startup.
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-agent-store-'));
+    const healthy = createTaskSnapshot('healthy-task');
+    writeTaskSnapshot(
+      tempDir,
+      createHash('sha256').update(healthy.taskId).digest('hex'),
+      healthy,
+    );
+    const unreadableDirectory = createHash('sha256').update('unreadable-task').digest('hex');
+    // A directory named snapshot.json makes every read attempt fail at the
+    // fs level — the same failure shape as a bad disk sector.
+    fs.mkdirSync(
+      path.join(tempDir, 'tasks', unreadableDirectory, 'snapshot.json'),
+      { recursive: true },
+    );
+
+    const store = createRuntimeAgentExecutorPlaneStore(tempDir);
+    const tasks = await store.loadTasks();
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]?.taskId).toBe('healthy-task');
+  });
 });

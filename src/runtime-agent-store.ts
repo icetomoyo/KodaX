@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { emitKodaXDiagnostic } from '@kodax-ai/agent';
+
 import type {
   AgentExecutorPlaneStore,
   AgentTaskEvent,
@@ -140,7 +142,23 @@ export function createRuntimeAgentExecutorPlaneStore(
         if (!entry.isDirectory()) continue;
         const file = path.join(tasksDir, entry.name, 'snapshot.json');
         if (!fs.existsSync(file)) continue;
-        const parsed = parseJson(file);
+        let parsed: unknown;
+        try {
+          parsed = parseJson(file);
+        } catch (error: unknown) {
+          // An fs-level unreadable snapshot (disk-sector failure, filter
+          // state, EIO) must never fail the store scan — this feeds Runtime
+          // creation, so one corrupt historical snapshot would brick every
+          // startup for external-agent embedders. Skip it visibly instead.
+          emitKodaXDiagnostic({
+            source: 'runtime.agent-store',
+            level: 'warn',
+            message: `Unreadable Runtime agent task snapshot skipped: ${file} `
+              + '(the snapshot stays on disk untouched)',
+            detail: error,
+          });
+          continue;
+        }
         if (!isTask(parsed)) throw new Error(`Invalid Runtime agent task shape: ${file}`);
         snapshots.push({ directoryName: entry.name, file, task: parsed });
       }
