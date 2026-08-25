@@ -1191,11 +1191,21 @@ async function runCleanupLeaseWorkflow<T>(
   onLeaseReleased?: (lease: FileSystemMutationLeaseRelease) => void,
 ): Promise<T> {
   const lease = await acquireEffectLease('cleanup', sandboxPolicyKey, deadline.expire);
-  // Publish the durable lease before binding, because bind may fail after the
-  // coordinator has recorded an owner that only the Job-backed janitor can settle.
-  onLeaseAcquired?.(lease);
-  observeCleanupLeaseRelease(lease, onLeaseReleased);
-  await lease.bindEffectProcess(cleanupProcess.pid, cleanupProcess.windowsJobContained);
+  try {
+    // Publish the durable lease before binding, because bind may fail after the
+    // coordinator has recorded an owner that only the Job-backed janitor can settle.
+    onLeaseAcquired?.(lease);
+    observeCleanupLeaseRelease(lease, onLeaseReleased);
+    await lease.bindEffectProcess(cleanupProcess.pid, cleanupProcess.windowsJobContained);
+  } catch (error) {
+    // A lease that was acquired but never bound must not stay published: a
+    // live daemon would never see it reclaimed as stale, and every later
+    // filesystem effect would queue behind it. Release best-effort before
+    // surfacing the failure; the cleanup action never started, so there is
+    // no partially applied ACL state to recover.
+    await lease().catch(() => undefined);
+    throw error;
+  }
   const result = await action();
   markActionCompleted();
   await finishAndReleaseFileSystemEffectLease(lease);

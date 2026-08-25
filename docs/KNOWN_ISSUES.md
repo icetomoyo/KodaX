@@ -151,6 +151,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 305 | Medium | Open | A cross-Runtime idle close queues an account-wide cleanup transition that blocks same-policy writes in the queueing Runtime until the other Runtime's command completes | v0.7.9x durable cleanup-transition serialization (pre-existing; surfaced by the Issue-304 cross-review) | — | 2026-08-25 | — |
 | 304 | High | Resolved | A long-lived background sandbox command parks a workspace session reset and every later text mutation fails closed as unavailable | v0.7.9x Windows pending-reset fail-closed (sandboxRuntime:5) | v0.7.96 development | 2026-08-24 | 2026-08-25 |
 | 303 | High | Resolved | Bundled Windows binary resolved srt-win.exe onto Bun's virtual `B:\` drive, so the sandbox backend was permanently unavailable | bundled (Bun `--compile`) Windows builds | v0.7.96 development | 2026-08-24 | 2026-08-24 |
 | 302 | High | Resolved | Runtime completion fallback could publish an empty A2A answer before the coding result settled | v0.7.79 Runtime completion fallback | v0.7.95 release | 2026-08-23 | 2026-08-23 |
@@ -344,6 +345,37 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 ## Issue Details
 <!-- Full details for each issue - REQUIRED for all issues -->
 
+### 305: A cross-Runtime idle close queues an account-wide cleanup transition that blocks same-policy writes in the queueing Runtime until the other Runtime's command completes
+
+- **Priority**: Medium
+- **Status**: Open
+- **Introduced**: v0.7.9x durable cleanup-transition serialization (pre-existing; surfaced by the Issue-304 cross-review)
+- **Created**: 2026-08-25
+
+#### Original Problem
+
+Two KodaX processes sharing one machine home: Runtime B runs a long background
+command (holding its durable shell lease); Runtime A finishes a write, goes
+idle, and its lifecycle session close enters the durable cleanup fence. The
+cleanup lease is deliberately policy-agnostic and account-wide
+(`file-mutation-queue.ts` — pinned by the
+`keeps cleanup queued past 30 seconds and blocks same-policy admission`
+regression), so A's queued cleanup waits behind B's lease — and A's next
+same-policy write cannot acquire its filesystem-effect lease either, failing
+after ~30 s with `A model filesystem effect is already active; retry after it
+finishes` until B's command completes. In-process (single Runtime) the
+Issue-304 fix prevents the idle close from even starting behind a live lease;
+only cross-process leases are invisible to that check.
+
+#### Resolution Direction
+
+Narrow fix (candidate for the next patch line): probe the durable fence
+before committing a lifecycle close — if cleanup admission would be blocked by
+a foreign lease, defer the close (session stays cached and servable, re-armed
+by retry) instead of queueing the account-wide transition. Structural fix:
+ADR-065 P0/P2 removes the teardown transaction (and with it the queued
+cleanup-transition class entirely).
+
 ### 304: A long-lived background sandbox command parks a workspace session reset and every later text mutation fails closed as unavailable
 
 - **Priority**: High
@@ -423,6 +455,16 @@ cross-check):
 Acceptance tests: fence-held session reuse, cleanup-timeout survival,
 structured standalone contention, global blocking of forced resets, plus the
 retained regression pinning fail-closed admission during a mid-action reset.
+
+Residuals, deliberately accepted: standalone's idle/leased partition keeps a
+few-instruction TOCTOU that fails safe through the durable owner layer, a
+cross-policy cold bootstrap can still be unavailable while a foreign owner is
+live (structured, retryable), and a cross-Runtime idle close can still queue
+the account-wide cleanup transition tracked as Issue 305. These residuals —
+and the owner-exclusivity protocol they belong to — are resolved structurally
+by
+[ADR-065](ADR.md##adr-065-windows-sandbox-migrates-to-token-carried-capability-scoping-over-an-append-only-acl-substrate)
+(token-carried capability scoping over an append-only ACL substrate).
 
 ### 303: Bundled Windows binary resolved srt-win.exe onto Bun's virtual `B:\` drive, so the sandbox backend was permanently unavailable
 

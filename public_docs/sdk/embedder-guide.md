@@ -6158,6 +6158,19 @@ are normalized to the hostname/port pair enforced by ASRT's network proxy. It
 never silently runs without containment: sandbox unavailability is the typed
 `{ status: 'unavailable', sandboxed: false, doctor }` result.
 
+Since v0.7.96, standalone admission on Windows coexists with live workspace
+sessions instead of terminating them: while a Runtime-owned session still
+holds an active lease (typically a long-running background command),
+`runKodaXSandboxed` rejects with a structured contention error after a short
+grace period rather than killing the session. Treat it like other transient
+unavailability — surface the message, retry after the background command
+completes. SDK consumers of `parseRuntimeEvent` also see two new
+`tool.sandbox` fallback reasons, `session_reset_pending` and
+`acl_transition_pending`, alongside `not_ready`, `prepare_failed`, and
+`backend_failed`; text-mutation unavailability surfaces the same reason in the
+user-facing error (for example
+`The Runtime sandboxed file mutation is unavailable. (session_reset_pending)`).
+
 KodaX's own local workspace-shell policy supplies a stricter `denyRead` set
 than the generic SDK default: common home credential locations, sensitive
 private-key/environment filenames, and the complete resolved agent home are

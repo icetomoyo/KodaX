@@ -94,6 +94,29 @@ bounds before that trust. Sandboxed text-helper stdin failures stay on the
 operation Promise. A missing workspace directory omits the concurrent text
 sandbox at Run start instead of aborting the Run.
 
+## Background commands and session reuse (v0.7.96)
+
+A long-lived background command (for example a dev server started through the
+`bash` tool) no longer interferes with later sandboxed tool calls on Windows:
+
+- The workspace session it shares stays cached and reusable, so subsequent
+  `write`/`edit` calls execute sandboxed instead of failing or falling back.
+- Session cleanup defers behind live leases and never terminates a running
+  background command; cleanup converges automatically after the command exits
+  (worst case ~5 s later), and a deferred close that waits on a leaked lease is
+  reported through diagnostics rather than killed.
+- Cleanups that never started no longer poison the Windows sandbox account, so
+  the "unavailable until reboot" lockout this produced in v0.7.95 is gone.
+- Standalone SDK admission (see below) fails with a structured contention
+  error while a leased session is active instead of terminating it.
+
+When a sandboxed text mutation is unavailable, the error carries a structured
+reason: `not_ready` (setup or readiness), `not_selected` (the call was not
+admitted to the sandbox policy), `session_reset_pending`, or
+`acl_transition_pending` (a same-policy reset or an account-wide ACL
+transition is in flight; retry after it settles). Runtime event consumers see
+the same reasons on `tool.sandbox` fallback observations.
+
 ## SDK sandbox
 
 SDK callers pass the same shape per Run as `KodaXOptions.sandbox`, so concurrent
@@ -107,7 +130,12 @@ await runKodaX({
 ```
 
 SDK embedders can also use the standalone sandbox capability independently
-through `@kodax-ai/kodax/sandbox`.
+through `@kodax-ai/kodax/sandbox`. Since v0.7.96, a standalone sandboxed run
+does not terminate a live workspace session: while a leased session is active
+(typically a long-running background command inside a Runtime), standalone
+admission rejects with a structured contention error after a short grace
+period — retry once the background command completes. Other `unavailable`
+results keep carrying the doctor snapshot for setup guidance.
 
 ## See also
 

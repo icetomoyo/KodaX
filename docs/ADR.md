@@ -5261,3 +5261,123 @@ observable without changing shell or sandbox fail-closed policy.
 **Rejected alternatives**: unbounded host callbacks, trusting late dialog
 answers, accepting arbitrary defaults, retrying a stale tail unchanged, or
 silently ignoring background persistence errors.
+
+## ADR-065: Windows Sandbox Migrates to Token-Carried Capability Scoping over an Append-Only ACL Substrate
+
+**Status**: Accepted (2026-08-25) — implementation gated on a maintainer go
+signal after the v0.7.96 patch line.
+
+**Driver**: the Windows sandbox runs every sandboxed process as one shared
+machine account (`srt-sandbox`). Effective permission is therefore the
+account's path-ACL state, so every policy change must grant and revoke ACLs,
+half-applied state is unsafe, and the account needs a single-writer discipline
+during ACL mutations. That discipline — owner admission, exclusive fences,
+poison tickets, recovery loops — is correct engineering under the model, but it
+is also a standing availability liability: Issues 301-304 (and the B:\
+resolution failure in 303) all trace to coordination state interacting with
+long-lived commands or broken installations, not to containment itself. A
+cross-codebase study of Codex (codex-rs, `C:\Works\PubProj\codex`, two
+research passes with file:line evidence) demonstrated a model where permission
+lives in each process's restricted token (per-writable-root capability SIDs)
+and on-disk ACLs are append-only and therefore inert when stale. Under that
+model there is no teardown, no single writer, no owner exclusivity, and no
+class of "pending cleanup blocks admission" failures — the class that produced
+304. The same study verified four discipline holes in Codex's implementation
+(unlocked read-modify-write on `cap_sid` with silent regeneration, torn-write
+hard failure on `deny_read_acl_state.json` requiring human deletion, no
+teardown or GC for granted ACEs, and unreaped background processes); KodaX
+will not copy those.
+
+**Decision**: migrate the Windows backend to Codex-shaped permission economics
+— token-carried capability scoping over an append-only, idempotent ACL
+substrate — while keeping KodaX's crash discipline (atomic, versioned state
+writes; durable recovery; fail-closed admission with structured reasons) and
+KodaX's stricter text-mutation safety (same-path FIFO, file-identity checks,
+revision CAS). Concretely:
+
+1. **Capability issuance**: one stable capability SID per (workspace root,
+   write-root) pair, persisted under KODAX_HOME with atomic
+   temporary-file-plus-rename writes and a versioned format; concurrent
+   writers merge by re-reading and re-appending, never last-writer-wins.
+2. **Token construction** (srt-win, vendored source in-tree): sandboxed
+   processes launch with a restricted token whose enabling-SID set contains
+   exactly the capability SIDs of the current policy's writable roots.
+   Stale ACEs on disk name SIDs no live token carries, so old grants are
+   inert by construction.
+3. **Append-only ACL substrate**: grants become idempotent
+   `ensure_allow_write_aces`-style operations (single-call atomic, safe to
+   repeat, safe after crash); revocation-by-removal is retired in favor of
+   token scoping plus a bounded reconcile sweep for deny-read entries, which
+   keeps its explicit revoke path.
+4. **Owner exclusivity retires**: with no mutating teardown there is no
+   single-writer invariant to enforce. The pending-reset admission gate, ACL
+   owner markers, poison tickets, and the standalone keyless-owner
+   precondition reduce to (a) capability-file locking, (b) the deny-read
+   reconciler's short machine-global transaction, and (c) process containment
+   (Job objects) — which remain.
+5. **Session model stays**: per-workspace ASRT sessions remain the execution
+   substrate (they amortize policy setup and enable the v0.7.94 concurrent
+   text/shell overlap); only the permission substrate under them changes.
+   The Issue-304 close semantics (defer-before-evict, lease re-check,
+   observability-only watchdog) carry over unchanged.
+
+**Migration phases** (each independently shippable, each with a rollback):
+
+- **P0 — substrate parity (no behavior change)**: reorganize srt-win ACL
+  helpers into idempotent ensure/reconcile primitives with atomic state
+  writes; add capability-SID issuance alongside the existing grant/revoke
+  flow without using it for enforcement. *Accept*: existing suites green;
+  capability file survives kill -9 mid-write; repeated ensure converges.
+- **P1 — dual-mode tokens**: restricted tokens carry capability SIDs while
+  the account ACLs remain authoritative; doctor reports mode `dual`.
+  *Accept*: sandboxed commands succeed with an empty-permission account if
+  and only if the policy grants nothing (proves scoping works); deny-read
+  reconciler still enforced; rollback = config flag back to `acl`.
+- **P2 — append-only enforcement**: stop revoking allow-ACEs on session
+  teardown; permission is token-scoped. Remove owner exclusivity and the
+  pending-reset gate; standalone admission loses its keyless-owner
+  precondition. *Accept*: the Issue-304 acceptance tests pass by
+  construction (no coordination state to race); cross-policy concurrent
+  bootstraps succeed; crash-injection suite (kill during ensure, during
+  token construction, during reconcile) leaves inert or absent state, never
+  over-permissioned state.
+- **P3 — residue GC and teardown of the old protocol**: a bounded sweep
+  collects orphaned capability SIDs' ACEs (bounded per-run quota, best
+  effort); the poison/recovery machinery is retained only for deny-read
+  reconciliation and process containment. *Accept*: steady-state ACL count
+  is bounded on a long-lived machine; uninstall removes account, filters,
+  and ACEs.
+
+**Security review gates** (P1 and P2 mandatory): token construction must be
+proven unable to widen a policy (the enabling-SID set is derived only from
+the policy's declared roots, never from on-disk ACEs); a corrupted capability
+file must fail closed into re-issuance with fresh SIDs and a diagnostic (the
+opposite of Codex's silent regeneration); reconcile transactions stay
+machine-global and short.
+
+**Consequences**: the 303/304 failure class is eliminated structurally rather
+than patched; cross-policy cold-start windows close; the coordination surface
+that Issues 291/295/297/299 hardened shrinks to file locks plus the reconcile
+transaction. Cost: a vendored-Rust protocol change with a two-release
+dual-mode window, plus a one-time on-disk migration for existing installs
+(detected at doctor time; old account state is forward-compatible because
+P1/P2 only add). The maintainer's efficiency-first principle is served on both
+ends: fewer availability failures, and no new restrictions — enforcement
+narrows to what each process's token says.
+
+**Rejected alternatives**: keeping the single-account teardown model and
+patching coordination indefinitely (accepted through v0.7.96; each new
+long-lived-command shape risks a new 304); copying Codex wholesale including
+its state-file discipline (rejected: torn-write human-intervention failures
+and silent orphaning violate KodaX's crash-recovery bar); adopting
+owner-join/shared-owner protocols inside the current model (rejected: highest
+risk per the Issue-304 red team, and discarded by P2 anyway); removing the
+session layer (rejected: sessions amortize setup and carry the concurrent
+text/shell overlap that v0.7.94 delivered).
+
+**Evidence base**: Codex mechanism research (2026-08-24/25, two passes:
+manager.rs seatbelt/bwrap/restricted-token model, cap.rs capability SIDs,
+token.rs/spawn_prep.rs restricted-token construction, deny_read_state.rs
+reconciler, job.rs preserve_descendants; four documented holes as above);
+Issue-304 three-way design review (implementation feasibility, safety red
+team, codex cross-check) in this repository's session records.

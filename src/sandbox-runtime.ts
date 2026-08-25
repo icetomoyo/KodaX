@@ -3450,10 +3450,7 @@ async function runBrokerResult(
         });
         const stillLeased = await closeIdleCachedWorkspaceSessionsForStandalone();
         if (stillLeased > 0) {
-          throw new Error(
-            `A leased workspace sandbox session is still active (${String(stillLeased)}); `
-            + 'standalone sandbox admission is unavailable until its background command completes.',
-          );
+          throw new WorkspaceSessionLeaseContentionError(stillLeased);
         }
       }
       await ensureWindowsSandboxAclRecovery();
@@ -4584,6 +4581,12 @@ let workspaceSessionCleanupTimeoutMs = WORKSPACE_SESSION_CLEANUP_TIMEOUT_MS;
 let standaloneBrokerShutdownSettlementTimeoutMs = STANDALONE_BROKER_SHUTDOWN_SETTLEMENT_TIMEOUT_MS;
 const MAX_CACHED_SCOPED_WORKSPACE_SESSIONS = 8;
 const workspaceSessions = new Map<string, Promise<WorkspaceSessionClient>>();
+/**
+ * Live ephemeral sessions (reviewed Agent Home and similar) never enter the
+ * session cache, so lifecycle guards that only enumerate the cache — notably
+ * standalone admission — must consult this set to see them.
+ */
+const liveEphemeralWorkspaceSessions = new Set<Promise<WorkspaceSessionClient>>();
 const pendingWorkspaceSessionWarmups = new Set<Promise<WorkspaceSessionClient | undefined>>();
 const pendingWorkspaceSessionResets = new Set<Promise<void>>();
 /**
@@ -4721,6 +4724,17 @@ function standaloneBrokerShutdownTimeoutError(timeoutMs: number): Error {
   );
 }
 
+/** Standalone sandbox admission contended with a live leased workspace session. */
+export class WorkspaceSessionLeaseContentionError extends Error {
+  constructor(liveSessions: number) {
+    super(
+      `A leased workspace sandbox session is still active (${String(liveSessions)}); `
+        + 'standalone sandbox admission is unavailable until its background command completes.',
+    );
+    this.name = 'WorkspaceSessionLeaseContentionError';
+  }
+}
+
 async function waitForStandaloneBrokerSettlementsBeforeShutdown(): Promise<void> {
   if (pendingStandaloneBrokerSettlements.size === 0) return;
   let timer: NodeJS.Timeout | undefined;
@@ -4791,7 +4805,7 @@ async function closeCachedWorkspaceSessions(): Promise<unknown[]> {
  */
 async function closeIdleCachedWorkspaceSessionsForStandalone(): Promise<number> {
   const failures: unknown[] = [];
-  let leased = 0;
+  let leased = liveEphemeralWorkspaceSessions.size;
   for (const [key, pendingSession] of [...workspaceSessions.entries()]) {
     let session: WorkspaceSessionClient;
     try {
@@ -5655,11 +5669,21 @@ async function startWorkspaceSessionClientWithFence(
     },
     async close(mode: 'lifecycle' | 'forced' = 'lifecycle') {
       if (closePromise) {
+        if (mode !== 'forced') return closePromise;
         // A forced caller (shutdown/reset) piggybacking an in-flight lifecycle
         // close must still get forced semantics: the close below may not skip
         // for a lease that arrived while it waited for admission.
-        if (mode === 'forced') forcedRequested = true;
-        return closePromise;
+        forcedRequested = true;
+        const piggybacked = closePromise;
+        const rerunForcedIfUnsettled = async (): Promise<void> => {
+          // If the piggybacked close skipped or failed without closing the
+          // session, run the full forced path (lease drain, terminate,
+          // keyless reset tracking) instead of reporting success.
+          if (!exited && closePromise !== piggybacked) {
+            await client.close('forced');
+          }
+        };
+        return piggybacked.then(rerunForcedIfUnsettled, rerunForcedIfUnsettled);
       }
       if (mode === 'lifecycle' && !exited && activeLeases > 0) {
         // A live background command still holds this session. Defer the close
@@ -5681,6 +5705,7 @@ async function startWorkspaceSessionClientWithFence(
       let aclActionStarted = false;
       let aclRecoveryConfirmed = false;
       let closeSkippedForNewLease = false;
+      let closeFailed = false;
       let settleTrackedReset: (() => void) | undefined;
       const current = (async () => {
         if (idleTimer) clearTimeout(idleTimer);
@@ -5743,6 +5768,7 @@ async function startWorkspaceSessionClientWithFence(
           },
         );
       })().catch(async (error: unknown) => {
+        closeFailed = true;
         setWorkspaceSessionReferenced(child, false);
         if (
           !aclRecoveryConfirmed
@@ -5753,7 +5779,11 @@ async function startWorkspaceSessionClientWithFence(
         }
         throw error;
       }).finally(() => {
-        if (closeSkippedForNewLease && closePromise === current) {
+        // Release the latch whenever the caller-visible close did not commit:
+        // a skip re-arms from the lease release, and a caller-deadline timeout
+        // or failure must never pin a settled promise that blocks every later
+        // close (the background workflow keeps converging on its own).
+        if ((closeSkippedForNewLease || closeFailed) && closePromise === current) {
           closePromise = undefined;
         }
         inFlightWorkspaceSessionCloses.delete(inflightClose);
@@ -5991,17 +6021,22 @@ async function getWorkspaceSession(
     ? policyKey
     : `${workspaceKey}\0${accessKey}`;
   if (scopedAccess?.ephemeral === true) {
-    return {
-      session: await startWorkspaceSessionClient(
-        workspaceRoot,
-        scopedAccess,
-        filesystemAccess,
-        runtimeReadScopes,
-        policyKey,
-        aclFenceHeld,
-        () => undefined,
-      ),
-    };
+    const ephemeralClient = startWorkspaceSessionClient(
+      workspaceRoot,
+      scopedAccess,
+      filesystemAccess,
+      runtimeReadScopes,
+      policyKey,
+      aclFenceHeld,
+      () => {
+        liveEphemeralWorkspaceSessions.delete(ephemeralClient);
+      },
+    );
+    liveEphemeralWorkspaceSessions.add(ephemeralClient);
+    void ephemeralClient.catch(() => {
+      liveEphemeralWorkspaceSessions.delete(ephemeralClient);
+    });
+    return { session: await ephemeralClient };
   }
   let session = workspaceSessions.get(key);
   if (session) {

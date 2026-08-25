@@ -187,6 +187,14 @@ jobs:
             runtime-worker.js
             constructed-handler-worker.js
           )
+          # vendor/srt-win/<arch>/srt-win.exe is only produced for win-* targets
+          # (build-binary step 5); other platforms have no vendor directory.
+          if [ -d vendor ]; then
+            sidecars+=(vendor)
+          elif [ "${target#win-}" != "${target}" ]; then
+            echo "Missing release sidecar: vendor (required for Windows targets)" >&2
+            exit 1
+          fi
           for sidecar in "${sidecars[@]}"; do
             test -e "$sidecar" || { echo "Missing release sidecar: $sidecar" >&2; exit 1; }
           done
@@ -194,7 +202,8 @@ jobs:
           if [ "${{ matrix.archive }}" = "zip" ]; then
             archive_file="${archive_base}.zip"
             # Windows 10+ ships with bsdtar; powershell Compress-Archive also works.
-            powershell -Command "Compress-Archive -Path kodax.exe,builtin,provider-capabilities.json,semantic-worker.js,runtime-worker.js,constructed-handler-worker.js -DestinationPath '$archive_file' -Force"
+            # Zip archives are Windows-only targets, so vendor/ is always present.
+            powershell -Command "Compress-Archive -Path kodax.exe,builtin,provider-capabilities.json,semantic-worker.js,runtime-worker.js,constructed-handler-worker.js,vendor -DestinationPath '$archive_file' -Force"
           else
             archive_file="${archive_base}.tar.gz"
             tar -czf "$archive_file" kodax "${sidecars[@]}"
