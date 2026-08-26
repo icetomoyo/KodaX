@@ -36,7 +36,12 @@ All notable changes to this project will be documented in this file.
   protected content-addressed store whose immutable-image verification remains
   shareable across concurrent Runtime processes. Linux/macOS shells remain
   per-command ASRT bubblewrap/Seatbelt calls with no KodaX workspace-session
-  owner (Issues 304–306). The ASRT-owned runner's pre-main creation window is
+  owner (Issues 304–306). Public POSIX sandbox calls now require target-start
+  attestation over a broker-only bounded control pipe. A proven pre-target exit
+  returns structured `backend_launch_failed`; a missing, malformed, or
+  mismatched control frame returns `execution_uncertain` and forbids blind
+  retry instead of misreporting that the command did not run. The ASRT-owned
+  runner's pre-main creation window is
   recorded separately as Issue 307; final targets remain creation-time Job
   contained. Runner loader/pre-main modal faults are part of that same upstream
   bootstrap residual; it does not reach trusted text tools.

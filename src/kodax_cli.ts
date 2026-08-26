@@ -3943,7 +3943,6 @@ async function main() {
     if (process.platform === 'win32') {
       throw new Error('Windows legacy ASRT broker execution is retired; use the native v2 shell sandbox.');
     }
-    if (!argv[1]) throw new Error('Missing internal ASRT broker request.');
     process.exitCode = await (await loadSandboxRuntimeModule()).runAsrtBrokerProcess(argv[1]);
     return;
   }

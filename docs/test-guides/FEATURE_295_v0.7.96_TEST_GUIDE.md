@@ -18,6 +18,9 @@ shell lifetime.
 - One ordinary workspace that is not under the KodaX Runtime/config home.
 - `kodax sandbox setup` completed for the shell checks only. Text checks must
   also be run once with setup deliberately unavailable.
+- Linux has `bubblewrap`, `socat`, and `ripgrep`, and its kernel/security policy
+  permits unprivileged user namespaces. CI must prove this with a real
+  `bwrap --unshare-net --unshare-pid` probe rather than dependency presence.
 - For an upgrade, close every old sandboxed command before setup. Confirm setup
   rotates the dedicated account SID and doctor reports
   `windows_v2_acl_cutover_required` before, but not after, the cutover.
@@ -88,6 +91,17 @@ shell lifetime.
 6. On Linux and macOS, overlap separate ASRT bubblewrap/Seatbelt commands and a
    trusted text write. Verify there is no KodaX workspace-session process,
    owner/reset/poison record, or filesystem-effect lease spanning the command.
+7. On POSIX, force a failure that proves the wrapper could not spawn the target.
+   `runKodaXSandboxed()` must return `unavailable`,
+   `sandboxed: false`, `reason: backend_launch_failed`, and a bounded diagnostic;
+   it must not return a completed exit code. A spawned wrapper that exits without
+   target-start attestation is instead `execution_uncertain` and must not be retried.
+8. Drop, truncate, oversize, or bind the broker control frame to a different
+   invocation/backend after target start. The public result must be
+   `execution_uncertain`, must warn against retry, and must never claim the
+   command did not run. Confirm the sandbox/fallback target cannot write to the
+   broker control channel (regardless of unrelated descriptor-number reuse) and
+   no request/observation file can alter authority.
 
 ## Packaging and regression gates
 

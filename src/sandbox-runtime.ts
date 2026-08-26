@@ -159,6 +159,7 @@ interface SandboxBrokerRequest {
   readonly allowAllNetwork?: boolean;
   readonly bootstrapCommand?: string;
   readonly fallbackToNormalExecution?: boolean;
+  readonly controlInvocationId?: string;
   readonly observationBackend?: KodaXShellSandboxBackend;
   readonly observationFile?: string;
   readonly targetStartedMarker?: string;
@@ -169,6 +170,23 @@ interface SandboxBrokerRequest {
     readonly shell: boolean;
   };
 }
+
+type SandboxBrokerControlObservation =
+  | KodaXShellSandboxObservation
+  | {
+      readonly version: 1;
+      readonly state: 'not_started';
+      readonly diagnostic?: string;
+    };
+
+interface SandboxBrokerControlFrame {
+  readonly version: 1;
+  readonly invocationId: string;
+  readonly observation: SandboxBrokerControlObservation;
+}
+
+const SANDBOX_BROKER_REQUEST_MAX_BYTES = 1024 * 1024;
+const SANDBOX_BROKER_CONTROL_MAX_BYTES = 16 * 1024;
 
 interface WindowsNetworkBrokerRequest {
   readonly version: 1;
@@ -288,6 +306,18 @@ export type KodaXSandboxRunResult =
     readonly status: 'unavailable';
     readonly sandboxed: false;
     readonly doctor: SandboxRuntimeDoctorResult;
+    readonly reason?: 'doctor_not_ready' | 'backend_launch_failed';
+    readonly diagnostic?: string;
+  }
+  | {
+    readonly status: 'execution_uncertain';
+    readonly sandboxed: false;
+    readonly reason: 'attestation_failed';
+    readonly diagnostic: string;
+    readonly doctor: SandboxRuntimeDoctorResult;
+    readonly exitCode: number;
+    readonly stdout: string;
+    readonly stderr: string;
   };
 
 export interface SandboxSetupOutcome {
@@ -738,12 +768,30 @@ input.once('line', async (gate) => {
 const BROKER_SOURCE = String.raw`
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { readFile, rm, writeFile } from 'node:fs/promises';
-import { realpathSync, statSync } from 'node:fs';
+import { realpathSync, statSync, writeSync } from 'node:fs';
 import path from 'node:path';
 let SandboxManager;
-const request = JSON.parse(await readFile(process.argv[2], 'utf8'));
-await rm(process.argv[2], { force: true });
+const request = await new Promise((resolve, reject) => {
+  const chunks = [];
+  let bytes = 0;
+  process.stdin.on('data', (chunk) => {
+    bytes += chunk.byteLength;
+    if (bytes > ${SANDBOX_BROKER_REQUEST_MAX_BYTES}) {
+      reject(new Error('Sandbox broker request exceeded its byte limit.'));
+      process.stdin.destroy();
+      return;
+    }
+    chunks.push(Buffer.from(chunk));
+  });
+  process.stdin.once('error', reject);
+  process.stdin.once('end', () => {
+    try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); }
+    catch (error) { reject(error); }
+  });
+});
+if (typeof request.controlInvocationId !== 'string' || request.controlInvocationId === '') {
+  throw new Error('Sandbox broker request omitted its control invocation identity.');
+}
 const targetStartedMarker = request.targetStartedMarker
   ?? '\u0000KODAX_ASRT_TARGET_STARTED:' + randomUUID() + '\u0000\n';
 const endpoints = new Set(request.endpoints.map((item) => item.host.toLowerCase() + ':' + item.port));
@@ -798,18 +846,26 @@ const withWindowsChildEnvironment = (argv, environment, gitTrustRoots) => {
   if (estimate > 30000) throw new Error('ASRT Windows child environment exceeds the CreateProcess command-line limit.');
   return withGitTrust;
 };
-const writeObservation = async (observation) => {
-  if (typeof request.observationFile !== 'string') return;
-  await writeFile(request.observationFile, JSON.stringify(observation), { mode: 0o600 });
+const writeObservation = (observation) => {
+  const payload = Buffer.from(JSON.stringify({
+    version: 1,
+    invocationId: request.controlInvocationId,
+    observation,
+  }) + '\n', 'utf8');
+  if (payload.byteLength > ${SANDBOX_BROKER_CONTROL_MAX_BYTES}) {
+    throw new Error('Sandbox broker control frame exceeded its byte limit.');
+  }
+  if (writeSync(3, payload) !== payload.byteLength) {
+    throw new Error('Sandbox broker control frame was only partially written.');
+  }
 };
-const waitForTarget = (target, observation) => {
+const waitForTarget = (target, observation, onTargetStarted) => {
   const marker = Buffer.from(targetStartedMarker, 'utf8');
   let pending = Buffer.alloc(0);
   let diagnostic = Buffer.alloc(0);
   let processError;
   let wrapperSpawned = false;
   let targetStarted = false;
-  let observationWrite = Promise.resolve();
   return new Promise((resolve, reject) => {
     let settled = false;
     target.once('spawn', () => {
@@ -818,7 +874,7 @@ const waitForTarget = (target, observation) => {
     const finish = (result) => {
       if (settled) return;
       settled = true;
-      void observationWrite.then(() => resolve(result), reject);
+      resolve(result);
     };
     target.stderr.on('data', (chunk) => {
       if (targetStarted) {
@@ -829,10 +885,16 @@ const waitForTarget = (target, observation) => {
       const markerOffset = pending.indexOf(marker);
       if (markerOffset >= 0) {
         targetStarted = true;
+        onTargetStarted();
         const suffix = pending.subarray(markerOffset + marker.length);
         pending = Buffer.alloc(0);
         diagnostic = Buffer.alloc(0);
-        observationWrite = writeObservation(observation).catch(() => undefined);
+        try {
+          writeObservation(observation);
+        } catch (error) {
+          processError = error instanceof Error ? error.message : String(error);
+          target.kill('SIGTERM');
+        }
         if (suffix.length > 0) process.stderr.write(suffix);
         return;
       }
@@ -854,6 +916,7 @@ const waitForTarget = (target, observation) => {
         exitCode: signal ? 1 : exitCode ?? 1,
         targetStarted,
         spawnFailedBeforeSpawn: processError !== undefined && !wrapperSpawned,
+        controlFailure: targetStarted ? processError : undefined,
         diagnostic: preTarget || processError || undefined,
       });
     });
@@ -862,6 +925,7 @@ const waitForTarget = (target, observation) => {
 let child;
 let targetStarted = false;
 let normalFallbackAttempted = false;
+let normalFallbackSpawned = false;
 const runDirect = async () => {
   const internalElectronNode = request.command === process.execPath && process.versions.electron !== undefined;
   const directArgs = internalElectronNode
@@ -879,6 +943,7 @@ const runDirect = async () => {
     windowsVerbatimArguments: request.windowsVerbatimArguments === true,
   });
   return await new Promise((resolve, reject) => {
+    child.once('spawn', () => { normalFallbackSpawned = true; });
     child.once('error', reject);
     child.once('exit', (exitCode, signal) => resolve(signal ? 1 : exitCode ?? 1));
   });
@@ -889,14 +954,25 @@ const runNormalFallback = async () => {
     || targetStarted
     || normalFallbackAttempted
   ) return false;
-  await writeObservation({
-    version: 1,
-    state: 'fallback',
-    reason: 'backend_failed',
-    execution: 'normal_permission_policy',
-  }).catch(() => undefined);
   normalFallbackAttempted = true;
-  process.exitCode = await runDirect();
+  try {
+    process.exitCode = await runDirect();
+    writeObservation({
+      version: 1,
+      state: 'fallback',
+      reason: 'backend_failed',
+      execution: 'normal_permission_policy',
+    });
+  } catch (error) {
+    if (!normalFallbackSpawned) {
+      writeObservation({
+        version: 1,
+        state: 'not_started',
+        diagnostic: error instanceof Error ? error.message : String(error),
+      });
+    }
+    throw error;
+  }
   return true;
 };
 try {
@@ -914,15 +990,29 @@ try {
       state: 'applied',
       backend: request.observationBackend ?? 'unsupported',
       policyId: 'kodax-workspace-shell-v1',
-    });
+    }, () => { targetStarted = true; });
     targetStarted = result.targetStarted;
-    const fellBack = result.spawnFailedBeforeSpawn
-      ? await runNormalFallback()
-      : false;
-    if (!targetStarted && !fellBack) {
-      process.stderr.write((result.diagnostic || 'Sandbox target launch could not be attested.') + '\n');
+    if (result.controlFailure) {
+      process.stderr.write(result.controlFailure + '\n');
+      process.exitCode = 125;
+    } else {
+      const fellBack = result.spawnFailedBeforeSpawn
+        ? await runNormalFallback()
+        : false;
+      if (!targetStarted && !fellBack) {
+        if (result.spawnFailedBeforeSpawn) {
+          writeObservation({
+            version: 1,
+            state: 'not_started',
+            diagnostic: result.diagnostic,
+          });
+        }
+        process.stderr.write((result.diagnostic || 'Sandbox target launch could not be attested.') + '\n');
+      }
+      if (!fellBack) {
+        process.exitCode = targetStarted ? result.exitCode : result.spawnFailedBeforeSpawn ? 1 : 125;
+      }
     }
-    if (!fellBack) process.exitCode = targetStarted ? result.exitCode : 1;
   } else {
   ({ SandboxManager } = await import(process.argv[1]));
   const bootstrap = request.bootstrapCommand ?? 'node';
@@ -997,17 +1087,31 @@ try {
     state: 'applied',
     backend: request.observationBackend ?? 'unsupported',
     policyId: 'kodax-workspace-shell-v1',
-  });
+  }, () => { targetStarted = true; });
   targetStarted = result.targetStarted;
   try { SandboxManager.cleanupAfterCommand(); } catch {}
   await SandboxManager.reset().catch(() => undefined);
-  const fellBack = result.spawnFailedBeforeSpawn
-    ? await runNormalFallback()
-    : false;
-  if (!targetStarted && !fellBack) {
-    process.stderr.write((result.diagnostic || 'Sandbox target launch could not be attested.') + '\n');
+  if (result.controlFailure) {
+    process.stderr.write(result.controlFailure + '\n');
+    process.exitCode = 125;
+  } else {
+    const fellBack = result.spawnFailedBeforeSpawn
+      ? await runNormalFallback()
+      : false;
+    if (!targetStarted && !fellBack) {
+      if (result.spawnFailedBeforeSpawn) {
+        writeObservation({
+          version: 1,
+          state: 'not_started',
+          diagnostic: result.diagnostic,
+        });
+      }
+      process.stderr.write((result.diagnostic || 'Sandbox target launch could not be attested.') + '\n');
+    }
+    if (!fellBack) {
+      process.exitCode = targetStarted ? result.exitCode : result.spawnFailedBeforeSpawn ? 1 : 125;
+    }
   }
-  if (!fellBack) process.exitCode = targetStarted ? result.exitCode : 1;
   }
 } catch (error) {
   await SandboxManager?.reset().catch(() => undefined);
@@ -1024,8 +1128,17 @@ try {
       process.exitCode = 1;
     }
   } else {
+    if (!targetStarted && child === undefined) {
+      try {
+        writeObservation({
+          version: 1,
+          state: 'not_started',
+          diagnostic: error instanceof Error ? error.message : String(error),
+        });
+      } catch {}
+    }
     process.stderr.write((error instanceof Error ? error.message : String(error)) + '\n');
-    process.exitCode = 1;
+    process.exitCode = targetStarted ? 125 : 1;
   }
 }
 `;
@@ -1924,6 +2037,105 @@ function parseBrokerObservation(
   return undefined;
 }
 
+function encodeControlledBrokerRequest(
+  request: SandboxBrokerRequest,
+): {
+  readonly invocationId: string;
+  readonly payload: Uint8Array;
+  readonly request: SandboxBrokerRequest;
+} {
+  const invocationId = randomUUID();
+  const controlled = { ...request, controlInvocationId: invocationId };
+  const payload = Buffer.from(JSON.stringify(controlled), 'utf8');
+  if (payload.byteLength > SANDBOX_BROKER_REQUEST_MAX_BYTES) {
+    throw new Error(
+      `Sandbox broker request exceeded ${SANDBOX_BROKER_REQUEST_MAX_BYTES} bytes.`,
+    );
+  }
+  return { invocationId, payload, request: controlled };
+}
+
+function parseSandboxBrokerControl(
+  bytes: Uint8Array,
+  invocationId: string,
+  expectedBackend: KodaXShellSandboxBackend,
+): SandboxBrokerControlObservation | undefined {
+  if (bytes.byteLength === 0) return undefined;
+  if (bytes.byteLength > SANDBOX_BROKER_CONTROL_MAX_BYTES) {
+    throw new Error('Sandbox broker control frame exceeded its byte limit.');
+  }
+  const payload = Buffer.from(bytes);
+  const newline = payload.indexOf(0x0a);
+  if (newline < 0 || payload.subarray(newline + 1).some((byte) => byte > 0x20)) {
+    throw new Error('Sandbox broker control channel returned an invalid frame boundary.');
+  }
+  const value = JSON.parse(payload.subarray(0, newline).toString('utf8')) as unknown;
+  if (typeof value !== 'object' || value === null) {
+    throw new Error('Sandbox broker control channel returned a non-object frame.');
+  }
+  const frame = value as Readonly<Record<string, unknown>>;
+  if (
+    frame.version !== 1
+    || frame.invocationId !== invocationId
+    || typeof frame.observation !== 'object'
+    || frame.observation === null
+  ) {
+    throw new Error('Sandbox broker control frame did not match this invocation.');
+  }
+  const observation = frame.observation as Readonly<Record<string, unknown>>;
+  if (observation.version !== 1) {
+    throw new Error('Sandbox broker control observation has an incompatible version.');
+  }
+  if (observation.state === 'not_started') {
+    if (
+      observation.diagnostic !== undefined
+      && typeof observation.diagnostic !== 'string'
+    ) {
+      throw new Error('Sandbox broker pre-target diagnostic is invalid.');
+    }
+    return observation as SandboxBrokerControlObservation;
+  }
+  const parsed = parseBrokerObservation(JSON.stringify(observation));
+  if (parsed === undefined) {
+    throw new Error('Sandbox broker control observation is invalid.');
+  }
+  if (parsed.state === 'applied' && parsed.backend !== expectedBackend) {
+    throw new Error('Sandbox broker control observation reported the wrong backend.');
+  }
+  return parsed;
+}
+
+function collectSandboxBrokerControl(
+  child: ReturnType<typeof spawn>,
+): Promise<Uint8Array> {
+  const control = child.stdio[3];
+  if (control === null || control === undefined) {
+    return Promise.reject(new Error('Sandbox broker control pipe was not created.'));
+  }
+  return new Promise<Uint8Array>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    let settled = false;
+    const finish = (error?: Error): void => {
+      if (settled) return;
+      settled = true;
+      if (error === undefined) resolve(Buffer.concat(chunks));
+      else reject(error);
+    };
+    control.on('data', (chunk: Buffer) => {
+      bytes += chunk.byteLength;
+      if (bytes > SANDBOX_BROKER_CONTROL_MAX_BYTES) {
+        finish(new Error('Sandbox broker control frame exceeded its byte limit.'));
+        control.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    control.once('error', finish);
+    control.once('end', () => finish());
+  });
+}
+
 function sandboxJavaScriptCommand(): string {
   if (process.env.KODAX_A2A_NODE !== undefined) return process.env.KODAX_A2A_NODE;
   if (process.versions.electron !== undefined) return process.execPath;
@@ -2531,6 +2743,13 @@ async function collectProcess(
   }
 }
 
+interface SandboxBrokerResult extends SandboxProcessResult {
+  readonly controlFailure?: string;
+  readonly controlInvocationId: string;
+  readonly controlOutput: Uint8Array;
+  readonly expectedBackend: KodaXShellSandboxBackend;
+}
+
 /** @internal Test isolation for cached doctor and staged Windows runner state. */
 export function resetSandboxRuntimeForTest(): void {
   cachedWindowsBootIdentity = undefined;
@@ -2673,45 +2892,55 @@ async function runBrokerResult(
   signal?: AbortSignal,
   timeoutMs = SCRIPT_TIMEOUT_MS,
   maxOutputBytes = MAX_OUTPUT_BYTES,
-): Promise<SandboxProcessResult> {
+): Promise<SandboxBrokerResult> {
   rejectWindowsLegacyAsrtFilesystemBackend();
-  const requestFile = path.join(
-    os.tmpdir(),
-    `kodax-asrt-${process.pid}-${randomUUID()}.json`,
-  );
-  const protectedRequest: SandboxBrokerRequest = {
+  const controlled = encodeControlledBrokerRequest({
     ...request,
     bootstrapCommand: request.bootstrapCommand ?? sandboxJavaScriptCommand(),
-    config: {
-      ...request.config,
-      filesystem: {
-        ...request.config.filesystem,
-        denyRead: [...request.config.filesystem.denyRead, requestFile],
-      },
-    },
-  };
-  await writeFile(requestFile, JSON.stringify(protectedRequest), { flag: 'wx', mode: 0o600 });
+  });
+  const args = process.env.KODAX_BUNDLED === 'true'
+    ? ['__asrt-broker']
+    : ['--input-type=module', '-e', BROKER_SOURCE, ASRT_MODULE_URL!];
+  const launch = prepareInternalNodeLaunch({
+    args,
+    env: sanitizedEnvironment(),
+    isElectron: process.versions.electron !== undefined,
+  });
+  const child = spawn(process.execPath, launch.args, {
+    cwd: request.cwd,
+    env: launch.env,
+    shell: false,
+    stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
+    windowsHide: true,
+  });
+  rememberChildProcessTree(child);
+  const collecting = collectProcess(child, signal, timeoutMs, maxOutputBytes);
+  const control = collectSandboxBrokerControl(child).then(
+    (output) => ({ output }),
+    (error: unknown) => ({ output: new Uint8Array(), failure: errorText(error) }),
+  );
   try {
-    const args = process.env.KODAX_BUNDLED === 'true'
-      ? ['__asrt-broker', requestFile]
-      : ['--input-type=module', '-e', BROKER_SOURCE, ASRT_MODULE_URL!, requestFile];
-    const launch = prepareInternalNodeLaunch({
-      args,
-      env: sanitizedEnvironment(),
-      isElectron: process.versions.electron !== undefined,
-    });
-    const child = spawn(process.execPath, launch.args, {
-      cwd: request.cwd,
-      env: launch.env,
-      shell: false,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      windowsHide: true,
-    });
-    rememberChildProcessTree(child);
-    return await collectProcess(child, signal, timeoutMs, maxOutputBytes);
-  } finally {
-    await rm(requestFile, { force: true });
+    await closeNativeSandboxInput(
+      child,
+      controlled.payload,
+      signal,
+      Date.now() + timeoutMs,
+    );
+  } catch (error: unknown) {
+    child.kill('SIGTERM');
+    await Promise.allSettled([collecting, control]);
+    throw error;
   }
+  const [result, controlResult] = await Promise.all([collecting, control]);
+  return {
+    ...result,
+    ...(controlResult.failure === undefined
+      ? {}
+      : { controlFailure: controlResult.failure }),
+    controlInvocationId: controlled.invocationId,
+    controlOutput: controlResult.output,
+    expectedBackend: controlled.request.observationBackend ?? 'unsupported',
+  };
 }
 async function runBroker(request: SandboxBrokerRequest, signal?: AbortSignal): Promise<string> {
   let result: SandboxProcessResult;
@@ -3807,7 +4036,12 @@ export async function runKodaXSandboxed(
   const endpoints = sdkSandboxEndpoints(network);
   const doctor = await doctorSandboxRuntime();
   if (!doctor.ready) {
-    return { status: 'unavailable', sandboxed: false, doctor };
+    return {
+      status: 'unavailable',
+      sandboxed: false,
+      doctor,
+      reason: 'doctor_not_ready',
+    };
   }
   const env = mergeSandboxEnvironment(
     input.inheritEnvironment === true ? process.env : sanitizedEnvironment(),
@@ -3852,6 +4086,8 @@ export async function runKodaXSandboxed(
     env,
     endpoints,
     allowAllNetwork: network.mode === 'allow',
+    observationBackend: sandboxRuntimeCapability().backend,
+    targetStartedMarker: `\0KODAX_ASRT_TARGET_STARTED:${randomUUID()}\0\n`,
   };
   const result = await runBrokerResult(
     request,
@@ -3859,6 +4095,57 @@ export async function runKodaXSandboxed(
     input.timeoutMs ?? SCRIPT_TIMEOUT_MS,
     input.maxOutputBytes ?? MAX_OUTPUT_BYTES,
   );
+  let observation: SandboxBrokerControlObservation | undefined;
+  let controlFailure: unknown = result.controlFailure;
+  if (controlFailure === undefined) {
+    try {
+      observation = parseSandboxBrokerControl(
+        result.controlOutput,
+        result.controlInvocationId,
+        result.expectedBackend,
+      );
+    } catch (error: unknown) {
+      controlFailure = error;
+    }
+  }
+  if (observation?.state === 'not_started') {
+    const diagnostic = [
+      observation.diagnostic,
+      result.stderr.trim(),
+    ].filter((value): value is string => value !== undefined && value !== '')
+      .join(' ')
+      .slice(0, 4096) || 'The sandbox backend exited before target-start attestation.';
+    return {
+      status: 'unavailable',
+      sandboxed: false,
+      reason: 'backend_launch_failed',
+      diagnostic,
+      doctor: {
+        ...doctor,
+        ready: false,
+        setupRequired: true,
+        diagnostics: [...doctor.diagnostics, diagnostic],
+      },
+    };
+  }
+  if (observation?.state !== 'applied') {
+    const diagnostic = [
+      controlFailure === undefined ? undefined : errorText(controlFailure),
+      result.stderr.trim(),
+    ].filter((value): value is string => value !== undefined && value !== '')
+      .join(' ')
+      .slice(0, 4096) || 'Sandbox target execution could not be attested; do not retry blindly.';
+    return {
+      status: 'execution_uncertain',
+      sandboxed: false,
+      reason: 'attestation_failed',
+      diagnostic,
+      doctor,
+      exitCode: result.exitCode,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    };
+  }
   return {
     status: 'completed',
     sandboxed: true,
@@ -4244,15 +4531,6 @@ async function preparePortableAsrtShellInvocation(input: {
   readonly windowsVerbatimArguments: boolean;
   readonly fallbackToNormalExecution: boolean;
 }): Promise<Awaited<ReturnType<KodaXShellSandbox['prepare']>>> {
-  const controlDirectory = await sandboxControlDirectory();
-  const requestFile = path.join(
-    controlDirectory,
-    `kodax-asrt-shell-${process.pid}-${randomUUID()}.json`,
-  );
-  const observationFile = path.join(
-    controlDirectory,
-    `kodax-asrt-observation-${process.pid}-${randomUUID()}.json`,
-  );
   const runtimeReadScopes = workspaceShellRuntimeReadScopes(input.env, input.executable);
   const request: SandboxBrokerRequest = {
     config: workspaceShellCommandSandboxConfig(
@@ -4272,52 +4550,45 @@ async function preparePortableAsrtShellInvocation(input: {
     bootstrapCommand: sandboxJavaScriptCommand(),
     fallbackToNormalExecution: input.fallbackToNormalExecution,
     observationBackend: sandboxRuntimeCapability().backend,
-    observationFile,
     targetStartedMarker: `\0KODAX_ASRT_TARGET_STARTED:${randomUUID()}\0\n`,
   };
+  const controlled = encodeControlledBrokerRequest(request);
   const brokerArgs = process.env.KODAX_BUNDLED === 'true'
-    ? ['__asrt-broker', requestFile]
-    : ['--input-type=module', '-e', BROKER_SOURCE, ASRT_MODULE_URL!, requestFile];
+    ? ['__asrt-broker']
+    : ['--input-type=module', '-e', BROKER_SOURCE, ASRT_MODULE_URL!];
   const launch = prepareInternalNodeLaunch({
     args: brokerArgs,
     env: sanitizedEnvironment(),
     isElectron: process.versions.electron !== undefined,
   });
-  await writeFile(requestFile, JSON.stringify(request), { flag: 'wx', mode: 0o600 });
   let cleanupPromise: Promise<KodaXShellSandboxObservation | undefined> | undefined;
   return {
     executable: process.execPath,
     args: launch.args,
     env: launch.env,
+    stdinPrefix: controlled.payload,
+    controlChannel: {
+      fd: 3,
+      maxOutputBytes: SANDBOX_BROKER_CONTROL_MAX_BYTES,
+    },
     cleanup(cleanupInput) {
       cleanupPromise ??= (async () => {
-        let observation: KodaXShellSandboxObservation | undefined;
-        let observationFailure: unknown;
-        try {
-          observation = await readFile(observationFile, 'utf8')
-            .then(parseBrokerObservation)
-            .catch((error: NodeJS.ErrnoException) => {
-              if (error.code === 'ENOENT') return undefined;
-              throw error;
-            });
-        } catch (error: unknown) {
-          observationFailure = error;
+        const controlOutput = cleanupInput?.controlOutput;
+        if (controlOutput === undefined) {
+          if (cleanupInput?.execution === 'started_or_unknown') {
+            throw new Error('Required OS sandbox execution could not be attested.');
+          }
+          return undefined;
         }
-        const removals = await Promise.allSettled([
-          rm(requestFile, { force: true }),
-          rm(observationFile, { force: true }),
-        ]);
-        const failures = [
-          ...(observationFailure === undefined ? [] : [observationFailure]),
-          ...removals.flatMap((result) => result.status === 'rejected' ? [result.reason] : []),
-        ];
-        if (cleanupInput?.execution === 'started_or_unknown' && observation === undefined) {
-          failures.push(new Error('Required OS sandbox execution could not be attested.'));
+        const observation = parseSandboxBrokerControl(
+          controlOutput,
+          controlled.invocationId,
+          controlled.request.observationBackend ?? 'unsupported',
+        );
+        if (observation === undefined) {
+          throw new Error('Required OS sandbox execution could not be attested.');
         }
-        if (failures.length > 0) {
-          throw new AggregateError(failures, 'Portable ASRT shell cleanup was not confirmed.');
-        }
-        return observation;
+        return observation.state === 'not_started' ? undefined : observation;
       })();
       return cleanupPromise;
     },
@@ -4709,8 +4980,23 @@ async function wrapSandboxTarget(
 
 async function writeBrokerObservation(
   request: SandboxBrokerRequest,
-  observation: KodaXShellSandboxObservation,
+  observation: SandboxBrokerControlObservation,
 ): Promise<void> {
+  if (request.controlInvocationId !== undefined) {
+    const payload = Buffer.from(`${JSON.stringify({
+      version: 1,
+      invocationId: request.controlInvocationId,
+      observation,
+    })}\n`, 'utf8');
+    if (payload.byteLength > SANDBOX_BROKER_CONTROL_MAX_BYTES) {
+      throw new Error('Sandbox broker control frame exceeded its byte limit.');
+    }
+    if (writeSync(3, payload) !== payload.byteLength) {
+      throw new Error('Sandbox broker control frame was only partially written.');
+    }
+    return;
+  }
+  if (observation.state === 'not_started') return;
   if (request.observationFile === undefined) return;
   await writeFile(
     request.observationFile,
@@ -4723,6 +5009,7 @@ interface SandboxedBrokerChildResult {
   readonly exitCode: number;
   readonly targetStarted: boolean;
   readonly spawnFailedBeforeSpawn: boolean;
+  readonly controlFailure?: string;
   readonly diagnostic?: string;
 }
 
@@ -4769,7 +5056,10 @@ function waitForSandboxedBrokerTarget(
           state: 'applied',
           backend: request.observationBackend ?? 'unsupported',
           policyId: 'kodax-workspace-shell-v1',
-        }).catch(() => undefined);
+        }).catch((error: unknown) => {
+          processError = errorText(error);
+          child.kill('SIGTERM');
+        });
         if (suffix.length > 0) process.stderr.write(suffix);
         return;
       }
@@ -4791,6 +5081,7 @@ function waitForSandboxedBrokerTarget(
         exitCode: signal ? 1 : code ?? 1,
         targetStarted,
         spawnFailedBeforeSpawn: processError !== undefined && !wrapperSpawned,
+        ...(targetStarted && processError ? { controlFailure: processError } : {}),
         ...(preTarget || processError
           ? { diagnostic: preTarget || processError }
           : {}),
@@ -4829,22 +5120,67 @@ async function runNormalBrokerProcess(
     windowsHide: true,
     windowsVerbatimArguments: request.windowsVerbatimArguments === true,
   });
-  return new Promise<number>((resolve, reject) => {
-    child.once('error', reject);
-    child.once('exit', (code, signal) => resolve(signal ? 1 : code ?? 1));
+  let spawned = false;
+  let processError: string | undefined;
+  const exitCode = await new Promise<number>((resolve) => {
+    child.once('spawn', () => { spawned = true; });
+    child.once('error', (error: Error) => { processError = error.message; });
+    child.once('close', (code, signal) => resolve(signal ? 1 : code ?? 1));
   });
+  if (!spawned) {
+    await writeBrokerObservation(request, {
+      version: 1,
+      state: 'not_started',
+      diagnostic: processError ?? 'Normal-permission fallback could not be spawned.',
+    });
+    return 1;
+  }
+  await writeBrokerObservation(request, {
+    version: 1,
+    state: 'fallback',
+    reason: 'backend_failed',
+    execution: 'normal_permission_policy',
+  });
+  return exitCode;
+}
+
+async function readSandboxBrokerRequest(
+  requestFile?: string,
+): Promise<SandboxBrokerRequest> {
+  if (requestFile !== undefined) {
+    if (process.env.NODE_ENV !== 'test') {
+      throw new Error('File-backed ASRT broker requests are test-only.');
+    }
+    const request = JSON.parse(await readFile(requestFile, 'utf8')) as SandboxBrokerRequest;
+    await rm(requestFile, { force: true });
+    return request;
+  }
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  for await (const chunk of process.stdin) {
+    const value = Buffer.from(chunk);
+    bytes += value.byteLength;
+    if (bytes > SANDBOX_BROKER_REQUEST_MAX_BYTES) {
+      throw new Error('Sandbox broker request exceeded its byte limit.');
+    }
+    chunks.push(value);
+  }
+  const request = JSON.parse(Buffer.concat(chunks).toString('utf8')) as SandboxBrokerRequest;
+  if (typeof request.controlInvocationId !== 'string' || request.controlInvocationId === '') {
+    throw new Error('Sandbox broker request omitted its control invocation identity.');
+  }
+  return request;
 }
 
 /** Internal entry used only by the standalone binary's isolated broker process. */
-export async function runAsrtBrokerProcess(requestFile: string): Promise<number> {
+export async function runAsrtBrokerProcess(requestFile?: string): Promise<number> {
   rejectWindowsLegacyAsrtFilesystemBackend();
   let request: SandboxBrokerRequest | undefined;
   let child: ReturnType<typeof spawn> | undefined;
   let targetStarted = false;
   let normalFallbackAttempted = false;
   try {
-    request = JSON.parse(await readFile(requestFile, 'utf8')) as SandboxBrokerRequest;
-    await rm(requestFile, { force: true });
+    request = await readSandboxBrokerRequest(requestFile);
     const targetStartedMarker = request.targetStartedMarker
       ?? `\0KODAX_ASRT_TARGET_STARTED:${randomUUID()}\0\n`;
     if (request.wrappedInvocation === undefined) {
@@ -4878,6 +5214,10 @@ export async function runAsrtBrokerProcess(requestFile: string): Promise<number>
       targetStartedMarker,
     );
     targetStarted = result.targetStarted;
+    if (result.controlFailure !== undefined) {
+      process.stderr.write(`${result.controlFailure}\n`);
+      return 125;
+    }
     if (
       result.spawnFailedBeforeSpawn
       && request.fallbackToNormalExecution === true
@@ -4887,20 +5227,21 @@ export async function runAsrtBrokerProcess(requestFile: string): Promise<number>
       if (request.wrappedInvocation === undefined) {
         await resetSandboxManagerBestEffort();
       }
-      await writeBrokerObservation(request, {
-        version: 1,
-        state: 'fallback',
-        reason: 'backend_failed',
-        execution: 'normal_permission_policy',
-      }).catch(() => undefined);
       return await runNormalBrokerProcess(request);
     }
     if (!targetStarted) {
+      if (result.spawnFailedBeforeSpawn) {
+        await writeBrokerObservation(request, {
+          version: 1,
+          state: 'not_started',
+          diagnostic: result.diagnostic,
+        });
+      }
       process.stderr.write(
         `${result.diagnostic ?? 'Sandbox target launch could not be attested.'}\n`,
       );
     }
-    return targetStarted ? result.exitCode : 1;
+    return targetStarted ? result.exitCode : result.spawnFailedBeforeSpawn ? 1 : 125;
   } catch (error: unknown) {
     if (
       request?.fallbackToNormalExecution === true
@@ -4912,12 +5253,6 @@ export async function runAsrtBrokerProcess(requestFile: string): Promise<number>
         await resetSandboxManagerBestEffort();
       }
       try {
-        await writeBrokerObservation(request, {
-          version: 1,
-          state: 'fallback',
-          reason: 'backend_failed',
-          execution: 'normal_permission_policy',
-        }).catch(() => undefined);
         normalFallbackAttempted = true;
         return await runNormalBrokerProcess(request);
       } catch (fallbackError: unknown) {
@@ -4925,8 +5260,15 @@ export async function runAsrtBrokerProcess(requestFile: string): Promise<number>
         return 1;
       }
     }
+    if (!targetStarted && request !== undefined && child === undefined) {
+      await writeBrokerObservation(request, {
+        version: 1,
+        state: 'not_started',
+        diagnostic: errorText(error),
+      }).catch(() => undefined);
+    }
     process.stderr.write(`${errorText(error)}\n`);
-    return 1;
+    return targetStarted ? 125 : 1;
   } finally {
     if (request?.wrappedInvocation === undefined) {
       await resetSandboxManagerBestEffort();

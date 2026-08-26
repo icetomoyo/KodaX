@@ -353,7 +353,53 @@ fn incompatible_external_write_handle_returns_structured_contention() {
         .unwrap_err();
     unsafe { windows_sys::Win32::Foundation::CloseHandle(raw) };
 
-    assert_eq!(error.code, TextTransactionErrorCode::Contended);
+    assert_eq!(error.code, TextTransactionErrorCode::Contended, "{error:?}");
+    assert_eq!(fs::read_to_string(target_path).unwrap(), "before");
+}
+
+#[test]
+fn external_read_handle_without_delete_sharing_contends_at_atomic_replace() {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_READ_DATA, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    };
+
+    let directory = tempdir().unwrap();
+    let target_path = directory.path().join("replace-held.txt");
+    fs::write(&target_path, "before").unwrap();
+    let root = TrustedRoot::open(&as_text(directory.path())).unwrap();
+    let snapshot = root.snapshot(&as_text(&target_path)).unwrap();
+    let wide = target_path
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let raw = unsafe {
+        CreateFileW(
+            wide.as_ptr(),
+            FILE_READ_DATA,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            0,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_ne!(raw, INVALID_HANDLE_VALUE);
+
+    let error = root
+        .commit(
+            &as_text(&target_path),
+            &snapshot.revision,
+            "must-not-overwrite",
+            false,
+            5_000,
+        )
+        .unwrap_err();
+    unsafe { windows_sys::Win32::Foundation::CloseHandle(raw) };
+
+    assert_eq!(error.code, TextTransactionErrorCode::Contended, "{error:?}");
     assert_eq!(fs::read_to_string(target_path).unwrap(), "before");
 }
 

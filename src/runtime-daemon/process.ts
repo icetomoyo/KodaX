@@ -541,6 +541,7 @@ async function waitForStartupPoll(
     signal,
   );
   if (outcome === undefined) return;
+  if (outcome.code === 0 && outcome.signal === null) return;
   if (hasCompetingStartupOwner(paths, child)) {
     await raceRuntimeDaemonStartupStep(delay(pollIntervalMs), signal);
     return;

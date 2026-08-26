@@ -29,7 +29,8 @@ Windows requests UAC during activation (an existing v2 account rotation may
 require a second confirmation); macOS/Linux report any required
 Seatbelt/bubblewrap dependencies. Declining or missing a dependency does not
 break ordinary permission handling, and normal startup will not keep reminding
-you.
+you. Linux shell containment also requires a host policy that permits
+unprivileged user namespaces; KodaX diagnoses but does not modify that policy.
 
 ## Single binary (no Node.js required)
 

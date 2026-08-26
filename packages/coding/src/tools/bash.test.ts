@@ -300,6 +300,40 @@ describe('toolBash', () => {
     expect(windowsEffectJobMock.containCalls).toBe(0);
   });
 
+  it('delivers broker-only control output to request-scoped cleanup', async () => {
+    const cleanup = vi.fn(async (input?: {
+      readonly execution: 'not_started' | 'started_or_unknown';
+      readonly controlOutput?: Uint8Array;
+    }) => {
+      expect(input?.execution).toBe('started_or_unknown');
+      expect(Buffer.from(input?.controlOutput ?? []).toString('utf8')).toBe('control-frame\n');
+      return undefined;
+    });
+    const script = [
+      'const fs=require("node:fs")',
+      "process.stdin.resume()",
+      "process.stdin.on('end',()=>{fs.writeSync(3,Buffer.from('control-frame\\n'));process.stdout.write('broker-finished')})",
+    ].join(';');
+
+    const result = await toolBash({ command: 'broker-control' }, {
+      backups: new Map(),
+      toolCallId: 'broker-control',
+      shellSandbox: {
+        prepare: async () => ({
+          executable: process.execPath,
+          args: ['-e', script],
+          env: process.env,
+          stdinPrefix: Buffer.from('request'),
+          controlChannel: { fd: 3, maxOutputBytes: 1024 },
+          cleanup,
+        }),
+      },
+    });
+
+    expect(completedCommandBody(result)).toContain('broker-finished');
+    expect(cleanup).toHaveBeenCalledOnce();
+  });
+
   it('keeps bootstrap pipe errors observed through close after cancellation', async () => {
     const marker = path.join(tempDir, 'native-bootstrap-started');
     const controller = new AbortController();

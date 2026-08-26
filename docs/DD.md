@@ -791,15 +791,26 @@ within the deadline, then uses the Accept-edits boundary without mutating the
 engine. `Auto[RULES]` remains a valid sticky state only after explicit or
 persisted user selection; `/auto-engine llm` changes it explicitly.
 
-ASRT is an execution adapter below this permission decision. Workspace
-commands share one long-lived containment session; unavailable or pre-spawn
-backend failure may use the already-admitted ordinary local path, while
-post-spawn failure never retries the target. The `/sandbox` command and
+Shell containment is an execution adapter below this permission decision.
+Windows uses the native v2 runner and Linux/macOS prepare one ASRT invocation
+per command; no platform keeps a KodaX workspace-session owner across the
+command lifetime. An unavailable or proven pre-target backend failure may
+use the already-admitted ordinary local path, while post-start failure never
+retries the target. The `/sandbox` command and
 `tool.sandbox` events expose diagnostics without entering ordinary history.
 The separate `src/sdk-sandbox.ts` API deliberately has no such fallback:
 `runKodaXSandboxed()` returns a typed `unavailable` result when containment
-cannot run. The internal workspace-shell adapter also denies common
-credential-bearing home paths and the complete resolved agent home; it removes
+cannot run. POSIX completion additionally requires an applied target-start
+observation; only a proven wrapper spawn failure returns `backend_launch_failed`
+with bounded diagnostics. A spawned wrapper without target-start authority is
+`execution_uncertain`. Request authority travels on
+broker stdin and target-start/fallback authority returns through a bounded FD3
+frame bound to the invocation and expected backend; the target never inherits
+that descriptor. Missing or invalid authority is `execution_uncertain`, not a
+retryable not-started result. The internal workspace-shell
+adapter also denies common
+credential-bearing home paths and the resolved internal Agent Home state
+surfaces; it removes
 home-local executable grants nested below those paths before sending the ASRT
 policy. This stricter local policy is not silently imposed on the standalone
 SDK executor, whose filesystem boundary remains caller-owned.

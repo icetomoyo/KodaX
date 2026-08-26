@@ -549,7 +549,8 @@ kodax sandbox setup
 - macOS 使用 Seatbelt/`sandbox-exec`，需要 ripgrep：
   `brew install ripgrep`。
 - Linux 使用 bubblewrap，需要 `bubblewrap`、`socat` 和 `ripgrep`，请根据发行版用
-  `apt`、`dnf` 或 `pacman` 安装。
+  `apt`、`dnf` 或 `pacman` 安装。宿主内核与安全策略还必须允许非特权 user
+  namespace；若 backend 无法启动，KodaX 会明确报告，且不会自行修改系统策略。
 
 KodaX 不会自动运行 `sudo` 或系统包管理器。sandbox 未激活时，确定性安全操作与
 Auto[LLM] 的权限体验保持一致，只缺少 OS 级 containment；普通运行不会反复打扰。

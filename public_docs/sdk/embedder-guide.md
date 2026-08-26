@@ -6108,7 +6108,8 @@ Platform behavior:
   to `brew install ripgrep` when doctor reports it missing.
 - Linux uses bubblewrap and requires `bubblewrap`, `socat`, and `ripgrep`.
   Present the emitted `apt`/`dnf`/`pacman` guidance; do not run `sudo` or a
-  package manager silently.
+  package manager silently. The host must also permit unprivileged user
+  namespaces. Do not change sysctls or AppArmor policy silently.
 
 Do not call `activateKodaXSandbox()` during ordinary Runtime startup, tool
 execution, or a background permission check. KodaX's own first-run/setup UI
@@ -6146,7 +6147,13 @@ const result = await runKodaXSandboxed({
 if (result.status === 'unavailable') {
   // The command was NOT run. Decide explicitly whether your product should
   // wait for setup, reject the operation, or use its own non-sandbox path.
+  if (result.reason === 'backend_launch_failed') {
+    reportBoundedDiagnostic(result.diagnostic);
+  }
   showSandboxInfo(getKodaXSandboxSetupGuidance(result.doctor));
+} else if (result.status === 'execution_uncertain') {
+  // The target may have started. Do not retry blindly.
+  throw new Error(result.diagnostic);
 } else if (result.exitCode !== 0) {
   throw new Error(result.stderr || `sandboxed command exited ${result.exitCode}`);
 }
@@ -6160,7 +6167,16 @@ back. `allowWrite` defines the writable roots, while `denyWrite` removes
 subtrees and always takes precedence over `allowWrite`. The HTTP(S) `origins`
 are normalized to the hostname/port pair enforced by ASRT's network proxy. It
 never silently runs without containment: sandbox unavailability is the typed
-`{ status: 'unavailable', sandboxed: false, doctor }` result.
+`{ status: 'unavailable', sandboxed: false, doctor, reason?, diagnostic? }`
+result. `doctor_not_ready` means readiness failed before launch;
+`backend_launch_failed` means the broker proved the wrapper could not spawn the
+target. In either case the API does not report a sandboxed completion.
+Missing, malformed, oversized, or invocation/backend-mismatched authority is a
+separate `{ status: 'execution_uncertain', reason: 'attestation_failed', ... }`
+result: the target may have started, so callers must not retry blindly. Broker
+requests travel over stdin and authority returns over a bounded descriptor that
+is not inherited by the sandbox or fallback target; ordinary files are not an
+execution authority.
 
 ### v0.7.96 authority split: trusted text tools and native shell containment
 

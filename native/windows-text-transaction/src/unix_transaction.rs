@@ -292,6 +292,7 @@ impl Drop for SlotLock {
 
 pub struct TrustedRoot {
     root: File,
+    authorized_root_path: PathBuf,
     root_path: PathBuf,
     identity: FileIdentity,
     mount: MountIdentity,
@@ -325,6 +326,7 @@ impl TrustedRoot {
         supported_local_filesystem(&lock_directory)?;
         Ok(Self {
             root,
+            authorized_root_path: root_path,
             root_path: canonical,
             identity: FileIdentity::from_metadata(&metadata),
             mount,
@@ -525,12 +527,23 @@ impl TrustedRoot {
 
     fn validate_target(&self, target: &str) -> Result<PathBuf, TextTransactionError> {
         let target = validate_absolute_path(target)?;
-        let relative = target.strip_prefix(&self.root_path).map_err(|_| {
-            TextTransactionError::new(
-                TextTransactionErrorCode::UnauthorizedPath,
-                "text mutation target is outside the trusted root",
-            )
-        })?;
+        let canonical_relative = target.strip_prefix(&self.root_path).ok();
+        let authorized_relative = target.strip_prefix(&self.authorized_root_path).ok();
+        let relative = match (canonical_relative, authorized_relative) {
+            (Some(canonical), Some(authorized)) if canonical != authorized => {
+                return Err(TextTransactionError::new(
+                    TextTransactionErrorCode::UnauthorizedPath,
+                    "text mutation target has an ambiguous trusted-root spelling",
+                ));
+            }
+            (Some(relative), _) | (_, Some(relative)) => relative,
+            (None, None) => {
+                return Err(TextTransactionError::new(
+                    TextTransactionErrorCode::UnauthorizedPath,
+                    "text mutation target is outside the trusted root",
+                ));
+            }
+        };
         if relative.as_os_str().is_empty() {
             return Err(TextTransactionError::new(
                 TextTransactionErrorCode::UnauthorizedPath,
@@ -1846,6 +1859,105 @@ mod tests {
         assert_eq!(
             root.snapshot(alias.to_str().unwrap()).unwrap_err().code,
             TextTransactionErrorCode::HardLink,
+        );
+    }
+
+    #[test]
+    fn authorized_root_alias_keeps_targets_handle_relative() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempdir().unwrap();
+        let state = private_tempdir();
+        let actual = directory.path().join("actual");
+        let alias = directory.path().join("alias");
+        fs::create_dir(&actual).unwrap();
+        symlink(&actual, &alias).unwrap();
+
+        let root =
+            TrustedRoot::open(alias.to_str().unwrap(), state.path().to_str().unwrap()).unwrap();
+        let target = alias.join("hello.md");
+        let snapshot = root.snapshot(target.to_str().unwrap()).unwrap();
+        assert_eq!(
+            snapshot.canonical_path,
+            actual.join("hello.md").to_str().unwrap()
+        );
+        let canonical_snapshot = root
+            .snapshot(actual.join("hello.md").to_str().unwrap())
+            .unwrap();
+        assert_eq!(canonical_snapshot.slot_id, snapshot.slot_id);
+        assert_eq!(canonical_snapshot.revision, snapshot.revision);
+        assert!(matches!(
+            root.commit(
+                target.to_str().unwrap(),
+                &snapshot.revision,
+                "hello",
+                false,
+                5_000,
+            )
+            .unwrap(),
+            CommitOutcome::Written(_)
+        ));
+        assert_eq!(
+            fs::read_to_string(actual.join("hello.md")).unwrap(),
+            "hello"
+        );
+    }
+
+    #[test]
+    fn authorized_root_alias_retargeting_cannot_redirect_an_open_root() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempdir().unwrap();
+        let state = private_tempdir();
+        let original = directory.path().join("original");
+        let replacement = directory.path().join("replacement");
+        let alias = directory.path().join("alias");
+        fs::create_dir(&original).unwrap();
+        fs::create_dir(&replacement).unwrap();
+        symlink(&original, &alias).unwrap();
+        let root =
+            TrustedRoot::open(alias.to_str().unwrap(), state.path().to_str().unwrap()).unwrap();
+
+        fs::remove_file(&alias).unwrap();
+        symlink(&replacement, &alias).unwrap();
+        let target = alias.join("hello.md");
+        let snapshot = root.snapshot(target.to_str().unwrap()).unwrap();
+        assert!(matches!(
+            root.commit(
+                target.to_str().unwrap(),
+                &snapshot.revision,
+                "original",
+                false,
+                5_000,
+            )
+            .unwrap(),
+            CommitOutcome::Written(_)
+        ));
+        assert_eq!(
+            fs::read_to_string(original.join("hello.md")).unwrap(),
+            "original"
+        );
+        assert!(!replacement.join("hello.md").exists());
+    }
+
+    #[test]
+    fn overlapping_root_spellings_with_different_relatives_are_rejected() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempdir().unwrap();
+        let state = private_tempdir();
+        let actual = directory.path().join("actual");
+        let alias = actual.join("alias");
+        fs::create_dir(&actual).unwrap();
+        symlink(&actual, &alias).unwrap();
+        let root =
+            TrustedRoot::open(alias.to_str().unwrap(), state.path().to_str().unwrap()).unwrap();
+
+        assert_eq!(
+            root.snapshot(alias.join("hello.md").to_str().unwrap())
+                .unwrap_err()
+                .code,
+            TextTransactionErrorCode::UnauthorizedPath,
         );
     }
 

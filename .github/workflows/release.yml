@@ -106,6 +106,15 @@ jobs:
         if: steps.filter.outputs.skip == 'false' && runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y bubblewrap socat ripgrep
 
+      - name: Verify Linux sandbox namespaces
+        if: steps.filter.outputs.skip == 'false' && runner.os == 'Linux'
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo sysctl -w kernel.unprivileged_userns_clone=1
+          test "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns)" = 0
+          test "$(sysctl -n kernel.unprivileged_userns_clone)" = 1
+          bwrap --ro-bind / / --unshare-net --unshare-pid --proc /proc true
+
       - name: Install macOS sandbox dependencies
         if: steps.filter.outputs.skip == 'false' && runner.os == 'macOS'
         run: brew install ripgrep socat
@@ -152,6 +161,7 @@ jobs:
         if: steps.filter.outputs.skip == 'false' && matrix.target != 'win-x64'
         env:
           KODAX_REAL_POSIX_SANDBOX: '1'
+          SRT_DEBUG: '1'
         run: node node_modules/vitest/vitest.mjs run tests/feature-295-posix-shell-policy.test.ts
 
       - name: Windows trusted text integration and dependency boundary

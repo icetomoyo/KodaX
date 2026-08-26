@@ -10,15 +10,15 @@ use windows_sys::Wdk::Foundation::OBJECT_ATTRIBUTES;
 use windows_sys::Wdk::Storage::FileSystem::{
     FILE_CREATE, FILE_DIRECTORY_FILE, FILE_NON_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_REPARSE_POINT,
     FILE_OPEN_REQUIRING_OPLOCK, FILE_RENAME_IGNORE_READONLY_ATTRIBUTE, FILE_RENAME_INFORMATION,
-    FILE_RENAME_POSIX_SEMANTICS, FILE_RENAME_REPLACE_IF_EXISTS, FILE_STREAM_INFORMATION,
-    FILE_SYNCHRONOUS_IO_NONALERT, FileRenameInformationEx, FileStreamInformation, NtCreateFile,
-    NtQueryInformationFile, NtSetInformationFile,
+    FILE_RENAME_REPLACE_IF_EXISTS, FILE_STREAM_INFORMATION, FILE_SYNCHRONOUS_IO_NONALERT,
+    FileRenameInformationEx, FileStreamInformation, NtCreateFile, NtQueryInformationFile,
+    NtSetInformationFile,
 };
 use windows_sys::Win32::Foundation::{
     CloseHandle, ERROR_ALREADY_EXISTS, ERROR_FILE_NOT_FOUND, ERROR_INSUFFICIENT_BUFFER,
-    ERROR_IO_PENDING, ERROR_PATH_NOT_FOUND, GetLastError, HANDLE, INVALID_HANDLE_VALUE, LocalFree,
-    OBJ_CASE_INSENSITIVE, RtlNtStatusToDosError, UNICODE_STRING, WAIT_ABANDONED, WAIT_OBJECT_0,
-    WAIT_TIMEOUT,
+    ERROR_IO_PENDING, ERROR_LOCK_VIOLATION, ERROR_PATH_NOT_FOUND, ERROR_SHARING_VIOLATION,
+    GetLastError, HANDLE, INVALID_HANDLE_VALUE, LocalFree, OBJ_CASE_INSENSITIVE,
+    RtlNtStatusToDosError, UNICODE_STRING, WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, GetSecurityInfo,
@@ -40,11 +40,12 @@ use windows_sys::Win32::Storage::FileSystem::{
     FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE,
     FILE_DISPOSITION_FLAG_POSIX_SEMANTICS, FILE_DISPOSITION_INFO_EX, FILE_FLAG_BACKUP_SEMANTICS,
     FILE_FLAG_OPEN_REPARSE_POINT, FILE_ID_INFO, FILE_READ_ATTRIBUTES, FILE_READ_DATA,
-    FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_STANDARD_INFO, FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA,
-    FileAttributeTagInfo, FileBasicInfo, FileCaseSensitiveInfo, FileDispositionInfoEx, FileIdInfo,
-    FileStandardInfo, FlushFileBuffers, GetDriveTypeW, GetFileInformationByHandleEx,
-    GetFinalPathNameByHandleW, GetVolumeInformationByHandleW, OPEN_EXISTING, READ_CONTROL,
-    ReadFile, SYNCHRONIZE, SetFileInformationByHandle, WRITE_DAC, WRITE_OWNER, WriteFile,
+    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_STANDARD_INFO,
+    FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA, FileAttributeTagInfo, FileBasicInfo,
+    FileCaseSensitiveInfo, FileDispositionInfoEx, FileIdInfo, FileStandardInfo, FlushFileBuffers,
+    GetDriveTypeW, GetFileInformationByHandleEx, GetFinalPathNameByHandleW,
+    GetVolumeInformationByHandleW, OPEN_EXISTING, READ_CONTROL, ReadFile, SYNCHRONIZE,
+    SetFileInformationByHandle, WRITE_DAC, WRITE_OWNER, WriteFile,
 };
 use windows_sys::Win32::System::IO::{
     DeviceIoControl, GetOverlappedResult, IO_STATUS_BLOCK, OVERLAPPED,
@@ -371,6 +372,9 @@ impl TrustedRoot {
                 post_revision: present_revision(&slot_id, temp_identity, content.as_bytes()),
                 abandoned_lock: mutex.abandoned,
             };
+            if before.state == ResourceState::Present {
+                verify_replace_delete_sharing(parent.raw(), leaf)?;
+            }
             atomic_rename(
                 temp.raw(),
                 parent.raw(),
@@ -1368,9 +1372,11 @@ fn atomic_rename(
     let info = storage.as_mut_ptr().cast::<FILE_RENAME_INFORMATION>();
     unsafe {
         if replace {
-            (*info).Anonymous.Flags = FILE_RENAME_REPLACE_IF_EXISTS
-                | FILE_RENAME_POSIX_SEMANTICS
-                | FILE_RENAME_IGNORE_READONLY_ATTRIBUTE;
+            // POSIX delete semantics can make Windows reclassify an unprotected legacy
+            // DACL as auto-inherited at the replacement name. The ordinary replace
+            // contract is also the one that fails on incompatible open handles.
+            (*info).Anonymous.Flags =
+                FILE_RENAME_REPLACE_IF_EXISTS | FILE_RENAME_IGNORE_READONLY_ATTRIBUTE;
         } else {
             (*info).Anonymous.Flags = 0;
         }
@@ -1386,12 +1392,36 @@ fn atomic_rename(
             FileRenameInformationEx,
         );
         if status < 0 {
+            let os_code = RtlNtStatusToDosError(status);
+            let code = if os_code == ERROR_SHARING_VIOLATION || os_code == ERROR_LOCK_VIOLATION {
+                TextTransactionErrorCode::Contended
+            } else {
+                TextTransactionErrorCode::Io
+            };
             return Err(TextTransactionError::os(
-                TextTransactionErrorCode::Io,
+                code,
                 "atomic text transaction replace failed",
-                RtlNtStatusToDosError(status),
+                os_code,
             ));
         }
+    }
+    Ok(())
+}
+
+fn verify_replace_delete_sharing(parent: HANDLE, leaf: &str) -> Result<(), TextTransactionError> {
+    let handle = open_relative(
+        parent,
+        leaf,
+        DELETE | SYNCHRONIZE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        FILE_OPEN,
+        FILE_NON_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
+    )?;
+    if handle.is_none() {
+        return Err(TextTransactionError::new(
+            TextTransactionErrorCode::Stale,
+            "text transaction target disappeared before atomic replacement",
+        ));
     }
     Ok(())
 }

@@ -32,6 +32,16 @@ not active, deterministic safe operations and Auto[LLM] decisions keep the same
 permission behavior; only OS-level containment is absent. Ordinary runs do not
 repeatedly prompt for setup.
 
+On Linux, the kernel and host security policy must also permit unprivileged
+user namespaces. Some hardened distributions disable them even when
+`bubblewrap` is installed. KodaX does not change sysctls or AppArmor policy;
+if the broker proves the wrapper could not spawn the target, the standalone SDK reports
+`reason: 'backend_launch_failed'` with a bounded diagnostic instead of claiming
+that the command completed inside the sandbox. A spawned wrapper that exits
+without target-start authority, or any missing or invalid broker-only control
+frame, returns `execution_uncertain`; the command may have started and must not
+be retried blindly.
+
 ## REPL diagnostics
 
 In the REPL, `/sandbox` refreshes readiness and diagnostics without activating
@@ -190,7 +200,11 @@ await runKodaX({
 SDK embedders can also use the standalone shell sandbox capability
 independently through `@kodax-ai/kodax/sandbox`. Its readiness and setup state
 apply to shell/process containment only. A failed or unavailable shell runner
-does not change the trusted text-tool path.
+does not change the trusted text-tool path. An unavailable result may include
+`reason: 'doctor_not_ready' | 'backend_launch_failed'`; the latter also includes
+a bounded `diagnostic` and is never reported as a sandboxed completion. A
+separate `execution_uncertain` result means target-start authority could not be
+recovered and callers must reread external state before deciding what to do.
 
 ## See also
 

@@ -5514,6 +5514,15 @@ platform; Windows v2 additionally replaces the legacy Windows shell backend.
     Seatbelt/`sandbox-exec` invocation for each command and keep no KodaX
     workspace-session owner or cross-command lifecycle lock. Shell writers on
     every platform remain ordinary OS writers and do not join text CAS.
+    Public POSIX sandbox execution requires an applied target-start
+    observation before it may return `completed`; a proven pre-target exit
+    returns structured `backend_launch_failed` unavailability. The request is
+    delivered on broker stdin and one bounded, invocation/backend-bound frame
+    returns on FD3, which is not inherited by the target or fallback. Missing
+    or invalid authority returns `execution_uncertain` and forbids blind retry;
+    ordinary files are never execution authority. Linux host
+    policy must permit unprivileged user namespaces, and KodaX does not mutate
+    sysctls or AppArmor policy to obtain that capability.
 11. **Atomic backend migration**: `sandbox setup` holds a machine coordination
     lock, proves the old account idle, recovers recorded ACL work, deletes and
     recreates the account, verifies that its SID changed, then writes a strict

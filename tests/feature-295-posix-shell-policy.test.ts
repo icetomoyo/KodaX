@@ -46,6 +46,20 @@ function requireCompleted(result: KodaXSandboxRunResult): Extract<
   return result;
 }
 
+function requireExit(
+  result: KodaXSandboxRunResult,
+  exitCode: number,
+): Extract<KodaXSandboxRunResult, { readonly status: 'completed' }> {
+  const completed = requireCompleted(result);
+  if (completed.exitCode !== exitCode) {
+    throw new Error(
+      `POSIX sandbox exited ${completed.exitCode}, expected ${exitCode}: `
+      + JSON.stringify({ stdout: completed.stdout, stderr: completed.stderr }),
+    );
+  }
+  return completed;
+}
+
 async function waitForFile(target: string): Promise<void> {
   const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
@@ -97,8 +111,8 @@ describe.runIf(realPosixGate)('FEATURE_295 real POSIX shell sandbox', () => {
       run(policyA, readyA, readyB),
       run(policyB, readyB, readyA),
     ]);
-    expect(requireCompleted(resultA)).toMatchObject({ sandboxed: true, exitCode: 0 });
-    expect(requireCompleted(resultB)).toMatchObject({ sandboxed: true, exitCode: 0 });
+    expect(requireExit(resultA, 0).sandboxed).toBe(true);
+    expect(requireExit(resultB, 0).sandboxed).toBe(true);
 
     const sentinel = `KODAX_EXPECTED_POSIX_POLICY_DENIAL:${randomUUID()}`;
     const protectedSentinel = `KODAX_EXPECTED_POSIX_PROTECTED_READ_DENIAL:${randomUUID()}`;
@@ -202,7 +216,16 @@ if (!fs.existsSync(release)) process.exit(7);
       inheritEnvironment: true,
       timeoutMs: 25_000,
     });
-    await waitForFile(ready);
+    const shellResult = shell.then(requireCompleted);
+    await Promise.race([
+      waitForFile(ready),
+      shellResult.then((completed) => {
+        throw new Error(
+          `POSIX sandbox exited ${completed.exitCode} before its ready marker: `
+          + JSON.stringify({ stdout: completed.stdout, stderr: completed.stderr }),
+        );
+      }),
+    ]);
 
     const host = createTrustedTextMutationHost(
       () => [root],
@@ -229,8 +252,28 @@ if (!fs.existsSync(release)) process.exit(7);
       content: 'release',
       createParentDirectories: false,
     });
-    expect(requireCompleted(await shell)).toMatchObject({ sandboxed: true, exitCode: 0 });
+    expect(requireExit(await shellResult, 0).sandboxed).toBe(true);
   }, 40_000);
+
+  it('does not let the sandbox target forge broker control authority', async () => {
+    const result = await runKodaXSandboxed({
+      command: process.execPath,
+      args: [
+        '-e',
+        "const fs=require('node:fs');try{fs.writeSync(3,Buffer.from('FORGED_CONTROL\\n'))}catch{}process.exit(0)",
+      ],
+      cwd: os.tmpdir(),
+      filesystem: {
+        allowRead: [process.execPath, os.tmpdir()],
+        allowWrite: [],
+      },
+      network: { mode: 'deny' },
+      inheritEnvironment: true,
+      timeoutMs: 15_000,
+    });
+
+    expect(requireExit(result, 0).sandboxed).toBe(true);
+  });
 
   it('rejects protected-state allow carve-backs before POSIX sandbox launch', async () => {
     const protectedRoot = trustedTextNativeArtifactStateRoots().at(-1);

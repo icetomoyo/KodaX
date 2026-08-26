@@ -675,4 +675,87 @@ describe("runtime daemon child startup", () => {
     expect(child.terminate).not.toHaveBeenCalled();
     expect(child.unref).not.toHaveBeenCalled();
   });
+
+  it("uses the same winner-publication grace when a clean loser exits between polls", async () => {
+    let reportExit:
+      | ((exit: {
+          readonly code: number | null;
+          readonly signal: NodeJS.Signals | null;
+        }) => void)
+      | undefined;
+    const child: RuntimeDaemonStartupProcess = {
+      pid: 888,
+      exit: new Promise((resolve) => {
+        reportExit = resolve;
+      }),
+      hasExited: vi.fn(() => true),
+      unref: vi.fn(),
+      terminate: vi.fn(async () => undefined),
+    };
+    let healthChecks = 0;
+    const delayedWinner = async () => {
+      healthChecks += 1;
+      if (healthChecks === 1) {
+        setTimeout(() => reportExit?.({ code: 0, signal: null }), 0);
+        return missingHealth();
+      }
+      if (healthChecks === 2) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        return missingHealth();
+      }
+      return healthy(999)();
+    };
+
+    await expect(
+      waitForHealthyDaemonStartup(
+        paths,
+        {
+          startupTimeoutMs: 1_000,
+          pollIntervalMs: 100,
+        },
+        child,
+        delayedWinner,
+      ),
+    ).resolves.toMatchObject({ state: { pid: 999 } });
+    expect(healthChecks).toBeGreaterThanOrEqual(3);
+    expect(child.terminate).not.toHaveBeenCalled();
+    expect(child.unref).not.toHaveBeenCalled();
+  });
+
+  it("does not add a second poll delay before clean-exit publication grace", async () => {
+    let reportExit:
+      | ((exit: {
+          readonly code: number | null;
+          readonly signal: NodeJS.Signals | null;
+        }) => void)
+      | undefined;
+    const child: RuntimeDaemonStartupProcess = {
+      pid: 888,
+      exit: new Promise((resolve) => {
+        reportExit = resolve;
+      }),
+      hasExited: vi.fn(() => true),
+      unref: vi.fn(),
+      terminate: vi.fn(async () => undefined),
+    };
+    let healthChecks = 0;
+    const missing = async () => {
+      healthChecks += 1;
+      if (healthChecks === 1) {
+        setTimeout(() => reportExit?.({ code: 0, signal: null }), 0);
+      }
+      return missingHealth();
+    };
+    const startedAt = Date.now();
+
+    await expect(
+      waitForHealthyDaemonStartup(
+        paths,
+        { startupTimeoutMs: 200, pollIntervalMs: 1_000 },
+        child,
+        missing,
+      ),
+    ).rejects.toMatchObject({ reason: "child_exit" });
+    expect(Date.now() - startedAt).toBeLessThan(350);
+  });
 });

@@ -149,7 +149,17 @@ const sandboxInitialize = vi.hoisted(
   () => vi.fn<() => Promise<void>>(() => Promise.resolve()),
 );
 const sandboxWrapper = vi.hoisted(() => ({
-  mode: 'attest' as 'attest' | 'late_marker' | 'missing' | 'spawn_error',
+  mode: 'attest' as
+    | 'attest'
+    | 'late_marker'
+    | 'missing'
+    | 'not_started'
+    | 'fallback'
+    | 'control_missing'
+    | 'control_oversized'
+    | 'control_error'
+    | 'wrong_invocation'
+    | 'spawn_error',
 }));
 const workspaceSessionControl = vi.hoisted(() => ({
   delayReady: false,
@@ -661,6 +671,16 @@ vi.mock('node:child_process', async (importOriginal) => {
         });
         return child;
       }
+      const controlledBroker = Array.isArray(argsOrOptions)
+        && !standaloneGate
+        && (
+          argsOrOptions.includes('__asrt-broker')
+          || (
+            argsOrOptions.includes('--input-type=module')
+            && (explicitOptions as { readonly stdio?: readonly string[] } | undefined)
+              ?.stdio?.length === 4
+          )
+        );
       let brokerRequest: Readonly<Record<string, unknown>> | undefined;
       const captureRequest = (): void => {
         if (typeof requestFile !== 'string' || !requestFile.endsWith('.json')) return;
@@ -673,19 +693,59 @@ vi.mock('node:child_process', async (importOriginal) => {
         }
       };
       const complete = (): void => {
+        const writeControl = (observation: Readonly<Record<string, unknown>>): void => {
+          if (brokerRequest?.controlInvocationId === undefined) return;
+          control.write(`${JSON.stringify({
+            version: 1,
+            invocationId: sandboxWrapper.mode === 'wrong_invocation'
+              ? 'wrong-invocation'
+              : brokerRequest.controlInvocationId,
+            observation,
+          })}\n`);
+        };
         if (sandboxWrapper.mode === 'spawn_error') {
           sandboxWrapper.mode = 'attest';
           child.stderr.end('wrapper spawn failed');
+          control.end();
           child.emit('error', new Error('wrapper spawn failed'));
           child.emit('close', null, null);
           return;
         }
         child.emit('spawn');
         child.stdout.end('sandbox output');
+        if (sandboxWrapper.mode === 'missing') {
+          child.stderr.write('sandbox target launch failed before attestation');
+        }
+        if (sandboxWrapper.mode === 'not_started' && brokerRequest !== undefined) {
+          child.stderr.write('sandbox target was proven not to have started');
+          writeControl({
+            version: 1,
+            state: 'not_started',
+            diagnostic: 'sandbox target was proven not to have started',
+          });
+        }
+        if (sandboxWrapper.mode === 'fallback') {
+          writeControl({
+            version: 1,
+            state: 'fallback',
+            reason: 'backend_failed',
+            execution: 'normal_permission_policy',
+          });
+        }
         if (
           sandboxWrapper.mode === 'attest'
           || sandboxWrapper.mode === 'late_marker'
+          || sandboxWrapper.mode === 'wrong_invocation'
+          || sandboxWrapper.mode === 'control_missing'
         ) {
+          if (sandboxWrapper.mode !== 'control_missing') {
+            writeControl({
+              version: 1,
+              state: 'applied',
+              backend: brokerRequest?.observationBackend ?? 'unsupported',
+              policyId: 'kodax-workspace-shell-v1',
+            });
+          }
           const wrappedCommand = capturedWrappedCommands.at(-1);
           const encoded = wrappedCommand?.trim().split(/\s+/).at(-1);
           if (encoded !== undefined) {
@@ -700,10 +760,21 @@ vi.mock('node:child_process', async (importOriginal) => {
             }
           }
         }
+        if (sandboxWrapper.mode === 'control_oversized') {
+          control.write(Buffer.alloc(16_385, 0x78));
+        }
+        if (sandboxWrapper.mode === 'control_error') {
+          control.destroy(new Error('injected broker control stream failure'));
+        }
         child.stderr.end();
-        child.emit('close', sandboxWrapper.mode === 'missing' ? 1 : 0);
+        if (sandboxWrapper.mode !== 'control_error') control.end();
+        const failed = sandboxWrapper.mode === 'missing'
+          || sandboxWrapper.mode === 'not_started'
+          || sandboxWrapper.mode === 'control_oversized'
+          || sandboxWrapper.mode === 'control_error';
+        child.emit('close', failed ? 1 : 0);
         if (sandboxWrapper.mode !== 'late_marker') {
-          child.emit('exit', sandboxWrapper.mode === 'missing' ? 1 : 0, null);
+          child.emit('exit', failed ? 1 : 0, null);
         }
       };
       if (standaloneGate) {
@@ -716,6 +787,25 @@ vi.mock('node:child_process', async (importOriginal) => {
             return;
           }
           captureRequest();
+          if (stubbornBroker.mode !== 'none') {
+            queueMicrotask(() => child.emit('spawn'));
+            if (stubbornBroker.mode === 'overflow') {
+              queueMicrotask(() => child.stdout.write('output-over-limit'));
+            }
+            return;
+          }
+          queueMicrotask(complete);
+        });
+        return child;
+      }
+      if (controlledBroker) {
+        const chunks: Buffer[] = [];
+        child.stdin.on('data', (chunk: Buffer) => chunks.push(chunk));
+        child.stdin.once('finish', () => {
+          brokerRequest = JSON.parse(
+            Buffer.concat(chunks).toString('utf8'),
+          ) as Readonly<Record<string, unknown>>;
+          capturedBrokerRequests.push(brokerRequest);
           if (stubbornBroker.mode !== 'none') {
             queueMicrotask(() => child.emit('spawn'));
             if (stubbornBroker.mode === 'overflow') {
@@ -1315,18 +1405,21 @@ describe.skipIf(process.platform === 'win32')('portable ASRT shell adapter', () 
 
     const [first, second] = await Promise.all([prepare('portable-a'), prepare('portable-b')]);
     if (first === undefined || second === undefined) throw new Error('expected portable brokers');
-    const firstRequest = first.args.at(-1);
-    const secondRequest = second.args.at(-1);
-    expect(firstRequest).toBeTypeOf('string');
-    expect(secondRequest).toBeTypeOf('string');
-    expect(firstRequest).not.toBe(secondRequest);
-    const request = JSON.parse(await readFile(firstRequest!, 'utf8')) as {
+    expect(first.stdinPrefix).toBeInstanceOf(Uint8Array);
+    expect(second.stdinPrefix).toBeInstanceOf(Uint8Array);
+    const request = JSON.parse(Buffer.from(first.stdinPrefix!).toString('utf8')) as {
+      readonly controlInvocationId: string;
       readonly wrappedInvocation?: unknown;
       readonly config: { readonly filesystem: { readonly allowWrite: readonly string[] } };
     };
+    const secondRequest = JSON.parse(Buffer.from(second.stdinPrefix!).toString('utf8')) as {
+      readonly controlInvocationId: string;
+    };
+    expect(request.controlInvocationId).not.toBe(secondRequest.controlInvocationId);
     expect(request.wrappedInvocation).toBeUndefined();
     expect(request.config.filesystem.allowWrite).toContain(root);
     expect(first.args.join(' ')).not.toContain('workspace-session');
+    expect(first.controlChannel).toEqual({ fd: 3, maxOutputBytes: 16 * 1024 });
     await Promise.all([
       first.cleanup({ execution: 'not_started' }),
       second.cleanup({ execution: 'not_started' }),
@@ -2725,6 +2818,73 @@ describe.skipIf(process.platform === 'win32')('legacy ASRT Skill-script adapter'
       expect(request.config.filesystem.denyWrite).toContain(protectedRoot);
     }
   });
+
+  it.runIf(process.platform !== 'win32')(
+    'reports a proven pre-target POSIX backend failure as unavailable',
+    async () => {
+      sandboxWrapper.mode = 'not_started';
+
+      await expect(runKodaXSandboxed({
+        command: process.execPath,
+        args: ['--version'],
+        cwd: os.tmpdir(),
+        filesystem: { allowRead: [], allowWrite: [] },
+        network: { mode: 'deny' },
+      })).resolves.toMatchObject({
+        status: 'unavailable',
+        sandboxed: false,
+        reason: 'backend_launch_failed',
+        diagnostic: expect.stringContaining('proven not to have started'),
+        doctor: { ready: false, setupRequired: true },
+      });
+    },
+  );
+
+  it.runIf(process.platform !== 'win32')(
+    'never accepts an ordinary-permission fallback as a sandboxed SDK completion',
+    async () => {
+      sandboxWrapper.mode = 'fallback';
+
+      await expect(runKodaXSandboxed({
+        command: process.execPath,
+        args: ['--version'],
+        cwd: os.tmpdir(),
+        filesystem: { allowRead: [], allowWrite: [] },
+        network: { mode: 'deny' },
+      })).resolves.toMatchObject({
+        status: 'execution_uncertain',
+        sandboxed: false,
+        reason: 'attestation_failed',
+      });
+    },
+  );
+
+  it.runIf(process.platform !== 'win32')(
+    'reports missing or mismatched broker control as execution-uncertain',
+    async () => {
+      for (const mode of [
+        'missing',
+        'control_missing',
+        'control_oversized',
+        'control_error',
+        'wrong_invocation',
+      ] as const) {
+        sandboxWrapper.mode = mode;
+        await expect(runKodaXSandboxed({
+          command: process.execPath,
+          args: ['--version'],
+          cwd: os.tmpdir(),
+          filesystem: { allowRead: [], allowWrite: [] },
+          network: { mode: 'deny' },
+        })).resolves.toMatchObject({
+          status: 'execution_uncertain',
+          sandboxed: false,
+          reason: 'attestation_failed',
+          diagnostic: expect.any(String),
+        });
+      }
+    },
+  );
 
   it('force-terminates a broker that ignores cancellation', async () => {
     stubbornBroker.mode = 'silent';

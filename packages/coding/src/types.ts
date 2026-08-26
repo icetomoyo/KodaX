@@ -1681,10 +1681,16 @@ export interface KodaXPreparedShellSandboxInvocation {
   readonly windowsVerbatimArguments?: boolean;
   /** Private bootstrap bytes consumed by the native host before target stdin. */
   readonly stdinPrefix?: Uint8Array;
+  /** Broker-only framed output. The requested descriptor is never inherited by the target. */
+  readonly controlChannel?: {
+    readonly fd: 3;
+    readonly maxOutputBytes: number;
+  };
   /** The authenticated native runner owns a per-command kill-on-close Job. */
   readonly processTreeContainment?: 'native-job';
   cleanup(input?: {
     readonly execution: 'not_started' | 'started_or_unknown';
+    readonly controlOutput?: Uint8Array;
   }): Promise<KodaXShellSandboxObservation | undefined>;
 }
 

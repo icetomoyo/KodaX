@@ -123,6 +123,32 @@ function closePreparedShellInput(
   });
 }
 
+function collectPreparedShellControl(
+  proc: ManagedChildProcess,
+  fd: 3,
+  maxOutputBytes: number,
+): Promise<Uint8Array> {
+  const control = proc.stdio[fd];
+  if (control === null || control === undefined || typeof control.on !== 'function') {
+    return Promise.reject(new Error('Sandbox broker control pipe was not created.'));
+  }
+  return new Promise<Uint8Array>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    control.on('data', (chunk: Buffer) => {
+      bytes += chunk.byteLength;
+      if (bytes > maxOutputBytes) {
+        reject(new Error(`Sandbox broker control output exceeded ${maxOutputBytes} bytes.`));
+        control.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    control.once('error', reject);
+    control.once('end', () => resolve(Buffer.concat(chunks)));
+  });
+}
+
 function sandboxLifecycleErrorDetail(error: unknown): string {
   if (error instanceof AggregateError) {
     const details = error.errors.map(sandboxLifecycleErrorDetail).filter(Boolean);
@@ -466,12 +492,18 @@ async function executeToolBash(
   let sandboxCleanup:
     | Promise<Awaited<ReturnType<NonNullable<typeof sandboxInvocation>['cleanup']>>>
     | undefined;
+  let sandboxControlOutput: Promise<Uint8Array> | undefined;
   let sandboxCleanupError: unknown;
   const cleanupSandbox = async (
     execution: 'not_started' | 'started_or_unknown' = 'not_started',
   ): Promise<void> => {
     if (!sandboxInvocation) return;
-    sandboxCleanup ??= sandboxInvocation.cleanup({ execution })
+    sandboxCleanup ??= (async () => sandboxInvocation.cleanup({
+      execution,
+      ...(sandboxControlOutput === undefined
+        ? {}
+        : { controlOutput: await sandboxControlOutput }),
+    }))()
       .then((observation) => {
         if (observation) ctx.reportToolSandboxObservation?.(observation);
         return observation;
@@ -524,18 +556,29 @@ async function executeToolBash(
     resolvedInvocation.executable,
     resolvedInvocation.env,
   );
-  const spawnCommand = () => spawn(
-    resolvedInvocation.executable,
-    [...resolvedInvocation.args],
-    {
+  const spawnCommand = (): ManagedChildProcess => {
+    const controlChannel = sandboxInvocation?.controlChannel;
+    const proc = spawn(resolvedInvocation.executable, [...resolvedInvocation.args], {
       shell: false,
       windowsHide: true,
       cwd,
       env: directEnvironment,
       detached: process.platform !== 'win32',
       windowsVerbatimArguments: resolvedInvocation.windowsVerbatimArguments,
-    },
-  );
+      ...(controlChannel === undefined
+        ? {}
+        : { stdio: ['pipe', 'pipe', 'pipe', 'pipe'] as const }),
+    });
+    if (controlChannel !== undefined) {
+      sandboxControlOutput = collectPreparedShellControl(
+        proc,
+        controlChannel.fd,
+        controlChannel.maxOutputBytes,
+      );
+      void sandboxControlOutput.catch(() => undefined);
+    }
+    return proc;
+  };
 
   const spawnManagedCommand = async (
     kind: 'bash' | 'bash-background',
