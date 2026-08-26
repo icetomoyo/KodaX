@@ -30,6 +30,14 @@ const authorizeOrdinaryCanonicalTarget = (canonicalTarget: string): void => {
   assertTrustedTextMutationPolicy(canonicalTarget);
 };
 
+async function createIntegrationTestRoot(): Promise<string> {
+  const base = process.env.KODAX_NATIVE_TEST_TEMP
+    ?? process.env.RUNNER_TEMP
+    ?? os.tmpdir();
+  await fs.mkdir(base, { recursive: true });
+  return fs.mkdtemp(path.join(base, 'kodax-windows-text-host-'));
+}
+
 async function writeFromExternalProcess(target: string, content: string): Promise<void> {
   await execFile(process.execPath, [
     '-e',
@@ -43,7 +51,7 @@ describe('Windows trusted text transaction integration', () => {
   let root = '';
 
   beforeEach(async () => {
-    root = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-windows-text-host-'));
+    root = await createIntegrationTestRoot();
   });
 
   afterEach(async () => {
